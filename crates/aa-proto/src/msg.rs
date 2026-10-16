@@ -11,8 +11,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    Cleanup, FlowEvent, ProfileView, ProjectView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady,
-    ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, MessageMode, MessageView, ProfileView, ProjectView, QuestionView,
+    ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 
 use crate::version::Version;
@@ -346,6 +346,8 @@ pub enum AgentResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// harness hook·notify·`aa report`에서 온 상태 사건(adapter가 정규화)
+    Harness(HarnessEvent),
     /// 감시 중인 thread의 report.md hash(없으면 None)가 바뀌었다
     ReportChanged {
         thread: String,
@@ -464,6 +466,8 @@ pub struct PaneView {
     pub rows: u16,
     pub lease: Option<LeaseView>,
     pub role: Option<Role>,
+    /// harness 상태(hook을 보내는 agent 세션만)
+    pub agent: Option<Box<AgentStatus>>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -714,6 +718,24 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
+    /// 열린 확인창 질문(기본은 열린 것만)
+    Questions {
+        #[serde(default)]
+        all: bool,
+    },
+    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다.
+    QuestionAnswer {
+        id: String,
+        choice: String,
+    },
+    /// thread agent에 메시지를 보낸다(전달을 모르면 다시 보내지 않는다)
+    ThreadMessage {
+        project: String,
+        thread: String,
+        text: String,
+        #[serde(default)]
+        mode: MessageMode,
+    },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {
         project: Option<String>,
@@ -737,6 +759,7 @@ impl FrontRequest {
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::Events { .. }
+                | FrontRequest::Questions { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -799,6 +822,11 @@ pub enum FrontResponse {
     Events {
         events: Vec<FlowEvent>,
     },
+    Questions {
+        questions: Vec<QuestionView>,
+    },
+    Question(QuestionView),
+    Message(MessageView),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -814,6 +842,8 @@ pub enum FrontEvent {
     Flow(FlowEvent),
     /// thread 기록이 바뀌었다
     Thread(ThreadView),
+    /// 확인창 질문이 생기거나 답해졌다(알림 대상)
+    Question(QuestionView),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -954,6 +984,8 @@ mod tests {
         assert!(!FrontRequest::Panes { role: None }.local_only());
         assert!(!FrontRequest::Threads { project: None }.needs_control());
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
+        assert!(!FrontRequest::Questions { all: true }.needs_control());
+        assert!(FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into() }.needs_control());
     }
 
     #[test]
@@ -968,5 +1000,14 @@ mod tests {
         assert_eq!(serde_json::from_value::<SessionInfo>(v).unwrap().role, None);
         let v = json!({"name":"","argv":[],"cwd":null,"cols":80,"rows":24});
         assert_eq!(serde_json::from_value::<SpawnSpec>(v).unwrap().role, None);
+        // 1.2 host의 PaneView(agent 없음)와 1.2 front의 thread message(mode 없음 → queue)
+        let v = json!({"id":"p","machine_id":"m","machine":"mac-a","name":"","argv":[],"cwd":null,"state":"running",
+            "connection":"connected","readonly":false,"cols":80,"rows":24,"lease":null,"role":null});
+        assert_eq!(serde_json::from_value::<PaneView>(v).unwrap().agent, None);
+        let v = json!({"op":"thread_message","project":"p","thread":"t","text":"x"});
+        assert!(matches!(
+            serde_json::from_value::<FrontRequest>(v).unwrap(),
+            FrontRequest::ThreadMessage { mode: MessageMode::Queue, .. }
+        ));
     }
 }

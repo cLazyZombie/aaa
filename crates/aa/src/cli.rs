@@ -93,6 +93,25 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
+    /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
+    #[command(hide = true)]
+    Hook {
+        #[arg(long, value_parser = ["claude", "codex"])]
+        agent: String,
+        payload: Option<String>,
+    },
+    /// 세션 안에서 진행을 보고한다(예: `aa report --percent 40 --activity "시험 중"`)
+    Report {
+        #[arg(long)]
+        percent: Option<u8>,
+        #[arg(long)]
+        activity: Option<String>,
+    },
+    /// 확인창 질문(폴더 신뢰·권한 확인)을 보고 답한다
+    Question {
+        #[command(subcommand)]
+        cmd: QuestionCmd,
+    },
     /// 흐름 사건(프로젝트별 순번). cursor(`--after`) 다음부터 읽는다
     Events {
         #[arg(long, short)]
@@ -104,6 +123,17 @@ enum Cmd {
         #[arg(long)]
         follow: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum QuestionCmd {
+    List {
+        /// 답한 것도 보인다
+        #[arg(long)]
+        all: bool,
+    },
+    /// 답한다(예: yes·no). host가 질문이 아직 열려 있는지 다시 확인한다
+    Answer { id: String, choice: String },
 }
 
 #[derive(Subcommand)]
@@ -171,6 +201,18 @@ enum ThreadCmd {
     Brief {
         project: String,
         thread: String,
+    },
+    /// thread agent에 메시지를 보낸다. 기본은 대기열(턴이 끝나면), --interrupt면 지금
+    Message {
+        project: String,
+        thread: String,
+        #[arg(long)]
+        interrupt: bool,
+        /// 보낼 글 파일(`-`면 표준 입력)
+        #[arg(long, conflicts_with = "text")]
+        text_file: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
     },
 }
 
@@ -561,9 +603,53 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::ThreadResolve { project, thread, keep_worktree }
                 }
                 ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
+                ThreadCmd::Message { project, thread, interrupt, text_file, text } => {
+                    let text = match (text, text_file) {
+                        (Some(t), _) => t,
+                        (None, Some(f)) if f == "-" => {
+                            let mut t = String::new();
+                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+                            t
+                        }
+                        (None, Some(f)) => std::fs::read_to_string(&f).with_context(|| format!("글 파일: {f}"))?,
+                        (None, None) => anyhow::bail!("--text 또는 --text-file이 필요하다"),
+                    };
+                    let mode = if interrupt { aa_proto::MessageMode::Interrupt } else { aa_proto::MessageMode::Queue };
+                    FrontRequest::ThreadMessage { project, thread, text, mode }
+                }
             },
         ),
         Cmd::Events { project, after, follow } => events_cmd(json, project, after, follow),
+        Cmd::Hook { agent, payload } => {
+            // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 출력 없음
+            let body = match payload {
+                Some(p) => p,
+                None => {
+                    let mut t = String::new();
+                    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut t);
+                    t
+                }
+            };
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body)
+                && let Ok(rt) = runtime()
+                && let Err(e) = rt.block_on(aa_agent::hooks::send(&agent, v))
+            {
+                eprintln!("aa hook: {e:#}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Report { percent, activity } => {
+            let v = serde_json::json!({ "percent": percent, "activity": activity });
+            runtime()?.block_on(aa_agent::hooks::send("report", v))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Question { cmd } => front(
+            json,
+            match cmd {
+                QuestionCmd::List { all } => FrontRequest::Questions { all },
+                QuestionCmd::Answer { id, choice } => FrontRequest::QuestionAnswer { id, choice },
+            },
+        ),
         Cmd::Attach { workspace } => {
             init_log("warn");
             aa_tui::run(workspace)
@@ -752,9 +838,14 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         } else {
             PathBuf::from(&cfg.agent.work_root)
         };
-        agent.configure_threads(aa_agent::threads::ThreadsConfig { work_root, profiles: cfg.profiles.clone() });
+        agent.configure_threads(aa_agent::threads::ThreadsConfig {
+            work_root,
+            exe: std::env::current_exe()?,
+            profiles: cfg.profiles.clone(),
+        });
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
+        agent.start_hooks()?;
         aa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
         tokio::select! {
@@ -852,6 +943,30 @@ fn render_event(e: &aa_proto::FlowEvent) -> String {
         e.detail,
         e.evidence.as_ref().map(|p| format!("\t({p})")).unwrap_or_default()
     )
+}
+
+fn render_question(s: &mut String, q: &aa_proto::QuestionView) {
+    use std::fmt::Write as _;
+    let at = match (&q.project, &q.thread) {
+        (Some(p), Some(t)) => format!("{p}/{t}"),
+        _ => q.pane.clone(),
+    };
+    let state = match q.state {
+        aa_proto::QuestionState::Open => "열림",
+        aa_proto::QuestionState::Answered => "답함",
+        aa_proto::QuestionState::Gone => "사라짐",
+    };
+    let _ = writeln!(
+        s,
+        "{}\t{}\t{}@{}\t{state}{}\t{}\t답: {}",
+        q.id,
+        q.question_kind,
+        at,
+        q.machine,
+        q.answer.as_ref().map(|a| format!("({a})")).unwrap_or_default(),
+        q.text,
+        q.options.join("·")
+    );
 }
 
 fn render_thread(s: &mut String, t: &aa_proto::ThreadView) {
@@ -1032,6 +1147,18 @@ fn render_front(r: &FrontResponse) -> String {
             for e in events {
                 s.push_str(&render_event(e));
             }
+        }
+        FrontResponse::Questions { questions } => {
+            if questions.is_empty() {
+                let _ = writeln!(s, "열린 질문이 없다");
+            }
+            for q in questions {
+                render_question(&mut s, q);
+            }
+        }
+        FrontResponse::Question(q) => render_question(&mut s, q),
+        FrontResponse::Message(m) => {
+            let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
         }
     }
     s

@@ -128,6 +128,117 @@ pub struct Cleanup {
     pub notes: Vec<String>,
 }
 
+// ───────────────────────── harness 상태 사건(M1-3b, §8.3) ─────────────────────────
+
+/// agent harness가 지금 하는 일(hook·notify·`aa report`로 안다. polling하지 않는다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentActivity {
+    /// harness가 시작했다(첫 입력 전)
+    Started,
+    /// 턴 진행 중
+    Working,
+    /// 턴이 끝나 다음 입력을 기다린다
+    Idle,
+    /// 확인창·질문에 답을 기다린다
+    Question,
+    Error,
+    Exited,
+}
+
+/// agent adapter가 정규화한 harness 사건 하나(agent → host)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HarnessEvent {
+    /// aa 세션(pane) ID
+    pub session: String,
+    /// claude·codex·report(`aa report`)
+    pub harness: String,
+    /// session_start·turn_start·turn_end·question·idle·error·exited·progress
+    pub kind: String,
+    /// harness 자기 세션 ID(resume에 쓴다)
+    pub harness_session: Option<String>,
+    /// 사람이 읽는 한 줄(알림 문구, 질문 본문 요약)
+    pub message: Option<String>,
+    /// 질문 종류(permission·trust …)
+    pub question_kind: Option<String>,
+    pub percent: Option<u8>,
+    pub at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AgentStatus {
+    pub activity: AgentActivity,
+    #[ts(type = "number")]
+    pub since_ms: u64,
+    pub harness: String,
+    pub message: Option<String>,
+    /// `aa report --percent`
+    pub percent: Option<u8>,
+    /// `aa report --activity`
+    pub progress: Option<String>,
+    pub harness_session: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionState {
+    Open,
+    Answered,
+    /// 답하기 전에 harness가 넘어갔다(다른 곳에서 답함, 세션 끝남)
+    Gone,
+}
+
+/// 확인창 질문(§8.4). 답은 host가 세션·상태를 다시 확인한 뒤 adapter 키 입력으로 보낸다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct QuestionView {
+    pub id: String,
+    pub pane: String,
+    pub machine: String,
+    pub project: Option<String>,
+    pub thread: Option<String>,
+    /// permission·trust(FrontResponse 태그 `kind`와 겹치지 않게 이름을 바꿨다)
+    pub question_kind: String,
+    pub text: String,
+    /// 고를 수 있는 답(예: yes·no)
+    pub options: Vec<String>,
+    pub state: QuestionState,
+    pub answer: Option<String>,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageMode {
+    /// 지금 보낸다(작업 중이면 먼저 멈춘다)
+    Interrupt,
+    /// host 대기열에 두고 턴이 끝나면 보낸다
+    #[default]
+    Queue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryState {
+    Queued,
+    /// harness가 입력을 받았다(turn_start)
+    Accepted,
+    /// 받았는지 모른다. 자동으로 다시 보내지 않는다(§8.5 a)
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MessageView {
+    pub id: String,
+    pub project: String,
+    pub thread: String,
+    pub mode: MessageMode,
+    pub state: DeliveryState,
+    pub text: String,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+}
+
 // ───────────────────────── front 쪽 보기 ─────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -234,6 +345,8 @@ pub struct ThreadView {
     /// 마지막 사본 결과: complete·partial·failed
     pub copy: Option<String>,
     pub error: Option<String>,
+    /// agent harness 상태(hook으로 안다)
+    pub agent: Option<Box<AgentStatus>>,
     #[ts(type = "number")]
     pub created_at_ms: u64,
     #[ts(type = "number")]
@@ -327,6 +440,41 @@ pub fn waits_on_user(state: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 응답·사건 enum 태그(`kind`·`ev`)와 안에 든 구조체 필드 이름이 겹치면 읽을 수 없다
+    #[test]
+    fn tagged_views_round_trip() {
+        use crate::{FrontEvent, FrontResponse};
+        let q = QuestionView {
+            id: "q-1".into(),
+            pane: "p".into(),
+            machine: "mac-a".into(),
+            project: Some("demo".into()),
+            thread: Some("t-0001".into()),
+            question_kind: "trust".into(),
+            text: "Do you trust".into(),
+            options: vec!["yes".into(), "no".into()],
+            state: QuestionState::Open,
+            answer: None,
+            created_at_ms: 1,
+        };
+        let m = MessageView {
+            id: "m-1".into(),
+            project: "demo".into(),
+            thread: "t-0001".into(),
+            mode: MessageMode::Interrupt,
+            state: DeliveryState::Accepted,
+            text: "x".into(),
+            created_at_ms: 1,
+        };
+        for r in [FrontResponse::Question(q.clone()), FrontResponse::Message(m)] {
+            let j = serde_json::to_string(&r).unwrap();
+            assert_eq!(serde_json::from_str::<FrontResponse>(&j).unwrap(), r, "{j}");
+        }
+        let e = FrontEvent::Question(q);
+        let j = serde_json::to_string(&e).unwrap();
+        assert_eq!(serde_json::from_str::<FrontEvent>(&j).unwrap(), e, "{j}");
+    }
 
     #[test]
     fn names_and_slug() {

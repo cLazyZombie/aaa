@@ -1,5 +1,7 @@
-//! M1-3a E2E: 프로젝트·thread 시작(그 머신 agent가 worktree·작업 폴더를 만든다)·brief 안내·보고 회수·ack·resolve·흐름 사건.
+//! M1-3 E2E: 프로젝트·thread 시작(그 머신 agent가 worktree·작업 폴더를 만든다)·brief 안내·보고 회수·ack·resolve·흐름 사건,
+//! harness 상태(hook)·확인창 질문 원격 응답·메시지(queue·interrupt).
 //! agent harness는 시험용 가짜 agent(셸 스크립트)다. brief 안내 한 줄을 받으면 brief를 읽고 report.md·library를 쓴다.
+//! 가짜 Claude(`hooked`)는 Claude Code처럼 hook 사건을 `aa hook --agent claude`로 보내고 확인창을 띄운다.
 //! 실행: `cargo test -p aa --test m13`
 
 #![cfg(unix)]
@@ -44,13 +46,71 @@ while IFS= read -r line; do
 done
 "#;
 
+/// 가짜 Claude Code: 폴더 신뢰 창 → SessionStart → 입력마다 UserPromptSubmit … Stop.
+/// 선택 창은 Claude처럼 그린다(❯ 커서, 화살표로 옮기고 Enter로 고름, Esc는 취소). 폴더 신뢰 창의 기본 선택은
+/// 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하거나 `long` 중에 Esc가 오면 Claude처럼 「Interrupted」만 보이고
+/// Stop hook은 내지 않는다.
+const HOOKED_AGENT: &str = r#"#!/bin/sh
+ESC=$(printf '\033')
+hook() { "$AA" hook --agent claude "$1"; }
+key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
+keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
+menu() {
+  q=$1; sel=$2
+  while :; do
+    printf '\033[2J\033[H%s\n' "$q"
+    if [ "$sel" = 0 ]; then printf '\342\235\257 %s\n  %s\n' "$3" "$4"; else printf '  %s\n\342\235\257 %s\n' "$3" "$4"; fi
+    printf 'Enter to confirm \302\267 Esc to cancel\n'
+    key
+    if [ "$k" = "$ESC" ]; then
+      keyt 2
+      if [ "$k" = "[" ]; then keyt 2; case "$k" in A) sel=0;; B) sel=1;; esac; continue; fi
+      pick=cancel; break
+    fi
+    if [ -z "$k" ]; then if [ "$sel" = 0 ]; then pick=$3; else pick=$4; fi; break; fi
+  done
+  printf '\033[2J\033[H'
+}
+perm() {
+  hook '{"hook_event_name":"PermissionRequest","session_id":"fake-1","tool_name":"Bash","tool_input":{"command":"make test"}}'
+  hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
+  menu 'Allow Bash(make test)?' 0 'Yes' 'No, and tell Claude what to do differently (esc)'
+  if [ "$pick" = Yes ]; then echo "allowed"; hook '{"hook_event_name":"PostToolUse","session_id":"fake-1","tool_name":"Bash"}'
+  else echo "denied"; echo "Interrupted \302\267 What should Claude do instead?"; quiet=1; fi
+}
+menu 'Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder'
+[ "$pick" = 'Yes, I trust this folder' ] || { echo "trust: $pick"; exit 1; }
+hook '{"hook_event_name":"SessionStart","session_id":"fake-1","source":"startup"}'
+echo "marker: ${CLAUDE_CODE_CHILD_SESSION:-none}"
+printf 'fake> '
+while IFS= read -r line; do
+  quiet=0
+  hook '{"hook_event_name":"UserPromptSubmit","session_id":"fake-1"}'
+  case "$line" in
+    *brief.md*)
+      path=$(printf '%s' "$line" | sed 's/를 읽고.*//')
+      dir=$(dirname "$path")
+      "$AA" report --percent 40 --activity '권한 확인 중'
+      perm
+      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
+      ;;
+    *ask*) perm ;;
+    *slow*) echo "slow start"; sleep 3; echo "slow done" ;;
+    *long*) echo "long start"; keyt 300; if [ "$k" = "$ESC" ]; then echo "Interrupted"; quiet=1; else echo "long done"; fi ;;
+    *) echo "got: $line" ;;
+  esac
+  [ "$quiet" = 1 ] || hook '{"hook_event_name":"Stop","session_id":"fake-1","last_assistant_message":"끝"}'
+  printf 'fake> '
+done
+"#;
+
 /// 안내를 받아도 화면이 바뀌지 않는 agent(echo 없음). 받은 줄은 파일에 남긴다.
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 
 fn host_toml(projects: &Path) -> String {
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\"]\nlibrary_copy_mb = 1\n",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\"]\nlibrary_copy_mb = 1\n",
         path_str(projects)
     )
 }
@@ -60,11 +120,14 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         "schema = 1\n[agent]\nwork_root = \"{}\"\n\
          [profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
+         [profiles.hooked]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
         path_str(&scripts.join("mute.sh")),
         path_str(&scripts.join("mute.log")),
+        path_str(&scripts.join("hooked.sh")),
+        lab::BIN,
     )
 }
 
@@ -115,6 +178,7 @@ fn world() -> World {
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(scripts.join("fake.sh"), FAKE_AGENT).unwrap();
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
+    std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
     let repo = make_repo(&lab.root);
     let h = lab.node("h", Some(&host_toml(&projects)));
     std::fs::write(h.cfg.join("agent.toml"), agent_toml(&lab.root.join("workA"), &scripts)).unwrap();
@@ -122,7 +186,13 @@ fn world() -> World {
     w.lab.spawn("host", &w.h, &["host"]);
     let st = wait_for("host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = st["agent_listen"].as_str().unwrap().to_string();
-    w.lab.spawn("agentA", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    // agent를 Claude Code 세션 안에서 띄운 경우: 그 세션 표지는 aa 세션에 넘기지 않는다
+    w.lab.spawn_env(
+        "agentA",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")],
+    );
     wait_for("labA 연결", T, || connected(&w.h, "labA").then_some(()));
     w.h.ok(&["project", "create", "demo"]);
     w
@@ -151,6 +221,41 @@ impl World {
             T,
             || Some(self.show(id)).filter(|v| f(v)),
             || format!("thread: {}\nevents: {}", self.show(id), self.h.ok(&["events", "--project", "demo"])),
+        )
+    }
+
+    fn questions(&self, all: bool) -> Vec<Value> {
+        let a: &[&str] = if all { &["question", "list", "--all"] } else { &["question", "list"] };
+        self.h.ok(a)["questions"].as_array().unwrap().clone()
+    }
+
+    /// 이 thread에 열린 질문 하나(종류 `kind`)를 기다린다
+    fn wait_question(&self, id: &str, kind: &str) -> Value {
+        wait_for_diag(
+            &format!("{kind} 질문"),
+            T,
+            || {
+                let open: Vec<_> = self.questions(false).into_iter().filter(|q| q["thread"] == id).collect();
+                (open.len() == 1 && open[0]["question_kind"] == kind).then(|| open[0].clone())
+            },
+            || format!("questions: {:?}\nthread: {}", self.questions(true), self.show(id)),
+        )
+    }
+
+    fn message(&self, id: &str, text: &str, interrupt: bool) -> Value {
+        let mut a = vec!["thread", "message", "demo", id, "--text", text];
+        if interrupt {
+            a.push("--interrupt");
+        }
+        self.h.ok(&a)
+    }
+
+    fn wait_screen(&self, pane: &str, needle: &str) -> String {
+        wait_for_diag(
+            &format!("화면 {needle:?}"),
+            T,
+            || Some(self.h.screen(pane)).filter(|s| s.contains(needle)),
+            || self.h.screen(pane),
         )
     }
 
@@ -333,4 +438,117 @@ fn unknown_brief_is_not_resent() {
     wait_for("두 번째 안내", T, || {
         (std::fs::read_to_string(&log).unwrap_or_default().matches("brief.md").count() == 2).then_some(())
     });
+    // 메시지도 받았다는 신호(hook 사건·화면 변화)가 없으면 unknown이고 다시 보내지 않는다
+    let m = w.message(&id, "MSG-UNKNOWN-1", false);
+    assert_eq!(m["state"], "unknown", "{m}");
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(std::fs::read_to_string(&log).unwrap().matches("MSG-UNKNOWN-1").count(), 1);
+    assert_eq!(
+        w.kinds(0).iter().filter(|k| k.starts_with("message_")).collect::<Vec<_>>(),
+        ["message_queued", "message_unknown"]
+    );
+}
+
+/// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
+#[test]
+fn hooked_thread_questions_and_messages() {
+    let w = world();
+    let v =
+        w.start(&["--title", "hooked", "--profile", "hooked", "--kind", "dir", "--task-file", &w.task("t5.txt", "x")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+
+    // 처음 실행 확인창(폴더 신뢰)은 입력하지 않고 질문으로 올린다
+    let q = w.wait_question(&id, "trust");
+    assert_eq!(q["text"], "Quick safety check: Do you trust the files in this folder?");
+    assert_eq!(w.show(&id)["brief"], "pending");
+    // 고를 수 없는 답은 거부한다
+    let e = w.h.json(&["question", "answer", q["id"].as_str().unwrap(), "maybe"]).expect_err("없는 답");
+    assert!(e.contains("yes, no"), "{e}");
+    let a = w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "yes"]);
+    assert_eq!((a["state"].as_str(), a["answer"].as_str()), (Some("answered"), Some("yes")));
+    // 기본 선택(No, exit)이 아니라 Yes까지 옮겨 골랐다
+    w.wait_screen(&pane, "marker: none");
+
+    // 답한 뒤 brief 안내가 가고, harness가 받았다고(UserPromptSubmit) 알린다. 이어 권한 확인창이 뜬다.
+    let q = w.wait_question(&id, "permission");
+    let v = w.show(&id);
+    assert_eq!(v["brief"], "delivered", "{v}");
+    let ag = &v["agent"];
+    assert_eq!((ag["activity"].as_str(), ag["harness"].as_str()), (Some("question"), Some("claude")), "{v}");
+    assert_eq!((ag["percent"].as_u64(), ag["progress"].as_str()), (Some(40), Some("권한 확인 중")), "{v}");
+    assert_eq!(ag["harness_session"], "fake-1");
+    // PermissionRequest와 Notification이 함께 와도 질문은 하나다
+    assert_eq!(w.questions(false).len(), 1);
+    // pane 목록에도 상태가 보인다(polling 없이 hook으로만 바뀐다)
+    assert_eq!(w.h.pane(&pane)["agent"]["activity"], "question");
+    let qid = q["id"].as_str().unwrap().to_string();
+    w.h.ok(&["question", "answer", &qid, "yes"]);
+    let e = w.h.json(&["question", "answer", &qid, "yes"]).expect_err("두 번 답하기");
+    assert!(e.contains("닫힌"), "{e}");
+    let v = w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["agent"]["activity"] == "idle");
+    assert_eq!(v["agent"]["message"], "끝");
+    assert!(w.h.screen(&pane).contains("allowed"));
+
+    // queue: 지금 기다리는 중이면 바로 받는다. 일하는 중에 온 것은 턴이 끝난 뒤 보낸다.
+    let m1 = w.message(&id, "slow one", false);
+    assert_eq!(m1["state"], "accepted", "{m1}");
+    let m2 = w.message(&id, "second", false);
+    assert_eq!(m2["state"], "queued", "{m2}");
+    let screen = w.wait_screen(&pane, "got: second");
+    assert!(screen.find("slow done").unwrap() < screen.find("got: second").unwrap(), "{screen}");
+
+    // 거절(Esc)
+    let m3 = w.message(&id, "ask again", false);
+    assert_eq!(m3["state"], "accepted", "{m3}");
+    let q = w.wait_question(&id, "permission");
+    // 확인창이 열려 있으면 interrupt는 거부하고 기록도 남기지 않는다(Esc가 확인창을 닫기 때문)
+    let e =
+        w.h.json(&["thread", "message", "demo", &id, "--interrupt", "--text", "NEVER-SENT"])
+            .expect_err("질문 중 interrupt");
+    assert!(e.contains("확인창"), "{e}");
+    w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "no"]);
+    w.wait_screen(&pane, "denied");
+    // 거절 뒤 Stop hook이 없어도 입력 대기로 본다
+    let v = w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    assert_eq!(v["agent"]["message"], "거절: 입력을 기다린다");
+
+    // interrupt: 일하는 중이면 Esc로 멈춘 뒤 보낸다. 멈춤은 Stop hook이 없어 화면(「Interrupted」)으로 안다.
+    assert_eq!(w.message(&id, "long run", false)["state"], "accepted");
+    w.wait_screen(&pane, "long start");
+    let t0 = std::time::Instant::now();
+    let m4 = w.message(&id, "urgent", true);
+    assert_eq!(m4["state"], "accepted", "{m4}");
+    assert!(t0.elapsed() < Duration::from_secs(10), "멈춤을 화면으로 알아야 한다: {:?}", t0.elapsed());
+    let screen = w.wait_screen(&pane, "got: urgent");
+    assert!(screen.contains("Interrupted") && !screen.contains("long done"), "{screen}");
+    assert!(!screen.contains("NEVER-SENT"), "{screen}");
+
+    let all = w.questions(true);
+    let got: Vec<_> =
+        all.iter().map(|q| (q["question_kind"].as_str().unwrap(), q["answer"].as_str().unwrap_or("-"))).collect();
+    assert_eq!(got, [("trust", "yes"), ("permission", "yes"), ("permission", "no")]);
+    let kinds = w.kinds(0);
+    let msg: Vec<_> = kinds.iter().filter(|k| k.starts_with("message_") || k.starts_with("question_")).collect();
+    assert_eq!(
+        msg,
+        [
+            "question_shown",
+            "question_answered",
+            "question_shown",
+            "question_answered",
+            "message_queued",
+            "message_accepted",
+            "message_queued",
+            "message_accepted",
+            "message_queued",
+            "message_accepted",
+            "question_shown",
+            "question_answered",
+            "message_queued",
+            "message_accepted",
+            "message_queued",
+            "message_accepted",
+        ]
+    );
 }
