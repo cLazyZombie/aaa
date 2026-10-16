@@ -778,7 +778,7 @@ host 프로젝트 폴더 구성:
 - **순서:** 운영 대체에 먼저 필요한 것부터 한다. ① 웹 보고서·결과물 보기 ② 알림 webhook ③ 웹 이미지 붙여넣기(macOS 대상).
 - **미룬 것**
   - TUI Ctrl+V 이미지: front 기기 clipboard를 읽는 crate(arboard)가 Linux CI에 X11 개발 의존을 끌어온다. 웹 붙여넣기가 같은 attachment 경로를 먼저 검증한다. → M1 마무리
-  - Web Push: VAPID·암호화(ECE)·service worker가 필요하다. M1-4 기준 「질문·보고 알림」은 webhook(텔레그램 연결)으로 채운다. → M3(PWA와 함께)
+  - Web Push: VAPID·암호화(ECE)·service worker가 필요하다. M1-4 기준 「질문·보고 알림」은 webhook(텔레그램 연결)으로 채운다. → M3(PWA와 함께, §8.26에서 구현)
 - **결과물 manifest:** 보고를 회수할 때 `threads/<id>.files.json`에 결과물 목록(경로·크기·host 사본인지)을 남긴다. 복사 상한을 넘어 agent에 남긴 일반 파일도 적는다(agent가 그 크기를 알린다). symlink·일반 파일이 아닌 것은 목록에 없다.
 - **보기 경로(권한):** 웹은 `ThreadLibrary`(reader도 가능)로 `/v/<cap>/`를 받는다.
   - cap은 무작위 24바이트이고 host 메모리에만 있다. 2시간 뒤 만료되고 host가 다시 시작하면 사라진다. 그 thread 결과물 읽기만 된다.
@@ -898,7 +898,7 @@ host 프로젝트 폴더 구성:
   - `web/public/manifest.webmanifest`(standalone, 시작 `/`)와 아이콘(192·512·maskable·apple-touch·favicon PNG)을 둔다. 아이콘은 견본 도구처럼 headless Chromium으로 한 번 그려 저장소에 넣었다.
   - manifest와 아이콘은 인증 없이 받는다(브라우저가 cookie 없이 가져간다). 비밀이 없다.
   - Chrome·Android가 설치 신호를 주면 목록 맨 아래에 「홈 화면에 설치」가 보인다. iOS는 공유 → 「홈 화면에 추가」다.
-  - service worker는 아직 두지 않는다. 지금 브라우저는 설치에 service worker를 요구하지 않는다. 캐시가 업그레이드 뒤 옛 화면을 남기는 위험도 있어, Web Push와 함께 넣는다.
+  - service worker(`/sw.js`)는 Web Push와 함께 넣었다(§8.26). 앱을 열 때마다 등록한다. 화면·자산을 캐시하지 않아 업그레이드 뒤 옛 화면이 남지 않는다. host에 닿지 않을 때 화면 이동만 「연결 없음」 화면(`/offline.html`)으로 바꾼다.
 - **검수(결정 17).** 사용자 검수를 통과했다. 나중 후보(이번에 하지 않음): 휴대폰 drawer, 명령 팔레트, 머신 묶음 접기, TUI 왼쪽 목록, thread 줄 하나로 합치기.
 - **남은 한계.** 한글 폭이 두 칸에 차지 않는 글꼴이면 터미널 한글 사이가 벌어져 보인다. 고정폭 한글 글꼴(D2Coding 등)이 있는 기기에서는 이 문제가 없다.
 
@@ -949,6 +949,31 @@ host 프로젝트 폴더 구성:
 - thread는 진행률을 Front API가 아닌 hook(`aaa report`)으로 알리므로 이 제한에 걸리지 않는다. thread 규칙(brief)에 「이 세션 안의 `aaa` CLI는 보기만 된다」를 적었다.
 - **남는 한계(§8.22와 같다):** env를 지운 프로세스는 사람의 CLI와 구별되지 않는다. 같은 사용자 권한으로 도는 agent를 완전히 막는 것은 OS 사용자 분리가 필요하다. 지금은 실수로 다른 thread에 지시하는 일을 막는 수준이다.
 - **시험:** m13 `worker_session_cli_is_read_only`. worker 세션의 결정·메시지·pane 입력·병합 대기열은 거부되고 보기는 된다. 사람의 셸 pane 안에서는 결정이 된다.
+
+### 8.26 M3 Web Push와 PWA 동작(10-17)
+
+질문·보고 준비 같은 inbox 알림을 휴대폰·데스크톱 브라우저 알림으로 받는다. 웹은 홈 화면 앱(PWA)으로도 동작한다.
+
+- **켜기.** 웹 목록 맨 아래 「알림 켜기」를 누른다. 브라우저 알림 권한을 묻고 구독을 만들어 host에 맡긴 뒤 시험 알림을 보낸다. 보기 권한 기기도 알림은 받는다. 「알림 끄기」는 구독을 지운다.
+  - 단추는 브라우저가 Web Push를 할 수 있고 host 설정이 켜져 있을 때만 보인다. 권한을 막았으면 「알림이 브라우저 설정에서 막혀 있다」로 보인다.
+  - iPhone·iPad는 홈 화면 앱(공유 → 「홈 화면에 추가」, iOS 16.4 이상)에서만 켤 수 있다. Safari 탭에서는 그 안내를 보인다. 홈 화면 앱은 Safari와 cookie가 따로라 처음 열 때 다시 pairing한다.
+- **보내기.** webhook과 같은 대기열(`notify.kinds`, `debounce_secs`)을 쓴다. 프로젝트마다 한 통이고, 한 thread 항목만이면 누를 때 그 thread 보기(`/#thread=<p>/<t>`)로 연다. 열린 창이 있으면 그 창으로 간다.
+- **보안.**
+  - 내용은 기기 키로 암호화한다(RFC 8291, aes128gcm). 중간의 push 서비스(Google·Apple·Mozilla·Microsoft)는 읽지 못한다.
+  - host는 VAPID(RFC 8292, ES256) 키를 상태 폴더 `push/vapid.p8`(0600)에 한 번 만들고 요청마다 서명한다. 새 의존성 없이 rustls가 이미 쓰는 ring으로 구현했다.
+  - 구독 주소는 기기가 준다. host가 아무 주소로나 요청하지 않게 `notify.push_hosts`(fcm.googleapis.com·push.apple.com·push.services.mozilla.com·notify.windows.com과 그 아래 이름)의 https만 받는다. loopback http는 시험용으로 목록에 적었을 때만 받는다.
+  - 구독 주소는 그 기기에 보내는 열쇠라 로그·흐름 사건·감사 기록에 넣지 않는다. 취소한 장치의 구독에는 보내지 않는다. 404·410이면 브라우저가 버린 구독이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
+- **설정(`[notify]`).** `web_push = true`(기본), `push_hosts`, `push_subject`(비우면 공개 주소 `https://<이름>.ts.net`, 없으면 `mailto:aaa@example.com`).
+- **service worker.** 설치·Web Push 알림·알림 누르기를 맡는다. 캐시는 「연결 없음」 화면 하나뿐이다.
+- **API.** `GET /api/v1/push`(키·구독 수), `POST /api/v1/push/subscribe`·`unsubscribe`·`test`. 장치 cookie와 Origin 검사는 다른 API와 같다.
+- **시험(웹 E2E).**
+  - PWA: Chromium이 설치할 수 있다고 본다(`Page.getInstallabilityErrors` 빈 목록). service worker가 화면을 맡는다. host를 내린 동안 새로 열면 「연결 없음」 화면이 나온다.
+  - Web Push: 가짜 push 서비스가 host 요청을 받는다. 본문은 Node crypto로 따로 구현한 RFC 8291 복호화로 풀고, VAPID JWT는 공개키로 검증한다(aud·exp·sub).
+  - 허용하지 않은 주소·목록에 없는 loopback 이름·틀린 키는 거부한다. 해제하면 지워진다. 보고 준비 알림은 그 thread 주소로 온다. 410 구독은 지워진다. 흐름 사건에 구독 주소가 없다.
+  - 알림 표시: 정식 Chromium(새 headless)에서 CDP로 push를 넣으면 service worker가 알림을 띄운다. headless shell은 알림을 지원하지 않는다.
+- **남는 한계.**
+  - 실제 push 서비스(FCM·Apple)로 가는 왕복은 자동 시험에 없다. headless 브라우저는 실제 구독을 만들지 못한다. 운영 휴대폰에서 「알림 켜기」의 시험 알림으로 확인한다.
+  - 알림을 눌렀을 때 thread로 가는 것은 자동 시험이 없다(CDP로 알림을 누를 수 없다).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
@@ -1278,7 +1303,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME, chat read-only, PWA(§8.23, **10-17 manifest·아이콘**, Web Push는 남음), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME, chat read-only, PWA·Web Push(§8.23·§8.26, **10-17 구현**), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.

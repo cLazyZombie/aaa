@@ -54,6 +54,10 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/me", get(me))
         .route("/api/v1/call", post(call))
         .route("/api/v1/events", get(events_ws))
+        .route("/api/v1/push", get(push_info))
+        .route("/api/v1/push/subscribe", post(push_subscribe))
+        .route("/api/v1/push/unsubscribe", post(push_unsubscribe))
+        .route("/api/v1/push/test", post(push_test))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/v/{cap}/{*path}", get(view_file))
         .fallback(get(static_file))
@@ -219,6 +223,95 @@ async fn call(State(host): State<Arc<Host>>, headers: HeaderMap, Json(req): Json
     let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
     let result = host.call(role, &format!("device:{id}"), req).await;
     Json(Outcome::from(result)).into_response()
+}
+
+fn bad_request(msg: impl Into<String>) -> Response {
+    (StatusCode::BAD_REQUEST, Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::BadRequest, msg)))).into_response()
+}
+
+#[derive(Serialize)]
+struct PushInfo {
+    /// host 설정에서 Web Push가 켜져 있다
+    enabled: bool,
+    /// `applicationServerKey`(VAPID 공개키, base64url)
+    key: Option<String>,
+    /// 이 장치의 구독 수
+    subscribed: usize,
+}
+
+/// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
+async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
+    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
+    let key = host.vapid.as_ref().map(|v| v.public_b64());
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed })).into_response()
+}
+
+#[derive(Deserialize)]
+struct PushKeys {
+    p256dh: String,
+    auth: String,
+}
+
+/// 브라우저 `PushSubscription.toJSON()` 모양
+#[derive(Deserialize)]
+struct PushSubBody {
+    endpoint: String,
+    keys: PushKeys,
+}
+
+async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushSubBody>) -> Response {
+    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    if host.vapid.is_none() {
+        return bad_request("host 설정에서 Web Push가 꺼져 있다(notify.web_push)");
+    }
+    if let Err(e) = crate::push::check_endpoint(&b.endpoint, &host.cfg.notify.push_hosts)
+        .and_then(|_| crate::push::check_keys(&b.keys.p256dh, &b.keys.auth))
+    {
+        return bad_request(e);
+    }
+    let sub = crate::db::PushSub { endpoint: b.endpoint, p256dh: b.keys.p256dh, auth: b.keys.auth, device: id.clone() };
+    if let Err(e) = host.db.push_put(&sub) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
+        )
+            .into_response();
+    }
+    // endpoint는 남기지 않는다(그 기기에 보내는 열쇠다)
+    host.db.audit(&format!("device:{id}"), "push_subscribe", "");
+    Json(Outcome::Ok(serde_json::json!({ "subscribed": true }))).into_response()
+}
+
+#[derive(Deserialize)]
+struct PushEndpoint {
+    endpoint: String,
+}
+
+async fn push_unsubscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushEndpoint>) -> Response {
+    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    let removed = host.db.push_del(&b.endpoint, Some(&id)).unwrap_or(false);
+    if removed {
+        host.db.audit(&format!("device:{id}"), "push_unsubscribe", "");
+    }
+    Json(Outcome::Ok(serde_json::json!({ "removed": removed }))).into_response()
+}
+
+/// 이 장치의 구독에 시험 알림을 보낸다
+async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
+    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    let subs = host.db.push_list(Some(&id)).unwrap_or_default();
+    let body =
+        serde_json::json!({ "title": "aaa", "body": "알림이 켜졌다", "url": "/", "tag": "aaa-test" }).to_string();
+    let (mut sent, mut failed) = (0, Vec::new());
+    for s in &subs {
+        match host.push_one(s, body.as_bytes()).await {
+            crate::push::Sent::Ok => sent += 1,
+            crate::push::Sent::Gone => failed.push("브라우저가 구독을 버렸다(지웠다)".to_string()),
+            crate::push::Sent::Failed(e) => failed.push(e),
+        }
+    }
+    Json(Outcome::Ok(serde_json::json!({ "sent": sent, "failed": failed }))).into_response()
 }
 
 async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {

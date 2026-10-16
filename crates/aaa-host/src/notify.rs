@@ -1,4 +1,4 @@
-//! 알림 webhook(§8.7, M1-4). inbox 항목 가운데 사람이 봐야 할 것(보고·질문·막힘·세션 끝남·머신 단절)을 밖으로 보낸다.
+//! 알림 webhook(§8.7, M1-4)과 Web Push(§8.26, `push.rs`). inbox 항목 가운데 사람이 봐야 할 것(보고·질문·막힘·세션 끝남·머신 단절)을 밖으로 보낸다.
 //!
 //! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다. 질문 창이 잇달아 떠도 한 통이다.
 //! - 실패하면 다시 보내지 않는다(알림 폭주를 막는다). 실패가 이어지는 동안 경고는 한 번만 남긴다.
@@ -74,15 +74,22 @@ fn parse_url(url: &str) -> Result<Target, String> {
     Ok(Target { tls, host, port, path })
 }
 
-/// HTTP/1.1 POST 한 번. 상태 코드를 돌려준다. 오류 글에는 주소(비밀값)를 넣지 않는다.
+/// JSON 본문 POST
 async fn post(url: &str, body: &[u8]) -> Result<u16, String> {
+    post_raw(url, &[("Content-Type", "application/json".to_string())], body).await
+}
+
+/// HTTP/1.1 POST 한 번. 상태 코드를 돌려준다. 오류 글에는 주소(비밀값)를 넣지 않는다.
+pub(crate) async fn post_raw(url: &str, headers: &[(&str, String)], body: &[u8]) -> Result<u16, String> {
     let t = parse_url(url)?;
-    let head = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nUser-Agent: aaa\r\nConnection: close\r\n\r\n",
-        t.path,
-        t.host,
-        body.len()
-    );
+    let mut head = format!("POST {} HTTP/1.1\r\nHost: {}\r\n", t.path, t.host);
+    for (k, v) in headers {
+        if v.contains(['\r', '\n']) {
+            return Err(format!("{k} 헤더에 줄바꿈이 있다"));
+        }
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str(&format!("Content-Length: {}\r\nUser-Agent: aaa\r\nConnection: close\r\n\r\n", body.len()));
     let tcp = tokio::net::TcpStream::connect((t.host.as_str(), t.port)).await.map_err(|e| format!("연결 실패: {e}"))?;
     let mut buf = Vec::new();
     if t.tls {
@@ -121,7 +128,7 @@ impl Host {
     }
 
     pub fn start_notifier(self: &Arc<Self>) {
-        if self.cfg.notify.webhook.is_empty() {
+        if self.cfg.notify.webhook.is_empty() && self.vapid.is_none() {
             return;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<InboxItem>();
@@ -139,7 +146,11 @@ impl Host {
                     batch.entry(i.project.clone()).or_default().push(i);
                 }
                 for (project, items) in batch {
+                    me.push_items(&project, &items).await;
                     let n = &me.cfg.notify;
+                    if n.webhook.is_empty() {
+                        continue;
+                    }
                     let body = notify_body(&n.format, &n.telegram_chat_id, &project, &items);
                     let sent = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
                     let res = match sent {

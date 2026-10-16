@@ -14,6 +14,7 @@ import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
 import { useInstall } from "./install";
+import { type PushState, iosNeedsInstall, usePush } from "./push";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
 
@@ -447,7 +448,7 @@ function Main({ role }: { role: DeviceRole }) {
             </section>
           );
         })}
-        <InstallButton />
+        <ListFoot />
       </aside>
       <main className="view">
         {currentThread ? (
@@ -487,16 +488,41 @@ function Main({ role }: { role: DeviceRole }) {
   );
 }
 
-/** 홈 화면에 설치할 수 있을 때만 목록 맨 아래에 보인다 */
-function InstallButton() {
+/** 목록 맨 아래: 알림 켜기(Web Push)와 홈 화면에 설치(PWA). 할 수 있는 것만 보인다. */
+function ListFoot() {
   const install = useInstall();
-  if (!install) return null;
+  const push = usePush();
+  const iosHint = iosNeedsInstall();
+  if (!install && push.state === "hidden" && !iosHint) return null;
+  const label: Record<PushState, string> = {
+    hidden: "",
+    off: "알림 켜기",
+    on: "알림 끄기",
+    denied: "알림이 브라우저 설정에서 막혀 있다",
+    busy: "알림 설정 중…",
+  };
   return (
     <div className="list-foot">
-      <button className="ghost" onClick={() => void install()}>
-        <Icon name="download" />
-        홈 화면에 설치
-      </button>
+      {push.state !== "hidden" && (
+        <button
+          className="ghost"
+          data-testid="push-toggle"
+          aria-pressed={push.state === "on"}
+          disabled={push.state === "busy" || push.state === "denied"}
+          onClick={() => void push.toggle()}
+        >
+          <Icon name={push.state === "on" ? "bell-off" : "bell"} />
+          {label[push.state]}
+        </button>
+      )}
+      {push.msg && <p className="foot-msg">{push.msg}</p>}
+      {iosHint && <p className="foot-msg">알림은 공유 → 「홈 화면에 추가」로 연 앱에서 켤 수 있다.</p>}
+      {install && (
+        <button className="ghost" onClick={() => void install()}>
+          <Icon name="download" />
+          홈 화면에 설치
+        </button>
+      )}
     </div>
   );
 }

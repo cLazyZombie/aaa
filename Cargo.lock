@@ -114,6 +114,7 @@ dependencies = [
  "hex",
  "libc",
  "rand 0.9.5",
+ "ring",
  "rusqlite",
  "rustls",
  "serde",

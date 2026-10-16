@@ -16,6 +16,7 @@ pub mod link;
 mod merge;
 mod notify;
 mod orch;
+mod push;
 mod routine;
 pub mod tailscale;
 mod tasks;
@@ -220,6 +221,8 @@ pub struct Host {
     routine_running: Mutex<HashSet<String>>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
+    /// Web Push 서명 키(설정이 켜져 있을 때)
+    vapid: Option<push::Vapid>,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
@@ -253,6 +256,18 @@ impl Host {
             }
         };
         let identity = aaa_common::tls::load_or_create(&state, "aaa-host")?;
+        // Web Push 키가 깨졌으면 host는 뜨고 push만 끈다(로그에 남긴다)
+        let vapid = if cfg.notify.web_push {
+            match push::Vapid::load_or_create(&state) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::error!("Web Push를 끈다: {e:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut machines = HashMap::new();
         for m in db.machines()? {
             machines.insert(
@@ -312,6 +327,7 @@ impl Host {
             nudge_screens: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
+            vapid,
             notify_tx: Mutex::new(None),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),

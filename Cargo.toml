@@ -51,6 +51,8 @@ toml = "1"
 toml_edit = "0.25"
 ulid = { version = "1", features = ["serde"] }
 base64 = "0.22"
+# Web Push(VAPID ES256·ECDH·HKDF·AES-GCM). rustls가 이미 쓰는 판이다
+ring = "0.17"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.9"

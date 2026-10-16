@@ -23,6 +23,17 @@ pub struct MachineRow {
     pub last_seen_ms: Option<u64>,
 }
 
+/// Web Push 구독. endpoint는 비밀값처럼 다룬다(로그에 남기지 않는다).
+#[derive(Debug, Clone)]
+pub struct PushSub {
+    pub endpoint: String,
+    /// 브라우저 ECDH 공개키(base64url, 65바이트)
+    pub p256dh: String,
+    /// 브라우저 인증 비밀(base64url, 16바이트)
+    pub auth: String,
+    pub device: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct DeviceRow {
     pub id: String,
@@ -65,7 +76,10 @@ impl Db {
                PRIMARY KEY(project, thread));
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
-               created_at INTEGER NOT NULL, PRIMARY KEY(project, id));",
+               created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS push_subs(
+               endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
+               created_at INTEGER NOT NULL);",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -206,6 +220,43 @@ impl Db {
             Ok(DeviceRow { id: r.get(0)?, role: r.get(1)? })
         })
         .optional()?)
+    }
+
+    // ───────────── Web Push 구독(§8.26) ─────────────
+
+    /// 구독을 넣는다. 같은 endpoint면 키·장치를 바꾼다(브라우저가 구독을 새로 만든 경우).
+    pub fn push_put(&self, s: &PushSub) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO push_subs(endpoint,p256dh,auth,device,created_at) VALUES(?1,?2,?3,?4,?5)
+             ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device=excluded.device",
+            params![s.endpoint, s.p256dh, s.auth, s.device, aaa_common::util::now_ms() as i64],
+        )?;
+        Ok(())
+    }
+
+    /// endpoint를 지운다. `device`를 주면 그 장치의 구독만 지운다.
+    pub fn push_del(&self, endpoint: &str, device: Option<&str>) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        let n = match device {
+            Some(d) => c.execute("DELETE FROM push_subs WHERE endpoint=?1 AND device=?2", [endpoint, d])?,
+            None => c.execute("DELETE FROM push_subs WHERE endpoint=?1", [endpoint])?,
+        };
+        Ok(n > 0)
+    }
+
+    /// 보낼 구독(취소되지 않은 장치의 것만). `device`를 주면 그 장치 것만.
+    pub fn push_list(&self, device: Option<&str>) -> Result<Vec<PushSub>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT s.endpoint,s.p256dh,s.auth,s.device FROM push_subs s JOIN devices d ON d.id=s.device
+             WHERE d.revoked=0 AND (?1 IS NULL OR s.device=?1) ORDER BY s.created_at",
+        )?;
+        let rows = st
+            .query_map([device], |r| {
+                Ok(PushSub { endpoint: r.get(0)?, p256dh: r.get(1)?, auth: r.get(2)?, device: r.get(3)? })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     // ───────────── thread·흐름 사건(M1-3) ─────────────
