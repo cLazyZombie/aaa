@@ -447,6 +447,27 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
+  await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
+    const v = aa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
+    const id = v.thread.id;
+    const badge = page.getByTestId("evaluator-demo");
+    await until("평가 badge", async () => (await badge.count()) === 1);
+    await until("평가자 brief 전달", () => aa("thread", "show", "demo", id).brief === "delivered");
+    if ((await page.getByTestId(`thread-demo-${id}`).count()) !== 0) throw new Error("평가자가 thread 목록에 보인다");
+    if ((await page.getByTestId(`pane-demo/${id}`).count()) !== 0) throw new Error("평가자가 머신 목록에 보인다");
+    const text = await badge.innerText();
+    if (!/평가\s*●\s*0/.test(text)) throw new Error(`badge: ${text}`);
+    await badge.click();
+    const pane = aa("thread", "show", "demo", id).pane;
+    await until("평가자 화면 선택", async () => (await page.evaluate(() => location.hash)) === `#pane=${pane}`);
+    await until("평가자 터미널", async () => (await screenText(page)).includes("fake>"));
+    await shot(page, "desktop-evaluator");
+    aa("evaluator", "unassign", "demo");
+    await until("끝낸 평가자 badge 사라짐", async () => (await badge.count()) === 0);
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
   await step("agent 끊김 → 읽기 전용 표시", async () => {
     await stop("agent");
     await until("끊김 배너", async () =>

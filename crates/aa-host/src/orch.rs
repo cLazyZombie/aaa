@@ -60,6 +60,13 @@ pub(crate) struct ThreadRec {
     /// brief에 넣은 결정 기록 번호
     #[serde(default)]
     pub decisions_rev: Option<u32>,
+    /// 사후 평가자: 마지막으로 넘긴 사건 seq, 넘긴 묶음 수, 마지막 묶음 시각(§8.13)
+    #[serde(default)]
+    pub eval_cursor: u64,
+    #[serde(default)]
+    pub eval_batches: u32,
+    #[serde(default)]
+    pub eval_last_batch_ms: Option<u64>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -74,6 +81,7 @@ pub struct StartArgs {
     pub repo: Option<String>,
     pub base: Option<String>,
     pub task: String,
+    pub role: Role,
 }
 
 /// 새 프로젝트의 AGENTS.md(coordinator 안내). `{p}`는 프로젝트 이름이다.
@@ -238,7 +246,7 @@ impl Host {
         serde_json::from_str(&json).map_err(internal)
     }
 
-    fn save(&self, rec: &mut ThreadRec) {
+    pub(crate) fn save(&self, rec: &mut ThreadRec) {
         rec.updated_at_ms = aa_common::util::now_ms();
         let json = serde_json::to_string(&rec).expect("thread 기록 직렬화");
         if let Err(e) = self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
@@ -298,11 +306,16 @@ impl Host {
         }
     }
 
-    pub(crate) fn threads_of(&self, project: Option<&str>) -> Result<Vec<ThreadView>, ErrorBody> {
+    /// thread 목록. 기본(`role` 없음)은 사후 평가자를 뺀다(§8.13).
+    pub(crate) fn threads_of(&self, project: Option<&str>, role: Option<Role>) -> Result<Vec<ThreadView>, ErrorBody> {
         let rows = self.db.threads(project).map_err(internal)?;
         Ok(rows
             .iter()
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter(|r| match role {
+                None => r.role != Role::Evaluator,
+                Some(want) => r.role == want,
+            })
             .map(|r| self.thread_view(&r))
             .collect())
     }
@@ -352,6 +365,7 @@ impl Host {
             Ok(seq) => {
                 e.seq = seq;
                 self.inbox_from_flow(&e);
+                self.evaluator_on_flow(&e);
                 let _ = self.flow_events.send(e);
             }
             Err(err) => tracing::error!(kind, "흐름 사건 저장 실패: {err:#}"),
@@ -395,11 +409,15 @@ impl Host {
             "# 프로젝트\n\n- 프로젝트: {}\n- thread: {} — {}\n- 보고: `{work}/report.md`\n- 결과물: `{work}/library/`\n\n",
             r.project, r.id, r.title
         );
-        out.push_str(
-            &THREAD_GUIDE
-                .replace("{report}", &format!("{work}/report.md"))
-                .replace("{library}", &format!("{work}/library/")),
-        );
+        if r.role == Role::Evaluator {
+            out.push_str(&crate::evaluator::EVALUATOR_GUIDE.replace("{work}", &work));
+        } else {
+            out.push_str(
+                &THREAD_GUIDE
+                    .replace("{report}", &format!("{work}/report.md"))
+                    .replace("{library}", &format!("{work}/library/")),
+            );
+        }
         out.push_str("\n# 프로젝트 지침\n\n");
         out.push_str(read("PROJECT.md").trim());
         out.push_str("\n\n# 결정 기록\n\n");
@@ -510,7 +528,7 @@ impl Host {
             title: a.title.trim().to_string(),
             machine_id: mid.clone(),
             profile: a.profile.clone(),
-            role: Role::Worker,
+            role: a.role,
             kind: a.kind,
             repo: a.repo.clone(),
             base: a.base.clone(),
@@ -528,6 +546,9 @@ impl Host {
             copy: None,
             error: None,
             decisions_rev: None,
+            eval_cursor: 0,
+            eval_batches: 0,
+            eval_last_batch_ms: None,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -901,6 +922,9 @@ impl Host {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
                 }
                 self.flow(&rec, "report_ready", Some(format!("threads/{id}.md")), detail);
+                if rec.role == Role::Evaluator {
+                    self.evaluator_ingest(&rec);
+                }
                 Ok(())
             }
             Err(e) => {
@@ -1001,6 +1025,7 @@ impl Host {
 
     /// agent가 다시 붙었다: 그 머신의 열린 thread 보고 감시를 다시 건다(놓친 변화는 등록 즉시 hash로 알 수 있다)
     pub(crate) fn rewatch(self: &Arc<Self>, mid: String) {
+        self.evaluator_reconnected(&mid);
         let me = self.clone();
         tokio::spawn(async move {
             let Some(conn) = me.conn_of(&mid) else { return };

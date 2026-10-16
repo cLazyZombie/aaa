@@ -15,6 +15,7 @@ use crate::orch::{
     MessageMode, MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
     Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
+use crate::orch::{EvaluationView, EvaluatorView};
 
 use crate::version::Version;
 
@@ -330,6 +331,12 @@ pub enum AgentRequest {
         offset: u64,
         data: B64,
         eof: bool,
+    },
+    /// 사후 평가자 사건 묶음을 작업 폴더의 `inbox/` 아래에 쓴다(§8.13). `path`는 `inbox/<이름>.json`만 받는다.
+    WorkFileWrite {
+        work_dir: String,
+        path: String,
+        data: B64,
     },
     /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
     ThreadCleanup {
@@ -804,8 +811,11 @@ pub enum FrontRequest {
         project: String,
         check: Option<String>,
     },
+    /// thread 목록. 기본은 사후 평가자를 빼고, `role`을 주면 그 역할만 보인다(§8.13).
     Threads {
         project: Option<String>,
+        #[serde(default)]
+        role: Option<Role>,
     },
     ThreadShow {
         project: String,
@@ -923,6 +933,45 @@ pub enum FrontRequest {
         #[serde(default)]
         limit: Option<u32>,
     },
+    /// 사후 평가자 지정(§8.13): 역할이 evaluator인 thread를 시작한다. 프로젝트당 하나다.
+    EvaluatorAssign {
+        project: String,
+        profile: String,
+        machine: Option<String>,
+        /// 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
+        #[serde(default)]
+        repo: Option<String>,
+        /// 평가자에게 더할 말(brief 끝에 붙는다)
+        #[serde(default)]
+        note: Option<String>,
+    },
+    /// 사후 평가자 상태(프로젝트를 주지 않으면 전체)
+    EvaluatorStatus {
+        project: Option<String>,
+    },
+    /// 사후 평가자를 끝낸다(평가자 thread resolve)
+    EvaluatorUnassign {
+        project: String,
+    },
+    /// 평가 기록 목록. 기본은 정하지 않은 개선안이 있는 것만
+    Evaluations {
+        project: String,
+        #[serde(default)]
+        all: bool,
+    },
+    EvaluationShow {
+        project: String,
+        id: String,
+    },
+    /// 개선안 채택·보류(채택은 결정 기록에 남는다)
+    EvaluationDecide {
+        project: String,
+        id: String,
+        proposals: Vec<String>,
+        adopt: bool,
+        #[serde(default)]
+        note: Option<String>,
+    },
 }
 
 impl FrontRequest {
@@ -952,6 +1001,9 @@ impl FrontRequest {
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
+                | FrontRequest::EvaluatorStatus { .. }
+                | FrontRequest::Evaluations { .. }
+                | FrontRequest::EvaluationShow { .. }
         )
     }
 
@@ -1040,6 +1092,13 @@ pub enum FrontResponse {
         routines: Vec<RoutineView>,
     },
     Library(LibraryView),
+    Evaluators {
+        evaluators: Vec<EvaluatorView>,
+    },
+    Evaluations {
+        evaluations: Vec<EvaluationView>,
+    },
+    Evaluation(Box<EvaluationView>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1065,6 +1124,9 @@ pub enum FrontMsg {
     Hello {
         proto: Version,
         client: String,
+        /// aa 세션 안에서 실행한 CLI면 그 세션 ID(`AA_SESSION_ID`). 사후 평가자 세션이면 host가 보기 권한만 준다(§8.13).
+        #[serde(default)]
+        session: Option<String>,
     },
     /// `front`는 이 연결의 ID다(lease 보유자 비교에 쓴다)
     Welcome {
@@ -1210,7 +1272,30 @@ mod tests {
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(FrontRequest::WebPair { role: DeviceRole::Reader }.local_only());
         assert!(!FrontRequest::Panes { role: None }.local_only());
-        assert!(!FrontRequest::Threads { project: None }.needs_control());
+        assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
+        // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)
+        assert!(!FrontRequest::EvaluatorStatus { project: None }.needs_control());
+        assert!(!FrontRequest::Evaluations { project: "p".into(), all: false }.needs_control());
+        assert!(
+            FrontRequest::EvaluationDecide {
+                project: "p".into(),
+                id: "e".into(),
+                proposals: vec![],
+                adopt: true,
+                note: None
+            }
+            .needs_control()
+        );
+        assert!(FrontRequest::EvaluatorUnassign { project: "p".into() }.needs_control());
+        assert!(
+            FrontRequest::ThreadMessage {
+                project: "p".into(),
+                thread: "t".into(),
+                text: "x".into(),
+                mode: MessageMode::Queue
+            }
+            .needs_control()
+        );
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
         assert!(FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into() }.needs_control());
@@ -1223,6 +1308,13 @@ mod tests {
             serde_json::from_value::<FrontRequest>(json!({"op":"panes"})).unwrap(),
             FrontRequest::Panes { role: None }
         );
+        // 1.2 front의 threads(role 없음)와 hello(session 없음)
+        assert_eq!(
+            serde_json::from_value::<FrontRequest>(json!({"op":"threads","project":null})).unwrap(),
+            FrontRequest::Threads { project: None, role: None }
+        );
+        let v = json!({"t":"hello","proto":{"major":1,"minor":2},"client":"cli"});
+        assert!(matches!(serde_json::from_value::<FrontMsg>(v), Ok(FrontMsg::Hello { session: None, .. })));
         let v = json!({"id":"s","name":"","argv":[],"cwd":null,"pid":null,"started_at_ms":1,"boot_id":"b",
             "cols":80,"rows":24,"state":"running"});
         assert_eq!(serde_json::from_value::<SessionInfo>(v).unwrap().role, None);

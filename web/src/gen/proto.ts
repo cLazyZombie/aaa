@@ -101,7 +101,11 @@ threads: Array<ThreadView>, assignable: Array<OwnerChoice>,
 /**
  * 끝내지 않은 inbox 항목 수
  */
-inbox_open: number, };
+inbox_open: number, 
+/**
+ * 사후 평가자(지정했을 때만)
+ */
+evaluator: EvaluatorView | null, };
 
 export type ToolCheck = { name: string, ok: boolean, 
 /**
@@ -187,7 +191,15 @@ task: string,
 /**
  * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
-from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
+from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
+/**
+ * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
+ */
+repo: string | null, 
+/**
+ * 평가자에게 더할 말(brief 끝에 붙는다)
+ */
+note: string | null, } | { "op": "evaluator_status", project: string | null, } | { "op": "evaluator_unassign", project: string, } | { "op": "evaluations", project: string, all: boolean, } | { "op": "evaluation_show", project: string, id: string, } | { "op": "evaluation_decide", project: string, id: string, proposals: Array<string>, adopt: boolean, note: string | null, };
 
 export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>, 
 /**
@@ -197,7 +209,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView;
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView;
 
@@ -414,4 +426,104 @@ export type LibraryView = { project: string, thread: string,
  * 회수한 report.md(없으면 None)
  */
 report: string | null, files: Array<LibraryFile>, base: string, expires_at_ms: number, };
+
+export type EvaluatorView = { project: string, thread: ThreadView, 
+/**
+ * 세션이 돌고 있다(아니면 `thread restart`로 다시 띄운다)
+ */
+running: boolean, 
+/**
+ * 마지막으로 넘긴 사건 seq
+ */
+cursor: number, 
+/**
+ * 아직 넘기지 않은 사건 수(평가자 자신의 사건 제외)
+ */
+pending: number, 
+/**
+ * 넘긴 사건 묶음 수
+ */
+batches: number, last_batch_ms: number | null, 
+/**
+ * 받은 평가 기록 수
+ */
+evaluations: number, 
+/**
+ * 채택·보류를 정하지 않은 개선안 수
+ */
+undecided: number, };
+
+export type EvaluationDoc = { 
+/**
+ * 평가한 thread ID
+ */
+targets: Array<string>, 
+/**
+ * 근거로 읽은 사건 묶음 파일 이름
+ */
+batches: Array<string>, 
+/**
+ * 흐름 효율 판정 한두 줄
+ */
+summary: string, 
+/**
+ * 단계별 시간
+ */
+stages: Array<EvalStage>, 
+/**
+ * 재작업(횟수·원인)
+ */
+rework: Array<string>, 
+/**
+ * 막힌 곳(기다린 것과 그 시간)
+ */
+blocked: Array<string>, tool_issues: Array<string>, 
+/**
+ * 결함을 누가 어느 단계에서 잡았나
+ */
+defects: Array<EvalDefect>, proposals: Array<Proposal>, };
+
+export type EvalStage = { thread: string, stage: string, 
+/**
+ * 걸린 시간
+ */
+minutes: Minutes | null, };
+
+export type Minutes = number;
+
+export type EvalDefect = { what: string, 
+/**
+ * 잡은 쪽(사람·coordinator·thread·CI·E2E …)
+ */
+found_by: string, stage: string, };
+
+export type Proposal = { id: string, text: string, 
+/**
+ * 예상 효과
+ */
+effect: string, 
+/**
+ * 대상 도구
+ */
+tool: string, decision: ProposalDecision | null, };
+
+export type ProposalDecision = { adopted: boolean, by: string, at_ms: number, note: string | null, 
+/**
+ * 채택이면 남긴 결정 기록 번호
+ */
+decision_num: number | null, };
+
+export type EvaluationView = { project: string, 
+/**
+ * 평가자가 정한 파일 이름(프로젝트 안에서 하나)
+ */
+id: string, 
+/**
+ * 평가자 thread ID
+ */
+evaluator: string, created_at_ms: number, 
+/**
+ * 사람이 읽는 본문(프로젝트 폴더 기준 `evaluations/<id>.md`)
+ */
+file: string, doc: EvaluationDoc, };
 

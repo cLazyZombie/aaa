@@ -201,7 +201,7 @@ impl Host {
         let dir = self.project_dir(project)?;
         let tasks = tasks::parse(&std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default());
         let mut threads: Vec<_> =
-            self.threads_of(Some(project))?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
+            self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);
         }
@@ -213,6 +213,7 @@ impl Host {
             threads,
             assignable: self.assignable().await,
             inbox_open: self.inbox(project, false, true)?.len() as u32,
+            evaluator: self.evaluator_rec(project).map(|r| Box::new(self.evaluator_view(&r))),
         })
     }
 }

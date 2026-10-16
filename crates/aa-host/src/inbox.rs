@@ -169,6 +169,10 @@ impl Host {
     /// 흐름 사건 → inbox 항목
     pub(crate) fn inbox_from_flow(&self, e: &FlowEvent) {
         let Some(thread) = &e.thread else { return };
+        // 사후 평가자의 보고·알림은 평가 기록(`evaluation`)으로 따로 알린다. 실패·사본 실패는 그대로 알린다.
+        if e.role == Some(aa_proto::Role::Evaluator) && matches!(e.kind.as_str(), "report_ready" | "message_unknown") {
+            return;
+        }
         let (kind, event) = match e.kind.as_str() {
             "report_ready" => ("report", "report ready"),
             "question_shown" => ("question", "question"),
@@ -217,6 +221,17 @@ impl Host {
         self.db.inbox_list(Some(project), false).map_err(internal)
     }
 
+    /// 조건에 맞는 끝내지 않은 항목을 끝낸다
+    pub(crate) fn inbox_finish_where(&self, project: &str, f: impl Fn(&InboxItem) -> bool) {
+        let pick: Vec<InboxItem> =
+            self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| f(i)).collect();
+        if !pick.is_empty()
+            && let Err(e) = self.inbox_finish(project, pick)
+        {
+            tracing::warn!("inbox 항목을 끝내지 못했다: {e:#}");
+        }
+    }
+
     fn inbox_finish(&self, project: &str, items: Vec<InboxItem>) -> anyhow::Result<()> {
         let dir = self.inbox_dir(project);
         let now = aa_common::util::now_ms();
@@ -257,8 +272,13 @@ impl Host {
         tokio::spawn(async move {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
+                // 사후 평가자 묶음 때가 더 이르면 그때까지만 잔다
+                let sleep = me
+                    .evaluator_next_due()
+                    .map(|d| d.saturating_duration_since(std::time::Instant::now()).min(every))
+                    .unwrap_or(every);
                 tokio::select! {
-                    _ = tokio::time::sleep(every) => {}
+                    _ = tokio::time::sleep(sleep) => {}
                     _ = me.tick_wake.notified() => {}
                 }
                 me.tick().await;
@@ -271,6 +291,7 @@ impl Host {
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
         self.check_outages(&names);
         self.check_health_items(&names);
+        self.evaluator_pass();
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_sessions(&p.name);

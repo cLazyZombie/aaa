@@ -351,6 +351,37 @@ pub fn read_chunk(work_dir: &str, rel: &str, offset: u64, len: u32) -> Result<(V
     Ok((buf, offset + n as u64 >= size))
 }
 
+/// 사후 평가자 사건 묶음을 `<work_dir>/inbox/<이름>.json`에 쓴다(§8.13). 다른 곳에는 쓰지 않는다.
+pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
+    const MAX: usize = 8 << 20;
+    let dir = check_work_dir(work_dir)?;
+    let name = rel
+        .strip_prefix("inbox/")
+        .and_then(|n| n.strip_suffix(".json"))
+        .filter(|n| !n.is_empty() && n.len() <= 64 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        .with_context(|| format!("inbox/<이름>.json만 쓴다: {rel}"))?;
+    if data.len() > MAX {
+        bail!("사건 묶음이 너무 크다({}바이트)", data.len());
+    }
+    let inbox = dir.join("inbox");
+    match std::fs::symlink_metadata(&inbox) {
+        Ok(m) if !m.is_dir() => bail!("inbox가 폴더가 아니다(symlink 등)"),
+        Ok(_) => {}
+        Err(_) => {
+            std::fs::create_dir(&inbox)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&inbox, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
+    }
+    let tmp = inbox.join(format!(".{name}.tmp"));
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, inbox.join(format!("{name}.json")))?;
+    Ok(())
+}
+
 pub async fn cleanup(
     repo: Option<&str>,
     cwd: &str,

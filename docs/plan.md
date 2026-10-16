@@ -40,6 +40,7 @@
 | 9 | 유료 Apple Developer Program 회원이 아니므로 Developer ID를 쓰지 않는다(8-2 변경). 1순위 자체 서명 코드 서명 인증서(장기 유효, 세 Mac 공용), 2순위 기존 무료 Apple Development 인증서. P0 E1에서 둘 다 실측해 고른다. Gatekeeper·공증은 쓰지 않는다 | §10.5, §10.6, §16 |
 | 10 | GUI가 필요한 사용자 작업(인증서·키체인·시스템 설정 화면)은 mac-a에서 한다. 명령만으로 되는 일은 mac-c에 ssh로 한다(ssh 세션은 login 키체인이 잠겨 있어 사용자가 직접 잠금을 푼다) | §10.6, `docs/p0-runbook.md` |
 | 14 | 재부팅 실험은 하지 않는다(시험 Mac 불필요). 개발자 도구에는 한 번 만들고 다시 빌드하지 않는 launcher를 고정 경로에 두고 등록한다(LaunchAgent → launcher → `aa` 자식). 목록이 일반 실행 파일을 받지 않으면 최소 `.app`으로 감싼다. 결정 9(자체 서명 인증서)는 보류한다. 전체 큰 그림(M1-2~M1-4 운영 대체)을 먼저 완성하고 P0 세부 실측에 시간을 쓰지 않는다 | §10, `docs/p0-runbook.md` |
+| 15 | launcher 등록은 mac-b(coordinator Mac)에서 한다. L1 측정·운영 설치 확인도 mac-b를 첫 대상으로 ssh로 한다(결정 10의 GUI 머신 대신) | §10.6, `docs/p0-runbook.md` |
 
 **결정 3 세부.** host는 host 역할만 한다(2안).
 - 실행 파일은 하나이고 역할만 나눈다(`aa host`/`aa agent`). 경로와 서명은 고정이다.
@@ -619,7 +620,7 @@ host 프로젝트 폴더 구성:
 - 역할 필드(schema·Front API·token)
 - 목록의 기본 role 필터
 - 흐름 사건과 cursor 구독
-평가자 기능 자체(지정, 배경 실행, 별도 표시, 사건 자동 전달, 평가 기록, 채택·보류, role 금지 동작)는 M3에 둔다(§14).
+평가자 기능 자체(지정, 배경 실행, 별도 표시, 사건 자동 전달, 평가 기록, 채택·보류, role 금지 동작)는 M3에 둔다(§14). 구현하면서 입출력 경로와 지정 기록을 바꿨다(§8.22).
 
 ### 8.14 M1-3a 구현 결정(10-16)
 
@@ -831,6 +832,36 @@ host 프로젝트 폴더 구성:
 - **운영 감독자 설치(결정 14):** `aa service show|install|uninstall --role host|agent`. 사용자 LaunchAgent(`~/Library/LaunchAgents/dev.aa.<role>.plist`)가 `aa-launcher <aa> <role>`을 띄운다(RunAtLoad·KeepAlive, Aqua 세션, `ProcessType=Interactive`). launchd 기본 PATH로는 `claude`·`codex`를 못 찾으므로 설치하는 셸의 `PATH`·`LANG`을 plist에 적는다. 설치·해제는 launchd를 바꾸므로 사람이 터미널에서 `yes`를 입력해야 하고, aa 세션 안에서는 거부한다. 순서와 확인은 [운영 설치 점검표](install-runbook.md)다. 이전 SMAppService(`aa.app`) 경로(`plan`·`register`)는 보류로 남긴다.
 - **새 프로젝트 AGENTS.md:** coordinator 안내(매 턴 `aa context`, thread 시작 규칙, TASKS.md 규칙, 결정·병합 명령)를 쓴다. 있는 파일은 덮지 않는다.
 
+### 8.22 M3 사후 평가자 구현 결정(10-17)
+
+§8.13을 실제 구조에 맞춰 바꿨다. 바꾼 이유는 Front API가 **host 머신의 UDS뿐**이라는 점이다. 다른 머신에서 도는 평가자는 `aa evaluation submit`을 부를 수 없고 host의 `evaluator/inbox/`도 읽지 못한다. 그래서 입출력을 모두 Agent link로 옮겼다.
+
+- **평가자 = 역할이 `evaluator`인 thread.** `aa evaluator assign <p> --profile P [--machine M] [--repo R] [--note …]`가 일반 thread와 같은 방식으로 시작한다(작업 폴더·resume·보고 회수·세션 끝남 알림·resolve가 같다). 프로젝트당 하나다.
+  - thread ID는 일반 순번(`t-NNNN`)이고 작업 폴더는 `.aa/<p>-<t>/`다. §8.13의 `.aa/<project>-evaluator/` 대신이다.
+  - 지정 기록은 thread 기록(역할)이 정본이다. host는 project.toml을 쓰지 않는다. `[evaluator]`에는 사용자가 쓰는 설정만 둔다: `events`(대상 사건, 기본 `merge_landed`·`thread_resolved`·`thread_failed`·`thread_restarted`), `batch_s`(기본 300초).
+  - 끝내기는 `aa evaluator unassign <p>`(평가자 thread resolve)다. 동시 thread 한도에 들어간다. 낮은 우선순위는 그 머신 agent.toml profile의 command에 `nice`를 넣어 정한다(aa가 따로 두지 않는다).
+- **목록에 섞지 않는다.** `aa thread list`·`aa context`의 thread·`aa pane list`·웹 thread·머신 목록은 기본으로 평가자를 뺀다. `--role evaluator`로만 보인다. `aa context`에는 따로 `evaluator` 요약이 있다.
+- **입력.** 대상 사건이 생기면 착지는 바로, 나머지는 `batch_s` 뒤에 host가 cursor 뒤 사건 묶음을 만든다.
+  - 묶음은 Agent link(`WorkFileWrite`)로 평가자 작업 폴더 `inbox/<첫 seq>-<끝 seq>.json`에 쓴다. agent는 이 이름 형식 말고는 쓰지 않는다.
+  - 묶음에는 이번 사건, 관련 thread마다 **전체 사건 이력·시간 요약·host가 받은 마지막 보고 본문(64KiB까지)**을 넣는다. 원격 평가자가 host 파일 없이도 단계별 시간을 계산할 수 있어야 해서다.
+  - 평가자 자신의 사건은 넣지 않고 대상 사건으로도 보지 않는다(평가 → 사건 → 묶음 → 평가로 도는 고리를 막는다).
+  - cursor는 thread 기록에 durable하게 둔다. 쓴 뒤 옮기고, 메시지 대기열로 「새 사건 n건」 한 줄을 보낸다. 받았는지 몰라도 다시 보내지 않는다. 평가자는 `inbox/`에서 처리하지 않은 파일을 다시 읽는다(§8.5 a). 머신이 끊겨 쓰지 못하면 cursor를 그대로 두고, 다시 연결될 때 확인한다.
+- **출력.** 평가자는 `library/evaluations/<이름>.json`(같은 이름의 `.md`는 선택)을 쓰고 report.md를 다시 쓴다. host는 보고 사본을 받은 뒤 처음 보는 기록을 검사해 받는다.
+  - 받은 기록은 DB와 `projects/<p>/evaluations/<이름>.md`에 둔다. inbox에는 `evaluation` 항목으로 뜬다.
+  - 형식이 틀리거나 이미 받은 이름의 내용이 바뀌었으면 받지 않는다. 같은 내용당 한 번 `evaluation`·`invalid` 항목으로 알린다.
+  - 평가자의 보고 자체는 `report` 항목으로 알리지 않는다.
+- **채택·보류.** `aa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 결정 기록(§8.6)에 한 줄로 남기고 그 번호를 붙인다. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
+- **금지(부분 thread 범위 token).** CLI는 aa 세션 안이면 `AA_SESSION_ID`를 Hello에 담는다. 그 세션의 역할이 평가자면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다.
+  - 남는 한계: env를 지운 프로세스는 사람의 CLI와 구별되지 않는다(routine 승인과 같은 수준, §8.21). 원격 머신의 평가자는 Front API에 닿지 않는다.
+- **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다. `aa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
+- **시험.** m13 `evaluator_flow`: 가짜 평가자가 착지·완료 묶음을 받아 평가 기록(정상 1, 잘못된 1)을 낸다. 확인하는 것은 다음과 같다.
+  - 목록·context·pane 목록에 섞이지 않는다.
+  - 평가자 세션의 지시·채택은 거부되고 보기는 된다.
+  - 묶음에 평가자 사건이 없고, seq가 겹치지 않고, 이력·보고 본문을 담는다.
+  - 채택이 결정 기록에 남고, 두 번 채택은 거부된다. 보류까지 하면 inbox가 정리된다.
+  - 평가자를 끝내고 다시 띄워도 앞 사건을 다시 넘기지 않는다.
+  - 단위 시험: 기록 검사(요약 필수, 개선안 id 중복·형식, 소수 분 반올림, 평가자가 쓴 decision 무시), thread 시간 요약.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -969,7 +1000,7 @@ flowchart LR
 결정 14로 범위를 줄였다. **재부팅 실험(E5)은 하지 않고 시험 Mac도 쓰지 않는다.** 자체 서명 인증서 E1(결정 9)은 보류하고, launcher 방식이 실측에서 실패할 때만 다시 꺼낸다. P0 세부 실측보다 M1-2~M1-4 완성을 먼저 한다.
 
 필요 조건:
-- 사용자 작업: mac-a에서 `aa-launcher.app`을 개발자 도구·전체 디스크 접근에 한 번 등록(결정 10, 화면 필요)
+- 사용자 작업: mac-b에서 `aa-launcher.app`을 개발자 도구·전체 디스크 접근에 한 번 등록(결정 15, 화면 필요)
 - 측정은 thread가 ssh로 한다. 재부팅·LaunchAgent 등록·시스템 설정 변경은 하지 않는다
 
 | 실험 | 방법 | 합격 gate |
@@ -1159,7 +1190,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13, 3~5일, M1 뒤 바로 시작 가능), 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.

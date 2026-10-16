@@ -78,6 +78,11 @@ code { background: #232a33; padding: 1px 5px; border-radius: 4px; }
 .badge.agent.working { color: var(--accent); border-color: var(--accent); }
 .badge.agent.question { color: #111418; background: var(--warn); border-color: var(--warn); font-weight: 600; }
 .badge.agent.idle { color: var(--ok); }
+.eval-badge { margin-left: auto; }
+.eval-badge .eval-dot { color: var(--muted); }
+.eval-badge.working .eval-dot { color: var(--accent); }
+.eval-badge.idle .eval-dot { color: var(--ok); }
+.eval-badge.ended .eval-dot { color: var(--warn); }
 .badge.agent.error { color: var(--err); border-color: var(--err); }
 .questions { padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .questions h2 { font-size: 13px; margin: 0 0 6px; color: var(--warn); }

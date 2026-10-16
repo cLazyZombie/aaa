@@ -121,6 +121,16 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
+    /// 사후 평가자: 배경에서 일의 흐름(시간·재작업·막힌 곳)을 평가하는 agent 지정·상태·열기·끝내기
+    Evaluator {
+        #[command(subcommand)]
+        cmd: EvaluatorCmd,
+    },
+    /// 평가 기록 목록·보기, 개선안 채택(adopt)·보류(hold)
+    Evaluation {
+        #[command(subcommand)]
+        cmd: EvaluationCmd,
+    },
     /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
     #[command(hide = true)]
     Hook {
@@ -257,6 +267,62 @@ enum ProfileCmd {
 }
 
 #[derive(Subcommand)]
+enum EvaluatorCmd {
+    /// 평가자를 지정한다: 그 머신에 역할이 evaluator인 thread를 띄운다(프로젝트당 하나, 목록에는 섞이지 않는다)
+    Assign {
+        project: String,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        machine: Option<String>,
+        /// 채택된 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
+        #[arg(long)]
+        repo: Option<String>,
+        /// 평가자에게 더할 말
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// 평가자 상태: 실행 여부, 넘긴 사건 묶음, 받은 평가, 정하지 않은 개선안
+    Status { project: Option<String> },
+    /// 평가자 화면을 TUI로 연다(workspace `eval-<project>`). 나가도 평가자는 배경에서 계속 돈다
+    Open { project: String },
+    /// 평가자를 끝낸다(평가자 thread resolve)
+    Unassign { project: String },
+}
+
+#[derive(Subcommand)]
+enum EvaluationCmd {
+    /// 정하지 않은 개선안이 있는 평가(--all은 전부)
+    List {
+        project: String,
+        #[arg(long)]
+        all: bool,
+    },
+    Show {
+        project: String,
+        id: String,
+    },
+    /// 개선안을 채택한다(결정 기록에 남는다)
+    Adopt {
+        project: String,
+        id: String,
+        #[arg(required = true)]
+        proposals: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// 개선안을 보류한다(나중에 채택할 수 있다)
+    Hold {
+        project: String,
+        id: String,
+        #[arg(required = true)]
+        proposals: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum ThreadCmd {
     /// thread를 시작한다: 그 머신 agent가 worktree(또는 작업 폴더)를 만들고 profile로 agent를 띄운 뒤 brief를 안내한다
     Start {
@@ -298,6 +364,9 @@ enum ThreadCmd {
     List {
         #[arg(long, short)]
         project: Option<String>,
+        /// 이 역할만(기본은 사후 평가자를 뺀 목록)
+        #[arg(long, value_parser = ["coordinator", "worker", "evaluator"])]
+        role: Option<String>,
     },
     /// 보고서와 결과물 목록, 웹에서 볼 읽기 전용 경로(2시간)
     Library {
@@ -818,7 +887,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Next { project, thread, line, add } => {
                     FrontRequest::ThreadNext { project, thread, line, add }
                 }
-                ThreadCmd::List { project } => FrontRequest::Threads { project },
+                ThreadCmd::List { project, role } => {
+                    FrontRequest::Threads { project, role: role.as_deref().and_then(aa_proto::Role::parse) }
+                }
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
                 ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
@@ -872,6 +943,31 @@ fn run(cli: Cli) -> Result<ExitCode> {
             init_log("warn");
             aa_tui::run(workspace)
         }
+        Cmd::Evaluator { cmd: EvaluatorCmd::Open { project } } => evaluator_open(&project),
+        Cmd::Evaluator { cmd } => front(
+            json,
+            match cmd {
+                EvaluatorCmd::Assign { project, profile, machine, repo, note } => {
+                    FrontRequest::EvaluatorAssign { project, profile, machine, repo, note }
+                }
+                EvaluatorCmd::Status { project } => FrontRequest::EvaluatorStatus { project },
+                EvaluatorCmd::Unassign { project } => FrontRequest::EvaluatorUnassign { project },
+                EvaluatorCmd::Open { .. } => unreachable!(),
+            },
+        ),
+        Cmd::Evaluation { cmd } => front(
+            json,
+            match cmd {
+                EvaluationCmd::List { project, all } => FrontRequest::Evaluations { project, all },
+                EvaluationCmd::Show { project, id } => FrontRequest::EvaluationShow { project, id },
+                EvaluationCmd::Adopt { project, id, proposals, note } => {
+                    FrontRequest::EvaluationDecide { project, id, proposals, adopt: true, note }
+                }
+                EvaluationCmd::Hold { project, id, proposals, note } => {
+                    FrontRequest::EvaluationDecide { project, id, proposals, adopt: false, note }
+                }
+            },
+        ),
         Cmd::Machine { cmd } => front(
             json,
             match cmd {
@@ -1122,6 +1218,35 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
         anyhow::bail!("이름이 다르다. 승인하지 않았다");
     }
     front(json, FrontRequest::RoutineApprove { project, name, command_sha256: r.command_sha256 })
+}
+
+/// 평가자 pane을 workspace `eval-<project>`에 두고 TUI로 연다(일반 attach와 lease 규칙이 같다)
+fn evaluator_open(project: &str) -> Result<ExitCode> {
+    let v = match front_call(FrontRequest::EvaluatorStatus { project: Some(project.to_string()) })? {
+        Ok(FrontResponse::Evaluators { evaluators }) => evaluators.into_iter().next(),
+        Ok(_) => None,
+        Err(e) => anyhow::bail!("{e}"),
+    };
+    let v = v.with_context(|| format!("{project}에 사후 평가자가 없다(aa evaluator assign)"))?;
+    let pane = v.thread.pane.clone().context("평가자 세션이 없다")?;
+    if !v.running {
+        eprintln!("평가자 세션이 끝나 있다. 다시 띄우려면: aa thread restart {project} {} --resume", v.thread.id);
+    }
+    let ws = format!("eval-{project}");
+    let have = match front_call(FrontRequest::Workspace { name: Some(ws.clone()) })? {
+        Ok(FrontResponse::Workspace(w)) => aa_proto::layout::ws_contains(&w, &pane),
+        _ => false,
+    };
+    if !have
+        && let Err(e) = front_call(FrontRequest::LayoutApply {
+            workspace: Some(ws.clone()),
+            change: LayoutChange::AddTab { pane: pane.clone() },
+        })?
+    {
+        anyhow::bail!("{e}");
+    }
+    init_log("warn");
+    aa_tui::run(Some(ws))
 }
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
@@ -1379,6 +1504,69 @@ fn render_context(s: &mut String, c: &aa_proto::ProjectContext) {
     }
     let _ = writeln!(s, "\n{}", assignable_line(&c.assignable));
     let _ = writeln!(s, "inbox: 끝내지 않은 항목 {}개 (aa inbox list {})", c.inbox_open, c.project);
+    if let Some(v) = &c.evaluator {
+        let _ = writeln!(
+            s,
+            "사후 평가자 {}: {}, 정하지 않은 개선안 {}개 (aa evaluation list {})",
+            v.thread.id,
+            if v.running { "실행 중" } else { "세션 끝남" },
+            v.undecided,
+            c.project
+        );
+    }
+}
+
+fn render_evaluator(s: &mut String, v: &aa_proto::EvaluatorView) {
+    use std::fmt::Write as _;
+    let t = &v.thread;
+    let state = if t.status == aa_proto::ThreadStatus::Resolved {
+        "끝남".to_string()
+    } else if v.running {
+        t.agent.as_ref().map(|a| format!("{:?}", a.activity).to_lowercase()).unwrap_or_else(|| "실행 중".into())
+    } else {
+        format!("세션 끝남(aa thread restart {} {} --resume)", v.project, t.id)
+    };
+    let _ = writeln!(s, "{} 사후 평가자 {}\t{}@{}\t{state}", v.project, t.id, t.profile, t.machine);
+    let _ = writeln!(
+        s,
+        "  사건: 넘긴 묶음 {} (cursor {}), 기다리는 사건 {}\n  평가: {}건, 정하지 않은 개선안 {}",
+        v.batches, v.cursor, v.pending, v.evaluations, v.undecided
+    );
+    if let Some(e) = &t.error {
+        let _ = writeln!(s, "  오류: {e}");
+    }
+}
+
+fn render_evaluation(s: &mut String, v: &aa_proto::EvaluationView) {
+    use std::fmt::Write as _;
+    let d = &v.doc;
+    let _ = writeln!(s, "평가 {} (평가자 {}, 대상 {})\n{}", v.id, v.evaluator, d.targets.join(", "), d.summary);
+    for st in &d.stages {
+        let m = st.minutes.map(|m| format!("{}분", m.0)).unwrap_or_else(|| "?".into());
+        let _ = writeln!(s, "  단계 {} {}: {m}", st.thread, st.stage);
+    }
+    for (title, items) in [("재작업", &d.rework), ("막힌 곳", &d.blocked), ("도구 문제", &d.tool_issues)] {
+        for i in items {
+            let _ = writeln!(s, "  {title}: {i}");
+        }
+    }
+    for x in &d.defects {
+        let _ = writeln!(s, "  결함: {} ({} · {})", x.what, x.found_by, x.stage);
+    }
+    for p in &d.proposals {
+        let state = match &p.decision {
+            None => "정하지 않음".to_string(),
+            Some(dc) if dc.adopted => {
+                format!("채택{}", dc.decision_num.map(|n| format!("(결정 {n}번)")).unwrap_or_default())
+            }
+            Some(_) => "보류".to_string(),
+        };
+        let _ = writeln!(s, "  개선안 {} [{state}] {}", p.id, p.text);
+        if !p.effect.is_empty() || !p.tool.is_empty() {
+            let _ = writeln!(s, "    효과: {} · 도구: {}", p.effect, p.tool);
+        }
+    }
+    let _ = writeln!(s, "본문: projects/{}/{}", v.project, v.file);
 }
 
 fn render_front(r: &FrontResponse) -> String {
@@ -1616,6 +1804,31 @@ fn render_front(r: &FrontResponse) -> String {
             }
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
+        FrontResponse::Evaluators { evaluators } => {
+            if evaluators.is_empty() {
+                s.push_str("사후 평가자가 없다(aa evaluator assign)\n");
+            }
+            for v in evaluators {
+                render_evaluator(&mut s, v);
+            }
+        }
+        FrontResponse::Evaluations { evaluations } => {
+            if evaluations.is_empty() {
+                s.push_str("정하지 않은 평가가 없다(--all은 전부)\n");
+            }
+            for v in evaluations {
+                let open = v.doc.proposals.iter().filter(|p| p.decision.is_none()).count();
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t개선안 {}건(남음 {open})\t{}",
+                    v.id,
+                    v.evaluator,
+                    v.doc.proposals.len(),
+                    v.doc.summary
+                );
+            }
+        }
+        FrontResponse::Evaluation(v) => render_evaluation(&mut s, v),
         FrontResponse::Inbox { items } => {
             if items.is_empty() {
                 s.push_str("inbox가 비었다\n");

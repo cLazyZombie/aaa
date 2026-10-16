@@ -6,6 +6,7 @@
 mod attach;
 mod coord;
 pub mod db;
+mod evaluator;
 pub mod front;
 mod harness;
 mod health;
@@ -221,6 +222,12 @@ pub struct Host {
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aa_proto::InboxItem>>>,
+    /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
+    eval_due: Mutex<HashMap<String, Instant>>,
+    /// 사후 평가자 묶음은 한 번에 하나씩 만든다
+    eval_lock: tokio::sync::Mutex<()>,
+    /// 평가 기록 채택·보류는 한 번에 하나씩
+    eval_decide_lock: Mutex<()>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -304,6 +311,9 @@ impl Host {
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
             notify_tx: Mutex::new(None),
+            eval_due: Mutex::new(HashMap::new()),
+            eval_lock: tokio::sync::Mutex::new(()),
+            eval_decide_lock: Mutex::new(()),
         }))
     }
 
@@ -673,7 +683,17 @@ impl Host {
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
-                let mut a = orch::StartArgs { project, title, machine, profile, kind, repo, base, task };
+                let mut a = orch::StartArgs {
+                    project,
+                    title,
+                    machine,
+                    profile,
+                    kind,
+                    repo,
+                    base,
+                    task,
+                    role: aa_proto::Role::Worker,
+                };
                 if let Some(t) = from_task {
                     self.apply_from_task(&mut a, &t).await?;
                 }
@@ -692,8 +712,8 @@ impl Host {
                 };
                 Ok(FrontResponse::Assignable { owners, valid })
             }
-            FrontRequest::Threads { project } => {
-                self.threads_of(project.as_deref()).map(|threads| FrontResponse::Threads { threads })
+            FrontRequest::Threads { project, role: want } => {
+                self.threads_of(project.as_deref(), want).map(|threads| FrontResponse::Threads { threads })
             }
             FrontRequest::ThreadShow { project, thread } => {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
@@ -753,6 +773,26 @@ impl Host {
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
             }
+            FrontRequest::EvaluatorAssign { project, profile, machine, repo, note } => self
+                .evaluator_assign(&project, profile, machine, repo, note, actor)
+                .await
+                .map(|v| FrontResponse::Evaluators { evaluators: vec![v] }),
+            FrontRequest::EvaluatorStatus { project } => {
+                self.evaluator_views(project.as_deref()).map(|evaluators| FrontResponse::Evaluators { evaluators })
+            }
+            FrontRequest::EvaluatorUnassign { project } => self
+                .evaluator_unassign(&project, actor)
+                .await
+                .map(|v| FrontResponse::Evaluators { evaluators: vec![v] }),
+            FrontRequest::Evaluations { project, all } => {
+                self.evaluations(&project, all).map(|evaluations| FrontResponse::Evaluations { evaluations })
+            }
+            FrontRequest::EvaluationShow { project, id } => {
+                self.evaluation(&project, &id).map(|v| FrontResponse::Evaluation(Box::new(v)))
+            }
+            FrontRequest::EvaluationDecide { project, id, proposals, adopt, note } => self
+                .evaluation_decide(&project, &id, &proposals, adopt, note, actor)
+                .map(|v| FrontResponse::Evaluation(Box::new(v))),
             FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
                 let spec = SpawnSpec {

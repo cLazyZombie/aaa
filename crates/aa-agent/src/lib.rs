@@ -503,6 +503,13 @@ impl Agent {
                     .map(AgentResponse::CommandRan)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
+            AgentRequest::WorkFileWrite { work_dir, path, data } => {
+                tokio::task::spawn_blocking(move || threads::write_inbox(&work_dir, &path, &data.0))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))))
+                    .map(|()| AgentResponse::Done)
+            }
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
             }
