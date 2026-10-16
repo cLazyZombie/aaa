@@ -1,6 +1,6 @@
-//! 웹 터미널에 붙여 넣은 그림(§8.20, M1-4).
+//! 붙여 넣은 그림(§8.20 M1-4 웹, §8.28 M3 TUI·CLI).
 //!
-//! - 브라우저가 pane WebSocket(대화형 front)으로 512KiB 조각을 보낸다. 조각마다 조작 권한·lease를 확인하고,
+//! - 브라우저는 pane WebSocket, TUI·CLI는 Front API(`PaneAttach`)로 512KiB 조각을 보낸다. 조각마다 조작 권한·lease를 확인하고,
 //!   host에 모으지 않고 바로 대상 머신 agent로 넘긴다(그 사이 화면 출력이 끼어든다).
 //! - 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고, 이름은 host가 정한다. agent는 세션 폴더에 0600으로 쓴다.
 //! - 다 받으면 sha256을 대조하고, harness pane이고 확인창이 없을 때만 입력창에 경로를 bracketed paste로 넣는다.
@@ -13,8 +13,7 @@ use aaa_proto::{AgentRequest, AgentResponse, B64, DeviceRole, ErrorBody, ErrorCo
 use crate::harness::modal_of;
 use crate::{FrontRef, Host, err};
 
-/// 조각 상한(Agent link frame 1MiB 안에 base64로 들어간다)
-pub(crate) const CHUNK: usize = 512 * 1024;
+use aaa_proto::ATTACH_CHUNK as CHUNK;
 /// 첨부 한 개 상한(agent도 같은 값으로 막는다)
 const MAX_BYTES: u64 = 16 << 20;
 

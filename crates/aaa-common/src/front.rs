@@ -5,7 +5,9 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use aaa_proto::{ErrorBody, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, MAX_FRAME};
+use aaa_proto::{
+    ATTACH_CHUNK, B64, ErrorBody, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, MAX_FRAME,
+};
 use anyhow::{Context, Result, bail};
 
 use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
@@ -117,4 +119,22 @@ impl FrontSender {
         self.tx.json(&FrontMsg::Req { id: id.clone(), body }).await?;
         Ok(id)
     }
+}
+
+/// 그림 한 개를 `PaneAttach` 조각 요청들로 나눈다(TUI Ctrl+V·`aaa pane attach`). 차례대로 보낸다.
+pub fn attach_requests(pane: &str, bytes: &[u8]) -> Vec<FrontRequest> {
+    use sha2::Digest;
+    let sha256 = hex::encode(sha2::Sha256::digest(bytes));
+    let total = bytes.len() as u64;
+    bytes
+        .chunks(ATTACH_CHUNK)
+        .enumerate()
+        .map(|(i, c)| FrontRequest::PaneAttach {
+            pane: pane.to_string(),
+            offset: (i * ATTACH_CHUNK) as u64,
+            total,
+            sha256: sha256.clone(),
+            data: B64(c.to_vec()),
+        })
+        .collect()
 }

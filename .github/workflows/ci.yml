@@ -53,6 +53,20 @@ jobs:
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo test --workspace --locked 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
+      # 실제 시스템 clipboard(§8.28): 그림을 쓰고 TUI front가 Ctrl+V로 읽어 대상 세션 폴더까지 가는지 본다.
+      # 개발 Mac에서는 사람의 clipboard를 덮어쓰므로 CI에서만 켠다. Linux는 Xvfb 위 X11, Windows는 TUI E2E(Unix 전용) 없이 읽기만.
+      - name: clipboard(실제)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          AAA_CLIP_NATIVE: "1"
+        run: |
+          run() { if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$@"; else "$@"; fi; }
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xvfb >/dev/null; fi
+          run cargo test --locked -p aaa-tui native_clipboard_roundtrip -- --nocapture 2>&1 | tee -a test.log; s=${PIPESTATUS[0]}
+          [ "$s" = 0 ] || exit "$s"
+          if [ "$RUNNER_OS" != Windows ]; then
+            run cargo test --locked -p aaa --test tui ctrl_v_pastes_clipboard_image -- --nocapture 2>&1 | tee -a test.log; exit ${PIPESTATUS[0]}
+          fi
       # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
       - name: 실패 요약
         if: failure()

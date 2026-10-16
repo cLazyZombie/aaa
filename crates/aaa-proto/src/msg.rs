@@ -784,6 +784,17 @@ pub enum FrontRequest {
     PaneRelease {
         pane: String,
     },
+    /// 붙여 넣은 그림 한 조각(TUI Ctrl+V·`aaa pane attach`, 최대 512KiB). 웹 `TermClientMsg::Attach`와 같은 규칙이다:
+    /// `offset` 0이 새 첨부의 시작이고, 마지막 조각에서 `sha256`(파일 전체)을 확인한다. 받는 중인 첨부는 연결마다 하나다.
+    PaneAttach {
+        pane: String,
+        #[ts(type = "number")]
+        offset: u64,
+        #[ts(type = "number")]
+        total: u64,
+        sha256: String,
+        data: B64,
+    },
     /// 끝난 pane(중단·유실·종료)을 같은 spec으로 다시 띄우고 layout 자리를 바꾼다
     PaneResume {
         pane: String,
@@ -1119,6 +1130,12 @@ pub enum FrontResponse {
     Publish(PublishState),
     Workspace(Workspace),
     Done,
+    /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
+    Attached {
+        path: String,
+        inserted: bool,
+        note: Option<String>,
+    },
     Projects {
         projects: Vec<ProjectView>,
     },
@@ -1333,6 +1350,16 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
+        assert!(
+            FrontRequest::PaneAttach {
+                pane: "p".into(),
+                offset: 0,
+                total: 1,
+                sha256: String::new(),
+                data: B64(vec![])
+            }
+            .needs_control()
+        );
         assert!(FrontRequest::WebPair { role: DeviceRole::Reader }.local_only());
         assert!(!FrontRequest::Panes { role: None }.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
