@@ -12,8 +12,8 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, MergeEntry, MessageMode,
-    MessageView, ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady,
-    ThreadView,
+    MessageView, ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind, ThreadPrepare,
+    ThreadReady, ThreadView,
 };
 
 use crate::version::Version;
@@ -314,6 +314,14 @@ pub enum AgentRequest {
         brief: String,
         launch: Launch,
     },
+    /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
+    /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
+    RunCommand {
+        project: String,
+        cwd: Option<String>,
+        command: String,
+        timeout_ms: u64,
+    },
     /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
     ThreadCleanup {
         repo: Option<String>,
@@ -350,6 +358,18 @@ pub enum AgentResponse {
     },
     Cleanup(Cleanup),
     Relaunch(Launch),
+    CommandRan(CommandRan),
+}
+
+/// routine 명령 실행 결과
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandRan {
+    /// 종료 코드(신호로 끝났거나 시간 초과면 None)
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    /// stdout 뒤에 stderr. 상한에서 자른다.
+    pub output: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -799,6 +819,16 @@ pub enum FrontRequest {
     MergeList {
         project: String,
     },
+    /// routine 목록(`projects/<p>/routines/*.md`)과 상태
+    Routines {
+        project: String,
+    },
+    /// routine 명령 승인. `command_sha256`은 사람이 본 명령(머신 포함)의 hash이고, 파일이 그 사이 바뀌었으면 거부한다.
+    RoutineApprove {
+        project: String,
+        name: String,
+        command_sha256: String,
+    },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {
         project: Option<String>,
@@ -826,6 +856,7 @@ impl FrontRequest {
                 | FrontRequest::Decisions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::MergeList { .. }
+                | FrontRequest::Routines { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -842,6 +873,7 @@ impl FrontRequest {
                 | FrontRequest::EnrollPending
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
+                | FrontRequest::RoutineApprove { .. }
                 | FrontRequest::WebPair { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -902,6 +934,9 @@ pub enum FrontResponse {
     },
     Merge {
         queue: Vec<MergeEntry>,
+    },
+    Routines {
+        routines: Vec<RoutineView>,
     },
 }
 

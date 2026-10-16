@@ -98,6 +98,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: MergeCmd,
     },
+    /// routine(projects/<p>/routines/*.md) 목록과 명령 승인
+    Routine {
+        #[command(subcommand)]
+        cmd: RoutineCmd,
+    },
     /// 머신의 agent.toml profile 목록
     Profile {
         #[command(subcommand)]
@@ -220,6 +225,18 @@ enum MergeCmd {
     Drop {
         project: String,
         thread: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RoutineCmd {
+    List {
+        project: String,
+    },
+    /// 명령을 승인한다. 사람이 host 머신 터미널(aa 세션 밖)에서 명령을 보고 routine 이름을 쳐야 한다
+    Approve {
+        project: String,
+        name: String,
     },
 }
 
@@ -697,6 +714,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 MergeCmd::Drop { project, thread } => FrontRequest::MergeDrop { project, thread, landed: false },
             },
         ),
+        Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
+        Cmd::Routine { cmd: RoutineCmd::Approve { project, name } } => routine_approve(json, project, name),
         Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
         Cmd::Thread { cmd } => front(
             json,
@@ -966,6 +985,54 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         anyhow::Ok(())
     })?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// routine 명령 승인: agent가 대신 승인하지 못하게, aa 세션 안이거나 터미널이 아니면 거부하고 사람에게 이름을 치게 한다.
+/// 남는 한계: 사람의 터미널을 흉내 내는 다른 수단(aa 밖의 PTY)까지 막지는 못한다(plan §8.19).
+fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    if std::env::var_os("AA_SESSION_ID").is_some() || std::env::var_os("AA_HOOK_SOCK").is_some() {
+        anyhow::bail!("aa 세션 안에서는 routine 명령을 승인할 수 없다. 사람이 host 머신의 일반 터미널에서 한다");
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!("`aa routine approve`는 사람이 터미널에서 실행해야 한다(표준 입력이 터미널이 아니다)");
+    }
+    let rt = runtime()?;
+    let list = rt.block_on(async {
+        let mut c = aa_common::front::FrontClient::connect(&aa_config::paths::state_dir()).await?;
+        c.call(FrontRequest::Routines { project: project.clone() }).await
+    })?;
+    let routines = match list {
+        Ok(FrontResponse::Routines { routines }) => routines,
+        Ok(_) => anyhow::bail!("예상하지 못한 응답"),
+        Err(e) => anyhow::bail!("{e}"),
+    };
+    let r = routines
+        .into_iter()
+        .find(|r| r.name == name)
+        .ok_or_else(|| anyhow::anyhow!("routine이 없다: {project}/{name}"))?;
+    if let Some(e) = &r.error {
+        anyhow::bail!("routine 파일을 읽지 못한다: {e}");
+    }
+    if r.command.is_empty() {
+        anyhow::bail!("명령이 없는 routine이다. 승인할 것이 없다");
+    }
+    let machine = r.machine.as_deref().unwrap_or("host 머신");
+    println!("routine `{name}`({project})은 {machine}에서 이 명령을 `sh -c`로 실행한다. 일정: {}\n", r.schedule);
+    println!("    {}\n", r.command);
+    if !r.commands_allowed {
+        println!(
+            "지금은 host.toml [projects] routine_commands가 이 프로젝트를 허용하지 않아, 승인해도 그것을 켜기 전에는 돌지 않는다.\n"
+        );
+    }
+    print!("승인하려면 routine 이름을 친다: ");
+    std::io::stdout().flush()?;
+    let mut typed = String::new();
+    std::io::stdin().lock().read_line(&mut typed)?;
+    if typed.trim() != name {
+        anyhow::bail!("이름이 다르다. 승인하지 않았다");
+    }
+    front(json, FrontRequest::RoutineApprove { project, name, command_sha256: r.command_sha256 })
 }
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
@@ -1323,6 +1390,39 @@ fn render_front(r: &FrontResponse) -> String {
                 let branch = e.branch.as_deref().unwrap_or("-");
                 let _ =
                     writeln!(s, "{}\t{}/{}\t{}\t{}@{}", e.position, e.project, e.thread, e.title, branch, e.machine);
+            }
+        }
+        FrontResponse::Routines { routines } => {
+            if routines.is_empty() {
+                s.push_str("routine이 없다\n");
+            }
+            for r in routines {
+                if let Some(e) = &r.error {
+                    let _ = writeln!(s, "{}\t쓸 수 없음: {e}", r.name);
+                    continue;
+                }
+                let when = |t: Option<u64>| t.map(aa_common::util::utc_text).unwrap_or_else(|| "-".into());
+                let cmd = if r.command.is_empty() {
+                    "안내만".to_string()
+                } else {
+                    let ok = match (r.commands_allowed, r.approved) {
+                        (true, true) => "승인됨",
+                        (_, false) => "승인 필요",
+                        (false, true) => "host.toml에서 꺼짐",
+                    };
+                    format!("명령 {ok}@{}", r.machine.as_deref().unwrap_or("host"))
+                };
+                let off = if r.enabled { "" } else { " · 꺼짐" };
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{cmd}{off}\t지난 {} · 다음 {} · 건너뜀 {} · coordinator 없음 {}",
+                    r.name,
+                    r.schedule,
+                    when(r.last_run_ms),
+                    when(r.next_run_ms),
+                    r.skipped,
+                    r.no_coordinator
+                );
             }
         }
         FrontResponse::Inbox { items } => {

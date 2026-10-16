@@ -10,6 +10,7 @@ mod inbox;
 pub mod link;
 mod merge;
 mod orch;
+mod routine;
 pub mod tailscale;
 pub mod web;
 
@@ -52,15 +53,20 @@ impl AgentConn {
     }
 
     pub async fn request(&self, body: AgentRequest) -> Result<AgentResponse, ErrorBody> {
+        self.request_timeout(body, REQUEST_TIMEOUT).await
+    }
+
+    /// 오래 걸리는 요청(routine 명령 등)
+    pub async fn request_timeout(&self, body: AgentRequest, wait: Duration) -> Result<AgentResponse, ErrorBody> {
         let id = format!("c{}", self.seq.fetch_add(1, Ordering::Relaxed));
         let (otx, orx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id.clone(), otx);
-        let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(REQUEST_TIMEOUT.as_millis() as u64), body };
+        let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
         if self.tx.json(&msg).await.is_err() {
             self.pending.lock().unwrap().remove(&id);
             return Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다"));
         }
-        match tokio::time::timeout(REQUEST_TIMEOUT, orx).await {
+        match tokio::time::timeout(wait, orx).await {
             Ok(Ok(o)) => o.into_result(),
             Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
             Err(_) => {
@@ -199,6 +205,8 @@ pub struct Host {
     outages: Mutex<HashSet<String>>,
     /// hook 없는 coordinator pane: 마지막 화면 hash와 그 화면이 된 때
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
+    /// 지금 도는 routine 명령(`<project>/<name>`)
+    routine_running: Mutex<HashSet<String>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -277,6 +285,7 @@ impl Host {
             tick_wake: tokio::sync::Notify::new(),
             outages: Mutex::new(HashSet::new()),
             nudge_screens: Mutex::new(HashMap::new()),
+            routine_running: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -692,6 +701,12 @@ impl Host {
             FrontRequest::MergeList { project } => {
                 self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
             }
+            FrontRequest::Routines { project } => {
+                self.routines(&project).map(|routines| FrontResponse::Routines { routines })
+            }
+            FrontRequest::RoutineApprove { project, name, command_sha256 } => self
+                .routine_approve(&project, &name, &command_sha256, actor)
+                .map(|routines| FrontResponse::Routines { routines }),
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
             }

@@ -831,3 +831,144 @@ fn merge_queue_and_capacity() {
     .collect();
     assert_eq!(ev, want);
 }
+
+/// routine(§8.9): coordinator가 없으면 건너뛰고, 안내는 처리 전까지 하나만, 명령은 host.toml 허용과 사람의 승인이 있어야
+/// 대상 머신 agent가 실행한다. 출력이 바뀔 때만 항목이 되고, 명령을 고치면 다시 승인해야 한다.
+#[test]
+fn routines() {
+    let mut w = world_with("tick_secs = 1\nroutine_commands = [\"demo\"]\n");
+    w.add_remote();
+    let dir = w.projects.join("demo");
+    let put = |name: &str, body: &str| std::fs::write(dir.join("routines").join(format!("{name}.md")), body).unwrap();
+    std::fs::write(dir.join("value.txt"), "v1\n").unwrap();
+    put("ping", "+++\nschedule = \"every 2s\"\n+++\n상태를 확인한다\n");
+    put("cmd", "+++\nschedule = \"every 2s\"\ncommand = \"cat value.txt\"\n+++\n값을 본다\n");
+    put("far", "+++\nschedule = \"every 2s\"\ncommand = \"pwd\"\nmachine = \"labB\"\n+++\n");
+    put("pr", "+++\non = \"pr\"\n+++\n");
+    let items = |kind: &str, subject: &str| -> Vec<Value> {
+        w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["item_kind"] == kind && i["subject"] == subject)
+            .cloned()
+            .collect()
+    };
+    let routine = |name: &str| -> Value {
+        w.h.ok(&["routine", "list", "demo"])["routines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()
+            .clone()
+    };
+
+    // coordinator가 없으면 돌지 않고 센다(밀린 실행도 쌓지 않는다)
+    wait_for("coordinator 없음", T, || (routine("ping")["no_coordinator"].as_u64() >= Some(2)).then_some(()));
+    assert!(items("routine", "ping").is_empty() && items("routine-approval", "cmd").is_empty());
+    assert_eq!(items("config-error", "pr").len(), 1);
+    assert!(routine("pr")["error"].as_str().unwrap().contains("M3"));
+
+    let coord = w.h.ok(&[
+        "pane",
+        "run",
+        "--machine",
+        "labA",
+        "--cwd",
+        path_str(&dir),
+        "--",
+        "/bin/sh",
+        path_str(&w.scripts.join("coord.sh")),
+    ])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    w.wait_screen(&coord, "❯");
+    // 안내 routine: 처리하지 않은 항목이 있으면 새로 만들지 않고 건너뛴다
+    let ping = wait_for("ping 항목", T, || items("routine", "ping").into_iter().next());
+    assert_eq!((ping["event"].as_str(), ping["body"].as_str()), (Some("due"), Some("상태를 확인한다")));
+    wait_for("ping 건너뜀", T, || (routine("ping")["skipped"].as_u64() >= Some(2)).then_some(()));
+    assert_eq!(items("routine", "ping").len(), 1);
+    // 승인 전에는 실행하지 않고, 같은 명령에는 「승인 필요」를 한 번만 남긴다
+    wait_for("승인 필요", T, || items("routine-approval", "cmd").into_iter().next());
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(items("routine-approval", "cmd").len(), 1);
+    assert!(items("routine", "cmd").is_empty());
+
+    // 승인: aa 세션 안이거나 터미널이 아니면 거부한다
+    let mut c = w.h.cmd(&["routine", "approve", "demo", "cmd"]);
+    let o = c.env("AA_SESSION_ID", "x").output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("aa 세션 안에서는"), "{o:?}");
+    let o = w.h.cmd(&["routine", "approve", "demo", "cmd"]).env_remove("AA_SESSION_ID").output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
+    // 사람이 터미널에서 이름을 치면 승인된다(시험은 script로 PTY를 만든다)
+    let approve = |name: &str, typed: &str| -> String {
+        let line = format!("{} routine approve demo {name}", lab::BIN);
+        let mut c = Command::new("script");
+        if cfg!(target_os = "macos") {
+            c.args(["-q", "/dev/null", lab::BIN, "routine", "approve", "demo", name]);
+        } else {
+            c.args(["-qec", &line, "/dev/null"]);
+        }
+        c.env("AA_CONFIG_DIR", &w.h.cfg)
+            .env("AA_STATE_DIR", &w.h.state)
+            .env_remove("AA_SESSION_ID")
+            .env_remove("AA_HOOK_SOCK")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = c.spawn().unwrap();
+        // 프롬프트가 보인 뒤에 친다(script는 입력이 끝나면 바로 EOF를 넣는다)
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let mut out = child.stdout.take().unwrap();
+        let s2 = seen.clone();
+        let reader = std::thread::spawn(move || {
+            let mut b = [0u8; 256];
+            while let Ok(n) = std::io::Read::read(&mut out, &mut b) {
+                if n == 0 {
+                    break;
+                }
+                s2.lock().unwrap().extend_from_slice(&b[..n]);
+            }
+        });
+        let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
+        wait_for_diag("승인 프롬프트", T, || text().contains("이름을 친다").then_some(()), text);
+        let mut stdin = child.stdin.take().unwrap();
+        std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
+        let o = child.wait_with_output().unwrap();
+        drop(stdin);
+        reader.join().unwrap();
+        format!("{}{}", text(), String::from_utf8_lossy(&o.stderr))
+    };
+    let out = approve("cmd", "wrong");
+    assert!(out.contains("cat value.txt") && out.contains("이름이 다르다"), "{out}");
+    assert_eq!(routine("cmd")["approved"], false);
+    let out = approve("cmd", "cmd");
+    assert!(!out.contains("aa:"), "{out}");
+    assert_eq!(routine("cmd")["approved"], true);
+
+    // 승인 뒤 실행: 출력이 바뀔 때만 항목이 된다. 출력은 자료로 감싼다.
+    let first = wait_for("출력 항목", T, || items("routine", "cmd").into_iter().next());
+    assert_eq!(first["event"], "output changed");
+    assert!(first["body"].as_str().unwrap().contains("값을 본다\n\n신뢰할 수 없는 명령 출력(종료 코드 0)"), "{first}");
+    assert!(first["body"].as_str().unwrap().contains("```text\nv1\n```"), "{first}");
+    let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
+    assert!(md.contains("```text\nv1\n```"), "{md}");
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(items("routine", "cmd").len(), 1);
+    std::fs::write(dir.join("value.txt"), "v2\n").unwrap();
+    wait_for("두 번째 출력", T, || (items("routine", "cmd").len() == 2).then_some(()));
+    // 명령을 고치면 승인이 풀린다
+    put("cmd", "+++\nschedule = \"every 2s\"\ncommand = \"cat value.txt; echo more\"\n+++\n값을 본다\n");
+    wait_for("다시 승인 필요", T, || (items("routine-approval", "cmd").len() == 2).then_some(()));
+    assert_eq!(routine("cmd")["approved"], false);
+
+    // 다른 머신: 그 머신 agent가 자기 작업 폴더(<work_root>/<project>/routines)에서 실행한다
+    approve("far", "far");
+    let far = wait_for("원격 출력", T, || items("routine", "far").into_iter().next());
+    assert!(far["body"].as_str().unwrap().contains("/workB/demo/routines\n"), "{far}");
+    let ran = w.kinds(0).iter().filter(|k| *k == "routine_ran").count();
+    assert!(ran >= 3, "{:?}", w.kinds(0));
+    assert!(w.kinds(0).contains(&"routine_approved".to_string()));
+}

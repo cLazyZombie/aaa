@@ -112,6 +112,8 @@ pub struct ProjectsSection {
     pub inbox_done_days: u64,
     /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
     pub max_threads_per_machine: u32,
+    /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
+    pub routine_commands: Vec<String>,
 }
 
 impl Default for ProjectsSection {
@@ -126,6 +128,7 @@ impl Default for ProjectsSection {
             outage_secs: 600,
             inbox_done_days: 30,
             max_threads_per_machine: 6,
+            routine_commands: Vec::new(),
         }
     }
 }

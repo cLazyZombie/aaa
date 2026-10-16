@@ -40,6 +40,7 @@ dependencies = [
  "aa-session",
  "anyhow",
  "hex",
+ "libc",
  "rand 0.9.5",
  "serde",
  "serde_json",
@@ -118,6 +119,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-rustls",
+ "toml",
  "toml_edit",
  "tracing",
 ]
@@ -2654,6 +2656,21 @@ dependencies = [
  "log",
  "tokio",
  "tungstenite",
+]
+
+[[package]]
+name = "toml"
+version = "1.1.8+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
 ]
 
 [[package]]
