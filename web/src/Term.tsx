@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, wsUrl } from "./api";
 import { Icon } from "./icons";
+import { ChatPanel } from "./Chat";
 import { onThemeChange, token } from "./theme";
 
 /** 한 번에 보내는 조각(host 상한과 같다) */
@@ -95,6 +96,9 @@ export function TermView({
   const [me, setMe] = useState<string | null>(null);
   const [lease, setLease] = useState<LeaseView | null>(pane.lease);
   const [attach, setAttach] = useState<{ text: string; ok: boolean } | null>(null);
+  // Claude·Codex pane은 터미널 대신 대화 기록으로도 본다(읽기 전용)
+  const chatable = pane.agent?.harness === "claude" || pane.agent?.harness === "codex";
+  const [chatView, setChatView] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const canControl = role !== "reader";
   // 다른 front가 조작 중이다(이 연결의 ID를 받기 전에는 판단하지 않는다)
@@ -344,6 +348,18 @@ export function TermView({
           </span>
         </div>
         {status}
+        {chatable && (
+          <button
+            className="ghost chat-btn"
+            aria-pressed={chatView}
+            data-testid="chat-toggle"
+            onClick={() => setChatView((v) => !v)}
+            title={chatView ? "터미널로 본다" : "대화 기록으로 본다(읽기 전용)"}
+          >
+            <Icon name={chatView ? "shell" : "chat"} />
+            {chatView ? "터미널" : "대화"}
+          </button>
+        )}
         {canControl && (
           <button className="ghost fit-btn" onClick={fitToScreen} disabled={locked} title="PTY 크기를 이 화면에 맞춘다">
             <Icon name="fit" />
@@ -375,7 +391,8 @@ export function TermView({
           </button>
         </div>
       )}
-      <div className="term-scroll">
+      {chatView && chatable && <ChatPanel pane={pane.id} />}
+      <div className="term-scroll" hidden={chatView && chatable}>
         <div className="term-box" ref={box} data-testid="terminal" />
       </div>
       {dock}

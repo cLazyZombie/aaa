@@ -79,6 +79,12 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   close: <path d="M4.5 4.5l9 9M13.5 4.5l-9 9" />,
+  chat: (
+    <>
+      <path d="M3 4.5h12v7.5H8.5L5 15v-3H3z" />
+      <path d="M6 7.5h6M6 9.5h4" />
+    </>
+  ),
   bell: (
     <>
       <path d="M4.5 12.5V8.5a4.5 4.5 0 0 1 9 0v4l1.2 1.5H3.3z" />

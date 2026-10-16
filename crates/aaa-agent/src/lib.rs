@@ -5,6 +5,7 @@
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
 
 mod attach;
+mod chat;
 mod command;
 mod health;
 pub mod hooks;
@@ -452,6 +453,15 @@ impl Agent {
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
             AgentRequest::Forget { session } => self.forget(&session).await,
+            AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
+                chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
+            })
+            .await
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+            .and_then(|r| {
+                r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
+                    .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
+            }),
             AgentRequest::Profiles => {
                 Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
             }
