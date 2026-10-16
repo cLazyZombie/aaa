@@ -73,6 +73,7 @@ pub struct HostConfig {
     pub host: HostSection,
     pub web: WebSection,
     pub local_agent: LocalAgentSection,
+    pub tui: TuiSection,
 }
 
 impl Default for HostConfig {
@@ -82,7 +83,22 @@ impl Default for HostConfig {
             host: HostSection::default(),
             web: WebSection::default(),
             local_agent: LocalAgentSection::default(),
+            tui: TuiSection::default(),
         }
+    }
+}
+
+/// TUI front(`aa attach`). host 머신에서 실행하므로 host.toml에 둔다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TuiSection {
+    /// 명령 prefix 키. `C-<글자>` 형식(예: tmux 안에서 쓸 때는 C-a 대신 C-g 같은 것을 고른다)
+    pub prefix: String,
+}
+
+impl Default for TuiSection {
+    fn default() -> Self {
+        TuiSection { prefix: "C-b".into() }
     }
 }
 

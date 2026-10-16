@@ -427,7 +427,7 @@ impl Host {
 
     // ───────────── 보기 ─────────────
 
-    fn machine_views(&self) -> Vec<MachineView> {
+    pub fn machine_views(&self) -> Vec<MachineView> {
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i
             .machines

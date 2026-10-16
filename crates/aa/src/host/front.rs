@@ -76,6 +76,19 @@ async fn serve(host: Arc<Host>, s: crate::ipc::LocalStream) -> Result<()> {
             }
         })
     };
+    // 머신·pane 목록(상태·lease)이 바뀌면 전체 목록을 보낸다
+    let state_task = {
+        let (tx, host, mut changed) = (tx.clone(), host.clone(), host.changed.subscribe());
+        tokio::spawn(async move {
+            loop {
+                let ev =
+                    FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(DeviceRole::Local) };
+                if tx.json(&FrontMsg::Event(ev)).await.is_err() || changed.changed().await.is_err() {
+                    break;
+                }
+            }
+        })
+    };
     let mut watches: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
@@ -114,6 +127,7 @@ async fn serve(host: Arc<Host>, s: crate::ipc::LocalStream) -> Result<()> {
     }
     .await;
     layout_task.abort();
+    state_task.abort();
     for (_, t) in watches {
         t.abort();
     }
@@ -269,6 +283,26 @@ impl FrontClient {
         Ok(id)
     }
 
+    /// 보내는 쪽과 받는 쪽으로 나눈다. 받기는 task가 하므로 select!에서 기다려도 frame이 잘리지 않는다.
+    pub fn split(self) -> (FrontSender, tokio::sync::mpsc::UnboundedReceiver<FrontMsg>) {
+        let (etx, erx) = tokio::sync::mpsc::unbounded_channel();
+        for e in self.events {
+            let _ = etx.send(FrontMsg::Event(e));
+        }
+        let mut rx = self.rx;
+        tokio::spawn(async move {
+            while let Ok(Some(m)) = rx.next().await {
+                if let Incoming::Control(b) = m
+                    && let Ok(msg) = serde_json::from_slice::<FrontMsg>(&b)
+                    && etx.send(msg).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        (FrontSender { tx: self.tx, seq: self.seq, front: self.front }, erx)
+    }
+
     /// 다음 메시지(사건 또는 응답). 모아 둔 사건을 먼저 준다. 연결이 끝나면 None.
     pub async fn next(&mut self) -> Result<Option<FrontMsg>> {
         if let Some(e) = self.events.pop_front() {
@@ -281,5 +315,21 @@ impl FrontClient {
                 Some(Incoming::Terminal(_)) => continue,
             }
         }
+    }
+}
+
+/// `FrontClient::split`의 보내는 쪽
+pub struct FrontSender {
+    tx: FrameTx,
+    seq: u64,
+    pub front: String,
+}
+
+impl FrontSender {
+    pub async fn send(&mut self, body: FrontRequest) -> Result<String> {
+        self.seq += 1;
+        let id = format!("q{}", self.seq);
+        self.tx.json(&FrontMsg::Req { id: id.clone(), body }).await?;
+        Ok(id)
     }
 }

@@ -15,3 +15,7 @@ publish_ports = [443, 8443, 7443, 17443]
 [local_agent]
 # child: 개발 모드(host가 로컬 agent를 띄움), launchd: 운영 모드(LaunchAgent가 띄움), none: 쓰지 않음
 mode = "child"
+
+[tui]
+# aa attach의 명령 prefix 키(C-<글자>). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "C-g").
+prefix = "C-b"
