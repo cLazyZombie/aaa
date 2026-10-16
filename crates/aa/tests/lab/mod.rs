@@ -1,6 +1,6 @@
 //! E2E 실험실: 한 머신에 host와 agent backend 여러 개를 각자 다른 설정·상태 폴더로 띄운다(결정 3).
 //!
-//! - 경로는 UDS 길이 제한(macOS 104바이트) 때문에 `/tmp/aae-<pid>-<n>`처럼 짧게 둔다.
+//! - Unix는 UDS 길이 제한(macOS 104바이트) 때문에 `/tmp/aae-<pid>-<n>`처럼 짧게 둔다. Windows는 Named Pipe라 임시 폴더를 쓴다.
 //! - 띄운 프로세스는 `Child`로만 잡고, 끝날 때 그 PID만 종료한다. session host(setsid로 분리)는
 //!   상태 폴더의 meta.json에 적힌 PID 중 명령줄이 이 실험실 경로를 가리키는 것만 종료한다.
 
@@ -87,7 +87,8 @@ impl Node {
 impl Lab {
     pub fn new() -> Lab {
         let n = SEQ.fetch_add(1, Ordering::SeqCst);
-        let root = PathBuf::from(format!("/tmp/aae-{}-{n}", std::process::id()));
+        let name = format!("aae-{}-{n}", std::process::id());
+        let root = if cfg!(unix) { PathBuf::from("/tmp").join(name) } else { std::env::temp_dir().join(name) };
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Lab { root, procs: vec![] }
@@ -169,16 +170,26 @@ impl Lab {
         }
         // 그 PID가 지금도 이 실험실의 session host인지 명령줄로 확인한다(PID 재사용 대비).
         out.into_iter()
-            .filter(|(pid, dir)| command_of(*pid).is_some_and(|c| c.contains(&*dir.to_string_lossy())))
+            .filter(|(pid, dir)| command_of(*pid).is_some_and(|c| cfg!(windows) || c.contains(&*dir.to_string_lossy())))
             .map(|(p, _)| p)
             .collect()
     }
 }
 
+#[cfg(unix)]
 fn command_of(pid: u32) -> Option<String> {
     let o = Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()]).output().ok()?;
     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
+}
+
+/// Windows: 명령줄 대신 그 PID의 실행 파일 이름이 aa인지 본다(CI 전용 임시 runner).
+#[cfg(windows)]
+fn command_of(pid: u32) -> Option<String> {
+    let filter = format!("PID eq {pid}");
+    let o = Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]).output().ok()?;
+    let s = String::from_utf8_lossy(&o.stdout).to_string();
+    s.to_ascii_lowercase().contains("\"aa.exe\"").then_some(s)
 }
 
 impl Drop for Lab {
@@ -187,9 +198,13 @@ impl Drop for Lab {
             let _ = c.kill();
             let _ = c.wait();
         }
-        #[cfg(unix)]
         for pid in self.session_hosts() {
-            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL)
+            };
+            #[cfg(windows)]
+            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
         }
         if !std::thread::panicking() {
             let _ = std::fs::remove_dir_all(&self.root);

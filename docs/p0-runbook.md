@@ -2,6 +2,8 @@
 
 기획서 [§10.6](plan.md#106-p0-실험)의 P0 실험을 사람이 실제로 돌리는 순서다. 결정 9(자체 서명 1순위, Apple Development 2순위)와 결정 10(GUI 작업은 mac-a, 명령만이면 mac-c ssh)을 따른다.
 
+문서의 머신 이름은 일반 이름이다. mac-a는 화면 접속이 되는 Mac, mac-b는 coordinator Mac, mac-c는 구현 Mac이다.
+
 - 도구: `p0/`(빌드·서명·설치·측정·업그레이드 모의), `aa doctor probe`, `aa service`
 - 결과 위치: 실행한 Mac의 `~/aa-p0/results/`
 - 판정은 도구가 한다. 첫 실행 추가 지연 median ≤10ms, p95 ≤20ms, 100ms 초과 0, 키체인 실제 항목 읽기 `ok`, 전체 디스크 접근 `ok`, 외장 볼륨 읽기·쓰기 성공.
