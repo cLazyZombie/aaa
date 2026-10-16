@@ -1033,6 +1033,25 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 외부 터미널이 그림 파일 경로를 글로 붙이는 경우(§9 「입력 호환」)는 아직 올리지 않는다. 경로를 일부러 붙인 것과 구분할 수 없어 글 그대로 보낸다.
   - 실제 Claude·Codex 입력창에 넣는 길은 웹과 같은 host 코드다. 웹 E2E의 harness pane 단계가 그것을 본다.
 
+### 8.29 다시 띄워도 harness 상태 유지(10-17, 운영 업그레이드에서 찾음)
+
+- **찾은 것.** 세 Mac의 감독자를 다시 띄우는 업그레이드(점검표 9)에서 일이 있었다. 운영 host Mac은 host와 agent를 함께 다시 띄웠는데, 그 뒤 쉬고 있던 shadow Claude pane의 harness 상태가 비었다. 상태 badge가 없어졌고, 「대화」 보기도 「Claude·Codex pane만」으로 거부됐다. 세션 자체는 이어졌다.
+- **원인.** harness 상태는 hook 사건으로만 생긴다. host가 다시 뜨면 agent가 세션별 마지막 사건을 다시 알려 주는데, agent는 그 사건을 메모리에만 두었다. 그래서 agent도 같이 다시 뜨면 다음 hook이 올 때까지 상태가 없다. 쉬는 harness에는 다음 hook이 오지 않는다.
+  - 또 하나: 다시 알리는 사건이 세션마다 마지막 하나뿐이었다. Claude Stop 뒤에 진행 보고(`aaa report`)가 오면, 다시 알릴 때 Claude 상태와 기록 위치가 빠졌다.
+- **고친 것.** agent가 세션마다 두 칸을 기억한다. harness(Claude·Codex) 마지막 사건 하나와 진행 보고 마지막 사건 하나다.
+  - 같은 harness의 다음 사건에 기록 위치나 harness 세션 ID가 없으면 앞 사건 것을 이어받는다.
+  - 두 칸을 세션 폴더 `harness.json`(0600)에 적는다. agent가 다시 뜨면 세션을 다시 붙일 때 읽고, host에 붙으면 시각 순으로 다시 알린다. 세션을 지우면 함께 지워진다.
+  - 기록 경로는 그 머신의 세션 폴더에만 남는다(§8.27의 「host는 내보내지 않는다」와 같다). host DB에 두는 방법도 해 봤지만 버렸다. agent가 이미 다시 알리는 구조가 있어서, 그것을 디스크에 남기는 쪽이 고칠 곳이 하나다.
+- **시험.** `host_restart_keeps_sessions_and_disconnect_is_readonly` E2E에 단계를 더했다.
+  - Stop hook(기록 위치 포함)과 진행 보고를 보낸 쉬는 Claude pane을 만든다.
+  - host만 다시 띄웠을 때, 그리고 host와 agent를 함께 다시 띄웠을 때 모두 같은 harness 상태(때·진행 포함)와 대화 보기가 돌아오는지 본다.
+  - 다음 두 경우에 이 시험이 실패하는 것을 확인했다.
+    - agent가 `harness.json`을 읽지 않을 때
+    - 진행 보고가 harness 칸을 덮을 때
+- **남는 한계.**
+  - 내려가 있는 동안 harness가 상태를 바꾸면, 다음 hook까지는 마지막으로 알던 상태다. 감독자가 내려가 있는 동안 온 hook은 다시 보낼 곳이 없다.
+  - 이 수정 전에 시작한 세션에는 `harness.json`이 없다. 그래서 그 세션은 다음 hook이 와야 상태가 생긴다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

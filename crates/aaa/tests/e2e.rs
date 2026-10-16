@@ -40,13 +40,16 @@ fn screen_has(node: &Node, pane: &str, needle: &str) -> Option<()> {
 }
 
 /// host를 죽였다 살려도 세션이 남고, agent가 끊기면 읽기 전용이 되며, agent가 돌아오면 다시 입력된다.
+/// host와 agent를 함께 다시 띄워도 harness 상태·진행·대화 기록 위치가 되살아난다(다음 hook을 기다리지 않는다).
 #[test]
 fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     let mut lab = Lab::new();
     let h = lab.node("h", Some(LOCAL_ONLY));
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
-    lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
+    let claude = lab.root.join("claude");
+    let claude_s = claude.to_str().unwrap().to_string();
+    lab.spawn_env("agent", &h, &["agent", "--host", "local", "--name", "labA"], &[("CLAUDE_CONFIG_DIR", &claude_s)]);
     wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
 
     let p = h.ok(&["pane", "run", "--machine", "labA", "--name", "t1", "--", "/bin/sh"]);
@@ -54,11 +57,53 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     h.ok(&["pane", "send", &id, "--text", "echo mark-$((6*7))", "--enter"]);
     wait_for("첫 출력", T, || screen_has(&h, &id, "mark-42"));
 
+    // 쉬고 있는 Claude pane(Stop hook과 진행 보고 뒤 입력 없음): 다시 떠도 상태·진행·대화 보기가 남아야 한다
+    let dir = claude.join("projects").join("-lab");
+    std::fs::create_dir_all(&dir).unwrap();
+    let tr = dir.join("s1.jsonl");
+    std::fs::write(
+        &tr,
+        concat!(
+            r#"{"type":"user","message":{"role":"user","content":"이름 뜻을 적어 줘"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"적었다"}]}}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let hook = serde_json::json!({ "hook_event_name": "Stop", "session_id": "s1", "transcript_path": tr }).to_string();
+    let c = h.ok(&[
+        "pane",
+        "run",
+        "--machine",
+        "labA",
+        "--name",
+        "c1",
+        "--",
+        "/bin/sh",
+        "-c",
+        r#""$0" hook --agent claude "$1"; "$0" report --percent 40 --activity 정리; exec cat"#,
+        lab::BIN,
+        &hook,
+    ]);
+    let cid = c["id"].as_str().unwrap().to_string();
+    let chat_len = || h.json(&["pane", "chat", &cid]).ok().and_then(|v| v["messages"].as_array().map(|m| m.len()));
+    wait_for("hook 반영", T, || (chat_len() == Some(2) && h.pane(&cid)["agent"]["percent"] == 40).then_some(()));
+    let before = h.pane(&cid)["agent"].clone();
+    assert_eq!((before["harness"].as_str(), before["activity"].as_str()), (Some("claude"), Some("idle")), "{before}");
+    let restored = |what: &str| {
+        assert_eq!(h.pane(&cid)["agent"], before, "{what}: harness 상태가 되살아나지 않았다");
+        assert_eq!(chat_len(), Some(2), "{what}: 대화 기록 위치가 되살아나지 않았다");
+    };
+
     // host 갑작스러운 종료 → 재시작: agent가 다시 붙고 같은 세션이 그대로 있다
     lab.kill("host");
     lab.spawn("host2", &h, &["host"]);
     wait_for("host 재시작 뒤 labA 재연결", Duration::from_secs(40), || connected(&h, "labA").then_some(()));
     assert_eq!(h.pane(&id)["state"], "running");
+    // 새 hook 없이 같은 harness 상태(때 포함)와 대화 보기(agent 메모리에서 다시 알린다)
+    wait_for("host 재시작 뒤 harness 상태", T, || (h.pane(&cid)["agent"] == before).then_some(()));
+    restored("host만 다시 띄움");
     wait_for("재시작 뒤 화면", T, || screen_has(&h, &id, "mark-42"));
     h.ok(&["pane", "send", &id, "--text", "echo after-$((1+1))", "--enter"]);
     wait_for("재시작 뒤 입력", T, || screen_has(&h, &id, "after-2"));
@@ -74,12 +119,21 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     assert!(err.contains("agent_disconnected"), "{err}");
     assert!(h.screen(&id).contains("after-2"), "끊긴 뒤에도 마지막 화면을 읽는다");
 
-    // agent가 돌아오면 session host가 살아 있어 다시 붙는다
-    lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
+    // agent가 내려간 동안 host도 다시 띄운다(운영 업그레이드처럼 둘 다 메모리가 빈다)
+    lab.kill("host2");
+    lab.spawn("host3", &h, &["host"]);
+    wait_for("host3 준비", T, || h.json(&["status"]).ok());
+
+    // agent가 돌아오면 session host가 살아 있어 다시 붙는다(새 host는 agent가 붙어야 pane을 안다)
+    lab.spawn_env("agent2", &h, &["agent", "--host", "local", "--name", "labA"], &[("CLAUDE_CONFIG_DIR", &claude_s)]);
     wait_for("agent 재연결", T, || {
-        let p = h.pane(&id);
+        let v = h.json(&["pane", "list"]).ok()?;
+        let p = v["panes"].as_array()?.iter().find(|p| p["id"] == id.as_str())?.clone();
         (p["connection"] == "connected" && p["readonly"] == false).then_some(())
     });
+    // agent가 세션 폴더(harness.json)에서 읽어 다시 알린다
+    wait_for("둘 다 다시 띄운 뒤 harness 상태", T, || (h.pane(&cid)["agent"] == before).then_some(()));
+    restored("host·agent 함께 다시 띄움");
     h.ok(&["pane", "send", &id, "--text", "echo back-$((2+2))", "--enter"]);
     wait_for("재부착 뒤 입력", T, || screen_has(&h, &id, "back-4"));
 

@@ -56,8 +56,9 @@ pub struct Agent {
     threads_cfg: Mutex<threads::ThreadsConfig>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
-    /// 세션별 마지막 harness 사건(host가 다시 붙으면 다시 보낸다)
-    harness_last: Mutex<HashMap<String, aaa_proto::HarnessEvent>>,
+    /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). harness(Claude·Codex) 마지막 하나와
+    /// 진행 보고(`aaa report`) 마지막 하나다. 세션 폴더 `harness.json`에도 적어 agent가 다시 떠도 남는다.
+    harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
     /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
@@ -126,9 +127,32 @@ impl Agent {
         let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
             return Ok(());
         };
-        self.harness_last.lock().unwrap().insert(msg.session.clone(), ev.clone());
+        let me = self.clone();
+        let kept = ev.clone();
+        let _ = tokio::task::spawn_blocking(move || me.remember_harness(kept)).await;
         self.send_host(&LinkMsg::Event(AgentEvent::Harness(ev))).await;
         Ok(())
+    }
+
+    /// 다시 알릴 사건을 바꾸고 세션 폴더에 적는다. 같은 칸(harness·보고)의 앞 사건을 바꾸되, 이번 사건에 없는
+    /// 기록 위치·harness 세션 ID는 앞 사건 것을 이어받는다(Stop 뒤에 온 사건이 그것을 지우지 않게).
+    fn remember_harness(&self, mut ev: aaa_proto::HarnessEvent) {
+        let is_report = |e: &aaa_proto::HarnessEvent| e.harness == "report";
+        let mut map = self.harness_last.lock().unwrap();
+        let list = map.entry(ev.session.clone()).or_default();
+        if let Some(i) = list.iter().position(|e| is_report(e) == is_report(&ev)) {
+            let old = list.remove(i);
+            if old.harness == ev.harness {
+                ev.transcript = ev.transcript.or(old.transcript);
+                ev.harness_session = ev.harness_session.or(old.harness_session);
+            }
+        }
+        list.push(ev.clone());
+        list.sort_by_key(|e| e.at_ms);
+        // 파일 쓰기도 lock 안에서 해 순서가 뒤바뀌지 않게 한다
+        if let Err(e) = util::write_json(&SessionPaths::new(&self.state, &ev.session).harness(), list) {
+            tracing::warn!(session = %ev.session, "harness.json을 쓰지 못했다: {e}");
+        }
     }
 
     /// agent.toml의 thread 설정(작업 root·profile)
@@ -172,7 +196,8 @@ impl Agent {
         let gone = tx.is_none();
         if let Some(tx) = &tx {
             // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
-            let last: Vec<_> = self.harness_last.lock().unwrap().values().cloned().collect();
+            let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
+            last.sort_by_key(|e| e.at_ms);
             let tx = tx.clone();
             tokio::spawn(async move {
                 for ev in last {
@@ -213,6 +238,12 @@ impl Agent {
                     continue;
                 }
             };
+            if let Ok(list) = util::read_json::<Vec<aaa_proto::HarnessEvent>>(&paths.harness()) {
+                self.harness_last
+                    .lock()
+                    .unwrap()
+                    .insert(id.clone(), list.into_iter().filter(|e| e.session == id).collect());
+            }
             if paths.exit().exists() {
                 let info = self.offline_info(&paths, &spec);
                 self.sessions.lock().unwrap().insert(id, Entry { info, pump: None });
@@ -598,6 +629,7 @@ impl Agent {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        self.harness_last.lock().unwrap().remove(session);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");
