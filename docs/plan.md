@@ -698,6 +698,20 @@ host 프로젝트 폴더 구성:
   - E2E `m13 hooked_thread_questions_and_messages`: 가짜 Claude가 실제처럼 신뢰 창(기본 No)·권한 창을 그리고 hook을 보낸다. 거절과 Esc 뒤에는 Stop을 내지 않는다.
   - 실제 Claude Code 2.1(haiku) smoke: 신뢰 창 → brief → 권한 거절·허락 → 메시지 → 보고 회수 → interrupt를 한 바퀴 돌렸다.
 
+### 8.16 M1-3c 구현 결정(10-16): 결정 기록, thread stop·restart
+
+- **결정 기록(§8.6):** `aa decision add <p> --text|--text-file [--replaces N]`, `aa decision list <p>`
+  - `decisions.md`가 원본이다. `## <번호> · <UTC 시각>[ · <번호>번 대체]` 묶음으로 덧붙인다. 사람이 고친 파일도 `## <번호>` 제목으로 읽는다.
+  - 흐름 사건은 `decision_added`(thread 없는 프로젝트 사건)다.
+  - thread는 시작·다시 시작 때 brief에 넣은 가장 큰 번호를 `decisions_rev`로 기록한다. `decisions_now`보다 작으면 CLI가 「결정 N번까지 보고 시작했다」를 보인다. 별도 DB revision 표는 두지 않았다(파일 번호가 revision이다).
+- **thread stop:** 0.2.35처럼 Esc 한 번이다. 세션·작업 폴더는 그대로다. 흐름 사건은 `thread_stopped`다.
+- **thread restart**
+  - 세션이 실행 중이면 거부한다(`aa pane kill` 뒤에 한다). 열린 thread인데 세션이 끝났으면 목록 묶음이 「사람 차례」다(새 보고가 있으면 「검토 대기」가 먼저다).
+  - 기본은 task(Follow-ups 포함)·지침·결정·memory를 다시 읽어 brief를 새로 쓴다. brief 맨 앞에는 「다시 시작했다, 이전 시도를 먼저 확인한다」를 붙이고, 새 대화로 띄운 뒤 안내한다. claude는 새 `--session-id`를 받는다(agent `ThreadRebrief`).
+  - `--resume`은 저장된 launch의 resume argv로 같은 대화를 잇고, 안내하지 않는다. `{session}`이 필요한데 harness 세션 ID를 모르면 거부한다.
+  - profile은 다시 해석하지 않는다(저장된 launch를 쓴다). profile 바꾸기는 하지 않았다.
+- **아직:** `thread next`, TASKS.md 소유, `start_threads` 정책은 하지 않았다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

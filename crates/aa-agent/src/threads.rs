@@ -40,6 +40,20 @@ pub fn profile_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
         .collect()
 }
 
+/// 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 만든다(claude는 새 session ID)
+pub fn rebrief(work_dir: &str, brief: &str, mut launch: Launch) -> Result<Launch> {
+    let dir = check_work_dir(work_dir)?;
+    std::fs::write(dir.join("brief.md"), brief)?;
+    if let Some(i) = launch.argv.iter().position(|a| a == "--session-id")
+        && i + 1 < launch.argv.len()
+    {
+        let key = uuid_v4();
+        launch.argv[i + 1] = key.clone();
+        launch.session_key = Some(key);
+    }
+    Ok(launch)
+}
+
 fn uuid_v4() -> String {
     let mut b: [u8; 16] = rand::random();
     b[6] = (b[6] & 0x0f) | 0x40;
@@ -398,6 +412,21 @@ mod tests {
         let x = resolve("p", &profile("codex")).unwrap();
         assert_eq!(&x.resume_argv[..3], ["codex", "resume", "{session}"]);
         assert!(x.argv.contains(&"model_reasoning_effort=high".to_string()));
+    }
+
+    #[test]
+    fn rebrief_writes_brief_and_new_claude_session() {
+        let root = std::env::temp_dir().join(format!("aa-rebrief-{}", std::process::id()));
+        let wd = root.join(".aa").join("p-t-0001");
+        std::fs::create_dir_all(&wd).unwrap();
+        let old = resolve("c", &profile("claude")).unwrap();
+        let new = rebrief(wd.to_str().unwrap(), "새 brief", old.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(wd.join("brief.md")).unwrap(), "새 brief");
+        assert_ne!(new.session_key, old.session_key);
+        let i = new.argv.iter().position(|a| a == "--session-id").unwrap();
+        assert_eq!(Some(&new.argv[i + 1]), new.session_key.as_ref());
+        assert_eq!(new.resume_argv, old.resume_argv);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

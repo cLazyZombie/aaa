@@ -347,6 +347,10 @@ pub struct ThreadView {
     pub error: Option<String>,
     /// agent harness 상태(hook으로 안다)
     pub agent: Option<Box<AgentStatus>>,
+    /// thread를 시작할 때 brief에 넣은 결정 기록 번호(가장 큰 번호). 지금 번호보다 작으면 옛 결정으로 일한다.
+    pub decisions_rev: Option<u32>,
+    /// 프로젝트의 지금 결정 번호
+    pub decisions_now: Option<u32>,
     #[ts(type = "number")]
     pub created_at_ms: u64,
     #[ts(type = "number")]
@@ -401,6 +405,55 @@ pub fn parse_report(text: &str) -> (Option<String>, Vec<String>) {
         }
     }
     (state, next)
+}
+
+/// 결정 기록 한 건(`projects/<p>/decisions.md`의 `## <번호> · <시각>[ · <번호>번 대체]` 묶음)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DecisionView {
+    pub num: u32,
+    /// 적은 시각(파일에 적힌 글 그대로)
+    pub at: String,
+    pub text: String,
+    /// 이 결정이 대체한 번호
+    pub replaces: Option<u32>,
+    /// 나중 결정이 이 결정을 대체했다
+    pub replaced_by: Option<u32>,
+}
+
+/// decisions.md를 읽는다. 사람이 고친 파일도 읽게 `## <번호>`로 시작하는 제목만 본다.
+pub fn parse_decisions(md: &str) -> Vec<DecisionView> {
+    let mut out: Vec<DecisionView> = Vec::new();
+    for line in md.lines() {
+        if let Some(h) = line.strip_prefix("## ") {
+            let mut parts = h.split('·').map(str::trim);
+            if let Some(num) = parts.next().and_then(|n| n.trim_end_matches('.').parse::<u32>().ok()) {
+                let at = parts.next().unwrap_or_default().to_string();
+                let replaces = parts.find_map(|p| p.strip_suffix("번 대체").and_then(|n| n.trim().parse().ok()));
+                out.push(DecisionView { num, at, text: String::new(), replaces, replaced_by: None });
+                continue;
+            }
+        }
+        if let Some(d) = out.last_mut() {
+            d.text.push_str(line);
+            d.text.push('\n');
+        }
+    }
+    for d in &mut out {
+        d.text = d.text.trim().to_string();
+    }
+    let pairs: Vec<(u32, u32)> = out.iter().filter_map(|d| d.replaces.map(|r| (r, d.num))).collect();
+    for (old, by) in pairs {
+        if let Some(d) = out.iter_mut().find(|d| d.num == old) {
+            d.replaced_by = Some(by);
+        }
+    }
+    out
+}
+
+/// decisions.md 끝에 붙일 한 건
+pub fn render_decision(d: &DecisionView) -> String {
+    let rep = d.replaces.map(|r| format!(" · {r}번 대체")).unwrap_or_default();
+    format!("\n## {} · {}{rep}\n\n{}\n", d.num, d.at, d.text.trim())
 }
 
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)
@@ -474,6 +527,32 @@ mod tests {
         let e = FrontEvent::Question(q);
         let j = serde_json::to_string(&e).unwrap();
         assert_eq!(serde_json::from_str::<FrontEvent>(&j).unwrap(), e, "{j}");
+    }
+
+    #[test]
+    fn decisions_parse_and_render() {
+        let mut md = String::from("# 결정 기록\n\n머리말\n");
+        md.push_str(&render_decision(&DecisionView {
+            num: 1,
+            at: "2026-10-16 12:00Z".into(),
+            text: "A로 한다".into(),
+            replaces: None,
+            replaced_by: None,
+        }));
+        md.push_str("\n## 2. · 사람이 쓴 시각\n\n여러 줄\n- 둘째 줄\n");
+        md.push_str(&render_decision(&DecisionView {
+            num: 3,
+            at: "2026-10-16 12:05Z".into(),
+            text: "B로 바꾼다".into(),
+            replaces: Some(1),
+            replaced_by: None,
+        }));
+        let d = parse_decisions(&md);
+        assert_eq!(d.iter().map(|d| d.num).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!((d[0].text.as_str(), d[0].replaced_by), ("A로 한다", Some(3)));
+        assert_eq!((d[1].at.as_str(), d[1].text.as_str()), ("사람이 쓴 시각", "여러 줄\n- 둘째 줄"));
+        assert_eq!(d[2].replaces, Some(1));
+        assert!(parse_decisions("# 결정 기록\n\n## 메모\n").is_empty());
     }
 
     #[test]

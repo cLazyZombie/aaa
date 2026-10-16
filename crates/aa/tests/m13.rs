@@ -550,6 +550,13 @@ fn hooked_thread_questions_and_messages() {
     let screen = w.wait_screen(&pane, "got: urgent2");
     assert!(!screen.contains("long done"), "{screen}");
     assert_eq!(screen.matches("Interrupted").count(), 3, "{screen}");
+    // thread stop: Esc 한 번(세션은 그대로)
+    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    assert_eq!(w.message(&id, "long three", false)["state"], "accepted");
+    w.wait_for_count(&pane, "long start", 3);
+    w.h.ok(&["thread", "stop", "demo", &id]);
+    w.wait_for_count(&pane, "Interrupted", 4);
+    assert_eq!(w.h.pane(&pane)["state"], "running");
     assert!(!screen.contains("NEVER-SENT"), "{screen}");
 
     let all = w.questions(true);
@@ -581,6 +588,71 @@ fn hooked_thread_questions_and_messages() {
             "message_accepted",
             "message_queued",
             "message_accepted",
+            "message_queued",
+            "message_accepted",
         ]
     );
+}
+
+/// 결정 기록이 brief에 들어가고, 옛 결정으로 일하는 thread가 보인다. 끝난 세션은 다시 시작한다(새 brief·resume).
+#[test]
+fn decisions_and_restart() {
+    let w = world();
+    let d = w.h.ok(&["decision", "add", "demo", "--text", "API는 v2로 한다"]);
+    assert_eq!(d["num"], 1);
+    let e = w.h.json(&["decision", "add", "demo", "--text", "x", "--replaces", "9"]).expect_err("없는 번호 대체");
+    assert!(e.contains("대체할 결정이 없다"), "{e}");
+
+    let v = w.start(&[
+        "--title",
+        "dec",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("t6.txt", "결정 확인"),
+    ]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    let brief_path = PathBuf::from(v["work_dir"].as_str().unwrap()).join("brief.md");
+    assert!(std::fs::read_to_string(&brief_path).unwrap().contains("API는 v2로 한다"));
+    let v = w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    assert_eq!((v["decisions_rev"].as_u64(), v["decisions_now"].as_u64()), (Some(1), Some(1)));
+
+    // 결정이 바뀌면 옛 결정으로 일하는 thread가 보인다
+    w.h.ok(&["decision", "add", "demo", "--text", "API는 v3로 바꾼다", "--replaces", "1"]);
+    let list = w.h.ok(&["decision", "list", "demo"]);
+    assert_eq!(list["decisions"][0]["replaced_by"], 2);
+    let text = String::from_utf8(w.h.cmd(&["thread", "show", "demo", &id]).output().unwrap().stdout).unwrap();
+    assert!(text.contains("결정 1번까지 보고 시작했다(지금 2번)"), "{text}");
+
+    // 실행 중이면 다시 시작하지 않는다
+    let e = w.h.json(&["thread", "restart", "demo", &id]).expect_err("실행 중 restart");
+    assert!(e.contains("실행 중"), "{e}");
+    // 새 보고는 「검토 대기」가 먼저다. 확인한 뒤 세션이 끝나면 「사람 차례」다.
+    w.h.ok(&["thread", "ack", "demo", &id]);
+    w.h.ok(&["pane", "kill", &pane]);
+    w.wait_show("세션 끝남 → 사람 차례", &id, |v| v["group"] == "waiting_on_you");
+
+    // 새로 시작: task·결정을 다시 읽어 brief를 새로 쓰고 안내한다
+    let v = w.h.ok(&["thread", "restart", "demo", &id]);
+    let pane2 = v["pane"].as_str().unwrap().to_string();
+    assert_ne!(pane2, pane);
+    let brief = std::fs::read_to_string(&brief_path).unwrap();
+    assert!(brief.starts_with("> 이 thread는 다시 시작했다") && brief.contains("API는 v3로 바꾼다"), "{brief}");
+    let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered" && v["decisions_rev"] == 2);
+    assert_eq!(v["group"], "working");
+    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+
+    // resume: 같은 대화를 잇는다(custom harness는 같은 명령). brief 안내는 하지 않는다.
+    w.h.ok(&["pane", "kill", &pane2]);
+    wait_for("세션 끝남", T, || (w.h.pane(&pane2)["state"] != "running").then_some(()));
+    let v = w.h.ok(&["thread", "restart", "demo", &id, "--resume"]);
+    let pane3 = v["pane"].as_str().unwrap().to_string();
+    wait_for("resume 세션", T, || (w.h.pane(&pane3)["state"] == "running").then_some(()));
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(w.kinds(seen), ["thread_restarted"]);
+    let all = w.kinds(0);
+    assert!(all.contains(&"decision_added".to_string()), "{all:?}");
 }

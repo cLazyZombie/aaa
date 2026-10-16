@@ -99,9 +99,9 @@ export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "
 /**
  * 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
  */
-task: string, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
+task: string, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
 
-export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView;
+export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView;
 
@@ -161,7 +161,15 @@ copy: string | null, error: string | null,
 /**
  * agent harness 상태(hook으로 안다)
  */
-agent: AgentStatus | null, created_at_ms: number, updated_at_ms: number, };
+agent: AgentStatus | null, 
+/**
+ * thread를 시작할 때 brief에 넣은 결정 기록 번호(가장 큰 번호). 지금 번호보다 작으면 옛 결정으로 일한다.
+ */
+decisions_rev: number | null, 
+/**
+ * 프로젝트의 지금 결정 번호
+ */
+decisions_now: number | null, created_at_ms: number, updated_at_ms: number, };
 
 export type FlowEvent = { project: string, seq: number, at_ms: number, boot_id: string, 
 /**
@@ -206,4 +214,18 @@ export type MessageMode = "interrupt" | "queue";
 export type DeliveryState = "queued" | "accepted" | "unknown";
 
 export type MessageView = { id: string, project: string, thread: string, mode: MessageMode, state: DeliveryState, text: string, created_at_ms: number, };
+
+export type DecisionView = { num: number, 
+/**
+ * 적은 시각(파일에 적힌 글 그대로)
+ */
+at: string, text: string, 
+/**
+ * 이 결정이 대체한 번호
+ */
+replaces: number | null, 
+/**
+ * 나중 결정이 이 결정을 대체했다
+ */
+replaced_by: number | null, };
 

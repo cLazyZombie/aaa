@@ -189,6 +189,8 @@ pub struct Host {
     deliver_lock: tokio::sync::Mutex<()>,
     /// pane 등록 전에 온 harness 사건
     held: Mutex<harness::Held>,
+    /// decisions.md 덧붙이기는 한 번에 하나씩
+    decision_lock: Mutex<()>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -263,6 +265,7 @@ impl Host {
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
+            decision_lock: Mutex::new(()),
         }))
     }
 
@@ -641,6 +644,12 @@ impl Host {
             FrontRequest::ThreadResolve { project, thread, keep_worktree } => {
                 self.thread_resolve(&project, &thread, keep_worktree, actor).await.map(FrontResponse::Thread)
             }
+            FrontRequest::ThreadStop { project, thread } => {
+                self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadRestart { project, thread, resume } => {
+                self.thread_restart(&project, &thread, resume, actor).await.map(FrontResponse::Thread)
+            }
             FrontRequest::ThreadBrief { project, thread } => {
                 self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
             }
@@ -650,6 +659,12 @@ impl Host {
             }
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
+            }
+            FrontRequest::DecisionAdd { project, text, replaces } => {
+                self.decision_add(&project, &text, replaces, actor).map(FrontResponse::Decision)
+            }
+            FrontRequest::Decisions { project } => {
+                self.decisions(&project).map(|decisions| FrontResponse::Decisions { decisions })
             }
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
