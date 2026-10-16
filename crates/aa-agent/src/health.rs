@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aa_config::HealthSection;
-use aa_proto::{AgentEvent, LinkMsg, MachineHealth, ToolCheck};
+use aa_proto::{AgentEvent, HealthProblem, LinkMsg, MachineHealth, ToolCheck};
 
 use crate::Agent;
 
@@ -100,19 +100,25 @@ pub async fn collect(cfg: &HealthSection, work_root: &Path) -> MachineHealth {
         && cfg.min_free_gb > 0
         && free < cfg.min_free_gb.saturating_mul(1 << 30)
     {
-        problems.push(format!(
-            "디스크 여유 {:.1}GB < {}GB({})",
-            free as f64 / (1u64 << 30) as f64,
-            cfg.min_free_gb,
-            probe.display()
-        ));
+        problems.push(HealthProblem {
+            code: "disk".into(),
+            text: format!(
+                "디스크 여유 {:.1}GB < {}GB({})",
+                free as f64 / (1u64 << 30) as f64,
+                cfg.min_free_gb,
+                probe.display()
+            ),
+        });
     }
     let mut toolchain = Vec::new();
     for (name, argv) in &cfg.toolchain {
         let check = match run(argv).await {
             Ok(out) => ToolCheck { name: name.clone(), ok: true, version: first_line(&out) },
             Err(e) => {
-                problems.push(format!("toolchain {name} 실패: {e}"));
+                problems.push(HealthProblem {
+                    code: format!("toolchain:{name}"),
+                    text: format!("toolchain {name} 실패: {e}"),
+                });
                 ToolCheck { name: name.clone(), ok: false, version: e }
             }
         };
@@ -173,8 +179,8 @@ mod tests {
         cfg.min_free_gb = 1 << 30; // 1EB
         cfg.toolchain.insert("bad".into(), vec!["/bin/sh".into(), "-c".into(), "echo nope >&2; exit 3".into()]);
         let h = collect(&cfg, Path::new("/")).await;
-        let all = h.problems.join(" | ");
-        assert!(all.contains("toolchain bad 실패") && all.contains("nope"), "{all}");
-        assert!(all.contains("디스크 여유"), "{all}");
+        let all = h.problems.iter().map(|p| format!("{}={}", p.code, p.text)).collect::<Vec<_>>().join(" | ");
+        assert!(all.contains("toolchain:bad=toolchain bad 실패") && all.contains("nope"), "{all}");
+        assert!(all.contains("disk=디스크 여유"), "{all}");
     }
 }

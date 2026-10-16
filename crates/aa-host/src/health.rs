@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use aa_proto::{ErrorBody, ErrorCode, MachineHealth};
+use aa_proto::{ErrorBody, ErrorCode, HealthProblem, MachineHealth};
 
 use crate::{Host, MachineRt, err};
 
@@ -13,13 +13,19 @@ use crate::{Host, MachineRt, err};
 const MAX_SKEW_MS: i64 = 60_000;
 
 /// 새 세션을 거부할 이유(연결 중일 때만)
-pub(crate) fn problems(m: &MachineRt) -> Vec<String> {
+pub(crate) fn problems(m: &MachineRt) -> Vec<HealthProblem> {
     let Some((h, skew)) = m.health.as_ref().filter(|_| m.conn.is_some()) else { return vec![] };
     let mut out = h.problems.clone();
     if skew.abs() > MAX_SKEW_MS {
-        out.push(format!("시계가 host와 {}초 어긋난다", skew / 1000));
+        out.push(HealthProblem {
+            code: "clock".into(), text: format!("시계가 host와 {}초 어긋난다", skew / 1000)
+        });
     }
     out
+}
+
+pub(crate) fn texts(p: &[HealthProblem]) -> String {
+    p.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("; ")
 }
 
 impl Host {
@@ -46,23 +52,23 @@ impl Host {
         if p.is_empty() {
             return Ok(());
         }
-        Err(err(
-            ErrorCode::Unavailable,
-            format!("머신 {name} 점검 이상으로 새 세션을 시작하지 않는다: {}", p.join("; ")),
-        ))
+        Err(err(ErrorCode::Unavailable, format!("머신 {name} 점검 이상으로 새 세션을 시작하지 않는다: {}", texts(&p))))
     }
 
-    /// ticker: 이상이 생기거나 바뀌거나 풀리면 inbox에 남긴다
+    /// ticker: 이상의 종류(code)가 생기거나 바뀌거나 풀리면 inbox에 남긴다. 값(디스크 여유 등)만 바뀐 것은 새 항목이 아니다.
     pub(crate) fn check_health_items(&self, projects: &[String]) {
         for m in self.machine_views() {
             if m.connection != aa_proto::Connection::Connected || m.health.is_none() {
                 continue;
             }
-            let now = m.problems.join("; ");
-            let before = self.health_marks.lock().unwrap().insert(m.id.clone(), now.clone()).unwrap_or_default();
-            if now == before {
+            let mut codes: Vec<&str> = m.problems.iter().map(|p| p.code.as_str()).collect();
+            codes.sort();
+            let key = codes.join(",");
+            let before = self.health_marks.lock().unwrap().insert(m.id.clone(), key.clone()).unwrap_or_default();
+            if key == before {
                 continue;
             }
+            let now = texts(&m.problems);
             for p in projects {
                 if !self.open_threads(p).iter().any(|r| r.machine_id == m.id) {
                     continue;

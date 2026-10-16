@@ -671,3 +671,42 @@ mod tests {
         assert!(!waits_on_user(Some("완료")));
     }
 }
+
+/// TASKS.md의 task 한 줄(0.2.35 형식). aa는 읽기만 한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskView {
+    /// 속한 `## ` 목록 이름
+    pub list: String,
+    pub title: String,
+    /// 괄호 안 owner 원문(`me`, `claude`, `codex@mac-b`, 사람 이름 등)
+    pub owner: Option<String>,
+    /// ` · t-0001`로 붙은 thread
+    pub thread: Option<String>,
+    /// task 줄 아래 들여쓴 메모
+    pub notes: Vec<String>,
+    pub done: bool,
+}
+
+/// 머신 하나에서 thread를 맡길 수 있는 profile(host 허용 목록과 그 머신 agent.toml의 교집합)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct OwnerChoice {
+    pub machine: String,
+    pub connected: bool,
+    /// 끊긴 머신은 비어 있다(모른다)
+    pub profiles: Vec<String>,
+}
+
+/// coordinator가 매 턴 처음 보는 프로젝트 요약(0.2.35 `context`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectContext {
+    pub project: String,
+    pub path: String,
+    /// project.toml `start_threads`: propose(제안하고 승인을 기다린다) 또는 auto. aa는 강제하지 않는다.
+    pub start_threads: String,
+    pub tasks: Vec<TaskView>,
+    /// 열린 thread. `next`는 보고서 `## Next`에 `aa thread next --add`로 더한 줄까지 붙인 목록이다.
+    pub threads: Vec<ThreadView>,
+    pub assignable: Vec<OwnerChoice>,
+    /// 끝내지 않은 inbox 항목 수
+    pub inbox_open: u32,
+}

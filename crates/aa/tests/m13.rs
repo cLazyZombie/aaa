@@ -1211,3 +1211,83 @@ fn machine_health() {
     assert_eq!(items[1].0, "ok", "{items:?}");
     w.h.ok(&["pane", "run", "--machine", "labA", "--", "/bin/sh"]);
 }
+
+/// coordinator 일 흐름(부록 A): TASKS.md owner로 thread 시작, assignable 확인, Next 목록·보내기, context 요약.
+#[test]
+fn coordinator_flow() {
+    let w = world();
+    let pdir = w.projects.join("demo");
+    std::fs::write(
+        pdir.join("TASKS.md"),
+        "# Tasks\n\n## Backlog\n- [ ] 로그인 고치기 (fake@labA)\n  - 메모: 테스트 먼저\n- [ ] 배포 (me)\n\
+         - [ ] 사람 일 (Priya Rao)\n- [ ] 미할당 일\n",
+    )
+    .unwrap();
+    // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
+    let a = w.h.ok(&["assignable", "demo"]);
+    let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
+    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute"]), "{a}");
+    w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
+    for (bad, why) in
+        [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]
+    {
+        let e = w.h.json(&["assignable", "demo", "--check", bad]).expect_err(bad);
+        assert!(e.contains(why), "{bad}: {e}");
+    }
+    // TASKS.md task로 시작: owner가 profile·machine, 메모가 할 일에 붙는다
+    for (title, why) in
+        [("배포", "me"), ("사람 일", "사람"), ("미할당 일", "--profile"), ("없는 일", "TASKS.md에 없는")]
+    {
+        let e = w.h.json(&["thread", "start", "demo", "--from-task", title, "--kind", "dir"]).expect_err(title);
+        assert!(e.contains(why), "{title}: {e}");
+    }
+    let t = w.h.ok(&["thread", "start", "demo", "--from-task", "로그인 고치기", "--kind", "dir"]);
+    let id = t["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        (t["title"].as_str(), t["profile"].as_str(), t["machine"].as_str()),
+        (Some("로그인 고치기"), Some("fake"), Some("labA"))
+    );
+    let task = std::fs::read_to_string(pdir.join("threads").join(format!("{id}.task.md"))).unwrap();
+    assert!(task.contains("## Notes from the task list") && task.contains("메모: 테스트 먼저"), "{task}");
+    // coordinator가 ` · t-…`를 붙이면 같은 task를 다시 맡기지 않는다
+    let md =
+        std::fs::read_to_string(pdir.join("TASKS.md")).unwrap().replace("(fake@labA)", &format!("(fake@labA) · {id}"));
+    std::fs::write(pdir.join("TASKS.md"), md).unwrap();
+    let e = w.h.json(&["thread", "start", "demo", "--from-task", "로그인 고치기", "--kind", "dir"]).expect_err("중복");
+    assert!(e.contains(&format!("이미 {id}")), "{e}");
+
+    // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다
+    let report_next = w.wait_show("보고", &id, |v| v["report_hash"].is_string())["next"].clone();
+    let mut want: Vec<Value> = report_next.as_array().unwrap().clone();
+    assert!(!want.is_empty(), "가짜 agent 보고에는 Next가 있다");
+    assert_eq!(w.h.ok(&["thread", "next", "demo", &id])["lines"], report_next);
+    want.push("두 번째 일".into());
+    let v = w.h.ok(&["thread", "next", "demo", &id, "--add", "두 번째 일"]);
+    assert_eq!(v["lines"], Value::Array(want.clone()));
+    let n = want.len();
+    let e = w.h.json(&["thread", "next", "demo", &id, "--line", &(n + 1).to_string()]).expect_err("범위 밖");
+    assert!(e.contains(&format!("{}번째 줄이 없다({n}줄)", n + 1)), "{e}");
+    let v = w.h.ok(&["thread", "next", "demo", &id, "--line", &n.to_string()]);
+    assert_eq!(v["message"]["text"], "두 번째 일", "{v}");
+    let pane = w.show(&id)["pane"].as_str().unwrap().to_string();
+    wait_for("Next 줄 전달", T, || w.h.screen(&pane).contains("got: 두 번째 일").then_some(()));
+
+    // context: TASKS.md·열린 thread와 Next·start_threads·owner·inbox
+    let c = w.h.ok(&["context", "demo"]);
+    assert_eq!(c["start_threads"], "propose");
+    assert_eq!(c["tasks"].as_array().unwrap().len(), 4);
+    assert_eq!(c["tasks"][0]["thread"].as_str(), Some(id.as_str()));
+    let th = c["threads"].as_array().unwrap().iter().find(|t| t["id"] == id.as_str()).unwrap().clone();
+    assert_eq!(th["next"], Value::Array(want));
+    assert!(c["inbox_open"].as_u64().unwrap() >= 1, "{c}");
+    std::fs::write(pdir.join("project.toml"), "schema = 1\nstart_threads = \"auto\"\n").unwrap();
+    let text = String::from_utf8_lossy(&w.h.run(&["context", "demo"]).stdout).to_string();
+    assert!(
+        text.contains("start_threads=auto") && text.contains("next: 두 번째 일") && text.contains("notes: - 메모"),
+        "{text}"
+    );
+    // 새 프로젝트의 coordinator 안내
+    w.h.ok(&["project", "create", "p2"]);
+    let guide = std::fs::read_to_string(w.projects.join("p2").join("AGENTS.md")).unwrap();
+    assert!(guide.contains("aa context p2") && guide.contains("--from-task"), "{guide}");
+}

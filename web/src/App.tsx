@@ -300,7 +300,7 @@ function Main({ role }: { role: DeviceRole }) {
                 {m.local && <span className="tag">host</span>}
                 {m.connection === "disconnected" && <span className="tag warn">끊김</span>}
                 {m.connection === "connected" && m.problems.length > 0 && (
-                  <span className="tag warn" title={m.problems.join("\n")} data-testid={`health-${m.name}`}>
+                  <span className="tag warn" title={m.problems.map((p) => p.text).join("\n")} data-testid={`health-${m.name}`}>
                     점검 이상
                   </span>
                 )}
@@ -311,7 +311,7 @@ function Main({ role }: { role: DeviceRole }) {
                 )}
               </h2>
               {m.connection === "connected" && m.problems.length > 0 && (
-                <p className="muted pad warn-text">새 세션을 시작하지 않는다: {m.problems.join("; ")}</p>
+                <p className="muted pad warn-text">새 세션을 시작하지 않는다: {m.problems.map((p) => p.text).join("; ")}</p>
               )}
               {mine.length === 0 && <p className="muted pad">pane 없음</p>}
               <ul>
