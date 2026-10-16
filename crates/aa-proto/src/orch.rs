@@ -430,6 +430,20 @@ pub struct InboxItem {
     pub done_at_ms: Option<u64>,
 }
 
+/// 병합 대기열 한 칸(§8.8). M1-3은 순번과 사건만 두고 단계 실행은 M3에서 한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MergeEntry {
+    pub project: String,
+    pub thread: String,
+    /// 1부터. 1이 맨 앞(지금 병합할 차례)이다.
+    pub position: u32,
+    pub title: String,
+    pub machine: String,
+    pub branch: Option<String>,
+    #[ts(type = "number")]
+    pub enqueued_at_ms: u64,
+}
+
 /// 결정 기록 한 건(`projects/<p>/decisions.md`의 `## <번호> · <시각>[ · <번호>번 대체]` 묶음)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DecisionView {

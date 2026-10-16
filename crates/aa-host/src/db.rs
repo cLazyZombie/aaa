@@ -59,7 +59,10 @@ impl Db {
                created_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS inbox(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, event TEXT NOT NULL,
-               done INTEGER NOT NULL DEFAULT 0, done_at INTEGER, created_at INTEGER NOT NULL, data TEXT NOT NULL);",
+               done INTEGER NOT NULL DEFAULT 0, done_at INTEGER, created_at INTEGER NOT NULL, data TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS merge_queue(
+               project TEXT NOT NULL, thread TEXT NOT NULL, seq INTEGER NOT NULL, enqueued_at INTEGER NOT NULL,
+               PRIMARY KEY(project, thread));",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -397,6 +400,32 @@ impl Db {
             .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
         c.execute("DELETE FROM inbox WHERE done=1 AND done_at < ?1", [done_before_ms as i64])?;
         Ok(gone)
+    }
+
+    /// 병합 대기열 맨 뒤에 넣는다. 이미 있으면 그대로 두고 false.
+    pub fn merge_add(&self, project: &str, thread: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        let n = c.execute(
+            "INSERT OR IGNORE INTO merge_queue(project,thread,seq,enqueued_at)
+             VALUES(?1,?2,(SELECT COALESCE(MAX(seq),0)+1 FROM merge_queue WHERE project=?1),?3)",
+            params![project, thread, aa_common::util::now_ms() as i64],
+        )?;
+        Ok(n == 1)
+    }
+
+    pub fn merge_remove(&self, project: &str, thread: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.execute("DELETE FROM merge_queue WHERE project=?1 AND thread=?2", [project, thread])? == 1)
+    }
+
+    /// 순서대로 (thread, 넣은 시각)
+    pub fn merge_list(&self, project: &str) -> Result<Vec<(String, u64)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT thread, enqueued_at FROM merge_queue WHERE project=?1 ORDER BY seq")?;
+        let v = st
+            .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(v)
     }
 
     pub fn audit(&self, actor: &str, action: &str, detail: &str) {

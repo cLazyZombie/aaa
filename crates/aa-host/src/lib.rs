@@ -8,6 +8,7 @@ pub mod front;
 mod harness;
 mod inbox;
 pub mod link;
+mod merge;
 mod orch;
 pub mod tailscale;
 pub mod web;
@@ -681,6 +682,15 @@ impl Host {
             }
             FrontRequest::InboxDone { project, ids, all } => {
                 self.inbox_done(&project, &ids, all, actor).map(|items| FrontResponse::Inbox { items })
+            }
+            FrontRequest::MergeEnqueue { project, thread } => {
+                self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
+            }
+            FrontRequest::MergeDrop { project, thread, landed } => {
+                self.merge_drop(&project, &thread, landed, actor).map(|queue| FrontResponse::Merge { queue })
+            }
+            FrontRequest::MergeList { project } => {
+                self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
             }
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })

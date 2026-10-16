@@ -218,7 +218,7 @@ impl Host {
         let _ = self.thread_events.send(self.thread_view(rec));
     }
 
-    fn machine_name(&self, mid: &str) -> String {
+    pub(crate) fn machine_name(&self, mid: &str) -> String {
         self.inner.lock().unwrap().machines.get(mid).map(|m| m.name.clone()).unwrap_or_else(|| mid.to_string())
     }
 
@@ -472,6 +472,7 @@ impl Host {
         }
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
+        self.check_capacity(&mid, None)?;
         let now = aa_common::util::now_ms();
         let mut rec = ThreadRec {
             project: a.project.clone(),
@@ -699,6 +700,7 @@ impl Host {
         }
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
+        self.check_capacity(&rec.machine_id, Some((project, id)))?;
         let argv = if resume {
             let key = rec
                 .pane
@@ -955,6 +957,7 @@ impl Host {
         rec.status = ThreadStatus::Resolved;
         self.save(&mut rec);
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
+        self.merge_forget(&rec);
         self.flow(
             &rec,
             "thread_resolved",

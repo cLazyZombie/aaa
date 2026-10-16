@@ -110,6 +110,8 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
+    /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
+    pub max_threads_per_machine: u32,
 }
 
 impl Default for ProjectsSection {
@@ -123,6 +125,7 @@ impl Default for ProjectsSection {
             nudge_idle_secs: 10,
             outage_secs: 600,
             inbox_done_days: 30,
+            max_threads_per_machine: 6,
         }
     }
 }

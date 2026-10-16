@@ -572,6 +572,11 @@ fn hooked_thread_questions_and_messages() {
     let got: Vec<_> =
         all.iter().map(|q| (q["question_kind"].as_str().unwrap(), q["answer"].as_str().unwrap_or("-"))).collect();
     assert_eq!(got, [("trust", "yes"), ("permission", "yes"), ("permission", "no")]);
+    // 닫힌 질문의 inbox 항목은 끝난 것으로 남는다(nudge에 섞이지 않는다)
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+    let qs: Vec<_> = items.iter().filter(|i| i["item_kind"] == "question").collect();
+    assert_eq!(qs.len(), 3, "{items:?}");
+    assert!(qs.iter().all(|i| i["done"] == true), "{qs:?}");
     let kinds = w.kinds(0);
     let msg: Vec<_> = kinds.iter().filter(|k| k.starts_with("message_") || k.starts_with("question_")).collect();
     assert_eq!(
@@ -734,7 +739,10 @@ fn inbox_and_nudge() {
     assert_eq!(files(&inbox).len(), 2);
     let report_id = items.iter().find(|i| i["item_kind"] == "report").unwrap()["id"].as_str().unwrap().to_string();
     let md = std::fs::read_to_string(inbox.join(format!("{report_id}.md"))).unwrap();
-    assert!(md.starts_with("+++\n") && md.contains("kind = \"report\"") && md.contains("event = \"report ready\""), "{md}");
+    assert!(
+        md.starts_with("+++\n") && md.contains("kind = \"report\"") && md.contains("event = \"report ready\""),
+        "{md}"
+    );
 
     // 끝내기: 파일은 inbox/done으로
     let e = w.h.json(&["inbox", "done", "demo", "no-such-item"]).expect_err("없는 항목");
@@ -756,4 +764,70 @@ fn inbox_and_nudge() {
     let nudges = w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     assert_eq!(nudges, 3);
     assert_eq!(w.h.screen(&coord).matches("got: [aa inbox]").count(), 3);
+}
+
+/// 병합 대기열 순번·사건(§8.8)과 머신별 동시 thread 한도(§8.10)
+#[test]
+fn merge_queue_and_capacity() {
+    let w = world_with("max_threads_per_machine = 2\n");
+    let start = |n: &str| {
+        w.h.json(&[
+            "thread",
+            "start",
+            "demo",
+            "--title",
+            n,
+            "--profile",
+            "fake",
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task(&format!("{n}.txt"), "x"),
+        ])
+    };
+    let t1 = start("m1").unwrap()["id"].as_str().unwrap().to_string();
+    let t2 = start("m2").unwrap()["id"].as_str().unwrap().to_string();
+    let e = start("m3").expect_err("한도");
+    assert!(e.contains("한도 2") && e.contains(&format!("demo/{t1}")), "{e}");
+    w.wait_show("보고", &t1, |v| v["report_hash"].is_string());
+    w.wait_show("보고", &t2, |v| v["report_hash"].is_string());
+    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+
+    w.h.ok(&["merge", "enqueue", "demo", &t1]);
+    let q = w.h.ok(&["merge", "enqueue", "demo", &t2])["queue"].as_array().unwrap().clone();
+    let order: Vec<_> = q.iter().map(|e| (e["position"].as_u64().unwrap(), e["thread"].as_str().unwrap())).collect();
+    assert_eq!(order, [(1, t1.as_str()), (2, t2.as_str())]);
+    // 이미 있으면 그 자리
+    assert_eq!(w.h.ok(&["merge", "enqueue", "demo", &t1])["queue"].as_array().unwrap().len(), 2);
+    // 병합을 마치면 다음이 맨 앞
+    let q = w.h.ok(&["merge", "done", "demo", &t1])["queue"].as_array().unwrap().clone();
+    assert_eq!((q.len(), q[0]["thread"].as_str(), q[0]["position"].as_u64()), (1, Some(t2.as_str()), Some(1)));
+    let e = w.h.json(&["merge", "drop", "demo", &t1]).expect_err("없는 항목");
+    assert!(e.contains("대기열에 없다"), "{e}");
+    // resolve하면 대기열에서 빠지고, 한도도 풀린다
+    w.h.ok(&["thread", "resolve", "demo", &t2]);
+    assert!(w.h.ok(&["merge", "list", "demo"])["queue"].as_array().unwrap().is_empty());
+    let e = w.h.json(&["merge", "enqueue", "demo", &t2]).expect_err("끝난 thread");
+    assert!(e.contains("열린 thread만"), "{e}");
+    start("m3").expect("한도 안");
+
+    let ev: Vec<(String, String)> = w.h.ok(&["events", "--project", "demo", "--after", &seen.to_string()])["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"].as_str().unwrap().starts_with("merge_"))
+        .map(|e| (e["kind"].as_str().unwrap().to_string(), e["thread"].as_str().unwrap().to_string()))
+        .collect();
+    let want: Vec<(String, String)> = [
+        ("merge_enqueued", &t1),
+        ("merge_head", &t1),
+        ("merge_enqueued", &t2),
+        ("merge_landed", &t1),
+        ("merge_head", &t2),
+        ("merge_dropped", &t2),
+    ]
+    .iter()
+    .map(|(k, t)| (k.to_string(), t.to_string()))
+    .collect();
+    assert_eq!(ev, want);
 }

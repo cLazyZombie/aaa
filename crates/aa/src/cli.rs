@@ -93,6 +93,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: InboxCmd,
     },
+    /// 병합 대기열(순번과 사건만, 병합 단계는 coordinator가 한다)
+    Merge {
+        #[command(subcommand)]
+        cmd: MergeCmd,
+    },
     /// 머신의 agent.toml profile 목록
     Profile {
         #[command(subcommand)]
@@ -193,6 +198,28 @@ enum InboxCmd {
         /// 끝내지 않은 항목 모두
         #[arg(long, conflicts_with = "ids")]
         all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum MergeCmd {
+    /// 맨 뒤에 넣는다(이미 있으면 그 자리)
+    Enqueue {
+        project: String,
+        thread: String,
+    },
+    List {
+        project: String,
+    },
+    /// 병합을 마쳤다: 대기열에서 빼고 다음 차례로 넘긴다
+    Done {
+        project: String,
+        thread: String,
+    },
+    /// 병합하지 않고 뺀다
+    Drop {
+        project: String,
+        thread: String,
     },
 }
 
@@ -659,6 +686,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
             match cmd {
                 InboxCmd::List { project, all, peek } => FrontRequest::Inbox { project, all, peek },
                 InboxCmd::Done { project, ids, all } => FrontRequest::InboxDone { project, ids, all },
+            },
+        ),
+        Cmd::Merge { cmd } => front(
+            json,
+            match cmd {
+                MergeCmd::Enqueue { project, thread } => FrontRequest::MergeEnqueue { project, thread },
+                MergeCmd::List { project } => FrontRequest::MergeList { project },
+                MergeCmd::Done { project, thread } => FrontRequest::MergeDrop { project, thread, landed: true },
+                MergeCmd::Drop { project, thread } => FrontRequest::MergeDrop { project, thread, landed: false },
             },
         ),
         Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
@@ -1279,12 +1315,28 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Decision(d) => render_decision(&mut s, d),
+        FrontResponse::Merge { queue } => {
+            if queue.is_empty() {
+                s.push_str("병합 대기열이 비었다\n");
+            }
+            for e in queue {
+                let branch = e.branch.as_deref().unwrap_or("-");
+                let _ =
+                    writeln!(s, "{}\t{}/{}\t{}\t{}@{}", e.position, e.project, e.thread, e.title, branch, e.machine);
+            }
+        }
         FrontResponse::Inbox { items } => {
             if items.is_empty() {
                 s.push_str("inbox가 비었다\n");
             }
             for i in items {
-                let mark = if i.done { "끝남" } else if i.seen { "봄" } else { "새것" };
+                let mark = if i.done {
+                    "끝남"
+                } else if i.seen {
+                    "봄"
+                } else {
+                    "새것"
+                };
                 let _ = writeln!(s, "{}\t{}\t{} {}\t{mark}", i.id, i.item_kind, i.subject, i.event);
                 let _ = writeln!(s, "  {}", i.summary);
             }
