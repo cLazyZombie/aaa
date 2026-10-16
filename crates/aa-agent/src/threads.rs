@@ -112,7 +112,7 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
     Ok(Launch { profile: name.to_string(), harness: p.harness.clone(), argv, env, resume_argv, session_key })
 }
 
-async fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+pub(crate) async fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     let out = tokio::time::timeout(
         timeout,
         tokio::process::Command::new("git").arg("-C").arg(dir).args(args).stdin(std::process::Stdio::null()).output(),

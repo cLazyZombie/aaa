@@ -244,6 +244,13 @@ enum MergeCmd {
         project: String,
         thread: String,
     },
+    /// 맨 앞 thread를 병합한다: 그 머신 agent가 원격 일치 확인 → 임시 worktree에서 merge --no-ff → tree 같음 확인 → push(force 없음)
+    /// → 사용자 checkout이 깨끗한 main이면 ff-only → 정리. 되면 대기열에서 빼고 같은 기준의 다른 thread에 알린다.
+    Land {
+        project: String,
+        /// 주면 그것이 맨 앞이어야 한다
+        thread: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -850,6 +857,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 MergeCmd::List { project } => FrontRequest::MergeList { project },
                 MergeCmd::Done { project, thread } => FrontRequest::MergeDrop { project, thread, landed: true },
                 MergeCmd::Drop { project, thread } => FrontRequest::MergeDrop { project, thread, landed: false },
+                MergeCmd::Land { project, thread } => FrontRequest::MergeLand { project, thread },
             },
         ),
         Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
@@ -1267,6 +1275,10 @@ fn front_print(json: bool, res: Result<FrontResponse, aa_proto::ErrorBody>) -> R
                 println!("{}", serde_json::to_string_pretty(&r)?);
             } else {
                 print!("{}", render_front(&r));
+            }
+            // 병합 단계가 멈췄으면 응답은 왔어도 실패로 끝난다
+            if matches!(&r, FrontResponse::MergeLand(v) if !v.ok) {
+                return Ok(ExitCode::from(1));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -1740,6 +1752,30 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ =
                     writeln!(s, "{}\t{}/{}\t{}\t{}@{}", e.position, e.project, e.thread, e.title, branch, e.machine);
             }
+        }
+        FrontResponse::MergeLand(v) => {
+            let _ = writeln!(
+                s,
+                "{}/{} {}",
+                v.project,
+                v.thread,
+                if v.ok { "병합했다" } else { "병합하지 못했다(대기열에 그대로 있다)" }
+            );
+            for st in &v.steps {
+                let mut lines = st.note.lines();
+                let first = lines.next().unwrap_or("");
+                let _ = writeln!(s, "  {} {}\t{}\t{}ms", if st.ok { "✓" } else { "✗" }, st.name, first, st.ms);
+                for l in lines {
+                    let _ = writeln!(s, "      {l}");
+                }
+            }
+            if let Some(c) = &v.commit {
+                let _ = writeln!(s, "병합 commit: {c}");
+            }
+            if !v.notified.is_empty() {
+                let _ = writeln!(s, "「main 이동」을 알린 thread: {}", v.notified.join(", "));
+            }
+            let _ = writeln!(s, "남은 대기열: {}", v.queue.len());
         }
         FrontResponse::Routines { routines } => {
             if routines.is_empty() {

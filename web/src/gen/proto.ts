@@ -191,7 +191,7 @@ task: string,
 /**
  * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
-from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
+from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "merge_land", project: string, thread: string | null, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -209,7 +209,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView;
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "merge_land" } & MergeLandView | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView;
 
@@ -376,6 +376,24 @@ export type MergeEntry = { project: string, thread: string,
  * 1부터. 1이 맨 앞(지금 병합할 차례)이다.
  */
 position: number, title: string, machine: string, branch: string | null, enqueued_at_ms: number, };
+
+export type MergeStep = { name: string, ok: boolean, 
+/**
+ * 사람이 읽는 설명(실패면 까닭)
+ */
+note: string, ms: number, };
+
+export type LandOutcome = { ok: boolean, steps: Array<MergeStep>, commit: string | null, };
+
+export type MergeLandView = { project: string, thread: string, ok: boolean, steps: Array<MergeStep>, commit: string | null, 
+/**
+ * 「main 이동」을 대기열 메시지로 알린 thread
+ */
+notified: Array<string>, 
+/**
+ * 병합 뒤 대기열
+ */
+queue: Array<MergeEntry>, };
 
 export type RoutineView = { name: string, 
 /**

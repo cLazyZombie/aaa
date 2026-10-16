@@ -111,6 +111,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 ## 결정·병합
 - 사용자 결정은 `aa decision add {p} --text …`로 남긴다(다음 thread brief에 들어간다).
 - 병합 순서는 `aa merge enqueue|list|done {p} <id>`로 정한다.
+- worktree thread는 `aa merge land {p}`로 맨 앞부터 병합한다. aa가 원격 일치·병합·tree 같음을 확인하고 push한다(force 없음).
+  멈추면 출력의 까닭(커밋하지 않은 변경, main을 합치지 않음 등)을 그 thread에 맡기고 다시 한다. 손으로 병합했으면 `merge done`.
 ";
 
 /// 화면이 이만큼 멈춰야 brief 안내를 보낸다
