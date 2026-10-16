@@ -10,6 +10,7 @@ mod inbox;
 mod library;
 pub mod link;
 mod merge;
+mod notify;
 mod orch;
 mod routine;
 pub mod tailscale;
@@ -210,6 +211,8 @@ pub struct Host {
     routine_running: Mutex<HashSet<String>>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
+    /// 알림 webhook 대기열(설정이 켜져 있을 때)
+    notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aa_proto::InboxItem>>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -290,6 +293,7 @@ impl Host {
             nudge_screens: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
+            notify_tx: Mutex::new(None),
         }))
     }
 
@@ -1325,6 +1329,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     front::start(&host).await?;
     web::start(&host).await?;
     host.start_ticker();
+    host.start_notifier();
     if host.cfg.local_agent.mode == LocalAgentMode::Child {
         let h = host.clone();
         let root = state_root.clone();

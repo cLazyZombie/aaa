@@ -782,6 +782,14 @@ host 프로젝트 폴더 구성:
 - **보내는 방식:** host 사본이 있으면 그것을, 없으면 agent에서 512KB 조각으로 읽어 그대로 흘려보낸다. host에 캐시하지 않는다. 경로는 library 안 상대 경로만 받고, agent도 `library/` 밖과 symlink를 거부한다. agent 쪽 파일을 읽지 못하면 응답 전에 502와 이유를 돌려준다.
 - **결과물 HTML 격리:** CSP `sandbox allow-scripts allow-popups …`(allow-same-origin 없음), `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`. 웹 화면은 같은 sandbox 속성의 iframe으로 `index.html`을 보인다. 웹 E2E가 결과물 script에서 부모 문서·cookie·제어 API에 닿지 못하는 것을 확인한다.
 - **웹 화면:** 목록 위에 끝나지 않은 thread(묶음 표시), 고르면 보고(Markdown을 HTML로 해석하지 않고 그린다)·결과물 iframe·파일 목록(agent에서 읽는 파일 표시)·확인(ack) 버튼. thread 사건이 events WS로 와서 polling 없이 바뀐다.
+- **알림 webhook:** host.toml `[notify]`
+  - 대상은 inbox 항목이다(종류는 `kinds`로 고른다. 기본: report·question·delivery·thread·session·outage·routine-approval). 알림이 inbox와 같은 사건을 본다.
+  - `debounce_secs`(기본 15초) 동안 모아 프로젝트마다 한 통으로 보낸다. 실제 시험에서 한 thread가 몇 초 안에 질문을 서너 번 냈기 때문이다.
+  - 실패하면 다시 보내지 않는다. 흐름 사건 `notify_failed`에 이유만 남기고, 실패가 이어지는 동안 경고 로그는 한 번만 낸다. 성공은 `notify_sent`다.
+  - 형식: `json`(항목 목록과 글) 또는 `telegram`(Bot API `sendMessage` 본문, `telegram_chat_id`). 텔레그램은 `webhook = "https://api.telegram.org/bot<token>/sendMessage"`로 쓴다.
+  - 주소에는 봇 token이 들어갈 수 있다. `host.local.toml`(커밋하지 않는 머신별 파일)에 두고, 로그·흐름 사건·오류 글에는 주소를 넣지 않는다.
+  - https만 받는다. 루트 인증서는 webpki 목록을 쓴다(OS 키체인을 읽지 않는다). http는 이 머신 loopback만 허용한다(시험용).
+  - HTTP client는 tokio-rustls 위에 직접 쓴 POST 한 번이다. 큰 HTTP crate를 더하지 않았다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
