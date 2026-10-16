@@ -1,5 +1,5 @@
 // host 웹 API(crates/aa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
-import type { DeviceRole, ErrorBody, FrontEvent, FrontRequest, FrontResponse, Outcome } from "./gen/proto";
+import type { DeviceRole, ErrorBody, FrontEvent, FrontRequest, FrontResponse, Outcome, QuestionView } from "./gen/proto";
 
 export class ApiError extends Error {
   constructor(public body: ErrorBody) {
@@ -46,9 +46,14 @@ export function wsUrl(path: string): string {
 
 /** 상태 이벤트 WS. 끊기면 다시 붙고, 붙어 있는지 알린다. */
 export type StateEvent = Extract<FrontEvent, { ev: "state" }>;
+export type QuestionEvent = Extract<FrontEvent, { ev: "question" }>;
 
-/** 기계·pane 목록 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
-export function watchState(onState: (ev: StateEvent) => void, onLink: (up: boolean) => void): () => void {
+/** 기계·pane 목록과 확인창 질문 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
+export function watchEvents(
+  onState: (ev: StateEvent) => void,
+  onQuestion: (q: QuestionView) => void,
+  onLink: (up: boolean) => void,
+): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
   let delay = 500;
@@ -62,6 +67,10 @@ export function watchState(onState: (ev: StateEvent) => void, onLink: (up: boole
     ws.onmessage = (m) => {
       const ev = JSON.parse(m.data as string) as FrontEvent;
       if (ev.ev === "state") onState(ev);
+      else if (ev.ev === "question") {
+        const { ev: _tag, ...q } = ev;
+        onQuestion(q as QuestionView);
+      }
     };
     ws.onclose = () => {
       onLink(false);

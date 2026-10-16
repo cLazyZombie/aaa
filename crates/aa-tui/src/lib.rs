@@ -498,18 +498,42 @@ fn state_text(p: &PaneView) -> String {
         return "끊김(읽기 전용)".into();
     }
     match &p.state {
-        SessionState::Running => "실행".into(),
+        SessionState::Running => match &p.agent {
+            // harness 상태(hook 사건)
+            Some(a) => {
+                let pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
+                format!("실행 · {}{pct}", activity_text(a.activity))
+            }
+            None => "실행".into(),
+        },
         SessionState::Exited { code } => format!("종료({})", code.map(|c| c.to_string()).unwrap_or("?".into())),
         SessionState::Interrupted => "중단(재부팅)".into(),
         SessionState::Lost => "유실".into(),
     }
 }
 
-/// 실행 중이 아니거나 끊긴 pane에는 오른쪽 위에 표시를 그린다
+fn activity_text(a: aa_proto::AgentActivity) -> &'static str {
+    use aa_proto::AgentActivity::*;
+    match a {
+        Started => "시작",
+        Working => "작업 중",
+        Idle => "입력 대기",
+        Question => "질문",
+        Error => "오류",
+        Exited => "끝남",
+    }
+}
+
+/// 실행 중이 아니거나 끊긴 pane, 확인창 질문이 열린 pane에는 오른쪽 위에 표시를 그린다
 fn badge(buf: &mut Buffer, view: Option<&PaneView>, r: Rect, focused: bool) -> Option<(u16, u16)> {
     let p = view?;
     let text = match (&p.state, p.connection) {
         (_, aa_proto::Connection::Disconnected) => " 끊김·읽기 전용 ".to_string(),
+        (SessionState::Running, _)
+            if p.agent.as_ref().is_some_and(|a| a.activity == aa_proto::AgentActivity::Question) =>
+        {
+            " 질문 — aa question ".to_string()
+        }
         (SessionState::Running, _) => return None,
         (SessionState::Interrupted, _) | (SessionState::Lost, _) => {
             format!(" {} — 재개: prefix r ", if p.state == SessionState::Lost { "유실" } else { "중단(재부팅)" })

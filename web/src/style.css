@@ -70,3 +70,21 @@ code { background: #232a33; padding: 1px 5px; border-radius: 4px; }
   .keys { flex-basis: 100%; justify-content: space-between; }
   .keys button { flex: 1; }
 }
+
+/* harness 상태와 확인창 질문(M1-3) */
+.badges { display: inline-flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.badge.agent { border-radius: 4px; padding: 0 5px; border: 1px solid var(--line); }
+.badge.agent.working { color: var(--accent); border-color: var(--accent); }
+.badge.agent.question { color: #111418; background: var(--warn); border-color: var(--warn); font-weight: 600; }
+.badge.agent.idle { color: var(--ok); }
+.badge.agent.error { color: var(--err); border-color: var(--err); }
+.questions { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.questions h2 { font-size: 13px; margin: 0 0 6px; color: var(--warn); }
+.question { border: 1px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 6px 0; background: #241f14; }
+.view > .question { margin: 8px; }
+.q-head { display: flex; gap: 8px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+.q-text { margin: 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+.q-actions { display: flex; gap: 8px; }
+.q-actions button { min-width: 72px; min-height: 32px; }
+button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
+.small-text { font-size: 12px; margin: 0; }

@@ -223,6 +223,31 @@ try {
     await page.getByTestId("pane-t1").click();
   });
 
+  await step("확인창 질문: 카드·상태 표시 → reader는 못 답함 → 예", async () => {
+    // 세션 안에서 Claude처럼 선택 창을 그리고 hook 사건(PermissionRequest)을 보낸다
+    const script =
+      'printf "Allow Bash(make test)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
+      '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}\'; ' +
+      "stty -echo; exec cat > /dev/null";
+    aa("pane", "run", "--machine", "labA", "--name", "q1", "--", "/bin/sh", "-c", script, AA);
+    const card = page.getByTestId("questions").locator(".question");
+    await until("질문 카드", async () => (await card.count()) === 1);
+    if (!(await card.innerText()).includes("make test")) throw new Error(`카드 본문: ${await card.innerText()}`);
+    await until("pane 질문 표시", async () => (await page.getByTestId("agent-q1").innerText()) === "질문");
+    const rd = await pairPage(browser, aa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    await rd.page.getByTestId("questions").waitFor();
+    if ((await rd.page.getByRole("button", { name: "예" }).count()) !== 0) throw new Error("reader에게 답 버튼");
+    await shot(page, "desktop-question");
+    await card.getByRole("button", { name: "예" }).click();
+    await until("카드 사라짐", async () => (await page.getByTestId("questions").count()) === 0);
+    await until("reader 카드도 사라짐", async () => (await rd.page.getByTestId("questions").count()) === 0);
+    const all = aa("question", "list", "--all").questions;
+    if (all.length !== 1 || all[0].state !== "answered" || all[0].answer !== "yes") throw new Error(JSON.stringify(all));
+    await until("pane 작업 중", async () => (await page.getByTestId("agent-q1").innerText()) === "작업 중");
+    if (rd.errors.length) throw new Error(rd.errors.join("; "));
+    await rd.page.context().close();
+  });
+
   await step("agent 끊김 → 읽기 전용 표시", async () => {
     await stop("agent");
     await until("끊김 배너", async () =>

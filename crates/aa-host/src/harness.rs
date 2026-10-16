@@ -27,6 +27,13 @@ const INTERRUPTED_MARKS: &[&str] = &["Interrupted"];
 /// interrupt: 멈춘 뒤 다음 입력을 받을 수 있게 되기를 기다리는 시간
 const STOP_WAIT: Duration = Duration::from_secs(15);
 
+/// 아직 모르는 pane의 harness 사건을 이만큼 보관한다
+const HOLD_FOR: Duration = Duration::from_secs(60);
+const HOLD_MAX: usize = 32;
+
+/// pane 등록 전에 온 harness 사건(세션 ID → (받은 시각, 머신, 사건))
+pub(crate) type Held = std::collections::HashMap<String, Vec<(Instant, String, HarnessEvent)>>;
+
 /// 사건 kind를 기다리는 대기자(pane별)
 pub(crate) type Waiters = std::collections::HashMap<String, Vec<(&'static [&'static str], oneshot::Sender<String>)>>;
 
@@ -131,6 +138,26 @@ impl Host {
         rx
     }
 
+    fn hold_harness(&self, mid: &str, ev: HarnessEvent) {
+        let mut h = self.held.lock().unwrap();
+        h.retain(|_, v| {
+            v.retain(|(at, _, _)| at.elapsed() < HOLD_FOR);
+            !v.is_empty()
+        });
+        let v = h.entry(ev.session.clone()).or_default();
+        if v.len() < HOLD_MAX {
+            v.push((Instant::now(), mid.to_string(), ev));
+        }
+    }
+
+    /// pane이 등록됐다: 그 전에 온 harness 사건을 순서대로 적용한다
+    pub(crate) fn replay_harness(self: &Arc<Self>, session: &str) {
+        let held = self.held.lock().unwrap().remove(session).unwrap_or_default();
+        for (_, mid, ev) in held {
+            self.on_harness(&mid, ev);
+        }
+    }
+
     pub(crate) fn pane_agent(&self, pane: &str) -> Option<AgentStatus> {
         self.inner.lock().unwrap().panes.get(pane).and_then(|p| p.agent.clone())
     }
@@ -146,7 +173,12 @@ impl Host {
     pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, ev: HarnessEvent) {
         let activity = {
             let mut i = self.inner.lock().unwrap();
-            let Some(p) = i.panes.get_mut(&ev.session) else { return };
+            let Some(p) = i.panes.get_mut(&ev.session) else {
+                // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
+                drop(i);
+                self.hold_harness(mid, ev);
+                return;
+            };
             if p.machine_id != mid {
                 return;
             }
