@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use aa_config::{HostConfig, LocalAgentMode};
 use aa_proto::{
     AgentRequest, AgentResponse, Connection, DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontRequest, FrontResponse,
-    HostStatus, LinkMsg, MachineView, Outcome, PaneView, PendingEnroll, PublishState, ScreenText, SessionInfo,
-    SessionState, SpawnSpec, TerminalChunk,
+    HostStatus, LayoutChange, LayoutNode, LeaseView, LinkMsg, MachineView, Outcome, PaneView, PendingEnroll,
+    PublishState, ScreenText, SessionInfo, SessionState, SpawnSpec, Tab, TerminalChunk, Workspace,
 };
 use anyhow::{Context, Result};
 use sha2::Digest;
@@ -109,7 +109,18 @@ struct PaneRt {
     info: SessionInfo,
     mirror: Option<Mirror>,
     events: broadcast::Sender<PaneEvent>,
+    /// 조작 lease(대화형 front 연결 하나). 연결이 끊기거나 다른 front가 가져가면 바뀐다.
+    lease: Option<FrontRef>,
 }
+
+/// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrontRef {
+    pub id: String,
+    pub label: String,
+}
+
+pub const DEFAULT_WORKSPACE: &str = "main";
 
 struct Inner {
     machines: HashMap<String, MachineRt>,
@@ -154,6 +165,10 @@ pub struct Host {
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
+    workspaces: Mutex<HashMap<String, Workspace>>,
+    /// workspace가 바뀔 때(TUI가 구독한다)
+    pub layout_events: broadcast::Sender<Workspace>,
+    front_seq: AtomicU64,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -192,6 +207,15 @@ impl Host {
                 },
             );
         }
+        let mut workspaces = HashMap::new();
+        for (name, json) in db.workspaces()? {
+            match serde_json::from_str::<Workspace>(&json) {
+                Ok(w) => {
+                    workspaces.insert(name, w);
+                }
+                Err(e) => tracing::warn!(%name, "workspace 기록을 읽지 못했다: {e}"),
+            }
+        }
         let web_port = cfg.web.listen.rsplit_once(':').and_then(|(_, p)| p.parse().ok()).unwrap_or(0);
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
         Ok(Arc::new(Host {
@@ -208,6 +232,9 @@ impl Host {
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
             web_listen: Mutex::new(None),
+            workspaces: Mutex::new(workspaces),
+            layout_events: broadcast::channel(64).0,
+            front_seq: AtomicU64::new(0),
         }))
     }
 
@@ -254,6 +281,7 @@ impl Host {
                     info: s.clone(),
                     mirror: None,
                     events: broadcast::channel(1024).0,
+                    lease: None,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -312,6 +340,13 @@ impl Host {
         let mut i = self.inner.lock().unwrap();
         let Some(p) = i.panes.get_mut(session) else { return };
         match snapshot {
+            // 끝난 세션인데 agent에 마지막 화면 파일이 없다(재부팅 등으로 session host가 기록 없이 사라짐):
+            // host가 가진 마지막 화면을 그대로 둔다(§4.4 「마지막 snapshot과 tail」).
+            Some(s) if s.replay.0.is_empty() && !p.info.state.is_running() && p.mirror.is_some() => {
+                if let Some(m) = p.mirror.as_mut() {
+                    m.synced = true;
+                }
+            }
             Some(s) => {
                 let mut vt = Vt::new(s.rows, s.cols);
                 vt.feed(&s.replay.0);
@@ -363,6 +398,7 @@ impl Host {
                 info: info.clone(),
                 mirror: None,
                 events: broadcast::channel(1024).0,
+                lease: None,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -426,6 +462,7 @@ impl Host {
             readonly: !connected || !p.info.state.is_running() || !role.can_control(),
             cols: p.info.cols,
             rows: p.info.rows,
+            lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
         }
     }
 
@@ -510,6 +547,17 @@ impl Host {
         actor: &str,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.call_from(role, actor, None, req).await
+    }
+
+    /// `front`는 대화형 연결(TUI·웹 터미널)일 때만 준다. 조작 lease는 이 연결에 묶인다.
+    pub async fn call_from(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        front: Option<&FrontRef>,
+        req: FrontRequest,
+    ) -> Result<FrontResponse, ErrorBody> {
         if req.local_only() && role != DeviceRole::Local {
             return Err(err(ErrorCode::Forbidden, "이 머신의 CLI에서만 할 수 있다"));
         }
@@ -530,7 +578,6 @@ impl Host {
             FrontRequest::Panes => Ok(FrontResponse::Panes { panes: self.pane_views(role) }),
             FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
-                let conn = self.live_conn(&mid)?;
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -539,16 +586,10 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                 };
-                self.db.audit(actor, "pane_run", &serde_json::to_string(&spec).unwrap_or_default());
-                match conn.request(AgentRequest::Spawn(spec)).await? {
-                    AgentResponse::Session(info) => {
-                        self.on_session(&mid, info.clone(), false);
-                        self.pane_view_of(&info.id, role)
-                            .map(FrontResponse::Pane)
-                            .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
-                    }
-                    other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
-                }
+                let id = self.spawn_on(&mid, spec, actor).await?;
+                self.pane_view_of(&id, role)
+                    .map(FrontResponse::Pane)
+                    .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
             }
             FrontRequest::PaneRead { pane } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
@@ -574,8 +615,56 @@ impl Host {
             FrontRequest::PaneResize { pane, cols, rows } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 self.check_running(&id)?;
+                // PTY 크기는 lease 보유자가 정한다. 한 번 보내는 CLI는 아무도 조작하지 않을 때만 바꾼다.
+                match front {
+                    Some(f) => self.lease_acquire(&id, f)?,
+                    None => self.lease_free(&id)?,
+                }
                 let conn = self.live_conn(&mid)?;
                 conn.request(AgentRequest::Resize { session: id, cols, rows }).await.map(|_| FrontResponse::Done)
+            }
+            FrontRequest::PaneInput { pane, data } => {
+                let f = front.ok_or_else(|| {
+                    err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다(한 번 보내기는 pane_send)")
+                })?;
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                let conn = self.live_conn(&mid)?;
+                self.lease_acquire(&id, f)?;
+                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+            }
+            FrontRequest::PaneTake { pane } => {
+                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
+                let (id, _) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                self.lease_set(&id, Some(f.clone()));
+                self.db.audit(actor, "pane_take", &id);
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::PaneRelease { pane } => {
+                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
+                let (id, _) = self.resolve_pane(&pane)?;
+                let mine = self.inner.lock().unwrap().panes.get(&id).is_some_and(|p| p.lease.as_ref() == Some(f));
+                if mine {
+                    self.lease_set(&id, None);
+                }
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::PaneResume { pane } => self.resume(&pane, role, actor).await,
+            FrontRequest::PaneForget { pane } => {
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.forget(&id, &mid, actor).await?;
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
+                Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aa attach)에서만 쓴다"))
+            }
+            FrontRequest::Workspace { name } => {
+                Ok(FrontResponse::Workspace(self.workspace(name.as_deref().unwrap_or(DEFAULT_WORKSPACE))))
+            }
+            FrontRequest::LayoutApply { workspace, change } => {
+                let name = workspace.unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
+                self.layout_apply(&name, change, actor).await.map(FrontResponse::Workspace)
             }
             FrontRequest::PaneKill { pane } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
@@ -646,6 +735,213 @@ impl Host {
                 self.publish_off().await.map(FrontResponse::Publish)
             }
         }
+    }
+
+    /// agent에 세션을 띄우고 pane 목록에 넣는다. 새 pane ID를 돌려준다.
+    async fn spawn_on(self: &Arc<Self>, mid: &str, spec: SpawnSpec, actor: &str) -> Result<String, ErrorBody> {
+        let conn = self.live_conn(mid)?;
+        self.db.audit(actor, "pane_run", &serde_json::to_string(&spec).unwrap_or_default());
+        match conn.request(AgentRequest::Spawn(spec)).await? {
+            AgentResponse::Session(info) => {
+                let id = info.id.clone();
+                self.on_session(mid, info, false);
+                Ok(id)
+            }
+            other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+        }
+    }
+
+    // ───────────── 조작 lease(§4.5) ─────────────
+
+    pub fn new_front(&self, label: String) -> FrontRef {
+        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label }
+    }
+
+    fn lease_set(&self, id: &str, to: Option<FrontRef>) {
+        {
+            let mut i = self.inner.lock().unwrap();
+            let Some(p) = i.panes.get_mut(id) else { return };
+            if p.lease == to {
+                return;
+            }
+            p.lease = to;
+            let _ = p.events.send(PaneEvent::State);
+        }
+        self.bump();
+    }
+
+    /// 비어 있으면 이 front가 갖고, 이미 가졌으면 그대로, 다른 front가 가졌으면 거부한다.
+    fn lease_acquire(&self, id: &str, f: &FrontRef) -> Result<(), ErrorBody> {
+        let holder = self.inner.lock().unwrap().panes.get(id).and_then(|p| p.lease.clone());
+        match holder {
+            Some(h) if h.id == f.id => Ok(()),
+            Some(h) => Err(err(ErrorCode::LeaseHeld, format!("{}이 조작 중이다(가져오려면 take)", h.label))),
+            None => {
+                self.lease_set(id, Some(f.clone()));
+                Ok(())
+            }
+        }
+    }
+
+    fn lease_free(&self, id: &str) -> Result<(), ErrorBody> {
+        match self.inner.lock().unwrap().panes.get(id).and_then(|p| p.lease.clone()) {
+            Some(h) => Err(err(ErrorCode::LeaseHeld, format!("{}이 조작 중이다", h.label))),
+            None => Ok(()),
+        }
+    }
+
+    /// front 연결이 끝났다: 그 연결의 lease를 모두 푼다.
+    pub fn front_gone(&self, front_id: &str) {
+        let freed: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            i.panes
+                .iter()
+                .filter(|(_, p)| p.lease.as_ref().is_some_and(|l| l.id == front_id))
+                .map(|(k, _)| k.clone())
+                .collect()
+        };
+        for id in freed {
+            self.lease_set(&id, None);
+        }
+    }
+
+    // ───────────── 재개·정리 ─────────────
+
+    /// 끝난 pane을 같은 spec(이름·argv·cwd·크기)으로 다시 띄우고 layout 자리를 새 pane으로 바꾼 뒤 옛 기록을 지운다.
+    async fn resume(self: &Arc<Self>, pane: &str, role: DeviceRole, actor: &str) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        let info = self
+            .inner
+            .lock()
+            .unwrap()
+            .panes
+            .get(&id)
+            .map(|p| p.info.clone())
+            .ok_or_else(|| err(ErrorCode::NotFound, "pane이 없다"))?;
+        if info.state.is_running() {
+            return Err(err(ErrorCode::BadRequest, "실행 중인 pane은 재개할 수 없다"));
+        }
+        let spec = SpawnSpec {
+            name: info.name.clone(),
+            argv: info.argv.clone(),
+            cwd: info.cwd.clone(),
+            env: vec![],
+            cols: info.cols,
+            rows: info.rows,
+        };
+        let new_id = self.spawn_on(&mid, spec, actor).await?;
+        self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
+        {
+            let mut ws = self.workspaces.lock().unwrap();
+            let changed: Vec<Workspace> =
+                ws.values_mut().filter_map(|w| crate::layout::ws_replace(w, &id, &new_id).then(|| w.clone())).collect();
+            drop(ws);
+            for w in changed {
+                self.save_workspace(&w);
+            }
+        }
+        if let Err(e) = self.forget(&id, &mid, actor).await {
+            tracing::warn!(pane = %id, "재개 뒤 옛 기록 정리 실패: {}", e.message);
+        }
+        self.pane_view_of(&new_id, role)
+            .map(FrontResponse::Pane)
+            .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
+    }
+
+    async fn forget(self: &Arc<Self>, id: &str, mid: &str, actor: &str) -> Result<(), ErrorBody> {
+        if self.inner.lock().unwrap().panes.get(id).is_some_and(|p| p.info.state.is_running()) {
+            return Err(err(ErrorCode::BadRequest, "실행 중인 pane은 지울 수 없다"));
+        }
+        let conn = self.live_conn(mid)?;
+        conn.request(AgentRequest::Forget { session: id.to_string() }).await?;
+        self.inner.lock().unwrap().panes.remove(id);
+        let changed: Vec<Workspace> = {
+            let mut ws = self.workspaces.lock().unwrap();
+            ws.values_mut().filter_map(|w| crate::layout::ws_remove(w, id).then(|| w.clone())).collect()
+        };
+        for w in changed {
+            self.save_workspace(&w);
+        }
+        self.db.audit(actor, "pane_forget", id);
+        self.bump();
+        Ok(())
+    }
+
+    // ───────────── workspace layout(host 정본) ─────────────
+
+    pub fn workspace(&self, name: &str) -> Workspace {
+        self.workspaces
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Workspace { name: name.to_string(), tabs: vec![] })
+    }
+
+    fn save_workspace(&self, w: &Workspace) {
+        if let Err(e) = self.db.save_workspace(&w.name, &serde_json::to_string(w).unwrap_or_default()) {
+            tracing::warn!(workspace = %w.name, "workspace 저장 실패: {e}");
+        }
+        self.workspaces.lock().unwrap().insert(w.name.clone(), w.clone());
+        let _ = self.layout_events.send(w.clone());
+    }
+
+    async fn layout_apply(
+        self: &Arc<Self>,
+        name: &str,
+        change: LayoutChange,
+        actor: &str,
+    ) -> Result<Workspace, ErrorBody> {
+        let pane_machine = |id: &str| self.inner.lock().unwrap().panes.get(id).map(|p| p.machine_id.clone());
+        let mut w = self.workspace(name);
+        match change {
+            LayoutChange::NewTab { machine, name: pname, argv, cwd } => {
+                let mid = self.resolve_machine(machine.as_deref())?;
+                let spec = SpawnSpec { name: pname.unwrap_or_default(), argv, cwd, env: vec![], cols: 120, rows: 32 };
+                let id = self.spawn_on(&mid, spec, actor).await?;
+                // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
+                w = self.workspace(name);
+                w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
+            }
+            LayoutChange::Split { pane, dir, machine, argv, cwd } => {
+                let (target, target_mid) = self.resolve_pane(&pane)?;
+                if !crate::layout::ws_contains(&w, &target) {
+                    return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
+                }
+                let mid = match machine {
+                    Some(m) => self.resolve_machine(Some(&m))?,
+                    None => pane_machine(&target).unwrap_or(target_mid),
+                };
+                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24 };
+                let id = self.spawn_on(&mid, spec, actor).await?;
+                w = self.workspace(name);
+                let done = w.tabs.iter_mut().any(|t| crate::layout::split(&mut t.root, &target, &id, dir));
+                if !done {
+                    return Err(err(ErrorCode::NotFound, "나누는 사이에 pane이 layout에서 빠졌다"));
+                }
+            }
+            LayoutChange::AddTab { pane } => {
+                let (id, _) = self.resolve_pane(&pane)?;
+                if crate::layout::ws_contains(&w, &id) {
+                    return Err(err(ErrorCode::BadRequest, "이미 이 workspace에 있다"));
+                }
+                w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
+            }
+            LayoutChange::Close { pane, kill } => {
+                let (id, mid) = self.resolve_pane(&pane)?;
+                if kill && self.inner.lock().unwrap().panes.get(&id).is_some_and(|p| p.info.state.is_running()) {
+                    let conn = self.live_conn(&mid)?;
+                    self.db.audit(actor, "pane_kill", &id);
+                    conn.request(AgentRequest::Kill { session: id.clone() }).await?;
+                }
+                if !crate::layout::ws_remove(&mut w, &id) {
+                    return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
+                }
+            }
+        }
+        self.db.audit(actor, "layout", name);
+        self.save_workspace(&w);
+        Ok(w)
     }
 
     fn check_running(&self, id: &str) -> Result<(), ErrorBody> {

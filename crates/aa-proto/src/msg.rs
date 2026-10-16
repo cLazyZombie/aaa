@@ -48,6 +48,8 @@ pub enum ErrorCode {
     Timeout,
     Unavailable,
     Internal,
+    /// 다른 front가 이 pane의 조작 lease를 갖고 있다(가져오려면 take)
+    LeaseHeld,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -266,6 +268,10 @@ pub enum AgentRequest {
     Screen {
         session: String,
     },
+    /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
+    Forget {
+        session: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -375,6 +381,15 @@ pub struct MachineView {
     pub last_seen_ms: Option<u64>,
 }
 
+/// pane 조작 lease(대화형 front 하나가 키 입력과 PTY 크기를 정한다). 연결이 끊기면 풀린다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LeaseView {
+    /// 보유한 front 연결 ID(front는 Welcome·attach 때 받은 자기 ID와 비교한다)
+    pub front: String,
+    /// 사람이 읽는 이름(예: `tui@mac-a`, `웹(ab12)`)
+    pub label: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PaneView {
     pub id: String,
@@ -386,10 +401,96 @@ pub struct PaneView {
     #[serde(flatten)]
     pub state: SessionState,
     pub connection: Connection,
-    /// 지금 입력할 수 없으면 true(끊김·종료·권한)
+    /// 지금 입력할 수 없으면 true(끊김·종료·권한). lease는 따로 본다.
     pub readonly: bool,
     pub cols: u16,
     pub rows: u16,
+    pub lease: Option<LeaseView>,
+}
+
+// ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitDir {
+    /// 좌우로 나눈다(a가 왼쪽)
+    Horizontal,
+    /// 위아래로 나눈다(a가 위)
+    Vertical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "node", rename_all = "snake_case")]
+pub enum LayoutNode {
+    Pane {
+        pane: String,
+    },
+    Split {
+        dir: SplitDir,
+        /// a 쪽 비율(천분율, 1..=999)
+        ratio: u16,
+        a: Box<LayoutNode>,
+        b: Box<LayoutNode>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Tab {
+    pub id: String,
+    pub name: String,
+    pub root: LayoutNode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Workspace {
+    pub name: String,
+    pub tabs: Vec<Tab>,
+}
+
+/// layout 바꾸기. 새 pane이 필요한 동작은 host가 띄운 뒤 layout에 넣는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum LayoutChange {
+    /// 새 탭에 새 pane
+    NewTab { machine: Option<String>, name: Option<String>, argv: Vec<String>, cwd: Option<String> },
+    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다
+    Split { pane: String, dir: SplitDir, machine: Option<String>, argv: Vec<String>, cwd: Option<String> },
+    /// 이미 있는 pane을 새 탭으로 넣는다
+    AddTab { pane: String },
+    /// layout에서 뺀다(kill이면 세션도 끝낸다)
+    Close { pane: String, kill: bool },
+}
+
+// ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
+
+/// 같은 모양 글자 묶음. 색은 0=기본, 0x0100_00nn=팔레트 nn, 0x0200_rrggbb=RGB.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridRun {
+    /// 글자들. 넓은 글자(한글 등)는 두 칸을 차지하고 뒤 칸은 따로 적지 않는다.
+    pub t: String,
+    pub fg: u32,
+    pub bg: u32,
+    /// 1=굵게, 2=기울임, 4=밑줄, 8=반전
+    pub a: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridLine {
+    pub row: u16,
+    pub runs: Vec<GridRun>,
+}
+
+/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridFrame {
+    pub pane: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    pub cursor_visible: bool,
+    pub full: bool,
+    pub lines: Vec<GridLine>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -455,6 +556,41 @@ pub enum FrontRequest {
     PaneKill {
         pane: String,
     },
+    /// 대화형 입력(TUI·웹 터미널). 조작 lease를 확인하고, 비어 있으면 이 연결이 갖는다.
+    /// 한 번 보내는 `PaneSend`(CLI·API)는 lease 대상이 아니다(§4.5).
+    PaneInput {
+        pane: String,
+        data: B64,
+    },
+    /// 조작 lease를 이 연결로 가져온다(이전 보유자에게는 State로 알린다)
+    PaneTake {
+        pane: String,
+    },
+    PaneRelease {
+        pane: String,
+    },
+    /// 끝난 pane(중단·유실·종료)을 같은 spec으로 다시 띄우고 layout 자리를 바꾼다
+    PaneResume {
+        pane: String,
+    },
+    /// 끝난 pane 기록을 지운다
+    PaneForget {
+        pane: String,
+    },
+    /// 이 연결로 pane 화면(cell grid)을 보낸다. 같은 머신 front 연결(UDS)에서만 쓴다.
+    PaneWatch {
+        pane: String,
+    },
+    PaneUnwatch {
+        pane: String,
+    },
+    Workspace {
+        name: Option<String>,
+    },
+    LayoutApply {
+        workspace: Option<String>,
+        change: LayoutChange,
+    },
     EnrollOpen {
         minutes: u32,
     },
@@ -483,6 +619,9 @@ impl FrontRequest {
                 | FrontRequest::Machines
                 | FrontRequest::Panes
                 | FrontRequest::PaneRead { .. }
+                | FrontRequest::PaneWatch { .. }
+                | FrontRequest::PaneUnwatch { .. }
+                | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
         )
     }
@@ -524,6 +663,7 @@ pub enum FrontResponse {
         expires_in_s: u64,
     },
     Publish(PublishState),
+    Workspace(Workspace),
     Done,
 }
 
@@ -532,16 +672,35 @@ pub enum FrontResponse {
 pub enum FrontEvent {
     /// 머신·pane 목록이 바뀌었다(전체 목록)
     State { machines: Vec<MachineView>, panes: Vec<PaneView> },
+    /// workspace layout이 바뀌었다
+    Workspace(Workspace),
+    /// PaneWatch로 구독한 화면
+    Grid(GridFrame),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum FrontMsg {
-    Hello { proto: Version, client: String },
-    Welcome { proto: Version, host_id: String, role: DeviceRole },
+    Hello {
+        proto: Version,
+        client: String,
+    },
+    /// `front`는 이 연결의 ID다(lease 보유자 비교에 쓴다)
+    Welcome {
+        proto: Version,
+        host_id: String,
+        role: DeviceRole,
+        front: String,
+    },
     Reject(ErrorBody),
-    Req { id: String, body: FrontRequest },
-    Res { id: String, result: Outcome<FrontResponse> },
+    Req {
+        id: String,
+        body: FrontRequest,
+    },
+    Res {
+        id: String,
+        result: Outcome<FrontResponse>,
+    },
     Event(FrontEvent),
 }
 
@@ -564,6 +723,10 @@ pub enum TermServerMsg {
     State {
         pane: PaneView,
     },
+    /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
+    Front {
+        id: String,
+    },
     Error(ErrorBody),
 }
 
@@ -571,8 +734,15 @@ pub enum TermServerMsg {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum TermClientMsg {
-    Input { data: String },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// 조작 lease를 가져온다
+    Take,
 }
 
 #[cfg(test)]

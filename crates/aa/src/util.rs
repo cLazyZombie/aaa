@@ -29,6 +29,12 @@ pub fn software() -> String {
 
 /// 이 부팅을 가리키는 ID. 재부팅하면 바뀐다(boot fencing).
 pub fn boot_id() -> String {
+    // 시험용: 재부팅을 흉내 낸다(E2E가 agent를 다른 boot ID로 다시 띄운다)
+    if let Ok(v) = std::env::var("AA_TEST_BOOT_ID")
+        && !v.is_empty()
+    {
+        return v;
+    }
     #[cfg(target_os = "macos")]
     {
         if let Some(v) = sysctl_string("kern.bootsessionuuid") {

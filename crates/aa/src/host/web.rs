@@ -21,7 +21,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
-use super::{Host, PaneEvent};
+use super::{FrontRef, Host, PaneEvent};
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
@@ -224,12 +224,32 @@ fn readonly_msg(view: &aa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
     TermServerMsg::Readonly { readonly: view.readonly, reason: reason.map(str::to_string) }
 }
 
-async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, mut socket: WebSocket) {
+/// WebSocket 하나가 대화형 front 하나다. 조작 lease는 이 연결에 묶이고 끝나면 풀린다.
+async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, socket: WebSocket) {
+    let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let front = host.new_front(format!("웹({short})"));
+    pane_session(&host, &id, &dev, role, &front, socket).await;
+    host.front_gone(&front.id);
+}
+
+async fn pane_session(
+    host: &Arc<Host>,
+    id: &str,
+    dev: &str,
+    role: DeviceRole,
+    front: &FrontRef,
+    mut socket: WebSocket,
+) {
+    let id = id.to_string();
     let actor = format!("device:{dev}");
     let Some((mut rx, replay, mut next, cols, rows)) = host.attach_pane(&id) else { return };
     let Some(view) = host.pane_view_of(&id, role) else { return };
     let snapshot = TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly: view.readonly };
-    if !send_msg(&mut socket, &snapshot).await || !send_msg(&mut socket, &readonly_msg(&view, role)).await {
+    if !send_msg(&mut socket, &TermServerMsg::Front { id: front.id.clone() }).await
+        || !send_msg(&mut socket, &snapshot).await
+        || !send_msg(&mut socket, &readonly_msg(&view, role)).await
+        || !send_msg(&mut socket, &TermServerMsg::State { pane: view }).await
+    {
         return;
     }
     loop {
@@ -267,18 +287,19 @@ async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, m
             m = socket.recv() => {
                 let req = match m {
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<TermClientMsg>(&t) {
-                        Ok(TermClientMsg::Input { data }) => Some(FrontRequest::PaneSend { pane: id.clone(), data: B64(data.into_bytes()) }),
+                        Ok(TermClientMsg::Input { data }) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(data.into_bytes()) }),
                         Ok(TermClientMsg::Resize { cols, rows }) if role.can_control() => {
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }
+                        Ok(TermClientMsg::Take) => Some(FrontRequest::PaneTake { pane: id.clone() }),
                         _ => None,
                     },
-                    Some(Ok(Message::Binary(b))) => Some(FrontRequest::PaneSend { pane: id.clone(), data: B64(b.to_vec()) }),
+                    Some(Ok(Message::Binary(b))) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(b.to_vec()) }),
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => None,
                 };
                 if let Some(req) = req
-                    && let Err(e) = host.call(role, &actor, req).await
+                    && let Err(e) = host.call_from(role, &actor, Some(front), req).await
                     && !send_msg(&mut socket, &TermServerMsg::Error(e)).await
                 {
                     break;

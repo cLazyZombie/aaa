@@ -243,7 +243,12 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 조작 lease 소유자가 정한다. lease는 host가 판정하고 입력 직전에 다시 확인한다.
-  - M1-1은 lease 없이 controller 권한이면 입력·resize할 수 있다(마지막 입력이 이긴다). 웹은 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize한다. lease는 M1-2에서 넣는다.
+  - **lease 규칙(M1-2 구현).**
+    - lease는 대화형 front 연결 하나(TUI의 Front 연결, 웹 터미널 WebSocket 하나)에 묶인다. 연결이 끝나면 풀리고, host가 재시작해도 풀린다. 시간 만료는 없다.
+    - 대화형 입력은 lease가 비어 있으면 그 연결이 갖고, 다른 연결이 갖고 있으면 `lease_held`로 거부한다. 넘기려면 명시적으로 가져온다(`take`). 이전 보유자 화면에는 상태 변경으로 보인다.
+    - PTY 크기는 보유자만 바꾼다. 한 번 보내는 CLI `pane resize`는 아무도 갖지 않았을 때만 된다.
+    - **한 번 보내는 API 입력(`pane send`)은 lease 대상이 아니다.** coordinator·스크립트의 전송이 사람의 attach에 막히지 않게 하려는 것이다. 감사 기록에는 남는다. M1-3 메시지 API(§8.5)와 질문 응답(§8.4)은 이 위에서 자기 규칙(interrupt·queue, generation·lease 재확인)을 더한다.
+    - M1-1에서는 웹이 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize했다. M1-2부터는 그것도 lease 보유자만 한다.
   - 보기(observe) front는 입력도 resize도 할 수 없다.
   - 느린 front는 bounded queue가 차면 snapshot으로 재동기화하며, 전체 agent를 무기한 backpressure하지 않는다.
   - TUI와 웹이 섞여도 같은 규칙이다.

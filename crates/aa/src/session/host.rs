@@ -27,6 +27,66 @@ pub const RING_BYTES: usize = 2 << 20;
 /// 한 터미널 frame에 담는 최대 출력
 const CHUNK: usize = 32 << 10;
 
+/// 자식 종료. Windows는 portable-pty 0.9의 `WinChildKiller::kill`이 `TerminateProcess` 성공을
+/// 실패로 돌려주므로(반환값 판정이 뒤집힘) spawn 직후 연 handle로 직접 끝낸다.
+struct Killer {
+    #[cfg_attr(windows, allow(dead_code))]
+    pty: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    #[cfg(windows)]
+    handle: Option<win::ProcHandle>,
+}
+
+impl Killer {
+    fn new(pty: Box<dyn portable_pty::ChildKiller + Send + Sync>, child_pid: Option<u32>) -> Killer {
+        #[cfg(windows)]
+        {
+            Killer { pty, handle: child_pid.and_then(win::ProcHandle::open) }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = child_pid;
+            Killer { pty }
+        }
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        if let Some(h) = &self.handle {
+            return h.terminate();
+        }
+        self.pty.kill()
+    }
+}
+
+#[cfg(windows)]
+mod win {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+
+    pub struct ProcHandle(HANDLE);
+    // HANDLE은 이 구조체만 갖고 닫으므로 thread 사이에 옮겨도 된다
+    unsafe impl Send for ProcHandle {}
+    unsafe impl Sync for ProcHandle {}
+
+    impl ProcHandle {
+        /// 자식이 살아 있는 동안(spawn 직후) 열어야 PID 재사용과 섞이지 않는다
+        pub fn open(pid: u32) -> Option<ProcHandle> {
+            let h = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+            (!h.is_null()).then_some(ProcHandle(h))
+        }
+
+        pub fn terminate(&self) -> std::io::Result<()> {
+            if unsafe { TerminateProcess(self.0, 1) } != 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+        }
+    }
+
+    impl Drop for ProcHandle {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
 enum Cmd {
     Connected { conn: u64, tx: FrameTx, proto: aa_proto::Version },
     Disconnected { conn: u64 },
@@ -45,7 +105,7 @@ struct State {
     subs: HashSet<u64>,
     exit: Option<Option<i32>>,
     master: Box<dyn portable_pty::MasterPty + Send>,
-    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    killer: Killer,
     input: std::sync::mpsc::Sender<Vec<u8>>,
 }
 
@@ -229,7 +289,7 @@ async fn run(dir: PathBuf) -> Result<()> {
     let mut child = pair.slave.spawn_command(cmd).context("자식 실행")?;
     drop(pair.slave);
     let child_pid = child.process_id();
-    let killer = child.clone_killer();
+    let killer = Killer::new(child.clone_killer(), child_pid);
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
 

@@ -357,8 +357,31 @@ impl Agent {
             }
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
+            AgentRequest::Forget { session } => self.forget(&session),
         };
         self.send_host(&LinkMsg::Res { id, result: direct.into() }).await;
+    }
+
+    /// 끝난 세션 기록(폴더)을 지운다. 실행 중이거나 session host가 붙어 있으면 거부한다.
+    fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
+        if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
+        }
+        let mut map = self.sessions.lock().unwrap();
+        match map.get(session) {
+            None => return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}"))),
+            Some(e) if e.pump.is_some() || e.info.state.is_running() => {
+                return Err(ErrorBody::new(ErrorCode::BadRequest, "실행 중인 세션은 지울 수 없다"));
+            }
+            Some(_) => {}
+        }
+        map.remove(session);
+        drop(map);
+        let paths = SessionPaths::new(&self.state, session);
+        if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
+            tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");
+        }
+        Ok(AgentResponse::Done)
     }
 
     async fn to_session(&self, id: String, session: &str, body: SessionRequest) {
