@@ -6,6 +6,7 @@
 
 pub mod identity;
 pub mod link;
+pub mod threads;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -46,6 +47,9 @@ pub struct Agent {
     sessions: Mutex<HashMap<String, Entry>>,
     host: Mutex<Option<FrameTx>>,
     pub selfcheck: Mutex<Option<serde_json::Value>>,
+    threads_cfg: Mutex<threads::ThreadsConfig>,
+    /// report.md 감시 task(thread ID별)
+    watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
 impl Agent {
@@ -70,7 +74,36 @@ impl Agent {
             sessions: Mutex::new(HashMap::new()),
             host: Mutex::new(None),
             selfcheck: Mutex::new(None),
+            threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
+            watches: Mutex::new(HashMap::new()),
         }))
+    }
+
+    /// agent.toml의 thread 설정(작업 root·profile)
+    pub fn configure_threads(&self, cfg: threads::ThreadsConfig) {
+        *self.threads_cfg.lock().unwrap() = cfg;
+    }
+
+    /// report.md hash를 1초마다 보고 바뀌면 host에 알린다. 등록하면 지금 값을 한 번 보낸다.
+    fn watch_report(self: &Arc<Self>, thread: String, work_dir: PathBuf) {
+        let me = self.clone();
+        let t = thread.clone();
+        let task = tokio::spawn(async move {
+            let mut last: Option<Option<String>> = None;
+            loop {
+                let wd = work_dir.clone();
+                let hash = tokio::task::spawn_blocking(move || threads::report_hash(&wd)).await.unwrap_or(None);
+                if last.as_ref() != Some(&hash) {
+                    me.send_host(&LinkMsg::Event(AgentEvent::ReportChanged { thread: t.clone(), hash: hash.clone() }))
+                        .await;
+                    last = Some(hash);
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+        if let Some(old) = self.watches.lock().unwrap().insert(thread, task) {
+            old.abort();
+        }
     }
 
     pub fn sessions(&self) -> Vec<SessionInfo> {
@@ -155,6 +188,7 @@ impl Agent {
             cols: exit.as_ref().map(|x| x.cols).unwrap_or(spec.spec.cols),
             rows: exit.as_ref().map(|x| x.rows).unwrap_or(spec.spec.rows),
             state,
+            role: spec.spec.role,
         }
     }
 
@@ -358,6 +392,54 @@ impl Agent {
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
             AgentRequest::Forget { session } => self.forget(&session),
+            AgentRequest::Profiles => {
+                Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
+            }
+            AgentRequest::ThreadPrepare(p) => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                threads::prepare(&cfg, p)
+                    .await
+                    .map(AgentResponse::ThreadReady)
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+            }
+            AgentRequest::ThreadWatch { thread, work_dir } => {
+                // 감시 key는 `<project>/<thread>`다(thread 번호는 프로젝트마다 다시 센다)
+                let ok = thread
+                    .split_once('/')
+                    .is_some_and(|(p, t)| aa_proto::valid_project(p) && aa_proto::valid_thread(t));
+                if ok {
+                    self.watch_report(thread, PathBuf::from(work_dir));
+                    Ok(AgentResponse::Done)
+                } else {
+                    Err(ErrorBody::new(ErrorCode::BadRequest, "감시 key는 <project>/<thread> 형식이다"))
+                }
+            }
+            AgentRequest::ThreadUnwatch { thread } => {
+                if let Some(t) = self.watches.lock().unwrap().remove(&thread) {
+                    t.abort();
+                }
+                Ok(AgentResponse::Done)
+            }
+            AgentRequest::ReportCollect { work_dir, max_library_bytes } => {
+                tokio::task::spawn_blocking(move || threads::collect(&work_dir, max_library_bytes))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .map(AgentResponse::Report)
+            }
+            AgentRequest::FileRead { work_dir, path, offset, len } => {
+                tokio::task::spawn_blocking(move || threads::read_chunk(&work_dir, &path, offset, len))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
+            }
+            AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
+                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)
+                    .await
+                    .map(AgentResponse::Cleanup)
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
+            }
         };
         self.send_host(&LinkMsg::Res { id, result: direct.into() }).await;
     }

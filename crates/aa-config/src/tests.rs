@@ -108,3 +108,20 @@ fn agent_host_forms() {
         assert_eq!(load_agent(&d.0).is_ok(), ok, "{v}");
     }
 }
+
+#[test]
+fn profiles_are_checked() {
+    let d = Dir::new("profiles");
+    d.write(
+        "agent.toml",
+        "schema = 1\n[profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"x.sh\"]\n[profiles.c]\nharness = \"claude\"\nmodel = \"opus\"\n",
+    );
+    let l = load_agent(&d.0).unwrap();
+    assert_eq!(l.config.profiles["c"].model, "opus");
+    assert_eq!(l.config.profiles["fake"].command, ["/bin/sh", "x.sh"]);
+    d.write("agent.toml", "schema = 1\n[profiles.bad]\nharness = \"custom\"\n");
+    let e = load_agent(&d.0).unwrap_err();
+    assert!(e.render().contains("profiles.bad.command") && e.0[0].line == 2, "{}", e.render());
+    d.write("agent.toml", "schema = 1\n[profiles.x]\nharness = \"vim\"\n");
+    assert!(load_agent(&d.0).unwrap_err().render().contains("profiles.x.harness"));
+}

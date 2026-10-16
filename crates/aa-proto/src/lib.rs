@@ -3,10 +3,12 @@
 pub mod frame;
 pub mod layout;
 pub mod msg;
+pub mod orch;
 pub mod version;
 
 pub use frame::{Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, write_frame};
 pub use msg::*;
+pub use orch::*;
 pub use version::{AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, Version, negotiate, require_features};
 
 /// Agent link heartbeat: 양쪽이 이 간격으로 ping하고, 이만큼 아무것도 못 받으면 끊는다.
@@ -49,6 +51,18 @@ pub fn typescript_bindings() -> String {
         FrontEvent::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
+        Role::decl(&cfg),
+        ThreadKind::decl(&cfg),
+        Launch::decl(&cfg),
+        ProfileView::decl(&cfg),
+        LibFile::decl(&cfg),
+        Skipped::decl(&cfg),
+        ProjectView::decl(&cfg),
+        ThreadStatus::decl(&cfg),
+        BriefState::decl(&cfg),
+        ThreadGroup::decl(&cfg),
+        ThreadView::decl(&cfg),
+        FlowEvent::decl(&cfg),
     ];
     let mut out = String::from(
         "// 생성 파일: crates/aa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.\n// 갱신: AA_UPDATE_TS=1 cargo test -p aa-proto typescript\n\n",

@@ -44,7 +44,14 @@ impl Db {
                id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
                created_at INTEGER NOT NULL, last_seen INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE IF NOT EXISTS audit(ts INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);
-             CREATE TABLE IF NOT EXISTS workspaces(name TEXT PRIMARY KEY, layout TEXT NOT NULL, updated_at INTEGER NOT NULL);",
+             CREATE TABLE IF NOT EXISTS workspaces(name TEXT PRIMARY KEY, layout TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS threads(
+               project TEXT NOT NULL, id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL,
+               updated_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS flow_events(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, at_ms INTEGER NOT NULL, boot_id TEXT NOT NULL,
+               kind TEXT NOT NULL, thread TEXT, role TEXT, profile TEXT, machine TEXT, evidence TEXT,
+               detail TEXT NOT NULL, PRIMARY KEY(project, seq));",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -185,6 +192,106 @@ impl Db {
             Ok(DeviceRow { id: r.get(0)?, role: r.get(1)? })
         })
         .optional()?)
+    }
+
+    // ───────────── thread·흐름 사건(M1-3) ─────────────
+
+    /// 프로젝트의 다음 thread 번호(`t-0001`부터)를 잡고 기록을 넣는다. `make`는 ID를 받아 저장할 JSON을 만든다.
+    pub fn thread_insert_next(&self, project: &str, make: impl FnOnce(&str) -> String) -> Result<String> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let max: Option<i64> =
+            tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
+                r.get(0)
+            })?;
+        let id = format!("t-{:04}", max.unwrap_or(0) + 1);
+        tx.execute(
+            "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
+            params![project, id, make(&id), aa_common::util::now_ms() as i64],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    pub fn thread_save(&self, project: &str, id: &str, status: &str, data: &str) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE threads SET status=?3, data=?4, updated_at=?5 WHERE project=?1 AND id=?2",
+            params![project, id, status, data, aa_common::util::now_ms() as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn thread_get(&self, project: &str, id: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT data FROM threads WHERE project=?1 AND id=?2", [project, id], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// (project, data) 목록. `project`가 없으면 전부.
+    pub fn threads(&self, project: Option<&str>) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT data FROM threads WHERE (?1 IS NULL OR project=?1) ORDER BY project, CAST(SUBSTR(id, 3) AS INTEGER)",
+        )?;
+        let rows = st.query_map([project], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    /// 흐름 사건을 프로젝트 순번으로 넣고 그 순번을 돌려준다
+    pub fn flow_insert(&self, e: &aa_proto::FlowEvent) -> Result<u64> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let seq: i64 =
+            tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM flow_events WHERE project=?1", [&e.project], |r| {
+                r.get(0)
+            })?;
+        tx.execute(
+            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![
+                e.project,
+                seq,
+                e.at_ms as i64,
+                e.boot_id,
+                e.kind,
+                e.thread,
+                e.role.map(|r| r.as_str()),
+                e.profile,
+                e.machine,
+                e.evidence,
+                e.detail
+            ],
+        )?;
+        tx.commit()?;
+        Ok(seq as u64)
+    }
+
+    /// cursor(`after`) 다음 사건. 프로젝트를 주지 않으면 모든 프로젝트를 시각 순으로.
+    pub fn flow_after(&self, project: Option<&str>, after: u64, limit: u32) -> Result<Vec<aa_proto::FlowEvent>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail FROM flow_events
+             WHERE (?1 IS NULL OR project=?1) AND seq>?2 ORDER BY at_ms, project, seq LIMIT ?3",
+        )?;
+        let rows = st
+            .query_map(params![project, after as i64, limit as i64], |r| {
+                Ok(aa_proto::FlowEvent {
+                    project: r.get(0)?,
+                    seq: r.get::<_, i64>(1)? as u64,
+                    at_ms: r.get::<_, i64>(2)? as u64,
+                    boot_id: r.get(3)?,
+                    kind: r.get(4)?,
+                    thread: r.get(5)?,
+                    role: r.get::<_, Option<String>>(6)?.and_then(|s| aa_proto::Role::parse(&s)),
+                    profile: r.get(7)?,
+                    machine: r.get(8)?,
+                    evidence: r.get(9)?,
+                    detail: r.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn audit(&self, actor: &str, action: &str, detail: &str) {

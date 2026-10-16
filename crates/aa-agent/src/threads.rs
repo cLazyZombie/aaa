@@ -1,0 +1,397 @@
+//! thread 자리(worktree·작업 폴더)와 보고 회수(§8.7, §8.12). git은 이 머신의 agent만 실행한다.
+//!
+//! - 작업 폴더는 `<cwd>/.aa/<project>-<thread>/`이고 brief.md·report.md·library/를 둔다. repo면 `.aa/`를 git exclude에 넣는다.
+//! - report.md는 regular file만 본다(symlink는 무시). library는 symlink를 따라가지 않고 상한을 넘는 파일은 건너뛴다.
+//! - 정리는 force 없이 한다: 고치지 않은 worktree만 지워지고, 기준에 병합된 branch만 지운다.
+
+use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
+
+use aa_config::Profile;
+use aa_proto::{
+    Cleanup, Launch, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadKind, ThreadPrepare, ThreadReady, slug,
+    valid_project, valid_thread,
+};
+use anyhow::{Context, Result, bail};
+use sha2::{Digest, Sha256};
+
+/// report.md 본문 상한(이보다 크면 회수하지 않는다)
+pub const MAX_REPORT_BYTES: u64 = 4 << 20;
+
+#[derive(Debug, Clone, Default)]
+pub struct ThreadsConfig {
+    pub work_root: PathBuf,
+    pub profiles: BTreeMap<String, Profile>,
+}
+
+pub fn profile_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
+    cfg.profiles
+        .iter()
+        .map(|(name, p)| ProfileView {
+            name: name.clone(),
+            harness: p.harness.clone(),
+            model: Some(p.model.clone()).filter(|m| !m.is_empty()),
+            effort: Some(p.effort.clone()).filter(|m| !m.is_empty()),
+            description: p.description.clone(),
+        })
+        .collect()
+}
+
+fn uuid_v4() -> String {
+    let mut b: [u8; 16] = rand::random();
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h = hex::encode(b);
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
+/// profile → 실행 argv. resume argv는 같은 model·effort·args·env를 쓰고 `{session}` 자리에 harness 세션 ID가 들어간다.
+pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
+    let base = |default: &str| if p.command.is_empty() { vec![default.to_string()] } else { p.command.clone() };
+    let env: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let (argv, resume_argv, session_key) = match p.harness.as_str() {
+        "claude" => {
+            let mut flags = Vec::new();
+            if !p.model.is_empty() {
+                flags.extend(["--model".to_string(), p.model.clone()]);
+            }
+            if !p.effort.is_empty() {
+                flags.extend(["--effort".to_string(), p.effort.clone()]);
+            }
+            flags.extend(p.args.iter().cloned());
+            let key = uuid_v4();
+            let mut argv = base("claude");
+            argv.extend(flags.iter().cloned());
+            argv.extend(["--session-id".to_string(), key.clone()]);
+            let mut resume = base("claude");
+            resume.extend(flags);
+            resume.extend(["--resume".to_string(), "{session}".to_string()]);
+            (argv, resume, Some(key))
+        }
+        "codex" => {
+            let mut flags = Vec::new();
+            if !p.model.is_empty() {
+                flags.extend(["-m".to_string(), p.model.clone()]);
+            }
+            if !p.effort.is_empty() {
+                flags.extend(["-c".to_string(), format!("model_reasoning_effort={}", p.effort)]);
+            }
+            flags.extend(p.args.iter().cloned());
+            let mut argv = base("codex");
+            argv.extend(flags.iter().cloned());
+            let mut resume = base("codex");
+            resume.extend(["resume".to_string(), "{session}".to_string()]);
+            resume.extend(flags);
+            (argv, resume, None)
+        }
+        "shell" | "custom" => {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+            let mut argv = base(&shell);
+            argv.extend(p.args.iter().cloned());
+            (argv.clone(), argv, None)
+        }
+        other => bail!("profile {name}: 모르는 harness {other:?}"),
+    };
+    Ok(Launch { profile: name.to_string(), harness: p.harness.clone(), argv, env, resume_argv, session_key })
+}
+
+async fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+    let out = tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new("git").arg("-C").arg(dir).args(args).stdin(std::process::Stdio::null()).output(),
+    )
+    .await
+    .with_context(|| format!("git {} 시간 초과", args.join(" ")))?
+    .context("git 실행")?;
+    if !out.status.success() {
+        bail!("git {} 실패: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+const GIT_T: Duration = Duration::from_secs(30);
+
+/// repo의 `info/exclude`에 `.aa/`를 한 번만 넣는다(작업 폴더가 git 상태에 보이지 않게)
+async fn exclude_work_dirs(repo: &Path) -> Result<()> {
+    let common = git(repo, &["rev-parse", "--git-common-dir"], GIT_T).await?;
+    let common = if Path::new(&common).is_absolute() { PathBuf::from(common) } else { repo.join(common) };
+    let path = common.join("info").join("exclude");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if !text.lines().any(|l| l.trim() == ".aa/") {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+        std::fs::write(&path, format!("{text}{sep}.aa/\n"))?;
+    }
+    Ok(())
+}
+
+pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadReady> {
+    if !valid_project(&p.project) || !valid_thread(&p.thread) {
+        bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
+    }
+    let profile = cfg.profiles.get(&p.profile).with_context(|| {
+        format!(
+            "이 머신 agent.toml에 profile `{}`가 없다(있는 것: {:?})",
+            p.profile,
+            cfg.profiles.keys().collect::<Vec<_>>()
+        )
+    })?;
+    let launch = resolve(&p.profile, profile)?;
+    let (cwd, branch, base) = match p.kind {
+        ThreadKind::Worktree => {
+            let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
+            let top = PathBuf::from(git(&repo, &["rev-parse", "--show-toplevel"], GIT_T).await?);
+            let has_origin = git(&top, &["remote"], GIT_T).await?.lines().any(|l| l == "origin");
+            if has_origin {
+                // 원격이 늦어도 시작은 막지 않는다(로컬 ref로 진행)
+                if let Err(e) = git(&top, &["fetch", "--quiet", "origin"], Duration::from_secs(15)).await {
+                    tracing::warn!("fetch 실패(로컬 ref로 진행): {e:#}");
+                }
+            }
+            let base = match &p.base {
+                Some(b) => b.clone(),
+                None => match git(&top, &["rev-parse", "--abbrev-ref", "origin/HEAD"], GIT_T).await {
+                    Ok(b) if has_origin && !b.is_empty() && b != "origin/HEAD" => b,
+                    _ => match git(&top, &["symbolic-ref", "--short", "HEAD"], GIT_T).await {
+                        Ok(b) => b,
+                        Err(_) => git(&top, &["rev-parse", "HEAD"], GIT_T).await?,
+                    },
+                },
+            };
+            let s = slug(&p.title);
+            let branch = if s.is_empty() {
+                format!("aa/{}/{}", p.project, p.thread)
+            } else {
+                format!("aa/{}/{}-{s}", p.project, p.thread)
+            };
+            let name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "repo".into());
+            let path = cfg.work_root.join(name).join(format!("{}-{}", p.project, p.thread));
+            if path.exists() {
+                bail!("worktree 자리가 이미 있다: {}", path.display());
+            }
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            let path_s = path.to_string_lossy().to_string();
+            git(&top, &["worktree", "add", "-b", &branch, &path_s, &base], Duration::from_secs(120)).await?;
+            exclude_work_dirs(&top).await?;
+            (path, Some(branch), Some(base))
+        }
+        ThreadKind::Dir => {
+            let path = cfg.work_root.join(&p.project).join(&p.thread);
+            if path.exists() {
+                bail!("작업 폴더가 이미 있다: {}", path.display());
+            }
+            std::fs::create_dir_all(&path)?;
+            (path, None, None)
+        }
+    };
+    let work_dir = cwd.join(".aa").join(format!("{}-{}", p.project, p.thread));
+    std::fs::create_dir_all(work_dir.join("library"))?;
+    std::fs::write(work_dir.join("brief.md"), &p.brief)?;
+    Ok(ThreadReady {
+        cwd: cwd.to_string_lossy().to_string(),
+        work_dir: work_dir.to_string_lossy().to_string(),
+        branch,
+        base,
+        launch,
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut f = std::fs::File::open(path)?;
+    let mut h = Sha256::new();
+    std::io::copy(&mut f, &mut h)?;
+    Ok(hex::encode(h.finalize()))
+}
+
+/// report.md hash. 없거나 regular file이 아니면 None
+pub fn report_hash(work_dir: &Path) -> Option<String> {
+    let path = work_dir.join("report.md");
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if !meta.file_type().is_file() || meta.len() > MAX_REPORT_BYTES {
+        return None;
+    }
+    sha256_file(&path).ok()
+}
+
+/// work_dir가 thread 작업 폴더 형식인가(host가 준 경로를 그대로 믿지 않는다)
+fn check_work_dir(work_dir: &str) -> Result<PathBuf> {
+    let p = PathBuf::from(work_dir);
+    let ok = p.is_absolute()
+        && p.parent().and_then(|d| d.file_name()).is_some_and(|n| n == ".aa")
+        && p.components().all(|c| !matches!(c, Component::ParentDir));
+    if !ok {
+        bail!("thread 작업 폴더 형식이 아니다: {work_dir}");
+    }
+    let meta = std::fs::symlink_metadata(&p).with_context(|| format!("작업 폴더가 없다: {work_dir}"))?;
+    if !meta.is_dir() {
+        bail!("작업 폴더가 폴더가 아니다(symlink 등): {work_dir}");
+    }
+    Ok(p)
+}
+
+pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot> {
+    let dir = check_work_dir(work_dir)?;
+    let path = dir.join("report.md");
+    let meta = std::fs::symlink_metadata(&path).context("report.md가 없다")?;
+    if !meta.file_type().is_file() {
+        bail!("report.md가 regular file이 아니다");
+    }
+    if meta.len() > MAX_REPORT_BYTES {
+        bail!("report.md가 너무 크다({} bytes)", meta.len());
+    }
+    let report = std::fs::read(&path)?;
+    let hash = hex::encode(Sha256::digest(&report));
+    let mut files = Vec::new();
+    let mut skipped = Vec::new();
+    let mut total = 0u64;
+    let lib = dir.join("library");
+    if std::fs::symlink_metadata(&lib).is_ok_and(|m| m.is_dir()) {
+        walk(&lib, &lib, &mut |rel, meta, abs| {
+            if meta.file_type().is_symlink() {
+                skipped.push(Skipped { path: rel, reason: "symlink는 따라가지 않는다".into() });
+            } else if !meta.is_file() {
+                skipped.push(Skipped { path: rel, reason: "일반 파일이 아니다".into() });
+            } else if total + meta.len() > max_library_bytes {
+                skipped.push(Skipped {
+                    path: rel,
+                    reason: format!("복사 상한({} MB)을 넘는다. agent에 남는다", max_library_bytes >> 20),
+                });
+            } else {
+                match sha256_file(abs) {
+                    Ok(sha256) => {
+                        total += meta.len();
+                        files.push(LibFile { path: rel, size: meta.len(), sha256 });
+                    }
+                    Err(e) => skipped.push(Skipped { path: rel, reason: format!("읽기 실패: {e}") }),
+                }
+            }
+        })?;
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(ReportSnapshot { hash, report: aa_proto::B64(report), files, skipped })
+}
+
+fn walk(root: &Path, dir: &Path, f: &mut impl FnMut(String, std::fs::Metadata, &Path)) -> Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let path = e.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+        if meta.is_dir() {
+            walk(root, &path, f)?;
+        } else {
+            f(rel, meta, &path);
+        }
+    }
+    Ok(())
+}
+
+/// library 파일 한 조각. 경로는 library 아래 상대 경로만, symlink는 거부한다.
+pub fn read_chunk(work_dir: &str, rel: &str, offset: u64, len: u32) -> Result<(Vec<u8>, bool)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let dir = check_work_dir(work_dir)?;
+    let relp = Path::new(rel);
+    if rel.is_empty() || !relp.components().all(|c| matches!(c, Component::Normal(_))) {
+        bail!("library 상대 경로가 아니다: {rel}");
+    }
+    let mut cur = dir.join("library");
+    for c in relp.components() {
+        cur = cur.join(c);
+        let meta = std::fs::symlink_metadata(&cur)?;
+        if meta.file_type().is_symlink() {
+            bail!("symlink는 읽지 않는다: {rel}");
+        }
+    }
+    let mut f = std::fs::File::open(&cur)?;
+    let size = f.metadata()?.len();
+    f.seek(SeekFrom::Start(offset))?;
+    let mut buf = vec![0u8; len.min(512 * 1024) as usize];
+    let n = f.read(&mut buf)?;
+    buf.truncate(n);
+    Ok((buf, offset + n as u64 >= size))
+}
+
+pub async fn cleanup(
+    repo: Option<&str>,
+    cwd: &str,
+    branch: Option<&str>,
+    base: Option<&str>,
+    keep_worktree: bool,
+) -> Result<Cleanup> {
+    let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
+    let Some(repo) = repo else {
+        c.notes.push("작업 폴더는 남긴다(repo 없는 thread)".into());
+        return Ok(c);
+    };
+    let repo = PathBuf::from(repo);
+    if keep_worktree {
+        c.notes.push("worktree를 남겼다(요청)".into());
+    } else {
+        match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
+            Ok(_) => c.worktree_removed = true,
+            // force는 쓰지 않는다: 고친 파일이 있으면 남는다
+            Err(e) => c.notes.push(format!("worktree를 남겼다: {e:#}")),
+        }
+        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
+    }
+    if let (Some(branch), Some(base), true) = (branch, base, c.worktree_removed) {
+        let _ = git(&repo, &["fetch", "--quiet", "origin"], Duration::from_secs(15)).await;
+        match git(&repo, &["merge-base", "--is-ancestor", branch, base], GIT_T).await {
+            Ok(_) => match git(&repo, &["branch", "-D", branch], GIT_T).await {
+                Ok(_) => c.branch_deleted = true,
+                Err(e) => c.notes.push(format!("branch 삭제 실패: {e:#}")),
+            },
+            Err(_) => c.notes.push(format!("branch {branch}는 {base}에 병합되지 않아 남겼다")),
+        }
+    }
+    Ok(c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(harness: &str) -> Profile {
+        Profile {
+            harness: harness.into(),
+            model: "opus".into(),
+            effort: "high".into(),
+            args: vec!["--no-daemon".into()],
+            env: [("CODEX_SSH_SKIP_APP_SERVER_BOOT".to_string(), "true".to_string())].into(),
+            command: vec![],
+            description: String::new(),
+        }
+    }
+
+    /// resume은 launch와 같은 model·effort·args(daemon 금지 인자 포함)·env를 쓴다(§8.2). 운영에서 빠졌던 문제를 막는다.
+    #[test]
+    fn resume_keeps_launch_spec() {
+        for h in ["claude", "codex"] {
+            let l = resolve("p", &profile(h)).unwrap();
+            for flag in ["opus", "--no-daemon"] {
+                assert!(l.argv.iter().any(|a| a == flag), "{h} argv {:?}", l.argv);
+                assert!(l.resume_argv.iter().any(|a| a == flag), "{h} resume {:?}", l.resume_argv);
+            }
+            assert!(l.argv.iter().chain(&l.resume_argv).any(|a| a.contains("high")));
+            assert!(l.resume_argv.iter().any(|a| a == "{session}"));
+            assert_eq!(l.env, [("CODEX_SSH_SKIP_APP_SERVER_BOOT".to_string(), "true".to_string())]);
+        }
+        let c = resolve("p", &profile("claude")).unwrap();
+        let key = c.session_key.clone().unwrap();
+        assert_eq!(key.len(), 36);
+        assert!(c.argv.ends_with(&["--session-id".into(), key]));
+        assert_eq!(c.argv[0], "claude");
+        let x = resolve("p", &profile("codex")).unwrap();
+        assert_eq!(&x.resume_argv[..3], ["codex", "resume", "{session}"]);
+        assert!(x.argv.contains(&"model_reasoning_effort=high".to_string()));
+    }
+
+    #[test]
+    fn work_dir_must_be_thread_folder() {
+        assert!(check_work_dir("relative/.aa/p-t-0001").is_err());
+        assert!(check_work_dir("/tmp/x/../.aa/p-t-0001").is_err());
+        assert!(check_work_dir("/etc").is_err());
+    }
+}

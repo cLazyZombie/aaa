@@ -19,3 +19,13 @@ mode = "child"
 [tui]
 # aa attach의 명령 prefix 키(C-<글자>). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "C-g").
 prefix = "C-b"
+
+[projects]
+# 프로젝트 폴더 root(비우면 ~/.aa/projects)
+root = ""
+# thread에 쓸 수 있는 profile(agent.toml에 정의). "*"는 모두 허용한다.
+allow_profiles = ["*"]
+# 보고와 함께 host로 복사할 library 상한(MB). 넘는 파일은 agent에 남는다.
+library_copy_mb = 200
+# brief에 넣을 memory 글자 수 상한
+brief_memory_chars = 32000
