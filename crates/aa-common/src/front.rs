@@ -38,7 +38,9 @@ impl FrontClient {
         let (r, w) = tokio::io::split(s);
         let tx = spawn_writer(w, MAX_FRAME);
         let mut rx = FrameRx::new(r, MAX_FRAME);
-        tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into() }).await?;
+        // aa 세션 안에서 실행했으면 그 세션을 알린다(사후 평가자 세션은 보기만 한다, §8.13)
+        let session = std::env::var("AA_SESSION_ID").ok().filter(|s| !s.is_empty());
+        tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into(), session }).await?;
         let front = match tokio::time::timeout(Duration::from_secs(10), rx.control::<FrontMsg>()).await?? {
             FrontMsg::Welcome { front, .. } => front,
             FrontMsg::Reject(e) => bail!("host가 거부했다: {e}"),

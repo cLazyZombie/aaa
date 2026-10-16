@@ -62,7 +62,10 @@ impl Db {
                done INTEGER NOT NULL DEFAULT 0, done_at INTEGER, created_at INTEGER NOT NULL, data TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS merge_queue(
                project TEXT NOT NULL, thread TEXT NOT NULL, seq INTEGER NOT NULL, enqueued_at INTEGER NOT NULL,
-               PRIMARY KEY(project, thread));",
+               PRIMARY KEY(project, thread));
+             CREATE TABLE IF NOT EXISTS evaluations(
+               project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
+               created_at INTEGER NOT NULL, PRIMARY KEY(project, id));",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -286,22 +289,73 @@ impl Db {
              WHERE (?1 IS NULL OR project=?1) AND seq>?2 ORDER BY at_ms, project, seq LIMIT ?3",
         )?;
         let rows = st
-            .query_map(params![project, after as i64, limit as i64], |r| {
-                Ok(aa_proto::FlowEvent {
-                    project: r.get(0)?,
-                    seq: r.get::<_, i64>(1)? as u64,
-                    at_ms: r.get::<_, i64>(2)? as u64,
-                    boot_id: r.get(3)?,
-                    kind: r.get(4)?,
-                    thread: r.get(5)?,
-                    role: r.get::<_, Option<String>>(6)?.and_then(|s| aa_proto::Role::parse(&s)),
-                    profile: r.get(7)?,
-                    machine: r.get(8)?,
-                    evidence: r.get(9)?,
-                    detail: r.get(10)?,
-                })
-            })?
+            .query_map(params![project, after as i64, limit as i64], Self::flow_from)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    fn flow_from(r: &rusqlite::Row) -> rusqlite::Result<aa_proto::FlowEvent> {
+        Ok(aa_proto::FlowEvent {
+            project: r.get(0)?,
+            seq: r.get::<_, i64>(1)? as u64,
+            at_ms: r.get::<_, i64>(2)? as u64,
+            boot_id: r.get(3)?,
+            kind: r.get(4)?,
+            thread: r.get(5)?,
+            role: r.get::<_, Option<String>>(6)?.and_then(|s| aa_proto::Role::parse(&s)),
+            profile: r.get(7)?,
+            machine: r.get(8)?,
+            evidence: r.get(9)?,
+            detail: r.get(10)?,
+        })
+    }
+
+    /// thread 하나의 사건 전체(순서대로)
+    pub fn flow_of_thread(&self, project: &str, thread: &str) -> Result<Vec<aa_proto::FlowEvent>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail FROM flow_events
+             WHERE project=?1 AND thread=?2 ORDER BY seq",
+        )?;
+        let rows = st.query_map(params![project, thread], Self::flow_from)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 프로젝트의 마지막 사건 seq(없으면 0)
+    pub fn flow_max(&self, project: &str) -> Result<u64> {
+        let c = self.conn.lock().unwrap();
+        let v: i64 =
+            c.query_row("SELECT COALESCE(MAX(seq), 0) FROM flow_events WHERE project=?1", [project], |r| r.get(0))?;
+        Ok(v as u64)
+    }
+
+    /// 평가 기록(받은 것은 `open`·`decided`, 받지 않은 것은 `invalid`)
+    pub fn eval_put(&self, project: &str, id: &str, state: &str, sha256: &str, data: &str) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO evaluations(project,id,state,sha256,data,created_at) VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(project,id) DO UPDATE SET state=excluded.state, data=excluded.data",
+            params![project, id, state, sha256, data, aa_common::util::now_ms() as i64],
+        )?;
+        Ok(())
+    }
+
+    /// (state, sha256, data)
+    pub fn eval_get(&self, project: &str, id: &str) -> Result<Option<(String, String, String)>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT state,sha256,data FROM evaluations WHERE project=?1 AND id=?2", [project, id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()?)
+    }
+
+    /// (state, data), 받은 순서대로
+    pub fn eval_list(&self, project: &str) -> Result<Vec<(String, String)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT state,data FROM evaluations WHERE project=?1 AND state!='invalid' ORDER BY created_at, id",
+        )?;
+        let rows = st.query_map([project], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 

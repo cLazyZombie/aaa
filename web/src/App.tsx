@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import type { AgentActivity, DeviceRole, MachineView, PaneView, QuestionView, ThreadView } from "./gen/proto";
+import type {
+  AgentActivity,
+  DeviceRole,
+  EvaluatorView,
+  MachineView,
+  PaneView,
+  QuestionView,
+  ThreadView,
+} from "./gen/proto";
 import { ApiError, call, me, pair, watchEvents } from "./api";
 import { TermView } from "./Term";
 import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
@@ -159,12 +167,22 @@ function Main({ role }: { role: DeviceRole }) {
   const [questions, setQuestions] = useState<Map<string, QuestionView>>(new Map());
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
-  const putThread = (t: ThreadView) =>
+  // 사후 평가자: 목록에 섞지 않고 header badge로만 보인다(§8.13)
+  const [evaluators, setEvaluators] = useState<EvaluatorView[]>([]);
+  const loadEvaluators = () =>
+    call({ op: "evaluator_status", project: null })
+      .then((r) => {
+        if (r.kind === "evaluators") setEvaluators(r.evaluators);
+      })
+      .catch(() => {});
+  const putThread = (t: ThreadView) => {
+    if (t.role === "evaluator") loadEvaluators();
     setThreads((old) => {
       const next = new Map(old);
       next.set(threadKey(t), t);
       return next;
     });
+  };
 
   const putQuestion = (q: QuestionView) =>
     setQuestions((old) => {
@@ -191,8 +209,9 @@ function Main({ role }: { role: DeviceRole }) {
                 if (r.kind === "questions") setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
+          if (on) loadEvaluators();
           if (on)
-            call({ op: "threads", project: null })
+            call({ op: "threads", project: null, role: null })
               .then((r) => {
                 if (r.kind === "threads") setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
               })
@@ -240,7 +259,7 @@ function Main({ role }: { role: DeviceRole }) {
   const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   const shownThreads = [...threads.values()]
-    .filter((t) => t.group !== "resolved")
+    .filter((t) => t.group !== "resolved" && t.role !== "evaluator")
     .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
   const canControl = role !== "reader";
   const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
@@ -257,6 +276,9 @@ function Main({ role }: { role: DeviceRole }) {
           <strong>aa</strong>
           <span className={`dot ${up ? "on" : "off"}`} title={up ? "host 연결됨" : "host 연결 끊김"} />
           <span className="muted">{role === "reader" ? "보기 권한" : "제어 권한"}</span>
+          {evaluators.map((v) => (
+            <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
+          ))}
         </header>
         {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
         {msg && <div className="banner err">{msg}</div>}
@@ -291,7 +313,7 @@ function Main({ role }: { role: DeviceRole }) {
           </section>
         )}
         {machines.map((m) => {
-          const mine = panes.filter((p) => p.machine_id === m.id);
+          const mine = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator");
           return (
             <section key={m.id} className="machine" data-testid={`machine-${m.name}`}>
               <h2>
@@ -350,5 +372,24 @@ function Main({ role }: { role: DeviceRole }) {
         )}
       </main>
     </div>
+  );
+}
+
+/** 사후 평가자 표시: 동작 상태와 정하지 않은 개선안 수. 누르면 평가자 pane을 연다(닫아도 배경에서 계속 돈다). */
+function EvaluatorBadge({ v, pane, onOpen }: { v: EvaluatorView; pane?: PaneView; onOpen: (id: string | null) => void }) {
+  const running = v.running && pane !== undefined;
+  const act = pane?.agent?.activity;
+  const state = !running ? "ended" : act === "working" ? "working" : "idle";
+  const label = state === "ended" ? "세션 끝남" : state === "working" ? "평가 중" : "대기";
+  return (
+    <button
+      className={`small eval-badge ${state}`}
+      data-testid={`evaluator-${v.project}`}
+      title={`${v.project} 사후 평가자 ${v.thread.id} · ${label} · 받은 평가 ${v.evaluations} · 정하지 않은 개선안 ${v.undecided}`}
+      disabled={!v.thread.pane}
+      onClick={() => v.thread.pane && onOpen(v.thread.pane)}
+    >
+      평가 <span className="eval-dot">●</span> {v.undecided}
+    </button>
   );
 }

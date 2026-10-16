@@ -42,7 +42,7 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
     let hello: FrontMsg = tokio::time::timeout(Duration::from_secs(10), rx.control()).await??;
-    let FrontMsg::Hello { proto, client } = hello else { bail!("hello가 와야 한다") };
+    let FrontMsg::Hello { proto, client, session } = hello else { bail!("hello가 와야 한다") };
     let agreed = match negotiate(FRONT_API, proto) {
         Ok(v) => v,
         Err(e) => {
@@ -51,14 +51,16 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
         }
     };
     let front = host.new_front(client.clone());
-    tx.json(&FrontMsg::Welcome {
-        proto: agreed,
-        host_id: host.host_id.clone(),
-        role: DeviceRole::Local,
-        front: front.id.clone(),
-    })
-    .await?;
-    let actor = format!("local:{client}");
+    // 사후 평가자 세션 안의 CLI는 보기만 한다(다른 agent에 지시하지 않는다, §8.13). 세션 ID는 CLI가 env에서 알린다.
+    let evaluator = session.as_deref().is_some_and(|s| {
+        host.pane_view_of(s, DeviceRole::Local).is_some_and(|p| p.role == Some(aa_proto::Role::Evaluator))
+    });
+    let role = if evaluator { DeviceRole::Reader } else { DeviceRole::Local };
+    tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
+    let actor = match (&session, evaluator) {
+        (Some(s), true) => format!("evaluator:{s}"),
+        _ => format!("local:{client}"),
+    };
 
     // workspace layout 변경을 이 연결에 보낸다
     let layout_task = {
@@ -124,7 +126,7 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
         let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
         tokio::spawn(async move {
             while let Some((id, body)) = ordered_rx.recv().await {
-                let result = host.call_from(DeviceRole::Local, &actor, Some(&front), body).await;
+                let result = host.call_from(role, &actor, Some(&front), body).await;
                 if tx.json(&FrontMsg::Res { id, result: result.into() }).await.is_err() {
                     break;
                 }
@@ -167,7 +169,7 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
                 body => {
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     tokio::spawn(async move {
-                        let result = host.call_from(DeviceRole::Local, &actor, Some(&front), body).await;
+                        let result = host.call_from(role, &actor, Some(&front), body).await;
                         let _ = tx.json(&FrontMsg::Res { id, result: result.into() }).await;
                     });
                 }

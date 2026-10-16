@@ -709,4 +709,139 @@ pub struct ProjectContext {
     pub assignable: Vec<OwnerChoice>,
     /// 끝내지 않은 inbox 항목 수
     pub inbox_open: u32,
+    /// 사후 평가자(지정했을 때만)
+    #[serde(default)]
+    pub evaluator: Option<Box<EvaluatorView>>,
+}
+
+// ───────────────────────── 사후 평가자(M3, §8.13) ─────────────────────────
+
+/// 사후 평가자 상태. 평가자 thread는 thread 목록에 섞지 않고 이것으로 따로 본다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EvaluatorView {
+    pub project: String,
+    pub thread: ThreadView,
+    /// 세션이 돌고 있다(아니면 `thread restart`로 다시 띄운다)
+    pub running: bool,
+    /// 마지막으로 넘긴 사건 seq
+    #[ts(type = "number")]
+    pub cursor: u64,
+    /// 아직 넘기지 않은 사건 수(평가자 자신의 사건 제외)
+    pub pending: u32,
+    /// 넘긴 사건 묶음 수
+    pub batches: u32,
+    #[ts(type = "number | null")]
+    pub last_batch_ms: Option<u64>,
+    /// 받은 평가 기록 수
+    pub evaluations: u32,
+    /// 채택·보류를 정하지 않은 개선안 수
+    pub undecided: u32,
+}
+
+/// 평가자가 쓰는 평가 기록(`library/evaluations/<이름>.json`). host가 검사해 받는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EvaluationDoc {
+    /// 평가한 thread ID
+    #[serde(default)]
+    pub targets: Vec<String>,
+    /// 근거로 읽은 사건 묶음 파일 이름
+    #[serde(default)]
+    pub batches: Vec<String>,
+    /// 흐름 효율 판정 한두 줄
+    pub summary: String,
+    /// 단계별 시간
+    #[serde(default)]
+    pub stages: Vec<EvalStage>,
+    /// 재작업(횟수·원인)
+    #[serde(default)]
+    pub rework: Vec<String>,
+    /// 막힌 곳(기다린 것과 그 시간)
+    #[serde(default)]
+    pub blocked: Vec<String>,
+    #[serde(default)]
+    pub tool_issues: Vec<String>,
+    /// 결함을 누가 어느 단계에서 잡았나
+    #[serde(default)]
+    pub defects: Vec<EvalDefect>,
+    #[serde(default)]
+    pub proposals: Vec<Proposal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EvalStage {
+    pub thread: String,
+    pub stage: String,
+    /// 걸린 시간
+    #[serde(default)]
+    pub minutes: Option<Minutes>,
+}
+
+/// 분. 평가자가 쓴 소수는 반올림해 받는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+pub struct Minutes(pub u32);
+
+impl<'de> Deserialize<'de> for Minutes {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let m = f64::deserialize(d)?;
+        if !(0.0..=1e6).contains(&m) {
+            return Err(serde::de::Error::custom(format!("minutes 범위 밖: {m}")));
+        }
+        Ok(Minutes(m.round() as u32))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EvalDefect {
+    pub what: String,
+    /// 잡은 쪽(사람·coordinator·thread·CI·E2E …)
+    #[serde(default)]
+    pub found_by: String,
+    #[serde(default)]
+    pub stage: String,
+}
+
+/// 개선안 하나. `decision`은 host가 채운다(평가자가 쓴 값은 버린다).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Proposal {
+    pub id: String,
+    pub text: String,
+    /// 예상 효과
+    #[serde(default)]
+    pub effect: String,
+    /// 대상 도구
+    #[serde(default)]
+    pub tool: String,
+    #[serde(default)]
+    pub decision: Option<ProposalDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProposalDecision {
+    pub adopted: bool,
+    pub by: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub note: Option<String>,
+    /// 채택이면 남긴 결정 기록 번호
+    pub decision_num: Option<u32>,
+}
+
+/// 받은 평가 기록 하나
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EvaluationView {
+    pub project: String,
+    /// 평가자가 정한 파일 이름(프로젝트 안에서 하나)
+    pub id: String,
+    /// 평가자 thread ID
+    pub evaluator: String,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+    /// 사람이 읽는 본문(프로젝트 폴더 기준 `evaluations/<id>.md`)
+    pub file: String,
+    pub doc: EvaluationDoc,
+}
+
+/// 평가 기록 이름(파일 이름): 영문·숫자·`-`·`_`, 64자까지
+pub fn valid_evaluation_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }

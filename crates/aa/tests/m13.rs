@@ -45,6 +45,19 @@ while IFS= read -r line; do
       esac
       echo "done"
       ;;
+    *inbox/*.json*)
+      # 사후 평가자 역할: 사건 묶음을 읽고 평가 기록을 쓴 뒤 report.md를 다시 쓴다
+      f=$(printf '%s' "$line" | tr ' ' '\n' | grep 'inbox/.*[.]json$' | head -n 1)
+      dir=$(dirname "$(dirname "$f")")
+      name=$(basename "$f" .json)
+      mkdir -p "$dir/library/evaluations"
+      printf '{"targets":["t-0002"],"batches":["%s"],"summary":"묶음 %s를 봤다","stages":[{"thread":"t-0002","stage":"전체","minutes":1.4}],"proposals":[{"id":"p1","text":"brief 확인을 자동으로"},{"id":"p2","text":"보고 형식 검사"}]}' "$name" "$name" > "$dir/library/evaluations/e-$name.json"
+      [ -f "$dir/library/evaluations/bad.json" ] || printf '{"proposals":[]}' > "$dir/library/evaluations/bad.json"
+      echo "$name" >> "$dir/processed.txt"
+      printf '[진행 중]\n\n## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
+      mv "$dir/report.md.tmp" "$dir/report.md"
+      echo "evaluated $name"
+      ;;
     *) echo "got: $line" ;;
   esac
   printf 'fake> '
@@ -1290,4 +1303,197 @@ fn coordinator_flow() {
     w.h.ok(&["project", "create", "p2"]);
     let guide = std::fs::read_to_string(w.projects.join("p2").join("AGENTS.md")).unwrap();
     assert!(guide.contains("aa context p2") && guide.contains("--from-task"), "{guide}");
+}
+
+/// 사후 평가자(§8.13): 목록에 섞이지 않고, 착지·완료 사건 묶음을 받아 평가 기록을 내며, 평가자 세션은 보기만 한다.
+/// 평가자는 가짜 agent(`fake`)이고, 묶음 알림 줄(`inbox/<seq>.json`)을 받으면 평가 기록과 보고를 쓴다.
+#[test]
+fn evaluator_flow() {
+    let w = world();
+    let pt = w.projects.join("demo/project.toml");
+    let mut toml = std::fs::read_to_string(&pt).unwrap();
+    toml.push_str("\n[evaluator]\nbatch_s = 1\n");
+    std::fs::write(&pt, toml).unwrap();
+
+    let v = w.h.ok(&["evaluator", "assign", "demo", "--profile", "fake", "--note", "착지 흐름을 본다"]);
+    let ev = v["evaluators"][0].clone();
+    let eid = ev["thread"]["id"].as_str().unwrap().to_string();
+    assert_eq!(ev["thread"]["role"], "evaluator", "{v}");
+    let e = w.h.json(&["evaluator", "assign", "demo", "--profile", "fake"]).expect_err("두 번째 평가자");
+    assert!(e.contains("이미 사후 평가자가 있다"), "{e}");
+    let wd = PathBuf::from(w.show(&eid)["work_dir"].as_str().unwrap());
+    let brief = std::fs::read_to_string(wd.join("brief.md")).unwrap();
+    assert!(brief.contains("# 사후 평가자 규칙") && !brief.contains("# thread 규칙"), "{brief}");
+    assert!(brief.contains("착지 흐름을 본다"), "{brief}");
+    w.wait_show("평가자 brief", &eid, |v| v["brief"] == "delivered");
+
+    // 목록에 섞이지 않는다: thread·pane 목록과 context에는 없고 role로만 보인다
+    let ids = |v: &Value, key: &str| -> Vec<String> {
+        v[key].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect()
+    };
+    assert!(!ids(&w.h.ok(&["thread", "list", "--project", "demo"]), "threads").contains(&eid));
+    assert_eq!(ids(&w.h.ok(&["thread", "list", "--role", "evaluator"]), "threads"), std::slice::from_ref(&eid));
+    let pane = w.show(&eid)["pane"].as_str().unwrap().to_string();
+    assert!(!ids(&w.h.ok(&["pane", "list"]), "panes").contains(&pane));
+    assert_eq!(ids(&w.h.ok(&["pane", "list", "--role", "evaluator"]), "panes"), std::slice::from_ref(&pane));
+    let c = w.h.ok(&["context", "demo"]);
+    assert!(c["threads"].as_array().unwrap().is_empty(), "{c}");
+    assert_eq!(c["evaluator"]["thread"]["id"], eid.as_str());
+
+    // 평가자 세션 안의 CLI는 보기만 한다: 다른 thread에 지시·채택이 거부되고 보기는 된다
+    let as_eval = |args: &[&str]| w.h.cmd(args).env("AA_SESSION_ID", &pane).output().unwrap();
+    for args in [
+        &["thread", "message", "demo", "t-0001", "--text", "x"][..],
+        &["evaluator", "unassign", "demo"],
+        &["thread", "start", "demo", "--title", "x", "--profile", "fake", "--kind", "dir", "--task-file", "/dev/null"],
+    ] {
+        let o = as_eval(args);
+        assert_eq!(o.status.code(), Some(3), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
+        assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    let o = as_eval(&["--json", "evaluator", "status", "demo"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+
+    // 일반 thread가 착지·완료되면 묶음이 평가자 작업 폴더 inbox/에 생긴다
+    let t =
+        w.start(&["--title", "work", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("e1.txt", "X-77")]);
+    let tid = t["id"].as_str().unwrap().to_string();
+    w.wait_show("보고", &tid, |v| v["report_hash"].is_string());
+    w.h.ok(&["merge", "enqueue", "demo", &tid]);
+    w.h.ok(&["merge", "done", "demo", &tid]);
+    w.h.ok(&["thread", "resolve", "demo", &tid]);
+    let inbox = wd.join("inbox");
+    let batches = |n: usize| {
+        wait_for_diag(
+            &format!("사건 묶음 {n}개"),
+            T,
+            || {
+                let mut v: Vec<PathBuf> = std::fs::read_dir(&inbox)
+                    .ok()?
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.extension().is_some_and(|x| x == "json"))
+                    .collect();
+                v.sort();
+                (v.len() >= n).then_some(v)
+            },
+            || format!("evaluator: {}\nevents: {}", w.h.ok(&["evaluator", "status", "demo"]), w.kinds(0).join(",")),
+        )
+    };
+    // 착지는 바로, 완료는 1초 뒤 묶음: 둘이 한 묶음이거나 두 묶음이다. 완료까지 넘어갈 때까지 기다린다.
+    let all_kinds = |files: &[PathBuf]| -> (Vec<String>, Vec<Value>) {
+        let mut kinds = Vec::new();
+        let mut docs = Vec::new();
+        for f in files {
+            let b: Value = serde_json::from_slice(&std::fs::read(f).unwrap()).unwrap();
+            for e in b["events"].as_array().unwrap() {
+                assert_ne!(e["role"], "evaluator", "평가자 자신의 사건이 들어갔다: {e}");
+                kinds.push(e["kind"].as_str().unwrap().to_string());
+            }
+            docs.push(b);
+        }
+        (kinds, docs)
+    };
+    let files = wait_for_diag(
+        "완료 사건까지 넘김",
+        T,
+        || {
+            let f = batches(1);
+            all_kinds(&f).0.contains(&"thread_resolved".to_string()).then_some(f)
+        },
+        || w.h.ok(&["evaluator", "status", "demo"]).to_string(),
+    );
+    let (kinds, docs) = all_kinds(&files);
+    for k in ["thread_started", "report_ready", "merge_landed", "thread_resolved"] {
+        assert!(kinds.contains(&k.to_string()), "{k} 없음: {kinds:?}");
+    }
+    // 묶음은 seq가 겹치지 않고, thread 이력·시간 요약·보고 본문을 담는다
+    for pair in docs.windows(2) {
+        assert!(pair[0]["to_seq"].as_u64() < pair[1]["from_seq"].as_u64(), "묶음이 겹친다");
+    }
+    let last = docs.last().unwrap();
+    let th = last["threads"].as_array().unwrap().iter().find(|t| t["id"] == tid.as_str()).unwrap();
+    assert!(th["summary"]["started_at_ms"].is_u64() && th["summary"]["resolved_ms"].is_u64(), "{th}");
+    assert!(th["report"].as_str().unwrap().contains("X-77"), "{th}");
+
+    // 평가 기록을 받는다: 목록·inbox 항목·잘못된 기록은 한 번만 알림
+    let first = files[0].file_stem().unwrap().to_str().unwrap().to_string();
+    let eval_id = format!("e-{first}");
+    let got = wait_for_diag(
+        "평가 기록",
+        T,
+        || {
+            let v = w.h.ok(&["evaluation", "list", "demo"]);
+            v["evaluations"].as_array().unwrap().iter().find(|e| e["id"] == eval_id.as_str()).cloned()
+        },
+        || format!("inbox: {}\nevents: {}", w.h.ok(&["inbox", "list", "demo", "--peek"]), w.kinds(0).join(",")),
+    );
+    assert_eq!(got["evaluator"], eid.as_str());
+    assert_eq!(got["doc"]["stages"][0]["minutes"], 1, "소수 분은 반올림");
+    assert!(w.projects.join("demo").join(got["file"].as_str().unwrap()).is_file());
+    let inbox_items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    let evals: Vec<&Value> = inbox_items.iter().filter(|i| i["item_kind"] == "evaluation").collect();
+    assert!(evals.iter().any(|i| i["subject"] == eval_id.as_str() && i["event"] == "evaluation"), "{inbox_items:?}");
+    assert_eq!(evals.iter().filter(|i| i["event"] == "invalid").count(), 1, "{inbox_items:?}");
+    assert!(
+        !inbox_items.iter().any(|i| i["item_kind"] == "report" && i["subject"] == eid.as_str()),
+        "평가자 보고가 report 항목이 됐다"
+    );
+
+    // 채택은 결정 기록에 남고, 보류까지 정하면 inbox 항목이 끝난다
+    let a = w.h.ok(&["evaluation", "adopt", "demo", &eval_id, "p1", "--note", "다음 주"]);
+    let num = a["doc"]["proposals"][0]["decision"]["decision_num"].as_u64().unwrap();
+    let d = w.h.ok(&["decision", "list", "demo"]);
+    assert!(
+        d["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["num"] == num && x["text"].as_str().unwrap().contains("p1")),
+        "{d}"
+    );
+    let e = w.h.json(&["evaluation", "adopt", "demo", &eval_id, "p1"]).expect_err("두 번 채택");
+    assert!(e.contains("이미 채택"), "{e}");
+    let e = w.h.json(&["evaluation", "hold", "demo", &eval_id, "p9"]).expect_err("없는 개선안");
+    assert!(e.contains("없는 개선안"), "{e}");
+    w.h.ok(&["evaluation", "hold", "demo", &eval_id, "p2"]);
+    let left = w.h.ok(&["evaluation", "list", "demo"]);
+    assert!(!left["evaluations"].as_array().unwrap().iter().any(|e| e["id"] == eval_id.as_str()), "{left}");
+    let open = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    assert!(!open.iter().any(|i| i["subject"] == eval_id.as_str() && i["event"] == "evaluation"), "{open:?}");
+
+    // 평가자를 다시 띄워도 넘긴 사건은 다시 넘기지 않는다: 다음 묶음은 그 뒤 seq부터
+    let before = w.h.ok(&["evaluator", "status", "demo"])["evaluators"][0].clone();
+    w.h.ok(&["pane", "kill", &pane]);
+    let eval_pane = || -> Value {
+        w.h.ok(&["pane", "list", "--role", "evaluator"])["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == pane.as_str())
+            .cloned()
+            .unwrap()
+    };
+    wait_for("평가자 종료", T, || (eval_pane()["state"] != "running").then_some(()));
+    let st = w.h.ok(&["evaluator", "status", "demo"])["evaluators"][0].clone();
+    assert_eq!(st["running"], false, "{st}");
+    w.h.ok(&["thread", "restart", "demo", &eid]);
+    w.wait_show("평가자 다시 brief", &eid, |v| v["brief"] == "delivered");
+    let t2 =
+        w.start(&["--title", "work2", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("e2.txt", "y")]);
+    let t2id = t2["id"].as_str().unwrap().to_string();
+    w.wait_show("보고", &t2id, |v| v["report_hash"].is_string());
+    w.h.ok(&["merge", "enqueue", "demo", &t2id]);
+    w.h.ok(&["merge", "done", "demo", &t2id]);
+    let files2 = batches(files.len() + 1);
+    let (_, docs2) = all_kinds(&files2);
+    let newest = docs2.last().unwrap();
+    assert!(newest["from_seq"].as_u64().unwrap() > before["cursor"].as_u64().unwrap(), "{newest}");
+    assert!(
+        newest["events"].as_array().unwrap().iter().all(|e| e["thread"] != tid.as_str()),
+        "앞 thread 사건이 다시 왔다"
+    );
+
+    // 끝내기: 상태에서 사라진다
+    w.h.ok(&["evaluator", "unassign", "demo"]);
+    assert!(w.h.ok(&["evaluator", "status", "demo"])["evaluators"].as_array().unwrap().is_empty());
 }

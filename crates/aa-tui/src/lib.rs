@@ -477,6 +477,19 @@ impl App {
                 None => {}
             }
         }
+        // 사후 평가자는 탭에 없어도 여기 작게 보인다(열기: aa evaluator open <project>)
+        let mut evals: Vec<&PaneView> =
+            self.panes.values().filter(|p| p.role == Some(aa_proto::Role::Evaluator)).collect();
+        evals.sort_by(|a, b| a.name.cmp(&b.name));
+        for p in evals {
+            let mark = match (&p.state, p.agent.as_ref().map(|a| a.activity)) {
+                (st, _) if !st.is_running() => "끝남",
+                (_, Some(aa_proto::AgentActivity::Working)) => "평가 중",
+                _ => "대기",
+            };
+            let project = p.name.split('/').next().unwrap_or(&p.name);
+            s.push_str(&format!(" · 평가 ● {project} {mark}"));
+        }
         if let Some(m) = &self.message {
             s.push_str(" · ");
             s.push_str(m);

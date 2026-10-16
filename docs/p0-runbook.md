@@ -7,7 +7,7 @@
 - 자체 서명 인증서(결정 9)는 보류한다. launcher 방식이 실측에서 실패할 때만 다시 꺼낸다(아래 「보류」).
 - P0 세부 실측보다 M1-2~M1-4 완성이 먼저다.
 
-문서의 머신 이름은 일반 이름이다. mac-a는 화면 접속이 되는 Mac, mac-b는 coordinator Mac, mac-c는 구현 Mac이다. 결정 10에 따라 화면이 필요한 일은 mac-a에서 하고, 명령만이면 ssh로 한다.
+문서의 머신 이름은 일반 이름이다. mac-a는 화면 접속이 되는 Mac, mac-b는 coordinator Mac, mac-c는 구현 Mac이다. 결정 10에 따라 화면이 필요한 일은 mac-a에서 하고, 명령만이면 ssh로 한다. 단, launcher 등록과 그 확인(L1·운영 설치)은 결정 15에 따라 **mac-b**에서 먼저 한다.
 
 - 도구: `p0/launcher/`(launcher 소스·설치·측정), `aa doctor probe`
 - 결과 위치: 실행한 Mac의 `~/aa-p0/results/`
@@ -38,21 +38,24 @@
 - 자식이 launcher에 귀속된다(책임 프로세스가 `aa-launcher`).
 - 미등록이면 느리고 FDA가 없다. 등록 뒤에 이 값이 기준 안으로 들어오면 합격이다.
 
-## 사용자 작업: launcher 등록 한 번 (mac-a 화면에서)
+## 사용자 작업: launcher 등록 한 번 (mac-b 화면에서, 결정 15)
 
 ```bash
-# mac-a 터미널(화면이 있는 세션). 저장소는 thread가 ~/aa-dev/aa에 준비한다.
+# mac-b 터미널(화면이 있는 세션). 저장소는 ~/aa-dev/aa에 준비한다. 이미 만들어 두었으면 건너뛴다.
 bash ~/aa-dev/aa/p0/launcher/install.sh
 ```
 
-1. 위 명령이 `~/Applications/aa-launcher.app`을 만든다. 키체인·시스템 설정은 바꾸지 않는다.
+1. 위 명령이 `~/Applications/aa-launcher.app`을 만든다(이미 있으면 그대로 둔다). 키체인·시스템 설정은 바꾸지 않는다.
 2. **시스템 설정 > 개인정보 보호 및 보안 > 개발자 도구**에서 「+」를 누르고, `~/Applications/aa-launcher.app`(홈 폴더 > 응용 프로그램)을 넣은 뒤 켠다. 변경할 때 비밀번호(또는 Touch ID) 창이 뜬다.
 3. **시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한**에서 같은 앱을 넣고 켠다.
 4. 끝나면 thread에 알린다.
 
 목록이 `.app`을 받지 않으면 `~/Applications/aa-launcher.app/Contents/MacOS/aa-launcher`(실행 파일)를 넣어 본다. 그것도 안 되면 무슨 창이었는지 알려 준다.
 
-## thread가 하는 확인(ssh, 재부팅·재등록 없음)
+## thread가 하는 확인(mac-b에 ssh, 재부팅·재등록 없음)
+
+측정 전에 mac-b의 `~/aa-dev/bin/aa`를 현재 소스로 빌드해 둔다(`nice`, 그 Mac의 다른 작업을 느리게 하지 않게).
+
 
 ```bash
 # 1) 지금 aa로 측정
