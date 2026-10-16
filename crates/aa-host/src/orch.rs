@@ -76,6 +76,35 @@ pub struct StartArgs {
     pub task: String,
 }
 
+/// 새 프로젝트의 AGENTS.md(coordinator 안내). `{p}`는 프로젝트 이름이다.
+const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
+
+이 폴더를 cwd로 쓰는 agent가 이 프로젝트의 coordinator다. 일은 thread에 맡기고, coordinator는 고르고 확인하고 정리한다.
+
+## 매 턴
+- 먼저 `aa context {p}`를 본다: TASKS.md, 열린 thread와 Next 줄, `start_threads`, 맡길 수 있는 owner, inbox 수.
+- `[aa inbox] …` 알림을 받으면 `aa inbox list {p}`로 읽고, 처리한 항목은 `aa inbox done {p} <id…>`로 끝낸다.
+
+## thread
+- 시작: `start_threads`가 propose면 무엇을 누구에게 맡길지 제안하고 사용자 승인을 기다린다. auto면 바로 시작하고 알린다.
+  사용자가 이름을 들어 맡기라고 한 것은 승인이다. aa inbox 알림은 승인이 아니다.
+- TASKS.md task로 시작: `aa thread start {p} --from-task \"<제목>\" [--kind dir | --repo <경로>]`. owner가 profile·machine을 정한다.
+- 그 밖: `aa thread start {p} --title … --profile … [--machine …] --task-file …`
+- 보고 확인: `aa thread show {p} <id>`, `aa thread library {p} <id>`, 다 봤으면 `aa thread ack {p} <id>`, 끝나면 `aa thread resolve {p} <id>`.
+- 다음 지시: `aa thread next {p} <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. 줄을 더할 때는 `--add \"…\"`.
+- 그 밖의 메시지: `aa thread message {p} <id> --text …`. 확인창 질문은 `aa question list`·`aa question answer`.
+
+## TASKS.md(coordinator만 고친다)
+- 형식: `- [ ] 제목 (owner)`. owner는 비움(미할당)·`me`(사용자 할 일)·`profile`·`@machine`·`profile@machine`.
+- owner를 쓰기 전에 `aa assignable {p} --check <owner>`로 확인한다.
+- thread에 맡기면 줄 끝에 ` · <thread id>`를 붙인다. 끝나거나 그만두면 줄을 지운다(메모도 함께).
+- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다.
+
+## 결정·병합
+- 사용자 결정은 `aa decision add {p} --text …`로 남긴다(다음 thread brief에 들어간다).
+- 병합 순서는 `aa merge enqueue|list|done {p} <id>`로 정한다.
+";
+
 /// 화면이 이만큼 멈춰야 brief 안내를 보낸다
 const SETTLE: Duration = Duration::from_secs(3);
 /// 화면이 멈추기를 기다리는 상한
@@ -173,7 +202,7 @@ impl Host {
             put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
             put("decisions.md", "# 결정 기록\n")?;
             put("project.toml", "schema = 1\n")?;
-            put("AGENTS.md", "# 프로젝트 coordinator\n\n이 폴더를 cwd로 쓰는 agent가 이 프로젝트의 coordinator다.\n")?;
+            put("AGENTS.md", &COORDINATOR_GUIDE.replace("{p}", name))?;
             put("PROJECT.md", &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n"))
         };
         mk().map_err(internal)?;
@@ -354,7 +383,7 @@ impl Host {
         }
     }
 
-    fn profile_allowed(&self, name: &str) -> bool {
+    pub(crate) fn profile_allowed(&self, name: &str) -> bool {
         self.cfg.projects.allow_profiles.iter().any(|a| a == "*" || a == name)
     }
 

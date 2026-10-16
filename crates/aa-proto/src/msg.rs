@@ -12,8 +12,8 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry,
-    MessageMode, MessageView, ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
-    ThreadPrepare, ThreadReady, ThreadView,
+    MessageMode, MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
+    Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 
 use crate::version::Version;
@@ -489,7 +489,7 @@ pub struct MachineView {
     #[ts(type = "number | null")]
     pub clock_skew_ms: Option<i64>,
     /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
-    pub problems: Vec<String>,
+    pub problems: Vec<HealthProblem>,
 }
 
 /// agent가 주기적으로 보내는 머신 건강(§8.10)
@@ -510,9 +510,16 @@ pub struct MachineHealth {
     pub on_ac: Option<bool>,
     pub toolchain: Vec<ToolCheck>,
     /// agent가 본 이상(디스크 부족·toolchain 실패). 새 세션을 거부한다.
-    pub problems: Vec<String>,
+    pub problems: Vec<HealthProblem>,
     /// 거부하지는 않는 주의(배터리 전원 등)
     pub warnings: Vec<String>,
+}
+
+/// 건강 이상 하나. `code`는 바뀌지 않는 종류(`disk`·`toolchain:<이름>`·`clock`)이고 `text`는 지금 값이 든 설명이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct HealthProblem {
+    pub code: String,
+    pub text: String,
 }
 
 /// agent.toml `[health.toolchain]`의 점검 명령 하나
@@ -777,6 +784,25 @@ pub enum FrontRequest {
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
         task: String,
+        /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+        #[serde(default)]
+        from_task: Option<String>,
+    },
+    /// thread의 Next 목록을 보이거나(`line`·`add` 없음), N번째 줄을 thread에 메시지로 보내거나, 줄을 더한다
+    ThreadNext {
+        project: String,
+        thread: String,
+        line: Option<u32>,
+        add: Option<String>,
+    },
+    /// coordinator용 프로젝트 요약
+    Context {
+        project: String,
+    },
+    /// thread를 맡길 수 있는 owner 목록. `check`를 주면 그 owner를 TASKS.md에 써도 되는지 본다.
+    Assignable {
+        project: String,
+        check: Option<String>,
     },
     Threads {
         project: Option<String>,
@@ -912,6 +938,9 @@ impl FrontRequest {
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::ThreadLibrary { .. }
+                | FrontRequest::ThreadNext { line: None, add: None, .. }
+                | FrontRequest::Context { .. }
+                | FrontRequest::Assignable { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Decisions { .. }
@@ -953,6 +982,17 @@ pub enum FrontResponse {
         panes: Vec<PaneView>,
     },
     Pane(PaneView),
+    Next {
+        lines: Vec<String>,
+        /// `line`으로 보낸 메시지
+        message: Option<MessageView>,
+    },
+    Context(ProjectContext),
+    Assignable {
+        owners: Vec<OwnerChoice>,
+        /// `check`가 통과했을 때 설명
+        valid: Option<String>,
+    },
     Screen(ScreenText),
     Pending {
         pending: Vec<PendingEnroll>,

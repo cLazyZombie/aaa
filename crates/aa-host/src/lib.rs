@@ -4,6 +4,7 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod attach;
+mod coord;
 pub mod db;
 pub mod front;
 mod harness;
@@ -16,6 +17,7 @@ mod notify;
 mod orch;
 mod routine;
 pub mod tailscale;
+mod tasks;
 pub mod web;
 
 use std::collections::{HashMap, HashSet};
@@ -670,10 +672,26 @@ impl Host {
             FrontRequest::ProjectCreate { name } => self.project_create(&name, actor),
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
-            FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task } => self
-                .thread_start(orch::StartArgs { project, title, machine, profile, kind, repo, base, task }, actor)
-                .await
-                .map(FrontResponse::Thread),
+            FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
+                let mut a = orch::StartArgs { project, title, machine, profile, kind, repo, base, task };
+                if let Some(t) = from_task {
+                    self.apply_from_task(&mut a, &t).await?;
+                }
+                self.thread_start(a, actor).await.map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadNext { project, thread, line, add } => {
+                self.thread_next(&project, &thread, line, add, actor).await
+            }
+            FrontRequest::Context { project } => self.context(&project).await.map(FrontResponse::Context),
+            FrontRequest::Assignable { project, check } => {
+                self.project_dir(&project)?;
+                let owners = self.assignable().await;
+                let valid = match check {
+                    Some(c) => Some(self.check_owner(&owners, &c)?),
+                    None => None,
+                };
+                Ok(FrontResponse::Assignable { owners, valid })
+            }
             FrontRequest::Threads { project } => {
                 self.threads_of(project.as_deref()).map(|threads| FrontResponse::Threads { threads })
             }

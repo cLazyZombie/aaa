@@ -742,7 +742,7 @@ host 프로젝트 폴더 구성:
   - 시작 중이거나 세션이 실행 중인 열린 thread를 머신별로 센다. `thread start`·`restart`가 한도에 닿으면 거부하고, 어느 thread가 도는지 보인다.
 - **미룬 것(이유: 결정 14의 「큰 그림 우선」, M1-4와 운영 대체 경로가 먼저다)**
   - 머신 건강 보고(디스크·부하·toolchain·전원·시계)와 이상 시 새 세션 거부 → M1 마무리(M1-4 뒤). boot fencing과 단절(`outage`)은 이미 있다. **M1 마무리에서 했다(§8.21).**
-  - `thread next`, TASKS.md `(profile@machine)` 소유, `start_threads` propose/auto → M1 마무리. coordinator는 지금도 `thread start`로 같은 일을 한다.
+  - `thread next`, TASKS.md `(profile@machine)` 소유, `start_threads` propose/auto → M1 마무리. coordinator는 지금도 `thread start`로 같은 일을 한다. **M1 마무리에서 했다(§8.21).**
   - routine은 M1-3d의 다음 착지에서 한다(명령 실행이 있어 보안 경계를 따로 본다).
 
 ### 8.19 M1-3d 구현 결정(10-16): routine
@@ -799,7 +799,7 @@ host 프로젝트 폴더 구성:
   - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex는 같은 방식으로 넣지만 실제 확인은 하지 않았다.
   - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
 
-### 8.21 M1 마무리 구현 결정(10-16): 머신 건강
+### 8.21 M1 마무리 구현 결정(10-16): 머신 건강, coordinator 일 흐름
 
 - **보고:** agent가 `[health] every_s`(기본 60초)마다 재서 `AgentEvent::Health`로 보낸다. host가 `health.v1`을 알렸을 때만 보낸다(이전 host와 호환). 다시 붙으면 마지막 보고를 바로 보낸다.
   - 디스크: 작업 root가 있는 디스크의 여유·전체(`statvfs`). 작업 root가 아직 없으면 있는 위 폴더를 본다.
@@ -809,8 +809,19 @@ host 프로젝트 폴더 구성:
   - 시계: host가 보고의 agent 시각과 자기 시각의 차이를 잰다. 60초 넘게 어긋나면 이상이다.
   - 계보·첫 실행 지연·키체인은 시작 때 자가 점검(selfcheck)이 이미 보낸다. boot ID·재부팅은 boot fencing이 맡는다.
 - **이상(새 세션 거부):** 디스크 여유가 `min_free_gb`(기본 5GB)보다 적다, toolchain 명령 실패, 시계 차이. 연결 중인 머신만 보고(끊김은 `outage`), 첫 보고 전에는 막지 않는다. `pane run`·resume·`thread start`·`restart`가 이유와 함께 거부된다. 이미 도는 세션은 건드리지 않는다.
-- **알림:** 이상이 생기거나 바뀌거나 풀리면 그 머신에 열린 thread가 있는 프로젝트 inbox에 `health` 항목(`problem`·`ok`)을 남긴다. 알림 webhook 기본 종류에 `health`를 더했다.
+- **알림:** 이상의 **종류**(`disk`·`toolchain:<이름>`·`clock`)가 생기거나 바뀌거나 풀리면 그 머신에 열린 thread가 있는 프로젝트 inbox에 `health` 항목(`problem`·`ok`)을 남긴다. 값(디스크 여유 GB 등)만 바뀐 것은 새 항목이 아니다(처음에는 설명 글로 비교해 디스크 여유가 0.1GB 바뀔 때마다 항목이 생겼다. E2E가 4번에 1번꼴로 잡았다). 알림 webhook 기본 종류에 `health`를 더했다.
 - **보기:** `aa status`·`aa machine list`에 이상 이유 또는 디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유.
+
+**coordinator 일 흐름(부록 A의 M1 마무리 항목, 0.2.35 의미)**
+- `aa context <p>`: coordinator가 매 턴 처음 본다. TASKS.md task(목록·owner·thread·메모), 열린 thread와 Next 줄·harness 상태, `start_threads`, 맡길 수 있는 owner, 끝내지 않은 inbox 수.
+- **TASKS.md:** aa는 읽기만 하고 coordinator가 쓴다. `- [ ] 제목 (owner) · t-0001`. owner는 비움·`agent`(미할당), `me`, `profile`·`@machine`·`profile@machine`(agent), 그 밖은 사람이다. 옛 표기 `(agent → t-0007)`도 읽는다. 완료는 줄을 지운다.
+- `aa thread start <p> --from-task "<제목>"`: 제목(대소문자 무시)으로 task를 찾는다. owner가 `--profile`·`--machine` 기본값이 되고 다르면 거부한다. `me`·사람 task, 미할당인데 `--profile`이 없으면 거부한다. 메모는 할 일 끝에 `## Notes from the task list`로 붙는다.
+  - 0.2.35와 다른 점: task에 붙은 thread가 아직 열려 있으면 다시 맡기지 않는다(같은 일을 두 thread가 하는 것을 막는다).
+- `aa assignable <p> [--check <owner>]`: 머신마다 host 허용 목록 ∩ 그 머신 agent.toml profile. 끊긴 머신은 「모름」이다. 맨 profile은 host 로컬 머신을 본다(`thread start`의 기본 머신과 같다). 0.2.35의 ssh 조회·1시간 캐시 대신 연결된 agent에 바로 묻는다.
+- `aa thread next <p> <id> [--line N | --add "…"]`: Next 목록은 보고서 `## Next` 줄 + `threads/<id>.next.md`. `--line N`은 그 줄을 메시지 API(대기열, 턴이 끝나면 전달)로 보낸다. 0.2.35는 바로 입력했다.
+- **`start_threads`(project.toml, propose·auto, 기본 propose):** coordinator가 따르는 안내 값이다. aa는 강제하지 않는다(0.2.35와 같다). 동시 실행 상한은 aa가 강제한다(`max_threads_per_machine`).
+- **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다.
+- **새 프로젝트 AGENTS.md:** coordinator 안내(매 턴 `aa context`, thread 시작 규칙, TASKS.md 규칙, 결정·병합 명령)를 쓴다. 있는 파일은 덮지 않는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
@@ -1227,7 +1238,7 @@ primary 근거:
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
 | profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | agent.toml 정의 + host.toml 허용, 해석 결과 저장(§7.2, §8.2) | M1-3 |
 | thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
-| `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`만 M1 마무리(§8.18) | M1-3 |
+| `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`는 M1 마무리에서 했다(§8.21) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |
 | brief 전달(claim 60초·settle 3초·3회·`--wait --until working`) | 그대로 계승(§8.5) | M1-3 |
 | `prompt_box` draft 감지 | adapter 입력 전 draft 감지 | M1-3 |
@@ -1239,8 +1250,8 @@ primary 근거:
 | nudge(미확인 묶음 hash당 1회, `herdr agent prompt`, 입력창 비었을 때) | 그대로(§8.5) | M1-3 |
 | progress 보고(`report --percent`), hook 5개 harness | 상태 사건 `progress` + adapter(Claude·Codex 먼저, 나머지 후속) | M1-3 / M3 |
 | sidebar·overview·focus·needs-you·popup | TUI·웹 표시 | M1-2 / M3 |
-| TASKS.md `(profile@machine)` 소유, `assignable` | 그대로 | M1 마무리(§8.18) |
-| safety·yolo `launch_args`, `start_threads` propose/auto | profile 정책·project.toml | M1 마무리(§8.18) |
+| TASKS.md `(profile@machine)` 소유, `assignable`, `context` | 그대로 + `--from-task` 중복 방지(§8.21) | M1 마무리(완료) |
+| safety·yolo `launch_args`, `start_threads` propose/auto | profile `args`(agent.toml)·project.toml `start_threads`(§8.21) | M1 마무리(완료) |
 | `threads/<id>.task.md` Follow-ups, `<id>.next.md` | thread 기록에 포함, restart 때 다시 읽기 | M1-3 |
 | `owned.json` configure journal | integration journal(§8.11) | M1-3 |
 | `launch_attempts` 3회, starting 5분 timeout | launch_state 전이 | M1-3 |

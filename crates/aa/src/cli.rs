@@ -88,6 +88,14 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DecisionCmd,
     },
+    /// coordinator가 매 턴 처음 보는 프로젝트 요약: TASKS.md, 열린 thread와 Next, start_threads, 맡길 수 있는 owner
+    Context { project: String },
+    /// TASKS.md owner로 쓸 수 있는 profile·머신. --check로 owner 하나를 확인한다.
+    Assignable {
+        project: String,
+        #[arg(long)]
+        check: Option<String>,
+    },
     /// inbox: 보고·질문·세션 끝남·머신 단절 같은 잃지 않는 항목(끝내기로 정리)
     Inbox {
         #[command(subcommand)]
@@ -253,12 +261,14 @@ enum ThreadCmd {
     /// thread를 시작한다: 그 머신 agent가 worktree(또는 작업 폴더)를 만들고 profile로 agent를 띄운 뒤 brief를 안내한다
     Start {
         project: String,
+        /// 제목(--from-task면 비워도 된다)
         #[arg(long)]
-        title: String,
+        title: Option<String>,
         #[arg(long)]
         machine: Option<String>,
+        /// profile(--from-task의 owner가 정하면 비워도 된다)
         #[arg(long)]
-        profile: String,
+        profile: Option<String>,
         /// worktree(기본, --repo 필요) 또는 dir(repo 없는 작업 폴더)
         #[arg(long, value_parser = ["worktree", "dir"], default_value = "worktree")]
         kind: String,
@@ -268,9 +278,22 @@ enum ThreadCmd {
         /// 기준 ref(기본: origin/HEAD, 없으면 현재 branch)
         #[arg(long)]
         base: Option<String>,
-        /// 할 일 파일(`-`면 표준 입력)
+        /// 할 일 파일(`-`면 표준 입력). --from-task면 비워도 된다.
         #[arg(long)]
-        task_file: String,
+        task_file: Option<String>,
+        /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다.
+        #[arg(long)]
+        from_task: Option<String>,
+    },
+    /// thread의 Next 목록(보고서 `## Next` + 더한 줄). --line N은 그 줄을 thread에 메시지로 보낸다.
+    Next {
+        project: String,
+        thread: String,
+        #[arg(long, conflicts_with = "add")]
+        line: Option<u32>,
+        /// Next 목록에 한 줄 더한다
+        #[arg(long)]
+        add: Option<String>,
     },
     List {
         #[arg(long, short)]
@@ -703,6 +726,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 DecisionCmd::List { project } => FrontRequest::Decisions { project },
             },
         ),
+        Cmd::Context { project } => front(json, FrontRequest::Context { project }),
+        Cmd::Assignable { project, check } => front(json, FrontRequest::Assignable { project, check }),
         Cmd::Inbox { cmd } => front(
             json,
             match cmd {
@@ -725,16 +750,34 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Thread { cmd } => front(
             json,
             match cmd {
-                ThreadCmd::Start { project, title, machine, profile, kind, repo, base, task_file } => {
-                    let task = if task_file == "-" {
-                        let mut t = String::new();
-                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
-                        t
-                    } else {
-                        std::fs::read_to_string(&task_file).with_context(|| format!("할 일 파일: {task_file}"))?
+                ThreadCmd::Start { project, title, machine, profile, kind, repo, base, task_file, from_task } => {
+                    if from_task.is_none() && (title.is_none() || profile.is_none() || task_file.is_none()) {
+                        anyhow::bail!("--title·--profile·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
+                    }
+                    let task = match task_file.as_deref() {
+                        None => String::new(),
+                        Some("-") => {
+                            let mut t = String::new();
+                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+                            t
+                        }
+                        Some(f) => std::fs::read_to_string(f).with_context(|| format!("할 일 파일: {f}"))?,
                     };
                     let kind = if kind == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree };
-                    FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task }
+                    FrontRequest::ThreadStart {
+                        project,
+                        title: title.unwrap_or_default(),
+                        machine,
+                        profile: profile.unwrap_or_default(),
+                        kind,
+                        repo,
+                        base,
+                        task,
+                        from_task,
+                    }
+                }
+                ThreadCmd::Next { project, thread, line, add } => {
+                    FrontRequest::ThreadNext { project, thread, line, add }
                 }
                 ThreadCmd::List { project } => FrontRequest::Threads { project },
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
@@ -1231,7 +1274,7 @@ fn state_label(s: &aa_proto::SessionState) -> String {
 /// 머신 건강 한 칸: 이상이면 그 이유, 아니면 디스크 여유·부하·주의
 fn health_text(m: &aa_proto::MachineView) -> String {
     if !m.problems.is_empty() {
-        return format!("\t이상: {}", m.problems.join("; "));
+        return format!("\t이상: {}", m.problems.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("; "));
     }
     let Some(h) = &m.health else { return String::new() };
     let mut parts = Vec::new();
@@ -1243,6 +1286,54 @@ fn health_text(m: &aa_proto::MachineView) -> String {
     }
     parts.extend(h.warnings.iter().cloned());
     format!("\t{}", parts.join(" · "))
+}
+
+/// `claude, codex @mac-b: claude|codex, @mac-c(끊김, 모름)`
+fn assignable_line(owners: &[aa_proto::OwnerChoice]) -> String {
+    let parts: Vec<String> = owners
+        .iter()
+        .map(|o| {
+            if !o.connected {
+                format!("@{}(끊김, 모름)", o.machine)
+            } else {
+                format!("@{}: {}", o.machine, if o.profiles.is_empty() { "-".into() } else { o.profiles.join("|") })
+            }
+        })
+        .collect();
+    format!("맡길 수 있는 owner(profile@machine): {}", parts.join(", "))
+}
+
+fn render_context(s: &mut String, c: &aa_proto::ProjectContext) {
+    use std::fmt::Write as _;
+    let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
+    let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
+    let _ = writeln!(s, "\nTasks(TASKS.md, coordinator만 고친다):");
+    if c.tasks.is_empty() {
+        s.push_str("  (없음)\n");
+    }
+    for t in &c.tasks {
+        let owner = t.owner.as_ref().map(|o| format!(" ({o})")).unwrap_or_default();
+        let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
+        let done = if t.done { " [x]" } else { "" };
+        let _ = writeln!(s, "  [{}] {}{owner}{thread}{done}", t.list, t.title);
+        if !t.notes.is_empty() {
+            let n: String = t.notes.join(" ").chars().take(60).collect();
+            let _ = writeln!(s, "    notes: {n}");
+        }
+    }
+    let _ = writeln!(s, "\n열린 thread:");
+    if c.threads.is_empty() {
+        s.push_str("  (없음)\n");
+    }
+    for t in &c.threads {
+        let state = t.agent.as_ref().map(|a| format!(" · {:?}", a.activity)).unwrap_or_default();
+        let _ = writeln!(s, "  {} {:?} {} {}@{}{state}", t.id, t.group, t.title, t.profile, t.machine);
+        for l in &t.next {
+            let _ = writeln!(s, "    next: {l}");
+        }
+    }
+    let _ = writeln!(s, "\n{}", assignable_line(&c.assignable));
+    let _ = writeln!(s, "inbox: 끝내지 않은 항목 {}개 (aa inbox list {})", c.inbox_open, c.project);
 }
 
 fn render_front(r: &FrontResponse) -> String {
@@ -1460,6 +1551,26 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("회수한 보고가 없다\n");
             }
         }
+        FrontResponse::Next { lines, message } => {
+            if let Some(m) = message {
+                let _ = writeln!(s, "보냈다({:?}): {}", m.state, m.text);
+            } else if lines.is_empty() {
+                s.push_str("Next 목록이 비었다\n");
+            } else {
+                for (n, l) in lines.iter().enumerate() {
+                    let _ = writeln!(s, "{}. {l}", n + 1);
+                }
+            }
+        }
+        FrontResponse::Assignable { owners, valid } => match valid {
+            Some(v) => {
+                let _ = writeln!(s, "{v}");
+            }
+            None => {
+                let _ = writeln!(s, "{}", assignable_line(owners));
+            }
+        },
+        FrontResponse::Context(c) => render_context(&mut s, c),
         FrontResponse::Inbox { items } => {
             if items.is_empty() {
                 s.push_str("inbox가 비었다\n");

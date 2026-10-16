@@ -35,7 +35,7 @@ clock_skew_ms: number | null,
 /**
  * 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
  */
-problems: Array<string>, };
+problems: Array<HealthProblem>, };
 
 export type MachineHealth = { 
 /**
@@ -57,11 +57,51 @@ on_ac: boolean | null, toolchain: Array<ToolCheck>,
 /**
  * agent가 본 이상(디스크 부족·toolchain 실패). 새 세션을 거부한다.
  */
-problems: Array<string>, 
+problems: Array<HealthProblem>, 
 /**
  * 거부하지는 않는 주의(배터리 전원 등)
  */
 warnings: Array<string>, };
+
+export type HealthProblem = { code: string, text: string, };
+
+export type TaskView = { 
+/**
+ * 속한 `## ` 목록 이름
+ */
+list: string, title: string, 
+/**
+ * 괄호 안 owner 원문(`me`, `claude`, `codex@mac-b`, 사람 이름 등)
+ */
+owner: string | null, 
+/**
+ * ` · t-0001`로 붙은 thread
+ */
+thread: string | null, 
+/**
+ * task 줄 아래 들여쓴 메모
+ */
+notes: Array<string>, done: boolean, };
+
+export type OwnerChoice = { machine: string, connected: boolean, 
+/**
+ * 끊긴 머신은 비어 있다(모른다)
+ */
+profiles: Array<string>, };
+
+export type ProjectContext = { project: string, path: string, 
+/**
+ * project.toml `start_threads`: propose(제안하고 승인을 기다린다) 또는 auto. aa는 강제하지 않는다.
+ */
+start_threads: string, tasks: Array<TaskView>, 
+/**
+ * 열린 thread. `next`는 보고서 `## Next`에 `aa thread next --add`로 더한 줄까지 붙인 목록이다.
+ */
+threads: Array<ThreadView>, assignable: Array<OwnerChoice>, 
+/**
+ * 끝내지 않은 inbox 항목 수
+ */
+inbox_open: number, };
 
 export type ToolCheck = { name: string, ok: boolean, 
 /**
@@ -143,9 +183,21 @@ export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "
 /**
  * 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
  */
-task: string, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
+task: string, 
+/**
+ * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+ */
+from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
 
-export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView;
+export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>, 
+/**
+ * `line`으로 보낸 메시지
+ */
+message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kind": "assignable", owners: Array<OwnerChoice>, 
+/**
+ * `check`가 통과했을 때 설명
+ */
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView;
 
