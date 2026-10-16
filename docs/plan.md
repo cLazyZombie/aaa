@@ -42,6 +42,7 @@
 | 14 | 재부팅 실험은 하지 않는다(시험 Mac 불필요). 개발자 도구에는 한 번 만들고 다시 빌드하지 않는 launcher를 고정 경로에 두고 등록한다(LaunchAgent → launcher → `aa` 자식). 목록이 일반 실행 파일을 받지 않으면 최소 `.app`으로 감싼다. 결정 9(자체 서명 인증서)는 보류한다. 전체 큰 그림(M1-2~M1-4 운영 대체)을 먼저 완성하고 P0 세부 실측에 시간을 쓰지 않는다 | §10, `docs/p0-runbook.md` |
 | 15 | launcher 등록은 mac-b(coordinator Mac)에서 한다. L1 측정·운영 설치 확인도 mac-b를 첫 대상으로 ssh로 한다(결정 10의 GUI 머신 대신) | §10.6, `docs/p0-runbook.md` |
 | 16 | UI를 참고 도구(herdr-web-ui·herdr TUI·herdr-mobile-relay)와 나란히 비교해 같거나 낫게 다듬는다. 웹(데스크톱·휴대폰)을 먼저, 그다음 TUI. 코드는 복사하지 않고 디자인만 참고한다. 결과는 전후 비교로 사용자 검수를 받는다 | §8.23 |
+| 17 | UI 검수 통과(10-17). 검수 때 후보로 남긴 휴대폰 drawer·명령 팔레트·머신 묶음 접기·TUI 왼쪽 목록·thread 줄 하나로 합치기는 이번에 하지 않고 나중 후보로만 둔다. 결정 14·16대로 M3 남은 범위를 이어서 한다 | §8.23 |
 
 **결정 3 세부.** host는 host 역할만 한다(2안).
 - 실행 파일은 하나이고 역할만 나눈다(`aa host`/`aa agent`). 경로와 서명은 고정이다.
@@ -897,6 +898,7 @@ host 프로젝트 폴더 구성:
   - manifest와 아이콘은 인증 없이 받는다(브라우저가 cookie 없이 가져간다). 비밀이 없다.
   - Chrome·Android가 설치 신호를 주면 목록 맨 아래에 「홈 화면에 설치」가 보인다. iOS는 공유 → 「홈 화면에 추가」다.
   - service worker는 아직 두지 않는다. 지금 브라우저는 설치에 service worker를 요구하지 않는다. 캐시가 업그레이드 뒤 옛 화면을 남기는 위험도 있어, Web Push와 함께 넣는다.
+- **검수(결정 17).** 사용자 검수를 통과했다. 나중 후보(이번에 하지 않음): 휴대폰 drawer, 명령 팔레트, 머신 묶음 접기, TUI 왼쪽 목록, thread 줄 하나로 합치기.
 - **남은 한계.** 한글 폭이 두 칸에 차지 않는 글꼴이면 터미널 한글 사이가 벌어져 보인다. 고정폭 한글 글꼴(D2Coding 등)이 있는 기기에서는 이 문제가 없다.
 
 ### 8.24 M3 병합 단계 자동 실행(10-17)
@@ -1329,6 +1331,10 @@ primary 근거:
 | 6 | AGENTS.md에 구조 원칙 한 줄 추가 | 추가 / 안 함 | **추가 권장.** 초안: 「backend(Rust)와 frontend(TUI·웹)를 분리한다. frontend는 상태를 갖지 않고 host backend하고만 통신하며, host backend가 각 머신의 agent backend와 통신한다.」 사용자가 정한 파일이라 승인 전에는 바꾸지 않았다 |
 | 7 | Linux linger | 설치 때 `loginctl enable-linger` 승인 / foreground 감독만 | **linger 승인**(SSH 로그아웃 뒤에도 세션 유지) |
 | 8 | Windows 로그온 전 agent | 사용자 로그온 예약 작업 / 시스템 서비스 | **사용자 로그온.** Session 0은 사용자 자격 증명과 다르다 |
+
+**나중 후보(사용자 결정 대기).**
+
+- **실행 파일 이름 `aa`.** macOS에는 Apple Archive 도구 `/usr/bin/aa`가 기본으로 있다. PATH에서 `~/.local/bin`이 `/usr/bin`보다 뒤면 Apple `aa`가 실행된다. 지금은 설치 안내·문서·launchd plist가 전체 경로(`~/.local/bin/aa`)를 쓴다. 이름을 바꿀지는 사용자가 정한다.
 
 ### 위험
 

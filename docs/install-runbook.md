@@ -4,6 +4,7 @@ launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aa를 
 
 - 머신 이름은 일반 이름이다. mac-a·mac-b·mac-c 중 host를 둘 Mac을 **host Mac**이라 부른다. 주소 예시는 `example.ts.net`이다.
 - **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aa service install·uninstall`은 aa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다.
+- **명령은 전체 경로 `~/.local/bin/aa`로 친다.** macOS에는 Apple Archive 도구 `/usr/bin/aa`가 기본으로 있어, PATH에서 `~/.local/bin`이 뒤면 Apple `aa`가 실행된다. 본문의 `aa …`는 모두 `~/.local/bin/aa …`를 뜻한다(이름 변경은 사용자 결정, 기획서 §16 나중 후보).
 - 지금 운영(herdr·herdr-projects·herdr-web-ui·WezTerm)과 그 설정·socket·port는 건드리지 않는다. aa는 다른 port·state·작업 폴더를 쓴다.
 
 ## 0. 전제
@@ -71,9 +72,9 @@ args = []
 ## 3. 감독자 설치 ✋(각 Mac, 사람이 직접)
 
 ```bash
-aa service show --role agent --aa ~/.local/bin/aa      # 바꾸지 않고 plist·경로·상태를 본다
-aa service install --role host --aa ~/.local/bin/aa    # host Mac만, agent보다 먼저
-aa service install --role agent --aa ~/.local/bin/aa   # 모든 Mac
+~/.local/bin/aa service show --role agent --aa ~/.local/bin/aa      # 바꾸지 않고 plist·경로·상태를 본다
+~/.local/bin/aa service install --role host --aa ~/.local/bin/aa    # host Mac만, agent보다 먼저
+~/.local/bin/aa service install --role agent --aa ~/.local/bin/aa   # 모든 Mac
 ```
 
 - plist는 `~/Library/LaunchAgents/dev.aa.<role>.plist`, 로그는 `~/Library/Logs/aa/<role>.log`다.
@@ -89,9 +90,9 @@ aa service install --role agent --aa ~/.local/bin/aa   # 모든 Mac
 ## 4. 다른 Mac 등록
 
 ```bash
-aa machine enroll --open 10m          # host Mac: 등록 창
-aa agent enroll mac-b.example.ts.net:7430   # 다른 Mac: 화면에 확인 코드가 나온다
-aa machine approve mac-a --code <코드>  # host Mac: 그 코드로 승인
+~/.local/bin/aa machine enroll --open 10m          # host Mac: 등록 창
+~/.local/bin/aa agent enroll mac-b.example.ts.net:7430   # 다른 Mac: 화면에 확인 코드가 나온다
+~/.local/bin/aa machine approve mac-a --code <코드>  # host Mac: 그 코드로 승인
 ```
 
 확인: `aa machine list`에 세 Mac이 「연결」이고 `이상:`이 없다(디스크·toolchain·시계).
@@ -100,8 +101,8 @@ aa machine approve mac-a --code <코드>  # host Mac: 그 코드로 승인
 
 ```bash
 tailscale serve status                # 기존 항목 기록(바꾸지 않는다)
-aa web publish                        # 겹치지 않는 port를 골라 HTTPS로 공개
-aa web pair                           # 휴대폰에서 주소를 열고 이 코드 입력(보기 권한은 --reader)
+~/.local/bin/aa web publish                        # 겹치지 않는 port를 골라 HTTPS로 공개
+~/.local/bin/aa web pair                           # 휴대폰에서 주소를 열고 이 코드 입력(보기 권한은 --reader)
 ```
 
 확인: 휴대폰에서 세 Mac의 pane 목록과 터미널이 보이고 입력된다. 질문 카드에 답할 수 있다.
@@ -128,8 +129,8 @@ aa web pair                           # 휴대폰에서 주소를 열고 이 코
 ## 8. 되돌리기
 
 ```bash
-aa web publish off                    # aa가 만든 serve 항목만 끈다
-aa service uninstall --role agent     # ✋ 각 Mac(host Mac은 --role host도)
+~/.local/bin/aa web publish off                    # aa가 만든 serve 항목만 끈다
+~/.local/bin/aa service uninstall --role agent     # ✋ 각 Mac(host Mac은 --role host도)
 ```
 
 - 세션은 session host가 소유하므로 agent를 내려도 도는 harness는 바로 죽지 않는다. 필요하면 `aa pane kill`로 먼저 끝낸다.
