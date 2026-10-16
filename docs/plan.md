@@ -713,6 +713,24 @@ host 프로젝트 폴더 구성:
   - profile은 다시 해석하지 않는다(저장된 launch를 쓴다). profile 바꾸기는 하지 않았다.
 - **아직:** `thread next`, TASKS.md 소유, `start_threads` 정책은 하지 않았다.
 
+### 8.17 M1-3c 구현 결정(10-16): inbox·ticker·nudge
+
+- **inbox(§8.9):** host DB가 원본이고 `projects/<p>/inbox/<id>.md`(0.2.35와 같은 `+++` TOML front matter)는 투영이다.
+  - ID는 `<UTC>-<종류>-<대상>-<순번>`이다. 끝내면 파일을 `inbox/done/`으로 옮기고, `inbox_done_days`(기본 30일)가 지나면 지운다.
+  - `aa inbox list <p> [--all] [--peek]`, `aa inbox done <p> <id…>|--all`. `--peek`이 아니면 보인 항목을 「봤다」로 표시한다.
+- **항목 출처**
+  - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
+  - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
+  - `outage`: 그 머신에 열린 thread가 있는 프로젝트에, `outage_secs`(기본 600초) 넘게 끊기면 한 번, 돌아오면 한 번.
+  - `config-error`: project.toml을 TOML로 읽지 못하면 파일 내용 hash당 한 번.
+- **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다).
+- **nudge:** 0.2.35를 이어받는다.
+  - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aa inbox] <대상> <사건>, …; …(aa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
+  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. **coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).
+  - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 10초) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 비어 있을 때만 보낸다. 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
+  - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
+- **아직:** 웹·TUI의 inbox 화면, 머신 이상(건강) 항목, routine.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

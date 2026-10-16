@@ -222,6 +222,9 @@ impl Host {
             next
         };
         self.bump();
+        if matches!(activity, Some(AgentActivity::Idle)) {
+            self.tick_wake.notify_one();
+        }
         // 기다리던 사건
         if let Some(list) = self.waiters.lock().unwrap().get_mut(&ev.session) {
             let mut keep = Vec::new();

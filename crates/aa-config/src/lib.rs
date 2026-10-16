@@ -102,6 +102,14 @@ pub struct ProjectsSection {
     pub library_copy_mb: u64,
     /// brief에 넣을 memory(MEMORY.md + memory/*.md) 글자 수 상한
     pub brief_memory_chars: usize,
+    /// host ticker 주기(초). 사건이 오면 주기를 기다리지 않고 바로 돈다.
+    pub tick_secs: u64,
+    /// coordinator가 이만큼(초) 입력 대기 상태로 머물러야 inbox 알림(nudge)을 보낸다
+    pub nudge_idle_secs: u64,
+    /// 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다
+    pub outage_secs: u64,
+    /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
+    pub inbox_done_days: u64,
 }
 
 impl Default for ProjectsSection {
@@ -111,6 +119,10 @@ impl Default for ProjectsSection {
             allow_profiles: vec!["*".into()],
             library_copy_mb: 200,
             brief_memory_chars: 32_000,
+            tick_secs: 15,
+            nudge_idle_secs: 10,
+            outage_secs: 600,
+            inbox_done_days: 30,
         }
     }
 }
@@ -312,6 +324,9 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
         out.push(Invalid {
             path: key(&["web", "publish_ports"]), message: "1~65535 포트를 하나 이상 적는다".into()
         });
+    }
+    if c.projects.tick_secs == 0 {
+        out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });
     }
     out
 }

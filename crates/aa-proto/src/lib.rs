@@ -71,6 +71,7 @@ pub fn typescript_bindings() -> String {
         DeliveryState::decl(&cfg),
         MessageView::decl(&cfg),
         DecisionView::decl(&cfg),
+        InboxItem::decl(&cfg),
     ];
     let mut out = String::from(
         "// 생성 파일: crates/aa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.\n// 갱신: AA_UPDATE_TS=1 cargo test -p aa-proto typescript\n\n",

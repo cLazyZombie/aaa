@@ -11,8 +11,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, Launch, MessageMode, MessageView, ProfileView,
-    ProjectView, QuestionView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, MessageMode, MessageView,
+    ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 
 use crate::version::Version;
@@ -767,6 +767,22 @@ pub enum FrontRequest {
     Decisions {
         project: String,
     },
+    /// inbox. `peek`가 아니면 보인 항목을 「봤다」로 표시한다(처음 보는 항목만 coordinator에게 알린다)
+    Inbox {
+        project: String,
+        #[serde(default)]
+        all: bool,
+        #[serde(default)]
+        peek: bool,
+    },
+    /// inbox 항목을 끝낸다(`all`이면 끝내지 않은 것 모두)
+    InboxDone {
+        project: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        all: bool,
+    },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {
         project: Option<String>,
@@ -792,6 +808,7 @@ impl FrontRequest {
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Decisions { .. }
+                | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -863,6 +880,9 @@ pub enum FrontResponse {
         decisions: Vec<DecisionView>,
     },
     Decision(DecisionView),
+    Inbox {
+        items: Vec<InboxItem>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

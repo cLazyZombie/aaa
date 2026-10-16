@@ -88,6 +88,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DecisionCmd,
     },
+    /// inbox: 보고·질문·세션 끝남·머신 단절 같은 잃지 않는 항목(끝내기로 정리)
+    Inbox {
+        #[command(subcommand)]
+        cmd: InboxCmd,
+    },
     /// 머신의 agent.toml profile 목록
     Profile {
         #[command(subcommand)]
@@ -166,6 +171,28 @@ enum DecisionCmd {
     },
     List {
         project: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum InboxCmd {
+    /// 끝내지 않은 항목. 처음 보는 항목은 「봤다」로 표시한다(`--peek`이면 표시하지 않는다)
+    List {
+        project: String,
+        /// 끝낸 항목도 보인다
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        peek: bool,
+    },
+    /// 항목을 끝낸다
+    Done {
+        project: String,
+        #[arg(required_unless_present = "all")]
+        ids: Vec<String>,
+        /// 끝내지 않은 항목 모두
+        #[arg(long, conflicts_with = "ids")]
+        all: bool,
     },
 }
 
@@ -625,6 +652,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::DecisionAdd { project, text: text_arg(text, text_file)?, replaces }
                 }
                 DecisionCmd::List { project } => FrontRequest::Decisions { project },
+            },
+        ),
+        Cmd::Inbox { cmd } => front(
+            json,
+            match cmd {
+                InboxCmd::List { project, all, peek } => FrontRequest::Inbox { project, all, peek },
+                InboxCmd::Done { project, ids, all } => FrontRequest::InboxDone { project, ids, all },
             },
         ),
         Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
@@ -1245,6 +1279,16 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Decision(d) => render_decision(&mut s, d),
+        FrontResponse::Inbox { items } => {
+            if items.is_empty() {
+                s.push_str("inbox가 비었다\n");
+            }
+            for i in items {
+                let mark = if i.done { "끝남" } else if i.seen { "봄" } else { "새것" };
+                let _ = writeln!(s, "{}\t{}\t{} {}\t{mark}", i.id, i.item_kind, i.subject, i.event);
+                let _ = writeln!(s, "  {}", i.summary);
+            }
+        }
     }
     s
 }

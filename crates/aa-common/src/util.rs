@@ -8,11 +8,10 @@ pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// 사람이 읽는 UTC 시각(`2026-10-16 12:05Z`). 시간대 라이브러리 없이 날짜를 계산한다.
-pub fn utc_text(ms: u64) -> String {
+/// UTC (년, 월, 일, 시, 분, 초). 시간대 라이브러리 없이 날짜를 계산한다(Howard Hinnant의 civil_from_days).
+fn civil(ms: u64) -> (i64, i64, i64, u64, u64, u64) {
     let secs = ms / 1000;
     let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
-    // Howard Hinnant의 civil_from_days
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -22,7 +21,19 @@ pub fn utc_text(ms: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}Z", rem / 3600, rem % 3600 / 60)
+    (y, m, d, rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+/// 사람이 읽는 UTC 시각(`2026-10-16 12:05Z`)
+pub fn utc_text(ms: u64) -> String {
+    let (y, m, d, h, mi, _) = civil(ms);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}Z")
+}
+
+/// 파일 이름에 쓰는 UTC 시각(`20261016T120500Z`)
+pub fn utc_compact(ms: u64) -> String {
+    let (y, m, d, h, mi, s) = civil(ms);
+    format!("{y:04}{m:02}{d:02}T{h:02}{mi:02}{s:02}Z")
 }
 
 /// 정렬 가능한 새 ID(ULID 26자)
@@ -182,5 +193,6 @@ mod time_tests {
         // 2024-02-29 23:59:59Z(윤일)
         assert_eq!(super::utc_text(1_709_251_199_000), "2024-02-29 23:59Z");
         assert_eq!(super::utc_text(1_792_152_000_000), "2026-10-16 12:00Z");
+        assert_eq!(super::utc_compact(1_709_251_199_000), "20240229T235959Z");
     }
 }

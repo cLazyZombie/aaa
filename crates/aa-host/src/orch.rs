@@ -134,7 +134,7 @@ impl Host {
         }
     }
 
-    fn project_dir(&self, name: &str) -> Result<PathBuf, ErrorBody> {
+    pub(crate) fn project_dir(&self, name: &str) -> Result<PathBuf, ErrorBody> {
         if !valid_project(name) {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
         }
@@ -322,6 +322,7 @@ impl Host {
         match self.db.flow_insert(&e) {
             Ok(seq) => {
                 e.seq = seq;
+                self.inbox_from_flow(&e);
                 let _ = self.flow_events.send(e);
             }
             Err(err) => tracing::error!(kind, "흐름 사건 저장 실패: {err:#}"),
