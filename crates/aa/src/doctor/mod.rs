@@ -270,6 +270,7 @@ pub fn compare_throughput(base: &ProbeReport, cur: &ProbeReport) -> Vec<String> 
 }
 
 pub fn lineage_self() -> Lineage {
+    #[allow(unused_mut)] // Windows에서는 채울 값이 없다
     let mut l = Lineage { pid: std::process::id(), ..Default::default() };
     #[cfg(unix)]
     unsafe {
