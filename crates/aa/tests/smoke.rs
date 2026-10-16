@@ -6,7 +6,7 @@ mod lab;
 
 use std::time::Duration;
 
-use lab::{Lab, Node, read_line_containing, wait_for};
+use lab::{Lab, Node, read_line_containing, tree, wait_for, wait_for_diag};
 
 const T: Duration = Duration::from_secs(30);
 
@@ -34,20 +34,30 @@ fn run(node: &Node, machine: &str, name: &str, argv: &[&str]) -> String {
     node.ok(&args)["id"].as_str().unwrap().to_string()
 }
 
-fn check_panes(h: &Node, machine: &str) {
+fn diag(h: &Node, id: &str, root: &std::path::Path) -> String {
+    let screen = h.json(&["pane", "read", id]).map(|v| v.to_string()).unwrap_or_else(|e| e);
+    format!("pane: {}\nscreen: {screen}\nfiles:\n{}", h.pane(id), tree(root))
+}
+
+fn check_panes(lab: &Lab, h: &Node, machine: &str) {
     let (short, shell, calc) = commands();
 
     let id = run(h, machine, "short", &short);
-    wait_for("짧은 명령 종료", T, || {
-        let p = h.pane(&id);
-        (p["state"] == "exited").then_some(())
-    });
+    wait_for_diag(
+        "짧은 명령 종료",
+        T,
+        || {
+            let p = h.pane(&id);
+            (p["state"] == "exited").then_some(())
+        },
+        || diag(h, &id, &lab.root),
+    );
     assert_eq!(h.pane(&id)["code"], 5, "{}", h.pane(&id));
     assert!(h.screen(&id).contains("smoke-ok"), "짧은 명령 출력이 없다:\n{}", h.screen(&id));
 
     let sh = run(h, machine, "sh", &shell);
     h.ok(&["pane", "send", &sh, "--text", calc, "--enter"]);
-    wait_for("대화형 입력 결과", T, || h.screen(&sh).contains("1042").then_some(()));
+    wait_for_diag("대화형 입력 결과", T, || h.screen(&sh).contains("1042").then_some(()), || diag(h, &sh, &lab.root));
     h.ok(&["pane", "resize", &sh, "100", "30"]);
     wait_for("크기 반영", T, || {
         let p = h.pane(&sh);
@@ -65,7 +75,7 @@ fn pty_smoke_local_agent() {
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "local1"]);
     wait_for("로컬 agent 연결", T, || connected(&h, "local1").then_some(()));
-    check_panes(&h, "local1");
+    check_panes(&lab, &h, "local1");
 }
 
 #[test]
@@ -86,5 +96,5 @@ fn pty_smoke_remote_agent_over_tls() {
 
     lab.spawn("agent", &b, &["agent", "--host", &addr, "--name", "remote1"]);
     wait_for("원격 agent 연결", T, || connected(&h, "remote1").then_some(()));
-    check_panes(&h, "remote1");
+    check_panes(&lab, &h, "remote1");
 }

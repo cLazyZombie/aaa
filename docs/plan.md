@@ -235,14 +235,15 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 
 ### 4.5 터미널 plane과 얇은 front
 
-- **VT 정본은 session host에 있다**(ghostty-vt adapter).
+- **VT 정본은 session host에 있다**(VT adapter). M1-1 구현은 순수 Rust `vt100` 0.16을 adapter 뒤에 둔다. ghostty-vt는 빌드에 Zig 0.16이 필요해 구현 Mac·CI에 바로 쓸 수 없었다(§12, 위험 표).
 - **화면 형식은 front 종류마다 hello에서 협상한다.**
   - TUI: cell grid snapshot + diff(herdr와 같은 얇은 방식)
   - 웹: raw byte stream + 재접속용 snapshot
-  - 웹 snapshot은 VT 재생 문자열로 만든다. ghostty-vt formatter로 만들 수 있는지는 M1-1에서 확인한다. 안 되면 grid를 ANSI로 다시 그린 뒤 이어지는 byte를 보낸다.
+  - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 조작 lease 소유자가 정한다. lease는 host가 판정하고 입력 직전에 다시 확인한다.
+  - M1-1은 lease 없이 controller 권한이면 입력·resize할 수 있다(마지막 입력이 이긴다). 웹은 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize한다. lease는 M1-2에서 넣는다.
   - 보기(observe) front는 입력도 resize도 할 수 없다.
   - 느린 front는 bounded queue가 차면 snapshot으로 재동기화하며, 전체 agent를 무기한 backpressure하지 않는다.
   - TUI와 웹이 섞여도 같은 규칙이다.
@@ -259,7 +260,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 | 셸 | 사용자 zsh/bash, argv 실행 우선 | 사용자 shell, argv 우선 | PowerShell/pwsh/cmd 명시, CreateProcessW 인용, UTF-16 경로 |
 | 경로·환경 | POSIX path·HOME, 외장 볼륨(전체 디스크 접근 필요) | POSIX bytes path·HOME·locale | drive/UNC·backslash·LOCALAPPDATA·대소문자·UTF-16 |
 | 줄바꿈·문자 | LF·raw bytes | 같음, locale 검증 | CRLF·codepage/UTF-8. 단순 LF 치환 금지 |
-| local IPC | user-only UDS·peer UID | 같음 | user SID 제한 Named Pipe·ACL |
+| local IPC | user-only UDS·peer UID | 같음 | user SID 제한 Named Pipe·ACL(M1-1은 기본 DACL, 제한 ACL은 M2) |
 | 키 저장 | 상태 디렉터리의 0600 파일(키체인 잠금에 의존하지 않음) | 0600 파일 | 사용자 DPAPI |
 | 실행 검사·속도 | 필수 gate(§10) | 해당 없음 | Defender·SmartScreen 지연을 doctor에서 관측 |
 
@@ -805,7 +806,7 @@ flowchart LR
 |---|---|---|---|
 | 비동기 | Tokio. 연결·사건·timer 생태계와 Axum 통합 | blocking PTY·DB 작업은 전용 thread | async-std를 섞지 않는다 |
 | PTY·spawn | portable-pty(herdr가 vendor한 0.9.0과 ConPTY 패치를 참고) + 얇은 OS adapter | Windows job·종료·수명, macOS spawn 속성은 직접 검증한다 | 한계가 확인되면 openpty·Windows API를 직접 쓴다 |
-| VT | ghostty-vt adapter(herdr 검증 범위 참고) | Zig 0.16.0 추가 빌드 도구. native CI 필수 | alacritty_terminal, vt100. vte는 parser뿐이다 |
+| VT | adapter 뒤 `vt100` 0.16(M1-1 구현). ghostty-vt는 후보로 남긴다 | ghostty-vt는 Zig 0.16.0 추가 빌드 도구가 필요하다(구현 Mac·CI에 없음). vt100은 순수 Rust라 세 OS CI에서 바로 빌드된다 | ghostty-vt(정확도·성능 비교 뒤 교체), alacritty_terminal. vte는 parser뿐이다 |
 | TUI front | Ratatui+Crossterm | cell grid diff를 받는 얇은 client | 순수 ANSI UI는 부담이 크다 |
 | Front API·Agent link | serde JSON + schemars JSON Schema → TS 타입 생성, binary terminal frame | UDS/Named Pipe·TCP+TLS adapter | 공개 다언어 SDK가 커지면 Protobuf. bincode를 공개 계약으로 쓰지 않는다 |
 | Agent link 보안 | rustls TLS 1.3 + rcgen 자체 서명 인증서 pinning | 세 OS 공통 Rust | Noise IK(snow) |
@@ -977,7 +978,7 @@ primary 근거:
 | SMAppService.agent 자식의 책임 귀속이 예상과 다름 | 느림·키체인 | E2에서 login item과 비교 |
 | GUI 계보 warm 저하 | build 전체가 느려짐 | E2 원인 조사, App Nap·QoS 설정 |
 | agent backend 재시작 때 session host가 면제를 잃음 | 업데이트 뒤 느림 | E3. 결과에 따라 drain |
-| ghostty-vt의 Zig 세 OS build | Windows·Linux 지연 | M1-1 CI. 실패하면 Rust VT 대안 비교 |
+| VT 정확도(vt100) | 복잡한 TUI 화면 재생이 어긋남 | M1-1은 vt100으로 시작했다. M1-2 TUI harness로 Claude·Codex 화면을 단언하고, 어긋나면 ghostty-vt(Zig 빌드)나 alacritty_terminal로 adapter 뒤에서 교체 |
 | harness hook·notify 지원 범위 | 사건화가 불완전 | adapter별 fixture, 화면 보조와 신뢰도 표시 |
 | Tailscale serve CLI 변경 | 공개 실패 | 읽기 전용 상태 판정 fixture, 실패 시 할 일 표시 |
 | 비공개 macOS API 변경 | 진단 실패 | timing probe fallback |
