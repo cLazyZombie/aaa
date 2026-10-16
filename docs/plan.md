@@ -729,7 +729,21 @@ host 프로젝트 폴더 구성:
   - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. **coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).
   - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 10초) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 비어 있을 때만 보낸다. 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
-- **아직:** 웹·TUI의 inbox 화면, 머신 이상(건강) 항목, routine.
+- **닫힌 질문(실제 시험 뒤 결정):** 질문에 답했거나 harness가 넘어가 질문이 닫히면, 그 질문의 `question` 항목은 끝낸 것으로 둔다(기록은 `inbox/done/`에 남는다). 실제 시험에서 이미 답한 질문이 알림마다 「question」으로 섞였기 때문이다.
+- **아직:** 웹·TUI의 inbox 화면, 머신 이상(건강) 항목.
+
+### 8.18 M1-3d 구현 결정(10-16): 병합 대기열 순번, 동시 thread 한도, 미룬 것
+
+- **병합 대기열(§8.8):** `aa merge enqueue|list|done|drop <p> <thread>`
+  - 순번은 host DB에 둔다. 열린 thread만 넣는다. 이미 있으면 그 자리를 지킨다.
+  - 흐름 사건: `merge_enqueued`(순번), `merge_head`(맨 앞이 바뀜), `merge_landed`(`done`), `merge_dropped`(`drop`·resolve).
+  - 단계 실행과 훅은 M3에서 한다(원래 배치). 맨 앞이 된 thread에 무엇을 보낼지는 coordinator가 `merge_head` 사건을 보고 정한다.
+- **동시 thread 한도(§8.10):** `[projects] max_threads_per_machine`(기본 6, 0이면 제한 없음)
+  - 시작 중이거나 세션이 실행 중인 열린 thread를 머신별로 센다. `thread start`·`restart`가 한도에 닿으면 거부하고, 어느 thread가 도는지 보인다.
+- **미룬 것(이유: 결정 14의 「큰 그림 우선」, M1-4와 운영 대체 경로가 먼저다)**
+  - 머신 건강 보고(디스크·부하·toolchain·전원·시계)와 이상 시 새 세션 거부 → M1 마무리(M1-4 뒤). boot fencing과 단절(`outage`)은 이미 있다.
+  - `thread next`, TASKS.md `(profile@machine)` 소유, `start_threads` propose/auto → M1 마무리. coordinator는 지금도 `thread start`로 같은 일을 한다.
+  - routine은 M1-3d의 다음 착지에서 한다(명령 실행이 있어 보안 경계를 따로 본다).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
@@ -1146,7 +1160,7 @@ primary 근거:
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
 | profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | agent.toml 정의 + host.toml 허용, 해석 결과 저장(§7.2, §8.2) | M1-3 |
 | thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
-| `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답 | M1-3 |
+| `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`만 M1 마무리(§8.18) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |
 | brief 전달(claim 60초·settle 3초·3회·`--wait --until working`) | 그대로 계승(§8.5) | M1-3 |
 | `prompt_box` draft 감지 | adapter 입력 전 draft 감지 | M1-3 |
@@ -1154,12 +1168,12 @@ primary 근거:
 | resolve 규칙(복사 Failed는 거부, Partial은 보존, merge된 branch만 삭제) | 그대로 + receipt(§8.7) | M1-3 |
 | inbox(timestamp·kind·subject·counter, done 30일), 특수 item session·outage·config-error | DB 사건 + Markdown 투영, 특수 item 유지(§8.9) | M1-3 |
 | ticker(15초, 원격 1분, 5분 유휴 종료, `.ticker.lock`) | host 안 task, 사건 구독 + reconciliation | M1-3 |
-| routine(every·daily·`on = "pr"`, 명령 digest 승인, `routine_commands`, coordinator 없으면 skipped, `sh -c` 60초) | 그대로 의미 유지, 실행은 agent backend(§8.9) | M1-3 |
+| routine(every·daily·`on = "pr"`, 명령 digest 승인, `routine_commands`, coordinator 없으면 skipped, `sh -c` 60초) | 그대로 의미 유지, 실행은 agent backend(§8.9). `on = "pr"`은 M3 | M1-3 |
 | nudge(미확인 묶음 hash당 1회, `herdr agent prompt`, 입력창 비었을 때) | 그대로(§8.5) | M1-3 |
 | progress 보고(`report --percent`), hook 5개 harness | 상태 사건 `progress` + adapter(Claude·Codex 먼저, 나머지 후속) | M1-3 / M3 |
 | sidebar·overview·focus·needs-you·popup | TUI·웹 표시 | M1-2 / M3 |
-| TASKS.md `(profile@machine)` 소유, `assignable` | 그대로 | M1-3 |
-| safety·yolo `launch_args`, `start_threads` propose/auto | profile 정책·project.toml | M1-3 |
+| TASKS.md `(profile@machine)` 소유, `assignable` | 그대로 | M1 마무리(§8.18) |
+| safety·yolo `launch_args`, `start_threads` propose/auto | profile 정책·project.toml | M1 마무리(§8.18) |
 | `threads/<id>.task.md` Follow-ups, `<id>.next.md` | thread 기록에 포함, restart 때 다시 읽기 | M1-3 |
 | `owned.json` configure journal | integration journal(§8.11) | M1-3 |
 | `launch_attempts` 3회, starting 5분 timeout | launch_state 전이 | M1-3 |

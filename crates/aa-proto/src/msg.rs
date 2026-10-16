@@ -11,8 +11,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, MessageMode, MessageView,
-    ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, MergeEntry, MessageMode,
+    MessageView, ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady,
+    ThreadView,
 };
 
 use crate::version::Version;
@@ -783,6 +784,21 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
+    /// 병합 대기열 맨 뒤에 넣는다(이미 있으면 그 자리)
+    MergeEnqueue {
+        project: String,
+        thread: String,
+    },
+    /// 병합 대기열에서 뺀다. `landed`면 병합을 마친 것이고, 아니면 취소다.
+    MergeDrop {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        landed: bool,
+    },
+    MergeList {
+        project: String,
+    },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {
         project: Option<String>,
@@ -809,6 +825,7 @@ impl FrontRequest {
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Decisions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
+                | FrontRequest::MergeList { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -882,6 +899,9 @@ pub enum FrontResponse {
     Decision(DecisionView),
     Inbox {
         items: Vec<InboxItem>,
+    },
+    Merge {
+        queue: Vec<MergeEntry>,
     },
 }
 

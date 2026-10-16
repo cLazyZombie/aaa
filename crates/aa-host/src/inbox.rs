@@ -131,7 +131,7 @@ impl Host {
         }
         let dir = self.inbox_dir(project);
         if let Err(e) = std::fs::create_dir_all(&dir)
-                .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(&item)))
+            .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(&item)))
         {
             tracing::warn!("inbox 파일 쓰기 실패: {e}");
         }
@@ -189,20 +189,44 @@ impl Host {
         if let Some(miss) = ids.iter().find(|id| !open.iter().any(|i| &&i.id == id)) {
             return Err(err(ErrorCode::NotFound, format!("끝내지 않은 항목이 없다: {miss}")));
         }
-        let dir = self.inbox_dir(project);
-        let now = aa_common::util::now_ms();
-        let mut n = 0;
-        for mut i in open.into_iter().filter(|i| all || ids.contains(&i.id)) {
-            i.done = true;
-            i.seen = true;
-            i.done_at_ms = Some(now);
-            self.db.inbox_put(&i).map_err(internal)?;
-            let _ = std::fs::create_dir_all(dir.join("done"));
-            let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
-            n += 1;
-        }
+        let pick: Vec<InboxItem> = open.into_iter().filter(|i| all || ids.contains(&i.id)).collect();
+        let n = pick.len();
+        self.inbox_finish(project, pick).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
         self.db.inbox_list(Some(project), false).map_err(internal)
+    }
+
+    fn inbox_finish(&self, project: &str, items: Vec<InboxItem>) -> anyhow::Result<()> {
+        let dir = self.inbox_dir(project);
+        let now = aa_common::util::now_ms();
+        for mut i in items {
+            i.done = true;
+            i.done_at_ms = Some(now);
+            self.db.inbox_put(&i)?;
+            let _ = std::fs::create_dir_all(dir.join("done"));
+            let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
+        }
+        Ok(())
+    }
+
+    /// 질문이 닫혔다(답함·harness가 넘어감): 그 질문의 inbox 항목은 할 일이 없으니 끝낸다(기록은 done에 남는다).
+    /// 끝낸 항목은 처음 보는 묶음에서 빠져 nudge에 섞이지 않는다.
+    pub(crate) fn inbox_question_closed(&self, q: &aa_proto::QuestionView) {
+        let (Some(project), Some(thread)) = (&q.project, &q.thread) else { return };
+        let mine: Vec<InboxItem> = self
+            .db
+            .inbox_list(Some(project), false)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| {
+                i.item_kind == "question" && &i.subject == thread && i.summary.starts_with(&format!("{} ", q.id))
+            })
+            .collect();
+        if !mine.is_empty()
+            && let Err(e) = self.inbox_finish(project, mine)
+        {
+            tracing::warn!("질문 inbox 항목을 끝내지 못했다: {e:#}");
+        }
     }
 
     // ───────────── ticker ─────────────
@@ -319,7 +343,13 @@ impl Host {
         }
         let _ = self.db.set_meta(&key, &hash);
         let first = e.to_string().lines().next().unwrap_or_default().to_string();
-        self.inbox_add(project, "config-error", "project.toml", "not usable", &format!("project.toml을 읽지 못한다: {first}"));
+        self.inbox_add(
+            project,
+            "config-error",
+            "project.toml",
+            "not usable",
+            &format!("project.toml을 읽지 못한다: {first}"),
+        );
     }
 
     /// 프로젝트 폴더를 cwd로 쓰는 host 머신의 실행 중 pane(coordinator)

@@ -276,6 +276,9 @@ impl Host {
         if let Err(e) = self.db.rec_put("questions", &q.id, state, &serde_json::to_string(q).unwrap(), (&q.pane, "")) {
             tracing::error!("질문 저장 실패: {e:#}");
         }
+        if q.state != QuestionState::Open {
+            self.inbox_question_closed(q);
+        }
         let _ = self.question_events.send(q.clone());
     }
 
