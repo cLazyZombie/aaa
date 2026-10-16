@@ -86,7 +86,7 @@ pub async fn land(
 
     // 2. fetch
     let t = Instant::now();
-    let r = git(&top, &["fetch", "--quiet", remote], NET_T).await.map(|_| format!("{remote}를 받았다"));
+    let r = git(&top, &["fetch", "--quiet", remote], NET_T).await.map(|_| format!("{remote}에서 받았다"));
     if !s.push("fetch", t, r) {
         return Ok(done(s, None));
     }
@@ -101,7 +101,7 @@ pub async fn land(
         }
         if git(&top, &["merge-base", "--is-ancestor", &upstream, branch], GIT_T).await.is_err() {
             bail!(
-                "branch가 {upstream}({})를 포함하지 않는다. thread에서 `git fetch {remote} && git merge {upstream}`로 합치고 시험한 뒤 다시 한다",
+                "branch가 {upstream}({})의 내용을 포함하지 않는다. thread에서 `git fetch {remote} && git merge {upstream}`을 실행해 합치고, 시험한 뒤 다시 한다",
                 &up[..up.len().min(12)]
             );
         }
@@ -188,7 +188,7 @@ async fn user_checkout(top: &Path, remote: &str, target: &str) -> String {
         Err(e) => return format!("그대로 둠({e:#})"),
     }
     match git(top, &["merge", "--ff-only", "--quiet", &format!("{remote}/{target}")], GIT_T).await {
-        Ok(_) => format!("{target}을 {remote}/{target}로 맞췄다(ff-only)"),
+        Ok(_) => format!("{target} branch를 {remote}/{target}에 맞췄다(ff-only)"),
         Err(e) => format!("그대로 둠(ff-only 실패: {e:#})"),
     }
 }
