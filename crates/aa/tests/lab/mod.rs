@@ -107,8 +107,16 @@ impl Lab {
     }
 
     pub fn spawn(&mut self, tag: &str, node: &Node, args: &[&str]) -> u32 {
+        self.spawn_env(tag, node, args, &[])
+    }
+
+    pub fn spawn_env(&mut self, tag: &str, node: &Node, args: &[&str], env: &[(&str, &str)]) -> u32 {
         let log = std::fs::File::create(self.root.join(format!("{tag}.log"))).unwrap();
-        let child = node.cmd(args).stdout(log.try_clone().unwrap()).stderr(log).spawn().expect("spawn");
+        let mut cmd = node.cmd(args);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let child = cmd.stdout(log.try_clone().unwrap()).stderr(log).spawn().expect("spawn");
         let pid = child.id();
         self.procs.push((tag.to_string(), child));
         pid
@@ -152,6 +160,20 @@ impl Lab {
 
     pub fn log(&self, tag: &str) -> String {
         std::fs::read_to_string(self.root.join(format!("{tag}.log"))).unwrap_or_default()
+    }
+
+    /// 이 실험실의 session host를 모두 SIGKILL한다(재부팅 흉내: 프로세스가 사라진다).
+    pub fn kill_session_hosts(&self) -> usize {
+        let pids = self.session_hosts();
+        for pid in &pids {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(*pid as i32, libc::SIGKILL)
+            };
+            #[cfg(windows)]
+            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
+        }
+        pids.len()
     }
 
     fn session_hosts(&self) -> Vec<u32> {

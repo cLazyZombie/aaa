@@ -43,7 +43,8 @@ impl Db {
              CREATE TABLE IF NOT EXISTS devices(
                id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
                created_at INTEGER NOT NULL, last_seen INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
-             CREATE TABLE IF NOT EXISTS audit(ts INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);",
+             CREATE TABLE IF NOT EXISTS audit(ts INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);
+             CREATE TABLE IF NOT EXISTS workspaces(name TEXT PRIMARY KEY, layout TEXT NOT NULL, updated_at INTEGER NOT NULL);",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -55,6 +56,23 @@ impl Db {
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aa(schema {SCHEMA_VERSION})가 모른다"),
         }
         Ok(Db { conn: Mutex::new(conn) })
+    }
+
+    pub fn workspaces(&self) -> Result<Vec<(String, String)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT name, layout FROM workspaces")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn save_workspace(&self, name: &str, layout: &str) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO workspaces(name,layout,updated_at) VALUES(?1,?2,?3)
+             ON CONFLICT(name) DO UPDATE SET layout=excluded.layout, updated_at=excluded.updated_at",
+            params![name, layout, crate::util::now_ms() as i64],
+        )?;
+        Ok(())
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>> {

@@ -3,7 +3,7 @@
 //! 기획서는 ghostty-vt를 1순위로 두었지만 빌드에 Zig 0.16이 필요해 M1-1은 순수 Rust `vt100`을 쓴다.
 //! 이 adapter 뒤에서 엔진을 바꿀 수 있게 front·host 쪽은 replay bytes와 글자 화면만 본다.
 
-use aa_proto::ScreenText;
+use aa_proto::{GridRun, ScreenText};
 
 pub struct Vt {
     parser: vt100::Parser,
@@ -37,6 +37,49 @@ impl Vt {
         out
     }
 
+    /// 한 줄을 같은 모양 글자 묶음으로(TUI front가 칸에 그린다). 넓은 글자의 뒤 칸은 건너뛴다.
+    pub fn grid_row(&self, row: u16) -> Vec<GridRun> {
+        let screen = self.parser.screen();
+        let (_, cols) = screen.size();
+        let mut runs: Vec<GridRun> = Vec::new();
+        for col in 0..cols {
+            let Some(cell) = screen.cell(row, col) else { continue };
+            if cell.is_wide_continuation() {
+                continue;
+            }
+            let t = if cell.has_contents() { cell.contents() } else { " " };
+            let a = u8::from(cell.bold())
+                | (u8::from(cell.italic()) << 1)
+                | (u8::from(cell.underline()) << 2)
+                | (u8::from(cell.inverse()) << 3);
+            let (fg, bg) = (color(cell.fgcolor()), color(cell.bgcolor()));
+            match runs.last_mut() {
+                Some(r) if r.fg == fg && r.bg == bg && r.a == a => r.t.push_str(t),
+                _ => runs.push(GridRun { t: t.to_string(), fg, bg, a }),
+            }
+        }
+        // 줄 끝의 기본 모양 공백은 보내지 않는다
+        if let Some(r) = runs.last_mut()
+            && r.fg == 0
+            && r.bg == 0
+            && r.a == 0
+        {
+            let trimmed = r.t.trim_end_matches(' ').len();
+            r.t.truncate(trimmed);
+            if r.t.is_empty() {
+                runs.pop();
+            }
+        }
+        runs
+    }
+
+    /// (줄, 칸, 보이는가)
+    pub fn cursor(&self) -> (u16, u16, bool) {
+        let screen = self.parser.screen();
+        let (r, c) = screen.cursor_position();
+        (r, c, !screen.hide_cursor())
+    }
+
     /// 커서 위치 보고(DSR 6의 답, 1부터 센다)
     pub fn cursor_report(&self) -> Vec<u8> {
         let (r, c) = self.parser.screen().cursor_position();
@@ -49,6 +92,14 @@ impl Vt {
         let lines = screen.rows(0, cols).map(|l| l.trim_end().to_string()).collect();
         let (cr, cc) = screen.cursor_position();
         ScreenText { session: session.to_string(), cols, rows, lines, cursor_row: cr, cursor_col: cc }
+    }
+}
+
+fn color(c: vt100::Color) -> u32 {
+    match c {
+        vt100::Color::Default => 0,
+        vt100::Color::Idx(i) => 0x0100_0000 | u32::from(i),
+        vt100::Color::Rgb(r, g, b) => 0x0200_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
     }
 }
 
@@ -84,6 +135,18 @@ impl DsrScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_runs_group_styles_and_skip_wide_continuation() {
+        let mut v = Vt::new(3, 20);
+        v.feed("a한\x1b[1;31mB\x1b[0m  ".as_bytes());
+        let row = v.grid_row(0);
+        assert_eq!(row.len(), 2);
+        assert_eq!((row[0].t.as_str(), row[0].fg, row[0].a), ("a한", 0, 0));
+        assert_eq!((row[1].t.as_str(), row[1].fg, row[1].a), ("B", 0x0100_0001, 1));
+        assert!(v.grid_row(1).is_empty());
+        assert_eq!(v.cursor(), (0, 6, true));
+    }
 
     #[test]
     fn dsr_found_across_chunks_and_answered_with_cursor() {

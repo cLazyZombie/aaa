@@ -8,7 +8,7 @@ use clap::{Args, Parser, Subcommand};
 
 use aa::doctor;
 use aa::service;
-use aa_proto::{B64, DeviceRole, FrontRequest, FrontResponse};
+use aa_proto::{B64, DeviceRole, FrontRequest, FrontResponse, LayoutChange, SplitDir};
 
 #[derive(Parser)]
 #[command(name = "aa", version, about = "여러 머신의 agent 오케스트레이션")]
@@ -44,6 +44,17 @@ enum Cmd {
     Pane {
         #[command(subcommand)]
         cmd: PaneCmd,
+    },
+    /// workspace layout(탭·나누기). 정본은 host에 있다
+    Ws {
+        #[command(subcommand)]
+        cmd: WsCmd,
+    },
+    /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신)
+    Attach {
+        /// workspace 이름(기본 main)
+        #[arg(long, short)]
+        workspace: Option<String>,
     },
     /// 머신 등록·목록·폐기(host에서)
     Machine {
@@ -133,6 +144,64 @@ enum PaneCmd {
     },
     Kill {
         pane: String,
+    },
+    /// 끝난(중단·유실·종료) pane을 같은 spec으로 다시 띄운다(layout 자리도 바꾼다)
+    Resume {
+        pane: String,
+    },
+    /// 끝난 pane 기록을 지운다
+    Forget {
+        pane: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WsCmd {
+    /// workspace의 탭·나누기
+    Show {
+        #[arg(long, short)]
+        workspace: Option<String>,
+    },
+    /// 새 탭에 새 pane(명령이 없으면 기본 셸)
+    Tab {
+        #[arg(long, short)]
+        workspace: Option<String>,
+        #[arg(long)]
+        machine: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(last = true)]
+        argv: Vec<String>,
+    },
+    /// pane 자리를 나눠 새 pane을 둔다(h: 좌우, v: 위아래)
+    Split {
+        pane: String,
+        #[arg(long, value_parser = ["h", "v"], default_value = "h")]
+        dir: String,
+        #[arg(long, short)]
+        workspace: Option<String>,
+        #[arg(long)]
+        machine: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(last = true)]
+        argv: Vec<String>,
+    },
+    /// 이미 있는 pane을 새 탭으로 넣는다
+    Add {
+        pane: String,
+        #[arg(long, short)]
+        workspace: Option<String>,
+    },
+    /// layout에서 뺀다(--kill이면 세션도 끝낸다)
+    Close {
+        pane: String,
+        #[arg(long, short)]
+        workspace: Option<String>,
+        #[arg(long)]
+        kill: bool,
     },
 }
 
@@ -331,8 +400,39 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 PaneCmd::Resize { pane, cols, rows } => FrontRequest::PaneResize { pane, cols, rows },
                 PaneCmd::Kill { pane } => FrontRequest::PaneKill { pane },
+                PaneCmd::Resume { pane } => FrontRequest::PaneResume { pane },
+                PaneCmd::Forget { pane } => FrontRequest::PaneForget { pane },
             },
         ),
+        Cmd::Ws { cmd } => front(
+            json,
+            match cmd {
+                WsCmd::Show { workspace } => FrontRequest::Workspace { name: workspace },
+                WsCmd::Tab { workspace, machine, name, cwd, argv } => {
+                    FrontRequest::LayoutApply { workspace, change: LayoutChange::NewTab { machine, name, argv, cwd } }
+                }
+                WsCmd::Split { pane, dir, workspace, machine, cwd, argv } => FrontRequest::LayoutApply {
+                    workspace,
+                    change: LayoutChange::Split {
+                        pane,
+                        dir: if dir == "v" { SplitDir::Vertical } else { SplitDir::Horizontal },
+                        machine,
+                        argv,
+                        cwd,
+                    },
+                },
+                WsCmd::Add { pane, workspace } => {
+                    FrontRequest::LayoutApply { workspace, change: LayoutChange::AddTab { pane } }
+                }
+                WsCmd::Close { pane, workspace, kill } => {
+                    FrontRequest::LayoutApply { workspace, change: LayoutChange::Close { pane, kill } }
+                }
+            },
+        ),
+        Cmd::Attach { workspace } => {
+            init_log("warn");
+            aa::tui::run(workspace)
+        }
         Cmd::Machine { cmd } => front(
             json,
             match cmd {
@@ -651,9 +751,27 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{m}");
             }
         }
+        FrontResponse::Workspace(w) => {
+            if w.tabs.is_empty() {
+                let _ = writeln!(s, "workspace {}: 탭 없음(`aa ws tab`으로 만든다)", w.name);
+            }
+            for (i, t) in w.tabs.iter().enumerate() {
+                let _ = writeln!(s, "탭 {}\t{}", i + 1, render_node(&t.root));
+            }
+        }
         FrontResponse::Done => s.push_str("완료\n"),
     }
     s
+}
+
+fn render_node(n: &aa_proto::LayoutNode) -> String {
+    match n {
+        aa_proto::LayoutNode::Pane { pane } => pane.clone(),
+        aa_proto::LayoutNode::Split { dir, a, b, .. } => {
+            let sep = if *dir == SplitDir::Horizontal { " | " } else { " / " };
+            format!("({}{sep}{})", render_node(a), render_node(b))
+        }
+    }
 }
 
 fn print_report(r: &doctor::ProbeReport, json: bool) -> Result<()> {
