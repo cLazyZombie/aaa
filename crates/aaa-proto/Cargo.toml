@@ -1,0 +1,18 @@
+[package]
+name = "aaa-proto"
+description = "aaa의 Agent link·Front API·Session IPC 계약(메시지·frame·버전 협상)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+base64.workspace = true
+ts-rs = { version = "12", default-features = false, features = ["serde-compat", "serde-json-impl"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

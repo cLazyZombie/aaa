@@ -1,8 +1,8 @@
-// 웹 front E2E: 실제 aa host·agent를 띄우고 headless Chromium으로 pairing·보기·입력·권한·끊김을 확인한다.
+// 웹 front E2E: 실제 aaa host·agent를 띄우고 headless Chromium으로 pairing·보기·입력·권한·끊김을 확인한다.
 //
-// 실행(저장소 루트): cargo build -p aa && (cd web && npm run build) && cargo build -p aa
+// 실행(저장소 루트): cargo build -p aaa && (cd web && npm run build) && cargo build -p aaa
 //                    NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs [스크린샷 폴더]
-// AA_BIN으로 실행 파일을 바꿀 수 있다. 실패하면 실험실 폴더를 남기고 종료 코드 1로 끝난다.
+// AAA_BIN으로 실행 파일을 바꿀 수 있다. 실패하면 실험실 폴더를 남기고 종료 코드 1로 끝난다.
 
 import { spawn, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -16,15 +16,15 @@ const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), 
 const { chromium } = require("playwright");
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const AA = process.env.AA_BIN ?? path.join(repo, "target/debug/aa");
+const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
 const shots = process.argv[2] ?? null;
 const root = `/tmp/aaw-${process.pid}`;
-const env = { ...process.env, AA_CONFIG_DIR: `${root}/c`, AA_STATE_DIR: `${root}/s`, RUST_LOG: "aa=info" };
+const env = { ...process.env, AAA_CONFIG_DIR: `${root}/c`, AAA_STATE_DIR: `${root}/s`, RUST_LOG: "aaa=info" };
 const procs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function aa(...args) {
+function aaa(...args) {
   const sep = args.indexOf("--");
   const a = sep < 0 ? [...args, "--json"] : [...args.slice(0, sep), "--json", ...args.slice(sep)];
   return JSON.parse(execFileSync(AA, a, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
@@ -199,10 +199,10 @@ const browser = await chromium.launch();
 try {
   await step("host·agent 시작", async () => {
     start("host", "host");
-    await until("host 준비", () => aa("status").web_listen);
+    await until("host 준비", () => aaa("status").web_listen);
     start("agent", "agent", "--host", "local", "--name", "labA");
-    await until("labA 연결", () => aa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
-    aa("pane", "run", "--machine", "labA", "--name", "t1", "--", "/bin/sh");
+    await until("labA 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
+    aaa("pane", "run", "--machine", "labA", "--name", "t1", "--", "/bin/sh");
   });
 
   await step("인증 없는 요청·다른 Origin 거부", async () => {
@@ -232,7 +232,7 @@ try {
       throw new Error(`manifest ${m.status} ${m.headers.get("content-type")}`);
     }
     const man = await m.json();
-    if (man.name !== "aa" || man.display !== "standalone" || man.start_url !== "/") throw new Error(JSON.stringify(man));
+    if (man.name !== "aaa" || man.display !== "standalone" || man.start_url !== "/") throw new Error(JSON.stringify(man));
     for (const icon of [...man.icons.map((i) => i.src), "/apple-touch-icon.png", "/favicon-32.png"]) {
       const r = await fetch(new URL(icon, base));
       const buf = Buffer.from(await r.arrayBuffer());
@@ -250,7 +250,7 @@ try {
     await ctx.close();
   });
 
-  const ctl = await pairPage(browser, aa("web", "pair").code, { width: 1280, height: 800 });
+  const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
   const page = ctl.page;
 
   await step("controller: 키보드 입력", async () => {
@@ -287,7 +287,7 @@ try {
   });
 
   await step("두 controller: 조작 중 표시 → 가져오기 → 연결이 끝나면 풀린다", async () => {
-    const other = await pairPage(browser, aa("web", "pair").code, { width: 1280, height: 800 });
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const op = other.page;
     await op.getByTestId("pane-t1").click();
     await until("다른 웹이 조작 중 표시", async () =>
@@ -309,7 +309,7 @@ try {
   });
 
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
-    const rd = await pairPage(browser, aa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     const rp = rd.page;
     if ((await rp.getByRole("button", { name: "새 셸" }).count()) !== 0) throw new Error("reader에게 새 셸 버튼");
     await shot(rp, "mobile-list");
@@ -321,7 +321,7 @@ try {
     await rp.getByTestId("terminal").click();
     await rp.keyboard.type("echo reader-$((1+1))\n");
     await sleep(800);
-    const lines = aa("pane", "read", "t1").lines.join("\n");
+    const lines = aaa("pane", "read", "t1").lines.join("\n");
     if (lines.includes("reader-")) throw new Error("reader 입력이 PTY에 들어갔다");
     await shot(rp, "mobile-reader");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
@@ -329,9 +329,9 @@ try {
   });
 
   await step("controller: 새 셸", async () => {
-    const before = aa("pane", "list").panes.length;
+    const before = aaa("pane", "list").panes.length;
     await page.getByTestId("machine-labA").getByRole("button", { name: "새 셸" }).click();
-    await until("새 pane", () => aa("pane", "list").panes.length === before + 1);
+    await until("새 pane", () => aaa("pane", "list").panes.length === before + 1);
     await page.getByTestId("pane-t1").click();
   });
 
@@ -341,19 +341,19 @@ try {
       'printf "Allow Bash(make test)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
       '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}\'; ' +
       "stty -echo; exec cat > /dev/null";
-    aa("pane", "run", "--machine", "labA", "--name", "q1", "--", "/bin/sh", "-c", script, AA);
+    aaa("pane", "run", "--machine", "labA", "--name", "q1", "--", "/bin/sh", "-c", script, AA);
     const card = page.getByTestId("questions").locator(".question");
     await until("질문 카드", async () => (await card.count()) === 1);
     if (!(await card.innerText()).includes("make test")) throw new Error(`카드 본문: ${await card.innerText()}`);
     await until("pane 질문 표시", async () => (await page.getByTestId("agent-q1").innerText()) === "질문");
-    const rd = await pairPage(browser, aa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     await rd.page.getByTestId("questions").waitFor();
     if ((await rd.page.getByRole("button", { name: "예" }).count()) !== 0) throw new Error("reader에게 답 버튼");
     await shot(page, "desktop-question");
     await card.getByRole("button", { name: "예" }).click();
     await until("카드 사라짐", async () => (await page.getByTestId("questions").count()) === 0);
     await until("reader 카드도 사라짐", async () => (await rd.page.getByTestId("questions").count()) === 0);
-    const all = aa("question", "list", "--all").questions;
+    const all = aaa("question", "list", "--all").questions;
     if (all.length !== 1 || all[0].state !== "answered" || all[0].answer !== "yes") throw new Error(JSON.stringify(all));
     await until("pane 작업 중", async () => (await page.getByTestId("agent-q1").innerText()) === "작업 중");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
@@ -361,19 +361,19 @@ try {
   });
 
   await step("입력 막대·pane send: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
-    aa("pane", "run", "--machine", "labA", "--name", "burst", "--", process.execPath, `${root}/burst.js`);
+    aaa("pane", "run", "--machine", "labA", "--name", "burst", "--", process.execPath, `${root}/burst.js`);
     await page.getByTestId("pane-burst").click();
     await until("burst 화면", async () => (await screenText(page)).includes("burst>"));
     await page.getByLabel("보낼 글").fill("hello web");
     await page.getByRole("button", { name: "보내기" }).click();
     await until("웹 제출", async () => (await screenText(page)).includes("SUBMIT:hello web"));
-    aa("pane", "send", "burst", "--text", "hello cli", "--enter");
-    await until("CLI 제출", () => aa("pane", "read", "burst").lines.join("\n").includes("SUBMIT:hello cli"));
+    aaa("pane", "send", "burst", "--text", "hello cli", "--enter");
+    await until("CLI 제출", () => aaa("pane", "read", "burst").lines.join("\n").includes("SUBMIT:hello cli"));
     if ((await screenText(page)).includes("[newline]")) throw new Error("Enter가 글과 한 덩어리로 갔다");
     // 가짜 입력창이 한 덩어리를 실제로 가려내는지(이 단언이 없으면 위 단언은 아무것도 보지 않는다)
-    aa("pane", "send", "burst", "--text", "one\r");
+    aaa("pane", "send", "burst", "--text", "one\r");
     await until("한 덩어리 판정", async () => (await screenText(page)).includes("[newline]"));
-    aa("pane", "kill", "burst");
+    aaa("pane", "kill", "burst");
   });
 
   await step("그림 붙여 넣기: 셸은 저장만, harness 입력창에는 경로(Enter 없음), 확인창·형식·reader 거부", async () => {
@@ -389,7 +389,7 @@ try {
     if (!fs.readFileSync(p1).equals(png)) throw new Error("저장한 그림이 다르다");
     if ((fs.statSync(p1).mode & 0o777) !== 0o600) throw new Error(`권한 ${(fs.statSync(p1).mode & 0o777).toString(8)}`);
     await sleep(300);
-    if (aa("pane", "read", "t1").lines.join("\n").includes("attachments")) throw new Error("셸에 경로가 들어갔다");
+    if (aaa("pane", "read", "t1").lines.join("\n").includes("attachments")) throw new Error("셸에 경로가 들어갔다");
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
@@ -397,7 +397,7 @@ try {
     // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
     const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);
     const recv = `${root}/h1.in`;
-    aa("pane", "run", "--machine", "labA", "--name", "h1", "--", "/bin/sh", "-c",
+    aaa("pane", "run", "--machine", "labA", "--name", "h1", "--", "/bin/sh", "-c",
       '"$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; stty raw -echo; printf "\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
     await until("h1 harness 상태", async () => (await page.getByTestId("agent-h1").count()) === 1);
     await page.getByTestId("pane-h1").click();
@@ -411,7 +411,7 @@ try {
 
     // 4) 확인창이 떠 있는 harness pane에는 넣지 않는다
     const recv2 = `${root}/h2.in`;
-    aa("pane", "run", "--machine", "labA", "--name", "h2", "--", "/bin/sh", "-c",
+    aaa("pane", "run", "--machine", "labA", "--name", "h2", "--", "/bin/sh", "-c",
       'printf "Allow Bash(rm x)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
         '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}\'; ' +
         'stty raw -echo; exec cat > "$1"', AA, recv2);
@@ -424,8 +424,8 @@ try {
     if (fs.readFileSync(recv2, "latin1") !== "") throw new Error(`확인창에 입력이 갔다: ${fs.readFileSync(recv2, "latin1")}`);
 
     // 5) reader 연결은 화면 밖에서 직접 보내도 host가 거부한다
-    const rd = await pairPage(browser, aa("web", "pair", "--reader").code, { width: 390, height: 844 });
-    const h1id = aa("pane", "list").panes.find((p) => p.name === "h1").id;
+    const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    const h1id = aaa("pane", "list").panes.find((p) => p.name === "h1").id;
     const got = await rd.page.evaluate(
       async ({ id, b64 }) => {
         const ws = new WebSocket(`ws://${location.host}/api/v1/panes/${id}/ws`);
@@ -443,15 +443,15 @@ try {
     );
     if (got.t !== "error" || got.code !== "forbidden") throw new Error(`reader 첨부: ${JSON.stringify(got)}`);
     await rd.page.context().close();
-    for (const n of ["h1", "h2"]) aa("pane", "kill", n);
+    for (const n of ["h1", "h2"]) aaa("pane", "kill", n);
   });
 
   await step("thread 보고서·결과물: Markdown 보고, sandbox 결과물, agent에 남은 큰 파일, ack", async () => {
-    aa("project", "create", "demo");
+    aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task.md`, "웹 보기");
-    const t = aa("thread", "start", "demo", "--title", "웹 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir",
+    const t = aaa("thread", "start", "demo", "--title", "웹 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir",
       "--task-file", `${root}/task.md`);
-    await until("보고 회수", () => aa("thread", "show", "demo", t.id).report_hash);
+    await until("보고 회수", () => aaa("thread", "show", "demo", t.id).report_hash);
     const item = page.getByTestId(`thread-demo-${t.id}`);
     await until("thread 목록에 검토 대기", async () => (await item.innerText()).includes("검토 대기"));
     await item.click();
@@ -481,7 +481,7 @@ try {
     await shot(page, "desktop-thread-library");
     await page.getByRole("button", { name: "확인(ack)" }).click();
     await until("ack 뒤 검토 대기 아님", async () => !(await item.innerText()).includes("검토 대기"));
-    if (aa("thread", "show", "demo", t.id).acked_hash !== aa("thread", "show", "demo", t.id).report_hash) {
+    if (aaa("thread", "show", "demo", t.id).acked_hash !== aaa("thread", "show", "demo", t.id).report_hash) {
       throw new Error("ack가 기록되지 않았다");
     }
     // 다음 단계는 t1 터미널을 본다
@@ -490,21 +490,21 @@ try {
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
-    const v = aa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
+    const v = aaa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
     const id = v.thread.id;
     const badge = page.getByTestId("evaluator-demo");
     await until("평가 badge", async () => (await badge.count()) === 1);
-    await until("평가자 brief 전달", () => aa("thread", "show", "demo", id).brief === "delivered");
+    await until("평가자 brief 전달", () => aaa("thread", "show", "demo", id).brief === "delivered");
     if ((await page.getByTestId(`thread-demo-${id}`).count()) !== 0) throw new Error("평가자가 thread 목록에 보인다");
     if ((await page.getByTestId(`pane-demo/${id}`).count()) !== 0) throw new Error("평가자가 머신 목록에 보인다");
     const text = await badge.innerText();
     if (!/평가\s*●\s*0/.test(text)) throw new Error(`badge: ${text}`);
     await badge.click();
-    const pane = aa("thread", "show", "demo", id).pane;
+    const pane = aaa("thread", "show", "demo", id).pane;
     await until("평가자 화면 선택", async () => (await page.evaluate(() => location.hash)) === `#pane=${pane}`);
     await until("평가자 터미널", async () => (await screenText(page)).includes("fake>"));
     await shot(page, "desktop-evaluator");
-    aa("evaluator", "unassign", "demo");
+    aaa("evaluator", "unassign", "demo");
     await until("끝낸 평가자 badge 사라짐", async () => (await badge.count()) === 0);
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));

@@ -1,7 +1,7 @@
 {
-  "name": "aa",
-  "short_name": "aa",
-  "description": "여러 머신의 agent 세션·thread를 보고 조작한다",
+  "name": "aaa",
+  "short_name": "aaa",
+  "description": "Any Agent, Anywhere: 여러 머신의 agent 세션·thread를 보고 조작한다",
   "lang": "ko",
   "start_url": "/",
   "scope": "/",

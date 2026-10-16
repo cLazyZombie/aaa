@@ -1,0 +1,28 @@
+[package]
+name = "aaa-common"
+description = "aaa 역할들이 함께 쓰는 바탕: 로컬 IPC·frame 연결·TLS 신원·OS 유틸·Front API 클라이언트. 역할 crate에 의존하지 않는다"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aaa-proto.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+ulid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tracing.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

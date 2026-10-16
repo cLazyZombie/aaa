@@ -1,8 +1,8 @@
-// 화면 견본(디자인 비교·검수용): 실제 aa host와 agent 둘(mac-a 로컬, mac-b 원격 등록)을 띄워
+// 화면 견본(디자인 비교·검수용): 실제 aaa host와 agent 둘(mac-a 로컬, mac-b 원격 등록)을 띄워
 // 셸·가짜 Claude(작업 중·입력 대기·질문)·thread(검토 대기·작업 중·사람 차례)·사후 평가자가 있는 상태를 만들고,
 // 같은 화면을 데스크톱 1920×1080·휴대폰 390×844, 어두움·밝음으로 찍는다.
 //
-// 실행(저장소 루트): (cd web && npm run build) && cargo build -p aa
+// 실행(저장소 루트): (cd web && npm run build) && cargo build -p aaa
 //                    NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs <스크린샷 폴더> [접두사]
 // 끝나면 띄운 프로세스를 PID로 끝내고 실험실 폴더를 지운다.
 
@@ -17,18 +17,18 @@ const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), 
 const { chromium } = require("playwright");
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const AA = process.env.AA_BIN ?? path.join(repo, "target/debug/aa");
+const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
 const out = process.argv[2];
-const prefix = process.argv[3] ?? "aa";
+const prefix = process.argv[3] ?? "aaa";
 if (!out) throw new Error("스크린샷 폴더를 준다");
 fs.mkdirSync(out, { recursive: true });
 const root = `/tmp/aas-${process.pid}`;
-const envA = { ...process.env, AA_CONFIG_DIR: `${root}/c`, AA_STATE_DIR: `${root}/s`, RUST_LOG: "aa=warn" };
-const envB = { ...process.env, AA_CONFIG_DIR: `${root}/cb`, AA_STATE_DIR: `${root}/sb`, RUST_LOG: "aa=warn" };
+const envA = { ...process.env, AAA_CONFIG_DIR: `${root}/c`, AAA_STATE_DIR: `${root}/s`, RUST_LOG: "aaa=warn" };
+const envB = { ...process.env, AAA_CONFIG_DIR: `${root}/cb`, AAA_STATE_DIR: `${root}/sb`, RUST_LOG: "aaa=warn" };
 const procs = new Map();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function aa(...args) {
+function aaa(...args) {
   const sep = args.indexOf("--");
   const a = sep < 0 ? [...args, "--json"] : [...args.slice(0, sep), "--json", ...args.slice(sep)];
   return JSON.parse(execFileSync(AA, a, { env: envA, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
@@ -158,11 +158,11 @@ const browser = await chromium.launch();
 let ok = false;
 try {
   start("host", envA, "host");
-  await until("host 준비", () => aa("status").web_listen);
+  await until("host 준비", () => aaa("status").web_listen);
   start("agentA", envA, "agent", "--host", "local", "--name", "mac-a");
-  await until("mac-a", () => aa("machine", "list").machines.some((m) => m.name === "mac-a" && m.connection === "connected"));
+  await until("mac-a", () => aaa("machine", "list").machines.some((m) => m.name === "mac-a" && m.connection === "connected"));
   // mac-b: 원격 등록
-  aa("machine", "enroll", "--open", "5m");
+  aaa("machine", "enroll", "--open", "5m");
   const enroll = spawn(AA, ["agent", "enroll", `127.0.0.1:${agentPort}`, "--name", "mac-b"], { env: envB });
   const code = await new Promise((resolve, reject) => {
     let buf = "";
@@ -175,13 +175,13 @@ try {
     enroll.stderr.on("data", on);
     enroll.on("exit", () => reject(new Error(`enroll 끝남: ${buf}`)));
   });
-  aa("machine", "approve", "mac-b", "--code", code);
+  aaa("machine", "approve", "mac-b", "--code", code);
   await new Promise((r) => (enroll.exitCode === null ? enroll.once("exit", r) : r()));
   start("agentB", envB, "agent", "--host", `127.0.0.1:${agentPort}`, "--name", "mac-b");
-  await until("mac-b", () => aa("machine", "list").machines.some((m) => m.name === "mac-b" && m.connection === "connected"));
+  await until("mac-b", () => aaa("machine", "list").machines.some((m) => m.name === "mac-b" && m.connection === "connected"));
 
   // pane: 셸 둘, 가짜 Claude 셋(작업 중·입력 대기·질문)
-  const run = (machine, name, argv) => aa("pane", "run", "--machine", machine, "--name", name, "--", ...argv);
+  const run = (machine, name, argv) => aaa("pane", "run", "--machine", machine, "--name", name, "--", ...argv);
   const sh = run("mac-a", "build", ["/bin/sh"]);
   for (const [mode, name, m] of [
     ["working", "claude-api", "mac-a"],
@@ -191,20 +191,20 @@ try {
     run(m, name, ["/usr/bin/env", `MODE=${mode}`, `AA=${AA}`, "/bin/sh", `${root}/claude-like.sh`]);
   }
   run("mac-b", "logs", ["/bin/sh"]);
-  aa("pane", "send", sh.id, "--text", "printf '\\033[1;32m✓\\033[0m cargo build --release\\n  Compiling shop-api v0.4.2\\n  \\033[1;32mFinished\\033[0m release in 41.2s\\n'", "--enter");
+  aaa("pane", "send", sh.id, "--text", "printf '\\033[1;32m✓\\033[0m cargo build --release\\n  Compiling shop-api v0.4.2\\n  \\033[1;32mFinished\\033[0m release in 41.2s\\n'", "--enter");
 
   // 프로젝트·thread
-  aa("project", "create", "shop");
+  aaa("project", "create", "shop");
   const task = (n, t) => (fs.writeFileSync(`${root}/${n}`, t), `${root}/${n}`);
-  const t1 = aa("thread", "start", "shop", "--title", "결제 API 지연 줄이기", "--machine", "mac-a", "--profile", "claude-opus",
+  const t1 = aaa("thread", "start", "shop", "--title", "결제 API 지연 줄이기", "--machine", "mac-a", "--profile", "claude-opus",
     "--kind", "dir", "--task-file", task("t1.md", "p95를 100ms 아래로"));
-  aa("thread", "start", "shop", "--title", "주문 목록 페이지 나누기", "--machine", "mac-b", "--profile", "claude-opus",
+  aaa("thread", "start", "shop", "--title", "주문 목록 페이지 나누기", "--machine", "mac-b", "--profile", "claude-opus",
     "--kind", "dir", "--task-file", task("t2.md", "오래 걸리는 시험"));
-  aa("thread", "start", "shop", "--title", "로그인 세션 저장 방식", "--machine", "mac-b", "--profile", "claude-opus",
+  aaa("thread", "start", "shop", "--title", "로그인 세션 저장 방식", "--machine", "mac-b", "--profile", "claude-opus",
     "--kind", "dir", "--task-file", task("t3.md", "결정이 필요한 일"));
-  aa("evaluator", "assign", "shop", "--profile", "claude-opus", "--machine", "mac-a");
-  await until("보고 회수", () => aa("thread", "show", "shop", t1.id).report_hash, 30_000);
-  await until("질문", () => aa("question", "list").questions.length > 0, 30_000);
+  aaa("evaluator", "assign", "shop", "--profile", "claude-opus", "--machine", "mac-a");
+  await until("보고 회수", () => aaa("thread", "show", "shop", t1.id).report_hash, 30_000);
+  await until("질문", () => aaa("question", "list").questions.length > 0, 30_000);
   await sleep(1500);
 
   const shots = [];
@@ -230,7 +230,7 @@ try {
       };
       await page.goto(base);
       await shot("pair");
-      await page.getByLabel("pairing 코드").fill(aa("web", "pair").code);
+      await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);
       await page.getByRole("button", { name: "연결" }).click();
       await page.getByTestId("machine-mac-a").waitFor();
       if (!phone) {
@@ -257,19 +257,19 @@ try {
       await ctx.close();
     }
   }
-  // TUI(aa attach)를 웹 터미널 안에서 찍는다: workspace demo = [claude-api │ 질문 중인 Claude] 탭 + build 탭
-  const paneId = (n) => aa("pane", "list").panes.find((p) => p.name === n).id;
-  aa("ws", "add", paneId("claude-api"), "-w", "demo");
-  aa("ws", "split", paneId("claude-api"), "-w", "demo", "--dir", "h", "--machine", "mac-b", "--",
+  // TUI(aaa attach)를 웹 터미널 안에서 찍는다: workspace demo = [claude-api │ 질문 중인 Claude] 탭 + build 탭
+  const paneId = (n) => aaa("pane", "list").panes.find((p) => p.name === n).id;
+  aaa("ws", "add", paneId("claude-api"), "-w", "demo");
+  aaa("ws", "split", paneId("claude-api"), "-w", "demo", "--dir", "h", "--machine", "mac-b", "--",
     "/usr/bin/env", "MODE=question", `AA=${AA}`, "/bin/sh", `${root}/claude-like.sh`);
-  aa("ws", "add", paneId("build"), "-w", "demo");
-  aa("pane", "run", "--machine", "mac-a", "--name", "tui", "--cols", "150", "--rows", "40", "--",
-    "/usr/bin/env", `AA_CONFIG_DIR=${root}/c`, `AA_STATE_DIR=${root}/s`, "TERM=xterm-256color", AA, "attach", "-w", "demo");
+  aaa("ws", "add", paneId("build"), "-w", "demo");
+  aaa("pane", "run", "--machine", "mac-a", "--name", "tui", "--cols", "150", "--rows", "40", "--",
+    "/usr/bin/env", `AAA_CONFIG_DIR=${root}/c`, `AAA_STATE_DIR=${root}/s`, "TERM=xterm-256color", AA, "attach", "-w", "demo");
   for (const scheme of ["dark", "light"]) {
     const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: scheme });
     const page = await ctx.newPage();
     await page.goto(base);
-    await page.getByLabel("pairing 코드").fill(aa("web", "pair").code);
+    await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);
     await page.getByRole("button", { name: "연결" }).click();
     await page.getByTestId("pane-tui").click();
     await until("TUI", async () => {

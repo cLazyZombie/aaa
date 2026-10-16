@@ -1,5 +1,5 @@
-// 생성 파일: crates/aa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
-// 갱신: AA_UPDATE_TS=1 cargo test -p aa-proto typescript
+// 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
+// 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
 
 export type Version = { major: number, minor: number, };
 
@@ -91,11 +91,11 @@ profiles: Array<string>, };
 
 export type ProjectContext = { project: string, path: string, 
 /**
- * project.toml `start_threads`: propose(제안하고 승인을 기다린다) 또는 auto. aa는 강제하지 않는다.
+ * project.toml `start_threads`: propose(제안하고 승인을 기다린다) 또는 auto. aaa는 강제하지 않는다.
  */
 start_threads: string, tasks: Array<TaskView>, 
 /**
- * 열린 thread. `next`는 보고서 `## Next`에 `aa thread next --add`로 더한 줄까지 붙인 목록이다.
+ * 열린 thread. `next`는 보고서 `## Next`에 `aaa thread next --add`로 더한 줄까지 붙인 목록이다.
  */
 threads: Array<ThreadView>, assignable: Array<OwnerChoice>, 
 /**
@@ -173,11 +173,11 @@ export type PublishState = {
  */
 tailscale: string, dns_name: string | null, 
 /**
- * aa 웹을 이미 proxy하는 HTTPS 주소
+ * aaa 웹을 이미 proxy하는 HTTPS 주소
  */
 url: string | null, 
 /**
- * aa가 만든 serve 포트(끌 때 이 포트만 끈다)
+ * aaa가 만든 serve 포트(끌 때 이 포트만 끈다)
  */
 owned_port: number | null, web_port: number, message: string | null, };
 
@@ -301,11 +301,11 @@ export type AgentActivity = "started" | "working" | "idle" | "question" | "error
 
 export type AgentStatus = { activity: AgentActivity, since_ms: number, harness: string, message: string | null, 
 /**
- * `aa report --percent`
+ * `aaa report --percent`
  */
 percent: number | null, 
 /**
- * `aa report --activity`
+ * `aaa report --activity`
  */
 progress: string | null, harness_session: string | null, };
 
@@ -367,7 +367,7 @@ summary: string,
  */
 body: string, done: boolean, 
 /**
- * coordinator(또는 사람)가 `aa inbox`로 본 적이 있다. 처음 보는 항목만 알린다.
+ * coordinator(또는 사람)가 `aaa inbox`로 본 적이 있다. 처음 보는 항목만 알린다.
  */
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 

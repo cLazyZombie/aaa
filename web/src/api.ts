@@ -1,4 +1,4 @@
-// host 웹 API(crates/aa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
+// host 웹 API(crates/aaa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
 import type {
   DeviceRole,
   ErrorBody,

@@ -17,5 +17,5 @@
 .env
 /p0/results/
 /p0/cert/out/
-aa-p0-results/
+aaa-p0-results/
 *.log

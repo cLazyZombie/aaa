@@ -1,0 +1,14 @@
+[package]
+name = "aaa-config"
+description = "aaa backend TOML 설정(host.toml·agent.toml): 위치·schema·검증·오류 위치"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml_edit = { workspace = true, features = ["serde"] }
+serde_ignored = "0.1"
+thiserror.workspace = true

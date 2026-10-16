@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 export type ThemePref = "system" | "light" | "dark";
 export type Scheme = "light" | "dark";
 
-const KEY = "aa:theme";
+const KEY = "aaa:theme";
 const media = () => window.matchMedia("(prefers-color-scheme: light)");
 
 function readPref(): ThemePref {

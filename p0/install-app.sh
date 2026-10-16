@@ -2,7 +2,7 @@
 # P0: 빌드한 .app을 /Applications의 고정 경로로 「rename 교체」한다(제자리 쓰기 금지, 기획서 §11).
 # 이전 판은 /Applications/.<name>.app.old-<시각>으로 남긴다(되돌리기용).
 #
-# 사용: p0/install-app.sh <빌드한 .app 경로>   예) p0/install-app.sh target/p0/aa.app
+# 사용: p0/install-app.sh <빌드한 .app 경로>   예) p0/install-app.sh target/p0/aaa.app
 set -euo pipefail
 
 SRC="${1:?빌드한 .app 경로가 필요하다}"

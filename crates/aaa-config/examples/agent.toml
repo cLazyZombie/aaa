@@ -1,0 +1,51 @@
+# aaa agent backend 설정. 위치: macOS ~/.config/aaa/agent.toml, Linux $XDG_CONFIG_HOME/aaa/agent.toml,
+# Windows %LOCALAPPDATA%\aaa\config\agent.toml (AAA_CONFIG_DIR로 바꿀 수 있다)
+schema = 1
+
+[agent]
+# 머신 이름(비우면 hostname)
+name = ""
+# host 주소. 같은 머신의 host면 "local", 아니면 "<이름 또는 주소>:<포트>"
+host = "local"
+# 새 세션 기본 작업 폴더(비우면 HOME)
+default_cwd = ""
+# thread worktree·작업 폴더를 만드는 root(비우면 ~/aaa-work)
+work_root = ""
+
+[reconnect]
+max_backoff_s = 60
+
+[selfcheck]
+# 시작 때 첫 실행 지연 표본 수(macOS). P0 측정은 30.
+first_exec_samples = 5
+# 실제로 읽어 볼 키체인 generic password의 service 이름(비우면 잠금 bit만 본다)
+keychain_service = ""
+# 읽기·쓰기를 확인할 외장 볼륨 폴더(선택)
+volume_dir = ""
+
+[health]
+# 머신 건강 점검 주기(초). 디스크·부하·전원·toolchain을 host에 보낸다.
+every_s = 60
+# 작업 root가 있는 디스크의 여유가 이보다 적으면 새 세션을 거부한다(GB, 0이면 보지 않는다)
+min_free_gb = 5
+
+[health.toolchain]
+# 점검 명령(이름 = argv). 실패하면 새 세션을 거부하고, 출력 첫 줄을 버전으로 보인다.
+# clt = ["xcrun", "--version"]
+# cargo = ["cargo", "--version"]
+
+# thread를 띄우는 profile. host.toml [projects] allow_profiles가 허용한 것만 쓴다.
+# harness: claude·codex·shell·custom. model·effort는 harness 플래그로 바뀌고, args·env는 resume에도 같다.
+[profiles.claude-opus]
+harness = "claude"
+model = "opus"
+effort = "high"
+args = []
+description = "Claude Code, opus high"
+
+[profiles.codex]
+harness = "codex"
+model = ""
+effort = "high"
+args = []
+description = "Codex CLI"
