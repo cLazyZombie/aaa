@@ -76,7 +76,7 @@ perm() {
   hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
   menu 'Allow Bash(make test)?' 0 'Yes' 'No, and tell Claude what to do differently (esc)'
   if [ "$pick" = Yes ]; then echo "allowed"; hook '{"hook_event_name":"PostToolUse","session_id":"fake-1","tool_name":"Bash"}'
-  else echo "denied"; echo "Interrupted \302\267 What should Claude do instead?"; quiet=1; fi
+  else echo "denied"; printf 'Interrupted \302\267 What should Claude do instead?\n'; quiet=1; fi
 }
 menu 'Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder'
 [ "$pick" = 'Yes, I trust this folder' ] || { echo "trust: $pick"; exit 1; }
@@ -96,7 +96,13 @@ while IFS= read -r line; do
       ;;
     *ask*) perm ;;
     *slow*) echo "slow start"; sleep 3; echo "slow done" ;;
-    *long*) echo "long start"; keyt 300; if [ "$k" = "$ESC" ]; then echo "Interrupted"; quiet=1; else echo "long done"; fi ;;
+    *long*)
+      echo "long start"; keyt 250
+      if [ "$k" = "$ESC" ]; then
+        # 멈추는 데 시간이 걸리고, 그동안 들어온 입력은 버린다(멈춤을 확인하기 전에 보낸 글은 사라진다)
+        sleep 1; while keyt 1; [ -n "$k" ]; do :; done
+        echo "Interrupted"; quiet=1
+      else echo "long done"; fi ;;
     *) echo "got: $line" ;;
   esac
   [ "$quiet" = 1 ] || hook '{"hook_event_name":"Stop","session_id":"fake-1","last_assistant_message":"끝"}'
@@ -255,6 +261,15 @@ impl World {
             &format!("화면 {needle:?}"),
             T,
             || Some(self.h.screen(pane)).filter(|s| s.contains(needle)),
+            || self.h.screen(pane),
+        )
+    }
+
+    fn wait_for_count(&self, pane: &str, needle: &str, n: usize) {
+        wait_for_diag(
+            &format!("화면 {needle:?} {n}번"),
+            T,
+            || (self.h.screen(pane).matches(needle).count() >= n).then_some(()),
             || self.h.screen(pane),
         )
     }
@@ -497,6 +512,8 @@ fn hooked_thread_questions_and_messages() {
     assert_eq!(m2["state"], "queued", "{m2}");
     let screen = w.wait_screen(&pane, "got: second");
     assert!(screen.find("slow done").unwrap() < screen.find("got: second").unwrap(), "{screen}");
+    // 화면 출력이 Stop hook보다 먼저 보일 수 있다: 입력 대기(idle)를 확인한 뒤 다음을 보낸다
+    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
 
     // 거절(Esc)
     let m3 = w.message(&id, "ask again", false);
@@ -522,6 +539,17 @@ fn hooked_thread_questions_and_messages() {
     assert!(t0.elapsed() < Duration::from_secs(10), "멈춤을 화면으로 알아야 한다: {:?}", t0.elapsed());
     let screen = w.wait_screen(&pane, "got: urgent");
     assert!(screen.contains("Interrupted") && !screen.contains("long done"), "{screen}");
+    // 두 번째 interrupt: 지난 「Interrupted」가 화면에 남아 있어도 새로 멈출 때까지 기다린다
+    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
+    w.wait_for_count(&pane, "long start", 2);
+    let t0 = std::time::Instant::now();
+    let m5 = w.message(&id, "urgent2", true);
+    assert_eq!(m5["state"], "accepted", "{m5}");
+    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
+    let screen = w.wait_screen(&pane, "got: urgent2");
+    assert!(!screen.contains("long done"), "{screen}");
+    assert_eq!(screen.matches("Interrupted").count(), 3, "{screen}");
     assert!(!screen.contains("NEVER-SENT"), "{screen}");
 
     let all = w.questions(true);
@@ -545,6 +573,10 @@ fn hooked_thread_questions_and_messages() {
             "message_accepted",
             "question_shown",
             "question_answered",
+            "message_queued",
+            "message_accepted",
+            "message_queued",
+            "message_accepted",
             "message_queued",
             "message_accepted",
             "message_queued",
