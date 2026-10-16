@@ -64,7 +64,7 @@ bash ~/aa-dev/aa/p0/launcher/measure.sh after --aa ~/aa-dev/bin/aa
 
 - `measure.sh`는 launcher의 cdhash가 설치 때와 같은지 먼저 확인한다. 다르면 측정하지 않는다.
 - launcher를 `open -n -W`(LaunchServices)로 띄우고, 자식 `aa doctor probe --samples 30 --fda-check`가 잰다. 결과는 `~/aa-p0/results/launcher-<단계>.json`과 요약 표다.
-- LaunchAgent → launcher → `aa` 기동(E2)은 설치 작업(M1-4)에서 같은 launcher로 확인한다. 이 단계에서는 LaunchAgent를 등록하지 않는다.
+- LaunchAgent → launcher → `aa` 기동(E2)은 설치 작업에서 같은 launcher로 확인한다([운영 설치 점검표](install-runbook.md) 3번, `aa service install`). 이 단계에서는 LaunchAgent를 등록하지 않는다.
 
 ## 보류(결정 14): 서명 identity 실험
 

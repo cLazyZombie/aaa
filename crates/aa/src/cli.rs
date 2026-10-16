@@ -68,7 +68,7 @@ enum Cmd {
     },
     /// 자가 점검(계보·키체인·첫 실행 지연)
     Doctor(DoctorArgs),
-    /// macOS 감독자(SMAppService LaunchAgent) 등록·해제·상태
+    /// macOS 감독자: 운영은 show·install·uninstall(LaunchAgent → aa-launcher → aa, 결정 14). plan·register 등은 보류한 SMAppService 경로
     Service {
         #[command(subcommand)]
         cmd: ServiceCmd,
@@ -591,6 +591,34 @@ enum ServiceCmd {
     },
     /// 시스템 설정의 로그인 항목 화면을 연다
     OpenSettings,
+    /// 운영 감독자(결정 14: LaunchAgent → aa-launcher → aa <role>)를 바꾸지 않고 보인다: plist·경로·launchd 상태
+    Show {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+        /// aa 실행 파일(기본: 지금 실행 중인 aa). 다시 빌드해도 바뀌지 않는 고정 경로를 쓴다.
+        #[arg(long)]
+        aa: Option<PathBuf>,
+        /// launcher 실행 파일(기본: ~/Applications/aa-launcher.app/Contents/MacOS/aa-launcher)
+        #[arg(long)]
+        launcher: Option<PathBuf>,
+    },
+    /// 운영 감독자를 설치한다(~/Library/LaunchAgents에 plist를 쓰고 launchctl bootstrap). 사람이 터미널에서 직접 한다.
+    Install {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+        #[arg(long)]
+        aa: Option<PathBuf>,
+        #[arg(long)]
+        launcher: Option<PathBuf>,
+        /// 이미 있으면 내리고 바꾼다
+        #[arg(long)]
+        replace: bool,
+    },
+    /// 운영 감독자를 내리고 plist를 지운다. 사람이 터미널에서 직접 한다.
+    Uninstall {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1627,6 +1655,19 @@ fn print_report(r: &doctor::ProbeReport, json: bool) -> Result<()> {
     Ok(())
 }
 
+fn launchd_spec(role: String, aa: Option<PathBuf>, launcher: Option<PathBuf>) -> Result<crate::launchd::Spec> {
+    let aa = match aa {
+        Some(p) => p,
+        None => std::env::current_exe()?.canonicalize()?,
+    };
+    Ok(crate::launchd::Spec {
+        role,
+        launcher: launcher.unwrap_or_else(crate::launchd::default_launcher),
+        aa,
+        env: crate::launchd::captured_env(),
+    })
+}
+
 fn service_cmd(cmd: ServiceCmd) -> Result<ExitCode> {
     match cmd {
         ServiceCmd::Plan { label } => print!("{}", service::plan(&label)?),
@@ -1634,6 +1675,13 @@ fn service_cmd(cmd: ServiceCmd) -> Result<ExitCode> {
         ServiceCmd::Unregister { label } => println!("{label}: {}", service::unregister(&label)?),
         ServiceCmd::Status { label } => println!("{label}: {}", service::status(&label)?),
         ServiceCmd::OpenSettings => service::open_settings(),
+        ServiceCmd::Show { role, aa, launcher } => {
+            print!("{}", crate::launchd::show(&launchd_spec(role, aa, launcher)?)?)
+        }
+        ServiceCmd::Install { role, aa, launcher, replace } => {
+            print!("{}", crate::launchd::install(&launchd_spec(role, aa, launcher)?, replace)?)
+        }
+        ServiceCmd::Uninstall { role } => print!("{}", crate::launchd::uninstall(&role)?),
     }
     Ok(ExitCode::SUCCESS)
 }
