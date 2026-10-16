@@ -20,7 +20,14 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
 const shots = process.argv[2] ?? null;
 const root = `/tmp/aaw-${process.pid}`;
-const env = { ...process.env, AAA_CONFIG_DIR: `${root}/c`, AAA_STATE_DIR: `${root}/s`, RUST_LOG: "aaa=info" };
+// CLAUDE_CONFIG_DIR: agent가 대화 기록을 읽는 Claude 폴더(실험실 안, 실제 ~/.claude는 건드리지 않는다)
+const env = {
+  ...process.env,
+  AAA_CONFIG_DIR: `${root}/c`,
+  AAA_STATE_DIR: `${root}/s`,
+  CLAUDE_CONFIG_DIR: `${root}/claude`,
+  RUST_LOG: "aaa=info",
+};
 const procs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -516,6 +523,67 @@ try {
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();
     aaa("pane", "kill", "pasteapp");
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 생각·도구 결과는 빼고, 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
+    const dir = `${root}/claude/projects/-lab-chat`;
+    fs.mkdirSync(dir, { recursive: true });
+    const tr = `${dir}/s1.jsonl`;
+    const L = (o) => JSON.stringify(o) + "\n";
+    fs.writeFileSync(
+      tr,
+      L({ type: "user", message: { role: "user", content: "결제 지연을 줄여 줘" } }) +
+        L({ type: "user", message: { role: "user", content: "<system-reminder>끼운 글</system-reminder>" } }) +
+        L({
+          type: "assistant",
+          message: {
+            content: [
+              { type: "thinking", thinking: "속생각" },
+              { type: "text", text: "캐시를 넣었다" },
+              { type: "tool_use", name: "Bash", input: { command: "cargo test" } },
+            ],
+          },
+        }) +
+        L({ type: "user", message: { content: [{ type: "tool_result", content: "도구결과본문" }] } }),
+    );
+    const hookPane = (name, path) =>
+      aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
+        JSON.stringify({ hook_event_name: "Stop", session_id: "s1", transcript_path: path }));
+    hookPane("chat1", tr);
+    await page.getByTestId("pane-chat1").click();
+    await until("대화 단추", async () => (await page.getByTestId("chat-toggle").count()) === 1);
+    await page.getByTestId("chat-toggle").click();
+    const chat = page.getByTestId("chat");
+    const roles = async () => chat.locator(".chat-msg").evaluateAll((els) => els.map((e) => [e.dataset.role, e.textContent]));
+    await until("대화 줄", async () => (await roles()).length === 3);
+    const want = [["user", "결제 지연을 줄여 줘"], ["assistant", "캐시를 넣었다"], ["tool", "Bash: cargo test"]];
+    if (JSON.stringify(await roles()) !== JSON.stringify(want)) throw new Error(JSON.stringify(await roles()));
+    const all = await chat.innerText();
+    if (all.includes("속생각") || all.includes("도구결과본문") || all.includes("끼운 글")) throw new Error(`빼야 할 글이 보인다: ${all}`);
+    // 새 줄이 생기면 따라간다
+    fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: "시험도 통과했다" }] } }));
+    await until("새 줄", async () => (await roles()).length === 4);
+    await shot(page, "desktop-chat");
+    // 터미널로 돌아간다
+    await page.getByTestId("chat-toggle").click();
+    if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");
+    // CLI도 같은 기록을 본다
+    const c = aaa("pane", "chat", "chat1");
+    if (c.messages.length !== 4 || c.harness !== "claude") throw new Error(JSON.stringify(c));
+    // 기록 폴더 밖을 가리키는 hook(세션 안 누구나 보낼 수 있다)은 읽지 않는다
+    fs.writeFileSync(`${root}/secret.jsonl`, L({ type: "user", message: { role: "user", content: "비밀" } }));
+    hookPane("chat2", `${root}/secret.jsonl`);
+    await until("chat2 harness", () => aaa("pane", "list").panes.find((p) => p.name === "chat2")?.agent?.harness === "claude");
+    let refused = "";
+    try {
+      aaa("pane", "chat", "chat2");
+    } catch (e) {
+      refused = String(e.stdout);
+    }
+    if (!refused.includes("기록 폴더 밖") || refused.includes("비밀")) throw new Error(`밖의 파일: ${refused}`);
+    for (const n of ["chat1", "chat2"]) aaa("pane", "kill", n);
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });

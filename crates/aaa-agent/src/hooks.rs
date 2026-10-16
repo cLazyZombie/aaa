@@ -60,6 +60,7 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         question_kind: None,
         percent: None,
         at_ms: now_ms,
+        transcript: s(p, "transcript_path"),
     };
     if harness == "report" {
         ev.kind = "progress".into();

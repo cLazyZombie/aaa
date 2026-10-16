@@ -981,6 +981,26 @@ host 프로젝트 폴더 구성:
   - 실제 push 서비스(FCM·Apple)로 가는 왕복은 자동 시험에 없다. headless 브라우저는 실제 구독을 만들지 못한다. 운영 휴대폰에서 「알림 켜기」의 시험 알림으로 확인한다.
   - 알림을 눌렀을 때 thread로 가는 것은 자동 시험이 없다(CDP로 알림을 누를 수 없다).
 
+### 8.27 M3 chat read-only(10-17)
+
+Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰에서 긴 작업의 흐름을 읽기 쉽게 하려는 것이다. 보기만 하고, 입력은 지금처럼 터미널로 간다.
+
+- **보기.** 웹 터미널 머리의 「대화」 단추(harness가 claude·codex인 pane만)로 바꾼다. 보이는 동안 3초마다 다시 읽고, 맨 아래를 보고 있으면 따라 내려간다. CLI는 `aaa pane chat <pane>`이다. 보기 권한 기기·worker 세션도 볼 수 있다(보이는 범위는 pane 보기와 같다).
+- **어디서 읽나.** agent가 그 머신의 기록 파일을 읽는다.
+  - Claude: hook 사건의 `transcript_path`. host는 pane에만 기억하고 웹·로그·흐름 사건으로 내보내지 않는다(그 머신의 홈 경로다).
+  - Codex: notify의 thread-id로 `sessions/YYYY/MM/DD/rollout-…-<thread-id>.jsonl`을 찾는다.
+- **무엇을 보이나.** 사람이 쓴 글, harness의 답, 도구 호출 한 줄(`Bash: cargo test`)이다. 생각(thinking)·도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글(`<system-reminder>` 등)은 뺀다. 터미널보다 많이 보이지 않게 하려는 것이다. 끝에서 150줄, 한 줄 4000자까지다.
+- **보안.** hook은 세션 안에서 누구나 보낼 수 있어 경로를 믿지 않는다.
+  - agent 자기 환경으로 정한 기록 폴더(`$CLAUDE_CONFIG_DIR`|`~/.claude`의 `projects/`, `$CODEX_HOME`|`~/.codex`의 `sessions/`) 안의 일반 `.jsonl` 파일만 읽는다. symlink는 실제 위치로 풀어 보고, FIFO·폴더는 거부한다.
+  - Codex thread-id는 형식(36자 hex·`-`)을 먼저 본다.
+  - 오류 글에 경로를 넣지 않는다.
+- **큰 기록.** Claude 기록에는 요청 원문 같은 큰 줄이 많다. 뒤에서부터 1MiB씩 읽어 필요한 만큼만 고르고 16MiB에서 멈춘다.
+- **호환.** hook 사건의 `transcript`는 없어도 되는 필드다. 옛 host는 무시하고, 옛 agent는 보내지 않는다(그때는 「아직 기록 위치를 알리지 않았다」).
+- **시험.**
+  - agent 유닛: 합성 기록으로 거르기(3MiB 줄·sidechain·thinking·system-reminder·tool_result)와 끝부분 자르기, Codex 줄, 경로(밖·상대·`..`·확장자·밖을 가리키는 symlink·폴더·FIFO), thread-id를 본다.
+  - 웹 E2E: 실험실 안 `CLAUDE_CONFIG_DIR`에 기록을 두고 hook으로 알린다. 사람·답·도구 줄만 보이고, 빼야 할 글은 없다. 새 줄을 따라가고 터미널로 돌아간다. CLI도 같다. 기록 폴더 밖을 가리키는 hook은 「기록 폴더 밖」으로 거부하고 내용을 내보내지 않는다.
+- **남는 한계.** Claude·Codex 기록 형식은 공개 규격이 아니다. 바뀌면 모르는 줄은 조용히 빠진다(오류로 멈추지 않는다). 실제 Codex 기록 왕복은 사용량 때문에 자동 시험이 없다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -1309,7 +1329,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only, PWA·Web Push(§8.23·§8.26, **10-17 구현**), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only(§8.27, **10-17 구현**), PWA·Web Push(§8.23·§8.26, **10-17 구현**), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.

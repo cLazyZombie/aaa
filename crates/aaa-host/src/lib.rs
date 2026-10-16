@@ -133,6 +133,8 @@ struct PaneRt {
     lease: Option<FrontRef>,
     /// harness 상태(hook 사건으로만 바뀐다)
     agent: Option<aaa_proto::AgentStatus>,
+    /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
+    transcript: Option<String>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -384,6 +386,7 @@ impl Host {
                     events: broadcast::channel(1024).0,
                     lease: None,
                     agent: None,
+                    transcript: None,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -504,6 +507,7 @@ impl Host {
                 events: broadcast::channel(1024).0,
                 lease: None,
                 agent: None,
+                transcript: None,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -844,6 +848,34 @@ impl Host {
                 self.mirror_text(&id)
                     .map(FrontResponse::Screen)
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
+            }
+            FrontRequest::PaneChat { pane } => {
+                let (id, mid) = self.resolve_pane(&pane)?;
+                // 보기 범위(§8.25)는 pane 보기와 같다
+                if self.pane_view_of(&id, role).is_none() {
+                    return Err(err(ErrorCode::NotFound, format!("pane이 없다: {pane}")));
+                }
+                let (harness, transcript, harness_session) = {
+                    let i = self.inner.lock().unwrap();
+                    let p = i.panes.get(&id).ok_or_else(|| err(ErrorCode::NotFound, "pane이 없다"))?;
+                    let a = p.agent.as_ref();
+                    (
+                        a.map(|a| a.harness.clone()).unwrap_or_default(),
+                        p.transcript.clone(),
+                        a.and_then(|a| a.harness_session.clone()),
+                    )
+                };
+                if !matches!(harness.as_str(), "claude" | "codex") {
+                    return Err(err(ErrorCode::NotFound, "대화 기록은 Claude·Codex pane만 볼 수 있다"));
+                }
+                let conn = self.live_conn(&mid)?;
+                match conn.request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session }).await?
+                {
+                    AgentResponse::Chat { messages, truncated } => {
+                        Ok(FrontResponse::Chat(aaa_proto::ChatView { pane: id, harness, messages, truncated }))
+                    }
+                    other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+                }
             }
             FrontRequest::PaneSend { pane, data } => {
                 let (id, mid) = self.resolve_pane(&pane)?;

@@ -182,6 +182,9 @@ impl Host {
             if p.machine_id != mid {
                 return;
             }
+            if ev.transcript.is_some() {
+                p.transcript = ev.transcript.clone();
+            }
             let prev = p.agent.clone();
             let mut st = prev.clone().unwrap_or(AgentStatus {
                 activity: AgentActivity::Started,
@@ -388,6 +391,7 @@ impl Host {
                     question_kind: None,
                     percent: None,
                     at_ms: aaa_common::util::now_ms(),
+                    transcript: None,
                 },
             );
         }

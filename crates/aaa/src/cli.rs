@@ -481,6 +481,10 @@ enum PaneCmd {
     Read {
         pane: String,
     },
+    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 생각·도구 결과 본문은 빼고)
+    Chat {
+        pane: String,
+    },
     /// 입력을 보낸다(문자열 그대로, --enter면 끝에 Enter)
     Send {
         pane: String,
@@ -778,6 +782,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows }
                 }
                 PaneCmd::Read { pane } => FrontRequest::PaneRead { pane },
+                PaneCmd::Chat { pane } => FrontRequest::PaneChat { pane },
                 PaneCmd::Send { pane, text, enter } => {
                     // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측).
                     // 글을 먼저 보내고 조금 뒤 Enter를 따로 보낸다(host의 brief·메시지 전달과 같은 간격).
@@ -1635,6 +1640,18 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Pane(p) => {
             let _ = writeln!(s, "{}\t{}\t{}\t{}", p.id, p.machine, p.name, state_label(&p.state));
+        }
+        FrontResponse::Chat(c) => {
+            if c.truncated {
+                let _ = writeln!(s, "(앞부분 생략)");
+            }
+            for m in &c.messages {
+                let _ = match m.role {
+                    aaa_proto::ChatRole::User => writeln!(s, "\n[사람] {}", m.text),
+                    aaa_proto::ChatRole::Assistant => writeln!(s, "\n[{}] {}", c.harness, m.text),
+                    aaa_proto::ChatRole::Tool => writeln!(s, "  · {}", m.text),
+                };
+            }
         }
         FrontResponse::Screen(t) => {
             let mut lines = t.lines.clone();

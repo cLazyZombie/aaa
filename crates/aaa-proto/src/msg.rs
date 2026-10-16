@@ -184,6 +184,31 @@ pub struct ScreenText {
     pub cursor_col: u16,
 }
 
+/// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatRole {
+    User,
+    Assistant,
+    /// 도구 호출 한 줄(예: `Bash: cargo test`). 도구 결과 본문은 싣지 않는다.
+    Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChatView {
+    pub pane: String,
+    pub harness: String,
+    pub messages: Vec<ChatMessage>,
+    /// 기록이 더 길어 끝부분만 실었다
+    pub truncated: bool,
+}
+
 // ───────────────────────── Agent link ─────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -284,6 +309,14 @@ pub enum AgentRequest {
     Forget {
         session: String,
     },
+    /// harness 대화 기록의 끝부분(§8.27). agent는 자기 Claude·Codex 기록 폴더 안의 파일만 읽는다.
+    Chat {
+        harness: String,
+        /// Claude hook이 알린 기록 파일
+        transcript: Option<String>,
+        /// Codex thread-id(기록 파일 이름에 들어 있다)
+        harness_session: Option<String>,
+    },
     /// agent.toml에 정의된 profile 목록
     Profiles,
     /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
@@ -372,6 +405,10 @@ pub enum AgentResponse {
     },
     Screen(ScreenText),
     Done,
+    Chat {
+        messages: Vec<ChatMessage>,
+        truncated: bool,
+    },
     Profiles {
         profiles: Vec<ProfileView>,
     },
@@ -718,6 +755,10 @@ pub enum FrontRequest {
     PaneRead {
         pane: String,
     },
+    /// harness(Claude·Codex) 대화 기록 보기(§8.27, 읽기 전용)
+    PaneChat {
+        pane: String,
+    },
     PaneSend {
         pane: String,
         data: B64,
@@ -1014,6 +1055,7 @@ impl FrontRequest {
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::PaneRead { .. }
+                | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::Workspace { .. }
@@ -1064,6 +1106,7 @@ pub enum FrontResponse {
         valid: Option<String>,
     },
     Screen(ScreenText),
+    Chat(ChatView),
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -1287,6 +1330,7 @@ mod tests {
     fn control_classification() {
         // reader가 보낼 수 있는 요청은 읽기뿐이어야 한다.
         assert!(!FrontRequest::PaneRead { pane: "p".into() }.needs_control());
+        assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(FrontRequest::WebPair { role: DeviceRole::Reader }.local_only());
