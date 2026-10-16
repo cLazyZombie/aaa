@@ -255,6 +255,21 @@ impl Host {
         let _ = self.thread_events.send(self.thread_view(rec));
     }
 
+    /// 최신 기록을 다시 읽어 고치고 저장한다. 읽은 뒤 agent 응답 등을 기다린 쪽은 이것으로 쓴다
+    /// (기다리는 동안 다른 쪽이 고친 필드, 예: 평가자 cursor를 옛 값으로 덮지 않게).
+    pub(crate) fn update_rec(
+        &self,
+        project: &str,
+        id: &str,
+        f: impl FnOnce(&mut ThreadRec),
+    ) -> Result<ThreadRec, ErrorBody> {
+        let _guard = self.rec_lock.lock().unwrap();
+        let mut r = self.load(project, id)?;
+        f(&mut r);
+        self.save(&mut r);
+        Ok(r)
+    }
+
     pub(crate) fn machine_name(&self, mid: &str) -> String {
         self.inner.lock().unwrap().machines.get(mid).map(|m| m.name.clone()).unwrap_or_else(|| mid.to_string())
     }
@@ -707,9 +722,10 @@ impl Host {
             role: Some(rec.role),
         };
         let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
-        rec.pane = Some(pane);
-        rec.status = ThreadStatus::Open;
-        self.save(rec);
+        *rec = self.update_rec(&rec.project, &rec.id, |r| {
+            r.pane = Some(pane);
+            r.status = ThreadStatus::Open;
+        })?;
         if let (Ok(conn), Some(wd)) = (self.live_conn(&rec.machine_id), rec.work_dir.clone()) {
             let _ = conn
                 .request(AgentRequest::ThreadWatch { thread: format!("{}/{}", rec.project, rec.id), work_dir: wd })
@@ -779,9 +795,13 @@ impl Host {
                 AgentResponse::Relaunch(l) => l,
                 other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
             };
-            rec.decisions_rev = decisions_rev(&dir);
-            rec.brief = BriefState::Pending;
-            rec.launch = Some(relaunched.clone());
+            let rev = decisions_rev(&dir);
+            let launch = relaunched.clone();
+            rec = self.update_rec(project, id, |r| {
+                r.decisions_rev = rev;
+                r.brief = BriefState::Pending;
+                r.launch = Some(launch);
+            })?;
             relaunched.argv
         };
         self.db.audit(actor, "thread_restart", &format!("{project}/{id} resume={resume}"));
@@ -834,7 +854,7 @@ impl Host {
 
     /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash를 바꾸지 않는다(다음 변화·정리 때 다시 한다).
     async fn collect(self: &Arc<Self>, project: &str, id: &str) -> Result<(), ErrorBody> {
-        let mut rec = self.load(project, id)?;
+        let rec = self.load(project, id)?;
         let dir = self.project_dir(project)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
@@ -912,11 +932,12 @@ impl Host {
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let (state, next) = parse_report(&text);
-                rec.report_hash = Some(hash);
-                rec.report_state = state.clone();
-                rec.next = next;
-                rec.copy = Some(copy.clone());
-                self.save(&mut rec);
+                let rec = self.update_rec(project, id, |r| {
+                    r.report_hash = Some(hash);
+                    r.report_state = state.clone();
+                    r.next = next;
+                    r.copy = Some(copy.clone());
+                })?;
                 let mut detail = format!("[{}] 사본 {copy}", state.as_deref().unwrap_or("상태 없음"));
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
@@ -928,8 +949,7 @@ impl Host {
                 Ok(())
             }
             Err(e) => {
-                rec.copy = Some("failed".into());
-                self.save(&mut rec);
+                let rec = self.update_rec(project, id, |r| r.copy = Some("failed".into()))?;
                 self.flow(&rec, "copy_failed", None, e.message.clone());
                 Err(e)
             }
@@ -978,7 +998,7 @@ impl Host {
                     .map_err(|e| bad(format!("마지막 사본이 실패해 resolve하지 않는다: {}", e.message)))?;
             }
         }
-        let mut rec = self.load(project, id)?;
+        let rec = self.load(project, id)?;
         if let Some(pane) = &rec.pane
             && self.pane_view_of(pane, aa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
@@ -1010,8 +1030,7 @@ impl Host {
                 Err(e) => notes.push(format!("정리 실패: {}", e.message)),
             }
         }
-        rec.status = ThreadStatus::Resolved;
-        self.save(&mut rec);
+        let rec = self.update_rec(project, id, |r| r.status = ThreadStatus::Resolved)?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
         self.merge_forget(&rec);
         self.flow(

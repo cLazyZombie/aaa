@@ -25,6 +25,10 @@ use crate::{Host, err};
 const DEFAULT_EVENTS: [&str; 4] = ["merge_landed", "thread_resolved", "thread_failed", "thread_restarted"];
 /// 묶음에 넣는 보고 본문 상한
 const REPORT_CAP: usize = 64 * 1024;
+/// 묶음 하나의 사건 수 상한(더 있으면 바로 다음 묶음으로 잇는다)
+const BATCH_EVENTS: u32 = 200;
+/// 묶음 JSON 상한. Agent link frame(1MiB)에 base64로 실려야 한다. 넘으면 보고 본문·이력을 줄인다.
+const BATCH_BYTES: usize = 512 * 1024;
 /// 평가 기록 파일 상한
 const DOC_CAP: u64 = 1 << 20;
 
@@ -106,8 +110,52 @@ struct BatchThread {
     status: String,
     summary: ThreadTimes,
     events: Vec<FlowEvent>,
+    /// 묶음 크기 때문에 뺀 앞쪽 이력 수
+    events_omitted: usize,
     /// host가 받은 마지막 report.md(상한을 넘으면 앞부분만)
     report: Option<String>,
+    /// 보고를 줄이거나 뺐으면 그 까닭(원본은 host `threads/<id>.md`)
+    report_note: Option<String>,
+}
+
+/// 묶음을 `max` 바이트 안으로 줄인다: 보고 8KiB → 보고 빼기 → 이력 마지막 20건 → thread 정보 빼기.
+/// 이번 사건(`events`)은 줄이지 않는다(사건 수 상한이 따로 있다).
+fn fit_batch(b: &mut Batch, max: usize) -> Vec<u8> {
+    let size = |b: &Batch| serde_json::to_vec_pretty(b).map(|v| v.len()).unwrap_or(usize::MAX);
+    let cut = |s: &str, n: usize| {
+        let mut end = n.min(s.len());
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
+    };
+    if size(b) > max {
+        for t in &mut b.threads {
+            if let Some(r) = t.report.as_mut().filter(|r| r.len() > 8 * 1024) {
+                *r = cut(r, 8 * 1024);
+                t.report_note = Some("묶음 크기 때문에 앞 8KiB만 넣었다".into());
+            }
+        }
+    }
+    if size(b) > max {
+        for t in &mut b.threads {
+            if t.report.take().is_some() {
+                t.report_note = Some("묶음 크기 때문에 넣지 않았다".into());
+            }
+        }
+    }
+    if size(b) > max {
+        for t in &mut b.threads {
+            let n = t.events.len().saturating_sub(20);
+            t.events.drain(..n);
+            t.events_omitted += n;
+        }
+    }
+    if size(b) > max {
+        b.threads_omitted = b.threads.len();
+        b.threads.clear();
+    }
+    serde_json::to_vec_pretty(b).unwrap_or_default()
 }
 
 #[derive(Serialize, Default)]
@@ -159,6 +207,8 @@ struct Batch {
     triggers: Vec<String>,
     events: Vec<FlowEvent>,
     threads: Vec<BatchThread>,
+    /// 묶음 크기 때문에 뺀 thread 정보 수
+    threads_omitted: usize,
 }
 
 /// 평가 기록 검사: 요약은 꼭, 개선안 id는 겹치지 않게. host가 채우는 `decision`은 버린다.
@@ -298,17 +348,19 @@ impl Host {
     /// cursor 뒤에 대상 사건이 있으면 묶음을 쓰고 cursor를 옮긴 뒤 한 줄 알린다
     async fn evaluator_flush(self: &Arc<Self>, project: &str) -> Result<(), ErrorBody> {
         let _guard = self.eval_lock.lock().await;
-        let Some(mut rec) = self.evaluator_rec(project) else { return Ok(()) };
+        let Some(rec) = self.evaluator_rec(project) else { return Ok(()) };
         let (Some(work_dir), ThreadStatus::Open) = (rec.work_dir.clone(), rec.status) else { return Ok(()) };
         let dir = self.project_dir(project)?;
         let cfg = eval_cfg(&dir);
-        let all = self.db.flow_after(Some(project), rec.eval_cursor, 5000).map_err(internal)?;
+        let all = self.db.flow_after(Some(project), rec.eval_cursor, BATCH_EVENTS).map_err(internal)?;
+        // 상한만큼 찼으면 대상 사건이 없어도 보낸다(뒤에 있는 대상 사건에 닿게). 남은 것은 바로 다음 묶음.
+        let full = all.len() >= BATCH_EVENTS as usize;
         let Some(to_all) = all.iter().map(|e| e.seq).max() else { return Ok(()) };
         let events: Vec<FlowEvent> = all.into_iter().filter(|e| e.role != Some(Role::Evaluator)).collect();
         let mut triggers: Vec<String> =
             events.iter().filter(|e| cfg.events.contains(&e.kind)).map(|e| e.kind.clone()).collect();
         triggers.dedup();
-        if triggers.is_empty() {
+        if triggers.is_empty() && !full {
             return Ok(());
         }
         let from = events.iter().map(|e| e.seq).min().unwrap_or(to_all);
@@ -336,11 +388,13 @@ impl Host {
                 status: r.status.as_str().to_string(),
                 summary: times(&history),
                 events: history,
+                events_omitted: 0,
                 report,
+                report_note: None,
             });
         }
         let n = events.len();
-        let batch = Batch {
+        let mut batch = Batch {
             project: project.to_string(),
             from_seq: from,
             to_seq: to,
@@ -348,9 +402,10 @@ impl Host {
             triggers,
             events,
             threads,
+            threads_omitted: 0,
         };
         let name = format!("{from:08}-{to:08}");
-        let data = serde_json::to_vec_pretty(&batch).map_err(internal)?;
+        let data = fit_batch(&mut batch, BATCH_BYTES);
         let conn = self.live_conn(&rec.machine_id)?;
         match conn
             .request(AgentRequest::WorkFileWrite {
@@ -363,11 +418,15 @@ impl Host {
             AgentResponse::Done => {}
             other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
         }
-        rec = self.load(project, &rec.id)?;
-        rec.eval_cursor = to_all;
-        rec.eval_batches += 1;
-        rec.eval_last_batch_ms = Some(aa_common::util::now_ms());
-        self.save(&mut rec);
+        // 기다리는 동안 다른 쪽(보고 사본 등)이 기록을 고쳤을 수 있다: 다시 읽어 cursor만 바꾼다
+        let rec = self.update_rec(project, &rec.id, |r| {
+            r.eval_cursor = to_all;
+            r.eval_batches += 1;
+            r.eval_last_batch_ms = Some(aa_common::util::now_ms());
+        })?;
+        if full {
+            self.evaluator_due(project, Duration::ZERO);
+        }
         let rel = format!(".aa/{project}-{}/inbox/{name}.json", rec.id);
         self.flow(&rec, "evaluator_batch", Some(rel.clone()), format!("사건 {n}건 (seq {from}–{to})"));
         // 받았는지 몰라도 다시 보내지 않는다. 평가자는 inbox/를 다시 읽는다(§8.5 a).
@@ -631,9 +690,7 @@ impl Host {
             role: Role::Evaluator,
         };
         let v = self.thread_start(a, actor).await?;
-        let mut rec = self.load(project, &v.id)?;
-        rec.eval_cursor = start_seq;
-        self.save(&mut rec);
+        let rec = self.update_rec(project, &v.id, |r| r.eval_cursor = start_seq)?;
         Ok(self.evaluator_view(&rec))
     }
 
@@ -682,6 +739,59 @@ mod tests {
             let e = check_doc(bad).unwrap_err();
             assert!(e.contains(why), "{e}");
         }
+    }
+
+    #[test]
+    fn batch_fits_frame() {
+        let ev = |seq: u64| FlowEvent {
+            project: "p".into(),
+            seq,
+            at_ms: seq,
+            boot_id: "b".into(),
+            kind: "report_ready".into(),
+            thread: Some("t-0001".into()),
+            role: Some(Role::Worker),
+            profile: None,
+            machine: None,
+            evidence: None,
+            detail: "x".repeat(200),
+        };
+        let thread = |id: &str| BatchThread {
+            id: id.into(),
+            title: "t".into(),
+            profile: "p".into(),
+            machine: "m".into(),
+            role: Role::Worker,
+            status: "open".into(),
+            summary: ThreadTimes::default(),
+            events: (0..400).map(ev).collect(),
+            events_omitted: 0,
+            report: Some("가".repeat(REPORT_CAP / 3)),
+            report_note: None,
+        };
+        let mut b = Batch {
+            project: "p".into(),
+            from_seq: 1,
+            to_seq: 2,
+            created_at_ms: 0,
+            triggers: vec!["merge_landed".into()],
+            events: (0..BATCH_EVENTS as u64).map(ev).collect(),
+            threads: (0..12).map(|i| thread(&format!("t-{i:04}"))).collect(),
+            threads_omitted: 0,
+        };
+        let data = fit_batch(&mut b, BATCH_BYTES);
+        assert!(data.len() <= BATCH_BYTES, "{}", data.len());
+        // base64로 실어도 frame 안이다
+        assert!(data.len() * 4 / 3 + 4096 < aa_proto::MAX_FRAME);
+        assert_eq!(b.events.len(), BATCH_EVENTS as usize, "이번 사건은 줄이지 않는다");
+        assert!(b.threads.iter().all(|t| t.report.is_none() && t.report_note.is_some()), "보고부터 뺀다");
+        // 작은 묶음은 그대로
+        let mut small = Batch { threads: vec![thread("t-0001")], events: vec![ev(1)], ..b };
+        small.threads[0].events.truncate(3);
+        small.threads[0].report = Some("짧다".into());
+        fit_batch(&mut small, BATCH_BYTES);
+        assert_eq!(small.threads[0].report.as_deref(), Some("짧다"));
+        assert_eq!(small.threads[0].report_note, None);
     }
 
     #[test]

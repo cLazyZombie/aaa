@@ -228,6 +228,8 @@ pub struct Host {
     eval_lock: tokio::sync::Mutex<()>,
     /// 평가 기록 채택·보류는 한 번에 하나씩
     eval_decide_lock: Mutex<()>,
+    /// thread 기록 다시 읽어 고치기(`update_rec`)는 한 번에 하나씩
+    rec_lock: Mutex<()>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -314,6 +316,7 @@ impl Host {
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
+            rec_lock: Mutex::new(()),
         }))
     }
 
