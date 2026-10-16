@@ -46,13 +46,14 @@ fn toml_str(s: &str) -> String {
 /// 투영 파일 본문(0.2.35와 같은 `+++` TOML front matter)
 fn render_item(i: &InboxItem) -> String {
     format!(
-        "+++\nid = {}\nkind = {}\nsubject = {}\ncreated = {}\nsummary = {}\nevent = {}\n+++\n",
+        "+++\nid = {}\nkind = {}\nsubject = {}\ncreated = {}\nsummary = {}\nevent = {}\n+++\n{}",
         toml_str(&i.id),
         toml_str(&i.item_kind),
         toml_str(&i.subject),
         toml_str(&aa_common::util::utc_text(i.created_at_ms)),
         toml_str(&i.summary.replace(|c: char| c.is_control(), " ")),
         toml_str(&i.event),
+        if i.body.is_empty() { String::new() } else { format!("\n{}\n", i.body.trim_end()) },
     )
 }
 
@@ -111,6 +112,18 @@ impl Host {
 
     /// 항목을 만든다(DB + 투영 파일). 투영 파일을 쓰지 못해도 DB 항목은 남긴다.
     pub(crate) fn inbox_add(&self, project: &str, kind: &str, subject: &str, event: &str, summary: &str) {
+        self.inbox_add_body(project, kind, subject, event, summary, "");
+    }
+
+    pub(crate) fn inbox_add_body(
+        &self,
+        project: &str,
+        kind: &str,
+        subject: &str,
+        event: &str,
+        summary: &str,
+        body: &str,
+    ) {
         let now = aa_common::util::now_ms();
         let n = self.db.inbox_count(project).unwrap_or(0) + 1;
         let item = InboxItem {
@@ -120,6 +133,7 @@ impl Host {
             subject: subject.to_string(),
             event: event.to_string(),
             summary: summary.chars().take(300).collect(),
+            body: body.to_string(),
             done: false,
             seen: false,
             created_at_ms: now,
@@ -139,7 +153,7 @@ impl Host {
     }
 
     /// 특수 항목: 같은 종류·대상·사건의 끝내지 않은 항목이 있으면 만들지 않는다
-    fn inbox_once(&self, project: &str, kind: &str, subject: &str, event: &str, summary: &str) {
+    pub(crate) fn inbox_once(&self, project: &str, kind: &str, subject: &str, event: &str, summary: &str) {
         if !self.db.inbox_open_exists(project, kind, subject, event).unwrap_or(true) {
             self.inbox_add(project, kind, subject, event, summary);
         }
@@ -251,7 +265,9 @@ impl Host {
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_sessions(&p.name);
-            self.nudge(&p.name, Path::new(&p.path)).await;
+            let dir = Path::new(&p.path);
+            self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
+            self.nudge(&p.name, dir).await;
         }
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;
         if let Ok(gone) = self.db.inbox_prune(aa_common::util::now_ms().saturating_sub(keep)) {
@@ -424,6 +440,7 @@ mod tests {
             subject: subject.into(),
             event: event.into(),
             summary: "요약은 문구에 넣지 않는다".into(),
+            body: String::new(),
             done: false,
             seen: false,
             created_at_ms: 0,

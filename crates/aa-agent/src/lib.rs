@@ -4,6 +4,7 @@
 //! - 세션은 session host 프로세스가 소유하므로 agent가 재시작해도 이어진다. 시작할 때 세션 폴더를 다시 읽어 붙는다.
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
 
+mod command;
 pub mod hooks;
 pub mod identity;
 pub mod link;
@@ -487,6 +488,13 @@ impl Agent {
             AgentRequest::ThreadRebrief { work_dir, brief, launch } => threads::rebrief(&work_dir, &brief, launch)
                 .map(AgentResponse::Relaunch)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
+            AgentRequest::RunCommand { project, cwd, command, timeout_ms } => {
+                let root = self.threads_cfg.lock().unwrap().work_root.clone();
+                command::run(&root, &project, cwd.as_deref(), &command, Duration::from_millis(timeout_ms))
+                    .await
+                    .map(AgentResponse::CommandRan)
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+            }
             AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
                 threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)
                     .await

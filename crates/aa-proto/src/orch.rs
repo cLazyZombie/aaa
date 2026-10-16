@@ -421,6 +421,9 @@ pub struct InboxItem {
     pub event: String,
     /// 사람이 읽는 한 줄(nudge 문구에는 넣지 않는다)
     pub summary: String,
+    /// 긴 본문(routine 안내·명령 출력). 투영 파일의 front matter 아래에 쓴다.
+    #[serde(default)]
+    pub body: String,
     pub done: bool,
     /// coordinator(또는 사람)가 `aa inbox`로 본 적이 있다. 처음 보는 항목만 알린다.
     pub seen: bool,
@@ -428,6 +431,34 @@ pub struct InboxItem {
     pub created_at_ms: u64,
     #[ts(type = "number | null")]
     pub done_at_ms: Option<u64>,
+}
+
+/// routine 하나(`projects/<p>/routines/<name>.md`, 0.2.35 계승)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RoutineView {
+    pub name: String,
+    /// `every 30m`·`daily 09:00`(파일에 적힌 글)
+    pub schedule: String,
+    /// 비면 안내만 하는 routine
+    pub command: String,
+    /// 명령을 실행할 머신(없으면 host 머신)
+    pub machine: Option<String>,
+    pub enabled: bool,
+    /// host.toml `[projects] routine_commands`가 이 프로젝트를 허용한다
+    pub commands_allowed: bool,
+    /// 지금 명령(머신 포함)이 승인돼 있다
+    pub approved: bool,
+    pub command_sha256: String,
+    #[ts(type = "number | null")]
+    pub last_run_ms: Option<u64>,
+    #[ts(type = "number | null")]
+    pub next_run_ms: Option<u64>,
+    /// 안내 항목을 아직 처리하지 않아 건너뛴 횟수
+    pub skipped: u32,
+    /// coordinator가 없어 건너뛴 횟수(돌면 0)
+    pub no_coordinator: u32,
+    /// 파일을 읽지 못했다
+    pub error: Option<String>,
 }
 
 /// 병합 대기열 한 칸(§8.8). M1-3은 순번과 사건만 두고 단계 실행은 M3에서 한다.

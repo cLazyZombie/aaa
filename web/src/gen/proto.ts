@@ -99,9 +99,9 @@ export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "
 /**
  * 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
  */
-task: string, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
+task: string, } | { "op": "threads", project: string | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "events", project: string | null, after: bigint, limit: number | null, };
 
-export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, };
+export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "screen" } & ScreenText | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "routines", routines: Array<RoutineView>, };
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView;
 
@@ -249,7 +249,11 @@ event: string,
 /**
  * 사람이 읽는 한 줄(nudge 문구에는 넣지 않는다)
  */
-summary: string, done: boolean, 
+summary: string, 
+/**
+ * 긴 본문(routine 안내·명령 출력). 투영 파일의 front matter 아래에 쓴다.
+ */
+body: string, done: boolean, 
 /**
  * coordinator(또는 사람)가 `aa inbox`로 본 적이 있다. 처음 보는 항목만 알린다.
  */
@@ -260,4 +264,38 @@ export type MergeEntry = { project: string, thread: string,
  * 1부터. 1이 맨 앞(지금 병합할 차례)이다.
  */
 position: number, title: string, machine: string, branch: string | null, enqueued_at_ms: number, };
+
+export type RoutineView = { name: string, 
+/**
+ * `every 30m`·`daily 09:00`(파일에 적힌 글)
+ */
+schedule: string, 
+/**
+ * 비면 안내만 하는 routine
+ */
+command: string, 
+/**
+ * 명령을 실행할 머신(없으면 host 머신)
+ */
+machine: string | null, enabled: boolean, 
+/**
+ * host.toml `[projects] routine_commands`가 이 프로젝트를 허용한다
+ */
+commands_allowed: boolean, 
+/**
+ * 지금 명령(머신 포함)이 승인돼 있다
+ */
+approved: boolean, command_sha256: string, last_run_ms: number | null, next_run_ms: number | null, 
+/**
+ * 안내 항목을 아직 처리하지 않아 건너뛴 횟수
+ */
+skipped: number, 
+/**
+ * coordinator가 없어 건너뛴 횟수(돌면 0)
+ */
+no_coordinator: number, 
+/**
+ * 파일을 읽지 못했다
+ */
+error: string | null, };
 
