@@ -1,4 +1,5 @@
 #!/bin/bash
+# [결정 14로 보류] launcher 방식(p0/launcher/)이 실측에서 실패할 때만 쓴다. 절차는 docs/p0-runbook.md.
 # P0 E1(서명 identity 유지)·E2 일부를 mac-a GUI 터미널에서 순서대로 진행한다.
 # 시스템 설정 화면 등록은 사용자가 하고, 이 스크립트는 그 앞에서 멈춘다(Enter로 계속).
 #

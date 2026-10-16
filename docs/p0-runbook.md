@@ -1,126 +1,86 @@
-# P0 절차서: 서명 identity와 개발자 도구 gate
+# P0 절차서: 불변 launcher 등록 한 번(결정 14)
 
-기획서 [§10.6](plan.md#106-p0-실험)의 P0 실험을 사람이 실제로 돌리는 순서다. 결정 9(자체 서명 1순위, Apple Development 2순위)와 결정 10(GUI 작업은 mac-a, 명령만이면 mac-c ssh)을 따른다.
+기획서 [§10.6](plan.md#106-p0-실험)의 P0를 사람이 실제로 돌리는 순서다. 결정 14에 따라 범위를 줄였다.
 
-문서의 머신 이름은 일반 이름이다. mac-a는 화면 접속이 되는 Mac, mac-b는 coordinator Mac, mac-c는 구현 Mac이다.
+- 재부팅 실험은 하지 않는다. 시험 Mac도 쓰지 않는다.
+- 개발자 도구에는 **한 번 만들고 다시 빌드하지 않는 작은 launcher**(`aa-launcher.app`)를 등록한다. LaunchAgent나 LaunchServices가 launcher를 띄우고, launcher가 그때의 `aa`를 자식으로 띄운다. `aa`는 자유롭게 다시 빌드·교체한다.
+- 자체 서명 인증서(결정 9)는 보류한다. launcher 방식이 실측에서 실패할 때만 다시 꺼낸다(아래 「보류」).
+- P0 세부 실측보다 M1-2~M1-4 완성이 먼저다.
 
-- 도구: `p0/`(빌드·서명·설치·측정·업그레이드 모의), `aa doctor probe`, `aa service`
+문서의 머신 이름은 일반 이름이다. mac-a는 화면 접속이 되는 Mac, mac-b는 coordinator Mac, mac-c는 구현 Mac이다. 결정 10에 따라 화면이 필요한 일은 mac-a에서 하고, 명령만이면 ssh로 한다.
+
+- 도구: `p0/launcher/`(launcher 소스·설치·측정), `aa doctor probe`
 - 결과 위치: 실행한 Mac의 `~/aa-p0/results/`
-- 판정은 도구가 한다. 첫 실행 추가 지연 median ≤10ms, p95 ≤20ms, 100ms 초과 0, 키체인 실제 항목 읽기 `ok`, 전체 디스크 접근 `ok`, 외장 볼륨 읽기·쓰기 성공.
+- 판정은 도구가 한다. 첫 실행 추가 지연 median ≤10ms, p95 ≤20ms, 100ms 초과 0, 전체 디스크 접근 `ok`, 책임 프로세스 `aa-launcher`
 
-## 측정 도구가 믿을 만한지(이미 확인, mac-c)
+## launcher가 하는 일
 
-| 조건 | 첫 실행 추가 지연 median | 책임 프로세스 | 전체 디스크 접근 |
-|---|---:|---|---|
-| 지금 pane(WezTerm 계보, 기준선) | 0.868ms | WezTerm | ok |
-| 음성 대조 `--disclaim`(미등록 aa가 자기 책임자) | 223.406ms | aa | denied |
-| 미등록 adhoc 앱을 LaunchServices로 실행 | 222.686ms(warm 5.695ms, 약 3배) | aa-adhoc | denied |
+`p0/launcher/aa-launcher.c`(C, 의존 없음)
 
-느린 계보와 FDA 없음을 각각 잡아낸다. 이전 실험(+221~236ms, GUI 앱 warm 약 3배)도 재현했다. LaunchServices 앱의 QoS는 user_interactive, nice 0이라 warm 저하는 QoS·nice로 설명되지 않는다(E2 조사 항목).
+- `aa-launcher <aa 실행 파일 절대 경로> [인자...]`를 받아 자식을 `posix_spawn`으로 띄우고 끝날 때까지 기다린다. exec는 하지 않는다.
+- SIGTERM·SIGINT·SIGHUP·SIGQUIT·SIGUSR1·SIGUSR2는 자식에게 전달한다. 자식의 종료 코드를 그대로 돌려준다(신호로 끝나면 128+신호).
+- 일부러 기능을 더하지 않는다. launcher가 바뀌면 등록을 다시 해야 한다.
 
-## 어느 Mac에서 무엇을 하나
+`p0/launcher/install.sh`
 
-| 작업 | Mac | 화면 필요 | 이유 |
-|---|---|---|---|
-| A. 자체 서명 인증서 만들기 | mac-a 터미널(ssh도 가능) | 아니요 | 파일만 만든다(키체인 변경 없음) |
-| B. mac-a 키체인에 넣기 | mac-a **GUI 터미널** | 신뢰 설정이 필요할 때만 | E1을 mac-a에서 한다 |
-| C. E1·E2 진행(`p0/e1.sh`) | mac-a **GUI 터미널** | 예(시스템 설정 등록) | 개발자 도구·전체 디스크 접근 등록은 시스템 설정 화면에서만 된다 |
-| D. 다른 Mac에 인증서 넣기 | mac-c·mac-b, ssh | 아니요(예상) | 나중에 운영 설치 때. P0에는 필요 없다 |
-| E5. 재부팅 | 재부팅해도 되는 별도 Mac | 예 | 지금 쓰는 세 Mac은 재부팅하지 않는다 |
+- launcher를 빌드해 최소 `.app`(`dev.aa.launcher`, adhoc 서명, `LSUIElement`)으로 감싼다. 그리고 `~/Applications/aa-launcher.app`에 quarantine 없이 둔다.
+- cdhash를 `~/Applications/aa-launcher.app.txt`에 적는다. **이미 있으면 바꾸지 않는다**(`--replace`를 줄 때만 바꾼다).
+- 같은 소스로 다시 만들면 cdhash가 같다(mac-c 실측). 시스템 설정은 바꾸지 않는다.
 
-mac-c은 지금 화면에 원격 접속할 수 없으므로 시스템 설정 등록이 필요한 E1은 mac-c에서 할 수 없다.
+## mac-c에서 이미 확인한 것(등록 없이, 음성 대조)
 
-## A. 자체 서명 인증서 만들기 (mac-a, 한 번)
+등록하지 않은 launcher를 LaunchServices로 띄워 자식 `aa`가 쟀다(5표본).
 
-```bash
-# mac-a 터미널. 저장소는 thread가 ~/aa-dev/aa에 준비한다.
-bash ~/aa-dev/aa/p0/cert/make-selfsigned.sh          # ~/aa-codesign/ 에 만든다
-```
+| 책임 프로세스 | 첫 실행 추가 지연 median | warm median | FDA |
+|---|---:|---:|---|
+| `aa-launcher` | 220.294ms | 5.369ms | denied |
 
-- p12 암호를 두 번 묻는다. 이 암호는 사용자가 보관한다(스크립트·보고서에 남기지 않는다).
-- 결과: `~/aa-codesign/aa-codesign.p12`(개인 키), `cert.pem`, `fingerprint.txt`(10년 유효).
-- GUI 창: 없다. 키체인을 바꾸지 않는다.
+- 자식이 launcher에 귀속된다(책임 프로세스가 `aa-launcher`).
+- 미등록이면 느리고 FDA가 없다. 등록 뒤에 이 값이 기준 안으로 들어오면 합격이다.
 
-## B. mac-a 키체인에 넣기
+## 사용자 작업: launcher 등록 한 번 (mac-a 화면에서)
 
 ```bash
-# mac-a GUI 터미널(키체인이 이미 풀려 있다)
-bash ~/aa-dev/aa/p0/cert/import-identity.sh ~/aa-codesign/aa-codesign.p12
+# mac-a 터미널(화면이 있는 세션). 저장소는 thread가 ~/aa-dev/aa에 준비한다.
+bash ~/aa-dev/aa/p0/launcher/install.sh
 ```
 
-스크립트가 하는 일과 확인 창:
+1. 위 명령이 `~/Applications/aa-launcher.app`을 만든다. 키체인·시스템 설정은 바꾸지 않는다.
+2. **시스템 설정 > 개인정보 보호 및 보안 > 개발자 도구**에서 「+」를 누르고, `~/Applications/aa-launcher.app`(홈 폴더 > 응용 프로그램)을 넣은 뒤 켠다. 변경할 때 비밀번호(또는 Touch ID) 창이 뜬다.
+3. **시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한**에서 같은 앱을 넣고 켠다.
+4. 끝나면 thread에 알린다.
 
-1. `security import … -T /usr/bin/codesign -T /usr/bin/security`: p12 암호를 터미널에서 묻는다. GUI 창은 없다.
-2. `security set-key-partition-list -S apple-tool:,apple:,codesign: …`: login 키체인 비밀번호를 터미널에서 묻는다. 이 단계가 없으면 codesign을 처음 쓸 때 「codesign이 키에 접근하려고 함」 GUI 창이 뜬다.
-3. 임시 파일에 `codesign --sign "aa Code Signing"`을 시험하고, `security find-identity -p codesigning`을 보인다.
+목록이 `.app`을 받지 않으면 `~/Applications/aa-launcher.app/Contents/MacOS/aa-launcher`(실행 파일)를 넣어 본다. 그것도 안 되면 무슨 창이었는지 알려 준다.
 
-**신뢰 설정(시험이 실패할 때만).** 자체 서명 인증서는 신뢰 설정 없이도 서명되는지 아직 확인하지 못했다. 서명 시험이 실패하면 mac-a 화면에서 아래처럼 한다.
-
-- 키체인 접근 앱 → 로그인 → 인증서 → 「aa Code Signing」 더블클릭 → 신뢰 → 「코드 서명」을 「항상 신뢰」로 바꾼다. 닫을 때 비밀번호(또는 Touch ID) 창이 뜬다.
-- 명령으로 하면 `security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/login.keychain-db ~/aa-codesign/cert.pem`이다. 이 명령도 **GUI 인증 창**을 띄운다. 그래서 화면이 없는 ssh에서는 실패한다.
-
-## C. E1·E2 진행 (mac-a GUI 터미널)
+## thread가 하는 확인(ssh, 재부팅·재등록 없음)
 
 ```bash
-bash ~/aa-dev/aa/p0/e1.sh
+# 1) 지금 aa로 측정
+bash ~/aa-dev/aa/p0/launcher/measure.sh before --aa ~/aa-dev/bin/aa
+# 2) aa를 다시 빌드(AA_BUILD_SALT)해 같은 경로에 rename으로 교체 → cdhash가 바뀐다
+# 3) 재등록 없이 다시 측정
+bash ~/aa-dev/aa/p0/launcher/measure.sh after --aa ~/aa-dev/bin/aa
 ```
 
-세 앱을 나란히 시험한다. 번들 id가 달라 등록이 서로 섞이지 않는다.
+- `measure.sh`는 launcher의 cdhash가 설치 때와 같은지 먼저 확인한다. 다르면 측정하지 않는다.
+- launcher를 `open -n -W`(LaunchServices)로 띄우고, 자식 `aa doctor probe --samples 30 --fda-check`가 잰다. 결과는 `~/aa-p0/results/launcher-<단계>.json`과 요약 표다.
+- LaunchAgent → launcher → `aa` 기동(E2)은 설치 작업(M1-4)에서 같은 launcher로 확인한다. 이 단계에서는 LaunchAgent를 등록하지 않는다.
 
-| 앱 | 서명 | 역할 |
-|---|---|---|
-| `/Applications/aa.app` | 자체 서명 「aa Code Signing」 | 1순위. SMAppService LaunchAgent plist 포함(E2) |
-| `/Applications/aa-appledev.app` | 이 Mac의 유효한 Apple Development | 2순위 |
-| `/Applications/aa-adhoc.app` | adhoc | 음성 대조. 업그레이드 뒤 등록이 풀려야 정상 |
+## 보류(결정 14): 서명 identity 실험
 
-진행 순서. 사용자가 할 일은 굵게 표시했다.
+launcher 방식(L1)이 실패할 때만 다시 꺼낸다. 도구는 저장소에 그대로 둔다.
 
-1. 사전 확인: 키체인 풀림, identity, cargo.
-2. 세 앱을 지금 소스로 빌드·서명하고 `ditto --noqtn`으로 `/Applications`에 rename 설치한다(quarantine 없음 확인).
-3. 키체인 실제 읽기용 시험 항목 `aa-p0-probe`를 만들지 묻는다(y). 값은 난수이고, 세 앱 실행 파일만 확인 창 없이 읽게 허용한다. **GUI 창 없음.**
-4. **시스템 설정 등록(사용자, 화면에서).** 스크립트가 멈추고 기다린다.
-   - 개인정보 보호 및 보안 > **개발자 도구**: 「+」로 세 앱을 넣고 켠다. 변경할 때 비밀번호(또는 Touch ID) 창이 뜬다.
-   - 개인정보 보호 및 보안 > **전체 디스크 접근 권한**: 같은 세 앱을 넣고 켠다.
-5. Enter를 누르면 `aa service register`로 LaunchAgent 두 개(`dev.aa.p0probe.standard`·`.interactive`)를 등록한다. 「백그라운드 항목이 추가됨」 알림이 뜬다. 상태가 `requires_approval`이면 **일반 > 로그인 항목 및 확장 프로그램 > 백그라운드에서 허용**에서 aa를 켠다.
-6. **before 측정**(앱마다 30표본)
-   - aa: LaunchServices 실행, LaunchAgent 두 종류, 이 터미널
-   - aa-appledev·aa-adhoc: LaunchServices 실행
-7. **업그레이드 모의**: 같은 identity로 다시 빌드(`AA_BUILD_SALT`)하고 다시 서명한 뒤 rename으로 교체한다. designated requirement는 같아야 하고 cdhash는 달라야 한다. **재등록하지 않는다.**
-8. **after 측정** 뒤 `~/aa-p0/results/E1-summary.md`를 만든다.
+- `p0/cert/make-selfsigned.sh`, `p0/cert/import-identity.sh`: 자체 서명 코드 서명 인증서(결정 9)를 만들고 키체인에 넣는다
+- `p0/e1.sh`, `p0/build-app.sh`, `p0/install-app.sh`, `p0/measure.sh`, `p0/upgrade-sim.sh`: 서명한 `aa.app` 세 개(자체 서명·Apple Development·adhoc)의 E1·E2 측정
 
-중간에 끊기면 `bash ~/aa-dev/aa/p0/e1.sh <phase>`로 그 단계부터 다시 한다(build·register·before·upgrade·after·summary). 끝나면 thread에 알린다. thread가 ssh로 결과를 가져가 판정한다.
-
-**기록할 것.** 아래 창이 떴으면 무슨 창이었는지 알려 준다.
-- 앱 실행 때 「확인되지 않은 개발자」(Gatekeeper)
-- 측정 중 「aa가 키체인의 기밀 정보를 사용하려고 함」(이 창은 「거부」를 누른다. 무인 실행이 멈추는 원인이라 실패로 기록한다)
-- 업그레이드 뒤 다시 묻는 권한 창
-
-예상 소요는 빌드 3회×2와 측정 약 10분이다.
-
-## D. 다른 Mac에 인증서 넣기 (나중, ssh 명령만)
-
-P0에는 필요 없다. 운영 설치 때 mac-c·mac-b에서 같은 인증서로 서명하려면 아래처럼 한다. 서명된 `aa.app`을 복사해 쓰기만 하면 그 Mac에 인증서가 없어도 된다(서명은 번들에 들어 있다).
-
-```bash
-# 1) mac-a → 대상 Mac으로 p12 복사(사용자 터미널에서)
-scp ~/aa-codesign/aa-codesign.p12 mac-c:~/aa-codesign.p12
-# 2) 대상 Mac에 ssh로 들어가 사용자가 직접 잠금 해제(비밀번호 직접 입력)
-ssh mac-c
-security unlock-keychain ~/Library/Keychains/login.keychain-db
-# 3) 반입·서명 시험(B와 같은 스크립트, GUI 창 없음 예상)
-bash ~/work/aa/p0/cert/import-identity.sh ~/aa-codesign.p12
-rm ~/aa-codesign.p12
-```
-
-- 신뢰 설정이 필요하다고 B에서 확인되면, 화면이 없는 Mac에서는 `add-trusted-cert`의 GUI 인증 창 때문에 막힌다. 그 경우 그 Mac에서는 서명하지 않고, mac-a에서 서명한 앱을 복사한다.
-- 개발자 도구·전체 디스크 접근 등록은 Mac마다 시스템 설정 화면에서 한 번 해야 한다. mac-c은 화면 접속이 돌아온 뒤 한다.
-
-## 다음 실험(M1-1 기능이 들어간 뒤)
+## 다음 실험
 
 | 실험 | 필요 조건 | 상태 |
 |---|---|---|
-| E3 책임 프로세스 수명 | `aa agent`가 LaunchAgent로 돌고 session host가 있어야 한다 | M1-1 뒤 |
-| E4 기동 경합 | host·agent·웹 | M1-1 뒤 |
-| E5 재부팅 | 재부팅해도 되는 별도 Mac | **사용자 결정 필요** |
-| E6 하위 daemon | `aa doctor lineage`(이미 있음)로 codex app-server·kache 계보를 본다 | thread가 진행 가능 |
-| E7 업그레이드 부수 효과 | E1 업그레이드 모의에서 quarantine·Gatekeeper·재질문을 본다. hook 신뢰는 M1-3 | E1과 함께 |
+| L1 launcher 등록 유지 | 사용자의 launcher 등록 한 번 | 등록 대기 |
+| E2 기동 방식·처리량 | LaunchAgent → launcher → `aa` | 설치 작업(M1-4)과 함께 |
+| E3 책임 프로세스 수명 | `aa agent`가 LaunchAgent로 돌아야 한다 | M1-4와 함께 |
+| E4 기동 경합 | host·agent·웹 | M1-4와 함께 |
+| ~~E5 재부팅~~ | — | 하지 않는다(결정 14) |
+| E6 하위 daemon | `aa doctor lineage`로 codex app-server·kache 계보를 본다 | thread가 진행 가능 |
+| E7 업그레이드 부수 효과 | L1 교체 뒤 quarantine·Gatekeeper·재질문, hook 신뢰는 M1-3 | L1과 함께 |
