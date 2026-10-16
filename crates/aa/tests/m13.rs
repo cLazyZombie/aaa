@@ -790,6 +790,36 @@ fn inbox_and_nudge() {
 }
 
 /// 병합 대기열 순번·사건(§8.8)과 머신별 동시 thread 한도(§8.10)
+/// thread 범위(§8.25): 일반 thread 세션 안의 CLI는 보기만 되고, thread가 아닌 pane(사람의 셸) 안의 CLI는 그대로 조작한다
+#[test]
+fn worker_session_cli_is_read_only() {
+    let w = world();
+    let t = w.start(&["--title", "w", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("w.txt", "x")]);
+    let (id, pane) = (t["id"].as_str().unwrap(), t["pane"].as_str().unwrap());
+    let shell = w.h.ok(&["pane", "run", "--machine", "labA", "--name", "sh", "--", "/bin/sh"])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let as_session = |s: &str, args: &[&str]| w.h.cmd(args).env("AA_SESSION_ID", s).output().unwrap();
+    for args in [
+        &["decision", "add", "demo", "--text", "thread가 정한 결정"][..],
+        &["thread", "message", "demo", id, "--text", "x"],
+        &["pane", "send", &shell, "--text", "echo hi"],
+        &["merge", "enqueue", "demo", id],
+    ] {
+        let o = as_session(pane, args);
+        assert_eq!(o.status.code(), Some(3), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
+        assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    let o = as_session(pane, &["--json", "thread", "show", "demo", id]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    // 사람의 셸(thread가 아닌 pane) 안에서는 조작이 된다
+    let o = as_session(&shell, &["--json", "decision", "add", "demo", "--text", "사람이 정한 결정"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let d = w.h.ok(&["decision", "list", "demo"]).to_string();
+    assert!(d.contains("사람이 정한 결정") && !d.contains("thread가 정한 결정"), "{d}");
+}
+
 /// 병합 단계 자동 실행(§8.24): 순번, 커밋하지 않은 변경, 원격 일치, 병합·tree 같음·push, 사용자 checkout ff-only, 다른 thread 알림
 #[test]
 fn merge_land_steps() {
