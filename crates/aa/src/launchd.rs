@@ -164,7 +164,9 @@ pub fn install(s: &Spec, replace: bool) -> Result<String> {
     std::fs::rename(&tmp, &p)?;
     let (ok, text) = launchctl(&["bootstrap", &target, &p.to_string_lossy()])?;
     if !ok {
-        bail!("launchctl bootstrap 실패: {}", text.trim());
+        // 반쯤 설치된 상태를 남기지 않는다
+        let _ = std::fs::remove_file(&p);
+        bail!("launchctl bootstrap 실패(plist를 지웠다): {}", text.trim());
     }
     show(s)
 }
