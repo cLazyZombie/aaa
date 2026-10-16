@@ -886,6 +886,12 @@ host 프로젝트 폴더 구성:
   - 질문 카드는 「Bash {json}」을 도구 이름과 명령 상자로 풀어 보인다. 터미널 아래(입력 위)에도 번호 붙은 선택지로 붙는다.
   - 입력은 둥근 카드 하나(그림·글·보내기)와 특수 키 줄이다. thread 보기는 가운데 860px 문서 모양(제목·meta·보고 카드·결과물 카드)이다.
   - 휴대폰은 목록과 보기를 화면 전체로 바꿔 보인다. 줄 높이는 56px, 키 줄은 40px 높이, header는 반투명이다. 터치 기기에서는 hover 색을 쓰지 않는다.
+  - **입력칸(composer, M3 10-17).**
+    - 글 줄 수만큼(최대 6줄) 늘어나는 여러 줄 입력이다.
+    - 데스크톱은 Enter가 보내기, Shift+Enter가 줄바꿈이다. 터치 기기(화면 키보드)는 Enter가 줄바꿈이고 보내기 단추로 보낸다.
+    - 한글 등 IME 조합 중의 Enter는 글자 확정만 하고 보내지 않는다(`isComposing`·keyCode 229).
+    - 여러 줄은 터미널 붙여넣기로 보낸다. 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다. 그래서 Claude·Codex 입력창이 줄마다 제출하지 않는다. Enter는 지금처럼 따로 조금 뒤에 보낸다.
+    - 쓰다 만 글은 pane마다 그 탭(sessionStorage)에 남는다. 휴대폰에서 앱을 내렸다 올려도, 다른 pane을 봤다 와도 그대로다.
   - 키 줄: Esc·Tab·Ctrl·Alt·^C·←↑↓→·⏎. Ctrl·Alt는 유지 키다. 누르면 켜지고, 다음 입력 한 번(터미널 글자 또는 키 줄 키)에 붙은 뒤 풀린다. 휴대폰에서는 가로로 밀어 본다.
 - **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다.
   - 탭 줄은 이름표·workspace·탭(지금 탭은 강조색 바탕)으로 짜고, 오른쪽에 열린 질문 수를 둔다.
@@ -1303,7 +1309,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME, chat read-only, PWA·Web Push(§8.23·§8.26, **10-17 구현**), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only, PWA·Web Push(§8.23·§8.26, **10-17 구현**), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.

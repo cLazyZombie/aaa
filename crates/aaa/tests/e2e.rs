@@ -131,6 +131,13 @@ fn enroll_remote_agent_and_run_short_command() {
         (p["state"] == "exited" && p["code"] == 7).then_some(())
     });
     assert!(h.screen(&id).contains("remote-5"), "{}", h.screen(&id));
+    // 종료가 보이자마자 지울 수 있다(session host가 종료 뒤 2초 더 응답하는 동안에도)
+    let q = h.ok(&["pane", "run", "--machine", "labB", "--", "/bin/sh", "-c", "exit 0"]);
+    let qid = q["id"].as_str().unwrap().to_string();
+    wait_for("곧바로 끝남", T, || (h.pane(&qid)["state"] == "exited").then_some(()));
+    h.ok(&["pane", "forget", &qid]);
+    std::thread::sleep(Duration::from_millis(2500));
+    assert!(!h.ok(&["pane", "list"]).to_string().contains(&qid), "지운 pane이 되살아났다");
 
     // 원격 셸에 입력
     let p = h.ok(&["pane", "run", "--machine", "labB", "--name", "rsh", "--", "/bin/sh"]);

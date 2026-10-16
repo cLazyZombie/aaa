@@ -73,7 +73,25 @@ export function TermView({
   const [reason, setReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState<[number, number]>([pane.cols, pane.rows]);
-  const [text, setText] = useState("");
+  // 쓰다 만 글은 pane마다 이 탭에 남긴다(휴대폰에서 앱을 내렸다 올려도, 다른 pane을 봤다 와도 그대로)
+  const draftKey = `aaa:draft:${pane.id}`;
+  const [text, setTextState] = useState(() => {
+    try {
+      return sessionStorage.getItem(draftKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const setText = (v: string) => {
+    setTextState(v);
+    try {
+      if (v) sessionStorage.setItem(draftKey, v);
+      else sessionStorage.removeItem(draftKey);
+    } catch {
+      // 저장소를 못 쓰는 브라우저면 남기지 않는다
+    }
+  };
+  const textRef = useRef<HTMLTextAreaElement>(null);
   const [me, setMe] = useState<string | null>(null);
   const [lease, setLease] = useState<LeaseView | null>(pane.lease);
   const [attach, setAttach] = useState<{ text: string; ok: boolean } | null>(null);
@@ -287,8 +305,11 @@ export function TermView({
   };
 
   // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다.
+  // 여러 줄은 터미널 붙여넣기로 보낸다: 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다(xterm.js).
+  // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다.
   const sendText = (enter: boolean) => {
-    if (text) input(text);
+    if (text.includes("\n")) termRef.current?.paste(text);
+    else if (text) input(text);
     if (enter) {
       if (text) window.setTimeout(() => input("\r"), ENTER_GAP_MS);
       else input("\r");
@@ -296,6 +317,14 @@ export function TermView({
     setText("");
     termRef.current?.focus();
   };
+
+  // 입력칸은 글 줄 수만큼(최대 6줄) 늘어난다
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 20)}px`;
+  }, [text]);
 
   let banner: string | null = null;
   if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중(읽기 전용)" : "연결하는 중";
@@ -369,9 +398,20 @@ export function TermView({
             >
               <Icon name="image" />
             </button>
-            <input
+            <textarea
+              ref={textRef}
+              rows={1}
               value={text}
               onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                // 한글 등 조합 중의 Enter는 글자를 확정할 뿐이다
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                // 터치 기기(화면 키보드)는 Enter가 줄바꿈이고 보내기는 단추로 한다. 데스크톱은 Shift+Enter가 줄바꿈이다.
+                if (e.shiftKey || e.altKey || window.matchMedia("(hover: none)").matches) return;
+                e.preventDefault();
+                sendText(true);
+              }}
               onPaste={(e) => {
                 const f = imageOf(e.clipboardData.files);
                 if (f) {
@@ -379,7 +419,14 @@ export function TermView({
                   void attachFile(f);
                 }
               }}
-              placeholder={locked ? "입력할 수 없다" : "글을 쓰고 Enter로 보낸다"}
+              placeholder={
+                locked
+                  ? "입력할 수 없다"
+                  : window.matchMedia("(hover: none)").matches
+                    ? "글을 쓰고 보내기 단추로 보낸다"
+                    : "글을 쓰고 Enter로 보낸다(Shift+Enter 줄바꿈)"
+              }
+              enterKeyHint="enter"
               disabled={locked}
               aria-label="보낼 글"
               autoCapitalize="off"
