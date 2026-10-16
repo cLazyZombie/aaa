@@ -163,11 +163,11 @@ impl Agent {
     }
 }
 
-#[cfg(test)]
+// 시험 명령이 /bin/sh라 unix에서만 돈다
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn problems_from_disk_and_toolchain() {
         let mut cfg = HealthSection { every_s: 60, min_free_gb: 0, toolchain: Default::default() };
