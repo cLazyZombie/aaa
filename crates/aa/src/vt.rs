@@ -37,6 +37,12 @@ impl Vt {
         out
     }
 
+    /// 커서 위치 보고(DSR 6의 답, 1부터 센다)
+    pub fn cursor_report(&self) -> Vec<u8> {
+        let (r, c) = self.parser.screen().cursor_position();
+        format!("\x1b[{};{}R", r + 1, c + 1).into_bytes()
+    }
+
     pub fn text(&self, session: &str) -> ScreenText {
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();
@@ -46,9 +52,50 @@ impl Vt {
     }
 }
 
+/// 출력에서 커서 위치 질의(DSR 6, `ESC [ 6 n`)가 끝나는 위치를 찾는다. chunk 경계에 걸쳐도 찾는다.
+///
+/// session host가 터미널 역할이라 이 질의에 답해야 한다. Windows ConPTY(INHERIT_CURSOR)는 시작할 때
+/// 이 질의를 보내고 답이 올 때까지 자식의 출력과 종료를 막는다.
+#[derive(Default)]
+pub struct DsrScanner {
+    matched: usize,
+}
+
+const DSR: &[u8] = b"\x1b[6n";
+
+impl DsrScanner {
+    pub fn scan(&mut self, data: &[u8]) -> Vec<usize> {
+        let mut ends = Vec::new();
+        for (i, &b) in data.iter().enumerate() {
+            if b == DSR[self.matched] {
+                self.matched += 1;
+                if self.matched == DSR.len() {
+                    ends.push(i + 1);
+                    self.matched = 0;
+                }
+            } else {
+                self.matched = usize::from(b == DSR[0]);
+            }
+        }
+        ends
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dsr_found_across_chunks_and_answered_with_cursor() {
+        let mut s = DsrScanner::default();
+        assert_eq!(s.scan(b"ab\x1b[6ncd"), vec![6]);
+        assert_eq!(s.scan(b"x\x1b["), Vec::<usize>::new());
+        assert_eq!(s.scan(b"6n\x1b\x1b[6n"), vec![2, 7]);
+        assert_eq!(s.scan(b"\x1b[61n\x1b[5n"), Vec::<usize>::new());
+        let mut v = Vt::new(5, 20);
+        v.feed(b"hi\r\nthere");
+        assert_eq!(v.cursor_report(), b"\x1b[2;6R");
+    }
 
     #[test]
     fn replay_reproduces_screen_in_a_fresh_vt() {

@@ -18,7 +18,7 @@ fn host_toml(link: bool) -> String {
 /// (곧바로 끝나며 출력 뒤 종료 코드 5를 내는 명령, 대화형 셸, 셸에 보낼 계산식). 계산 결과 1042는 입력 echo에 없다.
 fn commands() -> (Vec<&'static str>, Vec<&'static str>, &'static str) {
     if cfg!(windows) {
-        (vec!["cmd.exe", "/d", "/c", "echo smoke-ok& exit /b 5"], vec!["cmd.exe", "/d"], "set /a 6*7+1000")
+        (vec!["cmd.exe", "/d", "/c", "echo smoke-ok& exit 5"], vec!["cmd.exe", "/d"], "set /a 6*7+1000")
     } else {
         (vec!["/bin/sh", "-c", "echo smoke-ok; exit 5"], vec!["/bin/sh"], "echo $((6*7+1000))")
     }
@@ -65,6 +65,17 @@ fn check_panes(lab: &Lab, h: &Node, machine: &str) {
     });
     h.ok(&["pane", "kill", &sh]);
     wait_for("kill 뒤 종료", T, || (h.pane(&sh)["state"] == "exited").then_some(()));
+
+    // 커서 위치 질의(DSR)에 session host가 답한다(Windows ConPTY는 이 답이 없으면 시작하지 못한다)
+    if cfg!(unix) {
+        let q = run(
+            h,
+            machine,
+            "dsr",
+            &["/bin/bash", "-c", r#"printf 'ab\033[6n'; IFS= read -rs -d R -t 5 r; echo "dsr=${r#*[}""#],
+        );
+        wait_for_diag("DSR 답", T, || h.screen(&q).contains("dsr=1;3").then_some(()), || diag(h, &q, &lab.root));
+    }
 }
 
 #[test]
