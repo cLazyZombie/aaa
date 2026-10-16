@@ -174,6 +174,28 @@ try {
     await shot(page, "desktop-controller");
   });
 
+  await step("두 controller: 조작 중 표시 → 가져오기 → 연결이 끝나면 풀린다", async () => {
+    const other = await pairPage(browser, aa("web", "pair").code, { width: 1280, height: 800 });
+    const op = other.page;
+    await op.getByTestId("pane-t1").click();
+    await until("다른 웹이 조작 중 표시", async () =>
+      /웹\(.{4}\)이 조작 중/.test(await op.getByTestId("lease-banner").innerText()),
+    );
+    if (!(await op.getByLabel("보낼 글").isDisabled())) throw new Error("조작 중인데 입력 막대가 켜져 있다");
+    await op.getByTestId("take").click();
+    await until("가져온 쪽 배너 사라짐", async () => (await op.getByTestId("lease-banner").count()) === 0);
+    await until("빼앗긴 쪽 표시", async () => (await page.getByTestId("lease-banner").count()) === 1);
+    if (!(await page.getByLabel("보낼 글").isDisabled())) throw new Error("빼앗긴 쪽 입력 막대가 켜져 있다");
+    await op.getByLabel("보낼 글").fill("echo taken-$((3*7))");
+    await op.getByRole("button", { name: "보내기" }).click();
+    await until("가져온 쪽 입력", async () => (await screenText(page)).includes("taken-21"));
+    await shot(page, "desktop-lease-held");
+    if (other.errors.length) throw new Error(other.errors.join("; "));
+    await other.page.context().close();
+    await until("연결이 끝나 lease 해제", async () => (await page.getByTestId("lease-banner").count()) === 0);
+    if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("풀렸는데 입력 막대가 꺼져 있다");
+  });
+
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
     const rd = await pairPage(browser, aa("web", "pair", "--reader").code, { width: 390, height: 844 });
     const rp = rd.page;

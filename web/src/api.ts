@@ -45,7 +45,10 @@ export function wsUrl(path: string): string {
 }
 
 /** 상태 이벤트 WS. 끊기면 다시 붙고, 붙어 있는지 알린다. */
-export function watchState(onState: (ev: FrontEvent) => void, onLink: (up: boolean) => void): () => void {
+export type StateEvent = Extract<FrontEvent, { ev: "state" }>;
+
+/** 기계·pane 목록 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
+export function watchState(onState: (ev: StateEvent) => void, onLink: (up: boolean) => void): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
   let delay = 500;
@@ -56,7 +59,10 @@ export function watchState(onState: (ev: FrontEvent) => void, onLink: (up: boole
       delay = 500;
       onLink(true);
     };
-    ws.onmessage = (m) => onState(JSON.parse(m.data as string) as FrontEvent);
+    ws.onmessage = (m) => {
+      const ev = JSON.parse(m.data as string) as FrontEvent;
+      if (ev.ev === "state") onState(ev);
+    };
     ws.onclose = () => {
       onLink(false);
       if (!stopped) timer = window.setTimeout(open, delay);

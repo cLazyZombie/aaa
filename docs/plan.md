@@ -241,6 +241,9 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 웹: raw byte stream + 재접속용 snapshot
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
+  - M1-2 구현: `aa attach [-w workspace]`(설계 예시의 `aa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
+  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 가져오기, `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다.
+  - 다른 front가 lease를 가진 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. lease가 빈 pane에 포커스하면 그 칸 크기로 맞추면서 lease를 갖는다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 조작 lease 소유자가 정한다. lease는 host가 판정하고 입력 직전에 다시 확인한다.
   - **lease 규칙(M1-2 구현).**
@@ -987,7 +990,7 @@ primary 근거:
 | SMAppService.agent 자식의 책임 귀속이 예상과 다름 | 느림·키체인 | E2에서 login item과 비교 |
 | GUI 계보 warm 저하 | build 전체가 느려짐 | E2 원인 조사, App Nap·QoS 설정 |
 | agent backend 재시작 때 session host가 면제를 잃음 | 업데이트 뒤 느림 | E3. 결과에 따라 drain |
-| VT 정확도(vt100) | 복잡한 TUI 화면 재생이 어긋남 | M1-1은 vt100으로 시작했다. M1-2 TUI harness로 Claude·Codex 화면을 단언하고, 어긋나면 ghostty-vt(Zig 빌드)나 alacritty_terminal로 adapter 뒤에서 교체 |
+| VT 정확도(vt100) | 복잡한 TUI 화면 재생이 어긋남 | M1-1은 vt100으로 시작했다. M1-2 TUI harness는 셸 화면(넓은 글자 포함)까지 독립 parser로 단언했다. Claude·Codex 화면 단언은 그 agent를 실제로 띄우는 M1-3에서 하고, 어긋나면 ghostty-vt(Zig 빌드)나 alacritty_terminal로 adapter 뒤에서 교체 |
 | harness hook·notify 지원 범위 | 사건화가 불완전 | adapter별 fixture, 화면 보조와 신뢰도 표시 |
 | Tailscale serve CLI 변경 | 공개 실패 | 읽기 전용 상태 판정 fixture, 실패 시 할 일 표시 |
 | 비공개 macOS API 변경 | 진단 실패 | timing probe fallback |

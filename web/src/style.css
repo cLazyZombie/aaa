@@ -30,6 +30,7 @@ code { background: #232a33; padding: 1px 5px; border-radius: 4px; }
 .banner { padding: 6px 12px; font-size: 13px; background: #20262e; border-bottom: 1px solid var(--line); }
 .banner.warn { background: #3a2f17; color: var(--warn); }
 .banner.err { background: #3a1c1c; color: var(--err); }
+.banner button { margin-left: 10px; }
 
 .pair { max-width: 420px; margin: 12vh auto; padding: 0 16px; }
 .pair form { display: flex; gap: 8px; }
