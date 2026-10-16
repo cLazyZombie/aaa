@@ -659,7 +659,7 @@ host 프로젝트 폴더 구성:
     - SessionStart → `session_start`, UserPromptSubmit → `turn_start`
     - PostToolUse → `working`, Stop → `turn_end`, StopFailure → `error`, SessionEnd → `exited`
     - PermissionRequest·Notification(permission_prompt) → `question`, Notification(idle_prompt) → `idle`
-  - Codex는 notify(`agent-turn-complete` → `turn_end`)만 정규화해 두었다. hook은 프로젝트 `.codex/`·hash 신뢰가 필요하고, `-c notify=…`는 아직 확인하지 않았다(사용자 할 일 후보).
+  - Codex는 notify(`agent-turn-complete` → `turn_end`)를 쓴다. 실행마다 `codex -c notify=[<aa>,"hook","--agent","codex"]`로 준다(사용자 `~/.codex` 설정은 고치지 않는다). hook은 프로젝트 `.codex/`·hash 신뢰가 필요해 쓰지 않는다. 실측은 §8.21.
   - 세션 안의 `aa hook --agent …`·`aa report --percent --activity`가 그 머신 agent의 로컬 socket(`run/hook.sock`)으로 보낸다.
     - 세션 env의 `AA_HOOK_TOKEN`은 세션 token에서 만든 값이라 따로 저장하지 않는다.
     - `aa hook`은 무엇이 실패해도 출력 없이 0으로 끝난다(harness를 막지 않는다).
@@ -796,7 +796,7 @@ host 프로젝트 폴더 구성:
   - host는 모으지 않고 조각마다 agent로 넘긴다(그 사이 화면 출력이 끼어든다). 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고(브라우저가 알린 MIME은 믿지 않는다), 이름은 host가 무작위로 정한다. 상한 16MiB, offset이 맞지 않으면 거부한다.
   - 대상 경로: 모든 pane이 **세션 범위** `<agent state>/sessions/<id>/attachments/<hex>.<ext>`다(§9 표의 thread `.aa/…/attachments` 대신). thread 작업 폴더(worktree)에 두면 그림이 git에 섞일 수 있고, 세션 폴더는 이미 0700이며 세션 기록을 지울 때 함께 지워진다. 폴더 0700·파일 0600, 세션당 64개까지. `.part`에 이어 쓰고 마지막 조각에서 sha256을 대조한 뒤 이름을 바꾼다.
   - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 bracketed paste로 넣고 Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
-  - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex는 같은 방식으로 넣지만 실제 확인은 하지 않았다.
+  - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex(codex-cli 0.163)도 `[Image #1]`로 받아 그림 색을 답했다(§8.21).
   - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
 
 ### 8.21 M1 마무리 구현 결정(10-16): 머신 건강, coordinator 일 흐름
@@ -811,6 +811,7 @@ host 프로젝트 폴더 구성:
 - **이상(새 세션 거부):** 디스크 여유가 `min_free_gb`(기본 5GB)보다 적다, toolchain 명령 실패, 시계 차이. 연결 중인 머신만 보고(끊김은 `outage`), 첫 보고 전에는 막지 않는다. `pane run`·resume·`thread start`·`restart`가 이유와 함께 거부된다. 이미 도는 세션은 건드리지 않는다.
 - **알림:** 이상의 **종류**(`disk`·`toolchain:<이름>`·`clock`)가 생기거나 바뀌거나 풀리면 그 머신에 열린 thread가 있는 프로젝트 inbox에 `health` 항목(`problem`·`ok`)을 남긴다. 값(디스크 여유 GB 등)만 바뀐 것은 새 항목이 아니다(처음에는 설명 글로 비교해 디스크 여유가 0.1GB 바뀔 때마다 항목이 생겼다. E2E가 4번에 1번꼴로 잡았다). 알림 webhook 기본 종류에 `health`를 더했다.
 - **보기:** `aa status`·`aa machine list`에 이상 이유 또는 디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유.
+- **남는 한계:** 마지막으로 알린 이상 종류는 host 메모리에만 둔다. host를 다시 시작하면 같은 이상이 이어져도 `problem` 항목이 한 번 더 생긴다.
 
 **coordinator 일 흐름(부록 A의 M1 마무리 항목, 0.2.35 의미)**
 - `aa context <p>`: coordinator가 매 턴 처음 본다. TASKS.md task(목록·owner·thread·메모), 열린 thread와 Next 줄·harness 상태, `start_threads`, 맡길 수 있는 owner, 끝내지 않은 inbox 수.
@@ -821,6 +822,11 @@ host 프로젝트 폴더 구성:
 - `aa thread next <p> <id> [--line N | --add "…"]`: Next 목록은 보고서 `## Next` 줄 + `threads/<id>.next.md`. `--line N`은 그 줄을 메시지 API(대기열, 턴이 끝나면 전달)로 보낸다. 0.2.35는 바로 입력했다.
 - **`start_threads`(project.toml, propose·auto, 기본 propose):** coordinator가 따르는 안내 값이다. aa는 강제하지 않는다(0.2.35와 같다). 동시 실행 상한은 aa가 강제한다(`max_threads_per_machine`).
 - **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다.
+- **Codex 실측(codex-cli 0.163, macOS, 10-16)**
+  - 실행마다 `-c notify=…`를 주면 턴이 끝날 때 `turn_end`(마지막 답)와 `thread-id`가 온다. pane 상태가 입력 대기가 되고, `thread-id`를 harness 세션으로 써서 `thread restart --resume`이 `codex … resume <id>`로 이전 대화를 이었다.
+  - `-c`를 주면 Codex가 공유 background server 없이(embedded) 돈다는 경고를 한 번 낸다. aa는 daemon 없는 실행을 원하므로 그대로 둔다.
+  - 그림: 웹으로 붙여 넣은 경로가 `[Image #1]`이 되고, 보내자 그림 색을 답했다.
+  - **글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(제출되지 않는다).** 웹 입력 막대 「보내기」와 `aa pane send --text … --enter`가 이렇게 보내고 있었다. 글을 보낸 뒤 300ms 뒤에 Enter를 따로 보내게 고쳤다(host의 brief·메시지 전달은 처음부터 이렇게 했다). 웹 E2E에 이 동작을 흉내 내는 가짜 입력창을 두었다.
 - **새 프로젝트 AGENTS.md:** coordinator 안내(매 턴 `aa context`, thread 시작 규칙, TASKS.md 규칙, 결정·병합 명령)를 쓴다. 있는 파일은 덮지 않는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
