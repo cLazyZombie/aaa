@@ -275,13 +275,15 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
     if std::fs::symlink_metadata(&lib).is_ok_and(|m| m.is_dir()) {
         walk(&lib, &lib, &mut |rel, meta, abs| {
             if meta.file_type().is_symlink() {
-                skipped.push(Skipped { path: rel, reason: "symlink는 따라가지 않는다".into() });
+                skipped
+                    .push(Skipped { path: rel, reason: "symlink는 따라가지 않는다".into(), lazy_size: None });
             } else if !meta.is_file() {
-                skipped.push(Skipped { path: rel, reason: "일반 파일이 아니다".into() });
+                skipped.push(Skipped { path: rel, reason: "일반 파일이 아니다".into(), lazy_size: None });
             } else if total + meta.len() > max_library_bytes {
                 skipped.push(Skipped {
                     path: rel,
                     reason: format!("복사 상한({} MB)을 넘는다. agent에 남는다", max_library_bytes >> 20),
+                    lazy_size: Some(meta.len()),
                 });
             } else {
                 match sha256_file(abs) {
@@ -289,7 +291,9 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
                         total += meta.len();
                         files.push(LibFile { path: rel, size: meta.len(), sha256 });
                     }
-                    Err(e) => skipped.push(Skipped { path: rel, reason: format!("읽기 실패: {e}") }),
+                    Err(e) => {
+                        skipped.push(Skipped { path: rel, reason: format!("읽기 실패: {e}"), lazy_size: None })
+                    }
                 }
             }
         })?;

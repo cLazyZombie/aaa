@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import type { AgentActivity, DeviceRole, MachineView, PaneView, QuestionView } from "./gen/proto";
+import type { AgentActivity, DeviceRole, MachineView, PaneView, QuestionView, ThreadView } from "./gen/proto";
 import { ApiError, call, me, pair, watchEvents } from "./api";
 import { TermView } from "./Term";
+import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
 
@@ -139,10 +140,13 @@ function QuestionCard({
   );
 }
 
+/** 고른 것: `#pane=<id>` 또는 `#thread=<project>/<id>` */
 function selectedFromHash(): string | null {
-  const m = /^#pane=(.+)$/.exec(location.hash);
-  return m ? decodeURIComponent(m[1]) : null;
+  const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
+  return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
+
+const threadKey = (t: ThreadView) => `${t.project}/${t.id}`;
 
 function Main({ role }: { role: DeviceRole }) {
   const [machines, setMachines] = useState<MachineView[]>([]);
@@ -153,6 +157,14 @@ function Main({ role }: { role: DeviceRole }) {
   const [msg, setMsg] = useState<string | null>(null);
   // 열린 질문(id → 질문). 연결할 때마다 목록을 새로 읽고, 이후는 질문 사건으로 따라간다.
   const [questions, setQuestions] = useState<Map<string, QuestionView>>(new Map());
+  // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
+  const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
+  const putThread = (t: ThreadView) =>
+    setThreads((old) => {
+      const next = new Map(old);
+      next.set(threadKey(t), t);
+      return next;
+    });
 
   const putQuestion = (q: QuestionView) =>
     setQuestions((old) => {
@@ -179,7 +191,14 @@ function Main({ role }: { role: DeviceRole }) {
                 if (r.kind === "questions") setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
+          if (on)
+            call({ op: "threads", project: null })
+              .then((r) => {
+                if (r.kind === "threads") setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
+              })
+              .catch(() => {});
         },
+        putThread,
       ),
     [],
   );
@@ -201,7 +220,11 @@ function Main({ role }: { role: DeviceRole }) {
 
   const choose = (id: string | null) => {
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
-    setSel(id);
+    setSel(id ? `pane:${id}` : null);
+  };
+  const chooseThread = (t: ThreadView) => {
+    location.hash = `thread=${encodeURIComponent(threadKey(t))}`;
+    setSel(`thread:${threadKey(t)}`);
   };
 
   const newShell = async (m: MachineView) => {
@@ -214,7 +237,11 @@ function Main({ role }: { role: DeviceRole }) {
     }
   };
 
-  const current = panes.find((p) => p.id === sel) ?? null;
+  const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
+  const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
+  const shownThreads = [...threads.values()]
+    .filter((t) => t.group !== "resolved")
+    .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
   const canControl = role !== "reader";
   const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
   const currentQ = current ? open.filter((q) => q.pane === current.id) : [];
@@ -224,7 +251,7 @@ function Main({ role }: { role: DeviceRole }) {
   };
 
   return (
-    <div className={`app ${current ? "has-sel" : ""}`}>
+    <div className={`app ${current || currentThread ? "has-sel" : ""}`}>
       <aside className="list">
         <header className="list-head">
           <strong>aa</strong>
@@ -240,6 +267,27 @@ function Main({ role }: { role: DeviceRole }) {
             {open.map((q) => (
               <QuestionCard key={q.id} q={q} paneName={nameOf(q.pane)} canControl={canControl} onPick={answer} />
             ))}
+          </section>
+        )}
+        {shownThreads.length > 0 && (
+          <section className="threads" data-testid="threads">
+            <h2>thread {shownThreads.length}</h2>
+            <ul>
+              {shownThreads.map((t) => (
+                <li key={threadKey(t)}>
+                  <button
+                    className={`pane ${sel === `thread:${threadKey(t)}` ? "sel" : ""}`}
+                    onClick={() => chooseThread(t)}
+                    data-testid={`thread-${t.project}-${t.id}`}
+                  >
+                    <span className="pane-name">
+                      {t.title} <span className="muted">{t.project}/{t.id}</span>
+                    </span>
+                    <span className={`badge group ${t.group}`}>{GROUP_LABEL[t.group] ?? t.group}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
         {machines.map((m) => {
@@ -262,7 +310,7 @@ function Main({ role }: { role: DeviceRole }) {
                 {mine.map((p) => (
                   <li key={p.id}>
                     <button
-                      className={`pane ${p.id === sel ? "sel" : ""}`}
+                      className={`pane ${`pane:${p.id}` === sel ? "sel" : ""}`}
                       onClick={() => choose(p.id)}
                       data-testid={`pane-${p.name || p.id}`}
                     >
@@ -280,7 +328,9 @@ function Main({ role }: { role: DeviceRole }) {
         })}
       </aside>
       <main className="view">
-        {current ? (
+        {currentThread ? (
+          <ThreadPanel key={threadKey(currentThread)} t={currentThread} role={role} onBack={() => choose(null)} />
+        ) : current ? (
           <>
             {currentQ.map((q) => (
               <QuestionCard key={q.id} q={q} paneName={nameOf(q.pane)} canControl={canControl} onPick={answer} />

@@ -110,6 +110,34 @@ pub struct LibFile {
 pub struct Skipped {
     pub path: String,
     pub reason: String,
+    /// 복사 상한을 넘어 agent에 남긴 일반 파일의 크기(이것만 나중에 지연 스트리밍으로 볼 수 있다)
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub lazy_size: Option<u64>,
+}
+
+/// thread 결과물 파일 하나(host 사본 또는 agent에 남긴 것)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryFile {
+    /// library 안 상대 경로
+    pub path: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    /// host에 사본이 없다: 볼 때 agent에서 스트리밍한다(작업 폴더가 남아 있을 때만)
+    pub on_agent: bool,
+}
+
+/// 웹에서 보는 보고서·결과물. `base`는 짧은 수명의 읽기 전용 경로(`/v/<cap>/`)이고 그 아래에 `path`를 붙인다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryView {
+    pub project: String,
+    pub thread: String,
+    /// 회수한 report.md(없으면 None)
+    pub report: Option<String>,
+    pub files: Vec<LibraryFile>,
+    pub base: String,
+    #[ts(type = "number")]
+    pub expires_at_ms: u64,
 }
 
 /// report.md 본문과 library 목록(파일 본문은 `FileRead`로 나눠 받는다)

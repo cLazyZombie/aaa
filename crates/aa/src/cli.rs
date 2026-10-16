@@ -276,6 +276,11 @@ enum ThreadCmd {
         #[arg(long, short)]
         project: Option<String>,
     },
+    /// 보고서와 결과물 목록, 웹에서 볼 읽기 전용 경로(2시간)
+    Library {
+        project: String,
+        thread: String,
+    },
     Show {
         project: String,
         thread: String,
@@ -733,6 +738,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 ThreadCmd::List { project } => FrontRequest::Threads { project },
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
+                ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
                 ThreadCmd::Resolve { project, thread, keep_worktree } => {
                     FrontRequest::ThreadResolve { project, thread, keep_worktree }
@@ -1423,6 +1429,16 @@ fn render_front(r: &FrontResponse) -> String {
                     r.skipped,
                     r.no_coordinator
                 );
+            }
+        }
+        FrontResponse::Library(l) => {
+            let _ = writeln!(s, "{}/{} 결과물 {}개(보기 경로 2시간: {})", l.project, l.thread, l.files.len(), l.base);
+            for f in &l.files {
+                let at = if f.on_agent { " · agent에 있음" } else { "" };
+                let _ = writeln!(s, "  {}\t{}B{at}", f.path, f.size);
+            }
+            if l.report.is_none() {
+                s.push_str("회수한 보고가 없다\n");
             }
         }
         FrontResponse::Inbox { items } => {

@@ -97,7 +97,7 @@ fn decisions_rev(dir: &Path) -> Option<u32> {
 }
 
 /// 임시 파일에 쓴 뒤 rename으로 바꾼다
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(".{}.tmp-{}", path.file_name().unwrap().to_string_lossy(), aa_common::util::new_id()));
@@ -848,6 +848,7 @@ impl Host {
                 std::fs::remove_dir_all(&dest).map_err(internal)?;
             }
             std::fs::rename(&tmp, &dest).map_err(internal)?;
+            crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
             Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0)))

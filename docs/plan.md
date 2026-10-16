@@ -769,6 +769,20 @@ host 프로젝트 폴더 구성:
 - **흐름 사건:** `routine_ran`, `routine_failed`, `routine_approved`.
 - **CLI:** `aa routine list <p>`(일정·지난·다음·건너뜀·승인 상태), `aa routine approve <p> <name>`.
 
+### 8.20 M1-4 구현 결정(10-16): 보고서·결과물 보기, 순서와 미룬 것
+
+- **순서:** 운영 대체에 먼저 필요한 것부터 한다. ① 웹 보고서·결과물 보기 ② 알림 webhook ③ 웹 이미지 붙여넣기(macOS 대상).
+- **미룬 것**
+  - TUI Ctrl+V 이미지: front 기기 clipboard를 읽는 crate(arboard)가 Linux CI에 X11 개발 의존을 끌어온다. 웹 붙여넣기가 같은 attachment 경로를 먼저 검증한다. → M1 마무리
+  - Web Push: VAPID·암호화(ECE)·service worker가 필요하다. M1-4 기준 「질문·보고 알림」은 webhook(텔레그램 연결)으로 채운다. → M3(PWA와 함께)
+- **결과물 manifest:** 보고를 회수할 때 `threads/<id>.files.json`에 결과물 목록(경로·크기·host 사본인지)을 남긴다. 복사 상한을 넘어 agent에 남긴 일반 파일도 적는다(agent가 그 크기를 알린다). symlink·일반 파일이 아닌 것은 목록에 없다.
+- **보기 경로(권한):** 웹은 `ThreadLibrary`(reader도 가능)로 `/v/<cap>/`를 받는다.
+  - cap은 무작위 24바이트이고 host 메모리에만 있다. 2시간 뒤 만료되고 host가 다시 시작하면 사라진다. 그 thread 결과물 읽기만 된다.
+  - **URL에 권한을 넣는 이유:** 결과물 HTML은 CSP `sandbox`로 opaque origin이다. 그 문서의 그림·CSS 요청에는 SameSite=Strict cookie가 붙지 않는다. 그래서 장치 cookie 대신 짧은 읽기 경로를 쓴다. §6.4의 「token을 URL에 넣지 않는다」는 장치 token 규칙이고 그대로 지킨다. `Referrer-Policy: no-referrer`로 경로가 밖으로 새지 않게 한다.
+- **보내는 방식:** host 사본이 있으면 그것을, 없으면 agent에서 512KB 조각으로 읽어 그대로 흘려보낸다. host에 캐시하지 않는다. 경로는 library 안 상대 경로만 받고, agent도 `library/` 밖과 symlink를 거부한다. agent 쪽 파일을 읽지 못하면 응답 전에 502와 이유를 돌려준다.
+- **결과물 HTML 격리:** CSP `sandbox allow-scripts allow-popups …`(allow-same-origin 없음), `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`. 웹 화면은 같은 sandbox 속성의 iframe으로 `index.html`을 보인다. 웹 E2E가 결과물 script에서 부모 문서·cookie·제어 API에 닿지 못하는 것을 확인한다.
+- **웹 화면:** 목록 위에 끝나지 않은 thread(묶음 표시), 고르면 보고(Markdown을 HTML로 해석하지 않고 그린다)·결과물 iframe·파일 목록(agent에서 읽는 파일 표시)·확인(ack) 버튼. thread 사건이 events WS로 와서 polling 없이 바뀐다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -1094,7 +1108,7 @@ primary 근거:
 | M1-1. 골격 + 웹 HTTPS | 8~12일 | 단일 실행 파일 역할, TOML, Agent link(TLS·enrollment), 로컬 agent backend(개발 모드는 자식, 운영 모드는 LaunchAgent), session host·PTY·VT, `aa pane run/read/send`, host 웹 최소판(pairing·세션 목록·terminal 보기·입력), `aa web publish` | 다른 기기에서 Tailscale HTTPS 주소로 Mac 3대의 pane을 보고 입력한다. host 재시작 뒤에도 세션 유지. agent 단절 시 읽기 전용 표시. Windows·Linux는 Agent link 계약 테스트·CI build·PTY smoke |
 | M1-2. TUI front·세션 관리 | 6~10일 | workspace/tab/pane layout, attach/detach, 여러 front lease, 재부팅 뒤 resume spec | TUI harness로 화면 단언, 여러 front 동시, 재부팅 뒤 interrupted 표시 |
 | M1-3. 오케스트레이션 | 10~15일 | projects 0.2 핵심(부록 A의 M1 항목), 상태 사건(Claude·Codex adapter), 흐름 사건·cursor 구독과 역할 필드(평가자 대비, §8.13), 확인창 원격 응답, 메시지 API, 결정 기록, 병합 대기열 순번·사건, 머신 건강·자원 한도, routine을 agent에서 실행 | Mac 중심 → Mac 3대 thread 시작·보고 회수·ack·resolve. 질문 원격 응답. polling 없는 상태 표시 |
-| M1-4. 이미지·결과물·알림 | 4~7일 | TUI·웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, Web Push·webhook | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
+| M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
 | M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13, 3~5일, M1 뒤 바로 시작 가능), 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |

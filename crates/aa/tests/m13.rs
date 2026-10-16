@@ -38,6 +38,11 @@ while IFS= read -r line; do
       case "$task" in
         *dirty*) echo dirty > dirty.txt ;;
       esac
+      case "$task" in
+        *big*)
+          head -c 2097152 /dev/urandom > "$dir/library/big.bin"
+          printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
+      esac
       echo "done"
       ;;
     *) echo "got: $line" ;;
@@ -116,10 +121,11 @@ const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 /// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
 const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
-/// `extra`는 `[projects]`에 덧붙인다
-fn host_toml(projects: &Path, extra: &str) -> String {
+/// `extra`는 `[projects]`에 덧붙인다. `web`이면 웹을 loopback 임의 port로 연다.
+fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
+    let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
-        "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"\"\n[local_agent]\nmode = \"none\"\n\
+        "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
          [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
@@ -186,6 +192,10 @@ fn world() -> World {
 }
 
 fn world_with(extra: &str) -> World {
+    world_opts(extra, false)
+}
+
+fn world_opts(extra: &str, web: bool) -> World {
     let lab = Lab::new();
     let projects = lab.root.join("projects");
     let scripts = lab.root.join("scripts");
@@ -195,7 +205,7 @@ fn world_with(extra: &str) -> World {
     std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     let repo = make_repo(&lab.root);
-    let h = lab.node("h", Some(&host_toml(&projects, extra)));
+    let h = lab.node("h", Some(&host_toml(&projects, extra, web)));
     std::fs::write(h.cfg.join("agent.toml"), agent_toml(&lab.root.join("workA"), &scripts)).unwrap();
     let mut w = World { lab, h, projects, repo, scripts, addr: String::new() };
     w.lab.spawn("host", &w.h, &["host"]);
@@ -971,4 +981,73 @@ fn routines() {
     let ran = w.kinds(0).iter().filter(|k| *k == "routine_ran").count();
     assert!(ran >= 3, "{:?}", w.kinds(0));
     assert!(w.kinds(0).contains(&"routine_approved".to_string()));
+}
+
+/// HTTP/1.1 GET 한 번(Connection: close). (상태, 머리글 소문자, 본문)
+fn http_get(addr: &str, path: &str) -> (u16, String, Vec<u8>) {
+    use std::io::{Read, Write};
+    let mut c = std::net::TcpStream::connect(addr).unwrap();
+    c.set_read_timeout(Some(T)).unwrap();
+    write!(c, "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").unwrap();
+    let mut raw = Vec::new();
+    c.read_to_end(&mut raw).unwrap();
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("머리글 끝");
+    let head = String::from_utf8_lossy(&raw[..split]).to_lowercase();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, head, raw[split + 4..].to_vec())
+}
+
+/// 결과물 보기(§8.7): host 사본은 바로, 복사 상한을 넘어 agent에 남긴 파일은 agent에서 스트리밍한다.
+/// 보기 경로는 그 thread 결과물만 읽는 짧은 권한이고, 결과물 HTML은 sandbox로 간다.
+#[test]
+fn library_view() {
+    let w = world_opts("", true);
+    let web = w.h.ok(&["status"])["web_listen"].as_str().unwrap().to_string();
+    let v = w.start(&["--title", "big", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("t9.txt", "big")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let agent_lib = PathBuf::from(v["work_dir"].as_str().unwrap()).join("library");
+    let v = w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    assert_eq!(v["copy"], "partial", "{v}");
+
+    let lib = w.h.ok(&["thread", "library", "demo", &id]);
+    assert!(lib["report"].as_str().unwrap().contains("## Report"), "{lib}");
+    let files: Vec<(String, u64, bool)> = lib["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["path"].as_str().unwrap().into(), f["size"].as_u64().unwrap(), f["on_agent"].as_bool().unwrap()))
+        .collect();
+    assert!(files.contains(&("big.bin".into(), 2_097_152, true)), "{files:?}");
+    assert!(files.contains(&("out.txt".into(), 10, false)), "{files:?}");
+    // symlink는 목록에 없다
+    assert!(!files.iter().any(|f| f.0 == "link"), "{files:?}");
+    let base = lib["base"].as_str().unwrap().to_string();
+
+    // host 사본: sandbox CSP, 같은 host 웹 화면 안 frame만
+    let (st, head, body) = http_get(&web, &format!("{base}index.html"));
+    assert_eq!(st, 200, "{head}");
+    assert!(head.contains("content-security-policy: sandbox allow-scripts"), "{head}");
+    assert!(head.contains("x-frame-options: sameorigin") && head.contains("text/html"), "{head}");
+    assert!(String::from_utf8_lossy(&body).contains("<p>보고</p>"));
+    let (st, _, body) = http_get(&web, &format!("{base}sub/d.txt"));
+    assert_eq!((st, body.as_slice()), (200, b"deep\n".as_slice()));
+    // agent에 남긴 파일: 조각으로 스트리밍한 바이트가 원본과 같다
+    let (st, head, body) = http_get(&web, &format!("{base}big.bin"));
+    assert_eq!(st, 200, "{head}");
+    assert!(head.contains("content-length: 2097152"), "{head}");
+    assert!(body == std::fs::read(agent_lib.join("big.bin")).unwrap(), "본문 {}바이트가 원본과 다르다", body.len());
+
+    // 경로 밖·목록 밖·틀린 권한
+    let (st, _, _) = http_get(&web, &format!("{base}..%2F..%2Fbrief.md"));
+    assert_eq!(st, 400);
+    assert_eq!(http_get(&web, &format!("{base}link")).0, 404);
+    let (st, _, body) = http_get(&web, "/v/0000/out.txt");
+    assert_eq!(st, 401, "{}", String::from_utf8_lossy(&body));
+    // agent 쪽 파일이 사라졌으면 기다리지 않고 바로 알린다
+    std::fs::remove_file(agent_lib.join("big.bin")).unwrap();
+    let t0 = std::time::Instant::now();
+    let (st, _, body) = http_get(&web, &format!("{base}big.bin"));
+    assert_eq!(st, 502, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("agent에 남긴 결과물을 읽지 못한다"));
+    assert!(t0.elapsed() < Duration::from_secs(5));
 }

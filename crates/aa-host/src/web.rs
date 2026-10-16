@@ -55,6 +55,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/call", post(call))
         .route("/api/v1/events", get(events_ws))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
+        .route("/v/{cap}/{*path}", get(view_file))
         .fallback(get(static_file))
         .layer(middleware::from_fn_with_state(host.clone(), guard))
         .with_state(host)
@@ -100,11 +101,61 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     }
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
-    hs.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    // 결과물 보기(/v/)는 자기 CSP(sandbox)·frame 정책을 둔다
+    hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(CSP));
     hs.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     hs.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
-    hs.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    hs.entry(header::X_FRAME_OPTIONS).or_insert(HeaderValue::from_static("DENY"));
     res
+}
+
+/// 결과물: opaque origin(sandbox)으로 보여 제어 UI의 cookie·API에 닿지 못하게 한다. 같은 host의 웹 화면 안 iframe에만 넣을 수 있다.
+const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads; \
+                        default-src 'self' 'unsafe-inline' data: blob:; frame-ancestors 'self'";
+
+/// `/v/<cap>/<path>`: 보기 경로가 곧 권한이다(그 thread 결과물 읽기만, 2시간). host 사본이 없으면 agent에서 스트리밍한다.
+async fn view_file(State(host): State<Arc<Host>>, Path((cap, path)): Path<(String, String)>) -> Response {
+    let src = match host.view_source(&cap, &path).await {
+        Ok(s) => s,
+        Err(e) => {
+            let code = match e.code {
+                ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+                ErrorCode::NotFound => StatusCode::NOT_FOUND,
+                ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
+                _ => StatusCode::BAD_GATEWAY,
+            };
+            return (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], e.message).into_response();
+        }
+    };
+    let size = src.size();
+    let body = match src {
+        crate::library::ViewSource::Local(p, _) => match tokio::fs::File::open(&p).await {
+            Ok(f) => Body::from_stream(futures_util::stream::unfold(f, |mut f| async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; 256 * 1024];
+                match f.read(&mut buf).await {
+                    Ok(0) => None,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Some((Ok::<_, std::io::Error>(buf), f))
+                    }
+                    Err(e) => Some((Err(e), f)),
+                }
+            })),
+            Err(e) => return (StatusCode::NOT_FOUND, format!("host 사본을 열지 못했다: {e}")).into_response(),
+        },
+        crate::library::ViewSource::Agent { conn, work_dir, path: p, first, eof, .. } => {
+            Body::from_stream(crate::library::agent_stream(conn, work_dir, p, first, eof))
+        }
+    };
+    Response::builder()
+        .header(header::CONTENT_TYPE, crate::library::content_type(&path))
+        .header(header::CONTENT_LENGTH, size)
+        .header(header::CACHE_CONTROL, "private, no-store")
+        .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
+        .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
+        .body(body)
+        .unwrap()
 }
 
 fn cookie_token(h: &HeaderMap) -> Option<String> {
@@ -175,10 +226,11 @@ async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSoc
     ws.on_upgrade(move |socket| events_loop(host, role, socket))
 }
 
-/// 머신·pane 목록(바뀔 때마다 전체)과 확인창 질문 사건. 질문은 연결한 뒤 `questions`로 한 번 읽고 이 사건으로 따라간다.
+/// 머신·pane 목록(바뀔 때마다 전체)과 확인창 질문·thread 사건. 질문·thread는 연결한 뒤 목록을 한 번 읽고 이 사건으로 따라간다.
 async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
+    let mut threads = host.thread_events.subscribe();
     let mut send_state = true;
     loop {
         if send_state {
@@ -202,6 +254,18 @@ async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
                         }
                     }
                     // 놓쳤으면 끊는다. 웹은 다시 붙으며 질문 목록을 새로 읽는다.
+                    Err(_) => break,
+                }
+            }
+            t = threads.recv() => {
+                send_state = false;
+                match t {
+                    Ok(t) => {
+                        let text = serde_json::to_string(&FrontEvent::Thread(t)).unwrap();
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
                     Err(_) => break,
                 }
             }
