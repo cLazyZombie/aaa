@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.aa.p0probe.standard</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/aa</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>aa</string>
+		<string>doctor</string>
+		<string>probe</string>
+		<string>--samples</string>
+		<string>30</string>
+		<string>--fda-check</string>
+		<string>--keychain-service</string>
+		<string>aa-p0-probe</string>
+		<string>--label</string>
+		<string>launchagent-standard</string>
+		<string>--out-state</string>
+	</array>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>AssociatedBundleIdentifiers</key>
+	<string>@BUNDLE_ID@</string>
+</dict>
+</plist>

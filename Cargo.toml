@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/aa-proto", "crates/aa-config", "crates/aa"]
+default-members = ["crates/aa-proto", "crates/aa-config", "crates/aa"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+
+[workspace.dependencies]
+aa-proto = { path = "crates/aa-proto" }
+aa-config = { path = "crates/aa-config" }
+aa-lab = { path = "crates/aa-lab" }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+toml = "1"
+toml_edit = "0.25"
+ulid = { version = "1", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.9"
+libc = "0.2"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+debug = "line-tables-only"

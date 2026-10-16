@@ -1,3 +1,7 @@
 /.coordinator/
 /research/
 .DS_Store
+/target/
+/web/node_modules/
+/web/dist/
+/web/test-results/
