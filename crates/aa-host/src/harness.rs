@@ -40,15 +40,38 @@ const MODAL_MARKS: &[&str] = &[
     "Yes, proceed",
 ];
 
+/// 선택 창 표지는 화면 맨 아래 몇 줄(빈 줄 제외) 안에 있어야 한다. 위쪽 출력(예: 소스를 cat한 결과)에 같은 글이
+/// 있어도 선택 창으로 보지 않는다. Claude Code 선택 창은 맨 아래에 그려지고 그동안 상태 줄이 없다.
+const MARK_ROWS: usize = 3;
+/// 선택 창 본문·선택지를 찾는 범위(표지 줄에서 위로)
+const DIALOG_ROWS: usize = 24;
+
+/// 화면 맨 아래 선택 창 영역(표지 줄까지). 없으면 None.
+fn dialog(lines: &[String]) -> Option<&[String]> {
+    let filled: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| !l.trim().is_empty()).map(|(i, _)| i).collect();
+    let mark =
+        filled.iter().rev().take(MARK_ROWS).copied().find(|&i| MODAL_MARKS.iter().any(|m| lines[i].contains(m)))?;
+    Some(&lines[mark.saturating_sub(DIALOG_ROWS)..=mark])
+}
+
 /// 화면에 선택 창이 있으면 (질문 종류, 본문)
 pub(crate) fn modal_of(lines: &[String]) -> Option<(&'static str, String)> {
-    let mark = lines.iter().find(|l| MODAL_MARKS.iter().any(|m| l.contains(m)))?;
-    let all = lines.join(" ");
+    let d = dialog(lines)?;
+    let all = d.join(" ");
     let kind = if all.contains("trust") || all.contains("Trust") { "trust" } else { "confirm" };
-    // 본문: 물음표가 있는 줄(없으면 표지 줄)
-    let asks: Vec<&str> = lines.iter().map(|l| l.trim()).filter(|l| l.contains('?')).collect();
-    let text = if asks.is_empty() { mark.trim().to_string() } else { asks.join(" ") };
+    // 본문: 선택지에 가장 가까운 물음표 줄(없으면 표지 줄)
+    let text = d
+        .iter()
+        .rev()
+        .map(|l| l.trim())
+        .find(|l| l.contains('?'))
+        .unwrap_or_else(|| d.last().map(|l| l.trim()).unwrap_or_default());
     Some((kind, text.chars().take(300).collect()))
+}
+
+/// 화면에 보이는 「Interrupted」 수(Esc 전후를 비교해 새로 생긴 것만 멈춤으로 본다)
+fn interrupted_count(lines: &[String]) -> usize {
+    lines.iter().filter(|l| INTERRUPTED_MARKS.iter().any(|m| l.contains(m))).count()
 }
 
 /// 화면 선택 창의 선택지: (선택됨, 글)
@@ -86,7 +109,7 @@ pub(crate) fn answer_keys(lines: &[String], choice: &str) -> Result<Vec<u8>, Str
         "yes" => {}
         other => return Err(format!("모르는 답: {other}")),
     }
-    let m = menu(lines);
+    let m = dialog(lines).map(menu).unwrap_or_default();
     let cur = m.iter().position(|(s, _)| *s).ok_or("화면에서 선택 창을 찾지 못했다")?;
     let want = m.iter().position(|(_, t)| t.starts_with("Yes")).ok_or("화면 선택 창에 Yes 선택지가 없다")?;
     let step: &[u8] = if want > cur { b"\x1b[B" } else { b"\x1b[A" };
@@ -444,6 +467,8 @@ impl Host {
             MessageMode::Interrupt => {
                 if activity == Some(AgentActivity::Working) {
                     let mut stopped = self.wait_kind(&pid, &["turn_end", "idle"]);
+                    // 지난 interrupt의 「Interrupted」가 화면에 남아 있을 수 있다: 새로 생긴 것만 본다
+                    let before = interrupted_count(&self.screen_lines(&mid, &pid).await.unwrap_or_default());
                     let conn = self.live_conn(&mid)?;
                     conn.request(AgentRequest::Input { session: pid.clone(), data: B64(b"\x1b".to_vec()) }).await?;
                     // Claude Code는 Esc로 멈춰도 Stop hook을 내지 않고 화면에 「Interrupted」를 보인다(2.1 실측)
@@ -453,7 +478,7 @@ impl Host {
                             break;
                         }
                         let lines = self.screen_lines(&mid, &pid).await.unwrap_or_default();
-                        if lines.iter().any(|l| INTERRUPTED_MARKS.iter().any(|m| l.contains(m))) {
+                        if interrupted_count(&lines) > before {
                             break;
                         }
                     }
@@ -554,11 +579,38 @@ mod tests {
         assert_eq!(answer_keys(&l, "yes").unwrap(), b"\r");
     }
 
+    /// 위쪽 출력(소스 cat 등)에 선택 창 글이 있어도, 맨 아래가 평소 입력 상자면 선택 창이 아니다
+    #[test]
+    fn dialog_text_in_scrollback_is_not_a_modal() {
+        let l = lines(
+            "\
+⏺ Bash(cat harness.rs)
+  const MODAL_MARKS = [\"Enter to confirm\", \"Esc to cancel\"];
+   ❯ 1. Yes
+     2. No
+ Esc to cancel · Tab to amend
+⏺ 위 파일을 읽었다.
+✻ Brewed for 2s
+────────────────────────────────
+❯
+────────────────────────────────
+  Haiku 5.5 medium | ctx 95% left
+  ⏸ manual mode on
+
+",
+        );
+        assert!(modal_of(&l).is_none());
+        assert!(answer_keys(&l, "yes").is_err());
+        assert_eq!(interrupted_count(&lines("  ⎿  Interrupted · What should Claude do instead?\n❯ x\n")), 1);
+    }
+
     #[test]
     fn numbered_menu_and_missing_menu() {
-        let l = lines("Do you want to proceed?\n  1. Yes\n  2. Yes, and don't ask again\n❯ 3. No, and tell Claude\n");
+        let l = lines(
+            "Do you want to proceed?\n  1. Yes\n  2. Yes, and don't ask again\n❯ 3. No, and tell Claude\nEsc to cancel\n",
+        );
         assert_eq!(answer_keys(&l, "yes").unwrap(), b"\x1b[A\x1b[A\r");
-        let l = lines("Do you want to proceed?\n❯ 1. Yes\n  2. No\n");
+        let l = lines("Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel\n");
         assert_eq!(answer_keys(&l, "yes").unwrap(), b"\r");
         // 선택 창이 없으면 Enter를 보내지 않는다
         assert!(answer_keys(&lines("fake> \nNo idea"), "yes").is_err());
