@@ -1,11 +1,13 @@
 // pane 하나의 터미널 보기. 크기는 PTY(cols·rows)를 따르고, 「이 화면에 맞추기」만 PTY 크기를 바꾼다.
 // WebSocket 하나가 대화형 front 하나다. 다른 front가 조작(lease) 중이면 입력을 막고 「가져오기」를 보인다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
-import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, wsUrl } from "./api";
+import { Icon } from "./icons";
+import { onThemeChange, token } from "./theme";
 
 /** 한 번에 보내는 조각(host 상한과 같다) */
 const CHUNK = 512 * 1024;
@@ -21,7 +23,45 @@ function imageOf(list: FileList | undefined | null): File | null {
 
 type Link = "connecting" | "open" | "closed";
 
-export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceRole; onBack: () => void }) {
+const ANSI = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+] as const;
+
+/** 터미널 색은 style.css token을 그대로 읽는다(밝음·어두움마다 ANSI 16색이 따로 있다) */
+function termTheme(): ITheme {
+  const t: ITheme = {
+    background: token("--term-bg"),
+    foreground: token("--term-fg"),
+    cursor: token("--term-cursor"),
+    cursorAccent: token("--term-bg"),
+    selectionBackground: token("--term-selection"),
+  };
+  ANSI.forEach((k, n) => {
+    t[k] = token(`--ansi-${n}`);
+  });
+  return t;
+}
+
+export function TermView({
+  pane,
+  role,
+  onBack,
+  title,
+  crumb,
+  status,
+  dock,
+}: {
+  pane: PaneView;
+  role: DeviceRole;
+  onBack: () => void;
+  /** 목록과 같은 이름(thread pane이면 thread 제목) */
+  title?: string;
+  crumb?: string;
+  status?: ReactNode;
+  /** 입력 위에 붙는 질문 카드 */
+  dock?: ReactNode;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -89,10 +129,14 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
       cols: pane.cols,
       rows: pane.rows,
       fontSize: narrow ? 11 : 13,
-      fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+      lineHeight: 1.15,
+      fontFamily: token("--font-mono") || "ui-monospace, Menlo, monospace",
       scrollback: 2000,
       convertEol: false,
-      theme: { background: "#0d1014" },
+      theme: termTheme(),
+    });
+    const offTheme = onThemeChange(() => {
+      term.options.theme = termTheme();
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -204,6 +248,7 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
       el.removeEventListener("drop", onDrop);
       dataSub.dispose();
       binSub.dispose();
+      offTheme();
       term.dispose();
       termRef.current = null;
     };
@@ -236,20 +281,23 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
   if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중(읽기 전용)" : "연결하는 중";
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
 
+  const locked = readonly || heldByOther;
   return (
     <section className="term">
       <header className="term-head">
-        <button className="back" onClick={onBack} aria-label="목록으로">
-          ←
+        <button className="back ghost icon" onClick={onBack} aria-label="목록으로">
+          <Icon name="back" />
         </button>
         <div className="term-title">
-          <strong>{pane.name || pane.id}</strong>
+          <strong>{title ?? (pane.name || pane.id)}</strong>
           <span className="muted">
-            {pane.machine} · {size[0]}×{size[1]}
+            {crumb ?? pane.machine} · {size[0]}×{size[1]}
           </span>
         </div>
+        {status}
         {canControl && (
-          <button onClick={fitToScreen} disabled={readonly || heldByOther} title="PTY 크기를 이 화면에 맞춘다">
+          <button className="ghost fit-btn" onClick={fitToScreen} disabled={locked} title="PTY 크기를 이 화면에 맞춘다">
+            <Icon name="fit" />
             화면에 맞추기
           </button>
         )}
@@ -273,14 +321,15 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
       {attach && (
         <div className={`banner ${attach.ok ? "" : "warn"}`} data-testid="attach-banner">
           {attach.text}
-          <button type="button" onClick={() => setAttach(null)} aria-label="닫기">
-            ×
+          <button type="button" className="ghost icon small" onClick={() => setAttach(null)} aria-label="닫기">
+            <Icon name="close" />
           </button>
         </div>
       )}
       <div className="term-scroll">
         <div className="term-box" ref={box} data-testid="terminal" />
       </div>
+      {dock}
       {canControl && (
         <form
           className="input-bar"
@@ -289,34 +338,38 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
             sendText(true);
           }}
         >
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onPaste={(e) => {
-              const f = imageOf(e.clipboardData.files);
-              if (f) {
-                e.preventDefault();
-                void attachFile(f);
-              }
-            }}
-            placeholder={readonly || heldByOther ? "입력할 수 없다" : "입력(Enter로 보냄)"}
-            disabled={readonly || heldByOther}
-            aria-label="보낼 글"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-          <button type="submit" disabled={readonly || heldByOther}>
-            보내기
-          </button>
-          <button
-            type="button"
-            disabled={readonly || heldByOther}
-            onClick={() => fileRef.current?.click()}
-            title="그림을 대상 머신에 올리고 입력창에 경로를 넣는다"
-          >
-            그림
-          </button>
+          <div className="composer">
+            <button
+              type="button"
+              className="ghost icon"
+              disabled={locked}
+              onClick={() => fileRef.current?.click()}
+              aria-label="그림"
+              title="그림을 대상 머신에 올리고 입력창에 경로를 넣는다"
+            >
+              <Icon name="image" />
+            </button>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onPaste={(e) => {
+                const f = imageOf(e.clipboardData.files);
+                if (f) {
+                  e.preventDefault();
+                  void attachFile(f);
+                }
+              }}
+              placeholder={locked ? "입력할 수 없다" : "글을 쓰고 Enter로 보낸다"}
+              disabled={locked}
+              aria-label="보낼 글"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <button type="submit" className="primary send" disabled={locked} aria-label="보내기" title="보내기(Enter)">
+              <Icon name="send" />
+            </button>
+          </div>
           <input
             ref={fileRef}
             type="file"
@@ -340,10 +393,11 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
                 ["⏎", "\r"],
               ] as const
             ).map(([label, seq]) => (
-              <button type="button" key={label} disabled={readonly || heldByOther} onClick={() => input(seq)}>
+              <button type="button" key={label} disabled={locked} onClick={() => input(seq)}>
                 {label}
               </button>
             ))}
+            <span className="hint">터미널을 누르면 키보드로 바로 입력한다 · 그림은 붙여 넣거나 끌어 놓는다</span>
           </div>
         </form>
       )}

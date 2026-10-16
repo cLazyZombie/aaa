@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { DeviceRole, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
+import { Icon } from "./icons";
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "사람 차례",
@@ -71,6 +72,9 @@ function inline(s: string): ReactNode[] {
   });
 }
 
+/** 첫 줄 상태 태그(`[완료]` 등)는 위 meta에 이미 보인다 */
+const withoutStateLine = (r: string) => r.replace(/^\s*\[[^\]\n]{1,20}\]\s*\n/, "");
+
 const fmtSize = (n: number) =>
   n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)}MB` : n >= 1024 ? `${(n / 1024).toFixed(1)}KB` : `${n}B`;
 
@@ -113,53 +117,79 @@ export function ThreadPanel({
   return (
     <div className="thread-view" data-testid="thread-view">
       <header className="term-head">
-        <button className="back" onClick={onBack}>
-          목록으로
+        <button className="back ghost icon" onClick={onBack} aria-label="목록으로">
+          <Icon name="back" />
         </button>
         <div className="term-title">
-          <strong>{t.title}</strong>
+          <strong>
+            {t.project}/{t.id}
+          </strong>
           <span className="muted">
-            {t.project}/{t.id} · {t.profile}@{t.machine} · {GROUP_LABEL[t.group] ?? t.group}
-            {t.report_state ? ` · 보고 ${t.report_state}` : ""}
+            {t.profile}@{t.machine}
           </span>
         </div>
+        <span className={`chip head-chip ${t.group}`}>
+          {t.group === "working" && <span className="dot working" aria-hidden />}
+          {GROUP_LABEL[t.group] ?? t.group}
+        </span>
         {role !== "reader" && t.group === "ready_for_review" && (
           <button className="primary" onClick={ack}>
+            <Icon name="check" />
             확인(ack)
           </button>
         )}
       </header>
       {msg && <div className="banner err">{msg}</div>}
       <div className="thread-body">
-        <section className="report" data-testid="report">
-          <h2>보고</h2>
-          {lib?.report ? <Markdown text={lib.report} /> : <p className="muted">아직 회수한 보고가 없다</p>}
-        </section>
-        {lib && lib.files.length > 0 && (
-          <section className="files" data-testid="files">
-            <h2>결과물 {lib.files.length}</h2>
-            {index && (
-              <iframe
-                className="library-frame"
-                data-testid="library-frame"
-                title="결과물 index.html"
-                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
-                src={lib.base + "index.html"}
-              />
-            )}
-            <ul>
-              {lib.files.map((f) => (
-                <li key={f.path}>
-                  <a href={lib.base + encodePath(f.path)} target="_blank" rel="noopener noreferrer">
-                    {f.path}
-                  </a>
-                  <span className="muted"> {fmtSize(f.size)}</span>
-                  {f.on_agent && <span className="tag">agent에서 읽음</span>}
-                </li>
-              ))}
-            </ul>
+        <div className="thread-col">
+          <div className="t-hero">
+            <h1>{t.title}</h1>
+            <div className="t-meta">
+              <span className={`chip meta-chip ${t.group}`}>{GROUP_LABEL[t.group] ?? t.group}</span>
+              <span className="mono">
+                {t.project}/{t.id}
+              </span>
+              <span>
+                {t.profile}@{t.machine}
+              </span>
+              {t.branch && <span className="mono">{t.branch}</span>}
+              {t.report_state && <span className="tag">보고 {t.report_state}</span>}
+              {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
+            </div>
+          </div>
+          <section className="card report" data-testid="report">
+            <h2>보고</h2>
+            {lib?.report ? <Markdown text={withoutStateLine(lib.report)} /> : <p className="muted">아직 회수한 보고가 없다</p>}
           </section>
-        )}
+          {lib && lib.files.length > 0 && (
+            <section className="card files" data-testid="files">
+              <h2>
+                결과물 <span className="muted">{lib.files.length}</span>
+              </h2>
+              {index && (
+                <iframe
+                  className="library-frame"
+                  data-testid="library-frame"
+                  title="결과물 index.html"
+                  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
+                  src={lib.base + "index.html"}
+                />
+              )}
+              <ul>
+                {lib.files.map((f) => (
+                  <li key={f.path}>
+                    <Icon name="file" />
+                    <a href={lib.base + encodePath(f.path)} target="_blank" rel="noopener noreferrer">
+                      {f.path}
+                    </a>
+                    {f.on_agent && <span className="tag">agent에서 읽음</span>}
+                    <span className="size">{fmtSize(f.size)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );

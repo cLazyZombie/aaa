@@ -385,34 +385,66 @@ impl App {
 
     /// 그리고 포커스 pane의 커서 위치를 돌려준다
     fn render(&self, buf: &mut Buffer, area: Rect) -> Option<(u16, u16)> {
-        let dim = Style::default().fg(Color::DarkGray);
-        // 탭 줄
-        let mut x = area.x;
-        let ws_label = format!(" {} ", self.ws_name);
-        x = buf.set_stringn(x, area.y, &ws_label, area.w as usize, Style::default().add_modifier(Modifier::BOLD)).0;
+        // 탭 줄: 이름표 · workspace · 탭(지금 탭은 강조색 바탕) … 오른쪽에 열린 질문 수
+        let right_edge = area.x + area.w;
+        let put = |buf: &mut Buffer, x: u16, s: &str, st: Style| {
+            buf.set_stringn(x, area.y, s, right_edge.saturating_sub(x) as usize, st).0
+        };
+        let mut x = put(buf, area.x, " aa ", Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD));
+        x = put(buf, x, &format!(" {} ", self.ws_name), Style::default().fg(DIM));
         for (i, t) in self.ws.tabs.iter().enumerate() {
             let first = layout::leaves(&t.root).into_iter().next();
             let name = first.as_ref().and_then(|p| self.panes.get(p)).map(|p| p.name.clone()).unwrap_or_default();
             let label = format!(" {}:{} ", i + 1, if t.name.is_empty() { name } else { t.name.clone() });
-            let style =
-                if i == self.tab { Style::default().fg(Color::Black).bg(Color::Cyan) } else { Style::default() };
-            let room = (area.x + area.w).saturating_sub(x) as usize;
-            x = buf.set_stringn(x, area.y, &label, room, style).0;
+            let style = if i == self.tab {
+                Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(DIM)
+            };
+            x = put(buf, x, &label, style);
+        }
+        let asking = self.panes.values().filter(|p| is_asking(p)).count();
+        if asking > 0 {
+            let label = format!(" ? 질문 {asking} ");
+            let w = unicode_width(&label) as u16;
+            if x + w < right_edge {
+                put(buf, right_edge - w, &label, Style::default().fg(ON_CHIP).bg(BLOCKED).add_modifier(Modifier::BOLD));
+            }
         }
         let body = Self::body(area);
         let mut cursor = None;
         match self.ws.tabs.get(self.tab) {
             None => {
-                let msg = format!("탭이 없다. {} 다음 c로 새 셸을 연다", prefix_label(self.prefix.0));
-                buf.set_stringn(body.x + 1, body.y + 1, &msg, body.w.saturating_sub(2) as usize, dim);
+                let lines = [
+                    ("탭이 없다".to_string(), Style::default().add_modifier(Modifier::BOLD)),
+                    (
+                        format!("{} 다음 c로 새 셸을 연다 · ?로 도움말", prefix_label(self.prefix.0)),
+                        Style::default().fg(DIM),
+                    ),
+                ];
+                for (n, (msg, st)) in lines.iter().enumerate() {
+                    let w = unicode_width(msg).min(body.w as usize) as u16;
+                    let y = body.y + body.h / 2 + n as u16;
+                    buf.set_stringn(body.x + (body.w - w) / 2, y.saturating_sub(1), msg, w as usize, *st);
+                }
             }
             Some(tab) => {
                 let (rects, lines) = layout::rects(&tab.root, body);
+                // 포커스 pane과 맞닿은 구분선만 강조색으로 그린다(여럿일 때 어디가 포커스인지 보인다)
+                let focus_rect = rects.iter().find(|(p, _)| Some(p) == self.focus.as_ref()).map(|(_, r)| *r);
                 for (dir, r) in lines {
                     let ch = if dir == SplitDir::Horizontal { "│" } else { "─" };
                     for dy in 0..r.h {
                         for dx in 0..r.w {
-                            buf.set_string(r.x + dx, r.y + dy, ch, dim);
+                            let (cx, cy) = (r.x + dx, r.y + dy);
+                            let near = focus_rect.is_some_and(|f| {
+                                if dir == SplitDir::Horizontal {
+                                    (cx + 1 == f.x || cx == f.x + f.w) && cy >= f.y && cy < f.y + f.h
+                                } else {
+                                    (cy + 1 == f.y || cy == f.y + f.h) && cx >= f.x && cx < f.x + f.w
+                                }
+                            });
+                            buf.set_string(cx, cy, ch, Style::default().fg(if near { ACCENT } else { FAINT }));
                         }
                     }
                 }
@@ -424,14 +456,26 @@ impl App {
                 }
             }
         }
-        // 상태 줄
+        // 상태 줄: 색 조각들(머신 · pane · 상태 …), 오른쪽에 prefix 안내
         let y = area.y + area.h.saturating_sub(1);
-        let status = self.status_line();
-        let style = Style::default().fg(Color::Black).bg(if self.in_prefix { Color::Yellow } else { Color::Gray });
         for dx in 0..area.w {
-            buf.set_string(area.x + dx, y, " ", style);
+            buf.set_string(area.x + dx, y, " ", Style::default());
         }
-        buf.set_stringn(area.x, y, &status, area.w as usize, style);
+        let mut x = area.x;
+        for (text, st) in self.status_segments() {
+            let room = right_edge.saturating_sub(x) as usize;
+            if room == 0 {
+                break;
+            }
+            x = buf.set_stringn(x, y, &text, room, st).0;
+        }
+        if !self.in_prefix {
+            let hint = format!(" {} ? 도움말 ", prefix_label(self.prefix.0));
+            let w = unicode_width(&hint) as u16;
+            if x + w + 1 < right_edge {
+                buf.set_stringn(right_edge - w, y, &hint, w as usize, Style::default().fg(FAINT));
+            }
+        }
         cursor
     }
 
@@ -459,21 +503,36 @@ impl App {
         None
     }
 
-    fn status_line(&self) -> String {
+    /// 상태 줄 조각. 글을 이어 붙이면 예전 상태 줄과 같은 내용이다(시험은 글로 본다).
+    fn status_segments(&self) -> Vec<(String, Style)> {
+        let mut out: Vec<(String, Style)> = Vec::new();
         if self.in_prefix {
-            return format!(" {} … (? 도움말)", prefix_label(self.prefix.0));
-        }
-        let mut s = String::new();
-        if let Some(p) = self.focus.as_ref().and_then(|f| self.panes.get(f)) {
-            s.push_str(&format!(
-                " {} · {} · {}",
-                p.machine,
-                if p.name.is_empty() { &p.id } else { &p.name },
-                state_text(p)
+            out.push((
+                format!(" {} ", prefix_label(self.prefix.0)),
+                Style::default().fg(ON_CHIP).bg(WARN).add_modifier(Modifier::BOLD),
             ));
+            out.push((
+                " … c 새 탭 · % 좌우 · \" 위아래 · 화살표 이동 · d 나가기 (? 도움말)".into(),
+                Style::default().fg(DIM),
+            ));
+            return out;
+        }
+        if let Some(p) = self.focus.as_ref().and_then(|f| self.panes.get(f)) {
+            out.push((
+                format!(" {} ", p.machine),
+                Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD),
+            ));
+            out.push((
+                format!(" {} ", if p.name.is_empty() { &p.id } else { &p.name }),
+                Style::default().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED),
+            ));
+            out.push((format!(" {}", state_text(p)), Style::default().fg(state_color(p))));
             match &p.lease {
-                Some(l) if l.front == self.me => s.push_str(" · 조작 중"),
-                Some(l) => s.push_str(&format!(" · {} 조작 중(가져오기 {} t)", l.label, prefix_label(self.prefix.0))),
+                Some(l) if l.front == self.me => out.push((" · 조작 중".into(), Style::default().fg(DIM))),
+                Some(l) => out.push((
+                    format!(" · {} 조작 중(가져오기 {} t)", l.label, prefix_label(self.prefix.0)),
+                    Style::default().fg(WARN),
+                )),
                 None => {}
             }
         }
@@ -482,19 +541,50 @@ impl App {
             self.panes.values().filter(|p| p.role == Some(aa_proto::Role::Evaluator)).collect();
         evals.sort_by(|a, b| a.name.cmp(&b.name));
         for p in evals {
-            let mark = match (&p.state, p.agent.as_ref().map(|a| a.activity)) {
-                (st, _) if !st.is_running() => "끝남",
-                (_, Some(aa_proto::AgentActivity::Working)) => "평가 중",
-                _ => "대기",
+            let (mark, c) = match (&p.state, p.agent.as_ref().map(|a| a.activity)) {
+                (st, _) if !st.is_running() => ("끝남", WARN),
+                (_, Some(aa_proto::AgentActivity::Working)) => ("평가 중", WORKING),
+                _ => ("대기", DONE),
             };
             let project = p.name.split('/').next().unwrap_or(&p.name);
-            s.push_str(&format!(" · 평가 ● {project} {mark}"));
+            out.push((" · 평가 ".into(), Style::default().fg(DIM)));
+            out.push(("●".into(), Style::default().fg(c)));
+            out.push((format!(" {project} {mark}"), Style::default().fg(DIM)));
         }
         if let Some(m) = &self.message {
-            s.push_str(" · ");
-            s.push_str(m);
+            out.push((format!(" · {m}"), Style::default().fg(WARN)));
         }
-        s
+        out
+    }
+}
+
+/// 색(256색 번호: 밝은 터미널·어두운 터미널 모두에서 읽힌다). 웹 token과 같은 뜻으로 쓴다.
+const ACCENT: Color = Color::Indexed(141);
+const WORKING: Color = Color::Indexed(75);
+const BLOCKED: Color = Color::Indexed(210);
+const DONE: Color = Color::Indexed(114);
+const WARN: Color = Color::Indexed(221);
+const DIM: Color = Color::Indexed(245);
+const FAINT: Color = Color::Indexed(240);
+/// 색 바탕 위 글자. ANSI 0(검정)은 굵게 쓰면 많은 터미널이 밝은 회색으로 바꾸므로 256색 검정(16)을 쓴다.
+const ON_CHIP: Color = Color::Indexed(16);
+
+fn is_asking(p: &PaneView) -> bool {
+    p.state.is_running() && p.agent.as_ref().is_some_and(|a| a.activity == aa_proto::AgentActivity::Question)
+}
+
+fn state_color(p: &PaneView) -> Color {
+    use aa_proto::AgentActivity::*;
+    if p.connection == aa_proto::Connection::Disconnected {
+        return WARN;
+    }
+    match (&p.state, p.agent.as_ref().map(|a| a.activity)) {
+        (SessionState::Running, Some(Working)) => WORKING,
+        (SessionState::Running, Some(Question | Error)) => BLOCKED,
+        (SessionState::Running, Some(Idle)) => DONE,
+        (SessionState::Running, _) => DIM,
+        (SessionState::Exited { .. }, _) => DIM,
+        _ => WARN,
     }
 }
 
@@ -554,7 +644,17 @@ fn badge(buf: &mut Buffer, view: Option<&PaneView>, r: Rect, focused: bool) -> O
         (SessionState::Exited { code }, _) => format!(" 종료({}) ", code.map(|c| c.to_string()).unwrap_or("?".into())),
     };
     let w = unicode_width(&text).min(r.w as usize) as u16;
-    let style = Style::default().fg(Color::Black).bg(if focused { Color::Yellow } else { Color::DarkGray });
+    // 색은 상태를 따른다(질문 빨강·끊김과 중단 호박·종료 회색). 포커스가 아니면 조금 흐리게.
+    let bg = match (&p.state, p.connection) {
+        (_, aa_proto::Connection::Disconnected) => WARN,
+        (SessionState::Running, _) => BLOCKED,
+        (SessionState::Exited { .. }, _) => FAINT,
+        _ => WARN,
+    };
+    let mut style = Style::default().fg(ON_CHIP).bg(bg).add_modifier(Modifier::BOLD);
+    if !focused {
+        style = style.remove_modifier(Modifier::BOLD).add_modifier(Modifier::DIM);
+    }
     buf.set_stringn(r.x + r.w - w, r.y, &text, w as usize, style);
     None
 }
