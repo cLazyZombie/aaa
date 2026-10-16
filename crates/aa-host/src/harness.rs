@@ -263,7 +263,7 @@ impl Host {
 
     // ───────────── 질문 ─────────────
 
-    fn open_question_of(&self, pane: &str) -> Option<QuestionView> {
+    pub(crate) fn open_question_of(&self, pane: &str) -> Option<QuestionView> {
         self.questions(false).into_iter().find(|q| q.pane == pane)
     }
 

@@ -322,6 +322,15 @@ pub enum AgentRequest {
         command: String,
         timeout_ms: u64,
     },
+    /// 붙여 넣은 그림 한 조각을 세션 폴더(`sessions/<id>/attachments/`)에 쓴다. `att`는 host가 정한 이름(hex.확장자)이다.
+    /// `offset`은 지금까지 쓴 길이와 같아야 하고, `eof`면 sha256을 확인해 이름을 바꾸고 절대 경로를 돌려준다.
+    AttachWrite {
+        session: String,
+        att: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+    },
     /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
     ThreadCleanup {
         repo: Option<String>,
@@ -359,6 +368,11 @@ pub enum AgentResponse {
     Cleanup(Cleanup),
     Relaunch(Launch),
     CommandRan(CommandRan),
+    /// 첨부를 다 썼다(절대 경로와 sha256)
+    Attached {
+        path: String,
+        sha256: String,
+    },
 }
 
 /// routine 명령 실행 결과
@@ -1013,6 +1027,12 @@ pub enum TermServerMsg {
     Front {
         id: String,
     },
+    /// 붙여 넣은 그림을 대상 머신에 저장했다. `inserted`면 harness 입력창에 경로를 넣었다(Enter는 보내지 않는다).
+    Attached {
+        path: String,
+        inserted: bool,
+        note: Option<String>,
+    },
     Error(ErrorBody),
 }
 
@@ -1029,6 +1049,15 @@ pub enum TermClientMsg {
     },
     /// 조작 lease를 가져온다
     Take,
+    /// 붙여 넣은 그림 한 조각(최대 512KiB). `offset` 0이 새 첨부의 시작이고, 마지막 조각에서 `sha256`(파일 전체)을 확인한다.
+    Attach {
+        #[ts(type = "number")]
+        offset: u64,
+        #[ts(type = "number")]
+        total: u64,
+        sha256: String,
+        data: B64,
+    },
 }
 
 #[cfg(test)]

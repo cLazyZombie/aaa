@@ -769,7 +769,7 @@ host 프로젝트 폴더 구성:
 - **흐름 사건:** `routine_ran`, `routine_failed`, `routine_approved`.
 - **CLI:** `aa routine list <p>`(일정·지난·다음·건너뜀·승인 상태), `aa routine approve <p> <name>`.
 
-### 8.20 M1-4 구현 결정(10-16): 보고서·결과물 보기, 순서와 미룬 것
+### 8.20 M1-4 구현 결정(10-16): 보고서·결과물 보기, 알림, 이미지, 순서와 미룬 것
 
 - **순서:** 운영 대체에 먼저 필요한 것부터 한다. ① 웹 보고서·결과물 보기 ② 알림 webhook ③ 웹 이미지 붙여넣기(macOS 대상).
 - **미룬 것**
@@ -790,6 +790,14 @@ host 프로젝트 폴더 구성:
   - 주소에는 봇 token이 들어갈 수 있다. `host.local.toml`(커밋하지 않는 머신별 파일)에 두고, 로그·흐름 사건·오류 글에는 주소를 넣지 않는다.
   - https만 받는다. 루트 인증서는 webpki 목록을 쓴다(OS 키체인을 읽지 않는다). http는 이 머신 loopback만 허용한다(시험용).
   - HTTP client는 tokio-rustls 위에 직접 쓴 POST 한 번이다. 큰 HTTP crate를 더하지 않았다.
+- **웹 이미지 붙여넣기(§9를 이렇게 줄여 구현했다)**
+  - 수집: 터미널 영역 붙여넣기(xterm보다 먼저 가로챈다)·입력 막대 붙여넣기·끌어 놓기·「그림」 버튼. 글 붙여넣기는 그대로 xterm으로 간다.
+  - 전송: **pane WebSocket(대화형 front)**으로 512KiB 조각을 base64 JSON(`attach`)으로 보낸다. 별도 POST 경로를 두지 않은 이유: 조작 lease가 그 WebSocket 연결(front)에 묶여 있어, 조각마다 같은 권한·lease 판정을 그대로 쓸 수 있다. 조각은 Agent link frame(1MiB) 안에 든다. 메시지 상한도 1MiB로 둔다.
+  - host는 모으지 않고 조각마다 agent로 넘긴다(그 사이 화면 출력이 끼어든다). 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고(브라우저가 알린 MIME은 믿지 않는다), 이름은 host가 무작위로 정한다. 상한 16MiB, offset이 맞지 않으면 거부한다.
+  - 대상 경로: 모든 pane이 **세션 범위** `<agent state>/sessions/<id>/attachments/<hex>.<ext>`다(§9 표의 thread `.aa/…/attachments` 대신). thread 작업 폴더(worktree)에 두면 그림이 git에 섞일 수 있고, 세션 폴더는 이미 0700이며 세션 기록을 지울 때 함께 지워진다. 폴더 0700·파일 0600, 세션당 64개까지. `.part`에 이어 쓰고 마지막 조각에서 sha256을 대조한 뒤 이름을 바꾼다.
+  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 bracketed paste로 넣고 Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
+  - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex는 같은 방식으로 넣지만 실제 확인은 하지 않았다.
+  - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
