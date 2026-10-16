@@ -28,6 +28,11 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
   const input = (data: string) => {
     if (!readonlyRef.current) send({ t: "input", data });
   };
+  // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
+  const fromTerminal = (data: string) => {
+    if (/^\x1b\[\d+;\d+R$/.test(data)) return;
+    input(data);
+  };
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 700px)").matches;
@@ -45,7 +50,7 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
     term.open(box.current!);
     termRef.current = term;
     fitRef.current = fit;
-    const dataSub = term.onData(input);
+    const dataSub = term.onData(fromTerminal);
     const binSub = term.onBinary((s) => {
       if (readonlyRef.current) return;
       const ws = wsRef.current;

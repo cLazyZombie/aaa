@@ -20,7 +20,7 @@ use super::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
 use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use crate::ring::Ring;
 use crate::util;
-use crate::vt::Vt;
+use crate::vt::{DsrScanner, Vt};
 
 /// 출력 보존 상한(재접속 때 이 범위 안이면 bytes만 이어 보낸다)
 pub const RING_BYTES: usize = 2 << 20;
@@ -39,6 +39,7 @@ struct State {
     child_pid: Option<u32>,
     started_at_ms: u64,
     vt: Vt,
+    dsr: DsrScanner,
     ring: Ring,
     conns: HashMap<u64, FrameTx>,
     subs: HashSet<u64>,
@@ -76,7 +77,14 @@ impl State {
     fn output(&mut self, data: &[u8]) {
         let offset = self.ring.end();
         self.ring.push(data);
-        self.vt.feed(data);
+        // 커서 위치 질의에는 질의 시점의 커서로 답한다(front가 아니라 session host가 터미널이다)
+        let mut start = 0;
+        for end in self.dsr.scan(data) {
+            self.vt.feed(&data[start..end]);
+            let _ = self.input.send(self.vt.cursor_report());
+            start = end;
+        }
+        self.vt.feed(&data[start..]);
         let mut lagging = Vec::new();
         for conn in &self.subs {
             let Some(tx) = self.conns.get(conn) else { continue };
@@ -279,6 +287,7 @@ async fn run(dir: PathBuf) -> Result<()> {
         child_pid,
         started_at_ms,
         vt: Vt::new(rows, cols),
+        dsr: DsrScanner::default(),
         ring: Ring::new(RING_BYTES),
         conns: HashMap::new(),
         subs: HashSet::new(),
