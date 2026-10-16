@@ -92,7 +92,7 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     }
     let is_ws =
         h.get(header::UPGRADE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
-    if req.method() != Method::GET || is_ws {
+    if !matches!(*req.method(), Method::GET | Method::HEAD) || is_ws {
         let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
         if !origin_allowed(&host, origin) {
             return (StatusCode::FORBIDDEN, "허용하지 않은 Origin").into_response();

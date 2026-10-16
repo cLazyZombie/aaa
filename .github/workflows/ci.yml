@@ -57,6 +57,8 @@ jobs:
       - name: 실패 요약
         if: failure()
         run: |
+          # 기본 셸은 -e -o pipefail이다. 찾는 줄이 없어도 요약은 끝까지 간다.
+          set +e +o pipefail
           annotate() {
             node -e 'let t=require("fs").readFileSync(0,"utf8").slice(-3500); if(t.trim()) console.log("::error title="+process.argv[1]+"::"+t.replace(/%/g,"%25").replace(/\r/g,"").replace(/\n/g,"%0A"))' "$1"
           }
@@ -71,3 +73,4 @@ jobs:
               [ -f "$log" ] && tail -c 3000 "$log" | annotate "$(basename "$d")/$(basename "$log")"
             done
           done
+          true
