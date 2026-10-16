@@ -126,6 +126,7 @@ impl State {
                 None => SessionState::Running,
                 Some(code) => SessionState::Exited { code },
             },
+            role: self.spec.spec.role,
         }
     }
 

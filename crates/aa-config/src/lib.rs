@@ -74,6 +74,7 @@ pub struct HostConfig {
     pub web: WebSection,
     pub local_agent: LocalAgentSection,
     pub tui: TuiSection,
+    pub projects: ProjectsSection,
 }
 
 impl Default for HostConfig {
@@ -84,6 +85,32 @@ impl Default for HostConfig {
             web: WebSection::default(),
             local_agent: LocalAgentSection::default(),
             tui: TuiSection::default(),
+            projects: ProjectsSection::default(),
+        }
+    }
+}
+
+/// 프로젝트 폴더(§7.1)와 thread 정책(§8)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectsSection {
+    /// 프로젝트 폴더 root(비우면 `~/.aa/projects`)
+    pub root: String,
+    /// thread에 쓸 수 있는 profile 이름(agent.toml이 정의하고 host가 허용한다). `"*"`는 모두.
+    pub allow_profiles: Vec<String>,
+    /// thread 보고와 함께 host로 복사할 library 상한(MB). 넘는 파일은 agent에 남긴다.
+    pub library_copy_mb: u64,
+    /// brief에 넣을 memory(MEMORY.md + memory/*.md) 글자 수 상한
+    pub brief_memory_chars: usize,
+}
+
+impl Default for ProjectsSection {
+    fn default() -> Self {
+        ProjectsSection {
+            root: String::new(),
+            allow_profiles: vec!["*".into()],
+            library_copy_mb: 200,
+            brief_memory_chars: 32_000,
         }
     }
 }
@@ -164,6 +191,8 @@ pub struct AgentConfig {
     pub agent: AgentSection,
     pub reconnect: ReconnectSection,
     pub selfcheck: SelfcheckSection,
+    /// thread를 띄우는 profile(§8.2). host.toml `[projects] allow_profiles`가 허용한 것만 쓴다.
+    pub profiles: std::collections::BTreeMap<String, Profile>,
 }
 
 impl Default for AgentConfig {
@@ -173,8 +202,26 @@ impl Default for AgentConfig {
             agent: AgentSection::default(),
             reconnect: ReconnectSection::default(),
             selfcheck: SelfcheckSection::default(),
+            profiles: Default::default(),
         }
     }
+}
+
+/// agent harness 실행 방법. model·effort는 harness별 플래그로 바뀐다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Profile {
+    /// claude·codex·shell·custom
+    pub harness: String,
+    pub model: String,
+    pub effort: String,
+    /// 뒤에 붙일 인자(권한·daemon 금지 인자 등). resume에도 그대로 붙는다.
+    pub args: Vec<String>,
+    /// 더할 환경 변수. resume에도 그대로 쓴다.
+    pub env: std::collections::BTreeMap<String, String>,
+    /// harness 실행 파일(비우면 harness 이름). custom은 필수이고 앞부분 argv 전체다.
+    pub command: Vec<String>,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -186,6 +233,8 @@ pub struct AgentSection {
     pub host: String,
     /// 새 세션 기본 작업 폴더(기본: HOME)
     pub default_cwd: String,
+    /// thread worktree·작업 폴더를 만드는 root(기본: `~/aa-work`)
+    pub work_root: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,34 +279,38 @@ pub fn load_agent(dir: &Path) -> Result<Loaded<AgentConfig>, ConfigErrors> {
 
 /// 검증 실패 한 건: 문제 key 경로와 이유
 pub struct Invalid {
-    pub path: Vec<&'static str>,
+    pub path: Vec<String>,
     pub message: String,
+}
+
+fn key(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|s| s.to_string()).collect()
 }
 
 fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
     if !c.host.agent_listen.is_empty() && c.host.agent_listen.parse::<SocketAddr>().is_err() {
         out.push(Invalid {
-            path: vec!["host", "agent_listen"],
+            path: key(&["host", "agent_listen"]),
             message: format!("주소:포트 형식이 아니다: {:?}", c.host.agent_listen),
         });
     }
     if !c.web.listen.is_empty() {
         match c.web.listen.parse::<SocketAddr>() {
             Ok(a) if !a.ip().is_loopback() => out.push(Invalid {
-                path: vec!["web", "listen"],
+                path: key(&["web", "listen"]),
                 message: format!("웹은 loopback에서만 연다(외부 공개는 `aa web publish`): {a}"),
             }),
             Ok(_) => {}
             Err(_) => out.push(Invalid {
-                path: vec!["web", "listen"],
+                path: key(&["web", "listen"]),
                 message: format!("주소:포트 형식이 아니다: {:?}", c.web.listen),
             }),
         }
     }
     if c.web.publish_ports.is_empty() || c.web.publish_ports.contains(&0) {
         out.push(Invalid {
-            path: vec!["web", "publish_ports"], message: "1~65535 포트를 하나 이상 적는다".into()
+            path: key(&["web", "publish_ports"]), message: "1~65535 포트를 하나 이상 적는다".into()
         });
     }
     out
@@ -271,16 +324,36 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
             h.rsplit_once(':').is_some_and(|(name, port)| !name.is_empty() && port.parse::<u16>().is_ok_and(|p| p > 0));
         if !ok {
             out.push(Invalid {
-                path: vec!["agent", "host"],
+                path: key(&["agent", "host"]),
                 message: format!("\"local\" 또는 <이름 또는 주소>:<포트> 형식이어야 한다: {h:?}"),
             });
         }
     }
     if !(1..=3600).contains(&c.reconnect.max_backoff_s) {
-        out.push(Invalid { path: vec!["reconnect", "max_backoff_s"], message: "1~3600초여야 한다".into() });
+        out.push(Invalid { path: key(&["reconnect", "max_backoff_s"]), message: "1~3600초여야 한다".into() });
     }
     if c.selfcheck.first_exec_samples > 200 {
-        out.push(Invalid { path: vec!["selfcheck", "first_exec_samples"], message: "0~200이어야 한다".into() });
+        out.push(Invalid { path: key(&["selfcheck", "first_exec_samples"]), message: "0~200이어야 한다".into() });
+    }
+    for (name, p) in &c.profiles {
+        let leak = name.as_str();
+        if !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') {
+            out.push(Invalid {
+                path: key(&["profiles", leak]), message: "profile 이름은 영문·숫자·-·_만 쓴다".into()
+            });
+        }
+        match p.harness.as_str() {
+            "claude" | "codex" | "shell" => {}
+            "custom" if !p.command.is_empty() => {}
+            "custom" => out.push(Invalid {
+                path: key(&["profiles", leak, "command"]),
+                message: "custom harness는 command(실행할 argv)가 있어야 한다".into(),
+            }),
+            other => out.push(Invalid {
+                path: key(&["profiles", leak, "harness"]),
+                message: format!("claude·codex·shell·custom 중 하나여야 한다: {other:?}"),
+            }),
+        }
     }
     out
 }
@@ -347,7 +420,8 @@ where
     };
     for inv in validate(&config) {
         // 값을 마지막으로 정한 파일(local 우선)에서 위치를 찾는다.
-        let found = sources.iter().rev().find_map(|s| locate(&s.text, &inv.path).map(|lc| (s, lc)));
+        let parts: Vec<&str> = inv.path.iter().map(String::as_str).collect();
+        let found = sources.iter().rev().find_map(|s| locate(&s.text, &parts).map(|lc| (s, lc)));
         let (file, (line, col)) = match found {
             Some((s, lc)) => (s.path.clone(), lc),
             None => (dir.join(format!("{stem}.toml")), (0, 0)),
@@ -407,7 +481,7 @@ fn locate(text: &str, path: &[&str]) -> Option<(usize, usize)> {
     let mut item = doc.as_item();
     let mut best = None;
     for key in path {
-        let next = item.get(key)?;
+        let Some(next) = item.get(key) else { break };
         if let Some(span) = next.span() {
             best = Some(span.start);
         }

@@ -620,6 +620,36 @@ host 프로젝트 폴더 구성:
 - 흐름 사건과 cursor 구독
 평가자 기능 자체(지정, 배경 실행, 별도 표시, 사건 자동 전달, 평가 기록, 채택·보류, role 금지 동작)는 M3에 둔다(§14).
 
+### 8.14 M1-3a 구현 결정(10-16)
+
+- **자리 만들기는 agent가 한다.** `ThreadPrepare`를 받은 그 머신의 agent가 일을 맡는다.
+  - worktree(`<work_root>/<repo 이름>/<project>-<thread>`, branch `aa/<project>/<thread>-<slug>`)나 작업 폴더(`<work_root>/<project>/<thread>`)를 만든다.
+  - brief.md를 쓰고 profile을 해석한다. host는 git을 실행하지 않고 해석 결과(`Launch`)를 thread 기록에 저장한다.
+- **작업 폴더**는 `.aa/<project>-<thread>/`(brief.md·report.md·library/)이고, repo의 `info/exclude`에 `.aa/`를 넣는다.
+- **profile → argv**
+  - claude: `--model`·`--effort`·args 뒤에 `--session-id <uuid>`를 붙인다. 그래서 resume(`--resume <uuid>`)이 같은 대화를 잇는다.
+  - codex: `-m`·`-c model_reasoning_effort=…`·args를 쓴다. 세션 ID는 M1-3b hook에서 받는다.
+  - 두 harness 모두 resume argv가 launch와 같은 model·effort·args·env를 쓰는지 유닛 테스트로 막는다(§8.2).
+- **brief 안내**
+  - 화면이 3초 멈추면 `.aa/<p>-<t>/brief.md를 읽고 그대로 하라.`를 한 번 입력하고 Enter를 보낸다.
+  - 8초 안에 화면이 바뀌면 `delivered`, 아니면 `unknown`이다. unknown은 **자동으로 다시 보내지 않는다.** 사람이 `aa thread brief`로만 다시 보낸다.
+  - harness 확인창(폴더 신뢰 등)이 보이면 입력하지 않는다.
+  - 수신 확인을 화면 변화 대신 harness 사건(`turn_start`)으로 바꾸는 것은 M1-3b에서 한다.
+- **보고 회수**
+  - agent가 report.md(regular file만) hash를 1초마다 보고 바뀌면 알린다. host는 본문과 library(symlink 제외, `library_copy_mb` 상한)를 받는다.
+  - 받은 것은 hash를 확인한 뒤 `threads/<id>.md`·`library/<id>/`에 원자적으로 둔다. 건너뛴 것이 있으면 사본이 `partial`이고, 실패하면 hash를 바꾸지 않는다.
+  - agent가 다시 붙으면 host가 감시를 다시 걸고, agent는 곧바로 지금 hash를 보낸다. 그래서 host가 꺼진 동안 바뀐 보고도 받는다.
+- **보고 형식(0.2.35에 없던 규칙)**
+  - 첫 줄 상태 태그(`[진행 중]`·`[사용자 작업 필요]`·`[결정 필요]`·`[완료]`)와 `## Next` 줄을 읽는다. 지금 운영 brief가 쓰는 형식이다.
+  - `[사용자 작업 필요]`·`[결정 필요]`면 목록 묶음이 「사람 차례」다.
+- **resolve**
+  - 마지막 사본이 실패하면 거부한다. 그다음 세션을 끝내고 worktree를 force 없이 지운다. 고친 파일이 있으면 남긴다.
+  - branch는 기준 ref에 병합(조상)됐을 때만 지운다.
+- **흐름 사건**
+  - 프로젝트별 seq로 DB에 쌓는다. 지금 내는 사건: `thread_started`·`brief_delivered`·`brief_unknown`·`report_ready`·`copy_failed`·`review_acked`·`thread_resolved`·`thread_failed`.
+  - 연결된 front에는 `Flow` 사건으로 알린다. `aa events --after <seq>`는 cursor부터 다시 읽는다.
+- **역할:** `SpawnSpec`·`SessionInfo`·`PaneView`에 role이 있다. pane 목록은 기본으로 평가자를 빼고 `--role`로 거른다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

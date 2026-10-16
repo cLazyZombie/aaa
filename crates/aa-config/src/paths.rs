@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-fn home() -> PathBuf {
+pub fn home() -> PathBuf {
     #[cfg(windows)]
     let h = std::env::var_os("USERPROFILE");
     #[cfg(not(windows))]

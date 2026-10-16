@@ -20,3 +20,4 @@ hex.workspace = true
 rand.workspace = true
 tracing.workspace = true
 tokio-rustls.workspace = true
+sha2.workspace = true

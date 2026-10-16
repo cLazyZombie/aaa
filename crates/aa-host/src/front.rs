@@ -71,6 +71,29 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
             }
         })
     };
+    // 흐름 사건과 thread 기록 변화(놓치면 `events`로 cursor부터 다시 읽는다)
+    let flow_task = {
+        let (tx, mut flow, mut threads) = (tx.clone(), host.flow_events.subscribe(), host.thread_events.subscribe());
+        tokio::spawn(async move {
+            loop {
+                let ev = tokio::select! {
+                    e = flow.recv() => match e {
+                        Ok(e) => FrontEvent::Flow(e),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    },
+                    t = threads.recv() => match t {
+                        Ok(t) => FrontEvent::Thread(t),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    },
+                };
+                if tx.json(&FrontMsg::Event(ev)).await.is_err() {
+                    break;
+                }
+            }
+        })
+    };
     // 머신·pane 목록(상태·lease)이 바뀌면 전체 목록을 보낸다
     let state_task = {
         let (tx, host, mut changed) = (tx.clone(), host.clone(), host.changed.subscribe());
@@ -146,6 +169,7 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
     layout_task.abort();
     state_task.abort();
     ordered_task.abort();
+    flow_task.abort();
     for (_, t) in watches {
         t.abort();
     }

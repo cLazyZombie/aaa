@@ -222,6 +222,9 @@ async fn serve(host: Arc<Host>, stream: aa_common::ipc::LocalStream, known: Opti
                     LinkMsg::Event(AgentEvent::SessionStarted(info)) => host.on_session(&mid, info, true),
                     LinkMsg::Event(AgentEvent::SessionUpdated(info)) => host.on_session(&mid, info, false),
                     LinkMsg::Event(AgentEvent::Resync { session }) => host.on_resync(&mid, &session),
+                    LinkMsg::Event(AgentEvent::ReportChanged { thread, hash }) => {
+                        host.on_report_changed(&mid, &thread, hash)
+                    }
                     LinkMsg::Ping { seq } => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;
                     }

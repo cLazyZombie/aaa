@@ -6,6 +6,7 @@
 pub mod db;
 pub mod front;
 pub mod link;
+mod orch;
 pub mod tailscale;
 pub mod web;
 
@@ -169,6 +170,14 @@ pub struct Host {
     /// workspace가 바뀔 때(TUI가 구독한다)
     pub layout_events: broadcast::Sender<Workspace>,
     front_seq: AtomicU64,
+    /// 이 host 실행의 boot ID(흐름 사건에 같이 적는다)
+    pub boot_id: String,
+    /// 새 흐름 사건(연결된 front에 알린다)
+    pub flow_events: broadcast::Sender<aa_proto::FlowEvent>,
+    /// thread 기록이 바뀌었다
+    pub thread_events: broadcast::Sender<aa_proto::ThreadView>,
+    /// 보고 사본은 한 번에 하나씩 한다
+    collect_lock: tokio::sync::Mutex<()>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -235,6 +244,10 @@ impl Host {
             workspaces: Mutex::new(workspaces),
             layout_events: broadcast::channel(64).0,
             front_seq: AtomicU64::new(0),
+            boot_id: util::boot_id(),
+            flow_events: broadcast::channel(256).0,
+            thread_events: broadcast::channel(256).0,
+            collect_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -299,6 +312,7 @@ impl Host {
         for (sid, from) in subscribe {
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
         }
+        self.rewatch(hello.machine_id.clone());
     }
 
     pub fn agent_disconnected(&self, machine_id: &str, generation: u64) {
@@ -463,6 +477,7 @@ impl Host {
             cols: p.info.cols,
             rows: p.info.rows,
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
+            role: p.info.role,
         }
     }
 
@@ -575,7 +590,43 @@ impl Host {
                 machines: self.machine_views(),
             })),
             FrontRequest::Machines => Ok(FrontResponse::Machines { machines: self.machine_views() }),
-            FrontRequest::Panes => Ok(FrontResponse::Panes { panes: self.pane_views(role) }),
+            FrontRequest::Panes { role: want } => {
+                // 기본은 평가자 세션을 빼고, 역할을 주면 그 역할만(§8.13)
+                let panes = self
+                    .pane_views(role)
+                    .into_iter()
+                    .filter(|p| match want {
+                        None => p.role != Some(aa_proto::Role::Evaluator),
+                        Some(r) => p.role == Some(r),
+                    })
+                    .collect();
+                Ok(FrontResponse::Panes { panes })
+            }
+            FrontRequest::ProjectCreate { name } => self.project_create(&name, actor),
+            FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
+            FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
+            FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task } => self
+                .thread_start(orch::StartArgs { project, title, machine, profile, kind, repo, base, task }, actor)
+                .await
+                .map(FrontResponse::Thread),
+            FrontRequest::Threads { project } => {
+                self.threads_of(project.as_deref()).map(|threads| FrontResponse::Threads { threads })
+            }
+            FrontRequest::ThreadShow { project, thread } => {
+                self.thread_show(&project, &thread).map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadAck { project, thread } => {
+                self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadResolve { project, thread, keep_worktree } => {
+                self.thread_resolve(&project, &thread, keep_worktree, actor).await.map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadBrief { project, thread } => {
+                self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+            }
+            FrontRequest::Events { project, after, limit } => {
+                self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
+            }
             FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
                 let spec = SpawnSpec {
@@ -585,6 +636,7 @@ impl Host {
                     env: vec![],
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
+                    role: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -828,6 +880,7 @@ impl Host {
             env: vec![],
             cols: info.cols,
             rows: info.rows,
+            role: info.role,
         };
         let new_id = self.spawn_on(&mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
@@ -899,7 +952,15 @@ impl Host {
         match change {
             LayoutChange::NewTab { machine, name: pname, argv, cwd } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
-                let spec = SpawnSpec { name: pname.unwrap_or_default(), argv, cwd, env: vec![], cols: 120, rows: 32 };
+                let spec = SpawnSpec {
+                    name: pname.unwrap_or_default(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 120,
+                    rows: 32,
+                    role: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
                 w = self.workspace(name);
@@ -914,7 +975,7 @@ impl Host {
                     Some(m) => self.resolve_machine(Some(&m))?,
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24 };
+                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| aa_proto::layout::split(&mut t.root, &target, &id, dir));

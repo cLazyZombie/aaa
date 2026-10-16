@@ -10,6 +10,11 @@ use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
+use crate::orch::{
+    Cleanup, FlowEvent, ProfileView, ProjectView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady,
+    ThreadView,
+};
+
 use crate::version::Version;
 
 /// JSON에서 base64 문자열로 나가는 bytes.
@@ -135,6 +140,9 @@ pub struct SessionInfo {
     pub rows: u16,
     #[serde(flatten)]
     pub state: SessionState,
+    /// agent 세션 역할(thread가 띄운 세션만). 이전 session host는 보내지 않는다.
+    #[serde(default)]
+    pub role: Option<Role>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -147,6 +155,8 @@ pub struct SpawnSpec {
     pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
+    #[serde(default)]
+    pub role: Option<Role>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -272,6 +282,38 @@ pub enum AgentRequest {
     Forget {
         session: String,
     },
+    /// agent.toml에 정의된 profile 목록
+    Profiles,
+    /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
+    ThreadPrepare(ThreadPrepare),
+    /// report.md 변화를 `ReportChanged`로 알린다. 등록 즉시 지금 hash를 한 번 보낸다. `thread`는 `<project>/<thread>`다.
+    ThreadWatch {
+        thread: String,
+        work_dir: String,
+    },
+    ThreadUnwatch {
+        thread: String,
+    },
+    /// report.md 본문과 library 목록. symlink는 따라가지 않고, 상한을 넘는 파일은 건너뛴다.
+    ReportCollect {
+        work_dir: String,
+        max_library_bytes: u64,
+    },
+    /// work_dir 아래 파일 한 조각(library 사본용)
+    FileRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        len: u32,
+    },
+    /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
+    ThreadCleanup {
+        repo: Option<String>,
+        cwd: String,
+        branch: Option<String>,
+        base: Option<String>,
+        keep_worktree: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,11 +331,26 @@ pub enum AgentResponse {
     },
     Screen(ScreenText),
     Done,
+    Profiles {
+        profiles: Vec<ProfileView>,
+    },
+    ThreadReady(ThreadReady),
+    Report(ReportSnapshot),
+    FileChunk {
+        data: B64,
+        eof: bool,
+    },
+    Cleanup(Cleanup),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// 감시 중인 thread의 report.md hash(없으면 None)가 바뀌었다
+    ReportChanged {
+        thread: String,
+        hash: Option<String>,
+    },
     SessionStarted(SessionInfo),
     SessionUpdated(SessionInfo),
     /// 이 세션의 출력 구독이 끊겼다(느린 연결). host가 마지막 offset부터 다시 구독한다.
@@ -406,6 +463,7 @@ pub struct PaneView {
     pub cols: u16,
     pub rows: u16,
     pub lease: Option<LeaseView>,
+    pub role: Option<Role>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -532,7 +590,11 @@ pub struct HostStatus {
 pub enum FrontRequest {
     Status,
     Machines,
-    Panes,
+    /// pane 목록. 기본은 평가자 세션을 빼고, `role`을 주면 그 역할만 보인다(§8.13).
+    Panes {
+        #[serde(default)]
+        role: Option<Role>,
+    },
     PaneRun {
         machine: Option<String>,
         name: Option<String>,
@@ -608,6 +670,58 @@ pub enum FrontRequest {
     WebPublish,
     WebPublishOff,
     WebStatus,
+    ProjectCreate {
+        name: String,
+    },
+    Projects,
+    /// 머신의 agent.toml profile 목록
+    Profiles {
+        machine: Option<String>,
+    },
+    ThreadStart {
+        project: String,
+        title: String,
+        machine: Option<String>,
+        profile: String,
+        #[serde(default)]
+        kind: ThreadKind,
+        repo: Option<String>,
+        base: Option<String>,
+        /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
+        task: String,
+    },
+    Threads {
+        project: Option<String>,
+    },
+    ThreadShow {
+        project: String,
+        thread: String,
+    },
+    /// 지금 보고를 확인했다
+    ThreadAck {
+        project: String,
+        thread: String,
+    },
+    /// 끝낸다: 마지막 사본(실패면 거부) → 세션 종료 → worktree 정리(force 없음)
+    ThreadResolve {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        keep_worktree: bool,
+    },
+    /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
+    ThreadBrief {
+        project: String,
+        thread: String,
+    },
+    /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
+    Events {
+        project: Option<String>,
+        #[serde(default)]
+        after: u64,
+        #[serde(default)]
+        limit: Option<u32>,
+    },
 }
 
 impl FrontRequest {
@@ -617,7 +731,12 @@ impl FrontRequest {
             self,
             FrontRequest::Status
                 | FrontRequest::Machines
-                | FrontRequest::Panes
+                | FrontRequest::Panes { .. }
+                | FrontRequest::Projects
+                | FrontRequest::Profiles { .. }
+                | FrontRequest::Threads { .. }
+                | FrontRequest::ThreadShow { .. }
+                | FrontRequest::Events { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -665,6 +784,21 @@ pub enum FrontResponse {
     Publish(PublishState),
     Workspace(Workspace),
     Done,
+    Projects {
+        projects: Vec<ProjectView>,
+    },
+    Project(ProjectView),
+    Profiles {
+        machine: String,
+        profiles: Vec<ProfileView>,
+    },
+    Threads {
+        threads: Vec<ThreadView>,
+    },
+    Thread(ThreadView),
+    Events {
+        events: Vec<FlowEvent>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -676,6 +810,10 @@ pub enum FrontEvent {
     Workspace(Workspace),
     /// PaneWatch로 구독한 화면
     Grid(GridFrame),
+    /// 흐름 사건(새로 기록될 때). 놓쳤으면 `Events`로 cursor부터 다시 읽는다.
+    Flow(FlowEvent),
+    /// thread 기록이 바뀌었다
+    Thread(ThreadView),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -793,6 +931,7 @@ mod tests {
             cols: 80,
             rows: 24,
             state: SessionState::Exited { code: Some(2) },
+            role: None,
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["state"], "exited");
@@ -812,6 +951,22 @@ mod tests {
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(FrontRequest::WebPair { role: DeviceRole::Reader }.local_only());
-        assert!(!FrontRequest::Panes.local_only());
+        assert!(!FrontRequest::Panes { role: None }.local_only());
+        assert!(!FrontRequest::Threads { project: None }.needs_control());
+        assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
+    }
+
+    #[test]
+    fn additive_fields_keep_old_messages() {
+        // 1.1 front의 `panes`(필드 없음), 1.1 session host의 SessionInfo(role 없음)를 그대로 읽는다
+        assert_eq!(
+            serde_json::from_value::<FrontRequest>(json!({"op":"panes"})).unwrap(),
+            FrontRequest::Panes { role: None }
+        );
+        let v = json!({"id":"s","name":"","argv":[],"cwd":null,"pid":null,"started_at_ms":1,"boot_id":"b",
+            "cols":80,"rows":24,"state":"running"});
+        assert_eq!(serde_json::from_value::<SessionInfo>(v).unwrap().role, None);
+        let v = json!({"name":"","argv":[],"cwd":null,"cols":80,"rows":24});
+        assert_eq!(serde_json::from_value::<SpawnSpec>(v).unwrap().role, None);
     }
 }

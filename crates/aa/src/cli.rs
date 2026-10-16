@@ -8,7 +8,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::service;
 use aa_doctor as doctor;
-use aa_proto::{B64, DeviceRole, FrontRequest, FrontResponse, LayoutChange, SplitDir};
+use aa_proto::{B64, DeviceRole, FrontRequest, FrontResponse, LayoutChange, Role, SplitDir, ThreadKind};
 
 #[derive(Parser)]
 #[command(name = "aa", version, about = "여러 머신의 agent 오케스트레이션")]
@@ -78,6 +78,100 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
+    /// 프로젝트 폴더(host)
+    Project {
+        #[command(subcommand)]
+        cmd: ProjectCmd,
+    },
+    /// 머신의 agent.toml profile 목록
+    Profile {
+        #[command(subcommand)]
+        cmd: ProfileCmd,
+    },
+    /// thread 시작·목록·확인(ack)·끝내기(resolve)
+    Thread {
+        #[command(subcommand)]
+        cmd: ThreadCmd,
+    },
+    /// 흐름 사건(프로젝트별 순번). cursor(`--after`) 다음부터 읽는다
+    Events {
+        #[arg(long, short)]
+        project: Option<String>,
+        /// 이 순번 다음부터(프로젝트를 줄 때)
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        /// 다 읽은 뒤 새 사건을 계속 보인다
+        #[arg(long)]
+        follow: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectCmd {
+    List,
+    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md·decisions.md …)
+    Create {
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileCmd {
+    List {
+        #[arg(long)]
+        machine: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ThreadCmd {
+    /// thread를 시작한다: 그 머신 agent가 worktree(또는 작업 폴더)를 만들고 profile로 agent를 띄운 뒤 brief를 안내한다
+    Start {
+        project: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        machine: Option<String>,
+        #[arg(long)]
+        profile: String,
+        /// worktree(기본, --repo 필요) 또는 dir(repo 없는 작업 폴더)
+        #[arg(long, value_parser = ["worktree", "dir"], default_value = "worktree")]
+        kind: String,
+        /// 그 머신의 repo 경로
+        #[arg(long)]
+        repo: Option<String>,
+        /// 기준 ref(기본: origin/HEAD, 없으면 현재 branch)
+        #[arg(long)]
+        base: Option<String>,
+        /// 할 일 파일(`-`면 표준 입력)
+        #[arg(long)]
+        task_file: String,
+    },
+    List {
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+    Show {
+        project: String,
+        thread: String,
+    },
+    /// 지금 보고를 확인했다
+    Ack {
+        project: String,
+        thread: String,
+    },
+    /// 끝낸다: 마지막 사본 → 세션 종료 → worktree 정리(force 없음, 병합된 branch만 삭제)
+    Resolve {
+        project: String,
+        thread: String,
+        #[arg(long)]
+        keep_worktree: bool,
+    },
+    /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
+    Brief {
+        project: String,
+        thread: String,
+    },
 }
 
 #[derive(Args)]
@@ -108,8 +202,12 @@ enum AgentCmd {
 
 #[derive(Subcommand)]
 enum PaneCmd {
-    /// pane 목록
-    List,
+    /// pane 목록(기본은 평가자 세션을 뺀다)
+    List {
+        /// 이 역할(coordinator·worker·evaluator)의 세션만
+        #[arg(long)]
+        role: Option<String>,
+    },
     /// 새 pane(세션)을 띄운다. 명령이 없으면 그 머신 사용자의 기본 셸
     Run {
         #[arg(long)]
@@ -386,7 +484,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Pane { cmd } => front(
             json,
             match cmd {
-                PaneCmd::List => FrontRequest::Panes,
+                PaneCmd::List { role } => FrontRequest::Panes {
+                    role: match role {
+                        Some(r) => Some(Role::parse(&r).with_context(|| format!("모르는 역할: {r}"))?),
+                        None => None,
+                    },
+                },
                 PaneCmd::Run { machine, name, cwd, cols, rows, argv } => {
                     FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows }
                 }
@@ -429,6 +532,38 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
+        Cmd::Project { cmd } => front(
+            json,
+            match cmd {
+                ProjectCmd::List => FrontRequest::Projects,
+                ProjectCmd::Create { name } => FrontRequest::ProjectCreate { name },
+            },
+        ),
+        Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
+        Cmd::Thread { cmd } => front(
+            json,
+            match cmd {
+                ThreadCmd::Start { project, title, machine, profile, kind, repo, base, task_file } => {
+                    let task = if task_file == "-" {
+                        let mut t = String::new();
+                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+                        t
+                    } else {
+                        std::fs::read_to_string(&task_file).with_context(|| format!("할 일 파일: {task_file}"))?
+                    };
+                    let kind = if kind == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree };
+                    FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task }
+                }
+                ThreadCmd::List { project } => FrontRequest::Threads { project },
+                ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
+                ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
+                ThreadCmd::Resolve { project, thread, keep_worktree } => {
+                    FrontRequest::ThreadResolve { project, thread, keep_worktree }
+                }
+                ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
+            },
+        ),
+        Cmd::Events { project, after, follow } => events_cmd(json, project, after, follow),
         Cmd::Attach { workspace } => {
             init_log("warn");
             aa_tui::run(workspace)
@@ -612,6 +747,12 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
     rt.block_on(async move {
         let agent = aa_agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
+        let work_root = if cfg.agent.work_root.is_empty() {
+            aa_config::paths::home().join("aa-work")
+        } else {
+            PathBuf::from(&cfg.agent.work_root)
+        };
+        agent.configure_threads(aa_agent::threads::ThreadsConfig { work_root, profiles: cfg.profiles.clone() });
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
         aa_agent::start_selfcheck(&agent, &cfg.selfcheck);
@@ -648,6 +789,96 @@ fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
             }
             Ok(ExitCode::from(3))
         }
+    }
+}
+
+/// 흐름 사건: cursor 다음을 읽고, `follow`면 새 사건을 계속 보인다
+fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> Result<ExitCode> {
+    let rt = runtime()?;
+    rt.block_on(async {
+        let mut c = aa_common::front::FrontClient::connect(&aa_config::paths::state_dir()).await?;
+        let first = c.call(FrontRequest::Events { project: project.clone(), after, limit: None }).await?;
+        let events = match first {
+            Ok(FrontResponse::Events { events }) => events,
+            Ok(_) => anyhow::bail!("예상하지 못한 응답"),
+            Err(e) => {
+                eprintln!("aa: {e}");
+                return Ok(ExitCode::from(3));
+            }
+        };
+        let show = |e: &aa_proto::FlowEvent| -> Result<()> {
+            if json {
+                println!("{}", serde_json::to_string(e)?);
+            } else {
+                print!("{}", render_event(e));
+            }
+            Ok(())
+        };
+        if !follow {
+            // 한 번 읽기: 다른 명령처럼 JSON 객체 하나(따라 읽기는 사건마다 한 줄)
+            if json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "events": events }))?);
+            } else {
+                events.iter().for_each(|e| print!("{}", render_event(e)));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        let mut seen: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for e in &events {
+            show(e)?;
+            seen.insert(e.project.clone(), e.seq);
+        }
+        while let Some(m) = c.next().await? {
+            if let aa_proto::FrontMsg::Event(aa_proto::FrontEvent::Flow(e)) = m
+                && project.as_ref().is_none_or(|p| *p == e.project)
+                && seen.get(&e.project).is_none_or(|s| e.seq > *s)
+            {
+                show(&e)?;
+                seen.insert(e.project.clone(), e.seq);
+            }
+        }
+        Ok(ExitCode::SUCCESS)
+    })
+}
+
+fn render_event(e: &aa_proto::FlowEvent) -> String {
+    format!(
+        "{}#{}\t{}\t{}\t{}\t{}{}\n",
+        e.project,
+        e.seq,
+        e.kind,
+        e.thread.clone().unwrap_or_default(),
+        e.machine.clone().unwrap_or_default(),
+        e.detail,
+        e.evidence.as_ref().map(|p| format!("\t({p})")).unwrap_or_default()
+    )
+}
+
+fn render_thread(s: &mut String, t: &aa_proto::ThreadView) {
+    use std::fmt::Write as _;
+    let group = match t.group {
+        aa_proto::ThreadGroup::WaitingOnYou => "사람 차례",
+        aa_proto::ThreadGroup::ReadyForReview => "검토 대기",
+        aa_proto::ThreadGroup::Working => "작업 중",
+        aa_proto::ThreadGroup::Resolved => "끝남",
+    };
+    let _ = writeln!(
+        s,
+        "{}/{}\t{}\t{}\t{}@{}\t[{}]\tbrief {}",
+        t.project,
+        t.id,
+        group,
+        t.title,
+        t.profile,
+        t.machine,
+        t.report_state.clone().unwrap_or("-".into()),
+        t.brief.as_str()
+    );
+    if let Some(e) = &t.error {
+        let _ = writeln!(s, "  오류: {e}");
+    }
+    for n in &t.next {
+        let _ = writeln!(s, "  - {n}");
     }
 }
 
@@ -761,6 +992,47 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Done => s.push_str("완료\n"),
+        FrontResponse::Projects { projects } => {
+            if projects.is_empty() {
+                let _ = writeln!(s, "프로젝트가 없다(`aa project create <이름>`)");
+            }
+            for p in projects {
+                let _ = writeln!(s, "{}\tthread {}\t{}", p.name, p.threads, p.path);
+            }
+        }
+        FrontResponse::Project(p) => {
+            let _ = writeln!(s, "{}\t{}", p.name, p.path);
+        }
+        FrontResponse::Profiles { machine, profiles } => {
+            if profiles.is_empty() {
+                let _ = writeln!(s, "{machine}: agent.toml에 [profiles.<이름>]이 없다");
+            }
+            for p in profiles {
+                let _ = writeln!(
+                    s,
+                    "{machine}\t{}\t{}\t{}\t{}\t{}",
+                    p.name,
+                    p.harness,
+                    p.model.clone().unwrap_or("-".into()),
+                    p.effort.clone().unwrap_or("-".into()),
+                    p.description
+                );
+            }
+        }
+        FrontResponse::Threads { threads } => {
+            if threads.is_empty() {
+                let _ = writeln!(s, "thread가 없다");
+            }
+            for t in threads {
+                render_thread(&mut s, t);
+            }
+        }
+        FrontResponse::Thread(t) => render_thread(&mut s, t),
+        FrontResponse::Events { events } => {
+            for e in events {
+                s.push_str(&render_event(e));
+            }
+        }
     }
     s
 }
