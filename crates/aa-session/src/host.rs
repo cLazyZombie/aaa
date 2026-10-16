@@ -262,6 +262,20 @@ pub fn main(dir: PathBuf) -> Result<()> {
     rt.block_on(run(dir))
 }
 
+/// 세션에 넘기지 않는, 부모 harness 세션의 표지 env
+const INHERITED_SESSION_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+];
+
 async fn run(dir: PathBuf) -> Result<()> {
     let paths = SessionPaths::from_dir(&dir);
     let spec: SpecFile = util::read_json(&paths.spec()).context("spec.json")?;
@@ -280,6 +294,11 @@ async fn run(dir: PathBuf) -> Result<()> {
     };
     if let Some(cwd) = &s.cwd {
         cmd.cwd(cwd);
+    }
+    // agent를 Claude Code 세션 안에서 띄웠으면 그 세션 표지가 이어진다. 남기면 세션 안 Claude가 자기를 자식 세션으로 보고
+    // 기록 저장(resume)을 끄고, 메시징 token도 새어 나간다. 사용자가 준 설정 env(CLAUDE_CODE_USE_BEDROCK 등)는 남긴다.
+    for k in INHERITED_SESSION_MARKERS {
+        cmd.env_remove(k);
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");

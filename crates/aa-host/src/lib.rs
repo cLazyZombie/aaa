@@ -5,6 +5,7 @@
 
 pub mod db;
 pub mod front;
+mod harness;
 pub mod link;
 mod orch;
 pub mod tailscale;
@@ -112,6 +113,8 @@ struct PaneRt {
     events: broadcast::Sender<PaneEvent>,
     /// 조작 lease(대화형 front 연결 하나). 연결이 끊기거나 다른 front가 가져가면 바뀐다.
     lease: Option<FrontRef>,
+    /// harness 상태(hook 사건으로만 바뀐다)
+    agent: Option<aa_proto::AgentStatus>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -178,6 +181,12 @@ pub struct Host {
     pub thread_events: broadcast::Sender<aa_proto::ThreadView>,
     /// 보고 사본은 한 번에 하나씩 한다
     collect_lock: tokio::sync::Mutex<()>,
+    /// 확인창 질문이 열리거나 바뀌었다
+    pub question_events: broadcast::Sender<aa_proto::QuestionView>,
+    /// pane별 harness 사건 대기자
+    waiters: Mutex<harness::Waiters>,
+    /// 메시지 전달은 한 번에 하나씩 한다
+    deliver_lock: tokio::sync::Mutex<()>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -248,6 +257,9 @@ impl Host {
             flow_events: broadcast::channel(256).0,
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
+            question_events: broadcast::channel(256).0,
+            waiters: Mutex::new(HashMap::new()),
+            deliver_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -295,6 +307,7 @@ impl Host {
                     mirror: None,
                     events: broadcast::channel(1024).0,
                     lease: None,
+                    agent: None,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -413,6 +426,7 @@ impl Host {
                 mirror: None,
                 events: broadcast::channel(1024).0,
                 lease: None,
+                agent: None,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -478,6 +492,7 @@ impl Host {
             rows: p.info.rows,
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
+            agent: p.agent.clone().map(Box::new),
         }
     }
 
@@ -623,6 +638,13 @@ impl Host {
             }
             FrontRequest::ThreadBrief { project, thread } => {
                 self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+            }
+            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
+            FrontRequest::QuestionAnswer { id, choice } => {
+                self.answer(&id, &choice, actor).await.map(FrontResponse::Question)
+            }
+            FrontRequest::ThreadMessage { project, thread, text, mode } => {
+                self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })

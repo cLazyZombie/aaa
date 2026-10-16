@@ -225,6 +225,7 @@ async fn serve(host: Arc<Host>, stream: aa_common::ipc::LocalStream, known: Opti
                     LinkMsg::Event(AgentEvent::ReportChanged { thread, hash }) => {
                         host.on_report_changed(&mid, &thread, hash)
                     }
+                    LinkMsg::Event(AgentEvent::Harness(ev)) => host.on_harness(&mid, ev),
                     LinkMsg::Ping { seq } => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;
                     }

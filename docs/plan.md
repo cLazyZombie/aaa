@@ -568,7 +568,7 @@ host 프로젝트 폴더 구성:
 ### 8.11 hook·integration
 
 - **고정 명령:** `aa hook`은 고정 명령 문자열로 등록한다(예: `~/.local/bin/aa hook --agent claude`). 업그레이드로 경로나 인자가 바뀌지 않게 한다. 운영에서는 경로만 바뀌어도 codex가 hook 신뢰를 다시 물었다.
-- **설치는 사용자가 한 번 한다.** `aa integration install`로 설치한다. agent 설정 파일 변경은 auto mode가 막으므로 사용자가 직접 실행한다.
+- **설치는 사용자가 한 번 한다.** `aa integration install`로 설치한다(Claude Code는 실행마다 `--settings`로 주므로 설치가 필요 없다. §8.15). agent 설정 파일 변경은 auto mode가 막으므로 사용자가 직접 실행한다.
 - **되돌리기:** 바꾼 내용을 journal로 남겨 정확히 되돌린다(0.2.35 `owned.json` 방식). 사용자가 지운 파일은 되살리지 않는다.
 - **herdr와 공존:** aa가 관리하지 않는 pane에서는 세션 token이 없으므로 hook이 아무것도 하지 않는다.
 
@@ -634,7 +634,7 @@ host 프로젝트 폴더 구성:
   - 화면이 3초 멈추면 `.aa/<p>-<t>/brief.md를 읽고 그대로 하라.`를 한 번 입력하고 Enter를 보낸다.
   - 8초 안에 화면이 바뀌면 `delivered`, 아니면 `unknown`이다. unknown은 **자동으로 다시 보내지 않는다.** 사람이 `aa thread brief`로만 다시 보낸다.
   - harness 확인창(폴더 신뢰 등)이 보이면 입력하지 않는다.
-  - 수신 확인을 화면 변화 대신 harness 사건(`turn_start`)으로 바꾸는 것은 M1-3b에서 한다.
+  - 수신 확인을 화면 변화 대신 harness 사건(`turn_start`)으로 바꾸는 것은 M1-3b에서 했다(§8.15).
 - **보고 회수**
   - agent가 report.md(regular file만) hash를 1초마다 보고 바뀌면 알린다. host는 본문과 library(symlink 제외, `library_copy_mb` 상한)를 받는다.
   - 받은 것은 hash를 확인한 뒤 `threads/<id>.md`·`library/<id>/`에 원자적으로 둔다. 건너뛴 것이 있으면 사본이 `partial`이고, 실패하면 hash를 바꾸지 않는다.
@@ -649,6 +649,47 @@ host 프로젝트 폴더 구성:
   - 프로젝트별 seq로 DB에 쌓는다. 지금 내는 사건: `thread_started`·`brief_delivered`·`brief_unknown`·`report_ready`·`copy_failed`·`review_acked`·`thread_resolved`·`thread_failed`.
   - 연결된 front에는 `Flow` 사건으로 알린다. `aa events --after <seq>`는 cursor부터 다시 읽는다.
 - **역할:** `SpawnSpec`·`SessionInfo`·`PaneView`에 role이 있다. pane 목록은 기본으로 평가자를 빼고 `--role`로 거른다.
+
+### 8.15 M1-3b 구현 결정(10-16)
+
+- **사건 출처(§8.3 확정)**
+  - Claude Code는 실행마다 `--settings <작업 폴더>/.aa/<p>-<t>/claude-settings.json`으로 hook을 준다. 사용자 설정 파일은 고치지 않는다. 그래서 Claude에는 `aa integration install`(§8.11)이 필요 없다.
+  - 쓰는 hook과 정규화 결과는 다음과 같다.
+    - SessionStart → `session_start`, UserPromptSubmit → `turn_start`
+    - PostToolUse → `working`, Stop → `turn_end`, StopFailure → `error`, SessionEnd → `exited`
+    - PermissionRequest·Notification(permission_prompt) → `question`, Notification(idle_prompt) → `idle`
+  - Codex는 notify(`agent-turn-complete` → `turn_end`)만 정규화해 두었다. hook은 프로젝트 `.codex/`·hash 신뢰가 필요하고, `-c notify=…`는 아직 확인하지 않았다(사용자 할 일 후보).
+  - 세션 안의 `aa hook --agent …`·`aa report --percent --activity`가 그 머신 agent의 로컬 socket(`run/hook.sock`)으로 보낸다.
+    - 세션 env의 `AA_HOOK_TOKEN`은 세션 token에서 만든 값이라 따로 저장하지 않는다.
+    - `aa hook`은 무엇이 실패해도 출력 없이 0으로 끝난다(harness를 막지 않는다).
+  - agent는 pane별 마지막 사건을 기억했다가 host에 다시 붙으면 다시 보낸다.
+- **상태:** host가 pane별 `AgentStatus`(activity·since·harness·message·percent·progress·harness_session)를 사건으로만 바꾼다. `PaneView.agent`·`ThreadView.agent`로 보이며 polling하지 않는다.
+- **세션 표지 env를 넘기지 않는다.**
+  - agent를 Claude Code 세션 안에서 띄우면 `CLAUDECODE`·`CLAUDE_CODE_CHILD_SESSION`·메시징 token 같은 표지가 aa 세션까지 이어진다.
+  - 그러면 세션 안 Claude가 자기를 자식 세션으로 보고 기록 저장(=resume)을 끈다(실측). 그래서 session-host가 이 표지를 지운다. 사용자 설정 env는 남긴다.
+- **질문(§8.4)**
+  - hook 질문과, brief 안내 전에 화면에서 본 선택 창(폴더 신뢰 등)을 `question`으로 올린다. 한 pane에 열린 질문은 하나로 묶는다(Claude는 PermissionRequest와 Notification을 함께 낸다).
+  - 다음 hook 사건(working·turn_end·idle·exited)이 오면 열린 질문은 `gone`이 된다.
+  - 흐름 사건 `question_shown`·`question_answered`를 내고, front에는 `Question` 사건을 push한다.
+- **답 키(adapter)**
+  - 「아니오」는 Esc(취소)다. 「예」는 화면 선택 창을 읽어, 커서(❯)에서 Yes로 시작하는 첫 선택지까지 화살표로 옮긴 뒤 Enter를 보낸다.
+  - Claude Code 2.1 폴더 신뢰 창은 **기본 선택이 「No, exit」**라 Enter만 보내면 세션이 끝난다(실측). 선택 창을 찾지 못하면 키를 보내지 않고 거부한다.
+  - 답하기 전에 질문이 열려 있는지, 선택지에 있는지, 세션이 실행 중인지 다시 본다.
+  - Claude는 권한을 거절하면 턴을 멈추고 입력을 기다리지만 Stop hook을 내지 않는다(실측). 그래서 거절 뒤 상태를 `idle`로, 허락 뒤 상태를 `working`으로 둔다.
+- **선택 창이 떠 있으면 아무것도 입력하지 않는다.** 표지는 「Enter to confirm」「Esc to cancel」, 신뢰 문구 등이다. brief 안내와 메시지 모두 해당한다. 질문이 열려 있는 동안 brief 안내는 최대 30분 기다린다.
+- **입력과 수신 확인(§8.5)**
+  - 한 줄은 그대로, 여러 줄은 bracketed paste로 보낸 뒤 Enter를 보낸다.
+  - hook이 있는 세션은 10초 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
+- **메시지(§8.5 보충)**
+  - queue: 입력 대기 중(idle·started, 상태를 모르면 포함)이면 바로 보낸다. 아니면 대기열에 두고, 그 thread의 다음 `turn_end`·`idle` 때 가장 오래된 것 하나를 보낸다. 원안의 「다음 턴이 시작될 때」를 「턴이 끝났을 때」로 고쳤다.
+  - interrupt: 작업 중이면 Esc를 보내고, `turn_end`·`idle` 사건이나 화면의 「Interrupted」를 최대 15초 기다린 뒤 보낸다. Claude는 Esc로 멈춰도 Stop hook을 내지 않는다(실측, 약 1초에 멈춤).
+  - 확인창이 열려 있으면 interrupt를 거부한다. Esc가 확인창을 「아니오」로 닫기 때문이다.
+  - 보내기는 host에서 한 번에 하나씩 한다. 흐름 사건은 `message_queued`·`message_accepted`·`message_unknown`이다. 원문은 DB에 두고 감사 로그에는 길이만 적는다.
+  - 선택 창이 떠 있을 때 보내려던 메시지는 입력하지 않고 `unknown`으로 끝난다(§8.5 a에 따라 다시 보내지 않는다). 답한 뒤 사람이 다시 보낸다.
+- **계약:** AGENT_LINK·FRONT_API를 1.3으로 올렸다(`AgentEvent::Harness`, 질문·메시지 요청, `PaneView.agent`·`ThreadView.agent`). 1.2 메시지를 읽는 시험이 있다.
+- **확인 방법**
+  - E2E `m13 hooked_thread_questions_and_messages`: 가짜 Claude가 실제처럼 신뢰 창(기본 No)·권한 창을 그리고 hook을 보낸다. 거절과 Esc 뒤에는 Stop을 내지 않는다.
+  - 실제 Claude Code 2.1(haiku) smoke: 신뢰 창 → brief → 권한 거절·허락 → 메시지 → 보고 회수 → interrupt를 한 바퀴 돌렸다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

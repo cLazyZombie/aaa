@@ -22,6 +22,8 @@ pub const MAX_REPORT_BYTES: u64 = 4 << 20;
 #[derive(Debug, Clone, Default)]
 pub struct ThreadsConfig {
     pub work_root: PathBuf,
+    /// hook 명령에 쓰는 aa 실행 파일
+    pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
 }
 
@@ -137,7 +139,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
             cfg.profiles.keys().collect::<Vec<_>>()
         )
     })?;
-    let launch = resolve(&p.profile, profile)?;
+    let mut launch = resolve(&p.profile, profile)?;
     let (cwd, branch, base) = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -188,6 +190,16 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     let work_dir = cwd.join(".aa").join(format!("{}-{}", p.project, p.thread));
     std::fs::create_dir_all(work_dir.join("library"))?;
     std::fs::write(work_dir.join("brief.md"), &p.brief)?;
+    if launch.harness == "claude" {
+        // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
+        let settings = work_dir.join("claude-settings.json");
+        std::fs::write(&settings, serde_json::to_vec_pretty(&crate::hooks::claude_settings(&cfg.exe))?)?;
+        let s = settings.to_string_lossy().to_string();
+        for argv in [&mut launch.argv, &mut launch.resume_argv] {
+            argv.insert(1, s.clone());
+            argv.insert(1, "--settings".into());
+        }
+    }
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),

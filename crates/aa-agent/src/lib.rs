@@ -4,6 +4,7 @@
 //! - 세션은 session host 프로세스가 소유하므로 agent가 재시작해도 이어진다. 시작할 때 세션 폴더를 다시 읽어 붙는다.
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
 
+pub mod hooks;
 pub mod identity;
 pub mod link;
 pub mod threads;
@@ -50,6 +51,8 @@ pub struct Agent {
     threads_cfg: Mutex<threads::ThreadsConfig>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// 세션별 마지막 harness 사건(host가 다시 붙으면 다시 보낸다)
+    harness_last: Mutex<HashMap<String, aa_proto::HarnessEvent>>,
 }
 
 impl Agent {
@@ -76,7 +79,45 @@ impl Agent {
             selfcheck: Mutex::new(None),
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             watches: Mutex::new(HashMap::new()),
+            harness_last: Mutex::new(HashMap::new()),
         }))
+    }
+
+    /// 세션 안의 `aa hook`·`aa report`가 보내는 사건을 받는다(로컬 socket, 같은 사용자만)
+    pub fn start_hooks(self: &Arc<Self>) -> Result<()> {
+        let listener = aa_common::ipc::LocalListener::bind(&hooks::socket(&self.state)).context("hook socket")?;
+        let me = self.clone();
+        tokio::spawn(async move {
+            while let Ok(mut s) = listener.accept().await {
+                let me = me.clone();
+                tokio::spawn(async move {
+                    let reply = match me.on_hook(&mut s).await {
+                        Ok(()) => "ok\n".to_string(),
+                        Err(e) => format!("error: {e:#}\n"),
+                    };
+                    let _ = tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await;
+                    let _ = tokio::io::AsyncWriteExt::shutdown(&mut s).await;
+                });
+            }
+        });
+        Ok(())
+    }
+
+    async fn on_hook(self: &Arc<Self>, s: &mut aa_common::ipc::LocalStream) -> Result<()> {
+        let msg = hooks::read_msg(s).await?;
+        if msg.session.is_empty() || !msg.session.chars().all(|c| c.is_ascii_alphanumeric()) {
+            bail!("세션 ID 형식이 아니다");
+        }
+        let spec: SpecFile = util::read_json(&SessionPaths::new(&self.state, &msg.session).spec())?;
+        if hooks::hook_token(&spec.token) != msg.token {
+            bail!("hook token이 맞지 않는다");
+        }
+        let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
+            return Ok(());
+        };
+        self.harness_last.lock().unwrap().insert(msg.session.clone(), ev.clone());
+        self.send_host(&LinkMsg::Event(AgentEvent::Harness(ev))).await;
+        Ok(())
     }
 
     /// agent.toml의 thread 설정(작업 root·profile)
@@ -118,6 +159,16 @@ impl Agent {
 
     pub fn set_host(&self, tx: Option<FrameTx>) {
         let gone = tx.is_none();
+        if let Some(tx) = &tx {
+            // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
+            let last: Vec<_> = self.harness_last.lock().unwrap().values().cloned().collect();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                for ev in last {
+                    let _ = tx.json(&LinkMsg::Event(AgentEvent::Harness(ev))).await;
+                }
+            });
+        }
         *self.host.lock().unwrap() = tx;
         if gone {
             let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
@@ -317,13 +368,12 @@ impl Agent {
                 .map(|a| a.rsplit(['/', '\\']).next().unwrap_or(a).to_string())
                 .unwrap_or_else(|| "shell".into());
         }
-        let file = SpecFile {
-            id: id.clone(),
-            token: hex::encode(rand::random::<[u8; 16]>()),
-            boot_id: self.boot_id.clone(),
-            created_at_ms: util::now_ms(),
-            spec,
-        };
+        let token = hex::encode(rand::random::<[u8; 16]>());
+        // 세션 안의 `aa hook`·`aa report`가 이 agent에 사건을 보낼 곳
+        spec.env.push((hooks::ENV_SOCK.into(), hooks::socket(&self.state).to_string_lossy().to_string()));
+        spec.env.push((hooks::ENV_TOKEN.into(), hooks::hook_token(&token)));
+        let file =
+            SpecFile { id: id.clone(), token, boot_id: self.boot_id.clone(), created_at_ms: util::now_ms(), spec };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
         let mut cmd = std::process::Command::new(&self.exe);

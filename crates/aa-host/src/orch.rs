@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aa_proto::{
-    AgentRequest, AgentResponse, B64, BriefState, ErrorBody, ErrorCode, FlowEvent, FrontResponse, Launch, ProjectView,
-    Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, parse_report, valid_project, valid_thread,
+    AgentRequest, AgentResponse, BriefState, ErrorBody, ErrorCode, FlowEvent, FrontResponse, Launch, ProjectView, Role,
+    SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, parse_report, valid_project, valid_thread,
     waits_on_user,
 };
 use serde::{Deserialize, Serialize};
@@ -77,12 +77,8 @@ pub struct StartArgs {
 const SETTLE: Duration = Duration::from_secs(3);
 /// 화면이 멈추기를 기다리는 상한
 const SETTLE_LIMIT: Duration = Duration::from_secs(120);
-/// Enter 뒤 화면 변화를 기다리는 시간(변화가 없으면 unknown)
-const CONFIRM: Duration = Duration::from_secs(8);
-
-/// 처음 실행할 때 harness가 보이는 확인창. 이 화면에는 아무것도 입력하지 않는다.
-const TRUST_SCREENS: &[&str] =
-    &["Do you trust", "trust the files", "Trust this folder", "Allow Codex to work in this folder", "Yes, proceed"];
+/// 확인창 질문에 사람이 답하기를 기다리는 상한
+const TRUST_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 fn bad(msg: impl Into<String>) -> ErrorBody {
     err(ErrorCode::BadRequest, msg)
@@ -186,7 +182,7 @@ impl Host {
         out
     }
 
-    fn load(&self, project: &str, id: &str) -> Result<ThreadRec, ErrorBody> {
+    pub(crate) fn load(&self, project: &str, id: &str) -> Result<ThreadRec, ErrorBody> {
         if !valid_thread(id) {
             return Err(bad(format!("thread ID 형식이 아니다: {id}")));
         }
@@ -240,6 +236,7 @@ impl Host {
             acked_hash: r.acked_hash.clone(),
             report_state: r.report_state.clone(),
             next: r.next.clone(),
+            agent: r.pane.as_deref().and_then(|p| self.pane_agent(p)).map(Box::new),
             copy: r.copy.clone(),
             error: r.error.clone(),
             created_at_ms: r.created_at_ms,
@@ -261,7 +258,7 @@ impl Host {
     }
 
     /// 흐름 사건을 기록하고 알린다
-    fn flow(&self, r: &ThreadRec, kind: &str, evidence: Option<String>, detail: impl Into<String>) {
+    pub(crate) fn flow(&self, r: &ThreadRec, kind: &str, evidence: Option<String>, detail: impl Into<String>) {
         let mut e = FlowEvent {
             project: r.project.clone(),
             seq: 0,
@@ -483,7 +480,7 @@ impl Host {
         Ok(self.thread_view(&rec))
     }
 
-    async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
+    pub(crate) async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
         let conn = self.conn_of(mid)?;
         match conn.request(AgentRequest::Screen { session: pane.to_string() }).await {
             Ok(AgentResponse::Screen(s)) => Some(s.lines),
@@ -491,34 +488,51 @@ impl Host {
         }
     }
 
-    /// brief 안내 한 번: 화면이 멈추면 입력하고 Enter 뒤 화면 변화로 전달을 확인한다. 확인 못 하면 unknown(다시 보내지 않는다).
+    /// brief 안내 한 번: 화면이 멈추면 입력하고 Enter. harness가 받았다는 사건(hook이 없으면 화면 변화)으로 전달을 확인한다.
+    /// 처음 실행 확인창(폴더 신뢰 등)이 보이면 입력하지 않고 질문으로 올려 사람의 답을 기다린다.
+    /// 확인 못 하면 unknown(다시 보내지 않는다).
     pub(crate) async fn deliver_brief(self: &Arc<Self>, project: &str, id: &str) {
         let Ok(mut rec) = self.load(project, id) else { return };
         let (Some(pane), mid) = (rec.pane.clone(), rec.machine_id.clone()) else { return };
         let line = format!(".aa/{project}-{id}/brief.md를 읽고 그대로 하라.");
         let outcome: Result<(), String> = async {
-            let start = Instant::now();
+            let mut start = Instant::now();
             let mut last: Option<Vec<String>> = None;
             let mut since = Instant::now();
-            let mut trust_seen = false;
+            // (질문 id, 연 시각). 확인창 하나에 질문은 한 번만 연다.
+            let mut trust: Option<(String, Instant)> = None;
             loop {
-                if start.elapsed() > SETTLE_LIMIT {
-                    return Err(if trust_seen {
-                        "harness 확인창(폴더 신뢰 등)이 떠 있어 입력하지 않았다. 사람이 답한 뒤 `aa thread brief`로 보낸다".into()
-                    } else {
-                        format!("{}초 동안 화면이 멈추지 않았다", SETTLE_LIMIT.as_secs())
-                    });
+                // 질문이 열려 있는 동안은 사람을 더 오래 기다린다(답한 뒤부터 다시 잰다)
+                let asking = trust.as_ref().is_some_and(|(q, _)| self.questions(false).iter().any(|x| &x.id == q));
+                if let Some((_, at)) = trust.as_ref().filter(|_| asking) {
+                    if at.elapsed() > TRUST_LIMIT {
+                        return Err(
+                            "harness 확인창(폴더 신뢰 등)에 답이 없어 입력하지 않았다. 답한 뒤 `aa thread brief`로 보낸다".into(),
+                        );
+                    }
+                    start = Instant::now();
+                } else if start.elapsed() > SETTLE_LIMIT {
+                    return Err(format!("{}초 동안 화면이 멈추지 않았다", SETTLE_LIMIT.as_secs()));
                 }
                 if !self.pane_view_of(&pane, aa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running()) {
                     return Err("세션이 끝났다".into());
                 }
                 let lines = self.screen_lines(&mid, &pane).await;
-                if let Some(l) = &lines
-                    && l.iter().any(|x| TRUST_SCREENS.iter().any(|t| x.contains(t)))
-                {
-                    trust_seen = true;
+                // 처음 실행 확인창(폴더 신뢰 등)에는 입력하지 않고 질문으로 올린다
+                if let Some((kind, text)) = lines.as_deref().and_then(crate::harness::modal_of) {
+                    if trust.is_none() {
+                        trust = Some((self.ask(&pane, kind, text).id, Instant::now()));
+                    }
                     since = Instant::now();
                 } else if lines != last {
+                    // 확인창이 사라졌다(답했거나 터미널에서 직접 골랐다)
+                    if asking
+                        && let Some(mut q) =
+                            self.questions(false).into_iter().find(|x| Some(&x.id) == trust.as_ref().map(|t| &t.0))
+                    {
+                        q.state = aa_proto::QuestionState::Gone;
+                        self.save_question(&q);
+                    }
                     last = lines;
                     since = Instant::now();
                 } else if last.is_some() && since.elapsed() >= SETTLE {
@@ -526,23 +540,10 @@ impl Host {
                 }
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            let conn = self.live_conn(&mid).map_err(|e| e.message)?;
-            conn.request(AgentRequest::Input { session: pane.clone(), data: B64(line.clone().into_bytes()) })
-                .await
-                .map_err(|e| e.message)?;
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            let typed = self.screen_lines(&mid, &pane).await;
-            conn.request(AgentRequest::Input { session: pane.clone(), data: B64(b"\r".to_vec()) })
-                .await
-                .map_err(|e| e.message)?;
-            let until = Instant::now() + CONFIRM;
-            while Instant::now() < until {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                if self.screen_lines(&mid, &pane).await != typed {
-                    return Ok(());
-                }
+            match self.send_prompt(&mid, &pane, &line).await? {
+                true => Ok(()),
+                false => Err("Enter 뒤 받았다는 사건·화면 변화가 없었다".into()),
             }
-            Err(format!("Enter 뒤 {}초 동안 화면이 바뀌지 않았다", CONFIRM.as_secs()))
         }
         .await;
         let Ok(mut fresh) = self.load(project, id) else { return };

@@ -51,7 +51,12 @@ impl Db {
              CREATE TABLE IF NOT EXISTS flow_events(
                project TEXT NOT NULL, seq INTEGER NOT NULL, at_ms INTEGER NOT NULL, boot_id TEXT NOT NULL,
                kind TEXT NOT NULL, thread TEXT, role TEXT, profile TEXT, machine TEXT, evidence TEXT,
-               detail TEXT NOT NULL, PRIMARY KEY(project, seq));",
+               detail TEXT NOT NULL, PRIMARY KEY(project, seq));
+             CREATE TABLE IF NOT EXISTS questions(
+               id TEXT PRIMARY KEY, pane TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS messages(
+               id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL,
+               created_at INTEGER NOT NULL);",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -291,6 +296,39 @@ impl Db {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 질문·메시지 기록(JSON). `table`은 questions·messages만.
+    pub fn rec_put(&self, table: &str, id: &str, state: &str, data: &str, extra: (&str, &str)) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        let now = aa_common::util::now_ms() as i64;
+        match table {
+            "questions" => c.execute(
+                "INSERT INTO questions(id,pane,state,data,created_at) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(id) DO UPDATE SET state=excluded.state, data=excluded.data",
+                params![id, extra.0, state, data, now],
+            )?,
+            "messages" => c.execute(
+                "INSERT INTO messages(id,project,thread,state,data,created_at) VALUES(?1,?2,?3,?4,?5,?6)
+                 ON CONFLICT(id) DO UPDATE SET state=excluded.state, data=excluded.data",
+                params![id, extra.0, extra.1, state, data, now],
+            )?,
+            other => anyhow::bail!("모르는 표: {other}"),
+        };
+        Ok(())
+    }
+
+    /// `state`가 주어지면 그 상태만. 만든 순서대로.
+    pub fn rec_list(&self, table: &str, state: Option<&str>) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let sql = match table {
+            "questions" => "SELECT data FROM questions WHERE (?1 IS NULL OR state=?1) ORDER BY created_at, id",
+            "messages" => "SELECT data FROM messages WHERE (?1 IS NULL OR state=?1) ORDER BY created_at, id",
+            other => anyhow::bail!("모르는 표: {other}"),
+        };
+        let mut st = c.prepare(sql)?;
+        let rows = st.query_map([state], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(rows)
     }
 

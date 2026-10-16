@@ -16,9 +16,9 @@ impl std::fmt::Display for Version {
 }
 
 /// host ↔ agent
-pub const AGENT_LINK: Version = Version { major: 1, minor: 2 };
+pub const AGENT_LINK: Version = Version { major: 1, minor: 3 };
 /// front ↔ host
-pub const FRONT_API: Version = Version { major: 1, minor: 2 };
+pub const FRONT_API: Version = Version { major: 1, minor: 3 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 0 };
 

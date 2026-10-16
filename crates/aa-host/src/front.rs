@@ -73,7 +73,12 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
     };
     // 흐름 사건과 thread 기록 변화(놓치면 `events`로 cursor부터 다시 읽는다)
     let flow_task = {
-        let (tx, mut flow, mut threads) = (tx.clone(), host.flow_events.subscribe(), host.thread_events.subscribe());
+        let (tx, mut flow, mut threads, mut questions) = (
+            tx.clone(),
+            host.flow_events.subscribe(),
+            host.thread_events.subscribe(),
+            host.question_events.subscribe(),
+        );
         tokio::spawn(async move {
             loop {
                 let ev = tokio::select! {
@@ -84,6 +89,11 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
                     },
                     t = threads.recv() => match t {
                         Ok(t) => FrontEvent::Thread(t),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    },
+                    q = questions.recv() => match q {
+                        Ok(q) => FrontEvent::Question(q),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
                     },
