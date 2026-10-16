@@ -178,7 +178,7 @@ async fn serve(host: Arc<Host>, stream: aa_common::ipc::LocalStream, known: Opti
     tx.json(&LinkMsg::Welcome(HostWelcome {
         proto: agreed,
         host_id: host.host_id.clone(),
-        features: vec!["terminal.v1".into()],
+        features: vec!["terminal.v1".into(), "health.v1".into()],
     }))
     .await?;
     let generation = host.next_gen();
@@ -226,6 +226,7 @@ async fn serve(host: Arc<Host>, stream: aa_common::ipc::LocalStream, known: Opti
                         host.on_report_changed(&mid, &thread, hash)
                     }
                     LinkMsg::Event(AgentEvent::Harness(ev)) => host.on_harness(&mid, ev),
+                    LinkMsg::Event(AgentEvent::Health(h)) => host.on_health(&mid, h),
                     LinkMsg::Ping { seq } => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;
                     }

@@ -6,6 +6,7 @@
 
 mod attach;
 mod command;
+mod health;
 pub mod hooks;
 pub mod identity;
 pub mod link;
@@ -55,6 +56,10 @@ pub struct Agent {
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// 세션별 마지막 harness 사건(host가 다시 붙으면 다시 보낸다)
     harness_last: Mutex<HashMap<String, aa_proto::HarnessEvent>>,
+    /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
+    health: Mutex<Option<aa_proto::MachineHealth>>,
+    /// 지금 host가 건강 보고(`health.v1`)를 받는가
+    host_health: std::sync::atomic::AtomicBool,
 }
 
 impl Agent {
@@ -82,6 +87,8 @@ impl Agent {
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
+            health: Mutex::new(None),
+            host_health: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 

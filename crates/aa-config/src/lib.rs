@@ -100,7 +100,7 @@ impl Default for NotifySection {
             webhook: String::new(),
             format: "json".into(),
             telegram_chat_id: String::new(),
-            kinds: ["report", "question", "delivery", "thread", "session", "outage", "routine-approval"]
+            kinds: ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval"]
                 .map(String::from)
                 .to_vec(),
             debounce_secs: 15,
@@ -241,6 +241,7 @@ pub struct AgentConfig {
     pub agent: AgentSection,
     pub reconnect: ReconnectSection,
     pub selfcheck: SelfcheckSection,
+    pub health: HealthSection,
     /// thread를 띄우는 profile(§8.2). host.toml `[projects] allow_profiles`가 허용한 것만 쓴다.
     pub profiles: std::collections::BTreeMap<String, Profile>,
 }
@@ -252,6 +253,7 @@ impl Default for AgentConfig {
             agent: AgentSection::default(),
             reconnect: ReconnectSection::default(),
             selfcheck: SelfcheckSection::default(),
+            health: HealthSection::default(),
             profiles: Default::default(),
         }
     }
@@ -314,6 +316,24 @@ pub struct SelfcheckSection {
 impl Default for SelfcheckSection {
     fn default() -> Self {
         SelfcheckSection { first_exec_samples: 5, keychain_service: String::new(), volume_dir: String::new() }
+    }
+}
+
+/// 머신 건강 보고(§8.10)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HealthSection {
+    /// 점검 주기(초)
+    pub every_s: u64,
+    /// 작업 root가 있는 디스크의 여유가 이보다 적으면 새 세션을 거부한다(GB, 0이면 보지 않는다)
+    pub min_free_gb: u64,
+    /// toolchain 점검 명령(이름 = argv). 실패하면 새 세션을 거부한다. 출력 첫 줄을 버전으로 보인다.
+    pub toolchain: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl Default for HealthSection {
+    fn default() -> Self {
+        HealthSection { every_s: 60, min_free_gb: 5, toolchain: Default::default() }
     }
 }
 
@@ -410,6 +430,16 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
     }
     if c.selfcheck.first_exec_samples > 200 {
         out.push(Invalid { path: key(&["selfcheck", "first_exec_samples"]), message: "0~200이어야 한다".into() });
+    }
+    if !(1..=3600).contains(&c.health.every_s) {
+        out.push(Invalid { path: key(&["health", "every_s"]), message: "1~3600초여야 한다".into() });
+    }
+    for (name, argv) in &c.health.toolchain {
+        if argv.is_empty() || argv[0].is_empty() {
+            out.push(Invalid {
+                path: key(&["health", "toolchain", name]), message: "실행할 argv가 비었다".into()
+            });
+        }
     }
     for (name, p) in &c.profiles {
         let leak = name.as_str();

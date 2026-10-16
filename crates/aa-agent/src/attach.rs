@@ -98,7 +98,9 @@ mod tests {
         assert!(write(&s, att, 0, b"ab", false).unwrap().is_none());
         assert!(write(&s, att, 5, b"cd", true).is_err(), "건너뛴 위치");
         let (path, sha) = write(&s, att, 2, b"cd", true).unwrap().unwrap();
-        assert!(Path::new(&path).is_absolute() && path.ends_with("attachments/0123456789abcdef.png"));
+        // 경로 구분자는 OS마다 다르다(Windows는 `\`)
+        let p = Path::new(&path);
+        assert!(p.is_absolute() && p.ends_with(Path::new("attachments").join(att)), "{path}");
         assert_eq!(std::fs::read(&path).unwrap(), b"abcd");
         assert_eq!(sha, hex::encode(Sha256::digest(b"abcd")));
         assert!(write(&s, att, 0, b"x", true).is_err(), "같은 이름을 다시 만들지 않는다");

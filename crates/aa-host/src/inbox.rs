@@ -60,7 +60,7 @@ fn render_item(i: &InboxItem) -> String {
 /// 사람이 읽는 대상 이름(`machine mac-b`, `t-0001 session`, `t-0001`)
 pub(crate) fn who(i: &InboxItem) -> String {
     match i.item_kind.as_str() {
-        "outage" => format!("machine {}", i.subject),
+        "outage" | "health" => format!("machine {}", i.subject),
         "session" => format!("{} session", i.subject),
         "routine" | "routine-approval" => format!("routine {}", i.subject),
         _ => i.subject.clone(),
@@ -268,7 +268,9 @@ impl Host {
 
     async fn tick(self: &Arc<Self>) {
         let projects = self.projects();
-        self.check_outages(&projects.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
+        let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
+        self.check_outages(&names);
+        self.check_health_items(&names);
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_sessions(&p.name);
@@ -284,7 +286,7 @@ impl Host {
         }
     }
 
-    fn open_threads(&self, project: &str) -> Vec<ThreadRec> {
+    pub(crate) fn open_threads(&self, project: &str) -> Vec<ThreadRec> {
         self.db
             .threads(Some(project))
             .unwrap_or_default()

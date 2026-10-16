@@ -299,12 +299,20 @@ function Main({ role }: { role: DeviceRole }) {
                 {m.name}
                 {m.local && <span className="tag">host</span>}
                 {m.connection === "disconnected" && <span className="tag warn">끊김</span>}
+                {m.connection === "connected" && m.problems.length > 0 && (
+                  <span className="tag warn" title={m.problems.join("\n")} data-testid={`health-${m.name}`}>
+                    점검 이상
+                  </span>
+                )}
                 {canControl && m.connection === "connected" && (
                   <button className="small" onClick={() => newShell(m)}>
                     새 셸
                   </button>
                 )}
               </h2>
+              {m.connection === "connected" && m.problems.length > 0 && (
+                <p className="muted pad warn-text">새 세션을 시작하지 않는다: {m.problems.join("; ")}</p>
+              )}
               {mine.length === 0 && <p className="muted pad">pane 없음</p>}
               <ul>
                 {mine.map((p) => (

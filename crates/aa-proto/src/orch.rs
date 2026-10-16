@@ -441,7 +441,7 @@ pub struct InboxItem {
     /// `<UTC 시각>-<종류>-<대상>-<순번>`
     pub id: String,
     pub project: String,
-    /// report·question·delivery·thread·session·outage·config-error
+    /// report·question·delivery·thread·session·outage·health·config-error·routine·routine-approval
     pub item_kind: String,
     /// thread ID, 머신 이름, 파일 이름 등
     pub subject: String,
