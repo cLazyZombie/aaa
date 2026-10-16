@@ -71,7 +71,8 @@ args = []
 
 ```bash
 aa service show --role agent --aa ~/.local/bin/aa      # 바꾸지 않고 plist·경로·상태를 본다
-aa service install --role agent --aa ~/.local/bin/aa   # host Mac에서는 --role host도 설치한다
+aa service install --role host --aa ~/.local/bin/aa    # host Mac만, agent보다 먼저
+aa service install --role agent --aa ~/.local/bin/aa   # 모든 Mac
 ```
 
 - plist는 `~/Library/LaunchAgents/dev.aa.<role>.plist`, 로그는 `~/Library/Logs/aa/<role>.log`다.
