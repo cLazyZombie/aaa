@@ -28,13 +28,13 @@ jobs:
     steps:
       # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
       - run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Rust stable
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
           rustup default stable
           rustc --version
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
       - name: 웹 front 빌드(host 실행 파일에 포함)
@@ -44,11 +44,14 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: cargo fmt --all --check
       - name: build
+        id: build
         run: cargo build --workspace --all-targets --locked 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee clippy.log; exit ${PIPESTATUS[0]}
       # 유닛·프로토콜 계약 테스트와 PTY smoke(Windows는 ConPTY + Named Pipe). e2e는 Unix에서만 돈다.
       - name: test
+        # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo test --workspace --locked 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
       # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
       - name: 실패 요약
