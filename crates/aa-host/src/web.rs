@@ -175,20 +175,43 @@ async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSoc
     ws.on_upgrade(move |socket| events_loop(host, role, socket))
 }
 
+/// 머신·pane 목록(바뀔 때마다 전체)과 확인창 질문 사건. 질문은 연결한 뒤 `questions`로 한 번 읽고 이 사건으로 따라간다.
 async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
     let mut changed = host.changed.subscribe();
+    let mut questions = host.question_events.subscribe();
+    let mut send_state = true;
     loop {
-        let ev = FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(role) };
-        let text = serde_json::to_string(&ev).unwrap();
-        if socket.send(Message::Text(text.into())).await.is_err() {
-            break;
+        if send_state {
+            let ev = FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(role) };
+            if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
+                break;
+            }
         }
         tokio::select! {
-            r = changed.changed() => if r.is_err() { break },
-            m = socket.recv() => match m {
-                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                _ => {}
-            },
+            r = changed.changed() => {
+                if r.is_err() { break }
+                send_state = true;
+            }
+            q = questions.recv() => {
+                send_state = false;
+                match q {
+                    Ok(q) => {
+                        let text = serde_json::to_string(&FrontEvent::Question(q)).unwrap();
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // 놓쳤으면 끊는다. 웹은 다시 붙으며 질문 목록을 새로 읽는다.
+                    Err(_) => break,
+                }
+            }
+            m = socket.recv() => {
+                send_state = false;
+                match m {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
         }
     }
 }

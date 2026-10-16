@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { DeviceRole, MachineView, PaneView } from "./gen/proto";
-import { ApiError, call, me, pair, watchState } from "./api";
+import type { AgentActivity, DeviceRole, MachineView, PaneView, QuestionView } from "./gen/proto";
+import { ApiError, call, me, pair, watchEvents } from "./api";
 import { TermView } from "./Term";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
@@ -76,6 +76,69 @@ function paneBadge(p: PaneView): string {
   return STATE_LABEL[p.state];
 }
 
+const ACTIVITY_LABEL: Record<AgentActivity, string> = {
+  started: "시작",
+  working: "작업 중",
+  idle: "입력 대기",
+  question: "질문",
+  error: "오류",
+  exited: "끝남",
+};
+
+/** harness 상태(hook 사건으로만 바뀐다). 진행률을 보고했으면 함께 보인다. */
+function AgentBadge({ p }: { p: PaneView }) {
+  const a = p.agent;
+  if (!a || p.state !== "running") return null;
+  const pct = a.percent != null ? ` ${a.percent}%` : "";
+  const title = [a.harness, a.progress, a.message].filter(Boolean).join(" · ");
+  return (
+    <span className={`badge agent ${a.activity}`} title={title} data-testid={`agent-${p.name || p.id}`}>
+      {ACTIVITY_LABEL[a.activity]}
+      {pct}
+    </span>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = { trust: "폴더 신뢰", permission: "권한 확인", confirm: "확인" };
+const CHOICE_LABEL: Record<string, string> = { yes: "예", no: "아니오" };
+
+/** 확인창 질문 카드. 답은 host가 질문이 아직 열려 있는지 다시 확인한 뒤 harness 키로 보낸다. */
+function QuestionCard({
+  q,
+  paneName,
+  canControl,
+  onPick,
+}: {
+  q: QuestionView;
+  paneName: string;
+  canControl: boolean;
+  onPick: (q: QuestionView, c: string) => void;
+}) {
+  const where = q.project && q.thread ? `${q.project}/${q.thread}` : paneName;
+  return (
+    <div className="question" data-testid={`question-${q.id}`}>
+      <div className="q-head">
+        <span className="tag warn">{KIND_LABEL[q.question_kind] ?? q.question_kind}</span>
+        <span className="muted">
+          {where} · {q.machine}
+        </span>
+      </div>
+      <p className="q-text">{q.text}</p>
+      {canControl ? (
+        <div className="q-actions">
+          {q.options.map((o) => (
+            <button key={o} className={o === "yes" ? "primary" : ""} onClick={() => onPick(q, o)}>
+              {CHOICE_LABEL[o] ?? o}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="muted small-text">보기 권한이라 답할 수 없다</p>
+      )}
+    </div>
+  );
+}
+
 function selectedFromHash(): string | null {
   const m = /^#pane=(.+)$/.exec(location.hash);
   return m ? decodeURIComponent(m[1]) : null;
@@ -88,19 +151,48 @@ function Main({ role }: { role: DeviceRole }) {
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   const [msg, setMsg] = useState<string | null>(null);
+  // 열린 질문(id → 질문). 연결할 때마다 목록을 새로 읽고, 이후는 질문 사건으로 따라간다.
+  const [questions, setQuestions] = useState<Map<string, QuestionView>>(new Map());
+
+  const putQuestion = (q: QuestionView) =>
+    setQuestions((old) => {
+      const next = new Map(old);
+      if (q.state === "open") next.set(q.id, q);
+      else next.delete(q.id);
+      return next;
+    });
 
   useEffect(
     () =>
-      watchState(
+      watchEvents(
         (ev) => {
           setMachines(ev.machines);
           setPanes(ev.panes);
           setLoaded(true);
         },
-        setUp,
+        putQuestion,
+        (on) => {
+          setUp(on);
+          if (on)
+            call({ op: "questions", all: false })
+              .then((r) => {
+                if (r.kind === "questions") setQuestions(new Map(r.questions.map((q) => [q.id, q])));
+              })
+              .catch(() => {});
+        },
       ),
     [],
   );
+
+  const answer = async (q: QuestionView, choice: string) => {
+    setMsg(null);
+    try {
+      const r = await call({ op: "question_answer", id: q.id, choice });
+      if (r.kind === "question") putQuestion(r);
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : String(e));
+    }
+  };
   useEffect(() => {
     const on = () => setSel(selectedFromHash());
     window.addEventListener("hashchange", on);
@@ -124,6 +216,12 @@ function Main({ role }: { role: DeviceRole }) {
 
   const current = panes.find((p) => p.id === sel) ?? null;
   const canControl = role !== "reader";
+  const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
+  const currentQ = current ? open.filter((q) => q.pane === current.id) : [];
+  const nameOf = (id: string) => {
+    const p = panes.find((x) => x.id === id);
+    return p ? p.name || p.argv.join(" ") || id.slice(0, 8) : id.slice(0, 8);
+  };
 
   return (
     <div className={`app ${current ? "has-sel" : ""}`}>
@@ -136,6 +234,14 @@ function Main({ role }: { role: DeviceRole }) {
         {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
         {msg && <div className="banner err">{msg}</div>}
         {!loaded && <p className="muted pad">불러오는 중</p>}
+        {open.length > 0 && (
+          <section className="questions" data-testid="questions">
+            <h2>답을 기다리는 질문 {open.length}</h2>
+            {open.map((q) => (
+              <QuestionCard key={q.id} q={q} paneName={nameOf(q.pane)} canControl={canControl} onPick={answer} />
+            ))}
+          </section>
+        )}
         {machines.map((m) => {
           const mine = panes.filter((p) => p.machine_id === m.id);
           return (
@@ -161,7 +267,10 @@ function Main({ role }: { role: DeviceRole }) {
                       data-testid={`pane-${p.name || p.id}`}
                     >
                       <span className="pane-name">{p.name || p.argv.join(" ") || p.id}</span>
-                      <span className={`badge ${p.state} ${p.connection}`}>{paneBadge(p)}</span>
+                      <span className="badges">
+                        <AgentBadge p={p} />
+                        <span className={`badge ${p.state} ${p.connection}`}>{paneBadge(p)}</span>
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -172,7 +281,12 @@ function Main({ role }: { role: DeviceRole }) {
       </aside>
       <main className="view">
         {current ? (
-          <TermView key={current.id} pane={current} role={role} onBack={() => choose(null)} />
+          <>
+            {currentQ.map((q) => (
+              <QuestionCard key={q.id} q={q} paneName={nameOf(q.pane)} canControl={canControl} onPick={answer} />
+            ))}
+            <TermView key={current.id} pane={current} role={role} onBack={() => choose(null)} />
+          </>
         ) : (
           <p className="center muted">왼쪽에서 pane을 고른다</p>
         )}

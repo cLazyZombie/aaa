@@ -259,6 +259,17 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
+    // harness 상태는 hook 사건으로만 바뀌고 상태 줄·badge에 보인다(세션 안 `aa hook`)
+    tui.type_line(&format!(
+        "'{}' hook --agent claude '{{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}}'; clear",
+        lab::BIN
+    ));
+    tui.wait_text("질문 상태", |s| s.contains("실행 · 질문") && s.contains("질문 — aa question"));
+    tui.type_line(&format!("'{}' hook --agent claude '{{\"hook_event_name\":\"UserPromptSubmit\"}}'; clear", lab::BIN));
+    tui.wait_text("작업 상태", |s| s.contains("실행 · 작업 중") && !s.contains("질문 — aa question"));
+    tui.type_line("echo tui-$((6*7))");
+    tui.wait_text("입력 결과", |s| s.contains("tui-42"));
+
     // 좌우로 나누면 host layout이 바뀌고 구분선과 새 pane이 그려진다. 포커스는 새 pane으로 간다.
     tui.cmd("%");
     wait_for("split 반영", T, || (leaves(&h.ok(&["ws", "show"])).len() == 2).then_some(()));

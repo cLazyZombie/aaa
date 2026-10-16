@@ -187,6 +187,8 @@ pub struct Host {
     waiters: Mutex<harness::Waiters>,
     /// 메시지 전달은 한 번에 하나씩 한다
     deliver_lock: tokio::sync::Mutex<()>,
+    /// pane 등록 전에 온 harness 사건
+    held: Mutex<harness::Held>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -260,6 +262,7 @@ impl Host {
             question_events: broadcast::channel(256).0,
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
+            held: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -323,6 +326,7 @@ impl Host {
         }
         self.bump();
         for (sid, from) in subscribe {
+            self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
         }
         self.rewatch(hello.machine_id.clone());
@@ -437,6 +441,7 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        self.replay_harness(&info.id);
         if started {
             self.spawn_subscribe(machine_id.to_string(), info.id, None);
         }
