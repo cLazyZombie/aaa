@@ -1,6 +1,6 @@
 # aa 기획
 
-2026-10-16 · **기획 개정판, 구현 승인 대기.** 독립 검토(로컬 `.coordinator/review.md`), 사용자 결정 1~6, coordinator 운영 경험 10항목을 반영했다. 이 문서는 구현 승인을 뜻하지 않는다. 개발자 도구 문제가 해결되었다는 뜻도 아니다.
+2026-10-16 · **기획 개정판, 구현 승인 대기.** 독립 검토(로컬 `.coordinator/review.md`), 사용자 결정 1~7, coordinator 운영 경험 10항목을 반영했다. 이 문서는 구현 승인을 뜻하지 않는다. 개발자 도구 문제가 해결되었다는 뜻도 아니다.
 
 - 고정 버전의 소스 분석: [소스 분석](source-analysis.md)
 - 실측과 미검증 조건: [실험 기록](experiments.md)
@@ -35,6 +35,7 @@
 | 4 | 구현은 mac-c worktree thread(Claude Opus high)가 한다 | 로드맵에 반영하지 않음 |
 | 5 | backend 설정은 TOML이다. 위치·스키마 버전·마이그레이션·오류 표시를 정한다 | §7 |
 | 6 | 아래 「결정 6 세부」 참조 | §6, §14 |
+| 7 | 사후 평가자(workflow 감시) agent를 역할로 지정할 수 있다. 일반 agent 목록에 섞이지 않고 배경에서 돌며, 필요하면 열어 본다. 입력은 host가 자동으로 넘기는 사건, 출력은 정해진 평가 기록이다. 다른 agent에 직접 지시하지 않는다 | §8.3, §8.13, §14 |
 
 **결정 3 세부.** host는 host 역할만 한다(2안).
 - 실행 파일은 하나이고 역할만 나눈다(`aa host`/`aa agent`). 경로와 서명은 고정이다.
@@ -101,6 +102,7 @@
 | 결과물 | report·library를 host가 받아 HTTPS로 보여 준다. 큰 결과물은 지연 전송한다 | 175MB·5GB 결과물도 잃지 않고 볼 수 있다 |
 | 병합 | 병합 대기열(순번·사건·훅), 정리 | 병합 사이에 다시 통합하는 비용이 줄어든다 |
 | 운영·진단 | `doctor`, 계보·서명·키체인·첫 실행 지연 자가 보고, 동시 작업 한도 | 빠르지만 키체인이 잠긴 상태도 실패로 보인다 |
+| 사후 평가자 | 특정 agent에 「사후 평가자」 역할 지정. 배경 실행, 별도 상태 표시, 필요할 때 attach. 착지·완료·실패·재시도 사건을 host가 자동 전달 | 결과물 품질이 아니라 흐름의 효율(단계별 시간·재작업·막힌 곳·도구 문제)을 판정한 기록을 coordinator가 채택·보류한다 |
 
 아래 명령은 **설계 예시이며 지금 실행되는 명령이 아니다**.
 
@@ -115,6 +117,9 @@ aa thread message <id> --queue|--interrupt --text-file F
 aa question list / aa question answer <id> <선택지>
 aa decision add / aa merge enqueue <thread>
 aa web publish / aa web publish off
+aa evaluator assign --project P --machine M --profile P
+aa evaluator status / aa evaluator open   배경의 사후 평가자 보기·attach
+aa evaluation list / aa evaluation adopt|hold <id>
 aa doctor / aa config check / aa config migrate
 ```
 
@@ -290,7 +295,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 
 ### 6.2 Front 연결
 
-- **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 thread 범위 token으로 구분한다. 이 token 범위는 M3에서 검토한다.
+- **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 세션·역할 범위 token으로 구분한다. 일반 thread의 범위 제한은 M3에서 검토하지만, 사후 평가자의 금지 동작(§8.13)은 이 token으로 강제하므로 평가자와 함께 넣는다.
 - **다른 기기의 TUI:** TCP+TLS로 붙는다. 웹과 같은 장치 모델을 쓴다(장치 키 pairing, reader/controller 역할).
 - **브라우저:** §6.3의 HTTPS 주소로 붙는다.
 
@@ -334,7 +339,7 @@ herdr-web-ui 0.4.10의 방식(`server/tailscale.ts`, `scripts/plugin.ts`의 `pho
 - **업로드:** 이미지 업로드도 변경 권한이다. 전송이 끝나기 직전에 권한을 다시 확인한다.
 - **감사 로그:** 입력, thread 시작, routine 실행, 질문 응답, 업로드, 공개 변경을 누가 언제 했는지 남긴다.
 - **보고서 표시:** agent가 만든 보고서 HTML은 `allow-same-origin` 없는 sandbox iframe(opaque origin)과 CSP로 보여 준다. 제어 UI와 같은 origin에서 script를 실행하지 않는다.
-- **agent pane 안의 CLI:** thread agent의 `aa` 호출에 자기 thread 범위로 한정한 token을 줄지 M3에서 검토한다.
+- **agent pane 안의 CLI:** thread agent의 `aa` 호출에 자기 thread 범위로 한정한 token을 줄지 M3에서 검토한다. 역할(role)은 token에 처음부터 담고, 사후 평가자 역할은 다른 thread에 대한 메시지·시작·질문 응답을 거부한다(§8.13).
 
 ### 6.5 신뢰 경계
 
@@ -441,6 +446,10 @@ host 프로젝트 폴더 구성:
   - M1-3에서 harness별 사건 출처를 조사해 고정한다. Claude Code의 Stop·Notification류 hook, Codex의 hook·notify류가 후보이며, 현재 지원 범위는 아직 확인하지 않았다.
 - **감시 대상:** 모든 agent 세션을 같은 방식으로 등록·감시한다(thread 밖 agent와 coordinator 포함). coordinator와 front는 구독하고 polling하지 않는다. 주기적 reconciliation은 보조다.
 - **감지 규칙 고정:** 화면 감지 규칙은 버전을 pin하고 원격에서 자동 갱신하지 않는다.
+- **흐름 사건(host가 낸다):** `thread_started`, `brief_delivered`, `report_ready`, `review_acked`, `thread_resolved`, `thread_failed`, `thread_restarted`(재시도·재brief), `question_answered`, `merge_step`(enqueue·push·landed·cleanup).
+  - 모든 사건은 project별 순번(seq), host 시각 + boot ID, 관련 thread·role·profile·machine, 근거 경로(report·로그·시간표)를 가진 durable 기록이다.
+  - 구독자는 cursor로 읽는다. 알림을 놓쳐도 cursor부터 다시 읽어 복구한다(보고는 파일, 프롬프트는 알림).
+  - 사후 평가자(§8.13)는 이 사건 묶음만으로 단계별 시간을 계산할 수 있어야 한다. 그래서 사건 schema와 보존 기간은 M1-3에서 평가자 용도까지 고려해 정한다.
 
 ### 8.4 확인창 원격 응답
 
@@ -534,6 +543,49 @@ host 프로젝트 폴더 구성:
 
 - **로컬·원격 기능이 같다.** 종류는 worktree, tab(같은 checkout), checkout, adopt(기존 pane 등록), repo 없는 task dir이다. 0.2.35는 원격에서 worktree만 허용했다.
 - **기존 운영 규칙 유지:** worktree는 머신별 설정 root에만 만든다. thread 기록의 경로와 실제 디렉터리가 일치하는지 확인한다.
+
+### 8.13 역할 모델과 사후 평가자 (결정 7)
+
+참고 사례는 지금 운영의 t-0250(병합 재작업을 줄이는 도구 개선)이다. 착지마다 coordinator가 감시 기록(watch.md)에 손으로 사실을 적으면, 그 agent가 결과물 품질이 아니라 **흐름의 효율**을 판정하고 도구 개선안을 냈다. aa는 이것을 기능으로 만든다.
+
+**역할(role) 모델.** 모든 agent 세션은 spec에 역할을 가진다. 역할은 처음부터 schema·Front API·token에 들어가는 열거형이며, 새 역할을 더해도 기존 데이터가 깨지지 않게 둔다.
+
+| 역할 | 하는 일 | 목록 표시 | 다른 agent에 지시 |
+|---|---|---|---|
+| `coordinator` | 프로젝트 판단, thread 시작·검토·resolve | 프로젝트 머리 | 가능(Front API 권한 안에서) |
+| `worker` | 일반 thread 작업 | 왼쪽 agent 목록 | 불가(자기 보고만) |
+| `evaluator`(사후 평가자) | 흐름 효율 판정·도구 개선안 | **목록에 넣지 않음.** 별도 표시 | **불가** |
+
+**지정.**
+- `aa evaluator assign --project P --machine M --profile P`로 지정하고, `project.toml`의 `[evaluator]`에 기록한다. 프로젝트당 기본 하나이며 profile과 머신은 고른다.
+- host가 평가자 세션을 일반 thread처럼 agent backend에 시작한다. 실행 사실·resume·재부팅 처리는 일반 세션과 같다. 동시 thread 한도에는 포함하고 우선순위는 낮게(nice) 둔다.
+- 평가자 작업 폴더는 `projects/<p>/evaluator/`(host)와 대상 머신의 `.aa/<project>-evaluator/`다.
+
+**UI.**
+- TUI 왼쪽 agent 목록과 웹 agent 목록에 섞지 않는다. 헷갈리지 않게 하기 위해서다. Front API의 목록 조회도 기본은 `coordinator`·`worker`만 돌려주고, 평가자는 `--role evaluator`로만 나온다.
+- 상태는 따로 보인다. TUI는 상단 상태줄의 작은 표시(예: `평가 ● 2`, 새 판정 수와 working/idle), 웹은 header의 badge다.
+- `aa evaluator open`(TUI 단축키, 웹 badge 클릭)으로 평가자 pane을 열어 화면을 보고 직접 말을 건다(일반 attach와 lease 규칙이 같다). 닫으면 다시 배경으로 돌아가고 세션은 계속 돈다.
+
+**입력: host가 사건을 자동으로 넘긴다.**
+- 대상 사건: 착지(`merge_step` landed), 완료(`thread_resolved`), 실패(`thread_failed`), 재시도(`thread_restarted`), 그 밖에 §8.3 흐름 사건 중 project.toml에서 고른 것.
+- 넘기는 내용: 사건 묶음(thread의 단계별 시작·끝 시간표, 재시도 횟수, 질문 대기 시간), 로그·보고서·검토 기록 경로. coordinator가 손으로 감시 기록을 적지 않아도 된다.
+- 전달 방식: host가 평가자 cursor 뒤의 사건을 `evaluator/inbox/<seq>.json`에 쓰고, 메시지 API의 `--queue`로 「새 사건 n건」 알림만 보낸다. 사건이 몰리면 묶어서(debounce, 기본 예: 5분 또는 착지 1건마다) 보낸다. 알림이 `delivery_unknown`이어도 다시 보내지 않고, 평가자는 cursor부터 다시 읽는다(§8.5 a).
+
+**출력: 정해진 평가 기록.**
+- 평가자는 `aa evaluation submit --file F`로 기록을 낸다. host가 `projects/<p>/evaluations/<id>.md`(사람이 읽는 본문)와 DB 구조화 기록을 저장한다.
+- 구조화 기록 항목: 대상 사건·thread, 단계별 시간, 재작업(횟수·원인), 막힌 곳, 도구 문제, 결함을 누가 어느 단계에서 잡았나, 개선안 목록(id·내용·예상 효과·대상 도구).
+- coordinator나 사용자가 `aa evaluation adopt|hold <id>`로 개선안마다 채택·보류를 정한다. inbox에 `evaluation` item으로 뜨고 결정 기록(§8.6)과 연결된다.
+- 채택된 개선의 구현은 coordinator가 정한다. 평가자 자신의 worktree에서 고쳐 일반 착지 절차를 밟게 할 수도 있고(t-0250 방식), 별도 thread를 시작할 수도 있다.
+
+**금지.**
+- 평가자는 다른 agent에 직접 지시하지 않는다. 평가자 세션의 token으로는 다른 thread에 대한 `thread message`·`thread start`·`question answer`·`pane send`가 거부된다(Front API가 role로 판정).
+- 평가자는 사건·보고·로그를 읽고, 자기 작업 폴더와 평가 기록만 쓴다.
+
+**단계.** MVP 필수는 아니다. 그래도 막히지 않게 아래는 M1-3에 넣는다.
+- 역할 필드(schema·Front API·token)
+- 목록의 기본 role 필터
+- 흐름 사건과 cursor 구독
+평가자 기능 자체(지정, 배경 실행, 별도 표시, 사건 자동 전달, 평가 기록, 채택·보류, role 금지 동작)는 M3에 둔다(§14).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
@@ -791,6 +843,7 @@ primary 근거:
 | question·message | 선택지 매핑, lease 재확인, interrupt·queue 순서 | 잘못된 pane에 답 입력 |
 | routine·inbox | 가상 clock의 schedule·DST·missed-run·ack·중복 억제 | 재시작 뒤 중복 실행 |
 | 권한 | reader·controller·lease·취소·Origin/CSRF | 읽기 front의 입력, 취소 뒤 pending write |
+| 역할·사후 평가자 | 목록 기본 role 필터, 평가자 token의 금지 동작 거부, 사건 cursor·debounce, 평가 기록 schema·채택·보류 | 평가자가 일반 목록에 섞임, 다른 agent에 지시, 알림 유실로 사건 누락 |
 | adapter | Claude·Codex hook·화면 fixture를 버전별로 decode | 사건 오판, UI 문구 변화로 잘못된 키 |
 | Tailscale 공개 | `status --json`·`serve status --json` fixture로 포트 선택·상태 판정 | 기존 매핑 덮어쓰기, 잘못된 주소 |
 
@@ -856,14 +909,15 @@ primary 근거:
 | P0. 개발자 도구 gate | 3~6일 + 승인·시험기 대기(M1-1과 병행 가능) | E1~E7, 서명 identity 결정, 프로토콜·수명 ADR | §10.6의 gate 실측. 실패하면 설계를 수정. **P0 합격 전에는 운영 투입 금지** |
 | M1-1. 골격 + 웹 HTTPS | 8~12일 | 단일 실행 파일 역할, TOML, Agent link(TLS·enrollment), 로컬 agent backend(개발 모드는 자식, 운영 모드는 LaunchAgent), session host·PTY·VT, `aa pane run/read/send`, host 웹 최소판(pairing·세션 목록·terminal 보기·입력), `aa web publish` | 다른 기기에서 Tailscale HTTPS 주소로 Mac 3대의 pane을 보고 입력한다. host 재시작 뒤에도 세션 유지. agent 단절 시 읽기 전용 표시. Windows·Linux는 Agent link 계약 테스트·CI build·PTY smoke |
 | M1-2. TUI front·세션 관리 | 6~10일 | workspace/tab/pane layout, attach/detach, 여러 front lease, 재부팅 뒤 resume spec | TUI harness로 화면 단언, 여러 front 동시, 재부팅 뒤 interrupted 표시 |
-| M1-3. 오케스트레이션 | 10~15일 | projects 0.2 핵심(부록 A의 M1 항목), 상태 사건(Claude·Codex adapter), 확인창 원격 응답, 메시지 API, 결정 기록, 병합 대기열 순번·사건, 머신 건강·자원 한도, routine을 agent에서 실행 | Mac 중심 → Mac 3대 thread 시작·보고 회수·ack·resolve. 질문 원격 응답. polling 없는 상태 표시 |
+| M1-3. 오케스트레이션 | 10~15일 | projects 0.2 핵심(부록 A의 M1 항목), 상태 사건(Claude·Codex adapter), 흐름 사건·cursor 구독과 역할 필드(평가자 대비, §8.13), 확인창 원격 응답, 메시지 API, 결정 기록, 병합 대기열 순번·사건, 머신 건강·자원 한도, routine을 agent에서 실행 | Mac 중심 → Mac 3대 thread 시작·보고 회수·ack·resolve. 질문 원격 응답. polling 없는 상태 표시 |
 | M1-4. 이미지·결과물·알림 | 4~7일 | TUI·웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, Web Push·webhook | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 8~14일 | 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13, 3~5일, M1 뒤 바로 시작 가능), 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
-- **합계:** P0 3~6일 + M1 28~44일 + M2~M4 22~37일 = **약 53~87 작업일**에 승인·환경 대기가 더해진다.
+- **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.
+- **사후 평가자 배치:** MVP 필수가 아니므로 M3에 두었다. 역할 필드·흐름 사건은 M1-3에 있으므로, 원하면 M1 직후 M2와 독립적으로 먼저 할 수 있다.
 - **MVP 범위:** M1 범위를 macOS로 둔 것은 [정할 것 1](#16-위험과-정할-것)이다. 3 OS 기능 합격을 MVP에 넣으면 M2가 M1 안으로 들어와 첫 사용 시점이 늦어진다.
 - **세 OS 프로토콜·빌드는 M1-1부터 함께 간다.** 바뀌는 것은 기능 완성 시점뿐이다.
 
@@ -921,13 +975,14 @@ primary 근거:
 | Tailscale serve CLI 변경 | 공개 실패 | 읽기 전용 상태 판정 fixture, 실패 시 할 일 표시 |
 | 비공개 macOS API 변경 | 진단 실패 | timing probe fallback |
 | 로드맵 초과 | 전환 지연 | M1 중간 재산정, 범위는 부록 A 기준으로 조정 |
+| 사후 평가자가 사건마다 깨어남 | 토큰 비용·잡음 | 사건 묶음 debounce, 대상 사건 선택(project.toml), 판정은 기록으로만 |
 
 중심 머신의 Linux·Windows 지원은 후속 범위의 열린 질문이다. agent 머신의 세 OS 지원과 혼동하지 않는다.
 
 ## 17. 이번 작업 검증·전달 상태
 
 - **첫 조사:** 세 소스를 `research/<tool>/`에 확보하고 commit을 고정했다. 10조건×6개 fresh executable을 측정했다. 설정·개발자 도구·키체인·launchd·운영 herdr 서버는 바꾸지 않았다.
-- **이번 개정:** 독립 검토 지적 24개, 운영 경험 10항목, 사용자 결정 1~6을 반영했다. 반영 여부는 부록 B에 있다. 실험을 다시 돌리지 않았고, 등록·재부팅이 필요한 검증은 P0으로 남겼다.
+- **이번 개정:** 독립 검토 지적 24개, 운영 경험 10항목, 사용자 결정 1~7을 반영했다. 반영 여부는 부록 B에 있다. 실험을 다시 돌리지 않았고, 등록·재부팅이 필요한 검증은 P0으로 남겼다.
 - **함께 고친 문서:** [소스 분석](source-analysis.md)의 사실 오류와 [실험 기록](experiments.md)의 재해석을 같이 고쳤다.
 - **웹 보고서:** 한국어 웹 보고서는 로컬 `.coordinator/library/index.html`에 있다. 검증 결과는 `.coordinator/report.md`에 적는다.
 - **다음 단계:** 구현은 사용자 승인 뒤 별도 thread가 한다.
@@ -1010,3 +1065,4 @@ primary 근거:
 | 결정 5 | TOML | 반영 | §7 | |
 | 결정 6 | tailnet 모름, 설정 주소 TCP | 반영 | §6.1 | |
 | 결정 6 예외 | Tailscale HTTPS 공개, MVP 첫 단계 | 반영 | §6.3, §14 | |
+| 결정 7 | 사후 평가자 역할(배경 실행·별도 표시·attach·사건 자동 입력·평가 기록·직접 지시 금지) | 반영 | §3, §6.2, §6.4, §8.3, §8.13, §13, §14 | 기능은 M3, 역할 필드·흐름 사건은 M1-3 |
