@@ -1051,3 +1051,88 @@ fn library_view() {
     assert!(String::from_utf8_lossy(&body).contains("agent에 남긴 결과물을 읽지 못한다"));
     assert!(t0.elapsed() < Duration::from_secs(5));
 }
+
+/// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.
+#[test]
+fn notify_webhook() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
+    std::thread::spawn(move || {
+        for (n, conn) in listener.incoming().enumerate() {
+            let Ok(mut c) = conn else { continue };
+            let mut r = BufReader::new(c.try_clone().unwrap());
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap();
+            let mut len = 0;
+            loop {
+                let mut h = String::new();
+                r.read_line(&mut h).unwrap();
+                if h == "\r\n" {
+                    break;
+                }
+                if let Some(v) = h.to_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0u8; len];
+            r.read_exact(&mut body).unwrap();
+            // 두 번째 요청부터는 실패를 돌려준다
+            let status = if n == 0 { "200 OK" } else { "500 Internal Server Error" };
+            write!(c, "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            tx.send((line.trim().to_string(), String::from_utf8(body).unwrap())).unwrap();
+        }
+    });
+    let w = world_with(&format!(
+        "[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 2\nkinds = [\"report\", \"session\"]\n"
+    ));
+    let ids: Vec<String> = ["n1", "n2"]
+        .iter()
+        .map(|n| {
+            w.start(&[
+                "--title",
+                n,
+                "--profile",
+                "fake",
+                "--kind",
+                "dir",
+                "--task-file",
+                &w.task(&format!("{n}.txt"), "x"),
+            ])["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    // 두 보고가 debounce 안에 오면 한 통이다
+    let (line, body) = rx.recv_timeout(T).expect("알림");
+    assert_eq!(line, "POST /hook HTTP/1.1");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["project"], "demo");
+    let got: Vec<_> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
+        .collect();
+    assert_eq!(got, [(ids[0].as_str(), "report ready"), (ids[1].as_str(), "report ready")], "{body}");
+    assert!(v["text"].as_str().unwrap().starts_with("[aa] demo\n- t-0001 report ready"), "{body}");
+    wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
+    // 세션이 끝나면(session) 알린다. 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
+    w.h.ok(&["pane", "kill", w.show(&ids[0])["pane"].as_str().unwrap()]);
+    let (_, body) = rx.recv_timeout(T).expect("세션 알림");
+    assert!(body.contains(&format!("- {} session ended: 세션이 끝났다", ids[0])), "{body}");
+    wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
+    assert!(rx.recv_timeout(Duration::from_secs(5)).is_err(), "실패한 알림을 다시 보냈다");
+    let failed = w.h.ok(&["events", "--project", "demo"])["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "notify_failed")
+        .unwrap()
+        .clone();
+    assert_eq!(failed["detail"], "HTTP 500");
+    // 주소(비밀값이 들어갈 수 있다)는 기록에 남지 않는다
+    assert!(!w.h.ok(&["events", "--project", "demo"]).to_string().contains("/hook"));
+}

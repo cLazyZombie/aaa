@@ -75,6 +75,37 @@ pub struct HostConfig {
     pub local_agent: LocalAgentSection,
     pub tui: TuiSection,
     pub projects: ProjectsSection,
+    pub notify: NotifySection,
+}
+
+/// 알림 webhook(§8.7). 봇 token 같은 비밀값이 주소에 들어갈 수 있으니 `host.local.toml`(커밋하지 않는 파일)에 둔다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotifySection {
+    /// 보낼 주소(비우면 끈다). https만 받는다(시험용 loopback http 예외). 로그·오류에는 주소를 남기지 않는다.
+    pub webhook: String,
+    /// `json`(기본, 항목 목록과 글) 또는 `telegram`(Bot API sendMessage 본문)
+    pub format: String,
+    /// format이 telegram일 때 받을 chat
+    pub telegram_chat_id: String,
+    /// 알릴 inbox 항목 종류
+    pub kinds: Vec<String>,
+    /// 이 시간(초) 동안 모아 프로젝트마다 한 번에 보낸다(질문이 몰려도 한 통)
+    pub debounce_secs: u64,
+}
+
+impl Default for NotifySection {
+    fn default() -> Self {
+        NotifySection {
+            webhook: String::new(),
+            format: "json".into(),
+            telegram_chat_id: String::new(),
+            kinds: ["report", "question", "delivery", "thread", "session", "outage", "routine-approval"]
+                .map(String::from)
+                .to_vec(),
+            debounce_secs: 15,
+        }
+    }
 }
 
 impl Default for HostConfig {
@@ -86,6 +117,7 @@ impl Default for HostConfig {
             local_agent: LocalAgentSection::default(),
             tui: TuiSection::default(),
             projects: ProjectsSection::default(),
+            notify: NotifySection::default(),
         }
     }
 }
@@ -333,6 +365,29 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     }
     if c.projects.tick_secs == 0 {
         out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });
+    }
+    let n = &c.notify;
+    if !n.webhook.is_empty() {
+        let loopback =
+            ["http://127.0.0.1:", "http://localhost:", "http://[::1]:"].iter().any(|p| n.webhook.starts_with(p));
+        if !n.webhook.starts_with("https://") && !loopback {
+            out.push(Invalid {
+                path: key(&["notify", "webhook"]),
+                message: "https 주소여야 한다(http는 이 머신 loopback 시험만)".into(),
+            });
+        }
+    }
+    match n.format.as_str() {
+        "json" => {}
+        "telegram" if !n.telegram_chat_id.is_empty() => {}
+        "telegram" => out.push(Invalid {
+            path: key(&["notify", "telegram_chat_id"]),
+            message: "format = \"telegram\"이면 chat ID가 필요하다".into(),
+        }),
+        other => out.push(Invalid {
+            path: key(&["notify", "format"]),
+            message: format!("json 또는 telegram이어야 한다: {other:?}"),
+        }),
     }
     out
 }

@@ -29,3 +29,27 @@ allow_profiles = ["*"]
 library_copy_mb = 200
 # brief에 넣을 memory 글자 수 상한
 brief_memory_chars = 32000
+# ticker 주기(초). inbox 항목이 생기거나 harness가 입력 대기가 되면 주기를 기다리지 않고 돈다.
+tick_secs = 15
+# coordinator가 이만큼(초) 입력 대기 상태로 머물러야 inbox 알림(nudge)을 보낸다
+nudge_idle_secs = 10
+# 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다
+outage_secs = 600
+# inbox에서 끝낸 항목을 지우기까지 날짜
+inbox_done_days = 30
+# 머신 하나에서 동시에 도는 thread 한도(0이면 제한 없음)
+max_threads_per_machine = 6
+# routine 명령을 실행해도 되는 프로젝트("*"는 모두). 실행하려면 `aa routine approve`로 사람이 명령을 승인해야 한다.
+routine_commands = []
+
+[notify]
+# 알림 webhook(비우면 끈다). https만 받는다. 봇 token이 들어가면 이 줄은 host.local.toml에 둔다.
+# 텔레그램 예: webhook = "https://api.telegram.org/bot<token>/sendMessage", format = "telegram", telegram_chat_id = "<chat>"
+webhook = ""
+# json(항목 목록과 글) 또는 telegram
+format = "json"
+telegram_chat_id = ""
+# 알릴 inbox 항목 종류
+kinds = ["report", "question", "delivery", "thread", "session", "outage", "routine-approval"]
+# 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다
+debounce_secs = 15

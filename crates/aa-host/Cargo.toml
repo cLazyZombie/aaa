@@ -24,6 +24,8 @@ hex.workspace = true
 rand.workspace = true
 tracing.workspace = true
 tokio-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
 axum = { version = "0.8", features = ["ws"] }
 

@@ -57,16 +57,22 @@ fn render_item(i: &InboxItem) -> String {
     )
 }
 
+/// 사람이 읽는 대상 이름(`machine mac-b`, `t-0001 session`, `t-0001`)
+pub(crate) fn who(i: &InboxItem) -> String {
+    match i.item_kind.as_str() {
+        "outage" => format!("machine {}", i.subject),
+        "session" => format!("{} session", i.subject),
+        "routine" | "routine-approval" => format!("routine {}", i.subject),
+        _ => i.subject.clone(),
+    }
+}
+
 /// 처음 보는 항목 묶음 → nudge 한 줄. 대상별로 사건을 묶고 요약은 넣지 않는다.
 pub(crate) fn nudge_text(project: &str, items: &[InboxItem]) -> String {
     let mut order: Vec<String> = Vec::new();
     let mut events: HashMap<String, Vec<String>> = HashMap::new();
     for i in items {
-        let who = match i.item_kind.as_str() {
-            "outage" => format!("machine {}", i.subject),
-            "session" => format!("{} session", i.subject),
-            _ => i.subject.clone(),
-        };
+        let who = who(i);
         if !events.contains_key(&who) {
             order.push(who.clone());
         }
@@ -143,6 +149,7 @@ impl Host {
             tracing::error!("inbox 저장 실패: {e:#}");
             return;
         }
+        self.notify(&item);
         let dir = self.inbox_dir(project);
         if let Err(e) = std::fs::create_dir_all(&dir)
             .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(&item)))
