@@ -7,6 +7,7 @@ pub mod db;
 pub mod front;
 mod harness;
 mod inbox;
+mod library;
 pub mod link;
 mod merge;
 mod orch;
@@ -207,6 +208,8 @@ pub struct Host {
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
+    /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
+    view_caps: Mutex<HashMap<String, library::ViewCap>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -286,6 +289,7 @@ impl Host {
             outages: Mutex::new(HashSet::new()),
             nudge_screens: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
+            view_caps: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -657,6 +661,9 @@ impl Host {
             }
             FrontRequest::ThreadShow { project, thread } => {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadLibrary { project, thread } => {
+                self.thread_library(&project, &thread).map(FrontResponse::Library)
             }
             FrontRequest::ThreadAck { project, thread } => {
                 self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)

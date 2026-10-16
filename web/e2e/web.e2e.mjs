@@ -121,7 +121,44 @@ if (shots) fs.mkdirSync(shots, { recursive: true });
 const webPort = await freePort();
 fs.writeFileSync(
   `${root}/c/host.toml`,
-  `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:${webPort}"\n[local_agent]\nmode = "none"\n`,
+  `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:${webPort}"\n[local_agent]\nmode = "none"\n` +
+    `[projects]\nroot = "${root}/projects"\nallow_profiles = ["fake"]\nlibrary_copy_mb = 1\n`,
+);
+// 가짜 thread agent: brief 안내를 받으면 Markdown 보고와 결과물(HTML·그림·복사 상한을 넘는 파일)을 쓴다.
+// 결과물 HTML은 자기가 격리됐는지(부모 문서·cookie·API에 닿는지) body data에 적는다.
+fs.writeFileSync(
+  `${root}/pic.png`,
+  Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64"),
+);
+fs.writeFileSync(
+  `${root}/index.html`,
+  `<!doctype html><meta charset=utf-8><body><h1 id=t>결과 보고</h1><img id=pic src="pic.png"><script>
+var r = document.body.dataset;
+try { parent.document.title; r.parent = "open"; } catch (e) { r.parent = "blocked"; }
+try { r.cookie = document.cookie === "" ? "none" : "visible"; } catch (e) { r.cookie = "blocked"; }
+fetch("/api/v1/me").then(function (x) { r.api = String(x.status); }).catch(function () { r.api = "blocked"; });
+</script>`,
+);
+fs.writeFileSync(
+  `${root}/fake.sh`,
+  `#!/bin/sh
+printf 'fake> '
+while IFS= read -r line; do
+  case "$line" in
+    *brief.md*)
+      dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
+      cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
+      head -c 2097152 /dev/urandom > "$dir/library/big.bin"
+      printf '[완료]\\n\\n## Report\\n- 웹 보기 **확인**: \\140index.html\\140\\n\\n## Next\\n- 결과 확인\\n' > "$dir/report.md"
+      echo done ;;
+  esac
+  printf 'fake> '
+done
+`,
+);
+fs.writeFileSync(
+  `${root}/c/agent.toml`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
 );
 base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();
@@ -246,6 +283,49 @@ try {
     await until("pane 작업 중", async () => (await page.getByTestId("agent-q1").innerText()) === "작업 중");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+  });
+
+  await step("thread 보고서·결과물: Markdown 보고, sandbox 결과물, agent에 남은 큰 파일, ack", async () => {
+    aa("project", "create", "demo");
+    fs.writeFileSync(`${root}/task.md`, "웹 보기");
+    const t = aa("thread", "start", "demo", "--title", "웹 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir",
+      "--task-file", `${root}/task.md`);
+    await until("보고 회수", () => aa("thread", "show", "demo", t.id).report_hash);
+    const item = page.getByTestId(`thread-demo-${t.id}`);
+    await until("thread 목록에 검토 대기", async () => (await item.innerText()).includes("검토 대기"));
+    await item.click();
+    const report = page.getByTestId("report");
+    await until("보고 Markdown", async () => (await report.locator("strong").innerText()) === "확인");
+    if ((await report.locator("code").innerText()) !== "index.html") throw new Error(await report.innerHTML());
+    const frameEl = await page.getByTestId("library-frame").elementHandle();
+    const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
+    const probe = await until("결과물 HTML 실행", async () => {
+      const d = await frame.evaluate(() => ({
+        title: document.getElementById("t")?.textContent,
+        pic: document.getElementById("pic")?.naturalWidth,
+        ...document.body.dataset,
+      }));
+      return d.api ? d : null;
+    });
+    if (probe.title !== "결과 보고" || probe.pic !== 1) throw new Error(`결과물 표시: ${JSON.stringify(probe)}`);
+    // opaque origin: 부모 문서·cookie·제어 API에 닿지 못한다
+    if (probe.parent !== "blocked" || probe.cookie === "visible" || probe.api === "200") {
+      throw new Error(`결과물이 격리되지 않았다: ${JSON.stringify(probe)}`);
+    }
+    const big = page.getByTestId("files").locator("li", { hasText: "big.bin" });
+    if (!(await big.innerText()).includes("agent에서 읽음")) throw new Error(await big.innerText());
+    const href = await big.locator("a").getAttribute("href");
+    const n = await page.evaluate(async (u) => (await (await fetch(u)).arrayBuffer()).byteLength, href);
+    if (n !== 2097152) throw new Error(`agent 파일 길이 ${n}`);
+    await shot(page, "desktop-thread-library");
+    await page.getByRole("button", { name: "확인(ack)" }).click();
+    await until("ack 뒤 검토 대기 아님", async () => !(await item.innerText()).includes("검토 대기"));
+    if (aa("thread", "show", "demo", t.id).acked_hash !== aa("thread", "show", "demo", t.id).report_hash) {
+      throw new Error("ack가 기록되지 않았다");
+    }
+    // 다음 단계는 t1 터미널을 본다
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
   await step("agent 끊김 → 읽기 전용 표시", async () => {

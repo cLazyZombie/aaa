@@ -1,5 +1,14 @@
 // host 웹 API(crates/aa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
-import type { DeviceRole, ErrorBody, FrontEvent, FrontRequest, FrontResponse, Outcome, QuestionView } from "./gen/proto";
+import type {
+  DeviceRole,
+  ErrorBody,
+  FrontEvent,
+  FrontRequest,
+  FrontResponse,
+  Outcome,
+  QuestionView,
+  ThreadView,
+} from "./gen/proto";
 
 export class ApiError extends Error {
   constructor(public body: ErrorBody) {
@@ -48,11 +57,12 @@ export function wsUrl(path: string): string {
 export type StateEvent = Extract<FrontEvent, { ev: "state" }>;
 export type QuestionEvent = Extract<FrontEvent, { ev: "question" }>;
 
-/** 기계·pane 목록과 확인창 질문 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
+/** 기계·pane 목록과 확인창 질문·thread 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
 export function watchEvents(
   onState: (ev: StateEvent) => void,
   onQuestion: (q: QuestionView) => void,
   onLink: (up: boolean) => void,
+  onThread: (t: ThreadView) => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -70,6 +80,9 @@ export function watchEvents(
       else if (ev.ev === "question") {
         const { ev: _tag, ...q } = ev;
         onQuestion(q as QuestionView);
+      } else if (ev.ev === "thread") {
+        const { ev: _tag, ...t } = ev;
+        onThread(t as ThreadView);
       }
     };
     ws.onclose = () => {

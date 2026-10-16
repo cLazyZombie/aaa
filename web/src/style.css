@@ -88,3 +88,22 @@ code { background: #232a33; padding: 1px 5px; border-radius: 4px; }
 .q-actions button { min-width: 72px; min-height: 32px; }
 button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
 .small-text { font-size: 12px; margin: 0; }
+
+/* thread 보고서·결과물(M1-4) */
+.threads h2 { font-size: 13px; margin: 0; padding: 12px 14px 4px; }
+.threads ul { list-style: none; margin: 0; padding: 0 6px 6px; }
+.badge.group.ready_for_review { color: #111418; background: var(--accent); border-radius: 4px; padding: 0 5px; }
+.badge.group.waiting_on_you { color: var(--warn); }
+.badge.group.working { color: var(--ok); }
+.thread-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.thread-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px 24px; }
+.thread-body h2 { font-size: 14px; margin: 8px 0; color: var(--muted); }
+.md { line-height: 1.6; overflow-wrap: anywhere; }
+.md h2, .md h3, .md h4, .md h5 { color: var(--fg); margin: 14px 0 6px; }
+.md pre { background: #0d1014; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-x: auto; }
+.md ul { padding-left: 20px; }
+.files ul { padding-left: 18px; }
+.files a { color: var(--accent); overflow-wrap: anywhere; }
+.files .tag { margin-left: 6px; }
+.library-frame { width: 100%; height: 60vh; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+button.primary { background: var(--accent); color: #0d1014; border-color: var(--accent); }

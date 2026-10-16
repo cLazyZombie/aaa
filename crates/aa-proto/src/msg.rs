@@ -11,9 +11,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, MergeEntry, MessageMode,
-    MessageView, ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind, ThreadPrepare,
-    ThreadReady, ThreadView,
+    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry,
+    MessageMode, MessageView, ProfileView, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
+    ThreadPrepare, ThreadReady, ThreadView,
 };
 
 use crate::version::Version;
@@ -730,6 +730,11 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
+    /// 보고서와 결과물 목록, 그리고 결과물을 볼 짧은 수명의 읽기 전용 경로
+    ThreadLibrary {
+        project: String,
+        thread: String,
+    },
     /// 지금 보고를 확인했다
     ThreadAck {
         project: String,
@@ -851,6 +856,7 @@ impl FrontRequest {
                 | FrontRequest::Profiles { .. }
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
+                | FrontRequest::ThreadLibrary { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Decisions { .. }
@@ -938,6 +944,7 @@ pub enum FrontResponse {
     Routines {
         routines: Vec<RoutineView>,
     },
+    Library(LibraryView),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
