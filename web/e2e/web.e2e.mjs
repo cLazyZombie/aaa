@@ -268,6 +268,14 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// bracketed paste를 켜는 입력창: 받은 조각을 JSON으로 그대로 보인다(composer 여러 줄·Enter 시험)
+fs.writeFileSync(
+  `${root}/paste.js`,
+  `process.stdin.setRawMode(true);
+process.stdout.write("\\x1b[?2004hpaste> ");
+process.stdin.on("data", (d) => process.stdout.write("\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\npaste> "));
+`,
+);
 base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();
 
@@ -456,6 +464,60 @@ try {
     aaa("pane", "send", "burst", "--text", "one\r");
     await until("한 덩어리 판정", async () => (await screenText(page)).includes("[newline]"));
     aaa("pane", "kill", "burst");
+  });
+
+  await step("composer: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰 Enter는 줄바꿈", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "pasteapp", "--", process.execPath, `${root}/paste.js`);
+    const got = () => aaa("pane", "read", "pasteapp").lines.join("\n");
+    const gots = () => got().split("GOT:").length - 1;
+    await page.getByTestId("pane-pasteapp").click();
+    await until("paste 화면", async () => (await screenText(page)).includes("paste>"));
+    const box = page.getByLabel("보낼 글");
+    // 여러 줄: 프로그램이 bracketed paste를 켰으니 감싸서 한 덩어리로, 줄바꿈은 CR로. Enter는 따로.
+    await box.fill("줄1\n줄2");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await until("여러 줄 붙여넣기", () => got().includes('GOT:"\\u001b[200~줄1\\r줄2\\u001b[201~"'));
+    await until("뒤 Enter", () => got().split('GOT:"\\r"').length - 1 === 1);
+    // 데스크톱 Enter는 보낸다
+    await box.fill("한 줄");
+    await box.press("Enter");
+    await until("Enter로 보냄", () => got().includes('GOT:"한 줄"') && got().split('GOT:"\\r"').length - 1 === 2);
+    // Shift+Enter는 줄바꿈이고 보내지 않는다
+    let n = gots();
+    await box.press("a");
+    await box.press("Shift+Enter");
+    await box.press("b");
+    if ((await box.inputValue()) !== "a\nb") throw new Error(JSON.stringify(await box.inputValue()));
+    // 조합 중 Enter는 보내지 않는다. 같은 사건이 조합 중이 아니면 보낸다(이 단언이 실제로 가려내는지).
+    await box.evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true })));
+    await sleep(500);
+    if (gots() !== n || (await box.inputValue()) !== "a\nb") throw new Error(`조합 중 Enter로 보냈다: ${got()}`);
+    // 초안: 다시 열어도 남는다
+    await page.reload();
+    await page.getByTestId("machine-labA").waitFor();
+    await until("초안 보존", async () => (await page.getByLabel("보낼 글").inputValue()) === "a\nb");
+    await page.getByLabel("보낼 글").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await until("조합이 아닌 Enter는 보냄", () => gots() > n);
+    if ((await page.getByLabel("보낼 글").inputValue()) !== "") throw new Error("보낸 뒤 글이 남았다");
+    // 휴대폰(터치): Enter는 줄바꿈, 보내기는 단추
+    const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    await mob.page.getByTestId("pane-pasteapp").click();
+    const mbox = mob.page.getByLabel("보낼 글");
+    // 데스크톱 화면이 조작 중이라 가져온다
+    await mob.page.getByTestId("take").click();
+    await until("휴대폰 입력 가능", async () => !(await mbox.isDisabled()));
+    n = gots();
+    await mbox.fill("휴대폰");
+    await mbox.press("Enter");
+    await sleep(500);
+    if (gots() !== n || (await mbox.inputValue()) !== "휴대폰\n") throw new Error(`휴대폰 Enter: ${JSON.stringify(await mbox.inputValue())}`);
+    await mob.page.getByRole("button", { name: "보내기" }).click();
+    await until("휴대폰 보내기", () => got().includes("휴대폰"));
+    if (mob.errors.length) throw new Error(mob.errors.join("; "));
+    await mob.page.context().close();
+    aaa("pane", "kill", "pasteapp");
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
   await step("그림 붙여 넣기: 셸은 저장만, harness 입력창에는 경로(Enter 없음), 확인창·형식·reader 거부", async () => {
