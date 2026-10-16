@@ -268,6 +268,24 @@ try {
     await shot(page, "desktop-controller");
   });
 
+  await step("키 줄: Ctrl·Alt 유지 키는 다음 입력 한 번에 붙고 풀린다", async () => {
+    await page.getByLabel("보낼 글").fill("cat -v");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await sleep(400);
+    const ctrl = page.getByRole("button", { name: "Ctrl", exact: true });
+    await ctrl.click();
+    if ((await ctrl.getAttribute("aria-pressed")) !== "true") throw new Error("Ctrl이 켜지지 않았다");
+    await page.getByTestId("terminal").click();
+    await page.keyboard.type("a");
+    if ((await ctrl.getAttribute("aria-pressed")) !== "false") throw new Error("Ctrl이 풀리지 않았다");
+    await page.getByRole("button", { name: "Alt", exact: true }).click();
+    await page.getByTestId("terminal").click();
+    await page.keyboard.type("x");
+    await page.keyboard.press("Enter");
+    await until("cat -v 출력", async () => (await screenText(page)).includes("^A^[x"));
+    await page.getByRole("button", { name: "^C", exact: true }).click();
+  });
+
   await step("두 controller: 조작 중 표시 → 가져오기 → 연결이 끝나면 풀린다", async () => {
     const other = await pairPage(browser, aa("web", "pair").code, { width: 1280, height: 800 });
     const op = other.page;

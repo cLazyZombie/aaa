@@ -117,10 +117,30 @@ export function TermView({
   const attachRef = useRef(attachFile);
   attachRef.current = attachFile;
 
+  // 키 줄의 유지 키(Ctrl·Alt): 누르면 켜지고, 다음 입력 한 번에 적용한 뒤 풀린다(휴대폰 키보드에는 Ctrl이 없다)
+  const [mods, setMods] = useState({ ctrl: false, alt: false });
+  const modsRef = useRef(mods);
+  modsRef.current = mods;
+  const withMods = (data: string): string => {
+    const m = modsRef.current;
+    if (!m.ctrl && !m.alt) return data;
+    let out = data;
+    if (m.ctrl && data.length === 1) {
+      const c = data.toLowerCase().charCodeAt(0);
+      if (c >= 97 && c <= 122) out = String.fromCharCode(c - 96);
+      else if ("@[\\]^_".includes(data)) out = String.fromCharCode(data.charCodeAt(0) - 64);
+      else if (data === " ") out = "\x00";
+    }
+    if (m.alt) out = "\x1b" + out;
+    modsRef.current = { ctrl: false, alt: false };
+    setMods(modsRef.current);
+    return out;
+  };
+
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
   const fromTerminal = (data: string) => {
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
-    input(data);
+    input(withMods(data));
   };
 
   useEffect(() => {
@@ -387,16 +407,33 @@ export function TermView({
               [
                 ["Esc", "\x1b"],
                 ["Tab", "\t"],
+                ["Ctrl", "ctrl"],
+                ["Alt", "alt"],
                 ["^C", "\x03"],
+                ["←", "\x1b[D"],
                 ["↑", "\x1b[A"],
                 ["↓", "\x1b[B"],
+                ["→", "\x1b[C"],
                 ["⏎", "\r"],
               ] as const
-            ).map(([label, seq]) => (
-              <button type="button" key={label} disabled={locked} onClick={() => input(seq)}>
-                {label}
-              </button>
-            ))}
+            ).map(([label, seq]) =>
+              seq === "ctrl" || seq === "alt" ? (
+                <button
+                  type="button"
+                  key={label}
+                  className={`mod ${mods[seq] ? "on" : ""}`}
+                  aria-pressed={mods[seq]}
+                  disabled={locked}
+                  onClick={() => setMods((m) => ({ ...m, [seq]: !m[seq] }))}
+                >
+                  {label}
+                </button>
+              ) : (
+                <button type="button" key={label} disabled={locked} onClick={() => input(withMods(seq))}>
+                  {label}
+                </button>
+              ),
+            )}
             <span className="hint">터미널을 누르면 키보드로 바로 입력한다 · 그림은 붙여 넣거나 끌어 놓는다</span>
           </div>
         </form>
