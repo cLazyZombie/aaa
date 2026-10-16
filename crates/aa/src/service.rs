@@ -8,6 +8,8 @@ use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 pub const AGENT_LABEL: &str = "dev.aa.agent";
+/// host 등록 label(지금은 `--label`로 넘긴다. 기본값으로 쓰는 명령은 아직 없다)
+#[allow(dead_code)]
 pub const HOST_LABEL: &str = "dev.aa.host";
 
 /// 실행 파일이 들어 있는 .app 번들 경로

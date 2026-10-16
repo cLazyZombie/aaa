@@ -17,10 +17,10 @@ use portable_pty::{CommandBuilder, PtySize};
 use tokio::sync::mpsc;
 
 use super::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
-use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use crate::ring::Ring;
-use crate::util;
-use crate::vt::{DsrScanner, Vt};
+use aa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
+use aa_common::util;
+use aa_vt::{DsrScanner, Vt};
 
 /// 출력 보존 상한(재접속 때 이 범위 안이면 bytes만 이어 보낸다)
 pub const RING_BYTES: usize = 2 << 20;
@@ -325,7 +325,7 @@ async fn run(dir: PathBuf) -> Result<()> {
         let _ = exit_tx.blocking_send(code);
     });
 
-    let listener = crate::ipc::LocalListener::bind(&paths.sock).context("session socket")?;
+    let listener = aa_common::ipc::LocalListener::bind(&paths.sock).context("session socket")?;
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Cmd>(256);
     let token = spec.token.clone();
     {
@@ -420,7 +420,7 @@ async fn run(dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn serve_conn(conn: u64, stream: crate::ipc::LocalStream, token: String, cmd_tx: mpsc::Sender<Cmd>) {
+async fn serve_conn(conn: u64, stream: aa_common::ipc::LocalStream, token: String, cmd_tx: mpsc::Sender<Cmd>) {
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);

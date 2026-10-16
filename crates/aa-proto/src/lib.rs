@@ -1,12 +1,20 @@
 //! aa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
 pub mod frame;
+pub mod layout;
 pub mod msg;
 pub mod version;
 
 pub use frame::{Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, write_frame};
 pub use msg::*;
 pub use version::{AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, Version, negotiate, require_features};
+
+/// Agent link heartbeat: 양쪽이 이 간격으로 ping하고, 이만큼 아무것도 못 받으면 끊는다.
+pub const LINK_PING_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
+pub const LINK_DEAD_AFTER: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// 이름 없이 부르면 쓰는 workspace
+pub const DEFAULT_WORKSPACE: &str = "main";
 
 /// 웹 front가 쓰는 타입 선언을 한 파일로 만든다.
 pub fn typescript_bindings() -> String {

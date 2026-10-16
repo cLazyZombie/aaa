@@ -196,8 +196,8 @@ pub fn first_exec_samples(n: usize) -> Result<Vec<Sample>> {
 
 fn probe_dir() -> Result<PathBuf> {
     let base = aa_config::paths::state_dir().join("probe");
-    let dir = base.join(format!("run-{}-{}", std::process::id(), crate::util::now_ms()));
-    crate::util::ensure_private_dir(&dir)?;
+    let dir = base.join(format!("run-{}-{}", std::process::id(), aa_common::util::now_ms()));
+    aa_common::util::ensure_private_dir(&dir)?;
     Ok(dir)
 }
 

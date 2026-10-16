@@ -25,9 +25,9 @@ use anyhow::{Context, Result};
 use sha2::Digest;
 use tokio::sync::{broadcast, oneshot, watch};
 
-use crate::conn::FrameTx;
-use crate::util;
-use crate::vt::Vt;
+use aa_common::conn::FrameTx;
+use aa_common::util;
+use aa_vt::Vt;
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -120,7 +120,7 @@ pub struct FrontRef {
     pub label: String,
 }
 
-pub const DEFAULT_WORKSPACE: &str = "main";
+pub use aa_proto::DEFAULT_WORKSPACE;
 
 struct Inner {
     machines: HashMap<String, MachineRt>,
@@ -155,7 +155,7 @@ pub struct Host {
     pub state: PathBuf,
     pub host_id: String,
     pub db: db::Db,
-    pub identity: crate::tls::Identity,
+    pub identity: aa_common::tls::Identity,
     pub dev_mode: bool,
     /// 실제로 listen한 웹 포트(설정이 `:0`이면 bind 뒤에 정해진다)
     pub web_port: std::sync::atomic::AtomicU16,
@@ -191,7 +191,7 @@ impl Host {
                 v
             }
         };
-        let identity = crate::tls::load_or_create(&state, "aa-host")?;
+        let identity = aa_common::tls::load_or_create(&state, "aa-host")?;
         let mut machines = HashMap::new();
         for m in db.machines()? {
             machines.insert(
@@ -833,8 +833,10 @@ impl Host {
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         {
             let mut ws = self.workspaces.lock().unwrap();
-            let changed: Vec<Workspace> =
-                ws.values_mut().filter_map(|w| crate::layout::ws_replace(w, &id, &new_id).then(|| w.clone())).collect();
+            let changed: Vec<Workspace> = ws
+                .values_mut()
+                .filter_map(|w| aa_proto::layout::ws_replace(w, &id, &new_id).then(|| w.clone()))
+                .collect();
             drop(ws);
             for w in changed {
                 self.save_workspace(&w);
@@ -857,7 +859,7 @@ impl Host {
         self.inner.lock().unwrap().panes.remove(id);
         let changed: Vec<Workspace> = {
             let mut ws = self.workspaces.lock().unwrap();
-            ws.values_mut().filter_map(|w| crate::layout::ws_remove(w, id).then(|| w.clone())).collect()
+            ws.values_mut().filter_map(|w| aa_proto::layout::ws_remove(w, id).then(|| w.clone())).collect()
         };
         for w in changed {
             self.save_workspace(&w);
@@ -905,7 +907,7 @@ impl Host {
             }
             LayoutChange::Split { pane, dir, machine, argv, cwd } => {
                 let (target, target_mid) = self.resolve_pane(&pane)?;
-                if !crate::layout::ws_contains(&w, &target) {
+                if !aa_proto::layout::ws_contains(&w, &target) {
                     return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
                 }
                 let mid = match machine {
@@ -915,14 +917,14 @@ impl Host {
                 let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
-                let done = w.tabs.iter_mut().any(|t| crate::layout::split(&mut t.root, &target, &id, dir));
+                let done = w.tabs.iter_mut().any(|t| aa_proto::layout::split(&mut t.root, &target, &id, dir));
                 if !done {
                     return Err(err(ErrorCode::NotFound, "나누는 사이에 pane이 layout에서 빠졌다"));
                 }
             }
             LayoutChange::AddTab { pane } => {
                 let (id, _) = self.resolve_pane(&pane)?;
-                if crate::layout::ws_contains(&w, &id) {
+                if aa_proto::layout::ws_contains(&w, &id) {
                     return Err(err(ErrorCode::BadRequest, "이미 이 workspace에 있다"));
                 }
                 w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
@@ -934,7 +936,7 @@ impl Host {
                     self.db.audit(actor, "pane_kill", &id);
                     conn.request(AgentRequest::Kill { session: id.clone() }).await?;
                 }
-                if !crate::layout::ws_remove(&mut w, &id) {
+                if !aa_proto::layout::ws_remove(&mut w, &id) {
                     return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
                 }
             }

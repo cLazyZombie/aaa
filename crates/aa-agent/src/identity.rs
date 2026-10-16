@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::util;
+use aa_common::util;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentIdentity {

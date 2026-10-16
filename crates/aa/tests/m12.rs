@@ -8,7 +8,7 @@ mod lab;
 
 use std::time::Duration;
 
-use aa::host::front::FrontClient;
+use aa_common::front::FrontClient;
 use aa_proto::{B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse};
 use lab::{Lab, Node, wait_for};
 

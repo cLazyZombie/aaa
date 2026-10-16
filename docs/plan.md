@@ -170,6 +170,26 @@ flowchart LR
 
 모두 같은 실행 파일 `aa`의 역할이다. 설치·업데이트는 한 번에 하고, 경로와 서명은 고정이다(§10, §11).
 
+**crate 구조(결정 13, M1-2 뒤 적용).** 실행 파일은 하나이고, 역할 경계는 crate 의존으로 컴파일 때 막는다.
+
+| crate | 담는 것 | 의존할 수 있는 workspace crate |
+|---|---|---|
+| `aa-proto` | 계약(메시지·frame·버전), layout 순수 함수, link heartbeat 주기 | 없음 |
+| `aa-config` | TOML 설정 | 없음 |
+| `aa-common` | 로컬 IPC·frame 연결·TLS 신원·OS 유틸·Front API 클라이언트 | proto |
+| `aa-vt` | VT adapter(vt100) | proto |
+| `aa-doctor` | 머신 진단(`aa doctor`와 agent 자가 점검이 함께 쓴다) | common, config |
+| `aa-session` | session host·PTY·출력 ring·세션 파일 | proto, common, vt |
+| `aa-agent` | agent backend·Agent link agent 쪽 | proto, config, common, session, doctor |
+| `aa-host` | host backend·Front API 서버·웹 서버·Tailscale·SQLite | proto, config, common, vt |
+| `aa-tui` | TUI front(`aa attach`) | proto, config, common |
+| `aa` | 진입점: CLI·역할 선택·OS 감독자 등록 | 모두 |
+
+- front(`aa-tui`, `web/`)는 `aa-proto` 계약으로만 host와 말한다. `aa-host`는 agent·session을 Agent link로만 다룬다.
+- 공통 crate(`aa-common`·`aa-vt`·`aa-doctor`)는 역할 crate에 의존하지 않는다.
+- `crates/aa/tests/deps.rs`가 `cargo metadata`로 금지 의존(간접 포함)을 찾는다.
+- 결정 13 원안은 doctor를 진입점 `aa`에 두었다. 그런데 agent 자가 점검도 같은 측정을 써서, 측정 라이브러리만 `aa-doctor`로 뺐다. `aa doctor` 명령은 그대로 `aa`에 있다.
+
 ### 4.2 경계 원칙
 
 1. **front는 host backend하고만 통신한다.** agent backend에 직접 붙지 않는다. agent 머신에서 사람이 쓰는 CLI도 host를 거친다.

@@ -1,11 +1,10 @@
-//! Front API의 같은 머신 경로(UDS, peer UID 확인 → Local 역할). CLI와 TUI(`aa attach`)가 쓴다.
+//! Front API의 같은 머신 경로 서버(UDS, peer UID 확인 → Local 역할). 클라이언트는 `aa_common::front`다.
 //! front는 backend를 띄우지 않는다: host가 없으면 「host 없음」만 알린다(§4.2 2).
 //!
 //! 연결 하나가 front 하나다. 조작 lease는 이 연결에 묶이고 연결이 끝나면 풀린다.
 //! `PaneWatch`로 pane 화면(cell grid)을, 연결하면 workspace layout 변경을 사건으로 받는다.
 
-use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,18 +15,14 @@ use aa_proto::{
 use anyhow::{Context, Result, bail};
 
 use super::{Host, PaneEvent};
-use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
+use aa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 
 /// 화면 frame 사이 최소 간격(초당 약 30장)
 const GRID_INTERVAL: Duration = Duration::from_millis(33);
 
-pub fn socket(state_root: &Path) -> PathBuf {
-    state_root.join("host").join("front.sock")
-}
-
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let path = host.state.join("front.sock");
-    let listener = crate::ipc::LocalListener::bind(&path).context("front socket")?;
+    let listener = aa_common::ipc::LocalListener::bind(&path).context("front socket")?;
     let host = host.clone();
     tokio::spawn(async move {
         while let Ok(s) = listener.accept().await {
@@ -42,7 +37,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     Ok(())
 }
 
-async fn serve(host: Arc<Host>, s: crate::ipc::LocalStream) -> Result<()> {
+async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
     let (r, w) = tokio::io::split(s);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
@@ -229,107 +224,5 @@ impl Host {
             lines: vec![],
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
-    }
-}
-
-/// CLI·TUI 쪽 클라이언트. 요청 응답을 기다리는 동안 온 사건은 모아 둔다.
-pub struct FrontClient {
-    tx: FrameTx,
-    rx: FrameRx<tokio::io::ReadHalf<crate::ipc::LocalStream>>,
-    seq: u64,
-    events: VecDeque<FrontEvent>,
-    /// host가 준 이 연결의 front ID
-    pub front: String,
-}
-
-impl FrontClient {
-    pub async fn connect(state_root: &Path) -> Result<FrontClient> {
-        Self::connect_as(state_root, "cli").await
-    }
-
-    pub async fn connect_as(state_root: &Path, client: &str) -> Result<FrontClient> {
-        let path = socket(state_root);
-        let s = crate::ipc::connect(&path)
-            .await
-            .with_context(|| format!("host가 없다({}). host 머신에서 `aa host`가 실행 중인지 본다", path.display()))?;
-        let (r, w) = tokio::io::split(s);
-        let tx = spawn_writer(w, MAX_FRAME);
-        let mut rx = FrameRx::new(r, MAX_FRAME);
-        tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into() }).await?;
-        let front = match tokio::time::timeout(Duration::from_secs(10), rx.control::<FrontMsg>()).await?? {
-            FrontMsg::Welcome { front, .. } => front,
-            FrontMsg::Reject(e) => bail!("host가 거부했다: {e}"),
-            other => bail!("예상하지 못한 응답: {other:?}"),
-        };
-        Ok(FrontClient { tx, rx, seq: 0, events: VecDeque::new(), front })
-    }
-
-    pub async fn call(&mut self, body: FrontRequest) -> Result<Result<FrontResponse, ErrorBody>> {
-        let id = self.send(body).await?;
-        loop {
-            match self.rx.control::<FrontMsg>().await? {
-                FrontMsg::Res { id: rid, result } if rid == id => return Ok(result.into_result()),
-                FrontMsg::Event(e) => self.events.push_back(e),
-                _ => continue,
-            }
-        }
-    }
-
-    /// 응답을 기다리지 않고 보낸다(응답은 `next`로 받는다). 요청 ID를 돌려준다.
-    pub async fn send(&mut self, body: FrontRequest) -> Result<String> {
-        self.seq += 1;
-        let id = format!("q{}", self.seq);
-        self.tx.json(&FrontMsg::Req { id: id.clone(), body }).await?;
-        Ok(id)
-    }
-
-    /// 보내는 쪽과 받는 쪽으로 나눈다. 받기는 task가 하므로 select!에서 기다려도 frame이 잘리지 않는다.
-    pub fn split(self) -> (FrontSender, tokio::sync::mpsc::UnboundedReceiver<FrontMsg>) {
-        let (etx, erx) = tokio::sync::mpsc::unbounded_channel();
-        for e in self.events {
-            let _ = etx.send(FrontMsg::Event(e));
-        }
-        let mut rx = self.rx;
-        tokio::spawn(async move {
-            while let Ok(Some(m)) = rx.next().await {
-                if let Incoming::Control(b) = m
-                    && let Ok(msg) = serde_json::from_slice::<FrontMsg>(&b)
-                    && etx.send(msg).is_err()
-                {
-                    break;
-                }
-            }
-        });
-        (FrontSender { tx: self.tx, seq: self.seq, front: self.front }, erx)
-    }
-
-    /// 다음 메시지(사건 또는 응답). 모아 둔 사건을 먼저 준다. 연결이 끝나면 None.
-    pub async fn next(&mut self) -> Result<Option<FrontMsg>> {
-        if let Some(e) = self.events.pop_front() {
-            return Ok(Some(FrontMsg::Event(e)));
-        }
-        loop {
-            match self.rx.next().await? {
-                None => return Ok(None),
-                Some(Incoming::Control(b)) => return Ok(Some(serde_json::from_slice(&b)?)),
-                Some(Incoming::Terminal(_)) => continue,
-            }
-        }
-    }
-}
-
-/// `FrontClient::split`의 보내는 쪽
-pub struct FrontSender {
-    tx: FrameTx,
-    seq: u64,
-    pub front: String,
-}
-
-impl FrontSender {
-    pub async fn send(&mut self, body: FrontRequest) -> Result<String> {
-        self.seq += 1;
-        let id = format!("q{}", self.seq);
-        self.tx.json(&FrontMsg::Req { id: id.clone(), body }).await?;
-        Ok(id)
     }
 }

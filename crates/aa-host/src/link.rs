@@ -13,9 +13,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
 
 use super::{AgentConn, Host};
-use crate::agent::link::{DEAD_AFTER, PING_EVERY};
-use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
-use crate::tls;
+use aa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
+use aa_common::tls;
+use aa_proto::{LINK_DEAD_AFTER as DEAD_AFTER, LINK_PING_EVERY as PING_EVERY};
 
 /// 인증 전 동시 연결 상한
 const PREAUTH_LIMIT: usize = 16;
@@ -25,8 +25,8 @@ pub fn local_socket(host: &Host) -> std::path::PathBuf {
 }
 
 pub async fn start(host: &Arc<Host>) -> Result<()> {
-    let local =
-        crate::ipc::LocalListener::bind(&local_socket(host)).context("로컬 agent socket(이미 host가 실행 중인가?)")?;
+    let local = aa_common::ipc::LocalListener::bind(&local_socket(host))
+        .context("로컬 agent socket(이미 host가 실행 중인가?)")?;
     {
         let host = host.clone();
         tokio::spawn(async move {
@@ -152,7 +152,7 @@ async fn enroll<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
 }
 
 /// 인증된 agent: hello → welcome → 요청·사건·출력 처리. `known`은 TLS로 확인한 머신 ID(로컬은 None).
-async fn serve(host: Arc<Host>, stream: crate::ipc::LocalStream, known: Option<String>) -> Result<()> {
+async fn serve(host: Arc<Host>, stream: aa_common::ipc::LocalStream, known: Option<String>) -> Result<()> {
     let local = known.is_none();
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);

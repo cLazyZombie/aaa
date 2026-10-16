@@ -70,7 +70,7 @@ impl Db {
         c.execute(
             "INSERT INTO workspaces(name,layout,updated_at) VALUES(?1,?2,?3)
              ON CONFLICT(name) DO UPDATE SET layout=excluded.layout, updated_at=excluded.updated_at",
-            params![name, layout, crate::util::now_ms() as i64],
+            params![name, layout, aa_common::util::now_ms() as i64],
         )?;
         Ok(())
     }
@@ -146,7 +146,7 @@ impl Db {
         c.execute(
             "INSERT INTO machines(id,name,fingerprint,local,enrolled_at) VALUES(?1,?2,?3,?4,?5)
              ON CONFLICT(id) DO UPDATE SET name=excluded.name, fingerprint=excluded.fingerprint, local=excluded.local, revoked=0",
-            params![id, name, fingerprint, local as i64, crate::util::now_ms() as i64],
+            params![id, name, fingerprint, local as i64, aa_common::util::now_ms() as i64],
         )?;
         Ok(())
     }
@@ -155,7 +155,7 @@ impl Db {
         let c = self.conn.lock().unwrap();
         c.execute(
             "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4 WHERE id=?1",
-            params![id, os, boot_id, crate::util::now_ms() as i64],
+            params![id, os, boot_id, aa_common::util::now_ms() as i64],
         )?;
         Ok(())
     }
@@ -174,7 +174,7 @@ impl Db {
         let c = self.conn.lock().unwrap();
         c.execute(
             "INSERT INTO devices(id,role,token_hash,created_at) VALUES(?1,?2,?3,?4)",
-            params![id, role, token_hash, crate::util::now_ms() as i64],
+            params![id, role, token_hash, aa_common::util::now_ms() as i64],
         )?;
         Ok(())
     }
@@ -191,7 +191,7 @@ impl Db {
         let c = self.conn.lock().unwrap();
         let _ = c.execute(
             "INSERT INTO audit(ts,actor,action,detail) VALUES(?1,?2,?3,?4)",
-            params![crate::util::now_ms() as i64, actor, action, detail],
+            params![aa_common::util::now_ms() as i64, actor, action, detail],
         );
     }
 }
