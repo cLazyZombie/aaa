@@ -108,6 +108,9 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 확인: 휴대폰에서 세 Mac의 pane 목록과 터미널이 보이고 입력된다. 질문 카드에 답할 수 있다.
 
+- 홈 화면 앱(PWA): Android Chrome은 목록 아래 「홈 화면에 설치」, iPhone은 Safari 공유 → 「홈 화면에 추가」. iPhone 홈 화면 앱은 Safari와 cookie가 따로라 처음 열 때 다시 pairing한다.
+- 알림(Web Push): 목록 아래 「알림 켜기」를 누르면 시험 알림이 온다. iPhone은 홈 화면 앱에서만 켤 수 있다(iOS 16.4 이상).
+
 ## 6. shadow(§15 2)
 
 - aaa 프로젝트는 aaa projects root에 새로 만든다(`aaa project create <p>`). herdr-projects 폴더를 가리키지 않는다.

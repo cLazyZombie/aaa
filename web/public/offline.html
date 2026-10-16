@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>aaa · 연결 없음</title>
+<style>
+  :root { --bg: #0f1115; --fg: #e6e8ee; --dim: #9aa3b2; --accent: #9d8fff; }
+  @media (prefers-color-scheme: light) { :root { --bg: #f8f8f6; --fg: #1d1f24; --dim: #5d6472; --accent: #5b4bd6; } }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
+  body { display: grid; place-items: center; padding: 16px; box-sizing: border-box;
+    font: 15px/1.6 Pretendard, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  main { max-width: 360px; text-align: center; }
+  img { width: 72px; height: 72px; border-radius: 16px; }
+  h1 { font-size: 20px; margin: 16px 0 8px; }
+  p { color: var(--dim); margin: 0 0 20px; }
+  a { display: inline-block; padding: 10px 20px; border-radius: 10px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/icon-192.png" alt="">
+  <h1>host에 연결할 수 없다</h1>
+  <p>네트워크(tailnet) 연결과 host가 떠 있는지 확인한 뒤 다시 연다.</p>
+  <a href="/">다시 열기</a>
+</main>
+</body>
+</html>

@@ -53,3 +53,9 @@ telegram_chat_id = ""
 kinds = ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval"]
 # 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다
 debounce_secs = 15
+# 웹에서 「알림 켜기」한 기기에 Web Push로도 보낸다(내용은 암호화돼 push 서비스가 읽지 못한다)
+web_push = true
+# 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름, https만)
+push_hosts = ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
+# VAPID 연락처(비우면 공개 주소 https://<이름>.ts.net)
+push_subject = ""

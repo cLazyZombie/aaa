@@ -48,6 +48,15 @@ export async function me(): Promise<Me | null> {
 export const pair = (code: string) => post<{ role: DeviceRole }>("/api/v1/pair", { code });
 export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
 
+/** Web Push(§8.26) */
+export type PushInfo = { enabled: boolean; key: string | null; subscribed: number };
+export async function pushInfo(): Promise<PushInfo> {
+  return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
+}
+export const pushSubscribe = (sub: PushSubscriptionJSON) => post<{ subscribed: boolean }>("/api/v1/push/subscribe", sub);
+export const pushUnsubscribe = (endpoint: string) => post<{ removed: boolean }>("/api/v1/push/unsubscribe", { endpoint });
+export const pushTest = () => post<{ sent: number; failed: string[] }>("/api/v1/push/test", {});
+
 export function wsUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}${path}`;

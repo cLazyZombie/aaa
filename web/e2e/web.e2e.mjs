@@ -6,6 +6,7 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -117,6 +118,79 @@ async function pairPage(browser, code, viewport) {
   return { page, errors };
 }
 
+// 가짜 push 서비스(Web Push, §8.26): host가 보낸 요청을 모은다. /gone/ 경로는 410(브라우저가 구독을 버림)을 돌려준다.
+const pushes = [];
+const pushServer = http.createServer((req, res) => {
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    pushes.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+    res.writeHead(req.url.startsWith("/gone/") ? 410 : 201).end();
+  });
+});
+const pushPort = await new Promise((r) => pushServer.listen(0, "127.0.0.1", () => r(pushServer.address().port)));
+const pushOrigin = `http://127.0.0.1:${pushPort}`;
+
+const b64u = (b) => Buffer.from(b).toString("base64url");
+
+/** 기기 하나(브라우저 대신): P-256 키와 auth 비밀 */
+function pushDevice(name) {
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+  const auth = crypto.randomBytes(16);
+  return { ecdh, auth, json: { endpoint: `${pushOrigin}/${name}`, keys: { p256dh: b64u(ecdh.getPublicKey()), auth: b64u(auth) } } };
+}
+
+/** RFC 8291 받는 쪽을 Node crypto로 따로 구현해 푼다(host 구현과 독립) */
+function decryptPush(body, dev) {
+  const salt = body.subarray(0, 16);
+  const rs = body.readUInt32BE(16);
+  const idlen = body[20];
+  const asPub = body.subarray(21, 21 + idlen);
+  const ct = body.subarray(21 + idlen);
+  if (rs !== 4096 || idlen !== 65 || body.length > 4096) throw new Error(`머리 rs=${rs} idlen=${idlen} 길이=${body.length}`);
+  const uaPub = dev.ecdh.getPublicKey();
+  const secret = dev.ecdh.computeSecret(asPub);
+  const info = Buffer.concat([Buffer.from("WebPush: info\0"), uaPub, asPub]);
+  const ikm = Buffer.from(crypto.hkdfSync("sha256", secret, dev.auth, info, 32));
+  const cek = Buffer.from(crypto.hkdfSync("sha256", ikm, salt, Buffer.from("Content-Encoding: aes128gcm\0"), 16));
+  const nonce = Buffer.from(crypto.hkdfSync("sha256", ikm, salt, Buffer.from("Content-Encoding: nonce\0"), 12));
+  const d = crypto.createDecipheriv("aes-128-gcm", cek, nonce);
+  d.setAuthTag(ct.subarray(ct.length - 16));
+  const pt = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]);
+  let i = pt.length - 1;
+  while (i > 0 && pt[i] === 0) i--;
+  if (pt[i] !== 2) throw new Error("마지막 레코드 구분(0x02)이 없다");
+  return JSON.parse(pt.subarray(0, i).toString("utf8"));
+}
+
+/** VAPID(RFC 8292): JWT 서명을 공개키로 검증하고 claims를 돌려준다 */
+function checkVapid(headers, key) {
+  const m = /^vapid t=([^,]+), k=(\S+)$/.exec(headers.authorization ?? "");
+  if (!m) throw new Error(`Authorization: ${headers.authorization}`);
+  const [jwt, k] = [m[1], m[2]];
+  if (k !== key) throw new Error("VAPID 공개키가 /api/v1/push의 키와 다르다");
+  const [h, c, sig] = jwt.split(".");
+  const raw = Buffer.from(k, "base64url");
+  const pub = crypto.createPublicKey({
+    key: { kty: "EC", crv: "P-256", x: b64u(raw.subarray(1, 33)), y: b64u(raw.subarray(33, 65)) },
+    format: "jwk",
+  });
+  const ok = crypto.verify("sha256", Buffer.from(`${h}.${c}`), { key: pub, dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url"));
+  if (!ok) throw new Error("JWT 서명이 맞지 않다");
+  const header = JSON.parse(Buffer.from(h, "base64url"));
+  if (header.alg !== "ES256") throw new Error(JSON.stringify(header));
+  if (headers["content-encoding"] !== "aes128gcm" || !headers.ttl) throw new Error(JSON.stringify(headers));
+  return JSON.parse(Buffer.from(c, "base64url"));
+}
+
+/** 그 기기 앞으로 온 push 하나를 풀어 내용을 본다 */
+async function nextPush(dev, from, what) {
+  const p = await until(what, () => pushes.slice(from).find((x) => x.path === new URL(dev.json.endpoint).pathname));
+  return { msg: decryptPush(p.body, dev), claims: checkVapid(p.headers, pushKey), index: pushes.indexOf(p) };
+}
+let pushKey = "";
+
 let base = "";
 let failed = false;
 const steps = [];
@@ -139,7 +213,8 @@ const webPort = await freePort();
 fs.writeFileSync(
   `${root}/c/host.toml`,
   `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:${webPort}"\n[local_agent]\nmode = "none"\n` +
-    `[projects]\nroot = "${root}/projects"\nallow_profiles = ["fake"]\nlibrary_copy_mb = 1\n`,
+    `[projects]\nroot = "${root}/projects"\nallow_profiles = ["fake"]\nlibrary_copy_mb = 1\n` +
+    `[notify]\ndebounce_secs = 1\nkinds = ["report"]\npush_hosts = ["127.0.0.1"]\n`,
 );
 // 가짜 thread agent: brief 안내를 받으면 Markdown 보고와 결과물(HTML·그림·복사 상한을 넘는 파일)을 쓴다.
 // 결과물 HTML은 자기가 격리됐는지(부모 문서·cookie·API에 닿는지) body data에 적는다.
@@ -247,6 +322,13 @@ try {
     const cdp = await ctx.newCDPSession(page);
     const got = await cdp.send("Page.getAppManifest");
     if (got.errors.length || !got.url.endsWith("/manifest.webmanifest")) throw new Error(JSON.stringify(got.errors));
+    // service worker(§8.26)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
+    const sw = await fetch(`${base}sw.js`);
+    if (sw.status !== 200 || !sw.headers.get("content-type").startsWith("text/javascript")) throw new Error(`sw.js ${sw.status}`);
+    if ((await fetch(`${base}offline.html`)).status !== 200) throw new Error("offline.html");
+    await until("service worker가 화면을 맡음", () => page.evaluate(() => !!navigator.serviceWorker.controller));
+    const inst = await cdp.send("Page.getInstallabilityErrors");
+    if (inst.installabilityErrors.length) throw new Error(`설치할 수 없다: ${JSON.stringify(inst.installabilityErrors)}`);
     await ctx.close();
   });
 
@@ -446,6 +528,85 @@ try {
     for (const n of ["h1", "h2"]) aaa("pane", "kill", n);
   });
 
+  const pushDev = pushDevice("push/dev1");
+  const goneDev = pushDevice("gone/dev2");
+  await step("Web Push: 구독 검사 → 시험 알림이 암호화·서명돼 온다 → service worker가 알림을 띄운다", async () => {
+    const api = (path, body) =>
+      page.evaluate(
+        async ({ path, body }) => {
+          const r = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
+          return { status: r.status, json: await r.json() };
+        },
+        { path, body },
+      );
+    const info = await api("/api/v1/push");
+    if (!info.json.ok?.enabled || info.json.ok.subscribed !== 0) throw new Error(JSON.stringify(info.json));
+    pushKey = info.json.ok.key;
+    if (Buffer.from(pushKey, "base64url").length !== 65) throw new Error(`VAPID 공개키 ${pushKey}`);
+    // 허용하지 않은 곳·loopback이라도 목록에 없는 이름·틀린 키는 받지 않는다
+    for (const bad of [
+      { ...pushDev.json, endpoint: "https://evil.example/push" },
+      { ...pushDev.json, endpoint: `http://localhost:${pushPort}/x` },
+      { ...pushDev.json, keys: { ...pushDev.json.keys, p256dh: b64u(Buffer.alloc(65, 1)).slice(0, 40) } },
+    ]) {
+      const r = await api("/api/v1/push/subscribe", bad);
+      if (r.status !== 400) throw new Error(`거부하지 않았다: ${JSON.stringify(bad)} → ${r.status}`);
+    }
+    if ((await api("/api/v1/push/subscribe", pushDev.json)).status !== 200) throw new Error("구독 실패");
+    const from = pushes.length;
+    const t = await api("/api/v1/push/test", {});
+    if (t.json.ok?.sent !== 1) throw new Error(JSON.stringify(t.json));
+    const { msg, claims } = await nextPush(pushDev, from, "시험 알림");
+    if (msg.title !== "aaa" || msg.body !== "알림이 켜졌다") throw new Error(JSON.stringify(msg));
+    const now = Date.now() / 1000;
+    if (claims.aud !== pushOrigin || claims.exp < now || claims.exp > now + 24 * 3600 || !/^(mailto:|https:)/.test(claims.sub)) {
+      throw new Error(`claims ${JSON.stringify(claims)}`);
+    }
+    // 끄면 지워진다. 보고 알림을 받을 기기(dev1)와 브라우저가 버린 구독(dev2, 410)을 둔다.
+    if (!(await api("/api/v1/push/unsubscribe", { endpoint: pushDev.json.endpoint })).json.ok?.removed) throw new Error("구독 해제");
+    if ((await api("/api/v1/push")).json.ok.subscribed !== 0) throw new Error("해제 뒤에도 구독이 남았다");
+    for (const d of [pushDev, goneDev]) {
+      if ((await api("/api/v1/push/subscribe", d.json)).status !== 200) throw new Error("다시 구독 실패");
+    }
+    // service worker: push를 받으면 알림을 띄운다(push 서비스 없이 CDP로 직접 넣는다).
+    // headless shell은 알림을 지원하지 않아 이 부분만 정식 Chromium(새 headless)으로 한다.
+    const full = await chromium.launch({ channel: "chromium" });
+    try {
+      const mob = await pairPage(full, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
+      const ctx = mob.page.context();
+      await ctx.grantPermissions(["notifications"], { origin: base.slice(0, -1) });
+      await mob.page.reload();
+      await mob.page.getByTestId("machine-labA").waitFor();
+      // 알림을 받을 수 있는 브라우저면 목록 아래에 알림 단추가 보인다(보기 권한 기기도 알림은 받는다)
+      await until("알림 단추", async () => (await mob.page.getByTestId("push-toggle").innerText()).includes("알림 켜기"));
+      const cdp = await ctx.newCDPSession(mob.page);
+      const regId = new Promise((r) =>
+        cdp.on("ServiceWorker.workerRegistrationUpdated", (e) => {
+          const reg = e.registrations.find((x) => x.scopeURL === base && !x.isDeleted);
+          if (reg) r(reg.registrationId);
+        }),
+      );
+      await cdp.send("ServiceWorker.enable");
+      const data = JSON.stringify({ title: "aaa · demo", body: "t-0009 question: 확인창", url: "/#thread=demo%2Ft-0009", tag: "aaa-demo" });
+      await cdp.send("ServiceWorker.deliverPushMessage", { origin: base.slice(0, -1), registrationId: await regId, data });
+      const shown = await until("알림 표시", async () => {
+        const v = await mob.page.evaluate(async () =>
+          (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => [n.title, n.body, n.data?.url]),
+        );
+        return v.length ? v : null;
+      });
+      if (JSON.stringify(shown[0]) !== JSON.stringify(["aaa · demo", "t-0009 question: 확인창", "/#thread=demo%2Ft-0009"])) {
+        throw new Error(JSON.stringify(shown));
+      }
+      if (mob.errors.length) throw new Error(`페이지 오류: ${mob.errors.join("; ")}`);
+    } finally {
+      await full.close();
+    }
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  const pushFrom = pushes.length;
   await step("thread 보고서·결과물: Markdown 보고, sandbox 결과물, agent에 남은 큰 파일, ack", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task.md`, "웹 보기");
@@ -487,6 +648,20 @@ try {
     // 다음 단계는 t1 터미널을 본다
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("Web Push: 보고 준비 알림이 기기에 오고 그 thread로 연다, 버려진 구독(410)은 지운다", async () => {
+    const { msg } = await nextPush(pushDev, pushFrom, "보고 알림");
+    if (msg.title !== "aaa · demo" || !msg.body.includes("report ready") || msg.url !== "/#thread=demo%2Ft-0001") {
+      throw new Error(JSON.stringify(msg));
+    }
+    await until("410 구독 정리", async () =>
+      (await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed)) === 1,
+    );
+    const kinds = aaa("events", "--project", "demo").events.map((e) => e.kind);
+    if (!kinds.includes("push_sent") || !kinds.includes("push_gone")) throw new Error(kinds.join(","));
+    // 구독 주소(기기에 보내는 열쇠)는 기록에 남지 않는다
+    if (JSON.stringify(aaa("events", "--project", "demo")).includes("dev1")) throw new Error("흐름 사건에 endpoint가 남았다");
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
@@ -533,6 +708,11 @@ try {
     await until("host 끊김 표시", async () =>
       (await page.getByTestId("readonly-banner").innerText()).includes("host와 연결이 끊겼다"),
     );
+    // host가 없을 때 새로 열면 service worker가 「연결 없음」 화면을 보인다(PWA)
+    const off = await page.context().newPage();
+    await off.goto(base);
+    await until("연결 없음 화면", async () => (await off.locator("h1").innerText()) === "host에 연결할 수 없다");
+    await off.close();
     start("host2", "host");
     await until("다시 붙음", async () => (await page.getByTestId("readonly-banner").count()) === 0, 30_000);
     // agent 재연결(입력 가능)과 화면 재구독(snapshot)은 따로 도착한다. 화면이 돌아오는 것을 본다.
@@ -549,6 +729,7 @@ try {
   if (!steps.some((s) => s.startsWith("FAIL"))) steps.push(`FAIL ${e.message}`);
 } finally {
   await browser.close();
+  pushServer.close();
   for (const tag of [...procs.keys()]) await stop(tag);
   killSessionHosts();
   console.log(steps.join("\n"));

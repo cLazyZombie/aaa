@@ -92,6 +92,12 @@ pub struct NotifySection {
     pub kinds: Vec<String>,
     /// 이 시간(초) 동안 모아 프로젝트마다 한 번에 보낸다(질문이 몰려도 한 통)
     pub debounce_secs: u64,
+    /// 웹에서 「알림 켜기」한 기기에 Web Push로도 보낸다(§8.26)
+    pub web_push: bool,
+    /// Web Push 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름). https만. 시험용 loopback(127.0.0.1 등)은 적었을 때만 http도 받는다
+    pub push_hosts: Vec<String>,
+    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 공개 주소(https://<이름>.ts.net), 없으면 `mailto:aaa@example.com`
+    pub push_subject: String,
 }
 
 impl Default for NotifySection {
@@ -104,6 +110,11 @@ impl Default for NotifySection {
                 .map(String::from)
                 .to_vec(),
             debounce_secs: 15,
+            web_push: true,
+            push_hosts: ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
+                .map(String::from)
+                .to_vec(),
+            push_subject: String::new(),
         }
     }
 }
@@ -396,6 +407,20 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
                 message: "https 주소여야 한다(http는 이 머신 loopback 시험만)".into(),
             });
         }
+    }
+    for h in &n.push_hosts {
+        if h.is_empty() || h.contains(['/', ':', ' ']) && !h.starts_with('[') {
+            out.push(Invalid {
+                path: key(&["notify", "push_hosts"]),
+                message: format!("호스트 이름만 적는다(scheme·경로·port 없이): {h:?}"),
+            });
+        }
+    }
+    if !n.push_subject.is_empty() && !n.push_subject.starts_with("mailto:") && !n.push_subject.starts_with("https://") {
+        out.push(Invalid {
+            path: key(&["notify", "push_subject"]),
+            message: "mailto: 또는 https:// 주소여야 한다".into(),
+        });
     }
     match n.format.as_str() {
         "json" => {}
