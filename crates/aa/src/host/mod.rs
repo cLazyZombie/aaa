@@ -146,7 +146,8 @@ pub struct Host {
     pub db: db::Db,
     pub identity: crate::tls::Identity,
     pub dev_mode: bool,
-    pub web_port: u16,
+    /// 실제로 listen한 웹 포트(설정이 `:0`이면 bind 뒤에 정해진다)
+    pub web_port: std::sync::atomic::AtomicU16,
     inner: Mutex<Inner>,
     pub changed: watch::Sender<u64>,
     enroll: Mutex<Enroll>,
@@ -200,7 +201,7 @@ impl Host {
             db,
             identity,
             dev_mode,
-            web_port,
+            web_port: std::sync::atomic::AtomicU16::new(web_port),
             inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0 }),
             changed: watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
@@ -461,7 +462,13 @@ impl Host {
             return Ok((prefix.to_string(), p.machine_id.clone()));
         }
         let up = prefix.to_ascii_uppercase();
-        let hits: Vec<_> = i.panes.iter().filter(|(id, _)| prefix.len() >= 4 && id.starts_with(&up)).collect();
+        let mut hits: Vec<_> = i.panes.iter().filter(|(id, _)| prefix.len() >= 4 && id.starts_with(&up)).collect();
+        if hits.is_empty() {
+            // ID가 아니면 이름: 실행 중인 것을 먼저, 없으면 끝난 것까지
+            let named: Vec<_> = i.panes.iter().filter(|(_, p)| p.info.name == prefix).collect();
+            let running: Vec<_> = named.iter().copied().filter(|(_, p)| p.info.state.is_running()).collect();
+            hits = if running.is_empty() { named } else { running };
+        }
         match hits.as_slice() {
             [(id, p)] => Ok(((*id).clone(), p.machine_id.clone())),
             [] => Err(err(ErrorCode::NotFound, format!("pane이 없다: {prefix}"))),
@@ -790,7 +797,7 @@ impl Host {
 
     async fn publish_status(&self) -> PublishState {
         let out = tailscale::read().await;
-        let plan = tailscale::plan(out.as_ref(), self.web_port, &self.cfg.web.publish_ports);
+        let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
         let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
         if let Some(dns) = &plan.dns_name {
             let _ = self.db.set_meta("publish_dns", dns);
@@ -800,7 +807,7 @@ impl Host {
             dns_name: plan.dns_name.clone(),
             url: plan.serving.as_ref().map(|(u, _)| u.clone()),
             owned_port: owned,
-            web_port: self.web_port,
+            web_port: self.web_port(),
             message: match plan.state {
                 "missing" => Some("tailscale CLI가 없다. 웹은 127.0.0.1에서만 열린다".into()),
                 "stopped" => Some("Tailscale이 꺼졌거나 로그인 전이다".into()),
@@ -811,11 +818,11 @@ impl Host {
     }
 
     async fn publish(&self) -> Result<PublishState, ErrorBody> {
-        if self.web_port == 0 {
+        if self.web_port() == 0 {
             return Err(err(ErrorCode::BadRequest, "host.toml의 web.listen이 꺼져 있다"));
         }
         let out = tailscale::read().await;
-        let plan = tailscale::plan(out.as_ref(), self.web_port, &self.cfg.web.publish_ports);
+        let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
         if plan.state != "running" {
             return Ok(self.publish_status().await);
         }
@@ -823,7 +830,7 @@ impl Host {
             let Some(port) = plan.free_port else {
                 return Err(err(ErrorCode::Unavailable, format!("후보 포트가 모두 쓰이고 있다: {:?}", plan.taken)));
             };
-            let text = tailscale::serve(port, self.web_port)
+            let text = tailscale::serve(port, self.web_port())
                 .await
                 .map_err(|e| err(ErrorCode::Unavailable, format!("{e:#}")))?;
             tracing::info!("tailscale serve: {}", text.trim());
@@ -843,8 +850,12 @@ impl Host {
     }
 
     /// 웹 요청의 Host 헤더가 이 host를 가리키는가(DNS rebinding 방어)
+    pub fn web_port(&self) -> u16 {
+        self.web_port.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn host_allowed(&self, host_header: &str) -> bool {
-        let loopback = [format!("127.0.0.1:{}", self.web_port), format!("localhost:{}", self.web_port)];
+        let loopback = [format!("127.0.0.1:{}", self.web_port()), format!("localhost:{}", self.web_port())];
         if loopback.iter().any(|l| l == host_header) {
             return true;
         }

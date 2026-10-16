@@ -36,6 +36,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
         return Ok(());
     }
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("웹 listen {addr}"))?;
+    host.web_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
     *host.web_listen.lock().unwrap() = Some(listener.local_addr()?.to_string());
     tracing::info!(%addr, "웹 listen(loopback)");
     let app = router(host.clone());
@@ -74,7 +75,7 @@ fn via_https(h: &HeaderMap) -> bool {
 }
 
 fn origin_allowed(host: &Host, origin: &str) -> bool {
-    let port = host.web_port;
+    let port = host.web_port();
     if origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}") {
         return true;
     }
@@ -209,11 +210,26 @@ async fn send_msg(socket: &mut WebSocket, m: &TermServerMsg) -> bool {
     socket.send(Message::Text(serde_json::to_string(m).unwrap().into())).await.is_ok()
 }
 
+/// 입력할 수 있는지와 그 이유(끊김 > 종료 > 권한 순)
+fn readonly_msg(view: &aa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
+    let reason = if view.connection == aa_proto::Connection::Disconnected {
+        Some("agent와 연결이 끊겼다(읽기 전용)")
+    } else if !view.state.is_running() {
+        Some("세션이 끝났다")
+    } else if !role.can_control() {
+        Some("보기 권한")
+    } else {
+        None
+    };
+    TermServerMsg::Readonly { readonly: view.readonly, reason: reason.map(str::to_string) }
+}
+
 async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, mut socket: WebSocket) {
     let actor = format!("device:{dev}");
     let Some((mut rx, replay, mut next, cols, rows)) = host.attach_pane(&id) else { return };
-    let readonly = host.pane_view_of(&id, role).map(|p| p.readonly).unwrap_or(true);
-    if !send_msg(&mut socket, &TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly }).await {
+    let Some(view) = host.pane_view_of(&id, role) else { return };
+    let snapshot = TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly: view.readonly };
+    if !send_msg(&mut socket, &snapshot).await || !send_msg(&mut socket, &readonly_msg(&view, role)).await {
         return;
     }
     loop {
@@ -234,14 +250,7 @@ async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, m
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
                     Ok(PaneEvent::State) => {
                         let Some(view) = host.pane_view_of(&id, role) else { break };
-                        let reason = if view.connection == aa_proto::Connection::Disconnected {
-                            Some("agent와 연결이 끊겼다(읽기 전용)".to_string())
-                        } else if !view.state.is_running() {
-                            Some("세션이 끝났다".to_string())
-                        } else if !role.can_control() {
-                            Some("보기 권한".to_string())
-                        } else { None };
-                        if !send_msg(&mut socket, &TermServerMsg::Readonly { readonly: view.readonly, reason }).await { break; }
+                        if !send_msg(&mut socket, &readonly_msg(&view, role)).await { break; }
                         if !send_msg(&mut socket, &TermServerMsg::State { pane: view }).await { break; }
                         false
                     }
