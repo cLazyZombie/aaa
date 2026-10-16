@@ -11,8 +11,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, MessageMode, MessageView, ProfileView, ProjectView, QuestionView,
-    ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, Launch, MessageMode, MessageView, ProfileView,
+    ProjectView, QuestionView, ReportSnapshot, Role, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 
 use crate::version::Version;
@@ -306,6 +306,13 @@ pub enum AgentRequest {
         offset: u64,
         len: u32,
     },
+    /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
+    /// (claude는 새 `--session-id`). 저장된 launch를 그대로 쓰고 profile을 다시 해석하지 않는다.
+    ThreadRebrief {
+        work_dir: String,
+        brief: String,
+        launch: Launch,
+    },
     /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
     ThreadCleanup {
         repo: Option<String>,
@@ -341,6 +348,7 @@ pub enum AgentResponse {
         eof: bool,
     },
     Cleanup(Cleanup),
+    Relaunch(Launch),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -713,6 +721,18 @@ pub enum FrontRequest {
         #[serde(default)]
         keep_worktree: bool,
     },
+    /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
+    ThreadStop {
+        project: String,
+        thread: String,
+    },
+    /// 끝난 thread 세션을 다시 띄운다. 기본은 task를 다시 읽어 새 brief로 새 대화, `resume`이면 저장된 대화를 잇는다
+    ThreadRestart {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        resume: bool,
+    },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {
         project: String,
@@ -735,6 +755,17 @@ pub enum FrontRequest {
         text: String,
         #[serde(default)]
         mode: MessageMode,
+    },
+    /// 결정을 기록한다(decisions.md에 덧붙이고 흐름 사건을 낸다)
+    DecisionAdd {
+        project: String,
+        text: String,
+        #[serde(default)]
+        replaces: Option<u32>,
+    },
+    /// 결정 기록 목록
+    Decisions {
+        project: String,
     },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {
@@ -760,6 +791,7 @@ impl FrontRequest {
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
+                | FrontRequest::Decisions { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -827,6 +859,10 @@ pub enum FrontResponse {
     },
     Question(QuestionView),
     Message(MessageView),
+    Decisions {
+        decisions: Vec<DecisionView>,
+    },
+    Decision(DecisionView),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

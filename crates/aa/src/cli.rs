@@ -83,6 +83,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
+    /// 결정 기록(projects/<p>/decisions.md). thread brief에 들어간다
+    Decision {
+        #[command(subcommand)]
+        cmd: DecisionCmd,
+    },
     /// 머신의 agent.toml profile 목록
     Profile {
         #[command(subcommand)]
@@ -146,6 +151,25 @@ enum ProjectCmd {
 }
 
 #[derive(Subcommand)]
+enum DecisionCmd {
+    /// 결정을 덧붙인다(번호는 자동)
+    Add {
+        project: String,
+        #[arg(long, conflicts_with = "text_file")]
+        text: Option<String>,
+        /// 내용 파일(`-`면 표준 입력)
+        #[arg(long)]
+        text_file: Option<String>,
+        /// 이 결정이 대체하는 번호
+        #[arg(long)]
+        replaces: Option<u32>,
+    },
+    List {
+        project: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProfileCmd {
     List {
         #[arg(long)]
@@ -201,6 +225,19 @@ enum ThreadCmd {
     Brief {
         project: String,
         thread: String,
+    },
+    /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
+    Stop {
+        project: String,
+        thread: String,
+    },
+    /// 끝난 thread 세션을 다시 띄운다. 기본은 task를 다시 읽어 새 brief로 새 대화
+    Restart {
+        project: String,
+        thread: String,
+        /// 저장된 대화를 잇는다(brief 안내 없음)
+        #[arg(long)]
+        resume: bool,
     },
     /// thread agent에 메시지를 보낸다. 기본은 대기열(턴이 끝나면), --interrupt면 지금
     Message {
@@ -581,6 +618,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ProjectCmd::Create { name } => FrontRequest::ProjectCreate { name },
             },
         ),
+        Cmd::Decision { cmd } => front(
+            json,
+            match cmd {
+                DecisionCmd::Add { project, text, text_file, replaces } => {
+                    FrontRequest::DecisionAdd { project, text: text_arg(text, text_file)?, replaces }
+                }
+                DecisionCmd::List { project } => FrontRequest::Decisions { project },
+            },
+        ),
         Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
         Cmd::Thread { cmd } => front(
             json,
@@ -603,17 +649,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::ThreadResolve { project, thread, keep_worktree }
                 }
                 ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
+                ThreadCmd::Stop { project, thread } => FrontRequest::ThreadStop { project, thread },
+                ThreadCmd::Restart { project, thread, resume } => {
+                    FrontRequest::ThreadRestart { project, thread, resume }
+                }
                 ThreadCmd::Message { project, thread, interrupt, text_file, text } => {
-                    let text = match (text, text_file) {
-                        (Some(t), _) => t,
-                        (None, Some(f)) if f == "-" => {
-                            let mut t = String::new();
-                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
-                            t
-                        }
-                        (None, Some(f)) => std::fs::read_to_string(&f).with_context(|| format!("글 파일: {f}"))?,
-                        (None, None) => anyhow::bail!("--text 또는 --text-file이 필요하다"),
-                    };
+                    let text = text_arg(text, text_file)?;
                     let mode = if interrupt { aa_proto::MessageMode::Interrupt } else { aa_proto::MessageMode::Queue };
                     FrontRequest::ThreadMessage { project, thread, text, mode }
                 }
@@ -969,6 +1010,35 @@ fn render_question(s: &mut String, q: &aa_proto::QuestionView) {
     );
 }
 
+/// `--text` 또는 `--text-file`(`-`면 표준 입력)
+fn text_arg(text: Option<String>, file: Option<String>) -> Result<String> {
+    Ok(match (text, file) {
+        (Some(t), _) => t,
+        (None, Some(f)) if f == "-" => {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+            t
+        }
+        (None, Some(f)) => std::fs::read_to_string(&f).with_context(|| format!("글 파일: {f}"))?,
+        (None, None) => anyhow::bail!("--text 또는 --text-file이 필요하다"),
+    })
+}
+
+fn render_decision(s: &mut String, d: &aa_proto::DecisionView) {
+    use std::fmt::Write as _;
+    let mut tags = String::new();
+    if let Some(r) = d.replaces {
+        tags.push_str(&format!(" · {r}번 대체"));
+    }
+    if let Some(b) = d.replaced_by {
+        tags.push_str(&format!(" · {b}번으로 대체됨"));
+    }
+    let _ = writeln!(s, "{}\t{}{tags}", d.num, d.at);
+    for l in d.text.lines() {
+        let _ = writeln!(s, "  {l}");
+    }
+}
+
 fn render_thread(s: &mut String, t: &aa_proto::ThreadView) {
     use std::fmt::Write as _;
     let group = match t.group {
@@ -991,6 +1061,12 @@ fn render_thread(s: &mut String, t: &aa_proto::ThreadView) {
     );
     if let Some(e) = &t.error {
         let _ = writeln!(s, "  오류: {e}");
+    }
+    if let (Some(now), Some(had)) = (t.decisions_now, t.decisions_rev.or(Some(0)))
+        && had < now
+        && t.status != aa_proto::ThreadStatus::Resolved
+    {
+        let _ = writeln!(s, "  결정 {had}번까지 보고 시작했다(지금 {now}번). 새 결정을 알린다: aa thread message");
     }
     for n in &t.next {
         let _ = writeln!(s, "  - {n}");
@@ -1160,6 +1236,15 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Message(m) => {
             let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
         }
+        FrontResponse::Decisions { decisions } => {
+            if decisions.is_empty() {
+                s.push_str("결정 기록이 없다\n");
+            }
+            for d in decisions {
+                render_decision(&mut s, d);
+            }
+        }
+        FrontResponse::Decision(d) => render_decision(&mut s, d),
     }
     s
 }

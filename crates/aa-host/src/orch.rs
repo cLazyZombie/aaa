@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aa_proto::{
-    AgentRequest, AgentResponse, BriefState, ErrorBody, ErrorCode, FlowEvent, FrontResponse, Launch, ProjectView, Role,
-    SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, parse_report, valid_project, valid_thread,
-    waits_on_user,
+    AgentRequest, AgentResponse, BriefState, DecisionView, ErrorBody, ErrorCode, FlowEvent, FrontResponse, Launch,
+    ProjectView, Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, parse_decisions, parse_report,
+    render_decision, valid_project, valid_thread, waits_on_user,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -57,6 +57,9 @@ pub(crate) struct ThreadRec {
     pub copy: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// brief에 넣은 결정 기록 번호
+    #[serde(default)]
+    pub decisions_rev: Option<u32>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -88,6 +91,11 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 
+/// 프로젝트의 지금 결정 번호(가장 큰 번호)
+fn decisions_rev(dir: &Path) -> Option<u32> {
+    parse_decisions(&std::fs::read_to_string(dir.join("decisions.md")).ok()?).iter().map(|d| d.num).max()
+}
+
 /// 임시 파일에 쓴 뒤 rename으로 바꾼다
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap();
@@ -96,6 +104,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
 }
+
+/// 다시 시작한 thread의 brief 맨 앞
+const RESTART_NOTE: &str = "\
+> 이 thread는 다시 시작했다. 같은 작업 폴더(와 branch)에 이전 시도가 있다.
+> 먼저 지금 상태(파일·커밋·report.md)를 확인하고 이어서 한다.
+
+";
 
 /// thread 규칙(brief 앞부분). 보고 형식은 운영 coordinator가 읽는 형식이다.
 const THREAD_GUIDE: &str = "\
@@ -215,6 +230,14 @@ impl Host {
             _ if new_report && waits_on_user(r.report_state.as_deref()) => ThreadGroup::WaitingOnYou,
             _ if new_report => ThreadGroup::ReadyForReview,
             _ if r.brief == BriefState::Unknown || r.copy.as_deref() == Some("failed") => ThreadGroup::WaitingOnYou,
+            // 열린 thread인데 세션이 끝났다(종료·재부팅): 다시 시작하거나 끝낼지 사람이 정한다
+            ThreadStatus::Open
+                if r.pane.as_deref().is_some_and(|p| {
+                    !self.pane_view_of(p, aa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
+                }) =>
+            {
+                ThreadGroup::WaitingOnYou
+            }
             _ => ThreadGroup::Working,
         };
         ThreadView {
@@ -237,6 +260,8 @@ impl Host {
             report_state: r.report_state.clone(),
             next: r.next.clone(),
             agent: r.pane.as_deref().and_then(|p| self.pane_agent(p)).map(Box::new),
+            decisions_rev: r.decisions_rev,
+            decisions_now: self.project_dir(&r.project).ok().and_then(|d| decisions_rev(&d)),
             copy: r.copy.clone(),
             error: r.error.clone(),
             created_at_ms: r.created_at_ms,
@@ -259,7 +284,7 @@ impl Host {
 
     /// 흐름 사건을 기록하고 알린다
     pub(crate) fn flow(&self, r: &ThreadRec, kind: &str, evidence: Option<String>, detail: impl Into<String>) {
-        let mut e = FlowEvent {
+        self.flow_event(FlowEvent {
             project: r.project.clone(),
             seq: 0,
             at_ms: aa_common::util::now_ms(),
@@ -271,7 +296,29 @@ impl Host {
             machine: Some(self.machine_name(&r.machine_id)),
             evidence,
             detail: detail.into(),
-        };
+        });
+    }
+
+    /// thread에 묶이지 않은 프로젝트 사건(결정 기록 등)
+    pub(crate) fn flow_project(&self, project: &str, kind: &str, evidence: Option<String>, detail: impl Into<String>) {
+        self.flow_event(FlowEvent {
+            project: project.to_string(),
+            seq: 0,
+            at_ms: aa_common::util::now_ms(),
+            boot_id: self.boot_id.clone(),
+            kind: kind.to_string(),
+            thread: None,
+            role: None,
+            profile: None,
+            machine: None,
+            evidence,
+            detail: detail.into(),
+        });
+    }
+
+    fn flow_event(&self, mut e: FlowEvent) {
+        let kind = e.kind.clone();
+        let kind = kind.as_str();
         match self.db.flow_insert(&e) {
             Ok(seq) => {
                 e.seq = seq;
@@ -360,6 +407,51 @@ impl Host {
     }
 
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
+    pub(crate) fn decisions(&self, project: &str) -> Result<Vec<DecisionView>, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        Ok(parse_decisions(&std::fs::read_to_string(dir.join("decisions.md")).unwrap_or_default()))
+    }
+
+    /// 결정을 decisions.md 끝에 덧붙인다. 번호는 지금 가장 큰 번호 + 1이다.
+    pub(crate) fn decision_add(
+        &self,
+        project: &str,
+        text: &str,
+        replaces: Option<u32>,
+        actor: &str,
+    ) -> Result<DecisionView, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        if text.trim().is_empty() {
+            return Err(bad("결정 내용이 비었다"));
+        }
+        let _guard = self.decision_lock.lock().unwrap();
+        let path = dir.join("decisions.md");
+        let mut md = std::fs::read_to_string(&path).unwrap_or_else(|_| "# 결정 기록\n".into());
+        let have = parse_decisions(&md);
+        if let Some(r) = replaces
+            && !have.iter().any(|d| d.num == r)
+        {
+            return Err(bad(format!("대체할 결정이 없다: {r}번")));
+        }
+        let d = DecisionView {
+            num: have.iter().map(|d| d.num).max().unwrap_or(0) + 1,
+            at: aa_common::util::utc_text(aa_common::util::now_ms()),
+            text: text.trim().to_string(),
+            replaces,
+            replaced_by: None,
+        };
+        if !md.ends_with('\n') {
+            md.push('\n');
+        }
+        md.push_str(&render_decision(&d));
+        write_atomic(&path, md.as_bytes()).map_err(internal)?;
+        self.db.audit(actor, "decision_add", &format!("{project} {}", d.num));
+        let rep = replaces.map(|r| format!(" ({r}번 대체)")).unwrap_or_default();
+        let first = d.text.lines().next().unwrap_or_default().chars().take(80).collect::<String>();
+        self.flow_project(project, "decision_added", Some("decisions.md".into()), format!("{}번{rep}: {first}", d.num));
+        Ok(d)
+    }
+
     pub(crate) async fn thread_start(self: &Arc<Self>, a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         if a.title.trim().is_empty() {
@@ -403,6 +495,7 @@ impl Host {
             next: vec![],
             copy: None,
             error: None,
+            decisions_rev: None,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -418,6 +511,7 @@ impl Host {
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()).map_err(internal)?;
         let brief = self.brief(&dir, &rec, &a.task);
+        rec.decisions_rev = decisions_rev(&dir);
         self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
 
         let fail = |me: &Arc<Host>, rec: &mut ThreadRec, e: ErrorBody| -> ErrorBody {
@@ -449,31 +543,9 @@ impl Host {
         rec.launch = Some(ready.launch.clone());
         self.save(&mut rec);
 
-        let mut env = ready.launch.env.clone();
-        env.push(("AA_PROJECT".into(), a.project.clone()));
-        env.push(("AA_THREAD".into(), id.clone()));
-        let spec = SpawnSpec {
-            name: format!("{}/{id}", a.project),
-            argv: ready.launch.argv.clone(),
-            cwd: Some(ready.cwd.clone()),
-            env,
-            cols: 120,
-            rows: 32,
-            role: Some(rec.role),
-        };
-        let pane = match self.spawn_on(&mid, spec, actor).await {
-            Ok(p) => p,
-            Err(e) => return Err(fail(self, &mut rec, e)),
-        };
-        rec.pane = Some(pane);
-        rec.status = ThreadStatus::Open;
-        self.save(&mut rec);
-        let _ = conn
-            .request(AgentRequest::ThreadWatch {
-                thread: format!("{}/{id}", a.project),
-                work_dir: ready.work_dir.clone(),
-            })
-            .await;
+        if let Err(e) = self.launch_session(&mut rec, &ready.launch.argv, actor).await {
+            return Err(fail(self, &mut rec, e));
+        }
         let me = self.clone();
         let (p, t) = (a.project.clone(), id.clone());
         tokio::spawn(async move { me.deliver_brief(&p, &t).await });
@@ -559,6 +631,113 @@ impl Host {
                 self.flow(&fresh, "brief_unknown", None, why);
             }
         }
+    }
+
+    /// thread 세션을 띄우고 보고 감시를 건다(시작·다시 시작 공통)
+    async fn launch_session(
+        self: &Arc<Self>,
+        rec: &mut ThreadRec,
+        argv: &[String],
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
+        let mut env = launch.env.clone();
+        env.push(("AA_PROJECT".into(), rec.project.clone()));
+        env.push(("AA_THREAD".into(), rec.id.clone()));
+        let spec = SpawnSpec {
+            name: format!("{}/{}", rec.project, rec.id),
+            argv: argv.to_vec(),
+            cwd: rec.cwd.clone(),
+            env,
+            cols: 120,
+            rows: 32,
+            role: Some(rec.role),
+        };
+        let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
+        rec.pane = Some(pane);
+        rec.status = ThreadStatus::Open;
+        self.save(rec);
+        if let (Ok(conn), Some(wd)) = (self.live_conn(&rec.machine_id), rec.work_dir.clone()) {
+            let _ = conn
+                .request(AgentRequest::ThreadWatch { thread: format!("{}/{}", rec.project, rec.id), work_dir: wd })
+                .await;
+        }
+        Ok(())
+    }
+
+    /// thread agent를 멈춘다(Esc 한 번, 0.2.35 `thread stop`과 같다). 세션·작업 폴더는 그대로다.
+    pub(crate) async fn thread_stop(&self, project: &str, id: &str, actor: &str) -> Result<ThreadView, ErrorBody> {
+        let rec = self.load(project, id)?;
+        let pane = rec.pane.clone().ok_or_else(|| bad("thread 세션이 없다"))?;
+        self.check_running(&pane)?;
+        let conn = self.live_conn(&rec.machine_id)?;
+        conn.request(AgentRequest::Input { session: pane, data: aa_proto::B64(b"\x1b".to_vec()) }).await?;
+        self.db.audit(actor, "thread_stop", &format!("{project}/{id}"));
+        self.flow(&rec, "thread_stopped", None, "Esc");
+        Ok(self.thread_view(&rec))
+    }
+
+    /// 끝난 thread 세션을 다시 띄운다. 실행 중이면 거부한다(먼저 `aa pane kill`).
+    /// - 기본: task(Follow-ups 포함)·프로젝트 지침·결정·memory를 다시 읽어 brief를 새로 쓰고 새 대화로 띄운 뒤 안내한다.
+    /// - resume: 저장된 대화를 잇는다(brief 안내 없음). harness 세션 ID를 모르면 거부한다.
+    pub(crate) async fn thread_restart(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        resume: bool,
+        actor: &str,
+    ) -> Result<ThreadView, ErrorBody> {
+        let mut rec = self.load(project, id)?;
+        if rec.status != ThreadStatus::Open {
+            return Err(bad(format!("열린 thread만 다시 시작한다(지금 {})", rec.status.as_str())));
+        }
+        if let Some(p) = &rec.pane
+            && self.pane_view_of(p, aa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
+        {
+            return Err(bad(format!("세션이 아직 실행 중이다. 끝내려면 `aa pane kill {p}`")));
+        }
+        let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
+        let conn = self.live_conn(&rec.machine_id)?;
+        let argv = if resume {
+            let key = rec
+                .pane
+                .as_deref()
+                .and_then(|p| self.pane_agent(p))
+                .and_then(|a| a.harness_session)
+                .or(launch.session_key.clone());
+            if launch.resume_argv.is_empty() {
+                return Err(bad("이 harness는 대화를 이어 띄우는 방법이 없다"));
+            }
+            let needs_key = launch.resume_argv.iter().any(|a| a.contains("{session}"));
+            match key {
+                Some(k) => launch.resume_argv.iter().map(|a| a.replace("{session}", &k)).collect::<Vec<_>>(),
+                None if needs_key => return Err(bad("harness 세션 ID를 모른다. 새로 시작한다(--resume 없이)")),
+                None => launch.resume_argv.clone(),
+            }
+        } else {
+            let dir = self.project_dir(project)?;
+            let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
+            let mut brief = self.brief(&dir, &rec, &task);
+            brief.insert_str(0, RESTART_NOTE);
+            let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
+            let relaunched = match conn.request(AgentRequest::ThreadRebrief { work_dir, brief, launch }).await? {
+                AgentResponse::Relaunch(l) => l,
+                other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+            };
+            rec.decisions_rev = decisions_rev(&dir);
+            rec.brief = BriefState::Pending;
+            rec.launch = Some(relaunched.clone());
+            relaunched.argv
+        };
+        self.db.audit(actor, "thread_restart", &format!("{project}/{id} resume={resume}"));
+        self.launch_session(&mut rec, &argv, actor).await?;
+        self.flow(&rec, "thread_restarted", None, if resume { "resume" } else { "새 대화·brief 다시 씀" });
+        if !resume {
+            let me = self.clone();
+            let (p, t) = (project.to_string(), id.to_string());
+            tokio::spawn(async move { me.deliver_brief(&p, &t).await });
+        }
+        Ok(self.thread_view(&rec))
     }
 
     /// 사람이 명시적으로 다시 보낸다(자동 재전송은 하지 않는다)
