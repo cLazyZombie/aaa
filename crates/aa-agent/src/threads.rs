@@ -214,6 +214,14 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
             argv.insert(1, "--settings".into());
         }
     }
+    if launch.harness == "codex" {
+        // 턴이 끝날 때마다 notify로 상태와 thread ID(resume에 쓴다)를 받는다
+        let n = crate::hooks::codex_notify(&cfg.exe);
+        for argv in [&mut launch.argv, &mut launch.resume_argv] {
+            argv.insert(1, n.clone());
+            argv.insert(1, "-c".into());
+        }
+    }
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),

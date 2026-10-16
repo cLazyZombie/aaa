@@ -177,6 +177,22 @@ fs.writeFileSync(
   `${root}/c/agent.toml`,
   `schema = 1\n[agent]\nwork_root = "${root}/work"\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
 );
+// Codex처럼 구는 입력창: 글과 Enter가 한 덩어리로 오면 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측한 Codex 동작).
+// Enter만 따로 오면 그때까지의 글을 제출한다.
+fs.writeFileSync(
+  `${root}/burst.js`,
+  `process.stdin.setRawMode(true);
+let buf = "";
+process.stdout.write("burst> ");
+process.stdin.on("data", (d) => {
+  const s = d.toString("utf8");
+  if (s === "\\r") { process.stdout.write("\\r\\nSUBMIT:" + buf + "\\r\\nburst> "); buf = ""; return; }
+  if (s.length > 1 && s.endsWith("\\r")) { buf += s.slice(0, -1) + "\\n"; process.stdout.write("[newline]"); return; }
+  buf += s;
+  process.stdout.write(s);
+});
+`,
+);
 base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();
 
@@ -300,6 +316,22 @@ try {
     await until("pane 작업 중", async () => (await page.getByTestId("agent-q1").innerText()) === "작업 중");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+  });
+
+  await step("입력 막대·pane send: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
+    aa("pane", "run", "--machine", "labA", "--name", "burst", "--", process.execPath, `${root}/burst.js`);
+    await page.getByTestId("pane-burst").click();
+    await until("burst 화면", async () => (await screenText(page)).includes("burst>"));
+    await page.getByLabel("보낼 글").fill("hello web");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await until("웹 제출", async () => (await screenText(page)).includes("SUBMIT:hello web"));
+    aa("pane", "send", "burst", "--text", "hello cli", "--enter");
+    await until("CLI 제출", () => aa("pane", "read", "burst").lines.join("\n").includes("SUBMIT:hello cli"));
+    if ((await screenText(page)).includes("[newline]")) throw new Error("Enter가 글과 한 덩어리로 갔다");
+    // 가짜 입력창이 한 덩어리를 실제로 가려내는지(이 단언이 없으면 위 단언은 아무것도 보지 않는다)
+    aa("pane", "send", "burst", "--text", "one\r");
+    await until("한 덩어리 판정", async () => (await screenText(page)).includes("[newline]"));
+    aa("pane", "kill", "burst");
   });
 
   await step("그림 붙여 넣기: 셸은 저장만, harness 입력창에는 경로(Enter 없음), 확인창·형식·reader 거부", async () => {

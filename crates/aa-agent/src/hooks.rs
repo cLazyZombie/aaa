@@ -110,6 +110,13 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
     Some(ev)
 }
 
+/// Codex에 실행마다 줄 notify 설정(`codex -c <이것>`). 사용자 ~/.codex 설정은 고치지 않는다.
+/// Codex는 턴이 끝날 때 JSON을 마지막 인자로 붙여 이 명령을 실행한다(`agent-turn-complete`, `thread-id`).
+pub fn codex_notify(exe: &Path) -> String {
+    let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    format!("notify=[{},\"hook\",\"--agent\",\"codex\"]", q(&exe.to_string_lossy()))
+}
+
 /// Claude Code에 실행마다 줄 hook 설정(`claude --settings <파일>`). 사용자 설정 파일은 고치지 않는다.
 pub fn claude_settings(exe: &Path) -> Value {
     let cmd = format!("'{}' hook --agent claude", exe.to_string_lossy().replace('\'', "'\\''"));
@@ -206,6 +213,12 @@ mod tests {
         assert_eq!((r.kind.as_str(), r.percent), ("progress", Some(100)));
         assert_eq!(r.message.as_deref(), Some("테스트 중이상한 줄"));
         assert!(n("claude", json!({"x":1})).is_none());
+    }
+
+    #[test]
+    fn codex_notify_is_toml() {
+        let v = codex_notify(Path::new("/A b/q\"x\\/aa"));
+        assert_eq!(v, r#"notify=["/A b/q\"x\\/aa","hook","--agent","codex"]"#);
     }
 
     #[test]

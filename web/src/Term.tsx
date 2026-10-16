@@ -10,6 +10,8 @@ import { b64decode, b64encode, wsUrl } from "./api";
 /** 한 번에 보내는 조각(host 상한과 같다) */
 const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
+/** 글 뒤 Enter까지 기다리는 시간(host의 brief·메시지 전달과 같다) */
+const ENTER_GAP_MS = 300;
 
 /** 붙여 넣기·끌어 놓기에서 그림 파일 하나 */
 function imageOf(list: FileList | undefined | null): File | null {
@@ -219,8 +221,13 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
     send({ t: "take" });
   };
 
+  // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다.
   const sendText = (enter: boolean) => {
-    input(text + (enter ? "\r" : ""));
+    if (text) input(text);
+    if (enter) {
+      if (text) window.setTimeout(() => input("\r"), ENTER_GAP_MS);
+      else input("\r");
+    }
     setText("");
     termRef.current?.focus();
   };

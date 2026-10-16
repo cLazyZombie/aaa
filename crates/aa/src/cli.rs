@@ -673,11 +673,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 PaneCmd::Read { pane } => FrontRequest::PaneRead { pane },
                 PaneCmd::Send { pane, text, enter } => {
-                    let mut data = text.into_bytes();
-                    if enter {
-                        data.push(b'\r');
+                    // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측).
+                    // 글을 먼저 보내고 조금 뒤 Enter를 따로 보낸다(host의 brief·메시지 전달과 같은 간격).
+                    if enter && !text.is_empty() {
+                        let first = FrontRequest::PaneSend { pane: pane.clone(), data: B64(text.into_bytes()) };
+                        if let Err(e) = front_call(first)? {
+                            return front_print(json, Err(e));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        FrontRequest::PaneSend { pane, data: B64(b"\r".to_vec()) }
+                    } else {
+                        let mut data = text.into_bytes();
+                        if enter {
+                            data.push(b'\r');
+                        }
+                        FrontRequest::PaneSend { pane, data: B64(data) }
                     }
-                    FrontRequest::PaneSend { pane, data: B64(data) }
                 }
                 PaneCmd::Resize { pane, cols, rows } => FrontRequest::PaneResize { pane, cols, rows },
                 PaneCmd::Kill { pane } => FrontRequest::PaneKill { pane },
@@ -1086,11 +1097,17 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
 }
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
-    let rt = runtime()?;
-    let res = rt.block_on(async {
+    front_print(json, front_call(req)?)
+}
+
+fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aa_proto::ErrorBody>> {
+    runtime()?.block_on(async {
         let mut c = aa_common::front::FrontClient::connect(&aa_config::paths::state_dir()).await?;
         c.call(req).await
-    })?;
+    })
+}
+
+fn front_print(json: bool, res: Result<FrontResponse, aa_proto::ErrorBody>) -> Result<ExitCode> {
     match res {
         Ok(r) => {
             if json {
