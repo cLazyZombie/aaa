@@ -4,6 +4,7 @@
 //! `<agent state>/sessions/<id>/meta.json`  session host가 시작하며 쓴다(pid)
 //! `<agent state>/sessions/<id>/exit.json`  session host가 종료하며 쓴다(exit code·마지막 offset)
 //! `<agent state>/sessions/<id>/final.replay`·`final.json`  종료 때 마지막 화면
+//! `<agent state>/sessions/<id>/harness.json` agent가 쓴다(마지막 harness·보고 사건, 다시 뜬 뒤 host에 다시 알린다)
 //! `<agent state>/run/<id>.sock`            session IPC(짧은 경로: UDS 길이 제한)
 
 use std::path::{Path, PathBuf};
@@ -46,6 +47,9 @@ impl SessionPaths {
     }
     pub fn final_screen(&self) -> PathBuf {
         self.dir.join("final.json")
+    }
+    pub fn harness(&self) -> PathBuf {
+        self.dir.join("harness.json")
     }
     pub fn log(&self) -> PathBuf {
         self.dir.join("session-host.log")
