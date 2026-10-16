@@ -8,6 +8,7 @@ use clap::{Args, Parser, Subcommand};
 
 use aa::doctor;
 use aa::service;
+use aa_proto::{B64, DeviceRole, FrontRequest, FrontResponse};
 
 #[derive(Parser)]
 #[command(name = "aa", version, about = "여러 머신의 agent 오케스트레이션")]
@@ -27,6 +28,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// host backend 실행(보통 OS 감독자가 띄운다)
+    Host,
+    /// agent backend 실행, 또는 host에 등록(enroll)
+    Agent(AgentArgs),
+    /// (내부) 세션 하나의 PTY를 소유하는 프로세스
+    #[command(hide = true)]
+    SessionHost {
+        #[arg(long)]
+        dir: PathBuf,
+    },
+    /// host 상태
+    Status,
+    /// pane(세션) 목록·실행·읽기·입력
+    Pane {
+        #[command(subcommand)]
+        cmd: PaneCmd,
+    },
+    /// 머신 등록·목록·폐기(host에서)
+    Machine {
+        #[command(subcommand)]
+        cmd: MachineCmd,
+    },
+    /// host 웹: pairing 코드, tailscale serve HTTPS 공개
+    Web {
+        #[command(subcommand)]
+        cmd: WebCmd,
+    },
     /// 자가 점검(계보·키체인·첫 실행 지연)
     Doctor(DoctorArgs),
     /// macOS 감독자(SMAppService LaunchAgent) 등록·해제·상태
@@ -39,6 +67,110 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
+}
+
+#[derive(Args)]
+struct AgentArgs {
+    #[command(subcommand)]
+    cmd: Option<AgentCmd>,
+    /// host 주소("local" 또는 <이름>:<포트>). 기본: agent.toml
+    #[arg(long)]
+    host: Option<String>,
+    /// 머신 이름. 기본: agent.toml 또는 hostname
+    #[arg(long)]
+    name: Option<String>,
+    /// 개발 모드 표시(host가 자식으로 띄운 로컬 agent)
+    #[arg(long)]
+    dev_mode: bool,
+}
+
+#[derive(Subcommand)]
+enum AgentCmd {
+    /// host의 등록 창에 이 머신을 등록한다(확인 코드를 host에서 입력해 승인)
+    Enroll {
+        /// host 주소 <이름 또는 주소>:<포트>
+        host: String,
+        #[arg(long)]
+        name: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PaneCmd {
+    /// pane 목록
+    List,
+    /// 새 pane(세션)을 띄운다. 명령이 없으면 그 머신 사용자의 기본 셸
+    Run {
+        #[arg(long)]
+        machine: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(long)]
+        cols: Option<u16>,
+        #[arg(long)]
+        rows: Option<u16>,
+        #[arg(last = true)]
+        argv: Vec<String>,
+    },
+    /// 보이는 화면을 글자로 읽는다
+    Read {
+        pane: String,
+    },
+    /// 입력을 보낸다(문자열 그대로, --enter면 끝에 Enter)
+    Send {
+        pane: String,
+        #[arg(long)]
+        text: String,
+        #[arg(long)]
+        enter: bool,
+    },
+    Resize {
+        pane: String,
+        cols: u16,
+        rows: u16,
+    },
+    Kill {
+        pane: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MachineCmd {
+    List,
+    /// 등록 창을 연다(예: --open 10m)
+    Enroll {
+        #[arg(long, default_value = "10m")]
+        open: String,
+    },
+    /// 승인을 기다리는 등록
+    Pending,
+    /// agent 화면의 확인 코드로 승인한다
+    Approve {
+        name: String,
+        #[arg(long)]
+        code: String,
+    },
+    Revoke {
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WebCmd {
+    /// 웹 pairing 코드(5분, 1회용)
+    Pair {
+        /// 보기 권한만 준다
+        #[arg(long)]
+        reader: bool,
+    },
+    /// tailscale serve로 HTTPS 공개(off: aa가 만든 공개만 끈다)
+    Publish {
+        #[arg(value_parser = ["off"])]
+        off: Option<String>,
+    },
+    Status,
 }
 
 #[derive(Args)]
@@ -147,9 +279,81 @@ pub fn main() -> ExitCode {
     }
 }
 
+fn init_log(default: &str) {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("AA_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default));
+    use std::io::IsTerminal;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
+        .with_target(false)
+        .try_init();
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime> {
+    Ok(tokio::runtime::Builder::new_multi_thread().enable_all().build()?)
+}
+
 fn run(cli: Cli) -> Result<ExitCode> {
     let json = cli.json;
     match cli.cmd {
+        Cmd::Host => {
+            init_log("info");
+            let cfg = load_or_exit(aa_config::load_host(&aa_config::paths::config_dir()))?;
+            runtime()?.block_on(aa::host::run(cfg, aa_config::paths::state_dir()))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Agent(a) => {
+            init_log("info");
+            agent_cmd(a)
+        }
+        Cmd::SessionHost { dir } => {
+            init_log("info");
+            aa::session::host::main(dir)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Status => front(json, FrontRequest::Status),
+        Cmd::Pane { cmd } => front(
+            json,
+            match cmd {
+                PaneCmd::List => FrontRequest::Panes,
+                PaneCmd::Run { machine, name, cwd, cols, rows, argv } => {
+                    FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows }
+                }
+                PaneCmd::Read { pane } => FrontRequest::PaneRead { pane },
+                PaneCmd::Send { pane, text, enter } => {
+                    let mut data = text.into_bytes();
+                    if enter {
+                        data.push(b'\r');
+                    }
+                    FrontRequest::PaneSend { pane, data: B64(data) }
+                }
+                PaneCmd::Resize { pane, cols, rows } => FrontRequest::PaneResize { pane, cols, rows },
+                PaneCmd::Kill { pane } => FrontRequest::PaneKill { pane },
+            },
+        ),
+        Cmd::Machine { cmd } => front(
+            json,
+            match cmd {
+                MachineCmd::List => FrontRequest::Machines,
+                MachineCmd::Enroll { open } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
+                MachineCmd::Pending => FrontRequest::EnrollPending,
+                MachineCmd::Approve { name, code } => FrontRequest::EnrollApprove { name, code },
+                MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
+            },
+        ),
+        Cmd::Web { cmd } => front(
+            json,
+            match cmd {
+                WebCmd::Pair { reader } => {
+                    FrontRequest::WebPair { role: if reader { DeviceRole::Reader } else { DeviceRole::Controller } }
+                }
+                WebCmd::Publish { off: Some(_) } => FrontRequest::WebPublishOff,
+                WebCmd::Publish { off: None } => FrontRequest::WebPublish,
+                WebCmd::Status => FrontRequest::WebStatus,
+            },
+        ),
         Cmd::Doctor(a) => doctor_cmd(a, json),
         Cmd::Service { cmd } => service_cmd(cmd),
         Cmd::Config { cmd } => config_cmd(cmd, json),
@@ -252,6 +456,204 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn load_or_exit<T>(r: Result<aa_config::Loaded<T>, aa_config::ConfigErrors>) -> Result<T> {
+    match r {
+        Ok(l) => {
+            for w in &l.warnings {
+                eprintln!("{w}");
+            }
+            Ok(l.config)
+        }
+        Err(e) => anyhow::bail!("설정을 읽지 못해 시작하지 않는다:\n{}", e.render()),
+    }
+}
+
+fn parse_minutes(s: &str) -> Result<u32> {
+    let t = s.trim_end_matches('m');
+    t.parse::<u32>().with_context(|| format!("분 단위로 적는다(예: 10m): {s}"))
+}
+
+fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
+    let cfg = load_or_exit(aa_config::load_agent(&aa_config::paths::config_dir()))?;
+    let root = aa_config::paths::state_dir();
+    let state = root.join("agent");
+    let ident = aa::agent::identity::load_or_create(&state)?;
+    let name = a
+        .name
+        .clone()
+        .filter(|n| !n.is_empty())
+        .or_else(|| Some(cfg.agent.name.clone()).filter(|n| !n.is_empty()))
+        .unwrap_or_else(aa::util::hostname);
+    let rt = runtime()?;
+    if let Some(AgentCmd::Enroll { host, name: n }) = a.cmd {
+        let name = n.unwrap_or(name);
+        let pin = rt.block_on(aa::agent::link::enroll(&state, &host, &ident.machine_id, &name))?;
+        println!("등록됐다: {name} → {} (host fingerprint {}…)", pin.address, &pin.fingerprint[..16]);
+        println!("agent.toml의 [agent] host = \"{}\"로 두고 `aa agent`를 실행한다", pin.address);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let host = a
+        .host
+        .clone()
+        .unwrap_or_else(|| if cfg.agent.host.is_empty() { "local".into() } else { cfg.agent.host.clone() });
+    let target = if host == "local" {
+        aa::agent::link::Target::Local(root.join("host").join("agent.sock"))
+    } else {
+        let pin = aa::agent::identity::load_pin(&state)
+            .context("이 머신은 아직 등록되지 않았다: `aa agent enroll <host:port>`")?;
+        let id = aa::tls::load_or_create(&state, "aa-agent")?;
+        aa::agent::link::Target::Remote { addr: host.clone(), pin: pin.fingerprint, id }
+    };
+    let default_cwd = Some(cfg.agent.default_cwd.clone())
+        .filter(|c| !c.is_empty())
+        .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
+    rt.block_on(async move {
+        let agent = aa::agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
+        tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
+        agent.recover().await?;
+        aa::agent::start_selfcheck(&agent, &cfg.selfcheck);
+        let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
+        tokio::select! {
+            _ = aa::agent::link::run(agent.clone(), target, max) => {}
+            _ = aa::host::shutdown_signal() => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
+        }
+        anyhow::Ok(())
+    })?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
+    let rt = runtime()?;
+    let res = rt.block_on(async {
+        let mut c = aa::host::front::FrontClient::connect(&aa_config::paths::state_dir()).await?;
+        c.call(req).await
+    })?;
+    match res {
+        Ok(r) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                print!("{}", render_front(&r));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "error": e }))?);
+            } else {
+                eprintln!("aa: {e}");
+            }
+            Ok(ExitCode::from(3))
+        }
+    }
+}
+
+fn state_label(s: &aa_proto::SessionState) -> String {
+    match s {
+        aa_proto::SessionState::Running => "실행".into(),
+        aa_proto::SessionState::Exited { code } => {
+            format!("종료({})", code.map(|c| c.to_string()).unwrap_or("?".into()))
+        }
+        aa_proto::SessionState::Interrupted => "중단(재부팅)".into(),
+        aa_proto::SessionState::Lost => "유실".into(),
+    }
+}
+
+fn render_front(r: &FrontResponse) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    let machines = |s: &mut String, ms: &[aa_proto::MachineView]| {
+        for m in ms {
+            let _ = writeln!(
+                s,
+                "{}\t{}\t{}{}{}",
+                m.name,
+                if m.connection == aa_proto::Connection::Connected { "연결" } else { "끊김" },
+                m.os.clone().unwrap_or_default(),
+                if m.local { "\t로컬" } else { "" },
+                if m.dev_mode { "\t개발 모드" } else { "" }
+            );
+        }
+    };
+    match r {
+        FrontResponse::Status(h) => {
+            let _ = writeln!(
+                s,
+                "host {} · {} · {}",
+                h.host_id,
+                h.software,
+                if h.dev_mode { "개발 모드(로컬 agent를 host가 띄움)" } else { "운영 모드" }
+            );
+            let _ = writeln!(
+                s,
+                "Agent link: {} · 웹: {}",
+                h.agent_listen.clone().unwrap_or("-".into()),
+                h.web_listen.clone().unwrap_or("-".into())
+            );
+            machines(&mut s, &h.machines);
+        }
+        FrontResponse::Machines { machines: ms } => machines(&mut s, ms),
+        FrontResponse::Panes { panes } => {
+            for p in panes {
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{}\t{}{}\t{}",
+                    p.id,
+                    p.machine,
+                    p.name,
+                    state_label(&p.state),
+                    if p.connection == aa_proto::Connection::Disconnected { "·끊김(읽기 전용)" } else { "" },
+                    p.argv.join(" ")
+                );
+            }
+        }
+        FrontResponse::Pane(p) => {
+            let _ = writeln!(s, "{}\t{}\t{}\t{}", p.id, p.machine, p.name, state_label(&p.state));
+        }
+        FrontResponse::Screen(t) => {
+            let mut lines = t.lines.clone();
+            while lines.last().is_some_and(|l| l.is_empty()) {
+                lines.pop();
+            }
+            for l in lines {
+                let _ = writeln!(s, "{l}");
+            }
+        }
+        FrontResponse::Pending { pending } => {
+            if pending.is_empty() {
+                let _ = writeln!(s, "대기 중인 등록이 없다");
+            }
+            for p in pending {
+                let _ = writeln!(
+                    s,
+                    "{}\tfingerprint {}…\t`aa machine approve {} --code <agent 화면의 코드>`",
+                    p.name, p.fingerprint_prefix, p.name
+                );
+            }
+        }
+        FrontResponse::PairCode { code, role, expires_in_s } => {
+            let _ = writeln!(s, "pairing 코드: {code} ({role:?}, {}분 유효, 1회용)", expires_in_s / 60);
+        }
+        FrontResponse::Publish(p) => {
+            let _ = writeln!(
+                s,
+                "tailscale: {}{}",
+                p.tailscale,
+                p.dns_name.as_ref().map(|d| format!(" ({d})")).unwrap_or_default()
+            );
+            let _ = writeln!(s, "주소: {}", p.url.clone().unwrap_or("-".into()));
+            if let Some(port) = p.owned_port {
+                let _ = writeln!(s, "aa가 만든 serve 포트: {port} → 127.0.0.1:{}", p.web_port);
+            }
+            if let Some(m) = &p.message {
+                let _ = writeln!(s, "{m}");
+            }
+        }
+        FrontResponse::Done => s.push_str("완료\n"),
+    }
+    s
 }
 
 fn print_report(r: &doctor::ProbeReport, json: bool) -> Result<()> {

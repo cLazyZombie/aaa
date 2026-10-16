@@ -1,0 +1,387 @@
+//! `aa session-host`: 세션 하나의 PTY master·자식 handle·VT 상태·출력 보존을 소유한다.
+//!
+//! agent backend가 띄우지만 자기 세션(setsid)으로 분리되어 agent·host가 재시작해도 살아 있다.
+//! agent는 세션별 IPC로 다시 붙는다(token 확인). 자식이 끝나면 마지막 화면을 파일로 남기고 끝난다.
+
+use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::time::Duration;
+
+use aa_proto::{
+    AgentResponse, B64, ErrorBody, ErrorCode, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo, SessionMsg, SessionRequest,
+    SessionState, Snapshot, TerminalChunk, negotiate,
+};
+use anyhow::{Context, Result};
+use portable_pty::{CommandBuilder, PtySize};
+use tokio::sync::mpsc;
+
+use super::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
+use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
+use crate::ring::Ring;
+use crate::util;
+use crate::vt::Vt;
+
+/// 출력 보존 상한(재접속 때 이 범위 안이면 bytes만 이어 보낸다)
+pub const RING_BYTES: usize = 2 << 20;
+/// 한 터미널 frame에 담는 최대 출력
+const CHUNK: usize = 32 << 10;
+
+enum Cmd {
+    Connected { conn: u64, tx: FrameTx, proto: aa_proto::Version },
+    Disconnected { conn: u64 },
+    Req { conn: u64, id: String, body: SessionRequest },
+}
+
+struct State {
+    id: String,
+    spec: SpecFile,
+    child_pid: Option<u32>,
+    started_at_ms: u64,
+    vt: Vt,
+    ring: Ring,
+    conns: HashMap<u64, FrameTx>,
+    subs: HashSet<u64>,
+    exit: Option<Option<i32>>,
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+    input: std::sync::mpsc::Sender<Vec<u8>>,
+}
+
+impl State {
+    fn info(&self) -> SessionInfo {
+        let (rows, cols) = self.vt.size();
+        SessionInfo {
+            id: self.id.clone(),
+            name: self.spec.spec.name.clone(),
+            argv: self.spec.spec.argv.clone(),
+            cwd: self.spec.spec.cwd.clone(),
+            pid: self.child_pid,
+            started_at_ms: self.started_at_ms,
+            boot_id: self.spec.boot_id.clone(),
+            cols,
+            rows,
+            state: match self.exit {
+                None => SessionState::Running,
+                Some(code) => SessionState::Exited { code },
+            },
+        }
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        let (rows, cols) = self.vt.size();
+        Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(self.vt.replay()) }
+    }
+
+    fn output(&mut self, data: &[u8]) {
+        let offset = self.ring.end();
+        self.ring.push(data);
+        self.vt.feed(data);
+        let mut lagging = Vec::new();
+        for conn in &self.subs {
+            let Some(tx) = self.conns.get(conn) else { continue };
+            for (i, part) in data.chunks(CHUNK).enumerate() {
+                let c = TerminalChunk {
+                    session: self.id.clone(),
+                    offset: offset + (i * CHUNK) as u64,
+                    data: part.to_vec(),
+                };
+                match tx.try_terminal(&c) {
+                    Ok(true) => {}
+                    Ok(false) | Err(_) => {
+                        lagging.push(*conn);
+                        break;
+                    }
+                }
+            }
+        }
+        for conn in lagging {
+            self.subs.remove(&conn);
+            if let Some(tx) = self.conns.get(&conn).cloned() {
+                tokio::spawn(async move {
+                    let _ = tx.json(&SessionMsg::Resync).await;
+                });
+            }
+        }
+    }
+
+    async fn handle(&mut self, conn: u64, id: String, body: SessionRequest) {
+        let Some(tx) = self.conns.get(&conn).cloned() else { return };
+        let result: Result<AgentResponse, ErrorBody> = match body {
+            SessionRequest::Subscribe { from } => {
+                self.subs.insert(conn);
+                let backlog = from.and_then(|f| self.ring.since(f).map(|b| (f, b)));
+                match backlog {
+                    Some((f, bytes)) => {
+                        let res = SessionMsg::Res {
+                            id,
+                            result: Outcome::Ok(AgentResponse::Subscribed {
+                                session: self.id.clone(),
+                                snapshot: None,
+                                offset: f,
+                            }),
+                        };
+                        let _ = tx.json(&res).await;
+                        for (i, part) in bytes.chunks(CHUNK).enumerate() {
+                            let c = TerminalChunk {
+                                session: self.id.clone(),
+                                offset: f + (i * CHUNK) as u64,
+                                data: part.to_vec(),
+                            };
+                            if tx.terminal(&c).await.is_err() {
+                                break;
+                            }
+                        }
+                        return;
+                    }
+                    None => {
+                        let snap = self.snapshot();
+                        let offset = snap.offset;
+                        Ok(AgentResponse::Subscribed { session: self.id.clone(), snapshot: Some(snap), offset })
+                    }
+                }
+            }
+            SessionRequest::Unsubscribe => {
+                self.subs.remove(&conn);
+                Ok(AgentResponse::Done)
+            }
+            SessionRequest::Input { data } => {
+                if self.exit.is_some() {
+                    Err(ErrorBody::new(ErrorCode::SessionExited, "세션이 끝났다"))
+                } else {
+                    self.input
+                        .send(data.0)
+                        .map(|_| AgentResponse::Done)
+                        .map_err(|_| ErrorBody::new(ErrorCode::SessionExited, "입력 통로가 닫혔다"))
+                }
+            }
+            SessionRequest::Resize { cols, rows } => {
+                let size = PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 };
+                match self.master.resize(size) {
+                    Ok(()) => {
+                        self.vt.resize(rows, cols);
+                        let info = self.info();
+                        self.broadcast(SessionMsg::Updated(info.clone())).await;
+                        Ok(AgentResponse::Session(info))
+                    }
+                    Err(e) => Err(ErrorBody::new(ErrorCode::Internal, format!("resize 실패: {e}"))),
+                }
+            }
+            SessionRequest::Kill => match self.killer.kill() {
+                Ok(()) => Ok(AgentResponse::Done),
+                Err(e) => Err(ErrorBody::new(ErrorCode::Internal, format!("종료 실패: {e}"))),
+            },
+            SessionRequest::Screen => Ok(AgentResponse::Screen(self.vt.text(&self.id))),
+        };
+        let _ = tx.json(&SessionMsg::Res { id, result: result.into() }).await;
+    }
+
+    async fn broadcast(&self, msg: SessionMsg) {
+        for tx in self.conns.values() {
+            let _ = tx.json(&msg).await;
+        }
+    }
+}
+
+pub fn main(dir: PathBuf) -> Result<()> {
+    // agent·ssh 세션과 분리한다(SIGHUP을 받지 않고, agent가 죽어도 남는다).
+    #[cfg(unix)]
+    unsafe {
+        libc::setsid();
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
+    rt.block_on(run(dir))
+}
+
+async fn run(dir: PathBuf) -> Result<()> {
+    let paths = SessionPaths::from_dir(&dir);
+    let spec: SpecFile = util::read_json(&paths.spec()).context("spec.json")?;
+    let s = &spec.spec;
+
+    let pty = portable_pty::native_pty_system();
+    let pair = pty
+        .openpty(PtySize { rows: s.rows.max(1), cols: s.cols.max(1), pixel_width: 0, pixel_height: 0 })
+        .context("PTY 열기")?;
+    let mut cmd = if s.argv.is_empty() {
+        CommandBuilder::new_default_prog()
+    } else {
+        let mut c = CommandBuilder::new(&s.argv[0]);
+        c.args(&s.argv[1..]);
+        c
+    };
+    if let Some(cwd) = &s.cwd {
+        cmd.cwd(cwd);
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("AA_SESSION_ID", &spec.id);
+    for (k, v) in &s.env {
+        cmd.env(k, v);
+    }
+    let mut child = pair.slave.spawn_command(cmd).context("자식 실행")?;
+    drop(pair.slave);
+    let child_pid = child.process_id();
+    let killer = child.clone_killer();
+    let mut reader = pair.master.try_clone_reader()?;
+    let mut writer = pair.master.take_writer()?;
+
+    let started_at_ms = util::now_ms();
+    util::write_json(&paths.meta(), &MetaFile { host_pid: std::process::id(), child_pid, started_at_ms })?;
+
+    // PTY 입출력은 blocking이라 runtime 밖 thread에서 한다(ConPTY 문서 권고와 같은 구조).
+    let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(256);
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 16 << 10];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let (in_tx, in_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        while let Ok(data) = in_rx.recv() {
+            if writer.write_all(&data).and_then(|_| writer.flush()).is_err() {
+                break;
+            }
+        }
+    });
+    let (exit_tx, mut exit_rx) = mpsc::channel::<Option<i32>>(1);
+    std::thread::spawn(move || {
+        let code = child.wait().ok().map(|st| st.exit_code() as i32);
+        let _ = exit_tx.blocking_send(code);
+    });
+
+    let listener = crate::ipc::LocalListener::bind(&paths.sock).context("session socket")?;
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<Cmd>(256);
+    let token = spec.token.clone();
+    {
+        let cmd_tx = cmd_tx.clone();
+        tokio::spawn(async move {
+            let mut next = 1u64;
+            while let Ok(stream) = listener.accept().await {
+                let conn = next;
+                next += 1;
+                tokio::spawn(serve_conn(conn, stream, token.clone(), cmd_tx.clone()));
+            }
+        });
+    }
+
+    let (rows, cols) = (s.rows, s.cols);
+    let mut st = State {
+        id: spec.id.clone(),
+        spec: spec.clone(),
+        child_pid,
+        started_at_ms,
+        vt: Vt::new(rows, cols),
+        ring: Ring::new(RING_BYTES),
+        conns: HashMap::new(),
+        subs: HashSet::new(),
+        exit: None,
+        master: pair.master,
+        killer,
+        input: in_tx,
+    };
+
+    let mut reader_open = true;
+    let mut exit_deadline: Option<tokio::time::Instant> = None;
+    loop {
+        let drain = async {
+            match exit_deadline {
+                Some(d) => tokio::time::sleep_until(d).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            data = out_rx.recv(), if reader_open => match data {
+                Some(d) => st.output(&d),
+                None => {
+                    reader_open = false;
+                    if st.exit.is_some() { break; }
+                }
+            },
+            code = exit_rx.recv(), if st.exit.is_none() && exit_deadline.is_none() => {
+                st.exit = Some(code.flatten());
+                // 자식이 끝나도 PTY에 남은 출력을 잠깐 더 받는다(손자 프로세스가 PTY를 쥐고 있으면 기다리지 않는다).
+                exit_deadline = Some(tokio::time::Instant::now() + Duration::from_millis(300));
+                if !reader_open { break; }
+            }
+            _ = drain => break,
+            Some(cmd) = cmd_rx.recv() => match cmd {
+                Cmd::Connected { conn, tx, proto } => {
+                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info() }).await;
+                    st.conns.insert(conn, tx);
+                }
+                Cmd::Disconnected { conn } => { st.conns.remove(&conn); st.subs.remove(&conn); }
+                Cmd::Req { conn, id, body } => st.handle(conn, id, body).await,
+            },
+        }
+    }
+
+    // 종료 기록: 마지막 화면을 남겨 agent가 세션 종료 뒤에도 보여 줄 수 있게 한다.
+    let (rows, cols) = st.vt.size();
+    util::write_private(&paths.final_replay(), &st.vt.replay())?;
+    util::write_json(&paths.final_screen(), &st.vt.text(&st.id))?;
+    util::write_json(
+        &paths.exit(),
+        &ExitFile { code: st.exit.flatten(), ended_at_ms: util::now_ms(), end_offset: st.ring.end(), cols, rows },
+    )?;
+    let info = st.info();
+    st.broadcast(SessionMsg::Updated(info)).await;
+    // 바로 끝난 명령도 agent가 붙어 종료 상태·마지막 화면을 받을 수 있게 잠깐 더 응답한다.
+    let until = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(until) => break,
+            Some(cmd) = cmd_rx.recv() => match cmd {
+                Cmd::Connected { conn, tx, proto } => {
+                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info() }).await;
+                    st.conns.insert(conn, tx);
+                }
+                Cmd::Disconnected { conn } => { st.conns.remove(&conn); st.subs.remove(&conn); }
+                Cmd::Req { conn, id, body } => st.handle(conn, id, body).await,
+            },
+        }
+    }
+    Ok(())
+}
+
+async fn serve_conn(conn: u64, stream: crate::ipc::LocalStream, token: String, cmd_tx: mpsc::Sender<Cmd>) {
+    let (r, w) = tokio::io::split(stream);
+    let tx = spawn_writer(w, MAX_FRAME);
+    let mut rx = FrameRx::new(r, MAX_FRAME);
+    let hello: Result<SessionMsg> = rx.control().await;
+    match hello {
+        Ok(SessionMsg::Hello { proto, token: t }) if t == token => {
+            let agreed = match negotiate(SESSION_IPC, proto) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = tx
+                        .json(&SessionMsg::Reject(ErrorBody::new(ErrorCode::UnsupportedVersion, e.to_string())))
+                        .await;
+                    return;
+                }
+            };
+            // Welcome(info)은 상태를 가진 main loop가 보낸다.
+            if cmd_tx.send(Cmd::Connected { conn, tx: tx.clone(), proto: agreed }).await.is_err() {
+                return;
+            }
+        }
+        _ => {
+            let _ = tx.json(&SessionMsg::Reject(ErrorBody::new(ErrorCode::Unauthorized, "token이 다르다"))).await;
+            return;
+        }
+    }
+    while let Ok(Some(Incoming::Control(b))) = rx.next().await {
+        let Ok(SessionMsg::Req { id, body }) = serde_json::from_slice::<SessionMsg>(&b) else { break };
+        if cmd_tx.send(Cmd::Req { conn, id, body }).await.is_err() {
+            break;
+        }
+    }
+    let _ = cmd_tx.send(Cmd::Disconnected { conn }).await;
+}

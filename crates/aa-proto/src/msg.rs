@@ -290,6 +290,10 @@ pub enum AgentResponse {
 pub enum AgentEvent {
     SessionStarted(SessionInfo),
     SessionUpdated(SessionInfo),
+    /// 이 세션의 출력 구독이 끊겼다(느린 연결). host가 마지막 offset부터 다시 구독한다.
+    Resync {
+        session: String,
+    },
 }
 
 // ───────────────────────── Session IPC ─────────────────────────
@@ -316,6 +320,8 @@ pub enum SessionMsg {
     },
     /// 세션 상태 변화(종료·크기)
     Updated(SessionInfo),
+    /// 구독자가 너무 느려 구독을 끊었다. 마지막으로 받은 offset부터 다시 구독한다.
+    Resync,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
