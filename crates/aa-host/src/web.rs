@@ -290,7 +290,8 @@ async fn pane_ws(
     if host.pane_view_of(&id, role).is_none() {
         return (StatusCode::NOT_FOUND, "pane이 없다").into_response();
     }
-    ws.on_upgrade(move |socket| pane_loop(host, id, dev, role, socket))
+    // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, socket))
 }
 
 async fn send_msg(socket: &mut WebSocket, m: &TermServerMsg) -> bool {
@@ -330,6 +331,9 @@ async fn pane_session(
     let id = id.to_string();
     let actor = format!("device:{dev}");
     let Some((mut rx, replay, mut next, cols, rows)) = host.attach_pane(&id) else { return };
+    let mut upload: Option<crate::attach::Upload> = None;
+    // 첨부가 실패하면 그 첨부의 남은 조각은 오류 없이 버린다(다음 첨부는 offset 0으로 시작한다)
+    let mut upload_failed = false;
     let Some(view) = host.pane_view_of(&id, role) else { return };
     let snapshot = TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly: view.readonly };
     if !send_msg(&mut socket, &TermServerMsg::Front { id: front.id.clone() }).await
@@ -379,6 +383,21 @@ async fn pane_session(
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }
                         Ok(TermClientMsg::Take) => Some(FrontRequest::PaneTake { pane: id.clone() }),
+                        Ok(TermClientMsg::Attach { offset, total, sha256, data }) => {
+                            if offset != 0 && upload_failed {
+                                continue;
+                            }
+                            let reply = match host.attach_chunk(role, &actor, front, &id, &mut upload, offset, total, &sha256, data.0).await {
+                                Ok(None) => None,
+                                Ok(Some(a)) => Some(TermServerMsg::Attached { path: a.path, inserted: a.inserted, note: a.note }),
+                                Err(e) => Some(TermServerMsg::Error(e)),
+                            };
+                            upload_failed = matches!(reply, Some(TermServerMsg::Error(_)));
+                            if let Some(r) = reply && !send_msg(&mut socket, &r).await {
+                                break;
+                            }
+                            None
+                        }
                         _ => None,
                     },
                     Some(Ok(Message::Binary(b))) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(b.to_vec()) }),

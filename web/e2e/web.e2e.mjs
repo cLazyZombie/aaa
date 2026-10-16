@@ -86,6 +86,23 @@ function killSessionHosts() {
 }
 
 const screenText = (page) => page.locator(".xterm-rows").innerText();
+
+/** 터미널에 그림 파일 붙여 넣기(브라우저 붙여 넣기 사건과 같은 모양) */
+async function pasteFile(page, bytes, type, name = "shot.png") {
+  await page.evaluate(
+    ({ b64, type, name }) => {
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer();
+      dt.items.add(new File([bin], name, { type }));
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      document.querySelector('[data-testid="terminal"] textarea').dispatchEvent(ev);
+    },
+    { b64: Buffer.from(bytes).toString("base64"), type, name },
+  );
+}
+
+/** 배너의 「…: <절대 경로>」에서 경로 */
+const bannerPath = (text) => /(\/\S+\.(png|jpg|gif|webp))/.exec(text)?.[1];
 const shot = async (page, name) => shots && (await page.screenshot({ path: path.join(shots, `${name}.png`) }));
 
 async function pairPage(browser, code, viewport) {
@@ -283,6 +300,76 @@ try {
     await until("pane 작업 중", async () => (await page.getByTestId("agent-q1").innerText()) === "작업 중");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+  });
+
+  await step("그림 붙여 넣기: 셸은 저장만, harness 입력창에는 경로(Enter 없음), 확인창·형식·reader 거부", async () => {
+    const png = fs.readFileSync(`${root}/pic.png`);
+    const banner = page.getByTestId("attach-banner");
+    // 1) 일반 셸(t1): 대상 머신 세션 폴더에 저장하고 PTY에는 아무것도 넣지 않는다
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("$"));
+    await pasteFile(page, png, "image/png");
+    await until("셸 저장 배너", async () => (await banner.innerText()).includes("경로만 저장했다"));
+    const p1 = bannerPath(await banner.innerText());
+    if (!p1?.startsWith(`${root}/s/agent/sessions/`)) throw new Error(`저장 경로: ${await banner.innerText()}`);
+    if (!fs.readFileSync(p1).equals(png)) throw new Error("저장한 그림이 다르다");
+    if ((fs.statSync(p1).mode & 0o777) !== 0o600) throw new Error(`권한 ${(fs.statSync(p1).mode & 0o777).toString(8)}`);
+    await sleep(300);
+    if (aa("pane", "read", "t1").lines.join("\n").includes("attachments")) throw new Error("셸에 경로가 들어갔다");
+    // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
+    await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
+    await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
+
+    // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
+    const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);
+    const recv = `${root}/h1.in`;
+    aa("pane", "run", "--machine", "labA", "--name", "h1", "--", "/bin/sh", "-c",
+      '"$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; stty raw -echo; printf "\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
+    await until("h1 harness 상태", async () => (await page.getByTestId("agent-h1").count()) === 1);
+    await page.getByTestId("pane-h1").click();
+    await until("h1 터미널", async () => (await screenText(page)).includes("❯"));
+    await pasteFile(page, big, "image/png");
+    await until("입력창 배너", async () => (await banner.innerText()).includes("입력창에 넣었다"));
+    const p2 = bannerPath(await banner.innerText());
+    if (!fs.readFileSync(p2).equals(big)) throw new Error("여러 조각 그림이 다르다");
+    await until("PTY가 받은 경로", () => fs.readFileSync(recv, "latin1") === `\x1b[200~${p2}\x1b[201~`);
+    await shot(page, "desktop-attach");
+
+    // 4) 확인창이 떠 있는 harness pane에는 넣지 않는다
+    const recv2 = `${root}/h2.in`;
+    aa("pane", "run", "--machine", "labA", "--name", "h2", "--", "/bin/sh", "-c",
+      'printf "Allow Bash(rm x)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
+        '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}\'; ' +
+        'stty raw -echo; exec cat > "$1"', AA, recv2);
+    await until("h2 질문", async () => (await page.getByTestId("agent-h2").innerText()) === "질문");
+    await page.getByTestId("pane-h2").click();
+    await until("h2 터미널", async () => (await screenText(page)).includes("Esc to cancel"));
+    await pasteFile(page, png, "image/png");
+    await until("확인창 배너", async () => (await banner.innerText()).includes("확인창이 떠 있어"));
+    await sleep(300);
+    if (fs.readFileSync(recv2, "latin1") !== "") throw new Error(`확인창에 입력이 갔다: ${fs.readFileSync(recv2, "latin1")}`);
+
+    // 5) reader 연결은 화면 밖에서 직접 보내도 host가 거부한다
+    const rd = await pairPage(browser, aa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    const h1id = aa("pane", "list").panes.find((p) => p.name === "h1").id;
+    const got = await rd.page.evaluate(
+      async ({ id, b64 }) => {
+        const ws = new WebSocket(`ws://${location.host}/api/v1/panes/${id}/ws`);
+        return await new Promise((resolve) => {
+          ws.onopen = () => ws.send(JSON.stringify({ t: "attach", offset: 0, total: 70, sha256: "0".repeat(64), data: b64 }));
+          ws.onmessage = (m) => {
+            if (typeof m.data !== "string") return;
+            const msg = JSON.parse(m.data);
+            if (msg.t === "error" || msg.t === "attached") resolve(msg);
+          };
+          setTimeout(() => resolve({ t: "timeout" }), 5000);
+        });
+      },
+      { id: h1id, b64: png.toString("base64") },
+    );
+    if (got.t !== "error" || got.code !== "forbidden") throw new Error(`reader 첨부: ${JSON.stringify(got)}`);
+    await rd.page.context().close();
+    for (const n of ["h1", "h2"]) aa("pane", "kill", n);
   });
 
   await step("thread 보고서·결과물: Markdown 보고, sandbox 결과물, agent에 남은 큰 파일, ack", async () => {

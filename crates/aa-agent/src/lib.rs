@@ -4,6 +4,7 @@
 //! - 세션은 session host 프로세스가 소유하므로 agent가 재시작해도 이어진다. 시작할 때 세션 폴더를 다시 읽어 붙는다.
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
 
+mod attach;
 mod command;
 pub mod hooks;
 pub mod identity;
@@ -495,6 +496,9 @@ impl Agent {
                     .map(AgentResponse::CommandRan)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
+            AgentRequest::AttachWrite { session, att, offset, data, eof } => {
+                self.attach_write(&session, &att, offset, data.0, eof).await
+            }
             AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
                 threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)
                     .await
@@ -503,6 +507,33 @@ impl Agent {
             }
         };
         self.send_host(&LinkMsg::Res { id, result: direct.into() }).await;
+    }
+
+    /// 실행 중인 세션 폴더에 첨부 한 조각을 쓴다
+    async fn attach_write(
+        &self,
+        session: &str,
+        att: &str,
+        offset: u64,
+        data: Vec<u8>,
+        eof: bool,
+    ) -> Result<AgentResponse, ErrorBody> {
+        if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
+        }
+        if !self.sessions.lock().unwrap().get(session).is_some_and(|e| e.info.state.is_running()) {
+            return Err(ErrorBody::new(ErrorCode::NotFound, format!("실행 중인 세션이 아니다: {session}")));
+        }
+        let dir = SessionPaths::new(&self.state, session).dir;
+        let att = att.to_string();
+        tokio::task::spawn_blocking(move || attach::write(&dir, &att, offset, &data, eof))
+            .await
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?
+            .map(|r| match r {
+                Some((path, sha256)) => AgentResponse::Attached { path, sha256 },
+                None => AgentResponse::Done,
+            })
+            .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
     }
 
     /// 끝난 세션 기록(폴더)을 지운다. 실행 중이거나 session host가 붙어 있으면 거부한다.

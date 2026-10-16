@@ -1,10 +1,21 @@
 // pane 하나의 터미널 보기. 크기는 PTY(cols·rows)를 따르고, 「이 화면에 맞추기」만 PTY 크기를 바꾼다.
 // WebSocket 하나가 대화형 front 하나다. 다른 front가 조작(lease) 중이면 입력을 막고 「가져오기」를 보인다.
+// 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
-import { b64decode, wsUrl } from "./api";
+import { b64decode, b64encode, wsUrl } from "./api";
+
+/** 한 번에 보내는 조각(host 상한과 같다) */
+const CHUNK = 512 * 1024;
+const MAX_IMAGE = 16 << 20;
+
+/** 붙여 넣기·끌어 놓기에서 그림 파일 하나 */
+function imageOf(list: FileList | undefined | null): File | null {
+  for (const f of Array.from(list ?? [])) if (f.type.startsWith("image/")) return f;
+  return null;
+}
 
 type Link = "connecting" | "open" | "closed";
 
@@ -23,6 +34,8 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
   const [text, setText] = useState("");
   const [me, setMe] = useState<string | null>(null);
   const [lease, setLease] = useState<LeaseView | null>(pane.lease);
+  const [attach, setAttach] = useState<{ text: string; ok: boolean } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const canControl = role !== "reader";
   // 다른 front가 조작 중이다(이 연결의 ID를 받기 전에는 판단하지 않는다)
   const heldByOther = me !== null && lease !== null && lease.front !== me;
@@ -35,6 +48,33 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
   const input = (data: string) => {
     if (!readonlyRef.current && !blockedRef.current) send({ t: "input", data });
   };
+  /** 그림을 조각으로 보낸다. 결과(attached·error)는 WebSocket으로 온다. */
+  const attachFile = async (f: File) => {
+    if (readonlyRef.current || blockedRef.current) {
+      setAttach({ text: "지금은 입력할 수 없어 그림을 보내지 않았다", ok: false });
+      return;
+    }
+    if (f.size === 0 || f.size > MAX_IMAGE) {
+      setAttach({ text: `그림은 ${MAX_IMAGE >> 20}MiB까지 붙여 넣는다`, ok: false });
+      return;
+    }
+    if (!crypto.subtle) {
+      setAttach({ text: "이 주소(HTTPS 아님)에서는 그림을 보낼 수 없다", ok: false });
+      return;
+    }
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+    setError(null);
+    setAttach({ text: `그림 보내는 중(${Math.ceil(bytes.length / 1024)}KB)`, ok: true });
+    for (let off = 0; off < bytes.length; off += CHUNK) {
+      send({ t: "attach", offset: off, total: bytes.length, sha256, data: b64encode(bytes.subarray(off, off + CHUNK)) });
+    }
+  };
+  const attachRef = useRef(attachFile);
+  attachRef.current = attachFile;
+
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
   const fromTerminal = (data: string) => {
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
@@ -55,6 +95,27 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(box.current!);
+    // xterm의 글 붙여 넣기보다 먼저 본다: 그림이면 가로채고, 아니면 그대로 둔다
+    const onPaste = (e: ClipboardEvent) => {
+      const f = imageOf(e.clipboardData?.files);
+      if (!f) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void attachRef.current(f);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    const onDrop = (e: DragEvent) => {
+      const f = imageOf(e.dataTransfer?.files);
+      if (!f) return;
+      e.preventDefault();
+      void attachRef.current(f);
+    };
+    const el = box.current!;
+    el.addEventListener("paste", onPaste, true);
+    el.addEventListener("dragover", onDragOver);
+    el.addEventListener("drop", onDrop);
     termRef.current = term;
     fitRef.current = fit;
     const dataSub = term.onData(fromTerminal);
@@ -107,8 +168,18 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
               setSize([msg.pane.cols, msg.pane.rows]);
             }
             break;
+          case "attached":
+            setAttach({
+              text: msg.inserted
+                ? `그림을 입력창에 넣었다(Enter로 보낸다): ${msg.path}`
+                : `그림을 저장했다: ${msg.path}${msg.note ? ` · ${msg.note}` : ""}`,
+              ok: true,
+            });
+            termRef.current?.focus();
+            break;
           case "error":
             setError(msg.message);
+            setAttach((a) => (a?.text.startsWith("그림 보내는 중") ? null : a));
             break;
         }
       };
@@ -126,6 +197,9 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
       stopped = true;
       window.clearTimeout(timer);
       wsRef.current?.close();
+      el.removeEventListener("paste", onPaste, true);
+      el.removeEventListener("dragover", onDragOver);
+      el.removeEventListener("drop", onDrop);
       dataSub.dispose();
       binSub.dispose();
       term.dispose();
@@ -189,6 +263,14 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
         </div>
       )}
       {error && <div className="banner err">{error}</div>}
+      {attach && (
+        <div className={`banner ${attach.ok ? "" : "warn"}`} data-testid="attach-banner">
+          {attach.text}
+          <button type="button" onClick={() => setAttach(null)} aria-label="닫기">
+            ×
+          </button>
+        </div>
+      )}
       <div className="term-scroll">
         <div className="term-box" ref={box} data-testid="terminal" />
       </div>
@@ -203,6 +285,13 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onPaste={(e) => {
+              const f = imageOf(e.clipboardData.files);
+              if (f) {
+                e.preventDefault();
+                void attachFile(f);
+              }
+            }}
             placeholder={readonly || heldByOther ? "입력할 수 없다" : "입력(Enter로 보냄)"}
             disabled={readonly || heldByOther}
             aria-label="보낼 글"
@@ -213,6 +302,26 @@ export function TermView({ pane, role, onBack }: { pane: PaneView; role: DeviceR
           <button type="submit" disabled={readonly || heldByOther}>
             보내기
           </button>
+          <button
+            type="button"
+            disabled={readonly || heldByOther}
+            onClick={() => fileRef.current?.click()}
+            title="그림을 대상 머신에 올리고 입력창에 경로를 넣는다"
+          >
+            그림
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            hidden
+            data-testid="attach-file"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void attachFile(f);
+            }}
+          />
           <div className="keys">
             {(
               [

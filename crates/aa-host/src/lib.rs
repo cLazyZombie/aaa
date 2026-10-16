@@ -3,6 +3,7 @@
 //! - host는 자식 프로세스를 만들지 않는다. 예외: tailscale CLI, 개발 모드의 로컬 agent 기동(§4.2).
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
+mod attach;
 pub mod db;
 pub mod front;
 mod harness;
@@ -917,7 +918,7 @@ impl Host {
     }
 
     /// 비어 있으면 이 front가 갖고, 이미 가졌으면 그대로, 다른 front가 가졌으면 거부한다.
-    fn lease_acquire(&self, id: &str, f: &FrontRef) -> Result<(), ErrorBody> {
+    pub(crate) fn lease_acquire(&self, id: &str, f: &FrontRef) -> Result<(), ErrorBody> {
         let holder = self.inner.lock().unwrap().panes.get(id).and_then(|p| p.lease.clone());
         match holder {
             Some(h) if h.id == f.id => Ok(()),
