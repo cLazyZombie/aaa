@@ -6,12 +6,13 @@
 pub mod db;
 pub mod front;
 mod harness;
+mod inbox;
 pub mod link;
 mod orch;
 pub mod tailscale;
 pub mod web;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -191,6 +192,12 @@ pub struct Host {
     held: Mutex<harness::Held>,
     /// decisions.md 덧붙이기는 한 번에 하나씩
     decision_lock: Mutex<()>,
+    /// ticker를 바로 깨운다(흐름 사건·harness 사건)
+    tick_wake: tokio::sync::Notify,
+    /// 오래 끊겼다고 알린 머신
+    outages: Mutex<HashSet<String>>,
+    /// hook 없는 coordinator pane: 마지막 화면 hash와 그 화면이 된 때
+    nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -266,6 +273,9 @@ impl Host {
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
             decision_lock: Mutex::new(()),
+            tick_wake: tokio::sync::Notify::new(),
+            outages: Mutex::new(HashSet::new()),
+            nudge_screens: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -665,6 +675,12 @@ impl Host {
             }
             FrontRequest::Decisions { project } => {
                 self.decisions(&project).map(|decisions| FrontResponse::Decisions { decisions })
+            }
+            FrontRequest::Inbox { project, all, peek } => {
+                self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items })
+            }
+            FrontRequest::InboxDone { project, ids, all } => {
+                self.inbox_done(&project, &ids, all, actor).map(|items| FrontResponse::Inbox { items })
             }
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
@@ -1276,6 +1292,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    host.start_ticker();
     if host.cfg.local_agent.mode == LocalAgentMode::Child {
         let h = host.clone();
         let root = state_root.clone();

@@ -407,6 +407,29 @@ pub fn parse_report(text: &str) -> (Option<String>, Vec<String>) {
     (state, next)
 }
 
+/// inbox 항목(0.2.35 inbox 계승, §8.9). DB가 원본이고 `projects/<p>/inbox/<id>.md`는 투영이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct InboxItem {
+    /// `<UTC 시각>-<종류>-<대상>-<순번>`
+    pub id: String,
+    pub project: String,
+    /// report·question·delivery·thread·session·outage·config-error
+    pub item_kind: String,
+    /// thread ID, 머신 이름, 파일 이름 등
+    pub subject: String,
+    /// 짧은 사건 이름(nudge 문구에 쓴다)
+    pub event: String,
+    /// 사람이 읽는 한 줄(nudge 문구에는 넣지 않는다)
+    pub summary: String,
+    pub done: bool,
+    /// coordinator(또는 사람)가 `aa inbox`로 본 적이 있다. 처음 보는 항목만 알린다.
+    pub seen: bool,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+    #[ts(type = "number | null")]
+    pub done_at_ms: Option<u64>,
+}
+
 /// 결정 기록 한 건(`projects/<p>/decisions.md`의 `## <번호> · <시각>[ · <번호>번 대체]` 묶음)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DecisionView {

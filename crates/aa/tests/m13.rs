@@ -113,10 +113,14 @@ done
 /// 안내를 받아도 화면이 바뀌지 않는 agent(echo 없음). 받은 줄은 파일에 남긴다.
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 
-fn host_toml(projects: &Path) -> String {
+/// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
+const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
+
+/// `extra`는 `[projects]`에 덧붙인다
+fn host_toml(projects: &Path, extra: &str) -> String {
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\"]\nlibrary_copy_mb = 1\n",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -178,6 +182,10 @@ struct World {
 }
 
 fn world() -> World {
+    world_with("")
+}
+
+fn world_with(extra: &str) -> World {
     let lab = Lab::new();
     let projects = lab.root.join("projects");
     let scripts = lab.root.join("scripts");
@@ -185,8 +193,9 @@ fn world() -> World {
     std::fs::write(scripts.join("fake.sh"), FAKE_AGENT).unwrap();
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
     std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
+    std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     let repo = make_repo(&lab.root);
-    let h = lab.node("h", Some(&host_toml(&projects)));
+    let h = lab.node("h", Some(&host_toml(&projects, extra)));
     std::fs::write(h.cfg.join("agent.toml"), agent_toml(&lab.root.join("workA"), &scripts)).unwrap();
     let mut w = World { lab, h, projects, repo, scripts, addr: String::new() };
     w.lab.spawn("host", &w.h, &["host"]);
@@ -655,4 +664,96 @@ fn decisions_and_restart() {
     assert_eq!(w.kinds(seen), ["thread_restarted"]);
     let all = w.kinds(0);
     assert!(all.contains(&"decision_added".to_string()), "{all:?}");
+}
+
+/// inbox: 흐름 사건·세션 끝남·설정 오류가 항목이 되고, coordinator가 입력을 기다릴 때 처음 보는 묶음을 한 번만 알린다(§8.17)
+#[test]
+fn inbox_and_nudge() {
+    let w = world_with("tick_secs = 1\nnudge_idle_secs = 2\n");
+    let dir = w.projects.join("demo");
+    let coord = w.h.ok(&[
+        "pane",
+        "run",
+        "--machine",
+        "labA",
+        "--cwd",
+        path_str(&dir),
+        "--",
+        "/bin/sh",
+        path_str(&w.scripts.join("coord.sh")),
+    ])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    w.wait_screen(&coord, "❯");
+    // 사람이 입력창에 쓰던 글이 있으면 알리지 않는다
+    w.h.ok(&["pane", "send", &coord, "--text", "draft-text"]);
+    w.wait_screen(&coord, "❯ draft-text");
+
+    let v = w.start(&["--title", "inbox", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("t7.txt", "x")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!((items[0]["item_kind"].as_str(), items[0]["event"].as_str()), (Some("report"), Some("report ready")));
+    std::thread::sleep(Duration::from_secs(5));
+    assert!(!w.h.screen(&coord).contains("[aa inbox]"), "{}", w.h.screen(&coord));
+
+    // 쓰던 글을 보내고 나면 알린다
+    w.h.ok(&["pane", "send", &coord, "--text", "", "--enter"]);
+    w.wait_screen(&coord, "got: draft-text");
+    let screen = w.wait_screen(&coord, "got: [aa inbox]");
+    assert!(screen.contains(&format!("got: [aa inbox] {id} report ready (aa inbox list demo)")), "{screen}");
+    // 같은 묶음은 다시 보내지 않는다
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(w.h.screen(&coord).matches("got: [aa inbox]").count(), 1, "{}", w.h.screen(&coord));
+
+    // 세션이 끝나면 새 항목 → 새 묶음(아직 안 본 보고 포함)을 알린다
+    w.h.ok(&["pane", "kill", &pane]);
+    w.wait_for_count(&coord, "got: [aa inbox]", 2);
+    let screen = w.h.screen(&coord);
+    assert!(screen.contains(&format!("got: [aa inbox] {id} report ready; {id} session ended")), "{screen}");
+
+    // 보면(peek 아님) 「봤다」가 되고, 더 알리지 않는다
+    let items = w.h.ok(&["inbox", "list", "demo"])["items"].as_array().unwrap().clone();
+    assert_eq!(items.len(), 2);
+    let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    assert!(items.iter().all(|i| i["seen"] == true), "{items:?}");
+    let inbox = dir.join("inbox");
+    let files = |d: &Path| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(d)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(files(&inbox).len(), 2);
+    let report_id = items.iter().find(|i| i["item_kind"] == "report").unwrap()["id"].as_str().unwrap().to_string();
+    let md = std::fs::read_to_string(inbox.join(format!("{report_id}.md"))).unwrap();
+    assert!(md.starts_with("+++\n") && md.contains("kind = \"report\"") && md.contains("event = \"report ready\""), "{md}");
+
+    // 끝내기: 파일은 inbox/done으로
+    let e = w.h.json(&["inbox", "done", "demo", "no-such-item"]).expect_err("없는 항목");
+    assert!(e.contains("no-such-item"), "{e}");
+    let left = w.h.ok(&["inbox", "done", "demo", &report_id])["items"].as_array().unwrap().len();
+    assert_eq!(left, 1);
+    w.h.ok(&["inbox", "done", "demo", "--all"]);
+    assert!(w.h.ok(&["inbox", "list", "demo"])["items"].as_array().unwrap().is_empty());
+    assert_eq!(w.h.ok(&["inbox", "list", "demo", "--all"])["items"].as_array().unwrap().len(), 2);
+    assert!(files(&inbox).is_empty());
+    assert_eq!(files(&inbox.join("done")).len(), 2);
+
+    // project.toml을 읽지 못하면 내용당 한 번 알린다
+    std::fs::write(dir.join("project.toml"), "schema = [\n").unwrap();
+    let screen = w.wait_screen(&coord, "got: [aa inbox] project.toml not usable");
+    assert!(screen.contains("got: [aa inbox] project.toml not usable (aa inbox list demo)"), "{screen}");
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().len(), 1);
+    let nudges = w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
+    assert_eq!(nudges, 3);
+    assert_eq!(w.h.screen(&coord).matches("got: [aa inbox]").count(), 3);
 }

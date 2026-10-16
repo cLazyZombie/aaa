@@ -118,6 +118,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-rustls",
+ "toml_edit",
  "tracing",
 ]
 

@@ -56,7 +56,10 @@ impl Db {
                id TEXT PRIMARY KEY, pane TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS messages(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL,
-               created_at INTEGER NOT NULL);",
+               created_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS inbox(
+               id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, event TEXT NOT NULL,
+               done INTEGER NOT NULL DEFAULT 0, done_at INTEGER, created_at INTEGER NOT NULL, data TEXT NOT NULL);",
         )?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -330,6 +333,70 @@ impl Db {
         let mut st = c.prepare(sql)?;
         let rows = st.query_map([state], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(rows)
+    }
+
+    /// inbox 항목(JSON)을 넣거나 바꾼다
+    pub fn inbox_put(&self, i: &aa_proto::InboxItem) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,done_at,created_at,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+             ON CONFLICT(id) DO UPDATE SET done=excluded.done, done_at=excluded.done_at, data=excluded.data",
+            params![
+                i.id,
+                i.project,
+                i.item_kind,
+                i.subject,
+                i.event,
+                i.done,
+                i.done_at_ms.map(|v| v as i64),
+                i.created_at_ms as i64,
+                serde_json::to_string(i)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 만든 순서대로. `all`이 아니면 끝내지 않은 것만.
+    pub fn inbox_list(&self, project: Option<&str>, all: bool) -> Result<Vec<aa_proto::InboxItem>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT data FROM inbox WHERE (?1 IS NULL OR project=?1) AND (?2 OR done=0) ORDER BY created_at, id",
+        )?;
+        let rows = st.query_map(params![project, all], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(serde_json::from_str(&r?)?);
+        }
+        Ok(out)
+    }
+
+    /// 같은 종류·대상·사건의 끝내지 않은 항목이 있는가(특수 항목 중복 방지)
+    pub fn inbox_open_exists(&self, project: &str, kind: &str, subject: &str, event: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row(
+            "SELECT 1 FROM inbox WHERE project=?1 AND kind=?2 AND subject=?3 AND event=?4 AND done=0 LIMIT 1",
+            params![project, kind, subject, event],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+    }
+
+    /// 프로젝트 inbox 순번(항목 ID에 붙인다)
+    pub fn inbox_count(&self, project: &str) -> Result<u64> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT COUNT(*) FROM inbox WHERE project=?1", [project], |r| r.get::<_, i64>(0))? as u64)
+    }
+
+    /// 끝낸 지 오래된 항목을 지우고 (project, id)를 돌려준다
+    pub fn inbox_prune(&self, done_before_ms: u64) -> Result<Vec<(String, String)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT project, id FROM inbox WHERE done=1 AND done_at < ?1")?;
+        let gone = st
+            .query_map([done_before_ms as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+        c.execute("DELETE FROM inbox WHERE done=1 AND done_at < ?1", [done_before_ms as i64])?;
+        Ok(gone)
     }
 
     pub fn audit(&self, actor: &str, action: &str, detail: &str) {
