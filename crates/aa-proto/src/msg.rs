@@ -15,7 +15,7 @@ use crate::orch::{
     MessageMode, MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
     Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView};
+use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
 
 use crate::version::Version;
 
@@ -338,6 +338,15 @@ pub enum AgentRequest {
         path: String,
         data: B64,
     },
+    /// 병합 단계(§8.24). `repo`는 사용자 checkout, `cwd`는 thread worktree다. `remote`/`target`(예: origin/main)으로 push한다.
+    MergeLand {
+        repo: String,
+        cwd: String,
+        branch: String,
+        remote: String,
+        target: String,
+        message: String,
+    },
     /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
     ThreadCleanup {
         repo: Option<String>,
@@ -373,6 +382,7 @@ pub enum AgentResponse {
         eof: bool,
     },
     Cleanup(Cleanup),
+    Landed(LandOutcome),
     Relaunch(Launch),
     CommandRan(CommandRan),
     /// 첨부를 다 썼다(절대 경로와 sha256)
@@ -915,6 +925,13 @@ pub enum FrontRequest {
     MergeList {
         project: String,
     },
+    /// 병합 대기열 맨 앞 thread를 병합한다(§8.24): 그 머신 agent가 원격 일치·병합·tree 같음 확인·push·사용자 checkout 맞춤·정리를 한다.
+    /// `thread`를 주면 그것이 맨 앞이어야 한다.
+    MergeLand {
+        project: String,
+        #[serde(default)]
+        thread: Option<String>,
+    },
     /// routine 목록(`projects/<p>/routines/*.md`)과 상태
     Routines {
         project: String,
@@ -1016,6 +1033,7 @@ impl FrontRequest {
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
                 | FrontRequest::RoutineApprove { .. }
+                | FrontRequest::MergeLand { .. }
                 | FrontRequest::WebPair { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -1088,6 +1106,7 @@ pub enum FrontResponse {
     Merge {
         queue: Vec<MergeEntry>,
     },
+    MergeLand(Box<MergeLandView>),
     Routines {
         routines: Vec<RoutineView>,
     },

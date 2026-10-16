@@ -541,7 +541,7 @@ host 프로젝트 폴더 구성:
   3. 영향받는 thread에만 「main 이동」 알림(운영 규칙)
   4. 정리(중첩 worktree, worktree, branch, stash)
   5. 유휴 머신 사전 빌드 훅
-- **단계 배치:** M1-3에서는 순번과 사건·훅만 둔다. 단계 자동 실행은 M3에서 한다.
+- **단계 배치:** M1-3에서는 순번과 사건·훅만 둔다. 단계 자동 실행은 M3에서 한다(§8.24에서 했다).
 - **참고:** 0.2.35의 `Landing` group, `on = "pr"` routine.
 
 ### 8.9 ticker·inbox·routine
@@ -892,6 +892,42 @@ host 프로젝트 폴더 구성:
   - 색은 256색 번호이고, 색 바탕 위 글자는 굵게 써도 밝아지지 않게 256색 검정(16)을 쓴다.
 - **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)와 TUI(`aa attach`를 웹 터미널로)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AA_BIN`으로 옛 binary를 줄 수 있다.
 - **남은 한계.** 한글 폭이 두 칸에 차지 않는 글꼴이면 터미널 한글 사이가 벌어져 보인다. 고정폭 한글 글꼴(D2Coding 등)이 있는 기기에서는 이 문제가 없다.
+
+### 8.24 M3 병합 단계 자동 실행(10-17)
+
+§8.8의 단계를 `aa merge land <p> [<thread>]` 한 번으로 돈다. git은 그 thread 머신의 agent가 실행하고, host는 순번·사건·알림만 맡는다.
+
+- **조건:** 대기열 맨 앞이고(`thread`를 주면 그것이 맨 앞이어야 한다), 열린 worktree thread이며, 기준이 `<원격>/<branch>`(예: `origin/main`)여야 한다.
+  - 한 프로젝트에서 동시에 하나만 돈다.
+  - 이 머신의 CLI(host UDS)에서만 부른다. 웹 controller에서는 부를 수 없다. main에 push하는 일이라 기기 token이 새어도 못 하게 했다.
+  - 평가자 세션은 보기 권한이라 부를 수 없다.
+- **단계(agent)**
+  1. **확인:** thread worktree에 커밋하지 않은 추적 파일 변경이 없다.
+  2. **fetch:** 원격을 받는다.
+  3. **원격 일치:** branch가 `origin/main`을 포함하고 새 커밋이 있다. 포함하지 않으면 멈추고 「thread에서 `git merge origin/main`으로 합치고 시험한 뒤 다시」를 돌려준다.
+  4. **병합:** 임시 detached worktree(`origin/main`, 시스템 임시 폴더)에서 `merge --no-ff -m "병합: <제목> (<p>/<t>)"`를 한다. 이름·이메일은 사용자 repo 설정을 따른다.
+  5. **tree 같음:** 병합 tree가 branch tree와 같은지 본다.
+     - branch가 `origin/main`을 포함하므로 같아야 정상이다. 같으면 thread가 시험한 내용 그대로다.
+     - 그래서 **병합 뒤 시험 명령을 다시 돌리지 않는다.** 처음 초안의 「승인된 check 명령」은 넣지 않았다. 명령 실행 승인이라는 보안 경계를 하나 줄인다.
+  6. **push:** `git push origin HEAD:refs/heads/main`(force 없음). 그 사이 원격이 움직였으면 거부되고 멈춘다.
+  7. **사용자 checkout:** repo가 지금 main이고 고친 추적 파일이 없으면 `merge --ff-only origin/main`으로 맞춘다. 아니면 그대로 두고 까닭을 적는다. 실패로 치지 않는다.
+  8. **정리:** 임시 worktree를 지운다. aa가 만든 것이라 force로 지운다. 실패해도 이 단계는 돈다.
+  - git은 `GIT_TERMINAL_PROMPT=0`으로 돌린다. 인증을 묻는 창이 뜨면 멈추지 않고 실패한다.
+- **host**
+  - 단계마다 `merge_step` 사건(시작 + 단계별 ok·실패와 첫 줄)을 낸다.
+  - push까지 됐으면(병합 commit이 있으면) `merge_landed`로 대기열에서 빼고 `merge_head`를 낸다. 사후 평가자가 이 사건을 받는다.
+  - 같은 프로젝트에서 같은 기준을 쓰는 다른 열린 worktree thread에 「main 이동」을 대기열 메시지로 보낸다. 「`git fetch && git merge origin/main`으로 합치고 다시 시험」이라는 내용이다.
+  - 멈추면 대기열을 그대로 두고 단계 결과를 돌려준다. CLI는 종료 코드 1로 끝난다.
+- **미룬 것**
+  - thread worktree·branch 정리는 지금처럼 `thread resolve`가 한다. 병합 뒤라 branch도 지워진다. land가 thread를 끝내지 않는 것은 thread가 보고를 마무리할 수 있게 하려는 것이다.
+  - 유휴 머신 사전 빌드 훅은 미룬다.
+  - 맨 앞이 되면 자동으로 land하는 설정도 미룬다. 지금은 coordinator가 `merge_head` 사건을 보고 부른다.
+- **시험:** m13 `merge_land_steps`. 확인하는 것은 다음과 같다.
+  - 순번 거부
+  - 커밋하지 않은 변경 → 확인 단계에서 멈춤
+  - 그 사이 main이 앞서 나감 → 원격 일치에서 멈추고 대기열 유지
+  - 합친 뒤 land: 8단계 ok, 원격 main = 병합 commit(부모 둘, 메시지), 병합 tree = branch tree, 사용자 main ff-only, 임시 worktree 없음, 「main 이동」 알림, 대기열 다음, `merge_step` 9건·`merge_landed`·`merge_head`
+  - 새 커밋 없는 thread는 멈춤
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

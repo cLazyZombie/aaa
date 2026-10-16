@@ -503,6 +503,39 @@ pub struct MergeEntry {
     pub enqueued_at_ms: u64,
 }
 
+/// 병합 단계 하나의 결과(§8.24). 단계 이름은 `확인`·`fetch`·`원격 일치`·`병합`·`tree 같음`·`push`·`사용자 checkout`·`정리`다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MergeStep {
+    pub name: String,
+    pub ok: bool,
+    /// 사람이 읽는 설명(실패면 까닭)
+    pub note: String,
+    #[ts(type = "number")]
+    pub ms: u64,
+}
+
+/// agent가 병합 단계를 돌린 결과. `commit`은 push한 병합 commit이다(push까지 갔을 때만).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LandOutcome {
+    pub ok: bool,
+    pub steps: Vec<MergeStep>,
+    pub commit: Option<String>,
+}
+
+/// `aa merge land` 결과
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MergeLandView {
+    pub project: String,
+    pub thread: String,
+    pub ok: bool,
+    pub steps: Vec<MergeStep>,
+    pub commit: Option<String>,
+    /// 「main 이동」을 대기열 메시지로 알린 thread
+    pub notified: Vec<String>,
+    /// 병합 뒤 대기열
+    pub queue: Vec<MergeEntry>,
+}
+
 /// 결정 기록 한 건(`projects/<p>/decisions.md`의 `## <번호> · <시각>[ · <번호>번 대체]` 묶음)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DecisionView {

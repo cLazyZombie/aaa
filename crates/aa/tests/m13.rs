@@ -790,6 +790,122 @@ fn inbox_and_nudge() {
 }
 
 /// 병합 대기열 순번·사건(§8.8)과 머신별 동시 thread 한도(§8.10)
+/// 병합 단계 자동 실행(§8.24): 순번, 커밋하지 않은 변경, 원격 일치, 병합·tree 같음·push, 사용자 checkout ff-only, 다른 thread 알림
+#[test]
+fn merge_land_steps() {
+    let w = world();
+    // agent가 임시 worktree에서 만드는 병합 commit의 이름(사용자 repo 설정을 따른다)
+    git(&w.repo, &["config", "user.name", "t"]);
+    git(&w.repo, &["config", "user.email", "t@example.com"]);
+    let start = |title: &str| {
+        w.start(&[
+            "--title",
+            title,
+            "--machine",
+            "labA",
+            "--profile",
+            "fake",
+            "--repo",
+            path_str(&w.repo),
+            "--task-file",
+            &w.task(&format!("{title}.txt"), "x"),
+        ])
+    };
+    let t1 = start("land one");
+    let t2 = start("land two");
+    let (id1, id2) = (t1["id"].as_str().unwrap(), t2["id"].as_str().unwrap());
+    let branch = t1["branch"].as_str().unwrap();
+    let cwd1 = PathBuf::from(t1["cwd"].as_str().unwrap());
+    w.wait_show("보고", id1, |v| v["report_hash"].is_string());
+    std::fs::write(cwd1.join("feature.txt"), "one\n").unwrap();
+    git(&cwd1, &["add", "feature.txt"]);
+    git(&cwd1, &["commit", "-qm", "기능 하나"]);
+    w.h.ok(&["merge", "enqueue", "demo", id1]);
+    w.h.ok(&["merge", "enqueue", "demo", id2]);
+    let fail = |args: &[&str]| -> Value {
+        let e = w.h.json(args).expect_err("병합이 멈춰야 한다");
+        serde_json::from_str(&e).unwrap_or_else(|_| panic!("{e}"))
+    };
+    let last_step = |v: &Value| v["steps"].as_array().unwrap().last().unwrap().clone();
+
+    // 순번을 지킨다
+    let e = w.h.json(&["merge", "land", "demo", id2]).expect_err("맨 앞이 아니다");
+    assert!(e.contains("맨 앞이 아니다"), "{e}");
+    // 커밋하지 않은 변경이 있으면 확인 단계에서 멈춘다
+    std::fs::write(cwd1.join("README.md"), "changed\n").unwrap();
+    let v = fail(&["merge", "land", "demo"]);
+    let st = last_step(&v);
+    assert_eq!(
+        (v["ok"].as_bool(), st["name"].as_str(), st["ok"].as_bool()),
+        (Some(false), Some("확인"), Some(false)),
+        "{v}"
+    );
+    git(&cwd1, &["checkout", "--", "README.md"]);
+    // 그 사이 main이 앞서 나갔으면(다른 착지) 원격 일치에서 멈추고 대기열은 그대로다
+    std::fs::write(w.repo.join("other.txt"), "x\n").unwrap();
+    git(&w.repo, &["add", "other.txt"]);
+    git(&w.repo, &["commit", "-qm", "다른 착지"]);
+    git(&w.repo, &["push", "-q", "origin", "main"]);
+    let v = fail(&["merge", "land", "demo", id1]);
+    let st = last_step(&v);
+    assert_eq!(st["name"], "원격 일치", "{v}");
+    assert!(st["note"].as_str().unwrap().contains("포함하지 않는다"), "{v}");
+    assert_eq!(v["queue"].as_array().unwrap().len(), 2, "{v}");
+
+    // thread가 main을 합치면 병합된다
+    git(&cwd1, &["fetch", "-q", "origin"]);
+    git(&cwd1, &["merge", "-q", "--no-edit", "origin/main"]);
+    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+    let v = w.h.ok(&["merge", "land", "demo"]);
+    let steps: Vec<(&str, bool)> = v["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s["ok"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("확인", true),
+            ("fetch", true),
+            ("원격 일치", true),
+            ("병합", true),
+            ("tree 같음", true),
+            ("push", true),
+            ("사용자 checkout", true),
+            ("정리", true)
+        ],
+        "{v}"
+    );
+    let commit = v["commit"].as_str().unwrap();
+    let origin = w.lab.root.join("origin.git");
+    assert_eq!(git(&origin, &["rev-parse", "main"]), commit);
+    assert_eq!(
+        git(&origin, &["rev-list", "--parents", "-n", "1", "main"]).split(' ').count(),
+        3,
+        "병합 commit(부모 둘)"
+    );
+    assert_eq!(git(&origin, &["log", "-1", "--format=%s", "main"]), format!("병합: land one (demo/{id1})"));
+    assert_eq!(
+        git(&origin, &["rev-parse", "main^{tree}"]),
+        git(&w.repo, &["rev-parse", &format!("{branch}^{{tree}}")])
+    );
+    // 사용자 checkout(깨끗한 main)은 ff-only로 따라온다
+    assert_eq!(git(&w.repo, &["rev-parse", "main"]), commit);
+    assert!(v["steps"][6]["note"].as_str().unwrap().contains("ff-only"), "{v}");
+    assert!(!git(&w.repo, &["worktree", "list"]).contains("aa-land-"), "임시 worktree가 남았다");
+    // 대기열에서 빠지고, 같은 기준의 다른 열린 thread에 「main 이동」을 알린다
+    assert_eq!(v["notified"], serde_json::json!([id2]));
+    let q = v["queue"].as_array().unwrap();
+    assert_eq!((q.len(), q[0]["thread"].as_str()), (1, Some(id2)));
+    let kinds = w.kinds(seen);
+    assert_eq!(kinds.iter().filter(|k| *k == "merge_step").count(), 9, "{kinds:?}");
+    assert!(kinds.contains(&"merge_landed".to_string()) && kinds.contains(&"merge_head".to_string()), "{kinds:?}");
+    // 새 커밋이 없는 thread는 「포함하지 않는다」(main이 움직였다)로 멈춘다
+    let v = fail(&["merge", "land", "demo"]);
+    assert_eq!(last_step(&v)["name"], "원격 일치", "{v}");
+}
+
 #[test]
 fn merge_queue_and_capacity() {
     let w = world_with("max_threads_per_machine = 2\n");

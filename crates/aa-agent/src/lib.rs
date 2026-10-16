@@ -10,6 +10,7 @@ mod health;
 pub mod hooks;
 pub mod identity;
 pub mod link;
+mod merge;
 pub mod threads;
 
 use std::collections::HashMap;
@@ -512,6 +513,12 @@ impl Agent {
             }
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
+            }
+            AgentRequest::MergeLand { repo, cwd, branch, remote, target, message } => {
+                merge::land(&repo, &cwd, &branch, &remote, &target, &message)
+                    .await
+                    .map(AgentResponse::Landed)
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
                 threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)

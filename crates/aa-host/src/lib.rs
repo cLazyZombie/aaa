@@ -764,6 +764,9 @@ impl Host {
             FrontRequest::MergeDrop { project, thread, landed } => {
                 self.merge_drop(&project, &thread, landed, actor).map(|queue| FrontResponse::Merge { queue })
             }
+            FrontRequest::MergeLand { project, thread } => {
+                self.merge_land(&project, thread.as_deref(), actor).await.map(|v| FrontResponse::MergeLand(Box::new(v)))
+            }
             FrontRequest::MergeList { project } => {
                 self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
             }
