@@ -1,0 +1,26 @@
+[package]
+name = "aaa-doctor"
+description = "aaa 머신 진단(첫 실행 지연·처리량·스케줄·키체인·서명). `aaa doctor`와 agent 자가 점검이 쓴다"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aaa-common.workspace = true
+aaa-config.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+sha2.workspace = true
+rand.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+objc2-foundation = "0.3"
+core-foundation = "0.10"
+
+[build-dependencies]
+cc = "1"

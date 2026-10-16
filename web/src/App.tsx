@@ -37,10 +37,10 @@ function Pair({ onDone }: { onDone: (r: DeviceRole) => void }) {
   return (
     <div className="pair-wrap">
       <main className="pair">
-        <span className="logo big">aa</span>
+        <span className="logo big">aaa</span>
         <h1>이 기기 연결하기</h1>
         <p>
-          host 머신에서 <code>aa web pair</code>를 실행하고 나온 코드를 넣는다. 한 번 연결하면 이 브라우저는 다시 묻지 않는다.
+          host 머신에서 <code>aaa web pair</code>를 실행하고 나온 코드를 넣는다. 한 번 연결하면 이 브라우저는 다시 묻지 않는다.
         </p>
         <form
           onSubmit={async (e) => {
@@ -73,7 +73,7 @@ function Pair({ onDone }: { onDone: (r: DeviceRole) => void }) {
         </form>
         {msg && <p className="err">{msg}</p>}
         <p className="foot muted">
-          보기만 할 기기는 <code>aa web pair --reader</code>로 만든 코드를 쓴다.
+          보기만 할 기기는 <code>aaa web pair --reader</code>로 만든 코드를 쓴다.
         </p>
       </main>
     </div>
@@ -357,7 +357,7 @@ function Main({ role }: { role: DeviceRole }) {
       <aside className="list">
         <header className="list-head">
           <span className="brand">
-            <span className="logo">aa</span>
+            <span className="logo">aaa</span>
           </span>
           <span className="conn" title={up ? "host 연결됨" : "host 연결 끊김"}>
             <span className={`dot ${up ? "on" : "off"}`} />
@@ -473,7 +473,7 @@ function Main({ role }: { role: DeviceRole }) {
           />
         ) : (
           <div className="empty-view">
-            <span className="logo big">aa</span>
+            <span className="logo big">aaa</span>
             <h2>{open.length > 0 ? `답을 기다리는 질문 ${open.length}개` : "왼쪽에서 하나를 고른다"}</h2>
             <p>
               Thread를 고르면 보고와 결과물을, pane을 고르면 터미널을 본다.

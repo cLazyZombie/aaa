@@ -2,12 +2,12 @@
 # P0 E1 ④: 같은 identity로 다시 빌드·다시 서명해 /Applications/<name>.app을 rename 교체한다.
 # 재등록 없이 measure.sh <단계> --name <name>으로 다시 잰다.
 #
-# 사용: p0/upgrade-sim.sh --identity "<같은 identity>" [--name aa] [--bundle-id dev.aa] [--launchagents]
+# 사용: p0/upgrade-sim.sh --identity "<같은 identity>" [--name aaa] [--bundle-id dev.aaa] [--launchagents]
 # 확인: designated requirement는 같아야 하고 cdhash·실행 파일 sha256은 달라야 한다.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-IDENTITY=""; NAME="aa"; BUNDLE_ID="dev.aa"; EXTRA=()
+IDENTITY=""; NAME="aaa"; BUNDLE_ID="dev.aaa"; EXTRA=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --identity) IDENTITY="$2"; shift 2 ;;
@@ -23,13 +23,13 @@ DEST="/Applications/$NAME.app"
 
 dr() { /usr/bin/codesign -d -r- "$1" 2>&1 | sed -n "s/^#* *designated => //p"; }
 cdh() { /usr/bin/codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
-DR0=$(dr "$DEST"); CD0=$(cdh "$DEST"); SHA0=$(shasum -a 256 "$DEST/Contents/MacOS/aa" | cut -d' ' -f1)
+DR0=$(dr "$DEST"); CD0=$(cdh "$DEST"); SHA0=$(shasum -a 256 "$DEST/Contents/MacOS/aaa" | cut -d' ' -f1)
 
 SALT="upg-$(date +%Y%m%d%H%M%S)"
 "$ROOT/p0/build-app.sh" --identity "$IDENTITY" --name "$NAME" --bundle-id "$BUNDLE_ID" --salt "$SALT" ${EXTRA[@]+"${EXTRA[@]}"}
 "$ROOT/p0/install-app.sh" "$ROOT/target/p0/$NAME.app"
 
-DR1=$(dr "$DEST"); CD1=$(cdh "$DEST"); SHA1=$(shasum -a 256 "$DEST/Contents/MacOS/aa" | cut -d' ' -f1)
+DR1=$(dr "$DEST"); CD1=$(cdh "$DEST"); SHA1=$(shasum -a 256 "$DEST/Contents/MacOS/aaa" | cut -d' ' -f1)
 echo
 echo "designated 이전: $DR0"
 echo "designated 이후: $DR1"

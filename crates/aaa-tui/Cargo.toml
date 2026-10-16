@@ -1,0 +1,17 @@
+[package]
+name = "aaa-tui"
+description = "aaa TUI front(`aaa attach`). host와는 aaa-proto Front API로만 말하고 backend crate에 의존하지 않는다"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aaa-proto.workspace = true
+aaa-config.workspace = true
+aaa-common.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }

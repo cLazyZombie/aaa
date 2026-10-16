@@ -1,14 +1,14 @@
 #!/bin/bash
-# aa-codesign.p12를 이 Mac의 login 키체인에 넣고 codesign이 확인 창 없이 쓰게 한다(키체인 변경: 사용자가 실행).
+# aaa-codesign.p12를 이 Mac의 login 키체인에 넣고 codesign이 확인 창 없이 쓰게 한다(키체인 변경: 사용자가 실행).
 # ssh에서도 된다. ssh 세션의 login 키체인은 잠겨 있으므로 먼저 사용자가 직접 잠금을 푼다:
 #   security unlock-keychain ~/Library/Keychains/login.keychain-db     (비밀번호는 직접 입력)
 #
-# 사용: bash p0/cert/import-identity.sh <aa-codesign.p12 경로>
+# 사용: bash p0/cert/import-identity.sh <aaa-codesign.p12 경로>
 # 단계마다 GUI 확인 창이 뜨는지 적었다. 이 스크립트의 명령은 GUI 창 없이 끝나야 한다.
 set -euo pipefail
-P12="${1:?aa-codesign.p12 경로가 필요하다}"
+P12="${1:?aaa-codesign.p12 경로가 필요하다}"
 KC="$HOME/Library/Keychains/login.keychain-db"
-NAME="aa Code Signing"
+NAME="aaa Code Signing"
 
 if ! security show-keychain-info "$KC" >/dev/null 2>&1; then
   echo "login 키체인이 잠겨 있다. 먼저 직접 실행한다: security unlock-keychain $KC" >&2
@@ -28,10 +28,10 @@ fi
 
 # 3) 서명 시험(임시 파일). 신뢰 설정 없이 서명되는지 본다.
 T=$(mktemp -d)
-cp /usr/bin/true "$T/aa-sign-test"
-if /usr/bin/codesign --force --sign "$NAME" "$T/aa-sign-test" 2>"$T/err"; then
+cp /usr/bin/true "$T/aaa-sign-test"
+if /usr/bin/codesign --force --sign "$NAME" "$T/aaa-sign-test" 2>"$T/err"; then
   echo "서명 시험: 성공"
-  /usr/bin/codesign -d -r- "$T/aa-sign-test" 2>&1 | grep designated || true
+  /usr/bin/codesign -d -r- "$T/aaa-sign-test" 2>&1 | grep designated || true
 else
   echo "서명 시험: 실패 — $(cat "$T/err")"
   echo "신뢰 설정이 필요할 수 있다. 보고서의 「신뢰 설정」 단계를 본다."

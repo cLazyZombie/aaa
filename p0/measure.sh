@@ -1,18 +1,18 @@
 #!/bin/bash
 # P0: 설치한 /Applications/<name>.app의 계보별 측정(E1·E2). 시스템 설정은 바꾸지 않는다.
 #
-# 사용: p0/measure.sh <단계 이름> [--name aa] [--samples 30] [--volume-dir DIR] [--no-launchagent] [--no-shell]
+# 사용: p0/measure.sh <단계 이름> [--name aaa] [--samples 30] [--volume-dir DIR] [--no-launchagent] [--no-shell]
 #   단계 이름 예: before(등록 직후), after(업그레이드 뒤)
 # 측정 조건
 #   ls        LaunchServices로 띄운 앱 자신(open -n -W). 앱이 자기 책임 프로세스다.
 #   launchagent-standard / launchagent-interactive
-#             SMAppService로 등록된 LaunchAgent(dev.aa.p0probe.*)를 kickstart해서 잰다(등록돼 있을 때만).
+#             SMAppService로 등록된 LaunchAgent(dev.aaa.p0probe.*)를 kickstart해서 잰다(등록돼 있을 때만).
 #   shell     이 터미널 계보(WezTerm·Terminal·ssh 등). 기준선 비교용
-# 결과: ${AA_P0_RESULTS:-~/aa-p0/results}/<단계>-<name>-<조건>.json 과 요약 표
+# 결과: ${AAA_P0_RESULTS:-~/aaa-p0/results}/<단계>-<name>-<조건>.json 과 요약 표
 set -euo pipefail
 
 STEP="${1:?단계 이름이 필요하다(예: before, after)}"; shift
-NAME="aa"; SAMPLES=30; LAUNCHAGENT=1; SHELLRUN=1; VOLUME_DIR=""
+NAME="aaa"; SAMPLES=30; LAUNCHAGENT=1; SHELLRUN=1; VOLUME_DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) NAME="$2"; shift 2 ;;
@@ -25,11 +25,11 @@ while [ $# -gt 0 ]; do
 done
 
 APP="/Applications/$NAME.app"
-AA="$APP/Contents/MacOS/aa"
-RES="${AA_P0_RESULTS:-$HOME/aa-p0/results}"
+AA="$APP/Contents/MacOS/aaa"
+RES="${AAA_P0_RESULTS:-$HOME/aaa-p0/results}"
 mkdir -p "$RES"
 [ -x "$AA" ] || { echo "$AA 가 없다. install-app.sh를 먼저 실행한다." >&2; exit 1; }
-COMMON=(doctor probe --samples "$SAMPLES" --fda-check --keychain-service aa-p0-probe)
+COMMON=(doctor probe --samples "$SAMPLES" --fda-check --keychain-service aaa-p0-probe)
 [ -n "$VOLUME_DIR" ] && COMMON+=(--volume-dir "$VOLUME_DIR")
 done_files=()
 
@@ -40,9 +40,9 @@ rm -f "$OUT"
 if [ -s "$OUT" ]; then done_files+=("$OUT"); else echo "  결과 없음(앱이 실행되지 않았거나 측정 실패)"; fi
 
 if [ "$LAUNCHAGENT" = 1 ]; then
-  STATE_RESULTS="$HOME/Library/Application Support/aa/probe/results"
+  STATE_RESULTS="$HOME/Library/Application Support/aaa/probe/results"
   for kind in standard interactive; do
-    LABEL="dev.aa.p0probe.$kind"
+    LABEL="dev.aaa.p0probe.$kind"
     status=$("$AA" service status --label "$LABEL" 2>/dev/null | awk '{print $2}') || status="?"
     if [ "$status" != "enabled" ]; then
       echo "== [$STEP/$NAME] launchagent-$kind: 건너뜀(상태 $status)"

@@ -1,29 +1,29 @@
 [workspace]
 resolver = "3"
-# 역할별 crate(결정 13). 의존 규칙은 crates/aa/tests/deps.rs가 검사한다.
+# 역할별 crate(결정 13). 의존 규칙은 crates/aaa/tests/deps.rs가 검사한다.
 members = [
-    "crates/aa-proto",
-    "crates/aa-config",
-    "crates/aa-common",
-    "crates/aa-vt",
-    "crates/aa-doctor",
-    "crates/aa-session",
-    "crates/aa-agent",
-    "crates/aa-host",
-    "crates/aa-tui",
-    "crates/aa",
+    "crates/aaa-proto",
+    "crates/aaa-config",
+    "crates/aaa-common",
+    "crates/aaa-vt",
+    "crates/aaa-doctor",
+    "crates/aaa-session",
+    "crates/aaa-agent",
+    "crates/aaa-host",
+    "crates/aaa-tui",
+    "crates/aaa",
 ]
 default-members = [
-    "crates/aa-proto",
-    "crates/aa-config",
-    "crates/aa-common",
-    "crates/aa-vt",
-    "crates/aa-doctor",
-    "crates/aa-session",
-    "crates/aa-agent",
-    "crates/aa-host",
-    "crates/aa-tui",
-    "crates/aa",
+    "crates/aaa-proto",
+    "crates/aaa-config",
+    "crates/aaa-common",
+    "crates/aaa-vt",
+    "crates/aaa-doctor",
+    "crates/aaa-session",
+    "crates/aaa-agent",
+    "crates/aaa-host",
+    "crates/aaa-tui",
+    "crates/aaa",
 ]
 
 [workspace.package]
@@ -33,15 +33,15 @@ license = "MIT"
 rust-version = "1.90"
 
 [workspace.dependencies]
-aa-proto = { path = "crates/aa-proto" }
-aa-config = { path = "crates/aa-config" }
-aa-common = { path = "crates/aa-common" }
-aa-vt = { path = "crates/aa-vt" }
-aa-doctor = { path = "crates/aa-doctor" }
-aa-session = { path = "crates/aa-session" }
-aa-agent = { path = "crates/aa-agent" }
-aa-host = { path = "crates/aa-host" }
-aa-tui = { path = "crates/aa-tui" }
+aaa-proto = { path = "crates/aaa-proto" }
+aaa-config = { path = "crates/aaa-config" }
+aaa-common = { path = "crates/aaa-common" }
+aaa-vt = { path = "crates/aaa-vt" }
+aaa-doctor = { path = "crates/aaa-doctor" }
+aaa-session = { path = "crates/aaa-session" }
+aaa-agent = { path = "crates/aaa-agent" }
+aaa-host = { path = "crates/aaa-host" }
+aaa-tui = { path = "crates/aaa-tui" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

@@ -2,7 +2,7 @@
 
 - 여러 머신의 agent를 오케스트레이션하고, tmux 같은 세션 관리와 웹 접근을 제공한다. 기본 인터페이스는 CLI다.
 - backend(Rust)와 frontend(TUI·웹)를 분리한다. frontend는 상태를 갖지 않고 host backend하고만 통신하며, host backend가 각 머신의 agent backend와 통신한다.
-- 역할마다 crate를 나누고 실행 파일은 하나다. front(`aa-tui`·web)는 `aa-proto`로만 host와 통신하고 backend crate에 의존하지 않으며, `aa-host`는 agent·session 내부에 의존하지 않는다(검사: `cargo test -p aa --test deps`).
+- 역할마다 crate를 나누고 실행 파일은 하나다. front(`aaa-tui`·web)는 `aaa-proto`로만 host와 통신하고 backend crate에 의존하지 않으며, `aaa-host`는 agent·session 내부에 의존하지 않는다(검사: `cargo test -p aaa --test deps`).
 - 기본 언어는 Rust, 웹 언어는 TypeScript이며 작업과 문서는 한국어로 작성한다.
 - 다른 작업의 파일·프로세스를 건드리지 않으며, 프로세스 종료는 직접 확인한 PID로만 한다. `pkill`·`killall` 같은 pattern 종료는 금지한다.
 - `rm -rf`는 절대 경로나 `"${VAR:?}"`로 보호한 변수만 대상으로 삼는다.

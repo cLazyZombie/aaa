@@ -1,4 +1,6 @@
-# aa
+# aaa
+
+**aaa = Any Agent, Anywhere.** 어느 머신의 어떤 agent든 한곳에서 다룹니다.
 
 여러 머신의 agent를 오케스트레이션하는 프로젝트입니다.
 CLI를 중심으로 tmux 같은 세션 관리와 웹 접근을 제공합니다.

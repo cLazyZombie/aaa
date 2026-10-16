@@ -3,17 +3,17 @@
 version = 4
 
 [[package]]
-name = "aa"
+name = "aaa"
 version = "0.1.0"
 dependencies = [
- "aa-agent",
- "aa-common",
- "aa-config",
- "aa-doctor",
- "aa-host",
- "aa-proto",
- "aa-session",
- "aa-tui",
+ "aaa-agent",
+ "aaa-common",
+ "aaa-config",
+ "aaa-doctor",
+ "aaa-host",
+ "aaa-proto",
+ "aaa-session",
+ "aaa-tui",
  "anyhow",
  "clap",
  "libc",
@@ -30,14 +30,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-agent"
+name = "aaa-agent"
 version = "0.1.0"
 dependencies = [
- "aa-common",
- "aa-config",
- "aa-doctor",
- "aa-proto",
- "aa-session",
+ "aaa-common",
+ "aaa-config",
+ "aaa-doctor",
+ "aaa-proto",
+ "aaa-session",
  "anyhow",
  "hex",
  "libc",
@@ -51,10 +51,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-common"
+name = "aaa-common"
 version = "0.1.0"
 dependencies = [
- "aa-proto",
+ "aaa-proto",
  "anyhow",
  "hex",
  "libc",
@@ -72,7 +72,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-config"
+name = "aaa-config"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -83,11 +83,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-doctor"
+name = "aaa-doctor"
 version = "0.1.0"
 dependencies = [
- "aa-common",
- "aa-config",
+ "aaa-common",
+ "aaa-config",
  "anyhow",
  "cc",
  "core-foundation",
@@ -100,13 +100,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-host"
+name = "aaa-host"
 version = "0.1.0"
 dependencies = [
- "aa-common",
- "aa-config",
- "aa-proto",
- "aa-vt",
+ "aaa-common",
+ "aaa-config",
+ "aaa-proto",
+ "aaa-vt",
  "anyhow",
  "axum",
  "base64 0.22.1",
@@ -128,7 +128,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-proto"
+name = "aaa-proto"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -140,12 +140,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-session"
+name = "aaa-session"
 version = "0.1.0"
 dependencies = [
- "aa-common",
- "aa-proto",
- "aa-vt",
+ "aaa-common",
+ "aaa-proto",
+ "aaa-vt",
  "anyhow",
  "libc",
  "portable-pty",
@@ -156,12 +156,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-tui"
+name = "aaa-tui"
 version = "0.1.0"
 dependencies = [
- "aa-common",
- "aa-config",
- "aa-proto",
+ "aaa-common",
+ "aaa-config",
+ "aaa-proto",
  "anyhow",
  "crossterm",
  "futures-util",
@@ -170,10 +170,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aa-vt"
+name = "aaa-vt"
 version = "0.1.0"
 dependencies = [
- "aa-proto",
+ "aaa-proto",
  "vt100",
 ]
 
