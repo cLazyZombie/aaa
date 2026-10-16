@@ -37,6 +37,8 @@
 | 6 | 아래 「결정 6 세부」 참조 | §6, §14 |
 | 7 | 사후 평가자(workflow 감시) agent를 역할로 지정할 수 있다. 일반 agent 목록에 섞이지 않고 배경에서 돌며, 필요하면 열어 본다. 입력은 host가 자동으로 넘기는 사건, 출력은 정해진 평가 기록이다. 다른 agent에 직접 지시하지 않는다 | §8.3, §8.13, §14 |
 | 8 | 기획 승인. 「정할 것」 1~8을 모두 추천안으로 정한다 | §16 |
+| 9 | 유료 Apple Developer Program 회원이 아니므로 Developer ID를 쓰지 않는다(8-2 변경). 1순위 자체 서명 코드 서명 인증서(장기 유효, 세 Mac 공용), 2순위 기존 무료 Apple Development 인증서. P0 E1에서 둘 다 실측해 고른다. Gatekeeper·공증은 쓰지 않는다 | §10.5, §10.6, §16 |
+| 10 | GUI가 필요한 사용자 작업(인증서·키체인·시스템 설정 화면)은 mac-a에서 한다. 명령만으로 되는 일은 mac-c에 ssh로 한다(ssh 세션은 login 키체인이 잠겨 있어 사용자가 직접 잠금을 푼다) | §10.6, `docs/p0-runbook.md` |
 
 **결정 3 세부.** host는 host 역할만 한다(2안).
 - 실행 파일은 하나이고 역할만 나눈다(`aa host`/`aa agent`). 경로와 서명은 고정이다.
@@ -715,21 +717,23 @@ flowchart LR
 
 | 선택지 | 장점 | 단점·위험 |
 |---|---|---|
-| Developer ID | 근거가 가장 강하다(Developer ID인 kache가 업그레이드 뒤 권한 유지, 운영 관찰). notarization으로 Gatekeeper 창도 없앤다 | 유료 계정. 지금은 무료 개인 팀만 확인된다 |
-| 각 Mac에서 한 번 만드는 자체 서명 code-signing 인증서 | 무료. 요구 사항이 인증서 hash에 묶여 재빌드 뒤에도 유지될 것이라는 가설 | 개발자 도구 유지 여부 미검증. 인증서 생성이 키체인 변경(설치 때 사용자 승인) |
+| **자체 서명 code-signing 인증서(1순위, 결정 9)** | 무료, Apple 계정·연 갱신에 기대지 않는다. 한 번 만들어(10년) 세 Mac이 같은 인증서를 쓴다. designated requirement가 `identifier "dev.aa" and certificate root = H"<인증서 SHA-1>"`이 되어 같은 인증서로 다시 서명하면 그대로일 것이라는 가설 | 개발자 도구·전체 디스크 접근 유지 여부 미검증(E1). 인증서 반입이 키체인 변경(사용자 작업). 신뢰 설정이 필요한지 미확인 |
+| 무료 Apple Development 인증서(2순위, 결정 9) | mac-a·mac-b에 이미 있다. Apple 발급이라 요구 사항이 인증서 이름(CN)·Apple 체인에 묶인다 | 1년마다 갱신, 머신마다 다른 인증서. 갱신 뒤 이름이 같은지·등록이 유지되는지 미검증. mac-c에는 없다 |
+| Developer ID(결정 9로 제외) | 근거가 가장 강했다(Developer ID인 kache가 업그레이드 뒤 권한 유지, 운영 관찰) | 유료 회원이 아니라 만들 수 없다 |
 | 불변 adhoc broker | 서명 identity 불필요 | 결정 3과 어긋난다. broker 보안 패치 때 재등록 필요 |
 
 ### 10.6 P0 실험
 
 필요 조건:
 - 사용자 승인: 시험 서명 identity, 개발자 도구·전체 디스크 접근 등록, SMAppService 등록
-- 격리되어 재부팅할 수 있는 시험 Mac
+- E1~E4·E6·E7: 화면 접속이 되는 운영 Mac(제안 mac-a, 결정 10). 재부팅하지 않는다
+- E5만 격리되어 재부팅할 수 있는 시험 Mac이 필요하다
 
 이번 작업에서는 등록·재부팅을 하지 않았다.
 
 | 실험 | 방법 | 합격 gate |
 |---|---|---|
-| E1 서명 identity 유지 | ① 고정 경로 시험 `aa`를 identity X로 서명한다. ② 개발자 도구·전체 디스크 접근을 한 번 등록한다. ③ 새 binary 30개, 키체인 실제 항목 읽기, 외장 볼륨 읽기·쓰기를 측정한다. ④ 같은 identity로 재빌드·재서명해 rename으로 교체한다. ⑤ 재등록 없이 다시 측정한다. Developer ID와 자체 서명 둘 다 시험한다(가능한 범위) | median 추가 지연 ≤10ms, p95 ≤20ms, 100ms 초과 0. 실제 키체인·외장 볼륨 접근 성공. 재등록 0 |
+| E1 서명 identity 유지 | ① 고정 경로 시험 `aa`를 identity X로 서명한다. ② 개발자 도구·전체 디스크 접근을 한 번 등록한다. ③ 새 binary 30개, 키체인 실제 항목 읽기, 외장 볼륨 읽기·쓰기를 측정한다. ④ 같은 identity로 재빌드·재서명해 rename으로 교체한다. ⑤ 재등록 없이 다시 측정한다. 자체 서명(1순위)·Apple Development(2순위)를 같은 Mac에서 나란히 시험하고, adhoc을 음성 대조로 함께 둔다(업그레이드 뒤 등록이 풀려야 측정이 믿을 만하다). 절차는 `docs/p0-runbook.md`, 도구는 `p0/` | median 추가 지연 ≤10ms, p95 ≤20ms, 100ms 초과 0. 실제 키체인·외장 볼륨 접근 성공. 재등록 0 |
 | E2 기동 방식·처리량 | SMAppService.agent(Aqua, KeepAlive)와 login item을 비교한다. 측정: 책임 귀속, warm 절대값, 작은 cargo workspace의 clean build·`cargo test` 시간(WezTerm 기준선 대비). App Nap·QoS·`ps -o pri,nice`를 확인한다 | 위 지연 기준 + warm·처리량이 기준선 대비 +10% 이내(제안) |
 | E3 책임 프로세스 수명 | agent backend만 재시작했을 때 기존 session host 자손의 첫 실행 지연을 본다. disclaim spawn 유무로 비교하고, host 재시작의 영향도 본다 | 세션 유지 + 지연 기준 유지. 안 되면 §10.4 3(b) |
 | E4 기동 경합 | GUI 로그인 뒤 CLI·웹·Agent link를 동시에 먼저 연결한다 | agent backend는 LaunchAgent 하나만 뜬다. host fork 0, fallback 기동 0 |
@@ -765,7 +769,7 @@ flowchart LR
 ### 10.9 업그레이드 뒤 「재등록과 같은 일」
 
 - **hook 신뢰:** hook 명령 문자열을 고정한다(§8.11).
-- **quarantine:** updater가 직접 내려받은 파일에는 quarantine을 붙이지 않는다. 이를 `xattr`로 확인하는 테스트를 둔다. Developer ID라면 notarization도 받는다.
+- **quarantine:** updater가 직접 내려받은 파일에는 quarantine을 붙이지 않는다. 이를 `xattr`로 확인하는 테스트를 둔다. 공증은 쓰지 않는다(결정 9). 그래서 quarantine이 붙은 사본은 Gatekeeper 창이 뜨므로 설치·교체 도구가 반드시 quarantine 없이 옮긴다(`ditto --noqtn`, `p0/install-app.sh`).
 - **첫 실행 승인 창:** 승인 창이 GUI에 뜨면 ssh 실행이 그 자리에서 멈춘다. 운영에서도 `_dyld_start`에서 멈춘 일이 있다. 그래서 E7에서 0건임을 확인한다.
 
 ## 11. 설치·업데이트·버전 호환
@@ -810,7 +814,7 @@ flowchart LR
 | 저장 | rusqlite(bundled) + Markdown | DB I/O 전용 worker | 순수 파일+lock은 사건·outbox 정합성 비용이 크다 |
 | 설정 | toml(serde) + toml_edit(주석 보존 migrate) | 세 OS 경로 규칙(§7.1) | 없음(결정 5) |
 | clipboard·이미지 | front: arboard 후보 + 제한된 PNG/JPEG decoder. 웹: paste·Blob streaming | agent 머신에는 clipboard가 필요 없다 | osascript·wl-paste·xclip은 선택 adapter |
-| macOS 앱·SMAppService | objc2 계열 binding 또는 작은 Swift 부분 | 서명·notarization pipeline | P0에서 결정 |
+| macOS 앱·SMAppService | objc2-service-management(Rust, `aa service`) | 자체 서명 pipeline(`p0/build-app.sh`), 공증 없음 | 작은 Swift 부분 |
 | ID·관측 | ULID 또는 UUID, tracing 구조화 로그 | wall-clock 대신 boot ID+sequence, secret redact | OpenTelemetry는 초기 필수가 아니다 |
 | 웹 도구 | Node LTS + lockfile | TS build·Playwright에만 쓴다 | Bun은 선택 |
 | 배포 | OS/arch release + ed25519 서명 manifest, macOS `aa.app` | 고정 경로·rename 교체 | Homebrew는 배포 선택지. Cellar 경로를 등록 대상으로 쓰지 않는다 |
@@ -952,12 +956,12 @@ primary 근거:
 
 ### 정할 것(사용자 결정)
 
-2026-10-16 사용자 「진행해」「추천대로 해」로 1~8 모두 **추천안으로 결정**했다(결정 8). 6번의 문장은 AGENTS.md에 넣었다.
+2026-10-16 사용자 「진행해」「추천대로 해」로 1~8 모두 **추천안으로 결정**했다(결정 8). 6번의 문장은 AGENTS.md에 넣었다. 2번은 같은 날 결정 9로 바뀌었다(유료 회원이 아니라 Developer ID 불가).
 
 | # | 질문 | 선택지 | 추천 |
 |---|---|---|---|
 | 1 | MVP 범위 | macOS 운영 대체 먼저(Windows·Linux는 계약·빌드·smoke, 기능 합격은 M2) / 3 OS 기능 합격을 MVP에 포함 | **macOS 운영 대체 먼저.** 지금 운영이 Mac 3대이고 프로토콜·빌드는 처음부터 3 OS다 |
-| 2 | 서명 identity | Developer ID / 자체 서명 인증서 / 불변 adhoc broker | **Developer ID**(근거가 가장 강함). 비용이 문제면 자체 서명을 P0 E1에서 검증 |
+| 2 | 서명 identity | Developer ID / 자체 서명 인증서 / 불변 adhoc broker | ~~Developer ID~~ → **결정 9로 변경:** 자체 서명 1순위, Apple Development 2순위, E1 실측으로 고른다 |
 | 3 | 「재부팅 직후」 범위 | GUI 로그인 뒤(터미널 없이 ssh·웹 우선) / FileVault·GUI 로그인 전까지 포함 | **GUI 로그인 뒤.** 로그인 전은 키체인 무잠김을 보장할 수 없고 자동 unlock도 쓰지 않는다 |
 | 4 | 웹 입장 | aa pairing·token만 / Tailscale-User-Login 헤더로 본인 기기 자동 입장 허용 | **aa pairing만**(결정 6, 헤더 위조 위험) |
 | 5 | 자동 이어가기 기본값 | 꺼짐 + profile·project별 opt-in / 켜짐 | **꺼짐 + opt-in** |
@@ -969,7 +973,7 @@ primary 근거:
 
 | 위험 | 영향 | 대응 |
 |---|---|---|
-| 서명 identity로도 개발자 도구 유지가 안 됨 | 업그레이드마다 재등록 | E1. 실패하면 불변 broker 대안 |
+| 자체 서명·Apple Development 모두 개발자 도구 유지가 안 됨 | 업그레이드마다 재등록 | E1에서 둘 다 실측. 둘 다 실패하면 불변 broker 대안(결정 3과 충돌하므로 사용자 결정) |
 | SMAppService.agent 자식의 책임 귀속이 예상과 다름 | 느림·키체인 | E2에서 login item과 비교 |
 | GUI 계보 warm 저하 | build 전체가 느려짐 | E2 원인 조사, App Nap·QoS 설정 |
 | agent backend 재시작 때 session host가 면제를 잃음 | 업데이트 뒤 느림 | E3. 결과에 따라 drain |
