@@ -87,7 +87,7 @@ INFO="$OUT/$NAME.build.txt"
   echo "salt=$SALT"
   echo "identity=$IDENTITY"
   echo "sha256=$(shasum -a 256 "$APP/Contents/MacOS/aa" | cut -d' ' -f1)"
-  /usr/bin/codesign -dvv "$APP" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier|Signature|CDHash)='
+  /usr/bin/codesign -dvvv "$APP" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier|Signature|CDHash)='
   echo "designated=$(/usr/bin/codesign -d -r- "$APP" 2>&1 | sed -n "s/^#* *designated => //p")"
 } > "$INFO"
 cat "$INFO"

@@ -22,7 +22,7 @@ DEST="/Applications/$NAME.app"
 [ -d "$DEST" ] || { echo "$DEST 가 없다" >&2; exit 1; }
 
 dr() { /usr/bin/codesign -d -r- "$1" 2>&1 | sed -n "s/^#* *designated => //p"; }
-cdh() { /usr/bin/codesign -dvv "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
+cdh() { /usr/bin/codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
 DR0=$(dr "$DEST"); CD0=$(cdh "$DEST"); SHA0=$(shasum -a 256 "$DEST/Contents/MacOS/aa" | cut -d' ' -f1)
 
 SALT="upg-$(date +%Y%m%d%H%M%S)"

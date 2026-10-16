@@ -27,5 +27,5 @@ if [ -e "$DEST" ]; then
 fi
 mv "$STAGE" "$DEST"
 echo "설치: $DEST"
-/usr/bin/codesign -dvv "$DEST" 2>&1 | grep -E '^(Identifier|Authority|CDHash)='
+/usr/bin/codesign -dvvv "$DEST" 2>&1 | grep -E '^(Identifier|Authority|CDHash)='
 echo "designated=$(/usr/bin/codesign -d -r- "$DEST" 2>&1 | sed -n "s/^#* *designated => //p")"
