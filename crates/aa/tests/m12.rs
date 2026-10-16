@@ -218,3 +218,32 @@ fn reboot_marks_interrupted_and_resume_replaces_layout_slot() {
     h.ok(&["pane", "send", &new, "--text", "echo resumed-$((5*5))", "--enter"]);
     wait_for("재개 뒤 입력", T, || h.screen(&new).contains("resumed-25").then_some(()));
 }
+
+/// 한 front 연결에서 응답을 기다리지 않고 보낸 키 입력은 보낸 순서대로 PTY에 들어간다(TUI가 키마다 보낸다).
+#[test]
+fn inputs_from_one_front_keep_order() {
+    let mut lab = Lab::new();
+    let h = start(&mut lab);
+    let p = h.ok(&["pane", "run", "--machine", "labA", "--", "/bin/sh"]);
+    let id = p["id"].as_str().unwrap().to_string();
+    let line = "echo ordered-abcdefghijklmnopqrstuvwxyz-0123456789-$((40+2))\r";
+    rt().block_on(async {
+        let c = FrontClient::connect_as(&h.state, "keys").await.unwrap();
+        let (mut tx, mut rx) = c.split();
+        let mut ids = Vec::new();
+        for b in line.bytes() {
+            ids.push(tx.send(FrontRequest::PaneInput { pane: id.clone(), data: B64(vec![b]) }).await.unwrap());
+        }
+        // 응답이 모두 올 때까지 기다린다(모두 성공해야 한다)
+        let mut left: std::collections::HashSet<String> = ids.into_iter().collect();
+        while !left.is_empty() {
+            if let FrontMsg::Res { id, result } = tokio::time::timeout(T, rx.recv()).await.expect("응답").unwrap() {
+                assert!(matches!(result, aa_proto::Outcome::Ok(_)), "{result:?}");
+                left.remove(&id);
+            }
+        }
+    });
+    wait_for("순서대로 입력", T, || {
+        h.screen(&id).contains("ordered-abcdefghijklmnopqrstuvwxyz-0123456789-42").then_some(())
+    });
+}
