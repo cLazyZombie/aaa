@@ -451,7 +451,7 @@ impl Agent {
             }
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
-            AgentRequest::Forget { session } => self.forget(&session),
+            AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Profiles => {
                 Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
             }
@@ -557,21 +557,37 @@ impl Agent {
             .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
     }
 
-    /// 끝난 세션 기록(폴더)을 지운다. 실행 중이거나 session host가 붙어 있으면 거부한다.
-    fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
+    /// 끝난 세션을 지울 때 session host가 닫히기를 기다리는 한도(session host는 종료 뒤 2초 더 응답한다)
+    const FORGET_WAIT: Duration = Duration::from_secs(5);
+
+    /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
+    /// session host는 종료를 알린 뒤에도 2초 더 응답한다(바로 끝난 명령도 마지막 화면을 받게). 그동안은 pump가
+    /// 붙어 있으니 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
+    async fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
         }
-        let mut map = self.sessions.lock().unwrap();
-        match map.get(session) {
-            None => return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}"))),
-            Some(e) if e.pump.is_some() || e.info.state.is_running() => {
-                return Err(ErrorBody::new(ErrorCode::BadRequest, "실행 중인 세션은 지울 수 없다"));
+        let deadline = tokio::time::Instant::now() + Self::FORGET_WAIT;
+        loop {
+            {
+                let mut map = self.sessions.lock().unwrap();
+                match map.get(session) {
+                    None => return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}"))),
+                    Some(e) if e.info.state.is_running() => {
+                        return Err(ErrorBody::new(ErrorCode::BadRequest, "실행 중인 세션은 지울 수 없다"));
+                    }
+                    Some(e) if e.pump.is_none() => {
+                        map.remove(session);
+                        break;
+                    }
+                    Some(_) => {}
+                }
             }
-            Some(_) => {}
+            if tokio::time::Instant::now() >= deadline {
+                return Err(ErrorBody::new(ErrorCode::BadRequest, "session host가 아직 닫히지 않았다"));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        map.remove(session);
-        drop(map);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");
