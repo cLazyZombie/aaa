@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "hp/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+          rustup default stable
+          rustc --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 웹 front 빌드(host 실행 파일에 포함)
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: fmt
+        if: matrix.os == 'ubuntu-24.04'
+        run: cargo fmt --all --check
+      - name: build
+        run: cargo build --workspace --all-targets --locked 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee clippy.log; exit ${PIPESTATUS[0]}
+      # 유닛·프로토콜 계약 테스트와 PTY smoke(Windows는 ConPTY + Named Pipe). e2e는 Unix에서만 돈다.
+      - name: test
+        run: cargo test --workspace --locked 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
+      # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
+      - name: 실패 요약
+        if: failure()
+        run: |
+          annotate() {
+            node -e 'let t=require("fs").readFileSync(0,"utf8").slice(-3500); if(t.trim()) console.log("::error title="+process.argv[1]+"::"+t.replace(/%/g,"%25").replace(/\r/g,"").replace(/\n/g,"%0A"))' "$1"
+          }
+          for f in build.log clippy.log test.log; do
+            [ -f "$f" ] || continue
+            grep -nE -A8 "^error|^warning|panicked|FAILED" "$f" | head -80 | annotate "$f"
+          done
+          # 실험실(남겨진 host·agent 로그)
+          for d in /tmp/aae-* "${RUNNER_TEMP:-/nonexistent}"/aae-* "${TEMP:-/nonexistent}"/aae-*; do
+            [ -d "$d" ] || continue
+            for log in "$d"/*.log; do
+              [ -f "$log" ] && tail -c 3000 "$log" | annotate "$(basename "$d")/$(basename "$log")"
+            done
+          done
