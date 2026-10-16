@@ -302,7 +302,7 @@ fn lease_conflict_with_another_front() {
 
     // 다른 front(같은 계약을 쓰는 연결)가 먼저 조작을 갖는다
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
-    let mut other = rt.block_on(aa::host::front::FrontClient::connect_as(&h.state, "other-front")).unwrap();
+    let mut other = rt.block_on(aa_common::front::FrontClient::connect_as(&h.state, "other-front")).unwrap();
     let r = rt
         .block_on(other.call(aa_proto::FrontRequest::PaneInput {
             pane: id.clone(),

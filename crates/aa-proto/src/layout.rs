@@ -1,6 +1,6 @@
 //! workspace layout 트리 조작(순수 함수). 정본은 host가 갖고 TUI는 받은 트리를 칸으로 나눠 그리기만 한다.
 
-use aa_proto::{LayoutNode, SplitDir, Tab, Workspace};
+use crate::msg::{LayoutNode, SplitDir, Tab, Workspace};
 
 pub fn leaves(node: &LayoutNode) -> Vec<String> {
     let mut out = Vec::new();

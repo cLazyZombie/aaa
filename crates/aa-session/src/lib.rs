@@ -2,3 +2,4 @@
 
 pub mod files;
 pub mod host;
+pub mod ring;

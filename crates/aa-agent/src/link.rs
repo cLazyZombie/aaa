@@ -9,9 +9,9 @@ use anyhow::{Context, Result, bail};
 
 use super::Agent;
 use super::identity::{HostPin, save_pin};
-use crate::conn::{FrameRx, Incoming, spawn_writer};
-use crate::ipc::LocalStream;
-use crate::tls;
+use aa_common::conn::{FrameRx, Incoming, spawn_writer};
+use aa_common::ipc::LocalStream;
+use aa_common::tls;
 
 pub enum Target {
     Local(PathBuf),
@@ -27,12 +27,13 @@ impl std::fmt::Display for Target {
     }
 }
 
-pub const PING_EVERY: Duration = Duration::from_secs(15);
-pub const DEAD_AFTER: Duration = Duration::from_secs(45);
+use aa_proto::{LINK_DEAD_AFTER as DEAD_AFTER, LINK_PING_EVERY as PING_EVERY};
 
 pub async fn connect(t: &Target) -> Result<LocalStream> {
     match t {
-        Target::Local(p) => Ok(crate::ipc::connect(p).await.with_context(|| format!("host socket {}", p.display()))?),
+        Target::Local(p) => {
+            Ok(aa_common::ipc::connect(p).await.with_context(|| format!("host socket {}", p.display()))?)
+        }
         Target::Remote { addr, pin, id } => {
             let tcp = tokio::time::timeout(Duration::from_secs(10), tokio::net::TcpStream::connect(addr))
                 .await
@@ -77,7 +78,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         boot_id: agent.boot_id.clone(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
-        software: crate::util::software(),
+        software: aa_common::util::software(),
         features: vec!["terminal.v1".into()],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
@@ -176,8 +177,11 @@ pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name:
                 if mid != machine_id {
                     bail!("host가 다른 machine ID로 등록했다: {mid}");
                 }
-                let pin =
-                    HostPin { address: addr.to_string(), fingerprint: host_fp, enrolled_at_ms: crate::util::now_ms() };
+                let pin = HostPin {
+                    address: addr.to_string(),
+                    fingerprint: host_fp,
+                    enrolled_at_ms: aa_common::util::now_ms(),
+                };
                 save_pin(state, &pin)?;
                 return Ok(pin);
             }

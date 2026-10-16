@@ -176,11 +176,11 @@ pub struct ProbeOptions {
 
 pub fn probe(opts: &ProbeOptions) -> ProbeReport {
     let mut r = ProbeReport {
-        created_at_ms: crate::util::now_ms(),
-        host: crate::util::hostname(),
+        created_at_ms: aa_common::util::now_ms(),
+        host: aa_common::util::hostname(),
         os: std::env::consts::OS.to_string(),
         label: opts.label.clone(),
-        software: crate::util::software(),
+        software: aa_common::util::software(),
         activity_held: opts.activity_held,
         ..Default::default()
     };
@@ -189,7 +189,7 @@ pub fn probe(opts: &ProbeOptions) -> ProbeReport {
     r.sched = sched();
     #[cfg(target_os = "macos")]
     {
-        r.os_version = crate::util::sysctl_string("kern.osproductversion");
+        r.os_version = aa_common::util::sysctl_string("kern.osproductversion");
         r.binary.signature = macos::codesign_summary(&r.binary.exe);
         r.keychain = macos::keychain(opts.keychain_service.as_deref());
         if opts.samples > 0 {
@@ -298,7 +298,7 @@ pub fn sched() -> Sched {
 
 fn volume_check(dir: &str) -> Volume {
     let path = std::path::Path::new(dir).join(format!(".aa-probe-{}", std::process::id()));
-    let payload = crate::util::new_id();
+    let payload = aa_common::util::new_id();
     let res = (|| -> std::io::Result<()> {
         std::fs::write(&path, &payload)?;
         let back = std::fs::read_to_string(&path)?;

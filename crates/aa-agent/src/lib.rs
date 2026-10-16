@@ -19,9 +19,9 @@ use aa_proto::{
 use anyhow::{Context, Result, bail};
 use tokio::sync::mpsc;
 
-use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
-use crate::session::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
-use crate::util;
+use aa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
+use aa_common::util;
+use aa_session::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
 
 enum PumpCmd {
     /// host 요청을 session host로 보낸다. 응답은 pump가 host에 보낸다.
@@ -160,7 +160,7 @@ impl Agent {
 
     /// session host에 연결하고 pump를 띄운다.
     async fn attach(self: &Arc<Self>, paths: &SessionPaths, spec: &SpecFile) -> Result<SessionInfo> {
-        let stream = crate::ipc::connect(&paths.sock).await.context("session socket 연결")?;
+        let stream = aa_common::ipc::connect(&paths.sock).await.context("session socket 연결")?;
         let (r, w) = tokio::io::split(stream);
         let tx = spawn_writer(w, MAX_FRAME);
         let mut rx = FrameRx::new(r, MAX_FRAME);
@@ -186,7 +186,7 @@ impl Agent {
         paths: SessionPaths,
         spec: SpecFile,
         tx: FrameTx,
-        mut rx: FrameRx<tokio::io::ReadHalf<crate::ipc::LocalStream>>,
+        mut rx: FrameRx<tokio::io::ReadHalf<aa_common::ipc::LocalStream>>,
         mut cmds: mpsc::Receiver<PumpCmd>,
     ) {
         let id = spec.id.clone();
@@ -437,10 +437,10 @@ impl Agent {
 /// macOS에서는 App Nap·자동 종료를 막는 활동도 이때 잡는다.
 pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aa_config::SelfcheckSection) {
     #[cfg(target_os = "macos")]
-    let held = crate::doctor::macos::hold_activity("aa agent backend: agent 세션 실행");
+    let held = aa_doctor::macos::hold_activity("aa agent backend: agent 세션 실행");
     #[cfg(not(target_os = "macos"))]
     let held = false;
-    let opts = crate::doctor::ProbeOptions {
+    let opts = aa_doctor::ProbeOptions {
         samples: cfg.first_exec_samples,
         keychain_service: Some(cfg.keychain_service.clone()).filter(|s| !s.is_empty()),
         volume_dir: Some(cfg.volume_dir.clone()).filter(|s| !s.is_empty()),
@@ -451,7 +451,7 @@ pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aa_config::SelfcheckSection) {
     };
     let agent = agent.clone();
     tokio::task::spawn_blocking(move || {
-        let r = crate::doctor::probe(&opts);
+        let r = aa_doctor::probe(&opts);
         let _ = util::write_json(&agent.state.join("selfcheck.json"), &r);
         let summary = serde_json::json!({
             "pass": r.pass,

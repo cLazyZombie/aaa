@@ -6,28 +6,58 @@ version = 4
 name = "aa"
 version = "0.1.0"
 dependencies = [
+ "aa-agent",
+ "aa-common",
  "aa-config",
+ "aa-doctor",
+ "aa-host",
  "aa-proto",
+ "aa-session",
+ "aa-tui",
  "anyhow",
- "axum",
- "base64 0.22.1",
- "cc",
  "clap",
- "core-foundation",
- "crossterm",
- "futures-util",
- "hex",
  "libc",
  "objc2",
  "objc2-foundation",
  "objc2-service-management",
  "portable-pty",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-width",
+ "vte",
+]
+
+[[package]]
+name = "aa-agent"
+version = "0.1.0"
+dependencies = [
+ "aa-common",
+ "aa-config",
+ "aa-doctor",
+ "aa-proto",
+ "aa-session",
+ "anyhow",
+ "hex",
  "rand 0.9.5",
- "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "aa-common"
+version = "0.1.0"
+dependencies = [
+ "aa-proto",
+ "anyhow",
+ "hex",
+ "libc",
  "rcgen",
- "rusqlite",
  "rustls",
- "security-framework",
  "serde",
  "serde_json",
  "sha2",
@@ -35,11 +65,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "tracing-subscriber",
  "ulid",
- "unicode-width",
- "vt100",
- "vte",
  "windows-sys 0.60.2",
 ]
 
@@ -55,6 +81,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "aa-doctor"
+version = "0.1.0"
+dependencies = [
+ "aa-common",
+ "aa-config",
+ "anyhow",
+ "cc",
+ "core-foundation",
+ "libc",
+ "objc2-foundation",
+ "rand 0.9.5",
+ "security-framework",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "aa-host"
+version = "0.1.0"
+dependencies = [
+ "aa-common",
+ "aa-config",
+ "aa-proto",
+ "aa-vt",
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "hex",
+ "libc",
+ "rand 0.9.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
 name = "aa-proto"
 version = "0.1.0"
 dependencies = [
@@ -64,6 +130,44 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "ts-rs",
+]
+
+[[package]]
+name = "aa-session"
+version = "0.1.0"
+dependencies = [
+ "aa-common",
+ "aa-proto",
+ "aa-vt",
+ "anyhow",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tokio",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "aa-tui"
+version = "0.1.0"
+dependencies = [
+ "aa-common",
+ "aa-config",
+ "aa-proto",
+ "anyhow",
+ "crossterm",
+ "futures-util",
+ "ratatui",
+ "tokio",
+]
+
+[[package]]
+name = "aa-vt"
+version = "0.1.0"
+dependencies = [
+ "aa-proto",
+ "vt100",
 ]
 
 [[package]]

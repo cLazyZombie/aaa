@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use aa::doctor;
-use aa::service;
+use crate::service;
+use aa_doctor as doctor;
 use aa_proto::{B64, DeviceRole, FrontRequest, FrontResponse, LayoutChange, SplitDir};
 
 #[derive(Parser)]
@@ -370,7 +370,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Host => {
             init_log("info");
             let cfg = load_or_exit(aa_config::load_host(&aa_config::paths::config_dir()))?;
-            runtime()?.block_on(aa::host::run(cfg, aa_config::paths::state_dir()))?;
+            runtime()?.block_on(aa_host::run(cfg, aa_config::paths::state_dir()))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Agent(a) => {
@@ -379,7 +379,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::SessionHost { dir } => {
             init_log("info");
-            aa::session::host::main(dir)?;
+            aa_session::host::main(dir)?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Status => front(json, FrontRequest::Status),
@@ -431,7 +431,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         ),
         Cmd::Attach { workspace } => {
             init_log("warn");
-            aa::tui::run(workspace)
+            aa_tui::run(workspace)
         }
         Cmd::Machine { cmd } => front(
             json,
@@ -500,7 +500,7 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
             });
             if let Some(b) = baseline {
                 let base: doctor::ProbeReport =
-                    aa::util::read_json(&b).with_context(|| format!("기준선 {}", b.display()))?;
+                    aa_common::util::read_json(&b).with_context(|| format!("기준선 {}", b.display()))?;
                 let worse = doctor::compare_throughput(&base, &r);
                 if !worse.is_empty() {
                     r.reasons.extend(worse.into_iter().map(|w| format!("처리량 gate 실패: {w}")));
@@ -524,7 +524,8 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
         Some(DoctorCmd::Summary { files }) => {
             let mut rows = Vec::new();
             for f in files {
-                let r: doctor::ProbeReport = aa::util::read_json(&f).with_context(|| format!("{}", f.display()))?;
+                let r: doctor::ProbeReport =
+                    aa_common::util::read_json(&f).with_context(|| format!("{}", f.display()))?;
                 rows.push((f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), r));
             }
             print!("{}", doctor::summary_table(&rows));
@@ -579,17 +580,17 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
     let cfg = load_or_exit(aa_config::load_agent(&aa_config::paths::config_dir()))?;
     let root = aa_config::paths::state_dir();
     let state = root.join("agent");
-    let ident = aa::agent::identity::load_or_create(&state)?;
+    let ident = aa_agent::identity::load_or_create(&state)?;
     let name = a
         .name
         .clone()
         .filter(|n| !n.is_empty())
         .or_else(|| Some(cfg.agent.name.clone()).filter(|n| !n.is_empty()))
-        .unwrap_or_else(aa::util::hostname);
+        .unwrap_or_else(aa_common::util::hostname);
     let rt = runtime()?;
     if let Some(AgentCmd::Enroll { host, name: n }) = a.cmd {
         let name = n.unwrap_or(name);
-        let pin = rt.block_on(aa::agent::link::enroll(&state, &host, &ident.machine_id, &name))?;
+        let pin = rt.block_on(aa_agent::link::enroll(&state, &host, &ident.machine_id, &name))?;
         println!("등록됐다: {name} → {} (host fingerprint {}…)", pin.address, &pin.fingerprint[..16]);
         println!("agent.toml의 [agent] host = \"{}\"로 두고 `aa agent`를 실행한다", pin.address);
         return Ok(ExitCode::SUCCESS);
@@ -599,25 +600,25 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .clone()
         .unwrap_or_else(|| if cfg.agent.host.is_empty() { "local".into() } else { cfg.agent.host.clone() });
     let target = if host == "local" {
-        aa::agent::link::Target::Local(root.join("host").join("agent.sock"))
+        aa_agent::link::Target::Local(root.join("host").join("agent.sock"))
     } else {
-        let pin = aa::agent::identity::load_pin(&state)
+        let pin = aa_agent::identity::load_pin(&state)
             .context("이 머신은 아직 등록되지 않았다: `aa agent enroll <host:port>`")?;
-        let id = aa::tls::load_or_create(&state, "aa-agent")?;
-        aa::agent::link::Target::Remote { addr: host.clone(), pin: pin.fingerprint, id }
+        let id = aa_common::tls::load_or_create(&state, "aa-agent")?;
+        aa_agent::link::Target::Remote { addr: host.clone(), pin: pin.fingerprint, id }
     };
     let default_cwd = Some(cfg.agent.default_cwd.clone())
         .filter(|c| !c.is_empty())
         .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
     rt.block_on(async move {
-        let agent = aa::agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
+        let agent = aa_agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
-        aa::agent::start_selfcheck(&agent, &cfg.selfcheck);
+        aa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
         tokio::select! {
-            _ = aa::agent::link::run(agent.clone(), target, max) => {}
-            _ = aa::host::shutdown_signal() => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
+            _ = aa_agent::link::run(agent.clone(), target, max) => {}
+            _ = aa_host::shutdown_signal() => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
         }
         anyhow::Ok(())
     })?;
@@ -627,7 +628,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     let rt = runtime()?;
     let res = rt.block_on(async {
-        let mut c = aa::host::front::FrontClient::connect(&aa_config::paths::state_dir()).await?;
+        let mut c = aa_common::front::FrontClient::connect(&aa_config::paths::state_dir()).await?;
         c.call(req).await
     })?;
     match res {

@@ -20,8 +20,8 @@ use futures_util::StreamExt;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::host::front::{FrontClient, FrontSender};
-use crate::layout::{self, Rect};
+use aa_common::front::{FrontClient, FrontSender};
+use aa_proto::layout::{self, Rect};
 
 pub fn run(workspace: Option<String>) -> Result<ExitCode> {
     let cfg = aa_config::load_host(&aa_config::paths::config_dir()).map(|l| l.config).unwrap_or_default();
@@ -30,11 +30,11 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
     let state = aa_config::paths::state_dir();
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
     rt.block_on(async move {
-        let label = format!("tui@{}", crate::util::hostname());
+        let label = format!("tui@{}", aa_common::util::hostname());
         let client = FrontClient::connect_as(&state, &label).await?;
         let mut terminal = ratatui::init();
         let r = App::new(
-            workspace.unwrap_or_else(|| crate::host::DEFAULT_WORKSPACE.to_string()),
+            workspace.unwrap_or_else(|| aa_proto::DEFAULT_WORKSPACE.to_string()),
             prefix,
             client.front.clone(),
         )
