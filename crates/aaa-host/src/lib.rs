@@ -931,6 +931,11 @@ impl Host {
             FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
+            // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다
+            FrontRequest::PaneAttach { .. } => Err(err(
+                ErrorCode::BadRequest,
+                "그림 붙여넣기는 같은 머신 front 연결(aaa attach·aaa pane attach)에서만 쓴다",
+            )),
             FrontRequest::Workspace { name } => {
                 Ok(FrontResponse::Workspace(self.workspace(name.as_deref().unwrap_or(DEFAULT_WORKSPACE))))
             }

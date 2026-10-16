@@ -777,7 +777,7 @@ host 프로젝트 폴더 구성:
 
 - **순서:** 운영 대체에 먼저 필요한 것부터 한다. ① 웹 보고서·결과물 보기 ② 알림 webhook ③ 웹 이미지 붙여넣기(macOS 대상).
 - **미룬 것**
-  - TUI Ctrl+V 이미지: front 기기 clipboard를 읽는 crate(arboard)가 Linux CI에 X11 개발 의존을 끌어온다. 웹 붙여넣기가 같은 attachment 경로를 먼저 검증한다. → M1 마무리
+  - TUI Ctrl+V 이미지: front 기기 clipboard를 읽는 crate(arboard)가 Linux CI에 X11 개발 의존을 끌어온다. 웹 붙여넣기가 같은 attachment 경로를 먼저 검증한다. → M1 마무리(실제로는 M3 §8.28에서 했다. 개발 파일 의존도 생기지 않았다)
   - Web Push: VAPID·암호화(ECE)·service worker가 필요하다. M1-4 기준 「질문·보고 알림」은 webhook(텔레그램 연결)으로 채운다. → M3(PWA와 함께, §8.26에서 구현)
 - **결과물 manifest:** 보고를 회수할 때 `threads/<id>.files.json`에 결과물 목록(경로·크기·host 사본인지)을 남긴다. 복사 상한을 넘어 agent에 남긴 일반 파일도 적는다(agent가 그 크기를 알린다). symlink·일반 파일이 아닌 것은 목록에 없다.
 - **보기 경로(권한):** 웹은 `ThreadLibrary`(reader도 가능)로 `/v/<cap>/`를 받는다.
@@ -1001,6 +1001,38 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 웹 E2E: 실험실 안 `CLAUDE_CONFIG_DIR`에 기록을 두고 hook으로 알린다. 사람·답·도구 줄만 보이고, 빼야 할 글은 없다. 새 줄을 따라가고 터미널로 돌아간다. CLI도 같다. 기록 폴더 밖을 가리키는 hook은 「기록 폴더 밖」으로 거부하고 내용을 내보내지 않는다.
 - **남는 한계.** Claude·Codex 기록 형식은 공개 규격이 아니다. 바뀌면 모르는 줄은 조용히 빠진다(오류로 멈추지 않는다). 실제 Codex 기록 왕복은 사용량 때문에 자동 시험이 없다.
 
+### 8.28 M3 TUI Ctrl+V와 front clipboard(10-17)
+
+로드맵의 「Windows·Linux front clipboard」는 TUI의 Ctrl+V 그림 붙여넣기를 뜻한다. 그런데 TUI에는 macOS를 포함해 clipboard 읽기가 아예 없었다(M1-4에서 미룸, §8.20). 그래서 세 OS를 한 번에 만든다.
+
+- **누르는 것.** `aaa attach`에서 prefix 없이 Ctrl+V를 누른다. 그림만 든 clipboard를 붙이면 빈 붙여넣기(bracketed paste)를 보내는 터미널이 있어 그것도 받는다.
+  - clipboard에 그림이 없거나 clipboard를 열지 못하면(ssh 셸·desktop 없음) 원래 키 0x16을 그대로 보낸다. 이때 상태 줄에는 아무것도 띄우지 않는다. Claude Code 같은 harness가 Ctrl+V를 직접 쓰기 때문이다.
+- **읽는 것.** arboard 3.7을 쓴다.
+  - macOS는 NSPasteboard, Windows는 clipboard(PNG·CF_DIBV5·CF_DIB), Linux는 X11이다.
+  - 순수 Rust(X11은 x11rb)다. 새로 들어온 crate 가운데 C 라이브러리를 링크하는 것(`links`)은 없다. 그래서 Linux 빌드에 X11·Wayland 개발 파일이 필요 없다. §8.20에서 걱정한 점은 생기지 않았다.
+  - arboard는 RGBA를 돌려준다. 그래서 front가 PNG로 다시 만든다. 원래 형식과 색 profile은 남지 않는다.
+- **보내는 길.** Front API에 `PaneAttach{pane, offset, total, sha256, data}` 조각 요청을 더했다. 응답은 `Attached{path, inserted, note}`다. 웹 터미널 WebSocket의 `Attach`와 규칙이 같다.
+  - 512KiB 조각(`ATTACH_CHUNK`)으로 나누고, 마지막 조각에서 sha256을 대조한다.
+  - host의 `attach_chunk`가 그대로 처리한다. 그 안에서 서명으로 형식을 보고(PNG·JPEG·GIF·WebP), 16MiB 상한과 lease를 확인한다. harness 입력창이면 경로를 넣고(Enter 없음), 아니면 저장만 한다.
+  - 받는 중인 첨부는 front 연결마다 하나다. 키 입력과 같은 순서 큐로 처리해 조각과 키가 섞이지 않는다.
+  - 앞 조각이 실패하면 남은 조각은 거부한다. TUI는 그 거부를 한 번만 알린다.
+- **raw ssh 셸.** 사용자 PC의 clipboard가 없다. 그래서 `aaa pane attach <pane> <파일>`로 파일을 올린다. 같은 요청을 쓴다.
+- **시험.**
+  - 유닛: PNG 만들기와 풀기 왕복, 크기 불일치 거부.
+  - TUI E2E(`tui.rs`): 다음을 본다.
+    - 그림이 없으면 Ctrl+V가 원래 키다(lnext를 끈 `cat -v`가 `^V`를 보인다).
+    - 그림이 있으면 대상 세션 폴더에 PNG가 생기고, 풀어 본 pixel이 같다. 셸 pane에는 경로가 들어가지 않는다.
+    - `aaa pane attach`: TUI가 조작 중이면 lease로 거부한다. 1.2MB 여러 조각이 bytes 그대로 저장된다. 그림이 아니면 거부한다.
+  - **clipboard 바꿔치기.** 개발 Mac에서 사람의 clipboard를 덮어쓰지 않으려고, E2E는 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard 대신 읽는다. 실제 clipboard는 CI 단계 「clipboard(실제)」가 `AAA_CLIP_NATIVE=1`로 확인한다.
+    - 세 OS 모두 arboard로 시스템 clipboard에 그림을 쓰고 읽는다. Linux는 Xvfb 위에서 한다.
+    - macOS·Linux는 같은 TUI E2E를 실제 clipboard로 한 번 더 돈다.
+    - 이 값을 켰는데 clipboard를 열지 못하면 실패다(건너뛰지 않는다).
+- **남는 한계.**
+  - Windows의 TUI E2E는 없다. `tui.rs`가 Unix PTY 전용이라 Windows는 clipboard 읽기 왕복만 본다.
+  - Wayland 전용 세션(XWayland 없음)은 읽지 못한다. arboard의 Wayland 기능을 켜지 않았다. 그때는 Ctrl+V가 원래 키로 가고, 파일 첨부 명령이나 웹을 쓴다.
+  - 외부 터미널이 그림 파일 경로를 글로 붙이는 경우(§9 「입력 호환」)는 아직 올리지 않는다. 경로를 일부러 붙인 것과 구분할 수 없어 글 그대로 보낸다.
+  - 실제 Claude·Codex 입력창에 넣는 길은 웹과 같은 host 코드다. 웹 E2E의 harness pane 단계가 그것을 본다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -1025,7 +1057,7 @@ flowchart LR
 
 | 단계 | 동작·계약 |
 |---|---|
-| TUI 수집 | 명시적 Ctrl+V(또는 빈 bracketed paste)에서 front 자신의 clipboard를 읽는다. macOS는 NSPasteboard 이미지 → PNG, Windows는 PNG/CF_DIBV5/CF_DIB, Linux desktop은 X11/Wayland다. 후보는 arboard다 |
+| TUI 수집 | 명시적 Ctrl+V(또는 빈 bracketed paste)에서 front 자신의 clipboard를 읽는다. macOS는 NSPasteboard 이미지 → PNG, Windows는 PNG/CF_DIBV5/CF_DIB, Linux desktop은 X11/Wayland다. arboard로 한다(§8.28, Wayland 전용 세션은 아직 아님) |
 | 입력 호환 | 이미지가 있으면 중복 Ctrl+V byte와 텍스트 paste를 소비하고 image intent 하나를 만든다. 없으면 기존 text·raw-key 동작을 보존한다. 외부 터미널이 이미지 파일 경로를 붙이면 그 로컬 파일을 업로드한다 |
 | raw SSH 셸의 한계 | 단순 `ssh host` 셸은 사용자 PC의 clipboard를 제공하지 않는다. 기본 경로는 사용자 기기에서 실행한 aaa TUI front다. raw 셸에서는 파일 첨부 명령이나 웹을 안내한다 |
 | 웹 수집 | terminal 영역과 composer의 user paste event에서 `clipboardData.items/files`의 Blob을 받는다. 이미지와 plain text를 함께 draft에 보존하고 중복 paste를 막는다. 파일 선택·drop도 같은 API로 받는다 |
@@ -1329,7 +1361,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only(§8.27, **10-17 구현**), PWA·Web Push(§8.23·§8.26, **10-17 구현**), Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only(§8.27, **10-17 구현**), PWA·Web Push(§8.23·§8.26, **10-17 구현**), TUI Ctrl+V·세 OS front clipboard(§8.28, **10-17 구현**), thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.

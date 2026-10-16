@@ -144,6 +144,10 @@ struct Tui {
 
 impl Tui {
     fn start(node: &Node) -> Tui {
+        Self::start_env(node, &[])
+    }
+
+    fn start_env(node: &Node, env: &[(&str, &str)]) -> Tui {
         let pty = native_pty_system();
         let pair = pty.openpty(PtySize { rows: ROWS, cols: COLS, pixel_width: 0, pixel_height: 0 }).unwrap();
         let mut cmd = CommandBuilder::new(BIN);
@@ -152,6 +156,9 @@ impl Tui {
         cmd.env("AAA_STATE_DIR", &node.state);
         cmd.env("TERM", "xterm-256color");
         cmd.env("RUST_LOG", "off");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
         let child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().unwrap();
@@ -367,4 +374,116 @@ fn interrupted_badge_and_resume() {
     tui.wait_text("재개 뒤 실행", |s| !s.contains("중단(재부팅)") && s.contains("실행"));
     tui.type_line("echo resumed-$((5*5))");
     tui.wait_text("재개 뒤 입력", |s| s.contains("resumed-25"));
+}
+
+/// 세션 폴더에 저장된 첨부 파일들
+fn attachments(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.parent().is_some_and(|d| d.ends_with("attachments")) {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 불투명한 기본색 3x2(색 관리가 바꾸지 않는 값)
+const PIXELS: [[u8; 4]; 6] =
+    [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 255], [0, 0, 0, 255], [255, 255, 0, 255]];
+
+fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
+    let mut r = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
+    let mut buf = vec![0; r.output_buffer_size().unwrap()];
+    let info = r.next_frame(&mut buf).unwrap();
+    assert_eq!(info.color_type, png::ColorType::Rgba, "RGBA PNG여야 한다");
+    buf.truncate(info.buffer_size());
+    (info.width, info.height, buf)
+}
+
+/// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
+/// 셸 pane이라 입력창에 경로를 넣지 않는다. 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
+/// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).
+/// `AAA_CLIP_NATIVE=1`(CI)이면 실제 시스템 clipboard에 쓰고 TUI가 그것을 읽는다.
+#[test]
+fn ctrl_v_pastes_clipboard_image() {
+    let mut lab = Lab::new();
+    let h = start(&mut lab);
+    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "pic", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
+    let rgba: Vec<u8> = PIXELS.concat();
+    let fake = lab.root.join("clip.png");
+    let fake_s = fake.to_str().unwrap().to_string();
+    let mut clip = native.then(|| arboard::Clipboard::new().expect("clipboard를 열지 못했다"));
+
+    let mut tui = if native { Tui::start(&h) } else { Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_PNG", &fake_s)]) };
+    tui.wait_text("lease", |s| s.contains("조작 중"));
+
+    // 1) 그림이 없으면 Ctrl+V는 원래 키다(lnext를 끈 cat -v가 ^V를 보인다)
+    if let Some(c) = clip.as_mut() {
+        c.set_text("no image here").unwrap();
+    }
+    tui.type_line("stty -iexten; cat -v");
+    std::thread::sleep(Duration::from_millis(300));
+    tui.send(b"\x16");
+    tui.send(b"\r");
+    tui.wait_text("원래 Ctrl+V", |s| s.contains("^V"));
+    tui.send(b"\x03");
+    assert!(attachments(&h.state).is_empty(), "그림이 없는데 첨부가 생겼다");
+
+    // 2) 그림이 있으면 대상 머신에 저장하고 상태 줄에 경로를 보인다. 셸에는 경로를 넣지 않는다.
+    match clip.as_mut() {
+        Some(c) => c.set_image(arboard::ImageData { width: 3, height: 2, bytes: rgba.as_slice().into() }).unwrap(),
+        None => {
+            let mut out = Vec::new();
+            let mut enc = png::Encoder::new(&mut out, 3, 2);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut wr = enc.write_header().unwrap();
+            wr.write_image_data(&rgba).unwrap();
+            wr.finish().unwrap();
+            std::fs::write(&fake, out).unwrap();
+        }
+    }
+    tui.type_line("clear");
+    std::thread::sleep(Duration::from_millis(300));
+    tui.send(b"\x16");
+    tui.wait_text("저장 표시", |s| s.contains("그림을 저장했다"));
+    let files = attachments(&h.state);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].extension().is_some_and(|e| e == "png"), "{files:?}");
+    assert_eq!(decode_rgba(&std::fs::read(&files[0]).unwrap()), (3, 2, rgba.clone()), "대상 머신 그림의 pixel");
+    assert!(!h.screen(&id).contains("attachments"), "셸에 경로가 들어갔다");
+    drop(clip);
+
+    // 3) 여러 조각(1.2MB)을 `aaa pane attach`로 올린다. TUI가 조작 중이라 먼저 거부된다.
+    let big = lab.root.join("big.png");
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.resize(1_200_000, 7);
+    std::fs::write(&big, &bytes).unwrap();
+    let r: serde_json::Value =
+        serde_json::from_str(&h.json(&["pane", "attach", &id, big.to_str().unwrap()]).unwrap_err()).unwrap();
+    assert_eq!(r["error"]["code"], "lease_held", "{r}");
+    tui.cmd("d");
+    assert!(tui.wait_exit());
+    drop(tui);
+    wait_for("lease 해제", T, || h.pane(&id)["lease"].is_null().then_some(()));
+    let r = h.ok(&["pane", "attach", &id, big.to_str().unwrap()]);
+    let path = r["path"].as_str().unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), bytes, "{r}");
+    assert_eq!(r["inserted"], false, "{r}");
+    // 그림이 아니면 거부한다
+    let txt = lab.root.join("note.txt");
+    std::fs::write(&txt, "hello").unwrap();
+    let r: serde_json::Value =
+        serde_json::from_str(&h.json(&["pane", "attach", &id, txt.to_str().unwrap()]).unwrap_err()).unwrap();
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("PNG·JPEG·GIF·WebP")), "{r}");
+    assert_eq!(attachments(&h.state).len(), 2);
 }

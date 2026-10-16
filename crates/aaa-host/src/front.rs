@@ -125,8 +125,26 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     let ordered_task = {
         let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
         tokio::spawn(async move {
+            // 받는 중인 그림(웹 터미널 WebSocket과 같은 규칙). 실패한 첨부의 남은 조각은 응답만 하고 버린다.
+            let mut upload: Option<crate::attach::Upload> = None;
+            let mut upload_failed = false;
             while let Some((id, body)) = ordered_rx.recv().await {
-                let result = host.call_from(role, &actor, Some(&front), body).await;
+                let result = match body {
+                    FrontRequest::PaneAttach { offset, .. } if offset != 0 && upload_failed => {
+                        Err(ErrorBody::new(ErrorCode::BadRequest, "앞 조각이 실패한 첨부다"))
+                    }
+                    FrontRequest::PaneAttach { pane, offset, total, sha256, data } => {
+                        let r = host
+                            .attach_chunk(role, &actor, &front, &pane, &mut upload, offset, total, &sha256, data.0)
+                            .await;
+                        upload_failed = r.is_err();
+                        r.map(|a| match a {
+                            Some(a) => FrontResponse::Attached { path: a.path, inserted: a.inserted, note: a.note },
+                            None => FrontResponse::Done,
+                        })
+                    }
+                    body => host.call_from(role, &actor, Some(&front), body).await,
+                };
                 if tx.json(&FrontMsg::Res { id, result: result.into() }).await.is_err() {
                     break;
                 }
@@ -162,6 +180,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                 | FrontRequest::PaneSend { .. }
                 | FrontRequest::PaneResize { .. }
                 | FrontRequest::PaneTake { .. }
+                | FrontRequest::PaneAttach { .. }
                 | FrontRequest::PaneRelease { .. }
                 | FrontRequest::PaneKill { .. }) => {
                     let _ = ordered_tx.send((id, body));

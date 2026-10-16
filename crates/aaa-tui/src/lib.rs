@@ -3,7 +3,10 @@
 //! - host가 준 workspace layout을 칸으로 나누고, 각 pane은 host가 보내는 cell grid를 그린다.
 //! - 가진 것은 지금 탭·포커스·prefix 입력 상태뿐이다. lease·pane 상태는 host가 보낸 목록을 그대로 쓴다.
 //! - 키 입력은 포커스 pane에 대화형 입력(`PaneInput`)으로 보낸다. 다른 front가 조작 중이면 거부를 표시한다.
+//! - Ctrl+V(또는 빈 붙여넣기)에서 이 기기 clipboard에 그림이 있으면 pane 머신으로 올린다(`clip`, §8.28).
+//!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
 
+pub mod clip;
 pub mod keys;
 
 use std::collections::{HashMap, HashSet};
@@ -77,6 +80,8 @@ enum Pending {
     Input,
     /// 새로 만든 pane에 포커스를 옮긴다
     Focus,
+    /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
+    Attach(u64),
 }
 
 struct App {
@@ -94,6 +99,9 @@ struct App {
     pending: HashMap<String, Pending>,
     /// 마지막으로 보낸 크기(같은 크기를 거듭 보내지 않는다)
     sized: HashMap<String, (u16, u16)>,
+    /// 그림 붙여넣기 번호와 실패를 이미 알린 번호(남은 조각의 거부는 다시 알리지 않는다)
+    attach_seq: u64,
+    attach_failed: Option<u64>,
     quit: bool,
 }
 
@@ -113,6 +121,8 @@ impl App {
             message: None,
             pending: HashMap::new(),
             sized: HashMap::new(),
+            attach_seq: 0,
+            attach_failed: None,
             quit: false,
         }
     }
@@ -147,6 +157,8 @@ impl App {
                 },
                 e = keys_in.next() => match e {
                     Some(Ok(Event::Key(k))) if k.kind != KeyEventKind::Release => { self.on_key(k, &mut tx).await?; dirty = true; }
+                    // 그림만 든 clipboard를 붙이면 빈 붙여넣기로 오는 터미널이 있다
+                    Some(Ok(Event::Paste(s))) if s.is_empty() => { self.paste_image(&mut tx).await?; dirty = true; }
                     Some(Ok(Event::Paste(s))) => { self.input(&mut tx, s.into_bytes()).await?; }
                     Some(Ok(Event::Resize(..))) => dirty = true,
                     Some(Ok(_)) => {}
@@ -184,7 +196,20 @@ impl App {
                         }
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), _) => self.set_ws(w),
+                    (Outcome::Ok(aaa_proto::FrontResponse::Attached { path, inserted, note }), _) => {
+                        self.message = Some(match (inserted, note) {
+                            (true, _) => format!("그림을 붙였다(입력창에 경로, Enter 없음): {path}"),
+                            (false, Some(n)) => format!("그림을 저장했다: {path} — {n}"),
+                            (false, None) => format!("그림을 저장했다: {path}"),
+                        })
+                    }
                     (Outcome::Ok(_), _) => {}
+                    (Outcome::Err(e), Some(Pending::Attach(n))) => {
+                        if self.attach_failed != Some(n) {
+                            self.attach_failed = Some(n);
+                            self.message = Some(format!("그림 붙여넣기 실패: {}", e.message));
+                        }
+                    }
                     (Outcome::Err(e), Some(Pending::Input)) => self.message = Some(lease_message(&e)),
                     (Outcome::Err(e), Some(Pending::Report(what))) => {
                         self.message = Some(format!("{what} 실패: {}", e.message))
@@ -270,6 +295,19 @@ impl App {
         Ok(())
     }
 
+    /// clipboard에 그림이 있으면 포커스 pane으로 올리고 true. 없으면 아무것도 보내지 않고 false.
+    async fn paste_image(&mut self, tx: &mut FrontSender) -> Result<bool> {
+        let Some(pane) = self.focus.clone() else { return Ok(false) };
+        let Some(png) = tokio::task::spawn_blocking(clip::image_png).await.ok().flatten() else { return Ok(false) };
+        self.attach_seq += 1;
+        self.message = Some(format!("그림 보내는 중({}KB)…", png.len().div_ceil(1024)));
+        for req in aaa_common::front::attach_requests(&pane, &png) {
+            let id = tx.send(req).await?;
+            self.pending.insert(id, Pending::Attach(self.attach_seq));
+        }
+        Ok(true)
+    }
+
     fn focused_machine(&self) -> Option<String> {
         self.focus.as_ref().and_then(|f| self.panes.get(f)).map(|p| p.machine_id.clone())
     }
@@ -284,6 +322,9 @@ impl App {
         if !self.in_prefix {
             if keys::is_prefix(&k, self.prefix.0) {
                 self.in_prefix = true;
+                return Ok(());
+            }
+            if k.code == KeyCode::Char('v') && k.modifiers == KeyModifiers::CONTROL && self.paste_image(tx).await? {
                 return Ok(());
             }
             return self.input(tx, keys::encode(&k)).await;
@@ -345,7 +386,7 @@ impl App {
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => self.move_focus(k.code),
             KeyCode::Char('?') => self.message = Some(
-                "c 새 탭 · % 좌우 · \" 위아래 · 화살표/o 이동 · n/p/1-9 탭 · t 가져오기 · r 재개 · x 닫기 · d 나가기"
+                "c 새 탭 · % 좌우 · \" 위아래 · 화살표/o 이동 · n/p/1-9 탭 · t 가져오기 · r 재개 · x 닫기 · d 나가기 · (prefix 없이) Ctrl+V 그림"
                     .into(),
             ),
             _ => {}

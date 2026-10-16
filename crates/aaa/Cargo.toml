@@ -40,3 +40,6 @@ portable-pty.workspace = true
 # TUI harness의 독립 관측 parser(production VT인 vt100과 다른 구현)
 vte = "0.15"
 unicode-width = "0.2"
+# TUI Ctrl+V 그림 E2E: 받은 PNG를 풀어 pixel을 보고, CI에서는 실제 clipboard에 쓴다
+png = "0.18"
+arboard = { version = "3", default-features = false, features = ["image-data"] }
