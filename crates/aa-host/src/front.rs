@@ -84,6 +84,20 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
             }
         })
     };
+    // pane을 바꾸는 요청(입력·크기·가져오기 등)은 받은 순서대로 하나씩 처리한다. TUI는 키마다 응답을 기다리지 않고
+    // 보내므로, 동시에 처리하면 키 순서가 뒤바뀐다. 조회 같은 나머지 요청은 동시에 처리한다.
+    let (ordered_tx, mut ordered_rx) = tokio::sync::mpsc::unbounded_channel::<(String, FrontRequest)>();
+    let ordered_task = {
+        let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
+        tokio::spawn(async move {
+            while let Some((id, body)) = ordered_rx.recv().await {
+                let result = host.call_from(DeviceRole::Local, &actor, Some(&front), body).await;
+                if tx.json(&FrontMsg::Res { id, result: result.into() }).await.is_err() {
+                    break;
+                }
+            }
+        })
+    };
     let mut watches: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
@@ -109,6 +123,14 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
                     }
                     tx.json(&FrontMsg::Res { id, result: Ok::<_, ErrorBody>(FrontResponse::Done).into() }).await?;
                 }
+                body @ (FrontRequest::PaneInput { .. }
+                | FrontRequest::PaneSend { .. }
+                | FrontRequest::PaneResize { .. }
+                | FrontRequest::PaneTake { .. }
+                | FrontRequest::PaneRelease { .. }
+                | FrontRequest::PaneKill { .. }) => {
+                    let _ = ordered_tx.send((id, body));
+                }
                 body => {
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     tokio::spawn(async move {
@@ -123,6 +145,7 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
     .await;
     layout_task.abort();
     state_task.abort();
+    ordered_task.abort();
     for (_, t) in watches {
         t.abort();
     }
