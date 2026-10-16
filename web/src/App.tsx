@@ -13,6 +13,7 @@ import { TermView } from "./Term";
 import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
+import { useInstall } from "./install";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
 
@@ -446,6 +447,7 @@ function Main({ role }: { role: DeviceRole }) {
             </section>
           );
         })}
+        <InstallButton />
       </aside>
       <main className="view">
         {currentThread ? (
@@ -481,6 +483,20 @@ function Main({ role }: { role: DeviceRole }) {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+/** 홈 화면에 설치할 수 있을 때만 목록 맨 아래에 보인다 */
+function InstallButton() {
+  const install = useInstall();
+  if (!install) return null;
+  return (
+    <div className="list-foot">
+      <button className="ghost" onClick={() => void install()}>
+        <Icon name="download" />
+        홈 화면에 설치
+      </button>
     </div>
   );
 }

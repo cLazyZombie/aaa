@@ -72,6 +72,12 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   check: <path d="m4 9.5 3.2 3L14 5.5" />,
+  download: (
+    <>
+      <path d="M9 3v8.5M5.5 8 9 11.5 12.5 8" />
+      <path d="M3.5 13.5v1.5h11v-1.5" />
+    </>
+  ),
   close: <path d="M4.5 4.5l9 9M13.5 4.5l-9 9" />,
 };
 
