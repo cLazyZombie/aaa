@@ -1,391 +1,1012 @@
-# aa 조사·개발 계획
+# aa 기획
 
-2026-10-16 · **조사·계획 완료, 사용자·coordinator 검토 대기**. 이 문서는 구현 승인이나 개발자 도구 문제 해결 완료를 뜻하지 않는다. 고정 버전의 분석은 [소스 분석](source-analysis.md), 실측과 미검증 조건은 [실험 기록](experiments.md)에 있다.
+2026-10-16 · **기획 개정판, 구현 승인 대기.** 독립 검토(로컬 `.coordinator/review.md`), 사용자 결정 1~6, coordinator 운영 경험 10항목을 반영했다. 이 문서는 구현 승인을 뜻하지 않는다. 개발자 도구 문제가 해결되었다는 뜻도 아니다.
+
+- 고정 버전의 소스 분석: [소스 분석](source-analysis.md)
+- 실측과 미검증 조건: [실험 기록](experiments.md)
+- 검토 지적별 반영 여부: [부록 B](#부록-b-검토-지적-반영표)
 
 ## 결론
 
-1. herdr의 PTY·세션 관리, **projects 0.2.x의 프로젝트 폴더·coordinator·ticker·inbox·routine·thread·profile**, web-ui의 모바일 terminal 경험을 하나의 Rust API 위에 묶는다.
-2. 중심 머신은 macOS, agent 실행 머신은 Windows·macOS·Linux다. CLI가 기본이며 웹은 같은 API를 쓰는 선택적 client다.
-3. Rust/Tokio·portable-pty·ghostty-vt adapter·Ratatui·SQLite, Rust/Axum 웹 서버와 TypeScript/React/Vite/xterm.js를 추천한다. 원격은 SSH와 SSH 없는 머신의 outbound WSS를 함께 설계한다.
-4. 개발자 도구 문제는 **고정 AAHost.app가 실행 책임을 소유하고 버전별 core와 분리되는 구조**를 우선 검증한다. 미등록 앱은 실제로 +221.609~236.280ms 느렸으며, 일회 등록 후·업그레이드·재부팅 합격은 아직 가설이다.
-5. **터미널·웹의 Ctrl+V 이미지 붙여넣기**를 필수로 제공한다. 이미지 bytes를 대상 agent 머신에 저장하고 agent별 입력 adapter로 전달하며, 유닛·실제 PTY/ConPTY·세 OS agent·헤드리스 웹 E2E로 검증한다. 성능 gate가 모두 통과하기 전 현 운영을 이전하지 않는다.
+1. **구조는 3층이다.** front(TUI·CLI·웹 브라우저), host backend(`aa host`, 중심 macOS), agent backend(`aa agent`, 각 머신의 Windows·macOS·Linux)로 나눈다. front는 상태 없는 얇은 client이며 host하고만 통신한다. host는 host 역할만 한다. host 머신에서 도는 agent도 별도 agent backend가 다룬다.
+2. **연결은 설정 주소로 맺는다.** agent backend가 TOML에 적힌 host 주소:포트로 TCP+TLS 1.3 연결을 연다(상호 고정 키). SSH와 tailnet 기능에는 의존하지 않는다. Tailscale은 host 웹을 HTTPS로 공개하는 `tailscale serve`에만 쓴다.
+3. **개발자 도구 등록은 한 번이다.** 고정 경로·고정 서명 identity의 실행 파일 `aa` 하나를 설치 때 한 번 등록한다(개발자 도구·전체 디스크 접근). macOS agent backend는 GUI 로그인 세션의 LaunchAgent로 떠서 스스로 책임 프로세스가 된다. host는 agent backend를 직접 띄우지 않고 OS에 기동을 요청한다. **아직 합격하지 않았다.** P0 실험이 먼저다.
+4. **MVP는 지금 운영(세 Mac, herdr 0.9.5 + projects 0.2.35)을 대체하는 범위다.**
+   - macOS host와 agent backend
+   - 첫 단계부터 host 웹 HTTPS 공개
+   - projects 0.2 핵심
+   - 상태 사건과 확인창 원격 응답
+
+   Windows·Linux는 MVP부터 계약 테스트·빌드·PTY smoke를 돌리고, 기능 합격은 M2에서 한다([정할 것 1](#16-위험과-정할-것)).
+5. **스택**
+   - Rust: Tokio, portable-pty, ghostty-vt adapter, Ratatui, rusqlite, rustls, toml/toml_edit
+   - TypeScript: React, Vite, xterm.js
+   - 웹 서버도 Rust(Axum)로 host 안에 둔다. Bun·Node는 배포 필수 요소가 아니다.
 
 ## 1. 범위·전제
 
-사용자 지정 범위는 **「macOS만 = coordinator·ticker·웹 서버가 도는 중심 머신, Windows·macOS·Linux = agent가 도는 머신」**이다. 중심은 지금의 mac-b처럼 한 머신의 프로젝트 폴더·AGENTS.md·memory를 기준으로 한다. herdr-projects는 v0.2.35까지의 형태만 참고했다. 중심 머신 자체도 macOS agent 실행부를 통해 local thread를 실행할 수 있다.
+### 사용자 결정(2026-10-16)
 
-고정 언어는 Rust 기본, 웹 TypeScript다. 웹 서버는 Rust로 만들고 TypeScript는 브라우저 코드·웹 도구에 쓴다. Bun runtime은 필수 설치 요소로 두지 않는다. OS 범위·추천 스택·아래 제안 경로와 명령은 변경 가능한 계획이므로 AGENTS.md에 넣지 않는다.
+| # | 결정 | 반영 위치 |
+|---|---|---|
+| 1 | backend·frontend 분리가 가장 중요하다. front는 얇은 client이고 상태는 backend에 있다. 이미지 paste도 front가 받아 backend로 보낸다 | §4, §9 |
+| 2 | 3층 구조: front ↔ host backend(중심 macOS) ↔ agent backend(각 머신). front는 host하고만 통신한다 | §4 |
+| 3 | 아래 「결정 3 세부」 참조 | §4·§5·§10·§11·§13 |
+| 4 | 구현은 mac-c worktree thread(Claude Opus high)가 한다 | 로드맵에 반영하지 않음 |
+| 5 | backend 설정은 TOML이다. 위치·스키마 버전·마이그레이션·오류 표시를 정한다 | §7 |
+| 6 | 아래 「결정 6 세부」 참조 | §6, §14 |
 
-| 항목 | 이번 설계의 범위 |
+**결정 3 세부.** host는 host 역할만 한다(2안).
+- 실행 파일은 하나이고 역할만 나눈다(`aa host`/`aa agent`). 경로와 서명은 고정이다.
+- agent backend가 PTY와 agent 프로세스를 소유한다.
+- host는 로컬 agent backend를 확인하고, 없으면 기동하거나 이미 떠 있는 것에 붙는다.
+- 웹은 host만 연다. agent backend는 외부에 열지 않는다.
+- 개발자 도구에 등록하는 대상은 agent backend뿐이며, 고정 경로로 띄운다.
+- E2E에 한 머신에서 agent backend 여러 개를 띄우는 경우를 넣는다.
+- MVP에서는 로컬 agent backend를 host의 자식으로 띄워도 된다. 프로토콜은 처음부터 원격과 같다.
+
+**결정 6 세부.** aa는 tailnet을 모른다.
+- 연결은 설정의 주소로 일반 TCP를 쓴다. 인증·암호화는 aa 자체 수준에서 한다.
+- 유일한 예외는 host 웹의 HTTPS 공개다(`tailscale serve`). 이것은 MVP 첫 단계에 들어간다.
+
+### 범위
+
+| 항목 | 이번 설계 |
 |---|---|
-| 중심 머신 | macOS, 단일 사용자·단일 권위 coordinator 상태 저장소; 프로젝트별 coordinator agent |
-| agent 머신 | macOS arm64/x64, Linux x64/arm64, Windows x64의 native 실행을 설계; Windows arm64 배포는 후속 검증 |
-| Windows 기준 | ConPTY 가능한 지원 버전부터; 우선 Windows 11 x64 native CI·실기기. WSL로 Windows 지원을 대신하지 않음 |
-| macOS 기준 | SMAppService 가능한 macOS 13 이상을 후보로 두되 실제 지원 하한은 서명·성능 gate에서 확정; 현재 운영 27.x 검증 필수 |
-| Linux 기준 | glibc 환경 우선, bash/zsh·systemd 없는 경우도 수동 per-user supervisor 가능; musl/배포판 확대는 별도 검증 |
-| 원격 | 기존 세 Mac은 SSH, SSH 서버 없는 Windows 등은 agent가 중심으로 outbound TLS 연결 |
-| 웹 | desktop·모바일, authenticated read/control, terminal·보고·inbox·routine·profile 표시; CLI와 기능 의미 동일 |
-| 복원 | 네트워크/client/관리 daemon 재접속 시 기존 실행 유지; OS 재부팅 이후는 layout·agent 대화 재개, 중단한 빌드를 성공으로 처리하지 않음 |
-| 이번 작업 | 문서·웹 보고서·격리 소규모 실험만. 제품 코드, 설치·권한·운영 서버·agent 설정 변경 없음 |
+| 중심 머신 | macOS 한 대에서 host backend를 돌린다. 단일 사용자·단일 권위 상태 저장소이고, 프로젝트별로 coordinator agent가 있다 |
+| agent 머신 | 대상: macOS arm64/x64, Linux x64/arm64, Windows x64 native. 중심 Mac도 로컬 agent backend로 agent를 돌린다. Windows arm64는 후속 검증 |
+| Windows | ConPTY가 되는 지원 버전부터 시작하고, 우선 Windows 11 x64다. WSL로 Windows 지원을 대신하지 않는다 |
+| macOS | SMAppService가 있는 macOS 13 이상을 후보로 둔다. 실제 하한은 서명·성능 gate에서 확정한다. 현재 운영 버전(27.x) 검증은 필수다 |
+| Linux | glibc 환경이 우선이다. systemd user + linger를 쓰고, 없으면 명시적 foreground 감독으로 돈다. musl 확대는 별도로 검증한다 |
+| 네트워크 | 머신은 지금 tailnet으로 묶여 있지만 aa는 이를 모른다. TOML의 호스트:포트로 TCP+TLS 연결한다. tailnet 밖 접속은 이번 범위가 아니다 |
+| 웹 | host만 연다. `127.0.0.1` HTTP로 열고 `tailscale serve`로 tailnet HTTPS 공개한다. desktop·모바일 모두 다루며, 보기와 조작 권한을 나눈다 |
+| 복원 | front·네트워크·host·agent backend가 재접속해도 실행 중인 세션은 유지된다. OS 재부팅 뒤에는 layout과 agent 대화를 재개한다. 중단된 빌드를 성공으로 처리하지 않는다 |
+| 이번 작업 | 문서·웹 보고서·검토만 했다. 제품 코드, 설치·권한 변경, 운영 서버·agent 설정 변경은 없다 |
 
-초기 비목표: 다중 사용자 SaaS, agent 자체 모델 API 대체, 임의 플러그인 marketplace, 외부 gateway/WebRTC/QUIC, 완전한 tmux 명령 호환. 세 OS **agent** 지원은 비목표가 아니며 첫 실행부부터 반영한다.
+초기 비목표:
+- 다중 사용자 SaaS
+- agent 모델 API 대체
+- 임의 플러그인 marketplace
+- 외부 gateway·WebRTC·QUIC
+- 완전한 tmux 명령 호환
+- tailnet 신원·ACL 활용
+
+세 OS **agent** 지원은 비목표가 아니다. 프로토콜과 빌드는 첫 단계부터 세 OS를 대상으로 한다.
 
 ## 2. 세 도구에서 취할 것
 
-| 도구·확보 버전 | 좋은 점·가져올 개념 | 줄이거나 버릴 점 | 라이선스·이용 방식 |
+| 도구·확보 버전 | 가져올 개념 | 줄이거나 버릴 점 | 라이선스·이용 방식 |
 |---|---|---|---|
-| herdr 0.9.5 `2ecf19a` | 실제 PTY, workspace/tab/pane, detach/attach, terminal identity, snapshot/event, integration/session restore, machine 선택 | 원격/web가 먼저 서버를 띄우는 경합, GUI 터미널 수명에 의존한 권한, 내부 wire enum 종속 | Apache-2.0, 선택적 재사용 시 고지·수정 표시·NOTICE 확인 |
-| projects 0.2.35 `1f05c00` | 프로젝트 폴더·AGENTS/memory, coordinator의 판단과 binary의 절차 분리, profile, ticker/inbox/routine, worktree·report·sidebar, `herdr --machine` | 매 요청 CLI/SSH 실행, 원격 tab/checkout 제한, polling·파일 상태의 중복, POSIX 원격 스크립트 | MIT, 고지 보존; domain 개념과 검증된 작은 로직 중심 |
-| web-ui 0.4.10/v29 `aa624cb` | React/xterm terminal, 모바일 composer·IME, chat/terminal 전환, 장치 권한, ACK/backpressure, 원격 연결 표시 | Bun→Node→herdr 층, 웹이 실행 서버를 임의 기동, vendor별 transcript 전체를 MVP에 복제 | MIT, 고지 보존; UI 패턴·선택적 component 참고 |
-| 보조 mobile-relay 0.21.3 `a58f1fc` | 장치별 취소·controller/reader, 불안정 연결 복구 관점 | 외부 gateway·NAT·WebRTC를 초기 범위로 확대하지 않음 | AGPL-3.0-or-later, 제품 코드에 혼합하지 않고 일반 개념만 참고 |
+| herdr 0.9.5 `2ecf19a` | 실제 PTY, workspace/tab/pane, terminal identity, snapshot/event, 얇은 client(server VT + 화면 변경분), integration·resume, Windows native(ConPTY) 실행 경험 | 원격·웹이 먼저 서버를 띄우는 경합, GUI 터미널 수명에 의존한 권한, 내부 bincode wire 종속, 감지 manifest를 `herdr.dev`에서 자동 갱신하는 방식 | Apache-2.0. 선택적으로 재사용할 때 LICENSE와 수정 표시를 남긴다(루트 NOTICE 없음) |
+| projects 0.2.35 `1f05c00` | 프로젝트 폴더·AGENTS/memory, coordinator의 판단과 binary의 절차 분리, profile, ticker/inbox/routine, worktree·report·sidebar, brief 전달 규칙, trust_screens, `owned.json` journal | 매 요청 CLI·SSH 실행, 원격 tab/checkout 제한, polling, POSIX 원격 스크립트 | MIT, 고지를 보존한다. 개념과 검증된 작은 로직 중심으로 가져온다. 세부 대응은 [부록 A](#부록-a-herdr-projects-0235-기능-대응표) |
+| web-ui 0.4.10/v29 `aa624cb` | React/xterm terminal, 모바일 composer·IME, chat/terminal 전환, 장치 권한, ACK/backpressure, `tailscale serve` HTTPS 공개 절차, Web Push·PWA | Bun→Node→herdr 층, 웹이 실행 서버를 임의 기동(자동 재연결 포함), `Tailscale-User-Login` 헤더 자동 입장, vendor별 transcript 전부 | MIT, 고지를 보존한다. 번들 제3자 중 elkjs(EPL-2.0), DOMPurify(Apache/MPL), OFL 글꼴이 있어 component를 가져올 때 의존성별로 확인한다 |
+| 보조 mobile-relay 0.21.3 `a58f1fc` | 장치별 취소, controller/reader 역할, 불안정한 연결 복구 | 외부 gateway·NAT·WebRTC는 범위가 아니다 | AGPL-3.0-or-later. 섞지 않고 일반 개념만 참고한다 |
 
-원본 URL·전체 commit·코드 근거·각 구조도는 [소스 분석](source-analysis.md)에 보존했다. mac-a 설치 v29의 TS server 파일 100개가 공개 소스와 모두 일치한다. mac-b의 mobile-relay는 web-ui와 다른 프로그램이다. 현재 aa의 원격 초기 MIT LICENSE는 이력을 보존하여 유지했다.
+원본 URL·전체 commit·코드 근거는 [소스 분석](source-analysis.md)에 있다. aa 저장소의 MIT LICENSE는 유지한다.
 
 ## 3. 목표 기능과 사용자 흐름
 
 | 영역 | 목표 기능 | 사용자가 확인할 결과 |
 |---|---|---|
-| 프로젝트·coordinator | 프로젝트 폴더의 AGENTS.md·memory·TASKS.md, coordinator session, context·inbox cursor | 놓친 알림도 context에서 다시 읽음; 시작 profile·실제 세션 식별 가능 |
-| thread | worktree/tab/checkout 또는 원격 task dir, profile, brief, 보고, review/ack/resolve | repo 없는 원격 작업도 가능; report가 검토 대기로 보존됨 |
-| 여러 머신 | 머신 등록·상태·능력·profile, `--machine`, 단절/복귀 | 단절 중 thread를 failed/done으로 오판하지 않음; remote work 유지 |
-| 감시·routine | event 기반 상태 감시, 주기적 reconciliation, 일정·알림·허용된 명령 | 중복 알림 억제, 실행 ID와 누락된 일정 표시, explicit 실패 |
-| 세션 | 이름 있는 session, workspace/tab/pane, split/resize/scrollback, 여러 client·detach/attach | client 종료·SSH 끊김·웹 재시작으로 pane이 죽지 않음 |
-| 복원·갱신 | 실행 중 pane 재attach, versioned launch/resume spec, 재부팅 후 agent resume | model·effort·권한 의도가 기록됨; 실행 중이던 build는 interrupted로 남음 |
-| 웹·모바일 | terminal, 상태·보고·inbox·routine, 읽기/조작 구분, 모바일 입력·한글 IME | 모바일 background tab이 PTY 크기를 빼앗지 않음; 보고서와 조작이 분리됨 |
-| 이미지 붙여넣기 | 터미널·웹의 Ctrl+V → 이미지 수집·미리보기/첨부 → local 또는 원격 agent에게 전달 | Claude·Codex 등이 **자기 머신의 실제 이미지 파일**을 읽음. upload 완료 뒤 첨부하고 Enter/전송은 사용자 의도에 따름 |
-| 운영·진단 | `doctor`, machine health, responsible/signature/키체인 상태, 버전·프로토콜 | 빠르지만 키체인이 잠긴 상태도 건강 실패로 표시 |
+| 프로젝트·coordinator | 프로젝트 폴더(AGENTS.md·memory·TASKS.md·결정 기록), coordinator 세션, context, inbox cursor | 놓친 알림도 context에서 다시 읽는다. 결정은 한 곳에 남는다 |
+| thread | 종류: worktree·tab·checkout·adopt·repo 없는 task dir. 그 밖에 profile, brief, 보고, 검토·ack·resolve | 로컬과 원격에서 기능이 같다. report가 검토 대기로 보존된다 |
+| 여러 머신 | enrollment, 상태, 능력, profile, 단절·복귀, 머신 건강 | 단절 중 thread를 failed/done으로 오판하지 않는다. 이상이 바로 보인다 |
+| 상태 사건·알림 | agent backend가 턴·질문·오류·종료를 사건으로 보낸다. coordinator·front는 구독한다 | 화면 긁기로 상태를 추정하지 않는다. 막히면 즉시 알림이 온다 |
+| 확인창 원격 응답 | 폴더 신뢰·권한 확인 같은 확인창을 구조화된 질문으로 올린다 | 웹·TUI·coordinator가 원격에서 답한다. 자동 승인은 기본 금지 |
+| 메시지 | 즉시 끼어들기와 다음 턴 대기열을 나눈다. 수신 확인과 기록을 남긴다 | 특수문자가 깨지지 않는다. 받았는지 화면을 다시 읽지 않는다 |
+| 세션 | 이름 있는 session, workspace/tab/pane, split·resize·scrollback, 여러 front, detach/attach | front 종료·네트워크 끊김·host 재시작으로 pane이 죽지 않는다 |
+| 복원·갱신 | 실행 중 pane 재attach, launch/resume spec, 재부팅 뒤 resume | model·effort·권한·daemon 금지 인자가 유지된다. 실행 중이던 build는 interrupted로 남는다 |
+| 웹·모바일 | HTTPS 주소의 terminal·보고서·inbox·질문, 모바일 입력·한글 IME, push 알림 | 다른 기기에서 결과물을 바로 본다. 보기 권한으로는 조작할 수 없다 |
+| 이미지 붙여넣기 | TUI·웹 Ctrl+V → front → host → 대상 agent 머신 파일 → agent 입력 | Claude·Codex가 **자기 머신의 실제 이미지 파일**을 읽는다 |
+| 결과물 | report·library를 host가 받아 HTTPS로 보여 준다. 큰 결과물은 지연 전송한다 | 175MB·5GB 결과물도 잃지 않고 볼 수 있다 |
+| 병합 | 병합 대기열(순번·사건·훅), 정리 | 병합 사이에 다시 통합하는 비용이 줄어든다 |
+| 운영·진단 | `doctor`, 계보·서명·키체인·첫 실행 지연 자가 보고, 동시 작업 한도 | 빠르지만 키체인이 잠긴 상태도 실패로 보인다 |
 
-명령 형태의 예시는 `aa project context`, `aa thread start --machine M --profile P --task-file F`, `aa pane run/read/keys`, `aa session attach/detach`, `aa machine list`, `aa web serve`다. 이는 **설계 예시이며 현재 실행 가능한 명령은 아니다**. 명령마다 JSON 출력·안정된 error code·exit code를 정의한다. `pane run`의 셸 문자열 실행과 구조화된 `process start(argv)`를 분리하여 원격 OS의 셸 인용을 제어 흐름으로 사용하지 않는다.
-
-## 4. 프로세스와 모듈
-
-```mermaid
-flowchart TB
-  subgraph CENTER[중심 머신 · macOS]
-    C[coordinator agent · 프로젝트 폴더 / AGENTS.md / memory]
-    CLI[aa CLI / TUI · 기본 인터페이스]
-    D[aa-coordinatord · 프로젝트 / thread / ticker / inbox / routine]
-    DB[(SQLite · 상태 / event / outbox)]
-    W[aa-web · Rust Axum · 인증 / HTTP / WebSocket]
-    C --> CLI
-    CLI --> D
-    D --> DB
-    W --> D
-  end
-  B[TypeScript React · desktop / 모바일 · xterm.js] --> W
-  D --> TRANSPORT[공통 agent protocol · SSH stdio 또는 outbound WSS]
-  subgraph MAC[macOS agent 머신]
-    H[고정 AAHost.app · 실행 broker · 유일한 기동 주체]
-    A[aa-agentd · 머신 API / profile / 상태·파일]
-    S[aa-sessiond · PTY / VT / shell / agent]
-    H --> A
-    H --> S
-    A --> S
-  end
-  subgraph OTHER[Windows / Linux agent 머신]
-    SUP[OS별 per-user supervisor]
-    AG[aa-agentd · 같은 protocol]
-    SS[aa-sessiond · ConPTY 또는 Unix PTY]
-    SUP --> AG
-    SUP --> SS
-    AG --> SS
-  end
-  TRANSPORT <--> A
-  TRANSPORT <--> AG
-```
-
-이름은 역할을 표현한 제안이다. aa CLI·coordinatord·agentd·web는 공통 Rust workspace의 subcommand 또는 별도 executable로 패키징하되 역할·권한·수명은 분리한다. web 재시작은 coordinator와 session에 영향을 주지 않는다. ticker는 중심 daemon 안의 명시적인 task로 두어 projects의 역할을 유지하면서 또 하나의 중복 상태 소유자는 만들지 않는다.
-
-**실행부를 먼저 분리한다.** 관리 daemon은 오래 사는 session host에 연결한다. session host가 PTY master·child handle·VT state를 소유한다. 관리 daemon 갱신은 session host를 종료하지 않는다. 활성 session은 해당 세션의 실행부 버전을 계속 쓰고, 신규 session부터 새 버전을 선택한다. session host 자체 업그레이드는 drain 또는 명시적 재시작으로 처리하며 이를 무중단이라고 부르지 않는다. 재부팅 뒤 기존 OS 프로세스가 살아 있다고 약속하지 않는다.
-
-macOS에서는 고정 app broker가 agentd/sessiond를 직접 생성하여 책임 계보를 통제한다. 중간 web·sshd·관리 daemon이 자체 fallback server를 만들지 못하게 한다. broker가 단일 인스턴스 lock과 인증된 local IPC로 시작 요청을 합친다. 앱 자동기동/요청 기동과 helper 장애 후 책임 유지까지 실증해야 이 구조를 채택할 수 있다. 단순 launchd SID 판정은 사용하지 않는다.
-
-프로젝트·thread domain, agent adapter(Claude/Codex), process/PTY adapter, transport, state store, TUI, web를 라이브러리 경계로 나눈다. 초기에는 동적 플러그인 ABI를 만들지 않고 내장 adapter로 시작한다. 뒤에는 manifest+외부 프로세스 RPC 확장을 고려하되 빌드·설치 자동 실행은 별도 기능으로 다룬다.
-
-## 5. 세 OS 실행부
-
-| 차이 | macOS | Linux | Windows native |
-|---|---|---|---|
-| 터미널 | Unix PTY·tty·SIGWINCH | Unix PTY·tty·SIGWINCH | ConPTY·ResizePseudoConsole·별도 input/output pump |
-| 프로세스 수명 | 고정 app broker·GUI 보안 session, session host | per-user supervisor, systemd user unit 선택, 없으면 명시 foreground supervisor | user-logon Task Scheduler의 supervisor 후보; SSH/Bun job에서 독립 기동·검증 |
-| 종료·자식 관리 | PID+시작 identity 확인, process group 소유 추적 | 같은 원칙 | process handle+creation time, Job Object는 session host가 소유; Cancel/CTRL event·종료 fallback 의미 분리 |
-| 셸 | 사용자 기본 zsh/bash, argv 실행 우선 | 사용자 shell, argv 실행 우선 | PowerShell/pwsh/cmd 종류 명시, CreateProcessW 인용·UTF-16 경로 |
-| 경로·환경 | POSIX path·HOME, 외장 볼륨 권한 | POSIX bytes path·HOME, locale | drive/UNC·backslash·APPDATA/LOCALAPPDATA·대소문자·UTF-16 |
-| 줄바꿈·문자 | LF와 raw terminal bytes | 동일, locale 검증 | CRLF·codepage/UTF-8·ANSI, 단순 LF 치환 금지 |
-| local IPC | user-only UDS·peer UID | user-only UDS·peer UID | user SID 제한 Named Pipe·ACL |
-| 인증 저장 | GUI 로그인 키체인 접근 검증 | 파일 권한·OS keyring 선택 | 사용자 DPAPI/Credential Manager 후보, interactive user와 service 계정 구분 |
-| SSH | 시스템 ssh, known_hosts | OpenSSH, 배포판 차이 | OpenSSH optional; 없으면 outbound WSS |
-| macOS 실행 검사 문제 | 별도 필수 gate | 해당 없음 | 해당 없음; AV/SmartScreen·서명은 별도 성능 관측 |
-
-portable-pty의 API가 있다는 것만으로 전체 수명 관리가 해결되지는 않는다. Windows의 handle·job·ConPTY 입력/출력 deadlock, 부모 SSH 종료 뒤 생존은 native E2E로 확인한다. [Microsoft ConPTY 문서](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)는 동기 I/O 채널을 별도 thread에서 처리하도록 설명한다. wrapper 안에 blocking PTY reader/writer를 두고 Tokio event loop를 막지 않는다.
-
-Windows 기본을 Session 0의 시스템 서비스로 잡지 않는다. 사용자 자격 증명·agent 로그인·대화형 앱과 다른 보안 세션이기 때문이다. user-logon supervisor를 첫 후보로 하고, 로그인 전 서비스 실행까지 필요한지는 별도 결정한다. Linux systemd user·Windows Task Scheduler·macOS login item은 **설치·운영 단계의 제안**이고 이번 작업에서 등록하지 않았다. 해당 서비스가 없는 환경에서는 명시적 supervisor를 실행할 수 있으나 자동 복구 보장 수준을 표시한다.
-
-머신 경로는 항상 `(machine_id, os, native_path)`로 저장한다. 중심 Mac의 PathBuf로 Windows 경로를 canonicalize하지 않는다. control API는 Unicode 경로를 기본으로 하고 Unix 비UTF-8 경로는 명시적으로 지원 불가 오류 또는 별도 bytes encoding을 선택한다. 실행 env는 machine-local profile에서 해석하며 HOME·PATH·드라이브를 중심 값으로 덮어쓰지 않는다. 파일 전송에서 절대 경로·상위 이동·symlink/junction을 검증한다.
-
-## 6. 상태·API·원격 연결
-
-### 상태 소유권
-
-중심의 SQLite가 project/thread/profile snapshot·inbox/routine·보고 receipt·원격 연결 관측의 권위다. 각 agent의 local SQLite는 자신의 실행·세션 manifest·command receipt·outbox를 소유한다. SQLite 파일을 SMB/NFS로 공유하지 않는다. WAL·transaction·단일 write task로 동시 접근을 관리한다. Markdown/TOML은 사람이 읽고 agent가 쓰는 문맥으로 유지한다.
+아래 명령은 **설계 예시이며 지금 실행되는 명령이 아니다**.
 
 ```text
-중심의 사용자 데이터 영역(제안)
-  state.sqlite3, config.toml, machine identities
-  projects/<project>/AGENTS.md, PROJECT.md, TASKS.md, MEMORY.md, memory/, routines/
-  projects/<project>/threads/<id>/brief.md, report.md, library/
-머신별 사용자 데이터 영역
-  state.sqlite3, sessions/<session-id>/manifest.json, bounded output logs
-  worktrees 또는 task dirs/.aa/<project>/<thread>/brief.md, report.md, library/
-macOS 고정 실행부(제안)
-  /Applications/AAHost.app                       설치 뒤 고정
-  사용자 데이터 영역/aa/releases/<version>/      교체 가능한 core
+aa host / aa agent                      역할 실행(보통 OS 감독자가 띄움)
+aa machine enroll --open 10m            host에서 등록 창 열기
+aa agent enroll <host:port>             agent 머신에서 등록
+aa session attach [--machine M] <name>  TUI front
+aa pane run|read|send                   셸 문자열과 구조화된 process start(argv)는 분리
+aa thread start --machine M --profile P --task-file F
+aa thread message <id> --queue|--interrupt --text-file F
+aa question list / aa question answer <id> <선택지>
+aa decision add / aa merge enqueue <thread>
+aa web publish / aa web publish off
+aa doctor / aa config check / aa config migrate
 ```
 
-중복된 file/DB 상태를 임의로 양쪽에서 수정하지 않게 한다. profile·project config는 revision과 원본 hash를 가진 입력이고 DB는 이를 파싱한 snapshot을 저장한다. report.md는 thread가 쓰는 원본, 중심의 report는 검증된 사본이다. inbox Markdown 투영의 처리 상태는 API ack로 변경한다. 파일 감시가 실패해도 reconciliation이 변경 hash를 다시 찾는다.
+명령마다 JSON 출력, 안정된 error code, exit code를 정의한다.
 
-thread의 `launch_state`(planned/starting/running/exited/failed/interrupted), `agent_state`(unknown/working/blocked/idle), `review_state`(none/ready/acknowledged/resolved), `connection_state`를 분리한다. 오래된 관측은 last_seen/stale로 표시한다. agent idle 또는 100% progress만으로 검토·완료·merge를 자동 확정하지 않는다.
+## 4. 3층 구조
 
-### 공통 API
-
-Rust typed request/event와 JSON Schema로 TypeScript 타입을 생성한다. 제어 plane은 길이 제한을 가진 versioned JSON, terminal plane은 seq·offset·ACK가 있는 binary payload로 분리한다. bincode enum 순서나 Rust 메모리 구조를 공개 wire 계약으로 노출하지 않는다.
-
-주요 영역은 project/context, thread/start/prompt/report/ack/resolve, machine/capabilities/profiles, session/workspace/tab/pane, terminal/attach/input/resize, **attachment/begin/chunk/commit/status/cancel와 pane/attach-image**, events/subscribe, routine/approve/run이다. local은 UDS/Named Pipe, remote는 동일 envelope의 SSH stdio/WSS다. 웹에는 `/api/v1`의 resource endpoint와 `/ws` terminal/event stream을 제공한다.
-
-envelope에는 protocol major·minor, request ID, machine ID·boot ID, object ID, command ID, deadline, revision을 둔다. hello에서 기능을 협상하고 알 수 없는 선택 필드는 무시하되 필수 기능 부재는 명시 오류로 돌려준다. boot가 달라진 오래된 pane 입력, unknown major, 초과 frame, 잘못된 offset은 거부한다. client의 cursor가 보존 범위 밖이면 snapshot 후 이어진 event를 보낸다.
-
-outbox/receipt로 state change와 전달 상태를 원자적으로 저장한다. 동일 command ID의 재연결은 결과 조회로 처리한다. 터미널 타이핑과 외부 agent의 실제 접수까지 완전한 exactly-once를 주장하지 않는다. 접수 확인 없이 연결이 끊기면 `delivery_unknown`으로 남기고 **prompt·keys·shell command를 자동 재입력하지 않는다**. 전송 재접속과 작업 재실행은 다른 절차다.
-
-여러 client는 독립 viewport를 갖되 실제 PTY 크기는 pane의 조작 lease 소유자가 정한다. observe client는 입력·resize를 할 수 없다. 제어 전환·lease expiry는 서버가 판정하고 입력 직전에 재확인한다. 느린 client는 bounded queue에서 snapshot으로 재동기화하며 전체 agent를 무기한 backpressure하지 않는다. 출력 로그·스크롤백 상한, frame 상한·rate limit은 설정 가능한 정책으로 둔다.
-
-### 원격 등록·설치·갱신
-
-기존 세 Mac에는 SSH key·known_hosts를 재사용한다. 연결 명령은 remote supervisor에게 연결하거나 **정해진 broker에 시작을 요청**할 뿐, SSH 안에서 임의 daemon을 만들지 않는다. shell 부트스트랩은 OS 식별·고정 executable 경로 실행까지만 한정한다. Windows의 PowerShell/cmd 인용은 OS adapter가 담당하며 이후 모든 지시는 typed frames로 전송한다.
-
-SSH 없는 머신은 OS별 agent package를 한 번 설치하고 짧은 enrollment code로 중심 fingerprint를 확인한 뒤, agent가 outbound WSS로 접속한다. 장치별 key를 발급·취소하고 pin 또는 client certificate로 상호 식별한다. 본 연결에서는 short code를 다시 보내지 않는다. 중심에 접근 가능한 LAN/VPN/명시 TLS endpoint가 전제이며 NAT gateway를 새로 운영하지 않는다. SSH도 없고 중심에 outbound 접근도 없으면 현재 설계로 연결할 수 없다고 표시한다.
-
-원격 설치는 OS/arch별 서명 package·hash/manifest 검증 → 사용자 데이터 디렉터리의 새 version staging → self-check → atomic switch(Windows는 실행 파일을 덮어쓰지 않고 다른 directory) 순서다. 관리자 설치·SSH 서비스 추가는 필수가 아니다. 기존 실행부를 종료하는 자동 update는 하지 않는다. 프로토콜 호환 범위 내에서 단계별 갱신하고, rollback은 DB schema와 기존 session 버전을 함께 고려한다. 다운로드 실패·서명 실패를 무시한 fallback 설치는 없다.
-
-### profile·hook·보고
-
-profile은 이름, agent kind, model, effort, argv, env 참조, resume 방식, OS별 shell을 가진다. 원격에서 해석한 결과와 revision을 thread에 저장하고 중심 허용 목록과 원격 실행 정책 양쪽에서 검증한다. restart/resume 때 profile이 바뀌었으면 기존 snapshot 사용 또는 명시 갱신 중 하나를 선택한다. 권한 관련 launch intent도 보존하지만 실제 agent CLI의 현재 지원·trust 절차를 우회하지 않는다.
-
-Claude/Codex adapter는 semantic hook을 우선하고 process 생존·screen heuristic을 보조로 둔다. hook이 없거나 신뢰가 보류됐으면 unknown/stale 상태를 솔직히 표시한다. 동일 session ID·boot ID·한정 token으로 잘못된 pane의 상태 보고를 차단한다. native `aa hook`가 작은 bounded JSON을 로컬 IPC로 전달하여 매 hook마다 Python·shell·SSH 체인을 만들지 않는다. transcript parsing/chat 기능은 최소 read-only부터 추가하고 버전별 fixture로 검증한다.
-
-report는 hash가 다른 파일을 임시 경로로 받아 크기·hash를 검증한 뒤 atomic publish한다. library 전송에는 상대 경로·digest·길이 manifest, partial receipt·재개 offset을 둔다. symlink/junction을 따라 임의 파일을 읽지 않는다. 보고 파일이 복사됐다고 모든 artifact가 복사됐다고 가정하지 않는다. resolve는 최종 receipt와 dirty worktree 검사를 통과해야 하며 실패한 회수는 worktree를 보존한다.
-
-### 이미지 붙여넣기: 클라이언트 수집 → 대상 머신 파일 → agent 입력
-
-herdr 0.9.5 소스에서 원격 이미지 bridge를 확인했다. client가 Ctrl+V 또는 빈 bracketed paste를 감지하여 **client 머신의 clipboard 이미지 bytes**를 `ClientMessage::ClipboardImage`로 보낸다. 대상 서버가 `<temp>/herdr-clipboard-images-<euid>/client-<client_id>-clipboard-<nanos>-<attempt>.png` 등의 파일을 만들고 해당 **대상 서버의 절대 경로**를 pane Paste 입력에 넣는다. Windows staging 디렉터리 suffix는 euid 대신 server PID다. 이 bridge는 원격 endpoint 경로이며 로컬 endpoint의 모든 Ctrl+V를 herdr가 같은 방식으로 처리한다고 해석하지 않는다. 웹 UI도 브라우저 file을 대상 머신에 업로드한 뒤 경로를 composer/terminal에 넣는다. [확인한 코드와 차이](source-analysis.md#이미지-붙여넣기-소스-확인).
-
-aa는 local/remote를 같은 attachment API로 다룬다. 원격 agent의 clipboard를 읽거나 Mac 임시 경로 문자열만 복사하지 않는다. **이미지 bytes를 실제 agent 머신으로 옮기고 그 머신에서 읽을 수 있는 파일을 만든 뒤 입력을 전달한다.** agent 머신에 GUI·clipboard·X11/Wayland·별도 image relay를 요구하지 않는다. 이 기능 때문에 macOS daemon을 클라이언트/웹 계보에서 새로 띄우지 않는다.
+### 4.1 역할과 프로세스
 
 ```mermaid
 flowchart LR
-  T[터미널 client · Ctrl+V · OS clipboard] --> A[attachment API · upload ID / 대상 session]
-  B[웹 · paste event · image Blob] --> G[인증된 Mac 웹 gateway]
-  G --> A
-  A --> X[UDS/pipe 또는 SSH/WSS · bounded binary chunks]
-  X --> M[대상 macOS / Windows / Linux agentd]
-  M --> F[검증·원자적 저장 · agent 머신의 이미지 파일]
-  F --> R[길이·SHA256·native path receipt]
-  R --> P[대상 재검증 · Claude/Codex 입력 adapter]
+  subgraph FRONT[front · 상태 없는 얇은 client]
+    TUI[aa TUI · CLI]
+    BR[웹 브라우저 · React · xterm.js]
+  end
+  subgraph HOSTM[중심 머신 · macOS]
+    TS[tailscale serve · HTTPS]
+    H[aa host · Front API · 웹 · ticker · 오케스트레이션]
+    HDB[(host SQLite · 정본 목록 · spec · inbox)]
+    LA[aa agent · 로컬 agent backend]
+    LS[aa session-host · PTY · VT]
+    TS --> H
+    H --> HDB
+    LA -- Agent link · UDS --> H
+    LA --> LS
+  end
+  subgraph AGM[agent 머신 · Windows / macOS / Linux]
+    RA[aa agent]
+    RS[aa session-host · PTY / ConPTY · VT]
+    RA --> RS
+  end
+  TUI -- Front API · UDS 또는 TCP+TLS --> H
+  BR -- HTTPS --> TS
+  RA -- Agent link · TCP+TLS 1.3 · agent가 연결 --> H
+```
+
+| 프로세스(역할) | 위치 | 소유하는 것 | 띄우는 주체 |
+|---|---|---|---|
+| `aa` TUI·CLI (front) | 아무 기기 | 화면 viewport와 입력 중인 초안(저장 안 함) | 사용자 |
+| 웹 (front) | 브라우저 | 같음 | 사용자 |
+| `aa host` | 중심 Mac 1대 | 정본 목록·spec·thread·inbox·routine·결정 기록, lease·권한, Front API, 웹 | macOS gui 도메인 LaunchAgent(KeepAlive) |
+| `aa agent` | 모든 agent 머신(중심 Mac 포함) | 머신 API, session host 감독, 파일·attachment 저장, 상태 사건, 머신 건강 | OS 감독자(macOS LaunchAgent, Windows 로그온 예약 작업, Linux systemd user) |
+| `aa session-host` | 세션마다 하나 | PTY master·child handle·VT 상태·출력 로그 | `aa agent` |
+| `aa hook` | agent pane 안 | 없음(bounded 사건 한 건을 로컬 agent backend에 전달) | agent harness |
+
+모두 같은 실행 파일 `aa`의 역할이다. 설치·업데이트는 한 번에 하고, 경로와 서명은 고정이다(§10, §11).
+
+### 4.2 경계 원칙
+
+1. **front는 host backend하고만 통신한다.** agent backend에 직접 붙지 않는다. agent 머신에서 사람이 쓰는 CLI도 host를 거친다.
+2. **front는 backend를 띄우지 않는다.** host가 없으면 「host 없음」만 알린다.
+3. **host는 자식 프로세스를 만들지 않는다.**
+   - routine 명령·git·worktree·파일 작업은 해당 머신의 agent backend에 요청한다. host 머신의 작업이면 로컬 agent backend에 요청한다.
+   - 예외는 `tailscale` CLI 호출(§6.3)과, MVP 개발 모드의 로컬 agent backend 자식 기동(아래 4번)이다.
+4. **host가 로컬 agent backend를 「띄운다」는 것은 OS 감독자에게 기동을 요청한다는 뜻이다.**
+   - 요청 방법: macOS는 `launchctl kickstart`(`gui/<uid>`), Windows는 예약 작업 실행, Linux는 `systemctl --user start`다.
+   - 운영 모드에서는 host가 직접 fork하지 않는다. 자식으로 띄우면 host가 재시작될 때 책임 프로세스가 사라져 pane이 느려지기 때문이다(§10.3).
+   - MVP 개발 모드에서는 결정 3에 따라 자식으로 띄울 수 있다. 다만 doctor가 그 상태를 「개발 모드」로 표시하고, 운영 모드에서는 시작을 거부한다.
+5. **agent backend는 외부에 아무것도 listen하지 않는다.** 로컬 IPC(UDS/Named Pipe)는 `aa hook`과 session host 전용이며 front 명령을 받지 않는다.
+6. **이미지·파일은 front → host → agent로만 간다**(§9).
+7. **aa는 tailnet을 모른다.** 예외는 §6.3의 웹 HTTPS 공개다.
+
+### 4.3 경계 계약
+
+| 경계 | 계약 | transport | 인증 | 재연결 | 버전 |
+|---|---|---|---|---|---|
+| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TCP+TLS, 브라우저 HTTPS(serve) → `127.0.0.1` HTTP·WS | UDS peer UID + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
+| host ↔ agent | Agent link | 로컬은 UDS, 원격은 TCP+TLS 1.3. 연결은 agent가 연다 | 상호 고정 키(자체 서명 인증서 fingerprint pinning) | backoff+jitter, outbox 재전송, command ID로 결과 조회 | major.minor, host가 agent N-1 minor 지원 |
+| agent ↔ session host | Session IPC(내부) | 세션별 UDS/Named Pipe | peer UID/SID + 세션 token | agent 재시작 뒤 registry로 재접속 | 내부 버전. 이전 session host와 호환 |
+| agent pane ↔ agent | Hook IPC | UDS/Named Pipe | 세션·boot ID에 한정한 token | 없음(bounded JSON 한 건) | hook 버전 |
+
+Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 따른다.
+
+- **schema와 생성:** Rust typed request/event와 JSON Schema로 정의하고, TypeScript 타입을 생성한다. 웹의 `/api/v1`·`/ws`는 Front API를 생성으로 투영한 것이며 의미가 같다.
+- **plane 분리:** 제어 plane은 길이 제한이 있는 versioned JSON이다. 터미널 plane은 seq·offset·ACK가 있는 binary frame이다. bincode enum 순서나 Rust 메모리 구조를 wire 계약으로 쓰지 않는다.
+- **envelope:** protocol major·minor, request ID, machine ID·boot ID, object ID, command ID, deadline, revision을 둔다.
+- **hello 협상:** hello에서 기능을 협상한다. 모르는 선택 필드는 무시하고, 필수 기능이 없으면 명시 오류를 낸다.
+- **거부 대상:** boot가 다른 오래된 pane 입력, 모르는 major, 초과 frame, 잘못된 offset은 거부한다.
+- **outbox와 receipt:** 상태 변경과 전달 상태를 원자적으로 저장한다. 같은 command ID로 재연결하면 결과를 조회한다. 터미널 타이핑과 외부 agent의 실제 접수까지 exactly-once라고 주장하지 않는다.
+
+### 4.4 상태 정본
+
+| 상태 | 정본 | 다른 쪽이 가진 것 |
+|---|---|---|
+| 프로젝트·thread·profile spec·inbox·routine·결정 기록·보고 receipt | host SQLite + 프로젝트 파일 | agent: thread 작업 폴더의 brief·report 원본 |
+| 세션·workspace·tab·pane 목록과 layout, launch/resume spec | host | agent: 실행 중 세션 manifest(사본·journal) |
+| 실행 사실(pid·시작 identity·exit·PTY 크기·VT 화면·scrollback·출력 offset) | agent(session host) | host: 마지막 snapshot·제한된 tail·last_seen |
+| attachment 메타데이터(hash·대상·상태·참조) | host | agent: 파일 본문과 receipt |
+| lease·권한·장치 | host | 없음 |
+| host 단절 중의 사건·보고 | agent outbox | host: 재연결 때 받아 대조 |
+
+상황별 동작:
+
+- **agent ↔ host가 끊기면** 세션은 계속 돈다.
+  - host는 해당 pane을 `disconnected`(읽기 전용)로 표시하고 마지막 snapshot과 tail을 보여 준다.
+  - 입력·resize·paste·메시지는 대기열에 넣지 않고 `agent_disconnected` 오류를 낸다.
+  - thread를 failed/done으로 바꾸지 않는다.
+  - 재연결하면 agent가 실행 사실과 outbox를 보고하고, host가 boot ID로 대조한다. boot ID가 바뀌었으면(재부팅) `interrupted`다.
+- **host가 재시작·업데이트되면** 세션은 유지된다. front와 agent가 다시 접속하고, host는 SQLite에서 목록을 다시 읽는다.
+- **agent backend가 재시작·업데이트되면** session host가 살아 있는 한 registry로 재접속하고 세션을 유지한다. 그때 책임 계보가 유지되는지는 P0 E3이 정한다(§10.6).
+- **머신이 재부팅되면** 프로세스는 사라진다. layout과 resume spec으로 재개를 제안하고, 진행 중이던 build는 `interrupted`로 남긴다.
+
+상태 축은 분리한다.
+- `launch_state`: planned·starting·running·exited·failed·interrupted
+- `agent_state`: unknown·working·waiting_input·question·idle
+- `review_state`: none·ready·acknowledged·resolved
+- `connection_state`
+
+오래된 관측은 last_seen/stale로 표시한다. agent idle이나 100% 진행만으로 검토·완료·merge를 자동으로 확정하지 않는다.
+
+### 4.5 터미널 plane과 얇은 front
+
+- **VT 정본은 session host에 있다**(ghostty-vt adapter).
+- **화면 형식은 front 종류마다 hello에서 협상한다.**
+  - TUI: cell grid snapshot + diff(herdr와 같은 얇은 방식)
+  - 웹: raw byte stream + 재접속용 snapshot
+  - 웹 snapshot은 VT 재생 문자열로 만든다. ghostty-vt formatter로 만들 수 있는지는 M1-1에서 확인한다. 안 되면 grid를 ANSI로 다시 그린 뒤 이어지는 byte를 보낸다.
+- **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
+- **여러 front의 화면과 크기**
+  - front마다 viewport는 독립이지만, 실제 PTY 크기는 조작 lease 소유자가 정한다. lease는 host가 판정하고 입력 직전에 다시 확인한다.
+  - 보기(observe) front는 입력도 resize도 할 수 없다.
+  - 느린 front는 bounded queue가 차면 snapshot으로 재동기화하며, 전체 agent를 무기한 backpressure하지 않는다.
+  - TUI와 웹이 섞여도 같은 규칙이다.
+  - 출력 로그·scrollback 상한과 frame 상한·rate limit은 설정 정책이다.
+
+## 5. 세 OS agent backend
+
+| 차이 | macOS | Linux | Windows native |
+|---|---|---|---|
+| 감독자 | gui 도메인 LaunchAgent(SMAppService.agent, `LimitLoadToSessionType=Aqua`, KeepAlive) | systemd user unit + linger. linger는 설치 때 사용자 승인. 없으면 명시 foreground 감독 | 로그온 시 예약 작업. 사용자 권한, 실패 시 재시작 |
+| 터미널 | Unix PTY·SIGWINCH | Unix PTY·SIGWINCH | ConPTY·ResizePseudoConsole, 별도 input/output pump thread |
+| 세션 수명 | session host 분리, 책임 계보(§10) | session host 분리. `KillUserProcesses`·linger 확인 | session host가 Job Object 소유. SSH job 밖에서 기동 |
+| 종료 | PID+시작 identity, 자기 process group | 같음 | process handle+creation time. Cancel/CTRL event와 종료 fallback 구분 |
+| 셸 | 사용자 zsh/bash, argv 실행 우선 | 사용자 shell, argv 우선 | PowerShell/pwsh/cmd 명시, CreateProcessW 인용, UTF-16 경로 |
+| 경로·환경 | POSIX path·HOME, 외장 볼륨(전체 디스크 접근 필요) | POSIX bytes path·HOME·locale | drive/UNC·backslash·LOCALAPPDATA·대소문자·UTF-16 |
+| 줄바꿈·문자 | LF·raw bytes | 같음, locale 검증 | CRLF·codepage/UTF-8. 단순 LF 치환 금지 |
+| local IPC | user-only UDS·peer UID | 같음 | user SID 제한 Named Pipe·ACL |
+| 키 저장 | 상태 디렉터리의 0600 파일(키체인 잠금에 의존하지 않음) | 0600 파일 | 사용자 DPAPI |
+| 실행 검사·속도 | 필수 gate(§10) | 해당 없음 | Defender·SmartScreen 지연을 doctor에서 관측 |
+
+- **portable-pty만으로는 부족하다.** API가 있다는 것만으로 수명 관리가 해결되지 않는다. Windows의 handle·job·ConPTY 입출력 deadlock, 부모 종료 뒤 생존은 native E2E로 확인한다.
+- **ConPTY I/O는 별도 thread에서 한다.** [ConPTY 문서](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)는 동기 I/O를 별도 thread에서 처리하라고 한다. blocking reader/writer는 Tokio event loop 밖에 둔다.
+- **herdr 0.9.5의 Windows native 지원을 참고한다.** herdr는 Windows native(ConPTY) 서버를 GA로 지원하고, kill-on-close Job은 WMI로 벗어난다. 이 처리를 참고 구현으로 검토한다(Apache-2.0).
+- **Windows는 Session 0 시스템 서비스를 기본으로 쓰지 않는다.** 로그온 전 실행이 필요한지는 [정할 것 8](#16-위험과-정할-것)이다.
+- **경로는 `(machine_id, os, native_path)`로 저장한다.** 중심 Mac의 PathBuf로 Windows 경로를 canonicalize하지 않는다. Unix 비UTF-8 경로는 명시 오류로 처리한다. 실행 env는 machine-local profile에서 해석하고, 중심의 HOME·PATH로 덮어쓰지 않는다. 파일 전송에서는 절대 경로·상위 이동·symlink/junction을 검증한다.
+
+## 6. 연결·보안
+
+### 6.1 Agent link
+
+- **연결 방향과 주소**
+  - agent가 `agent.toml`의 `host = "<이름 또는 주소>:<포트>"`로 연결한다.
+  - 이름은 OS resolver로 푼다. tailnet MagicDNS든 LAN DNS든 aa는 구분하지 않는다.
+  - 로컬 agent backend는 같은 계약을 UDS로 쓴다.
+- **암호화:** TLS 1.3(rustls)이 필수다. tailnet의 암호화에 기대지 않는다. 실제 LAN에서도 같아야 하기 때문이다.
+- **상호 인증**
+  - host와 agent가 각자 자체 서명 인증서(장치 키, rcgen)를 만든다.
+  - enrollment 때 fingerprint를 교환해 서로 pinning한다.
+  - Noise IK는 대안이다.
+- **enrollment**
+  - host에서 `aa machine enroll --open 10m`으로 시간 제한 창을 연다.
+  - agent에서 `aa agent enroll <host:port>`를 실행한다.
+  - 양쪽 화면에 키 교환에서 유도한 6자리 확인 코드(SAS)가 뜬다. 사용자가 host에서 일치를 확인한다.
+  - 코드는 1회용이고 실패 시도는 제한한다. LAN의 다른 기기가 몰래 등록할 수 없다.
+- **인증 전 제한:** frame 크기, 동시 연결 수, 시도 횟수를 제한한다.
+- **재연결**
+  - 지수 backoff+jitter로 재연결한다(상한은 TOML로 정하며 기본 60초).
+  - 연결되면 hello(버전·boot ID·기능)를 보내고, outbox를 재전송한 뒤 command ID 결과를 조회한다.
+  - 주소 변경은 TOML로만 한다.
+- **키 관리:** host에서 `aa machine revoke`로 폐기하고 rotate한다. agent는 다시 등록한다.
+- **frame:** TLS 위에 길이 접두 frame을 쓴다. 브라우저가 아니므로 WebSocket이 필요 없다.
+- **SSH는 필수가 아니다.** Windows 포함 세 OS 모두 SSH 없이 연결된다. SSH는 설치 부트스트랩과 진단에서만 선택적으로 쓴다. agent는 연결을 열기만 하므로(outbound) agent 쪽 방화벽 수신 허용이 필요 없다.
+
+### 6.2 Front 연결
+
+- **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 thread 범위 token으로 구분한다. 이 token 범위는 M3에서 검토한다.
+- **다른 기기의 TUI:** TCP+TLS로 붙는다. 웹과 같은 장치 모델을 쓴다(장치 키 pairing, reader/controller 역할).
+- **브라우저:** §6.3의 HTTPS 주소로 붙는다.
+
+### 6.3 host 웹 HTTPS 공개 — aa가 Tailscale을 아는 유일한 곳
+
+herdr-web-ui 0.4.10의 방식(`server/tailscale.ts`, `scripts/plugin.ts`의 `phone`)을 그대로 가져오고, 아래 「aa에서 정한 차이」만 바꾼다. 이 기능은 MVP 첫 단계(M1-1)에 넣는다.
+
+| 항목 | 방식 |
+|---|---|
+| 웹 listen | host 웹은 `127.0.0.1:<web_port>`(TOML, 예: 7431)의 HTTP·WS로만 연다. TLS는 tailscale serve가 맡는다 |
+| 상태 읽기 | `tailscale status --json`과 `tailscale serve status --json`을 읽는다(2.5초 timeout, 읽기 전용). CLI는 PATH의 `tailscale`을 쓰고, 없으면 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`을 쓴다 |
+| 공개 | `aa web publish`가 실행한다. serve status에 이미 aa 웹 포트를 proxy하는 HTTPS가 있으면 그 주소를 쓴다. 없으면 후보 포트(443·8443·7443·17443) 중 serve status의 TCP에 없는 첫 포트로 `tailscale serve --bg --yes --https=<포트> http://127.0.0.1:<web_port>`를 실행한다. 180초를 기다리는데, 처음이면 tailnet HTTPS 켜기 승인 링크가 나올 수 있다 |
+| 주소 | MagicDNS 이름의 HTTPS 주소를 쓴다. 인증서가 이름에 대해 발급되므로 IP로 열면 경고가 난다. 주소는 QR로도 보여 준다 |
+| 끄기 | `aa web publish off`가 aa가 만든 포트만 `tailscale serve --https=<포트> off`로 끈다 |
+| 정리 | host 중지와 공개는 분리한다. host를 멈춰도 serve 설정은 남아 주소가 같다. `serve reset`은 금지한다. 다른 매핑(herdr-web-ui 등)을 덮지 않는다. 공개 상태는 host 상태에 기록한다 |
+| Tailscale이 없거나 로그인 전·HTTPS가 꺼진 경우 | `missing`·`stopped`·`https 꺼짐` 상태와 할 일만 보여 준다. 웹은 `127.0.0.1`에서 계속 동작한다 |
+
+**aa에서 정한 차이**
+- **입장은 aa pairing·token으로만 한다.** web-ui의 `Tailscale-User-Login` 헤더 자동 입장은 쓰지 않는다. 결정 6이 tailnet 신원 사용을 뺐고, serve가 loopback으로 proxy하므로 같은 머신의 다른 프로세스가 헤더를 위조할 수 있다([정할 것 4](#16-위험과-정할-것)).
+- **loopback을 인증 신호로 쓰지 않는다.** 웹 서버는 모든 요청을 loopback으로 받기 때문이다.
+- **Origin 허용 목록:** 공개 주소(`https://<이름>.ts.net[:포트]`)와 `http://127.0.0.1:<web_port>`만 허용한다.
+
+**HTTPS가 필요한 브라우저 기능(secure context, 표준 기준이며 실기기 확인은 M1-1)**
+- 비동기 Clipboard API(복사 버튼)
+- Service Worker·PWA 설치·Web Push
+- Wake Lock
+- `crypto.subtle`
+- Secure·`__Host-` cookie
+
+사용자가 일으킨 `paste` 이벤트의 `clipboardData`는 HTTP에서도 동작한다. 그래서 이미지 paste는 비동기 clipboard-read 권한을 필수로 두지 않는다. 그래도 다른 기기에서 알림·설치·복사를 쓰려면 HTTPS가 있어야 하므로 공개를 첫 단계에 둔다.
+
+### 6.4 인증·권한
+
+- **장치 역할과 범위:** 장치마다 reader(보기)와 controller(조작) 역할을 나눈다. 명령마다 대상 project·machine·session 권한을 검증한다.
+- **pairing**
+  - 6자리 코드나 QR로 한다. 코드는 host 화면이나 로컬 CLI에서만 보인다.
+  - 틀린 시도는 backoff로 막는다(web-ui는 5회부터).
+  - token은 URL·로그·HTML에 넣지 않는다.
+- **cookie와 요청 검사:** cookie는 `HttpOnly`·`SameSite=Strict`, HTTPS에서는 `Secure`·`__Host-`로 한다. Origin과 CSRF를 검사하고 CSP를 둔다.
+- **권한 취소:** 권한 취소와 lease 변경은 이미 열린 WebSocket과 대기 중인 입력에도 바로 반영한다. reader는 resize·키 입력·routine 실행·질문 응답·업로드를 할 수 없다.
+- **업로드:** 이미지 업로드도 변경 권한이다. 전송이 끝나기 직전에 권한을 다시 확인한다.
+- **감사 로그:** 입력, thread 시작, routine 실행, 질문 응답, 업로드, 공개 변경을 누가 언제 했는지 남긴다.
+- **보고서 표시:** agent가 만든 보고서 HTML은 `allow-same-origin` 없는 sandbox iframe(opaque origin)과 CSP로 보여 준다. 제어 UI와 같은 origin에서 script를 실행하지 않는다.
+- **agent pane 안의 CLI:** thread agent의 `aa` 호출에 자기 thread 범위로 한정한 token을 줄지 M3에서 검토한다.
+
+### 6.5 신뢰 경계
+
+- **강한 sandbox가 아니다.** agent와 coordinator는 같은 사용자 계정의 shell을 갖는다. 보안 격리가 필요하면 별도 OS 계정이나 VM이 필요하다.
+- **원격 실행 권한:** agent backend는 등록된 host 키의 요청만 받는다. 그 요청도 agent.toml의 허용 root·profile 정책 안에서만 실행한다.
+- **승인 묶기:** profile·routine 승인은 설정 revision과 정확한 명령 digest에 묶는다.
+- **agent 산출물은 믿지 않는다.** HTML·Markdown, 터미널 OSC, 파일 링크가 대상이다. 파일 열기는 machine-local allow-root 검증을 거친다.
+
+## 7. 상태·설정·저장
+
+### 7.1 배치
+
+| 구분 | macOS | Linux | Windows |
+|---|---|---|---|
+| 설정(TOML) | `~/.config/aa/` | `$XDG_CONFIG_HOME/aa/`(기본 `~/.config/aa/`) | `%LOCALAPPDATA%\aa\config\` |
+| 상태(SQLite·로그·키) | `~/Library/Application Support/aa/` | `$XDG_STATE_HOME/aa/`(기본 `~/.local/state/aa/`) | `%LOCALAPPDATA%\aa\state\` |
+| 실행 파일(고정) | `/Applications/aa.app/Contents/MacOS/aa`, CLI는 `~/.local/bin/aa` 링크 | `~/.local/bin/aa` | `%LOCALAPPDATA%\aa\bin\aa.exe` |
+| 프로젝트(host) | `~/.aa/projects/<project>/`(TOML로 변경 가능) | 없음 | 없음 |
+| thread 작업 폴더(agent) | `<worktree 또는 task dir>/.aa/<project>-<thread>/` 아래 brief.md·report.md·library/·attachments/ | 같음 | 같음 |
+
+- **위치 덮어쓰기:** `AA_CONFIG_DIR`·`AA_STATE_DIR`로 바꿀 수 있다.
+- **Windows는 roaming `%APPDATA%`를 쓰지 않는다.** 머신별 값이 다른 PC로 동기화되면 안 되기 때문이다.
+- **macOS 설정을 `~/.config`에 두는 이유:** 운영에서 herdr 설정을 dotfiles 링크로 관리해 왔고, 사용자 CLI 관례이기 때문이다.
+- **SQLite 파일은 SMB/NFS로 공유하지 않는다.**
+
+host 프로젝트 폴더 구성:
+
+| 파일·폴더 | 내용 |
+|---|---|
+| `AGENTS.md`, `PROJECT.md`, `MEMORY.md`, `memory/` | 사람이 읽는 문맥 |
+| `project.toml` | 기계가 읽는 값(nudge, 자동 승인 정책, 결과물 상한 등) |
+| `TASKS.md` | `(profile@machine)` 소유 표기 |
+| `decisions.md` | 결정 기록(§8.6) |
+| `routines/` | routine 정의 |
+| `threads/<id>.md` | 보고 사본 |
+| `library/<id>/` | 결과물 |
+| `inbox/` | Markdown 투영(정본은 DB) |
+
+### 7.2 TOML 설정
+
+- **파일 구성**
+  - `host.toml`은 host 머신에, `agent.toml`은 모든 agent 머신에 둔다.
+  - 선택 사항으로 `host.local.toml`·`agent.local.toml`을 두면 머신별로 덮어쓴다. 공유 dotfile을 링크하고 머신별 값(worktree root 등)만 local에 둔다. 운영에서 「worktree 줄만 다른」 사본을 따로 둔 문제를 해결한다.
+- **스키마 버전:** 파일 맨 위에 `schema = 1`을 둔다.
+- **host.toml에 두는 값**
+  - Agent link listen 주소·포트, 웹 포트, 공개 후보 포트
+  - 프로젝트 root
+  - profile 허용 목록
+  - 알림 webhook
+  - 업데이트 고정 버전
+  - 백업 보관 수
+  - 등록된 머신 키 같은 기계 상태는 TOML이 아니라 상태 DB에 둔다.
+- **agent.toml에 두는 값**
+  - host 주소, machine 이름
+  - 작업 root·허용 root
+  - profile 정의: harness, model, effort, args, env, resume 방식, OS별 shell, daemon 금지 인자
+  - 동시 thread 한도·우선순위
+  - toolchain 점검 명령
+  - attachment quota
+- **검증과 오류 표시**
+  - 시작할 때 전체를 검증한다. 모르는 key는 경고한다.
+  - 잘못된 값은 `파일:줄:열`과 이유를 보이고 시작을 거부한다. `aa config check`로 미리 확인할 수 있다.
+  - reload에 실패하면 마지막 정상 설정을 유지하고 doctor·front·inbox(`config-error`)에 표시한다.
+- **마이그레이션**
+  - 사용자 파일을 자동으로 다시 쓰지 않는다.
+  - 새 버전은 이전 schema(N-1)를 읽고 경고한다. `aa config migrate`가 백업(`.bak-<시각>`)을 만든 뒤 주석을 보존해 바꾼다(toml_edit).
+  - 모르는 미래 schema는 명시 오류다.
+  - 이전 프로세스가 아직 같은 파일을 읽는 기간(§11)에는 migrate를 미룬다.
+- **비밀:** TOML에 넣지 않는다. 상태 디렉터리의 0600 키 파일이나 DPAPI에 둔다.
+- **원격 편집:** host는 agent.toml을 몰래 고치지 않는다. `aa machine config show|diff`로 보기만 한다. 변경은 그 머신에서 하거나 명시 명령으로 하고 감사 로그에 남긴다.
+- **profile 해석:** profile은 agent.toml이 정의하고 host.toml이 허용한다. host는 thread spec에 해석 결과와 revision을 저장한다. restart 때는 저장된 spec을 그대로 쓰거나 명시적으로 갱신한다. 원격에 같은 설정을 미리 깔 필요가 없다.
+- **front 설정:** front의 키 바인딩 같은 값도 TOML로 두되, 이것은 backend 상태가 아니다.
+
+### 7.3 DB와 schema
+
+- **구성:** rusqlite(bundled), WAL, 단일 write task로 쓴다. host DB와 agent DB는 따로다.
+- **schema 변경:** schema 버전 테이블을 둔다. migration은 expand/contract 순서로 해서 이전 프로세스가 계속 읽을 수 있게 한다.
+- **백업과 되돌리기:** migrate 전에 `VACUUM INTO`로 백업한다. 다운그레이드는 백업 복원으로 한다. host DB는 주기적으로 백업하고, 복원 절차는 E2E로 확인한다.
+- **파일과 DB 분담:** Markdown·TOML은 사람이 읽는 원본이고, DB는 이를 파싱한 snapshot과 revision·hash를 저장한다. 같은 상태를 양쪽에서 임의로 고치지 않는다. 파일 감시가 실패해도 reconciliation이 hash를 다시 찾는다.
+
+## 8. 오케스트레이션 (projects 0.2 계승)
+
+### 8.1 프로젝트·coordinator
+
+- **역할 분담:** 프로젝트 폴더가 곧 coordinator의 문맥이다. coordinator는 평범한 agent이고, binary는 결정적인 절차만 맡는다.
+- **운영 철학:** **보고는 파일, 프롬프트는 알림**이다. 놓친 알림 때문에 결과를 잃지 않는다.
+- **coordinator 판정:** 프로젝트 폴더를 cwd로 쓰는 agent를 coordinator로 본다.
+
+### 8.2 profile과 launch/resume spec
+
+- **profile 필드:** 이름, 설명, agent kind, model, effort, args, env 참조, resume 방식, OS별 shell, daemon 금지 인자·env.
+- **daemon 금지 인자는 resume에도 적용한다.**
+  - 예: codex `--no-daemon`, `CODEX_SSH_SKIP_APP_SERVER_BOOT=true`
+  - 운영에서는 복원이 인자 없이 `codex resume <id>`를 띄워, yolo와 daemon 금지가 빠지고 managed app-server daemon이 떴다.
+  - 같은 spec으로 resume하는지 유닛 테스트로 막는다.
+- **권한 의도 보존:** 권한 관련 launch intent를 보존하되, agent CLI의 trust 절차를 우회하지 않는다.
+
+### 8.3 상태 사건
+
+- **사건 종류:** agent backend가 `session_start`, `turn_start`, `turn_end`, `question_shown`, `error`(용량 오류 포함), `progress`, `report_changed`, `exited`를 사건으로 보낸다.
+- **출처 우선순위:** harness hook·notify(adapter별, 버전별 fixture) → 프로세스 상태 → 화면 heuristic 순이다. 화면 heuristic은 보조이며 신뢰도를 함께 표시한다.
+- **adapter가 사건 출처를 직접 정한다.**
+  - herdr 0.9.5의 claude·codex hook은 SessionStart에서 session ID만 보고한다. 그래서 herdr식 integration으로는 상태를 사건으로 만들 수 없다.
+  - M1-3에서 harness별 사건 출처를 조사해 고정한다. Claude Code의 Stop·Notification류 hook, Codex의 hook·notify류가 후보이며, 현재 지원 범위는 아직 확인하지 않았다.
+- **감시 대상:** 모든 agent 세션을 같은 방식으로 등록·감시한다(thread 밖 agent와 coordinator 포함). coordinator와 front는 구독하고 polling하지 않는다. 주기적 reconciliation은 보조다.
+- **감지 규칙 고정:** 화면 감지 규칙은 버전을 pin하고 원격에서 자동 갱신하지 않는다.
+
+### 8.4 확인창 원격 응답
+
+- **질문 사건:** adapter가 확인창을 `question` 사건으로 올린다. 사건에는 종류, 본문, 선택지, 기본값, 남은 시간 추정이 들어간다.
+  - 확인창의 예: 폴더 신뢰, hook 신뢰, 권한 확인, 모드 전환 질문
+- **답하기**
+  - front나 coordinator가 `aa question answer <id> <선택지>`로 답한다.
+  - host가 대상 세션 generation·lease·권한을 다시 확인한다.
+  - adapter가 답을 harness 키 입력으로 바꾸고, 결과 사건으로 확인한다.
+- **자동 승인은 기본 금지다.** `project.toml`의 종류별 허용 목록으로만 허용하고 감사 로그에 남긴다.
+- **시한이 있는 질문은 바로 알린다**(§8.7). 운영에서 권한 확인이 1분 32초 뒤 자동 거부된 일이 있었다.
+- **재질문 원인을 줄인다.** hook 경로를 고정한다(§8.11, §10.9).
+- **참고 구현:** 0.2.35의 `trust_screens`·`thread keys`, web-ui의 prompt card.
+
+### 8.5 메시지 API와 재입력 규칙
+
+- **보내기:** `aa thread message <id> --interrupt|--queue`로 보낸다.
+  - interrupt: 지금 입력한다. 작업 중이면 harness가 지원하는 끼어들기 방식을 쓴다.
+  - queue: host 대기열에 순서대로 넣고, 다음 턴이 시작될 때 전달한다.
+- **입력 방식:** 키를 하나씩 치지 않고 adapter 입력(bracketed paste + harness별 전송 키)으로 보낸다. 특수문자가 깨지지 않는다. 원문은 기록한다.
+- **수신 확인:** deadline 안에 `turn_start` 사건(없으면 화면 변화)이 오면 `accepted`다. 오지 않으면 `delivery_unknown`이다.
+- **brief 전달:** 0.2.35 규칙을 이어받는다. claim lease 60초, settle 3초, 최대 3회, 실패하면 inbox item을 남긴다.
+- **재입력 규칙은 두 가지이며 trigger가 다르다.**
+  - (a) **전달 여부를 모를 때**(`delivery_unknown`, 연결 단절, ACK 유실): prompt·keys·shell command를 **절대 자동으로 다시 보내지 않는다.** 전송 재접속과 작업 재실행은 다른 절차다.
+  - (b) **자동 이어가기 정책:** 관측된 사건에만 적용한다(`turn_end` 뒤 harness가 다음 지시를 기다림, 일시적 용량 오류). 기본은 꺼져 있고 profile·project별로 켠다. 규칙(보낼 문구), 횟수 상한, backoff, 기록, front 표시를 갖춘다([정할 것 5](#16-위험과-정할-것)).
+- **nudge:** 0.2.35 방식을 이어받는다. 같은 미확인 묶음은 hash당 한 번만 보낸다. 놓친 알림은 다시 보내지 않고 context를 다시 읽어 복구한다.
+
+### 8.6 결정 기록
+
+- **기록:** `projects/<p>/decisions.md`에 번호, 시각, 내용, 대체한 번호를 적는다. DB에 revision을 두고 `aa decision add|list`로 다룬다.
+- **전달:** brief와 context에 최신 revision을 자동으로 넣는다. thread가 시작할 때 읽은 revision을 기록해, 결정이 바뀌었는데 이전 결정으로 일하는 thread를 찾을 수 있다.
+
+### 8.7 보고·결과물·알림
+
+- **report:** report.md 원본은 thread 작업 폴더에 있다. hash가 바뀌면 host가 Agent link로 임시 경로에 받고, 크기·hash를 검증한 뒤 원자적으로 publish하고 review 사건을 낸다.
+- **library**
+  - 상대 경로·digest·길이를 담은 manifest로 다룬다.
+  - 기본 복사 상한(예: 200MB, `project.toml`) 안에서만 복사한다. 그 넘는 파일은 agent에 두고, host 웹이 요청할 때 Agent link로 지연 스트리밍한다. host 캐시에는 상한을 둔다. 0.2.35의 50MB 상한 때문에 175MB·5GB 결과물을 잃을 뻔한 일을 막는다.
+  - symlink와 junction은 따라가지 않는다.
+- **보기:** host 웹이 보고서와 library를 HTTPS로 바로 보여 준다(§6.4 sandbox).
+- **알림**
+  - Web Push(HTTPS 필요)와 외부 알림 webhook(host.toml, HTTP POST)을 둔다. 명령 실행이 필요한 알림은 로컬 agent backend가 실행한다.
+  - 대상 사건: 보고 준비, 질문, 막힘, 머신 이상.
+  - 사용자는 이런 일을 텔레그램으로 받기를 원한다. webhook으로 연결한다.
+- **resolve:** 최종 receipt와 dirty worktree 검사를 통과해야 한다. 실패하면 worktree를 보존한다. 0.2.35처럼 복사가 Partial이면 보존하고, Failed면 resolve를 거부한다.
+
+### 8.8 병합 대기열과 정리
+
+- **대기열:** `aa merge enqueue <thread>`로 순번을 정한다.
+- **단계마다 사건과 훅을 낸다.**
+  1. 원격 일치·tree 같음 확인
+  2. push
+  3. 영향받는 thread에만 「main 이동」 알림(운영 규칙)
+  4. 정리(중첩 worktree, worktree, branch, stash)
+  5. 유휴 머신 사전 빌드 훅
+- **단계 배치:** M1-3에서는 순번과 사건·훅만 둔다. 단계 자동 실행은 M3에서 한다.
+- **참고:** 0.2.35의 `Landing` group, `on = "pr"` routine.
+
+### 8.9 ticker·inbox·routine
+
+- **ticker:** host 안의 task다. 사건을 구독하고 제한된 reconciliation timer를 돈다. 0.2.35는 15초마다 돌고 원격은 약 1분마다 polling했다.
+- **inbox:** 잃지 않는 사건과 ack로 관리하고, Markdown은 투영이다. 특수 item을 둔다: `session`(재시작 감지), `outage`(장시간 단절), `config-error`, 머신 이상.
+- **routine**
+  - 일정은 `every`·`daily`·`on = "pr"`이다. 정확한 명령 digest로 승인하고, `routine_commands` 같은 전체 스위치를 둔다.
+  - DST, missed-run 정책, 실행 ID를 다룬다. coordinator가 없으면 실행하지 않고 skipped로 기록한다.
+  - **명령은 대상 머신의 agent backend가 실행한다.** host는 실행하지 않는다.
+
+### 8.10 머신 건강과 자원 한도
+
+- **건강 보고:** agent backend가 주기적으로 보고한다.
+  - toolchain 버전(agent.toml에 선언한 명령, 예: CLT/Xcode)
+  - 디스크 여유, 부하
+  - boot ID와 재부팅
+  - 계보·첫 실행 지연·키체인(§10)
+  - 전원(AC), 시계
+- **이상 처리:** 변화나 이상은 inbox와 알림으로 낸다. 점검에 실패한 머신에서는 새 세션 시작을 거부하고 사유를 보인다. 재부팅 중 작업이 조용히 실패하던 문제는 boot fencing으로 `interrupted`가 된다.
+- **동시 작업 한도:** 머신별 동시 thread 한도를 둔다(운영값 예: 6).
+- **우선순위:** nice, Windows priority class를 쓴다. macOS QoS는 P0에서 측정한 뒤 정한다.
+- **빌드 병렬도는 제한하지 않는다.** 사용자 규칙이다.
+- **종료:** session host가 자기 자식만 PID+시작 identity(Windows는 handle)로 종료한다.
+- **안전 규칙의 위치:** rm·force push 같은 규칙은 agent가 지킬 정책이며 aa가 대신 강제하지 않는다.
+
+### 8.11 hook·integration
+
+- **고정 명령:** `aa hook`은 고정 명령 문자열로 등록한다(예: `~/.local/bin/aa hook --agent claude`). 업그레이드로 경로나 인자가 바뀌지 않게 한다. 운영에서는 경로만 바뀌어도 codex가 hook 신뢰를 다시 물었다.
+- **설치는 사용자가 한 번 한다.** `aa integration install`로 설치한다. agent 설정 파일 변경은 auto mode가 막으므로 사용자가 직접 실행한다.
+- **되돌리기:** 바꾼 내용을 journal로 남겨 정확히 되돌린다(0.2.35 `owned.json` 방식). 사용자가 지운 파일은 되살리지 않는다.
+- **herdr와 공존:** aa가 관리하지 않는 pane에서는 세션 token이 없으므로 hook이 아무것도 하지 않는다.
+
+### 8.12 thread 종류와 배치
+
+- **로컬·원격 기능이 같다.** 종류는 worktree, tab(같은 checkout), checkout, adopt(기존 pane 등록), repo 없는 task dir이다. 0.2.35는 원격에서 worktree만 허용했다.
+- **기존 운영 규칙 유지:** worktree는 머신별 설정 root에만 만든다. thread 기록의 경로와 실제 디렉터리가 일치하는지 확인한다.
+
+## 9. 이미지 붙여넣기 (front → host → agent)
+
+herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
+
+aa의 원칙:
+- local과 remote를 같은 attachment API로 다룬다.
+- **이미지 bytes를 front에서 host를 거쳐 실제 agent 머신으로 옮긴다.** 그 머신에서 읽을 수 있는 파일을 만든 뒤 입력을 전달한다.
+- agent 머신에는 GUI·clipboard·X11/Wayland가 필요 없다.
+- 원격 agent의 clipboard를 읽지 않는다. front 기기의 경로 문자열만 보내지도 않는다.
+
+```mermaid
+flowchart LR
+  T[TUI front · Ctrl+V · front 기기 clipboard] --> H[host · Front API attachment stream]
+  B[웹 front · paste event · Blob] --> S[tailscale serve HTTPS] --> H
+  H --> A[대상 agent backend · Agent link chunks]
+  A --> F[검증 · 원자적 저장 · 대상 머신 파일]
+  F --> R[길이 · SHA256 · native path receipt]
+  R --> H
+  H --> P[대상 재검증 · Claude/Codex 입력 adapter]
   P --> I[agent가 파일을 읽어 이미지로 소비]
 ```
 
 | 단계 | 동작·계약 |
 |---|---|
-| 터미널 수집 | 명시 Ctrl+V에서 client 자신의 clipboard를 읽는다. macOS는 NSPasteboard의 이미지 representation→PNG, Windows client는 PNG/CF_DIB 계열, Linux desktop client는 X11/Wayland adapter를 둔다. 초기 중심 Mac client가 다른 세 OS agent에 붙이는 데 대상 OS의 clipboard는 필요 없다 |
-| 터미널 입력 호환 | 이미지가 있으면 중복 Ctrl+V byte·텍스트 paste를 소비하고 image intent 하나를 만든다. 이미지가 없으면 기존 text/raw-key 동작을 보존한다. 외부 터미널이 이미지를 파일 경로로 붙이는 경우도 검증한 로컬 파일을 업로드한다. 같은 이미지의 여러 clipboard representation은 중복 첨부하지 않되 별도 사용자 paste는 별도 intent다 |
-| 직접 SSH 셸의 한계 | 단순 `ssh host`의 stdin은 사용자 PC의 clipboard 이미지 bytes를 제공하지 않는다. 원격 붙여넣기의 기본 사용 경로는 **사용자 PC에서 실행한 aa client → machine 선택**이다. raw SSH 셸만 열린 경우 파일 첨부 명령/웹 경로를 안내하며 원격에서 로컬 clipboard를 읽는다고 주장하지 않는다 |
-| 웹 수집 | terminal 영역과 composer의 user paste event에서 `clipboardData.items/files`의 이미지 Blob을 받는다. 이미지·독립 plain text가 함께 있으면 둘 다 draft에 보존하고 중복 browser/xterm paste를 막는다. OS/브라우저가 이미지 paste를 제공하지 않으면 파일 선택·drop을 같은 API로 제공한다. 비동기 clipboard-read 권한을 필수로 요구하지 않는다 |
-| 대상 고정 | paste 순간 machine/session/terminal generation·agent identity·lease·client 권한을 intent에 고정한다. 업로드 중 다른 pane/머신으로 전환해도 새 pane에 입력하지 않는다. receipt 뒤 실제 삽입 직전에 대상·권한을 다시 검증한다 |
-| 업로드·receipt | metadata는 JSON, 이미지 본문은 bounded binary chunks다. 웹은 streaming multipart/Blob body를 gateway가 SSH/WSS/로컬 IPC attachment stream으로 전달한다. base64 거대 JSON이나 scp shell 문자열은 기본 경로로 쓰지 않는다. 길이·SHA256·offset 검증 후 대상이 atomic commit하고 receipt를 반환해야 첨부할 수 있다 |
-| 대상 경로 | 기본은 해당 worktree/task cwd의 `.aa/<project>/<thread>/attachments/<attachment_id>.png` 같은 runtime 제외 경로다. 일반 session은 session-scoped 경로를 쓴다. 대상 Windows agent는 Windows 절대 경로, Unix agent는 해당 머신 POSIX 경로를 돌려준다. cwd를 알 수 없거나 쓰기 불가이면 명시 오류/선택 가능한 사용자 데이터 경로를 쓰며 위치를 몰래 바꾸지 않는다 |
-| agent 전달 | `attach_image(attachment_id)`를 Claude/Codex 등 agent adapter가 검증한 image-file 참조·bracketed paste 형식으로 변환한다. 모든 agent에 POSIX quote 또는 `@path` 하나를 강제하지 않는다. 업로드만 끝난 상태와 실제 agent 입력 접수는 분리한다. 이미지 미지원 harness·일반 shell·trust/권한 dialog에는 경로를 자동 입력하지 않는다 |
-| 전송 의도 | Ctrl+V는 첨부/초안 삽입이고 자동 Enter는 아니다. 현재 입력을 지우지 않으며 첨부 전 완료되지 않은 upload가 있으면 Send를 보류한다. 터미널의 후속 입력도 pane별 순서와 paste barrier로 직렬화하여 경로보다 Enter가 먼저 가거나 다른 입력 중간에 경로가 끼지 않게 한다. 실패 시 이미 입력한 문자·이미지 draft를 유지한다 |
-| 재연결 | upload status/offset을 조회해 미완료 파일 전송을 재개할 수 있지만 agent 타이핑을 자동 반복하지 않는다. commit 후 응답 유실은 동일 attachment ID로 receipt를 조회한다. 입력 직후 응답 유실은 기존 `delivery_unknown` 정책을 적용한다 |
-| 보관·정리 | 파일 수명을 client 연결에 묶지 않는다. agent가 늦게 읽거나 client가 detach해도 session/thread가 참조 중이면 보존한다. DB에 attachment ID·hash·대상·상태·참조를 기록하고 resume에 필요한 사본을 유지한다. 참조가 끝나고 보존 기한이 지난 파일만 정리한다. upload 중 취소·실패한 `.part`는 별도 회수하고 image 내용은 기본 로그·보고·git에 넣지 않는다 |
+| TUI 수집 | 명시적 Ctrl+V(또는 빈 bracketed paste)에서 front 자신의 clipboard를 읽는다. macOS는 NSPasteboard 이미지 → PNG, Windows는 PNG/CF_DIBV5/CF_DIB, Linux desktop은 X11/Wayland다. 후보는 arboard다 |
+| 입력 호환 | 이미지가 있으면 중복 Ctrl+V byte와 텍스트 paste를 소비하고 image intent 하나를 만든다. 없으면 기존 text·raw-key 동작을 보존한다. 외부 터미널이 이미지 파일 경로를 붙이면 그 로컬 파일을 업로드한다 |
+| raw SSH 셸의 한계 | 단순 `ssh host` 셸은 사용자 PC의 clipboard를 제공하지 않는다. 기본 경로는 사용자 기기에서 실행한 aa TUI front다. raw 셸에서는 파일 첨부 명령이나 웹을 안내한다 |
+| 웹 수집 | terminal 영역과 composer의 user paste event에서 `clipboardData.items/files`의 Blob을 받는다. 이미지와 plain text를 함께 draft에 보존하고 중복 paste를 막는다. 파일 선택·drop도 같은 API로 받는다 |
+| 대상 고정 | paste 순간 machine·session·terminal generation·agent identity·lease·front 권한을 intent에 고정한다. 업로드 중에 pane을 바꿔도 새 pane에 넣지 않는다. 실제 삽입 직전에 다시 검증한다 |
+| 전송 | front → host: Front API의 bounded binary chunk(웹은 streaming Blob body). host → agent: Agent link chunk. host는 **저장하지 않고 통과 전송**한다(bounded buffer). agent가 끊겨 있으면 바로 실패하고 draft는 유지한다. base64 거대 JSON과 scp 문자열은 쓰지 않는다. 길이·SHA256·offset을 검증한 뒤 agent가 원자적으로 commit하고 receipt를 반환한다 |
+| 대상 경로 | `.aa/<project>-<thread>/attachments/<attachment_id>.png`. 일반 세션은 session 범위 경로다. Windows agent는 Windows 절대 경로를, Unix agent는 그 머신의 POSIX 경로를 돌려준다. cwd를 모르거나 쓸 수 없으면 명시 오류를 낸다 |
+| agent 전달 | adapter가 harness별로 검증한 이미지 참조 형식으로 바꾼다. 모든 agent에 `@path`나 POSIX quote 하나를 강제하지 않는다. 업로드 완료와 실제 입력 접수는 따로 본다. 일반 shell과 확인창에는 경로를 자동으로 넣지 않는다 |
+| 전송 의도 | Ctrl+V는 첨부일 뿐 자동 Enter가 아니다. 업로드가 끝나지 않았으면 Send를 보류한다. pane별 순서와 paste barrier로 경로보다 Enter가 먼저 가지 않게 한다 |
+| 재연결 | 미완료 전송은 offset으로 재개할 수 있다. commit 뒤 응답이 유실되면 같은 ID로 receipt를 조회한다. 입력 직후 유실은 `delivery_unknown` 규칙을 따른다(§8.5 a) |
+| 보관 | 파일 수명을 front 연결에 묶지 않는다. session·thread가 참조하는 동안 보존하고, 참조가 끝나고 보존 기한이 지난 것만 정리한다. 이미지 내용은 로그·보고·git에 넣지 않는다 |
 
-이미지 크기 기본 제안은 herdr bridge와 같은 **파일당 16MiB**다. PNG/JPEG를 초기 필수 형식으로 하고 native clipboard representation은 제한된 decoder로 PNG를 만든다. MIME·확장자만 믿지 않고 실제 signature/decode·pixel/memory 상한·디스크 quota를 확인한다. GIF/WebP/BMP 등은 adapter 지원을 검증하여 확대하며 animation/화질을 몰래 잃는 변환은 하지 않는다. Unix는 user-only 0700/0600, Windows는 대상 사용자 SID ACL을 적용하고 symlink/junction과 path traversal을 거부한다. 파일 생성·경로 인용·정리 책임은 대상 agentd에 있고 웹 client가 목적 절대 경로를 지정할 수 없다.
+추가 규칙:
+- **크기:** 기본 상한은 파일당 16MiB다. 넘으면 연결을 끊지 않고 명시 오류를 내며 draft를 유지한다. herdr는 이 경우 client 연결을 끊는데, 그 동작은 가져오지 않는다.
+- **형식:** PNG/JPEG가 필수다. 실제 signature·decode·pixel·memory 상한·quota를 확인한다.
+- **권한:** Unix는 0700/0600, Windows는 사용자 SID ACL이다. symlink·junction·path traversal은 거부한다.
+- **책임:** 파일 생성·경로 인용·정리 책임은 대상 agent backend에 있다. front는 목적지 절대 경로를 지정할 수 없다.
 
-붙여넣기/파일 선택의 접근은 [Clipboard API와 user paste event](https://www.w3.org/TR/clipboard-apis/), [macOS NSPasteboard](https://developer.apple.com/documentation/appkit/nspasteboard), [Windows clipboard formats](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)를 참고한다. 실제 지원 여부는 브라우저/OS의 native E2E로 판정한다. 현재 조사에서 사용자의 clipboard를 읽거나 덮어쓰지 않았다.
+## 10. 개발자 도구·속도 해결 계획
 
-## 7. 보안·신뢰 경계
+### 10.1 합격 기준과 「한 번 등록」 목록
 
-- local IPC는 user-only directory/socket와 peer UID/SID를 확인한다. PID 문자열만 믿지 않고 시작 identity 또는 OS handle로 대상 프로세스를 확인한다. 명령별 대상 project/machine/session 권한을 검증한다.
-- 웹은 기본 loopback bind다. localhost에서도 pairing/session 인증을 적용한다. 장치별 reader/controller, 취소·만료·로그아웃, HttpOnly/SameSite cookie, HTTPS의 Secure, Origin/CSRF 검사를 구현한다. 외부 bind는 TLS와 명시 인증이 있어야 시작된다.
-- Tailscale은 연결 경로의 선택지다. 임의 proxy가 보내는 identity header를 신뢰하지 않는다. SSH known_hosts 검증을 끄지 않는다. token은 URL·로그·HTML 보고서에 넣지 않는다.
-- 웹 권한 취소·lease 변경을 이미 열린 WebSocket·대기 입력에도 반영한다. reader는 resize·keys·routine 실행이 불가능해야 한다.
-- 이미지 업로드도 변경 권한이다. reader·취소된 장치는 파일 생성과 입력 삽입 모두 거부하고, 전송 완료 직전에도 권한을 확인한다. 이미지 body/로컬 원본 경로를 로그나 다른 프로젝트의 preview에 노출하지 않으며 preview는 인증·소유권 범위에서만 제공한다.
-- agent가 만든 HTML/Markdown·terminal OSC·파일 링크는 신뢰하지 않는다. 보고서는 sanitize 또는 별도 origin의 sandbox iframe으로 표시하고 제어 UI와 같은 origin에서 script를 실행하지 않는다. 파일 열기는 machine-local allow-root 검증을 거친다.
-- profile·routine 승인은 configuration revision과 정확한 명령 digest에 묶는다. agent와 coordinator는 동일 사용자 계정의 shell을 가질 수 있으므로 이것을 강한 sandbox라고 주장하지 않는다. 보안 격리가 필요하면 별도 OS 계정/VM 단계가 필요하다.
-- 고정 broker는 임의 경로 실행 프록시가 되지 않게 검증한 release manifest와 제한된 실행 요청만 받는다. 최소 기능·고정 ABI·서명 배포로 유지한다. broker 보안 패치가 필요할 때 재등록 없이 갱신 가능한지도 별도 release gate로 둔다.
+사용자 합격 기준은 다섯 가지다. 이를 완화한 우회책은 채택하지 않는다.
+- 설치 때 한 번 등록까지만 허용
+- 업그레이드 뒤 재등록 없음
+- 매번 GUI 터미널을 띄울 필요 없음
+- 재부팅 직후 ssh·웹 우선 접속에도 빠름
+- 키체인 잠김 없음
 
-## 8. 개발자 도구·속도 해결 계획
+여기에 검토에서 찾은 처리량과 하위 daemon 조건을 더했다.
 
-사용자 합격 기준은 **설치 때 한 번 등록까지 허용, 업그레이드 재등록 없음, 매번 GUI 터미널 선행 실행 없음, 재부팅 후 ssh/web 우선 접속에도 빠름, 키체인 잠김 없음**이다. 이 기준을 완화한 우회책을 채택하지 않는다.
+| 기준 | 설계 | P0 검증 | 현재 |
+|---|---|---|---|
+| 설치 때 한 번 등록 | 아래 목록을 설치 절차에서 한 번 받는다 | E1 | 가설 |
+| 업그레이드 뒤 재등록 없음 | 고정 경로, 고정 서명 identity, 고정 hook 문자열, quarantine 없는 updater | E1·E7 | 가설. adhoc 재빌드는 요구 사항이 바뀜(실측) |
+| GUI 터미널 불필요 | agent backend는 gui 도메인 LaunchAgent(KeepAlive) | E2·E4 | 가설. 근거: WezTerm(등록된 GUI 앱) 자손은 빠름 |
+| 재부팅 직후 ssh·웹 우선에도 빠름 | GUI 로그인 뒤 LaunchAgent만 기동한다. 로그인 전에는 대기 상태를 명시한다(§10.7) | E5 | 가설. 로그인 전은 미해결([정할 것 3](#16-위험과-정할-것)) |
+| 키체인 잠김 없음 | Aqua 세션 프로세스만 agent를 띄운다 | E1·E5(실제 항목 읽기) | Aqua job·LS 앱 unlocked 실측. 실제 항목 접근은 미측정 |
+| 처리량이 줄지 않음(추가) | App Nap·자동 종료 끄기, QoS 확인 | E2 | **미등록 GUI 앱 계보에서 warm이 약 3배 느렸다(실측, 원인 모름)** |
+| 하위 daemon도 같은 계보(추가) | profile 금지 인자, doctor 점검 | E6 | 운영에서 codex app-server 문제를 겪었다 |
 
-실측 요약(n=6/조건):
+설치 때 한 번 받는 항목:
+
+| 항목 | 대상 | 근거 | 업그레이드 뒤 유지 조건 |
+|---|---|---|---|
+| 개발자 도구 | `aa.app`(고정 경로 `aa`) | 미등록 계보는 첫 실행 +221.609~236.280ms(실측) | 고정 서명 identity |
+| 전체 디스크 접근 | 같음 | 외장 볼륨 worktree. Background 세션은 허용 창을 띄우지 못한다(운영 t-0087) | 같음 |
+| 로그인 항목·백그라운드 항목 승인 | SMAppService LaunchAgent | macOS가 백그라운드 항목 승인을 요구한다 | bundle id·서명 유지 |
+| 방화벽 수신 허용(방화벽을 켠 경우) | host(Agent link·Front TLS listener) | macOS 애플리케이션 방화벽 | 서명 identity |
+| 로컬 네트워크(실제 LAN 사설 주소에 연결할 때, macOS 15 이후) | macOS agent backend | 미검증 | 서명 identity |
+| harness hook 신뢰 | Claude·Codex 설정 | 경로가 바뀌면 다시 묻는다(운영) | 고정 hook 문자열 |
+| Apple Events(필요한 agent만) | 대상 앱별 | 처음 쓸 때 GUI 프롬프트 | 서명 identity |
+
+### 10.2 실측 요약(n=6/조건)
 
 | 실험 | 첫 실행 평균 ms | warm 평균 ms | 추가 지연 ms | 키체인 | 의미 |
 |---|---:|---:|---:|---|---|
-| 기존 WezTerm 책임 상속 | 1.962 | 1.824 | 0.138 | unlocked | 빠른 기준선, 운영 해결안으로는 탈락 |
-| setsid만 적용 | 1.749 | 1.638 | 0.111 | unlocked | SID 분리가 책임 계보를 바꾸지 않음 |
-| disclaim=true | 225.950 | 1.966 | 223.984 | unlocked | 미등록 child 자신의 책임 → 느림 |
-| 미등록 GUI app | 227.043 | 5.434 | 221.609 | unlocked | GUI 형태만으로 면제 안 됨 |
-| 등록된 sshd-session 아래 | 1.767 | 1.677 | 0.090 | **locked** | 빠르더라도 전체 합격 아님 |
-| SSH → LaunchServices 미등록 app | 241.976 | 5.696 | 236.280 | unlocked | GUI 로그인 후 키체인 경로 후보, 속도 미합격 |
+| WezTerm 책임 상속 | 1.962 | 1.824 | 0.138 | unlocked | 빠른 기준선. 운영 해결안으로는 탈락 |
+| setsid만 적용 | 1.749 | 1.638 | 0.111 | unlocked | SID 분리는 책임 계보를 바꾸지 않는다 |
+| disclaim=true | 225.950 | 1.966 | 223.984 | unlocked | 미등록 child가 자기 자신의 책임자가 되어 느리다 |
+| 미등록 GUI app | 227.043 | **5.434** | 221.609 | unlocked | GUI 형태만으로 면제되지 않는다. warm 약 3배 |
+| 등록된 sshd-session 아래 | 1.767 | 1.677 | 0.090 | **locked** | 빠르지만 전체 합격은 아니다 |
+| SSH → LaunchServices 미등록 app | 241.976 | **5.696** | 236.280 | unlocked | GUI 로그인 뒤 키체인 경로. 속도는 미합격 |
 
-다음 표의 `가설`은 실패한 셀을 성공으로 가정했다는 뜻이 아니라 **측정 전이므로 합격 판정 불가**라는 뜻이다. 세부 표·모든 60개 표본은 [실험 기록](experiments.md)에 있다.
+- **warm 저하:** GUI 앱 두 조건의 warm(표본 3.995~7.542ms)은 다른 8조건(표본 1.447~2.398ms)보다 약 3배 느렸다. GUI 앱은 LaunchServices가 띄우므로 측정 script의 nice 15를 물려받지 않았을 것이다. 그래서 nice로는 설명되지 않는다(실제 priority는 측정하지 않았다).
+- **원인은 모른다.** App Nap, QoS, task role은 가설이다.
+- **지표를 바꾼다.** 「첫 실행 − warm」만 보면 계보 전체가 고르게 느려지는 경우를 놓치므로 warm 절대값과 처리량을 gate에 넣는다.
+- 세부와 60개 표본은 [실험 기록](experiments.md)에 있다.
 
-| 후보 | 한 번 등록 | 업그레이드 유지 | 재부팅·ssh/web-first 빠름 | 키체인 무잠김 | 종합 |
-|---|---|---|---|---|---|
-| WezTerm 의존 | 현재 등록 | child 변경은 빠름 | 터미널 선행·생존 의존 | 순서 의존 | 탈락(+0.138ms 기준선) |
-| sshd 아래 서버 | 현재 등록 | 새 앱 보장 아님 | 현재 SSH만 빠름 | **실측 locked** | 탈락(+0.090ms) |
-| setsid/disclaim만 | 면제를 만들지 못함 | 책임자/binary에 의존 | 미등록 경로 느림 | 보안 session을 고치지 못함 | 단독 탈락(+223.984ms) |
-| 고정 경로의 교체 launcher | 등록 정체성 별도 | **adhoc 재빌드 DR 변경** | Background/경합 남음 | 보장 없음 | 단독 탈락 |
-| 등록 GUI app → server → pane | 가설 | 가설 | server의 책임 유지·기동 경합 가설 | 현재 미등록 LS 앱 unlocked, 부팅 미측정 | 미합격(+221.609/+236.280ms는 미등록 표본) |
-| **고정 app broker가 session host/PTY를 직접 생성** | **가설** | helper 경로·바이트·서명 고정 가설 | 유일 기동 주체+자동기동 가설 | GUI 로그인 후 LS 실측만 있음 | **우선 검증 후보, 아직 미합격** |
-| launchd daemon만 | 미측정 | 미측정 | 기존 detached/경합 문제 | 세션 문제 남음 | 추천하지 않음 |
+### 10.3 후보 재평가
 
-추천 후보의 핵심은 책임 프로세스인 작은 app broker를 core 업데이트에서 분리하는 것이다. `/Applications/AAHost.app`를 설치 시 한 번 등록하고, app 내부를 core update로 수정하지 않는다. Rust core·웹·TUI는 앱 바깥 version directory에서 갱신한다. [SMAppService login item](https://developer.apple.com/documentation/servicemanagement/smappservice)과 LaunchServices를 통해 GUI 터미널 없이 앱이 자동 또는 요청으로 뜨게 하고, 웹·SSH는 그 broker에 연결만 한다. Developer ID가 같다는 사실만으로 TCC 유지가 입증된다고 주장하지 않는다.
+| 후보 | 근거 | 판정 |
+|---|---|---|
+| WezTerm 계보에 의존 | 빠르고 unlocked이지만 매번 GUI 터미널 기동·생존에 의존한다. WezTerm을 닫으면 살아남은 서버도 면제를 잃는다(운영: ppid 1, SLOW 360ms) | 탈락 |
+| sshd 아래 서버 | +0.090ms이지만 키체인 locked(실측) | 탈락 |
+| setsid·disclaim만 | 등록 없이는 +223.984ms | 단독 탈락 |
+| adhoc 재빌드 launcher | 같은 경로 재빌드 때 designated requirement(cdhash)가 바뀐다(실측) | 탈락. 「한 번 서명한 뒤 바꾸지 않는」 launcher는 반증되지 않았다 |
+| **고정 서명 `aa` + gui 도메인 LaunchAgent(SMAppService.agent) 아래 agent backend** | 운영 t-0087: 등록된 본체의 gui/501·Aqua LaunchAgent 아래 +0.04ms, 키체인 풀림. Developer ID인 kache는 업그레이드해도 권한이 유지됐고, Developer ID인 WezTerm이 책임자일 때는 herdr 업그레이드에 재등록이 필요 없었다. 탈락 사유였던 detached=false·bridge 경합은 herdr 고유 문제다 | **1순위 후보, 미합격**(aa identity·SMAppService 귀속·warm 미측정) |
+| 고정 서명 `aa.app` login item(LS 앱) 아래 | LS 앱 unlocked(실측). 비정상 종료 뒤 자동 재시작이 없다(일반 동작). warm 3배 원인 미규명 | 2순위 비교 대상 |
+| 절대 갱신하지 않는 adhoc broker + 버전 디렉터리 core(이전 추천) | 결정 3(단일 실행 파일)과 어긋난다 | 서명 identity를 확보하지 못할 때의 대안 |
 
-**현재 등록·시스템 변경은 하지 않았다.** 검증하려면 새 시험 앱 Developer Tools 일회 등록과 자동기동 승인, 격리된 재부팅 가능한 Mac이 필요하다. 이 작업은 계획 검토 후 별도 범위다. 등록 전 성능, 등록 후 성능, core update 전후 helper digest/DR, 재부팅 후 ssh-first/web-first/동시 접속, broker 장애, 실제 agent 키체인 항목 접근을 각각 측정한다. 새 바이너리 n=30/조건, median 추가 지연 ≤10ms·p95 ≤20ms·100ms 초과 0을 **제안 release gate**로 둔다. 실패 시 원인을 해결하고 근거를 남긴다.
+### 10.4 추천 구조
 
-FileVault 해제·GUI 로그인 **이전**까지 「재부팅 직후」에 포함한다면 login keychain 무잠김을 보장할 수 없다. 현재 추천 후보도 합격하지 못한다. 암호를 저장해 자동 unlock하는 해결책을 쓰지 않는다. 사용자 범위를 확정하고, 요구가 그 상태까지 포함되면 성능·인증 설계 자체를 다시 검토해야 한다. 로그인 이후이되 WezTerm을 전혀 열지 않고 ssh/web가 먼저 오는 상태는 필수 검증 대상이다.
+1. **앱 번들:** `/Applications/aa.app`(bundle id 고정) 안에 실행 파일 `aa` 하나를 두고 고정 서명 identity로 서명한다([정할 것 2](#16-위험과-정할-것)). CLI는 `~/.local/bin/aa` 링크다.
+2. **기동:** host와 agent를 각각 SMAppService.agent로 등록한 gui 도메인 LaunchAgent로 띄운다(Aqua, KeepAlive). agent backend는 **자기 자신이 책임 프로세스**다. `AbandonProcessGroup` 등 정리 동작은 P0에서 정한다.
+3. **session host:** agent backend가 spawn한다. agent backend가 재시작될 때 session host와 그 자손이 면제를 유지하는지는 **E3의 질문**이며, 결과로 둘 중 하나를 고른다.
+   - (a) disclaim spawn으로 session host를 독립 책임 프로세스로 만든다. 비공개 API이며 LLDB가 쓰는 예가 있다.
+   - (b) agent backend 재시작을 drain(세션 종료 뒤 재시작)으로 처리한다.
+4. **처리량 설정:** agent backend는 App Nap과 자동 종료를 끈다. QoS는 E2 결과로 정한다.
+5. **host의 역할:** host는 OS 감독자에게 요청만 한다(§4.2). GUI 로그인 전에는 띄우지 않는다(§10.7).
+6. **자가 보고**
+   - agent backend가 시작·재연결 때와 주기적으로 다음을 사건으로 보고한다. 실패하면 새 세션을 거부한다. 10-16 사고처럼 첫 실행 probe만 OK이고 키체인은 잠긴 상태를 잡는다.
+     - 계보(responsible path·서명)
+     - 보안 세션
+     - 키체인 실제 항목 읽기
+     - 첫 실행 지연 probe
+     - warm 지표
+   - 비공개 API(`responsibility_get_pid_responsible_for_pid`, `TCCAccessPreflight`)는 진단 보조로만 쓰고, 실패하면 timing probe로 판정한다.
 
-helper를 업데이트하지 않는 전략에도 보안 패치 수명이 있다. helper 자체 교체가 필요하면 동일 identity로 재등록 없이 유지되는지 먼저 실증한다. helper를 잃은 기존 child가 새 helper의 책임으로 자동 이동한다고 가정하지 않는다. broker 장애 후 자동 복구의 한계가 gate를 만족하지 못하면 아키텍처를 채택하지 않는다. **현재 완전 합격한 해결안은 없으며, 개발자 도구 gate를 넘기 전 제품 구현 본단계·운영 전환에 들어가지 않는다.**
+### 10.5 서명 identity
 
-## 9. 기술 스택 추천
+| 선택지 | 장점 | 단점·위험 |
+|---|---|---|
+| Developer ID | 근거가 가장 강하다(Developer ID인 kache가 업그레이드 뒤 권한 유지, 운영 관찰). notarization으로 Gatekeeper 창도 없앤다 | 유료 계정. 지금은 무료 개인 팀만 확인된다 |
+| 각 Mac에서 한 번 만드는 자체 서명 code-signing 인증서 | 무료. 요구 사항이 인증서 hash에 묶여 재빌드 뒤에도 유지될 것이라는 가설 | 개발자 도구 유지 여부 미검증. 인증서 생성이 키체인 변경(설치 때 사용자 승인) |
+| 불변 adhoc broker | 서명 identity 불필요 | 결정 3과 어긋난다. broker 보안 패치 때 재등록 필요 |
 
-아래는 조사에 따른 추천이다. 실제 도입 버전은 구현 승인 시 lockfile로 고정하고 세 OS build/test로 확인한다. 주요 라이브러리가 지원한다고 밝힌 플랫폼과 aa가 직접 검증한 결과를 구분한다.
+### 10.6 P0 실험
+
+필요 조건:
+- 사용자 승인: 시험 서명 identity, 개발자 도구·전체 디스크 접근 등록, SMAppService 등록
+- 격리되어 재부팅할 수 있는 시험 Mac
+
+이번 작업에서는 등록·재부팅을 하지 않았다.
+
+| 실험 | 방법 | 합격 gate |
+|---|---|---|
+| E1 서명 identity 유지 | ① 고정 경로 시험 `aa`를 identity X로 서명한다. ② 개발자 도구·전체 디스크 접근을 한 번 등록한다. ③ 새 binary 30개, 키체인 실제 항목 읽기, 외장 볼륨 읽기·쓰기를 측정한다. ④ 같은 identity로 재빌드·재서명해 rename으로 교체한다. ⑤ 재등록 없이 다시 측정한다. Developer ID와 자체 서명 둘 다 시험한다(가능한 범위) | median 추가 지연 ≤10ms, p95 ≤20ms, 100ms 초과 0. 실제 키체인·외장 볼륨 접근 성공. 재등록 0 |
+| E2 기동 방식·처리량 | SMAppService.agent(Aqua, KeepAlive)와 login item을 비교한다. 측정: 책임 귀속, warm 절대값, 작은 cargo workspace의 clean build·`cargo test` 시간(WezTerm 기준선 대비). App Nap·QoS·`ps -o pri,nice`를 확인한다 | 위 지연 기준 + warm·처리량이 기준선 대비 +10% 이내(제안) |
+| E3 책임 프로세스 수명 | agent backend만 재시작했을 때 기존 session host 자손의 첫 실행 지연을 본다. disclaim spawn 유무로 비교하고, host 재시작의 영향도 본다 | 세션 유지 + 지연 기준 유지. 안 되면 §10.4 3(b) |
+| E4 기동 경합 | GUI 로그인 뒤 CLI·웹·Agent link를 동시에 먼저 연결한다 | agent backend는 LaunchAgent 하나만 뜬다. host fork 0, fallback 기동 0 |
+| E5 재부팅 | `fdesetup authrestart` → 로그인 창(ssh로 상태 확인) → 화면 공유로 GUI 로그인 → ssh-first·web-first를 각각 30표본 측정한다 | 로그인 전 「대기」 명시, 로그인 뒤 지연·키체인 기준 |
+| E6 하위 daemon | codex app-server, `--no-daemon`, 빌드 cache daemon이 처음 뜬 문맥을 doctor가 탐지하는지 본다 | 잘못된 계보 탐지 100% |
+| E7 업그레이드 부수 효과 | 교체 뒤 hook 신뢰 재질문, 방화벽 프롬프트, quarantine·Gatekeeper 창을 본다 | 셋 다 0 |
+
+- **gate 성격:** 위 기준은 앞으로 적용할 제안 gate다. 과거 probe 임계값(100ms)을 낮춰 이전 결과를 통과시킨 것이 아니다.
+- **실패 처리:** 실패하면 원인을 조사한다. 반복 실행이나 timeout 연장으로 통과시키지 않는다.
+- **현재 상태:** **완전 합격한 해결안은 없다.** P0을 넘기 전에는 운영 전환을 하지 않는다. M1-1 개발은 개발 모드로 병행할 수 있다.
+
+### 10.7 재부팅·로그인 상태 기계
+
+```text
+부팅 → FileVault 해제(사람 또는 fdesetup authrestart)
+     → 로그인 창: GUI 세션이 없어 aa는 돌지 않는다.
+       ssh에서 `aa status`는 「GUI 로그인 대기」를 보고하고, 웹 주소는 응답이 없다.
+     → GUI 로그인(현장 또는 화면 공유)
+     → LaunchAgent가 aa host와 aa agent를 기동하고 자가 점검을 통과한다
+     → ready. front와 원격 agent가 재접속한다
+```
+
+- 로그인 전에도 빨라야 하는지는 [정할 것 3](#16-위험과-정할-것)이다.
+- 로그인 전에는 login keychain이 풀려 있다고 보장할 수 없다. 암호를 저장해 자동으로 unlock하는 방식은 쓰지 않는다.
+- 운영 Mac은 FileVault가 켜져 있고 자동 로그인이 없다. 계획 재부팅은 `fdesetup authrestart`로 한다.
+
+### 10.8 하위 daemon
+
+- **profile:** launch/resume spec에 daemon 금지 인자와 env를 넣는다(§8.2).
+- **doctor 점검:** pane 자손이 아닌 곳에서 agent 일을 하는 장수 프로세스의 책임 프로세스와 보안 세션을 점검한다. 대상은 codex app-server, 빌드 캐시 서버, gradle·bazel 같은 첫 사용 daemon이다.
+- **E2E:** 「agent가 daemon을 띄우고 다른 pane이 재사용」하는 경우를 시험한다.
+
+### 10.9 업그레이드 뒤 「재등록과 같은 일」
+
+- **hook 신뢰:** hook 명령 문자열을 고정한다(§8.11).
+- **quarantine:** updater가 직접 내려받은 파일에는 quarantine을 붙이지 않는다. 이를 `xattr`로 확인하는 테스트를 둔다. Developer ID라면 notarization도 받는다.
+- **첫 실행 승인 창:** 승인 창이 GUI에 뜨면 ssh 실행이 그 자리에서 멈춘다. 운영에서도 `_dyld_start`에서 멈춘 일이 있다. 그래서 E7에서 0건임을 확인한다.
+
+## 11. 설치·업데이트·버전 호환
+
+- **설치**
+  - macOS:
+    1. `aa.app`을 배치한다.
+    2. §10.1 목록을 사용자가 한 번 등록한다.
+    3. `aa agent install`로 LaunchAgent를 등록한다. host 머신이면 `aa host install`도 한다.
+    4. enrollment와 `aa integration install`을 한다.
+  - Windows: per-user로 `%LOCALAPPDATA%\aa\bin`에 설치하고 예약 작업을 등록한 뒤 enrollment한다. 관리자 권한은 필요 없다.
+  - Linux: `~/.local/bin/aa`, systemd user unit, linger 승인 뒤 enrollment한다.
+- **버전 고정:** `host.toml`의 `[update] version = "x.y.z"`로 고정한다. major를 자동으로 올리지 않는다. 운영에서는 update 스크립트가 원치 않는 1.0으로 올리려 한 일이 있다.
+- **산출물과 배포:** OS/arch별 서명 package와 서명 manifest(ed25519)다. host가 내려받아 검증하고, agent에는 Agent link로 보낸다. agent 머신에는 인터넷과 SSH가 필요 없다.
+- **교체**
+  - 같은 볼륨에 staging한 뒤 self-check를 하고 rename으로 교체한다. 제자리 쓰기는 금지한다.
+  - macOS는 번들을 통째로 rename한다.
+  - Windows는 실행 중인 exe를 rename한 뒤 교체한다. 예약 작업은 고정 경로를 가리킨다.
+  - 실행 중인 프로세스는 이전 이미지로 계속 돈다.
+- **순서:** host → 로컬 agent → 원격 agent를 롤링한다. agent backend 재시작은 E3 결과에 따라 무중단이거나 drain이다. 실행 중인 session host를 끊는 자동 update는 하지 않는다.
+- **호환**
+  - 같은 major 안에서 host는 agent minor N-1까지 지원한다. agent는 더 새 host와 hello로 협상하고, 지원하지 않는 기능은 플래그로 끈다.
+  - 실행 파일이 하나라서 갱신 직후 같은 머신에서 새 host와 이전 agent backend가 함께 도는 것이 정상 상태다.
+  - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
+- **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
+- **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
+
+## 12. 기술 스택 추천
+
+도입 버전은 구현 승인 뒤 lockfile로 고정하고 세 OS build·test로 확인한다. 라이브러리가 지원한다고 밝힌 플랫폼과 aa가 직접 검증한 결과를 구분한다.
 
 | 계층 | 추천·이유 | 세 OS·빌드 고려 | 대안·선택 조건 |
 |---|---|---|---|
-| 비동기 실행 | Tokio; connection/event/timer 생태계, Axum과 통합 | Rust agent 세 OS, blocking PTY/DB 작업은 전용 thread | std threads만으로 시작하면 transport 조합 복잡; async-std 혼용 안 함 |
-| PTY·spawn | portable-pty + 얇은 OS adapter; herdr/WezTerm에서 사용 | Unix PTY/Windows ConPTY 존재. Windows job·종료·수명과 macOS broker spawn은 직접 검증·보완 | Unix openpty·Windows API 직접 구현은 제한 지점이 확인될 때만 |
-| VT·screen | herdr의 검증 범위를 참고한 ghostty-vt를 adapter로 격리 | 조사본에 세 OS target 매핑, Zig 0.16.0 추가 빌드 도구. native CI 필수 | Rust alacritty_terminal 또는 vt100 검토. vte는 parser이며 grid/scrollback 전체를 제공하지 않아 직접 terminal 구현 비용 발생 |
-| TUI | Ratatui+Crossterm | 중심 Mac CLI/TUI 우선, agent 머신도 headless CLI 가능 | bare ANSI UI는 입력·layout·Unicode 부담; tmux 외부 필수 의존은 피함 |
-| IPC·schema | UDS/Named Pipe, Serde JSON+JSON Schema, binary terminal frames | UID/SID ACL·path 차이 adapter, 동일 remote envelope | gRPC/Protobuf는 공개 다언어 SDK 규모가 커질 때 검토; 내부 bincode 공개계약 사용 안 함 |
-| 웹 서버 | Axum+Tower, Rust gateway process | 중심 macOS만 제품 지원; 공통 agent WSS는 Rust portable | Bun/Hono는 빠른 시제품 장점이나 실행 runtime·타입 중복 증가 |
-| frontend | TypeScript+React+Vite+xterm.js | browser 공통, 모바일 IME·WebKit 별도 검증 | Svelte도 가능하지만 참고 web-ui와 component 개념 재사용은 React가 유리 |
-| 저장소 | SQLite/rusqlite(bundled) + Markdown/TOML | 세 OS local DB, DB I/O 전용 worker; OS-native 데이터 경로 | 순수 파일+lock은 초기 단순하나 event/outbox 정합성 비용; SQLx는 별도 async DB 필요 시 |
-| 원격·TLS | OpenSSH stdio 우선 + rustls/Tokio WebSocket outbound | SSH optional Windows 대응; 별도 ssh 설치 없이 enroll 가능 | QUIC/WebRTC는 초기 복잡도 대비 이점 미입증; Tailscale은 선택적 네트워크 |
-| ID·관측 | UUID/ULID 중 하나, tracing structured logs | wall-clock 순서 대신 boot ID+sequence, secret redact | OpenTelemetry collector는 초기 필수 아님 |
-| 웹 도구 | Node LTS+명시 package manager/lockfile | TS build·Playwright에만 필요, 배포 사용자에게 Node/Bun 불필요 | Bun 선택 가능하나 runtime 필수로 확장하지 않음 |
-| 이미지 수집·전송 | Rust native clipboard adapter·제한된 PNG/JPEG decoder, TS paste/Blob·streaming upload | Mac/Windows/Linux destination은 clipboard 불필요. OS별 native path·ACL, SSH/WSS 공통 binary attachment stream | osascript·wl-paste/xclip 외부 명령은 선택적 adapter 후보; daemon의 clipboard 조회·base64 전체 복제는 피함 |
-| 테스트·CI | Rust unit/contract/PTY E2E, Playwright, native OS matrix, macOS 시험기 | ConPTY는 Windows native, TCC/키체인·재부팅은 시험 Mac | container/WSL/mock만으로 native 합격 대체 불가 |
-| 배포·갱신 | OS/arch release binary+signed manifest, Mac 고정 app + 외부 core | Windows version directory·handle 수명, Linux user package, macOS identity 유지 | Homebrew는 core 배포 선택지이나 Cellar binary를 책임자로 삼지 않음 |
+| 비동기 | Tokio. 연결·사건·timer 생태계와 Axum 통합 | blocking PTY·DB 작업은 전용 thread | async-std를 섞지 않는다 |
+| PTY·spawn | portable-pty(herdr가 vendor한 0.9.0과 ConPTY 패치를 참고) + 얇은 OS adapter | Windows job·종료·수명, macOS spawn 속성은 직접 검증한다 | 한계가 확인되면 openpty·Windows API를 직접 쓴다 |
+| VT | ghostty-vt adapter(herdr 검증 범위 참고) | Zig 0.16.0 추가 빌드 도구. native CI 필수 | alacritty_terminal, vt100. vte는 parser뿐이다 |
+| TUI front | Ratatui+Crossterm | cell grid diff를 받는 얇은 client | 순수 ANSI UI는 부담이 크다 |
+| Front API·Agent link | serde JSON + schemars JSON Schema → TS 타입 생성, binary terminal frame | UDS/Named Pipe·TCP+TLS adapter | 공개 다언어 SDK가 커지면 Protobuf. bincode를 공개 계약으로 쓰지 않는다 |
+| Agent link 보안 | rustls TLS 1.3 + rcgen 자체 서명 인증서 pinning | 세 OS 공통 Rust | Noise IK(snow) |
+| 웹 서버 | Axum+Tower, host 프로세스 안 | 중심 macOS | Bun/Hono는 runtime·타입 중복이 늘어난다 |
+| 웹 front | TypeScript+React+Vite+xterm.js | 모바일 IME·WebKit은 따로 검증 | Svelte. web-ui component 개념을 쓰려면 React가 유리 |
+| 저장 | rusqlite(bundled) + Markdown | DB I/O 전용 worker | 순수 파일+lock은 사건·outbox 정합성 비용이 크다 |
+| 설정 | toml(serde) + toml_edit(주석 보존 migrate) | 세 OS 경로 규칙(§7.1) | 없음(결정 5) |
+| clipboard·이미지 | front: arboard 후보 + 제한된 PNG/JPEG decoder. 웹: paste·Blob streaming | agent 머신에는 clipboard가 필요 없다 | osascript·wl-paste·xclip은 선택 adapter |
+| macOS 앱·SMAppService | objc2 계열 binding 또는 작은 Swift 부분 | 서명·notarization pipeline | P0에서 결정 |
+| ID·관측 | ULID 또는 UUID, tracing 구조화 로그 | wall-clock 대신 boot ID+sequence, secret redact | OpenTelemetry는 초기 필수가 아니다 |
+| 웹 도구 | Node LTS + lockfile | TS build·Playwright에만 쓴다 | Bun은 선택 |
+| 배포 | OS/arch release + ed25519 서명 manifest, macOS `aa.app` | 고정 경로·rename 교체 | Homebrew는 배포 선택지. Cellar 경로를 등록 대상으로 쓰지 않는다 |
 
-primary 근거: [Tokio](https://tokio.rs/), [portable-pty](https://docs.rs/portable-pty/0.9.0/portable_pty/), [ConPTY 구현](https://github.com/wezterm/wezterm/blob/main/pty/src/win/conpty.rs), [Axum](https://docs.rs/axum/latest/axum/), [VT API](https://ghostty.org/docs/vt), [vte](https://github.com/alacritty/vte), [rusqlite](https://github.com/rusqlite/rusqlite), [xterm flow control](https://xtermjs.org/docs/guides/flowcontrol/). 조사본의 ghostty binding·Zig 버전과 기존 세 도구별 stack은 [소스 분석](source-analysis.md)에 정리했다. 이 조사에서 대형 upstream build를 돌리지 않았다.
+primary 근거:
+- [Tokio](https://tokio.rs/)
+- [portable-pty](https://docs.rs/portable-pty/0.9.0/portable_pty/)
+- [ConPTY 구현](https://github.com/wezterm/wezterm/blob/main/pty/src/win/conpty.rs)
+- [Axum](https://docs.rs/axum/latest/axum/)
+- [VT API](https://ghostty.org/docs/vt)
+- [vte](https://github.com/alacritty/vte)
+- [rusqlite](https://github.com/rusqlite/rusqlite)
+- [xterm flow control](https://xtermjs.org/docs/guides/flowcontrol/)
+- [SMAppService](https://developer.apple.com/documentation/servicemanagement/smappservice)
 
-## 10. 테스트 전략과 직접 만들 E2E 도구
+## 13. 테스트 전략과 직접 만들 E2E 도구
 
-**100% 커버리지를 목표로 하지 않는다.** 상태·권한·전달·수명·복원처럼 틀리면 결과를 잃는 경계를 유닛과 E2E로 검증한다. 외부 도구가 필요한 관측을 제공하지 않으면 aa용 작은 harness를 직접 만든다. 테스트를 위해 production에 임의 bypass endpoint를 만들지 않는다.
+**100% 커버리지를 목표로 하지 않는다.** 대상은 상태·권한·전달·수명·복원처럼 틀리면 결과를 잃는 경계다. 외부 도구가 관측을 제공하지 않으면 작은 harness를 직접 만든다. production에 테스트용 bypass endpoint를 만들지 않는다.
 
 ### 유닛·계약 테스트
 
 | 대상 | 단위 검증 | 잡으려는 실패 |
 |---|---|---|
-| thread 상태 reducer | delivery_unknown/stale/blocked/review/resolve 전이, 저장 재시작 복구 | disconnected를 done으로 잘못 분류, 중복 resolve |
-| profile·resume | OS별 argv·effort·model·policy intent·revision 합성 | 재시작 때 옵션 소실, Windows quote·경로 손상 |
-| command/event | ID dedupe·receipt·boot fencing·bounded frame·snapshot cursor | 재접속 시 같은 prompt 재입력, 오래된 pane에 입력 |
-| 보고·파일 | hash·부분 복사·receipt·symlink/junction·path traversal | 회수 전 삭제, 다른 머신 파일 접근 |
-| 이미지 intent·attachment | MIME와 실제 포맷·상한·digest·upload receipt·target generation·adapter 입력·참조 수명 | bytes 도착 전 경로/Enter 삽입, Mac 경로를 Windows에 전달, 중복 붙여넣기·detach 직후 삭제 |
-| routine·inbox | 가상 clock의 schedule·DST·missed-run·ack·중복 억제 | 재시작 뒤 명령 중복 실행, 누락 은폐 |
-| 권한 | reader/controller·lease·취소·Origin/CSRF 판단 | 읽기 client의 입력·resize, 권한 취소 후 pending write |
-| adapter | Claude/Codex hook·screen fixture를 버전별 decode | hook 없는 상태 오판, UI 문구 변화로 잘못된 키 입력 |
+| thread 상태 reducer | delivery_unknown·stale·question·review·resolve 전이, 재시작 뒤 복구 | 끊김을 done으로 분류, 중복 resolve |
+| 재입력 규칙 | delivery_unknown에서는 재전송 0, 이어가기 정책의 상한·기록 | 같은 prompt 재입력, 무한 이어가기 |
+| profile·resume | OS별 argv·effort·model·daemon 금지 인자·revision 합성 | resume 때 옵션 소실, Windows quote 손상 |
+| Front API·Agent link | ID dedupe·receipt·boot fencing·bounded frame·snapshot cursor·hello 버전 협상 | 재접속 때 재입력, 오래된 pane 입력, 버전 skew |
+| 설정(TOML) | schema 버전, 모르는 key, 잘못된 값 위치, local 겹치기, migrate 백업·주석 보존 | 조용한 기본값, 사용자 파일 손상 |
+| 보고·파일 | hash·부분 복사·지연 스트리밍·symlink/junction·path traversal | 회수 전 삭제, 다른 머신 파일 접근 |
+| 이미지 attachment | 실제 포맷·상한·digest·receipt·target generation·adapter 입력·참조 수명 | bytes 도착 전 경로·Enter 삽입, 중복 붙여넣기 |
+| question·message | 선택지 매핑, lease 재확인, interrupt·queue 순서 | 잘못된 pane에 답 입력 |
+| routine·inbox | 가상 clock의 schedule·DST·missed-run·ack·중복 억제 | 재시작 뒤 중복 실행 |
+| 권한 | reader·controller·lease·취소·Origin/CSRF | 읽기 front의 입력, 취소 뒤 pending write |
+| adapter | Claude·Codex hook·화면 fixture를 버전별로 decode | 사건 오판, UI 문구 변화로 잘못된 키 |
+| Tailscale 공개 | `status --json`·`serve status --json` fixture로 포트 선택·상태 판정 | 기존 매핑 덮어쓰기, 잘못된 주소 |
 
-단순 wrapper와 getter마다 mock 호출 횟수를 고정하는 테스트는 만들지 않는다. terminal parser의 모든 기능을 재구현한 기대값도 만들지 않는다. schema compatibility는 실제 저장한 구버전 fixture로 검증하고, 파서 fuzz/property 검증은 frame/path/state처럼 입력 공간이 큰 경계에 집중한다.
+단순 wrapper·getter의 mock 호출 횟수를 고정하는 테스트는 만들지 않는다. schema 호환은 실제로 저장한 구버전 fixture로 검증한다. fuzz·property 검증은 frame·path·state처럼 입력 공간이 큰 경계에 집중한다.
 
-### 직접 만들 도구(구현 단계의 제안)
+### 직접 만들 도구
 
 | 도구 | 구성 | 관측·단언 |
 |---|---|---|
-| `aa-e2e` 실행 harness | Rust child/PTY·ConPTY driver, 임시 state root/port/socket, 소유 PID/handle registry | 명시 deadline·event 대기, 종료 코드·잔여 프로세스·파일 receipt; 실패 시 transcript·버전·seed 저장 |
-| 터미널 fixture executable | Rust로 UTF-8/한글/emoji·ANSI·alternate screen·resize·echo·Ctrl-C 시나리오 출력 | 실제 키 입력·cursor/grid·scrollback·reconnect를 OS별 확인; paid agent API 불필요 |
-| 화면 단언기 | production ghostty와 독립된 vt100/vte 기반 관측 parser 또는 제한된 명시 화면 모델 | raw PTY stream에서 visible text·cursor·cell region 확인, 구현 내부 struct 대신 사용자 화면 단언 |
-| 다중 머신 lab driver | 여러 실제 agent 프로세스 + fault proxy + controller protocol fixture | 연결 지연·단절·중복·재순서·중심 재시작·version skew·partial file·SSH 부재; prompt 자동 재전송 없음 |
-| OS lifecycle adapter | Mac broker, Linux user supervisor, Windows user supervisor를 sandbox root에서 다룸 | 부모 shell/SSH/웹 종료 후 pane 생존, Windows job 탈출·ConPTY pump deadlock·복원 |
-| Mac 성능 probe | 이번 fresh-binary 방식을 제품 `doctor`와 시험 harness로 정제 | 책임자·서명·keychain 실제 접근·first/warm 분리; 등록/업그레이드/부팅 순서 gate |
-| 웹 headless driver | Playwright+실제 Rust gateway+fixture agent | 로그인·device revoke·reader 금지·terminal attach·resize lease·보고 sandbox·모바일 composer/IME |
-| 이미지 clipboard/agent fixture | 격리 runner의 native clipboard PNG/DIB writer, Ctrl+V를 실제 TUI에 전달하는 PTY/ConPTY driver, 입력 경로의 파일을 읽는 fixture agent | 대상 머신에서 이미지 존재·decode·픽셀값/정규화 hash·초안 보존·Enter 순서·detach 후 지연 읽기. mock이 receipt를 대신 만들지 않음 |
+| `aa-e2e` 실행 harness | Rust PTY·ConPTY driver, 임시 state root·포트·socket, 소유 PID/handle registry | 명시 deadline·사건 대기, 잔여 프로세스·파일 receipt. 실패하면 transcript·버전·seed를 저장 |
+| `aa-lab` 다중 머신 재현 | 한 머신에 agent backend 여러 개(인스턴스별 state root·포트·machine ID·TOML) + Agent link fault proxy | 지연·단절·재순서·느린 링크·인증 실패·version skew(이전·새 binary 혼합)·live 세션 중 host/agent 재시작. prompt 자동 재전송 0 |
+| 터미널 fixture executable | UTF-8·한글·emoji·ANSI·alternate screen·resize·Ctrl-C 시나리오 | 실제 키 입력·grid·scrollback·reconnect. 유료 API 불필요 |
+| 화면 단언기 | production ghostty와 독립된 vt100/vte 기반 관측 parser | raw stream과 TUI front 출력에서 visible text·cursor·cell region |
+| TUI front harness | harness PTY 안에서 aa TUI를 실행 | layout·attach/detach·lease·stale 표시를 화면으로 단언 |
+| OS lifecycle adapter | Mac LaunchAgent, Linux user unit, Windows 예약 작업을 sandbox root에서 실행 | 부모 shell·SSH·웹 종료 뒤 생존, Windows job 탈출·ConPTY deadlock |
+| Mac 성능 probe | fresh-binary 방식을 doctor와 P0 harness로 정제 | 책임자·서명·키체인 실제 접근·first/warm·처리량. 결과 기록 |
+| 웹 headless driver | Playwright + 실제 host + fixture agent | pairing·revoke·reader 금지·attach·lease·보고 sandbox·모바일 composer |
+| 이미지 clipboard·agent fixture | 격리 runner의 native clipboard writer, PTY driver, 받은 경로의 파일을 여는 fixture agent | 대상 머신에서 decode·pixel hash·draft 보존·Enter 순서 |
+| soak | 24시간 이상 | 메모리·scrollback 상한·재연결 반복 |
 
-screen fixture와 production screen engine이 같은 버그를 공유하지 않도록 독립 관측을 둔다. screenshot은 핵심 grid/text 검증의 보조다. 가짜 LLM은 prompt/idle/blocked를 결정적으로 재현하되 실제 Claude/Codex의 hook·resume는 release 직전 소수의 명시적 integration smoke로 별도 확인한다.
+- **독립 관측:** screen fixture와 production 엔진이 같은 버그를 공유하지 않게 관측을 독립시킨다.
+- **가짜 LLM과 실제 smoke:** 가짜 LLM은 사건을 결정적으로 재현한다. 실제 Claude·Codex의 hook·resume·이미지 소비는 release 전에 소수의 명시적 smoke로만 확인한다.
+- **미실행은 합격이 아니다.** TCC·책임 프로세스·재부팅은 hosted CI에서 검증할 수 없다. P0 harness를 수동으로 돌려 결과를 기록하고, CI에서는 「미실행」으로 표시하며 합격으로 세지 않는다.
 
-### 세 OS와 중심 Mac의 E2E 배치
+### E2E 배치
 
-| 위치 | 매 변경 검증 | 추가 release/nightly 검증 |
+| 위치 | 매 변경 검증 | release·nightly 검증 |
 |---|---|---|
-| macOS native runner(예: macos-26, Intel 보조) | 공통 Rust·실제 Unix PTY, Mac 중심 daemon+웹+fixture agent, Playwright Chromium | 별도 승인된 시험 Mac의 일회 등록·실제 키체인·재부팅/ssh/web-first·잠금·helper 장애 |
-| Linux native runner(예: ubuntu-24.04) | agent binary·Unix PTY·profile/path·outbound WSS·protocol fixture·부모 종료 생존 | systemd user/없는 환경, x64/arm64 배포·네트워크 장애 |
-| Windows native runner(예: windows-2025) | native agent·ConPTY·PowerShell/cmd·Unicode path/CRLF·Named Pipe ACL·Job handle·SSH 없는 outbound | 표준 사용자/Task Scheduler logon·OpenSSH 있는 환경·logoff/reboot·실제 credential store |
-| 격리된 세 OS lab + 중심 Mac | 필요한 변경에서만 전체 시나리오 | Mac coordinator → 실제 세 OS thread 생성·보고/파일 회수·단절/복귀·단계별 update/rollback |
+| macOS native runner(예: macos-26) | Rust 유닛·계약, Unix PTY, host+agent+fixture, `aa-lab`, Playwright Chromium | 승인된 시험 Mac의 P0 항목(등록·키체인·재부팅·처리량) |
+| Linux native runner(예: ubuntu-24.04) | agent binary·PTY·경로·Agent link·부모 종료 생존 | systemd user·linger 유무, arm64 |
+| Windows native runner(예: windows-2025) | agent·ConPTY·PowerShell/cmd·Unicode 경로·CRLF·Named Pipe ACL·Job handle·Agent link | 표준 사용자·예약 작업 logon·logoff/reboot·DPAPI |
+| 격리 세 OS lab + 중심 Mac | 해당 변경에서 전체 시나리오 | 실제 세 OS thread·보고 회수·단절·복귀·업데이트·rollback |
 
-runner 이름은 [GitHub 공식 지원 목록](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) 확인에 따른 예시이며 pin해서 쓰고 image 변경을 감시한다. 다른 OS의 hosted runner에서 제품 중심 daemon을 실행한다고 가정하지 않는다. Windows/Linux의 로컬 contract fixture는 **중심 전체 E2E가 아니다**. 실제 Mac 중심과 다른 OS 사이의 연결은 미리 격리·인증된 lab에서 검증하며 hosted job끼리 직접 접속 가능하다고 가정하지 않는다. 관리자 권한 hosted Windows 결과만으로 일반 사용자 설치·로그온 수명을 합격시키지 않는다.
+- **runner 이름:** [GitHub 지원 목록](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)을 따른 예시다. 이름은 pin해서 쓴다.
+- **hosted job의 한계:** hosted job끼리 직접 접속된다고 가정하지 않는다.
+- **실패 처리:** 실패에 자동 재실행을 붙이지 않고 첫 실패의 증거를 보존한다. timeout은 미리 정한 failure bound이며 늘려서 통과시키지 않는다.
+- **측정 전 rebuild:** 성능 비교와 화면 캡처 전에는 현재 소스로 산출물을 다시 만든다.
 
-매 변경 gate는 영향받은 유닛·계약·native PTY smoke·필요한 웹 smoke로 좁힌다. 부팅·권한·업데이트·다중 머신 E2E는 해당 변경과 release에서 필수다. 실패에 자동 재실행을 붙이지 않고 첫 실패 증거를 보존한다. timeout은 사전에 정한 failure bound이며 늘려서 통과시키지 않는다. 성능 비교·화면 캡처 전에는 현재 소스로 해당 산출물을 다시 만든다.
+### 이미지 붙여넣기 E2E 합격 기준
 
-### 이미지 붙여넣기 E2E의 합격 기준
-
-| 시나리오·위치 | 실제 경계의 단언 |
+| 시나리오 | 실제 경계의 단언 |
 |---|---|
-| Mac 터미널 client Ctrl+V → local/세 OS 원격 | 격리한 알려진 PNG를 native clipboard에 넣고 실제 TUI에 Ctrl+V를 전달한다. Windows ConPTY/Linux PTY/Mac PTY의 fixture agent가 자기 native path를 열어 decode한 pixel checksum을 출력해야 한다. client의 로컬 경로를 출력하거나 upload API 응답만 받은 것은 합격 아님 |
-| Windows/Linux client clipboard adapter | Windows PNG·CF_DIB/CF_DIBV5, Linux 격리 X11/Wayland session에서 native writer→Ctrl+V→destination까지 확인한다. GUI가 없는 원격 agent에는 clipboard 도구가 없어도 Mac/web 이미지가 도착해야 한다. 표준 hosted runner에 desktop clipboard 환경이 없으면 격리 desktop lab에서 수행하고 미실행을 합격으로 치지 않는다 |
-| 웹 terminal/composer Ctrl+V → 세 OS | localhost/HTTPS의 실제 gateway와 fixture agent를 사용한다. Chromium은 허용한 시험 context에서 실제 clipboard image를 준비한 뒤 keyboard paste로 전 경로를 검증한다. WebKit과 모바일 paste는 native 시험 환경에서 별도 검증한다. synthetic ClipboardEvent/DataTransfer만 주입한 검사는 component 계약이며 OS clipboard E2E를 대체하지 않는다 |
-| 입력·대상 경합 | 기존 한글/텍스트 draft+image, text-only clipboard, 이미지 paste 직후 Enter, 여러 이미지 순서, 느린 upload 중 pane/machine 전환·agent 교체·lease 상실을 확인한다. 텍스트 손실·이미지 중복·자동 Enter·잘못된 pane 입력·경로 이전 Enter가 없어야 한다 |
-| 파일 전송·수명·권한 | 단절/offset 재개, commit ACK 유실, 입력 ACK 유실, client detach/재attach 뒤 지연 읽기·resume, quota 초과·disk full·손상/MIME 위장·Windows 한글/공백 경로·junction·reader/revoke를 검증한다. commit 전에 경로를 넣지 않고 active 참조 파일을 삭제하지 않아야 한다 |
-| 실제 Claude/Codex smoke | 지원한다고 선언한 CLI 버전과 OS 조합에서 각 adapter의 이미지 인식/읽기 경로와 보존된 draft를 확인한다. native image attachment 기록 또는 지원 image-read의 소비 증거를 남긴다. 모델이 이미지 내용을 설명하는 문장을 고정 기대값으로 쓰지 않고 파일 전달만으로 모델의 시각 인식까지 입증했다고 하지 않는다 |
+| Mac TUI front Ctrl+V → local·세 OS 원격 | 격리한 PNG를 native clipboard에 넣고 실제 TUI에 Ctrl+V를 보낸다. 대상 fixture agent가 자기 native path를 열어 decode한 pixel checksum을 출력해야 한다. 경로 출력이나 API 응답만으로는 합격이 아니다 |
+| Windows·Linux client adapter | PNG·CF_DIB(V5), 격리 X11/Wayland에서 native writer → Ctrl+V → 대상까지. desktop이 없는 runner에서 미실행이면 합격이 아니다 |
+| 웹 Ctrl+V → 세 OS | HTTPS 공개 주소(시험 tailnet 또는 localhost)의 실제 host와 fixture agent로 검증한다. synthetic 이벤트는 component 계약일 뿐이다 |
+| 입력·대상 경합 | 한글 draft+이미지, 이미지 직후 Enter, 여러 이미지 순서, 느린 업로드 중 pane 전환·lease 상실을 본다. 텍스트 손실·중복·자동 Enter·잘못된 pane 입력이 없어야 한다 |
+| 전송·수명·권한 | offset 재개, ACK 유실, agent 단절 시 즉시 실패·draft 유지, detach 뒤 지연 읽기, quota·disk full·MIME 위장·Windows 한글 경로·junction·reader/revoke를 본다 |
+| 실제 Claude·Codex smoke | 지원을 선언한 CLI 버전·OS에서 이미지 인식 경로와 draft를 확인한다. 모델 설명 문장을 기대값으로 쓰지 않는다 |
 
-Mac 중심+세 OS destination lab에서 위 원격 흐름을 공통으로 실행한다. GitHub native runner는 해당 OS의 저장·path·ACL·PTY/ConPTY·headless 업로드 계약을 맡고, 실제 GUI clipboard·터미널 keybinding·모바일 붙여넣기는 별도 격리 lab의 release gate로 둔다. 사용 중인 머신의 clipboard를 테스트 때문에 바꾸지 않는다. 이 계획 추가 작업에서는 **제품 이미지 전달 기능이나 위 E2E를 구현·실행한 것이 아니다**.
+## 14. 단계별 로드맵
 
-## 11. 단계별 로드맵
+기간은 집중 개발 기준의 **작업일 추정**이며 약속이 아니다. M1 중간에 실제 진행 속도로 다시 산정한다. 시험 환경·서명 identity·권한 실험 승인이 선행 조건이다.
 
-아래 기간은 1명의 집중 개발 기준 **작업일 추정**이며 일정 약속이 아니다. 세 OS 시험 환경·서명 identity·권한 실험 승인 확보가 선행된다. 검토 결과에 따라 범위를 다시 산정한다. 첫 usable MVP는 P2~P3 완료 시점이며, Windows/Linux를 나중에 덧붙이는 MVP로 정의하지 않는다.
+참고 구현 규모(이번에 셈):
+- herdr `src`: Rust 285,077줄
+- herdr-projects: 25,031줄
+- herdr-web-ui: server 75,659줄 + src 59,940줄
+
+이 규모를 보면 이전 추정(28~46일)은 비현실적이었다.
 
 | 단계 | 기간 추정 | 내용 | 완료 기준·검증 |
 |---|---|---|---|
-| P0. 기획 검토·macOS 실행 gate | 3~5일 + 승인/시험기 대기 | 고정 broker 실험, 일회 등록·core update·재부팅·ssh/web-first·키체인 검증, 프로토콜·수명 ADR | 8절의 모든 조건 실측. helper 장애 한계 확인. 실패하면 이 단계에서 설계 수정; 본단계 진행 금지 |
-| P1. 공통 domain·native 실행 골격 | 4~6일 | agent protocol·receipt·state, OS adapter·PTY/ConPTY, attachment chunk/commit·대상 파일 저장, E2E harness·fixture | 세 OS에서 spawn/input/resize/exit·UTF-8·parent 종료 생존·IPC 권한·이미지 digest/파일 receipt. Windows를 WSL로 대체하지 않음 |
-| P2. CLI 세션 MVP | 6~10일 | local/remote session·workspace/tab/pane, attach/detach·VT·다중 client·관리 daemon 교체·터미널 Ctrl+V 이미지 | 세 OS pane, 기존 PID/출력 유지, interrupted 복원, Mac client 이미지가 세 OS agent에서 읽힘·detach 뒤 지연 읽기 |
-| P3. projects 0.2형 오케스트레이션 MVP | 5~8일 | Mac coordinator/context·profile·thread/worktree·report·ticker/inbox/routine·sidebar | Mac 중심→세 OS start·hook/status·보고 hash 회수·ack/resolve, repo 없는 원격 task, lost nudge 복구 |
-| P4. 웹·모바일 | 5~9일 | Axum auth·device·WS, React/xterm·보고 viewer·모바일 composer·최소 chat·웹 Ctrl+V 이미지 전송 | headless+native clipboard·한글 IME·세 OS 이미지 도착·slow upload 중 대상 전환·reader/revoke·resize lease·보고 sandbox |
-| P5. 업데이트·복원·전환 | 5~8일 | OS별 배포·signed manifest·호환/rollback, 기존 운영 import·shadow·pilot | 업그레이드 재등록 0, 부팅 gate 재확인, 세 OS lab E2E, 기존 작업 보존·rollback rehearsal |
+| P0. 개발자 도구 gate | 3~6일 + 승인·시험기 대기(M1-1과 병행 가능) | E1~E7, 서명 identity 결정, 프로토콜·수명 ADR | §10.6의 gate 실측. 실패하면 설계를 수정. **P0 합격 전에는 운영 투입 금지** |
+| M1-1. 골격 + 웹 HTTPS | 8~12일 | 단일 실행 파일 역할, TOML, Agent link(TLS·enrollment), 로컬 agent backend(개발 모드는 자식, 운영 모드는 LaunchAgent), session host·PTY·VT, `aa pane run/read/send`, host 웹 최소판(pairing·세션 목록·terminal 보기·입력), `aa web publish` | 다른 기기에서 Tailscale HTTPS 주소로 Mac 3대의 pane을 보고 입력한다. host 재시작 뒤에도 세션 유지. agent 단절 시 읽기 전용 표시. Windows·Linux는 Agent link 계약 테스트·CI build·PTY smoke |
+| M1-2. TUI front·세션 관리 | 6~10일 | workspace/tab/pane layout, attach/detach, 여러 front lease, 재부팅 뒤 resume spec | TUI harness로 화면 단언, 여러 front 동시, 재부팅 뒤 interrupted 표시 |
+| M1-3. 오케스트레이션 | 10~15일 | projects 0.2 핵심(부록 A의 M1 항목), 상태 사건(Claude·Codex adapter), 확인창 원격 응답, 메시지 API, 결정 기록, 병합 대기열 순번·사건, 머신 건강·자원 한도, routine을 agent에서 실행 | Mac 중심 → Mac 3대 thread 시작·보고 회수·ack·resolve. 질문 원격 응답. polling 없는 상태 표시 |
+| M1-4. 이미지·결과물·알림 | 4~7일 | TUI·웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, Web Push·webhook | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
+| → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
+| M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
+| M3. 확장 | 8~14일 | 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E |
+| M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
-합계 **28~46 작업일**에 승인·환경 대기 시간이 추가된다. 이미지 붙여넣기의 전송·adapter·native clipboard 검증 범위를 포함한 추정이다. P0은 gate 실험 단계이며 이번 조사·계획 단계에서 제품 구현으로 진행한 것이 아니다. P1부터 공통 실행부에 필요한 유닛·native E2E를 함께 만들고 이후 기능마다 확장한다.
+- **합계:** P0 3~6일 + M1 28~44일 + M2~M4 22~37일 = **약 53~87 작업일**에 승인·환경 대기가 더해진다.
+- **MVP 범위:** M1 범위를 macOS로 둔 것은 [정할 것 1](#16-위험과-정할-것)이다. 3 OS 기능 합격을 MVP에 넣으면 M2가 M1 안으로 들어와 첫 사용 시점이 늦어진다.
+- **세 OS 프로토콜·빌드는 M1-1부터 함께 간다.** 바뀌는 것은 기능 완성 시점뿐이다.
 
-## 12. 현재 운영에서 이전
+## 15. 현재 운영에서 이전
 
-1. **읽기 전용 inventory.** herdr 0.9.5와 projects 0.2.35의 machine ID·session/workspace/pane·thread record·profile·report/library를 export하여 hash를 보존한다. 토큰·인증 비밀은 import하지 않는다. 원격 경로는 해당 머신의 경로 그대로 기록한다.
-2. **별도 namespace의 shadow.** aa의 state root·socket/port·worktree 접두사·hook namespace를 분리한다. 기존 thread를 제어하지 않고 상태/보고만 read-only로 비교한다. 현재 운영 서버 재기동·ticker stop·agent hook 파일 변형은 이 조사에서 하지 않는다.
-3. **새 작업부터 pilot.** 기존 herdr thread는 기존 도구로 마무리한다. 새 low-impact thread만 aa에서 시작하고 세 Mac의 보고·권한·성능을 검증한다. Windows/Linux 시험 thread도 같은 API로 검증한다. 기존 terminal을 live takeover할 수 있다고 약속하지 않는다.
-4. **결과·문맥 이전.** 완료된 thread/report/library·memory를 검증된 사본으로 import한다. 진행 중 agent는 사용자가 정한 idle 시점에 저장한 session ID+launch/resume spec로 명시 재개한다. build/test는 연속 실행이 아닌 interrupted이며 필요하면 새 실행으로 남긴다.
-5. **전환 gate와 rollback.** 모든 active thread에 소유 도구를 하나만 지정한다. aa 실패 시 새 시작을 중단하고 검증한 보고·문맥을 기존 coordinator가 읽을 수 있게 export한다. 기존 설치·설정은 검증 기간 유지한다. 전체 중단/재시작·설정 변경은 실제 전환 작업에서 따로 승인 범위를 정한다.
+1. **읽기 전용 inventory.**
+   - herdr 0.9.5와 projects 0.2.35의 machine·session·pane·thread·profile·report·library를 export하고 hash를 보존한다.
+   - 토큰과 비밀은 가져오지 않는다.
+2. **별도 namespace의 shadow.**
+   - aa의 state root·포트·worktree 접두사·hook namespace를 분리한다.
+   - 기존 thread는 제어하지 않고 상태·보고만 비교한다.
+3. **새 작업부터 pilot.**
+   - 기존 herdr thread는 기존 도구로 마무리한다.
+   - 새 low-impact thread만 aa에서 시작한다. live takeover는 약속하지 않는다.
+4. **결과·문맥 이전.**
+   - 완료된 report·library·memory는 검증한 사본으로 가져온다.
+   - 진행 중인 agent는 사용자가 정한 idle 시점에 session ID와 resume spec으로 명시적으로 재개한다.
+5. **전환 gate와 rollback.**
+   - active thread마다 소유 도구를 하나만 둔다.
+   - aa가 실패하면 새 시작을 멈추고, 보고와 문맥을 기존 coordinator가 읽을 수 있게 export한다.
+   - 기존 설치는 검증 기간 동안 유지한다.
 
-`herdr-projects update`처럼 지정하지 않은 최신 프로그램으로 넘어가는 경로는 migration에 쓰지 않는다. source pin·import schema·호환 기준을 명시하고 원본 0.2 자료를 덮어쓰지 않는다.
+공존 기간에 생기는 충돌과 대책:
+- **Tailscale serve:** herdr-web-ui가 7317과 serve 후보 포트(443·8443·7317·17317)를 쓴다. aa는 다른 웹 포트를 쓰고, serve status를 읽어 빈 포트만 쓰며 기존 매핑을 덮지 않는다.
+- **hook:** aa hook은 aa 세션 token이 없으면 아무것도 하지 않는다. 설치하면 codex가 신뢰를 한 번 다시 물을 수 있으므로 미리 알린다.
+- **herdr-web-ui 자동 재연결:** 승인 없이 bridge와 herdr를 띄운다. 이전 기간에 해당 머신을 web-ui 원격 목록에서 빼거나 자동 재연결을 끌지는 사용자가 정한다. aa는 herdr 쪽 설정을 바꾸지 않는다.
+- **계보 점검:** 같은 Mac에서 herdr 서버(WezTerm 계보)와 aa agent backend(LaunchAgent)가 각자 올바른 계보인지 doctor로 함께 확인한다.
+- **버전 고정:** `herdr-projects update`처럼 지정하지 않은 최신판(1.0)으로 넘어가는 경로는 쓰지 않는다. source pin·import schema를 명시하고 원본 0.2 자료를 덮어쓰지 않는다.
 
-## 13. 위험과 정할 것
+## 16. 위험과 정할 것
 
-| 질문·위험 | 선택지 | 추천·현재 판정 |
+### 정할 것(사용자 결정)
+
+| # | 질문 | 선택지 | 추천 |
+|---|---|---|---|
+| 1 | MVP 범위 | macOS 운영 대체 먼저(Windows·Linux는 계약·빌드·smoke, 기능 합격은 M2) / 3 OS 기능 합격을 MVP에 포함 | **macOS 운영 대체 먼저.** 지금 운영이 Mac 3대이고 프로토콜·빌드는 처음부터 3 OS다 |
+| 2 | 서명 identity | Developer ID / 자체 서명 인증서 / 불변 adhoc broker | **Developer ID**(근거가 가장 강함). 비용이 문제면 자체 서명을 P0 E1에서 검증 |
+| 3 | 「재부팅 직후」 범위 | GUI 로그인 뒤(터미널 없이 ssh·웹 우선) / FileVault·GUI 로그인 전까지 포함 | **GUI 로그인 뒤.** 로그인 전은 키체인 무잠김을 보장할 수 없고 자동 unlock도 쓰지 않는다 |
+| 4 | 웹 입장 | aa pairing·token만 / Tailscale-User-Login 헤더로 본인 기기 자동 입장 허용 | **aa pairing만**(결정 6, 헤더 위조 위험) |
+| 5 | 자동 이어가기 기본값 | 꺼짐 + profile·project별 opt-in / 켜짐 | **꺼짐 + opt-in** |
+| 6 | AGENTS.md에 구조 원칙 한 줄 추가 | 추가 / 안 함 | **추가 권장.** 초안: 「backend(Rust)와 frontend(TUI·웹)를 분리한다. frontend는 상태를 갖지 않고 host backend하고만 통신하며, host backend가 각 머신의 agent backend와 통신한다.」 사용자가 정한 파일이라 승인 전에는 바꾸지 않았다 |
+| 7 | Linux linger | 설치 때 `loginctl enable-linger` 승인 / foreground 감독만 | **linger 승인**(SSH 로그아웃 뒤에도 세션 유지) |
+| 8 | Windows 로그온 전 agent | 사용자 로그온 예약 작업 / 시스템 서비스 | **사용자 로그온.** Session 0은 사용자 자격 증명과 다르다 |
+
+### 위험
+
+| 위험 | 영향 | 대응 |
 |---|---|---|
-| 설치 시 고정 macOS broker를 둘 것인가 | 고정 AAHost.app + 외부 core / 교체형 signed app 전체 / CLI만 | **고정 broker 실증 우선**. 현재 미합격이며 P0 이전 채택 확정 아님 |
-| 재부팅 직후가 어느 상태까지인가 | GUI 로그인 후, 터미널 없이 ssh/web-first / FileVault·GUI 로그인 전까지 | 전자를 시험 가능한 첫 기준으로 제안하되 사용자 확인 전 후자를 제외한 합격 선언 금지. 후자의 키체인 조건은 미해결 |
-| signing·helper 보안 패치 | Developer ID identity 유지 / 완전히 고정된 adhoc helper | 배포용 Developer ID+고정 broker 추천. 실제 재등록 0 검증·서명 비용/운영자 확보 필요 |
-| SSH 없는 Windows 등 | outbound WSS enrollment / SSH 설치를 필수 요구 | **outbound WSS**, SSH 강제 설치 없음. 중심 reachable TLS 경로 필요 |
-| VT 선택 | ghostty-vt adapter / Rust terminal library | 기능 재사용을 위해 전자 추천; Zig·세 OS build가 gate를 넘지 못하면 대안 비교 후 결정 |
-| Windows 로그인 전 agent | user-logon supervisor / 시스템 service | user-logon 추천. 로그인 전 credentials·ConPTY 요구는 별도 실증·범위 결정 |
-| 모바일 chat 범위 | terminal+report 먼저, 제한된 chat / 모든 agent transcript 기능부터 | **terminal+report 우선**, Claude/Codex chat는 P4의 최소 read-only부터 |
-| 기록 저장·공유 | SQLite + 사람이 읽는 파일 / 파일만 | 전자 추천. DB와 Markdown 소유권 규칙·backup/restore 검증 필수 |
-| 웹 외부 노출 | loopback+SSH/VPN / public HTTPS | 기존 네트워크를 이용한 전자 우선; public은 인증·TLS·도메인 운영을 명시한 뒤 |
-| core/host 장애·갱신 | session host 유지 / 모든 pane 재시작 | 전자 추천. helper 자체 죽음의 책임 계보 복구는 미검증 위험으로 P0에 포함 |
+| 서명 identity로도 개발자 도구 유지가 안 됨 | 업그레이드마다 재등록 | E1. 실패하면 불변 broker 대안 |
+| SMAppService.agent 자식의 책임 귀속이 예상과 다름 | 느림·키체인 | E2에서 login item과 비교 |
+| GUI 계보 warm 저하 | build 전체가 느려짐 | E2 원인 조사, App Nap·QoS 설정 |
+| agent backend 재시작 때 session host가 면제를 잃음 | 업데이트 뒤 느림 | E3. 결과에 따라 drain |
+| ghostty-vt의 Zig 세 OS build | Windows·Linux 지연 | M1-1 CI. 실패하면 Rust VT 대안 비교 |
+| harness hook·notify 지원 범위 | 사건화가 불완전 | adapter별 fixture, 화면 보조와 신뢰도 표시 |
+| Tailscale serve CLI 변경 | 공개 실패 | 읽기 전용 상태 판정 fixture, 실패 시 할 일 표시 |
+| 비공개 macOS API 변경 | 진단 실패 | timing probe fallback |
+| 로드맵 초과 | 전환 지연 | M1 중간 재산정, 범위는 부록 A 기준으로 조정 |
 
-중심 머신의 Linux·Windows 지원은 후속 범위의 열린 질문으로만 남긴다. agent 머신의 세 OS 지원과 혼동하지 않는다.
+중심 머신의 Linux·Windows 지원은 후속 범위의 열린 질문이다. agent 머신의 세 OS 지원과 혼동하지 않는다.
 
-## 14. 이번 조사 검증·전달 상태
+## 17. 이번 작업 검증·전달 상태
 
-- 세 소스를 `research/<tool>/`에 확보하고 commit을 고정했다. 설치 v29 source 일치·운영 사건·legacy profile/remote thread 제약을 확인했다. 별도 relay 라이선스도 분리했다.
-- small experiment 10조건×6개 fresh executable을 측정했다. 설정·개발자 도구·키체인·launchd·xcode-select·운영 herdr 서버를 바꾸지 않았다. 모든 조사 child는 종료했다.
-- 웹 보고서는 `.coordinator/library/index.html`이며 외부 의존 없는 한국어 정적 문서다. 현재 파일을 Playwright headless Chromium으로 `file://`에서 desktop/mobile·접힌 분석·링크·overflow·console error까지 확인한 결과는 `.coordinator/report.md`에 기록한다.
-- AGENTS.md·README.md·계획/근거 문서를 commit하고 사용자 지정 origin `git@github.com:cLazyZombie/aa.git`의 main에 push한다. research/·.coordinator/는 올리지 않는다. 원격 기존 LICENSE 이력을 보존했고 force push는 하지 않는다.
-- 전달 후 **멈춘다**. coordinator가 별도 검토자의 `.coordinator/review.md`를 전달하면 지적마다 수정하거나 미수정 이유를 기록하고 다시 commit·push한다. 검토 전 다음 구현 단계로 넘어가지 않는다.
+- **첫 조사:** 세 소스를 `research/<tool>/`에 확보하고 commit을 고정했다. 10조건×6개 fresh executable을 측정했다. 설정·개발자 도구·키체인·launchd·운영 herdr 서버는 바꾸지 않았다.
+- **이번 개정:** 독립 검토 지적 24개, 운영 경험 10항목, 사용자 결정 1~6을 반영했다. 반영 여부는 부록 B에 있다. 실험을 다시 돌리지 않았고, 등록·재부팅이 필요한 검증은 P0으로 남겼다.
+- **함께 고친 문서:** [소스 분석](source-analysis.md)의 사실 오류와 [실험 기록](experiments.md)의 재해석을 같이 고쳤다.
+- **웹 보고서:** 한국어 웹 보고서는 로컬 `.coordinator/library/index.html`에 있다. 검증 결과는 `.coordinator/report.md`에 적는다.
+- **다음 단계:** 구현은 사용자 승인 뒤 별도 thread가 한다.
+
+## 부록 A. herdr-projects 0.2.35 기능 대응표
+
+| 0.2.35 기능 | aa 대응 | 단계 |
+|---|---|---|
+| 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
+| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | agent.toml 정의 + host.toml 허용, 해석 결과 저장(§7.2, §8.2) | M1-3 |
+| thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
+| `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답 | M1-3 |
+| `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |
+| brief 전달(claim 60초·settle 3초·3회·`--wait --until working`) | 그대로 계승(§8.5) | M1-3 |
+| `prompt_box` draft 감지 | adapter 입력 전 draft 감지 | M1-3 |
+| report hash 복사, library 50MB 상한, symlink 불복사 | receipt·manifest·지연 스트리밍(§8.7) | M1-3·M1-4 |
+| resolve 규칙(복사 Failed는 거부, Partial은 보존, merge된 branch만 삭제) | 그대로 + receipt(§8.7) | M1-3 |
+| inbox(timestamp·kind·subject·counter, done 30일), 특수 item session·outage·config-error | DB 사건 + Markdown 투영, 특수 item 유지(§8.9) | M1-3 |
+| ticker(15초, 원격 1분, 5분 유휴 종료, `.ticker.lock`) | host 안 task, 사건 구독 + reconciliation | M1-3 |
+| routine(every·daily·`on = "pr"`, 명령 digest 승인, `routine_commands`, coordinator 없으면 skipped, `sh -c` 60초) | 그대로 의미 유지, 실행은 agent backend(§8.9) | M1-3 |
+| nudge(미확인 묶음 hash당 1회, `herdr agent prompt`, 입력창 비었을 때) | 그대로(§8.5) | M1-3 |
+| progress 보고(`report --percent`), hook 5개 harness | 상태 사건 `progress` + adapter(Claude·Codex 먼저, 나머지 후속) | M1-3 / M3 |
+| sidebar·overview·focus·needs-you·popup | TUI·웹 표시 | M1-2 / M3 |
+| TASKS.md `(profile@machine)` 소유, `assignable` | 그대로 | M1-3 |
+| safety·yolo `launch_args`, `start_threads` propose/auto | profile 정책·project.toml | M1-3 |
+| `threads/<id>.task.md` Follow-ups, `<id>.next.md` | thread 기록에 포함, restart 때 다시 읽기 | M1-3 |
+| `owned.json` configure journal | integration journal(§8.11) | M1-3 |
+| `launch_attempts` 3회, starting 5분 timeout | launch_state 전이 | M1-3 |
+| memory 32,000자 상한 | brief 조립 상한(project.toml) | M1-3 |
+| `Landing` group·PR 우선순위 | review_state·병합 대기열(§8.8) | M1-3 / M3 |
+| rename·sweep·archive·pause·resume·delete | 같은 의미의 명령 | M3 |
+| `update` 명령(1.0으로 올라감) | 쓰지 않음. 버전 고정(§11) | 없음 |
+| uploads·scratch | 프로젝트 폴더에 유지 | M1-3 |
+| 1.0의 「보드」 | 범위 밖 | 없음 |
+
+## 부록 B. 검토 지적 반영표
+
+출처: 로컬 `.coordinator/review.md`(지적 1~24, 운영-1~10), `.coordinator/decisions.md`.
+
+| 지적 | 요지 | 반영 | 위치 | 미반영·부분 이유 |
+|---|---|---|---|---|
+| 1 | 3층 경계 부재, front→agent 직결 경로 | 반영 | §4.1~4.3, §9 | |
+| 2 | TUI 얇음·화면 형식·정본·단절 시 동작 | 반영 | §4.4~4.5 | |
+| 3 | 단일 실행 파일과 불변 broker 충돌, 고정 서명 identity 필요 | 반영 | §10.3~10.5, §11 | 서명 identity 선택은 정할 것 2 |
+| 4 | 로컬 agent backend 자식 기동의 계보 위험 | 부분 | §4.2, §5, §10.4, §10.7 | session host 독립성(disclaim이냐 drain이냐)은 P0 E3 결과 전까지 보류 |
+| 5 | launchd 후보를 herdr 고유 문제로 탈락 | 반영 | §10.3, §10.6 | |
+| 6 | Tailscale HTTPS 공개 누락·P4 배치 | 반영 | §6.3, §14 M1-1 | 헤더 자동 입장 여부는 정할 것 4 |
+| 7 | 전송 이원화(SSH/WSS) → 설정 주소 TCP | 반영 | §6.1 | |
+| 8 | GUI 계보 warm 3배 저하 누락 | 반영 | §10.1, §10.2, §10.6 E2 | 원인은 미측정(승인 필요) |
+| 9 | 등록 목록에 전체 디스크 접근 등 누락 | 반영 | §10.1 | |
+| 10 | 하위 daemon(codex app-server) | 반영 | §8.2, §10.8, E6 | |
+| 11 | 업그레이드 뒤 hook 재신뢰·quarantine | 반영 | §8.11, §10.9, E7 | |
+| 12 | host·agent 버전 호환·업데이트 순서 | 반영 | §11 | |
+| 13 | TOML 위치·스키마·마이그레이션·오류 | 반영 | §7.1~7.2 | |
+| 14 | host의 직접 실행(routine 등) | 반영 | §4.2, §8.9 | |
+| 15 | 재부팅 제품 동작, Linux linger | 반영 | §10.7, §5 | 로그인 전 범위는 정할 것 3, linger는 정할 것 7 |
+| 16 | projects 0.2 세부 동작 누락, nudge 방식 | 반영 | 부록 A, §8.5 | nudge는 0.2.35 방식(재전송 없이 재독)을 채택 |
+| 17 | 로드맵 비현실, MVP 재정의 | 반영 | §14 | MVP 범위는 정할 것 1 |
+| 18 | 테스트 보완(다중 agent backend 등) | 반영 | §13 | |
+| 19 | 참고 소스 재사용(Windows native, manifest pin, web-ui 기능) | 반영 | §2, §5, §8.3 | |
+| 20 | 소스 분석 사실 오류 | 반영 | source-analysis.md | |
+| 21 | 라이선스 세부 | 반영 | §2, source-analysis.md | web-ui npm 의존성(node_modules 없음)은 구현 때 lockfile로 확인 |
+| 22 | 보안 세부(감사 로그·시도 제한·CSP·thread token·16MiB 동작) | 부분 | §6.4, §9 | thread 범위 token은 M3 검토 |
+| 23 | AGENTS.md에 구조 원칙 추가 여부 | 미반영 | §16 정할 것 6 | 사용자가 범위를 정한 파일이므로 승인 전에는 바꾸지 않음 |
+| 24 | 이전 경로 공존 충돌 | 반영 | §15 | |
+| 운영-1 | 상태·알림 사건화, 자동 이어가기 | 반영 | §8.3, §8.5 | 이어가기 기본값은 정할 것 5 |
+| 운영-2 | 확인창 원격 응답 | 반영 | §8.4 | |
+| 운영-3 | 로컬·원격 같은 경로 | 반영 | §4, §8.12 | |
+| 운영-4 | 계보 자가 점검 | 반영 | §10.4(6), §8.10 | |
+| 운영-5 | 업그레이드(고정 경로·버전 고정·되살리기 금지) | 반영 | §11, §8.11 | |
+| 운영-6 | 머신 건강 | 반영 | §8.10 | |
+| 운영-7 | 메시지 API·결정 기록 | 반영 | §8.5, §8.6 | |
+| 운영-8 | 결과물 HTTPS·크기·알림 | 반영 | §8.7, §6.3 | |
+| 운영-9 | 병합 대기열·정리 | 부분 | §8.8 | M1-3은 순번·사건·훅까지, 단계 자동 실행은 M3 |
+| 운영-10 | 안전·자원 한도 | 반영 | §8.10 | |
+| 결정 1 | front·backend 분리 | 반영 | §4 | |
+| 결정 2 | 3층 구조 | 반영 | §4 | |
+| 결정 3 | host 전용·단일 실행 파일·로컬 agent backend | 반영 | §4, §5, §10, §11, §13 | MVP 자식 기동은 개발 모드로 한정(§4.2) |
+| 결정 4 | 구현 진행 방식 | 해당 없음 | 없음 | 사용자 지시대로 로드맵에 넣지 않음 |
+| 결정 5 | TOML | 반영 | §7 | |
+| 결정 6 | tailnet 모름, 설정 주소 TCP | 반영 | §6.1 | |
+| 결정 6 예외 | Tailscale HTTPS 공개, MVP 첫 단계 | 반영 | §6.3, §14 | |
