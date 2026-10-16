@@ -11,6 +11,7 @@
 #   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴
 #   4) 저장소 밖 목록의 실제 이름(머신 hostname·tailnet·사람·회사 이름):
 #      `$(git rev-parse --git-common-dir)/info/private-words`에 한 줄에 하나씩 둔다(이 파일은 커밋되지 않는다).
+#      이 파일이 없는 clone(다른 머신·CI)에서는 4)를 건너뛴다. 그때의 「통과」는 1)~3)만 본 결과다.
 #
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
 #       noreply@anthropic.com·git@github.com·*@example.com, /Users/<이름> 같은 자리표시자.

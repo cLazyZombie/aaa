@@ -215,15 +215,49 @@ impl Drop for Lab {
 }
 
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.
-pub fn wait_for<T>(what: &str, timeout: Duration, mut f: impl FnMut() -> Option<T>) -> T {
+pub fn wait_for<T>(what: &str, timeout: Duration, f: impl FnMut() -> Option<T>) -> T {
+    wait_for_diag(what, timeout, f, String::new)
+}
+
+/// 시간이 지나면 `diag`가 모은 상태(pane·화면·파일)를 함께 보여 준다.
+pub fn wait_for_diag<T>(
+    what: &str,
+    timeout: Duration,
+    mut f: impl FnMut() -> Option<T>,
+    diag: impl FnOnce() -> String,
+) -> T {
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(v) = f() {
             return v;
         }
-        assert!(Instant::now() < deadline, "{timeout:?} 안에 {what}이 되지 않았다");
+        if Instant::now() >= deadline {
+            panic!("{timeout:?} 안에 {what}이 되지 않았다\n{}", diag());
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// 실험실 아래 모든 파일 목록(크기)과 작은 JSON 파일 내용. 실패 진단용.
+pub fn tree(root: &Path) -> String {
+    let mut out = String::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(list) = std::fs::read_dir(&dir) else { continue };
+        for e in list.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push_str(&format!("{} ({len})\n", p.strip_prefix(root).unwrap_or(&p).display()));
+            if p.extension().is_some_and(|x| x == "json") && len < 2000 {
+                out.push_str(&format!("    {}\n", std::fs::read_to_string(&p).unwrap_or_default().replace('\n', " ")));
+            }
+        }
+    }
+    out
 }
 
 pub fn read_line_containing(out: &mut impl BufRead, needle: &str) -> String {

@@ -59,18 +59,22 @@ jobs:
         run: |
           # 기본 셸은 -e -o pipefail이다. 찾는 줄이 없어도 요약은 끝까지 간다.
           set +e +o pipefail
+          # annotation은 step마다 개수 제한이 있어 파일별이 아니라 묶음별로 하나씩 남긴다.
           annotate() {
-            node -e 'let t=require("fs").readFileSync(0,"utf8").slice(-3500); if(t.trim()) console.log("::error title="+process.argv[1]+"::"+t.replace(/%/g,"%25").replace(/\r/g,"").replace(/\n/g,"%0A"))' "$1"
+            node -e 'let t=require("fs").readFileSync(0,"utf8"); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+process.argv[1]+"::"+t.replace(/%/g,"%25").replace(/\r/g,"").replace(/\n/g,"%0A"))' "$1"
           }
-          for f in build.log clippy.log test.log; do
+          for f in build.log clippy.log; do
             [ -f "$f" ] || continue
-            grep -nE -A8 "^error|^warning|panicked|FAILED" "$f" | head -80 | annotate "$f"
+            grep -nE -A8 "^error|^warning" "$f" | head -80 | annotate "$f"
           done
-          # 실험실(남겨진 host·agent 로그)
-          for d in /tmp/aae-* "${RUNNER_TEMP:-/nonexistent}"/aae-* "${TEMP:-/nonexistent}"/aae-*; do
+          # 테스트 실패 본문(진단 출력 포함)
+          [ -f test.log ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' test.log | annotate test.log
+          # 실험실: 남겨진 host·agent 로그와 세션 폴더(session-host.log, exit.json, meta.json)
+          for d in $(grep -o '실험실 기록을 남겼다: .*' test.log 2>/dev/null | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
+            [ -d "$d" ] || d=$(cygpath -u "$d" 2>/dev/null)
             [ -d "$d" ] || continue
-            for log in "$d"/*.log; do
-              [ -f "$log" ] && tail -c 3000 "$log" | annotate "$(basename "$d")/$(basename "$log")"
-            done
+            find "$d" -type f \( -name '*.log' -o -name '*.json' \) | while read -r f; do
+              echo "## ${f#"$d"/}"; tail -c 1500 "$f"; echo
+            done | annotate "$(basename "$d")"
           done
           true
