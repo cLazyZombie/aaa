@@ -23,6 +23,7 @@ install -m 755 target/release/aa ~/.local/bin/aa.new && mv ~/.local/bin/aa.new ~
 ```
 
 - 업그레이드도 같은 방법이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
+- 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/.local/bin/aa.new && chmod 755 ~/.local/bin/aa.new && mv ~/.local/bin/aa.new ~/.local/bin/aa' < target/release/aa`로 옮겨도 된다. 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다.
 - hook 명령(`aa hook --agent …`)은 이 경로로 실행마다 주므로 Claude·Codex 사용자 설정은 고치지 않는다.
 
 ## 2. 설정

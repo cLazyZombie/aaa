@@ -226,6 +226,30 @@ try {
     if (r3.statusCode !== 421) throw new Error(`다른 Host가 ${r3.statusCode}`);
   });
 
+  await step("PWA: manifest·아이콘을 인증 없이 받고 브라우저가 읽는다", async () => {
+    const m = await fetch(`${base}manifest.webmanifest`);
+    if (m.status !== 200 || !m.headers.get("content-type").startsWith("application/manifest+json")) {
+      throw new Error(`manifest ${m.status} ${m.headers.get("content-type")}`);
+    }
+    const man = await m.json();
+    if (man.name !== "aa" || man.display !== "standalone" || man.start_url !== "/") throw new Error(JSON.stringify(man));
+    for (const icon of [...man.icons.map((i) => i.src), "/apple-touch-icon.png", "/favicon-32.png"]) {
+      const r = await fetch(new URL(icon, base));
+      const buf = Buffer.from(await r.arrayBuffer());
+      // PNG 서명(89 50 4E 47)
+      if (r.status !== 200 || r.headers.get("content-type") !== "image/png" || buf.readUInt32BE(0) !== 0x89504e47) {
+        throw new Error(`아이콘 ${icon}: ${r.status} ${r.headers.get("content-type")}`);
+      }
+    }
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(base);
+    const cdp = await ctx.newCDPSession(page);
+    const got = await cdp.send("Page.getAppManifest");
+    if (got.errors.length || !got.url.endsWith("/manifest.webmanifest")) throw new Error(JSON.stringify(got.errors));
+    await ctx.close();
+  });
+
   const ctl = await pairPage(browser, aa("web", "pair").code, { width: 1280, height: 800 });
   const page = ctl.page;
 
