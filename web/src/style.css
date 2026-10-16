@@ -27,6 +27,7 @@ code { background: #232a33; padding: 1px 5px; border-radius: 4px; }
 .dot.off { background: var(--err); }
 .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-weight: normal; }
 .tag.warn { color: var(--warn); border-color: var(--warn); }
+.warn-text { color: var(--warn); font-size: 12px; }
 .banner { padding: 6px 12px; font-size: 13px; background: #20262e; border-bottom: 1px solid var(--line); }
 .banner.warn { background: #3a2f17; color: var(--warn); }
 .banner.err { background: #3a1c1c; color: var(--err); }

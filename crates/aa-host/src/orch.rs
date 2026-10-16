@@ -473,6 +473,7 @@ impl Host {
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
         self.check_capacity(&mid, None)?;
+        self.check_health(&mid)?;
         let now = aa_common::util::now_ms();
         let mut rec = ThreadRec {
             project: a.project.clone(),
@@ -701,6 +702,7 @@ impl Host {
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
         self.check_capacity(&rec.machine_id, Some((project, id)))?;
+        self.check_health(&rec.machine_id)?;
         let argv = if resume {
             let key = rec
                 .pane

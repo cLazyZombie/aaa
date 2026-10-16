@@ -33,6 +33,8 @@ pub fn typescript_bindings() -> String {
         DeviceRole::decl(&cfg),
         Connection::decl(&cfg),
         MachineView::decl(&cfg),
+        MachineHealth::decl(&cfg),
+        ToolCheck::decl(&cfg),
         LeaseView::decl(&cfg),
         PaneView::decl(&cfg),
         SplitDir::decl(&cfg),

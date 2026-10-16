@@ -7,6 +7,7 @@ mod attach;
 pub mod db;
 pub mod front;
 mod harness;
+mod health;
 mod inbox;
 mod library;
 pub mod link;
@@ -96,6 +97,8 @@ struct MachineRt {
     dev_mode: bool,
     conn: Option<AgentConn>,
     last_seen_ms: Option<u64>,
+    /// 마지막 건강 보고와 그때의 시계 차이(agent - host, ms)
+    health: Option<(aa_proto::MachineHealth, i64)>,
 }
 
 struct Mirror {
@@ -206,6 +209,8 @@ pub struct Host {
     tick_wake: tokio::sync::Notify,
     /// 오래 끊겼다고 알린 머신
     outages: Mutex<HashSet<String>>,
+    /// 머신별 마지막으로 알린 건강 이상(이어 붙인 글, 정상이면 빈 글)
+    health_marks: Mutex<HashMap<String, String>>,
     /// hook 없는 coordinator pane: 마지막 화면 hash와 그 화면이 된 때
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
     /// 지금 도는 routine 명령(`<project>/<name>`)
@@ -249,6 +254,7 @@ impl Host {
                     dev_mode: false,
                     conn: None,
                     last_seen_ms: m.last_seen_ms,
+                    health: None,
                 },
             );
         }
@@ -291,6 +297,7 @@ impl Host {
             decision_lock: Mutex::new(()),
             tick_wake: tokio::sync::Notify::new(),
             outages: Mutex::new(HashSet::new()),
+            health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
@@ -327,11 +334,14 @@ impl Host {
                 dev_mode: false,
                 conn: None,
                 last_seen_ms: None,
+                health: None,
             });
             m.os = Some(hello.os.clone());
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
             m.conn = Some(conn);
+            // 다시 붙은 agent는 설정이 바뀌었을 수 있다. 새 보고를 기다린다.
+            m.health = None;
             m.last_seen_ms = Some(util::now_ms());
             let ids: std::collections::HashSet<_> = hello.sessions.iter().map(|s| s.id.clone()).collect();
             i.panes.retain(|id, p| p.machine_id != hello.machine_id || ids.contains(id));
@@ -506,6 +516,9 @@ impl Host {
                 boot_id: m.boot_id.clone(),
                 dev_mode: m.dev_mode,
                 last_seen_ms: m.last_seen_ms,
+                health: m.health.as_ref().map(|h| h.0.clone()),
+                clock_skew_ms: m.health.as_ref().map(|h| h.1),
+                problems: health::problems(m),
             })
             .collect();
         v.sort_by(|a, b| b.local.cmp(&a.local).then(a.name.cmp(&b.name)));
@@ -887,6 +900,7 @@ impl Host {
     /// agent에 세션을 띄우고 pane 목록에 넣는다. 새 pane ID를 돌려준다.
     async fn spawn_on(self: &Arc<Self>, mid: &str, spec: SpawnSpec, actor: &str) -> Result<String, ErrorBody> {
         let conn = self.live_conn(mid)?;
+        self.check_health(mid)?;
         self.db.audit(actor, "pane_run", &serde_json::to_string(&spec).unwrap_or_default());
         match conn.request(AgentRequest::Spawn(spec)).await? {
             AgentResponse::Session(info) => {
@@ -1194,6 +1208,7 @@ impl Host {
                 dev_mode: false,
                 conn: None,
                 last_seen_ms: None,
+                health: None,
             },
         );
         if let Some(tx) = p.accept {

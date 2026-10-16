@@ -741,7 +741,7 @@ host 프로젝트 폴더 구성:
 - **동시 thread 한도(§8.10):** `[projects] max_threads_per_machine`(기본 6, 0이면 제한 없음)
   - 시작 중이거나 세션이 실행 중인 열린 thread를 머신별로 센다. `thread start`·`restart`가 한도에 닿으면 거부하고, 어느 thread가 도는지 보인다.
 - **미룬 것(이유: 결정 14의 「큰 그림 우선」, M1-4와 운영 대체 경로가 먼저다)**
-  - 머신 건강 보고(디스크·부하·toolchain·전원·시계)와 이상 시 새 세션 거부 → M1 마무리(M1-4 뒤). boot fencing과 단절(`outage`)은 이미 있다.
+  - 머신 건강 보고(디스크·부하·toolchain·전원·시계)와 이상 시 새 세션 거부 → M1 마무리(M1-4 뒤). boot fencing과 단절(`outage`)은 이미 있다. **M1 마무리에서 했다(§8.21).**
   - `thread next`, TASKS.md `(profile@machine)` 소유, `start_threads` propose/auto → M1 마무리. coordinator는 지금도 `thread start`로 같은 일을 한다.
   - routine은 M1-3d의 다음 착지에서 한다(명령 실행이 있어 보안 경계를 따로 본다).
 
@@ -798,6 +798,19 @@ host 프로젝트 폴더 구성:
   - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 bracketed paste로 넣고 Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
   - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex는 같은 방식으로 넣지만 실제 확인은 하지 않았다.
   - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
+
+### 8.21 M1 마무리 구현 결정(10-16): 머신 건강
+
+- **보고:** agent가 `[health] every_s`(기본 60초)마다 재서 `AgentEvent::Health`로 보낸다. host가 `health.v1`을 알렸을 때만 보낸다(이전 host와 호환). 다시 붙으면 마지막 보고를 바로 보낸다.
+  - 디스크: 작업 root가 있는 디스크의 여유·전체(`statvfs`). 작업 root가 아직 없으면 있는 위 폴더를 본다.
+  - 부하: 1분 평균(`getloadavg`)과 CPU 수. 판정에는 쓰지 않고 보이기만 한다.
+  - 전원: macOS `pmset -g batt`, Linux `/sys/class/power_supply`. 배터리 전원은 주의(warning)로만 보인다.
+  - toolchain: agent.toml `[health.toolchain]`의 명령(이름 = argv)을 10초 상한으로 실행하고 출력 첫 줄을 버전으로 보인다. agent.toml은 그 머신 사용자가 쓰는 파일이라 profile 명령과 같은 신뢰로 본다.
+  - 시계: host가 보고의 agent 시각과 자기 시각의 차이를 잰다. 60초 넘게 어긋나면 이상이다.
+  - 계보·첫 실행 지연·키체인은 시작 때 자가 점검(selfcheck)이 이미 보낸다. boot ID·재부팅은 boot fencing이 맡는다.
+- **이상(새 세션 거부):** 디스크 여유가 `min_free_gb`(기본 5GB)보다 적다, toolchain 명령 실패, 시계 차이. 연결 중인 머신만 보고(끊김은 `outage`), 첫 보고 전에는 막지 않는다. `pane run`·resume·`thread start`·`restart`가 이유와 함께 거부된다. 이미 도는 세션은 건드리지 않는다.
+- **알림:** 이상이 생기거나 바뀌거나 풀리면 그 머신에 열린 thread가 있는 프로젝트 inbox에 `health` 항목(`problem`·`ok`)을 남긴다. 알림 webhook 기본 종류에 `health`를 더했다.
+- **보기:** `aa status`·`aa machine list`에 이상 이유 또는 디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

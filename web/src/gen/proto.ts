@@ -23,7 +23,51 @@ export type DeviceRole = "reader" | "controller" | "local";
 
 export type Connection = "connected" | "disconnected";
 
-export type MachineView = { id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null, };
+export type MachineView = { id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null, 
+/**
+ * 마지막 건강 보고(§8.10). 연결 중이 아니면 오래된 값이다.
+ */
+health: MachineHealth | null, 
+/**
+ * agent 시계 - host 시계(보고를 받은 때 기준)
+ */
+clock_skew_ms: number | null, 
+/**
+ * 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
+ */
+problems: Array<string>, };
+
+export type MachineHealth = { 
+/**
+ * agent 시계
+ */
+at_ms: number, 
+/**
+ * 작업 root가 있는 디스크의 여유·전체(알 수 없으면 None)
+ */
+disk_free_bytes: number | null, disk_total_bytes: number | null, 
+/**
+ * 1분 평균 부하 ×100과 CPU 수
+ */
+load_x100: number | null, cpus: number, 
+/**
+ * 전원에 연결됐는가(배터리가 없는 머신은 true, 알 수 없으면 None)
+ */
+on_ac: boolean | null, toolchain: Array<ToolCheck>, 
+/**
+ * agent가 본 이상(디스크 부족·toolchain 실패). 새 세션을 거부한다.
+ */
+problems: Array<string>, 
+/**
+ * 거부하지는 않는 주의(배터리 전원 등)
+ */
+warnings: Array<string>, };
+
+export type ToolCheck = { name: string, ok: boolean, 
+/**
+ * 출력 첫 줄(실패면 이유)
+ */
+version: string, };
 
 export type LeaseView = { 
 /**
@@ -239,7 +283,7 @@ export type InboxItem = {
  */
 id: string, project: string, 
 /**
- * report·question·delivery·thread·session·outage·config-error
+ * report·question·delivery·thread·session·outage·health·config-error·routine·routine-approval
  */
 item_kind: string, 
 /**

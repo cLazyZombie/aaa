@@ -983,6 +983,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         agent.recover().await?;
         agent.start_hooks()?;
         aa_agent::start_selfcheck(&agent, &cfg.selfcheck);
+        agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
         tokio::select! {
             _ = aa_agent::link::run(agent.clone(), target, max) => {}
@@ -1227,6 +1228,23 @@ fn state_label(s: &aa_proto::SessionState) -> String {
     }
 }
 
+/// 머신 건강 한 칸: 이상이면 그 이유, 아니면 디스크 여유·부하·주의
+fn health_text(m: &aa_proto::MachineView) -> String {
+    if !m.problems.is_empty() {
+        return format!("\t이상: {}", m.problems.join("; "));
+    }
+    let Some(h) = &m.health else { return String::new() };
+    let mut parts = Vec::new();
+    if let Some(free) = h.disk_free_bytes {
+        parts.push(format!("디스크 여유 {:.0}GB", free as f64 / (1u64 << 30) as f64));
+    }
+    if let Some(l) = h.load_x100 {
+        parts.push(format!("부하 {:.2}/{}", l as f64 / 100.0, h.cpus));
+    }
+    parts.extend(h.warnings.iter().cloned());
+    format!("\t{}", parts.join(" · "))
+}
+
 fn render_front(r: &FrontResponse) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
@@ -1234,12 +1252,13 @@ fn render_front(r: &FrontResponse) -> String {
         for m in ms {
             let _ = writeln!(
                 s,
-                "{}\t{}\t{}{}{}",
+                "{}\t{}\t{}{}{}{}",
                 m.name,
                 if m.connection == aa_proto::Connection::Connected { "연결" } else { "끊김" },
                 m.os.clone().unwrap_or_default(),
                 if m.local { "\t로컬" } else { "" },
-                if m.dev_mode { "\t개발 모드" } else { "" }
+                if m.dev_mode { "\t개발 모드" } else { "" },
+                health_text(m)
             );
         }
     };

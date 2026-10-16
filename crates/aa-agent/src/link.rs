@@ -93,12 +93,20 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     tx.json(&LinkMsg::Hello(hello(agent))).await?;
     let first: LinkMsg =
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("welcome 대기")??;
-    match first {
-        LinkMsg::Welcome(w) => tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다"),
+    let health = match first {
+        LinkMsg::Welcome(w) => {
+            tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
+            w.features.iter().any(|f| f == "health.v1")
+        }
         LinkMsg::Reject(e) => bail!("host가 거부했다: {e}"),
         other => bail!("예상하지 못한 응답: {other:?}"),
-    }
+    };
+    agent.host_health.store(health, std::sync::atomic::Ordering::Relaxed);
     agent.set_host(Some(tx.clone()));
+    let cached = agent.health.lock().unwrap().clone();
+    if let Some(h) = cached {
+        agent.send_health(h).await;
+    }
     let pinger = {
         let tx = tx.clone();
         tokio::spawn(async move {

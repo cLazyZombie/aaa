@@ -50,6 +50,6 @@ webhook = ""
 format = "json"
 telegram_chat_id = ""
 # 알릴 inbox 항목 종류
-kinds = ["report", "question", "delivery", "thread", "session", "outage", "routine-approval"]
+kinds = ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval"]
 # 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다
 debounce_secs = 15

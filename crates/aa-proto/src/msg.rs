@@ -402,6 +402,8 @@ pub enum AgentEvent {
     Resync {
         session: String,
     },
+    /// 머신 건강(주기 보고). host가 `health.v1`을 알렸을 때만 보낸다.
+    Health(MachineHealth),
 }
 
 // ───────────────────────── Session IPC ─────────────────────────
@@ -481,6 +483,45 @@ pub struct MachineView {
     pub dev_mode: bool,
     #[ts(type = "number | null")]
     pub last_seen_ms: Option<u64>,
+    /// 마지막 건강 보고(§8.10). 연결 중이 아니면 오래된 값이다.
+    pub health: Option<MachineHealth>,
+    /// agent 시계 - host 시계(보고를 받은 때 기준)
+    #[ts(type = "number | null")]
+    pub clock_skew_ms: Option<i64>,
+    /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
+    pub problems: Vec<String>,
+}
+
+/// agent가 주기적으로 보내는 머신 건강(§8.10)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineHealth {
+    /// agent 시계
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// 작업 root가 있는 디스크의 여유·전체(알 수 없으면 None)
+    #[ts(type = "number | null")]
+    pub disk_free_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub disk_total_bytes: Option<u64>,
+    /// 1분 평균 부하 ×100과 CPU 수
+    pub load_x100: Option<u32>,
+    pub cpus: u32,
+    /// 전원에 연결됐는가(배터리가 없는 머신은 true, 알 수 없으면 None)
+    pub on_ac: Option<bool>,
+    pub toolchain: Vec<ToolCheck>,
+    /// agent가 본 이상(디스크 부족·toolchain 실패). 새 세션을 거부한다.
+    pub problems: Vec<String>,
+    /// 거부하지는 않는 주의(배터리 전원 등)
+    pub warnings: Vec<String>,
+}
+
+/// agent.toml `[health.toolchain]`의 점검 명령 하나
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ToolCheck {
+    pub name: String,
+    pub ok: bool,
+    /// 출력 첫 줄(실패면 이유)
+    pub version: String,
 }
 
 /// pane 조작 lease(대화형 front 하나가 키 입력과 PTY 크기를 정한다). 연결이 끊기면 풀린다.

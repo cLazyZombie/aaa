@@ -1136,3 +1136,78 @@ fn notify_webhook() {
     // 주소(비밀값이 들어갈 수 있다)는 기록에 남지 않는다
     assert!(!w.h.ok(&["events", "--project", "demo"]).to_string().contains("/hook"));
 }
+
+/// 머신 건강(§8.10): 디스크 부족·toolchain 실패면 새 세션을 거부하고 inbox에 남긴다. 고치고 다시 띄우면 풀린다.
+#[test]
+fn machine_health() {
+    let mut w = world();
+    let t = w.start(&["--title", "h", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("h.txt", "x")]);
+    let id = t["id"].as_str().unwrap().to_string();
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    let base = agent_toml(&w.lab.root.join("workA"), &w.scripts);
+    let restart = |w: &mut World, health: &str| {
+        w.lab.kill("agentA");
+        std::fs::write(w.h.cfg.join("agent.toml"), format!("{base}{health}")).unwrap();
+        w.lab.spawn("agentA", &w.h.clone(), &["agent", "--host", "local", "--name", "labA"]);
+    };
+    // 1EB가 필요하다고 하고, 실패하는 toolchain 명령을 둔다
+    restart(
+        &mut w,
+        "[health]\nevery_s = 1\nmin_free_gb = 1073741824\n[health.toolchain]\n\
+         ok = [\"/bin/sh\", \"-c\", \"echo tool 9.9\"]\nbad = [\"/bin/sh\", \"-c\", \"echo broken >&2; exit 2\"]\n",
+    );
+    let m =
+        wait_for("건강 이상", T, || w.h.machine("labA").filter(|m| !m["problems"].as_array().unwrap().is_empty()));
+    let problems = m["problems"].to_string();
+    assert!(
+        problems.contains("디스크 여유") && problems.contains("toolchain bad 실패") && problems.contains("broken"),
+        "{m}"
+    );
+    let tools = &m["health"]["toolchain"];
+    assert_eq!((tools[1]["name"].as_str(), tools[1]["version"].as_str()), (Some("ok"), Some("tool 9.9")), "{m}");
+    assert!(m["clock_skew_ms"].as_i64().unwrap().abs() < 5_000, "{m}");
+    // 새 세션·thread는 거부한다
+    let e = w.h.json(&["pane", "run", "--machine", "labA", "--", "/bin/sh"]).expect_err("점검 이상");
+    assert!(e.contains("점검 이상") && e.contains("toolchain bad"), "{e}");
+    let e =
+        w.h.json(&[
+            "thread",
+            "start",
+            "demo",
+            "--title",
+            "x",
+            "--profile",
+            "fake",
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task("x.txt", "x"),
+        ])
+        .expect_err("점검 이상");
+    assert!(e.contains("점검 이상"), "{e}");
+    let st = String::from_utf8_lossy(&w.h.run(&["status"]).stdout).to_string();
+    assert!(st.contains("이상: 디스크 여유"), "{st}");
+    // 열린 thread가 있는 프로젝트 inbox에 한 번
+    let health = |w: &World| -> Vec<(String, String)> {
+        w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["item_kind"] == "health")
+            .map(|i| (i["event"].as_str().unwrap().to_string(), i["summary"].as_str().unwrap().to_string()))
+            .collect()
+    };
+    let items = wait_for("inbox 이상 항목", T, || Some(health(&w)).filter(|v| !v.is_empty()));
+    assert!(items.len() == 1 && items[0].0 == "problem" && items[0].1.contains("labA"), "{items:?}");
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(health(&w).len(), 1, "같은 이상은 다시 남기지 않는다");
+
+    // 고치고 다시 띄우면 풀린다
+    restart(&mut w, "[health]\nevery_s = 1\nmin_free_gb = 0\n");
+    wait_for("건강 회복", T, || {
+        w.h.machine("labA").filter(|m| m["health"].is_object() && m["problems"].as_array().unwrap().is_empty())
+    });
+    let items = wait_for("inbox 회복 항목", T, || Some(health(&w)).filter(|v| v.len() == 2));
+    assert_eq!(items[1].0, "ok", "{items:?}");
+    w.h.ok(&["pane", "run", "--machine", "labA", "--", "/bin/sh"]);
+}
