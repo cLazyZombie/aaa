@@ -190,14 +190,14 @@ mod tests {
     fn plist_shape() {
         let s = Spec {
             role: "agent".into(),
-            launcher: "/Users/u/Applications/aa-launcher.app/Contents/MacOS/aa-launcher".into(),
-            aa: "/Users/u/.local/bin/a&a".into(),
+            launcher: "/opt/example/Applications/aa-launcher.app/Contents/MacOS/aa-launcher".into(),
+            aa: "/opt/example/.local/bin/a&a".into(),
             env: vec![("PATH".into(), "/opt/homebrew/bin:/usr/bin".into())],
         };
         let x = plist(&s);
         assert!(x.contains("<string>dev.aa.agent</string>"));
         assert!(x.contains(
-            "<string>/Users/u/Applications/aa-launcher.app/Contents/MacOS/aa-launcher</string>\n\t\t<string>/Users/u/.local/bin/a&amp;a</string>\n\t\t<string>agent</string>"
+            "<string>/opt/example/Applications/aa-launcher.app/Contents/MacOS/aa-launcher</string>\n\t\t<string>/opt/example/.local/bin/a&amp;a</string>\n\t\t<string>agent</string>"
         ));
         assert!(x.contains("<key>PATH</key>\n\t\t<string>/opt/homebrew/bin:/usr/bin</string>"));
         assert!(x.contains("<key>LimitLoadToSessionType</key>\n\t<string>Aqua</string>"));
