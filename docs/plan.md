@@ -375,7 +375,7 @@ herdr-web-ui 0.4.10의 방식(`server/tailscale.ts`, `scripts/plugin.ts`의 `pho
 - **업로드:** 이미지 업로드도 변경 권한이다. 전송이 끝나기 직전에 권한을 다시 확인한다.
 - **감사 로그:** 입력, thread 시작, routine 실행, 질문 응답, 업로드, 공개 변경을 누가 언제 했는지 남긴다.
 - **보고서 표시:** agent가 만든 보고서 HTML은 `allow-same-origin` 없는 sandbox iframe(opaque origin)과 CSP로 보여 준다. 제어 UI와 같은 origin에서 script를 실행하지 않는다.
-- **agent pane 안의 CLI:** thread agent의 `aa` 호출에 자기 thread 범위로 한정한 token을 줄지 M3에서 검토한다. 역할(role)은 token에 처음부터 담고, 사후 평가자 역할은 다른 thread에 대한 메시지·시작·질문 응답을 거부한다(§8.13).
+- **agent pane 안의 CLI:** 세션 역할로 범위를 정한다(§8.25, 10-17). 일반 thread와 사후 평가자 세션 안의 CLI는 보기만 되고, coordinator와 사람의 셸은 그대로 조작한다.
 
 ### 6.5 신뢰 경계
 
@@ -929,6 +929,18 @@ host 프로젝트 폴더 구성:
   - 합친 뒤 land: 8단계 ok, 원격 main = 병합 commit(부모 둘, 메시지), 병합 tree = branch tree, 사용자 main ff-only, 임시 worktree 없음, 「main 이동」 알림, 대기열 다음, `merge_step` 9건·`merge_landed`·`merge_head`
   - 새 커밋 없는 thread는 멈춤
 
+### 8.25 M3 thread 범위(10-17)
+
+§6의 「agent pane 안의 CLI 범위 token」을 세션 역할로 정했다.
+
+- CLI는 aa 세션 안이면 `AA_SESSION_ID`를 Hello에 담는다. host는 그 세션 pane의 역할을 본다.
+  - **일반 thread(worker)와 사후 평가자:** 그 연결을 **보기 권한(Reader)**으로 다룬다. 보기(`thread show`·`context`·`events` 등)는 되고, 메시지·시작·결정·병합·pane 입력·질문 응답은 거부된다. host 머신 전용 요청(`merge land`·`routine approve`·`web pair` 등)도 거부된다.
+  - **coordinator와 thread가 아닌 pane(사람의 셸):** 그대로 조작한다.
+  - 감사 기록의 actor는 `worker:<세션>`·`evaluator:<세션>`이다.
+- thread는 진행률을 Front API가 아닌 hook(`aa report`)으로 알리므로 이 제한에 걸리지 않는다. thread 규칙(brief)에 「이 세션 안의 `aa` CLI는 보기만 된다」를 적었다.
+- **남는 한계(§8.22와 같다):** env를 지운 프로세스는 사람의 CLI와 구별되지 않는다. 같은 사용자 권한으로 도는 agent를 완전히 막는 것은 OS 사용자 분리가 필요하다. 지금은 실수로 다른 thread에 지시하는 일을 막는 수준이다.
+- **시험:** m13 `worker_session_cli_is_read_only`. worker 세션의 결정·메시지·pane 입력·병합 대기열은 거부되고 보기는 된다. 사람의 셸 pane 안에서는 결정이 된다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -1257,7 +1269,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행, 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME, chat read-only, PWA, Windows·Linux front clipboard, thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.
@@ -1395,7 +1407,7 @@ primary 근거:
 | 19 | 참고 소스 재사용(Windows native, manifest pin, web-ui 기능) | 반영 | §2, §5, §8.3 | |
 | 20 | 소스 분석 사실 오류 | 반영 | source-analysis.md | |
 | 21 | 라이선스 세부 | 반영 | §2, source-analysis.md | web-ui npm 의존성(node_modules 없음)은 구현 때 lockfile로 확인 |
-| 22 | 보안 세부(감사 로그·시도 제한·CSP·thread token·16MiB 동작) | 부분 | §6.4, §9 | thread 범위 token은 M3 검토 |
+| 22 | 보안 세부(감사 로그·시도 제한·CSP·thread token·16MiB 동작) | 반영 | §6.4, §9, §8.25 | thread 범위는 세션 역할로(10-17) |
 | 23 | AGENTS.md에 구조 원칙 추가 여부 | 반영 | AGENTS.md | 결정 8(정할 것 6 추천안)으로 추가 |
 | 24 | 이전 경로 공존 충돌 | 반영 | §15 | |
 | 운영-1 | 상태·알림 사건화, 자동 이어가기 | 반영 | §8.3, §8.5 | 이어가기 기본값은 정할 것 5 |

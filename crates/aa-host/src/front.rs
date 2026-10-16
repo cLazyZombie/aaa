@@ -51,14 +51,14 @@ async fn serve(host: Arc<Host>, s: aa_common::ipc::LocalStream) -> Result<()> {
         }
     };
     let front = host.new_front(client.clone());
-    // 사후 평가자 세션 안의 CLI는 보기만 한다(다른 agent에 지시하지 않는다, §8.13). 세션 ID는 CLI가 env에서 알린다.
-    let evaluator = session.as_deref().is_some_and(|s| {
-        host.pane_view_of(s, DeviceRole::Local).is_some_and(|p| p.role == Some(aa_proto::Role::Evaluator))
-    });
-    let role = if evaluator { DeviceRole::Reader } else { DeviceRole::Local };
+    // thread 세션 안의 CLI는 보기만 한다(§8.25): 일반 thread(worker)와 사후 평가자는 다른 thread·pane에 지시하지 않는다(§8.13).
+    // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 세션 ID는 CLI가 env에서 알린다.
+    let session_role = session.as_deref().and_then(|s| host.pane_view_of(s, DeviceRole::Local)).and_then(|p| p.role);
+    let scoped = matches!(session_role, Some(aa_proto::Role::Evaluator | aa_proto::Role::Worker));
+    let role = if scoped { DeviceRole::Reader } else { DeviceRole::Local };
     tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
-    let actor = match (&session, evaluator) {
-        (Some(s), true) => format!("evaluator:{s}"),
+    let actor = match (&session, session_role) {
+        (Some(s), Some(r @ (aa_proto::Role::Evaluator | aa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
         _ => format!("local:{client}"),
     };
 

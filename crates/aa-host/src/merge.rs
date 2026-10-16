@@ -163,7 +163,7 @@ impl Host {
             let q = self.merge_drop(project, &head, true, actor)?;
             let sha = out.commit.as_deref().map(|c| &c[..c.len().min(12)]).unwrap_or("");
             let text = format!(
-                "{base}가 움직였다: {project}/{head} 「{}」를 병합했다({sha}). 다음 병합 전에 `git fetch {remote} && git merge {base}`로 branch에 합치고 다시 시험한다.",
+                "{base}가 움직였다: {project}/{head} 「{}」를 병합했다({sha}). 다음 병합 전에 `git fetch {remote} && git merge {base}`을 실행해 branch에 합치고 다시 시험한다.",
                 rec.title
             );
             let others: Vec<_> = self

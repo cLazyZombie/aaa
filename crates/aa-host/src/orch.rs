@@ -162,6 +162,7 @@ const THREAD_GUIDE: &str = "\
 - 결과물(스크린샷·로그·보고서)은 `{library}`에 둔다. symlink는 복사되지 않는다.
 - host는 report.md가 바뀔 때 library를 함께 복사한다. 결과물을 먼저 두고 report.md를 마지막에 쓴다.
 - 작업 폴더 밖의 다른 작업 파일·프로세스는 건드리지 않는다.
+- 이 세션 안의 `aa` CLI는 보기만 된다(다른 thread·pane에 지시하지 않는다). 진행률은 `aa report --percent N --activity …`로 알린다.
 ";
 
 impl Host {
