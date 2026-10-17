@@ -113,7 +113,12 @@ while IFS= read -r line; do
       printf '[완료]\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
       ;;
     *ask*) perm ;;
-    *slow*) echo "slow start"; sleep 3; echo "slow done" ;;
+    *slow*)
+      echo "slow start"
+      # 중첩 세션(다른 session_id)과 하위 agent의 Stop: 이 pane의 턴은 끝나지 않았다(버려야 한다)
+      hook '{"hook_event_name":"Stop","session_id":"fake-nested"}'
+      hook '{"hook_event_name":"Stop","session_id":"fake-1","agent_id":"sub-1"}'
+      echo "nested sent"; sleep 3; echo "slow done" ;;
     *long*)
       echo "long start"; keyt 250
       if [ "$k" = "$ESC" ]; then
@@ -131,6 +136,25 @@ done
 /// 안내를 받아도 화면이 바뀌지 않는 agent(echo 없음). 받은 줄은 파일에 남긴다.
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 
+/// 입력창 「❯ 」에 친 글자를 보이고 첫 Enter는 무시하는 harness(hook 없음): 받지 못한 brief 줄이 입력창에 남는다.
+/// 다음 Enter부터 받는다(`got: …`).
+const STICKY_AGENT: &str = r#"#!/bin/sh
+stty -icanon -echo min 1 time 0
+printf '\342\235\257 '
+buf=''; n=0
+while :; do
+  c=$(dd bs=1 count=1 2>/dev/null)
+  if [ -z "$c" ]; then
+    n=$((n+1))
+    [ "$n" -lt 2 ] && continue
+    printf '\ngot: %s\n' "$buf"; buf=''
+    printf '\342\235\257 '
+  else
+    printf '%s' "$c"; buf="$buf$c"
+  fi
+done
+"#;
+
 /// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
 const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
@@ -139,7 +163,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\"]\nlibrary_copy_mb = 1\n{extra}",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -150,6 +174,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
          [profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
          [profiles.hooked]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
+         [profiles.sticky]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
@@ -157,6 +182,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         path_str(&scripts.join("mute.log")),
         path_str(&scripts.join("hooked.sh")),
         lab::BIN,
+        path_str(&scripts.join("sticky.sh")),
     )
 }
 
@@ -216,6 +242,7 @@ fn world_opts(extra: &str, web: bool) -> World {
     std::fs::write(scripts.join("fake.sh"), FAKE_AGENT).unwrap();
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
     std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
+    std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     let repo = make_repo(&lab.root);
     let h = lab.node("h", Some(&host_toml(&projects, extra, web)));
@@ -517,15 +544,33 @@ fn unknown_brief_is_not_resent() {
     wait_for("두 번째 안내", T, || {
         (std::fs::read_to_string(&log).unwrap_or_default().matches("brief.md").count() == 2).then_some(())
     });
-    // 메시지도 받았다는 신호(hook 사건·화면 변화)가 없으면 unknown이고 다시 보내지 않는다
-    let m = w.message(&id, "MSG-UNKNOWN-1", false);
-    assert_eq!(m["state"], "unknown", "{m}");
-    std::thread::sleep(Duration::from_secs(3));
-    assert_eq!(std::fs::read_to_string(&log).unwrap().matches("MSG-UNKNOWN-1").count(), 1);
-    assert_eq!(
-        w.kinds(0).iter().filter(|k| k.starts_with("message_")).collect::<Vec<_>>(),
-        ["message_queued", "message_unknown"]
-    );
+    // brief를 받기 전의 메시지는 거부한다(brief보다 먼저 가지 않게, herdr-projects threads.rs `prompt`)
+    let e = w.h.json(&["thread", "message", "demo", &id, "--text", "MSG-EARLY-1"]).expect_err("brief 전 메시지");
+    assert!(e.contains("아직 brief를 받지 않았다"), "{e}");
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(!std::fs::read_to_string(&log).unwrap().contains("MSG-EARLY-1"));
+    assert!(!w.kinds(0).iter().any(|k| k.starts_with("message_")), "{:?}", w.kinds(0));
+}
+
+/// brief 줄이 입력창에 남으면(전달 불명) `thread brief`는 다시 치지 않고 Enter만 보낸다. 받은 thread에는 brief를
+/// 다시 보내지 않는다(herdr-projects threads.rs `brief`).
+#[test]
+fn brief_left_in_box_is_submitted_not_retyped() {
+    let w = world();
+    let v =
+        w.start(&["--title", "sticky", "--profile", "sticky", "--kind", "dir", "--task-file", &w.task("t9.txt", "x")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    w.wait_show("unknown", &id, |v| v["brief"] == "unknown");
+    assert!(w.h.screen(&pane).contains("brief.md를 읽고 그대로 하라."), "{}", w.h.screen(&pane));
+    w.h.ok(&["thread", "brief", "demo", &id]);
+    w.wait_show("delivered", &id, |v| v["brief"] == "delivered");
+    let screen = w.h.screen(&pane);
+    // 입력창 줄과 받은 줄에 한 번씩: 다시 쳤으면 입력창에 두 번 이어 붙는다
+    assert_eq!(screen.matches("brief.md를 읽고").count(), 2, "{screen}");
+    assert!(screen.contains(&format!("got: .aaa/demo-{id}/brief.md를 읽고 그대로 하라.\n")), "{screen}");
+    let e = w.h.json(&["thread", "brief", "demo", &id]).expect_err("받은 뒤 brief");
+    assert!(e.contains("이미 brief를 받았다"), "{e}");
 }
 
 /// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
@@ -574,10 +619,18 @@ fn hooked_thread_questions_and_messages() {
     assert_eq!(m1["state"], "accepted", "{m1}");
     let m2 = w.message(&id, "second", false);
     assert_eq!(m2["state"], "queued", "{m2}");
+    // 중첩 세션·하위 agent의 Stop은 버린다(herdr-projects progress.rs eligible·foreign_session)
+    w.wait_screen(&pane, "nested sent");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(w.h.pane(&pane)["agent"]["activity"], "working", "다른 세션의 Stop으로 턴이 끝난 것으로 보였다");
     let screen = w.wait_screen(&pane, "got: second");
     assert!(screen.find("slow done").unwrap() < screen.find("got: second").unwrap(), "{screen}");
     // 화면 출력이 Stop hook보다 먼저 보일 수 있다: 입력 대기(idle)를 확인한 뒤 다음을 보낸다
     w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    // 입력한 메시지는 task.md Follow-ups에 남는다(다시 시작하면 brief와 함께 읽는다, herdr-projects append_follow_up)
+    let task = std::fs::read_to_string(w.projects.join("demo/threads").join(format!("{id}.task.md"))).unwrap();
+    let follow = task.split("\n## Follow-ups\n").nth(1).unwrap_or_else(|| panic!("Follow-ups가 없다: {task}"));
+    assert!(follow.contains("\nslow one\n") && follow.find("slow one") < follow.find("second"), "{follow}");
 
     // 거절(Esc)
     let m3 = w.message(&id, "ask again", false);
@@ -1425,7 +1478,7 @@ fn coordinator_flow() {
     // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
     let a = w.h.ok(&["assignable", "demo"]);
     let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
-    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute"]), "{a}");
+    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "sticky"]), "{a}");
     w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
     for (bad, why) in
         [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]

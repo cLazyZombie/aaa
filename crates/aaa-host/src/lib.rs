@@ -229,6 +229,8 @@ pub struct Host {
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
     /// 프로젝트별로 nudge가 기다리는 coordinator pane과 그 입력창이 비어 보인 때(herdr-projects `box_pane`·`box_empty_since`)
     nudge_box: Mutex<HashMap<String, (String, Instant)>>,
+    /// task.md Follow-ups 덧붙이기는 한 번에 하나씩
+    follow_up_lock: Mutex<()>,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
@@ -338,6 +340,7 @@ impl Host {
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
             nudge_box: Mutex::new(HashMap::new()),
+            follow_up_lock: Mutex::new(()),
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
             vapid,

@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aaa_proto::{
-    AgentActivity, AgentRequest, AgentStatus, B64, DeliveryState, ErrorBody, ErrorCode, HarnessEvent, MessageMode,
-    MessageView, QuestionState, QuestionView, ThreadStatus,
+    AgentActivity, AgentRequest, AgentStatus, B64, BriefState, DeliveryState, ErrorBody, ErrorCode, HarnessEvent,
+    MessageMode, MessageView, QuestionState, QuestionView, ThreadStatus,
 };
 use tokio::sync::oneshot;
 
@@ -419,6 +419,15 @@ impl Host {
 
     /// 글을 입력하고 Enter. harness가 받았다고 알리면 true. 여러 줄은 bracketed paste로 보낸다.
     pub(crate) async fn send_prompt(self: &Arc<Self>, mid: &str, pane: &str, text: &str) -> Result<bool, String> {
+        self.submit(mid, pane, Some(text)).await
+    }
+
+    /// 입력창에 남은 글을 Enter로만 보낸다(다시 치지 않는다). 받았다고 알리면 true.
+    pub(crate) async fn send_enter(self: &Arc<Self>, mid: &str, pane: &str) -> Result<bool, String> {
+        self.submit(mid, pane, None).await
+    }
+
+    async fn submit(self: &Arc<Self>, mid: &str, pane: &str, text: Option<&str>) -> Result<bool, String> {
         let conn = self.live_conn(mid).map_err(|e| e.message)?;
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
         if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
@@ -426,14 +435,16 @@ impl Host {
         }
         let hooked = self.pane_agent(pane).is_some_and(|a| a.harness != "report");
         let accepted = self.wait_kind(pane, &["turn_start", "working"]);
-        let body = if text.contains('\n') {
-            format!("\x1b[200~{}\x1b[201~", text.trim_end())
-        } else {
-            text.trim_end().to_string()
-        };
-        conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(body.into_bytes()) })
-            .await
-            .map_err(|e| e.message)?;
+        if let Some(text) = text {
+            let body = if text.contains('\n') {
+                format!("\x1b[200~{}\x1b[201~", text.trim_end())
+            } else {
+                text.trim_end().to_string()
+            };
+            conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(body.into_bytes()) })
+                .await
+                .map_err(|e| e.message)?;
+        }
         tokio::time::sleep(Duration::from_millis(300)).await;
         let typed = self.screen_lines(mid, pane).await;
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(b"\r".to_vec()) })
@@ -451,6 +462,26 @@ impl Host {
             }
         }
         Ok(false)
+    }
+
+    /// `threads/<id>.task.md`의 `## Follow-ups` 아래에 시각과 함께 덧붙인다(herdr-projects `append_follow_up`)
+    fn append_follow_up(&self, project: &str, id: &str, text: &str) -> std::io::Result<()> {
+        let dir = self.project_dir(project).map_err(|e| std::io::Error::other(e.message))?;
+        let path = dir.join("threads").join(format!("{id}.task.md"));
+        let _guard = self.follow_up_lock.lock().unwrap();
+        let mut task = std::fs::read_to_string(&path).unwrap_or_default();
+        if !task.ends_with('\n') && !task.is_empty() {
+            task.push('\n');
+        }
+        if !task.lines().any(|l| l.trim() == "## Follow-ups") {
+            task.push_str("\n## Follow-ups\n");
+        }
+        task.push_str(&format!(
+            "\n### {}\n\n{}\n",
+            aaa_common::util::utc_text(aaa_common::util::now_ms()),
+            text.trim()
+        ));
+        crate::orch::write_atomic(&path, task.as_bytes())
     }
 
     fn save_message(&self, m: &MessageView) {
@@ -477,6 +508,15 @@ impl Host {
         }
         if text.trim().is_empty() {
             return Err(err(ErrorCode::BadRequest, "글이 비었다"));
+        }
+        // brief보다 먼저 가지 않게 한다(herdr-projects threads.rs `prompt`: prompt_pending이면 거부)
+        if rec.brief != BriefState::Delivered {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!(
+                    "{id}는 아직 brief를 받지 않았다. 준비되면 aaa가 보내고, 지금 보내려면 `aaa thread brief {project} {id}`"
+                ),
+            ));
         }
         let pane = rec.pane.clone().ok_or_else(|| err(ErrorCode::BadRequest, "thread 세션이 없다"))?;
         let (pid, mid) = self.resolve_pane(&pane)?;
@@ -551,6 +591,13 @@ impl Host {
         let r = self.send_prompt(mid, pane, &m.text).await;
         m.state = if r == Ok(true) { DeliveryState::Accepted } else { DeliveryState::Unknown };
         self.save_message(m);
+        // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
+        // thread.rs `append_follow_up`). 입력 전에 거부됐으면(Err) 남기지 않는다.
+        if r.is_ok()
+            && let Err(e) = self.append_follow_up(&m.project, &m.thread, &m.text)
+        {
+            tracing::warn!(project = %m.project, thread = %m.thread, "Follow-ups를 쓰지 못했다: {e}");
+        }
         if let Ok(rec) = self.load(&m.project, &m.thread) {
             let kind = if m.state == DeliveryState::Accepted { "message_accepted" } else { "message_unknown" };
             let why = match r {
