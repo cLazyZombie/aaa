@@ -1081,6 +1081,29 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 「넓은 창」 단계: 1280×800에서 터미널 글자 영역이 칸을 한 cell(과 scrollbar 자리) 안쪽까지 채운다. header 크기와 host PTY 크기가 같다. 1900×1150으로 넓히면 열·줄이 늘고, 되돌리면 같은 크기로 돌아온다. 자동 맞추기를 끄면 이 단계가 120×32에서 실패한다.
   - 「두 controller」 단계: 보기만 하는 쪽은 창 크기가 달라도 PTY 크기를 바꾸지 않는다. 가져오면 그 화면을 따른다. 연결이 끝나 lease가 비면 남은 화면이 다시 맞춘다.
 
+### 8.31 웹 터미널 글꼴 Meslotendard(10-17, 사용자 결정)
+
+§8.30 (3)의 한글 간격을 풀려고, 사용자 결정에 따라 사용자의 공개 글꼴 Meslotendard(MesloLGM Nerd Font Mono 영문·아이콘 + Pretendard 한글, OFL 1.1)를 터미널 첫 글꼴로 넣었다. 한글 한 글자가 영문 정확히 두 칸(units 2466:1233)이다.
+
+- **글꼴 목록.** `--font-term: Meslotendard, "Meslotendard Web", <기존 목록>`.
+  - 기기에 깔린 글꼴을 먼저 쓴다.
+  - 없으면(휴대폰 등) 함께 넣은 WOFF2를 받는다. `@font-face`의 src도 `local()`을 먼저 보므로, 깔린 기기에서는 받지 않는다.
+  - xterm은 처음 연 글꼴로 cell을 잰다. 그래서 WOFF2가 아직 없으면 그것을 뺀 목록으로 열고, 받아지면 원래 목록으로 바꿔 다시 잰다. 그 뒤 자동 맞추기(§8.30)가 다시 돈다.
+- **넣은 파일.** `web/public/fonts/meslotendard-0.3.1/`
+  - 원본: release `v0.3.1`의 `Meslotendard.zip`. 이 zip의 TTF 넷은 release `SHA256SUMS.txt`·운영 host Mac 설치본·개발 Mac 설치본과 sha256이 같았다.
+  - Regular·Bold만 WOFF2로 바꿨다(fontTools, glyf 변환 없음).
+    - 다시 풀어 비교하면 10개 표가 원본과 bytes가 같다. `head`만 WOFF2 규격의 「손실 없이 변환함」 표시(flags bit 11)와 checksum이 다르다.
+    - subset·이름 변경은 하지 않았다. Pretendard가 Reserved Font Name이라 변경판을 만들지 않는다.
+  - 크기: TTF 4.98MB·4.95MB → WOFF2 2.14MB·2.16MB. release 실행 파일이 28.25MB에서 32.63MB가 됐다(+4.38MB).
+  - Italic·BoldItalic은 넣지 않았다. 운영 Claude pane 두 화면을 읽기 전용 화면 구독으로 세어 보니 굵게 35·88자, 기울임 0자였다. 기울임은 깔린 기기에서는 그 기울임꼴을, 아니면 브라우저가 Regular를 기울여 그린다. 넣으면 약 4.3MB가 더 는다.
+  - 고지: `LICENSE`(OFL 전문), `licenses/MESLO_APACHE-2.0.txt`, `licenses/NERD_FONTS_LICENSE.txt`, `licenses/THIRD_PARTY_NOTICES.md`, `FONTLOG.md`, 그리고 출처·버전·sha256을 적은 `README.md`. 저장소 README에도 적었다.
+- **보내기.** WOFF2와 고지는 실행 파일에 들어가 `/fonts/meslotendard-0.3.1/`로 나간다. 폴더에 버전이 있으므로 host는 `fonts/`를 `assets/`처럼 1년 immutable로 보낸다(버전을 바꾸면 폴더도 바꾼다). CSP `font-src 'self'` 안이다.
+- **시험(웹 E2E 23단계).**
+  - 「터미널 글꼴」 단계(1280×800, 13px): host가 WOFF2(bytes 같음·`font/woff2`·immutable)와 고지 네 파일을 보낸다. 터미널 글꼴 목록이 바뀐 뒤 xterm cell 너비 7.828px = 영문 7.827px, 한글 15.653px = 영문의 정확히 2배다. 넣은 WOFF2만으로 잰 값도 같다.
+  - 휴대폰 폭(390×844, 11px): cell 6.62px, 한글 13.25px.
+  - 개발 Mac에는 Meslotendard가 깔려 있어 `local()`로 그린다. CI runner에는 없으므로 WOFF2를 받는 길을 CI가 지난다.
+- **남는 것.** 웹 UI의 다른 고정폭 글자(코드·질문 카드 등)는 바꾸지 않았다(`--font-mono`).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

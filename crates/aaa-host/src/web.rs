@@ -542,7 +542,12 @@ async fn static_file(req: Request) -> Response {
         .or_else(|| assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html"))
         .copied()
         .unwrap();
-    let cache = if name.starts_with("assets/") { "public, max-age=31536000, immutable" } else { "no-cache" };
+    // assets/는 이름에 hash가, fonts/는 폴더에 버전이 있다(글꼴을 바꾸면 폴더도 바꾼다)
+    let cache = if name.starts_with("assets/") || name.starts_with("fonts/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
     Response::builder()
         .header(header::CONTENT_TYPE, content_type(name))
         .header(header::CACHE_CONTROL, cache)
