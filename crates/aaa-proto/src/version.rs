@@ -26,7 +26,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.13: thread start `kind` 생략·restart `profile`·resolve `reopen`(plan §8.104)
 pub const FRONT_API: Version = Version { major: 1, minor: 13 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
-pub const SESSION_IPC: Version = Version { major: 1, minor: 0 };
+/// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
+pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
+/// `SessionRequest::Detect`를 받는 첫 SESSION_IPC minor
+pub const SESSION_IPC_DETECT: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NegotiateError {

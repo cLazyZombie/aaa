@@ -158,15 +158,28 @@ export default async function ({ ctl, page }) {
         const a = t1().cols;
         await sleep(300);
         const b = t1().cols;
-        return a === b && ok(b) ? b : null;
+        return a === b && (await ok(b)) ? b : null;
       });
+    /**
+     * 이 화면의 터미널 칸을 PTY `cols`열이 채운다: 이 화면이 자기 칸으로 크기를 건 뒤다(xterm은 host가 알린 PTY 크기를 따른다).
+     * 앞 단계 화면이 건 크기(넓은 창이면 116열)가 남아 있는 동안은 넘친다(02-terminal 「넓은 창」과 같은 판정)
+     */
+    const fills = (pg, cols) =>
+      pg.evaluate((cols) => {
+        const box = document.querySelector('[data-testid="terminal"]');
+        const sw = box.querySelector(".xterm-screen").getBoundingClientRect().width;
+        const cs = getComputedStyle(box);
+        const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        // 오른쪽에는 xterm 세로 scrollbar 자리(기본 14px)가 남는다
+        return sw <= w + 1 && w - sw < sw / cols + 15;
+      }, cols);
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await dp.getByTestId("pane-t1").click();
     await until("13px로 연다", async () => (await rowsFont(dp)) === "13px");
     // 데스크톱(바로 입력)은 pane을 열면 터미널이 키보드를 받는다(herdr-web-ui PaneTerminal 2072줄). 입력줄이면 참고처럼 놓는다.
     await until("열면 터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")));
     await dp.getByTestId("terminal").click();
-    const wide = await settled(dp, "데스크톱 크기", () => true);
+    const wide = await settled(dp, "데스크톱 크기", (c) => fills(dp, c));
     const dlg = await openSettings(dp, "터미널");
     for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 크게" }).click();
     if ((await dlg.getByRole("group", { name: "글자 크기" }).innerText()).trim() !== "16px") throw new Error("설정에 16px가 아니다");
