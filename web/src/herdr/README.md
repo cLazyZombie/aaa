@@ -7,6 +7,7 @@
 | `terminalGlyphs.ts` | xterm DOM renderer가 칸보다 좁게 그린 글자(한글 등)를 키우고 칸 가운데 둔다. 조합 상자(`.composition-view`)의 글꼴 크기·자간·여백을 그 줄에 맞춘다(`fitView`). NFC, 아이콘 크기 |
 | `terminalBoxGlyphs.ts` | 선·블록 문자를 글꼴 대신 칸 크기 상자로 그린다 |
 | `viewport.ts` | 화면 키보드가 올라오면 보이는 높이(visualViewport)를 `--app-height`로 알리고 `data-keyboard`를 단다. `.app`이 그 높이가 되어 머리·터미널·입력 막대·키 막대가 키보드 위에 남는다. 페이지는 (0, 0)에 둔다 |
+| `typography.ts` | 인터페이스 글자 크기의 한도(`UI_FONT_MIN` 11·`UI_FONT_MAX` 20), 저장값 거르기(`sanitizeUiFontSize`), `--ui-scale` 배율(`fontScale`). 설정 → 모양 「밀도」·「인터페이스 글자 크기」가 쓴다(차이 목록 T4) |
 | `viewportResume.ts` | 다시 보일 때(visibilitychange·pageshow) 위를 다시 잰다 |
 | `keyboard.ts` | `keyboardUp`, `keyboardHoldsGrid`(키보드는 화면 아래를 가릴 뿐이므로 높이만 줄면 PTY 크기를 바꾸지 않는다), `keyboardViewportReference` |
 | `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`), 키 막대 유지 키(`StickyModifiers`, chord는 `terminalChord`·`keyFromData`·`physicalKey`) |

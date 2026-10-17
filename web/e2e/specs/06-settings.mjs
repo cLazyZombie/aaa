@@ -1,4 +1,4 @@
-// 웹 E2E 설정: 터미널 글꼴·구독 사용량·글자 크기·설정 쪽(넓은 창·휴대폰·iPad).
+// 웹 E2E 설정: 터미널 글꼴·구독 사용량·글자 크기·설정 쪽(넓은 창·휴대폰·iPad)·밀도와 인터페이스 글자 크기.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 06-settings(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import path from "node:path";
@@ -326,6 +326,145 @@ export default async function ({ ctl, page }) {
     } finally {
       await wk.close();
     }
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("밀도·인터페이스 글자 크기(herdr-web-ui settings.ts density·uiFontSize·typography.ts, 차이 목록 T4): 촘촘이면 한 단계 작고, 글자 크기는 --ui-scale로 목록·창·단추가 함께 바뀌며 터미널은 그대로, 이 기기에만 남는다", async () => {
+    const bad = [];
+    /** 문서의 밀도·배율과 실제 글자 크기(본문, 목록 줄 이름, 설정 줄 이름, 터미널 줄) */
+    const look = (p) =>
+      p.evaluate(() => {
+        const px = (sel) => {
+          const el = document.querySelector(sel);
+          return el ? getComputedStyle(el).fontSize : null;
+        };
+        return {
+          density: document.documentElement.dataset.density,
+          scale: document.documentElement.style.getPropertyValue("--ui-scale"),
+          body: getComputedStyle(document.body).fontSize,
+          row: px('[data-testid="pane-t1"]'),
+          setting: px(".settings-row-text"),
+          term: px('[data-testid="terminal"] .xterm-rows'),
+        };
+      });
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-t1").click();
+    await until("13px 터미널", async () => (await look(dp)).term === "13px");
+    const start = await look(dp);
+    if (start.density !== "comfortable" || start.scale !== "1" || start.body !== "14px") bad.push(`처음 모양 ${JSON.stringify(start)}`);
+    const dlg = await openSettings(dp, "모양");
+    const size = dlg.getByRole("group", { name: "인터페이스 글자 크기" });
+    if ((await size.innerText()).trim() !== "14px") bad.push(`처음 인터페이스 글자 크기 ${await size.innerText()}`);
+    // 촘촘: 본문이 13px, 고른 크기가 없으니 글자 크기 칸도 밀도를 따라 13px
+    await dlg.getByRole("group", { name: "밀도" }).getByRole("button", { name: "촘촘" }).click();
+    await until("촘촘", async () => (await look(dp)).body === "13px");
+    const compact = await look(dp);
+    if (compact.density !== "compact" || compact.scale !== "1" || parseFloat(compact.setting) >= parseFloat(start.setting)) bad.push(`촘촘 ${JSON.stringify(compact)} ← ${JSON.stringify(start)}`);
+    if ((await size.innerText()).trim() !== "13px") bad.push(`촘촘의 글자 크기 칸 ${await size.innerText()}`);
+    // 18px까지: 배율 18/13, 목록·설정 줄 글자도 같은 배율로 커지고 터미널은 13px 그대로
+    for (let i = 0; i < 5; i++) await dlg.getByRole("button", { name: "인터페이스 글자 크기 키우기" }).click();
+    await until("18px", async () => (await look(dp)).body === "18px");
+    const big = await look(dp);
+    const ratio = (a, b) => parseFloat(a) / parseFloat(b);
+    if (Math.abs(Number(big.scale) - 18 / 13) > 1e-6) bad.push(`배율 ${big.scale}`);
+    if (Math.abs(ratio(big.row, compact.row) - 18 / 13) > 0.02 || Math.abs(ratio(big.setting, compact.setting) - 18 / 13) > 0.02) bad.push(`목록·설정이 배율을 따르지 않는다 ${JSON.stringify(big)} ← ${JSON.stringify(compact)}`);
+    if (big.term !== "13px") bad.push(`터미널 글자가 바뀌었다 ${big.term}`);
+    await shot(dp, "settings-ui-font-18-desktop");
+    // 20px이 끝: 키우기가 꺼진다
+    for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "인터페이스 글자 크기 키우기" }).click();
+    if (!(await dlg.getByRole("button", { name: "인터페이스 글자 크기 키우기" }).isDisabled())) bad.push("20px에서 키우기가 켜져 있다");
+    // 이 기기에 남고 host 공유 설정에는 가지 않는다(참고 SETTING_SCOPE density·uiFontSize "device")
+    const saved = await dp.evaluate(() => JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"));
+    if (saved.density !== "compact" || saved.uiFontSize !== 20) bad.push(`저장 ${JSON.stringify(saved)}`);
+    const shared = await dp.evaluate(() =>
+      fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "preferences" }) }).then((r) => r.json()),
+    );
+    const keys = Object.keys(shared.ok?.settings ?? {});
+    if (keys.includes("density") || keys.includes("uiFontSize")) bad.push(`공유 설정에 갔다 ${keys}`);
+    await dp.keyboard.press("Escape");
+    await dp.reload();
+    await dp.getByTestId("machine-labA").waitFor();
+    const again = await look(dp);
+    if (again.density !== "compact" || again.body !== "20px") bad.push(`다시 연 뒤 ${JSON.stringify(again)}`);
+    await dp.context().close();
+    // 휴대폰 20px: 목록·설정 쪽이 가로로 넘치지 않는다. 다른 기기는 제 밀도(여유) 그대로
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
+    if ((await look(pp)).density !== "comfortable") bad.push("다른 기기 밀도가 바뀌었다");
+    await pp.evaluate(() => localStorage.setItem("aaa:appearance", JSON.stringify({ ...JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"), uiFontSize: 20 })));
+    await pp.reload();
+    await pp.getByTestId("machine-labA").waitFor();
+    const wide = () => pp.evaluate(() => document.documentElement.scrollWidth);
+    if ((await wide()) > 390) bad.push(`휴대폰 20px 목록 넘침 ${await wide()}`);
+    await shot(pp, "phone-ui-font-20-list");
+    const pd = await openSettings(pp, "모양");
+    await pd.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))));
+    const over = await pp.evaluate(() => [...document.querySelectorAll(".settings-dialog *")].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 0.5).map((e) => e.className || e.tagName).slice(0, 3));
+    if (over.length) bad.push(`휴대폰 20px 설정 넘침 ${over}`);
+    await shot(pp, "phone-ui-font-20-settings");
+    await pp.context().close();
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("설정 닫는 길·조작 크기(QA t-0337 Q10·Q12, herdr-web-ui SettingsDialog useFocusTrap·useSheetSwipe·settingsHistory, primitives·SettingsControls 터치 크기): 휴대폰 시스템 뒤로는 설정만 한 걸음씩 닫고 앱을 나가지 않으며, 아래로 밀면 닫히고, 닫으면 focus는 연 곳으로, 단축키로 연 설정을 Esc로 닫으면 친 글은 터미널로, 조작 대상은 참고 크기", async () => {
+    const bad = [];
+    const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
+    await pp.getByTestId("machine-labA").waitFor();
+    const home = pp.url();
+    // 뒤로 두 번: 쪽 → 목록 → 닫힘. 앱은 그 자리(주소·목록)에 남고, focus는 톱니로
+    await openSettings(pp, "터미널");
+    await pp.goBack();
+    await pp.getByRole("dialog", { name: "설정" }).getByRole("tab", { name: "터미널" }).waitFor();
+    await pp.goBack();
+    await closed(pp);
+    if (pp.url() !== home || !(await pp.getByTestId("machine-labA").isVisible())) bad.push(`뒤로가 앱을 나갔다: ${pp.url()}`);
+    await until("닫은 뒤 focus는 톱니", () => pp.evaluate(() => document.activeElement?.dataset.testid === "settings-open")).catch((e) => bad.push(e.message));
+    // 조작 크기(390×844 터치): 쪽 줄은 --keybar-h, 머리·한 칸씩의 아이콘 단추는 --touch-target, 글 단추는 그 높이, 스위치는 48×40
+    const sizes = (p, sel) =>
+      p.locator(".settings-dialog").evaluate((d, sel) => [...d.querySelectorAll(sel)].filter((e) => e.getClientRects().length).map((e) => [Math.round(e.getBoundingClientRect().width), Math.round(e.getBoundingClientRect().height)]), sel);
+    await pp.getByTestId("settings-open").click();
+    const dlg = pp.getByRole("dialog", { name: "설정" });
+    await dlg.getByRole("tab", { name: "터미널" }).waitFor();
+    const tabs = await sizes(pp, ".settings-tab");
+    if (!tabs.length || tabs.some(([, h]) => h < 48)) bad.push(`쪽 줄 ${JSON.stringify(tabs)}`);
+    await dlg.getByRole("tab", { name: "터미널" }).click();
+    await dlg.getByRole("tabpanel", { name: "터미널" }).waitFor();
+    const icons = await sizes(pp, ".icon-button");
+    const btns = await sizes(pp, ".btn");
+    const toggles = await sizes(pp, ".settings-toggle");
+    if (!icons.length || icons.some(([w, h]) => w < 40 || h < 40)) bad.push(`아이콘 단추 ${JSON.stringify(icons)}`);
+    if (!btns.length || btns.some(([, h]) => h < 40)) bad.push(`글 단추 ${JSON.stringify(btns)}`);
+    if (!toggles.length || toggles.some(([w, h]) => w < 48 || h < 40)) bad.push(`스위치 ${JSON.stringify(toggles)}`);
+    await dlg.getByRole("button", { name: "설정으로 돌아가기" }).click();
+    await dlg.getByRole("tab", { name: "모양" }).click();
+    const segs = await sizes(pp, ".segmented > button");
+    console.log(`     휴대폰 설정 조작: 쪽 줄 ${tabs[0]}, 아이콘 ${icons[0]}, 글 단추 ${btns[0]}, 스위치 ${toggles[0]}, 여럿 중 하나 ${segs[0]}(참고 --control-h − 6px)`);
+    // 아래로 밀기: sheet가 다 올라온 뒤 머리를 손가락으로 끌어 내린다
+    await dlg.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished.catch(() => null))));
+    const head = await dlg.locator(".settings-header").boundingBox();
+    const cdp = await pp.context().newCDPSession(pp);
+    const x = head.x + head.width / 2;
+    const y0 = head.y + head.height / 2;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: y0, id: 1 }] });
+    for (let i = 1; i <= 12; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y0 + (420 * i) / 12, id: 1 }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await closed(pp).catch((e) => bad.push(`아래로 밀어 닫히지 않았다: ${e.message}`));
+    if (pp.url() !== home) bad.push(`밀어 닫은 뒤 주소 ${pp.url()}`);
+    await pp.context().close();
+    // 데스크톱: 터미널에서 단축키로 연 설정을 Esc로 닫으면 focus는 터미널로 돌아가 친 글이 pane에 닿는다(Mod = Ctrl인 platform)
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { platform: "Linux x86_64" })).page;
+    await dp.getByTestId("pane-t1").click();
+    await dp.getByTestId("terminal").click();
+    await until("터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")));
+    await dp.keyboard.press("Control+Shift+Comma");
+    await dp.getByRole("dialog", { name: "설정" }).waitFor();
+    await dp.keyboard.press("Escape");
+    await closed(dp);
+    await until("Esc 뒤 터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).catch((e) => bad.push(e.message));
+    await dp.keyboard.type("echo q10-$((3+4))");
+    await dp.keyboard.press("Enter");
+    await waitOutput("t1", "q10-7").catch((e) => bad.push(`친 글이 터미널에 닿지 않았다: ${e.message}`));
+    await dp.context().close();
     if (bad.length) throw new Error(bad.join("; "));
   });
 }
