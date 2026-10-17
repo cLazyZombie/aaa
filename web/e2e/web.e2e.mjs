@@ -1596,7 +1596,8 @@ try {
     await dlg.getByRole("button", { name: "로그아웃" }).click();
     const confirm = desk.getByRole("alertdialog", { name: "이 브라우저에서 로그아웃할까요?" });
     await confirm.waitFor();
-    if ((await desk.evaluate(() => document.activeElement?.textContent)) !== "취소") throw new Error("확인 창의 focus가 취소에 있지 않다");
+    // focus는 창이 그려진 다음 frame에 취소로 간다(useFocusTrap): frame마다 본다
+    await desk.waitForFunction(() => document.activeElement?.textContent === "취소" && document.activeElement.closest('[role="alertdialog"]') !== null, null, { polling: "raf", timeout: 5000 });
     await shot(desk, "settings-sign-out-confirm");
     await confirm.getByRole("button", { name: "로그아웃" }).click();
     await desk.getByLabel("페어링 코드").waitFor();
