@@ -1482,6 +1482,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 쓰지 않게 된 aaa 아이콘 넷(claude·codex·agent·thread)은 지웠다.
 - **agent 이름을 아는 법.** herdr는 pane의 프로세스를 보고 `pane.agent`(claude·codex…)를 정한다. aaa는 셋을 이 순서로 본다. hook이 알린 harness, thread profile, 명령 이름(경로를 뗀 것)이다. 표시가 있는 이름이면 그 이름이다. `claude`·`codex`가 든 이름(`claude-opus` profile, 경로 붙은 명령)이면 claude·codex다. 그 밖의 agent는 그 harness·profile 이름의 머리글자 표시다. agent가 아니면 셸이다.
 - **TUI.** herdr TUI 사이드바(`src/client/shell/agent_sidebar.rs`)에도 agent 표시가 없어 aaa TUI도 그대로 둔다.
+- **공개 저장소 검사.** `agentSvgMarks.ts`의 SVG path 좌표(점으로 이은 숫자 넷)가 IP 주소 패턴에 걸린다. 그래서 `scripts/check-public.sh` IP 검사에서만 이 파일을 뺀다(검사마다 뺄 파일 칸을 두었다). 다른 검사(token·이메일·홈 경로 등)는 이 파일도 본다.
 - **시험.** 웹 E2E 「agent 표시」(휴대폰 390×844):
   - hook으로 claude·codex를 알린 pane 줄은 각각 `agent-mark claude is-brand`(타일 `#D77655`, 18px)와 `agent-mark codex`다. 셸 줄은 터미널 표시다.
   - Claude pane 머리에는 같은 표시가 있고, 셸 머리에는 없다.

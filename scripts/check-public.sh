@@ -44,13 +44,14 @@ while IFS= read -r -d '' f; do
   if [ "$HISTORY" = 0 ] && [ -f "$f" ] && [ "$(wc -c <"$f")" -gt 1048576 ]; then report "1MiB 넘는 파일: $f"; fi
 done < <(printf '%s' "$FILES")
 
-# 2·3) 내용 패턴: 이름, 정규식, 허용 정규식(빈 값이면 허용 없음)을 같은 순서로 둔다.
-NAMES=() RES=() ALLOWS=()
-add() { NAMES+=("$1"); RES+=("$2"); ALLOWS+=("$3"); }
+# 2·3) 내용 패턴: 이름, 정규식, 허용 정규식(빈 값이면 허용 없음), 이 검사에서 뺄 파일 정규식(없으면 빈 값)을 같은 순서로 둔다.
+NAMES=() RES=() ALLOWS=() SKIPS=()
+add() { NAMES+=("$1"); RES+=("$2"); ALLOWS+=("$3"); SKIPS+=("${4:-}"); }
 add '개인 키·인증서 블록' '-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----' ''
 add 'token 형식' '(tskey-[a-z]+-[A-Za-z0-9]{6,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,})' ''
 add 'tailnet 주소' '[A-Za-z0-9-]+\.ts\.net' '(example\.ts\.net|>\.ts\.net|[`*]\.ts\.net|이름\.ts\.net)'
-add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\.1|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.255\.)'
+# agentSvgMarks.ts는 참고에서 옮긴 SVG path 숫자(점으로 이은 좌표)뿐이라 IP 검사에서만 뺀다(plan §8.56)
+add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\.1|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.255\.)' '^([0-9a-f]{40}:)?web/src/herdr/agentSvgMarks\.ts:'
 add '사용자 홈 경로' '(/Users/|/home/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|/Users/me/|/Users/Shared|/Users/runner|/home/runner)'
 add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|@example\.(com|org|net))'
 add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' ''
@@ -67,6 +68,7 @@ scan() {
     fi
     # 허용 문자열만 지운 뒤에도 패턴이 남는 줄만 남긴다(한 줄에 허용·금지가 섞여도 놓치지 않는다)
     [ -n "${ALLOWS[$i]}" ] && hits=$(printf '%s\n' "$hits" | sed -E "s~${ALLOWS[$i]}~~g" | grep -E -e "${RES[$i]}")
+    [ -n "${SKIPS[$i]}" ] && [ "$label" = "files" ] && hits=$(printf '%s\n' "$hits" | grep -v -E -e "${SKIPS[$i]}")
     hits=$(printf '%s\n' "$hits" | sed '/^$/d')
     if [ -n "$hits" ]; then
       report "${NAMES[$i]} ($label)"
