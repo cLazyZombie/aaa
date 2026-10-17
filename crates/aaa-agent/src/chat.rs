@@ -364,13 +364,14 @@ mod tests {
         }
         // Codex: thread-id 형식, 깊이 안의 rollout 파일만
         let sessions = root.join("sessions");
-        let id = "019c2fdd-ab9c-7b63-b162-e942875db19e";
+        // 지어낸 id다. 실제 세션 기록의 id를 시험 값으로 옮기지 않는다(공개 저장소, check-public 「실제 세션 id」)
+        let id = "01900000-0000-7000-8000-00000000a001";
         std::fs::create_dir_all(sessions.join("2026/10/17")).unwrap();
         let roll = sessions.join(format!("2026/10/17/rollout-2026-10-17T07-00-00-{id}.jsonl"));
         std::fs::write(&roll, "").unwrap();
         assert_eq!(codex_file(&sessions, id).unwrap(), std::fs::canonicalize(&roll).unwrap());
         assert!(codex_file(&sessions, "../../etc").is_err());
-        assert!(codex_file(&sessions, "019c2fdd-ab9c-7b63-b162-000000000000").is_err());
+        assert!(codex_file(&sessions, "01900000-0000-7000-8000-00000000a002").is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
