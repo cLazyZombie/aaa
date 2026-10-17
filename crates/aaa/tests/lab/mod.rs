@@ -157,6 +157,17 @@ impl Node {
     pub fn ticks(&self, n: usize) -> u64 {
         (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
     }
+
+    /// 이 agent 노드에서 세션의 session host PID(세션 폴더 meta.json)
+    pub fn session_host_pid(&self, session: &str) -> Option<u32> {
+        let text = std::fs::read_to_string(self.state.join("agent/sessions").join(session).join("meta.json")).ok()?;
+        serde_json::from_str::<Value>(&text).ok()?["host_pid"].as_u64().map(|p| p as u32)
+    }
+
+    /// 그 session host가 끝났다(PID가 없거나 다른 프로세스가 됐다). 세션 폴더를 지운 뒤에도 명령줄로 가린다
+    pub fn session_host_gone(&self, pid: u32, session: &str) -> bool {
+        command_of(pid).is_none_or(|c| !(cfg!(windows) || c.contains(session)))
+    }
 }
 
 impl Lab {

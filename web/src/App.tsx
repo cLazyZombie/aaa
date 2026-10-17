@@ -466,7 +466,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
-  useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
+  const keepScreenOn = useKeepScreenOn();
+  const holdScreen = keepScreenOn && (current !== null || currentThread !== null);
+  useScreenWakeLock(holdScreen);
+  // 표지 `data-wake-lock`: 위 wake lock effect가 이 상태(설정·걸지·보는 것)로 돈 뒤에 단다(한 컴포넌트의 effect는 선언 순서대로
+  // 돈다). 시험이 「요청하지 않았다」를 sleep 없이 본다(웹 E2E 04 「화면 켜짐 유지」)
+  const viewing = current ? `pane:${current.id}` : currentThread ? `thread:${currentThread.id}` : "-";
+  useEffect(() => {
+    document.documentElement.dataset.wakeLock = `${keepScreenOn ? "on" : "off"} ${holdScreen ? "hold" : "free"} ${viewing}`;
+  }, [keepScreenOn, holdScreen, viewing]);
   // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads)
   const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator");
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");

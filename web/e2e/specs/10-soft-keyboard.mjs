@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  webkit, shots, root, sleep, aaa, until, screenText, fakeViewport, softKeyboard, pairPage, step,
+  webkit, shots, root, sleep, aaa, until, screenText, fakeViewport, softKeyboard, pairPage, step, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -173,24 +173,50 @@ export default async function ({ ctl, page }) {
         aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", app);
         const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { touch: true, init })).page;
         const direct = p.locator('.key-bar .key[data-key="direct"]');
+        const pty = () => aaa("pane", "list").panes.find((x) => x.name === name);
+        // 맞추기 판단(Term data-fit)과 크기 바뀜 뒤 기다리는 맞추기(data-fit-pending). 시험이 지운 뒤 다시 달린 판단을 기다린다
+        const term = p.getByTestId("terminal");
+        const fit = async () => ({ fit: await term.getAttribute("data-fit"), pending: await term.getAttribute("data-fit-pending") });
+        const forget = () => term.evaluate((el) => delete el.dataset.fit);
+        const decided = (what) =>
+          until(what, async () => {
+            const f = await fit();
+            return f.fit !== null && f.pending === null;
+          }).then(fit, async (e) => {
+            throw new Error(`${e.message}: ${JSON.stringify(await fit())}`);
+          });
+        /** 이 화면과 host가 크기에 맞다(맞추기 판단 same, 기다리는 맞추기 없음)·host 크기가 ok */
+        const agreed = (what, ok = () => true) =>
+          until(what, async () => {
+            const f = await fit();
+            return f.fit === "same" && f.pending === null && ok(pty());
+          }).catch(async (e) => {
+            const r = pty();
+            throw new Error(`${e.message}: ${JSON.stringify(await fit())} PTY ${r.cols}x${r.rows}`);
+          });
         await p.getByTestId(`pane-${name}`).click();
         await until("키보드 화면", async () => (await screenText(p)).includes("kb-line-199"));
-        await sleep(500);
-        let before = aaa("pane", "list").panes.find((x) => x.name === name);
+        await agreed("연 화면의 크기");
+        let before = pty();
         for (const field of ["terminal", "input-bar"]) {
           // 터미널은 바로 입력(기본)에서, 입력줄은 ⌨로 입력줄을 켠 뒤 본다
           if (field === "terminal") await p.locator(".xterm-screen").tap();
           else {
             // 입력줄 칸(한 줄)이 흐름에 들어와 그리드가 한 번 줄어든다(참고와 같다). 키보드가 바꾸는지는 그 뒤부터 본다.
+            const opened = before;
             await direct.tap();
             await p.locator(".terminal-input").waitFor();
-            await sleep(800);
-            before = aaa("pane", "list").panes.find((x) => x.name === name);
+            await agreed("입력줄 칸만큼 줄어든 크기", (r) => r.rows < opened.rows);
+            before = pty();
             await p.getByLabel("보낼 글").focus();
           }
-          // 화면 키보드가 올라온다: 보이는 높이만 줄고(iOS Safari) 레이아웃은 그대로다
+          // 화면 키보드가 올라온다: 보이는 높이만 줄고(iOS Safari) 레이아웃은 그대로다. 앱 높이(--app-height)가 줄어 터미널 칸의
+          // 크기 바뀜이 맞추기를 부르고, 그 판단(keyboard: grid는 그대로, 커서 줄로 옮김)이 난 뒤에 본다(sleep으로 어림하지 않는다)
+          const k = await sentCount(p);
+          await forget();
           await softKeyboard(p, viewport.height - kb);
-          await sleep(600);
+          const up = await decided("키보드 뒤 맞추기 판단");
+          const resized = (await sentFrames(p, k)).filter((f) => f.t === "resize");
           const seen = await p.evaluate(() => {
             const bottom = (sel) => document.querySelector(sel)?.getBoundingClientRect().bottom ?? null;
             const cur = document.querySelector(".xterm-rows .xterm-cursor")?.getBoundingClientRect();
@@ -218,11 +244,13 @@ export default async function ({ ctl, page }) {
           if (field === "input-bar" && (seen.input === null || seen.input > vis + 0.5)) bad.push(`${at}: 입력줄 아래 ${seen.input} > ${vis}`);
           if (field === "terminal" && seen.input !== null) bad.push(`${at}: 바로 입력인데 입력줄이 있다`);
           if (seen.keys === null || seen.keys > vis + 0.5) bad.push(`${at}: 키 막대 아래 ${seen.keys} > ${vis}`);
-          if (rows.cols !== before.cols || rows.rows !== before.rows) bad.push(`${at}: 키보드에 PTY 크기가 바뀌었다 ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}`);
+          if (up.fit !== "keyboard" || resized.length || rows.cols !== before.cols || rows.rows !== before.rows)
+            bad.push(`${at}: 키보드에 PTY 크기가 바뀌었다 ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}, 판단 ${up.fit}, 보낸 크기 ${JSON.stringify(resized)}`);
           // 키보드가 내려간다
+          await forget();
           await softKeyboard(p, viewport.height);
           await p.evaluate(() => document.activeElement?.blur());
-          await sleep(400);
+          await decided("키보드가 내려간 뒤 맞추기 판단");
         }
         await p.context().close();
         aaa("pane", "kill", name);

@@ -66,10 +66,13 @@ export default async function ({ ctl, page }) {
         Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
         document.dispatchEvent(new Event("visibilitychange"));
       }, hidden);
+    // 「요청하지 않았다」는 App이 wake lock effect를 그 상태로 돌린 뒤 다는 표지(data-wake-lock: 설정 걸지 보는 것) 뒤에 본다
+    const t1 = `pane:${aaa("pane", "list").panes.find((p) => p.name === "t1").id}`;
+    const decided = (want) => until(`wake lock 판정 ${want}`, async () => (await wp.evaluate(() => document.documentElement.dataset.wakeLock)) === want);
     await wp.getByTestId("pane-t1").click();
     // 앞 단계가 남긴 글에 기대지 않는다: 셸 프롬프트가 보이면 연결된 것이다
     await until("t1 화면", async () => (await screenText(wp)).includes("$"));
-    await sleep(300);
+    await decided(`off free ${t1}`);
     if ((await log()) !== "") throw new Error(`꺼진 설정인데 ${await log()}`);
     if (!(await wp.evaluate(() => window.isSecureContext))) throw new Error("시험 주소가 secure context가 아니다");
     const toggle = async () => {
@@ -81,7 +84,7 @@ export default async function ({ ctl, page }) {
     if (await back.isVisible()) await back.click();
     await toggle();
     if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== "1") throw new Error("켠 설정이 저장되지 않았다");
-    await sleep(300);
+    await decided("on free -");
     if ((await log()) !== "") throw new Error(`pane을 보지 않는데 ${await log()}`);
     await wp.getByTestId("pane-t1").click();
     await until("wake lock 요청", async () => (await log()) === "request screen");
@@ -100,7 +103,7 @@ export default async function ({ ctl, page }) {
     await toggle();
     if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== null) throw new Error("끈 설정이 남았다");
     await wp.getByTestId("pane-t1").click();
-    await sleep(300);
+    await decided(`off free ${t1}`);
     if ((await log()) !== "request screen,release") throw new Error(`끈 뒤 ${await log()}`);
     await wp.context().close();
   });
