@@ -1489,6 +1489,12 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - thread 줄(fake profile)은 머리글자 표시 「F」다.
   - 사용자 사진(herdr-web-ui)과 E2E 캡처를 나란히 놓은 비교는 보고서에 있다(실제 머신 이름이 있어 저장소에 넣지 않는다).
 
+### 8.57 휠 스크롤 속도(10-17, 차이 목록 J 「휠 속도」)
+
+- **옮긴 것(herdr-web-ui `settings.ts` `terminalWheelSpeed`, SettingsDialog 401~403줄, PaneTerminal 681~690줄).** 설정 「터미널」에 「휠 스크롤 속도」(1~10×, 기본 1, 이 기기)를 둔다. 문구는 참고 `i18n.ko.ts` 그대로다. xterm은 휠 사건 하나에 delta와 상관없이 보고를 하나 보낸다. 그래서 속도가 N이면 진짜 휠(isTrusted)을 N−1번 더 보낸다. 다시 보낸 휠과 터치에서 바꾼 휠은 되풀이하지 않는다. 트랙패드 핀치(Ctrl 휠)도 되풀이하지 않는다.
+- **다른 곳.** 참고는 mouse 보고가 켜졌을 때만 되풀이한다. 거기서는 휠이 늘 herdr로 가는 보고라, 속도가 herdr의 기록 굴리기·화살표에도 든다. aaa는 기록과 화살표를 xterm이 맡으므로 보고가 아니어도 되풀이해 같은 결과를 낸다(§8.55).
+- **시험.** 웹 E2E 「터미널 스크롤」: mouse 보고 프로그램에서 1×는 휠 한 번에 보고 하나, 설정에서 3×로 올리면(저장 `aaa:terminal-wheel-speed`) 보고 셋이다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
