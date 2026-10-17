@@ -1408,6 +1408,17 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **출처·라이선스.** 표시 코드는 herdr-web-ui(MIT, Copyright (c) 2026 devswha)의 것이다(`web/src/herdr/README.md`에 그 MIT 고지가 있다). 참고는 이 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. Claude와 OpenAI(Codex) 로고는 각 상표권자(Anthropic·OpenAI)의 것이다. aaa는 구독 이름을 가리키는 데만 쓰고 그들과 관계를 뜻하지 않는다.
 - **시험.** 유닛: 다른 구독 읽기 시험 둘을 지웠다(Claude·Codex 시험 여섯은 그대로). 웹 E2E 「구독 사용량·설정」: 가짜 집에 OpenCode 로그인이 있어도 칩은 Claude·Codex 둘이고 OpenCode 주소에는 묻지 않는다(0번). 칩 표시는 `agent-mark claude is-brand`(svg 14px, 타일 `#D77655`)와 `agent-mark codex`(`currentColor`). 숨기기는 Claude로 본다.
 
+### 8.50 가려지면 바로 크기 놓기·대화 보기도 놓기·열면 focus·맞추기 단추 없앰(10-17, 차이 목록 2 G·H, 결정 「참고대로」)
+
+- **옮긴 것(herdr-web-ui PaneTerminal 1831~1842·1877~1887·2049~2056·2072줄, 65줄).**
+  - 탭이 가려지면 **바로** 크기를 놓는다(참고 `keepSize(hidden)`: 숨은 문서는 서버 grid를 놓고 연결은 둔다). 전에는 1초 뒤였다. §8.33의 「가려지면 1초 뒤 놓는다」는 참고의 `releasePaneAway`(기본 꺼짐)를 켰을 때 동작이었다. 그 설정(1초 뒤 보기 전용 전환)은 host에 크기를 걸지 않는 구독(watch)이 없어 옮기지 않았다.
+  - 보이는 채 focus만 잃으면 그대로 둔다(같았다).
+  - 대화 보기로 바꾸면 이 화면이 건 크기를 놓는다(터미널을 보는 다른 화면이 되찾는다).
+  - 데스크톱(터치 아님)에서 바로 입력이면 pane을 열자마자 터미널이 키보드를 받는다. 입력줄 모드면 참고처럼 입력 방식 처리가 그 focus를 놓는다.
+  - 창 크기가 멈춘 뒤 맞추기까지 120ms(전 150ms).
+  - 「화면에 맞추기」 단추와 「…이 크기를 정하는 중」 띠를 없앴다(참고에 없다). 누르기·입력·focus가 크기를 되찾는다(§8.48).
+- **시험.** 웹 E2E 「두 controller」: 크기 띠·맞추기 단추가 없고, 가려지자 700ms 안에 `release` frame을 쓴다(전에는 1000ms 뒤). 「글자 크기」: 데스크톱 바로 입력으로 열면 xterm textarea에 focus.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

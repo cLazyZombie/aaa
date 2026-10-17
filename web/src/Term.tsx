@@ -2,7 +2,7 @@
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
 // - 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않으면 칸 크기에 맞춘다(열 때·창 크기가 바뀔 때).
 // - focus를 얻거나 다시 보이면, 또는 터미널을 누르거나 입력하면 이 화면이 지금 쓰는 화면이 되어 크기를 다시 건다.
-// - 탭이 1초 넘게 가려지면 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
+// - 탭이 가려지거나 대화 보기로 바꾸면 바로 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
@@ -49,8 +49,6 @@ const MAX_IMAGE = 16 << 20;
 const ENTER_GAP_MS = 300;
 /** 붙잡은 입력이 있는 동안 다른 입력을 거절하는 말(herdr-web-ui PaneTerminal 1375줄) */
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
-/** 탭이 이만큼 가려져 있으면 「지금 쓰는 화면」을 놓는다(herdr-web-ui와 같은 1초) */
-const RELEASE_AFTER_MS = 1000;
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
 const inUse = () => document.visibilityState === "visible" && document.hasFocus();
 
@@ -334,6 +332,8 @@ export function TermView({
     term.loadAddon(fit);
     term.open(box.current!);
     const el = box.current!;
+    // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.
+    if (!window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
     // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
     // 그 확정은 글로 두고(유지 키 없음), 새 조합이 시작되면 이 표시는 지운다.
     let compositionEndTimer: number | null = null;
@@ -877,6 +877,11 @@ export function TermView({
     fitted();
   };
   useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
+  // 대화 보기는 grid를 가린다: 이 화면이 건 크기를 놓아 터미널을 보는 다른 화면이 되찾게 한다(PaneTerminal 2049~2056줄)
+  useEffect(() => {
+    if (chatView && chatable && leaseMineRef.current) send({ t: "release" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatView, chatable]);
   // 설정에서 글자 크기를 바꾸면 따라간다(PaneTerminal 1996~2025줄). 같은 크기면(핀치가 이미 바꿨다) 아무 일도 없다.
   // 쓰는 중이면 이 화면 크기로 PTY를 다시 건다.
   useEffect(() => {
@@ -886,29 +891,23 @@ export function TermView({
     term.options.fontSize = terminalFontSize;
     autoFit.current(true);
   }, [terminalFontSize]);
-  // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 1초 넘게 가려지면 놓는다(herdr-web-ui RELEASE_AFTER_MS).
+  // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 가려지면 바로 크기를 놓는다(herdr-web-ui PaneTerminal 1831~1842줄
+  // `keepSize(hidden)`: 숨은 문서는 서버 grid를 놓고 연결은 둔다). 보이는 채 focus만 잃으면 그대로 둔다.
+  // 참고의 「가려지면 1초 뒤 보기 전용으로」(`releasePaneAway`)는 기본 꺼짐 설정이라 옮기지 않았다(host에 watch가 없다).
   const leaseMine = me !== null && lease?.front === me;
   const leaseMineRef = useRef(leaseMine);
   leaseMineRef.current = leaseMine;
   useEffect(() => {
-    let away: number | undefined;
-    const back = () => {
-      window.clearTimeout(away);
-      autoFit.current(true);
-    };
+    const back = () => autoFit.current(true);
     const vis = () => {
       if (document.visibilityState === "visible") return back();
-      window.clearTimeout(away);
-      away = window.setTimeout(() => {
-        if (document.visibilityState === "hidden" && leaseMineRef.current) send({ t: "release" });
-      }, RELEASE_AFTER_MS);
+      if (leaseMineRef.current) send({ t: "release" });
     };
     window.addEventListener("focus", back);
     document.addEventListener("visibilitychange", vis);
     return () => {
       window.removeEventListener("focus", back);
       document.removeEventListener("visibilitychange", vis);
-      window.clearTimeout(away);
     };
   }, [pane.id]);
   useEffect(() => {
@@ -921,7 +920,7 @@ export function TermView({
         // 키보드가 화면 아래를 가렸다: grid는 그대로, 터미널만 커서 줄로 옮긴다(맞출 수 없는 화면도)
         if (keyboardHolds()) return;
         autoFit.current();
-      }, 150);
+      }, 120);
     });
     ro.observe(el);
     // 손으로 옮기면 키보드가 있는 동안 커서를 따라가지 않는다(herdr-web-ui `panned`)
@@ -938,11 +937,6 @@ export function TermView({
       host?.removeEventListener("wheel", pan);
     };
   }, [pane.id]);
-
-  const fitToScreen = () => {
-    const dims = fitRef.current?.proposeDimensions();
-    if (dims && dims.cols > 0 && dims.rows > 0) send({ t: "resize", cols: dims.cols, rows: dims.rows });
-  };
 
   // 키 막대(herdr-web-ui PaneTerminal 2218~2245줄). 항목은 기기별 저장값(설정 화면은 아직 없다), 없으면 참고 기본 배열.
   const [barItems] = useState(() => {
@@ -1088,21 +1082,10 @@ export function TermView({
             {chatView ? "터미널" : "대화"}
           </button>
         )}
-        {canControl && (
-          <button className="ghost fit-btn" onClick={fitToScreen} disabled={locked} title="PTY 크기를 이 화면에 맞춘다">
-            <Icon name="fit" />
-            화면에 맞추기
-          </button>
-        )}
       </header>
       {banner && (
         <div className={`banner ${readonly ? "warn" : ""}`} data-testid="readonly-banner">
           {banner}
-        </div>
-      )}
-      {!banner && heldByOther && lease && (
-        <div className="banner" data-testid="lease-banner">
-          {lease.label}이 크기를 정하는 중{canControl && " · 입력하거나 터미널을 누르면 이 화면 크기로"}
         </div>
       )}
       {error && <div className="banner err">{error}</div>}
