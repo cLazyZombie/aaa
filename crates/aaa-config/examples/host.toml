@@ -19,10 +19,10 @@ mode = "child"
 [tui]
 # aaa attach의 명령 prefix 키(herdr 형식, 여러 개면 배열). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "ctrl+g").
 prefix = "ctrl+b"
-# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·ssh 밖, herdr처럼 기본 끔).
-switch_ascii_input_source_in_prefix = false
-# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 끔).
-prefix_jamo_keys = false
+# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·Windows 한국어 IME, ssh 밖, 기본 켬).
+switch_ascii_input_source_in_prefix = true
+# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 켬).
+prefix_jamo_keys = true
 # 새 탭(prefix c)을 만들기 전에 이름을 묻는다(빈 채로·기본값 그대로 Enter면 자리 번호).
 prompt_new_tab_name = true
 # 마지막 탭·마지막 pane을 닫기 전에 묻는다.

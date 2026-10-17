@@ -24,7 +24,7 @@ const COLS: u16 = 90;
 const WIDE: u16 = 130;
 const ROWS: u16 = 30;
 
-/// 시험 설정: 사용자 입력기는 건드리지 않고(기본 끔), prefix 뒤 자모 해석은 켠다
+/// 시험 설정: 사용자 입력기는 건드리지 않고(입력기 전환은 기본 켬이라 끈다), prefix 뒤 자모 해석은 켠다(기본값)
 const LOCAL_ONLY: &str = r#"schema = 1
 [host]
 agent_listen = ""
@@ -33,6 +33,7 @@ listen = ""
 [local_agent]
 mode = "none"
 [tui]
+switch_ascii_input_source_in_prefix = false
 prefix_jamo_keys = true
 "#;
 
@@ -415,7 +416,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 
     // 새 탭과 탭 전환. herdr처럼 이름을 먼저 묻는다: 기본값(탭 수+1) 그대로 Enter면 자리 번호다.
     // 한글 입력기가 켜진 채 누른 명령 키(ㅊ = c 자리)도 같은 명령이다
-    // (시험 설정 prefix_jamo_keys = true. 기본은 끔이고 입력기 전환도 기본 끔이라 사용자 입력기를 건드리지 않는다)
+    // (자모 해석은 기본 켬. 시험 설정은 입력기 전환을 꺼 사용자 입력기를 건드리지 않는다)
     tui.cmd("c");
     tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
     tui.send(b"\r");
@@ -479,7 +480,9 @@ fn herdr_keys_and_modes() {
     tui.cmd("\x02");
     tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
     tui.send(b"\r");
-    tui.wait_text("^B", |s| s.contains("^B"));
+    // `^B` 하나는 tty echo(echoctl)라 cat이 뜨기 전에도 보인다. cat이 읽고 다시 찍은 둘째 `^B`를 본 뒤 끊는다
+    // (그 전에 ^C가 닿으면 입력 대기열이 비워지고 그 뒤에 cat이 떠 남는다)
+    tui.wait_text("cat이 읽은 ^B", |s| s.matches("^B").count() >= 2);
     tui.send(b"\x03");
     tui.type_line("clear");
 
@@ -654,6 +657,75 @@ fn tabs_like_herdr() {
     hw.wait("모두 닫힘", |w| w.ws.as_ref()?.tabs.is_empty().then_some(()));
     tui.wait_text("빈 화면", |s| s.contains("탭이 없다"));
     hw.wait("세션 끝남", |w| [&first, &right].iter().all(|p| w.pane(p).is_none()).then_some(()));
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 지금 탭(첫 탭) 뿌리 나눔의 비율
+fn split_ratio(w: &HostWatch) -> Option<u16> {
+    match &w.ws.as_ref()?.tabs.first()?.root {
+        aaa_proto::LayoutNode::Split { ratio, .. } => Some(*ratio),
+        aaa_proto::LayoutNode::Pane { .. } => None,
+    }
+}
+
+/// pane 모드(herdr 0.9.5 `route_resize_key`·`apply_pane_zoom`·`swap_pane_*`): `r` 크기 모드, `z` zoom,
+/// `H/J/K/L` 자리 바꾸기. zoom은 host 탭에 남고 나누면 풀린다.
+#[test]
+fn pane_modes_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["1"] && s.contains("이 화면 크기"));
+    tui.type_line("echo left-$((3+4))");
+    tui.wait_text("왼쪽 출력", |s| s.contains("left-7"));
+    tui.cmd("v");
+    let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
+    assert_eq!(hw.wait("비율", split_ratio), 500);
+
+    // 1) r 크기 모드: RESIZE 막대. 포커스(오른쪽 pane)는 오른쪽 가장자리 나눔이 없어 왼쪽 가장자리를 옮긴다
+    //    (herdr `resize_focused`): l이면 나눔이 오른쪽으로 5%씩
+    tui.cmd("r");
+    tui.wait_text("RESIZE 막대", |s| s.contains(" RESIZE ") && s.contains("h/l 너비") && s.contains("esc 끝"));
+    tui.send(b"l");
+    hw.wait("550", |w| (split_ratio(w) == Some(550)).then_some(()));
+    tui.send(b"l");
+    hw.wait("600", |w| (split_ratio(w) == Some(600)).then_some(()));
+    // 칸이 바뀌면 PTY 크기도 다시 건다: 왼쪽이 넓어진다
+    hw.wait("왼쪽이 넓다", |w| (w.pane(&first)?.cols >= w.pane(&right)?.cols + 4).then_some(()));
+    tui.send(b"\x1b");
+    tui.wait_text("크기 모드 끝", |s| !s.contains(" RESIZE "));
+    tui.type_line("echo right-$((4+5))");
+    tui.wait_text("오른쪽 출력", |s| s.contains("right-9"));
+    assert!(h.screen(&right).contains("right-9"), "크기 모드가 끝난 뒤 키는 pane으로 간다");
+
+    // 2) z: host 탭에 zoom, 이름표 `1 Z`, 포커스 pane만 칸 전체로 그리고 크기도 칸 전체
+    tui.cmd("z");
+    hw.wait("zoom", |w| w.ws.as_ref()?.tabs[0].zoomed.then_some(()));
+    tui.wait_text("zoom 화면", |s| tab_chips(s) == ["1", "Z"] && s.contains("right-9") && !s.contains("left-7"));
+    hw.wait("칸 전체 크기", |w| (w.pane(&right)?.cols > w.pane(&first)?.cols).then_some(()));
+    // zoom 중에도 h/j/k/l은 나눈 칸으로 이웃을 찾고, 옮긴 포커스 pane이 크게 보인다(herdr)
+    tui.cmd("h");
+    tui.wait_text("왼쪽 zoom", |s| s.contains("left-7") && !s.contains("right-9"));
+    tui.cmd("z");
+    hw.wait("zoom 풀림", |w| (!w.ws.as_ref()?.tabs[0].zoomed).then_some(()));
+    tui.wait_text("둘 다", |s| tab_chips(s) == ["1"] && s.contains("left-7") && s.contains("right-9"));
+
+    // 3) L: 포커스(왼쪽) pane을 오른쪽 이웃과 바꾼다. 칸·비율은 그대로, 포커스는 옮긴 pane을 따라간다
+    tui.cmd("L");
+    hw.wait("자리 바뀜", |w| (w.leaves() == [right.clone(), first.clone()]).then_some(()));
+    assert_eq!(split_ratio(&hw), Some(600));
+    tui.type_line("echo moved-$((5+6))");
+    tui.wait_text("옮긴 pane 출력", |s| s.contains("moved-11"));
+    assert!(h.screen(&first).contains("moved-11"), "포커스가 옮긴 pane을 따라가지 않았다");
+
+    // 4) zoom 중에 나누면 zoom이 풀린다(herdr `split_*`)
+    tui.cmd("z");
+    hw.wait("다시 zoom", |w| w.ws.as_ref()?.tabs[0].zoomed.then_some(()));
+    tui.cmd("-");
+    hw.wait("나누면 풀림", |w| (w.leaves().len() == 3 && !w.ws.as_ref()?.tabs[0].zoomed).then_some(()));
     tui.cmd("q");
     assert!(tui.wait_exit());
 }

@@ -1,6 +1,8 @@
 //! 탭 줄의 탭 이름표 자리. herdr 0.9.5 `src/client/shell/tabs.rs` `render_tab_bar`(마우스 단추를 뺀 모양)·
 //! `max_tab_scroll`·`centered_tab_scroll`을 옮겼다: 이름표 폭은 이름+4(최소 8), 사이 한 칸,
 //! 넘치면 지금 탭이 가운데 오게 밀고 잘린 쪽에 `…`를 둔다.
+//!
+//! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 
 use crate::unicode_width;
 

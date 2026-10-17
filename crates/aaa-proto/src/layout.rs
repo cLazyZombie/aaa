@@ -134,14 +134,36 @@ pub fn ws_remove(ws: &mut Workspace, target: &str) -> bool {
     for t in tabs {
         if leaves(&t.root).iter().any(|p| p == target) {
             changed = true;
+            // herdr `detach_pane`: 탭의 pane이 바뀌면 zoom을 푼다
             if let Some(root) = remove(t.root, target) {
-                ws.tabs.push(Tab { root, ..t });
+                ws.tabs.push(Tab { root, zoomed: false, ..t });
             }
         } else {
             ws.tabs.push(t);
         }
     }
     changed || ws.tabs.len() != before
+}
+
+/// 두 pane의 자리를 바꾼다(herdr `swap_panes`: 칸과 나눔 비율은 그대로, 잎의 pane만 바꾼다). 둘 다 있으면 true.
+pub fn swap(node: &mut LayoutNode, x: &str, y: &str) -> bool {
+    let l = leaves(node);
+    if x == y || !l.iter().any(|p| p == x) || !l.iter().any(|p| p == y) {
+        return false;
+    }
+    fn walk(n: &mut LayoutNode, x: &str, y: &str) {
+        match n {
+            LayoutNode::Pane { pane } if pane == x => *pane = y.to_string(),
+            LayoutNode::Pane { pane } if pane == y => *pane = x.to_string(),
+            LayoutNode::Pane { .. } => {}
+            LayoutNode::Split { a, b, .. } => {
+                walk(a, x, y);
+                walk(b, x, y);
+            }
+        }
+    }
+    walk(node, x, y);
+    true
 }
 
 pub fn ws_replace(ws: &mut Workspace, old: &str, new: &str) -> bool {
@@ -242,15 +264,38 @@ mod tests {
         let mut ws = Workspace {
             name: "main".into(),
             tabs: vec![
-                Tab { id: "t1".into(), name: "1".into(), root: p("a") },
-                Tab { id: "t2".into(), name: "2".into(), root: p("b") },
+                Tab { id: "t1".into(), name: "1".into(), root: p("a"), zoomed: false },
+                Tab { id: "t2".into(), name: "2".into(), root: p("b"), zoomed: false },
             ],
         };
         assert!(ws_remove(&mut ws, "a"));
         assert_eq!(ws.tabs.len(), 1);
+        // pane이 빠진 탭은 zoom이 풀린다(herdr `detach_pane`)
+        split(&mut ws.tabs[0].root, "b", "c", SplitDir::Horizontal);
+        ws.tabs[0].zoomed = true;
+        assert!(ws_remove(&mut ws, "c"));
+        assert!(!ws.tabs[0].zoomed);
         assert!(!ws_remove(&mut ws, "zz"));
         assert!(ws_replace(&mut ws, "b", "b2"));
         assert!(ws_contains(&ws, "b2"));
+    }
+
+    /// herdr `swap_panes_exchanges_leaf_ids_without_changing_cells`
+    #[test]
+    fn swap_exchanges_leaves_and_keeps_cells() {
+        // a | (b / c), 비율 300
+        let mut root = p("a");
+        split(&mut root, "a", "b", SplitDir::Horizontal);
+        split(&mut root, "b", "c", SplitDir::Vertical);
+        set_split_ratio(&mut root, "b", 300);
+        let area = Rect { x: 0, y: 0, w: 81, h: 21 };
+        let before: Vec<Rect> = rects(&root, area).0.into_iter().map(|(_, r)| r).collect();
+        assert!(swap(&mut root, "a", "c"));
+        assert_eq!(leaves(&root), ["c", "b", "a"]);
+        let after = rects(&root, area);
+        assert_eq!(after.0.iter().map(|(_, r)| *r).collect::<Vec<_>>(), before);
+        assert!(!swap(&mut root, "a", "a") && !swap(&mut root, "a", "zz"));
+        assert_eq!(leaves(&root), ["c", "b", "a"]);
     }
 
     #[test]

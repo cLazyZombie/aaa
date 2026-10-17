@@ -21,6 +21,8 @@ pub enum Action {
     SplitVertical,
     SplitHorizontal,
     ClosePane,
+    Zoom,
+    ResizeMode,
     ToggleSidebar,
     FocusLeft,
     FocusDown,
@@ -28,6 +30,10 @@ pub enum Action {
     FocusRight,
     CycleNext,
     CyclePrevious,
+    SwapLeft,
+    SwapDown,
+    SwapUp,
+    SwapRight,
 }
 
 /// prefix 뒤 키 → 동작(herdr 기본 키)
@@ -55,6 +61,8 @@ const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('v'), Action::SplitVertical),
     (Combo::plain('-'), Action::SplitHorizontal),
     (Combo::plain('x'), Action::ClosePane),
+    (Combo::plain('z'), Action::Zoom),
+    (Combo::plain('r'), Action::ResizeMode),
     (Combo::plain('b'), Action::ToggleSidebar),
     (Combo::plain('h'), Action::FocusLeft),
     (Combo::plain('j'), Action::FocusDown),
@@ -62,6 +70,10 @@ const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('l'), Action::FocusRight),
     (Combo::new(KeyCode::Tab, KeyModifiers::NONE), Action::CycleNext),
     (Combo::new(KeyCode::BackTab, KeyModifiers::NONE), Action::CyclePrevious),
+    (Combo::shift('h'), Action::SwapLeft),
+    (Combo::shift('j'), Action::SwapDown),
+    (Combo::shift('k'), Action::SwapUp),
+    (Combo::shift('l'), Action::SwapRight),
 ];
 
 /// 그 동작의 prefix 뒤 키 이름(`w`, `shift+r`)
@@ -118,6 +130,8 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 (p(SplitVertical), "좌우로 나누기"),
                 (p(SplitHorizontal), "위아래로 나누기"),
                 (p(ClosePane), "pane 닫기"),
+                (p(Zoom), "pane 크게 보기"),
+                (p(ResizeMode), "크기 모드(h/j/k/l, esc 끝)"),
                 (p(ToggleSidebar), "목록 펴기·접기"),
                 (p(FocusLeft), "왼쪽 pane"),
                 (p(FocusDown), "아래 pane"),
@@ -125,6 +139,11 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 (p(FocusRight), "오른쪽 pane"),
                 (p(CycleNext), "다음 pane"),
                 (p(CyclePrevious), "이전 pane"),
+                // herdr 도움말에는 없지만 기본 키는 있다(`swap_pane_*`)
+                (p(SwapLeft), "왼쪽 pane과 자리 바꾸기"),
+                (p(SwapDown), "아래 pane과 자리 바꾸기"),
+                (p(SwapUp), "위 pane과 자리 바꾸기"),
+                (p(SwapRight), "오른쪽 pane과 자리 바꾸기"),
                 ("ctrl+v".into(), "그림 붙여넣기(prefix 없이)"),
             ],
         ),
@@ -169,6 +188,10 @@ mod tests {
         assert_eq!(k("shift+t"), Some(RenameTab));
         assert_eq!(k("shift+x"), Some(CloseTab));
         assert_eq!(k("x"), Some(ClosePane));
+        assert_eq!(k("z"), Some(Zoom));
+        assert_eq!(k("r"), Some(ResizeMode));
+        assert_eq!(k("shift+h"), Some(SwapLeft));
+        assert_eq!(k("shift+l"), Some(SwapRight));
         // tmux식 예전 키는 없다
         for old in ["d", "t", "s", "%", "\"", "|"] {
             assert_eq!(k(old), None, "{old}");
