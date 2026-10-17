@@ -2125,6 +2125,16 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고대로.** herdr-web-ui `src/components/PromptCard.tsx`: 누르는 동안 카드 `aria-busy`, 선택지 `disabled={pending}`, 오류는 카드 안 `role="alert"`. 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다(`shown`). 모양은 `PromptCard.css` `[aria-busy="true"]` 선택지 흐림, `.prompt-card-error` 색.
 - **시험.** 웹 E2E 「확인창 답이 실패하면 카드 안에 보인다」: 휴대폰 제어 화면에서 「Esc to cancel」 없는 확인창에 「예」 → 누른 순간 `aria-busy=true`·선택지 막힘 → host 오류 답 → 카드 안 alert(「터미널에서 직접 답한다」)·선택지 풀림(`phone-question-error`). 기다림은 그 요청의 답과 MutationObserver다.
 
+### 8.93 웹 E2E를 기능별 파일로(10-18, 사용자 「e2e testability가 중요해」, t-0338)
+
+- **왜.** 웹 E2E가 한 파일(5161줄·57단계)이라 한 단계만 혼자 돌릴 수 없고 늘 전부(3~5분)를 돌았으며, 기능 thread 여럿이 같은 파일을 고쳤다. herdr-web-ui는 기능마다 혼자 도는 브라우저 시험(`scripts/*-regression.ts`)과 묶음 실행(`scripts/ui-regression.ts`, `BROWSER_SCRIPTS`로 고르기)을 둔다.
+- **구조.** 입구 `web/e2e/web.e2e.mjs`가 `web/e2e/specs/NN-기능.mjs` 13개를 파일마다 새 프로세스·새 실험실(`lib/child.mjs` → `lib/harness.mjs`의 `runSpec`: host·agent·t1·첫 화면)로 차례로 돈다. 고르기 `--spec`·`--grep`(= `AAA_E2E_ONLY`)·`--repeat`·`--list`. 한 파일이 실패해도 다음 파일을 돌아 한 번에 여러 실패를 본다. 단계 이름과 결과 줄(`ok`·`FAIL`)·실험실 폴더(`/tmp/aaw-<pid>`)는 그대로라 ci.yml·ci-local.sh는 바꾸지 않았다. 쓰는 법은 [docs/testing.md 「웹 E2E」](testing.md#웹-e2e).
+- **새 실험실.** 앞 단계가 남긴 상태(pane 수·질문 수·구독 수·공유 설정 revision·usage 조회 수·diag 수)에 기대던 단언이 파일 안 차례로만 남는다. 그래서 파일 하나를 혼자·되풀이해(간헐 실패 재기) 돌릴 수 있다. 값은 파일마다 준비·정리 약 1.5초(부하가 크면 4초).
+- **글자 그대로 옮겼다.** 단계 본문은 들여쓰기까지 그대로다. 바꾼 줄은 둘이다: 「t1로 돌아왔다」 기다림 7곳(`한글-8`은 「입력 막대로 한글」 단계가 찍은 글이라, 준비가 t1에 `t1-42`를 찍고 그것을 본다)과 push 키 대입(spec은 import한 이름에 쓸 수 없어 `setPushKey`).
+- **ratchet.** spec이 harness의 `sleep`을 import해 쓰므로 scanner가 저장소 안 다른 파일에서 import한 helper도 그 정의로 센다(전에는 같은 파일 정의만 보아 나눈 뒤 53곳 중 6곳만 셌다). origin/main 비교는 main에 있던 파일은 파일마다, 새 파일은 합계로 한다. 합계는 그대로 78이다.
+- **틀 검사.** `web/test/e2e-layout.test.mjs`: spec 이름 꼴·기본 함수, 단계 이름은 모든 spec에서 하나, harness는 위에 둔 이름을 모두 export, spec은 harness에 있는 이름만 import.
+- **나누기 전 branch.** `web/e2e/tools/port-patch.mjs`가 옛 한 파일의 hunk를 같은 글이 있는 spec·harness로 옮기고 새 helper는 export·import까지 맞춘다. 착지 때 아직 main에 없던 t-0329·t-0333 branch의 변경(hunk 4개, 새 helper `focusIs`)으로 시험했다. 모든 thread가 나눈 main을 받으면 지운다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
