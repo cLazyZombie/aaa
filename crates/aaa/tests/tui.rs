@@ -1326,8 +1326,10 @@ fn ctrl_v_pastes_clipboard_image() {
     if let Some(c) = clip.as_mut() {
         c.set_text("no image here").unwrap();
     }
-    tui.type_line("stty -iexten; cat -v");
-    std::thread::sleep(Duration::from_millis(300));
+    // stty가 돈 뒤에 ^V를 보낸다(그 전이면 셸 줄 규칙이 lnext로 먹어 `^V`가 나오지 않는다). 정한 시간을 자면 부하에서
+    // stty가 늦어 실패했다: 그 뒤 출력을 본다
+    tui.type_line("stty -iexten; echo cat-ready-$((1+1)); cat -v");
+    tui.wait_text("cat 준비", |s| s.contains("cat-ready-2"));
     tui.send(b"\x16");
     tui.send(b"\r");
     tui.wait_text("원래 Ctrl+V", |s| s.contains("^V"));
@@ -1348,8 +1350,8 @@ fn ctrl_v_pastes_clipboard_image() {
             std::fs::write(&fake, out).unwrap();
         }
     }
-    tui.type_line("clear");
-    std::thread::sleep(Duration::from_millis(300));
+    tui.type_line("clear; echo cleared-$((2+2))");
+    tui.wait_text("화면 지움", |s| s.contains("cleared-4"));
     tui.send(b"\x16");
     tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
     let files = attachments(&h.state);
