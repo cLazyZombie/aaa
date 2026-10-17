@@ -84,7 +84,11 @@ jobs:
     steps:
       # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
       - run: git config --global core.autocrlf false
+      # ubuntu는 이력을 모두 받는다(약 11MiB): 공개 검사가 이번 push·PR의 커밋 메시지·author를, 고정 sleep ratchet이
+      # 기준의 기준 파일을 본다. 얕은 checkout이면 둘 다 볼 커밋이 없어 늘 건너뛰었다(10-18 감사)
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: ${{ matrix.os == 'ubuntu-24.04' && '0' || '1' }}
       - name: Rust stable
         id: rust
         run: |
@@ -112,6 +116,10 @@ jobs:
           node-version: 24
       # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령). 여기서는 OS별로 어느 단계를 도는지만 정한다.
       - name: 웹 front 빌드(host 실행 파일에 포함)
+        env:
+          # 고정 sleep ratchet 「origin/main보다 올리지 않는다」의 기준(web/test/fixed-sleeps.test.mjs). 주면 건너뛰지 않는다.
+          # main push는 그 전 main(origin/main이 이미 HEAD라 자기와 비교하게 된다), 그 밖에는 origin/main. 이력이 있는 ubuntu만
+          AAA_SLEEP_BASE: ${{ matrix.os == 'ubuntu-24.04' && (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before || 'origin/main') || '' }}
         run: bash scripts/ci-local.sh --only web --logs . --tee
       - name: fmt
         if: matrix.os == 'ubuntu-24.04'
@@ -138,10 +146,13 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xvfb >/dev/null; fi
           bash scripts/ci-local.sh --only clipboard --logs . --tee
-      # 공개 저장소 검사(push 전 로컬 검사의 안전망). 얕은 checkout이라 origin/main..HEAD가 비어 커밋 메시지·author는 보지 않고,
-      # private-words가 없어 실제 이름도 보지 않는다: 여기의 통과는 추적 파일의 확장자·크기·내용 패턴만 본 결과다.
+      # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
+      # 새 branch의 첫 push는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
+      # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
       - name: public
         if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
+        env:
+          AAA_PUBLIC_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'origin/main' }}
         run: bash scripts/ci-local.sh --only public --logs . --tee
       # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
       - name: 실패 요약
