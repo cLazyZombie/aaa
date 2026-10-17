@@ -244,6 +244,8 @@ function Main({ role }: { role: DeviceRole }) {
   const alertKinds = useRef<Set<string> | null>(null);
   const seenQuestions = useRef(new Set<string>());
   const seenReports = useRef(new Map<string, string | null>());
+  // 이 화면이 한 번이라도 붙었었나: 다시 붙을 때 읽은 목록은 끊긴 동안 놓친 사건이다(아래)
+  const linkedOnce = useRef({ questions: false, threads: false });
   const now = useRef({ sel, panes, threads, machines });
   now.current = { sel, panes, threads, machines };
   const questionNews = (q: QuestionView) => {
@@ -308,7 +310,11 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "questions", all: false })
               .then((r) => {
                 if (r.kind !== "questions") return;
-                for (const q of r.questions) seenQuestions.current.add(q.id);
+                // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
+                // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.79)
+                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q);
+                else for (const q of r.questions) seenQuestions.current.add(q.id);
+                linkedOnce.current.questions = true;
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
@@ -317,7 +323,15 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "threads", project: null, role: null })
               .then((r) => {
                 if (r.kind !== "threads") return;
-                for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                // 위 질문과 같다: 다시 붙을 때는 끊긴 동안 온 새 보고를 알린다(처음 보는 thread는 새 소식이 아니다)
+                // 끊긴 동안 새로 생긴 thread도 처음 붙을 때 목록에 없었으니 새 소식이다
+                if (linkedOnce.current.threads)
+                  for (const t of r.threads) {
+                    if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
+                    reportNews(t);
+                  }
+                else for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                linkedOnce.current.threads = true;
                 setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
               })
               .catch(() => {});

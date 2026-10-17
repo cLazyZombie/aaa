@@ -1181,6 +1181,30 @@ impl Host {
     }
 }
 
+/// 두 폴더가 같은 상대 경로에 같은 바이트의 파일을 가졌나(library 사본이 바뀌었는지 볼 때). 없는 폴더는 빈 폴더와 다르다.
+fn same_tree(a: &Path, b: &Path) -> bool {
+    fn files(root: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).ok()? {
+                let p = e.ok()?.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    out.push((p.strip_prefix(root).ok()?.to_path_buf(), std::fs::read(&p).ok()?));
+                }
+            }
+        }
+        out.sort();
+        Some(out)
+    }
+    match (files(a), files(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! herdr-projects src/thread.rs `group()` 시험을 옮겼다(Landing·PR 줄은 aaa에 없어 뺐다).
@@ -1352,29 +1376,5 @@ mod tests {
         assert_eq!(g(&open_thread(), reported("끝", Some(100), 5, Idle)), ThreadGroup::Idle);
         // 새 보고가 진행 보고를 이긴다
         assert_eq!(g(&t, reported("다듬는 중", Some(90), 5, Idle)), ThreadGroup::ReadyForReview);
-    }
-}
-
-/// 두 폴더가 같은 상대 경로에 같은 바이트의 파일을 가졌나(library 사본이 바뀌었는지 볼 때). 없는 폴더는 빈 폴더와 다르다.
-fn same_tree(a: &Path, b: &Path) -> bool {
-    fn files(root: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
-        let mut out = Vec::new();
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(d) = stack.pop() {
-            for e in std::fs::read_dir(&d).ok()? {
-                let p = e.ok()?.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else {
-                    out.push((p.strip_prefix(root).ok()?.to_path_buf(), std::fs::read(&p).ok()?));
-                }
-            }
-        }
-        out.sort();
-        Some(out)
-    }
-    match (files(a), files(b)) {
-        (Some(x), Some(y)) => x == y,
-        _ => false,
     }
 }

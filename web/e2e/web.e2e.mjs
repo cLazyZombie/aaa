@@ -4471,6 +4471,7 @@ try {
           });
         }
         send(d) {
+          if (String(d).startsWith('{"t":"ping"')) log.push("ping");
           if (this.frozen) {
             log.push(`swallowed ${String(d).slice(0, 24)}`);
             return;
@@ -4522,11 +4523,29 @@ try {
     await until("ping을 보냄", () => bp.evaluate(() => window.__evSock.some((e) => e.startsWith('swallowed {"t":"ping"'))));
     await until("다시 붙음", () => bp.evaluate(() => window.__evSock.filter((e) => e === "new").length === 2));
     await until("새 연결이 쓰는 화면", async () => (await pushInUse()) === 1);
+    // 다시 붙으면 끊긴 동안 놓친 보고를 알린다(t3code afterSequence처럼 놓친 사건을 잇는다)
+    await until("놓친 보고의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("죽은 연결 동안"));
+    await bp.locator(".droplet-close").click();
+    await until("놓친 보고 알림 닫힘", async () => (await bp.locator(".droplet").count()) === 0);
     done();
     k = skips().length;
     ts.push(work("다시 붙은 뒤"));
     await until("다시 붙은 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("다시 붙은 뒤"));
     await until("다시 붙은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
+    // 10초 넘게 가려졌다가 다시 보이면 묻지 않고 바로 새로 붙는다(t3code application-active-reconnect). 시계만 앞으로 돌린다
+    const mark = await bp.evaluate(() => window.__evSock.length);
+    await bp.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      const real = Date.now;
+      Date.now = () => real() + 11_000;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until("오래 가려진 뒤 바로 다시 붙음", () => bp.evaluate(() => window.__evSock.filter((e) => e === "new").length === 3));
+    const after = await bp.evaluate((i) => window.__evSock.slice(i), mark);
+    if (after.indexOf("ping") !== -1 && after.indexOf("ping") < after.indexOf("new")) throw new Error(`오래 가려진 뒤 묻고 기다렸다: ${after.join(",")}`);
+    await until("다시 쓰는 화면", async () => (await pushInUse()) === 1);
     // host: WebSocket ping에도 답하지 않는 연결(읽지 않는 클라이언트)은 끊어 쓰는 화면에서 뺀다
     const cookie = (await bp.context().cookies()).find((c) => c.name === "aaa" || c.name === "__Host-aaa");
     const u = new URL(base);

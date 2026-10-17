@@ -84,6 +84,13 @@ const PROBE_TIMEOUT_MAX_MS = 12_000;
 const PROBE_OVERDUE_MS = 2_000;
 const IDLE_PROBE_MS = 20_000;
 const IDLE_CHECK_MS = 5_000;
+/**
+ * 이만큼 넘게 가려졌다가 다시 보이면 묻지 않고 바로 새로 붙는다. 휴대폰 OS는 멈춘 앱의 소켓을 close 사건 없이 죽이는
+ * 일이 잦아, 묻고 기다리는(3초+3초) 동안 화면이 사건 없이 멈춰 있게 된다. t3code(MIT)
+ * apps/mobile/src/connection/app-state-wakeups.ts·packages/client-runtime/src/connection/supervisor.ts 522~526줄
+ * 「application-active-reconnect」(10초)를 따랐다. herdr-web-ui ws.ts는 이때도 probe한다(plan §8.79).
+ */
+const RECONNECT_AFTER_HIDDEN_MS = 10_000;
 
 export function watchEvents(
   onState: (ev: StateEvent) => void,
@@ -153,10 +160,19 @@ export function watchEvents(
     delay = 500;
     open();
   };
+  let hiddenAt: number | null = document.visibilityState === "visible" ? null : Date.now();
   const onShow = () => {
     if (document.visibilityState !== "visible") {
       // 가려진 동안은 기한을 멈춘다(얼어 있는 동안 끊지 않는다). 다시 보이면 새로 묻는다
+      hiddenAt ??= Date.now();
       endProbe();
+      return;
+    }
+    const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+    hiddenAt = null;
+    if (away >= RECONNECT_AFTER_HIDDEN_MS && ws?.readyState === WebSocket.OPEN) {
+      drop(ws);
+      probeDrops = 0;
       return;
     }
     probe();
