@@ -2,6 +2,9 @@
 //!
 //! - 파일은 `+++` TOML front matter(`schedule`·`command`·`machine`·`enabled`)와 본문(coordinator에게 줄 안내)이다.
 //! - 일정은 `every <N>s|m|h|d`, `daily HH:MM`(host 머신의 지역 시각)이다. `s`는 aaa가 더한 단위다(시험용).
+//! - `on = "pr"`(선택 `events = ["opened", "checks-failed", "review", "merged"]`)이면 일정 대신 thread PR 사건에 본문을 그
+//!   thread에 보낸다(herdr-projects routine.rs `Trigger::Pr`, 보내기는 `pr.rs`). 명령은 받지 않는다. 프로젝트를 만들면
+//!   `routines/pr-followup.md`가 생긴다(끄려면 지우지 말고 `enabled = false`).
 //! - 처음 본 때를 지난 실행으로 친다(파일이 생기자마자 돌지 않는다). coordinator가 없으면 돌지 않고 건너뛴 횟수만 센다.
 //! - 명령이 없는 routine은 inbox에 「due」 항목을 남긴다. 처리하지 않은 항목이 있으면 새로 만들지 않고 건너뛴 횟수를 센다.
 //! - **명령은 대상 머신의 agent가 실행한다.** host는 실행하지 않는다. 실행하려면 둘 다 필요하다:
@@ -135,10 +138,27 @@ impl Default for Front {
     }
 }
 
+/// `pr` routine이 받는 PR 사건(herdr-projects `PR_EVENTS`)
+pub(crate) const PR_EVENTS: [&str; 4] = ["opened", "checks-failed", "review", "merged"];
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Trigger {
+    Schedule(Schedule),
+    /// `on = "pr"`과 받는 사건(적지 않으면 모두)
+    Pr(Vec<String>),
+}
+
+/// 새 프로젝트의 `routines/pr-followup.md`(herdr-projects project.rs `PR_FOLLOWUP_TEMPLATE`를 옮김)
+pub(crate) const PR_FOLLOWUP: &str = "routines/pr-followup.md";
+pub(crate) const PR_FOLLOWUP_TEMPLATE: &str = "+++\non = \"pr\"\nevents = [\"checks-failed\", \"review\"]\nenabled = true\n+++\n\n\
+PR의 실패한 check를 고치고 새 리뷰 댓글에 답한다. `gh`로 읽고, 고친 것을 push하고, 리뷰어가 물은 곳에 답한 뒤 보고를 다시 쓴다. \
+댓글이 할 일 밖의 것을 요청하면 하지 말고 보고에 적는다.\n";
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Routine {
     pub name: String,
-    pub schedule: Schedule,
+    pub trigger: Trigger,
+    /// 적은 일정, 또는 `on pr: <사건들>`
     pub schedule_text: String,
     pub command: String,
     pub machine: Option<String>,
@@ -167,16 +187,26 @@ pub(crate) fn parse(name: &str, text: &str) -> Result<Routine, String> {
         .or_else(|| rest.strip_suffix("\n+++").map(|f| (f, "")))
         .ok_or("닫는 `+++` 줄이 없다")?;
     let f: Front = toml::from_str(front).map_err(|e| format!("front matter: {}", e.message()))?;
-    match f.on.as_str() {
-        "" => {}
-        "pr" => return Err("`on = \"pr\"`(PR 사건)는 아직 없다(M3)".into()),
-        other => return Err(format!("`on = \"{other}\"`는 없는 trigger다")),
-    }
-    let _ = f.events;
+    let (trigger, schedule_text) = match f.on.as_str() {
+        "" => (Trigger::Schedule(parse_schedule(&f.schedule)?), f.schedule.trim().to_string()),
+        "pr" => {
+            if !f.command.trim().is_empty() {
+                return Err("`pr` routine은 thread에 글을 보낸다. `command`를 받지 않는다".into());
+            }
+            if let Some(bad) = f.events.iter().find(|e| !PR_EVENTS.contains(&e.as_str())) {
+                return Err(format!("없는 PR 사건 `{bad}`: {} 중에서 쓴다", PR_EVENTS.join(", ")));
+            }
+            let events: Vec<String> =
+                if f.events.is_empty() { PR_EVENTS.iter().map(|e| e.to_string()).collect() } else { f.events.clone() };
+            let text = format!("on pr: {}", events.join(", "));
+            (Trigger::Pr(events), text)
+        }
+        other => return Err(format!("`on = \"{other}\"`는 없는 trigger다(`on = \"pr\"` 또는 `schedule`)")),
+    };
     Ok(Routine {
         name: name.to_string(),
-        schedule: parse_schedule(&f.schedule)?,
-        schedule_text: f.schedule.trim().to_string(),
+        trigger,
+        schedule_text,
         command: f.command.trim().to_string(),
         machine: f.machine.filter(|m| !m.trim().is_empty()),
         enabled: f.enabled,
@@ -185,7 +215,7 @@ pub(crate) fn parse(name: &str, text: &str) -> Result<Routine, String> {
 }
 
 /// routines 폴더의 routine과 읽지 못한 파일(파일, 내용 hash, 오류)
-fn load_all(dir: &Path) -> (Vec<Routine>, Vec<(String, String, String)>) {
+pub(crate) fn load_all(dir: &Path) -> (Vec<Routine>, Vec<(String, String, String)>) {
     let mut ok = Vec::new();
     let mut broken = Vec::new();
     let mut files: Vec<_> = std::fs::read_dir(dir.join("routines"))
@@ -283,7 +313,10 @@ impl Host {
                     approved: !r.command.is_empty() && self.routine_approved(project, r),
                     command_sha256: r.command_sha256(),
                     last_run_ms: st.last_run_ms,
-                    next_run_ms: st.last_run_ms.filter(|_| r.enabled).map(|l| next_run(&r.schedule, l, off)),
+                    next_run_ms: match &r.trigger {
+                        Trigger::Schedule(s) => st.last_run_ms.filter(|_| r.enabled).map(|l| next_run(s, l, off)),
+                        Trigger::Pr(_) => None,
+                    },
                     skipped: st.skipped,
                     no_coordinator: st.no_coordinator,
                     error: None,
@@ -334,6 +367,41 @@ impl Host {
         self.routines(project)
     }
 
+    /// 켜기·끄기: front matter의 `enabled`만 바꾸고 나머지(주석·순서)는 그대로 둔다(herdr-projects settings.rs
+    /// `routine_toggle`). 바꾼 파일이 읽히지 않으면 쓰지 않는다.
+    pub(crate) fn routine_toggle(
+        &self,
+        project: &str,
+        name: &str,
+        on: Option<bool>,
+        actor: &str,
+    ) -> Result<Vec<RoutineView>, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let bad = |m: String| err(ErrorCode::BadRequest, m);
+        if !valid_project(name) {
+            return Err(bad(format!("routine 이름 형식이 아니다: {name}")));
+        }
+        let path = dir.join("routines").join(format!("{name}.md"));
+        let text = std::fs::read_to_string(&path)
+            .map_err(|_| err(ErrorCode::NotFound, format!("routine이 없다: {project}/{name}")))?;
+        let rest = text.strip_prefix("+++\n").ok_or_else(|| bad("`+++` 줄로 시작해야 한다".into()))?;
+        let (front, body) = rest
+            .split_once("\n+++\n")
+            .or_else(|| rest.strip_suffix("\n+++").map(|f| (f, "")))
+            .ok_or_else(|| bad("닫는 `+++` 줄이 없다".into()))?;
+        let mut doc: toml_edit::DocumentMut =
+            front.parse().map_err(|e: toml_edit::TomlError| bad(format!("front matter: {}", e.message())))?;
+        let enabled = on.unwrap_or(!doc.get("enabled").and_then(|i| i.as_bool()).unwrap_or(true));
+        doc["enabled"] = toml_edit::value(enabled);
+        let edited = format!("+++\n{}\n+++\n{body}", doc.to_string().trim_end_matches('\n'));
+        parse(name, &edited).map_err(bad)?;
+        crate::orch::write_atomic(&path, edited.as_bytes()).map_err(internal)?;
+        let word = if enabled { "켬" } else { "끔" };
+        self.db.audit(actor, "routine_toggle", &format!("{project}/{name} {word}"));
+        self.flow_project(project, "routine_toggled", Some(format!("routines/{name}.md")), format!("{name}: {word}"));
+        self.routines(project)
+    }
+
     /// ticker 한 번: 읽지 못한 파일을 알리고, 차례가 된 routine을 돌린다
     pub(crate) fn routine_pass(self: &Arc<Self>, project: &str, dir: &Path, coordinator: bool) {
         let (ok, broken) = load_all(dir);
@@ -343,11 +411,14 @@ impl Host {
                 let _ = self.db.set_meta(&key, &hash);
                 let stem = file.trim_start_matches("routines/").trim_end_matches(".md");
                 self.inbox_add(project, "config-error", stem, "not usable", &format!("{file}을 쓸 수 없다: {e}"));
+                self.flow_project(project, "routine_broken", Some(file.clone()), e);
             }
         }
         let now = aaa_common::util::now_ms();
         let off: Offset = &local_offset_secs;
         for r in ok.into_iter().filter(|r| r.enabled) {
+            // `pr` routine은 일정이 아니라 PR 사건에 돈다(pr.rs)
+            let Trigger::Schedule(schedule) = &r.trigger else { continue };
             let mut st = self.routine_state(project, &r.name);
             let Some(last) = st.last_run_ms else {
                 // 처음 본 때를 지난 실행으로 친다
@@ -355,7 +426,7 @@ impl Host {
                 self.save_routine_state(project, &r.name, &st);
                 continue;
             };
-            if !is_due(&r.schedule, last, now, off) {
+            if !is_due(schedule, last, now, off) {
                 continue;
             }
             st.last_run_ms = Some(now);
@@ -543,7 +614,19 @@ mod tests {
         let mut other = r.clone();
         other.machine = None;
         assert_ne!(r.command_sha256(), other.command_sha256());
-        assert!(parse("x", "+++\non = \"pr\"\n+++\n").unwrap_err().contains("M3"));
+        let pr = parse("follow", "+++\non = \"pr\"\nevents = [\"checks-failed\", \"review\"]\n+++\n고친다\n").unwrap();
+        assert_eq!(pr.trigger, Trigger::Pr(vec!["checks-failed".into(), "review".into()]));
+        assert_eq!(pr.schedule_text, "on pr: checks-failed, review");
+        assert!(matches!(parse("all", "+++\non = \"pr\"\n+++\nx").unwrap().trigger, Trigger::Pr(e) if e.len() == 4));
+        // 꺼진 pr routine도 읽힌다(옮기기가 꺼서 넣은 0.2 pr-followup.md가 config-error가 되지 않는다, t-0334)
+        let off = parse("off", "+++\non = \"pr\"\nevents = [\"checks-failed\"]\nenabled = false\n+++\n").unwrap();
+        assert!(!off.enabled);
+        assert!(parse("bad", "+++\non = \"pr\"\nevents = [\"pushed\"]\n+++\n").is_err());
+        assert!(parse("bad", "+++\non = \"pr\"\ncommand = \"x\"\n+++\n").is_err());
+        assert!(parse("bad", "+++\non = \"slack\"\n+++\n").is_err());
+        let tpl = parse("pr-followup", PR_FOLLOWUP_TEMPLATE).unwrap();
+        assert_eq!((tpl.trigger, tpl.enabled), (Trigger::Pr(vec!["checks-failed".into(), "review".into()]), true));
+        assert!(tpl.prompt.starts_with("PR의 실패한 check를 고치고"), "{}", tpl.prompt);
         assert!(parse("x", "+++\nschedule = \"every 1m\"\ncomand = \"oops\"\n+++\n").is_err());
         assert!(parse("Bad Name", "+++\nschedule = \"every 1m\"\n+++\n").is_err());
         let only = parse("ping", "+++\nschedule = \"every 1h\"\n+++").unwrap();

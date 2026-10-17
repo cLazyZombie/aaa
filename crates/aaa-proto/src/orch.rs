@@ -382,6 +382,8 @@ pub struct ThreadView {
     pub cwd: Option<String>,
     pub work_dir: Option<String>,
     pub branch: Option<String>,
+    /// 추적하는 PR(§8.80)
+    pub pr: Option<Box<ThreadPr>>,
     pub report_hash: Option<String>,
     pub acked_hash: Option<String>,
     /// report.md `## Next` 줄
@@ -399,6 +401,14 @@ pub struct ThreadView {
     pub created_at_ms: u64,
     #[ts(type = "number")]
     pub updated_at_ms: u64,
+}
+
+/// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPr {
+    pub url: String,
+    pub state: Option<String>,
+    pub review: Option<String>,
 }
 
 /// 흐름 사건(host가 낸다, §8.3). 프로젝트별 순번과 host 시각·boot ID를 가진다.

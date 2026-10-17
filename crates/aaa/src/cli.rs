@@ -283,6 +283,15 @@ enum RoutineCmd {
     List {
         project: String,
     },
+    /// 켜거나 끈다(front matter `enabled`). `--on`·`--off`가 없으면 뒤집는다. 명령 승인은 그대로 필요하다
+    Toggle {
+        project: String,
+        name: String,
+        #[arg(long, conflicts_with = "off")]
+        on: bool,
+        #[arg(long)]
+        off: bool,
+    },
     /// 명령을 승인한다. 사람이 host 머신 터미널(aaa 세션 밖)에서 명령을 보고 routine 이름을 쳐야 한다
     Approve {
         project: String,
@@ -931,6 +940,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             },
         ),
         Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
+        Cmd::Routine { cmd: RoutineCmd::Toggle { project, name, on, off } } => {
+            let on = if on {
+                Some(true)
+            } else if off {
+                Some(false)
+            } else {
+                None
+            };
+            front(json, FrontRequest::RoutineToggle { project, name, on })
+        }
         Cmd::Routine { cmd: RoutineCmd::Approve { project, name } } => routine_approve(json, project, name),
         Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
         Cmd::Thread { cmd } => front(
@@ -1757,6 +1776,10 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     if let Some(e) = &t.error {
         let _ = writeln!(s, "  오류: {e}");
     }
+    if let Some(pr) = &t.pr {
+        let review = pr.review.as_deref().map(|r| format!(", 리뷰 {r}")).unwrap_or_default();
+        let _ = writeln!(s, "  PR {} ({}{review})", pr.url, pr.state.as_deref().unwrap_or("아직 보지 않음"));
+    }
     if let (Some(now), Some(had)) = (t.decisions_now, t.decisions_rev.or(Some(0)))
         && had < now
         && t.status != aaa_proto::ThreadStatus::Resolved
@@ -2153,6 +2176,12 @@ fn render_front(r: &FrontResponse) -> String {
                     let _ = writeln!(s, "{}\t쓸 수 없음: {e}", r.name);
                     continue;
                 }
+                let off = if r.enabled { "" } else { " · 꺼짐" };
+                // `on pr: …`은 일정이 아니라 PR 사건에 thread로 보낸다(herdr-projects `when_text`도 비운다)
+                if r.schedule.starts_with("on pr:") {
+                    let _ = writeln!(s, "{}\t{}\tthread에 보냄{off}", r.name, r.schedule);
+                    continue;
+                }
                 let when = |t: Option<u64>| t.map(aaa_common::util::utc_text).unwrap_or_else(|| "-".into());
                 let cmd = if r.command.is_empty() {
                     "안내만".to_string()
@@ -2164,7 +2193,6 @@ fn render_front(r: &FrontResponse) -> String {
                     };
                     format!("명령 {ok}@{}", r.machine.as_deref().unwrap_or("host"))
                 };
-                let off = if r.enabled { "" } else { " · 꺼짐" };
                 let _ = writeln!(
                     s,
                     "{}\t{}\t{cmd}{off}\t지난 {} · 다음 {} · 건너뜀 {} · coordinator 없음 {}",
