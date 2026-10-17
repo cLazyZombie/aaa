@@ -217,8 +217,10 @@ mod tests {
         }
         let remote = |host: &str| Some(Remote { host: host.into(), repo: "owner/repo".into() });
         assert_eq!(parse_remote("http://github.localhost/Owner/Repo.git"), remote("github.localhost"));
-        assert_eq!(parse_remote("https://token@GitHub.example.com/Owner/Repo"), remote("github.example.com"));
-        assert_eq!(parse_remote("ssh://git@github.example.com:2222/Owner/Repo.git"), remote("github.example.com"));
+        // 사용자 정보·port는 떼고 host는 소문자로 본다
+        assert_eq!(parse_remote("https://GitHub.example.com/Owner/Repo"), remote("github.example.com"));
+        assert_eq!(parse_remote("https://git@github.com/Owner/Repo"), remote("github.com"));
+        assert_eq!(parse_remote("ssh://git@github.com:2222/Owner/Repo.git"), remote("github.com"));
         assert_eq!(host_of(""), "github.com");
         assert_eq!(gh_host_env("github.com"), None);
         assert_eq!(gh_host_env("github.localhost").as_deref(), Some("github.localhost"));
