@@ -17,7 +17,12 @@ export type ScreenText = { session: string, cols: number, rows: number,
 /**
  * 보이는 화면의 글자(줄 끝 공백 제거)
  */
-lines: Array<string>, cursor_row: number, cursor_col: number, };
+lines: Array<string>, cursor_row: number, cursor_col: number, 
+/**
+ * 보이는 화면을 SGR(굵게·흐리게·반전·색) escape와 함께 한 글로(`Vt::read` Visible·Ansi). herdr `agent read --format ansi`와 같은
+ * 모양이라 herdr-projects `prompt_box`가 흐린 placeholder와 사람이 친 글을 가른다(plan §8.76). 옛 agent는 비워 보낸다.
+ */
+ansi: string, };
 
 export type ReadSource = "visible" | "recent" | "recent-unwrapped";
 
@@ -298,10 +303,6 @@ export type ThreadView = { project: string, id: string, title: string, machine: 
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
 thread_kind: ThreadKind, status: ThreadStatus, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null, report_hash: string | null, acked_hash: string | null, 
-/**
- * report.md 첫 줄 상태 태그(예: `진행 중`, `완료`)
- */
-report_state: string | null, 
 /**
  * report.md `## Next` 줄
  */

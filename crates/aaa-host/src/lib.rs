@@ -4,6 +4,8 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod attach;
+mod brief;
+mod brief_text;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -19,12 +21,15 @@ pub mod migrate;
 mod notify;
 mod orch;
 mod output;
+mod project;
+mod prompt_box;
 mod push;
 mod routine;
 mod seen;
 pub mod tailscale;
 mod tasks;
 mod text;
+mod trust_screen;
 pub mod usage;
 pub mod web;
 
@@ -266,6 +271,10 @@ pub struct Host {
     eval_decide_lock: Mutex<()>,
     /// thread 기록 다시 읽어 고치기(`update_rec`)는 한 번에 하나씩
     rec_lock: Mutex<()>,
+    /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
+    brief_loops: Mutex<HashSet<String>>,
+    /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
+    brief_claims: Mutex<HashSet<String>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -371,6 +380,8 @@ impl Host {
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
             rec_lock: Mutex::new(()),
+            brief_loops: Mutex::new(HashSet::new()),
+            brief_claims: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -1712,6 +1723,11 @@ impl Host {
         }
         let name = host_header.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_header);
         self.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
+    }
+
+    /// host와 같은 머신의 agent인가(brief의 uploads 주석)
+    pub(crate) fn machine_is_local(&self, machine_id: &str) -> bool {
+        self.inner.lock().unwrap().machines.get(machine_id).is_some_and(|m| m.local)
     }
 
     pub fn local_machine_connected(&self) -> bool {

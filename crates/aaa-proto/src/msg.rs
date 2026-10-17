@@ -186,6 +186,10 @@ pub struct ScreenText {
     pub lines: Vec<String>,
     pub cursor_row: u16,
     pub cursor_col: u16,
+    /// 보이는 화면을 SGR(굵게·흐리게·반전·색) escape와 함께 한 글로(`Vt::read` Visible·Ansi). herdr `agent read --format ansi`와 같은
+    /// 모양이라 herdr-projects `prompt_box`가 흐린 placeholder와 사람이 친 글을 가른다(plan §8.76). 옛 agent는 비워 보낸다.
+    #[serde(default)]
+    pub ansi: String,
 }
 
 /// `pane read`·`pane wait-output`이 읽는 곳(herdr `ReadSource`, `src/api/schema`)
