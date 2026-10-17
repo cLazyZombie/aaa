@@ -175,7 +175,6 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         last_group: None,
         review_item_hash: None,
         error: None,
-        decisions_rev: None,
         eval_cursor: 0,
         eval_batches: 0,
         eval_last_batch_ms: None,

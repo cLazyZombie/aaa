@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use aaa_proto::{
-    AgentRequest, AgentResponse, DeviceRole, ErrorBody, ErrorCode, MergeEntry, MergeLandView, MessageMode, Role,
-    ThreadKind, ThreadStatus,
+    AgentRequest, AgentResponse, ErrorBody, ErrorCode, MergeEntry, MergeLandView, MessageMode, Role, ThreadKind,
+    ThreadStatus,
 };
 
 use crate::orch::ThreadRec;
@@ -208,44 +208,6 @@ impl Host {
             self.flow(r, "merge_dropped", None, "resolve");
             self.merge_head_changed(&r.project, before);
         }
-    }
-
-    /// 머신별 동시 thread 한도. 열린 thread 중 세션이 실행 중이거나 시작 중인 것을 센다(`skip`은 빼고).
-    pub(crate) fn check_capacity(self: &Arc<Self>, mid: &str, skip: Option<(&str, &str)>) -> Result<(), ErrorBody> {
-        let limit = self.cfg.projects.max_threads_per_machine;
-        if limit == 0 {
-            return Ok(());
-        }
-        let busy: Vec<String> = self
-            .db
-            .threads(None)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
-            .filter(|r| r.machine_id == mid && skip != Some((r.project.as_str(), r.id.as_str())))
-            .filter(|r| match r.status {
-                ThreadStatus::Starting => true,
-                ThreadStatus::Open => r
-                    .pane
-                    .as_deref()
-                    .and_then(|p| self.pane_view_of(p, DeviceRole::Local))
-                    .is_some_and(|v| v.state.is_running()),
-                _ => false,
-            })
-            .map(|r| format!("{}/{}", r.project, r.id))
-            .collect();
-        if busy.len() as u32 >= limit {
-            return Err(err(
-                ErrorCode::Unavailable,
-                format!(
-                    "{}에서 이미 thread {}개가 돈다(한도 {limit}, host.toml [projects] max_threads_per_machine): {}",
-                    self.machine_name(mid),
-                    busy.len(),
-                    busy.join(", ")
-                ),
-            ));
-        }
-        Ok(())
     }
 }
 

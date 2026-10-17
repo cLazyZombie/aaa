@@ -13,9 +13,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry,
-    MessageMode, MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
-    Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
+    MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role,
+    RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
 
@@ -1205,17 +1205,6 @@ pub enum FrontRequest {
         #[serde(default)]
         mode: MessageMode,
     },
-    /// 결정을 기록한다(decisions.md에 덧붙이고 흐름 사건을 낸다)
-    DecisionAdd {
-        project: String,
-        text: String,
-        #[serde(default)]
-        replaces: Option<u32>,
-    },
-    /// 결정 기록 목록
-    Decisions {
-        project: String,
-    },
     /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
     Preferences,
     /// 공유 설정을 바꾼다: 바꾼 설정만, 고정은 바뀌었을 때만(herdr-web-ui `PUT /api/preferences`). 보기 권한은 못 한다
@@ -1351,7 +1340,6 @@ impl FrontRequest {
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
-                | FrontRequest::Decisions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
@@ -1467,16 +1455,18 @@ pub enum FrontResponse {
     },
     Question(QuestionView),
     Message(MessageView),
-    Decisions {
-        decisions: Vec<DecisionView>,
-    },
-    Decision(DecisionView),
     Inbox {
         items: Vec<InboxItem>,
         /// `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         done: Option<u32>,
+        /// 응답 크기 한도로 싣지 못한 끝내지 않은 항목 수(실은 것은 오래된 것부터다)
+        #[serde(default)]
+        omitted_open: u32,
+        /// 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
+        #[serde(default)]
+        omitted_done: u32,
     },
     Merge {
         queue: Vec<MergeEntry>,

@@ -95,7 +95,6 @@ pub fn typescript_bindings() -> String {
         MessageMode::decl(&cfg),
         DeliveryState::decl(&cfg),
         MessageView::decl(&cfg),
-        DecisionView::decl(&cfg),
         InboxItem::decl(&cfg),
         MergeEntry::decl(&cfg),
         MergeStep::decl(&cfg),

@@ -4,6 +4,7 @@
 //! - 질문은 한 pane에 열린 것을 하나로 묶는다(Claude는 같은 확인창에 Notification과 PermissionRequest를 함께 낸다).
 //!   답은 질문이 아직 열려 있고 세션이 살아 있는지 다시 본 뒤 adapter 키(기본 선택 Enter, 거절 Esc)로 보낸다.
 //! - 입력(brief 안내·메시지)은 harness가 `turn_start`를 내면 accepted다. hook이 없는 harness는 화면 변화로 본다.
+//!   일하는 중인 harness에 보낸 메시지는 harness가 다음 턴으로 줄 세우므로, 보낸 뒤에도 일하는 중이면 accepted다.
 //!   확인하지 못하면 unknown으로 남기고 **자동으로 다시 보내지 않는다**(§8.5 a).
 
 use std::sync::Arc;
@@ -26,6 +27,18 @@ const INTERRUPTED_MARKS: &[&str] = &["Interrupted"];
 /// 아직 모르는 pane의 harness 사건을 이만큼 보관한다
 const HOLD_FOR: Duration = Duration::from_secs(60);
 const HOLD_MAX: usize = 32;
+
+/// 확인창 하나가 내는 hook 짝(Claude Code 권한 확인창: `PermissionRequest`와 `Notification(permission_prompt)`)
+const PROMPT_PAIR: [&str; 2] = ["PermissionRequest", "Notification"];
+
+/// 답한 확인창의 늦은 짝인가: 그 확인창은 짝 중 하나만 받았고, 이 질문 사건이 나머지 하나다.
+/// hook 사건은 agent 연결로 차례대로 오지만 답은 front 연결로 오므로, 답이 두 hook 사이에 낄 수 있다(ci-local에서 났다:
+/// 답 뒤에 온 Notification이 새 질문을 열어 thread가 사람 차례에 남았다). 답 뒤 다른 hook 사건이 오면 `answered`를 비우고,
+/// 같은 hook이 다시 오면 새 확인창이다(Claude는 확인창마다 PermissionRequest를 낸다).
+fn late_pair(answered: Option<&[String]>, hook: Option<&str>) -> bool {
+    let (Some([first]), Some(h)) = (answered, hook) else { return false };
+    PROMPT_PAIR.contains(&h) && PROMPT_PAIR.contains(&first.as_str()) && first != h
+}
 
 /// pane 등록 전에 온 harness 사건(세션 ID → (받은 시각, 머신, 사건))
 pub(crate) type Held = std::collections::HashMap<String, Vec<(Instant, String, HarnessEvent)>>;
@@ -131,11 +144,6 @@ pub(crate) struct SubmitErr {
     pub msg: String,
 }
 
-/// 새 입력을 바로 받을 수 있는 상태인가(상태를 모르면 받는다고 본다)
-fn ready(a: Option<AgentActivity>) -> bool {
-    a.is_none_or(|a| matches!(a, AgentActivity::Idle | AgentActivity::Started))
-}
-
 impl Host {
     /// 이 pane의 다음 사건 중 `kinds`에 드는 것을 기다린다
     fn wait_kind(&self, pane: &str, kinds: &'static [&'static str]) -> oneshot::Receiver<String> {
@@ -198,6 +206,22 @@ impl Host {
             };
             if p.machine_id != mid {
                 return;
+            }
+            // 답한 확인창의 늦은 짝 hook: 그 확인창은 이미 닫혔다. 새 질문을 열지 않고 상태도 바꾸지 않는다
+            if ev.kind == "question" && late_pair(p.answered_hooks.as_deref(), ev.hook.as_deref()) {
+                p.answered_hooks = None;
+                tracing::debug!(pane = %ev.session, hook = ?ev.hook, "답한 확인창의 늦은 짝 hook을 버린다");
+                return;
+            }
+            if let Some(h) = &ev.hook {
+                p.answered_hooks = None;
+                if ev.kind == "question" {
+                    if !p.prompt_hooks.contains(h) {
+                        p.prompt_hooks.push(h.clone());
+                    }
+                } else {
+                    p.prompt_hooks.clear();
+                }
             }
             if ev.transcript.is_some() {
                 p.transcript = ev.transcript.clone();
@@ -304,11 +328,6 @@ impl Host {
         }
         if let Some(rec) = self.thread_of_pane(&ev.session) {
             let _ = self.thread_events.send(self.thread_view(&rec));
-            // 턴이 끝났다: 대기열 메시지를 보낸다
-            if matches!(activity, Some(AgentActivity::Idle)) && rec.status == ThreadStatus::Open {
-                let me = self.clone();
-                tokio::spawn(async move { me.deliver_queued(&rec.project, &rec.id).await });
-            }
         }
     }
 
@@ -412,6 +431,10 @@ impl Host {
             }
         };
         let conn = self.live_conn(&mid)?;
+        // 이 확인창이 받은 hook을 기억한다: 짝 hook이 답보다 늦게 오면 그 확인창 것이다(`late_pair`)
+        if let Some(p) = self.inner.lock().unwrap().panes.get_mut(&pid) {
+            p.answered_hooks = Some(std::mem::take(&mut p.prompt_hooks));
+        }
         conn.request(AgentRequest::Input { session: pid.clone(), data: B64(keys) }).await?;
         q.state = QuestionState::Answered;
         q.answer = Some(choice.to_string());
@@ -437,6 +460,7 @@ impl Host {
                     percent: None,
                     at_ms: aaa_common::util::now_ms(),
                     transcript: None,
+                    hook: None,
                 },
             );
         }
@@ -487,8 +511,12 @@ impl Host {
         if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
             return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
         }
-        let hooked = self.pane_agent(pane).is_some_and(|a| a.harness != "report");
-        let (hook_accept, mut screen_accept) = if hooked { (on_accept, None) } else { (None, on_accept) };
+        let agent = self.pane_agent(pane);
+        let hooked = agent.as_ref().is_some_and(|a| a.harness != "report");
+        // 일하는 중인 harness는 받은 글을 다음 턴으로 줄 세운다(Claude Code 대기 메시지). herdr `agent prompt --wait`도
+        // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
+        let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
+        let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
         let accepted = self.wait_kind_then(pane, &["turn_start", "working"], hook_accept);
         if let Some(text) = text {
             let body = if text.contains('\n') {
@@ -505,6 +533,18 @@ impl Host {
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(b"\r".to_vec()) })
             .await
             .map_err(|e| after(e.message))?;
+        if busy {
+            let still = matches!(
+                self.pane_agent(pane).map(|a| a.activity),
+                Some(AgentActivity::Working | AgentActivity::Question)
+            );
+            // 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다
+            let ok = still || tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok());
+            if ok && let Some(f) = screen_accept.take() {
+                f();
+            }
+            return Ok(ok);
+        }
         if hooked {
             return Ok(tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok()));
         }
@@ -551,7 +591,8 @@ impl Host {
         let _ = self.db.rec_put("messages", &m.id, state, &serde_json::to_string(m).unwrap(), (&m.project, &m.thread));
     }
 
-    /// 메시지 API: interrupt는 지금(작업 중이면 Esc로 멈춘 뒤), queue는 턴이 끝나면 보낸다
+    /// 메시지 API(herdr-projects threads.rs `prompt`): 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다).
+    /// interrupt는 작업 중이면 Esc로 멈춘 뒤 보낸다: 참고의 `thread stop` 뒤 `thread prompt`를 멈춤까지 기다려 한 번에 한다(aaa).
     pub(crate) async fn thread_message(
         self: &Arc<Self>,
         project: &str,
@@ -579,10 +620,16 @@ impl Host {
         let pane = rec.pane.clone().ok_or_else(|| err(ErrorCode::BadRequest, "thread 세션이 없다"))?;
         let (pid, mid) = self.resolve_pane(&pane)?;
         self.check_running(&pid)?;
-        // Esc가 확인창을 「아니오」로 닫는다: 사람이 먼저 답한다(기록하기 전에 거부해 대기열에 남지 않게 한다)
-        if mode == MessageMode::Interrupt && self.pane_agent(&pid).map(|a| a.activity) == Some(AgentActivity::Question)
-        {
-            return Err(err(ErrorCode::BadRequest, "확인창이 열려 있다. `aaa question`으로 먼저 답한다"));
+        // 확인창에 친 글은 그 창이 받는다(Enter가 선택지를 고르고, interrupt의 Esc는 「아니오」다): 먼저 답한다.
+        // 기록하기 전에 거부한다(herdr-projects threads.rs `prompt_state` agent_blocked)
+        if self.pane_agent(&pid).map(|a| a.activity) == Some(AgentActivity::Question) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!(
+                    "agent_blocked: {id}가 pane({pid})의 확인창을 기다린다. `aaa thread read {project} {id}`로 보고 \
+                     `aaa thread keys {project} {id}`(또는 `aaa question answer`)로 먼저 답한다"
+                ),
+            ));
         }
         // herdr-projects threads.rs `prompt`: 신뢰 창은 Enter가 받아들이고, 사람이 입력창에 쓰던 글은 보낸 글과 섞여
         // 보내진다. 둘 다 입력하지 않고 기록하기 전에 거부한다. 읽을 수 없는 입력창(모르는 harness)은 전처럼 보낸다.
@@ -623,12 +670,12 @@ impl Host {
             None,
             format!("{} {}", m.id, if mode == MessageMode::Interrupt { "interrupt" } else { "queue" }),
         );
-        // 보내기는 host 전체에서 하나씩 한다(대기열 전달과 겹치지 않게). 머신 몇 대 규모에서는 충분하다.
+        // 보내기는 host 전체에서 하나씩 한다(같은 pane에 두 글이 섞이지 않게). 머신 몇 대 규모에서는 충분하다.
         let _guard = self.deliver_lock.lock().await;
         let activity = self.pane_agent(&pid).map(|a| a.activity);
         match mode {
-            // 잠금을 기다리는 동안 확인창이 떴으면 Esc를 보내지 않는다(질문이 열린 채로 둔다)
-            MessageMode::Interrupt if activity == Some(AgentActivity::Question) => {
+            // 잠금을 기다리는 동안 확인창이 떴으면 치지 않는다(질문이 열린 채로 둔다)
+            _ if activity == Some(AgentActivity::Question) => {
                 m.state = DeliveryState::Unknown;
                 self.save_message(&m);
                 self.flow(
@@ -660,9 +707,7 @@ impl Host {
                 }
                 self.deliver(&mut m, &mid, &pid).await;
             }
-            // 지금 입력을 기다리는 중(hook이 없는 harness 포함)이면 바로, 아니면 턴이 끝날 때 보낸다
-            MessageMode::Queue if ready(activity) => self.deliver(&mut m, &mid, &pid).await,
-            MessageMode::Queue => {}
+            MessageMode::Queue => self.deliver(&mut m, &mid, &pid).await,
         }
         Ok(m)
     }
@@ -695,24 +740,28 @@ impl Host {
         }
     }
 
-    /// 턴이 끝났다: 그 thread 대기열의 가장 오래된 메시지 하나를 보낸다
-    pub(crate) async fn deliver_queued(self: &Arc<Self>, project: &str, id: &str) {
-        let _guard = self.deliver_lock.lock().await;
-        let Ok(rec) = self.load(project, id) else { return };
-        let (Some(pane), mid) = (rec.pane.clone(), rec.machine_id.clone()) else { return };
-        // 잠금을 기다리는 동안 다른 입력으로 턴이 시작됐을 수 있다
-        if !ready(self.pane_agent(&pane).map(|a| a.activity)) {
-            return;
-        }
-        let next = self
+    /// 옛 host가 턴 끝을 기다리며 대기열에 둔 메시지, 또는 보내던 중 host가 끝난 메시지: 보냈는지 모른다고 남긴다
+    /// (다시 보내지 않는다, §8.5 a). 이 판에는 대기열이 없어 기록 뒤 바로 보낸다.
+    pub(crate) fn forget_queued_messages(&self) {
+        let left: Vec<MessageView> = self
             .db
             .rec_list("messages", Some("queued"))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<MessageView>(j).ok())
-            .find(|m| m.project == project && m.thread == id);
-        let Some(mut m) = next else { return };
-        self.deliver(&mut m, &mid, &pane).await;
+            .filter_map(|j| serde_json::from_str(j).ok())
+            .collect();
+        for mut m in left {
+            m.state = DeliveryState::Unknown;
+            self.save_message(&m);
+            if let Ok(rec) = self.load(&m.project, &m.thread) {
+                self.flow(
+                    &rec,
+                    "message_unknown",
+                    None,
+                    format!("{} (host가 다시 시작돼 보냈는지 모른다. 다시 보내지 않는다)", m.id),
+                );
+            }
+        }
     }
 }
 
@@ -741,6 +790,22 @@ mod tests {
    Yes, I trust this folder
 
  Enter to confirm · Esc to cancel";
+
+    /// 답한 확인창이 받지 못한 짝 hook만 그 확인창 것이다
+    #[test]
+    fn late_pair_is_the_missing_half_of_an_answered_prompt() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let pr = v(&["PermissionRequest"]);
+        assert!(late_pair(Some(&pr), Some("Notification")));
+        assert!(late_pair(Some(&v(&["Notification"])), Some("PermissionRequest")));
+        // 같은 hook이 다시 오면 새 확인창, 둘 다 받았으면 짝이 끝났다, 답하지 않았거나 옛 agent(hook 없음)면 아니다
+        assert!(!late_pair(Some(&pr), Some("PermissionRequest")));
+        assert!(!late_pair(Some(&v(&["PermissionRequest", "Notification"])), Some("Notification")));
+        assert!(!late_pair(None, Some("Notification")));
+        assert!(!late_pair(Some(&pr), None));
+        assert!(!late_pair(Some(&[]), Some("Notification")));
+        assert!(!late_pair(Some(&v(&["Stop"])), Some("Notification")));
+    }
 
     #[test]
     fn claude_trust_screen() {
