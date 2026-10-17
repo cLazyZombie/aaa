@@ -1893,7 +1893,22 @@ fn notify_webhook() {
     assert_eq!(got, ["pane closed"], "{body}");
     assert!(body.contains(&format!("- {n3} pane closed: {n3} \\\"n3\\\": 사람 차례(pane closed)")), "{body}");
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
-    assert!(rx.recv_timeout(Duration::from_secs(5)).is_err(), "실패한 알림을 다시 보냈다");
+    // 실패한 알림을 다시 보내지 않는다: 다음 알림(n4 pane closed)을 일으키면 받은 다음 요청에 그 항목만 있다. 다시 보냈다면
+    // 실패한 항목이 그보다 먼저(따로 또는 같은 묶음으로) 온다(알림은 한 줄로 차례대로 보낸다, notify.rs `start_notifier`)
+    let n4 =
+        w.start(&["--title", "n4", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("n4.txt", "noreport")]);
+    let (n4, pane4) = (n4["id"].as_str().unwrap().to_string(), n4["pane"].as_str().unwrap().to_string());
+    w.wait_screen(&pane4, "done");
+    w.h.ok(&["pane", "kill", &pane4]);
+    let (_, body) = rx.recv_timeout(T).expect("n4 pane closed 알림");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let got: Vec<_> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
+        .collect();
+    assert_eq!(got, [(n4.as_str(), "pane closed")], "실패한 알림을 다시 보냈다: {body}");
     let failed = w.h.ok(&["events", "demo"])["events"]
         .as_array()
         .unwrap()

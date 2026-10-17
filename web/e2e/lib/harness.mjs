@@ -464,6 +464,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       constructor(...a) {
         super(...a);
         if (!String(a[0]).includes("/panes/")) return;
+        this.pane = true;
         push("ws open");
         this.addEventListener("message", (m) => {
           if (typeof m.data !== "string") return push(`bin ${m.data.byteLength ?? m.data.size}`);
@@ -474,11 +475,16 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       }
       send(d) {
         if (typeof d === "string") push(d.startsWith('{"t":"ack"') ? `ack ${JSON.parse(d).offset}` : `send ${d.slice(0, 50)}`);
-        if (typeof d !== "string") {
-          const b = d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
-          sent.push({ t: "bin", data: String.fromCharCode(...b) });
-        }
-        else if (!/^\{"t":"(ack|history)"/.test(d)) sent.push(JSON.parse(d));
+        // 기록이 보내기를 막지 않는다(못 읽으면 그렇다고 남긴다)
+        if (this.pane)
+          try {
+            if (typeof d !== "string") {
+              const b = d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+              sent.push({ t: "bin", data: String.fromCharCode(...b) });
+            } else if (!/^\{"t":"(ack|history)"/.test(d)) sent.push(JSON.parse(d));
+          } catch (e) {
+            sent.push({ t: "unreadable", data: String(e) });
+          }
         super.send(d);
       }
     };
