@@ -65,6 +65,7 @@ import {
 import { forgetPaneViews } from "./paneLens";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, updateAppearance, useAppearance } from "./theme";
 import { DEFAULT_CHAT_SHARED, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS } from "./preferences";
+import { requestedSettingsPage, requestSettingsPage } from "./palette";
 import { bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutConflict, shortcutDisplayKeys, shortcutKeys } from "./herdr/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "./herdr/shortcutRecorder.ts";
 import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "./herdr/shortcutBindings.ts";
@@ -648,6 +649,7 @@ function AlertsPage() {
 
 /** 단축키 이름(참고 SHORTCUTS label의 i18n.ko.ts 문구) */
 const SHORTCUT_LABEL: Record<AaaShortcutId, string> = {
+  palette: "명령 팔레트",
   // 참고 「새 워크스페이스」: aaa에서 그 자리는 pane이다(새 pane 창)
   "new-session": "새 pane",
   "toggle-view": "채팅 / 터미널 전환",
@@ -896,7 +898,12 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
   // 앞으로 가기로 열렸으면 그 칸이 보이던 것을 보인다
   const [restored] = useState(() => shownBy(settingsEntry(window.history.state)));
   // 휴대폰은 쪽 목록으로 열고, 넓은 창은 목록 옆에 첫 쪽을 보인다
-  const [chosen, setChosen] = useState<SettingsPage | null>(restored ? restored.page : null);
+  // 명령 팔레트가 고른 쪽(참고 paletteSettings `requestedSettingsPage`: 열릴 때 한 번 읽고 지운다)
+  const [chosen, setChosen] = useState<SettingsPage | null>(() => {
+    const requested = requestedSettingsPage();
+    requestSettingsPage(null);
+    return restored ? restored.page : requested;
+  });
   const page = chosen ?? (narrow ? null : PAGES[0]!.id);
   const [keyBarOpen, setKeyBarOpen] = useState(restored?.keyBar ?? false);
   // 한 걸음 들어갈 때마다 history 한 칸: 시스템 「뒤로」가 한 걸음 나온다(herdr/settingsHistory.ts). ←·X·Esc도 같은 칸을 지운다

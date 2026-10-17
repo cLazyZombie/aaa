@@ -32,6 +32,8 @@ import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
 import { NewSessionDialog } from "./NewSessionDialog";
+import { CommandPalette, type PaletteActions } from "./CommandPalette";
+import { updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
@@ -388,6 +390,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
   const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
+  // 명령 팔레트(herdr-web-ui App.tsx 365~367줄 `paletteOpen`, plan §8.117)
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const { resolvedTheme } = useAppearance();
   const newShell = (m: MachineView) => {
     setMsg(null);
     setNewPaneOn(m);
@@ -431,7 +437,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       focusInput: () => paneControls.current?.focusInput(),
       scrollPage: (direction) => paneControls.current?.scrollPage(direction),
       openSettings: () => setSettingsOpen(true),
-      openPalette: none,
+      openPalette: () => setPaletteOpen(true),
       openFind: none,
       toggleSidebar: none,
       openNewSession: () => {
@@ -480,6 +486,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return parts.join(" · ") || p.id.slice(0, 8);
   };
 
+  // 팔레트 동작(참고 App.tsx 1220~1260줄 `actions` 가운데 aaa에 있는 것). 보기 전환은 고른 pane이 대화를 볼 수 있을 때만
+  const paneView = current ? (paneControls.current?.view() ?? null) : null;
+  const paletteActions: PaletteActions = {
+    openNewSession: canControl ? actions.openNewSession : null,
+    toggleView: paneView ? actions.toggleView : null,
+    view: paneView,
+    toggleTheme: () => updateAppearance({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
+    openSettings: () => setSettingsOpen(true),
+    openProjects: () => chooseProject(null),
+  };
+
   return (
     <div className={`app ${current || currentThread || viewProject !== undefined ? "has-sel" : ""}`}>
       <aside className="list sidebar-shell">
@@ -495,6 +512,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           {evaluators.map((v) => (
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
+          <button
+            className="ghost icon palette-button"
+            data-testid="palette-open"
+            aria-label="명령 팔레트"
+            title="명령 팔레트 (⌘⇧K)"
+            onClick={() => setPaletteOpen(true)}
+          >
+            <Icon name="search" />
+          </button>
           <MoreMenu onProjects={() => chooseProject(null)} />
         </header>
         {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
@@ -591,6 +617,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           }}
         />
       )}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        machines={machines}
+        panes={panes}
+        threads={shownThreads}
+        selected={sel}
+        agentOf={agentOf}
+        onOpen={(target) => ("pane" in target ? choose(target.pane) : chooseThread(target.thread))}
+        actions={paletteActions}
+      />
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {

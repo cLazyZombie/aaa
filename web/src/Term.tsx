@@ -1690,6 +1690,7 @@ export function TermView({
       toggleView: () => {
         if (chatable) setChatView(!chatViewRef.current);
       },
+      view: () => (chatable ? (chatViewRef.current ? "chat" : "terminal") : null),
     };
     controls.current = current;
     return () => {

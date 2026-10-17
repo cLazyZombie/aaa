@@ -271,6 +271,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   border-bottom: 1px solid var(--border);
 }
 .list-head .spacer { flex: 1; }
+/* 명령 팔레트 돋보기(참고 App.tsx `palette-button`): 터치 화면·좁은 창에는 없다(참고 styles.css 1618~1639줄) */
+@media (pointer: coarse), (max-width: 768px) { .palette-button { display: none; } }
 .conn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-dim); }
 /* herdr-web-ui Sidebar.css .sidebar-footer: 늘지도 줄지도 않는다 */
 .list-foot { flex: 0 0 auto; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
