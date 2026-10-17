@@ -116,7 +116,7 @@ async function termDiag(page) {
         scroll: scroll ? [scroll.clientWidth, scroll.clientHeight, scroll.scrollTop, scroll.scrollHeight] : null,
         viewport: vp ? [vp.scrollTop, vp.scrollHeight, vp.clientHeight] : null,
         fontFamily: rows ? getComputedStyle(rows).fontFamily : null,
-        log: (window.__aaaTermLog ?? []).slice(-40).map((x) => (x.kind ? `${x.at} bin×${x.n} ${x.bytes}B` : `${x.at} ${x.e}`)),
+        log: (window.__aaaTermLog ?? []).slice(-40).map((x) => (x.kind ? `${x.at} bin×${x.bins} ${x.bytes}B ack×${x.acks} ${x.acked}` : `${x.at} ${x.e}`)),
         stackHidden: document.querySelector(".term-stack")?.hidden,
         vis: document.visibilityState,
         focus: document.hasFocus(),
@@ -336,7 +336,8 @@ const softKeyboard = (page, visible) =>
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
 // line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line } = {}) {
+// wsRoute: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로챈다)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -360,15 +361,23 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
     const log = [];
     Object.defineProperty(window, "__aaaTermLog", { value: log });
     const t0 = performance.now();
+    // 받은 출력(bin)과 보낸 ACK(ack)는 다른 기록 사이마다 한 줄(io)로 묶는다(수가 많아 다른 기록을 밀어내지 않게)
     const push = (e) => {
       const at = Math.round(performance.now() - t0);
-      const last = log.at(-1);
-      if (e.startsWith("bin ") && last?.kind === "bin") {
-        last.n += 1;
-        last.bytes += Number(e.slice(4));
+      const [kind, n] = e.split(" ");
+      if (kind === "bin" || kind === "ack") {
+        let io = log.at(-1);
+        if (io?.kind !== "io") log.push((io = { kind: "io", at, bins: 0, bytes: 0, acks: 0, acked: 0 }));
+        if (kind === "bin") {
+          io.bins += 1;
+          io.bytes += Number(n);
+        } else {
+          io.acks += 1;
+          io.acked = Number(n);
+        }
         return;
       }
-      log.push(e.startsWith("bin ") ? { kind: "bin", at, n: 1, bytes: Number(e.slice(4)) } : { at, e });
+      log.push({ at, e });
       if (log.length > 300) log.splice(0, log.length - 300);
     };
     const WS = window.WebSocket;
@@ -385,7 +394,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
         this.addEventListener("close", (e) => push(`ws close ${e.code}`));
       }
       send(d) {
-        if (typeof d === "string") push(`send ${d.slice(0, 50)}`);
+        if (typeof d === "string") push(d.startsWith('{"t":"ack"') ? `ack ${JSON.parse(d).offset}` : `send ${d.slice(0, 50)}`);
         super.send(d);
       }
     };
@@ -413,7 +422,10 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       await sleep(Number(process.env.AAA_E2E_FONT_DELAY));
       await route.continue();
     });
+  if (wsRoute) await ctx.routeWebSocket(...wsRoute);
   const page = await ctx.newPage();
+  openPages.add(page);
+  page.on("close", () => openPages.delete(page));
   // AAA_E2E_THROTTLE=N: Chromium 화면을 N배 느리게(CI 러너처럼 느린 곳에서만 난 경합을 로컬에서 재현할 때). 기본은 끔
   if (process.env.AAA_E2E_THROTTLE && browser.browserType().name() === "chromium")
     await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.AAA_E2E_THROTTLE) });
@@ -502,13 +514,21 @@ let pushKey = "";
 let base = "";
 let failed = false;
 const steps = [];
+/** 열려 있는 화면(pairPage). 단계가 실패하면 화면마다 termDiag를 남긴다(CI에서만 난 실패가 여러 단계에 걸쳐 났다) */
+const openPages = new Set();
 async function step(name, fn) {
   const t0 = Date.now();
   try {
     await fn();
     steps.push(`ok   ${name} (${Date.now() - t0}ms)`);
   } catch (e) {
-    steps.push(`FAIL ${name}: ${e.message}`);
+    const diags = [];
+    for (const p of openPages) {
+      const d = await Promise.race([termDiag(p).catch((x) => String(x)), sleep(5000).then(() => "시간 넘김")]);
+      diags.push(`${p.viewportSize()?.width}px ${JSON.stringify(d)}`);
+    }
+    // 한 줄로 남긴다: CI annotation은 FAIL 줄만 옮긴다(ci-local.sh)
+    steps.push(`FAIL ${name}: ${e.message}${diags.length ? ` ‖ 열린 화면: ${diags.join(" ‖ ")}` : ""}`);
     failed = true;
     throw e;
   }
