@@ -1713,6 +1713,17 @@ fn copy_mode_like_herdr() {
     tui.wait_text("한 쪽 위", |s| top(s) == Some(146));
     tui.send(b"q");
     tui.wait_text("q로 나가 맨 아래", |s| top(s) == Some(173) && !s.contains(" COPY "));
+
+    // 4) copy 모드에서 휠로 3줄 올리면(맨 위 170) 커서(prompt 줄)는 화면 아래 밖이다. `k`면 커서가 화면 맨 아래 줄에 오게
+    //    2줄만 내려와 맨 위 172(휠로 옮긴 자리에서 셈한다. 휠 전 자리로 셈하면 넘기지 않아 170에 남는다)
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY "));
+    tui.mouse(64, (10, SIDE as usize + 20), false);
+    tui.wait_text("copy 모드에서 휠", |s| top(s) == Some(170));
+    tui.send(b"k");
+    tui.wait_text("커서가 보이게 넘김", |s| top(s) == Some(172));
+    tui.send(b"q");
+    tui.wait_text("q로 나가 맨 아래", |s| top(s) == Some(173) && !s.contains(" COPY "));
     // copy 모드 키는 셸에 가지 않았다
     assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
 

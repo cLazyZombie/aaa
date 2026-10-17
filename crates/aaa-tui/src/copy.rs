@@ -126,10 +126,21 @@ impl App {
             }
             return;
         }
+        // herdr: 떠나면 고른 칸을 지우고, 돌아오면 copy 모드의 고르기로 다시 칠한다
         let here = self.focus.as_deref() == Some(pane.as_str());
         match self.mode {
-            Mode::Terminal if here => self.mode = Mode::Copy,
-            Mode::Copy if !here => self.mode = Mode::Terminal,
+            Mode::Terminal if here => {
+                self.mode = Mode::Copy;
+                if self.selection.is_none() {
+                    self.copy_sync();
+                }
+            }
+            Mode::Copy if !here => {
+                self.mode = Mode::Terminal;
+                if self.selection.as_ref().is_some_and(|s| s.pane == pane) {
+                    self.selection = None;
+                }
+            }
             _ => {}
         }
     }

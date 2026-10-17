@@ -850,6 +850,10 @@ impl App {
         if !self.host_at_least(16) {
             return Ok(());
         }
+        // copy 모드가 셈하는 위치도 같이(scrollbar로 옮겨도 다음 키가 그 자리에서 시작한다)
+        if let Some(c) = self.copy.as_mut().filter(|c| c.pane == pane) {
+            c.offset = offset as u32;
+        }
         let by = ScrollBy::Offset { lines: offset as u32 };
         let id = tx.send(FrontRequest::PaneScroll { pane, by }).await?;
         self.pending.insert(id, Pending::Report("기록 넘기기"));
@@ -1079,6 +1083,16 @@ impl App {
         } else if modes.alt_screen {
             let k = KeyEvent::new(if down { KeyCode::Down } else { KeyCode::Up }, KeyModifiers::NONE);
             self.input_to(tx, b.pane, keys::encode_in(&k, modes.app_cursor)).await?;
+        } else if let Some((offset, max)) = self
+            .copy
+            .as_ref()
+            .filter(|c| c.pane == b.pane)
+            .and_then(|c| Some((c.offset, self.grids.get(&b.pane)?.scroll.max)))
+        {
+            // copy 모드 pane은 copy 모드가 셈하는 위치에서 넘긴다(다음 키가 그 자리에서 시작한다)
+            let lines = u32::from(self.scroll_lines);
+            let next = if down { offset.saturating_sub(lines) } else { (offset + lines).min(max) };
+            self.scroll_to(tx, b.pane, next as usize).await?;
         } else if self.host_at_least(16) {
             // herdr `apply_scroll`: 보통 화면은 이 화면의 기록을 `mouse_scroll_lines`줄씩 넘긴다(프로그램에는 아무것도 안 감)
             let lines = u32::from(self.scroll_lines);
