@@ -777,6 +777,17 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 긴 출력 시험 프로그램(QA t-0337 lab long.sh와 같은 줄): 3000줄(한글·이모지·전각)을 쓰고 셸처럼 기다린다
+fs.writeFileSync(
+  `${root}/long.js`,
+  `let out = "";
+for (let i = 1; i <= 3000; i++) out += String(i).padStart(4, "0") + " 한글 출력 줄 — 이모지 🚀 전각 ＡＢＣ 끝 " + i + "\\r\\n";
+process.stdout.write(out + "long-done\\r\\n$ ");
+process.stdin.setRawMode(true);
+process.stdin.on("data", (d) => process.stdout.write(d.toString("latin1") === "p" ? "\\r\\ntick-" + ++globalThis.ticks + "\\r\\n$ " : ""));
+globalThis.ticks = 0;
+`,
+);
 fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
@@ -2318,6 +2329,144 @@ try {
     aaa("pane", "kill", "histapp");
   });
 
+  await step("앞 기록 빠른 휠(QA t-0337 Q1: 데스크톱 Chromium 6/8에서 화면 전체가 빈 채로 굳음): 긴 출력 pane을 열자마자 휠을 연달아 굴려 앞 기록을 받는 동안에도, 붙인 뒤에도 줄이 그려지고, 키를 치면 맨 아래 새 출력이 보인다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "fastwheel", "--", process.execPath, `${root}/long.js`);
+    await waitOutput("fastwheel", "long-done");
+    // 붙을 때는 최근 기록(aaa_vt REPLAY_HISTORY 2000줄)만 오고 앞이 남는다: 굴리면 받는다
+    const looks = [];
+    for (let trial = 0; trial < 8; trial++) {
+      const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
+      await page.getByTestId("pane-fastwheel").click();
+      await until("fastwheel 화면", async () => (await screenText(page)).includes("long-done"));
+      const box = page.getByTestId("terminal");
+      const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
+      await until("앞 기록 있음", async () => (await attr("historyMore")) === "1");
+      // QA probe-scroll5.mjs처럼 누르지 않고 가운데에 올린다
+      await box.hover();
+      // QA probe-scroll5.mjs 그대로: -1200px를 40번 연달아(기다리지 않는다)
+      for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -1200);
+      const look = () =>
+        box.evaluate((el) => {
+          const rows = [...el.querySelectorAll(".xterm-screen:not(.term-history-cover) .xterm-rows > div")].map((d) => d.textContent);
+          return {
+            nonblank: rows.filter((t) => t.trim()).length,
+            first: rows.find((t) => t.trim())?.slice(0, 20) ?? null,
+            covers: el.querySelectorAll(".term-history-cover").length,
+            applied: el.dataset.historyApplied,
+            waiting: el.dataset.historyWaiting,
+            more: el.dataset.historyMore,
+            top: el.dataset.viewTop,
+            base: el.dataset.viewBase,
+          };
+        });
+      // 붙이기가 끝나고(덮개 없음) 그려진 줄이 있다. 고장이면 20초 기다림이 그때 모습으로 끝난다
+      let last = null;
+      try {
+        await until(`붙인 뒤 화면(${trial + 1})`, async () => {
+          last = await look();
+          return Number(last.applied) >= 1 && last.waiting !== "1" && last.covers === 0 && last.nonblank > 0;
+        });
+      } catch (e) {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      }
+      looks.push(last);
+      // 키를 치면 맨 아래로 가고 새 출력이 그려진다
+      await box.click();
+      await page.keyboard.press("p");
+      await until(`키 뒤 새 출력(${trial + 1})`, async () => (await screenText(page)).includes(`tick-${trial + 1}`));
+      await page.context().close();
+    }
+    if (looks.some((l) => l.first === null)) throw new Error(`빈 화면: ${JSON.stringify(looks)}`);
+    aaa("pane", "kill", "fastwheel");
+  });
+  await step("깨어나면 바로 다시 붙기(QA t-0337 Q5, herdr-web-ui ws.ts onWake·wake, t3code connection supervisor): pane 연결이 끊겨 backoff를 기다리는 동안 망이 돌아오거나(online) 화면이 다시 보이면(pageshow·visibilitychange) 기다리지 않고 그 자리에서 새로 붙는다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "wake", "--", process.execPath, `${root}/history.js`);
+    await waitOutput("wake", "hist>");
+    // 새 연결을 이만큼 바로 끊는다(망이 없는 동안). 그 뒤는 그대로 잇는다
+    let reject = 0;
+    let pipe = null;
+    const routed = [];
+    const route = (ws) => {
+      routed.push(reject);
+      if (reject > 0) {
+        reject -= 1;
+        return void ws.close({ code: 1011, reason: "test offline" });
+      }
+      const server = ws.connectToServer();
+      pipe = { ws, server };
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => ws.send(m));
+      server.onClose((code, reason) => ws.close({ code, reason }));
+      ws.onClose((code, reason) => server.close({ code, reason }));
+    };
+    const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
+    await page.getByTestId("pane-wake").click();
+    await until("wake 화면", async () => (await screenText(page)).includes("hist>"));
+    // 앱이 만드는 pane WebSocket을 센다. 진단 기록(__aaaTermLog)은 Playwright routeWebSocket이 서버에 이을 때 만드는 진짜
+    // 연결만 보아, 길에서 거절한 연결은 남지 않는다. 그래서 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싼다
+    await page.evaluate(() => {
+      const seen = (window.__appWs = { made: 0, closed: 0, onClose: null });
+      const WS = window.WebSocket;
+      window.WebSocket = class extends WS {
+        constructor(...a) {
+          super(...a);
+          if (!String(a[0]).includes("/panes/")) return;
+          seen.made += 1;
+          // 앱의 onclose(뒤에 단다)보다 먼저 돈다
+          this.addEventListener("close", () => {
+            seen.closed += 1;
+            seen.onClose?.();
+          });
+        }
+      };
+    });
+    const realOpens = () => page.evaluate(() => window.__aaaTermLog.filter((x) => x.e === "ws open").length);
+    for (const [round, kind] of ["online", "pageshow", "visibilitychange"].entries()) {
+      // 끊고, 다시 붙기 두 번을 거절한다: 두 번째 거절 뒤에는 다음 시도가 backoff(2초)를 기다린다.
+      // 듣개를 먼저 단 뒤에 끊는다(처음 연결은 감싸기 전에 만들어 그 닫힘은 세지 않는다). 20초는 고장 판정일 뿐이다
+      await page.evaluate((closes) => {
+        const seen = window.__appWs;
+        const want = seen.closed + closes;
+        window.__wakeClosed = new Promise((done, fail) => {
+          const stuck = setTimeout(() => fail(new Error(`닫힘 ${seen.closed}/${want}, 만든 연결 ${seen.made}`)), 20_000);
+          seen.onClose = () => {
+            if (seen.closed < want) return;
+            seen.onClose = null;
+            clearTimeout(stuck);
+            // 앱의 onclose가 다음 시도를 건 뒤
+            setTimeout(done, 0);
+          };
+        });
+      }, round === 0 ? 2 : 3);
+      reject = 2;
+      pipe.ws.close({ code: 1011, reason: "test offline" });
+      pipe.server.close({ code: 1000, reason: "test offline" });
+      await page.evaluate(() => window.__wakeClosed).catch((e) => {
+        throw new Error(`${kind}: ${e.message} 길 ${JSON.stringify(routed)}`);
+      });
+      if (reject !== 0) throw new Error(`${kind}: 거절이 남았다 ${reject}`);
+      const opened = await realOpens();
+      // 사건을 보낸 그 자리에서 새 연결이 열린다(타이머를 기다리지 않는다)
+      const now = await page.evaluate((kind) => {
+        const at = window.__appWs.made;
+        if (kind === "online") window.dispatchEvent(new Event("online"));
+        else if (kind === "pageshow") window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+        else document.dispatchEvent(new Event("visibilitychange"));
+        return window.__appWs.made - at;
+      }, kind);
+      if (now !== 1) throw new Error(`${kind}: 사건에 바로 붙지 않았다(새 연결 ${now}개)`);
+      // 그 연결이 snapshot을 받는다
+      await until(`${kind} 뒤 snapshot`, () =>
+        page.evaluate((opened) => {
+          const log = window.__aaaTermLog;
+          const i = log.findLastIndex((x) => x.e === "ws open");
+          return log.filter((x) => x.e === "ws open").length > opened && log.slice(i).some((x) => x.e?.startsWith("snapshot"));
+        }, opened),
+      );
+    }
+    await page.context().close();
+    aaa("pane", "kill", "wake");
+  });
   await step("출력이 밀릴 때(herdr-web-ui OutputWindow·pty-ack·4008 「Reconnect」, D7, plan §8.62): ACK를 못 하는 화면은 host가 4008로 닫고 다시 보내지 않으며 「다시 연결」로 새로 붙는다. 따라오는 화면은 그대로 받는다", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "flood", "--", process.execPath, `${root}/flood.js`);
     await waitOutput("flood", "flood>");
@@ -4151,6 +4300,8 @@ try {
       window.dispatchEvent(new Event(on ? "focus" : "blur"));
     }, on);
   const pushInUse = async () => (await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.in_use));
+  /** 그 화면 기기가 본 쓰는 기기(plan §8.85): `user`(앞 7자)·`you` */
+  const pushWho = (p) => p.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok);
   await step("thread 보고서·결과물: Markdown 보고, sandbox 결과물, agent에 남은 큰 파일, ack", async () => {
     await setInUse(page, false);
     await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
@@ -4216,7 +4367,8 @@ try {
     if (!kinds.includes("push_sent") || !kinds.includes("push_gone")) throw new Error(kinds.join(","));
     // 구독 주소(기기에 보내는 열쇠)는 기록에 남지 않는다
     if (JSON.stringify(aaa("events", "demo")).includes("dev1")) throw new Error("흐름 사건에 endpoint가 남았다");
-    // 화면을 다시 쓰면(보이고 focus) 새 보고가 나와도 어느 기기에도 보내지 않는다(herdr-web-ui push.ts inUse, 차이 목록 N5)
+    // 화면을 다시 쓰면(보이고 focus, 화면을 켰으니 이 기기가 쓰는 기기) 새 보고가 나와도 어느 기기에도 보내지 않는다
+    // (herdr-web-ui push.ts inUse, 차이 목록 N5. 쓰는 기기는 plan §8.85)
     await setInUse(page, true);
     await until("쓰는 화면", async () => (await pushInUse()) === 1);
     const from = pushes.length;
@@ -4224,7 +4376,7 @@ try {
     const t2 = aaa("thread", "start", "demo", "--title", "보는 중", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task2.md`);
     await until("보는 중 보고 회수", () => aaa("thread", "show", "demo", t2.id).report_hash);
     const skipped = await until("보내지 않음 기록", () =>
-      aaa("events", "demo").events.find((e) => e.kind === "push_skipped" && e.detail.startsWith("쓰는 화면 1개")),
+      aaa("events", "demo").events.find((e) => e.kind === "push_skipped" && / · 쓰는 화면 1개\(/.test(e.detail)),
     );
     if (pushes.slice(from).some((x) => x.path === new URL(pushDev.json.endpoint).pathname)) throw new Error(`쓰는 화면이 있는데 보냈다 ${skipped.detail}`);
     // 보내지 않은 대신 쓰는 화면에는 앱 안 알림이 내려온다(plan §8.70)
@@ -4736,6 +4888,9 @@ try {
     const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: freezeInit });
     const bp = B.page;
     await until("A만 쓰는 화면", async () => (await pushInUse()) === 1);
+    // A가 쓰는 기기다(마지막으로 누른 기기, plan §8.85)
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent("pointerdown")));
+    await until("A가 쓰는 기기", () => pushWho(page).then((w) => w.you));
     const skips = () => aaa("events", "demo").events.filter((e) => e.kind === "push_skipped");
     const devicePushes = (from) => pushes.slice(from).filter((x) => !x.path.startsWith("/gone/"));
     let n = 0;
@@ -4749,7 +4904,7 @@ try {
     let k = skips().length;
     ts.push(work("두 기기 A 쓰는 중"));
     const s1 = await until("A 때문에 보내지 않음", () => skips().slice(k)[0]);
-    if (!/^쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개$/.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
+    if (!/^쓰는 기기 [0-9A-Za-z]{1,7} · 쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개$/.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
     await until("보이기만 하는 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("두 기기 A 쓰는 중"));
     if (devicePushes(from).length !== 0) throw new Error(`A가 쓰는 동안 push ${devicePushes(from).length}건`);
     await bp.locator(".droplet-close").click();
@@ -4846,6 +5001,92 @@ try {
     done();
     await setInUse(page, true);
     await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
+  });
+
+  await step("쓰는 기기(사용자 결정 10-18 「최고 나중에 화면 켠 쪽」, plan §8.85): 마지막으로 치거나 누르거나 화면을 켠 한 기기가 보이고 focus일 때만 push를 건너뛴다. A가 보이고 focus여도 B에서 친 뒤 B가 가려지면 push가 가고, B가 쓰는 동안은 push 없이 B에 앱 안 알림, A에서 다시 치면 A가 쓰는 기기", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "who", "--", "/bin/cat");
+    const skips = () => aaa("events", "demo").events.filter((e) => e.kind === "push_skipped");
+    const sents = () => aaa("events", "demo").events.filter((e) => e.kind === "push_sent");
+    const devicePushes = (from) => pushes.slice(from).filter((x) => !x.path.startsWith("/gone/"));
+    const ts = [];
+    let n = 0;
+    const work = (title) => {
+      fs.writeFileSync(`${root}/task-user-${++n}.md`, title);
+      ts.push(aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-user-${n}.md`));
+    };
+    const done = () => {
+      while (ts.length) aaa("thread", "resolve", "demo", ts.shift().id);
+    };
+    // A(본 화면, 데스크톱)는 처음부터 끝까지 보이고 focus다
+    await setInUse(page, true);
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent("pointerdown")));
+    await until("A가 쓰는 기기", () => pushWho(page).then((w) => w.you));
+    // B(휴대폰): 열 때는 focus가 없다(앱을 켠 것이 아니다)
+    const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: () => (document.hasFocus = () => false) });
+    const bp = B.page;
+    await bp.getByTestId("pane-who").click();
+    await until("B 터미널", async () => (await bp.locator(".xterm-rows").count()) === 1);
+    if (!(await pushWho(page)).you) throw new Error("focus 없이 연 B가 쓰는 기기가 됐다");
+    // (1) B에서 친다: B가 쓰는 기기(pane 입력, host가 본다). A는 여전히 보이고 focus
+    await bp.locator(".xterm-helper-textarea").focus();
+    await bp.keyboard.type("b1");
+    await waitOutput("who", "b1");
+    await until("B가 쓰는 기기", () => pushWho(bp).then((w) => w.you));
+    if ((await pushWho(page)).you) throw new Error("B가 친 뒤에도 A가 쓰는 기기");
+    // B가 쓰는 화면이 아니다(focus 없음): A가 보이고 focus여도 push가 간다
+    let from = pushes.length;
+    let k = skips().length;
+    let m = sents().length;
+    work("쓰는 기기 B가 안 볼 때");
+    await until("push 보냄", () => sents().length > m);
+    if (skips().length !== k) throw new Error(`B가 안 보는데 건너뜀: ${JSON.stringify(skips().slice(k))}`);
+    await until("기기 push", () => devicePushes(from).length >= 1);
+    done();
+    // (2) B가 보이고 focus(화면을 켰다): push 없이 B에 앱 안 알림
+    await bp.evaluate(() => {
+      delete document.hasFocus;
+      window.dispatchEvent(new Event("focus"));
+    });
+    await until("B 쓰는 화면", async () => (await pushInUse()) === 2 && (await pushWho(bp)).you);
+    from = pushes.length;
+    k = skips().length;
+    work("쓰는 기기 B가 볼 때");
+    const s2 = await until("B 때문에 건너뜀", () => skips().slice(k)[0]);
+    const bId = (await pushWho(bp)).user;
+    if (!s2.detail.startsWith(`쓰는 기기 ${bId} · 쓰는 화면 2개`)) throw new Error(`push_skipped ${s2.detail}(B ${bId})`);
+    await until("B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("쓰는 기기 B가 볼 때"));
+    if (devicePushes(from).length !== 0) throw new Error(`B가 쓰는 동안 push ${devicePushes(from).length}건`);
+    await bp.locator(".droplet-close").click();
+    done();
+    // B가 가려진다: 쓰는 기기는 B 그대로, 쓰는 화면이 아니므로 push가 간다(A는 보이고 focus)
+    await bp.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until("B 가려짐", async () => (await pushInUse()) === 1);
+    from = pushes.length;
+    k = skips().length;
+    m = sents().length;
+    work("쓰는 기기 B가 가려진 뒤");
+    await until("가려진 뒤 push 보냄", () => sents().length > m);
+    if (skips().length !== k) throw new Error(`B가 가려졌는데 건너뜀: ${JSON.stringify(skips().slice(k))}`);
+    await until("가려진 뒤 기기 push", () => devicePushes(from).length >= 1);
+    done();
+    // (3) A에서 다시 친다: A가 쓰는 기기, push 없음
+    await page.getByTestId("pane-who").click();
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.type("a1");
+    await waitOutput("who", "a1");
+    await until("A가 다시 쓰는 기기", () => pushWho(page).then((w) => w.you));
+    k = skips().length;
+    work("쓰는 기기 A");
+    const s3 = await until("A 때문에 건너뜀", () => skips().slice(k)[0]);
+    const aId = (await pushWho(page)).user;
+    if (!s3.detail.startsWith(`쓰는 기기 ${aId} ·`) || aId === bId) throw new Error(`push_skipped ${s3.detail}(A ${aId}, B ${bId})`);
+    done();
+    if (B.errors.length) throw new Error(`페이지 오류: ${B.errors.join("; ")}`);
+    await bp.context().close();
+    aaa("pane", "kill", "who");
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {

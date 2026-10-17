@@ -2036,6 +2036,37 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 어떻게: 두 번 다 화면 위에 앱 안 알림이 내려와야 한다. host 사건 `push_skipped`의 「기기 …」가 그 iPhone인지 본다(push를 구독한 기기: host audit `push_subscribe`의 기기 앞 7자. 기기 목록 화면은 차이 목록 P2). 앱을 홈으로 보낸 동안 낸 보고는 휴대폰 push로 와야 한다.
   - ⋯ 메뉴를 연 채 미러링 키보드 Esc로 닫히는지 본다.
 
+### 8.85 쓰는 기기: 마지막으로 치거나 누르거나 화면을 켠 한 기기만 push를 막는다(10-18, 사용자 결정), pane 연결 깨어나면 바로 다시 붙기(QA t-0337 Q5), 빠른 휠 앞 기록(Q1)
+
+- **사용자 결정(원문 10-18 01:3x).** 「여러 곳에서 띄웠어. … 지금 입력 받아가는 것 처럼, (최고 나중에 화면 켠 쪽에 입력 과 화면 크기 맞추는), 이걸 이용하면 안될까?」 coordinator가 이것을 아래 규칙으로 정리했다.
+  - 「쓰는 기기」는 한 기기다. 사람이 마지막으로 치거나 누르거나 화면을 켠 기기다.
+  - push는 그 기기가 지금 보이고 focus일 때만 건너뛴다. 다른 기기 창이 보이는 것은 까닭이 아니다.
+  - 그 기기가 가려지거나 다른 기기가 입력을 받으면 바로 바뀐다. 앱 안 알림은 그 기기에 꼭 내려온다(다른 기기도 보이면 내려온다). 판정은 모으는 기다림(debounce) 뒤 보내기 직전에 한다.
+- **참고와 다른 점.** herdr-web-ui `server/index.ts` 1117줄 `inUse: () => present.size > 0`(`server/push.ts` 28~31·468~487줄)는 쓰는 화면이 하나라도 있으면 어느 기기에도 보내지 않는다. 여러 기기에 aaa를 띄워 두면 다른 기기 창 하나 때문에 휴대폰 push가 오지 않았다(10-18 00:58 실기). 그래서 사용자 결정대로 바꿨다.
+- **무엇이 쓰는 기기를 정하나.**
+  - 웹이 상태 사건 연결로 `EventsClientMsg::Touch`를 보낼 때다. 앱을 열거나 이 화면이 보이고 focus가 될 때(`watchPageInUse`가 쓰는 중으로 바뀜), 그리고 쓰는 중에 누를 때(`pointerdown`)·칠 때(`keydown`, 반복 키 제외)다. 붙기 전이나 끊긴 동안 누른 것은 붙으면 보낸다.
+  - host가 pane 연결에서 입력(`input`·binary·`submit`)이나 `take`를 받을 때다.
+  - 다시 붙을 때의 presence 보고와 크기 걸기(`resize`)는 정하지 않는다. host가 다시 뜨거나 연결이 다시 붙을 때, 보이고 focus인 데스크톱 창이 휴대폰에서 쓰는 기기를 빼앗지 않게 하려는 것이다.
+- **host.**
+  - `Viewing.user`(seen.rs)가 쓰는 기기다. `push_items`는 `user_in_use()`(그 기기에 쓰는 화면이 있다)일 때만 건너뛴다.
+  - `push_skipped` 설명: 「쓰는 기기 01ABCDE · 쓰는 화면 2개(기기 01ABCDE, 01FGHIJ) · 항목 1개」.
+  - `GET /api/v1/push`에 `user`(앞 7자)·`you`(이 기기인지)를 더했다. 쓰는 기기는 메모리에만 있어 host를 다시 띄우면 비고, 다음 누름·입력에서 정해진다.
+- **시험(웹 E2E 「쓰는 기기」).** A(데스크톱)는 처음부터 끝까지 보이고 focus이고, B(휴대폰)는 focus 없이 연다.
+  - (1) B에서 pane에 친다. B가 쓰는 기기가 되고(B `you`), B는 쓰는 화면이 아니므로 push가 간다. A가 쓰는 화면이어도 건너뛰지 않는다.
+  - (2) B가 보이고 focus가 된다. push 없이 「쓰는 기기 B · 쓰는 화면 2개」로 건너뛰고, B에 앱 안 알림이 내려온다. B가 가려지면 다음 보고는 push로 간다.
+  - (3) A에서 다시 친다. A가 쓰는 기기가 되고 「쓰는 기기 A」로 건너뛴다.
+  - 단위 시험: `push_waits_only_for_the_device_last_touched`(seen.rs).
+- **QA t-0337 Q5: pane 연결이 깨어나면 바로 다시 붙기.**
+  - 결함: 끊긴 pane 연결은 backoff(최대 10초)를 다 기다렸다. 망이 돌아오거나 화면이 다시 보여도 마찬가지였다(Term.tsx).
+  - 참고: herdr-web-ui `src/lib/ws.ts` `onWake`·`wake()`(150~165·571~600줄)는 online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다. t3code client-runtime `connection/supervisor.ts`도 같다.
+  - 고침: Term.tsx `onWake`가 그대로 한다. 열린 연결과 출력 정지(4008)는 건드리지 않는다. 열린 pane 연결의 probe(참고 `wake`가 하는 일)는 pane 연결에 ping이 없어 아직 아니다.
+  - 시험(웹 E2E 「깨어나면 바로 다시 붙기」): 끊고 다시 붙기 두 번을 거절해 backoff 중으로 만든 뒤 `online`·`pageshow`·`visibilitychange`를 보낸다. 그 사건 안에서 새 연결이 하나 생기고(타이머를 기다리지 않는다) snapshot을 받는다. 고침을 빼면 「새 연결 0개」로 실패함을 확인했다.
+  - Playwright `routeWebSocket`은 서버에 이을 때만 진짜 WebSocket을 만든다. 그래서 길에서 거절한 연결은 진단 기록에 남지 않는다. 시험은 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싸 센다.
+- **QA t-0337 Q1: 빠른 휠 뒤 빈 화면.**
+  - QA는 `d93e900`(t-0329 `245f321` 전)에서 데스크톱 Chromium 6/8로 쟀다: 3000줄 pane, 휠 −1200px×40, `.xterm-rows` 43줄 모두 빈 줄.
+  - 이 개발 Mac에서 재현해 봤다. QA 실험실(`lab.mjs`)과 재현 스크립트(`probe-scroll5.mjs`)를 그대로 썼고(옛 write 콜백 binary), CPU 4배 느리게와 휴대폰 크기로 먼저 열기를 더해 모두 24번 했지만 한 번도 비지 않았다. 웹 E2E 「앞 기록 빠른 휠」(QA와 같은 줄, 누르지 않고 휠 40번, 8번 되풀이)도 옛 코드·지금 코드 모두 통과한다.
+  - 원인을 찾지 못했으므로 짐작으로 고치지 않았다. 이 단계는 회귀 시험으로 둔다. QA가 `302e64b` 뒤 binary로 다시 재 보고, 재현되면 그때 `__aaaTermLog`와 xterm 상태(`buffer.active.length`·`viewportY`·`baseY`, 덮개 수)를 남겨 달라고 했다(report).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
