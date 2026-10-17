@@ -1,10 +1,10 @@
 // 웹 E2E 공유 설정: 기기 사이 테마·색상·사이드바 행, 보기 권한 거부(빈 공유 설정 문서에서 시작).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 14-shared-preferences(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { aaa, shot, pairPage, step, browser, openSettings } from "../lib/harness.mjs";
+import { aaa, shot, pairPage, step, browser, openSettings, domIs } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
-  await step("공유 설정(herdr-web-ui preferencesSync·shared/preferences.ts, 차이 목록 T2): 한 기기에서 바꾼 테마·색상·사이드바 행은 다른 기기에 곧 오고, 기기 설정(상태 표시)은 남으며, 여는 것만으로는 쓰지 않고, 보기 권한 기기의 쓰기는 거부되며 다음 공유 변경을 모두 받는다", async () => {
+  await step("공유 설정(herdr-web-ui preferencesSync·shared/preferences.ts, 차이 목록 T2): 한 기기에서 바꾼 테마·색상·사이드바 행은 다른 기기에 곧 오고, 기기 설정(상태 표시)은 남으며, 여는 것만으로는 쓰지 않고, 보기 권한 기기의 쓰기는 거부되며 다음 공유 변경을 모두 받는다, 바꾸고 곧 닫아도 간다(QA Q11)", async () => {
     // 기다림은 시간이 아니라 사건으로 끝낸다: <html> 속성은 MutationObserver, host 쓰기는 그 요청의 답
     const htmlIs = (p, name, value) =>
       p.evaluate(
@@ -82,6 +82,16 @@ export default async function ({ ctl, page }) {
     await htmlIs(r, "data-theme", "light");
     await b.locator(".machine-workspaces:not(.is-two-line)").first().waitFor();
     await shot(r, "phone-reader-shared");
+
+    // 바꾸고 곧바로 닫아도(보내기를 미루는 600ms 안) 값이 간다(QA t-0337 Q11): 떠날 때(pagehide) keepalive로 지금 보낸다
+    const q = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    await htmlIs(q.page, "data-theme", "light");
+    const qd = await settings(q.page);
+    await qd.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).click();
+    await q.page.close({ runBeforeUnload: true });
+    await domIs(b, "닫힌 기기에서 바꾼 테마가 다른 기기에", () => document.documentElement.getAttribute("data-theme") === "dark");
+    if ((await held(a)).settings.theme !== "dark") throw new Error("닫힌 기기에서 바꾼 테마가 host 문서에 없다");
+    await q.page.context().close();
 
     // 되돌린다(뒤 단계의 화면이 기본 모양이게)
     sent = wrote(a);

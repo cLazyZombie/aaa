@@ -1,0 +1,4 @@
+/* herdr-web-ui aa624cb src/components/PaneCanvas.css의 .pane-rename-form 그대로(고지는 README) */
+.pane-rename-form { display: flex; flex-direction: column; gap: var(--space-3); }
+/* aaa 차이: 참고는 label 규칙이 없어 「pane 이름」 글자와 칸이 한 줄에 붙는다. 글자를 칸 위에, 칸은 창 폭으로. */
+.pane-rename-form label { display: grid; gap: var(--space-2); }

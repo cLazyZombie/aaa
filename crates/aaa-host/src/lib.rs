@@ -155,14 +155,13 @@ struct PaneRt {
     /// 지금 쓰는 대화형 front(lease, 연결 하나). PTY 크기를 그 화면이 정한다. 다른 front가 입력·크기·그림을 보내면
     /// 그 front로 바뀌고(마지막 입력이 이긴다), 연결이 끝나거나 놓으면 비운다.
     lease: Option<FrontRef>,
-    /// harness 상태(hook 사건으로만 바뀐다)
+    /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
+    /// 다시 열지 않게 한다(harness.rs `on_harness`)
+    answered: bool,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
-    /// 열린 확인창 질문에 사건을 낸 hook들과, 방금 답한 확인창이 받은 hook들(다음 hook 사건까지). Claude는 확인창
-    /// 하나에 hook 둘(`PermissionRequest`·`Notification`)을 따로 내고, 둘째가 답보다 늦게 올 수 있다(harness.rs `late_pair`).
-    prompt_hooks: Vec<String>,
-    answered_hooks: Option<Vec<String>>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -504,8 +503,7 @@ impl Host {
                     lease: None,
                     agent: None,
                     transcript: None,
-                    prompt_hooks: Vec::new(),
-                    answered_hooks: None,
+                    answered: false,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -520,6 +518,19 @@ impl Host {
                 .collect();
         }
         self.bump();
+        // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
+        let open = self.questions(false);
+        let gone: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            open.into_iter()
+                .filter(|q| q.machine == hello.machine_name)
+                .filter(|q| !i.panes.get(&q.pane).is_some_and(|p| p.info.state.is_running()))
+                .map(|q| q.pane)
+                .collect()
+        };
+        for pane in gone {
+            self.close_questions_of(&pane);
+        }
         for (sid, from) in subscribe {
             self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
@@ -627,8 +638,7 @@ impl Host {
                 lease: None,
                 agent: None,
                 transcript: None,
-                prompt_hooks: Vec::new(),
-                answered_hooks: None,
+                answered: false,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -639,6 +649,9 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        if !info.state.is_running() {
+            self.close_questions_of(&info.id);
+        }
         self.replay_harness(&info.id);
         // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
         if !info.state.is_running() {
@@ -706,6 +719,7 @@ impl Host {
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
             agent: p.agent.clone().map(Box::new),
+            label: p.info.label.clone(),
         }
     }
 
@@ -1003,6 +1017,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1143,6 +1158,7 @@ impl Host {
                 self.forget(&id, &mid, actor).await?;
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
             FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
@@ -1331,6 +1347,40 @@ impl Host {
     // ───────────── 재개·정리 ─────────────
 
     /// 끝난 pane을 같은 spec(이름·argv·cwd·크기)으로 다시 띄우고 layout 자리를 새 pane으로 바꾼 뒤 옛 기록을 지운다.
+    /// pane에 사람이 붙인 이름(herdr `pane rename`). 이름의 정본은 agent의 세션 기록이라 agent까지 간다(plan §8.109).
+    async fn rename(
+        self: &Arc<Self>,
+        pane: &str,
+        label: Option<String>,
+        role: DeviceRole,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        if label.as_ref().is_some_and(|l| l.chars().count() > aaa_proto::MAX_PANE_LABEL_CHARS) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!("이름은 {}자 안이어야 한다", aaa_proto::MAX_PANE_LABEL_CHARS),
+            ));
+        }
+        let conn = self.live_conn(&mid)?;
+        // 옛 agent는 모르는 요청에 연결을 끊는다: 보내기 전에 거른다
+        let knows =
+            self.inner.lock().unwrap().machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "rename.v1"));
+        if !knows {
+            return Err(err(
+                ErrorCode::BadRequest,
+                "이 머신의 agent가 pane 이름 바꾸기를 모른다(agent binary 반영 필요)",
+            ));
+        }
+        self.db.audit(actor, "pane_rename", &format!("{id} {}", label.as_deref().unwrap_or("-")));
+        match conn.request(AgentRequest::Rename { session: id.clone(), label }).await? {
+            AgentResponse::Session(info) => self.on_session(&mid, info, false),
+            other => return Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+        }
+        self.pane_view_of(&id, role).map(FrontResponse::Pane).ok_or_else(|| err(ErrorCode::NotFound, "pane이 없다"))
+    }
+
     async fn resume(self: &Arc<Self>, pane: &str, role: DeviceRole, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let (id, mid) = self.resolve_pane(pane)?;
         let info = self
@@ -1352,6 +1402,7 @@ impl Host {
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            harness: info.harness.clone(),
         };
         let new_id = self.spawn_on(&mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
@@ -1432,6 +1483,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1454,7 +1506,16 @@ impl Host {
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
                 let cwd = self.new_pane_cwd(cwd, Some(&target), &mid).await;
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
+                let spec = SpawnSpec {
+                    name: String::new(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 80,
+                    rows: 24,
+                    role: None,
+                    harness: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| {

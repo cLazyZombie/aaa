@@ -153,7 +153,17 @@ pub struct SessionInfo {
     /// agent 세션 역할(thread가 띄운 세션만). 이전 session host는 보내지 않는다.
     #[serde(default)]
     pub role: Option<Role>,
+    /// 사람이 붙인 이름(`pane rename`, herdr `manual_label`). 있으면 `name`이 이것이고, 지우면 띄울 때 이름으로 돌아간다.
+    /// 정본은 agent의 `spec.json`이다(이전 session host는 모른다, plan §8.109).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// 띄울 때 알려 준 harness(`SpawnSpec.harness`). 다시 띄울 때(resume) 그대로 넘긴다.
+    #[serde(default)]
+    pub harness: Option<String>,
 }
+
+/// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
+pub const MAX_PANE_LABEL_CHARS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SpawnSpec {
@@ -167,6 +177,9 @@ pub struct SpawnSpec {
     pub rows: u16,
     #[serde(default)]
     pub role: Option<Role>,
+    /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -267,6 +280,19 @@ pub struct WorkspaceSummary {
     pub name: String,
     pub tabs: u32,
     pub panes: u32,
+}
+
+/// harness 상태 감지 입력(plan §8.110). herdr처럼 화면 끝 글과 마지막 OSC 제목·진행을 함께 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectScreen {
+    /// 화면 변화 순번(출력이 오거나 크기가 바뀔 때마다 는다)
+    pub seq: u64,
+    /// 화면 끝 글(herdr `detection_text`). 요청의 `unchanged_since`와 순번이 같으면 None이다(다시 볼 것이 없다).
+    pub text: Option<String>,
+    /// 마지막 OSC 0/2 제목(없으면 빈 글)
+    pub osc_title: String,
+    /// 마지막 OSC 9 payload(없으면 빈 글)
+    pub osc_progress: String,
 }
 
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
@@ -398,6 +424,11 @@ pub enum AgentRequest {
     Forget {
         session: String,
     },
+    /// 세션에 사람이 붙인 이름(`None`이면 지움). 답은 바뀐 `Session`이다. agent가 `rename.v1` 기능을 알릴 때만 보낸다.
+    Rename {
+        session: String,
+        label: Option<String>,
+    },
     /// harness 대화 기록의 끝부분(§8.27). agent는 자기 Claude·Codex 기록 폴더 안의 파일만 읽는다.
     Chat {
         harness: String,
@@ -523,6 +554,8 @@ pub enum AgentResponse {
         offset: u64,
     },
     Screen(ScreenText),
+    /// 상태 감지 입력(session host → agent, SESSION_IPC 1.1)
+    Detect(DetectScreen),
     Done,
     Chat {
         messages: Vec<ChatMessage>,
@@ -615,12 +648,23 @@ pub enum SessionMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
-    Subscribe { from: Option<u64> },
+    Subscribe {
+        from: Option<u64>,
+    },
     Unsubscribe,
-    Input { data: B64 },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: B64,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Kill,
     Screen,
+    /// 상태 감지 입력(SESSION_IPC 1.1부터). 순번이 `unchanged_since`와 같으면 글을 싣지 않는다.
+    Detect {
+        unchanged_since: Option<u64>,
+    },
 }
 
 // ───────────────────────── Front API ─────────────────────────
@@ -737,6 +781,10 @@ pub struct PaneView {
     pub role: Option<Role>,
     /// harness 상태(hook을 보내는 agent 세션만)
     pub agent: Option<Box<AgentStatus>>,
+    /// 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -876,7 +924,7 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
-    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.15부터, 옛 host는 맨 아래)
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.16부터, 옛 host는 맨 아래)
     #[serde(default)]
     pub scroll: GridScroll,
 }
@@ -1123,6 +1171,11 @@ pub enum FrontRequest {
     PaneForget {
         pane: String,
     },
+    /// pane에 이름을 붙인다(herdr `pane rename`). 앞뒤 공백을 떼고, `None`이나 빈 이름은 붙인 이름을 지워 띄울 때 이름으로 돌린다.
+    PaneRename {
+        pane: String,
+        label: Option<String>,
+    },
     /// 이 연결로 pane 화면(cell grid)을 보낸다. 같은 머신 front 연결(UDS)에서만 쓴다.
     PaneWatch {
         pane: String,
@@ -1130,7 +1183,7 @@ pub enum FrontRequest {
     PaneUnwatch {
         pane: String,
     },
-    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.108). 프로그램에는 아무것도 가지 않는다.
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.111). 프로그램에는 아무것도 가지 않는다.
     PaneScroll {
         pane: String,
         by: ScrollBy,
@@ -1812,6 +1865,8 @@ mod tests {
             rows: 24,
             state: SessionState::Exited { code: Some(2) },
             role: None,
+            label: None,
+            harness: Some("codex".into()),
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["state"], "exited");

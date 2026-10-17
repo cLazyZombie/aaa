@@ -25,10 +25,14 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.12: ThreadView `warnings`(plan §8.100), 결정 기록 요청(`decision_add`·`decisions`)과 ThreadView `decisions_rev`·`decisions_now`를 없앰(plan §8.101),
 /// 1.13: thread start `kind` 생략·restart `profile`·resolve `reopen`(plan §8.104),
 /// 1.14: TUI 마우스(`GridFrame.modes`, `LayoutChange::SplitRatio`·`MoveTab`)(plan §8.106),
-/// 1.15: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.108)
-pub const FRONT_API: Version = Version { major: 1, minor: 15 };
+/// 1.15: `pane_rename`과 PaneView `label`(plan §8.109),
+/// 1.16: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.111)
+pub const FRONT_API: Version = Version { major: 1, minor: 16 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
-pub const SESSION_IPC: Version = Version { major: 1, minor: 0 };
+/// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
+pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
+/// `SessionRequest::Detect`를 받는 첫 SESSION_IPC minor
+pub const SESSION_IPC_DETECT: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NegotiateError {

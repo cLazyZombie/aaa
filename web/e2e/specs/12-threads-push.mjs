@@ -171,6 +171,7 @@ export default async function ({ ctl, page }) {
       cells: [
         ["<code>T2</code>", "같음", "<code>prefs.rs</code>"],
         ["R1", "<strong>일부</strong>", "표와 <code>code</code>"],
+        ["Q9", "휴대폰 표 칸의 한글 낱말은 음절 사이에서 끊기지 않는다", "경우마다 메모를 남긴다"],
       ],
       nested: "하나",
       ol: 2,
@@ -205,6 +206,23 @@ export default async function ({ ctl, page }) {
     await report.locator(".markdown-table-wrap").scrollIntoViewIfNeeded();
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
+    // 표 칸의 한글 낱말은 한 줄에 남는다(QA t-0337 Q9 「경/우」): 낱말마다 그 글자들이 그려진 줄이 하나다
+    const split = await report.evaluate((el) => {
+      const bad = [];
+      for (const cell of el.querySelectorAll(".markdown th, .markdown td")) {
+        const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          for (const m of n.data.matchAll(/[가-힣]+/g)) {
+            const r = document.createRange();
+            r.setStart(n, m.index);
+            r.setEnd(n, m.index + m[0].length);
+            if (new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size > 1) bad.push(m[0]);
+          }
+        }
+      }
+      return bad;
+    });
+    if (split.length) throw new Error(`휴대폰 폭 표 칸에서 한글 낱말이 갈렸다: ${split.join(", ")}`);
     await shot(page, "phone-report-markdown");
     await page.setViewportSize({ width: 1280, height: 800 });
     // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다
@@ -863,7 +881,7 @@ export default async function ({ ctl, page }) {
     const key = await rowOf(page, "t1").getAttribute("data-pin-key");
     await page.getByTestId("pane-t1").click({ button: "right" });
     await focusIs(page, "메뉴 첫 항목", '[role="menu"] [role="menuitem"]');
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
     if ((await page.locator(".machine-list .row-menu-toggle").first().isVisible())) throw new Error("마우스 데스크톱에 ⋯ 단추가 보인다(참고는 오른쪽 클릭)");
     await page.keyboard.press("Escape");
     await domIs(page, "Esc로 메뉴 닫힘", () => !document.querySelector('[role="menu"]'));
@@ -889,6 +907,30 @@ export default async function ({ ctl, page }) {
     await domIs(page, "데스크톱에서도 풀림", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) === null && document.querySelector(`.machine-list [data-pin-key="${k}"]`) !== null, key);
     if (ph.errors.length) throw new Error(ph.errors.join("; "));
     await ph.page.context().close();
+    // 이름 바꾸기(참고 PaneCanvas PaneRename): 창의 이름 칸에 focus, 앞뒤 공백은 떼어 host(agent spec.json)까지, 붙인 이름이 있으면
+    // 메뉴에 「pane 이름 지우기」가 생기고 누르면 띄울 때 이름으로 돌아간다
+    aaa("tab", "create", "--machine", "labA", "--label", "rowname", "--", "/bin/sh", "-c", "read x");
+    await page.getByTestId("pane-rowname").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "pane 이름 바꾸기" }).click();
+    const named = page.getByRole("dialog", { name: "pane 이름 바꾸기" });
+    await focusIs(page, "이름 칸", '[role="dialog"] .pane-rename-form input');
+    await named.getByRole("textbox").fill("  빌드 창  ");
+    await shot(page, "desktop-pane-rename");
+    const renamed = opDone(page, "pane_rename");
+    await page.keyboard.press("Enter");
+    const sentName = (await renamed).request().postDataJSON();
+    if (sentName.label !== "빌드 창") throw new Error(`보낸 이름 ${JSON.stringify(sentName)}`);
+    await domIs(page, "새 이름 줄", () => document.querySelector('[data-testid="pane-빌드 창"]') !== null && !document.querySelector('[role="dialog"]'));
+    if (!aaa("pane", "list").panes.some((x) => x.name === "빌드 창" && x.label === "빌드 창")) throw new Error("붙인 이름이 host에 없다");
+    await page.getByTestId("pane-빌드 창").click({ button: "right" });
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 이름 지우기", "pane 닫기"]))
+      throw new Error(`이름 붙은 pane 메뉴 ${await menuItems(page)}`);
+    const cleared = opDone(page, "pane_rename");
+    await page.getByRole("menuitem", { name: "pane 이름 지우기" }).click();
+    if ((await cleared).request().postDataJSON().label !== null) throw new Error("지우기가 null을 보내지 않았다");
+    await domIs(page, "띄울 때 이름으로", () => document.querySelector('[data-testid="pane-rowname"]') !== null);
+    aaa("pane", "close", "rowname");
+    await domIs(page, "rowname 닫힘", () => !document.querySelector('[data-testid="pane-rowname"]'));
     // 3. pane 닫기: 확인 창(취소에 focus) → 닫으면 줄이 사라진다
     aaa("tab", "create", "--machine", "labA", "--label", "rowclose", "--", "/bin/sh", "-c", "read x");
     await page.getByTestId("pane-rowclose").waitFor();
@@ -909,7 +951,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "rowend");
     await domIs(page, "끝난 pane", endedRow);
     await page.getByTestId("pane-rowend").click({ button: "right" });
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "다시 열기", "기록 지우기"])) throw new Error(`끝난 pane 메뉴 ${await menuItems(page)}`);
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "다시 열기", "기록 지우기"])) throw new Error(`끝난 pane 메뉴 ${await menuItems(page)}`);
     const resumed = opDone(page, "pane_resume");
     await page.getByRole("menuitem", { name: "다시 열기" }).click();
     if (!(await (await resumed).json()).ok) throw new Error("다시 열기 실패");
