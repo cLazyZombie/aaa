@@ -3,7 +3,7 @@
 
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
-  openSettings,
+  openSettings, start, stop,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -715,5 +715,80 @@ export default async function ({ ctl, page }) {
     await slow.context().close();
     await fast.context().close();
     aaa("pane", "kill", "flood");
+  });
+
+  await step("host를 다시 띄운 뒤 앞 기록(QA t-0337 Q8, plan §8.107): 다시 뜬 host의 mirror는 session host snapshot(최근 2000줄)부터 채워진다. 그 앞은 session host에 물어 받아, 위로 굴려 첫 줄까지 빠짐 없이 본다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "q8", "--", process.execPath, `${root}/history.js`);
+    await waitOutput("q8", "hist>");
+    aaa("pane", "send-text", "q8", "h");
+    await waitOutput("q8", "history-done");
+    // host를 다시 띄운다(운영 binary 바꾸기처럼). session host는 그대로 6000줄을 가진다
+    await stop("host");
+    start("host-q8", "host");
+    const q8 = () => aaa("pane", "list").panes.find((p) => p.name === "q8");
+    await until("agent가 다시 붙음", () => {
+      try {
+        return q8()?.connection === "connected";
+      } catch {
+        return false;
+      }
+    }, 30_000);
+    const qp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await qp.getByTestId("pane-q8").click();
+    const box = qp.getByTestId("terminal");
+    const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
+    await until("q8 화면", async () => (await screenText(qp)).includes("history-done"));
+    if ((await attr("historyMore")) !== "1") throw new Error(`앞 기록 표시 ${await attr("historyMore")}(session host에 더 있다)`);
+    await box.click();
+    await until("이 화면 grid", async () => (await qp.locator(".term-scroll[data-adopted-grid]").count()) === 0);
+    await box.hover();
+    // 받은 기록 맨 위에 닿을 때마다 앞 덩어리를 받는다. 더 없을 때까지(답이 빨라 기다림 표지는 거의 보이지 않는다: 끝 상태를 본다)
+    await until("앞 기록 끝까지", async () => {
+      if ((await attr("historyMore")) === "0" && (await attr("historyWaiting")) !== "1") return true;
+      await qp.mouse.wheel(0, -3000);
+      return false;
+    }, 30_000);
+    const applied = Number(await attr("historyApplied"));
+    // mirror는 처음부터 2000줄(웹이 snapshot으로 이미 받음): 앞 4000줄은 session host에서 두 덩어리(2000줄 상한)로 온다
+    if (applied < 2) throw new Error(`앞 기록을 ${applied}번 붙였다(session host에 묻지 않았다)`);
+    // 버퍼 맨 위부터 한 화면씩: h-00001~h-06000이 빠짐·겹침 없이
+    const sweep = await qp.evaluate(async () => {
+      const box = document.querySelector('[data-testid="terminal"]');
+      const vp = box.querySelector(".xterm-viewport");
+      const rows = () => [...box.querySelectorAll(".xterm-rows > div")];
+      const drawnAt = (line) =>
+        new Promise((done, fail) => {
+          const ok = () => box.dataset.viewTop === String(line);
+          if (ok()) return done();
+          const stuck = setTimeout(() => {
+            mo.disconnect();
+            fail(new Error(`줄 ${line}이 그려지지 않았다: ${JSON.stringify({ top: box.dataset.viewTop, base: box.dataset.viewBase })}`));
+          }, 10_000);
+          const mo = new MutationObserver(() => ok() && (clearTimeout(stuck), mo.disconnect(), done()));
+          mo.observe(box, { attributes: true, attributeFilter: ["data-view-top"] });
+        });
+      const goTo = async (line) => {
+        if (box.dataset.viewTop === String(line)) return;
+        vp.scrollTop = line * rows()[0].getBoundingClientRect().height;
+        vp.dispatchEvent(new Event("scroll"));
+        await drawnAt(line);
+      };
+      const nums = new Set();
+      const bad = [];
+      const half = Math.floor(rows().length / 2);
+      for (let line = 0; ; ) {
+        await goTo(line);
+        const got = rows().map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
+        for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
+        got.forEach((n) => nums.add(n));
+        const base = Number(box.dataset.viewBase);
+        if (line >= base) break;
+        line = Math.min(base, line + half);
+      }
+      return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5) };
+    });
+    if (sweep.count !== 6000 || sweep.min !== 1 || sweep.max !== 6000 || sweep.bad.length) throw new Error(`버퍼 기록 ${JSON.stringify(sweep)}`);
+    await qp.context().close();
+    aaa("pane", "kill", "q8");
   });
 }

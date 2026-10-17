@@ -515,6 +515,9 @@ impl Agent {
             }
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
+            AgentRequest::History { session, anchor, depth } => {
+                return self.to_session(id, &session, SessionRequest::History { anchor, depth }).await;
+            }
             AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
@@ -713,6 +716,7 @@ impl Agent {
                         cols: info.cols,
                         rows: info.rows,
                         replay: B64(replay),
+                        history_more: false,
                     }),
                     offset: end,
                 })

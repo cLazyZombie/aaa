@@ -179,6 +179,21 @@ pub struct Snapshot {
     pub cols: u16,
     pub rows: u16,
     pub replay: B64,
+    /// `replay`의 기록 앞에 session host가 가진 기록이 더 있다(plan §8.107). 그 앞은 `History` 요청으로 받는다.
+    /// 옛 session host는 보내지 않는다(false: 묻지 않는다).
+    #[serde(default)]
+    pub history_more: bool,
+}
+
+/// 받은 기록 맨 위 줄들(`anchor`) 바로 앞 기록 한 덩어리(plan §8.67·§8.107). replay 기록과 같은 모양(색 포함)이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryChunk {
+    pub data: B64,
+    pub lines: u32,
+    /// 그 앞이 더 있다
+    pub more: bool,
+    /// anchor를 찾았다(못 찾으면 붙이지 않는다)
+    pub found: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -394,6 +409,13 @@ pub enum AgentRequest {
     Cwd {
         session: String,
     },
+    /// session host 기록에서 `anchor` 바로 앞 덩어리(host mirror에 없는 앞 기록, plan §8.107).
+    /// agent가 `history.v1` 기능을 알리고 snapshot이 `history_more`였을 때만 보낸다.
+    History {
+        session: String,
+        anchor: Vec<String>,
+        depth: u32,
+    },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
@@ -551,6 +573,7 @@ pub enum AgentResponse {
         cwd: Option<String>,
     },
     Pr(PrAnswer),
+    History(HistoryChunk),
 }
 
 /// routine 명령 실행 결과
@@ -615,12 +638,24 @@ pub enum SessionMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
-    Subscribe { from: Option<u64> },
+    Subscribe {
+        from: Option<u64>,
+    },
     Unsubscribe,
-    Input { data: B64 },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: B64,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Kill,
     Screen,
+    /// 기록에서 `anchor` 바로 앞 덩어리(plan §8.107). snapshot에 `history_more`를 실은 session host에만 보낸다.
+    History {
+        anchor: Vec<String>,
+        depth: u32,
+    },
 }
 
 // ───────────────────────── Front API ─────────────────────────

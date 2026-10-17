@@ -1638,6 +1638,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 선택지 2: host가 다시 뜰 때 session host가 기록 전체를 여러 frame으로 나눠 보낸다(10,000줄이면 수 MB를 매번).
     - 선택지 3: 두고 쓴다.
     - **추천은 1이다.** 필요한 만큼만 받고, 이번 웹 요청(anchor·depth)을 그대로 넘기면 된다. 이번에는 만들지 않았다.
+    - **10-18 선택지 1로 만들었다(§8.107, QA t-0337 Q8).**
   - **(나) 폭이 바뀐 기록.** xterm은 폭이 바뀌면 줄을 다시 접고 vt100은 접지 않는다. 그래서 폭이 바뀐 뒤에는 받은 기록 맨 위 글이 host와 달라 찾지 못할 수 있다. 그때 host는 `found: false`로 답하고, 웹은 더 받지 않는다(어긋난 자리에 붙이지 않는다).
   - **(라) 그 밖에 알고 둔 것.**
     - 다시 쓸 때 입력 모드(DECCKM·bracketed paste·마우스 보고)는 serialize가 다시 켠다. scroll region(DECSTBM)과 커서 숨김(DECTCEM)은 serialize에 없다. 보통 화면 셸에서는 쓰지 않아 두었다.
@@ -2415,6 +2416,25 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이미 이 머신의 이름으로 DB에 있는 로컬 이름은 그대로 받는다. 올린 뒤 로컬 agent가 끊기지 않게 하려는 것이다.
   - agent의 기본 이름(hostname)은 쓸 수 없는 글자를 `-`로 바꾼다.
   - 시험: `enroll_rejects_machine_names_with_control_characters`, `machine_names`.
+
+### 8.107 host를 다시 띄운 뒤 앞 기록: mirror에 없으면 session host에 묻는다(10-18, QA t-0337 Q8, §8.67 (가) 선택지 1)
+- **결함.** host를 다시 띄우면 mirror는 session host snapshot(최근 2000줄·384KiB)으로 처음 채워진다. 그래서 그 앞 기록은 session host에만 있고 웹은 받아 오지 못했다.
+  - 웹은 snapshot의 `history_more`가 거짓이라 위로 굴려도 더 묻지 않았다. 처음 구독 전에 2000줄 넘게 쏟은 pane도 같다(QA `probe-hist3`).
+- **고침.**
+  - session host snapshot에 `history_more`(replay 기록 앞에 더 있다)를 싣는다. host mirror는 이것을 `source_more`로 기억한다. 웹 snapshot의 `history_more`는 mirror에 더 있거나 `source_more`면 참이다.
+  - 웹의 앞 기록 요청(anchor·depth)은 먼저 mirror에서 찾는다. mirror에서 줄을 찾으면 그것을 준다. `source_more`면 「더 있다」를 붙인다.
+  - mirror에 더 줄 것이 없거나 anchor가 mirror에 없으면(이미 session host에서 받은 줄), 같은 요청을 agent link `History { session, anchor, depth }`로 session host에 넘긴다. session host는 자기 vt 기록에서 mirror와 같은 방법(`Vt::older`, 2000줄·384KiB 상한)으로 답한다.
+  - host는 그 답을 기다리는 동안 pane 연결 loop를 막지 않는다(별 task가 답을 같은 보내기 줄에 넣는다).
+  - 붙일 줄이 0인 답이면 웹은 버퍼를 다시 쓰지 않고 「더 없음」으로 둔다.
+- **옛 binary.**
+  - `history_more`는 serde 기본값 거짓이다. 옛 session host(올리기 전에 띄운 pane)나 옛 agent를 거친 snapshot은 거짓이라 묻지 않는다(지금과 같다).
+  - host는 agent가 `history.v1` 기능을 알릴 때만 묻는다. 그래서 session host에 모르는 요청이 가지 않는다.
+  - 새 pane(새 binary의 session host)부터 된다.
+- **시험.** 웹 E2E 07 「host를 다시 띄운 뒤 앞 기록」: pane이 6000줄을 쓴 뒤 host를 다시 띄우고, 새로 붙은 웹이 위로 굴려 h-00001~h-06000을 빠짐·겹침 없이 본다. session host에서 두 덩어리를 받는다.
+  - 결함 심기 둘: mirror의 `source_more`를 늘 거짓으로 두면 「앞 기록 표시 0」으로, session host에 묻지 않고 mirror 답만 주면 「앞 기록을 0번 붙였다」로 실패한다. 고친 판은 5/5 통과.
+- **알려진 한계.**
+  - session host에 묻기가 실패하면(agent 끊김, 15초 `REQUEST_TIMEOUT`) host는 `found: false`로 답한다. 웹은 그 연결에서 더 묻지 않는다(§8.67 「찾지 못하면 더 받지 않는다」와 같다). 다시 붙거나 새 snapshot을 받으면 다시 묻는다.
+  - 이미 떠 있는 pane은 옛 session host라 `history_more`를 보내지 않는다. 그래서 고침은 agent를 다시 띄운 뒤 새로 연 pane부터 보인다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

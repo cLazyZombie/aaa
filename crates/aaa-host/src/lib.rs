@@ -125,6 +125,16 @@ struct Mirror {
     vt: Vt,
     offset: u64,
     synced: bool,
+    /// 이 mirror를 채운 snapshot 앞에 session host 기록이 더 있다(plan §8.107): mirror 기록이 끝나면 session host에 묻는다
+    source_more: bool,
+}
+
+/// 앞 기록 한 덩어리를 어디서 받는가(plan §8.67·§8.107)
+pub enum OlderHistory {
+    /// host mirror에서 바로(None이면 anchor를 찾지 못했다)
+    Ready(Option<aaa_vt::Older>),
+    /// mirror에 없다: 그 머신 agent를 거쳐 session host에 묻는다
+    Ask(AgentConn),
 }
 
 /// 웹 터미널 등 구독자에게 보내는 pane 사건
@@ -579,7 +589,7 @@ impl Host {
             Some(s) => {
                 let mut vt = Vt::new(s.rows, s.cols);
                 vt.feed(&s.replay.0);
-                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true });
+                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true, source_more: s.history_more });
                 let _ = p.events.send(PaneEvent::Reset);
             }
             None => match p.mirror.as_mut() {
@@ -733,17 +743,55 @@ impl Host {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 let (replay, more) = m.vt.replay_more();
-                (replay, more, m.offset, rows, cols)
+                (replay, more || m.source_more, m.offset, rows, cols)
             }
             None => (Vec::new(), false, 0, p.info.rows, p.info.cols),
         };
         Some(Attach { rx, replay, more, offset, cols, rows })
     }
 
-    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67)
-    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> Option<aaa_vt::Older> {
+    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67).
+    /// mirror는 처음 구독 snapshot(최근 2000줄)부터 채워진다. 그보다 앞은 session host에만 있으므로, mirror에서 더 줄 것이
+    /// 없으면 session host에 묻는다(plan §8.107, QA t-0337 Q8). 옛 agent·session host면 묻지 않는다.
+    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> OlderHistory {
         let i = self.inner.lock().unwrap();
-        i.panes.get(id)?.mirror.as_ref()?.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY)
+        let Some(p) = i.panes.get(id) else { return OlderHistory::Ready(None) };
+        let Some(m) = p.mirror.as_ref() else { return OlderHistory::Ready(None) };
+        let found = m.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY);
+        match found {
+            Some(mut o) if o.lines > 0 => {
+                o.more |= m.source_more;
+                OlderHistory::Ready(Some(o))
+            }
+            found if m.source_more => {
+                let conn = i
+                    .machines
+                    .get(&p.machine_id)
+                    .filter(|mc| mc.features.iter().any(|f| f == "history.v1"))
+                    .and_then(|mc| mc.conn.clone());
+                match conn {
+                    Some(c) => OlderHistory::Ask(c),
+                    None => OlderHistory::Ready(found),
+                }
+            }
+            found => OlderHistory::Ready(found),
+        }
+    }
+
+    /// session host에 앞 기록을 묻는다(plan §8.107). 실패하면 None(웹은 더 받지 않는다).
+    pub async fn older_from_agent(
+        conn: &AgentConn,
+        session: String,
+        anchor: Vec<String>,
+        depth: usize,
+    ) -> Option<aaa_vt::Older> {
+        let depth = u32::try_from(depth).unwrap_or(u32::MAX);
+        match conn.request(AgentRequest::History { session, anchor, depth }).await {
+            Ok(AgentResponse::History(c)) if c.found => {
+                Some(aaa_vt::Older { data: c.data.0, lines: c.lines as usize, more: c.more })
+            }
+            _ => None,
+        }
     }
 
     fn resolve_pane(&self, prefix: &str) -> Result<(String, String), ErrorBody> {

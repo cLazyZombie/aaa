@@ -668,6 +668,28 @@ struct Outbox {
     stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
 }
 
+/// `Outbox`에 보내기만 하는 손잡이(앞 기록 답처럼 연결 loop 밖에서 끝나는 일)
+struct OutSender {
+    tx: tokio::sync::mpsc::UnboundedSender<Message>,
+    buffered: Arc<AtomicU64>,
+}
+
+impl OutSender {
+    fn msg(&self, m: &TermServerMsg) -> bool {
+        let m = Message::Text(serde_json::to_string(m).unwrap().into());
+        self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
+        self.tx.send(m).is_ok()
+    }
+}
+
+/// 앞 기록 답(plan §8.67): 찾지 못했으면 붙이지 않는다
+fn history_reply(id: u32, o: Option<aaa_vt::Older>) -> TermServerMsg {
+    match o {
+        Some(o) => TermServerMsg::History { id, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
+        None => TermServerMsg::History { id, data: B64(Vec::new()), lines: 0, more: false, found: false },
+    }
+}
+
 fn frame_len(m: &Message) -> u64 {
     match m {
         Message::Text(t) => t.len() as u64,
@@ -717,6 +739,11 @@ impl Outbox {
 
     fn msg(&self, m: &TermServerMsg) -> bool {
         self.send(Message::Text(serde_json::to_string(m).unwrap().into()))
+    }
+
+    /// 다른 task가 이 줄에 보낼 손잡이(보낸 bytes는 같은 `buffered`에 센다)
+    fn sender(&self) -> OutSender {
+        OutSender { tx: self.tx.clone(), buffered: self.buffered.clone() }
     }
 
     fn buffered(&self) -> u64 {
@@ -931,12 +958,21 @@ async fn pane_session(
                             // 앞 기록 한 덩어리(plan §8.67). 출력 흐름(ACK 창) 밖의 답이라 창에 넣지 않는다:
                             // 한 덩어리는 replay 기록 상한(2000줄·384KiB) 안이다.
                             let anchor: Vec<String> = anchor.into_iter().take(8).collect();
-                            let reply = match host.older_history(&id, &anchor, depth as usize) {
-                                Some(o) => TermServerMsg::History { id: hid, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
-                                None => TermServerMsg::History { id: hid, data: B64(Vec::new()), lines: 0, more: false, found: false },
-                            };
-                            if !out.msg(&reply) {
-                                break;
+                            match host.older_history(&id, &anchor, depth as usize) {
+                                crate::OlderHistory::Ready(o) => {
+                                    if !out.msg(&history_reply(hid, o)) {
+                                        break;
+                                    }
+                                }
+                                // mirror에 없는 앞 기록: session host에 묻는 동안 이 연결의 출력·입력을 막지 않는다(plan §8.107)
+                                crate::OlderHistory::Ask(conn) => {
+                                    let out = out.sender();
+                                    let session = id.clone();
+                                    tokio::spawn(async move {
+                                        let o = Host::older_from_agent(&conn, session, anchor, depth as usize).await;
+                                        out.msg(&history_reply(hid, o));
+                                    });
+                                }
                             }
                             None
                         }
