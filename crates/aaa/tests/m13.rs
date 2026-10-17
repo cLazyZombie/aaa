@@ -1772,14 +1772,18 @@ fn notify_webhook() {
     assert_eq!(line, "POST /hook HTTP/1.1");
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["project"], "demo");
-    let got: Vec<_> = v["items"]
+    // 항목은 들어온 순서다(notify batch). 두 thread는 따로 돌아 부하 아래에서는 n2의 보고가 먼저 올 수 있다.
+    let mut got: Vec<_> = v["items"]
         .as_array()
         .unwrap()
         .iter()
         .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
         .collect();
+    got.sort();
     assert_eq!(got, [(ids[0].as_str(), "new report"), (ids[1].as_str(), "new report")], "{body}");
-    assert!(v["text"].as_str().unwrap().starts_with("[aaa] demo\n- t-0001 new report"), "{body}");
+    let text = v["text"].as_str().unwrap();
+    assert!(text.starts_with("[aaa] demo\n- t-000"), "{body}");
+    assert!(text.contains("\n- t-0001 new report") && text.contains("\n- t-0002 new report"), "{body}");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
     // 보고 없이 쉬던 thread의 세션이 끝나면 사람 차례(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
     // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
