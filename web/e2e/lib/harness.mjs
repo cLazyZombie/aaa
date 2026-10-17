@@ -157,6 +157,14 @@ const screenText = (page) => page.locator(".xterm-rows").innerText();
  * eeee514에서는 글이 맨 아래보다 다섯 줄 위에서 멈춰 보였다(기록 높이는 맞다): viewport 자리와 pane WebSocket 메시지 순서(log)를 더 남긴다.
  * 실패를 넘기지 않는다: 이 값은 오류 글에만 들어간다.
  */
+/** 이 화면이 pane WebSocket으로 보낸 메시지({t: "input", data}·submit·resize·take…, 바이너리 마우스 보고는 {t: "bin", data})를
+ *  from번째부터. 사건 처리 안에서 보낸 것은 그 동작(click·press·evaluate)이 끝났을 때 이미 있다 */
+const sentFrames = (page, from = 0) => page.evaluate((n) => window.__aaaSent.slice(n), from);
+/** 지금까지 보낸 메시지 수(sentFrames의 from으로 쓴다) */
+const sentCount = (page) => page.evaluate(() => window.__aaaSent.length);
+/** 그중 터미널에 들어가는 글(input·bin)을 이어 붙인 것 */
+const sentText = (frames) => frames.filter((f) => f.t === "input" || f.t === "bin").map((f) => f.data).join("");
+
 async function termDiag(page) {
   const now = () =>
     page.evaluate(() => {
@@ -405,7 +413,8 @@ async function openSettings(p, pageName) {
   return dialog;
 }
 
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers } = {}) {
+// setup(ctx): 화면을 열기 전에 context에 건다(lib/devices.mjs가 기기 기록 binding과 그 기기의 규칙을 건다)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -415,6 +424,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
     ...(deviceScaleFactor ? { deviceScaleFactor } : {}),
     ...(serviceWorkers ? { serviceWorkers } : {}),
   });
+  if (setup) await setup(ctx);
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   if (init) await ctx.addInitScript(init);
   // 모든 frame에서 돈다: sandbox frame(결과물 보기)은 localStorage를 읽기만 해도 던진다
@@ -426,9 +436,13 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
     });
   // 터미널 진단 기록(termDiag가 읽는다): pane WebSocket의 글 메시지 종류·크기·순서, 받은 출력 묶음, 닫힘,
   // xterm viewport의 scroll 사건. CI에서만 난 실패의 순서를 보려고 둔다. 화면에는 손대지 않는다.
+  // 보낸 것(sentFrames가 읽는다): pane WebSocket으로 보낸 ack·history 밖의 메시지 전부. 키·마우스·붙여넣기 처리는 그 사건 안에서
+  // 바로 보내므로, 동작이 끝난 뒤 여기에 없으면 이 화면은 보내지 않았다(「보내지 않았다」를 sleep 없이 본다).
   await ctx.addInitScript(() => {
     const log = [];
     Object.defineProperty(window, "__aaaTermLog", { value: log });
+    const sent = [];
+    Object.defineProperty(window, "__aaaSent", { value: sent });
     const t0 = performance.now();
     // 받은 출력(bin)과 보낸 ACK(ack)는 다른 기록 사이마다 한 줄(io)로 묶는다(수가 많아 다른 기록을 밀어내지 않게)
     const push = (e) => {
@@ -454,6 +468,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       constructor(...a) {
         super(...a);
         if (!String(a[0]).includes("/panes/")) return;
+        this.pane = true;
         push("ws open");
         this.addEventListener("message", (m) => {
           if (typeof m.data !== "string") return push(`bin ${m.data.byteLength ?? m.data.size}`);
@@ -464,6 +479,16 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       }
       send(d) {
         if (typeof d === "string") push(d.startsWith('{"t":"ack"') ? `ack ${JSON.parse(d).offset}` : `send ${d.slice(0, 50)}`);
+        // 기록이 보내기를 막지 않는다(못 읽으면 그렇다고 남긴다)
+        if (this.pane)
+          try {
+            if (typeof d !== "string") {
+              const b = d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+              sent.push({ t: "bin", data: String.fromCharCode(...b) });
+            } else if (!/^\{"t":"(ack|history)"/.test(d)) sent.push(JSON.parse(d));
+          } catch (e) {
+            sent.push({ t: "unreadable", data: String(e) });
+          }
         super.send(d);
       }
     };
@@ -504,7 +529,8 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   if (process.env.AAA_E2E_THROTTLE && browser.browserType().name() === "chromium")
     await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.AAA_E2E_THROTTLE) });
   const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  // 글과 stack 맨 위 두 자리(번들 안 file:줄:칸): 한 번만 난 화면 오류도 어디서 났는지 남긴다
+  page.on("pageerror", (e) => errors.push([String(e), ...String(e.stack ?? "").split("\n").slice(1, 3).map((l) => l.trim())].join(" ")));
   await page.goto(base);
   // 넣은 글꼴을 터미널을 열기 전에 받아 둔다(늘 쓰는 기기처럼 cache에 있는 상태). 늦게 받아지면 칸 높이·줄 수가 바뀌어
   // 그 단계가 재는 것(끌기 줄 수·크기)과 겹친다: CI 러너에는 깔린 글꼴이 없어 매번 늦게 받았다(41e81eb 휴대폰 끌기).
@@ -954,6 +980,6 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, claudeSh, clearScreen,
-  claudeAsk, claudeWorking, claudeIdle,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle,
 };

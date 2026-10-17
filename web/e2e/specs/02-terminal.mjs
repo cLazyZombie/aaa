@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  repo, root, sleep, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings,
+  repo, root, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -136,6 +136,7 @@ export default async function ({ ctl, page }) {
     await until("원래 화면이 쓰는 중", () => holder() !== null);
     const held = t1size();
     const first = holder();
+    const opSent = await sentCount(op);
     await op.getByTestId("pane-t1").click();
     await until("둘째 화면 터미널", async () => (await screenText(op)).includes("own-3"));
     // 「다른 화면이 크기를 정하는 중」 띠와 「화면에 맞추기」 단추는 참고에 없어 없앴다
@@ -143,8 +144,20 @@ export default async function ({ ctl, page }) {
     if ((await op.getByRole("button", { name: "화면에 맞추기" }).count()) !== 0) throw new Error("화면에 맞추기 단추가 있다");
     // 입력 막대가 켜져 있다(보기 권한이 아니면 언제나 입력된다). 열기만 해서는 크기를 바꾸지 않는다
     if (await op.getByLabel("보낼 글").isDisabled()) throw new Error("다른 화면이 쓰는 중이라고 입력 막대가 꺼졌다");
-    await sleep(600);
-    if (t1size() !== held || holder() !== first) throw new Error(`열기만 했는데 크기·쓰는 화면이 바뀌었다: ${held} → ${t1size()}`);
+    // 열 때의 맞추기 판단(Term data-fit)이 나고(연결 전 off가 아니다) 크기 바뀜 뒤 남은 맞추기가 없을 때까지. 크기는 그 판단 안에서
+    // 바로 보내므로, 그 판단이 「다른 화면이 쓰는 중」이고 그 뒤 보낸 것에 resize·take가 없으면 이 화면은 걸지 않았다(sleep으로 어림하지 않는다)
+    const opTerm = op.getByTestId("terminal");
+    const fit = async () => ({ fit: await opTerm.getAttribute("data-fit"), pending: await opTerm.getAttribute("data-fit-pending") });
+    await until("열 때 맞추기 판단", async () => {
+      const f = await fit();
+      return f.fit !== null && f.fit !== "off" && f.pending === null;
+    }).catch(async (e) => {
+      throw new Error(`${e.message}: ${JSON.stringify(await fit())}`);
+    });
+    const decided = (await fit()).fit;
+    const claimed = (await sentFrames(op, opSent)).filter((f) => f.t === "resize" || f.t === "take");
+    if (decided !== "other" || claimed.length || t1size() !== held || holder() !== first)
+      throw new Error(`열기만 했는데 크기·쓰는 화면이 바뀌었다: ${held} → ${t1size()}, 판단 ${decided}, 보낸 것 ${JSON.stringify(claimed)}`);
     // 1) 입력하면 바로 들어가고, 그 화면이 지금 쓰는 화면이 되어 자기 칸 크기로 맞춘다
     await op.getByLabel("보낼 글").fill("echo direct-$((3*7))");
     await op.getByRole("button", { name: "보내기" }).click();
@@ -218,8 +231,11 @@ export default async function ({ ctl, page }) {
     if (!banner.includes("보기 권한")) throw new Error(`reader 배너: ${banner}`);
     if ((await rp.getByLabel("보낼 글").count()) !== 0) throw new Error("reader에게 입력 막대");
     await rp.getByTestId("terminal").click();
+    // 키 입력은 그 키 사건 안에서 보낸다: 다 친 뒤 이 화면이 보낸 입력이 없으면 PTY에 갈 것이 없다(host 쪽 거부는 11 「그림 붙여 넣기」 5))
+    const k = await sentCount(rp);
     await rp.keyboard.type("echo reader-$((1+1))\n");
-    await sleep(800);
+    const typed = (await sentFrames(rp, k)).filter((f) => f.t === "input" || f.t === "bin" || f.t === "submit");
+    if (typed.length) throw new Error(`reader 화면이 입력을 보냈다: ${JSON.stringify(typed)}`);
     const lines = aaa("pane", "read", "t1", "--source", "visible").text;
     if (lines.includes("reader-")) throw new Error("reader 입력이 PTY에 들어갔다");
     await shot(rp, "mobile-reader");

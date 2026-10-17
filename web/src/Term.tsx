@@ -544,6 +544,11 @@ export function TermView({
     const parsedSub = term.onWriteParsed(() => {
       if (document.activeElement === term.textarea) trace("write");
       followCursor.current();
+      // 받은 출력을 다 읽은 뒤의 버퍼 자리(맨 위 줄·baseY). 올려 둔 동안 아래에 줄이 붙으면 그리기(onRender, data-view-*)는 오지 않아,
+      // 시험이 「출력이 와도 올려 둔 자리」를 이 표지 뒤에 본다(웹 E2E 07 「터미널 스크롤」)
+      const buf = term.buffer.active;
+      el.dataset.parsedTop = String(buf.viewportY);
+      el.dataset.parsedBase = String(buf.baseY);
     });
     // 실기 입력 사건 기록(켜져 있을 때만 모은다, inputTrace.ts)
     const stopTrace = attachTrace(term.textarea!, scrollRef.current!);
@@ -1289,11 +1294,14 @@ export function TermView({
           if (stoppedHidden && document.visibilityState === "visible") queueMicrotask(reattach);
           return;
         }
-        if (!stopped)
+        if (!stopped) {
           timer = window.setTimeout(() => {
             timer = undefined;
             connect();
           }, delay);
+          // 표지: 어느 close 뒤에 몇 ms 뒤 다시 붙기를 걸었다. 시험이 「4008 뒤 스스로 다시 붙지 않는다」를 그 close 처리 뒤에 sleep 없이 본다(웹 E2E 07 흐름 제어)
+          el.dataset.retry = `${event.code} ${delay}`;
+        }
         delay = Math.min(delay * 2, 10_000);
       };
     };
@@ -1409,16 +1417,22 @@ export function TermView({
   };
   const autoFit = useRef((_claim?: boolean) => {});
   autoFit.current = (claim = false) => {
-    if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return;
+    // 표지 `data-fit`: 마지막 맞추기 판단(off·released·other·keyboard·unsized·sent·same). 크기는 그 판단 안에서 바로 보내므로,
+    // 시험이 「열기만 해서는 크기를 걸지 않는다」를 그 판단 뒤에 sleep 없이 본다(웹 E2E 02 「두 controller」)
+    const mark = (why: string): void => {
+      if (box.current) box.current.dataset.fit = why;
+    };
+    if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return mark("off");
     // 보기만 하는 동안은 크기를 걸지 않는다(돌아올 때 back이 풀고 건다)
-    if (releasedRef.current) return;
-    if (heldByOther && !claim) return;
-    if (keyboardHolds()) return;
+    if (releasedRef.current) return mark("released");
+    if (heldByOther && !claim) return mark("other");
+    if (keyboardHolds()) return mark("keyboard");
     const dims = fitRef.current?.proposeDimensions();
-    if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return;
-    if (dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther))
-      send({ t: "resize", cols: dims.cols, rows: dims.rows });
+    if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return mark("unsized");
+    const change = dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther);
+    if (change) send({ t: "resize", cols: dims.cols, rows: dims.rows });
     fitted();
+    mark(change ? "sent" : "same");
   };
   useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
   // 대화 보기는 grid를 가린다: 이 화면이 건 크기를 놓아 터미널을 보는 다른 화면이 되찾게 한다(PaneTerminal 2049~2056줄)
@@ -1514,11 +1528,17 @@ export function TermView({
     const el = box.current;
     if (!el) return;
     let t: number | undefined;
+    // 표지 `data-fit-pending`: 크기 바뀜 뒤 맞추기를 기다리는 동안(그 판단은 data-fit에 남는다)
     const ro = new ResizeObserver(() => {
       window.clearTimeout(t);
+      el.dataset.fitPending = "1";
       t = window.setTimeout(() => {
+        delete el.dataset.fitPending;
         // 키보드가 화면 아래를 가렸다: grid는 그대로, 터미널만 커서 줄로 옮긴다(맞출 수 없는 화면도)
-        if (keyboardHolds()) return;
+        if (keyboardHolds()) {
+          el.dataset.fit = "keyboard";
+          return;
+        }
         autoFit.current();
       }, 120);
     });
