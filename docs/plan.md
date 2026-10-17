@@ -2547,11 +2547,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」, 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「사람 차례 n · 작업 중 n」, 없으면 「쉼」, 사람 차례가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
   - thread의 머신은 pane이 있으면 pane의 머신, 없으면 thread 머신 이름·ID(웹 `threadMachine`). thread pane은 pane 줄로 다시 나오지 않는다. 끝난·평가자 thread는 빠진다.
   - 차례는 묶음 rank(사람 차례 → 검토 대기 → 작업 중 → 쉼) 다음 최근 바뀐 순(웹 `sortThreads`).
-  - 첫 줄 `   <상태 점> t-0001 · 제목`(점은 그 pane에서 harness가 돌면 pane 상태: herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`, 웹 thread 줄 `PaneState`. 그래서 확인창은 묶음이 사람 차례로 바뀌는 30초 전에도 빨강이다. harness가 없으면 묶음 점), 둘째 줄 `     <상태 말>`(묶음 색): 묶음 말과 사실 하나. 사람 차례는 pane 닫힘·실패·확인창·~n%, 검토 대기는 보고, 작업 중은 5분 안에 보고한 진행률 ~n%(100은 빼고) 아니면 보고·변경 뒤 5분이 지나면 「n분 조용」. 「n분 조용」이 늘어나게 1분마다 다시 그린다.
+  - 첫 줄 `   <상태 점> t-0001 · 제목`(점은 thread 묶음 점과 그 pane 상태 점 중 급한 쪽(herdr-web-ui `rollupStatus` 차례: 확인창 > 끝남 > 작업 > 쉼). herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`, 웹 thread 줄은 오른쪽 `PaneState`다. 그래서 확인창은 묶음이 사람 차례로 바뀌는 30초 전에도 빨강이고, 사람 차례 thread는 harness가 쉬어도 초록이 되지 않는다), 둘째 줄 `     <상태 말>`(묶음 색): 묶음 말과 사실 하나. 사람 차례는 pane 닫힘·실패·확인창·~n%, 검토 대기는 보고, 작업 중은 5분 안에 보고한 진행률 ~n%(100은 빼고) 아니면 보고·변경 뒤 5분이 지나면 「n분 조용」. 「n분 조용」이 늘어나게 1분마다 다시 그린다.
+  - 오른쪽 글이 이름 자리를 먹으면(26칸에서 「사람 차례 2 · 작업 중 1」) ` · ` 단위로 뒤를 덜어 낸다.
   - 둘째 줄은 고르지 않는다. 탐색 ↑↓는 건너뛰고, 누르면 그 thread, 고른·지금 thread는 두 줄을 같이 칠하고, 고른 thread가 아래 끝이면 둘째 줄까지 보이게 내린다. 지금 pane이 thread pane이면 그 thread 줄을 고른 줄로 삼는다.
   - 접힌 compact 열은 그대로(thread·pane마다 번호와 점, 차례는 위 목록 차례).
-- **다른 점.** 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴·agents 묶음은 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
-- **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래.
+- **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴·agents 묶음은 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
+- **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

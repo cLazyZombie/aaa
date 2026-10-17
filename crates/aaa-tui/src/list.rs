@@ -227,12 +227,25 @@ pub fn thread_dot(t: &ThreadView) -> Dot {
     }
 }
 
-/// thread 줄 점: 그 pane에서 harness가 돌면 pane 상태(herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`,
-/// 웹 thread 줄 `PaneState`), 아니면 thread 묶음. 확인창이 뜨면 묶음이 사람 차례로 바뀌기(30초) 전에도 빨강이다.
+/// 점이 얼마나 급한가(herdr-web-ui `rollupStatus`: blocked > done > working > idle)
+fn urgency(d: Dot) -> u8 {
+    match d {
+        Dot::Blocked => 4,
+        Dot::Done => 3,
+        Dot::Working => 2,
+        Dot::Idle => 1,
+        Dot::Unknown => 0,
+    }
+}
+
+/// thread 줄 점: thread 묶음 점과 그 pane 상태 점(herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`,
+/// 웹 thread 줄은 오른쪽 `PaneState`) 중 급한 쪽. 확인창이 뜨면 묶음이 사람 차례로 바뀌기(30초) 전에도 빨강이고,
+/// 사람 차례 thread의 harness가 쉬고 있어도 초록이 되지 않는다.
 pub fn thread_row_dot(t: &ThreadView, panes: &HashMap<String, PaneView>) -> Dot {
+    let group = thread_dot(t);
     match t.pane.as_deref().and_then(|id| panes.get(id)).map(pane_dot) {
-        Some(d) if d != Dot::Unknown => d,
-        _ => thread_dot(t),
+        Some(d) if urgency(d) > urgency(group) => d,
+        _ => group,
     }
 }
 
@@ -352,7 +365,17 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
         } else {
             None
         };
-        let (left, right) = line(row, v, current || sel);
+        let (left, mut right) = line(row, v, current || sel);
+        // 오른쪽 글(프로젝트 셈 「사람 차례 2 · 작업 중 1」)이 이름 자리를 먹으면 ` · ` 단위로 뒤를 덜어 낸다
+        let lw: usize = left.iter().map(|(t, _)| unicode_width(t)).sum();
+        if let Some((t, _)) = right.as_mut() {
+            while lw + unicode_width(t) + 2 > r.w as usize {
+                match t.rsplit_once(" · ") {
+                    Some((head, _)) => *t = head.to_string(),
+                    None => break,
+                }
+            }
+        }
         // 오른쪽 글(상태)은 이름과 한 칸 띄우고 끝 한 칸을 비운다. 넘치는 이름은 herdr `truncate_end`처럼 「…」로 자른다
         // (herdr `resolved_token_spans`: 토큰 사이 구분자, 잘린 토큰 끝 「…」)
         let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16).unwrap_or(0);
@@ -795,11 +818,27 @@ mod tests {
         assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
         working.get_mut("p1").unwrap().agent = None;
         assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
+        // harness가 쉬어도 묶음이 더 급하면 묶음 점
         working.get_mut("p1").unwrap().agent = agent(AgentActivity::Idle, None, None);
-        assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Idle);
+        assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
+        let mut waiting = threads["demo/t-0001"].clone();
+        waiting.group = ThreadGroup::WaitingOnYou;
+        assert_eq!(thread_row_dot(&waiting, &working), Dot::Blocked);
         let selection = if pal.selection_bg == Color::Reset { pal.active_row_bg } else { pal.selection_bg };
         assert_eq!((buf[(0, 5)].bg, buf[(0, 6)].bg), (selection, selection));
         assert_ne!(buf[(0, 4)].bg, selection);
+
+        // 26칸 사이드바(구분선 빼고 25칸)에서는 셈을 ` · ` 단위로 덜어 이름을 남긴다
+        let w = 25;
+        let mut narrow = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
+        render(&mut narrow, Rect { x: 0, y: 0, w, h: 1 }, &list[2..3], &View { sel: 0, focused: false, ..v });
+        let (mut out, mut x) = (String::new(), 0);
+        while x < w {
+            let sym = narrow[(x, 0)].symbol().to_string();
+            x += (unicode_width(&sym) as u16).max(1);
+            out.push_str(&sym);
+        }
+        assert_eq!(out.trim_end(), " demo        사람 차례 1");
     }
 
     /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
