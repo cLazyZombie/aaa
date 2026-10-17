@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use lab::{Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag};
+use lab::{Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag, window};
 use serde_json::Value;
 
 const T: Duration = Duration::from_secs(30);
@@ -131,6 +131,8 @@ while IFS= read -r line; do
       # 중첩 세션(다른 session_id)과 하위 agent의 Stop: 이 pane의 턴은 끝나지 않았다(버려야 한다)
       hook '{"hook_event_name":"Stop","session_id":"fake-nested"}'
       hook '{"hook_event_name":"Stop","session_id":"fake-1","agent_id":"sub-1"}'
+      # 같은 agent 연결로 뒤따르는 진행 보고: host가 이것을 보였으면 앞의 Stop 둘도 처리했다(시험의 울타리)
+      "$AA" report --percent 50 --activity '중첩 Stop 뒤'
       # 시험이 slow-go를 만들어야 턴이 끝난다(그 전에 보낸 글은 다음 턴으로 줄 선다)
       echo "nested sent"; while [ ! -f slow-go ]; do sleep 0.1; done; echo "slow done" ;;
     *long*)
@@ -413,6 +415,21 @@ impl World {
     fn kinds(&self, after: u64) -> Vec<String> {
         let v = self.h.ok(&["events", "demo", "--after", &after.to_string()]);
         v["events"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect()
+    }
+
+    fn nudges(&self) -> usize {
+        self.kinds(0).iter().filter(|k| *k == "nudge_sent").count()
+    }
+
+    /// coordinator nudge(inbox.rs `nudge`, `inbox_and_nudge`의 nudge_idle_secs 2·nudge_quiet_secs 1)가 보낼 수 있는 때를 지나며
+    /// tick을 돌린다: 첫 tick이 화면을 처음 보고, 2초 뒤 tick이 입력창을 처음 보고, 1초 뒤 tick이 보낸다. 보내는 것은 tick 안에서
+    /// `nudge_sent` 사건으로 남으므로, 이 뒤에 그 사건이 없으면 host가 막았다(고정 sleep 뒤 화면을 보면 늦은 tick을 놓친다)
+    fn nudge_window(&self) {
+        self.h.ticks(1);
+        window(Duration::from_secs(2));
+        self.h.ticks(1);
+        window(Duration::from_secs(1));
+        self.h.ticks(1);
     }
 
     /// 원격(TLS) agent labB를 등록하고 띄운다
@@ -757,7 +774,7 @@ fn hooked_thread_questions_and_messages() {
     assert!(!w.h.screen(&pane).contains("slow done"));
     // 중첩 세션·하위 agent의 Stop은 버린다(herdr-projects progress.rs eligible·foreign_session)
     w.wait_screen(&pane, "nested sent");
-    std::thread::sleep(Duration::from_millis(500));
+    w.wait_show("중첩 Stop 뒤 진행 보고", &id, |v| v["agent"]["progress"] == "중첩 Stop 뒤");
     assert_eq!(w.h.pane(&pane)["agent"]["activity"], "working", "다른 세션의 Stop으로 턴이 끝난 것으로 보였다");
     std::fs::write(cwd.join("slow-go"), "").unwrap();
     let screen = w.wait_screen(&pane, "got: second");
@@ -1016,7 +1033,8 @@ fn inbox_and_nudge() {
         (items[0]["item_kind"].as_str(), items[0]["event"].as_str()),
         (Some("thread-state"), Some("new report"))
     );
-    std::thread::sleep(Duration::from_secs(5));
+    w.nudge_window();
+    assert_eq!(w.nudges(), 0, "쓰던 글이 있는데 알렸다: {}", w.h.screen(&coord));
     assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
 
     // 쓰던 글을 보내고 나면 알린다
@@ -1024,8 +1042,10 @@ fn inbox_and_nudge() {
     w.wait_screen(&coord, "got: draft-text");
     let screen = w.wait_screen(&coord, "got: [aaa inbox]");
     assert!(screen.contains(&format!("got: [aaa inbox] {id} new report (aaa inbox list demo)")), "{screen}");
-    // 같은 묶음은 다시 보내지 않는다
-    std::thread::sleep(Duration::from_secs(4));
+    // 같은 묶음은 다시 보내지 않는다(받은 뒤 입력창이 다시 비어 화면이 멈춘 때부터 보낼 수 있는 때를 지난다)
+    wait_for("입력창 비어 멈춤", T, || w.h.screen(&coord).trim_end().ends_with('❯').then_some(()));
+    w.nudge_window();
+    assert_eq!(w.nudges(), 1, "{}", w.h.screen(&coord));
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 1, "{}", w.h.screen(&coord));
 
     // context가 보인 항목은 「봤다」가 되어 다음 알림에 다시 나오지 않는다(herdr-projects `context`).
@@ -1592,7 +1612,14 @@ fn routines() {
     assert_eq!(items("routine", "ping").len(), 1);
     // 승인 전에는 실행하지 않고, 같은 명령에는 「승인 필요」를 한 번만 남긴다
     wait_for("승인 필요", T, || items("routine-approval", "cmd").into_iter().next());
-    std::thread::sleep(Duration::from_secs(3));
+    // 그 뒤 차례(every 2s)를 판정한 것은 last_run_ms로 본다(routine.rs `routine_pass`는 판정한 뒤 last_run_ms와 같이 저장한다).
+    // 항목을 본 때 읽은 값은 항목을 만든 차례의 저장 전일 수 있어 두 번 넘어가기를 기다린다
+    let mut last = routine("cmd")["last_run_ms"].as_u64();
+    for n in 1..=2 {
+        last = wait_for(&format!("승인 필요 뒤 차례 {n}"), T, || {
+            Some(routine("cmd")["last_run_ms"].as_u64()).filter(|now| *now > last)
+        });
+    }
     assert_eq!(items("routine-approval", "cmd").len(), 1);
     assert!(items("routine", "cmd").is_empty());
 
@@ -1655,8 +1682,22 @@ fn routines() {
     assert!(first["body"].as_str().unwrap().contains("```text\nv1\n```"), "{first}");
     let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
     assert!(md.contains("```text\nv1\n```"), "{md}");
-    std::thread::sleep(Duration::from_secs(4));
-    assert_eq!(items("routine", "cmd").len(), 1);
+    // 다음 실행이 끝났다는 사건(`routine_ran`, 항목을 만들 판정 뒤에 남는다)을 본 뒤 항목 수를 센다. 승인 전에는 돌지 않았으니
+    // 첫 사건이 v1을 낸 실행이고 둘째가 다음 실행이다
+    let ran = wait_for("다음 실행", T, || {
+        Some(
+            w.h.ok(&["events", "demo"])["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["kind"] == "routine_ran" && e["detail"].as_str().is_some_and(|d| d.starts_with("cmd:")))
+                .map(|e| e["detail"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .filter(|v| v.len() >= 2)
+    });
+    assert_eq!(items("routine", "cmd").len(), 1, "{ran:?}");
+    assert!(ran[1].contains("출력 같음"), "{ran:?}");
     std::fs::write(dir.join("value.txt"), "v2\n").unwrap();
     wait_for("두 번째 출력", T, || (items("routine", "cmd").len() == 2).then_some(()));
     // 명령을 고치면 승인이 풀린다
@@ -1927,7 +1968,10 @@ fn machine_health() {
     };
     let items = wait_for("inbox 이상 항목", T, || Some(health(&w)).filter(|v| !v.is_empty()));
     assert!(items.len() == 1 && items[0].0 == "problem" && items[0].1.contains("labA"), "{items:?}");
-    std::thread::sleep(Duration::from_secs(3));
+    // 같은 이상은 다시 남기지 않는다: 그 뒤 점검 보고(every_s = 1)가 새로 온 다음 tick에서도 하나다
+    let at = w.h.machine("labA").unwrap()["health"]["at_ms"].as_u64();
+    wait_for("다음 점검 보고", T, || w.h.machine("labA").filter(|m| m["health"]["at_ms"].as_u64() > at));
+    w.h.ticks(1);
     assert_eq!(health(&w).len(), 1, "같은 이상은 다시 남기지 않는다");
 
     // 고치고 다시 띄우면 풀린다

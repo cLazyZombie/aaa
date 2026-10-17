@@ -155,6 +155,17 @@ impl Node {
     pub fn ticks(&self, n: usize) -> u64 {
         (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
     }
+
+    /// 이 agent 노드에서 세션의 session host PID(세션 폴더 meta.json)
+    pub fn session_host_pid(&self, session: &str) -> Option<u32> {
+        let text = std::fs::read_to_string(self.state.join("agent/sessions").join(session).join("meta.json")).ok()?;
+        serde_json::from_str::<Value>(&text).ok()?["host_pid"].as_u64().map(|p| p as u32)
+    }
+
+    /// 그 session host가 끝났다(PID가 없거나 다른 프로세스가 됐다). 세션 폴더를 지운 뒤에도 명령줄로 가린다
+    pub fn session_host_gone(&self, pid: u32, session: &str) -> bool {
+        command_of(pid).is_none_or(|c| !(cfg!(windows) || c.contains(session)))
+    }
 }
 
 impl Lab {
@@ -365,6 +376,12 @@ impl Lab {
 }
 
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.
+/// 시간 규칙의 창(host.toml로 줄인 `nudge_idle_secs`·`nudge_quiet_secs` 등)이 지나기를 기다린다. 「안 일어났다」는 이 뒤에
+/// `Node::ticks`로 host가 창이 지난 상태를 판정했음을 본 다음에 단언한다(docs/testing.md 「tick만으로 증명되지 않는 것」).
+pub fn window(d: Duration) {
+    std::thread::sleep(d); // fixed wait: 창이 지나는 것이 시험할 규칙이다(그 시각 판정은 유닛 시험이 now 인자로 본다)
+}
+
 pub fn wait_for<T>(what: &str, timeout: Duration, f: impl FnMut() -> Option<T>) -> T {
     wait_for_diag(what, timeout, f, String::new)
 }

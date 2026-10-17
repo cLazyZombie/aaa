@@ -10,8 +10,7 @@
   "web/e2e/specs/09-ime.mjs": 7,
   "web/e2e/specs/10-soft-keyboard.mjs": 7,
   "web/e2e/specs/11-agent-panes.mjs": 3,
-  "crates/aaa/tests/e2e.rs": 1,
-  "crates/aaa/tests/m13.rs": 7,
+  "crates/aaa/tests/m13.rs": 1,
   "crates/aaa/tests/tui.rs": 4,
   "crates/aaa-host/src/notify.rs": 2,
   "crates/aaa-tui/src/input_source.rs": 4
