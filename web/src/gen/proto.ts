@@ -368,7 +368,7 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "working" | "idle" | "resolved";
+export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "resolved";
 
 export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, role: Role, 
 /**

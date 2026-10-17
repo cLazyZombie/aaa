@@ -157,6 +157,7 @@ pub(crate) fn thread_rec(
         review_item_hash: None,
         group_changed_ms: None,
         report_changed_ms: None,
+        merged_seen_ms: None,
         error: opt(&t.error),
         eval_cursor: 0,
         eval_batches: 0,

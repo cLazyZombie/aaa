@@ -473,12 +473,16 @@ pub enum AgentRequest {
         target: String,
         message: String,
     },
-    /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
+    /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
+    /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.106).
+    /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
+    /// `base`는 읽지 않는다(branch를 남긴다).
     ThreadCleanup {
         repo: Option<String>,
         cwd: String,
         branch: Option<String>,
-        base: Option<String>,
+        #[serde(default)]
+        merged_head: Option<String>,
         keep_worktree: bool,
     },
     /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
@@ -499,6 +503,9 @@ pub enum PrQuery {
     Find { branch: String },
     /// `gh`가 쓰는 계정 login
     Login,
+    /// `repo`(`owner/repo`)에서 `gh` 계정이 연 열린 PR 번호들, 쉼표로(herdr-projects `open_own_numbers`).
+    /// agent 기능 `pr.v2`가 있을 때만 보낸다.
+    OpenOwn { repo: String },
 }
 
 /// PR 조회 결과. `out`은 질문마다 view JSON·찾은 주소·login이다.
@@ -1323,7 +1330,7 @@ pub enum FrontRequest {
         project: String,
         id: String,
     },
-    /// 개선안 채택·보류(채택은 결정 기록에 남는다)
+    /// 개선안 채택·보류(평가 기록에 누가 언제 정했는지 남는다)
     EvaluationDecide {
         project: String,
         id: String,
