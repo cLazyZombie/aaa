@@ -83,6 +83,9 @@ pub(crate) struct ThreadRec {
     /// 보고 hash가 마지막으로 바뀐 시각(herdr-projects `last_report_change`)
     #[serde(default)]
     pub report_changed_ms: Option<u64>,
+    /// ticker가 PR 병합을 처음 본 때(herdr-projects ticker 상태 `merged_seen`). 끝내거나 다시 열면 지운다
+    #[serde(default)]
+    pub merged_seen_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
     /// 사후 평가자: 마지막으로 넘긴 사건 seq, 넘긴 묶음 수, 마지막 묶음 시각(§8.13)
@@ -96,14 +99,15 @@ pub(crate) struct ThreadRec {
     pub updated_at_ms: u64,
 }
 
-/// thread 시작 인자
-/// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났다
+/// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났거나, PR이 병합됐다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolveWhy {
     Manual,
     Auto { days: u32 },
+    Merged,
 }
 
+/// thread 시작 인자
 pub struct StartArgs {
     pub project: String,
     pub title: String,
@@ -213,8 +217,8 @@ pub(crate) const WAITING: &str = "Waiting for you";
 
 /// thread 묶음. 위에서부터 처음 맞는 줄이 이긴다. herdr-projects `thread::group()`(src/thread.rs)을 옮겼다.
 /// prompt_pending은 brief `Pending`, brief_stuck은 `Unknown`(aaa는 다시 보내지 않는다), harness 상태는 pane agent 활동,
-/// blocked는 `Question`이다. 다른 점: PR(Landing)은 없고(aaa는 merge 대기열), 보고 사본 실패는 사람 차례로 둔다
-/// (aaa는 보고를 host로 복사한다). 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
+/// blocked는 `Question`이다. 다른 점: 보고 사본 실패는 사람 차례로 둔다(aaa는 보고를 host로 복사한다).
+/// 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
 /// 진행을 보고하는 agent의 새 보고는 `Done`일 때만 검토 대기다(5번 줄, plan §8.85).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
     use AgentActivity as A;
@@ -257,13 +261,17 @@ pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&Agen
     if (state == Some(A::Question) && state_ms >= BLOCKED_DEBOUNCE_MS) || self_waiting {
         return ThreadGroup::WaitingOnYou;
     }
-    // 5: 새 보고. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는 결과가 아니다).
-    //    진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이다(herdr-projects steps.rs
+    // 5: PR과 보고. 열리고 승인된 PR은 병합 중이다. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는
+    //    결과가 아니다). 진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이다(herdr-projects steps.rs
     //    `merged_thread_may_resolve`). 배경 명령을 기다리며 턴을 끝낸 중간 보고는 검토 대기가 아니다. pane이 닫혔으면
     //    더 보고할 수 없으니 참고대로 둔다.
+    let pr_open = r.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("open"));
+    if pr_open && r.pr_review.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("approved")) {
+        return ThreadGroup::Landing;
+    }
     let unfinished = pane_exists && reported.is_some_and(|a| a.percent != Some(100));
     let new_report = has_report && r.report_hash != r.acked_hash;
-    if new_report && !prompt_pending && state != Some(A::Working) && !unfinished {
+    if (new_report || (has_report && pr_open)) && !prompt_pending && state != Some(A::Working) && !unfinished {
         return ThreadGroup::ReadyForReview;
     }
     // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`DELIVERED_WORKING_MS`)
@@ -661,6 +669,7 @@ impl Host {
             review_item_hash: None,
             group_changed_ms: Some(now),
             report_changed_ms: None,
+            merged_seen_ms: None,
             error: None,
             eval_cursor: 0,
             eval_batches: 0,
@@ -1130,6 +1139,7 @@ impl Host {
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Resolved;
             r.last_group = Some(ThreadGroup::Resolved);
+            r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
         if let Some(pane) = &rec.pane
@@ -1141,12 +1151,13 @@ impl Host {
         let mut notes = Vec::new();
         if let Some(cwd) = &rec.cwd {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
+            let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
             match conn
                 .request(AgentRequest::ThreadCleanup {
                     repo,
                     cwd: cwd.clone(),
                     branch: rec.branch.clone(),
-                    base: rec.base.clone(),
+                    merged_head,
                     keep_worktree,
                 })
                 .await
@@ -1177,6 +1188,10 @@ impl Host {
                 "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
                 crate::transitions::label(&rec)
             ),
+            // herdr-projects `resolve_after_copy` 「resolved (merged)」
+            ResolveWhy::Merged => {
+                format!("{}: PR이 병합돼 저절로 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec))
+            }
         };
         if !notes.is_empty() {
             summary.push_str(&format!(": {}", notes.join("; ")));
@@ -1185,7 +1200,8 @@ impl Host {
         if rec.role != Role::Evaluator {
             self.inbox_add(project, "thread-state", id, "resolved", &summary);
         }
-        Ok(self.thread_view(&rec))
+        // 정리 중 resolve 때 찾은 PR(`last_pr_lookup`)이 기록을 고쳤을 수 있다
+        Ok(self.thread_view(&self.load(project, id).unwrap_or(rec)))
     }
 
     /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`): 기록만 열린 것으로 돌리고 아무것도 띄우지 않는다.
@@ -1202,8 +1218,9 @@ impl Host {
         }
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Open;
-            // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다)
+            // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다). 병합을 본 때도 다시 잰다
             r.last_group = None;
+            r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
         self.flow(&rec, "thread_reopened", None, "다시 열었다(아무것도 띄우지 않았다)");
@@ -1303,6 +1320,7 @@ mod tests {
             review_item_hash: None,
             group_changed_ms: None,
             report_changed_ms: None,
+            merged_seen_ms: None,
             error: None,
             eval_cursor: 0,
             eval_batches: 0,
@@ -1399,6 +1417,30 @@ mod tests {
         let t = with_report(open_thread());
         assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Working);
         // 오래 뜬 확인창이 새 보고를 이긴다
+        assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
+    }
+
+    /// herdr-projects thread.rs `row5_landing_needs_open_and_approved`·`row6_ready_for_review_until_ack_or_while_pr_open`
+    #[test]
+    fn row5_landing_and_an_open_pull_request() {
+        let pr = |t: ThreadRec, state: &str, review: &str| ThreadRec {
+            pr_state: Some(state.into()),
+            pr_review: Some(review.into()),
+            ..t
+        };
+        let t = pr(with_report(open_thread()), "OPEN", "APPROVED");
+        assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::Landing);
+        // 승인된 열린 PR은 일하는 harness보다 먼저다(참고 5번 줄이 6번보다 앞)
+        assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Landing);
+        let changes = pr(t.clone(), "OPEN", "CHANGES_REQUESTED");
+        assert_eq!(g(&changes, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
+        // 확인한 보고라도 PR이 열려 있으면 검토 대기, 병합되면 쉼
+        let acked = ThreadRec { acked_hash: Some("h".into()), ..pr(t.clone(), "OPEN", "") };
+        assert_eq!(g(&acked, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
+        assert_eq!(g(&pr(acked.clone(), "MERGED", "APPROVED"), Some(agent(Idle, 0))), ThreadGroup::Idle);
+        // 보고 없는 열린 PR은 검토할 것이 없다
+        assert_eq!(g(&pr(open_thread(), "OPEN", ""), Some(agent(Idle, 0))), ThreadGroup::Idle);
+        // 사람 차례(4번 줄)는 병합 중보다 먼저다
         assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
     }
 

@@ -362,8 +362,10 @@ pub enum ThreadGroup {
     /// 사람이나 coordinator가 할 일이 있다(시작 실패·5분 넘은 시작, 닫힌 pane, brief 전달 불명, 30초 넘은 확인창,
     /// `Waiting for you` 진행 보고). 보고 내용으로는 정하지 않는다(herdr-projects `group`, plan §8.78).
     WaitingOnYou,
-    /// 아직 확인(ack)하지 않은 새 보고
+    /// 아직 확인(ack)하지 않은 새 보고, 또는 보고가 있고 PR이 열려 있다
     ReadyForReview,
+    /// PR이 열려 있고 승인됐다(herdr-projects `Group::Landing`). thread가 자기 도구로 병합한다(D11)
+    Landing,
     Working,
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
@@ -376,6 +378,7 @@ impl ThreadGroup {
         match self {
             ThreadGroup::WaitingOnYou => "사람 차례",
             ThreadGroup::ReadyForReview => "검토 대기",
+            ThreadGroup::Landing => "병합 중",
             ThreadGroup::Working => "작업 중",
             ThreadGroup::Idle => "쉼",
             ThreadGroup::Resolved => "끝남",

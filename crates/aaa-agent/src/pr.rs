@@ -29,6 +29,11 @@ pub async fn query(cwd: &str, q: &PrQuery) -> Result<PrAnswer> {
             }
         },
         PrQuery::Login => pr::sanitize(gh(dir, &pr::login_call(&origin)).await?.trim()),
+        PrQuery::OpenOwn { repo } => {
+            let json = gh(dir, &pr::open_own_call(&origin, repo)).await?;
+            let open = pr::pick_numbers(&json).context("gh pr list 출력이 JSON이 아니다")?;
+            open.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+        }
     };
     Ok(PrAnswer { origin, out })
 }

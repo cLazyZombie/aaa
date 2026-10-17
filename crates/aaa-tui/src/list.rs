@@ -115,7 +115,7 @@ pub fn pane_dot(p: &PaneView) -> Dot {
 pub fn thread_dot(t: &ThreadView) -> Dot {
     match t.group {
         ThreadGroup::WaitingOnYou => Dot::Blocked,
-        ThreadGroup::ReadyForReview => Dot::Done,
+        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Dot::Done,
         ThreadGroup::Working => Dot::Working,
         ThreadGroup::Idle => Dot::Idle,
         ThreadGroup::Resolved => Dot::Unknown,
@@ -144,6 +144,7 @@ pub fn group_label(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "사람 차례",
         ThreadGroup::ReadyForReview => "검토 대기",
+        ThreadGroup::Landing => "병합 중",
         ThreadGroup::Working => "작업 중",
         ThreadGroup::Idle => "쉼",
         ThreadGroup::Resolved => "끝남",
@@ -154,6 +155,8 @@ fn group_color(g: ThreadGroup, p: &Palette) -> Color {
     match g {
         ThreadGroup::WaitingOnYou => p.red,
         ThreadGroup::ReadyForReview => p.teal,
+        // herdr-projects popup `group_color`
+        ThreadGroup::Landing => p.green,
         ThreadGroup::Working => p.yellow,
         ThreadGroup::Idle | ThreadGroup::Resolved => p.overlay0,
     }
