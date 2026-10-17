@@ -350,6 +350,9 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       } catch {}
     });
   const page = await ctx.newPage();
+  // AAA_E2E_THROTTLE=N: Chromium 화면을 N배 느리게(CI 러너처럼 느린 곳에서만 난 경합을 로컬에서 재현할 때). 기본은 끔
+  if (process.env.AAA_E2E_THROTTLE && browser.browserType().name() === "chromium")
+    await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.AAA_E2E_THROTTLE) });
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(base);
@@ -1451,6 +1454,31 @@ try {
     for (const mode of names) aaa("pane", "kill", `scroll-${mode}`);
     if (bad.length) throw new Error(bad.join("; "));
     console.log(`     휴대폰 240px 끌기: 첫 줄 s-${ph.before} → s-${ph.after}(${ph.want}줄)`);
+  });
+
+  await step("줄 수가 줄면 위 줄을 기록으로(xterm·herdr처럼, plan §8.59): 작은 화면이 크기를 걸어도 host 화면에 마지막 줄·커서 줄이 남고, 다시 붙은 웹은 그 위를 굴려 본다", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "shrink", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await until("shrink 200줄", () => aaa("pane", "read", "shrink").lines.join("\n").includes("s-200"));
+    aaa("pane", "resize", "shrink", "80", "8");
+    const r = await until("8줄", () => {
+      const v = aaa("pane", "read", "shrink");
+      return v.rows === 8 && v;
+    });
+    // 커서는 s-200 다음 빈 줄: 그 위 일곱 줄이 s-194~s-200
+    const want = Array.from({ length: 7 }, (_, i) => `s-${194 + i}`);
+    if (JSON.stringify(r.lines.slice(0, 7)) !== JSON.stringify(want)) throw new Error(`줄인 화면 ${JSON.stringify(r.lines)}`);
+    // 늦게 붙은 웹: 기록에 줄인 때 올린 줄까지 있어 위로 굴리면 s-001
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await dp.getByTestId("pane-shrink").click();
+    await until("shrink 화면", async () => (await screenText(dp)).includes("s-200"));
+    const box = await dp.getByTestId("terminal").boundingBox();
+    await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await until("기록 맨 위 s-001", async () => {
+      await dp.mouse.wheel(0, -2000);
+      return (await screenText(dp)).includes("s-001");
+    });
+    await dp.context().close();
+    aaa("pane", "kill", "shrink");
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {

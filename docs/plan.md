@@ -1504,6 +1504,13 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **남은 「aaa」 표시(git grep).** 그림 표시는 남은 것이 없다. 이름 글자는 표시가 아니라 그대로 둔다: manifest `name`, `apple-mobile-web-app-title`, `<title>`, 알림 제목 「aaa · project」, `offline.html` 제목, 웹 front가 없을 때의 안내 글. 알림 아이콘은 `icon-192.png?v=2`·`favicon-32.png?v=2`(새 그림)이다. TUI에는 그림 표시가 없다(글자 터미널).
 - **시험.** 웹 E2E 「앱 아이콘」: 휴대폰 연결 화면의 `.logo`는 `IMG /icon.svg`(불러짐, 44px)다. 데스크톱 머리(22px, alt aaa)와 빈 화면(44px)도 같다. 「PWA」 단계: manifest·link 아이콘 주소가 모두 `?v=2`이고, sw.js의 cache 이름과 알림 아이콘이 v2다. 캡처는 보고서에 있다. launcher 아이콘은 임시 폴더에 `install.sh --dest`로 설치해 Info.plist·Resources·서명을 확인했다.
 
+### 8.59 줄 수가 줄 때 화면, snapshot을 흐름 순서대로(10-17, 차이 목록 「줄 수가 줄 때 화면」)
+
+- **줄이 줄 때.** vt100 0.16 `Grid::set_size`는 줄 수가 줄면 아래 줄을 잘라 버린다. 작은 화면(휴대폰)이 크기를 걸면 커서 줄과 프롬프트가 host·session host 화면에서 사라졌다. 그래서 `aaa pane read`, TUI 칸, 다시 붙는 웹의 snapshot에서 빠졌다. xterm과 herdr(ghostty)는 위 줄을 기록으로 올리고 커서 줄을 남긴다. `Vt::resize`가 같게 한다. 커서 줄이 새 높이 밖이면 scroll region을 풀고 맨 아래에서 그만큼 줄을 내린다. 그러면 위 줄이 기록으로 가고 커서는 같은 글 위로 온다(모양은 DECSC·DECRC). 프로그램은 SIGWINCH 뒤 region을 다시 건다. 폭이 바뀔 때의 다시 감기(reflow)는 vt100에 없어 그대로다.
+- **snapshot을 흐름 순서대로(herdr-web-ui PaneTerminal 1755~1760줄).** xterm `write`는 줄을 서서 나중에 읽힌다. 그런데 웹은 snapshot의 `reset`·`resize`와 `state`의 `resize`를 바로 했다. 그러면 아직 읽지 않은 앞 출력이 새 화면 위에 그려지거나, replay가 다른 크기로 읽힐 수 있다. 참고처럼 지우기는 `\x1bc`로 흐름에 넣고, 크기는 write 콜백으로 앞선 출력 뒤에 건다.
+  - CI(macos-15)에서만 세 번 연달아 다른 단계가 「터미널 글이 비었다·기대한 줄이 없다」로 실패했다(`69224fd`·`e784eac`·`8116d94`). 이 경합이 짐작이다. 다만 로컬에서 CPU를 다 쓰게 하거나 Chromium을 20배 느리게 해도(`AAA_E2E_THROTTLE`) 고치기 전 판으로 재현되지 않아, 원인은 확인하지 못했다. 다시 나면 `termDiag`가 그때 상태를 남긴다.
+- **시험.** `aaa-vt` 유닛: 10줄 화면을 5줄로 줄이면 l6~l9와 프롬프트가 남는다. l1~l5는 기록으로 가고, 커서·글 모양이 그대로다. 커서가 안이면 기록으로 올리지 않는다. 웹 E2E 「줄 수가 줄면」: 200줄 pane을 `aaa pane resize`로 8줄로 줄이면 `aaa pane read`가 s-194~s-200이다(고치기 전에는 화면 위쪽 줄만 남았다). 늦게 붙은 웹에서 굴리면 s-001까지 간다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
