@@ -204,12 +204,13 @@ pub struct TuiSection {
     /// 명령 prefix 키. herdr 형식(`ctrl+b`, 여러 개면 배열 `["ctrl+b", "ctrl+a"]`). 예전 `C-b` 형식도 읽는다.
     pub prefix: KeyList,
     /// prefix·탐색·크기·copy 모드 동안 입력기가 한글 등(영문 아님)이면 영문 입력기로 바꾸고, 모드가 끝나면 되돌린다
-    /// (macOS, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같다(기본 끔).
+    /// (macOS·Windows 한국어 IME, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같은 이름이다.
+    /// herdr는 기본 끔이지만 사용자 요청이라 기본 켬이다(plan 결정 20 D12).
     pub switch_ascii_input_source_in_prefix: bool,
     /// 예전 이름(`prefix_ascii`). 적혀 있으면 위 값 대신 쓴다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_ascii: Option<bool>,
-    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 끔). 입력기를 바꾸지 못하는 ssh·다른 OS용.
+    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 켬, 결정 20 D12). 입력기를 바꾸기 전에 들어온 키·ssh·다른 OS용.
     pub prefix_jamo_keys: bool,
     /// 새 탭(`prefix c`)을 만들기 전에 이름을 묻는다(herdr `[ui] prompt_new_tab_name`, 기본 켬)
     pub prompt_new_tab_name: bool,
@@ -228,9 +229,9 @@ impl Default for TuiSection {
     fn default() -> Self {
         TuiSection {
             prefix: KeyList::One("ctrl+b".into()),
-            switch_ascii_input_source_in_prefix: false,
+            switch_ascii_input_source_in_prefix: true,
             prefix_ascii: None,
-            prefix_jamo_keys: false,
+            prefix_jamo_keys: true,
             prompt_new_tab_name: true,
             confirm_close: true,
         }

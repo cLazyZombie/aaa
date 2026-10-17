@@ -79,8 +79,8 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   ```toml
   [tui]
   prefix = "ctrl+b"                             # 여러 개면 ["ctrl+b", "ctrl+a"]. tmux 안에서 쓰면 겹치지 않게(예: "ctrl+g")
-  switch_ascii_input_source_in_prefix = false   # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
-  prefix_jamo_keys = false                      # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
+  switch_ascii_input_source_in_prefix = true    # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
+  prefix_jamo_keys = true                       # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
   prompt_new_tab_name = true                    # prefix c에서 이름 창을 띄우기
   confirm_close = true                          # 마지막 탭·마지막 pane을 닫을 때 묻기
 

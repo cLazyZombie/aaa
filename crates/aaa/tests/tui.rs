@@ -24,7 +24,7 @@ const COLS: u16 = 90;
 const WIDE: u16 = 130;
 const ROWS: u16 = 30;
 
-/// 시험 설정: 사용자 입력기는 건드리지 않고(기본 끔), prefix 뒤 자모 해석은 켠다
+/// 시험 설정: 사용자 입력기는 건드리지 않고(입력기 전환은 기본 켬이라 끈다), prefix 뒤 자모 해석은 켠다(기본값)
 const LOCAL_ONLY: &str = r#"schema = 1
 [host]
 agent_listen = ""
@@ -33,6 +33,7 @@ listen = ""
 [local_agent]
 mode = "none"
 [tui]
+switch_ascii_input_source_in_prefix = false
 prefix_jamo_keys = true
 "#;
 
@@ -415,7 +416,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 
     // 새 탭과 탭 전환. herdr처럼 이름을 먼저 묻는다: 기본값(탭 수+1) 그대로 Enter면 자리 번호다.
     // 한글 입력기가 켜진 채 누른 명령 키(ㅊ = c 자리)도 같은 명령이다
-    // (시험 설정 prefix_jamo_keys = true. 기본은 끔이고 입력기 전환도 기본 끔이라 사용자 입력기를 건드리지 않는다)
+    // (자모 해석은 기본 켬. 시험 설정은 입력기 전환을 꺼 사용자 입력기를 건드리지 않는다)
     tui.cmd("c");
     tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
     tui.send(b"\r");

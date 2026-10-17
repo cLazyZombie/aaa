@@ -126,27 +126,32 @@ fn profiles_are_checked() {
     assert!(load_agent(&d.0).unwrap_err().render().contains("profiles.x.harness"));
 }
 
-/// `[tui]`: herdr 형식 prefix(하나·배열), 입력기 전환·자모 해석은 herdr처럼 기본 끔, 예전 이름 `prefix_ascii`도 읽는다
+/// `[tui]`: herdr 형식 prefix(하나·배열), 입력기 전환·자모 해석은 사용자 요청대로 기본 켬(결정 20 D12, 끌 수 있다),
+/// 예전 이름 `prefix_ascii`도 읽는다
 #[test]
 fn tui_keys_like_herdr() {
     let d = Dir::new("tui");
     let t = load_host(&d.0).unwrap().config.tui;
     assert_eq!(t.prefix.values(), ["ctrl+b"]);
-    assert!(!t.switch_ascii() && !t.prefix_jamo_keys);
+    assert!(t.switch_ascii() && t.prefix_jamo_keys);
 
-    d.write("host.toml", "schema = 1\n[tui]\nprefix = [\"ctrl+a\", \"ctrl+g\"]\nprefix_jamo_keys = true\n");
+    d.write(
+        "host.toml",
+        "schema = 1\n[tui]\nprefix = [\"ctrl+a\", \"ctrl+g\"]\nswitch_ascii_input_source_in_prefix = false\n",
+    );
     let l = load_host(&d.0).unwrap();
     assert!(l.warnings.is_empty(), "{:?}", l.warnings);
     assert_eq!(l.config.tui.prefix.values(), ["ctrl+a", "ctrl+g"]);
     assert!(l.config.tui.prefix_jamo_keys && !l.config.tui.switch_ascii());
 
-    // 예전 설정(`C-b`, prefix_ascii = true)을 그대로 둔 사용자는 계속 켜진다
-    d.write("host.toml", "schema = 1\n[tui]\nprefix = \"C-b\"\nprefix_ascii = true\n");
+    // 예전 설정(`C-b`, prefix_ascii = false)을 그대로 둔 사용자는 계속 꺼진다
+    d.write("host.toml", "schema = 1\n[tui]\nprefix = \"C-b\"\nprefix_ascii = false\n");
     let l = load_host(&d.0).unwrap();
     assert!(l.warnings.is_empty(), "{:?}", l.warnings);
-    assert!(l.config.tui.switch_ascii());
-    d.write("host.toml", "schema = 1\n[tui]\nswitch_ascii_input_source_in_prefix = true\n");
-    assert!(load_host(&d.0).unwrap().config.tui.switch_ascii());
+    assert!(!l.config.tui.switch_ascii());
+    d.write("host.toml", "schema = 1\n[tui]\nprefix_jamo_keys = false\n");
+    let t = load_host(&d.0).unwrap().config.tui;
+    assert!(!t.prefix_jamo_keys && t.switch_ascii());
 }
 
 /// herdr `[ui] prompt_new_tab_name`·`confirm_close`(기본 켬)과 `[terminal] new_cwd`(기본 follow)

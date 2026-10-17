@@ -2,6 +2,7 @@
 //!
 //! herdr 0.9.5 `src/pane.rs` `follow_cwd`(앞 프로세스 그룹 leader의 cwd, 없으면 셸 cwd)와
 //! `src/platform/{macos,linux,windows}.rs`의 `foreground_process_group_id`·`process_cwd`·`pane_process_cwd`를 옮겼다.
+//! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 //! PTY는 session host만 갖고 있어(옛 session host와 IPC를 바꾸지 않는다) herdr의 pid 경로를 쓴다:
 //! child pid의 제어 터미널 앞 그룹(`tpgid`)을 읽는다. herdr가 먼저 보는 OSC 7 보고 위치는 aaa가 따로 모으지 않는다.
 

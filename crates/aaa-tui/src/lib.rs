@@ -1417,7 +1417,8 @@ mod tests {
         Rect { x, y, w, h }
     }
 
-    /// prefix 뒤 두벌식 자모는 설정을 켰을 때만 같은 자리 영문 키다(`[tui] prefix_jamo_keys`, 기본 끔)
+    /// prefix 뒤 두벌식 자모는 설정이 켜졌을 때만 같은 자리 영문 키다(`[tui] prefix_jamo_keys`, 설정 기본은 켬.
+    /// 설정을 읽기 전 App은 끈 채다)
     #[test]
     fn jamo_command_keys_only_when_enabled() {
         let mut app = App::new("main".into(), "me".into());
