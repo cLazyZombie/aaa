@@ -64,7 +64,10 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `h` `j` `k` `l` · `Tab` · `Shift+Tab` | pane 포커스 옮기기 · 차례로 |
 | `n` · `p` · `1`~`9` | 탭 이동 |
 | `x` | pane 닫기(세션도 끝냄) |
-| `b` | 왼쪽 목록 펴기·접기 |
+| `z` | 포커스 pane 크게 보기(다시 누르면 원래대로) |
+| `r` | 크기 모드: `h/j/k/l`로 가장자리 옮기기, `Esc` 끝 |
+| `Shift+H/J/K/L` | 그 방향 pane과 자리 바꾸기 |
+| `b` | 왼쪽 사이드바 펴기·접기 |
 | `w` | 목록 탐색(`↑↓` 고르기, `Enter` 열기, `1`~`9` n번째 열기, `h/j/k/l`·`Tab` pane, `Esc` 끝) |
 | `o` | 질문이 열린 pane으로 |
 | `?` | 단축키 창 |
@@ -79,10 +82,16 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   ```toml
   [tui]
   prefix = "ctrl+b"                             # 여러 개면 ["ctrl+b", "ctrl+a"]. tmux 안에서 쓰면 겹치지 않게(예: "ctrl+g")
-  switch_ascii_input_source_in_prefix = false   # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
-  prefix_jamo_keys = false                      # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
+  switch_ascii_input_source_in_prefix = true    # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
+  prefix_jamo_keys = true                       # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
   prompt_new_tab_name = true                    # prefix c에서 이름 창을 띄우기
   confirm_close = true                          # 마지막 탭·마지막 pane을 닫을 때 묻기
+  sidebar_width = 26                            # 사이드바 폭(18~36)
+  sidebar_start_collapsed = false               # 접힌 채 시작
+  sidebar_collapsed_mode = "compact"            # 접으면 번호·상태 점 4칸(compact) 또는 없음(hidden)
+  mobile_width_threshold = 64                   # 이 폭 이하면 사이드바·탭 막대 대신 두 줄 머리
+  theme = "catppuccin"                          # herdr 테마 이름(terminal·tokyo-night·dracula·nord 등 18개)
+  pane_borders = "auto"                         # pane 테두리: auto(나눈 탭만) · always · off
 
   [terminal]
   new_cwd = "follow"                            # 새 탭·나누기의 폴더: follow(포커스 pane의 지금 폴더) · home · 절대 경로

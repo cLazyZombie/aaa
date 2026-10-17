@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 07-scroll-history(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, step, browser,
+  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -19,7 +19,12 @@ export default async function ({ ctl, page }) {
         return m ? Number(m[1]) : null;
       });
     const bad = [];
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    const copies = () => {
+      window.__copied = [];
+      // xterm이 copy 사건에 넣은 글(bubble 끝에서 읽는다)
+      window.addEventListener("copy", (e) => window.__copied.push(e.clipboardData?.getData("text/plain") ?? ""));
+    };
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { init: copies })).page;
     // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
     await dp.getByTestId("pane-scroll-plain").click();
     await until("plain 화면", async () => (await screenText(dp)).includes("s-200")).catch(async (e) => {
@@ -52,6 +57,39 @@ export default async function ({ ctl, page }) {
       return text.includes('GOT:"x"') && text.includes("more-3");
     });
     if ((await firstNo(dp)) === 1) bad.push("키를 쳤는데 맨 아래로 오지 않았다");
+    // 「맨 아래로 이동」(herdr-web-ui TerminalViewportTools): 맨 아래에서는 없고, 위로 굴리면 grid 오른쪽 아래에 뜨며,
+    // 누르면 맨 아래로 오고 터미널 focus는 그대로다
+    const jump = dp.getByTestId("jump-bottom");
+    if ((await jump.count()) !== 0) bad.push("맨 아래인데 「맨 아래로 이동」이 있다");
+    await dp.mouse.wheel(0, -600);
+    await jump.waitFor();
+    await shot(dp, "desktop-jump-bottom");
+    const jb = await jump.boundingBox();
+    const sb = await dp.locator('[data-testid="terminal"] .xterm-screen').boundingBox();
+    if (!(jb.x + jb.width <= sb.x + sb.width && jb.y + jb.height <= sb.y + sb.height && jb.x > sb.x + sb.width / 2 && jb.y > sb.y + sb.height / 2))
+      bad.push(`「맨 아래로 이동」 자리 ${JSON.stringify(jb)}, grid ${JSON.stringify(sb)}`);
+    await jump.click();
+    await until("「맨 아래로 이동」을 누르면 맨 아래", async () => (await jump.count()) === 0 && (await screenText(dp)).includes('GOT:"x"'));
+    if (!(await dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")))) bad.push("「맨 아래로 이동」이 터미널 focus를 가져갔다");
+    // 끌어 고르는 중 휠(herdr-web-ui dragWheel): 선택을 지우지 않고 기록을 굴린다. 놓으면 화면 밖까지 고른 글을 복사한다
+    // (aaa xterm은 기록을 가져 선택이 화면을 넘는다: 차이 목록 J 「선택을 놓으면 복사(화면 밖 포함)」)
+    const top0 = await firstNo(dp);
+    const rowH = sb.height / aaa("pane", "list").panes.find((x) => x.name === "scroll-plain").rows;
+    const anchorY = sb.y + sb.height - rowH * 1.5;
+    await dp.mouse.move(sb.x + 3, anchorY);
+    await dp.mouse.down();
+    await dp.mouse.move(sb.x + 40, anchorY, { steps: 2 });
+    await dp.mouse.wheel(0, -rowH * 12);
+    await until("끌기 중 휠이 기록을 굴림", async () => (await firstNo(dp)) === top0 - 12).catch(async (e) => bad.push(`${e.message}: 첫 줄 ${await firstNo(dp)}(전 ${top0})`));
+    // 맨 윗줄 첫 칸까지 끈다(첫 칸이어야 그 줄 글 전체가 고른 글에 든다)
+    await dp.mouse.move(sb.x + 2, sb.y + rowH * 0.5, { steps: 4 });
+    await dp.mouse.up();
+    const wantTop = `s-${String(top0 - 12).padStart(3, "0")}`;
+    await until("화면 밖까지 고른 글 복사", async () => (await dp.evaluate(() => window.__copied)).some((t) => t.includes(wantTop) && t.includes("more-3"))).catch(async (e) =>
+      bad.push(`${e.message}: ${JSON.stringify((await dp.evaluate(() => window.__copied)).map((t) => t.slice(0, 40) + "…" + t.slice(-40)))}`),
+    );
+    await dp.keyboard.press("y");
+    await until("키를 치면 다시 맨 아래", async () => (await screenText(dp)).includes('GOT:"y"'));
     // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
     // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다
     for (const [mode, want] of [["alt", 'GOT:"\\u001b[A'], ["mouse", 'GOT:"\\u001b[<64;']]) {
@@ -84,8 +122,22 @@ export default async function ({ ctl, page }) {
 
     // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)
     const swipeCheck = async (label, p, swipe) => {
+      // 화면을 열면 첫 snapshot은 그 pane의 지금 크기(다른 기기가 건 grid)로 그려지고, 이 화면이 크기를 되찾으면 다시 그려진다.
+      // 끌 자리는 되찾은 뒤에 잰다: 글자(s-200)만 보고 재면 넓은 grid의 가운데가 휴대폰 밖이라 끌기가 아무 데도 닿지 않았다(CI 10-18)
+      const ownGrid = (name) =>
+        until(`${label} ${name} 이 화면 크기`, async () => {
+          const pane = aaa("pane", "list").panes.find((x) => x.name === name);
+          if (!pane || pane.lease === null) return false;
+          return p.evaluate((rows) => {
+            const scroll = document.querySelector(".term-scroll");
+            const screen = document.querySelector(".xterm-screen");
+            if (!scroll || !screen || scroll.hasAttribute("data-adopted-grid")) return false;
+            return document.querySelectorAll(".xterm-rows > div").length === rows && screen.getBoundingClientRect().right <= scroll.getBoundingClientRect().right + 0.5;
+          }, pane.rows);
+        });
       await p.getByTestId("pane-scroll-plain").click();
       await until(`${label} 화면`, async () => (await screenText(p)).includes('GOT:"x"'));
+      await ownGrid("scroll-plain");
       const cell = await p.evaluate(() => {
         const screen = document.querySelector(".xterm-screen").getBoundingClientRect();
         return { h: screen.height / document.querySelectorAll(".xterm-rows > div").length, top: screen.top, x: screen.left + screen.width / 2 };
@@ -96,6 +148,9 @@ export default async function ({ ctl, page }) {
       await sleep(200);
       const after = await firstNo(p);
       const want = Math.round(travel / cell.h);
+      // 위로 굴렸으니 「맨 아래로 이동」이 grid 오른쪽 아래에 있다
+      if (!(await p.getByTestId("jump-bottom").isVisible())) bad.push(`${label}: 위로 굴렸는데 「맨 아래로 이동」이 없다`);
+      await shot(p, label.startsWith("iPad") ? "ipad-jump-bottom" : "phone-jump-bottom");
       if (before === null || after === null || Math.abs(before - after - want) > 1)
         bad.push(`${label}: ${travel}px 끌어 첫 줄 ${before} → ${after}(기대 ${want}줄 위, 한 칸 ${cell.h.toFixed(1)}px)`);
       // alternate screen·mouse 보고 프로그램(Claude Code·Codex 같은)에서는 xterm 터치 스크롤이 아무것도 하지 않는다:
@@ -116,6 +171,7 @@ export default async function ({ ctl, page }) {
             return alt && (mode !== "touch-mouse" || !!document.querySelector(".xterm.enable-mouse-events"));
           }, mode)),
         );
+        await ownGrid(`scroll-${mode}`);
         const c = await p.evaluate(() => {
           const r = document.querySelector(".xterm-screen").getBoundingClientRect();
           return { top: r.top, x: r.left + r.width / 2 };

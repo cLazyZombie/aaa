@@ -691,17 +691,18 @@ host 프로젝트 폴더 구성:
 - **선택 창이 떠 있으면 아무것도 입력하지 않는다.** 표지는 「Enter to confirm」「Esc to cancel」, 신뢰 문구 등이다. brief 안내와 메시지 모두 해당한다. 질문이 열려 있는 동안 brief 안내는 최대 30분 기다린다.
 - **입력과 수신 확인(§8.5)**
   - 한 줄은 그대로, 여러 줄은 bracketed paste로 보낸 뒤 Enter를 보낸다.
-  - hook이 있는 세션은 10초 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
+  - hook이 있는 세션은 `accept_wait_ms`(기본 10초) 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
+  - 기다림 두 가지(받음 `accept_wait_ms`, interrupt 멈춤 `stop_wait_ms`)는 host.toml `[projects]`로 바꿀 수 있다(t-0327, 10-18). 기본값은 예전 상수와 같아 동작은 그대로다. 시험이 시간을 기다리지 않고 판정을 보려고 뺐다: m13은 전달 불명 시험에서 받음 기다림을 3·5초로 줄이고, interrupt 시험은 멈춤 상한을 120초로 늘린다. 그러면 화면으로 멈춤을 알지 못할 때 받은 줄이 시험 기다림(30초) 안에 오지 않아, 「10초 안」 같은 시간 단언 없이 구별된다.
 - **메시지(§8.5 보충)**
   - queue: 입력 대기 중(idle·started, 상태를 모르면 포함)이면 바로 보낸다. 아니면 대기열에 두고, 그 thread의 다음 `turn_end`·`idle` 때 가장 오래된 것 하나를 보낸다. 원안의 「다음 턴이 시작될 때」를 「턴이 끝났을 때」로 고쳤다.
-  - interrupt: 작업 중이면 Esc를 보내고, `turn_end`·`idle` 사건이나 화면의 「Interrupted」를 최대 15초 기다린 뒤 보낸다. Claude는 Esc로 멈춰도 Stop hook을 내지 않는다(실측, 약 1초에 멈춤).
+  - interrupt: 작업 중이면 Esc를 보내고, `turn_end`·`idle` 사건이나 화면의 「Interrupted」를 최대 `stop_wait_ms`(기본 15초) 기다린 뒤 보낸다. Claude는 Esc로 멈춰도 Stop hook을 내지 않는다(실측, 약 1초에 멈춤).
   - 확인창이 열려 있으면 interrupt를 거부한다. Esc가 확인창을 「아니오」로 닫기 때문이다.
   - 보내기는 host에서 한 번에 하나씩 한다. 흐름 사건은 `message_queued`·`message_accepted`·`message_unknown`이다. 원문은 DB에 두고 감사 로그에는 길이만 적는다.
   - 선택 창이 떠 있을 때 보내려던 메시지는 입력하지 않고 `unknown`으로 끝난다(§8.5 a에 따라 다시 보내지 않는다). 답한 뒤 사람이 다시 보낸다.
 - **front 표시(M1-3c-1)**
   - 웹 events WS는 목록(state)과 질문(question) 사건을 보낸다. 웹은 연결할 때마다 `questions`로 한 번 읽고, 이후는 사건으로 따라간다. 사건을 놓치면(broadcast lag) host가 WS를 끊어 다시 읽게 한다.
   - 웹 목록 위에 「답을 기다리는 질문」 카드가 있고, 고른 pane 위에도 그 pane의 질문 카드가 있다. reader에게는 답 버튼이 없다. pane마다 harness 상태 badge가 있다.
-  - TUI는 상태 줄에 `실행 · 작업 중` 같은 상태를 보이고, 질문이 열린 pane에는 「질문 — aaa question」 badge를 그린다.
+  - TUI는 상태 줄에 `실행 · 작업 중` 같은 상태를 보이고, 질문이 열린 pane에는 「질문 — aaa question」 badge를 그린다. → §8.92에서 상태 줄을 없애고 사이드바 줄의 상태 점·글과 탭 막대 오른쪽 `● 질문 n`으로 옮겼다.
 - **pane 등록 전에 온 hook 사건:** 세션이 시작하자마자 보낸 hook이 세션 시작 사건보다 먼저 host에 닿으면 버려지던 문제를 고쳤다. host는 모르는 pane의 사건을 60초(최대 32개) 보관했다가 pane이 등록되면 순서대로 적용한다.
 - **계약:** AGENT_LINK·FRONT_API를 1.3으로 올렸다(`AgentEvent::Harness`, 질문·메시지 요청, `PaneView.agent`·`ThreadView.agent`). 1.2 메시지를 읽는 시험이 있다.
 - **확인 방법**
@@ -866,7 +867,7 @@ host 프로젝트 폴더 구성:
 - **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 결정 기록(§8.6)에 한 줄로 남기고 그 번호를 붙인다. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
 - **금지(부분 thread 범위 token).** CLI는 aaa 세션 안이면 `AAA_SESSION_ID`를 Hello에 담는다. 그 세션의 역할이 평가자면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다.
   - 남는 한계: env를 지운 프로세스는 사람의 CLI와 구별되지 않는다(routine 승인과 같은 수준, §8.21). 원격 머신의 평가자는 Front API에 닿지 않는다.
-- **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다. `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
+- **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다(→ §8.92에서 사이드바 맨 아래 「평가」 묶음으로). `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
 - **시험.** m13 `evaluator_flow`: 가짜 평가자가 착지·완료 묶음을 받아 평가 기록(정상 1, 잘못된 1)을 낸다. 확인하는 것은 다음과 같다.
   - 목록·context·pane 목록에 섞이지 않는다.
   - 평가자 세션의 지시·채택은 거부되고 보기는 된다.
@@ -901,10 +902,10 @@ host 프로젝트 폴더 구성:
     - 쓰다 만 글은 머신·pane마다 이 기기(localStorage, 32,768자 상한)에 남는다. 보내는 동안 친 글은 남는다.
     - 연결이 끊겨도 입력줄은 쓸 수 있고 보내기만 막힌다.
   - 키 막대(§8.43, herdr-web-ui KeyBar): Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→. 터치 기기나 폭 768px 이하에서만 보인다. Ctrl·Alt·Shift는 유지 키다. 다시 누르거나 연결이 끊길 때까지 켜져 있다(래치). 휴대폰에서는 가로로 밀어 본다.
-- **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다.
+- **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다. → §8.92(묶음 3b)에서 herdr대로 나눈 탭은 pane마다 테두리 상자를 둘러 PTY가 테두리만큼 준다(`[tui] pane_borders = "off"`면 테두리 없음).
   - 탭 줄은 이름표·workspace·탭(지금 탭은 강조색 바탕)으로 짜고, 오른쪽에 열린 질문 수를 둔다.
-  - 포커스 pane과 맞닿은 구분선만 강조색으로 그린다.
-  - 상태 줄은 색 조각(머신·pane·상태색 글·조작 중·평가자)으로 짜고, 오른쪽에 prefix 도움말을 둔다.
+  - 포커스 pane과 맞닿은 구분선만 강조색으로 그린다. → §8.92에서 포커스 pane 상자만 강조색.
+  - 상태 줄은 색 조각(머신·pane·상태색 글·조작 중·평가자)으로 짜고, 오른쪽에 prefix 도움말을 둔다. → §8.92에서 herdr 배치·팔레트로 바꿨다(상태 줄 없음).
   - pane 표시는 상태 색(질문 빨강, 끊김·중단 호박, 종료 회색)을 따른다.
   - 색은 256색 번호이고, 색 바탕 위 글자는 굵게 써도 밝아지지 않게 256색 검정(16)을 쓴다.
 - **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)와 TUI(`aaa attach`를 웹 터미널로)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다.
@@ -1147,7 +1148,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - herdr-web-ui: 조작 연결이면 언제나 입력된다. 보이고 focus가 있을 때(`inUse`)만 크기를 건다. focus·보임을 얻거나, 크기가 어긋난 채 클릭·입력하면 다시 맞춘다. 가려지면 1초 뒤 놓는다. observe 연결은 입력·크기 불가다.
 - **aaa 규칙.**
   - host: 대화형 front의 입력·크기·그림은 거부하지 않고, 보낸 연결을 「지금 쓰는 화면」(lease)으로 둔다. 한 번 보내는 CLI(`cli` 연결)는 바꾸지 않는다. `lease_held`는 CLI `pane resize`(누가 쓰는 중)에만 남는다.
-  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다(→ §8.73에서 herdr처럼 없앴다).
+  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다(→ §8.92: 다른 화면이 쥘 때만 탭 막대 오른쪽에 「<화면> 크기」). `prefix t`는 남겼다(→ §8.73에서 herdr처럼 없앴다).
   - 웹: 입력 막대·키 줄·그림을 막지 않는다. 보이고 focus가 있을 때만 크기를 건다. window focus·다시 보임·터미널 누름이면 크기를 다시 건다. 1초 넘게 가려지면 `release`한다. 「가져오기」 단추를 없애고 「<화면>이 크기를 정하는 중 · 입력하거나 터미널을 누르면 이 화면 크기로」만 보인다.
   - 보기 권한(reader)은 그대로 입력·크기 불가다.
   - 두 화면이 번갈아 입력하면 크기가 그때마다 바뀐다(herdr와 같다).
@@ -1164,11 +1165,11 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 두벌식 같은 입력기도 macOS는 ASCII 가능으로 보고한다. 그래서 종류(자판 배치인지)까지 본다.
   - 명령 키를 처리한 뒤, 취소, 시간 초과(3초), TUI 종료·오류·panic에 원래 입력기로 되돌린다(값이 사라질 때 되돌리는 guard).
   - 지속 설정이 아니라 지금 입력기만 바꾼다. ssh 세션(`SSH_CONNECTION`·`SSH_CLIENT`·`SSH_TTY`)에서는 바꾸지 않는다(그 Mac의 입력기는 앞에 앉은 기기의 것이 아니다).
-  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다. → §8.73에서 herdr 이름 `switch_ascii_input_source_in_prefix`·기본 끔으로 바꿨다(예전 이름도 읽는다).
+  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다. → §8.73에서 herdr 이름 `switch_ascii_input_source_in_prefix`로 바꿨다(기본 켬 그대로, 예전 이름도 읽는다).
 - **보조: 자모 해석.** prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다(ㅊ=c, ㅅ=t, ㅌ=x, ㅇ=d, ㄱ=r, ㅜ=n, ㅔ=p, ㅐ=o, 쌍자음·ㅒ·ㅖ는 Shift 자리). 바꾸기 전에 들어온 키, ssh·다른 OS를 위한 것이다.
 - **시험.**
   - 유닛: 자모 → 키, ssh 판정.
-  - TUI harness: prefix 뒤 `ㅊ`로 새 탭. 시험 설정은 `prefix_ascii = false`라 사용자 입력기를 건드리지 않는다.
+  - TUI harness: prefix 뒤 `ㅊ`로 새 탭. 시험 설정은 입력기 전환을 꺼(`switch_ascii_input_source_in_prefix = false`) 사용자 입력기를 건드리지 않는다.
   - macOS 실제 입력기(`AAA_IME_NATIVE=1`, 개발 Mac에서 짧게, 단언이 실패해도 처음 입력기로 돌려 둔다): ABC → 두벌식 → prefix 영문 `com.apple.keylayout.ABC` → 되돌림 두벌식 → 처음 ABC. 약 0.4초다.
 
 ### 8.35 TUI 왼쪽 목록(10-17, 사용자 요청)
@@ -1177,10 +1178,10 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **구현(`aaa-tui::list`).**
   - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지).
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
-  - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다.
+  - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다. → §8.92에서 herdr대로 26칸(구분선 포함)·늘 펼친 채 시작·접으면 4칸 compact로 바꿨다.
   - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
   - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
-  - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널).
+  - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널). → §8.92에서 herdr대로 `selection_bg` 바탕만 쓴다.
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
 
 ### 8.36 웹 한글 IME를 herdr-web-ui 방식으로(10-17, 사용자 지시)
@@ -1788,16 +1789,16 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - `Shift+R`은 TUI가 `[tui]`를 다시 읽는 데까지다. herdr는 서버 설정도 다시 읽는다. host 쪽 `aaa config reload`는 CLI thread 몫이다.
 - **설정 `[tui]`(host.toml).**
   - `prefix`: herdr 형식 `"ctrl+b"`, 여러 개면 배열. 예전 `C-b`도 읽는다. 읽지 못한 값은 빼고, 남는 것이 없으면 `ctrl+b`로 두고 ERROR 막대로 알린다(herdr `parse_prefix_keys`).
-  - `switch_ascii_input_source_in_prefix`(기본 끔, herdr 이름): Prefix·Navigate 모드와 단축키 창 동안 영문 입력기. 예전 이름 `prefix_ascii`가 적혀 있으면 그 값을 쓴다(그대로 둔 사용자는 계속 켜진다).
-  - `prefix_jamo_keys`(기본 끔): prefix 뒤 두벌식 자모를 같은 자리 영문 키로 읽는다.
-  - 두 기능은 사용자가 전에 요청한 것이라 남기고, 참고처럼 기본은 끈다(brief). 결정 20 표의 「기본 켬」과 어긋난다 — coordinator 확인 대기.
+  - `switch_ascii_input_source_in_prefix`(기본 켬, herdr 이름): Prefix·Navigate 모드와 단축키 창 동안 영문 입력기. 예전 이름 `prefix_ascii`가 적혀 있으면 그 값을 쓴다.
+  - `prefix_jamo_keys`(기본 켬): prefix 뒤 두벌식 자모를 같은 자리 영문 키로 읽는다.
+  - 두 기능은 사용자 요청이라 결정 20(D12)대로 기본 켬이고 설정으로 끈다. herdr는 입력기 전환이 기본 끔(`[experimental]`)이고 자모 해석은 없다. 처음에는 brief를 따라 기본 끔으로 착지했다가(a161f16), coordinator가 정본을 decisions.md로 바로잡아 기본 켬으로 되돌렸다(10-18).
   - 입력기 전환 범위와 미루기는 herdr `reconcile_input_source`대로다: 모드가 끝나면 되돌리고, 터미널 focus가 없는 동안은 바꾸지도 되돌리지도 않고 돌아온 뒤 맞춘다.
   - Windows: 앞 창 자판이 한국어이고 IME가 한글이면 `VK_HANGUL`을 `SendInput`으로 눌러 영문으로 바꾸고, 같은 창이 앞에 있고 아직 영문이면 되돌린다(herdr와 같다. IME 상태 읽기는 `WM_IME_CONTROL`/`IMC_GETOPENSTATUS`, 200ms 한도). 다른 언어 IME는 건드리지 않는다.
   - kitty keyboard `REPORT_ALTERNATE_KEYS`로 기본 배치 키를 읽는 일(herdr `src/input/parse.rs`)은 crossterm 0.29가 그 값을 `KeyEvent`에 싣지 않아 하지 못한다. herdr도 prefix 뒤 일반 키는 글자 그대로 읽으므로, 한글 입력기에서는 입력기 전환이나 자모 해석을 켠다.
-- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다.
+- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다(→ §8.92).
   - 단축키 창: 가운데 76×22 테두리 창, 묶음(전체·탐색·목록/탭·pane)마다 `prefix+키`와 설명, `/` 검색(키·설명), `j/k/↑↓/pgup/pgdn` 넘기기, Esc·Enter 닫기, 넘칠 때 scrollbar.
 - **시험.**
-  - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 끔·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
+  - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 켬·끄기·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
   - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane, `o` 질문 pane, `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
   - 다른 TUI 시험도 새 키로 바꿨다(`q` 나가기, `v` 나누기, `w` 탐색과 `↑↓`, `b` 접기, 재개는 CLI).
   - harness의 기다림은 시간이 아니라 사건이다: 화면은 bytes가 올 때마다 깨우고(Condvar), host 상태는 Front 연결의 Workspace·State 사건을 받는다. `cmd`는 PREFIX 막대가 보인 뒤 명령 키를 보낸다.
@@ -2125,13 +2126,87 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고대로.** herdr-web-ui `src/components/PromptCard.tsx`: 누르는 동안 카드 `aria-busy`, 선택지 `disabled={pending}`, 오류는 카드 안 `role="alert"`. 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다(`shown`). 모양은 `PromptCard.css` `[aria-busy="true"]` 선택지 흐림, `.prompt-card-error` 색.
 - **시험.** 웹 E2E 「확인창 답이 실패하면 카드 안에 보인다」: 휴대폰 제어 화면에서 「Esc to cancel」 없는 확인창에 「예」 → 누른 순간 `aria-busy=true`·선택지 막힘 → host 오류 답 → 카드 안 alert(「터미널에서 직접 답한다」)·선택지 풀림(`phone-question-error`). 기다림은 그 요청의 답과 MutationObserver다.
 
-### 8.93 웹 E2E를 기능별 파일로(10-18, 사용자 「e2e testability가 중요해」, t-0338)
+### 8.91 TUI pane 모드: 크기 모드·zoom·자리 바꾸기를 herdr대로(10-18, 차이 목록 4장 C)
 
-- **왜.** 웹 E2E가 한 파일(5161줄·57단계)이라 한 단계만 혼자 돌릴 수 없고 늘 전부(3~5분)를 돌았으며, 기능 thread 여럿이 같은 파일을 고쳤다. herdr-web-ui는 기능마다 혼자 도는 브라우저 시험(`scripts/*-regression.ts`)과 묶음 실행(`scripts/ui-regression.ts`, `BROWSER_SCRIPTS`로 고르기)을 둔다.
-- **구조.** 입구 `web/e2e/web.e2e.mjs`가 `web/e2e/specs/NN-기능.mjs` 13개를 파일마다 새 프로세스·새 실험실(`lib/child.mjs` → `lib/harness.mjs`의 `runSpec`: host·agent·t1·첫 화면)로 차례로 돈다. 고르기 `--spec`·`--grep`(= `AAA_E2E_ONLY`)·`--repeat`·`--list`. 한 파일이 실패해도 다음 파일을 돌아 한 번에 여러 실패를 본다. 단계 이름과 결과 줄(`ok`·`FAIL`)·실험실 폴더(`/tmp/aaw-<pid>`)는 그대로라 ci.yml·ci-local.sh는 바꾸지 않았다. 쓰는 법은 [docs/testing.md 「웹 E2E」](testing.md#웹-e2e).
+- **참고(herdr 0.9.5).** 크기 모드 `src/client/shell/input.rs` `route_resize_key`, 막대 `src/client/shell/render.rs` `render_mode_bar`(RESIZE는 mauve), 크기 `src/layout.rs` `resize_focused`·`resize_pane`, zoom `src/app/actions.rs` `apply_pane_zoom`·`src/workspace/tab.rs`(나누기·닫기·옮기기에서 `zoomed = false`)·`src/ui/panes.rs`(zoom이면 포커스 pane 하나를 칸 전체로)·`src/client/shell/tabs.rs` `tab_label`(` Z`), 자리 바꾸기 `src/app/api/panes.rs` `handle_pane_swap`·`src/layout.rs` `swap_panes`, 키 `src/config/model.rs`(`prefix+r`·`prefix+z`·`prefix+shift+h/j/k/l`).
+- **크기 모드(`prefix r`).** RESIZE 막대(` RESIZE `  `h/l 너비  j/k 높이  esc 끝`). `h/j/k/l`·화살표마다 포커스 pane 가장자리를 5% 옮긴다: 그 방향 가장자리의 나눔, 없으면 반대쪽 가장자리의 나눔(§8.75 `LayoutChange::Resize`, 비율 10%~90%). Esc·Enter·`r`로 끝, 다른 키는 무시(pane에 가지 않는다). 모드 동안 입력기 전환 범위에 든다.
+- **zoom(`prefix z`).** host 탭에 `zoomed`를 둔다(herdr처럼 탭 상태라 다시 붙어도 남는다). 크게 보이는 pane은 front마다 그 front의 포커스 pane이다(herdr는 탭의 포커스 pane, aaa는 포커스가 front마다 다르다). zoom 중에도 `h/j/k/l`·`Tab`은 나눈 칸으로 이웃을 찾고, 옮긴 pane이 크게 보인다. 칸 전체 크기로 PTY 크기를 건다(가려진 pane은 크기를 그대로 둔다). 탭 이름표에 ` Z`. pane이 하나뿐인 탭은 그대로, 나누기·pane 닫기·옮기기로 탭 pane이 바뀌면 풀린다.
+- **자리 바꾸기(`prefix shift+h/j/k/l`).** 포커스와 같은 방향 찾기(`find_in_direction`)로 이웃을 고르고, 두 잎의 pane만 바꾼다(칸과 비율은 그대로). 포커스는 옮긴 pane을 따라간다. host 요청은 herdr `pane swap`의 source·target 꼴(`LayoutChange::Swap { pane, with }`)이다: 방향 이웃은 칸을 아는 front가 찾는다(host는 front마다 다른 화면 크기를 모른다). herdr 단축키 창에는 자리 바꾸기 줄이 없지만 aaa는 넣었다(기본 키가 있어 찾을 수 있게).
+- **host 요청(FRONT_API 1.10).** `LayoutChange::Zoom { pane, zoomed }`(없으면 뒤집기)·`Swap { pane, with }`, `Tab.zoomed`(없으면 false). TUI는 크기 모드를 1.4(§8.75 `Resize`)부터, zoom·자리 바꾸기를 1.10부터 보내고 옛 host면 「host를 새 aaa로 다시 띄워야 한다」를 보인다. CLI `pane zoom`·`pane swap`은 CLI thread 몫이다(요청은 있다).
+- **시험.**
+  - 유닛: `layout::swap`(잎만 바뀌고 칸 그대로), pane이 빠진 탭은 zoom 풀림, 키 표(`z`·`r`·`shift+h/l`), zoom 그리기(포커스 pane이 칸 전체·구분선 없음·` Z`·zoom 중 방향 포커스), RESIZE 막대(mauve), 옛 host 막기(1.9이면 zoom 안 보냄).
+  - TUI harness `pane_modes_like_herdr`: `r` 막대와 `l` 두 번에 비율 500→550→600·왼쪽 PTY가 넓어짐·Esc 뒤 키는 pane으로, `z` host zoom·이름표 `1 Z`·포커스 pane만 보임·칸 전체 크기, zoom 중 `h`로 왼쪽이 크게, `z` 풀기, `L` 자리 바꿈(비율 그대로, 포커스가 따라가 입력이 옮긴 pane으로), zoom 중 나누면 풀림.
+
+### 8.92 TUI 화면을 herdr대로: 배치·팔레트·사이드바·탭 막대·모드 막대·창(10-18, 사용자 지시 「tui도 ui 미려하게, 최소 herdr-projects 정도」, 차이 목록 2장 U3·4장 E)
+
+- **참고(herdr 0.9.5).**
+  - 배치 `src/client/shell/config.rs` `layout`, 그리기 `render.rs` `render_shell`·`render_mode_bar`·`render_sidebar_background`.
+  - 사이드바 `sidebar.rs` `render_sidebar`·`render_collapsed_sidebar`·`render_workspace_rows`·`workspace_selection_background`·`workspace_active_background`, 머신 줄 `endpoint_sidebar.rs` `render_endpoint_row`, agent 줄 `agent_sidebar.rs` `render_agent_row`.
+  - 탭 막대 `tabs.rs` `render_tab_bar`·`render_tab_bar_status`, 좁은 화면 `mobile.rs` `render_mobile_header`·`render_agent_summary`, 알림 `notifications.rs` `render_notification_card`, 창 `overlays.rs`(단축키·이름·닫기 확인), 나눔선 색 `src/ui/panes.rs`.
+  - 팔레트 `src/app/state.rs` `Palette`(테마 18개)·`src/config/theme.rs` `THEME_NAMES`·`canonical_theme_name`. 옮긴 `aaa-tui/src/theme.rs` 머리에 herdr Apache-2.0 출처를 적었다.
+- **배치.** 65칸 이상이면 왼쪽 사이드바가 온 높이(폭 26, 구분선 포함, 18~36으로 묶음), 그 오른쪽 맨 윗줄이 탭 막대, 나머지가 pane이다. 상태 줄은 없다. 64칸 이하면 사이드바·탭 막대 대신 두 줄 머리다. PTY 크기는 이 pane 칸으로 건다(90×30이면 64×29).
+- **팔레트.** herdr 테마 18개를 그대로 옮겼다. `[tui] theme`(기본 `catppuccin`, herdr 기본과 같음). 모르는 이름은 ERROR 막대로 알리고 기본을 쓴다. 256색 번호 상수(§8.27 무렵)는 없앴다.
+- **사이드바(펼침).** `sidebar_bg` 바탕, 오른쪽 `│`(`surface_dim`), 머리 ` <workspace>`(`overlay0` 굵게, herdr ` spaces` 자리), 빈 줄, 목록, 맨 아래 오른쪽 `«`.
+  - 줄: thread·pane은 ` <상태 점> <이름>`(herdr `state_icon` + 이름, 점은 working 노랑 `●`·blocked 빨강 `●`·done 청록 `●`·idle 초록 `○`·셸 등 `·`), 오른쪽에 상태 글. 머신은 ` ▾ <이름>`(`text` 굵게)과 붙은 원격 머신 초록 `●`·끊긴 머신 노랑 `◐ 끊김`(herdr `render_endpoint_row`).
+  - 이름은 `subtext0`, 지금 pane 줄은 `active_row_bg` 바탕에 `text` 굵게. 탐색 중 고른 줄은 `selection_bg` 바탕(없는 테마면 `active_row_bg`)이다. `▸` 표시는 뺐다(herdr는 바탕색만).
+  - 사후 평가자 pane은 상태 줄 대신 목록 맨 아래 「평가」 묶음에 보인다.
+- **사이드바(접힘).** `[tui] sidebar_collapsed_mode = "compact"`(기본)면 4칸 열에 thread·pane마다 번호와 상태 점, 맨 아래 가운데 `»`. `"hidden"`이면 없다. `[tui] sidebar_start_collapsed`(기본 끔)로 접힌 채 시작한다. herdr처럼 터미널 폭으로는 접지 않는다.
+- **탐색 모드(`prefix w`).** 펼쳐져 있으면 그 목록에서 고른다. 접혀 있거나 좁은 화면이면 펼친 목록을 pane 칸 위에 띄운다(접힌 칸·탭 막대·머리는 그대로, 모드 막대 위 줄까지, pane 크기는 그대로). herdr는 접힌 칸의 번호만 강조한다: aaa는 이름을 보며 고르게 띄운다(§8.73 그대로).
+- **탭 막대.** `panel_bg` 줄에 이름표(지금 탭 accent 바탕·`panel_bg` 글자, 붙인 이름이면 굵게, 다른 탭 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`, 넘치면 `…` `overlay0`). 앞에 있던 ` aaa `·workspace 이름 조각은 뺐다(workspace 이름은 사이드바 머리).
+  - 오른쪽 끝은 herdr `tab_bar_right` 자리: 열린 질문 수 ` ● 질문 n `(빨강 바탕), 다른 화면이 포커스 pane 크기를 쥐면 `<화면> 크기`(peach). 이름표 자리가 17칸(herdr `MIN_TAB_STRIP_WIDTH`) 밑으로 줄면 오른쪽 조각을 뺀다. 「이 화면 크기」는 보이지 않는다(평소 상태라).
+  - `+` 새 탭·`<` `>` 넘기기 단추는 마우스 묶음에서 넣는다(herdr도 마우스를 켰을 때만 그린다).
+- **모드 막대·알림.** herdr처럼 평소에는 없고, prefix·탐색·크기 모드와 오류 때 pane 맨 아랫줄에 겹친다(바탕 `panel_bg`, 글 `overlay0`, 키 accent 굵게, 모드 이름 accent 바탕(RESIZE는 mauve)). 커서가 그 줄이면 숨긴다. 알림(설정 다시 읽음·그림 경로 넣음 등, 5초)은 오른쪽 위 테두리 카드(`overlay0` 테두리, `●`와 굵은 글).
+- **좁은 화면(64칸 이하).** herdr 머리 두 줄: 첫 줄 가장 급한 상태 점·workspace·`탭 <이름> · i/n`, 둘째 줄 agent 요약(`◉ n 질문 · n 작업 중 · n 대기`, 첫 조각만 그 색, 없으면 「agent 없음」·「모두 대기」), 오른쪽 10칸 `목록` 단추 자리(질문이 있으면 빨강 `●`).
+- **창.** 단축키·이름·닫기 확인 창은 묶음 1·2a의 herdr 모양에 색만 팔레트로(테두리 accent·확인은 red, 바탕 `panel_bg`, 입력 칸·단추 `surface0`).
+- **pane 표시.** 끊김·중단·질문·종료 badge(aaa에만 있음)는 팔레트 색. `P` pane 이름(herdr `rename_pane`)은 host 요청이 필요해 다음 묶음이다.
+- **pane 테두리(묶음 3b).** herdr `src/ui/panes.rs` `apply_pane_chrome`·`zoomed_pane_borders`·`render_pane_borders`·`line_touches_pane`·`render_pane_border_titles`·`pane_border_title`, `src/layout.rs` `split_rect`를 `aaa-tui/src/chrome.rs`로 옮겼다(§8.23 「테두리를 두르지 않아 PTY 크기가 줄지 않는다」(결정 16)보다 뒤인 사용자 지시 「herdr 수준」을 따른다).
+  - `[tui] pane_borders`(herdr 이름·값): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 온 상자를 두른다(zoom이어도 상자 하나). `always`는 하나여도, `off`는 테두리 없이 오른쪽·아래 이웃 쪽에 빈 칸 하나(herdr `pane_gaps`, 선 없음).
+  - 나누기는 herdr `split_rect`: 나눔 칸 없이 첫 쪽이 `round(길이 × 비율)`. 상자끼리 붙는다(`┐┌`). PTY 크기는 테두리 안쪽(90×30에서 반반이면 30×27 둘). 방향 포커스·자리 바꾸기는 바깥 상자로 찾는다.
+  - 포커스 pane 자기 테두리 칸은 accent, 나머지 `overlay0`. 위 테두리 x+1에 제목 ` <이름> `(폭−4로 `…` 자름, 포커스면 accent 굵게, 아니면 `overlay0`). 제목은 붙인 pane 이름이다(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다. herdr는 agent 제목·사람이 붙인 이름을 쓰고 agent 이름은 설정(`show_agent_labels_on_pane_borders`, 기본 끔)으로만 보인다.
+  - 모드 막대는 pane 칸 맨 아랫줄(나눈 탭이면 아래 테두리)에 겹친다.
+- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다.
+- **시험.**
+  - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
+  - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
+  - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 나눈 두 pane 폭 합은 칸 폭 − 4(상자 테두리). 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
+
+### 8.93 웹 터미널 띠·맨 아래로·같이 쓰기·끌기 중 휠·패널 클립보드를 herdr-web-ui대로(10-18, 차이 목록 1장 나머지, D7)
+
+- **띠는 모두 터미널 위에 뜬다(PaneTerminal 2747~2826줄 `.terminal-banners`).** §8.48 뒤에도 끊김·권한·오류·그림 띠는 터미널 위 흐름에 있었다. 띠가 나고 들 때마다 터미널 칸이 줄었다 늘어 PTY 크기가 바뀌었다(그림을 붙여 넣으면 그 띠 높이만큼 줄 수가 줄었다). 이제 터미널 화면에서는 모든 띠가 `.terminal-banners`(터미널 위 오른쪽, 칸 크기와 상관없음)에 있다. 대화 보기는 grid가 없고 크기도 놓았으므로 거기서는 전처럼 흐름에 둔다(참고도 대화 lens는 ChatView가 그 안에서 말한다).
+- **「맨 아래로 이동」(TerminalViewportTools 64~82·244~247줄, CSS 그대로).** 위로 굴려 맨 아래가 아니면 grid 오른쪽 아래에 둥근 단추가 뜬다. 칸이 보이는 끝까지만이라 이 화면 것이 아닌 큰 grid에서도 보인다. 누르면 맨 아래로 가고 focus를 가져가지 않는다(pointerdown preventDefault). 터치 기기는 40px.
+  - 다른 곳: 참고는 herdr에 기록 자리(`offset_from_bottom`)를 물어 그리고 보기 전용 연결에는 없다. aaa는 xterm 기록을 보므로(§8.55) 묻지 않고, 보기 권한 기기도 자기 화면만 굴리므로 보인다.
+- **「터미널의 aaa와 같이 쓰기」(설정, 기본 꺼짐, 참고 `releasePaneAway`·PaneTerminal 1725~1918줄 `leave`·`release`·`back`).** 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고 「다른 창을 쓰는 동안 보기 전용 · 클릭하면 입력」 띠를 띄운다. 이 탭을 누르거나 focus가 돌아오면 다시 입력하고 이 화면 크기를 건다. 문구는 참고 i18n.ko에서 「herdr」를 aaa(TUI `aaa attach`)로 바꾼 것이다.
+  - 다른 곳: 참고는 attach를 떼고 보기 전용 구독(watch)으로 바꾼다. aaa는 연결 하나가 출력을 계속 받고 크기만 host lease로 놓으면 같은 일이 된다. 그래서 host에 새 구독을 두지 않았다(§8.50의 「watch가 없어 옮기지 않음」을 이것으로 푼다). 터치 기기가 가려지면 설정과 상관없이 바로 크기를 놓는 것은 §8.50 그대로다.
+- **끌어 고르는 중 휠(PaneTerminal 883~893줄 `dragWheel`).** 전에는 휠이 선택을 지웠다. 그래서 끌며 위로 굴려 화면 밖까지 고를 수 없었다. 이제 고르는 끌기 중 휠은 선택을 두고 xterm 기록을 줄 단위로 굴린 뒤 마지막 마우스 자리로 끌기를 한 번 더 알린다(선택 끝이 굴린 줄까지 따라온다). 마우스 보고 중에도 프로그램에 휠을 보내지 않는다.
+  - 차이 목록 J 「선택을 놓으면 복사(화면 밖 포함)」는 이것으로 같음이다. 참고가 herdr 원문 API를 쓰는 까닭은 xterm 기록이 0이어서다. aaa xterm은 기록 10,000줄을 가져 고른 글이 곧 원문이다.
+- **「패널에서 클립보드로 복사」(설정, 기본 켬, 참고 `paneClipboard`, PaneTerminal 1050~1063줄).** 끄면 OSC 52를 받기만 하고 버린다. pane 안 아무 프로세스나(agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있어서다. 문구는 참고 그대로다. 차이 목록에는 「같음」이었지만 설정이 빠져 있었다.
+- **커서 위치 보고(차이 목록 A 「확인 못 함」 → 같음).** herdr는 서버의 ghostty가 프로그램 질의에 답하고(`terminal_responses`, src/pane/terminal.rs 1402~1547줄) 웹에는 그린 화면을 보내므로 xterm이 답할 일이 없다. aaa는 session host가 DSR 6에 답하고(aaa-vt `DsrScanner`) 웹은 xterm의 같은 답을 버린다. 다만 다른 질의(DA1·DA2·kitty 키보드 질의 `CSI ? u`·색 질의 OSC 10/11)는 session host가 답하지 않아, 붙은 xterm 수만큼(0~N번) 답이 간다. herdr는 늘 한 번이다. 이것은 세션 쪽 일이라 「확인할 것」으로 남긴다(보고서).
+- **시험(웹 E2E, 고치기 전 판에서 실패함을 확인).**
+  - 「그림 붙여 넣기」: 그림 띠·오류 띠가 떠도 `.term-scroll` 칸 크기가 그대로다.
+  - 「터미널 스크롤」: 맨 아래에는 단추가 없고, 위로 굴리면 grid 오른쪽 아래(안쪽)에 뜨며, 누르면 맨 아래·터미널 focus 그대로. 휴대폰·iPad 한 손가락으로 올려도 뜬다. 끌기 중 휠로 12줄 굴리면 첫 줄이 12줄 위이고, 놓으면 화면 밖 줄(`s-NNN`)부터 `more-3`까지 복사한다.
+  - 「두 controller」: 같이 쓰기를 켜고 다른 창으로 옮기면 1초(900ms 이상) 뒤 `release`를 쓰고 띠가 뜨며 남은 화면이 크기를 되찾는다. 누르면 띠가 사라지고 이 화면 크기다.
+  - 「키 처리」: 클립보드 설정을 끄면 저장(`aaa:pane-clipboard` 0)하고, 그 뒤 OSC 52는 클립보드에 쓰지 않는다.
+- **병합 때 찾은 것: 앞 기록 덮개가 흐름에 들어갔다(§8.67).** 덮개(`.term-history-cover`)는 `.xterm-screen` 사본인데 xterm.css `.xterm .xterm-screen { position: relative }`가 더 강해 absolute가 되지 않았다. 덮개가 붙은 동안 `.xterm`이 두 배 높이가 되고, 그 사이 xterm Viewport가 잰 높이로 스크롤 영역이 한 화면(684px) 커졌다. 덮개는 화면 아래에 붙어 덮지도 못했다. 웹 E2E 「앞 기록」 훑기가 줄 90을 91로 그려 실패했다(병합본 진단: 줄 높이 19px, 화면 684px, 스크롤 영역 = 19×줄 수 + 684). main(245f321)에서도 이 단계가 실패하고 있었다(coordinator 10-18 알림). t-0329는 시험의 scrollTop을 줄 높이로 잡게 고쳤다(`7518957`). 이 고침은 그 높이 차이를 만든 화면 쪽 원인(덮개가 덮지 못하고, 덮개가 붙은 동안 xterm 스크롤 영역이 한 화면 커짐)이다. 선택자를 `.xterm .xterm-screen.term-history-cover`로 올렸다.
+- **병합 때 찾은 것: 「터미널 스크롤」 휴대폰 끌기 시험의 경쟁.** 병합본 CI에서 휴대폰 `touch-alt` 끌기가 프로그램에 화살표를 보내지 못한 적이 있다(격리 반복 14번 중 2번). 진단에서 끌 자리 x가 477.5px였다. pane을 열면 첫 snapshot은 그 pane의 지금 크기(120열)로 그려지고, 휴대폰이 45×38을 걸면 다시 그려진다. 시험은 글자(`s-200`)만 보고 그 사이에 잰 넓은 grid의 가운데를 끌어, 390px 화면 밖이라 아무 데도 닿지 않았다. 시험이 이 화면의 크기(lease가 있고, 빌린 grid 표시가 없고, 그린 줄 수가 pane 줄 수와 같고, 화면이 칸 안에 듦)를 본 뒤에 끌 자리를 재게 고쳤다. 확인: 진단 사본에서 휴대폰의 `resize`를 1.5초 늦추면 고치기 전 시험은 `touch-alt`·`touch-mouse` 둘 다 늘 실패하고, 고친 시험은 통과한다. 열 때 한 번 다른 크기로 그렸다 바뀌는 것은 보고서 「확인할 것」에 적었다. main(`995962c`, t-0304)은 같은 단계에서 다른 경쟁(앞 pane도 `s-200`을 보여 끌기가 바뀌는 사이 화면에 감)을 찾아 그 프로그램 화면(alternate screen·mouse 보고)을 기다리게 했다. 병합에서 두 기다림을 모두 둔다.
+
+### 8.94 앱 단축키를 herdr-web-ui대로(10-18, 차이 목록 1장 A 「앱 단축키가 터미널로 새지 않음」)
+
+- **옮긴 것(herdr-web-ui `src/lib/shortcuts.ts`·`shortcutBindings.ts`·`shortcutRecorder.ts`, SettingsDialog `ShortcutsPage` 701~843줄, App.tsx 1185~1279줄).** 세 파일을 `web/src/herdr/`에 옮겼다(`shortcutBindings.ts`·`shortcutRecorder.ts`는 그대로, `shortcuts.ts`는 설정 import 두 줄과 `useShortcuts`가 읽는 값만). 창 capture 처리기가 Mod+Shift(맥은 ⌘⇧, 그 밖은 Ctrl+Shift) 조합을 앱 동작으로 바꾸고 브라우저 기본을 막는다. 터미널 키 처리(`attachCustomKeyEventHandler`) 맨 앞에서 `isAppShortcut`이 같은 키를 xterm에서 거른다(PaneTerminal 621줄). 그래서 단축키가 pane 프로그램에 가지 않는다.
+- **aaa에 있는 동작만 켠다(`settings.ts` `AAA_SHORTCUTS`).** 대화 / 터미널 전환(⌘⇧J), 패널 입력창으로 이동(⌘⇧E), 패널 위·아래로 스크롤(⌘⇧PgUp·PgDn), 이전·다음 패널(⌘⇧↑·↓), 설정(⌘⇧,). 표는 참고 그대로 두고, aaa에 그 화면이 없는 동작(명령 팔레트·터미널에서 찾기·사이드바 토글·새 워크스페이스·새 탭·나누기)은 참고의 「끄기」(null) 값으로 둔다. 없는 동작이 Ctrl+Shift+K 같은 터미널 키를 가져가지 않는다. 그 화면이 생기면 목록에 더한다.
+- **동작은 참고와 같다.** 이전·다음은 목록 차례(같은 머신 안, 끝에서 처음으로, 접힌 묶음도 센다. 참고는 고른 PC의 snapshot 차례)이고 목록 줄을 누른 것과 같이 연다(`sidebarModel.ts` `machineRows`, 목록도 같은 `machineRoster`로 그린다). 한 화면씩은 기록이 있으면 한 줄을 남기고 굴리고(참고 `pageScrollDistance`), 기록이 없으면(alternate screen 프로그램) 그 프로그램에 PageUp·PageDown을 지금 받을 수 있을 때만 보낸다(참고 `sendApplicationPage`). 대화 보기는 그 목록을 한 화면씩 굴린다. 열린 창(설정 등)이 있으면 pane 동작은 하지 않는다(참고 `modalOpen`).
+- **설정 「단축키」(문구는 참고 i18n.ko.ts).** 찾기 칸, 줄마다 「기록」(누른 조합을 그대로, 터미널·브라우저도 쓰는 조합은 「그래도 저장」을 묻는다)과 고르기(기본값·끄기·Mod+Shift 키), 「단축키 초기화」. 기기 설정이다(localStorage `aaa:shortcut-overrides`, 참고 SETTING_SCOPE `device`).
+- **다른 곳.** 참고의 「대화 / 터미널 전환」은 모든 pane의 보기를 바꾼다. aaa는 대화 기록이 있는 pane(Claude·Codex)만 대화 보기가 있어 거기서만 바뀐다. 「음성 입력(누르고 있기)」 줄은 aaa에 음성 입력이 없어 보이지 않는다.
+- **잇달아 넘기기에서 찾은 것(참고 `src/lib/terminalDispose.ts`를 옮김).** 단축키로 pane을 빨리 넘기면 page error 「Cannot read properties of undefined (reading 'dimensions')」가 났다(웹 E2E 세 판 중 한 판, 격리 반복 두 판째). stack은 xterm `Viewport.reset`의 `requestAnimationFrame(() => this.syncScrollArea())`였다. snapshot마다 쓰는 RIS(`\x1bc`)로 xterm이 다음 frame에 renderer 크기를 읽기로 하는데, 그 frame 전에 pane이 내려가 `term.dispose()`가 renderer를 치웠다. 참고는 이미 `disposeAfterPendingFrame`(걸어 둔 frame 다음, 그 뒤 task에서 치움, PaneTerminal 1982줄)으로 풀었다. 그대로 옮기고 참고 유닛 시험도 옮겼다(`web/test/terminalDispose.test.mjs`). 웹 E2E 「앱 단축키」는 frame을 잡아 두고 다음 pane이 snapshot을 읽은 것(ACK)을 본 뒤 되돌아와 frame을 놓아, 이 순서를 늘 만든다. 고치기 전 판은 세 번 모두 실패, 고친 판은 다섯 번 모두 통과(격리 사본).
+- **시험.** 웹 유닛 `web/test/roster.test.mjs`(줄 차례: 프로젝트 묶음의 thread, 그다음 pane, thread 줄이 여는 것). 웹 E2E 「앱 단축키」는 새는 키가 보이는 Linux 화면(Ctrl+Shift)에서 본다. macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않아 새도 보이지 않는다(첫 판이 「끈 키는 터미널로」에서 멈춰 알았다). Ctrl+Shift+↓는 목록에서 바로 아래 줄로, ↑는 돌아오고, 그 뒤 친 z만 pane에 간다(새면 `ESC[1;6B`가 먼저 온다), aaa에 없는 Ctrl+Shift+K·F·B·O는 앱이 가져가지 않고 Ctrl+Shift+E는 가져간다, Ctrl+Shift+E로 터미널 focus, Ctrl+Shift+PgUp은 한 화면(줄 수 − 1) 위·PgDn은 맨 아래이고 pane에 아무것도 안 가며 alternate screen에는 `ESC[5~`·`ESC[6~`, 설정에서 「다음 패널」을 끄면 Ctrl+Shift+↓가 pane에 `ESC[1;6B`로 가고, 기록한 Ctrl+Shift+L이 다음 패널이 되며, 초기화하면 저장값이 지워진다. 맥 platform 휴대폰·iPad 화면에서 ⌘⇧,가 설정을 열고, 단축키 줄이 설정 칸 안에 든다. 변형 확인: 터미널 거르기(`isAppShortcut`)를 빼면 xterm도 Shift+PageUp으로 한 화면 굴려 두 화면이 된다(「한 화면 위」 실패). 옮기는 화살표는 거르기가 없어도 새지 않는다: 창 capture 처리기가 고른 pane을 바꾸면 React가 그 처리기 뒤 microtask에서 그 터미널을 내려 xterm이 키를 받지 못한다. 목록에 없는 동작을 켜 두면 Ctrl+Shift+K를 앱이 가져가고, 한 화면을 줄 수만큼 굴리면·방향을 거꾸로 하면 각 검사가 실패한다.
+
+### 8.95 웹 E2E를 기능별 파일로(10-18, 사용자 「e2e testability가 중요해」, t-0338)
+
+- **왜.** 웹 E2E가 한 파일(5442줄·58단계)이라 한 단계만 혼자 돌릴 수 없고 늘 전부(3~5분)를 돌았으며, 기능 thread 여럿이 같은 파일을 고쳤다. herdr-web-ui는 기능마다 혼자 도는 브라우저 시험(`scripts/*-regression.ts`)과 묶음 실행(`scripts/ui-regression.ts`, `BROWSER_SCRIPTS`로 고르기)을 둔다.
+- **구조.** 입구 `web/e2e/web.e2e.mjs`가 `web/e2e/specs/NN-기능.mjs` 14개를 파일마다 새 프로세스·새 실험실(`lib/child.mjs` → `lib/harness.mjs`의 `runSpec`: host·agent·t1·첫 화면)로 차례로 돈다. 고르기 `--spec`·`--grep`(= `AAA_E2E_ONLY`)·`--repeat`·`--list`. 한 파일이 실패해도 다음 파일을 돌아 한 번에 여러 실패를 본다. 단계 이름과 결과 줄(`ok`·`FAIL`)·실험실 폴더(`/tmp/aaw-<pid>`)는 그대로라 ci.yml·ci-local.sh는 바꾸지 않았다. 쓰는 법은 [docs/testing.md 「웹 E2E」](testing.md#웹-e2e).
 - **새 실험실.** 앞 단계가 남긴 상태(pane 수·질문 수·구독 수·공유 설정 revision·usage 조회 수·diag 수)에 기대던 단언이 파일 안 차례로만 남는다. 그래서 파일 하나를 혼자·되풀이해(간헐 실패 재기) 돌릴 수 있다. 값은 파일마다 준비·정리 약 1.5초(부하가 크면 4초).
 - **글자 그대로 옮겼다.** 단계 본문은 들여쓰기까지 그대로다. 바꾼 줄은 둘이다: 「t1로 돌아왔다」 기다림 7곳(`한글-8`은 「입력 막대로 한글」 단계가 찍은 글이라, 준비가 t1에 `t1-42`를 찍고 그것을 본다)과 push 키 대입(spec은 import한 이름에 쓸 수 없어 `setPushKey`).
-- **ratchet.** spec이 harness의 `sleep`을 import해 쓰므로 scanner가 저장소 안 다른 파일에서 import한 helper도 그 정의로 센다(전에는 같은 파일 정의만 보아 나눈 뒤 53곳 중 6곳만 셌다). origin/main 비교는 main에 있던 파일은 파일마다, 새 파일은 합계로 한다. 합계는 그대로 78이다.
+- **ratchet.** spec이 harness의 `sleep`을 import해 쓰므로 scanner가 저장소 안 다른 파일에서 import한 helper도 그 정의로 센다(전에는 같은 파일 정의만 보아 나눈 뒤 53곳 중 6곳만 셌다). origin/main 비교는 main에 있던 파일은 파일마다, 새 파일은 합계로 한다. 웹 E2E 합계는 나누기 전과 같은 53이다.
+- **공유 설정은 자기 파일(`14-shared-preferences`).** 이 단계는 host의 공유 설정 문서가 비어 있다(revision 0, 쓰는 순서대로 1·2·3)에서 시작한다. 앞 「구독 사용량」 단계가 바꾼 설정은 600ms 뒤(`preferencesSync.ts SEND_AFTER_MS`)에 host로 가므로, 그 화면을 닫는 때에 따라 써지기도 했다(부하가 크면 써진다: 나눈 뒤 첫 ci-local에서 「열기 전에 공유 설정이 있다 revision 1」, 나누기 전 한 파일에도 있던 경쟁). 파일마다 새 실험실이므로 자기 파일이면 빈 문서가 보장된다. 단계 본문은 그대로다.
 - **틀 검사.** `web/test/e2e-layout.test.mjs`: spec 이름 꼴·기본 함수, 단계 이름은 모든 spec에서 하나, harness는 위에 둔 이름을 모두 export, spec은 harness에 있는 이름만 import.
 - **나누기 전 branch.** `web/e2e/tools/port-patch.mjs`가 옛 한 파일의 hunk를 같은 글이 있는 spec·harness로 옮기고 새 helper는 export·import까지 맞춘다. 착지 때 아직 main에 없던 t-0329·t-0333 branch의 변경(hunk 4개, 새 helper `focusIs`)으로 시험했다. 모든 thread가 나눈 main을 받으면 지운다.
 

@@ -1128,7 +1128,9 @@ impl Host {
                     LayoutChange::Split { pane, .. }
                     | LayoutChange::Close { pane, .. }
                     | LayoutChange::Resize { pane, .. }
-                    | LayoutChange::MoveToNewTab { pane, .. } => self.workspace_of_pane(pane),
+                    | LayoutChange::MoveToNewTab { pane, .. }
+                    | LayoutChange::Zoom { pane, .. }
+                    | LayoutChange::Swap { pane, .. } => self.workspace_of_pane(pane),
                     LayoutChange::RenameTab { tab, .. } | LayoutChange::CloseTab { tab } => self.workspace_of_tab(tab),
                     LayoutChange::NewTab { .. } | LayoutChange::AddTab { .. } => None,
                 };
@@ -1400,7 +1402,12 @@ impl Host {
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
                 w = self.workspace(name);
                 let label = label.map(|l| l.trim().to_string()).unwrap_or_default();
-                w.tabs.push(Tab { id: util::new_id(), name: label, root: LayoutNode::Pane { pane: id } });
+                w.tabs.push(Tab {
+                    id: util::new_id(),
+                    name: label,
+                    root: LayoutNode::Pane { pane: id },
+                    zoomed: false,
+                });
             }
             LayoutChange::Split { pane, dir, machine, argv, cwd, ratio } => {
                 let (target, target_mid) = self.resolve_pane(&pane)?;
@@ -1415,7 +1422,12 @@ impl Host {
                 let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
-                let done = w.tabs.iter_mut().any(|t| aaa_proto::layout::split(&mut t.root, &target, &id, dir));
+                let done = w.tabs.iter_mut().any(|t| {
+                    // herdr: 나누면 그 탭의 zoom을 푼다
+                    let hit = aaa_proto::layout::split(&mut t.root, &target, &id, dir);
+                    t.zoomed &= !hit;
+                    hit
+                });
                 if let Some(r) = ratio {
                     // herdr `pane split --ratio`: 새로 생긴 나눔의 a 쪽 비율
                     for t in &mut w.tabs {
@@ -1431,7 +1443,12 @@ impl Host {
                 if aaa_proto::layout::ws_contains(&w, &id) {
                     return Err(err(ErrorCode::BadRequest, "이미 이 workspace에 있다"));
                 }
-                w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
+                w.tabs.push(Tab {
+                    id: util::new_id(),
+                    name: String::new(),
+                    root: LayoutNode::Pane { pane: id },
+                    zoomed: false,
+                });
             }
             LayoutChange::Close { pane, kill } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
@@ -1494,7 +1511,35 @@ impl Host {
                     id: util::new_id(),
                     name: label.unwrap_or_default(),
                     root: LayoutNode::Pane { pane: id },
+                    zoomed: false,
                 });
+            }
+            LayoutChange::Zoom { pane, zoomed } => {
+                let (id, _) = self.resolve_pane(&pane)?;
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| aaa_proto::layout::leaves(&t.root).contains(&id))
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")))?;
+                // herdr `apply_pane_zoom`: pane이 하나뿐인 탭은 그대로
+                if aaa_proto::layout::leaves(&t.root).len() > 1 {
+                    t.zoomed = zoomed.unwrap_or(!t.zoomed);
+                }
+            }
+            LayoutChange::Swap { pane, with } => {
+                let (a, _) = self.resolve_pane(&pane)?;
+                let (b, _) = self.resolve_pane(&with)?;
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| {
+                        let l = aaa_proto::layout::leaves(&t.root);
+                        l.contains(&a) && l.contains(&b)
+                    })
+                    .ok_or_else(|| {
+                        err(ErrorCode::BadRequest, format!("workspace {name}의 한 탭에 {pane}·{with}가 함께 없다"))
+                    })?;
+                aaa_proto::layout::swap(&mut t.root, &a, &b);
             }
         }
         self.db.audit(actor, "layout", name);

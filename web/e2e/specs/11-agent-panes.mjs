@@ -188,8 +188,12 @@ export default async function ({ ctl, page }) {
     // 1) 일반 셸(t1): 대상 머신 세션 폴더에 저장하고 셸에도 따옴표 경로와 빈칸을 넣는다(결정 20 D7, Enter 없음)
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("$"));
+    // 띠는 터미널 위에 뜬다(herdr-web-ui .terminal-banners): 흐름에 있으면 띠가 날 때 칸이 줄어 PTY 크기가 바뀐다
+    const termBox = () => page.locator(".term-scroll").evaluate((el) => `${el.clientWidth}x${el.clientHeight}`);
+    const boxBefore = await termBox();
     await pasteFile(page, png, "image/png");
     await until("셸 경로 배너", async () => (await banner.innerText()).includes("경로를 넣었다"));
+    if ((await termBox()) !== boxBefore) throw new Error(`그림 띠가 터미널 칸을 바꿨다: ${boxBefore} → ${await termBox()}`);
     const p1 = bannerPath(await banner.innerText());
     if (!p1?.startsWith(`${root}/s/agent/sessions/`)) throw new Error(`저장 경로: ${await banner.innerText()}`);
     if (!fs.readFileSync(p1).equals(png)) throw new Error("저장한 그림이 다르다");
@@ -203,6 +207,7 @@ export default async function ({ ctl, page }) {
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
+    if ((await termBox()) !== boxBefore) throw new Error(`오류 띠가 터미널 칸을 바꿨다: ${boxBefore} → ${await termBox()}`);
 
     // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
     const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);

@@ -2,6 +2,7 @@
 //!
 //! herdr 0.9.5 `src/pane.rs` `follow_cwd`(앞 프로세스 그룹 leader의 cwd, 없으면 셸 cwd)와
 //! `src/platform/{macos,linux,windows}.rs`의 `foreground_process_group_id`·`process_cwd`·`pane_process_cwd`를 옮겼다.
+//! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 //! PTY는 session host만 갖고 있어(옛 session host와 IPC를 바꾸지 않는다) herdr의 pid 경로를 쓴다:
 //! child pid의 제어 터미널 앞 그룹(`tpgid`)을 읽는다. herdr가 먼저 보는 OSC 7 보고 위치는 aaa가 따로 모으지 않는다.
 
@@ -402,12 +403,19 @@ mod tests {
             }
         });
         let mut writer = pair.master.take_writer().unwrap();
-        // 표지(ready)가 보이면 cd가 끝났다
+        // 표지(ready)가 보이면 cd가 끝났다. Windows ConPTY(portable-pty는 INHERIT_CURSOR로 연다)는 시작할 때 커서 위치를
+        // 묻고(DSR 6, `ESC [ 6 n`) 답이 올 때까지 자식의 출력과 종료를 막는다: session host처럼 한 번 답한다
+        // (aaa-vt `DsrScanner`). Unix 셸은 묻지 않는다.
         let mut seen = Vec::new();
+        let mut answered = false;
         while !String::from_utf8_lossy(&seen).contains("ready") {
             let chunk =
                 rx.recv().unwrap_or_else(|_| panic!("셸이 표지 전에 끝났다: {}", String::from_utf8_lossy(&seen)));
             seen.extend_from_slice(&chunk);
+            if !answered && seen.windows(4).any(|w| w == b"\x1b[6n") {
+                std::io::Write::write_all(&mut writer, b"\x1b[1;1R").unwrap();
+                answered = true;
+            }
         }
         let pid = child.process_id().unwrap();
         let got = follow_cwd(pid);

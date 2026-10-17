@@ -120,7 +120,7 @@ export default async function ({ ctl, page }) {
       ws.on("framesent", (f) => {
         if (typeof f.payload !== "string") return;
         try {
-          opFrames.push(JSON.parse(f.payload));
+          opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
         } catch {}
       }),
     );
@@ -163,6 +163,30 @@ export default async function ({ ctl, page }) {
     // 3) focus를 얻은 화면이 크기를 다시 건다(입력 없이)
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
+    // 3b) 「터미널의 aaa와 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
+    // 보기만 한다(띠). 남은 화면이 크기를 되찾고, 이 화면을 누르면 다시 이 화면 크기다
+    await op.getByTestId("settings-open").click();
+    await op.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
+    await op.keyboard.press("Escape");
+    await op.getByLabel("보낼 글").fill("echo away");
+    await op.getByRole("button", { name: "보내기" }).click();
+    await until("다른 화면 크기(같이 쓰기)", () => t1size() === otherSize);
+    const beforeAway = opFrames.length;
+    await op.evaluate(() => {
+      document.hasFocus = () => false;
+      window.dispatchEvent(new Event("blur"));
+    });
+    const blurAt = Date.now();
+    await until("다른 창으로 옮기고 놓음", () => opFrames.slice(beforeAway).find((f) => f.t === "release"), 5000);
+    const awayRelease = opFrames.slice(beforeAway).find((f) => f.t === "release");
+    if (awayRelease.at - blurAt < 900) throw new Error(`1초를 기다리지 않고 놓았다(${awayRelease.at - blurAt}ms)`);
+    await op.getByTestId("released-banner").waitFor();
+    await shot(op, "desktop-released");
+    await until("같이 쓰기로 놓은 뒤 남은 화면 크기", () => t1size() === held && holder() === first, 5000);
+    await op.evaluate(() => delete document.hasFocus);
+    await op.locator(".xterm-screen").click();
+    await until("누르면 다시 이 화면 크기", () => t1size() === otherSize && holder() !== first);
+    if ((await op.getByTestId("released-banner").count()) !== 0) throw new Error("되찾은 뒤에도 보기만 띠가 있다");
     // 4) 쓰던 화면이 가려지면 바로 놓고(참고 keepSize(hidden), 전에는 1초 뒤), 보이고 focus 있는 화면이 자기 크기로 맞춘다
     await op.getByLabel("보낼 글").fill("echo hide");
     await op.getByRole("button", { name: "보내기" }).click();

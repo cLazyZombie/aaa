@@ -19,14 +19,24 @@ mode = "child"
 [tui]
 # aaa attach의 명령 prefix 키(herdr 형식, 여러 개면 배열). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "ctrl+g").
 prefix = "ctrl+b"
-# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·ssh 밖, herdr처럼 기본 끔).
-switch_ascii_input_source_in_prefix = false
-# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 끔).
-prefix_jamo_keys = false
+# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·Windows 한국어 IME, ssh 밖, 기본 켬).
+switch_ascii_input_source_in_prefix = true
+# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 켬).
+prefix_jamo_keys = true
 # 새 탭(prefix c)을 만들기 전에 이름을 묻는다(빈 채로·기본값 그대로 Enter면 자리 번호).
 prompt_new_tab_name = true
 # 마지막 탭·마지막 pane을 닫기 전에 묻는다.
 confirm_close = true
+# 왼쪽 사이드바 폭(구분선 포함, 18~36), 접힌 채 시작, 접으면 "compact"(번호·상태 점 4칸)나 "hidden"(없음).
+sidebar_width = 26
+sidebar_start_collapsed = false
+sidebar_collapsed_mode = "compact"
+# 이 폭 이하 터미널은 사이드바·탭 막대 대신 두 줄 머리를 쓴다.
+mobile_width_threshold = 64
+# 색 테마(herdr와 같은 이름: catppuccin·terminal·tokyo-night·dracula·nord·gruvbox 등 18개).
+theme = "catppuccin"
+# pane 테두리: "auto"(pane이 둘 이상인 탭만 pane마다 상자), "always"(하나여도), "off"(테두리 없이 빈 칸 하나).
+pane_borders = "auto"
 
 [terminal]
 # 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로
@@ -51,6 +61,10 @@ nudge_quiet_secs = 10
 outage_secs = 600
 # 열린 thread의 PR을 이만큼(초)마다 thread 머신의 `gh`로 본다. 보고가 새로 오면 바로 본다.
 pr_poll_secs = 120
+# brief 안내·메시지를 Enter한 뒤 harness가 받았다고 알리기를 기다리는 시간(밀리초). 넘으면 전달 불명(다시 보내지 않는다)
+accept_wait_ms = 10000
+# interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기를 기다리는 상한(밀리초). 넘으면 그대로 보낸다
+stop_wait_ms = 15000
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
 # 머신 하나에서 동시에 도는 thread 한도(0이면 제한 없음)

@@ -1,5 +1,7 @@
 //! 한 줄 글 편집(이름 입력 창). herdr 0.9.5 `src/client/shell/text_editor.rs` `TextEditor`를 옮겼다:
 //! grapheme 단위 커서, 처음 치면 바꾸기(`replace_on_type`), emacs식 이동·지우기·kill/yank, 넓은 글자 viewport.
+//!
+//! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::buffer::Buffer;

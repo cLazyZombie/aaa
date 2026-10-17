@@ -189,6 +189,12 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
+    /// brief 안내·메시지를 입력하고 Enter한 뒤 harness가 받았다고 알리기(hook이 없으면 화면 변화)를 기다리는 시간(밀리초).
+    /// 넘으면 전달 불명(unknown)이고 다시 보내지 않는다.
+    pub accept_wait_ms: u64,
+    /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
+    /// 넘으면 그대로 보낸다.
+    pub stop_wait_ms: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
@@ -209,6 +215,8 @@ impl Default for ProjectsSection {
             nudge_quiet_secs: 10,
             outage_secs: 600,
             pr_poll_secs: 120,
+            accept_wait_ms: 10_000,
+            stop_wait_ms: 15_000,
             inbox_done_days: 30,
             max_threads_per_machine: 6,
             routine_commands: Vec::new(),
@@ -223,17 +231,48 @@ pub struct TuiSection {
     /// 명령 prefix 키. herdr 형식(`ctrl+b`, 여러 개면 배열 `["ctrl+b", "ctrl+a"]`). 예전 `C-b` 형식도 읽는다.
     pub prefix: KeyList,
     /// prefix·탐색·크기·copy 모드 동안 입력기가 한글 등(영문 아님)이면 영문 입력기로 바꾸고, 모드가 끝나면 되돌린다
-    /// (macOS, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같다(기본 끔).
+    /// (macOS·Windows 한국어 IME, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같은 이름이다.
+    /// herdr는 기본 끔이지만 사용자 요청이라 기본 켬이다(plan 결정 20 D12).
     pub switch_ascii_input_source_in_prefix: bool,
     /// 예전 이름(`prefix_ascii`). 적혀 있으면 위 값 대신 쓴다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_ascii: Option<bool>,
-    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 끔). 입력기를 바꾸지 못하는 ssh·다른 OS용.
+    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 켬, 결정 20 D12). 입력기를 바꾸기 전에 들어온 키·ssh·다른 OS용.
     pub prefix_jamo_keys: bool,
     /// 새 탭(`prefix c`)을 만들기 전에 이름을 묻는다(herdr `[ui] prompt_new_tab_name`, 기본 켬)
     pub prompt_new_tab_name: bool,
     /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
     pub confirm_close: bool,
+    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width` 26, 18~36으로 묶는다)
+    pub sidebar_width: u16,
+    /// 접힌 채 시작(herdr `[ui] sidebar_start_collapsed`, 기본 펼침)
+    pub sidebar_start_collapsed: bool,
+    /// 접으면: `compact`는 번호와 상태 점만 든 4칸 열, `hidden`은 없앤다(herdr `[ui] sidebar_collapsed_mode`)
+    pub sidebar_collapsed_mode: SidebarCollapsedMode,
+    /// 이 폭(칸) 이하면 목록·탭 줄 대신 두 줄 머리(herdr `[ui] mobile_width_threshold` 64)
+    pub mobile_width_threshold: u16,
+    /// 색 테마 이름(herdr `[theme] name`, 기본 `catppuccin`). 모르는 이름이면 TUI가 오류 막대로 알리고 기본을 쓴다.
+    pub theme: String,
+    /// pane 테두리(herdr `[ui] pane_borders`): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 상자를 두르고,
+    /// `always`는 하나여도, `off`는 테두리 없이 빈 칸 하나로 띄운다. 테두리만큼 PTY 크기가 준다.
+    pub pane_borders: PaneBorders,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneBorders {
+    #[default]
+    Auto,
+    Always,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarCollapsedMode {
+    #[default]
+    Compact,
+    Hidden,
 }
 
 impl TuiSection {
@@ -247,11 +286,17 @@ impl Default for TuiSection {
     fn default() -> Self {
         TuiSection {
             prefix: KeyList::One("ctrl+b".into()),
-            switch_ascii_input_source_in_prefix: false,
+            switch_ascii_input_source_in_prefix: true,
             prefix_ascii: None,
-            prefix_jamo_keys: false,
+            prefix_jamo_keys: true,
             prompt_new_tab_name: true,
             confirm_close: true,
+            sidebar_width: 26,
+            sidebar_start_collapsed: false,
+            sidebar_collapsed_mode: SidebarCollapsedMode::Compact,
+            mobile_width_threshold: 64,
+            theme: "catppuccin".into(),
+            pane_borders: PaneBorders::Auto,
         }
     }
 }
@@ -494,6 +539,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     }
     if c.projects.tick_secs == 0 {
         out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });
+    }
+    for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {
+        if v == 0 {
+            out.push(Invalid { path: key(&["projects", name]), message: "1밀리초 이상이어야 한다".into() });
+        }
     }
     let n = &c.notify;
     if !n.webhook.is_empty() {

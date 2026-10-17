@@ -90,6 +90,6 @@ for (const s of picked) {
   const ok = mine.filter((x) => x.ok).length;
   const ms = mine.map((x) => x.ms).sort((a, b) => a - b);
   const time = ms.length > 1 ? `중간 ${sec(ms[ms.length >> 1])}, 가장 긴 ${sec(ms.at(-1))}` : sec(ms[0]);
-  console.log(`##   ${s.name.padEnd(20)} ${ok === mine.length ? "통과" : "실패"} ${ok}/${mine.length}  ${time}`);
+  console.log(`##   ${s.name.padEnd(22)} ${ok === mine.length ? "통과" : "실패"} ${ok}/${mine.length}  ${time}`);
 }
 if (runs.some((x) => !x.ok)) process.exitCode = 1;

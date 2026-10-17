@@ -4,6 +4,8 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarItem } from "./herdr/keyBar.ts";
 import { sanitizeFontFamily } from "./herdr/fontFamily.ts";
+import { CUSTOM_SHORTCUT_IDS, sanitizeShortcutOverrides, type ShortcutOverrides } from "./herdr/shortcutBindings.ts";
+import type { ShortcutId } from "./herdr/shortcuts.ts";
 import { sanitizeUsage, type UsageSettings } from "./preferences.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
@@ -205,6 +207,113 @@ export function setKeepScreenOn(on: boolean) {
 
 export function useKeepScreenOn(): boolean {
   return useSyncExternalStore(subscribe, () => keepScreenOn);
+}
+
+/**
+ * 켜고 끄는 터미널 설정(herdr-web-ui settings.ts: 둘 다 `device` 범위).
+ * - paneClipboard(기본 켬): pane 프로그램의 클립보드 쓰기(OSC 52)를 이 기기 클립보드에 넣는다.
+ * - releasePaneAway(기본 꺼짐): 다른 창으로 옮기고 1초 뒤 이 탭은 pane을 보기만 하고 크기를 놓는다(터미널의 aaa TUI와 같이 쓸 때).
+ * 기본값이면 지운다. 값은 "1"·"0".
+ */
+export type TerminalToggle = "paneClipboard" | "releasePaneAway";
+const TOGGLE_KEYS: Record<TerminalToggle, string> = {
+  paneClipboard: "aaa:pane-clipboard",
+  releasePaneAway: "aaa:release-pane-away",
+};
+const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false };
+
+function readToggle(name: TerminalToggle): boolean {
+  try {
+    const v = localStorage.getItem(TOGGLE_KEYS[name]);
+    return v === "1" ? true : v === "0" ? false : TOGGLE_DEFAULTS[name];
+  } catch {
+    return TOGGLE_DEFAULTS[name];
+  }
+}
+
+const toggles: Record<TerminalToggle, boolean> = {
+  paneClipboard: readToggle("paneClipboard"),
+  releasePaneAway: readToggle("releasePaneAway"),
+};
+
+window.addEventListener("storage", (e) => {
+  const name = (Object.keys(TOGGLE_KEYS) as TerminalToggle[]).find((k) => TOGGLE_KEYS[k] === e.key);
+  if (!name) return;
+  toggles[name] = readToggle(name);
+  listeners.forEach((f) => f());
+});
+
+export function setTerminalToggle(name: TerminalToggle, on: boolean) {
+  toggles[name] = on;
+  try {
+    if (on === TOGGLE_DEFAULTS[name]) localStorage.removeItem(TOGGLE_KEYS[name]);
+    else localStorage.setItem(TOGGLE_KEYS[name], on ? "1" : "0");
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+/** 사건 처리기에서 읽는 지금 값 */
+export function terminalToggle(name: TerminalToggle): boolean {
+  return toggles[name];
+}
+
+export function useTerminalToggle(name: TerminalToggle): boolean {
+  return useSyncExternalStore(subscribe, () => toggles[name]);
+}
+
+/**
+ * 단축키(herdr-web-ui settings.ts `shortcutOverrides`: 기기마다, 기본 {}, 저장값은 `sanitizeShortcutOverrides`로 거른다).
+ * 참고 표(herdr/shortcuts.ts `SHORTCUTS`) 가운데 aaa에 그 동작이 있는 것만 켠다. 나머지는 「끄기」(null)로 두어 키가 터미널로
+ * 간다: 없는 동작이 Ctrl+Shift+K 같은 터미널 키를 가져가지 않는다. 그 화면이 생기면 이 목록에 더한다.
+ */
+export const AAA_SHORTCUTS = ["toggle-view", "focus-input", "scroll-up", "scroll-down", "previous-pane", "next-pane", "settings"] as const satisfies readonly ShortcutId[];
+export type AaaShortcutId = (typeof AAA_SHORTCUTS)[number];
+const NOT_IN_AAA: ShortcutOverrides = Object.fromEntries(
+  CUSTOM_SHORTCUT_IDS.filter((id) => !(AAA_SHORTCUTS as readonly string[]).includes(id)).map((id) => [id, null]),
+);
+const SHORTCUT_KEY = "aaa:shortcut-overrides";
+
+/** 저장된 것(사용자가 바꾼 것)에 aaa에 없는 동작의 「끄기」를 얹은 값: 단축키 판정과 설정 화면이 쓴다 */
+function readShortcuts(): ShortcutOverrides {
+  let stored: ShortcutOverrides = {};
+  try {
+    stored = sanitizeShortcutOverrides(JSON.parse(localStorage.getItem(SHORTCUT_KEY) ?? "{}"));
+  } catch {
+    // 막혔거나 깨진 값: 기본값
+  }
+  return { ...stored, ...NOT_IN_AAA };
+}
+
+let shortcuts = readShortcuts();
+
+window.addEventListener("storage", (e) => {
+  if (e.key !== SHORTCUT_KEY) return;
+  shortcuts = readShortcuts();
+  listeners.forEach((f) => f());
+});
+
+/** 설정 화면이 바꾼 값(aaa에 없는 동작의 「끄기」는 저장하지 않는다). 비면 지운다 */
+export function setShortcutOverrides(next: ShortcutOverrides) {
+  const own = sanitizeShortcutOverrides(Object.fromEntries(Object.entries(next).filter(([id]) => !(id in NOT_IN_AAA))));
+  shortcuts = { ...own, ...NOT_IN_AAA };
+  try {
+    if (Object.keys(own).length === 0) localStorage.removeItem(SHORTCUT_KEY);
+    else localStorage.setItem(SHORTCUT_KEY, JSON.stringify(own));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+/** 사건 처리기(터미널 키 처리)에서 읽는 지금 값 */
+export function shortcutOverrides(): ShortcutOverrides {
+  return shortcuts;
+}
+
+export function useShortcutOverrides(): ShortcutOverrides {
+  return useSyncExternalStore(subscribe, () => shortcuts);
 }
 
 /**
