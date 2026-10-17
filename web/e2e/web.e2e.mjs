@@ -1047,6 +1047,69 @@ try {
     await dp.context().close();
   });
 
+  await step("목록 바닥 줄은 늘 맨 아래(herdr-web-ui sidebar-footer, 사용자 요청 10-17): 목록이 길어도·굴려도 설정·사용량 줄은 화면 맨 아래, 휴대폰·iPad·데스크톱·화면 키보드", async () => {
+    // 목록이 화면보다 길어야 시험이 된다: 짧으면 예전 판(바닥 줄이 목록 끝을 따라감)도 맨 아래에 있다
+    const many = Array.from({ length: 24 }, (_, i) => `foot${i + 1}`);
+    for (const name of many) aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sleep", "600");
+    const footer = (p) =>
+      p.evaluate(() => {
+        const r = (s) => document.querySelector(s).getBoundingClientRect();
+        const body = document.querySelector(".list-body");
+        return {
+          view: Math.round(window.visualViewport?.height ?? window.innerHeight),
+          app: Math.round(r(".app").bottom),
+          list: Math.round(r(".list").bottom),
+          foot: Math.round(r(".list-foot").bottom),
+          gear: Math.round(r('[data-testid="settings-open"]').bottom),
+          over: body.scrollHeight - body.clientHeight,
+          top: Math.round(body.scrollTop),
+        };
+      });
+    const bad = [];
+    // 바닥 줄이 보이는 높이의 맨 아래에 붙어 있고(목록 끝을 따라가지 않고), 목록을 끝까지 굴려도 그 자리다
+    const check = async (label, p) => {
+      await until(`${label} 목록에 foot24`, async () => (await p.getByTestId("pane-foot24").count()) === 1);
+      const at = await footer(p);
+      if (at.over <= 0) bad.push(`${label}: 목록이 화면보다 짧아 시험이 안 된다 ${JSON.stringify(at)}`);
+      if (at.top !== 0 || at.app !== at.view || at.list !== at.view || at.foot !== at.view || at.gear > at.view) bad.push(`${label}: 바닥 줄이 맨 아래가 아니다 ${JSON.stringify(at)}`);
+      await p.locator(".list-body").evaluate((el) => (el.scrollTop = el.scrollHeight));
+      const end = await footer(p);
+      if (end.top === 0 || end.foot !== at.foot || end.gear !== at.gear) bad.push(`${label}: 목록을 굴리니 바닥 줄이 움직였다 ${JSON.stringify({ at, end })}`);
+      await p.locator(".list-body").evaluate((el) => (el.scrollTop = 0));
+      return at;
+    };
+    const phone = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    const ph = await check("휴대폰 390×844", phone);
+    await phone.context().close();
+    const desk = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await check("데스크톱 1100×760", desk);
+    await desk.context().close();
+    const wk = await webkit.launch();
+    try {
+      const pad = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, init: fakeViewport })).page;
+      const up = await check("iPad 820×1180", pad);
+      if (up.view !== 1180) bad.push(`iPad 보이는 높이가 1180이 아니다(${up.view}): 키보드 시험이 안 된다`);
+      // pane을 열고 화면 키보드를 올리면(보이는 높이 780) 바닥 줄은 키보드 바로 위에 남는다
+      await pad.getByTestId("pane-t1").click();
+      await pad.getByTestId("terminal").waitFor();
+      // 키보드는 글 칸에 focus가 있을 때만 올라온다(herdr/viewport.ts)
+      await pad.locator(".xterm-helper-textarea").focus();
+      await softKeyboard(pad, 780);
+      await until("iPad 키보드 위 바닥 줄", async () => (await footer(pad)).foot === 780).catch(async (e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(await footer(pad))}`);
+      });
+      await check("iPad 화면 키보드(보이는 높이 780)", pad);
+      await softKeyboard(pad, 1180);
+      await until("iPad 키보드 내림", async () => (await footer(pad)).foot === 1180);
+      await pad.context().close();
+    } finally {
+      await wk.close();
+    }
+    for (const name of many) aaa("pane", "kill", name);
+    if (bad.length) throw new Error(bad.join("; "));
+    console.log(`     휴대폰 바닥 줄 아래 ${ph.foot}px(보이는 높이 ${ph.view}), 목록 넘침 ${ph.over}px`);
+  });
+
   await step("글자 크기(herdr-web-ui terminalFontSize·핀치): 설정에서 한 칸씩, 휴대폰은 두 손가락으로 글자가 따라오고 손을 떼면 저장하고 PTY를 한 번 다시 건다", async () => {
     const t1 = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
     const rowsFont = (pg) => pg.evaluate(() => getComputedStyle(document.querySelector('[data-testid="terminal"] .xterm-rows')).fontSize);

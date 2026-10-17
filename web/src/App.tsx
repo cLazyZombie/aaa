@@ -373,84 +373,87 @@ function Main({ role }: { role: DeviceRole }) {
           ))}
           <ThemeButton />
         </header>
-        {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
-        {msg && <div className="banner err">{msg}</div>}
-        {!loaded && <p className="muted pad">불러오는 중</p>}
-        {open.length > 0 && (
-          <Section title="답을 기다림" count={open.length} alert testid="questions">
-            {open.map((q) => (
-              <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} />
-            ))}
-          </Section>
-        )}
-        {shownThreads.length > 0 && (
-          <Section title="Thread" count={shownThreads.length} testid="threads">
-            <ul>
-              {shownThreads.map((t) => (
-                <li key={threadKey(t)}>
-                  <ThreadRow t={t} sel={sel === `thread:${threadKey(t)}`} onClick={() => chooseThread(t)} />
-                </li>
+        {/* 목록만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar: machine-list가 굴러가고 sidebar-footer는 맨 아래) */}
+        <div className="list-body">
+          {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
+          {msg && <div className="banner err">{msg}</div>}
+          {!loaded && <p className="muted pad">불러오는 중</p>}
+          {open.length > 0 && (
+            <Section title="답을 기다림" count={open.length} alert testid="questions">
+              {open.map((q) => (
+                <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} />
               ))}
-            </ul>
-          </Section>
-        )}
-        {machines.map((m) => {
-          const mine = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator");
-          const on = m.connection === "connected";
-          return (
-            <section key={m.id} className="sec machine" data-testid={`machine-${m.name}`}>
-              <div className="machine-head">
-                <Icon name="machine" />
-                <span className="name">{m.name}</span>
-                {m.local && <span className="tag">host</span>}
-                <span className={`dot ${on ? "on" : "off"}`} title={on ? "연결됨" : "끊김"} />
-                {!on && <span className="chip warn">끊김</span>}
-                {on && m.problems.length > 0 && (
-                  <span className="chip warn" title={m.problems.map((p) => p.text).join("\n")} data-testid={`health-${m.name}`}>
-                    점검 이상
-                  </span>
-                )}
-                {canControl && on && (
-                  <button className="ghost small" onClick={() => newShell(m)}>
-                    <Icon name="plus" />
-                    새 셸
-                  </button>
-                )}
-              </div>
-              {on && m.problems.length > 0 && (
-                <p className="note">새 세션을 시작하지 않는다: {m.problems.map((p) => p.text).join("; ")}</p>
-              )}
-              {mine.length === 0 && <p className="empty">pane 없음</p>}
+            </Section>
+          )}
+          {shownThreads.length > 0 && (
+            <Section title="Thread" count={shownThreads.length} testid="threads">
               <ul>
-                {mine.map((p) => {
-                  const badge = paneBadge(p);
-                  const t = threadOfPane.get(p.id);
-                  return (
-                    <li key={p.id}>
-                      <button
-                        className={`pane ${`pane:${p.id}` === sel ? "sel" : ""} ${p.state !== "running" ? "dim" : ""}`}
-                        onClick={() => choose(p.id)}
-                        data-testid={`pane-${p.name || p.id}`}
-                      >
-                        <span className={`mark ${harnessOf(p, t)}`}>
-                          <Icon name={harnessOf(p, t)} />
-                        </span>
-                        <span className="row-text">
-                          <span className="row-title">{paneTitle(p)}</span>
-                          <span className="row-sub">{paneSub(p)}</span>
-                        </span>
-                        <span className="row-end">
-                          <AgentChip p={p} testid />
-                          {badge && <span className={`chip ${badge.cls}`}>{badge.text}</span>}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
+                {shownThreads.map((t) => (
+                  <li key={threadKey(t)}>
+                    <ThreadRow t={t} sel={sel === `thread:${threadKey(t)}`} onClick={() => chooseThread(t)} />
+                  </li>
+                ))}
               </ul>
-            </section>
-          );
-        })}
+            </Section>
+          )}
+          {machines.map((m) => {
+            const mine = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator");
+            const on = m.connection === "connected";
+            return (
+              <section key={m.id} className="sec machine" data-testid={`machine-${m.name}`}>
+                <div className="machine-head">
+                  <Icon name="machine" />
+                  <span className="name">{m.name}</span>
+                  {m.local && <span className="tag">host</span>}
+                  <span className={`dot ${on ? "on" : "off"}`} title={on ? "연결됨" : "끊김"} />
+                  {!on && <span className="chip warn">끊김</span>}
+                  {on && m.problems.length > 0 && (
+                    <span className="chip warn" title={m.problems.map((p) => p.text).join("\n")} data-testid={`health-${m.name}`}>
+                      점검 이상
+                    </span>
+                  )}
+                  {canControl && on && (
+                    <button className="ghost small" onClick={() => newShell(m)}>
+                      <Icon name="plus" />
+                      새 셸
+                    </button>
+                  )}
+                </div>
+                {on && m.problems.length > 0 && (
+                  <p className="note">새 세션을 시작하지 않는다: {m.problems.map((p) => p.text).join("; ")}</p>
+                )}
+                {mine.length === 0 && <p className="empty">pane 없음</p>}
+                <ul>
+                  {mine.map((p) => {
+                    const badge = paneBadge(p);
+                    const t = threadOfPane.get(p.id);
+                    return (
+                      <li key={p.id}>
+                        <button
+                          className={`pane ${`pane:${p.id}` === sel ? "sel" : ""} ${p.state !== "running" ? "dim" : ""}`}
+                          onClick={() => choose(p.id)}
+                          data-testid={`pane-${p.name || p.id}`}
+                        >
+                          <span className={`mark ${harnessOf(p, t)}`}>
+                            <Icon name={harnessOf(p, t)} />
+                          </span>
+                          <span className="row-text">
+                            <span className="row-title">{paneTitle(p)}</span>
+                            <span className="row-sub">{paneSub(p)}</span>
+                          </span>
+                          <span className="row-end">
+                            <AgentChip p={p} testid />
+                            {badge && <span className={`chip ${badge.cls}`}>{badge.text}</span>}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
         <ListFoot />
       </aside>
       <main className="view">
