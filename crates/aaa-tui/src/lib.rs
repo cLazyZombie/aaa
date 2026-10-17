@@ -2,7 +2,9 @@
 //!
 //! - host가 준 workspace layout을 칸으로 나누고, 각 pane은 host가 보내는 cell grid를 그린다.
 //! - 가진 것은 지금 탭·포커스·prefix 입력 상태뿐이다. lease·pane 상태는 host가 보낸 목록을 그대로 쓴다.
-//! - 키 입력은 포커스 pane에 대화형 입력(`PaneInput`)으로 보낸다. 다른 front가 조작 중이면 거부를 표시한다.
+//! - 키 입력은 포커스 pane에 대화형 입력(`PaneInput`)으로 보낸다. 다른 front가 쓰던 pane이어도 들어가고, 이 화면이
+//!   「지금 쓰는 화면」이 되어 PTY 크기를 다시 건다(herdr처럼 명시적 가져오기가 필요 없다, §8.33).
+//! - 터미널 focus를 얻으면(FocusGained) 보이는 pane의 크기를 다시 건다. focus가 없을 때는 크기를 걸지 않는다.
 //! - Ctrl+V(또는 빈 붙여넣기)에서 이 기기 clipboard에 그림이 있으면 pane 머신으로 올린다(`clip`, §8.28).
 //!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
 
@@ -14,8 +16,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use aaa_proto::{
-    B64, ErrorBody, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, Outcome, PaneView,
-    SessionState, SplitDir, Workspace,
+    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, Outcome, PaneView, SessionState,
+    SplitDir, Workspace,
 };
 use anyhow::{Context, Result};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -36,6 +38,8 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         let label = format!("tui@{}", aaa_common::util::hostname());
         let client = FrontClient::connect_as(&state, &label).await?;
         let mut terminal = ratatui::init();
+        // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
+        let _focus = FocusReport::on();
         let r = App::new(
             workspace.unwrap_or_else(|| aaa_proto::DEFAULT_WORKSPACE.to_string()),
             prefix,
@@ -47,6 +51,22 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         r
     })?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// 터미널 focus 사건 보고를 켜고, 이 값이 사라질 때(정상·오류·panic 종료) 끈다
+struct FocusReport;
+
+impl FocusReport {
+    fn on() -> FocusReport {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableFocusChange);
+        FocusReport
+    }
+}
+
+impl Drop for FocusReport {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableFocusChange);
+    }
 }
 
 #[derive(Default)]
@@ -76,7 +96,7 @@ impl Grid {
 enum Pending {
     /// 응답이 오면 오류만 보인다
     Report(&'static str),
-    /// 입력 거부(lease_held 등)는 상태 줄에 보인다
+    /// 입력·크기 오류는 상태 줄에 보인다
     Input,
     /// 새로 만든 pane에 포커스를 옮긴다
     Focus,
@@ -102,6 +122,10 @@ struct App {
     /// 그림 붙여넣기 번호와 실패를 이미 알린 번호(남은 조각의 거부는 다시 알리지 않는다)
     attach_seq: u64,
     attach_failed: Option<u64>,
+    /// 터미널 focus(focus 사건을 안 보내는 터미널은 늘 true)
+    focused: bool,
+    /// focus를 다시 얻었다: 다음 sync에서 보이는 pane의 크기를 다시 건다
+    reclaim: bool,
     quit: bool,
 }
 
@@ -123,6 +147,8 @@ impl App {
             sized: HashMap::new(),
             attach_seq: 0,
             attach_failed: None,
+            focused: true,
+            reclaim: false,
             quit: false,
         }
     }
@@ -161,6 +187,8 @@ impl App {
                     Some(Ok(Event::Paste(s))) if s.is_empty() => { self.paste_image(&mut tx).await?; dirty = true; }
                     Some(Ok(Event::Paste(s))) => { self.input(&mut tx, s.into_bytes()).await?; }
                     Some(Ok(Event::Resize(..))) => dirty = true,
+                    Some(Ok(Event::FocusGained)) => { self.focused = true; self.reclaim = true; self.sized.clear(); dirty = true; }
+                    Some(Ok(Event::FocusLost)) => self.focused = false,
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
@@ -210,7 +238,7 @@ impl App {
                             self.message = Some(format!("그림 붙여넣기 실패: {}", e.message));
                         }
                     }
-                    (Outcome::Err(e), Some(Pending::Input)) => self.message = Some(lease_message(&e)),
+                    (Outcome::Err(e), Some(Pending::Input)) => self.message = Some(e.message.clone()),
                     (Outcome::Err(e), Some(Pending::Report(what))) => {
                         self.message = Some(format!("{what} 실패: {}", e.message))
                     }
@@ -252,7 +280,8 @@ impl App {
         Rect { x: area.x, y: area.y + 1, w: area.w, h: area.h.saturating_sub(2) }
     }
 
-    /// 보이는 pane만 화면을 구독하고, 이 화면이 lease를 가졌거나 비어 있는 포커스 pane은 칸 크기에 맞춘다.
+    /// 보이는 pane만 화면을 구독한다. 이 화면이 지금 쓰는 화면이거나 비어 있는 포커스 pane은 칸 크기에 맞춘다.
+    /// focus를 다시 얻었으면 보이는 pane 모두 크기를 다시 건다(다른 화면이 쓰던 것도). focus가 없으면 걸지 않는다.
     async fn sync(&mut self, tx: &mut FrontSender, area: Rect) -> Result<()> {
         let visible: HashSet<String> = self.current_leaves().into_iter().collect();
         for p in visible.difference(&self.watching.clone()) {
@@ -267,6 +296,10 @@ impl App {
         }
         let Some(tab) = self.ws.tabs.get(self.tab) else { return Ok(()) };
         let (rects, _) = layout::rects(&tab.root, Self::body(area));
+        let reclaim = std::mem::take(&mut self.reclaim);
+        if !self.focused {
+            return Ok(());
+        }
         for (pane, r) in rects {
             let Some(view) = self.panes.get(&pane) else { continue };
             if !view.state.is_running() || view.connection == aaa_proto::Connection::Disconnected {
@@ -275,7 +308,8 @@ impl App {
             let mine = view.lease.as_ref().is_some_and(|l| l.front == self.me);
             let free_focus = view.lease.is_none() && self.focus.as_deref() == Some(pane.as_str());
             let want = (r.w.max(2), r.h.max(1));
-            if (mine || free_focus) && (view.cols, view.rows) != want && self.sized.get(&pane) != Some(&want) {
+            let differs = (view.cols, view.rows) != want && self.sized.get(&pane) != Some(&want);
+            if ((mine || free_focus) && differs) || (reclaim && !mine) {
                 self.sized.insert(pane.clone(), want);
                 let id = tx.send(FrontRequest::PaneResize { pane, cols: want.0, rows: want.1 }).await?;
                 self.pending.insert(id, Pending::Input);
@@ -360,7 +394,7 @@ impl App {
             KeyCode::Char('t') => {
                 let Some(pane) = focus else { return Ok(()) };
                 let id = tx.send(FrontRequest::PaneTake { pane: pane.clone() }).await?;
-                self.pending.insert(id, Pending::Report("가져오기"));
+                self.pending.insert(id, Pending::Report("이 화면 크기로"));
                 self.sized.remove(&pane);
             }
             KeyCode::Char('r') => {
@@ -386,7 +420,7 @@ impl App {
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => self.move_focus(k.code),
             KeyCode::Char('?') => self.message = Some(
-                "c 새 탭 · % 좌우 · \" 위아래 · 화살표/o 이동 · n/p/1-9 탭 · t 가져오기 · r 재개 · x 닫기 · d 나가기 · (prefix 없이) Ctrl+V 그림"
+                "c 새 탭 · % 좌우 · \" 위아래 · 화살표/o 이동 · n/p/1-9 탭 · t 이 화면 크기로 · r 재개 · x 닫기 · d 나가기 · (prefix 없이) Ctrl+V 그림"
                     .into(),
             ),
             _ => {}
@@ -523,7 +557,7 @@ impl App {
     fn render_pane(&self, buf: &mut Buffer, pane: &str, r: Rect, focused: bool) -> Option<(u16, u16)> {
         let view = self.panes.get(pane);
         if let Some(g) = self.grids.get(pane) {
-            // PTY 크기가 칸과 다를 수 있다(다른 front가 조작 중): 왼쪽 위에 맞추고 칸 밖은 자른다
+            // PTY 크기가 칸과 다를 수 있다(다른 front가 쓰는 중): 왼쪽 위에 맞추고 칸 밖은 자른다
             for (row, runs) in g.lines.iter().enumerate().take(r.h as usize) {
                 let y = r.y + row as u16;
                 let mut x = r.x;
@@ -569,11 +603,9 @@ impl App {
             ));
             out.push((format!(" {}", state_text(p)), Style::default().fg(state_color(p))));
             match &p.lease {
-                Some(l) if l.front == self.me => out.push((" · 조작 중".into(), Style::default().fg(DIM))),
-                Some(l) => out.push((
-                    format!(" · {} 조작 중(가져오기 {} t)", l.label, prefix_label(self.prefix.0)),
-                    Style::default().fg(WARN),
-                )),
+                Some(l) if l.front == self.me => out.push((" · 이 화면 크기".into(), Style::default().fg(DIM))),
+                // 입력하거나 이 터미널로 돌아오면 이 화면 크기로 바뀐다
+                Some(l) => out.push((format!(" · {} 크기", l.label), Style::default().fg(WARN))),
                 None => {}
             }
         }
@@ -631,10 +663,6 @@ fn state_color(p: &PaneView) -> Color {
 
 fn prefix_label(c: char) -> String {
     format!("C-{c}")
-}
-
-fn lease_message(e: &ErrorBody) -> String {
-    if e.code == aaa_proto::ErrorCode::LeaseHeld { format!("입력 안 됨: {}", e.message) } else { e.message.clone() }
 }
 
 fn state_text(p: &PaneView) -> String {

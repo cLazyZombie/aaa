@@ -225,7 +225,7 @@ export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: A
 
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string, } | { "t": "attached", path: string, inserted: boolean, note: string | null, } | { "t": "error" } & ErrorBody;
 
-export type TermClientMsg = { "t": "input", data: string, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, };
+export type TermClientMsg = { "t": "input", data: string, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, };
 
 export type Role = "coordinator" | "worker" | "evaluator";
 

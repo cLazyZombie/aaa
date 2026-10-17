@@ -405,7 +405,7 @@ fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
     TermServerMsg::Readonly { readonly: view.readonly, reason: reason.map(str::to_string) }
 }
 
-/// WebSocket 하나가 대화형 front 하나다. 조작 lease는 이 연결에 묶이고 끝나면 풀린다.
+/// WebSocket 하나가 대화형 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고 끝나면 풀린다.
 async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, socket: WebSocket) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
@@ -476,6 +476,7 @@ async fn pane_session(
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }
                         Ok(TermClientMsg::Take) => Some(FrontRequest::PaneTake { pane: id.clone() }),
+                        Ok(TermClientMsg::Release) => Some(FrontRequest::PaneRelease { pane: id.clone() }),
                         Ok(TermClientMsg::Attach { offset, total, sha256, data }) => {
                             if offset != 0 && upload_failed {
                                 continue;
