@@ -12,7 +12,7 @@
 | `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`), 키 막대 유지 키(`StickyModifiers`, chord는 `terminalChord`·`keyFromData`·`physicalKey`) |
 | `osc52.ts` | `parseOsc52`: pane 프로그램의 OSC 52 클립보드 쓰기(질의는 거절, 100 KiB 상한) |
 | `keyBar.ts` | 키 막대 항목(기본 Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→), 저장값 거르기(`sanitizeKeyBarItems`), 키 이름 → bytes(`keyBarInputSequence`, DECCKM) |
-| `KeyBarSettings.tsx`·`KeyBarSettings.css` | 설정 「키 바 편집」: 키 목록 순서·지우기, 키 추가, 고정 보조 키, 사용자 조합, 기본값으로 되돌리기(`src/components/KeyBarSettings.*`). CSS는 그대로, tsx는 lucide·i18n·useSettings 대신 aaa Icon·한국어 문구·`settings.ts`, 단추 class만 aaa 것 |
+| `KeyBarSettings.tsx`·`KeyBarSettings.css` | 설정 「키 바 편집」: 키 목록 순서·지우기, 키 추가, 고정 보조 키, 사용자 조합, 기본값으로 되돌리기(`src/components/KeyBarSettings.*`). CSS는 그대로, tsx는 i18n·useSettings 대신 한국어 문구·`settings.ts`(아이콘·단추 class는 참고 그대로) |
 | `fontFamily.ts` | 설정 「터미널 글꼴」: 쉼표로 적은 글꼴 목록을 CSS 값으로 거르고(`sanitizeFontFamily`), 그 face를 받을 때까지 기다린다(`loadFontStack`). aaa는 `terminalFontStack` 대신 Meslotendard 목록 앞에 붙인다(plan §8.64) |
 | `installedFonts.ts` | 「찾아보기」: 이 기기에 깔린 글꼴 목록(Chromium `queryLocalFonts`), 이름 거르기, 고정폭 판정(`isMonospaceFamily`) |
 | `presence.ts` | 이 화면을 지금 쓰는지(보이고 focus가 있다): events WS로 host에 알린다. 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다(`watchPageInUse`, plan §8.69) |
@@ -36,6 +36,8 @@
 | `AccessGate.css`·`DevicesPanel.css`·`PhonePanel.css`·`ConfirmDialog.css` | `src/components/` 것 그대로. 마크업은 `web/src/AccessGate.tsx`·`DevicesPanel.tsx`·`PhonePanel.tsx`·`ConfirmDialog.tsx` |
 | `modal.css` | `src/styles.css` 1269~1451줄 그대로: `.modal-scrim`·`.modal`·머리·몸·바닥, 휴대폰 sheet 움직임, 키보드가 있을 때, `.input`·`.select` |
 | `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
+| `SettingsControls.tsx`·`SettingsControls.css`·`SettingsDialog.css` | 설정 창의 묶음·줄·스위치·여럿 중 하나·한 칸씩(`src/components/SettingsControls.*` 그대로)과 창 배치(쪽 목록·쪽, 휴대폰은 목록 → 쪽, `src/components/SettingsDialog.css` 그대로). 마크업은 `web/src/SettingsDialog.tsx`. plan §8.88 |
+| `settingsHistory.ts` | 설정 창의 한 걸음(창·쪽·키 바 편집)마다 history 한 칸: 시스템 「뒤로」가 한 칸씩 나온다(`src/lib/settingsHistory.ts`, history 열쇠 이름만 `aaa:`) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 
 agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`·`agentMark.ts`는 `src/components/AgentMark.tsx`·`src/components/AgentMark.css`·`src/lib/agentMark.ts`를 그대로 옮겼다(`AgentMark.tsx`는 import 경로만). `agentSvgMarks.ts`는 `src/components/agentSvgMarks.ts`에서 droid(Factory favicon)·maki(maki.sh favicon) 두 줄만 뺐다. 참고가 그 출처의 사용 허락을 적지 않아서다. 그 agent는 머리글자 표시(FallbackMark)로 보인다. 참고는 Claude·Codex·Cursor·OpenCode·omp·gjc·omo 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. `agentSvgMarks.ts`의 나머지는 LobeHub Icons(`@lobehub/icons-static-svg`, 아래 MIT)다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표이며, 그 밖의 표시도 각 소유자의 것이다.** aaa는 pane에서 도는 agent를 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.
