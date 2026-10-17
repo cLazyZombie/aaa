@@ -136,6 +136,10 @@ jobs:
         # 끝나지 않는 시험은 job 한도(40분)에 취소되면 실패 요약이 돌지 않는다. 단계 한도로 실패로 끝내 요약을 남긴다
         # (지금 가장 긴 test 단계는 macOS 2분 안팎이다)
         timeout-minutes: 15
+        # 시험 binary 안의 동시 수(결정 D2). 기본은 러너 코어 수(3~4)인데 m13 등은 대부분 host·agent 사건을 기다리는
+        # 시험이라 코어보다 많이 돌려도 된다(개발 Mac m13: 3개 72.6초, 8개 39.0초). 시간 단언은 사건·기록 기준으로 바꿨다.
+        env:
+          RUST_TEST_THREADS: "8"
         run: bash scripts/ci-local.sh --only test --logs . --tee
       # 실제 시스템 clipboard(§8.28): 그림을 쓰고 TUI front가 Ctrl+V로 읽어 대상 세션 폴더까지 가는지 본다.
       # 개발 Mac에서는 사람의 clipboard를 덮어쓰므로 CI에서만 켠다. Linux는 Xvfb 위 X11, Windows는 TUI E2E(Unix 전용) 없이 읽기만.
