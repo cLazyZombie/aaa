@@ -1,5 +1,5 @@
 /* 보고서 Markdown 모양. herdr-web-ui aa624cb src/components/ChatView.css의 .markdown 규칙과 HighlightedCode.css .hl-code를
-   바꾸지 않고 골라 옮겼다. 빠진 것: 그림·수식·mermaid·skill·파일 단추(aaa 렌더에 없음), chat 말풍선 규칙.
+   바꾸지 않고 골라 옮겼다. 빠진 것: 수식·mermaid·skill(aaa 렌더에 없음), chat 말풍선 규칙. 그림·파일 단추는 파일 보기가 준다.
    --chat-fs-body는 참고에서 ChatView.css .chat-view가 정하는 값이라 여기서 둔다. 고지는 web/src/herdr/README.md. */
 .markdown {
   --chat-fs-body: var(--fs-chat);
@@ -303,4 +303,98 @@
 
 @media (prefers-reduced-motion: reduce) {
   .markdown-code-header { transition: none; }
+}
+
+/* ── 그림(ChatView.css .markdown-image·.image-slot)과 파일 단추(.markdown-file): 파일 보기 안 Markdown(plan §8.109) ── */
+.markdown-image {
+  max-width: 100%;
+  height: auto;
+}
+
+/* an image holds its box until it decodes (Markdown.tsx ReservedImage, lib/imageBox.ts): the wrapper
+   is the box while the bytes arrive and after a failure, and gives it up once the picture is in, so
+   the image renders bare and nothing around it is laid out anew */
+.image-slot { display: contents; }
+
+.image-slot.is-loading,
+.image-slot.is-failed {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+
+/* the picture loads behind its slot and shows only once it is whole */
+.image-slot.is-loading > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;
+}
+
+.image-slot-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.image-slot-note > svg { width: 1.25em; height: 1.25em; flex: none; }
+
+/* a standalone Markdown image (a screenshot, a logo on a line of its own) holds a 16:9 slot as wide
+   as the lane, up to the bound lib/imageBox.ts puts on it, framed as a code block is */
+.markdown .image-slot.is-loading,
+.markdown .image-slot.is-failed {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.markdown-file {
+  display: inline;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-strong);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: var(--space-1);
+  overflow-wrap: inherit;
+  cursor: pointer;
+}
+
+.markdown-file.is-code {
+  text-decoration: none;
+}
+
+.markdown-file.is-code code {
+  color: var(--text-strong);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 0.2em;
+}
+
+.markdown-file:hover,
+.markdown-file:hover code,
+.markdown-file:focus-visible,
+.markdown-file:focus-visible code {
+  color: var(--accent);
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
 }

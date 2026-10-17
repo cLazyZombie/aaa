@@ -1,23 +1,105 @@
 // 보고서 Markdown(차이 목록 R1). herdr-web-ui `src/components/Markdown.tsx`(aa624cb)의 렌더를 옮기고, 파서는
 // `src/lib/markdown.ts`·`markdownHtml.ts`를 그대로 쓴다(herdr/markdown.ts). HTML은 해석하지 않는다(parseMarkdown html=false).
-// 참고에서 뺀 것: 수식(KaTeX)은 원문 그대로, mermaid는 code block, 그림은 참고의 「그림을 그리지 않는 곳」처럼 대체 글,
-// 파일 열기는 aaa에 앱 안 viewer가 아직 없어 참고 「열 수 없는 곳」 모양(이름 뒤 경로). 문법 강조는 없다(글자 그대로).
+// 참고에서 뺀 것: 수식(KaTeX)은 원문 그대로, mermaid는 code block. 문법 강조는 없다(글자 그대로).
+// 그림과 파일 열기는 그것을 주는 곳(파일 보기: `MarkdownImageContext`·`OpenFileContext`)에서만 된다. 그 밖(보고서 등)은
+// 참고의 「그림을 그리지 않는 곳」처럼 대체 글, 「열 수 없는 곳」처럼 이름 뒤 경로다.
 // 문구는 참고 i18n.ko.ts 그대로다.
-import { memo, useId, useMemo, useState, type ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { Check, Copy, ImageOff } from "lucide-react";
 import { foldCode, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "./herdr/markdown.ts";
+import { codeIsFilePath, OpenFileContext, splitFilePaths } from "./herdr/filePaths.ts";
+import { fileUriPath } from "./herdr/terminalFileLinks.ts";
+import { imageSlotStyle, standaloneImage } from "./herdr/imageBox.ts";
+import type { MarkdownImagePreview } from "./herdr/markdownImages.ts";
+import { FilePathLink, linkFilePaths } from "./FilePathLink.tsx";
+import { formatBytes } from "./formatBytes.ts";
 import "./herdr/Markdown.css";
 
-/** `interactive`가 false면 링크·파일 이름 안이다: 누를 것을 겹치지 않는다(참고 Inline) */
-function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactive?: boolean }) {
+/** Stats an image before it can load; null context keeps chat images as links. */
+type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
+export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
+
+/**
+ * An image that holds its box until it decodes (lib/imageBox.ts). With `slot`, the wrapper is the
+ * box while the bytes arrive and after a failure, where a note stands in for the picture, so the
+ * row around it moves at most once, when the natural size is in. Decoded, the wrapper gives its box
+ * up (`display: contents`) and the one image renders bare, nothing remounted. Without `slot` (a badge
+ * in a sentence) nothing is held and a failure shows `fallback`. `src` is null while an address is
+ * still being resolved: the slot stands from the first paint. (참고 Markdown.tsx `ReservedImage`)
+ */
+function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback }: {
+  src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode;
+}) {
+  // keyed by address: another one starts from the slot again and never takes the old one's answer
+  const [settled, setSettled] = useState<{ src: string; failed: boolean } | null>(null);
+  const phase = src !== null && settled?.src === src ? (settled.failed ? "failed" : "decoded") : "loading";
+  // a cached image is complete before `onLoad` can fire
+  const complete = useCallback((image: HTMLImageElement | null) => {
+    if (image !== null && src !== null && image.complete && image.naturalWidth > 0) setSettled({ src, failed: false });
+  }, [src]);
+  if (phase === "failed" && !slot) return <>{fallback}</>;
+  const image = src === null ? null : (
+    <img ref={complete} className={className} src={src} alt={alt} width={width} loading="lazy"
+      onLoad={() => setSettled({ src, failed: false })} onError={() => setSettled({ src, failed: true })} />
+  );
+  if (!slot) return image;
+  if (phase === "failed") {
+    return (
+      <span className="image-slot is-failed" style={slotStyle}>
+        <span className="image-slot-note"><ImageOff aria-hidden="true" /><span>이미지를 표시할 수 없음</span>{alt !== "" && <span>{alt}</span>}</span>
+      </span>
+    );
+  }
+  if (phase === "loading") return <span className="image-slot is-loading" style={slotStyle} role="status" aria-label="이미지 불러오는 중">{image}</span>;
+  return <span className="image-slot">{image}</span>;
+}
+
+function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standalone }: {
+  src: string; alt: string; width?: number; fallback: ReactNode; resolve: MarkdownImageResolver; interactive: boolean; standalone: boolean;
+}) {
+  const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    resolve(src).then(
+      (preview) => { if (live) setLoaded({ src, resolve, preview }); },
+      () => { if (live) setLoaded({ src, resolve, preview: null }); },
+    );
+    return () => { live = false; };
+  }, [src, resolve]);
+  const preview = loaded?.src === src && loaded.resolve === resolve ? loaded.preview : undefined;
+  if (preview === null) return <>{fallback}</>;
+  if (preview?.kind === "too-large") {
+    const message = `이 이미지는 ${formatBytes(preview.size)}입니다. 보려면 다운로드하세요.`;
+    return interactive ? <a href={preview.downloadUrl} download>{message}</a> : <span>{message}</span>;
+  }
+  // still being stat'ed: a standalone image's slot stands from the first paint, a badge shows its alt
+  if (preview === undefined && !standalone) return <span>{alt}</span>;
+  return <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} />;
+}
+
+/**
+ * `interactive`가 false면 링크·파일 이름 안이다: 누를 것을 겹치지 않는다. `standalone`은 그 줄이 그림 하나뿐이라는 뜻이다
+ * (imageBox.ts): 그림이 풀리는 동안 자리를 잡는다(참고 Inline)
+ */
+function Inline({ nodes, interactive = true, standalone = false }: { nodes: InlineNode[]; interactive?: boolean; standalone?: boolean }) {
+  const context = useContext(OpenFileContext);
+  const open = interactive ? context : null;
+  const imageResolver = useContext(MarkdownImageContext);
   return (
     <>
       {nodes.map((node, index) => {
         const key = `${node.type}-${index}`;
         switch (node.type) {
           case "text":
-            return <span key={key}>{node.value}</span>;
-          case "code":
+            if (open === null) return <span key={key}>{node.value}</span>;
+            return (
+              <span key={key}>
+                {splitFilePaths(node.value).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{part}</Fragment> : <FilePathLink key={n} path={part.path} code={false} open={open} />))}
+              </span>
+            );
+          case "code": {
+            const file = fileUriPath(node.value);
+            if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
             // agent는 주소를 backtick에 넣곤 한다: 눈에는 code로 두고 열린다
             if (interactive && /^https?:\/\/\S+$/i.test(node.value))
               return (
@@ -25,13 +107,19 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
                   <code>{node.value}</code>
                 </a>
               );
-            return <code key={key}>{node.value}</code>;
+            return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
+          }
           case "math":
             return <span key={key}>{`\\(${node.value}\\)`}</span>;
           case "image":
             return (
               <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>
-                <Inline nodes={node.fallback} interactive={interactive} />
+                {imageResolver === null ? (
+                  <Inline nodes={node.fallback} interactive={interactive} />
+                ) : (
+                  <MarkdownImage src={node.src} alt={node.alt} width={node.width} resolve={imageResolver} interactive={interactive} standalone={standalone}
+                    fallback={<Inline nodes={node.fallback} interactive={interactive} />} />
+                )}
               </span>
             );
           case "strong":
@@ -55,12 +143,16 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
           case "link":
             return (
               <a key={key} href={node.href} target="_blank" rel="noopener noreferrer">
-                <Inline nodes={node.children} interactive={false} />
+                <Inline nodes={node.children} interactive={false} standalone={standalone} />
               </a>
             );
           case "file":
-            // 열 곳이 없으면 이름 뒤에 경로를 보인다(참고: Codex 터미널처럼)
-            return (
+            // 이름을 누르면 파일을 연다. 열 곳이 없으면 이름 뒤에 경로를 보인다(참고: Codex 터미널처럼)
+            return open !== null ? (
+              <button key={key} type="button" className="markdown-file" title={`${node.path} 열기`} onClick={() => open(node.path)}>
+                <Inline nodes={node.children} interactive={false} />
+              </button>
+            ) : (
               <span key={key}>
                 <Inline nodes={node.children} interactive={false} /> (<code>{node.path}</code>)
               </span>
@@ -105,8 +197,14 @@ function List({ block }: { block: ListBlock }) {
   );
 }
 
+/** A fence in no language, or in one that says plain output (a log, a command's answer): the files it names open. */
+const PLAIN_FENCE = /^(?:|text|txt|plain|plaintext|log|console|output|shell-session)$/i;
+
 /** code block: 머리에 언어와 복사, 긴 것은 접고 「n줄 모두 보기」(참고 CodeBlock, 안쪽 스크롤 없음) */
 function CodeBlock({ language, value }: { language: string; value: string }) {
+  const open = useContext(OpenFileContext);
+  // the tag decides, not the grammar: code in a language with no grammar here is still code
+  const plain = PLAIN_FENCE.test(language.trim().split(/\s+/)[0] ?? "");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -137,7 +235,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
         </p>
       )}
       <pre className="hl-code">
-        <code>{fold !== null && !expanded ? fold.head : value}</code>
+        <code>{linkFilePaths(fold !== null && !expanded ? fold.head : value, plain ? open : null)}</code>
       </pre>
       {fold !== null && (
         <button type="button" className="markdown-code-more" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
@@ -166,7 +264,7 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
               <p key={key} className={block.align ? "markdown-center" : undefined}>
                 {block.lines.map((line, lineIndex) => (
                   <span key={lineIndex}>
-                    <Inline nodes={line} />
+                    <Inline nodes={line} standalone={standaloneImage(line)} />
                     {lineIndex < block.lines.length - 1 && <br />}
                   </span>
                 ))}

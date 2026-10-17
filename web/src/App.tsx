@@ -563,7 +563,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </div>
         )}
       </main>
-      {fileViewing?.pane && <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} pane={fileViewing.pane} onClose={closeFile} />}
+      {fileViewing?.pane && <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} pane={fileViewing.pane} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />}
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {

@@ -3,14 +3,17 @@
 // 안 페이지와 소스), 글(Markdown 미리보기와 소스, 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
 // 아직 옮기지 않은 것(plan §8.109 남은 것): 문법 강조·긴 소스 가상화, 폴더 보기, 「파일 뷰어」 설정.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
 import { ApiError, call } from "./api.ts";
 import type { FileInfo } from "./gen/proto.ts";
-import { Markdown } from "./Markdown.tsx";
+import { Markdown, MarkdownImageContext } from "./Markdown.tsx";
+import { formatBytes } from "./formatBytes.ts";
 import { copyText } from "./herdr/clipboard.ts";
-import { fileLineTarget, pathParts } from "./herdr/filePaths.ts";
+import { fileLineTarget, OpenFileContext, pathParts } from "./herdr/filePaths.ts";
+import { resolveFromDocument } from "./herdr/fileReader.ts";
+import { markdownImagePreview } from "./herdr/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
 import "./herdr/FileViewer.css";
@@ -21,13 +24,6 @@ const SOURCE_PREVIEW_LINES = 200_000;
 /** 그림은 이 크기까지 바로 그린다(참고 markdownImages.ts) */
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 
-/** 참고 bridgeProgress.ts `formatBytes` */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`;
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  const megabytes = bytes / (1024 * 1024);
-  return `${megabytes < 10 ? Math.round(megabytes * 10) / 10 : Math.round(megabytes)} MB`;
-}
 
 type Loaded = { text: string; truncated: boolean; lines: number };
 
@@ -87,7 +83,8 @@ function CodeLines({ text, marked }: { text: string; marked: number | null }) {
   );
 }
 
-export function FileViewer({ path: asked, pane, onClose }: { path: string; pane: string; onClose: () => void }) {
+/** 파일 보기 안에서 고른 다른 파일(Markdown의 링크·경로)은 `onOpen`으로 연다: 같은 기록 칸을 바꾼다(참고 App onOpen) */
+export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: string; pane: string; onClose: () => void; onOpen: (path: string) => void }) {
   const [path, setPath] = useState(asked);
   const target = useMemo(() => fileLineTarget(path), [path]);
   const [info, setInfo] = useState<FileInfo | null>(null);
@@ -150,6 +147,33 @@ export function FileViewer({ path: asked, pane, onClose }: { path: string; pane:
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, surface]);
 
+  // Markdown의 링크는 그 문서가 있는 폴더 기준이다(참고 TextFileView openLink). 앱은 다시 그릴 때마다 새 onOpen을 주므로
+  // ref로 읽어, 문맥 값은 파일이 바뀔 때만 바뀌고 memo한 Markdown은 그대로 둔다
+  const documentPath = info?.path ?? null;
+  const onOpenRef = useRef(onOpen);
+  useLayoutEffect(() => {
+    onOpenRef.current = onOpen;
+  });
+  const openLink = useCallback((href: string) => {
+    if (documentPath !== null) onOpenRef.current(resolveFromDocument(documentPath, href));
+  }, [documentPath]);
+  // Markdown의 그림도 파일처럼 이 pane의 파일 보기로 읽는다(허용 폴더 안만). 읽기 경로는 그림마다 받는다
+  const imagePreview = useCallback((src: string) => {
+    if (documentPath === null) return Promise.resolve(null);
+    const urls = new Map<string, string>();
+    return markdownImagePreview(
+      src,
+      documentPath,
+      async (path) => {
+        const r = await call({ op: "pane_file", pane, path });
+        if (r.kind !== "pane_file") throw new Error("pane_file");
+        if (r.info === null) return { candidates: r.candidates };
+        if (r.url !== null) urls.set(r.info.path, r.url);
+        return r.info;
+      },
+      (path, download) => `${urls.get(path) ?? ""}${download ? "?download=1" : ""}`,
+    );
+  }, [documentPath, pane]);
   const shownPath = info?.path ?? target.path;
   const { stem, extension } = pathParts(info?.name ?? shownPath);
   const { folder } = pathParts(shownPath);
@@ -243,7 +267,11 @@ export function FileViewer({ path: asked, pane, onClose }: { path: string; pane:
             {htmlPage && modes}
             <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : undefined}>
               {view === "markdown" ? (
-                <Markdown className="file-viewer-markdown file-viewer-markdown-readable">{loaded.text}</Markdown>
+                <OpenFileContext.Provider value={openLink}>
+                  <MarkdownImageContext.Provider value={imagePreview}>
+                    <Markdown className="file-viewer-markdown file-viewer-markdown-readable">{loaded.text}</Markdown>
+                  </MarkdownImageContext.Provider>
+                </OpenFileContext.Provider>
               ) : (
                 <CodeLines text={loaded.text} marked={marked} />
               )}

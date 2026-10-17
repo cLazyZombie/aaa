@@ -18,7 +18,7 @@ async function textPoint(page, text) {
           r.setStart(n, mid - seen);
           r.setEnd(n, mid - seen + 1);
           const b = r.getBoundingClientRect();
-          return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+          return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width };
         }
     }
     return null;
@@ -27,9 +27,11 @@ async function textPoint(page, text) {
   return at;
 }
 
-/** 링크 위에서 누르고 놓는다. 마우스를 올리면 xterm이 링크를 찾아 손가락 커서를 단다 */
+/** 링크 위에서 누르고 놓는다. 마우스를 올리면 xterm이 링크를 찾아 손가락 커서를 단다. xterm은 칸이 바뀔 때만 다시 찾고
+ *  터미널 밖으로 나갔다 와도 마지막 칸을 기억하므로(같은 링크를 닫은 뒤 다시 누를 때) 옆 칸을 거쳐 온다 */
 async function clickLink(page, text) {
-  const { x, y } = await textPoint(page, text);
+  const { x, y, w } = await textPoint(page, text);
+  await page.mouse.move(x - w, y);
   await page.mouse.move(x, y);
   await domIs(page, `${text} 링크`, () => document.querySelector(".xterm-screen").classList.contains("xterm-cursor-pointer"));
   await page.mouse.down();
@@ -53,7 +55,11 @@ export default async function ({ ctl, page }) {
     const proj = `${root}/files/proj`;
     for (const d of ["notes", "src", "shots", "a/logs", "b/logs"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
     fs.mkdirSync(`${root}/outside`, { recursive: true });
-    const readme = "# 읽어보기\n\n파일 보기 시험.\n";
+    // 문서 폴더 기준의 그림·링크·code 경로(파일 보기 안 Markdown, 참고 markdownImages·resolveFromDocument)
+    // 언어 없는 fence(로그) 안 경로는 열리고 언어가 있는 code 안은 글 그대로(참고 PLAIN_FENCE)
+    const readme =
+      "# 읽어보기\n\n파일 보기 시험.\n\n![점](../shots/dot.png)\n\n[코드](../src/app.ts)와 `../a/logs/run.log`\n\n" +
+      "```\nsaved ../b/logs/run.log\n```\n\n```ts\nconst log = \"../b/logs/run.log\";\n```\n";
     fs.writeFileSync(`${proj}/notes/readme.md`, readme);
     const code = Array.from({ length: 30 }, (_, i) => `const line${String(i + 1).padStart(2, "0")} = ${i + 1};${i === 19 ? " // marked" : ""}`).join("\n") + "\n";
     fs.writeFileSync(`${proj}/src/app.ts`, code);
@@ -85,6 +91,11 @@ export default async function ({ ctl, page }) {
     await domIs(dp, "Markdown 미리보기", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "읽어보기");
     const title = await viewer(dp).locator(".modal-title").textContent();
     if (title !== "readme.md") throw new Error(`제목 ${title}`);
+    // 그림은 그 pane의 파일 보기 길로 읽는다
+    const pic = viewer(dp).locator("img.markdown-image");
+    await pic.waitFor();
+    const picWidth = await pic.evaluate((i) => i.decode().then(() => i.naturalWidth));
+    if (picWidth !== 1 || !(await pic.getAttribute("src")).startsWith("/f/")) throw new Error(`Markdown 그림 ${picWidth} ${await pic.getAttribute("src")}`);
     await shot(dp, "desktop-file-markdown");
     // 소스 보기: 줄 번호는 CSS counter라 글(복사)에 섞이지 않는다
     await viewer(dp).getByRole("button", { name: "소스 보기" }).click();
@@ -93,6 +104,26 @@ export default async function ({ ctl, page }) {
     await dp.goBack();
     await closed(dp, "뒤로");
     await screenHas(dp, "뒤로 뒤 pane", "files>");
+    // 문서 안 링크·code 경로는 문서 폴더 기준으로 열고, 기록 칸을 늘리지 않는다(뒤로 한 번이면 pane)
+    await clickLink(dp, "notes/readme.md");
+    await viewer(dp).getByRole("button", { name: "코드", exact: true }).click();
+    await codeIs(dp, "문서 링크", code);
+    await dp.goBack();
+    await closed(dp, "링크 뒤 뒤로");
+    await clickLink(dp, "notes/readme.md");
+    await viewer(dp).getByRole("button", { name: "../a/logs/run.log", exact: true }).click();
+    await codeIs(dp, "문서 code 경로", "run a\n");
+    await dp.keyboard.press("Escape");
+    await closed(dp, "code 경로 뒤 Escape");
+    await clickLink(dp, "notes/readme.md");
+    const fenced = viewer(dp).getByRole("button", { name: "../b/logs/run.log", exact: true });
+    await fenced.first().waitFor();
+    const fences = await fenced.evaluateAll((all) => all.map((b) => b.closest(".markdown-code")?.dataset.language));
+    if (JSON.stringify(fences) !== "[\"\"]") throw new Error(`fence 안 경로 링크 ${JSON.stringify(fences)}(언어 없는 fence 하나만)`);
+    await fenced.click();
+    await codeIs(dp, "fence 안 경로", "run b\n");
+    await dp.keyboard.press("Escape");
+    await closed(dp, "fence 경로 뒤 Escape");
 
     // 줄 참조 → 소스, 20번째 줄 표시
     await clickLink(dp, "src/app.ts:20:5");
