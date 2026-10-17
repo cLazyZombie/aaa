@@ -194,10 +194,6 @@ pub struct HarnessEvent {
     /// Claude hook이 알린 대화 기록 파일(§8.27). host는 pane에만 기억하고 웹·로그에 내보내지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
-    /// 사건을 낸 hook 이름(Claude `PermissionRequest`·`Notification` …). host가 확인창 하나가 낸 두 hook을 짝짓는다
-    /// (`harness.rs` `late_pair`). 옛 agent는 보내지 않는다.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hook: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
