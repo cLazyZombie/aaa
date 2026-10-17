@@ -142,6 +142,18 @@ impl OutputWindow {
     }
 }
 
+/// ACK를 하지 않는 화면(ACK 전의 웹: 주소에 `flow=ack`가 없다)은 보내기 줄로만 잰다(참고 `reconcileOutput`의
+/// 「a client without ACKs」): 줄이 HIGH 이상인 채 OUTPUT_STALL_MS가 지나거나 HARD에 닿으면 닫는다.
+/// `since`는 줄이 HIGH에 닿은 때다.
+pub fn check_unacked(buffered: u64, since: &mut Option<u64>, now: u64) -> Verdict {
+    if buffered < OUTPUT_HIGH_BYTES {
+        *since = None;
+        return Verdict::Flow;
+    }
+    let since = *since.get_or_insert(now);
+    if now - since >= OUTPUT_STALL_MS || buffered >= OUTPUT_HARD_BYTES { Verdict::Stop } else { Verdict::Pause }
+}
+
 /// `wire` 바이트가 예산이 허락하는 가장 느린 연결을 건너는 시간
 fn crossing_ms(wire: u64) -> u64 {
     (wire * 1000).div_ceil(OUTPUT_JOIN_BYTES_PER_SECOND)
@@ -160,6 +172,19 @@ mod tests {
         let bytes = unit.len() as u64 * n;
         let wire = serde_json::to_string(&unit.repeat(n as usize)).unwrap().len() as u64;
         (bytes, wire)
+    }
+
+    #[test]
+    fn judges_a_client_without_acks_by_its_send_queue() {
+        let mut since = None;
+        assert_eq!(check_unacked(OUTPUT_HIGH_BYTES - 1, &mut since, 0), Verdict::Flow);
+        assert_eq!(check_unacked(OUTPUT_HIGH_BYTES, &mut since, 100), Verdict::Pause);
+        assert_eq!(check_unacked(OUTPUT_HIGH_BYTES, &mut since, 100 + OUTPUT_STALL_MS - 1), Verdict::Pause);
+        assert_eq!(check_unacked(OUTPUT_HIGH_BYTES, &mut since, 100 + OUTPUT_STALL_MS), Verdict::Stop);
+        // 줄이 빠지면 시계도 처음부터
+        assert_eq!(check_unacked(0, &mut since, 5000), Verdict::Flow);
+        assert_eq!(since, None);
+        assert_eq!(check_unacked(OUTPUT_HARD_BYTES, &mut since, 5001), Verdict::Stop);
     }
 
     #[test]

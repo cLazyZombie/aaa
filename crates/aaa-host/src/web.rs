@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::{FrontRef, Host, PaneEvent};
-use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict};
+use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict, check_unacked};
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
@@ -440,9 +440,16 @@ async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
     }
 }
 
+/// pane WebSocket 주소의 선택. `flow=ack`면 출력 ACK를 보내는 화면이다(herdr-web-ui attach `flow_control: "ack"`).
+#[derive(Deserialize)]
+struct PaneWsQuery {
+    flow: Option<String>,
+}
+
 async fn pane_ws(
     State(host): State<Arc<Host>>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<PaneWsQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -451,7 +458,9 @@ async fn pane_ws(
         return (StatusCode::NOT_FOUND, "pane이 없다").into_response();
     }
     // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, socket))
+    // ACK를 하지 않는 화면(다시 띄우기 전에 받은 옛 웹)은 보내기 줄로만 잰다
+    let acks = q.flow.as_deref() == Some("ack");
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, acks, socket))
 }
 
 /// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
@@ -566,14 +575,22 @@ fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
 }
 
 /// WebSocket 하나가 대화형 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고 끝나면 풀린다.
-async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, socket: WebSocket) {
+async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, acks: bool, socket: WebSocket) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
-    pane_session(&host, &id, &dev, role, &front, socket).await;
+    pane_session(&host, &id, &dev, role, &front, acks, socket).await;
     host.front_gone(&front.id);
 }
 
-async fn pane_session(host: &Arc<Host>, id: &str, dev: &str, role: DeviceRole, front: &FrontRef, socket: WebSocket) {
+async fn pane_session(
+    host: &Arc<Host>,
+    id: &str,
+    dev: &str,
+    role: DeviceRole,
+    front: &FrontRef,
+    acks: bool,
+    socket: WebSocket,
+) {
     let id = id.to_string();
     let actor = format!("device:{dev}");
     let Some((mut rx, replay, mut next, cols, rows)) = host.attach_pane(&id) else { return };
@@ -596,8 +613,14 @@ async fn pane_session(host: &Arc<Host>, id: &str, dev: &str, role: DeviceRole, f
     // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut queue_since = None;
     loop {
-        if window.check(out.buffered(), now()) == Verdict::Stop {
+        let verdict = if acks {
+            window.check(out.buffered(), now())
+        } else {
+            check_unacked(out.buffered(), &mut queue_since, now())
+        };
+        if verdict == Verdict::Stop {
             out.stop("ACK가 나아가지 않는다");
             break;
         }
@@ -615,7 +638,7 @@ async fn pane_session(host: &Arc<Host>, id: &str, dev: &str, role: DeviceRole, f
                             let part = data[(next - start) as usize..].to_vec();
                             next = end;
                             let n = part.len() as u64;
-                            if window.pending() + n > OUTPUT_HARD_BYTES || out.buffered() >= OUTPUT_HARD_BYTES {
+                            if (acks && window.pending() + n > OUTPUT_HARD_BYTES) || out.buffered() >= OUTPUT_HARD_BYTES {
                                 out.stop("밀린 출력이 상한을 넘었다");
                                 break;
                             }
