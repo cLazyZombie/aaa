@@ -221,8 +221,8 @@ pub struct Host {
     decision_lock: Mutex<()>,
     /// ticker를 바로 깨운다(흐름 사건·harness 사건)
     tick_wake: tokio::sync::Notify,
-    /// 오래 끊겼다고 알린 머신
-    outages: Mutex<HashSet<String>>,
+    /// 머신별 끊김: 이 host 프로세스가 끊김을 처음 본 때와 알렸는지(inbox::Outage)
+    outages: Mutex<HashMap<String, inbox::Outage>>,
     /// 머신별 마지막으로 알린 건강 이상(이어 붙인 글, 정상이면 빈 글)
     health_marks: Mutex<HashMap<String, String>>,
     /// hook 없는 coordinator pane: 마지막 화면 hash와 그 화면이 된 때
@@ -332,7 +332,7 @@ impl Host {
             held: Mutex::new(HashMap::new()),
             decision_lock: Mutex::new(()),
             tick_wake: tokio::sync::Notify::new(),
-            outages: Mutex::new(HashSet::new()),
+            outages: Mutex::new(HashMap::new()),
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),

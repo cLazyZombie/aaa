@@ -531,6 +531,7 @@ const GROUP_DOT: Record<string, string> = {
   working: "working",
   waiting_on_you: "blocked",
   ready_for_review: "done",
+  idle: "",
   resolved: "",
 };
 

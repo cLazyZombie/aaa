@@ -261,7 +261,7 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "working" | "resolved";
+export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "working" | "idle" | "resolved";
 
 export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, role: Role, 
 /**
@@ -317,7 +317,11 @@ percent: number | null,
 /**
  * `aaa report --activity`
  */
-progress: string | null, harness_session: string | null, };
+progress: string | null, 
+/**
+ * 마지막 `aaa report` 시각. 5분이 지나면 진행 보고로 「작업 중」을 정하지 않는다(herdr-projects `ACTIVITY_TTL_MS`).
+ */
+progress_at_ms: number | null, harness_session: string | null, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

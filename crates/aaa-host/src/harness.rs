@@ -193,6 +193,7 @@ impl Host {
                 message: None,
                 percent: None,
                 progress: None,
+                progress_at_ms: None,
                 harness_session: None,
             });
             if ev.harness != "report" {
@@ -213,7 +214,19 @@ impl Host {
             if ev.kind == "progress" {
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
+                st.progress_at_ms = Some(ev.at_ms);
             } else if let Some(a) = next {
+                // 새 harness 세션: 옛 진행 보고는 이 세션을 말하지 않는다(herdr-projects progress `respond` SessionStart)
+                if a == AgentActivity::Started {
+                    st.percent = None;
+                    st.progress = None;
+                    st.progress_at_ms = None;
+                }
+                // 사용자가 답했다: 옛 「Waiting for you」는 더 맞지 않다(herdr-projects `respond` UserPromptSubmit)
+                if ev.kind == "turn_start" && st.progress.as_deref() == Some(crate::orch::WAITING) {
+                    st.progress = None;
+                    st.progress_at_ms = None;
+                }
                 if a != st.activity {
                     st.since_ms = ev.at_ms;
                 }

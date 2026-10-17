@@ -341,38 +341,34 @@ impl Host {
     }
 
     /// 머신이 오래 끊겼다·돌아왔다. 그 머신에 열린 thread가 있는 프로젝트에 알린다.
+    /// 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 잰다(herdr-projects steps.rs `Outage`).
+    /// 옛 `last_seen`으로 재면 host를 다시 띄운 직후 아직 붙지 않은 머신이 오래 끊긴 것으로 보인다.
     fn check_outages(&self, projects: &[String]) {
         let now = aaa_common::util::now_ms();
         let limit = self.cfg.projects.outage_secs * 1000;
         for m in self.machine_views() {
-            let down = m.connection == aaa_proto::Connection::Disconnected
-                && m.last_seen_ms.is_some_and(|t| now.saturating_sub(t) >= limit);
-            let mut marked = self.outages.lock().unwrap();
-            let was = marked.contains(&m.id);
-            if down == was {
-                continue;
-            }
-            if down {
-                marked.insert(m.id.clone());
-            } else {
-                marked.remove(&m.id);
-            }
-            drop(marked);
+            let ok = m.connection != aaa_proto::Connection::Disconnected;
+            let event = self.outages.lock().unwrap().entry(m.id.clone()).or_default().record(ok, now, limit);
+            let Some(event) = event else { continue };
             for p in projects {
                 if !self.open_threads(p).iter().any(|r| r.machine_id == m.id) {
                     continue;
                 }
-                if down {
-                    let mins = now.saturating_sub(m.last_seen_ms.unwrap_or(now)) / 60_000;
-                    self.inbox_once(
+                match event {
+                    OutageEvent::Down => self.inbox_once(
                         p,
                         "outage",
                         &m.name,
                         "down",
-                        &format!("머신 {}가 {mins}분째 연결되지 않는다. thread는 마지막 상태를 유지한다", m.name),
-                    );
-                } else {
-                    self.inbox_add(p, "outage", &m.name, "recovered", &format!("머신 {}가 다시 연결됐다", m.name));
+                        &format!(
+                            "머신 {}가 {}분째 연결되지 않는다. thread는 마지막 상태를 유지한다",
+                            m.name,
+                            limit / 60_000
+                        ),
+                    ),
+                    OutageEvent::Recovered => {
+                        self.inbox_add(p, "outage", &m.name, "recovered", &format!("머신 {}가 다시 연결됐다", m.name))
+                    }
                 }
             }
         }
@@ -458,9 +454,56 @@ impl Host {
     }
 }
 
+/// 머신 하나의 연속된 끊김(herdr-projects steps.rs `Outage`): 기준 시간을 넘으면 한 번, 돌아오면 한 번 알린다.
+/// 짧은 끊김은 아무것도 남기지 않는다. 시작 시각은 이 host 프로세스가 처음 끊김을 본 때다(저장하지 않는다).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Outage {
+    failing_since: Option<u64>,
+    reported: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutageEvent {
+    Down,
+    Recovered,
+}
+
+impl Outage {
+    pub(crate) fn record(&mut self, ok: bool, now_ms: u64, limit_ms: u64) -> Option<OutageEvent> {
+        if ok {
+            let was_reported = self.reported;
+            *self = Outage::default();
+            return was_reported.then_some(OutageEvent::Recovered);
+        }
+        let since = *self.failing_since.get_or_insert(now_ms);
+        if !self.reported && now_ms.saturating_sub(since) >= limit_ms {
+            self.reported = true;
+            return Some(OutageEvent::Down);
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_outages_write_nothing_and_long_ones_write_one_item_each_way() {
+        // herdr-projects steps.rs 같은 이름의 시험을 옮겼다(분 단위)
+        let min = 60_000;
+        let mut outage = Outage::default();
+        assert_eq!(outage.record(false, 0, 10 * min), None);
+        assert_eq!(outage.record(false, 5 * min, 10 * min), None);
+        // 기준 전에 끝난 짧은 끊김은 아무것도 남기지 않는다
+        assert_eq!(outage.record(true, 6 * min, 10 * min), None);
+
+        assert_eq!(outage.record(false, 60 * min, 10 * min), None);
+        assert_eq!(outage.record(false, 70 * min, 10 * min), Some(OutageEvent::Down));
+        assert_eq!(outage.record(false, 90 * min, 10 * min), None);
+        assert_eq!(outage.record(true, 91 * min, 10 * min), Some(OutageEvent::Recovered));
+        assert_eq!(outage.record(true, 92 * min, 10 * min), None);
+    }
 
     fn item(kind: &str, subject: &str, event: &str) -> InboxItem {
         InboxItem {

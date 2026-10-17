@@ -7,6 +7,7 @@ export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "사람 차례",
   ready_for_review: "검토 대기",
   working: "작업 중",
+  idle: "쉼",
   resolved: "끝남",
 };
 

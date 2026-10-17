@@ -1446,6 +1446,7 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         aaa_proto::ThreadGroup::WaitingOnYou => "사람 차례",
         aaa_proto::ThreadGroup::ReadyForReview => "검토 대기",
         aaa_proto::ThreadGroup::Working => "작업 중",
+        aaa_proto::ThreadGroup::Idle => "쉼",
         aaa_proto::ThreadGroup::Resolved => "끝남",
     };
     let _ = writeln!(
