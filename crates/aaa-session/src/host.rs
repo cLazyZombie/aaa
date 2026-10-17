@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use aaa_proto::{
-    AgentResponse, B64, ErrorBody, ErrorCode, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo, SessionMsg, SessionRequest,
-    SessionState, Snapshot, TerminalChunk, negotiate,
+    AgentResponse, B64, DetectScreen, ErrorBody, ErrorCode, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo, SessionMsg,
+    SessionRequest, SessionState, Snapshot, TerminalChunk, negotiate,
 };
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
@@ -99,6 +99,8 @@ struct State {
     child_pid: Option<u32>,
     started_at_ms: u64,
     vt: Vt,
+    /// 화면 변화 순번(출력·크기 변경). agent의 상태 감지가 그대로인 화면을 다시 읽지 않게 한다(herdr `detection_content_seq`).
+    screen_seq: u64,
     dsr: DsrScanner,
     ring: Ring,
     conns: HashMap<u64, FrameTx>,
@@ -127,6 +129,7 @@ impl State {
                 Some(code) => SessionState::Exited { code },
             },
             role: self.spec.spec.role,
+            harness: self.spec.spec.harness.clone(),
         }
     }
 
@@ -136,6 +139,9 @@ impl State {
     }
 
     fn output(&mut self, data: &[u8]) {
+        if !data.is_empty() {
+            self.screen_seq += 1;
+        }
         let offset = self.ring.end();
         self.ring.push(data);
         // 커서 위치 질의에는 질의 시점의 커서로 답한다(front가 아니라 session host가 터미널이다)
@@ -229,6 +235,7 @@ impl State {
                 match self.master.resize(size) {
                     Ok(()) => {
                         self.vt.resize(rows, cols);
+                        self.screen_seq += 1;
                         let info = self.info();
                         self.broadcast(SessionMsg::Updated(info.clone())).await;
                         Ok(AgentResponse::Session(info))
@@ -241,6 +248,12 @@ impl State {
                 Err(e) => Err(ErrorBody::new(ErrorCode::Internal, format!("종료 실패: {e}"))),
             },
             SessionRequest::Screen => Ok(AgentResponse::Screen(self.vt.text(&self.id))),
+            SessionRequest::Detect { unchanged_since } => Ok(AgentResponse::Detect(DetectScreen {
+                seq: self.screen_seq,
+                text: (unchanged_since != Some(self.screen_seq)).then(|| self.vt.detection_text()),
+                osc_title: self.vt.osc_title().to_string(),
+                osc_progress: self.vt.osc_progress().to_string(),
+            })),
         };
         let _ = tx.json(&SessionMsg::Res { id, result: result.into() }).await;
     }
@@ -367,6 +380,7 @@ async fn run(dir: PathBuf) -> Result<()> {
         child_pid,
         started_at_ms,
         vt: Vt::new(rows, cols),
+        screen_seq: 0,
         dsr: DsrScanner::default(),
         ring: Ring::new(RING_BYTES),
         conns: HashMap::new(),
