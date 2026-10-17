@@ -562,6 +562,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 }
 .term-box { width: 100%; height: 100%; }
 .term-box .xterm .xterm-viewport { background: transparent !important; }
+/* 앞 기록을 붙여 다시 쓰는 동안 그 전 화면을 덮어 둔다(Term.tsx prependHistory, plan §8.67) */
+.term-history-cover { position: absolute; z-index: 5; pointer-events: none; background: var(--term-bg); }
 
 /* 대화 기록 보기(읽기 전용) */
 .term-scroll[hidden] { display: none; }

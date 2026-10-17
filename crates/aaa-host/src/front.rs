@@ -211,7 +211,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
 async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx) {
     use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-    let Some((mut rx, ..)) = host.attach_pane(&pane) else { return };
+    let Some(crate::Attach { mut rx, .. }) = host.attach_pane(&pane) else { return };
     let mut sent: Vec<u64> = Vec::new();
     let mut full = true;
     loop {

@@ -1240,6 +1240,17 @@ pub enum TermServerMsg {
         rows: u16,
         readonly: bool,
         stream: u32,
+        /// replay에 싣지 않은 앞 기록이 host에 더 있다: 위로 굴려 끝에 닿으면 `History`로 받아 온다(plan §8.67)
+        history_more: bool,
+    },
+    /// `History`의 답: anchor 바로 앞 기록 `lines`줄(replay 기록과 같은 모양, 줄마다 `ESC[m CR LF`), 그 앞에 더 있는지.
+    /// `found`가 false면 host 기록에서 anchor를 찾지 못했다(크기가 바뀌어 줄이 달라졌거나 그만큼 지나 기록에서 빠짐).
+    History {
+        id: u32,
+        data: B64,
+        lines: u32,
+        more: bool,
+        found: bool,
     },
     /// 입력 가능 여부가 바뀌었다
     Readonly {
@@ -1288,6 +1299,13 @@ pub enum TermClientMsg {
     Submit {
         id: u32,
         data: String,
+    },
+    /// 받은 기록보다 앞 덩어리를 달라(위로 굴려 끝에 가까워졌다). `anchor`는 받은 기록 맨 위 몇 줄의 글,
+    /// `depth`는 그 첫 줄부터 맨 아래 줄까지의 줄 수(같은 글이 여러 곳이면 가까운 곳을 고른다)
+    History {
+        id: u32,
+        anchor: Vec<String>,
+        depth: u32,
     },
     /// xterm이 이 구독(`Snapshot.stream`)의 출력을 `offset` 바이트까지 다 썼다(herdr-web-ui `pty-ack`).
     /// host는 이것으로 이 화면이 따라오는지 보고, 따라오지 못하면 4008로 닫는다(plan §8.62).
