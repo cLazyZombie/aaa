@@ -480,7 +480,9 @@ fn herdr_keys_and_modes() {
     tui.cmd("\x02");
     tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
     tui.send(b"\r");
-    tui.wait_text("^B", |s| s.contains("^B"));
+    // `^B` 하나는 tty echo(echoctl)라 cat이 뜨기 전에도 보인다. cat이 읽고 다시 찍은 둘째 `^B`를 본 뒤 끊는다
+    // (그 전에 ^C가 닿으면 입력 대기열이 비워지고 그 뒤에 cat이 떠 남는다)
+    tui.wait_text("cat이 읽은 ^B", |s| s.matches("^B").count() >= 2);
     tui.send(b"\x03");
     tui.type_line("clear");
 
