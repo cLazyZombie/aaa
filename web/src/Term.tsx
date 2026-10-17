@@ -1298,9 +1298,14 @@ export function TermView({
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
       termRef.current = null;
+      // 앞 기록을 붙이는 중에 붙잡은 출력은 버린다: 이 터미널에 더 쓰지 않는다
+      holding = null;
       // xterm이 걸어 둔 frame·task가 돈 뒤에 치운다(PaneTerminal 1982줄 `disposeAfterPendingFrame`): snapshot의 RIS로 Viewport.reset이
-      // 다음 frame에 renderer 크기를 읽는데, 단축키로 pane을 잇달아 넘기면 그 frame 전에 내려가 TypeError가 났다
-      disposeAfterPendingFrame(term);
+      // 다음 frame에 renderer 크기를 읽는데, 단축키로 pane을 잇달아 넘기면 그 frame 전에 내려가 TypeError가 났다.
+      // 받은 출력을 xterm이 다 읽은 뒤에 기다리기 시작한다: 참고는 같은 탭 안 pane 전환에서 터미널을 내리지 않지만(terminalDispose.ts
+      // 머리 설명) aaa는 pane을 넘길 때마다 내린다. 막 온 snapshot을 아직 읽지 않은 채(WriteBuffer task가 남음) 내려가면, 그 task가 기다림
+      // frame 뒤에 RIS를 읽어 reset frame이 치운 뒤에 돌았다(CI 6번 중 1번, t-0332 재현).
+      term.write("", () => disposeAfterPendingFrame(term));
     };
     // pane.id가 바뀔 때만 새로 붙는다. cols/rows는 snapshot이 알려 준다.
     // eslint-disable-next-line react-hooks/exhaustive-deps

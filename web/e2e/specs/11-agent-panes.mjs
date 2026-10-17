@@ -209,11 +209,12 @@ export default async function ({ ctl, page }) {
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
     if ((await termBox()) !== boxBefore) throw new Error(`오류 띠가 터미널 칸을 바꿨다: ${boxBefore} → ${await termBox()}`);
 
-    // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
+    // 3) harness pane(hook 보냄, 입력 대기, Claude처럼 bracketed paste를 켬): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로
+    // 넣고 Enter는 보내지 않는다(감싸기는 프로그램이 켠 모드를 따른다, herdr-web-ui xterm paste)
     const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);
     const recv = `${root}/h1.in`;
     aaa("tab", "create", "--machine", "labA", "--label", "h1", "--", "/bin/sh", "-c",
-      '"$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; stty raw -echo; printf "\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
+      '"$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; stty raw -echo; printf "\\033[?2004h\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
     await until("h1 harness 상태", async () => (await page.getByTestId("agent-h1").count()) === 1);
     await page.getByTestId("pane-h1").click();
     await until("h1 터미널", async () => (await screenText(page)).includes("❯"));
@@ -226,7 +227,7 @@ export default async function ({ ctl, page }) {
     // 받은 것 가운데 이 뒤에 온 것
     let seen = fs.readFileSync(recv, "latin1").length;
     const recvNext = () => fs.readFileSync(recv, "latin1").slice(seen);
-    // 3a) 클립보드에 글과 그림이 같이 있으면 글이다(복사한 경로도 글로 남는다)
+    // 3a) 클립보드에 글과 그림이 같이 있으면 글이다(복사한 경로도 글로 남는다). 프로그램이 bracketed paste를 켰으니 xterm이 감싼다
     await page.evaluate(
       ({ b64 }) => {
         const dt = new DataTransfer();
@@ -236,9 +237,9 @@ export default async function ({ ctl, page }) {
       },
       { b64: png.toString("base64") },
     );
-    await until("글만 붙여 넣음", () => recvNext() === "mixed-text");
+    await until("글만 붙여 넣음", () => recvNext() === "\x1b[200~mixed-text\x1b[201~");
     await sleep(300);
-    if (recvNext() !== "mixed-text") throw new Error(`글과 그림: ${JSON.stringify(recvNext())}`);
+    if (recvNext() !== "\x1b[200~mixed-text\x1b[201~") throw new Error(`글과 그림: ${JSON.stringify(recvNext())}`);
     seen = fs.readFileSync(recv, "latin1").length;
     // 3b) 파일 여러 개를 끌어 놓으면 놓은 순서대로 올리고 경로를 차례로 넣는다
     const pa = Buffer.concat([png.subarray(0, 8), Buffer.alloc(300_000, 1)]);
@@ -268,7 +269,7 @@ export default async function ({ ctl, page }) {
     seen = fs.readFileSync(recv, "latin1").length;
     // 3c) 글을 끌어 놓으면 붙여 넣는다(Enter 없음)
     await drop([], "dropped-text");
-    await until("놓은 글", () => recvNext() === "dropped-text");
+    await until("놓은 글", () => recvNext() === "\x1b[200~dropped-text\x1b[201~");
 
     // 4) 확인창이 떠 있는 harness pane에는 넣지 않는다
     const recv2 = `${root}/h2.in`;

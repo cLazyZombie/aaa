@@ -692,7 +692,7 @@ host 프로젝트 폴더 구성:
 - **interrupt 멈춤 판정은 새 「Interrupted」만 본다.** Esc 전후 화면의 개수를 비교한다. 지난 interrupt의 글이 남아 있으면 곧바로 입력해 사라지게 하던 문제를 막는다.
 - **선택 창이 떠 있으면 아무것도 입력하지 않는다.** 표지는 「Enter to confirm」「Esc to cancel」, 신뢰 문구 등이다. brief 안내와 메시지 모두 해당한다. 질문이 열려 있는 동안 brief 안내는 최대 30분 기다린다.
 - **입력과 수신 확인(§8.5)**
-  - 한 줄은 그대로, 여러 줄은 bracketed paste로 보낸 뒤 Enter를 보낸다.
+  - 글을 보낸 뒤 300ms 뒤 Enter를 보낸다. 프로그램이 bracketed paste를 켰을 때만 글을 감싼다(herdr `encode_api_submission_parts`, §8.80 끝). 줄 수와 상관없다.
   - hook이 있는 세션은 `accept_wait_ms`(기본 10초) 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
   - 기다림 두 가지(받음 `accept_wait_ms`, interrupt 멈춤 `stop_wait_ms`)는 host.toml `[projects]`로 바꿀 수 있다(t-0327, 10-18). 기본값은 예전 상수와 같아 동작은 그대로다. 시험이 시간을 기다리지 않고 판정을 보려고 뺐다: m13은 전달 불명 시험에서 받음 기다림을 3·5초로 줄이고, interrupt 시험은 멈춤 상한을 120초로 늘린다. 그러면 화면으로 멈춤을 알지 못할 때 받은 줄이 시험 기다림(30초) 안에 오지 않아, 「10초 안」 같은 시간 단언 없이 구별된다.
 - **메시지(§8.5 보충)**
@@ -813,7 +813,7 @@ host 프로젝트 폴더 구성:
   - 전송: **pane WebSocket(대화형 front)**으로 512KiB 조각을 base64 JSON(`attach`)으로 보낸다. 별도 POST 경로를 두지 않은 이유: 조작 lease가 그 WebSocket 연결(front)에 묶여 있어, 조각마다 같은 권한·lease 판정을 그대로 쓸 수 있다. 조각은 Agent link frame(1MiB) 안에 든다. 메시지 상한도 1MiB로 둔다.
   - host는 모으지 않고 조각마다 agent로 넘긴다(그 사이 화면 출력이 끼어든다). 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고(브라우저가 알린 MIME은 믿지 않는다), 이름은 host가 무작위로 정한다. 상한 16MiB, offset이 맞지 않으면 거부한다.
   - 대상 경로: 모든 pane이 **세션 범위** `<agent state>/sessions/<id>/attachments/<hex>.<ext>`다(§9 표의 thread `.aaa/…/attachments` 대신). thread 작업 폴더(worktree)에 두면 그림이 git에 섞일 수 있고, 세션 폴더는 이미 0700이며 세션 기록을 지울 때 함께 지워진다. 폴더 0700·파일 0600, 세션당 64개까지. `.part`에 이어 쓰고 마지막 조각에서 sha256을 대조한 뒤 이름을 바꾼다.
-  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 bracketed paste로 넣고 Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
+  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 넣고(프로그램이 bracketed paste를 켰으면 감싼다) Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
   - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex(codex-cli 0.163)도 `[Image #1]`로 받아 그림 색을 답했다(§8.21).
   - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
 
@@ -1435,7 +1435,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 클립보드에 글이 있으면 글이다(그림이 같이 있어도). 파일만 있을 때 그 파일 전부를 올린다. 전에는 그림이 있으면 그림이 먼저였다.
   - 파일 여러 개를 붙여 넣거나 끌어 놓으면 놓은 순서대로 하나씩 올린다(겹쳐 놓아도 그 순서). 한 묶음에 상한을 넘는 것이 있으면 아무것도 올리지 않는다. 「그림」 단추도 여러 개를 고른다.
   - 글을 끌어 놓으면 붙여 넣는다(Enter 없음, 유지 키 안 붙음). 입력할 수 없으면 끌어 놓기를 받지 않는다(`dropEffect` none).
-  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness 입력창은 bracketed paste 안에, 셸 등은 친 글처럼 넣는다(host는 그 프로그램의 bracketed paste 모드를 모르고, 줄바꿈·제어 문자 없는 따옴표 경로는 bracketed paste가 꺼진 붙여넣기와 같다). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
+  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness든 셸이든 그 프로그램이 bracketed paste를 켰으면 감싸고, 아니면 친 글처럼 넣는다(herdr-web-ui는 xterm `paste`로 넣는다. host는 §8.75부터 pane mirror에서 모드를 안다, §8.80 끝). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
 - **다른 곳.**
   - 확인창·선택 창이 떠 있는 harness pane에는 넣지 않는다. 붙여 넣은 글이 그 답으로 읽힐 수 있다(참고에는 이 막기가 없다).
   - **그림만 받는다(PNG·JPEG·GIF·WebP, 16MiB).** 참고는 아무 파일이나 이름을 다듬어 저장한다(32MiB). §9의 형식 규칙(signature로 확인)이라 결정 없이 넓히지 않았다. 다른 파일은 host가 「PNG·JPEG·GIF·WebP 그림만」으로 거절한다.
@@ -1948,6 +1948,7 @@ pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, 
 - **여기서 하지 않는 것.** 병합 뒤 resolve·다른 PR이 열렸는지 보기(hp `resolve_merged`·`other_pr_open`)와 병합 대기열 제거는 병합 흐름(D11, thread 흐름 thread)이 `pr_state` 위에 얹는다.
 - **계약.** AGENT_LINK는 그대로 두고 기능 `pr.v1`로 가린다(옛 agent에는 보내지 않는다). FRONT_API 1.6(`routine_toggle`, `ThreadView.pr`). `inbox` 응답의 `done`은 §8.75.
 - **출처.** 옮긴 hp 코드의 MIT 고지(Copyright (c) 2026 Elias Stravik)는 `crates/aaa-common/src/pr.rs` 머리에 있다.
+- **넣는 글의 감싸기(보고 화면에서 찾은 결함, 10-18).** routine 글은 여러 줄이라, host가 메시지를 늘 bracketed paste로 감싸던 것이 그 모드를 켜지 않은 프로그램 화면에 `^[[200~ … ^[[201~`로 남았다. herdr `agent prompt`(src/app/api/agents.rs → src/app/api_helpers.rs `encode_api_submission_parts`)는 프로그램이 켰을 때만 감싸고 Enter도 터미널 모드로 쓴다. brief·메시지 입력(`harness.rs` `submit_checked`)과 그림 경로 넣기(`attach.rs`)가 이제 pane mirror의 모드(§8.75)를 본다. Claude·Codex는 켜므로 받는 bytes는 그대로다. 시험: m13 `thread_message_paste_follows_program_mode`(꺼진 채 여러 줄 → 그대로+CR, 프로그램이 켠 뒤 → 감쌈+CR, 받은 bytes를 16진수로 본다), 웹 E2E 그림 넣기의 가짜 harness는 Claude처럼 모드를 켠다.
 - **시험.** 단위: PR 주소·origin 꼴·gh 인자(`--` 뒤 주소, `GH_HOST`)·찾기 순서·이름 거르기(aaa-common), `PR:` 줄·fork·head 불일치·본문 없음·사건·문구(aaa-host pr), pr routine 파일·기본 template(routine). E2E m13 `pr_followup`: 가짜 `gh`(인자 기록, 파일로 답함)를 agent PATH에 두고, 꺼진 pr routine은 오류 없음 → branch로 찾은 열린 PR → check 실패에 pr-followup이 thread 화면에 글을 넣음 → 자기 계정 댓글은 review 아님, 다른 사람 댓글은 review → `routine toggle --on`(파일은 `enabled`만 바뀜) 뒤 병합에 그 routine이 보냄 → 틀린 `PR:` 줄 알림(보고 사본·Next는 그대로), 항목 차례·댓글 본문 없음·gh 인자 확인. 기다림은 모두 흐름 사건(`events --follow`)과 `pane wait-output`이다. m13 `routines`는 꺼진 pr routine이 오류가 아니고 없는 trigger만 오류인 것을 본다.
 
 ### 8.81 기기 pairing·목록·폐기·로그아웃을 herdr-web-ui대로(10-18, 차이 목록 2장 P1·P2·P3, 결정 D6 「참고대로(controller만)」)
@@ -2335,7 +2336,30 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
 - **시험.** 웹 E2E 「줄 메뉴」(`web/e2e/specs/12-threads-push.mjs`): 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다. 파일마다 새 실험실이라 host가 고정을 나눈 적이 없다: 참고대로 그때는 고정만 바꿔서는 보내지 않고 첫 설정 변경에 실려 가므로(`preferencesChange`, 참고 `shared/preferences.ts` 「absent until a browser first shares its pins」), 단계는 빈 고정을 써 두고 다시 연 화면에서 시작한다.
 
-### 8.104 보고 표 칸의 한글 낱말·떠날 때 공유 설정 보내기(10-18, QA t-0337 Q9·Q11)
+### 8.104 thread start 기본값·restart --profile·auto-resolve를 herdr-projects대로(10-18, 진행 순서 6 나머지, 차이 목록 A1·A15·E8·E11)
+
+- **profile 기본값(A1, hp `src/threads.rs` `thread_profile`).** `thread start`에 `--profile`이 없으면 `--from-task` owner, 그다음 project.toml `thread_profile`이다. 둘 다 없으면 거부한다. 참고의 내장 기본(`claude`)은 aaa에 없다(profile은 머신 agent.toml에만 있다). 허용 목록 검사는 그대로다.
+- **kind 기본값(hp `placement`).** `--kind`가 없으면 `--repo`가 있으면 worktree, 없으면 작업 폴더(dir)다. 참고의 tab이 aaa의 dir이다. `--machine`이 없으면 project.toml `[[repos]]`에 적힌 그 repo의 머신이다(hp `start`의 `listed`).
+- **`--from-task`(A15).** 미할당 task도 `thread_profile`로 시작한다. 이미 열린 thread가 맡은 task는 참고에 그 거부가 없어 막지 않고 경고한다(`warnings`).
+- **restart `--profile`(E8, hp `restart`).** 그 머신 agent가 agent.toml에서 profile을 다시 해석하고(옛 model·args는 쓰지 않는다) 새 대화로 띄운다. `--resume`과 함께는 거부한다. agent 요청 `ThreadRebrief.profile`(AGENT_LINK 1.4)이다. 옛 agent는 그 값을 모르고 저장된 launch를 돌려주므로, host는 돌려받은 `Launch.profile`이 다르면 거부한다.
+- **auto-resolve(E11, hp `src/steps.rs` `auto_resolve`·`resolve_after_copy`).**
+  - 열린 worker thread의 묶음이 쉼이고, 묶음·보고가 마지막으로 바뀐 때와 host가 뜬 때 중 가장 늦은 때부터 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지나면 끝낸다. 두 시각이 없는 옛 기록은 잴 수 없어 두지 않는다(참고와 같다).
+  - 끝내기는 `thread resolve`와 같다. 마지막 사본이 실패하면 끝내지 않고 다음 셈에 다시 한다. worktree는 force 없이 지운다.
+  - 항목은 「쉼으로 auto_resolve_days(N일)가 지나 저절로 끝냈다. `aaa thread resolve <p> <id> --reopen`으로 되돌린다」이다.
+  - 기록에 `group_changed_ms`·`report_changed_ms`를 더했다(hp `last_state_change`·`last_report_change`).
+  - host.toml `[projects] auto_resolve_day_secs`(기본 86400)는 하루 길이다. 시험에서 줄인다.
+  - 연결되지 않은 머신의 thread는 건너뛴다.
+- **`thread resolve --reopen`(hp `resolve`).** 끝낸 thread를 열린 것으로 되돌리고 아무것도 띄우지 않는다(`aaa thread restart`가 띄운다). 다음 셈은 처음 보는 것으로 쳐서 전이 항목을 내지 않는다. 지운 worktree는 돌아오지 않는다.
+- **0.2 설정 옮기기.** `auto_resolve_days`·`goal`·`thread_profile`·`repos`도 project.toml에 같은 이름으로 옮긴다(`coordinator_profile`은 aaa에 없다).
+- **coordinator 안내.** hp COORDINATOR.md 56·68줄(다른 profile로는 `thread restart --profile`, 도는 thread의 model은 harness `/model`)을 옮겼다. auto-resolve·`--reopen`을 한 줄 더했다.
+- **계약.** FrontRequest `thread_start.kind` 생략, `thread_restart.profile`, `thread_resolve.reopen`. FRONT_API 다음 번호, AGENT_LINK 1.4다.
+- **시험.**
+  - m13 `start_defaults_profile_kind_and_task`: profile 없음 거부, thread_profile, kind 기본값 둘, 미할당 task, 이미 맡은 task 경고.
+  - m13 `restart_with_another_profile`: `--resume`과 함께·없는 profile 거부(기록은 그대로), 다른 profile로 새 세션.
+  - m13 `auto_resolve_and_reopen`: 하루 1초·2일에서 쉼 뒤 끝나고 항목이 `--reopen`을 안내한다. 다시 열고, 0이면 끈다.
+  - host `transitions` 유닛: 가장 늦은 때부터 재기, 옛 기록. agent `threads` 유닛: profile 다시 해석·없는 profile.
+
+### 8.105 보고 표 칸의 한글 낱말·떠날 때 공유 설정 보내기(10-18, QA t-0337 Q9·Q11)
 
 - **Q9 표 칸.** 휴대폰 보고 표 칸에서 한글이 음절마다 끊겼다(「경/우」). 참고 `ChatView.css`는 칸을 `overflow-wrap: normal`로 두어 「칸은 가장 긴 낱말보다 좁아지지 않고, 자리가 없으면 표가 그 칸 안에서 굴러간다」를 뜻했지만, 한글은 낱말 안 음절 사이에서도 줄을 바꿀 수 있어 그 뜻이 서지 않았다. `.markdown th, .markdown td { word-break: keep-all }`을 `web/src/style.css`에 둔다(옮긴 `herdr/Markdown.css`는 그대로). 시험: 웹 E2E 「thread 보고서·결과물」(`specs/12-threads-push.mjs`)의 휴대폰 폭에서 표 칸의 한글 낱말마다 그려진 줄이 하나인지(Range `getClientRects`). 고침 없이 돌리면 「음절」이 갈려 떨어진다.
 - **Q11 떠날 때 보내기.** 공유 설정은 바뀐 뒤 600ms 멈추면 보낸다(참고 `SEND_AFTER_MS`). 그 안에 탭·앱을 닫으면 값이 사라졌다(참고도 같다). t3code는 떠날 때 미룬 저장을 마저 쓴다(`apps/web/src/uiStateStore.ts` `beforeunload → flush()`). aaa는 iOS에서 믿을 수 없는 `beforeunload` 대신 `pagehide`와 `visibilitychange`(hidden)를 듣고, 기다림을 건너뛰어 `fetch(keepalive)`로 지금 보낸다(`preferencesSync.ts`). 앞 변경이 가는 중이면 겹쳐 보내지 않는다: 그 짧은 동안 더 바꾸고 바로 닫으면 그 나머지는 잃는다(다시 열면 host 값이 선다). 시험: 웹 E2E 「공유 설정」(`specs/14-shared-preferences.mjs`) 새 화면에서 테마를 바꾸자마자 `page.close({ runBeforeUnload: true })` → 다른 기기 `data-theme`이 바뀌고 host 문서에 남는다. 고침 없이 돌리면 다른 기기가 바뀌지 않아 떨어진다.

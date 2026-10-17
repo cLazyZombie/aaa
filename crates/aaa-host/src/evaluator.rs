@@ -690,7 +690,7 @@ impl Host {
         actor: &str,
     ) -> Result<EvaluatorView, ErrorBody> {
         let rec = self.evaluator_rec(project).ok_or_else(|| err(ErrorCode::NotFound, "사후 평가자가 없다"))?;
-        self.thread_resolve(project, &rec.id, false, actor).await?;
+        self.thread_resolve(project, &rec.id, false, crate::orch::ResolveWhy::Manual, actor).await?;
         self.eval_due.lock().unwrap().remove(project);
         Ok(self.evaluator_view(&self.load(project, &rec.id)?))
     }
