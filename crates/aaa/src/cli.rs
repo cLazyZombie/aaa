@@ -1736,13 +1736,7 @@ fn render_decision(s: &mut String, d: &aaa_proto::DecisionView) {
 
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     use std::fmt::Write as _;
-    let group = match t.group {
-        aaa_proto::ThreadGroup::WaitingOnYou => "사람 차례",
-        aaa_proto::ThreadGroup::ReadyForReview => "검토 대기",
-        aaa_proto::ThreadGroup::Working => "작업 중",
-        aaa_proto::ThreadGroup::Idle => "쉼",
-        aaa_proto::ThreadGroup::Resolved => "끝남",
-    };
+    let group = t.group.label();
     let _ = writeln!(
         s,
         "{}/{}\t{}\t{}\t{}@{}\tbrief {}",

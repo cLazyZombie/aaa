@@ -161,11 +161,16 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
             (true, false) => BriefState::Pending,
         },
         brief_attempts: 0,
+        delivered_at_ms: None,
+        delivered_report: None,
         launch: None,
         report_hash: (!f.report_hash.is_empty()).then(|| f.report_hash.clone()),
         acked_hash: (!f.acked_hash.is_empty()).then(|| f.acked_hash.clone()),
         next: Vec::new(),
         copy: None,
+        copy_notes: Vec::new(),
+        last_group: None,
+        review_item_hash: None,
         error: None,
         decisions_rev: None,
         eval_cursor: 0,
@@ -202,6 +207,9 @@ pub fn reason(f: &Facts, hp: &str, _aaa: &str) -> String {
     }
     if f.agent_state.is_none() && f.self_activity.is_some() {
         return "agent 없이 진행 보고만 있다: aaa 상태는 harness 활동이 있어야 진행 보고를 담는다".into();
+    }
+    if hp == "ready-for-review" && f.pane_exists && f.self_age_secs.is_some() && f.self_percent != Some(100) {
+        return "진행을 보고하는 agent의 중간 보고: aaa는 `Done`일 때만 검토 대기다(plan §8.79)".into();
     }
     "분류 안 됨(규칙을 다시 본다)".into()
 }

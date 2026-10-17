@@ -255,7 +255,7 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
     let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
-    let kinds = host.cfg.notify.kinds.clone();
+    let kinds = host.cfg.notify.item_kinds();
     Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, kinds })).into_response()
 }
 

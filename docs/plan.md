@@ -729,9 +729,10 @@ host 프로젝트 폴더 구성:
 - **항목 출처**
   - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
   - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
+  - (10-18) thread 항목은 묶음 전이 `thread-state`로 바꿨다(§8.82). 위 두 줄과 아래 「닫힌 질문」은 옛 규칙이다.
   - `outage`: 그 머신에 열린 thread가 있는 프로젝트에, `outage_secs`(기본 600초) 넘게 끊기면 한 번, 돌아오면 한 번. 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 잰다(§8.38).
   - `config-error`: project.toml을 TOML로 읽지 못하면 파일 내용 hash당 한 번.
-- **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다).
+- **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다). 묶음 전이를 세는 때는 §8.82.
 - **nudge:** 0.2.35를 이어받는다.
   - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aaa inbox] <대상> <사건>, …; …(aaa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
   - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. **coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).
@@ -792,7 +793,7 @@ host 프로젝트 폴더 구성:
 - **결과물 HTML 격리:** CSP `sandbox allow-scripts allow-popups …`(allow-same-origin 없음), `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`. 웹 화면은 같은 sandbox 속성의 iframe으로 `index.html`을 보인다. 웹 E2E가 결과물 script에서 부모 문서·cookie·제어 API에 닿지 못하는 것을 확인한다.
 - **웹 화면:** 목록 위에 끝나지 않은 thread(묶음 표시), 고르면 보고(Markdown을 HTML로 해석하지 않고 그린다)·결과물 iframe·파일 목록(agent에서 읽는 파일 표시)·확인(ack) 버튼. thread 사건이 events WS로 와서 polling 없이 바뀐다.
 - **알림 webhook:** host.toml `[notify]`
-  - 대상은 inbox 항목이다(종류는 `kinds`로 고른다. 기본: report·question·delivery·thread·session·outage·routine-approval). 알림이 inbox와 같은 사건을 본다.
+  - 대상은 inbox 항목이다(종류는 `kinds`로 고른다. 기본: report·question·delivery·thread·session·outage·routine-approval). 알림이 inbox와 같은 사건을 본다. (10-18) thread 종류는 `thread-state` 하나가 됐고 사람이 할 일만 보낸다(§8.82).
   - `debounce_secs`(기본 15초) 동안 모아 프로젝트마다 한 통으로 보낸다. 실제 시험에서 한 thread가 몇 초 안에 질문을 서너 번 냈기 때문이다.
   - 실패하면 다시 보내지 않는다. 흐름 사건 `notify_failed`에 이유만 남기고, 실패가 이어지는 동안 경고 로그는 한 번만 낸다. 성공은 `notify_sent`다.
   - 형식: `json`(항목 목록과 글) 또는 `telegram`(Bot API `sendMessage` 본문, `telegram_chat_id`). 텔레그램은 `webhook = "https://api.telegram.org/bot<token>/sendMessage"`로 쓴다.
@@ -1664,6 +1665,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **보내기 직전 다시 보기(N4, 참고 server/push.ts 「기다리는 동안 바뀌면 보내지 않는다」).**
   - 참고는 질문 10초·끝남 60초를 기다리고, 그 사이 pane 상태가 바뀌면 보내지 않는다.
   - aaa는 모아 보내기(`notify.debounce_secs`, §8.20)를 그대로 둔다. 다만 보내기 직전에 inbox를 다시 읽는다. 그 사이 끝낸 항목(답한 질문은 `inbox_question_closed`가 끝낸다)과 thread가 이미 확인(ack)한 보고는 뺀다. 남은 것이 없으면 Web Push·webhook 모두 보내지 않는다. 뺀 수는 흐름 사건 `notify_skipped`로 남는다.
+  - (10-18) 질문 항목이 없어져, 사람 차례 항목은 보내기 직전 그 thread가 아직 사람 차례인지로 본다(§8.82).
   - inbox를 읽지 못하면 그대로 보낸다(알림을 잃지 않는 쪽).
 - **쓰는 화면이 있으면 보내지 않기(N5, 참고 presence·`inUse`).**
   - 웹은 events WS로 「이 화면을 지금 쓴다」(보이고 focus가 있다)를 알린다. `presence.ts`는 그대로 옮겼다. host는 연결마다 세고, 연결이 어떻게 끝나든 뺀다.
@@ -1687,8 +1689,8 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **같은 사건.** 참고 `shared/notify-policy.ts`는 열린 앱의 알림과 닫힌 앱의 push가 같은 사건에 뜨게 한다. aaa push는 inbox 항목에서 나온다(§8.69). 그래서 웹도 events WS의 같은 사건에 띄운다.
   - 질문이 열리면(`question` 사건, state open) 「입력 필요」, 누르면 그 pane이다.
-  - thread에 확인하지 않은 새 보고 hash가 오면 「작업 완료」, 누르면 그 thread다.
-  - host의 `notify.kinds`(`GET /api/v1/push`의 `kinds`)에 든 종류만 띄운다.
+  - thread에 확인하지 않은 새 보고 hash가 오면 「작업 완료」, 누르면 그 thread다. (10-18) host 「new report」와 같게, 검토 대기가 된 새 보고 hash당 한 번이다(§8.82).
+  - host의 `notify.kinds`(`GET /api/v1/push`의 `kinds`)에 든 종류만 띄운다. (10-18) 둘 다 `thread-state`다.
   - 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다(참고 `shouldNotifyStatus` 「first sighting」).
   - pane 턴 끝(긴 턴만) 알림과 기기별 「입력 필요」·「작업 완료」 선택은 기기별 종류(N3)와 함께 host·웹에 같이 넣는다. 한 thread에 턴 끝과 새 보고가 함께 오면 thread 한 자리(§8.69)로 겹치지 않게 그때 정한다.
 - **더 보기 메뉴(참고 App.tsx `moreItems`·`bell`, 문구는 참고 i18n.ko.ts).** 목록 머리에 「더 보기」를 두었다. 「링크 복사」와 「알림」이 있다.
@@ -1893,6 +1895,43 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - `aaa report`를 참고 `report`와 같게 했다: `--percent`(0~100)나 `--unknown` 중 하나, `--activity`는 필수, `--percent 100`이면 활동은 `Done`.
 - **첫 줄 태그 해석 제거(C3).** 보고 첫 줄 `[사용자 작업 필요]`·`[결정 필요]`로 사람 차례를 정하던 규칙(§8.14·§8.38)과 `report_state`(기록·ThreadView·CLI·웹 칩·알림 본문·`report_ready` 사건 글)를 없앴다. 새 보고는 harness가 일하지 않으면 「검토 대기」다. 사람 차례는 참고처럼 `Waiting for you` 진행 보고·확인창·시작 실패·닫힌 pane으로만 정한다. `## Next` 읽기는 참고 `next_lines`를 그대로 옮겼다. `PR:` 줄 읽기와 추적은 D11 절에서 한다.
 - **시험.** host 유닛 `brief_follows_herdr_projects_order`(차례·머리·경로·memory 상한·다시 시작 안내·원격 uploads 주석), proto `next_lines`(참고 시험 그대로), `fill_brief`, cli `report` 인자. m13·웹 E2E의 가짜 보고는 새 형식(태그 없음)이고, 「갱신된 보고」 시험은 태그 대신 `## Next` 변화로 사본을 확인한다. 「사람 차례」 시험은 `Waiting for you` 진행 보고로 본다.
+
+### 8.82 묶음 전이와 thread 항목을 herdr-projects대로: 전이 항목·새 보고 한 번·세션 끝남·resolve 차례(10-18, 차이 목록 3장 C7·C9·F2·F3·F4·F5·F6·F9·E10 일부, t-0334 결함 6·7)
+
+- **마지막 묶음 기록(C9, hp `src/ticker.rs` `thread_pass`).** thread 기록에 `last_group`·`review_item_hash`(참고 `last_group`·`last_review_item_hash`)를 둔다. ticker가 열린(시작 중 포함) worker thread의 묶음을 다시 세어 기록과 다르면 전이다.
+  - note는 참고대로 pane이 없으면 `pane closed`, agent 상태가 없으면 `no agent`, 그 밖은 harness 상태(확인창은 `blocked`)다. 보고 사본 실패는 aaa에만 있는 사람 차례라 `copy failed`다.
+  - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
+- **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
+  - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
+  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(`DELIVERED_WORKING_MS`). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
+  - 연결되지 않은 머신의 thread는 세지 않는다(참고 `remote_pass`: 닿지 않으면 상태도 묶음도 항목도 바꾸지 않는다).
+- **전이 항목(F2·F3, hp `src/steps.rs` `write_thread_items`·`transition_event`).** 사람 차례나 쉼으로 바뀔 때만 `thread-state` 항목 하나를 낸다.
+  - 사건 말은 참고 그대로다: `blocked on a prompt`·`pane closed`·`agent gone`·`waiting on you`·`idle`.
+  - 요약은 `<id> "<제목>": <묶음>(<note>)`이다. 확인창이면 `aaa thread read`·`aaa thread keys` 안내, pane이 닫혔으면 `aaa thread restart` 안내, 그 밖의 사람 차례는 pane·머신을 붙인다. agent가 `Waiting for you`를 알렸으면 그것도 적는다.
+  - 병합 중(Landing) 전이는 D11에서 더한다.
+- **새 보고(F4).** 묶음이 검토 대기일 때 보고 hash당 한 번 `new report`를 낸다. 요약에는 보고 hash 앞 12자와 사본에서 빠진 파일을 적는다. 작업 중에 고쳐 쓴 보고, 작업 중과 쉼을 오가는 같은 보고는 항목이 없다.
+- **진행을 보고하는 agent의 중간 보고(t-0334 결함 6).** 참고 `group`도 「새 보고 + 쉼 = 검토 대기」라 같은 결함이 있다. 그래서 참고의 다른 규칙을 묶음 5번 줄에 썼다(hp steps.rs `merged_thread_may_resolve`: 「진행을 보고하는 agent는 끝을 스스로 말한다: `Done`만 끝이다」).
+  - 진행을 보고한 agent의 새 보고는 `Done`(100)일 때만 검토 대기다. 그 전에는 작업 중(진행 보고 5분)이다가 쉼이 된다(쉼 항목).
+  - pane이 닫혔으면 더 보고할 수 없으니 참고대로 검토 대기다. 진행을 보고하지 않는 harness도 참고대로다.
+- **세션 끝남(F6).** thread마다 「세션이 끝났다」를 내던 `check_sessions`를 없앴다.
+  - 하나씩 닫힌 pane은 전이(`pane closed`)다. 보고를 쓴 뒤 닫힌 pane은 끝난 일이라 항목이 없다.
+  - 한 머신에 기록된 pane이 둘 이상이고 모두 사라졌으면(agent 재부팅) 그 머신의 `session`·`sessions ended` 항목 하나다. 그 머신 thread의 전이·새 보고 항목은 내지 않는다.
+  - 참고는 herdr 세션 하나를 본다. aaa는 세션이 머신마다 있어 머신마다 센다.
+- **resolve 차례(E10 일부, t-0334 결함 7).** 참고 `src/threads.rs` `resolve`처럼 마지막 사본 → 상태를 끝남으로 → 세션 종료·정리 → `resolved` 항목이다. 전에는 세션을 먼저 끝내, 정리하는 동안 ticker가 「세션이 끝났다」 항목과 알림을 냈다. resolve 옵션(`--reopen` 등)과 auto-resolve는 진행 순서 6 나머지에서 한다.
+- **사건 항목.** brief를 못 보냄은 `brief not delivered`(hp `src/brief.rs` `give_up`), 시작 실패는 `not launched`(hp ticker launch)다. 메시지 전달 모름 `message not delivered`는 aaa에만 있다(D10 E1·E6에서 다시 본다).
+  - 질문마다 만들던 `question` 항목과 그 자동 끝내기(F5, §8.17 「닫힌 질문」)는 없앴다. 30초 넘게 뜬 확인창만 전이 항목이 된다.
+- **알림(F9).** `thread-state`는 참고가 notifier를 부르는 사건만 보낸다: 사람 차례 전이와 `new report`.
+  - 시작 실패 `not launched`도 보낸다. 참고는 실패한 thread를 묶음 셈에서 빼서 알리지 않지만, 사람이 할 일이다.
+  - `notify.kinds` 기본은 `thread-state`·`session`·`outage`·`health`·`routine-approval`이다. 옛 이름(report·question·delivery·thread)은 `thread-state`로 읽어, 이미 쓴 host.toml이 알림을 잃지 않는다.
+  - 보내기 직전에 확인한 보고와, 사람 차례가 끝난(확인창에 답한) thread의 항목은 뺀다(§8.69). Web Push의 thread 한 자리는 `thread-state` 항목이다.
+  - 웹 앱 안 「작업 완료」는 host와 같게 검토 대기가 된 새 보고 hash당 한 번이다. 「입력 필요」는 전처럼 질문이 열리면 바로 띄운다(앱 안에서 바로 답하게).
+- **겹침.** 웹 App.tsx 알림(t-0304), migrate shadow의 차이 까닭 한 줄(t-0334).
+- **시험.**
+  - 단위: 묶음 5번 줄(`Done`, 닫힌 pane), 6번 줄(방금 안내), note·사건 말, 세션 한꺼번에 사라짐, 알림 거르기·옛 종류 이름, push 자리, nudge 문구.
+  - E2E m13 `thread_state_items_follow_groups`(agent 둘 labA·labB, webhook 받는 서버): 35% 중간 보고는 작업 중이고 항목·알림이 없다 → `Done`이면 끝낸 보고의 `new report` 한 건·알림 한 번 → 보고 없는 thread는 `idle`(알림 없음) → pane이 닫히면 `pane closed`(알림, restart 안내) → ack하면 `idle` → resolve하면 `resolved` → 보고 없는 worktree thread를 resolve해도 `pane closed` 없이 `resolved`.
+  - 결함을 되살리면 실패하는 것을 확인했다: 5번 줄 규칙을 끄면 중간 보고가 검토 대기가 되고, resolve 차례를 옛것으로 하면 worktree thread에 `pane closed`가 생긴다.
+  - `inbox_and_nudge`·`notify_webhook`(옛 종류 이름)·`coordinator_flow`·`hooked_thread_questions_and_messages`·`decisions_and_restart`를 새 항목과 규칙에 맞췄다.
+  - 한 머신의 세션이 모두 사라지는 경우는 agent를 죽이지 않고는 만들 수 없다(신호를 보내는 시험을 새로 만들지 않는다). 그래서 판정은 단위 시험으로만 본다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

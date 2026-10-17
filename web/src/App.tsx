@@ -240,8 +240,10 @@ function Main({ role }: { role: DeviceRole }) {
       return next;
     });
 
-  // 이 기기의 알림(plan §8.70): host push와 같은 사건, 같은 종류(`notify.kinds`)에만 띄운다. 질문이 열리면 「입력 필요」,
-  // thread에 확인하지 않은 새 보고가 오면 「작업 완료」. 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
+  // 이 기기의 알림(plan §8.70): host가 알리는 종류(`notify.kinds`의 `thread-state`)에만 띄운다. 질문이 열리면 바로
+  // 「입력 필요」(host push는 30초 넘게 뜬 확인창만 보낸다), thread가 검토 대기가 된 새 보고는 「작업 완료」(host 「new report」
+  // 항목과 같은 규칙: 검토 대기일 때 보고 hash당 한 번, 작업 중에 고쳐 쓴 보고는 아니다, plan §8.79).
+  // 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
   const alertKinds = useRef<Set<string> | null>(null);
   const seenQuestions = useRef(new Set<string>());
   const seenReports = useRef(new Map<string, string | null>());
@@ -250,7 +252,7 @@ function Main({ role }: { role: DeviceRole }) {
   const questionNews = (q: QuestionView) => {
     if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
     seenQuestions.current.add(q.id);
-    if (!alertKinds.current?.has("question")) return;
+    if (!alertKinds.current?.has("thread-state")) return;
     const { sel, panes, threads, machines } = now.current;
     const pane = panes.find((p) => p.id === q.pane);
     const thread = q.project && q.thread ? threads.get(`${q.project}/${q.thread}`) : undefined;
@@ -269,12 +271,18 @@ function Main({ role }: { role: DeviceRole }) {
       },
     });
   };
+  // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
+  const reviewHash = (t: ThreadView) => (t.group === "ready_for_review" ? t.report_hash : null);
   const reportNews = (t: ThreadView) => {
     const key = threadKey(t);
-    const before = seenReports.current.get(key);
-    seenReports.current.set(key, t.report_hash);
-    const fresh = before !== undefined && t.report_hash !== null && t.report_hash !== before && t.report_hash !== t.acked_hash;
-    if (!fresh || t.role === "evaluator" || !alertKinds.current?.has("report")) return;
+    if (!seenReports.current.has(key)) {
+      seenReports.current.set(key, reviewHash(t));
+      return;
+    }
+    const hash = reviewHash(t);
+    if (hash === null || hash === seenReports.current.get(key)) return;
+    seenReports.current.set(key, hash);
+    if (t.role === "evaluator" || !alertKinds.current?.has("thread-state")) return;
     const { sel, panes } = now.current;
     raiseAlert({
       kind: "done",
@@ -318,7 +326,7 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "threads", project: null, role: null })
               .then((r) => {
                 if (r.kind !== "threads") return;
-                for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                for (const t of r.threads) seenReports.current.set(threadKey(t), reviewHash(t));
                 setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
               })
               .catch(() => {});

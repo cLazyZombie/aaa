@@ -29,6 +29,7 @@ mod seen;
 pub mod tailscale;
 mod tasks;
 mod text;
+mod transitions;
 mod trust_screen;
 pub mod usage;
 pub mod web;
@@ -277,6 +278,9 @@ pub struct Host {
     brief_loops: Mutex<HashSet<String>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
+    /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
+    /// 끝날 때까지 이 thread를 건너뛴다(orch.rs `refresh_report`)
+    report_refresh: Mutex<HashMap<String, bool>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -385,6 +389,7 @@ impl Host {
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             brief_claims: Mutex::new(HashSet::new()),
+            report_refresh: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -571,6 +576,13 @@ impl Host {
         }
         self.bump();
         self.replay_harness(&info.id);
+        // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
+        if !info.state.is_running() {
+            match self.thread_of_pane(&info.id) {
+                Some(r) if r.status == aaa_proto::ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
+                _ => self.tick_wake.notify_one(),
+            }
+        }
         if started {
             self.spawn_subscribe(machine_id.to_string(), info.id, None);
         }

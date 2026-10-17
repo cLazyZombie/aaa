@@ -365,6 +365,19 @@ pub enum ThreadGroup {
     Resolved,
 }
 
+impl ThreadGroup {
+    /// 사람이 읽는 이름(CLI·TUI·웹과 같은 말)
+    pub fn label(self) -> &'static str {
+        match self {
+            ThreadGroup::WaitingOnYou => "사람 차례",
+            ThreadGroup::ReadyForReview => "검토 대기",
+            ThreadGroup::Working => "작업 중",
+            ThreadGroup::Idle => "쉼",
+            ThreadGroup::Resolved => "끝남",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
     pub project: String,
