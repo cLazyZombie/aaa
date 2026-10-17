@@ -224,6 +224,21 @@ pub struct ReadView {
     pub truncated: bool,
 }
 
+/// `thread read`·`thread keys` 결과: 그 thread의 pane과 그때의 harness 상태, 읽은 화면(read) 또는 한 일(keys)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPaneView {
+    pub project: String,
+    pub thread: String,
+    pub pane: String,
+    /// 읽거나 보내기 전 harness 상태(hook 없는 harness는 없다)
+    pub agent: Option<crate::AgentActivity>,
+    pub read: Option<ReadView>,
+    /// 친 글자 수
+    pub typed: u32,
+    /// 누른 키
+    pub pressed: Vec<String>,
+}
+
 /// `pane wait-output`이 찾는 것(herdr `OutputMatch`)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -1085,6 +1100,23 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
+    /// thread pane이 지금 보이는 것(신뢰 창·질문 메뉴·권한 확인창, herdr-projects `thread read`). `lines`면 보이는 화면 대신
+    /// 기록 끝 N줄
+    ThreadRead {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        lines: Option<u32>,
+    },
+    /// thread pane이 보이는 것에 답한다(herdr-projects `thread keys`): `text`를 치고(Enter 없음) `keys`를 누른다
+    ThreadKeys {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        keys: Vec<String>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// 열린 확인창 질문(기본은 열린 것만)
     Questions {
         #[serde(default)]
@@ -1233,6 +1265,7 @@ impl FrontRequest {
                 | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
+                | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
                 | FrontRequest::PaneWaitOutput { .. }
@@ -1290,6 +1323,8 @@ pub enum FrontResponse {
     },
     Screen(ScreenText),
     Read(ReadView),
+    /// `thread read`·`thread keys`
+    ThreadPane(ThreadPaneView),
     /// `pane wait-output`이 찾았다: 맞은 줄과 그때 읽은 글
     OutputMatched {
         matched_line: String,
@@ -1582,6 +1617,12 @@ mod tests {
     fn control_classification() {
         // reader가 보낼 수 있는 요청은 읽기뿐이어야 한다.
         assert!(!FrontRequest::PaneRead { pane: "p".into() }.needs_control());
+        // thread pane 읽기는 보기, 키로 답하기는 조작이다(세션 안 CLI는 보기만, §8.25)
+        let (project, thread) = ("p".to_string(), "t-0001".to_string());
+        assert!(
+            !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
+        );
+        assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
         assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());

@@ -830,6 +830,10 @@ impl Host {
             FrontRequest::ThreadBrief { project, thread } => {
                 self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
             }
+            FrontRequest::ThreadRead { project, thread, lines } => self.thread_read(&project, &thread, lines).await,
+            FrontRequest::ThreadKeys { project, thread, keys, text } => {
+                self.thread_keys(&project, &thread, &keys, text, actor).await
+            }
             FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
             FrontRequest::QuestionAnswer { id, choice } => {
                 self.answer(&id, &choice, actor).await.map(FrontResponse::Question)
