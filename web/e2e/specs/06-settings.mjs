@@ -18,7 +18,9 @@ export default async function ({ ctl, page }) {
         window.queryLocalFonts = async () => [{ family: "Menlo" }, { family: "Helvetica" }, { family: "E2E Wide" }];
       } catch {}
     };
-    const fp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init })).page;
+    // service worker는 /fonts/를 캐시 먼저로 맡아(plan §8.110) 다시 연 화면의 face가 아래 route를 거치지 않는다.
+    // 다시 연 뒤에도 늦게 온 face를 받은 다음 재는지 보려고 이 기기는 worker 없이 연다(worker 캐시는 01-http-pwa가 본다)
+    const fp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init, serviceWorkers: "block" })).page;
     // 그 face는 늦게 준다: 받기 전에 cell을 재면 대신 글꼴 너비가 남아 아래 1.5배 확인이 실패한다
     let wideFetches = 0;
     await fp.context().route((url) => url.search === "?e2e-wide", async (r) => {
