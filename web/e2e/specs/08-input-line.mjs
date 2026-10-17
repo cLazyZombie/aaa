@@ -199,7 +199,8 @@ export default async function ({ ctl, page }) {
     const second = await reply();
     await box.fill("다른 글");
     pipe.ws.send(JSON.stringify(second));
-    await sleep(300);
+    // 답을 처리한 뒤 보내기 단추가 풀린다(TerminalInput: 지우기 판단 then → 잠금 풀기 finally). 그 뒤의 글을 본다(sleep으로 어림하지 않는다)
+    await until("답 처리(보내기 풀림)", async () => !(await sendBtn.isDisabled()));
     if ((await box.inputValue()) !== "다른 글") throw new Error(`바꾼 글을 지웠다: ${JSON.stringify(await box.inputValue())}`);
     // 3) host가 거절하면 글을 두고 이유를 보인다(답을 바꿔 보낸다. 실제 거절은 아래 끝난 pane)
     await box.fill("셋");
