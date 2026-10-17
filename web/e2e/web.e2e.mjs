@@ -444,7 +444,9 @@ try {
       throw new Error(`woff2 ${r.status} ${r.headers.get("content-type")} ${got.length}`);
     if (!r.headers.get("cache-control").includes("immutable")) throw new Error(`cache ${r.headers.get("cache-control")}`);
     for (const f of ["LICENSE", "licenses/THIRD_PARTY_NOTICES.md", "licenses/MESLO_APACHE-2.0.txt", "licenses/NERD_FONTS_LICENSE.txt"]) {
-      if ((await fetch(`${base}${dir}${f}`)).status !== 200) throw new Error(`고지 파일 없음: ${f}`);
+      const n = await fetch(`${base}${dir}${f}`);
+      if (n.status !== 200 || n.headers.get("content-type") !== "text/plain; charset=utf-8")
+        throw new Error(`고지 파일 ${f}: ${n.status} ${n.headers.get("content-type")}`);
     }
     await page.getByLabel("보낼 글").fill("echo 한글 간격 확인 ABCD abcd 0123");
     await page.getByRole("button", { name: "보내기" }).click();
