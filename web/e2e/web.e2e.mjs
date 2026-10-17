@@ -237,6 +237,34 @@ async function ipadKey(page, jamo, edits) {
   );
 }
 const ipadFresh = (page, jamo) => ipadKey(page, jamo, [["insert", jamo]]);
+
+/**
+ * 화면 키보드 흉내(herdr-web-ui scripts/keyboard-viewport-regression.ts처럼 플랫폼 입력만 가짜로): visualViewport·innerHeight·
+ * 100lvh 자. pairPage의 init으로 넣고 softKeyboard(page, 보이는 높이)로 올리고 내린다.
+ */
+function fakeViewport() {
+  const h = window.screen.height;
+  const fake = { height: h, layout: h, large: h, scale: 1, viewport: new EventTarget() };
+  Object.assign(window, { viewportFixture: fake });
+  for (const key of ["height", "scale"]) Object.defineProperty(fake.viewport, key, { get: () => fake[key] });
+  Object.defineProperty(fake.viewport, "width", { get: () => window.screen.width });
+  Object.defineProperty(window, "visualViewport", { configurable: true, value: fake.viewport });
+  Object.defineProperty(window, "innerHeight", { configurable: true, get: () => fake.layout });
+  const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.style.height === "100lvh") return new DOMRect(0, 0, 0, fake.large);
+    if (this.style.height === "env(safe-area-inset-top, 0px)") return new DOMRect(0, 0, 0, 0);
+    return nativeRect.call(this);
+  };
+}
+/** 화면 키보드가 올라오거나(보이는 높이만 준다, iOS Safari) 내려간다 */
+const softKeyboard = (page, visible) =>
+  page.evaluate((h) => {
+    const f = window.viewportFixture;
+    f.height = h;
+    f.viewport.dispatchEvent(new Event("resize"));
+    window.dispatchEvent(new Event("resize"));
+  }, visible);
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
 async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init } = {}) {
@@ -416,6 +444,28 @@ fs.writeFileSync(
   `process.stdin.setRawMode(true);
 process.stdout.write("\\x1b[?2004hpaste> ");
 process.stdin.on("data", (d) => process.stdout.write("\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\npaste> "));
+`,
+);
+// 계속 그리는 입력창(Claude Code의 상태 줄처럼): 100ms마다 마지막 줄을 다시 그리고 커서를 입력 자리로 되돌린다.
+// 받은 조각은 paste.js처럼 JSON으로 보인다(조합 중에도 출력이 와서 화면 키보드가 터미널을 커서 줄로 옮긴다).
+fs.writeFileSync(
+  `${root}/spin.js`,
+  `process.stdin.setRawMode(true);
+// 프롬프트 아래 한 줄을 비워 두고(필요하면 화면을 올린다) 상태 줄은 그 줄에 그린다
+const prompt = () => process.stdout.write("\\r\\n\\x1b[Apaste> ");
+for (let i = 0; i < 80; i++) process.stdout.write("spin-line-" + i + "\\r\\n");
+prompt();
+// 크기가 바뀌면 입력 자리를 화면 맨 아래로 다시 둔다(Claude Code의 입력창처럼)
+process.stdout.on("resize", () => {
+  process.stdout.write("\\r\\x1b[2K" + "\\r\\n".repeat(process.stdout.rows));
+  prompt();
+});
+let n = 0;
+setInterval(() => process.stdout.write("\\x1b7\\x1b[B\\r\\x1b[2K* working " + (n++ % 10) + "\\x1b8"), 100);
+process.stdin.on("data", (d) => {
+  process.stdout.write("\\r\\x1b[B\\x1b[2K\\x1b[A\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\n");
+  prompt();
+});
 `,
 );
 base = `http://127.0.0.1:${webPort}/`;
@@ -821,6 +871,8 @@ try {
     const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await mob.page.getByTestId("pane-pasteapp").click();
     const mbox = mob.page.getByLabel("보낼 글");
+    // 연결(snapshot)되기 전에는 읽기 전용이다: 화면이 온 뒤에 본다
+    await until("휴대폰 paste 화면", async () => (await screenText(mob.page)).includes("paste>"));
     // 데스크톱 화면이 쓰는 중이어도 가져오기 없이 입력된다
     if (await mbox.isDisabled()) throw new Error("휴대폰 입력 막대가 꺼져 있다");
     n = gots();
@@ -840,6 +892,7 @@ try {
 
   await step("터미널 한글 IME(herdr-web-ui xterm 패치): 데스크톱 조합 사건·CDP 실제 IME, macOS Safari·iPad 기록 재생 → pane에는 완성된 글만", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "imeapp", "--", process.execPath, `${root}/paste.js`);
+    aaa("pane", "run", "--machine", "labA", "--name", "imespin", "--", process.execPath, `${root}/spin.js`);
     const wk = await webkit.launch();
     const bad = [];
     const textarea = (q) => q.locator("textarea.xterm-helper-textarea");
@@ -976,31 +1029,50 @@ try {
     const SAFARI_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/26.6.2 Safari/605.1.15";
     const IPAD_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15";
     const wide = { width: 1280, height: 800 };
+    const IPAD_PORTRAIT = { width: 820, height: 1180 };
     const runs = [
       ["Chromium", async () => page, [...desktop, cdpIme]],
       ["WebKit", async () => (await pairPage(wk, aaa("web", "pair").code, wide)).page, desktop],
       ["Safari 26.6.2 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: SAFARI_UA, platform: "MacIntel" })).page, safari],
       ["iPad(MacIntel) 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: IPAD_UA, platform: "MacIntel" })).page, ipad],
       ["iPad(iPad) 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: IPAD_UA, platform: "iPad" })).page, ipad],
+      // 화면 키보드가 올라온 iPad(사용자 보고 13:0x: 키보드 고침 뒤 자모가 다시 분리됐다). 키보드가 grid를 붙잡고
+      // 터미널을 커서 줄로 옮긴 상태에서, 출력이 계속 오는 동안 같은 기록을 재생한다.
+      ...[["iPad", ipad], ["Safari", safari]].map(([rec, ways]) => [
+        `WebKit iPad 화면 키보드 ${rec} 기록`,
+        async () => (await pairPage(wk, aaa("web", "pair").code, IPAD_PORTRAIT, { userAgent: IPAD_UA, platform: "iPad", touch: true, init: fakeViewport })).page,
+        ways,
+        async (p) => {
+          await softKeyboard(p, IPAD_PORTRAIT.height - 400);
+          await sleep(600);
+          const up = await p.evaluate(() => document.documentElement.hasAttribute("data-keyboard"));
+          const panned = await p.locator(".term-scroll").evaluate((el) => el.scrollTop);
+          if (!up || panned <= 0) throw new Error(`화면 키보드 흉내가 안 됐다(data-keyboard ${up}, 옮긴 거리 ${panned})`);
+          // iOS는 caret이 움직이면 보이는 영역을 옮기고 visualViewport scroll을 보낸다(viewport.ts가 그때마다 맞춘다)
+          await p.evaluate(() => setInterval(() => window.viewportFixture.viewport.dispatchEvent(new Event("scroll")), 30));
+        },
+        "imespin",
+      ]),
     ];
     try {
-      for (const [engine, open, ways] of runs) {
+      for (const [engine, open, ways, keyboard, pane = "imeapp"] of runs) {
         const p = await open();
-        await p.getByTestId("pane-imeapp").click();
+        await p.getByTestId(`pane-${pane}`).click();
         await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
         // 다른 화면이 쓰던 pane이어도 터미널을 누르고 바로 친다
         await until("입력 막대", async () => p.getByLabel("보낼 글").isEnabled());
         await p.locator(".xterm-screen").click();
+        if (keyboard) await keyboard(p);
         for (const [how, type, want] of ways) {
-          aaa("pane", "send", "imeapp", "--text", "MARK");
-          await until("표지", () => aaa("pane", "read", "imeapp").lines.join("\n").includes('GOT:"MARK"'));
+          aaa("pane", "send", pane, "--text", "MARK");
+          await until("표지", () => aaa("pane", "read", pane).lines.join("\n").includes('GOT:"MARK"'));
           // 기록 재생은 빈 편집기에서 시작한다(herdr-web-ui 재생과 같다)
           await textarea(p).evaluate((el) => {
             el.value = "";
           });
           await type(p);
           await sleep(700);
-          const all = aaa("pane", "read", "imeapp").lines.join("\n");
+          const all = aaa("pane", "read", pane).lines.join("\n");
           const got = all
             .slice(all.lastIndexOf('GOT:"MARK"') + 10)
             .split("\n")
@@ -1017,8 +1089,48 @@ try {
     }
     if (bad.length) throw new Error(bad.join("; "));
     aaa("pane", "kill", "imeapp");
+    aaa("pane", "kill", "imespin");
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("입력 기록(실기 키보드 진단): 켜면 터미널 사건·textarea 값·화면 키보드 상태·보낸 글을 모으고, 보내면 host diag/에 남는다", async () => {
+    // pairing 없이는 남기지 않는다
+    const anon = await fetch(`${base}api/v1/diag/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base.slice(0, -1) },
+      body: "{}",
+    });
+    if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
+    aaa("pane", "run", "--machine", "labA", "--name", "traceapp", "--", process.execPath, `${root}/paste.js`);
+    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    await tp.getByTestId("trace-toggle").click();
+    if ((await tp.getByTestId("trace-toggle").getAttribute("aria-pressed")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
+    await tp.getByTestId("pane-traceapp").click();
+    await until("trace 화면", async () => (await screenText(tp)).includes("paste>"));
+    await tp.locator(".xterm-screen").click();
+    await imeType(tp);
+    await until("조합 글 도착", () => aaa("pane", "read", "traceapp").lines.join("\n").includes('GOT:"상"'));
+    await sleep(300);
+    await tp.getByRole("button", { name: "목록으로" }).click();
+    await tp.getByTestId("trace-send").click();
+    await until("보냄 표시", async () => (await tp.locator(".foot-msg").allInnerTexts()).some((t) => t.startsWith("보냈다: input-")));
+    const dir = `${root}/s/host/diag`;
+    const files = fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n));
+    if (files.length !== 1) throw new Error(`diag 파일 ${files}`);
+    const rec = JSON.parse(fs.readFileSync(path.join(dir, files[0]), "utf8"));
+    const types = new Set(rec.events.map((e) => e.type));
+    for (const t of ["keydown", "compositionstart", "compositionupdate", "compositionend", "input", "focus", "send"])
+      if (!types.has(t)) throw new Error(`기록에 ${t}가 없다: ${[...types]}`);
+    const sent = rec.events.filter((e) => e.type === "send").map((e) => e.data).join("");
+    if (sent !== "상태") throw new Error(`기록의 보낸 글 ${JSON.stringify(sent)}`);
+    const upd = rec.events.find((e) => e.type === "compositionupdate" && e.data === "사");
+    if (!upd || typeof upd.value !== "string" || !Array.isArray(upd.sel) || typeof upd.kb !== "boolean") throw new Error(`상태가 빠졌다 ${JSON.stringify(upd)}`);
+    // 보내면 비우고, 끄면 모으지 않는다
+    if ((await tp.getByTestId("trace-toggle").innerText()).includes("(0개") === false) throw new Error("보낸 뒤 비우지 않았다");
+    await tp.getByTestId("trace-toggle").click();
+    await tp.context().close();
+    aaa("pane", "kill", "traceapp");
   });
 
   await step("조합 상자(WebKit iPad·iPhone 크기, 어두운·밝은 테마): 크기는 herdr-web-ui fitView, 색은 그 칸 배경·글자색, 테두리 없음, 세로는 커서 줄에 맞춰 커서가 새지 않음", async () => {
@@ -1165,21 +1277,7 @@ try {
   await step("화면 키보드(WebKit iPad·iPhone 크기, visualViewport를 줄여 흉내): 커서 줄·입력 막대·키 막대가 키보드 위에 보이고, PTY 크기는 그대로", async () => {
     // herdr-web-ui scripts/keyboard-viewport-regression.ts처럼 플랫폼 입력(visualViewport·innerHeight·100lvh 자)만 가짜로 둔다.
     // 사용자 캡처(12:26): iPad 화면 키보드가 터미널 아래쪽(프롬프트 줄·커서·입력 막대·키 막대)을 가렸다.
-    const init = () => {
-      const h = window.screen.height;
-      const fake = { height: h, layout: h, large: h, scale: 1, viewport: new EventTarget() };
-      Object.assign(window, { viewportFixture: fake });
-      for (const key of ["height", "scale"]) Object.defineProperty(fake.viewport, key, { get: () => fake[key] });
-      Object.defineProperty(fake.viewport, "width", { get: () => window.screen.width });
-      Object.defineProperty(window, "visualViewport", { configurable: true, value: fake.viewport });
-      Object.defineProperty(window, "innerHeight", { configurable: true, get: () => fake.layout });
-      const nativeRect = HTMLElement.prototype.getBoundingClientRect;
-      HTMLElement.prototype.getBoundingClientRect = function () {
-        if (this.style.height === "100lvh") return new DOMRect(0, 0, 0, fake.large);
-        if (this.style.height === "env(safe-area-inset-top, 0px)") return new DOMRect(0, 0, 0, 0);
-        return nativeRect.call(this);
-      };
-    };
+    const init = fakeViewport;
     const app = `${root}/keyboard.sh`;
     fs.writeFileSync(app, "i=0; while [ $i -lt 200 ]; do echo kb-line-$i; i=$((i+1)); done; printf '› '; cat >/dev/null\n");
     const wk = await webkit.launch();
@@ -1197,12 +1295,7 @@ try {
           if (field === "terminal") await p.locator(".xterm-screen").tap();
           else await p.getByLabel("보낼 글").focus();
           // 화면 키보드가 올라온다: 보이는 높이만 줄고(iOS Safari) 레이아웃은 그대로다
-          await p.evaluate((h) => {
-            const f = window.viewportFixture;
-            f.height = h;
-            f.viewport.dispatchEvent(new Event("resize"));
-            window.dispatchEvent(new Event("resize"));
-          }, viewport.height - kb);
+          await softKeyboard(p, viewport.height - kb);
           await sleep(600);
           const seen = await p.evaluate(() => {
             const bottom = (sel) => document.querySelector(sel)?.getBoundingClientRect().bottom ?? null;
@@ -1232,12 +1325,7 @@ try {
           if (seen.keys === null || seen.keys > vis + 0.5) bad.push(`${at}: 키 막대 아래 ${seen.keys} > ${vis}`);
           if (rows.cols !== before.cols || rows.rows !== before.rows) bad.push(`${at}: 키보드에 PTY 크기가 바뀌었다 ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}`);
           // 키보드가 내려간다
-          await p.evaluate((h) => {
-            const f = window.viewportFixture;
-            f.height = h;
-            f.viewport.dispatchEvent(new Event("resize"));
-            window.dispatchEvent(new Event("resize"));
-          }, viewport.height);
+          await softKeyboard(p, viewport.height);
           await p.evaluate(() => document.activeElement?.blur());
           await sleep(400);
         }

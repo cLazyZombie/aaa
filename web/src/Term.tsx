@@ -15,6 +15,7 @@ import { onThemeChange, token } from "./theme";
 import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
 import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
+import { attachTrace, trace } from "./inputTrace";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -126,6 +127,7 @@ export function TermView({
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
   };
   const input = (data: string) => {
+    trace("send", { data, readonly: readonlyRef.current });
     if (!readonlyRef.current) send({ t: "input", data });
   };
   /** 그림을 조각으로 보낸다. 결과(attached·error)는 WebSocket으로 온다. */
@@ -234,7 +236,12 @@ export function TermView({
     // 조합 상자의 크기·자간을 그 줄에 맞춘다. 조합 상자 색과 세로 자리는 aaa가 그 칸에 맞춘다(compositionView.ts).
     const stopGlyphs = adjustTerminalGlyphs(term);
     // 화면 키보드가 grid를 붙잡은 동안 새 출력이 오면 커서 줄을 따라간다(herdr-web-ui PaneTerminal 1133줄)
-    const parsedSub = term.onWriteParsed(() => followCursor.current());
+    const parsedSub = term.onWriteParsed(() => {
+      if (document.activeElement === term.textarea) trace("write");
+      followCursor.current();
+    });
+    // 실기 입력 사건 기록(켜져 있을 때만 모은다, inputTrace.ts)
+    const stopTrace = attachTrace(term.textarea!, scrollRef.current!);
     const stopCompositionView = matchCompositionView(term);
     let alive = true;
     if (!ready) {
@@ -299,6 +306,7 @@ export function TermView({
         const msg = JSON.parse(m.data as string) as TermServerMsg;
         switch (msg.t) {
           case "snapshot":
+            trace("snapshot");
             term.reset();
             term.resize(msg.cols, msg.rows);
             setSize([msg.cols, msg.rows]);
@@ -363,6 +371,7 @@ export function TermView({
       stopCompositionView();
       dataSub.dispose();
       parsedSub.dispose();
+      stopTrace();
       binSub.dispose();
       offTheme();
       term.dispose();
