@@ -2824,6 +2824,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 변형 확인(5b-1): 여섯 모두 실패한다. 페이지 CSP 풀기, 폴더 파일 안 넣기, iframe sandbox 빼기는 E2E가, 요소 종류 안 보기, 숨은 이름 안 보기, symlink 뒤 폴더 밖은 `page::` 유닛이 잡는다.
   - 변형 확인(5b-2): 여섯 모두 E2E가 실패한다. 링크 문맥 빼기, 문서 폴더 기준 빼기, 그림 문맥 빼기, 열린 채 열 때 기록 칸 늘리기, 언어 fence도 잇기, 언어 없는 fence도 글 그대로. 변형은 web 빌드가 되는 꼴로만 셌다(쓰지 않는 변수로 빌드가 실패하면 시험이 옛 화면을 돌므로 무효).
 
+### 8.127 TUI에서 pane 폭만 바뀌면 그 pane이 빈다(10-18, QA t-0337 Q23)
+
+- **증상.** 사이드바를 접거나 펴거나, 나눔 비율이 바뀌거나, `prefix w`로 높이는 같고 폭만 다른 pane으로 옮기면 그 pane의 앞 출력이 빈칸이 된다. 그 뒤에 바뀐 줄(새 프롬프트 등)만 보인다. `d6bb95c`에서도 재현된다.
+- **원인.** host는 pane마다 front에 보낸 줄 hash를 기억해 바뀐 줄만 보낸다(`watch_grid`). 전체를 다시 보내는 것은 줄 수가 바뀔 때뿐이었다. TUI(`Grid::apply`)는 크기가 바뀐 장면을 받으면 grid를 비우고 온 줄만 채운다. 그래서 폭만 바뀌면 내용이 같아 다시 오지 않은 줄이 비었다.
+- **고침(herdr처럼 크기가 바뀐 pane은 통째로).**
+  - host: 보낸 것에 크기(줄 수·폭)를 함께 기억한다. 크기가 바뀌면 모든 줄을 `full`로 보낸다(`changed_rows`).
+  - TUI: `full`이 아닌 장면은 온 줄만 바꾸고 나머지 줄은 둔다. 보내지 않은 줄은 host가 보기에 그대로이기 때문이다. 그래서 고치기 전 host에 붙어도 비지 않는다. host를 다시 띄우기 전에도 새 `aaa attach`면 고쳐진다.
+- **시험.**
+  - TUI E2E `width_only_change_redraws_the_pane`(약 0.5초): 셸 출력 두 줄 뒤 사이드바를 접고(폭 64→86) 펴서(86→64) 앞 출력이 남는지 본다. 바뀐 뒤 친 표지 줄이 보인 다음에 본다(그 뒤 장면까지 왔다).
+  - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
+  - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
