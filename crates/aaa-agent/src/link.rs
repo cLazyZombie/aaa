@@ -88,6 +88,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "pr.v2".into(),
             "rename.v1".into(),
             "history.v1".into(),
+            "profiles.v2".into(),
+            "launch_safety.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

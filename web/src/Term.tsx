@@ -57,7 +57,7 @@ import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import type { PaneControls } from "./actions";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, TriangleAlert } from "lucide-react";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -1631,8 +1631,9 @@ export function TermView({
   }, [inputSlot]);
 
   let banner: string | null = null;
-  // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다
-  if (link === "stopped") banner = null;
+  // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다. 재부팅 뒤 되살리지 못한 pane은 터미널 칸의 자리 표시가 까닭을 말한다
+  // (아래 `restore-error`, 참고는 그 pane에 붙지 않아 연결 띠도 없다)
+  if (link === "stopped" || pane.restore_error) banner = null;
   else if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중";
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
   // 끊긴 동안 붙잡은 글은 끊김 띠에 보이고, 다시 붙으면 따로 띠가 되어 보내기·버리기를 고른다(PaneTerminal 2777~2800줄)
@@ -1750,6 +1751,16 @@ export function TermView({
           {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
           <div className="term-box" ref={box} data-testid="terminal" data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
         </div>
+        {/* 재부팅 뒤 되살리지 못한 pane: 옛 화면 대신 까닭을 보인다(참고 PaneTerminal 2727~2734줄 `is-restore-error`, plan §8.111) */}
+        {pane.restore_error && (
+          <div className="terminal-placeholder is-restore-error" role="status" data-testid="restore-error">
+            <div className="terminal-placeholder-inner">
+              <TriangleAlert aria-hidden="true" />
+              <span>이 pane을 되살리지 못했다</span>
+              <span className="terminal-placeholder-detail">{pane.restore_error}</span>
+            </div>
+          </div>
+        )}
         <div className="terminal-banners">
           {link === "stopped" && (
             <div className="banner warn" role="status" data-testid="output-stalled">
@@ -1842,7 +1853,7 @@ export function TermView({
           }}
         />
       )}
-      {canControl && (
+      {canControl && !pane.restore_error && (
         <KeyBar
           items={barItems}
           modifiers={modifiers}

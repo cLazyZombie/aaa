@@ -3,6 +3,8 @@
 //!
 //! - 값이 잘못된 key는 그 key만 기본값을 쓴다. 파일을 TOML로 읽지 못하면 모두 기본값이고, inbox `config-error`가 알린다.
 //! - 이 파일을 쓰는 CLI(`aaa project set` 등)는 아직 없다. coordinator·사람이 직접 고친다.
+//! - `start_threads`·`trust_screens`는 옛 자리다: host.toml `[safety.*]`(사람만 고친다, plan §8.115)에 없을 때만 쓰고,
+//!   `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 보인다.
 
 use std::path::Path;
 
@@ -25,10 +27,10 @@ pub(crate) struct ProjectSettings {
     pub max_parallel_threads: u32,
     /// `Idle`로 이만큼(일) 지난 thread를 마지막 사본 뒤 resolve한다. 0이면 하지 않는다.
     pub auto_resolve_days: u32,
-    /// coordinator가 따르는 안내 값: propose·auto(aaa가 강제하지 않는다)
-    pub start_threads: String,
-    /// thread pane 신뢰 창에 누가 답하나: `user`(기본)·`coordinator`
-    pub trust_screens: String,
+    /// 옛 자리 `start_threads`(propose·auto, 잘못된 값은 없는 것)
+    pub start_threads: Option<String>,
+    /// 옛 자리 `trust_screens`(user·coordinator, 잘못된 값은 없는 것)
+    pub trust_screens: Option<String>,
     /// 이 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류·머신 이상만 남기고 끈다(herdr-projects `mute`, 차이 목록 N10).
     /// inbox 항목은 그대로 쌓이고 앱 안 알림도 그대로다.
     pub mute: bool,
@@ -42,8 +44,8 @@ impl Default for ProjectSettings {
             thread_profile: String::new(),
             max_parallel_threads: 10,
             auto_resolve_days: 7,
-            start_threads: "propose".into(),
-            trust_screens: crate::trust_screen::USER.into(),
+            start_threads: None,
+            trust_screens: None,
             mute: false,
         }
     }
@@ -64,15 +66,9 @@ impl ProjectSettings {
         let n = |k: &str, def: u32| {
             t.get(k).and_then(|v| v.as_integer()).and_then(|i| u32::try_from(i).ok()).unwrap_or(def)
         };
-        let start_threads = match s("start_threads").as_deref() {
-            None | Some("propose") => "propose".to_string(),
-            Some("auto") => "auto".to_string(),
-            Some(other) => format!("propose(project.toml 값이 잘못됐다: {other:?}, propose·auto만 받는다)"),
-        };
-        let trust_screens = match s("trust_screens").as_deref() {
-            Some(v @ (crate::trust_screen::USER | crate::trust_screen::COORDINATOR)) => v.to_string(),
-            _ => d.trust_screens.clone(),
-        };
+        let start_threads = s("start_threads").filter(|v| matches!(v.as_str(), "propose" | "auto"));
+        let trust_screens = s("trust_screens")
+            .filter(|v| matches!(v.as_str(), crate::trust_screen::USER | crate::trust_screen::COORDINATOR));
         let repos = t
             .get("repos")
             .and_then(|v| v.as_array())
@@ -105,9 +101,36 @@ impl crate::Host {
         self.project_dir(project).map(|d| ProjectSettings::load(&d)).unwrap_or_default()
     }
 
-    /// thread pane 신뢰 창에 답하는 쪽(project.toml `trust_screens`)
+    /// safety 층(plan §8.115): host.toml `[safety.*]`와 옛 자리(host.toml `[projects]`, project.toml). host.toml은 쓸 때마다
+    /// 다시 읽는다(사람이 `aaa safety`로 고치면 host를 다시 띄우지 않아도 닿는다). 설정 폴더를 모르면(유닛 시험) 시작 때 값.
+    pub(crate) fn safety_layers(&self, project: Option<&str>) -> (aaa_config::safety::Layers, Vec<String>) {
+        use aaa_config::safety;
+        let (default, own, mut legacy, warnings) = match self.config_dir.get() {
+            Some(dir) => safety::read(dir, project),
+            None => {
+                let c = &self.cfg;
+                let get = |k: &str| c.safety.get(k).cloned().unwrap_or_default();
+                let legacy =
+                    safety::legacy_host_layer(&c.projects.allow_profiles, &c.projects.routine_commands, project);
+                (get(safety::DEFAULT_TABLE), project.map(get).unwrap_or_default(), legacy, Vec::new())
+            }
+        };
+        if let Some(p) = project {
+            let set = self.settings(p);
+            legacy.start_threads = set.start_threads;
+            legacy.trust_screens = set.trust_screens;
+        }
+        (safety::Layers { own, default, legacy }, warnings)
+    }
+
+    /// 그 프로젝트가 실제로 쓰는 safety 값
+    pub(crate) fn safety(&self, project: &str) -> aaa_config::safety::Safety {
+        self.safety_layers(Some(project)).0.resolve()
+    }
+
+    /// thread pane 신뢰 창에 답하는 쪽(safety `trust_screens`)
     pub(crate) fn trust_screens(&self, project: &str) -> String {
-        self.settings(project).trust_screens
+        self.safety(project).trust_screens
     }
 }
 
@@ -143,10 +166,10 @@ mod tests {
         assert_eq!(s.thread_profile, "opus");
         // 잘못된 값은 그 key만 기본값
         assert_eq!(s.max_parallel_threads, 10);
-        assert_eq!(s.trust_screens, "user");
+        assert_eq!(s.trust_screens, None);
+        assert_eq!((s.auto_resolve_days, s.start_threads.as_deref()), (0, Some("auto")));
         assert!(!s.mute);
         assert!(ProjectSettings::from_table(&"mute = true".parse().unwrap()).mute);
-        assert_eq!((s.auto_resolve_days, s.start_threads.as_str()), (0, "auto"));
         assert_eq!(
             s.repos,
             vec![

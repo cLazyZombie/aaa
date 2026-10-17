@@ -28,6 +28,8 @@ const env = {
   RUST_LOG: "aaa=info",
   // 상태 사건 연결의 WebSocket ping 1초, 3초 동안 아무것도 받지 못하면 host가 끊는다(기본 15초·45초, 「두 기기·죽은 연결」 단계)
   AAA_TEST_EVENTS_PING_MS: "1000",
+  // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게
+  AAA_TEST_BUILTINS: "",
 };
 const procs = new Map();
 
@@ -55,9 +57,11 @@ function waitOutput(pane, text, source = "visible", ms = 20_000) {
   );
 }
 
+// 첫 인자가 객체면 이 프로세스에만 더할 환경 변수다(예: 재부팅 흉내의 AAA_TEST_BOOT_ID)
 function start(tag, ...args) {
+  const extra = typeof args[0] === "object" ? args.shift() : {};
   const log = fs.openSync(`${root}/${tag}.log`, "w");
-  const p = spawn(AA, args, { env, stdio: ["ignore", log, log] });
+  const p = spawn(AA, args, { env: { ...env, ...extra }, stdio: ["ignore", log, log] });
   procs.set(tag, p);
   return p;
 }

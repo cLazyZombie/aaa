@@ -42,8 +42,15 @@ listen = "127.0.0.1:7431"          # herdr-web-ui(7317)과 겹치지 않는 port
 mode = "launchd"                   # 운영: host가 agent를 띄우지 않는다
 [projects]
 root = ""                          # 기본 ~/.aaa/projects. herdr-projects 폴더와 다른 곳
-allow_profiles = ["*"]
 ```
+
+- thread가 쓸 profile·yolo·신뢰 창·routine 명령은 사람만 바꾸는 safety 설정이다. 파일을 고치지 말고 aaa 밖 터미널에서 명령으로 바꾼다(herdr-projects와 같다, plan §8.115):
+  - `aaa safety show --global`·`aaa safety show <프로젝트>`: 지금 값과 출처
+  - `aaa profile allow threads claude codex [--project <프로젝트>]`: thread가 쓸 수 있는 profile(없으면 모두)
+  - `aaa profile default threads claude`: `thread start`에 profile이 없을 때(프로젝트 `thread_profile`이 먼저)
+  - `aaa safety yolo <프로젝트|--global> on|off|default`: 묻지 않고 thread를 시작하고 claude·codex를 권한 건너뛰기 인자로 띄운다(y로 확인)
+  - `aaa safety set <프로젝트|--global> routine_commands on`: routine 명령 실행(명령마다 `aaa routine approve`도 필요)
+  - 옛 `[projects] allow_profiles`·`routine_commands`는 그대로 읽는다(safety 표에 값이 없을 때).
 
 - 알림(선택): 봇 token이 든 주소는 `host.local.toml`의 `[notify]`에 둔다(커밋·공유하지 않는다).
 
@@ -58,15 +65,14 @@ work_root = ""                     # 기본 ~/aaa-work. herdr worktree 접두사
 min_free_gb = 20
 [health.toolchain]
 cargo = ["cargo", "--version"]
-[profiles.claude]
-harness = "claude"
-model = "opus"
-effort = "high"
-args = []                          # 권한 건너뛰기를 쓰려면 여기(그 머신 사용자만 고친다)
-[profiles.codex]
-harness = "codex"
-args = []
 ```
+
+- profile: claude·codex는 정의하지 않아도 같은 이름의 기본 profile(인자 없음)이다. model·effort·인자를 정하려면 그 Mac 터미널에서 더한다. agent를 다시 띄우지 않아도 다음 thread부터 쓴다.
+  ```bash
+  ~/.local/bin/aaa profile add opus --harness claude --model opus --effort high --description "깊게 볼 일"
+  ~/.local/bin/aaa profile list --machine mac-a     # 그 Mac의 profile(기본 profile은 설치·로그인한 것만)
+  ```
+  권한 건너뛰기는 profile `--arg` 대신 `aaa safety yolo`(host Mac)로 켠다.
 
 확인: 각 Mac에서 `aaa config check`가 오류 없이 끝난다.
 
