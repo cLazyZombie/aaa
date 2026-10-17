@@ -525,7 +525,11 @@ let failed = false;
 const steps = [];
 /** 열려 있는 화면(pairPage). 단계가 실패하면 화면마다 termDiag를 남긴다(CI에서만 난 실패가 여러 단계에 걸쳐 났다) */
 const openPages = new Set();
+// AAA_E2E_ONLY=<정규식>: 이름이 맞는 단계만 돈다(한 단계를 여러 번·부하 아래 되풀이해 볼 때). 준비 단계(host·agent 시작)와
+// 단계 밖의 준비(첫 화면 연결)는 그대로 한다
+const only = process.env.AAA_E2E_ONLY ? new RegExp(process.env.AAA_E2E_ONLY) : null;
 async function step(name, fn) {
+  if (only && !only.test(name) && name !== "host·agent 시작") return;
   const t0 = Date.now();
   try {
     await fn();
@@ -2089,8 +2093,10 @@ try {
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const nums = new Set();
       const bad = [];
-      const ticks = new Map();
-      let last = -1;
+      // tick-1을 볼 때마다: 같은 화면에서 그 위 가장 가까운 기록 줄 번호와 둘레 줄(화면 픽셀로 버퍼 줄 번호를 셈하면 6000줄에서
+      // 몇 줄씩 어긋날 수 있어, 자리는 둘레 글로 본다)
+      const ticks = [];
+      let perScreen = 0;
       for (let y = 0; ; y += vp.clientHeight / 2) {
         vp.scrollTop = y;
         vp.dispatchEvent(new Event("scroll"));
@@ -2098,22 +2104,24 @@ try {
         const got = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
         for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
         got.forEach((n) => nums.add(n));
-        // tick-1·h-06000 줄의 버퍼 줄 번호(겹쳐 본 화면에서 같은 줄은 한 번 센다)
-        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
-        const rowH = divs[0].getBoundingClientRect().height;
-        divs.forEach((d, i) => {
-          const at = Math.round(vp.scrollTop / rowH) + i;
-          if (d.textContent.startsWith("tick-1")) ticks.set(at, "tick");
-          if (d.textContent.startsWith("h-06000")) last = at;
+        const texts = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => d.textContent);
+        let here = 0;
+        texts.forEach((t, i) => {
+          if (!t.startsWith("tick-1")) return;
+          here += 1;
+          let above = null;
+          for (let j = i - 1; j >= 0 && above === null; j--) above = /^h-(\d{5})/.exec(texts[j])?.[1] ?? null;
+          ticks.push({ above: above === null ? null : Number(above), near: texts.slice(Math.max(0, i - 3), i + 2).map((x) => x.slice(0, 12)) });
         });
+        perScreen = Math.max(perScreen, here);
         if (y >= vp.scrollHeight - vp.clientHeight) break;
       }
-      const tickAt = [...ticks.keys()];
-      return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), tickAt, last };
+      return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), ticks: ticks.slice(0, 6), perScreen };
     });
     if (sweep.count !== 6000 || sweep.min !== 1 || sweep.max !== 6000 || sweep.bad.length) throw new Error(`버퍼 기록 ${JSON.stringify(sweep)}`);
-    // 다시 쓰는 사이에 온 줄은 한 번, 기록 뒤에
-    if (sweep.tickAt.length !== 1 || !(sweep.tickAt[0] > sweep.last)) throw new Error(`tick-1 자리 ${JSON.stringify(sweep)}`);
+    // 다시 쓰는 사이에 온 줄은 한 번, 기록 뒤에: 볼 때마다 그 위 기록 줄은 h-06000이고, 한 화면에 둘 보인 적이 없다
+    if (sweep.ticks.length === 0 || sweep.perScreen !== 1 || sweep.ticks.some((t) => t.above !== null && t.above !== 6000) || sweep.ticks.every((t) => t.above === null))
+      throw new Error(`tick-1 자리 ${JSON.stringify(sweep)}`);
     // 다시 쓴 버퍼도 프로그램이 켠 입력 모드(bracketed paste)를 그대로 갖는다: 붙여 넣은 여러 줄이 감싸여 간다
     await box.click();
     await hp.locator(".xterm-helper-textarea").evaluate((el) => {
