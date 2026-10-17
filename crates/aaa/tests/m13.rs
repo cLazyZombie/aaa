@@ -2481,3 +2481,41 @@ fn pr_followup() {
     assert!(calls.contains(&format!("pr view --json state,reviewDecision,statusCheckRollup,comments,reviews,headRefName,headRefOid,headRepository,headRepositoryOwner -- {url}\n")), "{calls}");
     assert!(calls.contains("api user --jq .login\n"), "{calls}");
 }
+
+/// 웹 새 세션 창의 agent 고르기(herdr-web-ui NewSessionDialog, plan §8.110): `pane_run`에 profile을 주면 그 머신 agent.toml
+/// profile로 harness를 띄우고 thread처럼 상태 hook을 붙인다(hook 설정은 세션 폴더에). 없는 profile·폴더는 거부, `~/…`는 집으로 푼다.
+#[test]
+fn pane_run_with_profile_starts_harness_with_hooks() {
+    use aaa_common::front::FrontClient;
+    use aaa_proto::{FrontRequest, FrontResponse};
+    let w = world();
+    let run = |profile: Option<&str>, cwd: Option<String>| FrontRequest::PaneRun {
+        machine: Some("labA".into()),
+        name: None,
+        argv: vec![],
+        cwd,
+        cols: None,
+        rows: None,
+        profile: profile.map(String::from),
+    };
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut c = FrontClient::connect_as(&w.h.state, "web-new").await.unwrap();
+        let p = match c.call(run(Some("sticky"), Some(path_str(&w.repo).to_string()))).await.unwrap() {
+            Ok(FrontResponse::Pane(p)) => p,
+            other => panic!("profile로 띄우기: {other:?}"),
+        };
+        assert_eq!(p.name, "sticky", "이름을 비우면 profile 이름");
+        assert_eq!(p.argv[0], path_str(&w.scripts.join("sticky.sh")));
+        let settings =
+            p.argv.iter().position(|a| a == "--settings").map(|i| p.argv[i + 1].clone()).expect("claude hook 설정");
+        assert!(settings.ends_with(&format!("/sessions/{}/claude-settings.json", p.id)), "{settings}");
+        assert!(Path::new(&settings).is_file());
+        assert!(p.argv.iter().any(|a| a == "--session-id"), "{:?}", p.argv);
+        let e = c.call(run(Some("nope"), None)).await.unwrap().expect_err("없는 profile");
+        assert!(e.message.contains("profile `nope`"), "{}", e.message);
+        let e = c.call(run(None, Some("~/aaa-no-such-dir".into()))).await.unwrap().expect_err("없는 폴더");
+        let home = std::env::var("HOME").unwrap();
+        assert!(e.message.contains(&format!("{home}/aaa-no-such-dir")), "~를 집으로 푼다: {}", e.message);
+    });
+}

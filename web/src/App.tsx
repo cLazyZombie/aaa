@@ -31,6 +31,8 @@ import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
+import { NewSessionDialog } from "./NewSessionDialog";
+import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -240,8 +242,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const seenReports = useRef(new Map<string, string | null>());
   // 이 화면이 한 번이라도 붙었었나: 다시 붙을 때 읽은 목록은 끊긴 동안 놓친 사건이다(아래)
   const linkedOnce = useRef({ questions: false, threads: false });
-  const now = useRef({ sel, panes, threads, machines });
-  now.current = { sel, panes, threads, machines };
+  const now = useRef({ sel, panes, threads, machines, role });
+  now.current = { sel, panes, threads, machines, role };
   const questionNews = (q: QuestionView) => {
     if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
     seenQuestions.current.add(q.id);
@@ -384,15 +386,26 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     setSel(name === null ? "projects:" : `project:${name}`);
   };
 
-  const newShell = async (m: MachineView) => {
+  // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
+  const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
+  const newShell = (m: MachineView) => {
     setMsg(null);
-    try {
-      const r = await call({ op: "pane_run", machine: m.id, name: null, argv: [], cwd: null, cols: null, rows: null });
-      if (r.kind === "pane") choose(r.id);
-    } catch (e) {
-      setMsg(e instanceof ApiError ? e.message : String(e));
-    }
+    setNewPaneOn(m);
   };
+  // 새 pane의 최근 폴더는 머신의 pane이 있는 곳도 안다(참고 App.tsx 185~197줄): 시작한 폴더 뒤에 둔다. thread·평가자 pane은
+  // 작업 사본(참고의 linked worktree)이고 임시 폴더는 시작할 곳이 아니다
+  useEffect(() => {
+    for (const m of machines) {
+      if (m.connection !== "connected") continue;
+      recentDirectories.remember(
+        m.id,
+        panes
+          .filter((p) => p.machine_id === m.id && !p.role && !(p.cwd && passingFolder(p.cwd)))
+          .map((p) => p.cwd)
+          .reverse(),
+      );
+    }
+  }, [machines, panes]);
 
   // 앱 단축키(herdr-web-ui App.tsx 1185~1279줄 `actions`·`useShortcuts`): 목록 단추와 같은 일을 부른다. 고른 pane의 일은 그
   // TermView가 단 paneControls로. aaa에 그 화면이 없는 동작은 단축키가 꺼져 있어(settings.ts AAA_SHORTCUTS) 불리지 않는다.
@@ -421,7 +434,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       openPalette: none,
       openFind: none,
       toggleSidebar: none,
-      openNewSession: none,
+      openNewSession: () => {
+        // 참고는 고른 PC로 연다: 고른 pane·thread의 머신, 없으면 붙은 첫 머신. 보기 권한 기기는 띄울 수 없다
+        const { sel, panes, threads, machines, role } = now.current;
+        if (role === "reader") return;
+        const pane = sel?.startsWith("pane:") ? panes.find((p) => `pane:${p.id}` === sel) : undefined;
+        const thread = sel?.startsWith("thread:") ? threads.get(sel.slice(7)) : undefined;
+        const onId = pane?.machine_id ?? (thread?.pane ? panes.find((p) => p.id === thread.pane)?.machine_id : undefined);
+        const connected = machines.filter((m) => m.connection === "connected");
+        const m = connected.find((x) => x.id === onId) ?? connected[0];
+        if (m) setNewPaneOn(m);
+      },
       openNewTab: none,
       splitPane: null,
     };
@@ -558,6 +581,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </div>
         )}
       </main>
+      {newPaneOn && (
+        <NewSessionDialog
+          machine={newPaneOn}
+          onClose={() => setNewPaneOn(null)}
+          onCreated={(id) => {
+            setNewPaneOn(null);
+            choose(id);
+          }}
+        />
+      )}
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {

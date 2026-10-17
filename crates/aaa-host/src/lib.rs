@@ -994,8 +994,23 @@ impl Host {
             FrontRequest::EvaluationDecide { project, id, proposals, adopt, note } => self
                 .evaluation_decide(&project, &id, &proposals, adopt, note, actor)
                 .map(|v| FrontResponse::Evaluation(Box::new(v))),
-            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
+            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
+                // 옛 agent는 모르는 `profile` 칸을 버리고 셸을 띄운다: 보내기 전에 거른다
+                if profile.is_some()
+                    && !self
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .machines
+                        .get(&mid)
+                        .is_some_and(|m| m.features.iter().any(|f| f == "profile.v1"))
+                {
+                    return Err(err(
+                        ErrorCode::BadRequest,
+                        "이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)",
+                    ));
+                }
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -1004,6 +1019,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1388,6 +1404,7 @@ impl Host {
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            profile: None,
         };
         let new_id = self.spawn_on(&mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
@@ -1468,6 +1485,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1490,7 +1508,16 @@ impl Host {
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
                 let cwd = self.new_pane_cwd(cwd, Some(&target), &mid).await;
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
+                let spec = SpawnSpec {
+                    name: String::new(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 80,
+                    rows: 24,
+                    role: None,
+                    profile: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| {

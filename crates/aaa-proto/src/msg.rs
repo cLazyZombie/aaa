@@ -174,6 +174,11 @@ pub struct SpawnSpec {
     pub rows: u16,
     #[serde(default)]
     pub role: Option<Role>,
+    /// 이 머신 agent.toml profile로 harness를 띄운다(argv는 무시하고 profile이 정한다, 상태 hook도 붙는다).
+    /// agent가 `profile.v1` 기능을 알릴 때만 보낸다: 옛 agent는 이 칸을 버리고 셸을 띄운다(plan §8.110).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub profile: Option<String>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -1000,6 +1005,10 @@ pub enum FrontRequest {
         cwd: Option<String>,
         cols: Option<u16>,
         rows: Option<u16>,
+        /// 이 머신 agent.toml profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        profile: Option<String>,
     },
     PaneRead {
         pane: String,

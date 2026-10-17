@@ -448,10 +448,29 @@ impl Agent {
         if spec.cwd.is_none() {
             spec.cwd = self.default_cwd.clone();
         }
+        // 웹 새 세션 창은 `~/…`도 받는다(herdr-web-ui 「absolute path or ~/…」): 이 머신 사용자의 집으로 푼다
+        if let Some(rest) = spec.cwd.as_deref().and_then(|c| c.strip_prefix('~'))
+            && (rest.is_empty() || rest.starts_with('/'))
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            spec.cwd = Some(format!("{}{rest}", home.to_string_lossy()));
+        }
         if let Some(cwd) = &spec.cwd
             && !Path::new(cwd).is_dir()
         {
             bail!("작업 폴더가 없다: {cwd}");
+        }
+        // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
+        // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
+        if let Some(name) = spec.profile.clone() {
+            let cfg = self.threads_cfg.lock().unwrap().clone();
+            let launch =
+                threads::with_hooks(&cfg, threads::resolve(&name, threads::find_profile(&cfg, &name)?)?, &paths.dir)?;
+            spec.argv = launch.argv;
+            spec.env.extend(launch.env);
+            if spec.name.is_empty() {
+                spec.name = name;
+            }
         }
         if spec.name.is_empty() {
             spec.name = spec

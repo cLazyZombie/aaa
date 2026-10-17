@@ -539,6 +539,8 @@ function AlertsPage() {
 
 /** 단축키 이름(참고 SHORTCUTS label의 i18n.ko.ts 문구) */
 const SHORTCUT_LABEL: Record<AaaShortcutId, string> = {
+  // 참고 「새 워크스페이스」: aaa에서 그 자리는 pane이다(새 pane 창)
+  "new-session": "새 pane",
   "toggle-view": "채팅 / 터미널 전환",
   "focus-input": "패널 입력창으로 이동",
   "scroll-up": "패널 위로 스크롤",

@@ -221,7 +221,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     })
 }
 
-fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
+pub(crate) fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
     cfg.profiles.get(name).with_context(|| {
         format!("이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?})", cfg.profiles.keys().collect::<Vec<_>>())
     })
@@ -233,7 +233,7 @@ fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path) -> Result<Launch>
 }
 
 /// harness별 상태 hook을 launch에 붙인다
-fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path) -> Result<Launch> {
+pub(crate) fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path) -> Result<Launch> {
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");

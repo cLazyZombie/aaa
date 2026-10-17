@@ -333,8 +333,8 @@ function MachineGroup({ machine: m, ...props }: SidebarProps & { machine: Machin
             type="button"
             className="sidebar-row-action machine-new"
             disabled={!online}
-            aria-label={`${m.name}에 새 셸`}
-            title="새 셸"
+            aria-label={`${m.name}에 새 pane`}
+            title="새 pane"
             data-testid={`new-shell-${m.name}`}
             onClick={() => props.onNewShell(m)}
           >
@@ -390,7 +390,7 @@ function PaneRoster({
           </p>
           {props.canControl && online && (
             <button type="button" className="btn" onClick={() => props.onNewShell(m)}>
-              <Plus aria-hidden="true" />새 셸
+              <Plus aria-hidden="true" />새 pane
             </button>
           )}
         </div>

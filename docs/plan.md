@@ -2433,6 +2433,13 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **TUI.** herdr의 `prefix+shift+p` 이름 바꾸기는 TUI 몫(t-0330)으로 남긴다. 요청은 이 절의 `pane_rename`을 쓰면 된다.
 - **시험.** `m12 pane_rename_survives_agent_restart_exit_and_resume`: 붙이기(공백 떼고 낱말 잇기·새 이름으로 찾기) → session host 크기 바뀜 뒤에도 남음 → agent만 다시 띄워도 남음 → `--clear`로 띄울 때 이름 → 81자 거부 → 끝난 pane에 붙이고 끝나도 남음 → resume이 이어받음. agent의 Updated 덮기를 빼면 떨어지는 것을 확인했다. 웹 E2E 「줄 메뉴」(`specs/12-threads-push.mjs`): 메뉴 차례, 창 칸 focus, Enter로 저장(보낸 label은 뗀 이름), 줄·host에 새 이름, 「pane 이름 지우기」가 생기고 누르면 null을 보내 띄울 때 이름(`desktop-pane-rename`).
 
+### 8.110 새 pane 창을 herdr-web-ui대로(10-18, 차이 목록 2장 L11)
+
+- **뜻.** 머신 머리 `+`가 기본 셸을 바로 띄우던 것을 herdr-web-ui `src/components/NewSessionDialog.tsx`(새 workspace 창)대로 바꾼다: agent(셸 또는 이 머신 `agent.toml` profile, `AgentPicker.tsx`)·폴더(절대 경로나 `~/…`)·최근 폴더 칩(`RecentFolderChips.tsx`, 머신마다 `src/lib/recent-directories.ts`)·이름(비우면 폴더 이름, 참고 placeholder)을 고르고 「시작」. 마지막에 고른 agent를 기억하고(이 머신에 그 profile이 없으면 셸), 시작한 폴더는 최근 폴더 맨 앞으로, 머신의 pane이 있는 폴더도 그 뒤에 둔다(참고 App.tsx 185~197줄, thread·평가자 pane과 임시 폴더는 빼고). 실패는 창 안 `role="alert"`, 창은 남는다. 단축키 `new-session`(Mod+Shift+O, 참고 「새 워크스페이스」 → aaa 「새 pane」)이 고른 pane·thread의 머신(없으면 붙은 첫 머신)으로 연다. 모양은 `herdr/NewSessionDialog.css` 그대로.
+- **계약.** `FrontRequest::PaneRun`과 agent `SpawnSpec`에 `profile`(FRONT_API 1.16, 없으면 생략). agent는 그 profile을 thread처럼 풀어(`find_profile`·`with_hooks`: claude hook 설정·`--session-id`) 띄우고, 이름이 없으면 profile 이름이다. host는 agent가 `profile.v1` 기능을 알릴 때만 보낸다(옛 agent는 칸을 버리고 셸을 띄우므로 「agent binary 반영 필요」 오류, `cwd.v1` 선례대로 AGENT_LINK는 그대로). agent는 `cwd`의 `~`를 HOME으로 푼다(참고 입력 힌트 `~/…`).
+- **다른 곳.** 폴더 찾아보기(Browse)는 뺐다: 머신 폴더 목록 API가 없다(t3code도 프로젝트를 더할 때 서버 파일 시스템을 훑는 `CommandPalette.tsx` filesystem browse를 쓴다 — 붙이려면 agent에 폴더 목록 요청이 필요하다). 참고의 탭 모드(이 workspace에 새 탭)·주소 초안(`?new=`)·agent가 못 떴을 때 「열기」도 없다: aaa pane은 셸을 띄운 뒤 agent를 붙이지 않고 처음부터 그 명령으로 띄운다. 다시 연 profile pane은 펼친 argv(옛 `--session-id`)를 그대로 쓴다.
+- **시험.** `m13 pane_run_with_profile_starts_harness_with_hooks`: profile → 이름·argv[0]·`--settings`(세션 폴더 `claude-settings.json`이 있음)·`--session-id`, 없는 profile 오류, `~/없는 폴더`는 HOME으로 푼 경로로 오류. 웹 E2E `specs/02-terminal.mjs` 「새 pane 창」: 없는 폴더는 창 안 오류(pane 안 생김) → 셸·폴더(이름 placeholder·이름은 폴더 이름·그 pane을 연다) → fake profile·최근 폴더 칩·이름(argv에 fake.sh, `fake>`) → Mod+Shift+O로 열면 기억한 agent, Esc로 닫음(`desktop-new-pane`). `specs/03-keys.mjs`의 「aaa에 없는 키」에서 Mod+Shift+O를 뺐다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

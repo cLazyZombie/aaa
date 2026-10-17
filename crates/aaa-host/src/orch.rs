@@ -775,6 +775,7 @@ impl Host {
             cols: 120,
             rows: 32,
             role: Some(rec.role),
+            profile: None,
         };
         let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
         *rec = self.update_rec(&rec.project, &rec.id, |r| {
