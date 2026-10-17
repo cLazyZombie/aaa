@@ -2041,8 +2041,22 @@ try {
 
     // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)
     const swipeCheck = async (label, p, swipe) => {
+      // 화면을 열면 첫 snapshot은 그 pane의 지금 크기(다른 기기가 건 grid)로 그려지고, 이 화면이 크기를 되찾으면 다시 그려진다.
+      // 끌 자리는 되찾은 뒤에 잰다: 글자(s-200)만 보고 재면 넓은 grid의 가운데가 휴대폰 밖이라 끌기가 아무 데도 닿지 않았다(CI 10-18)
+      const ownGrid = (name) =>
+        until(`${label} ${name} 이 화면 크기`, async () => {
+          const pane = aaa("pane", "list").panes.find((x) => x.name === name);
+          if (!pane || pane.lease === null) return false;
+          return p.evaluate((rows) => {
+            const scroll = document.querySelector(".term-scroll");
+            const screen = document.querySelector(".xterm-screen");
+            if (!scroll || !screen || scroll.hasAttribute("data-adopted-grid")) return false;
+            return document.querySelectorAll(".xterm-rows > div").length === rows && screen.getBoundingClientRect().right <= scroll.getBoundingClientRect().right + 0.5;
+          }, pane.rows);
+        });
       await p.getByTestId("pane-scroll-plain").click();
       await until(`${label} 화면`, async () => (await screenText(p)).includes('GOT:"x"'));
+      await ownGrid("scroll-plain");
       const cell = await p.evaluate(() => {
         const screen = document.querySelector(".xterm-screen").getBoundingClientRect();
         return { h: screen.height / document.querySelectorAll(".xterm-rows > div").length, top: screen.top, x: screen.left + screen.width / 2 };
@@ -2067,6 +2081,7 @@ try {
         if (await back.isVisible()) await back.click();
         await p.getByTestId(`pane-scroll-${mode}`).click();
         await until(`${label} ${mode} 화면`, async () => (await screenText(p)).includes("s-200"));
+        await ownGrid(`scroll-${mode}`);
         const c = await p.evaluate(() => {
           const r = document.querySelector(".xterm-screen").getBoundingClientRect();
           return { top: r.top, x: r.left + r.width / 2 };
