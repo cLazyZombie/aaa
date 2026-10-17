@@ -30,8 +30,8 @@ while IFS= read -r line; do
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
       ln -s /etc/hosts "$dir/library/link"
-      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
-      mv "$dir/report.md.tmp" "$dir/report.md"
+      # 결과물·commit을 다 남긴 뒤 보고를 쓴다(실제 agent처럼 보고가 끝 신호다). 보고 뒤에 쓰면 host가 그 사이에
+      # 사본을 만들거나 시험이 먼저 resolve해 부하에 따라 실패했다(t-0327 (나))
       case "$task" in
         *commit*) echo change > change.txt && git add change.txt && git -c user.name=t -c user.email=t@example.com commit -qm change ;;
       esac
@@ -43,6 +43,8 @@ while IFS= read -r line; do
           head -c 2097152 /dev/urandom > "$dir/library/big.bin"
           printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
       esac
+      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
+      mv "$dir/report.md.tmp" "$dir/report.md"
       echo "done"
       ;;
     *inbox/*.json*)
@@ -316,6 +318,16 @@ impl World {
         self.h.ok(&a)
     }
 
+    /// interrupt 메시지를 보내고 그 줄을 harness가 받았다고 화면에 보이기를 기다린다. CLI는 host가 멈춤을 확인하고
+    /// 보낼 때까지 돌아오지 않으므로 따로 돈다: 멈춤을 알지 못하면 stop_wait 동안 막혀 화면 기다림(T)이 먼저 실패한다.
+    fn interrupt(&self, id: &str, pane: &str, text: &str) -> (Value, String) {
+        std::thread::scope(|s| {
+            let sent = s.spawn(|| self.message(id, text, true));
+            let screen = self.wait_screen(pane, &format!("got: {text}"));
+            (sent.join().unwrap(), screen)
+        })
+    }
+
     fn wait_screen(&self, pane: &str, needle: &str) -> String {
         wait_for_diag(
             &format!("화면 {needle:?}"),
@@ -500,25 +512,34 @@ fn remote_dir_thread_survives_host_restart() {
     assert_eq!(v["group"], "waiting_on_you");
     assert_eq!(v["next"], serde_json::json!(["사용자 확인"]));
     assert_eq!(w.kinds(seen), ["report_ready"]);
-    std::thread::sleep(Duration::from_secs(2));
+    // host2가 다시 붙기 전에 낸 outage가 있으면 여기와 아래 항목 시각 확인이 잡는다
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
     assert!(!items.iter().any(|i| i["item_kind"] == "outage"), "host 재시작에 outage가 생겼다: {items:?}");
 
     // 머신이 끊긴 채 host를 다시 띄워도 기준(5초) 전에는 알리지 않는다. 옛 코드는 마지막 연결 시각(7초 넘게 전)부터
     // 재서 첫 검사에 바로 알렸다. 기준 뒤 한 번, 돌아오면 한 번 알린다.
+    // 「기준 전에는 없다」는 시험 시계로 재지 않고 host가 남긴 항목 시각으로 본다: host3를 띄운 때보다 5초 넘게 뒤여야 한다.
+    // host3가 끊김을 처음 본 때는 띄운 때보다 늦으므로 부하로 늦어져도 거짓 실패가 없고, 일찍 알리면 늘 잡힌다.
     w.lab.kill("agentB");
     w.lab.kill("host2");
+    let spawned_ms = aaa_common::util::now_ms();
     w.lab.spawn("host3", &w.h, &["host"]);
-    let started = Instant::now();
+    let downs = || -> Vec<Value> {
+        let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+        items.into_iter().filter(|i| i["item_kind"] == "outage" && i["event"] == "down").collect()
+    };
     let outage = |event: &str| {
         let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
         items.iter().filter(|i| i["item_kind"] == "outage" && i["event"] == event).count()
     };
     wait_for("host3 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
-    std::thread::sleep(Duration::from_millis(2500));
-    assert_eq!(outage("down"), 0, "host가 끊김을 본 지 기준 전인데 outage가 생겼다");
-    assert!(started.elapsed() < Duration::from_secs(5), "기준 전 확인이 늦었다: {:?}", started.elapsed());
-    wait_for("outage down", T, || (outage("down") == 1).then_some(()));
+    let down = wait_for("outage down", T, || downs().into_iter().next());
+    let at = down["created_at_ms"].as_u64().unwrap();
+    assert!(
+        at >= spawned_ms + 5000,
+        "host가 끊김을 본 지 기준(5초) 전에 outage가 생겼다: 띄운 뒤 {}ms {down}",
+        at as i64 - spawned_ms as i64
+    );
     let b = w.lab.node("b", None);
     w.lab.spawn("agentB2", &b, &["agent", "--host", &w.addr, "--name", "labB"]);
     wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
@@ -528,7 +549,8 @@ fn remote_dir_thread_survives_host_restart() {
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)
 #[test]
 fn unknown_brief_is_not_resent() {
-    let w = world();
+    // 화면이 바뀌지 않는 agent라 받음 기다림(기본 10초)을 다 채워야 unknown이 된다. 줄여도 판정은 같다
+    let w = world_with("accept_wait_ms = 3000\n");
     let v = w.start(&["--title", "mute", "--profile", "mute", "--kind", "dir", "--task-file", &w.task("t4.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
     let v = w.wait_show("unknown", &id, |v| v["brief"] == "unknown");
@@ -557,7 +579,8 @@ fn unknown_brief_is_not_resent() {
 /// 다시 보내지 않는다(herdr-projects threads.rs `brief`).
 #[test]
 fn brief_left_in_box_is_submitted_not_retyped() {
-    let w = world();
+    // 첫 Enter를 버리는 agent라 첫 안내는 받음 기다림을 다 채워 unknown이 된다. 두 번째 Enter는 바로 받는다
+    let w = world_with("accept_wait_ms = 5000\n");
     let v =
         w.start(&["--title", "sticky", "--profile", "sticky", "--kind", "dir", "--task-file", &w.task("t9.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
@@ -577,7 +600,9 @@ fn brief_left_in_box_is_submitted_not_retyped() {
 /// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
 #[test]
 fn hooked_thread_questions_and_messages() {
-    let w = world();
+    // interrupt의 멈춤 상한(stop_wait)을 시험 기다림(T)보다 훨씬 길게 둔다: 멈춤을 화면으로 알지 못하면
+    // 보내지 않은 채 상한까지 기다려 아래 「got: urgent」 기다림이 실패한다(시간 단언 없이 구별한다)
+    let w = world_with("stop_wait_ms = 120000\n");
     let v =
         w.start(&["--title", "hooked", "--profile", "hooked", "--kind", "dir", "--task-file", &w.task("t5.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
@@ -651,21 +676,15 @@ fn hooked_thread_questions_and_messages() {
     // interrupt: 일하는 중이면 Esc로 멈춘 뒤 보낸다. 멈춤은 Stop hook이 없어 화면(「Interrupted」)으로 안다.
     assert_eq!(w.message(&id, "long run", false)["state"], "accepted");
     w.wait_screen(&pane, "long start");
-    let t0 = std::time::Instant::now();
-    let m4 = w.message(&id, "urgent", true);
+    let (m4, screen) = w.interrupt(&id, &pane, "urgent");
     assert_eq!(m4["state"], "accepted", "{m4}");
-    assert!(t0.elapsed() < Duration::from_secs(10), "멈춤을 화면으로 알아야 한다: {:?}", t0.elapsed());
-    let screen = w.wait_screen(&pane, "got: urgent");
     assert!(screen.contains("Interrupted") && !screen.contains("long done"), "{screen}");
     // 두 번째 interrupt: 지난 「Interrupted」가 화면에 남아 있어도 새로 멈출 때까지 기다린다
     w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
     assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
     w.wait_for_count(&pane, "long start", 2);
-    let t0 = std::time::Instant::now();
-    let m5 = w.message(&id, "urgent2", true);
+    let (m5, screen) = w.interrupt(&id, &pane, "urgent2");
     assert_eq!(m5["state"], "accepted", "{m5}");
-    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
-    let screen = w.wait_screen(&pane, "got: urgent2");
     assert!(!screen.contains("long done"), "{screen}");
     assert_eq!(screen.matches("Interrupted").count(), 3, "{screen}");
     // thread stop: Esc 한 번(세션은 그대로)
@@ -1296,13 +1315,13 @@ fn library_view() {
     assert_eq!(http_get(&web, &format!("{base}link")).0, 404);
     let (st, _, body) = http_get(&web, "/v/0000/out.txt");
     assert_eq!(st, 401, "{}", String::from_utf8_lossy(&body));
-    // agent 쪽 파일이 사라졌으면 기다리지 않고 바로 알린다
+    // agent 쪽 파일이 사라졌으면 기다리지 않고 바로 알린다: 본문의 까닭이 agent의 답(없는 파일)이다.
+    // 기다렸다면 「agent 응답 시간 초과」(15초)나 「연결이 끊겼다」가 온다(시간 단언 없이 구별한다)
     std::fs::remove_file(agent_lib.join("big.bin")).unwrap();
-    let t0 = std::time::Instant::now();
     let (st, _, body) = http_get(&web, &format!("{base}big.bin"));
-    assert_eq!(st, 502, "{}", String::from_utf8_lossy(&body));
-    assert!(String::from_utf8_lossy(&body).contains("agent에 남긴 결과물을 읽지 못한다"));
-    assert!(t0.elapsed() < Duration::from_secs(5));
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(st, 502, "{body}");
+    assert!(body.contains("agent에 남긴 결과물을 읽지 못한다") && body.contains("(os error 2)"), "{body}");
 }
 
 /// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.
