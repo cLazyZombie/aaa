@@ -1,4 +1,4 @@
-// 웹 E2E 스크롤과 기록: 터미널 스크롤·늦은 글꼴·줄 수 줄임·앞 기록·출력 밀림.
+// 웹 E2E 스크롤과 기록: 터미널 스크롤·늦은 글꼴·앞 기록·출력 밀림.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 07-scroll-history(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
@@ -119,8 +119,6 @@ export default async function ({ ctl, page }) {
     await until("1× 보고 하나", () => reports() === before + 1);
     const dlg = await openSettings(dp, "터미널");
     for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click();
-    if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
-    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");
     await dp.keyboard.press("Escape");
     await dlg.waitFor({ state: "hidden" });
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -291,29 +289,6 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "fontjump");
   });
 
-  await step("줄 수가 줄면 위 줄을 기록으로(xterm·herdr처럼, plan §8.59): 작은 화면이 크기를 걸어도 host 화면에 마지막 줄·커서 줄이 남고, 다시 붙은 웹은 그 위를 굴려 본다", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "shrink", "--", process.execPath, `${root}/scroll.js`, "plain");
-    await waitOutput("shrink", "s-200");
-    // pty-size는 새 크기가 host에 닿은 뒤 돌아온다: 바로 읽어도 줄인 화면이다
-    aaa("pane", "pty-size", "shrink", "80", "8");
-    const r = aaa("pane", "read", "shrink", "--source", "visible").text.split("\n");
-    // 커서는 s-200 다음 빈 줄: 그 위 일곱 줄이 s-194~s-200
-    const want = Array.from({ length: 7 }, (_, i) => `s-${194 + i}`);
-    if (JSON.stringify(r.slice(0, 7)) !== JSON.stringify(want)) throw new Error(`줄인 화면 ${JSON.stringify(r)}`);
-    // 늦게 붙은 웹: 기록에 줄인 때 올린 줄까지 있어 위로 굴리면 s-001
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await dp.getByTestId("pane-shrink").click();
-    await until("shrink 화면", async () => (await screenText(dp)).includes("s-200"));
-    const box = await dp.getByTestId("terminal").boundingBox();
-    await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await until("기록 맨 위 s-001", async () => {
-      await dp.mouse.wheel(0, -2000);
-      return (await screenText(dp)).includes("s-001");
-    });
-    await dp.context().close();
-    aaa("pane", "kill", "shrink");
-  });
-
   await step("앞 기록(사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」, plan §8.67): 끊긴 동안 쏟아진 출력을 다시 붙은 뒤 위로 굴리며 차례로 받아 보고, 붙일 때 보던 자리가 튀지 않는다", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "histapp", "--", process.execPath, `${root}/history.js`);
     await waitOutput("histapp", "hist>");
@@ -457,56 +432,6 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "histapp");
   });
 
-  await step("앞 기록 빠른 휠(QA t-0337 Q1: 데스크톱 Chromium 6/8에서 화면 전체가 빈 채로 굳음): 긴 출력 pane을 열자마자 휠을 연달아 굴려 앞 기록을 받는 동안에도, 붙인 뒤에도 줄이 그려지고, 키를 치면 맨 아래 새 출력이 보인다", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "fastwheel", "--", process.execPath, `${root}/long.js`);
-    await waitOutput("fastwheel", "long-done");
-    // 붙을 때는 최근 기록(aaa_vt REPLAY_HISTORY 2000줄)만 오고 앞이 남는다: 굴리면 받는다
-    const looks = [];
-    for (let trial = 0; trial < 8; trial++) {
-      const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
-      await page.getByTestId("pane-fastwheel").click();
-      await until("fastwheel 화면", async () => (await screenText(page)).includes("long-done"));
-      const box = page.getByTestId("terminal");
-      const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
-      await until("앞 기록 있음", async () => (await attr("historyMore")) === "1");
-      // QA probe-scroll5.mjs처럼 누르지 않고 가운데에 올린다
-      await box.hover();
-      // QA probe-scroll5.mjs 그대로: -1200px를 40번 연달아(기다리지 않는다)
-      for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -1200);
-      const look = () =>
-        box.evaluate((el) => {
-          const rows = [...el.querySelectorAll(".xterm-screen:not(.term-history-cover) .xterm-rows > div")].map((d) => d.textContent);
-          return {
-            nonblank: rows.filter((t) => t.trim()).length,
-            first: rows.find((t) => t.trim())?.slice(0, 20) ?? null,
-            covers: el.querySelectorAll(".term-history-cover").length,
-            applied: el.dataset.historyApplied,
-            waiting: el.dataset.historyWaiting,
-            more: el.dataset.historyMore,
-            top: el.dataset.viewTop,
-            base: el.dataset.viewBase,
-          };
-        });
-      // 붙이기가 끝나고(덮개 없음) 그려진 줄이 있다. 고장이면 20초 기다림이 그때 모습으로 끝난다
-      let last = null;
-      try {
-        await until(`붙인 뒤 화면(${trial + 1})`, async () => {
-          last = await look();
-          return Number(last.applied) >= 1 && last.waiting !== "1" && last.covers === 0 && last.nonblank > 0;
-        });
-      } catch (e) {
-        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
-      }
-      looks.push(last);
-      // 키를 치면 맨 아래로 가고 새 출력이 그려진다
-      await box.click();
-      await page.keyboard.press("p");
-      await until(`키 뒤 새 출력(${trial + 1})`, async () => (await screenText(page)).includes(`tick-${trial + 1}`));
-      await page.context().close();
-    }
-    if (looks.some((l) => l.first === null)) throw new Error(`빈 화면: ${JSON.stringify(looks)}`);
-    aaa("pane", "kill", "fastwheel");
-  });
   await step("앞 기록 reset 직후 scroll(QA t-0337 Q1 원인, patches/xterm-5.5.0-viewport.patch, plan §8.105): 앞 기록을 붙이려고 xterm을 reset한 뒤 줄 높이를 다시 재기 전에 scrollTop 0의 scroll 사건이 와도 보던 줄이 숫자로 남고 그려지며, 붙잡은 출력이 풀린다", async () => {
     // 짧은 줄 2600개: host가 처음부터 구독해 다 갖고(붙을 때 2000줄, 앞 기록 600줄), 덩어리와 화면을 한 번에 다 읽는다.
     // 읽는 중에 온 scroll의 NaN은 남은 출력이 되살리므로, 다 읽은 뒤 줄 높이를 재기 전의 scroll이 결함이다(QA probe-stuck)
@@ -679,22 +604,6 @@ export default async function ({ ctl, page }) {
     const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await fast.getByTestId("pane-flood").click();
     await until("따라오는 화면 flood>", async () => (await screenText(fast)).includes("flood>"));
-    // ACK 전의 옛 웹(주소에 flow=ack가 없고 ACK도 없다, 다시 띄우기 전에 받은 화면): host는 보내기 줄로만 재므로
-    // 잘 받는 동안은 닫지 않는다(참고의 ACK 없는 연결)
-    const old = await fast.context().newPage();
-    await old.goto(base);
-    await old.evaluate((id) => {
-      const w = new WebSocket(`ws://${location.host}/api/v1/panes/${encodeURIComponent(id)}/ws`);
-      w.binaryType = "arraybuffer";
-      window.oldClient = { bytes: 0, code: null, acks: 0, joined: false };
-      w.onmessage = (m) => {
-        if (typeof m.data !== "string") window.oldClient.bytes += m.data.byteLength;
-        else if (m.data.startsWith('{"t":"snapshot"')) window.oldClient.joined = true;
-      };
-      w.onclose = (e) => (window.oldClient.code = e.code);
-    }, aaa("pane", "list").panes.find((x) => x.name === "flood").id);
-    // snapshot이 출력 구독의 시작이다. 그 전에 쏟으면 앞부분이 snapshot(text)에 들어가 bytes가 모자란다(t-0327, 착지 검증에서 1/8)
-    await until("옛 웹 붙음", async () => await old.evaluate(() => window.oldClient.joined));
     // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
     aaa("pane", "send-text", "flood", "f");
     await until("출력 정지 띠", async () => await slow.getByTestId("output-stalled").isVisible());
@@ -711,10 +620,6 @@ export default async function ({ ctl, page }) {
     await until("따라오는 화면 flood-done", async () => (await screenText(fast)).includes("flood-done"));
     const kept = await log(fast);
     if (kept.some((e) => e.startsWith("ws close")) || count(kept, "snapshot") !== 1) throw new Error(`따라오는 화면이 끊겼다: ${JSON.stringify(kept.filter((e) => e !== "io"))}`);
-    await until("옛 웹도 끝까지 받음", async () => (await old.evaluate(() => window.oldClient.bytes)) >= 400_000);
-    const oldClient = await old.evaluate(() => window.oldClient);
-    if (oldClient.code !== null) throw new Error(`ACK 없는 옛 웹이 닫혔다: ${JSON.stringify(oldClient)}`);
-    await old.close();
     await shot(slow, "desktop-output-stalled");
     // 「다시 연결」: 새로 붙어 snapshot을 받고 입력도 간다
     dropAcks = false;

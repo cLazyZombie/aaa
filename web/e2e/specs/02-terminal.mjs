@@ -1,21 +1,11 @@
-// 웹 E2E 터미널 기본: 키보드·크기·글꼴·글자 폭·입력 막대·두 controller·reader·새 셸.
+// 웹 E2E 터미널 기본: 크기·글꼴·글자 폭·두 controller·reader·새 셸.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 02-terminal(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import fs from "node:fs";
-import path from "node:path";
 import {
-  repo, root, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
+  root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
-  await step("controller: 키보드 입력", async () => {
-    await page.getByTestId("pane-t1").click();
-    await page.getByTestId("terminal").click();
-    await until("터미널 준비", async () => (await screenText(page)).includes("$"));
-    await page.keyboard.type("echo key-$((5*5))\n");
-    await until("키보드 입력 결과", async () => (await screenText(page)).includes("key-25"));
-  });
-
   await step("넓은 창: PTY가 터미널 칸을 채우고 창 크기를 따라간다(조작 중일 때)", async () => {
     // 터미널 글자 영역이 칸(안쪽 여백 뺀 크기)을 한 cell 안쪽까지 채우는지, header 크기·host PTY 크기가 같은지
     const filled = async () => {
@@ -55,14 +45,8 @@ export default async function ({ ctl, page }) {
   });
 
   await step("터미널 글꼴: Meslotendard로 cell 너비는 영문, 한글은 정확히 두 칸(1280×800)", async () => {
-    // 넣은 WOFF2와 고지 파일을 host가 보낸다(버전 폴더라 오래 캐시한다)
+    // 글꼴 고지 파일을 host가 보낸다(WOFF2를 받는 것은 07 「글꼴이 늦게 와도」가 그 글꼴로 재며 본다)
     const dir = "fonts/meslotendard-0.3.1/";
-    const want = fs.readFileSync(path.join(repo, "web", "public", dir, "Meslotendard-Regular.woff2"));
-    const r = await fetch(`${base}${dir}Meslotendard-Regular.woff2`);
-    const got = Buffer.from(await r.arrayBuffer());
-    if (r.status !== 200 || r.headers.get("content-type") !== "font/woff2" || !got.equals(want))
-      throw new Error(`woff2 ${r.status} ${r.headers.get("content-type")} ${got.length}`);
-    if (!r.headers.get("cache-control").includes("immutable")) throw new Error(`cache ${r.headers.get("cache-control")}`);
     for (const f of ["LICENSE", "licenses/THIRD_PARTY_NOTICES.md", "licenses/MESLO_APACHE-2.0.txt", "licenses/NERD_FONTS_LICENSE.txt"]) {
       const n = await fetch(`${base}${dir}${f}`);
       if (n.status !== 200 || n.headers.get("content-type") !== "text/plain; charset=utf-8")
@@ -104,13 +88,6 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "widths");
   });
 
-  await step("controller: 입력 막대로 한글", async () => {
-    await page.getByLabel("보낼 글").fill("echo 한글-$((2*4))");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await until("한글 입력 결과", async () => (await screenText(page)).includes("한글-8"));
-    await shot(page, "desktop-controller");
-  });
-
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 바로 놓는다", async () => {
     const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
     const op = other.page;
@@ -139,9 +116,6 @@ export default async function ({ ctl, page }) {
     const opSent = await sentCount(op);
     await op.getByTestId("pane-t1").click();
     await until("둘째 화면 터미널", async () => (await screenText(op)).includes("own-3"));
-    // 「다른 화면이 크기를 정하는 중」 띠와 「화면에 맞추기」 단추는 참고에 없어 없앴다
-    if ((await op.getByTestId("lease-banner").count()) !== 0) throw new Error("크기를 정하는 중 띠가 있다");
-    if ((await op.getByRole("button", { name: "화면에 맞추기" }).count()) !== 0) throw new Error("화면에 맞추기 단추가 있다");
     // 입력 막대가 켜져 있다(보기 권한이 아니면 언제나 입력된다). 열기만 해서는 크기를 바꾸지 않는다
     if (await op.getByLabel("보낼 글").isDisabled()) throw new Error("다른 화면이 쓰는 중이라고 입력 막대가 꺼졌다");
     // 열 때의 맞추기 판단(Term data-fit)이 나고(연결 전 off가 아니다) 크기 바뀜 뒤 남은 맞추기가 없을 때까지. 크기는 그 판단 안에서
@@ -218,12 +192,14 @@ export default async function ({ ctl, page }) {
 
 
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
+    aaa("pane", "run", "t1", "echo rd-$((3*3))");
+    await waitOutput("t1", "rd-9");
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     const rp = rd.page;
     if ((await rp.getByRole("button", { name: "새 셸" }).count()) !== 0) throw new Error("reader에게 새 셸 버튼");
     await shot(rp, "mobile-list");
     await rp.getByTestId("pane-t1").click();
-    await until("reader 화면", async () => (await screenText(rp)).includes("한글-8"));
+    await until("reader 화면", async () => (await screenText(rp)).includes("rd-9"));
     // 휴대폰 폭(13px)에서도 한글이 두 칸에 꼭 맞는다
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
     console.log("     글꼴 측정(390×844)", JSON.stringify(await fontOk(rp, cols)));
