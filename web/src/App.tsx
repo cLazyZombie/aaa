@@ -605,18 +605,6 @@ function MoreMenu({ onProjects }: { onProjects: () => void }) {
             <Icon name="link" />
             <span className="more-label">링크 복사</span>
           </button>
-          {/* 프로젝트마다 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리 */}
-          <button
-            role="menuitem"
-            data-testid="projects-item"
-            onClick={() => {
-              setOpen(false);
-              onProjects();
-            }}
-          >
-            <Folder className="i" aria-hidden="true" />
-            <span className="more-label">프로젝트</span>
-          </button>
           {alerts.visible && (
             <button
               role="menuitemcheckbox"
@@ -633,6 +621,18 @@ function MoreMenu({ onProjects }: { onProjects: () => void }) {
               <span className="more-hint">{alerts.bell.state}</span>
             </button>
           )}
+          {/* 프로젝트마다 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리. 참고 moreItems에 없는 항목이라 맨 끝 */}
+          <button
+            role="menuitem"
+            data-testid="projects-item"
+            onClick={() => {
+              setOpen(false);
+              onProjects();
+            }}
+          >
+            <Folder className="i" aria-hidden="true" />
+            <span className="more-label">프로젝트</span>
+          </button>
         </div>
       )}
     </span>
