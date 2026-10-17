@@ -1395,8 +1395,9 @@ fn ctrl_v_pastes_clipboard_image() {
     if let Some(c) = clip.as_mut() {
         c.set_text("no image here").unwrap();
     }
-    tui.type_line("stty -iexten; cat -v");
-    std::thread::sleep(Duration::from_millis(300));
+    // stty가 끝난 뒤 보낸다: 그 전에 tty에 닿은 0x16은 lnext로 먹히고 CR이 글자 ^M으로 들어간다(부하 아래 ci-local)
+    tui.type_line("stty -iexten; echo lnext-$((0)); cat -v");
+    tui.wait_text("stty 끝", |s| s.contains("lnext-0"));
     tui.send(b"\x16");
     tui.send(b"\r");
     tui.wait_text("원래 Ctrl+V", |s| s.contains("^V"));
