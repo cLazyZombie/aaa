@@ -168,6 +168,15 @@ export function TermView({
       // private mode: 이 화면 동안만 남는다
     }
   }, [draft, draftKey]);
+  /** 클립보드에 쓴 결과를 잠깐 알린다(참고 `noteClipboard`, 2.5초) */
+  const [clipNote, setClipNote] = useState<string | null>(null);
+  const clipTimerRef = useRef<number | undefined>(undefined);
+  const noteClipboard = useCallback((note: string) => {
+    window.clearTimeout(clipTimerRef.current);
+    setClipNote(note);
+    clipTimerRef.current = window.setTimeout(() => setClipNote(null), 2500);
+  }, []);
+  useEffect(() => () => window.clearTimeout(clipTimerRef.current), []);
   /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
   const [inputError, setInputError] = useState<string | null>(null);
   const ended = pane.state !== "running";
@@ -324,6 +333,7 @@ export function TermView({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(box.current!);
+    const el = box.current!;
     // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
     // 그 확정은 글로 두고(유지 키 없음), 새 조합이 시작되면 이 표시는 지운다.
     let compositionEndTimer: number | null = null;
@@ -363,13 +373,89 @@ export function TermView({
       if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
     }));
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+    let disposed = false;
     const copySelection = () => {
       const text = term.getSelection();
       if (!text) return;
-      // 사용자 동작 안에서는 execCommand가 clipboard 권한이 없어도 된다
-      if (document.execCommand("copy")) return;
-      void navigator.clipboard?.writeText(text).catch(() => {});
+      // 사용자 동작 안에서는 execCommand가 clipboard 권한이 없어도 된다(HTTP·권한 거절에서도)
+      if (document.execCommand("copy")) return noteClipboard("클립보드에 복사했다");
+      if (!navigator.clipboard) return noteClipboard("브라우저가 클립보드 쓰기를 막았다");
+      void navigator.clipboard.writeText(text).then(
+        () => !disposed && noteClipboard("클립보드에 복사했다"),
+        () => !disposed && noteClipboard("브라우저가 클립보드 쓰기를 막았다"),
+      );
     };
+    // 그냥 끌어서 고르기(herdr-web-ui PaneTerminal 791~1046줄): 프로그램이 마우스 보고를 켜면 xterm은 누름을 모두 PTY로 넘기고
+    // Shift(macOS는 Option)를 눌러야 고른다. 왼쪽 끌기는 그 키를 누른 것처럼 고르고, 놓으면 복사한다(herdr TUI와 같다).
+    // 제자리에서 놓은 누름은 클릭이라 프로그램에 다시 보낸다(forwardClick). 터치는 그대로다.
+    // 참고는 xterm에 scrollback이 없어 화면을 넘는 끌기를 herdr 기록 API로 따라간다. aaa xterm은 자기 scrollback이 있어
+    // 끌기가 가장자리를 넘으면 xterm이 굴린다. 그래서 그 부분(기록 행 추적·herdr 원문 복사)은 옮기지 않았다.
+    type Cell = { row: number; col: number };
+    type ClickKeys = { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean };
+    let drag: { pane: string; anchor: Cell; click: ClickKeys | null } | null = null;
+    const cellAt = (event: MouseEvent): { cell: Cell; edge: -1 | 0 | 1 } => {
+      const rect = (term.element?.querySelector(".xterm-screen") ?? el).getBoundingClientRect();
+      const col = Math.floor((event.clientX - rect.left) / (rect.width / term.cols));
+      const row = Math.floor((event.clientY - rect.top) / (rect.height / term.rows));
+      return {
+        cell: { row: Math.max(0, Math.min(term.rows - 1, row)), col: Math.max(0, Math.min(term.cols - 1, col)) },
+        edge: row < 0 ? -1 : row >= term.rows ? 1 : 0,
+      };
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      // 프로그램에 다시 보내는 클릭(forwardClick)은 새 끌기가 아니다
+      if (event.button !== 0 || !event.isTrusted) return;
+      if ((event as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents) return;
+      if (!term.element?.contains(event.target as Node)) return;
+      const reporting = term.modes.mouseTrackingMode !== "none";
+      const selecting = isMac ? event.altKey : event.shiftKey;
+      // 선택을 지우는 누름, 링크를 여는 누름은 프로그램의 클릭이 아니다
+      const onLink = term.element?.querySelector(".xterm-screen")?.classList.contains("xterm-cursor-pointer") === true;
+      const click: ClickKeys | null =
+        reporting && !selecting && !onLink && !term.hasSelection()
+          ? { ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey }
+          : null;
+      if (reporting) Object.defineProperty(event, isMac ? "altKey" : "shiftKey", { value: true });
+      drag = { pane: pane.id, anchor: cellAt(event).cell, click };
+    };
+    // window capture: xterm의 document 처리보다 먼저 본다
+    const onMouseMove = (event: MouseEvent) => {
+      const d = drag;
+      if (!d || d.click === null) return;
+      const { cell, edge } = cellAt(event);
+      // 제 칸을 떠난 누름은 돌아와도 끌기다(옆으로 나가면 cellAt이 끝 열로 붙이므로 따로 본다)
+      const grid = term.element?.querySelector(".xterm-screen")?.getBoundingClientRect();
+      const beside = grid !== undefined && (event.clientX < grid.left || event.clientX >= grid.right);
+      if (beside || edge !== 0 || cell.row !== d.anchor.row || cell.col !== d.anchor.col) d.click = null;
+    };
+    // 선택이 되지 않은 누름은 클릭이다(Claude Code diff의 닫기 단추, TUI 메뉴). 고르기 키 없이 다시 보내 xterm이
+    // 프로그램이 요청한 보고 형식으로 인코딩하게 한다.
+    const forwardClick = (event: MouseEvent, keys: ClickKeys) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !term.element?.contains(target)) return;
+      const init = { ...keys, bubbles: true, cancelable: true, view: window, button: 0, detail: 1, clientX: event.clientX, clientY: event.clientY, screenX: event.screenX, screenY: event.screenY };
+      target.dispatchEvent(new MouseEvent("mousedown", { ...init, buttons: 1 }));
+      target.dispatchEvent(new MouseEvent("mouseup", { ...init, buttons: 0 }));
+    };
+    const onWindowBlur = () => {
+      drag = null;
+    };
+    // window bubble: xterm의 document 처리 뒤, 아직 놓는 동작 안이다(타이머를 쓰면 일부 브라우저가 클립보드 권한을 잃는다)
+    const onMouseUp = (event: MouseEvent) => {
+      const d = drag;
+      if (!d || event.button !== 0) return;
+      drag = null;
+      const released = cellAt(event).cell;
+      if (d.click && presentRef.current && !term.hasSelection() && released.row === d.anchor.row && released.col === d.anchor.col) {
+        forwardClick(event, d.click);
+        return;
+      }
+      if (term.hasSelection()) copySelection();
+    };
+    el.addEventListener("mousedown", onMouseDown, { capture: true });
+    window.addEventListener("mousemove", onMouseMove, { capture: true });
+    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("mouseup", onMouseUp);
     // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡기고, 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
     term.attachCustomKeyEventHandler((event) => {
       // 유지 키 + 하드웨어 키(PaneTerminal 620~651줄): 비라틴 자판 글자는 자판 위치로 읽는다(ㅊ on KeyC + Ctrl = Ctrl+C)
@@ -426,7 +512,11 @@ export function TermView({
     // OSC 52: pane 프로그램(vim·tmux·Claude Code)의 클립보드 쓰기. 질의는 답하지 않는다.
     const osc52 = term.parser.registerOscHandler(52, (payload) => {
       const text = parseOsc52(payload);
-      if (text !== null) void navigator.clipboard?.writeText(text).catch(() => {});
+      if (text !== null)
+        void navigator.clipboard?.writeText(text).then(
+          () => !disposed && noteClipboard("클립보드에 복사했다"),
+          () => !disposed && noteClipboard("브라우저가 클립보드 쓰기를 막았다"),
+        );
       return true;
     });
     // modifyOtherKeys(CSI > 4 ; n m): xterm.js는 처리하지 않으므로 듣기만 하고 Ctrl+Enter를 그 형식으로 보낸다
@@ -503,7 +593,6 @@ export function TermView({
       e.preventDefault();
       void attachRef.current(f);
     };
-    const el = box.current!;
     el.addEventListener("paste", onPaste, true);
     el.addEventListener("dragover", onDragOver);
     el.addEventListener("drop", onDrop);
@@ -595,9 +684,19 @@ export function TermView({
     el.addEventListener("touchcancel", onTouchEnd, touchOpts);
     el.addEventListener("gesturestart", onGesture, { passive: false });
     el.addEventListener("gesturechange", onGesture, { passive: false });
-    // 터미널을 누르면 이 화면이 지금 쓰는 화면이 된다(크기를 다시 건다)
-    const onPointer = () => autoFit.current(true);
+    // 터미널을 누르거나 치면 이 화면이 지금 쓰는 화면이 된다(herdr-web-ui PaneTerminal 1902~1918줄): 보내기 **전에**
+    // 크기를 다시 건다. 그래야 첫 글의 답이 이 화면 grid로 그려진다. 왼쪽 누름만, 반복 키·조합 중 키는 아니다.
+    const onPointer = (event: PointerEvent) => {
+      if (event.button === 0) autoFit.current(true);
+    };
     el.addEventListener("pointerdown", onPointer);
+    const onReclaimKey = (event: KeyboardEvent) => {
+      if (!(event.target instanceof Node) || !term.element?.contains(event.target)) return;
+      // IME 첫 키는 compositionstart보다 먼저, isComposing 없이 온다(keyCode 229)
+      if (event.repeat || event.isComposing || event.keyCode === 229 || composingTermRef.current || commitPendingRef.current) return;
+      autoFit.current(true);
+    };
+    window.addEventListener("keydown", onReclaimKey, { capture: true });
     termRef.current = term;
     fitRef.current = fit;
     const dataSub = term.onData((data) => {
@@ -693,6 +792,12 @@ export function TermView({
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
       el.removeEventListener("pointerdown", onPointer);
+      window.removeEventListener("keydown", onReclaimKey, { capture: true });
+      el.removeEventListener("mousedown", onMouseDown, { capture: true });
+      window.removeEventListener("mousemove", onMouseMove, { capture: true });
+      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("mouseup", onMouseUp);
+      disposed = true;
       el.removeEventListener("touchstart", onTouchStart, true);
       el.removeEventListener("touchmove", onTouchMove, true);
       el.removeEventListener("touchend", onTouchEnd, true);
@@ -860,6 +965,8 @@ export function TermView({
       (chord !== null ? chordSequence(chord, chordCtx()) : null) ??
       keyBarInputSequence(item.key, term.modes.applicationCursorKeysMode);
     if (seq === null) return;
+    // 키 막대는 grid 밖이다: 보내기 전에 이 화면 크기를 다시 건다(PaneTerminal 2231줄)
+    autoFit.current(true);
     deliver(seq, { chord: chord !== null });
     // 입력줄이면 키보드는 입력줄 것이다: 키를 눌러도 터미널로 옮기지 않는다
     if (!inputLineRef.current) term.focus();
@@ -880,6 +987,7 @@ export function TermView({
     if (!term || readonlyRef.current) return false;
     // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
+    autoFit.current(true);
     if (value.includes("\n")) {
       pastingRef.current = true;
       try {
@@ -902,6 +1010,7 @@ export function TermView({
   const pressEnter = (): boolean | string => {
     if (readonlyRef.current) return false;
     if (!draftIsEmpty(draftRef.current)) return HELD_FIRST;
+    autoFit.current(true);
     const m = modifiersRef.current;
     const chord = hasModifiers(m) ? terminalChord("Enter", m) : null;
     input((chord !== null ? chordSequence(chord, chordCtx()) : null) ?? "\r");
@@ -996,32 +1105,6 @@ export function TermView({
           {lease.label}이 크기를 정하는 중{canControl && " · 입력하거나 터미널을 누르면 이 화면 크기로"}
         </div>
       )}
-      {!banner && held && !ended && (
-        <div className="banner draft" role="status" data-testid="draft-banner">
-          <span className="draft-label">터미널이 준비될 때까지 붙잡은 입력:</span>
-          {draft.text.length > 0 && <code className="draft-text">{draft.text}</code>}
-          {/* 앞부분만 보이면 끝을 잃은 입력도 온전해 보인다 */}
-          {draft.truncated && <span className="draft-note">붙잡지 못한 입력이 있어 뺐다.</span>}
-          {/* Enter는 붙잡지 않는다: 이것이 없으면 두 명령이 한 줄로, 붙여 넣은 글이 온전하게 보인다 */}
-          {draft.leftOut && <span className="draft-note">Enter·줄바꿈은 뺐다: 보내기는 Enter를 누르지 않는다.</span>}
-          <span className="draft-actions">
-            <button type="button" data-testid="draft-send" disabled={draft.text.length === 0 || readonly} onClick={sendDraft}>
-              보내기
-            </button>
-            <button type="button" className="ghost" data-testid="draft-discard" onClick={discardDraft}>
-              버리기
-            </button>
-          </span>
-        </div>
-      )}
-      {inputError && (
-        <div className="banner warn" role="status" data-testid="input-error">
-          {inputError}
-          <button type="button" className="ghost icon small" onClick={() => setInputError(null)} aria-label="닫기">
-            <Icon name="close" />
-          </button>
-        </div>
-      )}
       {error && <div className="banner err">{error}</div>}
       {attach && (
         <div className={`banner ${attach.ok ? "" : "warn"}`} data-testid="attach-banner">
@@ -1033,8 +1116,44 @@ export function TermView({
       )}
       {chatView && chatable && <ChatPanel pane={pane.id} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
-      <div className="term-scroll" ref={scrollRef} hidden={chatView && chatable} data-direct-typing={inputLine ? undefined : ""}>
-        <div className="term-box" ref={box} data-testid="terminal" />
+      {/* 띠(붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
+      <div className="term-stack" hidden={chatView && chatable}>
+        <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""}>
+          <div className="term-box" ref={box} data-testid="terminal" />
+        </div>
+        <div className="terminal-banners">
+          {!banner && held && !ended && (
+            <div className="banner draft" role="status" data-testid="draft-banner">
+              <span className="draft-label">터미널이 준비될 때까지 붙잡은 입력:</span>
+              {draft.text.length > 0 && <code className="draft-text">{draft.text}</code>}
+              {/* 앞부분만 보이면 끝을 잃은 입력도 온전해 보인다 */}
+              {draft.truncated && <span className="draft-note">붙잡지 못한 입력이 있어 뺐다.</span>}
+              {/* Enter는 붙잡지 않는다: 이것이 없으면 두 명령이 한 줄로, 붙여 넣은 글이 온전하게 보인다 */}
+              {draft.leftOut && <span className="draft-note">Enter·줄바꿈은 뺐다: 보내기는 Enter를 누르지 않는다.</span>}
+              <span className="draft-actions">
+                <button type="button" data-testid="draft-send" disabled={draft.text.length === 0 || readonly} onClick={sendDraft}>
+                  보내기
+                </button>
+                <button type="button" className="ghost" data-testid="draft-discard" onClick={discardDraft}>
+                  버리기
+                </button>
+              </span>
+            </div>
+          )}
+          {inputError && (
+            <div className="banner warn" role="status" data-testid="input-error">
+              {inputError}
+              <button type="button" className="ghost icon small" onClick={() => setInputError(null)} aria-label="닫기">
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
+          {clipNote && (
+            <div className="banner" role="status" data-testid="clipboard-note">
+              {clipNote}
+            </div>
+          )}
+        </div>
       </div>
       <span ref={pinchBadgeRef} className="pinch-badge" data-testid="pinch-badge" aria-live="polite" hidden />
       {dock}

@@ -566,6 +566,16 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 마우스 시험 프로그램: 마우스 보고(SGR)를 켜고 첫 줄에 고를 낱말을 쓴다. 받은 조각과 PTY 크기 바뀜을 일련번호로 보인다.
+fs.writeFileSync(
+  `${root}/mouse.js`,
+  `process.stdin.setRawMode(true);
+let n = 0;
+process.stdout.write("\\x1b[?1000h\\x1b[?1006h\\x1b[2J\\x1b[Hpick-this-word\\r\\n");
+process.stdout.on("resize", () => process.stdout.write("SIZE:" + ++n + ":" + process.stdout.columns + "\\r\\n"));
+process.stdin.on("data", (d) => process.stdout.write("GOT:" + ++n + ":" + JSON.stringify(d.toString("utf8")) + "\\r\\n"));
+`,
+);
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
 fs.writeFileSync(
@@ -1131,6 +1141,85 @@ try {
     await late.page.context().close();
     await mp.context().close();
     await page.getByTestId("pane-t1").click();
+  });
+
+  await step("그냥 끌어 고르기·제자리 클릭·크기 되찾기(herdr-web-ui PaneTerminal): 마우스 보고 중에도 왼쪽 끌기는 고르고 놓으면 복사, 제자리 클릭은 프로그램에, 키는 보내기 전에 이 화면 크기를 건다", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "mouseapp", "--", process.execPath, `${root}/mouse.js`);
+    // [일련번호, 종류, 값]
+    const events = () =>
+      aaa("pane", "read", "mouseapp")
+        .lines.map((l) => /^(GOT|SIZE):(\d+):(.*)$/.exec(l))
+        .filter(Boolean)
+        .map((m) => [Number(m[2]), m[1], m[1] === "GOT" ? JSON.parse(m[3]) : Number(m[3])]);
+    const after = (n) => events().filter(([i]) => i > n);
+    const lastSeq = () => Math.max(0, ...events().map(([i]) => i));
+    const clip = () => {
+      window.__copied = [];
+      // xterm이 copy 사건에 넣은 글(bubble 끝에서 읽는다)
+      window.addEventListener("copy", (e) => window.__copied.push(e.clipboardData?.getData("text/plain") ?? ""));
+    };
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel", init: clip })).page;
+    // 이 화면이 WebSocket에 쓴 글 frame(보낸 순서를 본다)
+    const frames = [];
+    dp.on("websocket", (ws) =>
+      ws.on("framesent", (f) => {
+        if (typeof f.payload !== "string") return;
+        try {
+          frames.push(JSON.parse(f.payload));
+        } catch {}
+      }),
+    );
+    await dp.getByTestId("pane-mouseapp").click();
+    await until("mouse 화면", async () => (await screenText(dp)).includes("pick-this-word"));
+    const cell = async (col, row) => {
+      const r = await dp.locator('[data-testid="terminal"] .xterm-screen').boundingBox();
+      const p = aaa("pane", "list").panes.find((x) => x.name === "mouseapp");
+      return { x: r.x + (col + 0.5) * (r.width / p.cols), y: r.y + (row + 0.5) * (r.height / p.rows) };
+    };
+    // 제자리 클릭은 프로그램에 간다(SGR 누름·뗌, 1부터 센 열·줄)
+    let n = lastSeq();
+    const c2 = await cell(2, 0);
+    await dp.mouse.click(c2.x, c2.y);
+    await until("클릭 보고", () => after(n).filter(([, k]) => k === "GOT").map(([, , v]) => v).join("").includes("\u001b[<0;3;1m"));
+    const clicked = after(n).filter(([, k]) => k === "GOT").map(([, , v]) => v).join("");
+    if (!clicked.includes("\u001b[<0;3;1M")) throw new Error(`클릭 누름 보고가 없다: ${JSON.stringify(clicked)}`);
+    // 끌기는 고른다: 프로그램에 마우스 보고가 가지 않고, 놓으면 복사하고 알린다
+    await sleep(300);
+    n = lastSeq();
+    const from = await cell(0, 0);
+    // xterm은 끝을 가까운 칸 경계로 잡는다: 마지막 글자 다음 칸 가운데까지 끈다
+    const to = await cell(14, 0);
+    await dp.mouse.move(from.x, from.y);
+    await dp.mouse.down();
+    await dp.mouse.move(to.x, to.y, { steps: 6 });
+    await dp.mouse.up();
+    await until("복사 알림", async () => (await dp.getByTestId("clipboard-note").innerText()).includes("클립보드에 복사했다"));
+    const copied = await dp.evaluate(() => window.__copied);
+    if (!copied.some((t) => t.includes("pick-this-word"))) throw new Error(`복사한 글 ${JSON.stringify(copied)}`);
+    await sleep(300);
+    const leaked = after(n).filter(([, k, v]) => k === "GOT" && v.includes("\u001b[<"));
+    if (leaked.length) throw new Error(`끌기가 프로그램에 갔다: ${JSON.stringify(leaked)}`);
+    // 다른 화면이 크기를 가져간 뒤 이 화면에서 키를 치면, 키보다 먼저 이 화면 크기를 건다(첫 글의 답이 이 grid로 그려진다)
+    const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 760, height: 560 })).page;
+    await sp.getByTestId("pane-mouseapp").click();
+    await until("mouse 화면(둘째)", async () => (await screenText(sp)).includes("pick-this-word"));
+    const pcols = () => aaa("pane", "list").panes.find((x) => x.name === "mouseapp").cols;
+    const dcols = pcols();
+    // 둘째 화면이 크기를 가져간다(키 막대 없는 데스크톱: 터미널 누름은 클릭 보고도 보낸다)
+    await sp.getByTestId("terminal").click();
+    await until("둘째 화면 크기", () => pcols() < dcols);
+    await sleep(500);
+    // 보낸 순서는 이 화면이 WebSocket에 쓴 순서로 본다(프로그램 쪽은 SIGWINCH와 입력 읽기의 순서가 정해지지 않는다)
+    const mark = frames.length;
+    n = lastSeq();
+    await dp.keyboard.press("z");
+    await until("z 받음", () => after(n).some(([, k, v]) => k === "GOT" && v === "z"));
+    await until("크기 되찾음", () => pcols() === dcols);
+    const order = frames.slice(mark).filter((f) => f.t === "resize" || (f.t === "input" && f.data === "z")).map((f) => f.t);
+    if (order[0] !== "resize" || !order.includes("input")) throw new Error(`보낸 순서 ${JSON.stringify(frames.slice(mark))}`);
+    await sp.context().close();
+    await dp.context().close();
+    aaa("pane", "kill", "mouseapp");
   });
 
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 놓는다", async () => {
