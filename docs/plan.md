@@ -2109,6 +2109,24 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - 한도를 없애면 `too_large` 오류로 실패한다. host 로그는 `응답이 frame 상한을 넘어 오류로 답한다 kind="inbox" bytes=2276113`.
     - 응답 검사까지 없애면 「상대가 연결을 닫았다」로 실패한다(원래 결함). host 로그는 `frame을 보내지 못해 연결을 닫는다`.
 
+### 8.88 답보다 늦게 온 확인창 hook이 질문을 다시 열던 것(10-18, ci-local 경쟁)
+
+- **결함.** Claude Code는 권한 확인창 하나에 hook 둘(`PermissionRequest`, `Notification(permission_prompt)`)을 따로 낸다.
+  - hook 사건은 agent 연결로 차례대로 오지만, 답은 front 연결(`aaa question answer`·웹 카드)로 온다. 그래서 답이 두 hook 사이에 낄 수 있다.
+  - 그러면 늦은 둘째 hook이 열린 질문을 찾지 못해 새 질문을 연다. 거절한 뒤라 다음 hook이 오지 않으면 그 질문이 닫히지 않는다. thread는 사람 차례에 남고, 30초 뒤 「blocked on a prompt」 알림이 간다.
+  - m13 `hooked_thread_questions_and_messages`가 ci-local(ci8)에서 이것으로 한 번 실패했다. 사건 차례: 질문 → 답(no) → 같은 확인창의 질문 사건.
+- **고침(`harness.rs` `late_pair`).**
+  - agent가 사건에 hook 이름을 싣는다(`HarnessEvent.hook`, 빠져도 되는 칸이라 AGENT_LINK는 그대로다).
+  - host는 열린 질문이 받은 hook을 pane마다 기억한다. 답할 때 그것을 「답한 확인창의 hook」으로 옮긴다.
+  - 그 확인창이 짝 중 하나만 받았고, 다음 hook 사건이 나머지 하나면 그 확인창의 늦은 짝이다. 질문도 상태도 바꾸지 않고 버린다.
+  - 다른 hook 사건이 오거나 같은 hook이 다시 오면(새 확인창) 기억을 비운다.
+  - 옛 agent(hook 이름 없음)는 전과 같다.
+- **참고와 다른 점.** 참고에는 질문이라는 것이 없다. herdr는 agent 상태를 hook과 화면으로 정해, 늦은 사건으로 blocked가 돼도 화면이 바로잡는다. aaa 질문(원격 답, §8.15)은 hook으로만 열리고 닫혀 이 짝짓기가 필요하다.
+- **시험.**
+  - host 유닛 `late_pair_is_the_missing_half_of_an_answered_prompt`.
+  - m13 `hooked_thread_questions_and_messages`: 가짜 Claude가 `late`에서 PermissionRequest → 답 → Notification → 진행 보고 차례로 낸다. 진행 보고가 보이면 host가 늦은 Notification을 처리한 뒤다. 그때 thread는 쉼(idle)이고 열린 질문이 없다.
+  - 결함 심기: `late_pair` 검사를 끄면 이 시험이 「늦은 짝 hook이 질문을 다시 열었다(activity question)」로 늘 실패한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
