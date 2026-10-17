@@ -30,6 +30,12 @@
 | `tokens.css` | 디자인 token: 색(기본 amber, 밝음, charcoal·catppuccin 팔레트)·글자·크기·움직임·밀도. `src/styles.css` 18~494줄 그대로(plan §8.71) |
 | `primitives.css` | 공용 조각 `visually-hidden`·`icon-button`·`btn`·`badge`. `src/styles.css` 549~561·981~1116·1149~1205줄 그대로 |
 | `Sidebar.css`·`AgentSidebar.css`·`Machines.css` | 왼쪽 목록(머신 묶음·줄·상태 칸·Agents 구역·바닥 줄). `src/components/` 것 그대로. aaa 마크업은 `web/src/Sidebar.tsx` |
+| `phone.ts` | `src/lib/phone.ts`의 세 함수 그대로: `isLoopbackHost`, `deviceLabel`(pairing 기기 이름 「iPhone · Safari」), `takePairCode`(QR 주소의 `?pair=`를 읽고 바로 지움). plan §8.81 |
+| `clipboard.ts` | `src/lib/clipboard.ts` 그대로: `copyText`(clipboard API가 없으면 copy 명령, 그래도 안 되면 고르기) |
+| `QrCode.tsx`·`QrCode.css` | `src/components/QrCode.*` 그대로: QR을 inline SVG로(`qrcode-generator` 2.0.4, MIT). 설정 → 폰·기기 |
+| `AccessGate.css`·`DevicesPanel.css`·`PhonePanel.css`·`ConfirmDialog.css` | `src/components/` 것 그대로. 마크업은 `web/src/AccessGate.tsx`·`DevicesPanel.tsx`·`PhonePanel.tsx`·`ConfirmDialog.tsx` |
+| `modal.css` | `src/styles.css` 1269~1451줄 그대로: `.modal-scrim`·`.modal`·머리·몸·바닥, 휴대폰 sheet 움직임, 키보드가 있을 때, `.input`·`.select` |
+| `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 
 agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`·`agentMark.ts`는 `src/components/AgentMark.tsx`·`src/components/AgentMark.css`·`src/lib/agentMark.ts`를 그대로 옮겼다(`AgentMark.tsx`는 import 경로만). `agentSvgMarks.ts`는 `src/components/agentSvgMarks.ts`에서 droid(Factory favicon)·maki(maki.sh favicon) 두 줄만 뺐다. 참고가 그 출처의 사용 허락을 적지 않아서다. 그 agent는 머리글자 표시(FallbackMark)로 보인다. 참고는 Claude·Codex·Cursor·OpenCode·omp·gjc·omo 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. `agentSvgMarks.ts`의 나머지는 LobeHub Icons(`@lobehub/icons-static-svg`, 아래 MIT)다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표이며, 그 밖의 표시도 각 소유자의 것이다.** aaa는 pane에서 도는 agent를 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.

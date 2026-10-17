@@ -197,11 +197,37 @@ struct Enroll {
     pending: HashMap<String, PendingRt>,
 }
 
+/// 아직 쓰지 않은 pairing 코드 하나(herdr-web-ui `DeviceStore.pending`). 새 코드가 앞 코드를 바꾼다.
+struct PendingCode {
+    code: String,
+    role: DeviceRole,
+    expires: Instant,
+    /// 이 코드로 틀린 수. `PAIR_CODE_ATTEMPTS`에 닿으면 코드를 버린다
+    attempts: u32,
+}
+
 #[derive(Default)]
 struct Pairing {
-    codes: Vec<(String, DeviceRole, Instant)>,
+    pending: Option<PendingCode>,
+    /// 연속으로 틀린 수(코드와 상관없이). 5번부터 점점 길게 잠근다(§6.4)
     failures: u32,
     locked_until: Option<Instant>,
+}
+
+/// pairing 코드 수명(herdr-web-ui `CODE_TTL_MS` 10분)
+pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
+/// 코드 하나로 틀릴 수 있는 수(참고 `CODE_ATTEMPTS`)
+const PAIR_CODE_ATTEMPTS: u32 = 5;
+/// 기기 이름 길이(참고 `LABEL_MAX`)
+const DEVICE_LABEL_MAX: usize = 48;
+/// 마지막으로 본 때를 적는 간격(참고 `LAST_SEEN_WRITE_MS`)
+const DEVICE_SEEN_WRITE_MS: u64 = 60_000;
+
+/// 기기 이름: 빈칸을 하나로 줄이고 48자까지. 비면 `fallback`(참고 `normalizeLabel`)
+pub fn normalize_device_label(value: &str, fallback: &str) -> String {
+    let label: String = value.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(DEVICE_LABEL_MAX).collect();
+    let label = label.trim().to_string();
+    if label.is_empty() { fallback.to_string() } else { label }
 }
 
 pub struct Host {
@@ -235,6 +261,10 @@ pub struct Host {
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
     /// 웹 화면들이 함께 쓰는 설정과 고정(prefs.rs). events 연결마다 구독한다
     pub(crate) preferences: prefs::Store,
+    /// 취소한 기기 id. 그 기기의 열린 WebSocket(events·pane)이 이것을 듣고 바로 닫는다(§6.4)
+    pub device_revoked: broadcast::Sender<String>,
+    /// 이 host가 돌면서 취소한 기기. 열린 연결이 사건을 받기 전에 온 입력도 거른다
+    revoked_devices: Mutex<std::collections::HashSet<String>>,
     /// pane별 harness 사건 대기자
     waiters: Mutex<harness::Waiters>,
     /// 메시지 전달은 한 번에 하나씩 한다
@@ -283,6 +313,16 @@ pub struct Host {
     brief_loops: Mutex<HashSet<String>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
+}
+
+fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
+    aaa_proto::DeviceView {
+        role: if d.role == "reader" { DeviceRole::Reader } else { DeviceRole::Controller },
+        id: d.id,
+        label: d.label,
+        created_at_ms: d.created_ms,
+        last_seen_ms: d.last_seen_ms,
+    }
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -370,6 +410,8 @@ impl Host {
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
             preferences,
+            device_revoked: broadcast::channel(64).0,
+            revoked_devices: Mutex::new(Default::default()),
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
@@ -1119,16 +1161,35 @@ impl Host {
                 if r == DeviceRole::Local {
                     return Err(err(ErrorCode::BadRequest, "reader 또는 controller만 줄 수 있다"));
                 }
-                let code = format!("{:06}", rand::random_range(0..1_000_000u32));
-                let mut p = self.pairing.lock().unwrap();
-                let now = Instant::now();
-                p.codes.retain(|(_, _, exp)| *exp > now);
-                if p.codes.len() >= 5 {
-                    return Err(err(ErrorCode::Unavailable, "아직 쓰지 않은 pairing 코드가 너무 많다"));
+                // 웹에서 만드는 코드는 controller만(D6, herdr-web-ui는 웹 pairing이 늘 drive). 보기 기기는 이 머신의 CLI로
+                if role != DeviceRole::Local && r != DeviceRole::Controller {
+                    return Err(err(
+                        ErrorCode::Forbidden,
+                        "보기 권한 코드는 host 머신의 CLI(aaa web pair --reader)에서만 만든다",
+                    ));
                 }
-                p.codes.push((code.clone(), r, now + Duration::from_secs(300)));
+                let (code, expires_in_s) = self.mint_pairing(r, Instant::now());
                 self.db.audit(actor, "web_pair_code", &format!("{r:?}"));
-                Ok(FrontResponse::PairCode { code, role: r, expires_in_s: 300 })
+                Ok(FrontResponse::PairCode { code, role: r, expires_in_s })
+            }
+            FrontRequest::Devices => {
+                let rows = self.db.devices().map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+                Ok(FrontResponse::Devices { devices: rows.into_iter().map(device_view).collect() })
+            }
+            FrontRequest::DeviceRename { id, label } => {
+                let label = normalize_device_label(&label, db::DEVICE_LABEL_FALLBACK);
+                if !self.db.rename_device(&id, &label).map_err(|e| err(ErrorCode::Internal, e.to_string()))? {
+                    return Err(err(ErrorCode::NotFound, "그런 기기가 없다"));
+                }
+                self.db.audit(actor, "device_rename", &id);
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::DeviceRevoke { id } => {
+                if !self.revoke_device(&id)? {
+                    return Err(err(ErrorCode::NotFound, "그런 기기가 없다"));
+                }
+                self.db.audit(actor, "device_revoke", &id);
+                Ok(FrontResponse::Done)
             }
             FrontRequest::WebStatus => Ok(FrontResponse::Publish(self.publish_status().await)),
             FrontRequest::WebPublish => {
@@ -1674,10 +1735,22 @@ impl Host {
 
     // ───────────── pairing ─────────────
 
-    /// 웹 pairing 코드를 장치 token으로 바꾼다. 틀린 시도가 5번을 넘으면 점점 길게 잠근다.
-    pub fn redeem_pairing(&self, code: &str) -> Result<(String, DeviceRole), ErrorBody> {
+    /// 새 pairing 코드. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`: 「새 코드」·CLI가 같은 자리를 쓴다).
+    fn mint_pairing(&self, role: DeviceRole, now: Instant) -> (String, u64) {
+        let code = format!("{:06}", rand::random_range(0..1_000_000u32));
+        self.pairing.lock().unwrap().pending =
+            Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        (code, PAIR_CODE_TTL.as_secs())
+    }
+
+    /// 웹 pairing 코드를 장치 token으로 바꾼다. 코드는 한 번만 쓰고, 한 코드로 5번 틀리면 그 코드를 버린다.
+    /// 코드와 상관없이 5번 넘게 틀리면 점점 길게 잠근다.
+    pub fn redeem_pairing(&self, code: &str, label: &str) -> Result<(String, DeviceRole), ErrorBody> {
+        self.redeem_pairing_at(code, label, Instant::now())
+    }
+
+    fn redeem_pairing_at(&self, code: &str, label: &str, now: Instant) -> Result<(String, DeviceRole), ErrorBody> {
         let mut p = self.pairing.lock().unwrap();
-        let now = Instant::now();
         if let Some(t) = p.locked_until
             && t > now
         {
@@ -1686,32 +1759,68 @@ impl Host {
                 format!("시도가 너무 많다. {}초 뒤 다시 한다", (t - now).as_secs() + 1),
             ));
         }
-        p.codes.retain(|(_, _, exp)| *exp > now);
+        if p.pending.as_ref().is_some_and(|c| c.expires <= now) {
+            p.pending = None;
+        }
         let code: String = code.chars().filter(|c| c.is_ascii_digit()).collect();
-        let Some(pos) = p.codes.iter().position(|(c, _, _)| *c == code) else {
+        // 걸린 시간으로 자리를 알 수 없게 끝까지 비교한다(참고 `timingSafeEqual`)
+        let right = p.pending.as_ref().is_some_and(|c| {
+            c.code.len() == code.len() && c.code.bytes().zip(code.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+        });
+        if !right {
+            if let Some(c) = p.pending.as_mut() {
+                c.attempts += 1;
+                if c.attempts >= PAIR_CODE_ATTEMPTS {
+                    p.pending = None;
+                }
+            }
             p.failures += 1;
             if p.failures >= 5 {
                 let secs = 30u64 << (p.failures - 5).min(7);
                 p.locked_until = Some(now + Duration::from_secs(secs));
             }
-            return Err(err(ErrorCode::Unauthorized, "코드가 틀렸거나 만료됐다"));
-        };
-        let (_, role, _) = p.codes.remove(pos);
+            return Err(err(ErrorCode::Unauthorized, "코드가 틀렸거나 이미 썼거나 만료됐다"));
+        }
+        let role = p.pending.take().map(|c| c.role).unwrap_or(DeviceRole::Reader);
         p.failures = 0;
         drop(p);
         let token =
             base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, rand::random::<[u8; 32]>());
         let id = util::new_id();
         let role_s = if role == DeviceRole::Reader { "reader" } else { "controller" };
-        self.db.add_device(&id, role_s, &token_hash(&token)).map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+        let label = normalize_device_label(label, db::DEVICE_LABEL_FALLBACK);
+        self.db
+            .add_device(&id, role_s, &token_hash(&token), &label)
+            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
         self.db.audit(&format!("device:{id}"), "web_paired", role_s);
         Ok((token, role))
     }
 
+    /// cookie token의 기기. 들어올 때마다 「마지막으로 본 때」를 1분에 한 번까지 적는다(참고 `match`)
     pub fn device_role(&self, token: &str) -> Option<(String, DeviceRole)> {
         let d = self.db.device_by_token_hash(&token_hash(token)).ok()??;
+        let now = util::now_ms();
+        if d.last_seen_ms.is_none_or(|seen| now.saturating_sub(seen) >= DEVICE_SEEN_WRITE_MS) {
+            // 기록은 입장을 막지 않는다
+            let _ = self.db.device_seen(&d.id, now);
+        }
         let role = if d.role == "reader" { DeviceRole::Reader } else { DeviceRole::Controller };
         Some((d.id, role))
+    }
+
+    /// 기기를 취소하고 그 기기의 열린 연결에 알린다. 없으면(이미 취소) false
+    pub fn revoke_device(&self, id: &str) -> Result<bool, ErrorBody> {
+        let done = self.db.revoke_device(id).map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+        if done {
+            self.revoked_devices.lock().unwrap().insert(id.to_string());
+            let _ = self.device_revoked.send(id.to_string());
+        }
+        Ok(done)
+    }
+
+    /// 열린 연결의 기기가 이 host가 돈 뒤 취소됐나(그 전에 취소된 기기는 cookie 검사에서 이미 막힌다)
+    pub fn is_revoked(&self, id: &str) -> bool {
+        self.revoked_devices.lock().unwrap().contains(id)
     }
 
     // ───────────── 웹 공개 ─────────────
@@ -1868,5 +1977,150 @@ pub async fn shutdown_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    //! pairing·기기(§6.4, 차이 목록 P1·P2). 시각은 넣어 준 `now`로 잰다(herdr-web-ui devices.test.ts처럼).
+    use super::*;
+
+    struct Tmp(PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn host() -> (Arc<Host>, Tmp) {
+        let dir = std::env::temp_dir().join(format!("aaa-pairing-test-{}", util::new_id()));
+        let mut cfg = HostConfig::default();
+        cfg.notify.web_push = false;
+        (Host::open(cfg, dir.clone()).unwrap(), Tmp(dir))
+    }
+
+    async fn mint(h: &Arc<Host>, by: DeviceRole, role: DeviceRole) -> Result<String, ErrorBody> {
+        match h.call(by, "test", FrontRequest::WebPair { role }).await? {
+            FrontResponse::PairCode { code, expires_in_s, .. } => {
+                assert_eq!(expires_in_s, 600);
+                Ok(code)
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    async fn devices(h: &Arc<Host>) -> Vec<aaa_proto::DeviceView> {
+        match h.call(DeviceRole::Reader, "test", FrontRequest::Devices).await.unwrap() {
+            FrontResponse::Devices { devices } => devices,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_code_is_used_once_and_carries_its_role() {
+        let (h, _t) = host();
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Reader).await.unwrap();
+        let (token, role) = h.redeem_pairing(&code, "  iPhone \n · Safari ").unwrap();
+        assert_eq!(role, DeviceRole::Reader);
+        assert_eq!(h.device_role(&token).map(|(_, r)| r), Some(DeviceRole::Reader));
+        assert_eq!(h.redeem_pairing(&code, "x").unwrap_err().code, ErrorCode::Unauthorized);
+        let list = devices(&h).await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].label, "iPhone · Safari");
+        assert_eq!(list[0].role, DeviceRole::Reader);
+        // 처음 들어올 때 「마지막으로 본 때」를 적는다
+        assert!(list[0].last_seen_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_new_code_replaces_the_one_still_out() {
+        let (h, _t) = host();
+        let first = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        let mut second = mint(&h, DeviceRole::Controller, DeviceRole::Controller).await.unwrap();
+        // 같은 숫자가 나올 수 있다(1/10⁶): 다른 코드가 나올 때까지 다시 만든다
+        while second == first {
+            second = mint(&h, DeviceRole::Controller, DeviceRole::Controller).await.unwrap();
+        }
+        assert_eq!(h.redeem_pairing(&first, "").unwrap_err().code, ErrorCode::Unauthorized);
+        let (_, role) = h.redeem_pairing(&second, "").unwrap();
+        assert_eq!(role, DeviceRole::Controller);
+        assert_eq!(devices(&h).await[0].label, db::DEVICE_LABEL_FALLBACK);
+    }
+
+    #[tokio::test]
+    async fn a_code_expires_after_ten_minutes() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
+        assert!(h.redeem_pairing_at(&code, "", now + PAIR_CODE_TTL).is_err());
+        let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
+        assert!(h.redeem_pairing_at(&code, "", now + PAIR_CODE_TTL - Duration::from_secs(1)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn five_wrong_tries_spend_the_code_and_lock_for_a_while() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
+        let wrong = if code == "000000" { "111111" } else { "000000" };
+        for _ in 0..5 {
+            assert_eq!(h.redeem_pairing_at(wrong, "", now).unwrap_err().code, ErrorCode::Unauthorized);
+        }
+        // 잠긴 동안은 맞는 코드도 막는다
+        assert_eq!(h.redeem_pairing_at(&code, "", now).unwrap_err().code, ErrorCode::Unavailable);
+        // 잠금이 풀려도 그 코드는 이미 버렸다
+        let later = now + Duration::from_secs(31);
+        assert_eq!(h.redeem_pairing_at(&code, "", later).unwrap_err().code, ErrorCode::Unauthorized);
+        let (fresh, _) = h.mint_pairing(DeviceRole::Controller, later);
+        let later = later + Duration::from_secs(61);
+        assert!(h.redeem_pairing_at(&fresh, "", later).is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_web_mints_controller_codes_and_a_reader_manages_nothing() {
+        let (h, _t) = host();
+        assert_eq!(mint(&h, DeviceRole::Controller, DeviceRole::Reader).await.unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(mint(&h, DeviceRole::Reader, DeviceRole::Controller).await.unwrap_err().code, ErrorCode::Forbidden);
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        h.redeem_pairing(&code, "Mac · Chrome").unwrap();
+        let id = devices(&h).await[0].id.clone();
+        for req in [
+            FrontRequest::DeviceRename { id: id.clone(), label: "x".into() },
+            FrontRequest::DeviceRevoke { id: id.clone() },
+        ] {
+            assert_eq!(h.call(DeviceRole::Reader, "test", req).await.unwrap_err().code, ErrorCode::Forbidden);
+        }
+        let long = "가".repeat(60);
+        h.call(DeviceRole::Controller, "test", FrontRequest::DeviceRename { id: id.clone(), label: long })
+            .await
+            .unwrap();
+        assert_eq!(devices(&h).await[0].label.chars().count(), 48);
+        let missing = FrontRequest::DeviceRename { id: "nope".into(), label: "x".into() };
+        assert_eq!(h.call(DeviceRole::Controller, "test", missing).await.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[tokio::test]
+    async fn revoking_tells_open_connections_and_drops_the_token_and_push() {
+        let (h, _t) = host();
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        let (token, _) = h.redeem_pairing(&code, "").unwrap();
+        let (id, _) = h.device_role(&token).unwrap();
+        let sub = db::PushSub {
+            endpoint: "https://push.example/a".into(),
+            p256dh: "k".into(),
+            auth: "a".into(),
+            device: id.clone(),
+        };
+        h.db.push_put(&sub).unwrap();
+        let mut heard = h.device_revoked.subscribe();
+        assert!(!h.is_revoked(&id));
+        h.call(DeviceRole::Controller, "test", FrontRequest::DeviceRevoke { id: id.clone() }).await.unwrap();
+        assert_eq!(heard.try_recv().unwrap(), id);
+        assert!(h.is_revoked(&id));
+        assert!(h.device_role(&token).is_none());
+        assert!(h.db.push_list(None).unwrap().is_empty());
+        assert!(devices(&h).await.is_empty());
+        let again = FrontRequest::DeviceRevoke { id };
+        assert_eq!(h.call(DeviceRole::Local, "test", again).await.unwrap_err().code, ErrorCode::NotFound);
     }
 }

@@ -861,6 +861,20 @@ pub struct PublishState {
     pub message: Option<String>,
 }
 
+/// pairing한 웹 기기 하나(herdr-web-ui `PairedDevice`). 「이 기기」 표시는 웹이 `/api/v1/me`의 id로 정한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeviceView {
+    pub id: String,
+    pub label: String,
+    /// reader 또는 controller
+    pub role: DeviceRole,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+    /// 마지막으로 들어온 때(1분 단위로 적는다). 아직 한 번도 안 들어왔으면 없다
+    #[ts(type = "number | null")]
+    pub last_seen_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct HostStatus {
     pub host_id: String,
@@ -1025,8 +1039,20 @@ pub enum FrontRequest {
     MachineRevoke {
         name: String,
     },
+    /// pairing 코드를 만든다. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`). 웹 기기는 controller 코드만(D6)
     WebPair {
         role: DeviceRole,
+    },
+    /// pairing한 웹 기기 목록
+    Devices,
+    /// 기기 이름을 바꾼다
+    DeviceRename {
+        id: String,
+        label: String,
+    },
+    /// 기기를 취소한다. 그 기기의 열린 연결은 바로 닫히고 push 구독도 지워진다
+    DeviceRevoke {
+        id: String,
     },
     WebPublish,
     WebPublishOff,
@@ -1291,6 +1317,7 @@ impl FrontRequest {
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
+                | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
                 | FrontRequest::Evaluations { .. }
                 | FrontRequest::EvaluationShow { .. }
@@ -1308,7 +1335,6 @@ impl FrontRequest {
                 | FrontRequest::MachineRevoke { .. }
                 | FrontRequest::RoutineApprove { .. }
                 | FrontRequest::MergeLand { .. }
-                | FrontRequest::WebPair { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
         )
@@ -1358,6 +1384,9 @@ pub enum FrontResponse {
         expires_in_s: u64,
     },
     Publish(PublishState),
+    Devices {
+        devices: Vec<DeviceView>,
+    },
     Workspace(Workspace),
     Done,
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
@@ -1663,7 +1692,12 @@ mod tests {
             }
             .needs_control()
         );
-        assert!(FrontRequest::WebPair { role: DeviceRole::Reader }.local_only());
+        // 웹 설정에서도 코드를 만든다(D6). 조작 권한이 있어야 하고, 목록은 보기 권한도 본다
+        assert!(!FrontRequest::WebPair { role: DeviceRole::Controller }.local_only());
+        assert!(FrontRequest::WebPair { role: DeviceRole::Controller }.needs_control());
+        assert!(!FrontRequest::Devices.needs_control());
+        assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
+        assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)

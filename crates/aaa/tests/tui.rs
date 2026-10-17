@@ -521,6 +521,8 @@ fn herdr_keys_and_modes() {
     hw.wait("질문", |w| {
         w.pane(&bottom)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
     });
+    // o는 TUI가 아는 질문으로 간다: host가 바뀐 것만으로는 TUI가 아직 모를 수 있어 표시가 뜬 것을 본다
+    tui.wait_text("질문 표시", |s| s.contains("질문 — aaa question"));
     tui.cmd("o");
     typed_in(&mut tui, "asked", &bottom);
 

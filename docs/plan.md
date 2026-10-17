@@ -372,7 +372,8 @@ herdr-web-ui 0.4.10의 방식(`server/tailscale.ts`, `scripts/plugin.ts`의 `pho
 
 - **장치 역할과 범위:** 장치마다 reader(보기)와 controller(조작) 역할을 나눈다. 명령마다 대상 project·machine·session 권한을 검증한다.
 - **pairing**
-  - 6자리 코드나 QR로 한다. 코드는 host 화면이나 로컬 CLI에서만 보인다.
+  - 6자리 코드나 QR로 한다. 코드는 host 머신의 CLI(`aaa web pair`)나, 이미 pairing한 controller 기기의 웹 설정 → 폰 및 기기에서 만든다(10-18 D6 「참고대로」, §8.81). 웹에서 만드는 코드는 controller만이고 보기(reader) 코드는 CLI에서만 만든다.
+  - 코드는 한 번에 하나, 10분, 1회용이다. 새 코드가 아직 쓰지 않은 앞 코드를 버린다. 한 코드로 5번 틀리면 그 코드를 버린다.
   - 틀린 시도는 backoff로 막는다(web-ui는 5회부터).
   - token은 URL·로그·HTML에 넣지 않는다.
 - **cookie와 요청 검사:** cookie는 `HttpOnly`·`SameSite=Strict`, HTTPS에서는 `Secure`·`__Host-`로 한다. Origin과 CSRF를 검사하고 CSP를 둔다.
@@ -1933,6 +1934,31 @@ pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, 
 - **계약.** AGENT_LINK는 그대로 두고 기능 `pr.v1`로 가린다(옛 agent에는 보내지 않는다). FRONT_API 1.6(`routine_toggle`, `ThreadView.pr`). `inbox` 응답의 `done`은 §8.75.
 - **출처.** 옮긴 hp 코드의 MIT 고지(Copyright (c) 2026 Elias Stravik)는 `crates/aaa-common/src/pr.rs` 머리에 있다.
 - **시험.** 단위: PR 주소·origin 꼴·gh 인자(`--` 뒤 주소, `GH_HOST`)·찾기 순서·이름 거르기(aaa-common), `PR:` 줄·fork·head 불일치·본문 없음·사건·문구(aaa-host pr), pr routine 파일·기본 template(routine). E2E m13 `pr_followup`: 가짜 `gh`(인자 기록, 파일로 답함)를 agent PATH에 두고, 꺼진 pr routine은 오류 없음 → branch로 찾은 열린 PR → check 실패에 pr-followup이 thread 화면에 글을 넣음 → 자기 계정 댓글은 review 아님, 다른 사람 댓글은 review → `routine toggle --on`(파일은 `enabled`만 바뀜) 뒤 병합에 그 routine이 보냄 → 틀린 `PR:` 줄 알림(보고 사본·Next는 그대로), 항목 차례·댓글 본문 없음·gh 인자 확인. 기다림은 모두 흐름 사건(`events --follow`)과 `pane wait-output`이다. m13 `routines`는 꺼진 pr routine이 오류가 아니고 없는 trigger만 오류인 것을 본다.
+
+### 8.81 기기 pairing·목록·폐기·로그아웃을 herdr-web-ui대로(10-18, 차이 목록 2장 P1·P2·P3, 결정 D6 「참고대로(controller만)」)
+
+- **참고(herdr-web-ui aa624cb).** `server/devices.ts`(`DeviceStore`·`handleDeviceRequest`), `server/auth.ts`(`DELETE /api/auth`), `src/components/DevicesPanel.tsx`·`AccessGate.tsx`·`PhonePanel.tsx`·`QrCode.tsx`·`ConfirmDialog.tsx`, `src/lib/phone.ts`(`deviceLabel`·`takePairCode`·`phonePlan`), `src/lib/clipboard.ts`, `src/App.tsx` `lock`, `SettingsDialog.tsx` `DevicesPage`. 문구는 `i18n.ko.ts`에서 「PC」를 「host 머신」으로.
+- **host.**
+  - 코드(`mint_pairing`·`redeem_pairing`): 참고 `startPairing`·`pair`처럼 한 번에 하나, 10분(`CODE_TTL_MS`), 1회용, 한 코드로 5번 틀리면 버림. 새 코드(웹 「새 코드」·CLI)가 앞 코드를 바꾼다. 전에는 5분 코드를 다섯 개까지 두었다. 비교는 끝까지 하는 비교(참고 `timingSafeEqual`). §6.4의 연속 실패 backoff(5번부터 30초씩 두 배)는 그대로 둔다.
+  - Front API: `web_pair`는 로컬 CLI 전용에서 조작 권한 요청으로 바꿨다(D6). 웹 기기(controller)는 controller 코드만 만든다(참고 웹 pairing이 늘 `drive`). 보기 코드는 CLI `aaa web pair --reader`만. `devices`(보기 기기도 본다, 참고 GET /api/devices), `device_rename`·`device_revoke`(조작 권한, 참고 PATCH·DELETE는 watch 기기 403).
+  - DB `devices`에 `label` 열을 더했다(열만 더해 schema는 1 그대로, 옛 aaa도 연다). 이름은 빈칸을 하나로 줄이고 48자(`normalizeLabel`). `last_seen`은 들어올 때 1분에 한 번까지 적는다(`LAST_SEEN_WRITE_MS`).
+  - **폐기는 열린 연결에 바로**(§6.4). `device_revoke`가 `revoked=1`·push 구독 삭제 뒤 `device_revoked` broadcast를 보낸다. events·pane WebSocket은 그것을 듣고 4401(`device revoked`)로 닫는다. 터미널은 밀린 출력도 버리고 닫는다(4008과 같은 정지 길). 사건보다 먼저 와 있던 입력도 `is_revoked`로 거른다. 연결은 듣기 시작한 **뒤에** 다시 본다: upgrade와 폐기가 엇갈려도 놓치지 않는다(t3code `apps/server/src/auth/SessionStore.ts` `awaitInvalidation` 「Subscribe before reading」, 참고 `onRevoke`가 이미 폐기된 id면 바로 닫는 것과 같은 뜻).
+  - 로그아웃 `DELETE /api/v1/me`: 두 이름의 cookie(`__Host-aaa`·`aaa`)를 지운다. 기기 기록은 남는다(참고와 같다, 지우려면 폐기).
+  - CLI: `aaa web devices`·`aaa web rename <id> <이름>`·`aaa web revoke <id>`.
+- **웹.**
+  - 연결 화면(`AccessGate.tsx`, 모양 `herdr/AccessGate.css` 그대로): 숫자 키패드·`one-time-code`·6자리, 틀리면 「코드가 틀렸거나 이미 쓰였거나 만료」. QR이 연 주소의 `?pair=`는 App이 읽자마자 `replaceState`로 지우고 바로 낸다. 기기 이름은 `deviceLabel`(「iPhone · Safari」). 참고의 「액세스 토큰」 펼침은 aaa에 공유 token이 없어 뺐다.
+  - 설정 → 「폰」(참고 PhonePanel): 휴대폰이 열 주소와 QR. 참고 `/api/access` 대신 `web_status`(PublishState)를 읽는다: 지금 HTTPS 공개 주소면 그것, Tailscale이 이미 proxy하면 그 주소, 아니면 `aaa web publish` 명령. 화면 켜짐·설치 줄은 여기로 옮겼다(참고 DevicesPage와 같은 묶음).
+  - 설정 → 「기기」(참고 DevicesPanel): 목록(이름·「이 기기」·역할·마지막 접속), 이름 바꾸기, 두 번 눌러 폐기, 「기기 페어링」 → 코드·QR(`/?pair=`)·링크 복사·남은 시간·새 코드·완료. 코드가 나가 있는 동안 3초마다 목록을 다시 읽어 들어온 기기를 「페어링됨」으로 알리고 코드를 닫는다(참고 POLL_MS). 보기 기기는 목록만 보고 단추가 꺼진다(까닭을 적는다).
+  - 로그아웃: 확인 창(`ConfirmDialog.tsx`, 취소가 focus, Esc·바깥·휴대폰 아래로 밀기·시스템 뒤로 = 아니오). 구독을 먼저 지우고(cookie가 있어야 지워진다) 로그아웃한다.
+  - 401(pairing 말고)·WebSocket 4401을 받으면 `onSignedOut` → `/api/v1/me`를 다시 묻고 pairing 화면이 된다. events WS는 다시 붙기 전에 `me`를 물어 끊긴 동안 폐기된 것도 안다.
+  - 옮긴 공용: `herdr/modal.css`(참고 styles.css 1269~1451줄 .modal-scrim·.modal·sheet 움직임·.input), `herdr/useFocusTrap.ts`·`sheets.ts`(`watchSheetExits`는 main.tsx)·`sheetHistory.ts`(history key만 `aaa:sheet`)·`useMediaQuery.ts`·`clipboard.ts`·`QrCode.tsx`(`qrcode-generator` 2.0.4, MIT, 참고 bun.lock과 같은 판·같은 integrity).
+- **계약(FRONT_API 1.7).** `devices`·`device_rename`·`device_revoke`를 더했고, `web_pair`는 로컬 전용에서 조작 권한 요청으로 바꿨다. 웹은 그 host가 내주므로 늘 같은 판이고, 새 CLI의 `aaa web devices`·`rename`·`revoke`는 1.7 이상 host가 받는다.
+- **다르게 둔 것.**
+  - 역할 둘(reader·controller)을 그대로 둔다(P3, §6.4). 참고는 웹 pairing이 모두 같은 권한이다.
+  - 참고의 「아무도 pairing하지 않아 열린 gate」(via open·`pairSelf`)는 없다: aaa 웹은 처음부터 pairing이 있어야 들어온다.
+- **시험.**
+  - 유닛 `pairing_tests`(시각은 넣어 준 `Instant`): 1회용·역할, 새 코드가 앞 코드를 버림, 10분 만료(1초 전은 됨), 5번 틀리면 잠그고 풀려도 그 코드는 버림, 웹은 controller 코드만·보기 기기는 만들기·이름·폐기 403, 이름 48자, 폐기하면 broadcast·`is_revoked`·token 무효·push 구독 삭제·목록에서 빠짐.
+  - 웹 E2E 「기기·pairing」: `web_status` 답만 바꿔(`mac-a.example.ts.net`) 시험 host의 실제 Tailscale에 기대지 않는다. 코드·QR·링크·남은 시간, 새 코드가 앞 코드를 버림(401), 휴대폰이 `/?pair=`로 열면 바로 들어가고 주소에서 지움, 데스크톱이 「페어링됨: iPhone · Safari.」, 이름 바꾸기(CLI 목록과 같음), 폐기하면 터미널을 연 휴대폰이 바로 pairing 화면(`/api/v1/me` 401), 틀린 코드의 말, 휴대폰·iPad에서 넘치지 않음, 보기 기기는 목록만·코드 403, 웹은 보기 코드 403, 로그아웃 확인 창(취소 focus) → pairing 화면·기록은 남음. 기다림은 DOM 상태(`waitFor`)로 끝낸다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

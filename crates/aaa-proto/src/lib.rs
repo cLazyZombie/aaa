@@ -65,6 +65,7 @@ pub fn typescript_bindings() -> String {
         GridFrame::decl(&cfg),
         PendingEnroll::decl(&cfg),
         PublishState::decl(&cfg),
+        DeviceView::decl(&cfg),
         HostStatus::decl(&cfg),
         FrontRequest::decl(&cfg),
         SharedPreferences::decl(&cfg),
