@@ -29,6 +29,9 @@ pub(crate) struct ProjectSettings {
     pub start_threads: String,
     /// thread pane 신뢰 창에 누가 답하나: `user`(기본)·`coordinator`
     pub trust_screens: String,
+    /// 이 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류·머신 이상만 남기고 끈다(herdr-projects `mute`, 차이 목록 N10).
+    /// inbox 항목은 그대로 쌓이고 앱 안 알림도 그대로다.
+    pub mute: bool,
 }
 
 impl Default for ProjectSettings {
@@ -41,6 +44,7 @@ impl Default for ProjectSettings {
             auto_resolve_days: 7,
             start_threads: "propose".into(),
             trust_screens: crate::trust_screen::USER.into(),
+            mute: false,
         }
     }
 }
@@ -91,6 +95,7 @@ impl ProjectSettings {
             auto_resolve_days: n("auto_resolve_days", d.auto_resolve_days),
             start_threads,
             trust_screens,
+            mute: t.get("mute").and_then(|v| v.as_bool()).unwrap_or(d.mute),
         }
     }
 }
@@ -120,6 +125,7 @@ mod tests {
             auto_resolve_days = 0
             start_threads = "auto"
             trust_screens = "nobody"
+            mute = "yes"
             [[repos]]
             path = "/work/app"
             [[repos]]
@@ -138,6 +144,8 @@ mod tests {
         // 잘못된 값은 그 key만 기본값
         assert_eq!(s.max_parallel_threads, 10);
         assert_eq!(s.trust_screens, "user");
+        assert!(!s.mute);
+        assert!(ProjectSettings::from_table(&"mute = true".parse().unwrap()).mute);
         assert_eq!((s.auto_resolve_days, s.start_threads.as_str()), (0, "auto"));
         assert_eq!(
             s.repos,

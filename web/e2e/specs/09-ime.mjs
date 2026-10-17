@@ -476,6 +476,16 @@ export default async function ({ ctl, page }) {
     if (sent !== "상태") throw new Error(`기록의 보낸 글 ${JSON.stringify(sent)}`);
     const upd = rec.events.find((e) => e.type === "compositionupdate" && e.data === "사");
     if (!upd || typeof upd.value !== "string" || !Array.isArray(upd.sel) || typeof upd.kb !== "boolean") throw new Error(`상태가 빠졌다 ${JSON.stringify(upd)}`);
+    // 친 글 원문이 들어 있다: 사용자 전용 파일이고, 다른 사이트 폼이 보낼 수 있는 text/plain과 보기 권한 기기는 받지 않는다(보안 감사 t-0340 A6·B8)
+    const mode = fs.statSync(path.join(dir, files[0])).mode & 0o777;
+    if (mode !== 0o600) throw new Error(`diag 파일 권한 ${mode.toString(8)}`);
+    const post = (p, type) =>
+      p.evaluate(async (type) => (await fetch("/api/v1/diag/input", { method: "POST", headers: { "content-type": type }, body: "{}" })).status, type);
+    if ((await post(tp, "text/plain")) !== 400) throw new Error("text/plain 기록을 받았다");
+    const rd = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })).page;
+    if ((await post(rd, "application/json")) !== 403) throw new Error("보기 권한 기기의 기록을 받았다");
+    await rd.context().close();
+    if (fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n)).length !== 1) throw new Error("거절한 기록이 남았다");
     // 보내면 비우고, 끄면 모으지 않는다
     await until("보낸 뒤 비움", async () => (await dialog.locator(".settings-row:has([role=switch][aria-label='입력 기록'])").innerText()).includes("0개 모았습니다"));
     await traceSwitch.click();
