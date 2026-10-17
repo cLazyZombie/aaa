@@ -38,6 +38,7 @@
 | `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 | `shortcutBindings.ts`·`shortcutRecorder.ts` | 앱 단축키 저장값(Mod+Shift 키 또는 정확한 조합)·거르기·브라우저/OS가 쥔 키, 설정에서 누른 조합 읽기(plan §8.83) |
+| `terminalDispose.ts` | `disposeAfterPendingFrame`: xterm이 걸어 둔 frame과 그 뒤 task가 돈 다음에 터미널을 치운다(snapshot의 RIS 뒤 Viewport가 치운 renderer를 읽던 TypeError). 시험은 `web/test/terminalDispose.test.mjs`(← `src/lib/terminalDispose.test.ts`, bun:test → node:test만) |
 
 agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`·`agentMark.ts`는 `src/components/AgentMark.tsx`·`src/components/AgentMark.css`·`src/lib/agentMark.ts`를 그대로 옮겼다(`AgentMark.tsx`는 import 경로만). `agentSvgMarks.ts`는 `src/components/agentSvgMarks.ts`에서 droid(Factory favicon)·maki(maki.sh favicon) 두 줄만 뺐다. 참고가 그 출처의 사용 허락을 적지 않아서다. 그 agent는 머리글자 표시(FallbackMark)로 보인다. 참고는 Claude·Codex·Cursor·OpenCode·omp·gjc·omo 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. `agentSvgMarks.ts`의 나머지는 LobeHub Icons(`@lobehub/icons-static-svg`, 아래 MIT)다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표이며, 그 밖의 표시도 각 소유자의 것이다.** aaa는 pane에서 도는 agent를 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.
 

@@ -2509,7 +2509,27 @@ try {
     const got = (name) => aaa("pane", "read", name, "--source", "visible").text;
     const gots = (name) => got(name).split("GOT:").slice(1).map((g) => g.split("\n")[0]);
     const idOf = (name) => aaa("pane", "list").panes.find((p) => p.name === name).id;
-    const { page: sp, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "Linux x86_64" });
+    // frame을 잡아 둘 수 있게 한다(아래 「잇달아 넘기기」): 잡힌 동안 requestAnimationFrame callback을 모았다가 놓을 때 차례대로 건다
+    const holdFrames = () => {
+      const raf = window.requestAnimationFrame.bind(window);
+      const caf = window.cancelAnimationFrame.bind(window);
+      let held = null;
+      let next = -1;
+      window.requestAnimationFrame = (cb) => {
+        if (!held) return raf(cb);
+        held.push([next, cb]);
+        return next--;
+      };
+      window.cancelAnimationFrame = (id) => (held && id < 0 ? (held = held.filter(([i]) => i !== id)) : caf(id));
+      window.__holdFrames = () => void (held = []);
+      window.__releaseFrames = () => {
+        const q = held ?? [];
+        held = null;
+        for (const [, cb] of q) raf(cb);
+        return q.length;
+      };
+    };
+    const { page: sp, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "Linux x86_64", init: holdFrames });
     const open = async (name, ready) => {
       await sp.getByTestId(`pane-${name}`).click();
       await until(`${name} 화면`, async () => (await screenText(sp)).includes(ready));
@@ -2544,6 +2564,31 @@ try {
     await sp.keyboard.press("z");
     await until("z 도착", () => gots("shortkeys").length > before);
     if (JSON.stringify(gots("shortkeys").slice(before)) !== JSON.stringify(['"z"'])) throw new Error(`단축키가 터미널로 샜다: ${gots("shortkeys").slice(before)}`);
+
+    // 잇달아 넘기기: 다음 pane이 snapshot을 읽은 뒤(그 RIS로 xterm Viewport.reset이 다음 frame에 viewport를 다시 재기로 한다)
+    // 그 frame 전에 다시 넘겨 내려가도 page error가 없다(참고 terminalDispose.ts). frame을 잡아 그 순서를 늘 만든다
+    await sp.evaluate(() => {
+      window.__holdFrames();
+      window.__aaaTermLog.push({ at: 0, e: "mark 잇달아" });
+    });
+    await sp.keyboard.press("Control+Shift+ArrowDown");
+    await until("다음 pane이 snapshot을 읽음(frame은 잡힘)", () =>
+      sp.evaluate(() => {
+        const log = window.__aaaTermLog;
+        const from = log.findLastIndex((x) => x.e === "mark 잇달아");
+        const snap = log.findIndex((x, i) => i > from && x.e?.startsWith("snapshot "));
+        return snap > from && log.slice(snap + 1).some((x) => x.kind === "io" && x.acks > 0);
+      }),
+    );
+    await sp.keyboard.press("Control+Shift+ArrowUp");
+    await until("돌아옴(frame은 잡힘)", async () => (await hash()) === sel("shortkeys"));
+    const released = await sp.evaluate(() => window.__releaseFrames());
+    if (released === 0) throw new Error("잡힌 frame이 없다(시험이 그 경우를 만들지 못했다)");
+    // 놓은 callback이 돈 frame 두 개 뒤
+    await sp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    if (errors.length) throw new Error(`잇달아 넘긴 뒤 page error: ${errors.join("; ")}`);
+    await until("돌아온 화면(잇달아)", async () => (await screenText(sp)).includes("keys>"));
+    await sp.getByTestId("terminal").click();
 
     // aaa에 없는 동작(명령 팔레트·찾기·사이드바·새 워크스페이스)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다
     for (const key of ["K", "F", "B", "O"]) if (await taken({ key, code: `Key${key}`, ctrlKey: true, shiftKey: true })) throw new Error(`aaa에 없는 Mod+Shift+${key}를 앱이 가져갔다`);
@@ -2616,24 +2661,29 @@ try {
     if (errors.length) throw new Error(errors.join("; "));
     await sp.context().close();
 
-    // 휴대폰 설정 창의 단축키 줄(좁은 화면에서 기록·고르기가 한 줄을 채운다)
-    // macOS(⌘⇧)도 같은 표다: 맥 platform 휴대폰 화면에서 ⌘⇧,가 설정을 연다
-    const phone = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { platform: "MacIntel" })).page;
-    await phone.getByTestId("settings-open").waitFor();
-    await phone.keyboard.press("Meta+Shift+Comma");
-    const pd = phone.getByRole("dialog", { name: "설정" });
-    await pd.waitFor();
-    await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
-    const fit = await pd.locator(".settings-shortcuts").evaluate((el) => {
-      const box = el.getBoundingClientRect();
-      return [...el.querySelectorAll(".settings-shortcut-control")].every((c) => {
-        const r = c.getBoundingClientRect();
-        return r.left >= box.left && r.right <= box.right + 0.5;
+    // 휴대폰·iPad 설정 창의 단축키 줄(좁은 화면에서 기록·고르기가 한 줄을 채운다)
+    // macOS(⌘⇧)도 같은 표다: 맥 platform 화면에서 ⌘⇧,가 설정을 연다(iPadOS Safari의 platform도 MacIntel이다)
+    for (const [name, viewport] of [
+      ["phone-shortcuts", { width: 390, height: 844 }],
+      ["ipad-shortcuts", { width: 820, height: 1180 }],
+    ]) {
+      const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { platform: "MacIntel", touch: true })).page;
+      await p.getByTestId("settings-open").waitFor();
+      await p.keyboard.press("Meta+Shift+Comma");
+      const pd = p.getByRole("dialog", { name: "설정" });
+      await pd.waitFor();
+      await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
+      const fit = await pd.locator(".settings-shortcuts").evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return [...el.querySelectorAll(".settings-shortcut-control")].every((c) => {
+          const r = c.getBoundingClientRect();
+          return r.left >= box.left && r.right <= box.right + 0.5;
+        });
       });
-    });
-    await shot(phone, "phone-shortcuts");
-    if (!fit) throw new Error("휴대폰에서 단축키 줄이 설정 칸 밖으로 나갔다");
-    await phone.context().close();
+      await shot(p, name);
+      if (!fit) throw new Error(`${name}: 단축키 줄이 설정 칸 밖으로 나갔다`);
+      await p.context().close();
+    }
     for (const name of ["shortkeys", "shortplain", "shortalt"]) aaa("pane", "kill", name);
   });
 

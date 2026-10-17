@@ -54,6 +54,7 @@ import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
 import { isAppShortcut } from "./herdr/shortcuts.ts";
+import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import type { PaneControls } from "./actions";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
@@ -1285,8 +1286,10 @@ export function TermView({
       renderSub.dispose();
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
-      term.dispose();
       termRef.current = null;
+      // xterm이 걸어 둔 frame·task가 돈 뒤에 치운다(PaneTerminal 1982줄 `disposeAfterPendingFrame`): snapshot의 RIS로 Viewport.reset이
+      // 다음 frame에 renderer 크기를 읽는데, 단축키로 pane을 잇달아 넘기면 그 frame 전에 내려가 TypeError가 났다
+      disposeAfterPendingFrame(term);
     };
     // pane.id가 바뀔 때만 새로 붙는다. cols/rows는 snapshot이 알려 준다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
