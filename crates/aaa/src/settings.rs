@@ -440,7 +440,7 @@ fn edit_profiles(json: bool, change: profile_edit::ProfileChange) -> Result<Exit
     };
     // 값이 틀렸으면 사람인지 묻기 전에 알린다
     let file = config_dir().join("host.toml");
-    if !file.is_file() {
+    if !file.is_file() && !aaa_config::paths::state_dir().join("host/host.db").is_file() {
         bail!(
             "profile 바꾸기는 host 머신 터미널에서 한다(host.toml 없음). 확인은 `aaa profile list`·`aaa profile resolve`로 한다"
         );

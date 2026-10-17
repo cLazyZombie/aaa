@@ -2746,7 +2746,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **협상.** AGENT_LINK는 1.4를 유지해 운영 1.3 연결을 끊지 않는다. `host_profiles.v1`이 있을 때만
   ResolvedProfile·Harnesses 요청을 보낸다. 없는 agent는 연결·기존 세션을 유지하고 새 시작·새 대화 restart를 갱신 안내로 거부한다.
   옛 host → 새 agent는 기존 Profiles·이름 해석 경로를 유지한다. agent.toml `[profiles]`가 있으면 옮기라는 경고를 낸다.
-  FRONT_API 1.19의 ProfileResolve는 host의 정본·전역 기본값을 읽는다. 수정 CLI는 host 머신의 사람 터미널에서 host.toml만 쓴다.
+  FRONT_API 1.18의 ProfileResolve는 host의 정본·전역 기본값을 읽는다. 수정 CLI는 host 머신의 사람 터미널에서 host.toml만 쓴다.
+  t-0333의 1.18이 아직 착지하지 않아 같은 minor에 묶는다. 별도 1.19로 올리면 운영 front 1.17이 N-1 밖으로 밀려
+  연결을 잃는 것을 실제 hello/status 시험으로 확인했다. 기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면
+  로컬 host DB로 host 머신인지 확인한다(사람 확인은 유지, agent 파일은 쓰지 않는다).
 - **front.** 웹·TUI에는 독립된 profile 정의나 profile 선택기가 없다(현재 web/src·aaa-tui/src 확인).
   Front Profiles·assignable·thread profile 표시는 host 정본을 쓰며 기존 화면 흐름은 유지한다. 실행 중 model은 harness `/model`이다.
 - **추가 참고.** t3code `apps/server/src/provider/Drivers/ClaudeDriver.ts`·`CodexDriver.ts`의 effectiveConfig.binaryPath는

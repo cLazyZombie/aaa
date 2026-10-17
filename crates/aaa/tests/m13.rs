@@ -1538,6 +1538,18 @@ fn safety_and_profiles_by_a_person() {
         &w.task("g.txt", "x"),
     ]);
     assert!(e.expect_err("지운 profile").contains("profile `sh1`가 없다"));
+
+    // host.toml 없이 기본값으로 시작한 host도 첫 profile을 만들 수 있다. agent 파일은 바꾸지 않는다.
+    let host_file = w.h.cfg.join("host.toml");
+    let saved = w.h.cfg.join("host.saved");
+    let agent_file = std::fs::read(w.h.cfg.join("agent.toml")).unwrap();
+    std::fs::rename(&host_file, &saved).unwrap();
+    let out = w.h.in_terminal(&["profile", "add", "first", "--agent", "shell"], &[], T);
+    assert!(out.contains("profile `first`를 더했다"), "{out}");
+    assert_eq!(w.h.ok(&["profile", "resolve", "first"])["harness"], "shell");
+    assert_eq!(std::fs::read(w.h.cfg.join("agent.toml")).unwrap(), agent_file);
+    std::fs::remove_file(&host_file).unwrap();
+    std::fs::rename(saved, host_file).unwrap();
 }
 
 /// thread restart --profile(herdr-projects threads.rs `restart`, 차이 목록 E8): host.toml에서 다시 해석해 새 대화로
@@ -3385,4 +3397,27 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
     tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
     let pong: LinkMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
     assert!(matches!(pong, LinkMsg::Pong { seq: 42 }), "{pong:?}");
+    // 현재 main의 1.17 front도 이 묶음의 host에 계속 붙는다(1.18과 1.19를 한 번에 올려 끊지 않는다).
+    use aaa_proto::{FrontMsg, FrontRequest, FrontResponse, Outcome};
+    let stream = aaa_common::ipc::connect(&w.h.state.join("host/front.sock")).await.unwrap();
+    let (r, writer) = tokio::io::split(stream);
+    let tx = spawn_writer(writer, MAX_FRAME);
+    let mut rx = FrameRx::new(r, MAX_FRAME);
+    tx.json(&FrontMsg::Hello { proto: Version { major: 1, minor: 17 }, client: "legacy-front".into(), session: None })
+        .await
+        .unwrap();
+    let welcome: FrontMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
+    assert!(matches!(welcome, FrontMsg::Welcome { proto: Version { major: 1, minor: 17 }, .. }), "{welcome:?}");
+    tx.json(&FrontMsg::Req { id: "status".into(), body: FrontRequest::Status }).await.unwrap();
+    tokio::time::timeout(T, async {
+        loop {
+            match rx.control::<FrontMsg>().await.unwrap() {
+                FrontMsg::Res { id, result: Outcome::Ok(FrontResponse::Status(_)) } if id == "status" => break,
+                FrontMsg::Event(_) => {}
+                other => panic!("옛 front 상태 응답: {other:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
 }
