@@ -32,6 +32,9 @@ pub(crate) struct ProjectSettings {
     /// 이 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류·머신 이상만 남기고 끈다(herdr-projects `mute`, 차이 목록 N10).
     /// inbox 항목은 그대로 쌓이고 앱 안 알림도 그대로다.
     pub mute: bool,
+    /// 처음 보는 inbox 항목 묶음을 coordinator에 한 줄로 알린다(herdr-projects `nudge`, 기본 켬). 끄면 묶음을 본 것으로만
+    /// 적고 항목은 coordinator의 다음 턴 `context`가 보인다(사건마다 가는 알림은 그대로다).
+    pub nudge: bool,
 }
 
 impl Default for ProjectSettings {
@@ -45,6 +48,7 @@ impl Default for ProjectSettings {
             start_threads: "propose".into(),
             trust_screens: crate::trust_screen::USER.into(),
             mute: false,
+            nudge: true,
         }
     }
 }
@@ -96,6 +100,7 @@ impl ProjectSettings {
             start_threads,
             trust_screens,
             mute: t.get("mute").and_then(|v| v.as_bool()).unwrap_or(d.mute),
+            nudge: t.get("nudge").and_then(|v| v.as_bool()).unwrap_or(d.nudge),
         }
     }
 }
@@ -126,6 +131,7 @@ mod tests {
             start_threads = "auto"
             trust_screens = "nobody"
             mute = "yes"
+            nudge = 0
             [[repos]]
             path = "/work/app"
             [[repos]]
@@ -146,6 +152,7 @@ mod tests {
         assert_eq!(s.trust_screens, "user");
         assert!(!s.mute);
         assert!(ProjectSettings::from_table(&"mute = true".parse().unwrap()).mute);
+        assert!(s.nudge && !ProjectSettings::from_table(&"nudge = false".parse().unwrap()).nudge);
         assert_eq!((s.auto_resolve_days, s.start_threads.as_str()), (0, "auto"));
         assert_eq!(
             s.repos,

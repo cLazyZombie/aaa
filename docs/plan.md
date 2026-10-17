@@ -742,7 +742,7 @@ host 프로젝트 폴더 구성:
 - **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다). 묶음 전이를 세는 때는 §8.85.
 - **nudge:** 0.2.35를 이어받는다.
   - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aaa inbox] <대상> <사건>, …; …(aaa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
-  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. **coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).
+  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. ~~**coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).~~ → (10-18 §8.121) 참고대로 hash만 남기고 넘어간다. project.toml `nudge = false`도 같다.
   - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 60초, herdr-projects `NUDGE_IDLE_SECS`) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 이번 검사와 `nudge_quiet_secs`(기본 10초) 전 검사에서 모두 비어 보일 때만 보낸다(herdr-projects `box_quiet`, 사람이 치는 글과 섞이지 않게). 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
   - 안 본 항목이 남아 있으면 새 항목이 올 때 다시 나열된다(herdr-projects와 같다). 「봤다」는 `aaa inbox list`(`--peek` 아님)와 `aaa context`(`--peek` 아님)가 보인 항목에 단다(10-17, 차이 목록 G3·F8).
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
@@ -2732,6 +2732,29 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - `worktree_thread_round_trip`: symlink를 치운 뒤 끝내면 마지막 사본이 complete가 되어 지운다. 가짜 agent의 symlink는 할 일에
     「link」가 있을 때만 만든다(다른 시험은 사본이 complete다).
   - TUI 유닛 `threads_follow_the_display_order`: rank를 빼면 실패한다.
+
+
+### 8.121 coordinator가 없거나 `nudge = false`면 묶음만 적는다(10-18, 차이 목록 3장 G6, coordinator 지시 「참고대로」)
+
+- **참고(hp steps.rs `nudge` 329~347줄, project.rs `Settings.nudge`).** 처음 보는 inbox 항목 묶음(hash)마다, coordinator가 살아 있고
+  `nudge`가 켜져 있으면(기본 켬) idle 60초·입력창 10초 조용을 기다려 한 줄을 친다. coordinator가 없거나 `nudge = false`면 그
+  묶음 hash만 남긴다. 사람에게는 사건마다 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다.
+- **aaa가 달랐던 것(§8.17 구현 결정).** coordinator가 없으면 hash를 남기지 않고 기다렸다가 생기면 그 묶음을 알렸다. `nudge` 설정은
+  없었다(0.2 옮기기가 「옮길 예정」으로 남김).
+- **고침.**
+  - inbox.rs `nudge`: coordinator(host 머신에서 프로젝트 폴더를 cwd로 쓰는 실행 중 pane)가 없거나 project.toml `nudge = false`면
+    `nudged:<p>` hash를 적고 끝낸다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않고, 새 항목으로 묶음이 바뀌면 그때 아직 보지
+    않은 항목 모두를 알린다(참고와 같다).
+  - project.toml `nudge`(bool, 기본 true, 잘못된 값은 기본값). 0.2 `PROJECT.md`의 `nudge`는 같은 이름·같은 뜻으로 project.toml에
+    옮긴다(옮기지 못한 설정 목록에서 뺐다).
+  - 계약 변화 없음(host 안 동작과 project.toml 키).
+- **시험.**
+  - m13 `nudge_only_marks_the_set_without_a_coordinator_or_when_off`: coordinator 없이 생긴 묶음은 coordinator가 생긴 뒤 nudge 창이
+    지나도 알리지 않고, 새 항목이 생기면 앞 항목과 함께 알린다. `nudge = false`면 coordinator가 입력을 기다려도 알리지 않고, 다시
+    켜도 적은 묶음은 알리지 않는다(항목은 `context`에 있다). 옛 동작(hash를 남기지 않음)으로 되돌리면 coordinator가 생긴 뒤
+    `nudge_sent`로, 설정을 무시하면 4단계의 두 번째 알림으로 실패함을 확인했다.
+  - 유닛: project `keys_fall_back_one_by_one`(`nudge = 0`은 기본값, `nudge = false`), migrate `inventory_then_convert`(`nudge = false`가
+    project.toml로 간다).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

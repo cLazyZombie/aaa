@@ -1696,6 +1696,74 @@ fn inbox_and_nudge() {
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 3);
 }
 
+/// coordinator가 없거나 project.toml `nudge = false`면 nudge는 처음 보는 묶음을 본 것으로만 적는다(herdr-projects steps.rs
+/// `nudge`, 차이 목록 3장 G6, plan §8.121): 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 그
+/// 묶음으로 깨우지 않고, 새 항목으로 묶음이 바뀌면 그때 알린다.
+#[test]
+fn nudge_only_marks_the_set_without_a_coordinator_or_when_off() {
+    let (idle, quiet) = (Duration::from_secs(2), Duration::from_secs(1));
+    let w = world_with(&format!(
+        "tick_secs = 1\nnudge_idle_secs = {}\nnudge_quiet_secs = {}\n",
+        idle.as_secs(),
+        quiet.as_secs()
+    ));
+    let nudges = || w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
+    let dir = w.projects.join("demo");
+    // 보고를 쓰는 thread를 하나 띄우고 그 「새 보고」 항목이 생기기를 기다린다
+    let report = |title: &str| {
+        let v = w.start(&[
+            "--title",
+            title,
+            "--profile",
+            "fake",
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task(&format!("{title}.txt"), "x"),
+        ]);
+        let id = v["id"].as_str().unwrap().to_string();
+        wait_for("새 보고 항목", T, || {
+            let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+            items.iter().any(|i| i["subject"] == id.as_str() && i["event"] == "new report").then_some(())
+        });
+        id
+    };
+
+    // 1) coordinator가 없을 때 생긴 묶음: tick이 본 것으로 적는다
+    let a = report("a");
+    w.h.ticks(1);
+    let coord =
+        w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
+    w.wait_screen(&coord, "❯");
+    // 2) 나중에 생긴 coordinator는 그 묶음으로 깨우지 않는다(옛 aaa는 생기면 알렸다)
+    w.nudge_windows(idle, quiet);
+    assert_eq!(nudges(), 0, "{:?}", w.kinds(0));
+    assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
+    // 3) 새 항목이 생겨 묶음이 바뀌면 알린다: 아직 보지 않은 앞 항목도 함께다
+    let b = report("b");
+    let screen = w.wait_screen(&coord, "got: [aaa inbox]");
+    assert!(screen.contains(&format!("got: [aaa inbox] {a} new report; {b} new report")), "{screen}");
+    wait_for_diag(
+        "알림을 받은 뒤 입력 대기",
+        T,
+        || w.h.screen(&coord).trim_end().ends_with('❯').then_some(()),
+        || w.h.screen(&coord),
+    );
+
+    // 4) `nudge = false`: coordinator가 입력을 기다려도 알리지 않고 묶음만 적는다
+    std::fs::write(dir.join("project.toml"), "schema = 1\nnudge = false\n").unwrap();
+    let c = report("c");
+    w.nudge_windows(idle, quiet);
+    assert_eq!(nudges(), 1, "{:?}", w.kinds(0));
+    // 5) 다시 켜도 이미 적은 묶음은 알리지 않는다(항목은 context가 보인다)
+    std::fs::write(dir.join("project.toml"), "schema = 1\n").unwrap();
+    w.nudge_windows(idle, quiet);
+    assert_eq!(nudges(), 1, "{:?}", w.kinds(0));
+    assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 1, "{}", w.h.screen(&coord));
+    let ctx = w.h.ok(&["context", "demo", "--peek"]);
+    assert!(ctx["inbox"].as_array().unwrap().iter().any(|i| i["subject"] == c.as_str()), "{ctx}");
+}
+
 /// 끝낸 inbox가 많은 프로젝트(0.2에서 옮긴 기록 수천 건, t-0334 pilot 결함 2, plan §8.98). 응답이 frame 상한(1 MiB)을
 /// 넘어 연결이 말없이 닫히던 것: `inbox list --all`은 크기 한도 안에서 끝내지 않은 항목 모두와 최근 끝낸 항목을 싣고,
 /// 못 실은 수를 말한다. 기록은 실제 경로(`aaa migrate inventory`·`import`)로 넣는다.
