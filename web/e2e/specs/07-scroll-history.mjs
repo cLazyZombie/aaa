@@ -3,7 +3,7 @@
 
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
-  openSettings,
+  openSettings, sentFrames, sentText,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -102,7 +102,11 @@ export default async function ({ ctl, page }) {
     }
     // 휠 속도(herdr-web-ui terminalWheelSpeed): 3×면 휠 한 번에 보고 셋(xterm은 휠 사건마다 보고 하나)
     const reports = () => got("scroll-mouse").split("<64;").length - 1;
-    await sleep(300);
+    // 이 화면이 보낸 휠 보고 수(보고는 휠 사건 안에서 보낸다, Term.tsx 휠 속도도 같은 사건 안에서 더 dispatch한다).
+    // pane이 받은 수가 이것과 같으면 오는 중인 보고가 없다
+    const sentReports = async () => sentText(await sentFrames(dp)).split("<64;").length - 1;
+    const settled = (what) => until(what, async () => reports() === (await sentReports()));
+    await settled("앞 휠 보고 다 받음");
     const before = reports();
     await dp.mouse.wheel(0, -100);
     await until("1× 보고 하나", () => reports() === before + 1);
@@ -111,13 +115,16 @@ export default async function ({ ctl, page }) {
     if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
     if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");
     await dp.keyboard.press("Escape");
+    await dlg.waitFor({ state: "hidden" });
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await sleep(300);
+    await settled("휠 전 보고 다 받음");
     const mid = reports();
+    const sentMid = await sentReports();
     await dp.mouse.wheel(0, -100);
     await until("3× 보고 셋", () => reports() === mid + 3).catch((e) => bad.push(`${e.message}: ${reports() - mid}개`));
-    await sleep(300);
-    if (reports() !== mid + 3) bad.push(`3×에서 보고 ${reports() - mid}개`);
+    // 그 휠로 이 화면이 보낸 보고가 셋이다(더 보내지 않았다)
+    const sent3 = (await sentReports()) - sentMid;
+    if (sent3 !== 3 || reports() !== mid + 3) bad.push(`3×에서 보낸 보고 ${sent3}개, 받은 보고 ${reports() - mid}개`);
     await dp.context().close();
 
     // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)

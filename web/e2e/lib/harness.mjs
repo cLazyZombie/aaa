@@ -157,6 +157,12 @@ const screenText = (page) => page.locator(".xterm-rows").innerText();
  * eeee514에서는 글이 맨 아래보다 다섯 줄 위에서 멈춰 보였다(기록 높이는 맞다): viewport 자리와 pane WebSocket 메시지 순서(log)를 더 남긴다.
  * 실패를 넘기지 않는다: 이 값은 오류 글에만 들어간다.
  */
+/** 이 화면이 pane WebSocket으로 보낸 메시지({t: "input", data}·submit·resize·take…, 바이너리 마우스 보고는 {t: "bin", data})를
+ *  from번째부터. 사건 처리 안에서 보낸 것은 그 동작(click·press·evaluate)이 끝났을 때 이미 있다 */
+const sentFrames = (page, from = 0) => page.evaluate((n) => window.__aaaSent.slice(n), from);
+/** 그중 터미널에 들어가는 글(input·bin)을 이어 붙인 것 */
+const sentText = (frames) => frames.filter((f) => f.t === "input" || f.t === "bin").map((f) => f.data).join("");
+
 async function termDiag(page) {
   const now = () =>
     page.evaluate(() => {
@@ -426,9 +432,13 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
     });
   // 터미널 진단 기록(termDiag가 읽는다): pane WebSocket의 글 메시지 종류·크기·순서, 받은 출력 묶음, 닫힘,
   // xterm viewport의 scroll 사건. CI에서만 난 실패의 순서를 보려고 둔다. 화면에는 손대지 않는다.
+  // 보낸 것(sentFrames가 읽는다): pane WebSocket으로 보낸 ack·history 밖의 메시지 전부. 키·마우스·붙여넣기 처리는 그 사건 안에서
+  // 바로 보내므로, 동작이 끝난 뒤 여기에 없으면 이 화면은 보내지 않았다(「보내지 않았다」를 sleep 없이 본다).
   await ctx.addInitScript(() => {
     const log = [];
     Object.defineProperty(window, "__aaaTermLog", { value: log });
+    const sent = [];
+    Object.defineProperty(window, "__aaaSent", { value: sent });
     const t0 = performance.now();
     // 받은 출력(bin)과 보낸 ACK(ack)는 다른 기록 사이마다 한 줄(io)로 묶는다(수가 많아 다른 기록을 밀어내지 않게)
     const push = (e) => {
@@ -464,6 +474,11 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       }
       send(d) {
         if (typeof d === "string") push(d.startsWith('{"t":"ack"') ? `ack ${JSON.parse(d).offset}` : `send ${d.slice(0, 50)}`);
+        if (typeof d !== "string") {
+          const b = d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+          sent.push({ t: "bin", data: String.fromCharCode(...b) });
+        }
+        else if (!/^\{"t":"(ack|history)"/.test(d)) sent.push(JSON.parse(d));
         super.send(d);
       }
     };
@@ -926,5 +941,5 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, sentFrames, sentText,
 };

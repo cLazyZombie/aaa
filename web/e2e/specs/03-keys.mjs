@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 03-keys(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings,
+  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentText,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -31,17 +31,23 @@ export default async function ({ ctl, page }) {
     if (JSON.stringify(order) !== JSON.stringify(want)) throw new Error(`키 순서 ${order}`);
     const key = (k) => bar.locator(`.key[data-key="${k}"]`);
     await tp.locator(".xterm-screen").click();
-    // 한 동작이 pane에 보낸 조각들
+    // 한 동작이 pane에 보낸 조각들. pane이 첫 조각을 받은 때에는 화면이 그 동작으로 보낼 글을 다 보냈다(키·마우스 사건 안에서,
+    // 되풀이는 뗄 때까지). 그 글을 pane이 다 받을 때까지 기다린다: 더 오면 같아지지 않아 실패한다(「더 오지 않음」을 sleep으로 어림하지 않는다)
     const sent = async (act, what = "") => {
       const n = last();
+      const k = (await sentFrames(tp)).length;
       await act();
-      await sleep(250);
       await until(`pane 받음 ${what}`, () => last() > n);
-      await sleep(150);
-      return lines()
-        .filter(([i]) => i > n)
-        .map(([, d]) => d)
-        .join("");
+      const data = sentText(await sentFrames(tp, k));
+      const got = () =>
+        lines()
+          .filter(([i]) => i > n)
+          .map(([, d]) => d)
+          .join("");
+      await until(`보낸 글을 pane이 다 받음 ${what}`, () => got() === data).catch((e) => {
+        throw new Error(`${e.message}: 보낸 ${JSON.stringify(data)}, 받은 ${JSON.stringify(got())}`);
+      });
+      return got();
     };
     const bad = [];
     const expect = async (what, act, wantData) => {
@@ -49,9 +55,9 @@ export default async function ({ ctl, page }) {
       if (got !== wantData) bad.push(`${what}: ${JSON.stringify(got)}(기대 ${JSON.stringify(wantData)})`);
     };
     // 키를 눌러도 focus는 터미널에 남는다(화면 키보드가 내려가지 않는다)
-    await key("Escape").click();
+    const esc = await sent(() => key("Escape").click(), "Escape");
+    if (esc !== "\x1b") bad.push(`Escape: ${JSON.stringify(esc)}`);
     if (!(await tp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")))) bad.push("키가 focus를 가져갔다");
-    await sleep(300);
     // 래치: 켠 Ctrl은 두 번 써도 남고, 다시 눌러야 풀린다
     await key("Control").click();
     await expect("Ctrl 래치 a", () => tp.keyboard.press("a"), "\x01");
@@ -95,29 +101,28 @@ export default async function ({ ctl, page }) {
     const held = await sent(async () => {
       await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
       await tp.mouse.down();
-      await sleep(700);
+      await sleep(700); // fixed wait: 꾹 누른 시간(400ms 뒤 50ms마다 되풀이하는 규칙을 사람처럼 누른다)
       await tp.mouse.up();
     });
     const repeats = held.split("\x1b[D").length - 1;
     if (repeats < 3 || held.replaceAll("\x1b[D", "") !== "") bad.push(`꾹 누름: ${JSON.stringify(held)}`);
-    // 누른 채 밀면 취소(아무것도 안 감)
+    // 누른 채 밀면 취소(아무것도 안 감). 누름·되풀이·뗌은 화면이 그 사건 안에서 보낸다: 뗀 뒤 이 화면이 보낸 글이 없으면 가지 않았다
     const n0 = last();
+    const k0 = (await sentFrames(tp)).length;
     await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
     await tp.mouse.down();
     await tp.mouse.move(left.x + left.width / 2 + 15, left.y + left.height / 2, { steps: 3 });
-    await sleep(600);
+    await sleep(600); // fixed wait: 꾹 누름 기준(400ms)을 넘겨 누른다(밀어서 취소하지 못했으면 그사이 되풀이가 간다)
     await tp.mouse.up();
-    await sleep(300);
-    if (last() !== n0) bad.push(`밀어서 취소한 누름이 갔다: ${JSON.stringify(lines().filter(([i]) => i > n0))}`);
+    const slid = sentText(await sentFrames(tp, k0));
+    if (slid !== "" || last() !== n0) bad.push(`밀어서 취소한 누름이 갔다: ${JSON.stringify(slid)}, ${JSON.stringify(lines().filter(([i]) => i > n0))}`);
     // 조합 중에는 키 막대가 회색이고, 조합으로 확정된 글에는 유지 키가 붙지 않는다(다음 키를 기다린다)
     await key("Control").click();
     const textarea = tp.locator("textarea.xterm-helper-textarea");
     await textarea.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" })));
-    await sleep(100);
-    if (!(await key("Escape").isDisabled())) bad.push("조합 중에 키 막대가 켜져 있다");
+    await until("조합 중 키 막대 회색", () => key("Escape").isDisabled()).catch(() => bad.push("조합 중에 키 막대가 켜져 있다"));
     await textarea.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" })));
-    await sleep(100);
-    if (await key("Escape").isDisabled()) bad.push("조합이 끝나도 키 막대가 꺼져 있다");
+    await until("조합 끝 키 막대 켜짐", async () => !(await key("Escape").isDisabled())).catch(() => bad.push("조합이 끝나도 키 막대가 꺼져 있다"));
     const cdp = await tp.context().newCDPSession(tp);
     const ime = await sent(async () => {
       await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
@@ -211,11 +216,11 @@ export default async function ({ ctl, page }) {
     await line.fill("");
     // 입력줄 조합 중에는 ⌨만 회색이고 키 막대는 그대로다
     await line.dispatchEvent("compositionstart", { data: "" });
-    await sleep(100);
-    if (!(await toggle.isDisabled())) bad.push("입력줄 조합 중에 ⌨가 켜져 있다");
+    // ⌨가 회색이 된 그림에서 키 막대도 본다(같은 상태로 그린다)
+    await until("입력줄 조합 중 ⌨ 회색", () => toggle.isDisabled()).catch(() => bad.push("입력줄 조합 중에 ⌨가 켜져 있다"));
     if (await tp.locator('.key-bar .key[data-key="Escape"]').isDisabled()) bad.push("입력줄 조합 중에 키 막대가 꺼졌다");
     await line.dispatchEvent("compositionend", { data: "" });
-    await sleep(100);
+    await until("입력줄 조합 끝 ⌨ 켜짐", async () => !(await toggle.isDisabled()));
     // ⌨를 다시 누르면 바로 입력: 입력줄이 사라지고 터미널이 키보드를 받는다
     await toggle.click();
     await until("입력줄 사라짐", async () => (await tp.locator(".terminal-input").count()) === 0);
@@ -594,6 +599,7 @@ export default async function ({ ctl, page }) {
     // 끌기는 고른다: 프로그램에 마우스 보고가 가지 않고, 놓으면 복사하고 알린다
     await sleep(300);
     n = lastSeq();
+    const k = (await sentFrames(dp)).length;
     const from = await cell(0, 0);
     // xterm은 끝을 가까운 칸 경계로 잡는다: 마지막 글자 다음 칸 가운데까지 끈다
     const to = await cell(14, 0);
@@ -604,8 +610,10 @@ export default async function ({ ctl, page }) {
     await until("복사 알림", async () => (await dp.getByTestId("clipboard-note").innerText()).includes("클립보드에 복사했다"));
     const copied = await dp.evaluate(() => window.__copied);
     if (!copied.some((t) => t.includes("pick-this-word"))) throw new Error(`복사한 글 ${JSON.stringify(copied)}`);
-    await sleep(300);
-    const leaked = after(n).filter(([, k, v]) => k === "GOT" && v.includes("\u001b[<"));
+    // 마우스 보고는 xterm이 그 사건 안에서 보낸다: 놓은 뒤 이 화면이 보낸 것에 없으면 프로그램에 가지 않았다
+    const reported = sentText(await sentFrames(dp, k));
+    if (reported.includes("\u001b[<")) throw new Error(`끌기가 프로그램에 갔다: ${JSON.stringify(reported)}`);
+    const leaked = after(n).filter(([, kind, v]) => kind === "GOT" && v.includes("\u001b[<"));
     if (leaked.length) throw new Error(`끌기가 프로그램에 갔다: ${JSON.stringify(leaked)}`);
     // 다른 화면이 크기를 가져간 뒤 이 화면에서 키를 치면, 키보다 먼저 이 화면 크기를 건다(첫 글의 답이 이 grid로 그려진다)
     const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 760, height: 560 })).page;

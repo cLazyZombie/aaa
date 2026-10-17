@@ -1,7 +1,7 @@
 // 웹 E2E 입력줄: send-text·여러 줄·보내는 동안 친 글.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 08-input-line(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser } from "../lib/harness.mjs";
+import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("입력 막대·CLI send-text 뒤 send-keys enter: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
@@ -45,9 +45,11 @@ export default async function ({ ctl, page }) {
     await box.press("b");
     if ((await box.inputValue()) !== "a\nb") throw new Error(JSON.stringify(await box.inputValue()));
     // 조합 중 Enter는 보내지 않는다. 같은 사건이 조합 중이 아니면 보낸다(이 단언이 실제로 가려내는지).
+    // 보내기(submit)는 그 keydown 처리 안에서 일어난다: 그 사건 뒤 이 화면이 보낸 것이 없으면 보내지 않았다
+    const k = (await sentFrames(page)).length;
     await box.evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true })));
-    await sleep(500);
-    if (gots() !== n || (await box.inputValue()) !== "a\nb") throw new Error(`조합 중 Enter로 보냈다: ${got()}`);
+    const composed = (await sentFrames(page, k)).filter((f) => f.t === "submit" || f.t === "input");
+    if (composed.length || gots() !== n || (await box.inputValue()) !== "a\nb") throw new Error(`조합 중 Enter로 보냈다: ${JSON.stringify(composed)} ${got()}`);
     // 초안: 다시 열어도 남는다
     await page.reload();
     await page.getByTestId("machine-labA").waitFor();
