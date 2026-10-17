@@ -794,8 +794,10 @@ fn thread_read_and_keys() {
     let e = w.h.json(&["thread", "keys", "demo", &id]).expect_err("빈 키");
     assert!(e.contains("키나 --text"), "{e}");
     w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "yes"]);
-    // 권한 확인창: 보고 Enter로 답한다(기본 선택 Yes)
+    // 권한 확인창: 보고 Enter로 답한다(기본 선택 Yes). 가짜 Claude는 hook을 낸 뒤 창을 그리므로(`perm`) 질문이 생긴 때는
+    // 창이 아직 없을 수 있다: 그려진 것을 본 뒤 읽는다
     w.wait_question(&id, "permission");
+    w.wait_screen(&pane, "Allow Bash(make test)?");
     let r = w.h.ok(&["thread", "read", "demo", &id]);
     assert!(r["read"]["text"].as_str().unwrap().contains("Allow Bash(make test)?"), "{r}");
     assert_eq!((r["agent"].as_str(), r["read"]["source"].as_str()), (Some("question"), Some("visible")), "{r}");
