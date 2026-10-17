@@ -294,7 +294,11 @@ impl Host {
                 project,
                 "push_skipped",
                 None,
-                format!("쓰는 화면 {watching}개 · 항목 {}개", items.len()),
+                format!(
+                    "쓰는 화면 {watching}개(기기 {}) · 항목 {}개",
+                    self.viewing.lock().unwrap().devices_in_use().join(", "),
+                    items.len()
+                ),
             );
             return;
         }

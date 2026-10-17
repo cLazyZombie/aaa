@@ -23,6 +23,14 @@ pub(crate) struct Viewing {
 }
 
 impl Viewing {
+    /// 지금 쓰는 화면이 있는 기기(앞 7자, 정렬). push를 보내지 않은 까닭을 흐름 사건에 남길 때 쓴다
+    pub(crate) fn devices_in_use(&self) -> Vec<String> {
+        let mut v: Vec<String> =
+            self.active.iter().filter(|(_, n)| **n > 0).map(|(d, _)| d.chars().take(7).collect()).collect();
+        v.sort();
+        v
+    }
+
     fn device_active(&self, dev: &str) -> bool {
         self.active.get(dev).is_some_and(|n| *n > 0)
     }

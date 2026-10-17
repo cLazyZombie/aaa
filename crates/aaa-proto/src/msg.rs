@@ -1477,6 +1477,8 @@ pub enum FrontEvent {
     Question(QuestionView),
     /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)
     Preferences(SharedPreferences),
+    /// 상태 사건 연결의 `ping`에 대한 답(herdr-web-ui ws.ts 「Liveness」: 그 ping의 답만 연결이 살아 있음을 말한다)
+    Pong { id: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1612,6 +1614,9 @@ pub enum EventsClientMsg {
     /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 쓰는 화면이 하나라도 있으면
     /// host는 어느 기기에도 Web Push를 보내지 않는다(그 화면이 이미 바뀐 것을 보인다). 연결이 끊기면 쓰지 않는 것이다.
     Presence { active: bool },
+    /// 연결이 살아 있는지 묻는다. host는 같은 `id`의 `pong`으로 답한다(herdr-web-ui ws.ts `probe`·server `ping`).
+    /// 휴대폰이 잠들었다 깨거나 망이 바뀌면 열린 것처럼 보이는 죽은 연결이 몇 분씩 남는다.
+    Ping { id: u32 },
 }
 
 #[cfg(test)]
