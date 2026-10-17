@@ -319,7 +319,7 @@ export default async function ({ ctl, page }) {
   });
 
   await step("명령 팔레트(herdr-web-ui CommandPalette.tsx, 차이 목록 L12): 머리 돋보기·Mod+Shift+K로 열고, 이름으로 찾아 Enter면 그 pane, 다시 열면 「최근」이 앞, `>`는 pane 없이 동작(「테마 전환」), 찾으면 설정 쪽(「터미널」은 그 쪽으로), 휴대폰엔 돋보기가 없다", async () => {
-    for (const name of ["pala", "palb"]) aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/cat", AA);
+    for (const name of ["pala", "palb"]) aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/cat");
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
     for (const name of ["pala", "palb"]) await dp.getByTestId(`pane-${name}`).waitFor();
     const palette = dp.getByTestId("command-palette");
