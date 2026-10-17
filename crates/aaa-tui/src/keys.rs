@@ -1,40 +1,190 @@
-//! 키 → 터미널 입력 bytes, prefix 키 해석(순수 함수).
+//! 키 → 터미널 입력 bytes, 키 이름 해석(순수 함수).
+//!
+//! 키 이름과 맞추기는 herdr 0.9.5 `src/config/keybinds.rs`(`parse_key_combo`·`format_key_combo`·
+//! `normalize_key_combo`·`key_parts_match_combo`)를 따른다.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// `C-b` 같은 prefix 설정을 해석한다.
-pub fn parse_prefix(s: &str) -> Option<(char, u8)> {
-    let c = s.trim().strip_prefix("C-")?;
-    let mut it = c.chars();
-    let ch = it.next()?.to_ascii_lowercase();
-    if it.next().is_some() {
-        return None;
-    }
-    let byte = ctrl_byte(ch)?;
-    Some((ch, byte))
+/// 키 하나(키 + modifier). Shift+Tab은 `BackTab`, Shift+글자는 소문자 + SHIFT로 맞춰 둔다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Combo {
+    pub code: KeyCode,
+    pub mods: KeyModifiers,
 }
 
-fn ctrl_byte(c: char) -> Option<u8> {
-    match c {
-        'a'..='z' => Some(c as u8 - b'a' + 1),
-        '@' | ' ' | '2' => Some(0),
-        '[' => Some(0x1b),
-        '\\' => Some(0x1c),
-        ']' => Some(0x1d),
-        '^' => Some(0x1e),
-        '_' => Some(0x1f),
-        _ => None,
+impl Combo {
+    pub const fn new(code: KeyCode, mods: KeyModifiers) -> Combo {
+        Combo { code, mods }
+    }
+
+    pub const fn plain(c: char) -> Combo {
+        Combo { code: KeyCode::Char(c), mods: KeyModifiers::NONE }
+    }
+
+    pub const fn shift(c: char) -> Combo {
+        Combo { code: KeyCode::Char(c), mods: KeyModifiers::SHIFT }
     }
 }
 
-/// prefix 키인가(Ctrl+글자)
-pub fn is_prefix(k: &KeyEvent, prefix: char) -> bool {
-    k.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(k.code, KeyCode::Char(c) if c.to_ascii_lowercase() == prefix)
+/// herdr 기본 prefix
+pub const DEFAULT_PREFIX: Combo = Combo::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
+
+/// 비교할 모양으로 맞춘다: Shift+Tab → BackTab, Shift 글자는 소문자 + SHIFT, 기호는 Shift를 뗀다
+/// (터미널은 `?`·`%`를 Shift와 함께 보내기도 하고 아니기도 하다).
+pub fn normalize(code: KeyCode, mods: KeyModifiers) -> Combo {
+    let mut mods = mods & (KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER);
+    let code = match code {
+        KeyCode::Tab if mods.contains(KeyModifiers::SHIFT) => {
+            mods.remove(KeyModifiers::SHIFT);
+            KeyCode::BackTab
+        }
+        KeyCode::BackTab => {
+            mods.remove(KeyModifiers::SHIFT);
+            KeyCode::BackTab
+        }
+        KeyCode::Char(c) if c.is_ascii_uppercase() => {
+            mods.insert(KeyModifiers::SHIFT);
+            KeyCode::Char(c.to_ascii_lowercase())
+        }
+        KeyCode::Char(c) if c.is_ascii_lowercase() => KeyCode::Char(c),
+        KeyCode::Char(c) => {
+            // Ctrl 조합이 아닌 기호·숫자·글자(한글 등)는 Shift를 보지 않는다
+            if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                mods.remove(KeyModifiers::SHIFT);
+            }
+            KeyCode::Char(c)
+        }
+        other => other,
+    };
+    Combo { code, mods }
 }
 
-/// 두벌식 자모 → 같은 자리 영문 키(prefix 뒤 명령 키). 한글 입력기가 켜진 채 prefix 뒤 키를 누르면
-/// 터미널이 자모를 보낸다(입력기를 영문으로 바꾸기 전에 들어온 키, 바꿀 수 없는 ssh·다른 OS).
+pub fn of(k: &KeyEvent) -> Combo {
+    normalize(k.code, k.modifiers)
+}
+
+/// `ctrl+b`·`prefix`에 쓰는 이름(herdr 형식). 예전 `C-b` 형식도 읽는다.
+pub fn parse_combo(s: &str) -> Option<Combo> {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("C-") {
+        let mut it = rest.chars();
+        let c = it.next()?;
+        return it.next().is_none().then(|| normalize(KeyCode::Char(c.to_ascii_lowercase()), KeyModifiers::CONTROL));
+    }
+    if s == "+" {
+        return Some(Combo::plain('+'));
+    }
+    let mut mods = KeyModifiers::NONE;
+    let mut key: Option<&str> = None;
+    for part in s.split('+') {
+        let t = part.trim();
+        if t.is_empty() {
+            return None;
+        }
+        match t.to_lowercase().as_str() {
+            "ctrl" | "control" => mods |= KeyModifiers::CONTROL,
+            "shift" => mods |= KeyModifiers::SHIFT,
+            "alt" | "option" | "meta" => mods |= KeyModifiers::ALT,
+            "cmd" | "command" | "super" => mods |= KeyModifiers::SUPER,
+            _ if key.is_some() => return None,
+            _ => key = Some(t),
+        }
+    }
+    let key = key?;
+    let mut chars = key.chars();
+    let single = chars.next().filter(|_| chars.next().is_none());
+    let code = match key.to_lowercase().as_str() {
+        "space" => KeyCode::Char(' '),
+        "enter" | "return" => KeyCode::Enter,
+        "esc" | "escape" => KeyCode::Esc,
+        "tab" => KeyCode::Tab,
+        "backspace" | "bs" => KeyCode::Backspace,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "minus" => KeyCode::Char('-'),
+        "comma" => KeyCode::Char(','),
+        "period" => KeyCode::Char('.'),
+        "slash" => KeyCode::Char('/'),
+        "backslash" => KeyCode::Char('\\'),
+        "semicolon" => KeyCode::Char(';'),
+        "plus" => KeyCode::Char('+'),
+        _ if single.is_some() => KeyCode::Char(single?),
+        k if k.starts_with('f') => KeyCode::F(k[1..].parse().ok()?),
+        _ => return None,
+    };
+    Some(normalize(code, mods))
+}
+
+/// prefix 설정 값들. 읽지 못한 값은 빼고, 남는 것이 없으면 herdr처럼 기본(`ctrl+b`)으로 둔다.
+/// 둘째 값은 읽지 못한 값(알림용).
+pub fn parse_prefixes(values: &[&str]) -> (Vec<Combo>, Vec<String>) {
+    let mut out: Vec<Combo> = Vec::new();
+    let mut bad = Vec::new();
+    for v in values {
+        match parse_combo(v) {
+            Some(c) if !out.contains(&c) => out.push(c),
+            Some(_) => {}
+            None => bad.push(v.to_string()),
+        }
+    }
+    if out.is_empty() {
+        out.push(DEFAULT_PREFIX);
+    }
+    (out, bad)
+}
+
+/// herdr `format_key_combo`와 같은 이름(`ctrl+b`, `shift+x`, `tab`)
+pub fn label(c: Combo) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if c.mods.contains(KeyModifiers::CONTROL) {
+        parts.push("ctrl".into());
+    }
+    if c.mods.contains(KeyModifiers::ALT) {
+        parts.push("alt".into());
+    }
+    if c.mods.contains(KeyModifiers::SHIFT) {
+        parts.push("shift".into());
+    }
+    if c.mods.contains(KeyModifiers::SUPER) {
+        parts.push("cmd".into());
+    }
+    let key = match c.code {
+        KeyCode::Char(' ') => "space".to_string(),
+        KeyCode::Char(ch) => ch.to_string(),
+        KeyCode::Enter => "enter".into(),
+        KeyCode::Esc => "esc".into(),
+        KeyCode::Tab => "tab".into(),
+        KeyCode::BackTab => "shift+tab".into(),
+        KeyCode::Backspace => "backspace".into(),
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::F(n) => format!("f{n}"),
+        other => format!("{other:?}").to_lowercase(),
+    };
+    parts.push(key);
+    parts.join("+")
+}
+
+/// prefix 키를 그 pane에 보낼 때의 bytes(prefix를 두 번 누름)
+pub fn combo_bytes(c: Combo) -> Vec<u8> {
+    let mut code = c.code;
+    let mut mods = c.mods;
+    if let KeyCode::Char(ch) = code
+        && mods.contains(KeyModifiers::SHIFT)
+        && ch.is_ascii_lowercase()
+    {
+        code = KeyCode::Char(ch.to_ascii_uppercase());
+        mods.remove(KeyModifiers::SHIFT);
+    }
+    encode(&KeyEvent::new(code, mods))
+}
+
+/// 두벌식 자모 → 같은 자리 영문 키(prefix 뒤 명령 키, `[tui] prefix_jamo_keys`). 한글 입력기가 켜진 채
+/// prefix 뒤 키를 누르면 터미널이 자모를 보낸다(입력기를 바꾸지 못하는 ssh·다른 OS).
 /// 쌍자음·ㅒ·ㅖ는 Shift 자리(대문자)다.
 pub fn jamo_key(c: char) -> Option<char> {
     const MAP: &[(char, char)] = &[
@@ -73,6 +223,19 @@ pub fn jamo_key(c: char) -> Option<char> {
         ('ㅖ', 'P'),
     ];
     MAP.iter().find(|(j, _)| *j == c).map(|(_, k)| *k)
+}
+
+fn ctrl_byte(c: char) -> Option<u8> {
+    match c {
+        'a'..='z' => Some(c as u8 - b'a' + 1),
+        '@' | ' ' | '2' => Some(0),
+        '[' => Some(0x1b),
+        '\\' => Some(0x1c),
+        ']' => Some(0x1d),
+        '^' => Some(0x1e),
+        '_' => Some(0x1f),
+        _ => None,
+    }
 }
 
 fn modifier_param(m: KeyModifiers) -> u8 {
@@ -134,9 +297,8 @@ mod tests {
 
     #[test]
     fn jamo_is_read_as_the_key_at_the_same_place() {
-        // 명령 키: c 새 탭, x 닫기, d 나가기, t 이 화면 크기로, r 재개, n·p 탭, o 이동
         for (j, k) in
-            [('ㅊ', 'c'), ('ㅌ', 'x'), ('ㅇ', 'd'), ('ㅅ', 't'), ('ㄱ', 'r'), ('ㅜ', 'n'), ('ㅔ', 'p'), ('ㅐ', 'o')]
+            [('ㅊ', 'c'), ('ㅌ', 'x'), ('ㅂ', 'q'), ('ㅍ', 'v'), ('ㅠ', 'b'), ('ㅈ', 'w'), ('ㅜ', 'n'), ('ㅔ', 'p')]
         {
             assert_eq!(jamo_key(j), Some(k), "{j}");
         }
@@ -148,14 +310,39 @@ mod tests {
     }
 
     #[test]
-    fn prefix_parse() {
-        assert_eq!(parse_prefix("C-b"), Some(('b', 2)));
-        assert_eq!(parse_prefix("C-g"), Some(('g', 7)));
-        assert_eq!(parse_prefix(" C-A "), Some(('a', 1)));
-        assert_eq!(parse_prefix("b"), None);
-        assert_eq!(parse_prefix("C-bb"), None);
-        assert!(is_prefix(&k(KeyCode::Char('b'), KeyModifiers::CONTROL), 'b'));
-        assert!(!is_prefix(&k(KeyCode::Char('b'), KeyModifiers::NONE), 'b'));
+    fn combo_names_like_herdr() {
+        let ctrl = KeyModifiers::CONTROL;
+        assert_eq!(parse_combo("ctrl+b"), Some(Combo::new(KeyCode::Char('b'), ctrl)));
+        assert_eq!(parse_combo("Ctrl+A"), Some(Combo::new(KeyCode::Char('a'), ctrl | KeyModifiers::SHIFT)));
+        assert_eq!(parse_combo("ctrl+space"), Some(Combo::new(KeyCode::Char(' '), ctrl)));
+        assert_eq!(parse_combo("shift+tab"), Some(Combo::new(KeyCode::BackTab, KeyModifiers::NONE)));
+        assert_eq!(parse_combo("minus"), Some(Combo::plain('-')));
+        // 예전 형식
+        assert_eq!(parse_combo("C-g"), Some(Combo::new(KeyCode::Char('g'), ctrl)));
+        assert_eq!(parse_combo(" C-A "), Some(Combo::new(KeyCode::Char('a'), ctrl)));
+        for bad in ["", "ctrl+", "ctrl+bb", "C-bb", "b+c"] {
+            assert_eq!(parse_combo(bad), None, "{bad}");
+        }
+        for s in ["ctrl+b", "shift+x", "tab", "shift+tab", "ctrl+space", "?", "-"] {
+            assert_eq!(label(parse_combo(s).unwrap()), s);
+        }
+        // 읽지 못한 값은 빼고, 남는 것이 없으면 기본
+        assert_eq!(parse_prefixes(&["nope"]), (vec![DEFAULT_PREFIX], vec!["nope".to_string()]));
+        assert_eq!(parse_prefixes(&["ctrl+a", "ctrl+a", "C-b"]).0.len(), 2);
+    }
+
+    #[test]
+    fn keys_from_the_terminal_match_combos() {
+        // 터미널은 Shift 글자를 대문자로(+SHIFT 또는 없이), 기호는 Shift와 함께 또는 없이 보낸다
+        assert_eq!(of(&k(KeyCode::Char('X'), KeyModifiers::SHIFT)), Combo::shift('x'));
+        assert_eq!(of(&k(KeyCode::Char('X'), KeyModifiers::NONE)), Combo::shift('x'));
+        assert_eq!(of(&k(KeyCode::Char('?'), KeyModifiers::SHIFT)), Combo::plain('?'));
+        assert_eq!(of(&k(KeyCode::Tab, KeyModifiers::SHIFT)), Combo::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(of(&k(KeyCode::BackTab, KeyModifiers::SHIFT)), Combo::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(of(&k(KeyCode::Char('b'), KeyModifiers::CONTROL)), DEFAULT_PREFIX);
+        // prefix 두 번은 그 키 bytes
+        assert_eq!(combo_bytes(DEFAULT_PREFIX), [2]);
+        assert_eq!(combo_bytes(parse_combo("alt+x").unwrap()), b"\x1bx");
     }
 
     #[test]

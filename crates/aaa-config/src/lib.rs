@@ -180,20 +180,54 @@ impl Default for ProjectsSection {
     }
 }
 
-/// TUI front(`aaa attach`). host 머신에서 실행하므로 host.toml에 둔다.
+/// TUI front(`aaa attach`). host 머신에서 실행하므로 host.toml에 둔다. 키 이름과 기본값은 herdr 0.9.5 `[keys]`를 따른다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TuiSection {
-    /// 명령 prefix 키. `C-<글자>` 형식(예: tmux 안에서 쓸 때는 C-a 대신 C-g 같은 것을 고른다)
-    pub prefix: String,
-    /// prefix를 받으면 입력기가 한글 등(영문 아님)일 때 영문 입력기로 바꾸고, 명령 키 뒤에 되돌린다(macOS, ssh 밖).
-    /// 끄면 바꾸지 않는다. 어느 쪽이든 prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다.
-    pub prefix_ascii: bool,
+    /// 명령 prefix 키. herdr 형식(`ctrl+b`, 여러 개면 배열 `["ctrl+b", "ctrl+a"]`). 예전 `C-b` 형식도 읽는다.
+    pub prefix: KeyList,
+    /// prefix·탐색·크기·copy 모드 동안 입력기가 한글 등(영문 아님)이면 영문 입력기로 바꾸고, 모드가 끝나면 되돌린다
+    /// (macOS, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같다(기본 끔).
+    pub switch_ascii_input_source_in_prefix: bool,
+    /// 예전 이름(`prefix_ascii`). 적혀 있으면 위 값 대신 쓴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_ascii: Option<bool>,
+    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 끔). 입력기를 바꾸지 못하는 ssh·다른 OS용.
+    pub prefix_jamo_keys: bool,
+}
+
+impl TuiSection {
+    /// prefix 동안 영문 입력기로 바꾸나(예전 이름 `prefix_ascii`가 있으면 그 값)
+    pub fn switch_ascii(&self) -> bool {
+        self.prefix_ascii.unwrap_or(self.switch_ascii_input_source_in_prefix)
+    }
 }
 
 impl Default for TuiSection {
     fn default() -> Self {
-        TuiSection { prefix: "C-b".into(), prefix_ascii: true }
+        TuiSection {
+            prefix: KeyList::One("ctrl+b".into()),
+            switch_ascii_input_source_in_prefix: false,
+            prefix_ascii: None,
+            prefix_jamo_keys: false,
+        }
+    }
+}
+
+/// 키 하나 또는 여러 개(herdr 설정의 키 값과 같다)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeyList {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl KeyList {
+    pub fn values(&self) -> Vec<&str> {
+        match self {
+            KeyList::One(s) => vec![s.as_str()],
+            KeyList::Many(v) => v.iter().map(String::as_str).collect(),
+        }
     }
 }
 
