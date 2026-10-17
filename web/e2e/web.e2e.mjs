@@ -1031,6 +1031,8 @@ try {
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await dp.getByTestId("pane-t1").click();
     await until("13px로 연다", async () => (await rowsFont(dp)) === "13px");
+    // 데스크톱(바로 입력)은 pane을 열면 터미널이 키보드를 받는다(herdr-web-ui PaneTerminal 2072줄). 입력줄이면 참고처럼 놓는다.
+    await until("열면 터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")));
     await dp.getByTestId("terminal").click();
     const wide = await settled(dp, "데스크톱 크기", () => true);
     await dp.getByTestId("settings-open").click();
@@ -1230,9 +1232,19 @@ try {
     aaa("pane", "kill", "mouseapp");
   });
 
-  await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 놓는다", async () => {
+  await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 바로 놓는다", async () => {
     const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
     const op = other.page;
+    // 이 화면이 WebSocket에 쓴 글 frame
+    const opFrames = [];
+    op.on("websocket", (ws) =>
+      ws.on("framesent", (f) => {
+        if (typeof f.payload !== "string") return;
+        try {
+          opFrames.push(JSON.parse(f.payload));
+        } catch {}
+      }),
+    );
     const t1size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       return `${p.cols}x${p.rows}`;
@@ -1246,9 +1258,10 @@ try {
     const held = t1size();
     const first = holder();
     await op.getByTestId("pane-t1").click();
-    await until("다른 웹이 크기를 정하는 중 표시", async () =>
-      /웹\(.{4}\)이 크기를 정하는 중/.test(await op.getByTestId("lease-banner").innerText()),
-    );
+    await until("둘째 화면 터미널", async () => (await screenText(op)).includes("own-3"));
+    // 「다른 화면이 크기를 정하는 중」 띠와 「화면에 맞추기」 단추는 참고에 없어 없앴다
+    if ((await op.getByTestId("lease-banner").count()) !== 0) throw new Error("크기를 정하는 중 띠가 있다");
+    if ((await op.getByRole("button", { name: "화면에 맞추기" }).count()) !== 0) throw new Error("화면에 맞추기 단추가 있다");
     // 입력 막대가 켜져 있다(보기 권한이 아니면 언제나 입력된다). 열기만 해서는 크기를 바꾸지 않는다
     if (await op.getByLabel("보낼 글").isDisabled()) throw new Error("다른 화면이 쓰는 중이라고 입력 막대가 꺼졌다");
     await sleep(600);
@@ -1259,7 +1272,6 @@ try {
     await until("다른 화면 입력", async () => (await screenText(page)).includes("direct-21"));
     await until("입력한 화면 크기", () => t1size() !== held && holder() !== first);
     const otherSize = t1size();
-    await until("원래 화면에 표시", async () => (await page.getByTestId("lease-banner").count()) === 1);
     await shot(page, "desktop-lease-held");
     // 2) 번갈아 입력하면 크기가 그때마다 바뀐다(지금 규칙): 원래 화면 터미널에 직접 친다
     await page.locator(".xterm-screen").click();
@@ -1272,18 +1284,20 @@ try {
     // 3) focus를 얻은 화면이 크기를 다시 건다(입력 없이)
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
-    // 4) 쓰던 화면이 1초 넘게 가려지면 놓고, 보이고 focus 있는 화면이 자기 크기로 맞춘다
+    // 4) 쓰던 화면이 가려지면 바로 놓고(참고 keepSize(hidden), 전에는 1초 뒤), 보이고 focus 있는 화면이 자기 크기로 맞춘다
     await op.getByLabel("보낼 글").fill("echo hide");
     await op.getByRole("button", { name: "보내기" }).click();
     await until("다른 화면 크기", () => t1size() === otherSize);
+    const beforeHide = opFrames.length;
     await op.evaluate(() => {
       Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    // 1초 타이머가 아니라 바로 놓는다(700ms 안에 release frame)
+    await until("가려지자 바로 놓음", () => opFrames.slice(beforeHide).some((f) => f.t === "release"), 700);
     await until("가려진 화면이 놓음 → 남은 화면 크기", () => t1size() === held && holder() === first, 5000);
     if (other.errors.length) throw new Error(other.errors.join("; "));
     await other.page.context().close();
-    await until("표시 없음", async () => (await page.getByTestId("lease-banner").count()) === 0);
     if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("입력 막대가 꺼져 있다");
   });
 
@@ -1720,7 +1734,23 @@ try {
         await until("iPhone 준비", () => ready).catch(async (e) => {
           throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames)} 화면 ${JSON.stringify((await p.locator("body").innerText()).slice(0, 300))}`);
         });
-        await until("iPhone 화면", async () => (await screenText(p)).includes("paste>"));
+        await until("iPhone 화면", async () => (await screenText(p)).includes("paste>")).catch(async (e) => {
+          // CI에서만 실패한 적이 있다(10-17 dbacbfe·372e85d): 그때 화면이 어땠는지 남긴다
+          const seen = await p.evaluate(() => {
+            const rows = document.querySelector(".xterm-rows");
+            const scroll = document.querySelector(".term-scroll");
+            return {
+              text: rows?.innerText.replace(/\s+/g, " ").slice(-300),
+              rows: rows?.childElementCount,
+              font: rows ? getComputedStyle(rows).fontSize : null,
+              scroll: scroll ? [scroll.clientWidth, scroll.clientHeight, scroll.scrollTop, scroll.scrollHeight] : null,
+              vis: document.visibilityState,
+              focus: document.hasFocus(),
+              banners: [...document.querySelectorAll(".banner")].map((b) => b.textContent),
+            };
+          });
+          throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames.slice(-12))} ${JSON.stringify(seen)}`);
+        });
         const input = p.locator(".xterm-helper-textarea");
         await input.focus();
         // 기록처럼 화면 키보드가 올라온다(보이는 높이 873 → 485)
