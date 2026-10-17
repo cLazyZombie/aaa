@@ -17,6 +17,9 @@
 
 use aaa_common::process;
 
+/// pid를 모르는 pane 경고는 host마다 한 번
+static NO_PID_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// 연결한 프로세스가 있는 곳
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Caller {
@@ -34,12 +37,19 @@ impl crate::Host {
         let Some(pid) = pid.filter(|p| process::parent(*p).is_some()) else { return Caller::Detached };
         let (panes, agents) = {
             let i = self.inner.lock().unwrap();
-            let panes: Vec<(String, u32)> = i
+            let running: Vec<_> = i
                 .panes
                 .iter()
                 .filter(|(_, p)| p.info.state.is_running() && i.machines.get(&p.machine_id).is_some_and(|m| m.local))
-                .filter_map(|(id, p)| p.info.pid.map(|c| (id.clone(), c)))
                 .collect();
+            // pid가 없는 pane은 판정에서 빠진다(그 안의 CLI가 사람처럼 보인다): 운영자가 알게 한 번 남긴다
+            if let Some((id, _)) = running.iter().find(|(_, p)| p.info.pid.is_none())
+                && !NO_PID_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                tracing::warn!(pane = %id, "pid를 모르는 pane이 있어 그 안의 CLI를 thread 범위로 가리지 못한다(plan §8.116)");
+            }
+            let panes: Vec<(String, u32)> =
+                running.iter().filter_map(|(id, p)| p.info.pid.map(|c| ((*id).clone(), c))).collect();
             let agents: Vec<u32> =
                 i.machines.values().filter(|m| m.local && m.conn.is_some()).filter_map(|m| m.agent_pid).collect();
             (panes, agents)
