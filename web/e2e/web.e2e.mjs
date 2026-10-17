@@ -2087,36 +2087,47 @@ try {
     const sweep = await hp.evaluate(async () => {
       const box = document.querySelector('[data-testid="terminal"]');
       const vp = box.querySelector(".xterm-viewport");
-      // 굴린 자리가 그려질 때까지(Term onRender가 그린 맨 위 줄을 data-view-top에 적는다). 걸음마다 맨 위 줄이 바뀐다
-      const drawnFrom = (was) =>
-        new Promise((done) => {
-          const ok = () => box.dataset.viewTop !== undefined && box.dataset.viewTop !== was;
-          if (ok()) return done(Number(box.dataset.viewTop));
-          const mo = new MutationObserver(() => ok() && (mo.disconnect(), done(Number(box.dataset.viewTop))));
+      const rows = () => [...box.querySelectorAll(".xterm-rows > div")];
+      // 그 줄이 맨 위로 그려질 때까지(Term onRender가 data-view-top에 적는다). 걸음마다 맨 위 줄이 바뀌므로 그리기가 꼭 온다.
+      // 오지 않으면 끝없이 기다리지 않고 그때 모습으로 실패한다(기다림의 끝은 사건이고, 10초는 고장 판정일 뿐이다)
+      const drawnAt = (line) =>
+        new Promise((done, fail) => {
+          const ok = () => box.dataset.viewTop === String(line);
+          if (ok()) return done();
+          const stuck = setTimeout(() => {
+            mo.disconnect();
+            fail(new Error(`줄 ${line}이 그려지지 않았다: ${JSON.stringify({ top: box.dataset.viewTop, base: box.dataset.viewBase, scrollTop: vp.scrollTop, scrollHeight: vp.scrollHeight })}`));
+          }, 10_000);
+          const mo = new MutationObserver(() => ok() && (clearTimeout(stuck), mo.disconnect(), done()));
           mo.observe(box, { attributes: true, attributeFilter: ["data-view-top"] });
         });
+      // 줄 하나의 높이는 xterm viewport가 버퍼 줄 수(baseY + 화면 줄)만큼 늘인 높이에서 나온다: 줄 번호에 맞춘 scrollTop은 그 줄이 된다
+      const goTo = async (line) => {
+        if (box.dataset.viewTop === String(line)) return;
+        const rowPx = vp.scrollHeight / (Number(box.dataset.viewBase) + rows().length);
+        vp.scrollTop = line * rowPx;
+        vp.dispatchEvent(new Event("scroll"));
+        await drawnAt(line);
+      };
       const nums = new Set();
       const bad = [];
       const ticks = new Map();
       let last = -1;
-      for (let y = 0; ; y += vp.clientHeight / 2) {
-        const was = box.dataset.viewTop;
-        const before = vp.scrollTop;
-        vp.scrollTop = y;
-        vp.dispatchEvent(new Event("scroll"));
-        // 맨 위(첫 걸음)에 이미 있으면 그린 자리도 그대로다
-        const top = vp.scrollTop === before ? Number(was) : await drawnFrom(was);
-        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
+      const half = Math.floor(rows().length / 2);
+      for (let line = 0; ; ) {
+        await goTo(line);
+        const divs = rows();
         const got = divs.map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
         for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
         got.forEach((n) => nums.add(n));
         // tick-1·h-06000 줄의 버퍼 줄 번호(겹쳐 본 화면에서 같은 줄은 한 번 센다)
         divs.forEach((d, i) => {
-          const at = top + i;
-          if (d.textContent.startsWith("tick-1")) ticks.set(at, "tick");
-          if (d.textContent.startsWith("h-06000")) last = at;
+          if (d.textContent.startsWith("tick-1")) ticks.set(line + i, "tick");
+          if (d.textContent.startsWith("h-06000")) last = line + i;
         });
-        if (y >= vp.scrollHeight - vp.clientHeight) break;
+        const base = Number(box.dataset.viewBase);
+        if (line >= base) break;
+        line = Math.min(base, line + half);
       }
       const tickAt = [...ticks.keys()];
       return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), tickAt, last };
