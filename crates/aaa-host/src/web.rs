@@ -595,6 +595,21 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
+/// iOS·브라우저가 link 없이도 관례로 찾는 터치 아이콘 주소(`apple-touch-icon-precomposed.png`,
+/// `apple-touch-icon-180x180.png`, `apple-touch-icon-120x120-precomposed.png`)는 `apple-touch-icon.png`과 같은 그림이다
+fn touch_icon_alias(path: &str) -> &str {
+    let alias = path.strip_prefix("apple-touch-icon").and_then(|rest| rest.strip_suffix(".png")).is_some_and(|mid| {
+        mid.is_empty()
+            || mid.starts_with('-')
+                && mid[1..].split('-').all(|p| {
+                    p == "precomposed"
+                        || p.split_once('x')
+                            .is_some_and(|(w, h)| !w.is_empty() && w.bytes().all(|b| b.is_ascii_digit()) && w == h)
+                })
+    });
+    if alias { "apple-touch-icon.png" } else { path }
+}
+
 async fn static_file(req: Request) -> Response {
     let path = req.uri().path().trim_start_matches('/');
     if path.starts_with("api/") {
@@ -607,13 +622,14 @@ async fn static_file(req: Request) -> Response {
         )
             .into_response();
     }
-    let want = if path.is_empty() { "index.html" } else { path };
-    let (name, bytes) = assets::WEB_ASSETS
-        .iter()
-        .find(|(n, _)| *n == want)
-        .or_else(|| assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html"))
-        .copied()
-        .unwrap();
+    let want = if path.is_empty() { "index.html" } else { touch_icon_alias(path) };
+    let found = assets::WEB_ASSETS.iter().find(|(n, _)| *n == want).copied();
+    // 없는 파일 주소에는 화면(HTML)이 아니라 404를 준다. 그림 주소에 HTML을 200으로 주면 그것을 아이콘으로 받는
+    // 쪽(iOS 홈 화면·앱 전환)이 깨진 그림을 갖는다. 확장자 없는 주소만 화면 경로다(참고 static.ts는 /assets·/icons만 404).
+    if found.is_none() && path.rsplit('/').next().is_some_and(|f| f.contains('.')) {
+        return (StatusCode::NOT_FOUND, [(header::CACHE_CONTROL, "no-cache")], "없는 파일").into_response();
+    }
+    let (name, bytes) = found.or_else(|| assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html").copied()).unwrap();
     // assets/는 이름에 hash가, fonts/는 폴더에 버전이 있다(글꼴을 바꾸면 폴더도 바꾼다)
     let cache = if name.starts_with("assets/") || name.starts_with("fonts/") {
         "public, max-age=31536000, immutable"
@@ -630,6 +646,28 @@ async fn static_file(req: Request) -> Response {
 #[cfg(test)]
 mod content_type_tests {
     use super::content_type;
+
+    #[test]
+    fn touch_icon_aliases() {
+        use super::touch_icon_alias;
+        for p in [
+            "apple-touch-icon.png",
+            "apple-touch-icon-precomposed.png",
+            "apple-touch-icon-180x180.png",
+            "apple-touch-icon-120x120-precomposed.png",
+        ] {
+            assert_eq!(touch_icon_alias(p), "apple-touch-icon.png", "{p}");
+        }
+        for p in [
+            "apple-touch-icon-x.png",
+            "apple-touch-icon-180x120.png",
+            "apple-touch-icon.svg",
+            "icon-192.png",
+            "assets/apple-touch-icon.png",
+        ] {
+            assert_eq!(touch_icon_alias(p), p, "{p}");
+        }
+    }
 
     #[test]
     fn by_last_segment() {
