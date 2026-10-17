@@ -9,6 +9,7 @@
 //!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
 
 pub mod clip;
+pub mod input_source;
 pub mod keys;
 
 use std::collections::{HashMap, HashSet};
@@ -28,6 +29,9 @@ use ratatui::style::{Color, Modifier, Style};
 use aaa_common::front::{FrontClient, FrontSender};
 use aaa_proto::layout::{self, Rect};
 
+/// prefix 뒤 명령 키를 기다리는 시간. 지나면 취소하고 입력기를 되돌린다.
+const PREFIX_WAIT: Duration = Duration::from_secs(3);
+
 pub fn run(workspace: Option<String>) -> Result<ExitCode> {
     let cfg = aaa_config::load_host(&aaa_config::paths::config_dir()).map(|l| l.config).unwrap_or_default();
     let prefix = keys::parse_prefix(&cfg.tui.prefix)
@@ -40,13 +44,13 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         let mut terminal = ratatui::init();
         // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
         let _focus = FocusReport::on();
-        let r = App::new(
+        let mut app = App::new(
             workspace.unwrap_or_else(|| aaa_proto::DEFAULT_WORKSPACE.to_string()),
             prefix,
             client.front.clone(),
-        )
-        .run(&mut terminal, client)
-        .await;
+        );
+        app.prefix_ascii = cfg.tui.prefix_ascii;
+        let r = app.run(&mut terminal, client).await;
         ratatui::restore();
         r
     })?;
@@ -126,6 +130,12 @@ struct App {
     focused: bool,
     /// focus를 다시 얻었다: 다음 sync에서 보이는 pane의 크기를 다시 건다
     reclaim: bool,
+    /// prefix 뒤 명령 키를 영문 입력기로 받는다(`[tui] prefix_ascii`)
+    prefix_ascii: bool,
+    /// prefix 동안 영문으로 바꿔 둔 입력기(없애면 되돌린다: 명령 키·시간 초과·종료·panic)
+    ascii: Option<input_source::Ascii>,
+    /// prefix를 받은 때(PREFIX_WAIT 동안 명령 키가 없으면 취소)
+    prefix_at: Option<tokio::time::Instant>,
     quit: bool,
 }
 
@@ -149,6 +159,9 @@ impl App {
             attach_failed: None,
             focused: true,
             reclaim: false,
+            prefix_ascii: true,
+            ascii: None,
+            prefix_at: None,
             quit: false,
         }
     }
@@ -195,6 +208,11 @@ impl App {
                 },
                 // 화면 frame이 몰려와도 한 번에 그린다
                 _ = tokio::time::sleep(Duration::from_millis(16)), if dirty => {}
+                // prefix 뒤 명령 키가 오지 않으면 취소하고 입력기를 되돌린다
+                _ = tokio::time::sleep_until(self.prefix_at.unwrap_or_else(tokio::time::Instant::now) + PREFIX_WAIT), if self.in_prefix => {
+                    self.end_prefix();
+                    dirty = true;
+                }
             }
             // 쌓인 메시지를 마저 처리해 한 번만 그린다
             while let Ok(m) = rx.try_recv() {
@@ -352,10 +370,21 @@ impl App {
         Ok(())
     }
 
+    /// prefix 상태를 끝내고 바꿔 둔 입력기를 되돌린다
+    fn end_prefix(&mut self) {
+        self.in_prefix = false;
+        self.prefix_at = None;
+        self.ascii = None;
+    }
+
     async fn on_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         if !self.in_prefix {
             if keys::is_prefix(&k, self.prefix.0) {
                 self.in_prefix = true;
+                self.prefix_at = Some(tokio::time::Instant::now());
+                if self.prefix_ascii && self.ascii.is_none() {
+                    self.ascii = input_source::Ascii::switch();
+                }
                 return Ok(());
             }
             if k.code == KeyCode::Char('v') && k.modifiers == KeyModifiers::CONTROL && self.paste_image(tx).await? {
@@ -363,7 +392,12 @@ impl App {
             }
             return self.input(tx, keys::encode(&k)).await;
         }
-        self.in_prefix = false;
+        self.end_prefix();
+        // 한글 입력기가 켜진 채 누른 명령 키(두벌식 자모)는 같은 자리 영문 키로 읽는다
+        let k = match k.code {
+            KeyCode::Char(c) => keys::jamo_key(c).map_or(k, |m| KeyEvent { code: KeyCode::Char(m), ..k }),
+            _ => k,
+        };
         let focus = self.focus.clone();
         match k.code {
             // prefix를 두 번 누르면 그 키를 pane에 보낸다

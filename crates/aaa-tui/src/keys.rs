@@ -33,6 +33,48 @@ pub fn is_prefix(k: &KeyEvent, prefix: char) -> bool {
         && matches!(k.code, KeyCode::Char(c) if c.to_ascii_lowercase() == prefix)
 }
 
+/// 두벌식 자모 → 같은 자리 영문 키(prefix 뒤 명령 키). 한글 입력기가 켜진 채 prefix 뒤 키를 누르면
+/// 터미널이 자모를 보낸다(입력기를 영문으로 바꾸기 전에 들어온 키, 바꿀 수 없는 ssh·다른 OS).
+/// 쌍자음·ㅒ·ㅖ는 Shift 자리(대문자)다.
+pub fn jamo_key(c: char) -> Option<char> {
+    const MAP: &[(char, char)] = &[
+        ('ㅂ', 'q'),
+        ('ㅈ', 'w'),
+        ('ㄷ', 'e'),
+        ('ㄱ', 'r'),
+        ('ㅅ', 't'),
+        ('ㅛ', 'y'),
+        ('ㅕ', 'u'),
+        ('ㅑ', 'i'),
+        ('ㅐ', 'o'),
+        ('ㅔ', 'p'),
+        ('ㅁ', 'a'),
+        ('ㄴ', 's'),
+        ('ㅇ', 'd'),
+        ('ㄹ', 'f'),
+        ('ㅎ', 'g'),
+        ('ㅗ', 'h'),
+        ('ㅓ', 'j'),
+        ('ㅏ', 'k'),
+        ('ㅣ', 'l'),
+        ('ㅋ', 'z'),
+        ('ㅌ', 'x'),
+        ('ㅊ', 'c'),
+        ('ㅍ', 'v'),
+        ('ㅠ', 'b'),
+        ('ㅜ', 'n'),
+        ('ㅡ', 'm'),
+        ('ㅃ', 'Q'),
+        ('ㅉ', 'W'),
+        ('ㄸ', 'E'),
+        ('ㄲ', 'R'),
+        ('ㅆ', 'T'),
+        ('ㅒ', 'O'),
+        ('ㅖ', 'P'),
+    ];
+    MAP.iter().find(|(j, _)| *j == c).map(|(_, k)| *k)
+}
+
 fn modifier_param(m: KeyModifiers) -> u8 {
     1 + u8::from(m.contains(KeyModifiers::SHIFT))
         + 2 * u8::from(m.contains(KeyModifiers::ALT))
@@ -88,6 +130,21 @@ mod tests {
 
     fn k(code: KeyCode, m: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, m)
+    }
+
+    #[test]
+    fn jamo_is_read_as_the_key_at_the_same_place() {
+        // 명령 키: c 새 탭, x 닫기, d 나가기, t 이 화면 크기로, r 재개, n·p 탭, o 이동
+        for (j, k) in
+            [('ㅊ', 'c'), ('ㅌ', 'x'), ('ㅇ', 'd'), ('ㅅ', 't'), ('ㄱ', 'r'), ('ㅜ', 'n'), ('ㅔ', 'p'), ('ㅐ', 'o')]
+        {
+            assert_eq!(jamo_key(j), Some(k), "{j}");
+        }
+        assert_eq!(jamo_key('ㅆ'), Some('T'));
+        // 자모가 아니면 그대로 둔다(완성 음절·영문·기호)
+        for c in ['가', 'c', '%', '"', '1'] {
+            assert_eq!(jamo_key(c), None, "{c}");
+        }
     }
 
     #[test]

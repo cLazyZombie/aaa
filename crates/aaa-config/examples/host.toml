@@ -19,6 +19,8 @@ mode = "child"
 [tui]
 # aaa attach의 명령 prefix 키(C-<글자>). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "C-g").
 prefix = "C-b"
+# prefix 뒤 명령 키를 영문 입력기로 받는다(한글 입력기면 잠깐 영문으로 바꾸고 되돌린다, macOS·ssh 밖).
+prefix_ascii = true
 
 [projects]
 # 프로젝트 폴더 root(비우면 ~/.aaa/projects)
