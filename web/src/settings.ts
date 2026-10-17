@@ -211,15 +211,17 @@ export function useKeepScreenOn(): boolean {
  * - 켜짐(기본 켬): 이 기기의 알림 전체. 끄면 push 구독도 지운다.
  * - 앱 안(기본 켬): 앱을 보는 동안 위에서 내려오는 알림(Droplet).
  * - 소리(기본 끔): 앱 탭이 열려 있으면 알림마다 소리.
+ * - 무음 모드에서도(기본 끔, aaa): iPhone·iPad 무음 스위치를 켜 두어도 소리. 그 소리 동안 다른 앱 소리가 멈춘다(plan §8.78).
  * 기본값이면 지운다. 값은 "1"·"0".
  */
-export type AlertSetting = "alertsOn" | "alertInApp" | "alertSound";
+export type AlertSetting = "alertsOn" | "alertInApp" | "alertSound" | "alertSilent";
 const ALERT_KEYS: Record<AlertSetting, string> = {
   alertsOn: "aaa:alerts-on",
   alertInApp: "aaa:alert-in-app",
   alertSound: "aaa:alert-sound",
+  alertSilent: "aaa:alert-silent",
 };
-const ALERT_DEFAULTS: Record<AlertSetting, boolean> = { alertsOn: true, alertInApp: true, alertSound: false };
+const ALERT_DEFAULTS: Record<AlertSetting, boolean> = { alertsOn: true, alertInApp: true, alertSound: false, alertSilent: false };
 
 function readAlert(name: AlertSetting): boolean {
   try {
@@ -234,6 +236,7 @@ const alerts: Record<AlertSetting, boolean> = {
   alertsOn: readAlert("alertsOn"),
   alertInApp: readAlert("alertInApp"),
   alertSound: readAlert("alertSound"),
+  alertSilent: readAlert("alertSilent"),
 };
 
 export function setAlertSetting(name: AlertSetting, on: boolean) {

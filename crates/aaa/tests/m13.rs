@@ -30,6 +30,12 @@ while IFS= read -r line; do
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
       ln -s /etc/hosts "$dir/library/link"
+      # 결과물을 다 쓴 뒤에 보고를 쓴다: 보고가 바뀌면 host가 그때의 library를 받는다(t-0327 넘김 (나), 0바이트 사본)
+      case "$task" in
+        *big*)
+          head -c 2097152 /dev/urandom > "$dir/library/big.bin"
+          printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
+      esac
       printf '[완료]\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       case "$task" in
@@ -37,11 +43,6 @@ while IFS= read -r line; do
       esac
       case "$task" in
         *dirty*) echo dirty > dirty.txt ;;
-      esac
-      case "$task" in
-        *big*)
-          head -c 2097152 /dev/urandom > "$dir/library/big.bin"
-          printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
       esac
       echo "done"
       ;;
@@ -1276,6 +1277,23 @@ fn library_view() {
     assert_eq!(st, 502, "{}", String::from_utf8_lossy(&body));
     assert!(String::from_utf8_lossy(&body).contains("agent에 남긴 결과물을 읽지 못한다"));
     assert!(t0.elapsed() < Duration::from_secs(5));
+
+    // 보고 뒤에 바뀐 library는 보고가 그대로여도 resolve의 마지막 사본에서 다시 받는다
+    // (herdr-projects threads.rs final_copy → copy_home_*: hash와 상관없이 library를 다시 복사)
+    std::fs::write(agent_lib.join("out.txt"), "나중 결과물\n").unwrap();
+    std::fs::write(agent_lib.join("late.txt"), "늦게\n").unwrap();
+    w.h.ok(&["thread", "resolve", "demo", &id]);
+    let lib = w.h.ok(&["thread", "library", "demo", &id]);
+    let base = lib["base"].as_str().unwrap().to_string();
+    let (st, _, body) = http_get(&web, &format!("{base}out.txt"));
+    assert_eq!((st, String::from_utf8_lossy(&body).into_owned()), (200, "나중 결과물\n".to_string()));
+    let (st, _, body) = http_get(&web, &format!("{base}late.txt"));
+    assert_eq!((st, body.as_slice()), (200, "늦게\n".as_bytes()));
+    assert_eq!(http_get(&web, &format!("{base}big.bin")).0, 404, "지운 파일이 사본에 남았다");
+    // 보고는 그대로라 report_ready는 다시 내지 않고, 바뀐 library만 알린다(바뀌지 않았으면 worktree_thread_round_trip처럼 없다)
+    let kinds = w.kinds(0);
+    assert_eq!(kinds.iter().filter(|k| *k == "report_ready").count(), 1, "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| *k == "library_copied").count(), 1, "{kinds:?}");
 }
 
 /// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.

@@ -27,6 +27,8 @@ const env = {
   AAA_STATE_DIR: `${root}/s`,
   CLAUDE_CONFIG_DIR: `${root}/claude`,
   RUST_LOG: "aaa=info",
+  // 상태 사건 연결의 WebSocket ping 1초, 3초 동안 아무것도 받지 못하면 host가 끊는다(기본 15초·45초, 「두 기기·죽은 연결」 단계)
+  AAA_TEST_EVENTS_PING_MS: "1000",
 };
 const procs = new Map();
 
@@ -35,7 +37,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function aaa(...args) {
   // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
   const a = ["--json", ...args];
-  return JSON.parse(execFileSync(AA, a, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  try {
+    return JSON.parse(execFileSync(AA, a, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  } catch (e) {
+    // 실패하면 CLI가 답한 것(--json은 오류도 stdout에 쓴다)과 stderr를 남긴다
+    if (e.status !== undefined) e.message = `aaa ${args.join(" ")}: 끝 코드 ${e.status} ${String(e.stdout ?? "").trim()} ${String(e.stderr ?? "").trim()}`.slice(0, 600);
+    throw e;
+  }
 }
 
 // pane 출력에 글이 나올 때까지(`pane wait-output`: host가 출력 사건마다 다시 본다). 기다리는 동안 node를 막지 않는다.
@@ -535,7 +543,11 @@ let failed = false;
 const steps = [];
 /** 열려 있는 화면(pairPage). 단계가 실패하면 화면마다 termDiag를 남긴다(CI에서만 난 실패가 여러 단계에 걸쳐 났다) */
 const openPages = new Set();
+// AAA_E2E_ONLY=<정규식>: 이름이 맞는 단계만 돈다(한 단계를 여러 번·부하 아래 되풀이해 볼 때). 준비 단계(host·agent 시작)와
+// 단계 밖의 준비(첫 화면 연결)는 그대로 한다
+const only = process.env.AAA_E2E_ONLY ? new RegExp(process.env.AAA_E2E_ONLY) : null;
 async function step(name, fn) {
+  if (only && !only.test(name) && name !== "host·agent 시작") return;
   const t0 = Date.now();
   try {
     await fn();
@@ -1899,9 +1911,18 @@ try {
           return { top: r.top, x: r.left + r.width / 2 };
         });
         await swipe({ ...cell, ...c }, travel);
-        await until(`${label} ${mode} 끌기 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) =>
-          bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`),
-        );
+        await until(`${label} ${mode} 끌기 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch(async (e) => {
+          // 실패하면 그때 xterm이 mouse 보고 중이었는지(xterm Terminal.ts `enable-mouse-events`)와 viewport를 남긴다(t-0327 넘김 (마))
+          const at = await p.evaluate(() => {
+            const vp = document.querySelector(".xterm-viewport");
+            return {
+              mouse: !!document.querySelector(".xterm.enable-mouse-events"),
+              viewport: vp ? [vp.scrollTop, vp.scrollHeight, vp.clientHeight] : null,
+              log: (window.__aaaTermLog ?? []).slice(-12).map((x) => (x.kind ? `${x.at} bin×${x.bins}` : `${x.at} ${x.e}`)),
+            };
+          });
+          bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")} ‖ ${JSON.stringify(at)}`);
+        });
       }
       return { before, after, want };
     };
@@ -2097,8 +2118,10 @@ try {
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const nums = new Set();
       const bad = [];
-      const ticks = new Map();
-      let last = -1;
+      // tick-1을 볼 때마다: 같은 화면에서 그 위 가장 가까운 기록 줄 번호와 둘레 줄(화면 픽셀로 버퍼 줄 번호를 셈하면 6000줄에서
+      // 몇 줄씩 어긋날 수 있어, 자리는 둘레 글로 본다)
+      const ticks = [];
+      let perScreen = 0;
       for (let y = 0; ; y += vp.clientHeight / 2) {
         vp.scrollTop = y;
         vp.dispatchEvent(new Event("scroll"));
@@ -2106,22 +2129,24 @@ try {
         const got = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
         for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
         got.forEach((n) => nums.add(n));
-        // tick-1·h-06000 줄의 버퍼 줄 번호(겹쳐 본 화면에서 같은 줄은 한 번 센다)
-        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
-        const rowH = divs[0].getBoundingClientRect().height;
-        divs.forEach((d, i) => {
-          const at = Math.round(vp.scrollTop / rowH) + i;
-          if (d.textContent.startsWith("tick-1")) ticks.set(at, "tick");
-          if (d.textContent.startsWith("h-06000")) last = at;
+        const texts = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => d.textContent);
+        let here = 0;
+        texts.forEach((t, i) => {
+          if (!t.startsWith("tick-1")) return;
+          here += 1;
+          let above = null;
+          for (let j = i - 1; j >= 0 && above === null; j--) above = /^h-(\d{5})/.exec(texts[j])?.[1] ?? null;
+          ticks.push({ above: above === null ? null : Number(above), near: texts.slice(Math.max(0, i - 3), i + 2).map((x) => x.slice(0, 12)) });
         });
+        perScreen = Math.max(perScreen, here);
         if (y >= vp.scrollHeight - vp.clientHeight) break;
       }
-      const tickAt = [...ticks.keys()];
-      return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), tickAt, last };
+      return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), ticks: ticks.slice(0, 6), perScreen };
     });
     if (sweep.count !== 6000 || sweep.min !== 1 || sweep.max !== 6000 || sweep.bad.length) throw new Error(`버퍼 기록 ${JSON.stringify(sweep)}`);
-    // 다시 쓰는 사이에 온 줄은 한 번, 기록 뒤에
-    if (sweep.tickAt.length !== 1 || !(sweep.tickAt[0] > sweep.last)) throw new Error(`tick-1 자리 ${JSON.stringify(sweep)}`);
+    // 다시 쓰는 사이에 온 줄은 한 번, 기록 뒤에: 볼 때마다 그 위 기록 줄은 h-06000이고, 한 화면에 둘 보인 적이 없다
+    if (sweep.ticks.length === 0 || sweep.perScreen !== 1 || sweep.ticks.some((t) => t.above !== null && t.above !== 6000) || sweep.ticks.every((t) => t.above === null))
+      throw new Error(`tick-1 자리 ${JSON.stringify(sweep)}`);
     // 다시 쓴 버퍼도 프로그램이 켠 입력 모드(bracketed paste)를 그대로 갖는다: 붙여 넣은 여러 줄이 감싸여 간다
     await box.click();
     await hp.locator(".xterm-helper-textarea").evaluate((el) => {
@@ -3231,8 +3256,14 @@ try {
     if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
     aaa("tab", "create", "--machine", "labA", "--label", "traceapp", "--", process.execPath, `${root}/paste.js`);
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    await tp.getByTestId("trace-toggle").click();
-    if ((await tp.getByTestId("trace-toggle").getAttribute("aria-pressed")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
+    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 「진단」에 있다(사용자 화면 10-18, plan §8.77)
+    if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
+    const dialog = tp.getByRole("dialog", { name: "설정" });
+    const traceSwitch = dialog.getByRole("switch", { name: "입력 기록" });
+    await tp.getByTestId("settings-open").click();
+    await traceSwitch.click();
+    if ((await traceSwitch.getAttribute("aria-checked")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
+    await tp.keyboard.press("Escape");
     await tp.getByTestId("pane-traceapp").click();
     await until("trace 화면", async () => (await screenText(tp)).includes("paste>"));
     await tp.locator(".xterm-screen").click();
@@ -3240,8 +3271,9 @@ try {
     await waitOutput("traceapp", 'GOT:"상"');
     await sleep(300);
     await tp.getByRole("button", { name: "목록으로" }).click();
-    await tp.getByTestId("trace-send").click();
-    await until("보냄 표시", async () => (await tp.locator(".foot-msg").allInnerTexts()).some((t) => t.startsWith("보냈다: input-")));
+    await tp.getByTestId("settings-open").click();
+    await dialog.getByTestId("trace-send").click();
+    await until("보냄 표시", async () => (await dialog.getByTestId("trace-msg").innerText()).startsWith("보냈다: input-"));
     const dir = `${root}/s/host/diag`;
     const files = fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n));
     if (files.length !== 1) throw new Error(`diag 파일 ${files}`);
@@ -3254,8 +3286,9 @@ try {
     const upd = rec.events.find((e) => e.type === "compositionupdate" && e.data === "사");
     if (!upd || typeof upd.value !== "string" || !Array.isArray(upd.sel) || typeof upd.kb !== "boolean") throw new Error(`상태가 빠졌다 ${JSON.stringify(upd)}`);
     // 보내면 비우고, 끄면 모으지 않는다
-    if ((await tp.getByTestId("trace-toggle").innerText()).includes("(0개") === false) throw new Error("보낸 뒤 비우지 않았다");
-    await tp.getByTestId("trace-toggle").click();
+    await until("보낸 뒤 비움", async () => (await dialog.locator(".settings-row:has([role=switch][aria-label='입력 기록'])").innerText()).includes("0개 모았습니다"));
+    await traceSwitch.click();
+    if ((await traceSwitch.getAttribute("aria-checked")) !== "false") throw new Error("입력 기록이 꺼지지 않았다");
     await tp.context().close();
     aaa("pane", "kill", "traceapp");
   });
@@ -4102,6 +4135,18 @@ try {
         }
       }
       Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudio });
+      // iPhone·iPad Safari의 소리 범주(Audio Session API, plan §8.78): 바꿀 때마다 남긴다
+      let sessionType = "auto";
+      const session = {
+        get type() {
+          return sessionType;
+        },
+        set type(v) {
+          sessionType = v;
+          log.push(`session ${v}`);
+        },
+      };
+      Object.defineProperty(navigator, "audioSession", { configurable: true, value: session });
       // 진단: 상태 사건 WS의 열림·닫힘과 thread 사건(보고 hash)
       const ev = [];
       Object.defineProperty(window, "__evLog", { value: ev });
@@ -4195,6 +4240,24 @@ try {
     await report("소리");
     await waitLog("알림 소리", (l) => l === "tone 880,tone 660");
     await until("소리와 함께 앱 안 알림", async () => (await droplet.count()) === 1);
+    // 무음 모드에서도(사용자 보고 10-18 iPhone, plan §8.78): 끈 동안은 소리 범주를 건드리지 않는다(위 기록에 session이 없다).
+    // 켜는 누름이 미리 듣기이고, 소리를 낼 때만 "playback"(무음 스위치를 무시)으로 두었다가 끝나면 "auto"로 되돌린다
+    await ap.getByTestId("settings-open").click();
+    const silent = dialog.getByRole("switch", { name: "무음 모드에서도" });
+    await until("앞 소리 끝", () => ap.evaluate(() => performance.now() / 1000 > (window.__chimeEnd ?? 0)));
+    await clear();
+    await silent.click();
+    await waitLog("무음에서도 미리 듣기", (l) => l === "session playback,tone 880,tone 660,session auto");
+    await ap.keyboard.press("Escape");
+    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== "1") throw new Error("무음 모드 설정이 저장되지 않았다");
+    await until("앞 알림 접힘", async () => (await droplet.count()) === 0);
+    await clear();
+    await report("무음에서도");
+    await waitLog("무음에서도 알림 소리", (l) => l === "session playback,tone 880,tone 660,session auto");
+    await ap.getByTestId("settings-open").click();
+    await silent.click();
+    await ap.keyboard.press("Escape");
+    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== null) throw new Error("끈 무음 모드 설정이 남았다");
     // 가려지면: 앱 안 알림은 없고, 소리와 탭 알림(이 기기에 push 구독이 없다)
     const hide = (h) =>
       ap.evaluate((h) => {
@@ -4270,6 +4333,247 @@ try {
     await shot(pp, "phone-more-menu");
     await pp.context().close();
     aaa("thread", "ack", "demo", t.id);
+  });
+
+  await step("보는 동안은 push 대신 앱 안 알림(사용자 화면 10-18 00:27 iPhone 홈 화면 앱 배너, herdr-web-ui server/push.ts inUse·sendTest·App.tsx 다시 등록): 구독이 있는 휴대폰을 열고 다시 열어도(다시 등록) push 0건, 보는 동안 새 보고는 push 0건·앱 안 알림 1건, 가려지면 push 1건", async () => {
+    // 이 기기(휴대폰)는 알림을 켜 두어 이미 구독이 있다(홈 화면 앱처럼). 브라우저 push 서비스 대신 가짜 push 서비스의 주소를 준다
+    const dev = pushDevice("push/dev3");
+    const devPath = new URL(dev.json.endpoint).pathname;
+    const toDev = (from) => pushes.slice(from).filter((x) => x.path === devPath);
+    const subInit = (a) => {
+      const log = [];
+      Object.defineProperty(window, "__pushLog", { value: log });
+      class FakeNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        constructor(t) {
+          log.push(`new ${t}`);
+        }
+        addEventListener() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, value: FakeNotification });
+      ServiceWorkerRegistration.prototype.showNotification = async function (t) {
+        log.push(`tab ${t}`);
+      };
+      const key = Uint8Array.from(atob(a.key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)).buffer;
+      const sub = {
+        endpoint: a.sub.endpoint,
+        options: { applicationServerKey: key },
+        toJSON: () => a.sub,
+        unsubscribe: async () => (log.push("unsubscribe"), true),
+      };
+      PushManager.prototype.getSubscription = async () => sub;
+      PushManager.prototype.subscribe = async () => (log.push("subscribe"), sub);
+      try {
+        localStorage.setItem("aaa:alerts-on", "1");
+      } catch {}
+      // 이 화면이 받은 thread 사건(보고 hash)
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          this.addEventListener("message", (m) => {
+            try {
+              const d = JSON.parse(m.data);
+              if (d.ev === "thread") log.push(`thr ${String(d.report_hash).slice(0, 6)}`);
+            } catch {}
+          });
+        }
+      };
+    };
+    const init = `(${subInit})(${JSON.stringify({ key: pushKey, sub: dev.json })})`;
+    // 다른 화면은 쓰지 않는 것으로 둔다: 이 휴대폰 하나만 본다
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    const start = pushes.length;
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init });
+    const pp = phone.page;
+    const subscribed = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed);
+    const bellPush = async () => {
+      await pp.getByTestId("more").click();
+      const ok = (await pp.getByTestId("alerts-item").innerText()).includes("켜짐, 이 기기로 푸시");
+      await pp.keyboard.press("Escape");
+      return ok;
+    };
+    // (1) 열면 권한·구독이 있는 기기는 조용히 다시 등록한다(참고 App.tsx 「re-registers on every load」). 다시 열어도 같다
+    await until("열 때 다시 등록", async () => (await subscribed()) === 1 && (await bellPush()));
+    await pp.reload();
+    await pp.getByTestId("machine-labA").waitFor();
+    await until("다시 열 때 다시 등록", () => bellPush());
+    if ((await pp.evaluate(() => window.__pushLog.join(","))) !== "") throw new Error(`다시 등록이 구독을 바꿨다: ${await pp.evaluate(() => window.__pushLog.join(","))}`);
+    await until("휴대폰을 봄", async () => (await pushInUse()) === 1);
+    const work = (title) => {
+      fs.writeFileSync(`${root}/task-${title}.md`, title);
+      const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-${title}.md`);
+      const hash = until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
+      return { t, hash };
+    };
+    const seen = (hash) => until("보고 사건 받음", () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
+    // (2) 보는 동안: host는 보내지 않고(push_skipped) 이 화면에 앱 안 알림이 하나 내려온다
+    const skippedBefore = aaa("events", "--project", "demo").events.filter((e) => e.kind === "push_skipped").length;
+    const a = work("휴대폰으로 보는 중");
+    await seen(await a.hash);
+    await until("보내지 않음 기록", () => aaa("events", "--project", "demo").events.filter((e) => e.kind === "push_skipped").length > skippedBefore);
+    await until("보는 동안 앱 안 알림", async () => (await pp.locator(".droplet-title").allInnerTexts()).includes("휴대폰으로 보는 중"));
+    if ((await pp.locator(".droplet").count()) !== 1) throw new Error(`앱 안 알림 ${await pp.locator(".droplet").count()}개`);
+    if (toDev(start).length !== 0) throw new Error(`보는 동안·여는 동안 push ${toDev(start).length}건`);
+    await pp.locator(".droplet-close").click();
+    await until("앱 안 알림 닫힘", async () => (await pp.locator(".droplet").count()) === 0);
+    // (3) 가려지면(홈 화면으로 나감): 쓰는 화면이 없어 이 기기에 push가 하나 간다. 앱 안 알림·탭 알림은 없다
+    await pp.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.hasFocus = () => false;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until("가려진 휴대폰", async () => (await pushInUse()) === 0);
+    const b = work("휴대폰을 닫은 동안");
+    const { msg } = await nextPush(dev, start, "가려진 동안 push");
+    if (msg.title !== "demo · 휴대폰을 닫은 동안" || msg.tag !== `aaa-demo/${b.t.id}`) throw new Error(JSON.stringify(msg));
+    await seen(await b.hash);
+    await pp.evaluate(() => new Promise((r) => setTimeout(r)));
+    if ((await pp.locator(".droplet").count()) !== 0) throw new Error("가려진 동안 앱 안 알림이 내려왔다");
+    const tabs = (await pp.evaluate(() => window.__pushLog.filter((e) => !e.startsWith("thr ")).join(",")));
+    if (tabs !== "") throw new Error(`push가 있는 기기에 탭 알림: ${tabs}`);
+    // 처음부터 끝까지 이 기기에 간 push는 가려진 동안의 하나뿐(확인 push 「알림이 켜졌다」 없음)
+    if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
+    if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
+    await pp.context().close();
+    // 머신마다 도는 thread 수에 한도가 있다(max_threads_per_machine): 다 본 thread는 정리한다
+    for (const x of [a, b]) aaa("thread", "resolve", "demo", x.t.id);
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
+  });
+
+  await step("두 기기·죽은 연결(coordinator 실기 10-18 00:58 iPhone: push는 「쓰는 화면 1개」로 생략, 앱 안 알림도 없음, herdr-web-ui ws.ts Liveness·server/push.ts inUse): A가 쓰는 동안 보이기만 하는 B에 앱 안 알림이 내려오고 push는 없다, 사건이 오지 않는 연결은 웹이 ping으로 알아채 다시 붙고, 답하지 않는 연결은 host가 끊어 쓰는 화면에서 뺀다, ⋯ 메뉴는 열면 첫 항목에 focus·화살표로 옮기고 Esc로 닫힌다(herdr-web-ui RowMenu)", async () => {
+    // B(휴대폰): 보이지만 focus는 없다. 상태 사건 소켓을 「얼릴」 수 있게 감싼다: 언 뒤에는 받은 것을 버리고 보낸 것을 삼킨다.
+    // 브라우저의 WebSocket ping 응답(pong)은 그대로라 host는 그 연결이 살아 있다고 본다(잠든 휴대폰·바뀐 망의 반쯤 열린 연결)
+    const freezeInit = () => {
+      document.hasFocus = () => false;
+      const log = [];
+      Object.defineProperty(window, "__evSock", { value: log });
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          log.push("new");
+          const me = this;
+          me.frozen = false;
+          window.__freezeEvents = () => void (me.frozen = true);
+          this.addEventListener("message", (e) => {
+            if (!me.frozen) return;
+            log.push(`dropped ${String(e.data).slice(0, 24)}`);
+            e.stopImmediatePropagation();
+          });
+        }
+        send(d) {
+          if (this.frozen) {
+            log.push(`swallowed ${String(d).slice(0, 24)}`);
+            return;
+          }
+          super.send(d);
+        }
+      };
+    };
+    const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: freezeInit });
+    const bp = B.page;
+    await until("A만 쓰는 화면", async () => (await pushInUse()) === 1);
+    const skips = () => aaa("events", "--project", "demo").events.filter((e) => e.kind === "push_skipped");
+    const devicePushes = (from) => pushes.slice(from).filter((x) => !x.path.startsWith("/gone/"));
+    let n = 0;
+    const work = (title) => {
+      fs.writeFileSync(`${root}/task-dead-${++n}.md`, title);
+      return aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-dead-${n}.md`);
+    };
+    const ts = [];
+    // (1) A(본 화면)가 쓰는 동안: 어느 기기에도 push가 없고(참고 inUse는 모든 기기), 보이기만 하는 B에는 앱 안 알림이 내려온다
+    let from = pushes.length;
+    let k = skips().length;
+    ts.push(work("두 기기 A 쓰는 중"));
+    const s1 = await until("A 때문에 보내지 않음", () => skips().slice(k)[0]);
+    if (!/^쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개$/.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
+    await until("보이기만 하는 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("두 기기 A 쓰는 중"));
+    if (devicePushes(from).length !== 0) throw new Error(`A가 쓰는 동안 push ${devicePushes(from).length}건`);
+    await bp.locator(".droplet-close").click();
+    // 머신마다 도는 thread 수에 한도가 있다(max_threads_per_machine): 다 본 thread는 정리한다
+    const done = () => {
+      while (ts.length) aaa("thread", "resolve", "demo", ts.shift().id);
+    };
+    done();
+    // (2) 이제 B만 쓰고, B의 연결이 반쯤 열린 채 죽는다: host는 B를 쓰는 화면으로 세어 push를 생략하고 B는 사건을 받지 못한다(실기와 같은 상태)
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    await bp.evaluate(() => {
+      delete document.hasFocus;
+      window.dispatchEvent(new Event("focus"));
+    });
+    await until("B만 쓰는 화면", async () => (await pushInUse()) === 1 && (await bp.evaluate(() => document.hasFocus())));
+    await bp.evaluate(() => window.__freezeEvents());
+    k = skips().length;
+    ts.push(work("죽은 연결 동안"));
+    await until("죽은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
+    await until("B가 그 사건을 받지 못함", () => bp.evaluate(() => window.__evSock.some((e) => e.startsWith("dropped") && e.includes('"thread"'))));
+    // 웹: 망이 바뀌거나(online) 다시 보이면 ping하고, 그 pong이 두 번 오지 않으면 끊고 바로 다시 붙는다
+    await bp.evaluate(() => window.dispatchEvent(new Event("online")));
+    await until("ping을 보냄", () => bp.evaluate(() => window.__evSock.some((e) => e.startsWith('swallowed {"t":"ping"'))));
+    await until("다시 붙음", () => bp.evaluate(() => window.__evSock.filter((e) => e === "new").length === 2));
+    await until("새 연결이 쓰는 화면", async () => (await pushInUse()) === 1);
+    done();
+    k = skips().length;
+    ts.push(work("다시 붙은 뒤"));
+    await until("다시 붙은 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("다시 붙은 뒤"));
+    await until("다시 붙은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
+    // host: WebSocket ping에도 답하지 않는 연결(읽지 않는 클라이언트)은 끊어 쓰는 화면에서 뺀다
+    const cookie = (await bp.context().cookies()).find((c) => c.name === "aaa" || c.name === "__Host-aaa");
+    const u = new URL(base);
+    const raw = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: u.hostname,
+        port: u.port,
+        path: "/api/v1/events",
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": crypto.randomBytes(16).toString("base64"),
+          "Sec-WebSocket-Version": "13",
+          Origin: base.slice(0, -1),
+          Cookie: `${cookie.name}=${cookie.value}`,
+        },
+      });
+      req.on("upgrade", (_res, socket) => resolve(socket));
+      req.on("response", (res) => reject(new Error(`upgrade 거절 ${res.statusCode}`)));
+      req.on("error", reject);
+      req.end();
+    });
+    const text = Buffer.from(JSON.stringify({ t: "presence", active: true }));
+    const mask = crypto.randomBytes(4);
+    raw.write(Buffer.concat([Buffer.from([0x81, 0x80 | text.length]), mask, Buffer.from(text.map((b, i) => b ^ mask[i % 4]))]));
+    // 그 뒤로는 아무것도 보내지 않는다(pong도)
+    raw.pause();
+    await until("읽지 않는 연결도 쓰는 화면", async () => (await pushInUse()) === 2);
+    const t0 = Date.now();
+    await until("host가 답하지 않는 연결을 끊음", async () => (await pushInUse()) === 1);
+    const gone = Date.now() - t0;
+    raw.destroy();
+    if (gone > 6000) throw new Error(`끊기까지 ${gone}ms(ping 1초·3초 기한)`);
+    // ⋯ 메뉴(사용자 화면 10-18: 미러링 키보드 Esc로 닫히지 않음): 키보드 사건이 메뉴로 오도록 첫 항목에 focus
+    const focused = () => bp.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? document.activeElement?.textContent?.trim());
+    await bp.getByTestId("more").click();
+    await until("열면 첫 항목에 focus", async () => (await focused()) === "링크 복사");
+    await bp.keyboard.press("ArrowDown");
+    if ((await focused()) !== "alerts-item") throw new Error(`아래 화살표 뒤 focus ${await focused()}`);
+    await bp.keyboard.press("Escape");
+    await until("Esc로 닫힘", async () => (await bp.locator(".more-menu").count()) === 0);
+    if ((await focused()) !== "more") throw new Error(`닫힌 뒤 focus ${await focused()}`);
+    if (B.errors.length) throw new Error(`페이지 오류: ${B.errors.join("; ")}`);
+    await bp.context().close();
+    done();
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {

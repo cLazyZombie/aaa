@@ -10,6 +10,7 @@ import { showDroplet, type DropletKind } from "./herdr/droplet";
 import { pushTest } from "./api";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./push";
 import { alertSetting, setAlertSetting, useAlertSetting } from "./settings";
+import { beforeAlertSound } from "./silentMode";
 
 export type NotificationState = "unsupported" | "default" | "granted" | "denied";
 
@@ -134,7 +135,13 @@ export function useAlertSoundUnlock() {
 
 let turns: ReturnType<typeof createAlertTurnPlayer> | null = null;
 function player() {
-  turns ??= createAlertTurnPlayer({ play: (kind) => alertSetting("alertsOn") && alertSetting("alertSound") && playAlertSound(kind) });
+  turns ??= createAlertTurnPlayer({
+    play: (kind) => {
+      if (!alertSetting("alertsOn") || !alertSetting("alertSound")) return false;
+      if (canPlayAlertSound()) beforeAlertSound();
+      return playAlertSound(kind);
+    },
+  });
   return turns;
 }
 
