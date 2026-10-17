@@ -245,6 +245,8 @@ struct PushInfo {
     subscribed: usize,
     /// 지금 쓰는 웹 화면 수(그동안 Web Push를 보내지 않는다)
     in_use: usize,
+    /// 알리는 inbox 종류(`notify.kinds`). 웹의 앱 안 알림·소리·탭 알림도 이 종류에만 띄운다(push와 같은 사건)
+    kinds: Vec<String>,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
@@ -253,7 +255,8 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
     let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use })).into_response()
+    let kinds = host.cfg.notify.kinds.clone();
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, kinds })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -306,10 +309,25 @@ async fn push_unsubscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Jso
     Json(Outcome::Ok(serde_json::json!({ "removed": removed }))).into_response()
 }
 
-/// 이 장치의 구독에 시험 알림을 보낸다
-async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
+#[derive(Deserialize, Default)]
+struct PushTestBody {
+    /// 이 구독 하나에만(herdr-web-ui `sendTestPush(endpoint)`). 없으면 이 장치의 모든 구독
+    endpoint: Option<String>,
+}
+
+/// 이 장치의 구독에 시험 알림을 보낸다. `endpoint`를 주면 그 구독 하나에 보내고, 없거나(`subscription_not_found`)
+/// push 서비스가 버렸으면(`subscription_gone`, 지운다) 오류로 답한다. 웹은 그 말로 「알림 다시 켜기」를 권한다.
+async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap, body: Option<Json<PushTestBody>>) -> Response {
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
-    let subs = host.db.push_list(Some(&id)).unwrap_or_default();
+    let only = body.and_then(|Json(b)| b.endpoint);
+    let mut subs = host.db.push_list(Some(&id)).unwrap_or_default();
+    if let Some(e) = &only {
+        subs.retain(|s| &s.endpoint == e);
+        if subs.is_empty() {
+            let err = ErrorBody::new(ErrorCode::SubscriptionNotFound, "이 기기의 push 구독이 없다");
+            return (StatusCode::NOT_FOUND, Json(Outcome::<()>::Err(err))).into_response();
+        }
+    }
     let body =
         serde_json::json!({ "title": "aaa", "body": "알림이 켜졌다", "url": "/", "tag": "aaa-test" }).to_string();
     let (mut sent, mut failed) = (0, Vec::new());
@@ -319,6 +337,15 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
             crate::push::Sent::Gone => failed.push("브라우저가 구독을 버렸다(지웠다)".to_string()),
             crate::push::Sent::Failed(e) => failed.push(e),
         }
+    }
+    if only.is_some() && sent == 0 {
+        let gone = failed.first().is_some_and(|f| f.starts_with("브라우저가 구독을 버렸다"));
+        let err = if gone {
+            ErrorBody::new(ErrorCode::SubscriptionGone, "push 서비스가 이 기기의 구독을 버렸다(지웠다)")
+        } else {
+            ErrorBody::new(ErrorCode::Unavailable, failed.join("; "))
+        };
+        return (StatusCode::BAD_GATEWAY, Json(Outcome::<()>::Err(err))).into_response();
     }
     Json(Outcome::Ok(serde_json::json!({ "sent": sent, "failed": failed }))).into_response()
 }

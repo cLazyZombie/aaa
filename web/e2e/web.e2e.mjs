@@ -3642,13 +3642,23 @@ try {
     // headless shell은 알림을 지원하지 않아 이 부분만 정식 Chromium(새 headless)으로 한다.
     const full = await chromium.launch({ channel: "chromium" });
     try {
-      const mob = await pairPage(full, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
+      // 이 기기 알림은 꺼 둔다: 권한이 있으면 열 때마다 구독을 다시 등록하는데(참고), 그러면 정식 Chromium이 실제 push 서비스에 닿는다
+      const mob = await pairPage(full, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, {
+        init: () => {
+          try {
+            localStorage.setItem("aaa:alerts-on", "0");
+          } catch {}
+        },
+      });
       const ctx = mob.page.context();
       await ctx.grantPermissions(["notifications"], { origin: base.slice(0, -1) });
       await mob.page.reload();
       await mob.page.getByTestId("machine-labA").waitFor();
-      // 알림을 받을 수 있는 브라우저면 목록 아래에 알림 단추가 보인다(보기 권한 기기도 알림은 받는다)
-      await until("알림 단추", async () => (await mob.page.getByTestId("push-toggle").innerText()).includes("알림 켜기"));
+      // 알림 켜기는 머리 「더 보기」 메뉴의 「알림」이다(참고 App.tsx moreItems). 보기 권한 기기도 알림은 받는다. 꺼져 있으면 메뉴 단추에 점
+      await mob.page.getByTestId("more").click();
+      await until("알림 항목", async () => (await mob.page.getByTestId("alerts-item").innerText()).includes("이 기기에서 꺼짐"));
+      if ((await mob.page.getByTestId("more").getAttribute("aria-label")) !== "더 보기 · 알림 꺼짐") throw new Error("꺼진 알림 표시가 없다");
+      await mob.page.keyboard.press("Escape");
       const cdp = await ctx.newCDPSession(mob.page);
       const regId = new Promise((r) =>
         cdp.on("ServiceWorker.workerRegistrationUpdated", (e) => {
@@ -3662,6 +3672,9 @@ try {
       cdp.on("ServiceWorker.workerErrorReported", (e) => versions.push(`error:${e.errorMessage.errorMessage}`));
       await cdp.send("ServiceWorker.enable");
       const data = JSON.stringify({ title: "aaa · demo", body: "t-0009 question: 확인창", url: "/#thread=demo%2Ft-0009", tag: "aaa-demo" });
+      // 활성화된 worker에만 보낸다: 설치·활성화 중에 넣은 push는 사건 없이 버려질 수 있다(10-17 두 번 난 「알림 표시」 실패의 후보)
+      await until("service worker 활성", () => mob.page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state === "activated"));
+      const atDeliver = versions.slice(-4).join(",");
       await cdp.send("ServiceWorker.deliverPushMessage", { origin: base.slice(0, -1), registrationId: await regId, data });
       const shown = await until("알림 표시", async () => {
         const v = await mob.page.evaluate(async () =>
@@ -3680,7 +3693,7 @@ try {
             shown: reg ? (await reg.getNotifications()).length : null,
           };
         });
-        throw new Error(`${e.message}: ${JSON.stringify(state)} 판 ${versions.slice(-8).join(",")} 오류 ${mob.errors.join("; ")}`);
+        throw new Error(`${e.message}: ${JSON.stringify(state)} 판 ${versions.slice(-8).join(",")} 보낼 때 판 ${atDeliver} 오류 ${mob.errors.join("; ")}`);
       });
       if (JSON.stringify(shown[0]) !== JSON.stringify(["aaa · demo", "t-0009 question: 확인창", "/#thread=demo%2Ft-0009"])) {
         throw new Error(JSON.stringify(shown));
@@ -3737,8 +3750,8 @@ try {
     const { isAppWindow } = worker([]);
     eq(
       "앱 창",
-      [APP, `${APP}#pane=p1`, `${APP}thread/t-0001`, `${APP}index.html`, `${APP}api/v1/projects/demo/threads/t-0001/library/index.html`, `${APP}icon-192.png`, `${APP}manifest.webmanifest`, `${APP}sw.js`, `${APP}offline.html`, "not a url"].map(isAppWindow),
-      [true, true, true, true, false, false, false, false, false, false],
+      [APP, `${APP}#pane=p1`, `${APP}thread/t-0001`, `${APP}index.html`, `${APP}api/v1/push`, `${APP}v/cap1/index.html`, `${APP}v/cap1/sub/`, `${APP}icon-192.png`, `${APP}manifest.webmanifest`, `${APP}sw.js`, `${APP}offline.html`, "not a url"].map(isAppWindow),
+      [true, true, true, true, false, false, false, false, false, false, false, false],
     );
     // 보이는 창이 있으면 소리·진동 없이, 없으면 다시 울린다. 누를 때 쓸 주소를 단다
     const seen = worker([client()]);
@@ -3787,7 +3800,7 @@ try {
     }
     // 파일 탭(결과물)은 고르지 않는다: 앱 창이 받고, 앱 창이 없으면 연다
     {
-      const file = client(undefined, true, `${APP}api/v1/projects/demo/threads/t-0001/library/index.html`);
+      const file = client(undefined, true, `${APP}v/cap1/index.html`);
       const app = client();
       const w = worker([file, app]);
       await w.click();
@@ -3951,12 +3964,241 @@ try {
       aaa("events", "--project", "demo").events.find((e) => e.kind === "push_skipped" && e.detail.startsWith("쓰는 화면 1개")),
     );
     if (pushes.slice(from).some((x) => x.path === new URL(pushDev.json.endpoint).pathname)) throw new Error(`쓰는 화면이 있는데 보냈다 ${skipped.detail}`);
+    // 보내지 않은 대신 쓰는 화면에는 앱 안 알림이 내려온다(plan §8.70)
+    await until("쓰는 화면의 앱 안 알림", async () => (await page.locator(".droplet-title").allInnerTexts()).includes("보는 중"));
     // 화면을 닫으면(연결이 끊기면) 쓰는 화면이 아니다
     const extra = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
     await until("둘째 화면도 씀", async () => (await pushInUse()) === 2);
     await extra.context().close();
     await until("닫은 화면은 빠짐", async () => (await pushInUse()) === 1);
     aaa("thread", "ack", "demo", t2.id);
+  });
+
+  await step("이 기기 알림(herdr-web-ui Droplet·alertSound·notifications·PushTestControls·더 보기, 차이 목록 N1·N2·N8·N9): 새 보고에 앱 안 알림이 내려오고 누르면 그 thread, 소리는 켜면 미리 듣고 알림마다, 가려지면 탭 알림, 앱 안을 끄면 안 내려옴, 메뉴로 끄면 아무것도, 시험 보내기는 구독이 없다고", async () => {
+    // 소리·탭 알림·권한·push 구독은 기록하는 것으로 바꾼다(실제 소리·알림·push 서비스 없이)
+    const init = () => {
+      const log = [];
+      Object.defineProperty(window, "__alertLog", { value: log });
+      class FakeNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        constructor(t) {
+          log.push(`new ${t}`);
+        }
+        addEventListener() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, value: FakeNotification });
+      ServiceWorkerRegistration.prototype.showNotification = async function (t, o) {
+        log.push(`tab ${t}|${o.tag}|${o.data?.url}`);
+      };
+      PushManager.prototype.subscribe = async () => {
+        throw new DOMException("시험에서는 push 서비스가 없다", "AbortError");
+      };
+      PushManager.prototype.getSubscription = async () => null;
+      class FakeAudio {
+        state = "suspended";
+        destination = {};
+        // 소리 하나가 울리는 동안은 같은 소리를 겹쳐 울리지 않는다(참고 chime): 시계가 흘러야 한다
+        get currentTime() {
+          return performance.now() / 1000;
+        }
+        constructor() {
+          window.__evLog?.push("ac new");
+        }
+        async resume() {
+          window.__evLog?.push(`ac resume ${this.state}`);
+          this.state = "running";
+        }
+        createOscillator() {
+          const o = {
+            type: "",
+            frequency: { value: 0 },
+            connect: (g) => g,
+            start: (at) => {
+              log.push(`tone ${o.frequency.value}`);
+              // 이 소리가 끝나는 때(참고 NOTE_LENGTH_S 0.3초)
+              window.__chimeEnd = Math.max(window.__chimeEnd ?? 0, at + 0.3);
+              window.__evLog?.push(`osc ${o.frequency.value} at ${at.toFixed(2)} now ${this.currentTime.toFixed(2)}`);
+            },
+            stop() {},
+          };
+          return o;
+        }
+        createGain() {
+          return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: (d) => d };
+        }
+      }
+      Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudio });
+      // 진단: 상태 사건 WS의 열림·닫힘과 thread 사건(보고 hash)
+      const ev = [];
+      Object.defineProperty(window, "__evLog", { value: ev });
+      new MutationObserver((ms) => {
+        for (const m of ms) for (const n of m.addedNodes) if (n.classList?.contains("droplet")) ev.push(`drop ${n.dataset.kind}`);
+      }).observe(document, { childList: true, subtree: true });
+      addEventListener("pagehide", () => ev.push("pagehide"));
+      const RealBC = window.BroadcastChannel;
+      window.BroadcastChannel = class extends RealBC {
+        postMessage(m) {
+          ev.push(`bc ${m?.type} @${(performance.now() / 1000).toFixed(2)}`);
+          super.postMessage(m);
+        }
+      };
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          const t0 = performance.now();
+          const at = () => Math.round(performance.now() - t0);
+          this.addEventListener("open", () => ev.push(`open`));
+          this.addEventListener("close", (e) => ev.push(`close ${e.code} ${at()}`));
+          this.addEventListener("message", (m) => {
+            try {
+              const d = JSON.parse(m.data);
+              if (d.ev === "thread") ev.push(`thr ${d.id} ${String(d.report_hash).slice(0, 6)} ${String(d.acked_hash).slice(0, 6)} @${(performance.now() / 1000).toFixed(2)}`);
+            } catch {}
+          });
+        }
+      };
+    };
+    const apOpen = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init });
+    const ap = apOpen.page;
+    const log = () => ap.evaluate(() => window.__alertLog.join(","));
+    const clear = () => ap.evaluate(() => void window.__alertLog.splice(0));
+    // 기록을 기다린다. 실패하면 그때의 기록·고른 자리·소리 상태를 남긴다
+    const waitLog = (what, ok) =>
+      until(what, async () => ok(await log())).catch(async (e) => {
+        const at = await ap.evaluate(() => ({ hash: location.hash, vis: document.visibilityState, sound: localStorage.getItem("aaa:alert-sound") }));
+        const ev = await ap.evaluate(() => window.__evLog.slice(-16).join(","));
+        throw new Error(`${e.message}: 기록 [${await log()}] ${JSON.stringify(at)} 앱 안 ${await droplet.count()} 오류 [${apOpen.errors.join("; ")}] 사건 [${ev}] 보고 ${String(aaa("thread", "show", "demo", t.id).report_hash).slice(0, 6)}`);
+      });
+    const droplet = ap.locator(".droplet");
+    // 들어오는 움직임(참고 Droplet.css)이 끝난 모습
+    const landed = (d) => d.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+    fs.writeFileSync(`${root}/task3.md`, "알림 시험");
+    const t = aaa("thread", "start", "demo", "--title", "알림 시험", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task3.md`);
+    const target = `#thread=demo%2F${t.id}`;
+    // 첫 보고: 앱 안 알림(작업 완료). 누르면 그 thread로 가고 접힌다
+    await until("앱 안 알림", async () => (await droplet.count()) === 1 && (await droplet.locator(".droplet-title").innerText()) === "알림 시험");
+    if ((await droplet.getAttribute("data-kind")) !== "done" || (await droplet.locator(".droplet-detail").innerText()) !== "작업 완료") {
+      throw new Error(`앱 안 알림 ${await droplet.getAttribute("data-kind")} ${await droplet.locator(".droplet-detail").innerText()}`);
+    }
+    await landed(droplet);
+    await shot(ap, "desktop-droplet");
+    await droplet.locator(".droplet-card").click();
+    await until("누르면 그 thread", async () => (await ap.evaluate(() => location.hash)) === target);
+    await until("접힘", async () => (await droplet.count()) === 0);
+    const work = aaa("thread", "show", "demo", t.id).work_dir;
+    let n = 0;
+    // 새 보고를 낸다. 돌려주는 hash로 이 화면이 그 thread 사건을 받았는지 본다(evLog `thr`)
+    const report = async (what, { chime = true } = {}) => {
+      // 앞 소리가 울리는 동안 온 「완료」는 그 소리가 이미 알렸다고 보고 겹쳐 울리지 않는다(참고 alertSound.ts chime).
+      // 알림마다 소리를 보려면 앞 소리가 끝난 뒤에 다음 보고를 낸다
+      if (chime) await until("앞 소리 끝", () => ap.evaluate(() => performance.now() / 1000 > (window.__chimeEnd ?? 0)));
+      const before = aaa("thread", "show", "demo", t.id).report_hash;
+      fs.writeFileSync(`${work}/report.md`, `[완료]\n\n## Report\n- ${what} ${++n}\n`);
+      return await until(`${what} 보고`, () => {
+        const h = aaa("thread", "show", "demo", t.id).report_hash;
+        return h !== before && h;
+      });
+    };
+    // 이 화면이 그 보고 사건을 받아 처리하고(앱 처리기는 진단 기록 뒤에 돈다) 두 번 그린 뒤
+    const handled = async (hash) => {
+      await until("보고 사건 받음", () => ap.evaluate((h) => window.__evLog.some((e) => e.startsWith("thr ") && e.includes(` ${h.slice(0, 6)} `)), hash));
+      await ap.evaluate(() => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)))));
+    };
+    const dropsSince = (i) => ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("drop")).length, i);
+    const evMark = () => ap.evaluate(() => window.__evLog.length);
+    // 그 thread를 보고 있으면 띄우지 않는다: 다른 곳을 본다
+    await ap.getByTestId("pane-t1").click();
+    // 소리: 켜는 누름이 미리 듣기(작업 완료 음 880→660), 그 뒤 알림마다
+    await ap.getByTestId("settings-open").click();
+    const dialog = ap.getByRole("dialog", { name: "설정" });
+    await dialog.getByRole("switch", { name: "소리" }).click();
+    await waitLog("미리 듣기", (l) => l === "tone 880,tone 660");
+    await ap.keyboard.press("Escape");
+    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-sound"))) !== "1") throw new Error("소리 설정이 저장되지 않았다");
+    await clear();
+    await report("소리");
+    await waitLog("알림 소리", (l) => l === "tone 880,tone 660");
+    await until("소리와 함께 앱 안 알림", async () => (await droplet.count()) === 1);
+    // 가려지면: 앱 안 알림은 없고, 소리와 탭 알림(이 기기에 push 구독이 없다)
+    const hide = (h) =>
+      ap.evaluate((h) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => h });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, h);
+    await until("앞 알림 접힘", async () => (await droplet.count()) === 0);
+    await clear();
+    await hide(true);
+    await report("가려짐");
+    await waitLog("탭 알림", (l) => l.includes(`tab demo · 알림 시험|aaa-demo/${t.id}|/${target}`));
+    // 소리는 탭끼리 누가 울릴지 정하는 짧은 틈(참고 alertTurns WINDOW_MS) 뒤에 울린다
+    await waitLog("가려진 동안 소리", (l) => l.includes("tone 880,tone 660"));
+    if ((await droplet.count()) !== 0) throw new Error(`가려진 동안 앱 안 알림 ${await log()}`);
+    await hide(false);
+    // 앱 안을 끄면 소리만
+    await ap.getByTestId("settings-open").click();
+    await dialog.getByRole("switch", { name: "앱 안에서" }).click();
+    await ap.keyboard.press("Escape");
+    await clear();
+    const offMark = await evMark();
+    await handled(await report("앱 안 끔"));
+    await waitLog("앱 안 끈 뒤 소리", (l) => l === "tone 880,tone 660");
+    if ((await dropsSince(offMark)) !== 0 || (await droplet.count()) !== 0) throw new Error("앱 안을 껐는데 내려왔다");
+    // 더 보기 → 알림: 권한이 있고 구독이 없으면 「이 탭에서 켜짐」. 누르면 꺼지고 메뉴 단추에 점
+    await ap.getByTestId("more").click();
+    const item = ap.getByTestId("alerts-item");
+    if (!(await item.innerText()).includes("이 탭에서 켜짐") || (await item.getAttribute("aria-checked")) !== "true") throw new Error(`알림 항목 ${await item.innerText()}`);
+    if ((await ap.getByTestId("more").getAttribute("aria-label")) !== "더 보기") throw new Error("켜진 알림인데 점");
+    await shot(ap, "desktop-more-menu");
+    await item.click();
+    await until("메뉴 단추 점", async () => (await ap.getByTestId("more").getAttribute("aria-label")) === "더 보기 · 알림 꺼짐");
+    if ((await ap.evaluate(() => localStorage.getItem("aaa:alerts-on"))) !== "0") throw new Error("끈 알림이 저장되지 않았다");
+    // 끄면 아무것도: 이 화면이 그 사건을 받아 처리한 뒤에도 소리·소리 차례·앱 안 알림·탭 알림이 없다
+    await clear();
+    const quietMark = await evMark();
+    await handled(await report("끔"));
+    const turns = await ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("bc ")).length, quietMark);
+    if ((await log()) !== "" || (await dropsSince(quietMark)) !== 0 || turns !== 0) throw new Error(`끈 뒤 [${await log()}] 소리 차례 ${turns}`);
+    // 시험 보내기: 이 기기에 구독이 없다고 하고 「알림 다시 켜기」를 권한다
+    await ap.getByTestId("settings-open").click();
+    if ((await dialog.getByTestId("push-test-result").innerText()) !== "알림 꺼짐") throw new Error(`시험 줄 ${await dialog.getByTestId("push-test-result").innerText()}`);
+    await shot(ap, "desktop-settings-alerts-off");
+    await dialog.getByRole("button", { name: "알림 다시 켜기" }).click();
+    await until("다시 켠 알림", async () => (await ap.getByTestId("more").getAttribute("aria-label")) === "더 보기");
+    await dialog.getByRole("button", { name: "테스트 보내기" }).click();
+    await until("구독 없음", async () => (await dialog.getByTestId("push-test-result").innerText()) === "이 기기의 푸시 구독이 없습니다. 알림을 다시 켜세요.");
+    await ap.keyboard.press("Escape");
+    await ap.context().close();
+    // 휴대폰(390×844): 앱 안 알림과 「더 보기」 메뉴가 화면 안, 머리 아래에 있다(겹침·잘림 없음)
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    const inside = (r, what) => {
+      if (!r || r.left < 0 || r.right > 390 || r.top < 0 || r.bottom > 844) throw new Error(`${what}가 화면 밖 ${JSON.stringify(r)}`);
+    };
+    const rect = (l) => l.evaluate((e) => e.getBoundingClientRect().toJSON());
+    await report("휴대폰", { chime: false });
+    const pd = pp.locator(".droplet");
+    await until("휴대폰 앱 안 알림", async () => (await pd.count()) === 1);
+    await landed(pd);
+    const head = await rect(pp.locator(".list-head"));
+    const card = await rect(pd.locator(".droplet-card"));
+    inside(card, "앱 안 알림");
+    if (card.top < head.bottom) throw new Error(`앱 안 알림이 머리를 가린다 ${card.top} < ${head.bottom}`);
+    await shot(pp, "phone-droplet");
+    await pd.locator(".droplet-close").click();
+    await until("휴대폰 알림 닫힘", async () => (await pd.count()) === 0);
+    await pp.getByTestId("more").click();
+    inside(await rect(pp.locator(".more-menu")), "더 보기 메뉴");
+    const it = await rect(pp.getByTestId("alerts-item"));
+    const menu = await rect(pp.locator(".more-menu"));
+    if (it.bottom > menu.bottom) throw new Error(`알림 항목이 메뉴 밖으로 나온다 ${it.bottom} > ${menu.bottom}`);
+    await shot(pp, "phone-more-menu");
+    await pp.context().close();
+    aaa("thread", "ack", "demo", t.id);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {

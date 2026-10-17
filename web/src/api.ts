@@ -51,13 +51,15 @@ export const pair = (code: string) => post<{ role: DeviceRole }>("/api/v1/pair",
 export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
 
 /** Web Push(§8.26) */
-export type PushInfo = { enabled: boolean; key: string | null; subscribed: number };
+export type PushInfo = { enabled: boolean; key: string | null; subscribed: number; in_use: number; kinds: string[] };
 export async function pushInfo(): Promise<PushInfo> {
   return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
 }
 export const pushSubscribe = (sub: PushSubscriptionJSON) => post<{ subscribed: boolean }>("/api/v1/push/subscribe", sub);
 export const pushUnsubscribe = (endpoint: string) => post<{ removed: boolean }>("/api/v1/push/unsubscribe", { endpoint });
-export const pushTest = () => post<{ sent: number; failed: string[] }>("/api/v1/push/test", {});
+/** 시험 알림: `endpoint`를 주면 그 구독 하나에만. 없으면 `subscription_not_found`, push 서비스가 버렸으면 `subscription_gone` 오류다 */
+export const pushTest = (endpoint?: string) =>
+  post<{ sent: number; failed: string[] }>("/api/v1/push/test", endpoint ? { endpoint } : {});
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";

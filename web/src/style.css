@@ -910,3 +910,43 @@ button.settings-toggle[aria-checked="true"] { background: var(--accent); }
   .settings-row.is-wide .segmented button { flex: 1; }
   .settings-row.is-wide > .settings-font-field { flex: 1 1 100%; width: 100%; }
 }
+
+/* 머리 「더 보기」 메뉴(참고 App.tsx header-more·RowMenu): 링크 복사, 알림(이 기기 상태). 알림이 꺼져 있으면 단추에 점 */
+.more { position: relative; display: inline-flex; }
+.more > button.icon { width: 30px; height: 30px; }
+.more-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 999px; background: var(--accent); pointer-events: none; }
+.more-menu {
+  position: absolute; top: calc(100% + var(--space-1)); right: 0; z-index: 50;
+  display: flex; flex-direction: column; min-width: 15rem; padding: var(--space-1);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
+}
+.more-menu button {
+  display: grid; grid-template-columns: auto 1fr; column-gap: var(--space-2); align-items: center;
+  width: 100%; min-height: var(--control); padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--r-md); background: transparent; color: var(--text); text-align: left;
+}
+.more-menu button { height: auto; }
+.more-menu button:hover { background: var(--bg-hover); }
+.more-menu .more-hint { grid-column: 2; color: var(--text-dim); font-size: 12px; }
+.more-menu button[aria-checked="true"] .more-label::after { content: " ✓"; color: var(--accent); }
+.more-note { position: absolute; top: calc(100% + var(--space-1)); right: 0; z-index: 50; padding: var(--space-1) var(--space-2); white-space: nowrap; font-size: 12px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); }
+
+/* 앱 안 알림(herdr/Droplet.css 그대로)이 쓰는 참고 토큰: 섬처럼 검은 카드라 테마와 상관없이 한 벌(참고 styles.css 213~221줄) */
+.droplet {
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fw-semibold: 600; --lh-tight: 1.2; --radius-pill: 999px;
+  --ring: 2px solid var(--accent); --ring-offset: 2px; --ease-out: cubic-bezier(0.2, 0, 0, 1); --z-droplet: 40;
+  --droplet-bg: #000;
+  --droplet-text: #f5f5f7;
+  --droplet-text-dim: rgba(245, 245, 247, 0.62);
+  --droplet-blocked: #ff8a80;
+  --droplet-done: #9fd47a;
+  --droplet-mark-bg: rgba(255, 255, 255, 0.1);
+  --droplet-ring: rgba(255, 255, 255, 0.1);
+  --droplet-shadow: rgba(0, 0, 0, 0.35);
+}
+.settings-note { margin: 0 0 var(--space-2); font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.settings-item .settings-actions { display: flex; justify-content: flex-end; padding: 0 var(--space-3) var(--space-3); }
+.settings-item .settings-hint:empty { display: none; }
+/* 표시가 없는 agent의 머리글자 표시(AgentMark FallbackMark)는 테마의 --bg-elevated 원에 글자색을 쓴다. 검은 카드 위에서는
+   밝은 테마의 흰 원에 흰 글자가 되어 글자가 사라진다(참고도 같다): 카드 색으로 그린다 */
+.droplet-mark .agent-mark { --bg-elevated: var(--droplet-mark-bg); --border: var(--droplet-ring); }

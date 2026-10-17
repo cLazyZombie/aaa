@@ -55,8 +55,8 @@ self.addEventListener("push", (e) => {
 });
 
 /**
- * 앱을 띄운 창인지(herdr-web-ui sw.js isAppWindow). host API(`/api/`)가 연 파일·결과물 탭과 함께 보내는 파일
- * (아이콘·manifest·sw.js·offline.html)은 앱 창이 아니다: 마지막 부분에 확장자가 있으면 파일이다(index.html 빼고).
+ * 앱을 띄운 창인지(herdr-web-ui sw.js isAppWindow). host API(`/api/`)가 연 파일, 결과물 보기(`/v/`) 탭과 함께 보내는
+ * 파일(아이콘·manifest·sw.js·offline.html)은 앱 창이 아니다: 마지막 부분에 확장자가 있으면 파일이다(index.html 빼고).
  */
 function isAppWindow(url) {
   let parsed;
@@ -66,7 +66,7 @@ function isAppWindow(url) {
     return false;
   }
   const path = parsed.pathname;
-  if (path.startsWith("/api/")) return false;
+  if (path.startsWith("/api/") || path.startsWith("/v/")) return false;
   const last = path.slice(path.lastIndexOf("/") + 1);
   return !(last.includes(".") && last !== "index.html");
 }

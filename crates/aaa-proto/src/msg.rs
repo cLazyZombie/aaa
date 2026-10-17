@@ -57,6 +57,10 @@ pub enum ErrorCode {
     Internal,
     /// 다른 front가 이 pane의 조작 lease를 갖고 있다(가져오려면 take)
     LeaseHeld,
+    /// 이 기기에 그 push 구독이 없다(시험 알림, herdr-web-ui `subscription_not_found`)
+    SubscriptionNotFound,
+    /// push 서비스가 그 구독을 버렸다(404·410, host가 지웠다, herdr-web-ui `subscription_gone`)
+    SubscriptionGone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

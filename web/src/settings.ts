@@ -206,6 +206,55 @@ export function useKeepScreenOn(): boolean {
   return useSyncExternalStore(subscribe, () => keepScreenOn);
 }
 
+/**
+ * 알림(herdr-web-ui settings.ts `alertsOn`·`alertInApp`·`alertSound`: 기기마다).
+ * - 켜짐(기본 켬): 이 기기의 알림 전체. 끄면 push 구독도 지운다.
+ * - 앱 안(기본 켬): 앱을 보는 동안 위에서 내려오는 알림(Droplet).
+ * - 소리(기본 끔): 앱 탭이 열려 있으면 알림마다 소리.
+ * 기본값이면 지운다. 값은 "1"·"0".
+ */
+export type AlertSetting = "alertsOn" | "alertInApp" | "alertSound";
+const ALERT_KEYS: Record<AlertSetting, string> = {
+  alertsOn: "aaa:alerts-on",
+  alertInApp: "aaa:alert-in-app",
+  alertSound: "aaa:alert-sound",
+};
+const ALERT_DEFAULTS: Record<AlertSetting, boolean> = { alertsOn: true, alertInApp: true, alertSound: false };
+
+function readAlert(name: AlertSetting): boolean {
+  try {
+    const v = localStorage.getItem(ALERT_KEYS[name]);
+    return v === "1" ? true : v === "0" ? false : ALERT_DEFAULTS[name];
+  } catch {
+    return ALERT_DEFAULTS[name];
+  }
+}
+
+const alerts: Record<AlertSetting, boolean> = {
+  alertsOn: readAlert("alertsOn"),
+  alertInApp: readAlert("alertInApp"),
+  alertSound: readAlert("alertSound"),
+};
+
+export function setAlertSetting(name: AlertSetting, on: boolean) {
+  alerts[name] = on;
+  try {
+    if (on === ALERT_DEFAULTS[name]) localStorage.removeItem(ALERT_KEYS[name]);
+    else localStorage.setItem(ALERT_KEYS[name], on ? "1" : "0");
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function alertSetting(name: AlertSetting): boolean {
+  return alerts[name];
+}
+
+export function useAlertSetting(name: AlertSetting): boolean {
+  return useSyncExternalStore(subscribe, () => alerts[name]);
+}
+
 export function setTerminalInputMode(next: TerminalInputMode) {
   mode = next;
   try {
