@@ -29,8 +29,8 @@ const procs = new Map();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function aaa(...args) {
-  const sep = args.indexOf("--");
-  const a = sep < 0 ? [...args, "--json"] : [...args.slice(0, sep), "--json", ...args.slice(sep)];
+  // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
+  const a = ["--json", ...args];
   return JSON.parse(execFileSync(AA, a, { env: envA, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 }
 
@@ -181,7 +181,8 @@ try {
   await until("mac-b", () => aaa("machine", "list").machines.some((m) => m.name === "mac-b" && m.connection === "connected"));
 
   // pane: 셸 둘, 가짜 Claude 셋(작업 중·입력 대기·질문)
-  const run = (machine, name, argv) => aaa("pane", "run", "--machine", machine, "--name", name, "--", ...argv);
+  // 새 탭에 띄우고 그 pane ID를 돌려준다
+  const run = (machine, name, argv) => aaa("tab", "create", "--machine", machine, "--label", name, "--", ...argv).tabs.at(-1).root.pane;
   const sh = run("mac-a", "build", ["/bin/sh"]);
   for (const [mode, name, m] of [
     ["working", "claude-api", "mac-a"],
@@ -191,7 +192,7 @@ try {
     run(m, name, ["/usr/bin/env", `MODE=${mode}`, `AA=${AA}`, "/bin/sh", `${root}/claude-like.sh`]);
   }
   run("mac-b", "logs", ["/bin/sh"]);
-  aaa("pane", "send", sh.id, "--text", "printf '\\033[1;32m✓\\033[0m cargo build --release\\n  Compiling shop-api v0.4.2\\n  \\033[1;32mFinished\\033[0m release in 41.2s\\n'", "--enter");
+  aaa("pane", "run", sh, "printf '\\033[1;32m✓\\033[0m cargo build --release\\n  Compiling shop-api v0.4.2\\n  \\033[1;32mFinished\\033[0m release in 41.2s\\n'");
 
   // 프로젝트·thread
   aaa("project", "create", "shop");
@@ -259,11 +260,11 @@ try {
   }
   // TUI(aaa attach)를 웹 터미널 안에서 찍는다: workspace demo = [claude-api │ 질문 중인 Claude] 탭 + build 탭
   const paneId = (n) => aaa("pane", "list").panes.find((p) => p.name === n).id;
-  aaa("ws", "add", paneId("claude-api"), "-w", "demo");
-  aaa("ws", "split", paneId("claude-api"), "-w", "demo", "--dir", "h", "--machine", "mac-b", "--",
+  aaa("pane", "move", paneId("claude-api"), "--new-tab", "-w", "demo");
+  aaa("pane", "split", paneId("claude-api"), "-w", "demo", "--direction", "right", "--machine", "mac-b", "--",
     "/usr/bin/env", "MODE=question", `AA=${AA}`, "/bin/sh", `${root}/claude-like.sh`);
-  aaa("ws", "add", paneId("build"), "-w", "demo");
-  aaa("pane", "run", "--machine", "mac-a", "--name", "tui", "--cols", "150", "--rows", "40", "--",
+  aaa("pane", "move", paneId("build"), "--new-tab", "-w", "demo");
+  aaa("tab", "create", "--machine", "mac-a", "--label", "tui", "--cols", "150", "--rows", "40", "--",
     "/usr/bin/env", `AAA_CONFIG_DIR=${root}/c`, `AAA_STATE_DIR=${root}/s`, "TERM=xterm-256color", AA, "attach", "-w", "demo");
   for (const scheme of ["dark", "light"]) {
     const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: scheme });

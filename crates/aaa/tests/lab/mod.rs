@@ -44,17 +44,21 @@ impl Node {
         self.cmd(args).output().expect("aaa 실행")
     }
 
-    /// `--json`을 붙여 실행하고 JSON을 돌려준다. 실패하면 Err(JSON 또는 출력).
+    /// `--json`을 붙여 실행하고 JSON을 돌려준다. 실패하면 Err(표준 오류의 `{"error":…}` JSON, 아니면 출력 전부).
+    /// 오류 JSON은 herdr처럼 표준 오류로 온다.
     pub fn json(&self, args: &[&str]) -> Result<Value, String> {
-        let mut a = args.to_vec();
-        let at = a.iter().position(|x| *x == "--").unwrap_or(a.len());
-        a.insert(at, "--json");
+        // 맨 앞에 둔다: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
+        let mut a = vec!["--json"];
+        a.extend_from_slice(args);
         let o = self.run(&a);
-        let text = String::from_utf8_lossy(&o.stdout).to_string();
-        match serde_json::from_str::<Value>(&text) {
-            Ok(v) if o.status.success() => Ok(v),
-            Ok(v) => Err(v.to_string()),
-            Err(_) => Err(format!("{text}{}", String::from_utf8_lossy(&o.stderr))),
+        let out = String::from_utf8_lossy(&o.stdout).to_string();
+        let err = String::from_utf8_lossy(&o.stderr).to_string();
+        if o.status.success() {
+            return serde_json::from_str::<Value>(&out).map_err(|_| format!("{out}{err}"));
+        }
+        match err.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()) {
+            Some(v) => Err(v.to_string()),
+            None => Err(format!("{out}{err}")),
         }
     }
 
@@ -62,9 +66,46 @@ impl Node {
         self.json(args).unwrap_or_else(|e| panic!("aaa {} 실패: {e}", args.join(" ")))
     }
 
+    /// 보이는 화면 글(`pane read --source visible`)
     pub fn screen(&self, pane: &str) -> String {
-        let v = self.ok(&["pane", "read", pane]);
-        v["lines"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect::<Vec<_>>().join("\n")
+        let v = self.ok(&["pane", "read", pane, "--source", "visible"]);
+        v["text"].as_str().unwrap().to_string()
+    }
+
+    /// 새 탭에 pane을 띄우고(`tab create`) 그 pane ID를 돌려준다. `workspace`가 있으면 그 workspace에, `cwd`가 있으면 그 폴더에서.
+    pub fn new_pane(
+        &self,
+        workspace: Option<&str>,
+        machine: &str,
+        label: Option<&str>,
+        argv: &[&str],
+        cwd: Option<&str>,
+    ) -> String {
+        let mut a = vec!["tab", "create", "--machine", machine];
+        if let Some(w) = workspace {
+            a.extend(["--workspace", w]);
+        }
+        if let Some(c) = cwd {
+            a.extend(["--cwd", c]);
+        }
+        if let Some(l) = label {
+            a.extend(["--label", l]);
+        }
+        if !argv.is_empty() {
+            a.push("--");
+            a.extend(argv);
+        }
+        let w = self.ok(&a);
+        let tab = w["tabs"].as_array().and_then(|t| t.last()).unwrap_or_else(|| panic!("탭이 없다: {w}"));
+        tab["root"]["pane"].as_str().unwrap_or_else(|| panic!("새 탭의 pane이 없다: {w}")).to_string()
+    }
+
+    /// 출력에 글이 나올 때까지 기다린다(`pane wait-output`, host가 출력 사건마다 다시 본다)
+    pub fn wait_output(&self, pane: &str, needle: &str, timeout: Duration) -> Value {
+        let ms = timeout.as_millis().to_string();
+        self.json(&["pane", "wait-output", pane, &format!("--match={needle}"), "--timeout", &ms]).unwrap_or_else(|e| {
+            panic!("{pane}에 {needle:?}가 {timeout:?} 안에 나오지 않았다: {e}\n화면:\n{}", self.screen(pane))
+        })
     }
 
     pub fn pane(&self, pane: &str) -> Value {

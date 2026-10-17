@@ -261,7 +261,7 @@ fn leaves(w: &serde_json::Value) -> Vec<String> {
 fn attach_draws_layout_and_detach_keeps_sessions() {
     let mut lab = Lab::new();
     let h = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "first", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
@@ -288,8 +288,8 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 
     // 좌우로 나누면 host layout이 바뀌고 구분선과 새 pane이 그려진다. 포커스는 새 pane으로 간다.
     tui.cmd("%");
-    wait_for("split 반영", T, || (leaves(&h.ok(&["ws", "show"])).len() == 2).then_some(()));
-    let second = leaves(&h.ok(&["ws", "show"]))[1].clone();
+    wait_for("split 반영", T, || (leaves(&h.ok(&["workspace", "get"])).len() == 2).then_some(()));
+    let second = leaves(&h.ok(&["workspace", "get"]))[1].clone();
     tui.wait_text("구분선", |s| s.lines().nth(5).is_some_and(|l| l.contains('│')));
     tui.type_line("echo right-$((5+5))");
     tui.wait_text("오른쪽 출력", |s| s.lines().any(|l| l.find("right-10").is_some_and(|i| l[..i].contains('│'))));
@@ -311,7 +311,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     drop(tui);
     wait_for("lease 해제", T, || h.pane(&first)["lease"].is_null().then_some(()));
     assert_eq!(h.pane(&first)["state"], "running");
-    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 4);
+    assert_eq!(leaves(&h.ok(&["workspace", "get"])).len(), 4);
 
     // 다시 붙으면 같은 layout과 화면이 보인다
     let tui = Tui::start(&h);
@@ -328,7 +328,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 fn lease_conflict_with_another_front() {
     let mut lab = Lab::new();
     let h = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "shared", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "shared", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
 
     // 다른 front(같은 계약을 쓰는 연결)가 먼저 쓰고 크기를 건다
@@ -436,12 +436,10 @@ fn side_list_like_web() {
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
     wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
 
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "first", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
-    let loose = h.ok(&["pane", "run", "--machine", "labA", "--name", "loose", "--", "/bin/sh"])["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    // 지금 workspace(main) 탭에 없는 pane: 다른 workspace에 띄운다
+    let loose = h.new_pane(Some("scratch"), "labA", Some("loose"), &["/bin/sh"], None);
     h.ok(&["project", "create", "demo"]);
     let task = lab.root.join("task.md");
     std::fs::write(&task, "목록 시험\n").unwrap();
@@ -494,27 +492,27 @@ fn side_list_like_web() {
     tui.wait_text("목록 포커스", |s| s.contains("Enter 열기"));
     pick(&mut tui, "-job", "loose");
     tui.send(b"\r");
-    wait_for("새 탭", T, || leaves(&h.ok(&["ws", "show"])).contains(&loose).then_some(()));
+    wait_for("새 탭", T, || leaves(&h.ok(&["workspace", "get"])).contains(&loose).then_some(()));
     tui.wait_text("pane으로 돌아옴", |s| !s.contains("Enter 열기") && s.contains(" loose "));
 
     // 4) thread 줄을 고르면 그 thread의 pane이 탭으로 열린다
     tui.cmd("\t");
     pick(&mut tui, "-job", "alpha-job");
     tui.send(b"\r");
-    wait_for("thread 탭", T, || leaves(&h.ok(&["ws", "show"])).contains(&th_pane).then_some(()));
+    wait_for("thread 탭", T, || leaves(&h.ok(&["workspace", "get"])).contains(&th_pane).then_some(()));
 
     // 5) 이미 탭에 있는 pane은 그 탭으로 간다(탭이 늘지 않는다)
     tui.cmd("\t");
     pick(&mut tui, "-job", "first");
     tui.send(b"\r");
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
-    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 3);
+    assert_eq!(leaves(&h.ok(&["workspace", "get"])).len(), 3);
 
     // 6) 새 셸은 그 머신에 새 탭으로
     tui.cmd("\t");
     pick(&mut tui, "-job", "+ 새 셸");
     tui.send(b"\r");
-    wait_for("새 셸 탭", T, || (leaves(&h.ok(&["ws", "show"])).len() == 4).then_some(()));
+    wait_for("새 셸 탭", T, || (leaves(&h.ok(&["workspace", "get"])).len() == 4).then_some(()));
 
     // 7) Esc는 목록에서 pane으로 돌아간다
     tui.cmd("\t");
@@ -546,9 +544,9 @@ fn side_list_like_web() {
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
     let h = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "job", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh"]);
     let old = leaves(&w)[0].clone();
-    h.ok(&["pane", "send", &old, "--text", "echo before-$((1+1))", "--enter"]);
+    h.ok(&["pane", "run", &old, "echo before-$((1+1))"]);
     wait_for("출력", T, || h.screen(&old).contains("before-2").then_some(()));
 
     let mut tui = Tui::start(&h);
@@ -562,7 +560,7 @@ fn interrupted_badge_and_resume() {
 
     tui.cmd("r");
     wait_for("재개", T, || {
-        let l = leaves(&h.ok(&["ws", "show"]));
+        let l = leaves(&h.ok(&["workspace", "get"]));
         (l.len() == 1 && l[0] != old).then(|| l[0].clone())
     });
     tui.wait_text("재개 뒤 실행", |s| !s.contains("중단(재부팅)") && s.contains("실행"));
@@ -609,7 +607,7 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
 fn ctrl_v_pastes_clipboard_image() {
     let mut lab = Lab::new();
     let h = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "pic", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "pic", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
     let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
     let rgba: Vec<u8> = PIXELS.concat();

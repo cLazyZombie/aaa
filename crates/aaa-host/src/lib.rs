@@ -22,6 +22,7 @@ mod push;
 mod routine;
 pub mod tailscale;
 mod tasks;
+mod text;
 pub mod usage;
 pub mod web;
 
@@ -914,6 +915,25 @@ impl Host {
                     other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
                 }
             }
+            FrontRequest::PaneReadText { pane, source, lines, format } => {
+                self.pane_read_text(&pane, source, lines, format).await
+            }
+            FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
+            FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
+            FrontRequest::PaneSubmit { pane, text } => self.pane_submit(&pane, &text, actor).await,
+            FrontRequest::PaneWaitOutput { pane, matcher, source, lines, timeout_ms } => {
+                self.pane_wait_output(&pane, matcher, source, lines, timeout_ms).await
+            }
+            FrontRequest::PaneGet { pane } => {
+                let (id, _) = self.resolve_pane(&pane)?;
+                self.pane_view_of(&id, role)
+                    .map(FrontResponse::Pane)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("pane이 없다: {pane}")))
+            }
+            FrontRequest::PaneClose { pane } => self.pane_close(&pane, actor).await,
+            FrontRequest::Workspaces => Ok(FrontResponse::Workspaces { workspaces: self.workspace_summaries() }),
+            FrontRequest::WorkspaceClose { name } => self.workspace_close(&name, actor).await,
+            FrontRequest::WorkspaceRename { name, to } => self.workspace_rename(&name, &to, actor),
             FrontRequest::PaneSend { pane, data } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 self.check_running(&id)?;
@@ -925,12 +945,34 @@ impl Host {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 self.check_running(&id)?;
                 // 대화형 front가 크기를 걸면 그 화면이 지금 쓰는 화면이 된다. 한 번 보내는 CLI는 아무도 쓰지 않을 때만 바꾼다.
-                match front {
-                    Some(f) if f.interactive() => self.lease_use(&id, f),
-                    _ => self.lease_free(&id)?,
-                }
+                let interactive = match front {
+                    Some(f) if f.interactive() => {
+                        self.lease_use(&id, f);
+                        true
+                    }
+                    _ => {
+                        self.lease_free(&id)?;
+                        false
+                    }
+                };
                 let conn = self.live_conn(&mid)?;
-                conn.request(AgentRequest::Resize { session: id, cols, rows }).await.map(|_| FrontResponse::Done)
+                if interactive {
+                    return conn
+                        .request(AgentRequest::Resize { session: id, cols, rows })
+                        .await
+                        .map(|_| FrontResponse::Done);
+                }
+                // 한 번 보내는 CLI(`pane pty-size`): 새 크기가 host에 닿은 뒤 돌아온다. 바로 뒤 읽기가 새 크기의 화면을 본다.
+                let rx = self.pane_events(&id)?;
+                conn.request(AgentRequest::Resize { session: id.clone(), cols, rows }).await?;
+                self.wait_pane(
+                    &id,
+                    rx,
+                    |p| (p.info.cols, p.info.rows) == (cols, rows),
+                    "크기를 보냈지만 새 크기가 오지 않았다",
+                )
+                .await
+                .map(|_| FrontResponse::Done)
             }
             FrontRequest::PaneInput { pane, data } => {
                 let f = front.ok_or_else(|| {
@@ -977,7 +1019,16 @@ impl Host {
                 Ok(FrontResponse::Workspace(self.workspace(name.as_deref().unwrap_or(DEFAULT_WORKSPACE))))
             }
             FrontRequest::LayoutApply { workspace, change } => {
-                let name = workspace.unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
+                // workspace를 주지 않으면 그 pane·탭이 든 workspace(없으면 main)
+                let found = match &change {
+                    LayoutChange::Split { pane, .. }
+                    | LayoutChange::Close { pane, .. }
+                    | LayoutChange::Resize { pane, .. }
+                    | LayoutChange::MoveToNewTab { pane, .. } => self.workspace_of_pane(pane),
+                    LayoutChange::RenameTab { tab, .. } | LayoutChange::CloseTab { tab } => self.workspace_of_tab(tab),
+                    LayoutChange::NewTab { .. } | LayoutChange::AddTab { .. } => None,
+                };
+                let name = workspace.or(found).unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
                 self.layout_apply(&name, change, actor).await.map(FrontResponse::Workspace)
             }
             FrontRequest::PaneKill { pane } => {
@@ -1206,15 +1257,15 @@ impl Host {
         let pane_machine = |id: &str| self.inner.lock().unwrap().panes.get(id).map(|p| p.machine_id.clone());
         let mut w = self.workspace(name);
         match change {
-            LayoutChange::NewTab { machine, name: pname, argv, cwd } => {
+            LayoutChange::NewTab { machine, name: pname, argv, cwd, cols, rows } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
                 let spec = SpawnSpec {
                     name: pname.unwrap_or_default(),
                     argv,
                     cwd,
                     env: vec![],
-                    cols: 120,
-                    rows: 32,
+                    cols: cols.unwrap_or(120),
+                    rows: rows.unwrap_or(32),
                     role: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
@@ -1222,7 +1273,7 @@ impl Host {
                 w = self.workspace(name);
                 w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
             }
-            LayoutChange::Split { pane, dir, machine, argv, cwd } => {
+            LayoutChange::Split { pane, dir, machine, argv, cwd, ratio } => {
                 let (target, target_mid) = self.resolve_pane(&pane)?;
                 if !aaa_proto::layout::ws_contains(&w, &target) {
                     return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
@@ -1235,6 +1286,12 @@ impl Host {
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| aaa_proto::layout::split(&mut t.root, &target, &id, dir));
+                if let Some(r) = ratio {
+                    // herdr `pane split --ratio`: 새로 생긴 나눔의 a 쪽 비율
+                    for t in &mut w.tabs {
+                        aaa_proto::layout::set_split_ratio(&mut t.root, &id, r.clamp(100, 900));
+                    }
+                }
                 if !done {
                     return Err(err(ErrorCode::NotFound, "나누는 사이에 pane이 layout에서 빠졌다"));
                 }
@@ -1257,10 +1314,179 @@ impl Host {
                     return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
                 }
             }
+            LayoutChange::Resize { pane, direction, amount } => {
+                let (id, _) = self.resolve_pane(&pane)?;
+                // herdr `handle_pane_resize`: 기본 0.05, 최대 0.5
+                let amount = amount.unwrap_or(50).min(500);
+                let mut found = false;
+                for t in &mut w.tabs {
+                    if aaa_proto::layout::leaves(&t.root).contains(&id) {
+                        found = true;
+                        aaa_proto::layout::resize(&mut t.root, &id, direction, amount);
+                    }
+                }
+                if !found {
+                    return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
+                }
+            }
+            LayoutChange::RenameTab { tab, name: label } => {
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                t.name = label;
+            }
+            LayoutChange::CloseTab { tab } => {
+                let at = w
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                let t = w.tabs.remove(at);
+                self.close_panes(&aaa_proto::layout::leaves(&t.root), name, actor).await;
+            }
+            LayoutChange::MoveToNewTab { pane, name: label } => {
+                let (id, _) = self.resolve_pane(&pane)?;
+                // 옮긴다: 다른 workspace에 있던 자리도 뺀다(herdr `pane move`는 pane이 한 곳에만 있다)
+                let others: Vec<Workspace> = {
+                    let mut ws = self.workspaces.lock().unwrap();
+                    ws.values_mut()
+                        .filter(|o| o.name != name)
+                        .filter_map(|o| aaa_proto::layout::ws_remove(o, &id).then(|| o.clone()))
+                        .collect()
+                };
+                for o in others {
+                    self.save_workspace(&o);
+                }
+                aaa_proto::layout::ws_remove(&mut w, &id);
+                w.tabs.push(Tab {
+                    id: util::new_id(),
+                    name: label.unwrap_or_default(),
+                    root: LayoutNode::Pane { pane: id },
+                });
+            }
         }
         self.db.audit(actor, "layout", name);
         self.save_workspace(&w);
         Ok(w)
+    }
+
+    /// 탭·workspace를 닫을 때 그 안 pane을 끝내고 기록에서 지운다(herdr `tab close`·`workspace close`: pane이 사라진다).
+    /// 역할이 있는 pane(thread·coordinator·평가자)은 끝내지 않는다: 그 수명은 thread 명령(resolve·stop)이 정한다.
+    /// `closing` 밖 다른 workspace에도 있는 pane은 자리만 빠진다. agent가 끊긴 pane은 끝낼 수 없어 기록을 둔다.
+    async fn close_panes(self: &Arc<Self>, panes: &[String], closing: &str, actor: &str) {
+        for id in panes {
+            let target = {
+                let i = self.inner.lock().unwrap();
+                i.panes.get(id).map(|p| (p.machine_id.clone(), p.info.state.is_running(), p.info.role.is_some()))
+            };
+            let Some((mid, running, has_role)) = target else { continue };
+            let elsewhere = self
+                .workspaces
+                .lock()
+                .unwrap()
+                .values()
+                .any(|w| w.name != closing && aaa_proto::layout::ws_contains(w, id));
+            if has_role || elsewhere {
+                continue;
+            }
+            let Ok(conn) = self.live_conn(&mid) else { continue };
+            if running {
+                let Ok(rx) = self.pane_events(id) else { continue };
+                self.db.audit(actor, "pane_kill", id);
+                if let Err(e) = conn.request(AgentRequest::Kill { session: id.clone() }).await {
+                    tracing::warn!(pane = %id, "닫으며 끝내지 못했다: {}", e.message);
+                    continue;
+                }
+                if let Err(e) = self
+                    .wait_pane(id, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다")
+                    .await
+                {
+                    tracing::warn!(pane = %id, "{}", e.message);
+                    continue;
+                }
+            }
+            if let Err(e) = self.forget(id, &mid, actor).await {
+                tracing::warn!(pane = %id, "닫으며 기록을 지우지 못했다: {}", e.message);
+            }
+        }
+    }
+
+    /// pane이 들어 있는 workspace(main을 먼저). layout 요청에 workspace를 주지 않으면 이것을 쓴다(herdr는 pane ID가 workspace를 정한다).
+    pub fn workspace_of_pane(&self, pane: &str) -> Option<String> {
+        let (id, _) = self.resolve_pane(pane).ok()?;
+        let ws = self.workspaces.lock().unwrap();
+        if ws.get(DEFAULT_WORKSPACE).is_some_and(|w| aaa_proto::layout::ws_contains(w, &id)) {
+            return Some(DEFAULT_WORKSPACE.to_string());
+        }
+        let mut names: Vec<_> =
+            ws.values().filter(|w| aaa_proto::layout::ws_contains(w, &id)).map(|w| w.name.clone()).collect();
+        names.sort();
+        names.into_iter().next()
+    }
+
+    /// 탭이 들어 있는 workspace
+    pub fn workspace_of_tab(&self, tab: &str) -> Option<String> {
+        let ws = self.workspaces.lock().unwrap();
+        ws.values().find(|w| w.tabs.iter().any(|t| t.id == tab)).map(|w| w.name.clone())
+    }
+
+    fn workspace_summaries(&self) -> Vec<aaa_proto::WorkspaceSummary> {
+        let ws = self.workspaces.lock().unwrap();
+        let mut out: Vec<_> = ws
+            .values()
+            .map(|w| aaa_proto::WorkspaceSummary {
+                name: w.name.clone(),
+                tabs: w.tabs.len() as u32,
+                panes: w.tabs.iter().map(|t| aaa_proto::layout::leaves(&t.root).len() as u32).sum(),
+            })
+            .collect();
+        if !ws.contains_key(DEFAULT_WORKSPACE) {
+            out.push(aaa_proto::WorkspaceSummary { name: DEFAULT_WORKSPACE.to_string(), tabs: 0, panes: 0 });
+        }
+        out.sort_by(|a, b| (a.name != DEFAULT_WORKSPACE).cmp(&(b.name != DEFAULT_WORKSPACE)).then(a.name.cmp(&b.name)));
+        out
+    }
+
+    /// workspace를 닫는다: 그 안 pane을 끝내고(역할 있는 pane은 두고) layout을 지운다. 붙은 TUI에는 빈 workspace로 알린다.
+    async fn workspace_close(self: &Arc<Self>, name: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+        let w = self
+            .workspaces
+            .lock()
+            .unwrap()
+            .remove(name)
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace가 없다: {name}")))?;
+        if let Err(e) = self.db.delete_workspace(name) {
+            tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
+        }
+        let panes: Vec<String> = w.tabs.iter().flat_map(|t| aaa_proto::layout::leaves(&t.root)).collect();
+        self.close_panes(&panes, name, actor).await;
+        self.db.audit(actor, "workspace_close", name);
+        let _ = self.layout_events.send(Workspace { name: name.to_string(), tabs: vec![] });
+        Ok(FrontResponse::Workspaces { workspaces: self.workspace_summaries() })
+    }
+
+    fn workspace_rename(&self, name: &str, to: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+        let to = to.trim();
+        if to.is_empty() {
+            return Err(err(ErrorCode::BadRequest, "새 이름이 비었다"));
+        }
+        let mut w = {
+            let mut ws = self.workspaces.lock().unwrap();
+            if ws.contains_key(to) {
+                return Err(err(ErrorCode::NameTaken, format!("이미 있는 workspace: {to}")));
+            }
+            ws.remove(name).ok_or_else(|| err(ErrorCode::NotFound, format!("workspace가 없다: {name}")))?
+        };
+        if let Err(e) = self.db.delete_workspace(name) {
+            tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
+        }
+        let _ = self.layout_events.send(Workspace { name: name.to_string(), tabs: vec![] });
+        w.name = to.to_string();
+        self.save_workspace(&w);
+        self.db.audit(actor, "workspace_rename", &format!("{name} -> {to}"));
+        Ok(FrontResponse::Workspace(w))
     }
 
     fn check_running(&self, id: &str) -> Result<(), ErrorBody> {

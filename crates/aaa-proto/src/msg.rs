@@ -184,6 +184,64 @@ pub struct ScreenText {
     pub cursor_col: u16,
 }
 
+/// `pane read`·`pane wait-output`이 읽는 곳(herdr `ReadSource`, `src/api/schema`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReadSource {
+    /// 보이는 화면
+    Visible,
+    /// 기록과 화면의 마지막 줄들(기본 80줄, 커서·마지막 글 줄까지)
+    #[default]
+    Recent,
+    /// Recent와 같되 화면 폭에서 접힌 줄을 한 줄로 잇는다
+    RecentUnwrapped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadFormat {
+    #[default]
+    Text,
+    /// 글 모양(SGR)을 남긴다
+    Ansi,
+}
+
+/// `pane read` 결과(herdr `PaneReadResult`). `truncated`면 `lines`보다 앞 줄이 더 있다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ReadView {
+    pub pane: String,
+    pub source: ReadSource,
+    pub format: ReadFormat,
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// `pane wait-output`이 찾는 것(herdr `OutputMatch`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutputMatch {
+    Substring { value: String },
+    Regex { value: String },
+}
+
+/// `pane resize`·`pane split` 방향(herdr `PaneDirection`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// workspace 하나의 요약(`workspace list`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct WorkspaceSummary {
+    pub name: String,
+    pub tabs: u32,
+    pub panes: u32,
+}
+
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ChatMessage {
@@ -658,14 +716,40 @@ pub struct Workspace {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum LayoutChange {
-    /// 새 탭에 새 pane
-    NewTab { machine: Option<String>, name: Option<String>, argv: Vec<String>, cwd: Option<String> },
-    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다
-    Split { pane: String, dir: SplitDir, machine: Option<String>, argv: Vec<String>, cwd: Option<String> },
+    /// 새 탭에 새 pane. `cols`·`rows`는 화면이 붙기 전 처음 PTY 크기(기본 120×32)
+    NewTab {
+        machine: Option<String>,
+        name: Option<String>,
+        argv: Vec<String>,
+        cwd: Option<String>,
+        #[serde(default)]
+        cols: Option<u16>,
+        #[serde(default)]
+        rows: Option<u16>,
+    },
+    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다. `ratio`는 a 쪽 천분율(기본 500, herdr `pane split --ratio`)
+    Split {
+        pane: String,
+        dir: SplitDir,
+        machine: Option<String>,
+        argv: Vec<String>,
+        cwd: Option<String>,
+        #[serde(default)]
+        ratio: Option<u16>,
+    },
     /// 이미 있는 pane을 새 탭으로 넣는다
     AddTab { pane: String },
     /// layout에서 뺀다(kill이면 세션도 끝낸다)
     Close { pane: String, kill: bool },
+    /// pane 가장자리를 그 방향으로 옮긴다(herdr `pane resize`): 그쪽 가장자리의 나눔(없으면 반대쪽)의 비율을
+    /// 오른쪽·아래면 늘리고 왼쪽·위면 줄인다. `amount`는 천분율(기본 50, 최대 500), 비율은 100..=900으로 묶는다.
+    Resize { pane: String, direction: PaneDirection, amount: Option<u16> },
+    /// 탭 이름을 바꾼다
+    RenameTab { tab: String, name: String },
+    /// 탭을 닫는다. 그 안 pane도 끝낸다(herdr `tab close`)
+    CloseTab { tab: String },
+    /// pane을 지금 자리에서 빼 새 탭에 둔다(herdr `pane move --new-tab`)
+    MoveToNewTab { pane: String, name: Option<String> },
 }
 
 // ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
@@ -762,6 +846,65 @@ pub enum FrontRequest {
     PaneSend {
         pane: String,
         data: B64,
+    },
+    /// 글자로 읽는다(herdr `pane read`). host가 가진 화면 사본에서 읽는다.
+    PaneReadText {
+        pane: String,
+        #[serde(default)]
+        source: ReadSource,
+        /// 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
+        #[serde(default)]
+        lines: Option<u32>,
+        #[serde(default)]
+        format: ReadFormat,
+    },
+    /// 글을 그대로 보낸다(herdr `pane send-text`: 감싸지 않고 Enter도 없다)
+    PaneSendText {
+        pane: String,
+        text: String,
+    },
+    /// 키 이름(herdr 문법: `enter`·`esc`·`ctrl+c`·`shift+tab`·`up`·`f5`·글자 하나)을 그 프로그램이 켠 입력 모드(DECCKM 등)대로 보낸다.
+    /// 모두 해석한 뒤에 보낸다(하나라도 모르면 아무것도 보내지 않는다).
+    PaneSendKeys {
+        pane: String,
+        keys: Vec<String>,
+    },
+    /// 글 + Enter(herdr `pane run`): 프로그램이 bracketed paste를 켰으면 글을 감싸고 Enter와 한 번에 쓴다
+    PaneSubmit {
+        pane: String,
+        text: String,
+    },
+    /// 출력에 글이 나올 때까지 기다린다(herdr `pane wait-output`). 화면 사본에 출력이 들어올 때마다 다시 본다.
+    PaneWaitOutput {
+        pane: String,
+        #[serde(rename = "match")]
+        matcher: OutputMatch,
+        #[serde(default)]
+        source: ReadSource,
+        #[serde(default)]
+        lines: Option<u32>,
+        /// 없으면 끝없이 기다린다(herdr와 같다)
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        timeout_ms: Option<u64>,
+    },
+    /// pane 하나(ID·ID 앞부분·이름)
+    PaneGet {
+        pane: String,
+    },
+    /// pane을 닫는다(herdr `pane close`): 세션을 끝내고, 끝나기를 기다려 layout과 기록에서 지운다
+    PaneClose {
+        pane: String,
+    },
+    /// workspace 목록
+    Workspaces,
+    /// workspace를 닫는다: 그 안 pane을 끝내고 layout을 지운다. thread pane은 끝내지 않고 layout에서만 뺀다.
+    WorkspaceClose {
+        name: String,
+    },
+    WorkspaceRename {
+        name: String,
+        to: String,
     },
     PaneResize {
         pane: String,
@@ -1068,6 +1211,10 @@ impl FrontRequest {
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::PaneRead { .. }
+                | FrontRequest::PaneReadText { .. }
+                | FrontRequest::PaneWaitOutput { .. }
+                | FrontRequest::Workspaces
+                | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
@@ -1119,6 +1266,15 @@ pub enum FrontResponse {
         valid: Option<String>,
     },
     Screen(ScreenText),
+    Read(ReadView),
+    /// `pane wait-output`이 찾았다: 맞은 줄과 그때 읽은 글
+    OutputMatched {
+        matched_line: String,
+        read: ReadView,
+    },
+    Workspaces {
+        workspaces: Vec<WorkspaceSummary>,
+    },
     Chat(ChatView),
     Pending {
         pending: Vec<PendingEnroll>,

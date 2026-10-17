@@ -375,7 +375,14 @@ impl App {
             },
             list::Row::NewShell(machine) => {
                 self.list_focus = false;
-                let change = LayoutChange::NewTab { machine: Some(machine), name: None, argv: vec![], cwd: None };
+                let change = LayoutChange::NewTab {
+                    machine: Some(machine),
+                    name: None,
+                    argv: vec![],
+                    cwd: None,
+                    cols: None,
+                    rows: None,
+                };
                 return self.layout(tx, change, true).await;
             }
             _ => return Ok(()),
@@ -531,7 +538,7 @@ impl App {
             }
             KeyCode::Char('c') => {
                 let machine = self.focused_machine();
-                self.layout(tx, LayoutChange::NewTab { machine, name: None, argv: vec![], cwd: None }, true).await?;
+                self.layout(tx, LayoutChange::NewTab { machine, name: None, argv: vec![], cwd: None, cols: None, rows: None }, true).await?;
             }
             KeyCode::Char('%') | KeyCode::Char('|') | KeyCode::Char('"') | KeyCode::Char('-') => {
                 let Some(pane) = focus else { return Ok(()) };
@@ -540,7 +547,7 @@ impl App {
                 } else {
                     SplitDir::Vertical
                 };
-                self.layout(tx, LayoutChange::Split { pane, dir, machine: None, argv: vec![], cwd: None }, true)
+                self.layout(tx, LayoutChange::Split { pane, dir, machine: None, argv: vec![], cwd: None, ratio: None }, true)
                     .await?;
             }
             KeyCode::Char('x') => {
