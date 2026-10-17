@@ -52,6 +52,17 @@ fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: u
     serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
 }
 
+/// 보기 권한인 까닭(CLI 연결의 actor로 가린다, plan §8.116). 자기 스크립트가 왜 막혔는지 알게 한다.
+pub(crate) fn reader_reason(actor: &str) -> &'static str {
+    if actor.starts_with("detached:") {
+        ": 터미널도 aaa pane도 없는 떼어 낸 프로세스라 보기만 한다(사람 터미널에서 다시 실행한다)"
+    } else if actor.starts_with("worker:") || actor.starts_with("evaluator:") {
+        ": thread 세션 안의 CLI는 보기만 한다"
+    } else {
+        ""
+    }
+}
+
 /// aaa 세션(pane) 안에서 실행한 CLI인가(`local:<client>@<세션>`). coordinator가 여기에 든다.
 pub(crate) fn in_session(actor: &str) -> bool {
     actor.strip_prefix("local:").is_some_and(|rest| rest.contains('@'))

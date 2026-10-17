@@ -1855,6 +1855,162 @@ fn worker_session_cli_is_read_only() {
     assert!(next.contains("사람이 더한 줄") && !next.contains("thread가 더한 줄"), "{next}");
 }
 
+/// 시험용(plan §8.116): 여러 길로 떼어 낸 뒤 나머지 인자를 실행하고, 그 프로세스와 자손이 끝날 때까지 기다렸다 끝난다.
+/// 기다림은 pipe다: 실행한 쪽이 쓰기 끝을 물려받아 모두 끝나면 읽기 쪽이 EOF를 받는다(정한 시간을 자지 않는다).
+const DETACH_PL: &str = r#"use strict;
+use warnings;
+use POSIX ();
+
+my $mode = shift @ARGV;
+$^F = 1023;    # pipe를 exec 뒤에도 물려준다
+pipe(my $r, my $w) or die "pipe: $!";
+
+# 부모 $p가 끝나 다른 부모에 붙을 때까지, $gone이 있으면 그 프로세스가 거둬질 때까지 기다린다(그 사건이 조건이다)
+sub detached_from {
+    my ($p, $gone) = @_;
+    select(undef, undef, undef, 0.005) while getppid() == $p || ($gone && kill(0, $gone));
+}
+sub run { close $r; exec @ARGV or die "exec: $!" }
+sub wait_all { close $w; my $buf; 1 while sysread($r, $buf, 1); }
+# 고아를 만든다: 중간 프로세스가 곧바로 끝나 init에 붙은 뒤 $then을 하고 실행한다
+sub orphan {
+    my ($then) = @_;
+    my $k = fork // die;
+    if (!$k) { my $kp = $$; my $x = fork // die; exit 0 if $x; detached_from($kp); $then->() if $then; run() }
+    waitpid($k, 0);
+}
+
+if ($mode eq 'orphan') {
+    # nohup … &: 부모가 끝나 init에 붙는다(세션·제어 터미널은 pane 그대로)
+    orphan(); wait_all();
+} elsif ($mode eq 'setsid') {
+    # 새 세션(제어 터미널 없음), 부모는 살아 있다
+    my $x = fork // die;
+    if (!$x) { POSIX::setsid() or die "setsid: $!"; run() }
+    wait_all(); waitpid($x, 0);
+} elsif ($mode eq 'leader') {
+    # 새 세션의 leader는 살아 있고(pane 안), 그 세션 안 프로세스만 init에 붙는다(Claude Code Bash 도구 셸 안의 nohup … &)
+    my $b = fork // die;
+    if (!$b) { POSIX::setsid() or die "setsid: $!"; orphan(); wait_all(); exit 0 }
+    wait_all(); waitpid($b, 0);
+} elsif ($mode eq 'double') {
+    # double fork: 새 세션을 연 중간 프로세스가 끝나 세션 leader가 없다
+    my $b = fork // die;
+    if (!$b) {
+        POSIX::setsid() or die "setsid: $!";
+        my $x = fork // die;
+        exit 0 if $x;
+        my $bp = getppid();
+        detached_from($bp, $bp);
+        run();
+    }
+    waitpid($b, 0); wait_all();
+} elsif ($mode eq 'wrapper') {
+    # 떼어 낸 뒤 새 세션을 열어 셸로 감싼다: leader(셸)는 살아 있고 init의 자식이다
+    orphan(sub { POSIX::setsid() or die "setsid: $!" }); wait_all();
+} else {
+    die "모르는 방식 $mode";
+}
+"#;
+
+/// 시험용: `cli.sh <결과 파일> <-|=|세션> <이름>` — env를 지우거나(`-`) 그대로(`=`) 또는 다른 세션을 대고 `thread next --add <이름>`
+const BYPASS_CLI: &str = r#"out=$1 claim=$2 name=$3
+echo "ppid=$PPID" > "$out"
+case "$claim" in
+  -) env -u AAA_SESSION_ID -u AAA_HOOK_SOCK "$BIN" thread next demo "$ID" --add "$name" >> "$out" 2>&1 ;;
+  =) "$BIN" thread next demo "$ID" --add "$name" >> "$out" 2>&1 ;;
+  *) AAA_SESSION_ID=$claim "$BIN" thread next demo "$ID" --add "$name" >> "$out" 2>&1 ;;
+esac
+echo "rc=$?" >> "$out"
+"#;
+
+/// 시험용: thread pane 안에서 차례로 우회해 본다. 끝나면 `done`
+const BYPASS: &str = r#"export BIN=$1 ID=$2
+out=$3 shell_pane=$4 here=$(dirname "$0")
+cli="$here/cli.sh" pl="$here/detach.pl"
+sh "$cli" "$out/envu.txt" - envu
+sh -c 'unset AAA_SESSION_ID AAA_HOOK_SOCK; exec sh "$0" "$1" = shell' "$cli" "$out/shell.txt"
+nohup perl "$pl" orphan sh "$cli" "$out/nohup.txt" - nohup > /dev/null 2>&1
+perl "$pl" setsid sh "$cli" "$out/setsid.txt" - setsid
+perl "$pl" leader sh "$cli" "$out/leader.txt" - leader
+perl "$pl" double sh "$cli" "$out/double.txt" - double
+perl "$pl" wrapper sh "$cli" "$out/wrapper.txt" - wrapper
+sh "$cli" "$out/forged.txt" "$shell_pane" forged
+echo done > "$out/done"
+"#;
+
+/// thread 범위를 host가 판정한다(plan §8.116, t-0340 감사): thread pane 안에서 `AAA_SESSION_ID`를 지우거나 다른 셸·nohup·
+/// setsid·double fork로 떼어 내거나 사람 셸 pane의 세션을 대도 보기만 된다. 사람 셸 pane에서는 변수를 지워도 조작된다.
+#[test]
+fn thread_scope_survives_env_and_detach_bypass() {
+    let w = world_with("[safety.demo]\nthread_profiles = [\"other\"]\n");
+    let t = w.start(&["--title", "셸", "--profile", "other", "--kind", "dir", "--task-file", &w.task("s.txt", "x")]);
+    let (id, pane) = (t["id"].as_str().unwrap().to_string(), t["pane"].as_str().unwrap().to_string());
+    w.wait_show("brief", &id, |v| v["brief"] == "delivered");
+    let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
+    let dir = w.lab.root.join("bypass");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("detach.pl"), DETACH_PL).unwrap();
+    std::fs::write(dir.join("cli.sh"), BYPASS_CLI).unwrap();
+    std::fs::write(dir.join("bypass.sh"), BYPASS).unwrap();
+    let out = w.lab.root.join("bypass-out");
+    std::fs::create_dir_all(&out).unwrap();
+    let line = format!(
+        "sh {} {} {id} {} {shell}",
+        lab::shell_word(path_str(&dir.join("bypass.sh"))),
+        lab::shell_word(lab::BIN),
+        lab::shell_word(path_str(&out))
+    );
+    w.h.ok(&["pane", "run", &pane, &line]);
+    wait_for_diag(
+        "우회 시도 끝",
+        T,
+        || out.join("done").exists().then_some(()),
+        || format!("화면: {}", w.h.ok(&["pane", "read", &pane])),
+    );
+    let thread = ": thread 세션 안의 CLI는 보기만 한다";
+    let detached = ": 터미널도 aaa pane도 없는 떼어 낸 프로세스라 보기만 한다";
+    let mut tried = Vec::new();
+    for (name, why) in [
+        ("envu", thread),
+        ("shell", thread),
+        ("nohup", thread),
+        ("setsid", thread),
+        ("leader", thread),
+        ("double", detached),
+        ("wrapper", detached),
+        ("forged", thread),
+    ] {
+        let got = std::fs::read_to_string(out.join(format!("{name}.txt"))).unwrap();
+        tried.push(name);
+        // Linux subreaper(systemd --user) 밑이면 init 대신 그 프로세스에 붙어 「leader가 init의 자식」을 못 본다(남는 한계)
+        if name == "wrapper" && !got.starts_with("ppid=1\n") {
+            eprintln!("wrapper: init이 아닌 프로세스에 붙었다(subreaper), 판정을 건너뛴다: {got}");
+            continue;
+        }
+        assert!(
+            got.contains(&format!("보기 권한으로는 조작할 수 없다{why}")) && got.ends_with("rc=1\n"),
+            "{name}: {got}"
+        );
+    }
+    let next = w.h.ok(&["thread", "next", "demo", &id])["lines"].to_string();
+    assert!(tried.iter().all(|n| !next.contains(&format!("\"{n}\""))), "{next}");
+    // 사람의 셸 pane(thread가 아니다)에서는 변수를 지워도 조작된다
+    let ctl = out.join("control.txt");
+    let line = format!(
+        "BIN={} ID={id} sh {} {} - control",
+        lab::shell_word(lab::BIN),
+        lab::shell_word(path_str(&dir.join("cli.sh"))),
+        lab::shell_word(path_str(&ctl))
+    );
+    w.h.ok(&["pane", "run", &shell, &line]);
+    let got = wait_for("사람 셸 pane의 조작", T, || {
+        std::fs::read_to_string(&ctl).ok().filter(|s| s.ends_with("rc=0\n") || s.ends_with("rc=1\n"))
+    });
+    assert!(got.ends_with("rc=0\n"), "{got}");
+    assert!(w.h.ok(&["thread", "next", "demo", &id])["lines"].to_string().contains("\"control\""));
+}
+
 /// 병합 단계 자동 실행(§8.24): 순번, 커밋하지 않은 변경, 원격 일치, 병합·tree 같음·push, 사용자 checkout ff-only, 다른 thread 알림
 #[test]
 fn merge_land_steps() {

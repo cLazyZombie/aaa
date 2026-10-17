@@ -1,8 +1,9 @@
-//! 같은 머신의 다른 프로세스: 부모와 제어 터미널. front 연결이 어느 aaa pane 안에서 왔는지 host가 env 자기 신고 대신 판정할 때
-//! 쓴다(plan §8.116).
+//! 같은 머신의 다른 프로세스: 부모·세션·제어 터미널. front 연결이 어느 aaa pane 안에서 왔는지 host가 env 자기 신고 대신
+//! 판정할 때 쓴다(plan §8.116).
 //!
 //! - macOS `proc_pidinfo(PROC_PIDTBSDINFO)`의 `pbi_ppid`·`e_tdev`, Linux `/proc/<pid>/stat`의 ppid·tty_nr, Windows Toolhelp
-//!   snapshot의 부모(제어 터미널은 없다). herdr 0.9.5 `src/platform/{macos,linux,windows}.rs`가 agent 감지에 읽는 것과 같은 자리다.
+//!   snapshot의 부모(세션·제어 터미널은 없다). herdr 0.9.5 `src/platform/{macos,linux,windows}.rs`가 agent 감지에 읽는 것과
+//!   같은 자리다. 세션은 unix `getsid(pid)`(macOS·Linux 모두 다른 세션의 프로세스도 읽는다).
 //! - 못 읽으면 `None`이다(끝난 프로세스, 권한).
 
 /// 조상을 이만큼까지만 거슬러 오른다(고리·깊은 사슬)
@@ -64,6 +65,24 @@ pub fn tty(pid: u32) -> Option<u64> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         stat_field(pid, 4).and_then(|v| v.parse::<i64>().ok()).filter(|d| *d > 0).map(|d| d as u64)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// 세션 ID(그 세션 leader의 pid). Windows는 없다.
+pub fn session(pid: u32) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        if pid == 0 {
+            return None;
+        }
+        // SAFETY: getsid는 pid만 읽는다
+        let sid = unsafe { libc::getsid(pid as libc::pid_t) };
+        u32::try_from(sid).ok().filter(|s| *s > 0)
     }
     #[cfg(not(unix))]
     {
@@ -163,9 +182,11 @@ mod tests {
         assert_eq!(parent(cpid), Some(me));
         assert_eq!(ancestors(cpid).first().copied(), Some(me));
         assert_eq!(tty(cpid), tty(me));
+        assert_eq!(session(cpid), session(me));
+        assert!(session(me).is_some());
         let mut child = child;
         child.kill().unwrap();
         child.wait().unwrap();
-        assert!(parent(0).is_none() && tty(0).is_none());
+        assert!(parent(0).is_none() && tty(0).is_none() && session(0).is_none());
     }
 }

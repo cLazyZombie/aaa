@@ -30,10 +30,10 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     {
         let host = host.clone();
         tokio::spawn(async move {
-            while let Ok(s) = local.accept().await {
+            while let Ok((s, pid)) = local.accept_peer().await {
                 let host = host.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = serve(host, s, None).await {
+                    if let Err(e) = serve(host, s, None, pid).await {
                         tracing::info!("로컬 agent 연결 끝: {e:#}");
                     }
                 });
@@ -77,7 +77,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
                     let res = match known {
                         Some(m) => {
                             drop(permit);
-                            serve(host, Box::new(tls), Some(m.id)).await
+                            serve(host, Box::new(tls), Some(m.id), None).await
                         }
                         None => enroll(host, tls, &fp, &sas_base).await,
                     };
@@ -160,8 +160,14 @@ fn already_enrolled(name: &str) -> String {
     )
 }
 
-/// 인증된 agent: hello → welcome → 요청·사건·출력 처리. `known`은 TLS로 확인한 머신 ID(로컬은 None).
-async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Option<String>) -> Result<()> {
+/// 인증된 agent: hello → welcome → 요청·사건·출력 처리. `known`은 TLS로 확인한 머신 ID(로컬은 None), `pid`는 로컬 agent
+/// 프로세스(socket peer credential).
+async fn serve(
+    host: Arc<Host>,
+    stream: aaa_common::ipc::LocalStream,
+    known: Option<String>,
+    pid: Option<u32>,
+) -> Result<()> {
     let local = known.is_none();
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
@@ -204,7 +210,10 @@ async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Opt
     let conn = AgentConn::new(tx.clone(), generation);
     let pending = conn.pending.clone();
     host.agent_connected(&hello, local, conn);
-    tracing::info!(machine = %hello.machine_name, sessions = hello.sessions.len(), local, "agent 연결");
+    if local {
+        host.note_agent_pid(&hello.machine_id, pid);
+    }
+    tracing::info!(machine = %hello.machine_name, sessions = hello.sessions.len(), local, pid = ?pid, "agent 연결");
 
     let pinger = {
         let tx = tx.clone();

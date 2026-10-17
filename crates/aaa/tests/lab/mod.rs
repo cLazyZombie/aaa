@@ -473,7 +473,7 @@ impl Events {
 }
 
 /// 셸 낱말 하나로 감싼다(Linux `script -c` 명령줄)
-fn shell_word(w: &str) -> String {
+pub fn shell_word(w: &str) -> String {
     format!("'{}'", w.replace('\'', "'\\''"))
 }
 
