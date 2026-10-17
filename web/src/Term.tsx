@@ -38,9 +38,11 @@ import {
   setTerminalInputMode,
   useKeyBarItems,
   useMedia,
+  useTerminalFontFamily,
   useTerminalFontSize,
   useTerminalInputMode,
 } from "./settings";
+import { loadFontStack, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { pinchFontSize } from "./herdr/pinchFontSize.ts";
 import { matchHerdrWidths } from "./herdr/terminalWidths.ts";
 import { AgentMark } from "./herdr/AgentMark.tsx";
@@ -52,6 +54,15 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
+
+/**
+ * 설정한 터미널 글꼴을 기본 목록 앞에 붙인다(herdr-web-ui fontFamily.ts `terminalFontStack`). 기본 목록은 Meslotendard로 연다(plan §8.31).
+ * 이 기기에 없는 글꼴은 그대로 기본 목록으로 넘어간다.
+ */
+function fontStack(base: string, chosen: string): string {
+  const family = sanitizeFontFamily(chosen);
+  return family === "" ? base : `${family}, ${base}`;
+}
 
 /** 한 번에 보내는 조각(host 상한과 같다) */
 const CHUNK = 512 * 1024;
@@ -155,6 +166,12 @@ export function TermView({
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
   const terminalFontSize = useTerminalFontSize();
   const baseFontRef = useRef(terminalFontSize);
+  const terminalFontFamily = useTerminalFontFamily();
+  const fontFamilyRef = useRef(terminalFontFamily);
+  fontFamilyRef.current = terminalFontFamily;
+  /** 기본 글꼴 목록(--font-term)과, 넣은 WOFF2를 받았는지 */
+  const baseFamilyRef = useRef("");
+  const webFontReadyRef = useRef(false);
   const pinchBadgeRef = useRef<HTMLSpanElement>(null);
   const chatViewRef = useRef(false);
   chatViewRef.current = chatView && chatable;
@@ -361,6 +378,8 @@ export function TermView({
     const family = token("--font-term") || "ui-monospace, Menlo, monospace";
     const webFont = `${fontSize}px ${WEB_FONT}`;
     const ready = !family.includes(WEB_FONT) || document.fonts.check(webFont);
+    baseFamilyRef.current = family;
+    webFontReadyRef.current = ready;
     const term = new Terminal({
       cols: pane.cols,
       rows: pane.rows,
@@ -664,7 +683,10 @@ export function TermView({
     if (!ready) {
       void Promise.all([document.fonts.load(webFont), document.fonts.load(`bold ${webFont}`)])
         .then(() => {
-          if (!alive || term.options.fontFamily === family) return;
+          webFontReadyRef.current = true;
+          // 설정한 글꼴이 있으면 그 목록은 아래 글꼴 종류 effect가 그 face를 받은 뒤 넣는다. 여기서 먼저 넣으면
+          // 아직 없는 face 대신 글꼴로 cell을 재고, 같은 값이라 그 뒤에도 다시 재지 않는다.
+          if (!alive || sanitizeFontFamily(fontFamilyRef.current) !== "" || term.options.fontFamily === family) return;
           term.options.fontFamily = family;
           setFontGen((g) => g + 1);
         })
@@ -1134,6 +1156,28 @@ export function TermView({
     term.options.fontSize = terminalFontSize;
     autoFit.current(true);
   }, [terminalFontSize]);
+  // 설정한 글꼴 종류도 따라간다(PaneTerminal 1996~2028줄). xterm은 fontFamily가 바뀔 때 cell을 재고 같은 값이면 다시 재지 않는다.
+  // 그래서 고른 글꼴은 그 face를 받은 뒤에 넣는다. 아니면 대신 글꼴로 잰 cell이 남는다. 바뀌면 grid가 바뀌므로 크기를 다시 건다.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    const base = baseFamilyRef.current;
+    const chosen = sanitizeFontFamily(terminalFontFamily);
+    // 기본 목록으로 돌아갈 때 넣은 WOFF2가 아직이면 그것을 뺀 목록이다(받으면 위 open의 처리가 바꾼다)
+    const stack = chosen === "" && !webFontReadyRef.current ? base.replace(`${WEB_FONT}, `, "") : fontStack(base, chosen);
+    let superseded = false;
+    const apply = () => {
+      // 더 새 설정이나 새로 연 터미널이 그 사이 넘겨받았다
+      if (superseded || termRef.current !== term || term.options.fontFamily === stack) return;
+      term.options.fontFamily = stack;
+      autoFit.current(true);
+    };
+    if (chosen === "") apply();
+    else void loadFontStack(stack, baseFontRef.current).then(apply);
+    return () => {
+      superseded = true;
+    };
+  }, [terminalFontFamily, pane.id]);
   // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 가려지면 바로 크기를 놓는다(herdr-web-ui PaneTerminal 1831~1842줄
   // `keepSize(hidden)`: 숨은 문서는 서버 grid를 놓고 연결은 둔다). 보이는 채 focus만 잃으면 그대로 둔다.
   // 참고의 「가려지면 1초 뒤 보기 전용으로」(`releasePaneAway`)는 기본 꺼짐 설정이라 옮기지 않았다(host에 watch가 없다).

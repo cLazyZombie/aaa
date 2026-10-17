@@ -1,15 +1,19 @@
 // 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui MachineSidebar 바닥 줄 → SettingsDialog).
 // 참고 SettingsDialog(aa624cb)의 쪽 가운데 aaa가 뒷받침하는 묶음만 옮겼다: 터미널 「글자 크기」·「휠 스크롤 속도」·「입력 방식」(Terminal 쪽 395~409줄)과
 // 「구독 사용량」(Usage 쪽 UsagePage·UsageAccounts 570~631줄). 행·묶음·스위치·여럿 중 하나는 참고 SettingsControls.tsx와 같다.
+// 「터미널 글꼴」(395~400줄, FontFamilyInput 72~205줄)은 적은 목록을 기본 글꼴 앞에 붙인다(plan §8.64).
 // 「키 바」 줄의 「키 바 편집」은 참고처럼 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
 // 나머지 쪽(모양·chat·알림·기기 등)은 그 기능을 옮길 때 넣는다(plan §8.45).
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ProviderUsage } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
+import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "./herdr/fontFamily.ts";
+import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "./herdr/installedFonts.ts";
 import {
+  setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalInputMode,
   setTerminalWheelSpeed,
@@ -18,6 +22,7 @@ import {
   TERMINAL_WHEEL_SPEED_MAX,
   TERMINAL_WHEEL_SPEED_MIN,
   updateUsageSettings,
+  useTerminalFontFamily,
   useTerminalFontSize,
   useTerminalInputMode,
   useTerminalWheelSpeed,
@@ -194,9 +199,139 @@ function UsageGroups() {
   );
 }
 
+const FONT_LIST_LIMIT = 150;
+const FONT_FAMILY_PLACEHOLDER = 'D2Coding, "Cascadia Mono"';
+
+/**
+ * 글꼴 목록 칸(참고 SettingsDialog FontFamilyInput). 칸을 떠날 때·Enter·창을 닫을 때 저장한다. 누를 때마다 저장하면
+ * 치는 중인 쉼표·빈칸이 걸러지고, 글꼴이 바뀔 때마다 터미널이 다시 맞춰 pane 크기가 바뀐다.
+ * 「찾아보기」는 깔린 글꼴을 물을 수 있는 브라우저(Chromium)에만 있고, 고정폭이 아닌 글꼴은 고르지 않는다.
+ */
+function FontFamilyInput({ value, label, onCommit }: { value: string; label: string; onCommit: (family: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = (): void => {
+    const next = sanitizeFontFamily(draft);
+    setDraft(next);
+    if (next !== value) onCommit(next);
+  };
+  // Esc로 창을 닫으면 blur 없이 칸이 사라진다
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  useEffect(() => () => commitRef.current(), []);
+  const [families, setFamilies] = useState<string[] | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const [query, setQuery] = useState("");
+  const [refused, setRefused] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
+  // 허락 창은 누름(gesture)에서만 뜬다. API가 없는 브라우저에는 단추가 없다
+  const browse = async (): Promise<void> => {
+    if (browsing) {
+      setBrowsing(false);
+      return;
+    }
+    setRefused("");
+    setQuery("");
+    if (families === null) {
+      const result = await queryInstalledFonts();
+      if (result.status !== "granted") {
+        setUnavailable(true);
+        return;
+      }
+      setUnavailable(false);
+      setFamilies(result.families);
+    }
+    setBrowsing(true);
+  };
+  const matches = useMemo(() => filterFamilies(families ?? [], query), [families, query]);
+  const pick = (family: string): void => {
+    if (!isMonospaceFamily(family)) {
+      setRefused(family);
+      return;
+    }
+    const next = sanitizeFontFamily(family);
+    setDraft(next);
+    setBrowsing(false);
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <div className="settings-font-field">
+      <div className="settings-font-line">
+        <input
+          className="settings-font-input"
+          value={draft}
+          placeholder={FONT_FAMILY_PLACEHOLDER}
+          maxLength={FONT_FAMILY_MAX_CHARS}
+          aria-label={label}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            // IME의 Enter는 둔다(WebKit이 compositionend 뒤에 보내는 key code 229 포함)
+            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            event.preventDefault();
+            commit();
+          }}
+        />
+        {canListInstalledFonts() && (
+          <button type="button" className="settings-font-browse" aria-expanded={browsing} aria-label={`${label}에 설치된 글꼴 찾아보기`} onClick={() => void browse()}>
+            <Icon name="search" />
+            찾아보기
+          </button>
+        )}
+      </div>
+      {unavailable && (
+        <p className="settings-font-note" role="status">
+          설치된 글꼴을 불러오지 못했습니다. 이름을 직접 입력하세요.
+        </p>
+      )}
+      {browsing && families !== null && (
+        <div className="settings-font-picker">
+          <input
+            className="settings-font-search"
+            type="search"
+            value={query}
+            placeholder="글꼴 검색"
+            aria-label="글꼴 검색"
+            spellCheck={false}
+            autoFocus
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+                // 창이 아니라 목록을 닫는다
+                event.stopPropagation();
+                setBrowsing(false);
+              }
+            }}
+          />
+          {refused !== "" && (
+            <p className="settings-font-note" role="status">
+              {refused}은(는) 고정폭 글꼴이 아닙니다. 터미널에는 고정폭 글꼴이 필요하여 현재 글꼴을 유지했습니다.
+            </p>
+          )}
+          <ul className="settings-font-list" aria-label="설치된 글꼴">
+            {matches.slice(0, FONT_LIST_LIMIT).map((family) => (
+              <li key={family}>
+                <button type="button" className="settings-font-option" style={{ fontFamily: `"${family}", var(--font-ui)` }} onClick={() => pick(family)}>
+                  {family}
+                </button>
+              </li>
+            ))}
+            {matches.length === 0 && <li className="settings-font-empty">글꼴을 찾을 수 없습니다</li>}
+          </ul>
+          {matches.length > FONT_LIST_LIMIT && <p className="settings-font-note">처음 {FONT_LIST_LIMIT}개의 글꼴을 표시합니다. 검색해서 목록을 좁히세요.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
+  const fontFamily = useTerminalFontFamily();
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
@@ -260,6 +395,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 increaseLabel="글자 크게"
                 onChange={setTerminalFontSize}
               />
+            </SettingsRow>
+            {/* 참고 SettingsDialog 398~400줄(문구는 참고 i18n.ko.ts) */}
+            <SettingsRow label="터미널 글꼴" description="쉼표로 구분하며 앞에서부터 차례로 사용합니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다." wide>
+              <FontFamilyInput value={fontFamily} label="터미널 글꼴" onCommit={setTerminalFontFamily} />
             </SettingsRow>
             {/* 참고 SettingsDialog 401~403줄(문구는 참고 i18n.ko.ts) */}
             <SettingsRow label="휠 스크롤 속도" description="휠을 한 번 굴릴 때 터미널이 움직이는 정도">

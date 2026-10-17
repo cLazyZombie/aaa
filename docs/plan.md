@@ -1551,6 +1551,19 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **재연결 뒤 입력 모드.** 키 막대 화살표는 xterm의 DECCKM을 따른다(§8.48 무렵 옮김). 다시 붙을 때는 snapshot 재생(vt100 `state_formatted`)이 xterm에 모드를 되살려야 한다. `aaa-vt` 시험 `replay_restores_input_modes_in_a_fresh_vt`가 보통·대체 화면 모두에서 DECCKM·bracketed paste·마우스 보고(누름·놓음, SGR)가 새 vt에 되살아나고, 꺼진 DECCKM은 꺼진 채 오는지 본다. 고칠 것은 없었다.
 - **시험.** 웹 E2E 「키 바 편집」: 설정 → 「키 바 편집」에서 Esc를 지우고 Tab을 옮기고 PgUp을 더하고 Ctrl+← 조합을 더하면 키 막대가 그대로 바뀐다. 조합을 누르면 pane에 `ESC [1;5D`가 간다. 새로 고쳐도 남고, 「기본값」을 누르면 기본 키 막대로 돌아가며 저장값이 지워진다.
 
+### 8.64 터미널 글꼴 종류(10-17, 차이 목록 「글꼴 종류」)
+
+- **옮긴 것.** herdr-web-ui 설정 「터미널 글꼴」(SettingsDialog 398~400줄, `FontFamilyInput` 72~205줄)과 `src/lib/fontFamily.ts`·`installedFonts.ts`(`web/src/herdr/`에 그대로)다.
+  - 쉼표로 적은 글꼴 목록을 기기마다 둔다(`localStorage` `aaa:terminal-font-family`). 칸을 떠날 때·Enter·창을 닫을 때 저장한다. 저장하고 읽을 때 `sanitizeFontFamily`로 거른다(세미콜론·중괄호·제어 문자 빼기, 빈 이름 버리기, 빈칸 있는 이름은 따옴표, 200자).
+  - 「찾아보기」는 깔린 글꼴을 물을 수 있는 브라우저(Chromium `queryLocalFonts`)에만 있다. 이름순 목록과 검색이 있고, 고정폭이 아닌 글꼴은 고르지 않는다(참고 문구). 검색칸의 Esc는 목록만 닫는다.
+  - 터미널은 고른 목록의 face를 받은 뒤(`loadFontStack`, 3초 상한) 넣고 다시 맞춘다. xterm은 같은 fontFamily를 다시 넣으면 cell을 다시 재지 않기 때문이다. 먼저 넣으면 대신 글꼴로 잰 cell이 남는다.
+- **다른 곳(이유).**
+  - **기본 글꼴 목록 앞에 붙인다.** 참고 `terminalFontStack`은 Symbols Nerd Font Mono, 고른 목록, 참고 기본 목록 순이다. aaa는 고른 목록 뒤에 aaa 기본 목록(`--font-term`, Meslotendard, §8.31 사용자 결정)을 둔다. 아이콘 글꼴은 따로 넣지 않았다. Meslotendard가 Nerd Font 아이콘을 가지고 있어, 고른 글꼴에 없는 아이콘은 그것으로 그린다.
+  - **넣은 WOFF2와의 순서.** 터미널은 Meslotendard Web을 받기 전에는 그것을 뺀 목록으로 열고, 받으면 기본 목록으로 바꾼다(§8.31). 고른 글꼴이 있으면 이 처리는 목록을 바꾸지 않고 위 face 기다림에 맡긴다. 처음에는 여기서 고른 목록을 바로 넣었는데, 다시 연 화면에서 고른 face가 오기 전에 cell을 재어 좁은 칸이 남았다(아래 시험이 잡았다).
+  - **칸 너비.** aaa 설정 창이 참고보다 좁아 참고의 `flex: 0 1 18rem`이면 긴 설명이 칸을 몇 글자로 줄인다. 그래서 16rem에 고정하고, 휴대폰에서는 줄 전체로 둔다.
+  - 「찾아보기」 아이콘은 aaa `Icon`(돋보기)을 새로 그렸다(lucide를 쓰지 않는다).
+- **시험.** 웹 E2E 「터미널 글꼴」: 넣은 Meslotendard를 다른 주소에서 150% 크기로 받는 시험 글꼴 「E2E Wide」를 두고, 그 face는 0.8초 늦게 준다. 깔린 글꼴 목록은 Menlo·Helvetica·E2E Wide로 바꾼다. 찾아보기는 이름순이고 검색이 되며, Helvetica는 거절해 값이 그대로다. E2E Wide를 고르면 cell이 1.5배가 되고 grid와 host PTY 열 수가 준다. `'E2E Wide'; }, , Menlo`를 적고 Esc로 닫으면 `"E2E Wide", Menlo`로 저장된다. 다시 열어도 1.5배다. 비우고 Enter면 저장값이 지워지고 처음 cell·열 수로 돌아온다. face 기다림을 빼면 이 단계가 실패하는지 확인했다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

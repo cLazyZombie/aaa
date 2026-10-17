@@ -3,6 +3,7 @@
 // 모두 이 기기(localStorage)에 둔다(plan §8.45).
 import { useCallback, useSyncExternalStore } from "react";
 import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarItem } from "./herdr/keyBar.ts";
+import { sanitizeFontFamily } from "./herdr/fontFamily.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
 export type TerminalInputMode = "auto" | "line" | "direct";
@@ -28,11 +29,12 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== FONT_FAMILY_KEY) return;
   mode = read();
   fontSize = readFontSize();
   wheelSpeed = readWheelSpeed();
   keyBarItems = readKeyBarItems();
+  fontFamily = readFontFamily();
   listeners.forEach((f) => f());
 });
 
@@ -142,6 +144,37 @@ export function setKeyBarItems(items: readonly KeyBarItem[]) {
 
 export function useKeyBarItems(): readonly KeyBarItem[] {
   return useSyncExternalStore(subscribe, () => keyBarItems);
+}
+
+/**
+ * 터미널 글꼴(herdr-web-ui settings.ts `terminalFontFamily`: 기기마다, 기본 ""). 쉼표로 적은 목록이고
+ * 기본 글꼴 목록 앞에 붙는다(Term.tsx). 읽을 때도 거른다.
+ */
+const FONT_FAMILY_KEY = "aaa:terminal-font-family";
+
+function readFontFamily(): string {
+  try {
+    return sanitizeFontFamily(localStorage.getItem(FONT_FAMILY_KEY));
+  } catch {
+    return "";
+  }
+}
+
+let fontFamily = readFontFamily();
+
+export function setTerminalFontFamily(family: string) {
+  fontFamily = sanitizeFontFamily(family);
+  try {
+    if (fontFamily === "") localStorage.removeItem(FONT_FAMILY_KEY);
+    else localStorage.setItem(FONT_FAMILY_KEY, fontFamily);
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function useTerminalFontFamily(): string {
+  return useSyncExternalStore(subscribe, () => fontFamily);
 }
 
 export function setTerminalInputMode(next: TerminalInputMode) {
