@@ -262,8 +262,13 @@ impl Host {
             next
         };
         self.bump();
-        if matches!(activity, Some(AgentActivity::Idle)) {
-            self.tick_wake.notify_one();
+        // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
+        // aaa는 사건마다 다시 세어, 짧은 턴도 전이로 남는다. thread는 보고를 먼저 다시 본다(orch.rs `refresh_report`).
+        if activity.is_some() || ev.kind == "progress" {
+            match self.thread_of_pane(&ev.session) {
+                Some(r) if r.status == ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
+                _ => self.tick_wake.notify_one(),
+            }
         }
         // 기다리던 사건. 할 일(on_fire)은 잠금을 놓고 돌린 뒤 깨운다(기다리던 쪽이 그 기록을 본 뒤에 이어 가게)
         let mut fired = Vec::new();
@@ -325,9 +330,6 @@ impl Host {
         };
         if let Err(e) = self.db.rec_put("questions", &q.id, state, &serde_json::to_string(q).unwrap(), (&q.pane, "")) {
             tracing::error!("질문 저장 실패: {e:#}");
-        }
-        if q.state != QuestionState::Open {
-            self.inbox_question_closed(q);
         }
         let _ = self.question_events.send(q.clone());
     }

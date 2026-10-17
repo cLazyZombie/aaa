@@ -38,6 +38,7 @@ pub fn typescript_bindings() -> String {
         ReadSource::decl(&cfg),
         ReadFormat::decl(&cfg),
         ReadView::decl(&cfg),
+        ThreadPaneView::decl(&cfg),
         OutputMatch::decl(&cfg),
         PaneDirection::decl(&cfg),
         WorkspaceSummary::decl(&cfg),

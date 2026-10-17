@@ -104,7 +104,7 @@ pub struct NotifySection {
     pub format: String,
     /// format이 telegram일 때 받을 chat
     pub telegram_chat_id: String,
-    /// 알릴 inbox 항목 종류
+    /// 알릴 inbox 항목 종류(`item_kinds`가 옛 이름을 바꿔 읽는다). `thread-state`는 사람 차례·새 보고·시작 실패만 보낸다
     pub kinds: Vec<String>,
     /// 이 시간(초) 동안 모아 프로젝트마다 한 번에 보낸다(질문이 몰려도 한 통)
     pub debounce_secs: u64,
@@ -116,25 +116,31 @@ pub struct NotifySection {
     pub push_subject: String,
 }
 
+impl NotifySection {
+    /// 알릴 inbox 종류. 옛 thread 항목 종류(report·question·delivery·thread)는 `thread-state`로 읽는다: thread 항목을
+    /// 묶음 전이 하나로 합쳤다(plan §8.85). 이미 쓴 host.toml이 알림을 잃지 않게 한다.
+    pub fn item_kinds(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for k in &self.kinds {
+            let k = match k.as_str() {
+                "report" | "question" | "delivery" | "thread" => "thread-state",
+                other => other,
+            };
+            if !out.iter().any(|x| x == k) {
+                out.push(k.to_string());
+            }
+        }
+        out
+    }
+}
+
 impl Default for NotifySection {
     fn default() -> Self {
         NotifySection {
             webhook: String::new(),
             format: "json".into(),
             telegram_chat_id: String::new(),
-            kinds: [
-                "report",
-                "question",
-                "delivery",
-                "thread",
-                "session",
-                "outage",
-                "health",
-                "routine-approval",
-                "pr",
-            ]
-            .map(String::from)
-            .to_vec(),
+            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "pr"].map(String::from).to_vec(),
             debounce_secs: 15,
             web_push: true,
             push_hosts: ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]

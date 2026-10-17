@@ -18,8 +18,9 @@ impl std::fmt::Display for Version {
 /// host ↔ agent
 pub const AGENT_LINK: Version = Version { major: 1, minor: 3 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
-/// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81)
-pub const FRONT_API: Version = Version { major: 1, minor: 7 };
+/// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
+/// 1.8: `thread read`·`thread keys`(plan §8.86)
+pub const FRONT_API: Version = Version { major: 1, minor: 8 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 0 };
 

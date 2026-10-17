@@ -216,7 +216,11 @@ impl Host {
         let rec = self.load(project, id)?;
         match &out {
             Ok(Done::Delivered(how)) => {
-                let rec = self.update_rec(project, id, |r| r.brief = BriefState::Delivered)?;
+                let rec = self.update_rec(project, id, |r| {
+                    r.brief = BriefState::Delivered;
+                    r.delivered_at_ms = Some(aaa_common::util::now_ms());
+                    r.delivered_report = r.report_hash.clone();
+                })?;
                 let evidence = rec.work_dir.as_ref().map(|w| format!("{w}/brief.md"));
                 self.flow(&rec, "brief_delivered", evidence, format!("{how}(시도 {}번)", rec.brief_attempts));
             }
@@ -226,6 +230,8 @@ impl Host {
             }
             _ => {}
         }
+        // brief 상태는 묶음을 바꾼다(transitions.rs)
+        self.tick_wake.notify_one();
         out
     }
 
