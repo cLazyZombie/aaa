@@ -1232,12 +1232,14 @@ pub enum FrontMsg {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum TermServerMsg {
-    /// 화면을 비우고 replay를 쓴다
+    /// 화면을 비우고 replay를 쓴다. `stream`은 이 snapshot부터의 출력 구독 번호다: 브라우저는 replay와 뒤따르는
+    /// binary 출력을 xterm이 다 쓴 뒤 그 끝(replay 바이트 + 출력 바이트)을 `Ack`로 알린다(herdr-web-ui `pty-ack`).
     Snapshot {
         replay: B64,
         cols: u16,
         rows: u16,
         readonly: bool,
+        stream: u32,
     },
     /// 입력 가능 여부가 바뀌었다
     Readonly {
@@ -1275,6 +1277,13 @@ pub enum TermClientMsg {
     Take,
     /// 이 화면을 쓰지 않는다(탭이 1초 넘게 가려짐): 다른 화면이 크기를 되찾게 놓는다
     Release,
+    /// xterm이 이 구독(`Snapshot.stream`)의 출력을 `offset` 바이트까지 다 썼다(herdr-web-ui `pty-ack`).
+    /// host는 이것으로 이 화면이 따라오는지 보고, 따라오지 못하면 4008로 닫는다(plan §8.62).
+    Ack {
+        stream: u32,
+        #[ts(type = "number")]
+        offset: u64,
+    },
     /// 붙여 넣은 그림 한 조각(최대 512KiB). `offset` 0이 새 첨부의 시작이고, 마지막 조각에서 `sha256`(파일 전체)을 확인한다.
     Attach {
         #[ts(type = "number")]

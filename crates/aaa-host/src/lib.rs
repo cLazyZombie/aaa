@@ -17,6 +17,7 @@ pub mod link;
 mod merge;
 mod notify;
 mod orch;
+mod output;
 mod push;
 mod routine;
 pub mod tailscale;
