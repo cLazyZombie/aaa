@@ -312,12 +312,23 @@ async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(
         return bad_request(e);
     }
     let sub = crate::db::PushSub { endpoint: b.endpoint, p256dh: b.keys.p256dh, auth: b.keys.auth, device: id.clone() };
-    if let Err(e) = host.db.push_put(&sub) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
-        )
-            .into_response();
+    match host.db.push_put(&sub) {
+        Ok(true) => {}
+        Ok(false) => {
+            host.db.audit(&format!("device:{id}"), "push_subscribe", "다른 기기의 구독이라 거절");
+            return (
+                StatusCode::FORBIDDEN,
+                Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "다른 기기의 구독이다"))),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
+            )
+                .into_response();
+        }
     }
     // endpoint는 남기지 않는다(그 기기에 보내는 열쇠다)
     host.db.audit(&format!("device:{id}"), "push_subscribe", "");
@@ -411,8 +422,24 @@ const DIAG_KEEP: usize = 20;
 
 /// 실기 입력 사건 기록(web/src/inputTrace.ts)을 host 상태 폴더 `diag/`에 남긴다. iPad 화면 키보드 같은 OS 입력기의
 /// 사건 순서는 headless로 만들 수 없어 실기에서 모아 E2E 재생으로 옮긴다(herdr-web-ui terminal-ime-diagnostic과 같은 목적).
+/// 친 글 원문이 들어 있어 조작 권한 기기만 쓰고, 파일은 사용자 전용(0600)이다. `application/json`만 받는다: 다른 사이트의
+/// 폼이 보낼 수 있는 `text/plain` 단순 요청으로는 쓸 수 없다(보안 감사 t-0340 A6·B8, herdr-web-ui는 전용 헤더를 요구한다)
 async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
-    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    if !role.can_control() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 조작할 수 없다"))),
+        )
+            .into_response();
+    }
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("application/json")));
+    if !json {
+        return bad_request("content-type이 application/json이 아니다");
+    }
     if body.len() > DIAG_MAX {
         return bad_request(format!("기록은 {}KiB까지", DIAG_MAX >> 10));
     }
@@ -421,7 +448,7 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
     }
     let dir = host.state.join("diag");
     let name = format!("input-{}.json", aaa_common::util::now_ms());
-    let saved = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), &body));
+    let saved = std::fs::create_dir_all(&dir).and_then(|_| aaa_common::util::write_private(&dir.join(&name), &body));
     if let Err(e) = saved {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

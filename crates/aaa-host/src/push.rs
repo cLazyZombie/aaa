@@ -238,16 +238,18 @@ pub(crate) enum Sent {
     Failed(String),
 }
 
+/// VAPID `sub` 기본값(설정 `notify.push_subject`가 비었을 때)
+const DEFAULT_PUSH_SUBJECT: &str = "https://github.com/cLazyZombie/aaa";
+
 impl Host {
     fn push_subject(&self) -> String {
         let s = &self.cfg.notify.push_subject;
         if !s.is_empty() {
             return s.clone();
         }
-        match self.db.meta("publish_dns").ok().flatten() {
-            Some(dns) => format!("https://{dns}"),
-            None => "mailto:aaa@example.com".into(),
-        }
+        // 공개 주소(tailnet 이름)는 push 사업자에게 보내지 않는다(보안 감사 t-0340 B11). 참고 herdr-web-ui server/push.ts
+        // `DEFAULT_SUBJECT`처럼 프로젝트 저장소 주소를 쓴다
+        DEFAULT_PUSH_SUBJECT.into()
     }
 
     /// 구독 하나에 보낸다
