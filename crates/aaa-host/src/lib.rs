@@ -943,8 +943,21 @@ impl Host {
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
                 self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen: false } => self
-                .thread_resolve(&project, &thread, keep_worktree, orch::ResolveWhy::Manual, actor)
+            FrontRequest::ThreadResolve {
+                project,
+                thread,
+                keep_worktree,
+                reopen: false,
+                skip_copy,
+                discard_uncopied,
+            } => self
+                .thread_resolve(
+                    &project,
+                    &thread,
+                    orch::ResolveOpts { keep_worktree, skip_copy, discard_uncopied },
+                    orch::ResolveWhy::Manual,
+                    actor,
+                )
                 .await
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {

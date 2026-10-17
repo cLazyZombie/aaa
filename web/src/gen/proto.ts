@@ -298,7 +298,15 @@ from_task: string | null, } | { "op": "thread_next", project: string, thread: st
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
-reopen: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, 
+reopen: boolean, 
+/**
+ * 마지막 사본 없이 끝낸다(사본을 만들 수 없을 때, worktree는 남긴다. herdr-projects `--skip-copy`)
+ */
+skip_copy: boolean, 
+/**
+ * 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
+ */
+discard_uncopied: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, 
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */

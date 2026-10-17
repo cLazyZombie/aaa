@@ -2602,7 +2602,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   고치면 메시지는 `unknown`, 질문은 열려 사람이 답한다.
   `memory_and_restart`: symlink·FIFO decisions.md는 항목도 멈춤도 없다. host 유닛 `unknown_requests_get_an_error_answer`.
 
-### 8.115 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」(10-18, D11, 차이 목록 4장 I)
+### 8.115 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」, 집에 다 오지 않은 worktree는 남김, TUI 목록 차례(10-18, D11, 차이 목록 4장 I·D #556, 3장 C1·E10 일부·E12)
 
 - **없앤 것(4장 I 「누가 병합하나」「병합 대기열 순번」, hp README 121줄·COORDINATOR.md 72·147줄).** 참고 플러그인은 병합·push를
   하지 않고 대기열도 없다. aaa도 `aaa merge enqueue|list|done|drop|land`(§8.8·§8.24), host `merge.rs`, agent 병합 단계(`merge.rs`),
@@ -2625,10 +2625,33 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **평가자(aaa에만 있다, §8.13).** 「착지는 바로 묶음」 사건은 `merge_landed` 대신 PR 병합 `pr_merged`(PR 추적이 `merged`를 보면 낸다)다.
   기본 `[evaluator] events`도 바꿨다. 옛 기록의 `merge_landed`는 시간 요약(`landed_ms`)에서 그대로 읽는다. project.toml에
   `merge_landed`를 적은 프로젝트는 그 사건이 더 오지 않으니 `pr_merged`로 바꾼다.
-- **계약.** FRONT_API 1.17 안에서 `merge_*` 요청을 없앴다(옛 front가 보내면 모르는 요청 오류). AGENT_LINK는 올리지 않았다
-  (새 host는 `MergeLand`를 보내지 않는다, §8.113의 까닭).
+- **집에 다 오지 않은 worktree는 남긴다(4장 I 「병합 뒤 정리」 #617·3장 E12·E11, hp threads.rs `clean` `copy_complete`·steps.rs
+  `resolve_after_copy`).** 참고는 마지막 사본이 Partial(symlink·한도를 넘은 파일)이면 worktree를 남긴다(이미 없는 폴더는 예외).
+  aaa는 사본 결과와 상관없이 지웠다. 작업 폴더 `.aaa/`는 git exclude라 force 없는 `git worktree remove`도 그 안을 지우므로(직접
+  확인했다), 집에 오지 않은 library 파일이 사라졌다. 쉼 끝내기(E11)·병합 뒤 끝내기(E12)는 사람 없이 이 길을 탄다.
+  - host: 사본이 `partial`이거나 사본 없이 끝내면 `ThreadCleanup.uncopied`를 켜고 `keep_worktree`도 켠다(이 칸을 모르는 옛 agent도
+    지우지 않는다). 항목에 집에 오지 않은 것을 적는다.
+  - agent: 참고 차례대로 남김 요청 → 이미 없는 폴더(지운 것으로 침) → `uncopied`면 남김 → 지움. 남긴 worktree의 branch·pane 줄은
+    남는다.
+  - `thread resolve --skip-copy`(사본을 만들 수 없을 때, worktree는 남긴다)·`--discard-uncopied`(그래도 지운다), `--reopen`과 함께
+    못 쓴다(3장 E10의 이 둘만. 사본 실패 오류가 `--skip-copy`를 안내한다).
+- **TUI 목록 차례(3장 C1·4장 D #556).** thread 줄을 herdr-projects `Group::rank`·`DISPLAY_ORDER`(사람 차례 → 검토 → 병합 중 →
+  작업 → 쉼)로, 같은 묶음 안은 최근 바뀐 순으로 세운다. 참고 사이드바는 pane 표지 `hp_rank`로 세우고 popup·overview도 같은 차례다.
+  웹 목록(`sidebarModel.ts` `RANK`)은 이미 그랬고 TUI만 최근 바뀐 순이었다. proto `ThreadGroup::rank`. 참고 사이드바 줄은
+  `thread_display`(id·제목)만 보이고 「landing · PR #4」(`state_line`)는 popup 몫이라 TUI 줄의 사실은 두지 않았다.
+- **넘겨받은 줄(t-0332 조사, coordinator 10-18).** E12·#617(병합 뒤 끝내기·정리)·C8(병합 중)은 §8.113(280f8f2 착지)과 위
+  「집에 다 오지 않은」, #615·#616(누가 병합·대기열)은 위 「없앤 것」, C1·#556은 위 「TUI 목록 차례」다. E8은 t-0332 몫이다.
+- **계약.** FRONT_API 1.18: `merge_*` 요청을 없앴고(옛 front가 보내면 모르는 요청 오류) resolve `skip_copy`·`discard_uncopied`를
+  더했다. main의 1.17은 묶음 `landing`만 실었다(§8.113이 먼저 착지했다). AGENT_LINK는 올리지 않았다(새 host는 `MergeLand`를 보내지
+  않는다. `ThreadCleanup.uncopied`는 옛 agent가 버려도 `keep_worktree`로 남긴다, §8.113의 까닭).
 - **시험.** m13 `merge_land_steps`를 지우고 `merge_queue_and_capacity`는 한도 경고만 남겨 `parallel_threads_only_warn`으로,
   `worker_session_cli_is_read_only`의 쓰기 예는 `thread ack`, `evaluator_flow`는 `thread resolve`로 묶음을 만든다.
+  - m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`: symlink를 둔 worktree는 남기고(항목에 집에 오지 않은 것, pane 줄 남음),
+    `--discard-uncopied`면 지우고 pane을 닫고, `--skip-copy`는 남긴다(`--reopen`과 함께면 거부). host의 남김을 빼면 「worktree
+    삭제」로, agent가 `uncopied`를 모르면(옛 agent) worktree는 남고 「(요청)」 문구로 실패함을 확인했다.
+  - `worktree_thread_round_trip`: symlink를 치운 뒤 끝내면 마지막 사본이 complete가 되어 지운다. 가짜 agent의 symlink는 할 일에
+    「link」가 있을 때만 만든다(다른 시험은 사본이 complete다).
+  - TUI 유닛 `threads_follow_the_display_order`: rank를 빼면 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

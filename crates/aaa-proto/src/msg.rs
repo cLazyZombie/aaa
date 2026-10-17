@@ -510,6 +510,11 @@ pub enum AgentRequest {
         #[serde(default)]
         merged_head: Option<String>,
         keep_worktree: bool,
+        /// 마지막 사본에 집에 오지 않은 것이 있다(herdr-projects `clean` `copy_complete`, plan §8.115): 폴더가 남아 있으면
+        /// worktree를 남긴다. 이 칸을 모르는 옛 agent도 지우지 않게 host는 `keep_worktree`를 함께 켠다(둘 다 켜져 있으면
+        /// 사람의 「남기기」가 아니라 이것이다).
+        #[serde(default)]
+        uncopied: bool,
     },
     /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
     /// 않는다(결정 3). agent 기능 `pr.v1`이 있을 때만 보낸다.
@@ -1259,7 +1264,7 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
-    /// 끝낸다: 마지막 사본(실패면 거부) → 세션 종료 → worktree 정리(force 없음)
+    /// 끝낸다: 마지막 사본(실패면 거부) → 세션 종료 → worktree 정리(force 없음). 사본에 빠진 것이 있으면 worktree를 남긴다
     ThreadResolve {
         project: String,
         thread: String,
@@ -1268,6 +1273,12 @@ pub enum FrontRequest {
         /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
         #[serde(default)]
         reopen: bool,
+        /// 마지막 사본 없이 끝낸다(사본을 만들 수 없을 때, worktree는 남긴다. herdr-projects `--skip-copy`)
+        #[serde(default)]
+        skip_copy: bool,
+        /// 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
+        #[serde(default)]
+        discard_uncopied: bool,
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {

@@ -394,11 +394,18 @@ enum ThreadCmd {
     Resolve {
         project: String,
         thread: String,
+        /// worktree와 branch를 남긴다
         #[arg(long)]
         keep_worktree: bool,
         /// 끝낸 thread를 다시 연다(아무것도 띄우지 않는다. 띄우려면 restart)
-        #[arg(long, conflicts_with = "keep_worktree")]
+        #[arg(long, conflicts_with_all = ["keep_worktree", "skip_copy", "discard_uncopied"])]
         reopen: bool,
+        /// 마지막 사본을 만들 수 없어도 끝낸다(worktree는 남긴다)
+        #[arg(long)]
+        skip_copy: bool,
+        /// 집에 다 오지 않았어도 worktree를 지운다
+        #[arg(long)]
+        discard_uncopied: bool,
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
@@ -990,8 +997,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
                 ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
-                ThreadCmd::Resolve { project, thread, keep_worktree, reopen } => {
-                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen }
+                ThreadCmd::Resolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied }
                 }
                 ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
                 ThreadCmd::Read { project, thread, lines } => FrontRequest::ThreadRead { project, thread, lines },

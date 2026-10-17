@@ -35,7 +35,10 @@ while IFS= read -r line; do
       esac
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
-      ln -s /etc/hosts "$dir/library/link"
+      # 복사하지 않는 symlink(사본이 partial이 된다)
+      case "$task" in
+        *link*) ln -s /etc/hosts "$dir/library/link" ;;
+      esac
       # 결과물·commit을 다 남긴 뒤에 보고를 쓴다(실제 agent처럼 보고가 끝 신호다): 보고가 바뀌면 host가 그때의
       # library를 받는다(t-0327 넘김 (나), 0바이트 사본). 보고 뒤에 쓰면 시험이 먼저 resolve해 부하에 따라 실패했다
       case "$task" in
@@ -530,7 +533,7 @@ impl World {
 #[test]
 fn worktree_thread_round_trip() {
     let w = world();
-    let task = w.task("task1.txt", "보고에 X-42를 적는다");
+    let task = w.task("task1.txt", "보고에 X-42를 적는다 link");
     let v = w.start(&[
         "--title",
         "Fix the bug",
@@ -576,8 +579,11 @@ fn worktree_thread_round_trip() {
     let v = w.h.ok(&["thread", "ack", "demo", "t-0001"]);
     assert_eq!(v["group"], "idle");
 
+    // 끝내기는 마지막 사본을 다시 받는다: 복사하지 못한 symlink를 치우면 사본이 다 와(complete) worktree를 지운다
+    // (다 오지 않았으면 남긴다, `resolve_keeps_dirty_worktree_and_unmerged_branch`)
+    std::fs::remove_file(work.join("library/link")).unwrap();
     let v = w.h.ok(&["thread", "resolve", "demo", "t-0001"]);
-    assert_eq!(v["status"], "resolved");
+    assert_eq!((v["status"].as_str(), v["copy"].as_str()), (Some("resolved"), Some("complete")), "{v}");
     // 끝난 thread도 목록에 남는다(herdr-projects `thread list <slug>`, `--all` 없음). 프로젝트는 위치 인자다.
     let listed = w.h.ok(&["thread", "list", "demo"]);
     assert_eq!(listed["threads"][0]["group"], "resolved", "{listed}");
@@ -605,6 +611,7 @@ fn worktree_thread_round_trip() {
         "끝낸 thread의 pane이 남았다: {panes}"
     );
     assert!(resolved["detail"].as_str().unwrap().contains("pane을 닫았다"), "{resolved}");
+    // 마지막 사본은 받은 파일이 그대로라 따로 알리지 않는다(사본 상태만 complete로 바뀐다)
     assert_eq!(w.kinds(0), ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
     // cursor 뒤만 읽는다
     assert_eq!(w.kinds(3), ["review_acked", "thread_resolved"]);
@@ -613,6 +620,8 @@ fn worktree_thread_round_trip() {
 /// 고친 worktree와 병합되지 않은 branch는 남긴다(force 없음). 허용되지 않은 profile은 거부한다.
 /// pane은 그 thread의 자리를 치웠을 때만 닫는다(herdr-projects threads.rs `clean`: worktree를 지우며 workspace를, tab 종류는
 /// tab을 닫는다). 남긴 worktree의 pane 줄은 남고(세션만 끝남), 작업 폴더 thread와 이미 지운 worktree(`worktree_gone`)는 닫는다.
+/// 집에 다 오지 않은 worktree도 남긴다(`clean` `copy_complete`): `--discard-uncopied`면 지우고, `--skip-copy`는 사본 없이
+/// 끝내며 남긴다.
 #[test]
 fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let w = world();
@@ -651,13 +660,16 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     wait_for("남긴 worktree의 세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
 
     let listed = |p: &str| w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|x| x["id"] == p);
-    let resolved = |id: &str| {
-        w.h.ok(&["thread", "resolve", "demo", id]);
+    let resolved_with = |id: &str, flags: &[&str]| {
+        let mut a = vec!["thread", "resolve", "demo", id];
+        a.extend_from_slice(flags);
+        w.h.ok(&a);
         w.h.ok(&["events", "demo"])["events"].as_array().unwrap().last().unwrap()["detail"]
             .as_str()
             .unwrap()
             .to_string()
     };
+    let resolved = |id: &str| resolved_with(id, &[]);
     // 작업 폴더 thread는 늘 닫는다
     let d = w.start(&["--title", "dir", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("d.txt", "x")]);
     let (did, dpane) = (d["id"].as_str().unwrap().to_string(), d["pane"].as_str().unwrap().to_string());
@@ -685,6 +697,54 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     assert!(detail.contains("pane을 닫았다"), "{detail}");
     assert!(!listed(&gpane), "지운 worktree thread의 pane이 남았다");
     assert!(!git(&w.repo, &["worktree", "list"]).contains(path_str(&gcwd)), "git worktree 기록이 남았다");
+
+    // 집에 다 오지 않은 worktree(복사하지 않는 symlink)는 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는
+    // `worktree remove`도 지운다(시험 repo는 고친 파일이 없다)
+    let partial = |title: &str| {
+        let v = w.start(&[
+            "--title",
+            title,
+            "--profile",
+            "fake",
+            "--repo",
+            path_str(&w.repo),
+            "--task-file",
+            &w.task(&format!("{title}.txt"), "link"),
+        ]);
+        let id = v["id"].as_str().unwrap().to_string();
+        assert_eq!(w.wait_show("보고", &id, |v| v["report_hash"].is_string())["copy"], "partial");
+        (id, v["pane"].as_str().unwrap().to_string(), PathBuf::from(v["work_dir"].as_str().unwrap()))
+    };
+    let (pid, ppane, pwork) = partial("part");
+    let detail = resolved(&pid);
+    assert!(detail.contains("worktree 유지") && detail.contains("마지막 사본에 집에 오지 않은 것이 있다"), "{detail}");
+    assert!(detail.contains("집에 오지 않은 것: link: symlink"), "{detail}");
+    assert!(pwork.join("library/out.txt").is_file(), "집에 다 오지 않은 worktree를 지웠다");
+    assert!(listed(&ppane), "남긴 worktree의 pane 줄은 남는다");
+    // 사람이 고르면 지운다
+    let (xid, xpane, xwork) = partial("discard");
+    let detail = resolved_with(&xid, &["--discard-uncopied"]);
+    assert!(detail.contains("worktree 삭제") && detail.contains("pane을 닫았다"), "{detail}");
+    assert!(!xwork.exists() && !listed(&xpane), "{detail}");
+    // 사본 없이 끝내면 집에 온 것을 모르니 남긴다
+    let s = w.start(&[
+        "--title",
+        "skip",
+        "--profile",
+        "fake",
+        "--repo",
+        path_str(&w.repo),
+        "--task-file",
+        &w.task("skip.txt", "x"),
+    ]);
+    let sid = s["id"].as_str().unwrap().to_string();
+    let swork = PathBuf::from(s["work_dir"].as_str().unwrap());
+    w.wait_show("보고", &sid, |v| v["report_hash"].is_string());
+    let e = w.h.json(&["thread", "resolve", "demo", &sid, "--reopen", "--skip-copy"]).expect_err("reopen과 skip-copy");
+    assert!(e.contains("cannot be used with"), "{e}");
+    let detail = resolved_with(&sid, &["--skip-copy"]);
+    assert!(detail.contains("마지막 사본 없이 끝냈다") && detail.contains("worktree 유지"), "{detail}");
+    assert!(swork.join("report.md").is_file(), "사본 없이 끝낸 worktree를 지웠다");
 }
 
 /// 원격(TLS) 머신의 작업 폴더 thread, host 재시작 뒤 보고 감시 재개, 평가자 역할 필터
@@ -2095,7 +2155,16 @@ fn http_get(addr: &str, path: &str) -> (u16, String, Vec<u8>) {
 fn library_view() {
     let w = world_opts("", true);
     let web = w.h.ok(&["status"])["web_listen"].as_str().unwrap().to_string();
-    let v = w.start(&["--title", "big", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("t9.txt", "big")]);
+    let v = w.start(&[
+        "--title",
+        "big",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("t9.txt", "big link"),
+    ]);
     let id = v["id"].as_str().unwrap().to_string();
     let agent_lib = PathBuf::from(v["work_dir"].as_str().unwrap()).join("library");
     let v = w.wait_show("보고", &id, |v| v["report_hash"].is_string());

@@ -407,13 +407,16 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
 }
 
 /// thread 정리(herdr-projects threads.rs `clean`). worktree는 force 없이 지운다. branch는 PR이 병합됐고(`merged_head`가
-/// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다.
+/// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
+/// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
+/// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
 pub async fn cleanup(
     repo: Option<&str>,
     cwd: &str,
     branch: Option<&str>,
     merged_head: Option<&str>,
     keep_worktree: bool,
+    uncopied: bool,
 ) -> Result<Cleanup> {
     let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
     let Some(repo) = repo else {
@@ -421,13 +424,15 @@ pub async fn cleanup(
         return Ok(c);
     };
     let repo = PathBuf::from(repo);
-    if keep_worktree {
+    if keep_worktree && !uncopied {
         c.notes.push("worktree를 남겼다(요청)".into());
     } else if !Path::new(cwd).exists() {
         // 이미 없는 폴더는 잃을 것이 없다(herdr-projects `worktree_gone`): 지운 것으로 치고 git 기록만 치운다
         let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
         c.worktree_removed = true;
         c.notes.push("worktree는 이미 없다".into());
+    } else if uncopied {
+        c.notes.push("worktree를 남겼다: 마지막 사본에 집에 오지 않은 것이 있다(`--discard-uncopied`면 지운다)".into());
     } else {
         match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
             Ok(_) => c.worktree_removed = true,

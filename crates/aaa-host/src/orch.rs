@@ -107,6 +107,16 @@ pub(crate) enum ResolveWhy {
     Merged,
 }
 
+/// `thread resolve`의 고르기(herdr-projects `ResolveArgs`). 저절로 끝낼 때는 모두 끈 것이다(`resolve_after_copy`)
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ResolveOpts {
+    pub keep_worktree: bool,
+    /// 마지막 사본 없이 끝낸다(worktree는 남긴다)
+    pub skip_copy: bool,
+    /// 집에 다 오지 않았어도 worktree를 지운다
+    pub discard_uncopied: bool,
+}
+
 /// thread 시작 인자
 pub struct StartArgs {
     pub project: String,
@@ -1129,7 +1139,7 @@ impl Host {
         self: &Arc<Self>,
         project: &str,
         id: &str,
-        keep_worktree: bool,
+        opts: ResolveOpts,
         why: ResolveWhy,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
@@ -1138,7 +1148,9 @@ impl Host {
             return Ok(self.thread_view(&rec));
         }
         let conn = self.live_conn(&rec.machine_id)?;
-        if let Some(w) = &rec.work_dir {
+        if !opts.skip_copy
+            && let Some(w) = &rec.work_dir
+        {
             let has_report = matches!(
                 conn.request(AgentRequest::ReportCollect { work_dir: w.clone(), max_library_bytes: 0 }).await,
                 Ok(AgentResponse::Report(_))
@@ -1147,7 +1159,12 @@ impl Host {
                 let _guard = self.collect_lock.lock().await;
                 self.collect(project, id, true)
                     .await
-                    .map_err(|e| bad(format!("마지막 사본이 실패해 resolve하지 않는다: {}", e.message)))?;
+                    .map_err(|e| {
+                        bad(format!(
+                            "마지막 사본이 실패해 resolve하지 않는다: {} (`--skip-copy`면 사본 없이 끝내고 worktree는 남긴다)",
+                            e.message
+                        ))
+                    })?;
             }
         }
         let rec = self.update_rec(project, id, |r| {
@@ -1165,6 +1182,19 @@ impl Host {
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
+        // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
+        // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
+        let uncopied = rec.kind == ThreadKind::Worktree
+            && !opts.keep_worktree
+            && !opts.discard_uncopied
+            && (opts.skip_copy || rec.copy.as_deref() == Some("partial"));
+        if uncopied {
+            notes.push(if opts.skip_copy {
+                "마지막 사본 없이 끝냈다".to_string()
+            } else {
+                format!("집에 오지 않은 것: {}", rec.copy_notes.join("; "))
+            });
+        }
         // 그 thread의 자리가 치워졌나: 작업 폴더 thread는 늘, worktree thread는 worktree를 지웠을 때
         let mut place_gone = rec.kind == ThreadKind::Dir;
         if let Some(cwd) = &rec.cwd {
@@ -1176,7 +1206,9 @@ impl Host {
                     cwd: cwd.clone(),
                     branch: rec.branch.clone(),
                     merged_head,
-                    keep_worktree,
+                    // 옛 agent는 `uncopied`를 모른다: 남기기를 함께 켜야 지우지 않는다
+                    keep_worktree: opts.keep_worktree || uncopied,
+                    uncopied,
                 })
                 .await
             {
