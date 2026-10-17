@@ -153,7 +153,14 @@ pub struct SessionInfo {
     /// agent 세션 역할(thread가 띄운 세션만). 이전 session host는 보내지 않는다.
     #[serde(default)]
     pub role: Option<Role>,
+    /// 사람이 붙인 이름(`pane rename`, herdr `manual_label`). 있으면 `name`이 이것이고, 지우면 띄울 때 이름으로 돌아간다.
+    /// 정본은 agent의 `spec.json`이다(이전 session host는 모른다, plan §8.106).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
+
+/// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
+pub const MAX_PANE_LABEL_CHARS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SpawnSpec {
@@ -397,6 +404,11 @@ pub enum AgentRequest {
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
+    },
+    /// 세션에 사람이 붙인 이름(`None`이면 지움). 답은 바뀐 `Session`이다. agent가 `rename.v1` 기능을 알릴 때만 보낸다.
+    Rename {
+        session: String,
+        label: Option<String>,
     },
     /// harness 대화 기록의 끝부분(§8.27). agent는 자기 Claude·Codex 기록 폴더 안의 파일만 읽는다.
     Chat {
@@ -737,6 +749,10 @@ pub struct PaneView {
     pub role: Option<Role>,
     /// harness 상태(hook을 보내는 agent 세션만)
     pub agent: Option<Box<AgentStatus>>,
+    /// 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -1045,6 +1061,11 @@ pub enum FrontRequest {
     /// 끝난 pane 기록을 지운다
     PaneForget {
         pane: String,
+    },
+    /// pane에 이름을 붙인다(herdr `pane rename`). 앞뒤 공백을 떼고, `None`이나 빈 이름은 붙인 이름을 지워 띄울 때 이름으로 돌린다.
+    PaneRename {
+        pane: String,
+        label: Option<String>,
     },
     /// 이 연결로 pane 화면(cell grid)을 보낸다. 같은 머신 front 연결(UDS)에서만 쓴다.
     PaneWatch {
@@ -1726,6 +1747,7 @@ mod tests {
             rows: 24,
             state: SessionState::Exited { code: Some(2) },
             role: None,
+            label: None,
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["state"], "exited");

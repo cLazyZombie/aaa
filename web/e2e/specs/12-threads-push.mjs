@@ -875,7 +875,7 @@ export default async function ({ ctl, page }) {
     const key = await rowOf(page, "t1").getAttribute("data-pin-key");
     await page.getByTestId("pane-t1").click({ button: "right" });
     await focusIs(page, "메뉴 첫 항목", '[role="menu"] [role="menuitem"]');
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
     if ((await page.locator(".machine-list .row-menu-toggle").first().isVisible())) throw new Error("마우스 데스크톱에 ⋯ 단추가 보인다(참고는 오른쪽 클릭)");
     await page.keyboard.press("Escape");
     await domIs(page, "Esc로 메뉴 닫힘", () => !document.querySelector('[role="menu"]'));
@@ -901,6 +901,30 @@ export default async function ({ ctl, page }) {
     await domIs(page, "데스크톱에서도 풀림", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) === null && document.querySelector(`.machine-list [data-pin-key="${k}"]`) !== null, key);
     if (ph.errors.length) throw new Error(ph.errors.join("; "));
     await ph.page.context().close();
+    // 이름 바꾸기(참고 PaneCanvas PaneRename): 창의 이름 칸에 focus, 앞뒤 공백은 떼어 host(agent spec.json)까지, 붙인 이름이 있으면
+    // 메뉴에 「pane 이름 지우기」가 생기고 누르면 띄울 때 이름으로 돌아간다
+    aaa("tab", "create", "--machine", "labA", "--label", "rowname", "--", "/bin/sh", "-c", "read x");
+    await page.getByTestId("pane-rowname").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "pane 이름 바꾸기" }).click();
+    const named = page.getByRole("dialog", { name: "pane 이름 바꾸기" });
+    await focusIs(page, "이름 칸", '[role="dialog"] .pane-rename-form input');
+    await named.getByRole("textbox").fill("  빌드 창  ");
+    await shot(page, "desktop-pane-rename");
+    const renamed = opDone(page, "pane_rename");
+    await page.keyboard.press("Enter");
+    const sentName = (await renamed).request().postDataJSON();
+    if (sentName.label !== "빌드 창") throw new Error(`보낸 이름 ${JSON.stringify(sentName)}`);
+    await domIs(page, "새 이름 줄", () => document.querySelector('[data-testid="pane-빌드 창"]') !== null && !document.querySelector('[role="dialog"]'));
+    if (!aaa("pane", "list").panes.some((x) => x.name === "빌드 창" && x.label === "빌드 창")) throw new Error("붙인 이름이 host에 없다");
+    await page.getByTestId("pane-빌드 창").click({ button: "right" });
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 이름 지우기", "pane 닫기"]))
+      throw new Error(`이름 붙은 pane 메뉴 ${await menuItems(page)}`);
+    const cleared = opDone(page, "pane_rename");
+    await page.getByRole("menuitem", { name: "pane 이름 지우기" }).click();
+    if ((await cleared).request().postDataJSON().label !== null) throw new Error("지우기가 null을 보내지 않았다");
+    await domIs(page, "띄울 때 이름으로", () => document.querySelector('[data-testid="pane-rowname"]') !== null);
+    aaa("pane", "close", "rowname");
+    await domIs(page, "rowname 닫힘", () => !document.querySelector('[data-testid="pane-rowname"]'));
     // 3. pane 닫기: 확인 창(취소에 focus) → 닫으면 줄이 사라진다
     aaa("tab", "create", "--machine", "labA", "--label", "rowclose", "--", "/bin/sh", "-c", "read x");
     await page.getByTestId("pane-rowclose").waitFor();
@@ -921,7 +945,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "rowend");
     await domIs(page, "끝난 pane", endedRow);
     await page.getByTestId("pane-rowend").click({ button: "right" });
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "다시 열기", "기록 지우기"])) throw new Error(`끝난 pane 메뉴 ${await menuItems(page)}`);
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "다시 열기", "기록 지우기"])) throw new Error(`끝난 pane 메뉴 ${await menuItems(page)}`);
     const resumed = opDone(page, "pane_resume");
     await page.getByRole("menuitem", { name: "다시 열기" }).click();
     if (!(await (await resumed).json()).ok) throw new Error("다시 열기 실패");

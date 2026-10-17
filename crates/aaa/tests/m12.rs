@@ -219,6 +219,45 @@ fn reboot_marks_interrupted_and_resume_replaces_layout_slot() {
     h.wait_output(&new, "resumed-25", T);
 }
 
+/// pane 이름 바꾸기(herdr `pane rename <pane> <label>|--clear`, plan §8.106). 이름의 정본은 agent `spec.json`의 label이다:
+/// 띄울 때 이름을 모르는 session host가 보내는 정보(크기 바뀜)·agent 재시작·세션 끝·재개를 지나도 남고, 지우면 띄울 때 이름으로 돌아간다.
+#[test]
+fn pane_rename_survives_agent_restart_exit_and_resume() {
+    let mut lab = Lab::new();
+    let h = start(&mut lab);
+    let id = h.new_pane(None, "labA", Some("job"), &["/bin/sh"], None);
+    let p = h.ok(&["pane", "rename", &id, " 빌드", "창 "]);
+    assert_eq!(
+        (p["name"].as_str(), p["label"].as_str()),
+        (Some("빌드 창"), Some("빌드 창")),
+        "앞뒤 공백을 떼고 낱말을 띄어 잇는다"
+    );
+    assert_eq!(h.pane("빌드 창")["id"], id.as_str(), "새 이름으로 찾는다");
+    // session host는 띄울 때 이름만 안다: 그가 보낸 크기 바뀜에도 붙인 이름이 남는다
+    h.ok(&["pane", "pty-size", &id, "100", "30"]);
+    let p = h.pane(&id);
+    assert_eq!((p["cols"].as_u64(), p["name"].as_str()), (Some(100), Some("빌드 창")));
+    // agent만 다시 띄운다(session host는 살아 있다): spec.json에서 이름을 읽어 다시 붙은 정보에 덮는다
+    lab.kill("agent");
+    wait_for("끊김", T, || (h.pane(&id)["connection"] == "disconnected").then_some(()));
+    lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
+    wait_for("다시 붙음", T, || (h.pane(&id)["connection"] == "connected").then_some(()));
+    assert_eq!(h.pane(&id)["name"], "빌드 창");
+    // 지우면 띄울 때 이름
+    let p = h.ok(&["pane", "rename", &id, "--clear"]);
+    assert_eq!(p["name"], "job");
+    assert!(p.get("label").is_none(), "{p}");
+    let e = h.json(&["pane", "rename", &id, &"가".repeat(aaa_proto::MAX_PANE_LABEL_CHARS + 1)]).expect_err("긴 이름");
+    assert!(e.contains("bad_request"), "{e}");
+    // 끝난 pane에도 붙고, 재개한 pane이 그 이름을 이어받는다
+    h.ok(&["pane", "rename", &id, "끝난 뒤"]);
+    h.ok(&["pane", "kill", &id]);
+    wait_for("끝남", T, || (h.pane(&id)["state"] == "exited").then_some(()));
+    assert_eq!(h.pane(&id)["name"], "끝난 뒤", "세션이 끝나도 붙인 이름");
+    let p = h.ok(&["pane", "resume", &id]);
+    assert_eq!((p["name"].as_str(), p["state"].as_str()), (Some("끝난 뒤"), Some("running")));
+}
+
 /// 한 front 연결에서 응답을 기다리지 않고 보낸 키 입력은 보낸 순서대로 PTY에 들어간다(TUI가 키마다 보낸다).
 #[test]
 fn inputs_from_one_front_keep_order() {

@@ -706,6 +706,7 @@ impl Host {
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
             agent: p.agent.clone().map(Box::new),
+            label: p.info.label.clone(),
         }
     }
 
@@ -1143,6 +1144,7 @@ impl Host {
                 self.forget(&id, &mid, actor).await?;
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
             FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
@@ -1328,6 +1330,40 @@ impl Host {
     // ───────────── 재개·정리 ─────────────
 
     /// 끝난 pane을 같은 spec(이름·argv·cwd·크기)으로 다시 띄우고 layout 자리를 새 pane으로 바꾼 뒤 옛 기록을 지운다.
+    /// pane에 사람이 붙인 이름(herdr `pane rename`). 이름의 정본은 agent의 세션 기록이라 agent까지 간다(plan §8.106).
+    async fn rename(
+        self: &Arc<Self>,
+        pane: &str,
+        label: Option<String>,
+        role: DeviceRole,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        if label.as_ref().is_some_and(|l| l.chars().count() > aaa_proto::MAX_PANE_LABEL_CHARS) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!("이름은 {}자 안이어야 한다", aaa_proto::MAX_PANE_LABEL_CHARS),
+            ));
+        }
+        let conn = self.live_conn(&mid)?;
+        // 옛 agent는 모르는 요청에 연결을 끊는다: 보내기 전에 거른다
+        let knows =
+            self.inner.lock().unwrap().machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "rename.v1"));
+        if !knows {
+            return Err(err(
+                ErrorCode::BadRequest,
+                "이 머신의 agent가 pane 이름 바꾸기를 모른다(agent binary 반영 필요)",
+            ));
+        }
+        self.db.audit(actor, "pane_rename", &format!("{id} {}", label.as_deref().unwrap_or("-")));
+        match conn.request(AgentRequest::Rename { session: id.clone(), label }).await? {
+            AgentResponse::Session(info) => self.on_session(&mid, info, false),
+            other => return Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+        }
+        self.pane_view_of(&id, role).map(FrontResponse::Pane).ok_or_else(|| err(ErrorCode::NotFound, "pane이 없다"))
+    }
+
     async fn resume(self: &Arc<Self>, pane: &str, role: DeviceRole, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let (id, mid) = self.resolve_pane(pane)?;
         let info = self
