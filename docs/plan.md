@@ -1162,6 +1162,18 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - TUI harness: prefix 뒤 `ㅊ`로 새 탭. 시험 설정은 `prefix_ascii = false`라 사용자 입력기를 건드리지 않는다.
   - macOS 실제 입력기(`AAA_IME_NATIVE=1`, 개발 Mac에서 짧게, 단언이 실패해도 처음 입력기로 돌려 둔다): ABC → 두벌식 → prefix 영문 `com.apple.keylayout.ABC` → 되돌림 두벌식 → 처음 ABC. 약 0.4초다.
 
+### 8.35 TUI 왼쪽 목록(10-17, 사용자 요청)
+
+- **요청.** TUI에서도 웹처럼 프로젝트 thread와 머신별 pane을 보고 연다. 웹 왼쪽 목록과 같은 모양, 접기·펴기, 목록과 pane 사이 포커스 이동, 좁은 터미널은 접힌 채 시작.
+- **구현(`aaa-tui::list`).**
+  - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지).
+  - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
+  - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다.
+  - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다.
+  - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
+  - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널).
+- **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

@@ -15,7 +15,9 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use unicode_width::UnicodeWidthChar;
 
 const T: Duration = Duration::from_secs(20);
-const COLS: u16 = 100;
+/// 기본 시험 터미널 폭: 왼쪽 목록이 접힌 채 시작하는 폭(목록 시험은 WIDE)
+const COLS: u16 = 90;
+const WIDE: u16 = 130;
 const ROWS: u16 = 30;
 
 const LOCAL_ONLY: &str = r#"schema = 1
@@ -34,11 +36,12 @@ struct Screen {
     cells: Vec<Vec<char>>,
     row: usize,
     col: usize,
+    cols: usize,
 }
 
 impl Screen {
-    fn new() -> Screen {
-        Screen { cells: vec![vec![' '; COLS as usize]; ROWS as usize], row: 0, col: 0 }
+    fn new(cols: u16) -> Screen {
+        Screen { cells: vec![vec![' '; cols as usize]; ROWS as usize], row: 0, col: 0, cols: cols as usize }
     }
 
     fn text(&self) -> String {
@@ -60,7 +63,7 @@ impl vte::Perform for Screen {
         if w == 0 {
             return;
         }
-        if self.col + w > COLS as usize {
+        if self.col + w > self.cols {
             self.col = 0;
             self.row = (self.row + 1).min(ROWS as usize - 1);
         }
@@ -75,7 +78,7 @@ impl vte::Perform for Screen {
             line[end] = ' ';
         }
         line[col] = c;
-        if w == 2 && col + 1 < COLS as usize {
+        if w == 2 && col + 1 < self.cols {
             // 넓은 글자의 둘째 칸은 text()에서 뺀다
             self.cells[r][col + 1] = '\0';
         }
@@ -97,7 +100,7 @@ impl vte::Perform for Screen {
         }
         let p: Vec<u16> = params.iter().map(|x| x[0]).collect();
         let n = |i: usize| p.get(i).copied().filter(|v| *v > 0).unwrap_or(1) as usize;
-        let (rows, cols) = (ROWS as usize, COLS as usize);
+        let (rows, cols) = (ROWS as usize, self.cols);
         match action {
             'H' | 'f' => {
                 self.row = (n(0) - 1).min(rows - 1);
@@ -150,8 +153,12 @@ impl Tui {
     }
 
     fn start_env(node: &Node, env: &[(&str, &str)]) -> Tui {
+        Self::start_cols(node, env, COLS)
+    }
+
+    fn start_cols(node: &Node, env: &[(&str, &str)], cols: u16) -> Tui {
         let pty = native_pty_system();
-        let pair = pty.openpty(PtySize { rows: ROWS, cols: COLS, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let pair = pty.openpty(PtySize { rows: ROWS, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
         let mut cmd = CommandBuilder::new(BIN);
         cmd.arg("attach");
         cmd.env("AAA_CONFIG_DIR", &node.cfg);
@@ -165,7 +172,7 @@ impl Tui {
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().unwrap();
         let writer = pair.master.take_writer().unwrap();
-        let screen = Arc::new(Mutex::new(Screen::new()));
+        let screen = Arc::new(Mutex::new(Screen::new(cols)));
         let s = screen.clone();
         std::thread::spawn(move || {
             let mut parser = vte::Parser::new();
@@ -383,6 +390,155 @@ fn lease_conflict_with_another_front() {
     wait_for("가져오기", T, held_by("tui@"));
     wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
     drop(other);
+}
+
+/// 목록에서 고른 줄(▸ 표시)의 목록 칸 글
+fn selected(text: &str) -> Option<String> {
+    text.lines().map(|l| l.chars().take(32).collect::<String>()).find(|l| l.contains('▸'))
+}
+
+/// 목록 맨 위(첫 thread)로 올라간 뒤 `needle` 줄까지 내려간다. 한 칸씩 화면이 바뀐 것을 보고 다음 키를 누른다.
+fn pick(tui: &mut Tui, first: &str, needle: &str) {
+    for _ in 0..12 {
+        tui.send(b"k");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    tui.wait_text("목록 맨 위", |s| selected(s).is_some_and(|l| l.contains(first)));
+    for _ in 0..12 {
+        let now = selected(&tui.text()).unwrap();
+        if now.contains(needle) {
+            return;
+        }
+        tui.send(b"j");
+        tui.wait_text("한 칸 내려감", |s| selected(s).is_some_and(|l| l != now));
+    }
+    panic!("목록에 {needle}이 없다:\n{}", tui.text());
+}
+
+/// 왼쪽 목록(§8.35): 웹 목록처럼 Thread 묶음·머신별 pane·새 셸이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
+/// 넓은 터미널은 펼친 채, 좁은 터미널은 접힌 채 시작한다. prefix s 펴기·접기, prefix Tab 목록 ↔ pane.
+#[test]
+fn side_list_like_web() {
+    let mut lab = Lab::new();
+    let projects = lab.root.join("projects");
+    let host = format!("{LOCAL_ONLY}[projects]\nroot = \"{}\"\nallow_profiles = [\"cat\"]\n", lab::path_str(&projects));
+    let h = lab.node("h", Some(&host));
+    std::fs::write(
+        h.cfg.join("agent.toml"),
+        format!(
+            "schema = 1\n[agent]\nwork_root = \"{}\"\n[profiles.cat]\nharness = \"custom\"\ncommand = [\"/bin/cat\"]\n",
+            lab::path_str(&lab.root.join("work"))
+        ),
+    )
+    .unwrap();
+    lab.spawn("host", &h, &["host"]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
+    wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
+
+    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let loose = h.ok(&["pane", "run", "--machine", "labA", "--name", "loose", "--", "/bin/sh"])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    h.ok(&["project", "create", "demo"]);
+    let task = lab.root.join("task.md");
+    std::fs::write(&task, "목록 시험\n").unwrap();
+    let start = |title: &str| {
+        h.ok(&[
+            "thread",
+            "start",
+            "demo",
+            "--title",
+            title,
+            "--machine",
+            "labA",
+            "--profile",
+            "cat",
+            "--kind",
+            "dir",
+            "--task-file",
+            lab::path_str(&task),
+        ])
+    };
+    let th = start("alpha-job");
+    let th_pane = wait_for("thread pane", T, || {
+        h.ok(&["thread", "show", "demo", th["id"].as_str().unwrap()])["pane"].as_str().map(String::from)
+    });
+
+    // 1) 넓은 터미널: 펼친 목록, pane 칸은 목록(32)과 구분선(1)을 뺀 폭
+    let mut tui = Tui::start_cols(&h, &[], WIDE);
+    tui.wait_text("목록", |s| {
+        s.contains("Thread 1")
+            && s.contains("alpha-job")
+            && s.contains("■ labA")
+            && s.contains("+ 새 셸")
+            && s.contains("first")
+            && s.contains("loose")
+    });
+    wait_for("목록 옆 크기", T, || (h.pane(&first)["cols"].as_u64() == Some(WIDE as u64 - 33)).then_some(()));
+    tui.type_line("echo list-$((6*7))");
+    tui.wait_text("pane 입력", |s| s.contains("list-42"));
+
+    // 2) 새 thread는 사건으로 따라온다
+    start("beta-job");
+    tui.wait_text("새 thread", |s| s.contains("Thread 2") && s.contains("beta-job"));
+    // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
+    if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
+        std::fs::write(path, tui.text()).unwrap();
+    }
+
+    // 3) prefix Tab으로 목록에 가서 탭에 없는 pane을 고르면 새 탭으로 열린다
+    tui.cmd("\t");
+    tui.wait_text("목록 포커스", |s| s.contains("Enter 열기"));
+    pick(&mut tui, "-job", "loose");
+    tui.send(b"\r");
+    wait_for("새 탭", T, || leaves(&h.ok(&["ws", "show"])).contains(&loose).then_some(()));
+    tui.wait_text("pane으로 돌아옴", |s| !s.contains("Enter 열기") && s.contains(" loose "));
+
+    // 4) thread 줄을 고르면 그 thread의 pane이 탭으로 열린다
+    tui.cmd("\t");
+    pick(&mut tui, "-job", "alpha-job");
+    tui.send(b"\r");
+    wait_for("thread 탭", T, || leaves(&h.ok(&["ws", "show"])).contains(&th_pane).then_some(()));
+
+    // 5) 이미 탭에 있는 pane은 그 탭으로 간다(탭이 늘지 않는다)
+    tui.cmd("\t");
+    pick(&mut tui, "-job", "first");
+    tui.send(b"\r");
+    tui.wait_text("첫 탭", |s| s.contains("list-42"));
+    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 3);
+
+    // 6) 새 셸은 그 머신에 새 탭으로
+    tui.cmd("\t");
+    pick(&mut tui, "-job", "+ 새 셸");
+    tui.send(b"\r");
+    wait_for("새 셸 탭", T, || (leaves(&h.ok(&["ws", "show"])).len() == 4).then_some(()));
+
+    // 7) Esc는 목록에서 pane으로 돌아간다
+    tui.cmd("\t");
+    tui.wait_text("목록 포커스", |s| s.contains("Enter 열기"));
+    tui.send(b"\x1b");
+    tui.wait_text("Esc", |s| !s.contains("Enter 열기"));
+
+    // 8) prefix s로 접으면 pane이 전체 폭을 쓴다
+    tui.cmd("1");
+    tui.wait_text("첫 탭", |s| s.contains("list-42"));
+    tui.cmd("s");
+    tui.wait_text("접힘", |s| !s.contains("■ labA"));
+    wait_for("전체 폭", T, || (h.pane(&first)["cols"].as_u64() == Some(WIDE as u64)).then_some(()));
+    tui.cmd("d");
+    assert!(tui.wait_exit());
+    drop(tui);
+
+    // 9) 좁은 터미널은 접힌 채 시작하고, prefix s로 펴면 목록으로 포커스가 간다
+    let mut tui = Tui::start(&h);
+    tui.wait_text("접힌 채 시작", |s| s.contains("list-42") && s.contains("1:first"));
+    assert!(!tui.text().contains("■ labA"));
+    tui.cmd("s");
+    tui.wait_text("펼침", |s| s.contains("■ labA") && s.contains("Enter 열기"));
+    wait_for("목록 옆 크기", T, || (h.pane(&first)["cols"].as_u64() == Some(COLS as u64 - 33)).then_some(()));
 }
 
 /// 재부팅 흉내 뒤 중단 표시, prefix r로 같은 자리에서 재개

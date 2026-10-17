@@ -11,14 +11,15 @@
 pub mod clip;
 pub mod input_source;
 pub mod keys;
+pub mod list;
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use aaa_proto::{
-    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, Outcome, PaneView, SessionState,
-    SplitDir, Workspace,
+    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, MachineView, Outcome, PaneView,
+    SessionState, SplitDir, ThreadView, Workspace,
 };
 use anyhow::{Context, Result};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -114,6 +115,19 @@ struct App {
     me: String,
     ws: Workspace,
     panes: HashMap<String, PaneView>,
+    /// host가 보낸 순서(목록에 그 순서로 보인다)
+    pane_order: Vec<String>,
+    machines: Vec<MachineView>,
+    /// thread 기록(`project/id`). 처음에 목록을 읽고, 바뀌면 사건으로 온다.
+    threads: HashMap<String, ThreadView>,
+    /// 왼쪽 목록을 펼쳤나. 정하지 않았으면 터미널 폭으로 정한다(좁으면 접힘).
+    list_open: Option<bool>,
+    /// 키가 목록으로 간다
+    list_focus: bool,
+    /// 목록에서 고른 줄(줄이 늘거나 줄어도 같은 것을 가리킨다)
+    list_sel: Option<list::Row>,
+    /// 마지막으로 그린 터미널 폭
+    width: u16,
     grids: HashMap<String, Grid>,
     watching: HashSet<String>,
     tab: usize,
@@ -147,6 +161,13 @@ impl App {
             prefix,
             me,
             panes: HashMap::new(),
+            pane_order: vec![],
+            machines: vec![],
+            threads: HashMap::new(),
+            list_open: None,
+            list_focus: false,
+            list_sel: None,
+            width: 0,
             grids: HashMap::new(),
             watching: HashSet::new(),
             tab: 0,
@@ -170,11 +191,14 @@ impl App {
         let (mut tx, mut rx) = client.split();
         let id = tx.send(FrontRequest::Workspace { name: Some(self.ws_name.clone()) }).await?;
         self.pending.insert(id, Pending::Report("workspace 읽기"));
+        let id = tx.send(FrontRequest::Threads { project: None, role: None }).await?;
+        self.pending.insert(id, Pending::Report("thread 목록"));
         let mut keys_in = EventStream::new();
         let mut dirty = true;
         loop {
             if dirty {
                 let size = terminal.size()?;
+                self.width = size.width;
                 self.sync(&mut tx, Rect { x: 0, y: 0, w: size.width, h: size.height }).await?;
                 terminal.draw(|f| {
                     let area = f.area();
@@ -226,8 +250,13 @@ impl App {
         match m {
             FrontMsg::Event(FrontEvent::Workspace(w)) if w.name == self.ws_name => self.set_ws(w),
             FrontMsg::Event(FrontEvent::Workspace(_)) => {}
-            FrontMsg::Event(FrontEvent::State { panes, .. }) => {
+            FrontMsg::Event(FrontEvent::State { machines, panes }) => {
+                self.machines = machines;
+                self.pane_order = panes.iter().map(|p| p.id.clone()).collect();
                 self.panes = panes.into_iter().map(|p| (p.id.clone(), p)).collect();
+            }
+            FrontMsg::Event(FrontEvent::Thread(t)) => {
+                self.threads.insert(list::thread_key(&t), t);
             }
             FrontMsg::Event(FrontEvent::Grid(f)) => self.grids.entry(f.pane.clone()).or_default().apply(f),
             FrontMsg::Res { id, result } => {
@@ -242,6 +271,9 @@ impl App {
                         }
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), _) => self.set_ws(w),
+                    (Outcome::Ok(aaa_proto::FrontResponse::Threads { threads }), _) => {
+                        self.threads = threads.into_iter().map(|t| (list::thread_key(&t), t)).collect();
+                    }
                     (Outcome::Ok(aaa_proto::FrontResponse::Attached { path, inserted, note }), _) => {
                         self.message = Some(match (inserted, note) {
                             (true, _) => format!("그림을 붙였다(입력창에 경로, Enter 없음): {path}"),
@@ -293,9 +325,87 @@ impl App {
         self.ws.tabs.get(self.tab).map(|t| layout::leaves(&t.root)).unwrap_or_default()
     }
 
-    fn body(area: Rect) -> Rect {
-        // 맨 위 한 줄은 탭, 맨 아래 한 줄은 상태 줄
-        Rect { x: area.x, y: area.y + 1, w: area.w, h: area.h.saturating_sub(2) }
+    /// 왼쪽 목록이 보이나(정하지 않았으면 좁은 터미널에서는 접힘)
+    fn list_shown(&self, w: u16) -> bool {
+        self.list_open.unwrap_or(w >= list::NARROW) && w > list::WIDTH + 20
+    }
+
+    /// pane 칸 영역: 맨 위 한 줄은 탭, 맨 아래 한 줄은 상태 줄, 목록이 보이면 그 오른쪽(구분선 다음)
+    fn body(&self, area: Rect) -> Rect {
+        let side = if self.list_shown(area.w) { list::WIDTH + 1 } else { 0 };
+        Rect { x: area.x + side, y: area.y + 1, w: area.w - side, h: area.h.saturating_sub(2) }
+    }
+
+    fn list_rect(area: Rect) -> Rect {
+        Rect { x: area.x, y: area.y + 1, w: list::WIDTH, h: area.h.saturating_sub(2) }
+    }
+
+    fn list_rows(&self) -> Vec<list::Row> {
+        let panes: Vec<PaneView> = self.pane_order.iter().filter_map(|id| self.panes.get(id).cloned()).collect();
+        list::rows(&self.machines, &panes, &self.threads)
+    }
+
+    /// 고른 줄의 자리(없어졌으면 지금 pane 줄, 그것도 없으면 첫 줄)
+    fn list_index(&self, rows: &[list::Row]) -> usize {
+        let at = |r: &list::Row| rows.iter().position(|x| x == r);
+        self.list_sel
+            .as_ref()
+            .and_then(at)
+            .or_else(|| self.focus.clone().and_then(|f| at(&list::Row::Pane(f))))
+            .unwrap_or_else(|| list::first(rows))
+    }
+
+    /// 목록 펴기·접기. 펴면 목록으로 포커스를 옮긴다.
+    fn toggle_list(&mut self) {
+        let open = !self.list_shown(self.width);
+        self.list_open = Some(open);
+        self.list_focus = open;
+    }
+
+    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 새 셸이면 새 탭
+    async fn open_row(&mut self, tx: &mut FrontSender, row: list::Row) -> Result<()> {
+        let pane = match row {
+            list::Row::Pane(p) => p,
+            list::Row::Thread(k) => match self.threads.get(&k).and_then(|t| t.pane.clone()) {
+                Some(p) => p,
+                None => {
+                    self.message = Some("이 thread에는 열 pane이 없다".into());
+                    return Ok(());
+                }
+            },
+            list::Row::NewShell(machine) => {
+                self.list_focus = false;
+                let change = LayoutChange::NewTab { machine: Some(machine), name: None, argv: vec![], cwd: None };
+                return self.layout(tx, change, true).await;
+            }
+            _ => return Ok(()),
+        };
+        self.list_focus = false;
+        if let Some(i) = self.ws.tabs.iter().position(|t| layout::leaves(&t.root).contains(&pane)) {
+            self.tab = i;
+            self.focus = Some(pane);
+            return Ok(());
+        }
+        self.layout(tx, LayoutChange::AddTab { pane }, true).await
+    }
+
+    /// 목록에 포커스가 있을 때의 키: 위·아래(j·k) 고르기, Enter 열기, Esc·Tab 돌아가기
+    async fn on_list_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
+        let rows = self.list_rows();
+        let i = self.list_index(&rows);
+        match k.code {
+            KeyCode::Up | KeyCode::Char('k') => self.list_sel = rows.get(list::step(&rows, i, false)).cloned(),
+            KeyCode::Down | KeyCode::Char('j') => self.list_sel = rows.get(list::step(&rows, i, true)).cloned(),
+            KeyCode::Enter => {
+                if let Some(r) = rows.get(i).cloned() {
+                    self.list_sel = Some(r.clone());
+                    self.open_row(tx, r).await?;
+                }
+            }
+            KeyCode::Esc | KeyCode::Tab => self.list_focus = false,
+            _ => {}
+        }
+        Ok(())
     }
 
     /// 보이는 pane만 화면을 구독한다. 이 화면이 지금 쓰는 화면이거나 비어 있는 포커스 pane은 칸 크기에 맞춘다.
@@ -313,7 +423,7 @@ impl App {
             self.grids.remove(p);
         }
         let Some(tab) = self.ws.tabs.get(self.tab) else { return Ok(()) };
-        let (rects, _) = layout::rects(&tab.root, Self::body(area));
+        let (rects, _) = layout::rects(&tab.root, self.body(area));
         let reclaim = std::mem::take(&mut self.reclaim);
         if !self.focused {
             return Ok(());
@@ -387,6 +497,9 @@ impl App {
                 }
                 return Ok(());
             }
+            if self.list_focus && self.list_shown(self.width) {
+                return self.on_list_key(k, tx).await;
+            }
             if k.code == KeyCode::Char('v') && k.modifiers == KeyModifiers::CONTROL && self.paste_image(tx).await? {
                 return Ok(());
             }
@@ -407,6 +520,15 @@ impl App {
                 self.input(tx, vec![self.prefix.1]).await?;
             }
             KeyCode::Char('d') => self.quit = true,
+            // 왼쪽 목록 펴기·접기, 목록 ↔ pane 포커스
+            KeyCode::Char('s') => self.toggle_list(),
+            KeyCode::Tab => {
+                if self.list_shown(self.width) {
+                    self.list_focus = !self.list_focus;
+                } else {
+                    self.toggle_list();
+                }
+            }
             KeyCode::Char('c') => {
                 let machine = self.focused_machine();
                 self.layout(tx, LayoutChange::NewTab { machine, name: None, argv: vec![], cwd: None }, true).await?;
@@ -454,7 +576,7 @@ impl App {
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => self.move_focus(k.code),
             KeyCode::Char('?') => self.message = Some(
-                "c 새 탭 · % 좌우 · \" 위아래 · 화살표/o 이동 · n/p/1-9 탭 · t 이 화면 크기로 · r 재개 · x 닫기 · d 나가기 · (prefix 없이) Ctrl+V 그림"
+                "c 새 탭 · % 좌우 · \" 위아래 · 화살표/o 이동 · n/p/1-9 탭 · s 목록 · Tab 목록↔pane · t 이 화면 크기로 · r 재개 · x 닫기 · d 나가기 · (prefix 없이) Ctrl+V 그림"
                     .into(),
             ),
             _ => {}
@@ -520,7 +642,19 @@ impl App {
                 put(buf, right_edge - w, &label, Style::default().fg(ON_CHIP).bg(BLOCKED).add_modifier(Modifier::BOLD));
             }
         }
-        let body = Self::body(area);
+        let body = self.body(area);
+        if self.list_shown(area.w) {
+            let rows = self.list_rows();
+            let view = list::View {
+                machines: &self.machines,
+                panes: &self.panes,
+                threads: &self.threads,
+                current: self.focus.as_deref(),
+                sel: self.list_index(&rows),
+                focused: self.list_focus,
+            };
+            list::render(buf, Self::list_rect(area), &rows, &view);
+        }
         let mut cursor = None;
         match self.ws.tabs.get(self.tab) {
             None => {
@@ -621,9 +755,14 @@ impl App {
                 Style::default().fg(ON_CHIP).bg(WARN).add_modifier(Modifier::BOLD),
             ));
             out.push((
-                " … c 새 탭 · % 좌우 · \" 위아래 · 화살표 이동 · d 나가기 (? 도움말)".into(),
+                " … c 새 탭 · % 좌우 · \" 위아래 · 화살표 이동 · s 목록 · d 나가기 (? 도움말)".into(),
                 Style::default().fg(DIM),
             ));
+            return out;
+        }
+        if self.list_focus && self.list_shown(self.width) {
+            out.push((" 목록 ".into(), Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD)));
+            out.push((" ↑↓·j/k 고르기 · Enter 열기 · Esc 돌아가기".into(), Style::default().fg(DIM)));
             return out;
         }
         if let Some(p) = self.focus.as_ref().and_then(|f| self.panes.get(f)) {
@@ -666,15 +805,15 @@ impl App {
 }
 
 /// 색(256색 번호: 밝은 터미널·어두운 터미널 모두에서 읽힌다). 웹 token과 같은 뜻으로 쓴다.
-const ACCENT: Color = Color::Indexed(141);
-const WORKING: Color = Color::Indexed(75);
-const BLOCKED: Color = Color::Indexed(210);
-const DONE: Color = Color::Indexed(114);
-const WARN: Color = Color::Indexed(221);
-const DIM: Color = Color::Indexed(245);
-const FAINT: Color = Color::Indexed(240);
+pub(crate) const ACCENT: Color = Color::Indexed(141);
+pub(crate) const WORKING: Color = Color::Indexed(75);
+pub(crate) const BLOCKED: Color = Color::Indexed(210);
+pub(crate) const DONE: Color = Color::Indexed(114);
+pub(crate) const WARN: Color = Color::Indexed(221);
+pub(crate) const DIM: Color = Color::Indexed(245);
+pub(crate) const FAINT: Color = Color::Indexed(240);
 /// 색 바탕 위 글자. ANSI 0(검정)은 굵게 쓰면 많은 터미널이 밝은 회색으로 바꾸므로 256색 검정(16)을 쓴다.
-const ON_CHIP: Color = Color::Indexed(16);
+pub(crate) const ON_CHIP: Color = Color::Indexed(16);
 
 fn is_asking(p: &PaneView) -> bool {
     p.state.is_running() && p.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question)
@@ -718,7 +857,7 @@ fn state_text(p: &PaneView) -> String {
     }
 }
 
-fn activity_text(a: aaa_proto::AgentActivity) -> &'static str {
+pub(crate) fn activity_text(a: aaa_proto::AgentActivity) -> &'static str {
     use aaa_proto::AgentActivity::*;
     match a {
         Started => "시작",
@@ -762,7 +901,7 @@ fn badge(buf: &mut Buffer, view: Option<&PaneView>, r: Rect, focused: bool) -> O
     None
 }
 
-fn unicode_width(s: &str) -> usize {
+pub(crate) fn unicode_width(s: &str) -> usize {
     use ratatui::text::Span;
     Span::raw(s).width()
 }
