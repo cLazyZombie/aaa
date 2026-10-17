@@ -9,6 +9,7 @@ mod brief_text;
 mod coord;
 pub mod db;
 mod evaluator;
+mod files;
 pub mod front;
 mod harness;
 mod health;
@@ -339,6 +340,8 @@ pub struct Host {
     pr: Mutex<pr::PrMemory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
+    /// 파일 보기 읽기 경로(`/f/<cap>/`, plan §8.125)
+    file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -489,6 +492,7 @@ impl Host {
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),
+            file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             notify_tx: Mutex::new(None),
@@ -1143,6 +1147,7 @@ impl Host {
                     .map(FrontResponse::Screen)
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
+            FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
             FrontRequest::PaneChat { pane } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
