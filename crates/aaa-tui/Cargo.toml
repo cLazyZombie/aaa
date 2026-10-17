@@ -18,6 +18,9 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 # front 기기 clipboard 그림(§8.28). 순수 Rust(X11은 x11rb)라 Linux 빌드에 개발 파일이 필요 없다
 arboard = { version = "3", default-features = false, features = ["image-data"] }
 png = "0.18"
+# 이름 입력 창의 grapheme 커서·넓은 글자 폭(herdr text_editor와 같은 crate, ratatui가 이미 쓴다)
+unicode-segmentation = "1"
+unicode-width = "0.2"
 
 # prefix 동안 한국어 IME를 영문으로(herdr Windows 방식, input_source::win)
 [target.'cfg(windows)'.dependencies]

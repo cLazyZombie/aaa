@@ -7,6 +7,7 @@
 mod attach;
 mod chat;
 mod command;
+mod cwd;
 mod health;
 pub mod hooks;
 pub mod identity;
@@ -194,6 +195,22 @@ impl Agent {
         if let Some(old) = self.watches.lock().unwrap().insert(thread, task) {
             old.abort();
         }
+    }
+
+    /// 실행 중인 세션이 지금 있는 폴더(새 탭·나누기 cwd follow). 끝났거나 읽지 못하면 None.
+    async fn session_cwd(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
+        let pid = {
+            let s = self.sessions.lock().unwrap();
+            let e = s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?;
+            e.info.state.is_running().then_some(e.info.pid).flatten()
+        };
+        let cwd = match pid {
+            Some(pid) => tokio::task::spawn_blocking(move || cwd::follow_cwd(pid))
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?,
+            None => None,
+        };
+        Ok(AgentResponse::Cwd { cwd: cwd.map(|p| p.to_string_lossy().into_owned()) })
     }
 
     pub fn sessions(&self) -> Vec<SessionInfo> {
@@ -498,6 +515,7 @@ impl Agent {
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
             AgentRequest::Forget { session } => self.forget(&session).await,
+            AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
                 chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
             })

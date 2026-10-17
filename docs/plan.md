@@ -1830,6 +1830,32 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **화면 단서.** aaa thread의 상태가 화면과 맞는지 볼 때 herdr `src/detect/manifests/claude.toml`의 표지 일부(`esc to interrupt`, `Do you want to proceed?`)만 쓴다. 판정 엔진은 D8(상태 감지 thread)이 옮긴다.
 - **수집은 해석하지 않는다.** 수집 스크립트는 운영 읽기 명령의 출력을 그대로 tick 폴더에 둔다. 분석기 결함이 몇 시간치 수집을 버리지 않게 한다. `aaa inbox list`는 `--peek`로만 부른다(아니면 「봤다」를 찍는다).
 
+### 8.76 TUI 탭: 새 탭 이름·cwd 따라가기·탭 닫기·이름을 herdr대로(10-18, 차이 목록 4장 C)
+
+- **참고(herdr 0.9.5).** 새 탭 창 `src/client/shell/overlay_input.rs` `open_new_tab_overlay`·`save_rename_overlay`·`request_tab_close`·`request_pane_close`, 창 모양 `src/client/shell/overlays.rs` `render_rename_overlay`(56×7)·`render_confirm_close_overlay`(64×6)·`row`·`button`, 입력 칸 `src/client/shell/text_editor.rs`, 탭 줄 `src/client/shell/tabs.rs` `render_tab_bar`·`centered_tab_scroll`·`max_tab_scroll`, 탭 이름 `src/workspace.rs` `tab_display_name`, 새 pane cwd `src/app/creation.rs` `resolve_new_terminal_cwd`·`src/pane.rs` `follow_cwd`·`foreground_cwd`, 플랫폼 `src/platform/{macos,linux,windows}.rs` `process_cwd`·`foreground_process_group_id`·`pane_process_cwd`, 입력기 범위 `src/client/shell/input_source.rs` `wants_ascii_input`.
+- **새 탭(`prefix c`).**
+  - `[tui] prompt_new_tab_name`(기본 켬)이면 가운데 「새 탭」 창이 뜬다. 입력 칸에는 자리 번호(탭 수+1)가 들어 있고, 치면 그 글이 번호를 갈아 쓴다(replace on type). `↵ 저장`·`^c 지우기`·`esc 취소`.
+  - 저장 규칙(herdr `save_rename_overlay`): 다듬은 글이 비었거나 기본 번호 그대로면 이름 없는 탭(번호로 보임), 아니면 그 이름. Esc는 탭을 만들지 않는다. 끄면 바로 이름 없는 탭.
+  - 입력 칸은 herdr `TextEditor`를 옮겼다: 글자 묶음(grapheme) 단위 커서, `←→`·`Home/End`·`Alt+←→` 단어, emacs 키(`ctrl+a/e/b/f/k/u/w/y`, `alt+b/f/d`), 폭보다 길면 커서가 보이게 민다. 한글 이름을 치도록 이 창 동안은 입력기를 영문으로 바꾸지 않는다(`wants_ascii_input`).
+- **새 pane cwd.** host.toml `[terminal] new_cwd`(기본 `"follow"`, `"home"`, 절대 경로). follow면 새 탭은 포커스 pane, 나누기는 나눈 pane의 지금 cwd에서 연다.
+  - 지금 cwd는 agent가 읽는다(새 요청 `AgentRequest::Cwd`, agent 기능 `cwd.v1`): PTY 앞쪽 프로세스 그룹 leader의 cwd가 절대 경로이고 폴더면 그것, 아니면 셸(자식) cwd. macOS `proc_pidinfo`(`PROC_PIDTBSDINFO`의 `e_tpgid`, `PROC_PIDVNODEPATHINFO`), Linux `/proc/<pid>/stat`의 tpgid와 `/proc/<pid>/cwd`, Windows는 PEB의 `CurrentDirectory`(32비트 프로세스는 PEB32)와 Scoop shim이 띄운 자식 셸(Toolhelp).
+  - `cwd.v1`이 없는 옛 agent, 다른 머신 pane, 끝난 pane이면 그 pane을 띄운 cwd로 연다. 요청에 cwd를 주면 그것이 먼저다.
+  - herdr의 OSC 7(셸이 알리는 cwd) 추적은 하지 않는다: 프로세스에서 읽는 값으로 충분하고, 원격 머신 경로를 host가 해석할 필요가 없다.
+  - `"current"`처럼 뜻이 없는 값은 설정 검사에서 거른다(`"follow"`·`"home"`·절대 경로만).
+- **탭 줄.** ` aaa ` + workspace 이름 + 탭 이름표. 이름표는 붙인 이름 또는 자리 번호, 폭은 글자 폭+4(최소 8), 사이 한 칸. 지금 탭은 강조색 바탕(이름을 붙였으면 굵게), 다른 탭은 회색 바탕(이름 없는 탭은 흐리게). 넘치면 지금 탭이 가운데 오게 밀고 가려진 쪽 끝에 `…`. 예전 `1:이름` 모양은 뺐다. herdr의 `+` 새 탭 단추와 마우스는 마우스 묶음에서 한다.
+- **탭 이름(`prefix Shift+T`)·닫기(`prefix Shift+X`).**
+  - 이름 창은 지금 이름(없으면 번호)을 담고 연다. 이름이 없던 탭을 번호 그대로 저장하면 바꾸지 않는다. 비워 저장하면 이름을 지운다(번호로 돌아간다).
+  - 닫기는 탭의 pane과 세션을 끝낸다(thread·coordinator처럼 역할이 있는 pane은 §8.75대로 layout에서만 뺀다). `[tui] confirm_close`(기본 켬)이면 마지막 탭을 닫을 때와 마지막 탭의 마지막 pane을 `x`로 닫을 때만 빨간 확인 창(「마지막 탭을 닫을까?」, workspace와 pane 수, `↵ 닫기`·`esc 취소`)을 띄운다. herdr처럼 다른 탭이 남는 닫기는 묻지 않는다.
+  - host 요청은 §8.75가 CLI `tab rename`·`tab close`로 먼저 넣은 `LayoutChange::RenameTab`·`CloseTab`(FRONT_API 1.4)을 같이 쓴다. 1.4보다 옛 host에는 보내지 않고 「host를 새 aaa로 다시 띄워야 한다」를 보인다(모르는 요청은 연결을 끊는다).
+- **포커스를 옮기는 layout 요청 뒤 입력 잡아 두기.** `v`·`-`·새 탭 뒤 바로 친 글이 옛 pane으로 가던 일을 막는다. TUI는 그 요청의 응답이 올 때까지 키·붙여넣기를 잡아 두고, 응답으로 포커스를 새 pane으로 옮긴 뒤 차례대로 보낸다(herdr는 서버가 같은 순서로 처리해 생기지 않는다). Workspace 사건이 응답보다 먼저 와도 새 pane은 요청 전 pane들과 비교해 찾는다.
+- **host 요청 바뀜(FRONT_API 1.5).** `LayoutChange::NewTab`에 `label`(새 탭 이름)과 `from`(cwd를 따라갈 pane)을 더했다(둘 다 없어도 된다). 1.4 host는 두 필드를 모르고 지나간다(탭은 이름 없이, 띄운 cwd 기본값으로 열린다).
+  - CLI `aaa tab create --label`은 herdr처럼 탭 이름이 된다(`src/app/api/tabs.rs` `handle_tab_create`). §8.75가 정한 pane 이름도 같게 둔다(예전 이름표 `1:이름`이 보이던 값).
+  - herdr `tab create`는 cwd를 주지 않으면 그 workspace의 포커스 pane을 따라간다. aaa host는 포커스를 모르므로(front마다 다르다) CLI로 만든 탭은 `from`이 없어 머신 기본 위치에서 연다.
+- **확인하지 못한 것.** Linux·Windows의 cwd 읽기는 이 머신에 그 target이 없어 소스(std, windows-sys 0.60.2 서명)를 읽어 맞췄다. GitHub CI가 컴파일한다.
+- **시험.**
+  - 유닛: 입력 칸(갈아 쓰기, emacs 키와 yank, 글자 묶음·넓은 글자와 보이는 자리), 탭 이름표 폭·넘칠 때 가운데·꼬리, 탭 줄과 두 창을 버퍼에 그려 자리·색 확인(56×7 가운데, 단추 줄, 커서 자리), 이름 창 동안 입력기 그대로, 옛 host 막기, 설정(`new_cwd` 값 검사, 두 `[tui]` 기본 켬), agent `follow_cwd`(PTY 셸이 `cd`한 폴더).
+  - TUI harness `tabs_like_herdr`: 셸이 `cd`한 폴더(한글·빈칸 이름)에서 `v` 뒤 바로 친 명령이 새 pane에 가고 cwd가 따라감, `c` 이름 창으로 「빌드」 탭과 cwd, Esc 취소, `T` 이름 바꾸기·빈 저장, `X`로 탭과 세션 닫기, 마지막 탭 확인 창(Esc 유지, Enter로 모두 닫기).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

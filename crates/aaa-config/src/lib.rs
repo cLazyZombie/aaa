@@ -74,8 +74,24 @@ pub struct HostConfig {
     pub web: WebSection,
     pub local_agent: LocalAgentSection,
     pub tui: TuiSection,
+    pub terminal: TerminalSection,
     pub projects: ProjectsSection,
     pub notify: NotifySection,
+}
+
+/// 새 pane(새 탭·나누기). 이름과 값은 herdr 0.9.5 `[terminal] new_cwd`를 따른다(plan §8.76).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalSection {
+    /// 새 pane을 띄울 폴더: `"follow"`(원래 pane이 지금 있는 폴더, 같은 머신일 때), `"home"`(그 머신 기본 위치),
+    /// 또는 절대 경로. 명령에 cwd를 주면 그것이 먼저다. herdr의 `"current"`(서버 프로세스 위치)는 원격 머신과 맞지 않아 받지 않는다.
+    pub new_cwd: String,
+}
+
+impl Default for TerminalSection {
+    fn default() -> Self {
+        TerminalSection { new_cwd: "follow".into() }
+    }
 }
 
 /// 알림 webhook(§8.7). 봇 token 같은 비밀값이 주소에 들어갈 수 있으니 `host.local.toml`(커밋하지 않는 파일)에 둔다.
@@ -127,6 +143,7 @@ impl Default for HostConfig {
             web: WebSection::default(),
             local_agent: LocalAgentSection::default(),
             tui: TuiSection::default(),
+            terminal: TerminalSection::default(),
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
         }
@@ -194,6 +211,10 @@ pub struct TuiSection {
     pub prefix_ascii: Option<bool>,
     /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 끔). 입력기를 바꾸지 못하는 ssh·다른 OS용.
     pub prefix_jamo_keys: bool,
+    /// 새 탭(`prefix c`)을 만들기 전에 이름을 묻는다(herdr `[ui] prompt_new_tab_name`, 기본 켬)
+    pub prompt_new_tab_name: bool,
+    /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
+    pub confirm_close: bool,
 }
 
 impl TuiSection {
@@ -210,8 +231,18 @@ impl Default for TuiSection {
             switch_ascii_input_source_in_prefix: false,
             prefix_ascii: None,
             prefix_jamo_keys: false,
+            prompt_new_tab_name: true,
+            confirm_close: true,
         }
     }
+}
+
+/// 어느 OS 머신의 절대 경로인가(`/…`, `C:\…`·`C:/…`, `\\server\…`). 새 pane은 다른 OS 머신에 뜰 수 있다.
+fn is_absolute_anywhere(p: &str) -> bool {
+    let b = p.as_bytes();
+    p.starts_with('/')
+        || p.starts_with("\\\\")
+        || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
 }
 
 /// 키 하나 또는 여러 개(herdr 설정의 키 값과 같다)
@@ -411,6 +442,13 @@ fn key(parts: &[&str]) -> Vec<String> {
 
 fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    let cwd = &c.terminal.new_cwd;
+    if !matches!(cwd.as_str(), "follow" | "home") && !is_absolute_anywhere(cwd) {
+        out.push(Invalid {
+            path: key(&["terminal", "new_cwd"]),
+            message: format!("\"follow\", \"home\" 또는 절대 경로여야 한다: {cwd:?}"),
+        });
+    }
     if !c.host.agent_listen.is_empty() && c.host.agent_listen.parse::<SocketAddr>().is_err() {
         out.push(Invalid {
             path: key(&["host", "agent_listen"]),

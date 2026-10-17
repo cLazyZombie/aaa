@@ -1216,7 +1216,8 @@ fn tab_cmd(cmd: TabCmd) -> Result<ExitCode> {
         TabCmd::List { workspace } => FrontRequest::Workspace { name: workspace },
         TabCmd::Create { workspace, machine, label, cwd, cols, rows, argv } => FrontRequest::LayoutApply {
             workspace,
-            change: LayoutChange::NewTab { machine, name: label, argv, cwd, cols, rows },
+            // herdr `tab create --label`은 탭 이름이다. pane 이름도 같게 둔다(예전 `1:이름` 이름표가 보이던 값)
+            change: LayoutChange::NewTab { machine, name: label.clone(), argv, cwd, cols, rows, label, from: None },
         },
         TabCmd::Get { tab } => {
             return match find_tab(&tab)? {
@@ -1257,7 +1258,16 @@ fn workspace_cmd(cmd: WorkspaceCmd) -> Result<ExitCode> {
             }
             FrontRequest::LayoutApply {
                 workspace: Some(label),
-                change: LayoutChange::NewTab { machine, name: None, argv, cwd, cols: None, rows: None },
+                change: LayoutChange::NewTab {
+                    machine,
+                    name: None,
+                    argv,
+                    cwd,
+                    cols: None,
+                    rows: None,
+                    label: None,
+                    from: None,
+                },
             }
         }
         WorkspaceCmd::Rename { name, label } => FrontRequest::WorkspaceRename { name, to: label },

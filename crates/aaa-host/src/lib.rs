@@ -109,6 +109,8 @@ struct MachineRt {
     last_seen_ms: Option<u64>,
     /// 마지막 건강 보고와 그때의 시계 차이(agent - host, ms)
     health: Option<(aaa_proto::MachineHealth, i64)>,
+    /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
+    features: Vec<String>,
 }
 
 struct Mirror {
@@ -314,6 +316,7 @@ impl Host {
                     conn: None,
                     last_seen_ms: m.last_seen_ms,
                     health: None,
+                    features: vec![],
                 },
             );
         }
@@ -404,10 +407,12 @@ impl Host {
                 conn: None,
                 last_seen_ms: None,
                 health: None,
+                features: vec![],
             });
             m.os = Some(hello.os.clone());
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
+            m.features = hello.features.clone();
             m.conn = Some(conn);
             // 다시 붙은 agent는 설정이 바뀌었을 수 있다. 새 보고를 기다린다.
             m.health = None;
@@ -1266,8 +1271,9 @@ impl Host {
         let pane_machine = |id: &str| self.inner.lock().unwrap().panes.get(id).map(|p| p.machine_id.clone());
         let mut w = self.workspace(name);
         match change {
-            LayoutChange::NewTab { machine, name: pname, argv, cwd, cols, rows } => {
+            LayoutChange::NewTab { machine, name: pname, argv, cwd, cols, rows, label, from } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
+                let cwd = self.new_pane_cwd(cwd, from.as_deref(), &mid).await;
                 let spec = SpawnSpec {
                     name: pname.unwrap_or_default(),
                     argv,
@@ -1280,7 +1286,8 @@ impl Host {
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
                 w = self.workspace(name);
-                w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
+                let label = label.map(|l| l.trim().to_string()).unwrap_or_default();
+                w.tabs.push(Tab { id: util::new_id(), name: label, root: LayoutNode::Pane { pane: id } });
             }
             LayoutChange::Split { pane, dir, machine, argv, cwd, ratio } => {
                 let (target, target_mid) = self.resolve_pane(&pane)?;
@@ -1291,6 +1298,7 @@ impl Host {
                     Some(m) => self.resolve_machine(Some(&m))?,
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
+                let cwd = self.new_pane_cwd(cwd, Some(&target), &mid).await;
                 let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
@@ -1498,6 +1506,37 @@ impl Host {
         Ok(FrontResponse::Workspace(w))
     }
 
+    /// 새 pane의 cwd(herdr `resolve_new_terminal_cwd`): 준 값이 먼저, 없으면 `[terminal] new_cwd`.
+    /// follow면 원래 pane(`from`)이 같은 머신에 있을 때 그 pane이 지금 있는 폴더(agent `cwd.v1`),
+    /// 읽지 못하면 그 pane을 띄운 폴더(herdr `launch_cwd_for_terminal`). 다른 머신이면 그 머신 기본 위치.
+    async fn new_pane_cwd(&self, given: Option<String>, from: Option<&str>, mid: &str) -> Option<String> {
+        if given.is_some() {
+            return given;
+        }
+        match self.cfg.terminal.new_cwd.as_str() {
+            "follow" => {}
+            "home" => return None,
+            path => return Some(path.to_string()),
+        }
+        let (src, _) = self.resolve_pane(from?).ok()?;
+        let (conn, launch) = {
+            let i = self.inner.lock().unwrap();
+            let p = i.panes.get(&src)?;
+            if p.machine_id != mid {
+                return None;
+            }
+            let m = i.machines.get(mid);
+            let can_ask = p.info.state.is_running() && m.is_some_and(|m| m.features.iter().any(|f| f == "cwd.v1"));
+            (m.and_then(|m| m.conn.clone()).filter(|_| can_ask), p.info.cwd.clone())
+        };
+        if let Some(conn) = conn
+            && let Ok(AgentResponse::Cwd { cwd: Some(cwd) }) = conn.request(AgentRequest::Cwd { session: src }).await
+        {
+            return Some(cwd);
+        }
+        launch
+    }
+
     fn check_running(&self, id: &str) -> Result<(), ErrorBody> {
         let i = self.inner.lock().unwrap();
         match i.panes.get(id).map(|p| &p.info.state) {
@@ -1591,6 +1630,7 @@ impl Host {
                 conn: None,
                 last_seen_ms: None,
                 health: None,
+                features: vec![],
             },
         );
         if let Some(tx) = p.accept {

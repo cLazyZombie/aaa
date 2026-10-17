@@ -148,3 +148,28 @@ fn tui_keys_like_herdr() {
     d.write("host.toml", "schema = 1\n[tui]\nswitch_ascii_input_source_in_prefix = true\n");
     assert!(load_host(&d.0).unwrap().config.tui.switch_ascii());
 }
+
+/// herdr `[ui] prompt_new_tab_name`·`confirm_close`(기본 켬)과 `[terminal] new_cwd`(기본 follow)
+#[test]
+fn new_tab_prompt_and_new_cwd_like_herdr() {
+    let d = Dir::new("newcwd");
+    let c = load_host(&d.0).unwrap().config;
+    assert!(c.tui.prompt_new_tab_name && c.tui.confirm_close);
+    assert_eq!(c.terminal.new_cwd, "follow");
+    // TOML 리터럴 문자열('…')이라 역슬래시가 그대로 값이 된다
+    for ok in ["home", "/srv/work", r"C:\work", "D:/w", r"\\nas\share"] {
+        d.write(
+            "host.toml",
+            &format!("schema = 1\n[terminal]\nnew_cwd = '{ok}'\n[tui]\nprompt_new_tab_name = false\n"),
+        );
+        let l = load_host(&d.0).unwrap();
+        assert_eq!(l.config.terminal.new_cwd, ok);
+        assert!(!l.config.tui.prompt_new_tab_name);
+    }
+    // herdr의 "current"(서버 프로세스 위치)와 상대 경로는 받지 않는다
+    for bad in ["current", "work", "~/w"] {
+        d.write("host.toml", &format!("schema = 1\n[terminal]\nnew_cwd = \"{bad}\"\n"));
+        let e = load_host(&d.0).unwrap_err().render();
+        assert!(e.contains("terminal.new_cwd") && e.contains("절대 경로"), "{e}");
+    }
+}

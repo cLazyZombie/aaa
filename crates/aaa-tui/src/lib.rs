@@ -9,13 +9,17 @@
 //!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
 //! - 키는 herdr 0.9.5 모드를 따른다(`src/client/shell/input.rs` `route_key`): Terminal(pane에 바로) → prefix 키로
 //!   Prefix(명령 키 하나, 시간 제한 없음, Esc·모르는 키는 취소) → `w`로 Navigate(목록 고르기·pane 포커스).
+//! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
 
 pub mod bind;
 pub mod clip;
+mod editor;
 mod help;
 pub mod input_source;
 pub mod keys;
 pub mod list;
+mod prompt;
+mod tabs;
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
@@ -52,11 +56,13 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
     rt.block_on(async move {
         let label = format!("tui@{}", aaa_common::util::hostname());
         let client = FrontClient::connect_as(&state, &label).await?;
+        let host_minor = client.proto.minor;
         let mut terminal = ratatui::init();
         // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
         let _focus = FocusReport::on();
         let mut app =
             App::new(workspace.unwrap_or_else(|| aaa_proto::DEFAULT_WORKSPACE.to_string()), client.front.clone());
+        app.host_minor = host_minor;
         app.apply_config(&cfg);
         let r = app.run(&mut terminal, client).await;
         ratatui::restore();
@@ -110,8 +116,8 @@ enum Pending {
     Report(&'static str),
     /// 입력·크기 오류는 상태 줄에 보인다
     Input,
-    /// 새로 만든 pane에 포커스를 옮긴다
-    Focus,
+    /// 새로 만든 pane에 포커스를 옮긴다(보낼 때 있던 pane들: 같은 layout 사건이 응답보다 먼저 와도 새 pane을 찾는다)
+    Focus(HashSet<String>),
     /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
     Attach(u64),
 }
@@ -130,6 +136,10 @@ enum Mode {
 /// 화면 위에 뜨는 창
 enum Overlay {
     Help(Help),
+    /// 이름 입력(새 탭·탭 이름)
+    Rename(prompt::Rename),
+    /// 닫기 확인(마지막 탭·마지막 pane)
+    Confirm(prompt::Confirm),
 }
 
 /// 단축키 창(herdr `ClientHelpOverlay`)
@@ -183,10 +193,19 @@ struct App {
     switch_ascii: bool,
     /// prefix 뒤 두벌식 자모를 같은 자리 영문 키로 읽는다(`[tui] prefix_jamo_keys`)
     jamo_keys: bool,
+    /// 새 탭 이름을 먼저 묻는다(`[tui] prompt_new_tab_name`)
+    prompt_new_tab: bool,
+    /// 마지막 탭·pane을 닫기 전에 묻는다(`[tui] confirm_close`)
+    confirm_close: bool,
+    /// host와 합의한 Front API minor(옛 host는 탭 닫기·이름을 모른다)
+    host_minor: u16,
     /// 영문 입력기를 원하는 상태인가(herdr `ascii_input_source_active`)
     ascii_on: bool,
     /// 영문으로 바꿔 둔 입력기(없애면 되돌린다: 모드 끝·종료·panic)
     ascii: Option<input_source::Ascii>,
+    /// 새 pane으로 포커스를 옮길 layout 요청(응답 전까지 키·붙여넣기를 `held`에 붙잡는다)
+    focus_wait: Option<String>,
+    held: Vec<Event>,
     quit: bool,
 }
 
@@ -221,8 +240,13 @@ impl App {
             reclaim: false,
             switch_ascii: false,
             jamo_keys: false,
+            prompt_new_tab: true,
+            confirm_close: true,
+            host_minor: aaa_proto::FRONT_API.minor,
             ascii_on: false,
             ascii: None,
+            focus_wait: None,
+            held: vec![],
             quit: false,
         }
     }
@@ -233,6 +257,8 @@ impl App {
         self.prefixes = prefixes;
         self.switch_ascii = cfg.switch_ascii();
         self.jamo_keys = cfg.prefix_jamo_keys;
+        self.prompt_new_tab = cfg.prompt_new_tab_name;
+        self.confirm_close = cfg.confirm_close;
         if !bad.is_empty() {
             self.set_error(format!("[tui] prefix 값을 읽지 못했다: {} (예: \"ctrl+b\")", bad.join(", ")));
         }
@@ -252,9 +278,13 @@ impl App {
         self.prefixes.iter().map(|c| keys::label(*c)).collect::<Vec<_>>().join(" / ")
     }
 
-    /// herdr `wants_ascii_input`: 명령 키를 받는 모드나 창이 열린 동안
+    /// herdr `wants_ascii_input`: 명령 키를 받는 모드나 창이 열린 동안. 글을 쓰는 창(이름 입력)은 빼서 한글 이름을 쓸 수 있다.
     fn wants_ascii(&self) -> bool {
-        self.overlay.is_some() || self.mode != Mode::Terminal
+        match &self.overlay {
+            Some(Overlay::Rename(_)) => false,
+            Some(_) => true,
+            None => self.mode != Mode::Terminal,
+        }
     }
 
     /// herdr `reconcile_input_source`. 다른 창에 focus가 있는 동안은 바꾸지도 되돌리지도 않고 돌아온 뒤 맞춘다.
@@ -302,10 +332,10 @@ impl App {
                     None => anyhow::bail!("host 연결이 끊겼다"),
                 },
                 e = keys_in.next() => match e {
+                    Some(Ok(e @ (Event::Key(_) | Event::Paste(_)))) if self.focus_wait.is_some() => self.held.push(e),
                     Some(Ok(Event::Key(k))) if k.kind != KeyEventKind::Release => { self.on_key(k, &mut tx).await?; dirty = true; }
                     // 그림만 든 clipboard를 붙이면 빈 붙여넣기로 오는 터미널이 있다
-                    Some(Ok(Event::Paste(s))) if s.is_empty() => { self.paste_image(&mut tx).await?; dirty = true; }
-                    Some(Ok(Event::Paste(s))) => { self.input(&mut tx, s.into_bytes()).await?; }
+                    Some(Ok(Event::Paste(s))) => { self.on_paste(s, &mut tx).await?; dirty = true; }
                     Some(Ok(Event::Resize(..))) => dirty = true,
                     // 돌아오면 크기를 다시 걸고, 다른 창에 있는 동안 미룬 입력기 바꾸기·되돌리기를 맞춘다
                     Some(Ok(Event::FocusGained)) => { self.focused = true; self.reclaim = true; self.sized.clear(); self.reconcile_ascii(); dirty = true; }
@@ -327,7 +357,32 @@ impl App {
                 self.on_msg(m);
                 dirty = true;
             }
+            // 포커스를 옮긴 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
+            while self.focus_wait.is_none() && !self.held.is_empty() {
+                match self.held.remove(0) {
+                    Event::Key(k) if k.kind != KeyEventKind::Release => self.on_key(k, &mut tx).await?,
+                    Event::Paste(s) => self.on_paste(s, &mut tx).await?,
+                    _ => {}
+                }
+                dirty = true;
+            }
         }
+    }
+
+    /// 붙여넣기: 이름 창이 열려 있으면 그 칸으로(herdr `insert_overlay_text`), 다른 창이면 버린다.
+    /// 그림만 든 clipboard는 빈 붙여넣기로 오는 터미널이 있다.
+    async fn on_paste(&mut self, s: String, tx: &mut FrontSender) -> Result<()> {
+        match self.overlay.as_mut() {
+            Some(Overlay::Rename(r)) => {
+                r.input.insert(&s);
+            }
+            Some(_) => {}
+            None if s.is_empty() => {
+                self.paste_image(tx).await?;
+            }
+            None => self.input(tx, s.into_bytes()).await?,
+        }
+        Ok(())
     }
 
     fn on_msg(&mut self, m: FrontMsg) {
@@ -344,11 +399,13 @@ impl App {
             }
             FrontMsg::Event(FrontEvent::Grid(f)) => self.grids.entry(f.pane.clone()).or_default().apply(f),
             FrontMsg::Res { id, result } => {
+                if self.focus_wait.as_ref() == Some(&id) {
+                    self.focus_wait = None;
+                }
                 let why = self.pending.remove(&id);
                 match (result, why) {
-                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::Focus)) => {
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::Focus(before))) => {
                         // 새 pane은 마지막 탭(새 탭) 또는 나눈 자리의 새 leaf다
-                        let before: HashSet<String> = self.all_panes();
                         self.set_ws(w);
                         if let Some(new) = self.all_panes().difference(&before).next().cloned() {
                             self.select_pane(&new);
@@ -464,6 +521,8 @@ impl App {
                     cwd: None,
                     cols: None,
                     rows: None,
+                    label: None,
+                    from: None,
                 };
                 return self.layout(tx, change, true).await;
             }
@@ -548,9 +607,16 @@ impl App {
         self.focus.as_ref().and_then(|f| self.panes.get(f)).map(|p| p.machine_id.clone())
     }
 
+    /// layout 바꾸기. `focus_new`면 응답이 올 때까지 키를 붙잡아 두었다가 새 pane에 포커스를 옮긴 뒤 보낸다:
+    /// herdr는 나누기·새 탭과 그 뒤 키를 서버가 차례대로 처리하므로 바로 친 키도 새 pane으로 간다.
     async fn layout(&mut self, tx: &mut FrontSender, change: LayoutChange, focus_new: bool) -> Result<()> {
         let id = tx.send(FrontRequest::LayoutApply { workspace: Some(self.ws_name.clone()), change }).await?;
-        self.pending.insert(id, if focus_new { Pending::Focus } else { Pending::Report("layout") });
+        if focus_new {
+            self.pending.insert(id.clone(), Pending::Focus(self.all_panes()));
+            self.focus_wait = Some(id);
+        } else {
+            self.pending.insert(id, Pending::Report("layout"));
+        }
         Ok(())
     }
 
@@ -568,8 +634,7 @@ impl App {
 
     async fn route_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         if self.overlay.is_some() {
-            self.on_overlay_key(k);
-            return Ok(());
+            return self.on_overlay_key(k, tx).await;
         }
         let c = keys::of(&k);
         match self.mode {
@@ -666,13 +731,111 @@ impl App {
         }
     }
 
-    /// 창이 열려 있을 때의 키(herdr `route_overlay_key`의 Help)
-    fn on_overlay_key(&mut self, k: KeyEvent) {
-        let area = Rect { x: 0, y: 0, w: self.width, h: self.height };
-        let prefixes = self.prefix_label();
-        self.help_key(k);
-        if let Some(Overlay::Help(h)) = self.overlay.as_mut() {
-            h.scroll = h.scroll.min(help::max_scroll(area, &prefixes, &h.query));
+    /// 창이 열려 있을 때의 키(herdr `route_overlay_key`)
+    async fn on_overlay_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
+        match self.overlay.as_mut() {
+            Some(Overlay::Help(_)) => {
+                let area = Rect { x: 0, y: 0, w: self.width, h: self.height };
+                let prefixes = self.prefix_label();
+                self.help_key(k);
+                if let Some(Overlay::Help(h)) = self.overlay.as_mut() {
+                    h.scroll = h.scroll.min(help::max_scroll(area, &prefixes, &h.query));
+                }
+            }
+            // herdr `route_rename_key`: Enter 저장, Esc 취소, ^c·⌘⌫ 지우기, 나머지는 편집
+            Some(Overlay::Rename(r)) => match k.code {
+                KeyCode::Enter => {
+                    if let Some(Overlay::Rename(r)) = self.overlay.take() {
+                        self.save_rename(r, tx).await?;
+                    }
+                }
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Char('c') if k.modifiers == KeyModifiers::CONTROL => r.input.clear(),
+                KeyCode::Backspace if k.modifiers.contains(KeyModifiers::SUPER) => r.input.clear(),
+                _ => {
+                    r.input.key(k.code, k.modifiers);
+                }
+            },
+            Some(Overlay::Confirm(_)) => match k.code {
+                KeyCode::Enter => {
+                    if let Some(Overlay::Confirm(c)) = self.overlay.take() {
+                        let change = match c.target {
+                            prompt::CloseTarget::Tab(tab) => LayoutChange::CloseTab { tab },
+                            prompt::CloseTarget::Pane(pane) => LayoutChange::Close { pane, kill: true },
+                        };
+                        self.layout(tx, change, false).await?;
+                    }
+                }
+                KeyCode::Esc => self.overlay = None,
+                _ => {}
+            },
+            None => {}
+        }
+        Ok(())
+    }
+
+    /// 이름 창 저장(herdr `save_rename_overlay`): 새 탭은 기본 이름 그대로·빈 이름이면 자리 번호,
+    /// 탭 이름은 비었거나 자동 이름을 그대로 두면 바꾸지 않는다
+    async fn save_rename(&mut self, r: prompt::Rename, tx: &mut FrontSender) -> Result<()> {
+        let text = r.input.trim().to_string();
+        match r.target {
+            prompt::RenameTarget::NewTab { default } => {
+                let label = (!text.is_empty() && text != default).then_some(text);
+                self.new_tab(tx, label).await
+            }
+            prompt::RenameTarget::Tab { id, auto, original } => {
+                if text.is_empty() || auto && text == original || !self.host_knows_tabs() {
+                    return Ok(());
+                }
+                self.layout(tx, LayoutChange::RenameTab { tab: id, name: text }, false).await
+            }
+        }
+    }
+
+    /// 새 탭: 포커스 pane의 머신에, 그 pane이 지금 있는 폴더에서(host `[terminal] new_cwd`)
+    async fn new_tab(&mut self, tx: &mut FrontSender, label: Option<String>) -> Result<()> {
+        let machine = self.focused_machine();
+        let change = LayoutChange::NewTab {
+            machine,
+            name: None,
+            argv: vec![],
+            cwd: None,
+            cols: None,
+            rows: None,
+            label,
+            from: self.focus.clone(),
+        };
+        self.layout(tx, change, true).await
+    }
+
+    /// 탭 닫기·이름은 Front API 1.4부터다. 옛 host에 보내면 연결이 끊기므로 알리고 보내지 않는다.
+    fn host_knows_tabs(&mut self) -> bool {
+        if self.host_minor >= 4 {
+            return true;
+        }
+        self.set_error("host가 이 명령보다 옛 판이다: host를 새 aaa로 다시 띄워야 한다");
+        false
+    }
+
+    /// 탭 이름표(herdr `tab_display_name`: 붙인 이름, 없으면 자리 번호)
+    fn tab_label(&self, i: usize) -> String {
+        match self.ws.tabs.get(i) {
+            Some(t) if !t.name.is_empty() => t.name.clone(),
+            _ => (i + 1).to_string(),
+        }
+    }
+
+    /// 마지막 탭(이고 pane이 `pane`뿐)인가: herdr `confirm_close`는 workspace가 닫힐 때만 묻는다
+    fn closes_everything(&self, pane: Option<&str>) -> bool {
+        self.ws.tabs.len() == 1 && pane.is_none_or(|p| self.current_leaves() == [p])
+    }
+
+    fn close_confirm(&self, target: prompt::CloseTarget) -> prompt::Confirm {
+        let n = self.current_leaves().len();
+        prompt::Confirm {
+            title: "마지막 탭을 닫을까?".into(),
+            detail: format!("{} — pane {n}개(실행 중인 세션은 끝난다)", self.ws_name),
+            target,
         }
     }
 
@@ -748,14 +911,35 @@ impl App {
                 self.mode = Mode::Navigate;
                 self.list_sel = None;
             }
-            Action::NewTab => {
-                let machine = self.focused_machine();
-                self.layout(
-                    tx,
-                    LayoutChange::NewTab { machine, name: None, argv: vec![], cwd: None, cols: None, rows: None },
-                    true,
-                )
-                .await?;
+            // herdr `open_new_tab_overlay`: 기본 이름(탭 수+1)을 골라 둔 채로 묻는다
+            Action::NewTab if self.prompt_new_tab => {
+                let default = (self.ws.tabs.len() + 1).to_string();
+                self.overlay = Some(Overlay::Rename(prompt::Rename {
+                    title: "새 탭",
+                    input: editor::Editor::new(&default, true),
+                    target: prompt::RenameTarget::NewTab { default },
+                }));
+            }
+            Action::NewTab => self.new_tab(tx, None).await?,
+            Action::RenameTab => {
+                if let Some(t) = self.ws.tabs.get(self.tab) {
+                    let original = self.tab_label(self.tab);
+                    self.overlay = Some(Overlay::Rename(prompt::Rename {
+                        title: "탭 이름 바꾸기",
+                        input: editor::Editor::new(&original, false),
+                        target: prompt::RenameTarget::Tab { id: t.id.clone(), auto: t.name.is_empty(), original },
+                    }));
+                }
+            }
+            Action::CloseTab => {
+                let Some(tab) = self.ws.tabs.get(self.tab).map(|t| t.id.clone()) else { return Ok(()) };
+                if self.host_knows_tabs() {
+                    if self.confirm_close && self.closes_everything(None) {
+                        self.overlay = Some(Overlay::Confirm(self.close_confirm(prompt::CloseTarget::Tab(tab))));
+                    } else {
+                        self.layout(tx, LayoutChange::CloseTab { tab }, false).await?;
+                    }
+                }
             }
             Action::PreviousTab if !self.ws.tabs.is_empty() => {
                 self.tab = (self.tab + self.ws.tabs.len() - 1) % self.ws.tabs.len()
@@ -776,7 +960,11 @@ impl App {
             }
             Action::ClosePane => {
                 let Some(pane) = focus else { return Ok(()) };
-                self.layout(tx, LayoutChange::Close { pane, kill: true }, false).await?;
+                if self.confirm_close && self.closes_everything(Some(&pane)) {
+                    self.overlay = Some(Overlay::Confirm(self.close_confirm(prompt::CloseTarget::Pane(pane))));
+                } else {
+                    self.layout(tx, LayoutChange::Close { pane, kill: true }, false).await?;
+                }
             }
             Action::ToggleSidebar => self.toggle_list(),
             Action::FocusLeft => self.move_focus(Dir::Left),
@@ -814,31 +1002,24 @@ impl App {
 
     /// 그리고 포커스 pane의 커서 위치를 돌려준다
     fn render(&self, buf: &mut Buffer, area: Rect) -> Option<(u16, u16)> {
-        // 탭 줄: 이름표 · workspace · 탭(지금 탭은 강조색 바탕) … 오른쪽에 열린 질문 수
+        // 탭 줄: 이름표 · workspace · 탭 이름표(herdr `render_tab_bar`) … 오른쪽에 열린 질문 수
         let right_edge = area.x + area.w;
         let put = |buf: &mut Buffer, x: u16, s: &str, st: Style| {
             buf.set_stringn(x, area.y, s, right_edge.saturating_sub(x) as usize, st).0
         };
         let mut x = put(buf, area.x, " aaa ", Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD));
         x = put(buf, x, &format!(" {} ", self.ws_name), Style::default().fg(DIM));
-        for (i, t) in self.ws.tabs.iter().enumerate() {
-            let first = layout::leaves(&t.root).into_iter().next();
-            let name = first.as_ref().and_then(|p| self.panes.get(p)).map(|p| p.name.clone()).unwrap_or_default();
-            let label = format!(" {}:{} ", i + 1, if t.name.is_empty() { name } else { t.name.clone() });
-            let style = if i == self.tab {
-                Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(DIM)
-            };
-            x = put(buf, x, &label, style);
-        }
         let asking = self.panes.values().filter(|p| is_asking(p)).count();
-        if asking > 0 {
-            let label = format!(" ? 질문 {asking} ");
-            let w = unicode_width(&label) as u16;
-            if x + w < right_edge {
-                put(buf, right_edge - w, &label, Style::default().fg(ON_CHIP).bg(BLOCKED).add_modifier(Modifier::BOLD));
-            }
+        let ask_label = format!(" ? 질문 {asking} ");
+        let ask_w = if asking > 0 { unicode_width(&ask_label) as u16 + 1 } else { 0 };
+        self.render_tabs(buf, Rect { x, y: area.y, w: right_edge.saturating_sub(x).saturating_sub(ask_w), h: 1 });
+        if asking > 0 && x + ask_w <= right_edge {
+            put(
+                buf,
+                right_edge - ask_w + 1,
+                &ask_label,
+                Style::default().fg(ON_CHIP).bg(BLOCKED).add_modifier(Modifier::BOLD),
+            );
         }
         let body = self.body(area);
         let list_shown = self.list_shown(area.w);
@@ -904,10 +1085,46 @@ impl App {
             }
             x = buf.set_stringn(x, y, &text, room, st).0;
         }
-        if let Some(Overlay::Help(h)) = &self.overlay {
-            return help::render(buf, area, h, &self.prefix_label());
+        match &self.overlay {
+            Some(Overlay::Help(h)) => return help::render(buf, area, h, &self.prefix_label()),
+            Some(Overlay::Rename(r)) => return prompt::render_rename(buf, area, r),
+            Some(Overlay::Confirm(c)) => {
+                prompt::render_confirm(buf, area, c);
+                return None;
+            }
+            None => {}
         }
         cursor
+    }
+
+    /// 탭 이름표들(herdr: 지금 탭은 강조색 바탕, 이름을 붙인 탭은 굵게·밝게, 넘치면 지금 탭을 가운데로 밀고 `…`)
+    fn render_tabs(&self, buf: &mut Buffer, r: Rect) {
+        let labels: Vec<String> = (0..self.ws.tabs.len()).map(|i| self.tab_label(i)).collect();
+        let strip = tabs::layout(&labels, self.tab, r.x, r.w);
+        for c in &strip.chips {
+            let custom = !self.ws.tabs[c.index].name.is_empty();
+            let mut style = if c.index == self.tab {
+                Style::default().fg(ON_CHIP).bg(ACCENT)
+            } else if custom {
+                Style::default().fg(ON_SURFACE).bg(SURFACE)
+            } else {
+                Style::default().fg(DIM).bg(SURFACE)
+            };
+            if custom && c.index == self.tab {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            let name = &labels[c.index];
+            let pad = c.w.saturating_sub(unicode_width(name) as u16);
+            let left = pad / 2;
+            let text = format!("{:l$}{name}{:r$}", "", "", l = left as usize, r = pad.saturating_sub(left) as usize);
+            buf.set_stringn(c.x, r.y, &text, c.w as usize, style);
+        }
+        if strip.more_left {
+            buf.set_string(r.x, r.y, "…", Style::default().fg(FAINT));
+        }
+        if strip.more_right && r.w > 0 {
+            buf.set_string(r.x + r.w - 1, r.y, "…", Style::default().fg(FAINT));
+        }
     }
 
     fn render_list(&self, buf: &mut Buffer, area: Rect) {
@@ -1038,6 +1255,9 @@ pub(crate) const DIM: Color = Color::Indexed(245);
 pub(crate) const FAINT: Color = Color::Indexed(240);
 /// 도움말의 키 글자(herdr palette `mauve` 자리)
 pub(crate) const MAUVE: Color = Color::Indexed(176);
+/// 입력 칸·탭 이름표 바탕(herdr palette `surface0` 자리)과 그 위 글자: 밝은·어두운 터미널 모두에서 읽히게 글자색도 정한다
+pub(crate) const SURFACE: Color = Color::Indexed(237);
+pub(crate) const ON_SURFACE: Color = Color::Indexed(252);
 /// 색 바탕 위 글자. ANSI 0(검정)은 굵게 쓰면 많은 터미널이 밝은 회색으로 바꾸므로 256색 검정(16)을 쓴다.
 pub(crate) const ON_CHIP: Color = Color::Indexed(16);
 
@@ -1207,6 +1427,106 @@ mod tests {
         app.jamo_keys = true;
         assert_eq!(bind::prefix_action(app.command_key(jamo)), Some(Action::NewTab));
         assert_eq!(app.command_key(Combo::plain('ㅆ')), Combo::shift('t'));
+    }
+
+    fn app_with_tabs(names: &[&str]) -> App {
+        let mut app = App::new("main".into(), "me".into());
+        app.width = 90;
+        app.height = 30;
+        app.ws.tabs = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| aaa_proto::Tab {
+                id: format!("t{i}"),
+                name: n.to_string(),
+                root: aaa_proto::LayoutNode::Pane { pane: format!("p{i}") },
+            })
+            .collect();
+        app
+    }
+
+    fn draw(app: &App) -> (Vec<String>, Option<(u16, u16)>) {
+        let area = Rect { x: 0, y: 0, w: app.width, h: app.height };
+        let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, area.w, area.h));
+        let cursor = app.render(&mut buf, area);
+        // 넓은 글자 뒤 칸은 건너뛴다(터미널에 보이는 대로)
+        let lines = (0..area.h)
+            .map(|y| {
+                let (mut line, mut x) = (String::new(), 0);
+                while x < area.w {
+                    let sym = buf[(x, y)].symbol();
+                    line.push_str(sym);
+                    x += (unicode_width(sym) as u16).max(1);
+                }
+                line
+            })
+            .collect();
+        (lines, cursor)
+    }
+
+    /// 탭 이름표: 붙인 이름 또는 자리 번호, 폭은 이름+4(최소 8), 지금 탭은 강조색 바탕(herdr `render_tab_bar`)
+    #[test]
+    fn tab_chips_like_herdr() {
+        let mut app = app_with_tabs(&["", "빌드", ""]);
+        app.tab = 1;
+        let (lines, _) = draw(&app);
+        let top = &lines[0];
+        // " main " 뒤에 "   1    " "  빌드  " "   3    "(사이 한 칸)
+        assert!(top.starts_with(" aaa  main    1       빌드      3    "), "{top:?}");
+        let area = Rect { x: 0, y: 0, w: 90, h: 30 };
+        let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, 90, 30));
+        app.render(&mut buf, area);
+        let x = top.find("빌드").map(|b| unicode_width(&top[..b]) as u16).unwrap();
+        assert_eq!((buf[(x, 0)].bg, buf[(x, 0)].fg), (ACCENT, ON_CHIP));
+        assert!(buf[(x, 0)].modifier.contains(Modifier::BOLD), "붙인 이름의 지금 탭은 굵게");
+        assert_eq!(buf[(x - 2, 0)].bg, ACCENT, "이름표는 이름 양옆 빈칸까지 칠한다");
+        assert_ne!(buf[(x - 3, 0)].bg, ACCENT, "이름표 사이 한 칸");
+        assert_eq!((buf[(x - 4, 0)].bg, buf[(x - 4, 0)].fg), (SURFACE, DIM), "자동 이름은 흐리게");
+    }
+
+    /// 새 탭 이름 창(herdr `render_rename_overlay`): 가운데 56×7 테두리 창, 제목, 입력 칸(커서는 글 뒤), 단추 줄
+    #[test]
+    fn rename_overlay_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        app.overlay = Some(Overlay::Rename(prompt::Rename {
+            title: "새 탭",
+            input: editor::Editor::new("2", true),
+            target: prompt::RenameTarget::NewTab { default: "2".into() },
+        }));
+        let (lines, cursor) = draw(&app);
+        let shown = lines.join("\n");
+        // 90×30 화면: 창은 x 17..73, y 11..18
+        let top = lines.iter().position(|l| l.contains("┌")).expect(&shown);
+        assert_eq!(top, 11, "{shown}");
+        assert_eq!(lines[top].find('┌').map(|b| unicode_width(&lines[top][..b])), Some(17), "{shown}");
+        assert_eq!(lines[top].chars().filter(|c| *c == '─').count(), 54, "{shown}");
+        assert!(lines[top + 1].contains("│새 탭"), "{shown}");
+        assert!(lines[top + 3].contains("│ 2 "), "{shown}");
+        for b in ["↵ 저장", "^c 지우기", "esc 취소"] {
+            assert!(lines[top + 4].contains(b), "{b}\n{shown}");
+        }
+        assert!(lines[top + 6].contains("└"), "{shown}");
+        assert_eq!(cursor, Some((18 + 1 + 1, 14)));
+        // 이름 창이 열린 동안은 입력기를 바꾸지 않는다(한글 이름), 단축키·확인 창은 바꾼다(herdr `wants_ascii_input`)
+        assert!(!app.wants_ascii());
+        app.overlay = Some(Overlay::Confirm(app.close_confirm(prompt::CloseTarget::Tab("t0".into()))));
+        assert!(app.wants_ascii());
+        let (lines, cursor) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(lines.iter().any(|l| l.contains("│ 마지막 탭을 닫을까?")), "{shown}");
+        assert!(lines.iter().any(|l| l.contains("main — pane 1개")), "{shown}");
+        assert!(lines.iter().any(|l| l.contains("↵ 닫기") && l.contains("esc 취소")), "{shown}");
+        assert_eq!(cursor, None);
+    }
+
+    /// 탭 닫기·이름은 Front API 1.4부터: 옛 host에는 보내지 않고 알린다(모르는 요청은 연결을 끊는다)
+    #[test]
+    fn old_host_gets_no_tab_requests() {
+        let mut app = app_with_tabs(&[""]);
+        assert!(app.host_knows_tabs());
+        app.host_minor = 3;
+        assert!(!app.host_knows_tabs());
+        assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
     }
 
     #[test]

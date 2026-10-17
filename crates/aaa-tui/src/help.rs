@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use crate::{ACCENT, DIM, Help, MAUVE, ON_CHIP, bind, unicode_width};
 
 /// 창 자리(herdr `popup`: 화면에서 좌우 4칸·위아래 2칸은 남긴다)
-fn popup(a: Rect, w: u16, h: u16) -> Option<Rect> {
+pub(crate) fn popup(a: Rect, w: u16, h: u16) -> Option<Rect> {
     let w = w.min(a.w.saturating_sub(4));
     let h = h.min(a.h.saturating_sub(2));
     (w >= 4 && h >= 4).then(|| Rect { x: a.x + (a.w - w) / 2, y: a.y + (a.h - h) / 2, w, h })

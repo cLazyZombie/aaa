@@ -367,6 +367,10 @@ pub enum AgentRequest {
     Screen {
         session: String,
     },
+    /// 그 세션이 지금 있는 폴더(앞 프로그램, 없으면 셸). agent가 `cwd.v1` 기능을 알릴 때만 보낸다.
+    Cwd {
+        session: String,
+    },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
@@ -488,6 +492,10 @@ pub enum AgentResponse {
     Attached {
         path: String,
         sha256: String,
+    },
+    /// 세션이 지금 있는 폴더(읽지 못하면 None)
+    Cwd {
+        cwd: Option<String>,
     },
 }
 
@@ -720,7 +728,9 @@ pub struct Workspace {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum LayoutChange {
-    /// 새 탭에 새 pane. `cols`·`rows`는 화면이 붙기 전 처음 PTY 크기(기본 120×32)
+    /// 새 탭에 새 pane. `name`은 pane(세션) 이름, `label`은 탭 이름(없으면 자리 번호).
+    /// cwd를 주지 않으면 host `[terminal] new_cwd`를 따른다(follow면 `from` pane이 지금 있는 폴더, plan §8.76).
+    /// `cols`·`rows`는 화면이 붙기 전 처음 PTY 크기(기본 120×32)
     NewTab {
         machine: Option<String>,
         name: Option<String>,
@@ -730,8 +740,13 @@ pub enum LayoutChange {
         cols: Option<u16>,
         #[serde(default)]
         rows: Option<u16>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        from: Option<String>,
     },
-    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다. `ratio`는 a 쪽 천분율(기본 500, herdr `pane split --ratio`)
+    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다. `ratio`는 a 쪽 천분율(기본 500, herdr `pane split --ratio`).
+    /// cwd를 주지 않으면 `[terminal] new_cwd`(follow면 나눈 pane의 폴더)
     Split {
         pane: String,
         dir: SplitDir,

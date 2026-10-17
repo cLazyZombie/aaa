@@ -23,6 +23,14 @@ prefix = "ctrl+b"
 switch_ascii_input_source_in_prefix = false
 # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 끔).
 prefix_jamo_keys = false
+# 새 탭(prefix c)을 만들기 전에 이름을 묻는다(빈 채로·기본값 그대로 Enter면 자리 번호).
+prompt_new_tab_name = true
+# 마지막 탭·마지막 pane을 닫기 전에 묻는다.
+confirm_close = true
+
+[terminal]
+# 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로
+new_cwd = "follow"
 
 [projects]
 # 프로젝트 폴더 root(비우면 ~/.aaa/projects)

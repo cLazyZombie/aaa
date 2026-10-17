@@ -44,6 +44,7 @@ dependencies = [
  "anyhow",
  "hex",
  "libc",
+ "portable-pty",
  "rand 0.9.5",
  "serde",
  "serde_json",
@@ -51,6 +52,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -175,6 +177,8 @@ dependencies = [
  "png",
  "ratatui",
  "tokio",
+ "unicode-segmentation",
+ "unicode-width",
  "windows-sys 0.60.2",
 ]
 
