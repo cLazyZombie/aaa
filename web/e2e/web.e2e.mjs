@@ -1309,7 +1309,7 @@ try {
     await shot(rp, "mobile-list");
     await rp.getByTestId("pane-t1").click();
     await until("reader 화면", async () => (await screenText(rp)).includes("한글-8"));
-    // 휴대폰 폭(11px)에서도 한글이 두 칸에 꼭 맞는다
+    // 휴대폰 폭(13px)에서도 한글이 두 칸에 꼭 맞는다
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
     console.log("     글꼴 측정(390×844)", JSON.stringify(await fontOk(rp, cols)));
     const banner = await rp.getByTestId("readonly-banner").innerText();
@@ -1323,6 +1323,36 @@ try {
     await shot(rp, "mobile-reader");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+    // 낮은 화면의 보기 권한: 데스크톱 grid가 칸보다 높으면 칸이 굴러가고 커서 줄을 보이게 따라간다(herdr-web-ui followCursor)
+    // t1 화면은 뒤 단계가 본다: 따로 pane을 띄운다(80×40, 줄 80개 뒤 커서는 맨 아래)
+    aaa("pane", "run", "--machine", "labA", "--name", "follow", "--cols", "80", "--rows", "40", "--", "/bin/sh", "-c", "seq 1 80; echo follow-$((6*7)); exec cat");
+    const low = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 420 });
+    await low.page.getByTestId("pane-follow").click();
+    const followed = () =>
+      low.page.evaluate(() => {
+        const scroll = document.querySelector(".term-scroll");
+        const box = scroll.getBoundingClientRect();
+        // 보기만 하는 화면은 focus가 없어 커서 칸이 따로 없다: 커서 바로 위 줄(follow-42)을 본다
+        const row = [...document.querySelectorAll(".xterm-rows > div")].find((r) => r.textContent.includes("follow-42"));
+        const cursor = row?.getBoundingClientRect();
+        return {
+          text: row !== undefined,
+          scrollTop: scroll.scrollTop,
+          scrollHeight: scroll.scrollHeight,
+          clientHeight: scroll.clientHeight,
+          box: [Math.round(box.top), Math.round(box.bottom)],
+          cursor: cursor ? [Math.round(cursor.top), Math.round(cursor.bottom)] : null,
+        };
+      });
+    let last = null;
+    await until("커서 줄을 따라감", async () => {
+      last = await followed();
+      return last.text && last.cursor && last.scrollTop > 0 && last.cursor[0] >= last.box[0] && last.cursor[1] <= last.box[1] + 1;
+    }).catch((e) => {
+      throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+    });
+    await low.page.context().close();
+    aaa("pane", "kill", "follow");
   });
 
   await step("controller: 새 셸", async () => {

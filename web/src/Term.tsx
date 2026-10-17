@@ -882,13 +882,22 @@ export function TermView({
   // 그래서 높이만 줄면 grid를 그대로 두고 커서 줄이 보이게 터미널을 옮긴다. 폭이 바뀌면(회전) 키보드 중에도 맞춘다.
   // 붙잡아 둔 맞추기는 키보드가 내려가 터미널이 커질 때(ResizeObserver) 한다.
   const kbRef = useRef({ held: false, fittedWidth: null as number | null, panned: false });
+  // 이 화면 것이 아닌 grid(다른 화면이 크기를 정하는 중, 보기 권한)는 칸보다 클 수 있다. 칸이 굴러가고, 손으로 옮기기 전까지
+  // 커서 줄을 보이게 따라간다(herdr-web-ui PaneTerminal 699~727줄 `adopted`·`followCursor`).
+  const adopted = heldByOther || !canControl;
+  const adoptedRef = useRef(adopted);
+  useEffect(() => {
+    if (adopted && !adoptedRef.current) kbRef.current.panned = false;
+    adoptedRef.current = adopted;
+    if (adopted) followCursor.current();
+  }, [adopted]);
   const followCursor = useRef(() => {});
   followCursor.current = () => {
     const host = scrollRef.current;
     const term = termRef.current;
     const k = kbRef.current;
     const screen = term?.element?.querySelector<HTMLElement>(".xterm-screen");
-    if (!host || !term || !screen || !k.held || k.panned) return;
+    if (!host || !term || !screen || !(k.held || adoptedRef.current) || k.panned) return;
     const row = screen.offsetHeight / term.rows;
     const top = screen.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
     const cursorBottom = top + (term.buffer.active.cursorY + 1) * row;
@@ -973,7 +982,7 @@ export function TermView({
     // 손으로 옮기면 키보드가 있는 동안 커서를 따라가지 않는다(herdr-web-ui `panned`)
     const host = scrollRef.current;
     const pan = () => {
-      if (kbRef.current.held) kbRef.current.panned = true;
+      if (kbRef.current.held || adoptedRef.current) kbRef.current.panned = true;
     };
     host?.addEventListener("touchmove", pan, { passive: true });
     host?.addEventListener("wheel", pan, { passive: true });
