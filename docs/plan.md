@@ -2086,6 +2086,16 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **계약.** FRONT_API 1.8(`ThreadRead`·`ThreadKeys`, `ThreadPaneView`).
 - **시험.** E2E m13 `thread_read_and_keys`(가짜 Claude): 신뢰 창을 읽고(상태 모름) 키는 거부 → 질문으로 답한 뒤 권한 확인창을 읽고 Enter로 답해 넘어감 → `--lines` → 세션이 끝나면 거부. proto 유닛: 읽기는 보기, 키는 조작.
 
+### 8.87 시험하기 쉬운 구조: 고정 sleep ratchet, ticker 한 번, 실험실 셸(10-18, 사용자 「e2e testability가 중요해」·「기다리기만하는 테스트는 다르게 풀어」, t-0338)
+
+시험 쓰는 법은 [docs/testing.md](testing.md)에 모았다. 이 절은 제품·도구 쪽에서 바꾼 것만 적는다.
+- **진단.** Rust 시험의 고정 sleep 대부분(m13 10곳 약 37초)은 「N초 자고 아직 1개」 꼴이다. host가 「봤는데 할 일이 없었다」를 알릴 길이 없어서다. 웹 E2E의 간헐 실패 대부분은 xterm이 그 줄을 그렸는지 모르는 데서 났다(공개 CI 13회 중 9회).
+- **고정 sleep ratchet(herdr-web-ui `scripts/fixed-sleeps.ts`·`conventions.test.ts` 그대로).** `web/test/fixed-sleeps.mjs`가 세고 `web/test/fixed-sleeps.test.mjs`가 파일마다 `fixed-sleeps.json`보다 늘지 못하게 한다(줄면 낮춰야 하고 origin/main보다 올릴 수 없다). 참고가 세지 않던 Playwright `waitForTimeout`과 Rust 시험(`crates/*/tests`, src의 `#[cfg(test)]` 뒤)의 `thread::sleep`·`tokio::time::sleep`도 센다. 처음 센 수는 79곳(웹 E2E 53, showcase 4, m13 11, tui 4, e2e 1, host notify 시험 2, TUI 입력기 시험 4)이고, 아래 m13 하나를 바꿔 78곳에서 시작한다.
+- **ticker 한 번(`aaa ticker tick`, front API 1.9 `ticker_tick`).** herdr-projects는 시험에서 ticker를 띄우지 않고 `ticker::tick_project`를 직접 돈다(`src/ticker.rs:586`). t3code는 worker를 `drain`한다(`EffectWorker.ts:802`). aaa의 ticker는 host 안 task라, 요청이 tick을 깨우고 **그 요청 뒤에 시작한 tick**이 끝나면 답한다(돌던 tick은 요청 전 상태를 봤을 수 있어 다음 것까지 기다린다). 시작·끝 tick 수를 `tick_started`·`tick_done`(watch)으로 센다. 조작 권한이 필요하고 host 머신 CLI에서만 된다(thread 세션은 보기만 하므로 막힌다). 동작은 그대로다(사건이 와서 tick을 깨우는 것과 같다).
+- **시계는 흉내 내지 않는다.** 참고 넷 모두 production 시계를 바꾸는 시험 입구가 없다(herdr·herdr-projects는 `now` 인자와 설정 값, t3code TestClock은 Effect runtime 안). aaa도 판정은 `now` 인자 함수로 유닛 시험하고, E2E는 설정 값으로 창을 줄인 뒤 `ticker tick`으로 판정을 확인한다.
+- **실험실 셸.** `lab::Node::cmd`가 Unix에서 `SHELL=/bin/sh`를 준다(herdr `tests/cli/harness.rs`). 그 전에는 명령 없는 pane이 사람의 셸(이 머신은 zsh 설정)을 띄워 로컬과 CI 화면이 달랐다. `connected()` 네 벌은 `Node::connected` 하나로 모았다.
+- **결함 심기.** `inbox.rs check_project_config`의 내용 hash 비교를 끄면 바꾼 시험(`m13 inbox_and_nudge`, sleep 3초 → `ticks(2)`)이 「항목 1개」 대신 924개로 실패한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

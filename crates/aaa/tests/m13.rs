@@ -222,10 +222,6 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
     )
 }
 
-fn connected(node: &Node, name: &str) -> bool {
-    node.machine(name).is_some_and(|m| m["connection"] == "connected")
-}
-
 fn git(dir: &Path, args: &[&str]) -> String {
     let o = Command::new("git")
         .arg("-C")
@@ -300,7 +296,7 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     let mut envs = vec![("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")];
     envs.extend(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     w.lab.spawn_env("agentA", &w.h, &["agent", "--host", "local", "--name", "labA"], &envs);
-    wait_for("labA 연결", T, || connected(&w.h, "labA").then_some(()));
+    wait_for("labA 연결", T, || w.h.connected("labA").then_some(()));
     w.h.ok(&["project", "create", "demo"]);
     w
 }
@@ -391,7 +387,7 @@ impl World {
         self.h.ok(&["machine", "approve", "labB", "--code", &code]);
         assert!(self.lab.wait_exit("enroll", T).success(), "{}", self.lab.log("enroll"));
         self.lab.spawn("agentB", &b, &["agent", "--host", &self.addr, "--name", "labB"]);
-        wait_for("labB 연결", T, || connected(&self.h, "labB").then_some(()));
+        wait_for("labB 연결", T, || self.h.connected("labB").then_some(()));
     }
 }
 
@@ -544,7 +540,7 @@ fn remote_dir_thread_survives_host_restart() {
     let work_dir = PathBuf::from(v["work_dir"].as_str().unwrap());
     std::fs::write(work_dir.join("report.md"), "## Report\n갱신\n\n## Next\n- 사용자 확인\n").unwrap();
     w.lab.spawn("host2", &w.h, &["host"]);
-    wait_for("labB 재연결", Duration::from_secs(60), || connected(&w.h, "labB").then_some(()));
+    wait_for("labB 재연결", Duration::from_secs(60), || w.h.connected("labB").then_some(()));
     let v = w.wait_show("갱신된 보고", &id, |v| v["next"] == serde_json::json!(["사용자 확인"]));
     // 보고 첫 줄 태그로 사람 차례를 정하지 않는다(D9): 새 보고는 검토 대기
     assert_eq!(v["group"], "ready_for_review");
@@ -977,7 +973,8 @@ fn inbox_and_nudge() {
     std::fs::write(dir.join("project.toml"), "schema = [\n").unwrap();
     let screen = w.wait_screen(&coord, "got: [aaa inbox] project.toml not usable");
     assert!(screen.contains("got: [aaa inbox] project.toml not usable (aaa inbox list demo)"), "{screen}");
-    std::thread::sleep(Duration::from_secs(3));
+    // ticker가 같은 내용을 두 번 더 봐도 항목은 하나다(tick마다 다시 읽는다, 내용 hash당 한 번)
+    w.h.ticks(2);
     assert_eq!(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().len(), 1);
     let nudges = w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     assert_eq!(nudges, 3);

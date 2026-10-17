@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use aaa_proto::{AgentActivity, DeviceRole, ErrorBody, ErrorCode, FlowEvent, InboxItem, ThreadStatus};
@@ -271,9 +272,23 @@ impl Host {
                     _ = tokio::time::sleep(sleep) => {}
                     _ = me.tick_wake.notified() => {}
                 }
+                me.tick_started.fetch_add(1, Ordering::SeqCst);
                 me.tick().await;
+                me.tick_done.send_modify(|n| *n += 1);
             }
         });
+    }
+
+    /// tick을 하나 깨우고, 이 요청 뒤에 시작한 tick이 끝나면 끝난 tick 수를 돌려준다. 돌던 tick이 있으면 그 다음 것까지 기다린다
+    /// (그 tick은 이 요청 전의 상태를 봤을 수 있다). 시험이 「host가 보고 아무것도 하지 않았다」를 sleep 없이 확인한다(docs/testing.md).
+    pub(crate) async fn ticker_tick(&self) -> u64 {
+        let want = self.tick_started.load(Ordering::SeqCst) + 1;
+        let mut done = self.tick_done.subscribe();
+        self.tick_wake.notify_one();
+        match done.wait_for(|n| *n >= want).await {
+            Ok(n) => *n,
+            Err(_) => *self.tick_done.borrow(),
+        }
     }
 
     async fn tick(self: &Arc<Self>) {

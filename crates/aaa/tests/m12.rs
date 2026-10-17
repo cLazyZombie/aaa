@@ -23,16 +23,12 @@ listen = ""
 mode = "none"
 "#;
 
-fn connected(node: &Node, name: &str) -> bool {
-    node.machine(name).is_some_and(|m| m["connection"] == "connected")
-}
-
 fn start(lab: &mut Lab) -> Node {
     let h = lab.node("h", Some(LOCAL_ONLY));
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
-    wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
+    wait_for("labA 연결", T, || h.connected("labA").then_some(()));
     h
 }
 
@@ -139,7 +135,7 @@ fn layout_is_host_state_and_survives_restart() {
 
     lab.kill("host");
     lab.spawn("host2", &h, &["host"]);
-    wait_for("재시작 뒤 labA", Duration::from_secs(40), || connected(&h, "labA").then_some(()));
+    wait_for("재시작 뒤 labA", Duration::from_secs(40), || h.connected("labA").then_some(()));
     assert_eq!(h.ok(&["workspace", "get"]), before, "재시작 뒤 layout이 같아야 한다");
 
     // 없는 pane을 나누면 거부
