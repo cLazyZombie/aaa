@@ -46,11 +46,13 @@ dependencies = [
  "libc",
  "portable-pty",
  "rand 0.9.5",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
  "tokio-rustls",
+ "toml",
  "tracing",
  "windows-sys 0.60.2",
 ]
