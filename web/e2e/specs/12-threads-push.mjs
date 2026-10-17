@@ -966,7 +966,9 @@ export default async function ({ ctl, page }) {
     const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: () => (document.hasFocus = () => false) });
     const bp = B.page;
     await bp.getByTestId("pane-who").click();
-    await until("B 터미널", async () => (await bp.locator(".xterm-rows").count()) === 1);
+    // 터미널이 입력을 받기 전에 친 글은 붙잡힌다(herdr-web-ui draft): who pane이 붙어 입력을 받을 때까지
+    const writable = (p) => until("who 터미널 입력 받음", async () => (await p.locator('[data-testid="terminal"][data-pane-name="who"][data-readonly="false"]').count()) === 1);
+    await writable(bp);
     if (!(await pushWho(page)).you) throw new Error("focus 없이 연 B가 쓰는 기기가 됐다");
     // (1) B에서 친다: B가 쓰는 기기(pane 입력, host가 본다). A는 여전히 보이고 focus
     await bp.locator(".xterm-helper-textarea").focus();
@@ -1015,6 +1017,7 @@ export default async function ({ ctl, page }) {
     done();
     // (3) A에서 다시 친다: A가 쓰는 기기, push 없음
     await page.getByTestId("pane-who").click();
+    await writable(page);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type("a1");
     await waitOutput("who", "a1");

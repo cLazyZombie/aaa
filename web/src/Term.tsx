@@ -1740,7 +1740,8 @@ export function TermView({
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
         <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""} data-adopted-grid={adopted ? "" : undefined}>
-          <div className="term-box" ref={box} data-testid="terminal" />
+          {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
+          <div className="term-box" ref={box} data-testid="terminal" data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
         </div>
         <div className="terminal-banners">
           {link === "stopped" && (
