@@ -508,8 +508,15 @@ async fn pane_session(
     }
 }
 
+/// 웹 자산의 Content-Type. 확장자는 마지막 경로 조각에서만 본다(`fonts/meslotendard-0.3.1/LICENSE`의 버전 점을
+/// 확장자로 읽지 않게). 글꼴 고지(LICENSE·.txt·.md)는 브라우저가 바로 보이게 글자로 보낸다.
 fn content_type(path: &str) -> &'static str {
-    match path.rsplit('.').next().unwrap_or("") {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    if file == "LICENSE" {
+        return "text/plain; charset=utf-8";
+    }
+    match file.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("") {
+        "txt" | "md" => "text/plain; charset=utf-8",
         "html" => "text/html; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
@@ -553,4 +560,20 @@ async fn static_file(req: Request) -> Response {
         .header(header::CACHE_CONTROL, cache)
         .body(Body::from(bytes))
         .unwrap()
+}
+
+#[cfg(test)]
+mod content_type_tests {
+    use super::content_type;
+
+    #[test]
+    fn by_last_segment() {
+        assert_eq!(content_type("fonts/meslotendard-0.3.1/Meslotendard-Regular.woff2"), "font/woff2");
+        assert_eq!(content_type("fonts/meslotendard-0.3.1/LICENSE"), "text/plain; charset=utf-8");
+        assert_eq!(content_type("fonts/meslotendard-0.3.1/README.md"), "text/plain; charset=utf-8");
+        assert_eq!(content_type("fonts/meslotendard-0.3.1/licenses/MESLO_APACHE-2.0.txt"), "text/plain; charset=utf-8");
+        assert_eq!(content_type("assets/index-abc.js"), "text/javascript; charset=utf-8");
+        assert_eq!(content_type("index.html"), "text/html; charset=utf-8");
+        assert_eq!(content_type("v1.2/blob"), "application/octet-stream");
+    }
 }
