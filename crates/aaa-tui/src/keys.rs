@@ -246,10 +246,18 @@ fn modifier_param(m: KeyModifiers) -> u8 {
 
 /// xterm 방식 입력 bytes. 보낼 것이 없으면 빈 Vec.
 pub fn encode(k: &KeyEvent) -> Vec<u8> {
+    encode_in(k, false)
+}
+
+/// `app_cursor`(pane 프로그램이 DECCKM을 켬)면 수정키 없는 화살표를 `ESC O x`로(xterm·herdr, aaa-vt `KeyModes::key`와 같다)
+pub fn encode_in(k: &KeyEvent, app_cursor: bool) -> Vec<u8> {
     let m = k.modifiers;
     let csi = |end: &str| -> Vec<u8> {
         let p = modifier_param(m);
         if p == 1 { format!("\x1b[{end}").into_bytes() } else { format!("\x1b[1;{p}{end}").into_bytes() }
+    };
+    let arrow = |end: &str| -> Vec<u8> {
+        if app_cursor && modifier_param(m) == 1 { format!("\x1bO{end}").into_bytes() } else { csi(end) }
     };
     let tilde = |n: u8| -> Vec<u8> {
         let p = modifier_param(m);
@@ -266,10 +274,10 @@ pub fn encode(k: &KeyEvent) -> Vec<u8> {
         KeyCode::BackTab => b"\x1b[Z".to_vec(),
         KeyCode::Backspace => vec![0x7f],
         KeyCode::Esc => vec![0x1b],
-        KeyCode::Up => csi("A"),
-        KeyCode::Down => csi("B"),
-        KeyCode::Right => csi("C"),
-        KeyCode::Left => csi("D"),
+        KeyCode::Up => arrow("A"),
+        KeyCode::Down => arrow("B"),
+        KeyCode::Right => arrow("C"),
+        KeyCode::Left => arrow("D"),
         KeyCode::Home => csi("H"),
         KeyCode::End => csi("F"),
         KeyCode::Insert => tilde(2),
@@ -358,5 +366,9 @@ mod tests {
         assert_eq!(encode(&k(KeyCode::PageDown, none)), b"\x1b[6~");
         assert_eq!(encode(&k(KeyCode::F(1), none)), b"\x1bOP");
         assert_eq!(encode(&k(KeyCode::F(5), none)), b"\x1b[15~");
+        // DECCKM: 수정키 없는 화살표만 SS3
+        assert_eq!(encode_in(&k(KeyCode::Up, none), true), b"\x1bOA");
+        assert_eq!(encode_in(&k(KeyCode::Left, KeyModifiers::CONTROL), true), b"\x1b[1;5D");
+        assert_eq!(encode_in(&k(KeyCode::Home, none), true), b"\x1b[H");
     }
 }

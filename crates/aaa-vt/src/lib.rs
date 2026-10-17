@@ -3,7 +3,7 @@
 //! 기획서는 ghostty-vt를 1순위로 두었지만 빌드에 Zig 0.16이 필요해 M1-1은 순수 Rust `vt100`을 쓴다.
 //! 이 adapter 뒤에서 엔진을 바꿀 수 있게 front·host 쪽은 replay bytes와 글자 화면만 본다.
 
-use aaa_proto::{GridRun, ReadFormat, ReadSource, ScreenText};
+use aaa_proto::{GridRun, MouseEncoding, MouseMode, PaneModes, ReadFormat, ReadSource, ScreenText};
 
 pub struct Vt {
     parser: vt100::Parser<Modes>,
@@ -353,6 +353,27 @@ impl Vt {
             application_cursor: s.application_cursor(),
             bracketed_paste: s.bracketed_paste(),
             modify_other_keys: self.parser.callbacks().modify_other_keys,
+        }
+    }
+
+    /// 화면에 실어 보내는 모드(TUI가 마우스를 넘기고 휠·화살표를 고른다). vt100은 1015(urxvt)·1016(SGR 픽셀)을 모른다.
+    pub fn pane_modes(&self) -> PaneModes {
+        let s = self.parser.screen();
+        PaneModes {
+            mouse: match s.mouse_protocol_mode() {
+                vt100::MouseProtocolMode::None => MouseMode::None,
+                vt100::MouseProtocolMode::Press => MouseMode::Press,
+                vt100::MouseProtocolMode::PressRelease => MouseMode::PressRelease,
+                vt100::MouseProtocolMode::ButtonMotion => MouseMode::ButtonMotion,
+                vt100::MouseProtocolMode::AnyMotion => MouseMode::AnyMotion,
+            },
+            mouse_encoding: match s.mouse_protocol_encoding() {
+                vt100::MouseProtocolEncoding::Default => MouseEncoding::Default,
+                vt100::MouseProtocolEncoding::Utf8 => MouseEncoding::Utf8,
+                vt100::MouseProtocolEncoding::Sgr => MouseEncoding::Sgr,
+            },
+            alt_screen: s.alternate_screen(),
+            app_cursor: s.application_cursor(),
         }
     }
 }
@@ -977,6 +998,32 @@ mod tests {
             c.feed(&a.replay());
             assert!(!c.parser.screen().application_cursor(), "alt={alt}");
         }
+    }
+
+    #[test]
+    fn pane_modes_follow_the_program() {
+        let mut v = Vt::new(5, 20);
+        assert_eq!(v.pane_modes(), PaneModes::default());
+        v.feed(b"\x1b[?1049h\x1b[?1h\x1b[?1002h\x1b[?1006h");
+        assert_eq!(
+            v.pane_modes(),
+            PaneModes {
+                mouse: MouseMode::ButtonMotion,
+                mouse_encoding: MouseEncoding::Sgr,
+                alt_screen: true,
+                app_cursor: true
+            }
+        );
+        v.feed(b"\x1b[?1002l\x1b[?1003h\x1b[?1006l\x1b[?1005h\x1b[?1049l\x1b[?1l");
+        assert_eq!(
+            v.pane_modes(),
+            PaneModes {
+                mouse: MouseMode::AnyMotion,
+                mouse_encoding: MouseEncoding::Utf8,
+                alt_screen: false,
+                app_cursor: false
+            }
+        );
     }
 
     #[test]

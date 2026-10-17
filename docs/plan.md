@@ -2214,7 +2214,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **pane.** 누르면(테두리 포함) 포커스, 휠은 포커스만 옮긴다. 안쪽을 누른 칸에서 벗어나 끌면 보이는 화면 글을 고르고(밖으로 끌면 가장자리로 묶음), 떼는 때 복사한다(`[tui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사, 다른 키는 지우고 그대로 처리한다. 350ms 안에 같은 칸 근처를 두 번 누르면 낱말(빈칸·따옴표·괄호·`,;|`로 가르고 URL·경로는 한 낱말)을 복사하고 0.5초 보인다. 고른 칸 색은 herdr처럼 `panel_bg`를 흰색(어두운 테마)·검정 쪽으로 28% 섞고 글은 대비가 큰 쪽.
 - **복사.** 이 기기 시스템 clipboard에 쓴다. ssh·WSL·VS Code 터미널이거나 clipboard를 못 열면 OSC 52(`ESC ] 52 ; c ; <base64> BEL`). 알림 카드 「클립보드에 복사했다」. 시험은 `AAA_TEST_CLIPBOARD_TEXT=<파일>`로 사람의 clipboard 대신 파일에 쓴다.
 - **창.** 이름 창은 저장·지우기 단추, 닫기 확인은 닫기 단추만 하고 그 밖(안쪽 포함)을 누르면 취소하고 닫는다. 단축키 창은 밖을 누를 때만 닫고 휠로 3줄씩 민다(herdr).
-- **다음 묶음(3d-2, host 요청 필요).** 마우스 보고를 켠 프로그램(vim·htop 등)에 누름·휠을 넘기기(화면 장면에 그 pane의 마우스 모드), alt 화면 휠을 화살표로, 나눔 경계 끌기(비율 바로 정하기), 탭 끌어 옮기기, 오른쪽 누름 메뉴(탭 닫기 등). 기록 넘기기 휠은 copy 모드 묶음.
+- **다음 묶음(3d-2, host 요청 필요).** 마우스 보고를 켠 프로그램(vim·htop 등)에 누름·휠을 넘기기(화면 장면에 그 pane의 마우스 모드), alt 화면 휠을 화살표로, 나눔 경계 끌기(비율 바로 정하기), 탭 끌어 옮기기, 오른쪽 누름 메뉴(탭 닫기 등). 기록 넘기기 휠은 copy 모드 묶음. → §8.106(오른쪽 누름 메뉴는 3d-3)
 - **시험.** 유닛: 고른 글(넓은 글자 두 칸·끝 빈칸), 낱말 경계, 선택 색, 탭 막대 단추 자리(` + `·` < ` ` > `·넘긴 자리 지키기·17칸 밑), 그린 자리(이름표·` + `·`«`·경계). TUI harness `mouse_like_herdr`: SGR 마우스(`CSI < b ; x ; y M/m`)로 보고 켬, 이름표 누르기·휠, ` + `·이름 창 밖 누르기, 단축키 창 안·밖, 사이드바 줄·`«`/`»`·경계 끌기(32, 36에서 멈춤), pane 누르기 포커스, 끌어 고르기·두 번 누름 복사(파일), 나가면 보고 끔.
 
 ### 8.96 웹 E2E를 기능별 파일로(10-18, 사용자 「e2e testability가 중요해」, t-0338)
@@ -2397,6 +2397,28 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - 「reset 직후 rAF까지 scroll 막기」는 앱에서 xterm 안의 줄 높이를 볼 수 없어 frame 수를 어림해야 하므로 고르지 않았다.
   - 시험(웹 E2E 07 「앞 기록 reset 직후 scroll」): 짧은 줄 2600줄 pane에서 앞 기록을 받을 때 덮개가 떨어지는 순간(MutationObserver, 다음 frame 전) scrollTop 0의 scroll 사건을 보낸다. 붙인 뒤 `data-view-top`이 숫자이고, 줄이 그려지고, 덮개가 없고, 키를 치면 새 출력이 보인다. 패치를 빼면 `view-top`이 NaN으로 남아 실패함을 확인했다.
   - 「앞 기록 빠른 휠」(QA 1바퀴와 같은 줄·휠 40번, 8번)은 회귀 시험으로 둔다.
+
+### 8.106 TUI 마우스를 herdr대로(2): 프로그램에 넘기기·나눔 경계 끌기·탭 끌어 옮기기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D, FRONT_API 1.14)
+
+- **참고(herdr 0.9.5).** `src/client/shell/mouse.rs`(보고 pane에 누름 넘기기 `push_pane_mouse_event`·`pane_mouse_position`, 나눔 끌기 `pane_split_ratio`·33ms, 탭 끌기 `tab_drop_index_at`), `src/client/shell/tabs.rs` `tab_drop_indicator_x`, `src/server/client_shell.rs` `split_hit_rect`, `src/layout.rs` `collect_splits`·`set_ratio_at`, `src/workspace.rs` `move_tab`, `src/app/api/layouts.rs` `handle_layout_set_split_ratio`, `src/app/api/tabs.rs` `handle_tab_move`, `src/server/pane_input.rs` `apply_scroll`, `src/pane.rs` `encode_alternate_scroll`. 마우스 보고 bytes는 herdr가 ghostty 인코더를 쓰므로 xterm 규칙대로 새로 썼다.
+- **proto(FRONT_API 1.14).** `GridFrame.modes`(`PaneModes`): 마우스 보고 모드(none·press 9·press_release 1000·button_motion 1002·any_motion 1003), 인코딩(default·utf8 1005·sgr 1006), `alt_screen`, `app_cursor`(DECCKM). host는 pane 화면 사본(aaa-vt)에서 읽고, 모드만 바뀌어도 한 장 보내도록 커서 hash 위 비트에 접는다. 옛 host는 보내지 않아 기본값(넘기기 없음, 3d-1과 같음). `LayoutChange::SplitRatio { tab, path, ratio }`(herdr `layout.set_split_ratio`: path는 탭 뿌리에서 false = a, ratio는 천분율 100..=900, 그 자리에 나눔이 없으면 NotFound), `LayoutChange::MoveTab { tab, index }`(herdr `tab.move`의 insert_index, 0..=탭 수). 옛 host에는 보내지 않고 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
+- **넘기기.** 보고를 켠 pane의 안쪽을 누르면 포커스를 옮기고 누름을 넘기며, 뗄 때까지 그 pane이 끌기·뗌을 받는다(밖으로 나가도, 좌표는 안쪽 0부터 왼쪽·위로만 묶음). 가운데·오른쪽 누름도 넘긴다. 1003이면 누르지 않은 움직임도. 인코딩은 X10 바이트(223칸까지), UTF-8(2015칸까지), SGR(`CSI < b ; x ; y M/m`, 뗌은 그 버튼에 `m`), 수정키 shift 4·alt 8·ctrl 16(9 모드는 수정키 없음). 보고 pane에서는 끌어 고르기·두 번 누름 낱말이 없다(herdr).
+- **pane 휠.** 안쪽 휠은 포커스를 옮기고, 보고 pane이면 휠 보고(64·65), 보고를 끈 alt 화면이면 화살표 하나(DECCKM이면 `ESC O A/B`), 보통 화면이면 아직 아무것도 보내지 않는다(기록 넘기기는 copy 모드 묶음).
+- **화살표 키.** 프로그램이 DECCKM을 켰으면 수정키 없는 화살표를 `ESC O x`로 보낸다(xterm·herdr, aaa-vt `KeyModes::key`와 같다). 예전 TUI는 늘 `ESC [ x`였다.
+- **나눔 경계 끌기.** 테두리를 두르면 맞닿은 두 선(`pos-1`·`pos`), `off`면 그 빈 칸이 누를 자리다(바깥 나눔이 먼저, zoom이면 없음). 누른 칸과 경계의 차이를 지키며 비율 = (포인터 + 차이 − 원점) / 길이(0.1~0.9)를 천분율로 반올림해(1000칸보다 좁으면 `split_rect`가 그 칸을 되돌린다) 33ms마다, 뗄 때 마지막 값과 다르면 한 번 더 보낸다. 포커스는 그대로.
+- **탭 끌어 옮기기.** 이름표를 누른 칸에서 한 칸 넘게 끌면 넣을 자리(이름표 가운데보다 왼쪽이면 그 앞, ` < `·` > `는 맨 앞·맨 끝)에 accent `│`를 두고, 떼면 `MoveTab`. 그 자리에서 떼면 예전처럼 그 탭. 보던 탭은 탭 id로 따라간다(다른 화면이 탭 차례를 바꿔도 그대로).
+- **다른 점.** vt100(aaa-vt)은 1015(urxvt)·1016(SGR 픽셀)·1007(alternate scroll 끄기)을 모른다: 1015·1016만 켠 프로그램에는 기본 인코딩으로 넘기고, 보고를 끈 alt 화면의 휠은 늘 화살표다. herdr는 서버가 사건을 받아 그때 모드로 인코딩한다. aaa는 TUI가 받은 화면 장면의 모드로 인코딩하므로 프로그램이 모드를 바꾼 바로 뒤(다음 장면이 오기 전) 사건은 옛 모드로 갈 수 있다.
+- **다음 묶음(3d-3).** 오른쪽 누름 메뉴(탭·pane 닫기·이름 바꾸기 등). herdr 탭 막대에는 닫기 단추가 없어 마우스 탭 닫기는 그 메뉴다. → §8.107
+- **시험.** 유닛: 보고 인코딩(모드별 받는 사건·X10 223칸·UTF-8·SGR 뗌·수정키), 나눔 비율(차이·묶음·`split_rect` 반올림), 탭 넣을 자리·표시 열, 나눔 누를 자리(테두리·off·zoom), proto `set_ratio_at`·`move_tab`, aaa-vt `pane_modes`, 화살표 DECCKM. TUI harness `mouse_reaches_programs_like_herdr`: `cat -v`로 SGR 누름·뗌·휠이 pane에 닿음, alt 화면 휠 → `ESC [ B`·`ESC [ A`, DECCKM이면 휠·키 모두 `ESC O A`, `┐┌`를 10칸 끌면 왼쪽 안쪽 30 → 40칸, 이름표를 끌면 `│`가 보이고 떼면 탭 차례(host도) `b c prog`, 보던 탭에 남음.
+
+### 8.107 TUI 마우스를 herdr대로(3): 오른쪽 누름 메뉴(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
+
+- **참고(herdr 0.9.5).** `src/client/shell/context_menu.rs`(`items`·`move_context_menu_selection`·`activate_context_menu_item`·탭·pane 동작), `src/client/shell/overlays.rs` `render_context_menu`, `src/client/shell/mouse.rs`(오른쪽 누름 차례·메뉴 위 움직임·누름), `src/client/shell/overlay_input.rs`(메뉴 키). host 요청은 새로 없다.
+- **여는 자리.** 오른쪽 누름: 「오른쪽 누름을 pane에 보내기」를 켠 마우스 보고 pane의 안쪽이면(수정키 없음) 프로그램에 넘긴다. 아니면 탭 이름표는 탭 메뉴, pane(테두리 포함)은 pane 메뉴. 메뉴는 누른 자리에 띄우고 화면 밖이면 안으로 민다. 사이드바 줄 메뉴(herdr workspace 메뉴: 이름·닫기·worktree)는 없다(aaa 목록 줄은 thread·머신·pane이다).
+- **항목.** 탭: 새 탭·이름 바꾸기·닫기(그 탭으로 옮긴 뒤 prefix 키와 같은 동작, 새 탭 이름 창·마지막 탭 닫기 확인 그대로). pane: (포커스가 다른 pane이면) 포커스 pane과 자리 바꾸기(뒤 포커스는 그 pane), 오른쪽으로 나누기·아래로 나누기·크게 보기·pane 닫기(그 pane에 포커스를 두고 키와 같은 동작), 오른쪽 누름을 pane에 보내기 / 오른쪽 누름은 aaa 메뉴로. pane 이름 바꾸기·지우기는 `P` pane 이름 묶음에서.
+- **고르기.** 위·아래(끝에서 멈춤)·Enter, 움직이면 그 줄, 줄을 누르면 그 항목, 밖을 누르거나 Esc면 닫는다. 다른 키는 버린다. 모양은 herdr처럼 폭 = 가장 긴 항목 + 4(14 이상), accent 테두리·`panel_bg`, 고른 줄은 accent 바탕 굵게.
+- **다른 점.** 「오른쪽 누름을 pane에 보내기」는 이 화면에만 둔다(herdr는 서버 pane 상태 `right_click_passthrough`). TUI는 상태를 갖지 않는 front라 host에 두려면 pane 설정 요청이 필요하다. herdr `right_click_passthrough_modifier`(수정키를 누르면 넘김) 설정은 옮기지 않았다. 3d-2에서는 보고 pane에 오른쪽 누름을 늘 넘겼는데, herdr처럼 메뉴가 먼저로 바꿨다.
+- **시험.** 유닛 `menu_like_herdr`(항목·끝에서 멈춤·폭·화면 안으로·고른 줄 색). TUI harness `context_menu_like_herdr`: 탭 메뉴 Esc, 아래·Enter로 탭 이름 창, pane 메뉴에서 움직여 「아래로 나누기」 Enter, 위 pane 메뉴의 자리 바꾸기, 밖 누르기로 닫기, 보고 pane은 메뉴가 먼저이고 「오른쪽 누름을 pane에 보내기」 뒤 `cat -v`가 오른쪽 누름(`ESC [ < 2 ;`)을 받는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

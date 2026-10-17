@@ -836,6 +836,11 @@ pub enum LayoutChange {
     /// 같은 탭의 두 pane 자리를 바꾼다(herdr `pane swap`의 source·target 꼴). 칸과 비율은 그대로다.
     /// 방향 이웃은 화면 크기를 아는 front가 찾는다(host는 front마다 다른 칸을 모른다).
     Swap { pane: String, with: String },
+    /// 나눔 하나의 비율을 바로 정한다(herdr `layout.set_split_ratio`, 나눔 경계 끌기). `path`는 탭 뿌리에서 그 나눔까지
+    /// (false = a, true = b), `ratio`는 a 쪽 천분율이고 100..=900으로 묶는다(plan §8.106)
+    SplitRatio { tab: String, path: Vec<bool>, ratio: u16 },
+    /// 탭을 `index` 앞으로 옮긴다(herdr `tab.move`의 `insert_index`: 0..=탭 수, 옮기기 전 차례로 센다)
+    MoveTab { tab: String, index: u16 },
 }
 
 // ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
@@ -868,6 +873,50 @@ pub struct GridFrame {
     pub cursor_visible: bool,
     pub full: bool,
     pub lines: Vec<GridLine>,
+    /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
+    #[serde(default)]
+    pub modes: PaneModes,
+}
+
+/// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PaneModes {
+    #[serde(default)]
+    pub mouse: MouseMode,
+    #[serde(default)]
+    pub mouse_encoding: MouseEncoding,
+    /// alternate screen(`CSI ? 1049 h` 등)
+    #[serde(default)]
+    pub alt_screen: bool,
+    /// DECCKM(`CSI ? 1 h`): 화살표를 `ESC O x`로
+    #[serde(default)]
+    pub app_cursor: bool,
+}
+
+/// 마우스 보고 모드(xterm `CSI ? 9/1000/1002/1003 h`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseMode {
+    #[default]
+    None,
+    /// 9: 누름만
+    Press,
+    /// 1000: 누름·뗌·휠
+    PressRelease,
+    /// 1002: 누른 채 움직임도
+    ButtonMotion,
+    /// 1003: 모든 움직임
+    AnyMotion,
+}
+
+/// 마우스 보고 인코딩(기본 X10 바이트, `CSI ? 1005 h` UTF-8, `CSI ? 1006 h` SGR)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseEncoding {
+    #[default]
+    Default,
+    Utf8,
+    Sgr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
