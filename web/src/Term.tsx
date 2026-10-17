@@ -4,7 +4,7 @@
 // - focus를 얻거나 다시 보이면, 또는 터미널을 누르거나 입력하면 이 화면이 지금 쓰는 화면이 되어 크기를 다시 건다.
 // - 탭이 가려지거나 대화 보기로 바꾸면 바로 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -37,6 +37,7 @@ import {
   getTerminalWheelSpeed,
   setTerminalFontSize,
   setTerminalInputMode,
+  shortcutOverrides,
   terminalToggle,
   useKeyBarItems,
   useMedia,
@@ -52,6 +53,8 @@ import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSt
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
+import { isAppShortcut } from "./herdr/shortcuts.ts";
+import type { PaneControls } from "./actions";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
 
@@ -124,6 +127,7 @@ export function TermView({
   crumb,
   status,
   dock,
+  controls,
 }: {
   pane: PaneView;
   role: DeviceRole;
@@ -136,6 +140,8 @@ export function TermView({
   status?: ReactNode;
   /** 입력 위에 붙는 질문 카드 */
   dock?: ReactNode;
+  /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
+  controls?: MutableRefObject<PaneControls | null>;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -632,6 +638,9 @@ export function TermView({
     window.addEventListener("mouseup", onMouseUp);
     // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡기고, 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
     term.attachCustomKeyEventHandler((event) => {
+      // 앱 단축키는 앱 몫이다(PaneTerminal 621줄): 창의 capture 처리기(herdr/shortcuts.ts useShortcuts)는 브라우저 기본만 막으므로
+      // xterm이 그 키를 pane에 보내지 않게 먼저 거른다
+      if (isAppShortcut(event, shortcutOverrides())) return false;
       // 유지 키 + 하드웨어 키(PaneTerminal 620~651줄): 비라틴 자판 글자는 자판 위치로 읽는다(ㅊ on KeyC + Ctrl = Ctrl+C)
       const held = modifiersRef.current;
       if (
@@ -1581,6 +1590,52 @@ export function TermView({
   const held = canControl && !draftIsEmpty(draft);
   if (banner && held && ended) banner += " · 붙잡은 입력은 버렸다";
   else if (banner && held && draft.text.length > 0) banner += ` · 붙잡은 입력: “${draft.text}”`;
+
+  // 단축키가 시키는 일(PaneTerminal 2665~2692줄 `focusInput`·`scrollPage`·`sendApplicationPage`). 열린 창(설정 등)이 있으면 하지 않는다
+  useLayoutEffect(() => {
+    if (!controls) return;
+    const modalOpen = () => document.querySelector("[aria-modal='true'], dialog[open]") !== null;
+    const current: PaneControls = {
+      focusInput: () => {
+        if (modalOpen() || !canControl) return;
+        // 대화 보기에는 입력창이 없다(읽기 전용)
+        if (chatView && chatable) return;
+        const line = sectionRef.current?.querySelector<HTMLTextAreaElement>(".terminal-input-text");
+        if (line) line.focus({ preventScroll: true });
+        else if (!ended) termRef.current?.focus();
+      },
+      scrollPage: (direction) => {
+        if (modalOpen()) return;
+        if (chatView && chatable) {
+          // 한 화면에서 한 줄을 남기고(참고 pageScrollDistance, PAGE_OVERLAP_ROWS 1)
+          const chat = sectionRef.current?.querySelector<HTMLElement>(".chat");
+          if (!chat) return;
+          const line = parseFloat(getComputedStyle(chat).lineHeight) || 20;
+          chat.scrollBy({ top: direction * Math.max(1, chat.clientHeight - line) });
+          return;
+        }
+        const term = termRef.current;
+        if (!term) return;
+        const buf = term.buffer.active;
+        // 기록이 있으면 한 화면에서 한 줄을 남기고 굴린다
+        if (buf.type === "normal" && buf.baseY > 0) {
+          term.scrollLines(direction * Math.max(1, term.rows - 1));
+          return;
+        }
+        // 기록이 없으면(alternate screen 프로그램) 그 프로그램의 PageUp·PageDown. 지금 받을 수 있을 때만 보내고 미뤄 두지 않는다
+        if (!canControl || readonlyRef.current || endedRef.current || releasedRef.current || !draftIsEmpty(draftRef.current)) return;
+        if (composingTermRef.current || commitPendingRef.current) return;
+        input(direction < 0 ? "\x1b[5~" : "\x1b[6~");
+      },
+      toggleView: () => {
+        if (chatable) setChatView((v) => !v);
+      },
+    };
+    controls.current = current;
+    return () => {
+      if (controls.current === current) controls.current = null;
+    };
+  });
 
   const locked = readonly;
   // 대화 보기는 grid가 없고 크기도 놓았다: 거기서는 띠가 흐름에 있다. 터미널에서는 터미널 위 오른쪽에 뜬다(참고 PaneTerminal.css

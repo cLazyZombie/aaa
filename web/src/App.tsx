@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -18,7 +18,9 @@ import { ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
-import { shortPath, threadKey } from "./sidebarModel";
+import { machineRows, shortPath, threadKey } from "./sidebarModel";
+import { useShortcuts } from "./herdr/shortcuts.ts";
+import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { useInstallPrompt } from "./herdr/install";
@@ -330,6 +332,42 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     }
   };
 
+  // 앱 단축키(herdr-web-ui App.tsx 1185~1279줄 `actions`·`useShortcuts`): 목록 단추와 같은 일을 부른다. 고른 pane의 일은 그
+  // TermView가 단 paneControls로. aaa에 그 화면이 없는 동작은 단축키가 꺼져 있어(settings.ts AAA_SHORTCUTS) 불리지 않는다.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const paneControls = useRef<PaneControls | null>(null);
+  const actions = useMemo<AppActions>(() => {
+    const none = () => {};
+    return {
+      selectAdjacentPane: (direction) => {
+        // 고른 줄의 머신 안에서, 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 끊긴 머신의 줄은 열 수 없다
+        const { sel, panes, threads, machines } = now.current;
+        const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+        const groups = machines.filter((m) => m.connection === "connected").map((m) => machineRows(m, panes, shown));
+        const rows = sel === null ? groups.find((g) => g.length > 0) : groups.find((g) => g.some((r) => r.keys.includes(sel)));
+        if (!rows || rows.length === 0) return;
+        const index = rows.findIndex((r) => sel !== null && r.keys.includes(sel));
+        const next = rows[(index + direction + rows.length) % rows.length];
+        if (!next) return;
+        if ("pane" in next.open) choose(next.open.pane);
+        else chooseThread(next.open.thread);
+      },
+      toggleView: () => paneControls.current?.toggleView(),
+      focusInput: () => paneControls.current?.focusInput(),
+      scrollPage: (direction) => paneControls.current?.scrollPage(direction),
+      openSettings: () => setSettingsOpen(true),
+      openPalette: none,
+      openFind: none,
+      toggleSidebar: none,
+      openNewSession: none,
+      openNewTab: none,
+      splitPane: null,
+    };
+    // choose·chooseThread는 주소와 setSel만 쓴다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useShortcuts(actions, true);
+
   const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
@@ -390,7 +428,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             </>
           }
         />
-        <ListFoot role={role} device={device} onSignedOut={signedOut} />
+        <ListFoot role={role} device={device} onSignedOut={signedOut} settingsOpen={settingsOpen} onSettings={setSettingsOpen} />
       </aside>
       <main className="view">
         {currentThread ? (
@@ -406,6 +444,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         ) : current ? (
           <TermView
             key={current.id}
+            controls={paneControls}
             pane={current}
             role={role}
             title={paneTitle(current)}
@@ -541,14 +580,26 @@ function MoreMenu() {
 }
 
 /** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에 있다 */
-function ListFoot({ role, device, onSignedOut: signedOut }: { role: DeviceRole; device: string; onSignedOut: () => void }) {
+function ListFoot({
+  role,
+  device,
+  onSignedOut: signedOut,
+  settingsOpen,
+  onSettings: setSettingsOpen,
+}: {
+  role: DeviceRole;
+  device: string;
+  onSignedOut: () => void;
+  /** 설정 창(단축키도 연다, Main이 갖는다) */
+  settingsOpen: boolean;
+  onSettings: (open: boolean) => void;
+}) {
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const tr = useInputTrace();
   // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
   const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
   // 설정 → 기기 「로그아웃」(참고 App.tsx `lock`): 구독을 먼저 지운다(cookie가 있어야 지워지고, 잠긴 기기에 알림이 가지 않게). 답이 오다 끊겨도 host에 다시 묻는다
   const signOutHere = useCallback(async () => {
     await removePushSubscription().catch(() => undefined);

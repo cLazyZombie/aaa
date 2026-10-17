@@ -43,7 +43,14 @@ import {
   useTerminalToggle,
   useTerminalWheelSpeed,
   useUsageSettings,
+  AAA_SHORTCUTS,
+  setShortcutOverrides,
+  useShortcutOverrides,
+  type AaaShortcutId,
 } from "./settings";
+import { bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutConflict, shortcutDisplayKeys, shortcutKeys } from "./herdr/shortcuts.ts";
+import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "./herdr/shortcutRecorder.ts";
+import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "./herdr/shortcutBindings.ts";
 import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "./usage";
 
 /** 묶음: 제목 아래 카드 하나, 카드 안에 줄들 */
@@ -403,6 +410,218 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
   );
 }
 
+/** 단축키 이름(참고 SHORTCUTS label의 i18n.ko.ts 문구) */
+const SHORTCUT_LABEL: Record<AaaShortcutId, string> = {
+  "toggle-view": "채팅 / 터미널 전환",
+  "focus-input": "패널 입력창으로 이동",
+  "scroll-up": "패널 위로 스크롤",
+  "scroll-down": "패널 아래로 스크롤",
+  "previous-pane": "이전 패널",
+  "next-pane": "다음 패널",
+  settings: "설정",
+};
+
+/** 참고 SettingsDialog `compactKeys`: ⌘+⇧+K처럼 한 줄로 */
+function compactKeys(keys: readonly string[]): string {
+  return formatKeys(keys)
+    .map((key) => ({ Shift: "⇧", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" })[key] ?? (key.length === 1 ? key.toUpperCase() : key))
+    .join("+");
+}
+
+/**
+ * 설정 「단축키」(참고 SettingsDialog `ShortcutsPage` 701~843줄, 문구는 i18n.ko.ts). 줄마다 「기록」으로 누른 조합을 받고, 목록에서
+ * Mod+Shift 키나 「끄기」(터미널로 보냄)를 고른다. 터미널·브라우저도 쓰는 조합은 「그래도 저장」을 물은 뒤 저장한다. aaa에 그 화면이 있는
+ * 동작만 보인다(settings.ts `AAA_SHORTCUTS`).
+ */
+function ShortcutsGroup() {
+  const overrides = useShortcutOverrides();
+  const platformIsMac = isMacPlatform();
+  const [query, setQuery] = useState("");
+  const [recording, setRecording] = useState<{ id: AaaShortcutId; problem: string | null } | null>(null);
+  // 터미널이나 브라우저도 쓰는 조합은 「그래도 저장」·「취소」를 기다린다
+  const [pending, setPending] = useState<{ id: AaaShortcutId; value: string; risk: "terminal" | "browser" } | null>(null);
+  // 「그래도 저장」·「취소」 뒤 focus는 그 줄의 「기록」 단추로
+  const recordButtons = useRef(new Map<AaaShortcutId, HTMLButtonElement>());
+  const settlePending = (id: AaaShortcutId) => {
+    setPending(null);
+    recordButtons.current.get(id)?.focus();
+  };
+  const recordingId = recording?.id ?? null;
+  const riskText = (risk: "terminal" | "browser", keys: string) =>
+    risk === "terminal"
+      ? `${keys} 키는 터미널 키입니다. 셸, 편집기, 에이전트가 사용하며, 저장하면 더 이상 패널로 전달되지 않습니다.`
+      : `브라우저나 운영체제가 ${keys} 입력을 가로챌 수 있습니다.`;
+  // 줄이 기록하는 동안 누른 조합은 여기서 읽고 앱 단축키는 쉰다
+  useEffect(() => {
+    if (recordingId === null) return;
+    setShortcutRecording(true);
+    const onKeyDown = (event: KeyboardEvent) => {
+      const result = recordShortcut(event, platformIsMac);
+      if (result.kind === "ignore") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (result.kind === "cancel") return setRecording(null);
+      if (result.kind === "invalid") {
+        const problem =
+          result.reason === "chord"
+            ? platformIsMac
+              ? "⌘, Ctrl 또는 ⌥를 누른 채 키를 누르세요. Shift는 함께 눌러도 되고 안 눌러도 됩니다."
+              : "Ctrl 또는 Alt를 누른 채 키를 누르세요. Shift는 함께 눌러도 되고 안 눌러도 됩니다."
+            : result.reason === "key"
+              ? "이 키는 단축키로 쓸 수 없습니다."
+              : "브라우저나 운영 체제가 이 단축키를 사용합니다.";
+        return setRecording({ id: recordingId, problem });
+      }
+      const value = result.kind === "key" ? result.key : result.value;
+      if (shortcutConflict(recordingId, [value], overrides, platformIsMac)) return setRecording({ id: recordingId, problem: "이미 지정됨" });
+      setRecording(null);
+      if (result.kind === "exact" && result.risk !== null) return setPending({ id: recordingId, value, risk: result.risk });
+      setShortcutOverrides({ ...overrides, [recordingId]: value });
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      setShortcutRecording(false);
+    };
+  }, [recordingId, platformIsMac, overrides]);
+  const visible = AAA_SHORTCUTS.filter((id) => {
+    const keys = shortcutDisplayKeys(id, overrides);
+    return shortcutMatchesQuery(SHORTCUT_LABEL[id], `${formatKeys(keys).join(" ")} ${compactKeys(keys)}`, query);
+  });
+  return (
+    <SettingsGroup
+      title="단축키"
+      className="settings-shortcuts"
+      note="단축키는 이 브라우저와 기기에 적용됩니다. Mod+Shift 조합은 터미널 키를 그대로 남겨 두며, 기록 기능으로는 Ctrl, Alt 또는 (Mac에서는) ⌘를 쓰는 다른 조합도 누른 그대로 저장할 수 있습니다. 포커스된 입력란의 텍스트 선택은 기본 동작을 따릅니다. Tab/목록 키는 UI 안에서만 작동하며 전역 단축키가 아닙니다. 모바일 키 바는 앱 동작이 아닌 터미널 키를 보냅니다."
+    >
+      <div className="settings-item settings-shortcut-search-row">
+        <input
+          type="search"
+          className="settings-font-input settings-shortcut-search"
+          value={query}
+          placeholder="단축키 검색"
+          aria-label="단축키 검색"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        {visible.length === 0 && (
+          <p className="settings-hint" role="status">
+            일치하는 단축키가 없습니다.
+          </p>
+        )}
+      </div>
+      {visible.map((id) => {
+        const label = SHORTCUT_LABEL[id];
+        const displayedKeys = shortcutDisplayKeys(id, overrides);
+        const selectedKey = displayedKeys[displayedKeys.length - 1];
+        const override = Object.hasOwn(overrides, id) ? overrides[id] : null;
+        const exact = override ? parseExactChord(override) : null;
+        const selectedRisk = exact ? exactChordRisk(exact, platformIsMac) : selectedKey !== undefined && isReservedShortcutKey(selectedKey, platformIsMac) ? "browser" : null;
+        const confirming = pending?.id === id ? pending : null;
+        const defaultKeys = shortcutDisplayKeys(id, {});
+        const defaultKey = defaultKeys[defaultKeys.length - 1];
+        const defaultReserved = defaultKey !== undefined && isReservedShortcutKey(defaultKey, platformIsMac);
+        const rowText =
+          recording?.id === id
+            ? (recording.problem ?? "새 단축키를 누르거나 Escape로 취소하세요.")
+            : confirming
+              ? riskText(confirming.risk, compactKeys(bindingDisplayKeys(confirming.value)))
+              : selectedRisk
+                ? riskText(selectedRisk, compactKeys(displayedKeys))
+                : undefined;
+        return (
+          <SettingsRow key={id} label={label} wide description={rowText === undefined ? undefined : <span role="status">{rowText}</span>}>
+            <span className="settings-shortcut-control">
+              <button
+                type="button"
+                className="btn settings-shortcut-record"
+                ref={(button) => {
+                  if (button) recordButtons.current.set(id, button);
+                  else recordButtons.current.delete(id);
+                }}
+                aria-pressed={recording?.id === id}
+                aria-label={`${label}의 단축키 기록`}
+                onClick={() => {
+                  setPending(null);
+                  setRecording(recording?.id === id ? null : { id, problem: null });
+                }}
+              >
+                {recording?.id === id ? "키를 누르세요…" : "기록"}
+              </button>
+              {confirming ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn settings-shortcut-confirm"
+                    onClick={() => {
+                      settlePending(confirming.id);
+                      setShortcutOverrides({ ...overrides, [confirming.id]: confirming.value });
+                    }}
+                  >
+                    그래도 저장
+                  </button>
+                  <button type="button" className="btn" onClick={() => settlePending(confirming.id)}>
+                    취소
+                  </button>
+                </>
+              ) : (
+                <select
+                  className="settings-select settings-shortcut-select"
+                  aria-label={label}
+                  value={Object.hasOwn(overrides, id) ? (overrides[id] ?? "off") : "default"}
+                  onChange={(event) => {
+                    const next = { ...overrides };
+                    if (event.target.value === "default") delete next[id];
+                    else next[id] = event.target.value === "off" ? null : event.target.value;
+                    setShortcutOverrides(next);
+                  }}
+                >
+                  <option value="default" title="기본값" disabled={shortcutConflict(id, shortcutKeys(id, {}), overrides)}>
+                    {compactKeys(defaultKeys)}
+                    {defaultReserved ? " — 예약됨" : ""}
+                  </option>
+                  <option value="off" title="키를 터미널로 전달">
+                    끄기
+                  </option>
+                  {/* 목록에 없는 기록 조합(정확한 조합, Home·End·문장 부호)은 그 자체로 둔다 */}
+                  {override && (exact || !MENU_SHORTCUT_KEYS.includes(override)) && <option value={override}>{compactKeys(displayedKeys)}</option>}
+                  {MENU_SHORTCUT_KEYS.map((key) => {
+                    const conflict = shortcutConflict(id, [key], overrides);
+                    const reserved = isReservedShortcutKey(key, platformIsMac);
+                    return (
+                      <option key={key} value={key} disabled={conflict}>
+                        {compactKeys(["Mod", "Shift", key])}
+                        {reserved ? " — 예약됨" : ""}
+                        {conflict ? " — 이미 지정됨" : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+            </span>
+          </SettingsRow>
+        );
+      })}
+      <div className="settings-item">
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setPending(null);
+              setRecording(null);
+              setShortcutOverrides({});
+            }}
+          >
+            단축키 초기화
+          </button>
+        </div>
+      </div>
+    </SettingsGroup>
+  );
+}
+
 export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: () => void; role: DeviceRole; device: string; onSignOut: () => Promise<void> }) {
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
@@ -529,6 +748,7 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
             </SettingsRow>
           </SettingsGroup>
           {/* 참고 SettingsDialog AlertsPage(문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기별 종류(차이 목록 N3)와 함께 */}
+          <ShortcutsGroup />
           <SettingsGroup title="알림" note="이 기기에 적용됩니다. 알림은 잠시 모았다가 보내며, 그사이 질문에 답하거나 보고를 확인하면 보내지 않습니다.">
             <PushTestControls onEnable={enableAlerts} />
             <SettingsRow label="앱 안에서" description="앱을 열어 둔 동안에는 화면 위에서 바로 내려옵니다. 누르면 그 패널을 엽니다.">

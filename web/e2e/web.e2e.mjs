@@ -2501,6 +2501,135 @@ try {
     await page.getByTestId("pane-t1").click();
   });
 
+  await step("앱 단축키(herdr-web-ui shortcuts.ts·설정 「단축키」, 차이 목록 1장 A): Mod+Shift 동작은 앱 몫이라 터미널로 새지 않고, aaa에 없는 동작의 키는 앱이 가져가지 않으며, 설정에서 끄면 터미널로·기록한 키로 바꾸고 되돌린다(Windows·Linux Ctrl+Shift, macOS ⌘⇧)", async () => {
+    // 새는 키가 보이는 쪽으로 시험한다: macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않는다. Windows·Linux는 Ctrl+Shift+↓가 ESC[1;6B로 간다
+    aaa("tab", "create", "--machine", "labA", "--label", "shortkeys", "--", process.execPath, `${root}/keys.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "shortplain", "--", process.execPath, `${root}/scroll.js`, "plain");
+    aaa("tab", "create", "--machine", "labA", "--label", "shortalt", "--", process.execPath, `${root}/scroll.js`, "alt");
+    const got = (name) => aaa("pane", "read", name, "--source", "visible").text;
+    const gots = (name) => got(name).split("GOT:").slice(1).map((g) => g.split("\n")[0]);
+    const idOf = (name) => aaa("pane", "list").panes.find((p) => p.name === name).id;
+    const { page: sp, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "Linux x86_64" });
+    const open = async (name, ready) => {
+      await sp.getByTestId(`pane-${name}`).click();
+      await until(`${name} 화면`, async () => (await screenText(sp)).includes(ready));
+      await sp.getByTestId("terminal").click();
+    };
+    const hash = () => sp.evaluate(() => decodeURIComponent(location.hash));
+    const sel = (name) => `#pane=${idOf(name)}`;
+    // 앱이 가져가는가: 창의 capture 처리기가 브라우저 기본을 막는다(터미널이 아닌 body에서 쏘아 xterm 처리와 섞지 않는다)
+    const taken = (init) =>
+      sp.evaluate((init) => {
+        const e = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(e);
+        return e.defaultPrevented;
+      }, init);
+
+    // 이전·다음 패널은 목록 차례로 옮기고, 그 키가 떠나는 pane에 가지 않는다(가면 xterm이 ESC[1;6B를 보낸다)
+    await open("shortkeys", "keys>");
+    const before = gots("shortkeys").length;
+    await sp.keyboard.press("Control+Shift+ArrowDown");
+    await until("다음 패널", async () => (await hash()) !== sel("shortkeys"));
+    await sp.keyboard.press("Control+Shift+ArrowUp");
+    await until("이전 패널(돌아옴)", async () => (await hash()) === sel("shortkeys"));
+    await until("돌아온 화면", async () => (await screenText(sp)).includes("keys>"));
+    await sp.getByTestId("terminal").click();
+    await sp.keyboard.press("z");
+    await until("z 도착", () => gots("shortkeys").length > before);
+    if (JSON.stringify(gots("shortkeys").slice(before)) !== JSON.stringify(['"z"'])) throw new Error(`단축키가 터미널로 샜다: ${gots("shortkeys").slice(before)}`);
+
+    // aaa에 없는 동작(명령 팔레트·찾기·사이드바·새 워크스페이스)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다
+    for (const key of ["K", "F", "B", "O"]) if (await taken({ key, code: `Key${key}`, ctrlKey: true, shiftKey: true })) throw new Error(`aaa에 없는 Mod+Shift+${key}를 앱이 가져갔다`);
+    if (!(await taken({ key: "E", code: "KeyE", ctrlKey: true, shiftKey: true }))) throw new Error("Mod+Shift+E(입력창으로)를 앱이 가져가지 않았다");
+
+    // 입력으로 가기: 목록을 누르고(터미널 focus를 잃는다) Mod+Shift+E면 터미널이 focus를 받는다
+    await sp.locator(".list-body").click({ position: { x: 4, y: 4 } });
+    const focused = () => sp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false);
+    if (await focused()) throw new Error("목록을 눌러도 터미널이 focus를 갖고 있다(시험이 그 경우를 만들지 못했다)");
+    await sp.keyboard.press("Control+Shift+E");
+    await until("Mod+Shift+E → 터미널 focus", focused);
+
+    // 한 화면씩: 기록이 있으면 한 화면에서 한 줄을 남기고 굴리고(터미널로 가지 않는다), alternate screen이면 그 프로그램의 PageUp·PageDown
+    await open("shortplain", "s-200");
+    const top = () =>
+      sp.evaluate(() => {
+        const m = /s-(\d{3})/.exec(document.querySelector(".xterm-rows")?.firstElementChild?.textContent ?? "");
+        return m ? Number(m[1]) : null;
+      });
+    const rows = await sp.locator(".xterm-rows > div").count();
+    const top0 = await top();
+    await sp.keyboard.press("Control+Shift+PageUp");
+    await until("Mod+Shift+PageUp → 한 화면 위", async () => (await top()) === top0 - (rows - 1));
+    await sp.keyboard.press("Control+Shift+PageDown");
+    await until("Mod+Shift+PageDown → 맨 아래", async () => (await top()) === top0);
+    await sp.keyboard.press("q");
+    await until("q 도착", () => gots("shortplain").length > 0);
+    if (JSON.stringify(gots("shortplain")) !== JSON.stringify(['"q"'])) throw new Error(`한 화면 굴리기가 터미널로 샜다: ${gots("shortplain")}`);
+    await open("shortalt", "s-200");
+    await sp.keyboard.press("Control+Shift+PageUp");
+    await sp.keyboard.press("Control+Shift+PageDown");
+    await until("alternate screen 프로그램에 PageUp·PageDown", () => gots("shortalt").length >= 2);
+    if (JSON.stringify(gots("shortalt")) !== JSON.stringify(['"\\u001b[5~"', '"\\u001b[6~"'])) throw new Error(`alternate screen에 간 것: ${gots("shortalt")}`);
+
+    // 설정: Mod+Shift+,로 열고, 「다음 패널」을 끄면 그 키는 터미널로 간다. 기록한 Mod+Shift+L이 다음 패널이 된다. 초기화로 되돌린다
+    await open("shortkeys", "keys>");
+    await sp.keyboard.press("Control+Shift+Comma");
+    const dialog = sp.getByRole("dialog", { name: "설정" });
+    await dialog.waitFor();
+    const stored = () => sp.evaluate(() => localStorage.getItem("aaa:shortcut-overrides"));
+    await dialog.getByRole("combobox", { name: "다음 패널" }).selectOption("off");
+    await until("끄기 저장", async () => (await stored()) === '{"next-pane":null}');
+    await dialog.getByRole("button", { name: "다음 패널의 단축키 기록" }).click();
+    await sp.keyboard.press("Control+Shift+L");
+    await until("기록 저장", async () => (await stored()) === '{"next-pane":"l"}');
+    await dialog.getByRole("combobox", { name: "다음 패널" }).selectOption("off");
+    await until("다시 끄기", async () => (await stored()) === '{"next-pane":null}');
+    await dialog.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
+    await shot(sp, "desktop-shortcuts");
+    await sp.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    await sp.getByTestId("terminal").click();
+    const n = gots("shortkeys").length;
+    await sp.keyboard.press("Control+Shift+ArrowDown");
+    await until("끈 키는 터미널로", () => gots("shortkeys").length > n);
+    if (gots("shortkeys").at(-1) !== '"\\u001b[1;6B"' || (await hash()) !== sel("shortkeys")) throw new Error(`끈 Ctrl+Shift+↓: ${gots("shortkeys").at(-1)} ${await hash()}`);
+    await sp.keyboard.press("Control+Shift+Comma");
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: "다음 패널의 단축키 기록" }).click();
+    await sp.keyboard.press("Control+Shift+L");
+    await until("기록 저장(다시)", async () => (await stored()) === '{"next-pane":"l"}');
+    await sp.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    await sp.keyboard.press("Control+Shift+L");
+    await until("기록한 Mod+Shift+L → 다음 패널", async () => (await hash()) !== sel("shortkeys"));
+    await sp.keyboard.press("Control+Shift+Comma");
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: "단축키 초기화" }).click();
+    await until("초기화", async () => (await stored()) === null);
+    if (errors.length) throw new Error(errors.join("; "));
+    await sp.context().close();
+
+    // 휴대폰 설정 창의 단축키 줄(좁은 화면에서 기록·고르기가 한 줄을 채운다)
+    // macOS(⌘⇧)도 같은 표다: 맥 platform 휴대폰 화면에서 ⌘⇧,가 설정을 연다
+    const phone = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { platform: "MacIntel" })).page;
+    await phone.getByTestId("settings-open").waitFor();
+    await phone.keyboard.press("Meta+Shift+Comma");
+    const pd = phone.getByRole("dialog", { name: "설정" });
+    await pd.waitFor();
+    await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
+    const fit = await pd.locator(".settings-shortcuts").evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return [...el.querySelectorAll(".settings-shortcut-control")].every((c) => {
+        const r = c.getBoundingClientRect();
+        return r.left >= box.left && r.right <= box.right + 0.5;
+      });
+    });
+    await shot(phone, "phone-shortcuts");
+    if (!fit) throw new Error("휴대폰에서 단축키 줄이 설정 칸 밖으로 나갔다");
+    await phone.context().close();
+    for (const name of ["shortkeys", "shortplain", "shortalt"]) aaa("pane", "kill", name);
+  });
+
   await step("그냥 끌어 고르기·제자리 클릭·크기 되찾기(herdr-web-ui PaneTerminal): 마우스 보고 중에도 왼쪽 끌기는 고르고 놓으면 복사, 제자리 클릭은 프로그램에, 키는 보내기 전에 이 화면 크기를 건다", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "mouseapp", "--", process.execPath, `${root}/mouse.js`);
     // [일련번호, 종류, 값]

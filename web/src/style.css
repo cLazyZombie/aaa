@@ -740,6 +740,12 @@ button.settings-toggle[aria-checked="true"] { background: var(--accent); }
 .usage-accounts-name { font-size: 13px; color: var(--text); }
 .usage-accounts-account { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-dim); }
 .usage-accounts-actions { display: inline-flex; gap: 2px; }
+/* 설정 「단축키」(참고 SettingsDialog.css 129~151·342~353줄): 줄마다 「기록」과 고르기, 위에 찾기 칸 */
+.settings-shortcut-select { width: 14rem; }
+.settings-shortcut-control { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--space-2); }
+.settings-shortcut-record[aria-pressed="true"] { border-color: var(--accent); color: var(--text-strong); }
+.settings-shortcut-search-row { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); }
+.settings-shortcut-search { width: 100%; }
 @media (max-width: 700px) {
   .modal-backdrop { align-items: flex-end; padding: 0; }
   .modal.settings-dialog { width: 100%; max-height: calc(var(--app-height, 100dvh) - var(--space-8)); border-radius: var(--r-xl) var(--r-xl) 0 0; }
@@ -747,6 +753,8 @@ button.settings-toggle[aria-checked="true"] { background: var(--accent); }
   .settings-row.is-wide .segmented { width: 100%; }
   .settings-row.is-wide .segmented button { flex: 1; }
   .settings-row.is-wide > .settings-font-field { flex: 1 1 100%; width: 100%; }
+  .settings-shortcut-control { width: 100%; }
+  .settings-shortcut-control .settings-shortcut-select { flex: 1 1 auto; width: auto; min-width: 0; }
 }
 
 /* 머리 「더 보기」 메뉴(참고 App.tsx header-more·RowMenu): 링크 복사, 알림(이 기기 상태). 알림이 꺼져 있으면 단추에 점 */
