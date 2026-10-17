@@ -1227,6 +1227,19 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **outage(F7).** herdr-projects steps.rs `Outage`를 옮겼다. 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 재고(저장하지 않음), 기준을 넘으면 한 번, 돌아오면 한 번 알린다. 옛 코드는 연결할 때만 바뀌는 `last_seen`으로 재서 host를 다시 띄우면 오래 붙어 있던 머신이 곧바로 「34분째 끊김」이었다(운영 11:22).
 - **시험.** host 단위 시험(묶음 9개는 herdr-projects 시험을 옮김, outage 1개). m13 재시작 시험: 머신이 끊긴 채 host를 다시 띄우면 기준(5초) 전에는 outage 없음 → 기준 뒤 down 한 번 → 다시 붙으면 recovered 한 번. 옛 코드로 돌리면 실패한다.
 
+### 8.39 화면 키보드 위로 입력하는 곳을 올린다(10-17, 사용자 보고·지시)
+
+- **보고(12:26, iPad 화면 키보드).** 키보드가 올라오면 터미널 아래쪽(프롬프트 줄·커서·입력 막대·키 막대)이 키보드 뒤에 가린다. herdr-web-ui에서는 입력하는 곳이 키보드 위로 올라간다. 지시: herdr-web-ui를 그대로 따른다.
+- **원인.** iOS Safari는 화면 키보드가 올라와도 레이아웃 높이(100%·100dvh)를 그대로 두고 보이는 높이(`visualViewport`)만 줄인다. aaa 화면은 레이아웃 높이 그대로라 아래쪽이 키보드 뒤에 남았다.
+- **옮긴 것(herdr-web-ui `aa624cb`, 파일을 바꾸지 않음, `web/src/herdr/`).**
+  - `lib/viewport.ts`·`viewportResume.ts`·`keyboard.ts`. 키보드가 보이는 동안 보이는 높이를 `--app-height`로 알리고 `data-keyboard`를 달고 페이지를 (0, 0)에 둔다. `.app` 높이는 `var(--app-height, 100dvh)`(herdr-web-ui styles.css)다. 그래서 머리·터미널·입력 막대·키 막대가 키보드 위에 남는다.
+  - viewport meta에 `interactive-widget=resizes-content`(Chrome은 레이아웃 높이를 스스로 줄인다).
+  - PaneTerminal 705~752줄 `keyboardHolds`: 키보드는 화면 아래를 가릴 뿐이라 높이만 줄면 PTY 크기를 바꾸지 않는다(다른 화면이 키보드마다 두 번 줄바꿈하지 않게). 대신 터미널을 커서 줄이 보이게 옮기고, 새 출력에도 따라간다. 손으로 옮기면 따라가지 않는다. 폭이 바뀌면(회전) 키보드 중에도 맞춘다. 키보드가 내려가 터미널이 커지면 붙잡아 둔 맞추기를 한다.
+- **다르게 둔 것과 이유.** aaa 터미널은 늘 바로 입력이라(입력줄 모드 없음, D1에서 참고대로 바꾼다) 터미널 칸에 `data-direct-typing`을 늘 단다. 그래서 xterm 입력칸 focus도 키보드로 센다.
+- **시험(웹 E2E 「화면 키보드」).** herdr-web-ui `scripts/keyboard-viewport-regression.ts`처럼 visualViewport·innerHeight·100lvh 자만 가짜로 둔다. WebKit iPad 820×1180(키보드 400)·iPhone 390×844(키보드 336)에서 터미널을 누른 경우와 입력 막대를 누른 경우를 본다.
+  - 커서 줄이 터미널 영역 안에, 입력 막대·키 막대가 보이는 높이 안에 있다. PTY 크기는 그대로다.
+  - 고치기 전에는 `.app`이 1180·844 그대로였고, 입력 막대(아래 1091·787)와 키 막대(1168·836)가 키보드 뒤에 있었다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

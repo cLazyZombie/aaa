@@ -366,7 +366,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .logo.big { width: 44px; height: 44px; border-radius: 13px; font-size: 19px; }
 
 /* ── 틀 ────────────────────────────────────────────── */
-.app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100%; }
+/* 높이는 herdr-web-ui styles.css .app처럼: 화면 키보드가 올라오면 보이는 높이(--app-height, herdr/viewport.ts) */
+.app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); height: 100%; height: var(--app-height, 100dvh); }
 .list { background: var(--bg-panel); border-right: 1px solid var(--border); overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
 .list-head {
   position: sticky;

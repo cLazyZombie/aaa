@@ -239,16 +239,17 @@ async function ipadKey(page, jamo, edits) {
 const ipadFresh = (page, jamo) => ipadKey(page, jamo, [["insert", jamo]]);
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor } = {}) {
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
-    hasTouch: viewport.width < 700,
+    hasTouch: touch ?? viewport.width < 700,
     ...(userAgent ? { userAgent } : {}),
     ...(colorScheme ? { colorScheme } : {}),
     ...(deviceScaleFactor ? { deviceScaleFactor } : {}),
   });
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
+  if (init) await ctx.addInitScript(init);
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -1151,6 +1152,94 @@ try {
             el.dispatchEvent(new CompositionEvent("compositionend", { data: "", bubbles: true }));
           });
           await sleep(150);
+        }
+        await p.context().close();
+        aaa("pane", "kill", name);
+      }
+    } finally {
+      await wk.close();
+    }
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("화면 키보드(WebKit iPad·iPhone 크기, visualViewport를 줄여 흉내): 커서 줄·입력 막대·키 막대가 키보드 위에 보이고, PTY 크기는 그대로", async () => {
+    // herdr-web-ui scripts/keyboard-viewport-regression.ts처럼 플랫폼 입력(visualViewport·innerHeight·100lvh 자)만 가짜로 둔다.
+    // 사용자 캡처(12:26): iPad 화면 키보드가 터미널 아래쪽(프롬프트 줄·커서·입력 막대·키 막대)을 가렸다.
+    const init = () => {
+      const h = window.screen.height;
+      const fake = { height: h, layout: h, large: h, scale: 1, viewport: new EventTarget() };
+      Object.assign(window, { viewportFixture: fake });
+      for (const key of ["height", "scale"]) Object.defineProperty(fake.viewport, key, { get: () => fake[key] });
+      Object.defineProperty(fake.viewport, "width", { get: () => window.screen.width });
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: fake.viewport });
+      Object.defineProperty(window, "innerHeight", { configurable: true, get: () => fake.layout });
+      const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+      HTMLElement.prototype.getBoundingClientRect = function () {
+        if (this.style.height === "100lvh") return new DOMRect(0, 0, 0, fake.large);
+        if (this.style.height === "env(safe-area-inset-top, 0px)") return new DOMRect(0, 0, 0, 0);
+        return nativeRect.call(this);
+      };
+    };
+    const app = `${root}/keyboard.sh`;
+    fs.writeFileSync(app, "i=0; while [ $i -lt 200 ]; do echo kb-line-$i; i=$((i+1)); done; printf '› '; cat >/dev/null\n");
+    const wk = await webkit.launch();
+    const bad = [];
+    try {
+      for (const [dev, viewport, kb] of [["ipad", { width: 820, height: 1180 }, 400], ["iphone", { width: 390, height: 844 }, 336]]) {
+        const name = `kb-${dev}`;
+        aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
+        const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { touch: true, init })).page;
+        await p.getByTestId(`pane-${name}`).click();
+        await until("키보드 화면", async () => (await screenText(p)).includes("kb-line-199"));
+        await sleep(500);
+        const before = aaa("pane", "list").panes.find((x) => x.name === name);
+        for (const field of ["terminal", "input-bar"]) {
+          if (field === "terminal") await p.locator(".xterm-screen").tap();
+          else await p.getByLabel("보낼 글").focus();
+          // 화면 키보드가 올라온다: 보이는 높이만 줄고(iOS Safari) 레이아웃은 그대로다
+          await p.evaluate((h) => {
+            const f = window.viewportFixture;
+            f.height = h;
+            f.viewport.dispatchEvent(new Event("resize"));
+            window.dispatchEvent(new Event("resize"));
+          }, viewport.height - kb);
+          await sleep(600);
+          const seen = await p.evaluate(() => {
+            const bottom = (sel) => document.querySelector(sel)?.getBoundingClientRect().bottom ?? null;
+            const cur = document.querySelector(".xterm-rows .xterm-cursor")?.getBoundingClientRect();
+            const area = document.querySelector(".term-scroll")?.getBoundingClientRect();
+            return {
+              keyboard: document.documentElement.hasAttribute("data-keyboard"),
+              area: area ? { top: area.top, bottom: area.bottom } : null,
+              visible: window.visualViewport.height,
+              app: document.querySelector(".app")?.getBoundingClientRect().height,
+              cursor: cur ? { top: cur.top, bottom: cur.bottom } : null,
+              input: bottom(".input-bar textarea"),
+              keys: bottom(".input-bar .keys"),
+              scroll: window.scrollY,
+            };
+          });
+          const rows = aaa("pane", "list").panes.find((x) => x.name === name);
+          console.log(`     화면 키보드 ${dev} ${field}: ${JSON.stringify(seen)} PTY ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}`);
+          if (shots) await p.screenshot({ path: path.join(shots, `keyboard-${dev}-${field}.png`) });
+          const at = `${dev} ${field}`;
+          const vis = seen.visible;
+          if (!seen.cursor || seen.cursor.top < 0 || seen.cursor.bottom > vis + 0.5) bad.push(`${at}: 커서 줄이 키보드에 가렸다 ${JSON.stringify(seen.cursor)} > ${vis}`);
+          // 터미널 영역(입력 막대 위) 안에 보여야 한다: 영역 밖이면 잘려 보이지 않는다
+          else if (!seen.area || seen.cursor.top < seen.area.top - 0.5 || seen.cursor.bottom > seen.area.bottom + 0.5)
+            bad.push(`${at}: 커서 줄이 터미널 영역 밖이다 ${JSON.stringify(seen.cursor)} ∉ ${JSON.stringify(seen.area)}`);
+          if (seen.input === null || seen.input > vis + 0.5) bad.push(`${at}: 입력 막대 아래 ${seen.input} > ${vis}`);
+          if (seen.keys === null || seen.keys > vis + 0.5) bad.push(`${at}: 키 막대 아래 ${seen.keys} > ${vis}`);
+          if (rows.cols !== before.cols || rows.rows !== before.rows) bad.push(`${at}: 키보드에 PTY 크기가 바뀌었다 ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}`);
+          // 키보드가 내려간다
+          await p.evaluate((h) => {
+            const f = window.viewportFixture;
+            f.height = h;
+            f.viewport.dispatchEvent(new Event("resize"));
+            window.dispatchEvent(new Event("resize"));
+          }, viewport.height);
+          await p.evaluate(() => document.activeElement?.blur());
+          await sleep(400);
         }
         await p.context().close();
         aaa("pane", "kill", name);
