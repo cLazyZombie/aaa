@@ -19,6 +19,7 @@ pub mod migrate;
 mod notify;
 mod orch;
 mod output;
+mod pr;
 mod push;
 mod routine;
 mod seen;
@@ -248,6 +249,8 @@ pub struct Host {
     follow_up_lock: Mutex<()>,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
+    /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
+    pr: Mutex<pr::PrMemory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
@@ -364,6 +367,7 @@ impl Host {
             nudge_box: Mutex::new(HashMap::new()),
             follow_up_lock: Mutex::new(()),
             routine_running: Mutex::new(HashSet::new()),
+            pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
@@ -840,6 +844,9 @@ impl Host {
             }
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
+            }
+            FrontRequest::RoutineToggle { project, name, on } => {
+                self.routine_toggle(&project, &name, on, actor).map(|routines| FrontResponse::Routines { routines })
             }
             FrontRequest::RoutineApprove { project, name, command_sha256 } => self
                 .routine_approve(&project, &name, &command_sha256, actor)

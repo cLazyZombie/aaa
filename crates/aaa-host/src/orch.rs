@@ -35,6 +35,13 @@ pub(crate) struct ThreadRec {
     pub base: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
+    /// 추적하는 PR(§8.77): 보고 `PR:` 줄이나 branch로 찾은 주소, 마지막으로 본 상태·리뷰
+    #[serde(default)]
+    pub pr: Option<String>,
+    #[serde(default)]
+    pub pr_state: Option<String>,
+    #[serde(default)]
+    pub pr_review: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -114,6 +121,11 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 - 병합 순서는 `aaa merge enqueue|list|done {p} <id>`로 정한다.
 - worktree thread는 `aaa merge land {p}`로 맨 앞부터 병합한다. aaa가 원격 일치·병합·tree 같음을 확인하고 push한다(force 없음).
   멈추면 출력의 까닭(커밋하지 않은 변경, main을 합치지 않음 등)을 그 thread에 맡기고 다시 한다. 손으로 병합했으면 `merge done`.
+
+## routine
+- `routines/<이름>.md`는 일정 작업이다(`aaa routine list {p}`). `on = \"pr\"`(선택 `events = [\"opened\", \"checks-failed\", \"review\", \"merged\"]`)이면
+  일정 대신 thread의 PR 사건에 본문을 그 thread에 보낸다. 모든 프로젝트에 `routines/pr-followup.md`가 있어 thread가 실패한 check를
+  고치고 리뷰 댓글에 답하게 한다. 멈추려면 파일을 지우지 말고 `enabled = false`로 둔다.
 ";
 
 /// 화면이 이만큼 멈춰야 brief 안내를 보낸다
@@ -301,6 +313,12 @@ impl Host {
         if dir.join("PROJECT.md").exists() {
             return Err(err(ErrorCode::NameTaken, format!("이미 있다: {}", dir.display())));
         }
+        // 기본 `pr` routine(herdr-projects `write_default_routine`). PROJECT.md가 마지막이 되게 뼈대보다 먼저 쓴다.
+        // 옮기기(`migrate::convert`)는 0.2의 routine을 꺼서 넣으므로 여기서만 쓴다.
+        let followup = dir.join(crate::routine::PR_FOLLOWUP);
+        if !followup.exists() {
+            write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes()).map_err(internal)?;
+        }
         write_skeleton(&dir, name, &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n")).map_err(internal)?;
         self.db.audit(actor, "project_create", name);
         Ok(FrontResponse::Project(self.project_view(name, &dir)))
@@ -391,6 +409,9 @@ impl Host {
             cwd: r.cwd.clone(),
             work_dir: r.work_dir.clone(),
             branch: r.branch.clone(),
+            pr: r.pr.clone().map(|url| {
+                Box::new(aaa_proto::ThreadPr { url, state: r.pr_state.clone(), review: r.pr_review.clone() })
+            }),
             report_hash: r.report_hash.clone(),
             acked_hash: r.acked_hash.clone(),
             report_state: r.report_state.clone(),
@@ -632,6 +653,9 @@ impl Host {
             repo: a.repo.clone(),
             base: a.base.clone(),
             branch: None,
+            pr: None,
+            pr_state: None,
+            pr_review: None,
             cwd: None,
             work_dir: None,
             pane: None,
@@ -1041,6 +1065,8 @@ impl Host {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
                 }
                 self.flow(&rec, "report_ready", Some(format!("threads/{id}.md")), detail);
+                // 보고 첫 줄 `PR:`이 생겼을 수 있다: 간격을 기다리지 않고 본다
+                self.pr_soon(project);
                 if rec.role == Role::Evaluator {
                     self.evaluator_ingest(&rec);
                 }
@@ -1180,6 +1206,9 @@ mod tests {
             repo: None,
             base: None,
             branch: None,
+            pr: None,
+            pr_state: None,
+            pr_review: None,
             cwd: None,
             work_dir: None,
             pane: Some("pane".into()),

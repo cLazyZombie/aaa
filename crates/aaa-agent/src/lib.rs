@@ -13,6 +13,7 @@ pub mod hooks;
 pub mod identity;
 pub mod link;
 mod merge;
+mod pr;
 pub mod threads;
 
 use std::collections::HashMap;
@@ -599,6 +600,10 @@ impl Agent {
                     .map(AgentResponse::Cleanup)
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
             }
+            AgentRequest::PrQuery { cwd, query } => pr::query(&cwd, &query)
+                .await
+                .map(AgentResponse::Pr)
+                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
         };
         self.send_host(&LinkMsg::Res { id, result: direct.into() }).await;
     }

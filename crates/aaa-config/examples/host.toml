@@ -47,8 +47,10 @@ tick_secs = 15
 nudge_idle_secs = 60
 # coordinator 입력창이 이만큼(초) 비어 있어야 nudge를 보낸다(사람이 치는 글과 섞이지 않게)
 nudge_quiet_secs = 10
-# 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다
+# 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다(`gh`가 이만큼 계속 실패해도 한 번 알린다)
 outage_secs = 600
+# 열린 thread의 PR을 이만큼(초)마다 thread 머신의 `gh`로 본다. 보고가 새로 오면 바로 본다.
+pr_poll_secs = 120
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
 # 머신 하나에서 동시에 도는 thread 한도(0이면 제한 없음)
@@ -63,8 +65,8 @@ webhook = ""
 # json(항목 목록과 글) 또는 telegram
 format = "json"
 telegram_chat_id = ""
-# 알릴 inbox 항목 종류
-kinds = ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval"]
+# 알릴 inbox 항목 종류(pr은 병합·check 실패·리뷰 활동만 알린다)
+kinds = ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval", "pr"]
 # 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다
 debounce_secs = 15
 # 웹에서 「알림 켜기」한 기기에 Web Push로도 보낸다(내용은 암호화돼 push 서비스가 읽지 못한다)

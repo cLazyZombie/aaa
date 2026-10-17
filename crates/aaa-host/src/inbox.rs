@@ -60,6 +60,8 @@ fn render_item(i: &InboxItem) -> String {
 /// 사람이 읽는 대상 이름(`machine mac-b`, `t-0001 session`, `t-0001`)
 pub(crate) fn who(i: &InboxItem) -> String {
     match i.item_kind.as_str() {
+        // `gh` 실패(pr.rs)는 머신이 아니다
+        "outage" if i.subject == "gh" => "gh".into(),
         "outage" | "health" => format!("machine {}", i.subject),
         "session" => format!("{} session", i.subject),
         "routine" | "routine-approval" => format!("routine {}", i.subject),
@@ -273,11 +275,12 @@ impl Host {
         tokio::spawn(async move {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
-                // 사후 평가자 묶음 때가 더 이르면 그때까지만 잔다
-                let sleep = me
-                    .evaluator_next_due()
-                    .map(|d| d.saturating_duration_since(std::time::Instant::now()).min(every))
-                    .unwrap_or(every);
+                // 사후 평가자 묶음·PR 조회 때가 더 이르면 그때까지만 잔다
+                let sleep = [me.evaluator_next_due(), me.pr_next_due()]
+                    .into_iter()
+                    .flatten()
+                    .map(|d| d.saturating_duration_since(std::time::Instant::now()))
+                    .fold(every, Duration::min);
                 tokio::select! {
                     _ = tokio::time::sleep(sleep) => {}
                     _ = me.tick_wake.notified() => {}
@@ -298,6 +301,7 @@ impl Host {
             self.check_sessions(&p.name);
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
+            self.pr_tick(&p.name);
             self.nudge(&p.name, dir).await;
         }
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;

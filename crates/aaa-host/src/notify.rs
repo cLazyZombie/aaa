@@ -168,7 +168,11 @@ impl Host {
 
     /// inbox 항목을 알림 대기열에 넣는다(설정에서 켜고 고른 종류만)
     pub(crate) fn notify(&self, item: &InboxItem) {
-        if self.cfg.notify.kinds.iter().any(|k| k == &item.item_kind)
+        // PR 항목은 병합·check 실패·리뷰 활동만 알린다(herdr-projects steps.rs `pull_requests`의 notifier.send)
+        let worth = item.item_kind != "pr"
+            || matches!(item.event.as_str(), "PR merged" | "PR checks failing" | "PR review activity");
+        if worth
+            && self.cfg.notify.kinds.iter().any(|k| k == &item.item_kind)
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
             let _ = tx.send(item.clone());

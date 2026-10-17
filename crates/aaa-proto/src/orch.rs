@@ -382,6 +382,8 @@ pub struct ThreadView {
     pub cwd: Option<String>,
     pub work_dir: Option<String>,
     pub branch: Option<String>,
+    /// 추적하는 PR(§8.77)
+    pub pr: Option<Box<ThreadPr>>,
     pub report_hash: Option<String>,
     pub acked_hash: Option<String>,
     /// report.md 첫 줄 상태 태그(예: `진행 중`, `완료`)
@@ -401,6 +403,14 @@ pub struct ThreadView {
     pub created_at_ms: u64,
     #[ts(type = "number")]
     pub updated_at_ms: u64,
+}
+
+/// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.77)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPr {
+    pub url: String,
+    pub state: Option<String>,
+    pub review: Option<String>,
 }
 
 /// 흐름 사건(host가 낸다, §8.3). 프로젝트별 순번과 host 시각·boot ID를 가진다.
@@ -427,7 +437,8 @@ pub struct FlowEvent {
 /// report.md 해석: 첫 줄 상태 태그와 `## Next` 줄.
 /// 0.2.35에는 없던 규칙이다. 운영 brief가 쓰는 형식(`[진행 중]`·`[사용자 작업 필요]`·`[결정 필요]`·`[완료]`)을 읽는다.
 pub fn parse_report(text: &str) -> (Option<String>, Vec<String>) {
-    let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    // 첫 줄 `PR: <주소>`(herdr-projects skill/THREAD.md)는 상태 태그가 아니다
+    let first = text.lines().find(|l| !l.trim().is_empty() && !l.starts_with("PR:")).unwrap_or("").trim();
     let state = first.strip_prefix('[').and_then(|r| r.split_once(']')).map(|(s, _)| s.trim().to_string());
     let mut next = Vec::new();
     let mut in_next = false;

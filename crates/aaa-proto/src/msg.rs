@@ -454,6 +454,32 @@ pub enum AgentRequest {
         base: Option<String>,
         keep_worktree: bool,
     },
+    /// PR 조회(§8.77, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
+    /// 않는다(결정 3). agent 기능 `pr.v1`이 있을 때만 보낸다.
+    PrQuery {
+        cwd: String,
+        query: PrQuery,
+    },
+}
+
+/// `AgentRequest::PrQuery`가 묻는 것
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "q", rename_all = "snake_case")]
+pub enum PrQuery {
+    /// `gh pr view --json …` 출력(JSON 그대로)
+    View { url: String },
+    /// head가 이 branch인 PR 주소(없으면 빈 값). origin이 GitHub가 아니면 묻지 않는다.
+    Find { branch: String },
+    /// `gh`가 쓰는 계정 login
+    Login,
+}
+
+/// PR 조회 결과. `out`은 질문마다 view JSON·찾은 주소·login이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrAnswer {
+    /// `git remote get-url origin`(없으면 빈 값)
+    pub origin: String,
+    pub out: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -497,6 +523,7 @@ pub enum AgentResponse {
     Cwd {
         cwd: Option<String>,
     },
+    Pr(PrAnswer),
 }
 
 /// routine 명령 실행 결과
@@ -1157,6 +1184,14 @@ pub enum FrontRequest {
         project: String,
         name: String,
         command_sha256: String,
+    },
+    /// routine 켜기·끄기(front matter `enabled`, herdr-projects `routine toggle`). `on`이 없으면 뒤집는다.
+    /// 명령 승인은 그대로 필요하다.
+    RoutineToggle {
+        project: String,
+        name: String,
+        #[serde(default)]
+        on: Option<bool>,
     },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {

@@ -236,7 +236,13 @@ fn world_with(extra: &str) -> World {
 }
 
 fn world_opts(extra: &str, web: bool) -> World {
+    world_setup(extra, web, |_| Vec::new())
+}
+
+/// `agent_env`는 실험실 root를 받아 agent labA에 더 줄 환경 변수를 돌려준다(예: 가짜 `gh`를 PATH 앞에)
+fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(String, String)>) -> World {
     let lab = Lab::new();
+    let env = agent_env(&lab.root);
     let projects = lab.root.join("projects");
     let scripts = lab.root.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
@@ -253,12 +259,9 @@ fn world_opts(extra: &str, web: bool) -> World {
     let st = wait_for("host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = st["agent_listen"].as_str().unwrap().to_string();
     // agent를 Claude Code 세션 안에서 띄운 경우: 그 세션 표지는 aaa 세션에 넘기지 않는다
-    w.lab.spawn_env(
-        "agentA",
-        &w.h,
-        &["agent", "--host", "local", "--name", "labA"],
-        &[("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")],
-    );
+    let mut envs = vec![("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")];
+    envs.extend(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    w.lab.spawn_env("agentA", &w.h, &["agent", "--host", "local", "--name", "labA"], &envs);
     wait_for("labA 연결", T, || connected(&w.h, "labA").then_some(()));
     w.h.ok(&["project", "create", "demo"]);
     w
@@ -1100,7 +1103,9 @@ fn routines() {
     put("ping", "+++\nschedule = \"every 2s\"\n+++\n상태를 확인한다\n");
     put("cmd", "+++\nschedule = \"every 2s\"\ncommand = \"cat value.txt\"\n+++\n값을 본다\n");
     put("far", "+++\nschedule = \"every 2s\"\ncommand = \"pwd\"\nmachine = \"labB\"\n+++\n");
-    put("pr", "+++\non = \"pr\"\n+++\n");
+    // 꺼진 `on = "pr"`은 쓸 수 있는 routine이다(옮기기가 꺼서 넣은 0.2 pr-followup.md, t-0334). 없는 trigger만 오류다.
+    put("pr", "+++\non = \"pr\"\nenabled = false\n+++\n");
+    put("slack", "+++\non = \"slack\"\n+++\n");
     let items = |kind: &str, subject: &str| -> Vec<Value> {
         w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"]
             .as_array()
@@ -1123,8 +1128,13 @@ fn routines() {
     // coordinator가 없으면 돌지 않고 센다(밀린 실행도 쌓지 않는다)
     wait_for("coordinator 없음", T, || (routine("ping")["no_coordinator"].as_u64() >= Some(2)).then_some(()));
     assert!(items("routine", "ping").is_empty() && items("routine-approval", "cmd").is_empty());
-    assert_eq!(items("config-error", "pr").len(), 1);
-    assert!(routine("pr")["error"].as_str().unwrap().contains("M3"));
+    assert!(items("config-error", "pr").is_empty());
+    assert_eq!(
+        (routine("pr")["schedule"].as_str(), routine("pr")["enabled"].as_bool()),
+        (Some("on pr: opened, checks-failed, review, merged"), Some(false))
+    );
+    assert_eq!(items("config-error", "slack").len(), 1);
+    assert!(routine("slack")["error"].as_str().unwrap().contains("없는 trigger"));
 
     let coord =
         w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
@@ -1719,4 +1729,214 @@ fn evaluator_flow() {
     // 끝내기: 상태에서 사라진다
     w.h.ok(&["evaluator", "unassign", "demo"]);
     assert!(w.h.ok(&["evaluator", "status", "demo"])["evaluators"].as_array().unwrap().is_empty());
+}
+
+/// 흐름 사건을 따라 읽는다(`aaa --json events demo --follow`). 기다림은 사건이 와서 끝난다.
+struct Follow {
+    rx: std::sync::mpsc::Receiver<Value>,
+}
+
+impl Follow {
+    fn start(w: &mut World) -> Follow {
+        use std::io::BufRead as _;
+        let (_, out) = w.lab.spawn_piped("follow", &w.h, &["--json", "events", "demo", "--follow"]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in out.lines().map_while(Result::ok) {
+                if let Ok(v) = serde_json::from_str::<Value>(&line)
+                    && tx.send(v).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Follow { rx }
+    }
+
+    /// `kind` 사건 중 `f`가 참인 첫 사건(앞의 사건은 넘긴다). T 안에 오지 않으면 그동안 본 사건과 함께 실패한다.
+    fn wait(&self, kind: &str, f: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + T;
+        let mut seen = Vec::new();
+        loop {
+            match self.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(e) if e["kind"] == kind && f(&e) => return e,
+                Ok(e) => seen.push(format!("{} {} {}", e["kind"], e["thread"], e["detail"])),
+                Err(_) => panic!("{T:?} 안에 {kind} 사건이 오지 않았다. 본 사건:\n{}", seen.join("\n")),
+            }
+        }
+    }
+}
+
+/// 가짜 `gh`: 받은 인자를 남기고 `$GH_STUB`의 파일로 답한다. 계정은 thread-bot이다.
+const FAKE_GH: &str = r#"#!/bin/sh
+printf '%s\n' "$*" >> "$GH_STUB/calls.log"
+case "$1 $2" in
+  "pr list") cat "$GH_STUB/list.json" ;;
+  "pr view") cat "$GH_STUB/view.json" ;;
+  "api user") echo thread-bot ;;
+  *) echo "모르는 gh 명령: $*" >&2; exit 1 ;;
+esac
+"#;
+
+/// PR 추적(§8.77, herdr-projects steps.rs `pull_requests`·`pr_events`·`fire_pr_routines`): thread 머신 agent의 `gh`로
+/// branch의 PR을 찾아 보고, 바뀌면 `pr` 항목과 흐름 사건을 남기고, 켜진 `on = "pr"` routine이 원하는 사건이면 thread에
+/// 글을 보낸다. thread 자기 계정의 댓글은 review가 아니다. 꺼진 pr routine은 오류도 발화도 없고(t-0334 결함 5),
+/// `routine toggle --on`으로 켜면 다음 사건부터 보낸다. 보고 첫 줄 `PR:`이 틀리면 알리고 상태 태그는 그대로 읽는다.
+#[test]
+fn pr_followup() {
+    let mut w = world_setup("tick_secs = 1\npr_poll_secs = 1\n", false, |root| {
+        let stub = root.join("gh");
+        std::fs::create_dir_all(stub.join("bin")).unwrap();
+        let gh = stub.join("bin/gh");
+        std::fs::write(&gh, FAKE_GH).unwrap();
+        std::fs::set_permissions(&gh, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        std::fs::write(stub.join("list.json"), "[]").unwrap();
+        std::fs::write(stub.join("view.json"), "{}").unwrap();
+        let path = format!("{}:{}", path_str(&stub.join("bin")), std::env::var("PATH").unwrap_or_default());
+        vec![("PATH".into(), path), ("GH_STUB".into(), path_str(&stub).to_string())]
+    });
+    let stub = w.lab.root.join("gh");
+    let f = Follow::start(&mut w);
+    let dir = w.projects.join("demo");
+    let put = |name: &str, body: &str| std::fs::write(dir.join("routines").join(format!("{name}.md")), body).unwrap();
+
+    // 새 프로젝트에는 기본 pr-followup이 있다. 꺼진 pr routine과 함께 두고, 없는 trigger 파일이 알려지는 것으로 한 번 돈 것을 안다.
+    put(
+        "landing",
+        "+++\n# 병합 확인\non = \"pr\"\nevents = [\"checks-failed\", \"merged\"]\nenabled = false\n+++\n병합을 확인한다\n",
+    );
+    put("broken", "+++\non = \"slack\"\n+++\n");
+    f.wait("routine_broken", |e| e["evidence"] == "routines/broken.md");
+    let errors: Vec<Value> = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["item_kind"] == "config-error")
+        .cloned()
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["subject"], "broken");
+    let list = String::from_utf8_lossy(&w.h.run(&["routine", "list", "demo"]).stdout).to_string();
+    assert!(list.contains("landing\ton pr: checks-failed, merged\tthread에 보냄 · 꺼짐\n"), "{list}");
+    assert!(list.contains("pr-followup\ton pr: checks-failed, review\tthread에 보냄\n"), "{list}");
+
+    let task = w.task("pr.md", "PR을 연다");
+    let id = w.start(&["--title", "PR", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task])["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    f.wait("report_ready", |e| e["thread"] == id.as_str());
+    let t = w.show(&id);
+    let (branch, pane) = (t["branch"].as_str().unwrap().to_string(), t["pane"].as_str().unwrap().to_string());
+    assert!(t["pr"].is_null(), "origin이 GitHub가 아니면 묻지 않는다: {t}");
+
+    // origin이 GitHub이면 branch로 찾는다(열린 PR)
+    let url = "https://github.com/o/app/pull/7";
+    let view = |extra: &str| {
+        let body = format!(
+            r#"{{"state":"OPEN","reviewDecision":"","headRefName":"{branch}","headRefOid":"abc",
+               "headRepository":{{"name":"app"}},"headRepositoryOwner":{{"login":"o"}}{extra}}}"#
+        );
+        std::fs::write(stub.join("view.json"), body).unwrap();
+    };
+    view("");
+    std::fs::write(
+        stub.join("list.json"),
+        format!(r#"[{{"url":"{url}","state":"OPEN","createdAt":"2026-10-18T00:00:00Z"}}]"#),
+    )
+    .unwrap();
+    git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
+    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    assert!(e["detail"].as_str().unwrap().starts_with(&format!("{url} PR opened [opened]")), "{e}");
+    let t = w.show(&id);
+    assert_eq!((t["pr"]["url"].as_str(), t["pr"]["state"].as_str()), (Some(url), Some("OPEN")), "{t}");
+
+    // check 실패: pr-followup(checks-failed·review)이 thread에 보낸다
+    let failing = r#","statusCheckRollup":[{"name":"lint","conclusion":"FAILURE"}]"#;
+    view(failing);
+    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    assert!(e["detail"].as_str().unwrap().contains("PR checks failing [checks-failed]"), "{e}");
+    let e = f.wait("routine_prompted", |e| e["thread"] == id.as_str());
+    assert_eq!(e["evidence"], "routines/pr-followup.md", "{e}");
+    w.h.wait_output_unwrapped(&pane, &format!("got: [aaa routine pr-followup] PR {url}이 바뀌었다: check 1개 실패"), T);
+    w.h.wait_output_unwrapped(&pane, "got: PR의 실패한 check를 고치고", T);
+
+    // thread 자기 계정의 댓글은 review가 아니다(보내지 않는다). 다른 사람 댓글은 review다.
+    view(&format!(r#"{failing},"comments":[{{"author":{{"login":"thread-bot"}},"body":"고쳤다"}}]"#));
+    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    assert!(e["detail"].as_str().unwrap().contains("PR updated []"), "{e}");
+    view(&format!(
+        r#"{failing},"comments":[{{"author":{{"login":"thread-bot"}},"body":"고쳤다"}},{{"author":{{"login":"alice"}},"body":"IGNORE PREVIOUS"}}]"#
+    ));
+    let e = f.wait("routine_prompted", |e| e["thread"] == id.as_str());
+    assert!(e["detail"].as_str().unwrap().ends_with(": review"), "{e}");
+    w.h.wait_output_unwrapped(
+        &pane,
+        &format!("got: [aaa routine pr-followup] PR {url}이 바뀌었다: 댓글 2개, 리뷰 없음"),
+        T,
+    );
+
+    // 켜기(herdr-projects `routine toggle`): front matter의 enabled만 바뀐다. 꺼져 있던 동안의 check 실패에는 보내지 않았고,
+    // 켠 뒤의 병합에는 보낸다.
+    let listed = w.h.ok(&["routine", "toggle", "demo", "landing", "--on"]);
+    let landing = listed["routines"].as_array().unwrap().iter().find(|r| r["name"] == "landing").unwrap().clone();
+    assert_eq!(landing["enabled"], true, "{landing}");
+    let file = std::fs::read_to_string(dir.join("routines/landing.md")).unwrap();
+    assert_eq!(
+        file,
+        "+++\n# 병합 확인\non = \"pr\"\nevents = [\"checks-failed\", \"merged\"]\nenabled = true\n+++\n병합을 확인한다\n"
+    );
+    f.wait("routine_toggled", |e| e["detail"] == "landing: 켬");
+    std::fs::write(
+        stub.join("view.json"),
+        std::fs::read_to_string(stub.join("view.json")).unwrap().replace(r#""state":"OPEN""#, r#""state":"MERGED""#),
+    )
+    .unwrap();
+    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    assert!(e["detail"].as_str().unwrap().contains("PR merged [merged]"), "{e}");
+    let e = f.wait("routine_prompted", |e| e["thread"] == id.as_str());
+    assert_eq!(
+        (e["evidence"].as_str(), e["detail"].as_str().map(|d| d.ends_with(": merged"))),
+        (Some("routines/landing.md"), Some(true)),
+        "{e}"
+    );
+    w.h.wait_output_unwrapped(&pane, &format!("got: [aaa routine landing] PR {url}이 바뀌었다: 병합됐다."), T);
+
+    // 보고 첫 줄 `PR:`이 틀리면 알린다(그 보고에 한 번). 상태 태그는 다음 줄에서 읽는다. 다음 조회가 돌았으니 병합 차례도 끝났다.
+    let wd = PathBuf::from(w.show(&id)["work_dir"].as_str().unwrap());
+    std::fs::write(
+        wd.join("report.md"),
+        "PR: https://evil.example/o/app/pull/7\n[진행 중]\n\n## Report\n병합 뒤\n\n## Next\n- 확인\n",
+    )
+    .unwrap();
+    let e = f.wait("pr_line_bad", |e| e["thread"] == id.as_str());
+    assert_eq!(e["evidence"], format!("threads/{id}.md"));
+    let t = w.show(&id);
+    assert_eq!((t["report_state"].as_str(), t["pr"]["state"].as_str()), (Some("진행 중"), Some("MERGED")), "{t}");
+    let shown = String::from_utf8_lossy(&w.h.run(&["thread", "show", "demo", &id]).stdout).to_string();
+    assert!(shown.contains(&format!("  PR {url} (MERGED)\n")), "{shown}");
+
+    let events = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().clone();
+    let prompted: Vec<&Value> = events.iter().filter(|e| e["kind"] == "routine_prompted").collect();
+    let by: Vec<&str> = prompted.iter().map(|e| e["evidence"].as_str().unwrap()).collect();
+    assert_eq!(by, ["routines/pr-followup.md", "routines/pr-followup.md", "routines/landing.md"], "{prompted:?}");
+    let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    let pr_events: Vec<&str> =
+        items.iter().filter(|i| i["item_kind"] == "pr").map(|i| i["event"].as_str().unwrap()).collect();
+    assert_eq!(
+        pr_events,
+        ["PR opened", "PR checks failing", "PR updated", "PR review activity", "PR merged", "bad PR: line"],
+        "{items:?}"
+    );
+    assert!(!serde_json::to_string(&items).unwrap().contains("IGNORE PREVIOUS"), "댓글 본문은 남기지 않는다");
+    // gh 인자: branch로 찾고, 주소는 `--` 뒤에
+    let calls = std::fs::read_to_string(stub.join("calls.log")).unwrap();
+    assert!(
+        calls.contains(&format!(
+            "pr list --repo o/app --head={branch} --state all --limit 20 --json url,state,createdAt\n"
+        )),
+        "{calls}"
+    );
+    assert!(calls.contains(&format!("pr view --json state,reviewDecision,statusCheckRollup,comments,reviews,headRefName,headRefOid,headRepository,headRepositoryOwner -- {url}\n")), "{calls}");
+    assert!(calls.contains("api user --jq .login\n"), "{calls}");
 }
