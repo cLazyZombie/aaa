@@ -1930,6 +1930,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 「터미널 스크롤」: 맨 아래에는 단추가 없고, 위로 굴리면 grid 오른쪽 아래(안쪽)에 뜨며, 누르면 맨 아래·터미널 focus 그대로. 휴대폰·iPad 한 손가락으로 올려도 뜬다. 끌기 중 휠로 12줄 굴리면 첫 줄이 12줄 위이고, 놓으면 화면 밖 줄(`s-NNN`)부터 `more-3`까지 복사한다.
   - 「두 controller」: 같이 쓰기를 켜고 다른 창으로 옮기면 1초(900ms 이상) 뒤 `release`를 쓰고 띠가 뜨며 남은 화면이 크기를 되찾는다. 누르면 띠가 사라지고 이 화면 크기다.
   - 「키 처리」: 클립보드 설정을 끄면 저장(`aaa:pane-clipboard` 0)하고, 그 뒤 OSC 52는 클립보드에 쓰지 않는다.
+- **병합 때 찾은 것: 앞 기록 덮개가 흐름에 들어갔다(§8.67).** 덮개(`.term-history-cover`)는 `.xterm-screen` 사본인데 xterm.css `.xterm .xterm-screen { position: relative }`가 더 강해 absolute가 되지 않았다. 덮개가 붙은 동안 `.xterm`이 두 배 높이가 되고, 그 사이 xterm Viewport가 잰 높이로 스크롤 영역이 한 화면(684px) 커졌다. 덮개는 화면 아래에 붙어 덮지도 못했다. 웹 E2E 「앞 기록」 훑기가 줄 90을 91로 그려 실패했다(병합본 진단: 줄 높이 19px, 화면 684px, 스크롤 영역 = 19×줄 수 + 684). main(245f321)에서도 이 단계가 실패하고 있었다(coordinator 10-18 알림). 선택자를 `.xterm .xterm-screen.term-history-cover`로 올렸다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
