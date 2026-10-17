@@ -2221,8 +2221,17 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **나눔 경계 끌기.** 테두리를 두르면 맞닿은 두 선(`pos-1`·`pos`), `off`면 그 빈 칸이 누를 자리다(바깥 나눔이 먼저, zoom이면 없음). 누른 칸과 경계의 차이를 지키며 비율 = (포인터 + 차이 − 원점) / 길이(0.1~0.9)를 천분율로 반올림해(1000칸보다 좁으면 `split_rect`가 그 칸을 되돌린다) 33ms마다, 뗄 때 마지막 값과 다르면 한 번 더 보낸다. 포커스는 그대로.
 - **탭 끌어 옮기기.** 이름표를 누른 칸에서 한 칸 넘게 끌면 넣을 자리(이름표 가운데보다 왼쪽이면 그 앞, ` < `·` > `는 맨 앞·맨 끝)에 accent `│`를 두고, 떼면 `MoveTab`. 그 자리에서 떼면 예전처럼 그 탭. 보던 탭은 탭 id로 따라간다(다른 화면이 탭 차례를 바꿔도 그대로).
 - **다른 점.** vt100(aaa-vt)은 1015(urxvt)·1016(SGR 픽셀)·1007(alternate scroll 끄기)을 모른다: 1015·1016만 켠 프로그램에는 기본 인코딩으로 넘기고, 보고를 끈 alt 화면의 휠은 늘 화살표다. herdr는 서버가 사건을 받아 그때 모드로 인코딩한다. aaa는 TUI가 받은 화면 장면의 모드로 인코딩하므로 프로그램이 모드를 바꾼 바로 뒤(다음 장면이 오기 전) 사건은 옛 모드로 갈 수 있다.
-- **다음 묶음(3d-3).** 오른쪽 누름 메뉴(탭·pane 닫기·이름 바꾸기 등). herdr 탭 막대에는 닫기 단추가 없어 마우스 탭 닫기는 그 메뉴다.
+- **다음 묶음(3d-3).** 오른쪽 누름 메뉴(탭·pane 닫기·이름 바꾸기 등). herdr 탭 막대에는 닫기 단추가 없어 마우스 탭 닫기는 그 메뉴다. → §8.97
 - **시험.** 유닛: 보고 인코딩(모드별 받는 사건·X10 223칸·UTF-8·SGR 뗌·수정키), 나눔 비율(차이·묶음·`split_rect` 반올림), 탭 넣을 자리·표시 열, 나눔 누를 자리(테두리·off·zoom), proto `set_ratio_at`·`move_tab`, aaa-vt `pane_modes`, 화살표 DECCKM. TUI harness `mouse_reaches_programs_like_herdr`: `cat -v`로 SGR 누름·뗌·휠이 pane에 닿음, alt 화면 휠 → `ESC [ B`·`ESC [ A`, DECCKM이면 휠·키 모두 `ESC O A`, `┐┌`를 10칸 끌면 왼쪽 안쪽 30 → 40칸, 이름표를 끌면 `│`가 보이고 떼면 탭 차례(host도) `b c prog`, 보던 탭에 남음.
+
+### 8.97 TUI 마우스를 herdr대로(3): 오른쪽 누름 메뉴(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
+
+- **참고(herdr 0.9.5).** `src/client/shell/context_menu.rs`(`items`·`move_context_menu_selection`·`activate_context_menu_item`·탭·pane 동작), `src/client/shell/overlays.rs` `render_context_menu`, `src/client/shell/mouse.rs`(오른쪽 누름 차례·메뉴 위 움직임·누름), `src/client/shell/overlay_input.rs`(메뉴 키). host 요청은 새로 없다.
+- **여는 자리.** 오른쪽 누름: 「오른쪽 누름을 pane에 보내기」를 켠 마우스 보고 pane의 안쪽이면(수정키 없음) 프로그램에 넘긴다. 아니면 탭 이름표는 탭 메뉴, pane(테두리 포함)은 pane 메뉴. 메뉴는 누른 자리에 띄우고 화면 밖이면 안으로 민다. 사이드바 줄 메뉴(herdr workspace 메뉴: 이름·닫기·worktree)는 없다(aaa 목록 줄은 thread·머신·pane이다).
+- **항목.** 탭: 새 탭·이름 바꾸기·닫기(그 탭으로 옮긴 뒤 prefix 키와 같은 동작, 새 탭 이름 창·마지막 탭 닫기 확인 그대로). pane: (포커스가 다른 pane이면) 포커스 pane과 자리 바꾸기(뒤 포커스는 그 pane), 오른쪽으로 나누기·아래로 나누기·크게 보기·pane 닫기(그 pane에 포커스를 두고 키와 같은 동작), 오른쪽 누름을 pane에 보내기 / 오른쪽 누름은 aaa 메뉴로. pane 이름 바꾸기·지우기는 `P` pane 이름 묶음에서.
+- **고르기.** 위·아래(끝에서 멈춤)·Enter, 움직이면 그 줄, 줄을 누르면 그 항목, 밖을 누르거나 Esc면 닫는다. 다른 키는 버린다. 모양은 herdr처럼 폭 = 가장 긴 항목 + 4(14 이상), accent 테두리·`panel_bg`, 고른 줄은 accent 바탕 굵게.
+- **다른 점.** 「오른쪽 누름을 pane에 보내기」는 이 화면에만 둔다(herdr는 서버 pane 상태 `right_click_passthrough`). TUI는 상태를 갖지 않는 front라 host에 두려면 pane 설정 요청이 필요하다. herdr `right_click_passthrough_modifier`(수정키를 누르면 넘김) 설정은 옮기지 않았다. 3d-2에서는 보고 pane에 오른쪽 누름을 늘 넘겼는데, herdr처럼 메뉴가 먼저로 바꿨다.
+- **시험.** 유닛 `menu_like_herdr`(항목·끝에서 멈춤·폭·화면 안으로·고른 줄 색). TUI harness `context_menu_like_herdr`: 탭 메뉴 Esc, 아래·Enter로 탭 이름 창, pane 메뉴에서 움직여 「아래로 나누기」 Enter, 위 pane 메뉴의 자리 바꾸기, 밖 누르기로 닫기, 보고 pane은 메뉴가 먼저이고 「오른쪽 누름을 pane에 보내기」 뒤 `cat -v`가 오른쪽 누름(`ESC [ < 2 ;`)을 받는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

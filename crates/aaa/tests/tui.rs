@@ -1372,6 +1372,74 @@ fn mouse_reaches_programs_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// 묶음 3d-3(herdr `context_menu.rs`): 탭 이름표·pane을 오른쪽 누르면 메뉴. 위·아래·Enter나 누르기로 고르고(움직이면 그 줄),
+/// Esc·밖 누르기로 닫는다. 「오른쪽 누름을 pane에 보내기」를 켠 보고 pane에만 오른쪽 누름이 간다.
+#[test]
+fn context_menu_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    h.ok(&["tab", "create", "--machine", "labA", "--label", "one", "--", "/bin/sh"]);
+    let two = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--label", "two", "--", "/bin/sh"]))[1].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("두 탭", |s| tab_chips(s) == ["one", "two"]);
+    let menu_open = |s: &str| s.contains("이름 바꾸기") && s.contains("닫기");
+    let right = |tui: &mut Tui, at: (usize, usize)| {
+        tui.mouse(2, at, false);
+        tui.mouse(2, at, true);
+    };
+
+    // 1) 탭 메뉴: Esc로 닫고, 다시 열어 아래·Enter(이름 바꾸기)면 그 탭으로 옮겨 이름 창
+    let chip = tui.wait_find("two");
+    right(&mut tui, chip);
+    tui.wait_text("탭 메뉴", |s| menu_open(s) && s.contains("새 탭"));
+    tui.send(b"\x1b");
+    tui.wait_text("Esc로 닫힘", |s| !menu_open(s));
+    right(&mut tui, chip);
+    tui.wait_text("탭 메뉴 다시", menu_open);
+    tui.send(b"\x1b[B");
+    tui.send(b"\r");
+    tui.wait_text("탭 이름 창", |s| s.contains("탭 이름 바꾸기") && s.contains("↵ 저장"));
+    tui.send(b"\x1b");
+    tui.wait_text("이름 창 닫힘", |s| !s.contains("↵ 저장"));
+    hw.wait("이 화면 크기", |w| w.held_by(&two, "tui@").then_some(()));
+
+    // 2) pane 메뉴: 움직여 「아래로 나누기」를 고르고 Enter → 아래에 새 pane(포커스)
+    right(&mut tui, (8, SIDE as usize + 10));
+    let down = tui.wait_find("아래로 나누기");
+    tui.mouse(35, down, false);
+    tui.send(b"\r");
+    let bottom = hw.wait("아래로 나눔", |w| w.tab_of(&two).filter(|l| l.len() == 2).map(|l| l[1].clone()));
+
+    // 3) 포커스(아래)가 아닌 위 pane의 메뉴에는 「포커스 pane과 자리 바꾸기」가 있고, 누르면 자리를 바꾼다
+    right(&mut tui, (4, SIDE as usize + 10));
+    let swap = tui.wait_find("포커스 pane과 자리 바꾸기");
+    tui.click(swap);
+    hw.wait("자리 바꿈", |w| (w.tab_of(&two)? == [bottom.clone(), two.clone()]).then_some(()));
+
+    // 4) 메뉴는 밖을 누르면 닫힌다
+    right(&mut tui, chip);
+    tui.wait_text("탭 메뉴(밖 누르기)", menu_open);
+    tui.click((ROWS as usize - 3, SIDE as usize + 2));
+    tui.wait_text("밖 누르기로 닫힘", |s| !menu_open(s));
+
+    // 5) 보고 pane의 오른쪽 누름은 메뉴가 먼저다. 「오른쪽 누름을 pane에 보내기」를 켜면 넘긴다
+    tui.type_line("printf '\\033[?1000h\\033[?1006h'; echo rc-$((1)); cat -v");
+    let at = tui.wait_find("rc-1");
+    let inside = (at.0, at.1 + 2);
+    right(&mut tui, inside);
+    let pass = tui.wait_find("오른쪽 누름을 pane에 보내기");
+    tui.click(pass);
+    tui.wait_text("메뉴 닫힘", |s| !s.contains("오른쪽 누름을 pane에"));
+    right(&mut tui, inside);
+    tui.send(b"\r");
+    tui.wait_text("cat이 읽은 오른쪽 누름", |s| s.matches("^[[<2;").count() >= 4);
+    assert!(!tui.text().contains("pane 닫기"), "넘긴 오른쪽 누름에 메뉴가 열렸다");
+    tui.send(b"\x03");
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).

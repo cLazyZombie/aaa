@@ -10,8 +10,10 @@
 //!   프로그램이 마우스 보고를 켰으면(`GridFrame.modes`) 누름·끌기·뗌·움직임·휠을 그 모드의 인코딩으로 넘긴다.
 //!   보고를 끈 alt 화면이면 휠을 위·아래 화살표로 보낸다(herdr `WheelRouting::AlternateScroll`).
 //! - 창: 이름·닫기 확인은 단추가 아닌 곳을 누르면 닫고(안쪽도), 단축키 창은 밖을 누를 때만 닫는다.
+//! - 오른쪽 누름: 탭 이름표면 탭 메뉴, pane이면 pane 메뉴(herdr `context_menu.rs`). 메뉴에서 「오른쪽 누름을 pane에 보내기」를
+//!   켠 보고 pane에는 수정키 없는 오른쪽 누름을 넘긴다. 메뉴는 누르거나 위·아래·Enter로 고르고, 밖을 누르거나 Esc면 닫는다.
 //!
-//! 오른쪽 누름 메뉴(탭·pane 닫기 등)는 다음 묶음(3d-3), 보통 화면의 휠 기록 넘기기는 copy 모드 묶음(5)이다.
+//! 보통 화면의 휠 기록 넘기기는 copy 모드 묶음(5)이다.
 //!
 //! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 
@@ -21,7 +23,8 @@ use aaa_proto::layout::Rect;
 use aaa_proto::{GridRun, LayoutChange, MouseEncoding, MouseMode, PaneModes, SplitDir};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::style::Color;
+use ratatui::buffer::Buffer;
+use ratatui::style::{Color, Modifier, Style};
 use tokio::time::Instant;
 
 use crate::bind::Action;
@@ -77,6 +80,8 @@ pub struct Hits {
     pub popup: Option<Rect>,
     /// 이름·닫기 확인 창의 단추
     pub buttons: Vec<(Rect, Button)>,
+    /// 오른쪽 누름 메뉴의 줄과 항목 차례
+    pub menu_rows: Vec<(Rect, usize)>,
 }
 
 pub fn contains(r: Rect, x: u16, y: u16) -> bool {
@@ -144,6 +149,111 @@ pub enum Drag {
     Sidebar,
     /// pane 글을 고른다. `moved`는 누른 칸을 벗어났나(herdr: 벗어나야 보인다)
     Select { pane: String, anchor: Cell, moved: bool },
+}
+
+/// 오른쪽 누름 메뉴의 대상(herdr `ClientContextMenuTarget`)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuTarget {
+    Tab {
+        index: usize,
+    },
+    /// `source`는 메뉴를 열 때 포커스였던 다른 pane(자리 바꾸기), `passthrough`는 오른쪽 누름을 pane에 보내나
+    Pane {
+        pane: String,
+        source: Option<String>,
+        passthrough: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    NewTab,
+    Rename,
+    Close,
+    Swap,
+    SplitRight,
+    SplitDown,
+    Zoom,
+    RightClick,
+    ClosePane,
+}
+
+/// 오른쪽 누름 메뉴(herdr `ClientContextMenuOverlay`): 누른 자리에 띄우고 첫 항목을 고른다
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Menu {
+    pub target: MenuTarget,
+    pub x: u16,
+    pub y: u16,
+    pub highlighted: usize,
+}
+
+impl Menu {
+    /// 항목(herdr `ClientContextMenuOverlay::items`). pane 이름 바꾸기·지우기는 pane 이름 묶음(`P`)에서.
+    pub fn items(&self) -> Vec<(&'static str, MenuAction)> {
+        use MenuAction::*;
+        match &self.target {
+            MenuTarget::Tab { .. } => vec![("새 탭", NewTab), ("이름 바꾸기", Rename), ("닫기", Close)],
+            MenuTarget::Pane { source, passthrough, .. } => {
+                let mut items = Vec::new();
+                if source.is_some() {
+                    items.push(("포커스 pane과 자리 바꾸기", Swap));
+                }
+                items.extend([
+                    ("오른쪽으로 나누기", SplitRight),
+                    ("아래로 나누기", SplitDown),
+                    ("크게 보기", Zoom),
+                    (
+                        if *passthrough {
+                            "오른쪽 누름은 aaa 메뉴로"
+                        } else {
+                            "오른쪽 누름을 pane에 보내기"
+                        },
+                        RightClick,
+                    ),
+                    ("pane 닫기", ClosePane),
+                ]);
+                items
+            }
+        }
+    }
+
+    /// herdr `move_context_menu_selection`: 끝에서 멈춘다
+    pub fn step(&mut self, down: bool) {
+        let last = self.items().len().saturating_sub(1);
+        self.highlighted = if down { (self.highlighted + 1).min(last) } else { self.highlighted.saturating_sub(1) };
+    }
+}
+
+/// herdr `render_context_menu`: 폭은 가장 긴 항목 + 4(14 이상), 높이는 항목 + 2, 누른 자리에서 화면 안으로 민다.
+/// accent 테두리·`panel_bg`, 고른 줄은 accent 바탕 굵게. 창 칸과 (줄 칸, 항목 차례)를 준다.
+pub fn render_menu(buf: &mut Buffer, area: Rect, menu: &Menu, p: &Palette) -> (Rect, Vec<(Rect, usize)>) {
+    let items = menu.items();
+    let widest = items.iter().map(|(l, _)| unicode_width(l) as u16).max().unwrap_or(0);
+    let w = (widest + 4).max(14).min(area.w.max(1));
+    let h = (items.len() as u16 + 2).min(area.h.max(1));
+    let x = menu.x.min(area.x + area.w.saturating_sub(w));
+    let y = menu.y.min(area.y + area.h.saturating_sub(h));
+    let rect = Rect { x, y, w, h };
+    if w < 2 || h < 2 {
+        return (rect, Vec::new());
+    }
+    let inner = help::panel(buf, rect, p.accent, p.panel_bg);
+    let mut rows = Vec::new();
+    for (i, (label, _)) in items.iter().enumerate() {
+        let row = Rect { x: inner.x, y: inner.y + i as u16, w: inner.w, h: 1 };
+        if row.y >= inner.y + inner.h {
+            break;
+        }
+        let style = if i == menu.highlighted {
+            Style::default().fg(crate::theme::contrast(p)).bg(p.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.text).bg(p.panel_bg)
+        };
+        buf.set_style(ratatui::layout::Rect::new(row.x, row.y, row.w, 1), style);
+        buf.set_stringn(row.x, row.y, label, row.w as usize, style);
+        rows.push((row, i));
+    }
+    (rect, rows)
 }
 
 /// pane 프로그램에 넘길 마우스 사건
@@ -377,6 +487,7 @@ impl App {
         } else {
             match m.kind {
                 MouseEventKind::Down(MouseButton::Left) => self.press(x, y, mods, &hits, tx).await?,
+                MouseEventKind::Down(MouseButton::Right) => self.press_right(x, y, mods, &hits, tx).await?,
                 MouseEventKind::Down(b) => self.press_other(x, y, b, mods, &hits, tx).await?,
                 MouseEventKind::Drag(b) => self.drag_to(x, y, b, mods, &hits, tx).await?,
                 MouseEventKind::Up(b) => self.release(x, y, b, mods, &hits, tx).await?,
@@ -399,6 +510,21 @@ impl App {
     /// herdr: 이름·닫기 확인 창은 단추가 아닌 곳을 누르면(안쪽도) 닫는다. 단축키 창은 밖을 누를 때만 닫고 휠로 3줄씩 민다.
     async fn overlay_mouse(&mut self, m: MouseEvent, hits: &Hits, tx: &mut FrontSender) -> Result<()> {
         let (x, y) = (m.column, m.row);
+        // herdr: 메뉴는 움직이면 그 줄을 고르고, 줄을 누르면 그 항목, 밖을 누르면 닫는다
+        if let Some(Overlay::Menu(menu)) = self.overlay.as_mut() {
+            let row = hits.menu_rows.iter().find(|(r, _)| contains(*r, x, y)).map(|(_, i)| *i);
+            match (m.kind, row) {
+                (MouseEventKind::Moved, Some(i)) => menu.highlighted = i,
+                (MouseEventKind::Down(MouseButton::Left), Some(i)) => {
+                    if let Some(Overlay::Menu(menu)) = self.overlay.take() {
+                        self.menu_activate(menu, i, tx).await?;
+                    }
+                }
+                (MouseEventKind::Down(MouseButton::Left), None) => self.overlay = None,
+                _ => {}
+            }
+            return Ok(());
+        }
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => match self.overlay.as_mut() {
                 Some(Overlay::Help(_)) => {
@@ -423,7 +549,8 @@ impl App {
                     }
                     _ => self.overlay = None,
                 },
-                None => {}
+                // 메뉴는 위에서 다뤘다
+                Some(Overlay::Menu(_)) | None => {}
             },
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let area = Rect { x: 0, y: 0, w: self.width, h: self.height };
@@ -553,7 +680,93 @@ impl App {
         Ok(())
     }
 
-    /// 가운데·오른쪽 누름: 마우스 보고 pane이면 넘긴다(오른쪽 누름 메뉴는 다음 묶음)
+    /// 오른쪽 누름(herdr): 「오른쪽 누름을 pane에 보내기」를 켠 보고 pane이면 수정키 없는 누름을 넘기고, 아니면 탭 이름표는 탭 메뉴,
+    /// pane(테두리 포함)은 pane 메뉴. 사이드바 줄 메뉴(herdr workspace 메뉴)는 없다.
+    async fn press_right(
+        &mut self,
+        x: u16,
+        y: u16,
+        mods: KeyModifiers,
+        hits: &Hits,
+        tx: &mut FrontSender,
+    ) -> Result<()> {
+        if self.drag.is_some() {
+            return Ok(());
+        }
+        if let Some(b) = self.reporting(hits, x, y)
+            && self.right_click.contains(&b.pane)
+            && mods.is_empty()
+        {
+            return self.press_other(x, y, MouseButton::Right, mods, hits, tx).await;
+        }
+        self.selection = None;
+        if self.mode != Mode::Terminal {
+            self.mode = Mode::Terminal;
+            self.list_sel = None;
+        }
+        let target = if let Some(index) = hits.tab_at(x, y) {
+            MenuTarget::Tab { index }
+        } else if let Some(b) = hits.pane_at(x, y) {
+            let source = self.focus.clone().filter(|f| *f != b.pane);
+            MenuTarget::Pane { pane: b.pane.clone(), source, passthrough: self.right_click.contains(&b.pane) }
+        } else {
+            return Ok(());
+        };
+        self.overlay = Some(Overlay::Menu(Menu { target, x, y, highlighted: 0 }));
+        Ok(())
+    }
+
+    /// 메뉴 항목을 한다(herdr `activate_context_menu_item`). 탭 메뉴는 그 탭으로 옮긴 뒤 키와 같은 동작,
+    /// pane 메뉴는 그 pane에 포커스를 두고 키와 같은 동작(자리 바꾸기는 포커스였던 pane과, 뒤 포커스는 그 pane).
+    pub(crate) async fn menu_activate(&mut self, menu: Menu, index: usize, tx: &mut FrontSender) -> Result<()> {
+        let Some((_, action)) = menu.items().get(index).copied() else { return Ok(()) };
+        match menu.target {
+            MenuTarget::Tab { index } => {
+                if index >= self.ws.tabs.len() {
+                    return Ok(());
+                }
+                self.tab = index;
+                let leaves = self.current_leaves();
+                if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
+                    self.focus = leaves.first().cloned();
+                }
+                let a = match action {
+                    MenuAction::NewTab => Action::NewTab,
+                    MenuAction::Rename => Action::RenameTab,
+                    _ => Action::CloseTab,
+                };
+                self.act(a, tx).await
+            }
+            MenuTarget::Pane { pane, source, .. } => match action {
+                MenuAction::Swap => {
+                    let Some(source) = source else { return Ok(()) };
+                    if self.host_at_least(10) {
+                        self.layout(tx, LayoutChange::Swap { pane: source.clone(), with: pane }, false).await?;
+                        self.focus = Some(source);
+                    }
+                    Ok(())
+                }
+                MenuAction::RightClick => {
+                    if !self.right_click.remove(&pane) {
+                        self.right_click.insert(pane);
+                    }
+                    Ok(())
+                }
+                _ => {
+                    self.focus = Some(pane);
+                    let a = match action {
+                        MenuAction::SplitRight => Action::SplitVertical,
+                        MenuAction::SplitDown => Action::SplitHorizontal,
+                        MenuAction::Zoom => Action::Zoom,
+                        _ => Action::ClosePane,
+                    };
+                    self.act(a, tx).await
+                }
+            },
+        }
+    }
+
+    /// 가운데·오른쪽 누름: 마우스 보고 pane이면 넘긴다
     async fn press_other(
         &mut self,
         x: u16,
@@ -872,5 +1085,46 @@ mod tests {
         );
         assert_eq!(drop_index(&hits, 30, 1, 3), None);
         assert_eq!([0, 1, 2, 3].map(|i| drop_x(&hits, i, 3)), [Some(26), Some(34), Some(43), Some(52)]);
+    }
+
+    /// herdr `ClientContextMenuOverlay::items`·`render_context_menu`: 폭은 가장 긴 항목 + 4(14 이상), 누른 자리에서 화면 안으로,
+    /// 고른 줄은 accent 바탕, 위·아래는 끝에서 멈춤
+    #[test]
+    fn menu_like_herdr() {
+        let tab = Menu { target: MenuTarget::Tab { index: 1 }, x: 70, y: 0, highlighted: 0 };
+        assert_eq!(tab.items().iter().map(|(l, _)| *l).collect::<Vec<_>>(), ["새 탭", "이름 바꾸기", "닫기"]);
+        let mut pane = Menu {
+            target: MenuTarget::Pane { pane: "p".into(), source: Some("q".into()), passthrough: false },
+            x: 5,
+            y: 28,
+            highlighted: 0,
+        };
+        assert_eq!(pane.items().first().map(|i| i.1), Some(MenuAction::Swap));
+        assert_eq!(pane.items().len(), 6);
+        pane.step(false);
+        assert_eq!(pane.highlighted, 0);
+        for _ in 0..9 {
+            pane.step(true);
+        }
+        assert_eq!(pane.highlighted, 5);
+        let solo =
+            Menu { target: MenuTarget::Pane { pane: "p".into(), source: None, passthrough: true }, ..pane.clone() };
+        assert_eq!(
+            solo.items().iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+            ["오른쪽으로 나누기", "아래로 나누기", "크게 보기", "오른쪽 누름은 aaa 메뉴로", "pane 닫기"]
+        );
+
+        let p = Palette::catppuccin();
+        let area = Rect { x: 0, y: 0, w: 80, h: 30 };
+        let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 30));
+        // 「이름 바꾸기」 11칸 + 4 = 15, 오른쪽 끝에서 안으로
+        let (r, rows) = render_menu(&mut buf, area, &tab, &p);
+        assert_eq!(r, Rect { x: 65, y: 0, w: 15, h: 5 });
+        assert_eq!(rows.iter().map(|(r, i)| (r.x, r.y, *i)).collect::<Vec<_>>(), [(66, 1, 0), (66, 2, 1), (66, 3, 2)]);
+        assert_eq!((buf[(66, 1)].bg, buf[(66, 2)].bg), (p.accent, p.panel_bg));
+        assert_eq!(buf[(65, 0)].symbol(), "┌");
+        // 「오른쪽 누름을 pane에 보내기」 27칸 + 4, 아래 끝에서 위로
+        let (r, _) = render_menu(&mut buf, area, &pane, &p);
+        assert_eq!(r, Rect { x: 5, y: 22, w: 31, h: 8 });
     }
 }

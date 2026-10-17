@@ -179,6 +179,8 @@ enum Overlay {
     Rename(prompt::Rename),
     /// 닫기 확인(마지막 탭·마지막 pane)
     Confirm(prompt::Confirm),
+    /// 오른쪽 누름 메뉴(herdr `ContextMenu`)
+    Menu(mouse::Menu),
 }
 
 /// 단축키 창(herdr `ClientHelpOverlay`)
@@ -271,6 +273,8 @@ struct App {
     tab_scroll: Option<(usize, usize)>,
     /// 휠로 민 목록 첫 줄(키로 고르면 다시 고른 줄을 따른다)
     list_top: Option<usize>,
+    /// 오른쪽 누름을 받는 pane(메뉴 「오른쪽 누름을 pane에 보내기」, herdr `right_click_passthrough`). 이 화면에만 둔다.
+    right_click: HashSet<String>,
 }
 
 impl App {
@@ -326,6 +330,7 @@ impl App {
             last_click: None,
             tab_scroll: None,
             list_top: None,
+            right_click: HashSet::new(),
         }
     }
 
@@ -961,6 +966,18 @@ impl App {
                 KeyCode::Esc => self.overlay = None,
                 _ => {}
             },
+            // herdr: Esc 닫기, 위·아래 고르기(끝에서 멈춤), Enter 하기. 다른 키는 버린다
+            Some(Overlay::Menu(m)) => match k.code {
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Up | KeyCode::Down => m.step(k.code == KeyCode::Down),
+                KeyCode::Enter => {
+                    if let Some(Overlay::Menu(m)) = self.overlay.take() {
+                        let i = m.highlighted;
+                        self.menu_activate(m, i, tx).await?;
+                    }
+                }
+                _ => {}
+            },
             None => {}
         }
         Ok(())
@@ -1315,6 +1332,12 @@ impl App {
         }
         let mut hits = self.hits.borrow_mut();
         match &self.overlay {
+            Some(Overlay::Menu(m)) => {
+                let (rect, rows) = mouse::render_menu(buf, area, m, p);
+                hits.popup = Some(rect);
+                hits.menu_rows = rows;
+                return None;
+            }
             Some(Overlay::Help(h)) => {
                 hits.popup = help::popup(area, 76, 22);
                 return help::render(buf, area, h, &self.prefix_label(), p);
