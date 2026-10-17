@@ -414,7 +414,6 @@ host 프로젝트 폴더 구성:
 | `AGENTS.md`, `PROJECT.md`, `MEMORY.md`, `memory/` | 사람이 읽는 문맥 |
 | `project.toml` | 기계가 읽는 값(nudge, 자동 승인 정책, 결과물 상한 등) |
 | `TASKS.md` | `(profile@machine)` 소유 표기 |
-| `decisions.md` | 결정 기록(§8.6) |
 | `routines/` | routine 정의 |
 | `threads/<id>.md` | 보고 사본 |
 | `library/<id>/` | 결과물 |
@@ -511,6 +510,7 @@ host 프로젝트 폴더 구성:
 - **보내기:** `aaa thread message <id> --interrupt|--queue`로 보낸다.
   - interrupt: 지금 입력한다. 작업 중이면 harness가 지원하는 끼어들기 방식을 쓴다.
   - queue: host 대기열에 순서대로 넣고, 다음 턴이 시작될 때 전달한다.
+  - (10-18) host 대기열을 없앴다: 작업 중이어도 바로 입력하고 harness가 줄 세운다(§8.100).
 - **입력 방식:** 키를 하나씩 치지 않고 adapter 입력(bracketed paste + harness별 전송 키)으로 보낸다. 특수문자가 깨지지 않는다. 원문은 기록한다.
 - **수신 확인:** deadline 안에 `turn_start` 사건(없으면 화면 변화)이 오면 `accepted`다. 오지 않으면 `delivery_unknown`이다.
 - **brief 전달:** 0.2.35 규칙을 이어받는다. settle 3초, 최대 3회, 다시 보내기 전에 화면으로 앞 시도를 확인하고, 실패하면 inbox item을 남긴다(§8.77).
@@ -521,6 +521,7 @@ host 프로젝트 폴더 구성:
 
 ### 8.6 결정 기록
 
+- (10-18) 없앴다. 결정은 프로젝트 memory에 적는다(D10 G9, §8.101). 아래는 옛 설계다.
 - **기록:** `projects/<p>/decisions.md`에 번호, 시각, 내용, 대체한 번호를 적는다. DB에 revision을 두고 `aaa decision add|list`로 다룬다.
 - **전달:** brief와 context에 최신 revision을 자동으로 넣는다. thread가 시작할 때 읽은 revision을 기록해, 결정이 바뀌었는데 이전 결정으로 일하는 thread를 찾을 수 있다.
 
@@ -569,6 +570,7 @@ host 프로젝트 폴더 구성:
   - 전원(AC), 시계
 - **이상 처리:** 변화나 이상은 inbox와 알림으로 낸다. 점검에 실패한 머신에서는 새 세션 시작을 거부하고 사유를 보인다. 재부팅 중 작업이 조용히 실패하던 문제는 boot fencing으로 `interrupted`가 된다.
 - **동시 작업 한도:** 머신별 동시 thread 한도를 둔다(운영값 예: 6).
+  - (10-18) 프로젝트 `max_parallel_threads` 경고로 바꿨다(거부하지 않는다, §8.100).
 - **우선순위:** nice, Windows priority class를 쓴다. macOS QoS는 P0에서 측정한 뒤 정한다.
 - **빌드 병렬도는 제한하지 않는다.** 사용자 규칙이다.
 - **종료:** session host가 자기 자식만 PID+시작 identity(Windows는 handle)로 종료한다.
@@ -616,7 +618,7 @@ host 프로젝트 폴더 구성:
 **출력: 정해진 평가 기록.**
 - 평가자는 `aaa evaluation submit --file F`로 기록을 낸다. host가 `projects/<p>/evaluations/<id>.md`(사람이 읽는 본문)와 DB 구조화 기록을 저장한다.
 - 구조화 기록 항목: 대상 사건·thread, 단계별 시간, 재작업(횟수·원인), 막힌 곳, 도구 문제, 결함을 누가 어느 단계에서 잡았나, 개선안 목록(id·내용·예상 효과·대상 도구).
-- coordinator나 사용자가 `aaa evaluation adopt|hold <id>`로 개선안마다 채택·보류를 정한다. inbox에 `evaluation` item으로 뜨고 결정 기록(§8.6)과 연결된다.
+- coordinator나 사용자가 `aaa evaluation adopt|hold <id>`로 개선안마다 채택·보류를 정한다. inbox에 `evaluation` item으로 뜬다. 채택한 것을 뒤 thread가 알아야 하면 coordinator가 memory에 적는다(§8.101).
 - 채택된 개선의 구현은 coordinator가 정한다. 평가자 자신의 worktree에서 고쳐 일반 착지 절차를 밟게 할 수도 있고(t-0250 방식), 별도 thread를 시작할 수도 있다.
 
 **금지.**
@@ -711,6 +713,7 @@ host 프로젝트 폴더 구성:
 
 ### 8.16 M1-3c 구현 결정(10-16): 결정 기록, thread stop·restart
 
+- (10-18) 결정 기록은 없앴다(§8.101). thread stop·restart는 그대로다.
 - **결정 기록(§8.6):** `aaa decision add <p> --text|--text-file [--replaces N]`, `aaa decision list <p>`
   - `decisions.md`가 원본이다. `## <번호> · <UTC 시각>[ · <번호>번 대체]` 묶음으로 덧붙인다. 사람이 고친 파일도 `## <번호>` 제목으로 읽는다.
   - 흐름 사건은 `decision_added`(thread 없는 프로젝트 사건)다.
@@ -728,6 +731,7 @@ host 프로젝트 폴더 구성:
 - **inbox(§8.9):** host DB가 원본이고 `projects/<p>/inbox/<id>.md`(0.2.35와 같은 `+++` TOML front matter)는 투영이다.
   - ID는 `<UTC>-<종류>-<대상>-<순번>`이다. 끝내면 파일을 `inbox/done/`으로 옮기고, `inbox_done_days`(기본 30일)가 지나면 지운다.
   - `aaa inbox list <p> [--all] [--peek]`, `aaa inbox done <p> <id…>|--all`. `--peek`이 아니면 보인 항목을 「봤다」로 표시한다.
+  - (10-18) 한 응답은 크기 한도(512 KiB) 안에서만 싣는다(끝내지 않은 것은 오래된 것부터, 끝낸 것은 최근 것부터, §8.98).
 - **항목 출처**
   - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
   - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
@@ -751,6 +755,7 @@ host 프로젝트 폴더 구성:
   - 흐름 사건: `merge_enqueued`(순번), `merge_head`(맨 앞이 바뀜), `merge_landed`(`done`), `merge_dropped`(`drop`·resolve).
   - 단계 실행과 훅은 M3에서 한다(원래 배치). 맨 앞이 된 thread에 무엇을 보낼지는 coordinator가 `merge_head` 사건을 보고 정한다.
 - **동시 thread 한도(§8.10):** `[projects] max_threads_per_machine`(기본 6, 0이면 제한 없음)
+  - (10-18) 없앴다. 프로젝트 `max_parallel_threads` 경고만 한다(§8.100).
   - 시작 중이거나 세션이 실행 중인 열린 thread를 머신별로 센다. `thread start`·`restart`가 한도에 닿으면 거부하고, 어느 thread가 도는지 보인다.
 - **미룬 것(이유: 결정 14의 「큰 그림 우선」, M1-4와 운영 대체 경로가 먼저다)**
   - 머신 건강 보고(디스크·부하·toolchain·전원·시계)와 이상 시 새 세션 거부 → M1 마무리(M1-4 뒤). boot fencing과 단절(`outage`)은 이미 있다. **M1 마무리에서 했다(§8.21).**
@@ -864,7 +869,7 @@ host 프로젝트 폴더 구성:
   - 받은 기록은 DB와 `projects/<p>/evaluations/<이름>.md`에 둔다. inbox에는 `evaluation` 항목으로 뜬다.
   - 형식이 틀리거나 이미 받은 이름의 내용이 바뀌었으면 받지 않는다. 같은 내용당 한 번 `evaluation`·`invalid` 항목으로 알린다.
   - 평가자의 보고 자체는 `report` 항목으로 알리지 않는다.
-- **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 결정 기록(§8.6)에 한 줄로 남기고 그 번호를 붙인다. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
+- **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 평가 기록에만 남는다(10-18 결정 기록을 없앴다, §8.101). 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
 - **금지(부분 thread 범위 token).** CLI는 aaa 세션 안이면 `AAA_SESSION_ID`를 Hello에 담는다. 그 세션의 역할이 평가자면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다.
   - 남는 한계: env를 지운 프로세스는 사람의 CLI와 구별되지 않는다(routine 승인과 같은 수준, §8.21). 원격 머신의 평가자는 Front API에 닿지 않는다.
 - **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다(→ §8.92에서 사이드바 맨 아래 「평가」 묶음으로). `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
@@ -872,7 +877,7 @@ host 프로젝트 폴더 구성:
   - 목록·context·pane 목록에 섞이지 않는다.
   - 평가자 세션의 지시·채택은 거부되고 보기는 된다.
   - 묶음에 평가자 사건이 없고, seq가 겹치지 않고, 이력·보고 본문을 담는다.
-  - 채택이 결정 기록에 남고, 두 번 채택은 거부된다. 보류까지 하면 inbox가 정리된다.
+  - 채택이 평가 기록에 남고, 두 번 채택은 거부된다. 보류까지 하면 inbox가 정리된다.
   - 평가자를 끝내고 다시 띄워도 앞 사건을 다시 넘기지 않는다.
   - 단위 시험: 기록 검사(요약 필수, 개선안 id 중복·형식, 소수 분 반올림, 평가자가 쓴 decision 무시), thread 시간 요약.
 
@@ -1897,7 +1902,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 ### 8.78 보고 형식·brief를 herdr-projects대로: brief 머리·THREAD.md·진행 보고 안내, 첫 줄 태그 해석 제거(10-18, 차이 목록 3장 A5·A6·A8·C3, 결정 D9 「참고대로」)
 
-- **brief 차례(herdr-projects `src/thread.rs` `compose_brief`).** 머리(`# 프로젝트`) → thread 규칙(THREAD.md) → 다시 시작 안내 → 프로젝트 지침 → 프로젝트 memory → 결정 기록(§8.6, D10 G9에서 memory로 옮긴다) → 진행 보고 → 할 일 → 경로(`# 경로`). 전에는 다시 시작 안내가 맨 앞이었고 진행 보고 안내는 한 줄, 경로 절은 없었다.
+- **brief 차례(herdr-projects `src/thread.rs` `compose_brief`).** 머리(`# 프로젝트`) → thread 규칙(THREAD.md) → 다시 시작 안내 → 프로젝트 지침 → 프로젝트 memory → 진행 보고(결정 기록은 D10 G9에서 없앴다, §8.101) → 할 일 → 경로(`# 경로`). 전에는 다시 시작 안내가 맨 앞이었고 진행 보고 안내는 한 줄, 경로 절은 없었다.
 - **머리(A5, `brief_header`).** 프로젝트(PROJECT.md 첫 `# ` 제목과 이름), 목표(project.toml `goal`, 없으면 「정하지 않음」), 저장소(`[[repos]]`, 머신이 있으면 그 머신, 없으면 host 머신), 사용자가 준 파일(host의 `uploads/`, thread가 다른 머신이면 「host 머신에만 있다」), 사용자에게 줄 파일(thread의 `library/`), 보고(thread의 `report.md`). thread ID·제목 줄은 참고에 없어 뺐다.
   - 참고는 절대 경로를 쓴다. aaa host는 agent가 작업 폴더를 만들기 전에 brief를 짓는다. 그래서 host는 `{{aaa:work_dir}}`·`{{aaa:exe}}` 자리를 남기고, brief.md를 쓰는 agent(`threads::prepare`·`rebrief`)가 그 머신의 작업 폴더 절대 경로와 aaa 실행 파일 경로로 채운다(`aaa_proto::fill_brief`). protocol은 그대로다. host와 agent는 함께 배포한다(옛 agent는 자리를 채우지 않는다).
 - **thread 규칙(A6, `skill/THREAD.md`).** 참고 문장을 한국어로 옮겼다: 작업 폴더 안에, 목록에 없는 저장소는 보고에 적기, uploads 읽기, 지침·memory 따르기, memory 고치지 않기(교훈은 `## Remember`), 끝낼 때와 사용자를 기다릴 때 보고 쓰기, 첫 줄 `PR: <url>`(선택), `## Report`, `## Next`(필수, 명령형 100자 이하, 착지 뒤 정리 포함), `## Remember`(선택), 매번 통째로 다시 쓰기. 첫 줄 상태 태그 규칙은 뺐다.
@@ -2231,6 +2236,84 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **조작 모양.** 줄·스위치·여럿 중 하나·한 칸씩(Stepper)은 참고 SettingsControls 그대로, 단추·입력은 참고 class(`btn`·`icon-button`·`input`·`select`)와 lucide 아이콘. aaa가 따로 쓰던 설정 창 CSS(style.css)는 지웠다.
 - **다르게 둔 것.** 참고의 채팅·음성 입력·단축키·원격 PC·에이전트 연동·정보 쪽은 그 기능이 aaa에 없어 뺐다. 「구독 사용량」·「폰 및 기기」 쪽은 aaa 것이다(§8.81, §8.45·§8.49). 참고의 주소(`?settings=`)로 쪽 열기는 aaa에 그런 링크가 없어 두지 않았다. §8.94의 「단축키」는 참고 `ShortcutsPage`처럼 쪽 하나(찾기 칸·묶음·「단축키 초기화」, 차례도 참고 PAGES대로 구독 사용량 다음)이고, §8.93의 「패널에서 클립보드로 복사」·「터미널의 aaa와 같이 쓰기」는 터미널 쪽 「키 바」 아래(참고 413~418줄)다. Mod+Shift+,는 창을 첫 쪽(휴대폰은 목록)으로 연다. §8.82의 「진단」(입력 기록)은 참고에 없는 aaa 진단이라 그 기록이 보는 「터미널」 쪽 맨 끝에, §8.83의 「무음 모드에서도」는 「알림」 쪽 「소리」 아래에 둔다.
 - **시험.** 웹 E2E 「설정 쪽」: 넓은 창 목록·머리·쪽 자리, 고른 줄에만 바탕(transition이 끝난 뒤), 화살표·Home·End, Esc 뒤 focus가 톱니, 넓은 창 뒤로가 닫음; 휴대폰 목록만 → 쪽만·제목·←에 focus → 키 바 편집 → 뒤로 세 번(키 바 편집 단추·「터미널」 줄 focus·닫힘), ←·Esc, X 뒤 설정 칸 없음, sheet가 다 올라온 뒤 화면 안; iPad(WebKit 820×1180) 넓은 배치·넘침 없음. 다른 단계는 `openSettings(page, 쪽)`(lib/harness.mjs)으로 그 쪽을 연다. 단계는 `web/e2e/specs/06-settings.mjs` 끝.
+
+### 8.98 큰 응답: frame 상한을 넘으면 오류로 답하고, inbox는 크기 한도 안에서 싣는다(10-18, t-0334 pilot 결함 2)
+
+- **결함.** 0.2에서 옮긴 프로젝트는 끝낸 inbox가 수천 건이다. 그래서 `aaa inbox list --all` 응답(4000건이면 약 2.2 MB)이 front 연결 frame 상한(1 MiB)을 넘었다.
+  - host 쓰기 task는 그 frame을 쓰지 못하자 연결을 닫았고, 로그는 debug 한 줄뿐이었다.
+  - CLI에는 「상대가 연결을 닫았다」만 보였다.
+- **모든 응답(`front.rs` `res_frame`).** host는 응답 JSON을 만든 뒤 크기를 본다. 상한을 넘으면 `too_large` 오류로 바꿔 답하고 경고 로그를 남긴다.
+  - 오류 문구: 「<종류> 응답이 N KiB라 frame 상한 1024 KiB를 넘는다. 범위를 좁혀 다시 묻는다」.
+  - 쓰기 task(`aaa-common` `spawn_writer`)도 상한을 넘는 frame(사건, agent 쪽 응답 등)을 경고로 남기고 닫는다. 그 연결에 남은 요청이 무엇인지 알 수 없어 그 frame만 버리지는 않는다.
+- **inbox(`inbox.rs` `fit_inbox`).** 다음 셋은 항목 JSON 합이 512 KiB(상한의 절반)까지만 싣는다.
+  - 대상: `inbox list`, `inbox done`이 돌려주는 남은 항목, `context`의 inbox.
+  - 끝내지 않은 항목이 먼저 자리를 받고 오래된 것부터 싣는다(처리할 차례다). 끝낸 항목(`--all`)은 최근 것부터 싣는다. 한 번 넘치면 그 뒤는 싣지 않아, 실은 것은 늘 이어진 앞이다.
+  - 응답에 `omitted_open`·`omitted_done`을 담는다. CLI 문구: 「끝낸 항목 N개는 싣지 못했다(최근 것부터 실었다). 모두는 프로젝트 폴더 inbox/done/에 있다」. `context`는 `inbox_open`이 전체 수이고, 실은 수가 적으면 「… 항목 N개는 더 싣지 못했다」다.
+  - 「봤다」 표시는 실은 항목에만 한다. 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
+  - 참고와 다른 점: 참고에는 `inbox list`가 없다. coordinator는 `context`의 Inbox 절로 본다(herdr-projects `src/coordinator.rs`). 참고는 파일을 바로 읽어 상한도 없다. `--all`과 한도는 aaa 것이다.
+- **계약.** FRONT_API 1.11(`inbox` 응답의 두 수). 옛 CLI는 두 수를 모르고 실은 항목만 보인다.
+- **시험.**
+  - host 유닛: `inbox_page_fits_open_first_then_recent_done`, `oversized_response_becomes_an_error`.
+  - m13 `big_inbox_lists_within_frame`: 가짜 0.2 프로젝트(끝낸 4000건·열린 2건)를 `aaa migrate inventory`·`import`로 넣고 host를 띄운다. 그다음 `inbox list --all`·`--peek`·`context`·`inbox done --all`을 본다.
+  - mutation(되돌림)
+    - 한도를 없애면 `too_large` 오류로 실패한다. host 로그는 `응답이 frame 상한을 넘어 오류로 답한다 kind="inbox" bytes=2276113`.
+    - 응답 검사까지 없애면 「상대가 연결을 닫았다」로 실패한다(원래 결함). host 로그는 `frame을 보내지 못해 연결을 닫는다`.
+
+### 8.99 답보다 늦게 온 확인창 hook이 질문을 다시 열던 것(10-18, ci-local 경쟁)
+
+- **결함.** Claude Code는 권한 확인창 하나에 hook 둘(`PermissionRequest`, `Notification(permission_prompt)`)을 따로 낸다.
+  - hook 사건은 agent 연결로 차례대로 오지만, 답은 front 연결(`aaa question answer`·웹 카드)로 온다. 그래서 답이 두 hook 사이에 낄 수 있다.
+  - 그러면 늦은 둘째 hook이 열린 질문을 찾지 못해 새 질문을 연다. 거절한 뒤라 다음 hook이 오지 않으면 그 질문이 닫히지 않는다. thread는 사람 차례에 남고, 30초 뒤 「blocked on a prompt」 알림이 간다.
+  - m13 `hooked_thread_questions_and_messages`가 ci-local(ci8)에서 이것으로 한 번 실패했다. 사건 차례: 질문 → 답(no) → 같은 확인창의 질문 사건.
+- **고침(`harness.rs` `late_pair`).**
+  - agent가 사건에 hook 이름을 싣는다(`HarnessEvent.hook`, 빠져도 되는 칸이라 AGENT_LINK는 그대로다).
+  - host는 열린 질문이 받은 hook을 pane마다 기억한다. 답할 때 그것을 「답한 확인창의 hook」으로 옮긴다.
+  - 그 확인창이 짝 중 하나만 받았고, 다음 hook 사건이 나머지 하나면 그 확인창의 늦은 짝이다. 질문도 상태도 바꾸지 않고 버린다.
+  - 다른 hook 사건이 오거나 같은 hook이 다시 오면(새 확인창) 기억을 비운다.
+  - 옛 agent(hook 이름 없음)는 전과 같다.
+- **참고와 다른 점.** 참고에는 질문이라는 것이 없다. herdr는 agent 상태를 hook과 화면으로 정해, 늦은 사건으로 blocked가 돼도 화면이 바로잡는다. aaa 질문(원격 답, §8.15)은 hook으로만 열리고 닫혀 이 짝짓기가 필요하다.
+- **시험.**
+  - host 유닛 `late_pair_is_the_missing_half_of_an_answered_prompt`.
+  - m13 `hooked_thread_questions_and_messages`: 가짜 Claude가 `late`에서 PermissionRequest → 답 → Notification → 진행 보고 차례로 낸다. 진행 보고가 보이면 host가 늦은 Notification을 처리한 뒤다. 그때 thread는 쉼(idle)이고 열린 질문이 없다.
+  - 결함 심기: `late_pair` 검사를 끄면 이 시험이 「늦은 짝 hook이 질문을 다시 열었다(activity question)」로 늘 실패한다.
+
+### 8.100 메시지는 작업 중에도 바로 입력하고, 동시 thread 한도는 경고만 한다(10-18, 차이 목록 3장 E1·E6·A13, 결정 D10 「참고대로」)
+
+- **바로 입력(E1, hp `src/threads.rs` `prompt`).** `aaa thread message`의 기본은 지금 친다. 작업 중이면 harness가 다음 턴으로 줄 세운다(Claude Code 대기 메시지). host의 턴 끝 대기열(`deliver_queued`)은 없앴다.
+  - 받음 판정: 일하는 중에 보낸 글은 보낸 뒤에도 일하는 중(또는 확인창)이면 받은 것이다. herdr `agent prompt --wait --until working`이 보낸 직후 working·blocked를 받음으로 친다(`src/api/wait.rs` `prompt_activity_observed`). 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다(`harness.rs` `submit_checked`).
+  - 확인창이 떠 있으면 두 방식 모두 거부한다(`agent_blocked`, `aaa thread read`·`keys` 안내, hp `prompt_state`). 친 글과 Enter는 확인창이 받는다.
+  - 받았는지 모르면 다시 보내지 않는다. inbox `message not delivered`가 `thread read`로 입력창을 보고 남았으면 `thread keys … enter`를 안내한다(hp `prompt_unconfirmed`).
+  - `--interrupt`는 aaa에 남겼다. 참고의 `thread stop` 뒤 `thread prompt`를 멈춤까지 기다려 한 번에 한다. 이름 `queue`(JSON `mode`)는 옛 판 그대로다.
+  - `aaa thread next --line N`(E6)도 같은 길로 바로 친다.
+  - 옛 host가 대기열에 남긴 메시지: 새 host는 시작할 때 「보냈는지 모른다」로 바꾸고 `message_unknown`을 남긴다(다시 보내지 않는다, §8.5 a).
+- **동시 thread 한도(A13, hp `src/threads.rs` `start`).** 프로젝트 `project.toml max_parallel_threads`(기본 10)만큼 열려 있으면 `thread start`가 경고하고 시작은 한다.
+  - 한도는 coordinator가 지키는 규칙이다(hp COORDINATOR.md 「Parallel cap」: 그만큼 열려 일하면 시작하지 말고 제안한다). 새 프로젝트 AGENTS.md에 그 줄을 옮겼다. CLI는 `경고: …` 줄, JSON은 `warnings`다.
+  - 사후 평가자 thread는 세지 않는다(참고에 없는 배경 역할).
+  - host.toml `[projects] max_threads_per_machine`과 거부(`check_capacity`)를 없앴다. 그 key가 남은 host.toml은 「모르는 key는 무시한다」 경고를 낸다.
+  - `aaa migrate import`는 0.2 `max_parallel_threads`를 project.toml로 옮긴다.
+- **계약.** ThreadView `warnings`(빠져도 된다). FRONT_API는 착지 때 다음 번호다.
+- **시험.**
+  - m13 `hooked_thread_questions_and_messages`: 일하는 중에 보낸 「second」가 바로 accepted이고, 턴이 끝난 뒤에 읽힌다. 확인창 중 메시지는 두 방식 모두 거부한다.
+  - m13 `merge_queue_and_capacity`: 한도 2에서 셋째 시작이 경고와 함께 된다.
+  - host `migrate::convert` e2e: project.toml에 `max_parallel_threads`가 옮겨진다.
+
+### 8.101 결정 기록을 memory로 합친다(10-18, 차이 목록 3장 G9, 결정 D10 「참고대로」)
+
+- **참고.** herdr-projects에는 결정 기록이 따로 없다. 사용자가 채팅에서 정한 것 중 뒤 thread가 알아야 할 것은 coordinator가 그때 바로 memory에 적는다. memory는 모든 thread brief에 들어간다(`skill/COORDINATOR.md` 「Memory and preferences」, `src/thread.rs` `compose_brief`). binary는 memory를 쓰지 않는다.
+- **없앤 것.**
+  - `aaa decision add|list`와 Front 요청·응답(`decision_add`·`decisions`).
+  - 새 프로젝트의 decisions.md, brief의 「# 결정 기록」 절.
+  - thread의 `decisions_rev`·`decisions_now`와 「결정 N번까지 보고 시작했다」 줄, 흐름 사건 `decision_added`.
+  - 평가 채택의 `decision_num`.
+  - 남은 `aaa decision`은 숨은 명령이다. 결정은 memory에 적는다고 말하고 실패한다(옛 AGENTS.md를 따르는 coordinator를 위해).
+- **coordinator 안내.** 새 프로젝트 AGENTS.md에 참고의 「Memory and preferences」 네 줄을 옮겼다: 운영 선호는 묻지 않고 `memory/preferences.md`에, 프로젝트 사실은 사용자가 말하거나 보고 `## Remember`에서, 짧게, 결정은 그때 바로.
+- **옛 decisions.md.** 결정이 적혀 있으면 ticker가 내용 hash당 한 번 inbox `config-error`(`decisions.md`, `not read`) 항목을 낸다. coordinator가 memory로 옮기고 파일을 지운다. host는 memory를 쓰지 않는다(참고: binary는 `memory/`를 쓰지 않는다).
+- **평가 채택.** 채택·보류는 평가 기록에만 남는다. 뒤 thread가 알아야 하면 coordinator가 memory에 적는다.
+- **계약.** FrontRequest·FrontResponse에서 두 갈래가 빠지고 ThreadView에서 두 값이 빠진다. FRONT_API는 착지 때 다음 번호다.
+- **시험.**
+  - m13 `memory_and_restart`(옛 `decisions_and_restart`): memory가 brief에 들어가고, 다시 시작하면 바뀐 memory를 읽는다. `aaa decision`은 안내와 함께 실패한다. 옛 decisions.md는 항목 하나가 되고 memory는 그대로다. resume 확인의 고정 sleep(4초)은 화면과 `ticker tick` 두 번으로 바꿨다.
+  - m13 `worker_session_cli_is_read_only`: 조작 예시를 `thread next --add`로 바꿨다.
+  - host `brief_text`: brief에 결정 기록 절이 없다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

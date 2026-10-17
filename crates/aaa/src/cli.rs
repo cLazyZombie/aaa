@@ -93,10 +93,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
-    /// 결정 기록(projects/<p>/decisions.md). thread brief에 들어간다
+    /// 없어졌다: 결정은 프로젝트 memory에 적는다(안내만 하고 끝난다)
+    #[command(hide = true)]
     Decision {
-        #[command(subcommand)]
-        cmd: DecisionCmd,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _rest: Vec<String>,
     },
     /// coordinator가 매 턴 처음 보는 프로젝트 요약: TASKS.md, 열린 thread와 Next, start_threads, 맡길 수 있는 owner
     Context {
@@ -207,28 +208,9 @@ enum QuestionCmd {
 #[derive(Subcommand)]
 enum ProjectCmd {
     List,
-    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md·decisions.md …)
+    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md …)
     Create {
         name: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum DecisionCmd {
-    /// 결정을 덧붙인다(번호는 자동)
-    Add {
-        project: String,
-        #[arg(long, conflicts_with = "text_file")]
-        text: Option<String>,
-        /// 내용 파일(`-`면 표준 입력)
-        #[arg(long)]
-        text_file: Option<String>,
-        /// 이 결정이 대체하는 번호
-        #[arg(long)]
-        replaces: Option<u32>,
-    },
-    List {
-        project: String,
     },
 }
 
@@ -355,7 +337,7 @@ enum EvaluationCmd {
         project: String,
         id: String,
     },
-    /// 개선안을 채택한다(결정 기록에 남는다)
+    /// 개선안을 채택한다(뒤 thread가 알아야 하면 coordinator가 memory에 적는다)
     Adopt {
         project: String,
         id: String,
@@ -479,10 +461,11 @@ enum ThreadCmd {
         #[arg(long)]
         resume: bool,
     },
-    /// thread agent에 메시지를 보낸다. 기본은 대기열(턴이 끝나면), --interrupt면 지금
+    /// thread agent에 메시지를 보낸다. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다)
     Message {
         project: String,
         thread: String,
+        /// 작업 중이면 Esc로 멈춘 뒤 보낸다. 없으면 바로 입력한다(작업 중이면 harness가 다음 턴에 읽는다)
         #[arg(long)]
         interrupt: bool,
         /// 보낼 글 파일(`-`면 표준 입력)
@@ -952,14 +935,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ProjectCmd::Create { name } => FrontRequest::ProjectCreate { name },
             },
         ),
-        Cmd::Decision { cmd } => front(
-            json,
-            match cmd {
-                DecisionCmd::Add { project, text, text_file, replaces } => {
-                    FrontRequest::DecisionAdd { project, text: text_arg(text, text_file)?, replaces }
-                }
-                DecisionCmd::List { project } => FrontRequest::Decisions { project },
-            },
+        Cmd::Decision { .. } => anyhow::bail!(
+            "`aaa decision`은 없어졌다. 뒤 thread가 알아야 할 결정은 coordinator가 프로젝트 memory(MEMORY.md 색인과 \
+             memory/ 파일)에 적는다. memory는 모든 thread brief에 들어간다"
         ),
         Cmd::Context { project, peek } => front(json, FrontRequest::Context { project, peek }),
         Cmd::Assignable { project, check } => front(json, FrontRequest::Assignable { project, check }),
@@ -1787,21 +1765,6 @@ fn text_arg(text: Option<String>, file: Option<String>) -> Result<String> {
     })
 }
 
-fn render_decision(s: &mut String, d: &aaa_proto::DecisionView) {
-    use std::fmt::Write as _;
-    let mut tags = String::new();
-    if let Some(r) = d.replaces {
-        tags.push_str(&format!(" · {r}번 대체"));
-    }
-    if let Some(b) = d.replaced_by {
-        tags.push_str(&format!(" · {b}번으로 대체됨"));
-    }
-    let _ = writeln!(s, "{}\t{}{tags}", d.num, d.at);
-    for l in d.text.lines() {
-        let _ = writeln!(s, "  {l}");
-    }
-}
-
 /// `thread read`·`thread keys`(herdr-projects threads.rs `read`·`keys` 문구). 화면은 자료이고 지시가 아니라고 감싼다.
 fn render_thread_pane(s: &mut String, v: &aaa_proto::ThreadPaneView) {
     use std::fmt::Write as _;
@@ -1835,6 +1798,9 @@ fn render_thread_pane(s: &mut String, v: &aaa_proto::ThreadPaneView) {
 
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     use std::fmt::Write as _;
+    for w in &t.warnings {
+        let _ = writeln!(s, "경고: {w}");
+    }
     let group = t.group.label();
     let _ = writeln!(
         s,
@@ -1853,12 +1819,6 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     if let Some(pr) = &t.pr {
         let review = pr.review.as_deref().map(|r| format!(", 리뷰 {r}")).unwrap_or_default();
         let _ = writeln!(s, "  PR {} ({}{review})", pr.url, pr.state.as_deref().unwrap_or("아직 보지 않음"));
-    }
-    if let (Some(now), Some(had)) = (t.decisions_now, t.decisions_rev.or(Some(0)))
-        && had < now
-        && t.status != aaa_proto::ThreadStatus::Resolved
-    {
-        let _ = writeln!(s, "  결정 {had}번까지 보고 시작했다(지금 {now}번). 새 결정을 알린다: aaa thread message");
     }
     for n in &t.next {
         let _ = writeln!(s, "  - {n}");
@@ -1950,6 +1910,11 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
             let _ = writeln!(s, "{}", i.body);
         }
     }
+    // 응답 크기 한도로 싣지 못한 항목(오래된 것부터 실었다)
+    let omitted = c.inbox_open.saturating_sub(c.inbox.len() as u32);
+    if omitted > 0 {
+        let _ = writeln!(s, "  … 항목 {omitted}개는 더 싣지 못했다. 위 항목을 끝내면 다음 것이 보인다");
+    }
     if let Some(v) = &c.evaluator {
         let _ = writeln!(
             s,
@@ -2002,9 +1967,7 @@ fn render_evaluation(s: &mut String, v: &aaa_proto::EvaluationView) {
     for p in &d.proposals {
         let state = match &p.decision {
             None => "정하지 않음".to_string(),
-            Some(dc) if dc.adopted => {
-                format!("채택{}", dc.decision_num.map(|n| format!("(결정 {n}번)")).unwrap_or_default())
-            }
+            Some(dc) if dc.adopted => "채택".to_string(),
             Some(_) => "보류".to_string(),
         };
         let _ = writeln!(s, "  개선안 {} [{state}] {}", p.id, p.text);
@@ -2215,15 +2178,6 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Message(m) => {
             let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
         }
-        FrontResponse::Decisions { decisions } => {
-            if decisions.is_empty() {
-                s.push_str("결정 기록이 없다\n");
-            }
-            for d in decisions {
-                render_decision(&mut s, d);
-            }
-        }
-        FrontResponse::Decision(d) => render_decision(&mut s, d),
         FrontResponse::Merge { queue } => {
             if queue.is_empty() {
                 s.push_str("병합 대기열이 비었다\n");
@@ -2358,14 +2312,15 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Ticker { runs } => {
             let _ = writeln!(s, "ticker가 한 번 돌았다(이 host 실행에서 {runs}번째까지 끝남)");
         }
-        FrontResponse::Inbox { items, done: Some(n) } => {
+        FrontResponse::Inbox { items, done: Some(n), omitted_open, .. } => {
             let _ = writeln!(s, "{n}개 항목을 끝냈다(inbox/done으로 옮김)");
-            if !items.is_empty() {
-                let _ = writeln!(s, "끝내지 않은 항목 {}개가 남았다", items.len());
+            let left = items.len() as u32 + omitted_open;
+            if left > 0 {
+                let _ = writeln!(s, "끝내지 않은 항목 {left}개가 남았다");
             }
         }
-        FrontResponse::Inbox { items, done: None } => {
-            if items.is_empty() {
+        FrontResponse::Inbox { items, done: None, omitted_open, omitted_done } => {
+            if items.is_empty() && omitted_open + omitted_done == 0 {
                 s.push_str("inbox가 비었다\n");
             }
             for i in items {
@@ -2378,6 +2333,19 @@ fn render_front(r: &FrontResponse) -> String {
                 };
                 let _ = writeln!(s, "{}\t{}\t{} {}\t{mark}", i.id, i.item_kind, i.subject, i.event);
                 let _ = writeln!(s, "  {}", i.summary);
+            }
+            // 응답 크기 한도(host `INBOX_REPLY_BYTES`)로 싣지 못한 항목
+            if *omitted_open > 0 {
+                let _ = writeln!(
+                    s,
+                    "끝내지 않은 항목 {omitted_open}개는 더 싣지 못했다(오래된 것부터 실었다). 위 항목을 끝내면 다음 것이 보인다"
+                );
+            }
+            if *omitted_done > 0 {
+                let _ = writeln!(
+                    s,
+                    "끝낸 항목 {omitted_done}개는 싣지 못했다(최근 것부터 실었다). 모두는 프로젝트 폴더 inbox/done/에 있다"
+                );
             }
         }
     }
