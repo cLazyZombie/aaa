@@ -673,6 +673,8 @@ mod e2e {
         assert!(db.flow_after(Some("demo"), 0, 10).unwrap().iter().any(|e| e.kind == "project_imported"));
         // 두 번 하면 거부한다(덮어쓰지 않는다)
         assert!(convert(&inv, &dest, 0).unwrap_err().to_string().contains("이미 있다"));
+        // Windows는 열린 DB 파일을 지우지 못한다(os error 32)
+        drop(db);
         std::fs::remove_dir_all(&base).unwrap();
     }
 }
