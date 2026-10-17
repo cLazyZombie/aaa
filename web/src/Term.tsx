@@ -440,6 +440,12 @@ export function TermView({
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
     matchHerdrWidths(term);
     term.open(box.current!);
+    // FitAddon은 scrollback이 있으면 세로 scrollbar 자리를 빼고 칸을 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라
+    // 기본값 15px을 빼서 오른쪽 두 칸쯤이 늘 비었다. 참고는 scrollback 0이라 빼지 않는다(PaneTerminal 542~546줄). aaa xterm은
+    // 기록을 가지므로(plan §8.67) scrollback을 두고, 그 자리를 0으로 둔다(scrollbar는 그리지 않는다: style.css, plan §8.108).
+    // FitAddon이 읽는 내부 값이고 Viewport가 만들 때 한 번만 정한다. xterm이 바뀌어 없어지면 웹 E2E 「넓은 창」이 실패한다
+    const viewportOf = (term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } })._core?.viewport;
+    if (viewportOf) viewportOf.scrollBarWidth = 0;
     const el = box.current!;
     // 칸 높이가 바뀌는 사이(넣은 글꼴이 연 뒤에 받아질 때·글자 크기를 바꿀 때) xterm 5.5 Viewport는 화면이 먼저 커져
     // 브라우저가 줄인 scrollTop을 옛 칸 높이로 읽고, 몇 줄 위로 굴린 것(사용자 스크롤)으로 친다. 그러면 맨 아래를 보던

@@ -301,7 +301,7 @@ export default async function ({ ctl, page }) {
   });
 
   await step("폭이 줄었다 넓어지면 다시 접는다(herdr도 다시 접는다: src/pane.rs 「Herdr reflows too」, coordinator 10-18 t-0330 발견): 휴대폰이 좁게 쥐었다 놓아도 host 화면과 늦게 붙은 웹에 줄 끝이 그대로, 넓은 글자 줄도", async () => {
-    // 116칸(1280px 화면)에 드는 줄 둘과 접히는 줄 하나. 휴대폰 폭(홀수 칸)에서는 넓은 글자가 끝 칸에 들지 않아 다음 줄로 내려간다
+    // 118칸(1280px 화면)에 드는 줄 둘과 접히는 줄 하나. 휴대폰 폭(홀수 칸)에서는 넓은 글자가 끝 칸에 들지 않아 다음 줄로 내려간다
     const long = `LONG-${"0".repeat(100)}-END`;
     const wrap = `WRAP-${"1".repeat(150)}-END`;
     const wide = "가나다라마바사아자차카타파하".repeat(4);
