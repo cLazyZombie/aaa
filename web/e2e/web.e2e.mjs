@@ -385,6 +385,16 @@ const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["i
 
 // line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
 // wsRoute·route: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로채고, 글꼴은 연결 화면에서 이미 받는다)
+/** 설정 창을 열고 그 쪽으로 간다(herdr-web-ui SettingsDialog: 넓은 창은 왼쪽 목록 옆에 쪽, 휴대폰은 목록에서 쪽으로) */
+async function openSettings(p, pageName) {
+  await p.getByTestId("settings-open").click();
+  const dialog = p.getByRole("dialog", { name: "설정" });
+  await dialog.waitFor();
+  await dialog.getByRole("tab", { name: pageName }).click();
+  await dialog.getByRole("tabpanel", { name: pageName }).waitFor();
+  return dialog;
+}
+
 async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route } = {}) {
   const ctx = await browser.newContext({
     viewport,
@@ -952,6 +962,40 @@ try {
     await until("연결 화면 아이콘", async () => (await gate(pp)).join() === "IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await gate(pp)}`));
     await shot(pp, "phone-pair-icon");
     await ctx.close();
+    // iPhone WebKit 390×844(QA t-0337 Q2): 옛 .pair는 입력칸 고유 폭(20px mono·자간)이 grid 항목 카드를 47px 밀어 오른쪽이 잘렸다.
+    // AccessGate는 카드 폭이 min(100%, …)이고 입력칸이 100%라 카드·입력칸·단추·설명·틀린 코드 말이 모두 화면 안이다
+    const wk = await webkit.launch();
+    try {
+      const wctx = await wk.newContext({
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      });
+      const wp = await wctx.newPage();
+      await wp.goto(base);
+      const input = wp.getByLabel("페어링 코드");
+      await input.waitFor();
+      await input.fill("000000");
+      await wp.getByRole("button", { name: "이 기기 페어링" }).click();
+      await wp.getByRole("alert").waitFor();
+      const fit = await wp.evaluate(() => {
+        const right = (sel) => [...document.querySelectorAll(sel)].map((e) => Math.round(e.getBoundingClientRect().right));
+        const card = document.querySelector(".access-gate").getBoundingClientRect();
+        return {
+          page: document.documentElement.scrollWidth,
+          view: window.innerWidth,
+          card: [Math.round(card.left), Math.round(card.right)],
+          parts: right(".access-gate-input, .access-gate-submit, .access-gate-copy, .access-gate-error"),
+        };
+      });
+      if (fit.page > fit.view || fit.card[0] < 0 || fit.card[1] > fit.view || fit.parts.some((r) => r > fit.card[1]))
+        bad.push(`iPhone WebKit 연결 화면이 넘친다: ${JSON.stringify(fit)}`);
+      await shot(wp, "phone-webkit-pair-gate");
+      await wctx.close();
+    } finally {
+      await wk.close();
+    }
     // 머리(목록 왼쪽 위)와 아무것도 고르지 않은 빈 화면
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await until("머리·빈 화면 아이콘", async () => (await logos(dp)).join("|") === "IMG /icon.svg true 22 |IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(dp)}`));
@@ -1299,8 +1343,7 @@ try {
     const defaults = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
     if (JSON.stringify(await order()) !== JSON.stringify(defaults)) throw new Error(`처음 키 막대 ${await order()}`);
     const openKeyBar = async () => {
-      await tp.getByTestId("settings-open").click();
-      await tp.getByRole("dialog", { name: "설정" }).getByRole("button", { name: "키 바 편집" }).click();
+      (await openSettings(tp, "터미널")).getByRole("button", { name: "키 바 편집" }).click();
       return tp.getByRole("dialog", { name: "키 바" });
     };
     const kb = await openKeyBar();
@@ -1409,8 +1452,7 @@ try {
     if ((await log()) !== "") throw new Error(`꺼진 설정인데 ${await log()}`);
     if (!(await wp.evaluate(() => window.isSecureContext))) throw new Error("시험 주소가 secure context가 아니다");
     const toggle = async () => {
-      await wp.getByTestId("settings-open").click();
-      await wp.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "화면 켜짐 유지" }).click();
+      await (await openSettings(wp, "폰 및 기기")).getByRole("switch", { name: "화면 켜짐 유지" }).click();
       await wp.keyboard.press("Escape");
     };
     // 휴대폰은 pane을 보는 동안 목록 바닥 톱니가 가려진다: 목록으로 돌아가 켜고 다시 고른다
@@ -1465,8 +1507,7 @@ try {
         return e.defaultPrevented;
       });
     const dialogRow = async (p) => {
-      await p.getByTestId("settings-open").click();
-      const row = p.getByRole("dialog", { name: "설정" }).locator(".settings-row", { hasText: /^설치/ });
+      const row = (await openSettings(p, "폰 및 기기")).locator(".settings-row", { hasText: /^설치/ });
       const text = (await row.innerText()).replace(/\s+/g, " ");
       const button = await row.getByRole("button", { name: "앱 설치" }).count();
       await p.keyboard.press("Escape");
@@ -1557,8 +1598,7 @@ try {
       return route.continue();
     };
     const openDevices = async (p) => {
-      await p.getByTestId("settings-open").click();
-      const dialog = p.getByRole("dialog", { name: "설정" });
+      const dialog = await openSettings(p, "폰 및 기기");
       await dialog.locator(".devices-panel").scrollIntoViewIfNeeded();
       return dialog;
     };
@@ -1675,6 +1715,117 @@ try {
     await phoneCtx.close();
   });
 
+  await step("설정 쪽(herdr-web-ui SettingsDialog PAGES·settings-nav·settingsHistory, 차이 목록 T1): 넓은 창은 목록 옆에 쪽·화살표로 넘김, 휴대폰은 목록 → 쪽 → 뒤로, 시스템 뒤로는 한 걸음씩, Esc는 닫고 focus는 톱니로", async () => {
+    const bad = [];
+    const NAMES = ["모양", "터미널", "알림", "구독 사용량", "단축키", "폰 및 기기"];
+    const tabs = (dialog) => dialog.getByRole("tab").allInnerTexts();
+    const focused = (p) => p.evaluate(() => `${document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName}:${document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label")}`);
+    const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
+    // 넓은 창: 목록과 첫 쪽(모양)이 나란히, 고른 줄에 focus, 화살표·End가 목록을 걷고 쪽도 넘긴다
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("settings-open").click();
+    const dlg = dp.getByRole("dialog", { name: "설정" });
+    await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
+    if (JSON.stringify(await tabs(dlg)) !== JSON.stringify(NAMES)) bad.push(`넓은 창 목록 ${await tabs(dlg)}`);
+    const side = await dp.evaluate(() => {
+      // 참고 배치: 목록은 왼쪽 열 전체, 오른쪽 열은 머리(쪽 제목·닫기) 아래에 쪽
+      const nav = document.querySelector(".settings-nav").getBoundingClientRect();
+      const head = document.querySelector(".settings-header").getBoundingClientRect();
+      const body = document.querySelector(".settings-body").getBoundingClientRect();
+      return { navRight: Math.round(nav.right), bodyLeft: Math.round(body.left), top: Math.abs(nav.top - head.top) < 2 && body.top >= head.bottom - 1 };
+    });
+    if (side.navRight > side.bodyLeft || !side.top) bad.push(`넓은 창 목록·쪽이 나란하지 않다 ${JSON.stringify(side)}`);
+    await until("고른 줄에 focus", async () => (await focused(dp)) === "tab:모양").catch(async (e) => bad.push(`${e.message}: ${await focused(dp)}`));
+    await dp.keyboard.press("ArrowDown");
+    await dlg.getByRole("tabpanel", { name: "터미널" }).waitFor();
+    if ((await dlg.getByRole("tab", { name: "터미널" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
+    await dp.keyboard.press("End");
+    await dlg.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
+    await dp.keyboard.press("Home");
+    await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
+    await dlg.getByRole("tab", { name: "알림" }).click();
+    await dlg.getByRole("tabpanel", { name: "알림" }).waitFor();
+    // 고른 줄의 바탕은 transition으로 옮겨 간다(참고 .settings-tab): 다 옮긴 뒤 고른 줄만 바탕이 있는지 보고 찍는다
+    await dp.mouse.move(1200, 780);
+    const marks = await dp.evaluate(async () => {
+      await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null)));
+      return [...document.querySelectorAll(".settings-tab")].map((t) => `${t.textContent.trim()}:${getComputedStyle(t).backgroundColor !== "rgba(0, 0, 0, 0)"}`);
+    });
+    if (marks.join() !== "모양:false,터미널:false,알림:true,구독 사용량:false,단축키:false,폰 및 기기:false") bad.push(`고른 줄 바탕 ${marks}`);
+    await shot(dp, "settings-pages-desktop");
+    await dp.keyboard.press("Escape");
+    await closed(dp);
+    if ((await dp.evaluate(() => document.activeElement?.dataset.testid)) !== "settings-open") bad.push(`닫은 뒤 focus ${await focused(dp)}`);
+    // 넓은 창도 쪽마다 history 한 칸: 뒤로가 창을 닫는다
+    await openSettings(dp, "터미널");
+    await dp.goBack();
+    await closed(dp);
+    await dp.context().close();
+
+    // 휴대폰: 목록으로 열고(쪽 없음), 고르면 쪽만, ←·시스템 뒤로는 목록으로, 그 줄에 focus
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
+    await pp.getByTestId("settings-open").click();
+    const pd = pp.getByRole("dialog", { name: "설정" });
+    await pd.getByRole("tab", { name: "모양" }).waitFor();
+    if ((await pd.getByRole("tabpanel").count()) !== 0) bad.push("휴대폰이 목록과 쪽을 함께 보인다");
+    if (JSON.stringify(await tabs(pd)) !== JSON.stringify(NAMES)) bad.push(`휴대폰 목록 ${await tabs(pd)}`);
+    // sheet는 아래에서 올라온다(modal.css sheet-in): 다 올라온 뒤 잰다
+    const fit = await pp.evaluate(async () => {
+      const sheet = document.querySelector(".settings-dialog");
+      await Promise.all(sheet.getAnimations().map((a) => a.finished));
+      const r = sheet.getBoundingClientRect();
+      return { left: Math.round(r.left), right: Math.round(r.right), bottom: Math.round(r.bottom), page: document.documentElement.scrollWidth };
+    });
+    if (fit.left < 0 || fit.right > 390 || fit.bottom > 844 || fit.page > 390) bad.push(`휴대폰 설정 창이 넘친다 ${JSON.stringify(fit)}`);
+    await shot(pp, "settings-pages-phone-list");
+    await pd.getByRole("tab", { name: "터미널" }).click();
+    await pd.getByRole("tabpanel", { name: "터미널" }).waitFor();
+    if ((await pd.getByRole("tab").count()) !== 0) bad.push("휴대폰 쪽에 목록이 남았다");
+    if ((await pd.locator(".modal-title").innerText()) !== "터미널") bad.push(`휴대폰 쪽 제목 ${await pd.locator(".modal-title").innerText()}`);
+    await until("쪽으로 들어간 focus", async () => (await focused(pp)) === "BUTTON:설정으로 돌아가기").catch(async (e) => bad.push(`${e.message}: ${await focused(pp)}`));
+    await shot(pp, "settings-pages-phone-terminal");
+    // 키 바 편집 → 뒤로 → 터미널 쪽(「키 바 편집」에 focus) → 뒤로 → 목록(「터미널」 줄에 focus) → 뒤로 → 닫힘
+    await pd.getByRole("button", { name: "키 바 편집" }).click();
+    await pp.getByRole("dialog", { name: "키 바" }).waitFor();
+    await pp.goBack();
+    await pd.getByRole("tabpanel", { name: "터미널" }).waitFor();
+    await until("키 바에서 돌아온 focus", async () => (await focused(pp)) === "BUTTON:키 바 편집").catch(async (e) => bad.push(`${e.message}: ${await focused(pp)}`));
+    await pp.goBack();
+    await pd.getByRole("tab", { name: "터미널" }).waitFor();
+    await until("목록으로 나온 focus", async () => (await focused(pp)) === "tab:터미널").catch(async (e) => bad.push(`${e.message}: ${await focused(pp)}`));
+    await pp.goBack();
+    await closed(pp);
+    // ←는 목록으로, Esc는 쪽에서도 창을 닫는다
+    await openSettings(pp, "알림");
+    await pp.getByRole("button", { name: "설정으로 돌아가기" }).click();
+    await pd.getByRole("tab", { name: "알림" }).waitFor();
+    await pd.getByRole("tab", { name: "폰 및 기기" }).click();
+    await pd.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
+    await pp.keyboard.press("Escape");
+    await closed(pp);
+    // X로 닫으면 쌓은 칸을 지운다(settingsHistory): 지금 칸은 설정이 아니다
+    await openSettings(pp, "모양");
+    await pp.getByRole("button", { name: "설정 닫기" }).click();
+    await closed(pp);
+    await until("설정 칸이 지워짐", () => pp.evaluate(() => history.state?.["aaa:settings"] == null)).catch((e) => bad.push(e.message));
+    await pp.context().close();
+
+    // iPad(WebKit 820×1180): 넓은 창 배치(목록 옆에 쪽)
+    const wk = await webkit.launch();
+    try {
+      const ip = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
+      const id = await openSettings(ip, "폰 및 기기");
+      if ((await id.getByRole("tab").count()) !== NAMES.length) bad.push("iPad에 목록이 없다");
+      const over = await ip.evaluate(() => [...document.querySelectorAll(".settings-dialog *")].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 0.5).length);
+      if (over) bad.push(`iPad 설정 창 넘침 ${over}개`);
+      await shot(ip, "settings-pages-ipad");
+      await ip.context().close();
+    } finally {
+      await wk.close();
+    }
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
   await step("터미널 글꼴(herdr-web-ui 설정 「터미널 글꼴」, 차이 목록 「글꼴 종류」): 적은 목록을 거르고 기본 글꼴 앞에, face를 받은 뒤 cell을 재고, 찾아보기는 고정폭만, 비우면 기본", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "fontset", "--", process.execPath, `${root}/scroll.js`, "plain");
     await waitOutput("fontset", "s-200");
@@ -1718,8 +1869,7 @@ try {
     const field = () => fp.getByRole("dialog", { name: "설정" }).getByRole("textbox", { name: "터미널 글꼴" });
     const stored = () => fp.evaluate(() => localStorage.getItem("aaa:terminal-font-family"));
     // 찾아보기: 이름순, 검색, 비례폭 거절(값을 바꾸지 않음), 고정폭을 고르면 그것이 값
-    await fp.getByTestId("settings-open").click();
-    const dlg = fp.getByRole("dialog", { name: "설정" });
+    const dlg = await openSettings(fp, "터미널");
     await dlg.getByRole("button", { name: "터미널 글꼴에 설치된 글꼴 찾아보기" }).click();
     const listed = await dlg.getByRole("list", { name: "설치된 글꼴" }).getByRole("button").allInnerTexts();
     if (JSON.stringify(listed) !== JSON.stringify(["E2E Wide", "Helvetica", "Menlo"])) throw new Error(`글꼴 목록 ${listed}`);
@@ -1748,7 +1898,7 @@ try {
     await settle("다시 연 화면도 넓은 글꼴", (c) => Math.abs(c.w / first.w - 1.5) < 0.05);
     if (wideFetches !== 2) throw new Error(`다시 열고 E2E Wide를 ${wideFetches}번째로 받지 않았다`);
     // 비우면(Enter) 기본 글꼴, 저장값도 지운다
-    await fp.getByTestId("settings-open").click();
+    await openSettings(fp, "터미널");
     await field().fill("");
     await field().press("Enter");
     if ((await stored()) !== null) throw new Error(`비웠는데 저장값 ${await stored()}`);
@@ -1789,9 +1939,7 @@ try {
     if (JSON.stringify(hits) !== "[1,1,0]") bad.push(`구독에 물은 수 ${JSON.stringify(hits)}`);
     if (shots) await dp.screenshot({ path: path.join(shots, "usage-popover.png") });
     // 설정: 남은 양, 세션
-    await dp.getByTestId("settings-open").click();
-    const dlg = dp.getByRole("dialog", { name: "설정" });
-    await dlg.waitFor();
+    const dlg = await openSettings(dp, "구독 사용량");
     await dlg.getByRole("group", { name: "막대가 보이는 것" }).getByRole("button", { name: "남은 양" }).click();
     await until("남은 양", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 5% high", "codex 27%"]));
     await dlg.getByRole("group", { name: "보이는 한도" }).getByRole("button", { name: "세션" }).click();
@@ -1804,7 +1952,8 @@ try {
     await dlg.getByRole("button", { name: "Codex · me@example.com 위로" }).click();
     await until("순서", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
     if (shots) await dp.screenshot({ path: path.join(shots, "settings-dialog.png") });
-    // 데스크톱에서 입력줄 고르기(D1에서 남은 빈 곳)
+    // 데스크톱에서 입력줄 고르기(D1에서 남은 빈 곳): 입력 방식은 「터미널」 쪽
+    await dlg.getByRole("tab", { name: "터미널" }).click();
     await dlg.getByLabel("입력 방식").selectOption("line");
     await dp.keyboard.press("Escape");
     await until("설정 닫힘", async () => (await dp.getByRole("dialog", { name: "설정" }).count()) === 0);
@@ -1813,8 +1962,7 @@ try {
     // 다시 열어도 이 기기에 남는다. 끄면 막대도 사라진다
     await dp.reload();
     await until("남은 설정", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
-    await dp.getByTestId("settings-open").click();
-    await dp.getByRole("switch", { name: "plan 한도 보이기" }).click();
+    await (await openSettings(dp, "구독 사용량")).getByRole("switch", { name: "plan 한도 보이기" }).click();
     await until("막대 사라짐", async () => (await dp.getByTestId("usage-strip").count()) === 0);
     if (bad.length) throw new Error(bad.join("; "));
     await dp.context().close();
@@ -1945,8 +2093,7 @@ try {
     await until("열면 터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")));
     await dp.getByTestId("terminal").click();
     const wide = await settled(dp, "데스크톱 크기", () => true);
-    await dp.getByTestId("settings-open").click();
-    const dlg = dp.getByRole("dialog", { name: "설정" });
+    const dlg = await openSettings(dp, "터미널");
     for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 크게" }).click();
     if ((await dlg.getByRole("group", { name: "글자 크기" }).innerText()).trim() !== "16px") throw new Error("설정에 16px가 아니다");
     await until("16px", async () => (await rowsFont(dp)) === "16px");
@@ -1954,7 +2101,11 @@ try {
     const big = await settled(dp, "큰 글자 크기", (c) => c < wide * 0.9);
     if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "16") throw new Error("16px 저장이 없다");
     for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 작게" }).click();
-    await settled(dp, "13px로 돌아온 크기", (c) => c === wide);
+    await settled(dp, "13px로 돌아온 크기", (c) => c === wide).catch(async (e) => {
+      // Term autoFit은 이 문서가 보이고 focus를 가질 때만 크기를 건다(inUse)
+      const box = await dp.getByTestId("terminal").evaluate((el) => `${Math.round(el.getBoundingClientRect().width)}px, focus ${document.hasFocus()}, ${document.visibilityState}`);
+      throw new Error(`${e.message}: 처음 ${wide}열, 지금 ${t1().cols}열, 글자 ${await rowsFont(dp)}, 설정 ${(await dlg.getByRole("group", { name: "글자 크기" }).innerText()).trim()}, 터미널 ${box}`);
+    });
     // 기본값이면 저장하지 않는다
     if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("기본값을 저장했다");
     await dp.keyboard.press("Escape");
@@ -2092,8 +2243,7 @@ try {
     const before = reports();
     await dp.mouse.wheel(0, -100);
     await until("1× 보고 하나", () => reports() === before + 1);
-    await dp.getByTestId("settings-open").click();
-    const dlg = dp.getByRole("dialog", { name: "설정" });
+    const dlg = await openSettings(dp, "터미널");
     for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click();
     if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
     if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");
@@ -2562,8 +2712,7 @@ try {
     await press("o", '"o"');
     await until("OSC 52 클립보드", async () => (await mp.evaluate(() => window.__clip)).includes("클립 52"));
     // 설정 「패널에서 클립보드로 복사」(herdr-web-ui paneClipboard, 기본 켬)를 끄면 OSC 52는 클립보드에 닿지 않는다
-    await mp.getByTestId("settings-open").click();
-    await mp.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
+    await (await openSettings(mp, "터미널")).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
     if ((await mp.evaluate(() => localStorage.getItem("aaa:pane-clipboard"))) !== "0") throw new Error("클립보드 설정을 저장하지 않았다");
     await mp.keyboard.press("Escape");
     await mp.getByTestId("terminal").click();
@@ -2714,6 +2863,9 @@ try {
     await sp.keyboard.press("Control+Shift+Comma");
     const dialog = sp.getByRole("dialog", { name: "설정" });
     await dialog.waitFor();
+    // 설정은 쪽으로 나뉜다(plan §8.96): 단축키 쪽으로
+    const shortcutsPage = () => dialog.getByRole("tab", { name: "단축키" }).click();
+    await shortcutsPage();
     const stored = () => sp.evaluate(() => localStorage.getItem("aaa:shortcut-overrides"));
     await dialog.getByRole("combobox", { name: "다음 패널" }).selectOption("off");
     await until("끄기 저장", async () => (await stored()) === '{"next-pane":null}');
@@ -2733,6 +2885,7 @@ try {
     if (gots("shortkeys").at(-1) !== '"\\u001b[1;6B"' || (await hash()) !== sel("shortkeys")) throw new Error(`끈 Ctrl+Shift+↓: ${gots("shortkeys").at(-1)} ${await hash()}`);
     await sp.keyboard.press("Control+Shift+Comma");
     await dialog.waitFor();
+    await shortcutsPage();
     await dialog.getByRole("button", { name: "다음 패널의 단축키 기록" }).click();
     await sp.keyboard.press("Control+Shift+L");
     await until("기록 저장(다시)", async () => (await stored()) === '{"next-pane":"l"}');
@@ -2742,6 +2895,7 @@ try {
     await until("기록한 Mod+Shift+L → 다음 패널", async () => (await hash()) !== sel("shortkeys"));
     await sp.keyboard.press("Control+Shift+Comma");
     await dialog.waitFor();
+    await shortcutsPage();
     await dialog.getByRole("button", { name: "단축키 초기화" }).click();
     await until("초기화", async () => (await stored()) === null);
     if (errors.length) throw new Error(errors.join("; "));
@@ -2758,6 +2912,7 @@ try {
       await p.keyboard.press("Meta+Shift+Comma");
       const pd = p.getByRole("dialog", { name: "설정" });
       await pd.waitFor();
+      await pd.getByRole("tab", { name: "단축키" }).click();
       await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
       const fit = await pd.locator(".settings-shortcuts").evaluate((el) => {
         const box = el.getBoundingClientRect();
@@ -2906,8 +3061,7 @@ try {
     await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
     // 3b) 「터미널의 aaa와 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
     // 보기만 한다(띠). 남은 화면이 크기를 되찾고, 이 화면을 누르면 다시 이 화면 크기다
-    await op.getByTestId("settings-open").click();
-    await op.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
+    await (await openSettings(op, "터미널")).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
     await op.keyboard.press("Escape");
     await op.getByLabel("보낼 글").fill("echo away");
     await op.getByRole("button", { name: "보내기" }).click();
@@ -3165,9 +3319,17 @@ try {
     await page.reload();
     await page.getByTestId("machine-labA").waitFor();
     await until("초안 보존", async () => (await page.getByLabel("보낼 글").inputValue()) === "a\nb");
+    // 다시 연 화면은 host의 readonly 알림이 올 때까지 입력줄이 꺼져 있고, 꺼진 동안의 Enter는 초안을 두고 보내지 않는다
+    await until("입력줄 켜짐", () => page.getByLabel("보낼 글").isEnabled());
     await page.getByLabel("보낼 글").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     // 여러 줄 붙여넣기 다음 Enter는 300ms 뒤 따로 온다(둘 다 와야 끝난다)
-    await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>'));
+    await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>')).catch(async (e) => {
+      // 보내기가 어디서 멈췄는지: 입력줄에 남은 글·안내 말(끊김·붙잡은 입력 먼저 등)·붙잡은 입력 띠
+      const line = page.getByLabel("보낼 글");
+      const note = await page.locator(".terminal-input-note").allInnerTexts();
+      const held = await page.locator(".terminal-banners").allInnerTexts();
+      throw new Error(`${e.message}: 입력줄 ${JSON.stringify(await line.inputValue())} 켜짐 ${await line.isEnabled()}, 말 ${JSON.stringify(note)}, 띠 ${JSON.stringify(held)}`);
+    });
     if ((await page.getByLabel("보낼 글").inputValue()) !== "") throw new Error("보낸 뒤 글이 남았다");
     // 조합 중에 누른 보내기(herdr-web-ui scripts/terminal-input-regression.ts와 같은 네 경우)
     {
@@ -3779,11 +3941,11 @@ try {
     if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
     aaa("tab", "create", "--machine", "labA", "--label", "traceapp", "--", process.execPath, `${root}/paste.js`);
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 「진단」에 있다(사용자 화면 10-18, plan §8.82)
+    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 → 터미널 쪽 맨 끝 「진단」에 있다(사용자 화면 10-18, plan §8.82·§8.96)
     if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
     const dialog = tp.getByRole("dialog", { name: "설정" });
     const traceSwitch = dialog.getByRole("switch", { name: "입력 기록" });
-    await tp.getByTestId("settings-open").click();
+    await openSettings(tp, "터미널");
     await traceSwitch.click();
     if ((await traceSwitch.getAttribute("aria-checked")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
     await tp.keyboard.press("Escape");
@@ -3794,7 +3956,7 @@ try {
     await waitOutput("traceapp", 'GOT:"상"');
     await sleep(300);
     await tp.getByRole("button", { name: "목록으로" }).click();
-    await tp.getByTestId("settings-open").click();
+    await openSettings(tp, "터미널");
     await dialog.getByTestId("trace-send").click();
     await until("보냄 표시", async () => (await dialog.getByTestId("trace-msg").innerText()).startsWith("보냈다: input-"));
     const dir = `${root}/s/host/diag`;
@@ -4794,8 +4956,7 @@ try {
     // 그 thread를 보고 있으면 띄우지 않는다: 다른 곳을 본다
     await ap.getByTestId("pane-t1").click();
     // 소리: 켜는 누름이 미리 듣기(작업 완료 음 880→660), 그 뒤 알림마다
-    await ap.getByTestId("settings-open").click();
-    const dialog = ap.getByRole("dialog", { name: "설정" });
+    const dialog = await openSettings(ap, "알림");
     await dialog.getByRole("switch", { name: "소리" }).click();
     await waitLog("미리 듣기", (l) => l === "tone 880,tone 660");
     await ap.keyboard.press("Escape");
@@ -4806,7 +4967,7 @@ try {
     await until("소리와 함께 앱 안 알림", async () => (await droplet.count()) === 1);
     // 무음 모드에서도(사용자 보고 10-18 iPhone, plan §8.83): 끈 동안은 소리 범주를 건드리지 않는다(위 기록에 session이 없다).
     // 켜는 누름이 미리 듣기이고, 소리를 낼 때만 "playback"(무음 스위치를 무시)으로 두었다가 끝나면 "auto"로 되돌린다
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     const silent = dialog.getByRole("switch", { name: "무음 모드에서도" });
     await until("앞 소리 끝", () => ap.evaluate(() => performance.now() / 1000 > (window.__chimeEnd ?? 0)));
     await clear();
@@ -4818,7 +4979,7 @@ try {
     await clear();
     await report("무음에서도");
     await waitLog("무음에서도 알림 소리", (l) => l === "session playback,tone 880,tone 660,session auto");
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     await silent.click();
     await ap.keyboard.press("Escape");
     if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== null) throw new Error("끈 무음 모드 설정이 남았다");
@@ -4839,7 +5000,7 @@ try {
     if ((await droplet.count()) !== 0) throw new Error(`가려진 동안 앱 안 알림 ${await log()}`);
     await hide(false);
     // 앱 안을 끄면 소리만
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     await dialog.getByRole("switch", { name: "앱 안에서" }).click();
     await ap.keyboard.press("Escape");
     await clear();
@@ -4863,7 +5024,7 @@ try {
     const turns = await ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("bc ")).length, quietMark);
     if ((await log()) !== "" || (await dropsSince(quietMark)) !== 0 || turns !== 0) throw new Error(`끈 뒤 [${await log()}] 소리 차례 ${turns}`);
     // 시험 보내기: 이 기기에 구독이 없다고 하고 「알림 다시 켜기」를 권한다
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     if ((await dialog.getByTestId("push-test-result").innerText()) !== "알림 꺼짐") throw new Error(`시험 줄 ${await dialog.getByTestId("push-test-result").innerText()}`);
     await shot(ap, "desktop-settings-alerts-off");
     await dialog.getByRole("button", { name: "알림 다시 켜기" }).click();
@@ -4923,10 +5084,7 @@ try {
           .then((r) => r.json())
           .then((o) => o.ok),
       );
-    const settings = async (p) => {
-      await p.getByTestId("settings-open").click();
-      return p.getByRole("dialog", { name: "설정" });
-    };
+    const settings = (p) => openSettings(p, "모양");
     const close = (p) => p.keyboard.press("Escape");
     const a = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
     const b = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;

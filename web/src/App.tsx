@@ -25,6 +25,7 @@ import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
+import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
@@ -711,6 +712,20 @@ function ListFoot({
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
+  // 설정은 history 안에 있다(herdr/settingsHistory.ts, 참고 App.tsx 398~405줄): 마지막 칸에서 「뒤로」면 닫히고,
+  // 「앞으로」면 다시 열리며, 다른 길(X·Esc·바깥)로 닫으면 그 칸들을 지운다
+  useEffect(
+    () =>
+      onSettingsHistory((entry, own) => {
+        if (own) return;
+        if (entry === null) closeSettings();
+        else setSettingsOpen(true);
+      }),
+    [closeSettings, setSettingsOpen],
+  );
+  useEffect(() => {
+    if (!settingsOpen) recordSettings([]);
+  }, [settingsOpen]);
   // 설정 → 기기 「로그아웃」(참고 App.tsx `lock`): 구독을 먼저 지운다(cookie가 있어야 지워지고, 잠긴 기기에 알림이 가지 않게). 답이 오다 끊겨도 host에 다시 묻는다
   const signOutHere = useCallback(async () => {
     await removePushSubscription().catch(() => undefined);
