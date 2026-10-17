@@ -408,7 +408,11 @@ impl Host {
     async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {
         let unseen: Vec<InboxItem> =
             self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| !i.seen).collect();
+        let forget_box = || {
+            self.nudge_box.lock().unwrap().remove(project);
+        };
         if unseen.is_empty() {
+            forget_box();
             return;
         }
         let mut ids: Vec<&str> = unseen.iter().map(|i| i.id.as_str()).collect();
@@ -416,10 +420,14 @@ impl Host {
         let hash = hex::encode(sha2::Sha256::digest(ids.join("\n").as_bytes()));
         let key = format!("nudged:{project}");
         if self.db.meta(&key).ok().flatten().as_deref() == Some(hash.as_str()) {
+            forget_box();
             return;
         }
         // coordinator가 없으면 기다린다(생기면 그때 알린다)
-        let Some(coord) = self.coordinator_pane(dir) else { return };
+        let Some(coord) = self.coordinator_pane(dir) else {
+            forget_box();
+            return;
+        };
         let idle_for = Duration::from_secs(self.cfg.projects.nudge_idle_secs);
         // 입력 대기: hook 상태가 있으면 그것으로, 없으면 화면이 그만큼 그대로인지로 본다
         let lines = self.screen_lines(&coord.machine_id, &coord.id).await.unwrap_or_default();
@@ -439,13 +447,31 @@ impl Host {
             }
         };
         if !ready || !prompt_empty(&lines) {
+            forget_box();
             return;
+        }
+        // 입력창이 이번 검사와 nudge_quiet_secs 전 검사에서 모두 비어 보여야 보낸다. 사람이 치는 글과 섞이지 않게 한다
+        // (herdr-projects steps.rs `box_quiet`: 마지막 키 입력 시각을 알 수 없어 입력창으로 본다).
+        {
+            let mut boxes = self.nudge_box.lock().unwrap();
+            match boxes.get(project) {
+                Some((pane, since)) if *pane == coord.id => {
+                    if since.elapsed() < Duration::from_secs(self.cfg.projects.nudge_quiet_secs) {
+                        return;
+                    }
+                }
+                _ => {
+                    boxes.insert(project.to_string(), (coord.id.clone(), Instant::now()));
+                    return;
+                }
+            }
         }
         let text = nudge_text(project, &unseen);
         match self.send_prompt(&coord.machine_id, &coord.id, &text).await {
             Ok(accepted) => {
                 // 받았는지 몰라도 같은 묶음은 다시 보내지 않는다(§8.5 a)
                 let _ = self.db.set_meta(&key, &hash);
+                forget_box();
                 let state = if accepted { "accepted" } else { "unknown" };
                 self.flow_project(project, "nudge_sent", None, format!("{state}: {text}"));
             }

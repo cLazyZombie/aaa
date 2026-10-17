@@ -197,7 +197,9 @@ impl Host {
         Ok(())
     }
 
-    pub(crate) async fn context(self: &Arc<Self>, project: &str) -> Result<ProjectContext, ErrorBody> {
+    /// coordinator용 요약. herdr-projects `context`처럼 처리 안 한 inbox 항목을 보이고, `peek`이 아니면 「봤다」로 표시한다
+    /// (본 항목은 다음 nudge에 다시 나오지 않는다).
+    pub(crate) async fn context(self: &Arc<Self>, project: &str, peek: bool) -> Result<ProjectContext, ErrorBody> {
         let dir = self.project_dir(project)?;
         let tasks = tasks::parse(&std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default());
         let mut threads: Vec<_> =
@@ -205,6 +207,7 @@ impl Host {
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);
         }
+        let inbox = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
             project: project.to_string(),
             path: dir.display().to_string(),
@@ -212,7 +215,8 @@ impl Host {
             tasks,
             threads,
             assignable: self.assignable().await,
-            inbox_open: self.inbox(project, false, true)?.len() as u32,
+            inbox_open: inbox.len() as u32,
+            inbox,
             evaluator: self.evaluator_rec(project).map(|r| Box::new(self.evaluator_view(&r))),
         })
     }

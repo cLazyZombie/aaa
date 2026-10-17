@@ -147,8 +147,11 @@ pub struct ProjectsSection {
     pub brief_memory_chars: usize,
     /// host ticker 주기(초). 사건이 오면 주기를 기다리지 않고 바로 돈다.
     pub tick_secs: u64,
-    /// coordinator가 이만큼(초) 입력 대기 상태로 머물러야 inbox 알림(nudge)을 보낸다
+    /// coordinator가 이만큼(초) 입력 대기 상태로 머물러야 inbox 알림(nudge)을 보낸다(herdr-projects `NUDGE_IDLE_SECS`)
     pub nudge_idle_secs: u64,
+    /// coordinator 입력창이 이만큼(초) 비어 있는 것을 두 번 보아야 nudge를 보낸다. 사람이 치는 글과 섞이지 않게 한다
+    /// (herdr-projects `NUDGE_QUIET_SECS`).
+    pub nudge_quiet_secs: u64,
     /// 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다
     pub outage_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
@@ -167,7 +170,8 @@ impl Default for ProjectsSection {
             library_copy_mb: 200,
             brief_memory_chars: 32_000,
             tick_secs: 15,
-            nudge_idle_secs: 10,
+            nudge_idle_secs: 60,
+            nudge_quiet_secs: 10,
             outage_secs: 600,
             inbox_done_days: 30,
             max_threads_per_machine: 6,
