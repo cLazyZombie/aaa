@@ -50,7 +50,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking";
 
 export type ChatMessage = { role: ChatRole, text: string, };
 
@@ -270,7 +270,11 @@ export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "
 /**
  * 이 머신 agent.toml profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
-profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
+profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, 
+/**
+ * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.114)
+ */
+thinking: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */

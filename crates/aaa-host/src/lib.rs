@@ -1054,7 +1054,7 @@ impl Host {
                     .map(FrontResponse::Screen)
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
-            FrontRequest::PaneChat { pane } => {
+            FrontRequest::PaneChat { pane, thinking } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1074,7 +1074,9 @@ impl Host {
                     return Err(err(ErrorCode::NotFound, "대화 기록은 Claude·Codex pane만 볼 수 있다"));
                 }
                 let conn = self.live_conn(&mid)?;
-                match conn.request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session }).await?
+                match conn
+                    .request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session, thinking })
+                    .await?
                 {
                     AgentResponse::Chat { messages, truncated } => {
                         Ok(FrontResponse::Chat(aaa_proto::ChatView { pane: id, harness, messages, truncated }))

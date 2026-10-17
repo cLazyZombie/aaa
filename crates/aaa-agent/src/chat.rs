@@ -3,7 +3,8 @@
 //! - 경로는 믿지 않는다. hook은 세션 안에서 누구나 보낼 수 있다. 그래서 이 agent 프로세스의 환경으로 정한 기록 폴더
 //!   (`$CLAUDE_CONFIG_DIR`|`~/.claude`의 `projects/`, `$CODEX_HOME`|`~/.codex`의 `sessions/`) 안의 일반 `.jsonl` 파일만 읽는다.
 //!   symlink는 실제 위치로 풀어 본다.
-//! - 터미널보다 많이 보이지 않는다: 생각(thinking)·도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글은 뺀다.
+//! - 터미널보다 많이 보이지 않는다: 도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글은 뺀다. 생각(thinking)은 웹 「생각 표시」를
+//!   켠 화면이 청할 때만 싣는다(herdr-web-ui `showThinking`, plan §8.114).
 //! - 기록은 커질 수 있다(요청 원문 줄이 크다). 뒤에서부터 1MiB씩 읽어 필요한 만큼만 고르고, 16MiB에서 멈춘다.
 
 use std::io::{Read, Seek, SeekFrom};
@@ -123,7 +124,7 @@ fn msg(role: ChatRole, text: &str) -> Option<ChatMessage> {
 }
 
 /// Claude 기록 한 줄 → 보일 줄(0개 이상, 순서대로)
-fn claude_line(v: &Value) -> Vec<ChatMessage> {
+fn claude_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
     let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
     if !matches!(ty, "user" | "assistant")
         || v.get("isSidechain").and_then(|b| b.as_bool()) == Some(true)
@@ -152,7 +153,10 @@ fn claude_line(v: &Value) -> Vec<ChatMessage> {
                         let line = tool_line(b["name"].as_str().unwrap_or("tool"), &b["input"]);
                         out.extend(msg(ChatRole::Tool, &line));
                     }
-                    // thinking·tool_result·그 밖의 블록은 싣지 않는다
+                    ("assistant", Some("thinking")) if thinking => {
+                        out.extend(msg(ChatRole::Thinking, b["thinking"].as_str().unwrap_or("")))
+                    }
+                    // 청하지 않은 thinking, 가린 생각(redacted_thinking)·tool_result·그 밖의 블록은 싣지 않는다
                     _ => {}
                 }
             }
@@ -163,7 +167,7 @@ fn claude_line(v: &Value) -> Vec<ChatMessage> {
 }
 
 /// Codex 기록 한 줄 → 보일 줄
-fn codex_line(v: &Value) -> Vec<ChatMessage> {
+fn codex_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
     if v.get("type").and_then(|t| t.as_str()) != Some("response_item") {
         return vec![];
     }
@@ -191,12 +195,25 @@ fn codex_line(v: &Value) -> Vec<ChatMessage> {
             let args: Value = p["arguments"].as_str().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
             msg(ChatRole::Tool, &tool_line(p["name"].as_str().unwrap_or("tool"), &args)).into_iter().collect()
         }
+        // 생각은 요약(summary_text)만 남는다(본문은 암호화되어 있다)
+        Some("reasoning") if thinking => {
+            let text: Vec<&str> = p["summary"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter(|c| c["type"].as_str() == Some("summary_text"))
+                        .filter_map(|c| c["text"].as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            msg(ChatRole::Thinking, &text.join("\n")).into_iter().collect()
+        }
         _ => vec![],
     }
 }
 
 /// 파일 끝에서부터 줄을 읽어 보일 줄을 고른다. (줄, 다 못 읽음)
-fn tail(path: &Path, parse: fn(&Value) -> Vec<ChatMessage>) -> std::io::Result<(Vec<ChatMessage>, bool)> {
+fn tail(path: &Path, parse: impl Fn(&Value) -> Vec<ChatMessage>) -> std::io::Result<(Vec<ChatMessage>, bool)> {
     let mut f = std::fs::File::open(path)?;
     let len = f.metadata()?.len();
     let mut pos = len;
@@ -231,13 +248,17 @@ fn tail(path: &Path, parse: fn(&Value) -> Vec<ChatMessage>) -> std::io::Result<(
     Ok((rev, truncated))
 }
 
+/// 기록 한 줄 → 보일 줄(둘째 인자: 생각도 싣는다)
+type LineParser = fn(&Value, bool) -> Vec<ChatMessage>;
+
 /// agent 요청 처리. 오류 글에 경로를 넣지 않는다(홈 경로가 웹으로 간다).
 pub fn read(
     harness: &str,
     transcript: Option<&str>,
     harness_session: Option<&str>,
+    thinking: bool,
 ) -> Result<(Vec<ChatMessage>, bool), String> {
-    let (path, parse): (PathBuf, fn(&Value) -> Vec<ChatMessage>) = match harness {
+    let (path, parse): (PathBuf, LineParser) = match harness {
         "claude" => {
             let t = transcript.ok_or("Claude가 아직 기록 위치를 알리지 않았다(첫 hook 사건 전)")?;
             (inside(&claude_root(), Path::new(t))?, claude_line)
@@ -248,7 +269,7 @@ pub fn read(
         }
         _ => return Err("대화 기록은 Claude·Codex pane만 볼 수 있다".into()),
     };
-    tail(&path, parse).map_err(|e| format!("기록을 읽지 못했다: {}", e.kind()))
+    tail(&path, |v| parse(v, thinking)).map_err(|e| format!("기록을 읽지 못했다: {}", e.kind()))
 }
 
 #[cfg(test)]
@@ -284,7 +305,7 @@ mod tests {
         let root = dir("claude");
         let f = root.join("s.jsonl");
         std::fs::write(&f, claude_fixture()).unwrap();
-        let (m, truncated) = tail(&f, claude_line).unwrap();
+        let (m, truncated) = tail(&f, |v| claude_line(v, false)).unwrap();
         let got: Vec<_> = m.iter().map(|x| (x.role, x.text.as_str())).collect();
         assert_eq!(
             got,
@@ -296,6 +317,10 @@ mod tests {
             ]
         );
         assert!(!truncated);
+        // 「생각 표시」를 켠 화면이 청하면 생각도 제자리에
+        let (m, _) = tail(&f, |v| claude_line(v, true)).unwrap();
+        let got: Vec<_> = m.iter().map(|x| (x.role, x.text.as_str())).collect();
+        assert_eq!(&got[1..3], [(ChatRole::Thinking, "속생각"), (ChatRole::Assistant, "답을 쓴다")]);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -305,7 +330,7 @@ mod tests {
         let f = root.join("s.jsonl");
         let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"줄"}]}}"#;
         std::fs::write(&f, format!("{line}\n").repeat(400)).unwrap();
-        let (m, truncated) = tail(&f, claude_line).unwrap();
+        let (m, truncated) = tail(&f, |v| claude_line(v, false)).unwrap();
         assert_eq!((m.len(), truncated), (MAX_MESSAGES, true));
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -316,20 +341,24 @@ mod tests {
         let env = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd</environment_context>"}]}}"#;
         let dev = r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"규칙"}]}}"#;
         let call = r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"ls\"]}"}}"#;
+        let think = r#"{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"목록부터 본다"}],"encrypted_content":"gAAA"}}"#;
         let out = r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"했다"}]}}"#;
-        let got: Vec<_> = [user, env, dev, call, out]
-            .iter()
-            .flat_map(|l| codex_line(&serde_json::from_str(l).unwrap()))
-            .map(|m| (m.role, m.text))
-            .collect();
+        let lines = |thinking: bool| -> Vec<_> {
+            [user, env, dev, think, call, out]
+                .iter()
+                .flat_map(|l| codex_line(&serde_json::from_str(l).unwrap(), thinking))
+                .map(|m| (m.role, m.text))
+                .collect()
+        };
         assert_eq!(
-            got,
+            lines(false),
             [
                 (ChatRole::User, "고쳐 줘".to_string()),
                 (ChatRole::Tool, "shell: bash -lc ls".to_string()),
                 (ChatRole::Assistant, "했다".to_string())
             ]
         );
+        assert_eq!(lines(true)[1], (ChatRole::Thinking, "목록부터 본다".to_string()));
     }
 
     #[test]

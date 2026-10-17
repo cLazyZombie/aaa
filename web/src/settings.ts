@@ -6,7 +6,7 @@ import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarIt
 import { sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { CUSTOM_SHORTCUT_IDS, sanitizeShortcutOverrides, type ShortcutOverrides } from "./herdr/shortcutBindings.ts";
 import type { ShortcutId } from "./herdr/shortcuts.ts";
-import { sanitizeUsage, type UsageSettings } from "./preferences.ts";
+import { sanitizeChatShared, sanitizeUsage, type ChatShared, type UsageSettings } from "./preferences.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
 export type TerminalInputMode = "auto" | "line" | "direct";
@@ -397,7 +397,7 @@ export function useTerminalInputMode(): TerminalInputMode {
 }
 
 // 사용량 막대 설정은 host 공유 설정이라 그 형·기본값·거르기는 preferences.ts에 있다(plan §8.79)
-export { DEFAULT_USAGE, type UsageCount, type UsageGlance, type UsageSettings } from "./preferences.ts";
+export { DEFAULT_CHAT_SHARED, DEFAULT_USAGE, type ChatShared, type UsageCount, type UsageGlance, type UsageSettings } from "./preferences.ts";
 
 const USAGE_KEY = "aaa:usage-settings";
 const usageListeners = new Set<() => void>();
@@ -437,4 +437,95 @@ function subscribeUsage(f: () => void): () => void {
 
 export function useUsageSettings(): UsageSettings {
   return useSyncExternalStore(subscribeUsage, () => usage);
+}
+
+/**
+ * pane이 처음 열리는 보기(herdr-web-ui settings.ts `defaultView`, `device` 범위, 기본 auto): 자동은 터치 화면의 agent pane이면
+ * 대화, 그 밖은 터미널. pane에서 보기를 바꾸면 이 설정을 다시 바꿀 때까지 그 보기로 열린다(paneLens.ts). 기본값이면 지운다.
+ */
+export type DefaultView = "auto" | "chat" | "terminal";
+const DEFAULT_VIEW_KEY = "aaa:default-view";
+const defaultViewListeners = new Set<() => void>();
+
+function readDefaultView(): DefaultView {
+  try {
+    const v = localStorage.getItem(DEFAULT_VIEW_KEY);
+    return v === "chat" || v === "terminal" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+let defaultView = readDefaultView();
+
+window.addEventListener("storage", (e) => {
+  if (e.key !== DEFAULT_VIEW_KEY) return;
+  defaultView = readDefaultView();
+  defaultViewListeners.forEach((f) => f());
+});
+
+export function setDefaultView(view: DefaultView) {
+  defaultView = view;
+  try {
+    if (view === "auto") localStorage.removeItem(DEFAULT_VIEW_KEY);
+    else localStorage.setItem(DEFAULT_VIEW_KEY, view);
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  defaultViewListeners.forEach((f) => f());
+}
+
+/** 사건 처리기에서 읽는 지금 값 */
+export function currentDefaultView(): DefaultView {
+  return defaultView;
+}
+
+export function useDefaultView(): DefaultView {
+  return useSyncExternalStore(
+    (f) => {
+      defaultViewListeners.add(f);
+      return () => defaultViewListeners.delete(f);
+    },
+    () => defaultView,
+  );
+}
+
+/** 대화 보기의 공유 설정(preferences.ts `ChatShared`). 모양·사용량처럼 이 기기 사본을 두고 공유 값이 오면 preferencesSync가 놓는다 */
+const CHAT_SHARED_KEY = "aaa:chat-shared";
+const chatSharedListeners = new Set<() => void>();
+
+function readChatShared(): ChatShared {
+  try {
+    return sanitizeChatShared(JSON.parse(localStorage.getItem(CHAT_SHARED_KEY) ?? "{}"));
+  } catch {
+    return sanitizeChatShared({});
+  }
+}
+
+let chatShared = readChatShared();
+
+window.addEventListener("storage", (e) => {
+  if (e.key !== CHAT_SHARED_KEY) return;
+  chatShared = readChatShared();
+  chatSharedListeners.forEach((f) => f());
+});
+
+export function updateChatShared(patch: Partial<ChatShared>) {
+  chatShared = { ...chatShared, ...patch };
+  try {
+    localStorage.setItem(CHAT_SHARED_KEY, JSON.stringify(chatShared));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  chatSharedListeners.forEach((f) => f());
+}
+
+export function useChatShared(): ChatShared {
+  return useSyncExternalStore(
+    (f) => {
+      chatSharedListeners.add(f);
+      return () => chatSharedListeners.delete(f);
+    },
+    () => chatShared,
+  );
 }

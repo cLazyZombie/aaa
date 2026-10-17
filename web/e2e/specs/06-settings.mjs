@@ -233,7 +233,8 @@ export default async function ({ ctl, page }) {
 
   await step("설정 쪽(herdr-web-ui SettingsDialog PAGES·settings-nav·settingsHistory, 차이 목록 T1): 넓은 창은 목록 옆에 쪽·화살표로 넘김, 휴대폰은 목록 → 쪽 → 뒤로, 시스템 뒤로는 한 걸음씩, Esc는 닫고 focus는 톱니로", async () => {
     const bad = [];
-    const NAMES = ["모양", "터미널", "알림", "구독 사용량", "단축키", "폰 및 기기"];
+    // 참고 PAGES 차례 가운데 aaa에 있는 쪽(「채팅」은 C1·C4에서 더했다)
+    const NAMES = ["모양", "채팅", "터미널", "알림", "구독 사용량", "단축키", "폰 및 기기"];
     const tabs = (dialog) => dialog.getByRole("tab").allInnerTexts();
     const focused = (p) => p.evaluate(() => `${document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName}:${document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label")}`);
     const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
@@ -253,8 +254,8 @@ export default async function ({ ctl, page }) {
     if (side.navRight > side.bodyLeft || !side.top) bad.push(`넓은 창 목록·쪽이 나란하지 않다 ${JSON.stringify(side)}`);
     await until("고른 줄에 focus", async () => (await focused(dp)) === "tab:모양").catch(async (e) => bad.push(`${e.message}: ${await focused(dp)}`));
     await dp.keyboard.press("ArrowDown");
-    await dlg.getByRole("tabpanel", { name: "터미널" }).waitFor();
-    if ((await dlg.getByRole("tab", { name: "터미널" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
+    await dlg.getByRole("tabpanel", { name: "채팅" }).waitFor();
+    if ((await dlg.getByRole("tab", { name: "채팅" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
     await dp.keyboard.press("End");
     await dlg.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
     await dp.keyboard.press("Home");
@@ -267,7 +268,7 @@ export default async function ({ ctl, page }) {
       await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null)));
       return [...document.querySelectorAll(".settings-tab")].map((t) => `${t.textContent.trim()}:${getComputedStyle(t).backgroundColor !== "rgba(0, 0, 0, 0)"}`);
     });
-    if (marks.join() !== "모양:false,터미널:false,알림:true,구독 사용량:false,단축키:false,폰 및 기기:false") bad.push(`고른 줄 바탕 ${marks}`);
+    if (marks.join() !== "모양:false,채팅:false,터미널:false,알림:true,구독 사용량:false,단축키:false,폰 및 기기:false") bad.push(`고른 줄 바탕 ${marks}`);
     await shot(dp, "settings-pages-desktop");
     await dp.keyboard.press("Escape");
     await closed(dp);

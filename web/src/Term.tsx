@@ -40,6 +40,7 @@ import {
   shortcutOverrides,
   terminalToggle,
   useKeyBarItems,
+  useDefaultView,
   useMedia,
   useTerminalFontFamily,
   useTerminalFontSize,
@@ -56,6 +57,7 @@ import { isWebLink } from "./herdr/terminalFileLinks.ts";
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import type { PaneControls } from "./actions";
+import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
 
@@ -164,7 +166,20 @@ export function TermView({
   const [attach, setAttach] = useState<{ text: string; ok: boolean } | null>(null);
   // Claude·Codex pane은 터미널 대신 대화 기록으로도 본다(읽기 전용)
   const chatable = pane.agent?.harness === "claude" || pane.agent?.harness === "codex";
-  const [chatView, setChatView] = useState(false);
+  // 처음 보기(herdr-web-ui App.tsx `storedView`, paneLens.ts): 손으로 고른 보기, 없으면 설정 「패널 기본 화면」. agent인지 모르는 동안
+  // (agent 이름은 있으나 harness 상태가 아직 오지 않음)은 agent로 센다
+  const coarse = useMedia("(pointer: coarse)");
+  const defaultView = useDefaultView();
+  const lensKey = `${pane.machine_id}:${pane.id}`;
+  const [picked, setPicked] = useState(() => pickedLens(lensKey));
+  // 설정 기본이 바뀌면 고른 보기는 잊혔다(SettingsDialog `forgetPaneViews`)
+  useEffect(() => setPicked(pickedLens(lensKey)), [defaultView, lensKey]);
+  const chatView = (picked ?? lensesFor(defaultView).of(lensKey, chatable ? true : agent ? null : false, coarse)) === "chat";
+  const setChatView = (chat: boolean) => {
+    const lens = chat ? "chat" : "terminal";
+    rememberLens(lensKey, lens);
+    setPicked(lens);
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   const canControl = role !== "reader";
   // 다른 front가 지금 쓰는 화면이다(이 연결의 ID를 받기 전에는 판단하지 않는다). 입력은 막지 않는다.
@@ -174,7 +189,6 @@ export function TermView({
   const inputLine = !directTyping && !(chatView && chatable) && canControl;
   const inputLineRef = useRef(inputLine);
   inputLineRef.current = inputLine;
-  const coarse = useMedia("(pointer: coarse)");
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
   const terminalFontSize = useTerminalFontSize();
   const baseFontRef = useRef(terminalFontSize);
@@ -1670,7 +1684,7 @@ export function TermView({
         input(direction < 0 ? "\x1b[5~" : "\x1b[6~");
       },
       toggleView: () => {
-        if (chatable) setChatView((v) => !v);
+        if (chatable) setChatView(!chatViewRef.current);
       },
     };
     controls.current = current;
@@ -1726,7 +1740,7 @@ export function TermView({
             className="ghost chat-btn"
             aria-pressed={chatView}
             data-testid="chat-toggle"
-            onClick={() => setChatView((v) => !v)}
+            onClick={() => setChatView(!chatView)}
             title={chatView ? "터미널로 본다" : "대화 기록으로 본다(읽기 전용)"}
           >
             <Icon name={chatView ? "shell" : "chat"} />

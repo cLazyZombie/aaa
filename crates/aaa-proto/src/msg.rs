@@ -314,6 +314,8 @@ pub enum ChatRole {
     Assistant,
     /// 도구 호출 한 줄(예: `Bash: cargo test`). 도구 결과 본문은 싣지 않는다.
     Tool,
+    /// agent의 생각(Claude thinking 블록, Codex reasoning 요약). 「생각 표시」를 켠 화면이 청할 때만 싣는다(plan §8.114).
+    Thinking,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -441,6 +443,9 @@ pub enum AgentRequest {
         transcript: Option<String>,
         /// Codex thread-id(기록 파일 이름에 들어 있다)
         harness_session: Option<String>,
+        /// 생각도 싣는다(plan §8.114). 옛 agent는 이 칸을 모르고 빼고 보낸다
+        #[serde(default)]
+        thinking: bool,
     },
     /// agent.toml에 정의된 profile 목록
     Profiles,
@@ -1048,6 +1053,9 @@ pub enum FrontRequest {
     /// harness(Claude·Codex) 대화 기록 보기(§8.27, 읽기 전용)
     PaneChat {
         pane: String,
+        /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.114)
+        #[serde(default)]
+        thinking: bool,
     },
     PaneSend {
         pane: String,
@@ -1864,7 +1872,7 @@ mod tests {
             !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
-        assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
+        assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(

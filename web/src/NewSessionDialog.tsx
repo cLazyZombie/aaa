@@ -14,6 +14,8 @@ import { RecentFolderChips } from "./RecentFolderChips";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
+import { lensesFor } from "./paneLens";
+import { currentDefaultView } from "./settings";
 
 /** pane 이름 한도(aaa-proto `MAX_PANE_LABEL_CHARS`) */
 const MAX_LABEL_CHARS = 80;
@@ -98,6 +100,8 @@ export function NewSessionDialog({ machine, onClose, onCreated }: NewSessionDial
       });
       if (r.kind !== "pane") throw new Error(`뜻밖의 답 ${r.kind}`);
       setRecentFolders(recentDirectories.remember(machineId, [directory], true));
+      // 이 화면이 agent를 띄운 pane은 첫 상태가 오기 전에도 agent의 보기로 연다(참고 PaneLenses `startedAgent`)
+      if (agentKind) lensesFor(currentDefaultView()).startedAgent(`${machineId}:${r.id}`, window.matchMedia?.("(pointer: coarse)").matches === true);
       setPending(false);
       onCreated(r.id);
     } catch (reason: unknown) {

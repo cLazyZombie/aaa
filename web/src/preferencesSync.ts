@@ -8,23 +8,25 @@ import { ApiError, loadPreferences, savePreferences } from "./api";
 import type { PreferencesChange, SharedPreferences } from "./herdr/preferences.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./herdr/sidebarPins.ts";
 import { preferencesChange, sanitizeShared, sharedSettings, takePreferences, type Baseline, type Local, type SharedLocal } from "./preferences.ts";
-import { updateUsageSettings, useUsageSettings } from "./settings";
+import { updateChatShared, updateUsageSettings, useChatShared, useUsageSettings } from "./settings";
 import { updateAppearance, useAppearance } from "./theme";
 
 const SEND_AFTER_MS = 600;
 /** 가는 길에 실패한 요청(망, host 재시작)은 이만큼 뒤 다시 보낸다 */
 const RETRY_MS = 5_000;
 
-/** 참고 `useSettings()` 자리: aaa의 공유 설정은 모양 store와 사용량 store 둘에 있다 */
+/** 참고 `useSettings()` 자리: aaa의 공유 설정은 모양·사용량·대화 store 셋에 있다 */
 function useSharedLocal(): { settings: SharedLocal; update: (patch: Partial<SharedLocal>) => void } {
   const { appearance } = useAppearance();
   const usage = useUsageSettings();
-  const settings: SharedLocal = { theme: appearance.theme, palette: appearance.palette, sidebarRows: appearance.sidebarRows, agentOrder: appearance.agentOrder, ...usage };
+  const chat = useChatShared();
+  const settings: SharedLocal = { theme: appearance.theme, palette: appearance.palette, sidebarRows: appearance.sidebarRows, agentOrder: appearance.agentOrder, ...usage, ...chat };
   const update = useCallback((patch: Partial<SharedLocal>) => {
-    const { theme, palette, sidebarRows, agentOrder, ...rest } = patch;
+    const { theme, palette, sidebarRows, agentOrder, showThinking, ...rest } = patch;
     const look = Object.fromEntries(Object.entries({ theme, palette, sidebarRows, agentOrder }).filter(([, v]) => v !== undefined));
     if (Object.keys(look).length > 0) updateAppearance(look);
     if (Object.keys(rest).length > 0) updateUsageSettings(rest);
+    if (showThinking !== undefined) updateChatShared({ showThinking });
   }, []);
   return { settings, update };
 }

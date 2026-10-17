@@ -623,15 +623,17 @@ impl Agent {
             AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
-            AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
-                chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
-            })
-            .await
-            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-            .and_then(|r| {
-                r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
-                    .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
-            }),
+            AgentRequest::Chat { harness, transcript, harness_session, thinking } => {
+                tokio::task::spawn_blocking(move || {
+                    chat::read(&harness, transcript.as_deref(), harness_session.as_deref(), thinking)
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| {
+                    r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
+                        .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
+                })
+            }
             AgentRequest::Profiles => {
                 Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
             }

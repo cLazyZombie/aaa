@@ -115,7 +115,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "seen1");
   });
 
-  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 생각·도구 결과는 빼고, 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
+  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 도구 결과는 빼고 생각은 설정 「생각 표시」일 때만(C4), 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
     const dir = `${root}/claude/projects/-lab-chat`;
     fs.mkdirSync(dir, { recursive: true });
     const tr = `${dir}/s1.jsonl`;
@@ -154,12 +154,29 @@ export default async function ({ ctl, page }) {
     fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: "시험도 통과했다" }] } }));
     await until("새 줄", async () => (await roles()).length === 4);
     await shot(page, "desktop-chat");
+    // 설정 「생각 표시」(herdr-web-ui showThinking, 차이 목록 C4): 켜면 생각이 제자리에 접힌 「생각」 줄로, 누르면 글
+    const thinkingSetting = async (on) => {
+      const d = await openSettings(page, "채팅");
+      const sw = d.getByRole("switch", { name: "생각 표시" });
+      if ((await sw.getAttribute("aria-checked")) !== String(on)) await sw.click();
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    await thinkingSetting(true);
+    await until("생각 줄", async () => JSON.stringify((await roles())[1]) === JSON.stringify(["thinking", "생각"]));
+    await chat.getByRole("button", { name: "생각" }).click();
+    await until("생각 글", async () => (await chat.locator('[data-role="thinking"]').innerText()).includes("속생각"));
+    await shot(page, "desktop-chat-thinking");
+    await thinkingSetting(false);
+    await until("생각을 끄면 뺀다", async () => (await roles()).length === 4);
     // 터미널로 돌아간다
     await page.getByTestId("chat-toggle").click();
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");
     // CLI도 같은 기록을 본다
     const c = aaa("pane", "chat", "chat1");
     if (c.messages.length !== 4 || c.harness !== "claude") throw new Error(JSON.stringify(c));
+    const ct = aaa("pane", "chat", "chat1", "--thinking");
+    if (ct.messages[1]?.role !== "thinking" || ct.messages[1].text !== "속생각") throw new Error(JSON.stringify(ct));
     // 기록 폴더 밖을 가리키는 hook(세션 안 누구나 보낼 수 있다)은 읽지 않는다
     fs.writeFileSync(`${root}/secret.jsonl`, L({ type: "user", message: { role: "user", content: "비밀" } }));
     hookPane("chat2", `${root}/secret.jsonl`);
@@ -341,5 +358,55 @@ export default async function ({ ctl, page }) {
     if (other.errors.length) throw new Error(other.errors.join("; "));
     await other.page.context().close();
     for (const n of ["o1", "o2", "o3"]) aaa("pane", "kill", n);
+  });
+
+  await step("처음 보기(herdr-web-ui settings `defaultView`·paneLens.ts, 차이 목록 C1): 자동이면 터치 화면의 agent pane은 대화, 데스크톱·셸은 터미널, pane에서 바꾼 보기는 그 pane에 남고, 설정 「패널 기본 화면」을 바꾸면 그것이 모두에게", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "lens1", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
+    await page.getByTestId("agent-lens1").and(page.locator('[data-status="idle"]')).waitFor();
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const pp = ph.page;
+    const lensIs = async (pg, what, chat) => {
+      await pg.getByTestId("chat-toggle").and(pg.locator(`[aria-pressed="${chat}"]`)).waitFor();
+      if ((await pg.getByTestId("chat").count()) !== (chat ? 1 : 0)) throw new Error(`${what}: 대화 칸`);
+    };
+    // 다시 열기: 휴대폰은 pane을 보는 동안 목록이 숨으니 「목록으로」(pane을 닫는다), 데스크톱은 셸 t1을 거쳐 온다
+    const reopen = async (pg, name) => {
+      const back = pg.getByRole("button", { name: "목록으로" });
+      if (await back.isVisible()) await back.click();
+      else await pg.getByTestId("pane-t1").click();
+      await until(`${name} 떠나기`, async () => (await pg.getByTestId("chat-toggle").count()) === 0);
+      await pg.getByTestId(`pane-${name}`).click();
+    };
+    // 휴대폰(터치): agent pane은 대화, 셸은 터미널(대화 단추가 없다)
+    await pp.getByTestId("pane-lens1").click();
+    await lensIs(pp, "휴대폰 agent pane", true);
+    await pp.getByRole("button", { name: "목록으로" }).click();
+    await pp.getByTestId("pane-t1").click();
+    await until("휴대폰 셸 터미널", async () => (await screenText(pp)).includes("$"));
+    if ((await pp.getByTestId("chat").count()) !== 0) throw new Error("셸이 대화로 열렸다");
+    // 데스크톱: 같은 agent pane이 터미널
+    await page.getByTestId("pane-lens1").click();
+    await lensIs(page, "데스크톱 agent pane", false);
+    // 휴대폰에서 터미널로 바꾸면 그 pane은 다시 열어도 터미널
+    await reopen(pp, "lens1");
+    await lensIs(pp, "휴대폰 다시", true);
+    await pp.getByTestId("chat-toggle").click();
+    await lensIs(pp, "휴대폰 터미널로 바꿈", false);
+    await reopen(pp, "lens1");
+    await lensIs(pp, "고른 보기를 기억", false);
+    // 설정 「패널 기본 화면」 채팅: pane마다 고른 보기를 잊고 모두 대화(이 기기만, 데스크톱은 그대로). 설정은 목록 바닥에 있다
+    await pp.getByRole("button", { name: "목록으로" }).click();
+    const d = await openSettings(pp, "채팅");
+    await d.getByRole("group", { name: "패널 기본 화면" }).getByRole("button", { name: "채팅" }).click();
+    await pp.keyboard.press("Escape");
+    await d.waitFor({ state: "detached" });
+    await pp.getByTestId("pane-lens1").click();
+    await lensIs(pp, "기본 채팅", true);
+    await shot(pp, "phone-chat-default");
+    await reopen(page, "lens1");
+    await lensIs(page, "데스크톱은 그대로", false);
+    if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    await pp.context().close();
+    aaa("pane", "kill", "lens1");
   });
 }

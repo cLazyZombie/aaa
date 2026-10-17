@@ -7,7 +7,7 @@
 // 「키 바」 줄의 「키 바 편집」은 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Keyboard, Palette, Search, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Keyboard, MessageSquare, Palette, Search, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
@@ -31,6 +31,10 @@ import { PushTestControls } from "./PushTestControls";
 import { beforeAlertSound, canPlayInSilentMode } from "./silentMode";
 import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 import {
+  setDefaultView,
+  updateChatShared,
+  useChatShared,
+  useDefaultView,
   setKeepScreenOn,
   setTerminalFontFamily,
   setTerminalFontSize,
@@ -57,6 +61,7 @@ import {
   useShortcutOverrides,
   type AaaShortcutId,
 } from "./settings";
+import { forgetPaneViews } from "./paneLens";
 import { bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutConflict, shortcutDisplayKeys, shortcutKeys } from "./herdr/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "./herdr/shortcutRecorder.ts";
 import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "./herdr/shortcutBindings.ts";
@@ -350,6 +355,43 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
         )}
       </SettingsGroup>
     </>
+  );
+}
+
+/**
+ * 참고 ChatPage(300~350줄) 가운데 aaa에 있는 것: 「패널 기본 화면」(이 기기, 바꾸면 pane마다 고른 보기를 잊는다, 참고 그대로)과
+ * 「생각 표시」(공유). 채팅 폭·composer·빠른 답은 그 기능을 옮길 때 더한다.
+ */
+function ChatPage() {
+  const view = useDefaultView();
+  const { showThinking } = useChatShared();
+  return (
+    <SettingsGroup>
+      <SettingsRow
+        label="패널 기본 화면"
+        description="이 기기의 모든 패널에 적용됩니다. 패널에서 화면을 바꾸면 이 설정을 다시 바꿀 때까지 그 화면으로 열립니다. 자동: 터치 화면의 에이전트는 채팅, 그 밖에는 터미널."
+        wide
+      >
+        <Segmented
+          label="패널 기본 화면"
+          value={view}
+          options={[
+            { value: "auto", label: "자동" },
+            { value: "chat", label: "채팅" },
+            { value: "terminal", label: "터미널" },
+          ]}
+          onChange={(next) => {
+            if (next === view) return;
+            // 모든 pane에 한 선택: pane마다 기억한 보기는 이것에 자리를 내준다
+            forgetPaneViews();
+            setDefaultView(next);
+          }}
+        />
+      </SettingsRow>
+      <SettingsRow label="생각 표시" description="에이전트의 추론 블록을 함께 보여줍니다">
+        <Toggle label="생각 표시" checked={showThinking} onChange={(on) => updateChatShared({ showThinking: on })} />
+      </SettingsRow>
+    </SettingsGroup>
   );
 }
 
@@ -745,11 +787,12 @@ function ShortcutsPage() {
   );
 }
 
-type SettingsPage = "appearance" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
+type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
 
 /** 목록에 보이는 차례(참고 PAGES 198~210줄 가운데 aaa에 있는 쪽) */
 export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string }[] = [
   { id: "appearance", icon: Palette, label: "모양" },
+  { id: "chat", icon: MessageSquare, label: "채팅" },
   { id: "terminal", icon: SquareTerminal, label: "터미널" },
   { id: "alerts", icon: Bell, label: "알림" },
   { id: "usage", icon: Gauge, label: "구독 사용량" },
@@ -870,6 +913,8 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
     switch (page) {
       case "appearance":
         return <AppearanceSettings />;
+      case "chat":
+        return <ChatPage />;
       case "terminal":
         return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
       case "alerts":
