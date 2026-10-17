@@ -17,6 +17,8 @@ import { useInstallPrompt } from "./herdr/install.ts";
 import { previewAlertSound, unlockAlertSound } from "./herdr/alertSound.ts";
 import { enableAlerts } from "./alerts";
 import { PushTestControls } from "./PushTestControls";
+import { beforeAlertSound, canPlayInSilentMode } from "./silentMode";
+import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 import {
   setKeepScreenOn,
   setTerminalFontFamily,
@@ -30,6 +32,7 @@ import {
   updateUsageSettings,
   useKeepScreenOn,
   setAlertSetting,
+  alertSetting,
   useAlertSetting,
   useTerminalFontFamily,
   useTerminalFontSize,
@@ -338,6 +341,29 @@ function FontFamilyInput({ value, label, onCommit }: { value: string; label: str
   );
 }
 
+/** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
+function useInputTrace() {
+  const [on, setOn] = useState(traceOn());
+  const [count, setCount] = useState(traceCount());
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(
+    () =>
+      onTraceChange(() => {
+        setOn(traceOn());
+        setCount(traceCount());
+      }),
+    [],
+  );
+  const send = async () => {
+    try {
+      setMsg(`보냈다: ${await sendTrace()}`);
+    } catch (e) {
+      setMsg(`보내지 못했다: ${(e as Error).message}`);
+    }
+  };
+  return { on, count, msg, send };
+}
+
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
@@ -346,8 +372,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const installPrompt = useInstallPrompt();
   const alertInApp = useAlertSetting("alertInApp");
   const alertSound = useAlertSetting("alertSound");
+  const alertSilent = useAlertSetting("alertSilent");
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(alertSound);
+  const trace = useInputTrace();
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
@@ -466,11 +494,34 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   // unless the switch went off again while the audio was getting ready
                   if (on)
                     void unlockAlertSound().then((ready) => {
-                      if (ready && alertSoundWanted.current) previewAlertSound();
+                      if (ready && alertSoundWanted.current) {
+                        beforeAlertSound();
+                        previewAlertSound();
+                      }
                     });
                 }}
               />
             </SettingsRow>
+            {/* aaa(plan §8.81): 참고에 없다. 소리 범주를 바꿀 수 있는 브라우저(iPhone·iPad Safari 16.4+)에서만 */}
+            {alertSound && canPlayInSilentMode() && (
+              <SettingsRow label="무음 모드에서도" description="iPhone·iPad의 무음 모드에서도 알림 소리를 냅니다. 소리가 나는 동안 음악 같은 다른 앱의 소리가 멈추고, 저절로 다시 재생되지 않습니다.">
+                <Toggle
+                  label="무음 모드에서도"
+                  checked={alertSilent}
+                  onChange={(on) => {
+                    setAlertSetting("alertSilent", on);
+                    // 켜는 누름이 미리 듣기: 무음 스위치를 켠 채로 들리는지 바로 안다
+                    if (on)
+                      void unlockAlertSound().then((ready) => {
+                        if (ready && alertSetting("alertSilent")) {
+                          beforeAlertSound();
+                          previewAlertSound();
+                        }
+                      });
+                  }}
+                />
+              </SettingsRow>
+            )}
           </SettingsGroup>
           {/* 참고 SettingsDialog 「휴대폰」 840~847줄(문구는 참고 i18n.ko.ts) */}
           <SettingsGroup title="휴대폰">
@@ -486,6 +537,33 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </SettingsRow>
           </SettingsGroup>
           <UsageGroups />
+          {/* aaa: 실기 입력 사건 기록(inputTrace.ts, plan §8.80). 참고에는 이런 진단이 없어 목록이 아닌 설정 맨 끝에 둔다 */}
+          <SettingsGroup title="진단">
+            <SettingsRow
+              label="입력 기록"
+              description={
+                <>
+                  {trace.on
+                    ? `${trace.count}개 모았습니다. 문제를 재현한 뒤 보내면 host 상태 폴더 diag/에 남습니다.`
+                    : "실기 키보드·한글 입력 문제를 볼 때 켭니다. 터미널 입력 사건과 입력칸 상태를 모읍니다."}
+                  {trace.msg && (
+                    <span className="settings-status" role="status" data-testid="trace-msg">
+                      {trace.msg}
+                    </span>
+                  )}
+                </>
+              }
+            >
+              <span className="settings-actions">
+                {trace.on && (
+                  <button type="button" data-testid="trace-send" disabled={trace.count === 0} onClick={() => void trace.send()}>
+                    보내기
+                  </button>
+                )}
+                <Toggle label="입력 기록" checked={trace.on} onChange={setTrace} />
+              </span>
+            </SettingsRow>
+          </SettingsGroup>
         </div>
       </section>
     </div>,

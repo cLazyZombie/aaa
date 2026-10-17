@@ -25,7 +25,7 @@ pub(crate) struct ViewCap {
     pub until: Instant,
 }
 
-fn manifest_path(dir: &Path, id: &str) -> PathBuf {
+pub(crate) fn manifest_path(dir: &Path, id: &str) -> PathBuf {
     dir.join("threads").join(format!("{id}.files.json"))
 }
 

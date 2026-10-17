@@ -1018,10 +1018,25 @@ export function TermView({
         all.set(body, data.length);
         term.write(all, () => {
           otherKeysRef.current = keys;
-          term.scrollToLine(top + lines);
-          cover?.remove();
-          trace("history-applied", { lines, more });
-          done();
+          const want = top + lines;
+          term.scrollToLine(want);
+          // 덮개는 새 버퍼를 그린 뒤에 뗀다. write 콜백은 읽기가 끝난 때이고, 줄은 다음 frame에 그린다(xterm RenderService
+          // RenderDebouncer → _renderRows → onRender). 그 전에 떼면 reset한 빈 화면이 한 frame 보인다(t-0327 측정: 25번 중 10번).
+          // 참고도 그린 뒤 시점을 onRender로 잡는다(herdr-web-ui TerminalViewportTools.tsx 216줄 `terminal.onRender(paintHits)`).
+          // 그 그림이 보던 줄 자리여야 한다: viewport 요소의 scroll 사건(xterm Viewport._handleScroll)이 그 사이 자리를 옮겼으면
+          // 다시 맞추고 다음 그림을 기다린다(버퍼 끝을 넘는 자리는 끝으로 본다). 붙잡은 출력은 그 뒤에 쓴다.
+          const drawn = term.onRender(() => {
+            const b = term.buffer.active;
+            const at = Math.min(want, b.baseY);
+            if (b.viewportY !== at) {
+              term.scrollToLine(at);
+              return;
+            }
+            drawn.dispose();
+            cover?.remove();
+            trace("history-applied", { lines, more });
+            done();
+          });
         });
       });
     };

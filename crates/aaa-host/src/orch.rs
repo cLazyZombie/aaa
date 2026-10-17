@@ -793,20 +793,23 @@ impl Host {
         let (p, t) = (project.to_string(), id.to_string());
         tokio::spawn(async move {
             let _guard = me.collect_lock.lock().await;
-            if let Err(e) = me.collect(&p, &t).await {
+            if let Err(e) = me.collect(&p, &t, false).await {
                 tracing::warn!(thread = %t, "보고 사본 실패: {}", e.message);
             }
         });
     }
 
     /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash를 바꾸지 않는다(다음 변화·정리 때 다시 한다).
-    async fn collect(self: &Arc<Self>, project: &str, id: &str) -> Result<(), ErrorBody> {
+    /// `last`(resolve의 마지막 사본)는 보고가 그대로여도 library를 다시 받는다. 보고 뒤에 바뀐 결과물이 옛 사본으로
+    /// 남지 않게 한다(herdr-projects threads.rs `final_copy`가 늘 `copy_home_*`로 library까지 다시 복사하는 것과 같다).
+    async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         let rec = self.load(project, id)?;
         let dir = self.project_dir(project)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
         // Ok(None): 이미 받은 보고와 같다
-        type Got = Option<(String, Vec<String>, String, Vec<u8>)>;
+        // (보고 hash, 건너뛴 것, 사본 상태, 보고, library가 앞 사본과 달라졌나)
+        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool)>;
         let result: Result<Got, ErrorBody> = async {
             let snap = match conn
                 .request(AgentRequest::ReportCollect {
@@ -818,7 +821,7 @@ impl Host {
                 AgentResponse::Report(s) => s,
                 other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
             };
-            if Some(&snap.hash) == rec.report_hash.as_ref() && rec.copy.as_deref() != Some("failed") {
+            if !last && Some(&snap.hash) == rec.report_hash.as_ref() && rec.copy.as_deref() != Some("failed") {
                 return Ok(None);
             }
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
@@ -863,19 +866,36 @@ impl Host {
                 return Err(e);
             }
             let dest = lib_root.join(id);
+            let old_manifest = std::fs::read(crate::library::manifest_path(&dir, id)).ok();
+            let same_files = same_tree(&tmp, &dest);
             if dest.exists() {
                 std::fs::remove_dir_all(&dest).map_err(internal)?;
             }
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
+            let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
-            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0)))
+            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed)))
         }
         .await;
         match result {
             Ok(None) => Ok(()),
-            Ok(Some((hash, skipped, copy, report))) => {
+            Ok(Some((hash, skipped, copy, report, changed))) => {
+                // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
+                // library가 앞 사본과 달라졌을 때만 알린다
+                if rec.report_hash.as_ref() == Some(&hash) && rec.copy.as_deref() != Some("failed") {
+                    let rec = self.update_rec(project, id, |r| r.copy = Some(copy.clone()))?;
+                    if !changed {
+                        return Ok(());
+                    }
+                    let mut detail = format!("마지막 사본 {copy}");
+                    if !skipped.is_empty() {
+                        detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                    }
+                    self.flow(&rec, "library_copied", Some(format!("library/{id}")), detail);
+                    return Ok(());
+                }
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
@@ -935,7 +955,7 @@ impl Host {
             );
             if has_report {
                 let _guard = self.collect_lock.lock().await;
-                self.collect(project, id)
+                self.collect(project, id, true)
                     .await
                     .map_err(|e| bad(format!("마지막 사본이 실패해 resolve하지 않는다: {}", e.message)))?;
             }
@@ -1007,6 +1027,30 @@ impl Host {
                 }
             }
         });
+    }
+}
+
+/// 두 폴더가 같은 상대 경로에 같은 바이트의 파일을 가졌나(library 사본이 바뀌었는지 볼 때). 없는 폴더는 빈 폴더와 다르다.
+fn same_tree(a: &Path, b: &Path) -> bool {
+    fn files(root: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).ok()? {
+                let p = e.ok()?.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    out.push((p.strip_prefix(root).ok()?.to_path_buf(), std::fs::read(&p).ok()?));
+                }
+            }
+        }
+        out.sort();
+        Some(out)
+    }
+    match (files(a), files(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
     }
 }
 
