@@ -393,6 +393,7 @@ const softKeyboard = (page, visible) =>
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
 // line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
+// serviceWorkers: "block"이면 service worker 없이 연다(그 worker가 맡은 요청은 ctx.route를 거치지 않는다, plan §8.104)
 // wsRoute·route: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로채고, 글꼴은 연결 화면에서 이미 받는다)
 /** 설정 창을 열고 그 쪽으로 간다(herdr-web-ui SettingsDialog: 넓은 창은 왼쪽 목록 옆에 쪽, 휴대폰은 목록에서 쪽으로) */
 async function openSettings(p, pageName) {
@@ -404,7 +405,7 @@ async function openSettings(p, pageName) {
   return dialog;
 }
 
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route } = {}) {
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -412,6 +413,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
     ...(userAgent ? { userAgent } : {}),
     ...(colorScheme ? { colorScheme } : {}),
     ...(deviceScaleFactor ? { deviceScaleFactor } : {}),
+    ...(serviceWorkers ? { serviceWorkers } : {}),
   });
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   if (init) await ctx.addInitScript(init);
