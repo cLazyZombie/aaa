@@ -90,7 +90,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 6. import: `~/.local/bin/aaa migrate import --inventory <밖의 폴더>/final/inventory.json --to-project <p> --library --out <밖의 폴더>/final`. 요약에서 실패 0·바뀜 0을 본다(G1).
 7. ✋ aaa host를 다시 올린다: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.aaa.host.plist`. `aaa thread list -p <p>`·`aaa context <p>`로 본다.
 8. routine을 하나씩 켠다(`enabled = true`). 명령 routine은 `aaa routine approve`로 다시 승인한다.
-9. ✋ coordinator를 aaa 프로젝트 폴더로 옮긴다(사용자 승인): 0.2 coordinator를 `/exit`한 뒤 `aaa pane run --cwd ~/.aaa/projects/<p> -- claude ...`.
+9. ✋ coordinator를 aaa 프로젝트 폴더로 옮긴다(사용자 승인): 0.2 coordinator를 `/exit`한 뒤 `aaa tab create --cwd ~/.aaa/projects/<p> -- claude ...`.
 10. 0.2·herdr 설치는 검증 기간 동안 지우지 않는다(§15 5).
 
 ## 4. rollback

@@ -121,7 +121,7 @@ aaa host / aaa agent                      역할 실행(보통 OS 감독자가 �
 aaa machine enroll --open 10m            host에서 등록 창 열기
 aaa agent enroll <host:port>             agent 머신에서 등록
 aaa session attach [--machine M] <name>  TUI front
-aaa pane run|read|send                   셸 문자열과 구조화된 process start(argv)는 분리
+aaa pane run|send-text|send-keys|read|wait-output   herdr 0.9.5 이름(§8.75). 새 pane은 aaa tab create·pane split
 aaa thread start --machine M --profile P --task-file F
 aaa thread message <id> --queue|--interrupt --text-file F
 aaa question list / aaa question answer <id> <선택지>
@@ -279,7 +279,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
     - 크기는 「쓰는 중인」 front만 건다: 지금 쓰는 화면이거나 아무도 쓰지 않을 때, focus를 다시 얻었을 때, 입력했을 때. 보이지 않거나 focus가 없는 front는 걸지 않는다.
     - 한 번 보내는 CLI(`pane resize`·`pane attach`)는 지금 쓰는 화면이 되지 않는다. `pane resize`는 아무도 쓰지 않을 때만 된다.
     - **한 front 연결에서 pane을 바꾸는 요청(입력·전송·크기·가져오기·놓기·종료)은 받은 순서대로 처리한다.** TUI는 키마다 응답을 기다리지 않고 보낸다. 그래서 host가 동시에 처리하면 키 순서가 뒤바뀌었다(M1-2 CI에서 발견). 조회 요청은 동시에 처리한다.
-    - **한 번 보내는 API 입력(`pane send`)은 lease 대상이 아니다.** coordinator·스크립트의 전송이 사람의 attach에 막히지 않게 하려는 것이다. 감사 기록에는 남는다. M1-3 메시지 API(§8.5)와 질문 응답(§8.4)은 이 위에서 자기 규칙(interrupt·queue, generation·lease 재확인)을 더한다.
+    - **한 번 보내는 API 입력(`pane run`·`pane send-text`·`pane send-keys`)은 lease 대상이 아니다.** coordinator·스크립트의 전송이 사람의 attach에 막히지 않게 하려는 것이다. 감사 기록에는 남는다. M1-3 메시지 API(§8.5)와 질문 응답(§8.4)은 이 위에서 자기 규칙(interrupt·queue, generation·lease 재확인)을 더한다.
     - M1-1에서는 웹이 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize했다. M1-2부터는 그것도 lease 보유자만 한다. 10-17부터 웹도 TUI와 같이 자동으로 맞추고(§8.30), 같은 날 명시적 가져오기를 없앴다(§8.33).
   - 보기(observe) front는 입력도 resize도 할 수 없다.
   - 느린 front는 bounded queue가 차면 snapshot으로 재동기화하며, 전체 agent를 무기한 backpressure하지 않는다.
@@ -619,7 +619,7 @@ host 프로젝트 폴더 구성:
 - 채택된 개선의 구현은 coordinator가 정한다. 평가자 자신의 worktree에서 고쳐 일반 착지 절차를 밟게 할 수도 있고(t-0250 방식), 별도 thread를 시작할 수도 있다.
 
 **금지.**
-- 평가자는 다른 agent에 직접 지시하지 않는다. 평가자 세션의 token으로는 다른 thread에 대한 `thread message`·`thread start`·`question answer`·`pane send`가 거부된다(Front API가 role로 판정).
+- 평가자는 다른 agent에 직접 지시하지 않는다. 평가자 세션의 token으로는 다른 thread에 대한 `thread message`·`thread start`·`question answer`·`pane run`·`pane send-text`·`pane send-keys`가 거부된다(Front API가 role로 판정).
 - 평가자는 사건·보고·로그를 읽고, 자기 작업 폴더와 평가 기록만 쓴다.
 
 **단계.** MVP 필수는 아니다. 그래도 막히지 않게 아래는 M1-3에 넣는다.
@@ -835,7 +835,7 @@ host 프로젝트 폴더 구성:
   - `-c notify=…`는 aaa가 띄운 세션에서만 사용자 `~/.codex/config.toml`의 `notify`를 덮는다. 그래서 그 세션에서는 herdr-projects 쪽 notify가 불리지 않는다(의도한 분리다). 다른 Codex 실행은 그대로다.
   - `-c`를 주면 Codex가 공유 background server 없이(embedded) 돈다는 경고를 한 번 낸다. aaa는 daemon 없는 실행을 원하므로 그대로 둔다.
   - 그림: 웹으로 붙여 넣은 경로가 `[Image #1]`이 되고, 보내자 그림 색을 답했다.
-  - **글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(제출되지 않는다).** 웹 입력 막대 「보내기」와 `aaa pane send --text … --enter`가 이렇게 보내고 있었다. 글을 보낸 뒤 300ms 뒤에 Enter를 따로 보내게 고쳤다(host의 brief·메시지 전달은 처음부터 이렇게 했다). 웹 E2E에 이 동작을 흉내 내는 가짜 입력창을 두었다.
+  - **글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(제출되지 않는다).** 웹 입력 막대 「보내기」와 `aaa pane send --text … --enter`가 이렇게 보내고 있었다. 글을 보낸 뒤 300ms 뒤에 Enter를 따로 보내게 고쳤다(host의 brief·메시지 전달은 처음부터 이렇게 했다). 웹 E2E에 이 동작을 흉내 내는 가짜 입력창을 두었다. (CLI는 §8.75에서 herdr `pane run`·`send-text`·`send-keys`로 바뀌었다.)
 - **운영 감독자 설치(결정 14):** `aaa service show|install|uninstall --role host|agent`. 사용자 LaunchAgent(`~/Library/LaunchAgents/dev.aaa.<role>.plist`)가 `aaa-launcher <aaa> <role>`을 띄운다(RunAtLoad·KeepAlive, Aqua 세션, `ProcessType=Interactive`). launchd 기본 PATH로는 `claude`·`codex`를 못 찾으므로 설치하는 셸의 `PATH`·`LANG`을 plist에 적는다. 설치·해제는 launchd를 바꾸므로 사람이 터미널에서 `yes`를 입력해야 하고, aaa 세션 안에서는 거부한다. 순서와 확인은 [운영 설치 점검표](install-runbook.md)다. 이전 SMAppService(`aaa.app`) 경로(`plan`·`register`)는 보류로 남긴다.
 - **새 프로젝트 AGENTS.md:** coordinator 안내(매 턴 `aaa context`, thread 시작 규칙, TASKS.md 규칙, 결정·병합 명령)를 쓴다. 있는 파일은 덮지 않는다.
 
@@ -1787,6 +1787,31 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane, `o` 질문 pane, `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
   - 다른 TUI 시험도 새 키로 바꿨다(`q` 나가기, `v` 나누기, `w` 탐색과 `↑↓`, `b` 접기, 재개는 CLI).
   - harness의 기다림은 시간이 아니라 사건이다: 화면은 bytes가 올 때마다 깨우고(Condvar), host 상태는 Front 연결의 Workspace·State 사건을 받는다. `cmd`는 PREFIX 막대가 보인 뒤 명령 키를 보낸다.
+### 8.75 CLI 이름·출력을 herdr 0.9.5에 맞춘다: pane·tab·workspace·completion(10-18, 차이 목록 4장 F)
+
+- **이름(herdr `src/cli/pane.rs`·`tab.rs`·`workspace.rs`·`completion.rs`).** 옛 이름(`pane send`·`ws show|tab|split|add|close`·`pane run --machine`)은 남기지 않는다(herdr에 별칭이 없다). 저장소 안에서 쓰던 곳(cargo 시험·웹 E2E·showcase·README·runbook·평가자 안내)을 모두 바꿨다.
+  - `pane run <pane> <글…>`: 이미 있는 pane에 글 + Enter(herdr `pane_run` → `PaneSendInput{keys:["Enter"]}`). 새 pane은 `tab create`·`pane split`·`workspace create`로 띄운다.
+  - `pane send-text <pane> <글…>`(그대로), `pane send-keys <pane> <키…>`(키 이름은 herdr `parse_api_key`·`parse_key_combo`, src/config/keybinds.rs). 여러 인자는 빈칸으로 잇는다(herdr와 같다: 뒤 인자를 모두 글로 받으므로 `--json`은 명령 앞에 쓴다).
+  - `pane read --source visible|recent|recent-unwrapped --lines N --format text|ansi`: recent 범위는 herdr `ghostty_recent_read_range`(src/pane/terminal.rs) — 마지막 글 줄과 커서 줄 중 아래쪽까지, 기본 80줄·최대 1000줄. 출력은 글 그대로(`--json`이면 JSON).
+  - `pane wait-output --match|--regex --source --lines --timeout`(herdr src/api/wait.rs, `match_output` src/api/subscriptions.rs): 맞은 첫 줄과 읽은 글을 준다. 시한이 지나면 `timeout` 오류.
+  - `pane get`·`pane current [--pane|--current]`(`AAA_SESSION_ID`, herdr `HERDR_PANE_ID`)·`pane split [--pane|--current] --direction right|down --ratio`·`pane resize --direction --amount`(herdr `resize_focused` src/layout.rs: 그쪽 가장자리 나눔, 없으면 반대쪽, 기본 0.05·최대 0.5, 비율 0.1~0.9)·`pane move --new-tab`·`pane close`.
+  - `tab list|create|get|rename|close`, `workspace list|create|get|rename|close`, `completion bash|zsh|fish|elvish|powershell`(clap 정의에서 만든다. zsh는 herdr `space_separated_zsh_long_options`처럼 `--opt 값` 꼴로 고친다).
+- **출력(D12 참고대로).** `pane`·`tab`·`workspace` 명령은 늘 JSON 한 줄(herdr src/cli.rs:745-753). 실패하면 표준 출력은 비우고 stderr에 `{"error":{"code","message"}}` 한 줄, 종료 1. 사용법 오류는 종료 2(clap, herdr usage도 2). 다른 명령은 전역 `--json`일 때만 JSON이다. 모든 명령에서 host가 거부한 요청은 종료 1(전에는 3), 오류는 stderr, JSON은 한 줄(전에는 들여 쓴 여러 줄)이다.
+- **입력 인코딩(herdr src/app/api_helpers.rs `encode_api_input`·`encode_api_keys`).**
+  - `pane run`은 프로그램이 bracketed paste를 켰으면 글을 `ESC[200~…ESC[201~`로 감싸고 Enter를 이어 **한 번에** 쓴다. macOS·Linux의 Codex는 bracketed paste를 켜므로 붙여넣기 뒤 Enter가 제출이 된다(Windows Codex는 bracketed paste를 받지 못해 herdr도 `pane run`으로는 제출되지 않는다, src/app/api/agents.rs 주석. Windows에서는 host의 메시지 전달을 쓴다). §8.21(「글 뒤 300ms Enter」)의 CLI 부분은 이것으로 바뀐다. bracketed paste를 켜지 않은 입력창에 글과 Enter를 따로 보내려면 `send-text` 다음 `send-keys enter`를 쓴다(웹 E2E 가짜 입력창이 이것을 본다). host의 brief·메시지 전달과 웹 입력 막대는 그대로 300ms 뒤 Enter다(herdr `agent prompt`의 `AGENT_PROMPT_SUBMIT_DELAY`, src/app/api/agents.rs와 같다).
+  - `send-keys`는 모두 해석한 뒤 키마다 따로 쓴다. 모르는 키가 하나라도 있으면 아무것도 보내지 않는다(herdr `handle_pane_send_keys`). 커서 키는 DECCKM이면 SS3, modifyOtherKeys 2면 `CSI 27;m;k~`(herdr `encode_terminal_key`).
+  - 터미널 모드(bracketed paste·DECCKM·modifyOtherKeys)와 읽기는 host가 pane마다 가진 화면 사본(mirror VT)에서 본다. session IPC 1.0을 바꾸지 않아 몇 주 도는 옛 session host와 그대로 맞는다.
+- **herdr와 다르게 둔 것(이유).**
+  - `wait-output`은 정해진 간격으로 다시 읽지 않고(herdr `CONNECTION_POLL_INTERVAL`) 사본에 출력이 들어올 때(pane 사건)마다 본다. 결과는 같고 기다림이 사건으로 끝난다(시험도 이것으로 기다린다).
+  - `tab create`·`pane split`·`workspace create`는 `--machine`(띄울 머신)과 `-- <명령>`을, `tab create`는 `--cols`·`--rows`(화면이 붙기 전 처음 PTY 크기, 옛 `pane run --cols/--rows` 자리)를 더 받는다. 여러 머신을 다루는 aaa의 확장이다.
+  - workspace는 host가 저장하는 이름 있는 layout이다(§4). herdr는 서버 하나에 workspace가 여럿이고 「지금 focus」를 서버가 갖지만, aaa는 focus를 front마다 갖는다. 그래서 `pane focus|zoom|neighbor|edges|layout`·`tab focus`·`workspace focus`는 옮기지 않았다(TUI가 화면에서 한다). `pane process-info`는 session host만 아는 정보라 session IPC를 바꿔야 해서 두지 않았다. `pane rename`·`pane swap`·`pane input`(마우스)·`report-*`는 이번 차이 목록 F 줄에 없다(harness 보고는 `aaa hook`).
+  - `tab close`·`workspace close`는 herdr처럼 그 안 pane을 끝내고 기록에서 지운다. 다만 역할 pane(thread·coordinator·평가자)은 자리만 뺀다(수명은 thread 명령이 정한다). 다른 workspace에도 있는 pane(TUI 목록에서 연 pane)도 자리만 뺀다.
+  - `pane close`는 끝내기를 보내고, 끝났다는 상태 사건이 온 뒤 기록을 지운다. agent가 끊겨 있으면 끝낼 수 없어 거부한다.
+  - PTY 크기 바꾸기(시험·진단)는 숨은 `pane pty-size <pane> <cols> <rows>`로 옮겼다(`pane resize`는 herdr 뜻인 layout 비율). 이 CLI는 새 크기가 host에 닿은 뒤(상태 사건) 돌아온다. 보통은 붙은 화면이 크기를 정한다(§8.33).
+  - 사본이 아직 없으면(붙자마자) `pane read`는 agent의 보이는 화면을 주고 `source: visible`이라고 밝힌다.
+  - aaa에만 있는 `pane kill|resume|forget|attach|chat`은 그대로 둔다. `pane read --source detection`은 화면 감지(D8)가 들어올 때 함께 둔다.
+- **계약.** Front API 1.4(새 요청 `pane_read_text`·`pane_send_text`·`pane_send_keys`·`pane_submit`·`pane_wait_output`·`pane_get`·`pane_close`·`workspaces`·`workspace_close`·`workspace_rename`, layout 변경 `resize`·`rename_tab`·`close_tab`·`move_to_new_tab`, `split.ratio`, `new_tab.cols/rows`). 옛 요청(`pane_run` 띄우기·`pane_send` bytes·`pane_resize` PTY)은 웹·TUI가 그대로 쓴다. 새 CLI가 옛 host에 보내면 모르는 요청 오류로 끝난다(이름이 같은 요청이 뜻을 바꾸지 않는다).
+- **시험.** m12 `herdr_pane_input_read_and_wait`: 받은 bytes를 16진수로 보이는 고정 프로그램으로 `pane run` 감싸기, `send-text` 그대로, `send-keys` DECCKM·모르는 키면 아무것도 안 보냄, `read` 글·JSON·recent 범위, `wait-output` 정규식·시한(설정 값), stderr 오류 JSON·종료 1·사용법 종료 2. m12 `herdr_tab_workspace_and_layout`: split 비율, resize 가장자리·한계, move --new-tab, tab list·get·rename·close(기록 지움), workspace list·rename(겹치는 이름 거부)·get·close, completion zsh·bash. VT 유닛: recent 범위·unwrapped·키 인코딩·모드. 기다림은 모두 출력·상태 사건으로 끝난다.
 
 ### 8.74 M4 이전 도구: inventory·import·shadow(10-18, plan §15)
 

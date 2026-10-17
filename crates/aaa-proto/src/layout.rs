@@ -1,6 +1,6 @@
 //! workspace layout 트리 조작(순수 함수). 정본은 host가 갖고 TUI는 받은 트리를 칸으로 나눠 그리기만 한다.
 
-use crate::msg::{LayoutNode, SplitDir, Tab, Workspace};
+use crate::msg::{LayoutNode, PaneDirection, SplitDir, Tab, Workspace};
 
 pub fn leaves(node: &LayoutNode) -> Vec<String> {
     let mut out = Vec::new();
@@ -35,6 +35,20 @@ pub fn split(node: &mut LayoutNode, target: &str, new: &str, dir: SplitDir) -> b
     }
 }
 
+/// `new`가 b 쪽 잎인 나눔(방금 `split`으로 만든 것)의 비율을 정한다
+pub fn set_split_ratio(node: &mut LayoutNode, new: &str, value: u16) -> bool {
+    match node {
+        LayoutNode::Pane { .. } => false,
+        LayoutNode::Split { ratio, a, b, .. } => {
+            if matches!(&**b, LayoutNode::Pane { pane } if pane == new) {
+                *ratio = value;
+                return true;
+            }
+            set_split_ratio(a, new, value) || set_split_ratio(b, new, value)
+        }
+    }
+}
+
 /// pane을 뺀다. 나뉜 자리는 남은 쪽이 차지한다. 트리가 비면 None.
 pub fn remove(node: LayoutNode, target: &str) -> Option<LayoutNode> {
     match node {
@@ -61,6 +75,55 @@ pub fn replace(node: &mut LayoutNode, old: &str, new: &str) -> bool {
             x || y
         }
     }
+}
+
+/// pane 가장자리를 `dir` 쪽으로 옮긴다(herdr `resize_focused`, src/layout.rs). 그쪽 가장자리의 가장 가까운 나눔(pane이 a쪽이면
+/// 오른쪽·아래, b쪽이면 왼쪽·위 가장자리)을 고르고, 없으면 반대쪽 가장자리의 가장 가까운 나눔을 고른다. 오른쪽·아래면 비율을
+/// `amount`(천분율)만큼 늘리고 왼쪽·위면 줄인다. 비율은 100..=900(herdr 0.1..0.9)으로 묶는다. 바뀌었으면 true.
+pub fn resize(node: &mut LayoutNode, target: &str, dir: PaneDirection, amount: u16) -> bool {
+    // 뿌리에서 target까지 지나는 나눔: (나눔 방향, target이 b쪽인가)
+    fn path(n: &LayoutNode, target: &str, out: &mut Vec<(SplitDir, bool)>) -> bool {
+        match n {
+            LayoutNode::Pane { pane } => pane == target,
+            LayoutNode::Split { dir, a, b, .. } => {
+                out.push((*dir, false));
+                if path(a, target, out) {
+                    return true;
+                }
+                out.last_mut().unwrap().1 = true;
+                if path(b, target, out) {
+                    return true;
+                }
+                out.pop();
+                false
+            }
+        }
+    }
+    let mut steps = Vec::new();
+    if !path(node, target, &mut steps) {
+        return false;
+    }
+    let want = match dir {
+        PaneDirection::Left | PaneDirection::Right => SplitDir::Horizontal,
+        PaneDirection::Up | PaneDirection::Down => SplitDir::Vertical,
+    };
+    let grows = matches!(dir, PaneDirection::Right | PaneDirection::Down);
+    // 오른쪽·아래 가장자리 나눔은 target이 a쪽인 것, 왼쪽·위는 b쪽인 것
+    let edge = |in_b: bool, toward_grow: bool| in_b != toward_grow;
+    let pick = |toward_grow: bool| {
+        steps.iter().enumerate().rev().find(|(_, (d, in_b))| *d == want && edge(*in_b, toward_grow)).map(|(i, _)| i)
+    };
+    let Some(depth) = pick(grows).or_else(|| pick(!grows)) else { return false };
+    let mut n = node;
+    for (_, in_b) in &steps[..depth] {
+        let LayoutNode::Split { a, b, .. } = n else { return false };
+        n = if *in_b { b } else { a };
+    }
+    let LayoutNode::Split { ratio, .. } = n else { return false };
+    let before = *ratio;
+    let next = if grows { i32::from(before) + i32::from(amount) } else { i32::from(before) - i32::from(amount) };
+    *ratio = next.clamp(100, 900) as u16;
+    *ratio != before
 }
 
 /// workspace의 모든 탭에서 pane을 뺀다. 빈 탭은 없앤다. 바뀌었으면 true.
@@ -188,6 +251,44 @@ mod tests {
         assert!(!ws_remove(&mut ws, "zz"));
         assert!(ws_replace(&mut ws, "b", "b2"));
         assert!(ws_contains(&ws, "b2"));
+    }
+
+    #[test]
+    fn resize_moves_the_nearest_edge_like_herdr() {
+        // a | (b / c)
+        let mut root = p("a");
+        split(&mut root, "a", "b", SplitDir::Horizontal);
+        split(&mut root, "b", "c", SplitDir::Vertical);
+        let ratio = |n: &LayoutNode| match n {
+            LayoutNode::Split { ratio, b, .. } => (
+                *ratio,
+                match &**b {
+                    LayoutNode::Split { ratio, .. } => *ratio,
+                    _ => 0,
+                },
+            ),
+            _ => (0, 0),
+        };
+        // a 오른쪽 가장자리를 오른쪽으로: 바깥 나눔 +50
+        assert!(resize(&mut root, "a", PaneDirection::Right, 50));
+        assert_eq!(ratio(&root), (550, 500));
+        // a 왼쪽 가장자리는 없다: 반대쪽(오른쪽) 나눔을 왼쪽으로 옮긴다(줄어든다)
+        assert!(resize(&mut root, "a", PaneDirection::Left, 50));
+        assert_eq!(ratio(&root), (500, 500));
+        // b 아래 가장자리를 아래로: 안쪽 나눔 +
+        assert!(resize(&mut root, "b", PaneDirection::Down, 100));
+        assert_eq!(ratio(&root), (500, 600));
+        // c 위 가장자리를 위로: 같은 안쪽 나눔 -
+        assert!(resize(&mut root, "c", PaneDirection::Up, 100));
+        assert_eq!(ratio(&root), (500, 500));
+        // 비율은 100..=900
+        assert!(resize(&mut root, "c", PaneDirection::Left, 500));
+        assert_eq!(ratio(&root), (100, 500));
+        assert!(!resize(&mut root, "c", PaneDirection::Left, 500));
+        // 그 방향 나눔이 없거나 pane이 없으면 그대로
+        let mut one = p("a");
+        assert!(!resize(&mut one, "a", PaneDirection::Right, 50));
+        assert!(!resize(&mut root, "zz", PaneDirection::Right, 50));
     }
 
     #[test]

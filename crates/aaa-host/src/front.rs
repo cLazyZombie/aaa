@@ -152,6 +152,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
         })
     };
     let mut watches: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut waits: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
             let Incoming::Control(b) = m else { continue };
@@ -176,8 +177,20 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     }
                     tx.json(&FrontMsg::Res { id, result: Ok::<_, ErrorBody>(FrontResponse::Done).into() }).await?;
                 }
+                // 출력 기다리기는 연결이 끝나면 멈춘다(herdr `should_stop_connection`)
+                body @ FrontRequest::PaneWaitOutput { .. } => {
+                    let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
+                    waits.retain(|t| !t.is_finished());
+                    waits.push(tokio::spawn(async move {
+                        let result = host.call_from(role, &actor, Some(&front), body).await;
+                        let _ = tx.json(&FrontMsg::Res { id, result: result.into() }).await;
+                    }));
+                }
                 body @ (FrontRequest::PaneInput { .. }
                 | FrontRequest::PaneSend { .. }
+                | FrontRequest::PaneSendText { .. }
+                | FrontRequest::PaneSendKeys { .. }
+                | FrontRequest::PaneSubmit { .. }
                 | FrontRequest::PaneResize { .. }
                 | FrontRequest::PaneTake { .. }
                 | FrontRequest::PaneAttach { .. }
@@ -202,6 +215,9 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     ordered_task.abort();
     flow_task.abort();
     for (_, t) in watches {
+        t.abort();
+    }
+    for t in waits {
         t.abort();
     }
     host.front_gone(&front.id);
