@@ -287,6 +287,17 @@ impl Db {
         Ok(())
     }
 
+    /// 옮겨 온 기록을 정해진 ID로 넣는다(`aaa migrate import`). 같은 ID가 있으면 넣지 않고 false.
+    pub fn thread_import(&self, project: &str, id: &str, status: &str, data: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        let n = c.execute(
+            "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,?3,?4,?5)
+             ON CONFLICT(project, id) DO NOTHING",
+            params![project, id, status, data, aaa_common::util::now_ms() as i64],
+        )?;
+        Ok(n == 1)
+    }
+
     pub fn thread_get(&self, project: &str, id: &str) -> Result<Option<String>> {
         let c = self.conn.lock().unwrap();
         Ok(c.query_row("SELECT data FROM threads WHERE project=?1 AND id=?2", [project, id], |r| r.get(0))

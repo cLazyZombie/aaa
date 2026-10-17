@@ -166,6 +166,11 @@ enum Cmd {
         #[arg(long)]
         follow: bool,
     },
+    /// 지금 운영(herdr·herdr-projects 0.2)에서 옮기기: inventory·import·shadow 비교(plan §15, docs/migration.md)
+    Migrate {
+        #[command(subcommand)]
+        cmd: crate::migrate::MigrateCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -954,6 +959,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             },
         ),
         Cmd::Events { project, after, follow } => events_cmd(json, project, after, follow),
+        Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),
         Cmd::Hook { agent, payload } => {
             // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 출력 없음
             let body = match payload {
