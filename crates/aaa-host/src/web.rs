@@ -59,6 +59,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/push/unsubscribe", post(push_unsubscribe))
         .route("/api/v1/push/test", post(push_test))
         .route("/api/v1/diag/input", post(diag_input))
+        .route("/api/v1/usage", get(usage_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/v/{cap}/{*path}", get(view_file))
         .fallback(get(static_file))
@@ -313,6 +314,27 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
         }
     }
     Json(Outcome::Ok(serde_json::json!({ "sent": sent, "failed": failed }))).into_response()
+}
+
+#[derive(Deserialize)]
+struct UsageQuery {
+    refresh: Option<String>,
+}
+
+/// 이 host 머신의 CLI가 로그인한 구독의 한도(`usage.rs`). 보기 권한(reader) 기기도 본다(참고: 들어온 client 누구나).
+/// 계정 이름(email)이 들어 있으니 저장하지 않게 한다.
+async fn usage_report(
+    State(host): State<Arc<Host>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<UsageQuery>,
+) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let report = host.usage.report(q.refresh.as_deref() == Some("1")).await;
+    let mut res = Json(Outcome::Ok(report)).into_response();
+    res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
 }
 
 /// 입력 사건 기록 하나의 상한과 남기는 개수

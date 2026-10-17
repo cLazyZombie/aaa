@@ -114,6 +114,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "hex",
+ "httpdate",
  "libc",
  "rand 0.9.5",
  "ring",

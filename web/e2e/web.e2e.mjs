@@ -418,6 +418,51 @@ fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(`${root}/c`, { recursive: true });
 if (shots) fs.mkdirSync(shots, { recursive: true });
 const webPort = await freePort();
+
+// 구독 사용량(host usage.rs): 실험실 집과 가짜 구독 서버. host는 이 집만 읽고 keychain·gh·실제 구독 주소에 닿지 않는다
+// (AAA_USAGE_HOME·AAA_USAGE_ORIGIN 시험 고리). 계정·token은 지어낸 값이다.
+const usageHome = `${root}/usagehome`;
+const b64url = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const fakeJwt = (claims) => `${b64url({ alg: "none" })}.${b64url(claims)}.sig`;
+const inHours = (h) => new Date(Date.now() + h * 3_600_000).toISOString();
+fs.mkdirSync(`${usageHome}/.claude`, { recursive: true });
+fs.mkdirSync(`${usageHome}/.codex`, { recursive: true });
+fs.mkdirSync(`${usageHome}/.local/share/opencode`, { recursive: true });
+fs.writeFileSync(
+  `${usageHome}/.claude/.credentials.json`,
+  JSON.stringify({ claudeAiOauth: { accessToken: "tok-claude", expiresAt: Date.now() + 86_400_000, subscriptionType: "max" } }),
+);
+fs.writeFileSync(`${usageHome}/.claude.json`, JSON.stringify({ oauthAccount: { accountUuid: "acct-1", emailAddress: "me@example.com" } }));
+fs.writeFileSync(
+  `${usageHome}/.codex/auth.json`,
+  JSON.stringify({
+    tokens: {
+      access_token: fakeJwt({
+        exp: Math.floor(Date.now() / 1000) + 86_400,
+        "https://api.openai.com/auth": { chatgpt_plan_type: "pro", chatgpt_user_id: "user-1" },
+        "https://api.openai.com/profile": { email: "me@example.com" },
+      }),
+      account_id: "ws-1",
+    },
+  }),
+);
+fs.writeFileSync(`${usageHome}/.local/share/opencode/auth.json`, JSON.stringify({ "opencode-go": { type: "api", key: "tok-oc" } }));
+const usageHits = new Map();
+const usageRoutes = {
+  "/api/oauth/usage": () => [200, {}, { five_hour: { utilization: 20, resets_at: inHours(3) }, seven_day: { utilization: 95, resets_at: inHours(50) }, seven_day_sonnet: { utilization: 40, resets_at: inHours(50) } }],
+  "/backend-api/wham/usage": () => [200, {}, { plan_type: "pro", rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000, reset_after_seconds: 7200 }, secondary_window: { used_percent: 73, limit_window_seconds: 604800, reset_after_seconds: 300000 } } }],
+  // 늦추라고 한 구독: 처음부터 숫자가 없다. 10분 동안 다시 묻지 않아야 한다
+  "/zen/go/v1/usage": () => [429, { "retry-after": "600" }, {}],
+};
+const usageServer = http.createServer((req, res) => {
+  usageHits.set(req.url, (usageHits.get(req.url) ?? 0) + 1);
+  const [status, headers, body] = usageRoutes[req.url]?.() ?? [404, {}, {}];
+  res.writeHead(status, { "content-type": "application/json", ...headers });
+  res.end(JSON.stringify(body));
+});
+await new Promise((r) => usageServer.listen(0, "127.0.0.1", r));
+env.AAA_USAGE_HOME = usageHome;
+env.AAA_USAGE_ORIGIN = `http://127.0.0.1:${usageServer.address().port}`;
 fs.writeFileSync(
   `${root}/c/host.toml`,
   `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:${webPort}"\n[local_agent]\nmode = "none"\n` +
@@ -898,6 +943,60 @@ try {
     await tp.context().close();
     aaa("pane", "kill", "lineapp");
     await page.getByTestId("pane-t1").click();
+  });
+
+  await step("구독 사용량·설정(herdr-web-ui UsageMeters·SettingsDialog): 목록 아래 톱니와 구독별 칩, 펼치면 한도·초기화까지, 429는 숫자 없이 알림, host는 5분 캐시·Retry-After를 지킴, 설정에서 남은 양·세션·숨기기·순서·입력 방식", async () => {
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    const strip = dp.getByTestId("usage-strip");
+    await strip.waitFor();
+    const chips = () => strip.locator(".usage-chip").evaluateAll((els) => els.map((e) => `${e.dataset.provider} ${e.querySelector(".usage-chip-value").textContent}${e.classList.contains("is-high") ? " high" : ""}${e.classList.contains("has-problem") ? " problem" : ""}`));
+    const bad = [];
+    // 기본: 쓴 양·주간. 80% 넘으면 막힘 색. 늦추라고 한 구독은 숫자 없이 흐리게
+    let got = JSON.stringify(await chips());
+    if (got !== JSON.stringify(["claude 95% high", "codex 73%", "opencode — problem"])) bad.push(`기본 칩 ${got}`);
+    if ((await dp.getByTestId("settings-open").innerText()).trim() !== "설정") bad.push("톱니 「설정」이 없다");
+    // 펼치면 구독마다 한도·초기화까지·계정·plan
+    await strip.click();
+    const pop = dp.locator(".usage-popover");
+    await pop.waitFor();
+    const claude = await pop.getByRole("region", { name: "Claude · me@example.com" }).innerText();
+    for (const want of ["Max", "세션", "20%", "주간", "95%", "주간 · Sonnet", "40%", "뒤 초기화"]) if (!claude.includes(want)) bad.push(`펼친 Claude에 「${want}」가 없다: ${JSON.stringify(claude)}`);
+    const oc = await pop.getByRole("region", { name: "OpenCode" }).innerText();
+    if (!oc.includes("늦추라고 했다")) bad.push(`OpenCode 알림: ${JSON.stringify(oc)}`);
+    // 화면을 여러 번 열었어도 host는 구독마다 한 번만 물었다(5분 캐시, 429는 10분)
+    await dp.reload();
+    await strip.waitFor();
+    await sleep(300);
+    const hits = ["/api/oauth/usage", "/backend-api/wham/usage", "/zen/go/v1/usage"].map((p) => usageHits.get(p) ?? 0);
+    if (JSON.stringify(hits) !== "[1,1,1]") bad.push(`구독에 물은 수 ${JSON.stringify(hits)}`);
+    if (shots) await dp.screenshot({ path: path.join(shots, "usage-popover.png") });
+    // 설정: 남은 양, 세션
+    await dp.getByTestId("settings-open").click();
+    const dlg = dp.getByRole("dialog", { name: "설정" });
+    await dlg.waitFor();
+    await dlg.getByRole("group", { name: "막대가 보이는 것" }).getByRole("button", { name: "남은 양" }).click();
+    await until("남은 양", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 5% high", "codex 27%", "opencode — problem"]));
+    await dlg.getByRole("group", { name: "보이는 한도" }).getByRole("button", { name: "세션" }).click();
+    await until("세션", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 80%", "codex 90%", "opencode — problem"]));
+    // 계정 숨기기와 순서
+    await dlg.getByRole("switch", { name: "OpenCode 보이기" }).click();
+    await dlg.getByRole("button", { name: "Codex · me@example.com 위로" }).click();
+    await until("숨기기·순서", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
+    if (shots) await dp.screenshot({ path: path.join(shots, "settings-dialog.png") });
+    // 데스크톱에서 입력줄 고르기(D1에서 남은 빈 곳)
+    await dlg.getByLabel("입력 방식").selectOption("line");
+    await dp.keyboard.press("Escape");
+    await until("설정 닫힘", async () => (await dp.getByRole("dialog", { name: "설정" }).count()) === 0);
+    await dp.getByTestId("pane-t1").click();
+    await until("입력줄", async () => (await dp.locator(".terminal-input").count()) === 1);
+    // 다시 열어도 이 기기에 남는다. 끄면 막대도 사라진다
+    await dp.reload();
+    await until("남은 설정", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
+    await dp.getByTestId("settings-open").click();
+    await dp.getByRole("switch", { name: "plan 한도 보이기" }).click();
+    await until("막대 사라짐", async () => (await dp.getByTestId("usage-strip").count()) === 0);
+    if (bad.length) throw new Error(bad.join("; "));
+    await dp.context().close();
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
@@ -2235,6 +2334,7 @@ try {
 } finally {
   await browser.close();
   pushServer.close();
+  usageServer.close();
   for (const tag of [...procs.keys()]) await stop(tag);
   killSessionHosts();
   console.log(steps.join("\n"));

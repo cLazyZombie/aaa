@@ -39,6 +39,35 @@ const paths: Record<string, ReactNode> = {
   ),
   plus: <path d="M9 3.5v11M3.5 9h11" />,
   send: <path d="M9 14.5V3.5M4.5 8 9 3.5 13.5 8" />,
+  // 설정(톱니)
+  settings: (
+    <>
+      <circle cx="9" cy="9" r="2.3" />
+      <path d="M9 1.8v2M9 14.2v2M1.8 9h2M14.2 9h2M3.9 3.9l1.4 1.4M12.7 12.7l1.4 1.4M3.9 14.1l1.4-1.4M12.7 5.3l1.4-1.4" />
+      <circle cx="9" cy="9" r="5" />
+    </>
+  ),
+  // 다시 읽기
+  refresh: (
+    <>
+      <path d="M14.5 9a5.5 5.5 0 1 1-1.6-3.9" />
+      <path d="M14.5 3v3.5H11" />
+    </>
+  ),
+  up: <path d="m4.5 11 4.5-4.5 4.5 4.5" />,
+  down: <path d="m4.5 7 4.5 4.5 4.5-4.5" />,
+  eye: (
+    <>
+      <path d="M1.8 9S4.5 4 9 4s7.2 5 7.2 5-2.7 5-7.2 5-7.2-5-7.2-5z" />
+      <circle cx="9" cy="9" r="2" />
+    </>
+  ),
+  "eye-off": (
+    <>
+      <path d="M1.8 9S4.5 4 9 4s7.2 5 7.2 5-2.7 5-7.2 5-7.2-5-7.2-5z" />
+      <path d="M2.5 2.5l13 13" />
+    </>
+  ),
   // 자판: 키 막대의 입력줄 전환(herdr-web-ui는 lucide Keyboard)
   keyboard: (
     <>
