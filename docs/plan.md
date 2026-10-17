@@ -2202,7 +2202,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **설정 「단축키」(문구는 참고 i18n.ko.ts).** 찾기 칸, 줄마다 「기록」(누른 조합을 그대로, 터미널·브라우저도 쓰는 조합은 「그래도 저장」을 묻는다)과 고르기(기본값·끄기·Mod+Shift 키), 「단축키 초기화」. 기기 설정이다(localStorage `aaa:shortcut-overrides`, 참고 SETTING_SCOPE `device`).
 - **다른 곳.** 참고의 「대화 / 터미널 전환」은 모든 pane의 보기를 바꾼다. aaa는 대화 기록이 있는 pane(Claude·Codex)만 대화 보기가 있어 거기서만 바뀐다. 「음성 입력(누르고 있기)」 줄은 aaa에 음성 입력이 없어 보이지 않는다.
 - **잇달아 넘기기에서 찾은 것(참고 `src/lib/terminalDispose.ts`를 옮김).** 단축키로 pane을 빨리 넘기면 page error 「Cannot read properties of undefined (reading 'dimensions')」가 났다(웹 E2E 세 판 중 한 판, 격리 반복 두 판째). stack은 xterm `Viewport.reset`의 `requestAnimationFrame(() => this.syncScrollArea())`였다. snapshot마다 쓰는 RIS(`\x1bc`)로 xterm이 다음 frame에 renderer 크기를 읽기로 하는데, 그 frame 전에 pane이 내려가 `term.dispose()`가 renderer를 치웠다. 참고는 이미 `disposeAfterPendingFrame`(걸어 둔 frame 다음, 그 뒤 task에서 치움, PaneTerminal 1982줄)으로 풀었다. 그대로 옮기고 참고 유닛 시험도 옮겼다(`web/test/terminalDispose.test.mjs`). 웹 E2E 「앱 단축키」는 frame을 잡아 두고 다음 pane이 snapshot을 읽은 것(ACK)을 본 뒤 되돌아와 frame을 놓아, 이 순서를 늘 만든다. 고치기 전 판은 세 번 모두 실패, 고친 판은 다섯 번 모두 통과(격리 사본).
-- **읽기 전에 넘기기(10-18, main 간헐 실패, coordinator·t-0332가 6번 중 1번 재현).** 위 고침 뒤에도 같은 page error가 났다. Chromium을 4배 느리게(`AAA_E2E_THROTTLE=4`) 하면 이 머신에서도 25번 중 2번 났다. stack은 같은 `Viewport.reset`의 frame이었다. 기록을 붙여 보니 순서가 달랐다: 다음 pane이 snapshot을 받은 직전에 다시 넘기면, xterm이 그 snapshot을 아직 읽지 않았다(WriteBuffer는 받은 출력을 setTimeout task에서 읽는다). 치우기를 기다리는 frame이 먼저 돌고, 그다음 task가 RIS를 읽어 reset frame을 걸고, 치우는 task가 그 frame보다 먼저 돌았다. 참고 `disposeAfterPendingFrame`은 xterm이 frame을 *이미* 걸었다고 본다. 참고는 같은 탭 안 pane 전환에서 터미널을 내리지 않아(terminalDispose.ts 머리 설명) 이 경우가 드물지만, aaa는 한 화면에 pane 하나라 넘길 때마다 내린다. 그래서 내릴 때 받은 출력을 xterm이 다 읽은 뒤(`term.write("", …)`의 callback)에 참고의 frame·task 기다림을 시작한다(`Term.tsx` 정리). 앞 기록을 붙이는 중에 붙잡은 출력도 버린다(내린 터미널에 더 쓰지 않는다). 참고 파일은 그대로 둔다. 웹 E2E 「앱 단축키」에 「읽기 전에 넘기기」를 더했다: frame과 timer task를 함께 잡고, 다음 pane이 snapshot을 받은 것만 본 뒤(ACK 없음을 확인) 되돌아와, 잡힌 frame을 먼저 돌리고 task를 놓는다. 고침을 뺀 판은 3번 모두 이 검사에서 실패, 고친 판은 25번 모두 통과(그냥 25/25, 4배 느리게 25/25).
 - **시험.** 웹 유닛 `web/test/roster.test.mjs`(줄 차례: 프로젝트 묶음의 thread, 그다음 pane, thread 줄이 여는 것). 웹 E2E 「앱 단축키」는 새는 키가 보이는 Linux 화면(Ctrl+Shift)에서 본다. macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않아 새도 보이지 않는다(첫 판이 「끈 키는 터미널로」에서 멈춰 알았다). Ctrl+Shift+↓는 목록에서 바로 아래 줄로, ↑는 돌아오고, 그 뒤 친 z만 pane에 간다(새면 `ESC[1;6B`가 먼저 온다), aaa에 없는 Ctrl+Shift+K·F·B·O는 앱이 가져가지 않고 Ctrl+Shift+E는 가져간다, Ctrl+Shift+E로 터미널 focus, Ctrl+Shift+PgUp은 한 화면(줄 수 − 1) 위·PgDn은 맨 아래이고 pane에 아무것도 안 가며 alternate screen에는 `ESC[5~`·`ESC[6~`, 설정에서 「다음 패널」을 끄면 Ctrl+Shift+↓가 pane에 `ESC[1;6B`로 가고, 기록한 Ctrl+Shift+L이 다음 패널이 되며, 초기화하면 저장값이 지워진다. 맥 platform 휴대폰·iPad 화면에서 ⌘⇧,가 설정을 열고, 단축키 줄이 설정 칸 안에 든다. 변형 확인: 터미널 거르기(`isAppShortcut`)를 빼면 xterm도 Shift+PageUp으로 한 화면 굴려 두 화면이 된다(「한 화면 위」 실패). 옮기는 화살표는 거르기가 없어도 새지 않는다: 창 capture 처리기가 고른 pane을 바꾸면 React가 그 처리기 뒤 microtask에서 그 터미널을 내려 xterm이 키를 받지 못한다. 목록에 없는 동작을 켜 두면 Ctrl+Shift+K를 앱이 가져가고, 한 화면을 줄 수만큼 굴리면·방향을 거꾸로 하면 각 검사가 실패한다.
 
 ### 8.95 TUI 마우스를 herdr대로(1): 누르기·휠·끌어 고르기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
@@ -2419,11 +2418,25 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **고르기.** 위·아래(끝에서 멈춤)·Enter, 움직이면 그 줄, 줄을 누르면 그 항목, 밖을 누르거나 Esc면 닫는다. 다른 키는 버린다. 모양은 herdr처럼 폭 = 가장 긴 항목 + 4(14 이상), accent 테두리·`panel_bg`, 고른 줄은 accent 바탕 굵게.
 - **다른 점.** 「오른쪽 누름을 pane에 보내기」는 이 화면에만 둔다(herdr는 서버 pane 상태 `right_click_passthrough`). TUI는 상태를 갖지 않는 front라 host에 두려면 pane 설정 요청이 필요하다. herdr `right_click_passthrough_modifier`(수정키를 누르면 넘김) 설정은 옮기지 않았다. 3d-2에서는 보고 pane에 오른쪽 누름을 늘 넘겼는데, herdr처럼 메뉴가 먼저로 바꿨다.
 - **시험.** 유닛 `menu_like_herdr`(항목·끝에서 멈춤·폭·화면 안으로·고른 줄 색). TUI harness `context_menu_like_herdr`: 탭 메뉴 Esc, 아래·Enter로 탭 이름 창, pane 메뉴에서 움직여 「아래로 나누기」 Enter, 위 pane 메뉴의 자리 바꾸기, 밖 누르기로 닫기, 보고 pane은 메뉴가 먼저이고 「오른쪽 누름을 pane에 보내기」 뒤 `cat -v`가 오른쪽 누름(`ESC [ < 2 ;`)을 받는다.
+### 8.108 보고 표 칸의 한글 낱말·떠날 때 공유 설정 보내기(10-18, QA t-0337 Q9·Q11)
 
-### 8.108 병합을 herdr-projects대로(1): PR 승인은 「병합 중」, 병합되면 ticker가 끝낸다(10-18, D11, 차이 목록 3장 C8·E12·4장 I)
+- **Q9 표 칸.** 휴대폰 보고 표 칸에서 한글이 음절마다 끊겼다(「경/우」). 참고 `ChatView.css`는 칸을 `overflow-wrap: normal`로 두어 「칸은 가장 긴 낱말보다 좁아지지 않고, 자리가 없으면 표가 그 칸 안에서 굴러간다」를 뜻했지만, 한글은 낱말 안 음절 사이에서도 줄을 바꿀 수 있어 그 뜻이 서지 않았다. `.markdown th, .markdown td { word-break: keep-all }`을 `web/src/style.css`에 둔다(옮긴 `herdr/Markdown.css`는 그대로). 시험: 웹 E2E 「thread 보고서·결과물」(`specs/12-threads-push.mjs`)의 휴대폰 폭에서 표 칸의 한글 낱말마다 그려진 줄이 하나인지(Range `getClientRects`). 고침 없이 돌리면 「음절」이 갈려 떨어진다.
+- **Q11 떠날 때 보내기.** 공유 설정은 바뀐 뒤 600ms 멈추면 보낸다(참고 `SEND_AFTER_MS`). 그 안에 탭·앱을 닫으면 값이 사라졌다(참고도 같다). t3code는 떠날 때 미룬 저장을 마저 쓴다(`apps/web/src/uiStateStore.ts` `beforeunload → flush()`). aaa는 iOS에서 믿을 수 없는 `beforeunload` 대신 `pagehide`와 `visibilitychange`(hidden)를 듣고, 기다림을 건너뛰어 `fetch(keepalive)`로 지금 보낸다(`preferencesSync.ts`). 앞 변경이 가는 중이면 겹쳐 보내지 않는다: 그 짧은 동안 더 바꾸고 바로 닫으면 그 나머지는 잃는다(다시 열면 host 값이 선다). 시험: 웹 E2E 「공유 설정」(`specs/14-shared-preferences.mjs`) 새 화면에서 테마를 바꾸자마자 `page.close({ runBeforeUnload: true })` → 다른 기기 `data-theme`이 바뀌고 host 문서에 남는다. 고침 없이 돌리면 다른 기기가 바뀌지 않아 떨어진다.
+
+### 8.109 pane 이름 바꾸기를 herdr대로(10-18, 차이 목록 2장 L10 나머지)
+
+- **뜻.** herdr `pane rename <pane> <label>|--clear`(`src/cli/pane.rs` `pane_rename`, 낱말 여럿은 띄어 이음)와 `manual_label`(`app/mod.rs` 시험 `pane_rename_request_sets_and_clears_manual_label`): 사람이 붙인 이름이 띄울 때 이름 위에 서고, 지우면 띄울 때 이름으로 돌아간다. 웹은 herdr-web-ui `PaneCanvas.tsx` `PaneRename`(이름 창, 칸에 focus·전체 선택, 최대 80자, 빈 값 저장은 지움)과 메뉴 「Rename pane」·붙인 이름이 있을 때만 「Clear pane name」.
+- **정본은 agent.** 이름은 agent 세션 기록 `spec.json`의 새 칸 `label`이다(`SpecFile::name()`은 label, 없으면 `spec.name`). session host는 띄울 때 읽은 spec만 알고 이전 판은 label을 모르며, 몇 주 이어지는 session host는 모르는 요청에 연결을 끊는다(`aaa-session/src/host.rs` Req 해석 실패 → break). 그래서 session IPC는 바꾸지 않고 agent가 label 표(`labels`)를 들고 session host가 보낸 정보(Welcome·Updated)와 끝난 세션의 정보(`offline_info`, pump가 쥔 옛 spec 포함)에 덮는다. agent가 다시 떠도 `recover`가 spec.json에서 읽는다.
+- **계약.** `FrontRequest::PaneRename { pane, label }`(FRONT_API 1.15, 조작 권한), `AgentRequest::Rename { session, label }`(agent 기능 `rename.v1`; `cwd.v1`처럼 AGENT_LINK는 그대로, host가 보내기 전에 거른다 — 옛 agent면 「agent binary 반영 필요」 오류), `SessionInfo.label`·`PaneView.label`(없으면 생략, `name`은 늘 보이는 이름이라 이름으로 찾기·TUI·웹은 그대로). 한도는 `aaa_proto::MAX_PANE_LABEL_CHARS`(80, 참고 `maxLength`), 제어 문자 거부, 앞뒤 공백 뗌, 빈 값은 지움.
+- **다시 열기.** `pane resume`은 보이는 이름으로 새 spec을 띄우므로 붙인 이름이 이어진다(새 세션에서는 그것이 띄울 때 이름이 되어 지워도 남는다 — herdr는 resume이 없다).
+- **웹.** pane 줄 메뉴 차례는 참고 workspace 메뉴대로 고정 → 이름 바꾸기 → (이름 지우기) → 닫기. 창은 `web/src/PaneRename.tsx`, 모양 `herdr/PaneRename.css`(참고 그대로 + 이름 글자를 칸 위에 두는 aaa 한 줄).
+- **TUI.** herdr의 `prefix+shift+p` 이름 바꾸기는 TUI 몫(t-0330)으로 남긴다. 요청은 이 절의 `pane_rename`을 쓰면 된다.
+- **시험.** `m12 pane_rename_survives_agent_restart_exit_and_resume`: 붙이기(공백 떼고 낱말 잇기·새 이름으로 찾기) → session host 크기 바뀜 뒤에도 남음 → agent만 다시 띄워도 남음 → `--clear`로 띄울 때 이름 → 81자 거부 → 끝난 pane에 붙이고 끝나도 남음 → resume이 이어받음. agent의 Updated 덮기를 빼면 떨어지는 것을 확인했다. 웹 E2E 「줄 메뉴」(`specs/12-threads-push.mjs`): 메뉴 차례, 창 칸 focus, Enter로 저장(보낸 label은 뗀 이름), 줄·host에 새 이름, 「pane 이름 지우기」가 생기고 누르면 null을 보내 띄울 때 이름(`desktop-pane-rename`).
+
+### 8.110 병합을 herdr-projects대로(1): PR 승인은 「병합 중」, 병합되면 ticker가 끝낸다(10-18, D11, 차이 목록 3장 C8·E12·4장 I)
 
 - **결정.** D11(10-17 「d12까지 네 추천대로」): 병합은 thread가 PR을 병합하고 ticker가 merged를 보면 끝낸다. aaa는 병합하지 않는다.
-  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 §8.110이다.
+  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 §8.112이다.
 - **묶음(C8, hp `src/thread.rs` `group` 5번 줄).** 따라가는 PR이 열려 있고 승인됐으면 「병합 중」(`landing`)이다. 작업 중보다 먼저다.
   보고가 있고 PR이 열려 있으면 확인한 보고라도 검토 대기다(쉼으로 가지 않으니 auto-resolve도 하지 않는다). 진행을 보고하는 agent의
   중간 보고 규칙(§8.85)은 그대로 둔다.
@@ -2450,7 +2463,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     바꿨다. PR 없이 로컬 병합으로 착지한 branch는 남는다(사용자가 지운다).
 - **화면.** TUI·웹·CLI 말은 「병합 중」. TUI 점은 검토 대기와 같고 글자색은 hp popup `group_color`처럼 초록이다. 웹 줄의 사실은
   hp `state_line`대로 「PR #n」(따라가는 PR이 없으면 「보고」). shadow 비교(§15)의 Landing 차이 분류 두 줄은 이제 같아서 뺐다.
-- **계약.** ThreadGroup `landing`(FRONT_API 1.15, TUI 마우스 1.14 뒤). 옛 TUI(1.14)는 `landing`을 읽지 못하므로 host와 함께 바꾼다.
+- **계약.** ThreadGroup `landing`(FRONT_API 1.16, pane 이름 1.15 뒤). 옛 TUI(1.15 이하)는 `landing`을 읽지 못하므로 host와 함께 바꾼다.
   agent 쪽 `ThreadCleanup.merged_head`(`base`는 보내지 않는다)와 `PrQuery::OpenOwn`(기능 `pr.v2`)은 AGENT_LINK를 올리지 않았다:
   host는 agent minor N-1까지만 받으므로 1.5로 올리면 운영 중인 1.3 agent가 host 교체 직후 끊긴다. 옛 agent는 `merged_head`를
   버려 branch를 남기고, `pr.v2`가 없으면 다른 PR을 물을 수 없어 열린 것으로 친다(보고가 다른 PR을 이름 붙인 thread만 기다린다).
@@ -2464,7 +2477,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: host `row5_landing_and_an_open_pull_request`·`a_merged_thread_resolves_once_its_agent_is_done`, common `report_refs`·
     `open_own_numbers`, 웹 `stateLine.test.mjs`.
 
-### 8.109 치는 동안 뜬 확인창을 Enter가 고르지 않는다(10-18, t-0340 보안 감사 넘김, §8.100 고침)
+### 8.111 치는 동안 뜬 확인창을 Enter가 고르지 않는다(10-18, t-0340 보안 감사 넘김, §8.100 고침)
 
 - **결함(최우선).** 작업 중 바로 입력(§8.100)은 확인창을 치기 전에 한 번만 보고, 친 뒤 300ms에 화면을 보지 않고 Enter를 보냈다.
   그 사이 뜬 권한 창은 Enter가 기본 선택(「Yes」)을 고른다. 일하는 중에 보낸 글은 Enter 뒤 상태가 확인창이어도 받은 것으로 쳤다.

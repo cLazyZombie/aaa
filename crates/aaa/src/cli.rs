@@ -636,6 +636,14 @@ enum PaneCmd {
     Resume { pane: String },
     /// 끝난 pane 기록을 지운다
     Forget { pane: String },
+    /// pane에 이름을 붙인다(herdr `pane rename <pane> <label>|--clear`). 낱말 여럿은 띄어 잇고, --clear는 띄울 때 이름으로 돌린다
+    Rename {
+        pane: String,
+        #[arg(num_args = 1.., required_unless_present = "clear", conflicts_with = "clear")]
+        label: Vec<String>,
+        #[arg(long)]
+        clear: bool,
+    },
     /// (시험·진단) PTY 크기를 바꾼다. 쓰는 화면(lease)이 없을 때만 된다. 보통은 붙은 화면이 정한다
     #[command(hide = true)]
     PtySize { pane: String, cols: u16, rows: u16 },
@@ -1251,6 +1259,9 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
         PaneCmd::Kill { pane } => FrontRequest::PaneKill { pane },
         PaneCmd::Resume { pane } => FrontRequest::PaneResume { pane },
         PaneCmd::Forget { pane } => FrontRequest::PaneForget { pane },
+        PaneCmd::Rename { pane, label, clear } => {
+            FrontRequest::PaneRename { pane, label: (!clear).then(|| label.join(" ")) }
+        }
         PaneCmd::PtySize { pane, cols, rows } => FrontRequest::PaneResize { pane, cols, rows },
     };
     front(true, req)
