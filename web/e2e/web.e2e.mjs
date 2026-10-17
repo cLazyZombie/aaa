@@ -2241,10 +2241,11 @@ try {
           const mo = new MutationObserver(() => ok() && (clearTimeout(stuck), mo.disconnect(), done()));
           mo.observe(box, { attributes: true, attributeFilter: ["data-view-top"] });
         });
-      // 줄 하나의 높이는 xterm viewport가 버퍼 줄 수(baseY + 화면 줄)만큼 늘인 높이에서 나온다: 줄 번호에 맞춘 scrollTop은 그 줄이 된다
+      // xterm(5.5 Viewport)은 scrollTop을 줄 높이(css cell 높이 = 줄 div 높이)로 나눠 반올림한 줄을 맨 위로 그린다. scroll 영역은
+      // 줄 높이×줄 수에 (viewport 높이 − canvas 높이)를 더한 높이라, scrollHeight를 줄 수로 나누면 줄이 커져 먼 줄에서 한 줄 넘는다
       const goTo = async (line) => {
         if (box.dataset.viewTop === String(line)) return;
-        const rowPx = vp.scrollHeight / (Number(box.dataset.viewBase) + rows().length);
+        const rowPx = rows()[0].getBoundingClientRect().height;
         vp.scrollTop = line * rowPx;
         vp.dispatchEvent(new Event("scroll"));
         await drawnAt(line);
