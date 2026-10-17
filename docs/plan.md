@@ -691,10 +691,11 @@ host 프로젝트 폴더 구성:
 - **선택 창이 떠 있으면 아무것도 입력하지 않는다.** 표지는 「Enter to confirm」「Esc to cancel」, 신뢰 문구 등이다. brief 안내와 메시지 모두 해당한다. 질문이 열려 있는 동안 brief 안내는 최대 30분 기다린다.
 - **입력과 수신 확인(§8.5)**
   - 한 줄은 그대로, 여러 줄은 bracketed paste로 보낸 뒤 Enter를 보낸다.
-  - hook이 있는 세션은 10초 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
+  - hook이 있는 세션은 `accept_wait_ms`(기본 10초) 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
+  - 기다림 두 가지(받음 `accept_wait_ms`, interrupt 멈춤 `stop_wait_ms`)는 host.toml `[projects]`로 바꿀 수 있다(t-0327, 10-18). 기본값은 예전 상수와 같아 동작은 그대로다. 시험이 시간을 기다리지 않고 판정을 보려고 뺐다: m13은 전달 불명 시험에서 받음 기다림을 3·5초로 줄이고, interrupt 시험은 멈춤 상한을 120초로 늘린다. 그러면 화면으로 멈춤을 알지 못할 때 받은 줄이 시험 기다림(30초) 안에 오지 않아, 「10초 안」 같은 시간 단언 없이 구별된다.
 - **메시지(§8.5 보충)**
   - queue: 입력 대기 중(idle·started, 상태를 모르면 포함)이면 바로 보낸다. 아니면 대기열에 두고, 그 thread의 다음 `turn_end`·`idle` 때 가장 오래된 것 하나를 보낸다. 원안의 「다음 턴이 시작될 때」를 「턴이 끝났을 때」로 고쳤다.
-  - interrupt: 작업 중이면 Esc를 보내고, `turn_end`·`idle` 사건이나 화면의 「Interrupted」를 최대 15초 기다린 뒤 보낸다. Claude는 Esc로 멈춰도 Stop hook을 내지 않는다(실측, 약 1초에 멈춤).
+  - interrupt: 작업 중이면 Esc를 보내고, `turn_end`·`idle` 사건이나 화면의 「Interrupted」를 최대 `stop_wait_ms`(기본 15초) 기다린 뒤 보낸다. Claude는 Esc로 멈춰도 Stop hook을 내지 않는다(실측, 약 1초에 멈춤).
   - 확인창이 열려 있으면 interrupt를 거부한다. Esc가 확인창을 「아니오」로 닫기 때문이다.
   - 보내기는 host에서 한 번에 하나씩 한다. 흐름 사건은 `message_queued`·`message_accepted`·`message_unknown`이다. 원문은 DB에 두고 감사 로그에는 길이만 적는다.
   - 선택 창이 떠 있을 때 보내려던 메시지는 입력하지 않고 `unknown`으로 끝난다(§8.5 a에 따라 다시 보내지 않는다). 답한 뒤 사람이 다시 보낸다.
@@ -2169,7 +2170,36 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
   - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 나눈 두 pane 폭 합은 칸 폭 − 4(상자 테두리). 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
 
-### 8.93 TUI 마우스를 herdr대로(1): 누르기·휠·끌어 고르기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
+### 8.93 웹 터미널 띠·맨 아래로·같이 쓰기·끌기 중 휠·패널 클립보드를 herdr-web-ui대로(10-18, 차이 목록 1장 나머지, D7)
+
+- **띠는 모두 터미널 위에 뜬다(PaneTerminal 2747~2826줄 `.terminal-banners`).** §8.48 뒤에도 끊김·권한·오류·그림 띠는 터미널 위 흐름에 있었다. 띠가 나고 들 때마다 터미널 칸이 줄었다 늘어 PTY 크기가 바뀌었다(그림을 붙여 넣으면 그 띠 높이만큼 줄 수가 줄었다). 이제 터미널 화면에서는 모든 띠가 `.terminal-banners`(터미널 위 오른쪽, 칸 크기와 상관없음)에 있다. 대화 보기는 grid가 없고 크기도 놓았으므로 거기서는 전처럼 흐름에 둔다(참고도 대화 lens는 ChatView가 그 안에서 말한다).
+- **「맨 아래로 이동」(TerminalViewportTools 64~82·244~247줄, CSS 그대로).** 위로 굴려 맨 아래가 아니면 grid 오른쪽 아래에 둥근 단추가 뜬다. 칸이 보이는 끝까지만이라 이 화면 것이 아닌 큰 grid에서도 보인다. 누르면 맨 아래로 가고 focus를 가져가지 않는다(pointerdown preventDefault). 터치 기기는 40px.
+  - 다른 곳: 참고는 herdr에 기록 자리(`offset_from_bottom`)를 물어 그리고 보기 전용 연결에는 없다. aaa는 xterm 기록을 보므로(§8.55) 묻지 않고, 보기 권한 기기도 자기 화면만 굴리므로 보인다.
+- **「터미널의 aaa와 같이 쓰기」(설정, 기본 꺼짐, 참고 `releasePaneAway`·PaneTerminal 1725~1918줄 `leave`·`release`·`back`).** 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고 「다른 창을 쓰는 동안 보기 전용 · 클릭하면 입력」 띠를 띄운다. 이 탭을 누르거나 focus가 돌아오면 다시 입력하고 이 화면 크기를 건다. 문구는 참고 i18n.ko에서 「herdr」를 aaa(TUI `aaa attach`)로 바꾼 것이다.
+  - 다른 곳: 참고는 attach를 떼고 보기 전용 구독(watch)으로 바꾼다. aaa는 연결 하나가 출력을 계속 받고 크기만 host lease로 놓으면 같은 일이 된다. 그래서 host에 새 구독을 두지 않았다(§8.50의 「watch가 없어 옮기지 않음」을 이것으로 푼다). 터치 기기가 가려지면 설정과 상관없이 바로 크기를 놓는 것은 §8.50 그대로다.
+- **끌어 고르는 중 휠(PaneTerminal 883~893줄 `dragWheel`).** 전에는 휠이 선택을 지웠다. 그래서 끌며 위로 굴려 화면 밖까지 고를 수 없었다. 이제 고르는 끌기 중 휠은 선택을 두고 xterm 기록을 줄 단위로 굴린 뒤 마지막 마우스 자리로 끌기를 한 번 더 알린다(선택 끝이 굴린 줄까지 따라온다). 마우스 보고 중에도 프로그램에 휠을 보내지 않는다.
+  - 차이 목록 J 「선택을 놓으면 복사(화면 밖 포함)」는 이것으로 같음이다. 참고가 herdr 원문 API를 쓰는 까닭은 xterm 기록이 0이어서다. aaa xterm은 기록 10,000줄을 가져 고른 글이 곧 원문이다.
+- **「패널에서 클립보드로 복사」(설정, 기본 켬, 참고 `paneClipboard`, PaneTerminal 1050~1063줄).** 끄면 OSC 52를 받기만 하고 버린다. pane 안 아무 프로세스나(agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있어서다. 문구는 참고 그대로다. 차이 목록에는 「같음」이었지만 설정이 빠져 있었다.
+- **커서 위치 보고(차이 목록 A 「확인 못 함」 → 같음).** herdr는 서버의 ghostty가 프로그램 질의에 답하고(`terminal_responses`, src/pane/terminal.rs 1402~1547줄) 웹에는 그린 화면을 보내므로 xterm이 답할 일이 없다. aaa는 session host가 DSR 6에 답하고(aaa-vt `DsrScanner`) 웹은 xterm의 같은 답을 버린다. 다만 다른 질의(DA1·DA2·kitty 키보드 질의 `CSI ? u`·색 질의 OSC 10/11)는 session host가 답하지 않아, 붙은 xterm 수만큼(0~N번) 답이 간다. herdr는 늘 한 번이다. 이것은 세션 쪽 일이라 「확인할 것」으로 남긴다(보고서).
+- **시험(웹 E2E, 고치기 전 판에서 실패함을 확인).**
+  - 「그림 붙여 넣기」: 그림 띠·오류 띠가 떠도 `.term-scroll` 칸 크기가 그대로다.
+  - 「터미널 스크롤」: 맨 아래에는 단추가 없고, 위로 굴리면 grid 오른쪽 아래(안쪽)에 뜨며, 누르면 맨 아래·터미널 focus 그대로. 휴대폰·iPad 한 손가락으로 올려도 뜬다. 끌기 중 휠로 12줄 굴리면 첫 줄이 12줄 위이고, 놓으면 화면 밖 줄(`s-NNN`)부터 `more-3`까지 복사한다.
+  - 「두 controller」: 같이 쓰기를 켜고 다른 창으로 옮기면 1초(900ms 이상) 뒤 `release`를 쓰고 띠가 뜨며 남은 화면이 크기를 되찾는다. 누르면 띠가 사라지고 이 화면 크기다.
+  - 「키 처리」: 클립보드 설정을 끄면 저장(`aaa:pane-clipboard` 0)하고, 그 뒤 OSC 52는 클립보드에 쓰지 않는다.
+- **병합 때 찾은 것: 앞 기록 덮개가 흐름에 들어갔다(§8.67).** 덮개(`.term-history-cover`)는 `.xterm-screen` 사본인데 xterm.css `.xterm .xterm-screen { position: relative }`가 더 강해 absolute가 되지 않았다. 덮개가 붙은 동안 `.xterm`이 두 배 높이가 되고, 그 사이 xterm Viewport가 잰 높이로 스크롤 영역이 한 화면(684px) 커졌다. 덮개는 화면 아래에 붙어 덮지도 못했다. 웹 E2E 「앞 기록」 훑기가 줄 90을 91로 그려 실패했다(병합본 진단: 줄 높이 19px, 화면 684px, 스크롤 영역 = 19×줄 수 + 684). main(245f321)에서도 이 단계가 실패하고 있었다(coordinator 10-18 알림). t-0329는 시험의 scrollTop을 줄 높이로 잡게 고쳤다(`7518957`). 이 고침은 그 높이 차이를 만든 화면 쪽 원인(덮개가 덮지 못하고, 덮개가 붙은 동안 xterm 스크롤 영역이 한 화면 커짐)이다. 선택자를 `.xterm .xterm-screen.term-history-cover`로 올렸다.
+- **병합 때 찾은 것: 「터미널 스크롤」 휴대폰 끌기 시험의 경쟁.** 병합본 CI에서 휴대폰 `touch-alt` 끌기가 프로그램에 화살표를 보내지 못한 적이 있다(격리 반복 14번 중 2번). 진단에서 끌 자리 x가 477.5px였다. pane을 열면 첫 snapshot은 그 pane의 지금 크기(120열)로 그려지고, 휴대폰이 45×38을 걸면 다시 그려진다. 시험은 글자(`s-200`)만 보고 그 사이에 잰 넓은 grid의 가운데를 끌어, 390px 화면 밖이라 아무 데도 닿지 않았다. 시험이 이 화면의 크기(lease가 있고, 빌린 grid 표시가 없고, 그린 줄 수가 pane 줄 수와 같고, 화면이 칸 안에 듦)를 본 뒤에 끌 자리를 재게 고쳤다. 확인: 진단 사본에서 휴대폰의 `resize`를 1.5초 늦추면 고치기 전 시험은 `touch-alt`·`touch-mouse` 둘 다 늘 실패하고, 고친 시험은 통과한다. 열 때 한 번 다른 크기로 그렸다 바뀌는 것은 보고서 「확인할 것」에 적었다. main(`995962c`, t-0304)은 같은 단계에서 다른 경쟁(앞 pane도 `s-200`을 보여 끌기가 바뀌는 사이 화면에 감)을 찾아 그 프로그램 화면(alternate screen·mouse 보고)을 기다리게 했다. 병합에서 두 기다림을 모두 둔다.
+
+### 8.94 앱 단축키를 herdr-web-ui대로(10-18, 차이 목록 1장 A 「앱 단축키가 터미널로 새지 않음」)
+
+- **옮긴 것(herdr-web-ui `src/lib/shortcuts.ts`·`shortcutBindings.ts`·`shortcutRecorder.ts`, SettingsDialog `ShortcutsPage` 701~843줄, App.tsx 1185~1279줄).** 세 파일을 `web/src/herdr/`에 옮겼다(`shortcutBindings.ts`·`shortcutRecorder.ts`는 그대로, `shortcuts.ts`는 설정 import 두 줄과 `useShortcuts`가 읽는 값만). 창 capture 처리기가 Mod+Shift(맥은 ⌘⇧, 그 밖은 Ctrl+Shift) 조합을 앱 동작으로 바꾸고 브라우저 기본을 막는다. 터미널 키 처리(`attachCustomKeyEventHandler`) 맨 앞에서 `isAppShortcut`이 같은 키를 xterm에서 거른다(PaneTerminal 621줄). 그래서 단축키가 pane 프로그램에 가지 않는다.
+- **aaa에 있는 동작만 켠다(`settings.ts` `AAA_SHORTCUTS`).** 대화 / 터미널 전환(⌘⇧J), 패널 입력창으로 이동(⌘⇧E), 패널 위·아래로 스크롤(⌘⇧PgUp·PgDn), 이전·다음 패널(⌘⇧↑·↓), 설정(⌘⇧,). 표는 참고 그대로 두고, aaa에 그 화면이 없는 동작(명령 팔레트·터미널에서 찾기·사이드바 토글·새 워크스페이스·새 탭·나누기)은 참고의 「끄기」(null) 값으로 둔다. 없는 동작이 Ctrl+Shift+K 같은 터미널 키를 가져가지 않는다. 그 화면이 생기면 목록에 더한다.
+- **동작은 참고와 같다.** 이전·다음은 목록 차례(같은 머신 안, 끝에서 처음으로, 접힌 묶음도 센다. 참고는 고른 PC의 snapshot 차례)이고 목록 줄을 누른 것과 같이 연다(`sidebarModel.ts` `machineRows`, 목록도 같은 `machineRoster`로 그린다). 한 화면씩은 기록이 있으면 한 줄을 남기고 굴리고(참고 `pageScrollDistance`), 기록이 없으면(alternate screen 프로그램) 그 프로그램에 PageUp·PageDown을 지금 받을 수 있을 때만 보낸다(참고 `sendApplicationPage`). 대화 보기는 그 목록을 한 화면씩 굴린다. 열린 창(설정 등)이 있으면 pane 동작은 하지 않는다(참고 `modalOpen`).
+- **설정 「단축키」(문구는 참고 i18n.ko.ts).** 찾기 칸, 줄마다 「기록」(누른 조합을 그대로, 터미널·브라우저도 쓰는 조합은 「그래도 저장」을 묻는다)과 고르기(기본값·끄기·Mod+Shift 키), 「단축키 초기화」. 기기 설정이다(localStorage `aaa:shortcut-overrides`, 참고 SETTING_SCOPE `device`).
+- **다른 곳.** 참고의 「대화 / 터미널 전환」은 모든 pane의 보기를 바꾼다. aaa는 대화 기록이 있는 pane(Claude·Codex)만 대화 보기가 있어 거기서만 바뀐다. 「음성 입력(누르고 있기)」 줄은 aaa에 음성 입력이 없어 보이지 않는다.
+- **잇달아 넘기기에서 찾은 것(참고 `src/lib/terminalDispose.ts`를 옮김).** 단축키로 pane을 빨리 넘기면 page error 「Cannot read properties of undefined (reading 'dimensions')」가 났다(웹 E2E 세 판 중 한 판, 격리 반복 두 판째). stack은 xterm `Viewport.reset`의 `requestAnimationFrame(() => this.syncScrollArea())`였다. snapshot마다 쓰는 RIS(`\x1bc`)로 xterm이 다음 frame에 renderer 크기를 읽기로 하는데, 그 frame 전에 pane이 내려가 `term.dispose()`가 renderer를 치웠다. 참고는 이미 `disposeAfterPendingFrame`(걸어 둔 frame 다음, 그 뒤 task에서 치움, PaneTerminal 1982줄)으로 풀었다. 그대로 옮기고 참고 유닛 시험도 옮겼다(`web/test/terminalDispose.test.mjs`). 웹 E2E 「앱 단축키」는 frame을 잡아 두고 다음 pane이 snapshot을 읽은 것(ACK)을 본 뒤 되돌아와 frame을 놓아, 이 순서를 늘 만든다. 고치기 전 판은 세 번 모두 실패, 고친 판은 다섯 번 모두 통과(격리 사본).
+- **시험.** 웹 유닛 `web/test/roster.test.mjs`(줄 차례: 프로젝트 묶음의 thread, 그다음 pane, thread 줄이 여는 것). 웹 E2E 「앱 단축키」는 새는 키가 보이는 Linux 화면(Ctrl+Shift)에서 본다. macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않아 새도 보이지 않는다(첫 판이 「끈 키는 터미널로」에서 멈춰 알았다). Ctrl+Shift+↓는 목록에서 바로 아래 줄로, ↑는 돌아오고, 그 뒤 친 z만 pane에 간다(새면 `ESC[1;6B`가 먼저 온다), aaa에 없는 Ctrl+Shift+K·F·B·O는 앱이 가져가지 않고 Ctrl+Shift+E는 가져간다, Ctrl+Shift+E로 터미널 focus, Ctrl+Shift+PgUp은 한 화면(줄 수 − 1) 위·PgDn은 맨 아래이고 pane에 아무것도 안 가며 alternate screen에는 `ESC[5~`·`ESC[6~`, 설정에서 「다음 패널」을 끄면 Ctrl+Shift+↓가 pane에 `ESC[1;6B`로 가고, 기록한 Ctrl+Shift+L이 다음 패널이 되며, 초기화하면 저장값이 지워진다. 맥 platform 휴대폰·iPad 화면에서 ⌘⇧,가 설정을 열고, 단축키 줄이 설정 칸 안에 든다. 변형 확인: 터미널 거르기(`isAppShortcut`)를 빼면 xterm도 Shift+PageUp으로 한 화면 굴려 두 화면이 된다(「한 화면 위」 실패). 옮기는 화살표는 거르기가 없어도 새지 않는다: 창 capture 처리기가 고른 pane을 바꾸면 React가 그 처리기 뒤 microtask에서 그 터미널을 내려 xterm이 키를 받지 못한다. 목록에 없는 동작을 켜 두면 Ctrl+Shift+K를 앱이 가져가고, 한 화면을 줄 수만큼 굴리면·방향을 거꾸로 하면 각 검사가 실패한다.
+
+### 8.95 TUI 마우스를 herdr대로(1): 누르기·휠·끌어 고르기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
 
 - **참고(herdr 0.9.5).** `src/client/shell/mouse.rs` `handle_mouse`(맞히기 순서·누름/뗌·끌기·휠), `tabs.rs` `render_tab_bar`(` + `·` < ` ` > `), `word_selection.rs`, `src/ui/panes.rs` `automatic_selection_style`, `src/selection.rs`(clipboard·OSC 52), `client/terminal_setup.rs` `set_mouse_capture`. 옮긴 `aaa-tui/src/mouse.rs` 머리에 Apache-2.0 출처를 적었다.
 - **켜기.** `[tui] mouse_capture = true`(herdr 기본)면 crossterm `EnableMouseCapture`(1000·1002·1003·1015·1006)를 걸고, 터미널 크기가 바뀌면 다시 건다. 설정을 다시 읽으면 따른다. 끝날 때(panic도) 끈다. 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고른다.

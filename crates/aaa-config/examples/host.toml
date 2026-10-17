@@ -65,6 +65,10 @@ nudge_quiet_secs = 10
 outage_secs = 600
 # 열린 thread의 PR을 이만큼(초)마다 thread 머신의 `gh`로 본다. 보고가 새로 오면 바로 본다.
 pr_poll_secs = 120
+# brief 안내·메시지를 Enter한 뒤 harness가 받았다고 알리기를 기다리는 시간(밀리초). 넘으면 전달 불명(다시 보내지 않는다)
+accept_wait_ms = 10000
+# interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기를 기다리는 상한(밀리초). 넘으면 그대로 보낸다
+stop_wait_ms = 15000
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
 # 머신 하나에서 동시에 도는 thread 한도(0이면 제한 없음)

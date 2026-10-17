@@ -31,6 +31,10 @@ else
 fi
 fail=0
 report() { echo "[막음] $1"; fail=1; }
+# 검사 명령이 돌지 못한 것(정규식·rev 오류)을 「찾은 것 없음」으로 치지 않는다: grep·git grep은 0 찾음, 1 없음, 그 밖은 오류다.
+ERR=$(mktemp) || exit 2
+trap 'rm -f "$ERR"' EXIT
+broke() { echo "[오류] $1: $(head -c 300 "$ERR")"; fail=1; }
 
 # 1) 금지 확장자·큰 파일(이력 검사면 모든 커밋의 파일 이름)
 if [ "$HISTORY" = 1 ]; then
@@ -58,16 +62,28 @@ add '사용자 홈 경로' '(/Users/|/home/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|
 add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|noreply@github\.com|[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|@example\.(com|org|net))'
 add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' ''
 
+# 정규식 자체 검사: 깨진 패턴은 git grep·sed가 오류로 끝나 아무것도 막지 못한다(통과로 보인다)
+for i in "${!NAMES[@]}"; do
+  for re in "${RES[$i]}" "${ALLOWS[$i]}" "${SKIPS[$i]}"; do
+    [ -n "$re" ] || continue
+    grep -E -e "$re" </dev/null >/dev/null 2>"$ERR"
+    [ $? -le 1 ] || broke "${NAMES[$i]}: grep 정규식 오류"
+    sed -E "s~${re}~~g" </dev/null >/dev/null 2>"$ERR" || broke "${NAMES[$i]}: sed 정규식 오류"
+  done
+done
+[ "$fail" = 0 ] || { echo "공개 저장소 검사 실패: 검사 패턴을 고친다."; exit 2; }
+
 # $1=설명, $2..=검사할 rev(없으면 작업 트리의 추적 파일). 커밋 메시지는 COMMITS 변수로 검사한다.
 scan() {
   local label="$1" i hits
   shift
   for i in "${!NAMES[@]}"; do
     if [ "$label" = "files" ]; then
-      hits=$(git grep -I -n -E -e "${RES[$i]}" "$@" -- . ':!scripts/check-public.sh' 2>/dev/null)
+      hits=$(git grep -I -n -E -e "${RES[$i]}" "$@" -- . ':!scripts/check-public.sh' 2>"$ERR")
     else
-      hits=$(grep -n -E -e "${RES[$i]}" <<<"$COMMITS" 2>/dev/null)
+      hits=$(grep -n -E -e "${RES[$i]}" <<<"$COMMITS" 2>"$ERR")
     fi
+    [ $? -le 1 ] || { broke "${NAMES[$i]} ($label) 검사가 돌지 못했다"; continue; }
     # 허용 문자열만 지운 뒤에도 패턴이 남는 줄만 남긴다(한 줄에 허용·금지가 섞여도 놓치지 않는다)
     [ -n "${ALLOWS[$i]}" ] && hits=$(printf '%s\n' "$hits" | sed -E "s~${ALLOWS[$i]}~~g" | grep -E -e "${RES[$i]}")
     [ -n "${SKIPS[$i]}" ] && [ "$label" = "files" ] && hits=$(printf '%s\n' "$hits" | grep -v -E -e "${SKIPS[$i]}")
@@ -82,10 +98,12 @@ scan() {
 scan files $REVS
 COMMITS=""
 if [ "$HISTORY" = 1 ]; then
-  COMMITS=$(git log --no-walk=unsorted --format='%H %B' $REVS | grep -v -E '^Co-Authored-By: ')
+  COMMITS=$(git log --no-walk=unsorted --format='%H %B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
+  COMMITS=$(grep -v -E '^Co-Authored-By: ' <<<"$COMMITS")
   scan "커밋 메시지(이력)"
 elif git rev-parse -q --verify "$BASE" >/dev/null; then
-  COMMITS=$(git log --format='%H %B' "$BASE..HEAD" | grep -v -E '^Co-Authored-By: ')
+  COMMITS=$(git log --format='%H %B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
+  COMMITS=$(grep -v -E '^Co-Authored-By: ' <<<"$COMMITS")
   [ -n "$COMMITS" ] && scan "커밋 메시지 $BASE..HEAD"
 else
   echo "기준 ref ${BASE}가 없어 커밋 메시지는 건너뛴다"
@@ -95,9 +113,9 @@ fi
 IDENTS=""
 if [ "$HISTORY" = 1 ]; then
   # shellcheck disable=SC2086
-  IDENTS=$(git log --no-walk=unsorted --format='%h|%an|%ae|%cn|%ce' $REVS)
+  IDENTS=$(git log --no-walk=unsorted --format='%h|%an|%ae|%cn|%ce' $REVS 2>"$ERR") || broke "author·committer를 읽지 못했다"
 elif git rev-parse -q --verify "$BASE" >/dev/null; then
-  IDENTS=$(git log --format='%h|%an|%ae|%cn|%ce' "$BASE..HEAD")
+  IDENTS=$(git log --format='%h|%an|%ae|%cn|%ce' "$BASE..HEAD" 2>"$ERR") || broke "author·committer를 읽지 못했다"
 fi
 noreply() { case "$1" in *@users.noreply.github.com | noreply@github.com) return 0 ;; esac; return 1; }
 bad=""
@@ -118,8 +136,9 @@ if [ -f "$WORDS" ]; then
   while IFS= read -r w; do
     if [ -z "$w" ] || [ "${w#\#}" != "$w" ]; then continue; fi
     # shellcheck disable=SC2086
-    hits=$(git grep -I -n -i -F -e "$w" $REVS -- . ':!scripts/check-public.sh' 2>/dev/null | head -10)
-    [ -n "$hits" ] && { report "실제 이름(private-words의 한 항목)"; printf '%s\n' "$hits" | cut -c1-200 | sed 's/^/    /'; }
+    hits=$(git grep -I -n -i -F -e "$w" $REVS -- . ':!scripts/check-public.sh' 2>"$ERR")
+    [ $? -le 1 ] || broke "실제 이름 검사가 돌지 못했다"
+    [ -n "$hits" ] && { report "실제 이름(private-words의 한 항목)"; printf '%s\n' "$hits" | head -10 | cut -c1-200 | sed 's/^/    /'; }
     if [ -n "$COMMITS" ] && grep -q -i -F -e "$w" <<<"$COMMITS"; then
       report "실제 이름이 커밋 메시지에 있다(private-words의 한 항목)"
       grep -i -F -e "$w" <<<"$COMMITS" | head -5 | cut -c1-200 | sed 's/^/    /'

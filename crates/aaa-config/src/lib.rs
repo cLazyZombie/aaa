@@ -189,6 +189,12 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
+    /// brief 안내·메시지를 입력하고 Enter한 뒤 harness가 받았다고 알리기(hook이 없으면 화면 변화)를 기다리는 시간(밀리초).
+    /// 넘으면 전달 불명(unknown)이고 다시 보내지 않는다.
+    pub accept_wait_ms: u64,
+    /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
+    /// 넘으면 그대로 보낸다.
+    pub stop_wait_ms: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
@@ -209,6 +215,8 @@ impl Default for ProjectsSection {
             nudge_quiet_secs: 10,
             outage_secs: 600,
             pr_poll_secs: 120,
+            accept_wait_ms: 10_000,
+            stop_wait_ms: 15_000,
             inbox_done_days: 30,
             max_threads_per_machine: 6,
             routine_commands: Vec::new(),
@@ -538,6 +546,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     }
     if c.projects.tick_secs == 0 {
         out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });
+    }
+    for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {
+        if v == 0 {
+            out.push(Invalid { path: key(&["projects", name]), message: "1밀리초 이상이어야 한다".into() });
+        }
     }
     let n = &c.notify;
     if !n.webhook.is_empty() {
