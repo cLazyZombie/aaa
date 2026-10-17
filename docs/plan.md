@@ -1583,7 +1583,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **manifest·meta(M4 일부, 참고 manifest·index.html).**
   - manifest에 `id: "/"`를 둔다. 아이콘은 일반(`any`)·maskable을 192·512 모두 둔다. maskable 192는 `icon.svg`를 바탕까지 채워 렌더했다. 512와 같은 방법이다.
   - `apple-mobile-web-app-status-bar-style` meta를 뺐다(참고는 두지 않아 홈 화면 앱이 보통 배치를 쓴다).
-  - 설치 단추(설치 전엔 늘 보이고, 신호가 없으면 안내)는 다음에 옮긴다.
+  - 설치 단추는 §8.68로 옮겼다.
 - **화면 켜짐 유지(M6, 참고 `wakeLock.ts`·`visibility.ts` 그대로, App.tsx 842줄, 설정 「휴대폰」).** 설정을 켜면 pane이나 thread를 보는 동안 screen wake lock을 건다. 가려지면 놓고, 다시 보이면 다시 건다. 기기마다 두며 기본은 꺼짐이다. HTTPS나 localhost에서만 된다. 참고 문구를 그대로 쓴다.
 - **시험.**
   - 웹 E2E 「안전 영역」: Chromium `Emulation.setSafeAreaInsetsOverride`로 좌우 47px를 준다. 가로 두 칸(844×390)과 좁은 가로 한 칸(667×375)에서 각 칸의 여백을 잰다.
@@ -1643,6 +1643,21 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 끝에 버퍼 전체를 훑는다. h-00001~h-06000이 빠짐·겹침 없이 차례로 있고, tick-1은 한 번, 기록 뒤에 있다.
     - 다시 쓴 뒤에도 프로그램이 켠 bracketed paste가 남아, 붙여 넣은 여러 줄이 `ESC[200~`로 감싸여 간다.
     - 자리 맞추기(`top + lines`)를 빼거나 붙잡기를 빼면 이 단계가 「화면이 튀었다」로 실패함을 확인했다.
+
+### 8.68 앱 설치 단추: 설치 전엔 늘 보이고, 신호가 없으면 방법을 펼친다(10-17, 차이 목록 M4)
+
+- **전에는.** 브라우저가 설치 신호(`beforeinstallprompt`)를 보낼 때만 목록 바닥에 「홈 화면에 설치」를 보였다. iOS Safari·데스크톱 Safari·Firefox는 그 신호가 없다. 그래서 단추가 없었고, iOS 안내는 알림 문맥에만 있었다.
+- **참고대로(`src/lib/install.ts` → `web/src/herdr/install.ts`).** `t("…")` 문구만 참고 `i18n.ko.ts`의 한국어로 바꿨고 나머지는 그대로다.
+  - 홈 화면 앱(`display-mode: standalone`·iOS `navigator.standalone`)이 아니거나 설치되지 않았으면, 목록 바닥에 「앱 설치」가 늘 있다(참고 MachineSidebar 41~43줄).
+  - 신호가 있으면 누를 때 브라우저 설치 창을 띄운다. 신호가 없으면 누를 때 이 브라우저의 방법을 펼친다(`installHelp`). 안내는 iPhone·iPad(Mac UA라 터치 점 수로 가림), HTTPS 아님, 데스크톱 Firefox, Android, 데스크톱 Safari, 나머지(주소창 아이콘)로 나뉜다.
+  - 설정 「휴대폰」에 「설치」 줄을 둔다. 설치됐으면 「설치됨」을 보인다. 신호가 있으면 「앱 설치」 단추를, 없으면 같은 안내를 보인다(참고 SettingsDialog 844~846줄).
+  - 거절하면 그 신호는 다 쓴 것이라 안내로 돌아간다. `appinstalled`가 오면 단추가 숨는다.
+  - 알림 문맥의 iOS 안내(「알림은 공유 → 홈 화면에 추가로 연 앱에서 켤 수 있다」)는 알림 차이(N 묶음)에서 다룬다.
+- **시험(웹 E2E 「앱 설치」).**
+  - 브라우저가 스스로 보내는 신호는 막고, 시험이 보낸 신호만 받는다.
+  - 데스크톱 Chromium: 신호가 없으면 단추를 누를 때 주소창 안내가 펼쳐지고(`aria-expanded`), 설정 줄도 같은 안내를 보인다. 신호를 보내면 기본 창을 막고(`preventDefault`), 설정에 「앱 설치」 단추가 생기며, 단추를 누르면 그 창(`prompt`)을 부른다. 거절하면 안내로 돌아간다. `appinstalled`가 오면 단추가 숨고 설정은 「설치됨」이다.
+  - 참고 `install.test.ts`의 기기(iPhone, 터치 점 5개인 iPad, Mac Safari, Android, Firefox)마다 펼친 안내 글이 맞는다. Chromium 터치 흉내는 `maxTouchPoints`가 1이라, iPad는 실제처럼 5로 둔다.
+  - 홈 화면 앱(`navigator.standalone`)으로 열면 단추가 없고 설정은 「설치됨」이다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

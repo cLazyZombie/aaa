@@ -12,6 +12,7 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "./herdr/installedFonts.ts";
+import { useInstallPrompt } from "./herdr/install.ts";
 import {
   setKeepScreenOn,
   setTerminalFontFamily,
@@ -335,6 +336,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const fontSize = useTerminalFontSize();
   const fontFamily = useTerminalFontFamily();
   const keepScreenOn = useKeepScreenOn();
+  const installPrompt = useInstallPrompt();
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
@@ -435,10 +437,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             </SettingsRow>
           </SettingsGroup>
-          {/* 참고 SettingsDialog 「휴대폰」 840~843줄(문구는 참고 i18n.ko.ts). 설치 줄은 목록 바닥의 설치 단추가 맡는다 */}
+          {/* 참고 SettingsDialog 「휴대폰」 840~847줄(문구는 참고 i18n.ko.ts) */}
           <SettingsGroup title="휴대폰">
             <SettingsRow label="화면 켜짐 유지" description="터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다. HTTPS 또는 localhost와 지원 브라우저가 필요합니다.">
               <Toggle label="화면 켜짐 유지" checked={keepScreenOn} onChange={setKeepScreenOn} />
+            </SettingsRow>
+            <SettingsRow label="설치" description={installPrompt.installed ? "설치됨" : installPrompt.canInstall ? undefined : installPrompt.help}>
+              {!installPrompt.installed && installPrompt.canInstall && (
+                <button type="button" className="primary" onClick={() => void installPrompt.install()}>
+                  앱 설치
+                </button>
+              )}
             </SettingsRow>
           </SettingsGroup>
           <UsageGroups />

@@ -1362,6 +1362,109 @@ try {
     await wp.context().close();
   });
 
+  await step("앱 설치(herdr-web-ui install.ts·MachineSidebar·설정 「휴대폰 → 설치」, 차이 목록 M4): 설치 전엔 단추가 늘 있고, 신호가 없으면 누를 때 이 브라우저의 방법을 펼치며, 신호가 오면 그 창을 띄우고, 설치되면 숨는다", async () => {
+    // 브라우저가 스스로 보내는 beforeinstallprompt는 시험이 보낸 것만 남긴다(headless가 보낼지 말지에 기대지 않는다)
+    const init = () => {
+      const log = [];
+      Object.defineProperty(window, "__installLog", { value: log });
+      window.addEventListener(
+        "beforeinstallprompt",
+        (e) => {
+          if (!e.e2e) e.stopImmediatePropagation();
+        },
+        true,
+      );
+    };
+    const offer = (p) =>
+      p.evaluate(() => {
+        const e = new Event("beforeinstallprompt", { cancelable: true });
+        e.e2e = true;
+        e.prompt = async () => void window.__installLog.push("prompt");
+        e.userChoice = Promise.resolve({ outcome: "dismissed", platform: "" });
+        window.dispatchEvent(e);
+        return e.defaultPrevented;
+      });
+    const dialogRow = async (p) => {
+      await p.getByTestId("settings-open").click();
+      const row = p.getByRole("dialog", { name: "설정" }).locator(".settings-row", { hasText: /^설치/ });
+      const text = (await row.innerText()).replace(/\s+/g, " ");
+      const button = await row.getByRole("button", { name: "앱 설치" }).count();
+      await p.keyboard.press("Escape");
+      return { text, button };
+    };
+    const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init })).page;
+    const btn = ip.getByTestId("install-app");
+    await until("설치 단추", () => btn.isVisible());
+    // 신호 없음(데스크톱 Chromium): 누르면 주소창 안내를 펼치고, 다시 누르면 접는다
+    if ((await btn.getAttribute("aria-expanded")) !== "false") throw new Error(`aria-expanded ${await btn.getAttribute("aria-expanded")}`);
+    await btn.click();
+    const help = ip.getByTestId("install-help");
+    if ((await help.innerText()) !== "주소창의 설치 아이콘이나 브라우저 메뉴의 설치 항목을 쓰세요.") throw new Error(`안내 ${await help.innerText()}`);
+    if ((await btn.getAttribute("aria-expanded")) !== "true") throw new Error("펼친 뒤 aria-expanded");
+    let row = await dialogRow(ip);
+    if (!row.text.includes("주소창의 설치 아이콘") || row.button !== 0) throw new Error(`설정 줄(신호 없음) ${JSON.stringify(row)}`);
+    await btn.click();
+    if (await help.count()) throw new Error("다시 눌러도 안내가 남았다");
+    // 신호가 오면 기본 창을 막아 두고(preventDefault), 단추가 그 창을 띄운다
+    if (!(await offer(ip))) throw new Error("beforeinstallprompt 기본 동작을 막지 않았다");
+    await until("신호 받은 단추", async () => (await btn.getAttribute("aria-expanded")) === null);
+    row = await dialogRow(ip);
+    if (row.button !== 1 || row.text.includes("주소창")) throw new Error(`설정 줄(신호 있음) ${JSON.stringify(row)}`);
+    await btn.click();
+    await until("설치 창", async () => (await ip.evaluate(() => window.__installLog.join(","))) === "prompt");
+    // 거절하면 그 신호는 다 썼다: 다시 안내로
+    await until("거절 뒤 안내로", async () => (await btn.getAttribute("aria-expanded")) === "false");
+    // 설치되면 단추가 숨고 설정은 「설치됨」
+    await ip.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
+    await until("설치 뒤 단추 숨김", async () => (await btn.count()) === 0);
+    row = await dialogRow(ip);
+    if (!row.text.includes("설치됨") || row.button !== 0) throw new Error(`설정 줄(설치됨) ${JSON.stringify(row)}`);
+    await ip.context().close();
+    // 브라우저마다 안내(참고 installHelp 시험의 기기들). iPadOS는 Mac UA라 터치 점 수로 가린다:
+    // Chromium 터치 흉내는 maxTouchPoints가 1이라 실제 iPad처럼 5로 둔다(참고 시험도 5)
+    const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+    const MAC_SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+    const FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0";
+    const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Mobile Safari/537.36";
+    // addInitScript는 함수 글만 옮긴다(바깥 init을 부를 수 없다)
+    const ipad = () => {
+      window.addEventListener(
+        "beforeinstallprompt",
+        (e) => {
+          if (!e.e2e) e.stopImmediatePropagation();
+        },
+        true,
+      );
+      Object.defineProperty(navigator, "maxTouchPoints", { get: () => 5 });
+    };
+    for (const [name, viewport, userAgent, touch, want, script] of [
+      ["iPhone", { width: 390, height: 844 }, IPHONE, true, "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.", init],
+      ["iPad(Mac UA·터치)", { width: 1024, height: 1366 }, MAC_SAFARI, true, "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.", ipad],
+      ["Mac Safari", { width: 1280, height: 800 }, MAC_SAFARI, false, "파일 메뉴에서 Dock에 추가를 선택하세요.", init],
+      ["Android", { width: 412, height: 915 }, ANDROID, true, "브라우저 메뉴에서 앱 설치 또는 홈 화면에 추가를 선택하세요.", init],
+      ["데스크톱 Firefox", { width: 1280, height: 800 }, FIREFOX, false, "데스크톱 Firefox는 웹 앱을 설치할 수 없습니다. Chrome이나 Edge로 여세요.", init],
+    ]) {
+      const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { userAgent, touch, init: script })).page;
+      await until(`${name} 설치 단추`, () => p.getByTestId("install-app").isVisible());
+      await p.getByTestId("install-app").click();
+      const got = await p.getByTestId("install-help").innerText();
+      if (got !== want) throw new Error(`${name} 안내: ${got}`);
+      await p.context().close();
+    }
+    // 홈 화면 앱(iOS navigator.standalone)으로 열면 단추가 없고 설정은 「설치됨」
+    const sp = (
+      await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, {
+        userAgent: IPHONE,
+        init: () => Object.defineProperty(navigator, "standalone", { get: () => true }),
+      })
+    ).page;
+    await until("홈 화면 앱 목록", () => sp.getByTestId("settings-open").isVisible());
+    if (await sp.getByTestId("install-app").count()) throw new Error("설치된 앱에 설치 단추");
+    row = await dialogRow(sp);
+    if (!row.text.includes("설치됨")) throw new Error(`홈 화면 앱 설정 줄 ${JSON.stringify(row)}`);
+    await sp.context().close();
+  });
+
   await step("터미널 글꼴(herdr-web-ui 설정 「터미널 글꼴」, 차이 목록 「글꼴 종류」): 적은 목록을 거르고 기본 글꼴 앞에, face를 받은 뒤 cell을 재고, 찾아보기는 고정폭만, 비우면 기본", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "fontset", "--", process.execPath, `${root}/scroll.js`, "plain");
     await until("fontset 준비", () => aaa("pane", "read", "fontset").lines.join("\n").includes("s-200"));
