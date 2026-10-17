@@ -1,4 +1,4 @@
-// 이 host의 모든 웹 화면이 함께 쓰는 설정과 고정(plan §8.73). herdr-web-ui `src/lib/preferencesSync.ts`의
+// 이 host의 모든 웹 화면이 함께 쓰는 설정과 고정(plan §8.79). herdr-web-ui `src/lib/preferencesSync.ts`의
 // `preferencesChange`·`takePreferences`를 그대로 옮기고, 참고 `settings.ts` `sharedSettings`·`sanitizeSettings` 자리에
 // aaa가 가진 공유 설정(모양 theme·palette·sidebarRows, 사용량 막대 다섯)만 둔다. React·브라우저를 쓰지 않아 node 시험이 바로 부른다.
 // 참고 SHARED_SETTING_KEYS 가운데 aaa에 아직 없는 이름(language·agentOrder 등)은 host가 그대로 들고 있고 여기서는 읽지 않는다.
