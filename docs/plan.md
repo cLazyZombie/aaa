@@ -2315,6 +2315,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `worker_session_cli_is_read_only`: 조작 예시를 `thread next --add`로 바꿨다.
   - host `brief_text`: brief에 결정 기록 절이 없다.
 
+### 8.102 밀도·인터페이스 글자 크기를 herdr-web-ui대로, 설정 닫는 길·조작 크기 확인(10-18, 차이 목록 2장 T4, QA t-0337 Q10·Q12)
+
+- **참고(herdr-web-ui aa624cb).** `src/lib/settings.ts` `density`·`uiFontSize`·`BODY_FONT`(여유 14·촘촘 13)·`applyToDocument`(`data-density`, `--ui-scale` = 고른 본문 크기 / 밀도의 본문 크기), `src/lib/typography.ts`(그대로 `web/src/herdr/typography.ts`: 11~20px, `sanitizeUiFontSize`, `fontScale`), `SettingsDialog.tsx` `AppearancePage` 「밀도」·「타이포그래피 → 인터페이스 글자 크기」(문구 i18n.ko.ts), tokens.css `[data-density="compact"]`.
+- **설정.** 설정 → 모양에 「밀도」(여유·촘촘, 색상 다음)와 「타이포그래피」 묶음의 「인터페이스 글자 크기」(한 칸씩, 고르지 않았으면 밀도의 크기). 둘 다 참고처럼 이 기기 설정이다(`aaa:appearance`, host 공유 설정에 가지 않는다). `theme.ts`가 `<html data-density>`와 `--ui-scale`을 단다.
+- **글자 크기 토큰.** aaa `style.css`의 고정 px 글자 크기 51곳을 참고 토큰(`--fs-2xs`~`--fs-display`)으로 바꿨다. 토큰에 없는 크기(9·10.5·11.5·12.5·13.5·17·19px)는 가까운 토큰에 비율을 곱해(`calc(var(--fs-xs) * 12.5 / 12)`) 기본 화면은 그대로이고 밀도·배율을 따른다. 입력줄의 16px(iOS가 focus 때 키우지 않는 하한)은 참고처럼 배율을 받지 않는 `--fs-input`이다. 터미널 글자는 제 설정(§8.47 글자 크기)을 따른다.
+- **QA t-0337 Q10·Q12(옛 설정 창의 결함).** §8.97의 쪽 나눈 창(참고 `useFocusTrap`·`useSheetSwipe`·`settingsHistory`, `SettingsControls`·primitives 터치 크기)으로 없어졌다. E2E로 확인한다: 휴대폰 시스템 뒤로는 한 걸음씩 닫고 앱을 나가지 않는다, 아래로 밀면 닫힌다, 닫으면 focus는 톱니로, 단축키로 연 창을 Esc로 닫으면 focus가 터미널로 돌아가 친 글이 pane에 닿는다. 390×844 터치에서 쪽 줄 48px, 아이콘 단추 40×40, 글 단추 높이 40, 스위치 48×40(참고 그대로). 여럿 중 하나(segmented) 단추는 참고도 `--control-h − 6px`(28px)이고 휴대폰 넓은 줄에서는 줄 폭을 나눠 가진다(아침 확인: t3code 44px와 비교).
+- **시험.** 웹 E2E `specs/06-settings.mjs` 「밀도·인터페이스 글자 크기」(촘촘 13px, 18px 배율 18/13로 목록·설정 글자가 함께, 터미널 13px 그대로, 20px에서 키우기 꺼짐, 이 기기에만 저장·공유 설정에 없음, 다시 열어도 남음, 다른 기기는 여유, 휴대폰 20px 넘침 없음)와 「설정 닫는 길·조작 크기」.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
