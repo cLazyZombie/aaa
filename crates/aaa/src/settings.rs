@@ -252,8 +252,14 @@ pub fn safety_cmd(json: bool, cmd: SafetyCmd) -> Result<ExitCode> {
             print!("{}", show_text(&target, &rows, &eff, &warnings));
             Ok(ExitCode::SUCCESS)
         }
-        SafetyCmd::Yolo { target, state } => set(json, &target, "yolo", &[state]),
-        SafetyCmd::Set { target, key, value } => set(json, &target, &key, &value),
+        SafetyCmd::Yolo { target, state } => {
+            let command = format!("aaa safety yolo {target} {state}");
+            set(json, &command, &target, "yolo", &[state])
+        }
+        SafetyCmd::Set { target, key, value } => {
+            let command = format!("aaa safety set {target} {key} {}", value.join(" "));
+            set(json, command.trim_end(), &target, &key, &value)
+        }
     }
 }
 
@@ -307,10 +313,10 @@ fn shadowed(table: &str, key: &str) -> Option<String> {
     Some(format!("host.local.toml의 [safety.{table}] {key}가 이 값을 덮는다: 그 파일에서도 고친다"))
 }
 
-fn set(json: bool, target: &str, key: &str, words: &[String]) -> Result<ExitCode> {
+fn set(json: bool, command: &str, target: &str, key: &str, words: &[String]) -> Result<ExitCode> {
     let target = Target::parse(target)?;
     let item = safety::value_item(key, words).map_err(|e| anyhow::anyhow!(e))?;
-    crate::person::require(&format!("`aaa safety set {} {key} {}`(safety 바꾸기)", target.word(), words.join(" ")))?;
+    crate::person::require(&format!("`{command}`(safety 바꾸기)"))?;
     let row = |key: &str| layers(&target).0.rows(target.project().is_some()).into_iter().find(|r| r.key == key);
     let before = row(key).map(|r| r.text()).unwrap_or_default();
     if key == "yolo" && words.first().is_some_and(|w| matches!(w.as_str(), "on" | "true" | "yes")) {
