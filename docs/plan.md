@@ -2323,6 +2323,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **QA t-0337 Q10·Q12(옛 설정 창의 결함).** §8.97의 쪽 나눈 창(참고 `useFocusTrap`·`useSheetSwipe`·`settingsHistory`, `SettingsControls`·primitives 터치 크기)으로 없어졌다. E2E로 확인한다: 휴대폰 시스템 뒤로는 한 걸음씩 닫고 앱을 나가지 않는다, 아래로 밀면 닫힌다, 닫으면 focus는 톱니로, 단축키로 연 창을 Esc로 닫으면 focus가 터미널로 돌아가 친 글이 pane에 닿는다. 390×844 터치에서 쪽 줄 48px, 아이콘 단추 40×40, 글 단추 높이 40, 스위치 48×40(참고 그대로). 여럿 중 하나(segmented) 단추는 참고도 `--control-h − 6px`(28px)이고 휴대폰 넓은 줄에서는 줄 폭을 나눠 가진다(아침 확인: t3code 44px와 비교).
 - **시험.** 웹 E2E `specs/06-settings.mjs` 「밀도·인터페이스 글자 크기」(촘촘 13px, 18px 배율 18/13로 목록·설정 글자가 함께, 터미널 13px 그대로, 20px에서 키우기 꺼짐, 이 기기에만 저장·공유 설정에 없음, 다시 열어도 남음, 다른 기기는 여유, 휴대폰 20px 넘침 없음)와 「설정 닫는 길·조작 크기」.
 
+### 8.103 목록 줄 메뉴와 고정을 herdr-web-ui대로(10-18, 차이 목록 2장 L9·L10, 결정 D5)
+
+- **참고대로.** herdr-web-ui `src/components/RowMenu.tsx`(그대로 옮김, `web/src/RowMenu.tsx`·`herdr/RowMenu.css`·`herdr/menu.css`), `Sidebar.tsx` `onRowContextMenu`·`menuItems`, `AgentSidebar.tsx` 고정 메뉴·`refocusPin`, `lib/sidebarPins.ts` `splitPinnedRows`.
+  - 여는 법: 마우스 데스크톱은 줄 오른쪽 클릭(누른 자리에, focus는 옮기지 않음), 터치·좁은 화면은 줄 끝 ⋯ 단추(휴대폰은 아래 sheet, 시스템 「뒤로」로 닫힘). 메뉴는 첫 항목에 focus, 화살표·Home·End, Esc·바깥 누름·Tab으로 닫히고 연 곳으로 focus가 돌아간다.
+  - pane 줄: 「pane 고정/고정 해제」 → 「pane 닫기」(확인 창, 참고 「Close pane {name}?」). 끝난 pane은 닫는 대신 「다시 열기」(`pane_resume`)와 「기록 지우기」(확인 창, `pane_forget`). 실패는 줄 아래 한 줄(참고 `sidebar-inline-error`), 확인 창의 실패는 창 안.
+  - Agents 줄: 「에이전트 고정/고정 해제」 하나(참고 AgentSidebar).
+  - 고정 열쇠는 참고 Agents와 같은 `machine:pane`(`sidebarPinKey`)이다. 그래서 pane 하나를 고정하면 머신 목록과 Agents 양쪽에서 맨 앞 「고정됨」 카드에 핀 표시와 함께 선다. 고정은 host 공유 문서(plan §8.79)로 다른 기기에도 간다. 고정하면 줄이 다른 목록으로 옮겨 가므로, 메뉴를 연 줄(머신 목록·Agents 중 연 쪽)로 focus를 되돌린다.
+- **aaa에만 있는 것.** 프로젝트 머리 메뉴: 「프로젝트 thread 보기」(끝난 것까지, §8.89)와 「접기/펼치기」(참고 worktree 묶음의 fold). thread 줄 메뉴: 「보고」와 「프로젝트 thread 보기」(thread 줄은 누르면 agent pane을 연다).
+- **아직 없는 것.** pane 이름 바꾸기는 host·agent에 그 요청이 없어 다음 묶음(proto·agent·host·CLI)으로 넘긴다. 줄 끌어 옮기기(참고 workspaceOrder)도 다음 묶음.
+- **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
+- **시험.** 웹 E2E 「줄 메뉴」(`web/e2e/specs/12-threads-push.mjs`): 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다. 파일마다 새 실험실이라 host가 고정을 나눈 적이 없다: 참고대로 그때는 고정만 바꿔서는 보내지 않고 첫 설정 변경에 실려 가므로(`preferencesChange`, 참고 `shared/preferences.ts` 「absent until a browser first shares its pins」), 단계는 빈 고정을 써 두고 다시 연 화면에서 시작한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

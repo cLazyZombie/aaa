@@ -115,6 +115,16 @@ const hashIs = (p, hash, ms = 20_000) =>
     [hash, ms],
   );
 
+// focus 기다림: focusin 사건으로 끝낸다(focus는 DOM을 바꾸지 않아 MutationObserver로는 못 본다)
+const focusIs = (p, what, sel, ms = 20_000) =>
+  p.evaluate(`new Promise((done, fail) => {
+    const ok = () => document.activeElement?.matches(${JSON.stringify(sel)}) === true;
+    if (ok()) return done();
+    const on = () => { if (ok()) { clearTimeout(stuck); removeEventListener("focusin", on, true); done(); } };
+    const stuck = setTimeout(() => { removeEventListener("focusin", on, true); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}에 focus가 오지 않았다`)} + ": " + (document.activeElement?.outerHTML ?? "").slice(0, 160))); }, ${ms});
+    addEventListener("focusin", on, true);
+  })`);
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer();
@@ -913,5 +923,5 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs,
 };
