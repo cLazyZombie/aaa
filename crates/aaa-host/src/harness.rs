@@ -18,14 +18,10 @@ use tokio::sync::oneshot;
 use crate::orch::ThreadRec;
 use crate::{Host, err};
 
-/// Enter 뒤 harness가 입력을 받았다고 알리기를 기다리는 시간
-const ACCEPT_WAIT: Duration = Duration::from_secs(10);
 /// 질문에 답할 때 선택 창이 화면에 그려지기를 기다리는 시간
 const MENU_WAIT: Duration = Duration::from_secs(3);
 /// harness가 Esc로 멈췄다는 화면 표지(Claude Code: 「Interrupted · What should Claude do instead?」)
 const INTERRUPTED_MARKS: &[&str] = &["Interrupted"];
-/// interrupt: 멈춘 뒤 다음 입력을 받을 수 있게 되기를 기다리는 시간
-const STOP_WAIT: Duration = Duration::from_secs(15);
 
 /// 아직 모르는 pane의 harness 사건을 이만큼 보관한다
 const HOLD_FOR: Duration = Duration::from_secs(60);
@@ -262,8 +258,13 @@ impl Host {
             next
         };
         self.bump();
-        if matches!(activity, Some(AgentActivity::Idle)) {
-            self.tick_wake.notify_one();
+        // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
+        // aaa는 사건마다 다시 세어, 짧은 턴도 전이로 남는다. thread는 보고를 먼저 다시 본다(orch.rs `refresh_report`).
+        if activity.is_some() || ev.kind == "progress" {
+            match self.thread_of_pane(&ev.session) {
+                Some(r) if r.status == ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
+                _ => self.tick_wake.notify_one(),
+            }
         }
         // 기다리던 사건. 할 일(on_fire)은 잠금을 놓고 돌린 뒤 깨운다(기다리던 쪽이 그 기록을 본 뒤에 이어 가게)
         let mut fired = Vec::new();
@@ -325,9 +326,6 @@ impl Host {
         };
         if let Err(e) = self.db.rec_put("questions", &q.id, state, &serde_json::to_string(q).unwrap(), (&q.pane, "")) {
             tracing::error!("질문 저장 실패: {e:#}");
-        }
-        if q.state != QuestionState::Open {
-            self.inbox_question_closed(q);
         }
         let _ = self.question_events.send(q.clone());
     }
@@ -483,6 +481,8 @@ impl Host {
         let before = |msg: String| SubmitErr { typed: false, msg };
         let after = |msg: String| SubmitErr { typed: true, msg };
         let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
+        // Enter 뒤 harness가 입력을 받았다고 알리기를 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
+        let accept_wait = Duration::from_millis(self.cfg.projects.accept_wait_ms);
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
         if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
             return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
@@ -505,10 +505,10 @@ impl Host {
             .await
             .map_err(|e| after(e.message))?;
         if hooked {
-            return Ok(tokio::time::timeout(ACCEPT_WAIT, accepted).await.is_ok_and(|r| r.is_ok()));
+            return Ok(tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok()));
         }
         // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
-        let until = Instant::now() + ACCEPT_WAIT;
+        let until = Instant::now() + accept_wait;
         while Instant::now() < until {
             tokio::time::sleep(Duration::from_millis(250)).await;
             if self.screen_lines(mid, pane).await != typed {
@@ -644,8 +644,9 @@ impl Host {
                     let before = interrupted_count(&self.screen_lines(&mid, &pid).await.unwrap_or_default());
                     let conn = self.live_conn(&mid)?;
                     conn.request(AgentRequest::Input { session: pid.clone(), data: B64(b"\x1b".to_vec()) }).await?;
-                    // Claude Code는 Esc로 멈춰도 Stop hook을 내지 않고 화면에 「Interrupted」를 보인다(2.1 실측)
-                    let until = Instant::now() + STOP_WAIT;
+                    // Claude Code는 Esc로 멈춰도 Stop hook을 내지 않고 화면에 「Interrupted」를 보인다(2.1 실측).
+                    // 멈춘 뒤 다음 입력을 받을 수 있게 되기를 기다리는 상한은 설정 `stop_wait_ms`(기본 15초)다.
+                    let until = Instant::now() + Duration::from_millis(self.cfg.projects.stop_wait_ms);
                     while Instant::now() < until {
                         if tokio::time::timeout(Duration::from_millis(250), &mut stopped).await.is_ok() {
                             break;

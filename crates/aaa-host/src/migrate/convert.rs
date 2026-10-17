@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use aaa_proto::{BriefState, FlowEvent, InboxItem, Role, ThreadKind, ThreadStatus, next_lines};
+use aaa_proto::{BriefState, FlowEvent, InboxItem, Role, ThreadGroup, ThreadKind, ThreadStatus, next_lines};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -151,6 +151,8 @@ pub(crate) fn thread_rec(
         status: ThreadStatus::Resolved,
         brief: BriefState::Delivered,
         brief_attempts: 0,
+        delivered_at_ms: None,
+        delivered_report: None,
         launch: None,
         acked_hash: if acked && copy_hash.as_deref() == Some(t.report_hash.as_str()) {
             copy_hash.clone()
@@ -160,6 +162,9 @@ pub(crate) fn thread_rec(
         report_hash: copy_hash,
         next,
         copy: report.map(|_| "complete".to_string()),
+        copy_notes: vec![],
+        last_group: Some(ThreadGroup::Resolved),
+        review_item_hash: None,
         error: opt(&t.error),
         decisions_rev: None,
         eval_cursor: 0,
@@ -673,6 +678,8 @@ mod e2e {
         assert!(db.flow_after(Some("demo"), 0, 10).unwrap().iter().any(|e| e.kind == "project_imported"));
         // 두 번 하면 거부한다(덮어쓰지 않는다)
         assert!(convert(&inv, &dest, 0).unwrap_err().to_string().contains("이미 있다"));
+        // Windows는 열린 DB 파일을 지우지 못한다(os error 32)
+        drop(db);
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

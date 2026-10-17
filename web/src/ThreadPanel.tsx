@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import type { DeviceRole, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
+import { Markdown } from "./Markdown";
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "사람 차례",
@@ -11,67 +12,6 @@ export const GROUP_LABEL: Record<string, string> = {
   resolved: "끝남",
 };
 
-/** 짧은 Markdown 보기(제목·목록·code block·문단, 굵게·code). HTML은 해석하지 않고 글자로 둔다. */
-export function Markdown({ text }: { text: string }) {
-  const out: ReactNode[] = [];
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  let i = 0;
-  let key = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.startsWith("```")) {
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) body.push(lines[i++]);
-      i++;
-      out.push(<pre key={key++}>{body.join("\n")}</pre>);
-      continue;
-    }
-    const h = /^(#{1,4})\s+(.*)$/.exec(line);
-    if (h) {
-      const level = Math.min(h[1].length + 1, 5);
-      const Tag = `h${level}` as "h2" | "h3" | "h4" | "h5";
-      out.push(<Tag key={key++}>{inline(h[2])}</Tag>);
-      i++;
-      continue;
-    }
-    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
-      const items: { depth: number; text: string }[] = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
-        const m = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(lines[i])!;
-        items.push({ depth: Math.floor(m[1].length / 2), text: m[3] });
-        i++;
-      }
-      out.push(
-        <ul key={key++}>
-          {items.map((it, n) => (
-            <li key={n} style={{ marginLeft: it.depth * 16 }}>
-              {inline(it.text)}
-            </li>
-          ))}
-        </ul>,
-      );
-      continue;
-    }
-    if (!line.trim()) {
-      i++;
-      continue;
-    }
-    const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*([-*]|\d+\.)\s)/.test(lines[i])) para.push(lines[i++]);
-    out.push(<p key={key++}>{inline(para.join(" "))}</p>);
-  }
-  return <div className="md">{out}</div>;
-}
-
-function inline(s: string): ReactNode[] {
-  const parts = s.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
-  return parts.map((p, n) => {
-    if (p.startsWith("`") && p.endsWith("`") && p.length > 1) return <code key={n}>{p.slice(1, -1)}</code>;
-    if (p.startsWith("**") && p.endsWith("**") && p.length > 3) return <strong key={n}>{p.slice(2, -2)}</strong>;
-    return p;
-  });
-}
 
 const fmtSize = (n: number) =>
   n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)}MB` : n >= 1024 ? `${(n / 1024).toFixed(1)}KB` : `${n}B`;
@@ -83,11 +23,14 @@ export function ThreadPanel({
   t,
   role,
   onBack,
+  backTo,
   onOpenPane,
 }: {
   t: ThreadView;
   role: DeviceRole;
   onBack: () => void;
+  /** 돌아갈 화면 이름(프로젝트 thread 보기에서 열었으면): 그때 「뒤로」는 넓은 화면에도 보인다 */
+  backTo?: string;
   /** 그 thread의 agent pane이 돌고 있으면 터미널로(목록의 thread 줄과 같은 곳) */
   onOpenPane?: () => void;
 }) {
@@ -118,7 +61,7 @@ export function ThreadPanel({
   return (
     <div className="thread-view" data-testid="thread-view">
       <header className="term-head">
-        <button className="back ghost icon" onClick={onBack} aria-label="목록으로">
+        <button className={`back ghost icon${backTo ? " is-shown" : ""}`} onClick={onBack} aria-label={backTo ? `${backTo} 프로젝트로` : "목록으로"} data-testid="thread-back">
           <Icon name="back" />
         </button>
         <div className="term-title">
@@ -165,7 +108,7 @@ export function ThreadPanel({
           </div>
           <section className="card report" data-testid="report">
             <h2>보고</h2>
-            {lib?.report ? <Markdown text={lib.report} /> : <p className="muted">아직 회수한 보고가 없다</p>}
+            {lib?.report ? <Markdown className="report-markdown">{lib.report}</Markdown> : <p className="muted">아직 회수한 보고가 없다</p>}
           </section>
           {lib && lib.files.length > 0 && (
             <section className="card files" data-testid="files">

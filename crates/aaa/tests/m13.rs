@@ -27,21 +27,26 @@ while IFS= read -r line; do
       dir=$(dirname "$path")
       echo "brief 받음: $path"
       task=$(awk '/^# 할 일/{f=1;next} /^# 경로/{f=0} f' "$path" | sed '/^$/d')
+      # 보고 없이 쉬는 thread
+      case "$task" in
+        *noreport*) echo "done"; printf 'fake> '; continue ;;
+      esac
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
       ln -s /etc/hosts "$dir/library/link"
+      # 결과물·commit을 다 남긴 뒤에 보고를 쓴다(실제 agent처럼 보고가 끝 신호다): 보고가 바뀌면 host가 그때의
+      # library를 받는다(t-0327 넘김 (나), 0바이트 사본). 보고 뒤에 쓰면 시험이 먼저 resolve해 부하에 따라 실패했다
+      case "$task" in
+        *big*)
+          head -c 2097152 /dev/urandom > "$dir/library/big.bin"
+          printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
+      esac
       case "$task" in
         *commit*) echo change > change.txt && git add change.txt && git -c user.name=t -c user.email=t@example.com commit -qm change ;;
       esac
       case "$task" in
         *dirty*) echo dirty > dirty.txt ;;
       esac
-      case "$task" in
-        *big*)
-          head -c 2097152 /dev/urandom > "$dir/library/big.bin"
-          printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
-      esac
-      # 일을 다 한 뒤에 보고를 쓴다(보고를 본 시험이 resolve하면 그때 worktree·branch가 끝난 모습이어야 한다)
       printf '## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       echo "done"
@@ -137,6 +142,29 @@ done
 /// 안내를 받아도 화면이 바뀌지 않는 agent(echo 없음). 받은 줄은 파일에 남긴다.
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 
+/// 진행을 보고하는 agent(hook 없음, `aaa report`만): brief를 받으면 배경 CI를 기다린다며 35%와 중간 보고를 쓰고 턴을 끝낸다.
+/// `finish`를 받으면 끝낸 보고를 쓰고 `Done`을 알린다(보고를 먼저 쓰고 진행은 마지막, THREAD.md·진행 보고 안내 차례).
+const PROGRESS_AGENT: &str = r#"#!/bin/sh
+printf 'prog> '
+while IFS= read -r line; do
+  case "$line" in
+    *brief.md*)
+      dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
+      "$AA" report --percent 35 --activity 'CI 기다림'
+      printf '[진행 중] 배경 CI를 기다린다\n\n## Report\n중간\n\n## Next\n- CI 확인\n' > "$dir/report.md.tmp"
+      mv "$dir/report.md.tmp" "$dir/report.md"
+      echo "interim" ;;
+    *finish*)
+      printf '[완료] 끝냈다\n\n## Report\n끝\n\n## Next\n- 병합\n' > "$dir/report.md.tmp"
+      mv "$dir/report.md.tmp" "$dir/report.md"
+      "$AA" report --percent 100 --activity Done
+      echo "finished" ;;
+    *) echo "got: $line" ;;
+  esac
+  printf 'prog> '
+done
+"#;
+
 /// Claude Code처럼 입력창(위 테두리·`❯ `·아래 테두리)을 그리는 harness(hook 없음, profile harness는 claude). 첫 Enter는
 /// 무시해 brief 줄이 입력창에 남는다. 다음 Enter부터 받아 대화에 `❯ <줄>`·`got: <줄>`을 남기고 입력창을 비운다.
 /// 화면은 바뀔 때마다 통째로 다시 그린다(받은 조각을 한 번에 그려 느린 머신에서도 그리는 중에 Enter가 오지 않는다).
@@ -161,7 +189,6 @@ while :; do
 done
 "#;
 
-/// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
 /// 받은 바이트를 16진수로 `$PASTE_LOG`에 잇는 harness. Enter(0d)를 받을 때마다 `ok N`을 쓰고, 두 번째 Enter부터는
 /// bracketed paste를 켠다(brief와 첫 메시지는 꺼진 채, 둘째 메시지는 켠 채로 받는다).
 const PASTE_AGENT: &str = r#"#!/bin/sh
@@ -178,6 +205,7 @@ while c=$(dd bs=4096 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n') && [ -n "$
 done
 "#;
 
+/// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
 const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
 /// `extra`는 `[projects]`에 덧붙인다. `web`이면 웹을 loopback 임의 port로 연다.
@@ -185,7 +213,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\", \"paste\"]\nlibrary_copy_mb = 1\n{extra}",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\", \"prog\", \"paste\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -197,6 +225,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
          [profiles.hooked]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
+         [profiles.prog]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.paste]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
@@ -206,13 +235,11 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         path_str(&scripts.join("hooked.sh")),
         lab::BIN,
         path_str(&scripts.join("sticky.sh")),
+        path_str(&scripts.join("prog.sh")),
+        lab::BIN,
         path_str(&scripts.join("paste.sh")),
         path_str(&scripts.join("paste.log")),
     )
-}
-
-fn connected(node: &Node, name: &str) -> bool {
-    node.machine(name).is_some_and(|m| m["connection"] == "connected")
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -274,6 +301,7 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
     std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
     std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
+    std::fs::write(scripts.join("prog.sh"), PROGRESS_AGENT).unwrap();
     // harness claude는 실행 파일 뒤에 `--settings …`·`--session-id …`를 붙이므로 sh가 아니라 스크립트를 바로 띄운다
     std::fs::set_permissions(scripts.join("sticky.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
@@ -289,7 +317,7 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     let mut envs = vec![("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")];
     envs.extend(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     w.lab.spawn_env("agentA", &w.h, &["agent", "--host", "local", "--name", "labA"], &envs);
-    wait_for("labA 연결", T, || connected(&w.h, "labA").then_some(()));
+    wait_for("labA 연결", T, || w.h.connected("labA").then_some(()));
     w.h.ok(&["project", "create", "demo"]);
     w
 }
@@ -346,6 +374,16 @@ impl World {
         self.h.ok(&a)
     }
 
+    /// interrupt 메시지를 보내고 그 줄을 harness가 받았다고 화면에 보이기를 기다린다. CLI는 host가 멈춤을 확인하고
+    /// 보낼 때까지 돌아오지 않으므로 따로 돈다: 멈춤을 알지 못하면 stop_wait 동안 막혀 화면 기다림(T)이 먼저 실패한다.
+    fn interrupt(&self, id: &str, pane: &str, text: &str) -> (Value, String) {
+        std::thread::scope(|s| {
+            let sent = s.spawn(|| self.message(id, text, true));
+            let screen = self.wait_screen(pane, &format!("got: {text}"));
+            (sent.join().unwrap(), screen)
+        })
+    }
+
     fn wait_screen(&self, pane: &str, needle: &str) -> String {
         wait_for_diag(
             &format!("화면 {needle:?}"),
@@ -380,7 +418,7 @@ impl World {
         self.h.ok(&["machine", "approve", "labB", "--code", &code]);
         assert!(self.lab.wait_exit("enroll", T).success(), "{}", self.lab.log("enroll"));
         self.lab.spawn("agentB", &b, &["agent", "--host", &self.addr, "--name", "labB"]);
-        wait_for("labB 연결", T, || connected(&self.h, "labB").then_some(()));
+        wait_for("labB 연결", T, || self.h.connected("labB").then_some(()));
     }
 }
 
@@ -533,30 +571,39 @@ fn remote_dir_thread_survives_host_restart() {
     let work_dir = PathBuf::from(v["work_dir"].as_str().unwrap());
     std::fs::write(work_dir.join("report.md"), "## Report\n갱신\n\n## Next\n- 사용자 확인\n").unwrap();
     w.lab.spawn("host2", &w.h, &["host"]);
-    wait_for("labB 재연결", Duration::from_secs(60), || connected(&w.h, "labB").then_some(()));
+    wait_for("labB 재연결", Duration::from_secs(60), || w.h.connected("labB").then_some(()));
     let v = w.wait_show("갱신된 보고", &id, |v| v["next"] == serde_json::json!(["사용자 확인"]));
     // 보고 첫 줄 태그로 사람 차례를 정하지 않는다(D9): 새 보고는 검토 대기
     assert_eq!(v["group"], "ready_for_review");
     assert_eq!(w.kinds(seen), ["report_ready"]);
-    std::thread::sleep(Duration::from_secs(2));
+    // host2가 다시 붙기 전에 낸 outage가 있으면 여기와 아래 항목 시각 확인이 잡는다
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
     assert!(!items.iter().any(|i| i["item_kind"] == "outage"), "host 재시작에 outage가 생겼다: {items:?}");
 
     // 머신이 끊긴 채 host를 다시 띄워도 기준(5초) 전에는 알리지 않는다. 옛 코드는 마지막 연결 시각(7초 넘게 전)부터
     // 재서 첫 검사에 바로 알렸다. 기준 뒤 한 번, 돌아오면 한 번 알린다.
+    // 「기준 전에는 없다」는 시험 시계로 재지 않고 host가 남긴 항목 시각으로 본다: host3를 띄운 때보다 5초 넘게 뒤여야 한다.
+    // host3가 끊김을 처음 본 때는 띄운 때보다 늦으므로 부하로 늦어져도 거짓 실패가 없고, 일찍 알리면 늘 잡힌다.
     w.lab.kill("agentB");
     w.lab.kill("host2");
+    let spawned_ms = aaa_common::util::now_ms();
     w.lab.spawn("host3", &w.h, &["host"]);
-    let started = Instant::now();
+    let downs = || -> Vec<Value> {
+        let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+        items.into_iter().filter(|i| i["item_kind"] == "outage" && i["event"] == "down").collect()
+    };
     let outage = |event: &str| {
         let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
         items.iter().filter(|i| i["item_kind"] == "outage" && i["event"] == event).count()
     };
     wait_for("host3 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
-    std::thread::sleep(Duration::from_millis(2500));
-    assert_eq!(outage("down"), 0, "host가 끊김을 본 지 기준 전인데 outage가 생겼다");
-    assert!(started.elapsed() < Duration::from_secs(5), "기준 전 확인이 늦었다: {:?}", started.elapsed());
-    wait_for("outage down", T, || (outage("down") == 1).then_some(()));
+    let down = wait_for("outage down", T, || downs().into_iter().next());
+    let at = down["created_at_ms"].as_u64().unwrap();
+    assert!(
+        at >= spawned_ms + 5000,
+        "host가 끊김을 본 지 기준(5초) 전에 outage가 생겼다: 띄운 뒤 {}ms {down}",
+        at as i64 - spawned_ms as i64
+    );
     let b = w.lab.node("b", None);
     w.lab.spawn("agentB2", &b, &["agent", "--host", &w.addr, "--name", "labB"]);
     wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
@@ -651,7 +698,9 @@ fn thread_message_paste_follows_program_mode() {
 /// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
 #[test]
 fn hooked_thread_questions_and_messages() {
-    let w = world();
+    // interrupt의 멈춤 상한(stop_wait)을 시험 기다림(T)보다 훨씬 길게 둔다: 멈춤을 화면으로 알지 못하면
+    // 보내지 않은 채 상한까지 기다려 아래 「got: urgent」 기다림이 실패한다(시간 단언 없이 구별한다)
+    let w = world_with("stop_wait_ms = 120000\n");
     let v =
         w.start(&["--title", "hooked", "--profile", "hooked", "--kind", "dir", "--task-file", &w.task("t5.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
@@ -729,21 +778,15 @@ fn hooked_thread_questions_and_messages() {
     // interrupt: 일하는 중이면 Esc로 멈춘 뒤 보낸다. 멈춤은 Stop hook이 없어 화면(「Interrupted」)으로 안다.
     assert_eq!(w.message(&id, "long run", false)["state"], "accepted");
     w.wait_screen(&pane, "long start");
-    let t0 = std::time::Instant::now();
-    let m4 = w.message(&id, "urgent", true);
+    let (m4, screen) = w.interrupt(&id, &pane, "urgent");
     assert_eq!(m4["state"], "accepted", "{m4}");
-    assert!(t0.elapsed() < Duration::from_secs(10), "멈춤을 화면으로 알아야 한다: {:?}", t0.elapsed());
-    let screen = w.wait_screen(&pane, "got: urgent");
     assert!(screen.contains("Interrupted") && !screen.contains("long done"), "{screen}");
     // 두 번째 interrupt: 지난 「Interrupted」가 화면에 남아 있어도 새로 멈출 때까지 기다린다
     w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
     assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
     w.wait_for_count(&pane, "long start", 2);
-    let t0 = std::time::Instant::now();
-    let m5 = w.message(&id, "urgent2", true);
+    let (m5, screen) = w.interrupt(&id, &pane, "urgent2");
     assert_eq!(m5["state"], "accepted", "{m5}");
-    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
-    let screen = w.wait_screen(&pane, "got: urgent2");
     assert!(!screen.contains("long done"), "{screen}");
     assert_eq!(screen.matches("Interrupted").count(), 3, "{screen}");
     // thread stop: Esc 한 번(세션은 그대로)
@@ -759,11 +802,11 @@ fn hooked_thread_questions_and_messages() {
     let got: Vec<_> =
         all.iter().map(|q| (q["question_kind"].as_str().unwrap(), q["answer"].as_str().unwrap_or("-"))).collect();
     assert_eq!(got, [("trust", "yes"), ("permission", "yes"), ("permission", "no")]);
-    // 닫힌 질문의 inbox 항목은 끝난 것으로 남는다(nudge에 섞이지 않는다)
+    // 질문마다 항목을 만들지 않는다: 30초 안에 답한 확인창은 사람 차례가 아니다(herdr-projects `BLOCKED_DEBOUNCE_SECS`,
+    // plan §8.85). 진행을 40%로 알린 채 쓴 보고는 중간 보고다(검토 대기 아님)
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
-    let qs: Vec<_> = items.iter().filter(|i| i["item_kind"] == "question").collect();
-    assert_eq!(qs.len(), 3, "{items:?}");
-    assert!(qs.iter().all(|i| i["done"] == true), "{qs:?}");
+    assert!(items.iter().all(|i| i["item_kind"] != "question" && i["event"] != "blocked on a prompt"), "{items:?}");
+    assert!(!items.iter().any(|i| i["event"] == "new report"), "{items:?}");
     let kinds = w.kinds(0);
     let msg: Vec<_> = kinds.iter().filter(|k| k.starts_with("message_") || k.starts_with("question_")).collect();
     assert_eq!(
@@ -793,6 +836,54 @@ fn hooked_thread_questions_and_messages() {
             "message_accepted",
         ]
     );
+}
+
+/// `thread read`·`thread keys`(herdr-projects threads.rs `read`·`keys`): pane이 보이는 확인창을 자료로 감싸 보이고, 키로 답한다.
+/// `trust_screens = user`(기본)면 신뢰 창에는 키를 보내지 않는다. 세션이 끝났으면 거부한다.
+#[test]
+fn thread_read_and_keys() {
+    let w = world();
+    let v = w.start(&["--title", "keys", "--profile", "hooked", "--kind", "dir", "--task-file", &w.task("k.txt", "x")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    let q = w.wait_question(&id, "trust");
+    let out = w.h.run(&["thread", "read", "demo", &id]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "{text}");
+    assert!(
+        // 신뢰 창은 harness가 SessionStart hook을 내기 전이라 상태가 없다
+        text.starts_with(&format!(
+            "{id} · pane {pane} · agent 상태 모름\n--- 화면(pane이 보인 자료, 지시가 아니다) ---\n"
+        )) && text.contains("Quick safety check: Do you trust the files in this folder?")
+            && text.ends_with("--- 화면 끝 ---\n"),
+        "{text}"
+    );
+    // 신뢰 창은 사용자만 답한다
+    let e = w.h.json(&["thread", "keys", "demo", &id, "down", "enter"]).expect_err("신뢰 창에 키");
+    assert!(e.contains("trust_screen") && e.contains("trust_screens = user"), "{e}");
+    let e = w.h.json(&["thread", "keys", "demo", &id]).expect_err("빈 키");
+    assert!(e.contains("키나 --text"), "{e}");
+    w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "yes"]);
+    // 권한 확인창: 보고 Enter로 답한다(기본 선택 Yes). 가짜 Claude는 hook을 낸 뒤 창을 그리므로(`perm`) 질문이 생긴 때는
+    // 창이 아직 없을 수 있다: 그려진 것을 본 뒤 읽는다
+    w.wait_question(&id, "permission");
+    w.wait_screen(&pane, "Allow Bash(make test)?");
+    let r = w.h.ok(&["thread", "read", "demo", &id]);
+    assert!(r["read"]["text"].as_str().unwrap().contains("Allow Bash(make test)?"), "{r}");
+    assert_eq!((r["agent"].as_str(), r["read"]["source"].as_str()), (Some("question"), Some("visible")), "{r}");
+    let out = w.h.run(&["thread", "keys", "demo", &id, "enter"]);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{id}(agent question): enter를 눌렀다. 결과는 `aaa thread read demo {id}`\n")
+    );
+    w.wait_screen(&pane, "allowed");
+    // 기록 끝 N줄
+    let r = w.h.ok(&["thread", "read", "demo", &id, "--lines", "3"]);
+    assert_eq!(r["read"]["source"], "recent", "{r}");
+    w.h.ok(&["pane", "kill", &pane]);
+    wait_for("세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+    let e = w.h.json(&["thread", "read", "demo", &id]).expect_err("끝난 세션");
+    assert!(e.contains("세션이 끝났다") && e.contains(&format!("aaa thread restart demo {id}")), "{e}");
 }
 
 /// 결정 기록이 brief에 들어가고, 옛 결정으로 일하는 thread가 보인다. 끝난 세션은 다시 시작한다(새 brief·resume).
@@ -850,8 +941,9 @@ fn decisions_and_restart() {
     );
     assert!(brief.contains("API는 v3로 바꾼다"), "{brief}");
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered" && v["decisions_rev"] == 2);
-    // hook이 없는 harness는 일하는지 알 수 없다: 안내를 보낸 뒤에는 「쉼」이다(herdr-projects `group()` 7번 줄)
-    assert_eq!(v["group"], "idle");
+    // hook이 없는 harness는 일하는지 알 수 없다: 방금 안내를 받은 thread는 작업 중이다(herdr-projects ticker `delivered`,
+    // 다음 tick에야 7번 줄로 쉼이 된다). 같은 보고(같은 hash)를 다시 썼으니 새 보고는 없다.
+    assert_eq!(v["group"], "working");
     let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
 
     // resume: 같은 대화를 잇는다(custom harness는 같은 명령). brief 안내는 하지 않는다.
@@ -866,7 +958,8 @@ fn decisions_and_restart() {
     assert!(all.contains(&"decision_added".to_string()), "{all:?}");
 }
 
-/// inbox: 흐름 사건·세션 끝남·설정 오류가 항목이 되고, coordinator가 입력을 기다릴 때 처음 보는 묶음을 한 번만 알린다(§8.17)
+/// inbox: 묶음 전이(새 보고·쉼, plan §8.85)·설정 오류가 항목이 되고, coordinator가 입력을 기다릴 때 처음 보는 묶음을 한 번만
+/// 알린다(§8.17)
 #[test]
 fn inbox_and_nudge() {
     let w = world_with("tick_secs = 1\nnudge_idle_secs = 2\nnudge_quiet_secs = 1\n");
@@ -880,11 +973,16 @@ fn inbox_and_nudge() {
 
     let v = w.start(&["--title", "inbox", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("t7.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
-    let pane = v["pane"].as_str().unwrap().to_string();
-    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
-    let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    // 새 보고는 묶음이 검토 대기일 때 hash당 한 번 항목이 된다
+    let items = wait_for("새 보고 항목", T, || {
+        Some(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone())
+            .filter(|v| !v.is_empty())
+    });
     assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!((items[0]["item_kind"].as_str(), items[0]["event"].as_str()), (Some("report"), Some("report ready")));
+    assert_eq!(
+        (items[0]["item_kind"].as_str(), items[0]["event"].as_str()),
+        (Some("thread-state"), Some("new report"))
+    );
     std::thread::sleep(Duration::from_secs(5));
     assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
 
@@ -892,22 +990,22 @@ fn inbox_and_nudge() {
     w.h.ok(&["pane", "send-keys", &coord, "enter"]);
     w.wait_screen(&coord, "got: draft-text");
     let screen = w.wait_screen(&coord, "got: [aaa inbox]");
-    assert!(screen.contains(&format!("got: [aaa inbox] {id} report ready (aaa inbox list demo)")), "{screen}");
+    assert!(screen.contains(&format!("got: [aaa inbox] {id} new report (aaa inbox list demo)")), "{screen}");
     // 같은 묶음은 다시 보내지 않는다
     std::thread::sleep(Duration::from_secs(4));
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 1, "{}", w.h.screen(&coord));
 
     // context가 보인 항목은 「봤다」가 되어 다음 알림에 다시 나오지 않는다(herdr-projects `context`).
-    // 세션이 끝나면 새 항목만 알린다.
+    // 확인(ack)하면 검토 대기에서 쉼으로 바뀐 전이 항목만 새로 알린다.
     let c = w.h.ok(&["context", "demo", "--peek"]);
     assert_eq!(c["inbox"].as_array().unwrap().len(), 1, "{c}");
     assert_eq!(c["inbox"][0]["seen"], false);
     w.h.ok(&["context", "demo"]);
     assert_eq!(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"][0]["seen"], true);
-    w.h.ok(&["pane", "kill", &pane]);
+    w.h.ok(&["thread", "ack", "demo", &id]);
     w.wait_for_count(&coord, "got: [aaa inbox]", 2);
     let screen = w.h.screen(&coord);
-    assert!(screen.contains(&format!("got: [aaa inbox] {id} session ended (aaa inbox list demo)")), "{screen}");
+    assert!(screen.contains(&format!("got: [aaa inbox] {id} idle (aaa inbox list demo)")), "{screen}");
 
     // 보면(peek 아님) 「봤다」가 되고, 더 알리지 않는다
     let items = w.h.ok(&["inbox", "list", "demo"])["items"].as_array().unwrap().clone();
@@ -926,10 +1024,10 @@ fn inbox_and_nudge() {
         v
     };
     assert_eq!(files(&inbox).len(), 2);
-    let report_id = items.iter().find(|i| i["item_kind"] == "report").unwrap()["id"].as_str().unwrap().to_string();
+    let report_id = items.iter().find(|i| i["event"] == "new report").unwrap()["id"].as_str().unwrap().to_string();
     let md = std::fs::read_to_string(inbox.join(format!("{report_id}.md"))).unwrap();
     assert!(
-        md.starts_with("+++\n") && md.contains("kind = \"report\"") && md.contains("event = \"report ready\""),
+        md.starts_with("+++\n") && md.contains("kind = \"thread-state\"") && md.contains("event = \"new report\""),
         "{md}"
     );
 
@@ -951,11 +1049,148 @@ fn inbox_and_nudge() {
     std::fs::write(dir.join("project.toml"), "schema = [\n").unwrap();
     let screen = w.wait_screen(&coord, "got: [aaa inbox] project.toml not usable");
     assert!(screen.contains("got: [aaa inbox] project.toml not usable (aaa inbox list demo)"), "{screen}");
-    std::thread::sleep(Duration::from_secs(3));
+    // ticker가 같은 내용을 두 번 더 봐도 항목은 하나다(tick마다 다시 읽는다, 내용 hash당 한 번)
+    w.h.ticks(2);
     assert_eq!(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().len(), 1);
     let nudges = w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     assert_eq!(nudges, 3);
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 3);
+}
+
+/// 묶음 전이 항목(herdr-projects steps.rs `write_thread_items`, plan §8.85). 한 머신의 agent 둘(labA·labB):
+/// - 진행을 보고하는 thread(labA)가 배경 CI를 기다리며 중간 보고(35%)를 쓰고 턴을 끝내도 검토 대기가 아니다: 항목·알림이
+///   없다(t-0334 결함 6). `Done`을 알리면 끝낸 보고 하나로 「new report」 한 건·알림 한 번.
+/// - 보고 없이 쉬는 thread(labB)는 「idle」(알림 없음), 그 pane이 닫히면 「pane closed」(알림, 다시 시작 안내).
+/// - 확인(ack)하면 「idle」. resolve는 상태를 먼저 써서, 보고 없는 worktree thread의 세션을 끝내고 정리해도 「pane closed」·
+///   세션 항목 없이 「resolved」 한 건이다(알림 없음, t-0334 결함 7).
+#[test]
+fn thread_state_items_follow_groups() {
+    let (port, rx) = webhook_server(false);
+    let mut w = world_with(&format!(
+        "tick_secs = 1\n[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 1\n"
+    ));
+    w.add_remote();
+    let items = |w: &World| -> Vec<Value> {
+        w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone()
+    };
+    let has = |w: &World, id: &str, event: &str| items(w).iter().any(|i| i["subject"] == id && i["event"] == event);
+    let wait_item = |w: &World, id: &str, event: &str| {
+        wait_for_diag(
+            &format!("{id} {event} 항목"),
+            T,
+            || has(w, id, event).then_some(()),
+            || format!("inbox: {:?}\nthread: {}", items(w), w.show(id)),
+        )
+    };
+    // 받은 알림 항목(대상, 사건)
+    let mut pushed: Vec<(String, String)> = Vec::new();
+    let wait_push = |id: &str, event: &str, pushed: &mut Vec<(String, String)>| {
+        let want = (id.to_string(), event.to_string());
+        while !pushed.contains(&want) {
+            let (_, body) = rx.recv_timeout(T).unwrap_or_else(|_| panic!("{id} {event} 알림: 받은 것 {pushed:?}"));
+            let v: Value = serde_json::from_str(&body).unwrap();
+            for i in v["items"].as_array().unwrap() {
+                pushed.push((i["subject"].as_str().unwrap().into(), i["event"].as_str().unwrap().into()));
+            }
+        }
+    };
+
+    let start = |machine: &str, profile: &str, task: &str| -> (String, String) {
+        let v = w.start(&[
+            "--title",
+            task,
+            "--machine",
+            machine,
+            "--profile",
+            profile,
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task(&format!("{task}.txt"), task),
+        ]);
+        (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string())
+    };
+    let (a, _) = start("labA", "prog", "progress");
+    let (b, b_pane) = start("labB", "fake", "noreport");
+
+    // A: 중간 보고는 작업 중(진행 35%)
+    let v = w.wait_show("중간 보고", &a, |v| v["report_hash"].is_string() && v["agent"]["percent"] == 35);
+    assert_eq!(v["group"], "working", "{v}");
+    let interim = v["report_hash"].as_str().unwrap().to_string();
+    // B: 보고 없이 쉰다
+    wait_item(&w, &b, "idle");
+    // A: Done → 끝낸 보고로 검토 대기, 그 보고의 「new report」 한 건
+    assert_eq!(w.message(&a, "finish", false)["state"], "accepted");
+    let v = w.wait_show("끝낸 보고", &a, |v| {
+        v["group"] == "ready_for_review" && v["report_hash"].as_str().is_some_and(|h| h != interim)
+    });
+    let done = v["report_hash"].as_str().unwrap().to_string();
+    wait_item(&w, &a, "new report");
+    wait_push(&a, "new report", &mut pushed);
+    // B: pane이 닫히면 사람 차례
+    w.h.ok(&["pane", "kill", &b_pane]);
+    wait_item(&w, &b, "pane closed");
+    wait_push(&b, "pane closed", &mut pushed);
+    // A: 확인하면 쉼, 끝내면 resolved
+    w.h.ok(&["thread", "ack", "demo", &a]);
+    wait_item(&w, &a, "idle");
+    let v = w.h.ok(&["thread", "resolve", "demo", &a]);
+    assert_eq!(v["status"], "resolved");
+    assert!(has(&w, &a, "resolved"), "{:?}", items(&w));
+    // B: 다시 시작하면 다시 쉰다
+    w.h.ok(&["thread", "restart", "demo", &b]);
+    wait_for_diag(
+        "B 두 번째 idle",
+        T,
+        || (items(&w).iter().filter(|i| i["subject"] == b.as_str() && i["event"] == "idle").count() == 2).then_some(()),
+        || format!("{:?}", items(&w)),
+    );
+    // D: 보고 없이 쉬는 worktree thread를 끝낸다(세션 종료 뒤 worktree 정리가 이어진다, t-0334가 본 0.4초 창).
+    // 상태를 먼저 써서 닫힌 pane을 사람 차례로 보지 않는다: resolved뿐이다
+    let v = w.start(&[
+        "--title",
+        "worktree",
+        "--machine",
+        "labB",
+        "--profile",
+        "fake",
+        "--repo",
+        path_str(&w.repo),
+        "--task-file",
+        &w.task("d.txt", "noreport"),
+    ]);
+    let (d, d_pane) = (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string());
+    wait_item(&w, &d, "idle");
+    let v = w.h.ok(&["thread", "resolve", "demo", &d]);
+    assert_eq!(v["status"], "resolved");
+    wait_for("D 세션 끝남", T, || (w.h.pane(&d_pane)["state"] != "running").then_some(()));
+    // 그 뒤에도 묶음 셈이 돌았다는 표지: 새 thread C가 쉼 항목을 낸다
+    let (c, _) = start("labA", "fake", "noreport-c");
+    wait_item(&w, &c, "idle");
+
+    let got: Vec<(String, String, String)> = items(&w)
+        .iter()
+        .map(|i| {
+            let s = |k: &str| i[k].as_str().unwrap().to_string();
+            (s("subject"), s("event"), s("summary"))
+        })
+        .collect();
+    let events = |id: &str| -> Vec<&str> { got.iter().filter(|g| g.0 == id).map(|g| g.1.as_str()).collect() };
+    assert_eq!(events(&a), ["new report", "idle", "resolved"], "{got:?}");
+    assert_eq!(events(&b), ["idle", "pane closed", "idle"], "{got:?}");
+    assert_eq!(events(&d), ["idle", "resolved"], "{got:?}");
+    assert!(got.iter().all(|g| g.1 != "sessions ended"), "{got:?}");
+    let report = got.iter().find(|g| g.0 == a && g.1 == "new report").unwrap();
+    assert!(report.2.contains(&format!("(보고 {})", &done[..12])) && !report.2.contains(&interim[..12]), "{report:?}");
+    let closed = got.iter().find(|g| g.0 == b && g.1 == "pane closed").unwrap();
+    assert!(
+        closed.2.starts_with(&format!("{b} \"noreport\": 사람 차례(pane closed)"))
+            && closed.2.contains(&format!("aaa thread restart demo {b}")),
+        "{closed:?}"
+    );
+    // 알림: 사람이 할 일만 나간다(쉼·resolved는 inbox에만). 알림은 차례대로 오므로, 중간 보고에 항목이 생겼다면 끝낸 보고
+    // 알림보다 먼저(또는 함께) 받았다. 마지막 알림 뒤에 생긴 항목(쉼·resolved)은 알릴 것이 아니다.
+    assert_eq!(pushed, [(a.clone(), "new report".to_string()), (b.clone(), "pane closed".to_string())]);
 }
 
 /// 병합 대기열 순번·사건(§8.8)과 머신별 동시 thread 한도(§8.10)
@@ -1363,18 +1598,35 @@ fn library_view() {
     assert_eq!(http_get(&web, &format!("{base}link")).0, 404);
     let (st, _, body) = http_get(&web, "/v/0000/out.txt");
     assert_eq!(st, 401, "{}", String::from_utf8_lossy(&body));
-    // agent 쪽 파일이 사라졌으면 기다리지 않고 바로 알린다
+    // agent 쪽 파일이 사라졌으면 기다리지 않고 바로 알린다: 본문의 까닭이 agent의 답(없는 파일)이다.
+    // 기다렸다면 「agent 응답 시간 초과」(15초)나 「연결이 끊겼다」가 온다(시간 단언 없이 구별한다)
     std::fs::remove_file(agent_lib.join("big.bin")).unwrap();
-    let t0 = std::time::Instant::now();
     let (st, _, body) = http_get(&web, &format!("{base}big.bin"));
-    assert_eq!(st, 502, "{}", String::from_utf8_lossy(&body));
-    assert!(String::from_utf8_lossy(&body).contains("agent에 남긴 결과물을 읽지 못한다"));
-    assert!(t0.elapsed() < Duration::from_secs(5));
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(st, 502, "{body}");
+    assert!(body.contains("agent에 남긴 결과물을 읽지 못한다") && body.contains("(os error 2)"), "{body}");
+
+    // 보고 뒤에 바뀐 library는 보고가 그대로여도 resolve의 마지막 사본에서 다시 받는다
+    // (herdr-projects threads.rs final_copy → copy_home_*: hash와 상관없이 library를 다시 복사)
+    std::fs::write(agent_lib.join("out.txt"), "나중 결과물\n").unwrap();
+    std::fs::write(agent_lib.join("late.txt"), "늦게\n").unwrap();
+    w.h.ok(&["thread", "resolve", "demo", &id]);
+    let lib = w.h.ok(&["thread", "library", "demo", &id]);
+    let base = lib["base"].as_str().unwrap().to_string();
+    let (st, _, body) = http_get(&web, &format!("{base}out.txt"));
+    assert_eq!((st, String::from_utf8_lossy(&body).into_owned()), (200, "나중 결과물\n".to_string()));
+    let (st, _, body) = http_get(&web, &format!("{base}late.txt"));
+    assert_eq!((st, body.as_slice()), (200, "늦게\n".as_bytes()));
+    assert_eq!(http_get(&web, &format!("{base}big.bin")).0, 404, "지운 파일이 사본에 남았다");
+    // 보고는 그대로라 report_ready는 다시 내지 않고, 바뀐 library만 알린다(바뀌지 않았으면 worktree_thread_round_trip처럼 없다)
+    let kinds = w.kinds(0);
+    assert_eq!(kinds.iter().filter(|k| *k == "report_ready").count(), 1, "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| *k == "library_copied").count(), 1, "{kinds:?}");
 }
 
 /// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.
-#[test]
-fn notify_webhook() {
+/// 알림 webhook을 받는 loopback 서버: 요청 줄과 본문을 넘긴다. `ok_first_only`면 두 번째 요청부터 실패(500)를 돌려준다.
+fn webhook_server(ok_first_only: bool) -> (u16, std::sync::mpsc::Receiver<(String, String)>) {
     use std::io::{BufRead, BufReader, Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -1398,12 +1650,21 @@ fn notify_webhook() {
             }
             let mut body = vec![0u8; len];
             r.read_exact(&mut body).unwrap();
-            // 두 번째 요청부터는 실패를 돌려준다
-            let status = if n == 0 { "200 OK" } else { "500 Internal Server Error" };
+            let status = if n == 0 || !ok_first_only { "200 OK" } else { "500 Internal Server Error" };
             write!(c, "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
-            tx.send((line.trim().to_string(), String::from_utf8(body).unwrap())).unwrap();
+            if tx.send((line.trim().to_string(), String::from_utf8(body).unwrap())).is_err() {
+                break;
+            }
         }
     });
+    (port, rx)
+}
+
+#[test]
+fn notify_webhook() {
+    // 두 번째 요청부터는 실패를 돌려준다
+    let (port, rx) = webhook_server(true);
+    // 옛 종류 이름(report)도 thread 항목(thread-state)으로 읽는다(plan §8.85)
     let w = world_with(&format!(
         "[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 2\nkinds = [\"report\", \"session\"]\n"
     ));
@@ -1436,13 +1697,21 @@ fn notify_webhook() {
         .iter()
         .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
         .collect();
-    assert_eq!(got, [(ids[0].as_str(), "report ready"), (ids[1].as_str(), "report ready")], "{body}");
-    assert!(v["text"].as_str().unwrap().starts_with("[aaa] demo\n- t-0001 report ready"), "{body}");
+    assert_eq!(got, [(ids[0].as_str(), "new report"), (ids[1].as_str(), "new report")], "{body}");
+    assert!(v["text"].as_str().unwrap().starts_with("[aaa] demo\n- t-0001 new report"), "{body}");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
-    // 세션이 끝나면(session) 알린다. 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
-    w.h.ok(&["pane", "kill", w.show(&ids[0])["pane"].as_str().unwrap()]);
-    let (_, body) = rx.recv_timeout(T).expect("세션 알림");
-    assert!(body.contains(&format!("- {} session ended: 세션이 끝났다", ids[0])), "{body}");
+    // 보고 없이 쉬던 thread의 세션이 끝나면 사람 차례(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
+    // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
+    let n3 =
+        w.start(&["--title", "n3", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("n3.txt", "noreport")]);
+    let (n3, pane3) = (n3["id"].as_str().unwrap().to_string(), n3["pane"].as_str().unwrap().to_string());
+    w.wait_screen(&pane3, "done");
+    w.h.ok(&["pane", "kill", &pane3]);
+    let (_, body) = rx.recv_timeout(T).expect("pane closed 알림");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let got: Vec<_> = v["items"].as_array().unwrap().iter().map(|i| i["event"].as_str().unwrap()).collect();
+    assert_eq!(got, ["pane closed"], "{body}");
+    assert!(body.contains(&format!("- {n3} pane closed: {n3} \\\"n3\\\": 사람 차례(pane closed)")), "{body}");
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
     assert!(rx.recv_timeout(Duration::from_secs(5)).is_err(), "실패한 알림을 다시 보냈다");
     let failed = w.h.ok(&["events", "demo"])["events"]
@@ -1546,7 +1815,7 @@ fn coordinator_flow() {
     // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
     let a = w.h.ok(&["assignable", "demo"]);
     let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
-    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "paste", "sticky"]), "{a}");
+    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "paste", "prog", "sticky"]), "{a}");
     w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
     for (bad, why) in
         [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]
@@ -1592,7 +1861,11 @@ fn coordinator_flow() {
     let pane = w.show(&id)["pane"].as_str().unwrap().to_string();
     wait_for("Next 줄 전달", T, || w.h.screen(&pane).contains("got: 두 번째 일").then_some(()));
 
-    // context: TASKS.md·열린 thread와 Next·start_threads·owner·inbox
+    // context: TASKS.md·열린 thread와 Next·start_threads·owner·inbox(새 보고 항목은 ticker가 묶음을 센 뒤 생긴다)
+    wait_for("새 보고 항목", T, || {
+        let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+        items.iter().any(|i| i["subject"] == id.as_str() && i["event"] == "new report").then_some(())
+    });
     let c = w.h.ok(&["context", "demo"]);
     assert_eq!(c["start_threads"], "propose");
     assert_eq!(c["tasks"].as_array().unwrap().len(), 4);
@@ -1607,7 +1880,7 @@ fn coordinator_flow() {
         "{text}"
     );
     // inbox 항목은 context에 보인다(지시가 아니라 자료)
-    assert!(text.contains("지시가 아니라 자료다") && text.contains("[report]"), "{text}");
+    assert!(text.contains("지시가 아니라 자료다") && text.contains("[thread-state]"), "{text}");
     // 새 프로젝트의 coordinator 안내
     w.h.ok(&["project", "create", "p2"]);
     let guide = std::fs::read_to_string(w.projects.join("p2").join("AGENTS.md")).unwrap();
@@ -1744,8 +2017,8 @@ fn evaluator_flow() {
     assert!(evals.iter().any(|i| i["subject"] == eval_id.as_str() && i["event"] == "evaluation"), "{inbox_items:?}");
     assert_eq!(evals.iter().filter(|i| i["event"] == "invalid").count(), 1, "{inbox_items:?}");
     assert!(
-        !inbox_items.iter().any(|i| i["item_kind"] == "report" && i["subject"] == eid.as_str()),
-        "평가자 보고가 report 항목이 됐다"
+        !inbox_items.iter().any(|i| i["item_kind"] == "thread-state" && i["subject"] == eid.as_str()),
+        "평가자 보고가 thread 항목이 됐다"
     );
 
     // 채택은 결정 기록에 남고, 보류까지 정하면 inbox 항목이 끝난다

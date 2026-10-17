@@ -31,6 +31,11 @@ mod assets {
     include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
 }
 
+const OUTPUT_STALLED_REASON: &str = "terminal output consumer stalled";
+/// 기기를 취소해 닫은 WebSocket. 웹은 다시 붙지 않고 pairing 화면으로 간다(web/src/api.ts `REVOKED_CLOSE_CODE`)
+pub const DEVICE_REVOKED_CLOSE_CODE: u16 = 4401;
+const DEVICE_REVOKED_REASON: &str = "device revoked";
+
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
                    connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
@@ -55,7 +60,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
 pub fn router(host: Arc<Host>) -> Router {
     Router::new()
         .route("/api/v1/pair", post(pair))
-        .route("/api/v1/me", get(me))
+        .route("/api/v1/me", get(me).delete(sign_out))
         .route("/api/v1/call", post(call))
         .route("/api/v1/events", get(events_ws))
         .route("/api/v1/push", get(push_info))
@@ -193,6 +198,9 @@ fn unauthorized() -> Response {
 #[derive(Deserialize)]
 struct PairBody {
     code: String,
+    /// 이 브라우저의 이름(herdr-web-ui `deviceLabel`, 「iPhone · Safari」). 설정 → 기기에서 바꾼다
+    #[serde(default)]
+    label: String,
 }
 
 #[derive(Serialize)]
@@ -202,7 +210,7 @@ struct Me {
 }
 
 async fn pair(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PairBody>) -> Response {
-    match host.redeem_pairing(&b.code) {
+    match host.redeem_pairing(&b.code, &b.label) {
         Ok((token, role)) => {
             let secure = via_https(&headers);
             let cookie = if secure {
@@ -216,6 +224,19 @@ async fn pair(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<P
         }
         Err(e) => (StatusCode::UNAUTHORIZED, Json(Outcome::<()>::Err(e))).into_response(),
     }
+}
+
+/// 이 브라우저의 로그인을 잊는다(herdr-web-ui `DELETE /api/auth`): 두 이름의 cookie를 모두 지운다. 기기 기록은 남는다
+/// (참고와 같다. 지우려면 설정 → 기기에서 취소한다). push 구독은 웹이 먼저 지운다.
+async fn sign_out() -> Response {
+    let mut res = StatusCode::NO_CONTENT.into_response();
+    for c in [
+        "__Host-aaa=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+        "aaa=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+    ] {
+        res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_static(c));
+    }
+    res
 }
 
 async fn me(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
@@ -255,7 +276,7 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
     let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
-    let kinds = host.cfg.notify.kinds.clone();
+    let kinds = host.cfg.notify.item_kinds();
     Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, kinds })).into_response()
 }
 
@@ -338,6 +359,9 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap, body: Opti
             crate::push::Sent::Failed(e) => failed.push(e),
         }
     }
+    // 시험 알림은 사람이 켜거나 「테스트 보내기」를 누를 때만 간다(쓰는 화면이 있어도 보낸다, 참고 server/push.ts sendTest).
+    // 휴대폰에 뜬 배너가 어디서 왔는지 가릴 수 있게 남긴다(사용자 화면 10-18 00:27, plan §8.82)
+    host.db.audit(&format!("device:{id}"), "push_test", &format!("sent {sent} failed {}", failed.len()));
     if only.is_some() && sent == 0 {
         let gone = failed.first().is_some_and(|f| f.starts_with("브라우저가 구독을 버렸다"));
         let err = if gone {
@@ -425,10 +449,26 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
     let mut preferences = host.preferences.subscribe();
-    let mut presence = Presence { host: host.clone(), dev, active: false };
+    let mut revoked = host.device_revoked.subscribe();
+    let mut presence = Presence { host: host.clone(), dev: dev.clone(), active: false };
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
+    let close_revoked = |mut socket: WebSocket| async move {
+        let frame = CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE, reason: DEVICE_REVOKED_REASON.into() };
+        let _ = socket.send(Message::Close(Some(frame))).await;
+    };
+    // 듣기 시작한 뒤에 다시 본다(pane_session과 같다)
+    if host.is_revoked(&dev) {
+        return close_revoked(socket).await;
+    }
+    // 살아 있는지: 브라우저는 WebSocket ping에 저절로 pong한다. 휴대폰이 잠들거나 망이 바뀌어 반쯤 열린 연결은 보내기가
+    // 실패하지 않고 몇 분씩 남는다. 그동안 이 연결의 「쓰는 화면」이 남아 어느 기기에도 push가 가지 않고, 그 화면은 사건을
+    // 받지 못한다(10-18 iPhone 실기). 아무것도 받지 못한 채 EVENTS_DEAD_AFTER가 지나면 끊는다(herdr-web-ui는 Bun
+    // WebSocket의 ping·idleTimeout과 웹 ws.ts 「Liveness」 probe가 같은 일을 한다).
+    let (every, dead_after) = events_liveness();
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    let mut heard = tokio::time::Instant::now();
     loop {
         if send_preferences {
             send_preferences = false;
@@ -445,6 +485,18 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             }
         }
         tokio::select! {
+            biased;
+            r = revoked.recv() => {
+                send_state = false;
+                let mine = match r {
+                    Ok(gone) => gone == dev,
+                    Err(RecvError::Lagged(_)) => host.is_revoked(&dev),
+                    Err(RecvError::Closed) => false,
+                };
+                if mine {
+                    return close_revoked(socket).await;
+                }
+            }
             r = changed.changed() => {
                 if r.is_err() { break }
                 send_state = true;
@@ -479,12 +531,29 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 send_state = false;
                 send_preferences = true;
             }
+            _ = ping.tick() => {
+                send_state = false;
+                if heard.elapsed() >= dead_after {
+                    tracing::info!("상태 사건 연결이 {}초 동안 답하지 않아 끊는다", dead_after.as_secs());
+                    break;
+                }
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
             m = socket.recv() => {
                 send_state = false;
+                heard = tokio::time::Instant::now();
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
                         Ok(EventsClientMsg::Presence { active }) => presence.set(active),
+                        Ok(EventsClientMsg::Ping { id }) => {
+                            let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                            if socket.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
                         Err(_) => {}
                     },
                     _ => {}
@@ -492,6 +561,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             }
         }
     }
+}
+
+/// 상태 사건 연결의 WebSocket ping 간격과, 아무것도 받지 못하면 끊는 시간(15초·45초: ping 두 번을 놓치고도 남는다).
+/// `AAA_TEST_EVENTS_PING_MS`는 시험에서만 줄인다(끊는 시간은 그 세 배).
+fn events_liveness() -> (std::time::Duration, std::time::Duration) {
+    let ms = std::env::var("AAA_TEST_EVENTS_PING_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(15_000);
+    (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
@@ -552,7 +628,8 @@ async fn pane_ws(
 struct Outbox {
     tx: tokio::sync::mpsc::UnboundedSender<Message>,
     buffered: Arc<AtomicU64>,
-    stop: tokio::sync::watch::Sender<bool>,
+    /// 남은 줄을 버리고 이 code로 닫는다(4008 출력 정지, 4401 기기 취소)
+    stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
 }
 
 fn frame_len(m: &Message) -> u64 {
@@ -567,7 +644,7 @@ impl Outbox {
     fn new(mut sink: futures_util::stream::SplitSink<WebSocket, Message>) -> Self {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
         let buffered = Arc::new(AtomicU64::new(0));
-        let (stop, mut stopped) = tokio::sync::watch::channel(false);
+        let (stop, mut stopped) = tokio::sync::watch::channel(None);
         let left = buffered.clone();
         tokio::spawn(async move {
             loop {
@@ -589,11 +666,9 @@ impl Outbox {
                     return;
                 }
             }
-            // 따라오지 못한 연결: 남은 줄은 버리고 4008로 닫는다. 그 닫기도 못 가면 연결을 버린다.
-            let close = Message::Close(Some(CloseFrame {
-                code: OUTPUT_STALLED_CLOSE_CODE,
-                reason: "terminal output consumer stalled".into(),
-            }));
+            // 따라오지 못했거나 기기가 취소됐다: 남은 줄은 버리고 그 code로 닫는다. 그 닫기도 못 가면 연결을 버린다.
+            let (code, reason) = stopped.borrow().unwrap_or((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON));
+            let close = Message::Close(Some(CloseFrame { code, reason: reason.into() }));
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sink.send(close)).await;
         });
         Self { tx, buffered, stop }
@@ -615,7 +690,12 @@ impl Outbox {
     /// 출력을 따라오지 못했다: 4008로 닫는다. 다시 보내지 않는다(브라우저의 「다시 연결」이 새로 붙는다).
     fn stop(&self, why: &str) {
         tracing::info!(why, "웹 터미널 출력 정지(4008)");
-        let _ = self.stop.send(true);
+        let _ = self.stop.send(Some((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON)));
+    }
+
+    /// 기기가 취소됐다: 밀린 출력도 보내지 않고 4401로 닫는다
+    fn revoked(&self) {
+        let _ = self.stop.send(Some((DEVICE_REVOKED_CLOSE_CODE, DEVICE_REVOKED_REASON)));
     }
 }
 
@@ -683,6 +763,8 @@ async fn pane_session(
 ) {
     let id = id.to_string();
     let actor = format!("device:{dev}");
+    // 취소를 듣기 시작한 뒤에 다시 본다: upgrade와 취소가 엇갈려도 놓치지 않는다(t3code SessionStore `awaitInvalidation`)
+    let mut revoked = host.device_revoked.subscribe();
     let Some(mut attach) = host.attach_pane(&id) else { return };
     let mut next = attach.offset;
     let mut upload: Option<crate::attach::Upload> = None;
@@ -706,6 +788,10 @@ async fn pane_session(
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut queue_since = None;
+    if host.is_revoked(dev) {
+        out.revoked();
+        return;
+    }
     loop {
         let verdict = if acks {
             window.check(out.buffered(), now())
@@ -717,6 +803,19 @@ async fn pane_session(
             break;
         }
         tokio::select! {
+            biased;
+            r = revoked.recv() => {
+                // 놓쳤으면(Lagged) 이 기기인지 다시 본다
+                let mine = match r {
+                    Ok(gone) => gone == dev,
+                    Err(RecvError::Lagged(_)) => host.is_revoked(dev),
+                    Err(RecvError::Closed) => false,
+                };
+                if mine {
+                    out.revoked();
+                    break;
+                }
+            }
             _ = tick.tick() => {}
             ev = rx.recv() => {
                 // 빈틈·지연(Lagged)·agent 재구독(Reset)은 host 안의 일이라 snapshot으로 다시 맞춘다. 브라우저가
@@ -757,6 +856,11 @@ async fn pane_session(
                 }
             }
             m = stream.next() => {
+                // 취소 사건보다 먼저 와 있던 입력도 받지 않는다(§6.4 「대기 중인 입력에도 바로」)
+                if host.is_revoked(dev) {
+                    out.revoked();
+                    break;
+                }
                 let req = match m {
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<TermClientMsg>(&t) {
                         Ok(TermClientMsg::Ack { stream, offset }) => {
@@ -906,6 +1010,16 @@ async fn static_file(req: Request) -> Response {
 #[cfg(test)]
 mod content_type_tests {
     use super::content_type;
+
+    /// build.rs가 만든 자산 목록은 빌드한 worktree의 절대 경로를 갖지 않는다: build script 실행 결과를 캐시하는
+    /// 도구가 다른 worktree에 이 파일을 되돌려도 그 worktree의 web/dist를 읽어야 한다(t-0327, kache build_script_run)
+    #[test]
+    fn web_assets_do_not_bake_build_paths() {
+        let src = include_str!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
+        for line in src.lines().filter(|l| l.contains("include_bytes!")) {
+            assert!(line.contains("include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../web/dist/"), "{line}");
+        }
+    }
 
     #[test]
     fn touch_icon_aliases() {

@@ -189,11 +189,10 @@ pub(crate) fn check_keys(p256dh: &str, auth: &str) -> Result<(), String> {
 /// 알림 내용. 한 thread 항목만이면 제목은 「프로젝트 · thread 제목」(`title`이 비면 thread ID), 자리(tag)는 그 thread,
 /// 누르면 그 thread 보기로 연다. 아니면 「aaa · 프로젝트」와 프로젝트 자리다.
 pub(crate) fn payload(project: &str, items: &[InboxItem], title: Option<&str>) -> serde_json::Value {
-    let thread_kinds = ["report", "question", "delivery", "thread", "session"];
     let one = items
         .first()
         .map(|i| i.subject.as_str())
-        .filter(|s| items.iter().all(|i| i.subject == *s && thread_kinds.contains(&i.item_kind.as_str())));
+        .filter(|s| items.iter().all(|i| i.subject == *s && i.item_kind == "thread-state"));
     let (url, head, tag) = match one {
         Some(t) => (
             format!("/#thread={}", url_escape(&format!("{project}/{t}"))),
@@ -294,7 +293,11 @@ impl Host {
                 project,
                 "push_skipped",
                 None,
-                format!("쓰는 화면 {watching}개 · 항목 {}개", items.len()),
+                format!(
+                    "쓰는 화면 {watching}개(기기 {}) · 항목 {}개",
+                    self.viewing.lock().unwrap().devices_in_use().join(", "),
+                    items.len()
+                ),
             );
             return;
         }
@@ -431,7 +434,7 @@ mod tests {
             project: "demo".into(),
             item_kind: kind.into(),
             subject: subject.into(),
-            event: "question".into(),
+            event: "blocked on a prompt".into(),
             summary: "확인창".into(),
             body: String::new(),
             done: false,
@@ -440,21 +443,23 @@ mod tests {
             done_at_ms: None,
         };
         // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread
-        let p = payload("demo", &[item("t-0001", "question"), item("t-0001", "report")], Some("웹 결과물"));
+        let p = payload("demo", &[item("t-0001", "thread-state"), item("t-0001", "thread-state")], Some("웹 결과물"));
         assert_eq!(p["url"], "/#thread=demo%2Ft-0001");
         assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("demo · 웹 결과물"), Some("aaa-demo/t-0001")));
         // 제목이 없거나 비면 thread ID
-        assert_eq!(payload("demo", &[item("t-0001", "report")], Some("  "))["title"], "demo · t-0001");
-        assert_eq!(payload("demo", &[item("t-0001", "report")], None)["title"], "demo · t-0001");
+        assert_eq!(payload("demo", &[item("t-0001", "thread-state")], Some("  "))["title"], "demo · t-0001");
+        assert_eq!(payload("demo", &[item("t-0001", "thread-state")], None)["title"], "demo · t-0001");
+        // 머신 항목(세션 끝남)은 thread 자리가 아니다
+        assert_eq!(payload("demo", &[item("mac-b", "session")], None)["title"], "aaa · demo");
         // 섞이면 프로젝트 한 자리
-        let p = payload("demo", &[item("t-0001", "question"), item("mac-b", "outage")], Some("웹 결과물"));
+        let p = payload("demo", &[item("t-0001", "thread-state"), item("mac-b", "outage")], Some("웹 결과물"));
         assert_eq!(
             (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str()),
             (Some("/"), Some("aaa · demo"), Some("aaa-demo"))
         );
-        let p = payload("demo", &[item("t-0001", "report"), item("t-0002", "report")], None);
+        let p = payload("demo", &[item("t-0001", "thread-state"), item("t-0002", "thread-state")], None);
         assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("aaa · demo"), Some("aaa-demo")));
-        let many: Vec<_> = (0..200).map(|n| item(&format!("t-{n:04}"), "report")).collect();
+        let many: Vec<_> = (0..200).map(|n| item(&format!("t-{n:04}"), "thread-state")).collect();
         assert!(payload("demo", &many, None)["body"].as_str().unwrap().len() <= BODY_CAP + 3);
     }
 }
