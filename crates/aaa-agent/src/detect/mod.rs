@@ -169,7 +169,7 @@ mod tests {
             assert!(!d.skip_state_update, "{file}");
             n += 1;
         }
-        assert_eq!(n, 8, "fixture 수");
+        assert_eq!(n, 9, "fixture 수");
     }
 
     #[test]

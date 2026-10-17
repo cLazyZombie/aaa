@@ -134,6 +134,26 @@ fn ready(a: Option<AgentActivity>) -> bool {
     a.is_none_or(|a| matches!(a, AgentActivity::Idle | AgentActivity::Started))
 }
 
+/// 사건이 바꿀 활동(없으면 그대로).
+/// - harness 세션 ID(SessionStart·Codex notify)는 상태를 바꾸지 않는다(compact·clear 뒤에도 화면 감지가 낸 상태가
+///   맞다). 처음 보는 pane만 「시작」으로 둔다.
+/// - 지금 상태가 된 때보다 오래된 사건은 바꾸지 않는다. agent가 다시 붙을 때 보내는 기억(agent `set_host`)이 그 사이
+///   화면 감지가 낸 새 상태보다 늦게 올 수 있다(사건 때는 모두 그 pane agent의 시계다, plan §8.75).
+fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentActivity> {
+    if prev.is_some_and(|a| ev.at_ms < a.since_ms) {
+        return None;
+    }
+    match ev.kind.as_str() {
+        "session_start" | "session" => prev.is_none().then_some(AgentActivity::Started),
+        "turn_start" | "working" => Some(AgentActivity::Working),
+        "turn_end" | "idle" => Some(AgentActivity::Idle),
+        "question" => Some(AgentActivity::Question),
+        "error" => Some(AgentActivity::Error),
+        "exited" => Some(AgentActivity::Exited),
+        _ => None,
+    }
+}
+
 impl Host {
     /// 이 pane의 다음 사건 중 `kinds`에 드는 것을 기다린다
     fn wait_kind(&self, pane: &str, kinds: &'static [&'static str]) -> oneshot::Receiver<String> {
@@ -218,17 +238,7 @@ impl Host {
             if ev.harness_session.is_some() {
                 st.harness_session = ev.harness_session.clone();
             }
-            let next = match ev.kind.as_str() {
-                // harness 세션 ID(SessionStart·Codex notify)는 상태를 바꾸지 않는다(compact·clear 뒤에도 화면 감지가 낸
-                // 상태가 맞다). 처음 보는 pane만 「시작」으로 둔다.
-                "session_start" | "session" => prev.is_none().then_some(AgentActivity::Started),
-                "turn_start" | "working" => Some(AgentActivity::Working),
-                "turn_end" | "idle" => Some(AgentActivity::Idle),
-                "question" => Some(AgentActivity::Question),
-                "error" => Some(AgentActivity::Error),
-                "exited" => Some(AgentActivity::Exited),
-                _ => None,
-            };
+            let next = next_activity(prev.as_ref(), &ev);
             if ev.kind == "progress" {
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
@@ -763,5 +773,38 @@ mod tests {
         assert!(answer_keys(&lines("fake> \nNo idea"), "yes").is_err());
         assert!(modal_of(&lines("fake> got: x")).is_none());
         assert!(answer_keys(&[], "maybe").is_err());
+    }
+
+    /// agent가 다시 붙으며 보낸 옛 기억(옛 agent의 `turn_start`)이 먼저 도착한 화면 감지 idle을 덮지 않는다(t-0334 결함 1)
+    #[test]
+    fn older_events_do_not_change_the_activity() {
+        let ev = |kind: &str, at_ms| HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: kind.into(),
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            at_ms,
+            transcript: None,
+        };
+        let idle = AgentStatus {
+            activity: AgentActivity::Idle,
+            since_ms: 2_000,
+            harness: "claude".into(),
+            message: None,
+            percent: None,
+            progress: None,
+            progress_at_ms: None,
+            harness_session: None,
+            seen: true,
+        };
+        assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
+        assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
+        // host가 처음 듣는 pane(host 재시작)은 옛 기억으로 상태를 정한다
+        assert_eq!(next_activity(None, &ev("turn_start", 1_000)), Some(AgentActivity::Working));
+        assert_eq!(next_activity(None, &ev("session_start", 1_000)), Some(AgentActivity::Started));
+        assert_eq!(next_activity(Some(&idle), &ev("session_start", 3_000)), None);
     }
 }

@@ -1834,11 +1834,17 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - `session_start`·`session`은 상태를 바꾸지 않는다(처음 보는 pane만 「시작」). 옛 agent의 `turn_start`·`turn_end` 등은 그대로 받는다.
   - 입력 수신은 `working`·`question`(옛 agent는 `turn_start`)이 오면 `accepted`다.
   - 질문에 답한 뒤 상태를 꾸며 넣지 않는다(화면이 알린다). interrupt는 Esc 뒤 `idle`을 기다린다(「Interrupted」 화면 세기를 없앴다).
+  - 지금 상태가 된 때보다 오래된 사건은 상태를 바꾸지 않는다(`next_activity`). agent가 다시 붙을 때 보내는 기억(agent `set_host`, 따로 도는 task)이 그 사이 화면 감지가 낸 새 상태보다 늦게 도착할 수 있다. 사건 때는 모두 그 pane agent의 시계라 비교할 수 있다. host가 처음 듣는 pane(host 재시작)은 기억으로 정한다.
   - 답 키: Codex 0.163 승인 창의 맨 아래 줄 「Press enter to confirm or esc to cancel」을 선택 창 표지에 더했다(실측). 참고 herdr-projects는 사람이 고른 키(`thread keys`)를 보내고 선택지를 읽지 않는다. aaa `question answer`는 aaa 기능이라 표지를 실제 화면으로 맞춘다.
 - **herdr와 다르게 둔 것.**
   - 프로세스 판별(foreground 프로세스 이름으로 agent 찾기·바뀜·끝남, herdr `src/detect/mod.rs` 186~290줄)은 없다. aaa 세션은 harness 하나를 띄우고 끝나면 세션도 끝난다. 셸에서 사람이 띄운 claude·codex는 감지하지 않는다(차이 목록에 줄이 없고 3 OS 프로세스 코드가 필요하다).
   - 규칙 원격 갱신·local override·explain 명령은 없다(§8.3 「감지 규칙 고정」).
   - Codex 세션 ID는 SessionStart hook 대신 notify(`thread-id`)로 받는다. herdr는 `~/.codex/hooks.json`을 고치지만 aaa는 사용자 설정을 고치지 않는다(§8.15).
+- **운영 pane 확인(t-0334 결함 1, shadow/t-0002, 10-18 01:1x, 읽기만).**
+  - 증상: 운영 host가 10시간 넘게 「작업 중」(harness working)이라 했는데 화면은 턴이 끝난(「done 10:21 AM」) 뒤 입력 대기였다.
+  - 원인: 옛 hook 방식. 10-17 14:16 사용자가 「한글 상태」를 보냈고(UserPromptSubmit → `turn_start`) 대화 기록에는 요청만 있고 답이 없다. 보낸 글이 입력 상자로 돌아와 있어 턴이 응답 전에 interrupt된 모양이다. Claude Code는 사용자 interrupt에는 Stop hook을 내지 않아 `turn_end`가 오지 않았다. 세션 폴더 harness.json의 마지막 사건도 이 `turn_start`다.
+  - 화면 감지 판정: 그 pane 화면(`aaa pane read`, 66×42)을 herdr 0.9.5 원본(`herdr agent explain --file`)과 옮긴 엔진에 넣으면 둘 다 `live_prompt_box` idle이다. fixture `claude-idle-typed.txt`로 넣었다.
+  - binary를 바꾸면: 새 agent가 harness.json의 `turn_start`를 다시 보내 잠깐 「작업 중」이 되고, 첫 감지(300ms)에서 idle이 된다. 이 세션의 session host는 1.0이라 보이는 화면(`Screen`)으로 감지한다. 감지 idle이 기억보다 먼저 도착해도 위 host 규칙으로 덮이지 않는다.
 - **실제 화면과 참고 규칙의 차이(규칙은 넓히지 않았다).**
   - Claude Code 2.1.302의 파일 만들기 창(「Do you want to create report.md?」)은 `bash_permission_prompt`·`generic_permission_prompt`가 아니라 약한 표지 `legacy_no_prompt_blocker`로 잡힌다. blocked이지만 「보이는 확인창」이 아니어서 refresh가 없고, 질문 종류는 `confirm`이다.
   - Codex 0.163.0의 idle 화면은 화면 규칙 어느 것에도 맞지 않는다(아래 상태 줄의 「Working」 글은 규칙이 보지 않는다). 맞는 규칙이 없으면 Idle이라는 참고 동작으로 idle이 된다.
@@ -1846,10 +1852,11 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - Codex 0.163은 `approval_policy="untrusted"`를 받지 않는다(설정 오류로 시작하지 않는다). 시험은 `on-request` + 읽기 전용 sandbox로 승인 창을 띄운다.
 - **시험.**
   - 엔진·규칙: 옮긴 herdr 시험 12개, 상태 기계 6개(시계는 인자로 넘긴다), Watch 3개(요청 하나씩·화면이 같으면 평가하지 않음·질문 본문), 판 gate(1.0 session host에는 `Screen`).
-  - 실제 화면 fixture 8장(`detect/fixtures/`, 시험 host의 Claude Code 2.1.302·Codex 0.163.0, 경로·이름을 지움). 기대값은 herdr 원본 엔진(`herdr agent explain --file`)의 판정이다(`fixtures/expected.txt`).
+  - 실제 화면 fixture 9장(`detect/fixtures/`, 시험 host의 Claude Code 2.1.302·Codex 0.163.0과 운영 pane shadow/t-0002 하나, 경로·이름을 지움). 기대값은 herdr 원본 엔진(`herdr agent explain --file`)의 판정이다(`fixtures/expected.txt`).
   - vt: OSC 제목·진행, 감지 글이 내용·커서 줄에서 끝나고 화면 위 기록까지 읽는다.
   - m13 `claude_thread_states_questions_and_messages`: 가짜 Claude가 Claude 화면(입력 상자·spinner·확인창)을 그린다(모양은 herdr 원본으로 확인). 신뢰 창 질문, brief 수신, 권한 질문, queue·거절·interrupt·stop을 보고, 기다림은 모두 host가 밀어 주는 사건(`lab::Events`: thread 기록·질문·흐름)으로 끝난다. 턴 끝은 시험이 정한다(BEL).
-  - e2e 재시작 시험·TUI 상태 줄 시험도 hook 대신 화면으로 상태를 낸다.
+  - e2e 재시작 시험·TUI 상태 줄 시험도 hook 대신 화면으로 상태를 낸다. main에서 들어온 hook 상태 시험(TUI `o` 키 질문, 웹 질문 카드·끝남(안 봄)·첨부 확인창, agent 표시·대화·첨부 harness pane, showcase)도 실행 파일 이름이 claude인 셸의 Claude 화면 조각이나 세션 ID hook(SessionStart·Codex notify)으로 바꿨다. 나눈 pane은 harness가 없어(프로세스 판별 없음) 질문 pane은 claude 셸로 띄운다.
+  - e2e `stale_working_left_by_hooks_turns_idle_from_the_screen`: 운영 pane 화면을 그린 가짜 Claude와 옛 agent의 `turn_start` harness.json을 두고 host·agent를 함께 다시 띄우면 idle이 되고, 기억도 idle로 바뀐다. host `older_events_do_not_change_the_activity`: 늦게 온 옛 기억이 새 상태를 덮지 않는다(도착 순서는 E2E로 정할 수 없어 단위 시험으로 본다).
   - 실제 harness: `cargo test -p aaa --test real -- --ignored --test-threads 1`(구독 사용, CI 제외). Claude는 신뢰 창 → brief 수신 → 작업 중 → 권한 질문 → idle(15초), Codex는 brief 수신(작업 중) → 승인 질문 둘 → idle(16초)을 10-18에 확인했다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
 
