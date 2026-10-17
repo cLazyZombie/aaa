@@ -358,6 +358,44 @@ try {
     await until("키보드 입력 결과", async () => (await screenText(page)).includes("key-25"));
   });
 
+  await step("넓은 창: PTY가 터미널 칸을 채우고 창 크기를 따라간다(조작 중일 때)", async () => {
+    // 터미널 글자 영역이 칸(안쪽 여백 뺀 크기)을 한 cell 안쪽까지 채우는지, header 크기·host PTY 크기가 같은지
+    const filled = async () => {
+      const m = await page.evaluate(() => {
+        const box = document.querySelector('[data-testid="terminal"]');
+        const scr = box.querySelector(".xterm-screen").getBoundingClientRect();
+        const cs = getComputedStyle(box);
+        const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+        const crumb = document.querySelector(".term-title .muted").textContent;
+        return { w, h, sw: scr.width, sh: scr.height, crumb };
+      });
+      const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
+      const cw = m.sw / p.cols;
+      const ch = m.sh / p.rows;
+      // 오른쪽에는 xterm 세로 scrollbar 자리(기본 14px)가 남는다
+      const ok = m.sw <= m.w + 1 && m.w - m.sw < cw + 15 && m.sh <= m.h + 1 && m.h - m.sh < ch + 1;
+      return { ok: ok && m.crumb.includes(`${p.cols}×${p.rows}`), m, cols: p.cols, rows: p.rows };
+    };
+    let last = null;
+    const fills = async () => (last = await filled()).ok;
+    await until("1280×800에서 칸을 채움", fills).catch((e) => {
+      throw new Error(`${e.message} 마지막 측정: ${JSON.stringify(last)}`);
+    });
+    const small = await filled();
+    await page.setViewportSize({ width: 1900, height: 1150 });
+    await until("넓힌 창을 따라감", async () => {
+      const f = await filled();
+      return f.ok && f.cols > small.cols && f.rows > small.rows;
+    });
+    await shot(page, "desktop-wide-fit");
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await until("되돌린 창을 따라감", async () => {
+      const f = await filled();
+      return f.ok && f.cols === small.cols && f.rows === small.rows;
+    });
+  });
+
   await step("controller: 입력 막대로 한글", async () => {
     await page.getByLabel("보낼 글").fill("echo 한글-$((2*4))");
     await page.getByRole("button", { name: "보내기" }).click();
@@ -391,7 +429,18 @@ try {
       /웹\(.{4}\)이 조작 중/.test(await op.getByTestId("lease-banner").innerText()),
     );
     if (!(await op.getByLabel("보낼 글").isDisabled())) throw new Error("조작 중인데 입력 막대가 켜져 있다");
+    // 보기만 하는 쪽은 창 크기가 달라도 PTY 크기를 바꾸지 않는다
+    const t1size = () => {
+      const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
+      return `${p.cols}x${p.rows}`;
+    };
+    const held = t1size();
+    await op.setViewportSize({ width: 1000, height: 640 });
+    await sleep(600);
+    if (t1size() !== held) throw new Error(`보기만 하는 쪽이 크기를 바꿨다: ${held} → ${t1size()}`);
     await op.getByTestId("take").click();
+    // 가져오면 그 화면 칸 크기를 따른다
+    await until("가져온 쪽 크기", () => t1size() !== held);
     await until("가져온 쪽 배너 사라짐", async () => (await op.getByTestId("lease-banner").count()) === 0);
     await until("빼앗긴 쪽 표시", async () => (await page.getByTestId("lease-banner").count()) === 1);
     if (!(await page.getByLabel("보낼 글").isDisabled())) throw new Error("빼앗긴 쪽 입력 막대가 켜져 있다");
@@ -403,6 +452,8 @@ try {
     await other.page.context().close();
     await until("연결이 끝나 lease 해제", async () => (await page.getByTestId("lease-banner").count()) === 0);
     if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("풀렸는데 입력 막대가 꺼져 있다");
+    // 아무도 조작하지 않게 되면 남은 화면이 다시 자기 칸 크기로 맞춘다
+    await until("남은 화면 크기로", () => t1size() === held);
   });
 
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
