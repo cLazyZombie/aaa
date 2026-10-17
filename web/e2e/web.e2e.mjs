@@ -156,39 +156,92 @@ async function fontOk(page, cols) {
  * late: 첫 자모가 textarea에 들어간 다음 task에 compositionstart가 온다(keydown과 조합 사건이 따로 오는 브라우저).
  * xterm 6.0.0은 이때 첫 자모만 보내고 완성 음절을 잘랐다(사용자 보고 「상태」 → 「ㅅㅌ」).
  */
-async function imeType(page, late) {
-  await page.locator("textarea.xterm-helper-textarea").evaluate(
-    async (el, late) => {
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const key = (type) => el.dispatchEvent(new KeyboardEvent(type, { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
-      const input = (d) => el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertCompositionText", isComposing: true, bubbles: true }));
-      for (const syl of [["ㅅ", "사", "상"], ["ㅌ", "태"]]) {
-        const base = el.value;
-        for (const [i, d] of syl.entries()) {
-          key("keydown");
-          if (i === 0) {
-            if (late) {
-              el.value = base + d;
-              await sleep(5);
-            }
-            el.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
-          }
-          el.dispatchEvent(new CompositionEvent("compositionupdate", { data: d, bubbles: true }));
-          el.value = base + d;
-          input(d);
-          key("keyup");
-          await sleep(40);
-        }
-        el.dispatchEvent(new CompositionEvent("compositionend", { data: syl.at(-1), bubbles: true }));
+/** 같은 task에 keydown(229)·조합 사건이 오는 순서(Chromium·WebKit 데스크톱)로 「상태」를 친다 */
+async function imeType(page) {
+  await page.locator("textarea.xterm-helper-textarea").evaluate(async (el) => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const key = (type) => el.dispatchEvent(new KeyboardEvent(type, { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
+    const input = (d) => el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertCompositionText", isComposing: true, bubbles: true }));
+    for (const syl of [["ㅅ", "사", "상"], ["ㅌ", "태"]]) {
+      const base = el.value;
+      for (const [i, d] of syl.entries()) {
+        key("keydown");
+        if (i === 0) el.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+        el.dispatchEvent(new CompositionEvent("compositionupdate", { data: d, bubbles: true }));
+        el.value = base + d;
+        input(d);
+        key("keyup");
         await sleep(40);
       }
-    },
-    late,
-  );
+      el.dispatchEvent(new CompositionEvent("compositionend", { data: syl.at(-1), bubbles: true }));
+      await sleep(40);
+    }
+  });
 }
 
-async function pairPage(browser, code, viewport) {
-  const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 700, hasTouch: viewport.width < 700 });
+// 아래 두 재생은 herdr-web-ui(MIT, aa624cb)의 scripts/terminal-safari-ime-regression.ts와
+// scripts/terminal-ipad-ime-regression.ts가 기록한 실제 사건 순서를 그대로 옮긴 것이다(OS 입력기를 자동화하지 않는다).
+
+/** macOS Safari 26.6.2(#432): 조합 사건 없이 DOM을 먼저 고치고 keydown(229)은 그 뒤에 온다. beforeinput 선택이 바꿀 범위다. */
+async function safariEdit(page, type, data, start, end = start, keyCode = 229, order = "after") {
+  await page.locator("textarea.xterm-helper-textarea").evaluate(
+    async (box, { type, data, start, end, keyCode, order }) => {
+      const key = keyCode === 8 ? "Backspace" : keyCode === 46 ? "Delete" : data;
+      const keydown = () => box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, keyCode, isComposing: false }));
+      if (order === "after" || keydown()) {
+        box.setSelectionRange(start, end);
+        box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, inputType: type, data, isComposing: false }));
+        box.setRangeText(data, start, end, "end");
+        box.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: type, data, isComposing: false }));
+        if (order === "after") keydown();
+      }
+      box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key, keyCode: keyCode === 229 ? 71 : keyCode, isComposing: false }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+    },
+    { type, data, start, end, keyCode, order },
+  );
+}
+async function safariSyllable(page, parts, at = 0) {
+  await safariEdit(page, "insertText", parts[0], at);
+  for (const part of parts.slice(1)) await safariEdit(page, "insertReplacementText", part, at, at + 1);
+}
+
+/** iPadOS Safari + 하드웨어 키보드: 자모마다 제 keyCode의 keydown·keypress, 뒤이어 편집기가 지우고 넣는다(조합 사건 없음) */
+const IPAD_KEYCODES = { "ㅎ": 71, "ㅏ": 75, "ㄴ": 83, "ㄱ": 82, "ㅡ": 77, "ㄹ": 70, "ㅇ": 68, "ㅁ": 65 };
+async function ipadKey(page, jamo, edits) {
+  return page.locator("textarea.xterm-helper-textarea").evaluate(
+    async (box, { jamo, keyCode, edits }) => {
+      const down = box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: jamo, code: "", keyCode, isComposing: false }));
+      const press = down && box.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: jamo, keyCode: jamo.charCodeAt(0), charCode: jamo.charCodeAt(0) }));
+      if (down && press) {
+        for (const edit of edits) {
+          const end = box.value.length;
+          if (edit[0] === "delete") {
+            box.setSelectionRange(end - 1, end);
+            box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, inputType: "deleteContentBackward", isComposing: false }));
+            box.setRangeText("", end - 1, end, "end");
+            box.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "deleteContentBackward", isComposing: false }));
+          } else {
+            box.setSelectionRange(end, end);
+            box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, inputType: "insertText", data: edit[1], isComposing: false }));
+            box.setRangeText(edit[1], end, end, "end");
+            box.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: edit[1], isComposing: false }));
+          }
+        }
+      }
+      box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: jamo, keyCode, isComposing: false }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      return down;
+    },
+    { jamo, keyCode: IPAD_KEYCODES[jamo] ?? 65, edits },
+  );
+}
+const ipadFresh = (page, jamo) => ipadKey(page, jamo, [["insert", jamo]]);
+const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
+
+async function pairPage(browser, code, viewport, { userAgent, platform } = {}) {
+  const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 700, hasTouch: viewport.width < 700, ...(userAgent ? { userAgent } : {}) });
+  if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -514,6 +567,19 @@ try {
     await page.keyboard.type("x");
     await page.keyboard.press("Enter");
     await until("cat -v 출력", async () => (await screenText(page)).includes("^A^[x"));
+    // 조합으로 확정된 글에는 유지 키를 붙이지 않고, 유지 키는 다음 키를 기다린다(herdr-web-ui PaneTerminal과 같다)
+    await ctrl.click();
+    await page.getByTestId("terminal").click();
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
+    await cdp.send("Input.insertText", { text: "한" });
+    await cdp.detach();
+    await sleep(200);
+    if ((await ctrl.getAttribute("aria-pressed")) !== "true") throw new Error("조합 확정이 Ctrl을 써 버렸다");
+    await page.keyboard.type("b");
+    await page.keyboard.press("Enter");
+    // 터미널 echo 줄: 한은 그대로, 유지 키 Ctrl은 다음 키 b에 붙는다(한b가 아니라 한^B)
+    await until("조합 뒤 유지 키", async () => (await screenText(page)).includes("\n한^B\n"));
     await page.getByRole("button", { name: "^C", exact: true }).click();
   });
 
@@ -675,6 +741,74 @@ try {
     // 여러 줄 붙여넣기 다음 Enter는 300ms 뒤 따로 온다(둘 다 와야 끝난다)
     await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>'));
     if ((await page.getByLabel("보낼 글").inputValue()) !== "") throw new Error("보낸 뒤 글이 남았다");
+    // 조합 중에 누른 보내기(herdr-web-ui scripts/terminal-input-regression.ts와 같은 네 경우)
+    {
+      const line = page.getByLabel("보낼 글");
+      const send = page.getByRole("button", { name: "보내기" });
+      const banner = () => page.getByTestId("attach-banner").evaluateAll((els) => els[0]?.textContent ?? null);
+      const since = () => got().split('GOT:"MARK"').at(-1);
+      const mark = async () => {
+        aaa("pane", "send", "pasteapp", "--text", "MARK");
+        await until("표지", () => got().includes('GOT:"MARK"'));
+      };
+      // 1) 실제 조합(Chrome IME 길): 누르는 사이 확정되어 바로 보낸다. 입력칸은 focus를 지킨다(키보드가 그대로)
+      await mark();
+      await line.fill("real 한");
+      await line.focus();
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Input.imeSetComposition", { text: "글", selectionStart: 1, selectionEnd: 1 });
+      await until("조합 중 값", async () => (await line.inputValue()) === "real 한글");
+      await send.click();
+      await until("조합 중 보내기", () => since().includes('GOT:"real 한글"') && since().includes('GOT:"\\r"'));
+      await cdp.detach();
+      if (!(await line.evaluate((el) => el === document.activeElement))) throw new Error("보낸 뒤 입력칸이 focus를 잃었다");
+      // 2) 기다리는 사이 확정: 확정된 글을 한 번 보낸다(compositionend와 값 바꾸기가 같은 task여도)
+      await mark();
+      await line.fill("commit 한");
+      await line.dispatchEvent("compositionstart", { data: "" });
+      await send.click();
+      await until("기다림 표시", async () => (await banner()) === "글자를 마치는 중…");
+      if (since().includes("commit")) throw new Error("확정 전에 보냈다");
+      await line.evaluate((el) => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+        el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "글" }));
+        setValue.call(el, "commit 한글");
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, data: "글", inputType: "insertFromComposition" }));
+      });
+      await until("확정 뒤 보냄", () => since().includes('GOT:"commit 한글"') && since().includes('GOT:"\\r"'));
+      // 3) 확정 전에 지워짐: 글 보내기였으니 Enter도 보내지 않는다
+      await mark();
+      await line.fill("한");
+      await line.dispatchEvent("compositionstart", { data: "" });
+      await send.click();
+      await until("기다림 표시", async () => (await banner()) === "글자를 마치는 중…");
+      await line.evaluate((el) => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+        el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" }));
+        setValue.call(el, "");
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteCompositionText" }));
+      });
+      await sleep(400);
+      if (since().includes("GOT:")) throw new Error(`빈 확정에 보냈다: ${since()}`);
+      // 4) 조합이 이어져도 누른 때부터의 기한을 넘기지 않는다
+      await line.fill("chain 한");
+      await line.dispatchEvent("compositionstart", { data: "" });
+      await send.click();
+      await until("기다림 표시", async () => (await banner()) === "글자를 마치는 중…");
+      const t0 = Date.now();
+      while (Date.now() - t0 < 450) {
+        await line.evaluate((el) => {
+          el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "한" }));
+          el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+        });
+        await sleep(40);
+      }
+      if ((await banner()) !== "글자를 마친 뒤 보낸다") throw new Error(`기한 뒤 표시: ${await banner()}`);
+      await line.dispatchEvent("compositionend", { data: "한" });
+      await sleep(100);
+      if (since().includes("GOT:")) throw new Error(`기한 넘은 조합을 보냈다: ${since()}`);
+      await line.fill("");
+    }
     // 휴대폰(터치): Enter는 줄바꿈, 보내기는 단추
     const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await mob.page.getByTestId("pane-pasteapp").click();
@@ -696,55 +830,166 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
-  await step("터미널 한글 IME: 조합 사건 순서 두 가지(Chromium·WebKit)와 Chromium 실제 IME 사건(CDP) → pane에는 「상태」만, 조합 없는 숫자도 그대로", async () => {
+  await step("터미널 한글 IME(herdr-web-ui xterm 패치): 데스크톱 조합 사건·CDP 실제 IME, macOS Safari·iPad 기록 재생 → pane에는 완성된 글만", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "imeapp", "--", process.execPath, `${root}/paste.js`);
     const wk = await webkit.launch();
     const bad = [];
+    const textarea = (q) => q.locator("textarea.xterm-helper-textarea");
+    const press = async (q, ...keys) => {
+      for (const k of keys) await textarea(q).press(k);
+    };
+    // 데스크톱(실제 브라우저 판)
+    const desktop = [
+      ["같은 task", (q) => imeType(q), "상태"],
+      // 한글 입력기에서 숫자·문장부호: keydown(229) 뒤 조합 없이 글만 늘어난다
+      [
+        "조합 없는 229(숫자)",
+        (q) =>
+          textarea(q).evaluate(async (el) => {
+            for (const d of ["7", "."]) {
+              el.dispatchEvent(new KeyboardEvent("keydown", { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
+              el.value += d;
+              el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertText", bubbles: true, composed: true }));
+              el.dispatchEvent(new KeyboardEvent("keyup", { key: d, keyCode: 229, bubbles: true }));
+              await new Promise((r) => setTimeout(r, 40));
+            }
+          }),
+        "7.",
+      ],
+    ];
+    const cdpIme = [
+      "CDP 실제 IME",
+      async (q) => {
+        const cdp = await q.context().newCDPSession(q);
+        for (const syl of [["ㅅ", "사", "상"], ["ㅌ", "태"]]) {
+          for (const t of syl) await cdp.send("Input.imeSetComposition", { text: t, selectionStart: t.length, selectionEnd: t.length });
+          await cdp.send("Input.insertText", { text: syl.at(-1) });
+        }
+        await cdp.detach();
+      },
+      "상태",
+    ];
+    // macOS Safari 26.6.2 기록(herdr-web-ui terminal-safari-ime-regression.ts)
+    const safari = [
+      [
+        "영문 뒤 한글",
+        async (q) => {
+          await press(q, "a", "b", "c");
+          await safariSyllable(q, ["ㅎ", "하", "한"]);
+          await safariEdit(q, "insertReplacementText", "한", 0, 1);
+          await safariSyllable(q, ["ㄱ", "그", "글"], 1);
+          await safariEdit(q, "insertReplacementText", "글", 1, 2);
+          await press(q, "Space");
+        },
+        "abc한글 ",
+      ],
+      [
+        "Enter 앞 확정",
+        async (q) => {
+          await safariSyllable(q, ["ㅎ", "하", "한"]);
+          await press(q, "Enter");
+        },
+        "한\r",
+      ],
+      [
+        "받침 넘김",
+        async (q) => {
+          await safariSyllable(q, ["ㄱ", "가", "갑", "값"]);
+          await safariEdit(q, "insertReplacementText", "갑", 0, 1);
+          await safariSyllable(q, ["사"], 1);
+          await press(q, "Space");
+        },
+        "갑사 ",
+      ],
+      [
+        "확정 전 지우기",
+        async (q) => {
+          await safariSyllable(q, ["ㅎ", "하", "한"]);
+          await safariEdit(q, "insertReplacementText", "하", 0, 1);
+          await safariEdit(q, "insertReplacementText", "ㅎ", 0, 1);
+          await safariEdit(q, "deleteContentBackward", "", 0, 1);
+          await press(q, "a");
+        },
+        "a",
+      ],
+      [
+        "Safari 실제 조합 사건",
+        (q) =>
+          textarea(q).evaluate(async (box) => {
+            box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+            box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertCompositionText", data: "한", isComposing: true }));
+            box.value = "한";
+            box.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: "한" }));
+            box.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", data: "한", isComposing: true }));
+            await new Promise((r) => requestAnimationFrame(() => r()));
+            box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "한" }));
+          }),
+        "한",
+      ],
+    ];
+    // iPadOS Safari + 하드웨어 키보드 기록(herdr-web-ui terminal-ipad-ime-regression.ts)
+    const ipad = [
+      [
+        "영문 뒤 한글",
+        async (q) => {
+          await press(q, "a", "b", "c");
+          await ipadFresh(q, "ㅎ");
+          await ipadReplace(q, "ㅏ", "하");
+          await ipadReplace(q, "ㄴ", "한");
+          await ipadFresh(q, "ㄱ");
+          await ipadReplace(q, "ㅡ", "그");
+          await ipadReplace(q, "ㄹ", "글");
+          await press(q, "Space");
+        },
+        "abc한글 ",
+      ],
+      [
+        "두 음절 바꿔 넣기",
+        async (q) => {
+          await ipadFresh(q, "ㅁ");
+          await ipadReplace(q, "ㅏ", "마");
+          await ipadReplace(q, "ㅇ", "망");
+          await ipadReplace(q, "ㅏ", "마아");
+          await press(q, "Space");
+        },
+        "마아 ",
+      ],
+      [
+        "Enter 앞 확정",
+        async (q) => {
+          await ipadFresh(q, "ㅎ");
+          await ipadReplace(q, "ㅏ", "하");
+          await ipadReplace(q, "ㄴ", "한");
+          await press(q, "Enter");
+        },
+        "한\r",
+      ],
+    ];
+    const SAFARI_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/26.6.2 Safari/605.1.15";
+    const IPAD_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15";
+    const wide = { width: 1280, height: 800 };
+    const runs = [
+      ["Chromium", async () => page, [...desktop, cdpIme]],
+      ["WebKit", async () => (await pairPage(wk, aaa("web", "pair").code, wide)).page, desktop],
+      ["Safari 26.6.2 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: SAFARI_UA, platform: "MacIntel" })).page, safari],
+      ["iPad(MacIntel) 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: IPAD_UA, platform: "MacIntel" })).page, ipad],
+      ["iPad(iPad) 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: IPAD_UA, platform: "iPad" })).page, ipad],
+    ];
     try {
-      for (const [engine, p] of [
-        ["Chromium", page],
-        ["WebKit", (await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 })).page],
-      ]) {
+      for (const [engine, open, ways] of runs) {
+        const p = await open();
         await p.getByTestId("pane-imeapp").click();
         await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
         // 다른 화면이 쓰던 pane이어도 터미널을 누르고 바로 친다
         await until("입력 막대", async () => p.getByLabel("보낼 글").isEnabled());
         await p.locator(".xterm-screen").click();
-        const ways = [
-          ["같은 task", (q) => imeType(q, false), "상태"],
-          ["늦은 compositionstart", (q) => imeType(q, true), "상태"],
-          // 한글 입력기에서 숫자·문장부호: keydown(229) 뒤 조합 없이 글만 늘어난다(xterm 판정 그대로 보낸다)
-          [
-            "조합 없는 229(숫자)",
-            (q) =>
-              q.locator("textarea.xterm-helper-textarea").evaluate(async (el) => {
-                for (const d of ["7", "."]) {
-                  el.dispatchEvent(new KeyboardEvent("keydown", { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
-                  el.value += d;
-                  el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertText", bubbles: true, composed: true }));
-                  el.dispatchEvent(new KeyboardEvent("keyup", { key: d, keyCode: 229, bubbles: true }));
-                  await new Promise((r) => setTimeout(r, 40));
-                }
-              }),
-            "7.",
-          ],
-        ];
-        if (engine === "Chromium")
-          ways.push([
-            "CDP 실제 IME",
-            async (q) => {
-              const cdp = await q.context().newCDPSession(q);
-              for (const syl of [["ㅅ", "사", "상"], ["ㅌ", "태"]]) {
-                for (const t of syl) await cdp.send("Input.imeSetComposition", { text: t, selectionStart: t.length, selectionEnd: t.length });
-                await cdp.send("Input.insertText", { text: syl.at(-1) });
-              }
-              await cdp.detach();
-            },
-            "상태",
-          ]);
         for (const [how, type, want] of ways) {
           aaa("pane", "send", "imeapp", "--text", "MARK");
           await until("표지", () => aaa("pane", "read", "imeapp").lines.join("\n").includes('GOT:"MARK"'));
+          // 기록 재생은 빈 편집기에서 시작한다(herdr-web-ui 재생과 같다)
+          await textarea(p).evaluate((el) => {
+            el.value = "";
+          });
           await type(p);
           await sleep(700);
           const all = aaa("pane", "read", "imeapp").lines.join("\n");
@@ -755,7 +1000,7 @@ try {
             .map((l) => JSON.parse(l.slice(4)))
             .join("");
           console.log(`     IME ${engine} ${how}: ${JSON.stringify(got)}`);
-          if (got !== want) bad.push(`${engine} ${how}: pane이 받은 글 ${JSON.stringify(got)}`);
+          if (got !== want) bad.push(`${engine} ${how}: pane이 받은 글 ${JSON.stringify(got)}(기대 ${JSON.stringify(want)})`);
         }
         if (p !== page) await p.context().close();
       }

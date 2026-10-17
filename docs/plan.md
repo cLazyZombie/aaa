@@ -1130,6 +1130,8 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
   - 실제 macOS 입력기로 치는 자동 시험은 없다(OS 입력을 흉내 내려면 손쉬운 사용 권한이 필요하다). 사건 순서는 합성 사건으로 재현했고, 운영 화면에서 사용자가 확인한다.
 
+- **바뀜(10-17 11:30, §8.36).** 위 `ime.ts`는 실제 입력기에서 충분하지 않았다(사용자 보고: 초성·중성·종성이 분리된다, iPhone 자모 분리). 사용자 지시로 herdr-web-ui 방식(xterm 5.5.0 + IME patch)으로 바꿨고 `ime.ts`는 지웠다. 「다음 task의 compositionstart」 순서는 기록된 사건이 아니라 추측으로 만든 합성 순서였다. 그 줄은 herdr-web-ui가 실제 브라우저에서 기록한 순서(§8.36)로 바꿨다.
+
 ### 8.33 명시적 가져오기 없애기(10-17, 사용자 결정: herdr 모델)
 
 - **사용자 보고.** TUI에서 입력이 안 됐다. 웹이 lease를 갖고 있어 TUI는 보기만 했고 `Ctrl+B t`로 가져와야 했다. 사용자 결정: 「명시적으로 가져오는게 불편하다. herdr·herdr-web-ui처럼 한다.」
@@ -1173,6 +1175,26 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
   - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널).
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
+
+### 8.36 웹 한글 IME를 herdr-web-ui 방식으로(10-17, 사용자 지시)
+
+- **지시.** 「새로 만들지 말고 herdr-web-ui를 따라한다.」 iPhone에서 「입력」이 「ㅇㅣㅂㄹㅕㄱ」로, 데스크톱에서도 초성·중성·종성이 분리됐다.
+- **옮긴 것(herdr-web-ui `aa624cb`).**
+  - xterm을 6.0.0에서 herdr-web-ui와 같은 5.5.0(addon-fit 0.10.0)으로 내리고, 그 IME patch를 소스에 붙여 빌드한다(`web/patches/`, `web/xterm-source.mjs`, `scripts/build-xterm.ts`와 같은 방식). npm에는 bun의 patchedDependencies가 없어 빌드 때 cache에 복사해 붙인다. `patch(1)` 결과와 같은지 확인했다.
+  - 터미널 조합 상태(`PaneTerminal.tsx` 588~605줄): 조합 중이거나 방금 끝난 조합의 확정 글에는 키 줄 유지 키(Ctrl·Alt)를 붙이지 않는다.
+  - 입력 막대(`TerminalInput.tsx`): 조합 중 Enter·keyCode 229 Enter는 보내지 않는다(이미 같았다). 조합 중에 누른 보내기는 blur·focus로 확정시키고 compositionend 뒤 보낸다. 누른 때부터 300ms(`COMMIT_WAIT_MS`) 안에 확정되지 않으면 「글자를 마친 뒤 보낸다」. 보내기 단추는 focus를 가져가지 않고, 보낸 뒤에도 입력칸이 focus를 지킨다(화면 키보드가 그대로).
+- **시험(웹 E2E 24단계).** herdr-web-ui 재생 시험의 기록 순서를 옮겼다.
+
+| 입력 | 바꾸기 전(`a39b5c62`, xterm 6 + ime.ts) | 바꾼 뒤 |
+|---|---|---|
+| Chromium·WebKit 같은 task 조합, 조합 없는 229 숫자, Chromium CDP 실제 IME | 상태 · 7. · 상태 | 같음 |
+| macOS Safari 26.6.2 기록: abc + 한글 | **abcㅎㄱ** | abc한글 |
+| macOS Safari: Enter 앞 확정 · 받침 넘김 · 확정 전 지우기 | **ㅎ⏎ · ㄱ사 · ㅎa** | 한⏎ · 갑사 · a |
+| iPad 하드웨어 키보드 기록(platform MacIntel·iPad): abc + 한글 · 마아 · Enter | **abcㅎㅏㄴㄱㅡㄹ · ㅁㅏㅇㅏ · ㅎㅏㄴ⏎** | abc한글 · 마아 · 한⏎ |
+| 입력 막대 조합 중 보내기 네 경우(herdr-web-ui terminal-input-regression) | (없던 동작) | 통과 |
+| 유지 키 Ctrl + 조합 확정 「한」 + b | 한b(Ctrl을 「한」이 씀) | 한^B |
+
+- **iPhone은 아직 모른다.** herdr-web-ui patch는 `navigator.platform`이 Mac·iPad일 때만 바꿔 넣기 길을 켠다. iPhone(`iPhone`)에서 iPad와 같은 순서가 오면 바꾼 뒤에도 자모가 갈린다(E2E로 확인: platform iPhone으로 iPad 순서를 재생하면 「abcㅎㅏㄴㄱㅡㄹ」). herdr-web-ui에는 iPhone 기록이 없다. 실제 iPhone 확인이 필요하다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
