@@ -39,6 +39,15 @@ const paths: Record<string, ReactNode> = {
   ),
   plus: <path d="M9 3.5v11M3.5 9h11" />,
   send: <path d="M9 14.5V3.5M4.5 8 9 3.5 13.5 8" />,
+  // 자판: 키 막대의 입력줄 전환(herdr-web-ui는 lucide Keyboard)
+  keyboard: (
+    <>
+      <rect x="2" y="4.5" width="14" height="9" rx="1.5" />
+      <path d="M5 7.5h.01M7.7 7.5h.01M10.3 7.5h.01M13 7.5h.01M5.5 10.5h7" />
+    </>
+  ),
+  // Enter(⏎): 빈 입력줄의 보내기는 Enter만 누른다
+  enter: <path d="M14.5 4v5.5a1.5 1.5 0 0 1-1.5 1.5H4M7 7.5 3.5 11 7 14.5" />,
   image: (
     <>
       <rect x="2.5" y="3.5" width="13" height="11" rx="2" />
