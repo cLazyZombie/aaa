@@ -1,4 +1,4 @@
-//! 이 host의 모든 웹 화면이 함께 쓰는 설정과 고정(herdr-web-ui `shared/preferences.ts`·`server/preferences.ts` `PreferenceStore`, plan §8.73).
+//! 이 host의 모든 웹 화면이 함께 쓰는 설정과 고정(herdr-web-ui `shared/preferences.ts`·`server/preferences.ts` `PreferenceStore`, plan §8.79).
 //!
 //! 문서 하나다. 화면은 바꾼 설정만(고정은 바뀌었을 때만) 보내고, host는 그것을 가진 것 위에 놓는다(설정마다 마지막 쓰기가 이긴다).
 //! 다른 화면들은 events의 `preferences` 사건으로 문서 전체를 받는다. 변경은 저장된 뒤에만 갖고 알린다.

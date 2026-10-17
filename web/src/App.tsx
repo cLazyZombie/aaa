@@ -12,6 +12,8 @@ import { ApiError, call, me, pair, pushInfo, watchEvents } from "./api";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { ThreadPanel } from "./ThreadPanel";
+import { ProjectThreads } from "./ProjectThreads";
+import { Folder } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
@@ -182,9 +184,10 @@ function QuestionCard({
   );
 }
 
-/** 고른 것: `#pane=<id>` 또는 `#thread=<project>/<id>` */
+/** 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects` */
 function selectedFromHash(): string | null {
-  const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
+  if (location.hash === "#projects") return "projects:";
+  const m = /^#(pane|thread|project)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -288,7 +291,7 @@ function Main({ role }: { role: DeviceRole }) {
     });
   };
 
-  // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.73): 들어온 뒤에만 읽고, events 사건으로 따라간다
+  // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.79): 들어온 뒤에만 읽고, events 사건으로 따라간다
   const syncPreferences = usePreferencesSync(true);
   const receivePreferences = useRef(syncPreferences);
   receivePreferences.current = syncPreferences;
@@ -357,9 +360,16 @@ function Main({ role }: { role: DeviceRole }) {
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
   };
-  const chooseThread = (t: ThreadView) => {
+  // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로)
+  const [backTo, setBackTo] = useState<string | null>(null);
+  const chooseThread = (t: ThreadView, from: string | null = null) => {
+    setBackTo(from);
     location.hash = `thread=${encodeURIComponent(threadKey(t))}`;
     setSel(`thread:${threadKey(t)}`);
+  };
+  const chooseProject = (name: string | null) => {
+    location.hash = name === null ? "projects" : `project=${encodeURIComponent(name)}`;
+    setSel(name === null ? "projects:" : `project:${name}`);
   };
 
   const newShell = async (m: MachineView) => {
@@ -376,7 +386,10 @@ function Main({ role }: { role: DeviceRole }) {
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
   useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
-  const shownThreads = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+  // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads)
+  const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator");
+  const shownThreads = allThreads.filter((t) => t.group !== "resolved");
+  const viewProject = sel === "projects:" ? null : sel?.startsWith("project:") ? sel.slice(8) : undefined;
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
@@ -397,7 +410,7 @@ function Main({ role }: { role: DeviceRole }) {
   };
 
   return (
-    <div className={`app ${current || currentThread ? "has-sel" : ""}`}>
+    <div className={`app ${current || currentThread || viewProject !== undefined ? "has-sel" : ""}`}>
       <aside className="list sidebar-shell">
         <header className="list-head">
           <span className="brand">
@@ -411,7 +424,7 @@ function Main({ role }: { role: DeviceRole }) {
           {evaluators.map((v) => (
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
-          <MoreMenu />
+          <MoreMenu onProjects={() => chooseProject(null)} />
         </header>
         {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
         <Sidebar
@@ -422,7 +435,7 @@ function Main({ role }: { role: DeviceRole }) {
           canControl={canControl}
           agentOf={agentOf}
           onPane={(id) => choose(id)}
-          onThread={chooseThread}
+          onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
           banners={
             <>
@@ -440,10 +453,19 @@ function Main({ role }: { role: DeviceRole }) {
             key={threadKey(currentThread)}
             t={currentThread}
             role={role}
-            onBack={() => choose(null)}
+            backTo={backTo?.startsWith("project:") ? backTo.slice(8) : undefined}
+            onBack={() => (backTo !== null && backTo.startsWith("project:") ? chooseProject(backTo.slice(8)) : choose(null))}
             onOpenPane={
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
+          />
+        ) : viewProject !== undefined ? (
+          <ProjectThreads
+            project={viewProject}
+            threads={allThreads}
+            onProject={chooseProject}
+            onThread={(t) => chooseThread(t, `project:${t.project}`)}
+            onBack={() => choose(null)}
           />
         ) : current ? (
           <TermView
@@ -500,7 +522,7 @@ function Main({ role }: { role: DeviceRole }) {
  * 머리의 「더 보기」 메뉴(참고 App.tsx moreItems·header-more): 링크 복사와 「알림」(이 기기 상태를 말하고 누르면 켜고 끈다).
  * 알림이 꺼져 있으면 메뉴 단추에 점을 단다. 찾기·파일 보기 항목은 그 기능을 옮길 때 넣는다.
  */
-function MoreMenu() {
+function MoreMenu({ onProjects }: { onProjects: () => void }) {
   const alerts = useAlerts();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -559,6 +581,18 @@ function MoreMenu() {
           >
             <Icon name="link" />
             <span className="more-label">링크 복사</span>
+          </button>
+          {/* 프로젝트마다 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리 */}
+          <button
+            role="menuitem"
+            data-testid="projects-item"
+            onClick={() => {
+              setOpen(false);
+              onProjects();
+            }}
+          >
+            <Folder className="i" aria-hidden="true" />
+            <span className="more-label">프로젝트</span>
           </button>
           {alerts.visible && (
             <button

@@ -78,6 +78,36 @@ async function until(what, fn, ms = 20_000) {
   }
 }
 
+// 사건으로 끝내는 기다림(새 시험): DOM은 MutationObserver, 주소는 hashchange. ms는 실패 한도다(통과용 기다림이 아니다).
+// `fn(arg)`은 page에서 돈다(Playwright가 함수를 글로 옮기듯 글로 넘긴다).
+const domIs = (p, what, fn, arg, ms = 20_000) =>
+  p.evaluate(`new Promise((done, fail) => {
+    const ok = () => { try { return Boolean((${fn})(${JSON.stringify(arg)})); } catch { return false; } };
+    if (ok()) return done();
+    const mo = new MutationObserver(() => { if (ok()) { clearTimeout(stuck); mo.disconnect(); done(); } });
+    const stuck = setTimeout(() => { mo.disconnect(); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}이 되지 않았다`)})); }, ${ms});
+    mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  })`);
+const hashIs = (p, hash, ms = 20_000) =>
+  p.evaluate(
+    ([hash, ms]) =>
+      new Promise((done, fail) => {
+        if (location.hash === hash) return done();
+        const on = () => {
+          if (location.hash !== hash) return;
+          clearTimeout(stuck);
+          removeEventListener("hashchange", on);
+          done();
+        };
+        const stuck = setTimeout(() => {
+          removeEventListener("hashchange", on);
+          fail(new Error(`${ms}ms 안에 주소가 ${hash}이 되지 않았다(${location.hash})`));
+        }, ms);
+        addEventListener("hashchange", on);
+      }),
+    [hash, ms],
+  );
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer();
@@ -623,6 +653,32 @@ try { r.cookie = document.cookie === "" ? "none" : "visible"; } catch (e) { r.co
 fetch("/api/v1/me").then(function (x) { r.api = String(x.status); }).catch(function () { r.api = "blocked"; });
 </script>`,
 );
+// fake agent 보고: 실제 보고에 나오는 Markdown(표 안 code, 굵게 안 code, 링크, 번호 목록 안 목록, code block, 차이 목록 R1)
+fs.writeFileSync(
+  `${root}/report-fixture.md`,
+  [
+    "## Report",
+    "- 웹 보기 **확인**: `index.html`",
+    "- 착지 **`a1b2c3d`**(병합), 근거는 [참고 문서](https://example.com/doc)",
+    "",
+    "| ID | 판정 | 근거 |",
+    "| --- | :---: | ---: |",
+    "| `T2` | 같음 | `prefs.rs` |",
+    "| R1 | **일부** | 표와 `code` |",
+    "",
+    "1. 첫째",
+    "   - 안쪽 `하나`",
+    "2. 둘째",
+    "",
+    "```sh",
+    "cargo test -p aaa",
+    "```",
+    "",
+    "## Next",
+    "- 결과 확인",
+    "",
+  ].join("\n"),
+);
 fs.writeFileSync(
   `${root}/fake.sh`,
   `#!/bin/sh
@@ -633,7 +689,7 @@ while IFS= read -r line; do
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"
-      printf '## Report\\n- 웹 보기 **확인**: \\140index.html\\140\\n\\n## Next\\n- 결과 확인\\n' > "$dir/report.md"
+      cp "${root}/report-fixture.md" "$dir/report.md"
       echo done ;;
   esac
   printf 'fake> '
@@ -3997,8 +4053,37 @@ try {
     await item.click();
     await page.getByTestId("open-report").click();
     const report = page.getByTestId("report");
-    await until("보고 Markdown", async () => (await report.locator("strong").innerText()) === "확인");
-    if ((await report.locator("code").innerText()) !== "index.html") throw new Error(await report.innerHTML());
+    await until("보고 Markdown", async () => (await report.locator("strong").first().innerText()) === "확인");
+    // herdr-web-ui Markdown대로 그린다(차이 목록 R1): 표·굵게 안 code·링크·번호 목록 안 목록·code block
+    const md = await report.locator(".markdown").evaluate((m) => ({
+      firstCode: m.querySelector("li code")?.textContent,
+      strongCode: m.querySelector("strong > code")?.textContent,
+      link: [m.querySelector("a[href='https://example.com/doc']")?.textContent, m.querySelector("a[href='https://example.com/doc']")?.target],
+      head: [...m.querySelectorAll(".markdown-table-wrap table thead th")].map((x) => x.textContent),
+      cells: [...m.querySelectorAll(".markdown-table-wrap table tbody tr")].map((r) => [...r.children].map((c) => c.innerHTML.replace(/<\/?span>/g, ""))),
+      nested: m.querySelector("ol > li > ul > li code")?.textContent,
+      ol: [...m.querySelectorAll(":scope > ol > li")].length,
+      fence: [m.querySelector(".markdown-code")?.dataset.language, m.querySelector(".markdown-code pre code")?.textContent],
+      raw: /\*\*|\|/.test(m.textContent),
+      // code block 안 code는 바탕을 따로 갖지 않는다(참고 `.markdown :not(pre) > code`만 칩)
+      fenceBg: getComputedStyle(m.querySelector(".markdown-code pre code")).backgroundColor,
+    }));
+    const want = {
+      firstCode: "index.html",
+      strongCode: "a1b2c3d",
+      link: ["참고 문서", "_blank"],
+      head: ["ID", "판정", "근거"],
+      cells: [
+        ["<code>T2</code>", "같음", "<code>prefs.rs</code>"],
+        ["R1", "<strong>일부</strong>", "표와 <code>code</code>"],
+      ],
+      nested: "하나",
+      ol: 2,
+      fence: ["sh", "cargo test -p aaa"],
+      raw: false,
+      fenceBg: "rgba(0, 0, 0, 0)",
+    };
+    if (JSON.stringify(md) !== JSON.stringify(want)) throw new Error(`보고 Markdown ${JSON.stringify(md)}`);
     const frameEl = await page.getByTestId("library-frame").elementHandle();
     const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
     const probe = await until("결과물 HTML 실행", async () => {
@@ -4020,6 +4105,13 @@ try {
     const n = await page.evaluate(async (u) => (await (await fetch(u)).arrayBuffer()).byteLength, href);
     if (n !== 2097152) throw new Error(`agent 파일 길이 ${n}`);
     await shot(page, "desktop-thread-library");
+    // 휴대폰 폭: 넓은 표는 그 안에서만 옆으로 밀리고 화면은 밀리지 않는다(참고 .markdown-table-wrap)
+    await page.setViewportSize({ width: 390, height: 844 });
+    await report.locator(".markdown-table-wrap").scrollIntoViewIfNeeded();
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
+    await shot(page, "phone-report-markdown");
+    await page.setViewportSize({ width: 1280, height: 800 });
     // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다
     await until("보고 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
     await page.getByRole("button", { name: "확인(ack)" }).click();
@@ -4385,6 +4477,75 @@ try {
     await htmlIs(b, "data-theme", "dark");
     await b.locator(".machine-workspaces.is-two-line").first().waitFor();
     for (const p of [a, b, r]) await p.context().close();
+  });
+
+  await step("끝난 thread 보기(herdr-projects popup.rs Section::Threads, 차이 목록 2장 L3·3장 C1): 끝낸 thread는 목록에서 빠지고 「더 보기 → 프로젝트」에서 묶음마다 보이며 끝남은 맨 아래 흐리게, 거르기, 고르면 보고, 뒤로는 그 프로젝트", async () => {
+    const $ = (id) => `[data-testid="${id}"]`;
+    if ((await page.locator($("thread-demo-t-0001")).count()) !== 1) throw new Error("t-0001이 목록에 없다");
+    aaa("thread", "resolve", "demo", "t-0001");
+    await domIs(page, "끝낸 thread가 목록에서 빠짐(sidebar.rs)", (q) => !document.querySelector(q), $("thread-demo-t-0001"));
+    // 프로젝트 고르기(popup 첫 화면): 프로젝트마다 열린 묶음 줄과 끝난 수
+    await page.getByTestId("more").click();
+    const toProjects = hashIs(page, "#projects");
+    await page.getByTestId("projects-item").click();
+    await toProjects;
+    await domIs(page, "demo 줄의 끝난 수", (q) => document.querySelector(q)?.textContent.includes("끝남 1"), $("project-open-demo"));
+    const toDemo = hashIs(page, "#project=demo");
+    await page.getByTestId("project-open-demo").click();
+    await toDemo;
+    const view = page.getByTestId("project-threads-demo");
+    await domIs(page, "끝남 묶음", (q) => document.querySelector(q) !== null, `${$("project-threads-demo")} ${$("project-group-resolved")}`);
+    const done = view.getByTestId("project-group-resolved");
+    if ((await done.locator("h3").innerText()) !== "끝남 (1)") throw new Error(await done.innerHTML());
+    // 묶음은 popup DISPLAY_ORDER대로, 끝남은 맨 아래
+    const order = await view.locator("[data-testid^=project-group-]").evaluateAll((xs) => xs.map((x) => x.dataset.testid.slice("project-group-".length)));
+    const rank = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
+    if (order.at(-1) !== "resolved" || order.some((g, i) => i > 0 && rank.indexOf(g) < rank.indexOf(order[i - 1]))) throw new Error(order.join(","));
+    // 끝난 줄은 흐리다(popup group_color: Resolved는 DarkGrey)
+    const r = view.getByTestId("project-thread-t-0001");
+    const dim = await r.locator(".project-threads-name").evaluate((n) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-dim)";
+      document.body.append(probe);
+      const want = getComputedStyle(probe).color;
+      probe.remove();
+      return [getComputedStyle(n).color, want, n.textContent];
+    });
+    if (dim[0] !== dim[1] || dim[2] !== "t-0001 · 웹 결과물") throw new Error(`끝난 줄 ${JSON.stringify(dim)}`);
+    await shot(page, "desktop-project-threads");
+    // popup 「/」 거르기처럼 이름(id·제목)에 든 글로 고른다
+    const rows = `${$("project-threads-demo")} [data-testid^=project-thread-]`;
+    const all = await page.locator(rows).count();
+    const filter = view.getByRole("searchbox");
+    await filter.fill("웹 결과");
+    await domIs(page, "거른 줄 하나", (q) => document.querySelectorAll(q).length === 1, rows);
+    await filter.fill("없는 이름");
+    await domIs(page, "맞는 것 없음", (q) => document.querySelector(q)?.textContent === "맞는 thread 없음", `${$("project-threads-demo")} [role=status]`);
+    await filter.fill("");
+    await domIs(page, "거르기 풂", ([q, n]) => document.querySelectorAll(q).length === n, [rows, all]);
+    // 고르면 보고(popup detail), 뒤로는 그 프로젝트(popup: detail에서 목록으로)
+    const toReport = hashIs(page, "#thread=demo%2Ft-0001");
+    await r.click();
+    await toReport;
+    await domIs(page, "끝난 thread 보고", (q) => document.querySelector(q)?.textContent === "확인", `${$("report")} .markdown strong`);
+    const back = hashIs(page, "#project=demo");
+    await page.getByTestId("thread-back").click();
+    await back;
+    // 휴대폰 폭: 목록 대신 이 화면, 옆으로 밀리지 않는다
+    await page.setViewportSize({ width: 390, height: 844 });
+    await domIs(page, "휴대폰 폭 프로젝트 보기", (q) => document.querySelector(q)?.getBoundingClientRect().width > 0, $("project-threads-demo"));
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
+    await shot(page, "phone-project-threads");
+    const toPicker = hashIs(page, "#projects");
+    await view.getByRole("button", { name: "프로젝트 목록" }).click();
+    await toPicker;
+    const closed = hashIs(page, "");
+    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    await closed;
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
