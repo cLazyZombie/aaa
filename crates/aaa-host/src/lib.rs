@@ -1551,7 +1551,8 @@ impl Host {
                     .iter_mut()
                     .find(|t| t.id == tab)
                     .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
-                t.name = label;
+                // 앞뒤 빈칸은 뺀다. 빈 이름은 이름 없음(탭 번호로 보인다)
+                t.name = label.trim().to_string();
             }
             LayoutChange::CloseTab { tab } => {
                 let at = w
@@ -1560,7 +1561,12 @@ impl Host {
                     .position(|t| t.id == tab)
                     .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
                 let t = w.tabs.remove(at);
+                // 탭을 뺀 layout을 먼저 저장한다(front에서 바로 사라진다). pane을 끝내는 동안 기다리므로, 그 사이 다른
+                // 변경(새 탭·이름 바꾸기·나누기)이 있을 수 있다: 끝낸 뒤 최신을 다시 읽어 그것을 저장한다(보안 감사 t-0340:
+                // 맨 위에서 복사한 것을 저장하면 그 사이 변경이 사라졌다)
+                self.save_workspace(&w);
                 self.close_panes(&aaa_proto::layout::leaves(&t.root), name, actor).await;
+                w = self.workspace(name);
             }
             LayoutChange::MoveToNewTab { pane, name: label } => {
                 let (id, _) = self.resolve_pane(&pane)?;

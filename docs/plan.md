@@ -2363,7 +2363,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **무엇.** agent가 다른 boot ID로 붙으면(재부팅, session host가 기록 없이 사라져 세션이 `interrupted`) host가 연결 직후 그 머신의 pane을 layout 차례로 되살린다(`crates/aaa-host/src/restore.rs`). 한 host 실행에서 pane마다 한 번만 한다.
   - 셸 pane(argv가 비었거나 셸 이름 + 선택지만): 저장한 cwd에서 같은 셸을 새로 띄워 layout 자리를 바꾸고 옛 기록을 지운다(herdr `src/persist/restore.rs:65`: pane마다 저장한 cwd에서 새 셸).
-  - 그 셸에서 Claude·Codex가 돌았고 harness 세션 ID를 알면 새 셸에 `claude --resume <id>`·`codex resume <id>`와 CR을 친다(herdr `src/app/agent_resume.rs` `start_pending_agent_resume`, `src/agent_resume.rs` `plan`). harness를 바로 띄운 pane(argv 첫 낱말이 claude·codex)은 원래 argv(실행 파일 경로, aaa hook 설정 `--settings`·`-c notify=…`, model)를 두고 대화 인자만 바꿔 띄운다(`resume_in_place`: claude `--session-id <x>` → `--resume <id>`, codex는 실행 파일 뒤 `resume <id>`). herdr는 pane이 늘 셸이라 맨 명령을 치지만, aaa pane은 harness 자체일 수 있어 맨 명령으로 띄우면 hook 설정을 잃는다. 같은 harness 세션은 한 번만 잇는다(herdr `dedupe_key`). 셸에 치는 ID는 영숫자·`-_.:`만 받는다(herdr `validate_resume_argv`).
+  - 그 셸에서 Claude·Codex가 돌았고 harness 세션 ID를 알면 새 셸에 `claude --resume <id>`·`codex resume <id>`와 CR을 친다(herdr `src/app/agent_resume.rs` `start_pending_agent_resume`, `src/agent_resume.rs` `plan`). harness를 바로 띄운 pane(argv 첫 낱말이 claude·codex)은 원래 argv(실행 파일 경로, aaa hook 설정 `--settings`·`-c notify=…`, model)를 두고 대화 인자만 바꿔 띄운다(`resume_in_place`: claude `--session-id <x>` → `--resume <id>`, codex는 실행 파일 뒤 `resume <id>`). herdr는 pane이 늘 셸이라 맨 명령을 치지만, aaa pane은 harness 자체일 수 있어 맨 명령으로 띄우면 hook 설정을 잃는다. 같은 harness 세션은 한 번만 잇는다(herdr `dedupe_key`). 셸에 치는 ID는 UUID 꼴만 받는다(herdr `validate_resume_argv`보다 좁다, §8.106).
   - thread pane: `thread restart --resume`과 같은 길로 저장한 대화를 잇는다(brief 안내 없음). brief를 받기 전이었으면 이을 것이 없어 새로 띄우고 brief를 다시 보낸다. 대화 ID로 잇지 못하는 harness(custom 등)는 같은 명령을 다시 돌리면 하던 일을 잃은 채 기다리므로 사람에게 넘긴다: 흐름 사건 `restore_failed`, inbox `session`·`restore failed`(「`aaa thread restart <p> <id>`가 새 대화로 띄운다」). 성공은 흐름 사건 `session_restored`.
   - 그 밖의 프로그램 pane은 다시 실행하지 않는다(재부팅마다 배포 같은 명령이 다시 돌면 안 된다). 중단으로 남고 TUI·웹이 `aaa pane resume <id>`를 보인다. herdr pane은 늘 셸이라 이 경우가 없다.
   - 다시 띄우지 못하면(저장한 폴더가 없어짐 등) 중단으로 남고 까닭을 `PaneView.restore_error`로 보인다(herdr `restore_error`, herdr-web-ui `RestoreErrorBadge`). TUI 중단 띠와 웹 사이드바 경고에 붙는다.
@@ -2374,6 +2374,20 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **t3code와 비교.** t3code `apps/server/src/orchestration-v2/RestartContinuation.ts`는 재시작 때 턴 중이던 run에 「Continue where you left off.」를 보낸다(사람 답을 기다리던 run은 막고, 이어서 3번까지). herdr는 대화만 다시 연다. aaa는 herdr대로 했다(보고 「아침 확인」).
 - **계약.** FRONT_API 1.14(`PaneView.restore_error`, 선택 필드).
 - **시험.** m12 `reboot_restores_shells_and_resumes_agents`(가짜 claude를 PATH에: 셸 둘이 같은 대화 → 앞 것만 `--resume`, claude를 바로 띄운 pane은 원래 경로에 `--resume`으로, 프로그램 pane은 중단 뒤 `pane resume`이 같은 자리에, 폴더가 없어진 셸은 `restore_error`), `reboot_without_agent_resume_restores_plain_shells`(설정 끔). m13 `reboot_resumes_threads`(claude harness thread는 `--resume <session-id>`로 새 pane, 메시지가 간다, custom harness thread는 `restore_failed`·inbox, 「sessions ended」 없음). TUI `interrupted_badge_and_resume`은 프로그램 pane으로 바꿨다(셸 pane은 저절로 되살아난다). 띄울 때마다 차례를 찍어(`run-1`·`run-2`) 새 pane이 그려진 것을 본 뒤 친다(t-0330 a409bce가 찾은 「badge가 포커스보다 먼저 사라진다」). 유닛: `resume_argv`(herdr `plan`·`validate_resume_argv`)·`resume_in_place`·`is_shell`(restore.rs), 웹 `paneProblem`의 복원 실패 까닭(web/test/roster.test.mjs). 기다림은 host 사건(layout·pane 상태, `lab::watch::HostWatch`)·흐름 사건·출력이다.
+
+### 8.106 보안 감사 넘김(10-18, t-0340): hook 세션 ID는 UUID 꼴만, 탭 닫기 경쟁, 탭 이름 빈칸, PR 추적 panic
+
+- **hook 세션 ID(높음).** Claude hook `session_id`·Codex notify `thread-id`는 pane 프로그램이 정하는 값인데 검사 없이 harness 세션 ID로 저장돼(agent `hooks.rs` `normalize` → host `harness.rs` `on_harness`) `thread restart --resume`의 `{session}` 자리(`orch.rs` `thread_restart`)에 argv 낱말 하나로 들어갔다. `--dangerously-skip-permissions` 같은 값이면 Claude가 선택지로 읽는다. 재부팅 복원(§8.105)은 셸에 `claude --resume <id>`를 치므로 `; 명령`이면 명령이 돈다. 이제 `aaa_common::util::harness_session_ok`(8-4-4-4-12 16진수, Claude·Codex 모두 UUID)만 받는다: agent가 정규화에서 버리고, host도 받을 때 버리며(옛 agent), 쓰는 곳(`thread_restart`·`restore.rs`·Codex 기록 파일 이름 `chat.rs`)에서 다시 본다(이 검사 전 저장된 값). 세션 ID가 없으면 claude thread는 aaa가 준 `--session-id`로 잇는다.
+- **탭 닫기 경쟁(중간).** `tab close`가 맨 위에서 복사한 workspace에서 탭을 빼고, 그 안 pane을 끝내기를 기다린(`close_panes`) 뒤 그 복사본을 저장해 그 사이 들어온 layout 변경(새 탭·이름 바꾸기·나누기)이 사라졌다(F §8.75의 `tab close`와 t-0330 병합 3798fe7). 이제 탭을 뺀 layout을 먼저 저장하고(front에서 바로 사라진다), 끝낸 뒤 최신을 다시 읽어 저장한다(새 탭·나누기와 같은 방식).
+- **탭 이름 빈칸(낮음).** t-0330의 `RenameTab` 앞뒤 빈칸 빼기가 병합에서 빠졌다. 다시 넣었다: 빈칸뿐이면 이름 없음(탭 번호로 보인다).
+- **PR 추적 panic(낮음).** 프로젝트마다 따로 도는 한 번(`pr_pass`)이 panic하면 「도는 중」 표시가 남아 그 프로젝트 PR 추적이 멈췄다. 이제 따로 task로 돌려(`pr.rs` `survives`) panic이어도 뒷정리를 하고 오류 로그를 남긴 뒤 다음 간격에 다시 본다.
+- **시험(결함 심기로 확인).** 고친 곳을 옛 동작으로 되돌려 시험이 실패하는 것을 보았다.
+  - m13 `forged_hook_session_id_does_not_reach_resume`: 가짜 Claude가 `--dangerously-skip-permissions`를 세션 ID로 알려도 세션 ID는 비고 `thread restart --resume`이 aaa의 대화 ID로 뜬다. 검사를 늘 참으로 하면 세션 ID가 남고(첫 단언), 그 단언을 빼면 새 pane이 aaa 대화 ID로 뜨지 않는다.
+  - m12 `reboot_does_not_type_a_forged_session_id`: 셸 pane의 hook이 `x; touch pwned`를 알려도 복원한 셸에 치지 않는다. 검사를 늘 참으로 하면 세션 ID가 남고, 그 단언을 빼면 복원한 셸에 그 줄을 쳐 뒤에 친 줄이 돌지 않는다.
+  - m12 `tab_close_keeps_layout_changes_made_while_closing`(Unix): 시험 agent를 SIGSTOP으로 세워 끝내기 응답을 붙잡고, 탭을 뺀 layout 사건을 본 뒤 다른 탭 이름을 바꾸고 SIGCONT. 옛 판·「먼저 저장만」 판 모두 바꾼 이름이 사라져 실패한다.
+  - m12 `herdr_tab_workspace_and_layout`: `tab rename`의 빈칸만·앞뒤 빈칸. trim을 빼면 실패한다.
+  - 유닛: `harness_session_ok`(UUID, 선택지·`;`·경로·전각 숫자 거부), hook 정규화가 UUID 아닌 세션 ID를 버림(사건은 받음), `survives`(panic이면 false, 따로 돌리지 않으면 실패).
+  - 시험 fixture의 세션 ID(`fake-1`·`sess-a1`·`s1` 등)를 UUID로 바꿨다(중첩 세션을 버리는 시험은 두 ID가 달라야 한다).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

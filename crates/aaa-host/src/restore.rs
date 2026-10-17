@@ -29,7 +29,7 @@ use crate::Host;
 const ACTOR: &str = "restore";
 
 /// herdr `agent_resume::plan`(src/agent_resume.rs): harness 세션 ID로 대화를 이어 띄우는 명령. aaa harness는 둘이다.
-/// 셸에 치는 줄이 되므로 빈칸·따옴표·제어 문자가 든 ID는 받지 않는다(herdr `validate_resume_argv`).
+/// 셸에 치는 줄이 되므로 UUID 꼴이 아닌 ID는 받지 않는다(herdr `validate_resume_argv`).
 pub(crate) fn resume_argv(harness: &str, session: &str) -> Option<Vec<String>> {
     if !plain_id(session) {
         return None;
@@ -41,12 +41,9 @@ pub(crate) fn resume_argv(harness: &str, session: &str) -> Option<Vec<String>> {
     }
 }
 
-/// 셸에 치거나 인자로 넘겨도 안전한 harness 세션 ID(herdr `validate_resume_argv`)
+/// 셸에 치거나 인자로 넘겨도 안전한 harness 세션 ID: UUID 꼴만(herdr `validate_resume_argv`보다 좁다, 보안 감사 t-0340)
 fn plain_id(session: &str) -> bool {
-    !session.is_empty()
-        && session.len() <= 512
-        && !session.starts_with('-')
-        && session.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    aaa_common::util::harness_session_ok(session)
 }
 
 /// harness를 바로 띄운 pane: 원래 argv(실행 파일 경로, aaa hook 설정 `--settings`·`-c notify=…`, model 등)를 그대로 두고
@@ -321,20 +318,22 @@ fn shell_line(argv: &[String]) -> String {
 mod tests {
     use super::*;
 
+    const A: &str = "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b";
+    const B: &str = "019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0";
+
     fn v(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
     }
 
     #[test]
     fn resume_command_like_herdr_plan() {
-        assert_eq!(resume_argv("claude", "abc-1"), Some(v(&["claude", "--resume", "abc-1"])));
-        assert_eq!(resume_argv("codex", "019a.x:y_z"), Some(v(&["codex", "resume", "019a.x:y_z"])));
-        // 셸에 칠 줄이 되는 ID는 거른다(herdr `validate_resume_argv`)
-        for bad in ["", "-x", "a b", "a;rm", "a'b", "a\nb", "$(id)"] {
+        assert_eq!(resume_argv("claude", A), Some(v(&["claude", "--resume", A])));
+        assert_eq!(resume_argv("codex", B), Some(v(&["codex", "resume", B])));
+        // 셸에 칠 줄이 되는 ID는 거른다(UUID 꼴만, herdr `validate_resume_argv`보다 좁다)
+        for bad in ["", "-x", "abc-1", "a b", "a;rm", "$(id)", "--dangerously-skip-permissions"] {
             assert_eq!(resume_argv("claude", bad), None, "{bad:?}");
         }
-        assert_eq!(resume_argv("custom", "abc"), None);
-        assert_eq!(resume_argv("claude", &"a".repeat(513)), None);
+        assert_eq!(resume_argv("custom", A), None);
     }
 
     #[test]
@@ -351,24 +350,24 @@ mod tests {
 
     #[test]
     fn direct_harness_keeps_its_argv_and_swaps_the_conversation() {
-        let r = |a: &[&str], h: &str| resume_in_place(&v(a), h, "s1");
+        let r = |a: &[&str], h: &str| resume_in_place(&v(a), h, A);
         // 경로·hook 설정·model은 그대로, 대화 인자만
         assert_eq!(
             r(&["/opt/claude", "--settings", "/w/s.json", "--model", "m", "--session-id", "k0"], "claude"),
-            Some(v(&["/opt/claude", "--settings", "/w/s.json", "--model", "m", "--resume", "s1"]))
+            Some(v(&["/opt/claude", "--settings", "/w/s.json", "--model", "m", "--resume", A]))
         );
-        assert_eq!(r(&["claude", "-r", "old"], "claude"), Some(v(&["claude", "--resume", "s1"])));
+        assert_eq!(r(&["claude", "-r", "old"], "claude"), Some(v(&["claude", "--resume", A])));
         assert_eq!(
             r(&["claude", "--continue", "--model", "m"], "claude"),
-            Some(v(&["claude", "--resume", "s1", "--model", "m"]))
+            Some(v(&["claude", "--resume", A, "--model", "m"]))
         );
-        assert_eq!(r(&["claude", "--model", "m"], "claude"), Some(v(&["claude", "--model", "m", "--resume", "s1"])));
+        assert_eq!(r(&["claude", "--model", "m"], "claude"), Some(v(&["claude", "--model", "m", "--resume", A])));
         assert_eq!(
             r(&["codex", "-c", "notify=x", "-m", "g"], "codex"),
-            Some(v(&["codex", "resume", "s1", "-c", "notify=x", "-m", "g"]))
+            Some(v(&["codex", "resume", A, "-c", "notify=x", "-m", "g"]))
         );
-        assert_eq!(r(&["codex", "resume", "old", "-m", "g"], "codex"), Some(v(&["codex", "resume", "s1", "-m", "g"])));
-        assert_eq!(resume_in_place(&v(&["claude"]), "claude", "a b"), None);
+        assert_eq!(r(&["codex", "resume", "old", "-m", "g"], "codex"), Some(v(&["codex", "resume", A, "-m", "g"])));
+        assert_eq!(resume_in_place(&v(&["claude"]), "claude", "--dangerously-skip-permissions"), None);
         assert_eq!(r(&["sh"], "custom"), None);
     }
 }

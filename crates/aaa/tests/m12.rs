@@ -197,6 +197,10 @@ case "$1" in --resume|--session-id) sid=$2 ;; esac
 exec cat
 "#;
 
+/// 시험 대화 ID(harness 세션 ID는 UUID 꼴만 받는다, `aaa_common::util::harness_session_ok`)
+const SID_A: &str = "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b";
+const SID_C: &str = "7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a";
+
 /// 재부팅 흉내 준비: 가짜 claude를 PATH 앞에 둔 agent 환경
 fn fake_claude_env(lab: &Lab) -> (String, Vec<(String, String)>) {
     let bin = lab.root.join("bin");
@@ -251,12 +255,12 @@ fn reboot_restores_shells_and_resumes_agents() {
     std::fs::create_dir_all(&gone).unwrap();
     let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], Some(lab::path_str(&wa)));
     let b = h.new_pane(None, "labA", Some("b"), &["/bin/sh"], None);
-    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", "sess-c3"], None);
+    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", SID_C], None);
     let d = h.new_pane(None, "labA", Some("d"), &["/bin/sh", "-c", "echo job-ran-$((3*3)); exec cat"], None);
     let e = h.new_pane(None, "labA", Some("e"), &["/bin/sh"], Some(lab::path_str(&gone)));
-    // a·b 셸에서 같은 대화(sess-a1)의 Claude가 돈다
+    // a·b 셸에서 같은 대화(SID_A)의 Claude가 돈다
     for p in [&a, &b] {
-        h.ok(&["pane", "run", p, "FAKE_SID=sess-a1 claude"]);
+        h.ok(&["pane", "run", p, &format!("FAKE_SID={SID_A} claude")]);
     }
     hw.wait("harness 세션 ID", |w| [&a, &b, &c].iter().all(|p| has_session(w, p)).then_some(()));
     h.wait_output(&d, "job-ran-9", T);
@@ -274,10 +278,10 @@ fn reboot_restores_shells_and_resumes_agents() {
     // 저장한 cwd에서 같은 셸, 그 셸에 이어가기 명령을 쳤다
     let pa = hw.pane(&l[0]).unwrap().clone();
     assert_eq!((pa.argv.as_slice(), pa.cwd.as_deref()), (&["/bin/sh".to_string()][..], Some(lab::path_str(&wa))));
-    h.wait_output(&l[0], "fake-claude --resume sess-a1", T);
+    h.wait_output(&l[0], &format!("fake-claude --resume {SID_A}"), T);
     // Claude를 바로 띄운 pane은 원래 argv(실행 파일 경로)에서 대화 인자만 바꿔 띄웠다
-    assert_eq!(hw.pane(&l[2]).unwrap().argv, [claude.as_str(), "--resume", "sess-c3"]);
-    h.wait_output(&l[2], "fake-claude --resume sess-c3", T);
+    assert_eq!(hw.pane(&l[2]).unwrap().argv, [claude.as_str(), "--resume", SID_C]);
+    h.wait_output(&l[2], &format!("fake-claude --resume {SID_C}"), T);
     // 같은 대화는 한 번만 잇는다: b는 빈 셸(뒤에 친 줄보다 먼저 쳤을 이어가기 명령이 화면에 없다)
     h.ok(&["pane", "run", &l[1], "echo plain-$((2+2))"]);
     h.wait_output(&l[1], "plain-4", T);
@@ -298,6 +302,66 @@ fn reboot_restores_shells_and_resumes_agents() {
     hw.wait("재개 자리", |w| (w.leaves().get(3) == Some(&nd)).then_some(()));
 }
 
+/// 보안 감사 t-0340: hook이 알린 harness 세션 ID는 UUID 꼴만 받는다(`aaa_common::util::harness_session_ok`). 셸 pane의
+/// 프로그램이 `x; touch pwned`를 세션 ID로 알려도 재부팅 복원이 셸에 그 줄을 치지 않는다(전에는 `claude --resume x;
+/// touch pwned`가 돌 수 있었다). 결함 심기(검사를 늘 참으로): 세션 ID가 남아 첫 단언에서 실패하고, 그 단언을 빼면
+/// 복원한 셸에 그 줄을 쳐서 뒤에 친 줄의 출력(`plain-4`)이 나오지 않는다.
+#[test]
+fn reboot_does_not_type_a_forged_session_id() {
+    let mut lab = Lab::new();
+    let (_, env) = fake_claude_env(&lab);
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let dir = lab.root.join("wf");
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], Some(lab::path_str(&dir)));
+    let hook = r#""$AA" hook --agent claude '{"hook_event_name":"SessionStart","session_id":"x; touch pwned"}'"#;
+    h.ok(&["pane", "run", &a, hook]);
+    // 사건은 받았다(harness claude), 세션 ID는 버렸다
+    hw.wait("hook 받음", |w| w.pane(&a)?.agent.as_ref().filter(|g| g.harness == "claude").map(|_| ()));
+    assert!(!has_session(&hw, &a), "{:?}", hw.pane(&a).unwrap().agent);
+    reboot(&mut lab, &h, &env, 1);
+    let n = hw.wait("복원", |w| {
+        let l = w.leaves();
+        (l.len() == 1 && l[0] != a && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then(|| l[0].clone())
+    });
+    // 셸이 앞에 친 줄을 다 읽은 뒤의 출력
+    h.ok(&["pane", "run", &n, "echo plain-$((2+2))"]);
+    h.wait_output(&n, "plain-4", T);
+    assert!(!dir.join("pwned").exists(), "복원이 셸에 세션 ID를 쳤다");
+    assert!(!h.screen(&n).contains("--resume"), "{}", h.screen(&n));
+}
+
+/// 보안 감사 t-0340: 탭을 닫는 동안(그 안 pane 끝내기를 기다림) 들어온 다른 layout 변경이 닫기가 끝날 때 사라지지 않는다.
+/// 시험 agent를 SIGSTOP으로 세워 끝내기 응답을 붙잡고, 탭을 뺀 layout이 먼저 저장된 사건을 본 뒤 다른 탭 이름을 바꾼다.
+/// 결함 심기: 맨 위 복사본을 끝에 저장하던 판이면 「탭을 뺀 layout」 사건이 끝내기 전에 오지 않고, 먼저 저장만 하고
+/// 다시 읽지 않으면 바꾼 이름이 사라진다.
+#[cfg(unix)]
+#[test]
+fn tab_close_keeps_layout_changes_made_while_closing() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &[]);
+    let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], None);
+    let b = h.new_pane(None, "labA", Some("b"), &["/bin/sh"], None);
+    let tabs = hw.wait("탭 둘", |w| {
+        let ws = w.ws.as_ref()?;
+        let up = [&a, &b].iter().all(|p| w.pane(p).is_some_and(|v| v.state.is_running()));
+        (ws.tabs.len() == 2 && up).then(|| ws.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>())
+    });
+    lab.signal("agent", libc::SIGSTOP);
+    let node = h.clone();
+    let tab_b = tabs[1].clone();
+    let close = std::thread::spawn(move || node.ok(&["tab", "close", &tab_b]));
+    hw.wait("탭을 뺀 layout", |w| (w.ws.as_ref()?.tabs.len() == 1).then_some(()));
+    h.ok(&["tab", "rename", &tabs[0], "kept"]);
+    lab.signal("agent", libc::SIGCONT);
+    let w = close.join().unwrap();
+    assert_eq!((w["tabs"].as_array().map(|t| t.len()), w["tabs"][0]["name"].as_str()), (Some(1), Some("kept")), "{w}");
+    let t = h.ok(&["tab", "get", &tabs[0]]);
+    assert_eq!(t["tab"]["name"], "kept", "{t}");
+    // 닫은 탭의 pane은 끝나고 기록에서 지워졌다
+    hw.wait("b 지움", |w| w.pane(&b).is_none().then_some(()));
+}
+
 /// `[session] resume_agents_on_restore = false`(herdr와 같은 이름): 셸은 되살리되 대화는 잇지 않는다. 셸에서 돌던
 /// Claude는 빈 셸로, Claude를 바로 띄운 pane은 중단으로 남는다.
 #[test]
@@ -307,8 +371,8 @@ fn reboot_without_agent_resume_restores_plain_shells() {
     let toml = format!("{LOCAL_ONLY}[session]\nresume_agents_on_restore = false\n");
     let (h, mut hw) = start_watch(&mut lab, &toml, &env);
     let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], None);
-    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", "sess-c3"], None);
-    h.ok(&["pane", "run", &a, "FAKE_SID=sess-a1 claude"]);
+    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", SID_C], None);
+    h.ok(&["pane", "run", &a, &format!("FAKE_SID={SID_A} claude")]);
     hw.wait("harness 세션 ID", |w| [&a, &c].iter().all(|p| has_session(w, p)).then_some(()));
     reboot(&mut lab, &h, &env, 2);
 
@@ -447,7 +511,10 @@ fn herdr_tab_workspace_and_layout() {
     );
     let tab = w["tabs"][1]["id"].as_str().unwrap().to_string();
     assert_eq!(h.ok(&["tab", "list"])["tabs"].as_array().map(|t| t.len()), Some(2));
-    h.ok(&["tab", "rename", &tab, "renamed"]);
+    // 앞뒤 빈칸은 빼고, 빈칸뿐이면 이름 없음(보안 감사 t-0340: 병합에서 빠졌던 t-0330 처리)
+    h.ok(&["tab", "rename", &tab, "   "]);
+    assert_eq!(h.ok(&["tab", "get", &tab])["tab"]["name"], "");
+    h.ok(&["tab", "rename", &tab, "  renamed  "]);
     let t = h.ok(&["tab", "get", &tab]);
     assert_eq!(
         (t["kind"].as_str(), t["workspace"].as_str(), t["tab"]["name"].as_str()),

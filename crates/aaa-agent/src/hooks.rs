@@ -55,7 +55,10 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         session: session.to_string(),
         harness: harness.to_string(),
         kind: String::new(),
-        harness_session: s(p, "session_id").or_else(|| s(p, "thread-id")),
+        // UUID 꼴이 아니면 버린다(`aaa_common::util::harness_session_ok`): 이 값은 `--resume` 인자가 된다
+        harness_session: s(p, "session_id")
+            .or_else(|| s(p, "thread-id"))
+            .filter(|x| aaa_common::util::harness_session_ok(x)),
         message: None,
         question_kind: None,
         percent: None,
@@ -217,20 +220,34 @@ mod tests {
         let q = n(json!({"hook_event_name":"PermissionRequest","session_id":"a","agent_id":"x","tool_name":"Bash"}))
             .unwrap();
         assert_eq!(q.kind, "question");
-        let other = n(json!({"hook_event_name":"Stop","session_id":"b"})).unwrap();
-        assert!(foreign_session(Some("a"), &other));
-        assert!(!foreign_session(Some("b"), &other));
+        let other = n(json!({"hook_event_name":"Stop","session_id":"7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"})).unwrap();
+        assert!(foreign_session(Some("0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"), &other));
+        assert!(!foreign_session(Some("7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"), &other));
         assert!(!foreign_session(None, &other));
-        let start = n(json!({"hook_event_name":"SessionStart","session_id":"b"})).unwrap();
-        assert!(!foreign_session(Some("a"), &start));
+        let start =
+            n(json!({"hook_event_name":"SessionStart","session_id":"7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"})).unwrap();
+        assert!(!foreign_session(Some("0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"), &start));
     }
 
     #[test]
     fn claude_and_codex_events_normalize() {
         let n = |h: &str, p: Value| normalize("S", h, &p, 1);
-        let e = n("claude", json!({"hook_event_name":"UserPromptSubmit","session_id":"abc","prompt":"x"})).unwrap();
-        assert_eq!((e.kind.as_str(), e.harness_session.as_deref()), ("turn_start", Some("abc")));
-        assert_eq!(n("claude", json!({"hook_event_name":"Stop","session_id":"abc"})).unwrap().kind, "turn_end");
+        let e = n("claude", json!({"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","prompt":"x"})).unwrap();
+        assert_eq!(
+            (e.kind.as_str(), e.harness_session.as_deref()),
+            ("turn_start", Some("0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"))
+        );
+        assert_eq!(
+            n("claude", json!({"hook_event_name":"Stop","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}))
+                .unwrap()
+                .kind,
+            "turn_end"
+        );
+        // UUID 꼴이 아닌 세션 ID는 버린다(보안 감사 t-0340: `--resume` 인자가 된다). 사건은 그대로 받는다
+        for bad in ["--dangerously-skip-permissions", "x; touch pwned", "abc"] {
+            let e = n("claude", json!({"hook_event_name":"SessionStart","session_id":bad})).unwrap();
+            assert_eq!((e.kind.as_str(), e.harness_session.as_deref()), ("session_start", None), "{bad}");
+        }
         let q = n(
             "claude",
             json!({"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}),
@@ -250,8 +267,11 @@ mod tests {
         .unwrap();
         assert!(p.message.as_deref().unwrap().starts_with("Bash {\"command\""), "{p:?}");
         let c =
-            n("codex", json!({"type":"agent-turn-complete","thread-id":"t1","last-assistant-message":"done"})).unwrap();
-        assert_eq!((c.kind.as_str(), c.harness_session.as_deref()), ("turn_end", Some("t1")));
+            n("codex", json!({"type":"agent-turn-complete","thread-id":"019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0","last-assistant-message":"done"})).unwrap();
+        assert_eq!(
+            (c.kind.as_str(), c.harness_session.as_deref()),
+            ("turn_end", Some("019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0"))
+        );
         let r = n("report", json!({"percent":250,"activity":"테스트 중\n이상한 줄"})).unwrap();
         assert_eq!((r.kind.as_str(), r.percent), ("progress", Some(100)));
         assert_eq!(r.message.as_deref(), Some("테스트 중이상한 줄"));

@@ -62,7 +62,7 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         ),
     )
     .unwrap();
-    let hook = serde_json::json!({ "hook_event_name": "Stop", "session_id": "s1", "transcript_path": tr }).to_string();
+    let hook = serde_json::json!({ "hook_event_name": "Stop", "session_id": "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a", "transcript_path": tr }).to_string();
     let cid = h.new_pane(
         None,
         "labA",

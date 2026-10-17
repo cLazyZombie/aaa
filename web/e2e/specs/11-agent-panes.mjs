@@ -143,7 +143,7 @@ export default async function ({ ctl, page }) {
     );
     const hookPane = (name, path) =>
       aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
-        JSON.stringify({ hook_event_name: "Stop", session_id: "s1", transcript_path: path }));
+        JSON.stringify({ hook_event_name: "Stop", session_id: "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a", transcript_path: path }));
     hookPane("chat1", tr);
     await page.getByTestId("pane-chat1").click();
     await until("대화 단추", async () => (await page.getByTestId("chat-toggle").count()) === 1);

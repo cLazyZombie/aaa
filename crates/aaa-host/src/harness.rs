@@ -195,7 +195,12 @@ impl Host {
     }
 
     /// agent가 harness 사건을 보냈다
-    pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, ev: HarnessEvent) {
+    pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, mut ev: HarnessEvent) {
+        // 옛 agent는 hook의 harness 세션 ID를 거르지 않고 보낸다: host도 UUID 꼴만 받는다(`--resume` 인자가 된다)
+        if ev.harness_session.as_deref().is_some_and(|s| !aaa_common::util::harness_session_ok(s)) {
+            tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
+            ev.harness_session = None;
+        }
         let activity = {
             let mut i = self.inner.lock().unwrap();
             let Some(p) = i.panes.get_mut(&ev.session) else {
