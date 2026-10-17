@@ -16,7 +16,7 @@ function fail(offenders, instruction) {
 
 const HOW =
   "정한 시간이 아니라 기다리는 것을 기다린다(docs/testing.md 「기다리기」): 관찰할 수 있는 사건(host 흐름 사건·`pane wait-output`·" +
-  "`inbox tick`·화면 표지·fake 기록)을 기다리거나, 시한이 있는 반복으로 상태를 본다. 일부러 고정한 기다림(아무것도 오지 않음 증명)은 " +
+  "`aaa ticker tick`·화면 표지·fake 기록)을 기다리거나, 시한이 있는 반복으로 상태를 본다. 일부러 고정한 기다림(아무것도 오지 않음 증명)은 " +
   "그 줄이나 윗줄에 `// fixed wait: <이유>`를 단다. fixed-sleeps.json은 올리지 않는다. 파일 이름을 바꿨으면 같은 수로 새 경로에 옮긴다.";
 
 test("고정 sleep을 더하지 않고, 줄면 기준을 낮춘다", () => {
@@ -44,9 +44,10 @@ test("기준은 origin/main보다 올리지 않는다", (t) => {
   const total = (c) => Object.values(c).reduce((s, n) => s + n, 0);
   fail(
     [
+      // 파일마다는 main에 있던 파일만 본다. 새 파일(나누기·이름 바꾸기로 옮긴 sleep)은 합계가 막는다
       ...Object.entries(baseline)
-        .filter(([file, n]) => n > (before[file] ?? 0))
-        .map(([file, n]) => `${file}: ${n}, origin/main ${before[file] ?? 0}`),
+        .filter(([file, n]) => file in before && n > before[file])
+        .map(([file, n]) => `${file}: ${n}, origin/main ${before[file]}`),
       ...(total(baseline) > total(before) ? [`합계 ${total(baseline)}, origin/main ${total(before)}`] : []),
     ],
     `${BASELINE}은 줄기만 한다: 새 고정 sleep을 코드에서 뺀다. 파일 이름을 바꿨으면 같은 수로 옮겨 합계를 지킨다.`,
@@ -84,6 +85,14 @@ test("JS: 고정 sleep과 시한 있는 반복을 가른다(herdr-web-ui 사례)
   assert.equal(n("await page.waitForTimeout(0);"), 0);
   // 문자열(시험 프로그램 원문) 안은 코드가 아니다
   assert.equal(n('fs.writeFileSync("a.js", `await new Promise((r) => setTimeout(r, 900));`);'), 0);
+});
+
+test("JS: 다른 파일에서 import한 sleep helper도 센다(웹 E2E spec은 lib/harness.mjs의 sleep을 쓴다)", () => {
+  const n = (code) => fixedSleeps("web/e2e/specs/example.mjs", code).length;
+  assert.equal(n('import { aaa, sleep } from "../lib/harness.mjs";\nawait sleep(300);\nawait sleep(300);'), 2);
+  assert.equal(n('import { sleep as nap } from "../lib/harness.mjs";\nawait nap(300);'), 1);
+  assert.equal(n('import { until } from "../lib/harness.mjs";\nawait until("x", () => true);'), 0);
+  assert.equal(n('import { sleep } from "../lib/harness.mjs";\nawait Promise.race([event, sleep(1000)]);'), 0);
 });
 
 test("JS: sleep helper는 정의가 아니라 부를 때마다 센다", () => {
