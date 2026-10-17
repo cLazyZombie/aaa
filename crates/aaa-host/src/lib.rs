@@ -821,11 +821,11 @@ impl Host {
                 self.decisions(&project).map(|decisions| FrontResponse::Decisions { decisions })
             }
             FrontRequest::Inbox { project, all, peek } => {
-                self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items })
+                self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items, done: None })
             }
-            FrontRequest::InboxDone { project, ids, all } => {
-                self.inbox_done(&project, &ids, all, actor).map(|items| FrontResponse::Inbox { items })
-            }
+            FrontRequest::InboxDone { project, ids, all } => self
+                .inbox_done(&project, &ids, all, actor)
+                .map(|(done, items)| FrontResponse::Inbox { items, done: Some(done) }),
             FrontRequest::MergeEnqueue { project, thread } => {
                 self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
             }

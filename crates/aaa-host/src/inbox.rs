@@ -198,14 +198,15 @@ impl Host {
         Ok(items)
     }
 
-    /// 항목을 끝낸다: 투영 파일을 `inbox/done/`으로 옮긴다
+    /// 항목을 끝낸다: 투영 파일을 `inbox/done/`으로 옮긴다. 끝낸 수와 남은 항목을 돌려준다
+    /// (herdr-projects `inbox done`은 「N item(s) moved to inbox/done」을 쓴다, src/cli.rs).
     pub(crate) fn inbox_done(
         &self,
         project: &str,
         ids: &[String],
         all: bool,
         actor: &str,
-    ) -> Result<Vec<InboxItem>, ErrorBody> {
+    ) -> Result<(u32, Vec<InboxItem>), ErrorBody> {
         self.project_dir(project)?;
         if ids.is_empty() && !all {
             return Err(err(ErrorCode::BadRequest, "끝낼 항목 ID나 --all이 필요하다"));
@@ -218,7 +219,7 @@ impl Host {
         let n = pick.len();
         self.inbox_finish(project, pick).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
-        self.db.inbox_list(Some(project), false).map_err(internal)
+        Ok((n as u32, self.db.inbox_list(Some(project), false).map_err(internal)?))
     }
 
     /// 조건에 맞는 끝내지 않은 항목을 끝낸다

@@ -286,7 +286,7 @@ impl World {
             what,
             T,
             || Some(self.show(id)).filter(|v| f(v)),
-            || format!("thread: {}\nevents: {}", self.show(id), self.h.ok(&["events", "--project", "demo"])),
+            || format!("thread: {}\nevents: {}", self.show(id), self.h.ok(&["events", "demo"])),
         )
     }
 
@@ -335,7 +335,7 @@ impl World {
     }
 
     fn kinds(&self, after: u64) -> Vec<String> {
-        let v = self.h.ok(&["events", "--project", "demo", "--after", &after.to_string()]);
+        let v = self.h.ok(&["events", "demo", "--after", &after.to_string()]);
         v["events"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect()
     }
 
@@ -402,6 +402,11 @@ fn worktree_thread_round_trip() {
 
     let v = w.h.ok(&["thread", "resolve", "demo", "t-0001"]);
     assert_eq!(v["status"], "resolved");
+    // 끝난 thread도 목록에 남는다(herdr-projects `thread list <slug>`, `--all` 없음). 프로젝트는 위치 인자다.
+    let listed = w.h.ok(&["thread", "list", "demo"]);
+    assert_eq!(listed["threads"][0]["group"], "resolved", "{listed}");
+    let text = String::from_utf8_lossy(&w.h.run(&["thread", "list", "demo"]).stdout).to_string();
+    assert!(text.starts_with("demo/t-0001\t끝남\t"), "{text}");
     assert!(!cwd.exists(), "고치지 않은 worktree는 지워져야 한다");
     assert_eq!(git(&w.repo, &["branch", "--list", "aaa/demo/*"]), "", "병합된(새 commit 없는) branch는 지운다");
     let pane = v["pane"].as_str().unwrap();
@@ -441,7 +446,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     assert_eq!(v["status"], "resolved");
     assert!(cwd.join("dirty.txt").exists(), "고친 worktree는 남아야 한다");
     assert_eq!(git(&w.repo, &["branch", "--list", "aaa/demo/*", "--format=%(refname:short)"]), "aaa/demo/t-0001-keep");
-    let ev = w.h.ok(&["events", "--project", "demo"]);
+    let ev = w.h.ok(&["events", "demo"]);
     let last = ev["events"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(last["kind"], "thread_resolved");
     assert!(last["detail"].as_str().unwrap().contains("worktree 유지"), "{last}");
@@ -476,7 +481,7 @@ fn remote_dir_thread_survives_host_restart() {
     let workers = w.h.ok(&["pane", "list", "--role", "worker"]);
     assert!(workers.to_string().contains(&pane));
     assert_eq!(w.h.ok(&["pane", "list", "--role", "evaluator"])["panes"], serde_json::json!([]));
-    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+    let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
 
     // host 재시작 중에 보고가 바뀌어도, 다시 붙은 agent가 지금 hash를 알려 사본을 다시 받는다
     // 원격 agent가 같은 주소로 다시 붙게 처음 받은 포트를 고정한다
@@ -768,7 +773,7 @@ fn decisions_and_restart() {
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered" && v["decisions_rev"] == 2);
     // hook이 없는 harness는 일하는지 알 수 없다: 안내를 보낸 뒤에는 「쉼」이다(herdr-projects `group()` 7번 줄)
     assert_eq!(v["group"], "idle");
-    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+    let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
 
     // resume: 같은 대화를 잇는다(custom harness는 같은 명령). brief 안내는 하지 않는다.
     w.h.ok(&["pane", "kill", &pane2]);
@@ -852,9 +857,12 @@ fn inbox_and_nudge() {
     // 끝내기: 파일은 inbox/done으로
     let e = w.h.json(&["inbox", "done", "demo", "no-such-item"]).expect_err("없는 항목");
     assert!(e.contains("no-such-item"), "{e}");
-    let left = w.h.ok(&["inbox", "done", "demo", &report_id])["items"].as_array().unwrap().len();
-    assert_eq!(left, 1);
-    w.h.ok(&["inbox", "done", "demo", "--all"]);
+    let done = w.h.ok(&["inbox", "done", "demo", &report_id]);
+    assert_eq!((done["done"].as_u64(), done["items"].as_array().unwrap().len()), (Some(1), 1), "{done}");
+    // 끝낸 수를 말한다(herdr-projects 「N item(s) moved to inbox/done」)
+    let out = w.h.run(&["inbox", "done", "demo", "--all"]);
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1개 항목을 끝냈다(inbox/done으로 옮김)\n");
     assert!(w.h.ok(&["inbox", "list", "demo"])["items"].as_array().unwrap().is_empty());
     assert_eq!(w.h.ok(&["inbox", "list", "demo", "--all"])["items"].as_array().unwrap().len(), 2);
     assert!(files(&inbox).is_empty());
@@ -964,7 +972,7 @@ fn merge_land_steps() {
     // thread가 main을 합치면 병합된다
     git(&cwd1, &["fetch", "-q", "origin"]);
     git(&cwd1, &["merge", "-q", "--no-edit", "origin/main"]);
-    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+    let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
     let v = w.h.ok(&["merge", "land", "demo"]);
     let steps: Vec<(&str, bool)> = v["steps"]
         .as_array()
@@ -1039,7 +1047,7 @@ fn merge_queue_and_capacity() {
     assert!(e.contains("한도 2") && e.contains(&format!("demo/{t1}")), "{e}");
     w.wait_show("보고", &t1, |v| v["report_hash"].is_string());
     w.wait_show("보고", &t2, |v| v["report_hash"].is_string());
-    let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
+    let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
 
     w.h.ok(&["merge", "enqueue", "demo", &t1]);
     let q = w.h.ok(&["merge", "enqueue", "demo", &t2])["queue"].as_array().unwrap().clone();
@@ -1059,7 +1067,7 @@ fn merge_queue_and_capacity() {
     assert!(e.contains("열린 thread만"), "{e}");
     start("m3").expect("한도 안");
 
-    let ev: Vec<(String, String)> = w.h.ok(&["events", "--project", "demo", "--after", &seen.to_string()])["events"]
+    let ev: Vec<(String, String)> = w.h.ok(&["events", "demo", "--after", &seen.to_string()])["events"]
         .as_array()
         .unwrap()
         .iter()
@@ -1351,7 +1359,7 @@ fn notify_webhook() {
     assert!(body.contains(&format!("- {} session ended: 세션이 끝났다", ids[0])), "{body}");
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
     assert!(rx.recv_timeout(Duration::from_secs(5)).is_err(), "실패한 알림을 다시 보냈다");
-    let failed = w.h.ok(&["events", "--project", "demo"])["events"]
+    let failed = w.h.ok(&["events", "demo"])["events"]
         .as_array()
         .unwrap()
         .iter()
@@ -1360,7 +1368,7 @@ fn notify_webhook() {
         .clone();
     assert_eq!(failed["detail"], "HTTP 500");
     // 주소(비밀값이 들어갈 수 있다)는 기록에 남지 않는다
-    assert!(!w.h.ok(&["events", "--project", "demo"]).to_string().contains("/hook"));
+    assert!(!w.h.ok(&["events", "demo"]).to_string().contains("/hook"));
 }
 
 /// 머신 건강(§8.10): 디스크 부족·toolchain 실패면 새 세션을 거부하고 inbox에 남긴다. 고치고 다시 띄우면 풀린다.
@@ -1546,7 +1554,7 @@ fn evaluator_flow() {
     let ids = |v: &Value, key: &str| -> Vec<String> {
         v[key].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect()
     };
-    assert!(!ids(&w.h.ok(&["thread", "list", "--project", "demo"]), "threads").contains(&eid));
+    assert!(!ids(&w.h.ok(&["thread", "list", "demo"]), "threads").contains(&eid));
     assert_eq!(ids(&w.h.ok(&["thread", "list", "--role", "evaluator"]), "threads"), std::slice::from_ref(&eid));
     let pane = w.show(&eid)["pane"].as_str().unwrap().to_string();
     assert!(!ids(&w.h.ok(&["pane", "list"]), "panes").contains(&pane));

@@ -167,7 +167,7 @@ enum Cmd {
     },
     /// 흐름 사건(프로젝트별 순번). cursor(`--after`) 다음부터 읽는다
     Events {
-        #[arg(long, short)]
+        /// 프로젝트(생략하면 모든 프로젝트). 다른 프로젝트 명령처럼 위치 인자다
         project: Option<String>,
         /// 이 순번 다음부터(프로젝트를 줄 때)
         #[arg(long, default_value_t = 0)]
@@ -388,8 +388,9 @@ enum ThreadCmd {
         #[arg(long)]
         add: Option<String>,
     },
+    /// thread 목록. 끝난 thread도 늘 보인다(group 「끝남」, herdr-projects `thread list`처럼 `--all`이 없다)
     List {
-        #[arg(long, short)]
+        /// 프로젝트(생략하면 모든 프로젝트)
         project: Option<String>,
         /// 이 역할만(기본은 사후 평가자를 뺀 목록)
         #[arg(long, value_parser = ["coordinator", "worker", "evaluator"])]
@@ -2222,7 +2223,13 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Evaluation(v) => render_evaluation(&mut s, v),
-        FrontResponse::Inbox { items } => {
+        FrontResponse::Inbox { items, done: Some(n) } => {
+            let _ = writeln!(s, "{n}개 항목을 끝냈다(inbox/done으로 옮김)");
+            if !items.is_empty() {
+                let _ = writeln!(s, "끝내지 않은 항목 {}개가 남았다", items.len());
+            }
+        }
+        FrontResponse::Inbox { items, done: None } => {
             if items.is_empty() {
                 s.push_str("inbox가 비었다\n");
             }

@@ -70,7 +70,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 
 | # | 조건 | 확인 |
 |---|---|---|
-| G1 | **자료가 같다.** 마지막 inventory 뒤 import에서 실패 0, 「바뀜」은 0.2 ticker를 멈춘 뒤 0, 끝난 thread 수 = DB resolved 수, inbox 수 = 투영 파일 수 | `convert.md` 요약, `aaa thread list -p <p> --json` 개수 |
+| G1 | **자료가 같다.** 마지막 inventory 뒤 import에서 실패 0, 「바뀜」은 0.2 ticker를 멈춘 뒤 0, 끝난 thread 수 = DB resolved 수, inbox 수 = 투영 파일 수 | `convert.md` 요약, `aaa thread list <p> --json` 개수 |
 | G2 | **열린 0.2 thread가 없다.** 남은 것은 사용자가 정한 idle 시점에 재개 정보(세션 ID·profile 인자, 인자 출처 `record`·`home-profile`)로 명시적으로 이어 간다 | `inventory.md` 「열린 thread와 재개 정보」 |
 | G3 | **0.2 inbox 끝내지 않은 항목 0** | `inventory.md` 「inbox」 |
 | G4 | **shadow: N시간 동안 의도하지 않은 차이 0**, 판정한 줄 비율 90% 이상(「입력 재현 안 됨」이 많으면 수집을 고친다) | `shadow.md` |
@@ -88,7 +88,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 4. 마지막 inventory: `scripts/m4/inventory.sh --aaa ~/.local/bin/aaa --project <p> --home mac-a --herdr mac-a=local --herdr mac-b=mac-b --herdr mac-c=mac-c --out <밖의 폴더>/final`.
 5. ✋ aaa host를 멈춘다(세션은 session host가 가지므로 끊기지 않는다): `launchctl bootout gui/$(id -u)/dev.aaa.host`.
 6. import: `~/.local/bin/aaa migrate import --inventory <밖의 폴더>/final/inventory.json --to-project <p> --library --out <밖의 폴더>/final`. 요약에서 실패 0·바뀜 0을 본다(G1).
-7. ✋ aaa host를 다시 올린다: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.aaa.host.plist`. `aaa thread list -p <p>`·`aaa context <p>`로 본다.
+7. ✋ aaa host를 다시 올린다: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.aaa.host.plist`. `aaa thread list <p>`·`aaa context <p>`로 본다.
 8. routine을 하나씩 켠다(`enabled = true`). 명령 routine은 `aaa routine approve`로 다시 승인한다.
 9. ✋ coordinator를 aaa 프로젝트 폴더로 옮긴다(사용자 승인): 0.2 coordinator를 `/exit`한 뒤 `aaa tab create --cwd ~/.aaa/projects/<p> -- claude ...`.
 10. 0.2·herdr 설치는 검증 기간 동안 지우지 않는다(§15 5).
@@ -101,7 +101,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 
 1. aaa에서 새 thread를 더 시작하지 않는다. 켠 aaa routine을 끈다(`enabled = false`).
 2. aaa에서 생긴 일을 0.2 coordinator가 읽을 수 있게 내보낸다. aaa 프로젝트 폴더는 0.2와 같은 Markdown이다.
-   - `aaa thread list -p <p> --json > <밖의 폴더>/rollback/threads.json`
+   - `aaa thread list <p> --json > <밖의 폴더>/rollback/threads.json`
    - 보고: `~/.aaa/projects/<p>/threads/<id>.md`, 결과물: `library/<id>/`, inbox 투영: `inbox/*.md`(0.2.35와 같은 `+++` 형식), 결정: `decisions.md`
    - 0.2 coordinator brief에 위 경로를 적어 준다(0.2 폴더에 복사하지 않는다. 쓰기를 늘리지 않는다).
 3. aaa에서 열린 thread는 둘 중 하나로 한다.
@@ -116,7 +116,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 
 1. **사본 만들기.** host Mac의 0.2 프로젝트 폴더를 rsync로 시험 폴더에 받는다(`library/`·`scratch/`·`uploads/`와 「뺀 곳」은 빼도 된다): `rsync -a --exclude '/<p>/library/' --exclude '.env' … mac-a:.herdr-projects/<p> <시험>/hp/`.
 2. **시험 host.** `<시험>/config/host.toml`에 `agent_listen`·`web.listen`을 빈 port로, `[local_agent] mode = "none"`, `[projects] root = "<시험>/projects"`. 상태 폴더는 짧은 경로(socket 경로는 104자를 넘지 않는다)로 둔다.
-3. **inventory → import → host.** `aaa --config-dir <시험>/config --state-dir <상태> migrate inventory --from <시험>/hp …`, `… migrate import …`, `… host`. `aaa thread list -p <p>`·`aaa context <p>`·`aaa inbox list <p>`·웹을 본다.
+3. **inventory → import → host.** `aaa --config-dir <시험>/config --state-dir <상태> migrate inventory --from <시험>/hp …`, `… migrate import …`, `… host`. `aaa thread list <p>`·`aaa context <p>`·`aaa inbox list <p>`·웹을 본다.
 4. **실패를 흉내 내고 rollback.** 시험 host에서 일어난 일로 친다: 위 4장 1~2를 시험 host에 대고 하고, 내보낸 `threads.json`·보고 경로를 연다. 원본이 바뀌지 않았는지 inventory를 다시 내고 끝난 thread 파일의 hash를 비교한다(`inventory.json`의 `files`에서 `threads/`·`library/` 항목이 두 번 모두 같아야 한다).
 5. **정리.** 시험 host PID를 확인해 끝내고, 시험 폴더를 절대 경로로 지운다.
 
