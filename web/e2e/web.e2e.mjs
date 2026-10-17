@@ -792,14 +792,18 @@ try {
       throw new Error(`manifest ${m.status} ${m.headers.get("content-type")}`);
     }
     const man = await m.json();
-    if (man.name !== "aaa" || man.display !== "standalone" || man.start_url !== "/") throw new Error(JSON.stringify(man));
-    for (const icon of [...man.icons.map((i) => i.src), "/apple-touch-icon.png", "/favicon-32.png"]) {
-      const r = await fetch(new URL(icon, base));
+    if (man.id !== "/" || man.name !== "aaa" || man.display !== "standalone" || man.start_url !== "/") throw new Error(JSON.stringify(man));
+    // 참고(herdr-web-ui manifest)처럼 일반·maskable을 192·512 모두(차이 목록 M4)
+    const kinds = man.icons.map((i) => `${i.purpose} ${i.sizes}`).sort();
+    if (JSON.stringify(kinds) !== JSON.stringify(["any 192x192", "any 512x512", "maskable 192x192", "maskable 512x512"])) throw new Error(`manifest 아이콘 ${kinds}`);
+    for (const icon of [...man.icons, { src: "/apple-touch-icon.png" }, { src: "/favicon-32.png" }]) {
+      const r = await fetch(new URL(icon.src, base));
       const buf = Buffer.from(await r.arrayBuffer());
-      // PNG 서명(89 50 4E 47)
+      // PNG 서명(89 50 4E 47), 그리고 IHDR의 폭·높이가 적은 크기와 같다
       if (r.status !== 200 || r.headers.get("content-type") !== "image/png" || buf.readUInt32BE(0) !== 0x89504e47) {
-        throw new Error(`아이콘 ${icon}: ${r.status} ${r.headers.get("content-type")}`);
+        throw new Error(`아이콘 ${icon.src}: ${r.status} ${r.headers.get("content-type")}`);
       }
+      if (icon.sizes && icon.sizes !== `${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}`) throw new Error(`아이콘 ${icon.src} 크기 ${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)} ≠ ${icon.sizes}`);
     }
     // 관례 터치 아이콘 주소는 같은 PNG, 없는 파일은 화면(HTML)이 아니라 404, 확장자 없는 주소만 화면(plan §8.61)
     const touch = Buffer.from(await (await fetch(`${base}apple-touch-icon.png`)).arrayBuffer());
@@ -818,6 +822,8 @@ try {
     await page.goto(base);
     const cdp = await ctx.newCDPSession(page);
     const got = await cdp.send("Page.getAppManifest");
+    // 상태 막대 style은 두지 않는다(참고 index.html: 홈 화면 앱이 상태 막대 아래에 그리지 않는다)
+    if ((await page.locator('meta[name="apple-mobile-web-app-status-bar-style"]').count()) !== 0) throw new Error("apple-mobile-web-app-status-bar-style meta가 있다");
     if (got.errors.length || !got.url.endsWith("/manifest.webmanifest?v=2")) throw new Error(`${got.url} ${JSON.stringify(got.errors)}`);
     // service worker(§8.26)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
     const sw = await fetch(`${base}sw.js`);
@@ -1237,6 +1243,105 @@ try {
     await shot(tp, "tablet-key-bar-defaults");
     await tp.context().close();
     aaa("pane", "kill", "kbset");
+  });
+
+  await step("안전 영역(herdr-web-ui styles.css safe-area-inset, 차이 목록 M3): 가로로 둔 휴대폰의 노치를 목록은 왼쪽, 터미널 칸은 오른쪽(좁으면 양쪽)으로 비킨다", async () => {
+    // 가로 휴대폰(844×390, 두 칸)과 좁은 가로(667×375, 한 칸). Chromium이 env(safe-area-inset-*)를 이 값으로 준다
+    const measure = (p) =>
+      p.evaluate(() => {
+        const pad = (sel) => {
+          const el = document.querySelector(sel);
+          if (!el || !el.getClientRects().length) return null;
+          const cs = getComputedStyle(el);
+          return [parseFloat(cs.paddingLeft), parseFloat(cs.paddingRight)];
+        };
+        return { list: pad(".list"), head: pad(".term-head"), scroll: pad(".term-scroll"), keys: pad(".key-bar"), input: pad(".terminal-input") };
+      });
+    const open = async (viewport, line) => {
+      const { page: p } = await pairPage(browser, aaa("web", "pair").code, viewport, { touch: true, line });
+      const cdp = await p.context().newCDPSession(p);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, left: 47, right: 47, bottom: 21 } });
+      await p.getByTestId("pane-t1").click();
+      await until("t1 화면", async () => (await screenText(p)).includes("$"));
+      return p;
+    };
+    const wide = await open({ width: 844, height: 390 });
+    const w = await measure(wide);
+    const want = { list: [47, 0], head: [16, 12 + 47], scroll: [16, 16 + 47], keys: [8, 8 + 47] };
+    for (const [k, v] of Object.entries(want)) if (JSON.stringify(w[k]) !== JSON.stringify(v)) throw new Error(`가로 두 칸 ${k} ${JSON.stringify(w[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(w)})`);
+    await shot(wide, "phone-landscape-safe-area");
+    await wide.context().close();
+    // 한 칸씩 보이는 좁은 가로: 터미널 칸이 양쪽을 비킨다(입력줄 화면)
+    const narrow = await open({ width: 667, height: 375 }, true);
+    const n = await measure(narrow);
+    const wantN = { head: [8 + 47, 8 + 47], scroll: [8 + 47, 8 + 47], keys: [8 + 47, 8 + 47], input: [8 + 47, 8 + 47] };
+    for (const [k, v] of Object.entries(wantN)) if (JSON.stringify(n[k]) !== JSON.stringify(v)) throw new Error(`좁은 가로 ${k} ${JSON.stringify(n[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(n)})`);
+    await narrow.getByRole("button", { name: "목록으로" }).click();
+    const l = await measure(narrow);
+    if (JSON.stringify(l.list) !== "[47,47]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
+    await narrow.context().close();
+  });
+
+  await step("화면 켜짐 유지(herdr-web-ui keepScreenOn·wakeLock, 차이 목록 M6): 켜면 pane을 보는 동안 screen wake lock, 가려지면 놓고 다시 보이면 다시, 끄면 놓음, 이 기기에 저장", async () => {
+    // wake lock은 headless에서 거절될 수 있다: 요청·놓기를 기록하는 것으로 바꾼다
+    const init = () => {
+      const log = [];
+      Object.defineProperty(window, "__wakeLog", { value: log });
+      Object.defineProperty(navigator, "wakeLock", {
+        configurable: true,
+        value: {
+          request: async (type) => {
+            log.push(`request ${type}`);
+            return { release: async () => void log.push("release") };
+          },
+        },
+      });
+    };
+    const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init })).page;
+    const log = () => wp.evaluate(() => window.__wakeLog.join(","));
+    const hide = (hidden) =>
+      wp.evaluate((h) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, hidden);
+    await wp.getByTestId("pane-t1").click();
+    // 앞 단계가 남긴 글에 기대지 않는다: 셸 프롬프트가 보이면 연결된 것이다
+    await until("t1 화면", async () => (await screenText(wp)).includes("$"));
+    await sleep(300);
+    if ((await log()) !== "") throw new Error(`꺼진 설정인데 ${await log()}`);
+    if (!(await wp.evaluate(() => window.isSecureContext))) throw new Error("시험 주소가 secure context가 아니다");
+    const toggle = async () => {
+      await wp.getByTestId("settings-open").click();
+      await wp.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "화면 켜짐 유지" }).click();
+      await wp.keyboard.press("Escape");
+    };
+    // 휴대폰은 pane을 보는 동안 목록 바닥 톱니가 가려진다: 목록으로 돌아가 켜고 다시 고른다
+    const back = wp.getByRole("button", { name: "목록으로" });
+    if (await back.isVisible()) await back.click();
+    await toggle();
+    if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== "1") throw new Error("켠 설정이 저장되지 않았다");
+    await sleep(300);
+    if ((await log()) !== "") throw new Error(`pane을 보지 않는데 ${await log()}`);
+    await wp.getByTestId("pane-t1").click();
+    await until("wake lock 요청", async () => (await log()) === "request screen");
+    await hide(true);
+    await until("가려지면 놓음", async () => (await log()) === "request screen,release");
+    await hide(false);
+    await until("다시 보이면 다시 요청", async () => (await log()) === "request screen,release,request screen");
+    // 다시 열어도 이 기기 설정
+    await wp.reload();
+    // 주소(#pane=)가 그 pane을 다시 고른다. 목록이 보이면 고른다
+    await until("다시 연 화면", async () => (await wp.getByTestId("pane-t1").isVisible()) || (await log()) !== "");
+    if (await wp.getByTestId("pane-t1").isVisible()) await wp.getByTestId("pane-t1").click();
+    await until("다시 연 화면도 요청", async () => (await log()) === "request screen");
+    if (await back.isVisible()) await back.click();
+    await until("목록으로 가면 놓음", async () => (await log()) === "request screen,release");
+    await toggle();
+    if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== null) throw new Error("끈 설정이 남았다");
+    await wp.getByTestId("pane-t1").click();
+    await sleep(300);
+    if ((await log()) !== "request screen,release") throw new Error(`끈 뒤 ${await log()}`);
+    await wp.context().close();
   });
 
   await step("터미널 글꼴(herdr-web-ui 설정 「터미널 글꼴」, 차이 목록 「글꼴 종류」): 적은 목록을 거르고 기본 글꼴 앞에, face를 받은 뒤 cell을 재고, 찾아보기는 고정폭만, 비우면 기본", async () => {

@@ -17,6 +17,8 @@ import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
 import { useInstall } from "./install";
+import { useKeepScreenOn } from "./settings";
+import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { type PushState, iosNeedsInstall, usePush } from "./push";
 import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
@@ -353,6 +355,8 @@ function Main({ role }: { role: DeviceRole }) {
 
   const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
+  // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
+  useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
   const shownThreads = [...threads.values()]
     .filter((t) => t.group !== "resolved" && t.role !== "evaluator")
     .sort((a, b) => b.updated_at_ms - a.updated_at_ms);

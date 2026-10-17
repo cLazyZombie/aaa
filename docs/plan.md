@@ -1574,6 +1574,22 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **다른 곳(이유).** 참고 submit의 `delivery`(queue·hold, chat 대기열)·`draft`·`box`(Claude 입력창 읽기)는 aaa에 그 기능이 없어 옮기지 않았다. 「다시 띄우기 전에 받은 옛 웹」은 submit을 보내지 않으므로 그대로 된다.
 - **시험.** 웹 E2E 「보내는 동안 친 글 지키기」: host 답을 route로 붙잡는다. 답 전에 글과 Enter가 이미 pane에 있고, 입력줄 글은 남고 단추는 잠겨 있다. 그 사이 덧붙인 「 더」만 답 뒤에 남는다. 바꾼 글은 지우지 않는다. 거절 답이면 이유와 글이 남는다. 답 전에 끊기면 「확인하지 못했다」. 끝난 pane에 보낸 submit은 host가 `ok:false`, 「세션이 끝났다」로 답한다.
 
+### 8.66 휴대폰: 안전 영역 좌우, manifest 아이콘, 화면 켜짐 유지(10-17, 차이 목록 M3·M4 일부·M6)
+
+- **안전 영역(M3, 참고 styles.css 579~581·606·645줄).** 전에는 위·아래 inset만 비켰다. 가로로 둔 휴대폰·iPad에서는 노치와 둥근 모서리가 목록 글과 터미널 글을 가렸다.
+  - 목록은 왼쪽을 비킨다. 오른쪽 칸(머리·터미널·입력줄·키 막대·thread 화면)은 오른쪽을 비킨다.
+  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비키고, 목록이 오른쪽도 비킨다.
+  - 칸마다 자기 바탕색 안에서 비킨다(터미널 옆은 터미널 색). `--inset-l`·`--inset-r` 두 변수로 기존 여백에 더한다.
+- **manifest·meta(M4 일부, 참고 manifest·index.html).**
+  - manifest에 `id: "/"`를 둔다. 아이콘은 일반(`any`)·maskable을 192·512 모두 둔다. maskable 192는 `icon.svg`를 바탕까지 채워 렌더했다. 512와 같은 방법이다.
+  - `apple-mobile-web-app-status-bar-style` meta를 뺐다(참고는 두지 않아 홈 화면 앱이 보통 배치를 쓴다).
+  - 설치 단추(설치 전엔 늘 보이고, 신호가 없으면 안내)는 다음에 옮긴다.
+- **화면 켜짐 유지(M6, 참고 `wakeLock.ts`·`visibility.ts` 그대로, App.tsx 842줄, 설정 「휴대폰」).** 설정을 켜면 pane이나 thread를 보는 동안 screen wake lock을 건다. 가려지면 놓고, 다시 보이면 다시 건다. 기기마다 두며 기본은 꺼짐이다. HTTPS나 localhost에서만 된다. 참고 문구를 그대로 쓴다.
+- **시험.**
+  - 웹 E2E 「안전 영역」: Chromium `Emulation.setSafeAreaInsetsOverride`로 좌우 47px를 준다. 가로 두 칸(844×390)과 좁은 가로 한 칸(667×375)에서 각 칸의 여백을 잰다.
+  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 목록으로 가거나 끄면 놓는다.
+  - PWA 단계: manifest `id`, 아이콘 종류 넷, 각 PNG 실제 크기가 적은 크기와 같은지, status-bar meta가 없는지 본다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
