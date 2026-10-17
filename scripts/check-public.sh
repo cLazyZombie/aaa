@@ -62,7 +62,7 @@ scan() {
   shift
   for i in "${!NAMES[@]}"; do
     if [ "$label" = "files" ]; then
-      hits=$(git grep -I -n -E -e "${RES[$i]}" "$@" -- . ':!Cargo.lock' ':!web/package-lock.json' ':!scripts/check-public.sh' 2>/dev/null)
+      hits=$(git grep -I -n -E -e "${RES[$i]}" "$@" -- . ':!scripts/check-public.sh' 2>/dev/null)
     else
       hits=$(grep -n -E -e "${RES[$i]}" <<<"$COMMITS" 2>/dev/null)
     fi
@@ -86,7 +86,7 @@ elif git rev-parse -q --verify "$BASE" >/dev/null; then
   COMMITS=$(git log --format='%H %B' "$BASE..HEAD" | grep -v -E '^Co-Authored-By: ')
   [ -n "$COMMITS" ] && scan "커밋 메시지 $BASE..HEAD"
 else
-  echo "기준 ref $BASE가 없어 커밋 메시지는 건너뛴다"
+  echo "기준 ref ${BASE}가 없어 커밋 메시지는 건너뛴다"
 fi
 
 # 4) 저장소 밖 목록의 실제 이름(대소문자 무시)
@@ -103,7 +103,7 @@ if [ -f "$WORDS" ]; then
     fi
   done <"$WORDS"
 else
-  echo "참고: $WORDS가 없어 실제 이름 검사는 건너뛴다(머신 hostname·tailnet 이름을 한 줄씩 적어 둔다)"
+  echo "참고: ${WORDS}가 없어 실제 이름 검사는 건너뛴다(머신 hostname·tailnet 이름을 한 줄씩 적어 둔다)"
 fi
 
 if [ "$fail" -ne 0 ]; then
