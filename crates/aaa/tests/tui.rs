@@ -1366,8 +1366,10 @@ fn ctrl_v_pastes_clipboard_image() {
     if let Some(c) = clip.as_mut() {
         c.set_text("no image here").unwrap();
     }
-    tui.type_line("stty -iexten; cat -v");
-    std::thread::sleep(Duration::from_millis(300));
+    // lnext를 끈 뒤에 ^V를 보낸다. stty가 돌기 전에 가면 tty가 ^V로 뒤 CR을 감싸 cat -v가 ^M만 보인다(고정 300ms 쉼은
+    // ci-local 부하에서 모자랐다). 따옴표로 가른 표지는 친 줄에 없고 echo 출력에만 있다
+    tui.type_line("stty -iexten; echo LNEXT''-OFF; cat -v");
+    tui.wait_text("lnext 끔", |s| s.contains("LNEXT-OFF"));
     tui.send(b"\x16");
     tui.send(b"\r");
     tui.wait_text("원래 Ctrl+V", |s| s.contains("^V"));
