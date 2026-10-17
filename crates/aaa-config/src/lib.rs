@@ -216,6 +216,8 @@ pub struct ProjectsSection {
     pub stop_wait_ms: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
+    /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
+    pub merge_grace_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
@@ -237,6 +239,7 @@ impl Default for ProjectsSection {
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
             auto_resolve_day_secs: 86_400,
+            merge_grace_secs: 600,
             inbox_done_days: 30,
             routine_commands: Vec::new(),
         }
