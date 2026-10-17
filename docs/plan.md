@@ -1001,7 +1001,7 @@ host 프로젝트 폴더 구성:
 
 ### 8.27 M3 chat read-only(10-17)
 
-Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰에서 긴 작업의 흐름을 읽기 쉽게 하려는 것이다. 보기만 하고, 입력은 지금처럼 터미널로 간다.
+Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰에서 긴 작업의 흐름을 읽기 쉽게 하려는 것이다. 보기만 하고, 입력은 지금처럼 터미널로 간다. (10-18) 대화 보기 아래 입력창으로도 보낸다(§8.115).
 
 - **보기.** 웹 터미널 머리의 「대화」 단추(harness가 claude·codex인 pane만)로 바꾼다. 보이는 동안 3초마다 다시 읽고, 맨 아래를 보고 있으면 따라 내려간다. CLI는 `aaa pane chat <pane>`이다. 보기 권한 기기·worker 세션도 볼 수 있다(보이는 범위는 pane 보기와 같다).
 - **어디서 읽나.** agent가 그 머신의 기록 파일을 읽는다.
@@ -2528,6 +2528,15 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **계약.** `FrontRequest::PaneChat.thinking`(FRONT_API 1.17)·`AgentRequest::Chat.thinking`(둘 다 serde 기본 false)·`ChatRole::Thinking`. agent는 청할 때만 생각을 싣는다: Claude `thinking` 블록(가린 `redacted_thinking`은 빼고), Codex `reasoning`의 `summary_text`(본문은 암호화되어 있다). 옛 host는 청하지 않으니 모르는 role을 받지 않고, 옛 agent는 칸을 모르고 빼고 보낸다(그때는 생각 없이 보인다). CLI `aaa pane chat <pane> --thinking`.
 - **공유.** 모양·사용량처럼 이 기기 사본(`aaa:chat-shared`)을 두고 preferencesSync가 나눈다(`preferences.ts` LOCAL_KEYS에 `showThinking`).
 - **시험.** agent 유닛 `claude_tail_filters`(켜면 생각이 답 앞)·`codex_lines`(reasoning 요약). 웹 E2E 「대화 기록」: 설정 「채팅」 「생각 표시」를 켜면 둘째 줄이 접힌 「생각」, 누르면 「속생각」, 끄면 다시 빠진다, CLI `--thinking`(`desktop-chat-thinking`).
+
+### 8.115 대화 보기에서 보내기·붙잡기·빠른 답장과 다시 읽기를 herdr-web-ui대로(10-18, 차이 목록 2장 C2·C3)
+
+- **입력창(C2).** 대화 보기 아래에 herdr-web-ui `Composer.tsx`의 글 칸·보내기 단추·빠른 답장 칩과 PaneTerminal `composer-queue`(이 기기에 붙잡은 메시지)를 옮겼다(`web/src/ChatComposer.tsx`, 모양 `herdr/Composer.css` 그대로, 붙잡기 저장 `herdr/messageQueue.ts` 그대로). Enter로 보내고 Shift+Enter 줄바꿈(설정 「Enter로 보내기」, 이 기기, 끄면 Mod+Enter). 보내는 길은 터미널 입력줄과 같다(`sendTerminalLine`: 글 + Enter, 여러 줄은 bracketed paste, host가 받았는지 답한다). 보낸 그 글일 때만 칸을 비우고, 가지 못하면 칸 위에 까닭(`role=alert`).
+- **작업 중에 보낸 글.** 참고는 서버가 줄을 세웠다가 턴이 끝나면 보낸다(「대기 메시지 자동 전송」, 공유, 기본 켬). aaa는 host 대기열이 없어(§8.100) 켬이면 바로 입력하고 harness가 다음 턴으로 줄 세운다. 끔이면 작업 중에 쓴 글은 이 기기에 붙잡혀(「에이전트가 준비될 때까지 보관」, 작업이 끝나면 「보관된 메시지. 확인하고 보내세요」) 글을 고치거나 「지금 보내기」·「버리기」를 누른다. 저절로 보내지 않는다(참고 messageQueue.ts 「Held messages are explicitly sent」).
+- **빠른 답장.** 공유 설정 「입력창 위에 표시」(기본 끔)와 목록(기본 continue·yes·no·commit and push·retry, 12개·200자, 추가·삭제·기본값으로). 누르면 친 것처럼 같은 규칙으로 간다.
+- **다시 읽기(C3).** aaa는 기록 변경을 push하지 않는다: 참고의 push 없는 판처럼 2초마다(`INVALIDATION_MS`) 읽고, agent 상태가 작업 중에 들고 날 때(`statusEdgeRead`, 턴 시작·끝)와 이 화면이 보낸 뒤에는 바로 읽는다. host가 기록 변경 사건을 보내는 것은 하지 않았다.
+- **다른 곳.** 슬래시 명령·파일 멘션·그림 첨부·받아쓰기·제안 칩·크기 손잡이·멈춤 단추·상태 줄(모델·context)·확인창이 열렸을 때 입력을 답으로 바꾸기는 옮기지 않았다. 대화 보기에서는 키 막대를 숨긴다(입력은 입력창 몫).
+- **시험.** 웹 E2E 「대화 입력창」(`specs/11-agent-panes.mjs`): 받은 줄을 파일에 적는 Claude 화면에 Enter로 보내 닿음·칸 비움 → 작업 중 자동 전송 끔이면 붙잡힘(프로그램에 안 감) → 「지금 보내기」로 닿고 칸이 사라짐 → 빠른 답장 「yes」가 닿음(`desktop-chat-composer-held`).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

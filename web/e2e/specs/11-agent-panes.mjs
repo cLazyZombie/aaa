@@ -409,4 +409,52 @@ export default async function ({ ctl, page }) {
     await pp.context().close();
     aaa("pane", "kill", "lens1");
   });
+
+  await step("대화 입력창(herdr-web-ui Composer·composer-queue, 차이 목록 C2): Enter로 보내면 터미널 입력줄과 같은 길로 프로그램에 가고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 이 기기에 붙잡혀 「지금 보내기」로 가며, 빠른 답장은 누르면 간다", async () => {
+    // 받은 줄을 파일에 적는 Claude 화면: 처음은 쉼, 한 줄을 받으면 작업 중으로 바뀌고 그 뒤 줄도 적는다
+    const got = `${root}/composer.txt`;
+    fs.writeFileSync(got, "");
+    const lines = () => fs.readFileSync(got, "utf8").split("\n").filter(Boolean);
+    aaa("tab", "create", "--machine", "labA", "--label", "cmp1", "--", claudeSh, "-c",
+      `stty -echo; ${claudeIdle}; read a; printf '%s\\n' "$a" >> ${got}; ${claudeWorking}; while read a; do printf '%s\\n' "$a" >> ${got}; done`);
+    await page.getByTestId("agent-cmp1").and(page.locator('[data-status="idle"]')).waitFor();
+    await page.getByTestId("pane-cmp1").click();
+    await page.getByTestId("chat-toggle").click();
+    const composer = page.getByTestId("chat-composer");
+    const box = composer.getByRole("textbox", { name: "메시지" });
+    await box.fill("첫 메시지 c2");
+    await box.press("Enter");
+    await until("보낸 글이 프로그램에", async () => lines().includes("첫 메시지 c2"));
+    if ((await box.inputValue()) !== "") throw new Error("보낸 뒤 입력창이 비지 않았다");
+    await page.getByTestId("agent-cmp1").and(page.locator('[data-status="working"]')).waitFor();
+    // 자동 전송을 끄면 작업 중에 쓴 글은 붙잡힌다
+    const chatSettings = async (fn) => {
+      const d = await openSettings(page, "채팅");
+      await fn(d);
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    await chatSettings((d) => d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click());
+    await box.fill("붙잡을 글");
+    await box.press("Enter");
+    const queue = page.getByTestId("chat-queue");
+    await queue.waitFor();
+    if ((await queue.getByRole("textbox", { name: "대기 메시지 1" }).inputValue()) !== "붙잡을 글") throw new Error("붙잡은 글이 다르다");
+    if (!(await queue.innerText()).includes("에이전트가 준비될 때까지 보관")) throw new Error(`붙잡은 칸 글: ${await queue.innerText()}`);
+    if (lines().includes("붙잡을 글")) throw new Error("붙잡을 글이 프로그램에 갔다");
+    await shot(page, "desktop-chat-composer-held");
+    await queue.getByRole("button", { name: "지금 보내기" }).click();
+    await until("지금 보내기로 간다", async () => lines().includes("붙잡을 글"));
+    await queue.waitFor({ state: "detached" });
+    // 빠른 답장: 켜면 입력창 위에 칩, 누르면 간다(작업 중이고 자동 전송이 꺼져 있어도 같은 규칙: 다시 켠다)
+    await chatSettings(async (d) => {
+      await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
+      await d.getByRole("switch", { name: "입력창 위에 표시" }).click();
+    });
+    await composer.getByRole("group", { name: "빠른 답장" }).getByRole("button", { name: "yes", exact: true }).click();
+    await until("빠른 답장이 간다", async () => lines().includes("yes"));
+    await chatSettings((d) => d.getByRole("switch", { name: "입력창 위에 표시" }).click());
+    await page.getByTestId("chat-toggle").click();
+    aaa("pane", "kill", "cmp1");
+  });
 }

@@ -12,6 +12,8 @@ import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } fr
 import { b64decode, b64encode, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
+import { ChatComposer } from "./ChatComposer";
+import { paneAgentStatus } from "./sidebarModel";
 import { onThemeChange, token } from "./theme";
 import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
@@ -175,6 +177,8 @@ export function TermView({
   // 설정 기본이 바뀌면 고른 보기는 잊혔다(SettingsDialog `forgetPaneViews`)
   useEffect(() => setPicked(pickedLens(lensKey)), [defaultView, lensKey]);
   const chatView = (picked ?? lensesFor(defaultView).of(lensKey, chatable ? true : agent ? null : false, coarse)) === "chat";
+  // 대화 입력창이 보낸 수: 대화를 바로 다시 읽는다(Chat `readNow`)
+  const [chatSent, setChatSent] = useState(0);
   const setChatView = (chat: boolean) => {
     const lens = chat ? "chat" : "terminal";
     rememberLens(lensKey, lens);
@@ -1749,7 +1753,7 @@ export function TermView({
         )}
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} />}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
@@ -1849,7 +1853,19 @@ export function TermView({
           }}
         />
       )}
-      {canControl && (
+      {/* 대화 보기의 입력창(차이 목록 C2): 터미널 입력줄과 같은 길로 보낸다. 키 막대는 터미널 보기 것이다 */}
+      {chatView && chatable && canControl && (
+        <ChatComposer
+          key={pane.id}
+          owner={`${pane.machine_id}:${pane.id}`}
+          agentLabel={pane.agent?.harness === "codex" ? "Codex" : "Claude"}
+          connected={!locked}
+          working={paneAgentStatus(pane) === "working"}
+          onSend={sendTerminalLine}
+          onSent={() => setChatSent((n) => n + 1)}
+        />
+      )}
+      {canControl && !(chatView && chatable) && (
         <KeyBar
           items={barItems}
           modifiers={modifiers}

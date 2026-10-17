@@ -444,6 +444,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .chat-msg.assistant { align-self: flex-start; background: var(--bg-elevated); border: 1px solid var(--border); }
 .chat-msg.tool { align-self: flex-start; padding: 2px var(--space-3); font: var(--fs-xs)/1.5 var(--font-mono); color: var(--text-dim); background: transparent; }
 .chat-btn[aria-pressed="true"] { color: var(--accent); }
+/* 붙잡은 메시지는 입력창 기둥에(herdr/Composer.css `.terminal-stack.is-chat .composer-queue`: aaa의 pane 칸은 .term) */
+.term .composer-queue { width: min(calc(100% - 2 * var(--space-4)), var(--chat-w)); margin: 0 auto; }
 /* 생각 줄(herdr-web-ui ChatView.css `.work-row-head`·`.work-row-thinking .work-row-name`·`.work-thinking-text`): 접힌 「생각」 머리,
    누르면 글. 말풍선이 아니라 도구 줄처럼 왼쪽에 흐리게 */
 .chat-msg.thinking { align-self: flex-start; max-width: min(760px, 100%); padding: 0; background: transparent; white-space: normal; }

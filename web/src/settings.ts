@@ -213,14 +213,16 @@ export function useKeepScreenOn(): boolean {
  * 켜고 끄는 터미널 설정(herdr-web-ui settings.ts: 둘 다 `device` 범위).
  * - paneClipboard(기본 켬): pane 프로그램의 클립보드 쓰기(OSC 52)를 이 기기 클립보드에 넣는다.
  * - releasePaneAway(기본 꺼짐): 다른 창으로 옮기고 1초 뒤 이 탭은 pane을 보기만 하고 크기를 놓는다(터미널의 aaa TUI와 같이 쓸 때).
+ * - enterSends(기본 켬): 대화 입력창에서 Enter가 보내고 Shift+Enter가 줄바꿈. 끄면 Mod+Enter가 보낸다(참고 `enterSends`).
  * 기본값이면 지운다. 값은 "1"·"0".
  */
-export type TerminalToggle = "paneClipboard" | "releasePaneAway";
+export type TerminalToggle = "paneClipboard" | "releasePaneAway" | "enterSends";
 const TOGGLE_KEYS: Record<TerminalToggle, string> = {
   paneClipboard: "aaa:pane-clipboard",
   releasePaneAway: "aaa:release-pane-away",
+  enterSends: "aaa:enter-sends",
 };
-const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false };
+const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false, enterSends: true };
 
 function readToggle(name: TerminalToggle): boolean {
   try {
@@ -234,6 +236,7 @@ function readToggle(name: TerminalToggle): boolean {
 const toggles: Record<TerminalToggle, boolean> = {
   paneClipboard: readToggle("paneClipboard"),
   releasePaneAway: readToggle("releasePaneAway"),
+  enterSends: readToggle("enterSends"),
 };
 
 window.addEventListener("storage", (e) => {

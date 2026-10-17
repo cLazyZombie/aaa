@@ -22,11 +22,12 @@ function useSharedLocal(): { settings: SharedLocal; update: (patch: Partial<Shar
   const chat = useChatShared();
   const settings: SharedLocal = { theme: appearance.theme, palette: appearance.palette, sidebarRows: appearance.sidebarRows, agentOrder: appearance.agentOrder, ...usage, ...chat };
   const update = useCallback((patch: Partial<SharedLocal>) => {
-    const { theme, palette, sidebarRows, agentOrder, showThinking, ...rest } = patch;
+    const { theme, palette, sidebarRows, agentOrder, showThinking, autoSendQueued, quickReplies, showQuickReplies, ...rest } = patch;
     const look = Object.fromEntries(Object.entries({ theme, palette, sidebarRows, agentOrder }).filter(([, v]) => v !== undefined));
     if (Object.keys(look).length > 0) updateAppearance(look);
     if (Object.keys(rest).length > 0) updateUsageSettings(rest);
-    if (showThinking !== undefined) updateChatShared({ showThinking });
+    const chat = Object.fromEntries(Object.entries({ showThinking, autoSendQueued, quickReplies, showQuickReplies }).filter(([, v]) => v !== undefined));
+    if (Object.keys(chat).length > 0) updateChatShared(chat);
   }, []);
   return { settings, update };
 }
