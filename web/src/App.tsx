@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -8,7 +8,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ApiError, call, me, pair, watchEvents } from "./api";
+import { ApiError, call, me, pair, pushInfo, watchEvents } from "./api";
 import { TermView } from "./Term";
 import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
@@ -19,7 +19,8 @@ import { setThemePref, useScheme, type ThemePref } from "./theme";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
-import { type PushState, iosNeedsInstall, usePush } from "./push";
+import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
+import { Droplet } from "./herdr/Droplet.tsx";
 import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
@@ -289,6 +290,53 @@ function Main({ role }: { role: DeviceRole }) {
       return next;
     });
 
+  // 이 기기의 알림(plan §8.70): host push와 같은 사건, 같은 종류(`notify.kinds`)에만 띄운다. 질문이 열리면 「입력 필요」,
+  // thread에 확인하지 않은 새 보고가 오면 「작업 완료」. 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
+  const alertKinds = useRef<Set<string> | null>(null);
+  const seenQuestions = useRef(new Set<string>());
+  const seenReports = useRef(new Map<string, string | null>());
+  const now = useRef({ sel, panes, threads, machines });
+  now.current = { sel, panes, threads, machines };
+  const questionNews = (q: QuestionView) => {
+    if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
+    seenQuestions.current.add(q.id);
+    if (!alertKinds.current?.has("question")) return;
+    const { sel, panes, threads, machines } = now.current;
+    const pane = panes.find((p) => p.id === q.pane);
+    const thread = q.project && q.thread ? threads.get(`${q.project}/${q.thread}`) : undefined;
+    const name = thread?.title || (pane ? pane.name || pane.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8));
+    raiseAlert({
+      kind: "blocked",
+      target: `pane=${encodeURIComponent(q.pane)}`,
+      showing: sel === `pane:${q.pane}`,
+      title: name,
+      machine: machines.length > 1 ? q.machine : null,
+      agent: agentOf(pane, thread),
+      notice: {
+        title: q.project && q.thread ? `${q.project} · ${thread?.title || q.thread}` : `${q.machine} · ${name}`,
+        body: q.text,
+        tag: q.project && q.thread ? `aaa-${q.project}/${q.thread}` : `aaa-pane-${q.pane}`,
+      },
+    });
+  };
+  const reportNews = (t: ThreadView) => {
+    const key = threadKey(t);
+    const before = seenReports.current.get(key);
+    seenReports.current.set(key, t.report_hash);
+    const fresh = before !== undefined && t.report_hash !== null && t.report_hash !== before && t.report_hash !== t.acked_hash;
+    if (!fresh || t.role === "evaluator" || !alertKinds.current?.has("report")) return;
+    const { sel, panes } = now.current;
+    raiseAlert({
+      kind: "done",
+      target: `thread=${encodeURIComponent(key)}`,
+      showing: sel === `thread:${key}`,
+      title: t.title || t.id,
+      machine: null,
+      agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
+      notice: { title: `${t.project} · ${t.title || t.id}`, body: t.report_state ?? "보고 준비", tag: `aaa-${t.project}/${t.id}` },
+    });
+  };
+
   useEffect(
     () =>
       watchEvents(
@@ -297,27 +345,42 @@ function Main({ role }: { role: DeviceRole }) {
           setPanes(ev.panes);
           setLoaded(true);
         },
-        putQuestion,
+        (q) => {
+          questionNews(q);
+          putQuestion(q);
+        },
         (on) => {
           setUp(on);
           if (on)
+            pushInfo()
+              .then((i) => (alertKinds.current = new Set(i.kinds)))
+              .catch(() => {});
+          if (on)
             call({ op: "questions", all: false })
               .then((r) => {
-                if (r.kind === "questions") setQuestions(new Map(r.questions.map((q) => [q.id, q])));
+                if (r.kind !== "questions") return;
+                for (const q of r.questions) seenQuestions.current.add(q.id);
+                setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
           if (on) loadEvaluators();
           if (on)
             call({ op: "threads", project: null, role: null })
               .then((r) => {
-                if (r.kind === "threads") setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
+                if (r.kind !== "threads") return;
+                for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
               })
               .catch(() => {});
         },
-        putThread,
+        (t) => {
+          reportNews(t);
+          putThread(t);
+        },
       ),
     [],
   );
+  useAlertSoundUnlock();
 
   const answer = async (q: QuestionView, choice: string) => {
     setMsg(null);
@@ -397,6 +460,7 @@ function Main({ role }: { role: DeviceRole }) {
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
           <ThemeButton />
+          <MoreMenu />
         </header>
         {/* 목록만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar: machine-list가 굴러가고 sidebar-footer는 맨 아래) */}
         <div className="list-body">
@@ -519,44 +583,113 @@ function Main({ role }: { role: DeviceRole }) {
           </div>
         )}
       </main>
+      {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
+      <Droplet
+        onOpen={(target) => {
+          location.hash = target;
+        }}
+      />
     </div>
   );
 }
 
-/** 목록 맨 아래: 알림 켜기(Web Push)와 홈 화면에 설치(PWA). 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar) */
+/**
+ * 머리의 「더 보기」 메뉴(참고 App.tsx moreItems·header-more): 링크 복사와 「알림」(이 기기 상태를 말하고 누르면 켜고 끈다).
+ * 알림이 꺼져 있으면 메뉴 단추에 점을 단다. 찾기·파일 보기 항목은 그 기능을 옮길 때 넣는다.
+ */
+function MoreMenu() {
+  const alerts = useAlerts();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: Event) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("pointerdown", away, true);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!note) return;
+    const t = window.setTimeout(() => setNote(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [note]);
+  const label = alerts.offDot ? "더 보기 · 알림 꺼짐" : "더 보기";
+  return (
+    <span className="more" ref={box}>
+      <button
+        className="ghost icon"
+        data-testid="more"
+        aria-label={label}
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="more" />
+      </button>
+      {alerts.offDot && <span className="more-dot" aria-hidden="true" />}
+      {note && (
+        <span className="more-note" role="status">
+          {note}
+        </span>
+      )}
+      {open && (
+        <div className="more-menu" role="menu">
+          <button
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              void navigator.clipboard?.writeText(location.href).then(
+                () => setNote("링크를 복사했습니다"),
+                () => undefined,
+              );
+            }}
+          >
+            <Icon name="link" />
+            <span className="more-label">링크 복사</span>
+          </button>
+          {alerts.visible && (
+            <button
+              role="menuitemcheckbox"
+              aria-checked={alerts.bell.on}
+              data-testid="alerts-item"
+              title={alerts.bell.title}
+              onClick={() => {
+                setOpen(false);
+                void alerts.bell.run();
+              }}
+            >
+              <Icon name="bell" />
+              <span className="more-label">알림</span>
+              <span className="more-hint">{alerts.bell.state}</span>
+            </button>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에 있다 */
 function ListFoot() {
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
-  const push = usePush();
-  const iosHint = iosNeedsInstall();
   const tr = useInputTrace();
   // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
   const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
-  const label: Record<PushState, string> = {
-    hidden: "",
-    off: "알림 켜기",
-    on: "알림 끄기",
-    denied: "알림이 브라우저 설정에서 막혀 있다",
-    busy: "알림 설정 중…",
-  };
   return (
     <div className="list-foot">
-      {push.state !== "hidden" && (
-        <button
-          className="ghost"
-          data-testid="push-toggle"
-          aria-pressed={push.state === "on"}
-          disabled={push.state === "busy" || push.state === "denied"}
-          onClick={() => void push.toggle()}
-        >
-          <Icon name={push.state === "on" ? "bell-off" : "bell"} />
-          {label[push.state]}
-        </button>
-      )}
-      {push.msg && <p className="foot-msg">{push.msg}</p>}
-      {iosHint && <p className="foot-msg">알림은 공유 → 「홈 화면에 추가」로 연 앱에서 켤 수 있다.</p>}
       {showTrace && (
         <button className="ghost" data-testid="trace-toggle" aria-pressed={tr.on} onClick={() => setTrace(!tr.on)}>
           <Icon name="file" />

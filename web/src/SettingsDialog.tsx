@@ -13,6 +13,9 @@ import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "./herdr/installedFonts.ts";
 import { useInstallPrompt } from "./herdr/install.ts";
+import { previewAlertSound, unlockAlertSound } from "./herdr/alertSound.ts";
+import { enableAlerts } from "./alerts";
+import { PushTestControls } from "./PushTestControls";
 import {
   setKeepScreenOn,
   setTerminalFontFamily,
@@ -25,6 +28,8 @@ import {
   TERMINAL_WHEEL_SPEED_MIN,
   updateUsageSettings,
   useKeepScreenOn,
+  setAlertSetting,
+  useAlertSetting,
   useTerminalFontFamily,
   useTerminalFontSize,
   useTerminalInputMode,
@@ -34,10 +39,11 @@ import {
 import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "./usage";
 
 /** 묶음: 제목 아래 카드 하나, 카드 안에 줄들 */
-function SettingsGroup({ title, className, children }: { title?: string; className?: string; children: ReactNode }) {
+function SettingsGroup({ title, note, className, children }: { title?: string; note?: string; className?: string; children: ReactNode }) {
   return (
     <section className={className ? `settings-section ${className}` : "settings-section"}>
       {title !== undefined && <h3>{title}</h3>}
+      {note !== undefined && <p className="settings-note">{note}</p>}
       <div className="settings-card">{children}</div>
     </section>
   );
@@ -337,6 +343,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const fontFamily = useTerminalFontFamily();
   const keepScreenOn = useKeepScreenOn();
   const installPrompt = useInstallPrompt();
+  const alertInApp = useAlertSetting("alertInApp");
+  const alertSound = useAlertSetting("alertSound");
+  // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
+  const alertSoundWanted = useRef(alertSound);
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
@@ -435,6 +445,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <button type="button" ref={keyBarButton} onClick={() => setKeyBarOpen(true)}>
                 키 바 편집
               </button>
+            </SettingsRow>
+          </SettingsGroup>
+          {/* 참고 SettingsDialog AlertsPage(문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기별 종류(차이 목록 N3)와 함께 */}
+          <SettingsGroup title="알림" note="이 기기에 적용됩니다. 알림은 잠시 모았다가 보내며, 그사이 질문에 답하거나 보고를 확인하면 보내지 않습니다.">
+            <PushTestControls onEnable={enableAlerts} />
+            <SettingsRow label="앱 안에서" description="앱을 열어 둔 동안에는 화면 위에서 바로 내려옵니다. 누르면 그 패널을 엽니다.">
+              <Toggle label="앱 안에서" checked={alertInApp} onChange={(on) => setAlertSetting("alertInApp", on)} />
+            </SettingsRow>
+            <SettingsRow label="소리" description="앱 탭을 열어 둔 동안에는 이 알림마다 소리를 냅니다. 집중 모드나 방해 금지 모드로 알림이 꺼져 있어도 들립니다.">
+              <Toggle
+                label="소리"
+                checked={alertSound}
+                onChange={(on) => {
+                  setAlertSetting("alertSound", on);
+                  alertSoundWanted.current = on;
+                  // this tap is the gesture the page needs to play audio; the chime is the preview,
+                  // unless the switch went off again while the audio was getting ready
+                  if (on)
+                    void unlockAlertSound().then((ready) => {
+                      if (ready && alertSoundWanted.current) previewAlertSound();
+                    });
+                }}
+              />
             </SettingsRow>
           </SettingsGroup>
           {/* 참고 SettingsDialog 「휴대폰」 840~847줄(문구는 참고 i18n.ko.ts) */}

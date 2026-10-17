@@ -1,6 +1,6 @@
-// service worker 등록(PWA)과 Web Push 알림 켜기·끄기(§8.26).
+// service worker 등록(PWA)과 이 기기의 Web Push 구독(§8.26). herdr-web-ui src/lib/push.ts를 옮겼다(plan §8.70).
 // 구독은 브라우저가 만들고 host에 endpoint·키를 맡긴다. host는 질문·보고 준비 같은 알림을 암호화해 보낸다.
-import { useCallback, useEffect, useState } from "react";
+// service worker와 PushManager는 secure context(https·localhost)에만 있고, iPhone은 홈 화면 앱에만 있다.
 import { ApiError, pushInfo, pushSubscribe, pushTest, pushUnsubscribe } from "./api";
 
 /** 앱을 열 때 한 번 등록한다. 등록에 실패해도 화면은 그대로 쓴다. */
@@ -14,91 +14,121 @@ export function registerServiceWorker() {
   });
 }
 
-const supported = () =>
-  window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+/** How long to wait for the service worker before giving up on push for this page load. */
+const WORKER_READY_TIMEOUT_MS = 10_000;
 
-/** iPhone·iPad Safari는 홈 화면 앱에서만 알림을 켤 수 있다 */
-export const iosNeedsInstall = () =>
-  /iPhone|iPad|iPod/.test(navigator.userAgent) &&
-  !(navigator as Navigator & { standalone?: boolean }).standalone &&
-  !("PushManager" in window);
-
-function keyBytes(b64url: string): Uint8Array<ArrayBuffer> {
-  const b64 = (b64url + "===".slice((b64url.length + 3) % 4)).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(b64);
-  const out = new Uint8Array(new ArrayBuffer(raw.length));
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
+export function pushSupported(): boolean {
+  return typeof navigator !== "undefined" && "serviceWorker" in navigator && typeof globalThis.PushManager !== "undefined";
 }
 
-function sameKey(sub: PushSubscription, key: Uint8Array): boolean {
-  const k = sub.options.applicationServerKey;
-  if (!k) return false;
-  const a = new Uint8Array(k);
-  return a.length === key.length && a.every((v, i) => v === key[i]);
+/** Test the existing subscription without repairing it first, so stale registrations stay visible. */
+export async function testDevicePush(): Promise<"sent" | "unsupported" | "permission" | "missing"> {
+  if (!pushSupported()) return "unsupported";
+  if (globalThis.Notification?.permission !== "granted") return "permission";
+  const registration = await navigator.serviceWorker.getRegistration();
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return "missing";
+  await pushTest(subscription.endpoint);
+  return "sent";
 }
 
-export type PushState = "hidden" | "off" | "on" | "denied" | "busy";
+function keyBytes(base64url: string): Uint8Array<ArrayBuffer> {
+  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(base64url.length / 4) * 4, "=");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
 
-/** 알림 단추 상태와 켜기·끄기. 브라우저가 못 하거나 host에서 꺼져 있으면 hidden. */
-export function usePush(): { state: PushState; msg: string; toggle: () => Promise<void> } {
-  const [state, setState] = useState<PushState>("hidden");
-  const [msg, setMsg] = useState("");
-  const [key, setKey] = useState<string | null>(null);
+function sameKey(current: ArrayBuffer | null, expected: Uint8Array): boolean {
+  if (!current || current.byteLength !== expected.length) return false;
+  const bytes = new Uint8Array(current);
+  return bytes.every((byte, index) => byte === expected[index]);
+}
 
-  useEffect(() => {
-    if (!supported()) return;
-    let alive = true;
-    (async () => {
-      const info = await pushInfo();
-      if (!alive || !info.enabled || !info.key) return;
-      setKey(info.key);
-      if (Notification.permission === "denied") return setState("denied");
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      if (alive) setState(sub && info.subscribed > 0 && sameKey(sub, keyBytes(info.key)) ? "on" : "off");
-    })().catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, []);
+/** navigator.serviceWorker.ready never settles when registration failed; bound it. */
+async function workerRegistration(): Promise<ServiceWorkerRegistration | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), WORKER_READY_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([navigator.serviceWorker.ready, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-  const toggle = useCallback(async () => {
-    if (!key) return;
-    const before = state;
-    setState("busy");
-    setMsg("");
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-      if (before === "on") {
-        if (sub) {
-          await pushUnsubscribe(sub.endpoint);
-          await sub.unsubscribe();
-        }
-        setState("off");
-        return;
-      }
-      if ((await Notification.requestPermission()) !== "granted") {
-        setState("denied");
-        return;
-      }
-      const k = keyBytes(key);
-      // 다른 host 키로 만든 구독이면 새로 만든다
-      if (sub && !sameKey(sub, k)) {
-        await sub.unsubscribe();
-        sub = null;
-      }
-      sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: k });
-      await pushSubscribe(sub.toJSON());
-      setState("on");
-      const t = await pushTest();
-      if (t.failed.length) setMsg(`시험 알림 실패: ${t.failed[0]}`);
-    } catch (e) {
-      setState(before === "on" ? "on" : "off");
-      setMsg(e instanceof ApiError ? e.message : `알림을 켜지 못했다: ${String(e)}`);
-    }
-  }, [key, state]);
+/** The subscription being made right now, shared by every caller that arrives meanwhile. */
+let pending: Promise<string | null> | null = null;
+// Preserve click order across registration/removal, even when a prior operation fails.
+let operations: Promise<unknown> = Promise.resolve();
 
-  return { state, msg, toggle };
+/**
+ * Subscribes this device (reusing a live subscription) and registers it with the server.
+ * Idempotent, so it also runs on every load: a server that lost its state gets the device
+ * back without a click. Resolves the endpoint, or null when push is not available here.
+ *
+ * Single-flight: the bell's first tap grants permission, which also starts App's
+ * load-time registration. Two overlapping `subscribe()` calls make Chrome issue TWO
+ * subscriptions and keep only the later one, so the confirmation push could go to a
+ * dead endpoint. Concurrent callers therefore share one attempt.
+ */
+export function ensurePushSubscription(): Promise<string | null> {
+  if (pending) return pending;
+  const request = operations
+    .catch(() => undefined)
+    .then(() => subscribeDevice())
+    .finally(() => {
+      if (pending === request) pending = null;
+    });
+  pending = request;
+  operations = request;
+  return request;
+}
+
+// aaa: host가 꺼 두었으면(`notify.web_push`) 구독하지 않는다. 참고의 「버려진 endpoint」 거절(#1038, push-retired.json)은
+// aaa host에 없어 그 되살리기도 옮기지 않았다.
+async function subscribeDevice(): Promise<string | null> {
+  if (!pushSupported() || globalThis.Notification?.permission !== "granted") return null;
+  const registration = await workerRegistration();
+  if (!registration) return null;
+  const info = await pushInfo();
+  if (!info.enabled || !info.key) return null;
+  const key = keyBytes(info.key);
+  let subscription = await registration.pushManager.getSubscription();
+  // made for another server key (the server's state dir was reset): it can never receive our pushes
+  if (subscription && !sameKey(subscription.options.applicationServerKey, key)) {
+    await subscription.unsubscribe();
+    subscription = null;
+  }
+  subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  await pushSubscribe(subscription.toJSON());
+  return subscription.endpoint;
+}
+
+/** Stops pushes to this device: the server forgets it first, then the browser drops it. */
+export function removePushSubscription(): Promise<void> {
+  // A later enable must enqueue a new registration after this removal, not join the old one.
+  pending = null;
+  const request = operations.catch(() => undefined).then(unsubscribeDevice);
+  operations = request;
+  return request;
+}
+
+async function unsubscribeDevice(): Promise<void> {
+  if (!pushSupported()) return;
+  const registration = await navigator.serviceWorker.getRegistration();
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return;
+  try {
+    await pushUnsubscribe(subscription.endpoint);
+  } finally {
+    await subscription.unsubscribe();
+  }
+}
+
+/** 시험 알림 결과의 오류 코드(`subscription_not_found`·`subscription_gone`), 아니면 null */
+export function pushErrorCode(error: unknown): string | null {
+  return error instanceof ApiError ? error.body.code : null;
 }
