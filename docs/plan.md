@@ -896,7 +896,7 @@ host 프로젝트 폴더 구성:
     - 한글 등 IME 조합 중의 Enter는 글자 확정만 하고 보내지 않는다(`isComposing`·keyCode 229).
     - 여러 줄은 터미널 붙여넣기로 보낸다. 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다. 그래서 Claude·Codex 입력창이 줄마다 제출하지 않는다. Enter는 지금처럼 따로 조금 뒤에 보낸다.
     - 쓰다 만 글은 pane마다 그 탭(sessionStorage)에 남는다. 휴대폰에서 앱을 내렸다 올려도, 다른 pane을 봤다 와도 그대로다.
-  - 키 줄: Esc·Tab·Ctrl·Alt·^C·←↑↓→·⏎. Ctrl·Alt는 유지 키다. 누르면 켜지고, 다음 입력 한 번(터미널 글자 또는 키 줄 키)에 붙은 뒤 풀린다. 휴대폰에서는 가로로 밀어 본다.
+  - 키 막대(§8.43, herdr-web-ui KeyBar): Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→. 터치 기기나 폭 768px 이하에서만 보인다. Ctrl·Alt·Shift는 유지 키다. 다시 누르거나 연결이 끊길 때까지 켜져 있다(래치). 휴대폰에서는 가로로 밀어 본다.
 - **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다.
   - 탭 줄은 이름표·workspace·탭(지금 탭은 강조색 바탕)으로 짜고, 오른쪽에 열린 질문 수를 둔다.
   - 포커스 pane과 맞닿은 구분선만 강조색으로 그린다.
@@ -1184,7 +1184,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **지시.** 「새로 만들지 말고 herdr-web-ui를 따라한다.」 iPhone에서 「입력」이 「ㅇㅣㅂㄹㅕㄱ」로, 데스크톱에서도 초성·중성·종성이 분리됐다.
 - **옮긴 것(herdr-web-ui `aa624cb`).**
   - xterm을 6.0.0에서 herdr-web-ui와 같은 5.5.0(addon-fit 0.10.0)으로 내리고, 그 IME patch를 소스에 붙여 빌드한다(`web/patches/`, `web/xterm-source.mjs`, `scripts/build-xterm.ts`와 같은 방식). npm에는 bun의 patchedDependencies가 없어 빌드 때 cache에 복사해 붙인다. `patch(1)` 결과와 같은지 확인했다.
-  - 터미널 조합 상태(`PaneTerminal.tsx` 588~605줄): 조합 중이거나 방금 끝난 조합의 확정 글에는 키 줄 유지 키(Ctrl·Alt)를 붙이지 않는다.
+  - 터미널 조합 상태(`PaneTerminal.tsx` 588~605줄): 조합 중이거나 방금 끝난 조합의 확정 글에는 키 막대 유지 키(Ctrl·Alt·Shift)를 붙이지 않는다.
   - 입력 막대(`TerminalInput.tsx`): 조합 중 Enter·keyCode 229 Enter는 보내지 않는다(이미 같았다). 조합 중에 누른 보내기는 blur·focus로 확정시키고 compositionend 뒤 보낸다. 누른 때부터 300ms(`COMMIT_WAIT_MS`) 안에 확정되지 않으면 「글자를 마친 뒤 보낸다」. 보내기 단추는 focus를 가져가지 않고, 보낸 뒤에도 입력칸이 focus를 지킨다(화면 키보드가 그대로).
 - **시험(웹 E2E 24단계).** herdr-web-ui 재생 시험의 기록 순서를 옮겼다.
 
@@ -1299,6 +1299,29 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 고치기 전 웹: Shift+Enter가 `\r`로 갔다.
   - 새 웹과 옛 vt: Ctrl+Enter가 `\r`로 갔다.
   - `aaa-vt` 유닛 시험 `replay_says_modify_other_keys_again`.
+
+### 8.43 키 막대를 herdr-web-ui KeyBar대로(10-17, 차이 목록 2 C)
+
+- **옮긴 것.** `herdr/keyBar.ts`·`keyRepeat.ts`는 그대로 복사했다. `web/src/KeyBar.tsx`는 참고 `KeyBar.tsx`를 옮긴 것이다. 문구는 한국어로, lucide 아이콘은 글자로 바꿨다.
+  - 기본 항목과 순서: Esc, Tab, ^C, Ctrl, Alt, Shift, Enter, ↑, ↓, ←, →.
+  - 터치(`pointer: coarse`)나 폭 768px 이하에서만 보인다(KeyBar.css와 같은 media query). 데스크톱 마우스 화면에는 없다.
+  - 유지 키 Ctrl·Alt·Shift는 래치다. 다시 누를 때까지 켜져 있고, 연결이 끊기면 풀린다. pane이 바뀌면 화면이 다시 열려 풀린다.
+  - 화살표·⌫·Del·Home·End·PgUp·PgDn은 꾹 누르면 400ms 뒤 50ms마다 되풀이한다. 10px 넘게 밀면 취소한다.
+  - 키를 눌러도 focus를 가져가지 않는다(화면 키보드가 내려가지 않는다). 터미널 조합 중에는 회색이고 눌러도 가지 않는다.
+  - 붙여 넣은 글과 조합으로 확정된 글에는 유지 키를 붙이지 않는다. 유지 키는 다음 키를 기다린다.
+  - 화살표 키는 프로그램 화살표 모드(DECCKM)를 따른다. 항목 목록은 기기별 `localStorage`(`aaa:keybar-items`)에서 읽고 `sanitizeKeyBarItems`로 거른다.
+- **다른 곳 1: chord 인코딩을 front가 한다.** 참고는 유지 키 + 키를 chord(`ctrl+left` 등)로 herdr에 보내고, herdr가 pane 프로그램의 키보드 프로토콜로 인코딩한다. aaa host에는 그 인코더가 없다. 그래서 `web/src/keyChord.ts`가 front에서 bytes로 바꾼다.
+  - 기준: 같은 수식을 하드웨어 키로 눌렀을 때 이 웹 터미널(xterm.js 기본 인코더 + §8.42 재매핑)이 보내는 bytes와 같다.
+  - 그래서 xterm.js `Keyboard.ts`의 Alt+화살표 규칙도 따른다. Alt+←→는 macOS면 `ESC b`·`ESC f`, 그 밖은 Ctrl+←→다. Alt+↑↓는 macOS가 아니면 Ctrl+↑↓다.
+  - Shift+Enter는 `ESC CR`, Ctrl+Enter는 modifyOtherKeys대로(§8.42), Shift+Tab은 `CSI Z`다.
+- **다른 곳 2: 항목 설정 화면은 아직 없다.** 참고 KeyBarSettings(추가·삭제·순서)는 설정 화면을 만들 때 옮긴다. 저장값을 읽고 거르는 것만 지금 옮겼다.
+- **다른 곳 3: lens·active.** 참고는 lens나 active pane이 바뀌어도 유지 키를 푼다. aaa에는 lens가 없고 화면마다 pane이 하나라 pane이 바뀌면 화면이 다시 열린다.
+- **시험.** 웹 E2E 「키 막대」 단계(터치 820×1180, platform Linux).
+  - 데스크톱에서는 숨김, 키 순서, focus 유지, 래치를 본다.
+  - 유지 키 + 키 막대 키(또는 친 키)가 같은 수식의 하드웨어 키와 같은 bytes인지 키마다 견준다.
+  - DECCKM, 꾹 누름 반복, 밀어서 취소, 조합 중 회색, CDP IME 확정 뒤 Ctrl도 본다.
+  - 처음 만든 encoder는 Alt+←·Alt+↑가 하드웨어와 달랐다(`CSI 1;3D` ≠ `CSI 1;5D`). xterm.js 규칙을 따르게 고쳤다.
+  - 이 단계가 옛 「키 줄」 단계를 대신한다. 옛 단계가 t1에 입력해 두던 것에 「두 controller」 단계가 기대고 있었다. 이제 그 단계가 처음에 직접 t1에 입력한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

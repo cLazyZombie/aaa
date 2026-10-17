@@ -9,11 +9,13 @@
 | `viewport.ts` | 화면 키보드가 올라오면 보이는 높이(visualViewport)를 `--app-height`로 알리고 `data-keyboard`를 단다. `.app`이 그 높이가 되어 머리·터미널·입력 막대·키 막대가 키보드 위에 남는다. 페이지는 (0, 0)에 둔다 |
 | `viewportResume.ts` | 다시 보일 때(visibilitychange·pageshow) 위를 다시 잰다 |
 | `keyboard.ts` | `keyboardUp`, `keyboardHoldsGrid`(키보드는 화면 아래를 가릴 뿐이므로 높이만 줄면 PTY 크기를 바꾸지 않는다), `keyboardViewportReference` |
-| `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`). 키 막대 함수는 아직 aaa가 쓰지 않는다 |
+| `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`), 키 막대 유지 키(`StickyModifiers`, chord는 `terminalChord`·`keyFromData`·`physicalKey`) |
 | `osc52.ts` | `parseOsc52`: pane 프로그램의 OSC 52 클립보드 쓰기(질의는 거절, 100 KiB 상한) |
+| `keyBar.ts` | 키 막대 항목(기본 Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→), 저장값 거르기(`sanitizeKeyBarItems`), 키 이름 → bytes(`keyBarInputSequence`, DECCKM) |
+| `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 
-aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크), `web/src/main.tsx`(`viewport.ts`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
+aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크·유지 키), `web/src/KeyBar.tsx`(참고 `KeyBar.tsx`를 옮김), `web/src/main.tsx`(`viewport.ts`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
 
 ```
 MIT License
