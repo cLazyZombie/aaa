@@ -14,6 +14,7 @@
 pub mod bind;
 mod chrome;
 pub mod clip;
+mod copy;
 mod editor;
 mod help;
 pub mod input_source;
@@ -176,6 +177,8 @@ enum Mode {
     Navigate,
     /// 크기 모드(`prefix r`, herdr `route_resize_key`): h/j/k/l·화살표로 포커스 pane 가장자리를 옮긴다. Esc·Enter·r 끝
     Resize,
+    /// copy 모드(`prefix [`, herdr `route_copy_mode_key`): 키로 기록을 넘기며 고르고 복사한다(`copy.rs`)
+    Copy,
 }
 
 /// 화면 위에 뜨는 창
@@ -279,6 +282,8 @@ struct App {
     selection: Option<mouse::Selection>,
     /// 끌어 고르다 가장자리에 닿아 기록을 넘기는 중
     autoscroll: Option<mouse::AutoScroll>,
+    /// copy 모드(pane에 붙어 있다)
+    copy: Option<copy::CopyMode>,
     /// 마지막 누름(두 번 누름을 본다): 시각, pane, 칸
     last_click: Option<(tokio::time::Instant, String, mouse::Cell)>,
     /// 사용자가 넘긴 탭 막대 자리와 그때의 탭(탭이 바뀌면 다시 지금 탭을 가운데로)
@@ -342,6 +347,7 @@ impl App {
             drag: None,
             selection: None,
             autoscroll: None,
+            copy: None,
             last_click: None,
             tab_scroll: None,
             list_top: None,
@@ -514,6 +520,9 @@ impl App {
                 self.on_msg(m);
                 dirty = true;
             }
+            // copy 모드 pane에 포커스가 오가거나 그 pane이 없어지면 모드를 맞춘다
+            self.settle_copy();
+            self.reconcile_ascii();
             // 포커스를 옮긴 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
             while self.focus_wait.is_none() && !self.held.is_empty() {
                 match self.held.remove(0) {
@@ -535,6 +544,8 @@ impl App {
                 r.input.insert(&s);
             }
             Some(_) => {}
+            // copy 모드에서는 pane에 보내지 않는다
+            None if self.mode == Mode::Copy => {}
             None if s.is_empty() => {
                 self.paste_image(tx).await?;
             }
@@ -555,7 +566,14 @@ impl App {
             FrontMsg::Event(FrontEvent::Thread(t)) => {
                 self.threads.insert(list::thread_key(&t), t);
             }
-            FrontMsg::Event(FrontEvent::Grid(f)) => self.grids.entry(f.pane.clone()).or_default().apply(f),
+            FrontMsg::Event(FrontEvent::Grid(f)) => {
+                let pane = f.pane.clone();
+                let g = self.grids.entry(pane.clone()).or_default();
+                let (before, alt) = (g.scroll, g.modes.alt_screen);
+                g.apply(f);
+                let alt_changed = alt != g.modes.alt_screen;
+                self.follow_grid(&pane, before, alt_changed);
+            }
             FrontMsg::Res { id, result } => {
                 if self.focus_wait.as_ref() == Some(&id) {
                     self.focus_wait = None;
@@ -828,7 +846,9 @@ impl App {
     /// 키 하나. herdr `route_key`처럼 창 → 모드 순으로 고른다. 끝나면 입력기를 모드에 맞춘다.
     async fn on_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         let ch = if let KeyCode::Char(c) = k.code { Some(c) } else { None };
-        if self.selection_key(tx, k.modifiers, ch).await? {
+        // copy 모드 pane에서는 고르기가 copy 모드 것이다(herdr `copy_or_terminal_mode`)
+        let in_copy = self.copy.as_ref().is_some_and(|c| self.focus.as_deref() == Some(c.pane.as_str()));
+        if !in_copy && self.selection_key(tx, k.modifiers, ch).await? {
             return Ok(());
         }
         let r = self.route_key(k, tx).await;
@@ -874,6 +894,7 @@ impl App {
             }
             Mode::Navigate => self.on_navigate_key(c, tx).await,
             Mode::Resize => self.on_resize_key(c, tx).await,
+            Mode::Copy => self.on_copy_key(c, tx).await,
         }
     }
 
@@ -1247,6 +1268,7 @@ impl App {
                     }));
                 }
             }
+            Action::CopyMode => self.enter_copy(tx).await?,
             Action::RenamePane => {
                 if let Some(pane) = self.focus.clone() {
                     self.open_rename_pane(pane);
@@ -1772,6 +1794,26 @@ impl App {
                 s("esc", key),
                 s(" 끝", base),
             ]),
+            // herdr copy 모드 막대(낱말 이동·찾기는 아직 없다)
+            Mode::Copy => {
+                let selecting = self.copy.as_ref().is_some_and(|c| c.select.is_some());
+                let mut v = vec![
+                    s(" COPY ", chip),
+                    s(" ", base),
+                    s("h/j/k/l", key),
+                    s(" 이동  ", base),
+                    s("v/space", key),
+                    s(if selecting { " 고르는 중  " } else { " 고르기  " }, base),
+                    s("y/enter", key),
+                    s(" 복사  ", base),
+                ];
+                if selecting {
+                    v.extend([s("esc", key), s(" 지우기  q 끝", base)]);
+                } else {
+                    v.extend([s("q/esc", key), s(" 끝", base)]);
+                }
+                Some(v)
+            }
             Mode::Navigate => Some(vec![
                 s(" NAVIGATE ", chip),
                 s(" esc 돌아가기  ", base),
@@ -1816,8 +1858,19 @@ impl App {
                     }
                 }
             }
+            // copy 모드 커서(herdr: accent 바탕 굵게, 터미널 커서는 숨김)
+            let copying = self.copy.as_ref().filter(|c| c.pane == pane);
+            if let Some(c) = copying
+                && let Some(row) = c.cursor.0.checked_sub(mouse::view_top(g.scroll)).filter(|row| *row < u32::from(r.h))
+                && c.cursor.1 < r.w
+                && let Some(cell) = buf.cell_mut((r.x + c.cursor.1, r.y + row as u16))
+            {
+                cell.set_bg(self.palette.accent)
+                    .set_fg(theme::contrast(&self.palette))
+                    .set_style(Style::default().add_modifier(Modifier::BOLD));
+            }
             let (cr, cc, visible) = g.cursor;
-            if focused && visible && cr < r.h && cc < r.w {
+            if focused && visible && copying.is_none() && cr < r.h && cc < r.w {
                 return badge(buf, view, r, focused, &self.palette).or(Some((r.x + cc, r.y + cr)));
             }
         }

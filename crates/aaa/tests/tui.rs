@@ -1664,6 +1664,62 @@ fn drag_select_scrolls_history_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// 묶음 5b-2(herdr `copy_mode.rs`): `prefix [`로 copy 모드에 들어가 커서는 터미널 커서 자리, `k`·`0`·`v`·`j`·`y`로 두 줄에 걸쳐
+/// 골라 복사하고 나간다. `g`는 기록 맨 앞(명령 줄), `V`·`j`로 줄 단위로 고르고 Enter. PageUp은 화면 줄 − 2만큼 넘기고,
+/// `q`·Esc로 나가면 들어올 때의 자리(맨 아래)로 돌아온다.
+#[test]
+fn copy_mode_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let copied = lab.root.join("copied.txt");
+    let copied_s = lab::path_str(&copied);
+    let read_copied = || std::fs::read_to_string(&copied).unwrap_or_default();
+    let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)]);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
+    let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
+    // 복사 알림 카드가 오른쪽 위 세 줄을 가리므로 줄의 첫 낱말만 본다
+    let first = |l: &str| l.split_whitespace().next().unwrap_or_default().to_string();
+    let top = |s: &str| rows(s).first().and_then(|l| first(l).parse::<u32>().ok());
+    tui.type_line("seq 1 200");
+    tui.wait_text("seq 끝", |s| top(s) == Some(173) && rows(s).last().is_some_and(|l| l.ends_with('$')));
+
+    // 1) 커서는 prompt 줄에서: 세 줄 위(198) 첫 칸에서 글자 단위로 한 줄 내려 고르고 y면 복사하고 나간다
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("v/space 고르기"));
+    tui.send(b"kkk0v");
+    tui.wait_text("고르는 중", |s| s.contains("고르는 중"));
+    tui.send(b"jy");
+    wait_for("글자 단위 복사", T, || (read_copied() == "198\n1").then_some(()));
+    tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
+
+    // 2) g는 기록 맨 앞(명령 줄이 맨 위), V·j·j는 세 줄을 통째로, Enter면 복사하고 들어올 때의 자리(맨 아래)로 돌아온다
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY "));
+    tui.send(b"g");
+    tui.wait_text("기록 맨 앞", |s| {
+        rows(s).first().is_some_and(|l| l.contains("seq 1 200")) && rows(s).get(1).is_some_and(|l| first(l) == "1")
+    });
+    tui.send(b"Vjj\r");
+    wait_for("줄 단위 복사", T, || read_copied().ends_with("seq 1 200\n1\n2").then_some(()));
+    tui.wait_text("맨 아래로 돌아옴", |s| top(s) == Some(173) && !s.contains(" COPY "));
+
+    // 3) PageUp은 29줄 화면에서 27줄 넘기고, q면 넘기기 전 자리로
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY "));
+    tui.send(b"\x1b[5~");
+    tui.wait_text("한 쪽 위", |s| top(s) == Some(146));
+    tui.send(b"q");
+    tui.wait_text("q로 나가 맨 아래", |s| top(s) == Some(173) && !s.contains(" COPY "));
+    // copy 모드 키는 셸에 가지 않았다
+    assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).

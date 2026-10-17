@@ -846,7 +846,7 @@ impl App {
     }
 
     /// 이 화면의 그 pane 기록 위치를 맨 아래에서 `offset`줄로(herdr `set_scroll_offset_from_bottom`)
-    async fn scroll_to(&mut self, tx: &mut FrontSender, pane: String, offset: usize) -> Result<()> {
+    pub(crate) async fn scroll_to(&mut self, tx: &mut FrontSender, pane: String, offset: usize) -> Result<()> {
         if !self.host_at_least(16) {
             return Ok(());
         }
