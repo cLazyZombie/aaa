@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use aaa_config::Profile;
 use aaa_proto::{
-    Cleanup, Launch, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadKind, ThreadPrepare, ThreadReady, fill_brief,
-    slug, valid_project, valid_thread,
+    Cleanup, Launch, LaunchSafety, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadKind, ThreadPrepare,
+    ThreadReady, fill_brief, slug, valid_project, valid_thread,
 };
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -25,19 +25,55 @@ pub struct ThreadsConfig {
     /// hook 명령에 쓰는 aaa 실행 파일
     pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
+    pub harnesses: BTreeMap<String, aaa_config::HarnessOverride>,
+    /// 머신별 harness 덮어쓰기·옛 host 호환 profile을 쓸 때마다 다시 읽는다.
+    pub config_dir: Option<PathBuf>,
 }
 
+impl ThreadsConfig {
+    /// 지금 agent.toml의 머신별 덮어쓰기·호환 profile로 바꾼 설정. 읽지 못하면 그 까닭이 오류다(옛 값으로 띄우지 않는다).
+    pub fn fresh(&self) -> Result<ThreadsConfig> {
+        let Some(dir) = &self.config_dir else { return Ok(self.clone()) };
+        let loaded = aaa_config::load_agent(dir)
+            .map_err(|e| anyhow::anyhow!("이 머신 agent.toml을 읽지 못했다:\n{}", e.render()))?;
+        Ok(ThreadsConfig { profiles: loaded.config.profiles, harnesses: loaded.config.harnesses, ..self.clone() })
+    }
+}
+
+fn view(name: &str, p: &Profile, builtin: bool) -> ProfileView {
+    ProfileView {
+        name: name.to_string(),
+        harness: p.harness.clone(),
+        model: Some(p.model.clone()).filter(|m| !m.is_empty()),
+        effort: Some(p.effort.clone()).filter(|m| !m.is_empty()),
+        description: p.description.clone(),
+        args: p.args.clone(),
+        builtin,
+    }
+}
+
+/// agent.toml profile과, 같은 이름이 없는 기본 profile 중 이 머신에 설치·로그인한 것(참고 `Config::listed`)
 pub fn profile_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
-    cfg.profiles
-        .iter()
-        .map(|(name, p)| ProfileView {
-            name: name.clone(),
-            harness: p.harness.clone(),
-            model: Some(p.model.clone()).filter(|m| !m.is_empty()),
-            effort: Some(p.effort.clone()).filter(|m| !m.is_empty()),
-            description: p.description.clone(),
-        })
-        .collect()
+    let mut out: Vec<ProfileView> = cfg.profiles.iter().map(|(name, p)| view(name, p, false)).collect();
+    out.extend(builtin_views(cfg).into_iter().filter(|p| !cfg.profiles.contains_key(&p.name)));
+    out
+}
+
+pub fn builtin_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
+    // 시험은 이 머신의 설치·로그인과 상관없이 정한다(`AAA_TEST_BUILTINS`: 빈 값은 없음, 쉼표 목록은 그것만)
+    let detected: Vec<String> = match std::env::var("AAA_TEST_BUILTINS") {
+        Ok(v) => v.split(',').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect(),
+        Err(_) => {
+            let home = aaa_config::paths::home();
+            aaa_config::profile_edit::detect(
+                std::env::var("PATH").ok().as_deref(),
+                &home,
+                |n| std::env::var(n).ok(),
+                &cfg.harnesses,
+            )
+        }
+    };
+    detected.iter().filter_map(|name| aaa_config::profile_edit::builtin(name).map(|p| view(name, &p, true))).collect()
 }
 
 /// 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 만든다(claude는 새 session ID).
@@ -48,12 +84,20 @@ pub fn rebrief(
     brief: &str,
     mut launch: Launch,
     profile: Option<&str>,
+    safety: Option<&LaunchSafety>,
+    resolved: Option<&aaa_proto::ResolvedProfile>,
 ) -> Result<Launch> {
     let dir = check_work_dir(work_dir)?;
     std::fs::write(dir.join("brief.md"), fill_brief(brief, &dir.to_string_lossy(), &cfg.exe.to_string_lossy()))?;
     if let Some(name) = profile {
         // profile이 모든 설정을 가진다: 옛 model·args는 쓰지 않는다(herdr-projects threads.rs `restart`)
-        return launch_in(cfg, name, &dir);
+        return match resolved {
+            Some(p) => {
+                let p = local_profile(cfg, p)?;
+                with_hooks(cfg, resolve(name, &p)?, &dir, p.command.len().max(1))
+            }
+            None => launch_in(cfg, name, &dir, safety),
+        };
     }
     if let Some(i) = launch.argv.iter().position(|a| a == "--session-id")
         && i + 1 < launch.argv.len()
@@ -79,14 +123,7 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
     let env: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let (argv, resume_argv, session_key) = match p.harness.as_str() {
         "claude" => {
-            let mut flags = Vec::new();
-            if !p.model.is_empty() {
-                flags.extend(["--model".to_string(), p.model.clone()]);
-            }
-            if !p.effort.is_empty() {
-                flags.extend(["--effort".to_string(), p.effort.clone()]);
-            }
-            flags.extend(p.args.iter().cloned());
+            let flags = aaa_config::profile_edit::launch_flags(p);
             let key = uuid_v4();
             let mut argv = base("claude");
             argv.extend(flags.iter().cloned());
@@ -97,14 +134,7 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
             (argv, resume, Some(key))
         }
         "codex" => {
-            let mut flags = Vec::new();
-            if !p.model.is_empty() {
-                flags.extend(["-m".to_string(), p.model.clone()]);
-            }
-            if !p.effort.is_empty() {
-                flags.extend(["-c".to_string(), format!("model_reasoning_effort={}", p.effort)]);
-            }
-            flags.extend(p.args.iter().cloned());
+            let flags = aaa_config::profile_edit::launch_flags(p);
             let mut argv = base("codex");
             argv.extend(flags.iter().cloned());
             let mut resume = base("codex");
@@ -157,7 +187,10 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
     }
-    let profile = find_profile(cfg, &p.profile)?;
+    let profile = match &p.resolved_profile {
+        Some(profile) => local_profile(cfg, profile)?,
+        None => with_safety(cfg, find_profile(cfg, &p.profile)?, p.safety.as_ref()),
+    };
     let (cwd, branch, base) = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -211,7 +244,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         work_dir.join("brief.md"),
         fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
     )?;
-    let launch = with_hooks(cfg, resolve(&p.profile, profile)?, &work_dir)?;
+    let launch = with_hooks(cfg, resolve(&p.profile, &profile)?, &work_dir, profile.command.len().max(1))?;
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),
@@ -221,35 +254,86 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     })
 }
 
-fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
-    cfg.profiles.get(name).with_context(|| {
-        format!("이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?})", cfg.profiles.keys().collect::<Vec<_>>())
+/// host 정의에 머신 실행 경로·환경만 덮어쓴다. 없는 harness로 조용히 바꾸지 않는다.
+fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Result<Profile> {
+    let mut p = Profile {
+        harness: spec.harness.clone(),
+        model: spec.model.clone(),
+        effort: spec.effort.clone(),
+        args: spec.args.clone(),
+        command: spec.command.clone(),
+        env: spec.env.clone(),
+        description: String::new(),
+    };
+    if let Some(local) = cfg.harnesses.get(&p.harness) {
+        if !local.command.is_empty() {
+            p.command = local.command.clone();
+        }
+        p.env.extend(local.env.clone());
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let exe =
+        p.command.first().map(String::as_str).unwrap_or_else(|| if p.harness == "shell" { &shell } else { &p.harness });
+    if !aaa_config::profile_edit::executable_available(exe, p.env.get("PATH").map(String::as_str)) {
+        bail!(
+            "harness `{}`를 실행할 수 없다: 실행 파일 `{exe}`가 없거나 실행 권한이 없다. 이 머신 agent.toml [harnesses.{}] command 또는 PATH를 확인한다",
+            p.harness,
+            p.harness
+        );
+    }
+    Ok(p)
+}
+
+/// 이름의 profile과 기본 profile인지: agent.toml `[profiles.*]`, 없으면 같은 이름의 기본 profile(claude·codex, 참고 `get`)
+fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, bool)> {
+    if let Some(p) = cfg.profiles.get(name) {
+        return Ok((p.clone(), false));
+    }
+    aaa_config::profile_edit::builtin(name).map(|p| (p, true)).with_context(|| {
+        format!(
+            "이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?}, 기본 profile: claude, codex). 사람이 `aaa profile add`로 더한다",
+            cfg.profiles.keys().collect::<Vec<_>>()
+        )
     })
 }
 
+/// safety 인자를 profile 인자에 더한다(plan §8.115, 참고 `profiles::launch_args` 뒤 `Safety::launch_args`): 프로젝트 기본
+/// profile과 같은 harness의 기본 profile이면 `thread_agent_args`를 앞에, yolo면 harness의 권한 건너뛰기 인자를 뒤에.
+/// argv와 resume argv가 같은 인자를 쓴다.
+fn with_safety(cfg: &ThreadsConfig, (mut p, builtin): (Profile, bool), safety: Option<&LaunchSafety>) -> Profile {
+    let Some(s) = safety else { return p };
+    let legacy_harness =
+        find_profile(cfg, &s.default_profile).map(|(d, _)| d.harness).unwrap_or_else(|_| "claude".into());
+    let mut args = aaa_config::safety::legacy_args(builtin, &p.harness, &s.thread_agent_args, &legacy_harness);
+    args.extend(p.args.iter().cloned());
+    p.args = aaa_config::safety::apply_yolo(s.yolo, &p.harness, &args);
+    p
+}
+
 /// 있는 작업 폴더에서 profile을 다시 해석한다(brief.md는 host가 준 것을 이미 썼다)
-fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path) -> Result<Launch> {
-    with_hooks(cfg, resolve(name, find_profile(cfg, name)?)?, work_dir)
+fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path, safety: Option<&LaunchSafety>) -> Result<Launch> {
+    let p = with_safety(cfg, find_profile(cfg, name)?, safety);
+    with_hooks(cfg, resolve(name, &p)?, work_dir, p.command.len().max(1))
 }
 
 /// harness별 상태 hook을 launch에 붙인다
-fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path) -> Result<Launch> {
+fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path, command_len: usize) -> Result<Launch> {
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
         std::fs::write(&settings, serde_json::to_vec_pretty(&crate::hooks::claude_settings(&cfg.exe))?)?;
         let s = settings.to_string_lossy().to_string();
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
-            argv.insert(1, s.clone());
-            argv.insert(1, "--settings".into());
+            argv.insert(command_len, s.clone());
+            argv.insert(command_len, "--settings".into());
         }
     }
     if launch.harness == "codex" {
         // 턴이 끝날 때마다 notify로 상태와 thread ID(resume에 쓴다)를 받는다
         let n = crate::hooks::codex_notify(&cfg.exe);
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
-            argv.insert(1, n.clone());
-            argv.insert(1, "-c".into());
+            argv.insert(command_len, n.clone());
+            argv.insert(command_len, "-c".into());
         }
     }
     Ok(launch)
@@ -515,7 +599,7 @@ mod tests {
         let old = resolve("c", &profile("claude")).unwrap();
         let brief = format!("새 brief `{}/report.md` `{} report`", aaa_proto::BRIEF_WORK_DIR, aaa_proto::BRIEF_EXE);
         let mut cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
-        let new = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), None).unwrap();
+        let new = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), None, None, None).unwrap();
         // 작업 폴더·실행 파일 자리는 이 머신 값으로 채운다
         assert_eq!(
             std::fs::read_to_string(wd.join("brief.md")).unwrap(),
@@ -527,12 +611,54 @@ mod tests {
         assert_eq!(new.resume_argv, old.resume_argv);
         // --profile: 이 머신 agent.toml에서 다시 해석하고 그 harness의 hook을 붙인다(옛 launch는 쓰지 않는다)
         cfg.profiles.insert("x".into(), profile("codex"));
-        let other = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), Some("x")).unwrap();
+        let other = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), Some("x"), None, None).unwrap();
         assert_eq!((other.profile.as_str(), other.harness.as_str()), ("x", "codex"));
         assert_eq!(other.argv[1], "-c", "{:?}", other.argv);
-        let e = rebrief(&cfg, wd.to_str().unwrap(), &brief, old, Some("nope")).unwrap_err();
+        let e = rebrief(&cfg, wd.to_str().unwrap(), &brief, old, Some("nope"), None, None).unwrap_err();
         assert!(format!("{e:#}").contains("profile `nope`가 없다"), "{e:#}");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// safety 인자(plan §8.115, 참고 `profiles::launch_args`·`Safety::launch_args`): thread_agent_args는 프로젝트 기본
+    /// profile과 같은 harness의 기본 profile에만, yolo 인자는 harness마다(argv·resume argv 둘 다), 기본 profile은 이름으로 푼다.
+    #[test]
+    fn safety_args_reach_builtins_and_yolo_every_harness() {
+        let mut cfg = ThreadsConfig::default();
+        cfg.profiles.insert("deep".into(), profile("codex"));
+        let s =
+            LaunchSafety { yolo: true, thread_agent_args: vec!["--verbose".into()], default_profile: "claude".into() };
+        let launch = |name: &str, s: Option<&LaunchSafety>| {
+            resolve(name, &with_safety(&cfg, find_profile(&cfg, name).unwrap(), s)).unwrap()
+        };
+        let c = launch("claude", Some(&s));
+        for argv in [&c.argv, &c.resume_argv] {
+            assert!(argv.contains(&"--verbose".to_string()), "{argv:?}");
+            assert!(argv.contains(&"--dangerously-skip-permissions".to_string()), "{argv:?}");
+        }
+        // 다른 harness의 기본 profile: 옛 인자는 없고 제 yolo 인자
+        let x = launch("codex", Some(&s));
+        assert!(!x.argv.contains(&"--verbose".to_string()), "{:?}", x.argv);
+        assert!(x.argv.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()), "{:?}", x.argv);
+        assert!(
+            x.resume_argv.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()),
+            "{:?}",
+            x.resume_argv
+        );
+        // 사람이 정의한 profile: 제 인자 + yolo 인자만
+        let d = launch("deep", Some(&s));
+        assert!(
+            !d.argv.contains(&"--verbose".to_string()) && d.argv.contains(&"--no-daemon".to_string()),
+            "{:?}",
+            d.argv
+        );
+        assert!(d.argv.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()), "{:?}", d.argv);
+        // 기본 profile이 codex인 프로젝트: codex 기본 profile이 옛 인자를 받는다
+        let s2 = LaunchSafety { yolo: false, default_profile: "deep".into(), ..s.clone() };
+        assert!(launch("codex", Some(&s2)).argv.contains(&"--verbose".to_string()));
+        assert!(!launch("codex", Some(&s2)).argv.iter().any(|a| a.starts_with("--dangerously")));
+        // safety가 없으면(옛 host) 그대로
+        assert_eq!(launch("claude", None).argv.iter().filter(|a| a.starts_with("--")).count(), 1, "--session-id만");
+        assert!(format!("{:#}", find_profile(&cfg, "gpt").unwrap_err()).contains("기본 profile: claude, codex"));
     }
 
     #[test]

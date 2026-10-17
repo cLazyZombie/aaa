@@ -3,9 +3,12 @@
 //! - `host.toml`(host 머신), `agent.toml`(모든 agent 머신). 같은 폴더의 `*.local.toml`이 머신별로 덮어쓴다.
 //! - 맨 위 `schema = 1`. 모르는 미래 schema는 명시 오류다.
 //! - 잘못된 값은 `파일:줄:열`과 이유를 보이고 시작을 거부한다. 모르는 key는 경고한다.
-//! - 사용자 파일을 자동으로 다시 쓰지 않는다.
+//! - 사용자 파일을 자동으로 다시 쓰지 않는다. 사람이 터미널에서 내린 명령(`aaa profile`·`aaa safety`)만 toml_edit로 그
+//!   key만 고친다(주석·차례는 그대로).
 
 pub mod paths;
+pub mod profile_edit;
+pub mod safety;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -78,6 +81,20 @@ pub struct HostConfig {
     pub projects: ProjectsSection,
     pub notify: NotifySection,
     pub session: SessionSection,
+    /// profile 정의의 정본(참고 herdr-projects config.toml).
+    pub profiles: std::collections::BTreeMap<String, Profile>,
+    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.115). host는 쓸
+    /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
+    pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
+    pub defaults: DefaultsSection,
+}
+
+/// 정해지지 않았을 때 쓰는 값(herdr-projects `[defaults]`). host는 쓸 때마다 다시 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DefaultsSection {
+    /// thread start에 profile이 없고 project.toml `thread_profile`도 없을 때 쓰는 profile(`aaa profile default threads`)
+    pub thread_profile: String,
 }
 
 /// 새 pane(새 탭·나누기). 이름과 값은 herdr 0.9.5 `[terminal] new_cwd`를 따른다(plan §8.76).
@@ -181,6 +198,9 @@ impl Default for HostConfig {
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
             session: SessionSection::default(),
+            profiles: Default::default(),
+            safety: Default::default(),
+            defaults: DefaultsSection::default(),
         }
     }
 }
@@ -191,7 +211,8 @@ impl Default for HostConfig {
 pub struct ProjectsSection {
     /// 프로젝트 폴더 root(비우면 `~/.aaa/projects`)
     pub root: String,
-    /// thread에 쓸 수 있는 profile 이름(agent.toml이 정의하고 host가 허용한다). `"*"`는 모두.
+    /// thread에 쓸 수 있는 profile 이름(agent.toml이 정의하고 host가 허용한다). `"*"`는 모두. 옛 자리다: `[safety.*]
+    /// thread_profiles`가 있으면 그것이 먼저다(`aaa profile allow threads`).
     pub allow_profiles: Vec<String>,
     /// thread 보고와 함께 host로 복사할 library 상한(MB). 넘는 파일은 agent에 남긴다.
     pub library_copy_mb: u64,
@@ -221,6 +242,7 @@ pub struct ProjectsSection {
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
+    /// 옛 자리다: `[safety.*] routine_commands`가 있으면 그것이 먼저다(`aaa safety set`).
     pub routine_commands: Vec<String>,
 }
 
@@ -418,8 +440,17 @@ pub struct AgentConfig {
     pub reconnect: ReconnectSection,
     pub selfcheck: SelfcheckSection,
     pub health: HealthSection,
-    /// thread를 띄우는 profile(§8.2). host.toml `[projects] allow_profiles`가 허용한 것만 쓴다.
+    /// 옛 agent 설정 호환용. 새 host는 쓰지 않으며 시작 때 host로 옮기라는 경고를 낸다.
     pub profiles: std::collections::BTreeMap<String, Profile>,
+    /// 머신별 실행 파일·환경만 덮어쓴다. model·effort·args는 host 정본을 따른다.
+    pub harnesses: std::collections::BTreeMap<String, HarnessOverride>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct HarnessOverride {
+    pub command: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for AgentConfig {
@@ -431,6 +462,7 @@ impl Default for AgentConfig {
             selfcheck: SelfcheckSection::default(),
             health: HealthSection::default(),
             profiles: Default::default(),
+            harnesses: Default::default(),
         }
     }
 }
@@ -440,6 +472,7 @@ impl Default for AgentConfig {
 #[serde(default)]
 pub struct Profile {
     /// claude·codex·shell·custom
+    #[serde(rename = "agent", alias = "harness")]
     pub harness: String,
     pub model: String,
     pub effort: String,
@@ -520,7 +553,17 @@ pub fn load_host(dir: &Path) -> Result<Loaded<HostConfig>, ConfigErrors> {
 }
 
 pub fn load_agent(dir: &Path) -> Result<Loaded<AgentConfig>, ConfigErrors> {
-    load(dir, "agent", validate_agent)
+    let mut loaded: Loaded<AgentConfig> = load(dir, "agent", validate_agent)?;
+    if !loaded.config.profiles.is_empty() {
+        loaded.warnings.push(diag(
+            Severity::Warning,
+            &dir.join("agent.toml"),
+            0,
+            0,
+            "옛 agent.toml [profiles]가 있다: host.toml [profiles]로 옮기라. 새 host는 이 정의를 쓰지 않는다".into(),
+        ));
+    }
+    Ok(loaded)
 }
 
 /// 검증 실패 한 건: 문제 key 경로와 이유
@@ -616,6 +659,31 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
             message: format!("json 또는 telegram이어야 한다: {other:?}"),
         }),
     }
+    for (table, l) in &c.safety {
+        let mut bad = |k: &str, message: String| out.push(Invalid { path: key(&["safety", table, k]), message });
+        if let Some(v) = l.start_threads.as_deref().filter(|v| !matches!(*v, "propose" | "auto")) {
+            bad("start_threads", format!("\"propose\" 또는 \"auto\"여야 한다: {v:?}"));
+        }
+        if let Some(v) = l.trust_screens.as_deref().filter(|v| !matches!(*v, "coordinator" | "user")) {
+            bad("trust_screens", format!("\"coordinator\" 또는 \"user\"여야 한다: {v:?}"));
+        }
+        for name in l.thread_profiles.iter().flatten() {
+            if let Err(e) = profile_edit::validate_name(name) {
+                bad("thread_profiles", e);
+            }
+        }
+    }
+    let d = &c.defaults.thread_profile;
+    if !d.is_empty()
+        && let Err(e) = profile_edit::validate_name(d)
+    {
+        out.push(Invalid { path: key(&["defaults", "thread_profile"]), message: e });
+    }
+    for (name, profile) in &c.profiles {
+        if let Err(message) = profile_edit::validate_profile(name, profile) {
+            out.push(Invalid { path: key(&["profiles", name]), message });
+        }
+    }
     out
 }
 
@@ -648,12 +716,20 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
             });
         }
     }
+    for (name, h) in &c.harnesses {
+        if !matches!(name.as_str(), "claude" | "codex" | "shell" | "custom") {
+            out.push(Invalid { path: key(&["harnesses", name]), message: "모르는 harness다".into() });
+        }
+        if h.command.first().is_some_and(|v| v.is_empty()) {
+            out.push(Invalid {
+                path: key(&["harnesses", name, "command"]), message: "실행 파일이 비었다".into()
+            });
+        }
+    }
     for (name, p) in &c.profiles {
         let leak = name.as_str();
-        if !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') {
-            out.push(Invalid {
-                path: key(&["profiles", leak]), message: "profile 이름은 영문·숫자·-·_만 쓴다".into()
-            });
+        if let Err(message) = profile_edit::validate_name(name) {
+            out.push(Invalid { path: key(&["profiles", leak]), message });
         }
         match p.harness.as_str() {
             "claude" | "codex" | "shell" => {}

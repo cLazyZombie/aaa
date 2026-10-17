@@ -137,7 +137,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   말고 까닭을 들어 제안한다. 사용자가 채팅에서 그때 한 번 넘기게 할 수 있다(`thread start`는 경고만 한다).
 - TASKS.md task로 시작: `aaa thread start {p} --from-task \"<제목>\" [--kind dir | --repo <경로>]`. owner가 profile·machine을 정한다.
 - 그 밖: `aaa thread start {p} --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
-  project.toml `thread_profile`이다. `--repo`가 있으면 worktree, 없으면 repo 없는 작업 폴더다.
+  project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
+  작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project {p}`가 보인다.
 - 보고 확인: `aaa thread show {p} <id>`, `aaa thread library {p} <id>`, 다 봤으면 `aaa thread ack {p} <id>`, 끝나면 `aaa thread resolve {p} <id>`.
 - 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart {p} <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된) profile로
   띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
@@ -148,6 +149,12 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
   확인창 질문은 `aaa question list`·`aaa question answer`.
+
+## safety(사용자만 바꾼다)
+`start_threads`·`trust_screens`·yolo·`thread_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의 safety 설정이다.
+`aaa safety show {p}`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
+터미널에서만 한다: 필요하면 사용자에게 그 명령을 알린다. project.toml의 `start_threads`·`trust_screens`는 옛 자리라
+safety 표에 값이 있으면 먹지 않는다.
 
 ## thread pane의 확인창
 thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명령·편집 권한 확인창)에 멈출 수 있다. 사용자가 pane에 가지 않게
@@ -341,6 +348,10 @@ impl Host {
     pub(crate) fn project_create(&self, name: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         if !valid_project(name) {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
+        }
+        if name == aaa_config::safety::DEFAULT_TABLE {
+            // host.toml `[safety.default]`는 모든 프로젝트 표다(plan §8.115)
+            return Err(bad("`default`는 safety의 모든 프로젝트 표 이름이라 프로젝트 이름으로 쓰지 않는다"));
         }
         let dir = self.projects_root().join(name);
         if dir.join("PROJECT.md").exists() {
@@ -543,19 +554,142 @@ impl Host {
         self.db.flow_after(project, after, limit.unwrap_or(500).min(5000)).map_err(internal)
     }
 
-    pub(crate) async fn profiles(&self, machine: Option<&str>) -> Result<FrontResponse, ErrorBody> {
-        let mid = self.resolve_machine(machine)?;
-        let conn = self.live_conn(&mid)?;
-        match conn.request(AgentRequest::Profiles).await? {
-            AgentResponse::Profiles { profiles } => {
-                Ok(FrontResponse::Profiles { machine: self.machine_name(&mid), profiles })
-            }
-            other => Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+    fn profile_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {
+        match self.config_dir.get() {
+            Some(dir) => aaa_config::load_host(dir).map(|l| l.config).map_err(|e| bad(e.render())),
+            None => Ok(self.cfg.clone()),
         }
     }
 
-    pub(crate) fn profile_allowed(&self, name: &str) -> bool {
-        self.cfg.projects.allow_profiles.iter().any(|a| a == "*" || a == name)
+    pub(crate) async fn profiles(&self, machine: Option<&str>) -> Result<FrontResponse, ErrorBody> {
+        let cfg = self.profile_config()?;
+        let mid = match self.resolve_machine(machine) {
+            Ok(mid) => Some(mid),
+            Err(_) if machine.is_none() => None,
+            Err(e) => return Err(e),
+        };
+        // agent에 묻는 것은 설치·로그인한 기본 harness뿐이다. 옛 agent의 사용자 정의는 쓰지 않는다.
+        let detected = if let Some(mid) = &mid
+            && self.machine_feature(mid, "host_profiles.v1")
+            && let Ok(conn) = self.live_conn(mid)
+        {
+            match conn.request(AgentRequest::Harnesses).await? {
+                AgentResponse::Profiles { profiles } => profiles,
+                other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+            }
+        } else {
+            Vec::new()
+        };
+        let mut profiles: Vec<aaa_proto::ProfileView> = cfg
+            .profiles
+            .iter()
+            .map(|(name, p)| aaa_proto::ProfileView {
+                name: name.clone(),
+                harness: p.harness.clone(),
+                model: (!p.model.is_empty()).then(|| p.model.clone()),
+                effort: (!p.effort.is_empty()).then(|| p.effort.clone()),
+                args: p.args.clone(),
+                description: p.description.clone(),
+                builtin: false,
+            })
+            .collect();
+        profiles.extend(detected.into_iter().filter(|p| p.builtin && !cfg.profiles.contains_key(&p.name)));
+        Ok(FrontResponse::Profiles {
+            machine: mid.map(|mid| self.machine_name(&mid)).unwrap_or_else(|| "host".into()),
+            profiles,
+        })
+    }
+
+    pub(crate) fn profile_resolve(&self, name: Option<&str>) -> Result<FrontResponse, ErrorBody> {
+        let cfg = self.profile_config()?;
+        let name = name.unwrap_or_else(|| {
+            if cfg.defaults.thread_profile.is_empty() { "claude" } else { &cfg.defaults.thread_profile }
+        });
+        let builtin = !cfg.profiles.contains_key(name);
+        let p = cfg
+            .profiles
+            .get(name)
+            .cloned()
+            .or_else(|| aaa_config::profile_edit::builtin(name))
+            .ok_or_else(|| bad(format!("host.toml에 profile `{name}`가 없다: `aaa profile list`로 본다")))?;
+        Ok(FrontResponse::ProfileResolved {
+            profile: aaa_proto::ProfileView {
+                name: name.to_string(),
+                harness: p.harness.clone(),
+                model: (!p.model.is_empty()).then(|| p.model.clone()),
+                effort: (!p.effort.is_empty()).then(|| p.effort.clone()),
+                args: aaa_config::profile_edit::launch_flags(&p),
+                description: p.description,
+                builtin,
+            },
+        })
+    }
+
+    /// host에서 이름·기본값·safety를 풀어 전달한다. 옛 agent에는 정의를 잃은 채 이름만 보내지 않는다.
+    fn resolved_profile(&self, project: &str, mid: &str, name: &str) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
+        if !self.machine_feature(mid, "host_profiles.v1") {
+            return Err(bad(
+                "그 머신 agent는 host profile을 받지 못한다(host_profiles.v1 없음). 연결은 유지된다. 그 머신 aaa agent를 갱신한 뒤 시작한다",
+            ));
+        }
+        let cfg = self.profile_config()?;
+        let builtin = !cfg.profiles.contains_key(name);
+        let mut p =
+            cfg.profiles.get(name).cloned().or_else(|| aaa_config::profile_edit::builtin(name)).ok_or_else(|| {
+                bad(format!(
+                    "host.toml에 profile `{name}`가 없다: `aaa profile list`로 보고 사람이 `aaa profile add`로 더한다"
+                ))
+            })?;
+        let default = self.default_thread_profile(project);
+        let legacy = cfg
+            .profiles
+            .get(&default)
+            .cloned()
+            .or_else(|| aaa_config::profile_edit::builtin(&default))
+            .map(|p| p.harness)
+            .unwrap_or_else(|| "claude".into());
+        let safety = self.safety(project);
+        let mut args = aaa_config::safety::legacy_args(builtin, &p.harness, &safety.thread_agent_args, &legacy);
+        args.extend(p.args);
+        p.args = aaa_config::safety::apply_yolo(safety.yolo, &p.harness, &args);
+        Ok(aaa_proto::ResolvedProfile {
+            harness: p.harness,
+            model: p.model,
+            effort: p.effort,
+            args: p.args,
+            env: p.env,
+            command: p.command,
+        })
+    }
+
+    /// thread가 그 프로젝트에서 이 profile을 써도 되는가(safety `thread_profiles`, 참고 `check_allowed`). 목록은 사람만 바꾼다.
+    pub(crate) fn check_profile_allowed(&self, project: &str, name: &str) -> Result<(), ErrorBody> {
+        let safety = self.safety(project);
+        if safety.profile_allowed(name) {
+            return Ok(());
+        }
+        let list = safety.thread_profiles.unwrap_or_default();
+        Err(err(
+            ErrorCode::Forbidden,
+            format!(
+                "profile `{name}`는 `{project}`의 thread에 허용되지 않았다. 허용: {}. 이 목록은 사람만 바꾼다(`aaa profile allow threads … --project {project}`)",
+                if list.is_empty() { "없음".to_string() } else { list.join(", ") }
+            ),
+        ))
+    }
+
+    /// `thread start`에 profile이 없을 때(참고 `resolve`·`new_project_default`): project.toml `thread_profile` → host.toml
+    /// `[defaults] thread_profile` → 기본 profile `claude`. host.toml은 쓸 때마다 다시 읽는다.
+    pub(crate) fn default_thread_profile(&self, project: &str) -> String {
+        let own = self.settings(project).thread_profile;
+        if !own.is_empty() {
+            return own;
+        }
+        let global = match self.config_dir.get() {
+            Some(dir) => aaa_config::safety::default_thread_profile(dir),
+            None => self.cfg.defaults.thread_profile.clone(),
+        };
+        if global.is_empty() { "claude".into() } else { global }
     }
 
     /// brief.md(herdr-projects `brief_for`): 프로젝트 설정·지침·memory를 읽어 `compose_brief`로 짓는다.
@@ -614,26 +748,18 @@ impl Host {
         if a.task.trim().is_empty() {
             return Err(bad("할 일이 비었다"));
         }
-        // herdr-projects `thread_profile`: --profile이 없으면 프로젝트 기본. 참고의 내장 기본(claude)은 aaa에 없다
-        // (profile은 머신 agent.toml에만 있다)
         if a.profile.is_empty() {
-            a.profile = self.settings(&a.project).thread_profile;
+            a.profile = self.default_thread_profile(&a.project);
         }
-        if a.profile.is_empty() {
-            return Err(bad("profile이 없다: --profile을 주거나 project.toml에 thread_profile을 둔다"));
-        }
-        if !self.profile_allowed(&a.profile) {
-            return Err(err(
-                ErrorCode::Forbidden,
-                format!("host.toml [projects] allow_profiles에 없는 profile: {}", a.profile),
-            ));
-        }
+        self.check_profile_allowed(&a.project, &a.profile)?;
         if a.kind == ThreadKind::Worktree && a.repo.is_none() {
             return Err(bad("worktree thread에는 --repo(그 머신의 repo 경로)가 필요하다. repo 없이 하려면 --kind dir"));
         }
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
+        let resolved_profile = Some(self.resolved_profile(&a.project, &mid, &a.profile)?);
+        let safety = None;
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
@@ -703,6 +829,7 @@ impl Host {
             e
         };
         let prep = aaa_proto::ThreadPrepare {
+            resolved_profile,
             project: a.project.clone(),
             thread: id.clone(),
             title: rec.title.clone(),
@@ -711,6 +838,7 @@ impl Host {
             base: a.base.clone(),
             profile: a.profile.clone(),
             brief,
+            safety,
         };
         let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await {
             Ok(AgentResponse::ThreadReady(r)) => r,
@@ -831,12 +959,7 @@ impl Host {
             if resume {
                 return Err(bad("--profile은 새 대화로 다시 시작할 때만 쓴다(--resume과 함께 쓰지 않는다)"));
             }
-            if !self.profile_allowed(p) {
-                return Err(err(
-                    ErrorCode::Forbidden,
-                    format!("host.toml [projects] allow_profiles에 없는 profile: {p}"),
-                ));
-            }
+            self.check_profile_allowed(project, p)?;
         }
         if let Some(p) = &rec.pane
             && self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
@@ -869,8 +992,20 @@ impl Host {
             let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
             let brief = self.brief(&dir, &rec, &task, true);
             let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
+            // 새 대화는 host 정본과 지금 safety를 다시 읽는다. --resume은 위의 저장된 launch를 쓴다.
+            let again = profile.clone().unwrap_or_else(|| rec.profile.clone());
+            self.check_profile_allowed(project, &again)?;
+            let resolved_profile = Some(self.resolved_profile(project, &rec.machine_id, &again)?);
+            let safety = None;
             let relaunched = match conn
-                .request(AgentRequest::ThreadRebrief { work_dir, brief, launch, profile: profile.clone() })
+                .request(AgentRequest::ThreadRebrief {
+                    work_dir,
+                    brief,
+                    launch,
+                    profile: Some(again),
+                    safety,
+                    resolved_profile,
+                })
                 .await?
             {
                 AgentResponse::Relaunch(l) => l,

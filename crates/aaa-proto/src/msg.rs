@@ -465,6 +465,8 @@ pub enum AgentRequest {
     },
     /// agent.toml에 정의된 profile 목록
     Profiles,
+    /// host_profiles.v1: 정의를 제외한 설치·로그인한 기본 harness만 묻는다.
+    Harnesses,
     /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
     ThreadPrepare(ThreadPrepare),
     /// report.md 변화를 `ReportChanged`로 알린다. 등록 즉시 지금 hash를 한 번 보낸다. `thread`는 `<project>/<thread>`다.
@@ -487,16 +489,19 @@ pub enum AgentRequest {
         offset: u64,
         len: u32,
     },
-    /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
-    /// (claude는 새 `--session-id`). `profile`이 없으면 저장된 launch를 그대로 쓰고, 있으면 이 머신 agent.toml에서
-    /// 그 profile을 다시 해석한다(`thread restart --profile`, AGENT_LINK 1.4). 옛 agent는 `profile`을 모르고 저장된
-    /// launch를 돌려주므로 host는 돌려받은 `Launch.profile`로 확인한다.
+    /// 새 대화 준비. host_profiles.v1이면 host가 푼 resolved_profile을 받고 머신 경로·env·hook을 적용한다.
+    /// 옛 host는 profile 이름과 safety를 보내며, 둘 다 없으면 저장된 launch를 쓴다.
     ThreadRebrief {
         work_dir: String,
         brief: String,
         launch: Launch,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_profile: Option<crate::ResolvedProfile>,
+        /// profile을 다시 풀 때 더할 safety(plan §8.115, `launch_safety.v1`을 알린 agent에만)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        safety: Option<crate::LaunchSafety>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -1238,9 +1243,13 @@ pub enum FrontRequest {
         name: String,
     },
     Projects,
-    /// 머신의 agent.toml profile 목록
+    /// host 정본 profile과 그 머신에 설치·로그인한 기본 harness 목록
     Profiles {
         machine: Option<String>,
+    },
+    /// host 정본의 profile을 확인한다(설치 여부와 무관, 기본값도 host에서 고른다).
+    ProfileResolve {
+        name: Option<String>,
     },
     ThreadStart {
         project: String,
@@ -1489,6 +1498,7 @@ impl FrontRequest {
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects
                 | FrontRequest::Profiles { .. }
+                | FrontRequest::ProfileResolve { .. }
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::ThreadLibrary { .. }
@@ -1599,6 +1609,9 @@ pub enum FrontResponse {
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,
+    },
+    ProfileResolved {
+        profile: ProfileView,
     },
     Threads {
         threads: Vec<ThreadView>,

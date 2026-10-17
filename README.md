@@ -24,7 +24,7 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 
 2. **설정.** `aaa config example host`·`aaa config example agent`로 예시를 보고 `~/.config/aaa/`에 둡니다. `aaa config check`로 확인합니다.
    - `host.toml`(host만): agent link listen(`0.0.0.0:7430`), 웹 listen(`127.0.0.1:<port>`), 프로젝트 폴더, `[tui]` prefix.
-   - `agent.toml`(각 Mac): host 주소(host Mac은 `"local"`, 다른 Mac은 `"mac-a.example.ts.net:7430"`), 작업 폴더, profile(`claude`·`codex` 등).
+   - `agent.toml`(각 Mac): host 주소(host Mac은 `"local"`, 다른 Mac은 `"mac-a.example.ts.net:7430"`), 작업 폴더와 필요한 `[harnesses.<종류>] command/env` 덮어쓰기. profile 정의는 host Mac의 `host.toml [profiles.<이름>]` 한 곳(`agent`·`model`·`effort`·`description`·`args`)에 둡니다. `claude`·`codex`는 기본 profile이며 더하려면 host 터미널에서 `aaa profile add`를 씁니다. yolo·쓸 수 있는 profile은 host에서 사람이 `aaa safety`·`aaa profile allow`로 정합니다(plan §8.121).
 3. **감독자 설치(사람이 직접, 각 Mac).** launchd를 바꾸므로 자기 터미널에서 `yes`를 입력합니다. host Mac은 host를 agent보다 먼저 설치합니다.
 
    ```bash

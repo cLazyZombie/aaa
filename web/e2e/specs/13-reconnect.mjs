@@ -1,7 +1,8 @@
-// 웹 E2E 다시 붙기: agent 끊김·복귀·host 재시작(host를 내리므로 따로 된 실험실).
+// 웹 E2E 다시 붙기: agent 끊김·복귀·host 재시작·재부팅 뒤 복원 실패(host·agent를 내리므로 따로 된 실험실).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 13-reconnect(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { start, stop, until, screenText, shot, base, step } from "../lib/harness.mjs";
+import fs from "node:fs";
+import { aaa, start, stop, until, screenText, shot, base, step, root, killSessionHosts } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("agent 끊김 → 읽기 전용 표시", async () => {
@@ -79,5 +80,25 @@ export default async function ({ ctl, page }) {
     await page.getByRole("button", { name: "보내기" }).click();
     await until("재시작 뒤 입력", async () => (await screenText(page)).split("host-back").length >= 3);
     await shot(page, "desktop-after-host-restart");
+  });
+
+  // 참고 herdr-web-ui PaneTerminal 2727~2734줄: 되살리지 못한 pane(`restore_error`)은 터미널 대신 경고와 까닭을 보인다(plan §8.111)
+  await step("재부팅 뒤 되살리지 못한 pane → 터미널 대신 까닭", async () => {
+    fs.mkdirSync(`${root}/gone`, { recursive: true });
+    aaa("tab", "create", "--machine", "labA", "--label", "gone", "--cwd", `${root}/gone`, "--", "/bin/sh");
+    await page.getByTestId("pane-gone").waitFor();
+    fs.rmSync(`${root}/gone`, { recursive: true });
+    // 재부팅 흉내: agent와 session host를 끝내고 다른 boot ID로 agent를 띄운다. 저장한 폴더가 없어 다시 띄우지 못한다
+    await stop("agent2");
+    killSessionHosts();
+    start("agent3", { AAA_TEST_BOOT_ID: "boot-after" }, "agent", "--host", "local", "--name", "labA");
+    await page.getByTestId("pane-gone").click();
+    const placeholder = page.getByTestId("restore-error");
+    await placeholder.waitFor();
+    const said = await placeholder.innerText();
+    if (!said.includes("이 pane을 되살리지 못했다") || !said.includes("작업 폴더가 없다")) throw new Error(`복원 실패 자리 표시: ${said}`);
+    // 같은 말을 하는 「세션이 끝났다」 띠와 키 막대는 없다
+    if ((await page.getByTestId("readonly-banner").count()) !== 0) throw new Error("복원 실패 pane에 읽기 전용 띠가 떴다");
+    await shot(page, "desktop-restore-error");
   });
 }
