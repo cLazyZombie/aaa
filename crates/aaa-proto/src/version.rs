@@ -30,9 +30,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.15: `pane_rename`과 PaneView `label`(plan §8.109),
 /// 1.16: `PaneView.restore_error`(plan §8.111),
 /// 1.17: 묶음 `landing`(PR 승인, plan §8.113),
-/// 1.18: `pane_run`의 `profile`(plan §8.122),
-/// 1.19: `pane_chat`의 `thinking`과 ChatRole `thinking`(plan §8.125)
-pub const FRONT_API: Version = Version { major: 1, minor: 19 };
+/// 1.19: `pane_run`의 `profile`(plan §8.126),
+/// 1.20: `pane_chat`의 `thinking`과 ChatRole `thinking`(plan §8.129)
+pub const FRONT_API: Version = Version { major: 1, minor: 20 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

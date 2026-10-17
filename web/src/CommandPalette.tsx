@@ -2,7 +2,7 @@
 // i18n.ko.ts). Mod+Shift+K나 목록 머리 돋보기로 열고, 목록 줄(thread·pane)을 찾아 열거나 동작을 부른다. 찾지 않으면 최근 연 줄 셋이
 // 앞에 선다. `>`는 동작만, 상태 칩(목록 밖에서 a·b·w·i·d 키)은 줄만 거른다. 설정 쪽은 찾을 때만 나온다. ←·→는 묶음을 건넌다.
 // 다른 곳: 참고의 묶음은 workspace, aaa는 머신 안 프로젝트와 pane 묶음이다(palette.ts). 참고의 탭·나누기·확대·사이드바·PC 추가·
-// 알림 켜기·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없어 뺐다. plan §8.128.
+// 알림 켜기·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없어 뺐다. plan §8.132.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ListChecks, MessageSquarePlus, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 

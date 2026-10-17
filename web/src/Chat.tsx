@@ -1,6 +1,6 @@
-// harness 대화 기록 보기(§8.27). 기록은 읽기만 하고 보내는 길은 입력창 ChatComposer(plan §8.126)다. agent가 Claude·Codex 기록에서 골라 준 줄을 보인다.
+// harness 대화 기록 보기(§8.27). 기록은 읽기만 하고 보내는 길은 입력창 ChatComposer(plan §8.130)다. agent가 Claude·Codex 기록에서 골라 준 줄을 보인다.
 // 도구 결과 본문은 agent가 빼고 보낸다. 생각은 설정 「생각 표시」(공유)를 켰을 때만 청해 접힌 「생각」 줄로 보인다
-// (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.125). 다시 읽기(차이 목록 C3, 참고 conversationRefresh.ts·status.ts
+// (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.129). 다시 읽기(차이 목록 C3, 참고 conversationRefresh.ts·status.ts
 // `statusEdgeRead`): aaa는 기록 변경을 push하지 않으니 참고의 push 없는 판처럼 2초마다, 그리고 agent 상태가 작업 중에 들고 날 때
 // (턴 시작·끝)와 이 화면이 보낸 뒤(`readNow`)에는 기다리지 않고 바로 읽는다.
 import { useEffect, useRef, useState } from "react";

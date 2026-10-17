@@ -276,7 +276,7 @@ export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "
  */
 profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, 
 /**
- * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.125)
+ * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
  */
 thinking: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
 /**
