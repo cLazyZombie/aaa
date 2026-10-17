@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { fixImeComposition } from "./ime";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, wsUrl } from "./api";
 import { Icon } from "./icons";
@@ -22,6 +21,8 @@ const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
 /** 글 뒤 Enter까지 기다리는 시간(host의 brief·메시지 전달과 같다) */
 const ENTER_GAP_MS = 300;
+/** 조합 중에 누른 보내기가 글자 확정을 기다리는 시간(herdr-web-ui TerminalInput COMMIT_WAIT_MS와 같다) */
+const COMMIT_WAIT_MS = 300;
 /** 탭이 이만큼 가려져 있으면 「지금 쓰는 화면」을 놓는다(herdr-web-ui와 같은 1초) */
 const RELEASE_AFTER_MS = 1000;
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
@@ -170,10 +171,14 @@ export function TermView({
     return out;
   };
 
+  // 터미널 조합 상태(herdr-web-ui PaneTerminal과 같다): 조합 중이거나 방금 끝난 조합의 확정 글에는 유지 키를 붙이지 않는다
+  const composingTermRef = useRef(false);
+  const commitPendingRef = useRef(false);
+
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
   const fromTerminal = (data: string) => {
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
-    input(withMods(data));
+    input(composingTermRef.current || commitPendingRef.current ? data : withMods(data));
   };
 
   useEffect(() => {
@@ -200,7 +205,27 @@ export function TermView({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(box.current!);
-    if (!fixImeComposition(term)) console.warn("aaa: xterm IME 보정을 걸지 못했다(xterm 판이 바뀌었다)");
+    // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
+    // 그 확정은 글로 두고(유지 키 없음), 새 조합이 시작되면 이 표시는 지운다.
+    let compositionEndTimer: number | null = null;
+    commitPendingRef.current = false;
+    const compositionStart = () => {
+      if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
+      compositionEndTimer = null;
+      commitPendingRef.current = false;
+      composingTermRef.current = true;
+    };
+    const compositionEnd = () => {
+      if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
+      commitPendingRef.current = true;
+      composingTermRef.current = false;
+      compositionEndTimer = window.setTimeout(() => {
+        compositionEndTimer = null;
+        commitPendingRef.current = false;
+      }, 0);
+    };
+    box.current!.addEventListener("compositionstart", compositionStart);
+    box.current!.addEventListener("compositionend", compositionEnd);
     let alive = true;
     if (!ready) {
       void Promise.all([document.fonts.load(webFont), document.fonts.load(`bold ${webFont}`)])
@@ -321,6 +346,9 @@ export function TermView({
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
       el.removeEventListener("pointerdown", onPointer);
+      el.removeEventListener("compositionstart", compositionStart);
+      el.removeEventListener("compositionend", compositionEnd);
+      if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
       dataSub.dispose();
       binSub.dispose();
       offTheme();
@@ -392,16 +420,65 @@ export function TermView({
   // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다.
   // 여러 줄은 터미널 붙여넣기로 보낸다: 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다(xterm.js).
   // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다.
-  const sendText = (enter: boolean) => {
-    if (text.includes("\n")) termRef.current?.paste(text);
-    else if (text) input(text);
+  //
+  // 조합 중에 누른 보내기(herdr-web-ui TerminalInput과 같다): 단추는 focus를 가져가지 않으므로 글자가 확정되지 않는다.
+  // 입력칸을 blur·focus해 확정시키고(키보드는 그대로), compositionend 뒤(WebKit은 그 뒤 input 사건으로 값을 바꾼다)
+  // 확정된 글을 보낸다. 누른 때부터 COMMIT_WAIT_MS 안에 확정되지 않으면 보내지 않고 알린다.
+  const composingRef = useRef(false);
+  const attemptRef = useRef<{ timer: number | null; deadline: number; textSend: boolean } | null>(null);
+  const clearAttempt = () => {
+    const a = attemptRef.current;
+    if (a?.timer != null) window.clearTimeout(a.timer);
+    attemptRef.current = null;
+  };
+  const awaitCommit = (a: { timer: number | null; deadline: number }) => {
+    if (a.timer !== null) window.clearTimeout(a.timer);
+    a.timer = null;
+    const left = a.deadline - Date.now();
+    const giveUp = () => {
+      attemptRef.current = null;
+      setAttach({ text: "글자를 마친 뒤 보낸다", ok: false });
+    };
+    if (left <= 0) return giveUp();
+    setAttach({ text: "글자를 마치는 중…", ok: true });
+    a.timer = window.setTimeout(() => {
+      if (attemptRef.current === a) giveUp();
+    }, left);
+  };
+  const sendText = (enter: boolean, deferred = false) => {
+    const current = attemptRef.current;
+    if (deferred && current === null) return;
+    if (composingRef.current) {
+      if (deferred) return awaitCommit(current!);
+      clearAttempt();
+      // 마지막 렌더가 아니라 입력칸 값을 읽는다: 방금 확정된 글이 아직 렌더되지 않았을 수 있다
+      const tapped = { timer: null, deadline: Date.now() + COMMIT_WAIT_MS, textSend: (textRef.current?.value ?? text).length > 0 };
+      attemptRef.current = tapped;
+      const el = textRef.current;
+      if (el && document.activeElement === el) {
+        el.blur();
+        el.focus({ preventScroll: true });
+      }
+      // 누르는 사이 확정됐으면(Chrome) compositionend가 이미 보내기를 걸었다
+      if (composingRef.current && attemptRef.current === tapped) awaitCommit(tapped);
+      return;
+    }
+    clearAttempt();
+    setAttach((a) => (a?.text.startsWith("글자를 마") ? null : a));
+    const value = textRef.current?.value ?? text;
+    // 지우거나 취소해 비어 버린 글 보내기는 Enter가 아니다
+    if (deferred && current!.textSend && !value) return;
+    if (value.includes("\n")) termRef.current?.paste(value);
+    else if (value) input(value);
     if (enter) {
-      if (text) window.setTimeout(() => input("\r"), ENTER_GAP_MS);
+      if (value) window.setTimeout(() => input("\r"), ENTER_GAP_MS);
       else input("\r");
     }
+    // 입력칸이 focus를 지킨다: 화면 키보드가 다음 줄을 위해 그대로 남는다(herdr-web-ui와 같다)
     setText("");
-    termRef.current?.focus();
   };
+  const sendRef = useRef(sendText);
+  sendRef.current = sendText;
 
   // 입력칸은 글 줄 수만큼(최대 6줄) 늘어난다
   useEffect(() => {
@@ -495,7 +572,23 @@ export function TermView({
               ref={textRef}
               rows={1}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                // 비운 입력칸에는 기다리는 보내기가 보낼 것이 없다
+                if (!e.target.value) clearAttempt();
+              }}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+                const a = attemptRef.current;
+                if (a === null) return;
+                if (a.timer !== null) window.clearTimeout(a.timer);
+                a.timer = null;
+                // WebKit은 compositionend 뒤 input 사건으로 값을 고친다: 그 뒤 확정된 글을 보낸다
+                window.setTimeout(() => sendRef.current(true, true));
+              }}
               onKeyDown={(e) => {
                 if (e.key !== "Enter") return;
                 // 한글 등 조합 중의 Enter는 글자를 확정할 뿐이다
@@ -526,7 +619,15 @@ export function TermView({
               autoCorrect="off"
               spellCheck={false}
             />
-            <button type="submit" className="primary send" disabled={locked} aria-label="보내기" title="보내기(Enter)">
+            <button
+              type="submit"
+              className="primary send"
+              disabled={locked}
+              aria-label="보내기"
+              title="보내기(Enter)"
+              // 화면 키보드는 다음 줄을 위해 그대로 둔다(herdr-web-ui와 같다): 단추가 focus를 가져가지 않는다
+              onPointerDown={(e) => e.preventDefault()}
+            >
               <Icon name="send" />
             </button>
           </div>
