@@ -498,6 +498,21 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 키 막대 시험 프로그램: 받은 조각을 일련번호와 JSON으로 보인다(화면이 밀려도 새 조각을 고른다).
+// "K"를 받으면 화살표 모드(DECCKM)를 켜고 "J"면 끈다.
+fs.writeFileSync(
+  `${root}/bar.js`,
+  `process.stdin.setRawMode(true);
+process.stdout.write("bar> ");
+let n = 0;
+process.stdin.on("data", (d) => {
+  const s = d.toString("utf8");
+  if (s === "K") process.stdout.write("\\x1b[?1h");
+  if (s === "J") process.stdout.write("\\x1b[?1l");
+  process.stdout.write("\\r\\nGOT:" + ++n + ":" + JSON.stringify(s) + "\\r\\nbar> ");
+});
+`,
+);
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
 fs.writeFileSync(
@@ -655,35 +670,131 @@ try {
     await shot(page, "desktop-controller");
   });
 
-  await step("키 줄: Ctrl·Alt 유지 키는 다음 입력 한 번에 붙고 풀린다", async () => {
-    await page.getByLabel("보낼 글").fill("cat -v");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await sleep(400);
-    const ctrl = page.getByRole("button", { name: "Ctrl", exact: true });
-    await ctrl.click();
-    if ((await ctrl.getAttribute("aria-pressed")) !== "true") throw new Error("Ctrl이 켜지지 않았다");
-    await page.getByTestId("terminal").click();
-    await page.keyboard.type("a");
-    if ((await ctrl.getAttribute("aria-pressed")) !== "false") throw new Error("Ctrl이 풀리지 않았다");
-    await page.getByRole("button", { name: "Alt", exact: true }).click();
-    await page.getByTestId("terminal").click();
-    await page.keyboard.type("x");
-    await page.keyboard.press("Enter");
-    await until("cat -v 출력", async () => (await screenText(page)).includes("^A^[x"));
-    // 조합으로 확정된 글에는 유지 키를 붙이지 않고, 유지 키는 다음 키를 기다린다(herdr-web-ui PaneTerminal과 같다)
-    await ctrl.click();
-    await page.getByTestId("terminal").click();
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
-    await cdp.send("Input.insertText", { text: "한" });
+  await step("키 막대(herdr-web-ui KeyBar): 터치 기기에서만, 유지 키는 다시 누를 때까지(래치)·하드웨어 키와 같은 bytes, DECCKM, 꾹 누르면 반복, 조합 중 회색, focus를 안 가져감", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "barapp", "--", process.execPath, `${root}/bar.js`);
+    // [일련번호, 받은 조각]
+    const lines = () =>
+      aaa("pane", "read", "barapp")
+        .lines.map((l) => /^GOT:(\d+):(.*)$/.exec(l))
+        .filter(Boolean)
+        .map((m) => [Number(m[1]), JSON.parse(m[2])]);
+    const last = () => Math.max(0, ...lines().map(([i]) => i));
+    // 데스크톱(마우스)에는 키 막대가 없다
+    await page.getByTestId("pane-barapp").click();
+    await until("bar 화면(데스크톱)", async () => (await screenText(page)).includes("bar>"));
+    if (await page.locator(".key-bar").isVisible()) throw new Error("데스크톱에 키 막대가 보인다");
+    // 터치 기기. Alt를 하드웨어 키와 견주려고 macOS가 아닌 platform으로 둔다(macOS xterm은 Option을 글자로 쓴다).
+    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
+    await tp.getByTestId("pane-barapp").click();
+    await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
+    const bar = tp.locator(".key-bar");
+    if (!(await bar.isVisible())) throw new Error("터치 기기에 키 막대가 없다");
+    const order = await bar.locator(".key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
+    const want = ["Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+    if (JSON.stringify(order) !== JSON.stringify(want)) throw new Error(`키 순서 ${order}`);
+    const key = (k) => bar.locator(`.key[data-key="${k}"]`);
+    await tp.locator(".xterm-screen").click();
+    // 한 동작이 pane에 보낸 조각들
+    const sent = async (act, what = "") => {
+      const n = last();
+      await act();
+      await sleep(250);
+      await until(`pane 받음 ${what}`, () => last() > n);
+      await sleep(150);
+      return lines()
+        .filter(([i]) => i > n)
+        .map(([, d]) => d)
+        .join("");
+    };
+    const bad = [];
+    const expect = async (what, act, wantData) => {
+      const got = await sent(act, what);
+      if (got !== wantData) bad.push(`${what}: ${JSON.stringify(got)}(기대 ${JSON.stringify(wantData)})`);
+    };
+    // 키를 눌러도 focus는 터미널에 남는다(화면 키보드가 내려가지 않는다)
+    await key("Escape").click();
+    if (!(await tp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")))) bad.push("키가 focus를 가져갔다");
+    await sleep(300);
+    // 래치: 켠 Ctrl은 두 번 써도 남고, 다시 눌러야 풀린다
+    await key("Control").click();
+    await expect("Ctrl 래치 a", () => tp.keyboard.press("a"), "\x01");
+    if ((await key("Control").getAttribute("aria-pressed")) !== "true") bad.push("Ctrl이 한 번 쓰고 풀렸다");
+    await expect("Ctrl 래치 b", () => tp.keyboard.press("b"), "\x02");
+    await expect("Ctrl + 키 막대 ^C", () => key("ctrl-c").click(), "\x03");
+    await key("Control").click();
+    if ((await key("Control").getAttribute("aria-pressed")) !== "false") bad.push("Ctrl이 다시 눌러도 안 풀렸다");
+    await expect("풀린 뒤 c", () => tp.keyboard.press("c"), "c");
+    // 유지 키 + (키 막대 키 또는 하드웨어 키) = 같은 수식의 하드웨어 키
+    const combos = [
+      ["Control", "ArrowLeft", "bar"],
+      ["Alt", "ArrowLeft", "bar"],
+      ["Alt", "ArrowUp", "bar"],
+      ["Shift", "ArrowUp", "bar"],
+      ["Shift", "Tab", "bar"],
+      ["Alt", "Enter", "bar"],
+      ["Shift", "Enter", "bar"],
+      ["Control", "Home", "hw"],
+      ["Control", "PageUp", "hw"],
+      ["Alt", "b", "hw"],
+      ["Control", "Backspace", "hw"],
+      ["Shift", "a", "hw"],
+    ];
+    for (const [mod, k, how] of combos) {
+      // 글자는 물리 키 이름으로 누른다: Playwright는 "Shift+a"를 Shift를 쥔 "a"로 내지만 실제 자판은 "A"를 낸다
+      const physical = /^[a-z]$/.test(k) ? `Key${k.toUpperCase()}` : k;
+      const hardware = await sent(() => tp.keyboard.press(`${mod}+${physical}`), `하드웨어 ${mod}+${k}`);
+      await key(mod).click();
+      const viaBar = await sent(() => (how === "bar" ? key(k).click() : tp.keyboard.press(k)), `키 막대 ${mod}+${k}`);
+      await key(mod).click();
+      if (viaBar !== hardware) bad.push(`${mod}+${k}: 키 막대 ${JSON.stringify(viaBar)} ≠ 하드웨어 ${JSON.stringify(hardware)}`);
+    }
+    // 화살표 모드(DECCKM)를 켜면 키 막대 화살표도 SS3
+    await sent(() => tp.keyboard.press("Shift+K"));
+    await expect("DECCKM ↑", () => key("ArrowUp").click(), "\x1bOA");
+    await sent(() => tp.keyboard.press("Shift+J"));
+    await expect("DECCKM 끔 ↑", () => key("ArrowUp").click(), "\x1b[A");
+    // 꾹 누르면 400ms 뒤 50ms마다 되풀이, 손을 떼면 한 번 더 가지 않는다
+    const left = await key("ArrowLeft").boundingBox();
+    const held = await sent(async () => {
+      await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
+      await tp.mouse.down();
+      await sleep(700);
+      await tp.mouse.up();
+    });
+    const repeats = held.split("\x1b[D").length - 1;
+    if (repeats < 3 || held.replaceAll("\x1b[D", "") !== "") bad.push(`꾹 누름: ${JSON.stringify(held)}`);
+    // 누른 채 밀면 취소(아무것도 안 감)
+    const n0 = last();
+    await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
+    await tp.mouse.down();
+    await tp.mouse.move(left.x + left.width / 2 + 15, left.y + left.height / 2, { steps: 3 });
+    await sleep(600);
+    await tp.mouse.up();
+    await sleep(300);
+    if (last() !== n0) bad.push(`밀어서 취소한 누름이 갔다: ${JSON.stringify(lines().filter(([i]) => i > n0))}`);
+    // 조합 중에는 키 막대가 회색이고, 조합으로 확정된 글에는 유지 키가 붙지 않는다(다음 키를 기다린다)
+    await key("Control").click();
+    const textarea = tp.locator("textarea.xterm-helper-textarea");
+    await textarea.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" })));
+    await sleep(100);
+    if (!(await key("Escape").isDisabled())) bad.push("조합 중에 키 막대가 켜져 있다");
+    await textarea.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" })));
+    await sleep(100);
+    if (await key("Escape").isDisabled()) bad.push("조합이 끝나도 키 막대가 꺼져 있다");
+    const cdp = await tp.context().newCDPSession(tp);
+    const ime = await sent(async () => {
+      await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
+      await cdp.send("Input.insertText", { text: "한" });
+    });
     await cdp.detach();
-    await sleep(200);
-    if ((await ctrl.getAttribute("aria-pressed")) !== "true") throw new Error("조합 확정이 Ctrl을 써 버렸다");
-    await page.keyboard.type("b");
-    await page.keyboard.press("Enter");
-    // 터미널 echo 줄: 한은 그대로, 유지 키 Ctrl은 다음 키 b에 붙는다(한b가 아니라 한^B)
-    await until("조합 뒤 유지 키", async () => (await screenText(page)).includes("\n한^B\n"));
-    await page.getByRole("button", { name: "^C", exact: true }).click();
+    if (ime !== "한") bad.push(`조합 확정 글: ${JSON.stringify(ime)}`);
+    if ((await key("Control").getAttribute("aria-pressed")) !== "true") bad.push("조합 확정이 Ctrl을 풀었다");
+    await expect("조합 뒤 Ctrl b", () => tp.keyboard.press("b"), "\x02");
+    await key("Control").click();
+    if (bad.length) throw new Error(bad.join("; "));
+    await tp.context().close();
+    aaa("pane", "kill", "barapp");
+    await page.getByTestId("pane-t1").click();
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
@@ -764,6 +875,11 @@ try {
       return `${p.cols}x${p.rows}`;
     };
     const holder = () => aaa("pane", "list").panes.find((x) => x.name === "t1").lease?.label ?? null;
+    // 원래 화면이 t1을 쓰는 중에서 시작한다(앞 단계가 t1에 입력했는지에 기대지 않는다)
+    await page.locator(".xterm-screen").click();
+    await page.keyboard.type("echo own-$((1+2))\n");
+    await until("원래 화면 입력", async () => (await screenText(page)).includes("own-3"));
+    await until("원래 화면이 쓰는 중", () => holder() !== null);
     const held = t1size();
     const first = holder();
     await op.getByTestId("pane-t1").click();
@@ -1643,7 +1759,7 @@ try {
               app: document.querySelector(".app")?.getBoundingClientRect().height,
               cursor: cur ? { top: cur.top, bottom: cur.bottom } : null,
               input: bottom(".input-bar textarea"),
-              keys: bottom(".input-bar .keys"),
+              keys: bottom(".key-bar"),
               scroll: window.scrollY,
             };
           });

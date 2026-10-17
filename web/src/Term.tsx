@@ -16,7 +16,21 @@ import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
 import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
 import { attachTrace, trace } from "./inputTrace";
-import { clipboardKey, ctrlEnterSequence, modifyOtherKeysLevel } from "./herdr/keys.ts";
+import {
+  clipboardKey,
+  ctrlEnterSequence,
+  hasModifiers,
+  keyFromData,
+  modifyOtherKeysLevel,
+  navigationSequence,
+  NO_STICKY_MODIFIERS,
+  physicalKey,
+  terminalChord,
+  type StickyModifiers,
+} from "./herdr/keys.ts";
+import { DEFAULT_KEY_BAR_ITEMS, keyBarInputSequence, sanitizeKeyBarItems, type KeyBarKeyItem } from "./herdr/keyBar.ts";
+import { chordSequence, IS_MAC } from "./keyChord";
+import { KeyBar } from "./KeyBar";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -161,29 +175,26 @@ export function TermView({
   const attachRef = useRef(attachFile);
   attachRef.current = attachFile;
 
-  // 키 줄의 유지 키(Ctrl·Alt): 누르면 켜지고, 다음 입력 한 번에 적용한 뒤 풀린다(휴대폰 키보드에는 Ctrl이 없다)
-  const [mods, setMods] = useState({ ctrl: false, alt: false });
-  const modsRef = useRef(mods);
-  modsRef.current = mods;
-  const withMods = (data: string): string => {
-    const m = modsRef.current;
-    if (!m.ctrl && !m.alt) return data;
-    let out = data;
-    if (m.ctrl && data.length === 1) {
-      const c = data.toLowerCase().charCodeAt(0);
-      if (c >= 97 && c <= 122) out = String.fromCharCode(c - 96);
-      else if ("@[\\]^_".includes(data)) out = String.fromCharCode(data.charCodeAt(0) - 64);
-      else if (data === " ") out = "\x00";
-    }
-    if (m.alt) out = "\x1b" + out;
-    modsRef.current = { ctrl: false, alt: false };
-    setMods(modsRef.current);
-    return out;
-  };
+  // 키 막대의 유지 키(Ctrl·Alt·Shift, herdr-web-ui PaneTerminal 271~276·2237~2245줄): 다시 누를 때까지 켜져 있다(래치).
+  // pane이 바뀌면(다시 mount) 연결이 끊기면 풀린다. 하드웨어 키와 화면 키보드 글자 모두에 chord로 붙는다.
+  const [modifiers, setModifiers] = useState<StickyModifiers>(NO_STICKY_MODIFIERS);
+  const modifiersRef = useRef(modifiers);
+  modifiersRef.current = modifiers;
+  // 프로그램이 요청한 modifyOtherKeys 단계(CSI > 4 ; n m). Ctrl+Enter 인코딩에 쓴다.
+  const otherKeysRef = useRef(0);
+  // 붙여넣기 중: 붙여 넣은 글에는 유지 키를 붙이지 않는다(PaneTerminal `pasting`)
+  const pastingRef = useRef(false);
+  const chordCtx = () => ({
+    applicationCursorKeys: termRef.current?.modes.applicationCursorKeysMode ?? false,
+    modifyOtherKeys: otherKeysRef.current,
+    isMac: IS_MAC,
+  });
 
-  // 터미널 조합 상태(herdr-web-ui PaneTerminal과 같다): 조합 중이거나 방금 끝난 조합의 확정 글에는 유지 키를 붙이지 않는다
+  // 터미널 조합 상태(herdr-web-ui PaneTerminal과 같다): 조합 중이거나 방금 끝난 조합의 확정 글에는 유지 키를 붙이지 않는다.
+  // 조합 중에는 키 막대를 회색으로 둔다(PaneTerminal 3017줄).
   const composingTermRef = useRef(false);
   const commitPendingRef = useRef(false);
+  const [composing, setComposing] = useState(false);
 
   // 이 터미널이 화면에 있다. 다른 pane으로 바꾸면 화면에서 지우기 전에(layout effect 정리) 내린다: 지워지는 textarea의
   // blur가 조합 중 글자를 확정하는데, 버려진 그 글이 옛 pane으로 가면 안 된다(herdr-web-ui PaneTerminal presentedRef 검사).
@@ -199,7 +210,15 @@ export function TermView({
   const fromTerminal = (data: string) => {
     if (!presentRef.current) return;
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
-    input(composingTermRef.current || commitPendingRef.current ? data : withMods(data));
+    // 화면 키보드는 keydown 없이 글을 넣는다: 한 글자 키에는 유지 키 chord를 붙인다(PaneTerminal 1360~1363줄)
+    const m = modifiersRef.current;
+    if (hasModifiers(m) && !pastingRef.current && !composingTermRef.current && !commitPendingRef.current) {
+      const key = keyFromData(data);
+      const chord = key !== null ? terminalChord(key, m) : null;
+      const seq = chord !== null ? chordSequence(chord, chordCtx()) : null;
+      if (seq !== null) return input(seq);
+    }
+    input(data);
   };
 
   useEffect(() => {
@@ -240,11 +259,13 @@ export function TermView({
       compositionEndTimer = null;
       commitPendingRef.current = false;
       composingTermRef.current = true;
+      setComposing(true);
     };
     const compositionEnd = () => {
       if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
       commitPendingRef.current = true;
       composingTermRef.current = false;
+      setComposing(false);
       compositionEndTimer = window.setTimeout(() => {
         compositionEndTimer = null;
         commitPendingRef.current = false;
@@ -277,6 +298,44 @@ export function TermView({
     };
     // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡기고, 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
     term.attachCustomKeyEventHandler((event) => {
+      // 유지 키 + 하드웨어 키(PaneTerminal 620~651줄): 비라틴 자판 글자는 자판 위치로 읽는다(ㅊ on KeyC + Ctrl = Ctrl+C)
+      const held = modifiersRef.current;
+      if (
+        hasModifiers(held) &&
+        !readonlyRef.current &&
+        !composingTermRef.current &&
+        !commitPendingRef.current &&
+        !event.isComposing &&
+        event.keyCode !== 229 &&
+        !event.metaKey
+      ) {
+        const combined = {
+          ctrl: held.ctrl || event.ctrlKey,
+          alt: held.alt || event.altKey,
+          shift: held.shift || event.shiftKey,
+        };
+        const chord = terminalChord(physicalKey(event.key, event.code), combined);
+        const navigation = navigationSequence(event.key, combined);
+        if (navigation !== null) {
+          if (event.type === "keydown") {
+            event.preventDefault();
+            input(navigation);
+          }
+          return false;
+        }
+        // 진짜 클립보드 단축키는 브라우저 몫이다. 유지 Ctrl + 친 v는 터미널 chord다.
+        const letter = clipboardKey(event.key, event.code);
+        const clipboard =
+          event.ctrlKey && !event.altKey && /^(c|v)$/.test(letter) && (letter === "v" || term.hasSelection());
+        if (chord !== null && !clipboard) {
+          if (event.type === "keydown") {
+            event.preventDefault();
+            const seq = chordSequence(chord, chordCtx());
+            if (seq !== null) input(seq);
+          }
+          return false;
+        }
+      }
       if (!event.ctrlKey || event.altKey || event.metaKey) return true;
       const key = clipboardKey(event.key, event.code);
       if (key === "v") return false;
@@ -297,10 +356,10 @@ export function TermView({
       return true;
     });
     // modifyOtherKeys(CSI > 4 ; n m): xterm.js는 처리하지 않으므로 듣기만 하고 Ctrl+Enter를 그 형식으로 보낸다
-    let modifyOtherKeys = 0;
+    otherKeysRef.current = 0;
     const otherKeys = (final: "m" | "n") =>
       term.parser.registerCsiHandler({ prefix: ">", final }, (params) => {
-        modifyOtherKeys = modifyOtherKeysLevel(modifyOtherKeys, final, params);
+        otherKeysRef.current = modifyOtherKeysLevel(otherKeysRef.current, final, params);
         return false;
       });
     const otherKeysSet = otherKeys("m");
@@ -315,7 +374,7 @@ export function TermView({
       if (event.isComposing || event.keyCode === 229) return;
       if (key === "\r" && event.key === "Enter" && !event.altKey && !event.metaKey) {
         if (event.shiftKey && !event.ctrlKey) enterAs = "\x1b\r";
-        else if (event.ctrlKey && !event.shiftKey) enterAs = ctrlEnterSequence(modifyOtherKeys);
+        else if (event.ctrlKey && !event.shiftKey) enterAs = ctrlEnterSequence(otherKeysRef.current);
       }
       commandBackspace =
         isMac && key === "\x7f" && event.key === "Backspace" && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
@@ -350,6 +409,11 @@ export function TermView({
     }
     // xterm의 글 붙여 넣기보다 먼저 본다: 그림이면 가로채고, 아니면 그대로 둔다
     const onPaste = (e: ClipboardEvent) => {
+      // xterm은 이 capture 처리 바로 뒤에 붙여넣기를 처리한다: 그 글에는 유지 키를 붙이지 않는다
+      pastingRef.current = true;
+      queueMicrotask(() => {
+        pastingRef.current = false;
+      });
       const f = imageOf(e.clipboardData?.files);
       if (!f) return;
       e.preventDefault();
@@ -404,7 +468,7 @@ export function TermView({
             trace("snapshot");
             term.reset();
             // replay가 키보드 모드를 처음부터 다시 말한다(herdr-web-ui도 재접속 때 0으로 되돌린다)
-            modifyOtherKeys = 0;
+            otherKeysRef.current = 0;
             term.resize(msg.cols, msg.rows);
             setSize([msg.cols, msg.rows]);
             term.write(b64decode(msg.replay));
@@ -447,6 +511,8 @@ export function TermView({
         readonlyRef.current = true;
         setReadonly(true);
         setLink("closed");
+        // 끊기면 유지 키를 푼다(PaneTerminal 1261줄)
+        setModifiers(NO_STICKY_MODIFIERS);
         if (!stopped) timer = window.setTimeout(connect, delay);
         delay = Math.min(delay * 2, 10_000);
       };
@@ -620,6 +686,37 @@ export function TermView({
       if (attemptRef.current === a) giveUp();
     }, left);
   };
+  // 키 막대(herdr-web-ui PaneTerminal 2218~2245줄). 항목은 기기별 저장값(설정 화면은 아직 없다), 없으면 참고 기본 배열.
+  const [barItems] = useState(() => {
+    try {
+      const raw = localStorage.getItem("aaa:keybar-items");
+      return sanitizeKeyBarItems(raw === null ? undefined : JSON.parse(raw));
+    } catch {
+      return DEFAULT_KEY_BAR_ITEMS;
+    }
+  });
+  const pressKey = (item: KeyBarKeyItem) => {
+    const term = termRef.current;
+    if (!term || composingTermRef.current || commitPendingRef.current) return;
+    // 저장된 조합은 그대로, 보통 키는 유지 키를 이어받는다. 내장 ^C 키는 늘 ^C다.
+    const active = item.modifiers ?? modifiersRef.current;
+    const modified = (item.key !== "ctrl-c" || item.modifiers !== undefined) && (hasModifiers(active) || item.modifiers !== undefined);
+    const chord = modified ? terminalChord(item.key, active) : null;
+    const seq =
+      (modified ? navigationSequence(item.key, active) : null) ??
+      (chord !== null ? chordSequence(chord, chordCtx()) : null) ??
+      keyBarInputSequence(item.key, term.modes.applicationCursorKeysMode);
+    if (seq === null) return;
+    input(seq);
+    // 입력칸에서 치던 중이면 키보드는 그 칸에 둔다. 아니면 터미널이 받는다.
+    if (document.activeElement !== textRef.current) term.focus();
+  };
+  const toggleModifier = (modifier: keyof StickyModifiers) => {
+    if (composingTermRef.current) return;
+    setModifiers((m) => ({ ...m, [modifier]: !m[modifier] }));
+    if (document.activeElement !== textRef.current) termRef.current?.focus();
+  };
+
   const sendText = (enter: boolean, deferred = false) => {
     const current = attemptRef.current;
     if (deferred && current === null) return;
@@ -643,7 +740,14 @@ export function TermView({
     const value = textRef.current?.value ?? text;
     // 지우거나 취소해 비어 버린 글 보내기는 Enter가 아니다
     if (deferred && current!.textSend && !value) return;
-    if (value.includes("\n")) termRef.current?.paste(value);
+    if (value.includes("\n")) {
+      pastingRef.current = true;
+      try {
+        termRef.current?.paste(value);
+      } finally {
+        pastingRef.current = false;
+      }
+    }
     else if (value) input(value);
     if (enter) {
       if (value) window.setTimeout(() => input("\r"), ENTER_GAP_MS);
@@ -819,41 +923,17 @@ export function TermView({
               if (f) void attachFile(f);
             }}
           />
-          <div className="keys">
-            {(
-              [
-                ["Esc", "\x1b"],
-                ["Tab", "\t"],
-                ["Ctrl", "ctrl"],
-                ["Alt", "alt"],
-                ["^C", "\x03"],
-                ["←", "\x1b[D"],
-                ["↑", "\x1b[A"],
-                ["↓", "\x1b[B"],
-                ["→", "\x1b[C"],
-                ["⏎", "\r"],
-              ] as const
-            ).map(([label, seq]) =>
-              seq === "ctrl" || seq === "alt" ? (
-                <button
-                  type="button"
-                  key={label}
-                  className={`mod ${mods[seq] ? "on" : ""}`}
-                  aria-pressed={mods[seq]}
-                  disabled={locked}
-                  onClick={() => setMods((m) => ({ ...m, [seq]: !m[seq] }))}
-                >
-                  {label}
-                </button>
-              ) : (
-                <button type="button" key={label} disabled={locked} onClick={() => input(withMods(seq))}>
-                  {label}
-                </button>
-              ),
-            )}
-            <span className="hint">터미널을 누르면 키보드로 바로 입력한다 · 그림은 붙여 넣거나 끌어 놓는다</span>
-          </div>
         </form>
+      )}
+      {canControl && (
+        <KeyBar
+          items={barItems}
+          modifiers={modifiers}
+          onKey={pressKey}
+          onToggleModifier={toggleModifier}
+          disabled={locked || composing}
+          holdScope={pane.id}
+        />
       )}
     </section>
   );
