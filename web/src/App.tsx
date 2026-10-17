@@ -141,6 +141,9 @@ export function splitQuestion(text: string): { tool: string | null; body: string
 /**
  * 확인창 질문 카드. 답은 host가 질문이 아직 열려 있는지 다시 확인한 뒤 harness 키로 보낸다.
  * 목록에서는 작게(예·아니오 버튼), 터미널 아래에서는 선택지를 한 줄씩 번호와 함께 보인다.
+ * 답이 가는 동안과 실패는 카드 안에 보인다(herdr-web-ui PromptCard.tsx: `aria-busy`, 선택지 `disabled={pending}`,
+ * 카드 안 `role="alert"`). 휴대폰은 pane을 보는 동안 목록(머리 띠)이 숨으므로 오류가 카드 밖이면 아무도 못 본다.
+ * 카드는 질문 하나에 하나(`key`)라, 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다.
  */
 function QuestionCard({
   q,
@@ -152,12 +155,31 @@ function QuestionCard({
   q: QuestionView;
   where: string;
   canControl: boolean;
-  onPick: (q: QuestionView, c: string) => void;
+  onPick: (q: QuestionView, c: string) => Promise<void>;
   docked?: boolean;
 }) {
   const { tool, body } = splitQuestion(q.text);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shown = useRef(false);
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
+  const pick = async (choice: string) => {
+    setPending(true);
+    setError(null);
+    try {
+      await onPick(q, choice);
+    } catch (e) {
+      if (shown.current) setError(e instanceof ApiError ? e.message : String(e));
+    }
+    if (shown.current) setPending(false);
+  };
   return (
-    <div className="question" data-testid={docked ? `dock-question-${q.id}` : `question-${q.id}`}>
+    <div className="question" aria-busy={pending} data-testid={docked ? `dock-question-${q.id}` : `question-${q.id}`}>
       <div className="q-head">
         <span className="q-title">{KIND_LABEL[q.question_kind] ?? q.question_kind}</span>
         <span className="q-where">
@@ -171,7 +193,7 @@ function QuestionCard({
       {canControl ? (
         <div className="q-actions">
           {q.options.map((o, n) => (
-            <button key={o} className={o === "yes" ? "primary" : ""} onClick={() => onPick(q, o)}>
+            <button key={o} className={o === "yes" ? "primary" : ""} disabled={pending} onClick={() => void pick(o)}>
               {docked && <span className="key">{n + 1}</span>}
               {CHOICE_LABEL[o] ?? o}
             </button>
@@ -179,6 +201,11 @@ function QuestionCard({
         </div>
       ) : (
         <p className="muted small-text">보기 권한이라 답할 수 없다</p>
+      )}
+      {error !== null && (
+        <p className="q-error" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );
@@ -341,14 +368,10 @@ function Main({ role }: { role: DeviceRole }) {
   );
   useAlertSoundUnlock();
 
+  // 실패는 그 카드가 보인다(QuestionCard): 목록 머리 띠는 휴대폰에서 pane을 보는 동안 숨는다
   const answer = async (q: QuestionView, choice: string) => {
-    setMsg(null);
-    try {
-      const r = await call({ op: "question_answer", id: q.id, choice });
-      if (r.kind === "question") putQuestion(r);
-    } catch (e) {
-      setMsg(e instanceof ApiError ? e.message : String(e));
-    }
+    const r = await call({ op: "question_answer", id: q.id, choice });
+    if (r.kind === "question") putQuestion(r);
   };
   useEffect(() => {
     const on = () => setSel(selectedFromHash());

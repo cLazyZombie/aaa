@@ -565,7 +565,17 @@ let failed = false;
 const steps = [];
 /** 열려 있는 화면(pairPage). 단계가 실패하면 화면마다 termDiag를 남긴다(CI에서만 난 실패가 여러 단계에 걸쳐 났다) */
 const openPages = new Set();
+// AAA_E2E_REPEAT="<n>:<단계 이름 일부>": 그 단계를 제자리에서 n번 잇달아 돌린다(간헐·부하 실패를 연속 통과로 보일 때). 기본은 끔
+const repeat = /^(\d+):(.+)$/.exec(process.env.AAA_E2E_REPEAT ?? "");
 async function step(name, fn) {
+  if (repeat && name.includes(repeat[2])) {
+    const n = Number(repeat[1]);
+    for (let i = 1; i <= n; i++) await once(`${name} [${i}/${n}]`, fn);
+    return;
+  }
+  await once(name, fn);
+}
+async function once(name, fn) {
   const t0 = Date.now();
   try {
     await fn();
@@ -2069,9 +2079,12 @@ try {
     aaa("pane", "kill", "shrink");
   });
 
+  let histRuns = 0;
   await step("앞 기록(사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」, plan §8.67): 끊긴 동안 쏟아진 출력을 다시 붙은 뒤 위로 굴리며 차례로 받아 보고, 붙일 때 보던 자리가 튀지 않는다", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "histapp", "--", process.execPath, `${root}/history.js`);
-    await waitOutput("histapp", "hist>");
+    // AAA_E2E_REPEAT로 거듭 돌면 판마다 새 pane 이름(끝난 앞 판 pane이 목록에 남는다)
+    const histapp = histRuns++ === 0 ? "histapp" : `histapp${histRuns}`;
+    aaa("tab", "create", "--machine", "labA", "--label", histapp, "--", process.execPath, `${root}/history.js`);
+    await waitOutput(histapp, "hist>");
     // pane WebSocket 문: 닫혀 있으면 새 연결을 바로 끊는다(끊긴 동안). host의 앞 기록 답은 잠깐 붙잡아, 붙이기 전 화면을 잰다
     // 첫 답을 붙잡는 동안 온 출력도 붙잡았다가 답 바로 뒤에 보낸다: 다시 쓰는 사이에 출력이 오는 경우
     let gate = "open";
@@ -2103,7 +2116,7 @@ try {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const hp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
-    await hp.getByTestId("pane-histapp").click();
+    await hp.getByTestId(`pane-${histapp}`).click();
     await until("histapp 화면", async () => (await screenText(hp)).includes("hist>"));
     const box = hp.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
@@ -2111,8 +2124,8 @@ try {
     gate = "closed";
     pipe.ws.close({ code: 1011, reason: "test offline" });
     pipe.server.close({ code: 1000, reason: "test offline" });
-    aaa("pane", "send-text", "histapp", "h");
-    await waitOutput("histapp", "history-done");
+    aaa("pane", "send-text", histapp, "h");
+    await waitOutput(histapp, "history-done");
     gate = "open";
     await until("다시 붙음", async () => (await screenText(hp)).includes("history-done"), 30000);
     if ((await attr("historyMore")) !== "1") throw new Error(`다시 붙은 뒤 앞 기록 표시 ${await attr("historyMore")}`);
@@ -2135,8 +2148,8 @@ try {
       const before = await rows();
       // 첫 덩어리를 기다리는 동안 pane에 새 줄(tick-1): 다시 쓰는 사이에 도착한다
       if (round === 0) {
-        aaa("pane", "send-text", "histapp", "p");
-        await waitOutput("histapp", "tick-1");
+        aaa("pane", "send-text", histapp, "p");
+        await waitOutput(histapp, "tick-1");
       }
       await until(`붙임(${round + 1})`, async () => Number(await attr("historyApplied")) === applied + 1);
       applied += 1;
@@ -2206,9 +2219,9 @@ try {
       dt.setData("text/plain", "pa\nste");
       el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     });
-    await waitOutput("histapp", 'GOT:"\\u001b[200~pa\\rste\\u001b[201~"');
+    await waitOutput(histapp, 'GOT:"\\u001b[200~pa\\rste\\u001b[201~"');
     await hp.context().close();
-    aaa("pane", "kill", "histapp");
+    aaa("pane", "kill", histapp);
   });
 
   await step("출력이 밀릴 때(herdr-web-ui OutputWindow·pty-ack·4008 「Reconnect」, D7, plan §8.62): ACK를 못 하는 화면은 host가 4008로 닫고 다시 보내지 않으며 「다시 연결」로 새로 붙는다. 따라오는 화면은 그대로 받는다", async () => {
@@ -2601,6 +2614,38 @@ try {
     await state(page).and(page.locator('[data-status="working"]')).waitFor();
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+  });
+
+  await step("확인창 답이 실패하면 카드 안에 보인다(herdr-web-ui PromptCard.tsx pending·role=alert, QA t-0337 Q3): 휴대폰에서 답하는 동안 선택지가 막히고, host가 선택 창을 못 찾은 오류가 그 카드에 뜨며 다시 누를 수 있다", async () => {
+    // 선택 창 끝 줄(「Esc to cancel」)이 없는 확인창: host는 MENU_WAIT 동안 찾다가 오류로 답한다
+    const script =
+      'printf "Allow Bash(make lint)?\\n\\342\\235\\257 1. Yes\\n  2. No\\n"; ' +
+      '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make lint"}}\'; ' +
+      "stty -echo; exec cat > /dev/null";
+    aaa("tab", "create", "--machine", "labA", "--label", "q2", "--", "/bin/sh", "-c", script, AA);
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    await ph.page.getByTestId("agent-q2").and(ph.page.locator('[data-status="blocked"]')).waitFor();
+    await ph.page.getByTestId("pane-q2").click();
+    const q = aaa("question", "list").questions.find((x) => x.text.includes("make lint"));
+    const id = `dock-question-${q.id}`;
+    const card = ph.page.getByTestId(id);
+    await card.waitFor();
+    const answered = ph.page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "question_answer");
+    await card.getByRole("button", { name: "예" }).click();
+    // 답이 가는 동안: 카드는 aria-busy, 선택지는 막힘(누른 순간의 모습을 본다. 답은 MENU_WAIT 뒤에 온다)
+    const busy = await card.evaluate((c) => [c.getAttribute("aria-busy"), [...c.querySelectorAll(".q-actions button")].map((b) => b.disabled)]);
+    if (JSON.stringify(busy) !== JSON.stringify(["true", [true, true]])) throw new Error(`답하는 동안 카드 ${JSON.stringify(busy)}`);
+    const res = await (await answered).json();
+    if (res.ok !== undefined) throw new Error(`실패해야 할 답이 성공했다: ${JSON.stringify(res)}`);
+    await domIs(ph.page, "카드 안 오류", (sel) => document.querySelector(sel)?.textContent.includes("터미널에서 직접 답한다"), `[data-testid="${id}"] [role=alert]`);
+    const after = await card.evaluate((c) => [c.getAttribute("aria-busy"), [...c.querySelectorAll(".q-actions button")].map((b) => b.disabled)]);
+    if (JSON.stringify(after) !== JSON.stringify(["false", [false, false]])) throw new Error(`오류 뒤 카드 ${JSON.stringify(after)}`);
+    // 오류는 카드에만(휴대폰은 pane을 보는 동안 목록 머리 띠가 숨는다)
+    if (!(await card.getByRole("alert").isVisible())) throw new Error("휴대폰에서 카드 오류가 보이지 않는다");
+    await shot(ph.page, "phone-question-error");
+    if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    await ph.page.context().close();
+    aaa("pane", "kill", "q2");
   });
 
   await step("끝남(안 봄)(herdr PaneState::seen, 차이 목록 S1): 보는 화면 없이 턴이 끝나면 초록 점, 그 pane을 열면 사라지고, 보는 동안 끝난 턴은 남지 않으며, 가려진 동안 끝나면 다시 보일 때 사라진다", async () => {
