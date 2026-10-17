@@ -338,6 +338,9 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap, body: Opti
             crate::push::Sent::Failed(e) => failed.push(e),
         }
     }
+    // 시험 알림은 사람이 켜거나 「테스트 보내기」를 누를 때만 간다(쓰는 화면이 있어도 보낸다, 참고 server/push.ts sendTest).
+    // 휴대폰에 뜬 배너가 어디서 왔는지 가릴 수 있게 남긴다(사용자 화면 10-18 00:27, plan §8.80)
+    host.db.audit(&format!("device:{id}"), "push_test", &format!("sent {sent} failed {}", failed.len()));
     if only.is_some() && sent == 0 {
         let gone = failed.first().is_some_and(|f| f.starts_with("브라우저가 구독을 버렸다"));
         let err = if gone {
@@ -429,6 +432,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
+    // 살아 있는지: 브라우저는 WebSocket ping에 저절로 pong한다. 휴대폰이 잠들거나 망이 바뀌어 반쯤 열린 연결은 보내기가
+    // 실패하지 않고 몇 분씩 남는다. 그동안 이 연결의 「쓰는 화면」이 남아 어느 기기에도 push가 가지 않고, 그 화면은 사건을
+    // 받지 못한다(10-18 iPhone 실기). 아무것도 받지 못한 채 EVENTS_DEAD_AFTER가 지나면 끊는다(herdr-web-ui는 Bun
+    // WebSocket의 ping·idleTimeout과 웹 ws.ts 「Liveness」 probe가 같은 일을 한다).
+    let (every, dead_after) = events_liveness();
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    let mut heard = tokio::time::Instant::now();
     loop {
         if send_preferences {
             send_preferences = false;
@@ -479,12 +489,29 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 send_state = false;
                 send_preferences = true;
             }
+            _ = ping.tick() => {
+                send_state = false;
+                if heard.elapsed() >= dead_after {
+                    tracing::info!("상태 사건 연결이 {}초 동안 답하지 않아 끊는다", dead_after.as_secs());
+                    break;
+                }
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
             m = socket.recv() => {
                 send_state = false;
+                heard = tokio::time::Instant::now();
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
                         Ok(EventsClientMsg::Presence { active }) => presence.set(active),
+                        Ok(EventsClientMsg::Ping { id }) => {
+                            let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                            if socket.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
                         Err(_) => {}
                     },
                     _ => {}
@@ -492,6 +519,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             }
         }
     }
+}
+
+/// 상태 사건 연결의 WebSocket ping 간격과, 아무것도 받지 못하면 끊는 시간(15초·45초: ping 두 번을 놓치고도 남는다).
+/// `AAA_TEST_EVENTS_PING_MS`는 시험에서만 줄인다(끊는 시간은 그 세 배).
+fn events_liveness() -> (std::time::Duration, std::time::Duration) {
+    let ms = std::env::var("AAA_TEST_EVENTS_PING_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(15_000);
+    (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.

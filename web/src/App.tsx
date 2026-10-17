@@ -23,7 +23,6 @@ import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
-import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
 
@@ -246,6 +245,8 @@ function Main({ role }: { role: DeviceRole }) {
   const alertKinds = useRef<Set<string> | null>(null);
   const seenQuestions = useRef(new Set<string>());
   const seenReports = useRef(new Map<string, string | null>());
+  // 이 화면이 한 번이라도 붙었었나: 다시 붙을 때 읽은 목록은 끊긴 동안 놓친 사건이다(아래)
+  const linkedOnce = useRef({ questions: false, threads: false });
   const now = useRef({ sel, panes, threads, machines });
   now.current = { sel, panes, threads, machines };
   const questionNews = (q: QuestionView) => {
@@ -314,7 +315,11 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "questions", all: false })
               .then((r) => {
                 if (r.kind !== "questions") return;
-                for (const q of r.questions) seenQuestions.current.add(q.id);
+                // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
+                // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.82)
+                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q);
+                else for (const q of r.questions) seenQuestions.current.add(q.id);
+                linkedOnce.current.questions = true;
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
@@ -323,7 +328,15 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "threads", project: null, role: null })
               .then((r) => {
                 if (r.kind !== "threads") return;
-                for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                // 위 질문과 같다: 다시 붙을 때는 끊긴 동안 온 새 보고를 알린다(처음 보는 thread는 새 소식이 아니다)
+                // 끊긴 동안 새로 생긴 thread도 처음 붙을 때 목록에 없었으니 새 소식이다
+                if (linkedOnce.current.threads)
+                  for (const t of r.threads) {
+                    if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
+                    reportNews(t);
+                  }
+                else for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                linkedOnce.current.threads = true;
                 setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
               })
               .catch(() => {});
@@ -505,21 +518,55 @@ function MoreMenu() {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const box = useRef<HTMLSpanElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  // 닫기와 키(herdr-web-ui RowMenu.tsx 104~165줄): 열면 첫 항목에 focus(키보드 사건이 메뉴로 온다), Esc는 window에서
+  // 먼저 받아 닫고, 바깥 누름·focus가 메뉴 밖으로 나가면 닫는다. 위·아래·Home·End로 옮기고 Tab은 닫는다. 닫히면 ⋯로 돌아간다
+  const close = useCallback(() => {
+    setOpen(false);
+    if (menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     if (!open) return;
+    window.requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>("[role^=menuitem]")?.focus());
     const away = (e: Event) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
     };
     const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      close();
     };
-    document.addEventListener("pointerdown", away, true);
-    document.addEventListener("keydown", esc);
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", esc, true);
     return () => {
-      document.removeEventListener("pointerdown", away, true);
-      document.removeEventListener("keydown", esc);
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", esc, true);
     };
-  }, [open]);
+  }, [open, close]);
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const move = (next: number) => {
+      e.preventDefault();
+      items[(next + items.length) % items.length]?.focus();
+    };
+    if (e.key === "ArrowDown") move(at + 1);
+    else if (e.key === "ArrowUp") move(at - 1);
+    else if (e.key === "Home") move(0);
+    else if (e.key === "End") move(items.length - 1);
+    else if (e.key === "Tab") {
+      e.preventDefault();
+      close();
+    }
+  };
+  const onMenuBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && box.current?.contains(next)) return;
+    // Mac Safari는 누른 단추에 focus를 주지 않아 relatedTarget이 없다: 누름은 pointerdown이 판단한다
+    if (next) setOpen(false);
+  };
   useEffect(() => {
     if (!note) return;
     const t = window.setTimeout(() => setNote(null), 2000);
@@ -529,6 +576,7 @@ function MoreMenu() {
   return (
     <span className="more" ref={box}>
       <button
+        ref={button}
         className="ghost icon"
         data-testid="more"
         aria-label={label}
@@ -546,7 +594,7 @@ function MoreMenu() {
         </span>
       )}
       {open && (
-        <div className="more-menu" role="menu">
+        <div className="more-menu" role="menu" aria-label="더 보기" ref={menu} onKeyDown={onMenuKey} onBlur={onMenuBlur}>
           <button
             role="menuitem"
             onClick={() => {
@@ -582,30 +630,15 @@ function MoreMenu() {
   );
 }
 
-/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에 있다 */
+/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에,
+ * 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다(참고 목록에 그런 자리가 없다) */
 function ListFoot() {
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
-  const tr = useInputTrace();
-  // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
-  const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   return (
     <div className="list-foot">
-      {showTrace && (
-        <button className="ghost" data-testid="trace-toggle" aria-pressed={tr.on} onClick={() => setTrace(!tr.on)}>
-          <Icon name="file" />
-          {tr.on ? `입력 기록 끄기(${tr.count}개 모음)` : "입력 기록 켜기(실기 키보드 진단)"}
-        </button>
-      )}
-      {tr.on && (
-        <button className="ghost" data-testid="trace-send" disabled={tr.count === 0} onClick={() => void tr.send()}>
-          <Icon name="send" />
-          입력 기록 보내기
-        </button>
-      )}
-      {tr.msg && <p className="foot-msg">{tr.msg}</p>}
       {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
       {!installed && (
         <button
@@ -637,29 +670,6 @@ function ListFoot() {
       {settingsOpen && <SettingsDialog onClose={closeSettings} />}
     </div>
   );
-}
-
-/** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
-function useInputTrace() {
-  const [on, setOn] = useState(traceOn());
-  const [count, setCount] = useState(traceCount());
-  const [msg, setMsg] = useState<string | null>(null);
-  useEffect(
-    () =>
-      onTraceChange(() => {
-        setOn(traceOn());
-        setCount(traceCount());
-      }),
-    [],
-  );
-  const send = async () => {
-    try {
-      setMsg(`보냈다: ${await sendTrace()}`);
-    } catch (e) {
-      setMsg(`보내지 못했다: ${(e as Error).message}`);
-    }
-  };
-  return { on, count, msg, send };
 }
 
 /** 사후 평가자 표시: 동작 상태와 정하지 않은 개선안 수. 누르면 평가자 pane을 연다(닫아도 배경에서 계속 돈다). */
