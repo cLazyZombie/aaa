@@ -10,6 +10,7 @@ mod evaluator;
 pub mod front;
 mod harness;
 mod health;
+mod http;
 mod inbox;
 mod library;
 pub mod link;
@@ -20,6 +21,7 @@ mod push;
 mod routine;
 pub mod tailscale;
 mod tasks;
+pub mod usage;
 pub mod web;
 
 use std::collections::{HashMap, HashSet};
@@ -237,6 +239,8 @@ pub struct Host {
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
+    /// 구독 사용량(웹이 물을 때만 읽는다)
+    usage: usage::UsageService,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
@@ -344,6 +348,7 @@ impl Host {
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
             vapid,
+            usage: usage::UsageService::new(usage::UsageContext::system()),
             notify_tx: Mutex::new(None),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),

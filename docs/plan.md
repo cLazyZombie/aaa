@@ -888,15 +888,15 @@ host 프로젝트 폴더 구성:
   - sidebar 320px에 질문(답을 기다림) → Thread → 머신별 pane 순으로 둔다. 한 줄은 앞 표시(harness·thread 아이콘) + 제목/부제 두 줄 + 뒤 상태 글이다.
   - thread pane은 thread 제목으로 보인다. 평소 상태인 「실행」은 적지 않고, 끝났거나 끊긴 것만 적는다.
   - 질문 카드는 「Bash {json}」을 도구 이름과 명령 상자로 풀어 보인다. 터미널 아래(입력 위)에도 번호 붙은 선택지로 붙는다.
-  - 입력은 둥근 카드 하나(그림·글·보내기)와 특수 키 줄이다. thread 보기는 가운데 860px 문서 모양(제목·meta·보고 카드·결과물 카드)이다.
+  - 입력은 바로 입력이나 입력줄(그림·글·보내기, §8.44)과 키 막대(§8.43)다. thread 보기는 가운데 860px 문서 모양(제목·meta·보고 카드·결과물 카드)이다.
   - 휴대폰은 목록과 보기를 화면 전체로 바꿔 보인다. 줄 높이는 56px, 키 줄은 40px 높이, header는 반투명이다. 터치 기기에서는 hover 색을 쓰지 않는다.
-  - **입력칸(composer, M3 10-17).**
-    - 글 줄 수만큼(최대 6줄) 늘어나는 여러 줄 입력이다.
-    - 데스크톱은 Enter가 보내기, Shift+Enter가 줄바꿈이다. 터치 기기(화면 키보드)는 Enter가 줄바꿈이고 보내기 단추로 보낸다.
-    - 한글 등 IME 조합 중의 Enter는 글자 확정만 하고 보내지 않는다(`isComposing`·keyCode 229).
-    - 여러 줄은 터미널 붙여넣기로 보낸다. 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다. 그래서 Claude·Codex 입력창이 줄마다 제출하지 않는다. Enter는 지금처럼 따로 조금 뒤에 보낸다.
-    - 쓰다 만 글은 pane마다 그 탭(sessionStorage)에 남는다. 휴대폰에서 앱을 내렸다 올려도, 다른 pane을 봤다 와도 그대로다.
-  - 키 줄: Esc·Tab·Ctrl·Alt·^C·←↑↓→·⏎. Ctrl·Alt는 유지 키다. 누르면 켜지고, 다음 입력 한 번(터미널 글자 또는 키 줄 키)에 붙은 뒤 풀린다. 휴대폰에서는 가로로 밀어 본다.
+  - **입력 방식(§8.44, herdr-web-ui terminalInputMode, 결정 20 D1).** 기본은 바로 입력(터미널에 직접 친다)이다. 입력줄은 기기마다 고른다: 터치 기기는 키 막대 맨 앞 ⌨로 바꾼다. 데스크톱에서 입력줄을 고르는 설정 화면은 아직 없다.
+    - 입력줄은 터미널 마지막 줄 위에 떠서 4줄까지 자란다. 흐름에는 한 줄 칸만 두어 자라도 PTY 크기를 바꾸지 않는다.
+    - 모든 기기에서 Enter가 보내기, Shift+Enter가 줄바꿈이다. 한글 등 IME 조합 중의 Enter는 글자 확정만 한다(`isComposing`·keyCode 229). 빈 줄 보내기는 Enter만 누른다(유지 키가 붙는다).
+    - 여러 줄은 터미널 붙여넣기로 보낸다. 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다. 그래서 Claude·Codex 입력창이 줄마다 제출하지 않는다. Enter는 따로 조금 뒤에 보낸다.
+    - 쓰다 만 글은 머신·pane마다 이 기기(localStorage, 32,768자 상한)에 남는다. 보내는 동안 친 글은 남는다.
+    - 연결이 끊겨도 입력줄은 쓸 수 있고 보내기만 막힌다.
+  - 키 막대(§8.43, herdr-web-ui KeyBar): Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→. 터치 기기나 폭 768px 이하에서만 보인다. Ctrl·Alt·Shift는 유지 키다. 다시 누르거나 연결이 끊길 때까지 켜져 있다(래치). 휴대폰에서는 가로로 밀어 본다.
 - **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다.
   - 탭 줄은 이름표·workspace·탭(지금 탭은 강조색 바탕)으로 짜고, 오른쪽에 열린 질문 수를 둔다.
   - 포커스 pane과 맞닿은 구분선만 강조색으로 그린다.
@@ -1184,7 +1184,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **지시.** 「새로 만들지 말고 herdr-web-ui를 따라한다.」 iPhone에서 「입력」이 「ㅇㅣㅂㄹㅕㄱ」로, 데스크톱에서도 초성·중성·종성이 분리됐다.
 - **옮긴 것(herdr-web-ui `aa624cb`).**
   - xterm을 6.0.0에서 herdr-web-ui와 같은 5.5.0(addon-fit 0.10.0)으로 내리고, 그 IME patch를 소스에 붙여 빌드한다(`web/patches/`, `web/xterm-source.mjs`, `scripts/build-xterm.ts`와 같은 방식). npm에는 bun의 patchedDependencies가 없어 빌드 때 cache에 복사해 붙인다. `patch(1)` 결과와 같은지 확인했다.
-  - 터미널 조합 상태(`PaneTerminal.tsx` 588~605줄): 조합 중이거나 방금 끝난 조합의 확정 글에는 키 줄 유지 키(Ctrl·Alt)를 붙이지 않는다.
+  - 터미널 조합 상태(`PaneTerminal.tsx` 588~605줄): 조합 중이거나 방금 끝난 조합의 확정 글에는 키 막대 유지 키(Ctrl·Alt·Shift)를 붙이지 않는다.
   - 입력 막대(`TerminalInput.tsx`): 조합 중 Enter·keyCode 229 Enter는 보내지 않는다(이미 같았다). 조합 중에 누른 보내기는 blur·focus로 확정시키고 compositionend 뒤 보낸다. 누른 때부터 300ms(`COMMIT_WAIT_MS`) 안에 확정되지 않으면 「글자를 마친 뒤 보낸다」. 보내기 단추는 focus를 가져가지 않고, 보낸 뒤에도 입력칸이 focus를 지킨다(화면 키보드가 그대로).
 - **시험(웹 E2E 24단계).** herdr-web-ui 재생 시험의 기록 순서를 옮겼다.
 
@@ -1299,6 +1299,114 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 고치기 전 웹: Shift+Enter가 `\r`로 갔다.
   - 새 웹과 옛 vt: Ctrl+Enter가 `\r`로 갔다.
   - `aaa-vt` 유닛 시험 `replay_says_modify_other_keys_again`.
+
+### 8.43 키 막대를 herdr-web-ui KeyBar대로(10-17, 차이 목록 2 C)
+
+- **옮긴 것.** `herdr/keyBar.ts`·`keyRepeat.ts`는 그대로 복사했다. `web/src/KeyBar.tsx`는 참고 `KeyBar.tsx`를 옮긴 것이다. 문구는 한국어로, lucide 아이콘은 글자로 바꿨다.
+  - 기본 항목과 순서: Esc, Tab, ^C, Ctrl, Alt, Shift, Enter, ↑, ↓, ←, →.
+  - 터치(`pointer: coarse`)나 폭 768px 이하에서만 보인다(KeyBar.css와 같은 media query). 데스크톱 마우스 화면에는 없다.
+  - 유지 키 Ctrl·Alt·Shift는 래치다. 다시 누를 때까지 켜져 있고, 연결이 끊기면 풀린다. pane이 바뀌면 화면이 다시 열려 풀린다.
+  - 화살표·⌫·Del·Home·End·PgUp·PgDn은 꾹 누르면 400ms 뒤 50ms마다 되풀이한다. 10px 넘게 밀면 취소한다.
+  - 키를 눌러도 focus를 가져가지 않는다(화면 키보드가 내려가지 않는다). 터미널 조합 중에는 회색이고 눌러도 가지 않는다.
+  - 붙여 넣은 글과 조합으로 확정된 글에는 유지 키를 붙이지 않는다. 유지 키는 다음 키를 기다린다.
+  - 화살표 키는 프로그램 화살표 모드(DECCKM)를 따른다. 항목 목록은 기기별 `localStorage`(`aaa:keybar-items`)에서 읽고 `sanitizeKeyBarItems`로 거른다.
+- **다른 곳 1: chord 인코딩을 front가 한다.** 참고는 유지 키 + 키를 chord(`ctrl+left` 등)로 herdr에 보내고, herdr가 pane 프로그램의 키보드 프로토콜로 인코딩한다. aaa host에는 그 인코더가 없다. 그래서 `web/src/keyChord.ts`가 front에서 bytes로 바꾼다.
+  - 기준: 같은 수식을 하드웨어 키로 눌렀을 때 이 웹 터미널(xterm.js 기본 인코더 + §8.42 재매핑)이 보내는 bytes와 같다.
+  - 그래서 xterm.js `Keyboard.ts`의 Alt+화살표 규칙도 따른다. Alt+←→는 macOS면 `ESC b`·`ESC f`, 그 밖은 Ctrl+←→다. Alt+↑↓는 macOS가 아니면 Ctrl+↑↓다.
+  - Shift+Enter는 `ESC CR`, Ctrl+Enter는 modifyOtherKeys대로(§8.42), Shift+Tab은 `CSI Z`다.
+- **다른 곳 2: 항목 설정 화면은 아직 없다.** 참고 KeyBarSettings(추가·삭제·순서)는 설정 화면을 만들 때 옮긴다. 저장값을 읽고 거르는 것만 지금 옮겼다.
+- **다른 곳 3: lens·active.** 참고는 lens나 active pane이 바뀌어도 유지 키를 푼다. aaa에는 lens가 없고 화면마다 pane이 하나라 pane이 바뀌면 화면이 다시 열린다.
+- **시험.** 웹 E2E 「키 막대」 단계(터치 820×1180, platform Linux).
+  - 데스크톱에서는 숨김, 키 순서, focus 유지, 래치를 본다.
+  - 유지 키 + 키 막대 키(또는 친 키)가 같은 수식의 하드웨어 키와 같은 bytes인지 키마다 견준다.
+  - DECCKM, 꾹 누름 반복, 밀어서 취소, 조합 중 회색, CDP IME 확정 뒤 Ctrl도 본다.
+  - 처음 만든 encoder는 Alt+←·Alt+↑가 하드웨어와 달랐다(`CSI 1;3D` ≠ `CSI 1;5D`). xterm.js 규칙을 따르게 고쳤다.
+  - 이 단계가 옛 「키 줄」 단계를 대신한다. 옛 단계가 t1에 입력해 두던 것에 「두 controller」 단계가 기대고 있었다. 이제 그 단계가 처음에 직접 t1에 입력한다.
+
+### 8.44 입력 방식을 herdr-web-ui대로: 바로 입력 기본, 입력줄은 기기별(10-17, 결정 20 D1, 차이 목록 2 D)
+
+- **옮긴 것.** `herdr/terminalDraft.ts`는 그대로 복사했다. `web/src/TerminalInput.tsx`는 참고 `TerminalInput.tsx`를 옮겼다(문구 한국어). PaneTerminal 358~361·2218~2245·2318~2393·3008~3020줄을 따랐다.
+  - 입력 방식은 기기별 설정(`aaa:terminal-input-mode`, `auto`=바로 입력)이다. 터치 기기는 키 막대 맨 앞 ⌨로 바꾼다. 입력줄 조합 중에는 ⌨만 회색이다.
+  - 입력줄이면 xterm 칸에 `inputmode=none`을 둔다(터미널을 눌러도 화면 키보드가 안 올라온다). 바로 입력을 켤 때만 터미널에 focus를 준다. 키 막대 키는 입력줄의 키보드를 터미널로 옮기지 않는다.
+  - 입력줄은 그리드 위에 뜨고 4줄까지 자란다. 흐름에는 한 줄 칸만 둔다. 모드를 바꾸면 그 한 줄만큼 PTY가 한 번 바뀐다(참고와 같다).
+  - Enter는 모든 기기에서 보내기다(`enterKeyHint="send"`). 빈 줄 보내기는 Enter이고 단추 그림이 ⏎로 바뀐다. 조합 중 누른 보내기는 확정을 300ms 기다린다.
+  - 초안은 머신·pane마다 localStorage에 둔다. 보내는 동안 친 글은 지우지 않는다(보낸 앞부분만 지운다). 끊겨도 입력줄은 그대로고 보내기만 거부한다.
+- **다른 곳 1: 입력 확인 답.** 참고는 server의 submit 답을 기다려 「보냄」으로 친다. aaa 입력 protocol에는 답이 없다. Enter까지 보낸 때(300ms 뒤)를 「보냄」으로 친다. 답을 받으려면 protocol을 바꿔야 해 따로 한다.
+- **다른 곳 2: 「그림」 단추.** 참고 터미널 화면에는 없고 chat 화면 composer에 있다. aaa chat 화면은 아직 읽기 전용이라(D3) 휴대폰에서 그림을 올릴 곳이 입력줄뿐이다. 그래서 입력줄 앞에 둔다. 붙여넣기·끌어 놓기는 바로 입력에서도 된다.
+- **다른 곳 3: 받아쓰기(VoiceInput)** 는 aaa에 없다. 설정 화면도 아직 없어 데스크톱에서는 입력줄을 고를 수 없다(설정 화면을 만들 때 넣는다).
+- **바뀐 사용자 규칙.** 데스크톱 기본 화면에서 입력 막대가 없어졌다. 휴대폰 Enter가 줄바꿈에서 보내기로 바뀌었다(§8.23 규칙을 결정 20 D1로 바꾼다).
+- **시험.** 웹 E2E 「입력 방식」 단계: 데스크톱·터치 기본에 입력줄 없음, ⌨ 맨 앞, 입력줄 켜면 `inputmode=none`·저장, 글+Enter·빈 Enter·Alt+빈 Enter bytes, 키 막대가 focus를 안 옮김, 6줄을 써도 PTY·그리드 높이 그대로(rows 4), 조합 중 ⌨만 회색, 다시 바로 입력이면 터미널 focus.
+  - 입력줄을 쓰는 단계는 그 화면을 입력줄로 두고 돈다(`pairPage` `line`). 휴대폰 Enter·끊김 단언은 참고 규칙으로 바꿨다(위 「바뀐 사용자 규칙」).
+  - 화면 키보드 단계는 터미널을 바로 입력에서, 입력줄을 ⌨로 켠 뒤에 본다. PTY 기준은 모드를 바꾼 뒤에 잰다.
+
+### 8.45 구독 사용량 막대와 설정 톱니를 herdr-web-ui대로(10-17, 사용자 요청)
+
+- **요청.** 목록 왼쪽 아래에 설정 톱니와 구독별 남은 양(주간) 막대를 herdr-web-ui처럼 넣는다(사용자 캡처: 휴대폰 sidebar 바닥 줄).
+- **옮긴 것(herdr-web-ui aa624cb).**
+  - host `crates/aaa-host/src/usage.rs` ← `server/usage.ts`. Claude·Codex·Cursor·Copilot·Grok·Antigravity·OpenCode의 CLI 로그인으로 한도를 읽는다.
+    - 읽기만 한다(token refresh 안 함, 끝났으면 `expired`). FRESH 5분, 다시 읽기 30초, 실패 뒤 1분, 429는 Retry-After까지 계정마다 기다린다.
+    - 뒤에서 혼자 돌지 않는다: 웹이 물을 때만 읽는다. 계정을 말하지 않는 로그인의 key는 찾은 곳의 hash다(경로가 브라우저로 가지 않는다).
+  - `GET /api/v1/usage[?refresh=1]` → `UsageReport`(aaa-proto, 참고 `shared/protocol.ts` Usage 형식 그대로). 보기 권한 기기도 본다(참고: 들어온 client 누구나). `cache-control: no-store`.
+  - 웹 `usage.ts` ← `lib/usage.ts`(import만 바꾸고 문구 한국어), `UsageMeters.tsx` ← `UsageMeters.tsx`, 바닥 줄 ← `MachineSidebar` `sidebar-footer-row`, 설정 창의 「입력 방식」·「구독 사용량」·「계정」 묶음 ← `SettingsDialog`(Terminal·Usage 쪽).
+- **다른 곳 1: keychain을 로그인 세션 밖에서 다시 읽지 않는다.** 참고는 `security`가 36(잠김)을 내면 launchd 일회 job(`launchctl bootstrap gui/<uid>`)으로 다시 읽는다. launchd job을 만드는 일은 사용자 승인이 필요한 시스템 동작이다. aaa host는 로그인 세션의 LaunchAgent로 돈다. 그때는 `locked`로 알린다.
+- **다른 곳 2: 설정은 이 기기에만.** 참고는 구독 사용량 설정을 server에 두어 기기끼리 나눈다(shared). aaa에는 설정 저장소가 아직 없어 localStorage에 둔다.
+- **다른 곳 3: 막대가 기본으로 보인다.** 참고 기본은 끔이다. 사용자가 보이라고 해서 켬으로 둔다. 쓴 양·주간은 참고 기본 그대로다(캡처의 Claude 95% 빨강은 쓴 양이다).
+- **다른 곳 4: 설정 창의 쪽.** 이번에는 aaa가 뒷받침하는 묶음만 넣었다(터미널 입력 방식·구독 사용량·계정 순서·숨기기). 데스크톱에서도 입력줄을 고를 수 있게 됐다(§8.44의 빈 곳). 모양·알림·기기·키 막대 편집 등은 그 기능을 옮길 때 넣는다. 구독 표시는 참고 AgentMark 대신 aaa 아이콘(Claude·Codex)과 이름 첫 글자다.
+- **HTTP.** `crates/aaa-host/src/http.rs`: 본문(Content-Length·chunked·닫힘)을 1MiB까지 읽는 작은 client. 이미 쓰는 rustls·webpki 위에 두어 새 crate를 넣지 않았다(Retry-After 날짜만 `httpdate`, 이미 lock에 있던 판).
+- **시험 고리.** `AAA_USAGE_HOME`(집, keychain·gh·환경 변수 안 씀), `AAA_USAGE_ORIGIN`(구독 주소의 scheme·host를 가짜 서버로). 웹 E2E와 유닛 시험이 실제 로그인·keychain에 닿지 않는다.
+- **시험.**
+  - 유닛(`usage::tests`, 가짜 집·keychain·gh·loopback 서버): 일곱 구독 읽기, 5분 캐시와 30초 다시 읽기, 429 Retry-After, 끝난 token은 묻지 않음, keychain과 파일 중 늦은 것, 잠긴 keychain, 이름 없는 계정 번호와 경로 없는 key. `http::tests`: Content-Length·chunked(작은 chunk 5000개)·닫힘·상한.
+  - 웹 E2E 「구독 사용량·설정」: 칩(95% 빨강, 429는 「—」 흐림), 펼친 한도·초기화까지·plan·계정, 여러 화면을 열어도 구독마다 한 번만 물음, 남은 양·세션·숨기기·순서, 설정 창에서 입력줄, 다시 열어도 남음, 끄면 사라짐.
+  - 실제로 읽어 본 구독은 없다. Cursor·Copilot·Grok·Antigravity·OpenCode는 지어낸 답으로만 시험했다(§8.49에서 그 다섯은 지웠다). 운영 host 머신(mac-a)의 Claude·Codex는 host를 다시 띄운 뒤 사용자 화면에서 처음 읽는다. 이때 macOS keychain 허용 창이 그 머신에 뜰 수 있다.
+
+### 8.46 끊긴 동안 친 글을 붙잡는다(10-17, 차이 목록 2 E)
+
+- **전.** host나 agent가 끊긴 동안 터미널에 친 글은 읽기 전용이라 조용히 버려졌다.
+- **옮긴 것(herdr-web-ui PaneTerminal 363~379·1353~1424·2257~2268·2777~2800줄).** `herdr/draft.ts`는 그대로 복사했다.
+  - 입력할 수 없는 동안(host 끊김·agent 끊김·붙는 중) 친 글·붙여 넣은 글은 「붙잡은 입력」에 모은다. 줄을 세워 다시 보내지 않는다.
+  - Enter·줄바꿈은 붙잡지 않고 그 자리를 빈칸으로 둔다. 「보내기」는 Enter를 누르지 않는다(띠가 그렇다고 알린다). ⌫는 붙잡은 글을 지운다. 1024자 상한.
+  - 끊김 띠에 붙잡은 글이 보인다. 다시 붙으면 따로 띠가 되어 사람이 「보내기」·「버리기」를 고른다.
+  - 붙잡은 입력이 있는 동안 글·⌫·Enter는 거기에 더하고, chord(유지 키·Shift·Ctrl+Enter)와 입력줄 보내기·빈 보내기(Enter)는 「먼저 보내거나 버린다」로 거절한다. ^C·Esc·Tab·화살표는 그대로 간다.
+  - 입력할 수 없을 때 chord는 붙잡지 않고 「아직 키를 받을 수 없다」고 알린다(닫기로 지운다).
+  - 이 기기 localStorage `herdr-web-ui:terminal-draft:<머신>:<pane>`에 24시간 남는다(끊긴 동안 다시 열어도 잃지 않는다). 세션이 끝났으면 띠가 「붙잡은 입력은 버렸다」고 알린다.
+- **aaa에 맞춘 곳.** 참고는 socket이 입력을 못 받으면 붙잡는다. aaa는 host가 알리는 읽기 전용(끊김·붙는 중)일 때 붙잡는다. 보기 권한 기기는 붙잡지 않는다(참고의 observe와 같다). 키 막대 키도 같은 길로 간다(참고는 키 막대를 xterm 입력으로 흘려 같은 길을 탄다). 비밀번호 줄(secret) 감지는 aaa에 없어 그 규칙은 없다.
+- **시험.** 웹 E2E 「agent 끊김」·「agent 복귀」 단계: 끊긴 동안 친 `echo held-$((2+3))`와 Enter가 띠와 저장에 남는다(Enter 자리 빈칸, `leftOut`). 다시 붙어도 저절로 가지 않는다. 입력줄 보내기는 거절되고 그 글은 남는다. 「보내기」 뒤 사람이 Enter를 눌러 `held-5`가 나오고 저장이 지워진다.
+
+### 8.47 글자 크기 설정과 두 손가락 핀치(10-17, 차이 목록 2 G)
+
+- **전.** 폭 700px 이하면 11px, 아니면 13px로 고정이었다.
+- **옮긴 것(herdr-web-ui settings.ts `terminalFontSize`, SettingsDialog 395~397줄 `Stepper`, PaneTerminal 1528~1640·1996~2025줄, `lib/pinchFontSize.ts`).**
+  - 글자 크기는 이 기기 설정이다(참고도 `device` 범위). 기본 13px, 10~22px. 설정 창 「터미널 → 글자 크기」에서 한 칸씩 바꾼다. 모든 기기가 이 크기로 연다(좁은 화면 11px는 없앴다).
+  - 크기가 바뀌면 쓰는 화면은 그 글자로 PTY 크기를 다시 건다.
+  - 터미널에서 두 손가락을 벌리거나 오므리면 글자가 손가락을 따라 바로 바뀌고 크기(「20px」)를 띄운다. 손을 떼면 설정에 저장하고 PTY를 한 번 다시 건다. 취소(touchcancel)면 처음 크기로 돌아간다. Safari 확대(gesture)는 막는다.
+  - `herdr/pinchFontSize.ts`는 import 경로만 바꿔 옮겼다.
+- **다른 곳: 핀치 중에는 grid를 이 화면에서만 다시 맞추지 않는다.** 참고는 핀치 중 xterm grid를 그 화면에서 맞춘다. aaa 터미널 grid는 늘 host가 알리는 PTY 크기를 따른다(이 화면에서만 맞추는 일이 없다). 핀치 중에 grid를 이 화면에서만 맞추면, 그 사이 온 출력이 PTY에 없는 grid에 그려진다. 그래서 글자만 손가락을 따르고, grid는 손을 뗄 때 PTY와 함께 한 번 바뀐다. 화면 키보드가 grid를 붙잡고 있으면 키보드가 내려갈 때 맞춘다(§8.39).
+- **아직.** 한 손가락 끌기를 휠 보고로 바꾸는 참고 동작은 스크롤 묶음(차이 목록 J, 결정 필요 줄)과 함께 옮긴다.
+- **시험.** 웹 E2E 「글자 크기」: 설정에서 16px이면 PTY 93→76열, 13px로 돌리면 93열, 기본값은 저장하지 않음. 휴대폰(CDP 실제 터치)에서 100→150px로 벌리면 20px와 「20px」 표시, 손을 떼기 전에는 PTY·저장 그대로, 뗀 뒤 저장 20과 PTY 45→29열.
+
+### 8.48 그냥 끌어 고르기·제자리 클릭·보내기 전에 크기 되찾기(10-17, 차이 목록 2 H·J)
+
+- **옮긴 것(herdr-web-ui PaneTerminal 760~1046·1890~1918·2231·2342·2362줄).**
+  - 프로그램이 마우스 보고를 켜도 왼쪽 끌기는 고른다(Shift, macOS는 Option을 누른 것처럼). 놓으면 클립보드에 복사하고 「클립보드에 복사했다」를 2.5초 띄운다. OSC 52도 같은 알림을 띄운다.
+  - 끌지 않고 제자리에서 놓은 누름은 클릭이다. 고르기 키 없이 다시 보내 프로그램이 요청한 보고 형식(SGR 등)으로 간다(Claude Code diff의 닫기 단추, TUI 메뉴). 선택을 지우는 누름과 링크 누름은 보내지 않는다.
+  - 크기 되찾기는 보내기 **전에** 한다. 다른 화면이 크기를 가져간 뒤 이 화면에서 터미널 키를 치면, 그 키보다 먼저 이 화면 크기를 건다(반복 키·조합 중 키는 아니다). 키 막대 키, 입력줄 보내기·빈 보내기(Enter)도 그렇다. 전에는 host가 입력을 받고 「지금 쓰는 화면」을 바꾼 뒤에 맞춰, 첫 글의 답이 옛 크기로 그려질 수 있었다.
+  - 터미널을 눌러 크기를 거는 것은 왼쪽 버튼만이다(오른쪽 클릭은 아니다).
+  - 붙잡은 입력·보내지 못함·복사 알림 띠는 터미널 위 오른쪽에 뜬다(참고 `.terminal-banners`). 흐름에 넣으면 터미널 칸이 줄어 PTY 크기가 바뀐다. 다른 띠(끊김·권한·지금 쓰는 화면)는 아직 흐름에 있다(차이 목록 2장 레이아웃 줄과 함께 옮긴다).
+- **옮기지 않은 것.** 참고 xterm은 scrollback이 없어 화면을 넘는 끌기를 herdr 기록 API로 따라가고 herdr 원문을 복사한다. aaa xterm은 자기 scrollback이 있어 끌기가 가장자리를 넘으면 xterm이 굴리고, 복사도 xterm 선택 글이다. scroll 묶음(차이 목록 J 「scrollback과 휠」, 결정 필요)을 정하면 그때 맞춘다.
+- **시험.** 웹 E2E 「그냥 끌어 고르기·제자리 클릭·크기 되찾기」: 마우스 보고(SGR)를 켠 시험 프로그램에서
+  - 제자리 클릭은 `ESC[<0;3;1M`·`m`으로 간다.
+  - 끌기는 프로그램에 아무것도 보내지 않고 `pick-this-word`를 복사하며 알린다.
+  - 다른 화면이 크기를 가져간 뒤 친 `z`는 이 화면이 WebSocket에 `resize`를 먼저 쓰고 `input`을 쓴다. 프로그램 쪽 순서는 SIGWINCH와 입력 읽기 순서가 정해지지 않아 보지 않는다.
+  - keydown 되찾기를 뺀 판으로 돌리면 `[input z]`만 가서 실패한다(웹 번들을 다시 지은 판으로 확인).
+
+### 8.49 구독 사용량은 Claude·Codex만, 표시는 herdr-web-ui AgentMark(10-17, 사용자 요청)
+
+- **요청(원문: 「사용량은 claude codex만. 사용량 아이콘은 herdr web ui 같은거 사용」).**
+- **Claude·Codex만 묻고 보인다.** host는 그 둘의 로그인만 찾고 그 둘의 주소에만 묻는다. 참고가 함께 읽는 Cursor·Copilot·Grok·Antigravity·OpenCode 읽기는 지웠다. proto `UsageProviderId`도 둘이다. 그래서 그 구독들의 keychain 항목·`gh` 명령·Cursor 앱 DB도 열지 않는다.
+- **표시는 참고와 같다.** `web/src/herdr/AgentMark.tsx`의 `ClaudeMark`(주황 타일의 별)·`CodexMark`(글자색 매듭)·`FallbackMark`와 `AgentMark.css`·`agentMark.ts`는 참고 그대로다. `PROVIDER_MARK`(`usage.ts`)도 참고와 같다(둘만 남음). 칩 14px, 펼친 창·설정 계정 16px도 참고 크기다.
+- **다른 곳: 참고의 다른 agent 표시는 옮기지 않았다.** 참고 `AgentMark.tsx`는 omp·cursor·opencode·gjc·omo도 그리고, `agentSvgMarks.ts`에서 LobeHub Icons(MIT)와 출처 favicon(droid·maki) 표시를 가져온다. aaa는 Claude·Codex만 보인다. 라이선스가 적히지 않은 favicon 표시를 공개 저장소에 들이지 않으려고 그 둘의 표시만 남겼다.
+- **출처·라이선스.** 표시 코드는 herdr-web-ui(MIT, Copyright (c) 2026 devswha)의 것이다(`web/src/herdr/README.md`에 그 MIT 고지가 있다). 참고는 이 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. Claude와 OpenAI(Codex) 로고는 각 상표권자(Anthropic·OpenAI)의 것이다. aaa는 구독 이름을 가리키는 데만 쓰고 그들과 관계를 뜻하지 않는다.
+- **시험.** 유닛: 다른 구독 읽기 시험 둘을 지웠다(Claude·Codex 시험 여섯은 그대로). 웹 E2E 「구독 사용량·설정」: 가짜 집에 OpenCode 로그인이 있어도 칩은 Claude·Codex 둘이고 OpenCode 주소에는 묻지 않는다(0번). 칩 표시는 `agent-mark claude is-brand`(svg 14px, 타일 `#D77655`)와 `agent-mark codex`(`currentColor`). 숨기기는 Claude로 본다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

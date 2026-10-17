@@ -297,7 +297,8 @@ const softKeyboard = (page, visible) =>
   }, visible);
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init } = {}) {
+// line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -308,6 +309,13 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   });
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   if (init) await ctx.addInitScript(init);
+  // 모든 frame에서 돈다: sandbox frame(결과물 보기)은 localStorage를 읽기만 해도 던진다
+  if (line)
+    await ctx.addInitScript(() => {
+      try {
+        localStorage.setItem("aaa:terminal-input-mode", "line");
+      } catch {}
+    });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -410,6 +418,51 @@ fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(`${root}/c`, { recursive: true });
 if (shots) fs.mkdirSync(shots, { recursive: true });
 const webPort = await freePort();
+
+// 구독 사용량(host usage.rs): 실험실 집과 가짜 구독 서버. host는 이 집만 읽고 keychain·gh·실제 구독 주소에 닿지 않는다
+// (AAA_USAGE_HOME·AAA_USAGE_ORIGIN 시험 고리). 계정·token은 지어낸 값이다.
+const usageHome = `${root}/usagehome`;
+const b64url = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const fakeJwt = (claims) => `${b64url({ alg: "none" })}.${b64url(claims)}.sig`;
+const inHours = (h) => new Date(Date.now() + h * 3_600_000).toISOString();
+fs.mkdirSync(`${usageHome}/.claude`, { recursive: true });
+fs.mkdirSync(`${usageHome}/.codex`, { recursive: true });
+fs.mkdirSync(`${usageHome}/.local/share/opencode`, { recursive: true });
+fs.writeFileSync(
+  `${usageHome}/.claude/.credentials.json`,
+  JSON.stringify({ claudeAiOauth: { accessToken: "tok-claude", expiresAt: Date.now() + 86_400_000, subscriptionType: "max" } }),
+);
+fs.writeFileSync(`${usageHome}/.claude.json`, JSON.stringify({ oauthAccount: { accountUuid: "acct-1", emailAddress: "me@example.com" } }));
+fs.writeFileSync(
+  `${usageHome}/.codex/auth.json`,
+  JSON.stringify({
+    tokens: {
+      access_token: fakeJwt({
+        exp: Math.floor(Date.now() / 1000) + 86_400,
+        "https://api.openai.com/auth": { chatgpt_plan_type: "pro", chatgpt_user_id: "user-1" },
+        "https://api.openai.com/profile": { email: "me@example.com" },
+      }),
+      account_id: "ws-1",
+    },
+  }),
+);
+fs.writeFileSync(`${usageHome}/.local/share/opencode/auth.json`, JSON.stringify({ "opencode-go": { type: "api", key: "tok-oc" } }));
+const usageHits = new Map();
+const usageRoutes = {
+  "/api/oauth/usage": () => [200, {}, { five_hour: { utilization: 20, resets_at: inHours(3) }, seven_day: { utilization: 95, resets_at: inHours(50) }, seven_day_sonnet: { utilization: 40, resets_at: inHours(50) } }],
+  "/backend-api/wham/usage": () => [200, {}, { plan_type: "pro", rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000, reset_after_seconds: 7200 }, secondary_window: { used_percent: 73, limit_window_seconds: 604800, reset_after_seconds: 300000 } } }],
+  // 늦추라고 한 구독: 처음부터 숫자가 없다. 10분 동안 다시 묻지 않아야 한다
+  "/zen/go/v1/usage": () => [429, { "retry-after": "600" }, {}],
+};
+const usageServer = http.createServer((req, res) => {
+  usageHits.set(req.url, (usageHits.get(req.url) ?? 0) + 1);
+  const [status, headers, body] = usageRoutes[req.url]?.() ?? [404, {}, {}];
+  res.writeHead(status, { "content-type": "application/json", ...headers });
+  res.end(JSON.stringify(body));
+});
+await new Promise((r) => usageServer.listen(0, "127.0.0.1", r));
+env.AAA_USAGE_HOME = usageHome;
+env.AAA_USAGE_ORIGIN = `http://127.0.0.1:${usageServer.address().port}`;
 fs.writeFileSync(
   `${root}/c/host.toml`,
   `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:${webPort}"\n[local_agent]\nmode = "none"\n` +
@@ -498,6 +551,31 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 키 막대 시험 프로그램: 받은 조각을 일련번호와 JSON으로 보인다(화면이 밀려도 새 조각을 고른다).
+// "K"를 받으면 화살표 모드(DECCKM)를 켜고 "J"면 끈다.
+fs.writeFileSync(
+  `${root}/bar.js`,
+  `process.stdin.setRawMode(true);
+process.stdout.write("bar> ");
+let n = 0;
+process.stdin.on("data", (d) => {
+  const s = d.toString("utf8");
+  if (s === "K") process.stdout.write("\\x1b[?1h");
+  if (s === "J") process.stdout.write("\\x1b[?1l");
+  process.stdout.write("\\r\\nGOT:" + ++n + ":" + JSON.stringify(s) + "\\r\\nbar> ");
+});
+`,
+);
+// 마우스 시험 프로그램: 마우스 보고(SGR)를 켜고 첫 줄에 고를 낱말을 쓴다. 받은 조각과 PTY 크기 바뀜을 일련번호로 보인다.
+fs.writeFileSync(
+  `${root}/mouse.js`,
+  `process.stdin.setRawMode(true);
+let n = 0;
+process.stdout.write("\\x1b[?1000h\\x1b[?1006h\\x1b[2J\\x1b[Hpick-this-word\\r\\n");
+process.stdout.on("resize", () => process.stdout.write("SIZE:" + ++n + ":" + process.stdout.columns + "\\r\\n"));
+process.stdin.on("data", (d) => process.stdout.write("GOT:" + ++n + ":" + JSON.stringify(d.toString("utf8")) + "\\r\\n"));
+`,
+);
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
 fs.writeFileSync(
@@ -577,7 +655,8 @@ try {
     await ctx.close();
   });
 
-  const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+  // 입력줄을 쓰는 단계가 많아 이 화면은 입력줄로 둔다. 기본(바로 입력)은 「입력 방식」 단계가 본다.
+  const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { line: true });
   const page = ctl.page;
 
   await step("controller: 키보드 입력", async () => {
@@ -655,35 +734,351 @@ try {
     await shot(page, "desktop-controller");
   });
 
-  await step("키 줄: Ctrl·Alt 유지 키는 다음 입력 한 번에 붙고 풀린다", async () => {
-    await page.getByLabel("보낼 글").fill("cat -v");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await sleep(400);
-    const ctrl = page.getByRole("button", { name: "Ctrl", exact: true });
-    await ctrl.click();
-    if ((await ctrl.getAttribute("aria-pressed")) !== "true") throw new Error("Ctrl이 켜지지 않았다");
-    await page.getByTestId("terminal").click();
-    await page.keyboard.type("a");
-    if ((await ctrl.getAttribute("aria-pressed")) !== "false") throw new Error("Ctrl이 풀리지 않았다");
-    await page.getByRole("button", { name: "Alt", exact: true }).click();
-    await page.getByTestId("terminal").click();
-    await page.keyboard.type("x");
-    await page.keyboard.press("Enter");
-    await until("cat -v 출력", async () => (await screenText(page)).includes("^A^[x"));
-    // 조합으로 확정된 글에는 유지 키를 붙이지 않고, 유지 키는 다음 키를 기다린다(herdr-web-ui PaneTerminal과 같다)
-    await ctrl.click();
-    await page.getByTestId("terminal").click();
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
-    await cdp.send("Input.insertText", { text: "한" });
+  await step("키 막대(herdr-web-ui KeyBar): 터치 기기에서만, 유지 키는 다시 누를 때까지(래치)·하드웨어 키와 같은 bytes, DECCKM, 꾹 누르면 반복, 조합 중 회색, focus를 안 가져감", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "barapp", "--", process.execPath, `${root}/bar.js`);
+    // [일련번호, 받은 조각]
+    const lines = () =>
+      aaa("pane", "read", "barapp")
+        .lines.map((l) => /^GOT:(\d+):(.*)$/.exec(l))
+        .filter(Boolean)
+        .map((m) => [Number(m[1]), JSON.parse(m[2])]);
+    const last = () => Math.max(0, ...lines().map(([i]) => i));
+    // 데스크톱(마우스)에는 키 막대가 없다
+    await page.getByTestId("pane-barapp").click();
+    await until("bar 화면(데스크톱)", async () => (await screenText(page)).includes("bar>"));
+    if (await page.locator(".key-bar").isVisible()) throw new Error("데스크톱에 키 막대가 보인다");
+    // 터치 기기. Alt를 하드웨어 키와 견주려고 macOS가 아닌 platform으로 둔다(macOS xterm은 Option을 글자로 쓴다).
+    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
+    await tp.getByTestId("pane-barapp").click();
+    await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
+    const bar = tp.locator(".key-bar");
+    if (!(await bar.isVisible())) throw new Error("터치 기기에 키 막대가 없다");
+    const order = await bar.locator(".key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
+    // 터치 기기는 맨 앞에 ⌨(입력줄 전환, KeyBar.tsx 200~205줄)
+    const want = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+    if (JSON.stringify(order) !== JSON.stringify(want)) throw new Error(`키 순서 ${order}`);
+    const key = (k) => bar.locator(`.key[data-key="${k}"]`);
+    await tp.locator(".xterm-screen").click();
+    // 한 동작이 pane에 보낸 조각들
+    const sent = async (act, what = "") => {
+      const n = last();
+      await act();
+      await sleep(250);
+      await until(`pane 받음 ${what}`, () => last() > n);
+      await sleep(150);
+      return lines()
+        .filter(([i]) => i > n)
+        .map(([, d]) => d)
+        .join("");
+    };
+    const bad = [];
+    const expect = async (what, act, wantData) => {
+      const got = await sent(act, what);
+      if (got !== wantData) bad.push(`${what}: ${JSON.stringify(got)}(기대 ${JSON.stringify(wantData)})`);
+    };
+    // 키를 눌러도 focus는 터미널에 남는다(화면 키보드가 내려가지 않는다)
+    await key("Escape").click();
+    if (!(await tp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")))) bad.push("키가 focus를 가져갔다");
+    await sleep(300);
+    // 래치: 켠 Ctrl은 두 번 써도 남고, 다시 눌러야 풀린다
+    await key("Control").click();
+    await expect("Ctrl 래치 a", () => tp.keyboard.press("a"), "\x01");
+    if ((await key("Control").getAttribute("aria-pressed")) !== "true") bad.push("Ctrl이 한 번 쓰고 풀렸다");
+    await expect("Ctrl 래치 b", () => tp.keyboard.press("b"), "\x02");
+    await expect("Ctrl + 키 막대 ^C", () => key("ctrl-c").click(), "\x03");
+    await key("Control").click();
+    if ((await key("Control").getAttribute("aria-pressed")) !== "false") bad.push("Ctrl이 다시 눌러도 안 풀렸다");
+    await expect("풀린 뒤 c", () => tp.keyboard.press("c"), "c");
+    // 유지 키 + (키 막대 키 또는 하드웨어 키) = 같은 수식의 하드웨어 키
+    const combos = [
+      ["Control", "ArrowLeft", "bar"],
+      ["Alt", "ArrowLeft", "bar"],
+      ["Alt", "ArrowUp", "bar"],
+      ["Shift", "ArrowUp", "bar"],
+      ["Shift", "Tab", "bar"],
+      ["Alt", "Enter", "bar"],
+      ["Shift", "Enter", "bar"],
+      ["Control", "Home", "hw"],
+      ["Control", "PageUp", "hw"],
+      ["Alt", "b", "hw"],
+      ["Control", "Backspace", "hw"],
+      ["Shift", "a", "hw"],
+    ];
+    for (const [mod, k, how] of combos) {
+      // 글자는 물리 키 이름으로 누른다: Playwright는 "Shift+a"를 Shift를 쥔 "a"로 내지만 실제 자판은 "A"를 낸다
+      const physical = /^[a-z]$/.test(k) ? `Key${k.toUpperCase()}` : k;
+      const hardware = await sent(() => tp.keyboard.press(`${mod}+${physical}`), `하드웨어 ${mod}+${k}`);
+      await key(mod).click();
+      const viaBar = await sent(() => (how === "bar" ? key(k).click() : tp.keyboard.press(k)), `키 막대 ${mod}+${k}`);
+      await key(mod).click();
+      if (viaBar !== hardware) bad.push(`${mod}+${k}: 키 막대 ${JSON.stringify(viaBar)} ≠ 하드웨어 ${JSON.stringify(hardware)}`);
+    }
+    // 화살표 모드(DECCKM)를 켜면 키 막대 화살표도 SS3
+    await sent(() => tp.keyboard.press("Shift+K"));
+    await expect("DECCKM ↑", () => key("ArrowUp").click(), "\x1bOA");
+    await sent(() => tp.keyboard.press("Shift+J"));
+    await expect("DECCKM 끔 ↑", () => key("ArrowUp").click(), "\x1b[A");
+    // 꾹 누르면 400ms 뒤 50ms마다 되풀이, 손을 떼면 한 번 더 가지 않는다
+    const left = await key("ArrowLeft").boundingBox();
+    const held = await sent(async () => {
+      await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
+      await tp.mouse.down();
+      await sleep(700);
+      await tp.mouse.up();
+    });
+    const repeats = held.split("\x1b[D").length - 1;
+    if (repeats < 3 || held.replaceAll("\x1b[D", "") !== "") bad.push(`꾹 누름: ${JSON.stringify(held)}`);
+    // 누른 채 밀면 취소(아무것도 안 감)
+    const n0 = last();
+    await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
+    await tp.mouse.down();
+    await tp.mouse.move(left.x + left.width / 2 + 15, left.y + left.height / 2, { steps: 3 });
+    await sleep(600);
+    await tp.mouse.up();
+    await sleep(300);
+    if (last() !== n0) bad.push(`밀어서 취소한 누름이 갔다: ${JSON.stringify(lines().filter(([i]) => i > n0))}`);
+    // 조합 중에는 키 막대가 회색이고, 조합으로 확정된 글에는 유지 키가 붙지 않는다(다음 키를 기다린다)
+    await key("Control").click();
+    const textarea = tp.locator("textarea.xterm-helper-textarea");
+    await textarea.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" })));
+    await sleep(100);
+    if (!(await key("Escape").isDisabled())) bad.push("조합 중에 키 막대가 켜져 있다");
+    await textarea.evaluate((el) => el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" })));
+    await sleep(100);
+    if (await key("Escape").isDisabled()) bad.push("조합이 끝나도 키 막대가 꺼져 있다");
+    const cdp = await tp.context().newCDPSession(tp);
+    const ime = await sent(async () => {
+      await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
+      await cdp.send("Input.insertText", { text: "한" });
+    });
     await cdp.detach();
-    await sleep(200);
-    if ((await ctrl.getAttribute("aria-pressed")) !== "true") throw new Error("조합 확정이 Ctrl을 써 버렸다");
-    await page.keyboard.type("b");
-    await page.keyboard.press("Enter");
-    // 터미널 echo 줄: 한은 그대로, 유지 키 Ctrl은 다음 키 b에 붙는다(한b가 아니라 한^B)
-    await until("조합 뒤 유지 키", async () => (await screenText(page)).includes("\n한^B\n"));
-    await page.getByRole("button", { name: "^C", exact: true }).click();
+    if (ime !== "한") bad.push(`조합 확정 글: ${JSON.stringify(ime)}`);
+    if ((await key("Control").getAttribute("aria-pressed")) !== "true") bad.push("조합 확정이 Ctrl을 풀었다");
+    await expect("조합 뒤 Ctrl b", () => tp.keyboard.press("b"), "\x02");
+    await key("Control").click();
+    if (bad.length) throw new Error(bad.join("; "));
+    await tp.context().close();
+    aaa("pane", "kill", "barapp");
+    await page.getByTestId("pane-t1").click();
+  });
+
+  await step("입력 방식(herdr-web-ui terminalInputMode): 기본은 바로 입력, 터치 기기 ⌨로 입력줄, 입력줄은 키보드를 안 올리고 PTY 크기를 안 바꾼다, Enter 보내기·빈 Enter, 조합 중엔 ⌨만 회색", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "lineapp", "--", process.execPath, `${root}/bar.js`);
+    // [일련번호, 받은 조각]
+    const lines = () =>
+      aaa("pane", "read", "lineapp")
+        .lines.map((l) => /^GOT:(\d+):(.*)$/.exec(l))
+        .filter(Boolean)
+        .map((m) => [Number(m[1]), JSON.parse(m[2])]);
+    const last = () => Math.max(0, ...lines().map(([i]) => i));
+    const since = (n) =>
+      lines()
+        .filter(([i]) => i > n)
+        .map(([, d]) => d);
+    const size = () => {
+      const x = aaa("pane", "list").panes.find((q) => q.name === "lineapp");
+      return `${x.cols}x${x.rows}`;
+    };
+    const bad = [];
+    // 데스크톱 기본: 입력줄이 없다(바로 입력)
+    const desk = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 });
+    await desk.page.getByTestId("pane-lineapp").click();
+    await until("bar 화면(데스크톱)", async () => (await screenText(desk.page)).includes("bar>"));
+    if ((await desk.page.locator(".terminal-input").count()) !== 0) bad.push("데스크톱 기본에 입력줄이 있다");
+    await desk.page.context().close();
+    // 터치 기기 기본: 바로 입력. 키 막대 맨 앞 ⌨는 꺼져 있고 xterm 칸이 화면 키보드를 올린다
+    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
+    await tp.getByTestId("pane-lineapp").click();
+    await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
+    const toggle = tp.locator('.key-bar .key[data-key="direct"]');
+    const first = await tp.locator(".key-bar .key").first().getAttribute("data-key");
+    if (first !== "direct") bad.push(`키 막대 맨 앞이 ⌨가 아니다: ${first}`);
+    if ((await toggle.getAttribute("aria-pressed")) !== "false") bad.push("기본인데 ⌨가 켜져 있다");
+    if ((await tp.locator(".terminal-input").count()) !== 0) bad.push("터치 기본에 입력줄이 있다");
+    if ((await tp.locator(".term-scroll[data-direct-typing]").count()) !== 1) bad.push("바로 입력인데 data-direct-typing이 없다");
+    const helper = tp.locator("textarea.xterm-helper-textarea");
+    // ⌨ → 입력줄. xterm 칸은 화면 키보드를 올리지 않는다(inputmode=none)
+    await toggle.click();
+    await tp.locator(".terminal-input").waitFor();
+    if ((await toggle.getAttribute("aria-pressed")) !== "true") bad.push("입력줄인데 ⌨가 꺼져 있다");
+    if ((await helper.getAttribute("inputmode")) !== "none") bad.push(`입력줄인데 xterm inputmode ${await helper.getAttribute("inputmode")}`);
+    if ((await tp.locator(".term-scroll[data-direct-typing]").count()) !== 0) bad.push("입력줄인데 data-direct-typing이 있다");
+    if ((await tp.evaluate(() => localStorage.getItem("aaa:terminal-input-mode"))) !== "line") bad.push("입력 방식이 이 기기에 저장되지 않았다");
+    const line = tp.getByLabel("보낼 글");
+    const sendBtn = tp.locator(".terminal-input-send");
+    // 글 + Enter: 글 다음 Enter가 따로 간다
+    let n = last();
+    await line.fill("echo hi");
+    await line.press("Enter");
+    await until("입력줄 Enter", () => since(n).join("") === "echo hi\r");
+    if ((await line.inputValue()) !== "") bad.push("보낸 뒤 입력줄에 글이 남았다");
+    // 빈 입력줄의 보내기는 Enter만. 단추 이름도 Enter다. 유지 Alt는 붙는다(PaneTerminal pressEnter)
+    if ((await sendBtn.getAttribute("aria-label")) !== "터미널에 Enter 보내기") bad.push(`빈 줄 단추 ${await sendBtn.getAttribute("aria-label")}`);
+    n = last();
+    await sendBtn.click();
+    await until("빈 Enter", () => since(n).join("") === "\r");
+    await tp.locator('.key-bar .key[data-key="Alt"]').click();
+    n = last();
+    await sendBtn.click();
+    await until("Alt + 빈 Enter", () => since(n).join("") === "\x1b\r");
+    await tp.locator('.key-bar .key[data-key="Alt"]').click();
+    // 키 막대 키는 입력줄의 키보드를 터미널로 옮기지 않는다
+    await line.focus();
+    n = last();
+    await tp.locator('.key-bar .key[data-key="Escape"]').click();
+    await until("Esc", () => since(n).join("") === "\x1b");
+    if (!(await line.evaluate((el) => el === document.activeElement))) bad.push("키 막대 키가 입력줄의 focus를 가져갔다");
+    // 입력줄이 4줄까지 자라도 PTY 크기는 그대로다(그리드 위에 뜬다)
+    const before = size();
+    const box0 = await tp.locator(".term-scroll").boundingBox();
+    await line.fill("1\n2\n3\n4\n5\n6");
+    await sleep(800);
+    if ((await line.getAttribute("rows")) !== "4") bad.push(`여섯 줄 입력줄 rows ${await line.getAttribute("rows")}`);
+    const box1 = await tp.locator(".term-scroll").boundingBox();
+    if (size() !== before || Math.abs(box1.height - box0.height) > 0.5) bad.push(`입력줄이 자라며 터미널이 줄었다: ${before} → ${size()}, 높이 ${box0.height} → ${box1.height}`);
+    await line.fill("");
+    // 입력줄 조합 중에는 ⌨만 회색이고 키 막대는 그대로다
+    await line.dispatchEvent("compositionstart", { data: "" });
+    await sleep(100);
+    if (!(await toggle.isDisabled())) bad.push("입력줄 조합 중에 ⌨가 켜져 있다");
+    if (await tp.locator('.key-bar .key[data-key="Escape"]').isDisabled()) bad.push("입력줄 조합 중에 키 막대가 꺼졌다");
+    await line.dispatchEvent("compositionend", { data: "" });
+    await sleep(100);
+    // ⌨를 다시 누르면 바로 입력: 입력줄이 사라지고 터미널이 키보드를 받는다
+    await toggle.click();
+    await until("입력줄 사라짐", async () => (await tp.locator(".terminal-input").count()) === 0);
+    if ((await helper.getAttribute("inputmode")) !== null) bad.push("바로 입력인데 xterm inputmode가 남았다");
+    if (!(await helper.evaluate((el) => el === document.activeElement))) bad.push("바로 입력을 켰는데 터미널이 focus를 받지 않았다");
+    if (bad.length) throw new Error(bad.join("; "));
+    await tp.context().close();
+    aaa("pane", "kill", "lineapp");
+    await page.getByTestId("pane-t1").click();
+  });
+
+  await step("구독 사용량·설정(herdr-web-ui UsageMeters·SettingsDialog): 목록 아래 톱니와 Claude·Codex 칩(herdr-web-ui AgentMark), 펼치면 한도·초기화까지, 다른 구독은 묻지 않음, host는 5분 캐시, 설정에서 남은 양·세션·숨기기·순서·입력 방식", async () => {
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    const strip = dp.getByTestId("usage-strip");
+    await strip.waitFor();
+    const chips = () => strip.locator(".usage-chip").evaluateAll((els) => els.map((e) => `${e.dataset.provider} ${e.querySelector(".usage-chip-value").textContent}${e.classList.contains("is-high") ? " high" : ""}${e.classList.contains("has-problem") ? " problem" : ""}`));
+    const bad = [];
+    // 기본: 쓴 양·주간. 80% 넘으면 막힘 색. 늦추라고 한 구독은 숫자 없이 흐리게
+    let got = JSON.stringify(await chips());
+    // 구독은 Claude·Codex만 보인다: 이 집에 OpenCode 로그인이 있어도 묻지도 보이지도 않는다(사용자 요청 10-17)
+    if (got !== JSON.stringify(["claude 95% high", "codex 73%"])) bad.push(`기본 칩 ${got}`);
+    // 구독 표시는 herdr-web-ui AgentMark다: Claude는 주황 타일의 별, Codex는 글자색 매듭
+    const marks = await strip.locator(".usage-chip .agent-mark").evaluateAll((els) =>
+      els.map((e) => `${e.className} ${e.querySelector("svg").getAttribute("aria-label")} ${e.querySelector("svg").getAttribute("width")} ${e.querySelector("path").getAttribute("fill")}`),
+    );
+    if (JSON.stringify(marks) !== JSON.stringify(["agent-mark claude is-brand claude 14 #D77655", "agent-mark codex codex 14 currentColor"])) bad.push(`구독 표시 ${JSON.stringify(marks)}`);
+    if ((await dp.getByTestId("settings-open").innerText()).trim() !== "설정") bad.push("톱니 「설정」이 없다");
+    // 펼치면 구독마다 한도·초기화까지·계정·plan
+    await strip.click();
+    const pop = dp.locator(".usage-popover");
+    await pop.waitFor();
+    const claude = await pop.getByRole("region", { name: "Claude · me@example.com" }).innerText();
+    for (const want of ["Max", "세션", "20%", "주간", "95%", "주간 · Sonnet", "40%", "뒤 초기화"]) if (!claude.includes(want)) bad.push(`펼친 Claude에 「${want}」가 없다: ${JSON.stringify(claude)}`);
+    if ((await pop.getByRole("region", { name: "OpenCode" }).count()) !== 0) bad.push("펼친 창에 OpenCode가 있다");
+    // 화면을 여러 번 열었어도 host는 구독마다 한 번만 물었다(5분 캐시). OpenCode에는 묻지 않았다
+    await dp.reload();
+    await strip.waitFor();
+    await sleep(300);
+    const hits = ["/api/oauth/usage", "/backend-api/wham/usage", "/zen/go/v1/usage"].map((p) => usageHits.get(p) ?? 0);
+    if (JSON.stringify(hits) !== "[1,1,0]") bad.push(`구독에 물은 수 ${JSON.stringify(hits)}`);
+    if (shots) await dp.screenshot({ path: path.join(shots, "usage-popover.png") });
+    // 설정: 남은 양, 세션
+    await dp.getByTestId("settings-open").click();
+    const dlg = dp.getByRole("dialog", { name: "설정" });
+    await dlg.waitFor();
+    await dlg.getByRole("group", { name: "막대가 보이는 것" }).getByRole("button", { name: "남은 양" }).click();
+    await until("남은 양", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 5% high", "codex 27%"]));
+    await dlg.getByRole("group", { name: "보이는 한도" }).getByRole("button", { name: "세션" }).click();
+    await until("세션", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 80%", "codex 90%"]));
+    // 계정 숨기기와 순서
+    const hideClaude = dlg.getByRole("switch", { name: "Claude · me@example.com 보이기" });
+    await hideClaude.click();
+    await until("숨기기", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%"]));
+    await hideClaude.click();
+    await dlg.getByRole("button", { name: "Codex · me@example.com 위로" }).click();
+    await until("순서", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
+    if (shots) await dp.screenshot({ path: path.join(shots, "settings-dialog.png") });
+    // 데스크톱에서 입력줄 고르기(D1에서 남은 빈 곳)
+    await dlg.getByLabel("입력 방식").selectOption("line");
+    await dp.keyboard.press("Escape");
+    await until("설정 닫힘", async () => (await dp.getByRole("dialog", { name: "설정" }).count()) === 0);
+    await dp.getByTestId("pane-t1").click();
+    await until("입력줄", async () => (await dp.locator(".terminal-input").count()) === 1);
+    // 다시 열어도 이 기기에 남는다. 끄면 막대도 사라진다
+    await dp.reload();
+    await until("남은 설정", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
+    await dp.getByTestId("settings-open").click();
+    await dp.getByRole("switch", { name: "plan 한도 보이기" }).click();
+    await until("막대 사라짐", async () => (await dp.getByTestId("usage-strip").count()) === 0);
+    if (bad.length) throw new Error(bad.join("; "));
+    await dp.context().close();
+  });
+
+  await step("글자 크기(herdr-web-ui terminalFontSize·핀치): 설정에서 한 칸씩, 휴대폰은 두 손가락으로 글자가 따라오고 손을 떼면 저장하고 PTY를 한 번 다시 건다", async () => {
+    const t1 = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
+    const rowsFont = (pg) => pg.evaluate(() => getComputedStyle(document.querySelector('[data-testid="terminal"] .xterm-rows')).fontSize);
+    /** 이 화면이 PTY 크기를 건 뒤 멈춘 열 수 */
+    const settled = async (pg, what, ok) =>
+      until(what, async () => {
+        const a = t1().cols;
+        await sleep(300);
+        const b = t1().cols;
+        return a === b && ok(b) ? b : null;
+      });
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await dp.getByTestId("pane-t1").click();
+    await until("13px로 연다", async () => (await rowsFont(dp)) === "13px");
+    await dp.getByTestId("terminal").click();
+    const wide = await settled(dp, "데스크톱 크기", () => true);
+    await dp.getByTestId("settings-open").click();
+    const dlg = dp.getByRole("dialog", { name: "설정" });
+    for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 크게" }).click();
+    if ((await dlg.getByRole("group", { name: "글자 크기" }).innerText()).trim() !== "16px") throw new Error("설정에 16px가 아니다");
+    await until("16px", async () => (await rowsFont(dp)) === "16px");
+    // 쓰는 화면이면 바뀐 글자로 PTY 크기를 다시 건다(13 → 16px이면 열이 줄어든다)
+    const big = await settled(dp, "큰 글자 크기", (c) => c < wide * 0.9);
+    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "16") throw new Error("16px 저장이 없다");
+    for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 작게" }).click();
+    await settled(dp, "13px로 돌아온 크기", (c) => c === wide);
+    // 기본값이면 저장하지 않는다
+    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("기본값을 저장했다");
+    await dp.keyboard.press("Escape");
+    await dp.context().close();
+    console.log(`     글자 크기 ${wide}열(13px) → ${big}열(16px)`);
+
+    // 휴대폰: 두 손가락을 벌리면 글자가 바로 커지고 크기를 띄운다. 손을 떼면 저장하고 PTY를 다시 건다.
+    const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    await mp.getByTestId("pane-t1").click();
+    await until("휴대폰 13px", async () => (await rowsFont(mp)) === "13px");
+    await mp.getByTestId("terminal").click();
+    const phone = await settled(mp, "휴대폰 크기", (c) => c < wide);
+    const r = await mp.getByTestId("terminal").boundingBox();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + Math.min(r.height / 2, 200);
+    const cdp = await mp.context().newCDPSession(mp);
+    const touch = (type, d) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: d === null ? [] : [{ x: cx - d / 2, y: cy, id: 1 }, { x: cx + d / 2, y: cy, id: 2 }],
+      });
+    await touch("touchStart", 100);
+    await touch("touchMove", 130);
+    await touch("touchMove", 150);
+    // 13 × 150/100 = 19.5 → 20px. 손가락을 떼기 전에는 PTY도 저장도 그대로다
+    await until("핀치 중 20px", async () => (await rowsFont(mp)) === "20px");
+    const badge = await mp.getByTestId("pinch-badge").innerText();
+    if (badge !== "20px") throw new Error(`핀치 표시 ${JSON.stringify(badge)}`);
+    if (t1().cols !== phone) throw new Error("손을 떼기 전에 PTY가 바뀌었다");
+    if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("손을 떼기 전에 저장했다");
+    await touch("touchEnd", null);
+    await until("핀치 표시 사라짐", async () => await mp.getByTestId("pinch-badge").isHidden());
+    if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "20") throw new Error("핀치 크기를 저장하지 않았다");
+    const pinched = await settled(mp, "핀치 뒤 PTY", (c) => c < phone * 0.8);
+    console.log(`     핀치 ${phone}열(13px) → ${pinched}열(20px)`);
+    await mp.context().close();
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
@@ -756,14 +1151,98 @@ try {
     await page.getByTestId("pane-t1").click();
   });
 
+  await step("그냥 끌어 고르기·제자리 클릭·크기 되찾기(herdr-web-ui PaneTerminal): 마우스 보고 중에도 왼쪽 끌기는 고르고 놓으면 복사, 제자리 클릭은 프로그램에, 키는 보내기 전에 이 화면 크기를 건다", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "mouseapp", "--", process.execPath, `${root}/mouse.js`);
+    // [일련번호, 종류, 값]
+    const events = () =>
+      aaa("pane", "read", "mouseapp")
+        .lines.map((l) => /^(GOT|SIZE):(\d+):(.*)$/.exec(l))
+        .filter(Boolean)
+        .map((m) => [Number(m[2]), m[1], m[1] === "GOT" ? JSON.parse(m[3]) : Number(m[3])]);
+    const after = (n) => events().filter(([i]) => i > n);
+    const lastSeq = () => Math.max(0, ...events().map(([i]) => i));
+    const clip = () => {
+      window.__copied = [];
+      // xterm이 copy 사건에 넣은 글(bubble 끝에서 읽는다)
+      window.addEventListener("copy", (e) => window.__copied.push(e.clipboardData?.getData("text/plain") ?? ""));
+    };
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel", init: clip })).page;
+    // 이 화면이 WebSocket에 쓴 글 frame(보낸 순서를 본다)
+    const frames = [];
+    dp.on("websocket", (ws) =>
+      ws.on("framesent", (f) => {
+        if (typeof f.payload !== "string") return;
+        try {
+          frames.push(JSON.parse(f.payload));
+        } catch {}
+      }),
+    );
+    await dp.getByTestId("pane-mouseapp").click();
+    await until("mouse 화면", async () => (await screenText(dp)).includes("pick-this-word"));
+    const cell = async (col, row) => {
+      const r = await dp.locator('[data-testid="terminal"] .xterm-screen').boundingBox();
+      const p = aaa("pane", "list").panes.find((x) => x.name === "mouseapp");
+      return { x: r.x + (col + 0.5) * (r.width / p.cols), y: r.y + (row + 0.5) * (r.height / p.rows) };
+    };
+    // 제자리 클릭은 프로그램에 간다(SGR 누름·뗌, 1부터 센 열·줄)
+    let n = lastSeq();
+    const c2 = await cell(2, 0);
+    await dp.mouse.click(c2.x, c2.y);
+    await until("클릭 보고", () => after(n).filter(([, k]) => k === "GOT").map(([, , v]) => v).join("").includes("\u001b[<0;3;1m"));
+    const clicked = after(n).filter(([, k]) => k === "GOT").map(([, , v]) => v).join("");
+    if (!clicked.includes("\u001b[<0;3;1M")) throw new Error(`클릭 누름 보고가 없다: ${JSON.stringify(clicked)}`);
+    // 끌기는 고른다: 프로그램에 마우스 보고가 가지 않고, 놓으면 복사하고 알린다
+    await sleep(300);
+    n = lastSeq();
+    const from = await cell(0, 0);
+    // xterm은 끝을 가까운 칸 경계로 잡는다: 마지막 글자 다음 칸 가운데까지 끈다
+    const to = await cell(14, 0);
+    await dp.mouse.move(from.x, from.y);
+    await dp.mouse.down();
+    await dp.mouse.move(to.x, to.y, { steps: 6 });
+    await dp.mouse.up();
+    await until("복사 알림", async () => (await dp.getByTestId("clipboard-note").innerText()).includes("클립보드에 복사했다"));
+    const copied = await dp.evaluate(() => window.__copied);
+    if (!copied.some((t) => t.includes("pick-this-word"))) throw new Error(`복사한 글 ${JSON.stringify(copied)}`);
+    await sleep(300);
+    const leaked = after(n).filter(([, k, v]) => k === "GOT" && v.includes("\u001b[<"));
+    if (leaked.length) throw new Error(`끌기가 프로그램에 갔다: ${JSON.stringify(leaked)}`);
+    // 다른 화면이 크기를 가져간 뒤 이 화면에서 키를 치면, 키보다 먼저 이 화면 크기를 건다(첫 글의 답이 이 grid로 그려진다)
+    const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 760, height: 560 })).page;
+    await sp.getByTestId("pane-mouseapp").click();
+    await until("mouse 화면(둘째)", async () => (await screenText(sp)).includes("pick-this-word"));
+    const pcols = () => aaa("pane", "list").panes.find((x) => x.name === "mouseapp").cols;
+    const dcols = pcols();
+    // 둘째 화면이 크기를 가져간다(키 막대 없는 데스크톱: 터미널 누름은 클릭 보고도 보낸다)
+    await sp.getByTestId("terminal").click();
+    await until("둘째 화면 크기", () => pcols() < dcols);
+    await sleep(500);
+    // 보낸 순서는 이 화면이 WebSocket에 쓴 순서로 본다(프로그램 쪽은 SIGWINCH와 입력 읽기의 순서가 정해지지 않는다)
+    const mark = frames.length;
+    n = lastSeq();
+    await dp.keyboard.press("z");
+    await until("z 받음", () => after(n).some(([, k, v]) => k === "GOT" && v === "z"));
+    await until("크기 되찾음", () => pcols() === dcols);
+    const order = frames.slice(mark).filter((f) => f.t === "resize" || (f.t === "input" && f.data === "z")).map((f) => f.t);
+    if (order[0] !== "resize" || !order.includes("input")) throw new Error(`보낸 순서 ${JSON.stringify(frames.slice(mark))}`);
+    await sp.context().close();
+    await dp.context().close();
+    aaa("pane", "kill", "mouseapp");
+  });
+
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 놓는다", async () => {
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 });
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
     const op = other.page;
     const t1size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       return `${p.cols}x${p.rows}`;
     };
     const holder = () => aaa("pane", "list").panes.find((x) => x.name === "t1").lease?.label ?? null;
+    // 원래 화면이 t1을 쓰는 중에서 시작한다(앞 단계가 t1에 입력했는지에 기대지 않는다)
+    await page.locator(".xterm-screen").click();
+    await page.keyboard.type("echo own-$((1+2))\n");
+    await until("원래 화면 입력", async () => (await screenText(page)).includes("own-3"));
+    await until("원래 화면이 쓰는 중", () => holder() !== null);
     const held = t1size();
     const first = holder();
     await op.getByTestId("pane-t1").click();
@@ -880,7 +1359,7 @@ try {
     aaa("pane", "kill", "burst");
   });
 
-  await step("composer: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰 Enter는 줄바꿈", async () => {
+  await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "pasteapp", "--", process.execPath, `${root}/paste.js`);
     const got = () => aaa("pane", "read", "pasteapp").lines.join("\n");
     const gots = () => got().split("GOT:").length - 1;
@@ -918,7 +1397,7 @@ try {
     {
       const line = page.getByLabel("보낼 글");
       const send = page.getByRole("button", { name: "보내기" });
-      const banner = () => page.getByTestId("attach-banner").evaluateAll((els) => els[0]?.textContent ?? null);
+      const banner = () => page.locator(".terminal-input-note").evaluateAll((els) => els[0]?.textContent ?? null);
       const since = () => got().split('GOT:"MARK"').at(-1);
       const mark = async () => {
         aaa("pane", "send", "pasteapp", "--text", "MARK");
@@ -982,22 +1461,20 @@ try {
       if (since().includes("GOT:")) throw new Error(`기한 넘은 조합을 보냈다: ${since()}`);
       await line.fill("");
     }
-    // 휴대폰(터치): Enter는 줄바꿈, 보내기는 단추
-    const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    // 휴대폰(터치)도 Enter는 보내기다(herdr-web-ui TerminalInput: enterKeyHint="send", Shift+Enter만 줄바꿈)
+    const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { line: true });
     await mob.page.getByTestId("pane-pasteapp").click();
     const mbox = mob.page.getByLabel("보낼 글");
     // 연결(snapshot)되기 전에는 읽기 전용이다: 화면이 온 뒤에 본다
     await until("휴대폰 paste 화면", async () => (await screenText(mob.page)).includes("paste>"));
     // 데스크톱 화면이 쓰는 중이어도 가져오기 없이 입력된다
     if (await mbox.isDisabled()) throw new Error("휴대폰 입력 막대가 꺼져 있다");
+    if ((await mbox.getAttribute("enterkeyhint")) !== "send") throw new Error(`휴대폰 enterkeyhint ${await mbox.getAttribute("enterkeyhint")}`);
     n = gots();
     await mbox.fill("휴대폰");
     await mbox.press("Enter");
-    await sleep(500);
-    if (gots() !== n || (await mbox.inputValue()) !== "휴대폰\n")
-      throw new Error(`휴대폰 Enter: ${JSON.stringify(await mbox.inputValue())} · 받은 것 ${got().split("GOT:").slice(n + 1).join(" | ")}`);
-    await mob.page.getByRole("button", { name: "보내기" }).click();
-    await until("휴대폰 보내기", () => got().includes("휴대폰"));
+    await until("휴대폰 Enter로 보냄", () => got().includes('GOT:"휴대폰"') && gots() >= n + 2);
+    if ((await mbox.inputValue()) !== "") throw new Error(`휴대폰 보낸 뒤 글이 남았다: ${JSON.stringify(await mbox.inputValue())}`);
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();
     aaa("pane", "kill", "pasteapp");
@@ -1175,7 +1652,7 @@ try {
         await p.getByTestId(`pane-${pane}`).click();
         await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
         // 다른 화면이 쓰던 pane이어도 터미널을 누르고 바로 친다
-        await until("입력 막대", async () => p.getByLabel("보낼 글").isEnabled());
+        await until("입력 가능", async () => (await p.getByTestId("readonly-banner").count()) === 0);
         await p.locator(".xterm-screen").click();
         if (keyboard) await keyboard(p);
         for (const [how, type, want] of ways) {
@@ -1622,13 +2099,22 @@ try {
         const name = `kb-${dev}`;
         aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
         const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { touch: true, init })).page;
+        const direct = p.locator('.key-bar .key[data-key="direct"]');
         await p.getByTestId(`pane-${name}`).click();
         await until("키보드 화면", async () => (await screenText(p)).includes("kb-line-199"));
         await sleep(500);
-        const before = aaa("pane", "list").panes.find((x) => x.name === name);
+        let before = aaa("pane", "list").panes.find((x) => x.name === name);
         for (const field of ["terminal", "input-bar"]) {
+          // 터미널은 바로 입력(기본)에서, 입력줄은 ⌨로 입력줄을 켠 뒤 본다
           if (field === "terminal") await p.locator(".xterm-screen").tap();
-          else await p.getByLabel("보낼 글").focus();
+          else {
+            // 입력줄 칸(한 줄)이 흐름에 들어와 그리드가 한 번 줄어든다(참고와 같다). 키보드가 바꾸는지는 그 뒤부터 본다.
+            await direct.tap();
+            await p.locator(".terminal-input").waitFor();
+            await sleep(800);
+            before = aaa("pane", "list").panes.find((x) => x.name === name);
+            await p.getByLabel("보낼 글").focus();
+          }
           // 화면 키보드가 올라온다: 보이는 높이만 줄고(iOS Safari) 레이아웃은 그대로다
           await softKeyboard(p, viewport.height - kb);
           await sleep(600);
@@ -1642,8 +2128,8 @@ try {
               visible: window.visualViewport.height,
               app: document.querySelector(".app")?.getBoundingClientRect().height,
               cursor: cur ? { top: cur.top, bottom: cur.bottom } : null,
-              input: bottom(".input-bar textarea"),
-              keys: bottom(".input-bar .keys"),
+              input: bottom(".terminal-input-text"),
+              keys: bottom(".key-bar"),
               scroll: window.scrollY,
             };
           });
@@ -1656,7 +2142,8 @@ try {
           // 터미널 영역(입력 막대 위) 안에 보여야 한다: 영역 밖이면 잘려 보이지 않는다
           else if (!seen.area || seen.cursor.top < seen.area.top - 0.5 || seen.cursor.bottom > seen.area.bottom + 0.5)
             bad.push(`${at}: 커서 줄이 터미널 영역 밖이다 ${JSON.stringify(seen.cursor)} ∉ ${JSON.stringify(seen.area)}`);
-          if (seen.input === null || seen.input > vis + 0.5) bad.push(`${at}: 입력 막대 아래 ${seen.input} > ${vis}`);
+          if (field === "input-bar" && (seen.input === null || seen.input > vis + 0.5)) bad.push(`${at}: 입력줄 아래 ${seen.input} > ${vis}`);
+          if (field === "terminal" && seen.input !== null) bad.push(`${at}: 바로 입력인데 입력줄이 있다`);
           if (seen.keys === null || seen.keys > vis + 0.5) bad.push(`${at}: 키 막대 아래 ${seen.keys} > ${vis}`);
           if (rows.cols !== before.cols || rows.rows !== before.rows) bad.push(`${at}: 키보드에 PTY 크기가 바뀌었다 ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}`);
           // 키보드가 내려간다
@@ -1967,15 +2454,50 @@ try {
       (await page.getByTestId("readonly-banner").innerText()).includes("agent와 연결이 끊겼다"),
     );
     await page.getByText("실행·끊김(읽기 전용)").first().waitFor();
-    if (!(await page.getByLabel("보낼 글").isDisabled())) throw new Error("끊겼는데 입력 막대가 켜져 있다");
+    // 입력줄은 그대로 쓸 수 있고 보내기만 막힌다(herdr-web-ui TerminalInput: 끊겨도 쓰던 글은 두고 보내기만 거부)
+    if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("끊겼는데 입력줄이 꺼졌다");
+    if (!(await page.getByRole("button", { name: "보내기" }).isDisabled())) throw new Error("끊겼는데 보내기가 켜져 있다");
+    // 끊긴 동안 터미널에 친 글은 붙잡는다(herdr-web-ui lib/draft.ts): Enter는 붙잡지 않고 그 자리를 빈칸으로 둔다(참고 규칙)
+    await page.getByTestId("terminal").click();
+    await page.keyboard.type("echo held-$((2+3))");
+    await page.keyboard.press("Enter");
+    await until("끊김 띠에 붙잡은 입력", async () =>
+      (await page.getByTestId("readonly-banner").innerText()).includes("붙잡은 입력: “echo held-$((2+3)) ”"),
+    );
+    const stored = await page.evaluate(() =>
+      Object.keys(localStorage).filter((k) => k.startsWith("herdr-web-ui:terminal-draft:")).map((k) => JSON.parse(localStorage.getItem(k))),
+    );
+    if (stored.length !== 1 || stored[0].text !== "echo held-$((2+3)) " || stored[0].leftOut !== true)
+      throw new Error(`붙잡은 입력 저장: ${JSON.stringify(stored)}`);
     await shot(page, "desktop-disconnected");
   });
 
   await step("agent 복귀 → 다시 입력", async () => {
     start("agent2", "agent", "--host", "local", "--name", "labA");
     await until("배너 사라짐", async () => (await page.getByTestId("readonly-banner").count()) === 0);
+    // 다시 붙어도 붙잡은 입력은 저절로 가지 않는다: 띠에서 사람이 고른다. Enter를 뺐다고 알린다.
+    const draftBanner = page.getByTestId("draft-banner");
+    await draftBanner.waitFor();
+    const draftText = await draftBanner.innerText();
+    if (!draftText.includes("echo held-$((2+3))") || !draftText.includes("Enter·줄바꿈은 뺐다"))
+      throw new Error(`붙잡은 입력 띠: ${draftText}`);
+    if ((await screenText(page)).includes("held-5")) throw new Error("붙잡은 입력이 저절로 보내졌다");
+    // 붙잡은 입력이 있는 동안 입력줄 보내기는 거절한다(그 앞부분 없이 줄이 돌면 안 된다)
     await page.getByLabel("보낼 글").fill("echo again-$((9+1))");
-    await page.getByRole("button", { name: "보내기" }).click();
+    await page.getByRole("button", { name: "터미널에 보내기" }).click();
+    await until("먼저 보내거나 버리라는 말", async () =>
+      (await page.locator(".terminal-input-note").innerText()).includes("붙잡은 입력을 먼저 보내거나 버린다"),
+    );
+    if ((await page.getByLabel("보낼 글").inputValue()) !== "echo again-$((9+1))") throw new Error("거절된 입력줄 글이 사라졌다");
+    await page.getByTestId("draft-send").click();
+    await until("붙잡은 입력 띠 사라짐", async () => (await draftBanner.count()) === 0);
+    // 보내기는 Enter를 누르지 않는다: 글만 줄에 들어가 있다. Enter는 사람이 누른다.
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("Enter");
+    await until("붙잡은 입력 실행", async () => (await screenText(page)).includes("held-5"));
+    const left = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("herdr-web-ui:terminal-draft:")));
+    if (left.length !== 0) throw new Error(`보낸 뒤 저장이 남았다: ${left}`);
+    await page.getByRole("button", { name: "터미널에 보내기" }).click();
     await until("복귀 뒤 입력", async () => (await screenText(page)).includes("again-10"));
   });
 
@@ -2006,6 +2528,7 @@ try {
 } finally {
   await browser.close();
   pushServer.close();
+  usageServer.close();
   for (const tag of [...procs.keys()]) await stop(tag);
   killSessionHosts();
   console.log(steps.join("\n"));

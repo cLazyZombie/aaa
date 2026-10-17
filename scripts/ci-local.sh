@@ -145,6 +145,13 @@ for s in $ALL; do
     r=FAIL
     failed="$failed $s"
     [ -n "$TEE" ] || tail -20 "$log" | sed 's/^/   │ /'
+    # GitHub Actions: 실패 줄을 annotation으로 남긴다. job 로그는 로그인해야 받지만 annotation은 누구나 읽는다.
+    if [ "${GITHUB_ACTIONS:-}" = true ]; then
+      { grep -E 'FAIL|panicked|^error' "$log" | tail -8; tail -5 "$log"; } |
+        awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); gsub(/\r/, "%0D"); print }' |
+        sed "s/^/::error title=ci-local $s::/"
+      echo
+    fi
   fi
   echo "── $s $r $end($((t1 - t0))초)"
   RESULTS="$RESULTS$s|$r|$now|$end|$((t1 - t0))|$log

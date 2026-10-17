@@ -46,14 +46,14 @@ pub(crate) fn notify_body(format: &str, chat_id: &str, project: &str, items: &[I
     }
 }
 
-struct Target {
-    tls: bool,
-    host: String,
-    port: u16,
-    path: String,
+pub(crate) struct Target {
+    pub tls: bool,
+    pub host: String,
+    pub port: u16,
+    pub path: String,
 }
 
-fn parse_url(url: &str) -> Result<Target, String> {
+pub(crate) fn parse_url(url: &str) -> Result<Target, String> {
     let (tls, rest) = if let Some(r) = url.strip_prefix("https://") {
         (true, r)
     } else if let Some(r) = url.strip_prefix("http://") {

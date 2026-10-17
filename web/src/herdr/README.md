@@ -9,11 +9,19 @@
 | `viewport.ts` | 화면 키보드가 올라오면 보이는 높이(visualViewport)를 `--app-height`로 알리고 `data-keyboard`를 단다. `.app`이 그 높이가 되어 머리·터미널·입력 막대·키 막대가 키보드 위에 남는다. 페이지는 (0, 0)에 둔다 |
 | `viewportResume.ts` | 다시 보일 때(visibilitychange·pageshow) 위를 다시 잰다 |
 | `keyboard.ts` | `keyboardUp`, `keyboardHoldsGrid`(키보드는 화면 아래를 가릴 뿐이므로 높이만 줄면 PTY 크기를 바꾸지 않는다), `keyboardViewportReference` |
-| `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`). 키 막대 함수는 아직 aaa가 쓰지 않는다 |
+| `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`), 키 막대 유지 키(`StickyModifiers`, chord는 `terminalChord`·`keyFromData`·`physicalKey`) |
 | `osc52.ts` | `parseOsc52`: pane 프로그램의 OSC 52 클립보드 쓰기(질의는 거절, 100 KiB 상한) |
+| `keyBar.ts` | 키 막대 항목(기본 Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→), 저장값 거르기(`sanitizeKeyBarItems`), 키 이름 → bytes(`keyBarInputSequence`, DECCKM) |
+| `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
+| `draft.ts` | 끊긴 동안 친 글(붙잡은 입력): 글·붙여넣기를 모으고 Enter·줄바꿈은 빼서 알리며, 1024자 상한, 저장 기록은 24시간(`restoreDraft`) |
+| `terminalDraft.ts` | 입력줄 초안: 머신·pane마다 localStorage(32,768자 상한, 막히면 메모리). 보내는 동안 친 글은 두고 보낸 앞부분만 지운다 |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 
-aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크), `web/src/main.tsx`(`viewport.ts`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
+구독 표시 `AgentMark`(plan §8.49): `agentMark.ts`·`AgentMark.css`는 `src/lib/agentMark.ts`·`src/components/AgentMark.css`를 그대로, `AgentMark.tsx`는 `src/components/AgentMark.tsx`에서 `ClaudeMark`·`CodexMark`·`FallbackMark`·`AgentMarkProps`를 바꾸지 않고 옮겼다(나머지 agent 표시와 `agentSvgMarks.ts`는 aaa가 보이지 않아 옮기지 않았다). 참고는 이 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표다.** aaa는 구독 이름을 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.
+
+그대로 복사하지 못하고 옮긴 파일(import·문구만 바꿈, 고지는 같다): `web/src/herdr/pinchFontSize.ts`(← `src/lib/pinchFontSize.ts`, settings import 경로만), `web/src/usage.ts`(← `src/lib/usage.ts`), `web/src/UsageMeters.tsx`(← `src/components/UsageMeters.tsx`), `web/src/TerminalInput.tsx`, `web/src/KeyBar.tsx`, `web/src/SettingsDialog.tsx`(← `SettingsDialog.tsx`·`SettingsControls.tsx` 일부). host `crates/aaa-host/src/usage.rs`는 `server/usage.ts`를 Rust로 옮긴 것이다(plan §8.45).
+
+aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크·유지 키), `web/src/KeyBar.tsx`(참고 `KeyBar.tsx`를 옮김), `web/src/TerminalInput.tsx`(참고 `TerminalInput.tsx`를 옮김, `terminalDraft.ts`), `web/src/main.tsx`(`viewport.ts`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
 
 ```
 MIT License

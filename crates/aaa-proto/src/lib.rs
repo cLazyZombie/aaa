@@ -4,11 +4,13 @@ pub mod frame;
 pub mod layout;
 pub mod msg;
 pub mod orch;
+pub mod usage;
 pub mod version;
 
 pub use frame::{Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, write_frame};
 pub use msg::*;
 pub use orch::*;
+pub use usage::*;
 pub use version::{AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, Version, negotiate, require_features};
 
 /// Agent link heartbeat: 양쪽이 이 간격으로 ping하고, 이만큼 아무것도 못 받으면 끊는다.
@@ -99,6 +101,12 @@ pub fn typescript_bindings() -> String {
         Proposal::decl(&cfg),
         ProposalDecision::decl(&cfg),
         EvaluationView::decl(&cfg),
+        UsageProviderId::decl(&cfg),
+        UsageWindowKind::decl(&cfg),
+        UsageWindow::decl(&cfg),
+        UsageProblem::decl(&cfg),
+        ProviderUsage::decl(&cfg),
+        UsageReport::decl(&cfg),
     ];
     let mut out = String::from(
         "// 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.\n// 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript\n\n",
