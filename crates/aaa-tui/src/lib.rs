@@ -12,6 +12,7 @@
 //! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
 
 pub mod bind;
+mod chrome;
 pub mod clip;
 mod editor;
 mod help;
@@ -194,6 +195,8 @@ struct App {
     mobile_width: u16,
     /// 색(`[tui] theme`, herdr 팔레트)
     palette: theme::Palette,
+    /// pane 테두리(`[tui] pane_borders`)
+    pane_borders: aaa_config::PaneBorders,
     /// 탐색 모드에서 고른 줄(줄이 늘거나 줄어도 같은 것을 가리킨다)
     list_sel: Option<list::Row>,
     /// 마지막으로 그린 터미널 크기
@@ -255,6 +258,7 @@ impl App {
             collapsed_mode: aaa_config::SidebarCollapsedMode::Compact,
             mobile_width: 64,
             palette: theme::Palette::catppuccin(),
+            pane_borders: aaa_config::PaneBorders::Auto,
             list_sel: None,
             width: 0,
             height: 0,
@@ -297,6 +301,7 @@ impl App {
         self.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
         self.collapsed_mode = cfg.sidebar_collapsed_mode;
         self.mobile_width = cfg.mobile_width_threshold;
+        self.pane_borders = cfg.pane_borders;
         self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
         // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
         self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
@@ -638,12 +643,13 @@ impl App {
             self.grids.remove(p);
         }
         let Some(tab) = self.ws.tabs.get(self.tab) else { return Ok(()) };
-        let (rects, _) = self.shown_rects(tab, self.body(area));
+        let boxes = self.shown(tab, self.body(area));
         let reclaim = std::mem::take(&mut self.reclaim);
         if !self.focused {
             return Ok(());
         }
-        for (pane, r) in rects {
+        // PTY는 테두리 안쪽 칸 크기다(herdr `pane_inner_rect`)
+        for chrome::PaneBox { pane, inner: r, .. } in boxes {
             let Some(view) = self.panes.get(&pane) else { continue };
             if !view.state.is_running() || view.connection == aaa_proto::Connection::Disconnected {
                 continue;
@@ -934,13 +940,11 @@ impl App {
         if self.ws.tabs.get(i).is_some_and(|t| t.zoomed) { format!("{label} Z") } else { label }
     }
 
-    /// 그릴 pane 칸과 구분선. zoom이면 포커스 pane 하나가 칸 전체다(herdr `render_panes`).
+    /// 그릴 pane 상자(테두리·PTY 칸). zoom이면 포커스 pane 하나가 칸 전체다(herdr `render_panes`).
     /// 방향 포커스·자리 바꾸기는 zoom과 상관없이 나눈 칸으로 찾는다(`pane_rects`).
-    fn shown_rects(&self, tab: &aaa_proto::Tab, body: Rect) -> layout::Rects {
-        match &self.focus {
-            Some(f) if tab.zoomed && layout::leaves(&tab.root).contains(f) => (vec![(f.clone(), body)], vec![]),
-            _ => layout::rects(&tab.root, body),
-        }
+    fn shown(&self, tab: &aaa_proto::Tab, body: Rect) -> Vec<chrome::PaneBox> {
+        let zoomed = self.focus.as_deref().filter(|f| tab.zoomed && layout::leaves(&tab.root).iter().any(|p| p == f));
+        chrome::layout(&tab.root, body, self.pane_borders, zoomed)
     }
 
     /// 마지막 탭(이고 pane이 `pane`뿐)인가: herdr `confirm_close`는 workspace가 닫힐 때만 묻는다
@@ -1132,10 +1136,11 @@ impl App {
         Ok(())
     }
 
-    /// 지금 탭의 pane 칸들(그린 화면 그대로)
+    /// 지금 탭의 pane 칸들(테두리 포함, zoom이 아닐 때 그린 화면 그대로)
     fn pane_rects(&self) -> Vec<(String, Rect)> {
         let Some(tab) = self.ws.tabs.get(self.tab) else { return vec![] };
-        layout::rects(&tab.root, self.body(Rect { x: 0, y: 0, w: self.width, h: self.height })).0
+        let body = self.body(Rect { x: 0, y: 0, w: self.width, h: self.height });
+        chrome::layout(&tab.root, body, self.pane_borders, None).into_iter().map(|b| (b.pane, b.rect)).collect()
     }
 
     /// 방향으로 이웃 pane에 포커스한다(herdr `layout::find_in_direction`: 그 방향에 있고 겹치는 pane 중
@@ -1181,28 +1186,13 @@ impl App {
                 }
             }
             Some(tab) => {
-                let (rects, lines) = self.shown_rects(tab, body);
-                // herdr 나눔선: 포커스 pane에 닿은 칸은 accent, 나머지는 overlay0
-                let focus_rect = rects.iter().find(|(p, _)| Some(p) == self.focus.as_ref()).map(|(_, r)| *r);
-                for (dir, r) in lines {
-                    let ch = if dir == SplitDir::Horizontal { "│" } else { "─" };
-                    for dy in 0..r.h {
-                        for dx in 0..r.w {
-                            let (cx, cy) = (r.x + dx, r.y + dy);
-                            let near = focus_rect.is_some_and(|f| {
-                                if dir == SplitDir::Horizontal {
-                                    (cx + 1 == f.x || cx == f.x + f.w) && cy >= f.y && cy < f.y + f.h
-                                } else {
-                                    (cy + 1 == f.y || cy == f.y + f.h) && cx >= f.x && cx < f.x + f.w
-                                }
-                            });
-                            buf.set_string(cx, cy, ch, Style::default().fg(if near { p.accent } else { p.overlay0 }));
-                        }
-                    }
-                }
-                for (pane, r) in rects {
-                    let focused = self.focus.as_deref() == Some(pane.as_str());
-                    if let Some(c) = self.render_pane(buf, &pane, r, focused) {
+                // herdr `render_pane_borders`·`render_pane_border_titles`
+                let boxes = self.shown(tab, body);
+                let title = |id: &str| self.panes.get(id).and_then(border_title);
+                chrome::render(buf, &boxes, self.focus.as_deref(), title, p);
+                for b in &boxes {
+                    let focused = self.focus.as_deref() == Some(b.pane.as_str());
+                    if let Some(c) = self.render_pane(buf, &b.pane, b.inner, focused) {
                         cursor = Some(c);
                     }
                 }
@@ -1551,6 +1541,14 @@ impl App {
     }
 }
 
+/// pane 테두리 제목: 붙인 이름만(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름
+/// (명령 파일 이름, 없으면 `shell`)은 쓰지 않는다. herdr도 사람이 붙인 이름·agent 제목만 쓰고 셸 pane에는 제목이 없다.
+fn border_title(v: &PaneView) -> Option<String> {
+    let name = v.name.trim();
+    let default = v.argv.first().map_or("shell", |a| a.rsplit(['/', '\\']).next().unwrap_or(a));
+    (!name.is_empty() && name != default).then(|| name.to_string())
+}
+
 /// 사이드바 바탕과 오른쪽 구분선(herdr `render_sidebar_background`: `sidebar_bg`, `│`는 `surface_dim`)
 fn sidebar_background(buf: &mut Buffer, r: Rect, p: &theme::Palette) {
     fill(buf, r, Style::default().bg(p.sidebar_bg));
@@ -1897,7 +1895,7 @@ mod tests {
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
     }
 
-    /// zoom(herdr `render_panes`·`tab_label`): 포커스 pane 하나가 칸 전체, 구분선 없음, 탭 이름표에 ` Z`.
+    /// zoom(herdr `render_panes`·`tab_label`): 포커스 pane 하나가 칸 전체(상자 하나), 탭 이름표에 ` Z`.
     /// 방향 찾기는 나눈 칸 그대로라 zoom 중에도 이웃으로 포커스가 옮겨 가고 그 pane이 크게 보인다.
     #[test]
     fn zoom_shows_the_focused_pane_alone_like_herdr() {
@@ -1907,15 +1905,44 @@ mod tests {
         app.ws.tabs[0].zoomed = true;
         let area = Rect { x: 0, y: 0, w: app.width, h: app.height };
         let body = app.body(area);
-        assert_eq!(app.shown_rects(&app.ws.tabs[0], body), (vec![("p1".to_string(), body)], vec![]));
+        let shown = app.shown(&app.ws.tabs[0], body);
+        assert_eq!(shown.iter().map(|b| (b.pane.as_str(), b.rect)).collect::<Vec<_>>(), [("p1", body)]);
         let (lines, _) = draw(&app);
         assert!(right_of_sidebar(&lines[0]).contains("  1 Z  "), "{:?}", lines[0]);
-        assert!(lines[1..].iter().all(|l| !right_of_sidebar(l).contains('│')), "zoom이면 pane 구분선이 없다");
+        // pane이 둘인 탭이라 zoom이어도 상자 하나를 두른다(herdr `zoomed_pane_borders`)
+        let row = right_of_sidebar(&lines[5]);
+        assert!(row.starts_with('│') && row.ends_with('│') && row.matches('│').count() == 2, "{row:?}");
         app.move_focus(Dir::Left);
         assert_eq!(app.focus.as_deref(), Some("p0"));
-        assert_eq!(app.shown_rects(&app.ws.tabs[0], body).0[0].0, "p0");
+        assert_eq!(app.shown(&app.ws.tabs[0], body)[0].pane, "p0");
         app.ws.tabs[0].zoomed = false;
-        assert_eq!(app.shown_rects(&app.ws.tabs[0], body).0.len(), 2);
+        assert_eq!(app.shown(&app.ws.tabs[0], body).len(), 2);
+    }
+
+    /// 테두리 제목은 붙인 이름만: agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다(herdr 셸 pane처럼)
+    #[test]
+    fn border_titles_only_for_given_names() {
+        let named = |name: &str, argv: &[&str]| {
+            let mut v = pane_view("p", "m", name);
+            v.argv = argv.iter().map(|a| a.to_string()).collect();
+            border_title(&v)
+        };
+        assert_eq!(named("sh", &["/bin/sh"]), None);
+        assert_eq!(named("shell", &[]), None);
+        assert_eq!(named("demo/t-0001", &["claude"]), Some("demo/t-0001".into()));
+        assert_eq!(named(" build ", &["/bin/zsh"]), Some("build".into()));
+        // 나눈 탭에서 이름 붙은 pane만 위 테두리에 ` 이름 `
+        let mut app = app_with_tabs(&[""]);
+        aaa_proto::layout::split(&mut app.ws.tabs[0].root, "p0", "p1", SplitDir::Horizontal);
+        for (id, name) in [("p0", "빌드 서버"), ("p1", "sh")] {
+            let mut v = pane_view(id, "m1", name);
+            v.argv = vec!["/bin/sh".into()];
+            app.panes.insert(id.into(), v);
+        }
+        app.focus = Some("p0".into());
+        let (lines, _) = draw(&app);
+        let top = right_of_sidebar(&lines[1]);
+        assert!(top.starts_with("┌ 빌드 서버 ─") && top.contains("┐┌──") && !top.contains(" sh "), "{top:?}");
     }
 
     /// 크기 모드 막대(herdr `render_mode_bar`): mauve 바탕 ` RESIZE `와 키 안내

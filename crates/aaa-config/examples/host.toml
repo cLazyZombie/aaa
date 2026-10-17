@@ -35,6 +35,8 @@ sidebar_collapsed_mode = "compact"
 mobile_width_threshold = 64
 # 색 테마(herdr와 같은 이름: catppuccin·terminal·tokyo-night·dracula·nord·gruvbox 등 18개).
 theme = "catppuccin"
+# pane 테두리: "auto"(pane이 둘 이상인 탭만 pane마다 상자), "always"(하나여도), "off"(테두리 없이 빈 칸 하나).
+pane_borders = "auto"
 
 [terminal]
 # 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로

@@ -91,6 +91,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   sidebar_collapsed_mode = "compact"            # 접으면 번호·상태 점 4칸(compact) 또는 없음(hidden)
   mobile_width_threshold = 64                   # 이 폭 이하면 사이드바·탭 막대 대신 두 줄 머리
   theme = "catppuccin"                          # herdr 테마 이름(terminal·tokyo-night·dracula·nord 등 18개)
+  pane_borders = "auto"                         # pane 테두리: auto(나눈 탭만) · always · off
 
   [terminal]
   new_cwd = "follow"                            # 새 탭·나누기의 폴더: follow(포커스 pane의 지금 폴더) · home · 절대 경로

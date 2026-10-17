@@ -162,13 +162,17 @@ fn sidebar_like_herdr() {
     assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (26, false, 64));
     assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Compact);
     assert_eq!(t.theme, "catppuccin");
-    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\n");
+    assert_eq!(t.pane_borders, crate::PaneBorders::Auto);
+    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\npane_borders = \"off\"\n");
     let t = load_host(&d.0).unwrap().config.tui;
     assert_eq!((t.sidebar_width, t.sidebar_start_collapsed), (30, true));
     assert_eq!(t.theme, "terminal");
     assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Hidden);
+    assert_eq!(t.pane_borders, crate::PaneBorders::Off);
     d.write("host.toml", "schema = 1\n[tui]\nsidebar_collapsed_mode = \"tiny\"\n");
     assert!(load_host(&d.0).is_err(), "모르는 접기 방식은 거부한다");
+    d.write("host.toml", "schema = 1\n[tui]\npane_borders = \"never\"\n");
+    assert!(load_host(&d.0).is_err(), "모르는 테두리 방식은 거부한다");
 }
 
 /// herdr `[ui] prompt_new_tab_name`·`confirm_close`(기본 켬)과 `[terminal] new_cwd`(기본 follow)
