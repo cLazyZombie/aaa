@@ -466,6 +466,10 @@ impl Host {
                 let event = pr_event(&events, &summary);
                 self.inbox_add(project, "pr", &rec.id, event, &format!("{}: PR {change}", label(&rec)));
                 self.flow(&rec, "pr_changed", None, format!("{url} {event} [{}]: {change}", events.join(", ")));
+                // 평가자의 「착지」 사건(전에는 병합 대기열의 `merge_landed`)
+                if events.contains(&"merged") {
+                    self.flow(&rec, "pr_merged", None, url.clone());
+                }
                 self.fire_pr_routines(project, dir, &rec, &url, &events, &summary).await;
                 let _ = self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap());
             }

@@ -16,7 +16,6 @@ mod http;
 mod inbox;
 mod library;
 pub mod link;
-mod merge;
 pub mod migrate;
 mod notify;
 mod orch;
@@ -950,18 +949,6 @@ impl Host {
                 })
             }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
-            FrontRequest::MergeEnqueue { project, thread } => {
-                self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeDrop { project, thread, landed } => {
-                self.merge_drop(&project, &thread, landed, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeLand { project, thread } => {
-                self.merge_land(&project, thread.as_deref(), actor).await.map(|v| FrontResponse::MergeLand(Box::new(v)))
-            }
-            FrontRequest::MergeList { project } => {
-                self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
-            }
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }

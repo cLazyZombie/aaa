@@ -13,11 +13,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
-    MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role,
-    RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
+    OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
+    ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
+use crate::orch::{EvaluationView, EvaluatorView};
 
 use crate::version::Version;
 
@@ -476,15 +476,6 @@ pub enum AgentRequest {
         path: String,
         data: B64,
     },
-    /// 병합 단계(§8.24). `repo`는 사용자 checkout, `cwd`는 thread worktree다. `remote`/`target`(예: origin/main)으로 push한다.
-    MergeLand {
-        repo: String,
-        cwd: String,
-        branch: String,
-        remote: String,
-        target: String,
-        message: String,
-    },
     /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
     /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.110).
     /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
@@ -557,7 +548,6 @@ pub enum AgentResponse {
         eof: bool,
     },
     Cleanup(Cleanup),
-    Landed(LandOutcome),
     Relaunch(Launch),
     CommandRan(CommandRan),
     /// 첨부를 다 썼다(절대 경로와 sha256)
@@ -1322,28 +1312,6 @@ pub enum FrontRequest {
     /// ticker를 지금 한 번 돌리고, 이 요청 뒤에 시작한 tick이 끝나면 답한다(herdr-projects 시험의 `ticker::tick_project`,
     /// t3code worker `drain`과 같은 자리). host가 「봤는데 할 일이 없었다」를 시험이 기다릴 수 있다(docs/testing.md).
     TickerTick,
-    /// 병합 대기열 맨 뒤에 넣는다(이미 있으면 그 자리)
-    MergeEnqueue {
-        project: String,
-        thread: String,
-    },
-    /// 병합 대기열에서 뺀다. `landed`면 병합을 마친 것이고, 아니면 취소다.
-    MergeDrop {
-        project: String,
-        thread: String,
-        #[serde(default)]
-        landed: bool,
-    },
-    MergeList {
-        project: String,
-    },
-    /// 병합 대기열 맨 앞 thread를 병합한다(§8.24): 그 머신 agent가 원격 일치·병합·tree 같음 확인·push·사용자 checkout 맞춤·정리를 한다.
-    /// `thread`를 주면 그것이 맨 앞이어야 한다.
-    MergeLand {
-        project: String,
-        #[serde(default)]
-        thread: Option<String>,
-    },
     /// routine 목록(`projects/<p>/routines/*.md`)과 상태
     Routines {
         project: String,
@@ -1430,7 +1398,6 @@ impl FrontRequest {
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
-                | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
@@ -1460,7 +1427,6 @@ impl FrontRequest {
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
                 | FrontRequest::RoutineApprove { .. }
-                | FrontRequest::MergeLand { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
                 | FrontRequest::TickerTick
@@ -1557,14 +1523,10 @@ pub enum FrontResponse {
         #[serde(default)]
         omitted_done: u32,
     },
-    Merge {
-        queue: Vec<MergeEntry>,
-    },
     /// `ticker_tick`: 이 host 실행에서 끝난 tick 수(방금 돈 것까지)
     Ticker {
         runs: u64,
     },
-    MergeLand(Box<MergeLandView>),
     Routines {
         routines: Vec<RoutineView>,
     },

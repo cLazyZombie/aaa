@@ -143,7 +143,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve {p} <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
-- 다음 지시: `aaa thread next {p} <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. 줄을 더할 때는 `--add \"…\"`.
+- 다음 지시: `aaa thread next {p} <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. thread가 자기 도구로 한다. 줄을 더할
+  때는 `--add \"…\"`. Next 줄을 coordinator가 직접 하지 않는다.
 - 그 밖의 메시지: `aaa thread message {p} <id> --text …`. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다).
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
@@ -171,7 +172,11 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 형식: `- [ ] 제목 (owner)`. owner는 비움(미할당)·`me`(사용자 할 일)·`profile`·`@machine`·`profile@machine`.
 - owner를 쓰기 전에 `aaa assignable {p} --check <owner>`로 확인한다.
 - thread에 맡기면 줄 끝에 ` · <thread id>`를 붙인다. 끝나거나 그만두면 줄을 지운다(메모도 함께).
-- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다.
+- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 하나 예외는 아래 「thread가 끝나면」의 병합된 경우다(관찰이다).
+- thread가 끝나면: 맡긴 task의 thread가 끝났거나 열린 thread에서 빠졌을 때, 그 thread의 `pr` 항목이 `상태 MERGED`면 task를
+  지우고 알린다. 아니면 끝났는지·owner에게 돌릴지·다시 맡길지 묻는다(그 task를 이미 물었으면 묻지 않는다).
+- 빈 자리: inbox 항목이 thread가 끝났음을 보인 턴(새 보고, 저절로 끝냄, 병합된 PR)에 미할당이나 agent owner task가 기다리면
+  한 번 말하고 맡길지 묻는다. 다음 턴에 되풀이하지 않는다.
 
 ## memory와 선호
 - 운영 선호는 묻지 않고 적는다. 사용자가 thread를 어떻게 돌리고 싶은지(동시 thread 수, worker의 harness·model, PR 습관,
@@ -182,14 +187,19 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 사용자가 채팅에서 정한 것 중 뒤 thread가 알아야 할 것은 그때 바로 memory에 적는다(따로 두는 결정 기록은 없다).
 
 ## 병합
-- 병합 순서는 `aaa merge enqueue|list|done {p} <id>`로 정한다.
-- worktree thread는 `aaa merge land {p}`로 맨 앞부터 병합한다. aaa가 원격 일치·병합·tree 같음을 확인하고 push한다(force 없음).
-  멈추면 출력의 까닭(커밋하지 않은 변경, main을 합치지 않음 등)을 그 thread에 맡기고 다시 한다. 손으로 병합했으면 `merge done`.
+- aaa는 병합하지 않는다. thread가 PR을 열면 보고 첫 줄에 `PR: <url>`을 쓴다. 사용자가 채팅에서 병합하라고 하면 그 thread의
+  Next 줄(「PR을 병합한다」)을 `aaa thread next {p} <id> --line N`으로 보낸다. thread가 자기 도구(gh·git)로 병합한다.
+- aaa가 thread의 PR을 따라간다. 열리고 승인되면 묶음이 「병합 중」이고, 병합되면 agent가 끝낸 뒤(진행 보고 `Done`, 아니면 병합 뒤
+  새 보고나 10분) 저절로 끝낸다. 보고가 이름 붙인 내 다른 PR이 열려 있으면 기다린다. worktree는 force 없이 지우고, branch는
+  병합된 PR head일 때만 지운다.
 
 ## routine
 - `routines/<이름>.md`는 일정 작업이다(`aaa routine list {p}`). `on = \"pr\"`(선택 `events = [\"opened\", \"checks-failed\", \"review\", \"merged\"]`)이면
   일정 대신 thread의 PR 사건에 본문을 그 thread에 보낸다. 모든 프로젝트에 `routines/pr-followup.md`가 있어 thread가 실패한 check를
   고치고 리뷰 댓글에 답하게 한다. 멈추려면 파일을 지우지 말고 `enabled = false`로 둔다.
+
+## 사용자가 채팅에서 요청하지 않으면 하지 않는 것
+병합, force push, branch 지우기, worktree 지우기, thread 끝내기(`thread resolve`).
 ";
 
 fn bad(msg: impl Into<String>) -> ErrorBody {
@@ -1142,6 +1152,8 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
+        // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
+        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
         if let Some(pane) = &rec.pane
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
@@ -1149,6 +1161,8 @@ impl Host {
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
+        // 그 thread의 자리가 치워졌나: 작업 폴더 thread는 늘, worktree thread는 worktree를 지웠을 때
+        let mut place_gone = rec.kind == ThreadKind::Dir;
         if let Some(cwd) = &rec.cwd {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
             let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
@@ -1163,6 +1177,7 @@ impl Host {
                 .await
             {
                 Ok(AgentResponse::Cleanup(c)) => {
+                    place_gone |= c.worktree_removed;
                     notes.push(format!(
                         "worktree {}, branch {}",
                         if c.worktree_removed { "삭제" } else { "유지" },
@@ -1174,7 +1189,28 @@ impl Host {
                 Err(e) => notes.push(format!("정리 실패: {}", e.message)),
             }
         }
-        self.merge_forget(&rec);
+        // 참고 `clean`은 worktree를 지우며 그 workspace를, tab 종류는 tab을 닫는다: 끝난 pane 줄을 목록에 남기지 않는다.
+        // worktree를 남기면 pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 세션은 끝낸다, §8.14 resolve)
+        if place_gone && let Some(pane) = &rec.pane {
+            // 끝내기는 위에서 보냈다: 끝남을 기다려 layout과 기록에서 지운다(`pane close`의 뒷부분)
+            let closed = match pane_rx {
+                None => Ok(false),
+                Some(rx) => {
+                    match self
+                        .wait_pane(pane, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다")
+                        .await
+                    {
+                        Ok(()) => self.forget(pane, &rec.machine_id, actor).await.map(|_| true),
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+            notes.push(match closed {
+                Ok(true) => "pane을 닫았다".into(),
+                Ok(false) => "pane은 이미 닫혔다".into(),
+                Err(e) => format!("pane을 닫지 못했다: {}", e.message),
+            });
+        }
         self.flow(
             &rec,
             "thread_resolved",

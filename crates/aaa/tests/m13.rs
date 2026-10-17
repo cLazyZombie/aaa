@@ -518,14 +518,22 @@ fn worktree_thread_round_trip() {
             .contains("branch aaa/demo/t-0001-fix-the-bug를 남겼다: PR이 병합되지 않았다"),
         "{resolved}"
     );
+    // 자리(worktree)를 치웠으니 pane도 닫는다(herdr-projects `clean`은 그 workspace를 닫는다): 목록에 끝난 줄이 남지 않는다
     let pane = v["pane"].as_str().unwrap();
-    wait_for("세션 종료", T, || (w.h.pane(pane)["state"] != "running").then_some(()));
+    let panes = w.h.ok(&["pane", "list"]);
+    assert!(
+        !panes["panes"].as_array().unwrap().iter().any(|p| p["id"] == pane),
+        "끝낸 thread의 pane이 남았다: {panes}"
+    );
+    assert!(resolved["detail"].as_str().unwrap().contains("pane을 닫았다"), "{resolved}");
     assert_eq!(w.kinds(0), ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
     // cursor 뒤만 읽는다
     assert_eq!(w.kinds(3), ["review_acked", "thread_resolved"]);
 }
 
 /// 고친 worktree와 병합되지 않은 branch는 남긴다(force 없음). 허용되지 않은 profile은 거부한다.
+/// pane은 그 thread의 자리를 치웠을 때만 닫는다(herdr-projects threads.rs `clean`: worktree를 지우며 workspace를, tab 종류는
+/// tab을 닫는다). 남긴 worktree의 pane 줄은 남고(세션만 끝남), 작업 폴더 thread와 이미 지운 worktree(`worktree_gone`)는 닫는다.
 #[test]
 fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let w = world();
@@ -550,6 +558,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let v = w.start(&["--title", "keep", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task]);
     let id = v["id"].as_str().unwrap().to_string();
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
+    let pane = v["pane"].as_str().unwrap().to_string();
     w.wait_show("보고", &id, |v| v["report_hash"].is_string());
     let v = w.h.ok(&["thread", "resolve", "demo", &id]);
     assert_eq!(v["status"], "resolved");
@@ -559,6 +568,44 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let last = ev["events"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(last["kind"], "thread_resolved");
     assert!(last["detail"].as_str().unwrap().contains("worktree 유지"), "{last}");
+    assert!(!last["detail"].as_str().unwrap().contains("pane을 닫았다"), "{last}");
+    wait_for("남긴 worktree의 세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+
+    let listed = |p: &str| w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|x| x["id"] == p);
+    let resolved = |id: &str| {
+        w.h.ok(&["thread", "resolve", "demo", id]);
+        w.h.ok(&["events", "demo"])["events"].as_array().unwrap().last().unwrap()["detail"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    // 작업 폴더 thread는 늘 닫는다
+    let d = w.start(&["--title", "dir", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("d.txt", "x")]);
+    let (did, dpane) = (d["id"].as_str().unwrap().to_string(), d["pane"].as_str().unwrap().to_string());
+    w.wait_show("보고", &did, |v| v["report_hash"].is_string());
+    let detail = resolved(&did);
+    assert!(detail.contains("pane을 닫았다"), "{detail}");
+    assert!(!listed(&dpane), "작업 폴더 thread의 pane이 남았다");
+    // 사람이 이미 지운 worktree는 잃을 것이 없다: 지운 것으로 치고(git 기록도 치운다) pane을 닫는다
+    let g = w.start(&[
+        "--title",
+        "gone",
+        "--profile",
+        "fake",
+        "--repo",
+        path_str(&w.repo),
+        "--task-file",
+        &w.task("g.txt", "x"),
+    ]);
+    let (gid, gpane) = (g["id"].as_str().unwrap().to_string(), g["pane"].as_str().unwrap().to_string());
+    let gcwd = PathBuf::from(g["cwd"].as_str().unwrap());
+    w.wait_show("보고", &gid, |v| v["report_hash"].is_string());
+    std::fs::remove_dir_all(&gcwd).unwrap();
+    let detail = resolved(&gid);
+    assert!(detail.contains("worktree 삭제") && detail.contains("worktree는 이미 없다"), "{detail}");
+    assert!(detail.contains("pane을 닫았다"), "{detail}");
+    assert!(!listed(&gpane), "지운 worktree thread의 pane이 남았다");
+    assert!(!git(&w.repo, &["worktree", "list"]).contains(path_str(&gcwd)), "git worktree 기록이 남았다");
 }
 
 /// 원격(TLS) 머신의 작업 폴더 thread, host 재시작 뒤 보고 감시 재개, 평가자 역할 필터
@@ -1447,7 +1494,11 @@ fn thread_state_items_follow_groups() {
     wait_item(&w, &d, "idle");
     let v = w.h.ok(&["thread", "resolve", "demo", &d]);
     assert_eq!(v["status"], "resolved");
-    wait_for("D 세션 끝남", T, || (w.h.pane(&d_pane)["state"] != "running").then_some(()));
+    let panes = w.h.ok(&["pane", "list"]);
+    assert!(
+        !panes["panes"].as_array().unwrap().iter().any(|p| p["id"] == d_pane.as_str()),
+        "끝낸 thread의 pane이 남았다: {panes}"
+    );
     // 그 뒤에도 묶음 셈이 돌았다는 표지: 새 thread C가 쉼 항목을 낸다
     let (c, _) = start("labA", "fake", "noreport-c");
     wait_item(&w, &c, "idle");
@@ -1477,7 +1528,6 @@ fn thread_state_items_follow_groups() {
     assert_eq!(pushed, [(a.clone(), "new report".to_string()), (b.clone(), "pane closed".to_string())]);
 }
 
-/// 병합 대기열 순번·사건(§8.8)과 머신별 동시 thread 한도(§8.10)
 /// thread 범위(§8.25): 일반 thread 세션 안의 CLI는 보기만 되고, thread가 아닌 pane(사람의 셸) 안의 CLI는 그대로 조작한다
 #[test]
 fn worker_session_cli_is_read_only() {
@@ -1490,7 +1540,7 @@ fn worker_session_cli_is_read_only() {
         &["thread", "next", "demo", id, "--add", "thread가 더한 줄"][..],
         &["thread", "message", "demo", id, "--text", "x"],
         &["pane", "send-text", &shell, "echo hi"],
-        &["merge", "enqueue", "demo", id],
+        &["thread", "ack", "demo", id],
     ] {
         let o = as_session(pane, args);
         assert_eq!(o.status.code(), Some(1), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
@@ -1505,126 +1555,10 @@ fn worker_session_cli_is_read_only() {
     assert!(next.contains("사람이 더한 줄") && !next.contains("thread가 더한 줄"), "{next}");
 }
 
-/// 병합 단계 자동 실행(§8.24): 순번, 커밋하지 않은 변경, 원격 일치, 병합·tree 같음·push, 사용자 checkout ff-only, 다른 thread 알림
+/// 동시 thread 한도는 프로젝트 설정이고 경고만 한다(herdr-projects threads.rs `start`, D10 A13)
 #[test]
-fn merge_land_steps() {
+fn parallel_threads_only_warn() {
     let w = world();
-    // agent가 임시 worktree에서 만드는 병합 commit의 이름(사용자 repo 설정을 따른다)
-    git(&w.repo, &["config", "user.name", "t"]);
-    git(&w.repo, &["config", "user.email", "t@example.com"]);
-    let start = |title: &str| {
-        w.start(&[
-            "--title",
-            title,
-            "--machine",
-            "labA",
-            "--profile",
-            "fake",
-            "--repo",
-            path_str(&w.repo),
-            "--task-file",
-            &w.task(&format!("{title}.txt"), "x"),
-        ])
-    };
-    let t1 = start("land one");
-    let t2 = start("land two");
-    let (id1, id2) = (t1["id"].as_str().unwrap(), t2["id"].as_str().unwrap());
-    let branch = t1["branch"].as_str().unwrap();
-    let cwd1 = PathBuf::from(t1["cwd"].as_str().unwrap());
-    w.wait_show("보고", id1, |v| v["report_hash"].is_string());
-    std::fs::write(cwd1.join("feature.txt"), "one\n").unwrap();
-    git(&cwd1, &["add", "feature.txt"]);
-    git(&cwd1, &["commit", "-qm", "기능 하나"]);
-    w.h.ok(&["merge", "enqueue", "demo", id1]);
-    w.h.ok(&["merge", "enqueue", "demo", id2]);
-    let fail = |args: &[&str]| -> Value {
-        let e = w.h.json(args).expect_err("병합이 멈춰야 한다");
-        serde_json::from_str(&e).unwrap_or_else(|_| panic!("{e}"))
-    };
-    let last_step = |v: &Value| v["steps"].as_array().unwrap().last().unwrap().clone();
-
-    // 순번을 지킨다
-    let e = w.h.json(&["merge", "land", "demo", id2]).expect_err("맨 앞이 아니다");
-    assert!(e.contains("맨 앞이 아니다"), "{e}");
-    // 커밋하지 않은 변경이 있으면 확인 단계에서 멈춘다
-    std::fs::write(cwd1.join("README.md"), "changed\n").unwrap();
-    let v = fail(&["merge", "land", "demo"]);
-    let st = last_step(&v);
-    assert_eq!(
-        (v["ok"].as_bool(), st["name"].as_str(), st["ok"].as_bool()),
-        (Some(false), Some("확인"), Some(false)),
-        "{v}"
-    );
-    git(&cwd1, &["checkout", "--", "README.md"]);
-    // 그 사이 main이 앞서 나갔으면(다른 착지) 원격 일치에서 멈추고 대기열은 그대로다
-    std::fs::write(w.repo.join("other.txt"), "x\n").unwrap();
-    git(&w.repo, &["add", "other.txt"]);
-    git(&w.repo, &["commit", "-qm", "다른 착지"]);
-    git(&w.repo, &["push", "-q", "origin", "main"]);
-    let v = fail(&["merge", "land", "demo", id1]);
-    let st = last_step(&v);
-    assert_eq!(st["name"], "원격 일치", "{v}");
-    assert!(st["note"].as_str().unwrap().contains("포함하지 않는다"), "{v}");
-    assert_eq!(v["queue"].as_array().unwrap().len(), 2, "{v}");
-
-    // thread가 main을 합치면 병합된다
-    git(&cwd1, &["fetch", "-q", "origin"]);
-    git(&cwd1, &["merge", "-q", "--no-edit", "origin/main"]);
-    let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
-    let v = w.h.ok(&["merge", "land", "demo"]);
-    let steps: Vec<(&str, bool)> = v["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| (s["name"].as_str().unwrap(), s["ok"].as_bool().unwrap()))
-        .collect();
-    assert_eq!(
-        steps,
-        [
-            ("확인", true),
-            ("fetch", true),
-            ("원격 일치", true),
-            ("병합", true),
-            ("tree 같음", true),
-            ("push", true),
-            ("사용자 checkout", true),
-            ("정리", true)
-        ],
-        "{v}"
-    );
-    let commit = v["commit"].as_str().unwrap();
-    let origin = w.lab.root.join("origin.git");
-    assert_eq!(git(&origin, &["rev-parse", "main"]), commit);
-    assert_eq!(
-        git(&origin, &["rev-list", "--parents", "-n", "1", "main"]).split(' ').count(),
-        3,
-        "병합 commit(부모 둘)"
-    );
-    assert_eq!(git(&origin, &["log", "-1", "--format=%s", "main"]), format!("병합: land one (demo/{id1})"));
-    assert_eq!(
-        git(&origin, &["rev-parse", "main^{tree}"]),
-        git(&w.repo, &["rev-parse", &format!("{branch}^{{tree}}")])
-    );
-    // 사용자 checkout(깨끗한 main)은 ff-only로 따라온다
-    assert_eq!(git(&w.repo, &["rev-parse", "main"]), commit);
-    assert!(v["steps"][6]["note"].as_str().unwrap().contains("ff-only"), "{v}");
-    assert!(!git(&w.repo, &["worktree", "list"]).contains("aaa-land-"), "임시 worktree가 남았다");
-    // 대기열에서 빠지고, 같은 기준의 다른 열린 thread에 「main 이동」을 알린다
-    assert_eq!(v["notified"], serde_json::json!([id2]));
-    let q = v["queue"].as_array().unwrap();
-    assert_eq!((q.len(), q[0]["thread"].as_str()), (1, Some(id2)));
-    let kinds = w.kinds(seen);
-    assert_eq!(kinds.iter().filter(|k| *k == "merge_step").count(), 9, "{kinds:?}");
-    assert!(kinds.contains(&"merge_landed".to_string()) && kinds.contains(&"merge_head".to_string()), "{kinds:?}");
-    // 새 커밋이 없는 thread는 「포함하지 않는다」(main이 움직였다)로 멈춘다
-    let v = fail(&["merge", "land", "demo"]);
-    assert_eq!(last_step(&v)["name"], "원격 일치", "{v}");
-}
-
-#[test]
-fn merge_queue_and_capacity() {
-    let w = world();
-    // 동시 thread 한도는 프로젝트 설정이고 경고만 한다(herdr-projects threads.rs `start`, D10 A13)
     std::fs::write(w.projects.join("demo/project.toml"), "schema = 1\nmax_parallel_threads = 2\n").unwrap();
     let start = |n: &str| {
         w.h.json(&[
@@ -1641,10 +1575,9 @@ fn merge_queue_and_capacity() {
             &w.task(&format!("{n}.txt"), "x"),
         ])
     };
-    let t1 = start("m1").unwrap()["id"].as_str().unwrap().to_string();
+    start("m1").unwrap();
     let v2 = start("m2").unwrap();
     assert!(v2.get("warnings").is_none(), "{v2}");
-    let t2 = v2["id"].as_str().unwrap().to_string();
     // 한도에 닿으면 시작은 하고 경고한다(CLI는 `경고:` 줄)
     let o = w.h.run(&[
         "thread",
@@ -1662,46 +1595,6 @@ fn merge_queue_and_capacity() {
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
     assert!(out.starts_with("경고: 열린 thread가 이미 2개다(project.toml max_parallel_threads 2)"), "{out}");
-    w.wait_show("보고", &t1, |v| v["report_hash"].is_string());
-    w.wait_show("보고", &t2, |v| v["report_hash"].is_string());
-    let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
-
-    w.h.ok(&["merge", "enqueue", "demo", &t1]);
-    let q = w.h.ok(&["merge", "enqueue", "demo", &t2])["queue"].as_array().unwrap().clone();
-    let order: Vec<_> = q.iter().map(|e| (e["position"].as_u64().unwrap(), e["thread"].as_str().unwrap())).collect();
-    assert_eq!(order, [(1, t1.as_str()), (2, t2.as_str())]);
-    // 이미 있으면 그 자리
-    assert_eq!(w.h.ok(&["merge", "enqueue", "demo", &t1])["queue"].as_array().unwrap().len(), 2);
-    // 병합을 마치면 다음이 맨 앞
-    let q = w.h.ok(&["merge", "done", "demo", &t1])["queue"].as_array().unwrap().clone();
-    assert_eq!((q.len(), q[0]["thread"].as_str(), q[0]["position"].as_u64()), (1, Some(t2.as_str()), Some(1)));
-    let e = w.h.json(&["merge", "drop", "demo", &t1]).expect_err("없는 항목");
-    assert!(e.contains("대기열에 없다"), "{e}");
-    // resolve하면 대기열에서 빠진다
-    w.h.ok(&["thread", "resolve", "demo", &t2]);
-    assert!(w.h.ok(&["merge", "list", "demo"])["queue"].as_array().unwrap().is_empty());
-    let e = w.h.json(&["merge", "enqueue", "demo", &t2]).expect_err("끝난 thread");
-    assert!(e.contains("열린 thread만"), "{e}");
-
-    let ev: Vec<(String, String)> = w.h.ok(&["events", "demo", "--after", &seen.to_string()])["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|e| e["kind"].as_str().unwrap().starts_with("merge_"))
-        .map(|e| (e["kind"].as_str().unwrap().to_string(), e["thread"].as_str().unwrap().to_string()))
-        .collect();
-    let want: Vec<(String, String)> = [
-        ("merge_enqueued", &t1),
-        ("merge_head", &t1),
-        ("merge_enqueued", &t2),
-        ("merge_landed", &t1),
-        ("merge_head", &t2),
-        ("merge_dropped", &t2),
-    ]
-    .iter()
-    .map(|(k, t)| (k.to_string(), t.to_string()))
-    .collect();
-    assert_eq!(ev, want);
 }
 
 /// routine(§8.9): coordinator가 없으면 건너뛰고, 안내는 처리 전까지 하나만, 명령은 host.toml 허용과 사람의 승인이 있어야
@@ -2240,13 +2133,11 @@ fn evaluator_flow() {
     let o = as_eval(&["--json", "evaluator", "status", "demo"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 
-    // 일반 thread가 착지·완료되면 묶음이 평가자 작업 폴더 inbox/에 생긴다
+    // 일반 thread가 끝나면 묶음이 평가자 작업 폴더 inbox/에 생긴다(PR 병합 `pr_merged`는 바로 보낸다)
     let t =
         w.start(&["--title", "work", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("e1.txt", "X-77")]);
     let tid = t["id"].as_str().unwrap().to_string();
     w.wait_show("보고", &tid, |v| v["report_hash"].is_string());
-    w.h.ok(&["merge", "enqueue", "demo", &tid]);
-    w.h.ok(&["merge", "done", "demo", &tid]);
     w.h.ok(&["thread", "resolve", "demo", &tid]);
     let inbox = wd.join("inbox");
     let batches = |n: usize| {
@@ -2265,7 +2156,7 @@ fn evaluator_flow() {
             || format!("evaluator: {}\nevents: {}", w.h.ok(&["evaluator", "status", "demo"]), w.kinds(0).join(",")),
         )
     };
-    // 착지는 바로, 완료는 1초 뒤 묶음: 둘이 한 묶음이거나 두 묶음이다. 완료까지 넘어갈 때까지 기다린다.
+    // 완료는 1초 뒤 묶음이다. 완료까지 넘어갈 때까지 기다린다.
     let all_kinds = |files: &[PathBuf]| -> (Vec<String>, Vec<Value>) {
         let mut kinds = Vec::new();
         let mut docs = Vec::new();
@@ -2289,7 +2180,7 @@ fn evaluator_flow() {
         || w.h.ok(&["evaluator", "status", "demo"]).to_string(),
     );
     let (kinds, docs) = all_kinds(&files);
-    for k in ["thread_started", "report_ready", "merge_landed", "thread_resolved"] {
+    for k in ["thread_started", "report_ready", "thread_resolved"] {
         assert!(kinds.contains(&k.to_string()), "{k} 없음: {kinds:?}");
     }
     // 묶음은 seq가 겹치지 않고, thread 이력·시간 요약·보고 본문을 담는다
@@ -2362,8 +2253,7 @@ fn evaluator_flow() {
         w.start(&["--title", "work2", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("e2.txt", "y")]);
     let t2id = t2["id"].as_str().unwrap().to_string();
     w.wait_show("보고", &t2id, |v| v["report_hash"].is_string());
-    w.h.ok(&["merge", "enqueue", "demo", &t2id]);
-    w.h.ok(&["merge", "done", "demo", &t2id]);
+    w.h.ok(&["thread", "resolve", "demo", &t2id]);
     let files2 = batches(files.len() + 1);
     let (_, docs2) = all_kinds(&files2);
     let newest = docs2.last().unwrap();

@@ -423,6 +423,11 @@ pub async fn cleanup(
     let repo = PathBuf::from(repo);
     if keep_worktree {
         c.notes.push("worktree를 남겼다(요청)".into());
+    } else if !Path::new(cwd).exists() {
+        // 이미 없는 폴더는 잃을 것이 없다(herdr-projects `worktree_gone`): 지운 것으로 치고 git 기록만 치운다
+        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
+        c.worktree_removed = true;
+        c.notes.push("worktree는 이미 없다".into());
     } else {
         match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
             Ok(_) => c.worktree_removed = true,
