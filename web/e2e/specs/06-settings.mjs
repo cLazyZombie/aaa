@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit,
+  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -152,14 +152,20 @@ export default async function ({ ctl, page }) {
   await step("글자 크기(herdr-web-ui terminalFontSize·핀치): 설정에서 한 칸씩, 휴대폰은 두 손가락으로 글자가 따라오고 손을 떼면 저장하고 PTY를 한 번 다시 건다", async () => {
     const t1 = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
     const rowsFont = (pg) => pg.evaluate(() => getComputedStyle(document.querySelector('[data-testid="terminal"] .xterm-rows')).fontSize);
-    /** 이 화면이 PTY 크기를 건 뒤 멈춘 열 수 */
-    const settled = async (pg, what, ok) =>
-      until(what, async () => {
-        const a = t1().cols;
-        await sleep(300);
-        const b = t1().cols;
-        return a === b && (await ok(b)) ? b : null;
+    /**
+     * 이 화면이 PTY 크기를 건 뒤 멈춘 열 수: 맞추기 판단(Term data-fit)이 same(이 화면이 받은 host 크기가 맞출 크기와 같다)이고
+     * 크기 바뀜 뒤 기다리는 맞추기(data-fit-pending)가 없을 때의 host 열 수. 300ms 사이 두 번 읽어 멈춤을 어림하지 않는다
+     */
+    const settled = async (pg, what, ok) => {
+      const term = pg.getByTestId("terminal");
+      const now = async () => ({ fit: await term.getAttribute("data-fit"), pending: await term.getAttribute("data-fit-pending"), cols: t1().cols });
+      return until(what, async () => {
+        const n = await now();
+        return n.fit === "same" && n.pending === null && (await ok(n.cols)) ? n.cols : null;
+      }).catch(async (e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(await now())}`);
       });
+    };
     /**
      * 이 화면의 터미널 칸을 PTY `cols`열이 채운다: 이 화면이 자기 칸으로 크기를 건 뒤다(xterm은 host가 알린 PTY 크기를 따른다).
      * 앞 단계 화면이 건 크기(넓은 창이면 116열)가 남아 있는 동안은 넘친다(02-terminal 「넓은 창」과 같은 판정)
@@ -214,6 +220,7 @@ export default async function ({ ctl, page }) {
         type,
         touchPoints: d === null ? [] : [{ x: cx - d / 2, y: cy, id: 1 }, { x: cx + d / 2, y: cy, id: 2 }],
       });
+    const beforePinch = await sentCount(mp);
     await touch("touchStart", 100);
     await touch("touchMove", 130);
     await touch("touchMove", 150);
@@ -221,12 +228,17 @@ export default async function ({ ctl, page }) {
     await until("핀치 중 20px", async () => (await rowsFont(mp)) === "20px");
     const badge = await mp.getByTestId("pinch-badge").innerText();
     if (badge !== "20px") throw new Error(`핀치 표시 ${JSON.stringify(badge)}`);
-    if (t1().cols !== phone) throw new Error("손을 떼기 전에 PTY가 바뀌었다");
+    // 핀치 사건 처리 안에서 크기를 걸었다면 이미 보냈다(host에 닿기 전이어도)
+    const pinchResize = (await sentFrames(mp, beforePinch)).filter((f) => f.t === "resize");
+    if (pinchResize.length || t1().cols !== phone) throw new Error(`손을 떼기 전에 PTY가 바뀌었다: ${phone}열 → ${t1().cols}열, 보낸 크기 ${JSON.stringify(pinchResize)}`);
+    const beforeEnd = await sentCount(mp);
     if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("손을 떼기 전에 저장했다");
     await touch("touchEnd", null);
     await until("핀치 표시 사라짐", async () => await mp.getByTestId("pinch-badge").isHidden());
     if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "20") throw new Error("핀치 크기를 저장하지 않았다");
     const pinched = await settled(mp, "핀치 뒤 PTY", (c) => c < phone * 0.8);
+    const endResize = (await sentFrames(mp, beforeEnd)).filter((f) => f.t === "resize");
+    if (endResize.length !== 1) throw new Error(`손을 뗀 뒤 PTY를 한 번 걸지 않았다: ${JSON.stringify(endResize)}`);
     console.log(`     핀치 ${phone}열(13px) → ${pinched}열(20px)`);
     await mp.context().close();
   });

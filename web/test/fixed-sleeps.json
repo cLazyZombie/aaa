@@ -2,7 +2,7 @@
   "web/e2e/lib/harness.mjs": 4,
   "web/e2e/showcase.mjs": 4,
   "web/e2e/specs/03-keys.mjs": 2,
-  "web/e2e/specs/06-settings.mjs": 3,
+  "web/e2e/specs/06-settings.mjs": 2,
   "web/e2e/specs/07-scroll-history.mjs": 1,
   "web/e2e/specs/08-input-line.mjs": 3,
   "web/e2e/specs/09-ime.mjs": 7,
