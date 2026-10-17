@@ -28,7 +28,7 @@ import {
   terminalChord,
   type StickyModifiers,
 } from "./herdr/keys.ts";
-import { DEFAULT_KEY_BAR_ITEMS, keyBarInputSequence, sanitizeKeyBarItems, type KeyBarKeyItem } from "./herdr/keyBar.ts";
+import { keyBarInputSequence, type KeyBarKeyItem } from "./herdr/keyBar.ts";
 import { chordSequence, IS_MAC } from "./keyChord";
 import { KeyBar } from "./KeyBar";
 import { TerminalInput } from "./TerminalInput";
@@ -36,6 +36,7 @@ import {
   getTerminalWheelSpeed,
   setTerminalFontSize,
   setTerminalInputMode,
+  useKeyBarItems,
   useMedia,
   useTerminalFontSize,
   useTerminalInputMode,
@@ -1180,15 +1181,8 @@ export function TermView({
     };
   }, [pane.id]);
 
-  // 키 막대(herdr-web-ui PaneTerminal 2218~2245줄). 항목은 기기별 저장값(설정 화면은 아직 없다), 없으면 참고 기본 배열.
-  const [barItems] = useState(() => {
-    try {
-      const raw = localStorage.getItem("aaa:keybar-items");
-      return sanitizeKeyBarItems(raw === null ? undefined : JSON.parse(raw));
-    } catch {
-      return DEFAULT_KEY_BAR_ITEMS;
-    }
-  });
+  // 키 막대(herdr-web-ui PaneTerminal 2218~2245줄). 항목은 기기별 저장값(설정 「키 바 편집」이 바꾼다), 없으면 참고 기본 배열.
+  const barItems = useKeyBarItems();
   const pressKey = (item: KeyBarKeyItem) => {
     const term = termRef.current;
     if (!term || composingTermRef.current || commitPendingRef.current) return;

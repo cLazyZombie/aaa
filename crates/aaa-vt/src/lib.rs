@@ -403,6 +403,30 @@ mod tests {
     }
 
     #[test]
+    fn replay_restores_input_modes_in_a_fresh_vt() {
+        // 다시 붙은 화면도 화살표 모드(DECCKM)·bracketed paste·mouse 보고를 안다(차이 목록 「DECCKM」 재연결 뒤)
+        for alt in [false, true] {
+            let mut a = Vt::new(5, 20);
+            if alt {
+                a.feed(b"[?1049h");
+            }
+            a.feed(b"[?1h[?2004h[?1000h[?1006h");
+            let mut b = Vt::new(5, 20);
+            b.feed(&a.replay());
+            let s = b.parser.screen();
+            assert!(s.application_cursor() && s.bracketed_paste(), "alt={alt}");
+            assert_eq!(s.mouse_protocol_mode(), vt100::MouseProtocolMode::PressRelease, "alt={alt}");
+            assert_eq!(s.mouse_protocol_encoding(), vt100::MouseProtocolEncoding::Sgr, "alt={alt}");
+            assert_eq!(s.alternate_screen(), alt);
+            // 끄면 끈 채로
+            a.feed(b"[?1l");
+            let mut c = Vt::new(5, 20);
+            c.feed(&a.replay());
+            assert!(!c.parser.screen().application_cursor(), "alt={alt}");
+        }
+    }
+
+    #[test]
     fn replay_says_modify_other_keys_again() {
         let mut v = Vt::new(5, 20);
         assert!(!v.replay().windows(4).any(|w| w == b"\x1b[>4"));
