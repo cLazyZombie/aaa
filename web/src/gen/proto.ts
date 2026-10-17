@@ -167,11 +167,16 @@ export type LayoutNode = { "node": "pane", pane: string, } | { "node": "split", 
  */
 ratio: number, a: LayoutNode, b: LayoutNode, };
 
-export type Tab = { id: string, name: string, root: LayoutNode, };
+export type Tab = { id: string, name: string, root: LayoutNode, 
+/**
+ * pane 하나를 탭 가득 보인다(herdr `Tab.zoomed`). 보이는 pane은 front마다 그 front의 포커스 pane이다.
+ * 나누기·닫기·옮기기로 탭의 pane이 바뀌면 풀린다.
+ */
+zoomed: boolean, };
 
 export type Workspace = { name: string, tabs: Array<Tab>, };
 
-export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, label: string | null, from: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, ratio: number | null, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, } | { "do": "resize", pane: string, direction: PaneDirection, amount: number | null, } | { "do": "rename_tab", tab: string, name: string, } | { "do": "close_tab", tab: string, } | { "do": "move_to_new_tab", pane: string, name: string | null, };
+export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, label: string | null, from: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, ratio: number | null, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, } | { "do": "resize", pane: string, direction: PaneDirection, amount: number | null, } | { "do": "rename_tab", tab: string, name: string, } | { "do": "close_tab", tab: string, } | { "do": "move_to_new_tab", pane: string, name: string | null, } | { "do": "zoom", pane: string, zoomed: boolean | null, } | { "do": "swap", pane: string, with: string, };
 
 export type GridRun = { 
 /**

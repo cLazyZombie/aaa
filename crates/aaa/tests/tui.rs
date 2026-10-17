@@ -659,6 +659,75 @@ fn tabs_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// 지금 탭(첫 탭) 뿌리 나눔의 비율
+fn split_ratio(w: &HostWatch) -> Option<u16> {
+    match &w.ws.as_ref()?.tabs.first()?.root {
+        aaa_proto::LayoutNode::Split { ratio, .. } => Some(*ratio),
+        aaa_proto::LayoutNode::Pane { .. } => None,
+    }
+}
+
+/// pane 모드(herdr 0.9.5 `route_resize_key`·`apply_pane_zoom`·`swap_pane_*`): `r` 크기 모드, `z` zoom,
+/// `H/J/K/L` 자리 바꾸기. zoom은 host 탭에 남고 나누면 풀린다.
+#[test]
+fn pane_modes_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["1"] && s.contains("이 화면 크기"));
+    tui.type_line("echo left-$((3+4))");
+    tui.wait_text("왼쪽 출력", |s| s.contains("left-7"));
+    tui.cmd("v");
+    let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
+    assert_eq!(hw.wait("비율", split_ratio), 500);
+
+    // 1) r 크기 모드: RESIZE 막대. 포커스(오른쪽 pane)는 오른쪽 가장자리 나눔이 없어 왼쪽 가장자리를 옮긴다
+    //    (herdr `resize_focused`): l이면 나눔이 오른쪽으로 5%씩
+    tui.cmd("r");
+    tui.wait_text("RESIZE 막대", |s| s.contains(" RESIZE ") && s.contains("h/l 너비") && s.contains("esc 끝"));
+    tui.send(b"l");
+    hw.wait("550", |w| (split_ratio(w) == Some(550)).then_some(()));
+    tui.send(b"l");
+    hw.wait("600", |w| (split_ratio(w) == Some(600)).then_some(()));
+    // 칸이 바뀌면 PTY 크기도 다시 건다: 왼쪽이 넓어진다
+    hw.wait("왼쪽이 넓다", |w| (w.pane(&first)?.cols >= w.pane(&right)?.cols + 4).then_some(()));
+    tui.send(b"\x1b");
+    tui.wait_text("크기 모드 끝", |s| !s.contains(" RESIZE "));
+    tui.type_line("echo right-$((4+5))");
+    tui.wait_text("오른쪽 출력", |s| s.contains("right-9"));
+    assert!(h.screen(&right).contains("right-9"), "크기 모드가 끝난 뒤 키는 pane으로 간다");
+
+    // 2) z: host 탭에 zoom, 이름표 `1 Z`, 포커스 pane만 칸 전체로 그리고 크기도 칸 전체
+    tui.cmd("z");
+    hw.wait("zoom", |w| w.ws.as_ref()?.tabs[0].zoomed.then_some(()));
+    tui.wait_text("zoom 화면", |s| tab_chips(s) == ["1", "Z"] && s.contains("right-9") && !s.contains("left-7"));
+    hw.wait("칸 전체 크기", |w| (w.pane(&right)?.cols > w.pane(&first)?.cols).then_some(()));
+    // zoom 중에도 h/j/k/l은 나눈 칸으로 이웃을 찾고, 옮긴 포커스 pane이 크게 보인다(herdr)
+    tui.cmd("h");
+    tui.wait_text("왼쪽 zoom", |s| s.contains("left-7") && !s.contains("right-9"));
+    tui.cmd("z");
+    hw.wait("zoom 풀림", |w| (!w.ws.as_ref()?.tabs[0].zoomed).then_some(()));
+    tui.wait_text("둘 다", |s| tab_chips(s) == ["1"] && s.contains("left-7") && s.contains("right-9"));
+
+    // 3) L: 포커스(왼쪽) pane을 오른쪽 이웃과 바꾼다. 칸·비율은 그대로, 포커스는 옮긴 pane을 따라간다
+    tui.cmd("L");
+    hw.wait("자리 바뀜", |w| (w.leaves() == [right.clone(), first.clone()]).then_some(()));
+    assert_eq!(split_ratio(&hw), Some(600));
+    tui.type_line("echo moved-$((5+6))");
+    tui.wait_text("옮긴 pane 출력", |s| s.contains("moved-11"));
+    assert!(h.screen(&first).contains("moved-11"), "포커스가 옮긴 pane을 따라가지 않았다");
+
+    // 4) zoom 중에 나누면 zoom이 풀린다(herdr `split_*`)
+    tui.cmd("z");
+    hw.wait("다시 zoom", |w| w.ws.as_ref()?.tabs[0].zoomed.then_some(()));
+    tui.cmd("-");
+    hw.wait("나누면 풀림", |w| (w.leaves().len() == 3 && !w.ws.as_ref()?.tabs[0].zoomed).then_some(()));
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// 다른 front가 쓰던 pane에도 바로 입력된다(가져오기 없이, §8.33). 입력하거나 터미널 focus를 다시 얻은 화면이
 /// 지금 쓰는 화면이 되어 칸 크기를 다시 건다. focus가 없는 동안은 크기를 걸지 않는다.
 #[test]

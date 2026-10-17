@@ -64,6 +64,9 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `h` `j` `k` `l` · `Tab` · `Shift+Tab` | pane 포커스 옮기기 · 차례로 |
 | `n` · `p` · `1`~`9` | 탭 이동 |
 | `x` | pane 닫기(세션도 끝냄) |
+| `z` | 포커스 pane 크게 보기(다시 누르면 원래대로) |
+| `r` | 크기 모드: `h/j/k/l`로 가장자리 옮기기, `Esc` 끝 |
+| `Shift+H/J/K/L` | 그 방향 pane과 자리 바꾸기 |
 | `b` | 왼쪽 목록 펴기·접기 |
 | `w` | 목록 탐색(`↑↓` 고르기, `Enter` 열기, `1`~`9` n번째 열기, `h/j/k/l`·`Tab` pane, `Esc` 끝) |
 | `o` | 질문이 열린 pane으로 |

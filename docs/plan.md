@@ -1856,6 +1856,17 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 유닛: 입력 칸(갈아 쓰기, emacs 키와 yank, 글자 묶음·넓은 글자와 보이는 자리), 탭 이름표 폭·넘칠 때 가운데·꼬리, 탭 줄과 두 창을 버퍼에 그려 자리·색 확인(56×7 가운데, 단추 줄, 커서 자리), 이름 창 동안 입력기 그대로, 옛 host 막기, 설정(`new_cwd` 값 검사, 두 `[tui]` 기본 켬), agent `follow_cwd`(PTY 셸이 `cd`한 폴더).
   - TUI harness `tabs_like_herdr`: 셸이 `cd`한 폴더(한글·빈칸 이름)에서 `v` 뒤 바로 친 명령이 새 pane에 가고 cwd가 따라감, `c` 이름 창으로 「빌드」 탭과 cwd, Esc 취소, `T` 이름 바꾸기·빈 저장, `X`로 탭과 세션 닫기, 마지막 탭 확인 창(Esc 유지, Enter로 모두 닫기).
 
+### 8.79 TUI pane 모드: 크기 모드·zoom·자리 바꾸기를 herdr대로(10-18, 차이 목록 4장 C)
+
+- **참고(herdr 0.9.5).** 크기 모드 `src/client/shell/input.rs` `route_resize_key`, 막대 `src/client/shell/render.rs` `render_mode_bar`(RESIZE는 mauve), 크기 `src/layout.rs` `resize_focused`·`resize_pane`, zoom `src/app/actions.rs` `apply_pane_zoom`·`src/workspace/tab.rs`(나누기·닫기·옮기기에서 `zoomed = false`)·`src/ui/panes.rs`(zoom이면 포커스 pane 하나를 칸 전체로)·`src/client/shell/tabs.rs` `tab_label`(` Z`), 자리 바꾸기 `src/app/api/panes.rs` `handle_pane_swap`·`src/layout.rs` `swap_panes`, 키 `src/config/model.rs`(`prefix+r`·`prefix+z`·`prefix+shift+h/j/k/l`).
+- **크기 모드(`prefix r`).** RESIZE 막대(` RESIZE `  `h/l 너비  j/k 높이  esc 끝`). `h/j/k/l`·화살표마다 포커스 pane 가장자리를 5% 옮긴다: 그 방향 가장자리의 나눔, 없으면 반대쪽 가장자리의 나눔(§8.75 `LayoutChange::Resize`, 비율 10%~90%). Esc·Enter·`r`로 끝, 다른 키는 무시(pane에 가지 않는다). 모드 동안 입력기 전환 범위에 든다.
+- **zoom(`prefix z`).** host 탭에 `zoomed`를 둔다(herdr처럼 탭 상태라 다시 붙어도 남는다). 크게 보이는 pane은 front마다 그 front의 포커스 pane이다(herdr는 탭의 포커스 pane, aaa는 포커스가 front마다 다르다). zoom 중에도 `h/j/k/l`·`Tab`은 나눈 칸으로 이웃을 찾고, 옮긴 pane이 크게 보인다. 칸 전체 크기로 PTY 크기를 건다(가려진 pane은 크기를 그대로 둔다). 탭 이름표에 ` Z`. pane이 하나뿐인 탭은 그대로, 나누기·pane 닫기·옮기기로 탭 pane이 바뀌면 풀린다.
+- **자리 바꾸기(`prefix shift+h/j/k/l`).** 포커스와 같은 방향 찾기(`find_in_direction`)로 이웃을 고르고, 두 잎의 pane만 바꾼다(칸과 비율은 그대로). 포커스는 옮긴 pane을 따라간다. host 요청은 herdr `pane swap`의 source·target 꼴(`LayoutChange::Swap { pane, with }`)이다: 방향 이웃은 칸을 아는 front가 찾는다(host는 front마다 다른 화면 크기를 모른다). herdr 단축키 창에는 자리 바꾸기 줄이 없지만 aaa는 넣었다(기본 키가 있어 찾을 수 있게).
+- **host 요청(FRONT_API 1.6).** `LayoutChange::Zoom { pane, zoomed }`(없으면 뒤집기)·`Swap { pane, with }`, `Tab.zoomed`(없으면 false). TUI는 크기 모드를 1.4(§8.75 `Resize`)부터, zoom·자리 바꾸기를 1.6부터 보내고 옛 host면 「host를 새 aaa로 다시 띄워야 한다」를 보인다. CLI `pane zoom`·`pane swap`은 CLI thread 몫이다(요청은 있다).
+- **시험.**
+  - 유닛: `layout::swap`(잎만 바뀌고 칸 그대로), pane이 빠진 탭은 zoom 풀림, 키 표(`z`·`r`·`shift+h/l`), zoom 그리기(포커스 pane이 칸 전체·구분선 없음·` Z`·zoom 중 방향 포커스), RESIZE 막대(mauve), 옛 host 막기(1.5면 zoom 안 보냄).
+  - TUI harness `pane_modes_like_herdr`: `r` 막대와 `l` 두 번에 비율 500→550→600·왼쪽 PTY가 넓어짐·Esc 뒤 키는 pane으로, `z` host zoom·이름표 `1 Z`·포커스 pane만 보임·칸 전체 크기, zoom 중 `h`로 왼쪽이 크게, `z` 풀기, `L` 자리 바꿈(비율 그대로, 포커스가 따라가 입력이 옮긴 pane으로), zoom 중 나누면 풀림.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

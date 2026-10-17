@@ -29,8 +29,8 @@ use bind::Action;
 use keys::Combo;
 
 use aaa_proto::{
-    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, MachineView, Outcome, PaneView,
-    SessionState, SplitDir, ThreadView, Workspace,
+    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, MachineView, Outcome, PaneDirection,
+    PaneView, SessionState, SplitDir, ThreadView, Workspace,
 };
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -131,6 +131,8 @@ enum Mode {
     Prefix,
     /// 목록 탐색(`prefix w`): ↑↓ 목록, Enter 열기, h/j/k/l·←→·Tab pane 포커스, Esc 돌아가기
     Navigate,
+    /// 크기 모드(`prefix r`, herdr `route_resize_key`): h/j/k/l·화살표로 포커스 pane 가장자리를 옮긴다. Esc·Enter·r 끝
+    Resize,
 }
 
 /// 화면 위에 뜨는 창
@@ -556,7 +558,7 @@ impl App {
             self.grids.remove(p);
         }
         let Some(tab) = self.ws.tabs.get(self.tab) else { return Ok(()) };
-        let (rects, _) = layout::rects(&tab.root, self.body(area));
+        let (rects, _) = self.shown_rects(tab, self.body(area));
         let reclaim = std::mem::take(&mut self.reclaim);
         if !self.focused {
             return Ok(());
@@ -661,7 +663,27 @@ impl App {
                 }
             }
             Mode::Navigate => self.on_navigate_key(c, tx).await,
+            Mode::Resize => self.on_resize_key(c, tx).await,
         }
+    }
+
+    /// herdr `route_resize_key`: Esc·Enter·크기 모드 키는 끝, h/j/k/l·화살표는 그 방향으로 크기(한 번에 5%), 다른 키는 무시
+    async fn on_resize_key(&mut self, c: Combo, tx: &mut FrontSender) -> Result<()> {
+        if matches!(c.code, KeyCode::Esc | KeyCode::Enter)
+            || bind::prefix_action(self.command_key(c)) == Some(Action::ResizeMode)
+        {
+            self.mode = Mode::Terminal;
+            return Ok(());
+        }
+        let direction = match c.code {
+            KeyCode::Char('h') | KeyCode::Left => PaneDirection::Left,
+            KeyCode::Char('j') | KeyCode::Down => PaneDirection::Down,
+            KeyCode::Char('k') | KeyCode::Up => PaneDirection::Up,
+            KeyCode::Char('l') | KeyCode::Right => PaneDirection::Right,
+            _ => return Ok(()),
+        };
+        let Some(pane) = self.focus.clone() else { return Ok(()) };
+        self.layout(tx, LayoutChange::Resize { pane, direction, amount: None }, false).await
     }
 
     /// prefix 뒤 키. 설정을 켰으면 두벌식 자모를 같은 자리 영문 키로 읽는다.
@@ -784,7 +806,7 @@ impl App {
                 self.new_tab(tx, label).await
             }
             prompt::RenameTarget::Tab { id, auto, original } => {
-                if text.is_empty() || auto && text == original || !self.host_knows_tabs() {
+                if text.is_empty() || auto && text == original || !self.host_at_least(4) {
                     return Ok(());
                 }
                 self.layout(tx, LayoutChange::RenameTab { tab: id, name: text }, false).await
@@ -808,9 +830,10 @@ impl App {
         self.layout(tx, change, true).await
     }
 
-    /// 탭 닫기·이름은 Front API 1.4부터다. 옛 host에 보내면 연결이 끊기므로 알리고 보내지 않는다.
-    fn host_knows_tabs(&mut self) -> bool {
-        if self.host_minor >= 4 {
+    /// 새 layout 요청은 그것을 아는 host에만 보낸다(탭 닫기·이름·크기 1.4, zoom·자리 바꾸기 1.6).
+    /// 옛 host에 보내면 연결이 끊기므로 알리고 보내지 않는다.
+    fn host_at_least(&mut self, minor: u16) -> bool {
+        if self.host_minor >= minor {
             return true;
         }
         self.set_error("host가 이 명령보다 옛 판이다: host를 새 aaa로 다시 띄워야 한다");
@@ -822,6 +845,21 @@ impl App {
         match self.ws.tabs.get(i) {
             Some(t) if !t.name.is_empty() => t.name.clone(),
             _ => (i + 1).to_string(),
+        }
+    }
+
+    /// 탭 줄에 쓰는 글(herdr `tabs.rs` `tab_label`: zoom이면 ` Z`를 붙인다)
+    fn chip_label(&self, i: usize) -> String {
+        let label = self.tab_label(i);
+        if self.ws.tabs.get(i).is_some_and(|t| t.zoomed) { format!("{label} Z") } else { label }
+    }
+
+    /// 그릴 pane 칸과 구분선. zoom이면 포커스 pane 하나가 칸 전체다(herdr `render_panes`).
+    /// 방향 포커스·자리 바꾸기는 zoom과 상관없이 나눈 칸으로 찾는다(`pane_rects`).
+    fn shown_rects(&self, tab: &aaa_proto::Tab, body: Rect) -> layout::Rects {
+        match &self.focus {
+            Some(f) if tab.zoomed && layout::leaves(&tab.root).contains(f) => (vec![(f.clone(), body)], vec![]),
+            _ => layout::rects(&tab.root, body),
         }
     }
 
@@ -933,7 +971,7 @@ impl App {
             }
             Action::CloseTab => {
                 let Some(tab) = self.ws.tabs.get(self.tab).map(|t| t.id.clone()) else { return Ok(()) };
-                if self.host_knows_tabs() {
+                if self.host_at_least(4) {
                     if self.confirm_close && self.closes_everything(None) {
                         self.overlay = Some(Overlay::Confirm(self.close_confirm(prompt::CloseTarget::Tab(tab))));
                     } else {
@@ -971,6 +1009,36 @@ impl App {
             Action::FocusDown => self.move_focus(Dir::Down),
             Action::FocusUp => self.move_focus(Dir::Up),
             Action::FocusRight => self.move_focus(Dir::Right),
+            // herdr `pane zoom` 뒤집기: 포커스 pane을 탭 가득(host가 탭마다 기억한다)
+            Action::Zoom => {
+                let Some(pane) = focus else { return Ok(()) };
+                if self.host_at_least(6) {
+                    self.layout(tx, LayoutChange::Zoom { pane, zoomed: None }, false).await?;
+                }
+            }
+            Action::ResizeMode => {
+                if self.host_at_least(4) {
+                    self.mode = Mode::Resize;
+                }
+            }
+            // herdr `swap_pane_*`: 그 방향 이웃(포커스와 같은 찾기)과 자리를 바꾸고 포커스는 옮긴 pane을 따라간다
+            Action::SwapLeft | Action::SwapDown | Action::SwapUp | Action::SwapRight => {
+                let dir = match a {
+                    Action::SwapLeft => Dir::Left,
+                    Action::SwapDown => Dir::Down,
+                    Action::SwapUp => Dir::Up,
+                    _ => Dir::Right,
+                };
+                let rects = self.pane_rects();
+                let Some(cur) = rects.iter().find(|(p, _)| Some(p) == focus.as_ref()).map(|(_, r)| *r) else {
+                    return Ok(());
+                };
+                if let (Some(pane), Some(with)) = (focus, find_in_direction(cur, dir, &rects))
+                    && self.host_at_least(6)
+                {
+                    self.layout(tx, LayoutChange::Swap { pane, with }, false).await?;
+                }
+            }
             Action::CycleNext | Action::CyclePrevious => {
                 let leaves = self.current_leaves();
                 if !leaves.is_empty() {
@@ -1040,7 +1108,7 @@ impl App {
                 }
             }
             Some(tab) => {
-                let (rects, lines) = layout::rects(&tab.root, body);
+                let (rects, lines) = self.shown_rects(tab, body);
                 // 포커스 pane과 맞닿은 구분선만 강조색으로 그린다(여럿일 때 어디가 포커스인지 보인다)
                 let focus_rect = rects.iter().find(|(p, _)| Some(p) == self.focus.as_ref()).map(|(_, r)| *r);
                 for (dir, r) in lines {
@@ -1099,7 +1167,7 @@ impl App {
 
     /// 탭 이름표들(herdr: 지금 탭은 강조색 바탕, 이름을 붙인 탭은 굵게·밝게, 넘치면 지금 탭을 가운데로 밀고 `…`)
     fn render_tabs(&self, buf: &mut Buffer, r: Rect) {
-        let labels: Vec<String> = (0..self.ws.tabs.len()).map(|i| self.tab_label(i)).collect();
+        let labels: Vec<String> = (0..self.ws.tabs.len()).map(|i| self.chip_label(i)).collect();
         let strip = tabs::layout(&labels, self.tab, r.x, r.w);
         for c in &strip.chips {
             let custom = !self.ws.tabs[c.index].name.is_empty();
@@ -1163,6 +1231,17 @@ impl App {
                 s(" 목록 탐색  ", base),
                 (help, key),
                 s(" 단축키", base),
+            ]),
+            // herdr: 크기 모드 막대는 mauve 바탕
+            Mode::Resize => Some(vec![
+                s(" RESIZE ", chip.bg(MAUVE)),
+                s("  ", base),
+                s("h/l", key),
+                s(" 너비  ", base),
+                s("j/k", key),
+                s(" 높이  ", base),
+                s("esc", key),
+                s(" 끝", base),
             ]),
             Mode::Navigate => Some(vec![
                 s(" NAVIGATE ", chip),
@@ -1441,9 +1520,15 @@ mod tests {
                 id: format!("t{i}"),
                 name: n.to_string(),
                 root: aaa_proto::LayoutNode::Pane { pane: format!("p{i}") },
+                zoomed: false,
             })
             .collect();
         app
+    }
+
+    /// 탭 줄에서 이름표 부분(` aaa ` ` main ` 뒤)
+    fn tab_strip(top: &str) -> &str {
+        top.split_once(" main ").map(|(_, r)| r).unwrap_or(top)
     }
 
     fn draw(app: &App) -> (Vec<String>, Option<(u16, u16)>) {
@@ -1524,10 +1609,46 @@ mod tests {
     #[test]
     fn old_host_gets_no_tab_requests() {
         let mut app = app_with_tabs(&[""]);
-        assert!(app.host_knows_tabs());
-        app.host_minor = 3;
-        assert!(!app.host_knows_tabs());
+        assert!(app.host_at_least(4) && app.host_at_least(6));
+        app.host_minor = 5;
+        assert!(app.host_at_least(4) && !app.host_at_least(6));
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
+    }
+
+    /// zoom(herdr `render_panes`·`tab_label`): 포커스 pane 하나가 칸 전체, 구분선 없음, 탭 이름표에 ` Z`.
+    /// 방향 찾기는 나눈 칸 그대로라 zoom 중에도 이웃으로 포커스가 옮겨 가고 그 pane이 크게 보인다.
+    #[test]
+    fn zoom_shows_the_focused_pane_alone_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        aaa_proto::layout::split(&mut app.ws.tabs[0].root, "p0", "p1", SplitDir::Horizontal);
+        app.focus = Some("p1".into());
+        app.ws.tabs[0].zoomed = true;
+        let area = Rect { x: 0, y: 0, w: app.width, h: app.height };
+        let body = app.body(area);
+        assert_eq!(app.shown_rects(&app.ws.tabs[0], body), (vec![("p1".to_string(), body)], vec![]));
+        let (lines, _) = draw(&app);
+        assert!(tab_strip(&lines[0]).contains("  1 Z  "), "{:?}", lines[0]);
+        assert!(lines[1..lines.len() - 1].iter().all(|l| !l.contains('│')), "zoom이면 구분선이 없다");
+        app.move_focus(Dir::Left);
+        assert_eq!(app.focus.as_deref(), Some("p0"));
+        assert_eq!(app.shown_rects(&app.ws.tabs[0], body).0[0].0, "p0");
+        app.ws.tabs[0].zoomed = false;
+        assert_eq!(app.shown_rects(&app.ws.tabs[0], body).0.len(), 2);
+    }
+
+    /// 크기 모드 막대(herdr `render_mode_bar`): mauve 바탕 ` RESIZE `와 키 안내
+    #[test]
+    fn resize_mode_bar_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        app.mode = Mode::Resize;
+        assert!(app.wants_ascii(), "크기 모드 동안도 입력기를 영문으로(herdr처럼 모드 전부)");
+        let area = Rect { x: 0, y: 0, w: app.width, h: app.height };
+        let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, area.w, area.h));
+        app.render(&mut buf, area);
+        let (lines, _) = draw(&app);
+        let bar = lines.last().unwrap();
+        assert!(bar.starts_with(" RESIZE   h/l 너비  j/k 높이  esc 끝"), "{bar:?}");
+        assert_eq!(buf[(1, area.h - 1)].bg, MAUVE);
     }
 
     #[test]

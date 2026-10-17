@@ -716,6 +716,10 @@ pub struct Tab {
     pub id: String,
     pub name: String,
     pub root: LayoutNode,
+    /// pane 하나를 탭 가득 보인다(herdr `Tab.zoomed`). 보이는 pane은 front마다 그 front의 포커스 pane이다.
+    /// 나누기·닫기·옮기기로 탭의 pane이 바뀌면 풀린다.
+    #[serde(default)]
+    pub zoomed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -769,6 +773,15 @@ pub enum LayoutChange {
     CloseTab { tab: String },
     /// pane을 지금 자리에서 빼 새 탭에 둔다(herdr `pane move --new-tab`)
     MoveToNewTab { pane: String, name: Option<String> },
+    /// 탭 가득 보이기(herdr `pane zoom`). `zoomed`가 없으면 뒤집는다. pane이 하나뿐인 탭은 그대로다(plan §8.79)
+    Zoom {
+        pane: String,
+        #[serde(default)]
+        zoomed: Option<bool>,
+    },
+    /// 같은 탭의 두 pane 자리를 바꾼다(herdr `pane swap`의 source·target 꼴). 칸과 비율은 그대로다.
+    /// 방향 이웃은 화면 크기를 아는 front가 찾는다(host는 front마다 다른 칸을 모른다).
+    Swap { pane: String, with: String },
 }
 
 // ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
