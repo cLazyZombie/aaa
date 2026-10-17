@@ -9,7 +9,7 @@ mod lab;
 use std::time::Duration;
 
 use aaa_common::front::FrontClient;
-use aaa_proto::{B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse, SessionState};
+use aaa_proto::{B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse, QuestionState, SessionState};
 use lab::watch::HostWatch;
 use lab::{Lab, Node, wait_for};
 
@@ -194,8 +194,13 @@ echo "fake-claude $*"
 sid=$FAKE_SID
 case "$1" in --resume|--session-id) sid=$2 ;; esac
 [ -n "$sid" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$sid\",\"source\":\"startup\"}"
-# `--ask`: 확인창을 띄운 채 기다린다(화면 감지가 질문으로 본다)
-[ "$3" = --ask ] && printf '%s\n' ' Bash command' '' '   make test' '' ' Do you want to proceed?' ' \342\235\257 1. Yes' '   2. No' '' ' Esc to cancel'
+# `--ask`: 확인창을 띄운 채 기다린다(화면 감지가 질문으로 본다). `--ask2`: 답하면 같은 확인창을 곧바로 다시 그린다
+# (지우고 그리기를 한 번에 써 감지가 빈 화면을 보지 않는다)
+ask=' Bash command\n\n   make test\n\n Do you want to proceed?\n \342\235\257 1. Yes\n   2. No\n\n Esc to cancel\n'
+case "$3" in
+  --ask) printf "$ask" ;;
+  --ask2) printf "$ask"; read -r x; printf "\033[2J\033[H$ask"; read -r x; echo "answered-twice" ;;
+esac
 exec cat
 "#;
 
@@ -339,6 +344,35 @@ fn reboot_does_not_reopen_the_question_of_an_interrupted_pane() {
     });
     h.wait_output(&n, &format!("fake-claude --resume {SID_C}"), T);
     assert_eq!(asks(&c), Vec::<serde_json::Value>::new(), "끊긴 pane의 질문이 다시 열렸다");
+}
+
+/// QA t-0337 Q18: 답하자마자 같은 물음의 확인창이 다시 뜨면(Claude는 병렬 도구 호출마다 묻는다) 둘째도 질문이다. 막힘이
+/// 이어져 화면 감지는 바뀐 것을 보지 못한다: 막힘에 입력이 간 뒤 화면에 남은 확인창은 새로 묻는 것이다(herdr-web-ui
+/// `askingEnded`, agent `Watch::input_sent`). 기다림은 host 질문 사건과 출력이다.
+#[test]
+fn the_same_prompt_asked_again_right_after_its_answer_is_a_new_question() {
+    let mut lab = Lab::new();
+    let (claude, env) = fake_claude_env(&lab);
+    let (h, _hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let mut ev = lab::Events::connect(&h);
+    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", SID_C, "--ask2"], None);
+    let mut open = |what: &str, not: Option<&str>| -> String {
+        ev.wait(what, T, |e| match e {
+            FrontEvent::Question(q) if q.pane == c && q.state == QuestionState::Open && Some(q.id.as_str()) != not => {
+                Some(q.id.clone())
+            }
+            _ => None,
+        })
+    };
+    let q1 = open("첫 질문", None);
+    h.ok(&["question", "answer", &q1, "yes"]);
+    let q2 = open("같은 물음의 둘째 질문", Some(&q1));
+    h.ok(&["question", "answer", &q2, "yes"]);
+    h.wait_output(&c, "answered-twice", T);
+    let v = h.ok(&["question", "list", "--all"]);
+    let states: Vec<_> =
+        v["questions"].as_array().unwrap().iter().map(|q| q["state"].as_str().unwrap().to_string()).collect();
+    assert_eq!(states, ["answered", "answered"], "{v}");
 }
 
 /// 보안 감사 t-0340: hook이 알린 harness 세션 ID는 UUID 꼴만 받는다(`aaa_common::util::harness_session_ok`). 셸 pane의

@@ -428,6 +428,9 @@ impl Agent {
                 }
                 cmd = cmds.recv() => match cmd {
                     Some(PumpCmd::Host { host_id, body }) => {
+                        if matches!(body, SessionRequest::Input { .. }) && let Some(w) = watch.as_mut() {
+                            w.input_sent(std::time::Instant::now());
+                        }
                         seq += 1;
                         let sid = format!("h{seq}");
                         let is_sub = matches!(body, SessionRequest::Subscribe { .. });

@@ -212,6 +212,8 @@ impl Host {
         }
         let (activity, answered_block, running) = {
             let mut i = self.inner.lock().unwrap();
+            // 이 agent는 답한 뒤 화면에 남은 확인창을 새로 묻는 것으로만 다시 알린다(`ask_anew.v1`)
+            let anew = i.machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == "ask_anew.v1"));
             let Some(p) = i.panes.get_mut(&ev.session) else {
                 // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
                 drop(i);
@@ -262,7 +264,8 @@ impl Host {
                 st.progress_at_ms = None;
             }
             // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
-            let answered_block = next == Some(AgentActivity::Question)
+            let answered_block = !anew
+                && next == Some(AgentActivity::Question)
                 && prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question)
                 && p.answered;
             if next.is_some_and(|a| a != AgentActivity::Question) {
@@ -315,8 +318,9 @@ impl Host {
         // 질문: 열리거나, harness가 넘어가면 닫힌다. 답한 확인창 뒤에 늦게 온 질문 사건(옛 agent의 Claude
         // Notification `permission_prompt`가 답보다 늦게 도착)은 그 질문을 다시 열지 않는다. 참고 herdr 0.9.5는 상태 hook을
         // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
-        // 때만 알리므로, 한 막힘에 질문은 하나다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음
-        // 확인창은 새 막힘이다(t-0333 m13 사건 16, plan §8.99·§8.110)
+        // 때만 알린다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음 확인창은 새 막힘이다(t-0333 m13
+        // 사건 16, plan §8.99·§8.110). `ask_anew.v1` agent는 화면 감지만 질문을 내고, 막힘에 입력이 간 뒤 남은 확인창을
+        // 새 물음으로 다시 알린다(herdr-web-ui `askingEnded`, QA t-0337 Q18): 답한 질문 뒤의 질문 사건은 새 질문이다
         // 끝난 세션(재부팅으로 끊김·종료)에는 질문을 열지 않는다: 다시 붙은 agent가 알리는 세션별 마지막 상태
         // (`hello.harness`, 재부팅 복원이 harness 세션 ID를 알려고)가 확인창이면 그 pane 질문을 닫은 뒤 다시 열었다
         // (QA t-0337 Q20). 참고 herdr-web-ui는 살아 있는 blocked pane 화면에서만 질문을 읽는다(`server/prompt.ts`).
