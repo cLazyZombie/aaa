@@ -1324,6 +1324,10 @@ pub enum FrontResponse {
     Decision(DecisionView),
     Inbox {
         items: Vec<InboxItem>,
+        /// `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        done: Option<u32>,
     },
     Merge {
         queue: Vec<MergeEntry>,

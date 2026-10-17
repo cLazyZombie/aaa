@@ -4020,10 +4020,10 @@ try {
     await until("410 구독 정리", async () =>
       (await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed)) === 1,
     );
-    const kinds = aaa("events", "--project", "demo").events.map((e) => e.kind);
+    const kinds = aaa("events", "demo").events.map((e) => e.kind);
     if (!kinds.includes("push_sent") || !kinds.includes("push_gone")) throw new Error(kinds.join(","));
     // 구독 주소(기기에 보내는 열쇠)는 기록에 남지 않는다
-    if (JSON.stringify(aaa("events", "--project", "demo")).includes("dev1")) throw new Error("흐름 사건에 endpoint가 남았다");
+    if (JSON.stringify(aaa("events", "demo")).includes("dev1")) throw new Error("흐름 사건에 endpoint가 남았다");
     // 화면을 다시 쓰면(보이고 focus) 새 보고가 나와도 어느 기기에도 보내지 않는다(herdr-web-ui push.ts inUse, 차이 목록 N5)
     await setInUse(page, true);
     await until("쓰는 화면", async () => (await pushInUse()) === 1);
@@ -4032,7 +4032,7 @@ try {
     const t2 = aaa("thread", "start", "demo", "--title", "보는 중", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task2.md`);
     await until("보는 중 보고 회수", () => aaa("thread", "show", "demo", t2.id).report_hash);
     const skipped = await until("보내지 않음 기록", () =>
-      aaa("events", "--project", "demo").events.find((e) => e.kind === "push_skipped" && e.detail.startsWith("쓰는 화면 1개")),
+      aaa("events", "demo").events.find((e) => e.kind === "push_skipped" && e.detail.startsWith("쓰는 화면 1개")),
     );
     if (pushes.slice(from).some((x) => x.path === new URL(pushDev.json.endpoint).pathname)) throw new Error(`쓰는 화면이 있는데 보냈다 ${skipped.detail}`);
     // 보내지 않은 대신 쓰는 화면에는 앱 안 알림이 내려온다(plan §8.70)

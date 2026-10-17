@@ -71,7 +71,7 @@ while :; do
   # 고른 aaa 프로젝트의 열린 thread pane 화면(aaa 상태가 실제 화면과 맞는지 보는 근거). pane read는 읽기만 한다.
   for p in "${aaa_projects[@]}"; do
     on "$aaa_host" "$dir/aaa-screens-$p.txt" \
-      "$aaa thread list -p $(printf %q "$p") --json | python3 -c 'import json,sys
+      "$aaa --json thread list $(printf %q "$p") | python3 -c 'import json,sys
 for t in json.load(sys.stdin).get(\"threads\",[]):
     if t.get(\"status\")==\"open\" and t.get(\"pane\"): print(t[\"id\"], t[\"pane\"])' | while read -r id pane; do echo \"=== \$id \$pane\"; $aaa pane read \"\$pane\"; done"
   done
