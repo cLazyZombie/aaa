@@ -689,7 +689,7 @@ host 프로젝트 폴더 구성:
 - **interrupt 멈춤 판정은 새 「Interrupted」만 본다.** Esc 전후 화면의 개수를 비교한다. 지난 interrupt의 글이 남아 있으면 곧바로 입력해 사라지게 하던 문제를 막는다.
 - **선택 창이 떠 있으면 아무것도 입력하지 않는다.** 표지는 「Enter to confirm」「Esc to cancel」, 신뢰 문구 등이다. brief 안내와 메시지 모두 해당한다. 질문이 열려 있는 동안 brief 안내는 최대 30분 기다린다.
 - **입력과 수신 확인(§8.5)**
-  - 한 줄은 그대로, 여러 줄은 bracketed paste로 보낸 뒤 Enter를 보낸다.
+  - 글을 보낸 뒤 300ms 뒤 Enter를 보낸다. 프로그램이 bracketed paste를 켰을 때만 글을 감싼다(herdr `encode_api_submission_parts`, §8.80 끝). 줄 수와 상관없다.
   - hook이 있는 세션은 10초 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
 - **메시지(§8.5 보충)**
   - queue: 입력 대기 중(idle·started, 상태를 모르면 포함)이면 바로 보낸다. 아니면 대기열에 두고, 그 thread의 다음 `turn_end`·`idle` 때 가장 오래된 것 하나를 보낸다. 원안의 「다음 턴이 시작될 때」를 「턴이 끝났을 때」로 고쳤다.
@@ -805,7 +805,7 @@ host 프로젝트 폴더 구성:
   - 전송: **pane WebSocket(대화형 front)**으로 512KiB 조각을 base64 JSON(`attach`)으로 보낸다. 별도 POST 경로를 두지 않은 이유: 조작 lease가 그 WebSocket 연결(front)에 묶여 있어, 조각마다 같은 권한·lease 판정을 그대로 쓸 수 있다. 조각은 Agent link frame(1MiB) 안에 든다. 메시지 상한도 1MiB로 둔다.
   - host는 모으지 않고 조각마다 agent로 넘긴다(그 사이 화면 출력이 끼어든다). 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고(브라우저가 알린 MIME은 믿지 않는다), 이름은 host가 무작위로 정한다. 상한 16MiB, offset이 맞지 않으면 거부한다.
   - 대상 경로: 모든 pane이 **세션 범위** `<agent state>/sessions/<id>/attachments/<hex>.<ext>`다(§9 표의 thread `.aaa/…/attachments` 대신). thread 작업 폴더(worktree)에 두면 그림이 git에 섞일 수 있고, 세션 폴더는 이미 0700이며 세션 기록을 지울 때 함께 지워진다. 폴더 0700·파일 0600, 세션당 64개까지. `.part`에 이어 쓰고 마지막 조각에서 sha256을 대조한 뒤 이름을 바꾼다.
-  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 bracketed paste로 넣고 Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
+  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 넣고(프로그램이 bracketed paste를 켰으면 감싼다) Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
   - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex(codex-cli 0.163)도 `[Image #1]`로 받아 그림 색을 답했다(§8.21).
   - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
 
@@ -1427,7 +1427,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 클립보드에 글이 있으면 글이다(그림이 같이 있어도). 파일만 있을 때 그 파일 전부를 올린다. 전에는 그림이 있으면 그림이 먼저였다.
   - 파일 여러 개를 붙여 넣거나 끌어 놓으면 놓은 순서대로 하나씩 올린다(겹쳐 놓아도 그 순서). 한 묶음에 상한을 넘는 것이 있으면 아무것도 올리지 않는다. 「그림」 단추도 여러 개를 고른다.
   - 글을 끌어 놓으면 붙여 넣는다(Enter 없음, 유지 키 안 붙음). 입력할 수 없으면 끌어 놓기를 받지 않는다(`dropEffect` none).
-  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness 입력창은 bracketed paste 안에, 셸 등은 친 글처럼 넣는다(host는 그 프로그램의 bracketed paste 모드를 모르고, 줄바꿈·제어 문자 없는 따옴표 경로는 bracketed paste가 꺼진 붙여넣기와 같다). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
+  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness든 셸이든 그 프로그램이 bracketed paste를 켰으면 감싸고, 아니면 친 글처럼 넣는다(herdr-web-ui는 xterm `paste`로 넣는다. host는 §8.75부터 pane mirror에서 모드를 안다, §8.80 끝). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
 - **다른 곳.**
   - 확인창·선택 창이 떠 있는 harness pane에는 넣지 않는다. 붙여 넣은 글이 그 답으로 읽힐 수 있다(참고에는 이 막기가 없다).
   - **그림만 받는다(PNG·JPEG·GIF·WebP, 16MiB).** 참고는 아무 파일이나 이름을 다듬어 저장한다(32MiB). §9의 형식 규칙(signature로 확인)이라 결정 없이 넓히지 않았다. 다른 파일은 host가 「PNG·JPEG·GIF·WebP 그림만」으로 거절한다.
@@ -1932,6 +1932,7 @@ pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, 
 - **여기서 하지 않는 것.** 병합 뒤 resolve·다른 PR이 열렸는지 보기(hp `resolve_merged`·`other_pr_open`)와 병합 대기열 제거는 병합 흐름(D11, thread 흐름 thread)이 `pr_state` 위에 얹는다.
 - **계약.** AGENT_LINK는 그대로 두고 기능 `pr.v1`로 가린다(옛 agent에는 보내지 않는다). FRONT_API 1.6(`routine_toggle`, `ThreadView.pr`). `inbox` 응답의 `done`은 §8.75.
 - **출처.** 옮긴 hp 코드의 MIT 고지(Copyright (c) 2026 Elias Stravik)는 `crates/aaa-common/src/pr.rs` 머리에 있다.
+- **넣는 글의 감싸기(보고 화면에서 찾은 결함, 10-18).** routine 글은 여러 줄이라, host가 메시지를 늘 bracketed paste로 감싸던 것이 그 모드를 켜지 않은 프로그램 화면에 `^[[200~ … ^[[201~`로 남았다. herdr `agent prompt`(src/app/api/agents.rs → src/app/api_helpers.rs `encode_api_submission_parts`)는 프로그램이 켰을 때만 감싸고 Enter도 터미널 모드로 쓴다. brief·메시지 입력(`harness.rs` `submit_checked`)과 그림 경로 넣기(`attach.rs`)가 이제 pane mirror의 모드(§8.75)를 본다. Claude·Codex는 켜므로 받는 bytes는 그대로다. 시험: m13 `thread_message_paste_follows_program_mode`(꺼진 채 여러 줄 → 그대로+CR, 프로그램이 켠 뒤 → 감쌈+CR, 받은 bytes를 16진수로 본다), 웹 E2E 그림 넣기의 가짜 harness는 Claude처럼 모드를 켠다.
 - **시험.** 단위: PR 주소·origin 꼴·gh 인자(`--` 뒤 주소, `GH_HOST`)·찾기 순서·이름 거르기(aaa-common), `PR:` 줄·fork·head 불일치·본문 없음·사건·문구(aaa-host pr), pr routine 파일·기본 template(routine). E2E m13 `pr_followup`: 가짜 `gh`(인자 기록, 파일로 답함)를 agent PATH에 두고, 꺼진 pr routine은 오류 없음 → branch로 찾은 열린 PR → check 실패에 pr-followup이 thread 화면에 글을 넣음 → 자기 계정 댓글은 review 아님, 다른 사람 댓글은 review → `routine toggle --on`(파일은 `enabled`만 바뀜) 뒤 병합에 그 routine이 보냄 → 틀린 `PR:` 줄 알림(보고 사본·Next는 그대로), 항목 차례·댓글 본문 없음·gh 인자 확인. 기다림은 모두 흐름 사건(`events --follow`)과 `pane wait-output`이다. m13 `routines`는 꺼진 pr routine이 오류가 아니고 없는 trigger만 오류인 것을 본다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)

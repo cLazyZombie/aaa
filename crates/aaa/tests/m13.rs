@@ -161,6 +161,22 @@ done
 "#;
 
 /// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
+/// 받은 바이트를 16진수로 `$PASTE_LOG`에 잇는 harness. Enter(0d)를 받을 때마다 `ok N`을 쓰고, 두 번째 Enter부터는
+/// bracketed paste를 켠다(brief와 첫 메시지는 꺼진 채, 둘째 메시지는 켠 채로 받는다).
+const PASTE_AGENT: &str = r#"#!/bin/sh
+stty raw -echo
+printf 'paste> '
+n=0
+while c=$(dd bs=4096 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n') && [ -n "$c" ]; do
+  printf '%s' "$c" >> "$PASTE_LOG"
+  case $c in *0d)
+    n=$((n+1))
+    [ "$n" -ge 2 ] && printf '\033[?2004h'
+    printf '\r\nok %s\r\npaste> ' "$n" ;;
+  esac
+done
+"#;
+
 const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
 /// `extra`는 `[projects]`에 덧붙인다. `web`이면 웹을 loopback 임의 port로 연다.
@@ -168,7 +184,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\"]\nlibrary_copy_mb = 1\n{extra}",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\", \"paste\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -180,6 +196,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
          [profiles.hooked]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
+         [profiles.paste]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
@@ -188,6 +205,8 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         path_str(&scripts.join("hooked.sh")),
         lab::BIN,
         path_str(&scripts.join("sticky.sh")),
+        path_str(&scripts.join("paste.sh")),
+        path_str(&scripts.join("paste.log")),
     )
 }
 
@@ -257,6 +276,7 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     // harness claude는 실행 파일 뒤에 `--settings …`·`--session-id …`를 붙이므로 sh가 아니라 스크립트를 바로 띄운다
     std::fs::set_permissions(scripts.join("sticky.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
+    std::fs::write(scripts.join("paste.sh"), PASTE_AGENT).unwrap();
     let repo = make_repo(&lab.root);
     let h = lab.node("h", Some(&host_toml(&projects, extra, web)));
     std::fs::write(h.cfg.join("agent.toml"), agent_toml(&lab.root.join("workA"), &scripts)).unwrap();
@@ -591,6 +611,40 @@ fn brief_left_in_box_is_submitted_not_retyped() {
     assert_eq!(screen.matches("brief.md를 읽고").count(), 2, "{screen}");
     let e = w.h.json(&["thread", "brief", "demo", &id]).expect_err("받은 뒤 brief");
     assert!(e.contains("이미 brief를 받았다"), "{e}");
+}
+
+/// thread 메시지(routine 발화도 같은 길)는 프로그램이 bracketed paste를 켰을 때만 감싼다(herdr
+/// `encode_api_submission_parts`, src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
+#[test]
+fn thread_message_paste_follows_program_mode() {
+    let mut w = world();
+    let mut ev = w.lab.follow("events", &w.h, "demo");
+    let v =
+        w.start(&["--title", "paste", "--profile", "paste", "--kind", "dir", "--task-file", &w.task("tp.txt", "x")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    ev.kind("brief_delivered", &id, T);
+    w.h.wait_output(&pane, "ok 1", T);
+    let log = w.scripts.join("paste.log");
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut seen = 0;
+    let mut next = || {
+        let all = std::fs::read_to_string(&log).unwrap();
+        let got = all[seen..].to_string();
+        seen = all.len();
+        got
+    };
+    // brief 안내도 꺼진 채로는 그대로 + CR
+    assert!(next().ends_with(&format!("{}0d", hex("를 읽고 그대로 하라."))));
+    // 1) 꺼진 채: 여러 줄 글도 감싸지 않는다
+    w.message(&id, "첫 줄\n둘째 줄", false);
+    ev.kind("message_accepted", &id, T);
+    assert_eq!(next(), format!("{}0d", hex("첫 줄\n둘째 줄")));
+    // 2) 프로그램이 켠 뒤(`ok 2`와 같은 출력에서 켰다): 감싼다
+    w.h.wait_output(&pane, "ok 2", T);
+    w.message(&id, "셋째\n넷째", false);
+    ev.kind("message_accepted", &id, T);
+    assert_eq!(next(), format!("{}0d", hex("\x1b[200~셋째\n넷째\x1b[201~")));
 }
 
 /// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
@@ -1487,7 +1541,7 @@ fn coordinator_flow() {
     // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
     let a = w.h.ok(&["assignable", "demo"]);
     let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
-    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "sticky"]), "{a}");
+    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "paste", "sticky"]), "{a}");
     w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
     for (bad, why) in
         [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]
@@ -1748,42 +1802,6 @@ fn evaluator_flow() {
     assert!(w.h.ok(&["evaluator", "status", "demo"])["evaluators"].as_array().unwrap().is_empty());
 }
 
-/// 흐름 사건을 따라 읽는다(`aaa --json events demo --follow`). 기다림은 사건이 와서 끝난다.
-struct Follow {
-    rx: std::sync::mpsc::Receiver<Value>,
-}
-
-impl Follow {
-    fn start(w: &mut World) -> Follow {
-        use std::io::BufRead as _;
-        let (_, out) = w.lab.spawn_piped("follow", &w.h, &["--json", "events", "demo", "--follow"]);
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            for line in out.lines().map_while(Result::ok) {
-                if let Ok(v) = serde_json::from_str::<Value>(&line)
-                    && tx.send(v).is_err()
-                {
-                    break;
-                }
-            }
-        });
-        Follow { rx }
-    }
-
-    /// `kind` 사건 중 `f`가 참인 첫 사건(앞의 사건은 넘긴다). T 안에 오지 않으면 그동안 본 사건과 함께 실패한다.
-    fn wait(&self, kind: &str, f: impl Fn(&Value) -> bool) -> Value {
-        let deadline = Instant::now() + T;
-        let mut seen = Vec::new();
-        loop {
-            match self.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok(e) if e["kind"] == kind && f(&e) => return e,
-                Ok(e) => seen.push(format!("{} {} {}", e["kind"], e["thread"], e["detail"])),
-                Err(_) => panic!("{T:?} 안에 {kind} 사건이 오지 않았다. 본 사건:\n{}", seen.join("\n")),
-            }
-        }
-    }
-}
-
 /// 가짜 `gh`: 받은 인자를 남기고 `$GH_STUB`의 파일로 답한다. 계정은 thread-bot이다.
 const FAKE_GH: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$GH_STUB/calls.log"
@@ -1813,7 +1831,7 @@ fn pr_followup() {
         vec![("PATH".into(), path), ("GH_STUB".into(), path_str(&stub).to_string())]
     });
     let stub = w.lab.root.join("gh");
-    let f = Follow::start(&mut w);
+    let mut f = w.lab.follow("follow", &w.h, "demo");
     let dir = w.projects.join("demo");
     let put = |name: &str, body: &str| std::fs::write(dir.join("routines").join(format!("{name}.md")), body).unwrap();
 
@@ -1823,7 +1841,7 @@ fn pr_followup() {
         "+++\n# 병합 확인\non = \"pr\"\nevents = [\"checks-failed\", \"merged\"]\nenabled = false\n+++\n병합을 확인한다\n",
     );
     put("broken", "+++\non = \"slack\"\n+++\n");
-    f.wait("routine_broken", |e| e["evidence"] == "routines/broken.md");
+    f.until("routine_broken", T, |e| e["kind"] == "routine_broken" && e["evidence"] == "routines/broken.md");
     let errors: Vec<Value> = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"]
         .as_array()
         .unwrap()
@@ -1842,7 +1860,7 @@ fn pr_followup() {
         .as_str()
         .unwrap()
         .to_string();
-    f.wait("report_ready", |e| e["thread"] == id.as_str());
+    f.until("report_ready", T, |e| e["kind"] == "report_ready" && e["thread"] == id.as_str());
     let t = w.show(&id);
     let (branch, pane) = (t["branch"].as_str().unwrap().to_string(), t["pane"].as_str().unwrap().to_string());
     assert!(t["pr"].is_null(), "origin이 GitHub가 아니면 묻지 않는다: {t}");
@@ -1863,7 +1881,7 @@ fn pr_followup() {
     )
     .unwrap();
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
-    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    let e = f.until("pr_changed", T, |e| e["kind"] == "pr_changed" && e["thread"] == id.as_str());
     assert!(e["detail"].as_str().unwrap().starts_with(&format!("{url} PR opened [opened]")), "{e}");
     let t = w.show(&id);
     assert_eq!((t["pr"]["url"].as_str(), t["pr"]["state"].as_str()), (Some(url), Some("OPEN")), "{t}");
@@ -1871,21 +1889,21 @@ fn pr_followup() {
     // check 실패: pr-followup(checks-failed·review)이 thread에 보낸다
     let failing = r#","statusCheckRollup":[{"name":"lint","conclusion":"FAILURE"}]"#;
     view(failing);
-    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    let e = f.until("pr_changed", T, |e| e["kind"] == "pr_changed" && e["thread"] == id.as_str());
     assert!(e["detail"].as_str().unwrap().contains("PR checks failing [checks-failed]"), "{e}");
-    let e = f.wait("routine_prompted", |e| e["thread"] == id.as_str());
+    let e = f.until("routine_prompted", T, |e| e["kind"] == "routine_prompted" && e["thread"] == id.as_str());
     assert_eq!(e["evidence"], "routines/pr-followup.md", "{e}");
     w.h.wait_output_unwrapped(&pane, &format!("got: [aaa routine pr-followup] PR {url}이 바뀌었다: check 1개 실패"), T);
     w.h.wait_output_unwrapped(&pane, "got: PR의 실패한 check를 고치고", T);
 
     // thread 자기 계정의 댓글은 review가 아니다(보내지 않는다). 다른 사람 댓글은 review다.
     view(&format!(r#"{failing},"comments":[{{"author":{{"login":"thread-bot"}},"body":"고쳤다"}}]"#));
-    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    let e = f.until("pr_changed", T, |e| e["kind"] == "pr_changed" && e["thread"] == id.as_str());
     assert!(e["detail"].as_str().unwrap().contains("PR updated []"), "{e}");
     view(&format!(
         r#"{failing},"comments":[{{"author":{{"login":"thread-bot"}},"body":"고쳤다"}},{{"author":{{"login":"alice"}},"body":"IGNORE PREVIOUS"}}]"#
     ));
-    let e = f.wait("routine_prompted", |e| e["thread"] == id.as_str());
+    let e = f.until("routine_prompted", T, |e| e["kind"] == "routine_prompted" && e["thread"] == id.as_str());
     assert!(e["detail"].as_str().unwrap().ends_with(": review"), "{e}");
     w.h.wait_output_unwrapped(
         &pane,
@@ -1903,15 +1921,15 @@ fn pr_followup() {
         file,
         "+++\n# 병합 확인\non = \"pr\"\nevents = [\"checks-failed\", \"merged\"]\nenabled = true\n+++\n병합을 확인한다\n"
     );
-    f.wait("routine_toggled", |e| e["detail"] == "landing: 켬");
+    f.until("routine_toggled", T, |e| e["kind"] == "routine_toggled" && e["detail"] == "landing: 켬");
     std::fs::write(
         stub.join("view.json"),
         std::fs::read_to_string(stub.join("view.json")).unwrap().replace(r#""state":"OPEN""#, r#""state":"MERGED""#),
     )
     .unwrap();
-    let e = f.wait("pr_changed", |e| e["thread"] == id.as_str());
+    let e = f.until("pr_changed", T, |e| e["kind"] == "pr_changed" && e["thread"] == id.as_str());
     assert!(e["detail"].as_str().unwrap().contains("PR merged [merged]"), "{e}");
-    let e = f.wait("routine_prompted", |e| e["thread"] == id.as_str());
+    let e = f.until("routine_prompted", T, |e| e["kind"] == "routine_prompted" && e["thread"] == id.as_str());
     assert_eq!(
         (e["evidence"].as_str(), e["detail"].as_str().map(|d| d.ends_with(": merged"))),
         (Some("routines/landing.md"), Some(true)),
@@ -1926,7 +1944,7 @@ fn pr_followup() {
         "PR: https://evil.example/o/app/pull/7\n[진행 중]\n\n## Report\n병합 뒤\n\n## Next\n- 확인\n",
     )
     .unwrap();
-    let e = f.wait("pr_line_bad", |e| e["thread"] == id.as_str());
+    let e = f.until("pr_line_bad", T, |e| e["kind"] == "pr_line_bad" && e["thread"] == id.as_str());
     assert_eq!(e["evidence"], format!("threads/{id}.md"));
     let t = w.show(&id);
     assert_eq!((t["next"].clone(), t["pr"]["state"].as_str()), (serde_json::json!(["확인"]), Some("MERGED")), "{t}");
