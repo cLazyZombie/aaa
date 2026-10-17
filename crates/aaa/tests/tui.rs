@@ -25,6 +25,8 @@ agent_listen = ""
 listen = ""
 [local_agent]
 mode = "none"
+[tui]
+prefix_ascii = false
 "#;
 
 /// 화면 관측기: 출력·커서 이동·지우기만 다룬다(색은 보지 않는다).
@@ -287,9 +289,12 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     assert!(h.screen(&second).contains("right-10"));
     assert!(!h.screen(&first).contains("right-10"), "포커스한 pane에만 들어가야 한다");
 
-    // 새 탭과 탭 전환
+    // 새 탭과 탭 전환. 한글 입력기가 켜진 채 누른 명령 키(ㅊ = c 자리)도 같은 명령이다
+    // (시험 설정은 prefix_ascii = false: 사용자 입력기를 바꾸지 않는다)
     tui.cmd("c");
     tui.wait_text("둘째 탭", |s| s.lines().next().is_some_and(|l| l.contains("1:first") && l.contains(" 2:")));
+    tui.cmd("ㅊ");
+    tui.wait_text("셋째 탭(자모 ㅊ)", |s| s.lines().next().is_some_and(|l| l.contains(" 3:")));
     tui.cmd("1");
     tui.wait_text("첫 탭으로", |s| s.contains("tui-42") && s.contains("right-10"));
 
@@ -299,7 +304,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     drop(tui);
     wait_for("lease 해제", T, || h.pane(&first)["lease"].is_null().then_some(()));
     assert_eq!(h.pane(&first)["state"], "running");
-    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 3);
+    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 4);
 
     // 다시 붙으면 같은 layout과 화면이 보인다
     let tui = Tui::start(&h);

@@ -182,11 +182,14 @@ impl Default for ProjectsSection {
 pub struct TuiSection {
     /// 명령 prefix 키. `C-<글자>` 형식(예: tmux 안에서 쓸 때는 C-a 대신 C-g 같은 것을 고른다)
     pub prefix: String,
+    /// prefix를 받으면 입력기가 한글 등(영문 아님)일 때 영문 입력기로 바꾸고, 명령 키 뒤에 되돌린다(macOS, ssh 밖).
+    /// 끄면 바꾸지 않는다. 어느 쪽이든 prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다.
+    pub prefix_ascii: bool,
 }
 
 impl Default for TuiSection {
     fn default() -> Self {
-        TuiSection { prefix: "C-b".into() }
+        TuiSection { prefix: "C-b".into(), prefix_ascii: true }
     }
 }
 

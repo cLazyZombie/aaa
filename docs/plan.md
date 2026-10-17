@@ -267,7 +267,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
   - M1-2 구현: `aaa attach [-w workspace]`(설계 예시의 `aaa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
-  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 이 화면 크기로(보통은 필요 없다, §8.33), `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다.
+  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 이 화면 크기로(보통은 필요 없다, §8.33), `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다. 3초 안에 명령 키가 없으면 취소한다. 한글 입력기면 prefix 동안 영문 입력기로 바꾼다(§8.34).
   - 다른 front가 지금 쓰는 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. 입력하거나 터미널 focus를 다시 얻으면 그 칸 크기로 맞추면서 이 화면이 지금 쓰는 화면이 된다(§8.33). lease가 빈 pane에 포커스해도 같다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. lease는 host가 둔다.
@@ -1146,6 +1146,21 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - m12 `lease_between_fronts`: 다른 front 입력이 바로 되고 lease가 옮겨 간다. CLI resize는 쓰는 중 거부, `release`는 자기 것만 놓는다, 연결이 끝나면 풀린다.
   - TUI harness `lease_conflict_with_another_front`: 다른 front가 쓰던 pane에 바로 입력되고 칸 크기로 맞춘다. 다른 front가 다시 쓴 뒤 `ESC [ I`(focus 얻음)면 크기를 다시 건다. `ESC [ O` 동안은 lease가 비어도 크기를 걸지 않는다. `prefix t`도 된다.
   - 웹 E2E 「두 controller」: 열기만 해서는 바꾸지 않는다. 입력하면 바로 들어가고 그 화면 크기가 된다. 번갈아 입력하면 크기가 바뀐다. window focus면 다시 건다. 가려진 화면은 1초 뒤 놓고 남은 화면이 맞춘다.
+
+### 8.34 TUI prefix 뒤 명령 키를 영문 입력기로(10-17, 사용자 요청)
+
+- **요청.** 한글 입력기로 `Ctrl+B` 다음 명령 키(`c` 등)를 누르면 자모가 들어가 명령이 안 된다. prefix를 받으면 영문 입력기로 바꾸고, 끝나면 되돌린다.
+- **구현(`aaa-tui::input_source`, macOS Text Input Sources).**
+  - prefix를 받으면, 지금 입력기가 영문 자판 배치(`TISTypeKeyboardLayout`이면서 ASCII 가능)가 아닐 때 `TISCopyCurrentASCIICapableKeyboardLayoutInputSource`(ABC 등 사용자의 영문 배치)를 고른다.
+    - 두벌식 같은 입력기도 macOS는 ASCII 가능으로 보고한다. 그래서 종류(자판 배치인지)까지 본다.
+  - 명령 키를 처리한 뒤, 취소, 시간 초과(3초), TUI 종료·오류·panic에 원래 입력기로 되돌린다(값이 사라질 때 되돌리는 guard).
+  - 지속 설정이 아니라 지금 입력기만 바꾼다. ssh 세션(`SSH_CONNECTION`·`SSH_CLIENT`·`SSH_TTY`)에서는 바꾸지 않는다(그 Mac의 입력기는 앞에 앉은 기기의 것이 아니다).
+  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다.
+- **보조: 자모 해석.** prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다(ㅊ=c, ㅅ=t, ㅌ=x, ㅇ=d, ㄱ=r, ㅜ=n, ㅔ=p, ㅐ=o, 쌍자음·ㅒ·ㅖ는 Shift 자리). 바꾸기 전에 들어온 키, ssh·다른 OS를 위한 것이다.
+- **시험.**
+  - 유닛: 자모 → 키, ssh 판정.
+  - TUI harness: prefix 뒤 `ㅊ`로 새 탭. 시험 설정은 `prefix_ascii = false`라 사용자 입력기를 건드리지 않는다.
+  - macOS 실제 입력기(`AAA_IME_NATIVE=1`, 개발 Mac에서 짧게, 단언이 실패해도 처음 입력기로 돌려 둔다): ABC → 두벌식 → prefix 영문 `com.apple.keylayout.ABC` → 되돌림 두벌식 → 처음 ABC. 약 0.4초다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
