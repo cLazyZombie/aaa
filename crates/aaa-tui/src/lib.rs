@@ -1211,13 +1211,9 @@ impl App {
         // 탐색 모드인데 사이드바가 펼쳐져 있지 않으면 펼친 목록을 pane 위에 띄운다(pane 크기는 그대로).
         // herdr는 접힌 칸의 번호만 강조한다: 이름을 보며 고를 수 있게 aaa는 띄운다(plan §8.73).
         if self.mode == Mode::Navigate && (self.collapsed() || sh.sidebar.w == 0) {
-            // 모드 막대(pane 맨 아랫줄) 위까지
-            let over = if sh.header.h > 0 {
-                Rect { h: body.h.saturating_sub(1), ..body }
-            } else {
-                Rect { w: self.sidebar_width.min(area.w), h: area.h.saturating_sub(1), ..area }
-            };
-            self.render_sidebar(buf, over);
+            // pane 칸 위에만(접힌 칸·탭 막대·머리는 그대로), 모드 막대(pane 맨 아랫줄) 위까지
+            let w = if sh.header.h > 0 { body.w } else { self.sidebar_width.min(body.w) };
+            self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body });
         }
         if let Some(bar) = self.render_mode_bar(buf, body)
             && cursor.is_some_and(|(_, y)| y == bar.y)
@@ -2004,8 +2000,11 @@ mod tests {
         app.mode = Mode::Navigate;
         let (lines, _) = draw(&app);
         let shown = lines.join("\n");
-        assert!(lines.iter().any(|l| l.starts_with(" ▾ mac-a")), "탐색이면 띄운다: {shown}");
-        assert!(lines[28].starts_with("                        «│"), "띄운 목록은 막대 위까지: {shown}");
+        // 접힌 칸(4칸)과 탭 막대는 그대로, 그 오른쪽 아래 pane 칸에 펼친 목록(머리·`▾ 머신`·`«`), 모드 막대 위까지
+        assert!(lines[0].starts_with("1 ·│   1   "), "{shown}");
+        assert!(lines[1].starts_with("   │ main "), "{shown}");
+        assert!(lines.iter().any(|l| l.starts_with("   │ ▾ mac-a")), "탐색이면 띄운다: {shown}");
+        assert_eq!(at_col(&lines[28], 28), Some('«'), "띄운 목록은 막대 위까지: {shown}");
         assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
     }
 

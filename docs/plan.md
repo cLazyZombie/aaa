@@ -1881,7 +1881,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 이름은 `subtext0`, 지금 pane 줄은 `active_row_bg` 바탕에 `text` 굵게. 탐색 중 고른 줄은 `selection_bg` 바탕(없는 테마면 `active_row_bg`)이다. `▸` 표시는 뺐다(herdr는 바탕색만).
   - 사후 평가자 pane은 상태 줄 대신 목록 맨 아래 「평가」 묶음에 보인다.
 - **사이드바(접힘).** `[tui] sidebar_collapsed_mode = "compact"`(기본)면 4칸 열에 thread·pane마다 번호와 상태 점, 맨 아래 가운데 `»`. `"hidden"`이면 없다. `[tui] sidebar_start_collapsed`(기본 끔)로 접힌 채 시작한다. herdr처럼 터미널 폭으로는 접지 않는다.
-- **탐색 모드(`prefix w`).** 펼쳐져 있으면 그 목록에서 고른다. 접혀 있거나 좁은 화면이면 펼친 목록을 pane 위에 띄운다(모드 막대 위 줄까지, pane 크기는 그대로). herdr는 접힌 칸의 번호만 강조한다: aaa는 이름을 보며 고르게 띄운다(§8.73 그대로).
+- **탐색 모드(`prefix w`).** 펼쳐져 있으면 그 목록에서 고른다. 접혀 있거나 좁은 화면이면 펼친 목록을 pane 칸 위에 띄운다(접힌 칸·탭 막대·머리는 그대로, 모드 막대 위 줄까지, pane 크기는 그대로). herdr는 접힌 칸의 번호만 강조한다: aaa는 이름을 보며 고르게 띄운다(§8.73 그대로).
 - **탭 막대.** `panel_bg` 줄에 이름표(지금 탭 accent 바탕·`panel_bg` 글자, 붙인 이름이면 굵게, 다른 탭 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`, 넘치면 `…` `overlay0`). 앞에 있던 ` aaa `·workspace 이름 조각은 뺐다(workspace 이름은 사이드바 머리).
   - 오른쪽 끝은 herdr `tab_bar_right` 자리: 열린 질문 수 ` ● 질문 n `(빨강 바탕), 다른 화면이 포커스 pane 크기를 쥐면 `<화면> 크기`(peach). 이름표 자리가 17칸(herdr `MIN_TAB_STRIP_WIDTH`) 밑으로 줄면 오른쪽 조각을 뺀다. 「이 화면 크기」는 보이지 않는다(평소 상태라).
   - `+` 새 탭·`<` `>` 넘기기 단추는 마우스 묶음에서 넣는다(herdr도 마우스를 켰을 때만 그린다).
