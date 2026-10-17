@@ -1339,6 +1339,26 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 입력줄을 쓰는 단계는 그 화면을 입력줄로 두고 돈다(`pairPage` `line`). 휴대폰 Enter·끊김 단언은 참고 규칙으로 바꿨다(위 「바뀐 사용자 규칙」).
   - 화면 키보드 단계는 터미널을 바로 입력에서, 입력줄을 ⌨로 켠 뒤에 본다. PTY 기준은 모드를 바꾼 뒤에 잰다.
 
+### 8.45 구독 사용량 막대와 설정 톱니를 herdr-web-ui대로(10-17, 사용자 요청)
+
+- **요청.** 목록 왼쪽 아래에 설정 톱니와 구독별 남은 양(주간) 막대를 herdr-web-ui처럼 넣는다(사용자 캡처: 휴대폰 sidebar 바닥 줄).
+- **옮긴 것(herdr-web-ui aa624cb).**
+  - host `crates/aaa-host/src/usage.rs` ← `server/usage.ts`. Claude·Codex·Cursor·Copilot·Grok·Antigravity·OpenCode의 CLI 로그인으로 한도를 읽는다.
+    - 읽기만 한다(token refresh 안 함, 끝났으면 `expired`). FRESH 5분, 다시 읽기 30초, 실패 뒤 1분, 429는 Retry-After까지 계정마다 기다린다.
+    - 뒤에서 혼자 돌지 않는다: 웹이 물을 때만 읽는다. 계정을 말하지 않는 로그인의 key는 찾은 곳의 hash다(경로가 브라우저로 가지 않는다).
+  - `GET /api/v1/usage[?refresh=1]` → `UsageReport`(aaa-proto, 참고 `shared/protocol.ts` Usage 형식 그대로). 보기 권한 기기도 본다(참고: 들어온 client 누구나). `cache-control: no-store`.
+  - 웹 `usage.ts` ← `lib/usage.ts`(import만 바꾸고 문구 한국어), `UsageMeters.tsx` ← `UsageMeters.tsx`, 바닥 줄 ← `MachineSidebar` `sidebar-footer-row`, 설정 창의 「입력 방식」·「구독 사용량」·「계정」 묶음 ← `SettingsDialog`(Terminal·Usage 쪽).
+- **다른 곳 1: keychain을 로그인 세션 밖에서 다시 읽지 않는다.** 참고는 `security`가 36(잠김)을 내면 launchd 일회 job(`launchctl bootstrap gui/<uid>`)으로 다시 읽는다. launchd job을 만드는 일은 사용자 승인이 필요한 시스템 동작이다. aaa host는 로그인 세션의 LaunchAgent로 돈다. 그때는 `locked`로 알린다.
+- **다른 곳 2: 설정은 이 기기에만.** 참고는 구독 사용량 설정을 server에 두어 기기끼리 나눈다(shared). aaa에는 설정 저장소가 아직 없어 localStorage에 둔다.
+- **다른 곳 3: 막대가 기본으로 보인다.** 참고 기본은 끔이다. 사용자가 보이라고 해서 켬으로 둔다. 쓴 양·주간은 참고 기본 그대로다(캡처의 Claude 95% 빨강은 쓴 양이다).
+- **다른 곳 4: 설정 창의 쪽.** 이번에는 aaa가 뒷받침하는 묶음만 넣었다(터미널 입력 방식·구독 사용량·계정 순서·숨기기). 데스크톱에서도 입력줄을 고를 수 있게 됐다(§8.44의 빈 곳). 모양·알림·기기·키 막대 편집 등은 그 기능을 옮길 때 넣는다. 구독 표시는 참고 AgentMark 대신 aaa 아이콘(Claude·Codex)과 이름 첫 글자다.
+- **HTTP.** `crates/aaa-host/src/http.rs`: 본문(Content-Length·chunked·닫힘)을 1MiB까지 읽는 작은 client. 이미 쓰는 rustls·webpki 위에 두어 새 crate를 넣지 않았다(Retry-After 날짜만 `httpdate`, 이미 lock에 있던 판).
+- **시험 고리.** `AAA_USAGE_HOME`(집, keychain·gh·환경 변수 안 씀), `AAA_USAGE_ORIGIN`(구독 주소의 scheme·host를 가짜 서버로). 웹 E2E와 유닛 시험이 실제 로그인·keychain에 닿지 않는다.
+- **시험.**
+  - 유닛(`usage::tests`, 가짜 집·keychain·gh·loopback 서버): 일곱 구독 읽기, 5분 캐시와 30초 다시 읽기, 429 Retry-After, 끝난 token은 묻지 않음, keychain과 파일 중 늦은 것, 잠긴 keychain, 이름 없는 계정 번호와 경로 없는 key. `http::tests`: Content-Length·chunked(작은 chunk 5000개)·닫힘·상한.
+  - 웹 E2E 「구독 사용량·설정」: 칩(95% 빨강, 429는 「—」 흐림), 펼친 한도·초기화까지·plan·계정, 여러 화면을 열어도 구독마다 한 번만 물음, 남은 양·세션·숨기기·순서, 설정 창에서 입력줄, 다시 열어도 남음, 끄면 사라짐.
+  - 실제로 읽어 본 구독은 없다. Cursor·Copilot·Grok·Antigravity·OpenCode는 지어낸 답으로만 시험했다. 운영 host 머신(mac-a)의 Claude·Codex는 host를 다시 띄운 뒤 사용자 화면에서 처음 읽는다. 이때 macOS keychain 허용 창이 그 머신에 뜰 수 있다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -12,6 +12,8 @@ import { ApiError, call, me, pair, watchEvents } from "./api";
 import { TermView } from "./Term";
 import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
+import { UsageMeters } from "./UsageMeters";
+import { SettingsDialog } from "./SettingsDialog";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
 import { useInstall } from "./install";
 import { type PushState, iosNeedsInstall, usePush } from "./push";
@@ -497,7 +499,8 @@ function ListFoot() {
   const tr = useInputTrace();
   // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
   const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
-  if (!install && push.state === "hidden" && !iosHint && !showTrace) return null;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const label: Record<PushState, string> = {
     hidden: "",
     off: "알림 켜기",
@@ -540,6 +543,15 @@ function ListFoot() {
           홈 화면에 설치
         </button>
       )}
+      {/* 설정과 그 옆 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row) */}
+      <div className="foot-row">
+        <button className="ghost foot-settings" data-testid="settings-open" onClick={() => setSettingsOpen(true)}>
+          <Icon name="settings" />
+          설정
+        </button>
+        <UsageMeters />
+      </div>
+      {settingsOpen && <SettingsDialog onClose={closeSettings} />}
     </div>
   );
 }
