@@ -275,6 +275,9 @@ pub struct Host {
     decision_lock: Mutex<()>,
     /// ticker를 바로 깨운다(흐름 사건·harness 사건)
     tick_wake: tokio::sync::Notify,
+    /// 시작한 tick 수와 끝난 tick 수(`ticker_tick`이 「이 요청 뒤에 시작한 tick」이 끝나기를 기다린다)
+    tick_started: std::sync::atomic::AtomicU64,
+    tick_done: watch::Sender<u64>,
     /// 머신별 끊김: 이 host 프로세스가 끊김을 처음 본 때와 알렸는지(inbox::Outage)
     outages: Mutex<HashMap<String, inbox::Outage>>,
     /// 머신별 마지막으로 알린 건강 이상(이어 붙인 글, 정상이면 빈 글)
@@ -417,6 +420,8 @@ impl Host {
             held: Mutex::new(HashMap::new()),
             decision_lock: Mutex::new(()),
             tick_wake: tokio::sync::Notify::new(),
+            tick_started: std::sync::atomic::AtomicU64::new(0),
+            tick_done: watch::channel(0).0,
             outages: Mutex::new(HashMap::new()),
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
@@ -895,6 +900,7 @@ impl Host {
             FrontRequest::InboxDone { project, ids, all } => self
                 .inbox_done(&project, &ids, all, actor)
                 .map(|(done, items)| FrontResponse::Inbox { items, done: Some(done) }),
+            FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
             FrontRequest::MergeEnqueue { project, thread } => {
                 self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
             }

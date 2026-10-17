@@ -7,7 +7,7 @@ mod lab;
 
 use std::time::Duration;
 
-use lab::{Lab, Node, read_line_containing, wait_for};
+use lab::{Lab, read_line_containing, wait_for};
 
 const T: Duration = Duration::from_secs(20);
 
@@ -31,10 +31,6 @@ listen = ""
 mode = "none"
 "#;
 
-fn connected(node: &Node, name: &str) -> bool {
-    node.machine(name).is_some_and(|m| m["connection"] == "connected")
-}
-
 /// host를 죽였다 살려도 세션이 남고, agent가 끊기면 읽기 전용이 되며, agent가 돌아오면 다시 입력된다.
 /// host와 agent를 함께 다시 띄워도 harness 상태·진행·대화 기록 위치가 되살아난다(다음 hook을 기다리지 않는다).
 #[test]
@@ -46,7 +42,7 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     let claude = lab.root.join("claude");
     let claude_s = claude.to_str().unwrap().to_string();
     lab.spawn_env("agent", &h, &["agent", "--host", "local", "--name", "labA"], &[("CLAUDE_CONFIG_DIR", &claude_s)]);
-    wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
+    wait_for("labA 연결", T, || h.connected("labA").then_some(()));
 
     let id = h.new_pane(None, "labA", Some("t1"), &["/bin/sh"], None);
     h.ok(&["pane", "run", &id, "echo mark-$((6*7))"]);
@@ -92,7 +88,7 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     // host 갑작스러운 종료 → 재시작: agent가 다시 붙고 같은 세션이 그대로 있다
     lab.kill("host");
     lab.spawn("host2", &h, &["host"]);
-    wait_for("host 재시작 뒤 labA 재연결", Duration::from_secs(40), || connected(&h, "labA").then_some(()));
+    wait_for("host 재시작 뒤 labA 재연결", Duration::from_secs(40), || h.connected("labA").then_some(()));
     assert_eq!(h.pane(&id)["state"], "running");
     // 새 hook 없이 같은 harness 상태(때 포함)와 대화 보기(agent 메모리에서 다시 알린다)
     wait_for("host 재시작 뒤 harness 상태", T, || (h.pane(&cid)["agent"] == before).then_some(()));
@@ -168,7 +164,7 @@ fn enroll_remote_agent_and_run_short_command() {
     assert!(lab.wait_exit("enroll", T).success(), "enroll 실패: {}", lab.log("enroll"));
 
     lab.spawn("agentB", &b, &["agent", "--host", &addr, "--name", "labB"]);
-    wait_for("labB 연결", T, || connected(&h, "labB").then_some(()));
+    wait_for("labB 연결", T, || h.connected("labB").then_some(()));
 
     // 곧바로 끝나는 명령도 종료 코드와 출력이 남는다
     let id = h.new_pane(None, "labB", None, &["/bin/sh", "-c", "echo remote-$((2+3)); exit 7"], None);
@@ -191,5 +187,5 @@ fn enroll_remote_agent_and_run_short_command() {
 
     // 등록을 취소하면 그 장치는 다시 붙지 못한다
     h.ok(&["machine", "revoke", "labB"]);
-    wait_for("취소 뒤 끊김", T, || (!connected(&h, "labB")).then_some(()));
+    wait_for("취소 뒤 끊김", T, || (!h.connected("labB")).then_some(()));
 }

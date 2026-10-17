@@ -37,6 +37,9 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             .env_remove("NO_COLOR")
             .stdin(Stdio::null());
+        // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
+        #[cfg(unix)]
+        c.env("SHELL", "/bin/sh");
         c
     }
 
@@ -140,6 +143,17 @@ impl Node {
     pub fn machine(&self, name: &str) -> Option<Value> {
         let v = self.json(&["machine", "list"]).ok()?;
         v["machines"].as_array()?.iter().find(|m| m["name"] == name).cloned()
+    }
+
+    pub fn connected(&self, name: &str) -> bool {
+        self.machine(name).is_some_and(|m| m["connection"] == "connected")
+    }
+
+    /// host ticker를 `n`번 돌리고(`aaa ticker tick`: 이 명령 뒤에 시작한 tick이 끝나면 돌아온다) 끝난 tick 수를 돌려준다.
+    /// 「host가 보고도 아무것도 하지 않았다」를 고정 sleep 없이 단언할 때 쓴다(herdr-projects 시험의 `ticker::tick_project`).
+    /// 시간 규칙(idle·quiet·schedule·outage_secs)이 막는 일은 tick만으로 일어나지 않는다: 그 규칙은 시간이 지났음을 먼저 보인다.
+    pub fn ticks(&self, n: usize) -> u64 {
+        (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
     }
 }
 

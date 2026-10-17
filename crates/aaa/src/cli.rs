@@ -116,6 +116,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: InboxCmd,
     },
+    /// host 안의 ticker(inbox·outage·routine·건강·nudge를 주기마다 본다, herdr-projects `ticker`)
+    Ticker {
+        #[command(subcommand)]
+        cmd: TickerCmd,
+    },
     /// 병합 대기열(순번과 사건만, 병합 단계는 coordinator가 한다)
     Merge {
         #[command(subcommand)]
@@ -225,6 +230,13 @@ enum DecisionCmd {
     List {
         project: String,
     },
+}
+
+#[derive(Subcommand)]
+enum TickerCmd {
+    /// 지금 한 번 돌리고, 이 명령 뒤에 시작한 tick이 끝나면 끝난다(돌던 tick이 있으면 그 다음 것까지). host 머신 CLI에서만.
+    /// 시험이 「host가 봤는데 할 일이 없었다」를 고정 sleep 없이 기다린다(docs/testing.md)
+    Tick,
 }
 
 #[derive(Subcommand)]
@@ -940,6 +952,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 InboxCmd::Done { project, ids, all } => FrontRequest::InboxDone { project, ids, all },
             },
         ),
+        Cmd::Ticker { cmd: TickerCmd::Tick } => front(json, FrontRequest::TickerTick),
         Cmd::Merge { cmd } => front(
             json,
             match cmd {
@@ -2293,6 +2306,9 @@ fn render_front(r: &FrontResponse) -> String {
         // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
         FrontResponse::Preferences(p) => {
             let _ = writeln!(s, "{}", serde_json::to_string_pretty(p).unwrap_or_default());
+        }
+        FrontResponse::Ticker { runs } => {
+            let _ = writeln!(s, "ticker가 한 번 돌았다(이 host 실행에서 {runs}번째까지 끝남)");
         }
         FrontResponse::Inbox { items, done: Some(n) } => {
             let _ = writeln!(s, "{n}개 항목을 끝냈다(inbox/done으로 옮김)");

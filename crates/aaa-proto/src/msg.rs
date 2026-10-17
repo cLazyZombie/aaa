@@ -1196,6 +1196,9 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
+    /// ticker를 지금 한 번 돌리고, 이 요청 뒤에 시작한 tick이 끝나면 답한다(herdr-projects 시험의 `ticker::tick_project`,
+    /// t3code worker `drain`과 같은 자리). host가 「봤는데 할 일이 없었다」를 시험이 기다릴 수 있다(docs/testing.md).
+    TickerTick,
     /// 병합 대기열 맨 뒤에 넣는다(이미 있으면 그 자리)
     MergeEnqueue {
         project: String,
@@ -1337,6 +1340,7 @@ impl FrontRequest {
                 | FrontRequest::MergeLand { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
+                | FrontRequest::TickerTick
         )
     }
 }
@@ -1428,6 +1432,10 @@ pub enum FrontResponse {
     },
     Merge {
         queue: Vec<MergeEntry>,
+    },
+    /// `ticker_tick`: 이 host 실행에서 끝난 tick 수(방금 돈 것까지)
+    Ticker {
+        runs: u64,
     },
     MergeLand(Box<MergeLandView>),
     Routines {
