@@ -1816,7 +1816,25 @@ pub enum TermClientMsg {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum EventsClientMsg {
     /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 연결이 끊기면 쓰지 않는 것이다.
-    Presence { active: bool },
+    /// 나머지는 판정 근거 기록에만 쓴다(10-18 실기, 옛 웹은 보내지 않는다).
+    Presence {
+        active: bool,
+        /// 무엇이 알리게 했나(focus·blur·visibilitychange·pagehide·pageshow·freeze·resume·open·heartbeat)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        why: Option<String>,
+        /// 그때 `document.visibilityState === "visible"`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        visible: Option<bool>,
+        /// 그때 `document.hasFocus()`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        focus: Option<bool>,
+    },
+    /// 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거 기록, host는 흐름 사건으로 남긴다). `target`은 알림 자리
+    /// (`thread=…`·`pane=…`), `kind`는 `blocked`·`done`, `outcome`은 웹이 정한 한 줄(띄움·보는 중·가려짐·꺼짐 등)
+    Alert { project: Option<String>, target: String, kind: String, outcome: String },
     /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다(보이고 focus가 됐다·앱을 열었다). host는 마지막으로 이것을 보낸
     /// 기기(또는 pane에 입력한 기기)를 「쓰는 기기」로 두고, 그 기기가 지금 쓰는 화면일 때만 Web Push를 건너뛴다
     /// (사용자 결정 10-18, plan §8.105. 참고는 쓰는 화면이 하나라도 있으면 건너뛴다)
