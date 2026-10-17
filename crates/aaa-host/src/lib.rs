@@ -6,6 +6,7 @@
 mod attach;
 mod brief;
 mod brief_text;
+mod caller;
 mod coord;
 pub mod db;
 mod evaluator;

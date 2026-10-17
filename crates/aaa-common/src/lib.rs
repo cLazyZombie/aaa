@@ -5,5 +5,6 @@ pub mod conn;
 pub mod front;
 pub mod ipc;
 pub mod pr;
+pub mod process;
 pub mod tls;
 pub mod util;
