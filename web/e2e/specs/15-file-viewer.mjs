@@ -120,6 +120,9 @@ export default async function ({ ctl, page }) {
     await fenced.first().waitFor();
     const fences = await fenced.evaluateAll((all) => all.map((b) => b.closest(".markdown-code")?.dataset.language));
     if (JSON.stringify(fences) !== "[\"\"]") throw new Error(`fence 안 경로 링크 ${JSON.stringify(fences)}(언어 없는 fence 하나만)`);
+    // 언어가 있는 fence는 그 문법으로 칠한다(참고 CodeBlock languageForFence)
+    const tsKeyword = await viewer(dp).locator('.markdown-code[data-language="ts"] .hl-keyword').allTextContents();
+    if (tsKeyword.join() !== "const") throw new Error(`ts fence 색 ${JSON.stringify(tsKeyword)}`);
     await fenced.click();
     await codeIs(dp, "fence 안 경로", "run b\n");
     await dp.keyboard.press("Escape");
@@ -134,6 +137,13 @@ export default async function ({ ctl, page }) {
       return { index: all.indexOf(m) + 1, text: m?.textContent };
     });
     if (marked.index !== 20 || marked.text !== "const line20 = 20; // marked") throw new Error(`표시한 줄 ${JSON.stringify(marked)}`);
+    // 짧은 소스는 그리면서 칠한다(참고 SYNC_HIGHLIGHT_LIMIT): 이름(.ts)으로 고른 문법의 낱말·주석
+    const colors = await dp.evaluate(() => {
+      const code = document.querySelector('[data-testid="file-viewer-code"]');
+      const role = (cls, line) => [...code.querySelectorAll(`.hl-line[data-line="${line}"] .hl-${cls}`)].map((e) => e.textContent);
+      return { keyword: role("keyword", 1), number: role("number", 1), comment: role("comment", 20) };
+    });
+    if (JSON.stringify(colors) !== JSON.stringify({ keyword: ["const"], number: ["1"], comment: ["// marked"] })) throw new Error(`소스 색 ${JSON.stringify(colors)}`);
     // 읽기 경로: Range로 앞부분, 글은 text/plain, sandbox, 저장 안 함. 모르는 cap은 401
     const url = await viewer(dp).getByRole("link", { name: "새 탭에서 열기" }).getAttribute("href");
     const got = await dp.evaluate(async (url) => {
@@ -361,5 +371,44 @@ export default async function ({ ctl, page }) {
     await closed(dp, "PDF Escape");
     await dp.context().close();
     aaa("pane", "kill", "media");
+  });
+
+  await step("파일 보기 문법 강조(herdr-web-ui HighlightedCode·highlight.ts·highlightOffThread, plan §8.109): 긴 소스는 worker가 칠하고 그동안 글 그대로이며, worker가 예산(2초) 안에 못 칠하는 소스는 글 그대로에 「너무 길어 강조 표시를 생략했습니다」를 단다", async () => {
+    const proj = `${root}/files/code`;
+    for (const d of ["src", "data"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
+    // 2KB(SYNC_HIGHLIGHT_LIMIT)를 넘는 소스: 그리는 동안이 아니라 worker가 칠한다
+    const long = Array.from({ length: 200 }, (_, i) => `export const v${String(i).padStart(3, "0")} = "s"; // c${i}`).join("\n") + "\n";
+    fs.writeFileSync(`${proj}/src/long.ts`, long);
+    // YAML 대시 한 줄: 참고 시험의 tokenizer 제곱 꼴(이 크기는 30초쯤)
+    const dashes = "-".repeat(200_000);
+    fs.writeFileSync(`${proj}/data/dashes.yaml`, dashes);
+    const lines = ["L src/long.ts", "Y data/dashes.yaml"];
+    const prog = `process.stdout.write(${JSON.stringify(lines.join("\r\n") + "\r\ncode> ")}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "code", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("code", "code>");
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-code").click();
+    await screenHas(dp, "code 줄들", "code>");
+
+    await clickLink(dp, "src/long.ts");
+    await codeIs(dp, "긴 소스", long);
+    await domIs(dp, "worker가 칠한 긴 소스", () => {
+      const k = document.querySelector('[data-testid="file-viewer-code"] .hl-line[data-line="200"] .hl-keyword');
+      return k?.textContent === "export";
+    });
+    await dp.keyboard.press("Escape");
+    await closed(dp, "긴 소스 Escape");
+
+    // 글은 바로 보이고(worker를 기다리지 않음), 예산이 지나면 worker를 끝내고 글 그대로 알린다
+    await clickLink(dp, "data/dashes.yaml");
+    await codeIs(dp, "대시 소스", dashes);
+    await domIs(dp, "너무 길어 알림", () => document.querySelector(".file-viewer-notice")?.textContent.includes("너무 길어 강조 표시를 생략했습니다"));
+    const painted = await dp.evaluate(() => document.querySelectorAll('[data-testid="file-viewer-code"] [class^="hl-"]:not(.hl-line):not(.hl-code)').length);
+    if (painted !== 0) throw new Error(`예산을 넘은 소스에 색 ${painted}`);
+    await shot(dp, "desktop-file-too-long");
+    await dp.keyboard.press("Escape");
+    await closed(dp, "대시 소스 Escape");
+    await dp.context().close();
+    aaa("pane", "kill", "code");
   });
 }

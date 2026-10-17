@@ -1,18 +1,8 @@
-/* 보고서 Markdown 모양. herdr-web-ui aa624cb src/components/ChatView.css의 .markdown 규칙과 HighlightedCode.css .hl-code를
-   바꾸지 않고 골라 옮겼다. 빠진 것: 수식·mermaid·skill(aaa 렌더에 없음), chat 말풍선 규칙. 그림·파일 단추는 파일 보기가 준다.
+/* 보고서 Markdown 모양. herdr-web-ui aa624cb src/components/ChatView.css의 .markdown 규칙을
+   바꾸지 않고 골라 옮겼다(code 색·줄은 HighlightedCode.css). 빠진 것: 수식·mermaid·skill(aaa 렌더에 없음), chat 말풍선 규칙. 그림·파일 단추는 파일 보기가 준다.
    --chat-fs-body는 참고에서 ChatView.css .chat-view가 정하는 값이라 여기서 둔다. 고지는 web/src/herdr/README.md. */
 .markdown {
   --chat-fs-body: var(--fs-chat);
-}
-
-/* Highlighted code (chat code blocks, file viewer). The host sets padding and background. */
-.hl-code {
-  margin: 0;
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  line-height: var(--lh-base);
-  white-space: pre;
 }
 
 .markdown-code-error {

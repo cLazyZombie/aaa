@@ -1,18 +1,21 @@
 // 파일 보기(결정 20 D7, herdr-web-ui `src/components/FileViewer.tsx`·`FileViewer.css` aa624cb). 웹 터미널의 파일 경로 링크로 연다.
 // 옮긴 것: 대화 상자(휴대폰은 화면 가득), 경로 찾기(같은 이름이 여럿이면 고르기), 그림·동영상·소리·PDF, HTML 페이지(sandbox
 // 안 페이지와 소스), 글(Markdown 미리보기와 소스, 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
-// 아직 옮기지 않은 것(plan §8.109 남은 것): 문법 강조·긴 소스 가상화, 폴더 보기, 「파일 뷰어」 설정.
+// 소스는 참고처럼 문법 강조한다(HighlightedCode, 긴 것은 worker).
+// 아직 옮기지 않은 것(plan §8.109 남은 것): 긴 소스 가상화(VirtualSource), 폴더 보기, 「파일 뷰어」 설정.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
 import { ApiError, call } from "./api.ts";
 import type { FileInfo } from "./gen/proto.ts";
 import { Markdown, MarkdownImageContext } from "./Markdown.tsx";
 import { formatBytes } from "./formatBytes.ts";
+import { CodeLines, useHighlightedLines } from "./HighlightedCode.tsx";
 import { copyText } from "./herdr/clipboard.ts";
 import { fileLineTarget, OpenFileContext, pathParts } from "./herdr/filePaths.ts";
 import { resolveFromDocument } from "./herdr/fileReader.ts";
+import { languageForPath, normalizeCode } from "./herdr/highlight.ts";
 import { markdownImagePreview } from "./herdr/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
@@ -58,28 +61,6 @@ function CopyFileButton({ text }: { text: string }) {
     <button type="button" className="icon-button file-viewer-action" aria-label={label} title={label} onClick={() => void copyText(text).then((ok) => ok && setCopied(true))}>
       {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
     </button>
-  );
-}
-
-/** 소스(참고 HighlightedCode.tsx CodeLines): 줄은 inline이고 사이 "\n"이 글이라 복사가 원문 그대로다. 줄 번호는 CSS counter고 칸은 두 자리 이상이다.
- *  표시한 줄을 가운데로 굴린다. 문법 강조는 아직 없다(plan §8.109 남은 것) */
-function CodeLines({ text, marked }: { text: string; marked: number | null }) {
-  const markedRef = useRef<HTMLSpanElement>(null);
-  useLayoutEffect(() => markedRef.current?.scrollIntoView({ block: "center" }), [marked, text]);
-  const lines = useMemo(() => text.split("\n"), [text]);
-  return (
-    <pre className="hl-code file-viewer-text" data-line-numbers="" style={{ "--hl-digits": String(Math.max(2, String(lines.length).length)) } as CSSProperties} data-testid="file-viewer-code">
-      <code>
-        {lines.map((line, i) => (
-          <Fragment key={i}>
-            <span ref={i + 1 === marked ? markedRef : undefined} className={i + 1 === marked ? "hl-line is-marked" : "hl-line"} data-line={i + 1}>
-              {line}
-            </span>
-            {i < lines.length - 1 ? "\n" : null}
-          </Fragment>
-        ))}
-      </code>
-    </pre>
   );
 }
 
@@ -193,6 +174,11 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
     </div>
   );
   const view = markdown && mode === "preview" ? "markdown" : "code";
+  // 소스는 이름으로 고른 문법으로 칠한다(참고 FileViewer useHighlightedLines). 긴 것은 worker가 칠하고 그동안 글 그대로다
+  const codeShown = textFile && loaded !== null && view === "code" && (!htmlPage || source);
+  const sourceText = useMemo(() => (codeShown ? normalizeCode(loaded.text) : ""), [codeShown, loaded]);
+  const code = useHighlightedLines(sourceText, codeShown ? languageForPath(info.path) : null);
+  const sourceRef = useRef<HTMLPreElement>(null);
   // 표시할 줄: 받은 앞부분 안이면 표시, 밖이면 알림(참고 lineRequest)
   const notes: string[] = [];
   let marked: number | null = null;
@@ -210,6 +196,11 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
         : `전체 ${formatBytes(info.size)} 중 처음 ${formatBytes(TEXT_PREVIEW_BYTES)}만 보입니다.`,
     );
   const cutBytes = cutShort && loaded.lines < SOURCE_PREVIEW_LINES;
+  if (codeShown && code.tooLong) notes.push("너무 길어 강조 표시를 생략했습니다");
+  // 표시한 줄을 가운데로. worker의 색은 자리를 바꾸지 않으니 줄·보기·글이 바뀔 때만 굴린다(참고 TextFileView)
+  useLayoutEffect(() => {
+    if (marked !== null) sourceRef.current?.querySelector(".hl-line.is-marked")?.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [path, view, source, marked, loaded]);
 
   const body = (() => {
     if (problem !== null)
@@ -265,7 +256,7 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
         return (
           <>
             {htmlPage && modes}
-            <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : undefined}>
+            <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : "file-viewer-code"}>
               {view === "markdown" ? (
                 <OpenFileContext.Provider value={openLink}>
                   <MarkdownImageContext.Provider value={imagePreview}>
@@ -273,7 +264,7 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
                   </MarkdownImageContext.Provider>
                 </OpenFileContext.Provider>
               ) : (
-                <CodeLines text={loaded.text} marked={marked} />
+                <CodeLines ref={sourceRef} className="file-viewer-text" lines={code.lines} open={null} lineNumbers markedLine={marked} />
               )}
             </div>
           </>

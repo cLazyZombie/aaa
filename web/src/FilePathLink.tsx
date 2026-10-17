@@ -1,5 +1,4 @@
 // 글 속 파일 경로를 파일 보기로 여는 단추(herdr-web-ui `src/components/FilePathLink.tsx` aa624cb, 문구만 참고 ko).
-// 참고의 `linksFilePaths`는 문법 강조(HighlightedCode)가 쓰므로 그것과 함께 옮긴다.
 import type { ReactNode } from "react";
 
 import { splitFilePaths } from "./herdr/filePaths.ts";
@@ -11,6 +10,11 @@ import { splitFilePaths } from "./herdr/filePaths.ts";
 const FILE_LINK_LIMIT = 256 * 1024;
 /** Nor does a text with more paths than this link any: a listing of thousands would be thousands of buttons. */
 const FILE_LINK_COUNT = 500;
+
+/** Whether `text` links its paths at all: short enough, and not a listing of thousands. */
+export function linksFilePaths(text: string): boolean {
+  return text.length <= FILE_LINK_LIMIT && splitFilePaths(text).filter((part) => typeof part !== "string").length <= FILE_LINK_COUNT;
+}
 
 /** A file path the viewer opens: a button that reads as the text or code it replaced. */
 export function FilePathLink({ path, code, open }: { path: string; code: boolean; open: (path: string) => void }) {
