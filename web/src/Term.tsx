@@ -14,6 +14,7 @@ import { ChatPanel } from "./Chat";
 import { onThemeChange, token } from "./theme";
 import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
+import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -78,6 +79,7 @@ export function TermView({
   dock?: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -231,6 +233,8 @@ export function TermView({
     // herdr-web-ui terminalGlyphs.ts 그대로(PaneTerminal.tsx 609줄): 칸보다 좁은 글자를 키우고 가운데 두며,
     // 조합 상자의 크기·자간을 그 줄에 맞춘다. 조합 상자 색과 세로 자리는 aaa가 그 칸에 맞춘다(compositionView.ts).
     const stopGlyphs = adjustTerminalGlyphs(term);
+    // 화면 키보드가 grid를 붙잡은 동안 새 출력이 오면 커서 줄을 따라간다(herdr-web-ui PaneTerminal 1133줄)
+    const parsedSub = term.onWriteParsed(() => followCursor.current());
     const stopCompositionView = matchCompositionView(term);
     let alive = true;
     if (!ready) {
@@ -358,6 +362,7 @@ export function TermView({
       stopGlyphs();
       stopCompositionView();
       dataSub.dispose();
+      parsedSub.dispose();
       binSub.dispose();
       offTheme();
       term.dispose();
@@ -370,14 +375,52 @@ export function TermView({
   // 자동 맞추기: 조작할 수 있고, 연결돼 있고, 터미널이 보이고, 이 탭을 쓰는 중(보이고 focus)일 때만.
   // claim이 아니면 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않을 때만 맞춘다. claim이면(focus를 얻음·터미널 누름)
   // 크기가 같아도 보내 이 화면이 지금 쓰는 화면이 된다. 크기를 보내면 host가 이 연결을 지금 쓰는 화면으로 둔다.
+  //
+  // 화면 키보드(herdr-web-ui PaneTerminal 705~752줄, lib/keyboard.ts `keyboardHoldsGrid`): 키보드는 화면 아래를 가릴 뿐
+  // pane을 줄이지 않는다. 남은 띠에 맞추면 PTY와 그 pane을 보는 다른 화면이 키보드마다 두 번 줄바꿈한다.
+  // 그래서 높이만 줄면 grid를 그대로 두고 커서 줄이 보이게 터미널을 옮긴다. 폭이 바뀌면(회전) 키보드 중에도 맞춘다.
+  // 붙잡아 둔 맞추기는 키보드가 내려가 터미널이 커질 때(ResizeObserver) 한다.
+  const kbRef = useRef({ held: false, fittedWidth: null as number | null, panned: false });
+  const followCursor = useRef(() => {});
+  followCursor.current = () => {
+    const host = scrollRef.current;
+    const term = termRef.current;
+    const k = kbRef.current;
+    const screen = term?.element?.querySelector<HTMLElement>(".xterm-screen");
+    if (!host || !term || !screen || !k.held || k.panned) return;
+    const row = screen.offsetHeight / term.rows;
+    const top = screen.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
+    const cursorBottom = top + (term.buffer.active.cursorY + 1) * row;
+    const max = host.scrollHeight - host.clientHeight;
+    host.scrollTop = cursorBottom <= host.clientHeight ? 0 : cursorBottom - row >= max ? max : cursorBottom - host.clientHeight;
+  };
+  /** 맞추기 전: 키보드가 grid를 붙잡으면 true(맞추지 않고 커서 줄로 옮긴다) */
+  const keyboardHolds = () => {
+    const host = scrollRef.current;
+    if (!host || !keyboardHoldsGrid(keyboardUp(), host.clientWidth, kbRef.current.fittedWidth)) return false;
+    kbRef.current.held = true;
+    kbRef.current.panned = false;
+    followCursor.current();
+    return true;
+  };
+  /** 맞춘 뒤: grid가 다시 이 화면 것이고 옮길 것이 없다 */
+  const fitted = () => {
+    const host = scrollRef.current;
+    if (!host) return;
+    const wasHeld = kbRef.current.held;
+    kbRef.current = { held: false, fittedWidth: host.clientWidth, panned: false };
+    if (wasHeld) host.scrollTop = 0;
+  };
   const autoFit = useRef((_claim?: boolean) => {});
   autoFit.current = (claim = false) => {
     if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return;
     if (heldByOther && !claim) return;
+    if (keyboardHolds()) return;
     const dims = fitRef.current?.proposeDimensions();
     if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return;
     if (dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther))
       send({ t: "resize", cols: dims.cols, rows: dims.rows });
+    fitted();
   };
   useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
   // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 1초 넘게 가려지면 놓는다(herdr-web-ui RELEASE_AFTER_MS).
@@ -411,12 +454,25 @@ export function TermView({
     let t: number | undefined;
     const ro = new ResizeObserver(() => {
       window.clearTimeout(t);
-      t = window.setTimeout(() => autoFit.current(), 150);
+      t = window.setTimeout(() => {
+        // 키보드가 화면 아래를 가렸다: grid는 그대로, 터미널만 커서 줄로 옮긴다(맞출 수 없는 화면도)
+        if (keyboardHolds()) return;
+        autoFit.current();
+      }, 150);
     });
     ro.observe(el);
+    // 손으로 옮기면 키보드가 있는 동안 커서를 따라가지 않는다(herdr-web-ui `panned`)
+    const host = scrollRef.current;
+    const pan = () => {
+      if (kbRef.current.held) kbRef.current.panned = true;
+    };
+    host?.addEventListener("touchmove", pan, { passive: true });
+    host?.addEventListener("wheel", pan, { passive: true });
     return () => {
       ro.disconnect();
       window.clearTimeout(t);
+      host?.removeEventListener("touchmove", pan);
+      host?.removeEventListener("wheel", pan);
     };
   }, [pane.id]);
 
@@ -553,7 +609,8 @@ export function TermView({
         </div>
       )}
       {chatView && chatable && <ChatPanel pane={pane.id} />}
-      <div className="term-scroll" hidden={chatView && chatable}>
+      {/* data-direct-typing: aaa 터미널은 늘 바로 입력이라 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
+      <div className="term-scroll" ref={scrollRef} hidden={chatView && chatable} data-direct-typing="">
         <div className="term-box" ref={box} data-testid="terminal" />
       </div>
       {dock}
