@@ -182,7 +182,14 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
             let Incoming::Control(b) = m else { continue };
-            let FrontMsg::Req { id, body } = serde_json::from_slice(&b)? else { continue };
+            let (id, body) = match read_req(&b)? {
+                ReqFrame::Req(id, body) => (id, body),
+                ReqFrame::Unknown(id, e) => {
+                    tx.control(res_frame(id, Err(e))).await?;
+                    continue;
+                }
+                ReqFrame::Other => continue,
+            };
             match body {
                 FrontRequest::PaneWatch { pane } => {
                     let result = match host.pane_view_of(&pane, DeviceRole::Local) {
@@ -248,6 +255,35 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     }
     host.front_gone(&front.id);
     result
+}
+
+/// front가 보낸 control frame 하나
+enum ReqFrame {
+    Req(String, FrontRequest),
+    /// 이 host가 모르는 요청(옛 front가 보낸 없앤 요청, 새 front의 새 요청): 그 요청에 이 오류로 답한다
+    Unknown(String, ErrorBody),
+    Other,
+}
+
+/// 모르는 요청이어도 `id`가 있으면 연결을 끊지 않는다(t-0340 보안 감사: 1.11 front의 `decision_add`가 답 없이 끊겼다).
+/// `id`도 없는 frame은 front가 아니다: 끊는다.
+fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
+    match serde_json::from_slice::<FrontMsg>(b) {
+        Ok(FrontMsg::Req { id, body }) => Ok(ReqFrame::Req(id, body)),
+        Ok(_) => Ok(ReqFrame::Other),
+        Err(e) => {
+            let id = serde_json::from_slice::<serde_json::Value>(b)
+                .ok()
+                .and_then(|v| v.get("id")?.as_str().map(str::to_string));
+            match id {
+                Some(id) => {
+                    let why = format!("이 host(FRONT_API {FRONT_API})가 모르는 요청이다. CLI·host 판을 맞춘다: {e}");
+                    Ok(ReqFrame::Unknown(id, ErrorBody::new(ErrorCode::BadRequest, why)))
+                }
+                None => Err(e),
+            }
+        }
+    }
 }
 
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
@@ -358,6 +394,27 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 없앤 요청(1.12의 `decision_add`)·모르는 요청에는 그 id로 오류를 답하고, id도 없는 것만 끊는다(t-0340 보안 감사)
+    #[test]
+    fn unknown_requests_get_an_error_answer() {
+        let known = br#"{"t":"req","id":"1","body":{"op":"projects"}}"#;
+        assert!(matches!(read_req(known), Ok(ReqFrame::Req(id, FrontRequest::Projects)) if id == "1"));
+        let removed = br#"{"t":"req","id":"2","body":{"op":"decision_add","project":"p","text":"x"}}"#;
+        match read_req(removed) {
+            Ok(ReqFrame::Unknown(id, e)) => {
+                assert_eq!((id.as_str(), e.code), ("2", ErrorCode::BadRequest));
+                assert!(
+                    e.message.starts_with(&format!("이 host(FRONT_API {FRONT_API})가 모르는 요청이다")),
+                    "{}",
+                    e.message
+                );
+            }
+            _ => panic!("모르는 요청에 답하지 않는다"),
+        }
+        assert!(read_req(b"not json").is_err());
+        assert!(read_req(br#"{"t":"req","body":{"op":"nope"}}"#).is_err());
+    }
 
     /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)
     #[test]

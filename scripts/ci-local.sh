@@ -20,7 +20,8 @@
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
 #              target/debug/aaa는 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
-#   public     scripts/check-public.sh(공개 저장소 검사)
+#   public     scripts/check-public.sh(공개 저장소 검사). AAA_PUBLIC_BASE가 있으면 그 ref 이후 커밋의 메시지·author를 본다
+#              (없으면 origin/main. CI는 push의 before나 PR base를 준다)
 #
 # 실패한 단계는 다시 돌리지 않는다. 앞 단계(web·build)가 실패하면 그것에 기대는 단계는 「앞 단계 실패」로 건너뛴다.
 # 끝에 단계마다 시작·끝 시각, 걸린 시간, 결과, 실패한 단계의 로그 위치를 요약하고, 하나라도 실패하면 1로 끝난다.
@@ -105,7 +106,7 @@ step_e2e() {
   fi
   NODE_PATH="$root" node web/e2e/web.e2e.mjs
 }
-step_public() { bash scripts/check-public.sh; }
+step_public() { bash scripts/check-public.sh ${AAA_PUBLIC_BASE:+"$AAA_PUBLIC_BASE"}; }
 
 # 이번 실행에서 그 단계가 실패했거나 앞 단계 실패로 건너뛰었다
 broken() { case "$(result_of "$1")" in FAIL | 건너뜀:*) return 0 ;; esac; return 1; }

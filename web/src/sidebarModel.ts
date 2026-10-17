@@ -24,9 +24,15 @@ export const needsYou = (g: ThreadGroup | string) => g === "waiting_on_you" || g
 /** 5분 넘게 진행 보고가 없으면 작업 중 줄이 「n분 조용」(herdr-projects `QUIET_SECS`) */
 export const QUIET_MS = 300_000;
 
+/** PR 주소 끝의 번호(herdr-projects `pr_number`) */
+export function prNumber(url: string | null | undefined): string | null {
+  const n = url?.split("/").pop() ?? "";
+  return /^[0-9]+$/.test(n) ? n : null;
+}
+
 /**
  * thread 줄 상태 말: 묶음 말과 사실 하나(herdr-projects `state_line`). 진행률은 100 미만만 「~n%」.
- * aaa에는 PR이 아직 없어 검토·병합의 사실은 「보고」다(D11로 PR이 생기면 「PR #n」).
+ * 검토·병합 중의 사실은 따라가는 PR이 있으면 「PR #n」, 없으면 「보고」다.
  */
 export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string {
   const a = t.agent ?? null;
@@ -40,8 +46,11 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
       else fact = pct;
       break;
     case "ready_for_review":
-      fact = "보고";
+    case "landing": {
+      const n = prNumber(t.pr?.url);
+      fact = n ? `PR #${n}` : "보고";
       break;
+    }
     case "working": {
       const reportedAt = a?.progress_at_ms ?? null;
       const fresh = reportedAt != null && now - reportedAt < QUIET_MS;
@@ -52,8 +61,6 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
       }
       break;
     }
-    default:
-      if ((t.group as string) === "landing") fact = "보고";
   }
   const word = GROUP_WORD[t.group] ?? t.group;
   return fact ? `${word} · ${fact}` : word;

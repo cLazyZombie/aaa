@@ -689,8 +689,8 @@ impl Agent {
                     .map(AgentResponse::Landed)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
-            AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
-                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)
+            AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree } => {
+                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), merged_head.as_deref(), keep_worktree)
                     .await
                     .map(AgentResponse::Cleanup)
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))

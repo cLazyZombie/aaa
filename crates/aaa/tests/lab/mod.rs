@@ -442,11 +442,6 @@ pub fn now_ms() -> u64 {
 }
 
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.
-/// 시간 규칙의 창(host.toml로 줄인 `nudge_idle_secs`·`nudge_quiet_secs` 등)이 지나기를 기다린다. 「안 일어났다」는 이 뒤에
-/// `Node::ticks`로 host가 창이 지난 상태를 판정했음을 본 다음에 단언한다(docs/testing.md 「tick만으로 증명되지 않는 것」).
-pub fn window(d: Duration) {
-    std::thread::sleep(d); // fixed wait: 창이 지나는 것이 시험할 규칙이다(그 시각 판정은 유닛 시험이 now 인자로 본다)
-}
 
 pub fn wait_for<T>(what: &str, timeout: Duration, f: impl FnMut() -> Option<T>) -> T {
     wait_for_diag(what, timeout, f, String::new)

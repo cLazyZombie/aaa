@@ -152,6 +152,9 @@ fn same_dir(a: &str, b: &Path) -> bool {
     }
 }
 
+/// 옛 decisions.md를 읽는 상한(이보다 크면 결정 기록이 아니다)
+const OLD_DECISIONS_CAP: u64 = 1 << 20;
+
 impl Host {
     fn inbox_dir(&self, project: &str) -> std::path::PathBuf {
         self.projects_root().join(project).join("inbox")
@@ -346,6 +349,7 @@ impl Host {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
             self.thread_pass(&p.name);
+            self.resolve_merged_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
@@ -426,8 +430,20 @@ impl Host {
 
     /// 옛 aaa의 결정 기록(decisions.md)은 brief에 더 넣지 않는다(결정은 memory에 적는다, D10 G9). 결정이 적혀 있으면
     /// 내용 hash당 한 번 coordinator에게 memory로 옮기라고 알린다. host는 memory를 쓰지 않는다(coordinator 몫).
+    /// 프로젝트 폴더는 agent가 고칠 수 있다: symlink·FIFO·큰 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다.
     fn check_old_decisions(&self, project: &str, dir: &Path) {
-        let Ok(text) = std::fs::read_to_string(dir.join("decisions.md")) else { return };
+        let path = dir.join("decisions.md");
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { return };
+        if !meta.is_file() || meta.len() > OLD_DECISIONS_CAP {
+            return;
+        }
+        let stamp = format!("{}:{:?}", meta.len(), meta.modified().ok());
+        let seen = format!("old_decisions_stamp:{project}");
+        if self.db.meta(&seen).ok().flatten().as_deref() == Some(stamp.as_str()) {
+            return;
+        }
+        let _ = self.db.set_meta(&seen, &stamp);
+        let Ok(text) = std::fs::read_to_string(&path) else { return };
         let n = text
             .lines()
             .filter_map(|l| l.strip_prefix("## "))

@@ -2533,7 +2533,76 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 시험 fixture의 세션 ID(`fake-1`·`sess-a1`·`s1` 등)를 UUID로 바꿨다(중첩 세션을 버리는 시험은 두 ID가 달라야 한다).
 - **덤: 이미 등록된 머신의 다시 등록(QA t-0337 Q17, 낮음).** 등록된 장치 키로 `aaa agent enroll`을 다시 하면 host가 인증된 연결로 받아(`link.rs` `serve`) 「hello가 와야 한다」만 답했다. 이제 「이 머신(<이름>)은 이미 이 host에 등록돼 있다」와 두 길(그대로 `aaa agent`로 붙기, 다시 등록하려면 host에서 `aaa machine revoke <이름>`·`aaa machine enroll --open 10m` 뒤 `aaa agent enroll <host:port>`)을 답한다. 시험: e2e `enroll_remote_agent_and_run_short_command`가 다시 등록의 안내를 보고, 안내대로 취소 → 등록 창 → 같은 머신 다시 등록·승인 → 다시 붙기까지 한다(옛 답이면 실패).
 
-### 8.113 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
+### 8.113 병합을 herdr-projects대로(1): PR 승인은 「병합 중」, 병합되면 ticker가 끝낸다(10-18, D11, 차이 목록 3장 C8·E12·4장 I)
+
+- **결정.** D11(10-17 「d12까지 네 추천대로」): 병합은 thread가 PR을 병합하고 ticker가 merged를 보면 끝낸다. aaa는 병합하지 않는다.
+  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 D11b(병합 2, 다음 착지)다.
+- **묶음(C8, hp `src/thread.rs` `group` 5번 줄).** 따라가는 PR이 열려 있고 승인됐으면 「병합 중」(`landing`)이다. 작업 중보다 먼저다.
+  보고가 있고 PR이 열려 있으면 확인한 보고라도 검토 대기다(쉼으로 가지 않으니 auto-resolve도 하지 않는다). 진행을 보고하는 agent의
+  중간 보고 규칙(§8.85)은 그대로 둔다.
+- **전이 항목(hp steps.rs `write_thread_items`·`transition_event`).** 병합 중으로 바뀌면 `thread-state` 항목 `landing` 한 건이다.
+  알림(push)은 내지 않는다(참고 notifier는 사람 차례와 새 보고만). 「새 보고」 항목은 검토 대기와 병합 중에서 낸다.
+- **병합 뒤 끝내기(E12, hp `resolve_merged`·`merged_thread_may_resolve`·`other_pr_open`·`resolve_after_copy`).** tick마다 묶음 셈 뒤:
+  - 병합을 처음 본 때를 기록에 둔다(`merged_seen_ms`, 끝내거나 다시 열면 지운다).
+  - 작업 중·사람 차례면 끝내지 않는다. 진행을 보고하는 agent는 `Done`(100)만 끝이다(시간이 낮은 진행을 넘지 않는다).
+  - 그 밖은 병합 뒤 새 보고가 오거나 host.toml `[projects] merge_grace_secs`(기본 600, hp `MERGE_GRACE_SECS`)가 지나야 끝낸다.
+  - 보고가 이름 붙인 다른 PR(`#n`·PR 주소, hp `report_refs`, `aaa_common::pr`) 중 `gh` 계정이 연 것이 열려 있으면 기다린다
+    (`gh pr list --author @me`, `PrQuery::OpenOwn`, agent 기능 `pr.v2`). gh 실패와 옛 agent는 열린 것으로 친다.
+    `#n`의 저장소는 PR 조회 때 받은 thread origin이다(`pr_origin` meta).
+  - 끝내기는 `thread resolve`와 같다(마지막 사본이 실패하면 다음 셈). 항목은 「PR이 병합돼 저절로 끝냈다」다.
+  - 그 프로젝트의 PR 조회가 도는 동안은 끝내지 않는다. 참고는 한 tick 안에서 PR 조회·routine 발화 뒤에 끝낸다. aaa의 조회는
+    따로 돌아(gh가 느려도 ticker를 막지 않게) 순서가 정해져 있지 않다. 처음 본 PR이 이미 승인·병합이면 pr-followup(`review`)이
+    그 thread에 글을 보내는데, 받음을 확인하는 동안 끝내기가 session을 죽여 「message not delivered」가 생겼다(화면 견본에서 찾음).
+  - 병합된 thread를 `--reopen`하면 기다림을 다시 재고, agent가 쉬면 다시 끝낸다(참고와 같다).
+- **branch 정리(hp threads.rs `clean`·`delete_branch`·`last_pr_lookup`).**
+  - PR이 병합됐고 worktree를 지웠고 branch 끝이 병합된 PR head commit일 때만 `branch -D`다(squash 병합 때문에 `-D`).
+    그 밖은 남기고 까닭(병합되지 않았다·worktree가 남았다·병합된 PR에 없는 commit)을 적는다.
+  - 사람이 끝낼 때 기록이 병합이 아니거나 head를 모르면 PR을 한 번 더 보고(보고 `PR:`, 전에 찾은 것, branch 차례), 바뀌었으면
+    기록과 `PR found at resolve` 항목에 남긴다.
+  - **바뀐 것:** 전에는 기준(`origin/main`)의 조상인 branch를 지웠다. 부록 표(「merge된 branch만 삭제 — 그대로」)대로 PR 기준으로
+    바꿨다. PR 없이 로컬 병합으로 착지한 branch는 남는다(사용자가 지운다).
+- **화면.** TUI·웹·CLI 말은 「병합 중」. TUI 점은 검토 대기와 같고 글자색은 hp popup `group_color`처럼 초록이다. 웹 줄의 사실은
+  hp `state_line`대로 「PR #n」(따라가는 PR이 없으면 「보고」). shadow 비교(§15)의 Landing 차이 분류 두 줄은 이제 같아서 뺐다.
+- **계약.** ThreadGroup `landing`(FRONT_API 1.17, 재부팅 복원 1.16 뒤). 옛 TUI(1.16 이하)는 `landing`을 읽지 못하므로 host와 함께 바꾼다.
+  agent 쪽 `ThreadCleanup.merged_head`(`base`는 보내지 않는다)와 `PrQuery::OpenOwn`(기능 `pr.v2`)은 AGENT_LINK를 올리지 않았다:
+  host는 agent minor N-1까지만 받으므로 1.5로 올리면 운영 중인 1.3 agent가 host 교체 직후 끊긴다. 옛 agent는 `merged_head`를
+  버려 branch를 남기고, `pr.v2`가 없으면 다른 PR을 물을 수 없어 열린 것으로 친다(보고가 다른 PR을 이름 붙인 thread만 기다린다).
+- **시험.**
+  - m13 `merged_pr_resolves_the_thread`(가짜 gh, 로컬 bare repo): 승인 → 병합 중·`landing` 항목, 병합돼도 35%면 끝내지 않음,
+    `Done` → 끝냄·branch 삭제, 다른 내 PR이 열려 있으면 기다림 → 닫히면 끝냄·병합 뒤 commit이 있는 branch는 남김.
+  - m13 `resolve_looks_up_the_pull_request_once_more`: ticker가 병합을 보기 전에 사람이 끝내도 PR을 다시 보고 branch를 지운다.
+  - m13 `merged_resolve_waits_for_the_routine_prompt`: `Done` 뒤 입력을 보이지 않는 agent에 처음 본 PR이 승인·병합이면 routine
+    글의 받음 확인(`accept_wait_ms` 3초)이 끝난 뒤에 끝낸다. 조회 중 건너뛰기를 빼면 끝내기가 먼저 와 실패한다.
+  - m13 `pr_followup`: 틀린 `PR:` 줄을 병합 전에 쓴다(병합 뒤 새 보고는 끝 신호다). `worktree_thread_round_trip`: PR 없는 branch는 남는다.
+  - 유닛: host `row5_landing_and_an_open_pull_request`·`a_merged_thread_resolves_once_its_agent_is_done`, common `report_refs`·
+    `open_own_numbers`, 웹 `stateLine.test.mjs`.
+
+### 8.114 치는 동안 뜬 확인창을 Enter가 고르지 않는다(10-18, t-0340 보안 감사 넘김, §8.100 고침)
+
+- **결함(최우선).** 작업 중 바로 입력(§8.100)은 확인창을 치기 전에 한 번만 보고, 친 뒤 300ms에 화면을 보지 않고 Enter를 보냈다.
+  그 사이 뜬 권한 창은 Enter가 기본 선택(「Yes」)을 고른다. 일하는 중에 보낸 글은 Enter 뒤 상태가 확인창이어도 받은 것으로 쳤다.
+  coordinator 메시지만으로 사람이 보지 않은 권한 창이 넘어갈 수 있었다.
+- **고침(harness.rs `submit_checked`).**
+  - 치기 전: 선택 창(`modal_of`)과 harness 확인창(`Question`)이면 치지 않는다.
+  - Enter 바로 전: 친 뒤 화면의 선택 창과 harness 확인창을 다시 보고, 있으면 Enter를 보내지 않는다(`typed = true`: 메시지는
+    「받았는지 모른다」, 다시 보내지 않는다). 질문은 열린 채로 둔다.
+  - 일하는 중 받음 판정은 Enter 뒤 `Working`일 때만이다(확인창이면 그 Enter가 창에 갔을 수 있다).
+  - 받음 사건(작업 중·질문, §8.110)은 Enter 바로 전부터 기다린다. 친 글 앞부터 기다리면 치는 동안 뜬 확인창(질문)이 받음으로
+    잡혀, Enter를 보내지 않은 글을 「받았다」로도 적었다(t-0332 화면 감지와 합친 뒤 m13이 잡았다).
+  - 화면 검사와 Enter 사이의 아주 짧은 틈은 남는다(참고 herdr `agent prompt`도 같다). 친 글자가 바로 선택지를 고르는 창(숫자
+    키)은 치기 전 검사만 막는다.
+- **낮음.**
+  - 옛 decisions.md: symlink·FIFO·1MiB 넘는 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다(FIFO를 열면 ticker가 멈췄다).
+  - host가 모르는 front 요청(1.12에서 없앤 `decision_add` 등을 1.11 front가 보냄)에 연결을 끊지 않고 그 요청 id로 오류를 답한다.
+  - 옛 판의 보내던 메시지 잊기를 front·web 입구를 열기 전으로 옮겼다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀔 수 있었다).
+  - `evaluation_decide` 설명의 낡은 「결정 기록」 문구.
+- **시험(결함 심기).** m13 `claude_thread_states_questions_and_messages` 「race」: 가짜 Claude(화면으로 상태를 안다, §8.110)가
+  턴을 마치고 입력 상자를 보인 채 다음 입력의 첫 글자에서(Enter 전) 권한 창을 그린다. Enter 전 검사를 빼면 화면에
+  「race 1. Yes」가 남아 실패하고, 받음 대기를 친 글 앞으로 되돌리면 그 글의 `message_accepted`로 실패한다(둘 다 확인).
+  고치면 메시지는 `unknown`, 질문은 열려 사람이 답한다.
+  `memory_and_restart`: symlink·FIFO decisions.md는 항목도 멈춤도 없다. host 유닛 `unknown_requests_get_an_error_answer`.
+
+### 8.115 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
 
 - **왜.** iPhone에서만 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 앱 안 알림 없음)을 헤드리스가 못 잡았다. 단계마다 init script로 만든 가짜(「이 기기 알림」 FakeAudio)는 아무 때나 resume되고 가려져도 멈추지 않으며, 헤드리스 Chromium에는 어디에나 `Notification`이 있다. 참고 넷도 제품에 능력 주입 층이 없고 시험 쪽에서 바꾼다(herdr-web-ui `alert-sound-regression.ts`·`keyboard-viewport-regression.ts`), plan §13 「production에 시험용 bypass를 만들지 않는다」와도 맞다.
 - **`web/e2e/lib/devices.mjs`.** `pairDevice(browser, code, profile, opts)`가 기기 꼴(iphone·ipad·desktop)로 pairing하고 그 기기의 규칙을 건다(`pairPage`의 새 `setup(ctx)`). iOS 규칙: 누른 직후(1초, WebKit transient activation)에만 AudioContext가 running, 나가면 interrupted, 무음 스위치는 playback·play-and-record 범주만 지남, Safari 탭에는 Notification·PushManager 없음, 홈 화면 앱은 누른 직후에만 권한을 묻는다. 기록은 `exposeBinding`으로 Node에 오고 시험은 `device.next`로 사건을 기다린다. 소리 시계는 `device.skipAudio()`로 건너뛴다(자지 않는다). 쓰는 법은 [docs/testing.md 「실기와 headless」](testing.md#실기와-headless).
@@ -2541,12 +2610,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **결함 심기.** `alertSound.ts`가 interrupted에서 다시 풀지 않게(`state === "suspended"`일 때만 resume) → 15는 「누른 뒤 다시 풀림이 오지 않았다」, 12 「이 기기 알림」은 통과. `PushTestControls.tsx`의 `Notification?.permission`에서 `?.`를 빼면 → 15는 「화면 오류 [TypeError: … reading 'permission']」, 12는 통과.
 - **찾은 것.** 확인창 질문이 그 pane의 상태보다 먼저 오면 앱 안 알림·탭 알림 제목이 pane id 앞 8자다(`App.tsx questionNews`, 15를 6번 돌려 18번 중 1번). 알림 영역 thread에 넘긴다.
 
-### 8.114 「없음」 단언을 고정 sleep 뒤가 아니라 울타리 뒤에(10-18, 보안 감사 t-0340 넘김, t-0338)
+### 8.116 「없음」 단언을 고정 sleep 뒤가 아니라 울타리 뒤에(10-18, 보안 감사 t-0340 넘김, t-0338)
 
 - **왜.** 고정 sleep 뒤에 「일어나지 않았다」를 단언하는 시험은 그 sleep보다 늦게 온 결함을 놓친다(부하가 크면 더). 감사가 m13·tui·e2e·웹 E2E에서 약 25곳을 짚었다.
-- **울타리.** host 판정은 시간 창이 지난 뒤 `ticks`(nudge는 tick·창·tick·창·tick, `lab::window`), 일이 끝났다는 사건(`routine_ran`·새 점검 보고 `at_ms`·routine `last_run_ms`·다음 알림 요청), session host 끝남(`session_host_gone`). 웹은 harness가 pane WebSocket으로 보낸 메시지를 기록하고(`sentFrames`) 동작 직후 본다. 타이머로 늦게 보내는 키 막대 되풀이는 참고 `keyRepeat.test.ts`를 옮긴 가짜 시계 유닛 시험이 본다. 쓰는 법은 [docs/testing.md 「기다리기」](testing.md#기다리기).
+- **울타리.** host 판정은 시간 창이 지난 뒤 `ticks`(nudge는 tick·창·tick·창·tick, m13 `nudge_windows`), 일이 끝났다는 사건(`routine_ran`·새 점검 보고 `at_ms`·routine `last_run_ms`·다음 알림 요청), session host 끝남(`session_host_gone`). 웹은 harness가 pane WebSocket으로 보낸 메시지를 기록하고(`sentFrames`) 동작 직후 본다. 타이머로 늦게 보내는 키 막대 되풀이는 참고 `keyRepeat.test.ts`를 옮긴 가짜 시계 유닛 시험이 본다. 쓰는 법은 [docs/testing.md 「기다리기」](testing.md#기다리기).
 - **제품 표지(웹).** 화면이 그 판단을 끝냈다는 것을 DOM에 단다. App `data-wake-lock`(wake lock effect가 설정·걸지·보는 것으로 돈 뒤, 한 컴포넌트의 effect는 선언 순서대로 돈다), Term `data-parsed-top`·`data-parsed-base`(받은 출력을 다 읽은 뒤 버퍼 자리: 올려 둔 동안 아래에 줄만 붙으면 onRender가 오지 않는다), `data-retry`(다시 붙기를 건 close code·ms), `data-fit`(맞추기 판단 off·released·other·keyboard·unsized·sent·same, ResizeObserver 길에서 키보드가 grid를 붙잡아도 keyboard)·`data-fit-pending`(크기 바뀜 뒤 맞추기를 기다리는 동안). 「크기가 멈췄다」는 판단 same(받은 host 크기 = 맞출 크기)이고 기다리는 맞추기가 없을 때다.
-- **바꾼 곳.** Rust 일곱(m13 nudge 둘·routine 둘·health·실패한 알림 다시 보내지 않음, e2e 지운 pane), 웹 열아홉(03 키 막대 조각·밀어서 취소·끌기·입력줄이 자라도 PTY 크기 그대로, 07 휠 3×·출력이 와도 올려 둔 자리·4008 뒤 스스로 안 붙음, 08 조합 중 Enter·host 답이 와도 바꾼 글을 안 지움(답 처리 뒤 풀리는 보내기 단추), 02 reader 입력·열기만 하면 크기를 안 검, 11 경로를 실행 안 함·글만 붙임·확인창에 입력 안 감, 04 wake lock 요청 없음 셋, 10 화면 키보드가 PTY 크기를 안 바꿈, 06 핀치 중 크기를 안 검)과 그 곁 sleep(10 연 뒤·입력줄 칸·키보드 내림, 06 크기가 멈춤). m13 hooked의 중첩 세션 Stop 자리(fake가 Stop 뒤 같은 연결로 진행 보고)는 §8.110이 그 시험을 화면 감지로 바꾸며 없어졌다. 고정 sleep 수는 e2e.rs 1 → 0, m13 7 → 1, 웹 E2E 03 14 → 2·07 6 → 1·08 4 → 2·02 2 → 0·11 3 → 0·04 3 → 0·10 7 → 3·06 3 → 2.
+- **바꾼 곳.** Rust 일곱(m13 nudge 둘·routine 둘·health·실패한 알림 다시 보내지 않음, e2e 지운 pane. m13 nudge·routine·health 다섯은 t-0327이 같은 꼴 울타리로 먼저 착지해(`1ea179d`) 병합에서 그쪽을 받고, routine 「승인 필요」만 `last_run_ms`가 두 번 넘어가기를 남겼다: 항목을 본 때 읽은 값이 그 차례가 저장하기 전일 수 있다), 웹 열아홉(03 키 막대 조각·밀어서 취소·끌기·입력줄이 자라도 PTY 크기 그대로, 07 휠 3×·출력이 와도 올려 둔 자리·4008 뒤 스스로 안 붙음, 08 조합 중 Enter·host 답이 와도 바꾼 글을 안 지움(답 처리 뒤 풀리는 보내기 단추), 02 reader 입력·열기만 하면 크기를 안 검, 11 경로를 실행 안 함·글만 붙임·확인창에 입력 안 감, 04 wake lock 요청 없음 셋, 10 화면 키보드가 PTY 크기를 안 바꿈, 06 핀치 중 크기를 안 검)과 그 곁 sleep(10 연 뒤·입력줄 칸·키보드 내림, 06 크기가 멈춤). m13 hooked의 중첩 세션 Stop 자리(fake가 Stop 뒤 같은 연결로 진행 보고)는 §8.110이 그 시험을 화면 감지로 바꾸며 없어졌다. 고정 sleep 수는 e2e.rs 1 → 0, m13 7 → 1, 웹 E2E 03 14 → 2·07 6 → 1·08 4 → 2·02 2 → 0·11 3 → 0·04 3 → 0·10 7 → 3·06 3 → 2.
 - **결함 심기.** 제품에 하나씩 심어 바꾼 시험이 실패함을 봤고 모두 되돌렸다(스물둘 모두 실패): 입력창에 글이 있어도 nudge, 같은 묶음 다시 nudge, 「승인 필요」 반복, 같은 출력도 새 항목, 새 점검 보고마다 같은 이상, 실패한 알림을 다시 큐에 넣음, session host가 닫히기 전에 잊음(되살아남), 밀어서 취소한 키가 감, 휠 3×에서 보고 넷, 뗀 뒤에도 되풀이(유닛), 붙인 경로 뒤 Enter(옛 「No such file」 단언은 「Permission denied」를 못 잡았다), 글과 그림이면 그림도 올림, 확인창 질문 중에도 넣음, 꺼진 설정인데 wake lock, pane을 보지 않는데 wake lock, 출력을 쓰면 맨 아래로, 4008 갈래가 다시 붙기로 흘러내림(그때 `ws open`은 아직 하나라 옛 횟수 단언만으로는 1.5초 sleep에 기댔다), 남이 쓰는 pane을 열면 크기를 검, 입력줄 칸이 흐름에서 자람, 키보드가 grid를 붙잡지 않음(남은 띠에 맞춤), 핀치 중 크기를 검, 답이 오면 바뀐 글도 지움(`canClear`만 빼면 `writeTerminalDraft`가 이미 막아 결함이 아니었다: 두 조건을 모두 뺐다).
 - **남은 것.** 크기·IME·화면 키보드·재연결·구독 cache처럼 비동기로 정해지는 「없음」은 제품 표지가 있어야 울타리가 된다. 자리와 맡을 thread는 t-0338 report 「감사 넘김: 고정 sleep 뒤 「없음」 단언」 표.
 
