@@ -27,7 +27,10 @@ command -v cc >/dev/null || { echo "cc가 없다(Xcode Command Line Tools)"; exi
 
 STAGE=$(mktemp -d)
 trap 'rm -rf "${STAGE:?}"' EXIT
-mkdir -p "$STAGE/aaa-launcher.app/Contents/MacOS"
+mkdir -p "$STAGE/aaa-launcher.app/Contents/MacOS" "$STAGE/aaa-launcher.app/Contents/Resources"
+# 앱 아이콘: web/public/icon.svg(F3 a 블록 커서)에서 make-icon.mjs로 만든 것(출처 web/public/ICON-SOURCE.md).
+# 아이콘도 서명에 들므로, 이미 등록한 launcher를 아이콘 때문에 바꾸면(--replace) 개발자 도구·전체 디스크 접근 등록을 다시 해야 한다.
+cp "$HERE/AppIcon.icns" "$STAGE/aaa-launcher.app/Contents/Resources/AppIcon.icns"
 cc -O2 -Wall -Wextra -o "$STAGE/aaa-launcher.app/Contents/MacOS/aaa-launcher" "$HERE/aaa-launcher.c"
 cat > "$STAGE/aaa-launcher.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +43,8 @@ cat > "$STAGE/aaa-launcher.app/Contents/Info.plist" <<'PLIST'
 	<string>aaa-launcher</string>
 	<key>CFBundleExecutable</key>
 	<string>aaa-launcher</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

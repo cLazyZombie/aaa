@@ -37,8 +37,10 @@ APP="$OUT/$NAME.app"
 mkdir -p "$OUT"
 STAGE="$OUT/.$NAME.app.building"
 rm -rf "${STAGE:?}"
-mkdir -p "$STAGE/Contents/MacOS"
+mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
 cp "$ROOT/target/release/aaa" "$STAGE/Contents/MacOS/aaa"
+# 앱 아이콘: launcher와 같은 것(web/public/icon.svg에서 p0/launcher/make-icon.mjs로 만듦)
+cp "$ROOT/p0/launcher/AppIcon.icns" "$STAGE/Contents/Resources/AppIcon.icns"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)
 cat > "$STAGE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,6 +53,8 @@ cat > "$STAGE/Contents/Info.plist" <<EOF
 	<string>$NAME</string>
 	<key>CFBundleExecutable</key>
 	<string>aaa</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

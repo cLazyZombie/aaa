@@ -1,7 +1,8 @@
 // aaa service worker(§8.26): 홈 화면 앱(PWA)과 Web Push 알림.
 // - 화면·API·자산을 캐시하지 않는다. 업그레이드 뒤에도 늘 host가 주는 지금 화면을 연다.
 // - 화면 이동(navigate)만 네트워크가 안 될 때 미리 둔 「연결 없음」 화면을 보인다.
-const OFFLINE_CACHE = "aaa-offline-v1";
+// 아이콘을 바꾸면(v=2: F3 a 블록 커서) 이름과 아이콘 주소의 v를 함께 올린다. 그래야 설치된 앱도 새 worker·파일을 받는다.
+const OFFLINE_CACHE = "aaa-offline-v2";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (e) => {
@@ -39,8 +40,8 @@ self.addEventListener("push", (e) => {
       body: d.body || "",
       tag: d.tag || "aaa",
       renotify: true,
-      icon: "/icon-192.png",
-      badge: "/favicon-32.png",
+      icon: "/icon-192.png?v=2",
+      badge: "/favicon-32.png?v=2",
       data: { url: d.url || "/" },
     }),
   );

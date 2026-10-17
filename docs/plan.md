@@ -1495,6 +1495,15 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **다른 곳.** 참고는 mouse 보고가 켜졌을 때만 되풀이한다. 거기서는 휠이 늘 herdr로 가는 보고라, 속도가 herdr의 기록 굴리기·화살표에도 든다. aaa는 기록과 화살표를 xterm이 맡으므로 보고가 아니어도 되풀이해 같은 결과를 낸다(§8.55).
 - **시험.** 웹 E2E 「터미널 스크롤」: mouse 보고 프로그램에서 1×는 휠 한 번에 보고 하나, 설정에서 3×로 올리면(저장 `aaa:terminal-wheel-speed`) 보고 셋이다.
 
+### 8.58 앱 표시를 모두 새 아이콘으로(10-17, 사용자 요청 「모두 바꿔. 왼쪽위에있는것 과 이것도」)
+
+- **웹 화면.** 목록 머리(왼쪽 위), 연결(pairing) 화면, 아무것도 고르지 않은 빈 화면의 보라색 「aaa」 글자 배지(`.logo`)를 `icon.svg`(F3 a 블록 커서, §t-0324) 그림으로 바꿨다. 22px·44px, 둥근 모서리다. 머리 것은 이름(alt 「aaa」)을 갖고, 나머지 둘은 꾸밈이다. 옛 배지의 보라 그라데이션 CSS는 지웠다.
+- **이미 설치된 앱도 새 파일을 받게.** 아이콘 주소가 그대로면 브라우저·설치된 PWA가 옛 그림을 계속 쓸 수 있다. 그래서 모든 아이콘 주소에 `?v=2`를 붙였다: manifest의 아이콘 셋, `index.html`의 manifest·favicon·apple-touch-icon, service worker 알림 icon·badge, 연결 없음 화면. service worker cache 이름도 `aaa-offline-v2`로 올렸다. host는 이 파일들을 `no-cache`로 주므로 열 때마다 다시 확인한다. iOS 홈 화면 아이콘은 「홈 화면에 추가」할 때 한 번 받아 두는 것이라, 바꾸려면 지우고 다시 추가해야 한다(Apple 동작. 여기서 실기로 확인하지는 못했다).
+- **Mac launcher.** `p0/launcher/make-icon.mjs`가 같은 SVG를 macOS 아이콘 격자(1024 칸 안 824 둥근 사각형)에 크기마다 다시 그려 `AppIcon.icns`를 만든다. `install.sh`는 이것을 `Contents/Resources`에 넣고 `CFBundleIconFile`을 단다. 보류 경로 `p0/build-app.sh`(`aaa.app`)도 같다. 출처는 `web/public/ICON-SOURCE.md`에 적었다.
+  - **이미 설치한 launcher는 바꾸지 않았다.** 아이콘도 서명에 들어가 cdhash가 바뀐다. 바꾸면(`install.sh --replace`) 개발자 도구와 전체 디스크 접근 등록을 다시 해야 한다. 그 일은 사람이 시스템 설정에서 하므로 사용자 결정으로 남긴다.
+- **남은 「aaa」 표시(git grep).** 그림 표시는 남은 것이 없다. 이름 글자는 표시가 아니라 그대로 둔다: manifest `name`, `apple-mobile-web-app-title`, `<title>`, 알림 제목 「aaa · project」, `offline.html` 제목, 웹 front가 없을 때의 안내 글. 알림 아이콘은 `icon-192.png?v=2`·`favicon-32.png?v=2`(새 그림)이다. TUI에는 그림 표시가 없다(글자 터미널).
+- **시험.** 웹 E2E 「앱 아이콘」: 휴대폰 연결 화면의 `.logo`는 `IMG /icon.svg`(불러짐, 44px)다. 데스크톱 머리(22px, alt aaa)와 빈 화면(44px)도 같다. 「PWA」 단계: manifest·link 아이콘 주소가 모두 `?v=2`이고, sw.js의 cache 이름과 알림 아이콘이 v2다. 캡처는 보고서에 있다. launcher 아이콘은 임시 폴더에 `install.sh --dest`로 설치해 Info.plist·Resources·서명을 확인했다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

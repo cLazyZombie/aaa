@@ -94,6 +94,39 @@ function killSessionHosts() {
 }
 
 const screenText = (page) => page.locator(".xterm-rows").innerText();
+/**
+ * CI에서만 터미널 글이 비어 보인 실패(10-17 dbacbfe·372e85d·69224fd·e784eac: snapshot은 왔는데 줄이 비었다)를 가리는 기록:
+ * 그때 줄·칸 자리·가림을 남기고, 다시 그리기를 한 번 재촉한 뒤 글이 생기는지도 본다(생기면 그리기가 멈춰 있던 것이다).
+ * 실패를 넘기지 않는다: 이 값은 오류 글에만 들어간다.
+ */
+async function termDiag(page) {
+  const now = () =>
+    page.evaluate(() => {
+      const rows = document.querySelector(".xterm-rows");
+      const screen = document.querySelector(".xterm-screen")?.getBoundingClientRect();
+      const scroll = document.querySelector(".term-scroll");
+      return {
+        text: rows?.innerText.replace(/\s+/g, " ").trim().slice(-200),
+        rows: rows?.childElementCount,
+        font: rows ? getComputedStyle(rows).fontSize : null,
+        screen: screen ? [screen.x, screen.y, screen.width, screen.height].map(Math.round) : null,
+        win: [innerWidth, innerHeight],
+        scroll: scroll ? [scroll.clientWidth, scroll.clientHeight, scroll.scrollTop, scroll.scrollHeight] : null,
+        stackHidden: document.querySelector(".term-stack")?.hidden,
+        vis: document.visibilityState,
+        focus: document.hasFocus(),
+        banners: [...document.querySelectorAll(".banner")].map((b) => b.textContent),
+      };
+    });
+  const before = await now();
+  await page.evaluate(() => {
+    document.querySelector(".xterm-screen")?.scrollIntoView();
+    window.dispatchEvent(new Event("resize"));
+  });
+  await sleep(600);
+  const after = (await now()).text;
+  return { ...before, afterNudge: after };
+}
 
 /** 터미널에 그림 파일 붙여 넣기(브라우저 붙여 넣기 사건과 같은 모양) */
 async function pasteFile(page, bytes, type, name = "shot.png") {
@@ -663,7 +696,7 @@ try {
     await page.goto(base);
     const cdp = await ctx.newCDPSession(page);
     const got = await cdp.send("Page.getAppManifest");
-    if (got.errors.length || !got.url.endsWith("/manifest.webmanifest")) throw new Error(JSON.stringify(got.errors));
+    if (got.errors.length || !got.url.endsWith("/manifest.webmanifest?v=2")) throw new Error(`${got.url} ${JSON.stringify(got.errors)}`);
     // service worker(§8.26)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
     const sw = await fetch(`${base}sw.js`);
     if (sw.status !== 200 || !sw.headers.get("content-type").startsWith("text/javascript")) throw new Error(`sw.js ${sw.status}`);
@@ -671,7 +704,35 @@ try {
     await until("service worker가 화면을 맡음", () => page.evaluate(() => !!navigator.serviceWorker.controller));
     const inst = await cdp.send("Page.getInstallabilityErrors");
     if (inst.installabilityErrors.length) throw new Error(`설치할 수 없다: ${JSON.stringify(inst.installabilityErrors)}`);
+    // 아이콘을 바꾼 판(v=2, F3 a 블록 커서): 모든 아이콘 주소에 v가 붙고 service worker cache 이름도 올라가,
+    // 이미 설치된 앱·열린 탭도 옛 파일 대신 새 파일을 받는다
+    const links = await page.evaluate(() => [...document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]')].map((l) => l.getAttribute("href")));
+    const sws = await sw.text();
+    const old = [...man.icons.map((i) => i.src), ...links].filter((u) => !u.endsWith("?v=2"));
+    if (links.length !== 3 || old.length) throw new Error(`v 없는 아이콘 주소 ${JSON.stringify(old)} (link ${links.length}개)`);
+    if (!sws.includes('"aaa-offline-v2"') || !sws.includes('"/icon-192.png?v=2"') || !sws.includes('"/favicon-32.png?v=2"')) throw new Error("sw.js cache 이름·알림 아이콘이 v2가 아니다");
     await ctx.close();
+  });
+
+  await step("앱 아이콘(사용자 요청 10-17 「모두 바꿔」): 머리·연결 화면·빈 화면의 표시는 icon.svg(F3 a 블록 커서), 옛 「aaa」 글자 배지 없음", async () => {
+    const logos = (p) =>
+      p.locator(".logo").evaluateAll((els) => els.map((e) => `${e.tagName} ${e.getAttribute("src")} ${e.naturalWidth > 0} ${Math.round(e.getBoundingClientRect().width)} ${e.textContent}`));
+    const bad = [];
+    // 연결(pairing) 화면: 휴대폰
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const pp = await ctx.newPage();
+    await pp.goto(base);
+    await pp.getByLabel("pairing 코드").waitFor();
+    await until("연결 화면 아이콘", async () => (await logos(pp)).join() === "IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(pp)}`));
+    await shot(pp, "phone-pair-icon");
+    await ctx.close();
+    // 머리(목록 왼쪽 위)와 아무것도 고르지 않은 빈 화면
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await until("머리·빈 화면 아이콘", async () => (await logos(dp)).join("|") === "IMG /icon.svg true 22 |IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(dp)}`));
+    if ((await dp.locator(".list-head .logo").getAttribute("alt")) !== "aaa") bad.push("머리 아이콘에 이름(alt)이 없다");
+    await shot(dp, "desktop-head-icon");
+    await dp.context().close();
+    if (bad.length) throw new Error(bad.join("; "));
   });
 
   // 입력줄을 쓰는 단계가 많아 이 화면은 입력줄로 둔다. 기본(바로 입력)은 「입력 방식」 단계가 본다.
@@ -1255,19 +1316,11 @@ try {
     await dp.getByTestId("pane-scroll-plain").click();
     await until("plain 화면", async () => (await screenText(dp)).includes("s-200")).catch(async (e) => {
       // CI(macos-15)에서만 실패한 적이 있다(10-17 69224fd): 그때 화면과 grid·기록 상태를 남긴다
-      const seen = await dp.evaluate(() => {
-        const rows = document.querySelector(".xterm-rows");
-        const vp = document.querySelector(".xterm-viewport");
-        return {
-          title: document.querySelector(".term-title")?.textContent,
-          rows: rows?.children.length,
-          first: rows?.firstElementChild?.textContent?.trim(),
-          last: [...(rows?.children ?? [])].map((r) => r.textContent.trim()).filter(Boolean).slice(-3),
-          history: vp ? vp.scrollHeight - vp.clientHeight : null,
-          top: vp?.scrollTop,
-          banners: document.querySelector(".terminal-banners")?.textContent,
-        };
-      });
+      const seen = {
+        title: await dp.locator(".term-title").textContent(),
+        history: await dp.locator(".xterm-viewport").evaluate((vp) => vp.scrollHeight - vp.clientHeight),
+        ...(await termDiag(dp)),
+      };
       throw new Error(`${e.message}: ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "scroll-plain").lines.filter(Boolean).slice(-3))}`);
     });
     const box = await dp.getByTestId("terminal").boundingBox();
@@ -2058,15 +2111,17 @@ try {
         const { page: p } = await pairPage(b, aaa("web", "pair").code, IPHONE, { userAgent: IPHONE_UA, platform: "iPhone", touch: true, init: fakeViewport });
         const sent = [];
         const frames = [];
+        let bins = 0;
         let ready = false;
         await p.routeWebSocket(/\/api\/v1\/panes\/[^/]+\/ws/, (socket) => {
           const server = socket.connectToServer();
           server.onMessage((raw) => {
             if (typeof raw === "string") {
               const m = JSON.parse(raw);
-              frames.push(m.t);
+              // snapshot은 replay 길이도(빈 화면이 빈 replay였는지 가린다)
+              frames.push(m.t === "snapshot" ? `snapshot:${m.replay?.length ?? 0}` : m.t);
               if (m.t === "snapshot" || m.t === "readonly") ready = m.readonly === false;
-            }
+            } else bins++;
             socket.send(raw);
           });
           socket.onMessage((raw) => {
@@ -2082,21 +2137,9 @@ try {
           throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames)} 화면 ${JSON.stringify((await p.locator("body").innerText()).slice(0, 300))}`);
         });
         await until("iPhone 화면", async () => (await screenText(p)).includes("paste>")).catch(async (e) => {
-          // CI에서만 실패한 적이 있다(10-17 dbacbfe·372e85d): 그때 화면이 어땠는지 남긴다
-          const seen = await p.evaluate(() => {
-            const rows = document.querySelector(".xterm-rows");
-            const scroll = document.querySelector(".term-scroll");
-            return {
-              text: rows?.innerText.replace(/\s+/g, " ").slice(-300),
-              rows: rows?.childElementCount,
-              font: rows ? getComputedStyle(rows).fontSize : null,
-              scroll: scroll ? [scroll.clientWidth, scroll.clientHeight, scroll.scrollTop, scroll.scrollHeight] : null,
-              vis: document.visibilityState,
-              focus: document.hasFocus(),
-              banners: [...document.querySelectorAll(".banner")].map((b) => b.textContent),
-            };
-          });
-          throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames.slice(-12))} ${JSON.stringify(seen)}`);
+          // CI에서만 실패한 적이 있다(10-17 dbacbfe·372e85d·e784eac): 그때 화면이 어땠는지 남긴다
+          const seen = await termDiag(p);
+          throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames.slice(-12))} 출력 ${bins}조각 ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "iphoneA").lines.filter(Boolean).slice(-2))}`);
         });
         const input = p.locator(".xterm-helper-textarea");
         await input.focus();
