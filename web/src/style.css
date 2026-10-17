@@ -229,36 +229,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .banner.draft .draft-actions { margin-left: auto; display: flex; gap: var(--space-2); }
 .banner.draft .draft-actions button { margin-left: 0; }
 
-/* ── 연결(pairing) ─────────────────────────────────── */
-.pair-wrap { min-height: 100%; display: grid; place-items: center; padding: var(--space-6) var(--space-4); }
-.pair {
-  width: 100%;
-  max-width: 420px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--r-xl);
-  padding: var(--space-8) var(--space-6) var(--space-6);
-}
-.pair h1 { font-size: 20px; margin: var(--space-4) 0 var(--space-2); color: var(--text-strong); letter-spacing: -0.02em; }
-.pair p { margin: 0 0 var(--space-5); color: var(--text-dim); font-size: 13.5px; line-height: 1.65; }
-.pair form { display: flex; flex-direction: column; gap: var(--space-3); }
-.pair input {
-  height: 52px;
-  padding: 0 var(--space-4);
-  font: 600 20px/1 var(--font-mono);
-  letter-spacing: 0.18em;
-  text-align: center;
-  text-transform: uppercase;
-  background: var(--bg-inset);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-lg);
-  transition: border-color var(--fast) var(--ease);
-}
-.pair input:focus { border-color: var(--accent); }
-.pair input::placeholder { letter-spacing: 0.04em; font-weight: 400; font-size: 15px; text-transform: none; font-family: var(--font-ui); }
-.pair button[type="submit"] { height: 44px; font-size: 14px; border-radius: var(--r-lg); }
-.pair .foot { margin: var(--space-5) 0 0; font-size: 12.5px; }
-.pair .err { margin: var(--space-3) 0 0; font-size: 13px; }
+/* 연결(pairing) 화면은 herdr/AccessGate.css(참고 그대로) */
 .brand { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 700; color: var(--text-strong); letter-spacing: -0.02em; }
 /* 앱 아이콘(web/public/icon.svg, F3 a 블록 커서): 홈 화면 아이콘과 같은 그림을 둥근 모서리로 */
 .logo { display: block; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 6px; }

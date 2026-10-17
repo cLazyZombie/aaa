@@ -700,11 +700,22 @@ enum MachineCmd {
 
 #[derive(Subcommand)]
 enum WebCmd {
-    /// 웹 pairing 코드(5분, 1회용)
+    /// 웹 pairing 코드(10분, 1회용). 아직 쓰지 않은 앞 코드는 버린다(웹 설정 → 기기의 코드도)
     Pair {
         /// 보기 권한만 준다
         #[arg(long)]
         reader: bool,
+    },
+    /// pairing한 웹 기기 목록
+    Devices,
+    /// 웹 기기를 취소한다. 그 기기의 열린 화면은 바로 닫힌다
+    Revoke {
+        id: String,
+    },
+    /// 웹 기기 이름을 바꾼다
+    Rename {
+        id: String,
+        label: String,
     },
     /// tailscale serve로 HTTPS 공개(off: aaa가 만든 공개만 끈다)
     Publish {
@@ -1061,6 +1072,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 WebCmd::Publish { off: Some(_) } => FrontRequest::WebPublishOff,
                 WebCmd::Publish { off: None } => FrontRequest::WebPublish,
                 WebCmd::Status => FrontRequest::WebStatus,
+                WebCmd::Devices => FrontRequest::Devices,
+                WebCmd::Revoke { id } => FrontRequest::DeviceRevoke { id },
+                WebCmd::Rename { id, label } => FrontRequest::DeviceRename { id, label },
             },
         ),
         Cmd::Doctor(a) => doctor_cmd(a, json),
@@ -1994,6 +2008,22 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::PairCode { code, role, expires_in_s } => {
             let _ = writeln!(s, "pairing 코드: {code} ({role:?}, {}분 유효, 1회용)", expires_in_s / 60);
+        }
+        FrontResponse::Devices { devices } => {
+            if devices.is_empty() {
+                s.push_str("pairing한 기기 없음\n");
+            }
+            for d in devices {
+                let role = if d.role == DeviceRole::Reader { "reader" } else { "controller" };
+                let seen = d.last_seen_ms.map(aaa_common::util::utc_text).unwrap_or_else(|| "-".into());
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{role}\t연결 {}\t마지막 {seen}",
+                    d.id,
+                    d.label,
+                    aaa_common::util::utc_text(d.created_at_ms)
+                );
+            }
         }
         FrontResponse::Publish(p) => {
             let _ = writeln!(

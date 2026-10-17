@@ -243,8 +243,8 @@ try {
       };
       await page.goto(base);
       await shot("pair");
-      await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);
-      await page.getByRole("button", { name: "연결" }).click();
+      await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
+      await page.getByRole("button", { name: "이 기기 페어링" }).click();
       await page.getByTestId("machine-mac-a").waitFor();
       if (!phone) {
         await page.getByTestId("pane-claude-api").click();
@@ -281,8 +281,8 @@ try {
     await ctx.addInitScript((theme) => localStorage.setItem("aaa:appearance", JSON.stringify({ theme })), scheme);
     const page = await ctx.newPage();
     await page.goto(base);
-    await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);
-    await page.getByRole("button", { name: "연결" }).click();
+    await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
+    await page.getByRole("button", { name: "이 기기 페어링" }).click();
     await page.getByTestId("pane-tui").click();
     await until("TUI", async () => {
       const t = await page.locator(".xterm-rows").innerText();

@@ -28,7 +28,23 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return unwrap<T>(res);
 }
 
+/**
+ * 이 브라우저의 기기가 취소됐거나 로그아웃했다: host가 cookie를 모른다(401) 또는 열린 WebSocket을 4401로 닫았다.
+ * App이 듣고 pairing 화면으로 간다(herdr-web-ui는 health 검사가 gate를 다시 알린다).
+ */
+export const REVOKED_CLOSE_CODE = 4401;
+const signedOutListeners = new Set<() => void>();
+export function onSignedOut(listener: () => void): () => void {
+  signedOutListeners.add(listener);
+  return () => signedOutListeners.delete(listener);
+}
+export function reportSignedOut(): void {
+  for (const listener of signedOutListeners) listener();
+}
+
 async function unwrap<T>(res: Response): Promise<T> {
+  // pairing 자체(/api/v1/pair)의 401은 코드가 틀린 것이다. 그 밖의 401은 이 기기를 host가 모른다는 뜻이다
+  if (res.status === 401 && !res.url.endsWith("/api/v1/pair")) reportSignedOut();
   let out: Outcome<T>;
   try {
     out = (await res.json()) as Outcome<T>;
@@ -47,7 +63,14 @@ export async function me(): Promise<Me | null> {
   return unwrap<Me>(res);
 }
 
-export const pair = (code: string) => post<{ role: DeviceRole }>("/api/v1/pair", { code });
+/** 코드 하나로 이 브라우저를 기기로 연결한다. `label`은 설정 → 기기 목록에 보이는 이름이다(herdr-web-ui `pairDevice`) */
+export const pair = (code: string, label: string) => post<{ role: DeviceRole }>("/api/v1/pair", { code, label });
+
+/** 이 브라우저의 로그인을 잊는다(herdr-web-ui `signOut`, DELETE /api/auth). 기기 기록은 host에 남는다 */
+export async function signOut(): Promise<void> {
+  const res = await fetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
+  if (!res.ok) throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
+}
 export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
 
 /** Web Push(§8.26) */
@@ -109,9 +132,30 @@ export function watchEvents(
         onThread(t as ThreadView);
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       onLink(false);
-      if (!stopped) timer = window.setTimeout(open, delay);
+      // 기기가 취소됐다: 다시 붙지 않는다
+      if (event.code === REVOKED_CLOSE_CODE) {
+        stopped = true;
+        reportSignedOut();
+        return;
+      }
+      // 다시 붙기 전에 host가 아직 이 기기를 아는지 본다. 끊긴 동안 취소되면 upgrade는 401이라 WebSocket이 그 까닭을 알려 주지 않는다
+      if (!stopped)
+        timer = window.setTimeout(() => {
+          if (stopped) return;
+          void me()
+            .then((m) => {
+              if (stopped) return;
+              if (m === null) {
+                stopped = true;
+                reportSignedOut();
+              } else open();
+            })
+            .catch(() => {
+              if (!stopped) open();
+            });
+        }, delay);
       delay = Math.min(delay * 2, 10_000);
     };
   };

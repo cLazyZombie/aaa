@@ -9,7 +9,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
-import { b64decode, b64encode, wsUrl } from "./api";
+import { b64decode, b64encode, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { onThemeChange, token } from "./theme";
@@ -1154,6 +1154,12 @@ export function TermView({
         setLink("closed");
         // 끊기면 유지 키를 푼다(PaneTerminal 1261줄)
         setModifiers(NO_STICKY_MODIFIERS);
+        // 이 기기가 취소됐다: 다시 붙지 않고 pairing 화면으로(App이 onSignedOut으로 듣는다)
+        if (event.code === REVOKED_CLOSE_CODE) {
+          stopped = true;
+          reportSignedOut();
+          return;
+        }
         // 출력을 따라오지 못해 host가 닫았다: 자동으로 다시 붙지 않는다(과부하를 되풀이하지 않는다, herdr-web-ui ws.ts)
         if (event.code === OUTPUT_STALLED_CLOSE_CODE && !stopped) {
           outputStopped = true;

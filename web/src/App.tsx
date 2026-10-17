@@ -8,7 +8,10 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ApiError, call, me, pair, pushInfo, watchEvents } from "./api";
+import { ApiError, call, me, onSignedOut, pushInfo, signOut, watchEvents } from "./api";
+import { removePushSubscription } from "./push";
+import { AccessGate } from "./AccessGate";
+import { takePairCode } from "./herdr/phone";
 import { TermView } from "./Term";
 import { ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
@@ -24,69 +27,24 @@ import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
 import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
-type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
+type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
 export function App() {
   const [auth, setAuth] = useState<Auth>({ state: "loading" });
-  useEffect(() => {
+  // QR 코드가 연 주소의 `?pair=CODE`: 읽자마자 주소에서 지운다(기록·referrer에 남지 않게, herdr-web-ui takePairCode)
+  const [pairCode] = useState(() => takePairCode());
+  const check = useCallback(() => {
     me()
-      .then((m) => setAuth(m ? { state: "in", role: m.role } : { state: "pair" }))
+      .then((m) => setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" }))
       .catch((e: unknown) => setAuth({ state: "error", msg: String(e) }));
   }, []);
+  useEffect(check, [check]);
+  // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다
+  useEffect(() => onSignedOut(check), [check]);
   if (auth.state === "loading") return <p className="center muted">불러오는 중</p>;
   if (auth.state === "error") return <p className="center err">{auth.msg}</p>;
-  if (auth.state === "pair") return <Pair onDone={(role) => setAuth({ state: "in", role })} />;
-  return <Main role={auth.role} />;
-}
-
-function Pair({ onDone }: { onDone: (r: DeviceRole) => void }) {
-  const [code, setCode] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="pair-wrap">
-      <main className="pair">
-        <img className="logo big" src="/icon.svg" alt="" />
-        <h1>이 기기 연결하기</h1>
-        <p>
-          host 머신에서 <code>aaa web pair</code>를 실행하고 나온 코드를 넣는다. 한 번 연결하면 이 브라우저는 다시 묻지 않는다.
-        </p>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            setMsg(null);
-            try {
-              const r = await pair(code.trim());
-              onDone(r.role);
-            } catch (err) {
-              setMsg(err instanceof ApiError ? err.message : String(err));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="pairing 코드"
-            aria-label="pairing 코드"
-            autoComplete="one-time-code"
-            autoCapitalize="characters"
-            spellCheck={false}
-            autoFocus
-          />
-          <button type="submit" className="primary" disabled={busy || code.trim() === ""}>
-            연결
-          </button>
-        </form>
-        {msg && <p className="err">{msg}</p>}
-        <p className="foot muted">
-          보기만 할 기기는 <code>aaa web pair --reader</code>로 만든 코드를 쓴다.
-        </p>
-      </main>
-    </div>
-  );
+  if (auth.state === "pair") return <AccessGate initialCode={pairCode} onUnlocked={check} />;
+  return <Main role={auth.role} device={auth.device} onSignedOut={check} />;
 }
 
 const ACTIVITY_LABEL: Record<AgentActivity, string> = {
@@ -204,7 +162,7 @@ function agentOf(p: PaneView | undefined, t?: ThreadView): string | null {
   return null;
 }
 
-function Main({ role }: { role: DeviceRole }) {
+function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; device: string; onSignedOut: () => void }) {
   const [machines, setMachines] = useState<MachineView[]>([]);
   const [panes, setPanes] = useState<PaneView[]>([]);
   const [up, setUp] = useState(false);
@@ -426,7 +384,7 @@ function Main({ role }: { role: DeviceRole }) {
             </>
           }
         />
-        <ListFoot />
+        <ListFoot role={role} device={device} onSignedOut={signedOut} />
       </aside>
       <main className="view">
         {currentThread ? (
@@ -577,7 +535,7 @@ function MoreMenu() {
 }
 
 /** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에 있다 */
-function ListFoot() {
+function ListFoot({ role, device, onSignedOut: signedOut }: { role: DeviceRole; device: string; onSignedOut: () => void }) {
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const tr = useInputTrace();
@@ -585,6 +543,17 @@ function ListFoot() {
   const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  // 설정 → 기기 「로그아웃」(참고 App.tsx `lock`): 구독을 먼저 지운다(cookie가 있어야 지워지고, 잠긴 기기에 알림이 가지 않게). 답이 오다 끊겨도 host에 다시 묻는다
+  const signOutHere = useCallback(async () => {
+    await removePushSubscription().catch(() => undefined);
+    try {
+      await signOut();
+    } catch {
+      throw new Error("로그아웃하지 못했습니다. 다시 시도해 주세요.");
+    } finally {
+      signedOut();
+    }
+  }, [signedOut]);
   return (
     <div className="list-foot">
       {showTrace && (
@@ -628,7 +597,7 @@ function ListFoot() {
         </button>
         <UsageMeters />
       </div>
-      {settingsOpen && <SettingsDialog onClose={closeSettings} />}
+      {settingsOpen && <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />}
     </div>
   );
 }
