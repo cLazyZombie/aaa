@@ -79,8 +79,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         software: aaa_common::util::software(),
-        // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다)
-        features: vec!["terminal.v1".into(), "cwd.v1".into(), "pr.v1".into()],
+        // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다),
+        // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.109)
+        features: vec!["terminal.v1".into(), "cwd.v1".into(), "pr.v1".into(), "file.v1".into()],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
         sessions: agent.sessions(),

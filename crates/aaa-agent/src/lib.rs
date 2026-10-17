@@ -8,6 +8,7 @@ mod attach;
 mod chat;
 mod command;
 mod cwd;
+mod files;
 mod health;
 pub mod hooks;
 pub mod identity;
@@ -56,6 +57,8 @@ pub struct Agent {
     host: Mutex<Option<FrameTx>>,
     pub selfcheck: Mutex<Option<serde_json::Value>>,
     threads_cfg: Mutex<threads::ThreadsConfig>,
+    /// 파일 보기가 여는 폴더(plan §8.109)
+    file_roots: Mutex<files::Roots>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). harness(Claude·Codex) 마지막 하나와
@@ -92,6 +95,7 @@ impl Agent {
             host: Mutex::new(None),
             selfcheck: Mutex::new(None),
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
+            file_roots: Mutex::new(files::Roots::default()),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
@@ -174,6 +178,39 @@ impl Agent {
     /// agent.toml의 thread 설정(작업 root·profile)
     pub fn configure_threads(&self, cfg: threads::ThreadsConfig) {
         *self.threads_cfg.lock().unwrap() = cfg;
+    }
+
+    /// 파일 보기가 열 수 있는 폴더(§6.5 허용 폴더, plan §8.109). 없는 폴더는 빠진다.
+    pub fn configure_file_roots(&self, roots: Vec<PathBuf>) {
+        *self.file_roots.lock().unwrap() = files::Roots::new(roots);
+    }
+
+    /// 파일 보기: 세션이 지금 있는 폴더(없으면 시작 폴더) 기준으로 경로를 찾는다
+    async fn file_locate(&self, session: &str, path: String) -> Result<AgentResponse, ErrorBody> {
+        let started = {
+            let s = self.sessions.lock().unwrap();
+            s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?.info.cwd.clone()
+        };
+        // 지금 폴더를 못 읽어도 찾는다(참고 `paneContext` 실패: 절대·~ 경로는 그대로 열린다)
+        let cwd = match self.session_cwd(session).await {
+            Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
+            _ => started,
+        };
+        let roots = self.file_roots.lock().unwrap().clone();
+        let home = aaa_config::paths::home();
+        let found =
+            tokio::task::spawn_blocking(move || files::locate(&path, cwd.as_deref().map(Path::new), &home, &roots))
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        match found {
+            files::Located::Found(info) => Ok(AgentResponse::FileLocated { info: Some(info), candidates: Vec::new() }),
+            files::Located::Candidates(candidates) => Ok(AgentResponse::FileLocated { info: None, candidates }),
+            files::Located::Missing => Err(ErrorBody::new(ErrorCode::NotFound, "이 경로에 읽을 수 있는 파일이 없다")),
+            files::Located::Outside => Err(ErrorBody::new(
+                ErrorCode::Forbidden,
+                "허용한 폴더 밖의 파일이라 열지 않는다(그 머신 agent.toml [agent] file_roots)",
+            )),
+        }
     }
 
     /// report.md hash를 1초마다 보고 바뀌면 host에 알린다. 등록하면 지금 값을 한 번 보낸다.
@@ -517,6 +554,15 @@ impl Agent {
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
             AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
+            AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
+            AgentRequest::FileView { path, offset, len } => {
+                let roots = self.file_roots.lock().unwrap().clone();
+                tokio::task::spawn_blocking(move || files::read(&path, offset, len, &roots))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
+            }
             AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
                 chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
             })

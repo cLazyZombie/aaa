@@ -1,0 +1,297 @@
+// 파일 보기(결정 20 D7, herdr-web-ui `src/components/FileViewer.tsx`·`FileViewer.css` aa624cb). 웹 터미널의 파일 경로 링크로 연다.
+// 옮긴 것: 대화 상자(휴대폰은 화면 가득), 경로 찾기(같은 이름이 여럿이면 고르기), 그림, 글(Markdown 미리보기와 소스,
+// 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
+// 아직 옮기지 않은 것(plan §8.109 남은 것): 문법 강조·긴 소스 가상화, 동영상·소리·PDF, HTML 페이지 보기, 폴더 보기,
+// 「파일 뷰어」 설정. 그런 파일은 참고의 「여기서 볼 수 없음」 모양으로 내려받기를 권한다.
+// aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
+
+import { ApiError, call } from "./api.ts";
+import type { FileInfo } from "./gen/proto.ts";
+import { Markdown } from "./Markdown.tsx";
+import { copyText } from "./herdr/clipboard.ts";
+import { fileLineTarget, pathParts } from "./herdr/filePaths.ts";
+import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
+import { useSheetSwipe } from "./herdr/sheets.ts";
+import "./herdr/FileViewer.css";
+
+/** 글 파일은 앞부분만 받는다(참고 filePreviewText.ts TEXT_PREVIEW_BYTES·SOURCE_PREVIEW_LINES) */
+const TEXT_PREVIEW_BYTES = 256 * 1024;
+const SOURCE_PREVIEW_LINES = 200_000;
+/** 그림은 이 크기까지 바로 그린다(참고 markdownImages.ts) */
+const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/** 참고 bridgeProgress.ts `formatBytes` */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes < 10 ? Math.round(megabytes * 10) / 10 : Math.round(megabytes)} MB`;
+}
+
+type Loaded = { text: string; truncated: boolean; lines: number };
+
+/** 받은 앞부분을 보이는 글로: 잘렸으면 마지막 온전한 줄까지, 줄 수 상한까지(참고 readFilePreviewText·shownSource) */
+export function previewText(bytes: Uint8Array, size: number): Loaded {
+  let text = new TextDecoder("utf-8").decode(bytes);
+  let truncated = bytes.length < size;
+  if (truncated) {
+    const cut = text.lastIndexOf("\n");
+    text = cut < 0 ? "" : text.slice(0, cut);
+  }
+  const lines = text.split("\n");
+  if (lines.length > SOURCE_PREVIEW_LINES) {
+    truncated = true;
+    lines.length = SOURCE_PREVIEW_LINES;
+  }
+  return { text: lines.join("\n"), truncated, lines: lines.length };
+}
+
+/** 열 수 없는 까닭. 그 밖의 오류(agent가 파일 보기를 모름·연결 끊김)는 host가 말한 까닭을 붙인다 */
+type Problem = { kind: "missing" } | { kind: "outside" } | { kind: "unreadable"; message: string | null };
+
+function CopyFileButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const label = copied ? "파일 복사됨" : "파일 복사";
+  return (
+    <button type="button" className="icon-button file-viewer-action" aria-label={label} title={label} onClick={() => void copyText(text).then((ok) => ok && setCopied(true))}>
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+    </button>
+  );
+}
+
+/** 소스(참고 HighlightedCode.tsx CodeLines): 줄은 inline이고 사이 "\n"이 글이라 복사가 원문 그대로다. 줄 번호는 CSS counter고 칸은 두 자리 이상이다.
+ *  표시한 줄을 가운데로 굴린다. 문법 강조는 아직 없다(plan §8.109 남은 것) */
+function CodeLines({ text, marked }: { text: string; marked: number | null }) {
+  const markedRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => markedRef.current?.scrollIntoView({ block: "center" }), [marked, text]);
+  const lines = useMemo(() => text.split("\n"), [text]);
+  return (
+    <pre className="hl-code file-viewer-text" data-line-numbers="" style={{ "--hl-digits": String(Math.max(2, String(lines.length).length)) } as CSSProperties} data-testid="file-viewer-code">
+      <code>
+        {lines.map((line, i) => (
+          <Fragment key={i}>
+            <span ref={i + 1 === marked ? markedRef : undefined} className={i + 1 === marked ? "hl-line is-marked" : "hl-line"} data-line={i + 1}>
+              {line}
+            </span>
+            {i < lines.length - 1 ? "\n" : null}
+          </Fragment>
+        ))}
+      </code>
+    </pre>
+  );
+}
+
+export function FileViewer({ path: asked, pane, onClose }: { path: string; pane: string; onClose: () => void }) {
+  const [path, setPath] = useState(asked);
+  const target = useMemo(() => fileLineTarget(path), [path]);
+  const [info, setInfo] = useState<FileInfo | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<string[] | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  // 줄 참조가 있으면 소스, 아니면 미리보기. 새 경로는 옛 선택을 쓰지 않는다
+  const [chosen, setChosen] = useState<{ path: string; mode: "preview" | "code" } | null>(null);
+  const mode = chosen?.path === path ? chosen.mode : target.line === null ? "preview" : "code";
+  const surface = useFocusTrap<HTMLElement>(true);
+  useSheetSwipe(surface, onClose);
+  useEffect(() => setPath(asked), [asked]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const abort = new AbortController();
+    setInfo(null);
+    setUrl(null);
+    setCandidates(null);
+    setProblem(null);
+    setLoaded(null);
+    void (async () => {
+      try {
+        const r = await call({ op: "pane_file", pane, path: target.path });
+        if (cancelled || r.kind !== "pane_file") return;
+        if (r.info === null) {
+          setCandidates(r.candidates);
+          return;
+        }
+        setInfo(r.info);
+        setUrl(r.url);
+        if (r.info.kind !== "text" || r.url === null) return;
+        const res = await fetch(r.url, { signal: abort.signal, headers: { range: `bytes=0-${TEXT_PREVIEW_BYTES - 1}` } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = new Uint8Array(await res.arrayBuffer());
+        if (!cancelled) setLoaded(previewText(body.subarray(0, TEXT_PREVIEW_BYTES), r.info.size));
+      } catch (e) {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.body.code === "not_found") setProblem({ kind: "missing" });
+        else if (e instanceof ApiError && e.body.code === "forbidden") setProblem({ kind: "outside" });
+        else setProblem({ kind: "unreadable", message: e instanceof ApiError ? e.message : null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      abort.abort();
+    };
+  }, [pane, target.path]);
+
+  useEffect(() => {
+    // 맨 위 겹이라 키를 받는다. 그 위에 native dialog가 떠 있으면 그것이 먼저다
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" && !nativeModalOver(surface.current)) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, surface]);
+
+  const shownPath = info?.path ?? target.path;
+  const { stem, extension } = pathParts(info?.name ?? shownPath);
+  const { folder } = pathParts(shownPath);
+  const textFile = info?.kind === "text";
+  const markdown = textFile && /\.(?:md|markdown)$/i.test(info.name);
+  const view = markdown && mode === "preview" ? "markdown" : "code";
+  // 표시할 줄: 받은 앞부분 안이면 표시, 밖이면 알림(참고 lineRequest)
+  const notes: string[] = [];
+  let marked: number | null = null;
+  if (textFile && loaded !== null && view === "code" && target.line !== null) {
+    if (target.line <= loaded.lines) marked = target.line;
+    else if (loaded.truncated) notes.push(`${target.line}번째 줄은 미리보기 범위를 벗어납니다. 나머지를 읽으려면 다운로드하세요.`);
+    else notes.push(`이 파일은 ${loaded.lines}줄이며 ${target.line}번째 줄은 없습니다.`);
+  }
+  if (textFile && loaded?.truncated)
+    notes.push(
+      loaded.lines >= SOURCE_PREVIEW_LINES
+        ? `이 파일의 처음 ${SOURCE_PREVIEW_LINES.toLocaleString("ko")}줄만 보입니다. 나머지를 읽으려면 다운로드하세요.`
+        : `전체 ${formatBytes(info.size)} 중 처음 ${formatBytes(TEXT_PREVIEW_BYTES)}만 보입니다.`,
+    );
+  const cutBytes = textFile && loaded?.truncated && loaded.lines < SOURCE_PREVIEW_LINES;
+
+  const body = (() => {
+    if (problem !== null)
+      return (
+        <p className="file-viewer-note" role="alert">
+          {problem.kind === "missing"
+            ? "이 경로에 읽을 수 있는 파일이 없습니다."
+            : problem.kind === "outside"
+              ? "허용한 폴더 밖의 파일이라 열지 않습니다. 그 머신 agent.toml의 [agent] file_roots에 폴더를 넣으면 열 수 있습니다."
+              : `파일을 열 수 없습니다.${problem.message ? ` ${problem.message}` : ""}`}
+        </p>
+      );
+    if (candidates !== null)
+      return (
+        <div className="file-viewer-choices">
+          <p className="file-viewer-note">같은 이름의 파일이 여럿입니다: {target.path.split("/").pop()}</p>
+          <ul>
+            {candidates.map((c) => (
+              <li key={c}>
+                <button type="button" className="btn btn-ghost" onClick={() => setPath(c + path.slice(target.path.length))}>
+                  {c}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    if (info === null || url === null) return <p className="file-viewer-note">여는 중…</p>;
+    switch (info.kind) {
+      case "image":
+        return info.size > MAX_INLINE_IMAGE_BYTES ? (
+          <p className="file-viewer-note">이 이미지는 {formatBytes(info.size)}입니다. 보려면 다운로드하세요.</p>
+        ) : (
+          <img className="file-viewer-media" src={url} alt={info.name} />
+        );
+      case "text":
+        if (loaded === null) return <p className="file-viewer-note">여는 중…</p>;
+        // 참고 TextFileView: Markdown은 읽기 폭(「파일 뷰어」 설정 기본 readable) 열에 왼쪽 맞춤
+        return (
+          <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : undefined}>
+            {view === "markdown" ? (
+              <Markdown className="file-viewer-markdown file-viewer-markdown-readable">{loaded.text}</Markdown>
+            ) : (
+              <CodeLines text={loaded.text} marked={marked} />
+            )}
+          </div>
+        );
+      default:
+        return (
+          <p className="file-viewer-note">
+            {info.mime}, {formatBytes(info.size)}. 여기서는 볼 수 없는 파일입니다. 내려받아 여세요.
+          </p>
+        );
+    }
+  })();
+
+  return (
+    <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal file-viewer" role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1} data-testid="file-viewer">
+        <header className="modal-header file-viewer-header file-viewer-header-stacked">
+          <div className="file-viewer-title">
+            <h2 className="modal-title">
+              <span className="file-viewer-stem">{stem}</span>
+              {extension}
+            </h2>
+            <p className="file-viewer-meta" title={shownPath}>
+              {info &&
+                (notes.length > 0 ? (
+                  <span className="file-viewer-notice" title={notes.join("\n")}>
+                    <TriangleAlert aria-hidden="true" />
+                    <span>{cutBytes ? `${formatBytes(info.size)} 중 ${formatBytes(TEXT_PREVIEW_BYTES)}` : formatBytes(info.size)}</span>
+                    <span className="visually-hidden">{notes.join(". ")}</span>
+                  </span>
+                ) : (
+                  <span className="file-viewer-size">{formatBytes(info.size)}</span>
+                ))}
+              {folder !== "" && (
+                <span className="file-viewer-path">
+                  <span dir="ltr">
+                    {info && (
+                      <span className="file-viewer-dot" aria-hidden="true">
+                        ·
+                      </span>
+                    )}
+                    {folder}
+                  </span>
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="file-viewer-actions">
+            {markdown && (
+              <div className="file-viewer-group">
+                <button
+                  type="button"
+                  className="icon-button file-viewer-action"
+                  aria-pressed={mode === "code"}
+                  aria-label="소스 보기"
+                  title="소스 보기"
+                  onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}
+                >
+                  <Braces aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            {url !== null && (
+              <div className="file-viewer-group">
+                <a className="icon-button file-viewer-action" href={url} target="_blank" rel="noopener" aria-label="새 탭에서 열기" title="새 탭에서 열기">
+                  <ExternalLink aria-hidden="true" />
+                </a>
+                <a className="icon-button file-viewer-action" href={`${url}?download=1`} download={info?.name ?? true} aria-label="내려받기" title="내려받기">
+                  <Download aria-hidden="true" />
+                </a>
+                {textFile && loaded !== null && !loaded.truncated && <CopyFileButton text={loaded.text} />}
+              </div>
+            )}
+          </div>
+          <button type="button" className="icon-button file-viewer-action file-viewer-close" aria-label="파일 닫기" title="파일 닫기" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="file-viewer-body">{body}</div>
+      </section>
+    </div>
+  );
+}

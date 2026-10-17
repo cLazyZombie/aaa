@@ -39,7 +39,10 @@
 | `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
 | `SettingsControls.tsx`·`SettingsControls.css`·`SettingsDialog.css` | 설정 창의 묶음·줄·스위치·여럿 중 하나·한 칸씩(`src/components/SettingsControls.*` 그대로)과 창 배치(쪽 목록·쪽, 휴대폰은 목록 → 쪽, `src/components/SettingsDialog.css` 그대로). 마크업은 `web/src/SettingsDialog.tsx`. plan §8.97 |
 | `settingsHistory.ts` | 설정 창의 한 걸음(창·쪽·키 바 편집)마다 history 한 칸: 시스템 「뒤로」가 한 칸씩 나온다(`src/lib/settingsHistory.ts`, history 열쇠 이름만 `aaa:`) |
-| `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. `fileUriPath`는 보고 Markdown의 `file://` 링크를 파일 이름으로 읽을 때 쓴다(`markdown.ts`) |
+| `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. `fileUriPath`는 보고 Markdown의 `file://` 링크를 파일 이름으로 읽을 때와 터미널 OSC 8 file URI에 쓴다. 터미널 글 속 파일 경로 링크(`terminalFileLinkProvider`)와 열 수 없는 OSC 8 링크 거르기(`hyperlinkFilter`)는 `web/src/Term.tsx`가 건다(plan §8.109) |
+| `filePaths.ts` | 경로 조각(`pathParts`)·줄 참조 떼기(`fileLineTarget`, `a.ts:20:5`·`a.ts#L20`)·글 속 경로 찾기(`splitFilePaths`·`codeIsFilePath`): `src/lib/filePaths.ts` 그대로. 파일 보기가 쓴다(plan §8.109) |
+| `useFileViewer.ts` | 파일 보기를 방문 기록 한 칸으로(시스템 「뒤로」·Escape·닫기가 같은 길, 열린 채로 다른 파일을 고르면 칸을 늘리지 않음). `src/lib/useFileViewer.ts`에서 머신 ID 대신 pane만 두고 history 열쇠 이름을 `aaa:`로 바꿨다 |
+| `FileViewer.css` | 파일 보기 모양: `src/components/FileViewer.css` 그대로, 뒤에 `src/components/HighlightedCode.css`의 줄 번호 규칙을 붙였다. 마크업은 `web/src/FileViewer.tsx`(참고 `FileViewer.tsx`·`TextFileView.tsx`에서 옮긴 것, 남은 것은 plan §8.109) |
 | `markdown.ts`·`markdownHtml.ts` | 보고서 Markdown 파서(`parseMarkdown`: 제목·문단·목록·할 일·인용·code block·표·수식 원문, 굵게·기울임·지움·code·링크·파일 링크, `foldCode`). aaa는 HTML을 해석하지 않게(`html=false`) 부른다. 차이 목록 R1, plan §8.88 |
 | `Markdown.css` | 그 모양: `src/components/ChatView.css`의 `.markdown` 규칙과 `src/components/HighlightedCode.css` `.hl-code`를 바꾸지 않고 골라 옮겼다(그림·수식·mermaid·skill·파일 단추·chat 말풍선 규칙은 뺐다). 맨 앞 `--chat-fs-body` 한 줄만 aaa가 둔다(참고는 `.chat-view`가 정한다) |
 | `shortcutBindings.ts`·`shortcutRecorder.ts` | 앱 단축키 저장값(Mod+Shift 키 또는 정확한 조합)·거르기·브라우저/OS가 쥔 키, 설정에서 누른 조합 읽기(plan §8.94) |

@@ -52,7 +52,7 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSteps.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
-import { isWebLink } from "./herdr/terminalFileLinks.ts";
+import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } from "./herdr/terminalFileLinks.ts";
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
@@ -130,6 +130,7 @@ export function TermView({
   status,
   dock,
   controls,
+  onOpenFile,
 }: {
   pane: PaneView;
   role: DeviceRole;
@@ -144,8 +145,12 @@ export function TermView({
   dock?: ReactNode;
   /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
   controls?: MutableRefObject<PaneControls | null>;
+  /** 파일 경로 링크를 눌렀다: 파일 보기를 연다(결정 20 D7, plan §8.109). 없으면(보기 권한) 링크로 그리지 않는다 */
+  onOpenFile?: (path: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const openFileRef = useRef(onOpenFile);
+  openFileRef.current = onOpenFile;
   const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -426,7 +431,19 @@ export function TermView({
       macOptionClickForcesSelection: true,
       // term.unicode(아래 글자 폭)는 proposed API다
       allowProposedApi: true,
+      // OSC 8 링크(herdr-web-ui PaneTerminal 552~560줄): file URI는 파일 보기로, http(s)는 새 탭으로. 누름과 놓음이 다 링크 위면
+      // xterm이 연다: 일부를 끌어 고르는 끌기·오른쪽 누름은 「열기」가 아니다(linkPressed)
+      linkHandler: {
+        activate: (event, uri) => {
+          if (!linkPressed(event)) return;
+          const path = fileUriPath(uri);
+          if (path !== null) openFileRef.current?.(path);
+          else if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+        },
+        allowNonHttpProtocols: true,
+      },
     });
+    const linkPressed = (event: MouseEvent): boolean => event.button === 0 && !term.hasSelection();
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
     });
@@ -541,6 +558,16 @@ export function TermView({
     term.loadAddon(new WebLinksAddon((_event, uri) => {
       if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
     }));
+    // 글 속 파일 경로(herdr-web-ui PaneTerminal 586줄, terminalFileLinks.ts 그대로): 보기 권한 화면은 열 수 없어 그리지 않는다
+    const fileLinkProvider = terminalFileLinkProvider(
+      () => term.buffer.active,
+      (path, event) => {
+        if (linkPressed(event)) openFileRef.current?.(path);
+      },
+    );
+    const fileLinks = term.registerLinkProvider({
+      provideLinks: (line, callback) => (openFileRef.current ? fileLinkProvider.provideLinks(line, callback) : callback(undefined)),
+    });
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
     let disposed = false;
     const copySelection = () => {
@@ -703,6 +730,14 @@ export function TermView({
     // OSC 52: pane 프로그램(vim·tmux·Claude Code)의 클립보드 쓰기. 질의는 답하지 않는다.
     // 설정 「패널에서 클립보드로 복사」(기본 켬, PaneTerminal 1050~1063줄)를 끄면 받기만 하고 버린다: pane 안 아무 프로세스나
     // (agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있다.
+    // OSC 8: 이 앱이 열 수 없는 링크(OmO `omo-panel:` 줄)는 링크로 그리지 않는다(herdr-web-ui PaneTerminal 1066줄, #739).
+    // 열린 링크 상태는 RIS(replay 맨 앞 `ESC c`, 프로그램의 RIS)와 함께 끝난다(참고는 term.reset()과 함께 reset)
+    const hyperlinks = hyperlinkFilter();
+    const osc8 = term.parser.registerOscHandler(8, (payload) => hyperlinks.handler(payload));
+    const ris = term.parser.registerEscHandler({ final: "c" }, () => {
+      hyperlinks.reset();
+      return false;
+    });
     const osc52 = term.parser.registerOscHandler(52, (payload) => {
       const text = terminalToggle("paneClipboard") ? parseOsc52(payload) : null;
       if (text !== null)
@@ -1328,6 +1363,9 @@ export function TermView({
       stopTrace();
       keySub.dispose();
       osc52.dispose();
+      osc8.dispose();
+      ris.dispose();
+      fileLinks.dispose();
       otherKeysSet.dispose();
       otherKeysOff.dispose();
       binSub.dispose();

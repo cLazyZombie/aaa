@@ -103,6 +103,8 @@ pub fn typescript_bindings() -> String {
         RoutineView::decl(&cfg),
         LibraryFile::decl(&cfg),
         LibraryView::decl(&cfg),
+        FileKind::decl(&cfg),
+        FileInfo::decl(&cfg),
         EvaluatorView::decl(&cfg),
         EvaluationDoc::decl(&cfg),
         EvalStage::decl(&cfg),

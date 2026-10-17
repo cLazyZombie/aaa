@@ -727,9 +727,11 @@ while IFS= read -r line; do
 done
 `,
 );
+// 파일 보기(15-file-viewer)가 여는 폴더: 이 밖은 열지 않는다(agent가 시작할 때 있는 폴더만 허용한다)
+fs.mkdirSync(`${root}/files`, { recursive: true });
 fs.writeFileSync(
   `${root}/c/agent.toml`,
-  `schema = 1\n[agent]\nwork_root = "${root}/work"\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files"]\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
 );
 // Codex처럼 구는 입력창: 글과 Enter가 한 덩어리로 오면 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측한 Codex 동작).
 // Enter만 따로 오면 그때까지의 글을 제출한다.
