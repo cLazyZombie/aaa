@@ -6,7 +6,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ProviderUsage } from "./gen/proto";
 import { Icon } from "./icons";
-import { ProviderMark } from "./UsageMeters";
+import { AgentMark } from "./herdr/AgentMark.tsx";
 import {
   setTerminalFontSize,
   setTerminalInputMode,
@@ -17,7 +17,7 @@ import {
   useTerminalInputMode,
   useUsageSettings,
 } from "./settings";
-import { moveInOrder, orderProviders, PROVIDER_NAME, usageName, useUsage } from "./usage";
+import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "./usage";
 
 /** 묶음: 제목 아래 카드 하나, 카드 안에 줄들 */
 function SettingsGroup({ title, className, children }: { title?: string; className?: string; children: ReactNode }) {
@@ -98,7 +98,7 @@ function UsageAccounts({ providers }: { providers: readonly ProviderUsage[] }) {
           const hidden = settings.usageHidden.includes(usage.key);
           return (
             <li key={usage.key} className={`usage-accounts-row${hidden ? " is-hidden" : ""}`}>
-              <ProviderMark id={usage.id} />
+              <AgentMark agent={PROVIDER_MARK[usage.id]} size={16} />
               <span className="usage-accounts-name">{PROVIDER_NAME[usage.id]}</span>
               <span className="usage-accounts-account" title={usage.account ?? undefined}>
                 {usage.account}

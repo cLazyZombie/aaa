@@ -1,8 +1,9 @@
 // 목록 아래 설정 옆의 구독 사용량 막대. herdr-web-ui `src/components/UsageMeters.tsx`(aa624cb)를 옮겼다(문구 한국어).
-// 참고와 다른 곳: 구독 표시는 참고 AgentMark 대신 aaa 아이콘(claude·codex)이고, 나머지 구독은 이름 첫 글자다.
+// 구독 표시는 참고와 같은 AgentMark(herdr/AgentMark.tsx)와 PROVIDER_MARK다.
 import { useEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
-import type { ProviderUsage, UsageProviderId, UsageWindow } from "./gen/proto";
+import type { ProviderUsage, UsageWindow } from "./gen/proto";
 import { Icon } from "./icons";
+import { AgentMark } from "./herdr/AgentMark.tsx";
 import { useUsageSettings, type UsageCount, type UsageGlance } from "./settings";
 import {
   formatPercent,
@@ -12,6 +13,7 @@ import {
   meterPercent,
   meterText,
   orderProviders,
+  PROVIDER_MARK,
   PROVIDER_NAME,
   usageName,
   useUsage,
@@ -20,16 +22,6 @@ import {
 
 /** 설정 옆 줄에 두는 칩 수. 넘으면 나머지는 「+N」으로 접는다 */
 const MAX_CHIPS = 4;
-
-/** 구독 표시: aaa 아이콘이 있으면 그것, 없으면 이름 첫 글자 */
-export function ProviderMark({ id }: { id: UsageProviderId }) {
-  if (id === "claude" || id === "codex") return <Icon name={id} />;
-  return (
-    <span className="usage-mark" aria-hidden="true">
-      {PROVIDER_NAME[id][0]}
-    </span>
-  );
-}
 
 function level(window: UsageWindow | null): string {
   return window !== null && window.used_percent >= HIGH_PERCENT ? " is-high" : "";
@@ -61,7 +53,7 @@ function Chip({ usage, count, glance }: { usage: ProviderUsage; count: UsageCoun
   const window = glanceWindow(usage, glance);
   return (
     <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`} data-provider={usage.id}>
-      <ProviderMark id={usage.id} />
+      <AgentMark agent={PROVIDER_MARK[usage.id]} size={14} />
       <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : "—"}</span>
       <span className="usage-chip-bar" style={{ "--fill": `${window ? meterPercent(window, count) : 0}%` } as CSSProperties} />
     </span>
@@ -73,7 +65,7 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
   return (
     <section className="usage-provider" aria-label={usageName(usage)}>
       <header className="usage-provider-head">
-        <ProviderMark id={usage.id} />
+        <AgentMark agent={PROVIDER_MARK[usage.id]} size={16} />
         <span className="usage-provider-name">{PROVIDER_NAME[usage.id]}</span>
         {usage.plan && <span className="usage-plan">{usage.plan}</span>}
         {usage.account && (

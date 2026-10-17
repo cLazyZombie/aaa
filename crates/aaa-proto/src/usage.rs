@@ -6,17 +6,13 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// GET /api/v1/usage가 CLI 로그인으로 한도를 읽을 수 있는 구독
+/// GET /api/v1/usage가 CLI 로그인으로 한도를 읽는 구독. 참고(claude·codex·cursor·copilot·grok·antigravity·opencode) 가운데
+/// Claude·Codex만 둔다(사용자 요청 10-17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageProviderId {
     Claude,
     Codex,
-    Cursor,
-    Copilot,
-    Grok,
-    Antigravity,
-    Opencode,
 }
 
 /// 한도가 세는 기간: 굴러가는 세션(5시간)·하루·주·결제 달
