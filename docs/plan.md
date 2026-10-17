@@ -451,7 +451,7 @@ host 프로젝트 폴더 구성:
   - 이전 프로세스가 아직 같은 파일을 읽는 기간(§11)에는 migrate를 미룬다.
 - **비밀:** TOML에 넣지 않는다. 상태 디렉터리의 0600 키 파일이나 DPAPI에 둔다.
 - **원격 편집:** host는 agent.toml을 몰래 고치지 않는다. `aaa machine config show|diff`로 보기만 한다. 변경은 그 머신에서 하거나 명시 명령으로 하고 감사 로그에 남긴다.
-- **profile 해석(10-18 사용자 「한곳에 모아」):** host.toml `[profiles.<이름>]` 한 곳에 `agent`·`model`·`effort`·`description`·`args`를 둔다. host가 이름·허용 목록·safety를 풀어 agent에 보내고 agent는 머신별 `[harnesses.<종류>] command/env`와 hook만 적용한다. 해석 결과 `Launch`는 thread에 저장한다. 새 대화 restart는 최신 host 정의, `--resume`은 저장된 spec이다. 옛 agent.toml `[profiles]`는 전환 경고로 읽고 새 host는 사용하지 않는다(§8.121).
+- **profile 해석(10-18 사용자 「한곳에 모아」):** host.toml `[profiles.<이름>]` 한 곳에 `agent`·`model`·`effort`·`description`·`args`를 둔다. host가 이름·허용 목록·safety를 풀어 agent에 보내고 agent는 머신별 `[harnesses.<종류>] command/env`와 hook만 적용한다. 해석 결과 `Launch`는 thread에 저장한다. 새 대화 restart는 최신 host 정의, `--resume`은 저장된 spec이다. 옛 agent.toml `[profiles]`는 전환 경고로 읽고 새 host는 사용하지 않는다(§8.123).
 - **front 설정:** front의 키 바인딩 같은 값도 TOML로 두되, 이것은 backend 상태가 아니다.
 
 ### 7.3 DB와 schema
@@ -2681,9 +2681,26 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - inbox 항목과 앱 안 알림은 그대로다(참고 mute도 Herdr 알림만 끈다).
   - 시간대 조용한 시간은 만들지 않는다(결정 D4, 참고에도 없다).
   - 시험: `mute_keeps_errors_only`, `keys_fall_back_one_by_one`의 `mute`.
-### 8.120 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
+### 8.120 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
 
-> 이 절은 당시 구현 기록이다. profile 정의 위치·해석·목록은 10-18 사용자 결정으로 §8.121이 대신한다. safety 동작은 유지한다.
+- **왜.** iPhone에서만 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 앱 안 알림 없음)을 헤드리스가 못 잡았다. 단계마다 init script로 만든 가짜(「이 기기 알림」 FakeAudio)는 아무 때나 resume되고 가려져도 멈추지 않으며, 헤드리스 Chromium에는 어디에나 `Notification`이 있다. 참고 넷도 제품에 능력 주입 층이 없고 시험 쪽에서 바꾼다(herdr-web-ui `alert-sound-regression.ts`·`keyboard-viewport-regression.ts`), plan §13 「production에 시험용 bypass를 만들지 않는다」와도 맞다.
+- **`web/e2e/lib/devices.mjs`.** `pairDevice(browser, code, profile, opts)`가 기기 꼴(iphone·ipad·desktop)로 pairing하고 그 기기의 규칙을 건다(`pairPage`의 새 `setup(ctx)`). iOS 규칙: 누른 직후(1초, WebKit transient activation)에만 AudioContext가 running, 나가면 interrupted, 무음 스위치는 playback·play-and-record 범주만 지남, Safari 탭에는 Notification·PushManager 없음, 홈 화면 앱은 누른 직후에만 권한을 묻는다. 기록은 `exposeBinding`으로 Node에 오고 시험은 `device.next`로 사건을 기다린다. 소리 시계는 `device.skipAudio()`로 건너뛴다(자지 않는다). 쓰는 법은 [docs/testing.md 「실기와 headless」](testing.md#실기와-headless).
+- **`specs/15-ios-rules.mjs`.** 「iPhone 소리」(무음 스위치에서 미리 듣기가 묻힘 → 「무음 모드에서도」면 들림 → 다른 pane의 확인창마다 소리 → 나갔다 돌아오면 누르기 전에는 없음 → 알림을 닫는 누름 뒤 다시 소리), 「iPhone 알림 범위」(탭은 홈 화면 앱 안내·테스트 보내기 막힘·화면 오류 없음, 홈 화면 앱은 「알림」 항목을 누를 때만 권한).
+- **결함 심기.** `alertSound.ts`가 interrupted에서 다시 풀지 않게(`state === "suspended"`일 때만 resume) → 15는 「누른 뒤 다시 풀림이 오지 않았다」, 12 「이 기기 알림」은 통과. `PushTestControls.tsx`의 `Notification?.permission`에서 `?.`를 빼면 → 15는 「화면 오류 [TypeError: … reading 'permission']」, 12는 통과.
+- **찾은 것.** 확인창 질문이 그 pane의 상태보다 먼저 오면 앱 안 알림·탭 알림 제목이 pane id 앞 8자다(`App.tsx questionNews`, 15를 6번 돌려 18번 중 1번). 알림 영역 thread에 넘긴다.
+
+### 8.121 「없음」 단언을 고정 sleep 뒤가 아니라 울타리 뒤에(10-18, 보안 감사 t-0340 넘김, t-0338)
+
+- **왜.** 고정 sleep 뒤에 「일어나지 않았다」를 단언하는 시험은 그 sleep보다 늦게 온 결함을 놓친다(부하가 크면 더). 감사가 m13·tui·e2e·웹 E2E에서 약 25곳을 짚었다.
+- **울타리.** host 판정은 시간 창이 지난 뒤 `ticks`(nudge는 tick·창·tick·창·tick, m13 `nudge_windows`), 일이 끝났다는 사건(`routine_ran`·새 점검 보고 `at_ms`·routine `last_run_ms`·다음 알림 요청), session host 끝남(`session_host_gone`). 웹은 harness가 pane WebSocket으로 보낸 메시지를 기록하고(`sentFrames`) 동작 직후 본다. 타이머로 늦게 보내는 키 막대 되풀이는 참고 `keyRepeat.test.ts`를 옮긴 가짜 시계 유닛 시험이 본다. 쓰는 법은 [docs/testing.md 「기다리기」](testing.md#기다리기).
+- **제품 표지(웹).** 화면이 그 판단을 끝냈다는 것을 DOM에 단다. App `data-wake-lock`(wake lock effect가 설정·걸지·보는 것으로 돈 뒤, 한 컴포넌트의 effect는 선언 순서대로 돈다), Term `data-parsed-top`·`data-parsed-base`(받은 출력을 다 읽은 뒤 버퍼 자리: 올려 둔 동안 아래에 줄만 붙으면 onRender가 오지 않는다), `data-retry`(다시 붙기를 건 close code·ms), `data-fit`(맞추기 판단 off·released·other·keyboard·unsized·sent·same, ResizeObserver 길에서 키보드가 grid를 붙잡아도 keyboard)·`data-fit-pending`(크기 바뀜 뒤 맞추기를 기다리는 동안). 「크기가 멈췄다」는 판단 same(받은 host 크기 = 맞출 크기)이고 기다리는 맞추기가 없을 때다.
+- **바꾼 곳.** Rust 일곱(m13 nudge 둘·routine 둘·health·실패한 알림 다시 보내지 않음, e2e 지운 pane. m13 nudge·routine·health 다섯은 t-0327이 같은 꼴 울타리로 먼저 착지해(`1ea179d`) 병합에서 그쪽을 받고, routine 「승인 필요」만 `last_run_ms`가 두 번 넘어가기를 남겼다: 항목을 본 때 읽은 값이 그 차례가 저장하기 전일 수 있다), 웹 열아홉(03 키 막대 조각·밀어서 취소·끌기·입력줄이 자라도 PTY 크기 그대로, 07 휠 3×·출력이 와도 올려 둔 자리·4008 뒤 스스로 안 붙음, 08 조합 중 Enter·host 답이 와도 바꾼 글을 안 지움(답 처리 뒤 풀리는 보내기 단추), 02 reader 입력·열기만 하면 크기를 안 검, 11 경로를 실행 안 함·글만 붙임·확인창에 입력 안 감, 04 wake lock 요청 없음 셋, 10 화면 키보드가 PTY 크기를 안 바꿈, 06 핀치 중 크기를 안 검)과 그 곁 sleep(10 연 뒤·입력줄 칸·키보드 내림, 06 크기가 멈춤). m13 hooked의 중첩 세션 Stop 자리(fake가 Stop 뒤 같은 연결로 진행 보고)는 §8.110이 그 시험을 화면 감지로 바꾸며 없어졌다. 고정 sleep 수는 e2e.rs 1 → 0, m13 7 → 1, 웹 E2E 03 14 → 2·07 6 → 1·08 4 → 2·02 2 → 0·11 3 → 0·04 3 → 0·10 7 → 3·06 3 → 2.
+- **결함 심기.** 제품에 하나씩 심어 바꾼 시험이 실패함을 봤고 모두 되돌렸다(스물둘 모두 실패): 입력창에 글이 있어도 nudge, 같은 묶음 다시 nudge, 「승인 필요」 반복, 같은 출력도 새 항목, 새 점검 보고마다 같은 이상, 실패한 알림을 다시 큐에 넣음, session host가 닫히기 전에 잊음(되살아남), 밀어서 취소한 키가 감, 휠 3×에서 보고 넷, 뗀 뒤에도 되풀이(유닛), 붙인 경로 뒤 Enter(옛 「No such file」 단언은 「Permission denied」를 못 잡았다), 글과 그림이면 그림도 올림, 확인창 질문 중에도 넣음, 꺼진 설정인데 wake lock, pane을 보지 않는데 wake lock, 출력을 쓰면 맨 아래로, 4008 갈래가 다시 붙기로 흘러내림(그때 `ws open`은 아직 하나라 옛 횟수 단언만으로는 1.5초 sleep에 기댔다), 남이 쓰는 pane을 열면 크기를 검, 입력줄 칸이 흐름에서 자람, 키보드가 grid를 붙잡지 않음(남은 띠에 맞춤), 핀치 중 크기를 검, 답이 오면 바뀐 글도 지움(`canClear`만 빼면 `writeTerminalDraft`가 이미 막아 결함이 아니었다: 두 조건을 모두 뺐다).
+- **남은 것.** 크기·IME·화면 키보드·재연결·구독 cache처럼 비동기로 정해지는 「없음」은 제품 표지가 있어야 울타리가 된다. 자리와 맡을 thread는 t-0338 report 「감사 넘김: 고정 sleep 뒤 「없음」 단언」 표.
+
+### 8.122 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
+
+> 이 절은 당시 구현 기록이다. profile 정의 위치·해석·목록은 10-18 사용자 결정으로 §8.123이 대신한다. safety 동작은 유지한다.
 
 - **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
 - **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
@@ -2713,11 +2730,11 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `routines`: 사람 문을 `person.rs`로 모은 뒤에도 세션 안·터미널 아님 거부와 PTY 승인.
   - 유닛: safety 층(옛 자리 포함)·local 파일이 덮기·잘못된 값은 그 값만 버림·출처 줄·toml_edit 고치기가 나머지를 둠(aaa-config `safety`), profile 이름·model·effort 검증과 add·edit·remove·기본 profile 감지(`profile_edit`), agent `safety_args_reach_builtins_and_yolo_every_harness`(옛 인자는 기본 harness의 기본 profile에만, yolo는 harness마다, argv·resume 둘 다).
 
-### 8.121 profile 정의를 host 한 곳으로(10-18, 사용자 「한곳에 모아」, 차이 목록 4장 G #593)
+### 8.123 profile 정의를 host 한 곳으로(10-18, 사용자 「한곳에 모아」, 차이 목록 4장 G #593)
 
 - **전 구조.** agent.toml `[profiles]`가 정의·argv 해석, host.toml은 허용 목록·기본값·safety만 관리했다.
   thread start/restart는 이름만 넘기고 agent가 Launch를 돌려주면 host가 DB에 저장했다. `aaa profile add/edit/remove/resolve`도
-  머신 파일을 읽었다(§8.2·§8.14·§8.120의 당시 구현). 사용자 결정으로 정의만 host로 모은다.
+  머신 파일을 읽었다(§8.2·§8.14·§8.122의 당시 구현). 사용자 결정으로 정의만 host로 모은다.
 - **자리.** 별도 파일 대신 host.toml `[profiles.<이름>]`: 참고 herdr-projects 0.2.35 `src/profiles.rs`
   `Entry`·`Config`·`get`·`listed`·`validate_name`·`typed_args`·`apply_in`처럼 하나의 설정에 정의·기본값·허용 목록을 둔다.
   키는 `agent`·`model`·`effort`·`description`·`args`. 기존 `harness` 별칭과 shell/custom command/env는 전환 호환으로 읽는다.
@@ -2740,23 +2757,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   관찰 가능한 출력·응답으로 끝내며 고정 sleep은 추가하지 않는다. 결함 심기·전수 gate 결과는 thread 보고에 남긴다.
 - **M4.** docs/migration.md에 운영 0.2 설정을 host로 한 번 옮기고 각 Mac pilot로 확인하는 절차만 추가한다.
   운영 설정·프로세스는 건드리지 않는다. 사용자 모델 이름 목록은 저장소·fixture에 넣지 않는다.
-
-### 8.120 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
-
-- **왜.** iPhone에서만 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 앱 안 알림 없음)을 헤드리스가 못 잡았다. 단계마다 init script로 만든 가짜(「이 기기 알림」 FakeAudio)는 아무 때나 resume되고 가려져도 멈추지 않으며, 헤드리스 Chromium에는 어디에나 `Notification`이 있다. 참고 넷도 제품에 능력 주입 층이 없고 시험 쪽에서 바꾼다(herdr-web-ui `alert-sound-regression.ts`·`keyboard-viewport-regression.ts`), plan §13 「production에 시험용 bypass를 만들지 않는다」와도 맞다.
-- **`web/e2e/lib/devices.mjs`.** `pairDevice(browser, code, profile, opts)`가 기기 꼴(iphone·ipad·desktop)로 pairing하고 그 기기의 규칙을 건다(`pairPage`의 새 `setup(ctx)`). iOS 규칙: 누른 직후(1초, WebKit transient activation)에만 AudioContext가 running, 나가면 interrupted, 무음 스위치는 playback·play-and-record 범주만 지남, Safari 탭에는 Notification·PushManager 없음, 홈 화면 앱은 누른 직후에만 권한을 묻는다. 기록은 `exposeBinding`으로 Node에 오고 시험은 `device.next`로 사건을 기다린다. 소리 시계는 `device.skipAudio()`로 건너뛴다(자지 않는다). 쓰는 법은 [docs/testing.md 「실기와 headless」](testing.md#실기와-headless).
-- **`specs/15-ios-rules.mjs`.** 「iPhone 소리」(무음 스위치에서 미리 듣기가 묻힘 → 「무음 모드에서도」면 들림 → 다른 pane의 확인창마다 소리 → 나갔다 돌아오면 누르기 전에는 없음 → 알림을 닫는 누름 뒤 다시 소리), 「iPhone 알림 범위」(탭은 홈 화면 앱 안내·테스트 보내기 막힘·화면 오류 없음, 홈 화면 앱은 「알림」 항목을 누를 때만 권한).
-- **결함 심기.** `alertSound.ts`가 interrupted에서 다시 풀지 않게(`state === "suspended"`일 때만 resume) → 15는 「누른 뒤 다시 풀림이 오지 않았다」, 12 「이 기기 알림」은 통과. `PushTestControls.tsx`의 `Notification?.permission`에서 `?.`를 빼면 → 15는 「화면 오류 [TypeError: … reading 'permission']」, 12는 통과.
-- **찾은 것.** 확인창 질문이 그 pane의 상태보다 먼저 오면 앱 안 알림·탭 알림 제목이 pane id 앞 8자다(`App.tsx questionNews`, 15를 6번 돌려 18번 중 1번). 알림 영역 thread에 넘긴다.
-
-### 8.121 「없음」 단언을 고정 sleep 뒤가 아니라 울타리 뒤에(10-18, 보안 감사 t-0340 넘김, t-0338)
-
-- **왜.** 고정 sleep 뒤에 「일어나지 않았다」를 단언하는 시험은 그 sleep보다 늦게 온 결함을 놓친다(부하가 크면 더). 감사가 m13·tui·e2e·웹 E2E에서 약 25곳을 짚었다.
-- **울타리.** host 판정은 시간 창이 지난 뒤 `ticks`(nudge는 tick·창·tick·창·tick, m13 `nudge_windows`), 일이 끝났다는 사건(`routine_ran`·새 점검 보고 `at_ms`·routine `last_run_ms`·다음 알림 요청), session host 끝남(`session_host_gone`). 웹은 harness가 pane WebSocket으로 보낸 메시지를 기록하고(`sentFrames`) 동작 직후 본다. 타이머로 늦게 보내는 키 막대 되풀이는 참고 `keyRepeat.test.ts`를 옮긴 가짜 시계 유닛 시험이 본다. 쓰는 법은 [docs/testing.md 「기다리기」](testing.md#기다리기).
-- **제품 표지(웹).** 화면이 그 판단을 끝냈다는 것을 DOM에 단다. App `data-wake-lock`(wake lock effect가 설정·걸지·보는 것으로 돈 뒤, 한 컴포넌트의 effect는 선언 순서대로 돈다), Term `data-parsed-top`·`data-parsed-base`(받은 출력을 다 읽은 뒤 버퍼 자리: 올려 둔 동안 아래에 줄만 붙으면 onRender가 오지 않는다), `data-retry`(다시 붙기를 건 close code·ms), `data-fit`(맞추기 판단 off·released·other·keyboard·unsized·sent·same, ResizeObserver 길에서 키보드가 grid를 붙잡아도 keyboard)·`data-fit-pending`(크기 바뀜 뒤 맞추기를 기다리는 동안). 「크기가 멈췄다」는 판단 same(받은 host 크기 = 맞출 크기)이고 기다리는 맞추기가 없을 때다.
-- **바꾼 곳.** Rust 일곱(m13 nudge 둘·routine 둘·health·실패한 알림 다시 보내지 않음, e2e 지운 pane. m13 nudge·routine·health 다섯은 t-0327이 같은 꼴 울타리로 먼저 착지해(`1ea179d`) 병합에서 그쪽을 받고, routine 「승인 필요」만 `last_run_ms`가 두 번 넘어가기를 남겼다: 항목을 본 때 읽은 값이 그 차례가 저장하기 전일 수 있다), 웹 열아홉(03 키 막대 조각·밀어서 취소·끌기·입력줄이 자라도 PTY 크기 그대로, 07 휠 3×·출력이 와도 올려 둔 자리·4008 뒤 스스로 안 붙음, 08 조합 중 Enter·host 답이 와도 바꾼 글을 안 지움(답 처리 뒤 풀리는 보내기 단추), 02 reader 입력·열기만 하면 크기를 안 검, 11 경로를 실행 안 함·글만 붙임·확인창에 입력 안 감, 04 wake lock 요청 없음 셋, 10 화면 키보드가 PTY 크기를 안 바꿈, 06 핀치 중 크기를 안 검)과 그 곁 sleep(10 연 뒤·입력줄 칸·키보드 내림, 06 크기가 멈춤). m13 hooked의 중첩 세션 Stop 자리(fake가 Stop 뒤 같은 연결로 진행 보고)는 §8.110이 그 시험을 화면 감지로 바꾸며 없어졌다. 고정 sleep 수는 e2e.rs 1 → 0, m13 7 → 1, 웹 E2E 03 14 → 2·07 6 → 1·08 4 → 2·02 2 → 0·11 3 → 0·04 3 → 0·10 7 → 3·06 3 → 2.
-- **결함 심기.** 제품에 하나씩 심어 바꾼 시험이 실패함을 봤고 모두 되돌렸다(스물둘 모두 실패): 입력창에 글이 있어도 nudge, 같은 묶음 다시 nudge, 「승인 필요」 반복, 같은 출력도 새 항목, 새 점검 보고마다 같은 이상, 실패한 알림을 다시 큐에 넣음, session host가 닫히기 전에 잊음(되살아남), 밀어서 취소한 키가 감, 휠 3×에서 보고 넷, 뗀 뒤에도 되풀이(유닛), 붙인 경로 뒤 Enter(옛 「No such file」 단언은 「Permission denied」를 못 잡았다), 글과 그림이면 그림도 올림, 확인창 질문 중에도 넣음, 꺼진 설정인데 wake lock, pane을 보지 않는데 wake lock, 출력을 쓰면 맨 아래로, 4008 갈래가 다시 붙기로 흘러내림(그때 `ws open`은 아직 하나라 옛 횟수 단언만으로는 1.5초 sleep에 기댔다), 남이 쓰는 pane을 열면 크기를 검, 입력줄 칸이 흐름에서 자람, 키보드가 grid를 붙잡지 않음(남은 띠에 맞춤), 핀치 중 크기를 검, 답이 오면 바뀐 글도 지움(`canClear`만 빼면 `writeTerminalDraft`가 이미 막아 결함이 아니었다: 두 조건을 모두 뺐다).
-- **남은 것.** 크기·IME·화면 키보드·재연결·구독 cache처럼 비동기로 정해지는 「없음」은 제품 표지가 있어야 울타리가 된다. 자리와 맡을 thread는 t-0338 report 「감사 넘김: 고정 sleep 뒤 「없음」 단언」 표.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
@@ -3177,7 +3177,7 @@ primary 근거:
 | 0.2.35 기능 | aaa 대응 | 단계 |
 |---|---|---|
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
-| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.121) | M1-3 |
+| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.123) | M1-3 |
 | thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
 | `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`는 M1 마무리에서 했다(§8.21) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |
