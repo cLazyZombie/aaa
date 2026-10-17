@@ -1196,6 +1196,17 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **iPhone은 아직 모른다.** herdr-web-ui patch는 `navigator.platform`이 Mac·iPad일 때만 바꿔 넣기 길을 켠다. iPhone(`iPhone`)에서 iPad와 같은 순서가 오면 바꾼 뒤에도 자모가 갈린다(E2E로 확인: platform iPhone으로 iPad 순서를 재생하면 「abcㅎㅏㄴㄱㅡㄹ」). herdr-web-ui에는 iPhone 기록이 없다. 실제 iPhone 확인이 필요하다.
 
+### 8.37 조합 상자 모양과 색(10-17, 사용자 보고·지시)
+
+- **보고.** iPad 화면 키보드로 입력줄에 「상태 ㅅ」을 치면 조합 중인 ㅅ이 검은 사각 상자로 보이고, 앞 글자들과 크기·위치가 어긋났다. 지시: herdr-web-ui `terminalGlyphs.ts`의 조합 상자 맞추기(`fitView`)를 옮기고, 색은 그 자리 칸과 맞춘다(배경 = 그 칸 배경, 글자 = 그 칸 글자색, 테두리 없음).
+- **옮긴 것(herdr-web-ui `aa624cb`, 바꾸지 않음).** `src/lib/terminalGlyphs.ts`·`terminalBoxGlyphs.ts`를 `web/src/herdr/`에 두고 `adjustTerminalGlyphs(term)`를 건다(herdr-web-ui `PaneTerminal.tsx` 609줄과 같은 자리).
+  - 줄: 칸보다 좁게 그린 두 칸 글자(Meslotendard가 없는 기기의 한글 등)를 최대 1.2배 키우고 칸 가운데 둔다. 선·블록 문자는 칸 크기 상자로 그린다. 분해된 글자는 NFC로.
+  - 조합 상자: 그 줄이 줄 크기·자간·여백(`fitView`). xterm 자신의 폭 측정을 쓴다(macOS WebKit 한글이 canvas 13px 대 xterm 11.2px로 다르게 재지는 문제).
+  - herdr-web-ui의 조합 상자 관련 CSS는 따로 없다. xterm.css(5.5.0, aaa도 같은 파일)를 그대로 쓴다.
+- **다르게 둔 것(이유: 사용자 지시).** herdr-web-ui는 조합 상자 색을 정하지 않아 xterm.css의 검은 배경·흰 글자 그대로다. aaa는 `web/src/compositionColors.ts`가 상자 아래 칸(커서 칸이면 옆 칸)의 배경·글자색을 읽어 맞추고 테두리·외곽선을 없앤다.
+- **시험(웹 E2E 「조합 상자」, WebKit 820×1180 2배, 어두운·밝은 테마 × 배경 없는 줄·배경 있는 입력줄).** 조합 상자 배경·글자색이 그 칸과 같고, 테두리가 없고, 폭이 두 칸이다. 고치기 전(`26f305f1`)은 네 경우 모두 검은 배경·흰 글자였다.
+  - headless는 Meslotendard가 있어 한글이 정확히 두 칸이다. 그래서 크기 어긋남(글꼴이 없을 때)은 headless로 재현하지 못했다. iPad 실제 화면으로 확인한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

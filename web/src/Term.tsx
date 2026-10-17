@@ -12,6 +12,8 @@ import { b64decode, b64encode, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { onThemeChange, token } from "./theme";
+import { matchCompositionColors } from "./compositionColors";
+import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -226,6 +228,10 @@ export function TermView({
     };
     box.current!.addEventListener("compositionstart", compositionStart);
     box.current!.addEventListener("compositionend", compositionEnd);
+    // herdr-web-ui terminalGlyphs.ts 그대로(PaneTerminal.tsx 609줄): 칸보다 좁은 글자를 키우고 가운데 두며,
+    // 조합 상자의 크기·자간을 그 줄에 맞춘다. 조합 상자 색은 aaa가 칸 색에 맞춘다(compositionColors.ts).
+    const stopGlyphs = adjustTerminalGlyphs(term);
+    const stopCompositionColors = matchCompositionColors(term);
     let alive = true;
     if (!ready) {
       void Promise.all([document.fonts.load(webFont), document.fonts.load(`bold ${webFont}`)])
@@ -349,6 +355,8 @@ export function TermView({
       el.removeEventListener("compositionstart", compositionStart);
       el.removeEventListener("compositionend", compositionEnd);
       if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
+      stopGlyphs();
+      stopCompositionColors();
       dataSub.dispose();
       binSub.dispose();
       offTheme();

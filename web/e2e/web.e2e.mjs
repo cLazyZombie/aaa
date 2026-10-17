@@ -239,8 +239,15 @@ async function ipadKey(page, jamo, edits) {
 const ipadFresh = (page, jamo) => ipadKey(page, jamo, [["insert", jamo]]);
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
-async function pairPage(browser, code, viewport, { userAgent, platform } = {}) {
-  const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 700, hasTouch: viewport.width < 700, ...(userAgent ? { userAgent } : {}) });
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor } = {}) {
+  const ctx = await browser.newContext({
+    viewport,
+    isMobile: viewport.width < 700,
+    hasTouch: viewport.width < 700,
+    ...(userAgent ? { userAgent } : {}),
+    ...(colorScheme ? { colorScheme } : {}),
+    ...(deviceScaleFactor ? { deviceScaleFactor } : {}),
+  });
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   const page = await ctx.newPage();
   const errors = [];
@@ -1011,6 +1018,95 @@ try {
     aaa("pane", "kill", "imeapp");
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("조합 상자(WebKit iPad 크기, 어두운·밝은 테마): 크기는 herdr-web-ui fitView, 색은 그 칸 배경·글자색, 테두리 없음", async () => {
+    // 배경 있는 입력줄(Claude 입력줄처럼)과 배경 없는 줄, 커서는 줄 끝에 둔다
+    const app = `${root}/compose.sh`;
+    fs.writeFileSync(app, "printf 'plain 상태 '; read a; printf '\\033[48;5;238m› 상태 \\033[K'; cat >/dev/null\n");
+    const wk = await webkit.launch();
+    const bad = [];
+    try {
+      for (const scheme of ["dark", "light"]) {
+        const name = `compose-${scheme}`;
+        aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
+        const p = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { colorScheme: scheme, deviceScaleFactor: 2 })).page;
+        await p.getByTestId(`pane-${name}`).click();
+        await until("조합 화면", async () => (await screenText(p)).includes("plain 상태"));
+        await p.locator(".xterm-screen").click();
+        for (const line of ["plain", "bg"]) {
+          if (line === "bg") {
+            aaa("pane", "send", name, "--text", "", "--enter");
+            await until("배경 줄", async () => (await screenText(p)).includes("› 상태"));
+          }
+          await sleep(300);
+          const ta = p.locator("textarea.xterm-helper-textarea");
+          await ta.evaluate(async (el) => {
+            el.focus();
+            el.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+            el.value += "ㅅ";
+            el.dispatchEvent(new CompositionEvent("compositionupdate", { data: "ㅅ", bubbles: true }));
+            el.dispatchEvent(new InputEvent("input", { data: "ㅅ", inputType: "insertCompositionText", isComposing: true, bubbles: true }));
+            await new Promise((r) => setTimeout(r, 100));
+          });
+          const info = await p.evaluate(() => {
+            const view = document.querySelector(".xterm .composition-view.active");
+            if (!view) return null;
+            const r = view.getBoundingClientRect();
+            const st = getComputedStyle(view);
+            const rows = document.querySelector(".xterm-rows");
+            // 비교할 칸: 조합 상자 바로 왼쪽 칸(같은 줄의 「상태 」 뒤 빈칸)
+            const left = document.elementsFromPoint(r.left - 3, r.top + r.height / 2).find((e) => rows.contains(e) && e !== rows);
+            let bg = "";
+            for (let e = left ?? rows; e && e !== document.documentElement; e = e.parentElement) {
+              const c = getComputedStyle(e).backgroundColor;
+              if (c && c !== "rgba(0, 0, 0, 0)" && c !== "transparent") {
+                bg = c;
+                break;
+              }
+            }
+            const screen = document.querySelector(".xterm-screen");
+            return {
+              rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+              bg: st.backgroundColor,
+              fg: st.color,
+              border: st.borderTopWidth,
+              outline: st.outlineStyle,
+              cellBg: bg,
+              cellFg: left ? getComputedStyle(left).color : "",
+              screenW: parseFloat(screen.style.width),
+            };
+          });
+          const cols = aaa("pane", "list").panes.find((x) => x.name === name).cols;
+          if (shots && info) {
+            await p.screenshot({
+              path: path.join(shots, `compose-${scheme}-${line}.png`),
+              clip: { x: Math.max(0, info.rect.x - 160), y: Math.max(0, info.rect.y - 24), width: 260, height: info.rect.height + 48 },
+            });
+          }
+          console.log(`     조합 상자 ${scheme} ${line}: ${JSON.stringify(info)}`);
+          if (!info) bad.push(`${scheme} ${line}: 조합 상자가 없다`);
+          else {
+            const cell = info.screenW / cols;
+            if (info.bg !== info.cellBg) bad.push(`${scheme} ${line}: 배경 ${info.bg} ≠ 칸 ${info.cellBg}`);
+            if (info.fg !== info.cellFg) bad.push(`${scheme} ${line}: 글자 ${info.fg} ≠ 칸 ${info.cellFg}`);
+            if (info.border !== "0px" || info.outline !== "none") bad.push(`${scheme} ${line}: 테두리 ${info.border} ${info.outline}`);
+            if (Math.abs(info.rect.width - 2 * cell) > 1.5) bad.push(`${scheme} ${line}: 폭 ${info.rect.width} ≠ 두 칸 ${2 * cell}`);
+          }
+          // 조합을 끝내 지운다(보내지 않는다: 값을 비운 뒤 끝낸다)
+          await ta.evaluate((el) => {
+            el.value = el.value.slice(0, -1);
+            el.dispatchEvent(new CompositionEvent("compositionend", { data: "", bubbles: true }));
+          });
+          await sleep(150);
+        }
+        await p.context().close();
+        aaa("pane", "kill", name);
+      }
+    } finally {
+      await wk.close();
+    }
+    if (bad.length) throw new Error(bad.join("; "));
   });
 
   await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 생각·도구 결과는 빼고, 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
