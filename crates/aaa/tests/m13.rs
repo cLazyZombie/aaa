@@ -629,7 +629,9 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let v = w.start(&["--title", "keep", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task]);
     let id = v["id"].as_str().unwrap().to_string();
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
-    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    // fake agent는 안내 줄을 받자마자 보고하므로, host가 전달을 확인해 brief_delivered를 남기는 것이 보고보다 늦을 수 있다.
+    // 둘 다 본 뒤 resolve해야 마지막 사건이 thread_resolved다(부하 아래 brief_delivered가 resolve 뒤에 남아 실패했다)
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     let v = w.h.ok(&["thread", "resolve", "demo", &id]);
     assert_eq!(v["status"], "resolved");
     assert!(cwd.join("dirty.txt").exists(), "고친 worktree는 남아야 한다");
