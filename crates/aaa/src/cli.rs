@@ -1524,6 +1524,24 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         } else {
             PathBuf::from(&cfg.agent.work_root)
         };
+        let file_roots: Vec<PathBuf> = if cfg.agent.file_roots.is_empty() {
+            let mut v = vec![aaa_config::paths::home(), work_root.clone(), std::env::temp_dir()];
+            v.extend(agent.default_cwd.as_ref().map(PathBuf::from));
+            if cfg!(unix) {
+                v.push(PathBuf::from("/tmp"));
+            }
+            v
+        } else {
+            // `~`·`~/…`는 집 기준
+            let home = aaa_config::paths::home();
+            let at_home = |r: &str| match r.strip_prefix("~") {
+                Some("") => home.clone(),
+                Some(rest) if rest.starts_with('/') => home.join(&rest[1..]),
+                _ => PathBuf::from(r),
+            };
+            cfg.agent.file_roots.iter().map(|r| at_home(r)).collect()
+        };
+        agent.configure_file_roots(file_roots);
         agent.configure_threads(aaa_agent::threads::ThreadsConfig {
             work_root,
             exe: std::env::current_exe()?,
@@ -2037,6 +2055,16 @@ fn render_front(r: &FrontResponse) -> String {
                 };
             }
         }
+        FrontResponse::PaneFile { info, candidates, url } => match info {
+            Some(i) => {
+                let _ = writeln!(s, "{}\t{}바이트\t{}\t{}", i.path, i.size, i.mime, url.as_deref().unwrap_or(""));
+            }
+            None => {
+                for c in candidates {
+                    let _ = writeln!(s, "{c}");
+                }
+            }
+        },
         FrontResponse::Screen(t) => {
             let mut lines = t.lines.clone();
             while lines.last().is_some_and(|l| l.is_empty()) {

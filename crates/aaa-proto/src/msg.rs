@@ -335,6 +335,31 @@ pub struct ChatView {
     pub truncated: bool,
 }
 
+/// 파일 보기의 종류(herdr-web-ui `FileKind`, plan §8.125)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FileKind {
+    Image,
+    Video,
+    Audio,
+    Pdf,
+    Text,
+    Binary,
+}
+
+/// 파일 보기가 여는 파일(herdr-web-ui `FileInfo`). `path`는 agent 머신의 실제 경로(symlink를 따라간 것)다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct FileInfo {
+    pub path: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    #[ts(type = "number")]
+    pub modified_ms: u64,
+    pub mime: String,
+    pub kind: FileKind,
+}
+
 // ───────────────────────── Agent link ─────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -446,6 +471,21 @@ pub enum AgentRequest {
         anchor: Vec<String>,
         depth: u32,
     },
+    /// 파일 보기: 그 세션이 지금 있는 폴더 기준으로 경로를 찾는다(plan §8.125). 허용 폴더 밖이면 Forbidden,
+    /// 없으면 NotFound다. agent가 `file.v1` 기능을 알릴 때만 보낸다.
+    FileLocate {
+        session: String,
+        path: String,
+    },
+    /// 파일 보기: `FileLocate`가 돌려준 실제 경로의 한 조각(`FileChunk`). 그 사이 바뀌었거나 허용 폴더 밖이면 거부한다.
+    /// `page`면 HTML 파일을 페이지로 그린 bytes(제 폴더의 그림·style·script를 넣은 것)의 조각이다.
+    FileView {
+        path: String,
+        offset: u64,
+        len: u32,
+        #[serde(default)]
+        page: bool,
+    },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
@@ -532,7 +572,7 @@ pub enum AgentRequest {
         #[serde(default)]
         merged_head: Option<String>,
         keep_worktree: bool,
-        /// 마지막 사본에 집에 오지 않은 것이 있다(herdr-projects `clean` `copy_complete`, plan §8.120): 폴더가 남아 있으면
+        /// 마지막 사본에 집에 오지 않은 것이 있다(herdr-projects `clean` `copy_complete`, plan §8.126): 폴더가 남아 있으면
         /// worktree를 남긴다. 이 칸을 모르는 옛 agent도 지우지 않게 host는 `keep_worktree`를 함께 켠다(둘 다 켜져 있으면
         /// 사람의 「남기기」가 아니라 이것이다).
         #[serde(default)]
@@ -610,6 +650,11 @@ pub enum AgentResponse {
     /// 세션이 지금 있는 폴더(읽지 못하면 None)
     Cwd {
         cwd: Option<String>,
+    },
+    /// 찾은 파일. 없으면 끝이 같은 파일 후보(실제 경로, 둘 이상)
+    FileLocated {
+        info: Option<FileInfo>,
+        candidates: Vec<String>,
     },
     Pr(PrAnswer),
     History(HistoryChunk),
@@ -1077,6 +1122,12 @@ pub enum FrontRequest {
     /// harness(Claude·Codex) 대화 기록 보기(§8.27, 읽기 전용)
     PaneChat {
         pane: String,
+    },
+    /// 파일 보기(plan §8.125, 결정 20 D7): pane이 지금 있는 폴더 기준으로 경로를 찾고, 찾았으면 짧은 수명의
+    /// 읽기 경로(`url`)를 준다. 조작 기기만(참고도 보기 전용 기기는 403).
+    PaneFile {
+        pane: String,
+        path: String,
     },
     PaneSend {
         pane: String,
@@ -1548,6 +1599,12 @@ pub enum FrontResponse {
         workspaces: Vec<WorkspaceSummary>,
     },
     Chat(ChatView),
+    /// 찾은 파일과 읽기 경로(`/f/<cap>/<이름>`, 30분), 아니면 고를 후보
+    PaneFile {
+        info: Option<FileInfo>,
+        candidates: Vec<String>,
+        url: Option<String>,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -1873,6 +1930,8 @@ mod tests {
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
         assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
+        // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
+        assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(

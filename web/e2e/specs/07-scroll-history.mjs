@@ -3,7 +3,7 @@
 
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
-  openSettings, start, stop,
+  openSettings, start, stop, sentFrames, sentText,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -45,11 +45,18 @@ export default async function ({ ctl, page }) {
     }).catch(async (e) => {
       throw new Error(`${e.message}: 첫 줄 ${await firstNo(dp)}, xterm 기록 ${await dp.locator(".xterm-viewport").evaluate((v) => v.scrollHeight - v.clientHeight)}px`);
     });
-    // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력)
+    // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력). 울타리는 이 화면이 그 세 줄을 다 읽은 것이다:
+    // 버퍼가 세 줄 밀린 뒤의 자리(Term onWriteParsed가 data-parsed-*에 적는다. 아래에 줄만 붙으면 그리기는 오지 않는다)
+    const parsed = () => dp.getByTestId("terminal").evaluate((b) => ({ top: Number(b.dataset.parsedTop), base: Number(b.dataset.parsedBase) }));
+    // 지금 자리: 맨 위 줄은 휠 뒤에 그린 자리(data-view-top), baseY는 마지막으로 읽은 출력 뒤
+    const held = { ...(await parsed()), top: Number(await dp.getByTestId("terminal").getAttribute("data-view-top")) };
     for (let i = 0; i < 3; i++) aaa("pane", "send-text", "scroll-plain", "p");
     await until("more-3 출력", () => got("scroll-plain").includes("more-3"));
-    await sleep(300);
-    if ((await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(첫 줄 ${await firstNo(dp)})`);
+    await until("세 줄을 읽음", async () => (await parsed()).base >= held.base + 3).catch(async (e) => {
+      throw new Error(`${e.message}: 전 ${JSON.stringify(held)} 지금 ${JSON.stringify(await parsed())}`);
+    });
+    const now = await parsed();
+    if (now.top !== held.top || (await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(버퍼 맨 위 ${held.top} → ${now.top}, baseY ${held.base} → ${now.base}, 첫 줄 ${await firstNo(dp)})`);
     // 키를 치면 맨 아래로 돌아온다
     await dp.keyboard.press("x");
     // 맨 아래에는 올려 둔 동안 온 출력도 있다(그 출력이 이 화면에 왔는데도 자리를 지켰다는 뜻)
@@ -102,7 +109,11 @@ export default async function ({ ctl, page }) {
     }
     // 휠 속도(herdr-web-ui terminalWheelSpeed): 3×면 휠 한 번에 보고 셋(xterm은 휠 사건마다 보고 하나)
     const reports = () => got("scroll-mouse").split("<64;").length - 1;
-    await sleep(300);
+    // 이 화면이 보낸 휠 보고 수(보고는 휠 사건 안에서 보낸다, Term.tsx 휠 속도도 같은 사건 안에서 더 dispatch한다).
+    // pane이 받은 수가 이것과 같으면 오는 중인 보고가 없다
+    const sentReports = async () => sentText(await sentFrames(dp)).split("<64;").length - 1;
+    const settled = (what) => until(what, async () => reports() === (await sentReports()));
+    await settled("앞 휠 보고 다 받음");
     const before = reports();
     await dp.mouse.wheel(0, -100);
     await until("1× 보고 하나", () => reports() === before + 1);
@@ -111,13 +122,16 @@ export default async function ({ ctl, page }) {
     if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
     if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");
     await dp.keyboard.press("Escape");
+    await dlg.waitFor({ state: "hidden" });
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await sleep(300);
+    await settled("휠 전 보고 다 받음");
     const mid = reports();
+    const sentMid = await sentReports();
     await dp.mouse.wheel(0, -100);
     await until("3× 보고 셋", () => reports() === mid + 3).catch((e) => bad.push(`${e.message}: ${reports() - mid}개`));
-    await sleep(300);
-    if (reports() !== mid + 3) bad.push(`3×에서 보고 ${reports() - mid}개`);
+    // 그 휠로 이 화면이 보낸 보고가 셋이다(더 보내지 않았다)
+    const sent3 = (await sentReports()) - sentMid;
+    if (sent3 !== 3 || reports() !== mid + 3) bad.push(`3×에서 보낸 보고 ${sent3}개, 받은 보고 ${reports() - mid}개`);
     await dp.context().close();
 
     // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)
@@ -298,6 +312,49 @@ export default async function ({ ctl, page }) {
     });
     await dp.context().close();
     aaa("pane", "kill", "shrink");
+  });
+
+  await step("폭이 줄었다 넓어지면 다시 접는다(herdr도 다시 접는다: src/pane.rs 「Herdr reflows too」, coordinator 10-18 t-0330 발견): 휴대폰이 좁게 쥐었다 놓아도 host 화면과 늦게 붙은 웹에 줄 끝이 그대로, 넓은 글자 줄도", async () => {
+    // 118칸(1280px 화면)에 드는 줄 둘과 접히는 줄 하나. 휴대폰 폭(홀수 칸)에서는 넓은 글자가 끝 칸에 들지 않아 다음 줄로 내려간다
+    const long = `LONG-${"0".repeat(100)}-END`;
+    const wrap = `WRAP-${"1".repeat(150)}-END`;
+    const wide = "가나다라마바사아자차카타파하".repeat(4);
+    const prog = `process.stdout.write(${JSON.stringify([long, wrap, wide, "rewrap> "].join("\n"))}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "rewrap", "--", process.execPath, "-e", prog);
+    await waitOutput("rewrap", "rewrap>");
+    const read = (source) => aaa("pane", "read", "rewrap", "--source", source).text.split("\n");
+    const cols = () => aaa("pane", "list").panes.find((p) => p.name === "rewrap").cols;
+    const has = (lines, what) => {
+      for (const want of [long, wrap, wide].filter((w) => what.includes(w)))
+        if (!lines.includes(want)) throw new Error(`${want.slice(0, 12)}… 줄이 없다: ${JSON.stringify(lines)}`);
+    };
+    // 휴대폰이 열어 좁게 쥔다. host 화면은 다시 접어, 접힌 줄을 이으면 원래 줄이다(전에는 좁힌 폭 밖 글을 버렸다)
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
+    await pp.getByTestId("pane-rewrap").click();
+    await until("휴대폰이 쥔 크기", () => cols() < 50);
+    has(read("recent-unwrapped"), [long, wrap, wide]);
+    await until("휴대폰 화면", async () => (await screenText(pp)).includes("rewrap>"));
+    await shot(pp, "phone-rewrap");
+    await pp.context().close();
+    // 넓은 화면이 늦게 붙어 쥔다: 그 replay(host 화면)를 받아 줄 끝까지 보인다. 붙어 있던 xterm은 스스로 다시 접으므로 늦게 붙는다
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-rewrap").click();
+    await until("넓은 화면이 쥔 크기", () => cols() >= 112);
+    await until("늦게 붙은 웹에 줄 끝", async () => {
+      const rows = (await screenText(dp)).split("\n").map((r) => r.trimEnd());
+      return rows.includes(long) && rows.includes(wide);
+    });
+    has(read("visible"), [long, wide]);
+    has(read("recent-unwrapped"), [long, wrap, wide]);
+    await shot(dp, "desktop-rewrap");
+    await dp.context().close();
+    const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
+    await ip.getByTestId("pane-rewrap").click();
+    await until("iPad 화면", async () => (await screenText(ip)).includes("rewrap>"));
+    has(read("recent-unwrapped"), [long, wrap, wide]);
+    await shot(ip, "ipad-rewrap");
+    await ip.context().close();
+    aaa("pane", "kill", "rewrap");
   });
 
   await step("앞 기록(사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」, plan §8.67): 끊긴 동안 쏟아진 출력을 다시 붙은 뒤 위로 굴리며 차례로 받아 보고, 붙일 때 보던 자리가 튀지 않는다", async () => {
@@ -689,9 +746,10 @@ export default async function ({ ctl, page }) {
     if (dropped === 0) throw new Error("삼킨 ACK가 없다: 화면이 ACK를 보내지 않는다");
     // 과부하는 다시 보내지 않는다: 닫히기 전 snapshot을 다시 받지 않았고, 닫힌 뒤 스스로 다시 붙지 않는다
     if (count(stalled, "snapshot") !== 1) throw new Error(`snapshot을 다시 받았다: ${JSON.stringify(stalled.filter((e) => e !== "io"))}`);
-    await sleep(1500);
+    // 띠가 보이면 그 close 처리는 끝났다: 거기서 다시 붙기를 걸지 않았다(Term이 걸 때 data-retry를 단다. sleep으로 타이머를 어림하지 않는다)
+    const retry = await slow.getByTestId("terminal").getAttribute("data-retry");
     const later = await log(slow);
-    if (count(later, "ws open") !== 1 || !(await slow.getByTestId("output-stalled").isVisible())) throw new Error(`4008 뒤 스스로 다시 붙었다: ${JSON.stringify(later.filter((e) => e !== "io"))}`);
+    if (retry !== null || count(later, "ws open") !== 1 || !(await slow.getByTestId("output-stalled").isVisible())) throw new Error(`4008 뒤 스스로 다시 붙었다(다시 붙기 ${retry}): ${JSON.stringify(later.filter((e) => e !== "io"))}`);
     // 따라오는 화면은 닫히지 않고 끝까지 받는다
     await until("따라오는 화면 flood-done", async () => (await screenText(fast)).includes("flood-done"));
     const kept = await log(fast);

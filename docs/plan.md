@@ -742,7 +742,7 @@ host 프로젝트 폴더 구성:
 - **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다). 묶음 전이를 세는 때는 §8.85.
 - **nudge:** 0.2.35를 이어받는다.
   - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aaa inbox] <대상> <사건>, …; …(aaa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
-  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. ~~**coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).~~ → (10-18 §8.121) 참고대로 hash만 남기고 넘어간다. project.toml `nudge = false`도 같다.
+  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. ~~**coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).~~ → (10-18 §8.127) 참고대로 hash만 남기고 넘어간다. project.toml `nudge = false`도 같다.
   - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 60초, herdr-projects `NUDGE_IDLE_SECS`) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 이번 검사와 `nudge_quiet_secs`(기본 10초) 전 검사에서 모두 비어 보일 때만 보낸다(herdr-projects `box_quiet`, 사람이 치는 글과 섞이지 않게). 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
   - 안 본 항목이 남아 있으면 새 항목이 올 때 다시 나열된다(herdr-projects와 같다). 「봤다」는 `aaa inbox list`(`--peek` 아님)와 `aaa context`(`--peek` 아님)가 보인 항목에 단다(10-17, 차이 목록 G3·F8).
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
@@ -1093,7 +1093,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - D2Coding을 대체 글꼴로 설치해도 다 풀리지 않는다. cell 너비는 영문 글꼴(0.6em)이 정하므로, 한글(1em)과 2칸(1.2em) 사이가 여전히 빈다.
   - 풀려면 한글이 영문의 정확히 2배인 고정폭 글꼴(D2Coding·Sarasa Mono K 등)을 **첫 글꼴로** 써야 한다. 그러려면 웹 자산(약 1.5~2MB, OFL)을 저장소와 실행 파일에 넣어야 해서 결정으로 남긴다.
 - **시험(웹 E2E 22단계).**
-  - 「넓은 창」 단계: 1280×800에서 터미널 글자 영역이 칸을 한 cell(과 scrollbar 자리) 안쪽까지 채운다. header 크기와 host PTY 크기가 같다. 1900×1150으로 넓히면 열·줄이 늘고, 되돌리면 같은 크기로 돌아온다. 자동 맞추기를 끄면 이 단계가 120×32에서 실패한다.
+  - 「넓은 창」 단계: 1280×800에서 터미널 글자 영역이 칸을 한 cell 안쪽까지 채운다(10-18부터 scrollbar 자리 없이, §8.124). header 크기와 host PTY 크기가 같다. 1900×1150으로 넓히면 열·줄이 늘고, 되돌리면 같은 크기로 돌아온다. 자동 맞추기를 끄면 이 단계가 120×32에서 실패한다.
   - 「두 controller」 단계: 보기만 하는 쪽은 창 크기가 달라도 PTY 크기를 바꾸지 않는다. 가져오면 그 화면을 따른다. 연결이 끝나 lease가 비면 남은 화면이 다시 맞춘다.
 
 ### 8.31 웹 터미널 글꼴 Meslotendard(10-17, 사용자 결정)
@@ -2537,7 +2537,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 ### 8.113 병합을 herdr-projects대로(1): PR 승인은 「병합 중」, 병합되면 ticker가 끝낸다(10-18, D11, 차이 목록 3장 C8·E12·4장 I)
 
 - **결정.** D11(10-17 「d12까지 네 추천대로」): 병합은 thread가 PR을 병합하고 ticker가 merged를 보면 끝낸다. aaa는 병합하지 않는다.
-  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 §8.120이다.
+  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 §8.126이다.
 - **묶음(C8, hp `src/thread.rs` `group` 5번 줄).** 따라가는 PR이 열려 있고 승인됐으면 「병합 중」(`landing`)이다. 작업 중보다 먼저다.
   보고가 있고 PR이 열려 있으면 확인한 보고라도 검토 대기다(쉼으로 가지 않으니 auto-resolve도 하지 않는다). 진행을 보고하는 agent의
   중간 보고 규칙(§8.85)은 그대로 둔다.
@@ -2592,7 +2592,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     잡혀, Enter를 보내지 않은 글을 「받았다」로도 적었다(t-0332 화면 감지와 합친 뒤 m13이 잡았다).
   - 화면 검사와 Enter 사이의 아주 짧은 틈은 남는다(참고 herdr `agent prompt`도 같다). 친 글자가 바로 선택지를 고르는 창(숫자
     키)은 치기 전 검사만 막는다.
-  - 검사 때를 고정 300ms에서 「친 글에 화면이 반응한 뒤」로 옮겼다(§8.122, 부하 아래 아직 친 글 앞 상태를 보았다).
+  - 검사 때를 고정 300ms에서 「친 글에 화면이 반응한 뒤」로 옮겼다(§8.128, 부하 아래 아직 친 글 앞 상태를 보았다).
 - **낮음.**
   - 옛 decisions.md: symlink·FIFO·1MiB 넘는 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다(FIFO를 열면 ticker가 멈췄다).
   - host가 모르는 front 요청(1.12에서 없앤 `decision_add` 등을 1.11 front가 보냄)에 연결을 끊지 않고 그 요청 id로 오류를 답한다.
@@ -2683,7 +2683,149 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 시간대 조용한 시간은 만들지 않는다(결정 D4, 참고에도 없다).
   - 시험: `mute_keeps_errors_only`, `keys_fall_back_one_by_one`의 `mute`.
 
-### 8.120 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」, 집에 다 오지 않은 worktree는 남김, TUI 목록 차례(10-18, D11, 차이 목록 4장 I·D #556, 3장 C1·E10 일부·E12)
+### 8.120 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
+
+- **왜.** iPhone에서만 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 앱 안 알림 없음)을 헤드리스가 못 잡았다. 단계마다 init script로 만든 가짜(「이 기기 알림」 FakeAudio)는 아무 때나 resume되고 가려져도 멈추지 않으며, 헤드리스 Chromium에는 어디에나 `Notification`이 있다. 참고 넷도 제품에 능력 주입 층이 없고 시험 쪽에서 바꾼다(herdr-web-ui `alert-sound-regression.ts`·`keyboard-viewport-regression.ts`), plan §13 「production에 시험용 bypass를 만들지 않는다」와도 맞다.
+- **`web/e2e/lib/devices.mjs`.** `pairDevice(browser, code, profile, opts)`가 기기 꼴(iphone·ipad·desktop)로 pairing하고 그 기기의 규칙을 건다(`pairPage`의 새 `setup(ctx)`). iOS 규칙: 누른 직후(1초, WebKit transient activation)에만 AudioContext가 running, 나가면 interrupted, 무음 스위치는 playback·play-and-record 범주만 지남, Safari 탭에는 Notification·PushManager 없음, 홈 화면 앱은 누른 직후에만 권한을 묻는다. 기록은 `exposeBinding`으로 Node에 오고 시험은 `device.next`로 사건을 기다린다. 소리 시계는 `device.skipAudio()`로 건너뛴다(자지 않는다). 쓰는 법은 [docs/testing.md 「실기와 headless」](testing.md#실기와-headless).
+- **`specs/15-ios-rules.mjs`.** 「iPhone 소리」(무음 스위치에서 미리 듣기가 묻힘 → 「무음 모드에서도」면 들림 → 다른 pane의 확인창마다 소리 → 나갔다 돌아오면 누르기 전에는 없음 → 알림을 닫는 누름 뒤 다시 소리), 「iPhone 알림 범위」(탭은 홈 화면 앱 안내·테스트 보내기 막힘·화면 오류 없음, 홈 화면 앱은 「알림」 항목을 누를 때만 권한).
+- **결함 심기.** `alertSound.ts`가 interrupted에서 다시 풀지 않게(`state === "suspended"`일 때만 resume) → 15는 「누른 뒤 다시 풀림이 오지 않았다」, 12 「이 기기 알림」은 통과. `PushTestControls.tsx`의 `Notification?.permission`에서 `?.`를 빼면 → 15는 「화면 오류 [TypeError: … reading 'permission']」, 12는 통과.
+- **찾은 것.** 확인창 질문이 그 pane의 상태보다 먼저 오면 앱 안 알림·탭 알림 제목이 pane id 앞 8자다(`App.tsx questionNews`, 15를 6번 돌려 18번 중 1번). 알림 영역 thread에 넘긴다.
+
+### 8.121 「없음」 단언을 고정 sleep 뒤가 아니라 울타리 뒤에(10-18, 보안 감사 t-0340 넘김, t-0338)
+
+- **왜.** 고정 sleep 뒤에 「일어나지 않았다」를 단언하는 시험은 그 sleep보다 늦게 온 결함을 놓친다(부하가 크면 더). 감사가 m13·tui·e2e·웹 E2E에서 약 25곳을 짚었다.
+- **울타리.** host 판정은 시간 창이 지난 뒤 `ticks`(nudge는 tick·창·tick·창·tick, m13 `nudge_windows`), 일이 끝났다는 사건(`routine_ran`·새 점검 보고 `at_ms`·routine `last_run_ms`·다음 알림 요청), session host 끝남(`session_host_gone`). 웹은 harness가 pane WebSocket으로 보낸 메시지를 기록하고(`sentFrames`) 동작 직후 본다. 타이머로 늦게 보내는 키 막대 되풀이는 참고 `keyRepeat.test.ts`를 옮긴 가짜 시계 유닛 시험이 본다. 쓰는 법은 [docs/testing.md 「기다리기」](testing.md#기다리기).
+- **제품 표지(웹).** 화면이 그 판단을 끝냈다는 것을 DOM에 단다. App `data-wake-lock`(wake lock effect가 설정·걸지·보는 것으로 돈 뒤, 한 컴포넌트의 effect는 선언 순서대로 돈다), Term `data-parsed-top`·`data-parsed-base`(받은 출력을 다 읽은 뒤 버퍼 자리: 올려 둔 동안 아래에 줄만 붙으면 onRender가 오지 않는다), `data-retry`(다시 붙기를 건 close code·ms), `data-fit`(맞추기 판단 off·released·other·keyboard·unsized·sent·same, ResizeObserver 길에서 키보드가 grid를 붙잡아도 keyboard)·`data-fit-pending`(크기 바뀜 뒤 맞추기를 기다리는 동안). 「크기가 멈췄다」는 판단 same(받은 host 크기 = 맞출 크기)이고 기다리는 맞추기가 없을 때다.
+- **바꾼 곳.** Rust 일곱(m13 nudge 둘·routine 둘·health·실패한 알림 다시 보내지 않음, e2e 지운 pane. m13 nudge·routine·health 다섯은 t-0327이 같은 꼴 울타리로 먼저 착지해(`1ea179d`) 병합에서 그쪽을 받고, routine 「승인 필요」만 `last_run_ms`가 두 번 넘어가기를 남겼다: 항목을 본 때 읽은 값이 그 차례가 저장하기 전일 수 있다), 웹 열아홉(03 키 막대 조각·밀어서 취소·끌기·입력줄이 자라도 PTY 크기 그대로, 07 휠 3×·출력이 와도 올려 둔 자리·4008 뒤 스스로 안 붙음, 08 조합 중 Enter·host 답이 와도 바꾼 글을 안 지움(답 처리 뒤 풀리는 보내기 단추), 02 reader 입력·열기만 하면 크기를 안 검, 11 경로를 실행 안 함·글만 붙임·확인창에 입력 안 감, 04 wake lock 요청 없음 셋, 10 화면 키보드가 PTY 크기를 안 바꿈, 06 핀치 중 크기를 안 검)과 그 곁 sleep(10 연 뒤·입력줄 칸·키보드 내림, 06 크기가 멈춤). m13 hooked의 중첩 세션 Stop 자리(fake가 Stop 뒤 같은 연결로 진행 보고)는 §8.110이 그 시험을 화면 감지로 바꾸며 없어졌다. 고정 sleep 수는 e2e.rs 1 → 0, m13 7 → 1, 웹 E2E 03 14 → 2·07 6 → 1·08 4 → 2·02 2 → 0·11 3 → 0·04 3 → 0·10 7 → 3·06 3 → 2.
+- **결함 심기.** 제품에 하나씩 심어 바꾼 시험이 실패함을 봤고 모두 되돌렸다(스물둘 모두 실패): 입력창에 글이 있어도 nudge, 같은 묶음 다시 nudge, 「승인 필요」 반복, 같은 출력도 새 항목, 새 점검 보고마다 같은 이상, 실패한 알림을 다시 큐에 넣음, session host가 닫히기 전에 잊음(되살아남), 밀어서 취소한 키가 감, 휠 3×에서 보고 넷, 뗀 뒤에도 되풀이(유닛), 붙인 경로 뒤 Enter(옛 「No such file」 단언은 「Permission denied」를 못 잡았다), 글과 그림이면 그림도 올림, 확인창 질문 중에도 넣음, 꺼진 설정인데 wake lock, pane을 보지 않는데 wake lock, 출력을 쓰면 맨 아래로, 4008 갈래가 다시 붙기로 흘러내림(그때 `ws open`은 아직 하나라 옛 횟수 단언만으로는 1.5초 sleep에 기댔다), 남이 쓰는 pane을 열면 크기를 검, 입력줄 칸이 흐름에서 자람, 키보드가 grid를 붙잡지 않음(남은 띠에 맞춤), 핀치 중 크기를 검, 답이 오면 바뀐 글도 지움(`canClear`만 빼면 `writeTerminalDraft`가 이미 막아 결함이 아니었다: 두 조건을 모두 뺐다).
+- **남은 것.** 크기·IME·화면 키보드·재연결·구독 cache처럼 비동기로 정해지는 「없음」은 제품 표지가 있어야 울타리가 된다. 자리와 맡을 thread는 t-0338 report 「감사 넘김: 고정 sleep 뒤 「없음」 단언」 표.
+
+### 8.122 폭이 바뀌면 화면을 다시 접는다(reflow, 10-18, coordinator 범위 추가·t-0330 발견, 차이 목록 1장 G 일부)
+
+- **증상.** vt100 0.16 `set_size`는 폭이 줄면 줄 끝을 버리고, 다시 넓혀도 돌아오지 않는다. 휴대폰·좁은 화면이 pane 크기를 쥐었다 놓으면 넓은 화면(늦게 붙은 웹·TUI·`aaa pane read`)에서 줄이 오른쪽부터 비었다. host의 pane 화면(mirror)과 session host 화면이 둘 다 aaa-vt라 웹·TUI가 다 그랬다. 붙어 있던 xterm은 제 버퍼를 스스로 다시 접어 멀쩡해 보였다.
+- **참고.** herdr는 ghostty가 폭 변경 때 다시 접는다(`src/pane.rs` 110~118줄 「Herdr reflows too」). 그래서 pane env에 `fish_handle_reflow=0`을 건다(fish가 스스로 다시 그리지 않게, 겹쳐 그리면 프롬프트가 붙는다). aaa도 같이 건다. 물려받은 값이 있으면 두고, spec env가 이긴다(`apply_pane_terminal_env`와 같다).
+- **다시 접기(`aaa-vt` `Vt::resize`·`rewrap`).**
+  - 기록과 화면을 논리 줄로 읽는다. 접힌 줄과, 넓은 글자가 끝 칸 하나에 들지 않아 다음 줄로 내려간 줄(vt100 `col_wrap`은 이 경우 이음 표시를 두지 않는다, tmux와 같다. ghostty는 spacer 칸으로 둔다)을 잇는다.
+  - 새 폭의 새 parser에 다시 쓴다. 글자 모양(색·굵게 등), 커서(같은 글자 자리), 입력 모드, 펜, 커서 보임, modifyOtherKeys를 옮긴다.
+  - xterm처럼 폭을 먼저, 줄 수를 그다음 바꾼다(xterm `Buffer.resize`). 폭: 화면 아래 빈 줄이 늘어난 글을 먼저 받고, 넘치면 맨 아래에 맞춰 위가 기록으로 가며, 넓혀서 줄면 기록이 다시 내려온다. clear 뒤 맨 위 프롬프트는 맨 위에 남는다. 줄 수: 줄면 커서 아래 행을 먼저 버리고, 그래도 커서가 밖이면 위 행을 기록으로 올린다(§8.59). 늘면 아래에 빈 행이 붙는다.
+  - alternate screen은 다시 접지 않고 크기만 바꾼다(ghostty·xterm과 같다). 그 밑 normal screen은 다시 접는다.
+  - 달리 접힐 것이 없으면(접힌 줄도 새 폭 밖 글도 없음) 다시 쓰지 않는다.
+- **줄 수만 바뀌어도 다시 쓴다.** vt100 `set_size`는 크기가 같아도 보이는 줄의 이음 표시를 지운다(`Row::resize`가 `wrapped = false`). 휴대폰 키보드가 열렸다 닫히기만 해도 나중에 넓힐 때 그 줄이 펴지지 않았다. 화면에 접힌 줄이 있거나 alternate screen이면(그 밑 normal screen을 볼 수 없다) 다시 쓴다.
+- **replay도 이음을 지킨다.** 늦게 붙은 웹은 다른 기기 크기로 snapshot을 받은 뒤 제 크기를 걸고, xterm이 제 버퍼를 다시 접는다. xterm은 이음 표시로만 잇는다. 그래서 기록 줄(`history_row`)과 보이는 화면(`screen_rows`)을 글과 모양으로 직접 쓰고, 이어지는 줄은 줄바꿈 없이 이어 쓴다. 받는 터미널이 같은 폭에서 다시 접으며 이음 표시를 갖는다. vt100 `contents_formatted`는 넓은 글자를 내린 줄을 줄바꿈으로 썼다. 커서·펜·입력 모드는 vt100 것을 그대로 쓴다. 위로 굴려 받는 앞 기록(`older`)도 같다.
+- **`pane read --source recent-unwrapped`도 같은 규칙으로 잇는다**(넓은 글자를 내린 줄 포함).
+- **비용.** 기록 10,000줄이 가득한 pane에서 release 14~30ms, debug 150~300ms. host mirror(잠금 안)와 session host가 크기 변경마다 한 번씩 한다. replay는 7ms.
+- **시험.**
+  - aaa-vt 유닛: 줄였다 넓히기, 접힌 줄 펴기, 기록도 다시 접기, 색, 넓은 글자 다시 잇기, clear 뒤 맨 위 프롬프트, 줄 가운데 커서, 커서 아래 글, alternate screen 밑 normal screen, 입력 모드, 사이 빈 줄, 그대로일 때, 폭·줄 수 함께, 줄 수만(+alternate screen 아래), 커서 아래 행 버리기, 기록·화면 replay의 이음, 넓은 글자 내린 줄 잇기 읽기.
+  - TUI E2E `narrow_claim_then_release_keeps_line_ends`: 다른 front가 30칸으로 쥐었다 놓고 TUI가 되찾으면 49자 줄이 한 줄로 돌아오고 `pane read`도 같다. 셸에 `fish_handle_reflow=0`이 보인다. 시험 실험실은 물려받은 `fish_handle_reflow`를 뺀다(herdr pane 안에서 돌리면 물려받아, 빼기 전에는 fish env를 지운 변형도 통과했다).
+  - 웹 E2E 「폭이 줄었다 넓어지면 다시 접는다」(07): 휴대폰(45칸)이 쥔 동안 host 화면을 이으면 원래 줄(긴 줄·접히는 줄·넓은 글자 줄), 넓은 화면(116칸)이 늦게 붙으면 화면에 줄 끝까지, iPad도.
+  - 변형 확인: reflow를 빼면 유닛 8개·TUI·웹(휴대폰 단계)이 실패, replay 화면을 옛 `state_formatted`로 두면 유닛과 웹(늦게 붙은 웹)이 실패, 읽기의 넓은 글자 잇기를 빼면 유닛과 웹이 실패, 줄 수만 바뀔 때 다시 쓰기를 빼면 유닛 셋, 기록 이음을 빼면 유닛, fish env를 빼면 TUI가 실패.
+- **이 묶음이 아닌 것.** 캡처에 보이는 휴대폰·iPad 끝 열 반쯤 잘림과 「gh p / ecks」(t-0333)는 웹 열 수 계산 쪽이다(다음 묶음).
+
+### 8.123 붙여 넣는 글의 ESC를 뺀다(10-18, t-0340 보안 감사)
+
+- **구멍.** 프로그램이 bracketed paste를 켜면 붙여 넣는 글은 `ESC[200~ … ESC[201~`로 감싸여 간다. 글 안에 `ESC[201~`가 있으면 붙여넣기가 거기서 끝나고 뒤 글은 친 키가 된다. pane 프로그램(agent 출력 포함)은 OSC 52로 이 기기 클립보드에 글을 심을 수 있다(설정 「패널에서 클립보드로 복사」, 기본 켬). 그 글을 셸에 붙이면 명령이 실행된다.
+- **참고도 같다.** herdr-web-ui는 xterm.js 5.5 `paste`(`bracketTextForPaste`)로 그대로 감싸고, herdr `encode_api_text`도 그대로 감싼다. 보안 이유로 참고와 다르게 한다.
+- **고침.** 붙여 넣는 글은 글이다(키는 키 막대·`send-keys`). 글에서 ESC와 C1 CSI(U+009B)를 뺀다.
+  - 웹(`web/src/pasteText.ts`): 클립보드 붙여넣기(글에 ESC가 있으면 xterm 대신 뺀 글로 붙인다), 끌어 놓은 글, 입력줄로 보내는 글.
+  - host(`aaa-vt` `KeyModes::paste`): `pane run`, brief·메시지, 그림 경로가 같은 길이다.
+- **OSC 52 기본값은 참고대로 켬으로 둔다**(「아침 확인」). 붙여넣기를 막았으므로 클립보드에 심긴 글은 글로만 들어간다.
+- **시험.** aaa-vt 유닛(`paste`가 ESC·C1 CSI를 뺀다). 웹 E2E 「붙여 넣는 글의 ESC는 뺀다」(03): bracketed paste를 켠 프로그램에 클립보드·끌어 놓기·입력줄·`pane run`으로 `ESC[201~`가 든 글을 넣으면, 받은 조각은 감싼 짝 하나와 ESC를 뺀 글이다. 변형 확인: 웹 거르기를 빼면 클립보드 검사, host 거르기를 빼면 `pane run` 검사가 실패한다.
+
+### 8.124 웹 터미널 끝 칸까지 보인다(10-18, t-0333 발견·QA Q14)
+
+- **증상.** 웹 터미널 맨 오른쪽 칸이 잘렸다. 1280×800 데스크톱(116칸)은 끝 칸이 다 가려졌고 휴대폰(45칸)·iPad(57칸)는 반쯤 잘렸다. 끝 칸을 넘어 접힌 「gh pr checks」가 「gh p」/「checks」로 보였다. PTY 폭이 바뀐 줄(§8.122)과는 다른 원인이다: 크기를 바꾸지 않은 화면에서도 같다.
+- **원인 1: 자간이 xterm 안으로 들어왔다.**
+  - 웹 body에 `letter-spacing: -0.005em`(13px에서 -0.065px)이 있다. 참고는 body에 자간이 없다.
+  - xterm 5.5 DOM renderer는 cell 폭을 canvas `measureText`로 잰다(자간 없음). 글자 폭은 `.xterm-helpers` 안 DOM 요소의 `offsetWidth`로 잰다(물려받은 자간째). 그 차이(+0.065px)를 줄 자간으로 둔다.
+  - 줄 자간이 물려받은 값을 바꾸므로 글자마다 0.065px씩 cell보다 넓게 나아갔다. 116칸 줄은 7.5px(한 칸쯤) 밀려 줄 요소(`overflow: hidden`)가 끝 칸을 잘랐다.
+  - 고침: 터미널 자리(`.term-box`)의 자간을 기본(normal)으로 둔다. 조합 상자·앞 기록 덮개도 이 안이다.
+- **원인 2: scrollbar 자리.**
+  - FitAddon은 scrollback이 있으면 세로 scrollbar 폭을 빼고 칸 수를 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라 xterm 기본값 15px을 뺐다. 오른쪽 두 칸쯤이 늘 비었다(잘림은 아니다).
+  - 참고는 xterm scrollback이 0이라 빼지 않고 scrollbar도 숨긴다(PaneTerminal 542~546줄, PaneTerminal.css `.xterm-viewport`).
+  - aaa xterm은 기록을 가지므로(§8.67) scrollback을 둔다. 대신 FitAddon이 읽는 `viewport.scrollBarWidth`(Viewport가 만들 때 한 번 정하는 내부 값)를 0으로 두고, scrollbar는 참고처럼 그리지 않는다. 1280×800은 116칸에서 118칸, 휴대폰은 45칸에서 47칸, iPad는 57칸에서 59칸이 된다.
+- **남는 차이(참고와 같다).** xterm은 글자 폭을 32자 `offsetWidth`(정수)로 재므로 글자마다 1/64px까지 어긋난다. 118칸 줄 끝에서 1~2px이다. 끝 글자의 잉크는 줄 안에 든다.
+- **시험.**
+  - 웹 E2E 「끝 칸까지 보인다」(02): 휴대폰·iPad·데스크톱에서 칸 수만큼의 자를 그린다. 세 가지를 본다.
+    - 글자 하나가 나아가는 폭이 cell과 0.04px 안이다. xterm 오차는 1/32px 안이고, 고치기 전은 0.077px이었다.
+    - 끝 칸 글자가 반 넘게 줄 안에 있다.
+    - 칸이 터미널 자리를 cell 하나 안쪽까지 채운다.
+  - 「넓은 창」(02)도 scrollbar 자리 15px을 더 봐주지 않는다.
+  - 변형 확인:
+    - 자간 고침을 빼면 세 기기 모두 글자마다 7.906px(cell 7.830px)로 실패한다. iPad·데스크톱은 끝 칸 검사도 실패한다.
+    - scrollbar 자리를 그대로 두면 「넓은 창」이 실패하고(20px이 빈다), 「끝 칸」은 세 기기 모두 실패한다.
+  - 숨긴 scrollbar는 headless Chromium이 overlay scrollbar라 여기서 볼 수 없다(실기 확인).
+
+### 8.125 터미널의 파일 경로를 누르면 앱 안에서 본다(10-18, 결정 20 D7, 차이 목록 1장 「파일 경로 누르면 파일 보기」, FRONT_API 1.18)
+
+- **참고.** herdr-web-ui(aa624cb)는 터미널 글의 파일 경로(`notes/a.md`, `src/x.ts:20:5`, `~/…`, 절대 경로)와 OSC 8 `file://` 링크를 링크로 그린다(PaneTerminal 552~560·586줄, `terminalFileLinks.ts`). 누르면 앱 안 파일 보기(`FileViewer.tsx`)가 뜬다. 서버는 pane이 지금 있는 폴더 기준으로 경로를 찾는다(`server/file-view.ts` `locateFile`). 그대로 없으면 그 아래에서 끝이 같은 파일을 찾고, 여럿이면 고르게 한다.
+- **aaa의 길.** 파일은 pane이 도는 머신에 있다. 웹은 host와만 말하므로 세 곳을 거친다.
+  - 웹 → host `pane_file {pane, path}`(조작 기기만, `needs_control`). 참고도 보기 전용 기기는 403이다.
+  - host → 그 머신 agent `FileLocate {session, path}`. agent는 그 세션이 지금 있는 폴더(`follow_cwd`, 모르면 시작 폴더) 기준으로 찾는다. 찾는 규칙은 참고 그대로다: `~`·절대·상대 경로, 끝이 같은 파일은 깊이 6·항목 5000까지, `.git`·`node_modules`·`dist`·`target`·`.venv`는 건너뛰고, 후보는 10개까지.
+  - 찾으면 host가 그 파일 하나(실제 경로)만 읽는 30분짜리 읽기 경로 `/f/<cap>/<이름>`을 준다. 그 경로가 agent `FileView`(512KiB 조각)로 이어 읽어 흘려보낸다. host에 모으지 않는다. Range를 받는다. 글은 앞 256KiB만 읽는다(참고와 같다).
+  - agent가 `file.v1`을 모르면(옛 binary) 「그 머신 agent가 파일 보기를 아직 모른다」로 알린다.
+- **참고와 다른 것(보안·여러 머신).**
+  - **허용 폴더(§6.5).** 참고는 서버 사용자가 읽을 수 있는 파일을 다 연다(`/etc/hosts`도). aaa는 그 머신 `agent.toml [agent] file_roots` 안만 연다. 기본은 집·`work_root`·`default_cwd`·임시 폴더(`/tmp` 포함)다. 판정은 symlink를 따라간 실제 경로로 한다. 밖이면 「허용한 폴더 밖의 파일이라 열지 않습니다」라고 까닭과 설정 자리를 말한다.
+  - **바꿔치기.** 읽을 때마다 실제 경로가 찾을 때와 같고, 허용 폴더 안의 일반 파일인지 다시 본다. 찾은 뒤 그 경로가 symlink로 바뀌면 허용 폴더 안의 다른 파일을 가리켜도 읽지 않는다.
+  - **읽기 경로만으로는 열지 않는다.** 짝지은 조작 기기의 cookie도 있어야 한다(참고 `/api/fs/file`도 기기 인증 뒤다). 다른 site의 그림·script·fetch는 막고 새 탭·내려받기는 둔다(참고 `crossSiteFileRead`). 응답은 `no-store`, 글은 확장자와 상관없이 `text/plain`, PDF 밖은 `CSP: sandbox; default-src 'none'`이다.
+  - **보기 권한 화면.** 파일 경로를 링크로 그리지 않는다. 웹 주소 링크는 그대로다.
+- **옮긴 것(5a).**
+  - `filePaths.ts`(그대로), `useFileViewer.ts`(파일 보기가 방문 기록 한 칸: 뒤로·Escape·닫기가 같은 길), `FileViewer.css`(그대로)와 HighlightedCode.css의 줄 번호.
+  - 터미널: 파일 경로 링크(`terminalFileLinkProvider`), OSC 8 `linkHandler`(file URI는 파일 보기, http(s)는 새 탭), 열 수 없는 OSC 8 링크는 링크로 그리지 않는다(`hyperlinkFilter`, RIS와 함께 끝).
+  - 파일 보기: 휴대폰·iPad는 화면 가득, 데스크톱은 가운데 창. 그림(20MiB까지), Markdown 미리보기(읽기 폭)와 소스 보기, 소스는 줄 번호와 줄 참조 표시(가운데로 굴림), 같은 이름 후보 고르기, 새 탭·내려받기·파일 복사·닫기. 문구는 참고 ko 그대로다.
+- **동영상·소리·PDF·HTML 페이지(5b-1).**
+  - 동영상·소리는 `<video>`·`<audio>`가 읽기 경로를 Range로 흘려 받는다. PDF는 iframe에서 브라우저 PDF 보기가 그린다. 그 보기는 sandbox 문서를 거부하므로 PDF에는 sandbox를 달지 않는다(참고와 같다). 대신 `frame-ancestors 'self'`만 단다: 비워 두면 앱 기본 CSP(`frame-ancestors 'none'`)가 붙어 iframe에 들지 못한다(시험이 찾았다).
+  - HTML 파일은 페이지와 소스 중에서 고른다. 기본은 페이지이고, 줄 참조면 소스다.
+  - 페이지는 `?render=1`이다. `sandbox allow-scripts` iframe 안에서 제 script로 돈다. CSP는 참고 `PAGE_POLICY` 그대로다: origin이 없어 이 앱의 cookie·저장소가 없고, `connect-src`가 없어 이 서버에도 웹에도 묻지 못한다. 이 앱만 frame에 넣는다.
+  - 페이지가 제 폴더에서 가져오는 그림·동영상·소리·stylesheet·script는 agent가 보내기 전에 data: URL로 넣는다(참고 `pageWithLocalFiles`, `crates/aaa-agent/src/page.rs`).
+    - 요소는 제 종류의 파일만 받는다. 그림 자리에 `.env`를 적어도 넣지 않는다.
+    - 폴더 밖(symlink를 따라간 뒤에도)과 숨은 이름(`.ssh/`)은 읽지 않는다.
+    - 크기 상한: 파일 하나 8MiB, 모두 32MiB, 페이지 8MiB(넘으면 넣지 않고 그대로), 주소 1000개.
+  - 참고는 lol-html로 고친다. aaa는 시작 태그만 훑는 작은 tokenizer다. 주석·`<!…>`·script·style 안은 건너뛰고, 고칠 속성 값 자리만 바꾸며 나머지 bytes는 그대로 둔다.
+  - agent link frame 상한(1MiB) 때문에 그린 페이지는 agent가 한 벌 기억해 두고 host가 조각으로 읽는다. 길이를 모르고 보내며 Range는 받지 않는다.
+  - 모든 파일 응답에 `X-Content-Type-Options: nosniff`를 단다(참고와 같다).
+- **문서 안 링크·그림(5b-2).**
+  - 파일 보기 안 Markdown은 그 문서의 폴더를 기준으로 잇는다(참고 `resolveFromDocument`). 문서 링크(`[코드](../src/app.ts)`), code 안 경로, 언어 없는 fence(로그·명령 출력) 안 경로를 누르면 같은 pane 기준으로 연다. 언어가 있는 code 안은 글 그대로다(참고 `PLAIN_FENCE`).
+  - 열린 파일 보기 안에서 다른 파일을 열면 기록 칸을 바꾼다(참고와 같다). 뒤로 한 번이면 pane으로 돌아간다.
+  - 그림(`![점](../shots/dot.png)`)은 그 pane의 `pane_file`로 찾아 읽기 경로로 그린다(참고 `markdownImages`). 크기를 먼저 읽어 자리를 잡고(참고 `imageBox`), 못 읽으면 「이미지를 표시할 수 없음」, 크면 내려받기를 권한다. 문구는 참고 ko 그대로다.
+  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음).
+- **문법 강조(5b-3).**
+  - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
+  - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
+  - 2만 줄이 넘으면 줄마다 요소를 만들지 않고 한 글로 그린다(참고 `CodeLines`). 참고는 2천 줄부터 가상화한다. aaa는 가상화 전이라 2만 줄 넘는 소스에는 줄 번호·줄 표시가 없다. 글은 256KiB까지만 읽으므로 줄이 아주 짧을 때만 생긴다.
+  - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
+- **남은 것(5b).**
+  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`), 폴더 보기, 「파일 뷰어」 설정(줄 바꿈·Markdown 폭).
+  - 대화 보기·보고서 안 파일 링크.
+  - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
+- **시험.**
+  - 유닛:
+    - agent `files::` 셋. 찾기 규칙(참고 사례), symlink는 실제 경로로, 바꿔치기, 조각 읽기를 본다.
+    - host `files::` 둘. 이름 인코딩과 Range를 본다.
+    - proto `control_classification`. `PaneFile`은 조작 전용이다.
+  - 웹 E2E `16-file-viewer` 한 단계(약 3초):
+    - 데스크톱: 상대 경로 → Markdown, 소스 보기, 뒤로가 닫는다. 줄 참조 → 20번째 줄 표시.
+    - 문서 안(5b-2): 그림은 `/f/` 읽기 경로로 1px. 문서 링크·code 경로·언어 없는 fence 안 경로는 문서 폴더 기준으로 열린다. `ts` fence 안 같은 경로는 단추가 아니다. 문서 링크로 연 뒤 뒤로 한 번이면 닫힌다.
+    - 읽기 경로: Range 206·`text/plain`·sandbox·`no-store`. 모르는 cap은 401, cookie 없으면 401, 보기 권한 기기는 403.
+    - OSC 8 file URI → 그림. 후보 둘 → 고르기. 허용 폴더 밖 → 알림.
+    - 휴대폰·iPad: 손가락으로 누르면 화면 가득 연다.
+    - 보기 권한 화면: 파일 경로를 눌러도 열리지 않는다. 뒤에 누른 웹 주소가 새 탭으로 열린 뒤에 본다. host도 `pane_file`을 거부하고, 같은 요청이 조작 기기에는 열린다.
+  - 웹 E2E `16-file-viewer` 둘째 단계(HTML 페이지·동영상·소리·PDF):
+    - 페이지 안 script가 돈다. 저장소가 없다(opaque origin). 밖으로 묻기는 CSP 위반 사건(`connect-src`)으로 막힌다.
+    - 그림은 data: URL이 되고 `.env`·폴더 밖 그림은 그대로다. stylesheet가 든다. 소스로 바꾸면 원문이다.
+    - 동영상 Range 206·`video/mp4`, 소리는 브라우저가 길이(0.5초)를 읽는다, PDF는 `application/pdf`에 `frame-ancestors 'self'`만.
+  - 유닛 `page::` 셋: 요소마다 종류, 퍼센트·질의·`..`, 넣지 않는 것 열여섯, 주석·script 안, symlink, 크기 상한.
+  - 웹 E2E `16-file-viewer` 셋째 단계(문법 강조, 약 2.5초): 2KB 넘는 소스는 worker가 칠한 색이 온다. YAML 대시 20만 자는 글이 바로 보이고, 예산이 지나면 「너무 길어」 알림이 뜨고 색은 없다. 첫 단계에서는 `.ts` 소스의 낱말·숫자·주석 색과 `ts` fence 색을 본다.
+  - 웹 유닛 `highlight`·`offThread`(참고 시험을 node:test로): 문법 고르기, 줄을 넘는 주석·문자열, 원문 보존, worker 큐(하나씩, 예산 넘으면 끝내고 새로, 취소, 실패), 결과 기억(실행 중 취소한 글의 포기는 기억, 시작 전 버린 글은 기억 안 함).
+  - 변형 확인: 다섯을 하나씩 망가뜨려 보았다. 모두 시험이 실패한다.
+    - 허용 폴더 검사를 빼면 agent 유닛과 E2E 「허용 밖 알림」이 실패한다.
+    - 실제 경로 같음 검사를 빼면 agent 유닛 「허용 폴더 안으로 바꿔치기」가 실패한다.
+    - `PaneFile`을 보기 허용에 넣으면 proto 유닛과 E2E 「reader 파일 보기」가 실패한다.
+    - 보기 권한 화면에도 파일 링크를 그리면 E2E 「보기 권한 화면에서 파일 경로가 파일 보기를 열었다」가 실패한다.
+    - 읽기 경로에서 기기 cookie를 보지 않으면 E2E 「cookie 없는 읽기 200」이 실패한다.
+  - 변형 확인(5b-1): 여섯 모두 실패한다. 페이지 CSP 풀기, 폴더 파일 안 넣기, iframe sandbox 빼기는 E2E가, 요소 종류 안 보기, 숨은 이름 안 보기, symlink 뒤 폴더 밖은 `page::` 유닛이 잡는다.
+  - 변형 확인(5b-2): 여섯 모두 E2E가 실패한다. 링크 문맥 빼기, 문서 폴더 기준 빼기, 그림 문맥 빼기, 열린 채 열 때 기록 칸 늘리기, 언어 fence도 잇기, 언어 없는 fence도 글 그대로. 변형은 web 빌드가 되는 꼴로만 셌다(쓰지 않는 변수로 빌드가 실패하면 시험이 옛 화면을 돌므로 무효).
+
+### 8.126 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」, 집에 다 오지 않은 worktree는 남김, TUI 목록 차례(10-18, D11, 차이 목록 4장 I·D #556, 3장 C1·E10 일부·E12)
 
 - **없앤 것(4장 I 「누가 병합하나」「병합 대기열 순번」, hp README 121줄·COORDINATOR.md 72·147줄).** 참고 플러그인은 병합·push를
   하지 않고 대기열도 없다. aaa도 `aaa merge enqueue|list|done|drop|land`(§8.8·§8.24), host `merge.rs`, agent 병합 단계(`merge.rs`),
@@ -2735,7 +2877,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - TUI 유닛 `threads_follow_the_display_order`: rank를 빼면 실패한다.
 
 
-### 8.121 coordinator가 없거나 `nudge = false`면 묶음만 적는다(10-18, 차이 목록 3장 G6, coordinator 지시 「참고대로」)
+### 8.127 coordinator가 없거나 `nudge = false`면 묶음만 적는다(10-18, 차이 목록 3장 G6, coordinator 지시 「참고대로」)
 
 - **참고(hp steps.rs `nudge` 329~347줄, project.rs `Settings.nudge`).** 처음 보는 inbox 항목 묶음(hash)마다, coordinator가 살아 있고
   `nudge`가 켜져 있으면(기본 켬) idle 60초·입력창 10초 조용을 기다려 한 줄을 친다. coordinator가 없거나 `nudge = false`면 그
@@ -2757,7 +2899,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: project `keys_fall_back_one_by_one`(`nudge = 0`은 기본값, `nudge = false`), migrate `inventory_then_convert`(`nudge = false`가
     project.toml로 간다).
 
-### 8.122 Enter 전 검사는 프로그램이 친 글에 반응한 뒤에 한다·m13 부하 경쟁 넷(10-18, coordinator 최우선)
+### 8.128 Enter 전 검사는 프로그램이 친 글에 반응한 뒤에 한다·m13 부하 경쟁 넷(10-18, coordinator 최우선)
 
 - **실패(main 699383a·branch 40aae94의 ci-local, load 60 넘음).**
   - (1) `claude_thread_states_questions_and_messages` race: 「Enter가 권한 창을 골랐다」(t-0338)와, 같은 원인으로 race 글을

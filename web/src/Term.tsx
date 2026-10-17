@@ -52,9 +52,10 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSteps.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
-import { isWebLink } from "./herdr/terminalFileLinks.ts";
+import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } from "./herdr/terminalFileLinks.ts";
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
+import { pasteText } from "./pasteText.ts";
 import type { PaneControls } from "./actions";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
@@ -129,6 +130,7 @@ export function TermView({
   status,
   dock,
   controls,
+  onOpenFile,
 }: {
   pane: PaneView;
   role: DeviceRole;
@@ -143,8 +145,12 @@ export function TermView({
   dock?: ReactNode;
   /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
   controls?: MutableRefObject<PaneControls | null>;
+  /** 파일 경로 링크를 눌렀다: 파일 보기를 연다(결정 20 D7, plan §8.125). 없으면(보기 권한) 링크로 그리지 않는다 */
+  onOpenFile?: (path: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const openFileRef = useRef(onOpenFile);
+  openFileRef.current = onOpenFile;
   const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -425,7 +431,19 @@ export function TermView({
       macOptionClickForcesSelection: true,
       // term.unicode(아래 글자 폭)는 proposed API다
       allowProposedApi: true,
+      // OSC 8 링크(herdr-web-ui PaneTerminal 552~560줄): file URI는 파일 보기로, http(s)는 새 탭으로. 누름과 놓음이 다 링크 위면
+      // xterm이 연다: 일부를 끌어 고르는 끌기·오른쪽 누름은 「열기」가 아니다(linkPressed)
+      linkHandler: {
+        activate: (event, uri) => {
+          if (!linkPressed(event)) return;
+          const path = fileUriPath(uri);
+          if (path !== null) openFileRef.current?.(path);
+          else if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+        },
+        allowNonHttpProtocols: true,
+      },
     });
+    const linkPressed = (event: MouseEvent): boolean => event.button === 0 && !term.hasSelection();
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
     });
@@ -439,6 +457,12 @@ export function TermView({
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
     matchHerdrWidths(term);
     term.open(box.current!);
+    // FitAddon은 scrollback이 있으면 세로 scrollbar 자리를 빼고 칸을 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라
+    // 기본값 15px을 빼서 오른쪽 두 칸쯤이 늘 비었다. 참고는 scrollback 0이라 빼지 않는다(PaneTerminal 542~546줄). aaa xterm은
+    // 기록을 가지므로(plan §8.67) scrollback을 두고, 그 자리를 0으로 둔다(scrollbar는 그리지 않는다: style.css, plan §8.124).
+    // FitAddon이 읽는 내부 값이고 Viewport가 만들 때 한 번만 정한다. xterm이 바뀌어 없어지면 웹 E2E 「넓은 창」이 실패한다
+    const viewportOf = (term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } })._core?.viewport;
+    if (viewportOf) viewportOf.scrollBarWidth = 0;
     const el = box.current!;
     // 칸 높이가 바뀌는 사이(넣은 글꼴이 연 뒤에 받아질 때·글자 크기를 바꿀 때) xterm 5.5 Viewport는 화면이 먼저 커져
     // 브라우저가 줄인 scrollTop을 옛 칸 높이로 읽고, 몇 줄 위로 굴린 것(사용자 스크롤)으로 친다. 그러면 맨 아래를 보던
@@ -526,6 +550,11 @@ export function TermView({
     const parsedSub = term.onWriteParsed(() => {
       if (document.activeElement === term.textarea) trace("write");
       followCursor.current();
+      // 받은 출력을 다 읽은 뒤의 버퍼 자리(맨 위 줄·baseY). 올려 둔 동안 아래에 줄이 붙으면 그리기(onRender, data-view-*)는 오지 않아,
+      // 시험이 「출력이 와도 올려 둔 자리」를 이 표지 뒤에 본다(웹 E2E 07 「터미널 스크롤」)
+      const buf = term.buffer.active;
+      el.dataset.parsedTop = String(buf.viewportY);
+      el.dataset.parsedBase = String(buf.baseY);
     });
     // 실기 입력 사건 기록(켜져 있을 때만 모은다, inputTrace.ts)
     const stopTrace = attachTrace(term.textarea!, scrollRef.current!);
@@ -534,6 +563,16 @@ export function TermView({
     term.loadAddon(new WebLinksAddon((_event, uri) => {
       if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
     }));
+    // 글 속 파일 경로(herdr-web-ui PaneTerminal 586줄, terminalFileLinks.ts 그대로): 보기 권한 화면은 열 수 없어 그리지 않는다
+    const fileLinkProvider = terminalFileLinkProvider(
+      () => term.buffer.active,
+      (path, event) => {
+        if (linkPressed(event)) openFileRef.current?.(path);
+      },
+    );
+    const fileLinks = term.registerLinkProvider({
+      provideLinks: (line, callback) => (openFileRef.current ? fileLinkProvider.provideLinks(line, callback) : callback(undefined)),
+    });
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
     let disposed = false;
     const copySelection = () => {
@@ -696,6 +735,14 @@ export function TermView({
     // OSC 52: pane 프로그램(vim·tmux·Claude Code)의 클립보드 쓰기. 질의는 답하지 않는다.
     // 설정 「패널에서 클립보드로 복사」(기본 켬, PaneTerminal 1050~1063줄)를 끄면 받기만 하고 버린다: pane 안 아무 프로세스나
     // (agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있다.
+    // OSC 8: 이 앱이 열 수 없는 링크(OmO `omo-panel:` 줄)는 링크로 그리지 않는다(herdr-web-ui PaneTerminal 1066줄, #739).
+    // 열린 링크 상태는 RIS(replay 맨 앞 `ESC c`, 프로그램의 RIS)와 함께 끝난다(참고는 term.reset()과 함께 reset)
+    const hyperlinks = hyperlinkFilter();
+    const osc8 = term.parser.registerOscHandler(8, (payload) => hyperlinks.handler(payload));
+    const ris = term.parser.registerEscHandler({ final: "c" }, () => {
+      hyperlinks.reset();
+      return false;
+    });
     const osc52 = term.parser.registerOscHandler(52, (payload) => {
       const text = terminalToggle("paneClipboard") ? parseOsc52(payload) : null;
       if (text !== null)
@@ -768,7 +815,15 @@ export function TermView({
         pastingRef.current = false;
       });
       const files = pastedFiles(e.clipboardData);
-      if (files.length === 0) return;
+      if (files.length === 0) {
+        // 글에 ESC가 있으면 뺀 글로 xterm 대신 붙인다(pasteText.ts)
+        const text = e.clipboardData?.getData("text/plain") ?? "";
+        if (text === pasteText(text)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        term.paste(pasteText(text));
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       uploadRef.current(files);
@@ -789,7 +844,7 @@ export function TermView({
       if (!text) return;
       pastingRef.current = true;
       try {
-        term.paste(text);
+        term.paste(pasteText(text));
       } finally {
         pastingRef.current = false;
       }
@@ -1271,11 +1326,14 @@ export function TermView({
           if (stoppedHidden && document.visibilityState === "visible") queueMicrotask(reattach);
           return;
         }
-        if (!stopped)
+        if (!stopped) {
           timer = window.setTimeout(() => {
             timer = undefined;
             connect();
           }, delay);
+          // 표지: 어느 close 뒤에 몇 ms 뒤 다시 붙기를 걸었다. 시험이 「4008 뒤 스스로 다시 붙지 않는다」를 그 close 처리 뒤에 sleep 없이 본다(웹 E2E 07 흐름 제어)
+          el.dataset.retry = `${event.code} ${delay}`;
+        }
         delay = Math.min(delay * 2, 10_000);
       };
     };
@@ -1320,6 +1378,9 @@ export function TermView({
       stopTrace();
       keySub.dispose();
       osc52.dispose();
+      osc8.dispose();
+      ris.dispose();
+      fileLinks.dispose();
       otherKeysSet.dispose();
       otherKeysOff.dispose();
       binSub.dispose();
@@ -1391,16 +1452,22 @@ export function TermView({
   };
   const autoFit = useRef((_claim?: boolean) => {});
   autoFit.current = (claim = false) => {
-    if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return;
+    // 표지 `data-fit`: 마지막 맞추기 판단(off·released·other·keyboard·unsized·sent·same). 크기는 그 판단 안에서 바로 보내므로,
+    // 시험이 「열기만 해서는 크기를 걸지 않는다」를 그 판단 뒤에 sleep 없이 본다(웹 E2E 02 「두 controller」)
+    const mark = (why: string): void => {
+      if (box.current) box.current.dataset.fit = why;
+    };
+    if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return mark("off");
     // 보기만 하는 동안은 크기를 걸지 않는다(돌아올 때 back이 풀고 건다)
-    if (releasedRef.current) return;
-    if (heldByOther && !claim) return;
-    if (keyboardHolds()) return;
+    if (releasedRef.current) return mark("released");
+    if (heldByOther && !claim) return mark("other");
+    if (keyboardHolds()) return mark("keyboard");
     const dims = fitRef.current?.proposeDimensions();
-    if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return;
-    if (dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther))
-      send({ t: "resize", cols: dims.cols, rows: dims.rows });
+    if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return mark("unsized");
+    const change = dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther);
+    if (change) send({ t: "resize", cols: dims.cols, rows: dims.rows });
     fitted();
+    mark(change ? "sent" : "same");
   };
   useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
   // 대화 보기는 grid를 가린다: 이 화면이 건 크기를 놓아 터미널을 보는 다른 화면이 되찾게 한다(PaneTerminal 2049~2056줄)
@@ -1496,11 +1563,17 @@ export function TermView({
     const el = box.current;
     if (!el) return;
     let t: number | undefined;
+    // 표지 `data-fit-pending`: 크기 바뀜 뒤 맞추기를 기다리는 동안(그 판단은 data-fit에 남는다)
     const ro = new ResizeObserver(() => {
       window.clearTimeout(t);
+      el.dataset.fitPending = "1";
       t = window.setTimeout(() => {
+        delete el.dataset.fitPending;
         // 키보드가 화면 아래를 가렸다: grid는 그대로, 터미널만 커서 줄로 옮긴다(맞출 수 없는 화면도)
-        if (keyboardHolds()) return;
+        if (keyboardHolds()) {
+          el.dataset.fit = "keyboard";
+          return;
+        }
         autoFit.current();
       }, 120);
     });
@@ -1558,9 +1631,10 @@ export function TermView({
     // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     autoFit.current(true);
-    let data = value;
-    if (value.includes("\n")) {
-      data = value.replace(/\r?\n/g, "\r");
+    // 붙여 넣은 글처럼 ESC를 뺀다(pasteText.ts)
+    let data = pasteText(value);
+    if (data.includes("\n")) {
+      data = data.replace(/\r?\n/g, "\r");
       if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
     }
     const id = ++submitIdRef.current;

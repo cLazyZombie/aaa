@@ -1714,7 +1714,7 @@ fn inbox_and_nudge() {
 }
 
 /// coordinator가 없거나 project.toml `nudge = false`면 nudge는 처음 보는 묶음을 본 것으로만 적는다(herdr-projects steps.rs
-/// `nudge`, 차이 목록 3장 G6, plan §8.121): 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 그
+/// `nudge`, 차이 목록 3장 G6, plan §8.127): 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 그
 /// 묶음으로 깨우지 않고, 새 항목으로 묶음이 바뀌면 그때 알린다.
 #[test]
 fn nudge_only_marks_the_set_without_a_coordinator_or_when_off() {
@@ -2129,9 +2129,15 @@ fn routines() {
     assert_eq!(items("routine", "ping").len(), 1);
     // 승인 전에는 실행하지 않고, 같은 명령에는 「승인 필요」를 한 번만 남긴다
     wait_for("승인 필요", T, || items("routine-approval", "cmd").into_iter().next());
-    // 항목을 본 뒤 차례가 한 번 더 돈 것은 지난 실행 시각으로 본다(승인이 없어도 차례마다 옮기고, 항목을 먼저 남긴다)
-    let last = routine("cmd")["last_run_ms"].as_u64().expect("last_run_ms");
-    wait_for("승인 없이 다음 차례", T, || (routine("cmd")["last_run_ms"].as_u64() > Some(last)).then_some(()));
+    // 항목을 본 뒤 차례가 한 번 더 돈 것은 지난 실행 시각으로 본다(승인이 없어도 차례마다 옮기고, 항목을 먼저 남긴다). routine.rs
+    // `routine_pass`는 항목을 남긴 뒤 last_run_ms를 저장하므로, 항목을 본 때 읽은 값은 그 차례가 저장하기 전일 수 있다: 두 번
+    // 넘어가기를 기다린다(한 번이면 그 차례 자신의 저장일 수 있어 다음 차례를 보지 못한다)
+    let mut last = routine("cmd")["last_run_ms"].as_u64();
+    for n in 1..=2 {
+        last = wait_for(&format!("승인 필요 뒤 차례 {n}"), T, || {
+            Some(routine("cmd")["last_run_ms"].as_u64()).filter(|now| *now > last)
+        });
+    }
     assert_eq!(items("routine-approval", "cmd").len(), 1);
     assert!(items("routine", "cmd").is_empty());
 
@@ -2414,7 +2420,22 @@ fn notify_webhook() {
     assert_eq!(got, ["pane closed"], "{body}");
     assert!(body.contains(&format!("- {n3} pane closed: {n3} \\\"n3\\\": 사람 차례(pane closed)")), "{body}");
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
-    assert!(rx.recv_timeout(Duration::from_secs(5)).is_err(), "실패한 알림을 다시 보냈다");
+    // 실패한 알림을 다시 보내지 않는다: 다음 알림(n4 pane closed)을 일으키면 받은 다음 요청에 그 항목만 있다. 다시 보냈다면
+    // 실패한 항목이 그보다 먼저(따로 또는 같은 묶음으로) 온다(알림은 한 줄로 차례대로 보낸다, notify.rs `start_notifier`)
+    let n4 =
+        w.start(&["--title", "n4", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("n4.txt", "noreport")]);
+    let (n4, pane4) = (n4["id"].as_str().unwrap().to_string(), n4["pane"].as_str().unwrap().to_string());
+    w.wait_screen(&pane4, "done");
+    w.h.ok(&["pane", "kill", &pane4]);
+    let (_, body) = rx.recv_timeout(T).expect("n4 pane closed 알림");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let got: Vec<_> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
+        .collect();
+    assert_eq!(got, [(n4.as_str(), "pane closed")], "실패한 알림을 다시 보냈다: {body}");
     let failed = w.h.ok(&["events", "demo"])["events"]
         .as_array()
         .unwrap()
