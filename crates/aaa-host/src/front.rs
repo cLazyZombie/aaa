@@ -20,6 +20,32 @@ use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 /// 화면 frame 사이 최소 간격(초당 약 30장)
 const GRID_INTERVAL: Duration = Duration::from_millis(33);
 
+/// 응답 frame(JSON). frame 상한(`MAX_FRAME`)을 넘는 응답은 `too_large` 오류로 바꾼다. 그대로 보내면 쓰기 task가
+/// 연결을 닫아 front는 까닭 없이 끊긴다(t-0334 pilot 결함 2: 끝낸 inbox가 많을 때 `inbox list --all`).
+pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) -> Vec<u8> {
+    let msg = FrontMsg::Res { id, result: result.into() };
+    let bytes = serde_json::to_vec(&msg).expect("JSON 직렬화");
+    if bytes.len() <= MAX_FRAME {
+        return bytes;
+    }
+    let FrontMsg::Res { id, result } = msg else { unreachable!() };
+    // 드문 일이라 종류 이름을 얻으려고 한 번 더 직렬화한다
+    let kind = serde_json::to_value(&result)
+        .ok()
+        .and_then(|v| v.get("ok").and_then(|r| r.get("kind")).and_then(|k| k.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "?".into());
+    tracing::warn!(kind, bytes = bytes.len(), "응답이 frame 상한을 넘어 오류로 답한다");
+    let e = ErrorBody::new(
+        ErrorCode::TooLarge,
+        format!(
+            "{kind} 응답이 {} KiB라 frame 상한 {} KiB를 넘는다. 범위를 좁혀 다시 묻는다",
+            bytes.len() >> 10,
+            MAX_FRAME >> 10
+        ),
+    );
+    serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
+}
+
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let path = host.state.join("front.sock");
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
@@ -145,7 +171,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     }
                     body => host.call_from(role, &actor, Some(&front), body).await,
                 };
-                if tx.json(&FrontMsg::Res { id, result: result.into() }).await.is_err() {
+                if tx.control(res_frame(id, result)).await.is_err() {
                     break;
                 }
             }
@@ -169,7 +195,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                         }
                         None => Err(ErrorBody::new(ErrorCode::NotFound, format!("pane이 없다: {pane}"))),
                     };
-                    tx.json(&FrontMsg::Res { id, result: result.into() }).await?;
+                    tx.control(res_frame(id, result)).await?;
                 }
                 FrontRequest::PaneUnwatch { pane } => {
                     if let Some(t) = watches.remove(&pane) {
@@ -183,7 +209,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     waits.retain(|t| !t.is_finished());
                     waits.push(tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
-                        let _ = tx.json(&FrontMsg::Res { id, result: result.into() }).await;
+                        let _ = tx.control(res_frame(id, result)).await;
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
@@ -202,7 +228,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
-                        let _ = tx.json(&FrontMsg::Res { id, result: result.into() }).await;
+                        let _ = tx.control(res_frame(id, result)).await;
                     });
                 }
             }
@@ -318,5 +344,41 @@ impl Host {
             lines: vec![],
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)
+    #[test]
+    fn oversized_response_becomes_an_error() {
+        let parse = |b: &[u8]| match serde_json::from_slice::<FrontMsg>(b).unwrap() {
+            FrontMsg::Res { id, result } => (id, result.into_result()),
+            other => panic!("{other:?}"),
+        };
+        let (id, r) = parse(&res_frame("7".into(), Ok(FrontResponse::Done)));
+        assert_eq!((id.as_str(), r), ("7", Ok(FrontResponse::Done)));
+        let item = aaa_proto::InboxItem {
+            id: "i".into(),
+            project: "p".into(),
+            item_kind: "routine".into(),
+            subject: "s".into(),
+            event: "due".into(),
+            summary: String::new(),
+            body: "x".repeat(MAX_FRAME),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let big = FrontResponse::Inbox { items: vec![item], done: None, omitted_open: 0, omitted_done: 0 };
+        let bytes = res_frame("8".into(), Ok(big));
+        assert!(bytes.len() < 1024, "{}", bytes.len());
+        let (id, r) = parse(&bytes);
+        let e = r.unwrap_err();
+        assert_eq!((id.as_str(), e.code), ("8", ErrorCode::TooLarge));
+        assert!(e.message.starts_with("inbox 응답이 1024 KiB라 frame 상한 1024 KiB를 넘는다"), "{}", e.message);
     }
 }

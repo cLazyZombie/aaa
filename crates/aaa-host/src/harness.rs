@@ -27,6 +27,18 @@ const INTERRUPTED_MARKS: &[&str] = &["Interrupted"];
 const HOLD_FOR: Duration = Duration::from_secs(60);
 const HOLD_MAX: usize = 32;
 
+/// 확인창 하나가 내는 hook 짝(Claude Code 권한 확인창: `PermissionRequest`와 `Notification(permission_prompt)`)
+const PROMPT_PAIR: [&str; 2] = ["PermissionRequest", "Notification"];
+
+/// 답한 확인창의 늦은 짝인가: 그 확인창은 짝 중 하나만 받았고, 이 질문 사건이 나머지 하나다.
+/// hook 사건은 agent 연결로 차례대로 오지만 답은 front 연결로 오므로, 답이 두 hook 사이에 낄 수 있다(ci-local에서 났다:
+/// 답 뒤에 온 Notification이 새 질문을 열어 thread가 사람 차례에 남았다). 답 뒤 다른 hook 사건이 오면 `answered`를 비우고,
+/// 같은 hook이 다시 오면 새 확인창이다(Claude는 확인창마다 PermissionRequest를 낸다).
+fn late_pair(answered: Option<&[String]>, hook: Option<&str>) -> bool {
+    let (Some([first]), Some(h)) = (answered, hook) else { return false };
+    PROMPT_PAIR.contains(&h) && PROMPT_PAIR.contains(&first.as_str()) && first != h
+}
+
 /// pane 등록 전에 온 harness 사건(세션 ID → (받은 시각, 머신, 사건))
 pub(crate) type Held = std::collections::HashMap<String, Vec<(Instant, String, HarnessEvent)>>;
 
@@ -198,6 +210,22 @@ impl Host {
             };
             if p.machine_id != mid {
                 return;
+            }
+            // 답한 확인창의 늦은 짝 hook: 그 확인창은 이미 닫혔다. 새 질문을 열지 않고 상태도 바꾸지 않는다
+            if ev.kind == "question" && late_pair(p.answered_hooks.as_deref(), ev.hook.as_deref()) {
+                p.answered_hooks = None;
+                tracing::debug!(pane = %ev.session, hook = ?ev.hook, "답한 확인창의 늦은 짝 hook을 버린다");
+                return;
+            }
+            if let Some(h) = &ev.hook {
+                p.answered_hooks = None;
+                if ev.kind == "question" {
+                    if !p.prompt_hooks.contains(h) {
+                        p.prompt_hooks.push(h.clone());
+                    }
+                } else {
+                    p.prompt_hooks.clear();
+                }
             }
             if ev.transcript.is_some() {
                 p.transcript = ev.transcript.clone();
@@ -412,6 +440,10 @@ impl Host {
             }
         };
         let conn = self.live_conn(&mid)?;
+        // 이 확인창이 받은 hook을 기억한다: 짝 hook이 답보다 늦게 오면 그 확인창 것이다(`late_pair`)
+        if let Some(p) = self.inner.lock().unwrap().panes.get_mut(&pid) {
+            p.answered_hooks = Some(std::mem::take(&mut p.prompt_hooks));
+        }
         conn.request(AgentRequest::Input { session: pid.clone(), data: B64(keys) }).await?;
         q.state = QuestionState::Answered;
         q.answer = Some(choice.to_string());
@@ -437,6 +469,7 @@ impl Host {
                     percent: None,
                     at_ms: aaa_common::util::now_ms(),
                     transcript: None,
+                    hook: None,
                 },
             );
         }
@@ -741,6 +774,22 @@ mod tests {
    Yes, I trust this folder
 
  Enter to confirm · Esc to cancel";
+
+    /// 답한 확인창이 받지 못한 짝 hook만 그 확인창 것이다
+    #[test]
+    fn late_pair_is_the_missing_half_of_an_answered_prompt() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let pr = v(&["PermissionRequest"]);
+        assert!(late_pair(Some(&pr), Some("Notification")));
+        assert!(late_pair(Some(&v(&["Notification"])), Some("PermissionRequest")));
+        // 같은 hook이 다시 오면 새 확인창, 둘 다 받았으면 짝이 끝났다, 답하지 않았거나 옛 agent(hook 없음)면 아니다
+        assert!(!late_pair(Some(&pr), Some("PermissionRequest")));
+        assert!(!late_pair(Some(&v(&["PermissionRequest", "Notification"])), Some("Notification")));
+        assert!(!late_pair(None, Some("Notification")));
+        assert!(!late_pair(Some(&pr), None));
+        assert!(!late_pair(Some(&[]), Some("Notification")));
+        assert!(!late_pair(Some(&v(&["Stop"])), Some("Notification")));
+    }
 
     #[test]
     fn claude_trust_screen() {

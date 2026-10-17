@@ -118,6 +118,13 @@ while IFS= read -r line; do
       perm
       printf '## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
       ;;
+    *late*)
+      # 같은 확인창의 Notification이 답보다 늦게 온다(ci-local에서 경쟁으로 난 차례). 진행 보고가 같은 agent 연결로 그 뒤를 잇는다
+      hook '{"hook_event_name":"PermissionRequest","session_id":"fake-1","tool_name":"Bash","tool_input":{"command":"make late"}}'
+      menu 'Allow Bash(make late)?' 0 'Yes' 'No, and tell Claude what to do differently (esc)'
+      hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
+      "$AA" report --percent 40 --activity '늦은 짝 뒤'
+      echo "late $pick"; quiet=1 ;;
     *ask*) perm ;;
     *slow*)
       echo "slow start"
@@ -702,6 +709,15 @@ fn hooked_thread_questions_and_messages() {
     let follow = task.split("\n## Follow-ups\n").nth(1).unwrap_or_else(|| panic!("Follow-ups가 없다: {task}"));
     assert!(follow.contains("\nslow one\n") && follow.find("slow one") < follow.find("second"), "{follow}");
 
+    // 답보다 늦게 온 같은 확인창의 짝 hook은 새 질문을 열지 않는다(harness.rs `late_pair`). 진행 보고가 같은 연결로 그 뒤에
+    // 오므로, 그것이 보이면 host가 늦은 Notification을 처리한 뒤다
+    assert_eq!(w.message(&id, "late ask", false)["state"], "accepted");
+    let q = w.wait_question(&id, "permission");
+    w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "no"]);
+    let v = w.wait_show("늦은 짝 뒤 진행 보고", &id, |v| v["agent"]["progress"] == "늦은 짝 뒤");
+    assert_eq!(v["agent"]["activity"], "idle", "늦은 짝 hook이 질문을 다시 열었다: {v}");
+    assert!(w.questions(false).is_empty(), "{:?}", w.questions(false));
+
     // 거절(Esc)
     let m3 = w.message(&id, "ask again", false);
     assert_eq!(m3["state"], "accepted", "{m3}");
@@ -743,7 +759,7 @@ fn hooked_thread_questions_and_messages() {
     let all = w.questions(true);
     let got: Vec<_> =
         all.iter().map(|q| (q["question_kind"].as_str().unwrap(), q["answer"].as_str().unwrap_or("-"))).collect();
-    assert_eq!(got, [("trust", "yes"), ("permission", "yes"), ("permission", "no")]);
+    assert_eq!(got, [("trust", "yes"), ("permission", "yes"), ("permission", "no"), ("permission", "no")]);
     // 질문마다 항목을 만들지 않는다: 30초 안에 답한 확인창은 사람 차례가 아니다(herdr-projects `BLOCKED_DEBOUNCE_SECS`,
     // plan §8.85). 진행을 40%로 알린 채 쓴 보고는 중간 보고다(검토 대기 아님)
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
@@ -762,6 +778,10 @@ fn hooked_thread_questions_and_messages() {
             "message_accepted",
             "message_queued",
             "message_accepted",
+            "message_queued",
+            "message_accepted",
+            "question_shown",
+            "question_answered",
             "message_queued",
             "message_accepted",
             "question_shown",
@@ -997,6 +1017,90 @@ fn inbox_and_nudge() {
     let nudges = w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     assert_eq!(nudges, 3);
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 3);
+}
+
+/// 끝낸 inbox가 많은 프로젝트(0.2에서 옮긴 기록 수천 건, t-0334 pilot 결함 2, plan §8.95). 응답이 frame 상한(1 MiB)을
+/// 넘어 연결이 말없이 닫히던 것: `inbox list --all`은 크기 한도 안에서 끝내지 않은 항목 모두와 최근 끝낸 항목을 싣고,
+/// 못 실은 수를 말한다. 기록은 실제 경로(`aaa migrate inventory`·`import`)로 넣는다.
+#[test]
+fn big_inbox_lists_within_frame() {
+    const DONE: u32 = 4000;
+    let mut lab = Lab::new();
+    let projects = lab.root.join("projects");
+    let h = lab.node("h", Some(&host_toml(&projects, "", false)));
+    // 가짜 0.2 프로젝트(herdr-projects inbox.rs `write` 형식): 끝낸 항목 4000개(합쳐 약 2 MB)와 끝내지 않은 항목 둘
+    let src = lab.root.join("hp").join("demo");
+    std::fs::create_dir_all(src.join("inbox").join("done")).unwrap();
+    std::fs::write(src.join("PROJECT.md"), "+++\nname = \"Demo\"\n+++\n\n# 지침\n").unwrap();
+    let summary = "끝난 일의 요약이다. ".repeat(12);
+    let item = |n: u32| {
+        let (hh, mm, ss) = (n / 3600, n / 60 % 60, n % 60);
+        let id = format!("20261001T{hh:02}{mm:02}{ss:02}Z-thread-state-t-{n:04}-{n}");
+        let text = format!(
+            "+++\nid = \"{id}\"\nkind = \"thread-state\"\nsubject = \"t-{n:04}\"\ncreated = \"2026-10-01T{hh:02}:{mm:02}:{ss:02}Z\"\n\
+             summary = \"{summary}\"\nevent = \"idle\"\n+++\n"
+        );
+        (id, text)
+    };
+    for n in 1..=DONE + 2 {
+        let (id, text) = item(n);
+        let dir = if n <= DONE { src.join("inbox").join("done") } else { src.join("inbox") };
+        std::fs::write(dir.join(format!("{id}.md")), text).unwrap();
+    }
+    let inv = lab.root.join("inv");
+    let o = h.run(&[
+        "migrate",
+        "inventory",
+        "--from",
+        path_str(&lab.root.join("hp")),
+        "--project",
+        "demo",
+        "--out",
+        path_str(&inv),
+        "--home-machine",
+        "mac-a",
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = h.run(&["migrate", "import", "--inventory", path_str(&inv.join("inventory.json")), "--to-project", "demo"]);
+    assert!(o.status.success(), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains(&format!("inbox 2+{DONE}")),
+        "{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    lab.spawn("host", &h, &["host"]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+
+    let ids = |v: &Value| -> Vec<String> {
+        v["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect()
+    };
+    let v = h.ok(&["inbox", "list", "demo", "--all", "--peek"]);
+    let shown = ids(&v);
+    let omitted = v["omitted_done"].as_u64().unwrap() as usize;
+    assert_eq!(v["omitted_open"], 0, "끝내지 않은 항목은 모두 싣는다");
+    assert!(omitted > 0 && shown.len() + omitted == DONE as usize + 2, "{} + {omitted}", shown.len());
+    // 끝내지 않은 둘과 가장 최근 끝낸 것은 있고, 가장 옛 것은 없다. 차례는 만든 때다
+    for n in [DONE + 1, DONE + 2, DONE] {
+        assert!(shown.contains(&item(n).0), "{n}");
+    }
+    assert!(!shown.contains(&item(1).0));
+    assert!(shown.windows(2).all(|w| w[0] < w[1]));
+    let text = String::from_utf8_lossy(&h.run(&["inbox", "list", "demo", "--all", "--peek"]).stdout).to_string();
+    assert!(
+        text.contains(&format!("끝낸 항목 {omitted}개는 싣지 못했다(최근 것부터 실었다)")),
+        "{:?}",
+        text.lines().rev().take(3).collect::<Vec<_>>()
+    );
+    // 끝내지 않은 항목만 보면 한도 안이다
+    let v = h.ok(&["inbox", "list", "demo", "--peek"]);
+    assert_eq!((ids(&v).len(), v["omitted_open"].as_u64(), v["omitted_done"].as_u64()), (2, Some(0), Some(0)));
+    assert_eq!(h.ok(&["context", "demo", "--peek"])["inbox_open"], 2);
+    // 끝내면 가장 최근 끝낸 항목이 된다
+    let out = h.run(&["inbox", "done", "demo", "--all"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("2개 항목을 끝냈다"), "{out:?}");
+    let v = h.ok(&["inbox", "list", "demo", "--all", "--peek"]);
+    assert!(ids(&v).ends_with(&[item(DONE + 1).0, item(DONE + 2).0]));
+    assert_eq!(v["omitted_done"].as_u64().unwrap() as usize + ids(&v).len(), DONE as usize + 2);
 }
 
 /// 묶음 전이 항목(herdr-projects steps.rs `write_thread_items`, plan §8.85). 한 머신의 agent 둘(labA·labB):

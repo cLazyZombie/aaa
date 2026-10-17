@@ -1950,6 +1950,11 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
             let _ = writeln!(s, "{}", i.body);
         }
     }
+    // 응답 크기 한도로 싣지 못한 항목(오래된 것부터 실었다)
+    let omitted = c.inbox_open.saturating_sub(c.inbox.len() as u32);
+    if omitted > 0 {
+        let _ = writeln!(s, "  … 항목 {omitted}개는 더 싣지 못했다. 위 항목을 끝내면 다음 것이 보인다");
+    }
     if let Some(v) = &c.evaluator {
         let _ = writeln!(
             s,
@@ -2358,14 +2363,15 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Ticker { runs } => {
             let _ = writeln!(s, "ticker가 한 번 돌았다(이 host 실행에서 {runs}번째까지 끝남)");
         }
-        FrontResponse::Inbox { items, done: Some(n) } => {
+        FrontResponse::Inbox { items, done: Some(n), omitted_open, .. } => {
             let _ = writeln!(s, "{n}개 항목을 끝냈다(inbox/done으로 옮김)");
-            if !items.is_empty() {
-                let _ = writeln!(s, "끝내지 않은 항목 {}개가 남았다", items.len());
+            let left = items.len() as u32 + omitted_open;
+            if left > 0 {
+                let _ = writeln!(s, "끝내지 않은 항목 {left}개가 남았다");
             }
         }
-        FrontResponse::Inbox { items, done: None } => {
-            if items.is_empty() {
+        FrontResponse::Inbox { items, done: None, omitted_open, omitted_done } => {
+            if items.is_empty() && omitted_open + omitted_done == 0 {
                 s.push_str("inbox가 비었다\n");
             }
             for i in items {
@@ -2378,6 +2384,19 @@ fn render_front(r: &FrontResponse) -> String {
                 };
                 let _ = writeln!(s, "{}\t{}\t{} {}\t{mark}", i.id, i.item_kind, i.subject, i.event);
                 let _ = writeln!(s, "  {}", i.summary);
+            }
+            // 응답 크기 한도(host `INBOX_REPLY_BYTES`)로 싣지 못한 항목
+            if *omitted_open > 0 {
+                let _ = writeln!(
+                    s,
+                    "끝내지 않은 항목 {omitted_open}개는 더 싣지 못했다(오래된 것부터 실었다). 위 항목을 끝내면 다음 것이 보인다"
+                );
+            }
+            if *omitted_done > 0 {
+                let _ = writeln!(
+                    s,
+                    "끝낸 항목 {omitted_done}개는 싣지 못했다(최근 것부터 실었다). 모두는 프로젝트 폴더 inbox/done/에 있다"
+                );
             }
         }
     }

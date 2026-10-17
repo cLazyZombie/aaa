@@ -159,6 +159,10 @@ struct PaneRt {
     agent: Option<aaa_proto::AgentStatus>,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
+    /// 열린 확인창 질문에 사건을 낸 hook들과, 방금 답한 확인창이 받은 hook들(다음 hook 사건까지). Claude는 확인창
+    /// 하나에 hook 둘(`PermissionRequest`·`Notification`)을 따로 내고, 둘째가 답보다 늦게 올 수 있다(harness.rs `late_pair`).
+    prompt_hooks: Vec<String>,
+    answered_hooks: Option<Vec<String>>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -500,6 +504,8 @@ impl Host {
                     lease: None,
                     agent: None,
                     transcript: None,
+                    prompt_hooks: Vec::new(),
+                    answered_hooks: None,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -621,6 +627,8 @@ impl Host {
                 lease: None,
                 agent: None,
                 transcript: None,
+                prompt_hooks: Vec::new(),
+                answered_hooks: None,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -911,11 +919,21 @@ impl Host {
                 Ok(FrontResponse::Preferences(doc))
             }
             FrontRequest::Inbox { project, all, peek } => {
-                self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items, done: None })
+                self.inbox(&project, all, peek).map(|p| FrontResponse::Inbox {
+                    items: p.items,
+                    done: None,
+                    omitted_open: p.omitted_open,
+                    omitted_done: p.omitted_done,
+                })
             }
-            FrontRequest::InboxDone { project, ids, all } => self
-                .inbox_done(&project, &ids, all, actor)
-                .map(|(done, items)| FrontResponse::Inbox { items, done: Some(done) }),
+            FrontRequest::InboxDone { project, ids, all } => {
+                self.inbox_done(&project, &ids, all, actor).map(|(done, p)| FrontResponse::Inbox {
+                    items: p.items,
+                    done: Some(done),
+                    omitted_open: p.omitted_open,
+                    omitted_done: p.omitted_done,
+                })
+            }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
             FrontRequest::MergeEnqueue { project, thread } => {
                 self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })

@@ -194,7 +194,7 @@ impl Host {
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);
         }
-        let inbox = self.inbox(project, false, peek)?;
+        let page = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
             project: project.to_string(),
             path: dir.display().to_string(),
@@ -202,8 +202,8 @@ impl Host {
             tasks,
             threads,
             assignable: self.assignable().await,
-            inbox_open: inbox.len() as u32,
-            inbox,
+            inbox_open: page.items.len() as u32 + page.omitted_open,
+            inbox: page.items,
             evaluator: self.evaluator_rec(project).map(|r| Box::new(self.evaluator_view(&r))),
         })
     }

@@ -728,6 +728,7 @@ host 프로젝트 폴더 구성:
 - **inbox(§8.9):** host DB가 원본이고 `projects/<p>/inbox/<id>.md`(0.2.35와 같은 `+++` TOML front matter)는 투영이다.
   - ID는 `<UTC>-<종류>-<대상>-<순번>`이다. 끝내면 파일을 `inbox/done/`으로 옮기고, `inbox_done_days`(기본 30일)가 지나면 지운다.
   - `aaa inbox list <p> [--all] [--peek]`, `aaa inbox done <p> <id…>|--all`. `--peek`이 아니면 보인 항목을 「봤다」로 표시한다.
+  - (10-18) 한 응답은 크기 한도(512 KiB) 안에서만 싣는다(끝내지 않은 것은 오래된 것부터, 끝낸 것은 최근 것부터, §8.95).
 - **항목 출처**
   - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
   - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
@@ -2198,6 +2199,46 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 곳.** 참고의 「대화 / 터미널 전환」은 모든 pane의 보기를 바꾼다. aaa는 대화 기록이 있는 pane(Claude·Codex)만 대화 보기가 있어 거기서만 바뀐다. 「음성 입력(누르고 있기)」 줄은 aaa에 음성 입력이 없어 보이지 않는다.
 - **잇달아 넘기기에서 찾은 것(참고 `src/lib/terminalDispose.ts`를 옮김).** 단축키로 pane을 빨리 넘기면 page error 「Cannot read properties of undefined (reading 'dimensions')」가 났다(웹 E2E 세 판 중 한 판, 격리 반복 두 판째). stack은 xterm `Viewport.reset`의 `requestAnimationFrame(() => this.syncScrollArea())`였다. snapshot마다 쓰는 RIS(`\x1bc`)로 xterm이 다음 frame에 renderer 크기를 읽기로 하는데, 그 frame 전에 pane이 내려가 `term.dispose()`가 renderer를 치웠다. 참고는 이미 `disposeAfterPendingFrame`(걸어 둔 frame 다음, 그 뒤 task에서 치움, PaneTerminal 1982줄)으로 풀었다. 그대로 옮기고 참고 유닛 시험도 옮겼다(`web/test/terminalDispose.test.mjs`). 웹 E2E 「앱 단축키」는 frame을 잡아 두고 다음 pane이 snapshot을 읽은 것(ACK)을 본 뒤 되돌아와 frame을 놓아, 이 순서를 늘 만든다. 고치기 전 판은 세 번 모두 실패, 고친 판은 다섯 번 모두 통과(격리 사본).
 - **시험.** 웹 유닛 `web/test/roster.test.mjs`(줄 차례: 프로젝트 묶음의 thread, 그다음 pane, thread 줄이 여는 것). 웹 E2E 「앱 단축키」는 새는 키가 보이는 Linux 화면(Ctrl+Shift)에서 본다. macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않아 새도 보이지 않는다(첫 판이 「끈 키는 터미널로」에서 멈춰 알았다). Ctrl+Shift+↓는 목록에서 바로 아래 줄로, ↑는 돌아오고, 그 뒤 친 z만 pane에 간다(새면 `ESC[1;6B`가 먼저 온다), aaa에 없는 Ctrl+Shift+K·F·B·O는 앱이 가져가지 않고 Ctrl+Shift+E는 가져간다, Ctrl+Shift+E로 터미널 focus, Ctrl+Shift+PgUp은 한 화면(줄 수 − 1) 위·PgDn은 맨 아래이고 pane에 아무것도 안 가며 alternate screen에는 `ESC[5~`·`ESC[6~`, 설정에서 「다음 패널」을 끄면 Ctrl+Shift+↓가 pane에 `ESC[1;6B`로 가고, 기록한 Ctrl+Shift+L이 다음 패널이 되며, 초기화하면 저장값이 지워진다. 맥 platform 휴대폰·iPad 화면에서 ⌘⇧,가 설정을 열고, 단축키 줄이 설정 칸 안에 든다. 변형 확인: 터미널 거르기(`isAppShortcut`)를 빼면 xterm도 Shift+PageUp으로 한 화면 굴려 두 화면이 된다(「한 화면 위」 실패). 옮기는 화살표는 거르기가 없어도 새지 않는다: 창 capture 처리기가 고른 pane을 바꾸면 React가 그 처리기 뒤 microtask에서 그 터미널을 내려 xterm이 키를 받지 못한다. 목록에 없는 동작을 켜 두면 Ctrl+Shift+K를 앱이 가져가고, 한 화면을 줄 수만큼 굴리면·방향을 거꾸로 하면 각 검사가 실패한다.
+
+### 8.95 큰 응답: frame 상한을 넘으면 오류로 답하고, inbox는 크기 한도 안에서 싣는다(10-18, t-0334 pilot 결함 2)
+
+- **결함.** 0.2에서 옮긴 프로젝트는 끝낸 inbox가 수천 건이다. 그래서 `aaa inbox list --all` 응답(4000건이면 약 2.2 MB)이 front 연결 frame 상한(1 MiB)을 넘었다.
+  - host 쓰기 task는 그 frame을 쓰지 못하자 연결을 닫았고, 로그는 debug 한 줄뿐이었다.
+  - CLI에는 「상대가 연결을 닫았다」만 보였다.
+- **모든 응답(`front.rs` `res_frame`).** host는 응답 JSON을 만든 뒤 크기를 본다. 상한을 넘으면 `too_large` 오류로 바꿔 답하고 경고 로그를 남긴다.
+  - 오류 문구: 「<종류> 응답이 N KiB라 frame 상한 1024 KiB를 넘는다. 범위를 좁혀 다시 묻는다」.
+  - 쓰기 task(`aaa-common` `spawn_writer`)도 상한을 넘는 frame(사건, agent 쪽 응답 등)을 경고로 남기고 닫는다. 그 연결에 남은 요청이 무엇인지 알 수 없어 그 frame만 버리지는 않는다.
+- **inbox(`inbox.rs` `fit_inbox`).** 다음 셋은 항목 JSON 합이 512 KiB(상한의 절반)까지만 싣는다.
+  - 대상: `inbox list`, `inbox done`이 돌려주는 남은 항목, `context`의 inbox.
+  - 끝내지 않은 항목이 먼저 자리를 받고 오래된 것부터 싣는다(처리할 차례다). 끝낸 항목(`--all`)은 최근 것부터 싣는다. 한 번 넘치면 그 뒤는 싣지 않아, 실은 것은 늘 이어진 앞이다.
+  - 응답에 `omitted_open`·`omitted_done`을 담는다. CLI 문구: 「끝낸 항목 N개는 싣지 못했다(최근 것부터 실었다). 모두는 프로젝트 폴더 inbox/done/에 있다」. `context`는 `inbox_open`이 전체 수이고, 실은 수가 적으면 「… 항목 N개는 더 싣지 못했다」다.
+  - 「봤다」 표시는 실은 항목에만 한다. 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
+  - 참고와 다른 점: 참고에는 `inbox list`가 없다. coordinator는 `context`의 Inbox 절로 본다(herdr-projects `src/coordinator.rs`). 참고는 파일을 바로 읽어 상한도 없다. `--all`과 한도는 aaa 것이다.
+- **계약.** FRONT_API 1.11(`inbox` 응답의 두 수). 옛 CLI는 두 수를 모르고 실은 항목만 보인다.
+- **시험.**
+  - host 유닛: `inbox_page_fits_open_first_then_recent_done`, `oversized_response_becomes_an_error`.
+  - m13 `big_inbox_lists_within_frame`: 가짜 0.2 프로젝트(끝낸 4000건·열린 2건)를 `aaa migrate inventory`·`import`로 넣고 host를 띄운다. 그다음 `inbox list --all`·`--peek`·`context`·`inbox done --all`을 본다.
+  - mutation(되돌림)
+    - 한도를 없애면 `too_large` 오류로 실패한다. host 로그는 `응답이 frame 상한을 넘어 오류로 답한다 kind="inbox" bytes=2276113`.
+    - 응답 검사까지 없애면 「상대가 연결을 닫았다」로 실패한다(원래 결함). host 로그는 `frame을 보내지 못해 연결을 닫는다`.
+
+### 8.96 답보다 늦게 온 확인창 hook이 질문을 다시 열던 것(10-18, ci-local 경쟁)
+
+- **결함.** Claude Code는 권한 확인창 하나에 hook 둘(`PermissionRequest`, `Notification(permission_prompt)`)을 따로 낸다.
+  - hook 사건은 agent 연결로 차례대로 오지만, 답은 front 연결(`aaa question answer`·웹 카드)로 온다. 그래서 답이 두 hook 사이에 낄 수 있다.
+  - 그러면 늦은 둘째 hook이 열린 질문을 찾지 못해 새 질문을 연다. 거절한 뒤라 다음 hook이 오지 않으면 그 질문이 닫히지 않는다. thread는 사람 차례에 남고, 30초 뒤 「blocked on a prompt」 알림이 간다.
+  - m13 `hooked_thread_questions_and_messages`가 ci-local(ci8)에서 이것으로 한 번 실패했다. 사건 차례: 질문 → 답(no) → 같은 확인창의 질문 사건.
+- **고침(`harness.rs` `late_pair`).**
+  - agent가 사건에 hook 이름을 싣는다(`HarnessEvent.hook`, 빠져도 되는 칸이라 AGENT_LINK는 그대로다).
+  - host는 열린 질문이 받은 hook을 pane마다 기억한다. 답할 때 그것을 「답한 확인창의 hook」으로 옮긴다.
+  - 그 확인창이 짝 중 하나만 받았고, 다음 hook 사건이 나머지 하나면 그 확인창의 늦은 짝이다. 질문도 상태도 바꾸지 않고 버린다.
+  - 다른 hook 사건이 오거나 같은 hook이 다시 오면(새 확인창) 기억을 비운다.
+  - 옛 agent(hook 이름 없음)는 전과 같다.
+- **참고와 다른 점.** 참고에는 질문이라는 것이 없다. herdr는 agent 상태를 hook과 화면으로 정해, 늦은 사건으로 blocked가 돼도 화면이 바로잡는다. aaa 질문(원격 답, §8.15)은 hook으로만 열리고 닫혀 이 짝짓기가 필요하다.
+- **시험.**
+  - host 유닛 `late_pair_is_the_missing_half_of_an_answered_prompt`.
+  - m13 `hooked_thread_questions_and_messages`: 가짜 Claude가 `late`에서 PermissionRequest → 답 → Notification → 진행 보고 차례로 낸다. 진행 보고가 보이면 host가 늦은 Notification을 처리한 뒤다. 그때 thread는 쉼(idle)이고 열린 질문이 없다.
+  - 결함 심기: `late_pair` 검사를 끄면 이 시험이 「늦은 짝 hook이 질문을 다시 열었다(activity question)」로 늘 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

@@ -1477,6 +1477,12 @@ pub enum FrontResponse {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         done: Option<u32>,
+        /// 응답 크기 한도로 싣지 못한 끝내지 않은 항목 수(실은 것은 오래된 것부터다)
+        #[serde(default)]
+        omitted_open: u32,
+        /// 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
+        #[serde(default)]
+        omitted_done: u32,
     },
     Merge {
         queue: Vec<MergeEntry>,
