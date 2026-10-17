@@ -1,11 +1,11 @@
 // 공유 설정 동기화의 순수 규칙(src/preferences.ts). herdr-web-ui `src/lib/preferencesSync.test.ts`를 옮겼다.
 // 참고의 기기 설정(terminalFontSize 등)은 aaa에서 공유 설정 store에 없으므로 그 줄은 빠지고, aaa가 아직 없는 공유 이름
-// (showThinking·agentMarks)은 「읽지 못하는 값」 쪽 시험으로 간다. node(24, 형 지우기)로 바로 돈다: `npm test`.
+// (agentMarks)은 「읽지 못하는 값」 쪽 시험으로 간다. node(24, 형 지우기)로 바로 돈다: `npm test`.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DEFAULT_USAGE, preferencesChange, sharedSettings, takePreferences } from "../src/preferences.ts";
+import { DEFAULT_CHAT_SHARED, DEFAULT_USAGE, preferencesChange, sharedSettings, takePreferences } from "../src/preferences.ts";
 
-const DEFAULT = { theme: "dark", palette: "amber", sidebarRows: "two", ...DEFAULT_USAGE };
+const DEFAULT = { theme: "dark", palette: "amber", sidebarRows: "two", agentOrder: "workspace", ...DEFAULT_USAGE, ...DEFAULT_CHAT_SHARED };
 const light = { ...DEFAULT, theme: "light" };
 const base = (settings, pins) => ({ settings: sharedSettings(settings), pins });
 
@@ -60,7 +60,7 @@ describe("공유 설정 동기화", () => {
   });
 
   it("읽지 못하는 값(모르는 값·aaa에 없는 설정)은 두고, 제 것을 되돌려 보내지 않는다", () => {
-    const remote = { revision: 1, settings: { theme: "purple", agentMarks: "yes", showThinking: false, palette: "catppuccin" } };
+    const remote = { revision: 1, settings: { theme: "purple", agentMarks: "yes", showThinking: "yes", palette: "catppuccin" } };
     const taken = takePreferences(base(DEFAULT, null), { settings: DEFAULT, pins: [] }, remote, null);
     assert.deepEqual(taken.patch, { palette: "catppuccin" });
     assert.equal(preferencesChange(taken.base, { settings: { ...DEFAULT, palette: "catppuccin" }, pins: [] }), null);

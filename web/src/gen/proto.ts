@@ -50,7 +50,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking";
 
 export type ChatMessage = { role: ChatRole, text: string, };
 
@@ -270,7 +270,15 @@ last_seen_ms: number | null, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
-export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
+export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, 
+/**
+ * 이 머신 agent.toml profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
+ */
+profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, 
+/**
+ * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
+ */
+thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */

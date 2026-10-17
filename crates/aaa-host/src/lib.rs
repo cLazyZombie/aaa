@@ -95,6 +95,20 @@ impl AgentConn {
             Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
+                // 무슨 요청이었는지 남긴다(op과 세션만: 입력 바이트 같은 내용은 남기지 않는다)
+                let what = match &msg {
+                    LinkMsg::Req { body, .. } => serde_json::to_value(body).ok(),
+                    _ => None,
+                };
+                let field =
+                    |k: &str| what.as_ref().and_then(|v| v.get(k)?.as_str().map(str::to_string)).unwrap_or_default();
+                tracing::warn!(
+                    id,
+                    op = field("op"),
+                    session = field("session"),
+                    wait_ms = wait.as_millis() as u64,
+                    "agent 응답 시간 초과"
+                );
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         }
@@ -1116,8 +1130,23 @@ impl Host {
             FrontRequest::EvaluationDecide { project, id, proposals, adopt, note } => self
                 .evaluation_decide(&project, &id, &proposals, adopt, note, actor)
                 .map(|v| FrontResponse::Evaluation(Box::new(v))),
-            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
+            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
+                // 옛 agent는 모르는 `profile` 칸을 버리고 셸을 띄운다: 보내기 전에 거른다
+                if profile.is_some()
+                    && !self
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .machines
+                        .get(&mid)
+                        .is_some_and(|m| m.features.iter().any(|f| f == "profile.v1"))
+                {
+                    return Err(err(
+                        ErrorCode::BadRequest,
+                        "이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)",
+                    ));
+                }
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -1127,6 +1156,7 @@ impl Host {
                     rows: rows.unwrap_or(32),
                     role: None,
                     harness: None,
+                    profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1148,7 +1178,7 @@ impl Host {
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
             FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
-            FrontRequest::PaneChat { pane } => {
+            FrontRequest::PaneChat { pane, thinking } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1168,7 +1198,9 @@ impl Host {
                     return Err(err(ErrorCode::NotFound, "대화 기록은 Claude·Codex pane만 볼 수 있다"));
                 }
                 let conn = self.live_conn(&mid)?;
-                match conn.request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session }).await?
+                match conn
+                    .request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session, thinking })
+                    .await?
                 {
                     AgentResponse::Chat { messages, truncated } => {
                         Ok(FrontResponse::Chat(aaa_proto::ChatView { pane: id, harness, messages, truncated }))
@@ -1513,6 +1545,7 @@ impl Host {
             rows: info.rows,
             role: info.role,
             harness: info.harness.clone(),
+            profile: None,
         };
         let new_id = self.respawn(&id, &mid, spec, actor).await?;
         self.pane_view_of(&new_id, role)
@@ -1623,6 +1656,7 @@ impl Host {
                     rows: rows.unwrap_or(32),
                     role: None,
                     harness: None,
+                    profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1654,6 +1688,7 @@ impl Host {
                     rows: 24,
                     role: None,
                     harness: None,
+                    profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
