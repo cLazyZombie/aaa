@@ -347,6 +347,13 @@ pub fn token_hash(token: &str) -> String {
     hex::encode(sha2::Sha256::digest(token.as_bytes()))
 }
 
+/// 끝난 pane을 다시 띄울 때 줄 이름. 사람이 붙인 이름은 agent가 `name`에 덮어 알리므로 그대로 주면 그 이름이 띄울 때
+/// 이름이 되어 지워도 돌아가지 않는다. 비워 agent가 명령으로 짓게 하고, 붙인 이름은 `replace_pane`이 label로 다시 붙인다
+/// (처음 띄울 때 준 이름은 host가 모른다)
+pub(crate) fn respawn_name(info: &SessionInfo) -> String {
+    if info.label.is_some() { String::new() } else { info.name.clone() }
+}
+
 fn err(code: ErrorCode, msg: impl Into<String>) -> ErrorBody {
     ErrorBody::new(code, msg)
 }
@@ -1403,7 +1410,7 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "실행 중인 pane은 재개할 수 없다"));
         }
         let spec = SpawnSpec {
-            name: info.name.clone(),
+            name: respawn_name(&info),
             argv: info.argv.clone(),
             cwd: info.cwd.clone(),
             env: vec![],
@@ -1417,7 +1424,8 @@ impl Host {
             .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
     }
 
-    /// 끝난 pane 자리에 새 세션을 띄운다(`pane resume`·재부팅 복원): layout 자리를 바꾸고 옛 기록을 지운다
+    /// 끝난 pane 자리에 새 세션을 띄운다(`pane resume`·재부팅 복원): layout 자리를 바꾸고 옛 기록을 지운다.
+    /// spec 이름은 [`respawn_name`]으로 짓는다
     pub(crate) async fn respawn(
         self: &Arc<Self>,
         id: &str,
@@ -1431,8 +1439,21 @@ impl Host {
         Ok(new_id)
     }
 
-    /// layout에서 `old` 자리를 `new`로 바꾸고 `old` 기록을 지운다
+    /// layout에서 `old` 자리를 `new`로 바꾸고 `old` 기록을 지운다. 사람이 붙인 이름은 `new`가 잇는다(herdr 복원
+    /// `set_manual_label`). 이름의 정본은 agent 세션 기록이라 agent에 붙인다(plan §8.109)
     pub(crate) async fn replace_pane(self: &Arc<Self>, old: &str, new: &str, mid: &str, actor: &str) {
+        let label = self.inner.lock().unwrap().panes.get(old).and_then(|p| p.info.label.clone());
+        if let Some(label) = label.filter(|_| self.machine_feature(mid, "rename.v1")) {
+            let renamed = match self.live_conn(mid) {
+                Ok(conn) => conn.request(AgentRequest::Rename { session: new.to_string(), label: Some(label) }).await,
+                Err(e) => Err(e),
+            };
+            match renamed {
+                Ok(AgentResponse::Session(info)) => self.on_session(mid, info, false),
+                Ok(other) => tracing::warn!(pane = %new, "이름 잇기: 예상하지 못한 응답 {other:?}"),
+                Err(e) => tracing::warn!(pane = %new, "이름 잇기 실패: {}", e.message),
+            }
+        }
         {
             let mut ws = self.workspaces.lock().unwrap();
             let changed: Vec<Workspace> =

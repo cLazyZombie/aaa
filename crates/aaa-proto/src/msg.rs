@@ -1676,7 +1676,8 @@ pub enum TermServerMsg {
         reason: Option<String>,
     },
     State {
-        pane: PaneView,
+        // box: PaneView가 커서 다른 variant까지 크게 만든다(clippy large_enum_variant). wire 모양은 같다
+        pane: Box<PaneView>,
     },
     /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
     Front {

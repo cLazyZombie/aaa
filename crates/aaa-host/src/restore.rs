@@ -267,7 +267,7 @@ impl Host {
             (None, false) => return false,
         };
         let spec = SpawnSpec {
-            name: info.name.clone(),
+            name: crate::respawn_name(&info),
             argv,
             cwd: info.cwd.clone(),
             env: vec![],

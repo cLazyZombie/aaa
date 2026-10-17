@@ -803,6 +803,8 @@ fn reboot_resumes_threads() {
     let fid = f["id"].as_str().unwrap().to_string();
     let fpane = f["pane"].as_str().unwrap().to_string();
     ev.kind("report_ready", &fid, T);
+    // 사람이 붙인 pane 이름은 이어 띄운 thread pane도 잇는다
+    w.h.ok(&["pane", "rename", &pane, "리뷰어"]);
 
     w.lab.kill("agentA");
     assert_eq!(w.lab.kill_session_hosts(), 2);
@@ -817,6 +819,7 @@ fn reboot_resumes_threads() {
     assert!(e["detail"].as_str().unwrap().contains("대화를 이어 띄웠다"), "{e}");
     let new = w.show(&id)["pane"].as_str().unwrap().to_string();
     assert_ne!(new, pane);
+    assert_eq!(w.h.pane(&new)["label"], "리뷰어");
     w.h.wait_output(&new, &format!("--resume {key}"), T);
     // 이어 띄운 대화에 메시지가 간다(brief는 다시 보내지 않는다)
     w.message(&id, "after reboot", false);

@@ -243,7 +243,7 @@ fn has_session(w: &HostWatch, id: &str) -> bool {
 /// 돌던 Claude는 `claude --resume <id>`를 쳐서 잇는다. 같은 대화를 가리키는 두 번째 셸은 빈 셸로 되살린다(herdr
 /// `dedupe_key`). Claude를 바로 띄운 pane은 그 명령으로 띄운다. 다른 프로그램 pane은 다시 실행하지 않아 중단으로 남고
 /// `pane resume`이 같은 spec으로 그 자리에 띄운다. 저장한 폴더가 없어진 셸은 중단으로 남고 까닭을 보인다(herdr
-/// `restore_error`). 기다림은 host 사건(layout·pane 상태)과 출력뿐이다.
+/// `restore_error`). 사람이 붙인 pane 이름은 다시 띄운 pane이 잇는다. 기다림은 host 사건(layout·pane 상태)과 출력뿐이다.
 #[test]
 fn reboot_restores_shells_and_resumes_agents() {
     let mut lab = Lab::new();
@@ -264,6 +264,9 @@ fn reboot_restores_shells_and_resumes_agents() {
     }
     hw.wait("harness 세션 ID", |w| [&a, &b, &c].iter().all(|p| has_session(w, p)).then_some(()));
     h.wait_output(&d, "job-ran-9", T);
+    // 사람이 붙인 이름은 다시 띄운 pane이 잇는다(herdr 복원 `set_manual_label`)
+    h.ok(&["pane", "rename", &a, "내 셸"]);
+    h.ok(&["pane", "rename", &d, "작업"]);
     std::fs::remove_dir(&gone).unwrap();
     reboot(&mut lab, &h, &env, 5);
 
@@ -279,6 +282,13 @@ fn reboot_restores_shells_and_resumes_agents() {
     let pa = hw.pane(&l[0]).unwrap().clone();
     assert_eq!((pa.argv.as_slice(), pa.cwd.as_deref()), (&["/bin/sh".to_string()][..], Some(lab::path_str(&wa))));
     h.wait_output(&l[0], &format!("fake-claude --resume {SID_A}"), T);
+    // 붙인 이름을 이었다(layout을 바꾸기 전에 붙인다). 지우면 띄운 명령 이름이다(처음 띄울 때 준 이름 `a`는 host가
+    // 모른다: agent가 `name`을 붙인 이름으로 덮어 알린다). 이름이 없던 pane은 띄울 때 이름 그대로
+    assert_eq!((pa.name.as_str(), pa.label.as_deref()), ("내 셸", Some("내 셸")));
+    let p = h.ok(&["pane", "rename", &l[0], "--clear"]);
+    assert_eq!(p["name"], "sh");
+    assert!(p.get("label").is_none(), "{p}");
+    assert_eq!(hw.pane(&l[1]).map(|p| (p.name.as_str(), p.label.is_none())), Some(("b", true)));
     // Claude를 바로 띄운 pane은 원래 argv(실행 파일 경로)에서 대화 인자만 바꿔 띄웠다
     assert_eq!(hw.pane(&l[2]).unwrap().argv, [claude.as_str(), "--resume", SID_C]);
     h.wait_output(&l[2], &format!("fake-claude --resume {SID_C}"), T);
@@ -297,6 +307,7 @@ fn reboot_restores_shells_and_resumes_agents() {
     );
     // 프로그램 pane은 사람이 다시 띄운다: 같은 spec, 같은 layout 자리
     let p = h.ok(&["pane", "resume", &d]);
+    assert_eq!((p["name"].as_str(), p["label"].as_str()), (Some("작업"), Some("작업")));
     let nd = p["id"].as_str().unwrap().to_string();
     h.wait_output(&nd, "job-ran-9", T);
     hw.wait("재개 자리", |w| (w.leaves().get(3) == Some(&nd)).then_some(()));

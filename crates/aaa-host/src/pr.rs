@@ -319,7 +319,7 @@ impl Host {
         self.tick_wake.notify_one();
     }
 
-    fn machine_feature(&self, mid: &str, feature: &str) -> bool {
+    pub(crate) fn machine_feature(&self, mid: &str, feature: &str) -> bool {
         self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == feature))
     }
 
