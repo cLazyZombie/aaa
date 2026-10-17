@@ -137,13 +137,14 @@ done
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 
 /// 입력창 「❯ 」에 친 글자를 보이고 첫 Enter는 무시하는 harness(hook 없음): 받지 못한 brief 줄이 입력창에 남는다.
-/// 다음 Enter부터 받는다(`got: …`).
+/// 다음 Enter부터 받는다(`got: …`). 받은 조각은 한 번에 되돌려 찍는다: 한 바이트씩 찍으면 느린 머신(CI)에서
+/// 300ms 뒤에도 찍는 중이라 Enter 뒤 화면이 바뀐 것을 받았다고 보았다.
 const STICKY_AGENT: &str = r#"#!/bin/sh
 stty -icanon -echo min 1 time 0
 printf '\342\235\257 '
 buf=''; n=0
 while :; do
-  c=$(dd bs=1 count=1 2>/dev/null)
+  c=$(dd bs=4096 count=1 2>/dev/null)
   if [ -z "$c" ]; then
     n=$((n+1))
     [ "$n" -lt 2 ] && continue

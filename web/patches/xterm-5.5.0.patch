@@ -128,7 +128,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
  import { IRenderService } from 'browser/services/Services';
  import { IBufferService, ICoreService, IOptionsService } from 'common/services/Services';
  import { C0 } from 'common/data/EscapeSequences';
-+import { isIpad, isMac, isSafari } from 'common/Platform';
++import { isIpad, isIphone, isMac, isSafari } from 'common/Platform';
 +
 +/** Hangul jamo and syllables: a key or an edit that a Korean input method composes. */
 +const HANGUL_KEY = /^[ᄀ-ᇿ㄰-㆏가-힯]$/;
@@ -186,7 +186,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
 +  /** Safari #432: beforeinput supplies the pre-edit range; keydown 229 arrives AFTER input. */
 +  public beforeinput(ev: InputEvent, keyDownSeen = false): void {
 +    if (!this._replacementComposition) this._editAwaitingKey = false;
-+    if (!(isMac || isIpad) || !isSafari || ev.isComposing || this._optionsService.rawOptions.screenReaderMode
++    if (!(isMac || isIpad || isIphone) || !isSafari || ev.isComposing || this._optionsService.rawOptions.screenReaderMode
 +      || (this._isComposing && !this._replacementComposition)) return;
 +    if (this._replacementComposition && (ev.inputType === 'insertReplacementText'
 +      || ev.inputType === 'deleteContentBackward' || ev.inputType === 'deleteContentForward')) return;
@@ -213,7 +213,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
 +   * its insertion as a replacement preedit, which the next other key, paste or blur commits.
 +   */
 +  public passHangulKey(ev: KeyboardEvent): boolean {
-+    if (!isSafari || !(isMac || isIpad) || ev.keyCode === 229 || ev.isComposing || ev.ctrlKey || ev.altKey || ev.metaKey
++    if (!isSafari || !(isMac || isIpad || isIphone) || ev.keyCode === 229 || ev.isComposing || ev.ctrlKey || ev.altKey || ev.metaKey
 +      || this._optionsService.rawOptions.screenReaderMode || (this._isComposing && !this._replacementComposition)
 +      || !HANGUL_KEY.test(ev.key)) return false;
 +    this._editAwaitingKey = false;
