@@ -317,21 +317,32 @@ export function useShortcutOverrides(): ShortcutOverrides {
 }
 
 /**
- * 알림(herdr-web-ui settings.ts `alertsOn`·`alertInApp`·`alertSound`: 기기마다).
+ * 알림(herdr-web-ui settings.ts `alertsOn`·`alertInput`·`alertDone`·`alertInApp`·`alertSound`: 기기마다).
  * - 켜짐(기본 켬): 이 기기의 알림 전체. 끄면 push 구독도 지운다.
+ * - 입력 필요(기본 켬)·작업 완료(기본 켬): 무엇을 알릴지(차이 목록 N3). 앱 안 알림·소리·탭 알림에 쓰고, push 구독과 함께 host에
+ *   보내 이 기기로 가는 push에도 쓴다. 참고의 작업 완료는 끄기·긴 작업·매번이지만 aaa는 thread 새 보고라 켜기·끄기만(plan §8.108).
  * - 앱 안(기본 켬): 앱을 보는 동안 위에서 내려오는 알림(Droplet).
  * - 소리(기본 끔): 앱 탭이 열려 있으면 알림마다 소리.
  * - 무음 모드에서도(기본 끔, aaa): iPhone·iPad 무음 스위치를 켜 두어도 소리. 그 소리 동안 다른 앱 소리가 멈춘다(plan §8.83).
  * 기본값이면 지운다. 값은 "1"·"0".
  */
-export type AlertSetting = "alertsOn" | "alertInApp" | "alertSound" | "alertSilent";
+export type AlertSetting = "alertsOn" | "alertInput" | "alertDone" | "alertInApp" | "alertSound" | "alertSilent";
 const ALERT_KEYS: Record<AlertSetting, string> = {
   alertsOn: "aaa:alerts-on",
+  alertInput: "aaa:alert-input",
+  alertDone: "aaa:alert-done",
   alertInApp: "aaa:alert-in-app",
   alertSound: "aaa:alert-sound",
   alertSilent: "aaa:alert-silent",
 };
-const ALERT_DEFAULTS: Record<AlertSetting, boolean> = { alertsOn: true, alertInApp: true, alertSound: false, alertSilent: false };
+const ALERT_DEFAULTS: Record<AlertSetting, boolean> = {
+  alertsOn: true,
+  alertInput: true,
+  alertDone: true,
+  alertInApp: true,
+  alertSound: false,
+  alertSilent: false,
+};
 
 function readAlert(name: AlertSetting): boolean {
   try {
@@ -344,6 +355,8 @@ function readAlert(name: AlertSetting): boolean {
 
 const alerts: Record<AlertSetting, boolean> = {
   alertsOn: readAlert("alertsOn"),
+  alertInput: readAlert("alertInput"),
+  alertDone: readAlert("alertDone"),
   alertInApp: readAlert("alertInApp"),
   alertSound: readAlert("alertSound"),
   alertSilent: readAlert("alertSilent"),
@@ -362,6 +375,11 @@ export function setAlertSetting(name: AlertSetting, on: boolean) {
 
 export function alertSetting(name: AlertSetting): boolean {
   return alerts[name];
+}
+
+/** 이 기기가 받을 알림 종류(참고 settings.ts `alertPrefs`): push 구독과 함께 host에 보낸다 */
+export function alertPrefs(): { input: boolean; done: boolean } {
+  return { input: alerts.alertInput, done: alerts.alertDone };
 }
 
 export function useAlertSetting(name: AlertSetting): boolean {

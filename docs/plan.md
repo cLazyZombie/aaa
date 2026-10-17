@@ -2436,6 +2436,22 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - session host에 묻기가 실패하면(agent 끊김, 15초 `REQUEST_TIMEOUT`) host는 `found: false`로 답한다. 웹은 그 연결에서 더 묻지 않는다(§8.67 「찾지 못하면 더 받지 않는다」와 같다). 다시 붙거나 새 snapshot을 받으면 다시 묻는다.
   - 이미 떠 있는 pane은 옛 session host라 `history_more`를 보내지 않는다. 그래서 고침은 agent를 다시 띄운 뒤 새로 연 pane부터 보인다.
 
+### 8.108 기기별 알림 종류(차이 목록 N3)와 프로젝트 mute(N10)(10-18, 결정 D4 「참고대로, 조용한 시간은 만들지 않음」)
+- **N3 기기별 알림 종류.** 참고 herdr-web-ui처럼 기기마다 「입력 필요」·「작업 완료」를 고른다(설정 → 알림, 기본 둘 다 켬, 기기 저장소 `aaa:alert-input`·`aaa:alert-done`).
+  - 앱 안 알림·소리·탭 알림은 그 기기에서 바로 거른다(참고 notify-policy.ts `alertsAllow`).
+  - push는 구독과 함께 host에 보낸다(참고 `registerPushSubscription(subscription, alerts)`). 고른 것을 바꾸면 다시 등록한다. `alerts` 없이 온 다시 등록(불러올 때마다)은 전에 고른 것을 둔다.
+  - host는 `push_subs`에 `alert_input`·`alert_done` 열을 두고(열만 더한다, 옛 aaa도 연다), 보낼 때 기기마다 거른다(`push::for_device`).
+  - 아무것도 남지 않은 기기에는 보내지 않고 흐름 사건 `push_unwanted`(「기기 N개가 고른 알림 종류가 아니다 · 항목 K개」)를 남긴다.
+  - **가르는 기준.** thread 항목 중 「new report」는 작업 완료이고, 나머지 사람 차례(확인창·기다림·pane 닫힘·agent 사라짐·시작 실패)는 입력 필요다. PR·머신·routine·세션처럼 참고에 없는 aaa 항목은 host `notify.kinds`대로 모든 기기에 간다.
+  - **참고와 다른 것(아침 확인).** 참고의 「작업 완료」는 끄기·긴 작업(1분 이상)·매번이다. aaa의 작업 완료는 pane 차례가 아니라 thread가 낸 새 보고(일 한 단위)다. 그래서 「빨리 끝난 답」을 거를 차례 길이가 없어 켜기·끄기만 둔다. pane 차례마다 알리는 참고의 길(pane 상태 push)을 따로 넣을지는 사용자 결정이다(넣으면 thread 알림과 겹친다).
+  - 시험: 웹 E2E 12 「기기별 알림 종류」(작업 완료를 끄면 다시 등록 → 보는 동안 앱 안 알림 없음 → 가려진 동안 push 없음과 `push_unwanted` → 다시 켜면 push). host 단위 시험 `device_alert_kinds`, 구독 갱신 시험 `another_device_takes_a_push_endpoint_only_with_its_keys` 끝부분.
+  - 결함 심기 둘: host가 기기마다 거르지 않으면 「고르지 않은 종류 기록이 되지 않았다」, 웹이 거르지 않으면 「앱 안 알림이 내려왔다」로 실패한다.
+- **N10 프로젝트 mute.** herdr-projects처럼 `project.toml` `mute = true`면 그 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류만 남기고 끈다.
+  - 남는 것: `outage`(`gh` 실패 등)·`config-error`·`health`(머신 이상). herdr-projects가 error로 보내는 「gh keeps failing」·「file is not usable」과 차이 목록의 「오류·머신 이상은 보냄」을 따랐다.
+  - inbox 항목과 앱 안 알림은 그대로다(참고 mute도 Herdr 알림만 끈다).
+  - 시간대 조용한 시간은 만들지 않는다(결정 D4, 참고에도 없다).
+  - 시험: `mute_keeps_errors_only`, `keys_fall_back_one_by_one`의 `mute`.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

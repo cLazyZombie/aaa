@@ -2261,6 +2261,7 @@ mod pairing_tests {
             p256dh: "k".into(),
             auth: "a".into(),
             device: id.clone(),
+            alerts: None,
         };
         h.db.push_put(&sub).unwrap();
         let mut heard = h.device_revoked.subscribe();
@@ -2290,6 +2291,7 @@ mod pairing_tests {
             p256dh: "k".into(),
             auth: auth.into(),
             device: device.into(),
+            alerts: None,
         };
         assert!(h.db.push_put(&sub(&ids[0], "a")).unwrap());
         // 같은 기기는 키를 바꿀 수 있다
@@ -2300,6 +2302,14 @@ mod pairing_tests {
         assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
         assert!(h.db.push_list(Some(&ids[0])).unwrap().is_empty());
         assert_eq!(h.db.push_list(Some(&ids[1])).unwrap().len(), 1);
+        // 기기가 고른 알림 종류(N3): 주면 바꾸고, 없이 다시 넣으면(불러올 때마다 다시 구독) 둔다
+        let alerts = |h: &Host| h.db.push_list(Some(&ids[1])).unwrap()[0].alerts.unwrap();
+        assert_eq!(alerts(&h), db::Alerts::default());
+        let quiet = db::Alerts { input: false, done: true };
+        assert!(h.db.push_put(&db::PushSub { alerts: Some(quiet), ..sub(&ids[1], "a2") }).unwrap());
+        assert_eq!(alerts(&h), quiet);
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert_eq!(alerts(&h), quiet);
     }
 
     /// 보안 감사 t-0340 B5: 제어 문자·공백이 든 이름으로는 등록을 기다리지 못한다(`aaa machine pending` 화면·push 본문 위조)

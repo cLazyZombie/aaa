@@ -32,6 +32,24 @@ pub struct PushSub {
     /// 브라우저 인증 비밀(base64url, 16바이트)
     pub auth: String,
     pub device: String,
+    /// 이 기기가 받을 알림(차이 목록 N3). 넣을 때 None이면 전에 고른 것을 둔다(처음이면 둘 다 켬). 읽으면 늘 Some
+    pub alerts: Option<Alerts>,
+}
+
+/// 기기마다 고르는 알림(herdr-web-ui `AlertPrefs`, 차이 목록 N3). 참고는 「작업 완료」가 끄기·긴 작업·매번이지만 aaa의
+/// 「작업 완료」는 thread 새 보고(일 한 단위)라 길이로 거르지 않고 켜기·끄기만 둔다(plan §8.108).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Alerts {
+    /// 사람 차례(질문·확인창·thread가 기다림·시작 실패)
+    pub input: bool,
+    /// 새 보고(검토 대기)
+    pub done: bool,
+}
+
+impl Default for Alerts {
+    fn default() -> Self {
+        Alerts { input: true, done: true }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +109,15 @@ impl Db {
         let has_label = conn.prepare("SELECT 1 FROM pragma_table_info('devices') WHERE name='label'")?.exists([])?;
         if !has_label {
             conn.execute("ALTER TABLE devices ADD COLUMN label TEXT", [])?;
+        }
+        // 기기별 알림 종류(차이 목록 N3). 위와 같이 열만 더한다
+        let has_alerts =
+            conn.prepare("SELECT 1 FROM pragma_table_info('push_subs') WHERE name='alert_input'")?.exists([])?;
+        if !has_alerts {
+            conn.execute_batch(
+                "ALTER TABLE push_subs ADD COLUMN alert_input INTEGER NOT NULL DEFAULT 1;
+                 ALTER TABLE push_subs ADD COLUMN alert_done INTEGER NOT NULL DEFAULT 1;",
+            )?;
         }
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
@@ -289,12 +316,17 @@ impl Db {
     /// 구독을 넣는다. 같은 장치의 같은 endpoint면 키를 바꾼다(브라우저가 구독을 새로 만든 경우).
     /// 다른 장치의 endpoint는 키까지 같을 때만 옮긴다: 같은 브라우저가 다시 pairing한 경우다. endpoint만 아는 요청이
     /// 남의 구독을 가져가지 못한다(보안 감사 t-0340 B10. 참고 herdr-web-ui server/push.ts는 늘 옮긴다). 옮기지 않았으면 false.
+    /// 알림 종류(`alerts`)를 주면 바꾸고, None이면 전에 고른 것을 둔다(참고 `subscribe`: 「alerts absent keeps what the device chose before」).
     pub fn push_put(&self, s: &PushSub) -> Result<bool> {
+        let given = s.alerts.is_some();
+        let a = s.alerts.unwrap_or_default();
         let n = self.conn.lock().unwrap().execute(
-            "INSERT INTO push_subs(endpoint,p256dh,auth,device,created_at) VALUES(?1,?2,?3,?4,?5)
-             ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device=excluded.device
+            "INSERT INTO push_subs(endpoint,p256dh,auth,device,created_at,alert_input,alert_done) VALUES(?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device=excluded.device,
+               alert_input=CASE WHEN ?8 THEN excluded.alert_input ELSE push_subs.alert_input END,
+               alert_done=CASE WHEN ?8 THEN excluded.alert_done ELSE push_subs.alert_done END
              WHERE push_subs.device=excluded.device OR (push_subs.p256dh=excluded.p256dh AND push_subs.auth=excluded.auth)",
-            params![s.endpoint, s.p256dh, s.auth, s.device, aaa_common::util::now_ms() as i64],
+            params![s.endpoint, s.p256dh, s.auth, s.device, aaa_common::util::now_ms() as i64, a.input, a.done, given],
         )?;
         Ok(n > 0)
     }
@@ -313,12 +345,18 @@ impl Db {
     pub fn push_list(&self, device: Option<&str>) -> Result<Vec<PushSub>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare(
-            "SELECT s.endpoint,s.p256dh,s.auth,s.device FROM push_subs s JOIN devices d ON d.id=s.device
+            "SELECT s.endpoint,s.p256dh,s.auth,s.device,s.alert_input,s.alert_done FROM push_subs s JOIN devices d ON d.id=s.device
              WHERE d.revoked=0 AND (?1 IS NULL OR s.device=?1) ORDER BY s.created_at",
         )?;
         let rows = st
             .query_map([device], |r| {
-                Ok(PushSub { endpoint: r.get(0)?, p256dh: r.get(1)?, auth: r.get(2)?, device: r.get(3)? })
+                Ok(PushSub {
+                    endpoint: r.get(0)?,
+                    p256dh: r.get(1)?,
+                    auth: r.get(2)?,
+                    device: r.get(3)?,
+                    alerts: Some(Alerts { input: r.get(4)?, done: r.get(5)? }),
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)

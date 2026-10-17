@@ -91,11 +91,24 @@ export async function savePreferences(change: PreferencesChange): Promise<Shared
 
 /** Web Push(§8.26) */
 /** `user`는 쓰는 기기(앞 7자), `you`는 이 기기가 쓰는 기기인지(plan §8.105) */
-export type PushInfo = { enabled: boolean; key: string | null; subscribed: number; in_use: number; user: string | null; you: boolean; kinds: string[] };
+/** `alerts`는 이 기기 구독이 고른 알림 종류(차이 목록 N3, 구독이 없으면 null) */
+export type AlertPrefs = { input: boolean; done: boolean };
+export type PushInfo = {
+  enabled: boolean;
+  key: string | null;
+  subscribed: number;
+  in_use: number;
+  user: string | null;
+  you: boolean;
+  kinds: string[];
+  alerts: AlertPrefs | null;
+};
 export async function pushInfo(): Promise<PushInfo> {
   return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
 }
-export const pushSubscribe = (sub: PushSubscriptionJSON) => post<{ subscribed: boolean }>("/api/v1/push/subscribe", sub);
+/** `alerts`: 이 기기가 받을 알림. host가 이 기기로 보내는 push에 적용한다(참고 registerPushSubscription). 없으면 전에 고른 것을 둔다 */
+export const pushSubscribe = (sub: PushSubscriptionJSON, alerts?: AlertPrefs) =>
+  post<{ subscribed: boolean }>("/api/v1/push/subscribe", alerts === undefined ? sub : { ...sub, alerts });
 export const pushUnsubscribe = (endpoint: string) => post<{ removed: boolean }>("/api/v1/push/unsubscribe", { endpoint });
 /** 시험 알림: `endpoint`를 주면 그 구독 하나에만. 없으면 `subscription_not_found`, push 서비스가 버렸으면 `subscription_gone` 오류다 */
 export const pushTest = (endpoint?: string) =>

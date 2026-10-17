@@ -319,15 +319,21 @@ impl Host {
                 return;
             }
         };
-        // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
-        let title = items
-            .first()
-            .filter(|f| items.iter().all(|i| i.subject == f.subject))
-            .and_then(|f| self.load(project, &f.subject).ok())
-            .map(|r| r.title);
-        let body = payload(project, items, title.as_deref()).to_string();
-        let (mut ok, mut gone, mut failed) = (0, 0, Vec::new());
+        let (mut ok, mut gone, mut failed, mut chose_not) = (0, 0, Vec::new(), 0);
         for s in &subs {
+            // 이 기기가 고른 종류만(차이 목록 N3, 참고 notify-policy.ts `alertsAllow`)
+            let mine = for_device(s.alerts.unwrap_or_default(), items);
+            if mine.is_empty() {
+                chose_not += 1;
+                continue;
+            }
+            // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
+            let title = mine
+                .first()
+                .filter(|f| mine.iter().all(|i| i.subject == f.subject))
+                .and_then(|f| self.load(project, &f.subject).ok())
+                .map(|r| r.title);
+            let body = payload(project, &mine, title.as_deref()).to_string();
             match self.push_one(s, body.as_bytes()).await {
                 Sent::Ok => ok += 1,
                 Sent::Gone => gone += 1,
@@ -336,6 +342,14 @@ impl Host {
         }
         if ok > 0 {
             self.flow_project(project, "push_sent", None, format!("기기 {ok}개 · 항목 {}개", items.len()));
+        }
+        if chose_not > 0 {
+            self.flow_project(
+                project,
+                "push_unwanted",
+                None,
+                format!("기기 {chose_not}개가 고른 알림 종류가 아니다 · 항목 {}개", items.len()),
+            );
         }
         if gone > 0 {
             self.flow_project(project, "push_gone", None, format!("버려진 구독 {gone}개를 지웠다"));
@@ -347,9 +361,44 @@ impl Host {
     }
 }
 
+/// 기기가 고른 알림 종류(N3)에 드는 항목. thread 항목만 가른다: 새 보고는 「작업 완료」, 나머지(질문·확인창·기다림·시작 실패)는
+/// 「입력 필요」. PR·머신·routine 같은 다른 종류는 host 설정(`notify.kinds`)대로 모든 기기에 간다(참고에 없는 aaa 항목)
+pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
+    items
+        .iter()
+        .filter(|i| i.item_kind != "thread-state" || if i.event == "new report" { a.done } else { a.input })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_alert_kinds() {
+        let it = |kind: &str, event: &str| InboxItem {
+            id: event.into(),
+            project: "demo".into(),
+            item_kind: kind.into(),
+            subject: "t-0001".into(),
+            event: event.into(),
+            summary: String::new(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let items =
+            [it("thread-state", "new report"), it("thread-state", "blocked on a prompt"), it("pr", "PR merged")];
+        let ids = |a| for_device(a, &items).into_iter().map(|i| i.id).collect::<Vec<_>>();
+        use crate::db::Alerts;
+        assert_eq!(ids(Alerts::default()).len(), 3);
+        assert_eq!(ids(Alerts { input: false, done: true }), ["new report", "PR merged"]);
+        assert_eq!(ids(Alerts { input: true, done: false }), ["blocked on a prompt", "PR merged"]);
+        assert_eq!(ids(Alerts { input: false, done: false }), ["PR merged"]);
+    }
 
     fn hosts() -> Vec<String> {
         aaa_config::NotifySection::default().push_hosts

@@ -272,12 +272,16 @@ struct PushInfo {
     you: bool,
     /// 알리는 inbox 종류(`notify.kinds`). 웹의 앱 안 알림·소리·탭 알림도 이 종류에만 띄운다(push와 같은 사건)
     kinds: Vec<String>,
+    /// 이 장치 구독이 고른 알림 종류(차이 목록 N3, 구독이 없으면 없음)
+    alerts: Option<crate::db::Alerts>,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
 async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
-    let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
+    let mine = host.db.push_list(Some(&id)).unwrap_or_default();
+    let subscribed = mine.len();
+    let alerts = mine.first().and_then(|s| s.alerts);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
     let (user, you) = {
@@ -285,7 +289,8 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
         (v.user(), v.is_user(&id))
     };
     let kinds = host.cfg.notify.item_kinds();
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds })).into_response()
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts }))
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -299,6 +304,9 @@ struct PushKeys {
 struct PushSubBody {
     endpoint: String,
     keys: PushKeys,
+    /// 이 기기가 받을 알림(차이 목록 N3). 없으면 전에 고른 것을 둔다
+    #[serde(default)]
+    alerts: Option<crate::db::Alerts>,
 }
 
 async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushSubBody>) -> Response {
@@ -311,7 +319,13 @@ async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(
     {
         return bad_request(e);
     }
-    let sub = crate::db::PushSub { endpoint: b.endpoint, p256dh: b.keys.p256dh, auth: b.keys.auth, device: id.clone() };
+    let sub = crate::db::PushSub {
+        endpoint: b.endpoint,
+        p256dh: b.keys.p256dh,
+        auth: b.keys.auth,
+        device: id.clone(),
+        alerts: b.alerts,
+    };
     match host.db.push_put(&sub) {
         Ok(true) => {}
         Ok(false) => {

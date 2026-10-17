@@ -1033,6 +1033,108 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "who");
   });
 
+  await step("기기별 알림 종류(herdr-web-ui AlertsPage 「입력 필요」·「작업 완료」, notify-policy alertsAllow, 차이 목록 N3, plan §8.108): 설정에서 「작업 완료」를 끄면 다시 등록해 host가 이 기기로 새 보고 push를 보내지 않고 앱 안 알림도 없으며, 다시 켜면 보낸다", async () => {
+    const dev = pushDevice("push/dev-kinds");
+    const devPath = new URL(dev.json.endpoint).pathname;
+    const toDev = (from) => pushes.slice(from).filter((x) => x.path === devPath);
+    // 알림을 켜 둔 기기(권한·구독 있음). 브라우저 push 서비스 대신 가짜 push 서비스 주소를 준다(위 「보는 동안」과 같다)
+    const init = `(${(a) => {
+      const log = [];
+      Object.defineProperty(window, "__pushLog", { value: log });
+      class FakeNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        addEventListener() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, value: FakeNotification });
+      ServiceWorkerRegistration.prototype.showNotification = async () => {};
+      const key = Uint8Array.from(atob(a.key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)).buffer;
+      const sub = { endpoint: a.sub.endpoint, options: { applicationServerKey: key }, toJSON: () => a.sub, unsubscribe: async () => true };
+      PushManager.prototype.getSubscription = async () => sub;
+      PushManager.prototype.subscribe = async () => sub;
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          this.addEventListener("message", (m) => {
+            try {
+              const d = JSON.parse(m.data);
+              if (d.ev === "thread") log.push(`thr ${String(d.report_hash).slice(0, 6)}`);
+            } catch {}
+          });
+        }
+      };
+    }})(${JSON.stringify({ key: pushKey, sub: dev.json })})`;
+    // 본 화면은 쓰지 않는 것으로 둔다: 이 휴대폰만 본다
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    const start = pushes.length;
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init });
+    const pp = phone.page;
+    const mine = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok);
+    await until("열 때 다시 등록(기본 둘 다 켬)", async () => {
+      const i = await mine();
+      return i.subscribed === 1 && i.alerts?.input === true && i.alerts?.done === true;
+    });
+    const doneSwitch = async (on) => {
+      const dialog = await openSettings(pp, "알림");
+      const sw = dialog.getByRole("switch", { name: "작업 완료" });
+      if ((await sw.getAttribute("aria-checked")) !== String(!on)) throw new Error(`작업 완료 스위치 ${await sw.getAttribute("aria-checked")}`);
+      await sw.click();
+      await pp.keyboard.press("Escape");
+      // 바꾸면 다시 등록해 host가 이 기기의 고른 것을 안다
+      await until(`host가 작업 완료 ${on}을 앎`, async () => (await mine()).alerts?.done === on);
+    };
+    const hide = (hidden) =>
+      pp.evaluate((hidden) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+        if (hidden) document.hasFocus = () => false;
+        else delete document.hasFocus;
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event(hidden ? "blur" : "focus"));
+      }, hidden);
+    const ts = [];
+    const work = async (title) => {
+      fs.writeFileSync(`${root}/task-kinds-${ts.length}.md`, title);
+      const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-kinds-${ts.length}.md`);
+      ts.push(t);
+      const hash = await until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
+      await until(`${title} 보고 사건 받음`, () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
+      return t;
+    };
+    await doneSwitch(false);
+    // (1) 보는 동안: 이 기기가 고르지 않은 종류라 앱 안 알림이 없다(이 화면이 그 사건을 받아 처리한 뒤)
+    await work("완료 알림 끈 동안 봄");
+    await pp.evaluate(() => new Promise((r) => setTimeout(r)));
+    if ((await pp.locator(".droplet").count()) !== 0) throw new Error("작업 완료를 껐는데 앱 안 알림이 내려왔다");
+    // (2) 가려진 동안: host는 이 기기에 보내지 않고 그 까닭을 남긴다
+    await hide(true);
+    await until("가려진 휴대폰", async () => (await pushInUse()) === 0);
+    let k = aaa("events", "demo").events.filter((e) => e.kind === "push_unwanted").length;
+    await work("완료 알림 끈 동안 닫음");
+    const unwanted = await until("고르지 않은 종류 기록", () => aaa("events", "demo").events.filter((e) => e.kind === "push_unwanted")[k]);
+    if (!/^기기 1개가 고른 알림 종류가 아니다 · 항목 1개$/.test(unwanted.detail)) throw new Error(`push_unwanted ${unwanted.detail}`);
+    if (toDev(start).length !== 0) throw new Error(`작업 완료를 껐는데 push ${toDev(start).length}건`);
+    // (3) 다시 켜면 보낸다
+    await hide(false);
+    await doneSwitch(true);
+    await hide(true);
+    await until("다시 가려진 휴대폰", async () => (await pushInUse()) === 0);
+    const t = await work("완료 알림 다시 켬");
+    const { msg } = await nextPush(dev, start, "다시 켠 뒤 push");
+    if (msg.tag !== `aaa-demo/${t.id}`) throw new Error(JSON.stringify(msg));
+    if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
+    if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
+    await pp.context().close();
+    for (const x of ts) aaa("thread", "resolve", "demo", x.id);
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
+  });
+
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
     const v = aaa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
     const id = v.thread.id;
