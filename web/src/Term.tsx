@@ -920,7 +920,8 @@ export function TermView({
     document.addEventListener("visibilitychange", onVisibility);
     const connect = () => {
       setLink("connecting");
-      const ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws`));
+      // flow=ack: 이 화면은 출력 ACK를 보낸다(herdr-web-ui attach flow_control "ack"). 없으면 host는 보내기 줄로만 잰다
+      const ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?flow=ack`));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
       ws.onopen = () => {

@@ -1540,8 +1540,9 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - **PTY를 멈추지 않는다.** 참고의 `pause`는 함께 쓰는 PTY를 멈춘다. aaa의 PTY는 다른 머신의 session host에 있고 TUI와 다른 화면이 함께 본다. 멈추려면 agent 연결과 session host에 흐름 제어를 새로 넣어야 한다. 그래서 `pause`도 계속 보내고 시계만 돈다. 막힌 채 쌓이는 것은 HARD와 10초 상한이 끊는다. agent 연결의 흐름 제어는 보고서에 결정 줄로 남긴다.
   - **Lagged·빈틈·Reset은 그대로 snapshot.** 느린 브라우저는 이제 쓰기 줄과 ACK가 잰다. 그래서 broadcast Lagged와 offset 빈틈은 host 안의 일(agent 재구독, host 지연)에서만 생긴다. 이것은 과부하가 아니라 다시 맞추는 일이라 snapshot을 보낸다. 참고에도 이 경로가 없다(PTY 출력을 바로 보낸다).
   - **wire 크기.** 출력은 binary frame이라 JSON 이스케이프가 없다. wire 크기는 바이트 수 그대로다. snapshot(replay base64 JSON)만 직렬화한 길이를 쓴다.
+  - **ACK는 주소로 고른다(참고 attach `flow_control: "ack"`).** 웹은 `…/ws?flow=ack`로 붙는다. 주소에 그것이 없는 연결은 다시 띄우기 전에 받은 옛 웹이다. 그 연결은 참고의 「ACK 없는 연결」처럼 보내기 줄로만 잰다. 줄이 HIGH 이상인 채 2초가 지나거나 HARD에 닿으면 닫는다. 그래야 host를 바꿔도 열려 있던 화면이 ACK가 없다는 이유로 닫히지 않는다.
   - **모든 웹 화면이 ACK한다.** 참고에서 ACK하지 않는 것은 `watch`(보기 전용 미리보기)다. aaa에는 그것이 없다. TUI(`front.rs`)는 바꾸지 않았다. herdr의 TUI는 herdr 자신이라 견줄 것이 없다.
-- **시험.** `cargo test -p aaa-host output`: 참고 시험 13개. 웹 E2E 「출력이 밀릴 때」: 400KB를 한 번에 쓰는 pane을 두 화면이 연다. ACK를 삼키는 화면(Playwright `routeWebSocket`)은 4008로 닫히고 띠가 뜬다. 닫히기 전에 snapshot을 다시 받지 않고, 닫힌 뒤 스스로 다시 붙지 않는다. ACK하는 화면은 끊기지 않고 끝까지 받는다. 「다시 연결」을 누르면 새로 붙어 snapshot을 받고 입력도 간다. 시험이 가르는지 확인했다. host가 닫지 않게, 브라우저가 ACK하지 않게, 4008에도 다시 붙게 각각 바꾸면 이 단계가 실패한다.
+- **시험.** `cargo test -p aaa-host output`: 참고 시험 13개. 웹 E2E 「출력이 밀릴 때」: 400KB를 한 번에 쓰는 pane을 두 화면이 연다. ACK를 삼키는 화면(Playwright `routeWebSocket`)은 4008로 닫히고 띠가 뜬다. 닫히기 전에 snapshot을 다시 받지 않고, 닫힌 뒤 스스로 다시 붙지 않는다. ACK하는 화면은 끊기지 않고 끝까지 받는다. `flow=ack` 없이 붙은 옛 웹도 닫히지 않고 400KB를 다 받는다(host가 모든 연결을 ACK 화면으로 보게 바꾸면 이것이 4008로 닫혀 실패한다). 「다시 연결」을 누르면 새로 붙어 snapshot을 받고 입력도 간다. 시험이 가르는지 확인했다. host가 닫지 않게, 브라우저가 ACK하지 않게, 4008에도 다시 붙게 각각 바꾸면 이 단계가 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

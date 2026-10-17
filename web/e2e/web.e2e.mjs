@@ -1667,6 +1667,19 @@ try {
     const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await fast.getByTestId("pane-flood").click();
     await until("따라오는 화면 flood>", async () => (await screenText(fast)).includes("flood>"));
+    // ACK 전의 옛 웹(주소에 flow=ack가 없고 ACK도 없다, 다시 띄우기 전에 받은 화면): host는 보내기 줄로만 재므로
+    // 잘 받는 동안은 닫지 않는다(참고의 ACK 없는 연결)
+    const old = await fast.context().newPage();
+    await old.goto(base);
+    await old.evaluate((id) => {
+      const w = new WebSocket(`ws://${location.host}/api/v1/panes/${encodeURIComponent(id)}/ws`);
+      w.binaryType = "arraybuffer";
+      window.oldClient = { bytes: 0, code: null, acks: 0 };
+      w.onmessage = (m) => {
+        if (typeof m.data !== "string") window.oldClient.bytes += m.data.byteLength;
+      };
+      w.onclose = (e) => (window.oldClient.code = e.code);
+    }, aaa("pane", "list").panes.find((x) => x.name === "flood").id);
     // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
     aaa("pane", "send", "flood", "--text", "f");
     await until("출력 정지 띠", async () => await slow.getByTestId("output-stalled").isVisible());
@@ -1682,6 +1695,10 @@ try {
     await until("따라오는 화면 flood-done", async () => (await screenText(fast)).includes("flood-done"));
     const kept = await log(fast);
     if (kept.some((e) => e.startsWith("ws close")) || count(kept, "snapshot") !== 1) throw new Error(`따라오는 화면이 끊겼다: ${JSON.stringify(kept.filter((e) => e !== "io"))}`);
+    await until("옛 웹도 끝까지 받음", async () => (await old.evaluate(() => window.oldClient.bytes)) >= 400_000);
+    const oldClient = await old.evaluate(() => window.oldClient);
+    if (oldClient.code !== null) throw new Error(`ACK 없는 옛 웹이 닫혔다: ${JSON.stringify(oldClient)}`);
+    await old.close();
     await shot(slow, "desktop-output-stalled");
     // 「다시 연결」: 새로 붙어 snapshot을 받고 입력도 간다
     dropAcks = false;
