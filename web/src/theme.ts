@@ -1,8 +1,8 @@
-// 모양 설정: 테마·팔레트·상태 표시·목록 줄·밀도·인터페이스 글자 크기(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·
-// `paletteDark`·`statusIndicators`·`sidebarRows`·`density`·`uiFontSize`, lib/paletteFor.ts, lib/typography.ts, applyToDocument).
-// 기본값도 참고와 같다: 어두움, amber, classic, 두 줄, 여유, 밀도를 따르는 글자 크기.
+// 모양 설정: 테마·팔레트·상태 표시·목록 줄·Agents 정렬·밀도·인터페이스 글자 크기(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·
+// `paletteDark`·`statusIndicators`·`sidebarRows`·`agentOrder`·`density`·`uiFontSize`, lib/paletteFor.ts, lib/typography.ts, applyToDocument).
+// 기본값도 참고와 같다: 어두움, amber, classic, 두 줄, 워크스페이스순, 여유, 밀도를 따르는 글자 크기.
 // <html data-theme>·data-palette·data-density·--ui-scale을 늘 달고(참고 applyToDocument), 실제 색·크기는 herdr/tokens.css에 있다.
-// 참고처럼 theme·palette·sidebarRows는 host 공유 설정이다(preferencesSync.ts, plan §8.79). 나머지는 이 기기 것이다.
+// 참고처럼 theme·palette·sidebarRows·agentOrder는 host 공유 설정이다(preferencesSync.ts, plan §8.79). 나머지는 이 기기 것이다.
 // 이 store는 이 기기 사본을 localStorage에 두고, 공유 값이 오면 preferencesSync가 updateAppearance로 놓는다.
 import { useSyncExternalStore } from "react";
 import type { StatusIndicators } from "./herdr/status.ts";
@@ -14,6 +14,8 @@ export type ResolvedTheme = "dark" | "light";
 export type Palette = "amber" | "charcoal" | "catppuccin";
 /** 한 줄은 이름, 두 줄은 하는 일과 그 아래 이름(참고 `SidebarRows`) */
 export type SidebarRows = "one" | "two";
+/** Agents 목록 차례: 머신 목록 차례, 또는 기다리는 agent 먼저 그다음 최근 바뀐 것(참고 `AgentOrder`) */
+export type AgentOrder = "workspace" | "activity";
 export type Density = "comfortable" | "compact";
 
 export interface Appearance {
@@ -24,6 +26,7 @@ export interface Appearance {
   paletteDark: Palette;
   statusIndicators: StatusIndicators;
   sidebarRows: SidebarRows;
+  agentOrder: AgentOrder;
   /** 밀도(참고 settings.ts `density`): 촘촘이면 글자·줄이 한 단계 작다(tokens.css `[data-density="compact"]`) */
   density: Density;
   /** 인터페이스 본문 글자 크기 px(참고 `uiFontSize`, --fs-md). null이면 밀도를 따른다 */
@@ -31,7 +34,7 @@ export interface Appearance {
 }
 
 export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
-const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", density: "comfortable", uiFontSize: null };
+const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", agentOrder: "workspace", density: "comfortable", uiFontSize: null };
 const KEY = "aaa:appearance";
 /** 전에 쓰던 열쇠(밝음·어두움만 남았다). 처음 한 번 옮긴다 */
 const OLD_KEY = "aaa:theme";
@@ -59,6 +62,7 @@ export function sanitizeAppearance(raw: unknown): Appearance {
     paletteDark: pick(r.paletteDark, PALETTES, palette),
     statusIndicators: pick(r.statusIndicators, ["classic", "dots", "symbols"] as const, DEFAULT.statusIndicators),
     sidebarRows: pick(r.sidebarRows, ["one", "two"] as const, DEFAULT.sidebarRows),
+    agentOrder: pick(r.agentOrder, ["workspace", "activity"] as const, DEFAULT.agentOrder),
     density: pick(r.density, ["comfortable", "compact"] as const, DEFAULT.density),
     uiFontSize: sanitizeUiFontSize(r.uiFontSize),
   };

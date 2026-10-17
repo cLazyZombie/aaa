@@ -19,10 +19,10 @@ const RETRY_MS = 5_000;
 function useSharedLocal(): { settings: SharedLocal; update: (patch: Partial<SharedLocal>) => void } {
   const { appearance } = useAppearance();
   const usage = useUsageSettings();
-  const settings: SharedLocal = { theme: appearance.theme, palette: appearance.palette, sidebarRows: appearance.sidebarRows, ...usage };
+  const settings: SharedLocal = { theme: appearance.theme, palette: appearance.palette, sidebarRows: appearance.sidebarRows, agentOrder: appearance.agentOrder, ...usage };
   const update = useCallback((patch: Partial<SharedLocal>) => {
-    const { theme, palette, sidebarRows, ...rest } = patch;
-    const look = Object.fromEntries(Object.entries({ theme, palette, sidebarRows }).filter(([, v]) => v !== undefined));
+    const { theme, palette, sidebarRows, agentOrder, ...rest } = patch;
+    const look = Object.fromEntries(Object.entries({ theme, palette, sidebarRows, agentOrder }).filter(([, v]) => v !== undefined));
     if (Object.keys(look).length > 0) updateAppearance(look);
     if (Object.keys(rest).length > 0) updateUsageSettings(rest);
   }, []);

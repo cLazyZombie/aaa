@@ -28,7 +28,7 @@ import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, sub
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
-import { GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
+import { activityOrder, GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
@@ -711,17 +711,21 @@ function AgentSection(props: SidebarProps) {
   const listId = useId();
   const shared = useRows();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
+  const { appearance } = useAppearance();
   const threadOf = new Map<string, ThreadView>();
   for (const t of props.threads) if (t.pane) threadOf.set(t.pane, t);
-  const rows = props.machines.flatMap((m) =>
-    props.panes
+  // 설정 「에이전트 정렬」: 머신 목록 차례, 또는 머신마다 활동순(참고 AgentSidebar `byActivity`, 각 PC 안에서)
+  const byActivity = appearance.agentOrder === "activity";
+  const rows = props.machines.flatMap((m) => {
+    const agents = props.panes
       .filter((p) => p.machine_id === m.id && p.state === "running" && p.role !== "evaluator")
       .flatMap((p) => {
         const t = threadOf.get(p.id);
         const agent = props.agentOf(p, t);
         return agent !== null ? [{ m, p, t, agent }] : [];
-      }),
-  );
+      });
+    return byActivity ? activityOrder(agents, (r) => r.p) : agents;
+  });
   // 고정한 agent는 맨 앞 카드에(참고 AgentSidebar `splitPinnedRows`)
   const split = splitPinnedRows(rows, shared.pins, (r) => sidebarPinKey(r.m.id, r.p.id));
   // 참고 agentContext: 이름이 아닌 말(종류)·머신(둘 이상일 때만)·자리. 같은 말을 두 번 하지 않는다

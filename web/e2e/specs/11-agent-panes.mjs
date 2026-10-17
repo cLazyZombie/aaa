@@ -6,7 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   AA, root, sleep, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -298,5 +298,48 @@ export default async function ({ ctl, page }) {
     if (got.t !== "error" || got.code !== "forbidden") throw new Error(`reader 첨부: ${JSON.stringify(got)}`);
     await rd.page.context().close();
     for (const n of ["h1", "h2"]) aaa("pane", "kill", n);
+  });
+
+  await step("Agents 정렬(herdr-web-ui AgentSidebar `byActivity`·sidebarOrder.ts `activityOrder`, 차이 목록 L8): 기본은 머신 목록 차례, 설정 「에이전트 정렬」 활동순이면 질문이 먼저·그다음 최근 바뀐 agent, 일을 시키면 위로, 공유 설정이라 다른 기기도 같은 차례", async () => {
+    // 차례대로 띄우고 상태마다 기다린다(상태가 바뀐 시각이 차례다): o1 쉼(입력을 받으면 작업 중) → o2 작업 중 → o3 질문
+    const run = (label, script) => aaa("tab", "create", "--machine", "labA", "--label", label, "--", claudeSh, "-c", script);
+    const status = (pg, name, value) => pg.getByTestId(`agent-${name}`).and(pg.locator(`[data-status="${value}"]`)).waitFor();
+    run("o1", `stty -echo; ${claudeIdle}; read a; ${claudeWorking}; exec cat > /dev/null`);
+    await status(page, "o1", "idle");
+    run("o2", `stty -echo; ${claudeWorking}; exec cat > /dev/null`);
+    await status(page, "o2", "working");
+    run("o3", `stty -echo; ${claudeAsk("make o3")}; exec cat > /dev/null`);
+    await status(page, "o3", "blocked");
+    const order = (pg) =>
+      pg.evaluate(() =>
+        [...document.querySelectorAll('[data-testid="agents"] [data-testid^="agent-row-"]')].map((b) => b.dataset.testid.slice(10)).filter((n) => /^o\d$/.test(n)),
+      );
+    const orderIs = async (pg, what, want) => {
+      let last = null;
+      await until(what, async () => JSON.stringify((last = await order(pg))) === JSON.stringify(want)).catch((e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      });
+    };
+    await orderIs(page, "기본은 머신 목록 차례", ["o1", "o2", "o3"]);
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    await orderIs(other.page, "다른 기기도 머신 목록 차례", ["o1", "o2", "o3"]);
+    const d = await openSettings(page, "모양");
+    await d.getByRole("group", { name: "에이전트 정렬" }).getByRole("button", { name: "활동순" }).click();
+    await page.keyboard.press("Escape");
+    await d.waitFor({ state: "detached" });
+    await orderIs(page, "활동순: 질문, 그다음 최근", ["o3", "o2", "o1"]);
+    // 쉬던 o1에 일을 시키면 질문 다음으로 오른다
+    await page.getByTestId("pane-o1").click();
+    await until("o1 화면", async () => (await screenText(page)).includes("? for shortcuts"));
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("Enter");
+    await status(page, "o1", "working");
+    await orderIs(page, "일을 시킨 o1이 위로", ["o3", "o1", "o2"]);
+    // 공유 설정: 다른 기기도 활동순으로 같은 차례
+    await orderIs(other.page, "다른 기기도 활동순", ["o3", "o1", "o2"]);
+    await shot(page, "desktop-agents-activity");
+    if (other.errors.length) throw new Error(other.errors.join("; "));
+    await other.page.context().close();
+    for (const n of ["o1", "o2", "o3"]) aaa("pane", "kill", n);
   });
 }

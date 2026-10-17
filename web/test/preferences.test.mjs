@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_USAGE, preferencesChange, sharedSettings, takePreferences } from "../src/preferences.ts";
 
-const DEFAULT = { theme: "dark", palette: "amber", sidebarRows: "two", ...DEFAULT_USAGE };
+const DEFAULT = { theme: "dark", palette: "amber", sidebarRows: "two", agentOrder: "workspace", ...DEFAULT_USAGE };
 const light = { ...DEFAULT, theme: "light" };
 const base = (settings, pins) => ({ settings: sharedSettings(settings), pins });
 

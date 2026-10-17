@@ -102,6 +102,21 @@ export function paneAgentStatus(p: PaneView): AgentStatus | undefined {
 }
 
 /**
+ * Agents 「활동순」(herdr-web-ui `src/lib/sidebarOrder.ts` `activityOrder`): blocked가 먼저, 그다음 가장 최근 상태 변화, 같으면
+ * 받은 차례. 상태로 따로 순위를 매기지 않는다(참고: 메시지를 보낸 줄이 도는 동안 DONE 아래로 떨어졌다 끝나면 튀어 오르던 것을
+ * 막는다). 최근은 참고의 herdr `state_change_seq` 자리에 host가 상태(activity)가 바뀔 때 적는 `AgentStatus.since_ms`를 쓴다.
+ */
+export function activityOrder<T>(rows: readonly T[], paneOf: (row: T) => PaneView): T[] {
+  return rows
+    .map((row, index) => {
+      const pane = paneOf(row);
+      return { row, index, rank: paneAgentStatus(pane) === "blocked" ? 0 : 1, recent: pane.agent?.since_ms ?? -1 };
+    })
+    .sort((a, b) => a.rank - b.rank || b.recent - a.recent || a.index - b.index)
+    .map((entry) => entry.row);
+}
+
+/**
  * 상태 칸 대신 경고 하나로 보일 일(참고 Sidebar.tsx `RestoreErrorBadge`: 복원 실패는 경고 아이콘, 이유는 hover).
  * aaa는 agent backend가 PTY를 가져 중단·유실이 더 있고(결정 3), harness 오류도 있다.
  */

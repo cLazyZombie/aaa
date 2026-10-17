@@ -2507,6 +2507,13 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 곳.** 폴더 찾아보기(Browse)는 뺐다: 머신 폴더 목록 API가 없다(t3code도 프로젝트를 더할 때 서버 파일 시스템을 훑는 `CommandPalette.tsx` filesystem browse를 쓴다 — 붙이려면 agent에 폴더 목록 요청이 필요하다). 참고의 탭 모드(이 workspace에 새 탭)·주소 초안(`?new=`)·agent가 못 떴을 때 「열기」도 없다: aaa pane은 셸을 띄운 뒤 agent를 붙이지 않고 처음부터 그 명령으로 띄운다. 다시 연 profile pane은 펼친 argv(옛 `--session-id`)를 그대로 쓴다.
 - **시험.** `m13 pane_run_with_profile_starts_harness_with_hooks`: profile → 이름·argv[0]·`--settings`(세션 폴더 `claude-settings.json`이 있음)·`--session-id`, 없는 profile 오류, `~/없는 폴더`는 HOME으로 푼 경로로 오류, 세션 `spec.json`의 harness가 `claude`(이 한 줄을 빼면 떨어진다). 웹 E2E `specs/02-terminal.mjs` 「새 pane 창」: 없는 폴더는 창 안 오류(pane 안 생김) → 셸·폴더(이름 placeholder·이름은 폴더 이름·그 pane을 연다) → fake profile·최근 폴더 칩·이름(argv에 fake.sh, `fake>`) → Mod+Shift+O로 열면 기억한 agent, Esc로 닫음(`desktop-new-pane`). `specs/03-keys.mjs`의 「aaa에 없는 키」에서 Mod+Shift+O를 뺐다.
 
+### 8.112 Agents 정렬을 herdr-web-ui대로(10-18, 차이 목록 2장 L8)
+
+- **뜻.** herdr-web-ui 설정 「에이전트 정렬」(`src/lib/settings.ts` `agentOrder`, 기본 `workspace`, 공유 설정)과 `AgentSidebar.tsx` 90~95줄: 워크스페이스순은 머신 목록 차례 그대로, 활동순은 머신마다 `sidebarOrder.ts` `activityOrder` — blocked(질문)가 먼저, 그다음 가장 최근 상태 변화, 같으면 받은 차례. 상태로 따로 순위를 매기지 않는다(일을 시킨 줄이 도는 동안에도 끝난 뒤에도 위에 남는다). herdr TUI의 우선순위 정렬(blocked > done > working > idle)이 아니라 웹 참고 herdr-web-ui를 따랐다(TUI 정렬은 차이 목록 U5, TUI 몫).
+- **최근.** 참고의 herdr `state_change_seq`(상태가 바뀔 때마다 오르는 수) 자리에 host가 agent 상태(activity)가 바뀔 때 적는 `AgentStatus.since_ms`(harness.rs)를 쓴다. 참고의 `liveSeqs`(push된 상태를 다음 roster 읽기 전까지 지금 시각으로 세우기)는 aaa에 필요 없다: 상태와 시각이 한 사건으로 온다. 다른 곳: 안 본 끝남(done) → 봄(idle)은 aaa에서 상태가 아닌 `seen`이라 시각이 바뀌지 않는다.
+- **설정.** 모양 store(`theme.ts` `agentOrder`)와 공유 설정 이름(`preferences.ts` LOCAL_KEYS)에 더했다. 설정 → 모양 「사이드바 행」 아래 「에이전트 정렬」(워크스페이스순·활동순, 문구 참고 i18n.ko.ts, 「herdr 자체의 순서」는 「머신 목록의 순서」로).
+- **시험.** `web/test/sidebarOrder.test.mjs`(참고 `sidebarOrder.test.ts` 「activity order」와 기본값 시험을 옮김). 웹 E2E 「Agents 정렬」(`specs/11-agent-panes.mjs`): 화면 감지로 쉼·작업 중·질문 셋을 차례로 띄우고 기본 차례 → 설정 활동순 → 질문, 최근 차례 → 쉬던 agent에 Enter면 질문 다음으로 → 다른 기기도 같은 차례(`desktop-agents-activity`).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
