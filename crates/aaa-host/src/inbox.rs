@@ -24,6 +24,44 @@ use crate::{Host, err};
 /// nudge 문구에 나열하는 대상 수
 const NUDGE_SUBJECTS: usize = 5;
 
+/// `inbox`·`context` 한 응답에 싣는 inbox 항목 크기 한도(JSON bytes). front 연결 frame 상한(1 MiB)의 절반이라
+/// 응답의 나머지 자리가 남는다. 참고는 파일을 바로 읽어(`context`의 Inbox 절) 이런 한도가 없다.
+pub(crate) const INBOX_REPLY_BYTES: usize = aaa_proto::MAX_FRAME / 2;
+
+/// 크기 한도 안에 실은 inbox 항목과 못 실은 수
+#[derive(Debug, Default)]
+pub(crate) struct InboxPage {
+    pub items: Vec<InboxItem>,
+    pub omitted_open: u32,
+    pub omitted_done: u32,
+}
+
+/// 크기 한도(`budget`, JSON bytes) 안에 드는 항목만 싣는다. 끝내지 않은 항목이 먼저 자리를 받고 오래된 것부터 싣는다
+/// (처리할 차례다). 끝낸 항목은 최근 것부터 싣는다. 한 번 넘치면 그 뒤는 싣지 않아, 실은 것은 늘 이어진 앞(또는 뒤)이다.
+/// 실은 항목은 원래 차례(만든 때)로 돌려준다.
+pub(crate) fn fit_inbox(items: Vec<InboxItem>, budget: usize) -> InboxPage {
+    let (open, done): (Vec<_>, Vec<_>) = items.into_iter().partition(|i| !i.done);
+    let mut used = 0usize;
+    let mut take = |list: Vec<InboxItem>| {
+        let (mut kept, mut omitted) = (Vec::new(), 0u32);
+        for i in list {
+            let size = serde_json::to_vec(&i).map_or(usize::MAX, |b| b.len());
+            if omitted == 0 && used.saturating_add(size) <= budget {
+                used += size;
+                kept.push(i);
+            } else {
+                omitted += 1;
+            }
+        }
+        (kept, omitted)
+    };
+    let (mut items, omitted_open) = take(open);
+    let (recent, omitted_done) = take(done.into_iter().rev().collect());
+    items.extend(recent);
+    items.sort_by(|a, b| (a.created_at_ms, &a.id).cmp(&(b.created_at_ms, &b.id)));
+    InboxPage { items, omitted_open, omitted_done }
+}
+
 fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
@@ -194,16 +232,17 @@ impl Host {
     }
 
     /// `aaa inbox list`: peek가 아니면 보인 항목을 「봤다」로 표시한다
-    pub(crate) fn inbox(&self, project: &str, all: bool, peek: bool) -> Result<Vec<InboxItem>, ErrorBody> {
+    /// 실은 항목만 「봤다」로 표시한다: 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
+    pub(crate) fn inbox(&self, project: &str, all: bool, peek: bool) -> Result<InboxPage, ErrorBody> {
         self.project_dir(project)?;
-        let mut items = self.db.inbox_list(Some(project), all).map_err(internal)?;
+        let mut page = fit_inbox(self.db.inbox_list(Some(project), all).map_err(internal)?, INBOX_REPLY_BYTES);
         if !peek {
-            for i in items.iter_mut().filter(|i| !i.done && !i.seen) {
+            for i in page.items.iter_mut().filter(|i| !i.done && !i.seen) {
                 i.seen = true;
                 self.db.inbox_put(i).map_err(internal)?;
             }
         }
-        Ok(items)
+        Ok(page)
     }
 
     /// 항목을 끝낸다: 투영 파일을 `inbox/done/`으로 옮긴다. 끝낸 수와 남은 항목을 돌려준다
@@ -214,7 +253,7 @@ impl Host {
         ids: &[String],
         all: bool,
         actor: &str,
-    ) -> Result<(u32, Vec<InboxItem>), ErrorBody> {
+    ) -> Result<(u32, InboxPage), ErrorBody> {
         self.project_dir(project)?;
         if ids.is_empty() && !all {
             return Err(err(ErrorCode::BadRequest, "끝낼 항목 ID나 --all이 필요하다"));
@@ -227,7 +266,7 @@ impl Host {
         let n = pick.len();
         self.inbox_finish(project, pick).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
-        Ok((n as u32, self.db.inbox_list(Some(project), false).map_err(internal)?))
+        Ok((n as u32, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
     }
 
     /// 조건에 맞는 끝내지 않은 항목을 끝낸다
@@ -555,5 +594,36 @@ mod tests {
         assert_eq!(doc["summary"].as_str(), Some("따옴표 \" 와 줄 바꿈"));
         assert_eq!(doc["kind"].as_str(), Some("thread-state"));
         assert_eq!(safe_subject("Mac B/외장 x!!"), "mac-b-x");
+    }
+
+    /// 크기 한도: 끝내지 않은 항목이 먼저(오래된 것부터), 끝낸 항목은 최근 것부터, 넘친 뒤로는 싣지 않는다(t-0334 결함 2)
+    #[test]
+    fn inbox_page_fits_open_first_then_recent_done() {
+        let mk = |n: u64, done: bool| {
+            let mut i = item("thread-state", &format!("t-{n:04}"), "idle");
+            i.id = format!("{n:04}");
+            i.created_at_ms = n;
+            i.done = done;
+            i
+        };
+        let size = serde_json::to_vec(&mk(1, false)).unwrap().len();
+        let all: Vec<_> = (1..=4).map(|n| mk(n, true)).chain((5..=6).map(|n| mk(n, false))).collect();
+        let ids = |p: &InboxPage| p.items.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
+        let p = fit_inbox(all.clone(), size * 100);
+        assert_eq!((p.items.len(), p.omitted_open, p.omitted_done), (6, 0, 0));
+        // 자리 셋: 끝내지 않은 둘, 끝낸 것 중 가장 최근 하나. 원래 차례로 돌려준다
+        let p = fit_inbox(all.clone(), size * 3);
+        assert_eq!(ids(&p), ["0004", "0005", "0006"]);
+        assert_eq!((p.omitted_open, p.omitted_done), (0, 3));
+        // 끝내지 않은 것만으로 넘친다: 오래된 것 하나만, 끝낸 것은 하나도
+        let p = fit_inbox(all, size);
+        assert_eq!(ids(&p), ["0005"]);
+        assert_eq!((p.omitted_open, p.omitted_done), (1, 4));
+        // 한 번 넘치면 뒤의 작은 항목도 싣지 않는다(실은 것은 이어진 앞이다)
+        let mut big = mk(7, false);
+        big.body = "x".repeat(size * 2);
+        let p = fit_inbox(vec![mk(1, false), big, mk(9, false)], size * 2);
+        assert_eq!(ids(&p), ["0001"]);
+        assert_eq!(p.omitted_open, 2);
     }
 }

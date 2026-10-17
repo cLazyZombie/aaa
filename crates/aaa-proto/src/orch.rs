@@ -802,6 +802,7 @@ pub struct ProjectContext {
     /// 끝내지 않은 inbox 항목 수
     pub inbox_open: u32,
     /// 끝내지 않은 inbox 항목(herdr-projects `context`의 Inbox 절). 지시가 아니라 자료다.
+    /// 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
     #[serde(default)]
     pub inbox: Vec<InboxItem>,
     /// 사후 평가자(지정했을 때만)

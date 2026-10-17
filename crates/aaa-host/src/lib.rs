@@ -906,11 +906,21 @@ impl Host {
                 Ok(FrontResponse::Preferences(doc))
             }
             FrontRequest::Inbox { project, all, peek } => {
-                self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items, done: None })
+                self.inbox(&project, all, peek).map(|p| FrontResponse::Inbox {
+                    items: p.items,
+                    done: None,
+                    omitted_open: p.omitted_open,
+                    omitted_done: p.omitted_done,
+                })
             }
-            FrontRequest::InboxDone { project, ids, all } => self
-                .inbox_done(&project, &ids, all, actor)
-                .map(|(done, items)| FrontResponse::Inbox { items, done: Some(done) }),
+            FrontRequest::InboxDone { project, ids, all } => {
+                self.inbox_done(&project, &ids, all, actor).map(|(done, p)| FrontResponse::Inbox {
+                    items: p.items,
+                    done: Some(done),
+                    omitted_open: p.omitted_open,
+                    omitted_done: p.omitted_done,
+                })
+            }
             FrontRequest::MergeEnqueue { project, thread } => {
                 self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
             }

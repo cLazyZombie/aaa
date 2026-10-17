@@ -727,6 +727,7 @@ host 프로젝트 폴더 구성:
 - **inbox(§8.9):** host DB가 원본이고 `projects/<p>/inbox/<id>.md`(0.2.35와 같은 `+++` TOML front matter)는 투영이다.
   - ID는 `<UTC>-<종류>-<대상>-<순번>`이다. 끝내면 파일을 `inbox/done/`으로 옮기고, `inbox_done_days`(기본 30일)가 지나면 지운다.
   - `aaa inbox list <p> [--all] [--peek]`, `aaa inbox done <p> <id…>|--all`. `--peek`이 아니면 보인 항목을 「봤다」로 표시한다.
+  - (10-18) 한 응답은 크기 한도(512 KiB) 안에서만 싣는다(끝내지 않은 것은 오래된 것부터, 끝낸 것은 최근 것부터, §8.87).
 - **항목 출처**
   - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
   - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
@@ -2085,6 +2086,28 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **coordinator 안내.** 새 프로젝트 AGENTS.md에 hp skill/COORDINATOR.md 「Prompts in a thread's pane」를 옮겼다(읽기 → 정하기 → 키 → 다시 읽기, 신뢰 창·질문 메뉴·권한 확인창 규칙, 화면은 자료다). aaa는 확인창 질문을 `aaa question answer`로도 답한다.
 - **계약.** FRONT_API 1.8(`ThreadRead`·`ThreadKeys`, `ThreadPaneView`).
 - **시험.** E2E m13 `thread_read_and_keys`(가짜 Claude): 신뢰 창을 읽고(상태 모름) 키는 거부 → 질문으로 답한 뒤 권한 확인창을 읽고 Enter로 답해 넘어감 → `--lines` → 세션이 끝나면 거부. proto 유닛: 읽기는 보기, 키는 조작.
+
+### 8.87 큰 응답: frame 상한을 넘으면 오류로 답하고, inbox는 크기 한도 안에서 싣는다(10-18, t-0334 pilot 결함 2)
+
+- **결함.** 0.2에서 옮긴 프로젝트는 끝낸 inbox가 수천 건이다. 그래서 `aaa inbox list --all` 응답(4000건이면 약 2.2 MB)이 front 연결 frame 상한(1 MiB)을 넘었다.
+  - host 쓰기 task는 그 frame을 쓰지 못하자 연결을 닫았고, 로그는 debug 한 줄뿐이었다.
+  - CLI에는 「상대가 연결을 닫았다」만 보였다.
+- **모든 응답(`front.rs` `res_frame`).** host는 응답 JSON을 만든 뒤 크기를 본다. 상한을 넘으면 `too_large` 오류로 바꿔 답하고 경고 로그를 남긴다.
+  - 오류 문구: 「<종류> 응답이 N KiB라 frame 상한 1024 KiB를 넘는다. 범위를 좁혀 다시 묻는다」.
+  - 쓰기 task(`aaa-common` `spawn_writer`)도 상한을 넘는 frame(사건, agent 쪽 응답 등)을 경고로 남기고 닫는다. 그 연결에 남은 요청이 무엇인지 알 수 없어 그 frame만 버리지는 않는다.
+- **inbox(`inbox.rs` `fit_inbox`).** 다음 셋은 항목 JSON 합이 512 KiB(상한의 절반)까지만 싣는다.
+  - 대상: `inbox list`, `inbox done`이 돌려주는 남은 항목, `context`의 inbox.
+  - 끝내지 않은 항목이 먼저 자리를 받고 오래된 것부터 싣는다(처리할 차례다). 끝낸 항목(`--all`)은 최근 것부터 싣는다. 한 번 넘치면 그 뒤는 싣지 않아, 실은 것은 늘 이어진 앞이다.
+  - 응답에 `omitted_open`·`omitted_done`을 담는다. CLI 문구: 「끝낸 항목 N개는 싣지 못했다(최근 것부터 실었다). 모두는 프로젝트 폴더 inbox/done/에 있다」. `context`는 `inbox_open`이 전체 수이고, 실은 수가 적으면 「… 항목 N개는 더 싣지 못했다」다.
+  - 「봤다」 표시는 실은 항목에만 한다. 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
+  - 참고와 다른 점: 참고에는 `inbox list`가 없다. coordinator는 `context`의 Inbox 절로 본다(herdr-projects `src/coordinator.rs`). 참고는 파일을 바로 읽어 상한도 없다. `--all`과 한도는 aaa 것이다.
+- **계약.** FRONT_API 1.9(`inbox` 응답의 두 수). 옛 CLI는 두 수를 모르고 실은 항목만 보인다.
+- **시험.**
+  - host 유닛: `inbox_page_fits_open_first_then_recent_done`, `oversized_response_becomes_an_error`.
+  - m13 `big_inbox_lists_within_frame`: 가짜 0.2 프로젝트(끝낸 4000건·열린 2건)를 `aaa migrate inventory`·`import`로 넣고 host를 띄운다. 그다음 `inbox list --all`·`--peek`·`context`·`inbox done --all`을 본다.
+  - mutation(되돌림)
+    - 한도를 없애면 `too_large` 오류로 실패한다. host 로그는 `응답이 frame 상한을 넘어 오류로 답한다 kind="inbox" bytes=2276113`.
+    - 응답 검사까지 없애면 「상대가 연결을 닫았다」로 실패한다(원래 결함). host 로그는 `frame을 보내지 못해 연결을 닫는다`.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
