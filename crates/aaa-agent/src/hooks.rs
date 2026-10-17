@@ -1,7 +1,9 @@
-//! harness 상태 사건 수신(§8.3, §8.11). 세션 안의 `aaa hook`·`aaa report`가 이 머신 agent의 로컬 socket으로 보낸다.
+//! harness hook·진행 보고 수신(§8.3, §8.11). 세션 안의 `aaa hook`·`aaa report`가 이 머신 agent의 로컬 socket으로 보낸다.
 //!
 //! - 세션을 띄울 때 env에 `AAA_HOOK_SOCK`·`AAA_HOOK_TOKEN`을 넣는다. token은 세션 token에서 만든 값이라 따로 저장하지 않는다.
-//! - adapter가 harness별 사건(Claude hook JSON, Codex notify JSON)을 `HarnessEvent`로 정규화해 host에 보낸다.
+//! - harness 상태(작업 중·idle·질문)는 hook으로 정하지 않는다: pump의 화면 감지(`detect`, plan §8.75)가 정한다.
+//!   hook은 herdr 0.9.5처럼 harness 세션 ID를 잇는 데(Claude SessionStart, Codex notify)와 herdr-projects 진행 보고
+//!   정리(UserPromptSubmit: 「Waiting for you」를 지운다)에만 쓴다.
 //! - `aaa hook`은 harness를 막지 않는다: 연결이 안 되면 조용히 끝나고, 아무것도 출력하지 않는다(결정을 내리지 않음).
 
 use std::path::{Path, PathBuf};
@@ -49,7 +51,8 @@ fn clip(t: &str, n: usize) -> String {
     out
 }
 
-/// harness 사건 → 정규화. 모르는 사건은 None(무시).
+/// harness 사건 → 정규화. 모르는 사건은 None(무시). 옛 agent가 띄운 세션은 Stop·PermissionRequest 등도 보내지만
+/// 상태는 화면 감지가 정하므로 버린다.
 pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option<HarnessEvent> {
     let mut ev = HarnessEvent {
         session: session.to_string(),
@@ -68,48 +71,23 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         ev.message = s(p, "activity").map(|a| clip(&a, 40));
         return Some(ev);
     }
-    // Codex notify(`agent-turn-complete`)
+    // Codex notify(`agent-turn-complete`): 세션 ID(`thread-id`)만 쓴다. herdr는 Codex SessionStart hook을
+    // `~/.codex/hooks.json`에 깔지만 aaa는 사용자 설정을 고치지 않고 실행마다 `-c notify`만 준다.
     if s(p, "type").as_deref() == Some("agent-turn-complete") {
-        ev.kind = "turn_end".into();
-        ev.message = s(p, "last-assistant-message").map(|m| clip(&m, 120));
+        ev.kind = "session".into();
         return Some(ev);
     }
-    // Claude Code·Codex hook(같은 사건 이름)
     let name = s(p, "hook_event_name")?;
     ev.kind = match name.as_str() {
+        // herdr `claude_settings::install`: SessionStart(startup·resume·clear·compact·fork)로 세션 ID를 잇는다
         "SessionStart" => "session_start",
-        "UserPromptSubmit" => "turn_start",
-        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => "working",
-        "Stop" => {
-            ev.message = s(p, "last_assistant_message").map(|m| clip(&m, 120));
-            "turn_end"
-        }
-        "StopFailure" => {
-            ev.message = s(p, "error").or_else(|| s(p, "message")).map(|m| clip(&m, 200));
-            "error"
-        }
-        "SessionEnd" => "exited",
-        "PermissionRequest" => {
-            let tool = s(p, "tool_name").unwrap_or_default();
-            let input = p.get("tool_input").map(|i| i.to_string()).unwrap_or_default();
-            ev.message = Some(clip(&format!("{tool} {input}"), 200));
-            ev.question_kind = Some("permission".into());
-            "question"
-        }
-        "Notification" => match s(p, "notification_type").as_deref() {
-            Some("permission_prompt") => {
-                ev.message = s(p, "message").map(|m| clip(&m, 200));
-                ev.question_kind = Some("permission".into());
-                "question"
-            }
-            Some("idle_prompt") => "idle",
-            _ => return None,
-        },
+        // herdr-projects progress.rs `respond`: 사람이 답했으니 옛 「Waiting for you」는 맞지 않다
+        "UserPromptSubmit" => "prompt_submit",
         _ => return None,
     }
     .to_string();
-    // 하위 agent의 사건은 버린다(herdr-projects progress.rs `eligible`). 확인창은 하위 agent 것도 세션을 막으므로 둔다.
-    if ev.kind != "question" && subagent(p) {
+    // 하위 agent의 사건은 버린다(herdr-projects progress.rs `eligible`)
+    if subagent(p) {
         return None;
     }
     Some(ev)
@@ -125,7 +103,7 @@ fn subagent(p: &Value) -> bool {
 /// `started`는 SessionStart 때 적은 harness 세션 ID다. 모르면 버리지 않는다.
 pub fn foreign_session(started: Option<&str>, ev: &HarnessEvent) -> bool {
     match (started, ev.harness_session.as_deref()) {
-        (Some(a), Some(b)) => ev.kind != "session_start" && ev.kind != "question" && !a.is_empty() && a != b,
+        (Some(a), Some(b)) => ev.kind != "session_start" && !a.is_empty() && a != b,
         _ => false,
     }
 }
@@ -137,22 +115,18 @@ pub fn codex_notify(exe: &Path) -> String {
     format!("notify=[{},\"hook\",\"--agent\",\"codex\"]", q(&exe.to_string_lossy()))
 }
 
+/// herdr `claude_settings.rs` `SESSION_START_MATCHER`: Claude가 문서로 정한 SessionStart 출처
+const SESSION_START_MATCHER: &str = "^(startup|resume|clear|compact|fork)$";
+
 /// Claude Code에 실행마다 줄 hook 설정(`claude --settings <파일>`). 사용자 설정 파일은 고치지 않는다.
+/// 상태 hook(Stop·PermissionRequest·Notification 등)은 걸지 않는다(herdr 0.9.5가 그것들을 지우고 SessionStart만 둔다).
 pub fn claude_settings(exe: &Path) -> Value {
     let cmd = format!("'{}' hook --agent claude", exe.to_string_lossy().replace('\'', "'\\''"));
-    let h = || serde_json::json!([{ "hooks": [{ "type": "command", "command": cmd, "timeout": 10 }] }]);
-    let tool =
-        || serde_json::json!([{ "matcher": "*", "hooks": [{ "type": "command", "command": cmd, "timeout": 10 }] }]);
+    let hook = serde_json::json!({ "type": "command", "command": cmd, "timeout": 10 });
     serde_json::json!({
         "hooks": {
-            "SessionStart": h(),
-            "UserPromptSubmit": h(),
-            "Stop": h(),
-            "StopFailure": h(),
-            "Notification": h(),
-            "SessionEnd": h(),
-            "PermissionRequest": tool(),
-            "PostToolUse": tool(),
+            "SessionStart": [{ "matcher": SESSION_START_MATCHER, "hooks": [hook.clone()] }],
+            "UserPromptSubmit": [{ "hooks": [hook] }],
         }
     })
 }
@@ -206,16 +180,13 @@ mod tests {
     fn subagent_and_foreign_session_events_are_dropped() {
         // herdr-projects progress.rs eligible·foreign_session 시험과 같은 경우
         let n = |p: Value| normalize("S", "claude", &p, 1);
-        assert!(n(json!({"hook_event_name":"PostToolUse","session_id":"a","agent_id":"x"})).is_none());
+        assert!(n(json!({"hook_event_name":"UserPromptSubmit","session_id":"a","agent_id":"x"})).is_none());
         assert!(
-            n(json!({"hook_event_name":"Stop","session_id":"a","transcript_path":"/p/subagents/x.jsonl"})).is_none()
+            n(json!({"hook_event_name":"UserPromptSubmit","session_id":"a","transcript_path":"/p/subagents/x.jsonl"}))
+                .is_none()
         );
-        assert!(n(json!({"hook_event_name":"PostToolUse","session_id":"a","agent_id":null})).is_some());
-        // 하위 agent의 확인창도 세션을 막는다: 둔다
-        let q = n(json!({"hook_event_name":"PermissionRequest","session_id":"a","agent_id":"x","tool_name":"Bash"}))
-            .unwrap();
-        assert_eq!(q.kind, "question");
-        let other = n(json!({"hook_event_name":"Stop","session_id":"b"})).unwrap();
+        assert!(n(json!({"hook_event_name":"UserPromptSubmit","session_id":"a","agent_id":null})).is_some());
+        let other = n(json!({"hook_event_name":"UserPromptSubmit","session_id":"b"})).unwrap();
         assert!(foreign_session(Some("a"), &other));
         assert!(!foreign_session(Some("b"), &other));
         assert!(!foreign_session(None, &other));
@@ -224,36 +195,32 @@ mod tests {
     }
 
     #[test]
-    fn claude_and_codex_events_normalize() {
+    fn hooks_only_link_sessions_and_never_set_state() {
         let n = |h: &str, p: Value| normalize("S", h, &p, 1);
-        let e = n("claude", json!({"hook_event_name":"UserPromptSubmit","session_id":"abc","prompt":"x"})).unwrap();
-        assert_eq!((e.kind.as_str(), e.harness_session.as_deref()), ("turn_start", Some("abc")));
-        assert_eq!(n("claude", json!({"hook_event_name":"Stop","session_id":"abc"})).unwrap().kind, "turn_end");
-        let q = n(
-            "claude",
-            json!({"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}),
-        )
-        .unwrap();
-        assert_eq!((q.kind.as_str(), q.question_kind.as_deref()), ("question", Some("permission")));
-        assert!(q.message.unwrap().contains("permission"));
-        assert_eq!(
-            n("claude", json!({"hook_event_name":"Notification","notification_type":"idle_prompt"})).unwrap().kind,
-            "idle"
-        );
-        assert!(n("claude", json!({"hook_event_name":"Notification","notification_type":"auth_success"})).is_none());
-        let p = n(
-            "claude",
+        let e = n("claude", json!({"hook_event_name":"SessionStart","session_id":"abc","transcript_path":"/t.jsonl"}))
+            .unwrap();
+        assert_eq!((e.kind.as_str(), e.harness_session.as_deref()), ("session_start", Some("abc")));
+        assert_eq!(e.transcript.as_deref(), Some("/t.jsonl"));
+        let p = n("claude", json!({"hook_event_name":"UserPromptSubmit","session_id":"abc","prompt":"x"})).unwrap();
+        assert_eq!(p.kind, "prompt_submit");
+        // 옛 agent가 띄운 세션의 상태 hook은 버린다: 상태는 화면 감지가 정한다
+        for old in [
+            json!({"hook_event_name":"Stop","session_id":"abc"}),
             json!({"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}),
-        )
-        .unwrap();
-        assert!(p.message.as_deref().unwrap().starts_with("Bash {\"command\""), "{p:?}");
+            json!({"hook_event_name":"Notification","notification_type":"permission_prompt","message":"m"}),
+            json!({"hook_event_name":"Notification","notification_type":"idle_prompt"}),
+            json!({"hook_event_name":"PostToolUse","session_id":"abc"}),
+            json!({"hook_event_name":"SessionEnd","session_id":"abc"}),
+            json!({"x":1}),
+        ] {
+            assert!(n("claude", old.clone()).is_none(), "{old}");
+        }
         let c =
             n("codex", json!({"type":"agent-turn-complete","thread-id":"t1","last-assistant-message":"done"})).unwrap();
-        assert_eq!((c.kind.as_str(), c.harness_session.as_deref()), ("turn_end", Some("t1")));
+        assert_eq!((c.kind.as_str(), c.harness_session.as_deref(), c.message), ("session", Some("t1"), None));
         let r = n("report", json!({"percent":250,"activity":"테스트 중\n이상한 줄"})).unwrap();
         assert_eq!((r.kind.as_str(), r.percent), ("progress", Some(100)));
         assert_eq!(r.message.as_deref(), Some("테스트 중이상한 줄"));
-        assert!(n("claude", json!({"x":1})).is_none());
     }
 
     #[test]
@@ -263,10 +230,13 @@ mod tests {
     }
 
     #[test]
-    fn settings_quote_exe() {
+    fn settings_quote_exe_and_register_only_session_hooks() {
         let v = claude_settings(Path::new("/A b/it's/aaa"));
-        let cmd = v["hooks"]["Stop"][0]["hooks"][0]["command"].as_str().unwrap();
+        let cmd = v["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap();
         assert_eq!(cmd, "'/A b/it'\\''s/aaa' hook --agent claude");
-        assert_eq!(v["hooks"]["PermissionRequest"][0]["matcher"], "*");
+        assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "^(startup|resume|clear|compact|fork)$");
+        let mut events: Vec<&str> = v["hooks"].as_object().unwrap().keys().map(String::as_str).collect();
+        events.sort();
+        assert_eq!(events, ["SessionStart", "UserPromptSubmit"]);
     }
 }

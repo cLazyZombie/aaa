@@ -1,7 +1,7 @@
 //! M1-3 E2E: 프로젝트·thread 시작(그 머신 agent가 worktree·작업 폴더를 만든다)·brief 안내·보고 회수·ack·resolve·흐름 사건,
-//! harness 상태(hook)·확인창 질문 원격 응답·메시지(queue·interrupt).
+//! harness 상태(화면 감지)·확인창 질문 원격 응답·메시지(queue·interrupt).
 //! agent harness는 시험용 가짜 agent(셸 스크립트)다. brief 안내 한 줄을 받으면 brief를 읽고 report.md·library를 쓴다.
-//! 가짜 Claude(`hooked`)는 Claude Code처럼 hook 사건을 `aaa hook --agent claude`로 보내고 확인창을 띄운다.
+//! 가짜 Claude(`claude`)는 Claude Code 화면(입력 상자·spinner·확인창)을 그리고 SessionStart hook으로 세션 ID를 알린다.
 //! 실행: `cargo test -p aaa --test m13`
 
 #![cfg(unix)]
@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use lab::{Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag};
+use aaa_proto::{AgentActivity, FlowEvent, FrontEvent, QuestionState, QuestionView, ThreadView};
+use lab::{Events, Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag};
 use serde_json::Value;
 
 const T: Duration = Duration::from_secs(30);
@@ -64,21 +65,43 @@ while IFS= read -r line; do
 done
 "#;
 
-/// 가짜 Claude Code: 폴더 신뢰 창 → SessionStart → 입력마다 UserPromptSubmit … Stop.
+/// 가짜 Claude Code. aaa는 이 화면으로 상태를 안다(herdr 0.9.5 claude.toml: 입력 상자 `live_prompt_box`→idle,
+/// spinner 줄 `live_turn_working`→작업 중, 확인창 `live_blocked_form`·`bash_permission_prompt`→질문. 같은 모양의 화면을
+/// herdr `agent explain --file`로 확인했다). 폴더 신뢰 창 → SessionStart hook(세션 ID) → 입력 상자에서 기다린다.
+/// 입력을 받으면 UserPromptSubmit hook을 내고 spinner를 그린 채 일한다. 턴은 시험이 끝낸다: 일하는 동안 키를 기다려
+/// BEL(^G)이면 마치고, Esc면 Claude처럼 「Interrupted」를 보이고 멈춘다. 멈추는 동안(0.5초 조용할 때까지) 들어온 입력은
+/// 버린다: 멈춤이 화면에 보이기 전에 입력하면 사라진다.
 /// 선택 창은 Claude처럼 그린다(❯ 커서, 화살표로 옮기고 Enter로 고름, Esc는 취소). 폴더 신뢰 창의 기본 선택은
-/// 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하거나 `long` 중에 Esc가 오면 Claude처럼 「Interrupted」만 보이고
-/// Stop hook은 내지 않는다.
-const HOOKED_AGENT: &str = r#"#!/bin/sh
-ESC=$(printf '\033')
+/// 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하면 턴이 「Interrupted」로 끝난다.
+const CLAUDE_AGENT: &str = r#"#!/bin/sh
+ESC=$(printf '\033'); BEL=$(printf '\007')
+RULE='────────────────────────────────────────'
 hook() { "$AA" hook --agent claude "$1"; }
 key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
 keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
+box() { printf '%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE"; }
+# 입력 대기: 커서를 입력 상자 「❯ 」 뒤에 둔다. Enter 뒤(커서는 상자 아래 선)에는 상자를 지운다.
+prompt() { box; printf '\033[2A\r\033[2C'; }
+taken() { printf '\033[2A\r\033[J'; }
+spin() { printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
+unspin() { printf '\033[4A\r\033[J'; }
+interrupted() { printf '  \342\216\277  Interrupted \302\267 What should Claude do instead?\n'; }
+turn() {
+  while key; do
+    case "$k" in
+      "$BEL") unspin; return ;;
+      "$ESC") while keyt 5; [ -n "$k" ]; do :; done; unspin; interrupted; return ;;
+    esac
+  done
+}
+# $1 본문 $2 기본 선택(0·1) $3·$4 선택지 $5 아래 안내. 그린 자리에서 다시 그리고, 고른 뒤 지운다.
 menu() {
-  q=$1; sel=$2
+  sel=$2; h=$(( $(printf '%s\n' "$1" | wc -l) + 4 )); drawn=0
   while :; do
-    printf '\033[2J\033[H%s\n' "$q"
-    if [ "$sel" = 0 ]; then printf '\342\235\257 %s\n  %s\n' "$3" "$4"; else printf '  %s\n\342\235\257 %s\n' "$3" "$4"; fi
-    printf 'Enter to confirm \302\267 Esc to cancel\n'
+    [ "$drawn" = 1 ] && printf '\033[%sA\r\033[J' "$h"
+    printf '%s\n%s\n' "$RULE" "$1"
+    if [ "$sel" = 0 ]; then printf ' \342\235\257 %s\n   %s\n' "$3" "$4"; else printf '   %s\n \342\235\257 %s\n' "$3" "$4"; fi
+    printf '\n %s' "$5"; drawn=1
     key
     if [ "$k" = "$ESC" ]; then
       keyt 2
@@ -87,49 +110,37 @@ menu() {
     fi
     if [ -z "$k" ]; then if [ "$sel" = 0 ]; then pick=$3; else pick=$4; fi; break; fi
   done
-  printf '\033[2J\033[H'
+  printf '\033[%sA\r\033[J' "$h"
 }
 perm() {
-  hook '{"hook_event_name":"PermissionRequest","session_id":"fake-1","tool_name":"Bash","tool_input":{"command":"make test"}}'
-  hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
-  menu 'Allow Bash(make test)?' 0 'Yes' 'No, and tell Claude what to do differently (esc)'
-  if [ "$pick" = Yes ]; then echo "allowed"; hook '{"hook_event_name":"PostToolUse","session_id":"fake-1","tool_name":"Bash"}'
-  else echo "denied"; printf 'Interrupted \302\267 What should Claude do instead?\n'; quiet=1; fi
+  unspin
+  menu ' Bash command
+
+   make test
+   Run the tests
+
+ Do you want to proceed?' 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain'
+  if [ "$pick" = '1. Yes' ]; then echo "allowed"; spin; else echo "denied"; fi
 }
-menu 'Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder'
+printf '\033[2J\033[H'
+menu ' Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder' 'Enter to confirm · Esc to cancel'
 [ "$pick" = 'Yes, I trust this folder' ] || { echo "trust: $pick"; exit 1; }
 hook '{"hook_event_name":"SessionStart","session_id":"fake-1","source":"startup"}'
 echo "marker: ${CLAUDE_CODE_CHILD_SESSION:-none}"
-printf 'fake> '
+prompt
 while IFS= read -r line; do
-  quiet=0
   hook '{"hook_event_name":"UserPromptSubmit","session_id":"fake-1"}'
+  taken; pick=
   case "$line" in
     *brief.md*)
-      path=$(printf '%s' "$line" | sed 's/를 읽고.*//')
-      dir=$(dirname "$path")
-      "$AA" report --percent 40 --activity '권한 확인 중'
-      perm
-      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
-      ;;
-    *ask*) perm ;;
-    *slow*)
-      echo "slow start"
-      # 중첩 세션(다른 session_id)과 하위 agent의 Stop: 이 pane의 턴은 끝나지 않았다(버려야 한다)
-      hook '{"hook_event_name":"Stop","session_id":"fake-nested"}'
-      hook '{"hook_event_name":"Stop","session_id":"fake-1","agent_id":"sub-1"}'
-      echo "nested sent"; sleep 3; echo "slow done" ;;
-    *long*)
-      echo "long start"; keyt 250
-      if [ "$k" = "$ESC" ]; then
-        # 멈추는 데 시간이 걸리고, 그동안 들어온 입력은 버린다(멈춤을 확인하기 전에 보낸 글은 사라진다)
-        sleep 1; while keyt 1; [ -n "$k" ]; do :; done
-        echo "Interrupted"; quiet=1
-      else echo "long done"; fi ;;
-    *) echo "got: $line" ;;
+      dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
+      spin; "$AA" report --percent 40 --activity '권한 확인 중'; perm
+      [ "$pick" = cancel ] || printf '[완료]\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
+    *ask*) spin; perm ;;
+    *) printf 'got: %s\n' "$line"; spin ;;
   esac
-  [ "$quiet" = 1 ] || hook '{"hook_event_name":"Stop","session_id":"fake-1","last_assistant_message":"끝"}'
-  printf 'fake> '
+  if [ "$pick" = cancel ]; then interrupted; else turn; fi
+  prompt
 done
 "#;
 
@@ -164,7 +175,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\"]\nlibrary_copy_mb = 1\n{extra}",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"claude\", \"sticky\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -174,14 +185,14 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         "schema = 1\n[agent]\nwork_root = \"{}\"\n\
          [profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
-         [profiles.hooked]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
+         [profiles.claude]\nharness = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.sticky]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
         path_str(&scripts.join("mute.sh")),
         path_str(&scripts.join("mute.log")),
-        path_str(&scripts.join("hooked.sh")),
+        path_str(&scripts.join("claude.sh")),
         lab::BIN,
         path_str(&scripts.join("sticky.sh")),
     )
@@ -242,7 +253,10 @@ fn world_opts(extra: &str, web: bool) -> World {
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(scripts.join("fake.sh"), FAKE_AGENT).unwrap();
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
-    std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
+    std::fs::write(scripts.join("claude.sh"), CLAUDE_AGENT).unwrap();
+    // claude profile은 command를 harness 실행 파일로 바로 띄운다(뒤에 `--settings …`·`--session-id …`가 붙는다)
+    let exec = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755);
+    std::fs::set_permissions(scripts.join("claude.sh"), exec).unwrap();
     std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     let repo = make_repo(&lab.root);
@@ -293,19 +307,6 @@ impl World {
     fn questions(&self, all: bool) -> Vec<Value> {
         let a: &[&str] = if all { &["question", "list", "--all"] } else { &["question", "list"] };
         self.h.ok(a)["questions"].as_array().unwrap().clone()
-    }
-
-    /// 이 thread에 열린 질문 하나(종류 `kind`)를 기다린다
-    fn wait_question(&self, id: &str, kind: &str) -> Value {
-        wait_for_diag(
-            &format!("{kind} 질문"),
-            T,
-            || {
-                let open: Vec<_> = self.questions(false).into_iter().filter(|q| q["thread"] == id).collect();
-                (open.len() == 1 && open[0]["question_kind"] == kind).then(|| open[0].clone())
-            },
-            || format!("questions: {:?}\nthread: {}", self.questions(true), self.show(id)),
-        )
     }
 
     fn message(&self, id: &str, text: &str, interrupt: bool) -> Value {
@@ -574,45 +575,92 @@ fn brief_left_in_box_is_submitted_not_retyped() {
     assert!(e.contains("이미 brief를 받았다"), "{e}");
 }
 
-/// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
+/// 이 thread에 열린 질문(종류 `kind`, `not`에 없는 ID)이 생긴 사건
+fn open_question(ev: &mut Events, id: &str, kind: &str, not: &[&str]) -> QuestionView {
+    ev.wait(&format!("{kind} 질문"), T, |e| match e {
+        FrontEvent::Question(q)
+            if q.thread.as_deref() == Some(id)
+                && q.state == QuestionState::Open
+                && q.question_kind == kind
+                && !not.contains(&q.id.as_str()) =>
+        {
+            Some(q.clone())
+        }
+        _ => None,
+    })
+}
+
+/// 이 thread의 harness 상태가 `at`(ms) 뒤에 `activity`로 바뀐 사건(thread 기록)
+fn agent_became(ev: &mut Events, id: &str, activity: AgentActivity, at: u64) -> ThreadView {
+    ev.wait(&format!("{activity:?} 상태"), T, |e| match e {
+        FrontEvent::Thread(t)
+            if t.id == id && t.agent.as_ref().is_some_and(|a| a.activity == activity && a.since_ms >= at) =>
+        {
+            Some(t.clone())
+        }
+        _ => None,
+    })
+}
+
+/// 흐름 사건 `kind`(`detail`에 `about`이 든 것)
+fn flow_event(ev: &mut Events, kind: &str, about: &str) -> FlowEvent {
+    ev.wait(&format!("{kind} {about}"), T, |e| match e {
+        FrontEvent::Flow(f) if f.kind == kind && f.detail.contains(about) => Some(f.clone()),
+        _ => None,
+    })
+}
+
+/// 가짜 Claude의 지금 턴을 마친다(BEL)
+fn finish_turn(w: &World, pane: &str) {
+    w.h.ok(&["pane", "send", pane, "--text", "\u{7}"]);
+}
+
+/// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.75), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
+/// 기다림은 모두 host가 밀어 주는 사건(thread 기록·질문·흐름)으로 끝난다.
 #[test]
-fn hooked_thread_questions_and_messages() {
+fn claude_thread_states_questions_and_messages() {
     let w = world();
+    let mut ev = Events::connect(&w.h);
     let v =
-        w.start(&["--title", "hooked", "--profile", "hooked", "--kind", "dir", "--task-file", &w.task("t5.txt", "x")]);
+        w.start(&["--title", "claude", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("t5.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
     let pane = v["pane"].as_str().unwrap().to_string();
 
     // 처음 실행 확인창(폴더 신뢰)은 입력하지 않고 질문으로 올린다
-    let q = w.wait_question(&id, "trust");
-    assert_eq!(q["text"], "Quick safety check: Do you trust the files in this folder?");
+    let q = open_question(&mut ev, &id, "trust", &[]);
+    assert_eq!(q.text, "Quick safety check: Do you trust the files in this folder?");
     assert_eq!(w.show(&id)["brief"], "pending");
     // 고를 수 없는 답은 거부한다
-    let e = w.h.json(&["question", "answer", q["id"].as_str().unwrap(), "maybe"]).expect_err("없는 답");
+    let e = w.h.json(&["question", "answer", &q.id, "maybe"]).expect_err("없는 답");
     assert!(e.contains("yes, no"), "{e}");
-    let a = w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "yes"]);
+    let a = w.h.ok(&["question", "answer", &q.id, "yes"]);
     assert_eq!((a["state"].as_str(), a["answer"].as_str()), (Some("answered"), Some("yes")));
-    // 기본 선택(No, exit)이 아니라 Yes까지 옮겨 골랐다
-    w.wait_screen(&pane, "marker: none");
 
-    // 답한 뒤 brief 안내가 가고, harness가 받았다고(UserPromptSubmit) 알린다. 이어 권한 확인창이 뜬다.
-    let q = w.wait_question(&id, "permission");
+    // 답한 뒤 brief 안내가 가고(작업 중이나 확인창이 보이면 받았다), 권한 확인창이 질문이 된다
+    flow_event(&mut ev, "brief_delivered", "brief.md");
+    let p1 = open_question(&mut ev, &id, "permission", &[]);
+    assert_eq!(p1.text, "Do you want to proceed?");
     let v = w.show(&id);
-    assert_eq!(v["brief"], "delivered", "{v}");
     let ag = &v["agent"];
     assert_eq!((ag["activity"].as_str(), ag["harness"].as_str()), (Some("question"), Some("claude")), "{v}");
     assert_eq!((ag["percent"].as_u64(), ag["progress"].as_str()), (Some(40), Some("권한 확인 중")), "{v}");
+    // 세션 ID는 SessionStart hook으로 잇는다
     assert_eq!(ag["harness_session"], "fake-1");
-    // PermissionRequest와 Notification이 함께 와도 질문은 하나다
+    // 기본 선택(No, exit)이 아니라 Yes까지 옮겨 골랐다
+    assert!(w.h.screen(&pane).contains("marker: none"));
+    // 확인창이 그대로 떠 있어도(herdr는 800ms마다 다시 알린다) 질문은 하나다
     assert_eq!(w.questions(false).len(), 1);
-    // pane 목록에도 상태가 보인다(polling 없이 hook으로만 바뀐다)
     assert_eq!(w.h.pane(&pane)["agent"]["activity"], "question");
-    let qid = q["id"].as_str().unwrap().to_string();
-    w.h.ok(&["question", "answer", &qid, "yes"]);
-    let e = w.h.json(&["question", "answer", &qid, "yes"]).expect_err("두 번 답하기");
+    let t = lab::now_ms();
+    w.h.ok(&["question", "answer", &p1.id, "yes"]);
+    let e = w.h.json(&["question", "answer", &p1.id, "yes"]).expect_err("두 번 답하기");
     assert!(e.contains("닫힌"), "{e}");
-    let v = w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["agent"]["activity"] == "idle");
-    assert_eq!(v["agent"]["message"], "끝");
+    // 허락하면 도구가 돈다(spinner). 턴이 끝나 입력 상자가 보이면 idle이다.
+    agent_became(&mut ev, &id, AgentActivity::Working, t);
+    let t = lab::now_ms();
+    finish_turn(&w, &pane);
+    agent_became(&mut ev, &id, AgentActivity::Idle, t);
+    assert!(w.show(&id)["report_hash"].is_string());
     assert!(w.h.screen(&pane).contains("allowed"));
 
     // queue: 지금 기다리는 중이면 바로 받는다. 일하는 중에 온 것은 턴이 끝난 뒤 보낸다.
@@ -620,14 +668,13 @@ fn hooked_thread_questions_and_messages() {
     assert_eq!(m1["state"], "accepted", "{m1}");
     let m2 = w.message(&id, "second", false);
     assert_eq!(m2["state"], "queued", "{m2}");
-    // 중첩 세션·하위 agent의 Stop은 버린다(herdr-projects progress.rs eligible·foreign_session)
-    w.wait_screen(&pane, "nested sent");
-    std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(w.h.pane(&pane)["agent"]["activity"], "working", "다른 세션의 Stop으로 턴이 끝난 것으로 보였다");
-    let screen = w.wait_screen(&pane, "got: second");
-    assert!(screen.find("slow done").unwrap() < screen.find("got: second").unwrap(), "{screen}");
-    // 화면 출력이 Stop hook보다 먼저 보일 수 있다: 입력 대기(idle)를 확인한 뒤 다음을 보낸다
-    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    finish_turn(&w, &pane);
+    flow_event(&mut ev, "message_accepted", m2["id"].as_str().unwrap());
+    let screen = w.h.screen(&pane);
+    assert!(screen.find("got: slow one").unwrap() < screen.find("got: second").unwrap(), "{screen}");
+    let t = lab::now_ms();
+    finish_turn(&w, &pane);
+    agent_became(&mut ev, &id, AgentActivity::Idle, t);
     // 입력한 메시지는 task.md Follow-ups에 남는다(다시 시작하면 brief와 함께 읽는다, herdr-projects append_follow_up)
     let task = std::fs::read_to_string(w.projects.join("demo/threads").join(format!("{id}.task.md"))).unwrap();
     let follow = task.split("\n## Follow-ups\n").nth(1).unwrap_or_else(|| panic!("Follow-ups가 없다: {task}"));
@@ -636,44 +683,45 @@ fn hooked_thread_questions_and_messages() {
     // 거절(Esc)
     let m3 = w.message(&id, "ask again", false);
     assert_eq!(m3["state"], "accepted", "{m3}");
-    let q = w.wait_question(&id, "permission");
+    let p2 = open_question(&mut ev, &id, "permission", &[&p1.id]);
     // 확인창이 열려 있으면 interrupt는 거부하고 기록도 남기지 않는다(Esc가 확인창을 닫기 때문)
     let e =
         w.h.json(&["thread", "message", "demo", &id, "--interrupt", "--text", "NEVER-SENT"])
             .expect_err("질문 중 interrupt");
     assert!(e.contains("확인창"), "{e}");
-    w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "no"]);
-    w.wait_screen(&pane, "denied");
-    // 거절 뒤 Stop hook이 없어도 입력 대기로 본다
-    let v = w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
-    assert_eq!(v["agent"]["message"], "거절: 입력을 기다린다");
+    let t = lab::now_ms();
+    w.h.ok(&["question", "answer", &p2.id, "no"]);
+    // 거절하면 Claude는 턴을 멈추고 입력 상자를 보인다: hook 없이 화면으로 idle이다
+    agent_became(&mut ev, &id, AgentActivity::Idle, t);
+    assert!(w.h.screen(&pane).contains("denied"));
 
-    // interrupt: 일하는 중이면 Esc로 멈춘 뒤 보낸다. 멈춤은 Stop hook이 없어 화면(「Interrupted」)으로 안다.
+    // interrupt: 일하는 중이면 Esc로 멈춘 뒤, 멈춤(입력 상자)이 보이면 보낸다. 멈추기 전에 보낸 글은 사라진다.
     assert_eq!(w.message(&id, "long run", false)["state"], "accepted");
-    w.wait_screen(&pane, "long start");
-    let t0 = std::time::Instant::now();
+    let t0 = Instant::now();
     let m4 = w.message(&id, "urgent", true);
     assert_eq!(m4["state"], "accepted", "{m4}");
     assert!(t0.elapsed() < Duration::from_secs(10), "멈춤을 화면으로 알아야 한다: {:?}", t0.elapsed());
-    let screen = w.wait_screen(&pane, "got: urgent");
-    assert!(screen.contains("Interrupted") && !screen.contains("long done"), "{screen}");
-    // 두 번째 interrupt: 지난 「Interrupted」가 화면에 남아 있어도 새로 멈출 때까지 기다린다
-    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    let screen = w.h.screen(&pane);
+    let after = &screen[screen.find("got: long run").unwrap()..];
+    assert!(after.find("Interrupted").is_some_and(|i| after.find("got: urgent").is_some_and(|u| i < u)), "{screen}");
+    // 두 번째 interrupt
+    let t = lab::now_ms();
+    finish_turn(&w, &pane);
+    agent_became(&mut ev, &id, AgentActivity::Idle, t);
     assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
-    w.wait_for_count(&pane, "long start", 2);
-    let t0 = std::time::Instant::now();
     let m5 = w.message(&id, "urgent2", true);
     assert_eq!(m5["state"], "accepted", "{m5}");
-    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
-    let screen = w.wait_screen(&pane, "got: urgent2");
-    assert!(!screen.contains("long done"), "{screen}");
-    assert_eq!(screen.matches("Interrupted").count(), 3, "{screen}");
+    assert_eq!(w.h.screen(&pane).matches("Interrupted").count(), 3, "{}", w.h.screen(&pane));
     // thread stop: Esc 한 번(세션은 그대로)
-    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    let t = lab::now_ms();
+    finish_turn(&w, &pane);
+    agent_became(&mut ev, &id, AgentActivity::Idle, t);
     assert_eq!(w.message(&id, "long three", false)["state"], "accepted");
-    w.wait_for_count(&pane, "long start", 3);
+    let t = lab::now_ms();
     w.h.ok(&["thread", "stop", "demo", &id]);
-    w.wait_for_count(&pane, "Interrupted", 4);
+    agent_became(&mut ev, &id, AgentActivity::Idle, t);
+    let screen = w.h.screen(&pane);
+    assert_eq!(screen.matches("Interrupted").count(), 4, "{screen}");
     assert_eq!(w.h.pane(&pane)["state"], "running");
     assert!(!screen.contains("NEVER-SENT"), "{screen}");
 
@@ -1479,7 +1527,7 @@ fn coordinator_flow() {
     // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
     let a = w.h.ok(&["assignable", "demo"]);
     let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
-    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "sticky"]), "{a}");
+    assert_eq!(la["profiles"], serde_json::json!(["claude", "fake", "mute", "sticky"]), "{a}");
     w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
     for (bad, why) in
         [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]

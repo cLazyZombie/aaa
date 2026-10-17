@@ -116,12 +116,15 @@ while IFS= read -r line; do
 done
 `,
 );
-// Claude처럼 그리는 세션: 상태는 hook 사건으로 알린다
+// Claude처럼 그리는 세션(`<root>/bin/claude <모드>`): 실행 파일 이름이 claude라 agent가 화면을 Claude 규칙으로 보고
+// 상태를 정한다(plan §8.75). 화면 아래쪽은 실제 Claude Code 모양이고 판정은 herdr 원본 엔진으로 확인했다(작업 중
+// `live_turn_working`, 질문 `bash_permission_prompt`, 입력 대기 `live_prompt_box`). hook은 세션 ID만 알린다.
+fs.mkdirSync(`${root}/bin`, { recursive: true });
 fs.writeFileSync(
-  `${root}/claude-like.sh`,
+  `${root}/bin/claude`,
   `#!/bin/sh
-hook() { "$AA" hook --agent claude "$1"; }
-hook '{"hook_event_name":"SessionStart","session_id":"demo-'"$MODE"'","source":"startup"}'
+MODE="$1"
+"${AA}" hook --agent claude '{"hook_event_name":"SessionStart","session_id":"demo-'"$MODE"'","source":"startup"}'
 printf '\\033[38;5;216m╭───────────────────────────────────────────╮\\033[0m\\n'
 printf '\\033[38;5;216m│\\033[0m \\033[1m✻ Claude Code\\033[0m                              \\033[38;5;216m│\\033[0m\\n'
 printf '\\033[38;5;216m│\\033[0m   \\033[2mcwd: ~/work/shop-api\\033[0m                    \\033[38;5;216m│\\033[0m\\n'
@@ -131,22 +134,23 @@ printf '\\033[38;5;111m⏺\\033[0m Read(\\033[1msrc/pay/order.rs\\033[0m)\\n  �
 printf '\\033[38;5;111m⏺\\033[0m Update(\\033[1msrc/pay/order.rs\\033[0m)\\n'
 printf '  ⎿  \\033[32m+ let order = cache.get_or_load(id).await?;\\033[0m\\n'
 printf '     \\033[31m- let order = db.load(id).await?;\\033[0m\\n\\n'
+L='────────────────────────────────────────────'
+box() { printf '\\033[2m%s\\033[0m\\n\\033[2m❯\\033[0m \\n\\033[2m%s\\033[0m\\n  \\033[2m? for shortcuts\\033[0m' "$L" "$L"; }
 case "$MODE" in
   working)
-    hook '{"hook_event_name":"UserPromptSubmit","session_id":"demo-working"}'
-    printf '\\033[38;5;216m✻\\033[0m Running load test… \\033[2m(esc to interrupt · 1m 12s)\\033[0m\\n' ;;
+    printf '\\033[38;5;216m✻\\033[0m Running load test… \\033[2m(1m 12s · esc to interrupt)\\033[0m\\n\\n'
+    box ;;
   question)
-    hook '{"hook_event_name":"UserPromptSubmit","session_id":"demo-question"}'
-    printf '\\033[1mBash command\\033[0m\\n\\n  cargo test -p shop-api\\n\\nDo you want to proceed?\\n\\033[38;5;216m❯\\033[0m 1. Yes\\n  2. No, and tell Claude what to do differently (esc)\\n'
-    hook '{"hook_event_name":"PermissionRequest","session_id":"demo-question","tool_name":"Bash","tool_input":{"command":"cargo test -p shop-api"}}' ;;
+    printf '\\033[2m%s\\033[0m\\n \\033[1mBash command\\033[0m\\n\\n   cargo test -p shop-api\\n   Run the shop-api tests\\n\\n' "$L"
+    printf ' Do you want to proceed?\\n \\033[38;5;216m❯\\033[0m 1. Yes\\n   2. Yes, and don\\047t ask again for cargo test commands in ~/work/shop-api\\n'
+    printf '   3. No, and tell Claude what to do differently (esc)\\n\\n \\033[2mEsc to cancel · Tab to amend\\033[0m\\n' ;;
   *)
-    hook '{"hook_event_name":"UserPromptSubmit","session_id":"demo-idle"}'
     printf '\\033[38;5;111m⏺\\033[0m p95가 182ms에서 64ms로 줄었다. 시험 3회 통과.\\n\\n'
-    hook '{"hook_event_name":"Stop","session_id":"demo-idle","last_assistant_message":"p95 64ms"}'
-    printf '\\033[2m────────────────────────────────────────────\\033[0m\\n\\033[2m❯\\033[0m ' ;;
+    box ;;
 esac
 exec cat > /dev/null
 `,
+  { mode: 0o755 },
 );
 const agentToml = (work) =>
   `schema = 1\n[agent]\nwork_root = "${work}"\n[profiles.claude-opus]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\ndescription = "견본"\n`;
@@ -188,7 +192,7 @@ try {
     ["idle", "claude-web", "mac-b"],
     ["question", "claude-infra", "mac-b"],
   ]) {
-    run(m, name, ["/usr/bin/env", `MODE=${mode}`, `AA=${AA}`, "/bin/sh", `${root}/claude-like.sh`]);
+    run(m, name, [`${root}/bin/claude`, mode]);
   }
   run("mac-b", "logs", ["/bin/sh"]);
   aaa("pane", "send", sh.id, "--text", "printf '\\033[1;32m✓\\033[0m cargo build --release\\n  Compiling shop-api v0.4.2\\n  \\033[1;32mFinished\\033[0m release in 41.2s\\n'", "--enter");
@@ -270,8 +274,7 @@ try {
   // TUI(aaa attach)를 웹 터미널 안에서 찍는다: workspace demo = [claude-api │ 질문 중인 Claude] 탭 + build 탭
   const paneId = (n) => aaa("pane", "list").panes.find((p) => p.name === n).id;
   aaa("ws", "add", paneId("claude-api"), "-w", "demo");
-  aaa("ws", "split", paneId("claude-api"), "-w", "demo", "--dir", "h", "--machine", "mac-b", "--",
-    "/usr/bin/env", "MODE=question", `AA=${AA}`, "/bin/sh", `${root}/claude-like.sh`);
+  aaa("ws", "split", paneId("claude-api"), "-w", "demo", "--dir", "h", "--machine", "mac-b", "--", `${root}/bin/claude`, "question");
   aaa("ws", "add", paneId("build"), "-w", "demo");
   aaa("pane", "run", "--machine", "mac-a", "--name", "tui", "--cols", "150", "--rows", "40", "--",
     "/usr/bin/env", `AAA_CONFIG_DIR=${root}/c`, `AAA_STATE_DIR=${root}/s`, "TERM=xterm-256color", AA, "attach", "-w", "demo");
