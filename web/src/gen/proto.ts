@@ -181,7 +181,11 @@ agent: AgentStatus | null,
 /**
  * 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.
  */
-label?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
+label?: string, 
+/**
+ * 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+ */
+restore_error?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
 
 export type SplitDir = "horizontal" | "vertical";
 
@@ -398,7 +402,7 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "working" | "idle" | "resolved";
+export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "resolved";
 
 export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, role: Role, 
 /**

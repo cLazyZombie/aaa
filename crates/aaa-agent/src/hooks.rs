@@ -59,7 +59,10 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         session: session.to_string(),
         harness: harness.to_string(),
         kind: String::new(),
-        harness_session: s(p, "session_id").or_else(|| s(p, "thread-id")),
+        // UUID 꼴이 아니면 버린다(`aaa_common::util::harness_session_ok`): 이 값은 `--resume` 인자가 된다
+        harness_session: s(p, "session_id")
+            .or_else(|| s(p, "thread-id"))
+            .filter(|x| aaa_common::util::harness_session_ok(x)),
         message: None,
         question_kind: None,
         percent: None,
@@ -181,44 +184,58 @@ mod tests {
     fn subagent_and_foreign_session_events_are_dropped() {
         // herdr-projects progress.rs eligible·foreign_session 시험과 같은 경우
         let n = |p: Value| normalize("S", "claude", &p, 1);
-        assert!(n(json!({"hook_event_name":"UserPromptSubmit","session_id":"a","agent_id":"x"})).is_none());
+        assert!(n(json!({"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","agent_id":"x"})).is_none());
         assert!(
-            n(json!({"hook_event_name":"UserPromptSubmit","session_id":"a","transcript_path":"/p/subagents/x.jsonl"}))
+            n(json!({"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","transcript_path":"/p/subagents/x.jsonl"}))
                 .is_none()
         );
-        assert!(n(json!({"hook_event_name":"UserPromptSubmit","session_id":"a","agent_id":null})).is_some());
-        let other = n(json!({"hook_event_name":"UserPromptSubmit","session_id":"b"})).unwrap();
-        assert!(foreign_session(Some("a"), &other));
-        assert!(!foreign_session(Some("b"), &other));
+        assert!(n(json!({"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","agent_id":null})).is_some());
+        let other =
+            n(json!({"hook_event_name":"UserPromptSubmit","session_id":"7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"}))
+                .unwrap();
+        assert!(foreign_session(Some("0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"), &other));
+        assert!(!foreign_session(Some("7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"), &other));
         assert!(!foreign_session(None, &other));
-        let start = n(json!({"hook_event_name":"SessionStart","session_id":"b"})).unwrap();
-        assert!(!foreign_session(Some("a"), &start));
+        let start =
+            n(json!({"hook_event_name":"SessionStart","session_id":"7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a"})).unwrap();
+        assert!(!foreign_session(Some("0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"), &start));
     }
 
     #[test]
     fn hooks_only_link_sessions_and_never_set_state() {
         let n = |h: &str, p: Value| normalize("S", h, &p, 1);
-        let e = n("claude", json!({"hook_event_name":"SessionStart","session_id":"abc","transcript_path":"/t.jsonl"}))
+        let e = n("claude", json!({"hook_event_name":"SessionStart","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","transcript_path":"/t.jsonl"}))
             .unwrap();
-        assert_eq!((e.kind.as_str(), e.harness_session.as_deref()), ("session_start", Some("abc")));
+        assert_eq!(
+            (e.kind.as_str(), e.harness_session.as_deref()),
+            ("session_start", Some("0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"))
+        );
         assert_eq!(e.transcript.as_deref(), Some("/t.jsonl"));
-        let p = n("claude", json!({"hook_event_name":"UserPromptSubmit","session_id":"abc","prompt":"x"})).unwrap();
+        let p = n("claude", json!({"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","prompt":"x"})).unwrap();
         assert_eq!(p.kind, "prompt_submit");
+        // UUID 꼴이 아닌 세션 ID는 버린다(보안 감사 t-0340: `--resume` 인자가 된다). 사건은 그대로 받는다
+        for bad in ["--dangerously-skip-permissions", "x; touch pwned", "abc"] {
+            let e = n("claude", json!({"hook_event_name":"SessionStart","session_id":bad})).unwrap();
+            assert_eq!((e.kind.as_str(), e.harness_session.as_deref()), ("session_start", None), "{bad}");
+        }
         // 옛 agent가 띄운 세션의 상태 hook은 버린다: 상태는 화면 감지가 정한다
         for old in [
-            json!({"hook_event_name":"Stop","session_id":"abc"}),
+            json!({"hook_event_name":"Stop","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}),
             json!({"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}),
             json!({"hook_event_name":"Notification","notification_type":"permission_prompt","message":"m"}),
             json!({"hook_event_name":"Notification","notification_type":"idle_prompt"}),
-            json!({"hook_event_name":"PostToolUse","session_id":"abc"}),
-            json!({"hook_event_name":"SessionEnd","session_id":"abc"}),
+            json!({"hook_event_name":"PostToolUse","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}),
+            json!({"hook_event_name":"SessionEnd","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}),
             json!({"x":1}),
         ] {
             assert!(n("claude", old.clone()).is_none(), "{old}");
         }
         let c =
-            n("codex", json!({"type":"agent-turn-complete","thread-id":"t1","last-assistant-message":"done"})).unwrap();
-        assert_eq!((c.kind.as_str(), c.harness_session.as_deref(), c.message), ("session", Some("t1"), None));
+            n("codex", json!({"type":"agent-turn-complete","thread-id":"019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0","last-assistant-message":"done"})).unwrap();
+        assert_eq!(
+            (c.kind.as_str(), c.harness_session.as_deref(), c.message),
+            ("session", Some("019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0"), None)
+        );
         let r = n("report", json!({"percent":250,"activity":"테스트 중\n이상한 줄"})).unwrap();
         assert_eq!((r.kind.as_str(), r.percent), ("progress", Some(100)));
         assert_eq!(r.message.as_deref(), Some("테스트 중이상한 줄"));

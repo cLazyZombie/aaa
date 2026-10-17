@@ -90,5 +90,11 @@ debounce_secs = 15
 web_push = true
 # 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름, https만)
 push_hosts = ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
-# VAPID 연락처(비우면 공개 주소 https://<이름>.ts.net)
+# VAPID 연락처(비우면 프로젝트 저장소 주소. 공개 주소는 push 사업자에게 보내지 않는다)
 push_subject = ""
+
+[session]
+# 재부팅 뒤 Claude·Codex pane과 thread를 저장한 대화로 이어 띄운다(herdr와 같다). 꺼도 셸 pane은 저장한 폴더에서 되살린다.
+resume_agents_on_restore = true
+# 이어 띄우기 사이 간격(ms)
+startup_per_agent_delay_ms = 100

@@ -10,13 +10,13 @@
 #
 # 사용: bash p0/e1.sh [phase]
 #   phase: all(기본) | build | register | before | upgrade | after | summary
-# 환경: AAA_P0_VOLUME_DIR(외장 볼륨 읽기·쓰기 확인 폴더, 기본 /Volumes/ExSSD), AAA_P0_SAMPLES(기본 30)
+# 환경: AAA_P0_VOLUME_DIR(외장 볼륨 읽기·쓰기 확인 폴더, 예: /Volumes/<볼륨 이름>. 비우면 볼륨 확인을 건너뛴다), AAA_P0_SAMPLES(기본 30)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PHASE="${1:-all}"
 RES="${AAA_P0_RESULTS:-$HOME/aaa-p0/results}"
-VOL="${AAA_P0_VOLUME_DIR:-/Volumes/ExSSD}"
+VOL="${AAA_P0_VOLUME_DIR:-}"
 SAMPLES="${AAA_P0_SAMPLES:-30}"
 SELF_ID="aaa Code Signing"
 mkdir -p "$RES"
@@ -40,7 +40,7 @@ preflight() {
     || { echo "\"$SELF_ID\" identity가 없다. p0/cert/import-identity.sh를 먼저 한다."; exit 1; }
   [ -n "$(appledev_id)" ] || echo "주의: 유효한 Apple Development identity가 없다. aaa-appledev는 건너뛴다."
   command -v cargo >/dev/null || { echo "cargo가 없다"; exit 1; }
-  echo "자체 서명: $SELF_ID / Apple Development: $(appledev_id) / 결과: $RES / 볼륨: $VOL"
+  echo "자체 서명: $SELF_ID / Apple Development: $(appledev_id) / 결과: $RES / 볼륨: ${VOL:-확인 안 함}"
 }
 
 build_all() {

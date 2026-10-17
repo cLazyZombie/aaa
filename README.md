@@ -78,7 +78,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 
 - **마우스(herdr와 같음)**: 탭 이름표를 누르면 그 탭, 탭 막대 휠은 앞·뒤 탭, ` + `는 새 탭, 넘치면 ` < ` ` > `로 넘깁니다. 사이드바 줄을 누르면 엽니다. `«`·`»`는 접기·펴기, 사이드바 오른쪽 경계를 끌면 폭(18~36)이 바뀝니다. pane을 누르면 포커스, 끌면 글을 골라 떼는 때 이 기기 clipboard에 복사합니다(두 번 누르면 낱말, ssh 셸이면 OSC 52). vim·htop처럼 마우스를 켠 프로그램에는 누르기·끌기·휠이 그대로 가고, less처럼 alt 화면을 쓰는 프로그램에는 휠이 위·아래 화살표로 갑니다. 나눈 pane 사이 테두리를 끌면 크기가, 탭 이름표를 끌어 놓으면 탭 차례가 바뀝니다. 오른쪽 누름은 탭 이름표에서 탭 메뉴(새 탭·이름 바꾸기·닫기), pane에서 pane 메뉴(포커스 pane과 자리 바꾸기·나누기·크게 보기·닫기)를 엽니다. 마우스를 켠 프로그램에 오른쪽 누름을 보내려면 pane 메뉴의 「오른쪽 누름을 pane에 보내기」를 켭니다. 창과 메뉴는 밖을 누르면 닫힙니다. 터미널 자체의 끌어 고르기는 `[tui] mouse_capture = false`로 돌아옵니다(켠 채로도 WezTerm은 shift, iTerm2는 option을 누른 채 끌면 터미널이 고릅니다).
 - `Ctrl+V`(prefix 없이): 이 기기 clipboard에 그림이 있으면 pane 머신에 올리고, 입력창이면 경로를 넣습니다. 그림이 없으면 원래 `Ctrl+V`입니다.
-- 재부팅 등으로 중단된 pane에는 다시 띄우는 명령(`aaa pane resume <id>`)이 보입니다.
+- 재부팅 뒤 agent가 다시 붙으면 셸 pane은 저장한 폴더에서 되살아나고, Claude·Codex 대화와 thread는 이어 뜹니다(herdr처럼, `[session] resume_agents_on_restore`로 끔). 다른 프로그램 pane은 다시 실행하지 않고 중단으로 남아 다시 띄우는 명령(`aaa pane resume <id>`)이 보입니다.
 - 설정(`host.toml`):
 
   ```toml

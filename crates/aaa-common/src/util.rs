@@ -4,6 +4,16 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// harness 세션 ID(Claude hook `session_id`·Codex notify `thread-id`)는 UUID 꼴(8-4-4-4-12 16진수)만 받는다. 값은 pane
+/// 프로그램이 hook으로 알리므로 믿지 않는다: `--resume` 인자, 재부팅 뒤 셸에 치는 줄, 기록 파일 이름이 된다(보안 감사
+/// t-0340: `--dangerously-skip-permissions` 같은 인자나 `; 명령`이 들어갈 수 있었다). Claude·Codex 모두 UUID를 쓴다.
+pub fn harness_session_ok(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes()
+            .enumerate()
+            .all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == b'-' } else { c.is_ascii_hexdigit() })
+}
+
 pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
@@ -179,6 +189,19 @@ pub fn hostname() -> String {
     std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "unknown".into())
 }
 
+/// 머신 이름으로 쓸 수 있는가: 영문·숫자·`.`·`_`·`-`로 1~64자.
+/// 이름은 CLI 표·push 본문·nudge에 그대로 나간다. 제어 문자로 화면을 위조하지 못하게 막는다(보안 감사 t-0340 B5).
+pub fn machine_name_ok(name: &str) -> bool {
+    (1..=64).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+}
+
+/// hostname 같은 글에서 머신 이름 기본값을 만든다: 쓸 수 없는 글자는 `-`로 바꾸고 64자로 자른다.
+pub fn machine_name_from(raw: &str) -> String {
+    let s: String =
+        raw.chars().map(|c| if c.is_ascii_alphanumeric() || ".-_".contains(c) { c } else { '-' }).take(64).collect();
+    if s.is_empty() { "machine".into() } else { s }
+}
+
 /// 사용자만 읽고 쓰는 폴더(0700)를 만든다.
 pub fn ensure_private_dir(p: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(p)?;
@@ -262,11 +285,52 @@ mod time_tests {
     }
 
     #[test]
+    fn machine_names() {
+        use super::{machine_name_from, machine_name_ok};
+        for ok in ["mac-a", "build_01.lan", "A", &"x".repeat(64)] {
+            assert!(machine_name_ok(ok), "{ok}");
+        }
+        for bad in ["", "mac a", "mac\x1b[2Ja", "탭", "a\nb", "a\u{202e}b", &"x".repeat(65)] {
+            assert!(!machine_name_ok(bad), "{bad:?}");
+        }
+        assert_eq!(machine_name_from("Jo's Mac\x07"), "Jo-s-Mac-");
+        assert_eq!(machine_name_from(""), "machine");
+        assert!(machine_name_ok(&machine_name_from(&"한".repeat(100))));
+    }
+
+    #[test]
     fn utc_text_dates() {
         assert_eq!(super::utc_text(0), "1970-01-01 00:00Z");
         // 2024-02-29 23:59:59Z(윤일)
         assert_eq!(super::utc_text(1_709_251_199_000), "2024-02-29 23:59Z");
         assert_eq!(super::utc_text(1_792_152_000_000), "2026-10-16 12:00Z");
         assert_eq!(super::utc_compact(1_709_251_199_000), "20240229T235959Z");
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::harness_session_ok;
+
+    #[test]
+    fn harness_session_is_a_uuid() {
+        for ok in ["0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b", "019A4C5E-1F2B-7C3D-8E4F-A5B6C7D8E9F0"] {
+            assert!(harness_session_ok(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "--dangerously-skip-permissions",
+            "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b; rm -rf ~",
+            "x; touch pwned",
+            "../../../../etc/passwd",
+            "0f5b2c1e7a3d4c8e9b215d6e7f809a1b",
+            "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1",
+            "0f5b2c1e-7a3d-4c8e-9b21_5d6e7f809a1b",
+            "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1g",
+            "-f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b",
+            "０f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b",
+        ] {
+            assert!(!harness_session_ok(bad), "{bad}");
+        }
     }
 }

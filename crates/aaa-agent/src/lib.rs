@@ -265,12 +265,19 @@ impl Agent {
         self.host.lock().unwrap().clone()
     }
 
-    pub fn set_host(&self, tx: Option<FrameTx>) {
+    /// 세션별 마지막 harness 사건(시각 차례). hello에 싣거나 옛 host에 다시 보낸다.
+    pub fn harness_events(&self) -> Vec<aaa_proto::HarnessEvent> {
+        let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
+        last.sort_by_key(|e| e.at_ms);
+        last
+    }
+
+    /// `replay`: hello에 실은 harness 사건을 연결 뒤 다시 보낸다(hello의 것을 읽지 않는 옛 host)
+    pub fn set_host(&self, tx: Option<FrameTx>, replay: bool) {
         let gone = tx.is_none();
-        if let Some(tx) = &tx {
+        if let Some(tx) = tx.as_ref().filter(|_| replay) {
             // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
-            let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
-            last.sort_by_key(|e| e.at_ms);
+            let last = self.harness_events();
             let tx = tx.clone();
             tokio::spawn(async move {
                 for ev in last {
@@ -620,6 +627,9 @@ impl Agent {
             }
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
+            AgentRequest::History { session, anchor, depth } => {
+                return self.to_session(id, &session, SessionRequest::History { anchor, depth }).await;
+            }
             AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
@@ -705,8 +715,8 @@ impl Agent {
                     .map(AgentResponse::Landed)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
-            AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
-                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)
+            AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree } => {
+                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), merged_head.as_deref(), keep_worktree)
                     .await
                     .map(AgentResponse::Cleanup)
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
@@ -863,6 +873,7 @@ impl Agent {
                         cols: info.cols,
                         rows: info.rows,
                         replay: B64(replay),
+                        history_more: false,
                     }),
                     offset: end,
                 })

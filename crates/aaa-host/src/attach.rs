@@ -140,6 +140,10 @@ impl Host {
         if got != u.sha256 {
             return Err(err(ErrorCode::Internal, "저장한 그림의 sha256이 보낸 것과 다르다"));
         }
+        // 마지막 조각을 쓰는 동안 기기가 폐기됐으면 경로를 넣지 않는다(§6.4 「전송이 끝나기 직전에 권한을 다시」, t-0340 A9)
+        if actor.strip_prefix("device:").is_some_and(|d| self.is_revoked(d)) {
+            return Err(err(ErrorCode::Unauthorized, "기기가 폐기됐다"));
+        }
         let (inserted, note) = self.attach_insert(&id, &mid, &path).await;
         self.db.audit(actor, "pane_attach", &format!("{id} {} {} bytes inserted={inserted}", u.att, u.total));
         Ok(Some(Attached { path, inserted, note }))

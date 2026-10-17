@@ -197,6 +197,21 @@ pub struct Snapshot {
     pub cols: u16,
     pub rows: u16,
     pub replay: B64,
+    /// `replay`의 기록 앞에 session host가 가진 기록이 더 있다(plan §8.118). 그 앞은 `History` 요청으로 받는다.
+    /// 옛 session host는 보내지 않는다(false: 묻지 않는다).
+    #[serde(default)]
+    pub history_more: bool,
+}
+
+/// 받은 기록 맨 위 줄들(`anchor`) 바로 앞 기록 한 덩어리(plan §8.67·§8.118). replay 기록과 같은 모양(색 포함)이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryChunk {
+    pub data: B64,
+    pub lines: u32,
+    /// 그 앞이 더 있다
+    pub more: bool,
+    /// anchor를 찾았다(못 찾으면 붙이지 않는다)
+    pub found: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -347,6 +362,10 @@ pub struct AgentHello {
     pub selfcheck: Option<serde_json::Value>,
     #[serde(default)]
     pub sessions: Vec<SessionInfo>,
+    /// 세션별 마지막 harness 사건(agent가 `harness.json`에 둔 것). host가 연결 즉시 harness 세션 ID를 알아 재부팅 뒤
+    /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다.
+    #[serde(default)]
+    pub harness: Vec<HarnessEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -426,6 +445,13 @@ pub enum AgentRequest {
     /// 그 세션이 지금 있는 폴더(앞 프로그램, 없으면 셸). agent가 `cwd.v1` 기능을 알릴 때만 보낸다.
     Cwd {
         session: String,
+    },
+    /// session host 기록에서 `anchor` 바로 앞 덩어리(host mirror에 없는 앞 기록, plan §8.118).
+    /// agent가 `history.v1` 기능을 알리고 snapshot이 `history_more`였을 때만 보낸다.
+    History {
+        session: String,
+        anchor: Vec<String>,
+        depth: u32,
     },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
@@ -514,12 +540,16 @@ pub enum AgentRequest {
         target: String,
         message: String,
     },
-    /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
+    /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
+    /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.113).
+    /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
+    /// `base`는 읽지 않는다(branch를 남긴다).
     ThreadCleanup {
         repo: Option<String>,
         cwd: String,
         branch: Option<String>,
-        base: Option<String>,
+        #[serde(default)]
+        merged_head: Option<String>,
         keep_worktree: bool,
     },
     /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
@@ -540,6 +570,9 @@ pub enum PrQuery {
     Find { branch: String },
     /// `gh`가 쓰는 계정 login
     Login,
+    /// `repo`(`owner/repo`)에서 `gh` 계정이 연 열린 PR 번호들, 쉼표로(herdr-projects `open_own_numbers`).
+    /// agent 기능 `pr.v2`가 있을 때만 보낸다.
+    OpenOwn { repo: String },
 }
 
 /// PR 조회 결과. `out`은 질문마다 view JSON·찾은 주소·login이다.
@@ -594,6 +627,7 @@ pub enum AgentResponse {
         cwd: Option<String>,
     },
     Pr(PrAnswer),
+    History(HistoryChunk),
 }
 
 /// routine 명령 실행 결과
@@ -674,6 +708,11 @@ pub enum SessionRequest {
     /// 상태 감지 입력(SESSION_IPC 1.1부터). 순번이 `unchanged_since`와 같으면 글을 싣지 않는다.
     Detect {
         unchanged_since: Option<u64>,
+    },
+    /// 기록에서 `anchor` 바로 앞 덩어리(plan §8.118). snapshot에 `history_more`를 실은 session host에만 보낸다.
+    History {
+        anchor: Vec<String>,
+        depth: u32,
     },
 }
 
@@ -795,6 +834,10 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub label: Option<String>,
+    /// 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub restore_error: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -1442,7 +1485,7 @@ pub enum FrontRequest {
         project: String,
         id: String,
     },
-    /// 개선안 채택·보류(채택은 결정 기록에 남는다)
+    /// 개선안 채택·보류(평가 기록에 누가 언제 정했는지 남는다)
     EvaluationDecide {
         project: String,
         id: String,
@@ -1717,7 +1760,8 @@ pub enum TermServerMsg {
         reason: Option<String>,
     },
     State {
-        pane: PaneView,
+        // box: PaneView가 커서 다른 variant까지 크게 만든다(clippy large_enum_variant). wire 모양은 같다
+        pane: Box<PaneView>,
     },
     /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
     Front {

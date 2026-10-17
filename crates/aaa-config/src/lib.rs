@@ -77,6 +77,7 @@ pub struct HostConfig {
     pub terminal: TerminalSection,
     pub projects: ProjectsSection,
     pub notify: NotifySection,
+    pub session: SessionSection,
 }
 
 /// 새 pane(새 탭·나누기). 이름과 값은 herdr 0.9.5 `[terminal] new_cwd`를 따른다(plan §8.76).
@@ -91,6 +92,23 @@ pub struct TerminalSection {
 impl Default for TerminalSection {
     fn default() -> Self {
         TerminalSection { new_cwd: "follow".into() }
+    }
+}
+
+/// 재부팅 뒤 복원(herdr 0.9.5 `[session]`, src/config/model.rs `SessionConfig`). 이름·기본값이 herdr와 같다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionSection {
+    /// 재부팅 뒤 Claude·Codex pane과 thread를 저장한 대화로 이어 띄운다. 기본 켬(herdr와 같고, 결정 8-5 「꺼짐」을
+    /// 결정 20 D12가 바꿨다). 꺼도 셸 pane은 되살린다.
+    pub resume_agents_on_restore: bool,
+    /// 이어 띄우기 사이 간격(ms). 0이면 간격 없이.
+    pub startup_per_agent_delay_ms: u32,
+}
+
+impl Default for SessionSection {
+    fn default() -> Self {
+        SessionSection { resume_agents_on_restore: true, startup_per_agent_delay_ms: 100 }
     }
 }
 
@@ -112,7 +130,7 @@ pub struct NotifySection {
     pub web_push: bool,
     /// Web Push 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름). https만. 시험용 loopback(127.0.0.1 등)은 적었을 때만 http도 받는다
     pub push_hosts: Vec<String>,
-    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 공개 주소(https://<이름>.ts.net), 없으면 `mailto:aaa@example.com`
+    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 프로젝트 저장소 주소(herdr-web-ui와 같다). 공개 주소는 보내지 않는다
     pub push_subject: String,
 }
 
@@ -162,6 +180,7 @@ impl Default for HostConfig {
             terminal: TerminalSection::default(),
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
+            session: SessionSection::default(),
         }
     }
 }
@@ -197,6 +216,8 @@ pub struct ProjectsSection {
     pub stop_wait_ms: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
+    /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
+    pub merge_grace_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
@@ -218,6 +239,7 @@ impl Default for ProjectsSection {
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
             auto_resolve_day_secs: 86_400,
+            merge_grace_secs: 600,
             inbox_done_days: 30,
             routine_commands: Vec::new(),
         }
