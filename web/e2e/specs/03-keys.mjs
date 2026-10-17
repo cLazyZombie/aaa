@@ -205,14 +205,17 @@ export default async function ({ ctl, page }) {
     await tp.locator('.key-bar .key[data-key="Escape"]').click();
     await until("Esc", () => since(n).join("") === "\x1b");
     if (!(await line.evaluate((el) => el === document.activeElement))) bad.push("키 막대 키가 입력줄의 focus를 가져갔다");
-    // 입력줄이 4줄까지 자라도 PTY 크기는 그대로다(그리드 위에 뜬다)
+    // 입력줄이 4줄까지 자라도 PTY 크기는 그대로다(그리드 위에 뜬다). 울타리는 자란 입력줄이 그려진 것(rows 4)이다: 그 뒤 잰
+    // 터미널 칸 높이가 그대로면 맞출 크기도 그대로다(boundingBox가 그 자리에서 배치를 계산한다). 그 사이 크기를 보내지도 않았다
     const before = size();
     const box0 = await tp.locator(".term-scroll").boundingBox();
+    const k = await sentCount(tp);
     await line.fill("1\n2\n3\n4\n5\n6");
-    await sleep(800);
-    if ((await line.getAttribute("rows")) !== "4") bad.push(`여섯 줄 입력줄 rows ${await line.getAttribute("rows")}`);
+    await until("여섯 줄 입력줄 rows 4", async () => (await line.getAttribute("rows")) === "4").catch(async (e) => bad.push(`${e.message}: rows ${await line.getAttribute("rows")}`));
     const box1 = await tp.locator(".term-scroll").boundingBox();
-    if (size() !== before || Math.abs(box1.height - box0.height) > 0.5) bad.push(`입력줄이 자라며 터미널이 줄었다: ${before} → ${size()}, 높이 ${box0.height} → ${box1.height}`);
+    const resized = (await sentFrames(tp, k)).filter((f) => f.t === "resize");
+    if (size() !== before || Math.abs(box1.height - box0.height) > 0.5 || resized.length)
+      bad.push(`입력줄이 자라며 터미널이 줄었다: ${before} → ${size()}, 높이 ${box0.height} → ${box1.height}, 보낸 크기 ${JSON.stringify(resized)}`);
     await line.fill("");
     // 입력줄 조합 중에는 ⌨만 회색이고 키 막대는 그대로다
     await line.dispatchEvent("compositionstart", { data: "" });
