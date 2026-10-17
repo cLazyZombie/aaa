@@ -3,7 +3,7 @@
 // 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 탭에 없는 Notification을 부름)을 못 잡는다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 15-ios-rules(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { AA, aaa, until, step, browser, openSettings } from "../lib/harness.mjs";
+import { AA, aaa, until, step, browser, openSettings, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 export default async function () {
@@ -49,6 +49,7 @@ export default async function () {
     await dialog.getByRole("switch", { name: "무음 모드에서도" }).click();
     await device.next("무음에서도 미리 듣기", (e) => e === "tone 660", m);
     same(device.since(m).filter((e) => /^(session|tone|muted) /.test(e)), ["session playback", "tone 880", "tone 660"], "무음에서도 미리 듣기");
+    await shot(ph, "iphone-home-sound-settings");
     await ph.keyboard.press("Escape");
     await ph.getByTestId("pane-t1").click();
     // 1) 다른 pane의 확인창: 앱 안 알림과 「입력 필요」 소리(660 → 880)
@@ -57,6 +58,7 @@ export default async function () {
     const q1 = ask();
     await device.next("확인창 소리", (e) => e === "tone 880", m);
     await alerted(ph);
+    await shot(ph, "iphone-home-app-alert");
     await dismiss(ph);
     // 2) 홈 화면으로 나갔다 돌아옴: 소리가 interrupted라 누르기 전에는 낼 수 없다. 앱 안 알림이 뜬 때까지 소리 기록이 없어야 한다
     await device.skipAudio();
@@ -88,6 +90,7 @@ export default async function () {
       throw new Error(`${e.message}: 화면 오류 [${tab.errors.join("; ")}]`);
     });
     if (!(await dialog.getByRole("button", { name: "테스트 보내기" }).isDisabled())) throw new Error("탭에서 테스트 보내기가 눌린다");
+    await shot(tab.page, "iphone-tab-alerts-hint");
     if (tab.errors.length) throw new Error(`탭 화면 오류: ${tab.errors.join("; ")}`);
     if (tab.device.log.some((e) => e.startsWith("permission"))) throw new Error(`탭에서 권한을 물었다: ${tab.device.log}`);
     await tab.page.context().close();
