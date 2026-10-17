@@ -1621,6 +1621,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 다시 쓰는 동안 온 출력·snapshot·크기 바꾸기는 붙잡았다가 다 쓴 뒤에 차례로 쓴다.
   - 다시 쓰는 동안은 그 전 화면(DOM renderer 줄 요소의 사본)을 위에 덮어 둔다. 그래서 중간 모습이 보이지 않는다.
   - 덮개는 새 자리가 그려진 뒤(`term.onRender`)에 걷는다. xterm은 다음 frame에 그리므로 쓰기 callback에서 바로 걷으면 한 frame 동안 빈 줄이 보였다(10-18 t-0329 ci-local에서 웹 E2E 「앞 기록」이 그 순간의 빈 줄을 읽어 드러났다).
+  - 시험의 버퍼 훑기도 「굴린 뒤 두 frame이면 그렸다」를 어림하지 않고 Term이 `onRender`마다 적는 그린 맨 위 줄(`data-view-top`)이 바뀌기를 기다리고, 줄 자리도 그 값에서 센다(부하가 크면 그리기가 한 걸음 늦어 같은 줄을 두 자리로 셌다).
   - modifyOtherKeys 단계는 serialize에 없어 되살린다. 새 snapshot이 오면 기다리던 답은 버린다.
 - **안 되는 곳(사용자 결정을 기다린다).**
   - **(가) host를 다시 띄운 뒤의 앞 기록.** host mirror는 다시 뜰 때 session host snapshot으로 기록을 처음 채운다. 이 snapshot은 지금도 1MiB frame 하나다(최근 2000줄·384KiB). 그래서 host를 다시 띄우면 그보다 앞 기록은 session host에만 있고 웹은 받아 오지 못한다.

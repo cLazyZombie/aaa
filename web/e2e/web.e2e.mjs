@@ -2085,24 +2085,34 @@ try {
     if (!seen.every((n, i) => i === 0 || n < seen[i - 1])) throw new Error(`붙인 자리가 위로 가지 않았다: ${seen}`);
     // 버퍼 전체를 한 화면씩 훑어: h-00001~h-06000이 빠짐·겹침 없이 차례로(덩어리 경계도)
     const sweep = await hp.evaluate(async () => {
-      const vp = document.querySelector('[data-testid="terminal"] .xterm-viewport');
-      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const box = document.querySelector('[data-testid="terminal"]');
+      const vp = box.querySelector(".xterm-viewport");
+      // 굴린 자리가 그려질 때까지(Term onRender가 그린 맨 위 줄을 data-view-top에 적는다). 걸음마다 맨 위 줄이 바뀐다
+      const drawnFrom = (was) =>
+        new Promise((done) => {
+          const ok = () => box.dataset.viewTop !== undefined && box.dataset.viewTop !== was;
+          if (ok()) return done(Number(box.dataset.viewTop));
+          const mo = new MutationObserver(() => ok() && (mo.disconnect(), done(Number(box.dataset.viewTop))));
+          mo.observe(box, { attributes: true, attributeFilter: ["data-view-top"] });
+        });
       const nums = new Set();
       const bad = [];
       const ticks = new Map();
       let last = -1;
       for (let y = 0; ; y += vp.clientHeight / 2) {
+        const was = box.dataset.viewTop;
+        const before = vp.scrollTop;
         vp.scrollTop = y;
         vp.dispatchEvent(new Event("scroll"));
-        await frame();
-        const got = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
+        // 맨 위(첫 걸음)에 이미 있으면 그린 자리도 그대로다
+        const top = vp.scrollTop === before ? Number(was) : await drawnFrom(was);
+        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
+        const got = divs.map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
         for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
         got.forEach((n) => nums.add(n));
         // tick-1·h-06000 줄의 버퍼 줄 번호(겹쳐 본 화면에서 같은 줄은 한 번 센다)
-        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
-        const rowH = divs[0].getBoundingClientRect().height;
         divs.forEach((d, i) => {
-          const at = Math.round(vp.scrollTop / rowH) + i;
+          const at = top + i;
           if (d.textContent.startsWith("tick-1")) ticks.set(at, "tick");
           if (d.textContent.startsWith("h-06000")) last = at;
         });
