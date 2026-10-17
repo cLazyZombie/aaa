@@ -25,7 +25,6 @@ pub(crate) struct BriefInput<'a> {
     /// (파일 이름, 내용), 넣을 차례대로
     pub memory_files: &'a [(String, String)],
     pub memory_cap: usize,
-    pub decisions: &'a str,
     pub task: &'a str,
     pub restart: bool,
 }
@@ -141,9 +140,7 @@ pub(crate) fn compose_brief(input: &BriefInput) -> String {
             left_out.join(", ")
         ));
     }
-    brief.push_str("\n# 결정 기록\n\n");
-    brief.push_str(input.decisions.trim());
-    brief.push_str("\n\n# 진행 보고\n\n");
+    brief.push_str("\n# 진행 보고\n\n");
     brief.push_str(&progress_guidance(BRIEF_EXE));
     brief.push_str("\n\n# 할 일\n\n");
     brief.push_str(input.task.trim());
@@ -183,7 +180,6 @@ mod tests {
             memory_index: "# Memory\n- a\n- b\n- c",
             memory_files: &files,
             memory_cap: cap,
-            decisions: "# 결정 기록\n\n## 1번",
             task: "Do the thing.",
             restart: true,
         };
@@ -198,8 +194,8 @@ mod tests {
         assert!(pos("앞서 시도한 것") < pos("Always run the tests."));
         assert!(pos("Always run the tests.") < pos("# Memory"));
         assert!(pos("# Memory") < pos("alpha fact"));
-        assert!(pos("alpha fact") < pos("# 결정 기록\n\n## 1번"));
-        assert!(pos("# 결정 기록") < pos("# 진행 보고"));
+        assert!(pos("alpha fact") < pos("# 진행 보고"));
+        assert!(!brief.contains("결정 기록"), "결정은 memory에 있다(G9)");
         assert!(pos(&format!("`{BRIEF_EXE} report --percent 25")) < pos("Do the thing."));
         assert!(pos("Do the thing.") < pos("# 경로"));
         assert!(brief.ends_with(&format!(

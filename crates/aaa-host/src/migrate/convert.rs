@@ -67,9 +67,6 @@ fn setting_note(key: &str) -> Option<&'static str> {
         "goal" => {
             "aaa에 프로젝트 goal 칸이 없다(4장 G「프로젝트 만들기」 `--goal` 옮길 예정). PROJECT.herdr.toml에 남김"
         }
-        "max_parallel_threads" => {
-            "aaa 한도는 host.toml [projects] max_threads_per_machine(머신별)이다. 프로젝트별 한도 없음"
-        }
         "auto_resolve_days" => "aaa는 자동 resolve가 없다(4장 I「병합 뒤 정리」 옮길 예정)",
         "nudge" => "aaa nudge는 host.toml nudge_idle_secs로 늘 켜져 있다(3장 G6 `nudge` 설정 옮길 예정)",
         "mute" => "aaa 알림은 기기별 설정이다(D4). 프로젝트 mute 없음",
@@ -166,7 +163,6 @@ pub(crate) fn thread_rec(
         last_group: Some(ThreadGroup::Resolved),
         review_item_hash: None,
         error: opt(&t.error),
-        decisions_rev: None,
         eval_cursor: 0,
         eval_batches: 0,
         eval_last_batch_ms: None,
@@ -323,7 +319,8 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
     let mut project_toml = String::from("schema = 1\n");
     for (k, v) in &p.settings {
         match k.as_str() {
-            "start_threads" => project_toml.push_str(&format!("start_threads = {v}\n")),
+            // project.toml에서 같은 이름·같은 뜻이다
+            "start_threads" | "max_parallel_threads" => project_toml.push_str(&format!("{k} = {v}\n")),
             _ => {
                 let note = setting_note(k).unwrap_or("aaa에 같은 설정이 없다");
                 out.settings_not_mapped.push((k.clone(), front_value(v), note.to_string()));
@@ -651,18 +648,18 @@ mod e2e {
         assert_eq!(o.excluded.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["scratch/k.pem"]);
         assert_eq!(o.threads_imported, ["t-0001"]);
         assert_eq!((o.inbox_open, o.inbox_done), (1, 1));
-        assert!(o.settings_not_mapped.iter().any(|(k, _, _)| k == "max_parallel_threads"));
+        assert!(!o.settings_not_mapped.iter().any(|(k, _, _)| k == "max_parallel_threads"));
         let dir = base.join("projects/demo");
         assert!(!dir.join(".env").exists() && !dir.join("scratch/k.pem").exists());
         assert_eq!(std::fs::read_to_string(dir.join("library/t-0001/out.txt")).unwrap(), "결과물\n");
         assert!(std::fs::read_to_string(dir.join("routines/audit.md")).unwrap().contains("enabled = false"));
         assert_eq!(
             std::fs::read_to_string(dir.join("project.toml")).unwrap(),
-            "schema = 1\nstart_threads = \"auto\"\n"
+            "schema = 1\nmax_parallel_threads = 2\nstart_threads = \"auto\"\n"
         );
         assert!(std::fs::read_to_string(dir.join("PROJECT.md")).unwrap().starts_with("# demo\n\n# 지침\n규칙"));
         assert!(dir.join("AGENTS.md").is_file() && dir.join("imported/AGENTS.herdr.md").is_file());
-        assert!(dir.join("decisions.md").is_file());
+        assert!(dir.join("MEMORY.md").is_file() && !dir.join("decisions.md").exists());
         // 원본은 그대로
         assert!(src.join(".env").is_file() && src.join("routines/audit.md").is_file());
         assert!(std::fs::read_to_string(src.join("routines/audit.md")).unwrap().contains("enabled = true"));

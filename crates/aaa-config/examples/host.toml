@@ -67,8 +67,6 @@ accept_wait_ms = 10000
 stop_wait_ms = 15000
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
-# 머신 하나에서 동시에 도는 thread 한도(0이면 제한 없음)
-max_threads_per_machine = 6
 # routine 명령을 실행해도 되는 프로젝트("*"는 모두). 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.
 routine_commands = []
 

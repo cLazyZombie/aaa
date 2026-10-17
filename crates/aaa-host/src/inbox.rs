@@ -225,7 +225,13 @@ impl Host {
                     e.detail
                 ),
             ),
-            "message_unknown" => ("message not delivered", format!("{thread}: 메시지 {}", e.detail)),
+            "message_unknown" => (
+                "message not delivered",
+                format!(
+                    "{thread}: 메시지 {}. 다시 보내지 말고 `aaa thread read {p} {thread}`로 입력창을 본다(남았으면 `aaa thread keys {p} {thread} enter`)",
+                    e.detail
+                ),
+            ),
             "thread_failed" => ("not launched", format!("{thread}: 시작하지 못했다: {}", e.detail)),
             _ => return,
         };
@@ -338,6 +344,7 @@ impl Host {
         self.evaluator_pass();
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
+            self.check_old_decisions(&p.name, Path::new(&p.path));
             self.thread_pass(&p.name);
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
@@ -413,6 +420,36 @@ impl Host {
             "project.toml",
             "not usable",
             &format!("project.toml을 읽지 못한다: {first}"),
+        );
+    }
+
+    /// 옛 aaa의 결정 기록(decisions.md)은 brief에 더 넣지 않는다(결정은 memory에 적는다, D10 G9). 결정이 적혀 있으면
+    /// 내용 hash당 한 번 coordinator에게 memory로 옮기라고 알린다. host는 memory를 쓰지 않는다(coordinator 몫).
+    fn check_old_decisions(&self, project: &str, dir: &Path) {
+        let Ok(text) = std::fs::read_to_string(dir.join("decisions.md")) else { return };
+        let n = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("## "))
+            .filter(|h| h.trim_start().starts_with(|c: char| c.is_ascii_digit()))
+            .count();
+        if n == 0 {
+            return;
+        }
+        let hash = hex::encode(sha2::Sha256::digest(text.as_bytes()));
+        let key = format!("old_decisions:{project}");
+        if self.db.meta(&key).ok().flatten().as_deref() == Some(hash.as_str()) {
+            return;
+        }
+        let _ = self.db.set_meta(&key, &hash);
+        self.inbox_add(
+            project,
+            "config-error",
+            "decisions.md",
+            "not read",
+            &format!(
+                "decisions.md의 결정 {n}건은 thread brief에 더 들어가지 않는다(결정은 memory에 적는다). 뒤 thread가 알아야 할 것을 \
+                 memory로 옮기고(MEMORY.md 색인 + memory/ 파일) decisions.md를 지운다"
+            ),
         );
     }
 

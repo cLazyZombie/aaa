@@ -260,7 +260,7 @@ task: string,
 /**
  * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
-from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "decision_add", project: string, text: string, replaces: number | null, } | { "op": "decisions", project: string, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "merge_land", project: string, thread: string | null, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
+from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "merge_land", project: string, thread: string | null, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -292,7 +292,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "decisions", decisions: Array<DecisionView>, } | { "kind": "decision" } & DecisionView | { "kind": "inbox", items: Array<InboxItem>, 
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -374,15 +374,11 @@ copy: string | null, error: string | null,
 /**
  * agent harness 상태(hook으로 안다)
  */
-agent: AgentStatus | null, 
+agent: AgentStatus | null, created_at_ms: number, updated_at_ms: number, 
 /**
- * thread를 시작할 때 brief에 넣은 결정 기록 번호(가장 큰 번호). 지금 번호보다 작으면 옛 결정으로 일한다.
+ * `thread start`가 알리는 경고(시작은 했다, 예: 동시 thread 한도). 다른 응답에는 없다.
  */
-decisions_rev: number | null, 
-/**
- * 프로젝트의 지금 결정 번호
- */
-decisions_now: number | null, created_at_ms: number, updated_at_ms: number, };
+warnings?: Array<string>, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 
@@ -438,20 +434,6 @@ export type MessageMode = "interrupt" | "queue";
 export type DeliveryState = "queued" | "accepted" | "unknown";
 
 export type MessageView = { id: string, project: string, thread: string, mode: MessageMode, state: DeliveryState, text: string, created_at_ms: number, };
-
-export type DecisionView = { num: number, 
-/**
- * 적은 시각(파일에 적힌 글 그대로)
- */
-at: string, text: string, 
-/**
- * 이 결정이 대체한 번호
- */
-replaces: number | null, 
-/**
- * 나중 결정이 이 결정을 대체했다
- */
-replaced_by: number | null, };
 
 export type InboxItem = { 
 /**
@@ -637,11 +619,7 @@ effect: string,
  */
 tool: string, decision: ProposalDecision | null, };
 
-export type ProposalDecision = { adopted: boolean, by: string, at_ms: number, note: string | null, 
-/**
- * 채택이면 남긴 결정 기록 번호
- */
-decision_num: number | null, };
+export type ProposalDecision = { adopted: boolean, by: string, at_ms: number, note: string | null, };
 
 export type EvaluationView = { project: string, 
 /**

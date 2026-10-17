@@ -21,8 +21,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 3 };
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),
 /// 1.10: zoom·자리 바꾸기(`LayoutChange::Zoom`·`Swap`, `Tab.zoomed`)(plan §8.91),
-/// 1.11: `inbox` 응답의 `omitted_open`·`omitted_done`(plan §8.95)
-pub const FRONT_API: Version = Version { major: 1, minor: 11 };
+/// 1.11: `inbox` 응답의 `omitted_open`·`omitted_done`(plan §8.95),
+/// 1.12: ThreadView `warnings`(plan §8.98), 결정 기록 요청(`decision_add`·`decisions`)과 ThreadView `decisions_rev`·`decisions_now`를 없앰(plan §8.99)
+pub const FRONT_API: Version = Version { major: 1, minor: 12 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 0 };
 

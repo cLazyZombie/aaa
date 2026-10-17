@@ -558,7 +558,8 @@ impl Host {
         }
     }
 
-    /// 개선안 채택·보류. 채택은 결정 기록에 남긴다. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다.
+    /// 개선안 채택·보류. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 채택한 것을 뒤 thread가 알아야 하면
+    /// coordinator가 memory에 적는다(host는 memory를 쓰지 않는다, herdr-projects COORDINATOR.md).
     pub(crate) fn evaluation_decide(
         &self,
         project: &str,
@@ -585,22 +586,8 @@ impl Host {
         let note = note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
         for pid in pids {
             let p = v.doc.proposals.iter_mut().find(|p| &p.id == pid).unwrap();
-            let decision_num = if adopt {
-                let mut text = format!("평가 {id}의 개선안 {pid}를 채택한다: {}", p.text);
-                if let Some(n) = &note {
-                    text.push_str(&format!("\n  메모: {n}"));
-                }
-                Some(self.decision_add(project, &text, None, actor)?.num)
-            } else {
-                None
-            };
-            p.decision = Some(ProposalDecision {
-                adopted: adopt,
-                by: actor.to_string(),
-                at_ms: now,
-                note: note.clone(),
-                decision_num,
-            });
+            p.decision =
+                Some(ProposalDecision { adopted: adopt, by: actor.to_string(), at_ms: now, note: note.clone() });
         }
         let left = undecided(&v.doc);
         let state = if left > 0 { "open" } else { "decided" };
@@ -727,7 +714,7 @@ mod tests {
     #[test]
     fn doc_check() {
         let ok = r#"{"summary":"brief 대기가 길다","stages":[{"thread":"t-0001","stage":"구현","minutes":12.6}],
-            "proposals":[{"id":"p1","text":"brief 확인 자동화","decision":{"adopted":true,"by":"x","at_ms":1,"note":null,"decision_num":null}}],
+            "proposals":[{"id":"p1","text":"brief 확인 자동화","decision":{"adopted":true,"by":"x","at_ms":1,"note":null}}],
             "extra":"모르는 필드는 버린다"}"#;
         let d = check_doc(ok.as_bytes()).unwrap();
         assert_eq!(d.stages[0].minutes, Some(aaa_proto::Minutes(13)));

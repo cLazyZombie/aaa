@@ -276,8 +276,6 @@ pub struct Host {
     deliver_lock: tokio::sync::Mutex<()>,
     /// pane 등록 전에 온 harness 사건
     held: Mutex<harness::Held>,
-    /// decisions.md 덧붙이기는 한 번에 하나씩
-    decision_lock: Mutex<()>,
     /// ticker를 바로 깨운다(흐름 사건·harness 사건)
     tick_wake: tokio::sync::Notify,
     /// 시작한 tick 수와 끝난 tick 수(`ticker_tick`이 「이 요청 뒤에 시작한 tick」이 끝나기를 기다린다)
@@ -426,7 +424,6 @@ impl Host {
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
-            decision_lock: Mutex::new(()),
             tick_wake: tokio::sync::Notify::new(),
             tick_started: std::sync::atomic::AtomicU64::new(0),
             tick_done: watch::channel(0).0,
@@ -904,12 +901,6 @@ impl Host {
             }
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
-            }
-            FrontRequest::DecisionAdd { project, text, replaces } => {
-                self.decision_add(&project, &text, replaces, actor).map(FrontResponse::Decision)
-            }
-            FrontRequest::Decisions { project } => {
-                self.decisions(&project).map(|decisions| FrontResponse::Decisions { decisions })
             }
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
@@ -1995,6 +1986,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    host.forget_queued_messages();
     host.start_ticker();
     host.start_notifier();
     if host.cfg.local_agent.mode == LocalAgentMode::Child {
