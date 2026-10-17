@@ -19,6 +19,7 @@
 #              --native-clipboard일 때만 돈다. 아니면 「건너뜀」으로 요약에 남긴다. Linux는 xvfb-run 위에서.
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
+#              target/debug/aaa는 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
 #   public     scripts/check-public.sh(공개 저장소 검사)
 #
 # 실패한 단계는 다시 돌리지 않는다. 앞 단계(web·build)가 실패하면 그것에 기대는 단계는 「앞 단계 실패」로 건너뛴다.
@@ -35,7 +36,7 @@ SKIP=""
 LOGS=""
 NATIVE_CLIP="${AAA_CLIP_NATIVE:-}"
 TEE=""
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY=$(echo "${2:-}" | tr ',' ' '); shift 2 ;;
@@ -80,13 +81,23 @@ step_test() { cargo test --workspace --locked; }
 step_clipboard() {
   local run=()
   [ "$OS" = linux ] && run=(xvfb-run -a)
-  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa-tui native_clipboard_roundtrip -- --nocapture || return 1
+  # -p aaa-tui만 고르면 의존 crate의 feature 조합이 test 단계(--workspace)와 달라 다시 컴파일한다. test 단계와 같은 선택에 이름만 거른다
+  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked --workspace native_clipboard_roundtrip -- --nocapture || return 1
   # TUI E2E는 Unix 전용이다
   [ "$OS" = windows ] && return 0
   AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa --test tui ctrl_v_pastes_clipboard_image -- --nocapture
 }
 step_e2e() {
-  local root
+  local root newer
+  # 옛 번들·옛 binary로 시험하지 않는다(--only e2e처럼 web·build 없이 돌 때). host 실행 파일은 web/dist를 넣어 빌드된다
+  if [ -z "$(result_of web)" ]; then
+    [ -f web/dist/index.html ] || { echo "web/dist가 없다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
+    newer=$(find web/src web/public web/patches web/index.html web/package.json web/package-lock.json web/vite.config.ts \
+      web/tsconfig.json web/xterm-source.mjs -newer web/dist/index.html -print 2>/dev/null | head -1)
+    [ -z "$newer" ] || { echo "web/dist가 ${newer}보다 오래됐다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
+  fi
+  # e2e는 target/debug/aaa만 쓴다. build 단계 뒤라면 다시 컴파일하지 않는다(같은 binary)
+  cargo build --locked -p aaa --bin aaa || return 1
   root=$(npm root -g) || return 1
   if ! NODE_PATH="$root" node -e 'require("playwright")' 2>/dev/null; then
     echo "playwright가 전역 npm 모듈에 없다: npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit"
@@ -96,18 +107,21 @@ step_e2e() {
 }
 step_public() { bash scripts/check-public.sh; }
 
+# 이번 실행에서 그 단계가 실패했거나 앞 단계 실패로 건너뛰었다
+broken() { case "$(result_of "$1")" in FAIL | 건너뜀:*) return 0 ;; esac; return 1; }
+
 # 건너뛸 이유(없으면 빈 글)
 skip_reason() {
   case "$1" in
     build) [ "$(result_of web)" = FAIL ] && echo "앞 단계 실패(web)" ;;
-    clippy|test) [ "$(result_of build)" = FAIL ] || [ "$(result_of build)" = "앞 단계 실패" ] && echo "앞 단계 실패(build)" ;;
+    clippy|test) broken build && echo "앞 단계 실패(build)" ;;
     clipboard)
-      if [ "$(result_of build)" = FAIL ]; then echo "앞 단계 실패(build)"
+      if broken build; then echo "앞 단계 실패(build)"
       elif [ -z "$NATIVE_CLIP" ]; then echo "사람의 clipboard를 덮어쓴다(--native-clipboard나 AAA_CLIP_NATIVE=1로 켠다)"
       fi ;;
     e2e)
       if [ "$OS" = windows ]; then echo "Unix만(웹 E2E)"
-      elif [ "$(result_of web)" = FAIL ] || [ "$(result_of build)" = FAIL ]; then echo "앞 단계 실패(web·build)"
+      elif broken web || broken build; then echo "앞 단계 실패(web·build)"
       fi ;;
   esac
 }
