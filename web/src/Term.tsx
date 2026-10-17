@@ -1510,7 +1510,10 @@ export function TermView({
       t = window.setTimeout(() => {
         delete el.dataset.fitPending;
         // 키보드가 화면 아래를 가렸다: grid는 그대로, 터미널만 커서 줄로 옮긴다(맞출 수 없는 화면도)
-        if (keyboardHolds()) return;
+        if (keyboardHolds()) {
+          el.dataset.fit = "keyboard";
+          return;
+        }
         autoFit.current();
       }, 120);
     });
