@@ -46,6 +46,8 @@ prefix_jamo_keys = true
 /// 화면 관측기: 출력·커서 이동·지우기와 바탕색(SGR 40~49·100~107·48;5·48;2)만 다룬다.
 /// 바탕색은 herdr처럼 색으로만 보이는 사이드바의 고른 줄·지금 줄을 찾는 데 쓴다.
 struct Screen {
+    /// 켜 둔 DEC 개인 모드(`CSI ? n h`): 마우스 보고(1000·1002·1003·1006) 등
+    modes: std::collections::BTreeSet<u16>,
     cells: Vec<Vec<char>>,
     /// 칸마다 바탕색(0 기본, 0x01_000000|n 256색, 0x02_rrggbb RGB)
     bgs: Vec<Vec<u32>>,
@@ -58,6 +60,7 @@ struct Screen {
 impl Screen {
     fn new(cols: u16) -> Screen {
         Screen {
+            modes: Default::default(),
             cells: vec![vec![' '; cols as usize]; ROWS as usize],
             bgs: vec![vec![0; cols as usize]; ROWS as usize],
             bg: 0,
@@ -101,6 +104,15 @@ impl Screen {
     /// 지금 pane 줄(herdr `active_row_bg`)
     fn current(&self) -> Option<String> {
         self.side_row(ACTIVE_BG).map(|(_, l)| l)
+    }
+
+    /// 글이 처음 보이는 칸(줄, 열). 넓은 글자는 두 칸으로 센다(마우스로 누를 자리).
+    fn find(&self, needle: &str) -> Option<(usize, usize)> {
+        self.cells.iter().enumerate().find_map(|(r, line)| {
+            let (text, cols): (String, Vec<usize>) =
+                line.iter().enumerate().filter(|(_, c)| **c != '\0').map(|(i, c)| (*c, i)).unzip();
+            text.find(needle).map(|at| (r, cols[text[..at].chars().count()]))
+        })
     }
 
     fn sgr(&mut self, params: &vte::Params) {
@@ -168,6 +180,16 @@ impl vte::Perform for Screen {
     }
 
     fn csi_dispatch(&mut self, params: &vte::Params, inter: &[u8], _ignore: bool, action: char) {
+        if inter == b"?" && matches!(action, 'h' | 'l') {
+            for m in params.iter().map(|x| x[0]) {
+                if action == 'h' {
+                    self.modes.insert(m);
+                } else {
+                    self.modes.remove(&m);
+                }
+            }
+            return;
+        }
         if !inter.is_empty() {
             return;
         }
@@ -310,6 +332,22 @@ impl Tui {
         self.screen.0.lock().unwrap().selected()
     }
 
+    /// 화면에서 글을 찾을 때까지 기다려 그 칸(줄, 열)
+    fn wait_find(&self, needle: &str) -> (usize, usize) {
+        self.wait_screen(needle, |s| s.find(needle).is_some());
+        self.screen.0.lock().unwrap().find(needle).unwrap()
+    }
+
+    /// SGR 마우스(`CSI < b ; x ; y M`, 뗌은 `m`, 칸은 1부터). b: 0 왼쪽, 32 끌기, 64·65 휠 위·아래
+    fn mouse(&mut self, b: u16, (row, col): (usize, usize), up: bool) {
+        self.send(format!("\x1b[<{b};{};{}{}", col + 1, row + 1, if up { 'm' } else { 'M' }).as_bytes());
+    }
+
+    fn click(&mut self, at: (usize, usize)) {
+        self.mouse(0, at, false);
+        self.mouse(0, at, true);
+    }
+
     fn wait_exit(&mut self) -> bool {
         wait_for("TUI 종료", T, || self.child.try_wait().unwrap()).success()
     }
@@ -435,7 +473,9 @@ fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
     let rest = rest.split(" ● 질문").next().unwrap_or(rest);
-    let mut chips: Vec<String> = rest.split_whitespace().map(str::to_string).collect();
+    // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
+    let mut chips: Vec<String> =
+        rest.split_whitespace().filter(|c| !matches!(*c, "+" | "<" | ">" | "…")).map(str::to_string).collect();
     if chips.last().is_some_and(|c| c == "크기") {
         chips.truncate(chips.len().saturating_sub(2));
     }
@@ -1147,6 +1187,114 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
     assert_eq!(info.color_type, png::ColorType::Rgba, "RGBA PNG여야 한다");
     buf.truncate(info.buffer_size());
     (info.width, info.height, buf)
+}
+
+/// 마우스(herdr `mouse.rs`, 묶음 3d-1): 마우스 보고를 켜고, 탭 이름표·탭 막대 휠·` + `, 이름 창·단축키 창 밖 누르기,
+/// 사이드바 줄·`«`/`»`·경계 끌기(18~36), pane 누르기 포커스, 끌어 고르기·두 번 누름 낱말 복사, 나가면 보고를 끈다.
+/// 복사는 사람의 clipboard 대신 `AAA_TEST_CLIPBOARD_TEXT` 파일로 본다.
+#[test]
+fn mouse_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let one = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--label", "one", "--", "/bin/sh"]))[0].clone();
+    let two = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--label", "two", "--", "/bin/sh"]))[1].clone();
+    let copied = lab.root.join("copied.txt");
+    let copied_s = lab::path_str(&copied);
+    let read_copied = || std::fs::read_to_string(&copied).unwrap_or_default();
+    let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)]);
+    tui.wait_text("두 탭", |s| tab_chips(s) == ["one", "two"]);
+
+    // 1) 마우스 보고를 켠다(crossterm EnableMouseCapture: 1000·1002·1003·1006)
+    tui.wait_screen("마우스 보고", |s| [1000, 1002, 1003, 1006].iter().all(|m| s.modes.contains(m)));
+    hw.wait("첫 탭 크기", |w| (w.pane(&one)?.cols == COLS - SIDE).then_some(()));
+    tui.type_line("echo one-$((1))");
+    tui.wait_text("첫 탭 글", |s| s.contains("one-1"));
+
+    // 2) 이름표를 누르고 그 자리에서 떼면 그 탭, 탭 막대 휠은 앞·뒤 탭(herdr)
+    let chip = tui.wait_find("two");
+    assert_eq!(chip.0, 0, "탭 막대의 이름표");
+    tui.click(chip);
+    tui.wait_text("둘째 탭", |s| !s.contains("one-1"));
+    tui.type_line("echo two-$((2))");
+    tui.wait_text("둘째 탭 글", |s| s.contains("two-2"));
+    assert!(h.screen(&two).contains("two-2"), "누른 탭의 pane에 들어가야 한다");
+    tui.mouse(64, chip, false);
+    tui.wait_text("휠로 앞 탭", |s| s.contains("one-1") && !s.contains("two-2"));
+
+    // 3) ` + `는 새 탭 이름 창, 이름 창은 단추가 아닌 곳을 누르면 닫힌다(새 탭 없음)
+    let plus = tui.wait_find(" + ");
+    assert_eq!(plus.0, 0, "탭 막대의 + 단추");
+    tui.click((0, plus.1 + 1));
+    tui.wait_text("이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
+    tui.click((ROWS as usize - 3, 2));
+    tui.wait_text("이름 창 닫힘", |s| !s.contains("↵ 저장"));
+    assert_eq!(tab_chips(&tui.text()), ["one", "two"]);
+
+    // 4) 단축키 창은 안을 눌러도 그대로(뒤의 `/`가 검색이 된다), 밖을 누르면 닫힌다
+    tui.cmd("?");
+    let inside = tui.wait_find("/ 를 누르면");
+    tui.click(inside);
+    tui.send(b"/");
+    tui.wait_text("단축키 창 그대로", |s| s.contains("esc 돌아가기"));
+    tui.click((ROWS as usize - 1, 1));
+    tui.wait_text("단축키 창 닫힘", |s| !s.contains("단축키"));
+
+    // 5) 사이드바 pane 줄을 누르고 떼면 그 pane이 있는 탭으로
+    let row = tui.wait_find(" · two");
+    tui.click(row);
+    tui.wait_text("둘째 탭 열림", |s| s.contains("two-2"));
+
+    // 6) `«`는 접기(compact 4칸), `»`는 펴기
+    let fold = tui.wait_find("«");
+    tui.click(fold);
+    hw.wait("compact 폭", |w| (w.pane(&two)?.cols == COLS - COMPACT).then_some(()));
+    let unfold = tui.wait_find("»");
+    tui.click(unfold);
+    hw.wait("펼친 폭", |w| (w.pane(&two)?.cols == COLS - SIDE).then_some(()));
+
+    // 7) 경계(사이드바 마지막 열)를 끌면 폭 = 열 + 1, 18~36으로 묶는다(herdr)
+    let drag = |tui: &mut Tui, from: usize, to: usize| {
+        tui.mouse(0, (10, from), false);
+        tui.mouse(32, (10, to), false);
+        tui.mouse(0, (10, to), true);
+    };
+    drag(&mut tui, SIDE as usize - 1, 31);
+    hw.wait("32칸 사이드바", |w| (w.pane(&two)?.cols == COLS - 32).then_some(()));
+    drag(&mut tui, 31, 60);
+    hw.wait("36칸에서 멈춤", |w| (w.pane(&two)?.cols == COLS - 36).then_some(()));
+    drag(&mut tui, 35, SIDE as usize - 1);
+    hw.wait("26칸으로", |w| (w.pane(&two)?.cols == COLS - SIDE).then_some(()));
+
+    // 8) 나눈 탭에서 pane을 누르면 그 pane에 포커스
+    tui.cmd("v");
+    hw.wait("나눔", |w| w.tab_of(&two).filter(|l| l.len() == 2).map(|_| ()));
+    tui.type_line("echo right-$((4))");
+    tui.wait_text("오른쪽 글", |s| s.contains("right-4"));
+    tui.click((5, SIDE as usize + 3));
+    tui.type_line("echo left-$((3))");
+    tui.wait_text("왼쪽 글", |s| s.contains("left-3"));
+    assert!(h.screen(&two).contains("left-3"), "누른 pane에 들어가야 한다");
+
+    // 9) 끌어 고르기: 누른 칸을 벗어나 끌면 고르고, 떼면 복사하고 알린다(herdr copy_on_select)
+    let at = tui.wait_find("left-3");
+    tui.mouse(0, at, false);
+    tui.mouse(32, (at.0, at.1 + 5), false);
+    tui.mouse(0, (at.0, at.1 + 5), true);
+    wait_for("고른 글 복사", T, || (read_copied() == "left-3").then_some(()));
+    tui.wait_text("복사 알림", |s| s.contains("클립보드에 복사했다"));
+
+    // 10) 두 번 누르면 낱말(빈칸·괄호 등으로 가르고 경로는 한 낱말)
+    tui.type_line("printf 'w1 %s w2\\n' src/main.rs");
+    let at = tui.wait_find("w1 src/main.rs");
+    let word = (at.0, at.1 + 5);
+    tui.click(word);
+    tui.click(word);
+    wait_for("낱말 복사", T, || (read_copied() == "src/main.rs").then_some(()));
+
+    // 11) 나가면(prefix q) 마우스 보고를 끈다
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    tui.wait_screen("마우스 보고 끔", |s| ![1000, 1002, 1003, 1006].iter().any(|m| s.modes.contains(m)));
 }
 
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.

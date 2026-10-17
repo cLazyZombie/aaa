@@ -19,6 +19,7 @@ mod help;
 pub mod input_source;
 pub mod keys;
 pub mod list;
+mod mouse;
 mod prompt;
 mod tabs;
 mod theme;
@@ -82,6 +83,8 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         let mut terminal = ratatui::init();
         // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
         let _focus = FocusReport::on();
+        // 마우스 보고는 App이 설정대로 켠다. 끝날 때(panic도) 끈다.
+        let _mouse = MouseOff;
         let mut app =
             App::new(workspace.unwrap_or_else(|| aaa_proto::DEFAULT_WORKSPACE.to_string()), client.front.clone());
         app.host_minor = host_minor;
@@ -106,6 +109,15 @@ impl FocusReport {
 impl Drop for FocusReport {
     fn drop(&mut self) {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableFocusChange);
+    }
+}
+
+/// 사라질 때 마우스 보고를 끈다
+struct MouseOff;
+
+impl Drop for MouseOff {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
     }
 }
 
@@ -240,6 +252,22 @@ struct App {
     focus_wait: Option<String>,
     held: Vec<Event>,
     quit: bool,
+    /// 마우스(`[tui] mouse_capture`)와 터미널에 걸어 둔 값(다시 걸어야 하면 None)
+    mouse_capture: bool,
+    capture_on: Option<bool>,
+    /// 끌어 고른 글을 떼는 때 복사(`[tui] copy_on_select`)
+    copy_on_select: bool,
+    /// 마지막으로 그린 자리(마우스가 맞힌다)
+    hits: std::cell::RefCell<mouse::Hits>,
+    drag: Option<mouse::Drag>,
+    /// 고른 글(pane 화면 칸)
+    selection: Option<mouse::Selection>,
+    /// 마지막 누름(두 번 누름을 본다): 시각, pane, 칸
+    last_click: Option<(tokio::time::Instant, String, mouse::Cell)>,
+    /// 사용자가 넘긴 탭 막대 자리와 그때의 탭(탭이 바뀌면 다시 지금 탭을 가운데로)
+    tab_scroll: Option<(usize, usize)>,
+    /// 휠로 민 목록 첫 줄(키로 고르면 다시 고른 줄을 따른다)
+    list_top: Option<usize>,
 }
 
 impl App {
@@ -286,6 +314,15 @@ impl App {
             focus_wait: None,
             held: vec![],
             quit: false,
+            mouse_capture: true,
+            capture_on: None,
+            copy_on_select: true,
+            hits: Default::default(),
+            drag: None,
+            selection: None,
+            last_click: None,
+            tab_scroll: None,
+            list_top: None,
         }
     }
 
@@ -302,6 +339,8 @@ impl App {
         self.collapsed_mode = cfg.sidebar_collapsed_mode;
         self.mobile_width = cfg.mobile_width_threshold;
         self.pane_borders = cfg.pane_borders;
+        self.mouse_capture = cfg.mouse_capture;
+        self.copy_on_select = cfg.copy_on_select;
         self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
         // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
         self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
@@ -316,6 +355,25 @@ impl App {
             self.set_error(format!("[tui] prefix 값을 읽지 못했다: {} (예: \"ctrl+b\")", bad.join(", ")));
         }
         self.reconcile_ascii();
+    }
+
+    /// 마우스 보고를 설정대로 건다(herdr `set_mouse_capture`: 크기가 바뀌면 다시 건다)
+    fn sync_capture(&mut self) {
+        if self.capture_on == Some(self.mouse_capture) {
+            return;
+        }
+        let r = if self.mouse_capture {
+            crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)
+        } else {
+            crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)
+        };
+        if r.is_ok() {
+            self.capture_on = Some(self.mouse_capture);
+        }
+        if !self.mouse_capture {
+            self.drag = None;
+            self.selection = None;
+        }
     }
 
     fn set_error(&mut self, e: impl Into<String>) {
@@ -366,6 +424,7 @@ impl App {
         let mut dirty = true;
         loop {
             if dirty {
+                self.sync_capture();
                 let size = terminal.size()?;
                 self.width = size.width;
                 self.height = size.height;
@@ -389,11 +448,12 @@ impl App {
                     None => anyhow::bail!("host 연결이 끊겼다"),
                 },
                 e = keys_in.next() => match e {
-                    Some(Ok(e @ (Event::Key(_) | Event::Paste(_)))) if self.focus_wait.is_some() => self.held.push(e),
+                    Some(Ok(e @ (Event::Key(_) | Event::Paste(_) | Event::Mouse(_)))) if self.focus_wait.is_some() => self.held.push(e),
                     Some(Ok(Event::Key(k))) if k.kind != KeyEventKind::Release => { self.on_key(k, &mut tx).await?; dirty = true; }
                     // 그림만 든 clipboard를 붙이면 빈 붙여넣기로 오는 터미널이 있다
                     Some(Ok(Event::Paste(s))) => { self.on_paste(s, &mut tx).await?; dirty = true; }
-                    Some(Ok(Event::Resize(..))) => dirty = true,
+                    Some(Ok(Event::Mouse(m))) => { self.on_mouse(m, &mut tx).await?; dirty = true; }
+                    Some(Ok(Event::Resize(..))) => { self.capture_on = None; dirty = true; }
                     // 돌아오면 크기를 다시 걸고, 다른 창에 있는 동안 미룬 입력기 바꾸기·되돌리기를 맞춘다
                     Some(Ok(Event::FocusGained)) => { self.focused = true; self.reclaim = true; self.sized.clear(); self.reconcile_ascii(); dirty = true; }
                     Some(Ok(Event::FocusLost)) => self.focused = false,
@@ -406,6 +466,11 @@ impl App {
                 // 오류 막대는 잠깐만 보인다
                 _ = tokio::time::sleep_until(self.error.as_ref().map_or_else(tokio::time::Instant::now, |e| e.1)), if self.error.is_some() => {
                     self.error = None;
+                    dirty = true;
+                }
+                // 두 번 눌러 고른 낱말은 잠깐만 보인다
+                _ = tokio::time::sleep_until(self.selection.as_ref().and_then(|s| s.until).unwrap_or_else(tokio::time::Instant::now)), if self.selection.as_ref().is_some_and(|s| s.until.is_some()) => {
+                    self.selection = None;
                     dirty = true;
                 }
                 // 알림 카드도(herdr 알림처럼)
@@ -424,6 +489,7 @@ impl App {
                 match self.held.remove(0) {
                     Event::Key(k) if k.kind != KeyEventKind::Release => self.on_key(k, &mut tx).await?,
                     Event::Paste(s) => self.on_paste(s, &mut tx).await?,
+                    Event::Mouse(m) => self.on_mouse(m, &mut tx).await?,
                     _ => {}
                 }
                 dirty = true;
@@ -710,6 +776,10 @@ impl App {
 
     /// 키 하나. herdr `route_key`처럼 창 → 모드 순으로 고른다. 끝나면 입력기를 모드에 맞춘다.
     async fn on_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
+        let ch = if let KeyCode::Char(c) = k.code { Some(c) } else { None };
+        if self.selection_key(k.modifiers, ch) {
+            return Ok(());
+        }
         let r = self.route_key(k, tx).await;
         // 탭이 바뀌면 포커스를 그 탭으로
         let leaves = self.current_leaves();
@@ -797,10 +867,12 @@ impl App {
             match c.code {
                 KeyCode::Up => {
                     self.list_sel = rows.get(list::step(&rows, i, false)).cloned();
+                    self.list_top = None;
                     return Ok(());
                 }
                 KeyCode::Down => {
                     self.list_sel = rows.get(list::step(&rows, i, true)).cloned();
+                    self.list_top = None;
                     return Ok(());
                 }
                 KeyCode::Enter => {
@@ -867,11 +939,7 @@ impl App {
             Some(Overlay::Confirm(_)) => match k.code {
                 KeyCode::Enter => {
                     if let Some(Overlay::Confirm(c)) = self.overlay.take() {
-                        let change = match c.target {
-                            prompt::CloseTarget::Tab(tab) => LayoutChange::CloseTab { tab },
-                            prompt::CloseTarget::Pane(pane) => LayoutChange::Close { pane, kill: true },
-                        };
-                        self.layout(tx, change, false).await?;
+                        self.confirm(c, tx).await?;
                     }
                 }
                 KeyCode::Esc => self.overlay = None,
@@ -880,6 +948,15 @@ impl App {
             None => {}
         }
         Ok(())
+    }
+
+    /// 닫기 확인 창에서 닫기
+    async fn confirm(&mut self, c: prompt::Confirm, tx: &mut FrontSender) -> Result<()> {
+        let change = match c.target {
+            prompt::CloseTarget::Tab(tab) => LayoutChange::CloseTab { tab },
+            prompt::CloseTarget::Pane(pane) => LayoutChange::Close { pane, kill: true },
+        };
+        self.layout(tx, change, false).await
     }
 
     /// 이름 창 저장(herdr `save_rename_overlay`): 새 탭은 기본 이름 그대로·빈 이름이면 자리 번호,
@@ -1158,6 +1235,7 @@ impl App {
     fn render(&self, buf: &mut Buffer, area: Rect) -> Option<(u16, u16)> {
         let p = &self.palette;
         let sh = self.shell(area);
+        *self.hits.borrow_mut() = mouse::Hits::default();
         if sh.header.h > 0 {
             self.render_header(buf, sh.header);
         }
@@ -1190,6 +1268,7 @@ impl App {
                 let boxes = self.shown(tab, body);
                 let title = |id: &str| self.panes.get(id).and_then(border_title);
                 chrome::render(buf, &boxes, self.focus.as_deref(), title, p);
+                self.hits.borrow_mut().panes = boxes.clone();
                 for b in &boxes {
                     let focused = self.focus.as_deref() == Some(b.pane.as_str());
                     if let Some(c) = self.render_pane(buf, &b.pane, b.inner, focused) {
@@ -1204,6 +1283,7 @@ impl App {
             // pane 칸 위에만(접힌 칸·탭 막대·머리는 그대로), 모드 막대(pane 맨 아랫줄) 위까지
             let w = if sh.header.h > 0 { body.w } else { self.sidebar_width.min(body.w) };
             self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body });
+            self.hits.borrow_mut().divider = None;
         }
         if let Some(bar) = self.render_mode_bar(buf, body)
             && cursor.is_some_and(|(_, y)| y == bar.y)
@@ -1213,10 +1293,22 @@ impl App {
         if let Some((m, _)) = &self.message {
             render_notice(buf, area, m, p);
         }
+        let mut hits = self.hits.borrow_mut();
         match &self.overlay {
-            Some(Overlay::Help(h)) => return help::render(buf, area, h, &self.prefix_label(), p),
-            Some(Overlay::Rename(r)) => return prompt::render_rename(buf, area, r, p),
+            Some(Overlay::Help(h)) => {
+                hits.popup = help::popup(area, 76, 22);
+                return help::render(buf, area, h, &self.prefix_label(), p);
+            }
+            Some(Overlay::Rename(r)) => {
+                let bs = [mouse::Button::Save, mouse::Button::Clear, mouse::Button::Cancel];
+                hits.buttons = prompt::rename_buttons(area).into_iter().zip(bs).collect();
+                return prompt::render_rename(buf, area, r, p);
+            }
             Some(Overlay::Confirm(c)) => {
+                hits.buttons = prompt::confirm_buttons(area)
+                    .into_iter()
+                    .zip([mouse::Button::Close, mouse::Button::Cancel])
+                    .collect();
                 prompt::render_confirm(buf, area, c, p);
                 return None;
             }
@@ -1238,8 +1330,27 @@ impl App {
             if status_w > 0 && r.w.saturating_sub(status_w + 1) >= MIN_TAB_STRIP_WIDTH { status_w + 1 } else { 0 };
         let content = Rect { w: r.w - reserved, ..r };
         let labels: Vec<String> = (0..self.ws.tabs.len()).map(|i| self.chip_label(i)).collect();
-        let strip = tabs::layout(&labels, self.tab, content.x, content.w);
+        let scroll = self.tab_scroll.filter(|(_, t)| *t == self.tab).map(|(s, _)| s);
+        let strip = tabs::layout_with(&labels, self.tab, content.x, content.w, self.mouse_capture, scroll);
+        let mut hits = self.hits.borrow_mut();
+        hits.tab_bar = Some(r);
+        hits.tab_scroll = strip.scroll;
+        hits.max_tab_scroll = strip.max_scroll;
+        let button = |on: bool| Style::default().fg(if on { p.overlay1 } else { p.overlay0 }).bg(p.surface0);
+        if let Some(x) = strip.scroll_left {
+            buf.set_stringn(x, r.y, " < ", 3, button(strip.scroll > 0));
+            hits.scroll_left = Some(Rect { x, y: r.y, w: 3, h: 1 });
+        }
+        if let Some(x) = strip.scroll_right {
+            buf.set_stringn(x, r.y, " > ", 3, button(strip.scroll < strip.max_scroll));
+            hits.scroll_right = Some(Rect { x, y: r.y, w: 3, h: 1 });
+        }
+        if let Some((x, w)) = strip.new_tab {
+            buf.set_stringn(x, r.y, " + ", w as usize, Style::default().fg(p.overlay1).bg(p.panel_bg));
+            hits.new_tab = Some(Rect { x, y: r.y, w, h: 1 });
+        }
         for c in &strip.chips {
+            hits.tabs.push((Rect { x: c.x, y: r.y, w: c.w, h: 1 }, c.index));
             let custom = !self.ws.tabs[c.index].name.is_empty();
             let style = if c.index == self.tab {
                 let s = Style::default().fg(theme::contrast(p)).bg(p.accent);
@@ -1256,11 +1367,11 @@ impl App {
             buf.set_stringn(c.x, r.y, &text, c.w as usize, style);
         }
         let more = Style::default().fg(p.overlay0).bg(p.panel_bg);
-        if strip.more_left {
-            buf.set_string(content.x, r.y, "…", more);
+        if strip.more_left && strip.ellipsis_left < content.x + content.w {
+            buf.set_string(strip.ellipsis_left, r.y, "…", more);
         }
-        if strip.more_right && content.w > 0 {
-            buf.set_string(content.x + content.w - 1, r.y, "…", more);
+        if strip.more_right && content.w > 0 && strip.ellipsis_right >= content.x {
+            buf.set_string(strip.ellipsis_right, r.y, "…", more);
         }
         if reserved > 0 {
             let mut x = r.x + r.w - status_w;
@@ -1301,6 +1412,7 @@ impl App {
             current: self.focus.as_deref(),
             sel: self.list_index(rows),
             focused: self.mode == Mode::Navigate,
+            top: self.list_top,
             pal: &self.palette,
         }
     }
@@ -1320,11 +1432,21 @@ impl App {
         );
         let body = Rect { y: r.y + 2, h: r.h.saturating_sub(3), ..content };
         let rows = self.list_rows();
+        let mut hits = self.hits.borrow_mut();
+        hits.sidebar = Some(r);
         if body.h > 0 {
-            list::render(buf, body, &rows, &self.list_view(&rows));
+            let (placed, skip) = list::render(buf, body, &rows, &self.list_view(&rows));
+            hits.rows = placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..body }, rows[n].clone())).collect();
+            hits.list_skip = skip;
+            hits.list_h = body.h;
         }
         if r.w > 1 && r.h > 0 {
             buf.set_string(r.x + r.w - 2, r.y + r.h - 1, "«", Style::default().fg(p.overlay0));
+            // herdr: 접기 `«`는 (오른쪽−2, 아래−1), 경계는 마지막 열(띄운 목록은 끌지 않는다)
+            hits.toggle = Some(Rect { x: r.x + r.w - 2, y: r.y + r.h - 1, w: 1, h: 1 });
+            if !self.collapsed() {
+                hits.divider = Some(Rect { x: r.x + r.w - 1, w: 1, ..r });
+            }
         }
     }
 
@@ -1334,9 +1456,13 @@ impl App {
         sidebar_background(buf, r, p);
         let content = Rect { w: r.w.saturating_sub(1), h: r.h.saturating_sub(1), ..r };
         let rows = self.list_rows();
-        list::render_compact(buf, content, &rows, &self.list_view(&rows));
+        let placed = list::render_compact(buf, content, &rows, &self.list_view(&rows));
+        let mut hits = self.hits.borrow_mut();
+        hits.sidebar = Some(r);
+        hits.rows = placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, rows[n].clone())).collect();
         if content.w > 0 && r.h > 0 {
             buf.set_string(content.x + content.w / 2, r.y + r.h - 1, "»", Style::default().fg(p.overlay0));
+            hits.toggle = Some(Rect { x: content.x + content.w / 2, y: r.y + r.h - 1, w: 1, h: 1 });
         }
     }
 
@@ -1347,6 +1473,7 @@ impl App {
         fill(buf, r, Style::default().bg(p.panel_bg));
         let bw = MOBILE_BUTTON_WIDTH.min(r.w);
         let button = Rect { x: r.x + r.w - bw, w: bw, ..r };
+        self.hits.borrow_mut().header_button = Some(button);
         fill(buf, button, Style::default().bg(p.surface0));
         for y in button.y..button.y + button.h {
             buf.set_string(button.x, y, "│", Style::default().fg(p.surface_dim).bg(p.surface0));
@@ -1529,6 +1656,19 @@ impl App {
                         break;
                     }
                     x = buf.set_stringn(x, y, &run.t, room, run_style(run)).0;
+                }
+            }
+            // 고른 글(herdr 선택 색)
+            if let Some(sel) = self.selection.as_ref().filter(|s| s.pane == pane) {
+                let (bg, fg) = mouse::selection_colors(&self.palette);
+                for row in 0..r.h {
+                    for col in 0..r.w {
+                        if sel.covers(row, col)
+                            && let Some(cell) = buf.cell_mut((r.x + col, r.y + row))
+                        {
+                            cell.set_bg(bg).set_fg(fg);
+                        }
+                    }
                 }
             }
             let (cr, cc, visible) = g.cursor;
@@ -1848,6 +1988,19 @@ mod tests {
         assert_eq!(buf[(x - 3, 0)].bg, p.panel_bg, "이름표 사이 한 칸은 탭 막대 바탕");
         assert_eq!((buf[(x - 4, 0)].bg, buf[(x - 4, 0)].fg), (p.surface0, p.overlay0), "자동 이름은 흐리게");
         assert_eq!(buf[(89, 0)].bg, p.panel_bg, "탭 막대는 줄 끝까지 panel_bg");
+        // 마우스를 켜면(기본) 이름표 뒤에 ` + `(herdr `NEW_TAB_WIDTH`), 그린 자리는 마우스가 맞힌다
+        assert!(right_of_sidebar(top).starts_with("   1       빌드      3      + "), "{top:?}");
+        let hits = app.hits.borrow().clone();
+        assert_eq!(
+            hits.tabs.iter().map(|(r, i)| (r.x, r.w, *i)).collect::<Vec<_>>(),
+            [(26, 8, 0), (35, 8, 1), (44, 8, 2)]
+        );
+        assert_eq!(hits.new_tab, Some(Rect { x: 53, y: 0, w: 3, h: 1 }));
+        assert_eq!(hits.toggle, Some(Rect { x: 24, y: 29, w: 1, h: 1 }));
+        assert_eq!(hits.divider, Some(Rect { x: 25, y: 0, w: 1, h: 30 }));
+        app.mouse_capture = false;
+        let (lines, _) = draw(&app);
+        assert!(!right_of_sidebar(&lines[0]).contains('+'), "마우스를 끄면 단추가 없다(herdr)");
     }
 
     /// 새 탭 이름 창(herdr `render_rename_overlay`): 가운데 56×7 테두리 창, 제목, 입력 칸(커서는 글 뒤), 단추 줄

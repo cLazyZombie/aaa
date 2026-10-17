@@ -72,6 +72,21 @@ pub const CLEAR: &str = " ^c 지우기 ";
 pub const CANCEL: &str = " esc 취소 ";
 pub const CLOSE: &str = " ↵ 닫기 ";
 
+/// 창 안쪽 칸(`panel`이 테두리 안으로 주는 칸)
+fn inner(q: Rect) -> Rect {
+    Rect { x: q.x + 1, y: q.y + 1, w: q.w.saturating_sub(2), h: q.h.saturating_sub(2) }
+}
+
+/// 이름 창의 단추 자리: 저장·지우기·취소(마우스가 맞힌다)
+pub fn rename_buttons(area: Rect) -> Vec<Rect> {
+    popup(area, 56, 7).map_or_else(Vec::new, |q| row(inner(q), &label_widths(&[SAVE, CLEAR, CANCEL]), 2, 3))
+}
+
+/// 닫기 확인 창의 단추 자리: 닫기·취소
+pub fn confirm_buttons(area: Rect) -> Vec<Rect> {
+    popup(area, 64, 6).map_or_else(Vec::new, |q| row(inner(q), &label_widths(&[CLOSE, CANCEL]), 2, 3))
+}
+
 /// 이름 입력 창. 커서 자리를 준다.
 pub fn render_rename(buf: &mut Buffer, area: Rect, v: &Rename, p: &Palette) -> Option<(u16, u16)> {
     let q = popup(area, 56, 7)?;
@@ -89,8 +104,8 @@ pub fn render_rename(buf: &mut Buffer, area: Rect, v: &Rename, p: &Palette) -> O
         buf.set_string(x, input.y, " ", field);
     }
     let cursor = editor::render(buf, Rect { x: input.x + 1, w: input.w.saturating_sub(1), ..input }, &v.input, field);
-    let rs = row(i, &label_widths(&[SAVE, CLEAR, CANCEL]), 2, 3);
-    if let [save, clear, cancel] = rs.as_slice() {
+    debug_assert_eq!(i, inner(q));
+    if let [save, clear, cancel] = rename_buttons(area).as_slice() {
         button(buf, *save, SAVE, Style::default().fg(contrast(p)).bg(p.accent).add_modifier(Modifier::BOLD));
         let n = Style::default().fg(p.text).bg(p.surface0).add_modifier(Modifier::BOLD);
         button(buf, *clear, CLEAR, n);
@@ -111,8 +126,7 @@ pub fn render_confirm(buf: &mut Buffer, area: Rect, c: &Confirm, p: &Palette) {
         Style::default().fg(p.red).bg(p.panel_bg).add_modifier(Modifier::BOLD),
     );
     buf.set_stringn(i.x, i.y + 1, format!(" {}", c.detail), i.w as usize, Style::default().fg(p.text).bg(p.panel_bg));
-    let rs = row(i, &label_widths(&[CLOSE, CANCEL]), 2, 3);
-    if let [ok, cancel] = rs.as_slice() {
+    if let [ok, cancel] = confirm_buttons(area).as_slice() {
         button(buf, *ok, CLOSE, Style::default().fg(contrast(p)).bg(p.red).add_modifier(Modifier::BOLD));
         button(buf, *cancel, CANCEL, Style::default().fg(p.text).bg(p.surface0).add_modifier(Modifier::BOLD));
     }

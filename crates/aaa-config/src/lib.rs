@@ -248,6 +248,11 @@ pub struct TuiSection {
     /// pane 테두리(herdr `[ui] pane_borders`): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 상자를 두르고,
     /// `always`는 하나여도, `off`는 테두리 없이 빈 칸 하나로 띄운다. 테두리만큼 PTY 크기가 준다.
     pub pane_borders: PaneBorders,
+    /// TUI가 마우스를 받는다(herdr `[ui] mouse_capture`, 기본 켬): 탭·사이드바·pane 누르기, 휠, 끌어 고르기.
+    /// 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고르고 복사한다.
+    pub mouse_capture: bool,
+    /// 끌어 고른 글을 떼는 때 복사한다(herdr `[ui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사한다.
+    pub copy_on_select: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -289,6 +294,8 @@ impl Default for TuiSection {
             mobile_width_threshold: 64,
             theme: "catppuccin".into(),
             pane_borders: PaneBorders::Auto,
+            mouse_capture: true,
+            copy_on_select: true,
         }
     }
 }
