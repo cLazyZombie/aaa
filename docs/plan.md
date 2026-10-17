@@ -1761,6 +1761,24 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 다르게 둔 것: herdr-web-ui는 웹에서 pane을 열어도 herdr의 seen을 바꾸지 않는다(웹 터미널은 herdr TUI client가 아니어서 `outer_terminal_focus`가 없다. `focusPane`은 나눈 화면에서만 부른다). 웹으로만 보는 사람에게는 「끝남」이 지워지지 않으므로 aaa는 웹 화면도 보는 화면으로 센다.
 - **시험.** host 유닛 `seen`: 끝나는 전이와 보는 화면, 쓰는 기기의 연 pane만 본다. 웹 E2E 「끝남(안 봄)」: 다른 pane을 보는 동안 끝나면 초록 점과 말, 열면 사라짐, 보는 동안 끝난 턴은 남지 않음, 가려진 동안 끝나면 끝남이고 다시 쓰는 화면이 되면 사라짐. 턴의 시작·끝은 시험이 pane에 줄을 보내 정하고(hook), 기다림은 상태 칸의 `data-status`로 끝낸다.
 
+### 8.73 공유 설정과 고정을 herdr-web-ui대로 host에(10-18, 차이 목록 T2, 결정 D5)
+
+- **무엇을 나누나.** herdr-web-ui `shared/preferences.ts` `SHARED_SETTING_KEYS`(theme·palette·language·sidebarRows·agentOrder·agentMarks·autoSendQueued·showThinking·quickReplies·showQuickReplies·showUsage·usageCount·usageGlance·usageOrder·usageHidden)와 목록 고정(`pins`). 나머지(다크·라이트 짝 팔레트·상태 표시·키 막대·글꼴·알림 등)는 참고 `SETTING_SCOPE`처럼 기기 것이다.
+  - aaa에 지금 있는 공유 설정은 모양 셋과 사용량 막대 다섯이다. 아직 없는 이름도 host는 그대로 들고(다른 판의 화면을 위해), 웹은 읽지 못하는 값으로 두고 되돌려 보내지 않는다.
+- **host**(`crates/aaa-host/src/prefs.rs`, 참고 `server/preferences.ts` `PreferenceStore`·`handlePreferencesRequest`).
+  - 문서 하나 `{revision, settings, pins?}`를 host DB `meta`에 둔다. 변경은 바꾼 설정만(고정은 바뀌었을 때만) 오고 가진 것 위에 놓는다(설정마다 마지막 쓰기가 이긴다). revision이 하나 오른다.
+  - 공유 이름만 남기고, 고정은 500개·한 개 300자까지, 중복은 뺀다. 문서 전체가 64KB를 넘으면 `too_large`. 저장이 실패하면 갖지도 알리지도 않는다.
+  - `FrontRequest::Preferences`(읽기, 보기 권한도)·`PreferencesSet`(보기 권한은 `forbidden`, 참고 index.ts readOnly), 웹 events 연결은 열 때와 바뀔 때마다 문서 전체를 `preferences` 사건으로 받는다(참고 machine-api.ts).
+- **웹**(`web/src/preferences.ts`·`preferencesSync.ts`, 참고 `src/lib/preferencesSync.ts`).
+  - 들어온 뒤 한 번 읽고, host 값을 설정마다 이 기기 값 위에 놓는다. 여는 것만으로는 쓰지 않는다. 바꾸면 600ms 멈춘 뒤 바뀐 것만 보낸다. 가는 동안 온 문서는 답이 올 때까지 붙잡아 revision으로 앞뒤를 가린다. 처음 host가 갖는 고정은 이 기기 고정과 합친다.
+  - 보기 권한 기기는 첫 쓰기가 거부되면 보내지 않고, 다음 공유 변경을 모두 받는다(제 변경은 그때까지만).
+  - 다르게 둔 것: 참고는 404(옛 서버)면 동기화를 멈춘다. aaa 웹은 host binary 안에 있어 옛 host가 없으므로 그 갈래가 없다. 참고 `useSettings()` 하나 자리에 aaa는 모양 store(theme.ts)와 사용량 store(settings.ts) 둘을 잇는다.
+  - 고정은 이 묶음에서 나누기만 하고, 고정하는 줄 메뉴는 L10과 함께 넣는다.
+- **시험.**
+  - host 유닛 `prefs` 다섯(참고 preferences.test.ts 사례): 빈 시작·공유 이름만·revision·다시 띄우기, 고정 한도, 문서 전체 한도, 저장 실패면 안 알림, 깨진 기록.
+  - 웹 유닛 `web/test/preferences.test.mjs` 여덟(참고 preferencesSync.test.ts 사례, `npm test` = `node --test`, ci-local web 단계): 바뀐 것만 보냄, 첫 고정 함께, 받기, 안 보낸 변경 지킴, 나중 쓰기 이김, 읽지 못하는 값, 고정 합치기, 보기 권한.
+  - 웹 E2E 「공유 설정」: 데스크톱 밝게 → 휴대폰도, 휴대폰 색상 → 데스크톱도, 기기 설정(상태 표시)은 보내지 않음, 여는 것만으로는 revision 0, 보기 권한 쓰기 거부와 다음 변경 모두 받기. 기다림은 `<html>` 속성 MutationObserver와 그 쓰기 요청의 답으로 끝낸다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

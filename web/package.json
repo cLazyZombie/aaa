@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit -p . && vite build",
     "typecheck": "tsc --noEmit -p .",
+    "test": "node --test test/*.test.mjs",
     "e2e": "node e2e/web.e2e.mjs"
   },
   "dependencies": {

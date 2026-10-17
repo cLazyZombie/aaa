@@ -1,9 +1,10 @@
 // 이 기기의 설정(herdr-web-ui lib/settings.ts). 설정 창(SettingsDialog.tsx)과 키 막대 ⌨ 단추가 바꾼다.
-// 참고는 「shared」 범위 값(구독 사용량 설정)을 server에 두어 기기끼리 나눈다. aaa에는 아직 설정 저장소가 없어
-// 모두 이 기기(localStorage)에 둔다(plan §8.45).
+// 참고처럼 「shared」 범위 값(구독 사용량 설정)은 host에 두어 기기끼리 나눈다(preferencesSync.ts, plan §8.73).
+// 이 파일은 그 값의 이 기기 사본도 localStorage에 둔다. 나머지는 이 기기 것이다(plan §8.45).
 import { useCallback, useSyncExternalStore } from "react";
 import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarItem } from "./herdr/keyBar.ts";
 import { sanitizeFontFamily } from "./herdr/fontFamily.ts";
+import { sanitizeUsage, type UsageSettings } from "./preferences.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
 export type TerminalInputMode = "auto" | "line" | "direct";
@@ -283,44 +284,20 @@ export function useTerminalInputMode(): TerminalInputMode {
   return useSyncExternalStore(subscribe, () => mode);
 }
 
-/** 막대가 보이는 것: 쓴 몫, 남은 몫 */
-export type UsageCount = "used" | "left";
-/** 칩이 보이는 한도: 주간, 짧은 세션 */
-export type UsageGlance = "week" | "session";
-
-export interface UsageSettings {
-  showUsage: boolean;
-  usageCount: UsageCount;
-  usageGlance: UsageGlance;
-  /** 계정 key 순서(사용자가 정함) */
-  usageOrder: string[];
-  /** 숨긴 계정 key */
-  usageHidden: string[];
-}
-
-/** 참고 DEFAULT_SETTINGS와 같다. 다만 showUsage는 켬: 사용자가 이 막대를 보이라고 했다(10-17, 참고는 끔). */
-export const DEFAULT_USAGE: UsageSettings = { showUsage: true, usageCount: "used", usageGlance: "week", usageOrder: [], usageHidden: [] };
+// 사용량 막대 설정은 host 공유 설정이라 그 형·기본값·거르기는 preferences.ts에 있다(plan §8.73)
+export { DEFAULT_USAGE, type UsageCount, type UsageGlance, type UsageSettings } from "./preferences.ts";
 
 const USAGE_KEY = "aaa:usage-settings";
 const usageListeners = new Set<() => void>();
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /** 잘못된 저장값은 기본값으로(참고 settings.ts 465줄과 같은 거르기) */
 function readUsage(): UsageSettings {
-  let r: Record<string, unknown> = {};
   try {
-    const v = JSON.parse(localStorage.getItem(USAGE_KEY) ?? "{}");
-    if (v && typeof v === "object" && !Array.isArray(v)) r = v;
+    return sanitizeUsage(JSON.parse(localStorage.getItem(USAGE_KEY) ?? "{}"));
   } catch {
     // 막혔거나 깨진 값: 기본값
+    return sanitizeUsage({});
   }
-  return {
-    showUsage: typeof r.showUsage === "boolean" ? r.showUsage : DEFAULT_USAGE.showUsage,
-    usageCount: r.usageCount === "used" || r.usageCount === "left" ? r.usageCount : DEFAULT_USAGE.usageCount,
-    usageGlance: r.usageGlance === "week" || r.usageGlance === "session" ? r.usageGlance : DEFAULT_USAGE.usageGlance,
-    usageOrder: strings(r.usageOrder),
-    usageHidden: strings(r.usageHidden),
-  };
 }
 
 let usage = readUsage();

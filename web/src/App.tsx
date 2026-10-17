@@ -9,6 +9,7 @@ import type {
   ThreadView,
 } from "./gen/proto";
 import { ApiError, call, me, pair, pushInfo, watchEvents } from "./api";
+import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
@@ -287,6 +288,10 @@ function Main({ role }: { role: DeviceRole }) {
     });
   };
 
+  // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.73): 들어온 뒤에만 읽고, events 사건으로 따라간다
+  const syncPreferences = usePreferencesSync(true);
+  const receivePreferences = useRef(syncPreferences);
+  receivePreferences.current = syncPreferences;
   useEffect(
     () =>
       watchEvents(
@@ -327,6 +332,7 @@ function Main({ role }: { role: DeviceRole }) {
           reportNews(t);
           putThread(t);
         },
+        (p) => receivePreferences.current(p),
       ),
     [],
   );

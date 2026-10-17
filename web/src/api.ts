@@ -8,8 +8,10 @@ import type {
   FrontResponse,
   Outcome,
   QuestionView,
+  SharedPreferences,
   ThreadView,
 } from "./gen/proto";
+import type { PreferencesChange } from "./herdr/preferences.ts";
 import { watchPageInUse } from "./herdr/presence";
 
 export class ApiError extends Error {
@@ -50,6 +52,20 @@ export async function me(): Promise<Me | null> {
 export const pair = (code: string) => post<{ role: DeviceRole }>("/api/v1/pair", { code });
 export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
 
+/** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.73, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
+export async function loadPreferences(): Promise<SharedPreferences> {
+  const r = await call({ op: "preferences" });
+  if (r.kind !== "preferences") throw new ApiError({ code: "internal", message: `뜻밖의 답 ${r.kind}` });
+  const { kind: _kind, ...doc } = r;
+  return doc;
+}
+export async function savePreferences(change: PreferencesChange): Promise<SharedPreferences> {
+  const r = await call({ op: "preferences_set", settings: change.settings, pins: change.pins ?? null });
+  if (r.kind !== "preferences") throw new ApiError({ code: "internal", message: `뜻밖의 답 ${r.kind}` });
+  const { kind: _kind, ...doc } = r;
+  return doc;
+}
+
 /** Web Push(§8.26) */
 export type PushInfo = { enabled: boolean; key: string | null; subscribed: number; in_use: number; kinds: string[] };
 export async function pushInfo(): Promise<PushInfo> {
@@ -70,12 +86,13 @@ export function wsUrl(path: string): string {
 export type StateEvent = Extract<FrontEvent, { ev: "state" }>;
 export type QuestionEvent = Extract<FrontEvent, { ev: "question" }>;
 
-/** 기계·pane 목록과 확인창 질문·thread 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
+/** 기계·pane 목록과 확인창 질문·thread·공유 설정 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
 export function watchEvents(
   onState: (ev: StateEvent) => void,
   onQuestion: (q: QuestionView) => void,
   onLink: (up: boolean) => void,
   onThread: (t: ThreadView) => void,
+  onPreferences: (p: SharedPreferences) => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -107,6 +124,9 @@ export function watchEvents(
       } else if (ev.ev === "thread") {
         const { ev: _tag, ...t } = ev;
         onThread(t as ThreadView);
+      } else if (ev.ev === "preferences") {
+        const { ev: _tag, ...p } = ev;
+        onPreferences(p);
       }
     };
     ws.onclose = () => {

@@ -1,7 +1,8 @@
 // 모양 설정: 테마·팔레트·상태 표시·목록 줄(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·`paletteDark`·
 // `statusIndicators`·`sidebarRows`, lib/paletteFor.ts, applyToDocument). 기본값도 참고와 같다: 어두움, amber, classic, 두 줄.
 // <html data-theme>·data-palette를 늘 달고(참고 applyToDocument), 실제 색은 herdr/tokens.css에 있다.
-// 참고는 theme·palette·sidebarRows를 「shared」(서버 저장)로 둔다. aaa는 아직 이 기기(localStorage)에 둔다(plan §8.71).
+// 참고처럼 theme·palette·sidebarRows는 host 공유 설정이다(preferencesSync.ts, plan §8.73). 나머지는 이 기기 것이다.
+// 이 store는 이 기기 사본을 localStorage에 두고, 공유 값이 오면 preferencesSync가 updateAppearance로 놓는다.
 import { useSyncExternalStore } from "react";
 import type { StatusIndicators } from "./herdr/status.ts";
 
