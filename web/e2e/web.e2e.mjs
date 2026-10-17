@@ -1938,7 +1938,12 @@ try {
         return m ? Number(m[1]) : null;
       });
     const bad = [];
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    const copies = () => {
+      window.__copied = [];
+      // xterm이 copy 사건에 넣은 글(bubble 끝에서 읽는다)
+      window.addEventListener("copy", (e) => window.__copied.push(e.clipboardData?.getData("text/plain") ?? ""));
+    };
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { init: copies })).page;
     // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
     await dp.getByTestId("pane-scroll-plain").click();
     await until("plain 화면", async () => (await screenText(dp)).includes("s-200")).catch(async (e) => {
@@ -1971,6 +1976,39 @@ try {
       return text.includes('GOT:"x"') && text.includes("more-3");
     });
     if ((await firstNo(dp)) === 1) bad.push("키를 쳤는데 맨 아래로 오지 않았다");
+    // 「맨 아래로 이동」(herdr-web-ui TerminalViewportTools): 맨 아래에서는 없고, 위로 굴리면 grid 오른쪽 아래에 뜨며,
+    // 누르면 맨 아래로 오고 터미널 focus는 그대로다
+    const jump = dp.getByTestId("jump-bottom");
+    if ((await jump.count()) !== 0) bad.push("맨 아래인데 「맨 아래로 이동」이 있다");
+    await dp.mouse.wheel(0, -600);
+    await jump.waitFor();
+    await shot(dp, "desktop-jump-bottom");
+    const jb = await jump.boundingBox();
+    const sb = await dp.locator('[data-testid="terminal"] .xterm-screen').boundingBox();
+    if (!(jb.x + jb.width <= sb.x + sb.width && jb.y + jb.height <= sb.y + sb.height && jb.x > sb.x + sb.width / 2 && jb.y > sb.y + sb.height / 2))
+      bad.push(`「맨 아래로 이동」 자리 ${JSON.stringify(jb)}, grid ${JSON.stringify(sb)}`);
+    await jump.click();
+    await until("「맨 아래로 이동」을 누르면 맨 아래", async () => (await jump.count()) === 0 && (await screenText(dp)).includes('GOT:"x"'));
+    if (!(await dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")))) bad.push("「맨 아래로 이동」이 터미널 focus를 가져갔다");
+    // 끌어 고르는 중 휠(herdr-web-ui dragWheel): 선택을 지우지 않고 기록을 굴린다. 놓으면 화면 밖까지 고른 글을 복사한다
+    // (aaa xterm은 기록을 가져 선택이 화면을 넘는다: 차이 목록 J 「선택을 놓으면 복사(화면 밖 포함)」)
+    const top0 = await firstNo(dp);
+    const rowH = sb.height / aaa("pane", "list").panes.find((x) => x.name === "scroll-plain").rows;
+    const anchorY = sb.y + sb.height - rowH * 1.5;
+    await dp.mouse.move(sb.x + 3, anchorY);
+    await dp.mouse.down();
+    await dp.mouse.move(sb.x + 40, anchorY, { steps: 2 });
+    await dp.mouse.wheel(0, -rowH * 12);
+    await until("끌기 중 휠이 기록을 굴림", async () => (await firstNo(dp)) === top0 - 12).catch(async (e) => bad.push(`${e.message}: 첫 줄 ${await firstNo(dp)}(전 ${top0})`));
+    // 맨 윗줄 첫 칸까지 끈다(첫 칸이어야 그 줄 글 전체가 고른 글에 든다)
+    await dp.mouse.move(sb.x + 2, sb.y + rowH * 0.5, { steps: 4 });
+    await dp.mouse.up();
+    const wantTop = `s-${String(top0 - 12).padStart(3, "0")}`;
+    await until("화면 밖까지 고른 글 복사", async () => (await dp.evaluate(() => window.__copied)).some((t) => t.includes(wantTop) && t.includes("more-3"))).catch(async (e) =>
+      bad.push(`${e.message}: ${JSON.stringify((await dp.evaluate(() => window.__copied)).map((t) => t.slice(0, 40) + "…" + t.slice(-40)))}`),
+    );
+    await dp.keyboard.press("y");
+    await until("키를 치면 다시 맨 아래", async () => (await screenText(dp)).includes('GOT:"y"'));
     // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
     // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다
     for (const [mode, want] of [["alt", 'GOT:"\\u001b[A'], ["mouse", 'GOT:"\\u001b[<64;']]) {
@@ -2015,6 +2053,9 @@ try {
       await sleep(200);
       const after = await firstNo(p);
       const want = Math.round(travel / cell.h);
+      // 위로 굴렸으니 「맨 아래로 이동」이 grid 오른쪽 아래에 있다
+      if (!(await p.getByTestId("jump-bottom").isVisible())) bad.push(`${label}: 위로 굴렸는데 「맨 아래로 이동」이 없다`);
+      await shot(p, label.startsWith("iPad") ? "ipad-jump-bottom" : "phone-jump-bottom");
       if (before === null || after === null || Math.abs(before - after - want) > 1)
         bad.push(`${label}: ${travel}px 끌어 첫 줄 ${before} → ${after}(기대 ${want}줄 위, 한 칸 ${cell.h.toFixed(1)}px)`);
       // alternate screen·mouse 보고 프로그램(Claude Code·Codex 같은)에서는 xterm 터치 스크롤이 아무것도 하지 않는다:
@@ -2419,6 +2460,16 @@ try {
     // OSC 52: 프로그램이 쓴 글이 클립보드로
     await press("o", '"o"');
     await until("OSC 52 클립보드", async () => (await mp.evaluate(() => window.__clip)).includes("클립 52"));
+    // 설정 「패널에서 클립보드로 복사」(herdr-web-ui paneClipboard, 기본 켬)를 끄면 OSC 52는 클립보드에 닿지 않는다
+    await mp.getByTestId("settings-open").click();
+    await mp.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
+    if ((await mp.evaluate(() => localStorage.getItem("aaa:pane-clipboard"))) !== "0") throw new Error("클립보드 설정을 저장하지 않았다");
+    await mp.keyboard.press("Escape");
+    await mp.getByTestId("terminal").click();
+    const clips = (await mp.evaluate(() => window.__clip)).length;
+    // 화면에 GOT이 보이면 같은 조각의 앞선 OSC 52도 xterm이 읽었다(press가 화면까지 기다린다)
+    await press("o", '"o"');
+    if ((await mp.evaluate(() => window.__clip)).length !== clips) throw new Error("끈 뒤에도 OSC 52가 클립보드에 썼다");
     // 늦게 붙은 화면: 프로그램은 모드를 다시 말하지 않지만 replay가 말한다
     const late = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel" });
     await late.page.getByTestId("pane-keysapp").click();
@@ -2523,7 +2574,7 @@ try {
       ws.on("framesent", (f) => {
         if (typeof f.payload !== "string") return;
         try {
-          opFrames.push(JSON.parse(f.payload));
+          opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
         } catch {}
       }),
     );
@@ -2566,6 +2617,30 @@ try {
     // 3) focus를 얻은 화면이 크기를 다시 건다(입력 없이)
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
+    // 3b) 「터미널의 aaa와 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
+    // 보기만 한다(띠). 남은 화면이 크기를 되찾고, 이 화면을 누르면 다시 이 화면 크기다
+    await op.getByTestId("settings-open").click();
+    await op.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
+    await op.keyboard.press("Escape");
+    await op.getByLabel("보낼 글").fill("echo away");
+    await op.getByRole("button", { name: "보내기" }).click();
+    await until("다른 화면 크기(같이 쓰기)", () => t1size() === otherSize);
+    const beforeAway = opFrames.length;
+    await op.evaluate(() => {
+      document.hasFocus = () => false;
+      window.dispatchEvent(new Event("blur"));
+    });
+    const blurAt = Date.now();
+    await until("다른 창으로 옮기고 놓음", () => opFrames.slice(beforeAway).find((f) => f.t === "release"), 5000);
+    const awayRelease = opFrames.slice(beforeAway).find((f) => f.t === "release");
+    if (awayRelease.at - blurAt < 900) throw new Error(`1초를 기다리지 않고 놓았다(${awayRelease.at - blurAt}ms)`);
+    await op.getByTestId("released-banner").waitFor();
+    await shot(op, "desktop-released");
+    await until("같이 쓰기로 놓은 뒤 남은 화면 크기", () => t1size() === held && holder() === first, 5000);
+    await op.evaluate(() => delete document.hasFocus);
+    await op.locator(".xterm-screen").click();
+    await until("누르면 다시 이 화면 크기", () => t1size() === otherSize && holder() !== first);
+    if ((await op.getByTestId("released-banner").count()) !== 0) throw new Error("되찾은 뒤에도 보기만 띠가 있다");
     // 4) 쓰던 화면이 가려지면 바로 놓고(참고 keepSize(hidden), 전에는 1초 뒤), 보이고 focus 있는 화면이 자기 크기로 맞춘다
     await op.getByLabel("보낼 글").fill("echo hide");
     await op.getByRole("button", { name: "보내기" }).click();
@@ -3707,8 +3782,12 @@ try {
     // 1) 일반 셸(t1): 대상 머신 세션 폴더에 저장하고 셸에도 따옴표 경로와 빈칸을 넣는다(결정 20 D7, Enter 없음)
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("$"));
+    // 띠는 터미널 위에 뜬다(herdr-web-ui .terminal-banners): 흐름에 있으면 띠가 날 때 칸이 줄어 PTY 크기가 바뀐다
+    const termBox = () => page.locator(".term-scroll").evaluate((el) => `${el.clientWidth}x${el.clientHeight}`);
+    const boxBefore = await termBox();
     await pasteFile(page, png, "image/png");
     await until("셸 경로 배너", async () => (await banner.innerText()).includes("경로를 넣었다"));
+    if ((await termBox()) !== boxBefore) throw new Error(`그림 띠가 터미널 칸을 바꿨다: ${boxBefore} → ${await termBox()}`);
     const p1 = bannerPath(await banner.innerText());
     if (!p1?.startsWith(`${root}/s/agent/sessions/`)) throw new Error(`저장 경로: ${await banner.innerText()}`);
     if (!fs.readFileSync(p1).equals(png)) throw new Error("저장한 그림이 다르다");
@@ -3722,6 +3801,7 @@ try {
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
+    if ((await termBox()) !== boxBefore) throw new Error(`오류 띠가 터미널 칸을 바꿨다: ${boxBefore} → ${await termBox()}`);
 
     // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
     const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);
