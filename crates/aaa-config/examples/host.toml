@@ -17,10 +17,12 @@ publish_ports = [443, 8443, 7443, 17443]
 mode = "child"
 
 [tui]
-# aaa attach의 명령 prefix 키(C-<글자>). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "C-g").
-prefix = "C-b"
-# prefix 뒤 명령 키를 영문 입력기로 받는다(한글 입력기면 잠깐 영문으로 바꾸고 되돌린다, macOS·ssh 밖).
-prefix_ascii = true
+# aaa attach의 명령 prefix 키(herdr 형식, 여러 개면 배열). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "ctrl+g").
+prefix = "ctrl+b"
+# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·ssh 밖, herdr처럼 기본 끔).
+switch_ascii_input_source_in_prefix = false
+# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 끔).
+prefix_jamo_keys = false
 
 [projects]
 # 프로젝트 폴더 root(비우면 ~/.aaa/projects)

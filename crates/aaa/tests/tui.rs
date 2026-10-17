@@ -1,16 +1,20 @@
 //! TUI harness E2E: PTY 안에서 `aaa attach`를 띄우고, 나온 bytes를 독립 parser(vte)로 화면에 옮겨 단언한다.
 //! production VT(vt100)와 다른 구현이라 TUI가 그린 것을 따로 관측한다.
 //! 실행: `cargo test -p aaa --test tui`
+//!
+//! 기다림은 시간이 아니라 관측한 사건으로 끝낸다: 화면은 bytes가 들어올 때마다 알리고(Condvar), host 상태는
+//! Front 연결의 사건(Workspace·State)으로 받는다. 시간 한도는 멈췄을 때 실패로 끝내는 안전망일 뿐이다.
 
 #![cfg(unix)]
 
 mod lab;
 
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
-use lab::{BIN, Lab, Node, wait_for, wait_for_diag};
+use aaa_proto::{FrontEvent, FrontMsg, FrontRequest, FrontResponse, PaneView, Workspace};
+use lab::{BIN, Lab, Node, wait_for};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use unicode_width::UnicodeWidthChar;
 
@@ -20,6 +24,7 @@ const COLS: u16 = 90;
 const WIDE: u16 = 130;
 const ROWS: u16 = 30;
 
+/// 시험 설정: 사용자 입력기는 건드리지 않고(기본 끔), prefix 뒤 자모 해석은 켠다
 const LOCAL_ONLY: &str = r#"schema = 1
 [host]
 agent_listen = ""
@@ -28,7 +33,7 @@ listen = ""
 [local_agent]
 mode = "none"
 [tui]
-prefix_ascii = false
+prefix_jamo_keys = true
 "#;
 
 /// 화면 관측기: 출력·커서 이동·지우기만 다룬다(색은 보지 않는다).
@@ -56,7 +61,6 @@ impl Screen {
         }
     }
 }
-
 impl vte::Perform for Screen {
     fn print(&mut self, c: char) {
         let w = c.width().unwrap_or(0);
@@ -141,7 +145,8 @@ impl vte::Perform for Screen {
 
 /// PTY 안에서 도는 `aaa attach`
 struct Tui {
-    screen: Arc<Mutex<Screen>>,
+    /// 화면과, bytes가 들어와 화면이 바뀔 때마다 깨우는 Condvar
+    screen: Arc<(Mutex<Screen>, Condvar)>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
@@ -172,7 +177,7 @@ impl Tui {
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().unwrap();
         let writer = pair.master.take_writer().unwrap();
-        let screen = Arc::new(Mutex::new(Screen::new(cols)));
+        let screen = Arc::new((Mutex::new(Screen::new(cols)), Condvar::new()));
         let s = screen.clone();
         std::thread::spawn(move || {
             let mut parser = vte::Parser::new();
@@ -181,14 +186,15 @@ impl Tui {
                 if n == 0 {
                     break;
                 }
-                parser.advance(&mut *s.lock().unwrap(), &buf[..n]);
+                parser.advance(&mut *s.0.lock().unwrap(), &buf[..n]);
+                s.1.notify_all();
             }
         });
         Tui { screen, writer, child, _master: pair.master }
     }
 
     fn text(&self) -> String {
-        self.screen.lock().unwrap().text()
+        self.screen.0.lock().unwrap().text()
     }
 
     fn send(&mut self, bytes: &[u8]) {
@@ -196,11 +202,10 @@ impl Tui {
         self.writer.flush().unwrap();
     }
 
-    /// prefix(C-b) 다음 키
+    /// prefix(ctrl+b) 다음 키. PREFIX 막대가 보인 뒤(TUI가 prefix를 받은 뒤) 키를 보낸다.
     fn cmd(&mut self, key: &str) {
         self.send(b"\x02");
-        // crossterm은 ESC 다음 바로 오는 글자를 Alt 조합으로 읽으므로 따로 보낸다
-        std::thread::sleep(Duration::from_millis(50));
+        self.wait_text("PREFIX 막대", |s| s.contains(" PREFIX "));
         self.send(key.as_bytes());
     }
 
@@ -209,8 +214,20 @@ impl Tui {
         self.send(b"\r");
     }
 
+    /// 화면이 조건을 만족할 때까지: 화면이 바뀔 때마다 다시 본다
     fn wait_text(&self, what: &str, f: impl Fn(&str) -> bool) {
-        wait_for_diag(what, T, || f(&self.text()).then_some(()), || format!("TUI 화면:\n{}", self.text()));
+        let (lock, cv) = &*self.screen;
+        let deadline = Instant::now() + T;
+        let mut g = lock.lock().unwrap();
+        loop {
+            let text = g.text();
+            if f(&text) {
+                return;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            assert!(!left.is_zero(), "{T:?} 안에 {what}이 되지 않았다\nTUI 화면:\n{text}");
+            g = cv.wait_timeout(g, left).unwrap().0;
+        }
     }
 
     fn wait_exit(&mut self) -> bool {
@@ -227,17 +244,103 @@ impl Drop for Tui {
     }
 }
 
-fn connected(node: &Node, name: &str) -> bool {
-    node.machine(name).is_some_and(|m| m["connection"] == "connected")
+/// host 상태를 사건으로 본다: Front 연결 하나가 받는 Workspace·State 사건을 쌓고, 조건이 될 때까지 다음 사건을 기다린다.
+struct HostWatch {
+    rt: tokio::runtime::Runtime,
+    rx: tokio::sync::mpsc::UnboundedReceiver<FrontMsg>,
+    ws: Option<Workspace>,
+    panes: Vec<PaneView>,
+    machines: Vec<aaa_proto::MachineView>,
 }
 
-fn start(lab: &mut Lab) -> Node {
-    let h = lab.node("h", Some(LOCAL_ONLY));
+impl HostWatch {
+    fn new(node: &Node) -> HostWatch {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let rx = rt.block_on(async {
+            let c = aaa_common::front::FrontClient::connect_as(&node.state, "test-watch").await.unwrap();
+            let (mut tx, rx) = c.split();
+            tx.send(FrontRequest::Workspace { name: None }).await.unwrap();
+            // 보내는 쪽을 닫지 않게 task에 둔다(연결이 살아 있어야 사건이 온다)
+            tokio::spawn(async move {
+                let _keep = tx;
+                std::future::pending::<()>().await
+            });
+            rx
+        });
+        HostWatch { rt, rx, ws: None, panes: vec![], machines: vec![] }
+    }
+
+    fn apply(&mut self, m: FrontMsg) {
+        match m {
+            FrontMsg::Event(FrontEvent::Workspace(w)) if w.name == aaa_proto::DEFAULT_WORKSPACE => self.ws = Some(w),
+            FrontMsg::Event(FrontEvent::State { machines, panes }) => {
+                self.machines = machines;
+                self.panes = panes;
+            }
+            FrontMsg::Res { result, .. } => {
+                if let Ok(FrontResponse::Workspace(w)) = result.into_result() {
+                    self.ws = Some(w);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 조건이 될 때까지 host 사건을 받는다
+    fn wait<R>(&mut self, what: &str, mut f: impl FnMut(&HostWatch) -> Option<R>) -> R {
+        let deadline = Instant::now() + T;
+        loop {
+            if let Some(v) = f(self) {
+                return v;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            // 시간 한도 타이머는 runtime 안에서 만든다
+            let rx = &mut self.rx;
+            let m = self.rt.block_on(async move { tokio::time::timeout(left, rx.recv()).await });
+            match m {
+                Ok(Some(m)) => self.apply(m),
+                Ok(None) => panic!("host 연결이 끊겼다({what})"),
+                Err(_) => panic!(
+                    "{T:?} 안에 {what}이 되지 않았다\nworkspace: {:?}\npanes: {:?}",
+                    self.ws,
+                    self.panes.iter().map(|p| (&p.id, &p.name, &p.state, &p.lease, p.cols, p.rows)).collect::<Vec<_>>()
+                ),
+            }
+        }
+    }
+
+    /// 모든 탭의 pane(layout 차례)
+    fn leaves(&self) -> Vec<String> {
+        self.ws.iter().flat_map(|w| w.tabs.iter().flat_map(|t| aaa_proto::layout::leaves(&t.root))).collect()
+    }
+
+    fn pane(&self, id: &str) -> Option<&PaneView> {
+        self.panes.iter().find(|p| p.id == id)
+    }
+
+    fn connected(&self, name: &str) -> bool {
+        self.machines.iter().any(|m| m.name == name && m.connection == aaa_proto::Connection::Connected)
+    }
+
+    /// 그 pane의 lease 이름이 `label`로 시작하나
+    fn held_by(&self, id: &str, label: &str) -> bool {
+        self.pane(id).and_then(|p| p.lease.as_ref()).is_some_and(|l| l.label.starts_with(label))
+    }
+}
+
+/// host와 agent(labA)를 띄우고, 사건을 볼 연결을 준다
+fn start(lab: &mut Lab) -> (Node, HostWatch) {
+    start_with(lab, LOCAL_ONLY)
+}
+
+fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
+    let h = lab.node("h", Some(host_toml));
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
+    let mut hw = HostWatch::new(&h);
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
-    wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
-    h
+    hw.wait("labA 연결", |w| w.connected("labA").then_some(()));
+    (h, hw)
 }
 
 fn leaves(w: &serde_json::Value) -> Vec<String> {
@@ -260,7 +363,7 @@ fn leaves(w: &serde_json::Value) -> Vec<String> {
 #[test]
 fn attach_draws_layout_and_detach_keeps_sessions() {
     let mut lab = Lab::new();
-    let h = start(&mut lab);
+    let (h, mut hw) = start(&mut lab);
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
 
@@ -268,9 +371,10 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.wait_text("탭과 상태 줄", |s| s.contains("1:first") && s.contains("labA") && s.contains("실행"));
     // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기로 맞추고 이 화면이 지금 쓰는 화면이 된다
     tui.wait_text("lease", |s| s.contains("이 화면 크기"));
-    let p = h.pane(&first);
-    assert_eq!((p["cols"].as_u64(), p["rows"].as_u64()), (Some(COLS as u64), Some(ROWS as u64 - 2)), "{p}");
-    assert_eq!(p["lease"]["label"].as_str().map(|l| l.starts_with("tui@")), Some(true), "{p}");
+    hw.wait("칸 크기와 lease", |w| {
+        let p = w.pane(&first)?;
+        ((p.cols, p.rows) == (COLS, ROWS - 2) && w.held_by(&first, "tui@")).then_some(())
+    });
 
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
@@ -286,10 +390,13 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // 좌우로 나누면 host layout이 바뀌고 구분선과 새 pane이 그려진다. 포커스는 새 pane으로 간다.
-    tui.cmd("%");
-    wait_for("split 반영", T, || (leaves(&h.ok(&["ws", "show"])).len() == 2).then_some(()));
-    let second = leaves(&h.ok(&["ws", "show"]))[1].clone();
+    // prefix v(herdr split_vertical)로 좌우로 나누면 host layout이 바뀌고 구분선과 새 pane이 그려진다.
+    // 포커스는 새 pane(오른쪽)으로 간다.
+    tui.cmd("v");
+    let second = hw.wait("split 반영", |w| {
+        let l = w.leaves();
+        (l.len() == 2).then(|| l[1].clone())
+    });
     tui.wait_text("구분선", |s| s.lines().nth(5).is_some_and(|l| l.contains('│')));
     tui.type_line("echo right-$((5+5))");
     tui.wait_text("오른쪽 출력", |s| s.lines().any(|l| l.find("right-10").is_some_and(|i| l[..i].contains('│'))));
@@ -297,7 +404,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     assert!(!h.screen(&first).contains("right-10"), "포커스한 pane에만 들어가야 한다");
 
     // 새 탭과 탭 전환. 한글 입력기가 켜진 채 누른 명령 키(ㅊ = c 자리)도 같은 명령이다
-    // (시험 설정은 prefix_ascii = false: 사용자 입력기를 바꾸지 않는다)
+    // (시험 설정 prefix_jamo_keys = true. 기본은 끔이고 입력기 전환도 기본 끔이라 사용자 입력기를 건드리지 않는다)
     tui.cmd("c");
     tui.wait_text("둘째 탭", |s| s.lines().next().is_some_and(|l| l.contains("1:first") && l.contains(" 2:")));
     tui.cmd("ㅊ");
@@ -305,13 +412,13 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.cmd("1");
     tui.wait_text("첫 탭으로", |s| s.contains("tui-42") && s.contains("right-10"));
 
-    // 나가도(detach) 세션은 그대로다
-    tui.cmd("d");
+    // prefix q로 나가도(detach) 세션은 그대로다
+    tui.cmd("q");
     assert!(tui.wait_exit(), "detach는 성공으로 끝나야 한다");
     drop(tui);
-    wait_for("lease 해제", T, || h.pane(&first)["lease"].is_null().then_some(()));
-    assert_eq!(h.pane(&first)["state"], "running");
-    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 4);
+    hw.wait("lease 해제", |w| w.pane(&first).is_some_and(|p| p.lease.is_none()).then_some(()));
+    assert!(hw.pane(&first).unwrap().state.is_running());
+    assert_eq!(hw.leaves().len(), 4);
 
     // 다시 붙으면 같은 layout과 화면이 보인다
     let tui = Tui::start(&h);
@@ -322,12 +429,136 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     }
 }
 
+/// herdr 키와 모드(herdr 0.9.5 `KeysConfig::default`·`route_key`): prefix는 시간 제한 없이 다음 키 하나를 기다리고
+/// Esc·모르는 키는 아무것도 보내지 않고 취소한다. prefix 두 번은 prefix를 보낸다. v·- 나누기, h/j/k/l·Tab·Shift+Tab 포커스,
+/// x 닫기, o 질문 pane으로, ? 단축키 창(검색), shift+r 설정 다시 읽기(prefix를 바꿈, 읽지 못하면 ERROR 막대).
+#[test]
+fn herdr_keys_and_modes() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "keys", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| s.contains("1:keys") && s.contains("이 화면 크기"));
+
+    // 1) PREFIX 막대(herdr render_mode_bar)와 Esc 취소: ESC는 셸에 가지 않는다
+    tui.send(b"\x02");
+    tui.wait_text("PREFIX 막대", |s| {
+        s.contains(" PREFIX ") && s.contains("esc 취소") && s.contains("ctrl+b prefix 보내기")
+    });
+    tui.send(b"\x1b");
+    tui.wait_text("취소", |s| !s.contains(" PREFIX "));
+    // 모르는 키(y)도 취소하고 보내지 않는다
+    tui.cmd("y");
+    tui.wait_text("취소", |s| !s.contains(" PREFIX "));
+    tui.type_line("echo after-$((2+3))");
+    tui.wait_text("뒤 입력", |s| s.contains("after-5"));
+    let line = h.screen(&first);
+    assert!(!line.contains("yecho") && !line.contains("^["), "취소한 키가 셸에 갔다:\n{line}");
+
+    // 2) prefix 두 번은 prefix 키(ctrl+b = 0x02)를 pane에 보낸다
+    tui.type_line("stty -iexten; cat -v");
+    tui.wait_text("cat 대기", |s| s.contains("cat -v"));
+    tui.cmd("\x02");
+    tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
+    tui.send(b"\r");
+    tui.wait_text("^B", |s| s.contains("^B"));
+    tui.send(b"\x03");
+    tui.type_line("clear");
+
+    // 3) v 좌우, - 위아래, h/j/k/l·Tab·Shift+Tab 포커스. 입력이 간 pane으로 포커스를 본다.
+    tui.cmd("v");
+    let right = hw.wait("좌우 나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
+    tui.cmd("h");
+    tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
+    tui.cmd("-");
+    // 왼쪽 pane 아래에 새 pane: 차례는 [first, bottom, right]
+    let bottom = hw.wait("위아래 나눔", |w| (w.leaves().len() == 3).then(|| w.leaves()[1].clone()));
+    assert_eq!(hw.leaves(), vec![first.clone(), bottom.clone(), right.clone()]);
+    let typed_in = |tui: &mut Tui, word: &str, pane: &str| {
+        tui.type_line(&format!("echo {word}-$((1+1))"));
+        let out = format!("{word}-2");
+        tui.wait_text(word, |s| s.contains(&out));
+        assert!(h.screen(pane).contains(&out), "{word}이 {pane}에 가지 않았다");
+    };
+    typed_in(&mut tui, "bottom", &bottom);
+    tui.cmd("k");
+    typed_in(&mut tui, "top", &first);
+    tui.cmd("l");
+    typed_in(&mut tui, "east", &right);
+    tui.cmd("\t");
+    typed_in(&mut tui, "cycled", &first);
+    tui.cmd("\x1b[Z");
+    typed_in(&mut tui, "back", &right);
+
+    // 4) o: 질문이 열린 pane으로 간다
+    h.ok(&[
+        "pane",
+        "send",
+        &bottom,
+        "--text",
+        &format!(
+            "'{}' hook --agent claude '{{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}}'; clear",
+            lab::BIN
+        ),
+        "--enter",
+    ]);
+    hw.wait("질문", |w| {
+        w.pane(&bottom)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
+    });
+    tui.cmd("o");
+    typed_in(&mut tui, "asked", &bottom);
+
+    // 5) x: 포커스 pane을 닫는다
+    tui.cmd("x");
+    hw.wait("닫힘", |w| (w.leaves() == vec![first.clone(), right.clone()]).then_some(()));
+
+    // 6) ? 단축키 창: 묶음과 키, / 검색, Esc 두 번으로 닫기
+    tui.cmd("?");
+    tui.wait_text("단축키 창", |s| s.contains("prefix+?") && s.contains("prefix 모드") && s.contains("esc 닫기"));
+    // 넘기면 아래 묶음이 보인다
+    tui.send(b"\x1b[6~");
+    tui.wait_text("넘김", |s| s.contains("prefix+w") && s.contains("목록 탐색") && !s.contains("prefix 모드"));
+    tui.send(b"/");
+    tui.wait_text("검색", |s| s.contains("esc 돌아가기"));
+    tui.send("나누기".as_bytes());
+    tui.wait_text("거름", |s| {
+        s.contains("좌우로 나누기") && s.contains("위아래로 나누기") && !s.contains("목록 탐색")
+    });
+    tui.send(b"\x1b");
+    tui.wait_text("검색 끝", |s| s.contains("prefix 모드") && s.contains("esc 닫기"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+
+    // 7) shift+r: host.toml [tui]를 다시 읽는다. prefix를 ctrl+a로 바꾸면 ctrl+a가 prefix다.
+    let cfg = h.cfg.join("host.toml");
+    std::fs::write(&cfg, LOCAL_ONLY.replace("[tui]\n", "[tui]\nprefix = [\"ctrl+a\"]\n")).unwrap();
+    tui.cmd("R");
+    tui.wait_text("다시 읽음", |s| s.contains("설정을 다시 읽었다"));
+    tui.send(b"\x01");
+    tui.wait_text("새 prefix", |s| s.contains(" PREFIX ") && s.contains("ctrl+a prefix 보내기"));
+    tui.send(b"?");
+    tui.wait_text("단축키 창", |s| s.contains("prefix 모드") && s.contains("ctrl+a"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+    // 읽지 못하는 값이면 ERROR 막대로 알리고 기본(ctrl+b)으로 돌아간다
+    std::fs::write(&cfg, LOCAL_ONLY.replace("[tui]\n", "[tui]\nprefix = \"nope\"\n")).unwrap();
+    tui.send(b"\x01");
+    tui.wait_text("PREFIX", |s| s.contains(" PREFIX "));
+    tui.send(b"R");
+    tui.wait_text("ERROR 막대", |s| s.contains(" ERROR ") && s.contains("prefix 값을 읽지 못했다: nope"));
+    tui.send(b"\x02");
+    tui.wait_text("기본 prefix", |s| s.contains(" PREFIX ") && s.contains("ctrl+b prefix 보내기"));
+    tui.send(b"q");
+    assert!(tui.wait_exit());
+}
+
 /// 다른 front가 쓰던 pane에도 바로 입력된다(가져오기 없이, §8.33). 입력하거나 터미널 focus를 다시 얻은 화면이
 /// 지금 쓰는 화면이 되어 칸 크기를 다시 건다. focus가 없는 동안은 크기를 걸지 않는다.
 #[test]
 fn lease_conflict_with_another_front() {
     let mut lab = Lab::new();
-    let h = start(&mut lab);
+    let (h, mut hw) = start(&mut lab);
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "shared", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
 
@@ -344,12 +575,6 @@ fn lease_conflict_with_another_front() {
         call(other, aaa_proto::FrontRequest::PaneInput { pane: id.clone(), data });
     };
     other_types(&mut other, "echo from-other");
-    let held_by = |label: &str| {
-        let l = label.to_string();
-        let h = &h;
-        let id = &id;
-        move || h.pane(id)["lease"]["label"].as_str().is_some_and(|x| x.starts_with(&l)).then_some(())
-    };
 
     let mut tui = Tui::start(&h);
     tui.wait_text("다른 front 표시", |s| s.contains("other-front 크기") && s.contains("from-other"));
@@ -358,37 +583,26 @@ fn lease_conflict_with_another_front() {
     // 1) 그냥 입력하면 들어가고, 이 화면이 지금 쓰는 화면이 되어 칸 크기로 맞춘다
     tui.type_line("echo direct-$((6*7))");
     tui.wait_text("바로 입력", |s| s.contains("direct-42"));
-    wait_for("입력한 화면", T, held_by("tui@"));
-    wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
+    hw.wait("입력한 화면의 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS).then_some(()));
     tui.wait_text("이 화면 표시", |s| s.contains("이 화면 크기"));
 
     // 2) 다른 화면이 다시 쓰면 그 크기다. 이 터미널이 focus를 다시 얻으면(ESC [ I) 크기를 다시 건다
     other_types(&mut other, "echo again");
-    wait_for("다른 화면", T, held_by("other-front"));
+    hw.wait("다른 화면", |w| w.held_by(&id, "other-front").then_some(()));
     tui.wait_text("다른 front 표시", |s| s.contains("other-front 크기"));
     tui.send(b"\x1b[I");
-    wait_for("focus 얻은 화면", T, held_by("tui@"));
-    wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
+    hw.wait("focus 얻은 화면의 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS).then_some(()));
 
     // 3) focus를 잃은 동안(ESC [ O)은 크기를 걸지 않는다: 다른 화면이 썼다 놓아도 그 크기 그대로다
     tui.send(b"\x1b[O");
     std::thread::sleep(Duration::from_millis(200));
     other_types(&mut other, "echo third");
-    wait_for("다른 화면", T, held_by("other-front"));
+    hw.wait("다른 화면", |w| w.held_by(&id, "other-front").then_some(()));
     call(&mut other, aaa_proto::FrontRequest::PaneRelease { pane: id.clone() });
-    wait_for("놓음", T, || h.pane(&id)["lease"].is_null().then_some(()));
+    hw.wait("놓음", |w| w.pane(&id).is_some_and(|p| p.lease.is_none()).then_some(()));
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(h.pane(&id)["cols"].as_u64(), Some(70), "focus가 없는 화면이 크기를 걸었다");
     assert!(h.pane(&id)["lease"].is_null());
-
-    // 4) prefix t(명시적 가져오기)도 그대로 된다
-    tui.send(b"\x1b[I");
-    wait_for("focus 얻은 화면", T, held_by("tui@"));
-    other_types(&mut other, "echo fourth");
-    wait_for("다른 화면", T, held_by("other-front"));
-    tui.cmd("t");
-    wait_for("가져오기", T, held_by("tui@"));
-    wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
     drop(other);
 }
 
@@ -397,26 +611,38 @@ fn selected(text: &str) -> Option<String> {
     text.lines().map(|l| l.chars().take(32).collect::<String>()).find(|l| l.contains('▸'))
 }
 
-/// 목록 맨 위(첫 thread)로 올라간 뒤 `needle` 줄까지 내려간다. 한 칸씩 화면이 바뀐 것을 보고 다음 키를 누른다.
-fn pick(tui: &mut Tui, first: &str, needle: &str) {
-    for _ in 0..12 {
-        tui.send(b"k");
-        std::thread::sleep(Duration::from_millis(30));
+/// 목록 맨 위(고른 줄 바로 위가 「Thread n」 머리)인가
+fn at_top(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    lines
+        .iter()
+        .position(|l| l.chars().take(32).any(|c| c == '▸'))
+        .is_some_and(|i| i > 0 && lines[i - 1].contains("Thread "))
+}
+
+/// 탐색 모드에서 목록 맨 위(첫 thread)로 올라간 뒤 `needle` 줄까지 내려간다(herdr 탐색은 ↑↓). 한 칸씩 화면이 바뀐 것을 보고
+/// 다음 키를 누른다.
+fn pick(tui: &mut Tui, needle: &str) {
+    tui.wait_text("탐색 모드", |s| s.contains(" NAVIGATE ") && selected(s).is_some());
+    while !at_top(&tui.text()) {
+        let now = selected(&tui.text()).unwrap();
+        tui.send(b"\x1b[A");
+        tui.wait_text("한 칸 올라감", |s| selected(s).is_some_and(|l| l != now));
     }
-    tui.wait_text("목록 맨 위", |s| selected(s).is_some_and(|l| l.contains(first)));
     for _ in 0..12 {
         let now = selected(&tui.text()).unwrap();
         if now.contains(needle) {
             return;
         }
-        tui.send(b"j");
+        tui.send(b"\x1b[B");
         tui.wait_text("한 칸 내려감", |s| selected(s).is_some_and(|l| l != now));
     }
     panic!("목록에 {needle}이 없다:\n{}", tui.text());
 }
 
 /// 왼쪽 목록(§8.35): 웹 목록처럼 Thread 묶음·머신별 pane·새 셸이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
-/// 넓은 터미널은 펼친 채, 좁은 터미널은 접힌 채 시작한다. prefix s 펴기·접기, prefix Tab 목록 ↔ pane.
+/// 넓은 터미널은 펼친 채, 좁은 터미널은 접힌 채 시작한다. herdr 키: prefix b 펴기·접기(포커스는 그대로),
+/// prefix w 탐색 모드(↑↓ 고르기·Enter 열기·Esc 돌아가기, 접혀 있으면 pane 위에 띄워 보인다).
 #[test]
 fn side_list_like_web() {
     let mut lab = Lab::new();
@@ -433,8 +659,9 @@ fn side_list_like_web() {
     .unwrap();
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
+    let mut hw = HostWatch::new(&h);
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
-    wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
+    hw.wait("labA 연결", |w| w.connected("labA").then_some(()));
 
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
@@ -477,7 +704,7 @@ fn side_list_like_web() {
             && s.contains("first")
             && s.contains("loose")
     });
-    wait_for("목록 옆 크기", T, || (h.pane(&first)["cols"].as_u64() == Some(WIDE as u64 - 33)).then_some(()));
+    hw.wait("목록 옆 크기", |w| (w.pane(&first)?.cols == WIDE - 33).then_some(()));
     tui.type_line("echo list-$((6*7))");
     tui.wait_text("pane 입력", |s| s.contains("list-42"));
 
@@ -489,67 +716,75 @@ fn side_list_like_web() {
         std::fs::write(path, tui.text()).unwrap();
     }
 
-    // 3) prefix Tab으로 목록에 가서 탭에 없는 pane을 고르면 새 탭으로 열린다
-    tui.cmd("\t");
-    tui.wait_text("목록 포커스", |s| s.contains("Enter 열기"));
-    pick(&mut tui, "-job", "loose");
+    // 3) prefix w로 탐색해 탭에 없는 pane을 고르면 새 탭으로 열린다
+    tui.cmd("w");
+    tui.wait_text("탐색 모드", |s| s.contains(" NAVIGATE ") && selected(s).is_some());
+    pick(&mut tui, "loose");
     tui.send(b"\r");
-    wait_for("새 탭", T, || leaves(&h.ok(&["ws", "show"])).contains(&loose).then_some(()));
-    tui.wait_text("pane으로 돌아옴", |s| !s.contains("Enter 열기") && s.contains(" loose "));
+    hw.wait("새 탭", |w| w.leaves().contains(&loose).then_some(()));
+    tui.wait_text("pane으로 돌아옴", |s| !s.contains(" NAVIGATE ") && s.contains(" loose "));
 
     // 4) thread 줄을 고르면 그 thread의 pane이 탭으로 열린다
-    tui.cmd("\t");
-    pick(&mut tui, "-job", "alpha-job");
+    tui.cmd("w");
+    pick(&mut tui, "alpha-job");
     tui.send(b"\r");
-    wait_for("thread 탭", T, || leaves(&h.ok(&["ws", "show"])).contains(&th_pane).then_some(()));
+    hw.wait("thread 탭", |w| w.leaves().contains(&th_pane).then_some(()));
 
     // 5) 이미 탭에 있는 pane은 그 탭으로 간다(탭이 늘지 않는다)
-    tui.cmd("\t");
-    pick(&mut tui, "-job", "first");
+    tui.cmd("w");
+    pick(&mut tui, "first");
     tui.send(b"\r");
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
-    assert_eq!(leaves(&h.ok(&["ws", "show"])).len(), 3);
+    assert_eq!(hw.leaves().len(), 3);
 
     // 6) 새 셸은 그 머신에 새 탭으로
-    tui.cmd("\t");
-    pick(&mut tui, "-job", "+ 새 셸");
+    tui.cmd("w");
+    pick(&mut tui, "+ 새 셸");
     tui.send(b"\r");
-    wait_for("새 셸 탭", T, || (leaves(&h.ok(&["ws", "show"])).len() == 4).then_some(()));
+    hw.wait("새 셸 탭", |w| (w.leaves().len() == 4).then_some(()));
 
-    // 7) Esc는 목록에서 pane으로 돌아간다
-    tui.cmd("\t");
-    tui.wait_text("목록 포커스", |s| s.contains("Enter 열기"));
+    // 7) Esc는 탐색을 끝낸다
+    tui.cmd("w");
+    tui.wait_text("탐색 모드", |s| s.contains(" NAVIGATE "));
     tui.send(b"\x1b");
-    tui.wait_text("Esc", |s| !s.contains("Enter 열기"));
+    tui.wait_text("Esc", |s| !s.contains(" NAVIGATE "));
 
-    // 8) prefix s로 접으면 pane이 전체 폭을 쓴다
+    // 8) prefix b로 접으면 pane이 전체 폭을 쓴다
     tui.cmd("1");
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
-    tui.cmd("s");
+    tui.cmd("b");
     tui.wait_text("접힘", |s| !s.contains("■ labA"));
-    wait_for("전체 폭", T, || (h.pane(&first)["cols"].as_u64() == Some(WIDE as u64)).then_some(()));
-    tui.cmd("d");
+    hw.wait("전체 폭", |w| (w.pane(&first)?.cols == WIDE).then_some(()));
+    tui.cmd("q");
     assert!(tui.wait_exit());
     drop(tui);
 
-    // 9) 좁은 터미널은 접힌 채 시작하고, prefix s로 펴면 목록으로 포커스가 간다
+    // 9) 좁은 터미널은 접힌 채 시작한다. 탐색 모드는 접힌 목록을 pane 위에 띄워 보이고(pane 크기는 그대로),
+    //    prefix b로 펴면 목록 옆 크기가 된다(포커스는 pane 그대로: 바로 입력된다)
     let mut tui = Tui::start(&h);
     tui.wait_text("접힌 채 시작", |s| s.contains("list-42") && s.contains("1:first"));
+    hw.wait("전체 폭", |w| (w.pane(&first)?.cols == COLS).then_some(()));
     assert!(!tui.text().contains("■ labA"));
-    tui.cmd("s");
-    tui.wait_text("펼침", |s| s.contains("■ labA") && s.contains("Enter 열기"));
-    wait_for("목록 옆 크기", T, || (h.pane(&first)["cols"].as_u64() == Some(COLS as u64 - 33)).then_some(()));
+    tui.cmd("w");
+    tui.wait_text("띄운 목록", |s| s.contains(" NAVIGATE ") && s.contains("■ labA"));
+    tui.send(b"\x1b");
+    tui.wait_text("목록 닫힘", |s| !s.contains("■ labA"));
+    assert_eq!(hw.pane(&first).unwrap().cols, COLS, "탐색 모드가 pane 크기를 바꿨다");
+    tui.cmd("b");
+    tui.wait_text("펼침", |s| s.contains("■ labA") && !s.contains(" NAVIGATE "));
+    hw.wait("목록 옆 크기", |w| (w.pane(&first)?.cols == COLS - 33).then_some(()));
+    tui.type_line("echo still-$((3*3))");
+    tui.wait_text("포커스 그대로", |s| s.contains("still-9"));
 }
 
-/// 재부팅 흉내 뒤 중단 표시, prefix r로 같은 자리에서 재개
+/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 사람이 다시 띄우는 길은 badge가 알려 주는 CLI다.
 #[test]
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
-    let h = start(&mut lab);
+    let (h, mut hw) = start(&mut lab);
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "job", "--", "/bin/sh"]);
     let old = leaves(&w)[0].clone();
     h.ok(&["pane", "send", &old, "--text", "echo before-$((1+1))", "--enter"]);
-    wait_for("출력", T, || h.screen(&old).contains("before-2").then_some(()));
 
     let mut tui = Tui::start(&h);
     tui.wait_text("첫 화면", |s| s.contains("before-2"));
@@ -558,12 +793,14 @@ fn interrupted_badge_and_resume() {
     tui.wait_text("끊김 표시", |s| s.contains("끊김·읽기 전용"));
     assert_eq!(lab.kill_session_hosts(), 1);
     lab.spawn_env("agent2", &h, &["agent", "--host", "local", "--name", "labA"], &[("AAA_TEST_BOOT_ID", "boot-after")]);
-    tui.wait_text("중단 표시", |s| s.contains("중단(재부팅) — 재개: prefix r") && s.contains("before-2"));
+    let short: String = old.chars().take(8).collect();
+    let badge = format!("중단(재부팅) — aaa pane resume {short}");
+    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("before-2"));
 
-    tui.cmd("r");
-    wait_for("재개", T, || {
-        let l = leaves(&h.ok(&["ws", "show"]));
-        (l.len() == 1 && l[0] != old).then(|| l[0].clone())
+    h.ok(&["pane", "resume", &short]);
+    hw.wait("재개", |w| {
+        let l = w.leaves();
+        (l.len() == 1 && l[0] != old && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then_some(())
     });
     tui.wait_text("재개 뒤 실행", |s| !s.contains("중단(재부팅)") && s.contains("실행"));
     tui.type_line("echo resumed-$((5*5))");
@@ -608,7 +845,7 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
 #[test]
 fn ctrl_v_pastes_clipboard_image() {
     let mut lab = Lab::new();
-    let h = start(&mut lab);
+    let (h, _hw) = start(&mut lab);
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "pic", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
     let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
@@ -670,7 +907,7 @@ fn ctrl_v_pastes_clipboard_image() {
     std::fs::write(&big, &bytes).unwrap();
     let r = h.ok(&["pane", "attach", &id, big.to_str().unwrap()]);
     assert_eq!(h.pane(&id)["lease"]["label"].as_str().map(|l| l.starts_with("tui@")), Some(true));
-    tui.cmd("d");
+    tui.cmd("q");
     assert!(tui.wait_exit());
     drop(tui);
     let path = r["path"].as_str().unwrap();
