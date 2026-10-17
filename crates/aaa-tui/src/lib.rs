@@ -1186,9 +1186,9 @@ impl App {
                 }
             }
             Some(tab) => {
-                // herdr `render_pane_borders`·`render_pane_border_titles`: 제목은 pane 이름(thread pane은 `project/id`)
+                // herdr `render_pane_borders`·`render_pane_border_titles`
                 let boxes = self.shown(tab, body);
-                let title = |id: &str| self.panes.get(id).map(|v| v.name.clone()).filter(|n| !n.trim().is_empty());
+                let title = |id: &str| self.panes.get(id).and_then(border_title);
                 chrome::render(buf, &boxes, self.focus.as_deref(), title, p);
                 for b in &boxes {
                     let focused = self.focus.as_deref() == Some(b.pane.as_str());
@@ -1539,6 +1539,14 @@ impl App {
         badge(buf, view, r, focused, &self.palette);
         None
     }
+}
+
+/// pane 테두리 제목: 붙인 이름만(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름
+/// (명령 파일 이름, 없으면 `shell`)은 쓰지 않는다. herdr도 사람이 붙인 이름·agent 제목만 쓰고 셸 pane에는 제목이 없다.
+fn border_title(v: &PaneView) -> Option<String> {
+    let name = v.name.trim();
+    let default = v.argv.first().map_or("shell", |a| a.rsplit(['/', '\\']).next().unwrap_or(a));
+    (!name.is_empty() && name != default).then(|| name.to_string())
 }
 
 /// 사이드바 바탕과 오른쪽 구분선(herdr `render_sidebar_background`: `sidebar_bg`, `│`는 `surface_dim`)
@@ -1909,6 +1917,32 @@ mod tests {
         assert_eq!(app.shown(&app.ws.tabs[0], body)[0].pane, "p0");
         app.ws.tabs[0].zoomed = false;
         assert_eq!(app.shown(&app.ws.tabs[0], body).len(), 2);
+    }
+
+    /// 테두리 제목은 붙인 이름만: agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다(herdr 셸 pane처럼)
+    #[test]
+    fn border_titles_only_for_given_names() {
+        let named = |name: &str, argv: &[&str]| {
+            let mut v = pane_view("p", "m", name);
+            v.argv = argv.iter().map(|a| a.to_string()).collect();
+            border_title(&v)
+        };
+        assert_eq!(named("sh", &["/bin/sh"]), None);
+        assert_eq!(named("shell", &[]), None);
+        assert_eq!(named("demo/t-0001", &["claude"]), Some("demo/t-0001".into()));
+        assert_eq!(named(" build ", &["/bin/zsh"]), Some("build".into()));
+        // 나눈 탭에서 이름 붙은 pane만 위 테두리에 ` 이름 `
+        let mut app = app_with_tabs(&[""]);
+        aaa_proto::layout::split(&mut app.ws.tabs[0].root, "p0", "p1", SplitDir::Horizontal);
+        for (id, name) in [("p0", "빌드 서버"), ("p1", "sh")] {
+            let mut v = pane_view(id, "m1", name);
+            v.argv = vec!["/bin/sh".into()];
+            app.panes.insert(id.into(), v);
+        }
+        app.focus = Some("p0".into());
+        let (lines, _) = draw(&app);
+        let top = right_of_sidebar(&lines[1]);
+        assert!(top.starts_with("┌ 빌드 서버 ─") && top.contains("┐┌──") && !top.contains(" sh "), "{top:?}");
     }
 
     /// 크기 모드 막대(herdr `render_mode_bar`): mauve 바탕 ` RESIZE `와 키 안내
