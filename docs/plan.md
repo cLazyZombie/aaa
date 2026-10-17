@@ -1590,6 +1590,60 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 목록으로 가거나 끄면 놓는다.
   - PWA 단계: manifest `id`, 아이콘 종류 넷, 각 PNG 실제 크기가 적은 크기와 같은지, status-bar meta가 없는지 본다.
 
+### 8.67 앞 기록: 위로 굴려 받은 기록 끝에 닿으면 그 앞 덩어리를 받아 붙인다(10-17, 사용자 결정·요청)
+
+사용자 결정(원문: 「서버에출력이 다 있지않아? 프론트가 뛰어넘는건 상관없는데 왜 다시 들어갔을때 이전내용을 못보지?」, 이어서 「모든 기록을 다 받지는 마. 뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」).
+- PTY 흐름 제어는 넣지 않는다. 느린 화면만 4008로 끊는 지금 방식(§8.62)을 둔다.
+- 다시 연결하거나 처음 열 때는 최근 일부만 받는다. 위로 굴려 받은 기록 끝에 가까워지면 그 앞을 host에서 받아 온다.
+
+- **전에는(확인한 것).**
+  - session host와 host mirror의 vt100은 기록을 5000줄 가졌다.
+  - 붙을 때 replay는 최근 2000줄, 384KiB 안만 실었다(`REPLAY_HISTORY`·`REPLAY_HISTORY_BYTES`). session host → agent → host 구간은 1MiB frame 하나에 들어야 했다.
+  - 웹 xterm scrollback도 2000줄이었다. 그래서 끊긴 동안 2000줄 넘게 쏟아지면 그 앞은 웹에서 볼 수 없었다.
+- **참고(herdr 0.9.5·herdr-web-ui aa624cb).**
+  - herdr는 pane마다 ghostty 기록을 10,000,000바이트(`DEFAULT_SCROLLBACK_LIMIT_BYTES`, `advanced.scrollback_limit_bytes`) 가진다.
+  - 붙는 client에는 화면 한 장만 보내고 기록은 보내지 않는다. frame 상한은 2MiB이고, 넘으면 그 frame을 건너뛴다.
+  - herdr-web-ui의 xterm은 `scrollback: 0`이다. 위로 굴리면 herdr의 공유 viewport를 옮긴다(모든 화면이 함께 움직인다). 늦게 붙는 화면에는 attach 출력의 마지막 128KiB를 한 번에 준다.
+  - 기록을 덩어리로 나눠 받는 것은 대화(chat) 보기의 대화 기록뿐이다. 터미널에는 없다.
+  - 그래서 「앞 덩어리 받기」는 참고에 없는 aaa 동작이다. 사용자 요청대로 넣는다. 기록 보존 크기만 참고를 따른다.
+- **보존.** `aaa-vt SCROLLBACK` 10,000줄로 올렸다. herdr 10MB(ghostty 칸 8바이트)가 120칸에서 담는 줄 수(약 10,300줄)와 같게 했다. 웹 xterm scrollback도 10,000줄이다.
+  - **메모리.** vt100 칸은 32바이트다. 그래서 꽉 찬 120칸 pane 하나가 session host와 host mirror에서 각각 약 38MB를 쓴다. 출력이 많은 pane만 이만큼 쓴다.
+  - **적용 범위.** 이미 떠 있는 pane의 session host는 옛 binary(5000줄)로 돈다. host mirror는 host를 다시 띄우면 10,000줄이다.
+- **받아 오기.**
+  - 붙을 때는 전처럼 최근 2000줄이다. snapshot에 `history_more`(host에 앞 기록이 더 있다)를 싣는다.
+  - 웹은 보통 화면에서 위로 굴려 받은 기록 맨 위에서 한 화면 안에 들어오면 `{"t":"history","id","anchor","depth"}`를 보낸다. anchor는 받은 기록 맨 위 세 줄의 글, depth는 그 첫 줄부터 맨 아래까지의 줄 수다.
+  - host는 mirror 기록에서 anchor를 찾는다. 같은 글이 여러 곳이면 depth에 가장 가까운 곳이다. 그 바로 앞 2000줄(384KiB 안)을 replay 기록과 같은 모양(색 포함)으로 `{"t":"history","data","lines","more","found"}`에 담아 답한다.
+  - 줄 수가 아니라 글로 자리를 찾는다. 그 사이 새 출력이 들어와 기록이 밀려도 맞는 자리에 붙는다.
+  - 답 하나는 replay 기록 상한 안이다. 그래서 출력 흐름 창(1MiB에서 4008)에 걸리지 않고, 기록 전체를 한 번에 보내지 않는다.
+- **붙이기(xterm은 버퍼 앞에 줄을 끼울 수 없다).**
+  - 웹은 받은 덩어리 뒤에 지금 버퍼를 `@xterm/addon-serialize`(0.13.0, xterm 5.5 짝)로 이어 다시 쓴다(`reset` 뒤 write).
+  - 보던 줄 자리를 덩어리 줄 수만큼 내린다(`scrollToLine(top + lines)`).
+  - 다시 쓰는 동안 온 출력·snapshot·크기 바꾸기는 붙잡았다가 다 쓴 뒤에 차례로 쓴다.
+  - 다시 쓰는 동안은 그 전 화면(DOM renderer 줄 요소의 사본)을 위에 덮어 둔다. 그래서 중간 모습이 보이지 않는다.
+  - modifyOtherKeys 단계는 serialize에 없어 되살린다. 새 snapshot이 오면 기다리던 답은 버린다.
+- **안 되는 곳(사용자 결정을 기다린다).**
+  - **(가) host를 다시 띄운 뒤의 앞 기록.** host mirror는 다시 뜰 때 session host snapshot으로 기록을 처음 채운다. 이 snapshot은 지금도 1MiB frame 하나다(최근 2000줄·384KiB). 그래서 host를 다시 띄우면 그보다 앞 기록은 session host에만 있고 웹은 받아 오지 못한다.
+    - 선택지 1: host가 mirror에 없는 앞 덩어리를 session host에 요청하는 link 요청을 새로 둔다. 새 session host(새로 띄운 pane)부터 된다.
+    - 선택지 2: host가 다시 뜰 때 session host가 기록 전체를 여러 frame으로 나눠 보낸다(10,000줄이면 수 MB를 매번).
+    - 선택지 3: 두고 쓴다.
+    - **추천은 1이다.** 필요한 만큼만 받고, 이번 웹 요청(anchor·depth)을 그대로 넘기면 된다. 이번에는 만들지 않았다.
+  - **(나) 폭이 바뀐 기록.** xterm은 폭이 바뀌면 줄을 다시 접고 vt100은 접지 않는다. 그래서 폭이 바뀐 뒤에는 받은 기록 맨 위 글이 host와 달라 찾지 못할 수 있다. 그때 host는 `found: false`로 답하고, 웹은 더 받지 않는다(어긋난 자리에 붙이지 않는다).
+  - **(라) 그 밖에 알고 둔 것.**
+    - 다시 쓸 때 입력 모드(DECCKM·bracketed paste·마우스 보고)는 serialize가 다시 켠다. scroll region(DECSTBM)과 커서 숨김(DECTCEM)은 serialize에 없다. 보통 화면 셸에서는 쓰지 않아 두었다.
+    - 요청이 갈 때 alternate screen(less·vim)이면 host가 `found: false`로 답한다. 그 구독 동안은 더 받지 않는다(다시 붙으면 다시 받는다).
+    - 출력이 쏟아지는 중에 붙이면 다시 쓰는 동안 출력이 붙잡혀 ACK가 늦는다. 그래서 그동안 흐름 창이 막힐 수 있다. 오래 막히면 4008과 「다시 연결」이다.
+    - 연결이 닫히면 기다리던 답을 버린다.
+  - **(다) 남의 grid를 보는 화면.** 이 화면 크기가 아닌 grid를 보는 동안 휠은 칸을 굴린다(§8.55). 그래서 xterm 기록 굴리기 자체가 없다. 화면을 누르면 grid를 되찾는다.
+- **시험.**
+  - `aaa-vt`(4개): replay가 앞 기록이 남았는지 말하는지, anchor 바로 앞 덩어리가 글·색 그대로 L1001~L3000이고 다음 덩어리는 기록 끝까지인지, 같은 글이 여러 곳일 때 깊이로 고르는지, alternate screen이면 없음인지 본다.
+  - 웹 E2E 「앞 기록」:
+    - 화면의 pane WebSocket을 끊은 동안 pane이 6000줄(열 줄마다 색)을 쓴다. 다시 붙으면 앞 기록 표시가 켜진다.
+    - 위로 굴려 끝에 닿을 때마다 덩어리를 받는다. 답은 0.6초 붙잡아 붙이기 전 화면을 잰다. 붙인 뒤 보이는 줄이 붙이기 전과 같아야 한다.
+    - 첫 답을 기다리는 동안 온 출력(tick-1)은 다시 쓰는 사이에 도착하게 한다.
+    - 끝에 버퍼 전체를 훑는다. h-00001~h-06000이 빠짐·겹침 없이 차례로 있고, tick-1은 한 번, 기록 뒤에 있다.
+    - 다시 쓴 뒤에도 프로그램이 켠 bracketed paste가 남아, 붙여 넣은 여러 줄이 `ESC[200~`로 감싸여 간다.
+    - 자리 맞추기(`top + lines`)를 빼거나 붙잡기를 빼면 이 단계가 「화면이 튀었다」로 실패함을 확인했다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

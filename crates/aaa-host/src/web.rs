@@ -542,18 +542,22 @@ impl Outbox {
 fn open_stream(
     out: &Outbox,
     streams: &mut u32,
-    replay: Vec<u8>,
-    cols: u16,
-    rows: u16,
+    a: &mut crate::Attach,
     readonly: bool,
     now: u64,
 ) -> Option<OutputWindow> {
     *streams += 1;
     let mut window = OutputWindow::new(*streams);
-    let bytes = replay.len() as u64;
-    let text =
-        serde_json::to_string(&TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly, stream: *streams })
-            .unwrap();
+    let bytes = a.replay.len() as u64;
+    let text = serde_json::to_string(&TermServerMsg::Snapshot {
+        replay: B64(std::mem::take(&mut a.replay)),
+        cols: a.cols,
+        rows: a.rows,
+        readonly,
+        stream: *streams,
+        history_more: a.more,
+    })
+    .unwrap();
     if bytes > 0 {
         let wire = text.len() as u64;
         window.join(wire, out.buffered(), now);
@@ -595,7 +599,8 @@ async fn pane_session(
 ) {
     let id = id.to_string();
     let actor = format!("device:{dev}");
-    let Some((mut rx, replay, mut next, cols, rows)) = host.attach_pane(&id) else { return };
+    let Some(mut attach) = host.attach_pane(&id) else { return };
+    let mut next = attach.offset;
     let mut upload: Option<crate::attach::Upload> = None;
     // 첨부가 실패하면 그 첨부의 남은 조각은 오류 없이 버린다(다음 첨부는 offset 0으로 시작한다)
     let mut upload_failed = false;
@@ -608,7 +613,8 @@ async fn pane_session(
     if !out.msg(&TermServerMsg::Front { id: front.id.clone() }) {
         return;
     }
-    let Some(mut window) = open_stream(&out, &mut streams, replay, cols, rows, view.readonly, now()) else { return };
+    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()) else { return };
+    let mut rx = attach.rx;
     if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) {
         return;
     }
@@ -658,11 +664,11 @@ async fn pane_session(
                     Err(RecvError::Closed) => break,
                 };
                 if resync {
-                    let Some((nrx, replay, offset, cols, rows)) = host.attach_pane(&id) else { break };
-                    rx = nrx;
-                    next = offset;
+                    let Some(mut a) = host.attach_pane(&id) else { break };
+                    next = a.offset;
                     let readonly = host.pane_view_of(&id, role).map(|p| p.readonly).unwrap_or(true);
-                    let Some(w) = open_stream(&out, &mut streams, replay, cols, rows, readonly, now()) else { break };
+                    let Some(w) = open_stream(&out, &mut streams, &mut a, readonly, now()) else { break };
+                    rx = a.rx;
                     window = w;
                 }
             }
@@ -691,6 +697,19 @@ async fn pane_session(
                                 sent = host.call_from(role, &actor, Some(front), typed(b"\r".to_vec())).await;
                             }
                             let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
+                            if !out.msg(&reply) {
+                                break;
+                            }
+                            None
+                        }
+                        Ok(TermClientMsg::History { id: hid, anchor, depth }) => {
+                            // 앞 기록 한 덩어리(plan §8.67). 출력 흐름(ACK 창) 밖의 답이라 창에 넣지 않는다:
+                            // 한 덩어리는 replay 기록 상한(2000줄·384KiB) 안이다.
+                            let anchor: Vec<String> = anchor.into_iter().take(8).collect();
+                            let reply = match host.older_history(&id, &anchor, depth as usize) {
+                                Some(o) => TermServerMsg::History { id: hid, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
+                                None => TermServerMsg::History { id: hid, data: B64(Vec::new()), lines: 0, more: false, found: false },
+                            };
                             if !out.msg(&reply) {
                                 break;
                             }

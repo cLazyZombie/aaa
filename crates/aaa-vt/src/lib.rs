@@ -38,11 +38,13 @@ impl vt100::Callbacks for Modes {
     }
 }
 
-/// scrollback 줄 수(설정 정책은 M1-2에서 TOML로)
-pub const SCROLLBACK: usize = 5000;
+/// scrollback 줄 수. herdr 기본 기록(`DEFAULT_SCROLLBACK_LIMIT_BYTES` 10,000,000, ghostty 메모리 상한)이 120칸에서 담는
+/// 줄 수와 같게 둔다(ghostty 칸 8바이트: 10,000,000 / (120×8+8) ≈ 10,300줄). vt100 칸은 32바이트라 꽉 차면 120칸 pane
+/// 하나가 약 38MB다(plan §8.67).
+pub const SCROLLBACK: usize = 10_000;
 
-/// replay가 앞에 싣는 기록 줄 상한. 웹 xterm scrollback(Term.tsx 2000)과 같다.
-/// 붙을 때마다 보내므로 5000줄 다 싣지 않는다(색이 많은 120칸 5000줄이면 약 650KB, 2000줄이면 약 270KB).
+/// replay가 앞에 싣는 기록 줄 상한. 붙을 때마다 보내므로 기록 전부를 싣지 않는다(색이 많은 120칸 2000줄이면 약 270KB).
+/// 그 앞은 웹이 위로 굴려 끝에 닿을 때 `older`로 한 덩어리씩 받아 온다(plan §8.67).
 pub const REPLAY_HISTORY: usize = 2000;
 
 /// replay가 앞에 싣는 기록 bytes 상한. snapshot은 JSON 한 frame(base64, `aaa_proto::MAX_FRAME` 1MiB)으로 session host →
@@ -84,6 +86,11 @@ impl Vt {
     /// alternate screen이면 그 밑 normal screen(기록과 화면)을 먼저 그리고 alternate screen으로 들어간다: 붙은 front도 휠을
     /// 프로그램 화면에 맞게 나누고(plan §8.55, herdr `WheelRouting`), 프로그램이 나가면 그 밑 화면이 돌아온다.
     pub fn replay(&self) -> Vec<u8> {
+        self.replay_more().0
+    }
+
+    /// `replay`와 그 앞에 실리지 않은 기록이 더 있는지
+    pub fn replay_more(&self) -> (Vec<u8>, bool) {
         let screen = self.parser.screen();
         // 화면을 지우고 처음부터 그린다(재접속한 front의 이전 화면을 덮는다).
         let mut tail = b"\x1b[H\x1b[2J".to_vec();
@@ -93,6 +100,7 @@ impl Vt {
             tail.extend_from_slice(format!("\x1b[>4;{level}m").as_bytes());
         }
         let mut out = Vec::new();
+        let more;
         if screen.alternate_screen() {
             // vt100은 보이는 grid만 내준다: 사본에서 alternate screen을 나가 normal screen을 얻는다(1049l은 커서도 되돌린다)
             let (rows, cols) = screen.size();
@@ -102,13 +110,76 @@ impl Vt {
             let mut under = b"\x1b[H\x1b[2J".to_vec();
             under.extend_from_slice(&normal.screen().contents_formatted());
             under.extend_from_slice(b"\x1b[?1049h");
-            out.extend_from_slice(&history(normal.screen(), history_budget(under.len() + tail.len())));
+            let (h, m) = history(normal.screen(), history_budget(under.len() + tail.len()));
+            more = m;
+            out.extend_from_slice(&h);
             out.extend_from_slice(&under);
         } else {
-            out.extend_from_slice(&history(screen, history_budget(tail.len())));
+            let (h, m) = history(screen, history_budget(tail.len()));
+            more = m;
+            out.extend_from_slice(&h);
         }
         out.extend_from_slice(&tail);
-        out
+        (out, more)
+    }
+
+    /// 받은 기록 맨 위 줄들(`anchor`, 글만)의 바로 앞 기록 `want`줄을 replay 기록과 같은 모양으로 준다(위로 굴린 웹이 받아 붙인다).
+    /// `depth`는 받은 쪽에서 anchor 첫 줄부터 맨 아래 줄까지의 줄 수다. 같은 글이 여러 곳이면 그 깊이에 가장 가까운 곳이다.
+    /// alternate screen이거나 anchor를 찾지 못하면 None(기록을 맞출 수 없다).
+    pub fn older(&self, anchor: &[String], depth: usize, want: usize) -> Option<Older> {
+        let screen = self.parser.screen();
+        if screen.alternate_screen() || anchor.is_empty() {
+            return None;
+        }
+        let mut s = screen.clone();
+        let (rows, cols) = s.size();
+        s.set_scrollback(usize::MAX);
+        let len = s.scrollback();
+        // 기록(오래된 것부터)과 화면의 글
+        let mut plain: Vec<String> = Vec::with_capacity(len + usize::from(rows));
+        let mut back = len;
+        while back > 0 {
+            s.set_scrollback(back);
+            let take = back.min(usize::from(rows));
+            plain.extend(s.rows(0, cols).take(take).map(|r| r.trim_end().to_string()));
+            back -= take;
+        }
+        s.set_scrollback(0);
+        plain.extend(s.rows(0, cols).map(|r| r.trim_end().to_string()));
+        let n = anchor.len();
+        if plain.len() < n {
+            return None;
+        }
+        let target = plain.len().saturating_sub(depth);
+        let at = (0..=plain.len() - n)
+            .filter(|&i| plain[i..i + n].iter().zip(anchor).all(|(a, b)| a == b.trim_end()))
+            .min_by_key(|&i| i.abs_diff(target))?;
+        // anchor 앞 줄부터 거꾸로, 줄 수·bytes 상한 안에서
+        let mut lines: Vec<Vec<u8>> = Vec::new();
+        let mut size = 0;
+        let mut i = at;
+        while i > 0 && lines.len() < want {
+            let row = i - 1;
+            let mut line = if row < len {
+                s.set_scrollback(len - row);
+                s.rows_formatted(0, cols).next().unwrap_or_default()
+            } else {
+                s.set_scrollback(0);
+                s.rows_formatted(0, cols).nth(row - len).unwrap_or_default()
+            };
+            line.extend_from_slice(b"\x1b[m\r\n");
+            if size + line.len() > REPLAY_HISTORY_BYTES && !lines.is_empty() {
+                break;
+            }
+            size += line.len();
+            lines.push(line);
+            i = row;
+        }
+        let mut data = Vec::with_capacity(size);
+        for line in lines.iter().rev() {
+            data.extend_from_slice(line);
+        }
+        Some(Older { data, lines: lines.len(), more: i > 0 })
     }
 
     /// 한 줄을 같은 모양 글자 묶음으로(TUI front가 칸에 그린다). 넓은 글자의 뒤 칸은 건너뛴다.
@@ -174,18 +245,27 @@ fn history_budget(screen: usize) -> usize {
     REPLAY_HISTORY_BYTES.min((aaa_proto::MAX_FRAME / 4 * 3).saturating_sub(screen + (64 << 10)))
 }
 
-/// scrollback 줄을 오래된 것부터 한 줄씩 쓰고, 마지막 줄까지 화면 위로 밀어 올리는 bytes.
+/// `Vt::older`의 답: anchor 바로 앞 기록 `lines`줄(줄마다 `ESC[m CR LF`로 끝난다)과, 그 앞에 기록이 더 있는지
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Older {
+    pub data: Vec<u8>,
+    pub lines: usize,
+    pub more: bool,
+}
+
+/// scrollback 줄을 오래된 것부터 한 줄씩 쓰고, 마지막 줄까지 화면 위로 밀어 올리는 bytes와, 싣지 못한 앞 기록이 있는지.
 /// 빈 터미널이 이것을 받으면 그 scrollback에 같은 줄이 생긴다(plan §8.55: 기록은 session host vt가 갖고, 붙는 front에 채운다).
 /// 화면 밖 줄이라 줄 이음(soft wrap)은 남기지 않는다.
-fn history(screen: &vt100::Screen, budget: usize) -> Vec<u8> {
+fn history(screen: &vt100::Screen, budget: usize) -> (Vec<u8>, bool) {
     let mut screen = screen.clone();
     let (rows, cols) = screen.size();
     // 크게 주면 실제 scrollback 길이로 줄어든다
     screen.set_scrollback(usize::MAX);
-    let len = screen.scrollback().min(REPLAY_HISTORY);
+    let all = screen.scrollback();
+    let len = all.min(REPLAY_HISTORY);
     let mut out = Vec::new();
     if len == 0 {
-        return out;
+        return (out, false);
     }
     // 위로 k줄 올린 화면의 첫 줄이 끝에서 k번째 기록 줄이다: 한 화면씩 내려오며 모은다
     let mut lines: Vec<Vec<u8>> = Vec::with_capacity(len);
@@ -206,15 +286,16 @@ fn history(screen: &vt100::Screen, budget: usize) -> Vec<u8> {
         size <= budget
     });
     let first = lines.len() - keep.count();
+    let more = all > lines.len() - first;
     if first == lines.len() {
-        return out;
+        return (out, more);
     }
     for line in &lines[first..] {
         out.extend_from_slice(line);
     }
     // 커서는 마지막 기록 줄 다음 줄 맨 앞이다. rows-1번 더 내리면 기록이 모두 화면 위로 넘어간다
     out.extend(std::iter::repeat_n(b'\n', usize::from(rows) - 1));
-    out
+    (out, more)
 }
 
 fn color(c: vt100::Color) -> u32 {
@@ -400,6 +481,99 @@ mod tests {
         assert_eq!(a.text("s").lines, b.text("s").lines);
         assert_eq!(b.text("s").lines[0], "한글 ok");
         assert_eq!((b.text("s").cursor_row, b.text("s").cursor_col), (2, 5));
+    }
+
+    /// 기록 줄 글(오래된 것부터)과 화면 글
+    fn all_text(vt: &Vt) -> Vec<String> {
+        let mut s = vt.parser.screen().clone();
+        let (rows, cols) = s.size();
+        s.set_scrollback(usize::MAX);
+        let len = s.scrollback();
+        let mut out = Vec::new();
+        let mut back = len;
+        while back > 0 {
+            s.set_scrollback(back);
+            let take = back.min(usize::from(rows));
+            out.extend(s.rows(0, cols).take(take).map(|r| r.trim_end().to_string()));
+            back -= take;
+        }
+        s.set_scrollback(0);
+        out.extend(s.rows(0, cols).map(|r| r.trim_end().to_string()));
+        out
+    }
+
+    #[test]
+    fn replay_says_whether_older_history_is_left_out() {
+        let mut vt = Vt::new(10, 40);
+        for i in 1..=50 {
+            vt.feed(format!("L{i:04}\r\n").as_bytes());
+        }
+        assert!(!vt.replay_more().1, "다 실렸다");
+        for i in 51..=REPLAY_HISTORY + 100 {
+            vt.feed(format!("L{i:04}\r\n").as_bytes());
+        }
+        assert!(vt.replay_more().1, "앞 기록이 남았다");
+    }
+
+    #[test]
+    fn older_gives_the_chunk_just_above_the_anchor_until_history_ends() {
+        let mut vt = Vt::new(10, 40);
+        for i in 1..=5000 {
+            vt.feed(format!("\x1b[3{}mL{i:04}\x1b[m\r\n", i % 7).as_bytes());
+        }
+        let text = all_text(&vt);
+        let total = text.len();
+        // 웹이 L3001부터 갖고 있다: 그 앞 2000줄은 L1001~L3000
+        let at = text.iter().position(|l| l == "L3001").unwrap();
+        let anchor = vec!["L3001".to_string(), "L3002".to_string()];
+        let o = vt.older(&anchor, total - at, 2000).unwrap();
+        assert_eq!((o.lines, o.more), (2000, true));
+        // 받은 덩어리를 빈 vt에 쓰면 그 줄들이 같은 글·색으로 기록에 쌓인다
+        let mut fresh = Vt::new(10, 40);
+        fresh.feed(&o.data);
+        let got = all_text(&fresh);
+        let got: Vec<_> = got.iter().filter(|l| !l.is_empty()).cloned().collect();
+        assert_eq!(got.first().map(String::as_str), Some("L1001"));
+        assert_eq!(got.last().map(String::as_str), Some("L3000"));
+        assert_eq!(got.len(), 2000);
+        assert!(String::from_utf8_lossy(&o.data).contains("\x1b[3"), "색을 싣는다");
+        // 그 다음 덩어리는 기록 끝까지: L0001~L1000, 더 없음
+        let at = text.iter().position(|l| l == "L1001").unwrap();
+        let o = vt.older(&["L1001".to_string()], total - at, 2000).unwrap();
+        assert_eq!((o.lines, o.more), (1000, false));
+        assert!(String::from_utf8_lossy(&o.data).starts_with("\x1b[31mL0001"), "{:?}", &o.data[..12]);
+        // 맨 앞이면 빈 덩어리, 더 없음
+        let o = vt.older(&["L0001".to_string()], total, 2000).unwrap();
+        assert_eq!((o.lines, o.more), (0, false));
+        // 없는 글이면 맞출 수 없다
+        assert!(vt.older(&["nope".to_string()], 10, 2000).is_none());
+    }
+
+    #[test]
+    fn older_picks_the_repeated_anchor_nearest_the_given_depth() {
+        let mut vt = Vt::new(5, 20);
+        // 같은 글 「same」이 세 번: 각 앞 줄로 어느 것을 골랐는지 본다
+        for i in 1..=300 {
+            let l = if i % 100 == 0 { "same".to_string() } else { format!("x{i}") };
+            vt.feed(format!("{l}\r\n").as_bytes());
+        }
+        let text = all_text(&vt);
+        let total = text.len();
+        for want in [100, 200, 300] {
+            let at = text.iter().position(|l| *l == format!("x{}", want - 1)).unwrap() + 1;
+            let o = vt.older(&["same".to_string()], total - at, 1).unwrap();
+            assert_eq!(String::from_utf8_lossy(&o.data).trim_end_matches("\x1b[m\r\n"), format!("x{}", want - 1));
+        }
+    }
+
+    #[test]
+    fn older_is_none_on_the_alternate_screen() {
+        let mut vt = Vt::new(5, 20);
+        for i in 1..=50 {
+            vt.feed(format!("L{i}\r\n").as_bytes());
+        }
+        vt.feed(b"\x1b[?1049h");
+        assert!(vt.older(&["L40".to_string()], 15, 10).is_none());
     }
 
     #[test]

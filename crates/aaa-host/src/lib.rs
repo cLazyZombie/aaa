@@ -124,8 +124,15 @@ pub enum PaneEvent {
     State,
 }
 
-/// 웹 터미널 attach 결과: (사건 구독, replay, offset, cols, rows)
-pub type Attach = (broadcast::Receiver<PaneEvent>, Vec<u8>, u64, u16, u16);
+/// 웹 터미널 attach 결과: 사건 구독, replay와 그 앞 기록이 더 있는지, replay 끝 offset, 크기
+pub struct Attach {
+    pub rx: broadcast::Receiver<PaneEvent>,
+    pub replay: Vec<u8>,
+    pub more: bool,
+    pub offset: u64,
+    pub cols: u16,
+    pub rows: u16,
+}
 
 struct PaneRt {
     machine_id: String,
@@ -618,14 +625,21 @@ impl Host {
         let i = self.inner.lock().unwrap();
         let p = i.panes.get(id)?;
         let rx = p.events.subscribe();
-        let (replay, offset, rows, cols) = match &p.mirror {
+        let (replay, more, offset, rows, cols) = match &p.mirror {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
-                (m.vt.replay(), m.offset, rows, cols)
+                let (replay, more) = m.vt.replay_more();
+                (replay, more, m.offset, rows, cols)
             }
-            None => (Vec::new(), 0, p.info.rows, p.info.cols),
+            None => (Vec::new(), false, 0, p.info.rows, p.info.cols),
         };
-        Some((rx, replay, offset, cols, rows))
+        Some(Attach { rx, replay, more, offset, cols, rows })
+    }
+
+    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67)
+    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> Option<aaa_vt::Older> {
+        let i = self.inner.lock().unwrap();
+        i.panes.get(id)?.mirror.as_ref()?.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY)
     }
 
     fn resolve_pane(&self, prefix: &str) -> Result<(String, String), ErrorBody> {

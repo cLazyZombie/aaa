@@ -737,6 +737,24 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 앞 기록 시험 프로그램: "h"를 받으면 번호 붙은 줄 6000개(열 줄마다 색)를 한 번에 쓴다(plan §8.67). "p"면 tick 줄 하나
+fs.writeFileSync(
+  `${root}/history.js`,
+  `process.stdin.setRawMode(true);
+process.stdout.write("\\x1b[?2004hhist> ");
+let ticks = 0;
+process.stdin.on("data", (d) => {
+  if (d.toString("latin1") === "p") return void process.stdout.write("\\r\\ntick-" + ++ticks + "\\r\\nhist> ");
+  if (d.toString("latin1") !== "h") return void process.stdout.write("\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\nhist> ");
+  let out = "\\r\\n";
+  for (let i = 1; i <= 6000; i++) {
+    const n = "h-" + String(i).padStart(5, "0");
+    out += (i % 10 === 0 ? "\\x1b[3" + (i % 7) + "m" + n + "\\x1b[m" : n) + " " + "y".repeat(i % 40) + "\\r\\n";
+  }
+  process.stdout.write(out + "history-done\\r\\nhist> ");
+});
+`,
+);
 fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
@@ -1882,6 +1900,127 @@ try {
     });
     await dp.context().close();
     aaa("pane", "kill", "shrink");
+  });
+
+  await step("앞 기록(사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」, plan §8.67): 끊긴 동안 쏟아진 출력을 다시 붙은 뒤 위로 굴리며 차례로 받아 보고, 붙일 때 보던 자리가 튀지 않는다", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "histapp", "--", process.execPath, `${root}/history.js`);
+    await until("histapp 준비", () => aaa("pane", "read", "histapp").lines.join("\n").includes("hist>"));
+    // pane WebSocket 문: 닫혀 있으면 새 연결을 바로 끊는다(끊긴 동안). host의 앞 기록 답은 잠깐 붙잡아, 붙이기 전 화면을 잰다
+    // 첫 답을 붙잡는 동안 온 출력도 붙잡았다가 답 바로 뒤에 보낸다: 다시 쓰는 사이에 출력이 오는 경우
+    let gate = "open";
+    let pipe = null;
+    let replies = 0;
+    let holdOutput = null;
+    let heldOutput = 0;
+    const route = (ws) => {
+      if (gate === "closed") return void ws.close({ code: 1011, reason: "test offline" });
+      const server = ws.connectToServer();
+      pipe = { ws, server };
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => {
+        if (typeof m === "string" && m.startsWith('{"t":"history"')) {
+          replies += 1;
+          if (replies === 1) holdOutput = [];
+          return void setTimeout(() => {
+            ws.send(m);
+            for (const o of holdOutput ?? []) ws.send(o);
+            heldOutput += holdOutput?.length ?? 0;
+            holdOutput = null;
+          }, replies === 1 ? 1500 : 600);
+        }
+        // 지금 연결의 출력만(닫은 앞 연결의 늦은 출력이 섞이지 않게)
+        if (holdOutput && typeof m !== "string" && pipe?.server === server) return void holdOutput.push(m);
+        ws.send(m);
+      });
+      server.onClose((code, reason) => ws.close({ code, reason }));
+      ws.onClose((code, reason) => server.close({ code, reason }));
+    };
+    const hp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
+    await hp.getByTestId("pane-histapp").click();
+    await until("histapp 화면", async () => (await screenText(hp)).includes("hist>"));
+    const box = hp.getByTestId("terminal");
+    const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
+    // 끊고, 끊긴 동안 6000줄
+    gate = "closed";
+    pipe.ws.close({ code: 1011, reason: "test offline" });
+    pipe.server.close({ code: 1000, reason: "test offline" });
+    aaa("pane", "send", "histapp", "--text", "h");
+    await until("pane에 다 씀", () => aaa("pane", "read", "histapp").lines.join("\n").includes("history-done"));
+    gate = "open";
+    await until("다시 붙음", async () => (await screenText(hp)).includes("history-done"), 30000);
+    if ((await attr("historyMore")) !== "1") throw new Error(`다시 붙은 뒤 앞 기록 표시 ${await attr("historyMore")}`);
+    const rows = () => hp.locator(".xterm-rows").innerText();
+    const firstNum = (t) => Number(/h-(\d{5})/.exec(t)?.[1] ?? NaN);
+    // 이 화면을 쓴다(누르면 이 화면 크기로 grid를 되찾는다: 남의 grid를 보는 동안은 휠이 칸을 굴린다)
+    await box.click();
+    await until("이 화면 grid", async () => (await hp.locator(".term-scroll[data-adopted-grid]").count()) === 0);
+    await box.hover();
+    let applied = 0;
+    const seen = [];
+    for (let round = 0; round < 10; round++) {
+      // 받은 기록 맨 위 근처까지 굴린다: 요청이 나가면 멈추고 그 화면을 잰다
+      await until(`위로 굴려 요청(${round + 1})`, async () => {
+        if ((await attr("historyWaiting")) === "1" || (await attr("historyMore")) === "0") return true;
+        await hp.mouse.wheel(0, -3000);
+        return false;
+      });
+      if ((await attr("historyMore")) === "0" && (await attr("historyWaiting")) !== "1") break;
+      const before = await rows();
+      // 첫 덩어리를 기다리는 동안 pane에 새 줄(tick-1): 다시 쓰는 사이에 도착한다
+      if (round === 0) {
+        aaa("pane", "send", "histapp", "--text", "p");
+        await until("tick-1을 pane이 씀", () => aaa("pane", "read", "histapp").lines.join("\n").includes("tick-1"));
+      }
+      await until(`붙임(${round + 1})`, async () => Number(await attr("historyApplied")) === applied + 1);
+      applied += 1;
+      const after = await rows();
+      if (after !== before) throw new Error(`붙일 때 화면이 튀었다(${round + 1}): ${before.slice(0, 80)} → ${after.slice(0, 80)}`);
+      seen.push(firstNum(before));
+    }
+    if (applied < 2 || replies !== applied) throw new Error(`앞 기록을 ${applied}번 붙였다(답 ${replies})`);
+    if (heldOutput === 0) throw new Error("다시 쓰는 사이에 온 출력이 없다(시험이 그 경우를 만들지 못했다)");
+    if (!seen.every((n, i) => i === 0 || n < seen[i - 1])) throw new Error(`붙인 자리가 위로 가지 않았다: ${seen}`);
+    // 버퍼 전체를 한 화면씩 훑어: h-00001~h-06000이 빠짐·겹침 없이 차례로(덩어리 경계도)
+    const sweep = await hp.evaluate(async () => {
+      const vp = document.querySelector('[data-testid="terminal"] .xterm-viewport');
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const nums = new Set();
+      const bad = [];
+      const ticks = new Map();
+      let last = -1;
+      for (let y = 0; ; y += vp.clientHeight / 2) {
+        vp.scrollTop = y;
+        vp.dispatchEvent(new Event("scroll"));
+        await frame();
+        const got = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
+        for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
+        got.forEach((n) => nums.add(n));
+        // tick-1·h-06000 줄의 버퍼 줄 번호(겹쳐 본 화면에서 같은 줄은 한 번 센다)
+        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
+        const rowH = divs[0].getBoundingClientRect().height;
+        divs.forEach((d, i) => {
+          const at = Math.round(vp.scrollTop / rowH) + i;
+          if (d.textContent.startsWith("tick-1")) ticks.set(at, "tick");
+          if (d.textContent.startsWith("h-06000")) last = at;
+        });
+        if (y >= vp.scrollHeight - vp.clientHeight) break;
+      }
+      const tickAt = [...ticks.keys()];
+      return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), tickAt, last };
+    });
+    if (sweep.count !== 6000 || sweep.min !== 1 || sweep.max !== 6000 || sweep.bad.length) throw new Error(`버퍼 기록 ${JSON.stringify(sweep)}`);
+    // 다시 쓰는 사이에 온 줄은 한 번, 기록 뒤에
+    if (sweep.tickAt.length !== 1 || !(sweep.tickAt[0] > sweep.last)) throw new Error(`tick-1 자리 ${JSON.stringify(sweep)}`);
+    // 다시 쓴 버퍼도 프로그램이 켠 입력 모드(bracketed paste)를 그대로 갖는다: 붙여 넣은 여러 줄이 감싸여 간다
+    await box.click();
+    await hp.locator(".xterm-helper-textarea").evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "pa\nste");
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await until("감싼 붙여넣기", () => aaa("pane", "read", "histapp").lines.join("\n").includes('GOT:"\\u001b[200~pa\\rste\\u001b[201~"'));
+    await hp.context().close();
+    aaa("pane", "kill", "histapp");
   });
 
   await step("출력이 밀릴 때(herdr-web-ui OutputWindow·pty-ack·4008 「Reconnect」, D7, plan §8.62): ACK를 못 하는 화면은 host가 4008로 닫고 다시 보내지 않으며 「다시 연결」로 새로 붙는다. 따라오는 화면은 그대로 받는다", async () => {
@@ -3414,6 +3553,10 @@ try {
           if (reg) r(reg.registrationId);
         }),
       );
+      // 실패하면 service worker 판 상태를 남긴다(10-17 22:20 전체 실행에서 한 번 알림이 뜨지 않았고 따로는 재현되지 않았다)
+      const versions = [];
+      cdp.on("ServiceWorker.workerVersionUpdated", (e) => versions.push(...e.versions.map((v) => `${v.versionId}:${v.status}/${v.runningStatus}`)));
+      cdp.on("ServiceWorker.workerErrorReported", (e) => versions.push(`error:${e.errorMessage.errorMessage}`));
       await cdp.send("ServiceWorker.enable");
       const data = JSON.stringify({ title: "aaa · demo", body: "t-0009 question: 확인창", url: "/#thread=demo%2Ft-0009", tag: "aaa-demo" });
       await cdp.send("ServiceWorker.deliverPushMessage", { origin: base.slice(0, -1), registrationId: await regId, data });
@@ -3422,6 +3565,19 @@ try {
           (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => [n.title, n.body, n.data?.url]),
         );
         return v.length ? v : null;
+      }).catch(async (e) => {
+        const state = await mob.page.evaluate(async () => {
+          const reg = await navigator.serviceWorker.getRegistration();
+          return {
+            permission: Notification.permission,
+            controller: !!navigator.serviceWorker.controller,
+            active: reg?.active?.state ?? null,
+            waiting: reg?.waiting?.state ?? null,
+            installing: reg?.installing?.state ?? null,
+            shown: reg ? (await reg.getNotifications()).length : null,
+          };
+        });
+        throw new Error(`${e.message}: ${JSON.stringify(state)} 판 ${versions.slice(-8).join(",")} 오류 ${mob.errors.join("; ")}`);
       });
       if (JSON.stringify(shown[0]) !== JSON.stringify(["aaa · demo", "t-0009 question: 확인창", "/#thread=demo%2Ft-0009"])) {
         throw new Error(JSON.stringify(shown));

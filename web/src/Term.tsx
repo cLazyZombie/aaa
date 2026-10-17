@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, wsUrl } from "./api";
 import { Icon } from "./icons";
@@ -392,7 +393,8 @@ export function TermView({
       fontSize,
       lineHeight: 1.15,
       fontFamily: ready ? family : family.replace(`${WEB_FONT}, `, ""),
-      scrollback: 2000, // aaa-vt REPLAY_HISTORY와 같다: 붙을 때 host가 이만큼 기록을 채운다(plan §8.55)
+      // aaa-vt SCROLLBACK과 같다: 붙을 때는 최근 2000줄(REPLAY_HISTORY)만 오고, 위로 굴리면 앞 덩어리를 받아 붙인다(plan §8.67)
+      scrollback: 10_000,
       convertEol: false,
       theme: termTheme(),
       // herdr-web-ui PaneTerminal 539~562줄: 블록 커서 깜빡임(프로그램의 DECSCUSR는 그대로 바꾼다),
@@ -408,6 +410,9 @@ export function TermView({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // 앞 기록을 받아 붙일 때 지금 버퍼를 다시 쓰는 데 쓴다(xterm은 버퍼 앞에 줄을 끼울 수 없다)
+    const serializer = new SerializeAddon();
+    term.loadAddon(serializer);
     // 글자 폭(herdr-web-ui terminalWidths.ts 그대로, PaneTerminal 583줄): xterm 기본 Unicode 6 폭이면 이모지 대부분이 한 칸이라
     // 프로그램·session host(vt100, 지금 Unicode 폭)와 줄이 어긋난다. grapheme addon과 참고의 보정으로 이모지는 두 칸,
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
@@ -947,6 +952,79 @@ export function TermView({
       if (outputStopped && stoppedHidden) reattach();
     };
     document.addEventListener("visibilitychange", onVisibility);
+    // 앞 기록 받기(plan §8.67, 사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」). 붙을 때는 최근 기록만 오고
+    // (`history_more`면 host에 더 있다), 위로 굴려 받은 기록 맨 위에서 한 화면 안에 들어오면 그 앞 덩어리를 받는다.
+    // xterm은 버퍼 앞에 줄을 끼울 수 없으므로 「받은 덩어리 + 지금 버퍼(serialize)」로 다시 쓰고, 보던 줄 자리를 덩어리 줄 수만큼
+    // 내려 맞춘다. 다시 쓰는 동안 온 출력은 붙잡았다가 뒤에 쓰고, 화면은 그 전 모습을 덮어 두어 튀지 않는다.
+    let historyMore = false;
+    let historyWait: { id: number; stream: number } | null = null;
+    let historyId = 0;
+    let historyApplied = 0;
+    let holding: (() => void)[] | null = null;
+    const run = (f: () => void) => (holding ? holding.push(f) : f());
+    const markHistory = () => {
+      const el = box.current;
+      if (!el) return;
+      el.dataset.historyApplied = String(historyApplied);
+      el.dataset.historyMore = historyMore ? "1" : "0";
+      el.dataset.historyWaiting = historyWait ? "1" : "0";
+    };
+    const wantHistory = () => {
+      const ws = wsRef.current;
+      const buf = term.buffer.active;
+      if (!historyMore || historyWait || holding || !ws || ws.readyState !== WebSocket.OPEN) return;
+      // 보통 화면에서 위로 굴려, 받은 기록 맨 위에서 한 화면 안에 들어왔을 때
+      if (buf.type !== "normal" || buf.viewportY >= buf.baseY || buf.viewportY > term.rows) return;
+      const anchor = [0, 1, 2].map((i) => buf.getLine(i)?.translateToString(true) ?? "");
+      historyWait = { id: ++historyId, stream: streamId };
+      trace("history-request", { id: historyId, depth: buf.length });
+      ws.send(JSON.stringify({ t: "history", id: historyId, anchor, depth: buf.length } satisfies TermClientMsg));
+      markHistory();
+    };
+    // xterm 5.5 onScroll은 새 줄로 버퍼가 밀릴 때만 온다: 사용자가 굴린 것은 viewport의 scroll로 본다(xterm 처리 뒤라 viewportY가 새 자리다)
+    const scrollSub = term.onScroll(() => wantHistory());
+    viewport?.addEventListener("scroll", wantHistory);
+    /** 받은 덩어리를 지금 버퍼 앞에 붙인다(위 설명) */
+    const prependHistory = (data: Uint8Array, lines: number, more: boolean) => {
+      holding = [];
+      const done = () => {
+        const held = holding ?? [];
+        holding = null;
+        historyWait = null;
+        historyMore = more;
+        historyApplied += 1;
+        markHistory();
+        for (const f of held) f();
+      };
+      // 앞서 온 출력을 다 읽은 뒤의 버퍼를 다시 쓴다
+      term.write("", () => {
+        const buf = term.buffer.active;
+        if (buf.type !== "normal" || lines === 0) return done();
+        const top = buf.viewportY;
+        const keys = otherKeysRef.current;
+        const body = new TextEncoder().encode(serializer.serialize({ excludeAltBuffer: true }));
+        // 다시 쓰는 동안의 화면: 지금 모습을 그대로 덮어 둔다(DOM renderer의 줄 요소 사본)
+        const screen = box.current?.querySelector<HTMLElement>(".xterm-screen");
+        const cover = screen?.cloneNode(true) as HTMLElement | undefined;
+        if (screen && cover) {
+          cover.classList.add("term-history-cover");
+          cover.style.left = `${screen.offsetLeft}px`;
+          cover.style.top = `${screen.offsetTop}px`;
+          screen.parentElement?.appendChild(cover);
+        }
+        term.reset();
+        const all = new Uint8Array(data.length + body.length);
+        all.set(data);
+        all.set(body, data.length);
+        term.write(all, () => {
+          otherKeysRef.current = keys;
+          term.scrollToLine(top + lines);
+          cover?.remove();
+          trace("history-applied", { lines, more });
+          done();
+        });
+      });
+    };
     const connect = () => {
       setLink("connecting");
       // flow=ack: 이 화면은 출력 ACK를 보낸다(herdr-web-ui attach flow_control "ack"). 없으면 host는 보내기 줄로만 잰다
@@ -960,31 +1038,62 @@ export function TermView({
       ws.onmessage = (m) => {
         if (m.data instanceof ArrayBuffer) {
           received += m.data.byteLength;
-          term.write(new Uint8Array(m.data), acknowledge(ws, streamId, received));
+          const data = new Uint8Array(m.data);
+          const ack = acknowledge(ws, streamId, received);
+          run(() => term.write(data, ack));
           return;
         }
         const msg = JSON.parse(m.data as string) as TermServerMsg;
         switch (msg.t) {
-          case "snapshot":
+          case "snapshot": {
             trace("snapshot");
+            // 새 snapshot은 버퍼를 새로 쓴다: 기다리던 앞 기록 답은 버린다(버퍼가 바뀌었다)
+            historyWait = null;
             // 지우기와 크기는 흐름 순서대로(herdr-web-ui PaneTerminal 1755~1760줄 「Reset in stream order」): xterm write는
             // 줄을 서 나중에 읽히는데 reset·resize는 바로 일어난다. 바로 하면 아직 읽지 않은 앞 출력이 새 화면 위에 그려지고,
             // 곧 온 state의 크기가 replay보다 먼저 걸려 replay가 다른 크기로 읽혔다(CI에서 빈 줄로 보인 실패, plan §8.59).
             const { cols, rows } = msg;
-            term.write("\x1bc", () => {
-              // replay가 키보드 모드를 처음부터 다시 말한다(herdr-web-ui도 재접속 때 0으로 되돌린다)
-              otherKeysRef.current = 0;
-              term.resize(cols, rows);
-            });
             setSize([cols, rows]);
             const replay = b64decode(msg.replay);
             streamId = msg.stream;
             received = replay.length;
-            term.write(replay, acknowledge(ws, msg.stream, received));
+            const ack = acknowledge(ws, msg.stream, received);
+            // 앞 기록을 붙이는 중이면 그 뒤에(붙잡은 출력과 같은 줄)
+            run(() => {
+              historyMore = msg.history_more;
+              markHistory();
+              term.write("\x1bc", () => {
+                // replay가 키보드 모드를 처음부터 다시 말한다(herdr-web-ui도 재접속 때 0으로 되돌린다)
+                otherKeysRef.current = 0;
+                term.resize(cols, rows);
+              });
+              term.write(replay, ack);
+            });
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
             setError(null);
             break;
+          }
+          case "history": {
+            const wait = historyWait;
+            if (!wait || wait.id !== msg.id) break;
+            // 그 사이 snapshot이 버퍼를 새로 썼으면 맞지 않는다
+            if (wait.stream !== streamId) {
+              historyWait = null;
+              markHistory();
+              break;
+            }
+            trace("history", { lines: msg.lines, more: msg.more, found: msg.found });
+            if (!msg.found) {
+              // host 기록에서 받은 기록 맨 위를 찾지 못했다(크기가 바뀌어 줄이 달라졌거나 기록에서 빠짐): 더 받지 않는다
+              historyWait = null;
+              historyMore = false;
+              markHistory();
+              break;
+            }
+            prependHistory(b64decode(msg.data), msg.lines, msg.more);
+            break;
+          }
           case "readonly":
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
@@ -999,9 +1108,11 @@ export function TermView({
               // 크기도 흐름 순서대로: 앞서 온 출력(snapshot replay 포함)을 다 읽은 뒤 바꾼다
               const { cols, rows } = msg.pane;
               setSize((prev) => (prev[0] === cols && prev[1] === rows ? prev : [cols, rows]));
-              term.write("", () => {
-                if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
-              });
+              run(() =>
+                term.write("", () => {
+                  if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+                }),
+              );
             }
             break;
           case "attached":
@@ -1031,6 +1142,8 @@ export function TermView({
         if (wsRef.current === ws) wsRef.current = null;
         // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
         attachDone();
+        // 기다리던 앞 기록 답은 오지 않는다: 다시 붙으면 새 snapshot부터 다시 받는다
+        historyWait = null;
         for (const [id, waiting] of submitsRef.current)
           if (waiting.ws === ws) {
             submitsRef.current.delete(id);
@@ -1091,6 +1204,8 @@ export function TermView({
       otherKeysSet.dispose();
       otherKeysOff.dispose();
       binSub.dispose();
+      scrollSub.dispose();
+      viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
       term.dispose();
       termRef.current = null;
