@@ -13,7 +13,7 @@
 #   1) 추적 파일 전체: 금지 확장자(p12·key·pem 등), 1MiB 넘는 파일
 #   2) 추적 파일 내용: 개인 키·인증서 블록, 알려진 token 형식(Telegram 봇 token 포함), Web Push 구독 주소,
 #      실제 *.ts.net 주소, IP 주소(Tailscale IPv6 fd7a:115c:a1e0: 포함), 사용자 홈·외장 볼륨 경로(/Volumes/<이름>),
-#      이메일, 대문자 hex 지문(40자 이상)
+#      이메일, 대문자 hex 지문(40자 이상, 전부 0인 run은 뺀다)
 #   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴
 #   4) 저장소 밖 목록의 실제 이름(머신 hostname·tailnet·사람·회사 이름):
 #      `$(git rev-parse --git-common-dir)/info/private-words`에 한 줄에 하나씩 둔다(이 파일은 커밋되지 않는다).
@@ -27,7 +27,8 @@
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
 #       noreply@anthropic.com·git@github.com·GitHub noreply(5)와 같다)·*@example.com과 그 하위 이름(token@GitHub.example.com),
 #       /Users/<이름>·/Users/me/·/Users/u/·/home/me/·/Volumes/<이름> 같은 자리표시자(me·u는 참고 프로젝트와 옛 시험의 예시),
-#       Tailscale 고정 주소 fd7a:115c:a1e0::53(MagicDNS)·fd7a:115c:a1e0::/48(대역).
+#       Tailscale 고정 주소 fd7a:115c:a1e0::53(MagicDNS)·fd7a:115c:a1e0::/48(대역),
+#       앞뒤가 hex가 아닌 0만의 run(git의 빈 sha 0×40. 0이 아닌 hex가 한 글자라도 붙으면 막는다).
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 HISTORY=0
@@ -90,7 +91,9 @@ add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\
 add 'Tailscale IPv6 주소' '[fF][dD]7[aA]:115[cC]:[aA]1[eE]0::?[0-9a-fA-F]{1,4}' '(fd7a:115c:a1e0::/48|fd7a:115c:a1e0::53([^0-9a-fA-F:]|$))'
 add '사용자 홈·볼륨 경로' '(/Users/|/home/|/Volumes/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|/Volumes/<|/Users/me/|/Users/u/|/home/me/|/Users/Shared|/Users/runner|/home/runner)'
 add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|noreply@github\.com|[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|@([A-Za-z0-9-]+\.)*example\.(com|org|net))'
-add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' ''
+# 0만의 run은 정보가 없다(git의 빈 sha 0×40). 허용은 그 run과 앞뒤 경계 글자만 지우므로 0이 아닌 hex는 남는다.
+# 경계 글자 하나로만 떨어진 0 run 여럿(「<빈 sha> <빈 sha>」)도 한 번에 지운다
+add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' '(^|[^0-9A-F])0{40,}([^0-9A-F]0{40,})*([^0-9A-F]|$)'
 
 # 정규식 자체 검사: 깨진 패턴은 git grep·sed가 오류로 끝나 아무것도 막지 못한다(통과로 보인다)
 for i in "${!NAMES[@]}"; do
