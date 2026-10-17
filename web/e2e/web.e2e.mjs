@@ -4516,19 +4516,21 @@ try {
     if ((await page.locator($("thread-demo-t-0001")).count()) !== 1) throw new Error("t-0001이 목록에 없다");
     aaa("thread", "resolve", "demo", "t-0001");
     await domIs(page, "끝낸 thread가 목록에서 빠짐(sidebar.rs)", (q) => !document.querySelector(q), $("thread-demo-t-0001"));
+    // 앞 단계들도 demo thread를 끝낸다: 끝난 수는 host가 말하는 그대로
+    const ended = aaa("thread", "list", "demo").threads.filter((t) => t.group === "resolved").length;
     // 프로젝트 고르기(popup 첫 화면): 프로젝트마다 열린 묶음 줄과 끝난 수
     await page.getByTestId("more").click();
     const toProjects = hashIs(page, "#projects");
     await page.getByTestId("projects-item").click();
     await toProjects;
-    await domIs(page, "demo 줄의 끝난 수", (q) => document.querySelector(q)?.textContent.includes("끝남 1"), $("project-open-demo"));
+    await domIs(page, "demo 줄의 끝난 수", ([q, n]) => document.querySelector(q)?.textContent.includes(`끝남 ${n}`), [$("project-open-demo"), ended]);
     const toDemo = hashIs(page, "#project=demo");
     await page.getByTestId("project-open-demo").click();
     await toDemo;
     const view = page.getByTestId("project-threads-demo");
     await domIs(page, "끝남 묶음", (q) => document.querySelector(q) !== null, `${$("project-threads-demo")} ${$("project-group-resolved")}`);
     const done = view.getByTestId("project-group-resolved");
-    if ((await done.locator("h3").innerText()) !== "끝남 (1)") throw new Error(await done.innerHTML());
+    if ((await done.locator("h3").innerText()) !== `끝남 (${ended})`) throw new Error(`끝남 ${ended}: ${await done.innerHTML()}`);
     // 묶음은 popup DISPLAY_ORDER대로, 끝남은 맨 아래
     const order = await view.locator("[data-testid^=project-group-]").evaluateAll((xs) => xs.map((x) => x.dataset.testid.slice("project-group-".length)));
     const rank = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];

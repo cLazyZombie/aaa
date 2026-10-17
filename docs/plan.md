@@ -1935,7 +1935,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 줄을 고르면 보고(popup detail). 거기서 「뒤로」는 그 프로젝트로 돌아간다(popup: detail에서 목록으로). 이때만 넓은 화면에도 뒤로 단추를 보인다.
   - 여는 곳: 웹에는 prefix 키가 없어 머리 「더 보기」 메뉴 「프로젝트」가 popup 키 자리다. 주소는 `#projects`·`#project=<이름>`이라 링크·되돌리기가 된다. 사이드바 프로젝트 머리를 누르면 접고 펴기는 그대로다(herdr-web-ui 목록 머리).
 - **t3code와 비교.** t3code(4b1024da)는 보관한 thread를 설정 「Archived」(`apps/web/src/components/settings/SettingsPanels.tsx` `ArchivedThreadsPanel`)에 모은다. 동작 기준은 결정대로 herdr-projects라 popup 모양을 옮겼다(report 「아침 확인」).
-- **시험.** 웹 E2E 「끝난 thread 보기」: t-0001을 끝내면 목록에서 빠지고, 「더 보기 → 프로젝트」에서 demo 줄이 「끝남 1」, 프로젝트 보기에서 「끝남 (1)」 묶음이 맨 아래 흐리게, 거르기·맞는 것 없음, 고르면 보고, 뒤로는 그 프로젝트, 휴대폰 폭에서 옆으로 밀리지 않음(`desktop-project-threads`·`phone-project-threads`). 기다림은 MutationObserver(`waitForFunction` polling `mutation`)와 `hashchange`로 끝낸다(`domIs`·`hashIs`).
+- **시험.** 웹 E2E 「끝난 thread 보기」: t-0001을 끝내면 목록에서 빠지고, 「더 보기 → 프로젝트」에서 demo 줄이 「끝남 n」(host가 말하는 끝난 수), 프로젝트 보기에서 「끝남 (n)」 묶음이 맨 아래 흐리게, 거르기·맞는 것 없음, 고르면 보고, 뒤로는 그 프로젝트, 휴대폰 폭에서 옆으로 밀리지 않음(`desktop-project-threads`·`phone-project-threads`). 기다림은 MutationObserver(`waitForFunction` polling `mutation`)와 `hashchange`로 끝낸다(`domIs`·`hashIs`).
 
 ### 8.87 확인창 답의 진행과 실패를 카드 안에(10-18, QA t-0337 Q3, 차이 목록 2장 Q2 일부)
 
