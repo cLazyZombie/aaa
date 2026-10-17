@@ -473,7 +473,7 @@ impl Host {
 
     // ───────────── 입력(brief 안내·메시지) ─────────────
 
-    /// 글을 입력하고 Enter. harness가 받았다고 알리면 true. 여러 줄은 bracketed paste로 보낸다.
+    /// 글을 입력하고 Enter. harness가 받았다고 알리면 true. 프로그램이 bracketed paste를 켰으면 글을 감싼다.
     pub(crate) async fn send_prompt(self: &Arc<Self>, mid: &str, pane: &str, text: &str) -> Result<bool, String> {
         self.submit(mid, pane, Some(text), None).await
     }
@@ -518,19 +518,18 @@ impl Host {
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
         let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
         let accepted = self.wait_kind_then(pane, &["turn_start", "working"], hook_accept);
+        // 프로그램이 bracketed paste를 켰을 때만 감싸고 Enter도 그 터미널 모드대로 쓴다(herdr `encode_api_submission_parts`,
+        // src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
+        let modes = self.key_modes(pane);
         if let Some(text) = text {
-            let body = if text.contains('\n') {
-                format!("\x1b[200~{}\x1b[201~", text.trim_end())
-            } else {
-                text.trim_end().to_string()
-            };
-            conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(body.into_bytes()) })
+            conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) })
                 .await
                 .map_err(|e| after(e.message))?;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
         let typed = self.screen_lines(mid, pane).await;
-        conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(b"\r".to_vec()) })
+        let enter = modes.key("enter").unwrap_or_else(|| b"\r".to_vec());
+        conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(enter) })
             .await
             .map_err(|e| after(e.message))?;
         if busy {

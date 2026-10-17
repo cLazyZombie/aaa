@@ -167,7 +167,8 @@ impl Host {
         }))
     }
 
-    fn key_modes(&self, id: &str) -> aaa_vt::KeyModes {
+    /// pane 프로그램이 켠 입력 모드(mirror에서 본다). mirror가 아직 없으면 모두 꺼짐.
+    pub(crate) fn key_modes(&self, id: &str) -> aaa_vt::KeyModes {
         let i = self.inner.lock().unwrap();
         i.panes.get(id).and_then(|p| p.mirror.as_ref()).map(|m| m.vt.modes()).unwrap_or_default()
     }
