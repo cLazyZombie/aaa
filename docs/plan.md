@@ -1258,6 +1258,22 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **A12 시작 시한.** 묶음(§8.38)이 시작 5분을 넘으면 사람 차례로 보인다. herdr-projects ticker는 상태를 failed로 바꾸지만, aaa는 시작 작업이 아직 끝날 수 있어 상태는 그대로 둔다.
 - **시험(m13).** 하위 agent·중첩 세션 Stop을 보내도 「작업 중」이 남는다. 메시지 둘이 Follow-ups에 순서대로 남는다. 입력창에 남은 brief는 Enter만으로 받고 줄이 한 번만 보인다. 받은 뒤 `thread brief`와 brief 전 메시지는 거부한다. 앞 셋은 옛 코드로 돌리면 실패한다.
 
+### 8.41 화면 키보드에서 한글이 자모로 갈리는 퇴행 조사(10-17, 사용자 보고)
+
+- **보고.** 화면 키보드 고침(§8.39) 뒤 iPad 화면 키보드로 터미널에 치면 한글이 초성·중성·종성으로 갈린다. 그 전 판(§8.37)에서는 조합이 됐다.
+- **원인 commit.** 두 판 사이에 웹을 바꾼 것은 §8.39 하나다. 의심: 출력마다 `.term-scroll`을 커서 줄로 옮기는 것, `herdr/viewport.ts`가 viewport 사건마다 `scrollTo(0, 0)`하는 것, `.app` 높이, `data-direct-typing`.
+- **headless 재현 안 됨.** 웹 E2E IME 단계에 「화면 키보드가 올라온 iPad」 판을 더했다.
+  - WebKit, iPad UA, 터치, 가짜 visualViewport로 키보드를 올려 grid를 붙잡고 터미널을 옮긴 상태다.
+  - 100ms마다 상태 줄을 다시 그리는 pane에서, 30ms마다 visualViewport scroll을 보내며 iPad·Safari 기록을 재생한다.
+  - 지금 코드로 모두 통과한다. 이 재생은 하드웨어 키보드·macOS Safari 기록이라 iOS 화면 키보드의 사건 순서는 들어 있지 않다. herdr-web-ui도 iPadOS 화면 키보드 기록이 없다(docs/terminal-input.md).
+- **실기 사건 기록(herdr-web-ui `terminal-ime-diagnostic` 목적).**
+  - 목록 아래 「입력 기록 켜기」(터치 기기) 또는 `?trace=input`으로 켠다.
+  - 모으는 것: 터미널 helper textarea의 키·beforeinput·input·조합·focus 사건, 그때의 textarea 값과 선택, visualViewport, `data-keyboard`, 터미널 옮김, 보낸 글, 출력.
+  - 「입력 기록 보내기」가 host 상태 폴더 `host/diag/input-<ms>.json`에 남긴다(`POST /api/v1/diag/input`, pairing 필요, 1MiB, 20개).
+  - 기록을 E2E 재생으로 옮겨 고치기 전 실패를 보인 뒤 고친다.
+- **IME 재생을 매 commit에.** CI에 `web-e2e (macos-15)` job을 더했다. 웹 E2E 전체(IME 기록 재생 포함)를 headless Chromium·WebKit(Playwright 1.59.1)으로 돌린다. binary를 바꾸기 전에도 로컬에서 웹 E2E를 돌리고 결과를 report.md에 적는다.
+- **E2E 고침.** composer 단계의 「휴대폰 입력 막대」 검사가 연결 전에 봐서 타이밍에 따라 실패했다. 화면이 온 뒤에 본다(기대값은 그대로).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

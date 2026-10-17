@@ -58,6 +58,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/push/subscribe", post(push_subscribe))
         .route("/api/v1/push/unsubscribe", post(push_unsubscribe))
         .route("/api/v1/push/test", post(push_test))
+        .route("/api/v1/diag/input", post(diag_input))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/v/{cap}/{*path}", get(view_file))
         .fallback(get(static_file))
@@ -312,6 +313,47 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
         }
     }
     Json(Outcome::Ok(serde_json::json!({ "sent": sent, "failed": failed }))).into_response()
+}
+
+/// 입력 사건 기록 하나의 상한과 남기는 개수
+const DIAG_MAX: usize = 1 << 20;
+const DIAG_KEEP: usize = 20;
+
+/// 실기 입력 사건 기록(web/src/inputTrace.ts)을 host 상태 폴더 `diag/`에 남긴다. iPad 화면 키보드 같은 OS 입력기의
+/// 사건 순서는 headless로 만들 수 없어 실기에서 모아 E2E 재생으로 옮긴다(herdr-web-ui terminal-ime-diagnostic과 같은 목적).
+async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    if body.len() > DIAG_MAX {
+        return bad_request(format!("기록은 {}KiB까지", DIAG_MAX >> 10));
+    }
+    if serde_json::from_slice::<serde_json::Value>(&body).is_err() {
+        return bad_request("JSON이 아니다");
+    }
+    let dir = host.state.join("diag");
+    let name = format!("input-{}.json", aaa_common::util::now_ms());
+    let saved = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), &body));
+    if let Err(e) = saved {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
+        )
+            .into_response();
+    }
+    // 오래된 것부터 지워 DIAG_KEEP개만 둔다(이름이 시각 순이다)
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut names: Vec<_> = rd
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("input-") && n.ends_with(".json"))
+            .collect();
+        names.sort();
+        let extra = names.len().saturating_sub(DIAG_KEEP);
+        for n in &names[..extra] {
+            let _ = std::fs::remove_file(dir.join(n));
+        }
+    }
+    host.db.audit(&format!("device:{id}"), "diag_input", &name);
+    Json(Outcome::Ok(serde_json::json!({ "saved": name }))).into_response()
 }
 
 async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {

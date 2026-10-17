@@ -15,6 +15,7 @@ import { Icon } from "./icons";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
 import { useInstall } from "./install";
 import { type PushState, iosNeedsInstall, usePush } from "./push";
+import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
 
@@ -493,7 +494,10 @@ function ListFoot() {
   const install = useInstall();
   const push = usePush();
   const iosHint = iosNeedsInstall();
-  if (!install && push.state === "hidden" && !iosHint) return null;
+  const tr = useInputTrace();
+  // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
+  const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
+  if (!install && push.state === "hidden" && !iosHint && !showTrace) return null;
   const label: Record<PushState, string> = {
     hidden: "",
     off: "알림 켜기",
@@ -517,6 +521,19 @@ function ListFoot() {
       )}
       {push.msg && <p className="foot-msg">{push.msg}</p>}
       {iosHint && <p className="foot-msg">알림은 공유 → 「홈 화면에 추가」로 연 앱에서 켤 수 있다.</p>}
+      {showTrace && (
+        <button className="ghost" data-testid="trace-toggle" aria-pressed={tr.on} onClick={() => setTrace(!tr.on)}>
+          <Icon name="file" />
+          {tr.on ? `입력 기록 끄기(${tr.count}개 모음)` : "입력 기록 켜기(실기 키보드 진단)"}
+        </button>
+      )}
+      {tr.on && (
+        <button className="ghost" data-testid="trace-send" disabled={tr.count === 0} onClick={() => void tr.send()}>
+          <Icon name="send" />
+          입력 기록 보내기
+        </button>
+      )}
+      {tr.msg && <p className="foot-msg">{tr.msg}</p>}
       {install && (
         <button className="ghost" onClick={() => void install()}>
           <Icon name="download" />
@@ -525,6 +542,29 @@ function ListFoot() {
       )}
     </div>
   );
+}
+
+/** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
+function useInputTrace() {
+  const [on, setOn] = useState(traceOn());
+  const [count, setCount] = useState(traceCount());
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(
+    () =>
+      onTraceChange(() => {
+        setOn(traceOn());
+        setCount(traceCount());
+      }),
+    [],
+  );
+  const send = async () => {
+    try {
+      setMsg(`보냈다: ${await sendTrace()}`);
+    } catch (e) {
+      setMsg(`보내지 못했다: ${(e as Error).message}`);
+    }
+  };
+  return { on, count, msg, send };
 }
 
 const GROUP_DOT: Record<string, string> = {

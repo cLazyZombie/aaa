@@ -17,6 +17,41 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  # 웹 front E2E(web/e2e/web.e2e.mjs): 실제 host·agent와 headless Chromium·WebKit. 터미널 한글 IME 기록 재생
+  # (macOS Safari·iPad 하드웨어 키보드·화면 키보드가 올라온 iPad)이 웹·터미널 코드를 바꾸는 모든 commit에서 돈다.
+  web-e2e:
+    name: web-e2e (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: 웹 front 빌드(host 실행 파일에 포함)
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: build
+        run: cargo build -p aaa --locked
+      - name: Playwright(Chromium·WebKit)
+        run: npm install -g --no-audit --no-fund playwright@1.59.1 && npx -y playwright@1.59.1 install chromium webkit
+      - name: 웹 E2E
+        run: NODE_PATH="$(npm root -g)" node web/e2e/web.e2e.mjs 2>&1 | tee web-e2e.log; exit ${PIPESTATUS[0]}
+      - name: 실패 요약
+        if: failure()
+        run: |
+          set +e +o pipefail
+          grep -nE '^(ok|FAIL) |IME ' web-e2e.log | tail -60
+          for d in /tmp/aaw-*; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*.log; do echo "## $f"; tail -c 3000 "$f"; done
+          done
+          true
+
   rust:
     name: ${{ matrix.os }}
     strategy:
