@@ -14,7 +14,8 @@
 #   2) 추적 파일 내용: 개인 키·인증서 블록, 알려진 token 형식(Telegram 봇 token 포함), Web Push 구독 주소,
 #      실제 *.ts.net 주소, IP 주소(Tailscale IPv6 fd7a:115c:a1e0: 포함), 사용자 홈·외장 볼륨 경로(/Volumes/<이름>),
 #      이메일, 대문자 hex 지문(40자 이상, 전부 0인 run은 뺀다)
-#   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴
+#   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴과 공동 작성자 줄(Co-authored-by, 누구의 줄이든 막는다.
+#      GitHub가 그 사람(Claude 등)을 contributor로 보인다. 사용자 결정 10-18)
 #   4) 저장소 밖 목록의 실제 이름(머신 hostname·tailnet·사람·회사 이름):
 #      `$(git rev-parse --git-common-dir)/info/private-words`에 한 줄에 하나씩 둔다(이 파일은 커밋되지 않는다).
 #      이 파일이 없는 clone(다른 머신·CI)에서는 4)를 건너뛴다. 그때의 「통과」는 1)~3)·5)만 본 결과다.
@@ -140,20 +141,28 @@ scan() {
 }
 # shellcheck disable=SC2086
 scan files $REVS
-COMMITS=""
+COMMITS="" CO=""
 if [ "$HISTORY" = 1 ]; then
   COMMITS=$(git log --no-walk=unsorted --format='%H %B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
-  COMMITS=$(grep -v -E '^Co-Authored-By: ' <<<"$COMMITS")
+  CO=$(git log --no-walk=unsorted --format='%x01%h%n%B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   scan "커밋 메시지(이력)"
 elif git rev-parse -q --verify "$BASE" >/dev/null; then
   COMMITS=$(git log --format='%H %B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
-  COMMITS=$(grep -v -E '^Co-Authored-By: ' <<<"$COMMITS")
+  CO=$(git log --format='%x01%h%n%B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   [ -n "$COMMITS" ] && scan "커밋 메시지 $BASE..HEAD"
 elif [ -n "${CI:-}" ]; then
   # CI의 통과가 커밋 메시지·author를 본 결과이게 한다(얕은 checkout이면 기준이 없어 늘 건너뛰었다)
   report "기준 ref ${BASE}가 없다: CI는 그 push·PR의 커밋을 볼 수 있게 이력을 받는다(ci.yml checkout fetch-depth)"
 else
   echo "기준 ref ${BASE}가 없어 커밋 메시지는 건너뛴다"
+fi
+# 공동 작성자 줄: GitHub는 commit 메시지의 Co-authored-by 줄로 그 사람을 contributor로 보인다. 이 저장소는 누구의 줄도 넣지 않는다.
+# 대소문자·들여쓰기·콜론 앞 공백이 달라도, 제목·본문 중간이어도 막는다(%x01이 commit의 경계). 출력에는 commit과 email domain만 보인다
+co=$(awk 'substr($0, 1, 1) == "\001" { h = substr($0, 2); next }
+  tolower($0) ~ /^[ \t]*co-authored-by[ \t]*:/ { d = $0; if (!sub(/^[^@]*@/, "", d)) d = "?"; sub(/>.*/, "", d); print h " …@" d }' <<<"$CO")
+if [ -n "$co" ]; then
+  report "커밋 메시지에 공동 작성자(Co-authored-by) 줄이 있다: GitHub가 그 사람을 contributor로 보인다. 그 줄을 지운다"
+  head -10 <<<"$co" | sed 's/^/    /'
 fi
 
 # 5) 커밋 author·committer. 공개 이력은 메타데이터도 그대로 공개된다. 출력에는 email의 domain만 보인다(CI annotation도 공개다)
