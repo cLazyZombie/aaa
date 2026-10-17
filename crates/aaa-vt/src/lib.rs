@@ -218,6 +218,25 @@ impl Vt {
         runs
     }
 
+    /// 맨 아래에서 `offset`줄 올라간 자리의 화면 줄과 normal screen 기록 줄 수(TUI 휠 기록 넘기기, herdr `scroll_up`).
+    /// alt 화면이면 기록이 없다(지금 화면, 0). 기록 위치는 읽고 바로 되돌린다(다른 읽기는 늘 지금 화면을 본다).
+    pub fn grid_rows_at(&mut self, offset: usize) -> (Vec<Vec<GridRun>>, usize) {
+        let (rows, _) = self.parser.screen().size();
+        if self.parser.screen().alternate_screen() {
+            return ((0..rows).map(|r| self.grid_row(r)).collect(), 0);
+        }
+        let max = self.history_len();
+        self.parser.screen_mut().set_scrollback(offset.min(max));
+        let lines = (0..rows).map(|r| self.grid_row(r)).collect();
+        self.parser.screen_mut().set_scrollback(0);
+        (lines, max)
+    }
+
+    /// normal screen 기록 줄 수(alt 화면이면 0)
+    pub fn history_rows(&mut self) -> usize {
+        if self.parser.screen().alternate_screen() { 0 } else { self.history_len() }
+    }
+
     /// (줄, 칸, 보이는가)
     pub fn cursor(&self) -> (u16, u16, bool) {
         let screen = self.parser.screen();
@@ -998,6 +1017,27 @@ mod tests {
             c.feed(&a.replay());
             assert!(!c.parser.screen().application_cursor(), "alt={alt}");
         }
+    }
+
+    /// 기록 위치에서 읽은 줄(herdr `scroll_up`), 끝에서 멈춤, 읽은 뒤 지금 화면 그대로, alt 화면은 기록 없음
+    #[test]
+    fn grid_rows_at_scrollback_offset() {
+        let mut v = Vt::new(3, 10);
+        for i in 1..=8 {
+            v.feed(format!("{i}\r\n").as_bytes());
+        }
+        let text = |rows: Vec<Vec<GridRun>>| {
+            rows.iter().map(|r| r.iter().map(|g| g.t.as_str()).collect::<String>()).collect::<Vec<_>>()
+        };
+        let (now, max) = v.grid_rows_at(0);
+        assert_eq!((text(now), max), (vec!["7".to_string(), "8".into(), String::new()], 6));
+        assert_eq!(text(v.grid_rows_at(2).0), ["5", "6", "7"]);
+        assert_eq!(text(v.grid_rows_at(99).0), ["1", "2", "3"]);
+        assert_eq!(text(v.grid_rows_at(0).0), ["7", "8", ""]);
+        assert_eq!(v.grid_row(0)[0].t, "7");
+        v.feed(b"\x1b[?1049hA");
+        let (alt, max) = v.grid_rows_at(5);
+        assert_eq!((text(alt)[0].as_str(), max), ("A", 0));
     }
 
     #[test]

@@ -1143,7 +1143,7 @@ impl Host {
                 self.forget(&id, &mid, actor).await?;
                 Ok(FrontResponse::Done)
             }
-            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
+            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
             // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다

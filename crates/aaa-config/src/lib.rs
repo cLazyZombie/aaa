@@ -261,6 +261,8 @@ pub struct TuiSection {
     pub mouse_capture: bool,
     /// 끌어 고른 글을 떼는 때 복사한다(herdr `[ui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사한다.
     pub copy_on_select: bool,
+    /// 보통 화면 pane에서 휠 한 칸에 넘기는 기록 줄 수(herdr `[ui] mouse_scroll_lines`, 기본 3, 1 이상)
+    pub mouse_scroll_lines: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -304,6 +306,7 @@ impl Default for TuiSection {
             pane_borders: PaneBorders::Auto,
             mouse_capture: true,
             copy_on_select: true,
+            mouse_scroll_lines: 3,
         }
     }
 }

@@ -1444,6 +1444,60 @@ fn context_menu_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// 묶음 5a-1(herdr `apply_scroll`·`scroll_reset`): 보통 화면 pane의 휠은 이 화면의 기록을 3줄씩 넘기고(프로그램에는 안 감),
+/// 올라가 있는 동안 새 출력이 와도 보던 줄을 지키며, 글자를 치면 맨 아래로 돌아온다(host `PaneScroll`, FRONT_API 1.15).
+#[test]
+fn wheel_scrolls_history_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    // pane은 탭 막대 아래 29줄: 맨 아래 장면은 173..200과 prompt(그 위 기록은 명령 줄과 1..172)
+    let shows = |s: &str, n: &str| s.lines().any(|l| panes_part(l).trim_end() == n);
+    let rows = |s: &str| s.lines().skip(1).map(|l| panes_part(l).trim_end().to_string()).collect::<Vec<_>>();
+    tui.type_line("seq 1 200");
+    tui.wait_text("seq 끝", |s| {
+        rows(s).first().is_some_and(|l| l == "173") && rows(s).last().is_some_and(|l| l.ends_with('$'))
+    });
+    let at = (10, SIDE as usize + 20);
+
+    // 1) 휠 위 한 칸: 3줄 위(170..198)
+    tui.mouse(64, at, false);
+    tui.wait_text("3줄 위", |s| {
+        rows(s).first().is_some_and(|l| l == "170") && rows(s).last().is_some_and(|l| l == "198")
+    });
+
+    // 2) 올라가 있는 동안 다른 연결(CLI)의 출력(명령 줄·201..205·prompt 6줄)이 와도 보던 줄을 지킨다:
+    //    한 칸 더 올리면 167..195. 지키지 않으면 맨 아래에서 6줄 위(173..201)가 된다.
+    h.ok(&["pane", "run", &id, "seq 201 205"]);
+    wait_for("host 화면에 205", T, || h.screen(&id).contains("205").then_some(()));
+    tui.mouse(64, at, false);
+    tui.wait_text("보던 줄에서 3줄 더 위", |s| {
+        rows(s).first().is_some_and(|l| l == "167") && rows(s).last().is_some_and(|l| l == "195")
+    });
+    // 휠은 셸에 아무것도 보내지 않았다(보냈으면 prompt 줄에 글이 있다)
+    assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
+
+    // 3) 휠 아래 네 칸(12줄)이면 다시 맨 아래(205와 prompt)
+    for _ in 0..4 {
+        tui.mouse(65, at, false);
+    }
+    tui.wait_text("맨 아래", |s| shows(s, "205") && rows(s).last().is_some_and(|l| l.ends_with('$')));
+
+    // 4) 올라간 채 글자를 치면 맨 아래로 돌아와 친 글이 보인다(herdr `scroll_reset`)
+    tui.mouse(64, at, false);
+    tui.wait_text("다시 위", |s| !shows(s, "205"));
+    tui.send(b"echo back-$((1+1))");
+    tui.wait_text("맨 아래로", |s| rows(s).last().is_some_and(|l| l.ends_with("echo back-$((1+1))")));
+    tui.send(b"\r");
+    tui.wait_text("친 명령", |s| shows(s, "back-2"));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).

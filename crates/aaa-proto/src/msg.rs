@@ -876,6 +876,34 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.15부터, 옛 host는 맨 아래)
+    #[serde(default)]
+    pub scroll: GridScroll,
+}
+
+/// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridScroll {
+    pub offset: u32,
+    pub max: u32,
+}
+
+/// 기록 위치 옮기기(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "to", rename_all = "snake_case")]
+pub enum ScrollBy {
+    Up {
+        lines: u32,
+    },
+    Down {
+        lines: u32,
+    },
+    /// 맨 아래(지금 화면)로
+    Bottom,
+    /// 맨 아래에서 `lines`줄 위로
+    Offset {
+        lines: u32,
+    },
 }
 
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
@@ -1101,6 +1129,11 @@ pub enum FrontRequest {
     },
     PaneUnwatch {
         pane: String,
+    },
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.108). 프로그램에는 아무것도 가지 않는다.
+    PaneScroll {
+        pane: String,
+        by: ScrollBy,
     },
     Workspace {
         name: Option<String>,
@@ -1413,6 +1446,7 @@ impl FrontRequest {
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
+                | FrontRequest::PaneScroll { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices

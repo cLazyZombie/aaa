@@ -20,7 +20,7 @@
 use std::time::Duration;
 
 use aaa_proto::layout::Rect;
-use aaa_proto::{GridRun, LayoutChange, MouseEncoding, MouseMode, PaneModes, SplitDir};
+use aaa_proto::{FrontRequest, GridRun, LayoutChange, MouseEncoding, MouseMode, PaneModes, ScrollBy, SplitDir};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -31,7 +31,7 @@ use crate::bind::Action;
 use crate::chrome::{PaneBox, SplitHit};
 use crate::list::Row;
 use crate::theme::Palette;
-use crate::{App, FrontSender, Mode, Overlay, SIDEBAR_MAX, SIDEBAR_MIN, clip, help, keys, unicode_width};
+use crate::{App, FrontSender, Mode, Overlay, Pending, SIDEBAR_MAX, SIDEBAR_MIN, clip, help, keys, unicode_width};
 
 /// 두 번 누름으로 보는 사이(herdr `DOUBLE_CLICK_WINDOW`)
 pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
@@ -588,6 +588,8 @@ impl App {
     ) -> Result<()> {
         let Some(modes) = self.grids.get(&b.pane).map(|g| g.modes) else { return Ok(()) };
         match report(modes, r, x.saturating_sub(b.inner.x), y.saturating_sub(b.inner.y), mods) {
+            // herdr: 누르지 않은 움직임 보고는 기록 위치를 그대로 둔다
+            Some(bytes) if r == Report::Move => self.send_input(tx, b.pane.clone(), bytes).await,
             Some(bytes) => self.input_to(tx, b.pane.clone(), bytes).await,
             None => Ok(()),
         }
@@ -947,6 +949,12 @@ impl App {
         } else if modes.alt_screen {
             let k = KeyEvent::new(if down { KeyCode::Down } else { KeyCode::Up }, KeyModifiers::NONE);
             self.input_to(tx, b.pane, keys::encode_in(&k, modes.app_cursor)).await?;
+        } else if self.host_at_least(15) {
+            // herdr `apply_scroll`: 보통 화면은 이 화면의 기록을 `mouse_scroll_lines`줄씩 넘긴다(프로그램에는 아무것도 안 감)
+            let lines = u32::from(self.scroll_lines);
+            let by = if down { ScrollBy::Down { lines } } else { ScrollBy::Up { lines } };
+            let id = tx.send(FrontRequest::PaneScroll { pane: b.pane, by }).await?;
+            self.pending.insert(id, Pending::Report("기록 넘기기"));
         }
         Ok(())
     }

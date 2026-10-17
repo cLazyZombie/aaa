@@ -32,8 +32,8 @@ use bind::Action;
 use keys::Combo;
 
 use aaa_proto::{
-    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, MachineView, Outcome, PaneDirection,
-    PaneModes, PaneView, SessionState, SplitDir, ThreadView, Workspace,
+    B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, GridScroll, LayoutChange, MachineView, Outcome,
+    PaneDirection, PaneModes, PaneView, ScrollBy, SessionState, SplitDir, ThreadView, Workspace,
 };
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -129,6 +129,8 @@ struct Grid {
     cursor: (u16, u16, bool),
     /// pane 프로그램이 켠 모드(마우스 보고·alt 화면·DECCKM)
     modes: PaneModes,
+    /// 이 화면이 보는 기록 위치(휠 기록 넘기기)
+    scroll: GridScroll,
 }
 
 impl Grid {
@@ -145,6 +147,7 @@ impl Grid {
         }
         self.cursor = (f.cursor_row, f.cursor_col, f.cursor_visible);
         self.modes = f.modes;
+        self.scroll = f.scroll;
     }
 }
 
@@ -262,6 +265,8 @@ struct App {
     capture_on: Option<bool>,
     /// 끌어 고른 글을 떼는 때 복사(`[tui] copy_on_select`)
     copy_on_select: bool,
+    /// 휠 한 칸에 넘기는 기록 줄 수(`[tui] mouse_scroll_lines`)
+    scroll_lines: u16,
     /// 마지막으로 그린 자리(마우스가 맞힌다)
     hits: std::cell::RefCell<mouse::Hits>,
     drag: Option<mouse::Drag>,
@@ -324,6 +329,7 @@ impl App {
             mouse_capture: true,
             capture_on: None,
             copy_on_select: true,
+            scroll_lines: 3,
             hits: Default::default(),
             drag: None,
             selection: None,
@@ -349,6 +355,7 @@ impl App {
         self.pane_borders = cfg.pane_borders;
         self.mouse_capture = cfg.mouse_capture;
         self.copy_on_select = cfg.copy_on_select;
+        self.scroll_lines = cfg.mouse_scroll_lines.max(1);
         self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
         // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
         self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
@@ -751,11 +758,17 @@ impl App {
         self.input_to(tx, pane, data).await
     }
 
-    /// 그 pane에 입력을 보낸다(마우스 사건은 포인터 밑 pane에)
+    /// 그 pane에 입력을 보낸다(마우스 사건은 포인터 밑 pane에). 기록을 보고 있었으면 먼저 맨 아래로(herdr `scroll_reset`).
     async fn input_to(&mut self, tx: &mut FrontSender, pane: String, data: Vec<u8>) -> Result<()> {
         if data.is_empty() {
             return Ok(());
         }
+        self.scroll_bottom(tx, &pane).await?;
+        self.send_input(tx, pane, data).await
+    }
+
+    /// 기록 위치는 그대로 두고 보낸다(누르지 않은 움직임 보고, herdr)
+    async fn send_input(&mut self, tx: &mut FrontSender, pane: String, data: Vec<u8>) -> Result<()> {
         self.message = None;
         let id = tx.send(FrontRequest::PaneInput { pane, data: B64(data) }).await?;
         self.pending.insert(id, Pending::Input);
@@ -766,6 +779,7 @@ impl App {
     async fn paste_image(&mut self, tx: &mut FrontSender) -> Result<bool> {
         let Some(pane) = self.focus.clone() else { return Ok(false) };
         let Some(png) = tokio::task::spawn_blocking(clip::image_png).await.ok().flatten() else { return Ok(false) };
+        self.scroll_bottom(tx, &pane).await?;
         self.attach_seq += 1;
         self.set_message(format!("그림 보내는 중({}KB)…", png.len().div_ceil(1024)));
         for req in aaa_common::front::attach_requests(&pane, &png) {
@@ -1028,6 +1042,18 @@ impl App {
 
     /// 새 layout 요청은 그것을 아는 host에만 보낸다(탭 닫기·이름·크기 1.4, zoom·자리 바꾸기 1.10, 나눔 비율·탭 옮기기 1.14).
     /// 옛 host에 보내면 연결이 끊기므로 알리고 보내지 않는다.
+    /// 이 화면이 그 pane 기록을 보고 있으면 맨 아래로 돌린다(다음 장면이 오기 전에 또 보내지 않게 여기서도 0으로)
+    async fn scroll_bottom(&mut self, tx: &mut FrontSender, pane: &str) -> Result<()> {
+        let Some(g) = self.grids.get_mut(pane) else { return Ok(()) };
+        if g.scroll.offset == 0 || self.host_minor < 15 {
+            return Ok(());
+        }
+        g.scroll.offset = 0;
+        let id = tx.send(FrontRequest::PaneScroll { pane: pane.to_string(), by: ScrollBy::Bottom }).await?;
+        self.pending.insert(id, Pending::Report("기록 넘기기"));
+        Ok(())
+    }
+
     fn host_at_least(&mut self, minor: u16) -> bool {
         if self.host_minor >= minor {
             return true;

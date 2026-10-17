@@ -2420,6 +2420,16 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 점.** 「오른쪽 누름을 pane에 보내기」는 이 화면에만 둔다(herdr는 서버 pane 상태 `right_click_passthrough`). TUI는 상태를 갖지 않는 front라 host에 두려면 pane 설정 요청이 필요하다. herdr `right_click_passthrough_modifier`(수정키를 누르면 넘김) 설정은 옮기지 않았다. 3d-2에서는 보고 pane에 오른쪽 누름을 늘 넘겼는데, herdr처럼 메뉴가 먼저로 바꿨다.
 - **시험.** 유닛 `menu_like_herdr`(항목·끝에서 멈춤·폭·화면 안으로·고른 줄 색). TUI harness `context_menu_like_herdr`: 탭 메뉴 Esc, 아래·Enter로 탭 이름 창, pane 메뉴에서 움직여 「아래로 나누기」 Enter, 위 pane 메뉴의 자리 바꾸기, 밖 누르기로 닫기, 보고 pane은 메뉴가 먼저이고 「오른쪽 누름을 pane에 보내기」 뒤 `cat -v`가 오른쪽 누름(`ESC [ < 2 ;`)을 받는다.
 
+### 8.108 TUI 휠 기록 넘기기(herdr `apply_scroll`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「휠로 scrollback」, FRONT_API 1.15)
+
+- **참고(herdr 0.9.5).** `src/server/pane_input.rs` `apply_scroll`(보고 pane → 휠 보고, alt 화면 → 화살표, 아니면 `scroll_up`·`scroll_down`을 `mouse_scroll_lines`줄)과 키·글·붙여넣기·마우스 보고 전 `scroll_reset`(누르지 않은 움직임 보고는 그대로), `src/pane/terminal.rs` `ScrollMetrics`, `[ui] mouse_scroll_lines`(기본 3). 기본 TUI 화면은 PageUp·PageDown을 프로그램에 보낸다(`apply_client_terminal_input_events`의 `host_page_keys`가 false, host 기록 넘기기는 `herdr attach`만).
+- **proto(FRONT_API 1.15).** `FrontRequest::PaneScroll { pane, by }`(`ScrollBy`: `up`·`down`(lines)·`bottom`·`offset`(맨 아래에서 lines)): 이 연결의 `PaneWatch` 구독이 보는 기록 위치만 옮긴다. 프로그램에는 아무것도 가지 않고, 구독이 없으면 NotFound. `GridFrame.scroll`(`GridScroll { offset, max }`, 옛 host는 0).
+- **host.** 구독마다 기록 위치를 두고, 장면을 만들 때 pane 화면 사본(aaa-vt `grid_rows_at`)에서 그 위치의 줄을 읽고 같은 잠금 안에서 되돌린다(다른 읽기·웹 snapshot은 늘 지금 화면을 본다). 올라가 있는 동안 기록이 늘면 그만큼 더 올라 보던 줄을 지킨다(ghostty viewport 고정과 같음, 기록 상한에서 앞을 버리면 지키지 못한다). 기록보다 크면 묶고, alt 화면은 기록 0. 올라가 있는 동안 커서를 숨긴다. 모드나 기록 위치만 바뀌어도 한 장 보낸다(커서·모드·위치 hash).
+- **TUI.** 보통 화면(마우스 보고 끔·alt 화면 아님) pane의 휠은 `[tui] mouse_scroll_lines`(기본 3)줄씩 위·아래. 그 pane에 키·글·붙여넣기·그림·마우스 보고를 보내기 전에 올라가 있었으면 맨 아래로 돌린다(누르지 않은 움직임 보고는 그대로). 옛 host(1.14 이하)에서는 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
+- **다른 점.** 기록 위치는 화면(front 연결)마다 둔다. herdr는 pane마다 서버에 하나라 모든 client가 같이 움직인다. aaa는 여러 기기가 한 pane을 보므로 한 화면이 넘겨도 다른 화면은 그대로이고, 맨 아래로 돌리기도 그 화면이 입력을 보낼 때만이다(다른 화면·CLI 입력은 위치를 그대로 둔다).
+- **다음 묶음(5a-2).** pane scrollbar(herdr `pane_scrollbars`: 보통 화면에서 오른쪽 1칸 gutter, PTY가 1칸 좁아짐, 누르기·끌기). 그전에는 올라가 있다는 표시가 숨은 커서뿐이다.
+- **시험.** 유닛: aaa-vt `grid_rows_at_scrollback_offset`(위치·끝에서 멈춤·되돌림·alt 화면), host `grid_view_keeps_the_lines_it_shows`(끝에서 멈춤·보던 줄 고정·묶기·맨 아래 따라감), 설정 `mouse_scroll_lines`. TUI harness `wheel_scrolls_history_like_herdr`: `seq 1 200` 뒤 휠 위 한 칸이면 170..198, 올라간 동안 CLI `pane run`의 출력 6줄이 와도 보던 줄을 지켜 한 칸 더 올리면 167..195, 휠 아래 네 칸이면 맨 아래, 올라간 채 치면 맨 아래로 돌아와 친 글이 보임.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

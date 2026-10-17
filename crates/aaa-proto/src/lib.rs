@@ -67,6 +67,8 @@ pub fn typescript_bindings() -> String {
         PaneModes::decl(&cfg),
         MouseMode::decl(&cfg),
         MouseEncoding::decl(&cfg),
+        GridScroll::decl(&cfg),
+        ScrollBy::decl(&cfg),
         PendingEnroll::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),
