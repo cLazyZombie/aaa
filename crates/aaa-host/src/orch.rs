@@ -843,7 +843,9 @@ impl Host {
                 .as_deref()
                 .and_then(|p| self.pane_agent(p))
                 .and_then(|a| a.harness_session)
-                .or(launch.session_key.clone());
+                .or(launch.session_key.clone())
+                // 저장된 값도 다시 본다(이 검사 전 host가 받아 둔 것): `{session}`은 argv 낱말 하나가 된다
+                .filter(|k| aaa_common::util::harness_session_ok(k));
             if launch.resume_argv.is_empty() {
                 return Err(bad("이 harness는 대화를 이어 띄우는 방법이 없다"));
             }

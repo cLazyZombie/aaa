@@ -2,7 +2,7 @@
 // 목록(Sidebar MachineGroup)도 같은 machineRoster로 그리므로, 여기서는 차례 규칙과 thread 줄이 여는 것을 본다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { machineRows } from "../src/sidebarModel.ts";
+import { machineRows, paneProblem } from "../src/sidebarModel.ts";
 
 const m = { id: "m1", name: "mac-a" };
 const pane = (id, machine_id = "m1", state = "running", role = "pane") => ({ id, machine_id, state, role });
@@ -26,5 +26,15 @@ describe("단축키 줄 차례", () => {
     assert.deepEqual(rows[0], { open: { pane: "a" }, keys: ["thread:p/t-1", "pane:a"] });
     assert.equal("thread" in rows[1].open, true);
     assert.deepEqual(rows[1].keys, ["thread:p/t-2", "pane:b"]);
+  });
+});
+
+// 재부팅 뒤 복원 실패(plan §8.111): 참고 RestoreErrorBadge처럼 경고 하나에 까닭을 싣는다
+describe("중단 pane 경고", () => {
+  it("복원하지 못한 까닭이 있으면 그것을, 없으면 중단만", () => {
+    const p = { ...pane("p1", "m1", "interrupted"), restore_error: "다시 띄우지 못했다: 작업 폴더가 없다: /w" };
+    assert.equal(paneProblem(p), "중단: 다시 띄우지 못했다: 작업 폴더가 없다: /w");
+    assert.equal(paneProblem(pane("p2", "m1", "interrupted")), "중단: agent backend가 다시 떴을 때 이 세션이 없었다");
+    assert.equal(paneProblem(pane("p3")), null);
   });
 });

@@ -340,6 +340,10 @@ pub struct AgentHello {
     pub selfcheck: Option<serde_json::Value>,
     #[serde(default)]
     pub sessions: Vec<SessionInfo>,
+    /// 세션별 마지막 harness 사건(agent가 `harness.json`에 둔 것). host가 연결 즉시 harness 세션 ID를 알아 재부팅 뒤
+    /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다.
+    #[serde(default)]
+    pub harness: Vec<HarnessEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -785,6 +789,10 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub label: Option<String>,
+    /// 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub restore_error: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -1700,7 +1708,8 @@ pub enum TermServerMsg {
         reason: Option<String>,
     },
     State {
-        pane: PaneView,
+        // box: PaneView가 커서 다른 variant까지 크게 만든다(clippy large_enum_variant). wire 모양은 같다
+        pane: Box<PaneView>,
     },
     /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
     Front {

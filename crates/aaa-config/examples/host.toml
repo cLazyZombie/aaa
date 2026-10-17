@@ -92,3 +92,9 @@ web_push = true
 push_hosts = ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
 # VAPID 연락처(비우면 공개 주소 https://<이름>.ts.net)
 push_subject = ""
+
+[session]
+# 재부팅 뒤 Claude·Codex pane과 thread를 저장한 대화로 이어 띄운다(herdr와 같다). 꺼도 셸 pane은 저장한 폴더에서 되살린다.
+resume_agents_on_restore = true
+# 이어 띄우기 사이 간격(ms)
+startup_per_agent_delay_ms = 100
