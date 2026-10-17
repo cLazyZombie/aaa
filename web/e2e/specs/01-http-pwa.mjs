@@ -67,7 +67,7 @@ export default async function ({ ctl, page }) {
     // 상태 막대 style은 두지 않는다(참고 index.html: 홈 화면 앱이 상태 막대 아래에 그리지 않는다)
     if ((await page.locator('meta[name="apple-mobile-web-app-status-bar-style"]').count()) !== 0) throw new Error("apple-mobile-web-app-status-bar-style meta가 있다");
     if (got.errors.length || !got.url.endsWith("/manifest.webmanifest?v=2")) throw new Error(`${got.url} ${JSON.stringify(got.errors)}`);
-    // service worker(§8.26)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
+    // service worker(§8.26·§8.103)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
     const sw = await fetch(`${base}sw.js`);
     if (sw.status !== 200 || !sw.headers.get("content-type").startsWith("text/javascript")) throw new Error(`sw.js ${sw.status}`);
     if ((await fetch(`${base}offline.html`)).status !== 200) throw new Error("offline.html");
@@ -80,7 +80,36 @@ export default async function ({ ctl, page }) {
     const sws = await sw.text();
     const old = [...man.icons.map((i) => i.src), ...links].filter((u) => !u.endsWith("?v=2"));
     if (links.length !== 3 || old.length) throw new Error(`v 없는 아이콘 주소 ${JSON.stringify(old)} (link ${links.length}개)`);
-    if (!sws.includes('"aaa-offline-v2"') || !sws.includes('"/icon-192.png?v=2"') || !sws.includes('"/favicon-32.png?v=2"')) throw new Error("sw.js cache 이름·알림 아이콘이 v2가 아니다");
+    if (!sws.includes('"aaa-files-v2"') || !sws.includes('"/icon-192.png?v=2"') || !sws.includes('"/favicon-32.png?v=2"')) throw new Error("sw.js 파일 cache 이름·알림 아이콘이 v2가 아니다");
+    // 빌드마다 worker가 따로다(herdr-web-ui scripts/service-worker-build.ts, 차이 목록 M5, plan §8.103): 이 빌드의 이름과 파일이 찍혀 있다
+    const build = /const BUILD = "([0-9a-f]{12})";/.exec(sws)?.[1];
+    const listed = /const BUILD_FILES = (\[[^\]]*\]);/.exec(sws)?.[1];
+    if (!build || !listed || !JSON.parse(listed).some((f) => /^\/assets\/index-.*\.js$/.test(f))) throw new Error(`sw.js 빌드 도장 ${build} ${listed}`);
+    // 네트워크 먼저인 화면은 받은 셸을 이 빌드의 cache에 둔다. 그 셸이 여는 입구 script·stylesheet도 함께.
+    // 첫 방문의 화면 이동은 worker가 맡기 전이라(참고도 같다) worker가 맡은 뒤의 화면 이동부터 둔다
+    await page.reload();
+    const cacheName = `aaa-web-v3-${build}`;
+    await until("셸 cache", () =>
+      page.evaluate(async (name) => {
+        const c = await caches.open(name);
+        const shell = await c.match("/");
+        if (!shell) return false;
+        const html = await shell.text();
+        const starts = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:js|css))"/g)].map((m) => m[1]);
+        return starts.length >= 2 && (await Promise.all(starts.map((f) => c.match(f)))).every(Boolean);
+      }, cacheName),
+    );
+    // 끊긴 채 새로 고치면 「연결 없음」 화면이 아니라 캐시한 셸로 앱이 뜬다(연결 화면·오류는 앱이 그린다)
+    await ctx.setOffline(true);
+    await page.reload();
+    // 앱은 host에 닿지 못했다고 말하고(offline.html의 「다시 열기」 링크가 아니라 앱의 카드), 네트워크가 돌아오면 스스로 다시 묻는다
+    await page.getByTestId("unreachable").waitFor();
+    if (await page.getByRole("link", { name: "다시 열기" }).count()) throw new Error("셸 대신 offline.html이 떴다");
+    await shot(page, "pwa-offline-shell");
+    await ctx.setOffline(false);
+    await page.getByTestId("token-gate").waitFor();
+    // 셸을 갖기 전의 처음 실행이 끊겼다면: 미리 둔 offline.html(aaa 것)
+    if (!(await page.evaluate(() => caches.open("aaa-files-v2").then((c) => c.match("/offline.html")).then(Boolean)))) throw new Error("offline.html이 미리 놓이지 않았다");
     await ctx.close();
   });
 

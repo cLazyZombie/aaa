@@ -984,7 +984,7 @@ host 프로젝트 폴더 구성:
   - 구독 주소는 기기가 준다. host가 아무 주소로나 요청하지 않게 `notify.push_hosts`(fcm.googleapis.com·push.apple.com·push.services.mozilla.com·notify.windows.com과 그 아래 이름)의 https만 받는다. loopback http는 시험용으로 목록에 적었을 때만 받는다.
   - 구독 주소는 그 기기에 보내는 열쇠라 로그·흐름 사건·감사 기록에 넣지 않는다. 취소한 장치의 구독에는 보내지 않는다. 404·410이면 브라우저가 버린 구독이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
 - **설정(`[notify]`).** `web_push = true`(기본), `push_hosts`, `push_subject`(비우면 공개 주소 `https://<이름>.ts.net`, 없으면 `mailto:aaa@example.com`).
-- **service worker.** 설치·Web Push 알림·알림 누르기를 맡는다. 캐시는 「연결 없음」 화면 하나뿐이다.
+- **service worker.** 설치·Web Push 알림·알림 누르기를 맡는다. 캐시는 「연결 없음」 화면 하나뿐이다. → §8.103이 대신한다: 셸·빌드 파일·글꼴·아이콘을 참고처럼 캐시하고, 「연결 없음」은 셸을 갖기 전의 처음 실행에만.
 - **API.** `GET /api/v1/push`(키·구독 수), `POST /api/v1/push/subscribe`·`unsubscribe`·`test`. 장치 cookie와 Origin 검사는 다른 API와 같다.
 - **시험(웹 E2E).**
   - PWA: Chromium이 설치할 수 있다고 본다(`Page.getInstallabilityErrors` 빈 목록). service worker가 화면을 맡는다. host를 내린 동안 새로 열면 「연결 없음」 화면이 나온다.
@@ -2322,6 +2322,15 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **글자 크기 토큰.** aaa `style.css`의 고정 px 글자 크기 51곳을 참고 토큰(`--fs-2xs`~`--fs-display`)으로 바꿨다. 토큰에 없는 크기(9·10.5·11.5·12.5·13.5·17·19px)는 가까운 토큰에 비율을 곱해(`calc(var(--fs-xs) * 12.5 / 12)`) 기본 화면은 그대로이고 밀도·배율을 따른다. 입력줄의 16px(iOS가 focus 때 키우지 않는 하한)은 참고처럼 배율을 받지 않는 `--fs-input`이다. 터미널 글자는 제 설정(§8.47 글자 크기)을 따른다.
 - **QA t-0337 Q10·Q12(옛 설정 창의 결함).** §8.97의 쪽 나눈 창(참고 `useFocusTrap`·`useSheetSwipe`·`settingsHistory`, `SettingsControls`·primitives 터치 크기)으로 없어졌다. E2E로 확인한다: 휴대폰 시스템 뒤로는 한 걸음씩 닫고 앱을 나가지 않는다, 아래로 밀면 닫힌다, 닫으면 focus는 톱니로, 단축키로 연 창을 Esc로 닫으면 focus가 터미널로 돌아가 친 글이 pane에 닿는다. 390×844 터치에서 쪽 줄 48px, 아이콘 단추 40×40, 글 단추 높이 40, 스위치 48×40(참고 그대로). 여럿 중 하나(segmented) 단추는 참고도 `--control-h − 6px`(28px)이고 휴대폰 넓은 줄에서는 줄 폭을 나눠 가진다(아침 확인: t3code 44px와 비교).
 - **시험.** 웹 E2E `specs/06-settings.mjs` 「밀도·인터페이스 글자 크기」(촘촘 13px, 18px 배율 18/13로 목록·설정 글자가 함께, 터미널 13px 그대로, 20px에서 키우기 꺼짐, 이 기기에만 저장·공유 설정에 없음, 다시 열어도 남음, 다른 기기는 여유, 휴대폰 20px 넘침 없음)와 「설정 닫는 길·조작 크기」.
+
+### 8.103 service worker 셸·파일 캐시를 herdr-web-ui대로(10-18, 차이 목록 2장 M5)
+
+- **참고(herdr-web-ui aa624cb).** `public/sw.js` 1~190줄(화면 이동은 네트워크 먼저·끊기면 캐시한 셸, `/assets/`·아이콘은 캐시 먼저, manifest·API·WebSocket은 건드리지 않음, `keepShell`·`cachedShell`·`fileFor`·`shellFiles`, 빌드 이름 cache `CACHE_NAME-BUILD`와 빌드를 넘는 `FILES`), `scripts/service-worker-build.ts`(Vite plugin: `buildId`·`buildFiles`·`stampServiceWorker`가 dist/sw.js의 `BUILD`·`BUILD_FILES`를 찍는다).
+- **바뀐 것.** §8.26의 「화면·자산을 캐시하지 않고 끊기면 offline.html」을 대신한다. 끊긴 채 홈 화면 앱을 열면 캐시한 셸로 앱이 뜨고 host에 다시 붙는다(연결 화면·끊김 표시는 앱이 그린다). 연결되면 늘 host가 주는 지금 빌드다(셸은 네트워크 먼저). 새 빌드는 cache 이름이 달라 지난 빌드 파일은 지난 cache와 함께 가고, 새 cache가 셸과 그 셸이 여는 파일을 다 가진 뒤에야 옛 cache를 지운다.
+- **aaa 경로.** 캐시 먼저는 `/assets/`(빌드 파일), `/fonts/`(Meslotendard), 아이콘(`/icon*.png`·`/icon.svg`·`/apple-touch-icon.png`·`/favicon-32.png`, `?v=2` 주소 그대로)와 `offline.html`. 빌드를 넘어 남는 것(`aaa-files-v2`)은 글꼴·아이콘·offline.html. `/api/`(REST·WebSocket)와 `/v/`(결과물 보기)는 지나간다.
+- **앱의 첫 물음.** 셸로 뜬 앱이 host에 닿지 못하면(`/api/v1/me`가 네트워크 오류) 「host에 연결할 수 없다」 카드(연결 화면 모양, 「다시 시도」)를 보이고, `online`이나 다시 보일 때(visibilitychange) 스스로 다시 묻는다. 전에는 오류 글(TypeError)만 남고 다시 묻지 않았다. 참고는 셸이 그대로 뜬 채 주기로 다시 묻는다(App.tsx `loadHealth` tick). aaa는 첫 물음이 기기·역할을 고르므로 그 사건들에서 다시 묻는다.
+- **다르게 둔 것.** 셸을 갖기 전에 끊긴 처음 실행은 참고처럼 `Response.error()`가 아니라 aaa `offline.html`(「host에 연결할 수 없다」)을 보인다. 그 한 장만 install 때 미리 둔다(참고는 아무것도 미리 두지 않는다). 이유: 빈 오류 화면보다 무엇이 안 되는지 말하는 화면이 낫고, 크기가 작아 모든 기기에 받아도 된다.
+- **시험.** 단위 `web/test/service-worker-build.test.mjs`(참고 사례: 빌드 이름은 해시 파일만으로·순서 무관, 도장은 BUILD 한 줄만, 못 찍는 worker·이상한 id·파일 거부, 글꼴·압축본 빼고 목록). 웹 E2E `specs/01-http-pwa.mjs` 「PWA」: dist/sw.js에 빌드 이름·파일이 찍힘, 셸과 입구 script·stylesheet가 이 빌드 cache에 놓임, 끊긴 채 새로 고치면 offline.html이 아니라 셸로 앱이 뜸, offline.html은 미리 놓임.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
