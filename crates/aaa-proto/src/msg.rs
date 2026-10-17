@@ -157,6 +157,9 @@ pub struct SessionInfo {
     /// 정본은 agent의 `spec.json`이다(이전 session host는 모른다, plan §8.109).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// 띄울 때 알려 준 harness(`SpawnSpec.harness`). 다시 띄울 때(resume) 그대로 넘긴다.
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 /// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
@@ -174,6 +177,9 @@ pub struct SpawnSpec {
     pub rows: u16,
     #[serde(default)]
     pub role: Option<Role>,
+    /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -274,6 +280,19 @@ pub struct WorkspaceSummary {
     pub name: String,
     pub tabs: u32,
     pub panes: u32,
+}
+
+/// harness 상태 감지 입력(plan §8.110). herdr처럼 화면 끝 글과 마지막 OSC 제목·진행을 함께 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectScreen {
+    /// 화면 변화 순번(출력이 오거나 크기가 바뀔 때마다 는다)
+    pub seq: u64,
+    /// 화면 끝 글(herdr `detection_text`). 요청의 `unchanged_since`와 순번이 같으면 None이다(다시 볼 것이 없다).
+    pub text: Option<String>,
+    /// 마지막 OSC 0/2 제목(없으면 빈 글)
+    pub osc_title: String,
+    /// 마지막 OSC 9 payload(없으면 빈 글)
+    pub osc_progress: String,
 }
 
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
@@ -535,6 +554,8 @@ pub enum AgentResponse {
         offset: u64,
     },
     Screen(ScreenText),
+    /// 상태 감지 입력(session host → agent, SESSION_IPC 1.1)
+    Detect(DetectScreen),
     Done,
     Chat {
         messages: Vec<ChatMessage>,
@@ -627,12 +648,23 @@ pub enum SessionMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
-    Subscribe { from: Option<u64> },
+    Subscribe {
+        from: Option<u64>,
+    },
     Unsubscribe,
-    Input { data: B64 },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: B64,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Kill,
     Screen,
+    /// 상태 감지 입력(SESSION_IPC 1.1부터). 순번이 `unchanged_since`와 같으면 글을 싣지 않는다.
+    Detect {
+        unchanged_since: Option<u64>,
+    },
 }
 
 // ───────────────────────── Front API ─────────────────────────
@@ -1800,6 +1832,7 @@ mod tests {
             state: SessionState::Exited { code: Some(2) },
             role: None,
             label: None,
+            harness: Some("codex".into()),
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["state"], "exited");
