@@ -840,7 +840,7 @@ host 프로젝트 폴더 구성:
 - `aaa assignable <p> [--check <owner>]`: 머신마다 host 허용 목록 ∩ 그 머신 agent.toml profile. 끊긴 머신은 「모름」이다. 맨 profile은 host 로컬 머신을 본다(`thread start`의 기본 머신과 같다). 0.2.35의 ssh 조회·1시간 캐시 대신 연결된 agent에 바로 묻는다.
 - `aaa thread next <p> <id> [--line N | --add "…"]`: Next 목록은 보고서 `## Next` 줄 + `threads/<id>.next.md`. `--line N`은 그 줄을 메시지 API(대기열, 턴이 끝나면 전달)로 보낸다. 0.2.35는 바로 입력했다.
 - **`start_threads`(project.toml, propose·auto, 기본 propose):** coordinator가 따르는 안내 값이다. aaa는 강제하지 않는다(0.2.35와 같다). 동시 실행 상한은 aaa가 강제한다(`max_threads_per_machine`).
-- **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다.
+- **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다. → 결정 20 D12(참고대로)가 바꿨다: host.toml `[safety.*]` yolo 스위치(§8.115).
 - **Codex 실측(codex-cli 0.163, macOS, 10-16)**
   - 실행마다 `-c notify=…`를 주면 턴이 끝날 때 `turn_end`(마지막 답)와 `thread-id`가 온다. pane 상태가 입력 대기가 되고, `thread-id`를 harness 세션으로 써서 `thread restart --resume`이 `codex … resume <id>`로 이전 대화를 이었다.
   - `-c notify=…`는 aaa가 띄운 세션에서만 사용자 `~/.codex/config.toml`의 `notify`를 덮는다. 그래서 그 세션에서는 herdr-projects 쪽 notify가 불리지 않는다(의도한 분리다). 다른 Codex 실행은 그대로다.
@@ -2533,6 +2533,27 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 시험 fixture의 세션 ID(`fake-1`·`sess-a1`·`s1` 등)를 UUID로 바꿨다(중첩 세션을 버리는 시험은 두 ID가 달라야 한다).
 - **덤: 이미 등록된 머신의 다시 등록(QA t-0337 Q17, 낮음).** 등록된 장치 키로 `aaa agent enroll`을 다시 하면 host가 인증된 연결로 받아(`link.rs` `serve`) 「hello가 와야 한다」만 답했다. 이제 「이 머신(<이름>)은 이미 이 host에 등록돼 있다」와 두 길(그대로 `aaa agent`로 붙기, 다시 등록하려면 host에서 `aaa machine revoke <이름>`·`aaa machine enroll --open 10m` 뒤 `aaa agent enroll <host:port>`)을 답한다. 시험: e2e `enroll_remote_agent_and_run_short_command`가 다시 등록의 안내를 보고, 안내대로 취소 → 등록 창 → 같은 머신 다시 등록·승인 → 다시 붙기까지 한다(옛 답이면 실패).
 
+### 8.115 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
+
+- **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
+- **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
+  - key: `yolo`·`start_threads`·`trust_screens`·`thread_agent_args`·`routine_commands`·`thread_profiles`. 참고의 `coordinator_agent_args`·`coordinator_profiles`·`profile allow|default coordinator`는 없다: aaa는 coordinator를 띄우지 않는다(§8.104, 사람이 연 세션). 그 이름을 주면 까닭을 말하고 거부한다.
+  - 값마다 「프로젝트 표 → default 표 → 옛 자리 → 기본값」. 옛 자리는 host.toml `[projects] allow_profiles`(`"*"`는 모두)·`routine_commands`(프로젝트 목록)와 project.toml `start_threads`·`trust_screens`다. 이미 쓴 설정이 그대로 먹게 두었고, project.toml 값은 프로젝트 폴더 안이라 `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 드러낸다.
+  - yolo면 `start_threads`는 auto, `trust_screens`가 없으면 coordinator(참고 `default_trust_screens`). `routine_commands`는 yolo와 따로다(켜도 명령마다 사람 승인, §8.19).
+  - host는 쓸 때마다 host.toml을 다시 읽는다(`Host::safety`, `aaa_config::safety::read`): 사람이 바꾸면 host를 다시 띄우지 않아도 다음 thread start·신뢰 창 판단·routine·context가 쓴다. 이 읽기는 느슨하다: 다른 절이 깨졌거나 값 하나가 잘못돼도 그 값만 아래 층으로 가고 경고를 남긴다. 시작 때 읽기(`load_host`)는 전처럼 엄격하다(값 검사 포함).
+- **쓰는 곳.** thread start·restart의 profile 허용(`check_profile_allowed`, 거부 말은 참고 `check_allowed`처럼 허용 목록과 바꾸는 명령), `assignable`·context의 선택지(프로젝트마다), `trust_screens`(brief 안내·메시지·`thread keys`·`question answer`), routine 명령 허용, context `start_threads`.
+- **thread 기본 profile.** `thread start`에 profile이 없으면 project.toml `thread_profile` → host.toml `[defaults] thread_profile` → 기본 profile `claude`(참고 `new_project_default`). 전에는 오류였다(§8.104는 「aaa에 내장 기본이 없다」였다).
+- **기본 profile.** claude·codex는 같은 이름의 기본 profile이다(인자 없음, 참고 「every Herdr agent kind is also a built-in profile」). agent.toml의 같은 이름 `[profiles.*]`가 대신한다. 목록(`profile list`·assignable)에는 그 머신에 CLI가 PATH에 있고 로그인한 것으로 보일 때만 나온다(참고 `detect`·`signed_in`: 파일·환경 변수만 보고 네트워크·키체인·CLI 실행은 하지 않는다). 허용 목록에 이름이 적힌 기본 profile은 감지하지 못해도 선택지에 넣는다(참고 `usable`). 시험은 `AAA_TEST_BUILTINS`로 감지를 정한다(lab·웹 harness는 빈 값). 참고의 다른 harness(gemini·cursor 등)는 aaa에 없다.
+- **profile은 머신마다.** 참고는 한 머신 config.toml이지만 aaa profile은 그 머신 agent.toml이다(§8.2). `aaa profile add|edit|remove`는 명령을 실행한 머신의 agent.toml을 고친다. agent는 profile을 쓸 때마다(목록·thread 준비·restart) agent.toml을 다시 읽는다(`ThreadsConfig::fresh`): 고친 뒤 agent를 다시 띄우지 않아도 된다. 읽지 못하면 옛 값으로 띄우지 않고 그 까닭이 오류다. agent feature `profiles.v2`.
+  - 검증은 참고대로: 이름은 영문·숫자·`.`·`_`·`-` 40자(`-`·`.`로 시작하지 않음, 전에는 `.`을 받지 않았다), model은 플래그처럼 보이지 않는 이름, effort는 harness가 받는 값(claude low~max, codex none~ultra), shell·custom은 model·effort 플래그가 없다. harness를 바꾸면 받지 못하는 effort는 버린다. 고친 파일이 다시 읽히는지 본 뒤 임시 파일에 쓰고 rename한다. 빈 파일이면 `schema = 1`부터 쓴다.
+  - `profile allow threads <이름…> [--project P] [--all]`·`profile default threads <이름>`은 host.toml을 고친다. 이름은 연결된 머신의 profile(그리고 기본 profile)에 있어야 한다. host에 닿지 않거나 연결된 머신이 없으면 경고만 한다.
+  - `profile resolve [이름]`: 이 머신에서 그 profile이 띄우는 harness·인자(model·effort 플래그 + args)를 JSON으로(env는 뺀다). 참고처럼 `~/`를 펴지는 않는다: aaa agent는 인자를 펴지 않고 그대로 넘긴다.
+  - `profile list --project P`(그 프로젝트의 thread 기본값·허용 목록), `--names`(이름만).
+- **바꾸기는 사람만.** `aaa safety yolo|set`, `aaa profile add|edit|remove|allow|default`는 aaa 세션 밖(`AAA_SESSION_ID`·`AAA_HOOK_SOCK` 없음)이고 표준 입력이 터미널일 때만 한다. safety는 지금 값을 보이고 `[y/N]`에 y를 쳐야 한다(yolo를 켤 때는 무엇이 바뀌는지 먼저 말한다). routine 승인·launchd 설치와 같은 문 하나(`crates/aaa/src/person.rs`)를 쓴다(전에는 둘이 따로 같은 검사를 했다). 참고는 「터미널인가」만 본다: 참고 coordinator의 셸 도구는 터미널 없이 돌지만, aaa pane은 터미널이라 세션 안도 막는다. host.local.toml이 같은 key를 덮으면 고친 뒤 알린다.
+  - 남는 한계: host 머신에서 도는 coordinator가 셸로 host.toml을 직접 고치거나 aaa 밖에서 PTY를 열어 명령을 치는 것까지는 막지 못한다(참고도 「a terminal faked by an agent is not stopped by this」). 그 머신 사용자 권한 안의 일이다.
+- **신뢰 창 답(구멍 막음).** `trust_screens = user`인데 aaa 세션 안 CLI(coordinator)가 `aaa question answer`로 thread pane의 신뢰 창에 답할 수 있었다(`thread keys`·메시지는 막고 있었다). 이제 세션 안 CLI(actor `local:<client>@<세션>`)면 화면이 신뢰 창일 때 거부한다. 웹·TUI·세션 밖 터미널(사람)은 그대로 답한다.
+- **계약.** FRONT_API 1.18(ProfileView `args`·`builtin`, 선택 필드).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -2967,7 +2988,7 @@ primary 근거:
 | progress 보고(`report --percent`), hook 5개 harness | 상태 사건 `progress` + adapter(Claude·Codex 먼저, 나머지 후속) | M1-3 / M3 |
 | sidebar·overview·focus·needs-you·popup | TUI·웹 표시 | M1-2 / M3 |
 | TASKS.md `(profile@machine)` 소유, `assignable`, `context` | 그대로 + `--from-task` 중복 방지(§8.21) | M1 마무리(완료) |
-| safety·yolo `launch_args`, `start_threads` propose/auto | profile `args`(agent.toml)·project.toml `start_threads`(§8.21) | M1 마무리(완료) |
+| safety·yolo `launch_args`, `start_threads` propose/auto | host.toml `[safety.*]`(yolo·start_threads·trust_screens·thread_agent_args·routine_commands·thread_profiles, §8.115). 옛 자리(project.toml·`[projects]`)는 아래 층 | 10-18 참고대로(§8.115) |
 | `threads/<id>.task.md` Follow-ups, `<id>.next.md` | thread 기록에 포함, restart 때 다시 읽기 | M1-3 |
 | `owned.json` configure journal | integration journal(§8.11) | M1-3 |
 | `launch_attempts` 3회, starting 5분 timeout | launch_state 전이 | M1-3 |

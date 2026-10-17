@@ -566,6 +566,26 @@ impl Host {
         ))
     }
 
+    /// thread를 띄울 때 agent에 보낼 safety(plan §8.115). 그 머신 agent가 `launch_safety.v1`을 모르면 보내지 않는데, yolo나
+    /// `thread_agent_args`가 있으면 조용히 빼지 않고 거부한다(사람이 켠 것이 빠진 채 뜨지 않게).
+    pub(crate) fn launch_safety(&self, project: &str, mid: &str) -> Result<Option<aaa_proto::LaunchSafety>, ErrorBody> {
+        let s = self.safety(project);
+        if self.machine_feature(mid, "launch_safety.v1") {
+            return Ok(Some(aaa_proto::LaunchSafety {
+                yolo: s.yolo,
+                thread_agent_args: s.thread_agent_args,
+                default_profile: self.default_thread_profile(project),
+            }));
+        }
+        if s.yolo || !s.thread_agent_args.is_empty() {
+            return Err(bad(format!(
+                "그 머신({}) agent가 오래돼 safety yolo·thread_agent_args를 thread에 붙이지 못한다. 그 머신 aaa를 갱신하거나 사람이 `aaa safety yolo {project} off`·`aaa safety set {project} thread_agent_args default`로 끈다",
+                self.machine_name(mid)
+            )));
+        }
+        Ok(None)
+    }
+
     /// `thread start`에 profile이 없을 때(참고 `resolve`·`new_project_default`): project.toml `thread_profile` → host.toml
     /// `[defaults] thread_profile` → 기본 profile `claude`. host.toml은 쓸 때마다 다시 읽는다.
     pub(crate) fn default_thread_profile(&self, project: &str) -> String {
@@ -646,6 +666,7 @@ impl Host {
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
+        let safety = self.launch_safety(&a.project, &mid)?;
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
@@ -722,6 +743,7 @@ impl Host {
             base: a.base.clone(),
             profile: a.profile.clone(),
             brief,
+            safety,
         };
         let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await {
             Ok(AgentResponse::ThreadReady(r)) => r,
@@ -875,8 +897,19 @@ impl Host {
             let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
             let brief = self.brief(&dir, &rec, &task, true);
             let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
+            // 새 대화는 profile을 그 머신 agent.toml에서 다시 풀고 허용 목록·safety를 다시 본다(참고 ticker `launch`: 사람이
+            // 그 사이 지우거나 막은 profile은 뜨지 않고, 바꾼 yolo·인자가 닿는다). 옛 agent는 저장한 argv를 다시 쓴다.
+            let safety = self.launch_safety(project, &rec.machine_id)?;
+            let again = match (&profile, &safety) {
+                (Some(p), _) => Some(p.clone()),
+                (None, Some(_)) if !rec.profile.is_empty() => {
+                    self.check_profile_allowed(project, &rec.profile)?;
+                    Some(rec.profile.clone())
+                }
+                _ => None,
+            };
             let relaunched = match conn
-                .request(AgentRequest::ThreadRebrief { work_dir, brief, launch, profile: profile.clone() })
+                .request(AgentRequest::ThreadRebrief { work_dir, brief, launch, profile: again, safety })
                 .await?
             {
                 AgentResponse::Relaunch(l) => l,

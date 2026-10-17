@@ -1180,6 +1180,21 @@ fn thread_read_and_keys() {
     assert!(e.contains("trust_screen") && e.contains("trust_screens = user"), "{e}");
     let e = w.h.json(&["thread", "keys", "demo", &id]).expect_err("빈 키");
     assert!(e.contains("키나 --text"), "{e}");
+    // aaa 세션 안 CLI(coordinator의 셸 도구)는 `question answer`로도 신뢰 창에 답하지 못한다(plan §8.115). 사람(세션 밖)은 된다
+    let coord = w.h.new_pane(None, "labA", None, &["/bin/sh"], None);
+    let o = w.h.cmd(&["--json", "question", "answer", &q.id, "yes"]).env("AAA_SESSION_ID", &coord).output().unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success() && err.contains("trust_screens = user"), "{err}");
+    assert_eq!(
+        w.h.ok(&["question", "list"])["questions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == q.id.as_str())
+            .unwrap()["state"],
+        "open",
+        "거부한 답은 질문을 닫지 않는다"
+    );
     w.h.ok(&["question", "answer", &q.id, "yes"]);
     // 권한 확인창: 보고 Enter로 답한다(기본 선택 Yes). 질문은 화면 감지가 그려진 창을 보고 연다(창보다 먼저 오는 hook이 없다)
     open_question(&mut ev, &id, "permission", &[]);
@@ -1282,16 +1297,30 @@ fn memory_and_restart() {
     assert!(!std::fs::read_dir(dir.join("memory")).unwrap().any(|e| e.unwrap().file_name() != "api.md"));
 }
 
-/// thread start 기본값(herdr-projects threads.rs `start`·`placement`·`thread_profile`, 차이 목록 A1·A15): profile을 빼면
-/// project.toml `thread_profile`, kind를 빼면 repo가 있으면 worktree·없으면 작업 폴더. 미할당 task도 `thread_profile`로
-/// 시작하고, 이미 열린 thread가 맡은 task는 막지 않고 경고한다.
+/// thread start 기본값(herdr-projects threads.rs `start`·`placement`·`thread_profile`·`new_project_default`, 차이 목록
+/// A1·A15, plan §8.115): profile을 빼면 project.toml `thread_profile` → host.toml `[defaults] thread_profile` → 기본 profile
+/// `claude`(host가 쓸 때마다 host.toml을 다시 읽는다), kind를 빼면 repo가 있으면 worktree·없으면 작업 폴더. 미할당 task도
+/// `thread_profile`로 시작하고, 이미 열린 thread가 맡은 task는 막지 않고 경고한다.
 #[test]
 fn start_defaults_profile_kind_and_task() {
     let w = world();
     let dir = w.projects.join("demo");
     let task = w.task("d.txt", "x");
-    let e = w.h.json(&["thread", "start", "demo", "--title", "d", "--task-file", &task]).expect_err("profile 없음");
-    assert!(e.contains("project.toml에 thread_profile"), "{e}");
+    let host_toml = w.h.cfg.join("host.toml");
+    let base = std::fs::read_to_string(&host_toml).unwrap();
+    // 아무 기본값도 없으면 claude다: 허용 목록이 막아 띄우지 않고 그 이름을 본다(host를 다시 띄우지 않고 고친 host.toml)
+    std::fs::write(&host_toml, format!("{base}\n[safety.demo]\nthread_profiles = [\"fake\", \"mute\"]\n")).unwrap();
+    let e = w.h.json(&["thread", "start", "demo", "--title", "d", "--task-file", &task]).expect_err("claude는 허용 밖");
+    assert!(e.contains("profile `claude`는 `demo`의 thread에 허용되지 않았다. 허용: fake, mute"), "{e}");
+    std::fs::write(
+        &host_toml,
+        format!(
+            "{base}\n[defaults]\nthread_profile = \"mute\"\n\n[safety.demo]\nthread_profiles = [\"fake\", \"mute\"]\n"
+        ),
+    )
+    .unwrap();
+    let m = w.start(&["--title", "d", "--kind", "dir", "--task-file", &task]);
+    assert_eq!(m["profile"].as_str(), Some("mute"), "host.toml [defaults]: {m}");
     std::fs::write(dir.join("project.toml"), "schema = 1\nthread_profile = \"fake\"\n").unwrap();
     let a = w.start(&["--title", "d", "--task-file", &task]);
     assert_eq!((a["profile"].as_str(), a["thread_kind"].as_str()), (Some("fake"), Some("dir")), "{a}");
@@ -1311,6 +1340,106 @@ fn start_defaults_profile_kind_and_task() {
     assert!(out.starts_with(&format!("경고: 열린 {aid}가 이미 이 task를 맡고 있다. 그래도 시작했다\n")), "{out}");
 }
 
+/// profile·safety를 사람이 바꾸고 thread가 쓴다(herdr-projects `profile`·`safety`, plan §8.115): 세션 안·터미널 아님은 거부,
+/// 사람이 y로 켠 yolo가 다음 thread 인자·context에 닿고(host를 다시 띄우지 않음), 이 머신 agent.toml에 더한 profile을
+/// agent를 다시 띄우지 않고 허용·사용한다.
+#[cfg(unix)]
+#[test]
+fn safety_and_profiles_by_a_person() {
+    let w = world();
+    let show = |t: &str| -> Value { w.h.ok(&["safety", "show", t]) };
+    let row = |v: &Value, key: &str| -> (String, String) {
+        let r = v["rows"].as_array().unwrap().iter().find(|r| r["key"] == key).unwrap().clone();
+        (r["value"].as_str().unwrap().to_string(), r["source"].as_str().unwrap().to_string())
+    };
+    let s = show("demo");
+    assert_eq!(row(&s, "yolo"), ("off".into(), "기본값".into()));
+    assert_eq!(row(&s, "thread_profiles").1, "host.toml [projects]", "옛 allow_profiles가 아래 층: {s}");
+    // 바꾸기는 사람만: 세션 안, 터미널 아님
+    let o = w.h.cmd(&["safety", "yolo", "demo", "on"]).env("AAA_SESSION_ID", "x").output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
+    let o = w.h.run(&["safety", "yolo", "demo", "on"]);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
+    let o = w.h.run(&["profile", "add", "sh1", "--harness", "shell"]);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
+    // 틀린 값은 사람인지 묻기 전에 알린다
+    let o = w.h.run(&["safety", "set", "demo", "start_threads", "now"]);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("propose·auto"), "{o:?}");
+    let o = w.h.run(&["profile", "allow", "coordinator", "fake"]);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("coordinator를 띄우지 않는다"), "{o:?}");
+    // 사람이 y가 아니면 바꾸지 않는다
+    let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "n")], T);
+    assert!(out.contains("권한 건너뛰기") && out.contains("바꾸지 않았다"), "{out}");
+    assert_eq!(row(&show("demo"), "yolo").0, "off");
+    let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "y")], T);
+    assert!(out.contains("demo: yolo = on"), "{out}");
+    let s = show("demo");
+    assert_eq!(row(&s, "yolo"), ("on".into(), "프로젝트".into()));
+    assert_eq!(row(&s, "start_threads").0, "auto");
+    assert_eq!(row(&s, "trust_screens").0, "coordinator");
+    assert_eq!(row(&show("--global"), "yolo").0, "off", "다른 프로젝트는 그대로");
+    assert!(std::fs::read_to_string(w.h.cfg.join("host.toml")).unwrap().contains("[safety.demo]\nyolo = true\n"));
+    assert_eq!(w.h.ok(&["context", "demo", "--peek"])["start_threads"], "auto", "host를 다시 띄우지 않고 닿는다");
+    // yolo가 thread 인자에 닿는다: claude harness는 권한 건너뛰기 인자로, 사람이 정의한 profile이라 thread_agent_args는 없다
+    let out = w.h.in_terminal(&["safety", "set", "demo", "thread_agent_args", "--verbose"], &[("[y/N]", "y")], T);
+    assert!(out.contains("thread_agent_args = --verbose"), "{out}");
+    let v = w.start(&["--title", "y", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("y.txt", "x")]);
+    let argv = w.h.pane(v["pane"].as_str().unwrap())["argv"].to_string();
+    assert!(argv.contains("--dangerously-skip-permissions") && !argv.contains("--verbose"), "{argv}");
+    // custom harness는 yolo 인자가 없다
+    let v = w.start(&["--title", "f", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("f.txt", "x")]);
+    assert!(!w.h.pane(v["pane"].as_str().unwrap())["argv"].to_string().contains("dangerously"));
+
+    // 이 머신 agent.toml에 profile을 더하고, 허용하고, agent를 다시 띄우지 않고 쓴다
+    let o = w.h.in_terminal(&["profile", "allow", "threads", "fake", "sh1", "--project", "demo"], &[], T);
+    assert!(o.contains("연결된 어느 머신에도 profile `sh1`가 없다"), "{o}");
+    let o = w.h.in_terminal(
+        &["profile", "add", "sh1", "--harness", "shell", "--description", "셸 하나", "--arg", "-i"],
+        &[],
+        T,
+    );
+    assert!(o.contains("profile `sh1`를 더했다: shell · 기본 model · args: -i — 셸 하나"), "{o}");
+    let names = w.h.run(&["profile", "list", "--machine", "labA", "--names"]);
+    assert!(String::from_utf8_lossy(&names.stdout).lines().any(|l| l == "sh1"), "{names:?}");
+    let o = w.h.in_terminal(&["profile", "allow", "threads", "fake", "sh1", "--project", "demo"], &[], T);
+    assert!(o.contains("thread는 `demo`에서 fake, sh1를 쓸 수 있다"), "{o}");
+    let e = w.h.json(&[
+        "thread",
+        "start",
+        "demo",
+        "--title",
+        "c",
+        "--profile",
+        "claude",
+        "--task-file",
+        &w.task("c.txt", "x"),
+    ]);
+    assert!(e.expect_err("허용 밖").contains("허용: fake, sh1"));
+    let v = w.start(&["--title", "s", "--profile", "sh1", "--kind", "dir", "--task-file", &w.task("s.txt", "x")]);
+    assert_eq!(w.h.pane(v["pane"].as_str().unwrap())["argv"], serde_json::json!(["/bin/sh", "-i"]));
+    let l = w.h.ok(&["profile", "list", "--machine", "labA", "--project", "demo"]);
+    assert_eq!(l["project"]["thread_profiles"], serde_json::json!(["fake", "sh1"]), "{l}");
+    assert_eq!(l["project"]["thread_profile"], "claude", "기본값 사슬의 끝: {l}");
+    // resolve: 이 머신 profile의 harness·인자(기본 profile도)
+    let r = w.h.ok(&["profile", "resolve", "sh1"]);
+    assert_eq!((r["harness"].as_str(), r["args"].clone()), (Some("shell"), serde_json::json!(["-i"])));
+    assert_eq!(w.h.ok(&["profile", "resolve", "codex"])["builtin"], true);
+    let o = w.h.in_terminal(&["profile", "remove", "sh1"], &[], T);
+    assert!(o.contains("profile `sh1`를 지웠다"), "{o}");
+    let e = w.h.json(&[
+        "thread",
+        "start",
+        "demo",
+        "--title",
+        "g",
+        "--profile",
+        "sh1",
+        "--task-file",
+        &w.task("g.txt", "x"),
+    ]);
+    assert!(e.expect_err("지운 profile").contains("profile `sh1`가 없다"));
+}
+
 /// thread restart --profile(herdr-projects threads.rs `restart`, 차이 목록 E8): 그 머신 agent.toml에서 다시 해석해 새 대화로
 /// 띄운다. 허용 목록에 없는 profile·`--resume`과 함께는 거부한다(agent.toml에 없는 profile은 agent 유닛 시험).
 #[test]
@@ -1324,7 +1453,7 @@ fn restart_with_another_profile() {
     let o = w.h.run(&["thread", "restart", "demo", &id, "--resume", "--profile", "mute"]);
     assert_eq!(o.status.code(), Some(2), "{}", String::from_utf8_lossy(&o.stderr));
     let e = w.h.json(&["thread", "restart", "demo", &id, "--profile", "nope"]).expect_err("허용하지 않은 profile");
-    assert!(e.contains("allow_profiles에 없는 profile: nope"), "{e}");
+    assert!(e.contains("profile `nope`는 `demo`의 thread에 허용되지 않았다"), "{e}");
     assert_eq!(w.show(&id)["profile"], "fake", "거부한 restart는 기록을 바꾸지 않는다");
     let v = w.h.ok(&["thread", "restart", "demo", &id, "--profile", "mute"]);
     assert_eq!(v["profile"], "mute", "{v}");
@@ -1991,44 +2120,8 @@ fn routines() {
     let o = w.h.cmd(&["routine", "approve", "demo", "cmd"]).env_remove("AAA_SESSION_ID").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     // 사람이 터미널에서 이름을 치면 승인된다(시험은 script로 PTY를 만든다)
-    let approve = |name: &str, typed: &str| -> String {
-        let line = format!("{} routine approve demo {name}", lab::BIN);
-        let mut c = Command::new("script");
-        if cfg!(target_os = "macos") {
-            c.args(["-q", "/dev/null", lab::BIN, "routine", "approve", "demo", name]);
-        } else {
-            c.args(["-qec", &line, "/dev/null"]);
-        }
-        c.env("AAA_CONFIG_DIR", &w.h.cfg)
-            .env("AAA_STATE_DIR", &w.h.state)
-            .env_remove("AAA_SESSION_ID")
-            .env_remove("AAA_HOOK_SOCK")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        let mut child = c.spawn().unwrap();
-        // 프롬프트가 보인 뒤에 친다(script는 입력이 끝나면 바로 EOF를 넣는다)
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-        let mut out = child.stdout.take().unwrap();
-        let s2 = seen.clone();
-        let reader = std::thread::spawn(move || {
-            let mut b = [0u8; 256];
-            while let Ok(n) = std::io::Read::read(&mut out, &mut b) {
-                if n == 0 {
-                    break;
-                }
-                s2.lock().unwrap().extend_from_slice(&b[..n]);
-            }
-        });
-        let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
-        wait_for_diag("승인 프롬프트", T, || text().contains("이름을 친다").then_some(()), text);
-        let mut stdin = child.stdin.take().unwrap();
-        std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
-        let o = child.wait_with_output().unwrap();
-        drop(stdin);
-        reader.join().unwrap();
-        format!("{}{}", text(), String::from_utf8_lossy(&o.stderr))
-    };
+    let approve =
+        |name: &str, typed: &str| w.h.in_terminal(&["routine", "approve", "demo", name], &[("이름을 친다", typed)], T);
     let out = approve("cmd", "wrong");
     assert!(out.contains("cat value.txt") && out.contains("이름이 다르다"), "{out}");
     assert_eq!(routine("cmd")["approved"], false);
@@ -2357,9 +2450,7 @@ fn coordinator_flow() {
         assert!(e.contains(why), "{bad}: {e}");
     }
     // TASKS.md task로 시작: owner가 profile·machine, 메모가 할 일에 붙는다
-    for (title, why) in
-        [("배포", "me"), ("사람 일", "사람"), ("미할당 일", "--profile"), ("없는 일", "TASKS.md에 없는")]
-    {
+    for (title, why) in [("배포", "me"), ("사람 일", "사람"), ("없는 일", "TASKS.md에 없는")] {
         let e = w.h.json(&["thread", "start", "demo", "--from-task", title, "--kind", "dir"]).expect_err(title);
         assert!(e.contains(why), "{title}: {e}");
     }

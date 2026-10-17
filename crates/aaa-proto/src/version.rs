@@ -15,8 +15,9 @@ impl std::fmt::Display for Version {
     }
 }
 
-/// host ↔ agent. 1.4: `ThreadRebrief.profile`(thread restart --profile)
-pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
+/// host ↔ agent. 1.4: `ThreadRebrief.profile`(thread restart --profile), 1.5: `ThreadPrepare.safety`·`ThreadRebrief.safety`
+/// (yolo·thread_agent_args, plan §8.115)
+pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),

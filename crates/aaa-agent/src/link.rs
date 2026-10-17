@@ -80,8 +80,16 @@ pub fn hello(agent: &Agent) -> AgentHello {
         arch: std::env::consts::ARCH.into(),
         software: aaa_common::util::software(),
         // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`
-        // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.115)
-        features: vec!["terminal.v1".into(), "cwd.v1".into(), "pr.v1".into(), "rename.v1".into(), "profiles.v2".into()],
+        // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.115),
+        // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
+        features: vec![
+            "terminal.v1".into(),
+            "cwd.v1".into(),
+            "pr.v1".into(),
+            "rename.v1".into(),
+            "profiles.v2".into(),
+            "launch_safety.v1".into(),
+        ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
         sessions: agent.sessions(),

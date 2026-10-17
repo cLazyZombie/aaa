@@ -80,18 +80,23 @@ impl Safety {
         self.thread_profiles.as_ref().is_none_or(|l| l.iter().any(|a| a == name || a == "*"))
     }
 
-    /// 실제로 띄울 인자: `args` 뒤에 yolo면 그 harness의 인자(이미 있으면 한 번만, 참고 `Safety::launch_args`)
+    /// 실제로 띄울 인자: `args` 뒤에 yolo면 그 harness의 인자(참고 `Safety::launch_args`)
     pub fn launch_args(&self, harness: &str, args: &[String]) -> Vec<String> {
-        let mut out = args.to_vec();
-        if self.yolo {
-            for flag in yolo_flags(harness).unwrap_or_default() {
-                if !out.iter().any(|a| a == flag) {
-                    out.push(flag.to_string());
-                }
+        apply_yolo(self.yolo, harness, args)
+    }
+}
+
+/// `args` 뒤에 yolo면 그 harness의 권한 건너뛰기 인자(이미 있으면 한 번만). agent가 profile을 푼 뒤 쓴다.
+pub fn apply_yolo(yolo: bool, harness: &str, args: &[String]) -> Vec<String> {
+    let mut out = args.to_vec();
+    if yolo {
+        for flag in yolo_flags(harness).unwrap_or_default() {
+            if !out.iter().any(|a| a == flag) {
+                out.push(flag.to_string());
             }
         }
-        out
     }
+    out
 }
 
 /// `thread_agent_args`가 닿는 profile(참고 `profiles::launch_args`, herdr-projects issue #45): 프로젝트 기본 profile의

@@ -665,10 +665,12 @@ impl Agent {
                     .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                     .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile } => {
+            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile, safety } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 cfg.fresh()
-                    .and_then(|cfg| threads::rebrief(&cfg, &work_dir, &brief, launch, profile.as_deref()))
+                    .and_then(|cfg| {
+                        threads::rebrief(&cfg, &work_dir, &brief, launch, profile.as_deref(), safety.as_ref())
+                    })
                     .map(AgentResponse::Relaunch)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }

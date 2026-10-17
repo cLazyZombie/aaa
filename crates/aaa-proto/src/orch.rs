@@ -90,6 +90,21 @@ pub struct ThreadPrepare {
     pub base: Option<String>,
     pub profile: String,
     pub brief: String,
+    /// thread를 띄울 때 safety(plan §8.115). `launch_safety.v1`을 알린 agent에만 보낸다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety: Option<LaunchSafety>,
+}
+
+/// host → agent: thread 인자에 더할 safety(herdr-projects `profiles::launch_args`·`Safety::launch_args`). host는 profile의
+/// harness를 모르므로 agent가 profile을 풀고 붙인다.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LaunchSafety {
+    /// harness의 권한 건너뛰기 인자(claude `--dangerously-skip-permissions`, codex `--dangerously-bypass-approvals-and-sandbox`)
+    pub yolo: bool,
+    /// 프로젝트 기본 profile과 같은 harness의 기본 profile에만 붙인다(사람이 정의한 profile은 제 인자를 쓴다)
+    pub thread_agent_args: Vec<String>,
+    /// 프로젝트 기본 profile 이름: 그 harness가 `thread_agent_args`의 harness다(못 풀면 claude)
+    pub default_profile: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
