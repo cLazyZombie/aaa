@@ -1487,6 +1487,9 @@ try {
         const name = `compose-${scheme}-${dev}`;
         aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
         const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { colorScheme: scheme, deviceScaleFactor })).page;
+        // 커서는 herdr-web-ui처럼 깜빡인다(cursorBlink). 꺼진 순간에 재면 커서색이 투명이라 샘을 볼 수 없다:
+        // 깜빡임만 멈춰 커서가 그려진 상태에서 잰다
+        await p.addStyleTag({ content: ".xterm .xterm-cursor-blink, .xterm .xterm-cursor-blink * { animation: none !important; }" });
         await p.getByTestId(`pane-${name}`).click();
         await until("조합 화면", async () => (await screenText(p)).includes("plain 상태"));
         await p.locator(".xterm-screen").click();
