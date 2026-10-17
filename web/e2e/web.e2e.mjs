@@ -336,8 +336,8 @@ const softKeyboard = (page, visible) =>
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
 // line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
-// wsRoute: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로챈다)
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute } = {}) {
+// wsRoute·route: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로채고, 글꼴은 연결 화면에서 이미 받는다)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -407,12 +407,16 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       true,
     );
   });
-  // AAA_E2E_NO_LOCAL_FONT=1: 이 머신에 깔린 Meslotendard를 빼고 넣은 글꼴(WOFF2)만 쓴다(CI 러너처럼). 기본은 끔
+  // AAA_E2E_NO_LOCAL_FONT=1: 이 머신에 깔린 Meslotendard를 빼고 넣은 글꼴(WOFF2)만 쓴다(CI 러너·처음 여는 기기처럼).
+  // 목록의 Meslotendard와 @font-face의 local()을 모두 뺀다(같은 이름의 @font-face를 뒤에 둔다). 기본은 끔
   if (process.env.AAA_E2E_NO_LOCAL_FONT)
     await ctx.addInitScript(() =>
       document.addEventListener("DOMContentLoaded", () => {
         const st = document.createElement("style");
-        st.textContent = ':root{--font-term:"Meslotendard Web", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace !important}';
+        st.textContent = [400, 700]
+          .map((w) => `@font-face{font-family:"Meslotendard Web";src:url("/fonts/meslotendard-0.3.1/Meslotendard-${w === 400 ? "Regular" : "Bold"}.woff2") format("woff2");font-weight:${w}}`)
+          .concat(':root{--font-term:"Meslotendard Web", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace !important}')
+          .join("\n");
         document.head.append(st);
       }),
     );
@@ -423,6 +427,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       await route.continue();
     });
   if (wsRoute) await ctx.routeWebSocket(...wsRoute);
+  if (route) await ctx.route(...route);
   const page = await ctx.newPage();
   openPages.add(page);
   page.on("close", () => openPages.delete(page));
@@ -1538,6 +1543,48 @@ try {
     for (const mode of names) aaa("pane", "kill", `scroll-${mode}`);
     if (bad.length) throw new Error(bad.join("; "));
     console.log(`     휴대폰 240px 끌기: 첫 줄 s-${ph.before} → s-${ph.after}(${ph.want}줄)`);
+  });
+
+  await step("글꼴이 늦게 와도 맨 아래(넣은 WOFF2, plan §8.60): 터미널을 연 뒤 글꼴이 받아져 칸 높이가 바뀌어도 맨 아래를 보던 화면은 맨 아래에 남는다", async () => {
+    // CI 러너와 처음 여는 기기에는 Meslotendard가 깔려 있지 않다: 대신 글꼴로 열고, 넣은 글꼴은 늦게 받는다.
+    // 대신 글꼴은 칸 높이가 확실히 다른 것을 쓴다(같으면 이 시험은 아무것도 보지 않는다)
+    aaa("pane", "run", "--machine", "labA", "--name", "fontjump", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await until("fontjump 200줄", () => aaa("pane", "read", "fontjump").lines.join("\n").includes("s-200"));
+    const init = () =>
+      document.addEventListener("DOMContentLoaded", () => {
+        const st = document.createElement("style");
+        // 이 머신에 깔린 Meslotendard(local)를 쓰지 않고 WOFF2만 받게 같은 이름의 @font-face를 뒤에 둔다
+        st.textContent = [400, 700]
+          .map((w) => `@font-face{font-family:"Meslotendard Web";src:url("/fonts/meslotendard-0.3.1/Meslotendard-${w === 400 ? "Regular" : "Bold"}.woff2") format("woff2");font-weight:${w}}`)
+          .concat(':root{--font-term:"Meslotendard Web", "Courier New", monospace !important}')
+          .join("\n");
+        document.head.append(st);
+      });
+    let release;
+    const fontGate = new Promise((r) => (release = r));
+    const hold = async (r) => {
+      await fontGate;
+      await r.continue();
+    };
+    const p = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { init, route: ["**/fonts/**", hold] })).page;
+    const rowHeight = () => p.evaluate(() => document.querySelector(".xterm-rows > div")?.getBoundingClientRect().height ?? 0);
+    const atBottom = () =>
+      p.evaluate(() => {
+        const vp = document.querySelector(".xterm-viewport");
+        return vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 1;
+      });
+    await p.getByTestId("pane-fontjump").click();
+    await until("대신 글꼴로 맨 아래 s-200", async () => (await screenText(p)).includes("s-200") && (await atBottom()));
+    const before = await rowHeight();
+    release();
+    await until("넣은 글꼴로 칸 높이가 바뀜", async () => Math.abs((await rowHeight()) - before) >= 1);
+    const after = await rowHeight();
+    await until("글꼴이 바뀐 뒤에도 맨 아래 s-200", async () => (await screenText(p)).includes("s-200") && (await atBottom())).catch(async (e) => {
+      throw new Error(`${e.message}: 칸 ${before.toFixed(1)}px → ${after.toFixed(1)}px, ${JSON.stringify(await termDiag(p))}`);
+    });
+    console.log(`     칸 높이 ${before.toFixed(1)}px → ${after.toFixed(1)}px`);
+    await p.context().close();
+    aaa("pane", "kill", "fontjump");
   });
 
   await step("줄 수가 줄면 위 줄을 기록으로(xterm·herdr처럼, plan §8.59): 작은 화면이 크기를 걸어도 host 화면에 마지막 줄·커서 줄이 남고, 다시 붙은 웹은 그 위를 굴려 본다", async () => {
