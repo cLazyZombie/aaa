@@ -1239,6 +1239,89 @@ try {
     aaa("pane", "kill", "kbset");
   });
 
+  await step("터미널 글꼴(herdr-web-ui 설정 「터미널 글꼴」, 차이 목록 「글꼴 종류」): 적은 목록을 거르고 기본 글꼴 앞에, face를 받은 뒤 cell을 재고, 찾아보기는 고정폭만, 비우면 기본", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "fontset", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await until("fontset 준비", () => aaa("pane", "read", "fontset").lines.join("\n").includes("s-200"));
+    // 시험 글꼴 「E2E Wide」: 넣은 Meslotendard를 다른 주소로 150% 크기로 받는다(깔린 글꼴에 기대지 않는다).
+    // 깔린 글꼴 목록(Chromium queryLocalFonts)은 정해 둔 셋으로 바꾼다. Helvetica는 비례폭이라 거절해야 한다.
+    const init = () => {
+      try {
+        document.fonts.add(new FontFace("E2E Wide", 'url("/fonts/meslotendard-0.3.1/Meslotendard-Regular.woff2?e2e-wide")', { sizeAdjust: "150%" }));
+        window.queryLocalFonts = async () => [{ family: "Menlo" }, { family: "Helvetica" }, { family: "E2E Wide" }];
+      } catch {}
+    };
+    const fp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init })).page;
+    // 그 face는 늦게 준다: 받기 전에 cell을 재면 대신 글꼴 너비가 남아 아래 1.5배 확인이 실패한다
+    let wideFetches = 0;
+    await fp.context().route((url) => url.search === "?e2e-wide", async (r) => {
+      wideFetches += 1;
+      await sleep(800);
+      await r.continue();
+    });
+    await fp.getByTestId("pane-fontset").click();
+    await until("fontset 화면", async () => (await screenText(fp)).includes("s-200"));
+    // cell 너비 = 글자 영역 너비 / 열 수(머리의 cols×rows), 그리고 host PTY 열 수
+    const cell = async () => {
+      const m = await fp.evaluate(() => {
+        const w = document.querySelector('[data-testid="terminal"] .xterm-screen').getBoundingClientRect().width;
+        const cols = Number(/(\d+)×\d+/.exec(document.querySelector(".term-title .muted").textContent)?.[1]);
+        return { w: w / cols, cols };
+      });
+      return { ...m, pty: aaa("pane", "list").panes.find((x) => x.name === "fontset").cols };
+    };
+    let last = null;
+    const settle = (what, ok) =>
+      until(what, async () => {
+        last = await cell();
+        return last.cols === last.pty && ok(last);
+      }).catch((e) => {
+        throw new Error(`${e.message} 마지막: ${JSON.stringify(last)}`);
+      });
+    await settle("처음 크기", () => true);
+    const first = last;
+    const field = () => fp.getByRole("dialog", { name: "설정" }).getByRole("textbox", { name: "터미널 글꼴" });
+    const stored = () => fp.evaluate(() => localStorage.getItem("aaa:terminal-font-family"));
+    // 찾아보기: 이름순, 검색, 비례폭 거절(값을 바꾸지 않음), 고정폭을 고르면 그것이 값
+    await fp.getByTestId("settings-open").click();
+    const dlg = fp.getByRole("dialog", { name: "설정" });
+    await dlg.getByRole("button", { name: "터미널 글꼴에 설치된 글꼴 찾아보기" }).click();
+    const listed = await dlg.getByRole("list", { name: "설치된 글꼴" }).getByRole("button").allInnerTexts();
+    if (JSON.stringify(listed) !== JSON.stringify(["E2E Wide", "Helvetica", "Menlo"])) throw new Error(`글꼴 목록 ${listed}`);
+    await dlg.getByRole("searchbox", { name: "글꼴 검색" }).fill("hel");
+    await dlg.getByRole("button", { name: "Helvetica" }).click();
+    await dlg.getByText("Helvetica은(는) 고정폭 글꼴이 아닙니다.", { exact: false }).waitFor();
+    await shot(fp, "desktop-terminal-font");
+    if ((await field().inputValue()) !== "" || (await stored()) !== null) throw new Error("비례폭 글꼴을 받아들였다");
+    // 검색칸의 Esc는 목록만 닫는다
+    await dlg.getByRole("searchbox", { name: "글꼴 검색" }).press("Escape");
+    await dlg.getByRole("list", { name: "설치된 글꼴" }).waitFor({ state: "detached" });
+    await dlg.getByRole("button", { name: "터미널 글꼴에 설치된 글꼴 찾아보기" }).click();
+    await dlg.getByRole("button", { name: "E2E Wide" }).click();
+    if ((await field().inputValue()) !== '"E2E Wide"' || (await stored()) !== '"E2E Wide"') throw new Error(`고른 값 ${await field().inputValue()} / ${await stored()}`);
+    // 그 face를 받은 뒤 넣으므로 cell은 1.5배, grid는 줄고 host PTY도 그 열 수
+    await settle("넓은 글꼴로 다시 맞춤", (c) => Math.abs(c.w / first.w - 1.5) < 0.05 && c.cols < first.cols);
+    if (wideFetches !== 1) throw new Error(`E2E Wide를 ${wideFetches}번 받았다`);
+    // 적은 값은 거른다(세미콜론·중괄호를 빼고, 빈 이름을 버리고, 빈칸 있는 이름은 따옴표). Esc로 닫아도 저장한다
+    await field().fill("'E2E Wide'; }, , Menlo");
+    await fp.keyboard.press("Escape");
+    await until("설정 닫힘", async () => (await fp.locator(".settings-dialog").count()) === 0);
+    if ((await stored()) !== '"E2E Wide", Menlo') throw new Error(`거른 값 ${await stored()}`);
+    // 다시 열어도 이 기기의 글꼴: 연 뒤 face를 받고 나서 잰다
+    await fp.reload();
+    await fp.getByTestId("pane-fontset").click();
+    await settle("다시 연 화면도 넓은 글꼴", (c) => Math.abs(c.w / first.w - 1.5) < 0.05);
+    if (wideFetches !== 2) throw new Error(`다시 열고 E2E Wide를 ${wideFetches}번째로 받지 않았다`);
+    // 비우면(Enter) 기본 글꼴, 저장값도 지운다
+    await fp.getByTestId("settings-open").click();
+    await field().fill("");
+    await field().press("Enter");
+    if ((await stored()) !== null) throw new Error(`비웠는데 저장값 ${await stored()}`);
+    await fp.keyboard.press("Escape");
+    await settle("기본 글꼴로 돌아옴", (c) => Math.abs(c.w - first.w) < 0.05 && c.cols === first.cols);
+    await fp.context().close();
+    aaa("pane", "kill", "fontset");
+  });
+
   await step("구독 사용량·설정(herdr-web-ui UsageMeters·SettingsDialog): 목록 아래 톱니와 Claude·Codex 칩(herdr-web-ui AgentMark), 펼치면 한도·초기화까지, 다른 구독은 묻지 않음, host는 5분 캐시, 설정에서 남은 양·세션·숨기기·순서·입력 방식", async () => {
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     const strip = dp.getByTestId("usage-strip");

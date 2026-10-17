@@ -109,6 +109,13 @@ const paths: Record<string, ReactNode> = {
       <path d="M7.5 15.5a1.6 1.6 0 0 0 3 0" />
     </>
   ),
+  // 찾아보기(돋보기)
+  search: (
+    <>
+      <circle cx="8" cy="8" r="4.5" />
+      <path d="m11.3 11.3 3.7 3.7" />
+    </>
+  ),
   "bell-off": (
     <>
       <path d="M4.5 12.5V8.5a4.5 4.5 0 0 1 9 0v4l1.2 1.5H3.3z" />
