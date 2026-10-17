@@ -29,12 +29,13 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== FONT_FAMILY_KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== FONT_FAMILY_KEY && e.key !== KEEP_SCREEN_KEY) return;
   mode = read();
   fontSize = readFontSize();
   wheelSpeed = readWheelSpeed();
   keyBarItems = readKeyBarItems();
   fontFamily = readFontFamily();
+  keepScreenOn = readKeepScreenOn();
   listeners.forEach((f) => f());
 });
 
@@ -175,6 +176,34 @@ export function setTerminalFontFamily(family: string) {
 
 export function useTerminalFontFamily(): string {
   return useSyncExternalStore(subscribe, () => fontFamily);
+}
+
+/** 화면 켜짐 유지(herdr-web-ui settings.ts `keepScreenOn`: 기기마다, 기본 꺼짐). pane을 보는 동안 wake lock을 건다 */
+const KEEP_SCREEN_KEY = "aaa:keep-screen-on";
+
+function readKeepScreenOn(): boolean {
+  try {
+    return localStorage.getItem(KEEP_SCREEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+let keepScreenOn = readKeepScreenOn();
+
+export function setKeepScreenOn(on: boolean) {
+  keepScreenOn = on;
+  try {
+    if (on) localStorage.setItem(KEEP_SCREEN_KEY, "1");
+    else localStorage.removeItem(KEEP_SCREEN_KEY);
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function useKeepScreenOn(): boolean {
+  return useSyncExternalStore(subscribe, () => keepScreenOn);
 }
 
 export function setTerminalInputMode(next: TerminalInputMode) {

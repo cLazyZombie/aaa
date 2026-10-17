@@ -13,6 +13,7 @@ import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "./herdr/installedFonts.ts";
 import {
+  setKeepScreenOn,
   setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalInputMode,
@@ -22,6 +23,7 @@ import {
   TERMINAL_WHEEL_SPEED_MAX,
   TERMINAL_WHEEL_SPEED_MIN,
   updateUsageSettings,
+  useKeepScreenOn,
   useTerminalFontFamily,
   useTerminalFontSize,
   useTerminalInputMode,
@@ -332,6 +334,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
   const fontFamily = useTerminalFontFamily();
+  const keepScreenOn = useKeepScreenOn();
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
@@ -430,6 +433,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <button type="button" ref={keyBarButton} onClick={() => setKeyBarOpen(true)}>
                 키 바 편집
               </button>
+            </SettingsRow>
+          </SettingsGroup>
+          {/* 참고 SettingsDialog 「휴대폰」 840~843줄(문구는 참고 i18n.ko.ts). 설치 줄은 목록 바닥의 설치 단추가 맡는다 */}
+          <SettingsGroup title="휴대폰">
+            <SettingsRow label="화면 켜짐 유지" description="터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다. HTTPS 또는 localhost와 지원 브라우저가 필요합니다.">
+              <Toggle label="화면 켜짐 유지" checked={keepScreenOn} onChange={setKeepScreenOn} />
             </SettingsRow>
           </SettingsGroup>
           <UsageGroups />
