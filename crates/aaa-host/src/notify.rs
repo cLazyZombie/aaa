@@ -106,15 +106,28 @@ pub(crate) async fn post_raw(url: &str, headers: &[(&str, String)], body: &[u8])
             .map_err(|e| format!("TLS 실패: {e}"))?;
         s.write_all(head.as_bytes()).await.map_err(|e| e.to_string())?;
         s.write_all(body).await.map_err(|e| e.to_string())?;
-        let _ = s.read_to_end(&mut buf).await;
+        read_head(&mut s, &mut buf).await;
     } else {
         let mut s = tcp;
         s.write_all(head.as_bytes()).await.map_err(|e| e.to_string())?;
         s.write_all(body).await.map_err(|e| e.to_string())?;
-        let _ = s.read_to_end(&mut buf).await;
+        read_head(&mut s, &mut buf).await;
     }
     let line = String::from_utf8_lossy(&buf).lines().next().unwrap_or_default().to_string();
     line.split_whitespace().nth(1).and_then(|c| c.parse().ok()).ok_or_else(|| "HTTP 응답이 아니다".into())
+}
+
+/// 응답 머리(빈 줄까지)만 읽는다. 상태 코드만 쓴다.
+/// Apple push 서버는 `Connection: close`를 보내도 응답 뒤 연결을 닫지 않는다(10-17 실측: 0.75초에 응답, 15초 넘게
+/// 열림). 닫힐 때까지 읽으면 전달된 알림도 timeout 실패로 기록된다.
+async fn read_head<S: tokio::io::AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>) {
+    let mut chunk = [0u8; 4096];
+    while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 64 * 1024 {
+        match s.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+    }
 }
 
 impl Host {
@@ -221,6 +234,34 @@ mod tests {
         assert!((200..600).contains(&code), "{code}");
         let e = post("https://self-signed.badssl.com/", b"{}").await.unwrap_err();
         assert!(e.contains("TLS"), "{e}");
+        // Apple push는 응답 뒤 연결을 닫지 않는다: 머리만 읽고 바로 돌아와야 한다(잘못된 경로라 403)
+        let t = std::time::Instant::now();
+        let code = post("https://web.push.apple.com/aaa-probe-invalid", b"{}").await.unwrap();
+        assert!((400..500).contains(&code) && t.elapsed() < Duration::from_secs(5), "{code} {:?}", t.elapsed());
+    }
+
+    /// 응답 뒤 연결을 닫지 않는 서버(Apple push 실측)에서도 상태 코드를 바로 돌려준다
+    #[tokio::test]
+    async fn response_without_close() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut req = Vec::new();
+            let mut b = [0u8; 1024];
+            while !req.ends_with(b"{}") {
+                let n = s.read(&mut b).await.unwrap();
+                req.extend_from_slice(&b[..n]);
+            }
+            // 머리를 두 번에 나눠 보내고 연결은 열어 둔다
+            s.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            s.write_all(b"\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let r = tokio::time::timeout(Duration::from_secs(3), post(&format!("http://{addr}/p"), b"{}")).await;
+        assert_eq!(r.expect("연결이 닫히기를 기다렸다"), Ok(201));
+        server.abort();
     }
 
     #[test]
