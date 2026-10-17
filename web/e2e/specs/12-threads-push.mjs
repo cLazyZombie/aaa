@@ -169,6 +169,7 @@ export default async function ({ ctl, page }) {
       cells: [
         ["<code>T2</code>", "같음", "<code>prefs.rs</code>"],
         ["R1", "<strong>일부</strong>", "표와 <code>code</code>"],
+        ["Q9", "휴대폰 표 칸의 한글 낱말은 음절 사이에서 끊기지 않는다", "경우마다 메모를 남긴다"],
       ],
       nested: "하나",
       ol: 2,
@@ -203,6 +204,23 @@ export default async function ({ ctl, page }) {
     await report.locator(".markdown-table-wrap").scrollIntoViewIfNeeded();
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
+    // 표 칸의 한글 낱말은 한 줄에 남는다(QA t-0337 Q9 「경/우」): 낱말마다 그 글자들이 그려진 줄이 하나다
+    const split = await report.evaluate((el) => {
+      const bad = [];
+      for (const cell of el.querySelectorAll(".markdown th, .markdown td")) {
+        const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          for (const m of n.data.matchAll(/[가-힣]+/g)) {
+            const r = document.createRange();
+            r.setStart(n, m.index);
+            r.setEnd(n, m.index + m[0].length);
+            if (new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size > 1) bad.push(m[0]);
+          }
+        }
+      }
+      return bad;
+    });
+    if (split.length) throw new Error(`휴대폰 폭 표 칸에서 한글 낱말이 갈렸다: ${split.join(", ")}`);
     await shot(page, "phone-report-markdown");
     await page.setViewportSize({ width: 1280, height: 800 });
     // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다

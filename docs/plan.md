@@ -2335,6 +2335,11 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
 - **시험.** 웹 E2E 「줄 메뉴」(`web/e2e/specs/12-threads-push.mjs`): 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다. 파일마다 새 실험실이라 host가 고정을 나눈 적이 없다: 참고대로 그때는 고정만 바꿔서는 보내지 않고 첫 설정 변경에 실려 가므로(`preferencesChange`, 참고 `shared/preferences.ts` 「absent until a browser first shares its pins」), 단계는 빈 고정을 써 두고 다시 연 화면에서 시작한다.
 
+### 8.104 보고 표 칸의 한글 낱말·떠날 때 공유 설정 보내기(10-18, QA t-0337 Q9·Q11)
+
+- **Q9 표 칸.** 휴대폰 보고 표 칸에서 한글이 음절마다 끊겼다(「경/우」). 참고 `ChatView.css`는 칸을 `overflow-wrap: normal`로 두어 「칸은 가장 긴 낱말보다 좁아지지 않고, 자리가 없으면 표가 그 칸 안에서 굴러간다」를 뜻했지만, 한글은 낱말 안 음절 사이에서도 줄을 바꿀 수 있어 그 뜻이 서지 않았다. `.markdown th, .markdown td { word-break: keep-all }`을 `web/src/style.css`에 둔다(옮긴 `herdr/Markdown.css`는 그대로). 시험: 웹 E2E 「thread 보고서·결과물」(`specs/12-threads-push.mjs`)의 휴대폰 폭에서 표 칸의 한글 낱말마다 그려진 줄이 하나인지(Range `getClientRects`). 고침 없이 돌리면 「음절」이 갈려 떨어진다.
+- **Q11 떠날 때 보내기.** 공유 설정은 바뀐 뒤 600ms 멈추면 보낸다(참고 `SEND_AFTER_MS`). 그 안에 탭·앱을 닫으면 값이 사라졌다(참고도 같다). t3code는 떠날 때 미룬 저장을 마저 쓴다(`apps/web/src/uiStateStore.ts` `beforeunload → flush()`). aaa는 iOS에서 믿을 수 없는 `beforeunload` 대신 `pagehide`와 `visibilitychange`(hidden)를 듣고, 기다림을 건너뛰어 `fetch(keepalive)`로 지금 보낸다(`preferencesSync.ts`). 앞 변경이 가는 중이면 겹쳐 보내지 않는다: 그 짧은 동안 더 바꾸고 바로 닫으면 그 나머지는 잃는다(다시 열면 host 값이 선다). 시험: 웹 E2E 「공유 설정」(`specs/14-shared-preferences.mjs`) 새 화면에서 테마를 바꾸자마자 `page.close({ runBeforeUnload: true })` → 다른 기기 `data-theme`이 바뀌고 host 문서에 남는다. 고침 없이 돌리면 다른 기기가 바뀌지 않아 떨어진다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
