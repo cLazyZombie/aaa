@@ -95,6 +95,10 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         .map(|_| ())
     });
     assert_eq!(chat_len(), Some(2));
+    // thread가 아닌 pane의 Claude hook에는 진행 안내를 넣지 않는다(aaa가 hook 설정을 주는 세션만, herdr-projects
+    // `managed`). 이 가짜는 hook 출력을 화면에 낸다
+    let read = h.ok(&["pane", "read", &cid, "--lines", "1000"]);
+    assert!(!read["text"].as_str().unwrap().contains("additionalContext"), "{read}");
     let before = h.pane(&cid)["agent"].clone();
     assert_eq!((before["harness"].as_str(), before["activity"].as_str()), (Some("claude"), Some("idle")), "{before}");
     let restored = |what: &str| {

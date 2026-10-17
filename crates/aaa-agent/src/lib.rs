@@ -65,6 +65,9 @@ pub struct Agent {
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
     /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
     harness_started: Mutex<HashMap<String, String>>,
+    /// 세션마다 진행 알림 기록(Claude hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
+    /// 한 번 일찍 갈 수 있을 뿐이다.
+    progress: Mutex<HashMap<String, hooks::Progress>>,
     /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
@@ -101,6 +104,7 @@ impl Agent {
             harness_last: Mutex::new(HashMap::new()),
             labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
+            progress: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -115,7 +119,7 @@ impl Agent {
                 let me = me.clone();
                 tokio::spawn(async move {
                     let reply = match me.on_hook(&mut s).await {
-                        Ok(()) => "ok\n".to_string(),
+                        Ok(out) => format!("ok\n{}", out.unwrap_or_default()),
                         Err(e) => format!("error: {e:#}\n"),
                     };
                     let _ = tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await;
@@ -126,7 +130,8 @@ impl Agent {
         Ok(())
     }
 
-    async fn on_hook(self: &Arc<Self>, s: &mut aaa_common::ipc::LocalStream) -> Result<()> {
+    /// hook 사건 하나. 돌려준 것은 `aaa hook`이 harness에 출력할 진행 안내다(Claude만).
+    async fn on_hook(self: &Arc<Self>, s: &mut aaa_common::ipc::LocalStream) -> Result<Option<String>> {
         let msg = hooks::read_msg(s).await?;
         if msg.session.is_empty() || !msg.session.chars().all(|c| c.is_ascii_alphanumeric()) {
             bail!("세션 ID 형식이 아니다");
@@ -135,11 +140,35 @@ impl Agent {
         if hooks::hook_token(&spec.token) != msg.token {
             bail!("hook token이 맞지 않는다");
         }
-        let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
-            return Ok(());
-        };
-        self.harness_event(ev).await;
-        Ok(())
+        let now = util::now_ms();
+        if let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, now) {
+            if msg.harness == "report" {
+                let mut map = self.progress.lock().unwrap();
+                let rec = map.entry(msg.session.clone()).or_default();
+                (rec.reported_at, rec.percent) = (now, ev.percent);
+            }
+            self.harness_event(ev).await;
+        }
+        // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
+        let managed = spec.spec.role.is_some();
+        Ok(if managed && msg.harness == "claude" { self.guide(&msg.session, &msg.payload, now) } else { None })
+    }
+
+    /// Claude hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
+    /// 넣지 않는다(`foreign_session`). 실행 파일 경로는 brief와 같은 꼴이다(`fill_brief`).
+    fn guide(&self, session: &str, p: &serde_json::Value, now: u64) -> Option<String> {
+        let kind = hooks::guide_kind(p)?;
+        let id = p.get("session_id").and_then(|v| v.as_str());
+        if kind != "SessionStart"
+            && let (Some(started), Some(id)) = (self.harness_started.lock().unwrap().get(session), id)
+            && started != id
+        {
+            return None;
+        }
+        let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
+        let mut map = self.progress.lock().unwrap();
+        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+        Some(hooks::output(kind, &text))
     }
 
     /// harness 사건을 기억하고(다시 알릴 것이면) host에 보낸다
@@ -804,6 +833,7 @@ impl Agent {
         }
         self.harness_last.lock().unwrap().remove(session);
         self.labels.lock().unwrap().remove(session);
+        self.progress.lock().unwrap().remove(session);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");

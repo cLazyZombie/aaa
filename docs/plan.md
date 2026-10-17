@@ -2458,7 +2458,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 질문 본문은 화면 끝 24줄에서 물음표가 있는 마지막 줄(없으면 마지막 줄, 300자)이다(host `modal_of`와 같은 규칙). 종류는 신뢰 창이면 `trust`, Claude bash·일반 권한 창과 Codex 승인 창 규칙이면 `permission`, 나머지는 `confirm`이다.
   - herdr의 800ms refresh는 aaa host에 상태만 있어 다시 보내지 않는다. 본문이 달라졌을 때만 보낸다(답한 뒤 창이 잠깐 남아도 질문을 새로 열지 않고, 다른 창이 바로 이어 뜨면 연다).
   - agent가 기억하는 사건은 칸 셋(진행 보고·세션 ID·상태)이다. 세션 ID 사건(compact·clear 뒤 SessionStart)이 상태를 덮지 않는다. agent가 다시 떠 같은 상태를 다시 감지하면 그 상태가 된 때를 그대로 보낸다.
-- **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 건다. Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
+- **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 host에 알린다. PostToolUse는 진행 안내만 하고 host에 보내지 않는다(§8.118). Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
 - **host.**
   - `session_start`·`session`은 상태를 바꾸지 않는다(처음 보는 pane만 「시작」). 옛 agent의 `turn_start`·`turn_end` 등은 그대로 받는다.
   - 입력 수신은 `working`·`question`(옛 agent는 `turn_start`)이 오면 `accepted`다.
@@ -2623,6 +2623,21 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험(결함 심기).** `web.rs` `guard_tests`는 router를 그대로 부른다(`tower::ServiceExt::oneshot`, dev-dependency, axum이 이미 쓰는 판). Host 다른 포트·포트 없음·localhost → 421, Origin 다른 포트·포트 없음·http·남의 주소 → 403(WS upgrade 포함), 443은 포트 없이, 공개 전 loopback만, 깨진 cookie·HTTPS의 prefix 없는 cookie, API no-store를 본다. `lib.rs` pairing 시험은 기다림 2·4·8·16·32·60초에서 멈춤, 10분 뒤 잊음, 새 코드가 풀음, 폐기한 기기의 보기 경로 401을 본다. 고치기 전 결함 10가지(이름만 비교 2·localhost·새 코드가 안 풂·창 없음·상한 없음·cookie 포기·prefix 없는 cookie·보기 경로·no-store)를 하나씩 되심으면 이 시험이 모두 실패하는 것을 확인했다.
 - **폐기와 진행 중 작업(A9).** 입력줄 보내기는 글을 친 뒤 300ms 기다렸다 Enter를 친다. 그 사이 폐기된 기기의 Enter는 보내지 않고 4401로 닫는다. 그림 업로드는 마지막 조각을 agent가 쓴 뒤 경로를 넣기 직전에 폐기를 다시 본다(§6.4). 참고 t3code `SessionStore.awaitInvalidation`(await 뒤 다시 확인). 시험: 웹 E2E `05-devices` 「폐기와 보내던 Enter」(그 실험실 host만 `AAA_TEST_SUBMIT_GAP_MS=4000`, 글이 들어간 것을 보고 폐기 → 연결 닫힘 → 이어 친 글이 같은 줄에 붙음). 검사를 빼면 이 단계가 실패하는 것을 확인했다. 업로드 쪽은 마지막 조각을 쓰는 틈을 시험이 붙잡을 수 없어 코드로만 확인했다.
 - **넘긴 것.** A3(UDS 세션 범위 자기 신고)·A6(diag/input 역할·content-type)은 이 묶음 밖이다(t-0340 넘김 범위).
+
+### 8.118 Claude hook으로 진행 보고 안내를 넣는다(10-18, 차이 목록 3장 B5)
+
+- **무엇.** herdr-projects 0.2.35 `src/progress.rs` `hook`·`respond`·`eligible`·`output`대로, aaa가 띄운 thread 세션의 Claude hook이 `additionalContext`로 진행 보고 안내를 넣는다. 안내만 한다. 상태는 화면 감지 그대로다(§8.110, 결정 20 D8 「hook은 세션 ID만」은 상태 쪽 결정이라 부딪히지 않는다).
+  - SessionStart: 지침(`# 진행 보고(aaa)` + brief와 같은 진행 안내 글). 이 세션의 알림 기록을 새로 한다.
+  - UserPromptSubmit: 「새 일이면 새 어림을 보고하고, 사용자를 기다리기 전에 보고한다」.
+  - PostToolUse: 마지막 안내와 마지막 보고에서 1분이 지났고 100%(Done)가 아니면 알림 한 줄(참고 `REMIND_SECS`).
+- **거르기(참고 `eligible`·`foreign_session`·`managed`).** 하위 agent의 사건, `aaa report` 자신의 PostToolUse, 이 세션이 시작한 harness 세션과 다른 세션의 사건에는 넣지 않는다. aaa가 hook 설정(`--settings`)을 주는 thread 세션(세션 역할이 있다)만 넣는다. aaa coordinator는 사람이 띄운 pane이라 hook 설정이 없다.
+- **자리.**
+  - 진행 안내 글은 `aaa-proto` `progress_guidance` 하나다. brief(host)와 hook(agent)이 함께 쓴다(참고도 brief와 hook이 `progress::guidance` 하나다).
+  - agent가 세션마다 알림 기록(마지막 보고 때·백분율, 마지막 안내 때)을 기억하고 `hooks::respond`로 안내를 정한다(시계는 인자). 기록은 기억만 한다: agent가 다시 뜨면 알림이 한 번 일찍 갈 수 있을 뿐이다.
+  - agent는 hook 답 `ok` 뒤에 Claude가 읽는 JSON 한 줄(`hookSpecificOutput.hookEventName`·`additionalContext`)을 붙이고, `aaa hook`은 그것만 표준 출력에 쓴다. 옛 agent는 `ok`만 답해 아무것도 쓰지 않고, 옛 `aaa hook`은 `ok` 뒤를 읽지 않는다. agent link·session IPC는 그대로다.
+  - `claude --settings`에 PostToolUse hook을 더했다(matcher 없음, 참고 setup.rs). 상태 hook(Stop·PermissionRequest·Notification)은 여전히 없다.
+- **Codex는 다르게 둔다(이유).** 참고는 `~/.codex/hooks.json`에 hook을 깐다. aaa는 사용자 설정을 고치지 않고 실행마다 `-c notify`만 준다(§8.15). notify는 턴 끝 알림이라 안내를 넣을 수 없다. Codex thread는 brief의 진행 안내만 받는다.
+- **시험.** agent 유닛: 참고 `helpers_and_the_reporters_own_call_do_not_trigger`·`session_start_injects_instructions_and_resets_the_record`·`reminders_are_throttled_to_once_a_minute_and_stop_at_done`를 옮겼다(1분 간격은 유닛에서만 본다, E2E는 기다리지 않는다). PostToolUse는 host 사건이 아니다. m13 `claude_thread_states_questions_and_messages`: 가짜 Claude가 실제 Claude처럼 hook 출력을 받아 적고(`HOOK_LOG`), SessionStart 지침(실행 파일 경로가 든 `report --percent 25`)과 UserPromptSubmit 안내를 받았다. e2e `host_restart_keeps_sessions_and_disconnect_is_readonly`: thread가 아닌 Claude pane의 hook은 아무것도 쓰지 않는다. 결함 심기(되돌렸다): 안내를 빼면 m13, 관리 세션 검사를 빼면 e2e, 알림 간격·report 자신 거르기를 빼거나 PostToolUse를 host에 보내면 유닛, 지침 글을 빼면 유닛·m13이 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
