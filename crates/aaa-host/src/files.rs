@@ -121,25 +121,33 @@ impl Host {
     }
 }
 
-/// 한 조각을 읽는다
-pub(crate) async fn read_at(conn: &AgentConn, path: &str, offset: u64, len: u64) -> Result<Vec<u8>, ErrorBody> {
-    match conn.request(AgentRequest::FileView { path: path.to_string(), offset, len: len.min(CHUNK) as u32 }).await? {
-        AgentResponse::FileChunk { data, .. } => Ok(data.0),
+/// 한 조각을 읽는다(`page`면 페이지로 그린 HTML). 끝에 닿았는지도 돌려준다
+pub(crate) async fn read_at(
+    conn: &AgentConn,
+    path: &str,
+    offset: u64,
+    len: u64,
+    page: bool,
+) -> Result<(Vec<u8>, bool), ErrorBody> {
+    let req = AgentRequest::FileView { path: path.to_string(), offset, len: len.min(CHUNK) as u32, page };
+    match conn.request(req).await? {
+        AgentResponse::FileChunk { data, eof } => Ok((data.0, eof)),
         _ => Err(err(ErrorCode::Internal, "예상하지 못한 응답")),
     }
 }
 
-/// `first`(이미 읽은 첫 조각) 뒤를 `len`까지 agent에서 이어 읽는 stream. 파일이 그 사이 줄면 짧게 끝난다
-/// (받은 쪽은 Content-Length가 모자라 안다).
+/// `first`(이미 읽은 첫 조각) 뒤를 `len`까지(끝에 닿으면 거기까지) agent에서 이어 읽는 stream. 파일이 그 사이 줄면 짧게
+/// 끝난다(받은 쪽은 Content-Length가 모자라 안다). 페이지는 길이를 모르고 보내 끝까지 읽는다.
 pub(crate) fn file_stream(
     conn: AgentConn,
     path: Arc<str>,
     start: u64,
     len: u64,
-    first: Vec<u8>,
+    (first, eof): (Vec<u8>, bool),
+    page: bool,
 ) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
     let offset = start + first.len() as u64;
-    let left = len.saturating_sub(first.len() as u64);
+    let left = if eof { 0 } else { len.saturating_sub(first.len() as u64) };
     futures_util::stream::unfold((Some(first), offset, left), move |(pending, offset, left)| {
         let conn = conn.clone();
         let path = path.clone();
@@ -150,11 +158,11 @@ pub(crate) fn file_stream(
             if left == 0 {
                 return None;
             }
-            match read_at(&conn, &path, offset, left).await {
-                Ok(b) if b.is_empty() => None,
-                Ok(b) => {
+            match read_at(&conn, &path, offset, left, page).await {
+                Ok((b, _)) if b.is_empty() => None,
+                Ok((b, eof)) => {
                     let n = b.len() as u64;
-                    Some((Ok(b), (None, offset + n, left.saturating_sub(n))))
+                    Some((Ok(b), (None, offset + n, if eof { 0 } else { left.saturating_sub(n) })))
                 }
                 Err(e) => Some((Err(std::io::Error::other(e.message)), (None, offset, 0))),
             }

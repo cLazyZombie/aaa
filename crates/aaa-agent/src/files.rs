@@ -36,7 +36,7 @@ impl Roots {
         Roots(v)
     }
 
-    fn allows(&self, real: &Path) -> bool {
+    pub(crate) fn allows(&self, real: &Path) -> bool {
         self.0.iter().any(|r| real.starts_with(r))
     }
 }
@@ -141,7 +141,7 @@ fn info(real: &Path, meta: &std::fs::Metadata) -> FileInfo {
 }
 
 /// 확장자로 정하는 MIME(모르면 None: 내용으로 본다)
-fn mime_of(name: &str) -> Option<&'static str> {
+pub(crate) fn mime_of(name: &str) -> Option<&'static str> {
     let (_, ext) = name.rsplit_once('.')?;
     Some(match ext.to_ascii_lowercase().as_str() {
         "png" => "image/png",
@@ -263,16 +263,29 @@ fn files_named(cwd: &Path, rel: &str) -> Vec<PathBuf> {
     out
 }
 
-/// 찾은 파일(실제 경로) 한 조각. 그 사이 바뀌었으면(실제 경로가 다르거나 허용 폴더 밖·일반 파일 아님) 읽지 않는다.
-pub fn read(path: &str, offset: u64, len: u32, roots: &Roots) -> anyhow::Result<(Vec<u8>, bool)> {
+/// 찾은 파일을 연다. 그 사이 바뀌었으면(실제 경로가 다르거나 허용 폴더 밖·일반 파일 아님) 열지 않는다.
+fn opened(path: &str, roots: &Roots) -> anyhow::Result<(File, std::fs::Metadata)> {
     let p = Path::new(path);
     anyhow::ensure!(p.is_absolute(), "절대 경로가 아니다");
     let real = p.canonicalize()?;
     anyhow::ensure!(real == p, "실제 경로가 바뀌었다");
     anyhow::ensure!(roots.allows(&real), "허용 폴더 밖이다");
-    let mut f = File::open(&real)?;
+    let f = File::open(&real)?;
     let meta = f.metadata()?;
     anyhow::ensure!(meta.is_file(), "일반 파일이 아니다");
+    Ok((f, meta))
+}
+
+/// 페이지로 그릴 HTML 파일(`read`와 같은 확인)의 크기·고친 시각: 그린 페이지를 다시 쓸지 정하는 열쇠
+pub fn page_key(path: &str, roots: &Roots) -> anyhow::Result<(u64, std::time::SystemTime)> {
+    anyhow::ensure!(mime_of(path) == Some("text/html"), "HTML 파일이 아니다");
+    let (_, meta) = opened(path, roots)?;
+    Ok((meta.len(), meta.modified()?))
+}
+
+/// 찾은 파일(실제 경로) 한 조각. 그 사이 바뀌었으면(실제 경로가 다르거나 허용 폴더 밖·일반 파일 아님) 읽지 않는다.
+pub fn read(path: &str, offset: u64, len: u32, roots: &Roots) -> anyhow::Result<(Vec<u8>, bool)> {
+    let (mut f, meta) = opened(path, roots)?;
     f.seek(SeekFrom::Start(offset))?;
     let want = len.min(MAX_CHUNK) as usize;
     let mut buf = vec![0u8; want];

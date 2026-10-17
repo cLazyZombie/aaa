@@ -217,4 +217,118 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     aaa("pane", "kill", "files");
   });
+
+  await step("파일 보기 HTML 페이지·동영상·소리·PDF(herdr-web-ui FileViewer·file-view.ts pageWithLocalFiles, plan §8.109): HTML은 origin도 network도 없는 sandbox에서 제 script로 그리고 제 폴더의 그림·style·script만 제 종류대로 넣으며, 소스로 바꿀 수 있다. 동영상·소리는 흘려 받아 틀고 PDF는 브라우저가 그린다", async () => {
+    const proj = `${root}/files/media`;
+    for (const d of ["site", "shots", "av"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+    fs.writeFileSync(`${proj}/site/pic.png`, png);
+    fs.writeFileSync(`${proj}/shots/up.png`, png);
+    fs.writeFileSync(`${proj}/site/.env`, "KEY=secret\n");
+    fs.writeFileSync(`${proj}/site/style.css`, "h1 { color: rgb(1, 2, 3); }\n");
+    // 페이지 script: 돌았다, 이 앱 저장소가 없다(opaque origin), 밖으로 묻기는 CSP가 막는다(위반 사건)
+    fs.writeFileSync(
+      `${proj}/site/app.js`,
+      [
+        'document.addEventListener("securitypolicyviolation", (e) => { document.body.dataset.csp = e.violatedDirective; });',
+        'document.addEventListener("DOMContentLoaded", () => {',
+        '  try { localStorage.length; document.body.dataset.storage = "yes"; } catch { document.body.dataset.storage = "none"; }',
+        '  document.body.dataset.ran = "yes";',
+        '  fetch("https://example.com/x").catch(() => {});',
+        "});",
+      ].join("\n"),
+    );
+    const html = '<!doctype html><html><head><link rel="stylesheet" href="style.css"><script src="app.js"></script></head>\n<body><h1>보고</h1><img id="pic" src="pic.png"><img id="env" src=".env"><img id="up" src="../shots/up.png"></body></html>\n';
+    fs.writeFileSync(`${proj}/site/index.html`, html);
+    // 소리: 8kHz 16bit 한 채널 0.5초 WAV. 동영상은 틀지 않고 흘려 받는 길만 본다
+    const wav = Buffer.alloc(44 + 8000);
+    wav.write("RIFF", 0);
+    wav.writeUInt32LE(36 + 8000, 4);
+    wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(8000, 24);
+    wav.writeUInt32LE(16000, 28);
+    wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write("data", 36);
+    wav.writeUInt32LE(8000, 40);
+    fs.writeFileSync(`${proj}/av/tone.wav`, wav);
+    fs.writeFileSync(`${proj}/av/clip.mp4`, Buffer.alloc(4096, 7));
+    fs.writeFileSync(`${proj}/av/manual.pdf`, "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+    // 맨 이름은 링크가 아니다(참고: 폴더가 있어야 경로다)
+    const lines = ["H site/index.html", "V av/clip.mp4", "A av/tone.wav", "D av/manual.pdf"];
+    const prog = `process.stdout.write(${JSON.stringify(lines.join("\r\n") + "\r\nmedia> ")}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "media", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("media", "media>");
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-media").click();
+    await screenHas(dp, "media 줄들", "media>");
+
+    // HTML 페이지
+    await clickLink(dp, "site/index.html");
+    const frameEl = viewer(dp).locator("iframe.file-viewer-page");
+    await frameEl.waitFor();
+    if ((await frameEl.getAttribute("sandbox")) !== "allow-scripts") throw new Error("페이지 iframe sandbox");
+    const frame = await (await frameEl.elementHandle()).contentFrame();
+    await frame.locator("body[data-ran='yes'][data-csp]").waitFor();
+    const inside = await frame.evaluate(() => ({
+      pic: document.getElementById("pic").getAttribute("src").slice(0, 22),
+      env: document.getElementById("env").getAttribute("src"),
+      up: document.getElementById("up").getAttribute("src"),
+      color: getComputedStyle(document.querySelector("h1")).color,
+      storage: document.body.dataset.storage,
+      csp: document.body.dataset.csp,
+    }));
+    const want = { pic: "data:image/png;base64,", env: ".env", up: "../shots/up.png", color: "rgb(1, 2, 3)", storage: "none", csp: "connect-src" };
+    for (const k of Object.keys(want)) if (inside[k] !== want[k]) throw new Error(`페이지 안 ${k}: ${JSON.stringify(inside)}`);
+    const pageHref = await viewer(dp).getByRole("link", { name: "새 탭에서 열기" }).getAttribute("href");
+    if (!pageHref.endsWith("?render=1")) throw new Error(`페이지 새 탭 주소 ${pageHref}`);
+    const served = await dp.evaluate((u) => fetch(u).then(async (r) => ({ type: r.headers.get("content-type"), csp: r.headers.get("content-security-policy"), body: await r.text() })), pageHref);
+    if (served.type !== "text/html; charset=utf-8" || !served.csp?.startsWith("sandbox allow-scripts;") || !served.csp.includes("default-src 'none'") || !served.body.includes('src=".env"'))
+      throw new Error(`페이지 응답: ${JSON.stringify({ ...served, body: served.body.slice(0, 200) })}`);
+    await shot(dp, "desktop-file-page");
+    // 소스로
+    await viewer(dp).getByRole("button", { name: "소스" }).click();
+    await codeIs(dp, "HTML 소스", html);
+    await dp.keyboard.press("Escape");
+    await closed(dp, "페이지 Escape");
+
+    // 동영상: 흘려 받는 길(Range)
+    await clickLink(dp, "av/clip.mp4");
+    const video = viewer(dp).locator("video.file-viewer-media");
+    await video.waitFor();
+    const clip = await video.evaluate((v) => fetch(v.src, { headers: { range: "bytes=0-99" } }).then((r) => ({ status: r.status, type: r.headers.get("content-type"), range: r.headers.get("content-range") })));
+    if (clip.status !== 206 || clip.type !== "video/mp4" || clip.range !== "bytes 0-99/4096") throw new Error(`동영상 읽기 ${JSON.stringify(clip)}`);
+    await dp.keyboard.press("Escape");
+    await closed(dp, "동영상 Escape");
+
+    // 소리: 브라우저가 읽어 길이를 안다
+    await clickLink(dp, "av/tone.wav");
+    const audio = viewer(dp).locator("audio.file-viewer-audio");
+    await audio.waitFor();
+    const duration = await audio.evaluate(
+      (a) =>
+        new Promise((done, fail) => {
+          if (a.readyState >= 1) return done(a.duration);
+          a.addEventListener("loadedmetadata", () => done(a.duration));
+          a.addEventListener("error", () => fail(new Error(`소리 오류 ${a.error?.code}`)));
+        }),
+    );
+    if (duration !== 0.5) throw new Error(`소리 길이 ${duration}`);
+    await dp.keyboard.press("Escape");
+    await closed(dp, "소리 Escape");
+
+    // PDF: 브라우저의 PDF 보기가 그린다(sandbox CSP를 받지 않는다). 이 앱만 frame에 넣는다(앱 기본 CSP는 frame을 막는다)
+    await clickLink(dp, "av/manual.pdf");
+    const pdf = viewer(dp).locator("iframe.file-viewer-pdf");
+    await pdf.waitFor();
+    const doc = await pdf.evaluate((f) => fetch(f.src).then((r) => ({ type: r.headers.get("content-type"), csp: r.headers.get("content-security-policy"), frame: r.headers.get("x-frame-options") })));
+    if (doc.type !== "application/pdf" || doc.csp !== "frame-ancestors 'self'" || doc.frame !== "SAMEORIGIN") throw new Error(`PDF 읽기 ${JSON.stringify(doc)}`);
+    await dp.keyboard.press("Escape");
+    await closed(dp, "PDF Escape");
+    await dp.context().close();
+    aaa("pane", "kill", "media");
+  });
 }

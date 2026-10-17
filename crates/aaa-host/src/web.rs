@@ -128,10 +128,18 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
 /// 파일 보기 응답(herdr-web-ui `fileResponse`): 이 origin에서 연 HTML·SVG가 앱 권한으로 script를 돌리지 못하게 sandbox.
 /// PDF는 브라우저 자체 viewer가 sandbox 문서를 거부하므로 뺀다(그 script는 viewer 안에 머문다)
 const FILE_CSP: &str = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
+const PDF_CSP: &str = "frame-ancestors 'self'";
+/// 페이지로 그린 HTML(참고 `PAGE_POLICY`): 제 script는 돌지만 origin 없는 sandbox라 이 앱의 cookie·저장소가 없고,
+/// `connect-src`가 없어 이 서버에도 웹에도 묻지 못한다. 제 폴더 파일은 agent가 미리 넣었다(data:). 이 앱만 frame에 넣는다.
+const PAGE_CSP: &str = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data:; \
+                        style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; \
+                        base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
 #[derive(serde::Deserialize)]
 struct FileQuery {
     download: Option<String>,
+    /// HTML 파일을 페이지로(`PAGE_CSP`). 다른 파일은 본다
+    render: Option<String>,
 }
 
 /// `/f/<cap>/<이름>`: 파일 보기 읽기 경로(plan §8.109). 그 파일 하나만 30분 읽고, 짝지은 조작 기기여야 한다. Range를 받는다.
@@ -167,6 +175,26 @@ async fn pane_file_view(
             return text(code, e.message);
         }
     };
+    let disposition = if q.download.is_some() { "attachment" } else { "inline" };
+    let name = format!("{disposition}; filename*=UTF-8''{}", crate::files::pct(&info.name));
+    let path: Arc<str> = Arc::from(info.path.as_str());
+    // HTML 페이지: 그린 bytes는 길이를 미리 모르고 Range도 받지 않는다
+    if q.render.is_some() && q.download.is_none() && info.kind == aaa_proto::FileKind::Text && info.mime == "text/html"
+    {
+        let first = match crate::files::read_at(&conn, &info.path, 0, u64::MAX, true).await {
+            Ok(b) => b,
+            Err(e) => return text(StatusCode::NOT_FOUND, format!("파일을 읽지 못했다: {}", e.message)),
+        };
+        return Response::builder()
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CONTENT_DISPOSITION, name)
+            .header(header::CACHE_CONTROL, "private, no-store")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, PAGE_CSP)
+            .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
+            .body(Body::from_stream(crate::files::file_stream(conn, path, 0, u64::MAX, first, true)))
+            .unwrap();
+    }
     let size = info.size;
     let range = match crate::files::parse_range(fetch("range"), size) {
         Ok(r) => r,
@@ -181,9 +209,9 @@ async fn pane_file_view(
     let (start, len) = range.map(|(a, b)| (a, b - a + 1)).unwrap_or((0, size));
     // 응답 전에 첫 조각을 읽어, 그 사이 지워졌거나 바뀐 파일은 오류로 끝낸다
     let first = if len == 0 {
-        Vec::new()
+        (Vec::new(), true)
     } else {
-        match crate::files::read_at(&conn, &info.path, start, len).await {
+        match crate::files::read_at(&conn, &info.path, start, len, false).await {
             Ok(b) => b,
             Err(e) => return text(StatusCode::NOT_FOUND, format!("파일을 읽지 못했다: {}", e.message)),
         }
@@ -194,26 +222,23 @@ async fn pane_file_view(
     } else {
         info.mime.clone()
     };
-    let disposition = if q.download.is_some() { "attachment" } else { "inline" };
     let mut res = Response::builder()
         .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
         .header(header::CONTENT_TYPE, kind)
         .header(header::CONTENT_LENGTH, len)
         .header(header::ACCEPT_RANGES, "bytes")
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("{disposition}; filename*=UTF-8''{}", crate::files::pct(&info.name)),
-        )
+        .header(header::CONTENT_DISPOSITION, name)
         .header(header::CACHE_CONTROL, "private, no-store")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
         .header(header::X_FRAME_OPTIONS, "SAMEORIGIN");
     if let Some((a, b)) = range {
         res = res.header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{size}"));
     }
-    if info.kind != aaa_proto::FileKind::Pdf {
-        res = res.header(header::CONTENT_SECURITY_POLICY, FILE_CSP);
-    }
-    let path: Arc<str> = Arc::from(info.path.as_str());
-    res.body(Body::from_stream(crate::files::file_stream(conn, path, start, len, first))).unwrap()
+    // PDF는 브라우저의 PDF 보기가 그리는데, 그것은 sandbox 문서를 거부한다(참고와 같다). 그 script는 그 보기 안에 머문다.
+    // 비워 두면 앱 기본 CSP(`frame-ancestors 'none'`)가 붙어 파일 보기 iframe에 들지 못하므로 이 앱만 frame에 넣게 한다
+    let csp = if info.kind == aaa_proto::FileKind::Pdf { PDF_CSP } else { FILE_CSP };
+    res = res.header(header::CONTENT_SECURITY_POLICY, csp);
+    res.body(Body::from_stream(crate::files::file_stream(conn, path, start, len, first, false))).unwrap()
 }
 
 /// 결과물: opaque origin(sandbox)으로 보여 제어 UI의 cookie·API에 닿지 못하게 한다. 같은 host의 웹 화면 안 iframe에만 넣을 수 있다.

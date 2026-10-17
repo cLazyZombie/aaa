@@ -14,6 +14,7 @@ pub mod hooks;
 pub mod identity;
 pub mod link;
 mod merge;
+mod page;
 mod pr;
 pub mod threads;
 
@@ -45,6 +46,9 @@ struct Entry {
     pump: Option<mpsc::Sender<PumpCmd>>,
 }
 
+/// 그린 HTML 페이지: 경로·크기·고친 시각과 bytes
+type DrawnPage = (String, u64, std::time::SystemTime, Arc<Vec<u8>>);
+
 pub struct Agent {
     pub state: PathBuf,
     pub machine_id: String,
@@ -59,6 +63,8 @@ pub struct Agent {
     threads_cfg: Mutex<threads::ThreadsConfig>,
     /// 파일 보기가 여는 폴더(plan §8.109)
     file_roots: Mutex<files::Roots>,
+    /// 마지막으로 그린 HTML 페이지(경로·크기·고친 시각): host가 조각으로 읽는 동안 다시 그리지 않는다
+    page_cache: Mutex<Option<DrawnPage>>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). harness(Claude·Codex) 마지막 하나와
@@ -96,6 +102,7 @@ impl Agent {
             selfcheck: Mutex::new(None),
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             file_roots: Mutex::new(files::Roots::default()),
+            page_cache: Mutex::new(None),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
@@ -183,6 +190,29 @@ impl Agent {
     /// 파일 보기가 열 수 있는 폴더(§6.5 허용 폴더, plan §8.109). 없는 폴더는 빠진다.
     pub fn configure_file_roots(&self, roots: Vec<PathBuf>) {
         *self.file_roots.lock().unwrap() = files::Roots::new(roots);
+    }
+
+    /// 페이지로 그린 HTML 파일의 한 조각. 파일이 그대로면 마지막으로 그린 것을 다시 쓴다(조각마다 다시 그리지 않는다)
+    fn page_chunk(&self, path: &str, offset: u64, len: u32, roots: &files::Roots) -> anyhow::Result<(Vec<u8>, bool)> {
+        let (size, modified) = files::page_key(path, roots)?;
+        let cached = self
+            .page_cache
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|c| c.0 == path && c.1 == size && c.2 == modified)
+            .map(|c| c.3.clone());
+        let bytes = match cached {
+            Some(b) => b,
+            None => {
+                let b = Arc::new(page::render(Path::new(path), roots)?);
+                *self.page_cache.lock().unwrap() = Some((path.to_string(), size, modified, b.clone()));
+                b
+            }
+        };
+        let start = (offset as usize).min(bytes.len());
+        let end = start.saturating_add(len.min(files::MAX_CHUNK) as usize).min(bytes.len());
+        Ok((bytes[start..end].to_vec(), end >= bytes.len()))
     }
 
     /// 파일 보기: 세션이 지금 있는 폴더(없으면 시작 폴더) 기준으로 경로를 찾는다
@@ -555,13 +585,20 @@ impl Agent {
             AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
-            AgentRequest::FileView { path, offset, len } => {
+            AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();
-                tokio::task::spawn_blocking(move || files::read(&path, offset, len, &roots))
-                    .await
-                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
-                    .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
+                let me = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    if page {
+                        me.page_chunk(&path, offset, len, &roots)
+                    } else {
+                        files::read(&path, offset, len, &roots)
+                    }
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
             AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
                 chat::read(&harness, transcript.as_deref(), harness_session.as_deref())

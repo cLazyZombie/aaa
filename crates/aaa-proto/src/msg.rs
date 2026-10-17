@@ -426,10 +426,13 @@ pub enum AgentRequest {
         path: String,
     },
     /// 파일 보기: `FileLocate`가 돌려준 실제 경로의 한 조각(`FileChunk`). 그 사이 바뀌었거나 허용 폴더 밖이면 거부한다.
+    /// `page`면 HTML 파일을 페이지로 그린 bytes(제 폴더의 그림·style·script를 넣은 것)의 조각이다.
     FileView {
         path: String,
         offset: u64,
         len: u32,
+        #[serde(default)]
+        page: bool,
     },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {

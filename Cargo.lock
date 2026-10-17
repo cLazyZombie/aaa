@@ -42,6 +42,7 @@ dependencies = [
  "aaa-proto",
  "aaa-session",
  "anyhow",
+ "base64 0.22.1",
  "hex",
  "libc",
  "portable-pty",

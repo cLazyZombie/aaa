@@ -1,8 +1,7 @@
 // 파일 보기(결정 20 D7, herdr-web-ui `src/components/FileViewer.tsx`·`FileViewer.css` aa624cb). 웹 터미널의 파일 경로 링크로 연다.
-// 옮긴 것: 대화 상자(휴대폰은 화면 가득), 경로 찾기(같은 이름이 여럿이면 고르기), 그림, 글(Markdown 미리보기와 소스,
-// 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
-// 아직 옮기지 않은 것(plan §8.109 남은 것): 문법 강조·긴 소스 가상화, 동영상·소리·PDF, HTML 페이지 보기, 폴더 보기,
-// 「파일 뷰어」 설정. 그런 파일은 참고의 「여기서 볼 수 없음」 모양으로 내려받기를 권한다.
+// 옮긴 것: 대화 상자(휴대폰은 화면 가득), 경로 찾기(같은 이름이 여럿이면 고르기), 그림·동영상·소리·PDF, HTML 페이지(sandbox
+// 안 페이지와 소스), 글(Markdown 미리보기와 소스, 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
+// 아직 옮기지 않은 것(plan §8.109 남은 것): 문법 강조·긴 소스 가상화, 폴더 보기, 「파일 뷰어」 설정.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
@@ -99,9 +98,12 @@ export function FileViewer({ path: asked, pane, onClose }: { path: string; pane:
   // 줄 참조가 있으면 소스, 아니면 미리보기. 새 경로는 옛 선택을 쓰지 않는다
   const [chosen, setChosen] = useState<{ path: string; mode: "preview" | "code" } | null>(null);
   const mode = chosen?.path === path ? chosen.mode : target.line === null ? "preview" : "code";
+  // HTML 파일은 페이지로 보이고, 고르면 소스로. 줄 참조면 소스로 연다
+  const [source, setSource] = useState(false);
   const surface = useFocusTrap<HTMLElement>(true);
   useSheetSwipe(surface, onClose);
   useEffect(() => setPath(asked), [asked]);
+  useEffect(() => setSource(target.line !== null), [path, target.line]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,22 +155,37 @@ export function FileViewer({ path: asked, pane, onClose }: { path: string; pane:
   const { folder } = pathParts(shownPath);
   const textFile = info?.kind === "text";
   const markdown = textFile && /\.(?:md|markdown)$/i.test(info.name);
+  // 제 script로 그리는 페이지: origin도 network도 없는 sandbox(host PAGE_CSP)
+  const htmlPage = textFile && info.mime === "text/html";
+  const pageUrl = url === null ? null : `${url}?render=1`;
+  const modes = (
+    <div className="segmented file-viewer-modes" role="group" aria-label="HTML 파일 보기 방식">
+      <button type="button" aria-pressed={!source} onClick={() => setSource(false)}>
+        페이지
+      </button>
+      <button type="button" aria-pressed={source} onClick={() => setSource(true)}>
+        소스
+      </button>
+    </div>
+  );
   const view = markdown && mode === "preview" ? "markdown" : "code";
   // 표시할 줄: 받은 앞부분 안이면 표시, 밖이면 알림(참고 lineRequest)
   const notes: string[] = [];
   let marked: number | null = null;
-  if (textFile && loaded !== null && view === "code" && target.line !== null) {
+  if (textFile && loaded !== null && view === "code" && (!htmlPage || source) && target.line !== null) {
     if (target.line <= loaded.lines) marked = target.line;
     else if (loaded.truncated) notes.push(`${target.line}번째 줄은 미리보기 범위를 벗어납니다. 나머지를 읽으려면 다운로드하세요.`);
     else notes.push(`이 파일은 ${loaded.lines}줄이며 ${target.line}번째 줄은 없습니다.`);
   }
-  if (textFile && loaded?.truncated)
+  // 잘린 것은 글을 볼 때만 말한다(페이지는 파일 전체를 그린다)
+  const cutShort = textFile && (!htmlPage || source) && loaded?.truncated === true;
+  if (cutShort)
     notes.push(
       loaded.lines >= SOURCE_PREVIEW_LINES
         ? `이 파일의 처음 ${SOURCE_PREVIEW_LINES.toLocaleString("ko")}줄만 보입니다. 나머지를 읽으려면 다운로드하세요.`
         : `전체 ${formatBytes(info.size)} 중 처음 ${formatBytes(TEXT_PREVIEW_BYTES)}만 보입니다.`,
     );
-  const cutBytes = textFile && loaded?.truncated && loaded.lines < SOURCE_PREVIEW_LINES;
+  const cutBytes = cutShort && loaded.lines < SOURCE_PREVIEW_LINES;
 
   const body = (() => {
     if (problem !== null)
@@ -204,17 +221,34 @@ export function FileViewer({ path: asked, pane, onClose }: { path: string; pane:
         ) : (
           <img className="file-viewer-media" src={url} alt={info.name} />
         );
+      // 흘려 받아 바로 틀고 넘긴다(Range)
+      case "video":
+        return <video className="file-viewer-media" src={url} controls playsInline preload="metadata" />;
+      case "audio":
+        return <audio className="file-viewer-audio" src={url} controls preload="metadata" />;
+      case "pdf":
+        return <iframe className="file-viewer-pdf" src={url} title={info.name} />;
       case "text":
+        if (htmlPage && !source)
+          return (
+            <>
+              {modes}
+              <iframe className="file-viewer-page" src={pageUrl ?? undefined} sandbox="allow-scripts" title={info.name} />
+            </>
+          );
         if (loaded === null) return <p className="file-viewer-note">여는 중…</p>;
         // 참고 TextFileView: Markdown은 읽기 폭(「파일 뷰어」 설정 기본 readable) 열에 왼쪽 맞춤
         return (
-          <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : undefined}>
-            {view === "markdown" ? (
-              <Markdown className="file-viewer-markdown file-viewer-markdown-readable">{loaded.text}</Markdown>
-            ) : (
-              <CodeLines text={loaded.text} marked={marked} />
-            )}
-          </div>
+          <>
+            {htmlPage && modes}
+            <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : undefined}>
+              {view === "markdown" ? (
+                <Markdown className="file-viewer-markdown file-viewer-markdown-readable">{loaded.text}</Markdown>
+              ) : (
+                <CodeLines text={loaded.text} marked={marked} />
+              )}
+            </div>
+          </>
         );
       default:
         return (
@@ -276,7 +310,14 @@ export function FileViewer({ path: asked, pane, onClose }: { path: string; pane:
             )}
             {url !== null && (
               <div className="file-viewer-group">
-                <a className="icon-button file-viewer-action" href={url} target="_blank" rel="noopener" aria-label="새 탭에서 열기" title="새 탭에서 열기">
+                <a
+                  className="icon-button file-viewer-action"
+                  href={htmlPage && !source ? (pageUrl ?? url) : url}
+                  target="_blank"
+                  rel="noopener"
+                  aria-label="새 탭에서 열기"
+                  title="새 탭에서 열기"
+                >
                   <ExternalLink aria-hidden="true" />
                 </a>
                 <a className="icon-button file-viewer-action" href={`${url}?download=1`} download={info?.name ?? true} aria-label="내려받기" title="내려받기">
