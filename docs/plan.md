@@ -2381,6 +2381,16 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 변형 확인: reflow를 빼면 유닛 8개·TUI·웹(휴대폰 단계)이 실패, replay 화면을 옛 `state_formatted`로 두면 유닛과 웹(늦게 붙은 웹)이 실패, 읽기의 넓은 글자 잇기를 빼면 유닛과 웹이 실패, 줄 수만 바뀔 때 다시 쓰기를 빼면 유닛 셋, 기록 이음을 빼면 유닛, fish env를 빼면 TUI가 실패.
 - **이 묶음이 아닌 것.** 캡처에 보이는 휴대폰·iPad 끝 열 반쯤 잘림과 「gh p / ecks」(t-0333)는 웹 열 수 계산 쪽이다(다음 묶음).
 
+### 8.106 붙여 넣는 글의 ESC를 뺀다(10-18, t-0340 보안 감사)
+
+- **구멍.** 프로그램이 bracketed paste를 켜면 붙여 넣는 글은 `ESC[200~ … ESC[201~`로 감싸여 간다. 글 안에 `ESC[201~`가 있으면 붙여넣기가 거기서 끝나고 뒤 글은 친 키가 된다. pane 프로그램(agent 출력 포함)은 OSC 52로 이 기기 클립보드에 글을 심을 수 있다(설정 「패널에서 클립보드로 복사」, 기본 켬). 그 글을 셸에 붙이면 명령이 실행된다.
+- **참고도 같다.** herdr-web-ui는 xterm.js 5.5 `paste`(`bracketTextForPaste`)로 그대로 감싸고, herdr `encode_api_text`도 그대로 감싼다. 보안 이유로 참고와 다르게 한다.
+- **고침.** 붙여 넣는 글은 글이다(키는 키 막대·`send-keys`). 글에서 ESC와 C1 CSI(U+009B)를 뺀다.
+  - 웹(`web/src/pasteText.ts`): 클립보드 붙여넣기(글에 ESC가 있으면 xterm 대신 뺀 글로 붙인다), 끌어 놓은 글, 입력줄로 보내는 글.
+  - host(`aaa-vt` `KeyModes::paste`): `pane run`, brief·메시지, 그림 경로가 같은 길이다.
+- **OSC 52 기본값은 참고대로 켬으로 둔다**(「아침 확인」). 붙여넣기를 막았으므로 클립보드에 심긴 글은 글로만 들어간다.
+- **시험.** aaa-vt 유닛(`paste`가 ESC·C1 CSI를 뺀다). 웹 E2E 「붙여 넣는 글의 ESC는 뺀다」(03): bracketed paste를 켠 프로그램에 클립보드·끌어 놓기·입력줄·`pane run`으로 `ESC[201~`가 든 글을 넣으면, 받은 조각은 감싼 짝 하나와 ESC를 뺀 글이다. 변형 확인: 웹 거르기를 빼면 클립보드 검사, host 거르기를 빼면 `pane run` 검사가 실패한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

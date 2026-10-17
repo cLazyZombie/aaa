@@ -487,9 +487,12 @@ pub struct KeyModes {
 }
 
 impl KeyModes {
-    /// API로 넣는 글(herdr `encode_api_text`, src/app/api_helpers.rs): bracketed paste가 켜져 있으면 감싼다
+    /// API로 넣는 글(herdr `encode_api_text`, src/app/api_helpers.rs): bracketed paste가 켜져 있으면 감싼다.
+    /// 글의 ESC와 C1 CSI(U+009B)는 뺀다: 글 안의 `ESC[201~`가 붙여넣기를 일찍 끝내 뒤 글을 친 키로 읽게 했다(t-0340 보안 감사, 웹
+    /// `pasteText.ts`와 같다). 참고 herdr도 그대로 감싼다. 키는 `key`로 보낸다.
     pub fn paste(&self, text: &str) -> Vec<u8> {
-        if self.bracketed_paste { format!("\x1b[200~{text}\x1b[201~").into_bytes() } else { text.as_bytes().to_vec() }
+        let text: String = text.chars().filter(|&c| c != '\x1b' && c != '\u{9b}').collect();
+        if self.bracketed_paste { format!("\x1b[200~{text}\x1b[201~").into_bytes() } else { text.into_bytes() }
     }
 
     /// 키 이름 → 입력 bytes. 모르는 이름이면 None(herdr `invalid_key`).
@@ -1628,6 +1631,9 @@ mod tests {
         assert_eq!(k(&app, "shift+enter").unwrap(), b"\x1b[27;2;13~");
         assert_eq!(app.paste("hi"), b"\x1b[200~hi\x1b[201~");
         assert_eq!(plain.paste("hi"), b"hi");
+        // 글 안의 ESC·C1 CSI는 빠진다: 붙여넣기를 일찍 끝내지 못한다
+        assert_eq!(app.paste("a\x1b[201~rm x\r\u{9b}201~b"), "\x1b[200~a[201~rm x\r201~b\x1b[201~".as_bytes());
+        assert_eq!(plain.paste("a\x1bb"), b"ab");
     }
 
     #[test]

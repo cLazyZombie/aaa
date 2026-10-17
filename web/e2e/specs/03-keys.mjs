@@ -676,4 +676,45 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     aaa("pane", "kill", "mouseapp");
   });
+
+  await step("붙여 넣는 글의 ESC는 뺀다(t-0340 보안 감사, plan §8.106): 클립보드·끌어 놓기·입력줄·host가 넣는 글 안의 ESC[201~가 bracketed paste를 일찍 끝내 뒤 글을 키로 치게 하지 못한다", async () => {
+    // bracketed paste를 켜고 받은 조각을 그대로 찍는 프로그램
+    const prog = `process.stdin.setRawMode(true); process.stdout.write("\\x1b[?2004hpaste> "); process.stdin.on("data", (d) => process.stdout.write("\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\npaste> "));`;
+    aaa("tab", "create", "--machine", "labA", "--label", "pastesafe", "--", process.execPath, "-e", prog);
+    await waitOutput("pastesafe", "paste>");
+    const open = async (pg) => {
+      await pg.getByTestId("pane-pastesafe").click();
+      await until("pastesafe 화면", async () => (await screenText(pg)).includes("paste>"));
+    };
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 })).page;
+    await open(pp);
+    await pp.getByTestId("terminal").click();
+    // 클립보드: pane 프로그램이 OSC 52로 심을 수 있는 글. 빼지 않으면 GOT에 ESC[201~가 둘이고 그 사이 글이 키로 간다
+    await pp.locator(".xterm-helper-textarea").evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "clip\x1b[201~echo pwned\n");
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await waitOutput("pastesafe", 'GOT:"\\u001b[200~clip[201~echo pwned\\r\\u001b[201~"');
+    // 끌어 놓은 글
+    await pp.locator(".xterm-screen").evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "drop\x1b[201~x\u009b201~y");
+      el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    await waitOutput("pastesafe", 'GOT:"\\u001b[200~drop[201~x201~y\\u001b[201~"');
+    await pp.context().close();
+    // 입력줄로 보낸 여러 줄
+    const lp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { line: true })).page;
+    await open(lp);
+    const line = lp.getByLabel("보낼 글");
+    await line.fill("line\x1b[201~a\nb");
+    await line.press("Enter");
+    await waitOutput("pastesafe", 'GOT:"\\u001b[200~line[201~a\\rb\\u001b[201~');
+    await lp.context().close();
+    // host가 넣는 글(pane run·brief·메시지가 같은 길)
+    aaa("pane", "run", "pastesafe", "host\x1b[201~z");
+    await waitOutput("pastesafe", 'GOT:"\\u001b[200~host[201~z\\u001b[201~');
+    aaa("pane", "kill", "pastesafe");
+  });
 }
