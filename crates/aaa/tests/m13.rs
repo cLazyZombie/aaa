@@ -2926,7 +2926,7 @@ fn pr_followup() {
     assert!(calls.contains("api user --jq .login\n"), "{calls}");
 }
 
-/// 웹 새 세션 창의 agent 고르기(herdr-web-ui NewSessionDialog, plan §8.120): `pane_run`에 profile을 주면 그 머신 agent.toml
+/// 웹 새 세션 창의 agent 고르기(herdr-web-ui NewSessionDialog, plan §8.122): `pane_run`에 profile을 주면 그 머신 agent.toml
 /// profile로 harness를 띄우고 thread처럼 상태 hook을 붙인다(hook 설정은 세션 폴더에). 없는 profile·폴더는 거부, `~/…`는 집으로 푼다.
 #[test]
 fn pane_run_with_profile_starts_harness_with_hooks() {

@@ -4,7 +4,7 @@
 //!   (`$CLAUDE_CONFIG_DIR`|`~/.claude`의 `projects/`, `$CODEX_HOME`|`~/.codex`의 `sessions/`) 안의 일반 `.jsonl` 파일만 읽는다.
 //!   symlink는 실제 위치로 풀어 본다.
 //! - 터미널보다 많이 보이지 않는다: 도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글은 뺀다. 생각(thinking)은 웹 「생각 표시」를
-//!   켠 화면이 청할 때만 싣는다(herdr-web-ui `showThinking`, plan §8.123).
+//!   켠 화면이 청할 때만 싣는다(herdr-web-ui `showThinking`, plan §8.125).
 //! - 기록은 커질 수 있다(요청 원문 줄이 크다). 뒤에서부터 1MiB씩 읽어 필요한 만큼만 고르고, 16MiB에서 멈춘다.
 
 use std::io::{Read, Seek, SeekFrom};
