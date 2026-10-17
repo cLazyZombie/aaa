@@ -38,6 +38,8 @@ impl Node {
             .env("AAA_STATE_DIR", &self.state)
             .env("RUST_LOG", "aaa=info")
             .env_remove("NO_COLOR")
+            // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
+            .env_remove("fish_handle_reflow")
             .stdin(Stdio::null());
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
         #[cfg(unix)]

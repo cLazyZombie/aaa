@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  repo, root, sleep, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings,
+  repo, root, sleep, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -31,8 +31,8 @@ export default async function ({ ctl, page }) {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       const cw = m.sw / p.cols;
       const ch = m.sh / p.rows;
-      // 오른쪽에는 xterm 세로 scrollbar 자리(기본 14px)가 남는다
-      const ok = m.sw <= m.w + 1 && m.w - m.sw < cw + 15 && m.sh <= m.h + 1 && m.h - m.sh < ch + 1;
+      // 오른쪽에 xterm 세로 scrollbar 자리를 남기지 않는다(참고처럼, plan §8.122): 전에는 15px(두 칸쯤)이 늘 비었다
+      const ok = m.sw <= m.w + 1 && m.w - m.sw < cw + 1 && m.sh <= m.h + 1 && m.h - m.sh < ch + 1;
       return { ok: ok && m.crumb.includes(`${p.cols}×${p.rows}`), m, cols: p.cols, rows: p.rows };
     };
     let last = null;
@@ -52,6 +52,77 @@ export default async function ({ ctl, page }) {
       const f = await filled();
       return f.ok && f.cols === small.cols && f.rows === small.rows;
     });
+  });
+
+  await step("끝 칸까지 보인다(coordinator 10-18 t-0333 발견 「gh pr checks」가 「gh p」로, plan §8.122): 휴대폰·iPad·데스크톱에서 글자가 한 cell씩 나아가 끝 칸이 줄 안에, scrollbar 자리 없이 칸을 끝까지", async () => {
+    // 칸 수만큼의 자(끝 두 글자 @#)와, 끝 칸을 넘어 접히는 「gh pr checks」. 크기가 바뀌면 다시 그린다
+    const prog = `const draw = () => {
+  const c = process.stdout.columns;
+  let s = "";
+  for (let i = 1; i <= c; i++) s += String(i % 10);
+  process.stdout.write("\\x1b[H\\x1b[2J" + s.slice(0, -2) + "@#\\r\\n" + "x".repeat(c - 5) + "gh pr checks\\r\\nendcol " + c + "> ");
+};
+process.stdout.on("resize", draw);
+draw();
+process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "endcol", "--", process.execPath, "-e", prog);
+    const cols = () => aaa("pane", "list").panes.find((p) => p.name === "endcol").cols;
+    await waitOutput("endcol", "endcol ");
+    // 앞 화면이 쥔 크기(처음은 만들 때 크기). 기기마다 폭이 달라, 이 값이 바뀌면 그 화면이 쥔 것이다
+    let held = cols();
+    const devices = [
+      ["phone", { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 }],
+      ["ipad", { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 }],
+      ["desktop", { width: 1280, height: 800 }, { deviceScaleFactor: 2 }],
+    ];
+    const bad = [];
+    for (const [name, viewport, opt] of devices) {
+      const p = (await pairPage(browser, aaa("web", "pair").code, viewport, opt)).page;
+      await p.getByTestId("pane-endcol").click();
+      // 이 화면이 쥔 크기로 다시 그린 자(붙은 직후에는 앞 화면 크기의 자가 보인다)
+      await until(`${name}: 자기 폭의 자`, async () => {
+        const c = cols();
+        return c !== held && (await screenText(p)).includes(`endcol ${c}>`);
+      });
+      const c = (held = cols());
+      const m = await p.evaluate(() => {
+        const row = [...document.querySelectorAll(".xterm-rows > div")].find((r) => r.textContent.trimEnd().endsWith("@#"));
+        if (!row) return null;
+        const at = (i) => {
+          const w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+          for (let n = w.nextNode(), seen = 0; n; seen += n.data.length, n = w.nextNode())
+            if (i < seen + n.data.length) {
+              const r = document.createRange();
+              r.setStart(n, i - seen);
+              r.setEnd(n, i - seen + 1);
+              return r.getBoundingClientRect();
+            }
+          return null;
+        };
+        const text = row.textContent.trimEnd();
+        const first = at(0);
+        const last = at(text.length - 1);
+        const box = document.querySelector('[data-testid="terminal"]').getBoundingClientRect();
+        return { len: text.length, first: first.left, last: last.left, rowRight: row.getBoundingClientRect().right, screen: document.querySelector(".xterm-screen").getBoundingClientRect().width, box: box.width };
+      });
+      if (!m || m.len !== c) {
+        bad.push(`${name}: ${c}칸 자를 찾지 못했다 ${JSON.stringify(m)}`);
+      } else {
+        const cell = m.screen / c;
+        const advance = (m.last - m.first) / (c - 1);
+        // 글자 하나가 나아가는 폭이 cell이다. xterm 5.5 DOM renderer는 글자 폭을 32자 offsetWidth(정수)로 재고(1/64px까지 어긋남),
+        // 줄 자간을 그 차이로 둔다(배치 단위 1/64px 반올림까지). 그래서 정상은 글자마다 1/32px 안쪽이다. body 자간이 들던 때는 0.065px
+        if (Math.abs(advance - cell) > 0.04) bad.push(`${name}: 글자마다 ${advance.toFixed(4)}px 나아간다(cell ${cell.toFixed(4)}px)`);
+        // 끝 칸 글자가 반 넘게 줄(overflow hidden) 안에 있다
+        if (m.last + cell / 2 > m.rowRight) bad.push(`${name}: 끝 칸 글자가 ${m.last.toFixed(2)}에서 시작해 줄 끝 ${m.rowRight.toFixed(2)}에 잘린다`);
+        // 칸이 터미널 자리를 끝까지 쓴다(scrollbar 자리 15px을 남기지 않는다)
+        if (m.box - m.screen >= cell + 1) bad.push(`${name}: 오른쪽 ${(m.box - m.screen).toFixed(1)}px이 빈다(cell ${cell.toFixed(2)}px)`);
+      }
+      await shot(p, `${name}-endcol`);
+      await p.context().close();
+    }
+    aaa("pane", "kill", "endcol");
+    if (bad.length) throw new Error(bad.join(" / "));
   });
 
   await step("터미널 글꼴: Meslotendard로 cell 너비는 영문, 한글은 정확히 두 칸(1280×800)", async () => {

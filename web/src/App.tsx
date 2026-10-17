@@ -31,6 +31,8 @@ import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
+import { useFileViewer } from "./herdr/useFileViewer.ts";
+import { FileViewer } from "./FileViewer.tsx";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -467,6 +469,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
   useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
+  // 파일 보기(결정 20 D7, herdr-web-ui useFileViewer): 휴대폰 뒤로가 닫도록 기록 한 칸이다
+  const { viewing: fileViewing, openFile, closeFile } = useFileViewer();
   // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads)
   const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator");
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
@@ -555,6 +559,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             controls={paneControls}
             pane={current}
             role={role}
+            onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: current.id }) : undefined}
             title={paneTitle(current)}
             agent={agentOf(current, threadOfPane.get(current.id))}
             crumb={`${current.machine} › ${paneSub(current)}`}
@@ -591,6 +596,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </div>
         )}
       </main>
+      {fileViewing?.pane && <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} pane={fileViewing.pane} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />}
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {
