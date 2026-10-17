@@ -723,6 +723,20 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 출력 흐름 시험 프로그램: "f"를 받으면 100바이트 줄 4000개(400KB)를 한 번에 쓴다. 다른 조각은 JSON으로 보인다.
+fs.writeFileSync(
+  `${root}/flood.js`,
+  `process.stdin.setRawMode(true);
+process.stdout.write("flood> ");
+process.stdin.on("data", (d) => {
+  const s = d.toString("latin1");
+  if (s !== "f") return void process.stdout.write("\\r\\nGOT:" + JSON.stringify(s) + "\\r\\nflood> ");
+  let out = "\\r\\n";
+  for (let i = 1; i <= 4000; i++) out += "fl-" + String(i).padStart(5, "0") + " " + "x".repeat(88) + "\\r\\n";
+  process.stdout.write(out + "flood-done\\r\\nflood> ");
+});
+`,
+);
 fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
@@ -1626,6 +1640,63 @@ try {
     });
     await dp.context().close();
     aaa("pane", "kill", "shrink");
+  });
+
+  await step("출력이 밀릴 때(herdr-web-ui OutputWindow·pty-ack·4008 「Reconnect」, D7, plan §8.62): ACK를 못 하는 화면은 host가 4008로 닫고 다시 보내지 않으며 「다시 연결」로 새로 붙는다. 따라오는 화면은 그대로 받는다", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "flood", "--", process.execPath, `${root}/flood.js`);
+    await until("flood 준비", () => aaa("pane", "read", "flood").lines.join("\n").includes("flood>"));
+    /** 이 화면의 pane WebSocket 기록(진단 기록과 같은 것): snapshot·닫힘·열림 */
+    const log = (p) => p.evaluate(() => window.__aaaTermLog.map((x) => x.e ?? x.kind));
+    const count = (l, prefix) => l.filter((e) => e.startsWith(prefix)).length;
+    // ACK를 삼키는 화면: 브라우저가 쓴 뒤 알리는 것이 host에 닿지 않는다(느린 기기·멈춘 탭과 같다)
+    let dropAcks = true;
+    let dropped = 0;
+    const swallow = (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((m) => {
+        if (dropAcks && typeof m === "string" && m.startsWith('{"t":"ack"')) return void dropped++;
+        server.send(m);
+      });
+      server.onMessage((m) => ws.send(m));
+      server.onClose((code, reason) => ws.close({ code, reason }));
+      ws.onClose((code, reason) => server.close({ code, reason }));
+    };
+    const slow = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, swallow] })).page;
+    await slow.getByTestId("pane-flood").click();
+    await until("느린 화면 flood>", async () => (await screenText(slow)).includes("flood>"));
+    const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await fast.getByTestId("pane-flood").click();
+    await until("따라오는 화면 flood>", async () => (await screenText(fast)).includes("flood>"));
+    // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
+    aaa("pane", "send", "flood", "--text", "f");
+    await until("출력 정지 띠", async () => await slow.getByTestId("output-stalled").isVisible());
+    const stalled = await log(slow);
+    if (!stalled.includes("ws close 4008")) throw new Error(`4008로 닫히지 않았다: ${JSON.stringify(stalled.filter((e) => e !== "io"))}`);
+    if (dropped === 0) throw new Error("삼킨 ACK가 없다: 화면이 ACK를 보내지 않는다");
+    // 과부하는 다시 보내지 않는다: 닫히기 전 snapshot을 다시 받지 않았고, 닫힌 뒤 스스로 다시 붙지 않는다
+    if (count(stalled, "snapshot") !== 1) throw new Error(`snapshot을 다시 받았다: ${JSON.stringify(stalled.filter((e) => e !== "io"))}`);
+    await sleep(1500);
+    const later = await log(slow);
+    if (count(later, "ws open") !== 1 || !(await slow.getByTestId("output-stalled").isVisible())) throw new Error(`4008 뒤 스스로 다시 붙었다: ${JSON.stringify(later.filter((e) => e !== "io"))}`);
+    // 따라오는 화면은 닫히지 않고 끝까지 받는다
+    await until("따라오는 화면 flood-done", async () => (await screenText(fast)).includes("flood-done"));
+    const kept = await log(fast);
+    if (kept.some((e) => e.startsWith("ws close")) || count(kept, "snapshot") !== 1) throw new Error(`따라오는 화면이 끊겼다: ${JSON.stringify(kept.filter((e) => e !== "io"))}`);
+    await shot(slow, "desktop-output-stalled");
+    // 「다시 연결」: 새로 붙어 snapshot을 받고 입력도 간다
+    dropAcks = false;
+    await slow.getByTestId("output-reconnect").click();
+    // 옛 화면에도 flood-done이 있다: 새 snapshot을 받은 뒤의 화면을 본다
+    await until("다시 붙음", async () => count(await log(slow), "snapshot") === 2 && (await slow.getByTestId("output-stalled").count()) === 0);
+    await until("다시 붙은 화면", async () => (await screenText(slow)).includes("flood-done"));
+    const back = await log(slow);
+    if (count(back, "ws open") !== 2) throw new Error(`다시 연결이 새로 붙지 않았다: ${JSON.stringify(back.filter((e) => e !== "io"))}`);
+    await slow.locator(".xterm-helper-textarea").focus();
+    await slow.keyboard.type("z");
+    await until("다시 붙은 화면의 입력", () => aaa("pane", "read", "flood").lines.join("\n").includes('GOT:"z"'));
+    await slow.context().close();
+    await fast.context().close();
+    aaa("pane", "kill", "flood");
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {

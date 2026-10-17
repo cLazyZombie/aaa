@@ -71,7 +71,12 @@ function pastedFiles(data: DataTransfer | null | undefined): File[] {
   return Array.from(data.files);
 }
 
-type Link = "connecting" | "open" | "closed";
+/** stopped: host가 출력을 따라오지 못한 이 화면을 4008로 닫았다. 「다시 연결」까지 다시 붙지 않는다 */
+type Link = "connecting" | "open" | "closed" | "stopped";
+/** host가 출력을 따라오지 못한 연결을 닫는 code(herdr-web-ui shared/terminal-flow.ts, aaa-host output.rs) */
+const OUTPUT_STALLED_CLOSE_CODE = 4008;
+/** 다시 보인 뒤 이만큼 안에 온 4008은 가려져 있던 탓으로 친다(herdr-web-ui ws.ts SHOWN_GRACE_MS) */
+const SHOWN_GRACE_MS = 5_000;
 
 const ANSI = [
   "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
@@ -120,6 +125,8 @@ export function TermView({
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  /** 출력이 멈춘 연결을 다시 붙인다(「다시 연결」 단추) */
+  const reattachRef = useRef<() => void>(() => {});
   const readonlyRef = useRef(true);
   const [link, setLink] = useState<Link>("connecting");
   const [readonly, setReadonly] = useState(true);
@@ -884,6 +891,33 @@ export function TermView({
     let stopped = false;
     let delay = 500;
     let timer: number | undefined;
+    // 출력 흐름 제어(herdr-web-ui pty-ack, plan §8.62): snapshot마다 host가 구독 번호를 주고, xterm이 다 쓴 뒤
+    // 그 구독에서 받은 바이트 끝(replay + 출력)을 알린다. 받았을 때가 아니라 쓴 뒤에 알려야 느린 기기가 드러난다.
+    let streamId = 0;
+    let received = 0;
+    const acknowledge = (ws: WebSocket, stream: number, offset: number) => () => {
+      if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN || streamId !== stream) return;
+      ws.send(JSON.stringify({ t: "ack", stream, offset } satisfies TermClientMsg));
+    };
+    // 가려진 탭은 ACK를 보내지 못한다: 그때(또는 다시 보인 바로 뒤) 멈춘 것은 기기가 느린 것이 아니라
+    // 치워 둔 것이라, 다시 보일 때 한 번 스스로 붙는다(herdr-web-ui stoppedWhileHidden). 보이는 채로 멈추면 단추를 기다린다.
+    let outputStopped = false;
+    let stoppedHidden = false;
+    let shownAt = 0;
+    const reattach = () => {
+      if (!outputStopped || stopped) return;
+      outputStopped = false;
+      stoppedHidden = false;
+      delay = 500;
+      connect();
+    };
+    reattachRef.current = reattach;
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      shownAt = Date.now();
+      if (outputStopped && stoppedHidden) reattach();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     const connect = () => {
       setLink("connecting");
       const ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws`));
@@ -895,7 +929,8 @@ export function TermView({
       };
       ws.onmessage = (m) => {
         if (m.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(m.data));
+          received += m.data.byteLength;
+          term.write(new Uint8Array(m.data), acknowledge(ws, streamId, received));
           return;
         }
         const msg = JSON.parse(m.data as string) as TermServerMsg;
@@ -912,7 +947,10 @@ export function TermView({
               term.resize(cols, rows);
             });
             setSize([cols, rows]);
-            term.write(b64decode(msg.replay));
+            const replay = b64decode(msg.replay);
+            streamId = msg.stream;
+            received = replay.length;
+            term.write(replay, acknowledge(ws, msg.stream, received));
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
             setError(null);
@@ -953,7 +991,7 @@ export function TermView({
             break;
         }
       };
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (wsRef.current === ws) wsRef.current = null;
         // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
         attachDone();
@@ -962,6 +1000,14 @@ export function TermView({
         setLink("closed");
         // 끊기면 유지 키를 푼다(PaneTerminal 1261줄)
         setModifiers(NO_STICKY_MODIFIERS);
+        // 출력을 따라오지 못해 host가 닫았다: 자동으로 다시 붙지 않는다(과부하를 되풀이하지 않는다, herdr-web-ui ws.ts)
+        if (event.code === OUTPUT_STALLED_CLOSE_CODE && !stopped) {
+          outputStopped = true;
+          stoppedHidden = document.visibilityState === "hidden" || (shownAt > 0 && Date.now() - shownAt <= SHOWN_GRACE_MS);
+          setLink("stopped");
+          if (stoppedHidden && document.visibilityState === "visible") queueMicrotask(reattach);
+          return;
+        }
         if (!stopped) timer = window.setTimeout(connect, delay);
         delay = Math.min(delay * 2, 10_000);
       };
@@ -971,6 +1017,7 @@ export function TermView({
       alive = false;
       stopped = true;
       window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
       wsRef.current?.close();
       el.removeEventListener("paste", onPaste, true);
       viewport?.removeEventListener("scroll", onViewportScroll);
@@ -1243,7 +1290,9 @@ export function TermView({
   }, [inputSlot]);
 
   let banner: string | null = null;
-  if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중";
+  // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다
+  if (link === "stopped") banner = null;
+  else if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중";
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
   // 끊긴 동안 붙잡은 글은 끊김 띠에 보이고, 다시 붙으면 따로 띠가 되어 보내기·버리기를 고른다(PaneTerminal 2777~2800줄)
   const held = canControl && !draftIsEmpty(draft);
@@ -1302,6 +1351,14 @@ export function TermView({
           <div className="term-box" ref={box} data-testid="terminal" />
         </div>
         <div className="terminal-banners">
+          {link === "stopped" && (
+            <div className="banner warn" role="status" data-testid="output-stalled">
+              <span>이 기기가 출력을 따라가지 못해 터미널 출력을 멈췄다.</span>
+              <button type="button" data-testid="output-reconnect" onClick={() => reattachRef.current()}>
+                다시 연결
+              </button>
+            </div>
+          )}
           {!banner && held && !ended && (
             <div className="banner draft" role="status" data-testid="draft-banner">
               <span className="draft-label">터미널이 준비될 때까지 붙잡은 입력:</span>

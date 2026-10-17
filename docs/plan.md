@@ -1526,6 +1526,22 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **서버에서 확인한 것.** host가 주는 아이콘(`apple-touch-icon.png`, manifest 아이콘, favicon)은 모두 새 그림이다. 옛 보라색 PNG는 `ea70cc8`(10-17 01:40)~`9d73a03`(16:26) 사이에만 있었고, 지금 binary에는 없다. service worker는 화면 이동(navigate)만 맡고 아이콘 요청은 가로채지 않는다. 아이콘은 인증 없이 받아진다. 그런데 `/apple-touch-icon-precomposed.png` 같은 관례 주소와 없는 파일 주소는 모두 웹 화면(HTML)을 200으로 돌려주었다.
 - **고침(서버에서 확인할 수 있는 범위만).** 관례 터치 아이콘 주소(`apple-touch-icon-precomposed.png`, `apple-touch-icon-NxN.png`, `apple-touch-icon-NxN-precomposed.png`)는 `apple-touch-icon.png`과 같은 PNG를 준다. 확장자가 있는데 없는 파일(`favicon.ico`, `nope.png`, `assets/…`)은 404다. 확장자 없는 주소만 웹 화면이다. 참고(static.ts)는 `/assets/`·`/icons/` 아래만 404이고 나머지는 화면을 준다. 그림 주소에 HTML을 주지 않으려고 넓혔다. 시험은 웹 E2E 「PWA」 단계와 host 유닛 `touch_icon_aliases`다.
 - **보류: iOS 앱 아이콘 캐시(사용자 결정 「아이콘은 넘어가」).** iOS가 홈 화면·앱 전환 화면에 어느 아이콘을 쓰는지, 이 고침으로 회색 격자가 사라지는지는 실기로만 볼 수 있다. 여기서 더 파지 않는다. 홈 화면에 추가할 때 받아 둔 아이콘을 쓴다면(옛 보라색은 01:40~16:26에 추가한 것), 바꾸는 길은 홈 화면에서 지우고 Safari에서 다시 「홈 화면에 추가」하는 것이다. 지우면 그 앱의 저장소(pairing·알림 구독)도 사라져 다시 pairing해야 한다. 차이 목록에도 같은 줄이 있다.
+||||||| parent of 2142dc4 (출력이 밀릴 때: herdr-web-ui ACK 흐름 제어, 따라오지 못한 화면은 4008로 닫고 「다시 연결」)
+
+### 8.62 출력이 밀릴 때: ACK 흐름 제어, 4008, 「다시 연결」(10-17, 차이 목록 「출력이 밀릴 때」, D7 참고대로)
+
+- **전에는.** host는 pane WebSocket으로 출력을 받는 대로 `send().await`했다. 브라우저가 느리면 이 연결의 사건 처리가 그 자리에서 막혔다. 그러다 broadcast가 밀리면(Lagged) snapshot을 다시 보냈다. 느린 기기는 큰 replay를 되풀이해 받아 더 밀렸다.
+- **옮긴 것(herdr-web-ui server/output-window.ts `OutputWindow`, index.ts `reconcileOutput`·`pty-ack`, src/lib/ws.ts 4008, PaneTerminal 1240~1252·1845~1855·2762~2766줄).**
+  - `aaa-host/src/output.rs`가 `OutputWindow`의 상수와 판정을 그대로 옮긴다. HIGH 256KiB, LOW 64KiB, HARD 1MiB, STALL 2초, 붙는 화면 32KiB/s·최대 15초, 막힘 최대 10초다. 참고 시험(`output-window.test.ts` 「terminal output credit」) 13개를 Rust로 옮겼다.
+  - snapshot마다 새 구독 번호(`stream`)를 준다. 브라우저는 replay와 뒤따르는 binary 출력을 xterm이 다 쓴 뒤 그 끝 offset을 `{"t":"ack","stream","offset"}`로 보낸다. 받았을 때가 아니라 쓴 뒤에 보낸다. 앞 구독의 늦은 ACK는 버린다.
+  - host는 frame을 쓰기 task의 줄로 넘긴다. 그 줄에 남은 바이트가 참고의 `getBufferedAmount`다. 그래서 느린 브라우저가 사건 처리를 막지 않는다. 100ms마다, 그리고 사건마다 창을 잰다. 막힌 채 ACK가 나아가지 않으면 close code 4008로 닫는다. 밀린 출력이나 줄이 HARD를 넘을 때도 같다. 닫을 때 남은 줄은 버린다.
+  - 브라우저는 4008이면 스스로 다시 붙지 않는다. 터미널 위에 「이 기기가 출력을 따라가지 못해 터미널 출력을 멈췄다.」와 「다시 연결」(참고 i18n.ko 「Reconnect」) 단추를 띄운다. 단추를 누르면 새로 붙어 snapshot을 받는다. 가려진 탭이나 다시 보인 지 5초 안에 멈춘 것은 기기를 치워 둔 것이다. 그때는 다시 보일 때 한 번 스스로 붙는다(`stoppedWhileHidden`, `SHOWN_GRACE_MS`).
+- **다른 곳(이유).**
+  - **PTY를 멈추지 않는다.** 참고의 `pause`는 함께 쓰는 PTY를 멈춘다. aaa의 PTY는 다른 머신의 session host에 있고 TUI와 다른 화면이 함께 본다. 멈추려면 agent 연결과 session host에 흐름 제어를 새로 넣어야 한다. 그래서 `pause`도 계속 보내고 시계만 돈다. 막힌 채 쌓이는 것은 HARD와 10초 상한이 끊는다. agent 연결의 흐름 제어는 보고서에 결정 줄로 남긴다.
+  - **Lagged·빈틈·Reset은 그대로 snapshot.** 느린 브라우저는 이제 쓰기 줄과 ACK가 잰다. 그래서 broadcast Lagged와 offset 빈틈은 host 안의 일(agent 재구독, host 지연)에서만 생긴다. 이것은 과부하가 아니라 다시 맞추는 일이라 snapshot을 보낸다. 참고에도 이 경로가 없다(PTY 출력을 바로 보낸다).
+  - **wire 크기.** 출력은 binary frame이라 JSON 이스케이프가 없다. wire 크기는 바이트 수 그대로다. snapshot(replay base64 JSON)만 직렬화한 길이를 쓴다.
+  - **모든 웹 화면이 ACK한다.** 참고에서 ACK하지 않는 것은 `watch`(보기 전용 미리보기)다. aaa에는 그것이 없다. TUI(`front.rs`)는 바꾸지 않았다. herdr의 TUI는 herdr 자신이라 견줄 것이 없다.
+- **시험.** `cargo test -p aaa-host output`: 참고 시험 13개. 웹 E2E 「출력이 밀릴 때」: 400KB를 한 번에 쓰는 pane을 두 화면이 연다. ACK를 삼키는 화면(Playwright `routeWebSocket`)은 4008로 닫히고 띠가 뜬다. 닫히기 전에 snapshot을 다시 받지 않고, 닫힌 뒤 스스로 다시 붙지 않는다. ACK하는 화면은 끊기지 않고 끝까지 받는다. 「다시 연결」을 누르면 새로 붙어 snapshot을 받고 입력도 간다. 시험이 가르는지 확인했다. host가 닫지 않게, 브라우저가 ACK하지 않게, 4008에도 다시 붙게 각각 바꾸면 이 단계가 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

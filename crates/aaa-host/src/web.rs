@@ -5,23 +5,26 @@
 //! - `/api/v1/call`은 Front API 요청을 그대로 받는다(같은 타입, 같은 권한 판정).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use aaa_proto::{
     B64, DeviceRole, ErrorBody, ErrorCode, FrontEvent, FrontRequest, Outcome, TermClientMsg, TermServerMsg,
 };
 use anyhow::{Context, Result};
 use axum::body::Body;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::{FrontRef, Host, PaneEvent};
+use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict};
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
@@ -451,8 +454,101 @@ async fn pane_ws(
     ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, socket))
 }
 
-async fn send_msg(socket: &mut WebSocket, m: &TermServerMsg) -> bool {
-    socket.send(Message::Text(serde_json::to_string(m).unwrap().into())).await.is_ok()
+/// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
+/// (herdr-web-ui가 보는 WebSocket `getBufferedAmount`). 그래서 느린 브라우저가 이 연결의 사건 처리를 막지 않고,
+/// 따라오는지는 ACK와 이 줄로 잰다(plan §8.62).
+struct Outbox {
+    tx: tokio::sync::mpsc::UnboundedSender<Message>,
+    buffered: Arc<AtomicU64>,
+    stop: tokio::sync::watch::Sender<bool>,
+}
+
+fn frame_len(m: &Message) -> u64 {
+    match m {
+        Message::Text(t) => t.len() as u64,
+        Message::Binary(b) => b.len() as u64,
+        _ => 0,
+    }
+}
+
+impl Outbox {
+    fn new(mut sink: futures_util::stream::SplitSink<WebSocket, Message>) -> Self {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+        let buffered = Arc::new(AtomicU64::new(0));
+        let (stop, mut stopped) = tokio::sync::watch::channel(false);
+        let left = buffered.clone();
+        tokio::spawn(async move {
+            loop {
+                // 연결이 그냥 끝나 보내는 쪽이 사라진 것(Err)은 정지가 아니다: 4008 없이 끝낸다
+                let m = tokio::select! {
+                    biased;
+                    r = stopped.changed() => if r.is_ok() { break } else { return },
+                    m = rx.recv() => match m { Some(m) => m, None => return },
+                };
+                let n = frame_len(&m);
+                // 막힌 보내기도 닫기가 끊는다(보내던 frame은 tungstenite 버퍼에 통째로 있어 흐름이 깨지지 않는다)
+                let ok = tokio::select! {
+                    biased;
+                    r = stopped.changed() => if r.is_ok() { break } else { return },
+                    r = sink.send(m) => r.is_ok(),
+                };
+                left.fetch_sub(n, Ordering::Relaxed);
+                if !ok {
+                    return;
+                }
+            }
+            // 따라오지 못한 연결: 남은 줄은 버리고 4008로 닫는다. 그 닫기도 못 가면 연결을 버린다.
+            let close = Message::Close(Some(CloseFrame {
+                code: OUTPUT_STALLED_CLOSE_CODE,
+                reason: "terminal output consumer stalled".into(),
+            }));
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sink.send(close)).await;
+        });
+        Self { tx, buffered, stop }
+    }
+
+    fn send(&self, m: Message) -> bool {
+        self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
+        self.tx.send(m).is_ok()
+    }
+
+    fn msg(&self, m: &TermServerMsg) -> bool {
+        self.send(Message::Text(serde_json::to_string(m).unwrap().into()))
+    }
+
+    fn buffered(&self) -> u64 {
+        self.buffered.load(Ordering::Relaxed)
+    }
+
+    /// 출력을 따라오지 못했다: 4008로 닫는다. 다시 보내지 않는다(브라우저의 「다시 연결」이 새로 붙는다).
+    fn stop(&self, why: &str) {
+        tracing::info!(why, "웹 터미널 출력 정지(4008)");
+        let _ = self.stop.send(true);
+    }
+}
+
+/// snapshot 하나가 새 출력 구독이다: 새 번호의 창을 열고, replay가 느린 연결을 건널 시간을 준다(참고 `join`)
+fn open_stream(
+    out: &Outbox,
+    streams: &mut u32,
+    replay: Vec<u8>,
+    cols: u16,
+    rows: u16,
+    readonly: bool,
+    now: u64,
+) -> Option<OutputWindow> {
+    *streams += 1;
+    let mut window = OutputWindow::new(*streams);
+    let bytes = replay.len() as u64;
+    let text =
+        serde_json::to_string(&TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly, stream: *streams })
+            .unwrap();
+    if bytes > 0 {
+        let wire = text.len() as u64;
+        window.join(wire, out.buffered(), now);
+        window.write(bytes, wire);
+    }
+    out.send(Message::Text(text.into())).then_some(window)
 }
 
 /// 입력할 수 있는지와 그 이유(끊김 > 종료 > 권한 순)
@@ -477,14 +573,7 @@ async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, s
     host.front_gone(&front.id);
 }
 
-async fn pane_session(
-    host: &Arc<Host>,
-    id: &str,
-    dev: &str,
-    role: DeviceRole,
-    front: &FrontRef,
-    mut socket: WebSocket,
-) {
+async fn pane_session(host: &Arc<Host>, id: &str, dev: &str, role: DeviceRole, front: &FrontRef, socket: WebSocket) {
     let id = id.to_string();
     let actor = format!("device:{dev}");
     let Some((mut rx, replay, mut next, cols, rows)) = host.attach_pane(&id) else { return };
@@ -492,17 +581,31 @@ async fn pane_session(
     // 첨부가 실패하면 그 첨부의 남은 조각은 오류 없이 버린다(다음 첨부는 offset 0으로 시작한다)
     let mut upload_failed = false;
     let Some(view) = host.pane_view_of(&id, role) else { return };
-    let snapshot = TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly: view.readonly };
-    if !send_msg(&mut socket, &TermServerMsg::Front { id: front.id.clone() }).await
-        || !send_msg(&mut socket, &snapshot).await
-        || !send_msg(&mut socket, &readonly_msg(&view, role)).await
-        || !send_msg(&mut socket, &TermServerMsg::State { pane: view }).await
-    {
+    let (sink, mut stream) = socket.split();
+    let out = Outbox::new(sink);
+    let started = std::time::Instant::now();
+    let now = || started.elapsed().as_millis() as u64;
+    let mut streams = 0;
+    if !out.msg(&TermServerMsg::Front { id: front.id.clone() }) {
         return;
     }
+    let Some(mut window) = open_stream(&out, &mut streams, replay, cols, rows, view.readonly, now()) else { return };
+    if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) {
+        return;
+    }
+    // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        if window.check(out.buffered(), now()) == Verdict::Stop {
+            out.stop("ACK가 나아가지 않는다");
+            break;
+        }
         tokio::select! {
+            _ = tick.tick() => {}
             ev = rx.recv() => {
+                // 빈틈·지연(Lagged)·agent 재구독(Reset)은 host 안의 일이라 snapshot으로 다시 맞춘다. 브라우저가
+                // 느린 것은 위 창이 잰다: 그때는 다시 보내지 않고 닫는다(참고: 과부하는 자동 replay하지 않는다).
                 let resync = match ev {
                     Ok(PaneEvent::Output(start, data)) => {
                         let end = start + data.len() as u64;
@@ -511,15 +614,20 @@ async fn pane_session(
                         else {
                             let part = data[(next - start) as usize..].to_vec();
                             next = end;
-                            if socket.send(Message::Binary(part.into())).await.is_err() { break; }
+                            let n = part.len() as u64;
+                            if window.pending() + n > OUTPUT_HARD_BYTES || out.buffered() >= OUTPUT_HARD_BYTES {
+                                out.stop("밀린 출력이 상한을 넘었다");
+                                break;
+                            }
+                            window.write(n, n);
+                            if !out.send(Message::Binary(part.into())) { break; }
                             false
                         }
                     }
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
                     Ok(PaneEvent::State) => {
                         let Some(view) = host.pane_view_of(&id, role) else { break };
-                        if !send_msg(&mut socket, &readonly_msg(&view, role)).await { break; }
-                        if !send_msg(&mut socket, &TermServerMsg::State { pane: view }).await { break; }
+                        if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) { break; }
                         false
                     }
                     Err(RecvError::Closed) => break,
@@ -529,12 +637,21 @@ async fn pane_session(
                     rx = nrx;
                     next = offset;
                     let readonly = host.pane_view_of(&id, role).map(|p| p.readonly).unwrap_or(true);
-                    if !send_msg(&mut socket, &TermServerMsg::Snapshot { replay: B64(replay), cols, rows, readonly }).await { break; }
+                    let Some(w) = open_stream(&out, &mut streams, replay, cols, rows, readonly, now()) else { break };
+                    window = w;
                 }
             }
-            m = socket.recv() => {
+            m = stream.next() => {
                 let req = match m {
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<TermClientMsg>(&t) {
+                        Ok(TermClientMsg::Ack { stream, offset }) => {
+                            // 앞 구독(snapshot 전)의 늦은 ACK는 그냥 버린다
+                            if stream == window.id && !window.acknowledge(stream, offset) {
+                                let e = ErrorBody::new(ErrorCode::BadRequest, "ACK offset이 보낸 출력을 넘는다");
+                                if !out.msg(&TermServerMsg::Error(e)) { break; }
+                            }
+                            None
+                        }
                         Ok(TermClientMsg::Input { data }) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(data.into_bytes()) }),
                         Ok(TermClientMsg::Resize { cols, rows }) if role.can_control() => {
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
@@ -551,7 +668,7 @@ async fn pane_session(
                                 Err(e) => Some(TermServerMsg::Error(e)),
                             };
                             upload_failed = matches!(reply, Some(TermServerMsg::Error(_)));
-                            if let Some(r) = reply && !send_msg(&mut socket, &r).await {
+                            if let Some(r) = reply && !out.msg(&r) {
                                 break;
                             }
                             None
@@ -564,7 +681,7 @@ async fn pane_session(
                 };
                 if let Some(req) = req
                     && let Err(e) = host.call_from(role, &actor, Some(front), req).await
-                    && !send_msg(&mut socket, &TermServerMsg::Error(e)).await
+                    && !out.msg(&TermServerMsg::Error(e))
                 {
                     break;
                 }
