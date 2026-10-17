@@ -16,7 +16,7 @@ import { AgentMark, hasAgentMark } from "./herdr/AgentMark.tsx";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
-import { useInstall } from "./install";
+import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { type PushState, iosNeedsInstall, usePush } from "./push";
@@ -523,9 +523,10 @@ function Main({ role }: { role: DeviceRole }) {
   );
 }
 
-/** 목록 맨 아래: 알림 켜기(Web Push)와 홈 화면에 설치(PWA). 할 수 있는 것만 보인다. */
+/** 목록 맨 아래: 알림 켜기(Web Push)와 홈 화면에 설치(PWA). 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar) */
 function ListFoot() {
-  const install = useInstall();
+  const { canInstall, installed, install, help } = useInstallPrompt();
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const push = usePush();
   const iosHint = iosNeedsInstall();
   const tr = useInputTrace();
@@ -569,11 +570,25 @@ function ListFoot() {
         </button>
       )}
       {tr.msg && <p className="foot-msg">{tr.msg}</p>}
-      {install && (
-        <button className="ghost" onClick={() => void install()}>
+      {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
+      {!installed && (
+        <button
+          className="ghost"
+          data-testid="install-app"
+          aria-expanded={canInstall ? undefined : installHelpOpen}
+          onClick={() => {
+            if (canInstall) void install();
+            else setInstallHelpOpen(!installHelpOpen);
+          }}
+        >
           <Icon name="download" />
-          홈 화면에 설치
+          앱 설치
         </button>
+      )}
+      {!installed && !canInstall && installHelpOpen && (
+        <p className="foot-msg" role="status" data-testid="install-help">
+          {help}
+        </p>
       )}
       {/* 설정과 그 옆 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row) */}
       <div className="foot-row">
