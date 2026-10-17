@@ -1761,10 +1761,12 @@ fn badge(
             " 질문 — aaa question ".to_string()
         }
         (SessionState::Running, _) => return None,
-        // herdr에는 재개 키가 없다(복원 때 자동). 사람이 다시 띄우는 길은 CLI다.
+        // herdr에는 재개 키가 없다(복원 때 자동). 자동으로 되살리지 않는 pane(프로그램 pane·복원 실패)은 CLI로 다시 띄운다.
+        // 복원 실패 까닭은 herdr-web-ui `RestoreErrorBadge`처럼 함께 보인다
         (SessionState::Interrupted, _) | (SessionState::Lost, _) => format!(
-            " {} — aaa pane resume {} ",
+            " {}{} — aaa pane resume {} ",
             if p.state == SessionState::Lost { "유실" } else { "중단(재부팅)" },
+            p.restore_error.as_deref().map(|e| format!(": {e}")).unwrap_or_default(),
             p.id.chars().take(8).collect::<String>()
         ),
         (SessionState::Exited { code }, _) => format!(" 종료({}) ", code.map(|c| c.to_string()).unwrap_or("?".into())),
@@ -1929,6 +1931,7 @@ mod tests {
             lease: None,
             role: None,
             agent: None,
+            restore_error: None,
         }
     }
 

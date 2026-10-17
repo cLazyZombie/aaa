@@ -177,7 +177,11 @@ readonly: boolean, cols: number, rows: number, lease: LeaseView | null, role: Ro
 /**
  * harness 상태(hook을 보내는 agent 세션만)
  */
-agent: AgentStatus | null, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
+agent: AgentStatus | null, 
+/**
+ * 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+ */
+restore_error?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
 
 export type SplitDir = "horizontal" | "vertical";
 

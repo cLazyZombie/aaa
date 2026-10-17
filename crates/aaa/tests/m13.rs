@@ -213,6 +213,35 @@ while c=$(dd bs=4096 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n') && [ -n "$
 done
 "#;
 
+/// 이어 띄울 수 있는 가짜 Claude(harness claude, hook 없음): 대화 ID 인자를 보이고, STICKY_AGENT처럼 입력창 상자를 그려
+/// Enter마다 받은 줄을 대화에 `got: <줄>`로 남긴다. 처음에는 `--session-id <id>`로, 이어 띄우면 `--resume <id>`로
+/// 뜬다(agent threads.rs `resolve`).
+const RESUMABLE_AGENT: &str = r#"#!/bin/sh
+stty -icanon -echo min 1 time 0
+R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
+# 대화 ID 인자만 한 줄로 보인다(긴 `--settings` 경로에 줄이 접히지 않게)
+log=''
+while [ $# -gt 0 ]; do
+  case "$1" in --session-id|--resume) log="$1 $2
+" ;; esac
+  shift
+done
+buf=''
+draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n' "$log" "$R" "$buf" "$R"; }
+draw
+while :; do
+  c=$(dd bs=4096 count=1 2>/dev/null)
+  if [ -z "$c" ]; then
+    log="$log$(printf 'got: %s' "$buf")
+"
+    buf=''
+  else
+    buf="$buf$c"
+  fi
+  draw
+done
+"#;
+
 /// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
 const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
@@ -221,7 +250,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\", \"prog\", \"paste\"]\nlibrary_copy_mb = 1\n{extra}",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"hooked\", \"sticky\", \"prog\", \"paste\", \"resumable\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -235,6 +264,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
          [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
          [profiles.prog]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.paste]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
+         [profiles.resumable]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
@@ -247,6 +277,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         lab::BIN,
         path_str(&scripts.join("paste.sh")),
         path_str(&scripts.join("paste.log")),
+        path_str(&scripts.join("resumable.sh")),
     )
 }
 
@@ -314,6 +345,10 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     std::fs::set_permissions(scripts.join("sticky.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     std::fs::write(scripts.join("paste.sh"), PASTE_AGENT).unwrap();
+    // harness claude는 실행 파일 뒤에 인자를 붙이므로 스크립트를 바로 띄운다
+    std::fs::write(scripts.join("resumable.sh"), RESUMABLE_AGENT).unwrap();
+    std::fs::set_permissions(scripts.join("resumable.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .unwrap();
     let repo = make_repo(&lab.root);
     let h = lab.node("h", Some(&host_toml(&projects, extra, web)));
     std::fs::write(h.cfg.join("agent.toml"), agent_toml(&lab.root.join("workA"), &scripts)).unwrap();
@@ -701,6 +736,76 @@ fn thread_message_paste_follows_program_mode() {
     w.message(&id, "셋째\n넷째", false);
     ev.kind("message_accepted", &id, T);
     assert_eq!(next(), format!("{}0d", hex("\x1b[200~셋째\n넷째\x1b[201~")));
+}
+
+/// 4장 A 재부팅 뒤 thread(herdr 복원 + herdr-projects는 그 pane을 그대로 쓴다): 저장한 대화를 이어 띄운다(`thread
+/// restart --resume`과 같은 길, brief 안내 없음). 대화를 이어 띄울 방법이 없는 harness(custom)는 중단으로 두고
+/// `restore_failed` 사건과 inbox `session`·`restore failed` 항목을 남긴다. 복원 중에는 「세션이 모두 끝났다」 항목을
+/// 내지 않는다. 기다림은 흐름 사건과 출력이다.
+#[test]
+fn reboot_resumes_threads() {
+    let mut w = world();
+    let mut ev = w.lab.follow("events", &w.h, "demo");
+    let v = w.start(&[
+        "--title",
+        "resume",
+        "--profile",
+        "resumable",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("tr.txt", "x"),
+    ]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    ev.kind("brief_delivered", &id, T);
+    let args = w.h.wait_output(&pane, "--session-id", T);
+    let line = args["matched_line"].as_str().unwrap().to_string();
+    let key = line.rsplit(' ').next().unwrap().to_string();
+    let f = w.start(&["--title", "plain", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("tf.txt", "y")]);
+    let fid = f["id"].as_str().unwrap().to_string();
+    let fpane = f["pane"].as_str().unwrap().to_string();
+    ev.kind("report_ready", &fid, T);
+
+    w.lab.kill("agentA");
+    assert_eq!(w.lab.kill_session_hosts(), 2);
+    w.lab.spawn_env(
+        "agentA2",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1"), ("AAA_TEST_BOOT_ID", "boot-after")],
+    );
+    // 이어 띄운 thread: 새 pane이 같은 대화(`--resume <key>`)로 뜨고 thread 기록이 그 pane을 가리킨다
+    let e = ev.kind("session_restored", &id, T);
+    assert!(e["detail"].as_str().unwrap().contains("대화를 이어 띄웠다"), "{e}");
+    let new = w.show(&id)["pane"].as_str().unwrap().to_string();
+    assert_ne!(new, pane);
+    w.h.wait_output(&new, &format!("--resume {key}"), T);
+    // 이어 띄운 대화에 메시지가 간다(brief는 다시 보내지 않는다)
+    w.message(&id, "after reboot", false);
+    w.h.wait_output(&new, "got: after reboot", T);
+    assert!(!w.h.screen(&new).contains("brief.md"), "{}", w.h.screen(&new));
+    // custom harness는 이어 띄울 대화가 없다: 중단으로 두고 알린다
+    let e = ev.kind("restore_failed", &fid, T);
+    assert!(e["detail"].as_str().unwrap().contains("이어 띄우지 못한다"), "{e}");
+    assert_eq!(w.show(&fid)["pane"], fpane.as_str());
+    assert!(w.h.pane(&fpane)["restore_error"].as_str().is_some_and(|s| s.contains("이어 띄우지 못한다")));
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+    assert!(
+        items.iter().any(|i| i["item_kind"] == "session"
+            && i["event"] == "restore failed"
+            && i["summary"].as_str().is_some_and(|s| s.contains(&fid))),
+        "{items:?}"
+    );
+    // 복원 뒤 ticker가 돌아도 「세션이 모두 끝났다」·이은 thread의 「pane closed」는 없다(사라졌다가 돌아온 것으로 보지
+    // 않는다). 실패한 thread에는 까닭이 든 항목 하나만 있다
+    w.h.ticks(2);
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+    assert!(!items.iter().any(|i| i["event"] == "sessions ended"), "{items:?}");
+    assert!(!items.iter().any(|i| i["event"] == "pane closed"), "{items:?}");
+    assert_eq!(items.iter().filter(|i| i["event"] == "restore failed").count(), 1, "{items:?}");
+    // 옛 pane 기록은 지웠다
+    assert!(w.h.json(&["pane", "get", &pane]).is_err());
 }
 
 /// hook으로 아는 harness 상태, 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5)
@@ -2051,7 +2156,11 @@ fn coordinator_flow() {
     // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
     let a = w.h.ok(&["assignable", "demo"]);
     let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
-    assert_eq!(la["profiles"], serde_json::json!(["fake", "hooked", "mute", "paste", "prog", "sticky"]), "{a}");
+    assert_eq!(
+        la["profiles"],
+        serde_json::json!(["fake", "hooked", "mute", "paste", "prog", "resumable", "sticky"]),
+        "{a}"
+    );
     w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
     for (bad, why) in
         [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]

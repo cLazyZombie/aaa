@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+pub mod watch;
+
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 static SEQ: AtomicU32 = AtomicU32::new(0);
 

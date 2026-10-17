@@ -1128,17 +1128,20 @@ fn side_list_like_web() {
     assert!(h.screen(&right).contains("still-9"), "포커스는 나눈 오른쪽 pane 그대로");
 }
 
-/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 사람이 다시 띄우는 길은 badge가 알려 주는 CLI다.
+/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 셸 pane은 저절로 되살아나고(m12
+/// `reboot_restores_shells_and_resumes_agents`), 다시 실행하지 않는 프로그램 pane은 badge가 알려 주는 CLI로 띄운다.
 #[test]
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh"]);
+    // 띄울 때마다 차례를 센다(첫 실행 `run-1`, 재개 `run-2`)
+    let runs = lab.root.join("runs").display().to_string();
+    let script = r#"echo x >> "$0"; echo "run-$(( $(wc -l < "$0") ))"; exec cat"#;
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh", "-c", script, &runs]);
     let old = leaves(&w)[0].clone();
-    h.ok(&["pane", "run", &old, "echo before-$((1+1))"]);
 
     let mut tui = Tui::start(&h);
-    tui.wait_text("첫 화면", |s| s.contains("before-2"));
+    tui.wait_text("첫 화면", |s| s.contains("run-1"));
 
     lab.kill("agent");
     tui.wait_text("끊김 표시", |s| s.contains("끊김·읽기 전용"));
@@ -1146,7 +1149,7 @@ fn interrupted_badge_and_resume() {
     lab.spawn_env("agent2", &h, &["agent", "--host", "local", "--name", "labA"], &[("AAA_TEST_BOOT_ID", "boot-after")]);
     let short: String = old.chars().take(8).collect();
     let badge = format!("중단(재부팅) — aaa pane resume {short}");
-    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("before-2"));
+    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("run-1"));
 
     h.ok(&["pane", "resume", &short]);
     hw.wait("재개", |w| {
@@ -1154,12 +1157,11 @@ fn interrupted_badge_and_resume() {
         (l.len() == 1 && l[0] != old && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then_some(())
     });
     // badge는 옛 pane 기록이 빠질 때 먼저 사라진다. 포커스는 TUI가 새 layout을 받을 때 새 pane으로 옮기므로,
-    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 새 pane 화면(옛 출력 없이 prompt)이 그려진 뒤 친다.
-    tui.wait_text("재개 뒤 새 pane", |s| {
-        !s.contains("중단(재부팅)") && !s.contains("before-2") && s.lines().any(|l| l.trim_end().ends_with('$'))
-    });
-    tui.type_line("echo resumed-$((5*5))");
-    tui.wait_text("재개 뒤 입력", |s| s.contains("resumed-25"));
+    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 같은 spec으로 다시 돈 새 pane 화면(`run-2`)이 그려진 뒤 친다.
+    tui.wait_text("재개 뒤 새 pane", |s| !s.contains("중단(재부팅)") && s.contains("run-2"));
+    // 입력은 새 세션(cat)이 받는다: 터미널 echo와 cat 출력으로 두 번
+    tui.type_line("typed-after-resume");
+    tui.wait_text("재개 뒤 입력", |s| s.matches("typed-after-resume").count() >= 2);
 }
 
 /// 세션 폴더에 저장된 첨부 파일들
