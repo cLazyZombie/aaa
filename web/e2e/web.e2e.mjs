@@ -2158,12 +2158,15 @@ try {
     await old.evaluate((id) => {
       const w = new WebSocket(`ws://${location.host}/api/v1/panes/${encodeURIComponent(id)}/ws`);
       w.binaryType = "arraybuffer";
-      window.oldClient = { bytes: 0, code: null, acks: 0 };
+      window.oldClient = { bytes: 0, code: null, acks: 0, joined: false };
       w.onmessage = (m) => {
         if (typeof m.data !== "string") window.oldClient.bytes += m.data.byteLength;
+        else if (m.data.startsWith('{"t":"snapshot"')) window.oldClient.joined = true;
       };
       w.onclose = (e) => (window.oldClient.code = e.code);
     }, aaa("pane", "list").panes.find((x) => x.name === "flood").id);
+    // snapshot이 출력 구독의 시작이다. 그 전에 쏟으면 앞부분이 snapshot(text)에 들어가 bytes가 모자란다(t-0327, 착지 검증에서 1/8)
+    await until("옛 웹 붙음", async () => await old.evaluate(() => window.oldClient.joined));
     // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
     aaa("pane", "send", "flood", "--text", "f");
     await until("출력 정지 띠", async () => await slow.getByTestId("output-stalled").isVisible());

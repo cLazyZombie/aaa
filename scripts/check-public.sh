@@ -11,10 +11,12 @@
 #   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴
 #   4) 저장소 밖 목록의 실제 이름(머신 hostname·tailnet·사람·회사 이름):
 #      `$(git rev-parse --git-common-dir)/info/private-words`에 한 줄에 하나씩 둔다(이 파일은 커밋되지 않는다).
-#      이 파일이 없는 clone(다른 머신·CI)에서는 4)를 건너뛴다. 그때의 「통과」는 1)~3)만 본 결과다.
+#      이 파일이 없는 clone(다른 머신·CI)에서는 4)를 건너뛴다. 그때의 「통과」는 1)~3)·5)만 본 결과다.
+#   5) 기준 ref 이후(--history면 모든) 커밋의 author·committer(결정 D4): email은 GitHub noreply
+#      (…@users.noreply.github.com, noreply@github.com)만 쓴다. 이름은 4)의 목록으로도 본다.
 #
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
-#       noreply@anthropic.com·git@github.com·*@example.com, /Users/<이름>·/Users/me/ 같은 자리표시자(me는 참고 프로젝트에서 그대로 옮긴 예시).
+#       noreply@anthropic.com·git@github.com·GitHub noreply(5)와 같다)·*@example.com, /Users/<이름>·/Users/me/ 같은 자리표시자(me는 참고 프로젝트에서 그대로 옮긴 예시).
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 HISTORY=0
@@ -53,7 +55,7 @@ add 'tailnet 주소' '[A-Za-z0-9-]+\.ts\.net' '(example\.ts\.net|>\.ts\.net|[`*]
 # agentSvgMarks.ts는 참고에서 옮긴 SVG path 숫자(점으로 이은 좌표)뿐이라 IP 검사에서만 뺀다(plan §8.56)
 add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\.1|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.255\.)' '^([0-9a-f]{40}:)?web/src/herdr/agentSvgMarks\.ts:'
 add '사용자 홈 경로' '(/Users/|/home/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|/Users/me/|/Users/Shared|/Users/runner|/home/runner)'
-add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|@example\.(com|org|net))'
+add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|noreply@github\.com|[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|@example\.(com|org|net))'
 add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' ''
 
 # $1=설명, $2..=검사할 rev(없으면 작업 트리의 추적 파일). 커밋 메시지는 COMMITS 변수로 검사한다.
@@ -89,6 +91,27 @@ else
   echo "기준 ref ${BASE}가 없어 커밋 메시지는 건너뛴다"
 fi
 
+# 5) 커밋 author·committer. 공개 이력은 메타데이터도 그대로 공개된다. 출력에는 email의 domain만 보인다(CI annotation도 공개다)
+IDENTS=""
+if [ "$HISTORY" = 1 ]; then
+  # shellcheck disable=SC2086
+  IDENTS=$(git log --no-walk=unsorted --format='%h|%an|%ae|%cn|%ce' $REVS)
+elif git rev-parse -q --verify "$BASE" >/dev/null; then
+  IDENTS=$(git log --format='%h|%an|%ae|%cn|%ce' "$BASE..HEAD")
+fi
+noreply() { case "$1" in *@users.noreply.github.com | noreply@github.com) return 0 ;; esac; return 1; }
+bad=""
+while IFS='|' read -r h _ ae _ ce; do
+  [ -n "$h" ] || continue
+  noreply "$ae" || bad="${bad}${h} author …@${ae#*@}"$'\n'
+  noreply "$ce" || bad="${bad}${h} committer …@${ce#*@}"$'\n'
+done <<<"$IDENTS"
+if [ -n "$bad" ]; then
+  report "커밋 author·committer email이 GitHub noreply가 아니다(git config user.email을 …@users.noreply.github.com으로 둔다)"
+  printf '%s' "$bad" | head -10 | sed 's/^/    /'
+fi
+IDENT_NAMES=$(cut -d'|' -f1,2,4 <<<"$IDENTS")
+
 # 4) 저장소 밖 목록의 실제 이름(대소문자 무시)
 WORDS="$(git rev-parse --git-common-dir)/info/private-words"
 if [ -f "$WORDS" ]; then
@@ -100,6 +123,10 @@ if [ -f "$WORDS" ]; then
     if [ -n "$COMMITS" ] && grep -q -i -F -e "$w" <<<"$COMMITS"; then
       report "실제 이름이 커밋 메시지에 있다(private-words의 한 항목)"
       grep -i -F -e "$w" <<<"$COMMITS" | head -5 | cut -c1-200 | sed 's/^/    /'
+    fi
+    if [ -n "$IDENTS" ] && grep -q -i -F -e "$w" <<<"$IDENT_NAMES"; then
+      report "실제 이름이 커밋 author·committer 이름에 있다(private-words의 한 항목)"
+      grep -i -F -e "$w" <<<"$IDENT_NAMES" | head -5 | cut -d'|' -f1 | sed 's/^/    /'
     fi
   done <"$WORDS"
 else
