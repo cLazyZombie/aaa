@@ -1153,7 +1153,11 @@ fn interrupted_badge_and_resume() {
         let l = w.leaves();
         (l.len() == 1 && l[0] != old && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then_some(())
     });
-    tui.wait_text("재개 뒤 badge 없음", |s| !s.contains("중단(재부팅)"));
+    // badge는 옛 pane 기록이 빠질 때 먼저 사라진다. 포커스는 TUI가 새 layout을 받을 때 새 pane으로 옮기므로,
+    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 새 pane 화면(옛 출력 없이 prompt)이 그려진 뒤 친다.
+    tui.wait_text("재개 뒤 새 pane", |s| {
+        !s.contains("중단(재부팅)") && !s.contains("before-2") && s.lines().any(|l| l.trim_end().ends_with('$'))
+    });
     tui.type_line("echo resumed-$((5*5))");
     tui.wait_text("재개 뒤 입력", |s| s.contains("resumed-25"));
 }
