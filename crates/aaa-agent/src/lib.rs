@@ -3,11 +3,13 @@
 //! - 외부에 아무것도 listen하지 않는다. host로 나가는 연결만 연다(§4.2 5).
 //! - 세션은 session host 프로세스가 소유하므로 agent가 재시작해도 이어진다. 시작할 때 세션 폴더를 다시 읽어 붙는다.
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
+//! - Claude·Codex 세션은 pump가 화면을 300ms마다 읽어 상태(작업 중·idle·질문)를 정한다(herdr 0.9.5 감지, plan §8.110).
 
 mod attach;
 mod chat;
 mod command;
 mod cwd;
+pub mod detect;
 mod health;
 pub mod hooks;
 pub mod identity;
@@ -58,8 +60,8 @@ pub struct Agent {
     threads_cfg: Mutex<threads::ThreadsConfig>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
-    /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). harness(Claude·Codex) 마지막 하나와
-    /// 진행 보고(`aaa report`) 마지막 하나다. 세션 폴더 `harness.json`에도 적어 agent가 다시 떠도 남는다.
+    /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). 칸마다(`Slot`) 마지막 하나다.
+    /// 세션 폴더 `harness.json`에도 적어 agent가 다시 떠도 남는다.
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
     /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
     harness_started: Mutex<HashMap<String, String>>,
@@ -67,6 +69,9 @@ pub struct Agent {
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
+    /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
+    /// 그가 보내는 정보의 이름은 여기서 덮는다.
+    labels: Mutex<HashMap<String, String>>,
 }
 
 impl Agent {
@@ -94,6 +99,7 @@ impl Agent {
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
+            labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
@@ -132,6 +138,12 @@ impl Agent {
         let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
             return Ok(());
         };
+        self.harness_event(ev).await;
+        Ok(())
+    }
+
+    /// harness 사건을 기억하고(다시 알릴 것이면) host에 보낸다
+    async fn harness_event(self: &Arc<Self>, ev: aaa_proto::HarnessEvent) {
         // 이 pane이 시작한 harness 세션과 다른 세션(중첩 Codex thread 등)의 사건은 버린다(herdr-projects `foreign_session`)
         if ev.harness != "report" {
             let mut started = self.harness_started.lock().unwrap();
@@ -140,23 +152,51 @@ impl Agent {
                     started.insert(ev.session.clone(), id.clone());
                 }
             } else if hooks::foreign_session(started.get(&ev.session).map(String::as_str), &ev) {
-                return Ok(());
+                return;
             }
         }
-        let me = self.clone();
-        let kept = ev.clone();
-        let _ = tokio::task::spawn_blocking(move || me.remember_harness(kept)).await;
+        let ev = if Slot::of(&ev).is_some() {
+            let me = self.clone();
+            let kept = ev.clone();
+            tokio::task::spawn_blocking(move || me.remember_harness(kept)).await.unwrap_or(ev)
+        } else {
+            ev
+        };
         self.send_host(&LinkMsg::Event(AgentEvent::Harness(ev))).await;
-        Ok(())
     }
 
-    /// 다시 알릴 사건을 바꾸고 세션 폴더에 적는다. 같은 칸(harness·보고)의 앞 사건을 바꾸되, 이번 사건에 없는
-    /// 기록 위치·harness 세션 ID는 앞 사건 것을 이어받는다(Stop 뒤에 온 사건이 그것을 지우지 않게).
-    fn remember_harness(&self, mut ev: aaa_proto::HarnessEvent) {
-        let is_report = |e: &aaa_proto::HarnessEvent| e.harness == "report";
+    /// 화면 감지가 알린 상태(pump에서)
+    async fn detected(self: &Arc<Self>, session: &str, harness: detect::Harness, r: detect::Report) {
+        tracing::debug!(%session, kind = r.kind, rule = ?r.rule, "harness 상태(화면 감지)");
+        self.harness_event(aaa_proto::HarnessEvent {
+            session: session.to_string(),
+            harness: harness.label().to_string(),
+            kind: r.kind.to_string(),
+            harness_session: None,
+            message: r.message,
+            question_kind: r.question_kind.map(str::to_string),
+            percent: None,
+            at_ms: util::now_ms(),
+            transcript: None,
+        })
+        .await;
+    }
+
+    /// 다시 알릴 사건을 바꾸고 세션 폴더에 적는다. 같은 칸의 앞 사건을 바꾸되, 이번 사건에 없는 기록 위치·
+    /// harness 세션 ID는 앞 사건 것을 이어받는다. 돌려준 사건을 host에 보낸다: agent가 다시 떠 같은 상태를 다시
+    /// 감지했으면 앞 사건(그 상태가 된 때)을 그대로 보낸다.
+    fn remember_harness(&self, mut ev: aaa_proto::HarnessEvent) -> aaa_proto::HarnessEvent {
+        let Some(slot) = Slot::of(&ev) else { return ev };
         let mut map = self.harness_last.lock().unwrap();
         let list = map.entry(ev.session.clone()).or_default();
-        if let Some(i) = list.iter().position(|e| is_report(e) == is_report(&ev)) {
+        let send = ev.clone();
+        if let Some(i) = list.iter().position(|e| Slot::of(e) == Some(slot)) {
+            let same_state = |o: &aaa_proto::HarnessEvent| {
+                slot == Slot::State && (&o.harness, &o.kind, &o.message) == (&ev.harness, &ev.kind, &ev.message)
+            };
+            if same_state(&list[i]) {
+                return list[i].clone();
+            }
             let old = list.remove(i);
             if old.harness == ev.harness {
                 ev.transcript = ev.transcript.or(old.transcript);
@@ -169,6 +209,7 @@ impl Agent {
         if let Err(e) = util::write_json(&SessionPaths::new(&self.state, &ev.session).harness(), list) {
             tracing::warn!(session = %ev.session, "harness.json을 쓰지 못했다: {e}");
         }
+        send
     }
 
     /// agent.toml의 thread 설정(작업 root·profile)
@@ -270,6 +311,9 @@ impl Agent {
                     continue;
                 }
             };
+            if let Some(label) = &spec.label {
+                self.labels.lock().unwrap().insert(id.clone(), label.clone());
+            }
             if let Ok(list) = util::read_json::<Vec<aaa_proto::HarnessEvent>>(&paths.harness()) {
                 self.harness_last
                     .lock()
@@ -302,7 +346,7 @@ impl Agent {
             None if spec.boot_id != self.boot_id => SessionState::Interrupted,
             None => SessionState::Lost,
         };
-        SessionInfo {
+        self.labeled(SessionInfo {
             id: spec.id.clone(),
             name: spec.spec.name.clone(),
             argv: spec.spec.argv.clone(),
@@ -314,7 +358,18 @@ impl Agent {
             rows: exit.as_ref().map(|x| x.rows).unwrap_or(spec.spec.rows),
             state,
             role: spec.spec.role,
+            label: None,
+            harness: spec.spec.harness.clone(),
+        })
+    }
+
+    /// session host나 옛 spec이 준 정보에 사람이 붙인 이름을 덮는다
+    fn labeled(&self, mut info: SessionInfo) -> SessionInfo {
+        if let Some(label) = self.labels.lock().unwrap().get(&info.id) {
+            info.name = label.clone();
+            info.label = Some(label.clone());
         }
+        info
     }
 
     /// session host에 연결하고 pump를 띄운다.
@@ -326,17 +381,18 @@ impl Agent {
         tx.json(&SessionMsg::Hello { proto: SESSION_IPC, token: spec.token.clone() }).await?;
         let welcome: SessionMsg =
             tokio::time::timeout(Duration::from_secs(5), rx.control()).await.context("welcome 대기")??;
-        let info = match welcome {
-            SessionMsg::Welcome { info, .. } => info,
+        let (proto, info) = match welcome {
+            SessionMsg::Welcome { proto, info } => (proto, self.labeled(info)),
             SessionMsg::Reject(e) => bail!("session host가 거부했다: {e}"),
             other => bail!("예상하지 못한 응답: {other:?}"),
         };
+        let watch = watch_of(spec, &info, proto);
         let (ptx, prx) = mpsc::channel(256);
         self.sessions.lock().unwrap().insert(info.id.clone(), Entry { info: info.clone(), pump: Some(ptx) });
         let me = self.clone();
         let paths = paths.clone();
         let spec = spec.clone();
-        tokio::spawn(async move { me.pump(paths, spec, tx, rx, prx).await });
+        tokio::spawn(async move { me.pump(paths, spec, tx, rx, prx, watch).await });
         Ok(info)
     }
 
@@ -347,13 +403,22 @@ impl Agent {
         tx: FrameTx,
         mut rx: FrameRx<tokio::io::ReadHalf<aaa_common::ipc::LocalStream>>,
         mut cmds: mpsc::Receiver<PumpCmd>,
+        mut watch: Option<detect::Watch>,
     ) {
         let id = spec.id.clone();
         let mut pending: HashMap<String, (String, bool)> = HashMap::new();
         let mut forwarding = false;
         let mut seq = 0u64;
         loop {
+            let detect_at = watch.as_ref().and_then(detect::Watch::next_at);
             tokio::select! {
+                _ = sleep_until(detect_at) => {
+                    if let Some((sid, body)) = watch.as_mut().and_then(|w| w.due(std::time::Instant::now()))
+                        && tx.json(&SessionMsg::Req { id: sid, body }).await.is_err()
+                    {
+                        break;
+                    }
+                }
                 cmd = cmds.recv() => match cmd {
                     Some(PumpCmd::Host { host_id, body }) => {
                         seq += 1;
@@ -383,12 +448,18 @@ impl Agent {
                     }
                     Ok(Some(Incoming::Control(b))) => match serde_json::from_slice::<SessionMsg>(&b) {
                         Ok(SessionMsg::Res { id: sid, result }) => {
-                            if let Some((host_id, is_sub)) = pending.remove(&sid) {
+                            if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
+                                let harness = w.harness();
+                                if let Some(r) = w.answer(std::time::Instant::now(), result) {
+                                    self.detected(&id, harness, r).await;
+                                }
+                            } else if let Some((host_id, is_sub)) = pending.remove(&sid) {
                                 if is_sub && matches!(result, Outcome::Ok(_)) { forwarding = true; }
                                 self.send_host(&LinkMsg::Res { id: host_id, result }).await;
                             }
                         }
                         Ok(SessionMsg::Updated(info)) => {
+                            let info = self.labeled(info);
                             if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) { e.info = info.clone(); }
                             self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
                         }
@@ -411,6 +482,13 @@ impl Agent {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         let info = self.offline_info(&paths, &spec);
+        // harness가 끝났다(herdr는 프로세스가 사라지면 agent를 놓는다. aaa 세션은 harness 하나라 세션 끝이 그것이다)
+        if let Some(w) = &watch
+            && !info.state.is_running()
+        {
+            let r = detect::Report { kind: "exited", message: None, question_kind: None, rule: None };
+            self.detected(&id, w.harness(), r).await;
+        }
         if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
             e.info = info.clone();
             e.pump = None;
@@ -446,8 +524,14 @@ impl Agent {
         // 세션 안의 `aaa hook`·`aaa report`가 이 agent에 사건을 보낼 곳
         spec.env.push((hooks::ENV_SOCK.into(), hooks::socket(&self.state).to_string_lossy().to_string()));
         spec.env.push((hooks::ENV_TOKEN.into(), hooks::hook_token(&token)));
-        let file =
-            SpecFile { id: id.clone(), token, boot_id: self.boot_id.clone(), created_at_ms: util::now_ms(), spec };
+        let file = SpecFile {
+            id: id.clone(),
+            token,
+            boot_id: self.boot_id.clone(),
+            created_at_ms: util::now_ms(),
+            spec,
+            label: None,
+        };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
         let mut cmd = std::process::Command::new(&self.exe);
@@ -516,6 +600,7 @@ impl Agent {
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
             AgentRequest::Forget { session } => self.forget(&session).await,
+            AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
                 chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
@@ -568,9 +653,9 @@ impl Agent {
                     .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                     .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::ThreadRebrief { work_dir, brief, launch } => {
-                let exe = self.threads_cfg.lock().unwrap().exe.clone();
-                threads::rebrief(&work_dir, &brief, launch, &exe)
+            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                threads::rebrief(&cfg, &work_dir, &brief, launch, profile.as_deref())
                     .map(AgentResponse::Relaunch)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
@@ -644,6 +729,47 @@ impl Agent {
     /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
     /// session host는 종료를 알린 뒤에도 2초 더 응답한다(바로 끝난 명령도 마지막 화면을 받게). 그동안은 pump가
     /// 붙어 있으니 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
+    /// 사람이 붙인 이름을 `spec.json`에 적고(지우면 뺀다) 바뀐 정보를 host에 알린다. 끝난 세션에도 붙인다(다시 열면 그 이름).
+    async fn rename(&self, session: &str, label: Option<String>) -> Result<AgentResponse, ErrorBody> {
+        if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
+        }
+        let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        if label
+            .as_ref()
+            .is_some_and(|l| l.chars().count() > aaa_proto::MAX_PANE_LABEL_CHARS || l.chars().any(char::is_control))
+        {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!("이름은 제어 문자 없이 {}자 안이어야 한다", aaa_proto::MAX_PANE_LABEL_CHARS),
+            ));
+        }
+        if !self.sessions.lock().unwrap().contains_key(session) {
+            return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}")));
+        }
+        let paths = SessionPaths::new(&self.state, session);
+        let mut spec: SpecFile = util::read_json(&paths.spec())
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("spec.json 읽기: {e:#}")))?;
+        spec.label = label.clone();
+        util::write_json(&paths.spec(), &spec)
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("spec.json 쓰기: {e:#}")))?;
+        match &label {
+            Some(l) => self.labels.lock().unwrap().insert(session.to_string(), l.clone()),
+            None => self.labels.lock().unwrap().remove(session),
+        };
+        let info = {
+            let mut map = self.sessions.lock().unwrap();
+            let Some(e) = map.get_mut(session) else {
+                return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}")));
+            };
+            e.info.name = spec.name().to_string();
+            e.info.label = label;
+            e.info.clone()
+        };
+        self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info.clone()))).await;
+        Ok(AgentResponse::Session(info))
+    }
+
     async fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
@@ -670,6 +796,7 @@ impl Agent {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         self.harness_last.lock().unwrap().remove(session);
+        self.labels.lock().unwrap().remove(session);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");
@@ -726,6 +853,52 @@ impl Agent {
     }
 }
 
+/// 다시 알릴 harness 사건의 칸. 칸마다 마지막 하나를 남긴다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    /// 진행 보고(`aaa report`)
+    Report,
+    /// harness 세션 ID·기록 위치(SessionStart hook, Codex notify)
+    Session,
+    /// 상태(화면 감지, 끝남). 세션 ID 사건이 이것을 덮으면 다시 붙은 host가 상태를 잃는다.
+    State,
+}
+
+impl Slot {
+    /// 다시 알리지 않는 사건(입력 제출 같은 한때 신호)은 None
+    fn of(e: &aaa_proto::HarnessEvent) -> Option<Slot> {
+        match e.kind.as_str() {
+            _ if e.harness == "report" => Some(Slot::Report),
+            "session_start" | "session" => Some(Slot::Session),
+            "prompt_submit" => None,
+            _ => Some(Slot::State),
+        }
+    }
+}
+
+/// 화면으로 상태를 볼 세션이면 감지 차례. session host가 SESSION_IPC 1.1 이상일 때만 `Detect`를 보낸다
+/// (그 전 session host는 모르는 요청을 받으면 연결을 끊는다).
+fn watch_of(spec: &SpecFile, info: &SessionInfo, proto: aaa_proto::Version) -> Option<detect::Watch> {
+    if !info.state.is_running() {
+        return None;
+    }
+    let harness = detect::Harness::of_session(spec.spec.harness.as_deref(), &spec.spec.argv)?;
+    let now = std::time::Instant::now();
+    // 띄운 지 오래된 세션(agent가 다시 떠 붙었다)은 시작 유예가 이미 끝났다
+    let age = Duration::from_millis(util::now_ms().saturating_sub(info.started_at_ms));
+    let started = now.checked_sub(age).unwrap_or(now);
+    let detect_ipc = proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_DETECT;
+    Some(detect::Watch::new(harness, started, detect_ipc, now))
+}
+
+/// `at`까지 잔다(None이면 깨지 않는다)
+async fn sleep_until(at: Option<std::time::Instant>) {
+    match at {
+        Some(t) => tokio::time::sleep_until(tokio::time::Instant::from_std(t)).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// 시작 때 자가 점검(§10.4 6): 계보·키체인·FDA·첫 실행 지연. 결과는 상태 폴더 selfcheck.json과 다음 hello에 담는다.
 /// macOS에서는 App Nap·자동 종료를 막는 활동도 이때 잡는다.
 pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
@@ -761,4 +934,66 @@ pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
         }
         *agent.selfcheck.lock().unwrap() = Some(summary);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(harness: Option<&str>, argv: &[&str], state: SessionState) -> (SpecFile, SessionInfo) {
+        let spec = SpawnSpec {
+            name: "s".into(),
+            argv: argv.iter().map(|a| a.to_string()).collect(),
+            cwd: None,
+            env: vec![],
+            cols: 80,
+            rows: 24,
+            role: None,
+            harness: harness.map(str::to_string),
+        };
+        let info = SessionInfo {
+            id: "s".into(),
+            name: "s".into(),
+            argv: spec.argv.clone(),
+            cwd: None,
+            pid: Some(1),
+            // 오래전에 띄운 세션(시작 유예가 끝났다)
+            started_at_ms: 1,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state,
+            role: None,
+            label: None,
+            harness: spec.harness.clone(),
+        };
+        (SpecFile { id: "s".into(), token: "t".into(), boot_id: "b".into(), created_at_ms: 1, spec, label: None }, info)
+    }
+
+    /// 감지 요청: 유예가 끝난 차례 다음의 첫 요청
+    fn first_request(w: &mut detect::Watch) -> SessionRequest {
+        let now = std::time::Instant::now();
+        assert!(w.due(now).is_none());
+        w.due(w.next_at().unwrap()).unwrap().1
+    }
+
+    #[test]
+    fn detection_asks_old_session_hosts_only_for_the_screen() {
+        let v = |minor| aaa_proto::Version { major: SESSION_IPC.major, minor };
+        let running = SessionState::Running;
+        let (spec, info) = session(Some("codex"), &["/opt/bin/codex", "-c", "x"], running.clone());
+        // SESSION_IPC 1.0 session host는 `Detect`를 모르고 연결을 끊는다: 보이는 화면만 묻는다
+        let mut old = watch_of(&spec, &info, v(0)).unwrap();
+        assert_eq!(old.harness(), detect::Harness::Codex);
+        assert_eq!(first_request(&mut old), SessionRequest::Screen);
+        let mut new = watch_of(&spec, &info, v(aaa_proto::SESSION_IPC_DETECT)).unwrap();
+        assert_eq!(first_request(&mut new), SessionRequest::Detect { unchanged_since: None });
+        // profile harness가 shell·custom이면 실행 파일 이름으로, 그것도 모르면 보지 않는다
+        let (spec, info) = session(Some("custom"), &["/x/claude", "--settings", "f"], running.clone());
+        assert_eq!(watch_of(&spec, &info, v(1)).map(|w| w.harness()), Some(detect::Harness::Claude));
+        let (spec, info) = session(None, &["/bin/sh"], running);
+        assert!(watch_of(&spec, &info, v(1)).is_none());
+        let (spec, info) = session(Some("claude"), &["claude"], SessionState::Exited { code: Some(0) });
+        assert!(watch_of(&spec, &info, v(1)).is_none(), "끝난 세션은 보지 않는다");
+    }
 }

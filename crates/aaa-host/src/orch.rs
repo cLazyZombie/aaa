@@ -77,6 +77,12 @@ pub(crate) struct ThreadRec {
     /// 「새 보고」 항목을 낸 보고 hash(herdr-projects `last_review_item_hash`). 같은 보고로 두 번 내지 않는다.
     #[serde(default)]
     pub review_item_hash: Option<String>,
+    /// 묶음이 마지막으로 바뀐 시각(herdr-projects `last_state_change`). auto-resolve가 잰다
+    #[serde(default)]
+    pub group_changed_ms: Option<u64>,
+    /// 보고 hash가 마지막으로 바뀐 시각(herdr-projects `last_report_change`)
+    #[serde(default)]
+    pub report_changed_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
     /// 사후 평가자: 마지막으로 넘긴 사건 seq, 넘긴 묶음 수, 마지막 묶음 시각(§8.13)
@@ -91,6 +97,13 @@ pub(crate) struct ThreadRec {
 }
 
 /// thread 시작 인자
+/// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResolveWhy {
+    Manual,
+    Auto { days: u32 },
+}
+
 pub struct StartArgs {
     pub project: String,
     pub title: String,
@@ -119,8 +132,13 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 - 동시 thread 한도: project.toml `max_parallel_threads`는 coordinator가 지키는 규칙이다. 그만큼 열려 일하고 있으면 시작하지
   말고 까닭을 들어 제안한다. 사용자가 채팅에서 그때 한 번 넘기게 할 수 있다(`thread start`는 경고만 한다).
 - TASKS.md task로 시작: `aaa thread start {p} --from-task \"<제목>\" [--kind dir | --repo <경로>]`. owner가 profile·machine을 정한다.
-- 그 밖: `aaa thread start {p} --title … --profile … [--machine …] --task-file …`
+- 그 밖: `aaa thread start {p} --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
+  project.toml `thread_profile`이다. `--repo`가 있으면 worktree, 없으면 repo 없는 작업 폴더다.
 - 보고 확인: `aaa thread show {p} <id>`, `aaa thread library {p} <id>`, 다 봤으면 `aaa thread ack {p} <id>`, 끝나면 `aaa thread resolve {p} <id>`.
+- 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart {p} <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된) profile로
+  띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
+- 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
+  `aaa thread resolve {p} <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
 - 다음 지시: `aaa thread next {p} <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. 줄을 더할 때는 `--add \"…\"`.
 - 그 밖의 메시지: `aaa thread message {p} <id> --text …`. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다).
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
@@ -580,13 +598,21 @@ impl Host {
     }
 
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
-    pub(crate) async fn thread_start(self: &Arc<Self>, a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
+    pub(crate) async fn thread_start(self: &Arc<Self>, mut a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         if a.title.trim().is_empty() {
             return Err(bad("제목이 비었다"));
         }
         if a.task.trim().is_empty() {
             return Err(bad("할 일이 비었다"));
+        }
+        // herdr-projects `thread_profile`: --profile이 없으면 프로젝트 기본. 참고의 내장 기본(claude)은 aaa에 없다
+        // (profile은 머신 agent.toml에만 있다)
+        if a.profile.is_empty() {
+            a.profile = self.settings(&a.project).thread_profile;
+        }
+        if a.profile.is_empty() {
+            return Err(bad("profile이 없다: --profile을 주거나 project.toml에 thread_profile을 둔다"));
         }
         if !self.profile_allowed(&a.profile) {
             return Err(err(
@@ -633,6 +659,8 @@ impl Host {
             // 시작 중은 작업 중이다(`thread_group` 2번 줄). 처음 셈을 기다리지 않고 적어, 첫 셈 전에 온 보고도 새 보고다.
             last_group: Some(ThreadGroup::Working),
             review_item_hash: None,
+            group_changed_ms: Some(now),
+            report_changed_ms: None,
             error: None,
             eval_cursor: 0,
             eval_batches: 0,
@@ -747,6 +775,8 @@ impl Host {
             cols: 120,
             rows: 32,
             role: Some(rec.role),
+            // agent가 이 harness(claude·codex)의 화면으로 상태를 본다(plan §8.110)
+            harness: Some(launch.harness.clone()),
         };
         let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
         *rec = self.update_rec(&rec.project, &rec.id, |r| {
@@ -781,11 +811,23 @@ impl Host {
         project: &str,
         id: &str,
         resume: bool,
+        profile: Option<String>,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let mut rec = self.load(project, id)?;
         if rec.status != ThreadStatus::Open {
             return Err(bad(format!("열린 thread만 다시 시작한다(지금 {})", rec.status.as_str())));
+        }
+        if let Some(p) = &profile {
+            if resume {
+                return Err(bad("--profile은 새 대화로 다시 시작할 때만 쓴다(--resume과 함께 쓰지 않는다)"));
+            }
+            if !self.profile_allowed(p) {
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    format!("host.toml [projects] allow_profiles에 없는 profile: {p}"),
+                ));
+            }
         }
         if let Some(p) = &rec.pane
             && self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
@@ -816,21 +858,38 @@ impl Host {
             let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
             let brief = self.brief(&dir, &rec, &task, true);
             let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
-            let relaunched = match conn.request(AgentRequest::ThreadRebrief { work_dir, brief, launch }).await? {
+            let relaunched = match conn
+                .request(AgentRequest::ThreadRebrief { work_dir, brief, launch, profile: profile.clone() })
+                .await?
+            {
                 AgentResponse::Relaunch(l) => l,
                 other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
             };
+            // 옛 agent는 `profile`을 모르고 저장된 launch를 돌려준다
+            if let Some(p) = &profile
+                && relaunched.profile != *p
+            {
+                return Err(bad(format!(
+                    "그 머신 agent가 profile을 바꾸지 못했다(돌려준 것: {}). agent를 새 aaa로 바꾼 뒤 다시 한다",
+                    relaunched.profile
+                )));
+            }
             let launch = relaunched.clone();
             rec = self.update_rec(project, id, |r| {
+                if let Some(p) = &profile {
+                    r.profile = p.clone();
+                }
                 r.brief = BriefState::Pending;
                 r.brief_attempts = 0;
                 r.launch = Some(launch);
             })?;
             relaunched.argv
         };
-        self.db.audit(actor, "thread_restart", &format!("{project}/{id} resume={resume}"));
+        let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
+        self.db.audit(actor, "thread_restart", &format!("{project}/{id} resume={resume}{profile_note}"));
         self.launch_session(&mut rec, &argv, actor).await?;
-        self.flow(&rec, "thread_restarted", None, if resume { "resume" } else { "새 대화·brief 다시 씀" });
+        let detail = if resume { "resume".to_string() } else { format!("새 대화·brief 다시 씀{profile_note}") };
+        self.flow(&rec, "thread_restarted", None, detail);
         if !resume {
             self.spawn_brief(project, id);
         }
@@ -1001,6 +1060,7 @@ impl Host {
                 let next = next_lines(&text);
                 let rec = self.update_rec(project, id, |r| {
                     r.report_hash = Some(hash);
+                    r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
                     r.copy = Some(copy.clone());
                     r.copy_notes = skipped.clone();
@@ -1049,6 +1109,7 @@ impl Host {
         project: &str,
         id: &str,
         keep_worktree: bool,
+        why: ResolveWhy,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let rec = self.load(project, id)?;
@@ -1111,7 +1172,14 @@ impl Host {
             rec.report_hash.as_ref().map(|_| format!("threads/{id}.md")),
             notes.join("; "),
         );
-        let mut summary = format!("{}: 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec));
+        let mut summary = match why {
+            ResolveWhy::Manual => format!("{}: 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec)),
+            // herdr-projects steps.rs `resolve_after_copy`의 auto 문구
+            ResolveWhy::Auto { days } => format!(
+                "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
+                crate::transitions::label(&rec)
+            ),
+        };
         if !notes.is_empty() {
             summary.push_str(&format!(": {}", notes.join("; ")));
         }
@@ -1120,6 +1188,31 @@ impl Host {
             self.inbox_add(project, "thread-state", id, "resolved", &summary);
         }
         Ok(self.thread_view(&rec))
+    }
+
+    /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`): 기록만 열린 것으로 돌리고 아무것도 띄우지 않는다.
+    /// 지워진 worktree는 돌아오지 않는다(작업 폴더 thread는 남아 있다).
+    pub(crate) fn thread_reopen(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        actor: &str,
+    ) -> Result<ThreadView, ErrorBody> {
+        let rec = self.load(project, id)?;
+        if rec.status != ThreadStatus::Resolved {
+            return Err(bad(format!("{id}는 끝낸 thread가 아니다(지금 {})", rec.status.as_str())));
+        }
+        let rec = self.update_rec(project, id, |r| {
+            r.status = ThreadStatus::Open;
+            // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다)
+            r.last_group = None;
+        })?;
+        self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
+        self.flow(&rec, "thread_reopened", None, "다시 열었다(아무것도 띄우지 않았다)");
+        let mut view = self.thread_view(&rec);
+        view.warnings
+            .push(format!("아무것도 띄우지 않았다. `aaa thread restart {project} {id}`가 agent를 다시 띄운다"));
+        Ok(view)
     }
 
     /// agent가 다시 붙었다: 그 머신의 열린 thread 보고 감시를 다시 건다(놓친 변화는 등록 즉시 hash로 알 수 있다)
@@ -1210,6 +1303,8 @@ mod tests {
             copy_notes: Vec::new(),
             last_group: None,
             review_item_hash: None,
+            group_changed_ms: None,
+            report_changed_ms: None,
             error: None,
             eval_cursor: 0,
             eval_batches: 0,

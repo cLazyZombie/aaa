@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashSet};
 use aaa_proto::{AgentActivity, AgentStatus, Connection, Role, ThreadGroup, ThreadStatus};
 
 use crate::Host;
-use crate::orch::{ThreadRec, WAITING, thread_group};
+use crate::orch::{ResolveWhy, ThreadRec, WAITING, thread_group};
 
 /// 이 수 이상 기록된 pane이 한 머신에서 모두 사라지면 세션 한 건으로 알린다(herdr-projects `session_lost`)
 const SESSION_LOST_PANES: usize = 2;
@@ -120,6 +120,17 @@ impl MachinePanes {
     }
 }
 
+/// auto-resolve 때가 됐나: 묶음·보고가 마지막으로 바뀐 때와 host가 뜬 때 중 가장 늦은 때부터 `limit_ms`가 지났다
+/// (herdr-projects steps.rs `auto_resolve`). 두 시각이 모두 없는 기록(옛 host)은 잴 수 없어 끝내지 않는다.
+pub(crate) fn auto_resolve_due(r: &ThreadRec, now: u64, started: u64, limit_ms: u64) -> bool {
+    let Some(since) =
+        [r.group_changed_ms, r.report_changed_ms].into_iter().flatten().map(|t| now.saturating_sub(t)).min()
+    else {
+        return false;
+    };
+    since.min(now.saturating_sub(started)) >= limit_ms
+}
+
 impl Host {
     /// 한 프로젝트의 묶음 전이와 thread 항목(ticker 한 번). 기록은 잠금 안에서 다시 읽고 고친다
     /// (같은 때 resolve·ack가 쓴 필드를 옛 값으로 덮지 않고, 끝낸 thread를 닫힌 pane으로 보지 않게).
@@ -172,6 +183,7 @@ impl Host {
                     None => r.review_item_hash = r.report_hash.clone(),
                 }
                 r.last_group = Some(group);
+                r.group_changed_ms = Some(now);
                 self.save(&mut r);
             }
             seen.push((r, change, agent));
@@ -189,6 +201,33 @@ impl Host {
                 self.inbox_add(project, "thread-state", &r.id, transition_event(t), &summary);
             }
             self.new_report_item(project, r);
+        }
+    }
+
+    /// 쉼으로 `auto_resolve_days`가 지난 thread를 마지막 사본 뒤 끝낸다(herdr-projects steps.rs `auto_resolve`).
+    /// 사본이 실패하면 끝내지 않고 다음 셈에 다시 한다. 연결되지 않은 머신의 thread는 건너뛴다.
+    pub(crate) async fn auto_resolve_pass(self: &std::sync::Arc<Self>, project: &str) {
+        let days = self.settings(project).auto_resolve_days;
+        if days == 0 {
+            return;
+        }
+        let limit = u64::from(days) * self.cfg.projects.auto_resolve_day_secs * 1000;
+        let now = aaa_common::util::now_ms();
+        let due: Vec<String> = self
+            .db
+            .threads(Some(project))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter(|r| r.status == ThreadStatus::Open && r.role != Role::Evaluator)
+            .filter(|r| r.last_group == Some(ThreadGroup::Idle) && self.live_conn(&r.machine_id).is_ok())
+            .filter(|r| auto_resolve_due(r, now, self.started_ms, limit))
+            .map(|r| r.id)
+            .collect();
+        for id in due {
+            if let Err(e) = self.thread_resolve(project, &id, false, ResolveWhy::Auto { days }, "ticker").await {
+                tracing::warn!(project, thread = %id, "자동 resolve를 다음 셈으로 미룬다: {}", e.message);
+            }
         }
     }
 
@@ -238,6 +277,24 @@ impl Host {
 
 #[cfg(test)]
 mod tests {
+    /// herdr-projects steps.rs `auto_resolve`: 묶음·보고가 바뀐 때와 ticker(host)가 뜬 때 중 가장 늦은 때부터 잰다
+    #[test]
+    fn auto_resolve_counts_from_the_latest_change_or_host_start() {
+        let mut r: super::ThreadRec = serde_json::from_value(serde_json::json!({
+            "project": "p", "id": "t-0001", "title": "t", "machine_id": "m", "profile": "x", "role": "worker",
+            "kind": "dir", "status": "open", "brief": "delivered", "created_at_ms": 0, "updated_at_ms": 0
+        }))
+        .unwrap();
+        let due = |r: &super::ThreadRec, now, started| super::auto_resolve_due(r, now, started, 100);
+        assert!(!due(&r, 1_000, 0), "잴 시각이 없는 옛 기록은 끝내지 않는다");
+        r.group_changed_ms = Some(500);
+        assert!(due(&r, 600, 0) && !due(&r, 599, 0));
+        r.report_changed_ms = Some(550);
+        assert!(!due(&r, 600, 0), "보고가 더 늦게 바뀌었다");
+        assert!(!due(&r, 1_000, 950), "host가 방금 떴다: 꺼져 있던 동안은 세지 않는다");
+        assert!(due(&r, 1_050, 950));
+    }
+
     use super::*;
 
     fn agent(activity: AgentActivity) -> AgentStatus {

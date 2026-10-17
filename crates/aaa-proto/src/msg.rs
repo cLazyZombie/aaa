@@ -153,7 +153,17 @@ pub struct SessionInfo {
     /// agent 세션 역할(thread가 띄운 세션만). 이전 session host는 보내지 않는다.
     #[serde(default)]
     pub role: Option<Role>,
+    /// 사람이 붙인 이름(`pane rename`, herdr `manual_label`). 있으면 `name`이 이것이고, 지우면 띄울 때 이름으로 돌아간다.
+    /// 정본은 agent의 `spec.json`이다(이전 session host는 모른다, plan §8.109).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// 띄울 때 알려 준 harness(`SpawnSpec.harness`). 다시 띄울 때(resume) 그대로 넘긴다.
+    #[serde(default)]
+    pub harness: Option<String>,
 }
+
+/// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
+pub const MAX_PANE_LABEL_CHARS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SpawnSpec {
@@ -167,6 +177,9 @@ pub struct SpawnSpec {
     pub rows: u16,
     #[serde(default)]
     pub role: Option<Role>,
+    /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -267,6 +280,19 @@ pub struct WorkspaceSummary {
     pub name: String,
     pub tabs: u32,
     pub panes: u32,
+}
+
+/// harness 상태 감지 입력(plan §8.110). herdr처럼 화면 끝 글과 마지막 OSC 제목·진행을 함께 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectScreen {
+    /// 화면 변화 순번(출력이 오거나 크기가 바뀔 때마다 는다)
+    pub seq: u64,
+    /// 화면 끝 글(herdr `detection_text`). 요청의 `unchanged_since`와 순번이 같으면 None이다(다시 볼 것이 없다).
+    pub text: Option<String>,
+    /// 마지막 OSC 0/2 제목(없으면 빈 글)
+    pub osc_title: String,
+    /// 마지막 OSC 9 payload(없으면 빈 글)
+    pub osc_progress: String,
 }
 
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
@@ -398,6 +424,11 @@ pub enum AgentRequest {
     Forget {
         session: String,
     },
+    /// 세션에 사람이 붙인 이름(`None`이면 지움). 답은 바뀐 `Session`이다. agent가 `rename.v1` 기능을 알릴 때만 보낸다.
+    Rename {
+        session: String,
+        label: Option<String>,
+    },
     /// harness 대화 기록의 끝부분(§8.27). agent는 자기 Claude·Codex 기록 폴더 안의 파일만 읽는다.
     Chat {
         harness: String,
@@ -431,11 +462,15 @@ pub enum AgentRequest {
         len: u32,
     },
     /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
-    /// (claude는 새 `--session-id`). 저장된 launch를 그대로 쓰고 profile을 다시 해석하지 않는다.
+    /// (claude는 새 `--session-id`). `profile`이 없으면 저장된 launch를 그대로 쓰고, 있으면 이 머신 agent.toml에서
+    /// 그 profile을 다시 해석한다(`thread restart --profile`, AGENT_LINK 1.4). 옛 agent는 `profile`을 모르고 저장된
+    /// launch를 돌려주므로 host는 돌려받은 `Launch.profile`로 확인한다.
     ThreadRebrief {
         work_dir: String,
         brief: String,
         launch: Launch,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -519,6 +554,8 @@ pub enum AgentResponse {
         offset: u64,
     },
     Screen(ScreenText),
+    /// 상태 감지 입력(session host → agent, SESSION_IPC 1.1)
+    Detect(DetectScreen),
     Done,
     Chat {
         messages: Vec<ChatMessage>,
@@ -611,12 +648,23 @@ pub enum SessionMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
-    Subscribe { from: Option<u64> },
+    Subscribe {
+        from: Option<u64>,
+    },
     Unsubscribe,
-    Input { data: B64 },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: B64,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Kill,
     Screen,
+    /// 상태 감지 입력(SESSION_IPC 1.1부터). 순번이 `unchanged_since`와 같으면 글을 싣지 않는다.
+    Detect {
+        unchanged_since: Option<u64>,
+    },
 }
 
 // ───────────────────────── Front API ─────────────────────────
@@ -733,6 +781,10 @@ pub struct PaneView {
     pub role: Option<Role>,
     /// harness 상태(hook을 보내는 agent 세션만)
     pub agent: Option<Box<AgentStatus>>,
+    /// 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -832,6 +884,11 @@ pub enum LayoutChange {
     /// 같은 탭의 두 pane 자리를 바꾼다(herdr `pane swap`의 source·target 꼴). 칸과 비율은 그대로다.
     /// 방향 이웃은 화면 크기를 아는 front가 찾는다(host는 front마다 다른 칸을 모른다).
     Swap { pane: String, with: String },
+    /// 나눔 하나의 비율을 바로 정한다(herdr `layout.set_split_ratio`, 나눔 경계 끌기). `path`는 탭 뿌리에서 그 나눔까지
+    /// (false = a, true = b), `ratio`는 a 쪽 천분율이고 100..=900으로 묶는다(plan §8.106)
+    SplitRatio { tab: String, path: Vec<bool>, ratio: u16 },
+    /// 탭을 `index` 앞으로 옮긴다(herdr `tab.move`의 `insert_index`: 0..=탭 수, 옮기기 전 차례로 센다)
+    MoveTab { tab: String, index: u16 },
 }
 
 // ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
@@ -864,6 +921,50 @@ pub struct GridFrame {
     pub cursor_visible: bool,
     pub full: bool,
     pub lines: Vec<GridLine>,
+    /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
+    #[serde(default)]
+    pub modes: PaneModes,
+}
+
+/// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PaneModes {
+    #[serde(default)]
+    pub mouse: MouseMode,
+    #[serde(default)]
+    pub mouse_encoding: MouseEncoding,
+    /// alternate screen(`CSI ? 1049 h` 등)
+    #[serde(default)]
+    pub alt_screen: bool,
+    /// DECCKM(`CSI ? 1 h`): 화살표를 `ESC O x`로
+    #[serde(default)]
+    pub app_cursor: bool,
+}
+
+/// 마우스 보고 모드(xterm `CSI ? 9/1000/1002/1003 h`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseMode {
+    #[default]
+    None,
+    /// 9: 누름만
+    Press,
+    /// 1000: 누름·뗌·휠
+    PressRelease,
+    /// 1002: 누른 채 움직임도
+    ButtonMotion,
+    /// 1003: 모든 움직임
+    AnyMotion,
+}
+
+/// 마우스 보고 인코딩(기본 X10 바이트, `CSI ? 1005 h` UTF-8, `CSI ? 1006 h` SGR)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseEncoding {
+    #[default]
+    Default,
+    Utf8,
+    Sgr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1042,6 +1143,11 @@ pub enum FrontRequest {
     PaneForget {
         pane: String,
     },
+    /// pane에 이름을 붙인다(herdr `pane rename`). 앞뒤 공백을 떼고, `None`이나 빈 이름은 붙인 이름을 지워 띄울 때 이름으로 돌린다.
+    PaneRename {
+        pane: String,
+        label: Option<String>,
+    },
     /// 이 연결로 pane 화면(cell grid)을 보낸다. 같은 머신 front 연결(UDS)에서만 쓴다.
     PaneWatch {
         pane: String,
@@ -1097,9 +1203,11 @@ pub enum FrontRequest {
         project: String,
         title: String,
         machine: Option<String>,
+        /// 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
         profile: String,
+        /// 없으면 repo가 있으면 worktree, 없으면 dir(herdr-projects `placement`)
         #[serde(default)]
-        kind: ThreadKind,
+        kind: Option<ThreadKind>,
         repo: Option<String>,
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
@@ -1152,6 +1260,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         keep_worktree: bool,
+        /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
+        #[serde(default)]
+        reopen: bool,
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {
@@ -1164,6 +1275,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         resume: bool,
+        /// 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
+        #[serde(default)]
+        profile: Option<String>,
     },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {
@@ -1657,9 +1771,12 @@ pub enum TermClientMsg {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum EventsClientMsg {
-    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 쓰는 화면이 하나라도 있으면
-    /// host는 어느 기기에도 Web Push를 보내지 않는다(그 화면이 이미 바뀐 것을 보인다). 연결이 끊기면 쓰지 않는 것이다.
+    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 연결이 끊기면 쓰지 않는 것이다.
     Presence { active: bool },
+    /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다(보이고 focus가 됐다·앱을 열었다). host는 마지막으로 이것을 보낸
+    /// 기기(또는 pane에 입력한 기기)를 「쓰는 기기」로 두고, 그 기기가 지금 쓰는 화면일 때만 Web Push를 건너뛴다
+    /// (사용자 결정 10-18, plan §8.105. 참고는 쓰는 화면이 하나라도 있으면 건너뛴다)
+    Touch,
     /// 연결이 살아 있는지 묻는다. host는 같은 `id`의 `pong`으로 답한다(herdr-web-ui ws.ts `probe`·server `ping`).
     /// 휴대폰이 잠들었다 깨거나 망이 바뀌면 열린 것처럼 보이는 죽은 연결이 몇 분씩 남는다.
     Ping { id: u32 },
@@ -1714,6 +1831,8 @@ mod tests {
             rows: 24,
             state: SessionState::Exited { code: Some(2) },
             role: None,
+            label: None,
+            harness: Some("codex".into()),
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["state"], "exited");

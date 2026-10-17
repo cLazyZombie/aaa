@@ -126,6 +126,34 @@ pub fn resize(node: &mut LayoutNode, target: &str, dir: PaneDirection, amount: u
     *ratio != before
 }
 
+/// 뿌리에서 `path`(false = a, true = b)로 찾은 나눔의 비율을 정한다(herdr `set_ratio_at`). 비율은 100..=900으로 묶는다.
+/// 그 자리에 나눔이 없으면 false.
+pub fn set_ratio_at(node: &mut LayoutNode, path: &[bool], value: u16) -> bool {
+    let LayoutNode::Split { ratio, a, b, .. } = node else { return false };
+    match path.split_first() {
+        None => {
+            *ratio = value.clamp(100, 900);
+            true
+        }
+        Some((true, rest)) => set_ratio_at(b, rest, value),
+        Some((false, rest)) => set_ratio_at(a, rest, value),
+    }
+}
+
+/// 탭 `from`을 `insert` 앞으로 옮긴다(herdr `Workspace::move_tab`: `insert`는 옮기기 전 차례로 0..=탭 수). 바뀌었으면 true.
+pub fn move_tab(tabs: &mut Vec<Tab>, from: usize, insert: usize) -> bool {
+    if from >= tabs.len() || insert > tabs.len() {
+        return false;
+    }
+    let to = if from < insert { insert - 1 } else { insert }.min(tabs.len() - 1);
+    if from == to {
+        return false;
+    }
+    let t = tabs.remove(from);
+    tabs.insert(to, t);
+    true
+}
+
 /// workspace의 모든 탭에서 pane을 뺀다. 빈 탭은 없앤다. 바뀌었으면 true.
 pub fn ws_remove(ws: &mut Workspace, target: &str) -> bool {
     let before = ws.tabs.len();
@@ -296,6 +324,38 @@ mod tests {
         assert_eq!(after.0.iter().map(|(_, r)| *r).collect::<Vec<_>>(), before);
         assert!(!swap(&mut root, "a", "a") && !swap(&mut root, "a", "zz"));
         assert_eq!(leaves(&root), ["c", "b", "a"]);
+    }
+
+    /// herdr `layout_set_split_ratio_updates_existing_split`·`move_tab`
+    #[test]
+    fn ratio_at_path_and_move_tab_like_herdr() {
+        // a | (b / c)
+        let mut root = p("a");
+        split(&mut root, "a", "b", SplitDir::Horizontal);
+        split(&mut root, "b", "c", SplitDir::Vertical);
+        assert!(set_ratio_at(&mut root, &[true], 950));
+        assert!(set_ratio_at(&mut root, &[], 600));
+        let LayoutNode::Split { ratio, b, .. } = &root else { panic!() };
+        assert_eq!(*ratio, 600);
+        assert!(matches!(&**b, LayoutNode::Split { ratio: 900, .. }));
+        assert!(!set_ratio_at(&mut root, &[false], 300) && !set_ratio_at(&mut root, &[true, true], 300));
+
+        let tab = |id: &str| Tab { id: id.into(), name: String::new(), root: p(id), zoomed: false };
+        let mut tabs: Vec<Tab> = ["1", "2", "3"].map(tab).into();
+        let ids = |t: &[Tab]| t.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        assert!(move_tab(&mut tabs, 0, 3));
+        assert_eq!(ids(&tabs), ["2", "3", "1"]);
+        assert!(move_tab(&mut tabs, 2, 0));
+        assert_eq!(ids(&tabs), ["1", "2", "3"]);
+        assert!(move_tab(&mut tabs, 0, 2));
+        assert_eq!(ids(&tabs), ["2", "1", "3"]);
+        // 제자리(앞이나 바로 뒤에 넣기)·밖은 그대로
+        assert!(
+            !move_tab(&mut tabs, 1, 1)
+                && !move_tab(&mut tabs, 1, 2)
+                && !move_tab(&mut tabs, 3, 0)
+                && !move_tab(&mut tabs, 0, 4)
+        );
     }
 
     #[test]

@@ -18,10 +18,11 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, FileText, Folder, FolderOpen, ListChecks, Monitor, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 import type { FrontRequest, MachineView, PaneView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { PaneRename } from "./PaneRename";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin } from "./herdr/sidebarPins.ts";
 import { AgentMark } from "./herdr/AgentMark.tsx";
@@ -179,6 +180,8 @@ interface Rows {
   menuKey: string | null;
   toggleMenu: (state: MenuState) => void;
   ask: (c: ConfirmState) => void;
+  /** pane 이름 창(참고 PaneCanvas `setRenaming`) */
+  rename: (pane: PaneView) => void;
   act: (key: string, req: FrontRequest) => void;
   error: { key: string; message: string } | null;
 }
@@ -220,6 +223,7 @@ export function Sidebar(props: SidebarProps) {
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [renaming, setRenaming] = useState<PaneView | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   // 고정하면 줄이 다른 목록(고정 카드)으로 옮겨 다시 그려진다: 메뉴를 연 곳(줄이나 ⋯)으로 focus를 되돌린다(참고 AgentSidebar refocusPin)
@@ -243,6 +247,7 @@ export function Sidebar(props: SidebarProps) {
     menuKey: menu?.key ?? null,
     toggleMenu: (state) => setMenu(menu?.key === state.key ? null : state),
     ask: setConfirm,
+    rename: setRenaming,
     act: (key, req) => {
       setError(null);
       call(req).catch((e: unknown) => setError({ key, message: e instanceof ApiError ? e.message : String(e) }));
@@ -269,6 +274,13 @@ export function Sidebar(props: SidebarProps) {
             setConfirm(null);
           }}
           onClose={() => setConfirm(null)}
+        />
+      )}
+      {renaming && (
+        <PaneRename
+          label={renaming.label ?? null}
+          onClose={() => setRenaming(null)}
+          onSave={async (label) => void (await call({ op: "pane_rename", pane: renaming.id, label: label || null }))}
         />
       )}
     </RowsContext.Provider>
@@ -431,11 +443,18 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
   const pinKey = sidebarPinKey(p.machine_id, p.id);
   const pinned = rows.pins.includes(pinKey);
   const menuKey = `pane:${p.id}`;
-  // 참고 workspace 메뉴(Sidebar.tsx `menuItems`) 차례: 고정 → 닫기. 끝난 pane은 닫는 대신 다시 열기·기록 지우기(aaa PaneResume·PaneForget)
+  // 참고 workspace 메뉴(Sidebar.tsx `menuItems`) 차례: 고정 → 이름 바꾸기 → 닫기. 이름은 pane 이름(참고 PaneCanvas `itemsFor`의
+  // 「Rename pane」·붙인 이름이 있을 때 「Clear pane name」). 끝난 pane은 닫는 대신 다시 열기·기록 지우기(aaa PaneResume·PaneForget)
   const items = (): RowMenuItem[] => [
     pinned
       ? { id: "unpin", label: "pane 고정 해제", icon: PinOff, run: () => rows.togglePin(pinKey, menuFrom.current) }
       : { id: "pin", label: "pane 고정", icon: Pin, run: () => rows.togglePin(pinKey, menuFrom.current) },
+    ...(!props.canControl
+      ? []
+      : [
+          { id: "rename", label: "pane 이름 바꾸기", icon: Pencil, run: () => rows.rename(p) },
+          ...(p.label ? [{ id: "clear-name", label: "pane 이름 지우기", icon: Eraser, run: () => rows.act(menuKey, { op: "pane_rename", pane: p.id, label: null }) }] : []),
+        ]),
     ...(!props.canControl
       ? []
       : p.state === "running"

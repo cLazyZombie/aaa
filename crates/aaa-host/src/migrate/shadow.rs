@@ -174,6 +174,8 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         copy_notes: Vec::new(),
         last_group: None,
         review_item_hash: None,
+        group_changed_ms: None,
+        report_changed_ms: None,
         error: None,
         eval_cursor: 0,
         eval_batches: 0,

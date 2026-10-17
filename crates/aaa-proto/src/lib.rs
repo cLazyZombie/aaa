@@ -11,7 +11,9 @@ pub use frame::{Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, Term
 pub use msg::*;
 pub use orch::*;
 pub use usage::*;
-pub use version::{AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, Version, negotiate, require_features};
+pub use version::{
+    AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, SESSION_IPC_DETECT, Version, negotiate, require_features,
+};
 
 /// Agent link heartbeat: 양쪽이 이 간격으로 ping하고, 이만큼 아무것도 못 받으면 끊는다.
 /// 붙여 넣은 그림 한 조각 상한(Agent link frame 1MiB 안에 base64로 들어간다). 웹·TUI·CLI 첨부가 같이 쓴다.
@@ -64,6 +66,9 @@ pub fn typescript_bindings() -> String {
         GridRun::decl(&cfg),
         GridLine::decl(&cfg),
         GridFrame::decl(&cfg),
+        PaneModes::decl(&cfg),
+        MouseMode::decl(&cfg),
+        MouseEncoding::decl(&cfg),
         PendingEnroll::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),

@@ -20,12 +20,13 @@ export class ApiError extends Error {
   }
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function post<T>(path: string, body: unknown, keepalive = false): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     credentials: "same-origin",
+    keepalive,
   });
   return unwrap<T>(res);
 }
@@ -73,7 +74,7 @@ export async function signOut(): Promise<void> {
   const res = await fetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
   if (!res.ok) throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
 }
-export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
+export const call = (req: FrontRequest, keepalive = false) => post<FrontResponse>("/api/v1/call", req, keepalive);
 
 /** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.79, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
 export async function loadPreferences(): Promise<SharedPreferences> {
@@ -82,15 +83,17 @@ export async function loadPreferences(): Promise<SharedPreferences> {
   const { kind: _kind, ...doc } = r;
   return doc;
 }
-export async function savePreferences(change: PreferencesChange): Promise<SharedPreferences> {
-  const r = await call({ op: "preferences_set", settings: change.settings, pins: change.pins ?? null });
+/** `keepalive`: 화면이 닫혀도 브라우저가 요청을 마저 보낸다(떠날 때 보내기, QA t-0337 Q11) */
+export async function savePreferences(change: PreferencesChange, keepalive = false): Promise<SharedPreferences> {
+  const r = await call({ op: "preferences_set", settings: change.settings, pins: change.pins ?? null }, keepalive);
   if (r.kind !== "preferences") throw new ApiError({ code: "internal", message: `뜻밖의 답 ${r.kind}` });
   const { kind: _kind, ...doc } = r;
   return doc;
 }
 
 /** Web Push(§8.26) */
-export type PushInfo = { enabled: boolean; key: string | null; subscribed: number; in_use: number; kinds: string[] };
+/** `user`는 쓰는 기기(앞 7자), `you`는 이 기기가 쓰는 기기인지(plan §8.105) */
+export type PushInfo = { enabled: boolean; key: string | null; subscribed: number; in_use: number; user: string | null; you: boolean; kinds: string[] };
 export async function pushInfo(): Promise<PushInfo> {
   return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
 }
@@ -147,10 +150,26 @@ export function watchEvents(
   const tell = () => {
     if (active !== null && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "presence", active } satisfies EventsClientMsg));
   };
+  // 쓰는 기기(사용자 결정 10-18, plan §8.105): 사람이 이 기기에서 누르거나 치거나 화면을 켜면(앱을 열거나 보이고 focus가
+  // 되면) 알린다. host는 마지막으로 알린 기기가 쓰는 화면일 때만 push를 건너뛴다. 다시 붙을 때는 알리지 않는다(누른 것이
+  // 아니다). 붙기 전·끊긴 동안 누른 것은 붙으면 보낸다
+  let touched = false;
+  const touch = () => {
+    if (!active) return;
+    if (ws?.readyState !== WebSocket.OPEN) return void (touched = true);
+    touched = false;
+    ws.send(JSON.stringify({ t: "touch" } satisfies EventsClientMsg));
+  };
+  const onKey = (event: KeyboardEvent) => {
+    if (!event.repeat) touch();
+  };
+  window.addEventListener("pointerdown", touch, true);
+  window.addEventListener("keydown", onKey, true);
   const stopPresence = watchPageInUse((now) => {
     if (now === active) return;
     active = now;
     tell();
+    if (now) touch();
   });
   let heard = Date.now();
   let nextPing = 1;
@@ -231,6 +250,7 @@ export function watchEvents(
       delay = 500;
       heard = Date.now();
       tell();
+      if (touched) touch();
       onLink(true);
     };
     socket.onmessage = (m) => {
@@ -290,6 +310,8 @@ export function watchEvents(
     document.removeEventListener("visibilitychange", onShow);
     window.removeEventListener("pageshow", onShow);
     window.removeEventListener("online", probe);
+    window.removeEventListener("pointerdown", touch, true);
+    window.removeEventListener("keydown", onKey, true);
     ws?.close();
   };
 }

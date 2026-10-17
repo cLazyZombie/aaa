@@ -264,8 +264,12 @@ struct PushInfo {
     key: Option<String>,
     /// 이 장치의 구독 수
     subscribed: usize,
-    /// 지금 쓰는 웹 화면 수(그동안 Web Push를 보내지 않는다)
+    /// 지금 쓰는 웹 화면 수(보이고 focus)
     in_use: usize,
+    /// 쓰는 기기(앞 7자): 마지막으로 누르거나 치거나 화면을 켠 기기. 그 기기가 쓰는 화면인 동안 Web Push를 보내지 않는다(plan §8.105)
+    user: Option<String>,
+    /// 이 장치가 쓰는 기기다
+    you: bool,
     /// 알리는 inbox 종류(`notify.kinds`). 웹의 앱 안 알림·소리·탭 알림도 이 종류에만 띄운다(push와 같은 사건)
     kinds: Vec<String>,
 }
@@ -276,8 +280,12 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
     let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
+    let (user, you) = {
+        let v = host.viewing.lock().unwrap();
+        (v.user(), v.is_user(&id))
+    };
     let kinds = host.cfg.notify.item_kinds();
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, kinds })).into_response()
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -548,6 +556,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
                         Ok(EventsClientMsg::Presence { active }) => presence.set(active),
+                        Ok(EventsClientMsg::Touch) => host.touch_device(&dev),
                         Ok(EventsClientMsg::Ping { id }) => {
                             let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
                             if socket.send(Message::Text(text.into())).await.is_err() {
@@ -878,6 +887,7 @@ async fn pane_session(
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
                             // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
                             // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
+                            host.touch_device(dev);
                             let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
                             if sent.is_ok() {
@@ -926,6 +936,10 @@ async fn pane_session(
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => None,
                 };
+                // pane에 친 기기가 쓰는 기기다(plan §8.105). 크기 걸기는 다시 붙을 때도 오므로 세지 않는다(누름은 웹이 touch로 알린다)
+                if matches!(req, Some(FrontRequest::PaneInput { .. }) | Some(FrontRequest::PaneTake { .. })) {
+                    host.touch_device(dev);
+                }
                 if let Some(req) = req
                     && let Err(e) = host.call_from(role, &actor, Some(front), req).await
                     && !out.msg(&TermServerMsg::Error(e))
