@@ -496,6 +496,9 @@ pub struct AgentSection {
     pub default_cwd: String,
     /// thread worktree·작업 폴더를 만드는 root(기본: `~/aaa-work`)
     pub work_root: String,
+    /// 웹 파일 보기(터미널의 파일 경로 링크)가 열 수 있는 폴더(§6.5 허용 폴더). 비우면 집·`work_root`·`default_cwd`·
+    /// 임시 폴더다. 그 아래도 symlink를 따라간 실제 경로로 본다(plan §8.125)
+    pub file_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

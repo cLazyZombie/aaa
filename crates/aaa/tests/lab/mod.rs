@@ -40,6 +40,8 @@ impl Node {
             // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게(보는 시험만 채운다)
             .env("AAA_TEST_BUILTINS", "")
             .env_remove("NO_COLOR")
+            // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
+            .env_remove("fish_handle_reflow")
             .stdin(Stdio::null());
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
         #[cfg(unix)]

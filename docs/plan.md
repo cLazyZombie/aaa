@@ -451,7 +451,7 @@ host 프로젝트 폴더 구성:
   - 이전 프로세스가 아직 같은 파일을 읽는 기간(§11)에는 migrate를 미룬다.
 - **비밀:** TOML에 넣지 않는다. 상태 디렉터리의 0600 키 파일이나 DPAPI에 둔다.
 - **원격 편집:** host는 agent.toml을 몰래 고치지 않는다. `aaa machine config show|diff`로 보기만 한다. 변경은 그 머신에서 하거나 명시 명령으로 하고 감사 로그에 남긴다.
-- **profile 해석(10-18 사용자 「한곳에 모아」):** host.toml `[profiles.<이름>]` 한 곳에 `agent`·`model`·`effort`·`description`·`args`를 둔다. host가 이름·허용 목록·safety를 풀어 agent에 보내고 agent는 머신별 `[harnesses.<종류>] command/env`와 hook만 적용한다. 해석 결과 `Launch`는 thread에 저장한다. 새 대화 restart는 최신 host 정의, `--resume`은 저장된 spec이다. 옛 agent.toml `[profiles]`는 전환 경고로 읽고 새 host는 사용하지 않는다(§8.123).
+- **profile 해석(10-18 사용자 「한곳에 모아」):** host.toml `[profiles.<이름>]` 한 곳에 `agent`·`model`·`effort`·`description`·`args`를 둔다. host가 이름·허용 목록·safety를 풀어 agent에 보내고 agent는 머신별 `[harnesses.<종류>] command/env`와 hook만 적용한다. 해석 결과 `Launch`는 thread에 저장한다. 새 대화 restart는 최신 host 정의, `--resume`은 저장된 spec이다. 옛 agent.toml `[profiles]`는 전환 경고로 읽고 새 host는 사용하지 않는다(§8.127).
 - **front 설정:** front의 키 바인딩 같은 값도 TOML로 두되, 이것은 backend 상태가 아니다.
 
 ### 7.3 DB와 schema
@@ -1093,7 +1093,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - D2Coding을 대체 글꼴로 설치해도 다 풀리지 않는다. cell 너비는 영문 글꼴(0.6em)이 정하므로, 한글(1em)과 2칸(1.2em) 사이가 여전히 빈다.
   - 풀려면 한글이 영문의 정확히 2배인 고정폭 글꼴(D2Coding·Sarasa Mono K 등)을 **첫 글꼴로** 써야 한다. 그러려면 웹 자산(약 1.5~2MB, OFL)을 저장소와 실행 파일에 넣어야 해서 결정으로 남긴다.
 - **시험(웹 E2E 22단계).**
-  - 「넓은 창」 단계: 1280×800에서 터미널 글자 영역이 칸을 한 cell(과 scrollbar 자리) 안쪽까지 채운다. header 크기와 host PTY 크기가 같다. 1900×1150으로 넓히면 열·줄이 늘고, 되돌리면 같은 크기로 돌아온다. 자동 맞추기를 끄면 이 단계가 120×32에서 실패한다.
+  - 「넓은 창」 단계: 1280×800에서 터미널 글자 영역이 칸을 한 cell 안쪽까지 채운다(10-18부터 scrollbar 자리 없이, §8.124). header 크기와 host PTY 크기가 같다. 1900×1150으로 넓히면 열·줄이 늘고, 되돌리면 같은 크기로 돌아온다. 자동 맞추기를 끄면 이 단계가 120×32에서 실패한다.
   - 「두 controller」 단계: 보기만 하는 쪽은 창 크기가 달라도 PTY 크기를 바꾸지 않는다. 가져오면 그 화면을 따른다. 연결이 끝나 lease가 비면 남은 화면이 다시 맞춘다.
 
 ### 8.31 웹 터미널 글꼴 Meslotendard(10-17, 사용자 결정)
@@ -2698,9 +2698,134 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **결함 심기.** 제품에 하나씩 심어 바꾼 시험이 실패함을 봤고 모두 되돌렸다(스물둘 모두 실패): 입력창에 글이 있어도 nudge, 같은 묶음 다시 nudge, 「승인 필요」 반복, 같은 출력도 새 항목, 새 점검 보고마다 같은 이상, 실패한 알림을 다시 큐에 넣음, session host가 닫히기 전에 잊음(되살아남), 밀어서 취소한 키가 감, 휠 3×에서 보고 넷, 뗀 뒤에도 되풀이(유닛), 붙인 경로 뒤 Enter(옛 「No such file」 단언은 「Permission denied」를 못 잡았다), 글과 그림이면 그림도 올림, 확인창 질문 중에도 넣음, 꺼진 설정인데 wake lock, pane을 보지 않는데 wake lock, 출력을 쓰면 맨 아래로, 4008 갈래가 다시 붙기로 흘러내림(그때 `ws open`은 아직 하나라 옛 횟수 단언만으로는 1.5초 sleep에 기댔다), 남이 쓰는 pane을 열면 크기를 검, 입력줄 칸이 흐름에서 자람, 키보드가 grid를 붙잡지 않음(남은 띠에 맞춤), 핀치 중 크기를 검, 답이 오면 바뀐 글도 지움(`canClear`만 빼면 `writeTerminalDraft`가 이미 막아 결함이 아니었다: 두 조건을 모두 뺐다).
 - **남은 것.** 크기·IME·화면 키보드·재연결·구독 cache처럼 비동기로 정해지는 「없음」은 제품 표지가 있어야 울타리가 된다. 자리와 맡을 thread는 t-0338 report 「감사 넘김: 고정 sleep 뒤 「없음」 단언」 표.
 
-### 8.122 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
+### 8.122 폭이 바뀌면 화면을 다시 접는다(reflow, 10-18, coordinator 범위 추가·t-0330 발견, 차이 목록 1장 G 일부)
 
-> 이 절은 당시 구현 기록이다. profile 정의 위치·해석·목록은 10-18 사용자 결정으로 §8.123이 대신한다. safety 동작은 유지한다.
+- **증상.** vt100 0.16 `set_size`는 폭이 줄면 줄 끝을 버리고, 다시 넓혀도 돌아오지 않는다. 휴대폰·좁은 화면이 pane 크기를 쥐었다 놓으면 넓은 화면(늦게 붙은 웹·TUI·`aaa pane read`)에서 줄이 오른쪽부터 비었다. host의 pane 화면(mirror)과 session host 화면이 둘 다 aaa-vt라 웹·TUI가 다 그랬다. 붙어 있던 xterm은 제 버퍼를 스스로 다시 접어 멀쩡해 보였다.
+- **참고.** herdr는 ghostty가 폭 변경 때 다시 접는다(`src/pane.rs` 110~118줄 「Herdr reflows too」). 그래서 pane env에 `fish_handle_reflow=0`을 건다(fish가 스스로 다시 그리지 않게, 겹쳐 그리면 프롬프트가 붙는다). aaa도 같이 건다. 물려받은 값이 있으면 두고, spec env가 이긴다(`apply_pane_terminal_env`와 같다).
+- **다시 접기(`aaa-vt` `Vt::resize`·`rewrap`).**
+  - 기록과 화면을 논리 줄로 읽는다. 접힌 줄과, 넓은 글자가 끝 칸 하나에 들지 않아 다음 줄로 내려간 줄(vt100 `col_wrap`은 이 경우 이음 표시를 두지 않는다, tmux와 같다. ghostty는 spacer 칸으로 둔다)을 잇는다.
+  - 새 폭의 새 parser에 다시 쓴다. 글자 모양(색·굵게 등), 커서(같은 글자 자리), 입력 모드, 펜, 커서 보임, modifyOtherKeys를 옮긴다.
+  - xterm처럼 폭을 먼저, 줄 수를 그다음 바꾼다(xterm `Buffer.resize`). 폭: 화면 아래 빈 줄이 늘어난 글을 먼저 받고, 넘치면 맨 아래에 맞춰 위가 기록으로 가며, 넓혀서 줄면 기록이 다시 내려온다. clear 뒤 맨 위 프롬프트는 맨 위에 남는다. 줄 수: 줄면 커서 아래 행을 먼저 버리고, 그래도 커서가 밖이면 위 행을 기록으로 올린다(§8.59). 늘면 아래에 빈 행이 붙는다.
+  - alternate screen은 다시 접지 않고 크기만 바꾼다(ghostty·xterm과 같다). 그 밑 normal screen은 다시 접는다.
+  - 달리 접힐 것이 없으면(접힌 줄도 새 폭 밖 글도 없음) 다시 쓰지 않는다.
+- **줄 수만 바뀌어도 다시 쓴다.** vt100 `set_size`는 크기가 같아도 보이는 줄의 이음 표시를 지운다(`Row::resize`가 `wrapped = false`). 휴대폰 키보드가 열렸다 닫히기만 해도 나중에 넓힐 때 그 줄이 펴지지 않았다. 화면에 접힌 줄이 있거나 alternate screen이면(그 밑 normal screen을 볼 수 없다) 다시 쓴다.
+- **replay도 이음을 지킨다.** 늦게 붙은 웹은 다른 기기 크기로 snapshot을 받은 뒤 제 크기를 걸고, xterm이 제 버퍼를 다시 접는다. xterm은 이음 표시로만 잇는다. 그래서 기록 줄(`history_row`)과 보이는 화면(`screen_rows`)을 글과 모양으로 직접 쓰고, 이어지는 줄은 줄바꿈 없이 이어 쓴다. 받는 터미널이 같은 폭에서 다시 접으며 이음 표시를 갖는다. vt100 `contents_formatted`는 넓은 글자를 내린 줄을 줄바꿈으로 썼다. 커서·펜·입력 모드는 vt100 것을 그대로 쓴다. 위로 굴려 받는 앞 기록(`older`)도 같다.
+- **`pane read --source recent-unwrapped`도 같은 규칙으로 잇는다**(넓은 글자를 내린 줄 포함).
+- **비용.** 기록 10,000줄이 가득한 pane에서 release 14~30ms, debug 150~300ms. host mirror(잠금 안)와 session host가 크기 변경마다 한 번씩 한다. replay는 7ms.
+- **시험.**
+  - aaa-vt 유닛: 줄였다 넓히기, 접힌 줄 펴기, 기록도 다시 접기, 색, 넓은 글자 다시 잇기, clear 뒤 맨 위 프롬프트, 줄 가운데 커서, 커서 아래 글, alternate screen 밑 normal screen, 입력 모드, 사이 빈 줄, 그대로일 때, 폭·줄 수 함께, 줄 수만(+alternate screen 아래), 커서 아래 행 버리기, 기록·화면 replay의 이음, 넓은 글자 내린 줄 잇기 읽기.
+  - TUI E2E `narrow_claim_then_release_keeps_line_ends`: 다른 front가 30칸으로 쥐었다 놓고 TUI가 되찾으면 49자 줄이 한 줄로 돌아오고 `pane read`도 같다. 셸에 `fish_handle_reflow=0`이 보인다. 시험 실험실은 물려받은 `fish_handle_reflow`를 뺀다(herdr pane 안에서 돌리면 물려받아, 빼기 전에는 fish env를 지운 변형도 통과했다).
+  - 웹 E2E 「폭이 줄었다 넓어지면 다시 접는다」(07): 휴대폰(45칸)이 쥔 동안 host 화면을 이으면 원래 줄(긴 줄·접히는 줄·넓은 글자 줄), 넓은 화면(116칸)이 늦게 붙으면 화면에 줄 끝까지, iPad도.
+  - 변형 확인: reflow를 빼면 유닛 8개·TUI·웹(휴대폰 단계)이 실패, replay 화면을 옛 `state_formatted`로 두면 유닛과 웹(늦게 붙은 웹)이 실패, 읽기의 넓은 글자 잇기를 빼면 유닛과 웹이 실패, 줄 수만 바뀔 때 다시 쓰기를 빼면 유닛 셋, 기록 이음을 빼면 유닛, fish env를 빼면 TUI가 실패.
+- **이 묶음이 아닌 것.** 캡처에 보이는 휴대폰·iPad 끝 열 반쯤 잘림과 「gh p / ecks」(t-0333)는 웹 열 수 계산 쪽이다(다음 묶음).
+
+### 8.123 붙여 넣는 글의 ESC를 뺀다(10-18, t-0340 보안 감사)
+
+- **구멍.** 프로그램이 bracketed paste를 켜면 붙여 넣는 글은 `ESC[200~ … ESC[201~`로 감싸여 간다. 글 안에 `ESC[201~`가 있으면 붙여넣기가 거기서 끝나고 뒤 글은 친 키가 된다. pane 프로그램(agent 출력 포함)은 OSC 52로 이 기기 클립보드에 글을 심을 수 있다(설정 「패널에서 클립보드로 복사」, 기본 켬). 그 글을 셸에 붙이면 명령이 실행된다.
+- **참고도 같다.** herdr-web-ui는 xterm.js 5.5 `paste`(`bracketTextForPaste`)로 그대로 감싸고, herdr `encode_api_text`도 그대로 감싼다. 보안 이유로 참고와 다르게 한다.
+- **고침.** 붙여 넣는 글은 글이다(키는 키 막대·`send-keys`). 글에서 ESC와 C1 CSI(U+009B)를 뺀다.
+  - 웹(`web/src/pasteText.ts`): 클립보드 붙여넣기(글에 ESC가 있으면 xterm 대신 뺀 글로 붙인다), 끌어 놓은 글, 입력줄로 보내는 글.
+  - host(`aaa-vt` `KeyModes::paste`): `pane run`, brief·메시지, 그림 경로가 같은 길이다.
+- **OSC 52 기본값은 참고대로 켬으로 둔다**(「아침 확인」). 붙여넣기를 막았으므로 클립보드에 심긴 글은 글로만 들어간다.
+- **시험.** aaa-vt 유닛(`paste`가 ESC·C1 CSI를 뺀다). 웹 E2E 「붙여 넣는 글의 ESC는 뺀다」(03): bracketed paste를 켠 프로그램에 클립보드·끌어 놓기·입력줄·`pane run`으로 `ESC[201~`가 든 글을 넣으면, 받은 조각은 감싼 짝 하나와 ESC를 뺀 글이다. 변형 확인: 웹 거르기를 빼면 클립보드 검사, host 거르기를 빼면 `pane run` 검사가 실패한다.
+
+### 8.124 웹 터미널 끝 칸까지 보인다(10-18, t-0333 발견·QA Q14)
+
+- **증상.** 웹 터미널 맨 오른쪽 칸이 잘렸다. 1280×800 데스크톱(116칸)은 끝 칸이 다 가려졌고 휴대폰(45칸)·iPad(57칸)는 반쯤 잘렸다. 끝 칸을 넘어 접힌 「gh pr checks」가 「gh p」/「checks」로 보였다. PTY 폭이 바뀐 줄(§8.122)과는 다른 원인이다: 크기를 바꾸지 않은 화면에서도 같다.
+- **원인 1: 자간이 xterm 안으로 들어왔다.**
+  - 웹 body에 `letter-spacing: -0.005em`(13px에서 -0.065px)이 있다. 참고는 body에 자간이 없다.
+  - xterm 5.5 DOM renderer는 cell 폭을 canvas `measureText`로 잰다(자간 없음). 글자 폭은 `.xterm-helpers` 안 DOM 요소의 `offsetWidth`로 잰다(물려받은 자간째). 그 차이(+0.065px)를 줄 자간으로 둔다.
+  - 줄 자간이 물려받은 값을 바꾸므로 글자마다 0.065px씩 cell보다 넓게 나아갔다. 116칸 줄은 7.5px(한 칸쯤) 밀려 줄 요소(`overflow: hidden`)가 끝 칸을 잘랐다.
+  - 고침: 터미널 자리(`.term-box`)의 자간을 기본(normal)으로 둔다. 조합 상자·앞 기록 덮개도 이 안이다.
+- **원인 2: scrollbar 자리.**
+  - FitAddon은 scrollback이 있으면 세로 scrollbar 폭을 빼고 칸 수를 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라 xterm 기본값 15px을 뺐다. 오른쪽 두 칸쯤이 늘 비었다(잘림은 아니다).
+  - 참고는 xterm scrollback이 0이라 빼지 않고 scrollbar도 숨긴다(PaneTerminal 542~546줄, PaneTerminal.css `.xterm-viewport`).
+  - aaa xterm은 기록을 가지므로(§8.67) scrollback을 둔다. 대신 FitAddon이 읽는 `viewport.scrollBarWidth`(Viewport가 만들 때 한 번 정하는 내부 값)를 0으로 두고, scrollbar는 참고처럼 그리지 않는다. 1280×800은 116칸에서 118칸, 휴대폰은 45칸에서 47칸, iPad는 57칸에서 59칸이 된다.
+- **남는 차이(참고와 같다).** xterm은 글자 폭을 32자 `offsetWidth`(정수)로 재므로 글자마다 1/64px까지 어긋난다. 118칸 줄 끝에서 1~2px이다. 끝 글자의 잉크는 줄 안에 든다.
+- **시험.**
+  - 웹 E2E 「끝 칸까지 보인다」(02): 휴대폰·iPad·데스크톱에서 칸 수만큼의 자를 그린다. 세 가지를 본다.
+    - 글자 하나가 나아가는 폭이 cell과 0.04px 안이다. xterm 오차는 1/32px 안이고, 고치기 전은 0.077px이었다.
+    - 끝 칸 글자가 반 넘게 줄 안에 있다.
+    - 칸이 터미널 자리를 cell 하나 안쪽까지 채운다.
+  - 「넓은 창」(02)도 scrollbar 자리 15px을 더 봐주지 않는다.
+  - 변형 확인:
+    - 자간 고침을 빼면 세 기기 모두 글자마다 7.906px(cell 7.830px)로 실패한다. iPad·데스크톱은 끝 칸 검사도 실패한다.
+    - scrollbar 자리를 그대로 두면 「넓은 창」이 실패하고(20px이 빈다), 「끝 칸」은 세 기기 모두 실패한다.
+  - 숨긴 scrollbar는 headless Chromium이 overlay scrollbar라 여기서 볼 수 없다(실기 확인).
+
+### 8.125 터미널의 파일 경로를 누르면 앱 안에서 본다(10-18, 결정 20 D7, 차이 목록 1장 「파일 경로 누르면 파일 보기」, FRONT_API 1.18)
+
+- **참고.** herdr-web-ui(aa624cb)는 터미널 글의 파일 경로(`notes/a.md`, `src/x.ts:20:5`, `~/…`, 절대 경로)와 OSC 8 `file://` 링크를 링크로 그린다(PaneTerminal 552~560·586줄, `terminalFileLinks.ts`). 누르면 앱 안 파일 보기(`FileViewer.tsx`)가 뜬다. 서버는 pane이 지금 있는 폴더 기준으로 경로를 찾는다(`server/file-view.ts` `locateFile`). 그대로 없으면 그 아래에서 끝이 같은 파일을 찾고, 여럿이면 고르게 한다.
+- **aaa의 길.** 파일은 pane이 도는 머신에 있다. 웹은 host와만 말하므로 세 곳을 거친다.
+  - 웹 → host `pane_file {pane, path}`(조작 기기만, `needs_control`). 참고도 보기 전용 기기는 403이다.
+  - host → 그 머신 agent `FileLocate {session, path}`. agent는 그 세션이 지금 있는 폴더(`follow_cwd`, 모르면 시작 폴더) 기준으로 찾는다. 찾는 규칙은 참고 그대로다: `~`·절대·상대 경로, 끝이 같은 파일은 깊이 6·항목 5000까지, `.git`·`node_modules`·`dist`·`target`·`.venv`는 건너뛰고, 후보는 10개까지.
+  - 찾으면 host가 그 파일 하나(실제 경로)만 읽는 30분짜리 읽기 경로 `/f/<cap>/<이름>`을 준다. 그 경로가 agent `FileView`(512KiB 조각)로 이어 읽어 흘려보낸다. host에 모으지 않는다. Range를 받는다. 글은 앞 256KiB만 읽는다(참고와 같다).
+  - agent가 `file.v1`을 모르면(옛 binary) 「그 머신 agent가 파일 보기를 아직 모른다」로 알린다.
+- **참고와 다른 것(보안·여러 머신).**
+  - **허용 폴더(§6.5).** 참고는 서버 사용자가 읽을 수 있는 파일을 다 연다(`/etc/hosts`도). aaa는 그 머신 `agent.toml [agent] file_roots` 안만 연다. 기본은 집·`work_root`·`default_cwd`·임시 폴더(`/tmp` 포함)다. 판정은 symlink를 따라간 실제 경로로 한다. 밖이면 「허용한 폴더 밖의 파일이라 열지 않습니다」라고 까닭과 설정 자리를 말한다.
+  - **바꿔치기.** 읽을 때마다 실제 경로가 찾을 때와 같고, 허용 폴더 안의 일반 파일인지 다시 본다. 찾은 뒤 그 경로가 symlink로 바뀌면 허용 폴더 안의 다른 파일을 가리켜도 읽지 않는다.
+  - **읽기 경로만으로는 열지 않는다.** 짝지은 조작 기기의 cookie도 있어야 한다(참고 `/api/fs/file`도 기기 인증 뒤다). 다른 site의 그림·script·fetch는 막고 새 탭·내려받기는 둔다(참고 `crossSiteFileRead`). 응답은 `no-store`, 글은 확장자와 상관없이 `text/plain`, PDF 밖은 `CSP: sandbox; default-src 'none'`이다.
+  - **보기 권한 화면.** 파일 경로를 링크로 그리지 않는다. 웹 주소 링크는 그대로다.
+- **옮긴 것(5a).**
+  - `filePaths.ts`(그대로), `useFileViewer.ts`(파일 보기가 방문 기록 한 칸: 뒤로·Escape·닫기가 같은 길), `FileViewer.css`(그대로)와 HighlightedCode.css의 줄 번호.
+  - 터미널: 파일 경로 링크(`terminalFileLinkProvider`), OSC 8 `linkHandler`(file URI는 파일 보기, http(s)는 새 탭), 열 수 없는 OSC 8 링크는 링크로 그리지 않는다(`hyperlinkFilter`, RIS와 함께 끝).
+  - 파일 보기: 휴대폰·iPad는 화면 가득, 데스크톱은 가운데 창. 그림(20MiB까지), Markdown 미리보기(읽기 폭)와 소스 보기, 소스는 줄 번호와 줄 참조 표시(가운데로 굴림), 같은 이름 후보 고르기, 새 탭·내려받기·파일 복사·닫기. 문구는 참고 ko 그대로다.
+- **동영상·소리·PDF·HTML 페이지(5b-1).**
+  - 동영상·소리는 `<video>`·`<audio>`가 읽기 경로를 Range로 흘려 받는다. PDF는 iframe에서 브라우저 PDF 보기가 그린다. 그 보기는 sandbox 문서를 거부하므로 PDF에는 sandbox를 달지 않는다(참고와 같다). 대신 `frame-ancestors 'self'`만 단다: 비워 두면 앱 기본 CSP(`frame-ancestors 'none'`)가 붙어 iframe에 들지 못한다(시험이 찾았다).
+  - HTML 파일은 페이지와 소스 중에서 고른다. 기본은 페이지이고, 줄 참조면 소스다.
+  - 페이지는 `?render=1`이다. `sandbox allow-scripts` iframe 안에서 제 script로 돈다. CSP는 참고 `PAGE_POLICY` 그대로다: origin이 없어 이 앱의 cookie·저장소가 없고, `connect-src`가 없어 이 서버에도 웹에도 묻지 못한다. 이 앱만 frame에 넣는다.
+  - 페이지가 제 폴더에서 가져오는 그림·동영상·소리·stylesheet·script는 agent가 보내기 전에 data: URL로 넣는다(참고 `pageWithLocalFiles`, `crates/aaa-agent/src/page.rs`).
+    - 요소는 제 종류의 파일만 받는다. 그림 자리에 `.env`를 적어도 넣지 않는다.
+    - 폴더 밖(symlink를 따라간 뒤에도)과 숨은 이름(`.ssh/`)은 읽지 않는다.
+    - 크기 상한: 파일 하나 8MiB, 모두 32MiB, 페이지 8MiB(넘으면 넣지 않고 그대로), 주소 1000개.
+  - 참고는 lol-html로 고친다. aaa는 시작 태그만 훑는 작은 tokenizer다. 주석·`<!…>`·script·style 안은 건너뛰고, 고칠 속성 값 자리만 바꾸며 나머지 bytes는 그대로 둔다.
+  - agent link frame 상한(1MiB) 때문에 그린 페이지는 agent가 한 벌 기억해 두고 host가 조각으로 읽는다. 길이를 모르고 보내며 Range는 받지 않는다.
+  - 모든 파일 응답에 `X-Content-Type-Options: nosniff`를 단다(참고와 같다).
+- **문서 안 링크·그림(5b-2).**
+  - 파일 보기 안 Markdown은 그 문서의 폴더를 기준으로 잇는다(참고 `resolveFromDocument`). 문서 링크(`[코드](../src/app.ts)`), code 안 경로, 언어 없는 fence(로그·명령 출력) 안 경로를 누르면 같은 pane 기준으로 연다. 언어가 있는 code 안은 글 그대로다(참고 `PLAIN_FENCE`).
+  - 열린 파일 보기 안에서 다른 파일을 열면 기록 칸을 바꾼다(참고와 같다). 뒤로 한 번이면 pane으로 돌아간다.
+  - 그림(`![점](../shots/dot.png)`)은 그 pane의 `pane_file`로 찾아 읽기 경로로 그린다(참고 `markdownImages`). 크기를 먼저 읽어 자리를 잡고(참고 `imageBox`), 못 읽으면 「이미지를 표시할 수 없음」, 크면 내려받기를 권한다. 문구는 참고 ko 그대로다.
+  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음).
+- **문법 강조(5b-3).**
+  - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
+  - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
+  - 2만 줄이 넘으면 줄마다 요소를 만들지 않고 한 글로 그린다(참고 `CodeLines`). 참고는 2천 줄부터 가상화한다. aaa는 가상화 전이라 2만 줄 넘는 소스에는 줄 번호·줄 표시가 없다. 글은 256KiB까지만 읽으므로 줄이 아주 짧을 때만 생긴다.
+  - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
+- **남은 것(5b).**
+  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`), 폴더 보기, 「파일 뷰어」 설정(줄 바꿈·Markdown 폭).
+  - 대화 보기·보고서 안 파일 링크.
+  - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
+- **시험.**
+  - 유닛:
+    - agent `files::` 셋. 찾기 규칙(참고 사례), symlink는 실제 경로로, 바꿔치기, 조각 읽기를 본다.
+    - host `files::` 둘. 이름 인코딩과 Range를 본다.
+    - proto `control_classification`. `PaneFile`은 조작 전용이다.
+  - 웹 E2E `16-file-viewer` 한 단계(약 3초):
+    - 데스크톱: 상대 경로 → Markdown, 소스 보기, 뒤로가 닫는다. 줄 참조 → 20번째 줄 표시.
+    - 문서 안(5b-2): 그림은 `/f/` 읽기 경로로 1px. 문서 링크·code 경로·언어 없는 fence 안 경로는 문서 폴더 기준으로 열린다. `ts` fence 안 같은 경로는 단추가 아니다. 문서 링크로 연 뒤 뒤로 한 번이면 닫힌다.
+    - 읽기 경로: Range 206·`text/plain`·sandbox·`no-store`. 모르는 cap은 401, cookie 없으면 401, 보기 권한 기기는 403.
+    - OSC 8 file URI → 그림. 후보 둘 → 고르기. 허용 폴더 밖 → 알림.
+    - 휴대폰·iPad: 손가락으로 누르면 화면 가득 연다.
+    - 보기 권한 화면: 파일 경로를 눌러도 열리지 않는다. 뒤에 누른 웹 주소가 새 탭으로 열린 뒤에 본다. host도 `pane_file`을 거부하고, 같은 요청이 조작 기기에는 열린다.
+  - 웹 E2E `16-file-viewer` 둘째 단계(HTML 페이지·동영상·소리·PDF):
+    - 페이지 안 script가 돈다. 저장소가 없다(opaque origin). 밖으로 묻기는 CSP 위반 사건(`connect-src`)으로 막힌다.
+    - 그림은 data: URL이 되고 `.env`·폴더 밖 그림은 그대로다. stylesheet가 든다. 소스로 바꾸면 원문이다.
+    - 동영상 Range 206·`video/mp4`, 소리는 브라우저가 길이(0.5초)를 읽는다, PDF는 `application/pdf`에 `frame-ancestors 'self'`만.
+  - 유닛 `page::` 셋: 요소마다 종류, 퍼센트·질의·`..`, 넣지 않는 것 열여섯, 주석·script 안, symlink, 크기 상한.
+  - 웹 E2E `16-file-viewer` 셋째 단계(문법 강조, 약 2.5초): 2KB 넘는 소스는 worker가 칠한 색이 온다. YAML 대시 20만 자는 글이 바로 보이고, 예산이 지나면 「너무 길어」 알림이 뜨고 색은 없다. 첫 단계에서는 `.ts` 소스의 낱말·숫자·주석 색과 `ts` fence 색을 본다.
+  - 웹 유닛 `highlight`·`offThread`(참고 시험을 node:test로): 문법 고르기, 줄을 넘는 주석·문자열, 원문 보존, worker 큐(하나씩, 예산 넘으면 끝내고 새로, 취소, 실패), 결과 기억(실행 중 취소한 글의 포기는 기억, 시작 전 버린 글은 기억 안 함).
+  - 변형 확인: 다섯을 하나씩 망가뜨려 보았다. 모두 시험이 실패한다.
+    - 허용 폴더 검사를 빼면 agent 유닛과 E2E 「허용 밖 알림」이 실패한다.
+    - 실제 경로 같음 검사를 빼면 agent 유닛 「허용 폴더 안으로 바꿔치기」가 실패한다.
+    - `PaneFile`을 보기 허용에 넣으면 proto 유닛과 E2E 「reader 파일 보기」가 실패한다.
+    - 보기 권한 화면에도 파일 링크를 그리면 E2E 「보기 권한 화면에서 파일 경로가 파일 보기를 열었다」가 실패한다.
+    - 읽기 경로에서 기기 cookie를 보지 않으면 E2E 「cookie 없는 읽기 200」이 실패한다.
+  - 변형 확인(5b-1): 여섯 모두 실패한다. 페이지 CSP 풀기, 폴더 파일 안 넣기, iframe sandbox 빼기는 E2E가, 요소 종류 안 보기, 숨은 이름 안 보기, symlink 뒤 폴더 밖은 `page::` 유닛이 잡는다.
+  - 변형 확인(5b-2): 여섯 모두 E2E가 실패한다. 링크 문맥 빼기, 문서 폴더 기준 빼기, 그림 문맥 빼기, 열린 채 열 때 기록 칸 늘리기, 언어 fence도 잇기, 언어 없는 fence도 글 그대로. 변형은 web 빌드가 되는 꼴로만 셌다(쓰지 않는 변수로 빌드가 실패하면 시험이 옛 화면을 돌므로 무효).
+
+### 8.126 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
+
+> 이 절은 당시 구현 기록이다. profile 정의 위치·해석·목록은 10-18 사용자 결정으로 §8.127이 대신한다. safety 동작은 유지한다.
 
 - **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
 - **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
@@ -2730,11 +2855,11 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `routines`: 사람 문을 `person.rs`로 모은 뒤에도 세션 안·터미널 아님 거부와 PTY 승인.
   - 유닛: safety 층(옛 자리 포함)·local 파일이 덮기·잘못된 값은 그 값만 버림·출처 줄·toml_edit 고치기가 나머지를 둠(aaa-config `safety`), profile 이름·model·effort 검증과 add·edit·remove·기본 profile 감지(`profile_edit`), agent `safety_args_reach_builtins_and_yolo_every_harness`(옛 인자는 기본 harness의 기본 profile에만, yolo는 harness마다, argv·resume 둘 다).
 
-### 8.123 profile 정의를 host 한 곳으로(10-18, 사용자 「한곳에 모아」, 차이 목록 4장 G #593)
+### 8.127 profile 정의를 host 한 곳으로(10-18, 사용자 「한곳에 모아」, 차이 목록 4장 G #593)
 
 - **전 구조.** agent.toml `[profiles]`가 정의·argv 해석, host.toml은 허용 목록·기본값·safety만 관리했다.
   thread start/restart는 이름만 넘기고 agent가 Launch를 돌려주면 host가 DB에 저장했다. `aaa profile add/edit/remove/resolve`도
-  머신 파일을 읽었다(§8.2·§8.14·§8.122의 당시 구현). 사용자 결정으로 정의만 host로 모은다.
+  머신 파일을 읽었다(§8.2·§8.14·§8.126의 당시 구현). 사용자 결정으로 정의만 host로 모은다.
 - **자리.** 별도 파일 대신 host.toml `[profiles.<이름>]`: 참고 herdr-projects 0.2.35 `src/profiles.rs`
   `Entry`·`Config`·`get`·`listed`·`validate_name`·`typed_args`·`apply_in`처럼 하나의 설정에 정의·기본값·허용 목록을 둔다.
   키는 `agent`·`model`·`effort`·`description`·`args`. 기존 `harness` 별칭과 shell/custom command/env는 전환 호환으로 읽는다.
@@ -2747,7 +2872,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   ResolvedProfile·Harnesses 요청을 보낸다. 없는 agent는 연결·기존 세션을 유지하고 새 시작·새 대화 restart를 갱신 안내로 거부한다.
   옛 host → 새 agent는 기존 Profiles·이름 해석 경로를 유지한다. agent.toml `[profiles]`가 있으면 옮기라는 경고를 낸다.
   FRONT_API 1.18의 ProfileResolve는 host의 정본·전역 기본값을 읽는다. 수정 CLI는 host 머신의 사람 터미널에서 host.toml만 쓴다.
-  t-0333의 1.18이 아직 착지하지 않아 같은 minor에 묶는다. 별도 1.19로 올리면 운영 front 1.17이 N-1 밖으로 밀려
+  t-0333의 1.18이 아직 착지하지 않았고 파일 보기의 1.18도 운영 배포 전이라 같은 minor에 묶는다. 별도 1.19로 올리면 운영 front 1.17이 N-1 밖으로 밀려
   연결을 잃는 것을 실제 hello/status 시험으로 확인했다. 기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면
   로컬 host DB로 host 머신인지 확인한다(사람 확인은 유지, agent 파일은 쓰지 않는다).
 - **front.** 웹·TUI에는 독립된 profile 정의나 profile 선택기가 없다(현재 web/src·aaa-tui/src 확인).
@@ -3180,7 +3305,7 @@ primary 근거:
 | 0.2.35 기능 | aaa 대응 | 단계 |
 |---|---|---|
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
-| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.123) | M1-3 |
+| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.127) | M1-3 |
 | thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
 | `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`는 M1 마무리에서 했다(§8.21) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |

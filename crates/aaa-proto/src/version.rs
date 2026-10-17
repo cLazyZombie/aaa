@@ -18,7 +18,7 @@ impl std::fmt::Display for Version {
 /// host ↔ agent. 1.4: `ThreadRebrief.profile`(thread restart --profile).
 /// 버전을 올리지 않은 것(plan §8.113): `ThreadCleanup.merged_head`(옛 agent는 버리고 branch를 남긴다),
 /// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다). host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
-/// 버전을 올리지 않은 것(plan §8.115): `ThreadPrepare.safety`·`ThreadRebrief.safety`(agent 기능 `launch_safety.v1`이 있을 때만
+/// 버전을 올리지 않은 것(plan §8.126): `ThreadPrepare.safety`·`ThreadRebrief.safety`(agent 기능 `launch_safety.v1`이 있을 때만
 /// 보낸다). host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
@@ -31,9 +31,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.14: TUI 마우스(`GridFrame.modes`, `LayoutChange::SplitRatio`·`MoveTab`)(plan §8.106),
 /// 1.15: `pane_rename`과 PaneView `label`(plan §8.109),
 /// 1.16: `PaneView.restore_error`(plan §8.111),
-/// 1.17: 묶음 `landing`(PR 승인, plan §8.113)
-/// 1.18: ProfileView `args`·`builtin`(기본 profile claude·codex, plan §8.115)
-/// profile·safety와 같은 1.18 묶음에 `ProfileResolve`(host 정본에서 확인)를 넣는다. 운영 front 1.17의 연결 창을 유지한다.
+/// 1.17: 묶음 `landing`(PR 승인, plan §8.113),
+/// 1.18: 파일 보기 `pane_file`(plan §8.125), ProfileView `args`·`builtin`(plan §8.126),
+/// `ProfileResolve`(host 정본에서 확인, plan §8.127). 운영 front 1.17의 연결 창을 유지한다.
 /// host_profiles.v1은 AGENT_LINK 1.4의 선택 기능으로 agent 1.3 연결을 유지한다.
 pub const FRONT_API: Version = Version { major: 1, minor: 18 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.

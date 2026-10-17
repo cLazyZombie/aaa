@@ -81,6 +81,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         software: aaa_common::util::software(),
         // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`,
         // history.v1: `AgentRequest::History`(plan §8.118)
+        // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
@@ -92,6 +93,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             // host의 ResolvedProfile과 설치 harness 조회(Harnesses)를 받는다.
             "host_profiles.v1".into(),
             "launch_safety.v1".into(),
+            "file.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
