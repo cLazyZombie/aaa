@@ -1620,6 +1620,8 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 보던 줄 자리를 덩어리 줄 수만큼 내린다(`scrollToLine(top + lines)`).
   - 다시 쓰는 동안 온 출력·snapshot·크기 바꾸기는 붙잡았다가 다 쓴 뒤에 차례로 쓴다.
   - 다시 쓰는 동안은 그 전 화면(DOM renderer 줄 요소의 사본)을 위에 덮어 둔다. 그래서 중간 모습이 보이지 않는다.
+  - 덮개는 새 자리가 그려진 뒤(`term.onRender`)에 걷는다. xterm은 다음 frame에 그리므로 쓰기 callback에서 바로 걷으면 한 frame 동안 빈 줄이 보였다(10-18 t-0329 ci-local에서 웹 E2E 「앞 기록」이 그 순간의 빈 줄을 읽어 드러났다).
+  - 시험의 버퍼 훑기도 「굴린 뒤 두 frame이면 그렸다」를 어림하지 않는다. Term이 `onRender`마다 그린 맨 위 줄(`data-view-top`)과 baseY(`data-view-base`)를 적고, 훑기는 목표 줄을 정해 그 줄에 맞춘 scrollTop을 준 뒤 그 줄이 그려지기를 기다린다(걸음마다 줄이 바뀌어 그리기가 꼭 온다). 오지 않으면 10초 뒤 그때 모습으로 실패한다(고장 판정). 부하가 크면 그리기가 한 걸음 늦어 같은 줄을 두 자리로 셌고, 「바뀌기만」 기다린 판은 마지막 걸음이 반 줄 미만이면 끝나지 않았다.
   - modifyOtherKeys 단계는 serialize에 없어 되살린다. 새 snapshot이 오면 기다리던 답은 버린다.
 - **안 되는 곳(사용자 결정을 기다린다).**
   - **(가) host를 다시 띄운 뒤의 앞 기록.** host mirror는 다시 뜰 때 session host snapshot으로 기록을 처음 채운다. 이 snapshot은 지금도 1MiB frame 하나다(최근 2000줄·384KiB). 그래서 host를 다시 띄우면 그보다 앞 기록은 session host에만 있고 웹은 받아 오지 못한다.
@@ -1893,6 +1895,24 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - `aaa report`를 참고 `report`와 같게 했다: `--percent`(0~100)나 `--unknown` 중 하나, `--activity`는 필수, `--percent 100`이면 활동은 `Done`.
 - **첫 줄 태그 해석 제거(C3).** 보고 첫 줄 `[사용자 작업 필요]`·`[결정 필요]`로 사람 차례를 정하던 규칙(§8.14·§8.38)과 `report_state`(기록·ThreadView·CLI·웹 칩·알림 본문·`report_ready` 사건 글)를 없앴다. 새 보고는 harness가 일하지 않으면 「검토 대기」다. 사람 차례는 참고처럼 `Waiting for you` 진행 보고·확인창·시작 실패·닫힌 pane으로만 정한다. `## Next` 읽기는 참고 `next_lines`를 그대로 옮겼다. `PR:` 줄 읽기와 추적은 D11 절에서 한다.
 - **시험.** host 유닛 `brief_follows_herdr_projects_order`(차례·머리·경로·memory 상한·다시 시작 안내·원격 uploads 주석), proto `next_lines`(참고 시험 그대로), `fill_brief`, cli `report` 인자. m13·웹 E2E의 가짜 보고는 새 형식(태그 없음)이고, 「갱신된 보고」 시험은 태그 대신 `## Next` 변화로 사본을 확인한다. 「사람 차례」 시험은 `Waiting for you` 진행 보고로 본다.
+
+### 8.79 공유 설정과 고정을 herdr-web-ui대로 host에(10-18, 차이 목록 T2, 결정 D5)
+
+- **무엇을 나누나.** herdr-web-ui `shared/preferences.ts` `SHARED_SETTING_KEYS`(theme·palette·language·sidebarRows·agentOrder·agentMarks·autoSendQueued·showThinking·quickReplies·showQuickReplies·showUsage·usageCount·usageGlance·usageOrder·usageHidden)와 목록 고정(`pins`). 나머지(다크·라이트 짝 팔레트·상태 표시·키 막대·글꼴·알림 등)는 참고 `SETTING_SCOPE`처럼 기기 것이다.
+  - aaa에 지금 있는 공유 설정은 모양 셋과 사용량 막대 다섯이다. 아직 없는 이름도 host는 그대로 들고(다른 판의 화면을 위해), 웹은 읽지 못하는 값으로 두고 되돌려 보내지 않는다.
+- **host**(`crates/aaa-host/src/prefs.rs`, 참고 `server/preferences.ts` `PreferenceStore`·`handlePreferencesRequest`).
+  - 문서 하나 `{revision, settings, pins?}`를 host DB `meta`에 둔다. 변경은 바꾼 설정만(고정은 바뀌었을 때만) 오고 가진 것 위에 놓는다(설정마다 마지막 쓰기가 이긴다). revision이 하나 오른다.
+  - 공유 이름만 남기고, 고정은 500개·한 개 300자까지, 중복은 뺀다. 문서 전체가 64KB를 넘으면 `too_large`. 저장이 실패하면 갖지도 알리지도 않는다.
+  - `FrontRequest::Preferences`(읽기, 보기 권한도)·`PreferencesSet`(보기 권한은 `forbidden`, 참고 index.ts readOnly), 웹 events 연결은 열 때와 바뀔 때마다 문서 전체를 `preferences` 사건으로 받는다(참고 machine-api.ts).
+- **웹**(`web/src/preferences.ts`·`preferencesSync.ts`, 참고 `src/lib/preferencesSync.ts`).
+  - 들어온 뒤 한 번 읽고, host 값을 설정마다 이 기기 값 위에 놓는다. 여는 것만으로는 쓰지 않는다. 바꾸면 600ms 멈춘 뒤 바뀐 것만 보낸다. 가는 동안 온 문서는 답이 올 때까지 붙잡아 revision으로 앞뒤를 가린다. 처음 host가 갖는 고정은 이 기기 고정과 합친다.
+  - 보기 권한 기기는 첫 쓰기가 거부되면 보내지 않고, 다음 공유 변경을 모두 받는다(제 변경은 그때까지만).
+  - 다르게 둔 것: 참고는 404(옛 서버)면 동기화를 멈춘다. aaa 웹은 host binary 안에 있어 옛 host가 없으므로 그 갈래가 없다. 참고 `useSettings()` 하나 자리에 aaa는 모양 store(theme.ts)와 사용량 store(settings.ts) 둘을 잇는다.
+  - 고정은 이 묶음에서 나누기만 하고, 고정하는 줄 메뉴는 L10과 함께 넣는다.
+- **시험.**
+  - host 유닛 `prefs` 다섯(참고 preferences.test.ts 사례): 빈 시작·공유 이름만·revision·다시 띄우기, 고정 한도, 문서 전체 한도, 저장 실패면 안 알림, 깨진 기록.
+  - 웹 유닛 `web/test/preferences.test.mjs` 여덟(참고 preferencesSync.test.ts 사례, `npm test` = `node --test`, ci-local web 단계): 바뀐 것만 보냄, 첫 고정 함께, 받기, 안 보낸 변경 지킴, 나중 쓰기 이김, 읽지 못하는 값, 고정 합치기, 보기 권한.
+  - 웹 E2E 「공유 설정」: 데스크톱 밝게 → 휴대폰도, 휴대폰 색상 → 데스크톱도, 기기 설정(상태 표시)은 보내지 않음, 여는 것만으로는 revision 0, 보기 권한 쓰기 거부와 다음 변경 모두 받기. 기다림은 `<html>` 속성 MutationObserver와 그 쓰기 요청의 답으로 끝낸다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

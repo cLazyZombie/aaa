@@ -67,6 +67,7 @@ pub fn typescript_bindings() -> String {
         PublishState::decl(&cfg),
         HostStatus::decl(&cfg),
         FrontRequest::decl(&cfg),
+        SharedPreferences::decl(&cfg),
         FrontResponse::decl(&cfg),
         FrontEvent::decl(&cfg),
         TermServerMsg::decl(&cfg),

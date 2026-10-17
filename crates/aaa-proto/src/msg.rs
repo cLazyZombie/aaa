@@ -6,6 +6,8 @@
 //!
 //! 모르는 선택 필드는 무시한다(serde 기본). 필수 필드가 없거나 모르는 메시지 종류는 오류다.
 
+use std::collections::BTreeMap;
+
 use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
@@ -61,6 +63,8 @@ pub enum ErrorCode {
     SubscriptionNotFound,
     /// push 서비스가 그 구독을 버렸다(404·410, host가 지웠다, herdr-web-ui `subscription_gone`)
     SubscriptionGone,
+    /// 받을 수 있는 크기를 넘었다(공유 설정 64KB, herdr-web-ui `too_large`)
+    TooLarge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1114,6 +1118,15 @@ pub enum FrontRequest {
     Decisions {
         project: String,
     },
+    /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
+    Preferences,
+    /// 공유 설정을 바꾼다: 바꾼 설정만, 고정은 바뀌었을 때만(herdr-web-ui `PUT /api/preferences`). 보기 권한은 못 한다
+    PreferencesSet {
+        #[ts(type = "Record<string, unknown>")]
+        settings: BTreeMap<String, serde_json::Value>,
+        #[serde(default)]
+        pins: Option<Vec<String>>,
+    },
     /// inbox. `peek`가 아니면 보인 항목을 「봤다」로 표시한다(처음 보는 항목만 coordinator에게 알린다)
     Inbox {
         project: String,
@@ -1246,6 +1259,7 @@ impl FrontRequest {
                 | FrontRequest::EvaluatorStatus { .. }
                 | FrontRequest::Evaluations { .. }
                 | FrontRequest::EvaluationShow { .. }
+                | FrontRequest::Preferences
         )
     }
 
@@ -1363,6 +1377,23 @@ pub enum FrontResponse {
         evaluations: Vec<EvaluationView>,
     },
     Evaluation(Box<EvaluationView>),
+    Preferences(SharedPreferences),
+}
+
+/// 이 host의 모든 웹 화면이 함께 쓰는 것: 기기에 기대지 않는 설정과 고정(herdr-web-ui `shared/preferences.ts` `SharedPreferences`).
+/// 값의 뜻은 웹이 본다. host는 공유 이름(`SHARED_SETTING_KEYS`)과 모양·한도만 지킨다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SharedPreferences {
+    /// 처음 쓰기 전에는 0, 쓸 때마다 하나 오른다
+    #[ts(type = "number")]
+    pub revision: u64,
+    /// 어느 화면이 나눈 설정만 있다. 아무도 안 바꾼 설정은 없고, 기기마다 제 것으로 남는다
+    #[ts(type = "Record<string, unknown>")]
+    pub settings: BTreeMap<String, serde_json::Value>,
+    /// 목록 고정 열쇠(agent는 `machine:pane`), 고정한 순서대로. 화면이 처음 고정을 나누기 전에는 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pins: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1380,6 +1411,8 @@ pub enum FrontEvent {
     Thread(ThreadView),
     /// 확인창 질문이 생기거나 답해졌다(알림 대상)
     Question(QuestionView),
+    /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)
+    Preferences(SharedPreferences),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

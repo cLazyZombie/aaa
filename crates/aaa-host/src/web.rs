@@ -424,9 +424,20 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
+    let mut preferences = host.preferences.subscribe();
     let mut presence = Presence { host: host.clone(), dev, active: false };
     let mut send_state = true;
+    // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
+    let mut send_preferences = true;
     loop {
+        if send_preferences {
+            send_preferences = false;
+            let doc = preferences.borrow_and_update().clone();
+            let text = serde_json::to_string(&FrontEvent::Preferences(doc)).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
         if send_state {
             let ev = FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(role) };
             if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
@@ -462,6 +473,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     }
                     Err(_) => break,
                 }
+            }
+            r = preferences.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_preferences = true;
             }
             m = socket.recv() => {
                 send_state = false;

@@ -21,6 +21,7 @@ pub mod migrate;
 mod notify;
 mod orch;
 mod output;
+mod prefs;
 mod project;
 mod prompt_box;
 mod push;
@@ -231,6 +232,8 @@ pub struct Host {
     collect_lock: tokio::sync::Mutex<()>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
+    /// 웹 화면들이 함께 쓰는 설정과 고정(prefs.rs). events 연결마다 구독한다
+    pub(crate) preferences: prefs::Store,
     /// pane별 harness 사건 대기자
     waiters: Mutex<harness::Waiters>,
     /// 메시지 전달은 한 번에 하나씩 한다
@@ -300,6 +303,7 @@ impl Host {
             }
         };
         let identity = aaa_common::tls::load_or_create(&state, "aaa-host")?;
+        let preferences = prefs::Store::new(prefs::parse(db.meta(prefs::META_KEY)?.as_deref()));
         // Web Push 키가 깨졌으면 host는 뜨고 push만 끈다(로그에 남긴다)
         let vapid = if cfg.notify.web_push {
             match push::Vapid::load_or_create(&state) {
@@ -362,6 +366,7 @@ impl Host {
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
+            preferences,
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
@@ -830,6 +835,13 @@ impl Host {
             }
             FrontRequest::Decisions { project } => {
                 self.decisions(&project).map(|decisions| FrontResponse::Decisions { decisions })
+            }
+            FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
+            FrontRequest::PreferencesSet { settings, pins } => {
+                let change = prefs::change_body(settings, pins)?;
+                let doc = self.preferences.set(change, |text| self.db.set_meta(prefs::META_KEY, text))?;
+                self.db.audit(actor, "preferences_set", &doc.revision.to_string());
+                Ok(FrontResponse::Preferences(doc))
             }
             FrontRequest::Inbox { project, all, peek } => {
                 self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items, done: None })

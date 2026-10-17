@@ -10,7 +10,7 @@
 #   bash scripts/ci-local.sh --tee                 단계 출력을 로그와 함께 화면에도 낸다(CI가 쓴다)
 #
 # 단계(순서대로): web fmt build clippy test clipboard e2e public
-#   web        웹 front 빌드(npm ci·build). host 실행 파일에 들어간다
+#   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
 #   build      cargo build --workspace --all-targets --locked
 #   clippy     cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -73,7 +73,7 @@ wanted() {
 }
 
 # ── 단계 명령(여기가 유일한 정의다) ──
-step_web() { (cd web && npm ci --no-audit --no-fund && npm run build); }
+step_web() { (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
 step_fmt() { cargo fmt --all --check; }
 step_build() { cargo build --workspace --all-targets --locked; }
 step_clippy() { cargo clippy --workspace --all-targets --locked -- -D warnings; }

@@ -2093,28 +2093,49 @@ try {
     if (!seen.every((n, i) => i === 0 || n < seen[i - 1])) throw new Error(`붙인 자리가 위로 가지 않았다: ${seen}`);
     // 버퍼 전체를 한 화면씩 훑어: h-00001~h-06000이 빠짐·겹침 없이 차례로(덩어리 경계도)
     const sweep = await hp.evaluate(async () => {
-      const vp = document.querySelector('[data-testid="terminal"] .xterm-viewport');
-      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const box = document.querySelector('[data-testid="terminal"]');
+      const vp = box.querySelector(".xterm-viewport");
+      const rows = () => [...box.querySelectorAll(".xterm-rows > div")];
+      // 그 줄이 맨 위로 그려질 때까지(Term onRender가 data-view-top에 적는다). 걸음마다 맨 위 줄이 바뀌므로 그리기가 꼭 온다.
+      // 오지 않으면 끝없이 기다리지 않고 그때 모습으로 실패한다(기다림의 끝은 사건이고, 10초는 고장 판정일 뿐이다)
+      const drawnAt = (line) =>
+        new Promise((done, fail) => {
+          const ok = () => box.dataset.viewTop === String(line);
+          if (ok()) return done();
+          const stuck = setTimeout(() => {
+            mo.disconnect();
+            fail(new Error(`줄 ${line}이 그려지지 않았다: ${JSON.stringify({ top: box.dataset.viewTop, base: box.dataset.viewBase, scrollTop: vp.scrollTop, scrollHeight: vp.scrollHeight })}`));
+          }, 10_000);
+          const mo = new MutationObserver(() => ok() && (clearTimeout(stuck), mo.disconnect(), done()));
+          mo.observe(box, { attributes: true, attributeFilter: ["data-view-top"] });
+        });
+      // 줄 하나의 높이는 xterm viewport가 버퍼 줄 수(baseY + 화면 줄)만큼 늘인 높이에서 나온다: 줄 번호에 맞춘 scrollTop은 그 줄이 된다
+      const goTo = async (line) => {
+        if (box.dataset.viewTop === String(line)) return;
+        const rowPx = vp.scrollHeight / (Number(box.dataset.viewBase) + rows().length);
+        vp.scrollTop = line * rowPx;
+        vp.dispatchEvent(new Event("scroll"));
+        await drawnAt(line);
+      };
       const nums = new Set();
       const bad = [];
       const ticks = new Map();
       let last = -1;
-      for (let y = 0; ; y += vp.clientHeight / 2) {
-        vp.scrollTop = y;
-        vp.dispatchEvent(new Event("scroll"));
-        await frame();
-        const got = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')].map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
+      const half = Math.floor(rows().length / 2);
+      for (let line = 0; ; ) {
+        await goTo(line);
+        const divs = rows();
+        const got = divs.map((d) => /^h-(\d{5})/.exec(d.textContent)?.[1]).filter(Boolean).map(Number);
         for (let i = 1; i < got.length; i++) if (got[i] !== got[i - 1] + 1) bad.push([got[i - 1], got[i]]);
         got.forEach((n) => nums.add(n));
         // tick-1·h-06000 줄의 버퍼 줄 번호(겹쳐 본 화면에서 같은 줄은 한 번 센다)
-        const divs = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
-        const rowH = divs[0].getBoundingClientRect().height;
         divs.forEach((d, i) => {
-          const at = Math.round(vp.scrollTop / rowH) + i;
-          if (d.textContent.startsWith("tick-1")) ticks.set(at, "tick");
-          if (d.textContent.startsWith("h-06000")) last = at;
+          if (d.textContent.startsWith("tick-1")) ticks.set(line + i, "tick");
+          if (d.textContent.startsWith("h-06000")) last = line + i;
         });
-        if (y >= vp.scrollHeight - vp.clientHeight) break;
+        const base = Number(box.dataset.viewBase);
+        if (line >= base) break;
+        line = Math.min(base, line + half);
       }
       const tickAt = [...ticks.keys()];
       return { count: nums.size, min: Math.min(...nums), max: Math.max(...nums), bad: bad.slice(0, 5), tickAt, last };
@@ -4270,6 +4291,100 @@ try {
     await shot(pp, "phone-more-menu");
     await pp.context().close();
     aaa("thread", "ack", "demo", t.id);
+  });
+
+  await step("공유 설정(herdr-web-ui preferencesSync·shared/preferences.ts, 차이 목록 T2): 한 기기에서 바꾼 테마·색상·사이드바 행은 다른 기기에 곧 오고, 기기 설정(상태 표시)은 남으며, 여는 것만으로는 쓰지 않고, 보기 권한 기기의 쓰기는 거부되며 다음 공유 변경을 모두 받는다", async () => {
+    // 기다림은 시간이 아니라 사건으로 끝낸다: <html> 속성은 MutationObserver, host 쓰기는 그 요청의 답
+    const htmlIs = (p, name, value) =>
+      p.evaluate(
+        ([name, value]) =>
+          new Promise((done) => {
+            const ok = () => document.documentElement.getAttribute(name) === value;
+            if (ok()) return done();
+            const mo = new MutationObserver(() => ok() && (mo.disconnect(), done()));
+            mo.observe(document.documentElement, { attributes: true, attributeFilter: [name] });
+          }),
+        [name, value],
+      );
+    const wrote = (p) =>
+      p
+        .waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set")
+        .then(async (r) => ({ sent: r.request().postDataJSON(), ...(await r.json()) }));
+    const keys = (o) => JSON.stringify(Object.keys(o).sort());
+    const held = (p) =>
+      p.evaluate(() =>
+        fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "preferences" }) })
+          .then((r) => r.json())
+          .then((o) => o.ok),
+      );
+    const settings = async (p) => {
+      await p.getByTestId("settings-open").click();
+      return p.getByRole("dialog", { name: "설정" });
+    };
+    const close = (p) => p.keyboard.press("Escape");
+    const a = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    const b = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    await a.getByTestId("machine-labA").waitFor();
+    await b.getByTestId("machine-labA").waitFor();
+    // 여는 것만으로는 아무것도 쓰지 않는다
+    const before = await held(a);
+    if (before.revision !== 0) throw new Error(`열기 전에 공유 설정이 있다: ${JSON.stringify(before)}`);
+
+    // 데스크톱에서 밝게 → 휴대폰도 밝게(새로 고치지 않음)
+    let d = await settings(a);
+    let sent = wrote(a);
+    await d.getByRole("group", { name: "테마" }).getByRole("button", { name: "밝게" }).click();
+    const first = await sent;
+    // 바꾼 공유 설정만 보낸다. host가 아직 고정을 갖지 않아 이 기기 고정(빈 목록)이 함께 간다
+    if (first.ok?.revision !== 1 || first.ok.settings.theme !== "light" || keys(first.sent.settings) !== keys({ theme: 1 }) || !Array.isArray(first.sent.pins))
+      throw new Error(`첫 쓰기 ${JSON.stringify(first)}`);
+    await htmlIs(b, "data-theme", "light");
+    // 휴대폰에서 색상 Catppuccin과 상태 표시 「점」(기기 설정) → 데스크톱은 색상만 받는다
+    d = await settings(b);
+    await d.getByRole("group", { name: "상태 표시" }).getByRole("button", { name: "점" }).click();
+    sent = wrote(b);
+    await d.locator("#settings-palette").selectOption("catppuccin");
+    const second = await sent;
+    if (keys(second.sent.settings) !== keys({ palette: 1 }) || keys(second.ok.settings) !== keys({ palette: 1, theme: 1 }))
+      throw new Error(`둘째 쓰기에 기기 설정이 섞였다: ${JSON.stringify(second)}`);
+    await htmlIs(a, "data-palette", "catppuccin");
+    const aLook = await a.evaluate(() => JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"));
+    if (aLook.statusIndicators === "dots") throw new Error("기기 설정(상태 표시)이 다른 기기로 갔다");
+    if (aLook.palette !== "catppuccin" || aLook.theme !== "light") throw new Error(`받은 값이 이 기기에 남지 않았다: ${JSON.stringify(aLook)}`);
+    await close(b);
+    await shot(a, "desktop-shared-light-catppuccin");
+
+    // 보기 권한 기기: 열면 host 문서를 받고, 제 변경은 거부되어 이 기기에만 남다가 다음 공유 변경을 모두 받는다
+    const r = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })).page;
+    await htmlIs(r, "data-palette", "catppuccin");
+    await htmlIs(r, "data-theme", "light");
+    d = await settings(r);
+    sent = wrote(r);
+    await d.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).click();
+    const refused = await sent;
+    if (refused.err?.code !== "forbidden") throw new Error(`보기 권한 쓰기가 거부되지 않았다: ${JSON.stringify(refused)}`);
+    await htmlIs(r, "data-theme", "dark");
+    if ((await held(a)).revision !== 2) throw new Error("거부된 쓰기가 host 문서를 바꿨다");
+    await close(r);
+    // 데스크톱에서 사이드바 한 줄 → 휴대폰은 한 줄, 보기 권한 기기는 밝음까지 모두 받는다
+    sent = wrote(a);
+    d = a.getByRole("dialog", { name: "설정" });
+    await d.getByRole("group", { name: "사이드바 행" }).getByRole("button", { name: "한 줄" }).click();
+    if ((await sent).ok?.revision !== 3) throw new Error("셋째 쓰기");
+    await htmlIs(r, "data-theme", "light");
+    await b.locator(".machine-workspaces:not(.is-two-line)").first().waitFor();
+    await shot(r, "phone-reader-shared");
+
+    // 되돌린다(뒤 단계의 화면이 기본 모양이게)
+    sent = wrote(a);
+    await d.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).click();
+    await d.locator("#settings-palette").selectOption("amber");
+    await d.getByRole("group", { name: "사이드바 행" }).getByRole("button", { name: "두 줄" }).click();
+    await sent;
+    await htmlIs(b, "data-palette", "amber");
+    await htmlIs(b, "data-theme", "dark");
+    await b.locator(".machine-workspaces.is-two-line").first().waitFor();
+    for (const p of [a, b, r]) await p.context().close();
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {

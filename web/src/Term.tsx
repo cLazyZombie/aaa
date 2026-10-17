@@ -983,6 +983,13 @@ export function TermView({
     };
     // xterm 5.5 onScroll은 새 줄로 버퍼가 밀릴 때만 온다: 사용자가 굴린 것은 viewport의 scroll로 본다(xterm 처리 뒤라 viewportY가 새 자리다)
     const scrollSub = term.onScroll(() => wantHistory());
+    // 그린 화면의 맨 위 버퍼 줄과 맨 아래 화면의 맨 위 줄(baseY). 시험이 「이 자리가 그려졌다」를 사건으로 안다: 굴린 뒤 frame 수를 어림하지 않는다
+    const renderSub = term.onRender(() => {
+      const el = box.current;
+      if (!el) return;
+      el.dataset.viewTop = String(term.buffer.active.viewportY);
+      el.dataset.viewBase = String(term.buffer.active.baseY);
+    });
     viewport?.addEventListener("scroll", wantHistory);
     /** 받은 덩어리를 지금 버퍼 앞에 붙인다(위 설명) */
     const prependHistory = (data: Uint8Array, lines: number, more: boolean) => {
@@ -1019,9 +1026,14 @@ export function TermView({
         term.write(all, () => {
           otherKeysRef.current = keys;
           term.scrollToLine(top + lines);
-          cover?.remove();
-          trace("history-applied", { lines, more });
-          done();
+          // 덮개는 새 자리가 그려진 뒤에 걷는다. xterm은 다음 frame에 그리므로 여기서 걷으면 한 frame 동안 다시 쓰던 화면(빈 줄)이 보인다
+          const drawn = term.onRender(() => {
+            drawn.dispose();
+            cover?.remove();
+            trace("history-applied", { lines, more });
+            done();
+          });
+          term.refresh(0, term.rows - 1);
         });
       });
     };
@@ -1205,6 +1217,7 @@ export function TermView({
       otherKeysOff.dispose();
       binSub.dispose();
       scrollSub.dispose();
+      renderSub.dispose();
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
       term.dispose();

@@ -2232,6 +2232,10 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Evaluation(v) => render_evaluation(&mut s, v),
+        // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
+        FrontResponse::Preferences(p) => {
+            let _ = writeln!(s, "{}", serde_json::to_string_pretty(p).unwrap_or_default());
+        }
         FrontResponse::Inbox { items, done: Some(n) } => {
             let _ = writeln!(s, "{n}개 항목을 끝냈다(inbox/done으로 옮김)");
             if !items.is_empty() {
