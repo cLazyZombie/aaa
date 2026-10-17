@@ -34,6 +34,7 @@ import { KeyBar } from "./KeyBar";
 import { TerminalInput } from "./TerminalInput";
 import { setTerminalFontSize, setTerminalInputMode, useMedia, useTerminalFontSize, useTerminalInputMode } from "./settings";
 import { pinchFontSize } from "./herdr/pinchFontSize.ts";
+import { matchHerdrWidths } from "./herdr/terminalWidths.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
@@ -354,12 +355,18 @@ export function TermView({
       cursorStyle: "block",
       cursorBlink: true,
       macOptionClickForcesSelection: true,
+      // term.unicode(아래 글자 폭)는 proposed API다
+      allowProposedApi: true,
     });
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // 글자 폭(herdr-web-ui terminalWidths.ts 그대로, PaneTerminal 583줄): xterm 기본 Unicode 6 폭이면 이모지 대부분이 한 칸이라
+    // 프로그램·session host(vt100, 지금 Unicode 폭)와 줄이 어긋난다. grapheme addon과 참고의 보정으로 이모지는 두 칸,
+    // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
+    matchHerdrWidths(term);
     term.open(box.current!);
     const el = box.current!;
     // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.

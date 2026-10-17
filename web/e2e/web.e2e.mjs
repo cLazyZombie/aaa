@@ -576,6 +576,8 @@ process.stdout.on("resize", () => process.stdout.write("SIZE:" + ++n + ":" + pro
 process.stdin.on("data", (d) => process.stdout.write("GOT:" + ++n + ":" + JSON.stringify(d.toString("utf8")) + "\\r\\n"));
 `,
 );
+// 글자 폭 시험: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️(VS16) 뒤에 글자 하나씩
+fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
 fs.writeFileSync(
@@ -725,6 +727,34 @@ try {
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
     console.log("     글꼴 측정(1280×800)", JSON.stringify(await fontOk(page, cols)));
     await shot(page, "desktop-hangul");
+  });
+
+  await step("글자 폭(herdr-web-ui terminalWidths): 이모지·새 이모지·ZWJ 묶음·⚠️는 두 칸", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "widths", "--", process.execPath, `${root}/widths.js`);
+    const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 })).page;
+    await wp.getByTestId("pane-widths").click();
+    await until("폭 화면", async () => (await screenText(wp)).includes("W"));
+    // 글자마다 화면 위치로 몇째 칸인지 잰다(DOM renderer의 span 묶음에 기대지 않는다)
+    const cols = await wp.evaluate((cols) => {
+      const screen = document.querySelector('[data-testid="terminal"] .xterm-screen').getBoundingClientRect();
+      const cell = screen.width / cols;
+      const at = (ch) => {
+        const walk = document.createTreeWalker(document.querySelector(".xterm-rows"), NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          const i = n.textContent.indexOf(ch);
+          if (i < 0) continue;
+          const r = document.createRange();
+          r.setStart(n, i);
+          r.setEnd(n, i + 1);
+          return Math.round((r.getBoundingClientRect().left - screen.left) / cell);
+        }
+        return null;
+      };
+      return ["X", "Y", "Z", "W"].map(at);
+    }, aaa("pane", "list").panes.find((x) => x.name === "widths").cols);
+    if (JSON.stringify(cols) !== "[2,2,2,2]") throw new Error(`글자 칸(기대 [2,2,2,2]) ${JSON.stringify(cols)}`);
+    await wp.context().close();
+    aaa("pane", "kill", "widths");
   });
 
   await step("controller: 입력 막대로 한글", async () => {

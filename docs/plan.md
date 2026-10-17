@@ -1437,6 +1437,12 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **옮긴 것(herdr-web-ui PaneTerminal 699~727줄 `adopted`·`followCursor`).** 이 화면 것이 아닌 grid는 칸보다 클 수 있다. 다른 화면이 크기를 정하는 중이거나 보기 권한일 때가 그렇다. 그때 칸이 굴러가고, 새 출력마다 커서 줄이 보이게 옮긴다. 손가락이나 휠로 옮기면 그 뒤로는 따라가지 않는다. 다시 남의 grid가 되거나 맞추면 다시 따라간다. 전에는 화면 키보드가 grid를 붙잡을 때만 따라갔다(§8.39).
 - **시험.** 웹 E2E 「reader」: 390×420 보기 권한 화면으로 80×40 pane(줄 80개 뒤 커서는 맨 아래)을 열면 칸이 맨 아래까지 굴러 커서 바로 위 줄이 보인다. 키보드 때만 따라가던 판으로 돌리면 `scrollTop` 0, 그 줄은 칸 밖(819px)이라 실패한다(웹 번들을 다시 지은 판으로 확인).
 
+### 8.53 이모지·결합 문자 폭을 herdr와 같게(10-17, 차이 목록 2 「이모지·결합 문자 폭」)
+
+- **옮긴 것(herdr-web-ui `src/lib/terminalWidths.ts`, PaneTerminal 583줄).** `web/src/herdr/terminalWidths.ts`를 바꾸지 않고 옮기고 `@xterm/addon-unicode-graphemes` 0.4.0(MIT, xterm 묶음)을 넣었다. 터미널을 열 때 fit addon 다음에 `matchHerdrWidths(term)`로 폭 규칙을 갈아 끼운다(addon이 proposed API라 `allowProposedApi: true`). 이모지·새 이모지·ZWJ 묶음·⚠️(VS16)가 두 칸이다. xterm 기본(Unicode 6)에서는 이모지가 한 칸이고 ZWJ 묶음은 이모지마다 칸을 차지해서 뒤 글자가 밀렸다.
+- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. vt100 폭을 맞추는 일은 뒤로 미룬다.
+- **시험.** 웹 E2E 「글자 폭」: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️ 뒤에 쓴 글자의 칸 자리로 폭을 잰다. 기대값은 `[2,2,2,2]`다. `matchHerdrWidths`를 빼고 웹 번들을 다시 지은 판은 `[1,1,4,1]`로 실패한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
