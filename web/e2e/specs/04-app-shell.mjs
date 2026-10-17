@@ -3,6 +3,7 @@
 
 import {
   webkit, AA, sleep, aaa, until, screenText, shot, fakeViewport, softKeyboard, pairPage, step, browser,
+  openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -72,8 +73,7 @@ export default async function ({ ctl, page }) {
     if ((await log()) !== "") throw new Error(`꺼진 설정인데 ${await log()}`);
     if (!(await wp.evaluate(() => window.isSecureContext))) throw new Error("시험 주소가 secure context가 아니다");
     const toggle = async () => {
-      await wp.getByTestId("settings-open").click();
-      await wp.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "화면 켜짐 유지" }).click();
+      await (await openSettings(wp, "폰 및 기기")).getByRole("switch", { name: "화면 켜짐 유지" }).click();
       await wp.keyboard.press("Escape");
     };
     // 휴대폰은 pane을 보는 동안 목록 바닥 톱니가 가려진다: 목록으로 돌아가 켜고 다시 고른다
@@ -128,8 +128,7 @@ export default async function ({ ctl, page }) {
         return e.defaultPrevented;
       });
     const dialogRow = async (p) => {
-      await p.getByTestId("settings-open").click();
-      const row = p.getByRole("dialog", { name: "설정" }).locator(".settings-row", { hasText: /^설치/ });
+      const row = (await openSettings(p, "폰 및 기기")).locator(".settings-row", { hasText: /^설치/ });
       const text = (await row.innerText()).replace(/\s+/g, " ");
       const button = await row.getByRole("button", { name: "앱 설치" }).count();
       await p.keyboard.press("Escape");

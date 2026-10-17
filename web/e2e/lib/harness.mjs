@@ -384,6 +384,16 @@ const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["i
 
 // line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
 // wsRoute·route: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로채고, 글꼴은 연결 화면에서 이미 받는다)
+/** 설정 창을 열고 그 쪽으로 간다(herdr-web-ui SettingsDialog: 넓은 창은 왼쪽 목록 옆에 쪽, 휴대폰은 목록에서 쪽으로) */
+async function openSettings(p, pageName) {
+  await p.getByTestId("settings-open").click();
+  const dialog = p.getByRole("dialog", { name: "설정" });
+  await dialog.waitFor();
+  await dialog.getByRole("tab", { name: pageName }).click();
+  await dialog.getByRole("tabpanel", { name: pageName }).waitFor();
+  return dialog;
+}
+
 async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route } = {}) {
   const ctx = await browser.newContext({
     viewport,
@@ -900,8 +910,8 @@ async function runSpec(spec) {
 export {
   require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, waitOutput, start, stop, until, domIs,
   hashIs, freePort, killSessionHosts, screenText, termDiag, pasteFile, bannerPath, shot, termFont, fontOk, imeType,
-  safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace,
-  pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid, nextPush, pushKey,
-  base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours, usageHits, usageRoutes,
-  usageServer, browser, setPushKey, runSpec,
+  safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
+  ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
+  nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings,
 };

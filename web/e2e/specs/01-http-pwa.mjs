@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { repo, aaa, until, shot, pairPage, base, step, webPort, browser } from "../lib/harness.mjs";
+import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, webkit } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("인증 없는 요청·다른 Origin 거부", async () => {
@@ -98,6 +98,40 @@ export default async function ({ ctl, page }) {
     await until("연결 화면 아이콘", async () => (await gate(pp)).join() === "IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await gate(pp)}`));
     await shot(pp, "phone-pair-icon");
     await ctx.close();
+    // iPhone WebKit 390×844(QA t-0337 Q2): 옛 .pair는 입력칸 고유 폭(20px mono·자간)이 grid 항목 카드를 47px 밀어 오른쪽이 잘렸다.
+    // AccessGate는 카드 폭이 min(100%, …)이고 입력칸이 100%라 카드·입력칸·단추·설명·틀린 코드 말이 모두 화면 안이다
+    const wk = await webkit.launch();
+    try {
+      const wctx = await wk.newContext({
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      });
+      const wp = await wctx.newPage();
+      await wp.goto(base);
+      const input = wp.getByLabel("페어링 코드");
+      await input.waitFor();
+      await input.fill("000000");
+      await wp.getByRole("button", { name: "이 기기 페어링" }).click();
+      await wp.getByRole("alert").waitFor();
+      const fit = await wp.evaluate(() => {
+        const right = (sel) => [...document.querySelectorAll(sel)].map((e) => Math.round(e.getBoundingClientRect().right));
+        const card = document.querySelector(".access-gate").getBoundingClientRect();
+        return {
+          page: document.documentElement.scrollWidth,
+          view: window.innerWidth,
+          card: [Math.round(card.left), Math.round(card.right)],
+          parts: right(".access-gate-input, .access-gate-submit, .access-gate-copy, .access-gate-error"),
+        };
+      });
+      if (fit.page > fit.view || fit.card[0] < 0 || fit.card[1] > fit.view || fit.parts.some((r) => r > fit.card[1]))
+        bad.push(`iPhone WebKit 연결 화면이 넘친다: ${JSON.stringify(fit)}`);
+      await shot(wp, "phone-webkit-pair-gate");
+      await wctx.close();
+    } finally {
+      await wk.close();
+    }
     // 머리(목록 왼쪽 위)와 아무것도 고르지 않은 빈 화면
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await until("머리·빈 화면 아이콘", async () => (await logos(dp)).join("|") === "IMG /icon.svg true 22 |IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(dp)}`));

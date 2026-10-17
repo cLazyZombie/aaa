@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  repo, root, sleep, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser,
+  repo, root, sleep, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -165,8 +165,7 @@ export default async function ({ ctl, page }) {
     await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
     // 3b) 「터미널의 aaa와 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
     // 보기만 한다(띠). 남은 화면이 크기를 되찾고, 이 화면을 누르면 다시 이 화면 크기다
-    await op.getByTestId("settings-open").click();
-    await op.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
+    await (await openSettings(op, "터미널")).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
     await op.keyboard.press("Escape");
     await op.getByLabel("보낼 글").fill("echo away");
     await op.getByRole("button", { name: "보내기" }).click();

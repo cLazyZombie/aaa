@@ -1,7 +1,7 @@
 // 웹 E2E 공유 설정: 기기 사이 테마·색상·사이드바 행, 보기 권한 거부(빈 공유 설정 문서에서 시작).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 14-shared-preferences(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { aaa, shot, pairPage, step, browser } from "../lib/harness.mjs";
+import { aaa, shot, pairPage, step, browser, openSettings } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("공유 설정(herdr-web-ui preferencesSync·shared/preferences.ts, 차이 목록 T2): 한 기기에서 바꾼 테마·색상·사이드바 행은 다른 기기에 곧 오고, 기기 설정(상태 표시)은 남으며, 여는 것만으로는 쓰지 않고, 보기 권한 기기의 쓰기는 거부되며 다음 공유 변경을 모두 받는다", async () => {
@@ -28,10 +28,7 @@ export default async function ({ ctl, page }) {
           .then((r) => r.json())
           .then((o) => o.ok),
       );
-    const settings = async (p) => {
-      await p.getByTestId("settings-open").click();
-      return p.getByRole("dialog", { name: "설정" });
-    };
+    const settings = (p) => openSettings(p, "모양");
     const close = (p) => p.keyboard.press("Escape");
     const a = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
     const b = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;

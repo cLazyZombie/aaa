@@ -1,7 +1,9 @@
 // 웹 E2E 기기·pairing.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 05-devices(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { aaa, until, screenText, shot, pairPage, base, openPages, step, browser } from "../lib/harness.mjs";
+import {
+  aaa, until, screenText, shot, pairPage, base, openPages, step, browser, openSettings,
+} from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("기기·pairing(herdr-web-ui DevicesPanel·AccessGate·PhonePanel, 차이 목록 P1·P2·P3, D6): 설정 → 기기에서 코드·QR, QR 주소는 바로 내고 주소에서 지움, 새 코드는 앞 코드를 버림, 틀린 코드는 말, 이름 바꾸기, 폐기하면 열린 화면이 바로 pairing 화면, 보기 기기는 목록만, 로그아웃", async () => {
@@ -16,8 +18,7 @@ export default async function ({ ctl, page }) {
       return route.continue();
     };
     const openDevices = async (p) => {
-      await p.getByTestId("settings-open").click();
-      const dialog = p.getByRole("dialog", { name: "설정" });
+      const dialog = await openSettings(p, "폰 및 기기");
       await dialog.locator(".devices-panel").scrollIntoViewIfNeeded();
       return dialog;
     };

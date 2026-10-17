@@ -4,8 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, imeType, safariEdit, safariSyllable, iphoneKey,
-  ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser,
+  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, imeType, safariEdit, safariSyllable,
+  iphoneKey, ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser,
+  openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -446,11 +447,11 @@ export default async function ({ ctl, page }) {
     if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
     aaa("tab", "create", "--machine", "labA", "--label", "traceapp", "--", process.execPath, `${root}/paste.js`);
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 「진단」에 있다(사용자 화면 10-18, plan §8.82)
+    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 → 터미널 쪽 맨 끝 「진단」에 있다(사용자 화면 10-18, plan §8.82·§8.97)
     if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
     const dialog = tp.getByRole("dialog", { name: "설정" });
     const traceSwitch = dialog.getByRole("switch", { name: "입력 기록" });
-    await tp.getByTestId("settings-open").click();
+    await openSettings(tp, "터미널");
     await traceSwitch.click();
     if ((await traceSwitch.getAttribute("aria-checked")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
     await tp.keyboard.press("Escape");
@@ -461,7 +462,7 @@ export default async function ({ ctl, page }) {
     await waitOutput("traceapp", 'GOT:"상"');
     await sleep(300);
     await tp.getByRole("button", { name: "목록으로" }).click();
-    await tp.getByTestId("settings-open").click();
+    await openSettings(tp, "터미널");
     await dialog.getByTestId("trace-send").click();
     await until("보냄 표시", async () => (await dialog.getByTestId("trace-msg").innerText()).startsWith("보냈다: input-"));
     const dir = `${root}/s/host/diag`;

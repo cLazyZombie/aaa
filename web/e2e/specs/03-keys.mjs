@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 03-keys(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser,
+  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -237,8 +237,7 @@ export default async function ({ ctl, page }) {
     const defaults = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
     if (JSON.stringify(await order()) !== JSON.stringify(defaults)) throw new Error(`처음 키 막대 ${await order()}`);
     const openKeyBar = async () => {
-      await tp.getByTestId("settings-open").click();
-      await tp.getByRole("dialog", { name: "설정" }).getByRole("button", { name: "키 바 편집" }).click();
+      (await openSettings(tp, "터미널")).getByRole("button", { name: "키 바 편집" }).click();
       return tp.getByRole("dialog", { name: "키 바" });
     };
     const kb = await openKeyBar();
@@ -336,8 +335,7 @@ export default async function ({ ctl, page }) {
     await press("o", '"o"');
     await until("OSC 52 클립보드", async () => (await mp.evaluate(() => window.__clip)).includes("클립 52"));
     // 설정 「패널에서 클립보드로 복사」(herdr-web-ui paneClipboard, 기본 켬)를 끄면 OSC 52는 클립보드에 닿지 않는다
-    await mp.getByTestId("settings-open").click();
-    await mp.getByRole("dialog", { name: "설정" }).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
+    await (await openSettings(mp, "터미널")).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
     if ((await mp.evaluate(() => localStorage.getItem("aaa:pane-clipboard"))) !== "0") throw new Error("클립보드 설정을 저장하지 않았다");
     await mp.keyboard.press("Escape");
     await mp.getByTestId("terminal").click();
@@ -488,6 +486,9 @@ export default async function ({ ctl, page }) {
     await sp.keyboard.press("Control+Shift+Comma");
     const dialog = sp.getByRole("dialog", { name: "설정" });
     await dialog.waitFor();
+    // 설정은 쪽으로 나뉜다(plan §8.97): 단축키 쪽으로
+    const shortcutsPage = () => dialog.getByRole("tab", { name: "단축키" }).click();
+    await shortcutsPage();
     const stored = () => sp.evaluate(() => localStorage.getItem("aaa:shortcut-overrides"));
     await dialog.getByRole("combobox", { name: "다음 패널" }).selectOption("off");
     await until("끄기 저장", async () => (await stored()) === '{"next-pane":null}');
@@ -507,6 +508,7 @@ export default async function ({ ctl, page }) {
     if (gots("shortkeys").at(-1) !== '"\\u001b[1;6B"' || (await hash()) !== sel("shortkeys")) throw new Error(`끈 Ctrl+Shift+↓: ${gots("shortkeys").at(-1)} ${await hash()}`);
     await sp.keyboard.press("Control+Shift+Comma");
     await dialog.waitFor();
+    await shortcutsPage();
     await dialog.getByRole("button", { name: "다음 패널의 단축키 기록" }).click();
     await sp.keyboard.press("Control+Shift+L");
     await until("기록 저장(다시)", async () => (await stored()) === '{"next-pane":"l"}');
@@ -516,6 +518,7 @@ export default async function ({ ctl, page }) {
     await until("기록한 Mod+Shift+L → 다음 패널", async () => (await hash()) !== sel("shortkeys"));
     await sp.keyboard.press("Control+Shift+Comma");
     await dialog.waitFor();
+    await shortcutsPage();
     await dialog.getByRole("button", { name: "단축키 초기화" }).click();
     await until("초기화", async () => (await stored()) === null);
     if (errors.length) throw new Error(errors.join("; "));
@@ -532,6 +535,7 @@ export default async function ({ ctl, page }) {
       await p.keyboard.press("Meta+Shift+Comma");
       const pd = p.getByRole("dialog", { name: "설정" });
       await pd.waitFor();
+      await pd.getByRole("tab", { name: "단축키" }).click();
       await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
       const fit = await pd.locator(".settings-shortcuts").evaluate((el) => {
         const box = el.getBoundingClientRect();

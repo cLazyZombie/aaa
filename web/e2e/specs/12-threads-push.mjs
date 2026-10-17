@@ -7,7 +7,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   chromium, root, aaa, start, stop, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin,
-  b64u, pushDevice, nextPush, pushKey, base, step, browser, setPushKey,
+  b64u, pushDevice, nextPush, pushKey, base, step, browser, setPushKey, openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -403,8 +403,7 @@ export default async function ({ ctl, page }) {
     // 그 thread를 보고 있으면 띄우지 않는다: 다른 곳을 본다
     await ap.getByTestId("pane-t1").click();
     // 소리: 켜는 누름이 미리 듣기(작업 완료 음 880→660), 그 뒤 알림마다
-    await ap.getByTestId("settings-open").click();
-    const dialog = ap.getByRole("dialog", { name: "설정" });
+    const dialog = await openSettings(ap, "알림");
     await dialog.getByRole("switch", { name: "소리" }).click();
     await waitLog("미리 듣기", (l) => l === "tone 880,tone 660");
     await ap.keyboard.press("Escape");
@@ -415,7 +414,7 @@ export default async function ({ ctl, page }) {
     await until("소리와 함께 앱 안 알림", async () => (await droplet.count()) === 1);
     // 무음 모드에서도(사용자 보고 10-18 iPhone, plan §8.83): 끈 동안은 소리 범주를 건드리지 않는다(위 기록에 session이 없다).
     // 켜는 누름이 미리 듣기이고, 소리를 낼 때만 "playback"(무음 스위치를 무시)으로 두었다가 끝나면 "auto"로 되돌린다
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     const silent = dialog.getByRole("switch", { name: "무음 모드에서도" });
     await until("앞 소리 끝", () => ap.evaluate(() => performance.now() / 1000 > (window.__chimeEnd ?? 0)));
     await clear();
@@ -427,7 +426,7 @@ export default async function ({ ctl, page }) {
     await clear();
     await report("무음에서도");
     await waitLog("무음에서도 알림 소리", (l) => l === "session playback,tone 880,tone 660,session auto");
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     await silent.click();
     await ap.keyboard.press("Escape");
     if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== null) throw new Error("끈 무음 모드 설정이 남았다");
@@ -448,7 +447,7 @@ export default async function ({ ctl, page }) {
     if ((await droplet.count()) !== 0) throw new Error(`가려진 동안 앱 안 알림 ${await log()}`);
     await hide(false);
     // 앱 안을 끄면 소리만
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     await dialog.getByRole("switch", { name: "앱 안에서" }).click();
     await ap.keyboard.press("Escape");
     await clear();
@@ -472,7 +471,7 @@ export default async function ({ ctl, page }) {
     const turns = await ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("bc ")).length, quietMark);
     if ((await log()) !== "" || (await dropsSince(quietMark)) !== 0 || turns !== 0) throw new Error(`끈 뒤 [${await log()}] 소리 차례 ${turns}`);
     // 시험 보내기: 이 기기에 구독이 없다고 하고 「알림 다시 켜기」를 권한다
-    await ap.getByTestId("settings-open").click();
+    await openSettings(ap, "알림");
     if ((await dialog.getByTestId("push-test-result").innerText()) !== "알림 꺼짐") throw new Error(`시험 줄 ${await dialog.getByTestId("push-test-result").innerText()}`);
     await shot(ap, "desktop-settings-alerts-off");
     await dialog.getByRole("button", { name: "알림 다시 켜기" }).click();

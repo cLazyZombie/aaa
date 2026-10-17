@@ -3,6 +3,7 @@
 
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
+  openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -105,8 +106,7 @@ export default async function ({ ctl, page }) {
     const before = reports();
     await dp.mouse.wheel(0, -100);
     await until("1× 보고 하나", () => reports() === before + 1);
-    await dp.getByTestId("settings-open").click();
-    const dlg = dp.getByRole("dialog", { name: "설정" });
+    const dlg = await openSettings(dp, "터미널");
     for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click();
     if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
     if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");

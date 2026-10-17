@@ -52,9 +52,17 @@ export default async function ({ ctl, page }) {
     await page.reload();
     await page.getByTestId("machine-labA").waitFor();
     await until("초안 보존", async () => (await page.getByLabel("보낼 글").inputValue()) === "a\nb");
+    // 다시 연 화면은 host의 readonly 알림이 올 때까지 입력줄이 꺼져 있고, 꺼진 동안의 Enter는 초안을 두고 보내지 않는다
+    await until("입력줄 켜짐", () => page.getByLabel("보낼 글").isEnabled());
     await page.getByLabel("보낼 글").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     // 여러 줄 붙여넣기 다음 Enter는 300ms 뒤 따로 온다(둘 다 와야 끝난다)
-    await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>'));
+    await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>')).catch(async (e) => {
+      // 보내기가 어디서 멈췄는지: 입력줄에 남은 글·안내 말(끊김·붙잡은 입력 먼저 등)·붙잡은 입력 띠
+      const line = page.getByLabel("보낼 글");
+      const note = await page.locator(".terminal-input-note").allInnerTexts();
+      const held = await page.locator(".terminal-banners").allInnerTexts();
+      throw new Error(`${e.message}: 입력줄 ${JSON.stringify(await line.inputValue())} 켜짐 ${await line.isEnabled()}, 말 ${JSON.stringify(note)}, 띠 ${JSON.stringify(held)}`);
+    });
     if ((await page.getByLabel("보낼 글").inputValue()) !== "") throw new Error("보낸 뒤 글이 남았다");
     // 조합 중에 누른 보내기(herdr-web-ui scripts/terminal-input-regression.ts와 같은 네 경우)
     {
