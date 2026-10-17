@@ -4,6 +4,7 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod attach;
+mod brief;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -18,10 +19,13 @@ mod merge;
 mod notify;
 mod orch;
 mod output;
+mod project;
+mod prompt_box;
 mod push;
 mod routine;
 pub mod tailscale;
 mod tasks;
+mod trust_screen;
 pub mod usage;
 pub mod web;
 
@@ -261,6 +265,10 @@ pub struct Host {
     eval_decide_lock: Mutex<()>,
     /// thread 기록 다시 읽어 고치기(`update_rec`)는 한 번에 하나씩
     rec_lock: Mutex<()>,
+    /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
+    brief_loops: Mutex<HashSet<String>>,
+    /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
+    brief_claims: Mutex<HashSet<String>>,
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -365,6 +373,8 @@ impl Host {
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
             rec_lock: Mutex::new(()),
+            brief_loops: Mutex::new(HashSet::new()),
+            brief_claims: Mutex::new(HashSet::new()),
         }))
     }
 

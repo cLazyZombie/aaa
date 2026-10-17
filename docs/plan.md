@@ -512,7 +512,7 @@ host 프로젝트 폴더 구성:
   - queue: host 대기열에 순서대로 넣고, 다음 턴이 시작될 때 전달한다.
 - **입력 방식:** 키를 하나씩 치지 않고 adapter 입력(bracketed paste + harness별 전송 키)으로 보낸다. 특수문자가 깨지지 않는다. 원문은 기록한다.
 - **수신 확인:** deadline 안에 `turn_start` 사건(없으면 화면 변화)이 오면 `accepted`다. 오지 않으면 `delivery_unknown`이다.
-- **brief 전달:** 0.2.35 규칙을 이어받는다. claim lease 60초, settle 3초, 최대 3회, 실패하면 inbox item을 남긴다.
+- **brief 전달:** 0.2.35 규칙을 이어받는다. settle 3초, 최대 3회, 다시 보내기 전에 화면으로 앞 시도를 확인하고, 실패하면 inbox item을 남긴다(§8.70).
 - **재입력 규칙은 두 가지이며 trigger가 다르다.**
   - (a) **전달 여부를 모를 때**(`delivery_unknown`, 연결 단절, ACK 유실): prompt·keys·shell command를 **절대 자동으로 다시 보내지 않는다.** 전송 재접속과 작업 재실행은 다른 절차다.
   - (b) **자동 이어가기 정책:** 관측된 사건에만 적용한다(`turn_end` 뒤 harness가 다음 지시를 기다림, 일시적 용량 오류). 기본은 꺼져 있고 profile·project별로 켠다. 규칙(보낼 문구), 횟수 상한, backoff, 기록, front 표시를 갖춘다([정할 것 5](#16-위험과-정할-것)).
@@ -640,7 +640,7 @@ host 프로젝트 폴더 구성:
   - 두 harness 모두 resume argv가 launch와 같은 model·effort·args·env를 쓰는지 유닛 테스트로 막는다(§8.2).
 - **brief 안내**
   - 화면이 3초 멈추면 `.aaa/<p>-<t>/brief.md를 읽고 그대로 하라.`를 한 번 입력하고 Enter를 보낸다.
-  - 8초 안에 화면이 바뀌면 `delivered`, 아니면 `unknown`이다. unknown은 **자동으로 다시 보내지 않는다.** 사람이 `aaa thread brief`로만 다시 보낸다.
+  - 8초 안에 화면이 바뀌면 `delivered`, 아니면 `unknown`이다. unknown은 **자동으로 다시 보내지 않는다.** 사람이 `aaa thread brief`로만 다시 보낸다. → §8.70에서 herdr-projects처럼 바꿨다(화면 확인 뒤 최대 3회).
   - harness 확인창(폴더 신뢰 등)이 보이면 입력하지 않는다.
   - 수신 확인을 화면 변화 대신 harness 사건(`turn_start`)으로 바꾸는 것은 M1-3b에서 했다(§8.15).
 - **보고 회수**
@@ -1682,6 +1682,29 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - host 유닛: `news`(끝낸 항목·ack한 보고만 빠짐, ack 판정은 보고에만), `payloads`(thread 제목·자리, 빈 제목은 thread ID, 섞이면 프로젝트).
   - 웹 E2E 「service worker 알림」: 내보내는 `sw.js`를 가짜 `self`로 그대로 돌린다(참고 `pwa-notification.test.ts`와 같은 방법). 보이는 창이면 소리 없이, focus 전 알림·거절 뒤 새 창·focus된 창 고르기·자리 없는 알림, 파일 탭, 늦은 focus·밀려난 거절·느린 창 찾기·늦게 열린 창을 본다.
   - 웹 E2E 「보고 준비 알림」: 보고 알림의 제목·자리를 본다. 화면을 다시 쓰면 새 보고에 `push_skipped`가 남고 기기에는 오지 않는다. 둘째 화면을 열면 쓰는 화면이 2, 닫으면 1이다. 이 단계 앞에서는 화면의 focus만 없애 보고 알림이 가게 하고, 알림이 나간 뒤에 ack한다.
+
+### 8.70 brief 준비 판정·다시 보내기를 herdr-projects대로, 입력창 읽기(10-18, 차이 목록 3장 A9·A10·C6, 결정 D10 「참고대로」)
+
+- **입력창 읽기(prompt_box).** herdr-projects `src/prompt_box.rs`를 `crates/aaa-host/src/prompt_box.rs`로 그대로 옮겼다(MIT, fixture 16개 포함). harness별 입력창 자리(Claude는 테두리 아래 `❯`, Codex는 `›` 등)를 찾고, 흐리게 그린 placeholder·harness 커서를 빼고 사람이 친 글이 있는지(`Empty`·`Typed`·`Unknown`) 가른다. 신뢰 창 판정 `src/trust_screen.rs`도 옮겼다(`showing`은 뺐고 거절 문구는 aaa 명령으로).
+  - 판정에는 글자 모양(dim·reverse·배경)이 필요하다. herdr는 `agent read --format ansi`를 준다. aaa는 session host vt가 `ScreenText.ansi`(보이는 화면을 칸마다 `ESC[0;…m` SGR과 함께, 줄은 `\n`)를 함께 보낸다(`aaa_vt::Vt::ansi`). 참고 fixture를 vt에 먹여 다시 그려도 같은 판정이 나오는지 시험한다. 옛 agent는 빈 `ansi`를 보내고, 그때 입력창은 `Unknown`이다.
+  - kind는 thread launch의 harness다(`claude`·`codex`). `custom`·`shell`은 `Unknown`이다.
+- **brief 보내기(herdr-projects `src/brief.rs` `deliver`·`step`, `crates/aaa-host/src/brief.rs`).** 시작·다시 시작 뒤 thread마다 배경 task 하나가 250ms마다 본다. agent가 다시 붙거나 host가 다시 뜨면 brief가 `pending`인 열린 thread에 다시 건다(참고 ticker `brief_pass`가 기록에서 다시 찾는 것과 같다).
+  1. 확인창(질문)이면 기다린다. 처음이고(시도 0) harness가 입력을 받을 상태(started·idle)가 아니면 기다린다.
+  2. 신뢰 창이면 아무것도 입력하지 않는다(Enter가 신뢰를 받아들인다).
+  3. 앞 시도가 있으면 화면이 정한다. 대화에 줄이 보이고 입력창이 비면 받은 것, 입력창에 남았으면 **Enter만**, 입력창이 비었고 줄이 어디에도 없으면 다시 친다. 입력창을 읽을 수 없는 harness면 ticker는 멈추고 사람(`thread brief`)은 화면에 줄이 보이면 받은 것으로 친다.
+  4. 처음이면 입력창이 비어 있어야 한다(사람이 쓰던 글·메뉴·시작 화면이면 기다린다).
+  5. ticker는 시도 3번이 넘으면 brief를 `unknown`으로 두고 `brief_unknown`(inbox)을 낸다. 그 뒤로는 사람만 보낸다.
+  6. ticker는 상태가 바뀐 때와 화면 hash가 3초 그대로일 때 친다. 치기 전에 시도 수(`brief_attempts`, thread 기록)를 올린다. 입력하기 전에 거절되면(선택 창·연결 없음, 참고 `refused_before_typing`) 되돌린다.
+  - 「보냈다」는 harness가 받았다는 사건(hook `turn_start`·`working`, hook이 없으면 Enter 뒤 화면 변화)을 본 때다.
+  - `aaa thread brief`는 기다리지 않고 지금 한 걸음을 한다(settle·시도 상한 없음). 결과를 바로 돌려준다: 못 보냈으면 까닭과 함께 실패한다. brief를 이미 받았으면 거부한다.
+  - 배경 task와 `thread brief`는 메모리 claim으로 겹치지 않는다(참고 claim lease 60초는 보내는 프로세스가 죽는 경우를 위한 것이라 host 안 task인 aaa에는 필요 없다).
+- **다르게 둔 것과 이유.**
+  - herdr는 모든 agent 상태를 화면으로 안다. aaa는 hook으로만 안다(화면 감지는 D8 thread). 상태가 없는 harness는 입력을 받을 상태로 보고 화면이 멈추기만 기다린다(전과 같다).
+  - 확인창(`harness::modal_of`)이 보이면 질문으로 올린다(§8.15 원격 응답). 참고는 coordinator가 `thread read`·`keys`로 답한다.
+  - §8.14의 「unknown은 자동으로 다시 보내지 않는다(1회)」와 §8.5 (a)의 brief 줄은 이 절로 바뀐다. 재입력은 화면이 「남았다·사라졌다」를 보일 때만 하므로 (a)의 뜻(모르는 채 다시 치지 않기)은 지킨다.
+- **메시지 보내기 전 검사(차이 목록 E2 남은 것).** 참고 threads.rs `prompt`처럼, 신뢰 창이면 거부하고(누가 답하는지 `trust_screens`로 알린다) 입력창에 사람이 쓰던 글이 있으면 `draft_in_box`로 거부한다. 기록·대기열에 넣기 전에 거부한다.
+- **프로젝트 설정 한곳(`crates/aaa-host/src/project.rs`).** project.toml에서 `goal`·`[[repos]] path/machine`·`thread_profile`·`max_parallel_threads`(기본 10)·`auto_resolve_days`(기본 7)·`start_threads`·`trust_screens`(기본 user)를 읽는다(참고 `Settings`·`Safety`). 값이 잘못된 key만 기본값을 쓴다. 이 파일을 쓰는 CLI는 세션·CLI thread 몫이다.
+- **시험.** host 유닛: prompt_box 참고 시험 전부 + vt 다시 그리기, trust_screen, brief `step` 판정(준비·입력창·Enter만·다시 치기·시도 상한·읽을 수 없는 입력창·신뢰 창), project 설정. m13: `unknown_brief_is_not_resent`(입력창을 못 읽는 harness는 한 번 보내고 멈춤, 사람이 보내면 한 번 더), `brief_left_in_box_is_submitted_not_retyped`(Claude 모양 입력창에 남은 줄을 ticker가 Enter만으로 보냄, `시도 2번`). 둘 다 흐름 사건을 따라 읽어(`lab::Follow`) 기다린다(고정 sleep 없음).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

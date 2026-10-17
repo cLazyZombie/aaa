@@ -236,8 +236,77 @@ impl Vt {
         let (rows, cols) = screen.size();
         let lines = screen.rows(0, cols).map(|l| l.trim_end().to_string()).collect();
         let (cr, cc) = screen.cursor_position();
-        ScreenText { session: session.to_string(), cols, rows, lines, cursor_row: cr, cursor_col: cc }
+        ScreenText {
+            session: session.to_string(),
+            cols,
+            rows,
+            lines,
+            cursor_row: cr,
+            cursor_col: cc,
+            ansi: self.ansi(),
+        }
     }
+
+    /// 보이는 화면을 SGR escape와 함께(herdr `agent read --source visible --format ansi` 모양). 칸마다 모양이 바뀌면
+    /// `ESC[0;…m`로 다시 세우고, 빈 칸은 공백, 줄 끝의 기본 모양 공백은 뺀다. 줄은 `\n`으로 잇는다.
+    pub fn ansi(&self) -> String {
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        let mut out = String::new();
+        for row in 0..rows {
+            if row > 0 {
+                out.push('\n');
+            }
+            // (글자, 모양) 칸을 모은 뒤 끝의 기본 모양 공백을 뗀다
+            let mut cells: Vec<(String, String)> = Vec::new();
+            for col in 0..cols {
+                let Some(cell) = screen.cell(row, col) else { continue };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                let t = if cell.has_contents() { cell.contents().to_string() } else { " ".to_string() };
+                cells.push((t, sgr(cell)));
+            }
+            while cells.last().is_some_and(|(t, s)| t == " " && s.is_empty()) {
+                cells.pop();
+            }
+            let mut cur = String::new();
+            for (t, s) in &cells {
+                if *s != cur {
+                    out.push_str(&format!("\x1b[0{s}m"));
+                    cur = s.clone();
+                }
+                out.push_str(t);
+            }
+            if !cur.is_empty() {
+                out.push_str("\x1b[0m");
+            }
+        }
+        out
+    }
+}
+
+/// 칸 하나의 SGR 인자(`;`로 시작, 기본 모양이면 빈 글)
+fn sgr(cell: &vt100::Cell) -> String {
+    let mut s = String::new();
+    for (on, code) in
+        [(cell.bold(), "1"), (cell.dim(), "2"), (cell.italic(), "3"), (cell.underline(), "4"), (cell.inverse(), "7")]
+    {
+        if on {
+            s.push(';');
+            s.push_str(code);
+        }
+    }
+    let mut paint = |c: vt100::Color, base: u8, bright: u8, ext: &str| match c {
+        vt100::Color::Default => {}
+        vt100::Color::Idx(i) if i < 8 => s.push_str(&format!(";{}", base + i)),
+        vt100::Color::Idx(i) if i < 16 => s.push_str(&format!(";{}", bright + i - 8)),
+        vt100::Color::Idx(i) => s.push_str(&format!(";{ext};5;{i}")),
+        vt100::Color::Rgb(r, g, b) => s.push_str(&format!(";{ext};2;{r};{g};{b}")),
+    };
+    paint(cell.fgcolor(), 30, 90, "38");
+    paint(cell.bgcolor(), 40, 100, "48");
+    s
 }
 
 /// 화면 bytes가 `screen`일 때 기록에 쓸 수 있는 bytes: snapshot JSON(base64는 4/3배)이 한 frame에 들고 64KiB가 남게
@@ -349,6 +418,22 @@ mod tests {
         assert_eq!((row[1].t.as_str(), row[1].fg, row[1].a), ("B", 0x0100_0001, 1));
         assert!(v.grid_row(1).is_empty());
         assert_eq!(v.cursor(), (0, 6, true));
+    }
+
+    #[test]
+    fn ansi_keeps_dim_reverse_and_colours_per_cell() {
+        let mut v = Vt::new(3, 30);
+        v.feed(
+            "❯ \x1b[2mTry \"fix\"\x1b[0m\r\n\x1b[7mx\x1b[27m \x1b[38;5;135m─\x1b[48;2;1;2;3mb\x1b[0m  \r\n".as_bytes(),
+        );
+        let a = v.ansi();
+        let rows: Vec<&str> = a.split('\n').collect();
+        assert_eq!(rows.len(), 3);
+        // 기본 모양 글자는 escape 없이, 흐린 placeholder는 `2`로
+        assert_eq!(rows[0], "❯ \x1b[0;2mTry \"fix\"\x1b[0m");
+        assert_eq!(rows[1], "\x1b[0;7mx\x1b[0m \x1b[0;38;5;135m─\x1b[0;38;5;135;48;2;1;2;3mb\x1b[0m");
+        assert_eq!(rows[2], "");
+        assert_eq!(v.text("s").ansi, a);
     }
 
     #[test]

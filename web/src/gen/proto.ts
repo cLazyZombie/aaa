@@ -17,7 +17,12 @@ export type ScreenText = { session: string, cols: number, rows: number,
 /**
  * 보이는 화면의 글자(줄 끝 공백 제거)
  */
-lines: Array<string>, cursor_row: number, cursor_col: number, };
+lines: Array<string>, cursor_row: number, cursor_col: number, 
+/**
+ * 보이는 화면을 SGR(굵게·흐리게·반전·색) escape와 함께 한 글로(줄은 `\n`). herdr `agent read --format ansi`와 같은
+ * 모양이라 herdr-projects `prompt_box`가 흐린 placeholder와 사람이 친 글을 가른다(plan §8.70). 옛 agent는 비워 보낸다.
+ */
+ansi: string, };
 
 export type ChatRole = "user" | "assistant" | "tool";
 

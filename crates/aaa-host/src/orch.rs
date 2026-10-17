@@ -7,7 +7,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use aaa_proto::{
     AgentActivity, AgentRequest, AgentResponse, AgentStatus, BriefState, DecisionView, ErrorBody, ErrorCode, FlowEvent,
@@ -43,6 +42,10 @@ pub(crate) struct ThreadRec {
     pub pane: Option<String>,
     pub status: ThreadStatus,
     pub brief: BriefState,
+    /// brief 줄을 치거나 Enter를 보낸 수(herdr-projects `brief_attempts`). 0보다 크면 입력창에 줄이 남았을 수 있어
+    /// 다시 보내기 전에 화면을 본다(brief.rs).
+    #[serde(default)]
+    pub brief_attempts: u32,
     #[serde(default)]
     pub launch: Option<Launch>,
     #[serde(default)]
@@ -116,13 +119,6 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   멈추면 출력의 까닭(커밋하지 않은 변경, main을 합치지 않음 등)을 그 thread에 맡기고 다시 한다. 손으로 병합했으면 `merge done`.
 ";
 
-/// 화면이 이만큼 멈춰야 brief 안내를 보낸다
-const SETTLE: Duration = Duration::from_secs(3);
-/// 화면이 멈추기를 기다리는 상한
-const SETTLE_LIMIT: Duration = Duration::from_secs(120);
-/// 확인창 질문에 사람이 답하기를 기다리는 상한
-const TRUST_LIMIT: Duration = Duration::from_secs(30 * 60);
-
 fn bad(msg: impl Into<String>) -> ErrorBody {
     err(ErrorCode::BadRequest, msg)
 }
@@ -134,14 +130,6 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
 /// 프로젝트의 지금 결정 번호(가장 큰 번호)
 fn decisions_rev(dir: &Path) -> Option<u32> {
     parse_decisions(&std::fs::read_to_string(dir.join("decisions.md")).ok()?).iter().map(|d| d.num).max()
-}
-
-/// 입력창(맨 아래 쪽 `❯`·`›` 줄)에 brief 안내 줄이 그대로 남아 있나
-fn brief_in_box(lines: &[String], line: &str) -> bool {
-    lines.iter().rev().filter(|l| !l.trim().is_empty()).take(8).any(|l| {
-        let t = l.trim_start();
-        ['❯', '›', '>'].iter().any(|c| t.strip_prefix(*c).is_some_and(|rest| rest.trim() == line))
-    })
 }
 
 /// `Starting`이 이보다 길면 사람 차례(herdr-projects `STARTING_TIMEOUT_SECS`)
@@ -627,6 +615,7 @@ impl Host {
             pane: None,
             status: ThreadStatus::Starting,
             brief: BriefState::Pending,
+            brief_attempts: 0,
             launch: None,
             report_hash: None,
             acked_hash: None,
@@ -688,94 +677,20 @@ impl Host {
         if let Err(e) = self.launch_session(&mut rec, &ready.launch.argv, actor).await {
             return Err(fail(self, &mut rec, e));
         }
-        let me = self.clone();
-        let (p, t) = (a.project.clone(), id.clone());
-        tokio::spawn(async move { me.deliver_brief(&p, &t).await });
+        self.spawn_brief(&a.project, &id);
         Ok(self.thread_view(&rec))
     }
 
     pub(crate) async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
-        let conn = self.conn_of(mid)?;
-        match conn.request(AgentRequest::Screen { session: pane.to_string() }).await {
-            Ok(AgentResponse::Screen(s)) => Some(s.lines),
-            _ => None,
-        }
+        self.screen(mid, pane).await.map(|s| s.lines)
     }
 
-    /// brief 안내 한 번: 화면이 멈추면 입력하고 Enter. harness가 받았다는 사건(hook이 없으면 화면 변화)으로 전달을 확인한다.
-    /// 처음 실행 확인창(폴더 신뢰 등)이 보이면 입력하지 않고 질문으로 올려 사람의 답을 기다린다.
-    /// 확인 못 하면 unknown(다시 보내지 않는다).
-    pub(crate) async fn deliver_brief(self: &Arc<Self>, project: &str, id: &str) {
-        let Ok(mut rec) = self.load(project, id) else { return };
-        let (Some(pane), mid) = (rec.pane.clone(), rec.machine_id.clone()) else { return };
-        let line = format!(".aaa/{project}-{id}/brief.md를 읽고 그대로 하라.");
-        let outcome: Result<(), String> = async {
-            let mut start = Instant::now();
-            let mut last: Option<Vec<String>> = None;
-            let mut since = Instant::now();
-            // (질문 id, 연 시각). 확인창 하나에 질문은 한 번만 연다.
-            let mut trust: Option<(String, Instant)> = None;
-            loop {
-                // 질문이 열려 있는 동안은 사람을 더 오래 기다린다(답한 뒤부터 다시 잰다)
-                let asking = trust.as_ref().is_some_and(|(q, _)| self.questions(false).iter().any(|x| &x.id == q));
-                if let Some((_, at)) = trust.as_ref().filter(|_| asking) {
-                    if at.elapsed() > TRUST_LIMIT {
-                        return Err(
-                            "harness 확인창(폴더 신뢰 등)에 답이 없어 입력하지 않았다. 답한 뒤 `aaa thread brief`로 보낸다".into(),
-                        );
-                    }
-                    start = Instant::now();
-                } else if start.elapsed() > SETTLE_LIMIT {
-                    return Err(format!("{}초 동안 화면이 멈추지 않았다", SETTLE_LIMIT.as_secs()));
-                }
-                if !self.pane_view_of(&pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running()) {
-                    return Err("세션이 끝났다".into());
-                }
-                let lines = self.screen_lines(&mid, &pane).await;
-                // 처음 실행 확인창(폴더 신뢰 등)에는 입력하지 않고 질문으로 올린다
-                if let Some((kind, text)) = lines.as_deref().and_then(crate::harness::modal_of) {
-                    if trust.is_none() {
-                        trust = Some((self.ask(&pane, kind, text).id, Instant::now()));
-                    }
-                    since = Instant::now();
-                } else if lines != last {
-                    // 확인창이 사라졌다(답했거나 터미널에서 직접 골랐다)
-                    if asking
-                        && let Some(mut q) =
-                            self.questions(false).into_iter().find(|x| Some(&x.id) == trust.as_ref().map(|t| &t.0))
-                    {
-                        q.state = aaa_proto::QuestionState::Gone;
-                        self.save_question(&q);
-                    }
-                    last = lines;
-                    since = Instant::now();
-                } else if last.is_some() && since.elapsed() >= SETTLE {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-            // 전에 입력한 줄이 입력창에 남아 있으면(전달 불명) 다시 치지 않고 Enter만 보낸다(herdr-projects brief.rs:
-            // 화면에 그 줄이 있으면 전달로 친다)
-            let in_box = last.as_deref().is_some_and(|l| brief_in_box(l, &line));
-            let sent = if in_box { self.send_enter(&mid, &pane).await } else { self.send_prompt(&mid, &pane, &line).await };
-            match sent? {
-                true => Ok(()),
-                false => Err("Enter 뒤 받았다는 사건·화면 변화가 없었다".into()),
-            }
-        }
-        .await;
-        let Ok(mut fresh) = self.load(project, id) else { return };
-        match outcome {
-            Ok(()) => {
-                fresh.brief = BriefState::Delivered;
-                self.save(&mut fresh);
-                self.flow(&fresh, "brief_delivered", rec.work_dir.take().map(|w| format!("{w}/brief.md")), line);
-            }
-            Err(why) => {
-                fresh.brief = BriefState::Unknown;
-                self.save(&mut fresh);
-                self.flow(&fresh, "brief_unknown", None, why);
-            }
+    /// 보이는 화면(글자 줄과 SGR 모양을 담은 `ansi`)
+    pub(crate) async fn screen(&self, mid: &str, pane: &str) -> Option<aaa_proto::ScreenText> {
+        let conn = self.conn_of(mid)?;
+        match conn.request(AgentRequest::Screen { session: pane.to_string() }).await {
+            Ok(AgentResponse::Screen(s)) => Some(s),
+            _ => None,
         }
     }
 
@@ -878,6 +793,7 @@ impl Host {
             rec = self.update_rec(project, id, |r| {
                 r.decisions_rev = rev;
                 r.brief = BriefState::Pending;
+                r.brief_attempts = 0;
                 r.launch = Some(launch);
             })?;
             relaunched.argv
@@ -886,40 +802,8 @@ impl Host {
         self.launch_session(&mut rec, &argv, actor).await?;
         self.flow(&rec, "thread_restarted", None, if resume { "resume" } else { "새 대화·brief 다시 씀" });
         if !resume {
-            let me = self.clone();
-            let (p, t) = (project.to_string(), id.to_string());
-            tokio::spawn(async move { me.deliver_brief(&p, &t).await });
+            self.spawn_brief(project, id);
         }
-        Ok(self.thread_view(&rec))
-    }
-
-    /// 사람이 명시적으로 다시 보낸다(자동 재전송은 하지 않는다)
-    pub(crate) async fn thread_brief(
-        self: &Arc<Self>,
-        project: &str,
-        id: &str,
-        actor: &str,
-    ) -> Result<ThreadView, ErrorBody> {
-        let mut rec = self.load(project, id)?;
-        if rec.status != ThreadStatus::Open {
-            return Err(bad("열린 thread만 brief를 보낼 수 있다"));
-        }
-        // 두 번 입력하지 않는다(herdr-projects threads.rs `brief`): 받았으면 더 보낼 것은 메시지로, 보내는 중이면 기다린다
-        match rec.brief {
-            BriefState::Delivered => {
-                return Err(bad(format!(
-                    "{id}는 이미 brief를 받았다. 더 보낼 것은 `aaa thread message {project} {id} --text …`로 보낸다"
-                )));
-            }
-            BriefState::Pending => return Err(bad(format!("{id}의 brief를 보내는 중이다"))),
-            BriefState::Unknown => {}
-        }
-        rec.brief = BriefState::Pending;
-        self.save(&mut rec);
-        self.db.audit(actor, "thread_brief", &format!("{project}/{id}"));
-        let me = self.clone();
-        let (p, t) = (project.to_string(), id.to_string());
-        tokio::spawn(async move { me.deliver_brief(&p, &t).await });
         Ok(self.thread_view(&rec))
     }
 
@@ -1138,6 +1022,11 @@ impl Host {
             let Some(conn) = me.conn_of(&mid) else { return };
             let Ok(rows) = me.db.threads(None) else { return };
             for r in rows.iter().filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok()) {
+                // 아직 brief를 받지 않은 thread는 다시 보기 시작한다(host가 다시 뜬 뒤에도, herdr-projects ticker
+                // `brief_pass`처럼 기록에서 다시 찾는다)
+                if r.machine_id == mid && r.status == ThreadStatus::Open && r.brief == BriefState::Pending {
+                    me.spawn_brief(&r.project, &r.id);
+                }
                 if r.machine_id == mid
                     && r.status == ThreadStatus::Open
                     && let Some(w) = r.work_dir
@@ -1175,6 +1064,7 @@ mod tests {
             pane: Some("pane".into()),
             status: ThreadStatus::Open,
             brief: BriefState::Delivered,
+            brief_attempts: 0,
             launch: None,
             report_hash: None,
             acked_hash: None,

@@ -38,19 +38,6 @@ fn item(l: &str) -> Option<String> {
     Some(s.to_string())
 }
 
-/// project.toml `start_threads`(없으면 propose)
-fn start_threads(dir: &Path) -> String {
-    let v = std::fs::read_to_string(dir.join("project.toml"))
-        .ok()
-        .and_then(|t| t.parse::<toml::Table>().ok())
-        .and_then(|t| t.get("start_threads").and_then(|v| v.as_str()).map(str::to_string));
-    match v.as_deref() {
-        None | Some("propose") => "propose".into(),
-        Some("auto") => "auto".into(),
-        Some(other) => format!("propose(project.toml 값이 잘못됐다: {other:?}, propose·auto만 받는다)"),
-    }
-}
-
 impl Host {
     /// 보고서 `## Next` 줄 + `threads/<id>.next.md`
     fn next_lines(&self, dir: &Path, report_next: &[String], id: &str) -> Vec<String> {
@@ -211,7 +198,7 @@ impl Host {
         Ok(ProjectContext {
             project: project.to_string(),
             path: dir.display().to_string(),
-            start_threads: start_threads(&dir),
+            start_threads: crate::project::ProjectSettings::load(&dir).start_threads,
             tasks,
             threads,
             assignable: self.assignable().await,

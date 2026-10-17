@@ -182,6 +182,10 @@ pub struct ScreenText {
     pub lines: Vec<String>,
     pub cursor_row: u16,
     pub cursor_col: u16,
+    /// 보이는 화면을 SGR(굵게·흐리게·반전·색) escape와 함께 한 글로(줄은 `\n`). herdr `agent read --format ansi`와 같은
+    /// 모양이라 herdr-projects `prompt_box`가 흐린 placeholder와 사람이 친 글을 가른다(plan §8.70). 옛 agent는 비워 보낸다.
+    #[serde(default)]
+    pub ansi: String,
 }
 
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
