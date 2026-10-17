@@ -382,7 +382,16 @@ impl Host {
         let limit = self.cfg.projects.outage_secs * 1000;
         for m in self.machine_views() {
             let ok = m.connection != aaa_proto::Connection::Disconnected;
-            let event = self.outages.lock().unwrap().entry(m.id.clone()).or_default().record(ok, now, limit);
+            let known = self.outages.lock().unwrap().contains_key(&m.id);
+            let reported = !known
+                && projects.iter().any(|p| self.db.inbox_open_exists(p, "outage", &m.name, "down").unwrap_or(false));
+            let event = self
+                .outages
+                .lock()
+                .unwrap()
+                .entry(m.id.clone())
+                .or_insert_with(|| Outage::resumed(reported))
+                .record(ok, now, limit);
             let Some(event) = event else { continue };
             for p in projects {
                 if !self.open_threads(p).iter().any(|r| r.machine_id == m.id) {
@@ -564,6 +573,15 @@ pub(crate) struct Outage {
     reported: bool,
 }
 
+impl Outage {
+    /// host를 다시 띄운 뒤 처음 본다. 앞 host가 알린 끊김이 아직 열린 inbox 항목으로 남았으면(`reported`) 알린 것으로
+    /// 시작한다: 돌아오면 「다시 된다」를 한 번 쓰고, 이어 끊겨도 다시 알리지 않는다. herdr-projects `Memory`는 이 상태를
+    /// 저장하지 않아 다시 띄우면 그 항목에 회복이 영영 오지 않는다(참고와 다르게 둔 것, plan §8.121)
+    pub(crate) fn resumed(reported: bool) -> Outage {
+        Outage { failing_since: None, reported }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutageEvent {
     Down,
@@ -605,6 +623,12 @@ mod tests {
         assert_eq!(outage.record(false, 90 * min, 10 * min), None);
         assert_eq!(outage.record(true, 91 * min, 10 * min), Some(OutageEvent::Recovered));
         assert_eq!(outage.record(true, 92 * min, 10 * min), None);
+        // 다시 띄운 host: 앞 host가 알린 끊김이 열려 있으면 이어 끊겨도 다시 알리지 않고 돌아오면 한 번 알린다
+        let mut outage = Outage::resumed(true);
+        assert_eq!(outage.record(false, 0, 10 * min), None);
+        assert_eq!(outage.record(false, 30 * min, 10 * min), None);
+        assert_eq!(outage.record(true, 31 * min, 10 * min), Some(OutageEvent::Recovered));
+        assert_eq!(Outage::resumed(false).record(true, 0, 10 * min), None);
     }
 
     fn item(kind: &str, subject: &str, event: &str) -> InboxItem {

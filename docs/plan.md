@@ -2702,6 +2702,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - Web Push 알림의 소리는 iOS 무음 스위치를 따른다(알림 소리는 무음 모드에서 나지 않고 진동만 한다). 무음을 넘는 「중요 알림」(Critical Alerts)은 Apple 승인 entitlement가 있는 앱만 쓰며 Web Push에는 없다. 그래서 07:43의 push가 조용했던 것은 iOS 규칙이고 aaa가 바꿀 수 없다.
   - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
 
+### 8.121 host를 다시 띄워도 알린 끊김(gh·머신)을 이어받는다(10-18, coordinator 실기 확인 중 발견)
+- **결함.** `gh` 실패·머신 끊김은 기준 시간(`outage_secs`)을 넘으면 inbox 항목을 한 번 쓰고, 돌아오면 「다시 된다」를 한 번 쓴다. 이 상태는 host 메모리에만 있어, 알린 뒤 host를 다시 띄우면 새 host는 알린 것을 모른다. 그 뒤 돌아와도 회복 항목이 오지 않아 열린 실패 항목이 그대로 남았다(07:53 재시작, 20:21 shadow 「gh 실패」).
+- **참고와 다르게 둔 것.** herdr-projects `Memory`도 저장하지 않는다(steps.rs 「not persisted」). 같은 결함이 있다.
+- **고침.** host가 그 프로젝트(gh)·머신을 처음 볼 때, 앞 host가 연 실패 항목(`outage`/`gh`/`failing`, `outage`/<머신>/`down`)이 아직 열려 있으면 알린 것으로 시작한다(`Outage::resumed`). 그러면 돌아오면 회복을 한 번 쓰고, 이어 끊겨도 실패를 다시 쓰지 않는다. 시작 시각은 여전히 새 host가 처음 본 때다(다시 띄운 직후 아직 붙지 않은 머신을 끊김으로 세지 않는다).
+- 시험: `m13` `remote_dir_thread_survives_host_restart` 끝(알린 끊김 중 host를 다시 띄우고 머신이 돌아오면 recovered 1, down 1). 이어받지 않는 결함 심기는 「outage recovered」 기다림에서 실패한다. 단위 시험 `short_outages_write_nothing_and_long_ones_write_one_item_each_way` 끝.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
