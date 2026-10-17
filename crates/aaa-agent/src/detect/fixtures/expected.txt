@@ -1,0 +1,14 @@
+# 실제 harness 화면(시험 host에서 띄운 Claude Code 2.1.302·Codex 0.163.0, plan §8.102)과 herdr 0.9.5 원본 엔진의 판정.
+# 판정은 `herdr agent explain --file <화면> --agent <harness> --json`(OSC 없이 화면만)으로 뽑았다. 경로·이름은 지웠다.
+# claude-idle-typed.txt는 운영 pane(shadow/t-0002)을 읽은 화면이다: 턴이 끝난 뒤 보내지 않은 글이 입력 상자에 남았다
+# (옛 hook 방식은 Stop 없이 UserPromptSubmit만 와서 10시간 넘게 작업 중이었다, t-0334 결함 1).
+# 칸: 파일 상태 규칙 보이는표지(i=idle b=blocker w=working, -=없음)
+claude-bash-permission.txt blocked bash_permission_prompt b
+claude-create-file.txt blocked legacy_no_prompt_blocker -
+claude-idle.txt idle live_prompt_box i
+claude-idle-typed.txt idle live_prompt_box i
+claude-trust.txt blocked live_blocked_form b
+claude-working.txt working live_turn_working w
+codex-approval.txt blocked live_strong_blocker b
+codex-idle.txt idle - -
+codex-working.txt working screen_working_fallback w

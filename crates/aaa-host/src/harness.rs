@@ -1,9 +1,12 @@
 //! harness 상태·확인창 질문·메시지 API(M1-3b, §8.3~8.5).
 //!
-//! - agent adapter가 정규화한 사건(`HarnessEvent`)으로 pane별 상태를 바꾸고 front에 알린다. polling하지 않는다.
-//! - 질문은 한 pane에 열린 것을 하나로 묶는다(Claude는 같은 확인창에 Notification과 PermissionRequest를 함께 낸다).
+//! - agent가 보낸 사건(`HarnessEvent`)으로 pane별 상태를 바꾸고 front에 알린다. polling하지 않는다.
+//!   상태(working·idle·question)는 agent의 화면 감지가 낸다(herdr 0.9.5, plan §8.102). hook 사건은 harness 세션 ID와
+//!   진행 보고 정리에만 쓴다. 옛 agent의 hook 상태 사건(turn_start·turn_end 등)도 그대로 받는다.
+//! - 질문은 한 pane에 열린 것을 하나로 묶는다(brief 안내 중 화면에서 연 질문과 화면 감지 질문이 같은 창이다).
 //!   답은 질문이 아직 열려 있고 세션이 살아 있는지 다시 본 뒤 adapter 키(기본 선택 Enter, 거절 Esc)로 보낸다.
-//! - 입력(brief 안내·메시지)은 harness가 `turn_start`를 내면 accepted다. hook이 없는 harness는 화면 변화로 본다.
+//! - 입력(brief 안내·메시지)은 harness가 작업 중이나 질문으로 보이면 accepted다(herdr-projects `agent_prompt_confirmed`:
+//!   `--until working --until blocked`). 상태를 모르는 harness는 화면 변화로 본다.
 //!   일하는 중인 harness에 보낸 메시지는 harness가 다음 턴으로 줄 세우므로, 보낸 뒤에도 일하는 중이면 accepted다.
 //!   확인하지 못하면 unknown으로 남기고 **자동으로 다시 보내지 않는다**(§8.5 a).
 
@@ -21,24 +24,12 @@ use crate::{Host, err};
 
 /// 질문에 답할 때 선택 창이 화면에 그려지기를 기다리는 시간
 const MENU_WAIT: Duration = Duration::from_secs(3);
-/// harness가 Esc로 멈췄다는 화면 표지(Claude Code: 「Interrupted · What should Claude do instead?」)
-const INTERRUPTED_MARKS: &[&str] = &["Interrupted"];
+/// 입력을 받았다는 사건: 화면 감지의 작업 중·질문(herdr-projects `--until working --until blocked`), 옛 agent의 turn_start
+const ACCEPTED: &[&str] = &["working", "question", "turn_start"];
 
 /// 아직 모르는 pane의 harness 사건을 이만큼 보관한다
 const HOLD_FOR: Duration = Duration::from_secs(60);
 const HOLD_MAX: usize = 32;
-
-/// 확인창 하나가 내는 hook 짝(Claude Code 권한 확인창: `PermissionRequest`와 `Notification(permission_prompt)`)
-const PROMPT_PAIR: [&str; 2] = ["PermissionRequest", "Notification"];
-
-/// 답한 확인창의 늦은 짝인가: 그 확인창은 짝 중 하나만 받았고, 이 질문 사건이 나머지 하나다.
-/// hook 사건은 agent 연결로 차례대로 오지만 답은 front 연결로 오므로, 답이 두 hook 사이에 낄 수 있다(ci-local에서 났다:
-/// 답 뒤에 온 Notification이 새 질문을 열어 thread가 사람 차례에 남았다). 답 뒤 다른 hook 사건이 오면 `answered`를 비우고,
-/// 같은 hook이 다시 오면 새 확인창이다(Claude는 확인창마다 PermissionRequest를 낸다).
-fn late_pair(answered: Option<&[String]>, hook: Option<&str>) -> bool {
-    let (Some([first]), Some(h)) = (answered, hook) else { return false };
-    PROMPT_PAIR.contains(&h) && PROMPT_PAIR.contains(&first.as_str()) && first != h
-}
 
 /// pane 등록 전에 온 harness 사건(세션 ID → (받은 시각, 머신, 사건))
 pub(crate) type Held = std::collections::HashMap<String, Vec<(Instant, String, HarnessEvent)>>;
@@ -50,9 +41,12 @@ pub(crate) type Waiters =
     std::collections::HashMap<String, Vec<(&'static [&'static str], oneshot::Sender<String>, Option<OnFire>)>>;
 
 /// 선택 창이 떠 있다는 표지(Claude Code·Codex). 이 화면에는 안내·메시지를 입력하지 않는다.
+/// Codex 0.163 명령 승인 창의 맨 아래 줄은 「Press enter to confirm or esc to cancel」이다(herdr codex.toml
+/// `live_strong_blocker`가 보는 글과 같다).
 const MODAL_MARKS: &[&str] = &[
     "Enter to confirm",
     "Esc to cancel",
+    "Press enter to confirm or esc to cancel",
     "Do you trust",
     "trust this folder",
     "Allow Codex to work in this folder",
@@ -86,11 +80,6 @@ pub(crate) fn modal_of(lines: &[String]) -> Option<(&'static str, String)> {
         .find(|l| l.contains('?'))
         .unwrap_or_else(|| d.last().map(|l| l.trim()).unwrap_or_default());
     Some((kind, text.chars().take(300).collect()))
-}
-
-/// 화면에 보이는 「Interrupted」 수(Esc 전후를 비교해 새로 생긴 것만 멈춤으로 본다)
-fn interrupted_count(lines: &[String]) -> usize {
-    lines.iter().filter(|l| INTERRUPTED_MARKS.iter().any(|m| l.contains(m))).count()
 }
 
 /// 화면 선택 창의 선택지: (선택됨, 글)
@@ -142,6 +131,26 @@ pub(crate) fn answer_keys(lines: &[String], choice: &str) -> Result<Vec<u8>, Str
 pub(crate) struct SubmitErr {
     pub typed: bool,
     pub msg: String,
+}
+
+/// 사건이 바꿀 활동(없으면 그대로).
+/// - harness 세션 ID(SessionStart·Codex notify)는 상태를 바꾸지 않는다(compact·clear 뒤에도 화면 감지가 낸 상태가
+///   맞다). 처음 보는 pane만 「시작」으로 둔다.
+/// - 지금 상태가 된 때보다 오래된 사건은 바꾸지 않는다. agent가 다시 붙을 때 보내는 기억(agent `set_host`)이 그 사이
+///   화면 감지가 낸 새 상태보다 늦게 올 수 있다(사건 때는 모두 그 pane agent의 시계다, plan §8.102).
+fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentActivity> {
+    if prev.is_some_and(|a| ev.at_ms < a.since_ms) {
+        return None;
+    }
+    match ev.kind.as_str() {
+        "session_start" | "session" => prev.is_none().then_some(AgentActivity::Started),
+        "turn_start" | "working" => Some(AgentActivity::Working),
+        "turn_end" | "idle" => Some(AgentActivity::Idle),
+        "question" => Some(AgentActivity::Question),
+        "error" => Some(AgentActivity::Error),
+        "exited" => Some(AgentActivity::Exited),
+        _ => None,
+    }
 }
 
 impl Host {
@@ -196,7 +205,7 @@ impl Host {
 
     /// agent가 harness 사건을 보냈다
     pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, ev: HarnessEvent) {
-        let activity = {
+        let (activity, answered_block) = {
             let mut i = self.inner.lock().unwrap();
             let Some(p) = i.panes.get_mut(&ev.session) else {
                 // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
@@ -206,22 +215,6 @@ impl Host {
             };
             if p.machine_id != mid {
                 return;
-            }
-            // 답한 확인창의 늦은 짝 hook: 그 확인창은 이미 닫혔다. 새 질문을 열지 않고 상태도 바꾸지 않는다
-            if ev.kind == "question" && late_pair(p.answered_hooks.as_deref(), ev.hook.as_deref()) {
-                p.answered_hooks = None;
-                tracing::debug!(pane = %ev.session, hook = ?ev.hook, "답한 확인창의 늦은 짝 hook을 버린다");
-                return;
-            }
-            if let Some(h) = &ev.hook {
-                p.answered_hooks = None;
-                if ev.kind == "question" {
-                    if !p.prompt_hooks.contains(h) {
-                        p.prompt_hooks.push(h.clone());
-                    }
-                } else {
-                    p.prompt_hooks.clear();
-                }
             }
             if ev.transcript.is_some() {
                 p.transcript = ev.transcript.clone();
@@ -244,31 +237,33 @@ impl Host {
             if ev.harness_session.is_some() {
                 st.harness_session = ev.harness_session.clone();
             }
-            let next = match ev.kind.as_str() {
-                "session_start" => Some(AgentActivity::Started),
-                "turn_start" | "working" => Some(AgentActivity::Working),
-                "turn_end" | "idle" => Some(AgentActivity::Idle),
-                "question" => Some(AgentActivity::Question),
-                "error" => Some(AgentActivity::Error),
-                "exited" => Some(AgentActivity::Exited),
-                _ => None,
-            };
+            let next = next_activity(prev.as_ref(), &ev);
             if ev.kind == "progress" {
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
                 st.progress_at_ms = Some(ev.at_ms);
-            } else if let Some(a) = next {
-                // 새 harness 세션: 옛 진행 보고는 이 세션을 말하지 않는다(herdr-projects progress `respond` SessionStart)
-                if a == AgentActivity::Started {
-                    st.percent = None;
-                    st.progress = None;
-                    st.progress_at_ms = None;
-                }
-                // 사용자가 답했다: 옛 「Waiting for you」는 더 맞지 않다(herdr-projects `respond` UserPromptSubmit)
-                if ev.kind == "turn_start" && st.progress.as_deref() == Some(crate::orch::WAITING) {
-                    st.progress = None;
-                    st.progress_at_ms = None;
-                }
+            }
+            // 새 harness 세션: 옛 진행 보고는 이 세션을 말하지 않는다(herdr-projects progress `respond` SessionStart)
+            if ev.kind == "session_start" {
+                st.percent = None;
+                st.progress = None;
+                st.progress_at_ms = None;
+            }
+            // 사용자가 답했다: 옛 「Waiting for you」는 더 맞지 않다(herdr-projects `respond` UserPromptSubmit)
+            if matches!(ev.kind.as_str(), "prompt_submit" | "turn_start")
+                && st.progress.as_deref() == Some(crate::orch::WAITING)
+            {
+                st.progress = None;
+                st.progress_at_ms = None;
+            }
+            // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
+            let answered_block = next == Some(AgentActivity::Question)
+                && prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question)
+                && p.answered;
+            if next.is_some_and(|a| a != AgentActivity::Question) {
+                p.answered = false;
+            }
+            if let Some(a) = next {
                 if a != st.activity {
                     st.since_ms = ev.at_ms;
                 }
@@ -279,7 +274,7 @@ impl Host {
             }
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
-            next
+            (next, answered_block)
         };
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
@@ -312,17 +307,19 @@ impl Host {
             }
             let _ = tx.send(ev.kind.clone());
         }
-        // 질문: 열리거나, harness가 넘어가면 닫힌다
+        // 질문: 열리거나, harness가 넘어가면 닫힌다. 답한 확인창 뒤에 늦게 온 질문 사건(옛 agent의 Claude
+        // Notification `permission_prompt`가 답보다 늦게 도착)은 그 질문을 다시 열지 않는다. 참고 herdr 0.9.5는 상태 hook을
+        // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
+        // 때만 알리므로, 한 막힘에 질문은 하나다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음
+        // 확인창은 새 막힘이다(t-0333 m13 사건 16, plan §8.99·§8.102)
         match activity {
+            Some(AgentActivity::Question) if answered_block => {}
             Some(AgentActivity::Question) => {
                 let kind = ev.question_kind.clone().unwrap_or_else(|| "permission".into());
                 self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
             }
             Some(AgentActivity::Working) | Some(AgentActivity::Idle) | Some(AgentActivity::Exited) => {
-                if let Some(mut q) = self.open_question_of(&ev.session) {
-                    q.state = QuestionState::Gone;
-                    self.save_question(&q);
-                }
+                self.close_questions_of(&ev.session);
             }
             _ => {}
         }
@@ -337,7 +334,23 @@ impl Host {
         self.questions(false).into_iter().find(|q| q.pane == pane)
     }
 
+    /// 그 pane의 열린 질문을 모두 닫는다(Gone). 확인창이 사라졌거나, 세션이 끝났거나 pane이 없어졌을 때다.
+    /// 참고 herdr-web-ui는 질문을 기록하지 않고 살아 있는 blocked pane 화면에서 읽어(`server/prompt.ts`), pane이 끝나거나
+    /// 닫히면(`server/collector.ts` `parseStructureFrame`의 pane_exited·pane_closed) 질문도 없다. aaa는 질문을 기록하므로
+    /// 그때 닫는다(QA t-0337 Q4, plan §8.102).
+    pub(crate) fn close_questions_of(&self, pane: &str) {
+        for mut q in self.questions(false).into_iter().filter(|q| q.pane == pane) {
+            q.state = QuestionState::Gone;
+            self.save_question(&q);
+        }
+    }
+
     pub(crate) fn save_question(&self, q: &QuestionView) {
+        if q.state == QuestionState::Answered
+            && let Some(p) = self.inner.lock().unwrap().panes.get_mut(&q.pane)
+        {
+            p.answered = true;
+        }
         let state = match q.state {
             QuestionState::Open => "open",
             QuestionState::Answered => "answered",
@@ -431,39 +444,11 @@ impl Host {
             }
         };
         let conn = self.live_conn(&mid)?;
-        // 이 확인창이 받은 hook을 기억한다: 짝 hook이 답보다 늦게 오면 그 확인창 것이다(`late_pair`)
-        if let Some(p) = self.inner.lock().unwrap().panes.get_mut(&pid) {
-            p.answered_hooks = Some(std::mem::take(&mut p.prompt_hooks));
-        }
         conn.request(AgentRequest::Input { session: pid.clone(), data: B64(keys) }).await?;
+        // 답한 뒤 상태(도구가 돈다·입력을 기다린다)는 화면 감지가 알린다
         q.state = QuestionState::Answered;
         q.answer = Some(choice.to_string());
         self.save_question(&q);
-        // Claude Code는 권한을 거절하면 턴을 멈추고 입력을 기다리지만 Stop hook을 내지 않는다(2.1 실측).
-        // 허락하면 도구가 이어 돈다. 다음 hook 사건이 오기 전까지 상태를 이렇게 둔다.
-        if q.question_kind == "permission" {
-            let harness = self.pane_agent(&pid).map(|a| a.harness).unwrap_or_default();
-            let (kind, msg) = if choice == "yes" {
-                ("working", None)
-            } else {
-                ("idle", Some("거절: 입력을 기다린다".into()))
-            };
-            self.on_harness(
-                &mid,
-                HarnessEvent {
-                    session: pid.clone(),
-                    harness,
-                    kind: kind.into(),
-                    harness_session: None,
-                    message: msg,
-                    question_kind: None,
-                    percent: None,
-                    at_ms: aaa_common::util::now_ms(),
-                    transcript: None,
-                    hook: None,
-                },
-            );
-        }
         self.db.audit(actor, "question_answer", &format!("{} {choice}", q.id));
         if let Some(r) = self.thread_of_pane(&q.pane) {
             self.flow(&r, "question_answered", None, format!("{} → {choice}", q.id));
@@ -517,7 +502,7 @@ impl Host {
         // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
         let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
-        let accepted = self.wait_kind_then(pane, &["turn_start", "working"], hook_accept);
+        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         if let Some(text) = text {
             let body = if text.contains('\n') {
                 format!("\x1b[200~{}\x1b[201~", text.trim_end())
@@ -687,23 +672,12 @@ impl Host {
             }
             MessageMode::Interrupt => {
                 if activity == Some(AgentActivity::Working) {
-                    let mut stopped = self.wait_kind(&pid, &["turn_end", "idle"]);
-                    // 지난 interrupt의 「Interrupted」가 화면에 남아 있을 수 있다: 새로 생긴 것만 본다
-                    let before = interrupted_count(&self.screen_lines(&mid, &pid).await.unwrap_or_default());
+                    let stopped = self.wait_kind(&pid, &["turn_end", "idle"]);
                     let conn = self.live_conn(&mid)?;
                     conn.request(AgentRequest::Input { session: pid.clone(), data: B64(b"\x1b".to_vec()) }).await?;
-                    // Claude Code는 Esc로 멈춰도 Stop hook을 내지 않고 화면에 「Interrupted」를 보인다(2.1 실측).
+                    // 멈추면 입력 상자가 보인다: 화면 감지가 idle을 알린다(Claude 「Interrupted」 뒤 `live_prompt_box`).
                     // 멈춘 뒤 다음 입력을 받을 수 있게 되기를 기다리는 상한은 설정 `stop_wait_ms`(기본 15초)다.
-                    let until = Instant::now() + Duration::from_millis(self.cfg.projects.stop_wait_ms);
-                    while Instant::now() < until {
-                        if tokio::time::timeout(Duration::from_millis(250), &mut stopped).await.is_ok() {
-                            break;
-                        }
-                        let lines = self.screen_lines(&mid, &pid).await.unwrap_or_default();
-                        if interrupted_count(&lines) > before {
-                            break;
-                        }
-                    }
+                    let _ = tokio::time::timeout(Duration::from_millis(self.cfg.projects.stop_wait_ms), stopped).await;
                 }
                 self.deliver(&mut m, &mid, &pid).await;
             }
@@ -791,22 +765,6 @@ mod tests {
 
  Enter to confirm · Esc to cancel";
 
-    /// 답한 확인창이 받지 못한 짝 hook만 그 확인창 것이다
-    #[test]
-    fn late_pair_is_the_missing_half_of_an_answered_prompt() {
-        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let pr = v(&["PermissionRequest"]);
-        assert!(late_pair(Some(&pr), Some("Notification")));
-        assert!(late_pair(Some(&v(&["Notification"])), Some("PermissionRequest")));
-        // 같은 hook이 다시 오면 새 확인창, 둘 다 받았으면 짝이 끝났다, 답하지 않았거나 옛 agent(hook 없음)면 아니다
-        assert!(!late_pair(Some(&pr), Some("PermissionRequest")));
-        assert!(!late_pair(Some(&v(&["PermissionRequest", "Notification"])), Some("Notification")));
-        assert!(!late_pair(None, Some("Notification")));
-        assert!(!late_pair(Some(&pr), None));
-        assert!(!late_pair(Some(&[]), Some("Notification")));
-        assert!(!late_pair(Some(&v(&["Stop"])), Some("Notification")));
-    }
-
     #[test]
     fn claude_trust_screen() {
         let l = lines(CLAUDE_TRUST);
@@ -854,7 +812,36 @@ mod tests {
         );
         assert!(modal_of(&l).is_none());
         assert!(answer_keys(&l, "yes").is_err());
-        assert_eq!(interrupted_count(&lines("  ⎿  Interrupted · What should Claude do instead?\n❯ x\n")), 1);
+    }
+
+    /// Codex 0.163의 실제 명령 승인 창(경로만 바꿨다). 선택 커서는 `›`, 맨 아래 줄은 소문자 「enter」·「esc」다.
+    #[test]
+    fn codex_approval_screen() {
+        let l = lines(
+            "\
+› .aaa/demo-t-0001/brief.md를 읽고 그대로 하라.
+
+• Failed (exit 1) touch probe.txt
+  └ touch: probe.txt: Operation not permitted
+
+• Running touch probe.txt
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  $ touch probe.txt
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `touch probe.txt` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
+",
+        );
+        assert_eq!(modal_of(&l).unwrap(), ("confirm", "Would you like to run the following command?".to_string()));
+        assert_eq!(answer_keys(&l, "yes").unwrap(), b"\r");
+        assert_eq!(answer_keys(&l, "no").unwrap(), b"\x1b");
     }
 
     #[test]
@@ -869,5 +856,101 @@ mod tests {
         assert!(answer_keys(&lines("fake> \nNo idea"), "yes").is_err());
         assert!(modal_of(&lines("fake> got: x")).is_none());
         assert!(answer_keys(&[], "maybe").is_err());
+    }
+
+    /// agent가 다시 붙으며 보낸 옛 기억(옛 agent의 `turn_start`)이 먼저 도착한 화면 감지 idle을 덮지 않는다(t-0334 결함 1)
+    #[test]
+    fn older_events_do_not_change_the_activity() {
+        let ev = |kind: &str, at_ms| HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: kind.into(),
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            at_ms,
+            transcript: None,
+        };
+        let idle = AgentStatus {
+            activity: AgentActivity::Idle,
+            since_ms: 2_000,
+            harness: "claude".into(),
+            message: None,
+            percent: None,
+            progress: None,
+            progress_at_ms: None,
+            harness_session: None,
+            seen: true,
+        };
+        assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
+        assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
+        // host가 처음 듣는 pane(host 재시작)은 옛 기억으로 상태를 정한다
+        assert_eq!(next_activity(None, &ev("turn_start", 1_000)), Some(AgentActivity::Working));
+        assert_eq!(next_activity(None, &ev("session_start", 1_000)), Some(AgentActivity::Started));
+        assert_eq!(next_activity(Some(&idle), &ev("session_start", 3_000)), None);
+    }
+
+    struct Tmp(std::path::PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 머신 `m`의 Claude pane `s` 하나가 있는 host(agent 연결 없음)
+    fn host_with_pane() -> (Arc<Host>, Tmp) {
+        let dir = std::env::temp_dir().join(format!("aaa-harness-test-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, dir.clone()).unwrap();
+        let info = aaa_proto::SessionInfo {
+            id: "s".into(),
+            name: "claude".into(),
+            argv: vec!["claude".into()],
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state: aaa_proto::SessionState::Running,
+            role: None,
+            harness: Some("claude".into()),
+        };
+        h.on_session("m", info, false);
+        (h, Tmp(dir))
+    }
+
+    /// 답한 확인창 뒤 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16·plan §8.99: 부하에서
+    /// PermissionRequest → 답 → 1.3초 뒤 Notification `permission_prompt`). 막힘이 끝난 뒤(작업 중: 화면 감지나 옛 agent의
+    /// PostToolUse·PreToolUse)의 질문 사건은 다음 확인창의 새 질문이다.
+    #[tokio::test]
+    async fn a_late_question_event_does_not_reopen_the_answered_question() {
+        let (h, _t) = host_with_pane();
+        let ev = |kind: &str, at_ms| HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: kind.into(),
+            harness_session: None,
+            message: Some("Bash make test".into()),
+            question_kind: Some("permission".into()),
+            percent: None,
+            at_ms,
+            transcript: None,
+        };
+        h.on_harness("m", ev("question", 1_000));
+        let mut q = h.open_question_of("s").expect("질문");
+        // 답의 마지막 걸음(`answer`: 키를 보낸 뒤 Answered로 적는다)
+        q.state = QuestionState::Answered;
+        q.answer = Some("yes".into());
+        h.save_question(&q);
+        h.on_harness("m", ev("question", 2_300));
+        assert_eq!(h.open_question_of("s").map(|x| x.id), None, "답한 질문을 다시 열었다");
+        assert_eq!(h.questions(true).len(), 1);
+        h.on_harness("m", ev("working", 3_000));
+        h.on_harness("m", ev("question", 4_000));
+        let again = h.open_question_of("s").expect("다음 확인창의 질문");
+        assert_ne!(again.id, q.id);
     }
 }
