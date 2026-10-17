@@ -217,6 +217,26 @@ pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&Agen
     ThreadGroup::Idle
 }
 
+/// 프로젝트 폴더 뼈대. 이미 있는 파일은 두고, PROJECT.md를 마지막에 써서 중간에 멈춘 폴더는 프로젝트로 치지 않는다
+/// (`project create`와 옮기기 `migrate::convert`가 함께 쓴다).
+pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::io::Result<()> {
+    for sub in ["memory", "routines", "threads", "library", "inbox", "uploads"] {
+        std::fs::create_dir_all(dir.join(sub))?;
+    }
+    let put = |f: &str, body: &str| -> std::io::Result<()> {
+        if !dir.join(f).exists() {
+            write_atomic(&dir.join(f), body.as_bytes())?;
+        }
+        Ok(())
+    };
+    put("MEMORY.md", "# Memory\n")?;
+    put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
+    put("decisions.md", "# 결정 기록\n")?;
+    put("project.toml", "schema = 1\n")?;
+    put("AGENTS.md", &COORDINATOR_GUIDE.replace("{p}", name))?;
+    put("PROJECT.md", project_md)
+}
+
 /// 임시 파일에 쓴 뒤 rename으로 바꾼다
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap();
@@ -281,24 +301,7 @@ impl Host {
         if dir.join("PROJECT.md").exists() {
             return Err(err(ErrorCode::NameTaken, format!("이미 있다: {}", dir.display())));
         }
-        let mk = || -> std::io::Result<()> {
-            for sub in ["memory", "routines", "threads", "library", "inbox", "uploads"] {
-                std::fs::create_dir_all(dir.join(sub))?;
-            }
-            let put = |f: &str, body: &str| -> std::io::Result<()> {
-                if !dir.join(f).exists() {
-                    write_atomic(&dir.join(f), body.as_bytes())?;
-                }
-                Ok(())
-            };
-            put("MEMORY.md", "# Memory\n")?;
-            put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
-            put("decisions.md", "# 결정 기록\n")?;
-            put("project.toml", "schema = 1\n")?;
-            put("AGENTS.md", &COORDINATOR_GUIDE.replace("{p}", name))?;
-            put("PROJECT.md", &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n"))
-        };
-        mk().map_err(internal)?;
+        write_skeleton(&dir, name, &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n")).map_err(internal)?;
         self.db.audit(actor, "project_create", name);
         Ok(FrontResponse::Project(self.project_view(name, &dir)))
     }

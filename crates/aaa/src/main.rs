@@ -2,6 +2,7 @@
 
 mod cli;
 mod launchd;
+mod migrate;
 mod service;
 
 fn main() -> std::process::ExitCode {

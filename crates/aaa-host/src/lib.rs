@@ -15,6 +15,7 @@ mod inbox;
 mod library;
 pub mod link;
 mod merge;
+pub mod migrate;
 mod notify;
 mod orch;
 mod output;
