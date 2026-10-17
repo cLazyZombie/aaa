@@ -916,7 +916,7 @@ impl App {
         self.layout(tx, change, true).await
     }
 
-    /// 새 layout 요청은 그것을 아는 host에만 보낸다(탭 닫기·이름·크기 1.4, zoom·자리 바꾸기 1.6).
+    /// 새 layout 요청은 그것을 아는 host에만 보낸다(탭 닫기·이름·크기 1.4, zoom·자리 바꾸기 1.10).
     /// 옛 host에 보내면 연결이 끊기므로 알리고 보내지 않는다.
     fn host_at_least(&mut self, minor: u16) -> bool {
         if self.host_minor >= minor {
@@ -1096,7 +1096,7 @@ impl App {
             // herdr `pane zoom` 뒤집기: 포커스 pane을 탭 가득(host가 탭마다 기억한다)
             Action::Zoom => {
                 let Some(pane) = focus else { return Ok(()) };
-                if self.host_at_least(6) {
+                if self.host_at_least(10) {
                     self.layout(tx, LayoutChange::Zoom { pane, zoomed: None }, false).await?;
                 }
             }
@@ -1118,7 +1118,7 @@ impl App {
                     return Ok(());
                 };
                 if let (Some(pane), Some(with)) = (focus, find_in_direction(cur, dir, &rects))
-                    && self.host_at_least(6)
+                    && self.host_at_least(10)
                 {
                     self.layout(tx, LayoutChange::Swap { pane, with }, false).await?;
                 }
@@ -1881,9 +1881,9 @@ mod tests {
     #[test]
     fn old_host_gets_no_tab_requests() {
         let mut app = app_with_tabs(&[""]);
-        assert!(app.host_at_least(4) && app.host_at_least(6));
-        app.host_minor = 5;
-        assert!(app.host_at_least(4) && !app.host_at_least(6));
+        assert!(app.host_at_least(4) && app.host_at_least(10));
+        app.host_minor = 9;
+        assert!(app.host_at_least(4) && !app.host_at_least(10));
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
     }
 

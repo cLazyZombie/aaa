@@ -24,10 +24,6 @@ fn commands() -> (Vec<&'static str>, Vec<&'static str>, &'static str) {
     }
 }
 
-fn connected(node: &Node, name: &str) -> bool {
-    node.machine(name).is_some_and(|m| m["connection"] == "connected")
-}
-
 fn run(node: &Node, machine: &str, name: &str, argv: &[&str]) -> String {
     node.new_pane(None, machine, Some(name), argv, None)
 }
@@ -83,7 +79,7 @@ fn pty_smoke_local_agent() {
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "local1"]);
-    wait_for("로컬 agent 연결", T, || connected(&h, "local1").then_some(()));
+    wait_for("로컬 agent 연결", T, || h.connected("local1").then_some(()));
     check_panes(&lab, &h, "local1");
 }
 
@@ -104,6 +100,6 @@ fn pty_smoke_remote_agent_over_tls() {
     assert!(lab.wait_exit("enroll", T).success(), "enroll 실패: {}", lab.log("enroll"));
 
     lab.spawn("agent", &b, &["agent", "--host", &addr, "--name", "remote1"]);
-    wait_for("원격 agent 연결", T, || connected(&h, "remote1").then_some(()));
+    wait_for("원격 agent 연결", T, || h.connected("remote1").then_some(()));
     check_panes(&lab, &h, "remote1");
 }

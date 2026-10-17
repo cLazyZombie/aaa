@@ -1,0 +1,184 @@
+/* herdr-web-ui(aa624cb) src/styles.css 1269~1451줄 그대로: .modal-scrim·.modal·머리·몸·바닥, 휴대폰 sheet 움직임, 키보드가 있을 때, 창 안 field·.input·.select. 고지는 README.md */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--scrim);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 560px);
+  max-height: min(100%, 720px);
+  background: var(--bg-panel);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.modal-title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-top: var(--hairline) solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .modal-scrim {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 92%;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* A phone's sheet moves as an iPhone's does: it rises from the bottom edge over a scrim that
+   darkens with it, follows a finger dragged down, and drops back down however it was closed.
+   lib/sheets.ts drives the drag and puts a closed sheet's last frame back for .is-leaving.
+   Every surface on a .modal-scrim is a sheet here: the dialogs, the palette, the row sheet. */
+@media (max-width: 640px) {
+  .modal-scrim {
+    animation: scrim-in var(--dur-sheet) var(--ease-out);
+  }
+
+  .modal-scrim > * {
+    animation: sheet-in var(--dur-sheet) var(--ease-spring);
+  }
+
+  /* A stroke on a sheet or its scrim is the sheet's: it pans nothing behind it, the chat
+     included. Its own lists still scroll, each a scroll container where touch-action starts
+     afresh, and keep their overscroll to themselves; a drag down is lib/sheets.ts's. Two
+     fingers still zoom the page, begun on a sheet as anywhere else (WCAG 1.4.4). */
+  .modal-scrim,
+  .modal-scrim > * {
+    touch-action: pinch-zoom;
+  }
+
+  .modal-scrim * {
+    overscroll-behavior: contain;
+  }
+
+  .modal-scrim.is-leaving {
+    pointer-events: none;
+    animation: scrim-out var(--dur-sheet-out) var(--ease-out) forwards;
+  }
+
+  .modal-scrim.is-leaving > * {
+    animation: sheet-out var(--dur-sheet-out) var(--ease-out) forwards;
+  }
+}
+
+@keyframes scrim-in {
+  from { background-color: transparent; }
+}
+
+@keyframes scrim-out {
+  to { background-color: transparent; }
+}
+
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+}
+
+/* no `from`: a sheet let go mid-drag drops from where the finger left it */
+@keyframes sheet-out {
+  to { transform: translateY(100%); }
+}
+
+/* A phone's keyboard is up (lib/viewport.ts): the scrim ends where the keyboard begins, as the
+   shell does. An iPhone home screen app keeps the layout viewport at full height under the
+   keyboard, so a sheet on the screen's bottom edge sat behind it, its text field included. */
+[data-keyboard] .modal-scrim {
+  bottom: auto;
+  height: var(--app-height, 100%);
+}
+
+/* the keyboard covers the home indicator: the sheet drops the room it kept for it */
+@media (max-width: 640px) {
+  [data-keyboard] .modal {
+    padding-bottom: 0;
+  }
+}
+
+/* form fields inside dialogs */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.field-label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-dim);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.field-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.input,
+.select {
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  background: var(--bg-input);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-input);
+}
+
+/* a bordered field shows focus on its own border; the offset ring is for controls without one */
+.input:focus,
+.select:focus,
+.input:focus-visible,
+.select:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+@media (min-width: 641px) {
+  .input,
+  .select {
+    font-size: var(--fs-sm);
+  }
+}

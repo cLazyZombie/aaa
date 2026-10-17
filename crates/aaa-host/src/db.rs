@@ -38,7 +38,13 @@ pub struct PushSub {
 pub struct DeviceRow {
     pub id: String,
     pub role: String,
+    pub label: String,
+    pub created_ms: u64,
+    pub last_seen_ms: Option<u64>,
 }
+
+/// 이름이 없는 옛 기기(CLI pairing만 있던 때)
+pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
     pub fn open(path: &Path) -> Result<Db> {
@@ -81,6 +87,11 @@ impl Db {
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
                created_at INTEGER NOT NULL);",
         )?;
+        // 기기 이름(웹 설정 → 기기, herdr-web-ui devices.json `label`). 열만 더하므로 schema를 올리지 않는다: 옛 aaa도 이 DB를 연다
+        let has_label = conn.prepare("SELECT 1 FROM pragma_table_info('devices') WHERE name='label'")?.exists([])?;
+        if !has_label {
+            conn.execute("ALTER TABLE devices ADD COLUMN label TEXT", [])?;
+        }
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
         match v.as_deref().map(str::parse::<i64>) {
@@ -211,21 +222,66 @@ impl Db {
         Ok(id)
     }
 
-    pub fn add_device(&self, id: &str, role: &str, token_hash: &str) -> Result<()> {
+    pub fn add_device(&self, id: &str, role: &str, token_hash: &str, label: &str) -> Result<()> {
         let c = self.conn.lock().unwrap();
         c.execute(
-            "INSERT INTO devices(id,role,token_hash,created_at) VALUES(?1,?2,?3,?4)",
-            params![id, role, token_hash, aaa_common::util::now_ms() as i64],
+            "INSERT INTO devices(id,role,token_hash,created_at,label) VALUES(?1,?2,?3,?4,?5)",
+            params![id, role, token_hash, aaa_common::util::now_ms() as i64, label],
         )?;
         Ok(())
     }
 
+    fn device_from(r: &rusqlite::Row) -> rusqlite::Result<DeviceRow> {
+        Ok(DeviceRow {
+            id: r.get(0)?,
+            role: r.get(1)?,
+            label: r.get::<_, Option<String>>(2)?.unwrap_or_else(|| DEVICE_LABEL_FALLBACK.to_string()),
+            created_ms: r.get::<_, i64>(3)? as u64,
+            last_seen_ms: r.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+        })
+    }
+
     pub fn device_by_token_hash(&self, h: &str) -> Result<Option<DeviceRow>> {
         let c = self.conn.lock().unwrap();
-        Ok(c.query_row("SELECT id,role FROM devices WHERE token_hash=?1 AND revoked=0", [h], |r| {
-            Ok(DeviceRow { id: r.get(0)?, role: r.get(1)? })
-        })
+        Ok(c.query_row(
+            "SELECT id,role,label,created_at,last_seen FROM devices WHERE token_hash=?1 AND revoked=0",
+            [h],
+            Self::device_from,
+        )
         .optional()?)
+    }
+
+    /// 취소하지 않은 기기를 연결한 순서대로
+    pub fn devices(&self) -> Result<Vec<DeviceRow>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT id,role,label,created_at,last_seen FROM devices WHERE revoked=0 ORDER BY created_at, id",
+        )?;
+        let rows = st.query_map([], Self::device_from)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 마지막으로 본 때. 취소한 기기는 고치지 않는다
+    pub fn device_seen(&self, id: &str, now_ms: u64) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute("UPDATE devices SET last_seen=?2 WHERE id=?1 AND revoked=0", params![id, now_ms as i64])?;
+        Ok(())
+    }
+
+    /// 이름을 바꾼다. 그런 기기가 없으면(취소됐으면) false
+    pub fn rename_device(&self, id: &str, label: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.execute("UPDATE devices SET label=?2 WHERE id=?1 AND revoked=0", params![id, label])? > 0)
+    }
+
+    /// 취소한다(token hash는 남겨 다시 쓰지 못하게 한다). 그 기기의 push 구독도 지운다. 없으면(이미 취소) false
+    pub fn revoke_device(&self, id: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        let n = c.execute("UPDATE devices SET revoked=1 WHERE id=?1 AND revoked=0", [id])?;
+        if n > 0 {
+            c.execute("DELETE FROM push_subs WHERE device=?1", [id])?;
+        }
+        Ok(n > 0)
     }
 
     // ───────────── Web Push 구독(§8.26) ─────────────

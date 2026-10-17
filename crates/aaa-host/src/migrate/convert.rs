@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use aaa_proto::{BriefState, FlowEvent, InboxItem, Role, ThreadKind, ThreadStatus, parse_report};
+use aaa_proto::{BriefState, FlowEvent, InboxItem, Role, ThreadGroup, ThreadKind, ThreadStatus, next_lines};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -129,7 +129,7 @@ pub(crate) fn thread_rec(
     // aaa의 report_hash는 host가 가진 사본의 hash다. 0.2 기록의 hash와 사본이 같을 때만 확인(ack) 상태를 옮긴다.
     let copy_hash = report.map(|b| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(b)));
     let acked = !t.acked_report_hash.is_empty() && t.acked_report_hash == t.report_hash;
-    let (report_state, next) = report.map(|b| parse_report(&String::from_utf8_lossy(b))).unwrap_or((None, Vec::new()));
+    let next = report.map(|b| next_lines(&String::from_utf8_lossy(b))).unwrap_or_default();
     let created = aaa_common::util::parse_iso(&t.created).unwrap_or(now_ms);
     ThreadRec {
         project: project.to_string(),
@@ -142,11 +142,17 @@ pub(crate) fn thread_rec(
         repo: opt(&t.repo),
         base: opt(&t.base),
         branch: opt(&t.branch),
+        pr: None,
+        pr_state: None,
+        pr_review: None,
         cwd: opt(&t.cwd),
         work_dir: opt(&t.thread_dir),
         pane: None,
         status: ThreadStatus::Resolved,
         brief: BriefState::Delivered,
+        brief_attempts: 0,
+        delivered_at_ms: None,
+        delivered_report: None,
         launch: None,
         acked_hash: if acked && copy_hash.as_deref() == Some(t.report_hash.as_str()) {
             copy_hash.clone()
@@ -154,9 +160,11 @@ pub(crate) fn thread_rec(
             None
         },
         report_hash: copy_hash,
-        report_state,
         next,
         copy: report.map(|_| "complete".to_string()),
+        copy_notes: vec![],
+        last_group: Some(ThreadGroup::Resolved),
+        review_item_hash: None,
         error: opt(&t.error),
         decisions_rev: None,
         eval_cursor: 0,
@@ -528,7 +536,6 @@ mod tests {
         let r = thread_rec("p", &t, "m1", Some(report), 0);
         assert_eq!(r.report_hash.as_deref(), Some(h.as_str()));
         assert_eq!(r.acked_hash.as_deref(), Some(h.as_str()));
-        assert_eq!(r.report_state.as_deref(), Some("완료"));
         assert_eq!(r.next, ["Merge the PR"]);
         assert_eq!((r.status, r.kind, r.brief), (ThreadStatus::Resolved, ThreadKind::Worktree, BriefState::Delivered));
         assert_eq!(r.created_at_ms, 1_790_812_800_000);
@@ -671,6 +678,8 @@ mod e2e {
         assert!(db.flow_after(Some("demo"), 0, 10).unwrap().iter().any(|e| e.kind == "project_imported"));
         // 두 번 하면 거부한다(덮어쓰지 않는다)
         assert!(convert(&inv, &dest, 0).unwrap_err().to_string().contains("이미 있다"));
+        // Windows는 열린 DB 파일을 지우지 못한다(os error 32)
+        drop(db);
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

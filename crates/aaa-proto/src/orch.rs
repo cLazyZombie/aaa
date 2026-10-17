@@ -355,7 +355,7 @@ impl BriefState {
 #[serde(rename_all = "snake_case")]
 pub enum ThreadGroup {
     /// 사람이나 coordinator가 할 일이 있다(시작 실패·5분 넘은 시작, 닫힌 pane, brief 전달 불명, 30초 넘은 확인창,
-    /// `Waiting for you` 진행 보고, `[사용자 작업 필요]`·`[결정 필요]` 보고)
+    /// `Waiting for you` 진행 보고). 보고 내용으로는 정하지 않는다(herdr-projects `group`, plan §8.78).
     WaitingOnYou,
     /// 아직 확인(ack)하지 않은 새 보고
     ReadyForReview,
@@ -363,6 +363,19 @@ pub enum ThreadGroup {
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
     Resolved,
+}
+
+impl ThreadGroup {
+    /// 사람이 읽는 이름(CLI·TUI·웹과 같은 말)
+    pub fn label(self) -> &'static str {
+        match self {
+            ThreadGroup::WaitingOnYou => "사람 차례",
+            ThreadGroup::ReadyForReview => "검토 대기",
+            ThreadGroup::Working => "작업 중",
+            ThreadGroup::Idle => "쉼",
+            ThreadGroup::Resolved => "끝남",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -382,10 +395,10 @@ pub struct ThreadView {
     pub cwd: Option<String>,
     pub work_dir: Option<String>,
     pub branch: Option<String>,
+    /// 추적하는 PR(§8.80)
+    pub pr: Option<Box<ThreadPr>>,
     pub report_hash: Option<String>,
     pub acked_hash: Option<String>,
-    /// report.md 첫 줄 상태 태그(예: `진행 중`, `완료`)
-    pub report_state: Option<String>,
     /// report.md `## Next` 줄
     pub next: Vec<String>,
     /// 마지막 사본 결과: complete·partial·failed
@@ -401,6 +414,14 @@ pub struct ThreadView {
     pub created_at_ms: u64,
     #[ts(type = "number")]
     pub updated_at_ms: u64,
+}
+
+/// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPr {
+    pub url: String,
+    pub state: Option<String>,
+    pub review: Option<String>,
 }
 
 /// 흐름 사건(host가 낸다, §8.3). 프로젝트별 순번과 host 시각·boot ID를 가진다.
@@ -424,33 +445,48 @@ pub struct FlowEvent {
     pub detail: String,
 }
 
-/// report.md 해석: 첫 줄 상태 태그와 `## Next` 줄.
-/// 0.2.35에는 없던 규칙이다. 운영 brief가 쓰는 형식(`[진행 중]`·`[사용자 작업 필요]`·`[결정 필요]`·`[완료]`)을 읽는다.
-pub fn parse_report(text: &str) -> (Option<String>, Vec<String>) {
-    let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-    let state = first.strip_prefix('[').and_then(|r| r.split_once(']')).map(|(s, _)| s.trim().to_string());
-    let mut next = Vec::new();
-    let mut in_next = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if let Some(h) = t.strip_prefix("## ") {
-            in_next = h.trim() == "Next";
+/// report.md `## Next` 절의 줄: 한 줄에 권하는 행동 하나, 목록 표시는 빼고 빈 줄은 버린다
+/// (herdr-projects `thread::next_lines`를 옮겼다). 첫 줄 상태 태그는 읽지 않는다(plan §8.78).
+pub fn next_lines(report: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut inside = false;
+    for line in report.lines() {
+        if line.starts_with("## ") {
+            inside = line.trim() == "## Next";
             continue;
         }
-        if t.starts_with("# ") {
-            in_next = false;
+        if !inside || line.starts_with('#') {
+            if line.starts_with('#') {
+                inside = false;
+            }
             continue;
         }
-        if in_next && !t.is_empty() {
-            let item = t
-                .strip_prefix("- ")
-                .or_else(|| t.strip_prefix("* "))
-                .or_else(|| t.split_once(". ").filter(|(n, _)| n.chars().all(|c| c.is_ascii_digit())).map(|(_, r)| r))
-                .unwrap_or(t);
-            next.push(item.to_string());
+        let text = line.trim();
+        let text = text
+            .strip_prefix("- ")
+            .or_else(|| text.strip_prefix("* "))
+            .or_else(|| {
+                text.split_once(". ").filter(|(n, _)| n.chars().all(|c| c.is_ascii_digit())).map(|(_, rest)| rest)
+            })
+            .unwrap_or(text)
+            .trim();
+        if !text.is_empty() {
+            lines.push(text.to_string());
         }
     }
-    (state, next)
+    lines
+}
+
+/// brief.md에서 그 글을 쓰는 agent가 채우는 자리(plan §8.78). host는 agent가 작업 폴더를 만들기 전에 brief를 짓는다.
+/// 작업 폴더(`<cwd>/.aaa/<project>-<thread>`)의 절대 경로
+pub const BRIEF_WORK_DIR: &str = "{{aaa:work_dir}}";
+/// 그 머신 aaa 실행 파일(진행 보고 명령)
+pub const BRIEF_EXE: &str = "{{aaa:exe}}";
+
+/// brief 자리를 채운다. 실행 파일 경로에 빈칸이 있으면 큰따옴표로 감싼다.
+pub fn fill_brief(brief: &str, work_dir: &str, exe: &str) -> String {
+    let exe = if exe.contains(char::is_whitespace) { format!("\"{exe}\"") } else { exe.to_string() };
+    brief.replace(BRIEF_WORK_DIR, work_dir).replace(BRIEF_EXE, &exe)
 }
 
 /// inbox 항목(0.2.35 inbox 계승, §8.9). DB가 원본이고 `projects/<p>/inbox/<id>.md`는 투영이다.
@@ -632,11 +668,6 @@ pub fn slug(title: &str) -> String {
     s
 }
 
-/// 보고 상태 태그가 사람의 일을 뜻하는가
-pub fn waits_on_user(state: Option<&str>) -> bool {
-    matches!(state, Some("사용자 작업 필요") | Some("결정 필요"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,15 +742,25 @@ mod tests {
         assert_eq!(slug("M1-3 Thread: 시작"), "m1-3-thread");
     }
 
+    /// herdr-projects `next_lines_come_from_the_next_section_only`를 옮겼다
     #[test]
-    fn report_tag_and_next() {
-        let r = "[사용자 작업 필요]\n\n## Report\n본문\n## Next\n- 인증서 만들기\n* 결과 알려 주기\n1. 셋째\n\n## Remember\n- 이건 아님\n";
-        let (s, n) = parse_report(r);
-        assert_eq!(s.as_deref(), Some("사용자 작업 필요"));
-        assert_eq!(n, ["인증서 만들기", "결과 알려 주기", "셋째"]);
-        assert!(waits_on_user(s.as_deref()));
-        assert_eq!(parse_report("그냥 글\n").0, None);
-        assert!(!waits_on_user(Some("완료")));
+    fn next_lines_come_from_the_next_section_only() {
+        let report = "PR: https://github.com/o/r/pull/1\n## Report\n- not this\n## Next\n- Merge the PR\n* Fix CI\n3. Confirm assumption X\n\n## Remember\n- nor this\n";
+        assert_eq!(next_lines(report), ["Merge the PR", "Fix CI", "Confirm assumption X"]);
+        assert!(next_lines("## Report\nnothing\n").is_empty());
+        assert!(next_lines("## Next\n").is_empty());
+        // `#` 머리가 오면 Next가 끝난다
+        assert_eq!(next_lines("## Next\n- 하나\n# 다른 절\n- 둘\n"), ["하나"]);
+    }
+
+    #[test]
+    fn fill_brief_puts_the_machine_paths() {
+        let b = format!("`{BRIEF_WORK_DIR}/report.md` `{BRIEF_EXE} report --unknown`");
+        assert_eq!(
+            fill_brief(&b, "/w/.aaa/p-t-0001", "/opt/aaa"),
+            "`/w/.aaa/p-t-0001/report.md` `/opt/aaa report --unknown`"
+        );
+        assert_eq!(fill_brief(BRIEF_EXE, "", r"C:\Program Files\aaa.exe"), r#""C:\Program Files\aaa.exe""#);
     }
 }
 

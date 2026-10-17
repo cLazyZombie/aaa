@@ -37,6 +37,9 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             .env_remove("NO_COLOR")
             .stdin(Stdio::null());
+        // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
+        #[cfg(unix)]
+        c.env("SHELL", "/bin/sh");
         c
     }
 
@@ -108,6 +111,24 @@ impl Node {
         })
     }
 
+    /// `wait_output`과 같되 화면 폭에서 접힌 줄을 이어 본다(`--source recent-unwrapped`, 긴 줄을 기다릴 때)
+    pub fn wait_output_unwrapped(&self, pane: &str, needle: &str, timeout: Duration) -> Value {
+        let ms = timeout.as_millis().to_string();
+        let args = [
+            "pane",
+            "wait-output",
+            pane,
+            "--source",
+            "recent-unwrapped",
+            &format!("--match={needle}"),
+            "--timeout",
+            &ms,
+        ];
+        self.json(&args).unwrap_or_else(|e| {
+            panic!("{pane}에 {needle:?}가 {timeout:?} 안에 나오지 않았다: {e}\n화면:\n{}", self.screen(pane))
+        })
+    }
+
     pub fn pane(&self, pane: &str) -> Value {
         let v = self.ok(&["pane", "list"]);
         v["panes"]
@@ -122,6 +143,17 @@ impl Node {
     pub fn machine(&self, name: &str) -> Option<Value> {
         let v = self.json(&["machine", "list"]).ok()?;
         v["machines"].as_array()?.iter().find(|m| m["name"] == name).cloned()
+    }
+
+    pub fn connected(&self, name: &str) -> bool {
+        self.machine(name).is_some_and(|m| m["connection"] == "connected")
+    }
+
+    /// host ticker를 `n`번 돌리고(`aaa ticker tick`: 이 명령 뒤에 시작한 tick이 끝나면 돌아온다) 끝난 tick 수를 돌려준다.
+    /// 「host가 보고도 아무것도 하지 않았다」를 고정 sleep 없이 단언할 때 쓴다(herdr-projects 시험의 `ticker::tick_project`).
+    /// 시간 규칙(idle·quiet·schedule·outage_secs)이 막는 일은 tick만으로 일어나지 않는다: 그 규칙은 시간이 지났음을 먼저 보인다.
+    pub fn ticks(&self, n: usize) -> u64 {
+        (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
     }
 }
 
@@ -274,6 +306,61 @@ impl Drop for Lab {
         } else {
             eprintln!("실험실 기록을 남겼다: {}", self.root.display());
         }
+    }
+}
+
+/// 흐름 사건을 따라 읽는다(`aaa events --follow --json`, cursor 0부터라 따라 읽기 전에 난 사건도 본다).
+/// 기다림은 사건이 오는 것으로 끝난다. 시간은 오지 않을 때 멈추는 안전 상한일 뿐이다(polling하지 않는다).
+pub struct Follow {
+    rx: std::sync::mpsc::Receiver<Value>,
+    /// 지금까지 읽은 사건(순서대로)
+    pub seen: Vec<Value>,
+}
+
+impl Follow {
+    /// `f`에 맞는 사건이 올 때까지 읽는다. 이미 읽은 사건은 다시 보지 않는다.
+    pub fn until(&mut self, what: &str, timeout: Duration, f: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.rx.recv_timeout(left) {
+                Ok(e) => {
+                    self.seen.push(e.clone());
+                    if f(&e) {
+                        return e;
+                    }
+                }
+                Err(_) => panic!("{timeout:?} 안에 사건 {what}이 오지 않았다\n읽은 사건: {:#?}", self.seen),
+            }
+        }
+    }
+
+    /// 종류(`kind`)와 thread로 기다린다
+    pub fn kind(&mut self, kind: &str, thread: &str, timeout: Duration) -> Value {
+        self.until(&format!("{kind} {thread}"), timeout, |e| e["kind"] == kind && e["thread"] == thread)
+    }
+
+    pub fn kinds(&self) -> Vec<String> {
+        self.seen.iter().map(|e| e["kind"].as_str().unwrap_or_default().to_string()).collect()
+    }
+}
+
+impl Lab {
+    /// 프로젝트의 흐름 사건을 따라 읽는 프로세스를 띄운다(끝나면 다른 프로세스처럼 이 실험실이 정리한다)
+    pub fn follow(&mut self, tag: &str, node: &Node, project: &str) -> Follow {
+        let (_, out) = self.spawn_piped(tag, node, &["events", project, "--follow", "--json"]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in out.lines() {
+                let Ok(line) = line else { break };
+                if let Ok(v) = serde_json::from_str::<Value>(&line)
+                    && tx.send(v).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Follow { rx, seen: Vec::new() }
     }
 }
 

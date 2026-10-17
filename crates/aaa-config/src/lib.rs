@@ -104,7 +104,7 @@ pub struct NotifySection {
     pub format: String,
     /// format이 telegram일 때 받을 chat
     pub telegram_chat_id: String,
-    /// 알릴 inbox 항목 종류
+    /// 알릴 inbox 항목 종류(`item_kinds`가 옛 이름을 바꿔 읽는다). `thread-state`는 사람 차례·새 보고·시작 실패만 보낸다
     pub kinds: Vec<String>,
     /// 이 시간(초) 동안 모아 프로젝트마다 한 번에 보낸다(질문이 몰려도 한 통)
     pub debounce_secs: u64,
@@ -116,15 +116,31 @@ pub struct NotifySection {
     pub push_subject: String,
 }
 
+impl NotifySection {
+    /// 알릴 inbox 종류. 옛 thread 항목 종류(report·question·delivery·thread)는 `thread-state`로 읽는다: thread 항목을
+    /// 묶음 전이 하나로 합쳤다(plan §8.85). 이미 쓴 host.toml이 알림을 잃지 않게 한다.
+    pub fn item_kinds(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for k in &self.kinds {
+            let k = match k.as_str() {
+                "report" | "question" | "delivery" | "thread" => "thread-state",
+                other => other,
+            };
+            if !out.iter().any(|x| x == k) {
+                out.push(k.to_string());
+            }
+        }
+        out
+    }
+}
+
 impl Default for NotifySection {
     fn default() -> Self {
         NotifySection {
             webhook: String::new(),
             format: "json".into(),
             telegram_chat_id: String::new(),
-            kinds: ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval"]
-                .map(String::from)
-                .to_vec(),
+            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "pr"].map(String::from).to_vec(),
             debounce_secs: 15,
             web_push: true,
             push_hosts: ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
@@ -169,8 +185,10 @@ pub struct ProjectsSection {
     /// coordinator 입력창이 이만큼(초) 비어 있는 것을 두 번 보아야 nudge를 보낸다. 사람이 치는 글과 섞이지 않게 한다
     /// (herdr-projects `NUDGE_QUIET_SECS`).
     pub nudge_quiet_secs: u64,
-    /// 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다
+    /// 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다. `gh`가 이만큼 계속 실패해도 한 번 알린다.
     pub outage_secs: u64,
+    /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
+    pub pr_poll_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
@@ -190,6 +208,7 @@ impl Default for ProjectsSection {
             nudge_idle_secs: 60,
             nudge_quiet_secs: 10,
             outage_secs: 600,
+            pr_poll_secs: 120,
             inbox_done_days: 30,
             max_threads_per_machine: 6,
             routine_commands: Vec::new(),

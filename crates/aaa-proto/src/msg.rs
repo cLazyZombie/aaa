@@ -6,6 +6,8 @@
 //!
 //! 모르는 선택 필드는 무시한다(serde 기본). 필수 필드가 없거나 모르는 메시지 종류는 오류다.
 
+use std::collections::BTreeMap;
+
 use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
@@ -61,6 +63,8 @@ pub enum ErrorCode {
     SubscriptionNotFound,
     /// push 서비스가 그 구독을 버렸다(404·410, host가 지웠다, herdr-web-ui `subscription_gone`)
     SubscriptionGone,
+    /// 받을 수 있는 크기를 넘었다(공유 설정 64KB, herdr-web-ui `too_large`)
+    TooLarge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -186,6 +190,10 @@ pub struct ScreenText {
     pub lines: Vec<String>,
     pub cursor_row: u16,
     pub cursor_col: u16,
+    /// 보이는 화면을 SGR(굵게·흐리게·반전·색) escape와 함께 한 글로(`Vt::read` Visible·Ansi). herdr `agent read --format ansi`와 같은
+    /// 모양이라 herdr-projects `prompt_box`가 흐린 placeholder와 사람이 친 글을 가른다(plan §8.77). 옛 agent는 비워 보낸다.
+    #[serde(default)]
+    pub ansi: String,
 }
 
 /// `pane read`·`pane wait-output`이 읽는 곳(herdr `ReadSource`, `src/api/schema`)
@@ -218,6 +226,21 @@ pub struct ReadView {
     pub format: ReadFormat,
     pub text: String,
     pub truncated: bool,
+}
+
+/// `thread read`·`thread keys` 결과: 그 thread의 pane과 그때의 harness 상태, 읽은 화면(read) 또는 한 일(keys)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPaneView {
+    pub project: String,
+    pub thread: String,
+    pub pane: String,
+    /// 읽거나 보내기 전 harness 상태(hook 없는 harness는 없다)
+    pub agent: Option<crate::AgentActivity>,
+    pub read: Option<ReadView>,
+    /// 친 글자 수
+    pub typed: u32,
+    /// 누른 키
+    pub pressed: Vec<String>,
 }
 
 /// `pane wait-output`이 찾는 것(herdr `OutputMatch`)
@@ -454,6 +477,32 @@ pub enum AgentRequest {
         base: Option<String>,
         keep_worktree: bool,
     },
+    /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
+    /// 않는다(결정 3). agent 기능 `pr.v1`이 있을 때만 보낸다.
+    PrQuery {
+        cwd: String,
+        query: PrQuery,
+    },
+}
+
+/// `AgentRequest::PrQuery`가 묻는 것
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "q", rename_all = "snake_case")]
+pub enum PrQuery {
+    /// `gh pr view --json …` 출력(JSON 그대로)
+    View { url: String },
+    /// head가 이 branch인 PR 주소(없으면 빈 값). origin이 GitHub가 아니면 묻지 않는다.
+    Find { branch: String },
+    /// `gh`가 쓰는 계정 login
+    Login,
+}
+
+/// PR 조회 결과. `out`은 질문마다 view JSON·찾은 주소·login이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrAnswer {
+    /// `git remote get-url origin`(없으면 빈 값)
+    pub origin: String,
+    pub out: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -497,6 +546,7 @@ pub enum AgentResponse {
     Cwd {
         cwd: Option<String>,
     },
+    Pr(PrAnswer),
 }
 
 /// routine 명령 실행 결과
@@ -773,7 +823,7 @@ pub enum LayoutChange {
     CloseTab { tab: String },
     /// pane을 지금 자리에서 빼 새 탭에 둔다(herdr `pane move --new-tab`)
     MoveToNewTab { pane: String, name: Option<String> },
-    /// 탭 가득 보이기(herdr `pane zoom`). `zoomed`가 없으면 뒤집는다. pane이 하나뿐인 탭은 그대로다(plan §8.79)
+    /// 탭 가득 보이기(herdr `pane zoom`). `zoomed`가 없으면 뒤집는다. pane이 하나뿐인 탭은 그대로다(plan §8.91)
     Zoom {
         pane: String,
         #[serde(default)]
@@ -837,6 +887,20 @@ pub struct PublishState {
     pub owned_port: Option<u16>,
     pub web_port: u16,
     pub message: Option<String>,
+}
+
+/// pairing한 웹 기기 하나(herdr-web-ui `PairedDevice`). 「이 기기」 표시는 웹이 `/api/v1/me`의 id로 정한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeviceView {
+    pub id: String,
+    pub label: String,
+    /// reader 또는 controller
+    pub role: DeviceRole,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+    /// 마지막으로 들어온 때(1분 단위로 적는다). 아직 한 번도 안 들어왔으면 없다
+    #[ts(type = "number | null")]
+    pub last_seen_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1003,8 +1067,20 @@ pub enum FrontRequest {
     MachineRevoke {
         name: String,
     },
+    /// pairing 코드를 만든다. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`). 웹 기기는 controller 코드만(D6)
     WebPair {
         role: DeviceRole,
+    },
+    /// pairing한 웹 기기 목록
+    Devices,
+    /// 기기 이름을 바꾼다
+    DeviceRename {
+        id: String,
+        label: String,
+    },
+    /// 기기를 취소한다. 그 기기의 열린 연결은 바로 닫히고 push 구독도 지워진다
+    DeviceRevoke {
+        id: String,
     },
     WebPublish,
     WebPublishOff,
@@ -1094,6 +1170,23 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
+    /// thread pane이 지금 보이는 것(신뢰 창·질문 메뉴·권한 확인창, herdr-projects `thread read`). `lines`면 보이는 화면 대신
+    /// 기록 끝 N줄
+    ThreadRead {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        lines: Option<u32>,
+    },
+    /// thread pane이 보이는 것에 답한다(herdr-projects `thread keys`): `text`를 치고(Enter 없음) `keys`를 누른다
+    ThreadKeys {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        keys: Vec<String>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// 열린 확인창 질문(기본은 열린 것만)
     Questions {
         #[serde(default)]
@@ -1123,6 +1216,15 @@ pub enum FrontRequest {
     Decisions {
         project: String,
     },
+    /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
+    Preferences,
+    /// 공유 설정을 바꾼다: 바꾼 설정만, 고정은 바뀌었을 때만(herdr-web-ui `PUT /api/preferences`). 보기 권한은 못 한다
+    PreferencesSet {
+        #[ts(type = "Record<string, unknown>")]
+        settings: BTreeMap<String, serde_json::Value>,
+        #[serde(default)]
+        pins: Option<Vec<String>>,
+    },
     /// inbox. `peek`가 아니면 보인 항목을 「봤다」로 표시한다(처음 보는 항목만 coordinator에게 알린다)
     Inbox {
         project: String,
@@ -1139,6 +1241,9 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
+    /// ticker를 지금 한 번 돌리고, 이 요청 뒤에 시작한 tick이 끝나면 답한다(herdr-projects 시험의 `ticker::tick_project`,
+    /// t3code worker `drain`과 같은 자리). host가 「봤는데 할 일이 없었다」를 시험이 기다릴 수 있다(docs/testing.md).
+    TickerTick,
     /// 병합 대기열 맨 뒤에 넣는다(이미 있으면 그 자리)
     MergeEnqueue {
         project: String,
@@ -1170,6 +1275,14 @@ pub enum FrontRequest {
         project: String,
         name: String,
         command_sha256: String,
+    },
+    /// routine 켜기·끄기(front matter `enabled`, herdr-projects `routine toggle`). `on`이 없으면 뒤집는다.
+    /// 명령 승인은 그대로 필요하다.
+    RoutineToggle {
+        project: String,
+        name: String,
+        #[serde(default)]
+        on: Option<bool>,
     },
     /// 흐름 사건을 `after`(cursor) 다음부터 읽는다
     Events {
@@ -1242,6 +1355,7 @@ impl FrontRequest {
                 | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
+                | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
                 | FrontRequest::PaneWaitOutput { .. }
@@ -1252,9 +1366,11 @@ impl FrontRequest {
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
+                | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
                 | FrontRequest::Evaluations { .. }
                 | FrontRequest::EvaluationShow { .. }
+                | FrontRequest::Preferences
         )
     }
 
@@ -1268,9 +1384,9 @@ impl FrontRequest {
                 | FrontRequest::MachineRevoke { .. }
                 | FrontRequest::RoutineApprove { .. }
                 | FrontRequest::MergeLand { .. }
-                | FrontRequest::WebPair { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
+                | FrontRequest::TickerTick
         )
     }
 }
@@ -1299,6 +1415,8 @@ pub enum FrontResponse {
     },
     Screen(ScreenText),
     Read(ReadView),
+    /// `thread read`·`thread keys`
+    ThreadPane(ThreadPaneView),
     /// `pane wait-output`이 찾았다: 맞은 줄과 그때 읽은 글
     OutputMatched {
         matched_line: String,
@@ -1318,6 +1436,9 @@ pub enum FrontResponse {
         expires_in_s: u64,
     },
     Publish(PublishState),
+    Devices {
+        devices: Vec<DeviceView>,
+    },
     Workspace(Workspace),
     Done,
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
@@ -1352,9 +1473,17 @@ pub enum FrontResponse {
     Decision(DecisionView),
     Inbox {
         items: Vec<InboxItem>,
+        /// `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        done: Option<u32>,
     },
     Merge {
         queue: Vec<MergeEntry>,
+    },
+    /// `ticker_tick`: 이 host 실행에서 끝난 tick 수(방금 돈 것까지)
+    Ticker {
+        runs: u64,
     },
     MergeLand(Box<MergeLandView>),
     Routines {
@@ -1368,6 +1497,23 @@ pub enum FrontResponse {
         evaluations: Vec<EvaluationView>,
     },
     Evaluation(Box<EvaluationView>),
+    Preferences(SharedPreferences),
+}
+
+/// 이 host의 모든 웹 화면이 함께 쓰는 것: 기기에 기대지 않는 설정과 고정(herdr-web-ui `shared/preferences.ts` `SharedPreferences`).
+/// 값의 뜻은 웹이 본다. host는 공유 이름(`SHARED_SETTING_KEYS`)과 모양·한도만 지킨다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SharedPreferences {
+    /// 처음 쓰기 전에는 0, 쓸 때마다 하나 오른다
+    #[ts(type = "number")]
+    pub revision: u64,
+    /// 어느 화면이 나눈 설정만 있다. 아무도 안 바꾼 설정은 없고, 기기마다 제 것으로 남는다
+    #[ts(type = "Record<string, unknown>")]
+    pub settings: BTreeMap<String, serde_json::Value>,
+    /// 목록 고정 열쇠(agent는 `machine:pane`), 고정한 순서대로. 화면이 처음 고정을 나누기 전에는 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pins: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1385,6 +1531,10 @@ pub enum FrontEvent {
     Thread(ThreadView),
     /// 확인창 질문이 생기거나 답해졌다(알림 대상)
     Question(QuestionView),
+    /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)
+    Preferences(SharedPreferences),
+    /// 상태 사건 연결의 `ping`에 대한 답(herdr-web-ui ws.ts 「Liveness」: 그 ping의 답만 연결이 살아 있음을 말한다)
+    Pong { id: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1520,6 +1670,9 @@ pub enum EventsClientMsg {
     /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 쓰는 화면이 하나라도 있으면
     /// host는 어느 기기에도 Web Push를 보내지 않는다(그 화면이 이미 바뀐 것을 보인다). 연결이 끊기면 쓰지 않는 것이다.
     Presence { active: bool },
+    /// 연결이 살아 있는지 묻는다. host는 같은 `id`의 `pong`으로 답한다(herdr-web-ui ws.ts `probe`·server `ping`).
+    /// 휴대폰이 잠들었다 깨거나 망이 바뀌면 열린 것처럼 보이는 죽은 연결이 몇 분씩 남는다.
+    Ping { id: u32 },
 }
 
 #[cfg(test)]
@@ -1587,6 +1740,12 @@ mod tests {
     fn control_classification() {
         // reader가 보낼 수 있는 요청은 읽기뿐이어야 한다.
         assert!(!FrontRequest::PaneRead { pane: "p".into() }.needs_control());
+        // thread pane 읽기는 보기, 키로 답하기는 조작이다(세션 안 CLI는 보기만, §8.25)
+        let (project, thread) = ("p".to_string(), "t-0001".to_string());
+        assert!(
+            !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
+        );
+        assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
         assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
@@ -1600,7 +1759,12 @@ mod tests {
             }
             .needs_control()
         );
-        assert!(FrontRequest::WebPair { role: DeviceRole::Reader }.local_only());
+        // 웹 설정에서도 코드를 만든다(D6). 조작 권한이 있어야 하고, 목록은 보기 권한도 본다
+        assert!(!FrontRequest::WebPair { role: DeviceRole::Controller }.local_only());
+        assert!(FrontRequest::WebPair { role: DeviceRole::Controller }.needs_control());
+        assert!(!FrontRequest::Devices.needs_control());
+        assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
+        assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)

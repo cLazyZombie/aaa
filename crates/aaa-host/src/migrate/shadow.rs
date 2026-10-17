@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use aaa_proto::{AgentActivity, AgentStatus, BriefState, ThreadGroup, ThreadStatus, waits_on_user};
+use aaa_proto::{AgentActivity, AgentStatus, BriefState, ThreadGroup, ThreadStatus};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -52,8 +52,6 @@ pub struct Facts {
     pub pane_exists: bool,
     pub report_hash: String,
     pub acked_hash: String,
-    /// 보고 사본 첫 줄 상태 태그(모르면 None)
-    pub report_tag: Option<String>,
     pub pr_state: String,
     pub pr_review: String,
     /// herdr agent 상태(idle·working·blocked·done·unknown). agent를 못 찾으면 None
@@ -152,6 +150,9 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         repo: None,
         base: None,
         branch: None,
+        pr: None,
+        pr_state: None,
+        pr_review: None,
         cwd: None,
         work_dir: None,
         pane: None,
@@ -162,12 +163,17 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
             (true, true) => BriefState::Unknown,
             (true, false) => BriefState::Pending,
         },
+        brief_attempts: 0,
+        delivered_at_ms: None,
+        delivered_report: None,
         launch: None,
         report_hash: (!f.report_hash.is_empty()).then(|| f.report_hash.clone()),
         acked_hash: (!f.acked_hash.is_empty()).then(|| f.acked_hash.clone()),
-        report_state: f.report_tag.clone(),
         next: Vec::new(),
         copy: None,
+        copy_notes: Vec::new(),
+        last_group: None,
+        review_item_hash: None,
         error: None,
         decisions_rev: None,
         eval_cursor: 0,
@@ -192,13 +198,9 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
 }
 
 /// 차이의 까닭(규칙을 읽고 정한 분류)
-pub fn reason(f: &Facts, hp: &str, aaa: &str) -> String {
+pub fn reason(f: &Facts, hp: &str, _aaa: &str) -> String {
     if hp == "landing" {
         return "aaa에는 Landing(PR 승인) 묶음이 없다(4장 I「누가 병합하나」, D11 옮기는 중)".into();
-    }
-    if aaa == "waiting-on-you" && hp == "ready-for-review" && waits_on_user(f.report_tag.as_deref()) {
-        return "보고 태그 [결정 필요]·[사용자 작업 필요]를 aaa는 사람 차례로 둔다(aaa orch.rs thread_group 5, 의도한 차이)"
-            .into();
     }
     if hp == "ready-for-review" && f.pr_state.eq_ignore_ascii_case("open") && f.report_hash == f.acked_hash {
         return "PR이 열린 확인된 보고: 0.2는 검토 대기, aaa는 PR을 모른다(4장 I)".into();
@@ -208,6 +210,9 @@ pub fn reason(f: &Facts, hp: &str, aaa: &str) -> String {
     }
     if f.agent_state.is_none() && f.self_activity.is_some() {
         return "agent 없이 진행 보고만 있다: aaa 상태는 harness 활동이 있어야 진행 보고를 담는다".into();
+    }
+    if hp == "ready-for-review" && f.pane_exists && f.self_age_secs.is_some() && f.self_percent != Some(100) {
+        return "진행을 보고하는 agent의 중간 보고: aaa는 `Done`일 때만 검토 대기다(plan §8.85)".into();
     }
     "분류 안 됨(규칙을 다시 본다)".into()
 }
@@ -304,15 +309,6 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
             reports.insert(m.to_string(), v);
         }
     }
-    let heads: BTreeMap<String, (String, String)> = read(dir, "hp-reports.txt")
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| {
-            let mut it = l.splitn(3, '\t');
-            Some((it.next()?.to_string(), (it.next()?.to_string(), it.next().unwrap_or("").to_string())))
-        })
-        .collect();
-    let have_heads = dir.join("hp-reports.txt.rc").exists();
     if let Some(text) = read(dir, "hp-threads.json") {
         let list: Vec<serde_json::Value> = serde_json::from_str(&text).context("hp-threads.json")?;
         for v in list {
@@ -324,8 +320,6 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
             let machine = if t.is_remote() { t.machine.clone() } else { opts.home_machine.clone() };
             let snap = snaps.get(&machine);
             let agent: Option<&SnapAgent> = snap.and_then(|s| s.agents.iter().find(|a| source::agent_matches(&t, a)));
-            let head = heads.get(&t.id);
-            let report_tag = head.and_then(|(_, first)| aaa_proto::parse_report(first).0);
             let mut f = Facts {
                 status: t.status.clone(),
                 created_s: aaa_common::util::parse_iso(&t.created).map_or(0, |ms| (ms / 1000) as i64),
@@ -334,7 +328,6 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
                 pane_exists: true,
                 report_hash: t.report_hash.clone(),
                 acked_hash: t.acked_report_hash.clone(),
-                report_tag,
                 pr_state: t.pr_state.clone(),
                 pr_review: t.pr_review.clone(),
                 ..Facts::default()
@@ -383,17 +376,15 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
             } else {
                 None
             };
-            // 입력이 재현될 때만 aaa 차이를 판정한다. 보고 첫 줄을 못 모은 tick은 태그를 몰라 판정하지 않는다.
-            let reproduced = hp_cli.as_deref() == Some(hp_replay.as_str()) && (have_heads || f.report_hash.is_empty());
+            // 입력이 재현될 때만 aaa 차이를 판정한다. 보고 첫 줄(`hp-reports.txt`)은 aaa가 태그로 묶음을 정하지 않아
+            // 더 읽지 않는다(plan §8.78).
+            let reproduced = hp_cli.as_deref() == Some(hp_replay.as_str());
             let (agree, why) = match &hp_cli {
                 Some(cli) if reproduced => {
                     let same = *cli == aaa;
                     (Some(same), (!same).then(|| reason(&f, cli, &aaa)))
                 }
-                Some(_) => (
-                    None,
-                    Some(if have_heads { "입력 재현 안 됨" } else { "보고 첫 줄 없음(수집기 옛 판)" }.into()),
-                ),
+                Some(_) => (None, Some("입력 재현 안 됨".into())),
                 None => (None, None),
             };
             rows.push(Row {
@@ -641,13 +632,11 @@ mod tests {
         assert_eq!(both(&f), ("ready-for-review", "ready-for-review"));
         f.report_hash.clear();
         assert_eq!(both(&f), ("working", "working"));
-        // 의도한 차이: [결정 필요] 보고
+        // 보고 첫 줄 태그로는 묶음을 정하지 않는다(D9, plan §8.78): 쉬는 agent의 새 보고는 둘 다 검토 대기
         let mut d = open();
         d.agent_state = Some("idle".into());
         d.report_hash = "h".into();
-        d.report_tag = Some("결정 필요".into());
-        assert_eq!(both(&d), ("ready-for-review", "waiting-on-you"));
-        assert!(reason(&d, "ready-for-review", "waiting-on-you").contains("의도한 차이"));
+        assert_eq!(both(&d), ("ready-for-review", "ready-for-review"));
         // PR 승인: 0.2만 Landing
         let mut l = open();
         l.agent_state = Some("idle".into());

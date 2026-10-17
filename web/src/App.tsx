@@ -8,9 +8,15 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ApiError, call, me, pair, pushInfo, watchEvents } from "./api";
+import { ApiError, call, me, onSignedOut, pushInfo, signOut, watchEvents } from "./api";
+import { removePushSubscription } from "./push";
+import { AccessGate } from "./AccessGate";
+import { takePairCode } from "./herdr/phone";
+import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { ThreadPanel } from "./ThreadPanel";
+import { ProjectThreads } from "./ProjectThreads";
+import { Folder } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
@@ -22,71 +28,25 @@ import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
-import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
-type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
+type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
 export function App() {
   const [auth, setAuth] = useState<Auth>({ state: "loading" });
-  useEffect(() => {
+  // QR 코드가 연 주소의 `?pair=CODE`: 읽자마자 주소에서 지운다(기록·referrer에 남지 않게, herdr-web-ui takePairCode)
+  const [pairCode] = useState(() => takePairCode());
+  const check = useCallback(() => {
     me()
-      .then((m) => setAuth(m ? { state: "in", role: m.role } : { state: "pair" }))
+      .then((m) => setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" }))
       .catch((e: unknown) => setAuth({ state: "error", msg: String(e) }));
   }, []);
+  useEffect(check, [check]);
+  // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다
+  useEffect(() => onSignedOut(check), [check]);
   if (auth.state === "loading") return <p className="center muted">불러오는 중</p>;
   if (auth.state === "error") return <p className="center err">{auth.msg}</p>;
-  if (auth.state === "pair") return <Pair onDone={(role) => setAuth({ state: "in", role })} />;
-  return <Main role={auth.role} />;
-}
-
-function Pair({ onDone }: { onDone: (r: DeviceRole) => void }) {
-  const [code, setCode] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="pair-wrap">
-      <main className="pair">
-        <img className="logo big" src="/icon.svg" alt="" />
-        <h1>이 기기 연결하기</h1>
-        <p>
-          host 머신에서 <code>aaa web pair</code>를 실행하고 나온 코드를 넣는다. 한 번 연결하면 이 브라우저는 다시 묻지 않는다.
-        </p>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            setMsg(null);
-            try {
-              const r = await pair(code.trim());
-              onDone(r.role);
-            } catch (err) {
-              setMsg(err instanceof ApiError ? err.message : String(err));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="pairing 코드"
-            aria-label="pairing 코드"
-            autoComplete="one-time-code"
-            autoCapitalize="characters"
-            spellCheck={false}
-            autoFocus
-          />
-          <button type="submit" className="primary" disabled={busy || code.trim() === ""}>
-            연결
-          </button>
-        </form>
-        {msg && <p className="err">{msg}</p>}
-        <p className="foot muted">
-          보기만 할 기기는 <code>aaa web pair --reader</code>로 만든 코드를 쓴다.
-        </p>
-      </main>
-    </div>
-  );
+  if (auth.state === "pair") return <AccessGate initialCode={pairCode} onUnlocked={check} />;
+  return <Main role={auth.role} device={auth.device} onSignedOut={check} />;
 }
 
 const ACTIVITY_LABEL: Record<AgentActivity, string> = {
@@ -138,6 +98,9 @@ export function splitQuestion(text: string): { tool: string | null; body: string
 /**
  * 확인창 질문 카드. 답은 host가 질문이 아직 열려 있는지 다시 확인한 뒤 harness 키로 보낸다.
  * 목록에서는 작게(예·아니오 버튼), 터미널 아래에서는 선택지를 한 줄씩 번호와 함께 보인다.
+ * 답이 가는 동안과 실패는 카드 안에 보인다(herdr-web-ui PromptCard.tsx: `aria-busy`, 선택지 `disabled={pending}`,
+ * 카드 안 `role="alert"`). 휴대폰은 pane을 보는 동안 목록(머리 띠)이 숨으므로 오류가 카드 밖이면 아무도 못 본다.
+ * 카드는 질문 하나에 하나(`key`)라, 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다.
  */
 function QuestionCard({
   q,
@@ -149,12 +112,31 @@ function QuestionCard({
   q: QuestionView;
   where: string;
   canControl: boolean;
-  onPick: (q: QuestionView, c: string) => void;
+  onPick: (q: QuestionView, c: string) => Promise<void>;
   docked?: boolean;
 }) {
   const { tool, body } = splitQuestion(q.text);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shown = useRef(false);
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
+  const pick = async (choice: string) => {
+    setPending(true);
+    setError(null);
+    try {
+      await onPick(q, choice);
+    } catch (e) {
+      if (shown.current) setError(e instanceof ApiError ? e.message : String(e));
+    }
+    if (shown.current) setPending(false);
+  };
   return (
-    <div className="question" data-testid={docked ? `dock-question-${q.id}` : `question-${q.id}`}>
+    <div className="question" aria-busy={pending} data-testid={docked ? `dock-question-${q.id}` : `question-${q.id}`}>
       <div className="q-head">
         <span className="q-title">{KIND_LABEL[q.question_kind] ?? q.question_kind}</span>
         <span className="q-where">
@@ -168,7 +150,7 @@ function QuestionCard({
       {canControl ? (
         <div className="q-actions">
           {q.options.map((o, n) => (
-            <button key={o} className={o === "yes" ? "primary" : ""} onClick={() => onPick(q, o)}>
+            <button key={o} className={o === "yes" ? "primary" : ""} disabled={pending} onClick={() => void pick(o)}>
               {docked && <span className="key">{n + 1}</span>}
               {CHOICE_LABEL[o] ?? o}
             </button>
@@ -177,13 +159,19 @@ function QuestionCard({
       ) : (
         <p className="muted small-text">보기 권한이라 답할 수 없다</p>
       )}
+      {error !== null && (
+        <p className="q-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
-/** 고른 것: `#pane=<id>` 또는 `#thread=<project>/<id>` */
+/** 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects` */
 function selectedFromHash(): string | null {
-  const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
+  if (location.hash === "#projects") return "projects:";
+  const m = /^#(pane|thread|project)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -204,7 +192,7 @@ function agentOf(p: PaneView | undefined, t?: ThreadView): string | null {
   return null;
 }
 
-function Main({ role }: { role: DeviceRole }) {
+function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; device: string; onSignedOut: () => void }) {
   const [machines, setMachines] = useState<MachineView[]>([]);
   const [panes, setPanes] = useState<PaneView[]>([]);
   const [up, setUp] = useState(false);
@@ -240,17 +228,21 @@ function Main({ role }: { role: DeviceRole }) {
       return next;
     });
 
-  // 이 기기의 알림(plan §8.70): host push와 같은 사건, 같은 종류(`notify.kinds`)에만 띄운다. 질문이 열리면 「입력 필요」,
-  // thread에 확인하지 않은 새 보고가 오면 「작업 완료」. 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
+  // 이 기기의 알림(plan §8.70): host가 알리는 종류(`notify.kinds`의 `thread-state`)에만 띄운다. 질문이 열리면 바로
+  // 「입력 필요」(host push는 30초 넘게 뜬 확인창만 보낸다), thread가 검토 대기가 된 새 보고는 「작업 완료」(host 「new report」
+  // 항목과 같은 규칙: 검토 대기일 때 보고 hash당 한 번, 작업 중에 고쳐 쓴 보고는 아니다, plan §8.85).
+  // 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
   const alertKinds = useRef<Set<string> | null>(null);
   const seenQuestions = useRef(new Set<string>());
   const seenReports = useRef(new Map<string, string | null>());
+  // 이 화면이 한 번이라도 붙었었나: 다시 붙을 때 읽은 목록은 끊긴 동안 놓친 사건이다(아래)
+  const linkedOnce = useRef({ questions: false, threads: false });
   const now = useRef({ sel, panes, threads, machines });
   now.current = { sel, panes, threads, machines };
   const questionNews = (q: QuestionView) => {
     if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
     seenQuestions.current.add(q.id);
-    if (!alertKinds.current?.has("question")) return;
+    if (!alertKinds.current?.has("thread-state")) return;
     const { sel, panes, threads, machines } = now.current;
     const pane = panes.find((p) => p.id === q.pane);
     const thread = q.project && q.thread ? threads.get(`${q.project}/${q.thread}`) : undefined;
@@ -269,12 +261,18 @@ function Main({ role }: { role: DeviceRole }) {
       },
     });
   };
+  // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
+  const reviewHash = (t: ThreadView) => (t.group === "ready_for_review" ? t.report_hash : null);
   const reportNews = (t: ThreadView) => {
     const key = threadKey(t);
-    const before = seenReports.current.get(key);
-    seenReports.current.set(key, t.report_hash);
-    const fresh = before !== undefined && t.report_hash !== null && t.report_hash !== before && t.report_hash !== t.acked_hash;
-    if (!fresh || t.role === "evaluator" || !alertKinds.current?.has("report")) return;
+    if (!seenReports.current.has(key)) {
+      seenReports.current.set(key, reviewHash(t));
+      return;
+    }
+    const hash = reviewHash(t);
+    if (hash === null || hash === seenReports.current.get(key)) return;
+    seenReports.current.set(key, hash);
+    if (t.role === "evaluator" || !alertKinds.current?.has("thread-state")) return;
     const { sel, panes } = now.current;
     raiseAlert({
       kind: "done",
@@ -283,10 +281,14 @@ function Main({ role }: { role: DeviceRole }) {
       title: t.title || t.id,
       machine: null,
       agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
-      notice: { title: `${t.project} · ${t.title || t.id}`, body: t.report_state ?? "보고 준비", tag: `aaa-${t.project}/${t.id}` },
+      notice: { title: `${t.project} · ${t.title || t.id}`, body: "보고 준비", tag: `aaa-${t.project}/${t.id}` },
     });
   };
 
+  // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.79): 들어온 뒤에만 읽고, events 사건으로 따라간다
+  const syncPreferences = usePreferencesSync(true);
+  const receivePreferences = useRef(syncPreferences);
+  receivePreferences.current = syncPreferences;
   useEffect(
     () =>
       watchEvents(
@@ -309,7 +311,11 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "questions", all: false })
               .then((r) => {
                 if (r.kind !== "questions") return;
-                for (const q of r.questions) seenQuestions.current.add(q.id);
+                // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
+                // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
+                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q);
+                else for (const q of r.questions) seenQuestions.current.add(q.id);
+                linkedOnce.current.questions = true;
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
@@ -318,7 +324,15 @@ function Main({ role }: { role: DeviceRole }) {
             call({ op: "threads", project: null, role: null })
               .then((r) => {
                 if (r.kind !== "threads") return;
-                for (const t of r.threads) seenReports.current.set(threadKey(t), t.report_hash);
+                // 위 질문과 같다: 다시 붙을 때는 끊긴 동안 검토 대기가 된 새 보고를 알린다(처음 보는 thread는 새 소식이 아니다)
+                // 끊긴 동안 새로 생긴 thread도 처음 붙을 때 목록에 없었으니 새 소식이다
+                if (linkedOnce.current.threads)
+                  for (const t of r.threads) {
+                    if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
+                    reportNews(t);
+                  }
+                else for (const t of r.threads) seenReports.current.set(threadKey(t), reviewHash(t));
+                linkedOnce.current.threads = true;
                 setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
               })
               .catch(() => {});
@@ -327,19 +341,16 @@ function Main({ role }: { role: DeviceRole }) {
           reportNews(t);
           putThread(t);
         },
+        (p) => receivePreferences.current(p),
       ),
     [],
   );
   useAlertSoundUnlock();
 
+  // 실패는 그 카드가 보인다(QuestionCard): 목록 머리 띠는 휴대폰에서 pane을 보는 동안 숨는다
   const answer = async (q: QuestionView, choice: string) => {
-    setMsg(null);
-    try {
-      const r = await call({ op: "question_answer", id: q.id, choice });
-      if (r.kind === "question") putQuestion(r);
-    } catch (e) {
-      setMsg(e instanceof ApiError ? e.message : String(e));
-    }
+    const r = await call({ op: "question_answer", id: q.id, choice });
+    if (r.kind === "question") putQuestion(r);
   };
   useEffect(() => {
     const on = () => setSel(selectedFromHash());
@@ -351,9 +362,16 @@ function Main({ role }: { role: DeviceRole }) {
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
   };
-  const chooseThread = (t: ThreadView) => {
+  // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로)
+  const [backTo, setBackTo] = useState<string | null>(null);
+  const chooseThread = (t: ThreadView, from: string | null = null) => {
+    setBackTo(from);
     location.hash = `thread=${encodeURIComponent(threadKey(t))}`;
     setSel(`thread:${threadKey(t)}`);
+  };
+  const chooseProject = (name: string | null) => {
+    location.hash = name === null ? "projects" : `project=${encodeURIComponent(name)}`;
+    setSel(name === null ? "projects:" : `project:${name}`);
   };
 
   const newShell = async (m: MachineView) => {
@@ -370,7 +388,10 @@ function Main({ role }: { role: DeviceRole }) {
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
   useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
-  const shownThreads = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+  // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads)
+  const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator");
+  const shownThreads = allThreads.filter((t) => t.group !== "resolved");
+  const viewProject = sel === "projects:" ? null : sel?.startsWith("project:") ? sel.slice(8) : undefined;
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
@@ -391,7 +412,7 @@ function Main({ role }: { role: DeviceRole }) {
   };
 
   return (
-    <div className={`app ${current || currentThread ? "has-sel" : ""}`}>
+    <div className={`app ${current || currentThread || viewProject !== undefined ? "has-sel" : ""}`}>
       <aside className="list sidebar-shell">
         <header className="list-head">
           <span className="brand">
@@ -405,7 +426,7 @@ function Main({ role }: { role: DeviceRole }) {
           {evaluators.map((v) => (
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
-          <MoreMenu />
+          <MoreMenu onProjects={() => chooseProject(null)} />
         </header>
         {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
         <Sidebar
@@ -416,7 +437,7 @@ function Main({ role }: { role: DeviceRole }) {
           canControl={canControl}
           agentOf={agentOf}
           onPane={(id) => choose(id)}
-          onThread={chooseThread}
+          onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
           banners={
             <>
@@ -426,7 +447,7 @@ function Main({ role }: { role: DeviceRole }) {
             </>
           }
         />
-        <ListFoot />
+        <ListFoot role={role} device={device} onSignedOut={signedOut} />
       </aside>
       <main className="view">
         {currentThread ? (
@@ -434,10 +455,19 @@ function Main({ role }: { role: DeviceRole }) {
             key={threadKey(currentThread)}
             t={currentThread}
             role={role}
-            onBack={() => choose(null)}
+            backTo={backTo?.startsWith("project:") ? backTo.slice(8) : undefined}
+            onBack={() => (backTo !== null && backTo.startsWith("project:") ? chooseProject(backTo.slice(8)) : choose(null))}
             onOpenPane={
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
+          />
+        ) : viewProject !== undefined ? (
+          <ProjectThreads
+            project={viewProject}
+            threads={allThreads}
+            onProject={chooseProject}
+            onThread={(t) => chooseThread(t, `project:${t.project}`)}
+            onBack={() => choose(null)}
           />
         ) : current ? (
           <TermView
@@ -494,26 +524,60 @@ function Main({ role }: { role: DeviceRole }) {
  * 머리의 「더 보기」 메뉴(참고 App.tsx moreItems·header-more): 링크 복사와 「알림」(이 기기 상태를 말하고 누르면 켜고 끈다).
  * 알림이 꺼져 있으면 메뉴 단추에 점을 단다. 찾기·파일 보기 항목은 그 기능을 옮길 때 넣는다.
  */
-function MoreMenu() {
+function MoreMenu({ onProjects }: { onProjects: () => void }) {
   const alerts = useAlerts();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const box = useRef<HTMLSpanElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  // 닫기와 키(herdr-web-ui RowMenu.tsx 104~165줄): 열면 첫 항목에 focus(키보드 사건이 메뉴로 온다), Esc는 window에서
+  // 먼저 받아 닫고, 바깥 누름·focus가 메뉴 밖으로 나가면 닫는다. 위·아래·Home·End로 옮기고 Tab은 닫는다. 닫히면 ⋯로 돌아간다
+  const close = useCallback(() => {
+    setOpen(false);
+    if (menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     if (!open) return;
+    window.requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>("[role^=menuitem]")?.focus());
     const away = (e: Event) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
     };
     const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      close();
     };
-    document.addEventListener("pointerdown", away, true);
-    document.addEventListener("keydown", esc);
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", esc, true);
     return () => {
-      document.removeEventListener("pointerdown", away, true);
-      document.removeEventListener("keydown", esc);
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", esc, true);
     };
-  }, [open]);
+  }, [open, close]);
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const move = (next: number) => {
+      e.preventDefault();
+      items[(next + items.length) % items.length]?.focus();
+    };
+    if (e.key === "ArrowDown") move(at + 1);
+    else if (e.key === "ArrowUp") move(at - 1);
+    else if (e.key === "Home") move(0);
+    else if (e.key === "End") move(items.length - 1);
+    else if (e.key === "Tab") {
+      e.preventDefault();
+      close();
+    }
+  };
+  const onMenuBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && box.current?.contains(next)) return;
+    // Mac Safari는 누른 단추에 focus를 주지 않아 relatedTarget이 없다: 누름은 pointerdown이 판단한다
+    if (next) setOpen(false);
+  };
   useEffect(() => {
     if (!note) return;
     const t = window.setTimeout(() => setNote(null), 2000);
@@ -523,6 +587,7 @@ function MoreMenu() {
   return (
     <span className="more" ref={box}>
       <button
+        ref={button}
         className="ghost icon"
         data-testid="more"
         aria-label={label}
@@ -540,7 +605,7 @@ function MoreMenu() {
         </span>
       )}
       {open && (
-        <div className="more-menu" role="menu">
+        <div className="more-menu" role="menu" aria-label="더 보기" ref={menu} onKeyDown={onMenuKey} onBlur={onMenuBlur}>
           <button
             role="menuitem"
             onClick={() => {
@@ -570,36 +635,44 @@ function MoreMenu() {
               <span className="more-hint">{alerts.bell.state}</span>
             </button>
           )}
+          {/* 프로젝트마다 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리. 참고 moreItems에 없는 항목이라 맨 끝 */}
+          <button
+            role="menuitem"
+            data-testid="projects-item"
+            onClick={() => {
+              setOpen(false);
+              onProjects();
+            }}
+          >
+            <Folder className="i" aria-hidden="true" />
+            <span className="more-label">프로젝트</span>
+          </button>
         </div>
       )}
     </span>
   );
 }
 
-/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에 있다 */
-function ListFoot() {
+/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에,
+ * 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다(참고 목록에 그런 자리가 없다) */
+function ListFoot({ role, device, onSignedOut: signedOut }: { role: DeviceRole; device: string; onSignedOut: () => void }) {
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
-  const tr = useInputTrace();
-  // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
-  const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  // 설정 → 기기 「로그아웃」(참고 App.tsx `lock`): 구독을 먼저 지운다(cookie가 있어야 지워지고, 잠긴 기기에 알림이 가지 않게). 답이 오다 끊겨도 host에 다시 묻는다
+  const signOutHere = useCallback(async () => {
+    await removePushSubscription().catch(() => undefined);
+    try {
+      await signOut();
+    } catch {
+      throw new Error("로그아웃하지 못했습니다. 다시 시도해 주세요.");
+    } finally {
+      signedOut();
+    }
+  }, [signedOut]);
   return (
     <div className="list-foot">
-      {showTrace && (
-        <button className="ghost" data-testid="trace-toggle" aria-pressed={tr.on} onClick={() => setTrace(!tr.on)}>
-          <Icon name="file" />
-          {tr.on ? `입력 기록 끄기(${tr.count}개 모음)` : "입력 기록 켜기(실기 키보드 진단)"}
-        </button>
-      )}
-      {tr.on && (
-        <button className="ghost" data-testid="trace-send" disabled={tr.count === 0} onClick={() => void tr.send()}>
-          <Icon name="send" />
-          입력 기록 보내기
-        </button>
-      )}
-      {tr.msg && <p className="foot-msg">{tr.msg}</p>}
       {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
       {!installed && (
         <button
@@ -628,32 +701,9 @@ function ListFoot() {
         </button>
         <UsageMeters />
       </div>
-      {settingsOpen && <SettingsDialog onClose={closeSettings} />}
+      {settingsOpen && <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />}
     </div>
   );
-}
-
-/** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
-function useInputTrace() {
-  const [on, setOn] = useState(traceOn());
-  const [count, setCount] = useState(traceCount());
-  const [msg, setMsg] = useState<string | null>(null);
-  useEffect(
-    () =>
-      onTraceChange(() => {
-        setOn(traceOn());
-        setCount(traceCount());
-      }),
-    [],
-  );
-  const send = async () => {
-    try {
-      setMsg(`보냈다: ${await sendTrace()}`);
-    } catch (e) {
-      setMsg(`보내지 못했다: ${(e as Error).message}`);
-    }
-  };
-  return { on, count, msg, send };
 }
 
 /** 사후 평가자 표시: 동작 상태와 정하지 않은 개선안 수. 누르면 평가자 pane을 연다(닫아도 배경에서 계속 돈다). */

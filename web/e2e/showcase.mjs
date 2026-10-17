@@ -90,7 +90,7 @@ fs.writeFileSync(
     `[projects]\nroot = "${root}/projects"\nallow_profiles = ["*"]\ntick_secs = 1\n`,
 );
 
-// 보고를 쓰는 가짜 thread agent: 할 일에 따라 [완료]·[결정 필요]를 쓰거나, 「오래」면 보고 없이 일한다
+// 보고를 쓰는 가짜 thread agent: 할 일에 따라 보고를 쓰거나(결정이면 먼저 `Waiting for you` 진행 보고), 「오래」면 보고 없이 일한다
 fs.writeFileSync(
   `${root}/fake.sh`,
   `#!/bin/sh
@@ -99,16 +99,17 @@ while IFS= read -r line; do
   case "$line" in
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
-      task=$(sed -n '/^# 할 일/,$p' "$dir/brief.md" | tail -n +3)
+      task=$(awk '/^# 할 일/{f=1;next} /^# 경로/{f=0} f' "$dir/brief.md" | sed '/^$/d')
       printf '\\033[36m● brief를 읽었다\\033[0m\\n'
       case "$task" in
         *오래*) printf '\\033[2m  · 시험을 돌리는 중…\\033[0m\\n' ;;
         *결정*)
-          printf '[결정 필요]\\n\\n## Report\\n로그인 저장 방식을 정해야 한다.\\n\\n- 쿠키 세션: 서버 상태가 필요하다\\n- JWT: 폐기가 어렵다\\n\\n## Next\\n- 쿠키 세션으로 정하기(추천)\\n' > "$dir/report.md" ;;
+          "$AA" report --percent 50 --activity 'Waiting for you'
+          printf '## Report\\n로그인 저장 방식을 정해야 한다.\\n\\n- 쿠키 세션: 서버 상태가 필요하다\\n- JWT: 폐기가 어렵다\\n\\n## Next\\n- 쿠키 세션으로 정하기(추천)\\n' > "$dir/report.md" ;;
         *)
           mkdir -p "$dir/library"
           printf '<!doctype html><meta charset=utf-8><body style="font-family:sans-serif;padding:24px"><h1>성능 보고</h1><p>p95 <b>182ms → 64ms</b></p></body>' > "$dir/library/index.html"
-          printf '[완료]\\n\\n## Report\\n결제 API의 **p95 지연**을 182ms에서 64ms로 줄였다.\\n\\n- 원인: 주문마다 \\140SELECT\\140을 다시 했다\\n- 고침: 요청 안에서 한 번만 읽는다\\n- 확인: 부하 시험 3회\\n\\n## Next\\n- 결과를 확인하고 병합하기\\n- 캐시 만료 시간 정하기\\n' > "$dir/report.md" ;;
+          printf '## Report\\n결제 API의 **p95 지연**을 182ms에서 64ms로 줄였다.\\n\\n- 원인: 주문마다 \\140SELECT\\140을 다시 했다\\n- 고침: 요청 안에서 한 번만 읽는다\\n- 확인: 부하 시험 3회\\n\\n## Next\\n- 결과를 확인하고 병합하기\\n- 캐시 만료 시간 정하기\\n' > "$dir/report.md" ;;
       esac
       ;;
   esac
@@ -149,7 +150,7 @@ exec cat > /dev/null
 `,
 );
 const agentToml = (work) =>
-  `schema = 1\n[agent]\nwork_root = "${work}"\n[profiles.claude-opus]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\ndescription = "견본"\n`;
+  `schema = 1\n[agent]\nwork_root = "${work}"\n[profiles.claude-opus]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\ndescription = "견본"\n[profiles.claude-opus.env]\nAA = "${AA}"\n`;
 fs.writeFileSync(`${root}/c/agent.toml`, agentToml(`${root}/work`));
 fs.writeFileSync(`${root}/cb/agent.toml`, agentToml(`${root}/workb`));
 
@@ -243,8 +244,8 @@ try {
       };
       await page.goto(base);
       await shot("pair");
-      await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);
-      await page.getByRole("button", { name: "연결" }).click();
+      await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
+      await page.getByRole("button", { name: "이 기기 페어링" }).click();
       await page.getByTestId("machine-mac-a").waitFor();
       if (!phone) {
         await page.getByTestId("pane-claude-api").click();
@@ -281,8 +282,8 @@ try {
     await ctx.addInitScript((theme) => localStorage.setItem("aaa:appearance", JSON.stringify({ theme })), scheme);
     const page = await ctx.newPage();
     await page.goto(base);
-    await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);
-    await page.getByRole("button", { name: "연결" }).click();
+    await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
+    await page.getByRole("button", { name: "이 기기 페어링" }).click();
     await page.getByTestId("pane-tui").click();
     await until("TUI", async () => {
       const t = await page.locator(".xterm-rows").innerText();

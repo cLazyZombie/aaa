@@ -9,7 +9,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
-import { b64decode, b64encode, wsUrl } from "./api";
+import { b64decode, b64encode, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { onThemeChange, token } from "./theme";
@@ -983,6 +983,13 @@ export function TermView({
     };
     // xterm 5.5 onScroll은 새 줄로 버퍼가 밀릴 때만 온다: 사용자가 굴린 것은 viewport의 scroll로 본다(xterm 처리 뒤라 viewportY가 새 자리다)
     const scrollSub = term.onScroll(() => wantHistory());
+    // 그린 화면의 맨 위 버퍼 줄과 맨 아래 화면의 맨 위 줄(baseY). 시험이 「이 자리가 그려졌다」를 사건으로 안다: 굴린 뒤 frame 수를 어림하지 않는다
+    const renderSub = term.onRender(() => {
+      const el = box.current;
+      if (!el) return;
+      el.dataset.viewTop = String(term.buffer.active.viewportY);
+      el.dataset.viewBase = String(term.buffer.active.baseY);
+    });
     viewport?.addEventListener("scroll", wantHistory);
     /** 받은 덩어리를 지금 버퍼 앞에 붙인다(위 설명) */
     const prependHistory = (data: Uint8Array, lines: number, more: boolean) => {
@@ -1018,10 +1025,26 @@ export function TermView({
         all.set(body, data.length);
         term.write(all, () => {
           otherKeysRef.current = keys;
-          term.scrollToLine(top + lines);
-          cover?.remove();
-          trace("history-applied", { lines, more });
-          done();
+          const want = top + lines;
+          term.scrollToLine(want);
+          // 덮개는 새 버퍼를 그린 뒤에 뗀다. write 콜백은 읽기가 끝난 때이고, 줄은 다음 frame에 그린다(xterm RenderService
+          // RenderDebouncer → _renderRows → onRender). 그 전에 떼면 reset한 빈 화면이 한 frame 보인다(t-0327 측정: 25번 중 10번).
+          // 참고도 그린 뒤 시점을 onRender로 잡는다(herdr-web-ui TerminalViewportTools.tsx 216줄 `terminal.onRender(paintHits)`).
+          // 그 그림이 보던 줄 자리여야 한다: viewport 요소의 scroll 사건(xterm Viewport._handleScroll)이 그 사이 자리를 옮겼으면
+          // 다시 맞추고 다음 그림을 기다린다(버퍼 끝을 넘는 자리는 끝으로 본다). 붙잡은 출력은 그 뒤에 쓴다.
+          const drawn = term.onRender(() => {
+            const b = term.buffer.active;
+            const at = Math.min(want, b.baseY);
+            if (b.viewportY !== at) {
+              term.scrollToLine(at);
+              return;
+            }
+            drawn.dispose();
+            cover?.remove();
+            trace("history-applied", { lines, more });
+            done();
+          });
+          term.refresh(0, term.rows - 1);
         });
       });
     };
@@ -1154,6 +1177,12 @@ export function TermView({
         setLink("closed");
         // 끊기면 유지 키를 푼다(PaneTerminal 1261줄)
         setModifiers(NO_STICKY_MODIFIERS);
+        // 이 기기가 취소됐다: 다시 붙지 않고 pairing 화면으로(App이 onSignedOut으로 듣는다)
+        if (event.code === REVOKED_CLOSE_CODE) {
+          stopped = true;
+          reportSignedOut();
+          return;
+        }
         // 출력을 따라오지 못해 host가 닫았다: 자동으로 다시 붙지 않는다(과부하를 되풀이하지 않는다, herdr-web-ui ws.ts)
         if (event.code === OUTPUT_STALLED_CLOSE_CODE && !stopped) {
           outputStopped = true;
@@ -1205,6 +1234,7 @@ export function TermView({
       otherKeysOff.dispose();
       binSub.dispose();
       scrollSub.dispose();
+      renderSub.dispose();
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
       term.dispose();

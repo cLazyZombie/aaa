@@ -2,8 +2,9 @@
 //!
 //! - **inbox:** 잃지 않는 항목과 끝내기(done)로 관리한다. DB가 원본이고 `projects/<p>/inbox/<id>.md`(TOML front
 //!   matter, 0.2.35 형식)는 투영이다. 끝낸 항목은 `inbox/done/`으로 옮기고 `inbox_done_days`가 지나면 지운다.
-//! - **항목 출처:** 흐름 사건(보고 준비·질문·전달 모름·thread 실패)과 ticker가 찾는 특수 항목
-//!   (`session` 세션 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
+//! - **항목 출처:** ticker의 묶음 전이(`thread-state`: 사람 차례·쉼·새 보고, transitions.rs), thread 사건
+//!   (`thread-state`: resolved·brief not delivered·message not delivered·not launched)과 ticker가 찾는 특수 항목
+//!   (`session` 한 머신의 세션이 모두 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
 //! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs` 이상
 //!   머물고 입력창이 비었을 때, 처음 보는 항목 묶음을 한 줄로 알린다. 같은 묶음(hash)은 한 번만 보낸다.
 //!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없으면 보내지 않고 기다린다.
@@ -12,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use aaa_proto::{AgentActivity, DeviceRole, ErrorBody, ErrorCode, FlowEvent, InboxItem, ThreadStatus};
@@ -57,11 +59,12 @@ fn render_item(i: &InboxItem) -> String {
     )
 }
 
-/// 사람이 읽는 대상 이름(`machine mac-b`, `t-0001 session`, `t-0001`)
+/// 사람이 읽는 대상 이름(`machine mac-b`, `t-0001`)
 pub(crate) fn who(i: &InboxItem) -> String {
     match i.item_kind.as_str() {
-        "outage" | "health" => format!("machine {}", i.subject),
-        "session" => format!("{} session", i.subject),
+        // `gh` 실패(pr.rs)는 머신이 아니다
+        "outage" if i.subject == "gh" => "gh".into(),
+        "outage" | "health" | "session" => format!("machine {}", i.subject),
         "routine" | "routine-approval" => format!("routine {}", i.subject),
         _ => i.subject.clone(),
     }
@@ -166,23 +169,29 @@ impl Host {
         }
     }
 
-    /// 흐름 사건 → inbox 항목
+    /// 흐름 사건 → inbox 항목. 보고·질문·사본 실패는 사건마다가 아니라 묶음 전이로 낸다(transitions.rs).
+    /// 남은 것은 herdr-projects가 그때 바로 쓰는 항목이다: brief.rs `give_up`(brief not delivered), ticker.rs
+    /// launch(not launched). 메시지 전달 모름은 aaa에만 있다(메시지를 대기열로 보낸다).
     pub(crate) fn inbox_from_flow(&self, e: &FlowEvent) {
         let Some(thread) = &e.thread else { return };
-        // 사후 평가자의 보고·알림은 평가 기록(`evaluation`)으로 따로 알린다. 실패·사본 실패는 그대로 알린다.
-        if e.role == Some(aaa_proto::Role::Evaluator) && matches!(e.kind.as_str(), "report_ready" | "message_unknown") {
+        // 사후 평가자의 알림은 평가 기록(`evaluation`)으로 따로 알린다. 실패는 그대로 알린다.
+        if e.role == Some(aaa_proto::Role::Evaluator) && e.kind == "message_unknown" {
             return;
         }
-        let (kind, event) = match e.kind.as_str() {
-            "report_ready" => ("report", "report ready"),
-            "question_shown" => ("question", "question"),
-            "brief_unknown" => ("delivery", "brief unknown"),
-            "message_unknown" => ("delivery", "message unknown"),
-            "thread_failed" => ("thread", "failed"),
-            "copy_failed" => ("thread", "copy failed"),
+        let p = &e.project;
+        let (event, summary) = match e.kind.as_str() {
+            "brief_unknown" => (
+                "brief not delivered",
+                format!(
+                    "{thread}: brief를 보내지 못했다({}). `aaa thread read {p} {thread}`로 pane을 보고, 입력창이 비면 `aaa thread brief {p} {thread}`가 보낸다",
+                    e.detail
+                ),
+            ),
+            "message_unknown" => ("message not delivered", format!("{thread}: 메시지 {}", e.detail)),
+            "thread_failed" => ("not launched", format!("{thread}: 시작하지 못했다: {}", e.detail)),
             _ => return,
         };
-        self.inbox_add(&e.project, kind, thread, event, &e.detail);
+        self.inbox_add(p, "thread-state", thread, event, &summary);
     }
 
     /// `aaa inbox list`: peek가 아니면 보인 항목을 「봤다」로 표시한다
@@ -198,14 +207,15 @@ impl Host {
         Ok(items)
     }
 
-    /// 항목을 끝낸다: 투영 파일을 `inbox/done/`으로 옮긴다
+    /// 항목을 끝낸다: 투영 파일을 `inbox/done/`으로 옮긴다. 끝낸 수와 남은 항목을 돌려준다
+    /// (herdr-projects `inbox done`은 「N item(s) moved to inbox/done」을 쓴다, src/cli.rs).
     pub(crate) fn inbox_done(
         &self,
         project: &str,
         ids: &[String],
         all: bool,
         actor: &str,
-    ) -> Result<Vec<InboxItem>, ErrorBody> {
+    ) -> Result<(u32, Vec<InboxItem>), ErrorBody> {
         self.project_dir(project)?;
         if ids.is_empty() && !all {
             return Err(err(ErrorCode::BadRequest, "끝낼 항목 ID나 --all이 필요하다"));
@@ -218,7 +228,7 @@ impl Host {
         let n = pick.len();
         self.inbox_finish(project, pick).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
-        self.db.inbox_list(Some(project), false).map_err(internal)
+        Ok((n as u32, self.db.inbox_list(Some(project), false).map_err(internal)?))
     }
 
     /// 조건에 맞는 끝내지 않은 항목을 끝낸다
@@ -245,26 +255,6 @@ impl Host {
         Ok(())
     }
 
-    /// 질문이 닫혔다(답함·harness가 넘어감): 그 질문의 inbox 항목은 할 일이 없으니 끝낸다(기록은 done에 남는다).
-    /// 끝낸 항목은 처음 보는 묶음에서 빠져 nudge에 섞이지 않는다.
-    pub(crate) fn inbox_question_closed(&self, q: &aaa_proto::QuestionView) {
-        let (Some(project), Some(thread)) = (&q.project, &q.thread) else { return };
-        let mine: Vec<InboxItem> = self
-            .db
-            .inbox_list(Some(project), false)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|i| {
-                i.item_kind == "question" && &i.subject == thread && i.summary.starts_with(&format!("{} ", q.id))
-            })
-            .collect();
-        if !mine.is_empty()
-            && let Err(e) = self.inbox_finish(project, mine)
-        {
-            tracing::warn!("질문 inbox 항목을 끝내지 못했다: {e:#}");
-        }
-    }
-
     // ───────────── ticker ─────────────
 
     pub fn start_ticker(self: &Arc<Self>) {
@@ -272,18 +262,33 @@ impl Host {
         tokio::spawn(async move {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
-                // 사후 평가자 묶음 때가 더 이르면 그때까지만 잔다
-                let sleep = me
-                    .evaluator_next_due()
-                    .map(|d| d.saturating_duration_since(std::time::Instant::now()).min(every))
-                    .unwrap_or(every);
+                // 사후 평가자 묶음·PR 조회 때가 더 이르면 그때까지만 잔다
+                let sleep = [me.evaluator_next_due(), me.pr_next_due()]
+                    .into_iter()
+                    .flatten()
+                    .map(|d| d.saturating_duration_since(std::time::Instant::now()))
+                    .fold(every, Duration::min);
                 tokio::select! {
                     _ = tokio::time::sleep(sleep) => {}
                     _ = me.tick_wake.notified() => {}
                 }
+                me.tick_started.fetch_add(1, Ordering::SeqCst);
                 me.tick().await;
+                me.tick_done.send_modify(|n| *n += 1);
             }
         });
+    }
+
+    /// tick을 하나 깨우고, 이 요청 뒤에 시작한 tick이 끝나면 끝난 tick 수를 돌려준다. 돌던 tick이 있으면 그 다음 것까지 기다린다
+    /// (그 tick은 이 요청 전의 상태를 봤을 수 있다). 시험이 「host가 보고 아무것도 하지 않았다」를 sleep 없이 확인한다(docs/testing.md).
+    pub(crate) async fn ticker_tick(&self) -> u64 {
+        let want = self.tick_started.load(Ordering::SeqCst) + 1;
+        let mut done = self.tick_done.subscribe();
+        self.tick_wake.notify_one();
+        match done.wait_for(|n| *n >= want).await {
+            Ok(n) => *n,
+            Err(_) => *self.tick_done.borrow(),
+        }
     }
 
     async fn tick(self: &Arc<Self>) {
@@ -294,9 +299,10 @@ impl Host {
         self.evaluator_pass();
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
-            self.check_sessions(&p.name);
+            self.thread_pass(&p.name);
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
+            self.pr_tick(&p.name);
             self.nudge(&p.name, dir).await;
         }
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;
@@ -315,29 +321,6 @@ impl Host {
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
             .filter(|r| r.status == ThreadStatus::Open)
             .collect()
-    }
-
-    /// 열린 thread의 세션이 끝났다(종료·재부팅·유실). 세션(pane)마다 한 번만 알린다(끝낸 뒤에도 다시 만들지 않는다).
-    fn check_sessions(&self, project: &str) {
-        for r in self.open_threads(project) {
-            let Some(pane) = &r.pane else { continue };
-            let Some(v) = self.pane_view_of(pane, DeviceRole::Local) else { continue };
-            if v.state.is_running() {
-                continue;
-            }
-            let key = format!("session_ended:{project}:{}", r.id);
-            if self.db.meta(&key).ok().flatten().as_deref() == Some(pane.as_str()) {
-                continue;
-            }
-            let _ = self.db.set_meta(&key, pane);
-            self.inbox_add(
-                project,
-                "session",
-                &r.id,
-                "ended",
-                &format!("세션이 끝났다({:?}). 다시 시작: aaa thread restart {project} {}", v.state, r.id),
-            );
-        }
     }
 
     /// 머신이 오래 끊겼다·돌아왔다. 그 머신에 열린 thread가 있는 프로젝트에 알린다.
@@ -550,16 +533,17 @@ mod tests {
     #[test]
     fn nudge_groups_by_subject() {
         let items = vec![
-            item("report", "t-0001", "report ready"),
-            item("question", "t-0001", "question"),
+            item("thread-state", "t-0001", "new report"),
+            item("thread-state", "t-0001", "blocked on a prompt"),
             item("outage", "mac-b", "down"),
-            item("report", "t-0002", "report ready"),
+            item("thread-state", "t-0002", "new report"),
+            item("session", "mac-c", "sessions ended"),
         ];
         assert_eq!(
             nudge_text("demo", &items),
-            "[aaa inbox] t-0001 report ready, question; machine mac-b down; t-0002 report ready (aaa inbox list demo)"
+            "[aaa inbox] t-0001 new report, blocked on a prompt; machine mac-b down; t-0002 new report; machine mac-c sessions ended (aaa inbox list demo)"
         );
-        let many: Vec<_> = (1..=7).map(|n| item("report", &format!("t-000{n}"), "report ready")).collect();
+        let many: Vec<_> = (1..=7).map(|n| item("thread-state", &format!("t-000{n}"), "new report")).collect();
         assert!(nudge_text("demo", &many).contains("; 2 more (aaa inbox list demo)"));
     }
 
@@ -578,13 +562,13 @@ mod tests {
 
     #[test]
     fn projection_is_toml_front_matter() {
-        let mut i = item("report", "t-0001", "report ready");
+        let mut i = item("thread-state", "t-0001", "new report");
         i.summary = "따옴표 \" 와 줄\n바꿈".into();
         let md = render_item(&i);
         let body = md.trim().trim_start_matches("+++").trim_end_matches("+++");
         let doc = body.parse::<toml_edit::DocumentMut>().unwrap();
         assert_eq!(doc["summary"].as_str(), Some("따옴표 \" 와 줄 바꿈"));
-        assert_eq!(doc["kind"].as_str(), Some("report"));
+        assert_eq!(doc["kind"].as_str(), Some("thread-state"));
         assert_eq!(safe_subject("Mac B/외장 x!!"), "mac-b-x");
     }
 }

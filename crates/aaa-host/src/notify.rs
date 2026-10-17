@@ -1,8 +1,10 @@
-//! 알림 webhook(§8.7, M1-4)과 Web Push(§8.26, `push.rs`). inbox 항목 가운데 사람이 봐야 할 것(보고·질문·막힘·세션 끝남·머신 단절)을 밖으로 보낸다.
+//! 알림 webhook(§8.7, M1-4)과 Web Push(§8.26, `push.rs`). inbox 항목 가운데 사람이 봐야 할 것(사람 차례·새 보고·시작 실패·
+//! 세션 끝남·머신 단절)을 밖으로 보낸다. thread 항목은 herdr-projects가 notifier를 부르는 사건만 보낸다(transitions.rs
+//! `PUSH_EVENTS`): 쉼·resolved·전달 모름은 inbox에만 둔다.
 //!
-//! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다. 질문 창이 잇달아 떠도 한 통이다.
-//! - 보내기 직전에 다시 본다(herdr-web-ui push.ts 「기다리는 동안 바뀌면 보내지 않는다」): 그 사이 끝낸 항목(답한 질문)과
-//!   이미 확인(ack)한 보고는 뺀다. 남은 것이 없으면 보내지 않는다.
+//! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다. 여러 thread가 잇달아 바뀌어도 한 통이다.
+//! - 보내기 직전에 다시 본다(herdr-web-ui push.ts 「기다리는 동안 바뀌면 보내지 않는다」): 그 사이 끝낸 항목, 이미 확인(ack)한
+//!   보고, 사람 차례가 끝난 thread(확인창에 답함)의 항목은 뺀다. 남은 것이 없으면 보내지 않는다.
 //! - 실패하면 다시 보내지 않는다(알림 폭주를 막는다). 실패가 이어지는 동안 경고는 한 번만 남긴다.
 //! - 주소에는 봇 token 같은 비밀값이 들어갈 수 있다. 로그·흐름 사건·오류에는 주소를 넣지 않는다.
 //! - https는 webpki 루트 인증서로 검증한다. http는 설정 검증에서 loopback만 허용한다(시험용).
@@ -132,16 +134,26 @@ async fn read_head<S: tokio::io::AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>
     }
 }
 
-/// 아직 알릴 만한 항목만 남긴다: 끝내지 않았고(`open`), 보고라면 그 thread가 그 보고를 확인(ack)하지 않았다.
+/// 밖으로 알릴 항목인가: 고른 종류(`notify.item_kinds`)이고, thread 항목이면 사람이 할 일(`PUSH_EVENTS`), PR 항목이면
+/// 병합·check 실패·리뷰 활동이다(herdr-projects steps.rs `pull_requests`의 notifier.send)
+pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
+    kinds.iter().any(|k| k == &i.item_kind)
+        && match i.item_kind.as_str() {
+            "thread-state" => crate::transitions::PUSH_EVENTS.contains(&i.event.as_str()),
+            "pr" => matches!(i.event.as_str(), "PR merged" | "PR checks failing" | "PR review activity"),
+            _ => true,
+        }
+}
+
+/// 아직 알릴 만한 항목만 남긴다: 끝내지 않았고(`open`), 지난 일(`stale`: 확인한 보고, 사람 차례가 끝난 thread)이 아니다.
 /// 돌려주는 수는 뺀 항목 수다.
 pub(crate) fn news(
     items: Vec<InboxItem>,
     open: &HashSet<String>,
-    acked: impl Fn(&str) -> bool,
+    stale: impl Fn(&InboxItem) -> bool,
 ) -> (Vec<InboxItem>, usize) {
     let n = items.len();
-    let keep: Vec<InboxItem> =
-        items.into_iter().filter(|i| open.contains(&i.id) && !(i.item_kind == "report" && acked(&i.subject))).collect();
+    let keep: Vec<InboxItem> = items.into_iter().filter(|i| open.contains(&i.id) && !stale(i)).collect();
     let dropped = n - keep.len();
     (keep, dropped)
 }
@@ -156,19 +168,26 @@ impl Host {
                 return items;
             }
         };
-        let acked = |thread: &str| {
-            self.load(project, thread).is_ok_and(|r| r.report_hash.is_some() && r.report_hash == r.acked_hash)
+        let stale = |i: &InboxItem| {
+            if i.item_kind != "thread-state" {
+                return false;
+            }
+            let Ok(r) = self.load(project, &i.subject) else { return false };
+            if i.event == "new report" {
+                return r.report_hash.is_some() && r.report_hash == r.acked_hash;
+            }
+            self.thread_view(&r).group != aaa_proto::ThreadGroup::WaitingOnYou
         };
-        let (keep, dropped) = news(items, &open, acked);
+        let (keep, dropped) = news(items, &open, stale);
         if dropped > 0 {
             self.flow_project(project, "notify_skipped", None, format!("그 사이 답했거나 확인한 항목 {dropped}개"));
         }
         keep
     }
 
-    /// inbox 항목을 알림 대기열에 넣는다(설정에서 켜고 고른 종류만)
+    /// inbox 항목을 알림 대기열에 넣는다(설정에서 켜고 고른 것만, `pushes`)
     pub(crate) fn notify(&self, item: &InboxItem) {
-        if self.cfg.notify.kinds.iter().any(|k| k == &item.item_kind)
+        if pushes(&self.cfg.notify.item_kinds(), item)
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
             let _ = tx.send(item.clone());
@@ -238,10 +257,10 @@ mod tests {
         InboxItem {
             id: format!("x-{subject}"),
             project: "demo".into(),
-            item_kind: "report".into(),
+            item_kind: "thread-state".into(),
             subject: subject.into(),
             event: event.into(),
-            summary: "[완료] 사본 complete".into(),
+            summary: "사본 complete".into(),
             body: String::new(),
             done: false,
             seen: false,
@@ -250,41 +269,66 @@ mod tests {
         }
     }
 
-    /// 보내기 직전: 끝낸 항목(답한 질문)과 ack한 보고는 빠지고, ack하지 않은 보고·다른 종류는 남는다
+    /// 보내기 직전: 끝낸 항목과 지난 일(stale)은 빠지고 나머지는 남는다
     #[test]
-    fn drops_what_was_answered_or_acked_meanwhile() {
-        let mut q = item("t-0001", "question");
-        q.item_kind = "question".into();
+    fn drops_what_was_done_or_stale_meanwhile() {
+        let mut q = item("t-0001", "blocked on a prompt");
         q.id = "q".into();
-        let mut r1 = item("t-0001", "report ready");
+        let mut r1 = item("t-0001", "new report");
         r1.id = "r1".into();
-        let mut r2 = item("t-0002", "report ready");
+        let mut r2 = item("t-0002", "new report");
         r2.id = "r2".into();
         let mut o = item("mac-b", "down");
         o.item_kind = "outage".into();
         o.id = "o".into();
-        // 질문은 답해 끝났고, t-0001 보고는 확인했다
+        // 확인창 항목은 끝냈고, t-0001 보고는 확인했다
         let open: HashSet<String> = ["r1", "r2", "o"].iter().map(|s| s.to_string()).collect();
-        let (keep, dropped) = news(vec![q, r1, r2, o.clone()], &open, |t| t == "t-0001");
+        let (keep, dropped) = news(vec![q, r1, r2, o], &open, |i| i.subject == "t-0001");
         assert_eq!(keep.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["r2", "o"]);
         assert_eq!(dropped, 2);
-        // ack 판정은 보고에만 쓴다: 같은 이름의 머신 항목은 남는다
-        let (keep, dropped) = news(vec![o], &open, |_| true);
-        assert_eq!((keep.len(), dropped), (1, 0));
+    }
+
+    /// 옛 종류 이름도 thread 항목을 고르고, thread 항목은 사람이 할 일만 나간다
+    #[test]
+    fn pushes_needs_you_and_new_reports_only() {
+        let old = aaa_config::NotifySection {
+            kinds: ["report", "question", "outage"].map(String::from).to_vec(),
+            ..Default::default()
+        };
+        let kinds = old.item_kinds();
+        assert_eq!(kinds, ["thread-state", "outage"]);
+        for e in ["blocked on a prompt", "pane closed", "agent gone", "waiting on you", "new report", "not launched"] {
+            assert!(pushes(&kinds, &item("t-0001", e)), "{e}");
+        }
+        for e in ["idle", "resolved", "brief not delivered", "message not delivered"] {
+            assert!(!pushes(&kinds, &item("t-0001", e)), "{e}");
+        }
+        let mut s = item("mac-a", "sessions ended");
+        s.item_kind = "session".into();
+        let all = aaa_config::NotifySection::default().item_kinds();
+        assert!(!pushes(&kinds, &s) && pushes(&all, &s));
+        let mut pr = item("t-0001", "PR merged");
+        pr.item_kind = "pr".into();
+        assert!(pushes(&all, &pr));
+        pr.event = "PR opened".into();
+        assert!(!pushes(&all, &pr));
     }
 
     #[test]
     fn bodies() {
-        let items = [item("t-0001", "report ready"), item("t-0002", "question")];
+        let items = [item("t-0001", "new report"), item("t-0002", "blocked on a prompt")];
         let t = notify_body("telegram", "-100", "demo", &items);
         assert_eq!(t["chat_id"], "-100");
         assert_eq!(
             t["text"],
-            "[aaa] demo\n- t-0001 report ready: [완료] 사본 complete\n- t-0002 question: [완료] 사본 complete"
+            "[aaa] demo\n- t-0001 new report: 사본 complete\n- t-0002 blocked on a prompt: 사본 complete"
         );
         let j = notify_body("json", "", "demo", &items);
-        assert_eq!((j["project"].as_str(), j["items"][1]["event"].as_str()), (Some("demo"), Some("question")));
-        let many: Vec<_> = (0..100).map(|n| item(&format!("t-{n:04}"), "report ready")).collect();
+        assert_eq!(
+            (j["project"].as_str(), j["items"][1]["event"].as_str()),
+            (Some("demo"), Some("blocked on a prompt"))
+        );
+        let many: Vec<_> = (0..100).map(|n| item(&format!("t-{n:04}"), "new report")).collect();
         assert!(notify_text("demo", &many).chars().count() <= TEXT_CAP + 2);
     }
 

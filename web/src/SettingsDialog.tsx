@@ -4,9 +4,14 @@
 // 「터미널 글꼴」(395~400줄, FontFamilyInput 72~205줄)은 적은 목록을 기본 글꼴 앞에 붙인다(plan §8.64).
 // 「키 바」 줄의 「키 바 편집」은 참고처럼 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
 // 나머지 쪽(모양·chat·알림·기기 등)은 그 기능을 옮길 때 넣는다(plan §8.45).
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { ProviderUsage } from "./gen/proto";
+import type { DeviceRole, ProviderUsage, PublishState } from "./gen/proto";
+import { call } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { DevicesPanel } from "./DevicesPanel";
+import { PhonePanel, phonePlan } from "./PhonePanel";
+import { isLoopbackHost } from "./herdr/phone";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
@@ -17,6 +22,8 @@ import { useInstallPrompt } from "./herdr/install.ts";
 import { previewAlertSound, unlockAlertSound } from "./herdr/alertSound.ts";
 import { enableAlerts } from "./alerts";
 import { PushTestControls } from "./PushTestControls";
+import { beforeAlertSound, canPlayInSilentMode } from "./silentMode";
+import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 import {
   setKeepScreenOn,
   setTerminalFontFamily,
@@ -30,6 +37,7 @@ import {
   updateUsageSettings,
   useKeepScreenOn,
   setAlertSetting,
+  alertSetting,
   useAlertSetting,
   useTerminalFontFamily,
   useTerminalFontSize,
@@ -338,16 +346,97 @@ function FontFamilyInput({ value, label, onCommit }: { value: string; label: str
   );
 }
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+/** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
+function useInputTrace() {
+  const [on, setOn] = useState(traceOn());
+  const [count, setCount] = useState(traceCount());
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(
+    () =>
+      onTraceChange(() => {
+        setOn(traceOn());
+        setCount(traceCount());
+      }),
+    [],
+  );
+  const send = async () => {
+    try {
+      setMsg(`보냈다: ${await sendTrace()}`);
+    } catch (e) {
+      setMsg(`보내지 못했다: ${(e as Error).message}`);
+    }
+  };
+  return { on, count, msg, send };
+}
+
+/** 참고 SettingsDialog `DevicesPage`(820~862줄): 폰(열 주소·화면 켜짐·설치)과 기기(목록·페어링·로그아웃) */
+function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: string; onSignOut: () => Promise<void> }) {
+  const keepScreenOn = useKeepScreenOn();
+  const installPrompt = useInstallPrompt();
+  // host가 tailscale serve로 이미 공개하는 주소(`web_status`)
+  const [publish, setPublish] = useState<PublishState | null | undefined>(undefined);
+  const loadPublish = useCallback(() => {
+    setPublish(undefined);
+    call({ op: "web_status" }).then(
+      (r) => setPublish(r.kind === "publish" ? r : null),
+      () => setPublish(null),
+    );
+  }, []);
+  useEffect(loadPublish, [loadPublish]);
+  const plan = phonePlan({ protocol: location.protocol, hostname: location.hostname, origin: location.origin, secure: window.isSecureContext }, publish ?? null);
+  // 폰이 지금 열 수 있는 곳(pairing QR): 공개 주소, 아니면 loopback이 아닌 이 주소
+  const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(location.hostname) ? null : location.origin;
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  return (
+    <>
+      <SettingsGroup title="폰">
+        <div className="settings-item">
+          <PhonePanel plan={plan} loading={publish === undefined} onRefresh={loadPublish} />
+        </div>
+        <SettingsRow label="화면 켜짐 유지" description="터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다. HTTPS 또는 localhost와 지원 브라우저가 필요합니다.">
+          <Toggle label="화면 켜짐 유지" checked={keepScreenOn} onChange={setKeepScreenOn} />
+        </SettingsRow>
+        <SettingsRow label="설치" description={installPrompt.installed ? "설치됨" : installPrompt.canInstall ? undefined : installPrompt.help}>
+          {!installPrompt.installed && installPrompt.canInstall && (
+            <button type="button" className="primary" onClick={() => void installPrompt.install()}>
+              앱 설치
+            </button>
+          )}
+        </SettingsRow>
+      </SettingsGroup>
+      <SettingsGroup title="기기">
+        <div className="settings-item">
+          <DevicesPanel pairUrl={pairUrl} role={role} device={device} />
+        </div>
+        <SettingsRow label="로그아웃" description="이 브라우저의 로그인을 지웁니다. 다시 들어오려면 페어링 코드가 필요합니다.">
+          <button type="button" className="btn" onClick={() => setConfirmSignOut(true)}>
+            로그아웃
+          </button>
+        </SettingsRow>
+        {confirmSignOut && (
+          <ConfirmDialog
+            title="이 브라우저에서 로그아웃할까요?"
+            body="다시 들어오려면 페어링 코드가 필요합니다. 코드는 페어링된 기기의 설정 → 폰 및 기기나 host 머신 터미널의 aaa web pair에서 받습니다."
+            confirmLabel="로그아웃"
+            onClose={() => setConfirmSignOut(false)}
+            onConfirm={onSignOut}
+          />
+        )}
+      </SettingsGroup>
+    </>
+  );
+}
+
+export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: () => void; role: DeviceRole; device: string; onSignOut: () => Promise<void> }) {
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
   const fontFamily = useTerminalFontFamily();
-  const keepScreenOn = useKeepScreenOn();
-  const installPrompt = useInstallPrompt();
   const alertInApp = useAlertSetting("alertInApp");
   const alertSound = useAlertSetting("alertSound");
+  const alertSilent = useAlertSetting("alertSilent");
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(alertSound);
+  const trace = useInputTrace();
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
@@ -466,26 +555,64 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   // unless the switch went off again while the audio was getting ready
                   if (on)
                     void unlockAlertSound().then((ready) => {
-                      if (ready && alertSoundWanted.current) previewAlertSound();
+                      if (ready && alertSoundWanted.current) {
+                        beforeAlertSound();
+                        previewAlertSound();
+                      }
                     });
                 }}
               />
             </SettingsRow>
+            {/* aaa(plan §8.83): 참고에 없다. 소리 범주를 바꿀 수 있는 브라우저(iPhone·iPad Safari 16.4+)에서만 */}
+            {alertSound && canPlayInSilentMode() && (
+              <SettingsRow label="무음 모드에서도" description="iPhone·iPad의 무음 모드에서도 알림 소리를 냅니다. 소리가 나는 동안 음악 같은 다른 앱의 소리가 멈추고, 저절로 다시 재생되지 않습니다.">
+                <Toggle
+                  label="무음 모드에서도"
+                  checked={alertSilent}
+                  onChange={(on) => {
+                    setAlertSetting("alertSilent", on);
+                    // 켜는 누름이 미리 듣기: 무음 스위치를 켠 채로 들리는지 바로 안다
+                    if (on)
+                      void unlockAlertSound().then((ready) => {
+                        if (ready && alertSetting("alertSilent")) {
+                          beforeAlertSound();
+                          previewAlertSound();
+                        }
+                      });
+                  }}
+                />
+              </SettingsRow>
+            )}
           </SettingsGroup>
-          {/* 참고 SettingsDialog 「휴대폰」 840~847줄(문구는 참고 i18n.ko.ts) */}
-          <SettingsGroup title="휴대폰">
-            <SettingsRow label="화면 켜짐 유지" description="터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다. HTTPS 또는 localhost와 지원 브라우저가 필요합니다.">
-              <Toggle label="화면 켜짐 유지" checked={keepScreenOn} onChange={setKeepScreenOn} />
-            </SettingsRow>
-            <SettingsRow label="설치" description={installPrompt.installed ? "설치됨" : installPrompt.canInstall ? undefined : installPrompt.help}>
-              {!installPrompt.installed && installPrompt.canInstall && (
-                <button type="button" className="primary" onClick={() => void installPrompt.install()}>
-                  앱 설치
-                </button>
-              )}
-            </SettingsRow>
-          </SettingsGroup>
+          <DevicesPage role={role} device={device} onSignOut={onSignOut} />
           <UsageGroups />
+          {/* aaa: 실기 입력 사건 기록(inputTrace.ts, plan §8.82). 참고에는 이런 진단이 없어 목록이 아닌 설정 맨 끝에 둔다 */}
+          <SettingsGroup title="진단">
+            <SettingsRow
+              label="입력 기록"
+              description={
+                <>
+                  {trace.on
+                    ? `${trace.count}개 모았습니다. 문제를 재현한 뒤 보내면 host 상태 폴더 diag/에 남습니다.`
+                    : "실기 키보드·한글 입력 문제를 볼 때 켭니다. 터미널 입력 사건과 입력칸 상태를 모읍니다."}
+                  {trace.msg && (
+                    <span className="settings-status" role="status" data-testid="trace-msg">
+                      {trace.msg}
+                    </span>
+                  )}
+                </>
+              }
+            >
+              <span className="settings-actions">
+                {trace.on && (
+                  <button type="button" data-testid="trace-send" disabled={trace.count === 0} onClick={() => void trace.send()}>
+                    보내기
+                  </button>
+                )}
+                <Toggle label="입력 기록" checked={trace.on} onChange={setTrace} />
+              </span>
+            </SettingsRow>
+          </SettingsGroup>
         </div>
       </section>
     </div>,

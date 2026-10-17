@@ -363,6 +363,8 @@ mod tests {
     #[test]
     fn switch_and_restore_native() {
         if std::env::var_os("AAA_IME_NATIVE").is_none() {
+            // 통과로 보이지 않게 남긴다(clip.rs native_clipboard_roundtrip과 같다, t-0327 넘김 (다))
+            eprintln!("건너뜀: AAA_IME_NATIVE=1일 때만 이 Mac의 입력기를 바꿔 본다");
             return;
         }
         let first = current_id().expect("지금 입력기");
