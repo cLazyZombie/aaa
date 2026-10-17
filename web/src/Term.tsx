@@ -381,6 +381,16 @@ export function TermView({
     matchHerdrWidths(term);
     term.open(box.current!);
     const el = box.current!;
+    // 칸 높이가 바뀌는 사이(넣은 글꼴이 연 뒤에 받아질 때·글자 크기를 바꿀 때) xterm 5.5 Viewport는 화면이 먼저 커져
+    // 브라우저가 줄인 scrollTop을 옛 칸 높이로 읽고, 몇 줄 위로 굴린 것(사용자 스크롤)으로 친다. 그러면 맨 아래를 보던
+    // 화면이 다섯 줄쯤 위에 멈추고 새 출력도 따라가지 않았다(CI eeee514·52caa0a, plan §8.60). 화면(DOM)이 맨 아래인데
+    // 버퍼가 위면 그 사건이다: 맨 아래로 되돌린다. xterm의 처리 뒤에 돌도록 open 뒤에 단다.
+    const viewport = el.querySelector<HTMLElement>(".xterm-viewport");
+    const onViewportScroll = () => {
+      const buf = term.buffer.active;
+      if (viewport && viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 1 && buf.viewportY < buf.baseY) term.scrollToBottom();
+    };
+    viewport?.addEventListener("scroll", onViewportScroll);
     // 휠(herdr-web-ui PaneTerminal 665~694줄): 이 화면 것이 아닌 grid는 휠이 브라우저 몫이라 칸을 옮긴다. 휠은 선택을 지운다.
     // 참고는 보고가 꺼졌을 때 xterm을 막는다(herdr가 늘 보고를 켜 그럴 일이 없다). aaa는 herdr 서버가 휠을 나누는 것
     // (server/pane_input.rs 153~183줄: 보고면 프로그램에, alternate screen이면 화살표, 아니면 scrollback)과 같은 xterm 기본에 맡긴다.
@@ -963,6 +973,7 @@ export function TermView({
       window.clearTimeout(timer);
       wsRef.current?.close();
       el.removeEventListener("paste", onPaste, true);
+      viewport?.removeEventListener("scroll", onViewportScroll);
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
       el.removeEventListener("pointerdown", onPointer);
