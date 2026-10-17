@@ -25,6 +25,7 @@ mod prefs;
 mod project;
 mod prompt_box;
 mod push;
+mod restore;
 mod routine;
 mod seen;
 pub mod tailscale;
@@ -154,14 +155,15 @@ struct PaneRt {
     /// 지금 쓰는 대화형 front(lease, 연결 하나). PTY 크기를 그 화면이 정한다. 다른 front가 입력·크기·그림을 보내면
     /// 그 front로 바뀌고(마지막 입력이 이긴다), 연결이 끝나거나 놓으면 비운다.
     lease: Option<FrontRef>,
-    /// harness 상태(hook 사건으로만 바뀐다)
+    /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
+    /// 다시 열지 않게 한다(harness.rs `on_harness`)
+    answered: bool,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
-    /// 열린 확인창 질문에 사건을 낸 hook들과, 방금 답한 확인창이 받은 hook들(다음 hook 사건까지). Claude는 확인창
-    /// 하나에 hook 둘(`PermissionRequest`·`Notification`)을 따로 내고, 둘째가 답보다 늦게 올 수 있다(harness.rs `late_pair`).
-    prompt_hooks: Vec<String>,
-    answered_hooks: Option<Vec<String>>,
+    /// 재부팅 뒤 다시 띄우지 못한 까닭(restore.rs)
+    restore_error: Option<String>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -323,6 +325,10 @@ pub struct Host {
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
     /// 끝날 때까지 이 thread를 건너뛴다(orch.rs `refresh_report`)
     report_refresh: Mutex<HashMap<String, bool>>,
+    /// 재부팅 뒤 복원 중인 머신. 묶음 셈(transitions.rs)은 끝날 때까지 그 머신 thread를 건너뛴다(restore.rs)
+    restoring: Mutex<HashSet<String>>,
+    /// 이 host 실행에서 복원해 본 pane(한 번만 한다)
+    restore_tried: Mutex<HashSet<String>>,
 }
 
 fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
@@ -337,6 +343,13 @@ fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
 
 pub fn token_hash(token: &str) -> String {
     hex::encode(sha2::Sha256::digest(token.as_bytes()))
+}
+
+/// 끝난 pane을 다시 띄울 때 줄 이름. 사람이 붙인 이름은 agent가 `name`에 덮어 알리므로 그대로 주면 그 이름이 띄울 때
+/// 이름이 되어 지워도 돌아가지 않는다. 비워 agent가 명령으로 짓게 하고, 붙인 이름은 `replace_pane`이 label로 다시 붙인다
+/// (처음 띄울 때 준 이름은 host가 모른다)
+pub(crate) fn respawn_name(info: &SessionInfo) -> String {
+    if info.label.is_some() { String::new() } else { info.name.clone() }
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>) -> ErrorBody {
@@ -449,6 +462,8 @@ impl Host {
             brief_loops: Mutex::new(HashSet::new()),
             brief_claims: Mutex::new(HashSet::new()),
             report_refresh: Mutex::new(HashMap::new()),
+            restoring: Mutex::new(HashSet::new()),
+            restore_tried: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -467,6 +482,11 @@ impl Host {
     /// hello를 받아들였다: 머신·pane 목록을 갱신하고 모든 세션을 구독한다.
     pub fn agent_connected(self: &Arc<Self>, hello: &aaa_proto::AgentHello, local: bool, conn: AgentConn) {
         let _ = self.db.touch_machine(&hello.machine_id, &hello.os, &hello.boot_id);
+        let generation = conn.generation;
+        // 재부팅 뒤 복원할 pane이 있으면 연결로 보이기 전부터 묶음 셈을 멈춘다(restore.rs `restore_after_reboot`이 푼다)
+        if hello.sessions.iter().any(|s| s.state == SessionState::Interrupted) {
+            self.restoring.lock().unwrap().insert(hello.machine_id.clone());
+        }
         let subscribe: Vec<(String, Option<u64>)>;
         {
             let mut i = self.inner.lock().unwrap();
@@ -503,8 +523,8 @@ impl Host {
                     lease: None,
                     agent: None,
                     transcript: None,
-                    prompt_hooks: Vec::new(),
-                    answered_hooks: None,
+                    answered: false,
+                    restore_error: None,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -519,11 +539,29 @@ impl Host {
                 .collect();
         }
         self.bump();
+        // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
+        let open = self.questions(false);
+        let gone: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            open.into_iter()
+                .filter(|q| q.machine == hello.machine_name)
+                .filter(|q| !i.panes.get(&q.pane).is_some_and(|p| p.info.state.is_running()))
+                .map(|q| q.pane)
+                .collect()
+        };
+        for pane in gone {
+            self.close_questions_of(&pane);
+        }
+        // agent가 남겨 둔 세션별 마지막 harness 상태(재부팅 복원이 harness 세션 ID를 바로 안다)
+        for ev in &hello.harness {
+            self.on_harness(&hello.machine_id, ev.clone());
+        }
         for (sid, from) in subscribe {
             self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
         }
         self.rewatch(hello.machine_id.clone());
+        self.restore_after_reboot(&hello.machine_id, generation);
     }
 
     pub fn agent_disconnected(&self, machine_id: &str, generation: u64) {
@@ -626,8 +664,8 @@ impl Host {
                 lease: None,
                 agent: None,
                 transcript: None,
-                prompt_hooks: Vec::new(),
-                answered_hooks: None,
+                answered: false,
+                restore_error: None,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -638,6 +676,9 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        if !info.state.is_running() {
+            self.close_questions_of(&info.id);
+        }
         self.replay_harness(&info.id);
         // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
         if !info.state.is_running() {
@@ -706,6 +747,7 @@ impl Host {
             role: p.info.role,
             agent: p.agent.clone().map(Box::new),
             label: p.info.label.clone(),
+            restore_error: p.restore_error.clone(),
         }
     }
 
@@ -991,6 +1033,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1368,33 +1411,63 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "실행 중인 pane은 재개할 수 없다"));
         }
         let spec = SpawnSpec {
-            name: info.name.clone(),
+            name: respawn_name(&info),
             argv: info.argv.clone(),
             cwd: info.cwd.clone(),
             env: vec![],
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            harness: info.harness.clone(),
         };
-        let new_id = self.spawn_on(&mid, spec, actor).await?;
+        let new_id = self.respawn(&id, &mid, spec, actor).await?;
+        self.pane_view_of(&new_id, role)
+            .map(FrontResponse::Pane)
+            .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
+    }
+
+    /// 끝난 pane 자리에 새 세션을 띄운다(`pane resume`·재부팅 복원): layout 자리를 바꾸고 옛 기록을 지운다.
+    /// spec 이름은 [`respawn_name`]으로 짓는다
+    pub(crate) async fn respawn(
+        self: &Arc<Self>,
+        id: &str,
+        mid: &str,
+        spec: SpawnSpec,
+        actor: &str,
+    ) -> Result<String, ErrorBody> {
+        let new_id = self.spawn_on(mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
+        self.replace_pane(id, &new_id, mid, actor).await;
+        Ok(new_id)
+    }
+
+    /// layout에서 `old` 자리를 `new`로 바꾸고 `old` 기록을 지운다. 사람이 붙인 이름은 `new`가 잇는다(herdr 복원
+    /// `set_manual_label`). 이름의 정본은 agent 세션 기록이라 agent에 붙인다(plan §8.109)
+    pub(crate) async fn replace_pane(self: &Arc<Self>, old: &str, new: &str, mid: &str, actor: &str) {
+        let label = self.inner.lock().unwrap().panes.get(old).and_then(|p| p.info.label.clone());
+        if let Some(label) = label.filter(|_| self.machine_feature(mid, "rename.v1")) {
+            let renamed = match self.live_conn(mid) {
+                Ok(conn) => conn.request(AgentRequest::Rename { session: new.to_string(), label: Some(label) }).await,
+                Err(e) => Err(e),
+            };
+            match renamed {
+                Ok(AgentResponse::Session(info)) => self.on_session(mid, info, false),
+                Ok(other) => tracing::warn!(pane = %new, "이름 잇기: 예상하지 못한 응답 {other:?}"),
+                Err(e) => tracing::warn!(pane = %new, "이름 잇기 실패: {}", e.message),
+            }
+        }
         {
             let mut ws = self.workspaces.lock().unwrap();
-            let changed: Vec<Workspace> = ws
-                .values_mut()
-                .filter_map(|w| aaa_proto::layout::ws_replace(w, &id, &new_id).then(|| w.clone()))
-                .collect();
+            let changed: Vec<Workspace> =
+                ws.values_mut().filter_map(|w| aaa_proto::layout::ws_replace(w, old, new).then(|| w.clone())).collect();
             drop(ws);
             for w in changed {
                 self.save_workspace(&w);
             }
         }
-        if let Err(e) = self.forget(&id, &mid, actor).await {
-            tracing::warn!(pane = %id, "재개 뒤 옛 기록 정리 실패: {}", e.message);
+        if let Err(e) = self.forget(old, mid, actor).await {
+            tracing::warn!(pane = %old, "재개 뒤 옛 기록 정리 실패: {}", e.message);
         }
-        self.pane_view_of(&new_id, role)
-            .map(FrontResponse::Pane)
-            .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
     }
 
     async fn forget(self: &Arc<Self>, id: &str, mid: &str, actor: &str) -> Result<(), ErrorBody> {
@@ -1455,6 +1528,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1477,7 +1551,16 @@ impl Host {
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
                 let cwd = self.new_pane_cwd(cwd, Some(&target), &mid).await;
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
+                let spec = SpawnSpec {
+                    name: String::new(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 80,
+                    rows: 24,
+                    role: None,
+                    harness: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| {
@@ -1540,7 +1623,8 @@ impl Host {
                     .iter_mut()
                     .find(|t| t.id == tab)
                     .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
-                t.name = label;
+                // 앞뒤 빈칸은 뺀다. 빈 이름은 이름 없음(탭 번호로 보인다)
+                t.name = label.trim().to_string();
             }
             LayoutChange::CloseTab { tab } => {
                 let at = w
@@ -1549,7 +1633,12 @@ impl Host {
                     .position(|t| t.id == tab)
                     .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
                 let t = w.tabs.remove(at);
+                // 탭을 뺀 layout을 먼저 저장한다(front에서 바로 사라진다). pane을 끝내는 동안 기다리므로, 그 사이 다른
+                // 변경(새 탭·이름 바꾸기·나누기)이 있을 수 있다: 끝낸 뒤 최신을 다시 읽어 그것을 저장한다(보안 감사 t-0340:
+                // 맨 위에서 복사한 것을 저장하면 그 사이 변경이 사라졌다)
+                self.save_workspace(&w);
                 self.close_panes(&aaa_proto::layout::leaves(&t.root), name, actor).await;
+                w = self.workspace(name);
             }
             LayoutChange::MoveToNewTab { pane, name: label } => {
                 let (id, _) = self.resolve_pane(&pane)?;

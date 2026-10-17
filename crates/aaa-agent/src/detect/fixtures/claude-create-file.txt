@@ -1,0 +1,32 @@
+ ▝▝   ▝▝   /work/lab/work/demo/t-0001
+
+
+❯ .aaa/demo-t-0001/brief.md를 읽고 그대로 하라.
+
+  Read 1 file, ran 1 shell command
+
+⏺ Write(.aaa/demo-t-0001/report.md)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Create file
+ .aaa/demo-t-0001/report.md
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   1 [완료]
+   2
+   3 ## Report
+   4
+   5 - 작업 지시(`brief.md`의 「할 일」)대로 셸 명령 `touch probe.txt`를 한 번 실행했다.
+   6 - 확인: `/work/lab/work/demo/t-0001/probe.txt`가 생성됐고(0 B, 소유자 user), `ls -l`로 존재를 확인
+     했다.
+   7 - 결과물 파일은 없어서 `library/`에는 넣지 않았다.
+   8
+   9 ## Next
+  10
+  11 coordinator가 `probe.txt` 생성 여부를 확인하고 thread를 닫는다.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create report.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend

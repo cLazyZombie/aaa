@@ -113,7 +113,7 @@ export function paneAgentStatus(p: PaneView): AgentStatus | undefined {
  * aaa는 agent backend가 PTY를 가져 중단·유실이 더 있고(결정 3), harness 오류도 있다.
  */
 export function paneProblem(p: PaneView): string | null {
-  if (p.state === "interrupted") return "중단: agent backend가 다시 떴을 때 이 세션이 없었다";
+  if (p.state === "interrupted") return p.restore_error ? `중단: ${p.restore_error}` : "중단: agent backend가 다시 떴을 때 이 세션이 없었다";
   if (p.state === "lost") return "유실: 세션 기록을 찾지 못했다";
   if (p.state === "running" && p.agent?.activity === "error") return `harness 오류${p.agent.message ? `: ${p.agent.message}` : ""}`;
   return null;

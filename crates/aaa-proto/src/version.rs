@@ -16,8 +16,8 @@ impl std::fmt::Display for Version {
 }
 
 /// host ↔ agent. 1.4: `ThreadRebrief.profile`(thread restart --profile).
-/// 버전을 올리지 않은 것(plan §8.110): `ThreadCleanup.merged_head`(옛 agent는 버리고 branch를 남긴다),
-/// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다), `MergeLand`·`Landed`를 없앰(새 host는 보내지 않는다, §8.112).
+/// 버전을 올리지 않은 것(plan §8.113): `ThreadCleanup.merged_head`(옛 agent는 버리고 branch를 남긴다),
+/// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다), `MergeLand`·`Landed`를 없앰(새 host는 보내지 않는다, §8.115).
 /// host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
@@ -29,11 +29,15 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.13: thread start `kind` 생략·restart `profile`·resolve `reopen`(plan §8.104),
 /// 1.14: TUI 마우스(`GridFrame.modes`, `LayoutChange::SplitRatio`·`MoveTab`)(plan §8.106),
 /// 1.15: `pane_rename`과 PaneView `label`(plan §8.109),
-/// 1.16: 묶음 `landing`(PR 승인, plan §8.110), 병합 대기열 요청(`merge_enqueue`·`merge_drop`·`merge_list`·`merge_land`)을
-/// 없앰(plan §8.112, 옛 front가 보내면 모르는 요청 오류다)
-pub const FRONT_API: Version = Version { major: 1, minor: 16 };
+/// 1.16: `PaneView.restore_error`(plan §8.111),
+/// 1.17: 묶음 `landing`(PR 승인, plan §8.113), 병합 대기열 요청(`merge_enqueue`·`merge_drop`·`merge_list`·`merge_land`)을
+/// 없앰(plan §8.115, 옛 front가 보내면 모르는 요청 오류다)
+pub const FRONT_API: Version = Version { major: 1, minor: 17 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
-pub const SESSION_IPC: Version = Version { major: 1, minor: 0 };
+/// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
+pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
+/// `SessionRequest::Detect`를 받는 첫 SESSION_IPC minor
+pub const SESSION_IPC_DETECT: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NegotiateError {

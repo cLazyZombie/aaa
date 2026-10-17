@@ -1,0 +1,32 @@
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› .aaa/demo-t-0001/brief.md를 읽고 그대로 하라.
+
+
+• 지정한 brief를 읽고 요구사항대로 진행하겠습니다.
+
+• Explored
+  └ Read brief.md
+    + Show details
+
+✔ You approved codex to run touch probe.txt this time
+
+• Ran touch probe.txt
+  └ (no output)
+
+✔ You approved codex to run printf '%s\n' '[완료]' '' '## Report' '`touch probe.txt`를 정확히 한 번 실행했고 종료 코드 0
+  을... this time
+
+• Ran printf '%s\n' '[완료]' '' '## Report' '`touch probe.txt`를 정확히 한 번 실행했고 종료 코드 0을 확인했다.' '' '## …
+  └ (no output)
+    + Show details
+
+• done
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · /work/lab/work/demo/t-0001 · Working · Context 97% left · weekly 21% left · 0.163.0 …
+  ? for shortcuts

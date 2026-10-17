@@ -508,7 +508,12 @@ fn leaves(w: &serde_json::Value) -> Vec<String> {
 fn attach_draws_layout_and_detach_keeps_sessions() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "first", "--", "/bin/sh"]);
+    // 실행 파일 이름이 claude인 셸: agent가 이 pane 화면을 Claude 규칙(herdr claude.toml)으로 본다
+    let claude = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh\n").unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "first", "--", lab::path_str(&claude)]);
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
@@ -528,15 +533,16 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // harness 상태는 hook 사건으로만 바뀌고 사이드바 줄·탭 막대 질문 수·pane badge에 보인다(세션 안 `aaa hook`)
-    tui.type_line(&format!(
-        "'{}' hook --agent claude '{{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}}'; clear",
-        lab::BIN
-    ));
+    // harness 상태는 화면으로 바뀌고 사이드바 줄·탭 막대 질문 수·pane badge에 보인다: Claude 권한 확인창
+    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다
+    tui.type_line(
+        "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
+         ' Esc to cancel · Tab to amend'",
+    );
     tui.wait_text("질문 상태", |s| {
         s.lines().next().is_some_and(|l| l.contains(" ● 질문 1 ")) && s.contains("질문 — aaa question")
     });
-    tui.type_line(&format!("'{}' hook --agent claude '{{\"hook_event_name\":\"UserPromptSubmit\"}}'; clear", lab::BIN));
+    tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| {
         s.lines().any(|l| l.contains(" ● first") && l.contains("작업 중")) && !s.contains("질문 — aaa question")
     });
@@ -601,7 +607,12 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 fn herdr_keys_and_modes() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "keys", "--", "/bin/sh"]);
+    // 첫 pane은 실행 파일 이름이 claude인 셸이다: 4)에서 Claude 확인창을 그려 질문을 연다(나눈 pane은 harness가 없다)
+    let claude = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh\n").unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "keys", "--", lab::path_str(&claude)]);
     let first = leaves(&w)[0].clone();
     let mut tui = Tui::start(&h);
     tui.wait_text("첫 화면", |s| tab_chips(s) == ["keys"]);
@@ -659,27 +670,25 @@ fn herdr_keys_and_modes() {
     tui.cmd("\x1b[Z");
     typed_in(&mut tui, "back", &right);
 
-    // 4) o: 질문이 열린 pane으로 간다
+    // 4) o: 질문이 열린 pane으로 간다. 질문은 첫 pane 화면의 Claude 권한 확인창(`bash_permission_prompt`)이다.
     h.ok(&[
         "pane",
         "run",
-        &bottom,
-        &format!(
-            "'{}' hook --agent claude '{{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}}'; clear",
-            lab::BIN
-        ),
+        &first,
+        "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
+         ' Esc to cancel · Tab to amend'",
     ]);
     hw.wait("질문", |w| {
-        w.pane(&bottom)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
+        w.pane(&first)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
     });
     // o는 TUI가 아는 질문으로 간다: host가 바뀐 것만으로는 TUI가 아직 모를 수 있어 표시가 뜬 것을 본다
     tui.wait_text("질문 표시", |s| s.contains("질문 — aaa question"));
     tui.cmd("o");
-    typed_in(&mut tui, "asked", &bottom);
+    typed_in(&mut tui, "asked", &first);
 
     // 5) x: 포커스 pane을 닫는다
     tui.cmd("x");
-    hw.wait("닫힘", |w| (w.leaves() == vec![first.clone(), right.clone()]).then_some(()));
+    hw.wait("닫힘", |w| (w.leaves() == vec![bottom.clone(), right.clone()]).then_some(()));
 
     // 6) ? 단축키 창: 묶음과 키, / 검색, Esc 두 번으로 닫기
     tui.cmd("?");
@@ -1128,17 +1137,20 @@ fn side_list_like_web() {
     assert!(h.screen(&right).contains("still-9"), "포커스는 나눈 오른쪽 pane 그대로");
 }
 
-/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 사람이 다시 띄우는 길은 badge가 알려 주는 CLI다.
+/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 셸 pane은 저절로 되살아나고(m12
+/// `reboot_restores_shells_and_resumes_agents`), 다시 실행하지 않는 프로그램 pane은 badge가 알려 주는 CLI로 띄운다.
 #[test]
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh"]);
+    // 띄울 때마다 차례를 센다(첫 실행 `run-1`, 재개 `run-2`)
+    let runs = lab.root.join("runs").display().to_string();
+    let script = r#"echo x >> "$0"; echo "run-$(( $(wc -l < "$0") ))"; exec cat"#;
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh", "-c", script, &runs]);
     let old = leaves(&w)[0].clone();
-    h.ok(&["pane", "run", &old, "echo before-$((1+1))"]);
 
     let mut tui = Tui::start(&h);
-    tui.wait_text("첫 화면", |s| s.contains("before-2"));
+    tui.wait_text("첫 화면", |s| s.contains("run-1"));
 
     lab.kill("agent");
     tui.wait_text("끊김 표시", |s| s.contains("끊김·읽기 전용"));
@@ -1146,7 +1158,7 @@ fn interrupted_badge_and_resume() {
     lab.spawn_env("agent2", &h, &["agent", "--host", "local", "--name", "labA"], &[("AAA_TEST_BOOT_ID", "boot-after")]);
     let short: String = old.chars().take(8).collect();
     let badge = format!("중단(재부팅) — aaa pane resume {short}");
-    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("before-2"));
+    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("run-1"));
 
     h.ok(&["pane", "resume", &short]);
     hw.wait("재개", |w| {
@@ -1154,12 +1166,11 @@ fn interrupted_badge_and_resume() {
         (l.len() == 1 && l[0] != old && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then_some(())
     });
     // badge는 옛 pane 기록이 빠질 때 먼저 사라진다. 포커스는 TUI가 새 layout을 받을 때 새 pane으로 옮기므로,
-    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 새 pane 화면(옛 출력 없이 prompt)이 그려진 뒤 친다.
-    tui.wait_text("재개 뒤 새 pane", |s| {
-        !s.contains("중단(재부팅)") && !s.contains("before-2") && s.lines().any(|l| l.trim_end().ends_with('$'))
-    });
-    tui.type_line("echo resumed-$((5*5))");
-    tui.wait_text("재개 뒤 입력", |s| s.contains("resumed-25"));
+    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 같은 spec으로 다시 돈 새 pane 화면(`run-2`)이 그려진 뒤 친다.
+    tui.wait_text("재개 뒤 새 pane", |s| !s.contains("중단(재부팅)") && s.contains("run-2"));
+    // 입력은 새 세션(cat)이 받는다: 터미널 echo와 cat 출력으로 두 번
+    tui.type_line("typed-after-resume");
+    tui.wait_text("재개 뒤 입력", |s| s.matches("typed-after-resume").count() >= 2);
 }
 
 /// 세션 폴더에 저장된 첨부 파일들
@@ -1490,8 +1501,8 @@ fn ctrl_v_pastes_clipboard_image() {
             std::fs::write(&fake, out).unwrap();
         }
     }
-    tui.type_line("clear");
-    std::thread::sleep(Duration::from_millis(300));
+    tui.type_line("clear; echo cleared-$((2+2))");
+    tui.wait_text("화면 지움", |s| s.contains("cleared-4"));
     tui.send(b"\x16");
     tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
     let files = attachments(&h.state);
