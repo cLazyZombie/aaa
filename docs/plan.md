@@ -1419,6 +1419,19 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 「화면에 맞추기」 단추와 「…이 크기를 정하는 중」 띠를 없앴다(참고에 없다). 누르기·입력·focus가 크기를 되찾는다(§8.48).
 - **시험.** 웹 E2E 「두 controller」: 크기 띠·맞추기 단추가 없고, 가려지자 700ms 안에 `release` frame을 쓴다(전에는 1000ms 뒤). 「글자 크기」: 데스크톱 바로 입력으로 열면 xterm textarea에 focus.
 
+### 8.51 붙여넣기·끌어 놓기를 herdr-web-ui대로, 셸에도 경로(10-17, 차이 목록 2 F, 결정 20 D7 「참고대로」)
+
+- **옮긴 것(herdr-web-ui PaneTerminal 1425~1480줄, shared paste 규칙).**
+  - 클립보드에 글이 있으면 글이다(그림이 같이 있어도). 파일만 있을 때 그 파일 전부를 올린다. 전에는 그림이 있으면 그림이 먼저였다.
+  - 파일 여러 개를 붙여 넣거나 끌어 놓으면 놓은 순서대로 하나씩 올린다(겹쳐 놓아도 그 순서). 한 묶음에 상한을 넘는 것이 있으면 아무것도 올리지 않는다. 「그림」 단추도 여러 개를 고른다.
+  - 글을 끌어 놓으면 붙여 넣는다(Enter 없음, 유지 키 안 붙음). 입력할 수 없으면 끌어 놓기를 받지 않는다(`dropEffect` none).
+  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness 입력창은 bracketed paste 안에, 셸 등은 친 글처럼 넣는다(host는 그 프로그램의 bracketed paste 모드를 모르고, 줄바꿈·제어 문자 없는 따옴표 경로는 bracketed paste가 꺼진 붙여넣기와 같다). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
+- **다른 곳.**
+  - 확인창·선택 창이 떠 있는 harness pane에는 넣지 않는다. 붙여 넣은 글이 그 답으로 읽힐 수 있다(참고에는 이 막기가 없다).
+  - **그림만 받는다(PNG·JPEG·GIF·WebP, 16MiB).** 참고는 아무 파일이나 이름을 다듬어 저장한다(32MiB). §9의 형식 규칙(signature로 확인)이라 결정 없이 넓히지 않았다. 다른 파일은 host가 「PNG·JPEG·GIF·WebP 그림만」으로 거절한다.
+  - 경로는 참고처럼 브라우저가 묶음 끝에 한꺼번에 붙여 넣지 않고 host가 파일마다 넣는다(옮기는 길은 §9 그대로). 넣는 글은 같다(`'a' 'b' `).
+- **시험.** 웹 E2E 「그림 붙여 넣기·끌어 놓기」: 셸 줄에 `'경로'`(실행 안 됨), harness는 `ESC[200~'경로' ESC[201~`, 글과 그림이 같이 있으면 `mixed-text`만, 두 파일을 끌어 놓으면 놓은 순서의 두 경로(내용 대조), 글 놓기는 `dropped-text`. host 유닛 `quoted_like_the_reference`. `dropEffect`는 시험하지 못한다: 지어낸 `DataTransfer`는 끌기 중이 아니어서 Chromium이 대입을 버린다(따로 확인).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -1450,7 +1463,7 @@ flowchart LR
 | 대상 고정 | paste 순간 machine·session·terminal generation·agent identity·lease·front 권한을 intent에 고정한다. 업로드 중에 pane을 바꿔도 새 pane에 넣지 않는다. 실제 삽입 직전에 다시 검증한다 |
 | 전송 | front → host: Front API의 bounded binary chunk(웹은 streaming Blob body). host → agent: Agent link chunk. host는 **저장하지 않고 통과 전송**한다(bounded buffer). agent가 끊겨 있으면 바로 실패하고 draft는 유지한다. base64 거대 JSON과 scp 문자열은 쓰지 않는다. 길이·SHA256·offset을 검증한 뒤 agent가 원자적으로 commit하고 receipt를 반환한다 |
 | 대상 경로 | `.aaa/<project>-<thread>/attachments/<attachment_id>.png`. 일반 세션은 session 범위 경로다. Windows agent는 Windows 절대 경로를, Unix agent는 그 머신의 POSIX 경로를 돌려준다. cwd를 모르거나 쓸 수 없으면 명시 오류를 낸다 |
-| agent 전달 | adapter가 harness별로 검증한 이미지 참조 형식으로 바꾼다. 모든 agent에 `@path`나 POSIX quote 하나를 강제하지 않는다. 업로드 완료와 실제 입력 접수는 따로 본다. 일반 shell과 확인창에는 경로를 자동으로 넣지 않는다 |
+| agent 전달 | adapter가 harness별로 검증한 이미지 참조 형식으로 바꾼다. 모든 agent에 `@path`나 POSIX quote 하나를 강제하지 않는다. 업로드 완료와 실제 입력 접수는 따로 본다. 확인창·선택 창에는 경로를 넣지 않는다. 일반 shell에도 따옴표 경로를 넣는다(10-17 결정 20 D7, §8.51) |
 | 전송 의도 | Ctrl+V는 첨부일 뿐 자동 Enter가 아니다. 업로드가 끝나지 않았으면 Send를 보류한다. pane별 순서와 paste barrier로 경로보다 Enter가 먼저 가지 않게 한다 |
 | 재연결 | 미완료 전송은 offset으로 재개할 수 있다. commit 뒤 응답이 유실되면 같은 ID로 receipt를 조회한다. 입력 직후 유실은 `delivery_unknown` 규칙을 따른다(§8.5 a) |
 | 보관 | 파일 수명을 front 연결에 묶지 않는다. session·thread가 참조하는 동안 보존하고, 참조가 끝나고 보존 기한이 지난 것만 정리한다. 이미지 내용은 로그·보고·git에 넣지 않는다 |

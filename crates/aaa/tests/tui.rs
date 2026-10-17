@@ -602,7 +602,7 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
 }
 
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
-/// 셸 pane이라 입력창에 경로를 넣지 않는다. 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
+/// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).
 /// `AAA_CLIP_NATIVE=1`(CI)이면 실제 시스템 clipboard에 쓰고 TUI가 그것을 읽는다.
 #[test]
@@ -632,7 +632,7 @@ fn ctrl_v_pastes_clipboard_image() {
     tui.send(b"\x03");
     assert!(attachments(&h.state).is_empty(), "그림이 없는데 첨부가 생겼다");
 
-    // 2) 그림이 있으면 대상 머신에 저장하고 상태 줄에 경로를 보인다. 셸에는 경로를 넣지 않는다.
+    // 2) 그림이 있으면 대상 머신에 저장하고 셸 줄에 따옴표 경로를 넣고(Enter 없음) 상태 줄에 알린다.
     match clip.as_mut() {
         Some(c) => c.set_image(arboard::ImageData { width: 3, height: 2, bytes: rgba.as_slice().into() }).unwrap(),
         None => {
@@ -649,12 +649,17 @@ fn ctrl_v_pastes_clipboard_image() {
     tui.type_line("clear");
     std::thread::sleep(Duration::from_millis(300));
     tui.send(b"\x16");
-    tui.wait_text("저장 표시", |s| s.contains("그림을 저장했다"));
+    tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
     let files = attachments(&h.state);
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(files[0].extension().is_some_and(|e| e == "png"), "{files:?}");
     assert_eq!(decode_rgba(&std::fs::read(&files[0]).unwrap()), (3, 2, rgba.clone()), "대상 머신 그림의 pixel");
-    assert!(!h.screen(&id).contains("attachments"), "셸에 경로가 들어갔다");
+    let line: String = h.screen(&id).replace('\n', "");
+    let quoted = format!("'{}' ", files[0].display());
+    assert!(line.contains(quoted.trim_end()), "셸 줄에 따옴표 경로가 없다: {line}");
+    // Enter가 없었으니 셸은 실행하지 않았다. 그 줄을 지운다.
+    assert!(!line.contains("Permission denied") && !line.contains("not found"), "{line}");
+    tui.send(b"\x15");
     drop(clip);
 
     // 3) 여러 조각(1.2MB)을 `aaa pane attach`로 올린다. TUI가 쓰는 중이어도 되고, 한 번 보내는 CLI라
@@ -670,7 +675,7 @@ fn ctrl_v_pastes_clipboard_image() {
     drop(tui);
     let path = r["path"].as_str().unwrap();
     assert_eq!(std::fs::read(path).unwrap(), bytes, "{r}");
-    assert_eq!(r["inserted"], false, "{r}");
+    assert_eq!(r["inserted"], true, "{r}");
     // 그림이 아니면 거부한다
     let txt = lab.root.join("note.txt");
     std::fs::write(&txt, "hello").unwrap();

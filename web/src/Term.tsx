@@ -52,10 +52,13 @@ const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
 const inUse = () => document.visibilityState === "visible" && document.hasFocus();
 
-/** 붙여 넣기·끌어 놓기에서 그림 파일 하나 */
-function imageOf(list: FileList | undefined | null): File | null {
-  for (const f of Array.from(list ?? [])) if (f.type.startsWith("image/")) return f;
-  return null;
+/**
+ * 붙여 넣기에서 올릴 파일들(herdr-web-ui PaneTerminal 1449~1458줄): 클립보드에 글이 있으면 글이다(xterm이 붙여 넣는다,
+ * 복사한 경로도 글로 남는다). 파일만 있을 때 그 파일 전부.
+ */
+function pastedFiles(data: DataTransfer | null | undefined): File[] {
+  if (!data || data.getData("text/plain")) return [];
+  return Array.from(data.files);
 }
 
 type Link = "connecting" | "open" | "closed";
@@ -191,7 +194,14 @@ export function TermView({
     trace("send", { data, readonly: readonlyRef.current });
     if (!readonlyRef.current) send({ t: "input", data });
   };
-  /** 그림을 조각으로 보낸다. 결과(attached·error)는 WebSocket으로 온다. */
+  /** 올리는 중인 파일의 결과(attached·error·끊김)를 기다리는 것 */
+  const attachWaitRef = useRef<(() => void) | null>(null);
+  const attachDone = () => {
+    const done = attachWaitRef.current;
+    attachWaitRef.current = null;
+    done?.();
+  };
+  /** 그림을 조각으로 보낸다. 결과(attached·error)가 WebSocket으로 올 때까지 기다린다. */
   const attachFile = async (f: File) => {
     if (readonlyRef.current) {
       setAttach({ text: "지금은 입력할 수 없어 그림을 보내지 않았다", ok: false });
@@ -211,9 +221,13 @@ export function TermView({
     ).join("");
     setError(null);
     setAttach({ text: `그림 보내는 중(${Math.ceil(bytes.length / 1024)}KB)`, ok: true });
+    const done = new Promise<void>((resolve) => {
+      attachWaitRef.current = resolve;
+    });
     for (let off = 0; off < bytes.length; off += CHUNK) {
       send({ t: "attach", offset: off, total: bytes.length, sha256, data: b64encode(bytes.subarray(off, off + CHUNK)) });
     }
+    await done;
   };
   /**
    * 터미널로 가는 입력 하나(PaneTerminal onData 1353~1424줄). 붙잡은 입력이 있으면 글·⌫·Enter는 거기에 더하고
@@ -255,6 +269,22 @@ export function TermView({
   };
   const attachRef = useRef(attachFile);
   attachRef.current = attachFile;
+  // 여러 파일은 하나씩 놓은 순서대로 올린다. 겹친 붙여넣기·끌어 놓기도 그 순서다(PaneTerminal 1425~1448줄).
+  // 한 묶음에 상한을 넘는 파일이 하나라도 있으면 아무것도 올리지 않는다. 경로는 host가 파일마다 따옴표로 넣는다.
+  const fileQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const uploadFiles = (files: File[]) => {
+    if (files.length === 0) return;
+    fileQueueRef.current = fileQueueRef.current.then(async () => {
+      const tooBig = files.find((f) => f.size === 0 || f.size > MAX_IMAGE);
+      if (tooBig) {
+        setAttach({ text: `${tooBig.name || "파일"}: 그림은 ${MAX_IMAGE >> 20}MiB까지 붙여 넣는다(이 묶음은 올리지 않았다)`, ok: false });
+        return;
+      }
+      for (const f of files) await attachRef.current(f);
+    });
+  };
+  const uploadRef = useRef(uploadFiles);
+  uploadRef.current = uploadFiles;
 
   // 키 막대의 유지 키(Ctrl·Alt·Shift, herdr-web-ui PaneTerminal 271~276·2237~2245줄): 다시 누를 때까지 켜져 있다(래치).
   // pane이 바뀌면(다시 mount) 연결이 끊기면 풀린다. 하드웨어 키와 화면 키보드 글자 모두에 chord로 붙는다.
@@ -578,20 +608,33 @@ export function TermView({
       queueMicrotask(() => {
         pastingRef.current = false;
       });
-      const f = imageOf(e.clipboardData?.files);
-      if (!f) return;
+      const files = pastedFiles(e.clipboardData);
+      if (files.length === 0) return;
       e.preventDefault();
       e.stopPropagation();
-      void attachRef.current(f);
+      uploadRef.current(files);
     };
+    // 끌어 놓기(PaneTerminal 1459~1480줄): 파일은 놓은 순서대로 올리고, 글은 붙여 넣는다(Enter 없음). 입력할 수 없으면 놓지 못한다.
     const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+      if (!e.dataTransfer) return;
+      if (!e.dataTransfer.types.some((type) => type === "Files" || type === "text/plain")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = readonlyRef.current ? "none" : "copy";
     };
     const onDrop = (e: DragEvent) => {
-      const f = imageOf(e.dataTransfer?.files);
-      if (!f) return;
       e.preventDefault();
-      void attachRef.current(f);
+      if (!e.dataTransfer || readonlyRef.current) return;
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) return uploadRef.current(files);
+      const text = e.dataTransfer.getData("text/plain");
+      if (!text) return;
+      pastingRef.current = true;
+      try {
+        term.paste(text);
+      } finally {
+        pastingRef.current = false;
+      }
+      term.focus();
     };
     el.addEventListener("paste", onPaste, true);
     el.addEventListener("dragover", onDragOver);
@@ -759,20 +802,24 @@ export function TermView({
           case "attached":
             setAttach({
               text: msg.inserted
-                ? `그림을 입력창에 넣었다(Enter로 보낸다): ${msg.path}`
+                ? `그림 경로를 넣었다(Enter는 보내지 않았다): ${msg.path}`
                 : `그림을 저장했다: ${msg.path}${msg.note ? ` · ${msg.note}` : ""}`,
               ok: true,
             });
-            termRef.current?.focus();
+            if (!inputLineRef.current) termRef.current?.focus();
+            attachDone();
             break;
           case "error":
             setError(msg.message);
             setAttach((a) => (a?.text.startsWith("그림 보내는 중") ? null : a));
+            attachDone();
             break;
         }
       };
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null;
+        // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
+        attachDone();
         readonlyRef.current = true;
         setReadonly(true);
         setLink("closed");
@@ -1153,10 +1200,10 @@ export function TermView({
             onFocus={() => autoFit.current(true)}
             onImage={() => fileRef.current?.click()}
             onPaste={(e) => {
-              const f = imageOf(e.clipboardData.files);
-              if (f) {
+              const files = pastedFiles(e.clipboardData);
+              if (files.length > 0) {
                 e.preventDefault();
-                void attachFile(f);
+                uploadFiles(files);
               }
             }}
           />
@@ -1167,12 +1214,13 @@ export function TermView({
           ref={fileRef}
           type="file"
           accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
           hidden
           data-testid="attach-file"
           onChange={(e) => {
-            const f = e.target.files?.[0];
+            const files = Array.from(e.target.files ?? []);
             e.target.value = "";
-            if (f) void attachFile(f);
+            uploadFiles(files);
           }}
         />
       )}

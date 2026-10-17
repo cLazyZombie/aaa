@@ -1685,7 +1685,7 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Attached { path, inserted, note } => {
             let _ = writeln!(s, "{path}");
             if *inserted {
-                let _ = writeln!(s, "입력창에 경로를 넣었다(Enter는 보내지 않았다)");
+                let _ = writeln!(s, "경로를 넣었다(Enter는 보내지 않았다)");
             }
             if let Some(n) = note {
                 let _ = writeln!(s, "{n}");
