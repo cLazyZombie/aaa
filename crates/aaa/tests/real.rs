@@ -1,4 +1,4 @@
-//! 실제 harness E2E(plan §8.70): 시험 host에서 실제 Claude Code·Codex를 thread로 띄워 화면 감지 상태가
+//! 실제 harness E2E(plan §8.75): 시험 host에서 실제 Claude Code·Codex를 thread로 띄워 화면 감지 상태가
 //! 작업 중 → 질문(명령 허락) → idle로 바뀌고, 처음 실행 확인창은 질문으로 올라오며, brief가 받아졌는지(작업 중·질문이
 //! 보이면 받았다)를 본다. 구독 사용량을 쓰므로 평소에는 돌지 않는다(CI 제외).
 //!

@@ -615,7 +615,7 @@ fn finish_turn(w: &World, pane: &str) {
     w.h.ok(&["pane", "send", pane, "--text", "\u{7}"]);
 }
 
-/// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.70), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
+/// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.75), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
 /// 기다림은 모두 host가 밀어 주는 사건(thread 기록·질문·흐름)으로 끝난다.
 #[test]
 fn claude_thread_states_questions_and_messages() {

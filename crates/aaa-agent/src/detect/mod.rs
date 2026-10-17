@@ -1,4 +1,4 @@
-//! harness 상태의 화면 감지(결정 20 D8, plan §8.70). herdr 0.9.5처럼 화면 끝과 OSC 제목·진행으로 Claude·Codex 상태를 정한다.
+//! harness 상태의 화면 감지(결정 20 D8, plan §8.75). herdr 0.9.5처럼 화면 끝과 OSC 제목·진행으로 Claude·Codex 상태를 정한다.
 //!
 //! - 규칙 엔진은 herdr `src/detect/manifest.rs`, 규칙은 herdr `src/detect/manifests/{claude,codex}.toml`(Apache-2.0,
 //!   `LICENSE-herdr.txt`)을 그대로 옮겼다. 상태 전이(언제 알리나)는 herdr `src/pane/agent_detection.rs`(`state.rs`)다.
@@ -44,7 +44,7 @@ impl Harness {
     }
 
     /// 세션의 harness: 띄운 쪽이 알려 준 것(profile harness)이 먼저, 그것으로 모르면(shell·custom) 실행 파일 이름.
-    /// herdr는 foreground 프로세스 이름으로 찾지만(`identify_agent_in_job`), aaa는 세션을 띄울 때 안다(plan §8.70).
+    /// herdr는 foreground 프로세스 이름으로 찾지만(`identify_agent_in_job`), aaa는 세션을 띄울 때 안다(plan §8.75).
     pub fn of_session(declared: Option<&str>, argv: &[String]) -> Option<Harness> {
         declared.and_then(Harness::from_label).or_else(|| argv.first().and_then(|a| Harness::from_label(a)))
     }
@@ -114,7 +114,7 @@ pub fn text_from_screen(lines: &[String], cursor_row: u16) -> String {
 const QUESTION_ROWS: usize = 24;
 const QUESTION_MAX_CHARS: usize = 300;
 
-/// 확인창 감지(blocked)의 질문 종류와 본문. herdr에는 없는 aaa 질문 API용이다(plan §8.70).
+/// 확인창 감지(blocked)의 질문 종류와 본문. herdr에는 없는 aaa 질문 API용이다(plan §8.75).
 /// - 종류: 폴더 신뢰(`trust`), 도구·명령 허락(`permission`), 그 밖(`confirm`). host `modal_of`처럼 창에 trust가 보이면 trust다.
 /// - 본문: host `modal_of`와 같이 화면 끝 쪽에서 물음표가 있는 마지막 줄, 없으면 마지막 내용 줄(300자까지).
 pub fn question_of(rule: Option<&str>, screen: &str) -> (&'static str, String) {

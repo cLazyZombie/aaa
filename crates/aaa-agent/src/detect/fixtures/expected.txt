@@ -1,4 +1,4 @@
-# 실제 harness 화면(시험 host에서 띄운 Claude Code 2.1.302·Codex 0.163.0, plan §8.70)과 herdr 0.9.5 원본 엔진의 판정.
+# 실제 harness 화면(시험 host에서 띄운 Claude Code 2.1.302·Codex 0.163.0, plan §8.75)과 herdr 0.9.5 원본 엔진의 판정.
 # 판정은 `herdr agent explain --file <화면> --agent <harness> --json`(OSC 없이 화면만)으로 뽑았다. 경로·이름은 지웠다.
 # 칸: 파일 상태 규칙 보이는표지(i=idle b=blocker w=working, -=없음)
 claude-bash-permission.txt blocked bash_permission_prompt b

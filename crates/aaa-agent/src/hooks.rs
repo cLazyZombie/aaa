@@ -1,7 +1,7 @@
 //! harness hook·진행 보고 수신(§8.3, §8.11). 세션 안의 `aaa hook`·`aaa report`가 이 머신 agent의 로컬 socket으로 보낸다.
 //!
 //! - 세션을 띄울 때 env에 `AAA_HOOK_SOCK`·`AAA_HOOK_TOKEN`을 넣는다. token은 세션 token에서 만든 값이라 따로 저장하지 않는다.
-//! - harness 상태(작업 중·idle·질문)는 hook으로 정하지 않는다: pump의 화면 감지(`detect`, plan §8.70)가 정한다.
+//! - harness 상태(작업 중·idle·질문)는 hook으로 정하지 않는다: pump의 화면 감지(`detect`, plan §8.75)가 정한다.
 //!   hook은 herdr 0.9.5처럼 harness 세션 ID를 잇는 데(Claude SessionStart, Codex notify)와 herdr-projects 진행 보고
 //!   정리(UserPromptSubmit: 「Waiting for you」를 지운다)에만 쓴다.
 //! - `aaa hook`은 harness를 막지 않는다: 연결이 안 되면 조용히 끝나고, 아무것도 출력하지 않는다(결정을 내리지 않음).

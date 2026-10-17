@@ -162,7 +162,7 @@ pub struct SpawnSpec {
     pub rows: u16,
     #[serde(default)]
     pub role: Option<Role>,
-    /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.70).
+    /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.75).
     #[serde(default)]
     pub harness: Option<String>,
 }
@@ -190,7 +190,7 @@ pub struct ScreenText {
     pub cursor_col: u16,
 }
 
-/// harness 상태 감지 입력(plan §8.70). herdr처럼 화면 끝 글과 마지막 OSC 제목·진행을 함께 읽는다.
+/// harness 상태 감지 입력(plan §8.75). herdr처럼 화면 끝 글과 마지막 OSC 제목·진행을 함께 읽는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DetectScreen {
     /// 화면 변화 순번(출력이 오거나 크기가 바뀔 때마다 는다)
