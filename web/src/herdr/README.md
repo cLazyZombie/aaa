@@ -15,6 +15,7 @@
 | `KeyBarSettings.tsx`·`KeyBarSettings.css` | 설정 「키 바 편집」: 키 목록 순서·지우기, 키 추가, 고정 보조 키, 사용자 조합, 기본값으로 되돌리기(`src/components/KeyBarSettings.*`). CSS는 그대로, tsx는 lucide·i18n·useSettings 대신 aaa Icon·한국어 문구·`settings.ts`, 단추 class만 aaa 것 |
 | `fontFamily.ts` | 설정 「터미널 글꼴」: 쉼표로 적은 글꼴 목록을 CSS 값으로 거르고(`sanitizeFontFamily`), 그 face를 받을 때까지 기다린다(`loadFontStack`). aaa는 `terminalFontStack` 대신 Meslotendard 목록 앞에 붙인다(plan §8.64) |
 | `installedFonts.ts` | 「찾아보기」: 이 기기에 깔린 글꼴 목록(Chromium `queryLocalFonts`), 이름 거르기, 고정폭 판정(`isMonospaceFamily`) |
+| `presence.ts` | 이 화면을 지금 쓰는지(보이고 focus가 있다): events WS로 host에 알린다. 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다(`watchPageInUse`, plan §8.69) |
 | `wakeLock.ts`·`visibility.ts` | 설정 「화면 켜짐 유지」: 보이는 동안만 screen wake lock을 걸고, 늦게 온 lock도 놓는다(`useScreenWakeLock`, `usePageVisible`) |
 | `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
 | `draft.ts` | 끊긴 동안 친 글(붙잡은 입력): 글·붙여넣기를 모으고 Enter·줄바꿈은 빼서 알리며, 1024자 상한, 저장 기록은 24시간(`restoreDraft`) |
@@ -27,7 +28,7 @@ agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`�
 
 그대로 복사하지 못하고 옮긴 파일(import·문구만 바꿈, 고지는 같다): `web/src/herdr/install.ts`(← `src/lib/install.ts`, `t("…")`를 참고 `i18n.ko.ts`의 한국어로, 앱 설치 단추·설정 「설치」 줄, plan §8.68), `web/src/herdr/pinchFontSize.ts`(← `src/lib/pinchFontSize.ts`, settings import 경로만), `web/src/usage.ts`(← `src/lib/usage.ts`), `web/src/UsageMeters.tsx`(← `src/components/UsageMeters.tsx`), `web/src/TerminalInput.tsx`, `web/src/KeyBar.tsx`, `web/src/SettingsDialog.tsx`(← `SettingsDialog.tsx`·`SettingsControls.tsx` 일부). host `crates/aaa-host/src/usage.rs`는 `server/usage.ts`를 Rust로 옮긴 것이다(plan §8.45).
 
-aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `matchHerdrWidths`, `wheelSteps`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크·유지 키), `web/src/KeyBar.tsx`(참고 `KeyBar.tsx`를 옮김), `web/src/TerminalInput.tsx`(참고 `TerminalInput.tsx`를 옮김, `terminalDraft.ts`), `web/src/main.tsx`(`viewport.ts`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
+aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `matchHerdrWidths`, `wheelSteps`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크·유지 키), `web/src/KeyBar.tsx`(참고 `KeyBar.tsx`를 옮김), `web/src/TerminalInput.tsx`(참고 `TerminalInput.tsx`를 옮김, `terminalDraft.ts`), `web/src/main.tsx`(`viewport.ts`), `web/src/api.ts`(`presence.ts`: events WS `presence`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
 
 ```
 MIT License

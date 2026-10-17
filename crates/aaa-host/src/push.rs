@@ -6,6 +6,10 @@
 //!   시험용 loopback http는 `push_hosts`에 그 이름을 적었을 때만 받는다.
 //! - endpoint 경로는 그 기기에 보내는 열쇠다. 로그·흐름 사건·오류에 넣지 않는다.
 //! - 404·410이면 브라우저가 구독을 버린 것이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
+//! - 웹 화면을 지금 쓰고 있으면(어느 기기든 보이고 focus가 있으면, events WS `presence`) 어느 기기에도 보내지 않는다
+//!   (herdr-web-ui push.ts `inUse`). 보낼 때 묻는다. 시험 알림과 webhook(텔레그램)은 이와 상관없다.
+//! - 알림 한 자리는 thread 하나다(새 것이 옛 것을 바꾼다, herdr-web-ui `paneNotificationTag`). 여러 thread·머신 항목이
+//!   섞이면 프로젝트 한 자리다.
 
 use std::path::Path;
 use std::time::Duration;
@@ -182,16 +186,21 @@ pub(crate) fn check_keys(p256dh: &str, auth: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 알림 내용. 한 thread 항목만이면 그 thread 보기로 연다.
-pub(crate) fn payload(project: &str, items: &[InboxItem]) -> serde_json::Value {
+/// 알림 내용. 한 thread 항목만이면 제목은 「프로젝트 · thread 제목」(`title`이 비면 thread ID), 자리(tag)는 그 thread,
+/// 누르면 그 thread 보기로 연다. 아니면 「aaa · 프로젝트」와 프로젝트 자리다.
+pub(crate) fn payload(project: &str, items: &[InboxItem], title: Option<&str>) -> serde_json::Value {
     let thread_kinds = ["report", "question", "delivery", "thread", "session"];
     let one = items
         .first()
         .map(|i| i.subject.as_str())
         .filter(|s| items.iter().all(|i| i.subject == *s && thread_kinds.contains(&i.item_kind.as_str())));
-    let url = match one {
-        Some(t) => format!("/#thread={}", url_escape(&format!("{project}/{t}"))),
-        None => "/".into(),
+    let (url, head, tag) = match one {
+        Some(t) => (
+            format!("/#thread={}", url_escape(&format!("{project}/{t}"))),
+            format!("{project} · {}", title.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(t)),
+            format!("aaa-{project}/{t}"),
+        ),
+        None => ("/".into(), format!("aaa · {project}"), format!("aaa-{project}")),
     };
     let mut body = String::new();
     for i in items {
@@ -206,7 +215,7 @@ pub(crate) fn payload(project: &str, items: &[InboxItem]) -> serde_json::Value {
         }
         body.push_str(&line);
     }
-    serde_json::json!({ "title": format!("aaa · {project}"), "body": body, "url": url, "tag": format!("aaa-{project}") })
+    serde_json::json!({ "title": head, "body": body, "url": url, "tag": tag })
 }
 
 /// encodeURIComponent와 같은 규칙(웹이 decodeURIComponent로 읽는다)
@@ -279,6 +288,16 @@ impl Host {
         if self.vapid.is_none() {
             return;
         }
+        let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
+        if watching > 0 {
+            self.flow_project(
+                project,
+                "push_skipped",
+                None,
+                format!("쓰는 화면 {watching}개 · 항목 {}개", items.len()),
+            );
+            return;
+        }
         let subs = match self.db.push_list(None) {
             Ok(s) if !s.is_empty() => s,
             Ok(_) => return,
@@ -287,7 +306,13 @@ impl Host {
                 return;
             }
         };
-        let body = payload(project, items).to_string();
+        // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
+        let title = items
+            .first()
+            .filter(|f| items.iter().all(|i| i.subject == f.subject))
+            .and_then(|f| self.load(project, &f.subject).ok())
+            .map(|r| r.title);
+        let body = payload(project, items, title.as_deref()).to_string();
         let (mut ok, mut gone, mut failed) = (0, 0, Vec::new());
         for s in &subs {
             match self.push_one(s, body.as_bytes()).await {
@@ -414,12 +439,22 @@ mod tests {
             created_at_ms: 0,
             done_at_ms: None,
         };
-        let p = payload("demo", &[item("t-0001", "question"), item("t-0001", "report")]);
+        // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread
+        let p = payload("demo", &[item("t-0001", "question"), item("t-0001", "report")], Some("웹 결과물"));
         assert_eq!(p["url"], "/#thread=demo%2Ft-0001");
-        assert_eq!(p["title"], "aaa · demo");
-        let p = payload("demo", &[item("t-0001", "question"), item("mac-b", "outage")]);
-        assert_eq!(p["url"], "/");
+        assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("demo · 웹 결과물"), Some("aaa-demo/t-0001")));
+        // 제목이 없거나 비면 thread ID
+        assert_eq!(payload("demo", &[item("t-0001", "report")], Some("  "))["title"], "demo · t-0001");
+        assert_eq!(payload("demo", &[item("t-0001", "report")], None)["title"], "demo · t-0001");
+        // 섞이면 프로젝트 한 자리
+        let p = payload("demo", &[item("t-0001", "question"), item("mac-b", "outage")], Some("웹 결과물"));
+        assert_eq!(
+            (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str()),
+            (Some("/"), Some("aaa · demo"), Some("aaa-demo"))
+        );
+        let p = payload("demo", &[item("t-0001", "report"), item("t-0002", "report")], None);
+        assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("aaa · demo"), Some("aaa-demo")));
         let many: Vec<_> = (0..200).map(|n| item(&format!("t-{n:04}"), "report")).collect();
-        assert!(payload("demo", &many)["body"].as_str().unwrap().len() <= BODY_CAP + 3);
+        assert!(payload("demo", &many, None)["body"].as_str().unwrap().len() <= BODY_CAP + 3);
     }
 }

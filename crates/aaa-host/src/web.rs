@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aaa_proto::{
-    B64, DeviceRole, ErrorBody, ErrorCode, FrontEvent, FrontRequest, Outcome, TermClientMsg, TermServerMsg,
+    B64, DeviceRole, ErrorBody, ErrorCode, EventsClientMsg, FrontEvent, FrontRequest, Outcome, TermClientMsg,
+    TermServerMsg,
 };
 use anyhow::{Context, Result};
 use axum::body::Body;
@@ -242,6 +243,8 @@ struct PushInfo {
     key: Option<String>,
     /// 이 장치의 구독 수
     subscribed: usize,
+    /// 지금 쓰는 웹 화면 수(그동안 Web Push를 보내지 않는다)
+    in_use: usize,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
@@ -249,7 +252,8 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
     let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed })).into_response()
+    let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -393,6 +397,7 @@ async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
+    let mut presence = Presence { host: host.clone(), active: false };
     let mut send_state = true;
     loop {
         if send_state {
@@ -435,10 +440,40 @@ async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
                 send_state = false;
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
+                        Ok(EventsClientMsg::Presence { active }) => presence.set(active),
+                        Err(_) => {}
+                    },
                     _ => {}
                 }
             }
         }
+    }
+}
+
+/// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
+struct Presence {
+    host: Arc<Host>,
+    active: bool,
+}
+
+impl Presence {
+    fn set(&mut self, active: bool) {
+        use std::sync::atomic::Ordering::SeqCst;
+        if active != self.active {
+            self.active = active;
+            if active {
+                self.host.in_use.fetch_add(1, SeqCst);
+            } else {
+                self.host.in_use.fetch_sub(1, SeqCst);
+            }
+        }
+    }
+}
+
+impl Drop for Presence {
+    fn drop(&mut self) {
+        self.set(false);
     }
 }
 

@@ -251,6 +251,8 @@ pub struct Host {
     usage: usage::UsageService,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
+    /// 지금 쓰는(보이고 focus가 있는) 웹 화면 수(events WS `presence`). 하나라도 있으면 Web Push를 보내지 않는다
+    pub(crate) in_use: std::sync::atomic::AtomicUsize,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
     eval_due: Mutex<HashMap<String, Instant>>,
     /// 사후 평가자 묶음은 한 번에 하나씩 만든다
@@ -358,6 +360,7 @@ impl Host {
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             notify_tx: Mutex::new(None),
+            in_use: std::sync::atomic::AtomicUsize::new(0),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),

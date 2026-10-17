@@ -3693,8 +3693,193 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
+  await step("service worker 알림(herdr-web-ui sw.js·pwa-notification.test.ts 사례, 차이 목록 N5·N7): 보이는 창이 있으면 소리 없이, 누르면 focus 전에 자리를 알리고, focus가 안 되면 새 창, 마지막 누름만, 파일 탭은 고르지 않음", async () => {
+    // 내보내는 sw.js를 그대로 돌린다(가짜 self). 참고 시험과 같은 방법이다.
+    const src = fs.readFileSync(path.join(repo, "web/public/sw.js"), "utf8");
+    const APP = "https://aaa.example/";
+    const deferred = () => {
+      let resolve, reject;
+      const promise = new Promise((y, n) => ((resolve = y), (reject = n)));
+      return { promise, resolve, reject };
+    };
+    const worker = (windows, matchAll = async () => windows, openWindow = async () => null) => {
+      const on = new Map();
+      const opened = [];
+      const shown = [];
+      const self = {
+        location: new URL(APP),
+        addEventListener: (type, f) => on.set(type, f),
+        clients: { matchAll, openWindow: async (u) => (opened.push(u), openWindow(u)), claim: async () => {} },
+        registration: { showNotification: async (title, options) => void shown.push({ title, options }) },
+        skipWaiting: async () => {},
+      };
+      const { isAppWindow } = new Function("self", "caches", `${src}\nreturn { isAppWindow };`)(self, {});
+      const run = (type, ev) => {
+        let done;
+        on.get(type)({ ...ev, waitUntil: (p) => (done = p) });
+        return done;
+      };
+      const push = (payload) => run("push", { data: { json: () => payload, text: () => JSON.stringify(payload) } });
+      let closed = 0;
+      const click = (url = "/#thread=demo%2Ft-0001") => run("notificationclick", { notification: { data: { url }, close: () => closed++ } });
+      return { isAppWindow, push, click, opened, shown, closed: () => closed };
+    };
+    const client = (focus = async () => {}, focused = false, url = APP, visibilityState = "visible") => {
+      const got = [];
+      return { url, focused, focus, visibilityState, got, postMessage: (m) => got.push(m.hash) };
+    };
+    const eq = (what, a, b) => {
+      if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${what}: ${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`);
+    };
+    const A = "#thread=demo%2Ft-0001";
+    const B = "#thread=demo%2Ft-0002";
+    // 앱 창: host API가 연 파일·결과물 탭과 보내는 파일은 아니다
+    const { isAppWindow } = worker([]);
+    eq(
+      "앱 창",
+      [APP, `${APP}#pane=p1`, `${APP}thread/t-0001`, `${APP}index.html`, `${APP}api/v1/projects/demo/threads/t-0001/library/index.html`, `${APP}icon-192.png`, `${APP}manifest.webmanifest`, `${APP}sw.js`, `${APP}offline.html`, "not a url"].map(isAppWindow),
+      [true, true, true, true, false, false, false, false, false, false],
+    );
+    // 보이는 창이 있으면 소리·진동 없이, 없으면 다시 울린다. 누를 때 쓸 주소를 단다
+    const seen = worker([client()]);
+    await seen.push({ title: "demo · 웹", body: "b", url: `/${A}`, tag: "aaa-demo/t-0001" });
+    const hidden = worker([client(undefined, false, APP, "hidden")]);
+    await hidden.push({ title: "t", body: "b" });
+    eq("보는 중 알림", [seen.shown[0].title, seen.shown[0].options.silent, seen.shown[0].options.renotify, seen.shown[0].options.tag, seen.shown[0].options.data.url], ["demo · 웹", true, false, "aaa-demo/t-0001", `/${A}`]);
+    eq("안 보는 중 알림", [hidden.shown[0].options.silent, hidden.shown[0].options.renotify, hidden.shown[0].options.tag, hidden.shown[0].options.data.url], [false, true, "aaa", "/"]);
+    // focus가 늦어도 먼저 알리고, 끝나면 다시 알린다. 새 창은 열지 않는다
+    {
+      const d = deferred();
+      const t = client(() => d.promise);
+      const w = worker([t]);
+      const done = w.click();
+      await Promise.resolve();
+      eq("focus 전에 알림", t.got, [A]);
+      d.resolve();
+      await done;
+      eq("focus 뒤 다시", [t.got, w.opened, w.closed()], [[A, A], [], 1]);
+    }
+    // focus를 거절하면 그 자리로 새 창을 한 번 연다
+    {
+      const t = client(async () => {
+        throw new Error("NotAllowedError");
+      });
+      const w = worker([t]);
+      await w.click();
+      eq("거절 뒤 새 창", [t.got, w.opened], [[A], [`/${A}`]]);
+    }
+    // focus된 창을 고른다. 창이 없으면 그 자리로 열고, 자리가 없는 알림은 맨 앞으로
+    {
+      const bg = client();
+      const fg = client(undefined, true);
+      const w = worker([bg, fg]);
+      await w.click();
+      eq("focus된 창", [bg.got.length, fg.got.length, w.opened], [0, 2, []]);
+      const cold = worker([]);
+      await cold.click();
+      await cold.click("/");
+      eq("창 없음", cold.opened, [`/${A}`, "/"]);
+      let focused = 0;
+      const g = client(async () => void focused++);
+      const gw = worker([g]);
+      await gw.click("/");
+      eq("자리 없는 알림", [focused, g.got, gw.opened], [1, [], []]);
+    }
+    // 파일 탭(결과물)은 고르지 않는다: 앱 창이 받고, 앱 창이 없으면 연다
+    {
+      const file = client(undefined, true, `${APP}api/v1/projects/demo/threads/t-0001/library/index.html`);
+      const app = client();
+      const w = worker([file, app]);
+      await w.click();
+      eq("파일 탭", [file.got, app.got.length, w.opened], [[], 2, []]);
+      let focused = 0;
+      const lone = client(async () => void focused++, true, `${APP}icon-192.png`);
+      const cold = worker([lone]);
+      await cold.click(`/${B}`);
+      eq("파일 탭만", [focused, lone.got, cold.opened], [0, [], [`/${B}`]]);
+    }
+    // 늦게 끝난 앞 누름의 focus가 새 누름 자리를 바꾸지 못한다
+    {
+      const d = deferred();
+      let n = 0;
+      const t = client(() => (++n === 1 ? d.promise : Promise.resolve()));
+      const w = worker([t]);
+      const first = w.click(`/${A}`);
+      await Promise.resolve();
+      await w.click(`/${B}`);
+      d.resolve();
+      await first;
+      eq("늦은 focus", [t.got, w.opened], [[A, B, B, B], []]);
+    }
+    // 밀려난 앞 누름의 focus 거절이 옛 자리로 새 창을 열지 못한다
+    {
+      const d = deferred();
+      let n = 0;
+      const t = client(() => (++n === 1 ? d.promise : Promise.resolve()));
+      const w = worker([t]);
+      const first = w.click(`/${A}`);
+      await Promise.resolve();
+      await w.click(`/${B}`);
+      d.reject(new Error("NotAllowedError"));
+      await first;
+      eq("밀려난 거절", [t.got, w.opened], [[A, B, B], []]);
+    }
+    // 창 찾기가 느린 앞 누름은 새 누름 뒤에 옛 자리를 알리지 못한다
+    {
+      const d = deferred();
+      let n = 0;
+      const t = client();
+      const w = worker([t], async () => {
+        if (++n === 1) await d.promise;
+        return [t];
+      });
+      const first = w.click(`/${A}`);
+      await w.click(`/${B}`);
+      d.resolve();
+      await first;
+      eq("느린 창 찾기", [t.got, w.opened], [[B, B], []]);
+    }
+    // 늦게 열린 새 창(거절 뒤·처음 열기)도 마지막 누름 자리를 받는다
+    for (const fallback of [false, true]) {
+      const opening = deferred();
+      const ready = deferred();
+      const refused = client(async () => {
+        throw new Error("NotAllowedError");
+      });
+      const newer = client(undefined, true);
+      const opened = client();
+      let n = 0;
+      const w = worker(
+        [],
+        async () => (++n > 1 ? [newer] : fallback ? [refused] : []),
+        async () => {
+          opening.resolve();
+          await ready.promise;
+          return opened;
+        },
+      );
+      const first = w.click(`/${A}`);
+      await opening.promise;
+      await w.click(`/${B}`);
+      ready.resolve();
+      await first;
+      eq(`늦게 열린 창(${fallback ? "거절 뒤" : "처음"})`, [opened.got, newer.got, w.opened], [[B], [B, B], [`/${A}`]]);
+    }
+  });
+
   const pushFrom = pushes.length;
+  // 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다(herdr-web-ui presence, plan §8.69). headless 화면은 늘 focus가
+  // 있으므로, 보고 알림이 기기에 가는 것을 볼 동안 이 화면은 쓰지 않는 것으로 둔다(focus만 없앤다)
+  const setInUse = (p, on) =>
+    p.evaluate((on) => {
+      if (on) delete document.hasFocus;
+      else document.hasFocus = () => false;
+      window.dispatchEvent(new Event(on ? "focus" : "blur"));
+    }, on);
+  const pushInUse = async () => (await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.in_use));
   await step("thread 보고서·결과물: Markdown 보고, sandbox 결과물, agent에 남은 큰 파일, ack", async () => {
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task.md`, "웹 보기");
     const t = aaa("thread", "start", "demo", "--title", "웹 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir",
@@ -3730,6 +3915,8 @@ try {
     const n = await page.evaluate(async (u) => (await (await fetch(u)).arrayBuffer()).byteLength, href);
     if (n !== 2097152) throw new Error(`agent 파일 길이 ${n}`);
     await shot(page, "desktop-thread-library");
+    // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다
+    await until("보고 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
     await page.getByRole("button", { name: "확인(ack)" }).click();
     await until("ack 뒤 검토 대기 아님", async () => !(await item.innerText()).includes("검토 대기"));
     if (aaa("thread", "show", "demo", t.id).acked_hash !== aaa("thread", "show", "demo", t.id).report_hash) {
@@ -3740,9 +3927,10 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
-  await step("Web Push: 보고 준비 알림이 기기에 오고 그 thread로 연다, 버려진 구독(410)은 지운다", async () => {
+  await step("Web Push: 보고 준비 알림이 기기에 오고(제목·자리는 그 thread) 그 thread로 연다, 버려진 구독(410)은 지운다, 쓰는 화면이 있으면 어느 기기에도 보내지 않는다(차이 목록 N5·N6)", async () => {
     const { msg } = await nextPush(pushDev, pushFrom, "보고 알림");
-    if (msg.title !== "aaa · demo" || !msg.body.includes("report ready") || msg.url !== "/#thread=demo%2Ft-0001") {
+    // 한 thread 알림: 제목은 「프로젝트 · thread 제목」, 자리(tag)는 그 thread(차이 목록 N6)
+    if (msg.title !== "demo · 웹 결과물" || msg.tag !== "aaa-demo/t-0001" || !msg.body.includes("report ready") || msg.url !== "/#thread=demo%2Ft-0001") {
       throw new Error(JSON.stringify(msg));
     }
     await until("410 구독 정리", async () =>
@@ -3752,6 +3940,23 @@ try {
     if (!kinds.includes("push_sent") || !kinds.includes("push_gone")) throw new Error(kinds.join(","));
     // 구독 주소(기기에 보내는 열쇠)는 기록에 남지 않는다
     if (JSON.stringify(aaa("events", "--project", "demo")).includes("dev1")) throw new Error("흐름 사건에 endpoint가 남았다");
+    // 화면을 다시 쓰면(보이고 focus) 새 보고가 나와도 어느 기기에도 보내지 않는다(herdr-web-ui push.ts inUse, 차이 목록 N5)
+    await setInUse(page, true);
+    await until("쓰는 화면", async () => (await pushInUse()) === 1);
+    const from = pushes.length;
+    fs.writeFileSync(`${root}/task2.md`, "보는 중 보고");
+    const t2 = aaa("thread", "start", "demo", "--title", "보는 중", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task2.md`);
+    await until("보는 중 보고 회수", () => aaa("thread", "show", "demo", t2.id).report_hash);
+    const skipped = await until("보내지 않음 기록", () =>
+      aaa("events", "--project", "demo").events.find((e) => e.kind === "push_skipped" && e.detail.startsWith("쓰는 화면 1개")),
+    );
+    if (pushes.slice(from).some((x) => x.path === new URL(pushDev.json.endpoint).pathname)) throw new Error(`쓰는 화면이 있는데 보냈다 ${skipped.detail}`);
+    // 화면을 닫으면(연결이 끊기면) 쓰는 화면이 아니다
+    const extra = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await until("둘째 화면도 씀", async () => (await pushInUse()) === 2);
+    await extra.context().close();
+    await until("닫은 화면은 빠짐", async () => (await pushInUse()) === 1);
+    aaa("thread", "ack", "demo", t2.id);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
