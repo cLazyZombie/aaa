@@ -29,7 +29,7 @@ describe("단축키 줄 차례", () => {
   });
 });
 
-// 재부팅 뒤 복원 실패(plan §8.105): 참고 RestoreErrorBadge처럼 경고 하나에 까닭을 싣는다
+// 재부팅 뒤 복원 실패(plan §8.110): 참고 RestoreErrorBadge처럼 경고 하나에 까닭을 싣는다
 describe("중단 pane 경고", () => {
   it("복원하지 못한 까닭이 있으면 그것을, 없으면 중단만", () => {
     const p = { ...pane("p1", "m1", "interrupted"), restore_error: "다시 띄우지 못했다: 작업 폴더가 없다: /w" };

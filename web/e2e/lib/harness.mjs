@@ -696,6 +696,7 @@ fs.writeFileSync(
     "| --- | :---: | ---: |",
     "| `T2` | 같음 | `prefs.rs` |",
     "| R1 | **일부** | 표와 `code` |",
+    "| Q9 | 휴대폰 표 칸의 한글 낱말은 음절 사이에서 끊기지 않는다 | 경우마다 메모를 남긴다 |",
     "",
     "1. 첫째",
     "   - 안쪽 `하나`",
@@ -842,6 +843,12 @@ process.stdout.write("\\x1b[?2004hhist> ");
 let ticks = 0;
 process.stdin.on("data", (d) => {
   if (d.toString("latin1") === "p") return void process.stdout.write("\\r\\ntick-" + ++ticks + "\\r\\nhist> ");
+  // 짧은 줄 2600개(QA t-0337 probe-stuck처럼 앞 기록과 화면이 한 번에 읽히는 크기)
+  if (d.toString("latin1") === "q") {
+    let out = "\\r\\n";
+    for (let i = 1; i <= 2600; i++) out += "q-" + String(i).padStart(4, "0") + "\\r\\n";
+    return void process.stdout.write(out + "short-done\\r\\nhist> ");
+  }
   if (d.toString("latin1") !== "h") return void process.stdout.write("\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\nhist> ");
   let out = "\\r\\n";
   for (let i = 1; i <= 6000; i++) {
@@ -850,6 +857,17 @@ process.stdin.on("data", (d) => {
   }
   process.stdout.write(out + "history-done\\r\\nhist> ");
 });
+`,
+);
+// 긴 출력 시험 프로그램(QA t-0337 lab long.sh와 같은 줄): 3000줄(한글·이모지·전각)을 쓰고 셸처럼 기다린다
+fs.writeFileSync(
+  `${root}/long.js`,
+  `let out = "";
+for (let i = 1; i <= 3000; i++) out += String(i).padStart(4, "0") + " 한글 출력 줄 — 이모지 🚀 전각 ＡＢＣ 끝 " + i + "\\r\\n";
+process.stdout.write(out + "long-done\\r\\n$ ");
+process.stdin.setRawMode(true);
+process.stdin.on("data", (d) => process.stdout.write(d.toString("latin1") === "p" ? "\\r\\ntick-" + ++globalThis.ticks + "\\r\\n$ " : ""));
+globalThis.ticks = 0;
 `,
 );
 fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');

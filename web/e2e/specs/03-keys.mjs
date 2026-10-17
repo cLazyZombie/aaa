@@ -367,8 +367,19 @@ export default async function ({ ctl, page }) {
     const got = (name) => aaa("pane", "read", name, "--source", "visible").text;
     const gots = (name) => got(name).split("GOT:").slice(1).map((g) => g.split("\n")[0]);
     const idOf = (name) => aaa("pane", "list").panes.find((p) => p.name === name).id;
-    // frame을 잡아 둘 수 있게 한다(아래 「잇달아 넘기기」): 잡힌 동안 requestAnimationFrame callback을 모았다가 놓을 때 차례대로 건다
+    // frame과 timer task를 잡아 둘 수 있게 한다(아래 「잇달아 넘기기」): 잡힌 동안 requestAnimationFrame·setTimeout callback을 모았다가
+    // 놓을 때 차례대로 건다(xterm WriteBuffer는 받은 출력을 setTimeout task에서 읽는다)
     const holdFrames = () => {
+      const st = window.setTimeout.bind(window);
+      let tasks = null;
+      window.setTimeout = (cb, ms, ...args) => (tasks ? void tasks.push([cb, ms, args]) : st(cb, ms, ...args));
+      window.__holdTasks = () => void (tasks = []);
+      window.__releaseTasks = () => {
+        const q = tasks ?? [];
+        tasks = null;
+        for (const [cb, ms, args] of q) st(cb, ms, ...args);
+        return q.length;
+      };
       const raf = window.requestAnimationFrame.bind(window);
       const caf = window.cancelAnimationFrame.bind(window);
       let held = null;
@@ -446,6 +457,42 @@ export default async function ({ ctl, page }) {
     await sp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     if (errors.length) throw new Error(`잇달아 넘긴 뒤 page error: ${errors.join("; ")}`);
     await until("돌아온 화면(잇달아)", async () => (await screenText(sp)).includes("keys>"));
+    await sp.getByTestId("terminal").click();
+
+    // 읽기 전에 넘기기: 다음 pane이 snapshot을 받았으나 xterm이 아직 읽지 않았을 때(WriteBuffer task가 남음) 다시 넘긴다. 치우기를
+    // 기다리는 frame이 그 task보다 먼저 돌면, task가 RIS를 읽어 건 reset frame이 치운 뒤에 돌았다(CI 6번 중 1번, t-0332 재현).
+    // frame과 task를 잡아 그 순서(frame 먼저, 그다음 task)를 늘 만든다
+    await sp.evaluate(() => {
+      window.__holdFrames();
+      window.__holdTasks();
+      window.__aaaTermLog.push({ at: 0, e: "mark 읽기 전" });
+    });
+    await sp.keyboard.press("Control+Shift+ArrowDown");
+    await until("다음 pane이 snapshot을 받음(읽기는 잡힘)", () =>
+      sp.evaluate(() => {
+        const log = window.__aaaTermLog;
+        const from = log.findLastIndex((x) => x.e === "mark 읽기 전");
+        return log.some((x, i) => i > from && x.e?.startsWith("snapshot "));
+      }),
+    );
+    await sp.keyboard.press("Control+Shift+ArrowUp");
+    await until("돌아옴(읽기 전)", async () => (await hash()) === sel("shortkeys"));
+    const read = await sp.evaluate(() => {
+      const log = window.__aaaTermLog;
+      const from = log.findLastIndex((x) => x.e === "mark 읽기 전");
+      return log.slice(from).some((x) => x.kind === "io" && x.acks > 0);
+    });
+    if (read) throw new Error("넘기기 전에 snapshot을 읽었다(시험이 그 경우를 만들지 못했다)");
+    // 잡힌 frame을 먼저 돌리고(그 frame 뒤에 이어서 기다린다), 그다음 잡힌 task를 차례로
+    await sp.evaluate(() => {
+      window.__releaseFrames();
+      return new Promise((r) => requestAnimationFrame(() => r()));
+    });
+    const tasks = await sp.evaluate(() => window.__releaseTasks());
+    if (tasks === 0) throw new Error("잡힌 task가 없다(시험이 그 경우를 만들지 못했다)");
+    await sp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    if (errors.length) throw new Error(`읽기 전에 넘긴 뒤 page error: ${errors.join("; ")}`);
+    await until("돌아온 화면(읽기 전)", async () => (await screenText(sp)).includes("keys>"));
     await sp.getByTestId("terminal").click();
 
     // aaa에 없는 동작(명령 팔레트·찾기·사이드바·새 워크스페이스)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다

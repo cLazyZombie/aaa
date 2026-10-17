@@ -727,6 +727,7 @@ impl Host {
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
             agent: p.agent.clone().map(Box::new),
+            label: p.info.label.clone(),
             restore_error: p.restore_error.clone(),
         }
     }
@@ -1165,6 +1166,7 @@ impl Host {
                 self.forget(&id, &mid, actor).await?;
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
             FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
@@ -1185,7 +1187,10 @@ impl Host {
                     | LayoutChange::MoveToNewTab { pane, .. }
                     | LayoutChange::Zoom { pane, .. }
                     | LayoutChange::Swap { pane, .. } => self.workspace_of_pane(pane),
-                    LayoutChange::RenameTab { tab, .. } | LayoutChange::CloseTab { tab } => self.workspace_of_tab(tab),
+                    LayoutChange::RenameTab { tab, .. }
+                    | LayoutChange::CloseTab { tab }
+                    | LayoutChange::SplitRatio { tab, .. }
+                    | LayoutChange::MoveTab { tab, .. } => self.workspace_of_tab(tab),
                     LayoutChange::NewTab { .. } | LayoutChange::AddTab { .. } => None,
                 };
                 let name = workspace.or(found).unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
@@ -1350,6 +1355,40 @@ impl Host {
     // ───────────── 재개·정리 ─────────────
 
     /// 끝난 pane을 같은 spec(이름·argv·cwd·크기)으로 다시 띄우고 layout 자리를 새 pane으로 바꾼 뒤 옛 기록을 지운다.
+    /// pane에 사람이 붙인 이름(herdr `pane rename`). 이름의 정본은 agent의 세션 기록이라 agent까지 간다(plan §8.109).
+    async fn rename(
+        self: &Arc<Self>,
+        pane: &str,
+        label: Option<String>,
+        role: DeviceRole,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        if label.as_ref().is_some_and(|l| l.chars().count() > aaa_proto::MAX_PANE_LABEL_CHARS) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!("이름은 {}자 안이어야 한다", aaa_proto::MAX_PANE_LABEL_CHARS),
+            ));
+        }
+        let conn = self.live_conn(&mid)?;
+        // 옛 agent는 모르는 요청에 연결을 끊는다: 보내기 전에 거른다
+        let knows =
+            self.inner.lock().unwrap().machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "rename.v1"));
+        if !knows {
+            return Err(err(
+                ErrorCode::BadRequest,
+                "이 머신의 agent가 pane 이름 바꾸기를 모른다(agent binary 반영 필요)",
+            ));
+        }
+        self.db.audit(actor, "pane_rename", &format!("{id} {}", label.as_deref().unwrap_or("-")));
+        match conn.request(AgentRequest::Rename { session: id.clone(), label }).await? {
+            AgentResponse::Session(info) => self.on_session(&mid, info, false),
+            other => return Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+        }
+        self.pane_view_of(&id, role).map(FrontResponse::Pane).ok_or_else(|| err(ErrorCode::NotFound, "pane이 없다"))
+    }
+
     async fn resume(self: &Arc<Self>, pane: &str, role: DeviceRole, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let (id, mid) = self.resolve_pane(pane)?;
         let info = self
@@ -1615,6 +1654,29 @@ impl Host {
                         err(ErrorCode::BadRequest, format!("workspace {name}의 한 탭에 {pane}·{with}가 함께 없다"))
                     })?;
                 aaa_proto::layout::swap(&mut t.root, &a, &b);
+            }
+            LayoutChange::SplitRatio { tab, path, ratio } => {
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                // herdr `handle_layout_set_split_ratio`: 그 자리에 나눔이 없으면 split_not_found
+                if !aaa_proto::layout::set_ratio_at(&mut t.root, &path, ratio) {
+                    return Err(err(ErrorCode::NotFound, format!("탭 {tab}에 그 나눔({path:?})이 없다")));
+                }
+            }
+            LayoutChange::MoveTab { tab, index } => {
+                let from = w
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                // herdr `handle_tab_move`: insert_index는 0..=탭 수
+                if usize::from(index) > w.tabs.len() {
+                    return Err(err(ErrorCode::BadRequest, format!("탭 자리 {index}가 0..={} 밖이다", w.tabs.len())));
+                }
+                aaa_proto::layout::move_tab(&mut w.tabs, from, usize::from(index));
             }
         }
         self.db.audit(actor, "layout", name);

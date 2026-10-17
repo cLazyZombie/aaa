@@ -235,17 +235,22 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
             None
         };
         let (left, right) = line(row, v, current || sel);
-        let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16 + 1).unwrap_or(0);
-        let end = r.x + r.w.saturating_sub(rw);
+        // 오른쪽 글(상태)은 이름과 한 칸 띄우고 끝 한 칸을 비운다. 넘치는 이름은 herdr `truncate_end`처럼 「…」로 자른다
+        // (herdr `resolved_token_spans`: 토큰 사이 구분자, 잘린 토큰 끝 「…」)
+        let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16).unwrap_or(0);
+        let end = r.x + r.w.saturating_sub(if rw > 0 { rw + 2 } else { 0 });
+        let overflow = left.iter().map(|(t, _)| unicode_width(t)).sum::<usize>() > (end - r.x) as usize;
         let mut x = r.x;
         for (t, st) in &left {
             if x >= end {
                 break;
             }
-            x = buf.set_stringn(x, y, t, (end - x) as usize, *st).0;
+            let room = (end - x) as usize;
+            let t = if overflow { crate::chrome::truncate_end(t, room) } else { t.clone() };
+            x = buf.set_stringn(x, y, &t, room, *st).0;
         }
         if let Some((t, st)) = right {
-            buf.set_stringn(end, y, &t, rw as usize, st);
+            buf.set_stringn(end + 1, y, &t, rw as usize, st);
         }
         if let Some(c) = bg {
             for dx in 0..r.w {
@@ -392,5 +397,50 @@ mod tests {
         assert_eq!(step(&r, 6, true), 6);
         assert_eq!(step(&r, 6, false), 3);
         assert_eq!(step(&r, 1, false), 1);
+    }
+
+    /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
+    #[test]
+    fn long_name_is_cut_with_ellipsis_before_the_right_text() {
+        let machines = [MachineView {
+            id: "m".into(),
+            name: "studio-very-long-machine".into(),
+            local: false,
+            connection: Connection::Disconnected,
+            os: None,
+            boot_id: None,
+            dev_mode: false,
+            last_seen_ms: None,
+            health: None,
+            clock_skew_ms: None,
+            problems: vec![],
+        }];
+        let (panes, threads) = (HashMap::new(), HashMap::new());
+        let pal = Palette::catppuccin();
+        let v = View {
+            machines: &machines,
+            panes: &panes,
+            threads: &threads,
+            current: None,
+            sel: 0,
+            focused: false,
+            top: None,
+            pal: &pal,
+        };
+        let line = |w: u16| {
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
+            render(&mut buf, Rect { x: 0, y: 0, w, h: 1 }, &[Row::Machine("m".into())], &v);
+            // 넓은 글자 뒤 칸은 건너뛴다(터미널에 보이는 대로)
+            let (mut out, mut x) = (String::new(), 0);
+            while x < w {
+                let sym = buf[(x, 0)].symbol().to_string();
+                x += (unicode_width(&sym) as u16).max(1);
+                out.push_str(&sym);
+            }
+            out
+        };
+        assert_eq!(line(20), " ▾ studio-v… ◐ 끊김 ");
+        // 넉넉하면 그대로
+        assert_eq!(line(40), format!(" ▾ studio-very-long-machine{}◐ 끊김 ", " ".repeat(6)));
     }
 }

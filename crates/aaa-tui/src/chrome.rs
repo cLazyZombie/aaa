@@ -74,26 +74,81 @@ fn pane_box(pane: String, rect: Rect, bordered: bool) -> PaneBox {
     PaneBox { pane, rect, inner, bordered: bordered && rect.w >= 2 && rect.h >= 2 }
 }
 
-/// herdr `split_rect`: 나눔 칸 없이 첫 쪽은 `round(길이 × 비율)`. 나눌 수 없으면(1칸) 첫 쪽만 그린다.
+/// herdr `split_rect`: 나눔 칸 없이 첫 쪽은 `round(길이 × 비율)`. 나눌 수 없으면(1칸) None(첫 쪽만 그린다).
+fn cut(dir: SplitDir, ratio: u16, r: Rect) -> Option<(Rect, Rect)> {
+    let total = if dir == SplitDir::Horizontal { r.w } else { r.h };
+    if total < 2 {
+        return None;
+    }
+    let first =
+        ((u32::from(total) * u32::from(ratio.clamp(1, 999)) + 500) / 1000).clamp(1, u32::from(total - 1)) as u16;
+    Some(match dir {
+        SplitDir::Horizontal => (Rect { w: first, ..r }, Rect { x: r.x + first, w: total - first, ..r }),
+        SplitDir::Vertical => (Rect { h: first, ..r }, Rect { y: r.y + first, h: total - first, ..r }),
+    })
+}
+
 fn tile(n: &LayoutNode, r: Rect, out: &mut Vec<(String, Rect)>) {
     match n {
         LayoutNode::Pane { pane } => out.push((pane.clone(), r)),
-        LayoutNode::Split { dir, ratio, a, b } => {
-            let total = if *dir == SplitDir::Horizontal { r.w } else { r.h };
-            if total < 2 {
-                tile(a, r, out);
-                return;
+        LayoutNode::Split { dir, ratio, a, b } => match cut(*dir, *ratio, r) {
+            Some((ra, rb)) => {
+                tile(a, ra, out);
+                tile(b, rb, out);
             }
-            let first = ((u32::from(total) * u32::from((*ratio).clamp(1, 999)) + 500) / 1000)
-                .clamp(1, u32::from(total - 1)) as u16;
-            let (ra, rb) = match dir {
-                SplitDir::Horizontal => (Rect { w: first, ..r }, Rect { x: r.x + first, w: total - first, ..r }),
-                SplitDir::Vertical => (Rect { h: first, ..r }, Rect { y: r.y + first, h: total - first, ..r }),
-            };
-            tile(a, ra, out);
-            tile(b, rb, out);
-        }
+            None => tile(a, r, out),
+        },
     }
+}
+
+/// 끌어 비율을 바꿀 나눔(herdr `SplitBorder`): 뿌리에서의 길(false = a), 나눔 칸, b 쪽 시작 자리, 누를 칸
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitHit {
+    pub path: Vec<bool>,
+    pub dir: SplitDir,
+    pub area: Rect,
+    pub pos: u16,
+    pub hit: Rect,
+}
+
+/// 나눔 경계의 누를 칸(herdr `collect_splits`·`split_hit_rect`). 바깥 나눔이 앞에 온다. 테두리가 있으면 맞닿은 두 선
+/// (`pos-1`·`pos`), `off`면 빈 칸(`pos-1`, pane 칸과 겹치면 뺀다). zoom이면 없다.
+pub fn splits(root: &LayoutNode, area: Rect, boxes: &[PaneBox], zoomed: bool) -> Vec<SplitHit> {
+    fn walk(n: &LayoutNode, r: Rect, path: &mut Vec<bool>, out: &mut Vec<(Vec<bool>, SplitDir, Rect, u16)>) {
+        let LayoutNode::Split { dir, ratio, a, b } = n else { return };
+        let Some((ra, rb)) = cut(*dir, *ratio, r) else { return };
+        out.push((path.clone(), *dir, r, if *dir == SplitDir::Horizontal { rb.x } else { rb.y }));
+        path.push(false);
+        walk(a, ra, path, out);
+        path.pop();
+        path.push(true);
+        walk(b, rb, path, out);
+        path.pop();
+    }
+    if zoomed {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    walk(root, area, &mut Vec::new(), &mut found);
+    let bordered = boxes.iter().any(|b| b.bordered);
+    let overlaps = |h: &Rect, o: &Rect| h.x < o.x + o.w && h.x + h.w > o.x && h.y < o.y + o.h && h.y + h.h > o.y;
+    found
+        .into_iter()
+        .filter_map(|(path, dir, area, pos)| {
+            let (start, len) = if bordered { (pos - 1, 2) } else { (pos - 1, 1) };
+            let hit = match dir {
+                SplitDir::Horizontal => Rect { x: start, w: len, ..area },
+                SplitDir::Vertical => Rect { y: start, h: len, ..area },
+            };
+            (bordered || !boxes.iter().any(|b| overlaps(&hit, &b.rect))).then_some(SplitHit {
+                path,
+                dir,
+                area,
+                pos,
+                hit,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Default)]
@@ -223,6 +278,28 @@ mod tests {
 
     fn pane(p: &str) -> LayoutNode {
         LayoutNode::Pane { pane: p.into() }
+    }
+
+    /// herdr `split_hit_rect`: 테두리면 맞닿은 두 선, off면 빈 칸, 바깥 나눔이 먼저, zoom이면 없다
+    #[test]
+    fn split_hits_like_herdr() {
+        let t = split(SplitDir::Horizontal, 500, pane("a"), split(SplitDir::Vertical, 500, pane("b"), pane("c")));
+        let area = r(26, 1, 64, 29);
+        let boxes = layout(&t, area, PaneBorders::Auto, None);
+        let s = splits(&t, area, &boxes, false);
+        assert_eq!(s.len(), 2);
+        assert_eq!(
+            (s[0].path.clone(), s[0].dir, s[0].area, s[0].pos, s[0].hit),
+            (vec![], SplitDir::Horizontal, area, 58, r(57, 1, 2, 29))
+        );
+        assert_eq!(
+            (s[1].path.clone(), s[1].area, s[1].pos, s[1].hit),
+            (vec![true], r(58, 1, 32, 29), 16, r(58, 15, 32, 2))
+        );
+        let boxes = layout(&t, area, PaneBorders::Off, None);
+        let s = splits(&t, area, &boxes, false);
+        assert_eq!((s[0].hit, s[1].hit), (r(57, 1, 1, 29), r(58, 15, 32, 1)));
+        assert!(splits(&t, area, &boxes, true).is_empty());
     }
 
     /// herdr 기본(auto): 하나면 테두리 없음, 둘 이상이면 pane마다 상자, 나눔 칸 없이 반올림
