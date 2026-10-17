@@ -30,8 +30,6 @@ while IFS= read -r line; do
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
       ln -s /etc/hosts "$dir/library/link"
-      printf '## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
-      mv "$dir/report.md.tmp" "$dir/report.md"
       case "$task" in
         *commit*) echo change > change.txt && git add change.txt && git -c user.name=t -c user.email=t@example.com commit -qm change ;;
       esac
@@ -43,6 +41,9 @@ while IFS= read -r line; do
           head -c 2097152 /dev/urandom > "$dir/library/big.bin"
           printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
       esac
+      # 일을 다 한 뒤에 보고를 쓴다(보고를 본 시험이 resolve하면 그때 worktree·branch가 끝난 모습이어야 한다)
+      printf '## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
+      mv "$dir/report.md.tmp" "$dir/report.md"
       echo "done"
       ;;
     *inbox/*.json*)
@@ -681,6 +682,9 @@ fn hooked_thread_questions_and_messages() {
     // pane 목록에도 상태가 보인다(polling 없이 hook으로만 바뀐다)
     assert_eq!(w.h.pane(&pane)["agent"]["activity"], "question");
     let qid = q["id"].as_str().unwrap().to_string();
+    // 가짜 Claude는 hook 둘(PermissionRequest·Notification)을 낸 뒤 창을 그린다(`perm`): 그려진 것을 본 뒤 답한다.
+    // 먼저 답하면 늦게 온 Notification이 답한 질문을 다시 연다(ci-local 부하에서 1.3초 늦게 왔다)
+    w.wait_screen(&pane, "Allow Bash(make test)?");
     w.h.ok(&["question", "answer", &qid, "yes"]);
     let e = w.h.json(&["question", "answer", &qid, "yes"]).expect_err("두 번 답하기");
     assert!(e.contains("닫힌"), "{e}");
@@ -715,6 +719,7 @@ fn hooked_thread_questions_and_messages() {
         w.h.json(&["thread", "message", "demo", &id, "--interrupt", "--text", "NEVER-SENT"])
             .expect_err("질문 중 interrupt");
     assert!(e.contains("확인창"), "{e}");
+    w.wait_screen(&pane, "Allow Bash(make test)?");
     w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "no"]);
     w.wait_screen(&pane, "denied");
     // 거절 뒤 Stop hook이 없어도 입력 대기로 본다
