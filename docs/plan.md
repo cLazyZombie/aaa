@@ -2372,7 +2372,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 ### 8.107 웹 입구 보안: Origin·Host 포트, pairing 기다림, cookie, 보기 경로(10-18, t-0340 보안 감사 A1·A2·A4·A5·A7·A8·A10)
 
 - **Host·Origin은 포트까지(A1·A8).** 전에는 이름만 비교해서, 같은 MagicDNS 이름의 다른 포트(운영은 443에 herdr-web-ui, 8443에 aaa)나 포트 없는 Origin이 WS upgrade·변경 요청을 통과했다. 이제 Host는 `127.0.0.1:<web_port>`나 tailscale serve가 aaa 웹 포트를 proxy하는 공개 origin(`https://<이름>[:포트]`, 443은 포트 없이)과 같아야 한다. Origin은 그 Host의 origin 전체와 같아야 한다. 참고: herdr-web-ui `server/machine-security.ts` `sameOrigin`(요청 주소의 `URL.origin`과 정확 비교), t3code `apps/server/src/auth/EnvironmentAuth.ts`. `localhost`는 §6.3대로 뺐다.
-  - 공개 origin은 host 상태 `publish_origin`에 둔다. `web_status`·`publish`·`publish off`와 host 시작(배경)에서 `tailscale serve status`로 고친다. tailscale을 못 읽으면 지난 값을 둔다. 공개하지 않았으면 loopback만 연다. 옛 `publish_dns`(이름만)로는 열지 않는다.
+  - 공개 origin은 host 상태 `publish_origin`에 둔다. `web_status`·`publish`·`publish off`와 host 시작(배경)에서 `tailscale serve status`로 고친다. tailscale을 못 읽으면 지난 값을 둔다. 공개하지 않았으면 loopback만 연다. 옛 `publish_dns`(이름만)로는 열지 않는다. 아직 serve 상태를 못 읽었으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개 포트(`publish_port`)와 이름으로 대신한다.
 - **pairing 기다림(A2).** 전에는 전역 카운터가 성공할 때만 0이 되고 30초부터 64분까지 잠갔으며, 새 코드도 막았다. 이제 10분 창 안의 실패만 세고, 5번까지는 기다리지 않으며, 그 뒤로는 마지막 실패부터 1초·2초·4초… 60초까지 기다린다(참고 `server/auth.ts` `AUTH_FAILURE_BUDGET`·`AUTH_BACKOFF_MS`·`AUTH_BACKOFF_MAX_MS`·`SHARED_WINDOW_MS`). 코드를 만들면(CLI `aaa web pair`나 controller 기기) 기다림이 풀린다. 코드 하나로 5번 틀리면 그 코드를 버리는 것은 그대로다.
   - 다르게 둔 것: 참고는 주소(X-Forwarded-For)마다 따로 센다. aaa는 하나로 센다. 코드는 한 번에 하나이고 주인만 만들 수 있어 주소를 나눌 이득이 적고, 새 코드가 기다림을 풀어 주인이 막히지 않는다.
 - **cookie(A4·A5).** `=`이 없는 등 깨진 항목은 건너뛴다(참고 `parseCookies`). HTTPS에서는 `__Host-aaa`만, loopback HTTP에서는 `aaa`만 장치 cookie로 본다.
