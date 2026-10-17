@@ -514,6 +514,19 @@ impl Host {
                 .collect();
         }
         self.bump();
+        // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
+        let open = self.questions(false);
+        let gone: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            open.into_iter()
+                .filter(|q| q.machine == hello.machine_name)
+                .filter(|q| !i.panes.get(&q.pane).is_some_and(|p| p.info.state.is_running()))
+                .map(|q| q.pane)
+                .collect()
+        };
+        for pane in gone {
+            self.close_questions_of(&pane);
+        }
         for (sid, from) in subscribe {
             self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
@@ -631,6 +644,9 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        if !info.state.is_running() {
+            self.close_questions_of(&info.id);
+        }
         self.replay_harness(&info.id);
         // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
         if !info.state.is_running() {
@@ -971,6 +987,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1315,6 +1332,7 @@ impl Host {
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            harness: info.harness.clone(),
         };
         let new_id = self.spawn_on(&mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
@@ -1395,6 +1413,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1412,7 +1431,16 @@ impl Host {
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
                 let cwd = self.new_pane_cwd(cwd, Some(&target), &mid).await;
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
+                let spec = SpawnSpec {
+                    name: String::new(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 80,
+                    rows: 24,
+                    role: None,
+                    harness: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| aaa_proto::layout::split(&mut t.root, &target, &id, dir));
