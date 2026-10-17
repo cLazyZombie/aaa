@@ -30,6 +30,8 @@ export default async function () {
     await ph.locator(".droplet-close").click();
     await ph.locator(".droplet").waitFor({ state: "detached" });
   };
+  // 캡처는 그 요소의 애니메이션(물방울 펼침·스위치 이동)이 끝난 뒤에 찍는다(06-settings와 같다)
+  const still = (loc) => loc.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))));
   const same = (got, want, what) => {
     if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`${what}: ${JSON.stringify(got)}(기대 ${JSON.stringify(want)})`);
   };
@@ -49,6 +51,7 @@ export default async function () {
     await dialog.getByRole("switch", { name: "무음 모드에서도" }).click();
     await device.next("무음에서도 미리 듣기", (e) => e === "tone 660", m);
     same(device.since(m).filter((e) => /^(session|tone|muted) /.test(e)), ["session playback", "tone 880", "tone 660"], "무음에서도 미리 듣기");
+    await still(dialog);
     await shot(ph, "iphone-home-sound-settings");
     await ph.keyboard.press("Escape");
     await ph.getByTestId("pane-t1").click();
@@ -58,6 +61,7 @@ export default async function () {
     const q1 = ask();
     await device.next("확인창 소리", (e) => e === "tone 880", m);
     await alerted(ph);
+    await still(ph.locator(".droplet"));
     await shot(ph, "iphone-home-app-alert");
     await dismiss(ph);
     // 2) 홈 화면으로 나갔다 돌아옴: 소리가 interrupted라 누르기 전에는 낼 수 없다. 앱 안 알림이 뜬 때까지 소리 기록이 없어야 한다
@@ -90,6 +94,7 @@ export default async function () {
       throw new Error(`${e.message}: 화면 오류 [${tab.errors.join("; ")}]`);
     });
     if (!(await dialog.getByRole("button", { name: "테스트 보내기" }).isDisabled())) throw new Error("탭에서 테스트 보내기가 눌린다");
+    await still(dialog);
     await shot(tab.page, "iphone-tab-alerts-hint");
     if (tab.errors.length) throw new Error(`탭 화면 오류: ${tab.errors.join("; ")}`);
     if (tab.device.log.some((e) => e.startsWith("permission"))) throw new Error(`탭에서 권한을 물었다: ${tab.device.log}`);
