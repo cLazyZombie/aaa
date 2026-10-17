@@ -1648,7 +1648,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 원인: 덮개를 `term.write` 콜백에서 뗐다. 이 콜백은 parse가 끝난 뒤, 그리기 전이다. xterm 5.5는 그리기를 rAF로 미룬다(`RenderService.refreshRows` → `RenderDebouncer` → `_renderRows` → `onRender`). 그래서 덮개를 떼고 다음 frame이 그려지기 전 한 frame 동안 비운 버퍼가 보였다. 부하가 높으면 그 frame이 길어져 잡혔다.
   - 고침: 덮개는 새 버퍼가 그려진 뒤 `term.onRender`에서 뗀다. 참고 herdr-web-ui `TerminalViewportTools.tsx` 216줄(`terminal.onRender(paintHits)`)도 그린 뒤를 이 사건으로 기다린다.
   - 그린 뒤 보던 줄이 맞는지도 본다. `Viewport._innerRefresh`가 rAF에서 scroll 영역 높이를 바꾸면 native scroll 사건이 나고, `Viewport._handleScroll`이 보던 줄(ydisp)을 옮길 수 있다. 그 frame이 `min(top + lines, baseY)`가 아니면 다시 `scrollToLine`하고 다음 그리기를 기다린다.
-  - 시험: 훑기의 tick-1 검사를 「바로 위 줄이 h-06000이고 한 번」으로 바꿨다(화소에서 줄을 거꾸로 계산하던 것이 흔들렸다). 이 단계만 되풀이하는 `AAA_E2E_ONLY=<정규식>`을 두었다. 개발 Mac(10코어)에서 25번 연속 통과했다(1분 load 5.7~16.0, 줄마다 기록).
+  - 시험: 훑기의 tick-1 검사를 「바로 위 줄이 h-06000이고 한 번」으로 바꿨다(화소에서 줄을 거꾸로 계산하던 것이 흔들렸다). 이 단계만 되풀이하는 `AAA_E2E_ONLY=<정규식>`을 두었다. 개발 Mac(10코어)에서 25번 연속 통과했다(1분 load 5.7~16.0). 부하 프로세스(`yes`)를 더해 1분 load가 10 아래로 내려가지 않게 한 25번도 모두 통과했다(13.5~51.2, 다른 작업의 빌드가 겹쳐 20을 넘은 회차가 13번).
 
 ### 8.68 앱 설치 단추: 설치 전엔 늘 보이고, 신호가 없으면 방법을 펼친다(10-17, 차이 목록 M4)
 
