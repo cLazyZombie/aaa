@@ -10,7 +10,7 @@ pub struct Vt {
 }
 
 /// vt100이 화면에 담지 않는 입력 모드. replay가 다시 말해 늦게 붙은 front도 프로그램이 요청한 형식으로 키를 보낸다.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Modes {
     /// modifyOtherKeys 단계(`CSI > 4 ; n m`). Claude Code는 2를 요청하고 Ctrl+Enter를 `CSI 27;5;13~`로 받는다.
     modify_other_keys: u16,
@@ -60,22 +60,66 @@ impl Vt {
         self.parser.process(bytes);
     }
 
-    /// 크기를 바꾼다. 줄이 줄어 커서 줄이 새 높이 밖으로 나가면, 먼저 그만큼 위 줄을 기록으로 올린다.
-    /// vt100 `set_size`는 아래 줄을 잘라 버려(커서 줄과 프롬프트가 사라진다) xterm·herdr(ghostty)와 달랐다(plan §8.59).
+    /// 크기를 바꾼다. xterm처럼 폭을 먼저, 줄 수를 그다음 바꾼다.
+    /// - 폭이 바뀌면 기록과 화면을 새 폭으로 다시 접는다(reflow). vt100 `set_size`는 폭이 줄면 줄 끝을 버려, 휴대폰이 좁게 쥐었다
+    ///   놓으면 넓은 화면에서 줄 오른쪽이 비었다(coordinator 10-18, t-0330 발견). herdr는 ghostty가 다시 접는다(src/pane.rs 110줄).
+    /// - 줄 수만 바뀌어도 화면에 접힌 줄이 있으면 다시 쓴다: vt100 `set_size`는 보이는 줄의 이음 표시를 지워(`Row::resize`) 휴대폰
+    ///   키보드가 열렸다 닫히기만 해도 나중에 넓힐 때 그 줄이 펴지지 않았다.
+    /// - 줄이 줄면 커서 아래 줄을 먼저 버리고, 그래도 커서 줄이 새 높이 밖이면 그만큼 위 줄을 기록으로 올린다. vt100 `set_size`는
+    ///   아래 줄을 잘라 버려(커서 줄과 프롬프트가 사라진다) xterm·herdr(ghostty)와 달랐다(plan §8.59).
     pub fn resize(&mut self, rows: u16, cols: u16) {
         let (rows, cols) = (rows.max(1), cols.max(1));
-        let (old_rows, _) = self.parser.screen().size();
-        let (cursor_row, cursor_col) = self.parser.screen().cursor_position();
-        let lift = (cursor_row + 1).saturating_sub(rows);
-        if rows < old_rows && lift > 0 {
-            // 화면 전체를 lift줄 올린다: scroll region을 풀고 맨 아래에서 줄을 내린다(위 줄은 기록으로).
-            // 프로그램은 SIGWINCH 뒤 region을 다시 건다. 커서는 같은 글 위(lift줄 위)로, 모양은 DECSC·DECRC로 되돌린다.
-            let mut b = format!("\x1b7\x1b[r\x1b[{old_rows};1H").into_bytes();
-            b.extend(std::iter::repeat_n(b'\n', usize::from(lift)));
-            b.extend_from_slice(format!("\x1b8\x1b[{};{}H", cursor_row - lift + 1, cursor_col + 1).as_bytes());
-            self.parser.process(&b);
+        let (old_rows, old_cols) = self.parser.screen().size();
+        if (rows, cols) == (old_rows, old_cols) {
+            return;
         }
-        self.parser.screen_mut().set_size(rows, cols);
+        let screen = self.parser.screen_mut();
+        let alt = screen.alternate_screen();
+        let rewrap = if cols != old_cols {
+            alt || wraps_differently(screen, cols)
+        } else {
+            // alternate screen이면 그 밑 normal screen의 줄을 볼 수 없어 늘 다시 쓴다(`set_size`는 두 화면을 다 지운다)
+            alt || (0..old_rows).any(|r| screen.row_wrapped(r))
+        };
+        if rewrap {
+            self.reflow(rows, cols);
+        } else {
+            resize_grid(&mut self.parser, rows, cols);
+        }
+    }
+
+    /// 기록과 화면을 논리 줄로 읽어 새 크기의 새 parser에 다시 쓴다. alternate screen은 다시 접지 않고(ghostty·xterm과 같다)
+    /// 크기만 바꾸며, 그 밑 normal screen을 다시 접는다. 입력 모드·글자 모양·커서 보임·modifyOtherKeys는 그대로 옮긴다.
+    fn reflow(&mut self, rows: u16, cols: u16) {
+        let screen = self.parser.screen();
+        let modes = self.parser.callbacks().clone();
+        let input_mode = screen.input_mode_formatted();
+        let pen = screen.attributes_formatted();
+        let hidden = screen.hide_cursor();
+        let alt = screen.alternate_screen().then(|| {
+            let (r, c) = screen.size();
+            let mut a = vt100::Parser::new(r, c, 0);
+            a.process(&screen.contents_formatted());
+            resize_grid(&mut a, rows, cols);
+            a.screen().contents_formatted()
+        });
+        if alt.is_some() {
+            // 나가면 들어갈 때 둔 커서로 돌아온다(1049): 그 커서를 다시 접은 자리로 옮긴 뒤 다시 들어간다
+            self.parser.process(b"\x1b[?1049l");
+        }
+        let mut out = rewrap(self.parser.screen_mut(), rows, cols);
+        if let Some(a) = alt {
+            out.extend_from_slice(b"\x1b[?1049h\x1b[H\x1b[2J");
+            out.extend_from_slice(&a);
+        }
+        out.extend_from_slice(&pen);
+        out.extend_from_slice(&input_mode);
+        if hidden {
+            out.extend_from_slice(b"\x1b[?25l");
+        }
+        let mut p = vt100::Parser::new_with_callbacks(rows, cols, SCROLLBACK, modes);
+        p.process(&out);
+        self.parser = p;
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -94,7 +138,13 @@ impl Vt {
         let screen = self.parser.screen();
         // 화면을 지우고 처음부터 그린다(재접속한 front의 이전 화면을 덮는다).
         let mut tail = b"\x1b[H\x1b[2J".to_vec();
-        tail.extend_from_slice(&screen.state_formatted());
+        if screen.alternate_screen() {
+            tail.extend_from_slice(&screen.state_formatted());
+        } else {
+            screen_rows(screen, &mut tail);
+            tail.extend_from_slice(&screen.attributes_formatted());
+            tail.extend_from_slice(&screen.input_mode_formatted());
+        }
         let level = self.parser.callbacks().modify_other_keys;
         if level > 0 {
             tail.extend_from_slice(format!("\x1b[>4;{level}m").as_bytes());
@@ -108,7 +158,7 @@ impl Vt {
             *normal.screen_mut() = screen.clone();
             normal.process(b"\x1b[?1049l");
             let mut under = b"\x1b[H\x1b[2J".to_vec();
-            under.extend_from_slice(&normal.screen().contents_formatted());
+            screen_rows(normal.screen(), &mut under);
             under.extend_from_slice(b"\x1b[?1049h");
             let (h, m) = history(normal.screen(), history_budget(under.len() + tail.len()));
             more = m;
@@ -160,14 +210,18 @@ impl Vt {
         let mut i = at;
         while i > 0 && lines.len() < want {
             let row = i - 1;
-            let mut line = if row < len {
+            let r = if row < len {
                 s.set_scrollback(len - row);
-                s.rows_formatted(0, cols).next().unwrap_or_default()
+                0
             } else {
                 s.set_scrollback(0);
-                s.rows_formatted(0, cols).nth(row - len).unwrap_or_default()
+                (row - len) as u16
             };
-            line.extend_from_slice(b"\x1b[m\r\n");
+            // 가장 새 줄(anchor 바로 앞)은 받는 쪽의 이미 있는 줄과 따로 그리므로 늘 줄바꿈
+            // 창은 이어진 줄을 보이므로 다음 줄은 r+1이다(anchor 앞 줄이라 화면 맨 아래 줄이 아니다)
+            let joins = row + 1 != at && joins_next(&s, r, cols, s.cell(r + 1, 0).is_some_and(vt100::Cell::is_wide));
+            let mut line = Vec::new();
+            history_row(&s, r, cols, joins, &mut line);
             if size + line.len() > REPLAY_HISTORY_BYTES && !lines.is_empty() {
                 break;
             }
@@ -338,7 +392,19 @@ impl Vt {
                 screen.rows(0, cols).skip(first).take(take).map(|l| l.trim_end().to_string()).collect()
             };
             for (k, t) in texts.into_iter().enumerate() {
-                out.push((t, screen.row_wrapped((first + k) as u16)));
+                // 접혔거나 넓은 글자를 다음 줄로 내렸으면 다음 줄로 이어진다(`joins_next`). 창 맨 아래 줄의 다음 줄은 한 줄 내려 본다
+                let r = (first + k) as u16;
+                let next_wide = if r + 1 < rows {
+                    screen.cell(r + 1, 0).is_some_and(vt100::Cell::is_wide)
+                } else if offset > 0 {
+                    screen.set_scrollback(offset - 1);
+                    let wide = screen.cell(rows - 1, 0).is_some_and(vt100::Cell::is_wide);
+                    screen.set_scrollback(offset);
+                    wide
+                } else {
+                    false
+                };
+                out.push((t, joins_next(screen, r, cols, next_wide)));
             }
             i += take;
         }
@@ -421,9 +487,12 @@ pub struct KeyModes {
 }
 
 impl KeyModes {
-    /// API로 넣는 글(herdr `encode_api_text`, src/app/api_helpers.rs): bracketed paste가 켜져 있으면 감싼다
+    /// API로 넣는 글(herdr `encode_api_text`, src/app/api_helpers.rs): bracketed paste가 켜져 있으면 감싼다.
+    /// 글의 ESC와 C1 CSI(U+009B)는 뺀다: 글 안의 `ESC[201~`가 붙여넣기를 일찍 끝내 뒤 글을 친 키로 읽게 했다(t-0340 보안 감사, 웹
+    /// `pasteText.ts`와 같다). 참고 herdr도 그대로 감싼다. 키는 `key`로 보낸다.
     pub fn paste(&self, text: &str) -> Vec<u8> {
-        if self.bracketed_paste { format!("\x1b[200~{text}\x1b[201~").into_bytes() } else { text.as_bytes().to_vec() }
+        let text: String = text.chars().filter(|&c| c != '\x1b' && c != '\u{9b}').collect();
+        if self.bracketed_paste { format!("\x1b[200~{text}\x1b[201~").into_bytes() } else { text.into_bytes() }
     }
 
     /// 키 이름 → 입력 bytes. 모르는 이름이면 None(herdr `invalid_key`).
@@ -609,6 +678,23 @@ fn encode_key(key: Key, m: Mods, modes: &KeyModes) -> Vec<u8> {
 }
 
 /// 화면 bytes가 `screen`일 때 기록에 쓸 수 있는 bytes: snapshot JSON(base64는 4/3배)이 한 frame에 들고 64KiB가 남게
+/// 다시 쓰지 않고 크기만 바꾼다(지킬 이음 표시가 없을 때·alternate screen). 줄이 줄어 커서 줄이 새 높이 밖으로 나가면, 먼저 그만큼
+/// 위 줄을 기록으로 올린다(plan §8.59).
+fn resize_grid<C: vt100::Callbacks>(parser: &mut vt100::Parser<C>, rows: u16, cols: u16) {
+    let (old_rows, _) = parser.screen().size();
+    let (cursor_row, cursor_col) = parser.screen().cursor_position();
+    let lift = (cursor_row + 1).saturating_sub(rows);
+    if rows < old_rows && lift > 0 {
+        // 화면 전체를 lift줄 올린다: scroll region을 풀고 맨 아래에서 줄을 내린다(위 줄은 기록으로).
+        // 프로그램은 SIGWINCH 뒤 region을 다시 건다. 커서는 같은 글 위(lift줄 위)로, 모양은 DECSC·DECRC로 되돌린다.
+        let mut b = format!("\x1b7\x1b[r\x1b[{old_rows};1H").into_bytes();
+        b.extend(std::iter::repeat_n(b'\n', usize::from(lift)));
+        b.extend_from_slice(format!("\x1b8\x1b[{};{}H", cursor_row - lift + 1, cursor_col + 1).as_bytes());
+        parser.process(&b);
+    }
+    parser.screen_mut().set_size(rows, cols);
+}
+
 fn history_budget(screen: usize) -> usize {
     REPLAY_HISTORY_BYTES.min((aaa_proto::MAX_FRAME / 4 * 3).saturating_sub(screen + (64 << 10)))
 }
@@ -623,7 +709,8 @@ pub struct Older {
 
 /// scrollback 줄을 오래된 것부터 한 줄씩 쓰고, 마지막 줄까지 화면 위로 밀어 올리는 bytes와, 싣지 못한 앞 기록이 있는지.
 /// 빈 터미널이 이것을 받으면 그 scrollback에 같은 줄이 생긴다(plan §8.55: 기록은 session host vt가 갖고, 붙는 front에 채운다).
-/// 화면 밖 줄이라 줄 이음(soft wrap)은 남기지 않는다.
+/// 줄은 글과 글자 모양만으로 쓴다(`history_row`): 접힌 줄은 줄바꿈 없이 이어 써서 받는 터미널(xterm)이 같은 폭에서 다시 접고
+/// 이음 표시를 가진다. 그래야 그 화면의 폭이 바뀔 때 xterm이 기록 줄도 다시 접는다.
 fn history(screen: &vt100::Screen, budget: usize) -> (Vec<u8>, bool) {
     let mut screen = screen.clone();
     let (rows, cols) = screen.size();
@@ -641,8 +728,20 @@ fn history(screen: &vt100::Screen, budget: usize) -> (Vec<u8>, bool) {
     while back > 0 {
         screen.set_scrollback(back);
         let take = back.min(usize::from(rows));
-        for mut row in screen.rows_formatted(0, cols).take(take) {
-            row.extend_from_slice(b"\x1b[m\r\n");
+        for r in 0..take {
+            let r = r as u16;
+            // 다음 줄 첫 칸: 이 창 맨 아래 줄이면 다음 창에서 본다
+            let next_wide = if r + 1 < rows {
+                screen.cell(r + 1, 0).is_some_and(vt100::Cell::is_wide)
+            } else {
+                screen.set_scrollback(back - usize::from(rows));
+                let wide = screen.cell(0, 0).is_some_and(vt100::Cell::is_wide);
+                screen.set_scrollback(back);
+                wide
+            };
+            let joins = back - usize::from(r) > 1 && joins_next(&screen, r, cols, next_wide);
+            let mut row = Vec::new();
+            history_row(&screen, r, cols, joins, &mut row);
             lines.push(row);
         }
         back -= take;
@@ -664,6 +763,425 @@ fn history(screen: &vt100::Screen, budget: usize) -> (Vec<u8>, bool) {
     // 커서는 마지막 기록 줄 다음 줄 맨 앞이다. rows-1번 더 내리면 기록이 모두 화면 위로 넘어간다
     out.extend(std::iter::repeat_n(b'\n', usize::from(rows) - 1));
     (out, more)
+}
+
+/// 새 폭에서 줄이 달리 접히는가: 이어진 줄이 있거나(넓히면 펴진다), 새 폭 밖에 글·색이 있다(줄이면 접힌다)
+fn wraps_differently(screen: &mut vt100::Screen, cols: u16) -> bool {
+    let (_, old_cols) = screen.size();
+    let mut found = false;
+    let mut split = false;
+    each_row(screen, |s, r| {
+        let first_wide = s.cell(r, 0).is_some_and(vt100::Cell::is_wide);
+        found = (split && first_wide)
+            || s.row_wrapped(r)
+            || (cols..old_cols).any(|c| s.cell(r, c).is_some_and(|c| c.has_contents() || !Look::of(c).plain()));
+        split = wide_split(s, r, old_cols);
+        !found
+    });
+    found
+}
+
+/// vt100은 넓은 글자가 끝 칸 하나에 들지 않으면 이음 표시 없이 다음 줄로 간다(`col_wrap`, tmux와 같다). 그런 줄: 접히지 않았고
+/// 끝 칸이 비었으며 그 앞 칸에 글이 있다. 다음 줄 첫 칸이 넓은 글자면 이어진 줄로 본다(ghostty는 이 칸을 spacer로 표시한다).
+fn wide_split(s: &vt100::Screen, r: u16, cols: u16) -> bool {
+    cols >= 2
+        && !s.row_wrapped(r)
+        && s.cell(r, cols - 1).is_some_and(|c| !c.has_contents() && Look::of(c).plain())
+        && s.cell(r, cols - 2).is_some_and(|c| c.has_contents() || c.is_wide_continuation())
+}
+
+/// 기록(오래된 것부터)과 화면의 줄마다 f(screen, 보이는 줄 번호). f가 false면 멈춘다. 끝나면 scrollback 위치를 0으로 되돌린다.
+fn each_row(screen: &mut vt100::Screen, mut f: impl FnMut(&vt100::Screen, u16) -> bool) {
+    let (rows, _) = screen.size();
+    screen.set_scrollback(usize::MAX);
+    let mut back = screen.scrollback();
+    'all: loop {
+        screen.set_scrollback(back);
+        // 위로 back줄 올린 화면의 첫 줄이 끝에서 back번째 기록 줄이다
+        let take = if back == 0 { rows } else { back.min(usize::from(rows)) as u16 };
+        for r in 0..take {
+            if !f(screen, r) {
+                break 'all;
+            }
+        }
+        if back == 0 {
+            break;
+        }
+        back -= usize::from(take);
+    }
+    screen.set_scrollback(0);
+}
+
+/// 한 칸의 모양(vt100 Cell이 알려 주는 것)
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+struct Look {
+    fg: vt100::Color,
+    bg: vt100::Color,
+    bold: bool,
+    dim: bool,
+    italic: bool,
+    underline: bool,
+    inverse: bool,
+}
+
+impl Look {
+    fn of(c: &vt100::Cell) -> Look {
+        Look {
+            fg: c.fgcolor(),
+            bg: c.bgcolor(),
+            bold: c.bold(),
+            dim: c.dim(),
+            italic: c.italic(),
+            underline: c.underline(),
+            inverse: c.inverse(),
+        }
+    }
+
+    /// 지운 칸처럼 보인다(줄 끝에서 버려도 같은 모습)
+    fn plain(&self) -> bool {
+        self.bg == vt100::Color::Default && !self.inverse
+    }
+
+    /// 앞 모양(prev)에서 이 모양으로 바꾸는 SGR. 앞이 기본이면 지우지 않고 켤 것만 말한다(vt100이 쓰는 모양과 같다)
+    fn sgr(&self, prev: &Look, out: &mut Vec<u8>) {
+        use std::io::Write;
+        out.extend_from_slice(b"\x1b[");
+        let mut sep = if *prev == Look::default() {
+            ""
+        } else {
+            out.push(b'0');
+            ";"
+        };
+        for (on, code) in [(self.bold, 1), (self.dim, 2), (self.italic, 3), (self.underline, 4), (self.inverse, 7)] {
+            if on {
+                let _ = write!(out, "{sep}{code}");
+                sep = ";";
+            }
+        }
+        for (color, base, bright, ext) in [(self.fg, 30u16, 90u16, 38), (self.bg, 40, 100, 48)] {
+            let _ = match color {
+                vt100::Color::Default => continue,
+                vt100::Color::Idx(i) if i < 8 => write!(out, "{sep}{}", base + u16::from(i)),
+                vt100::Color::Idx(i) if i < 16 => write!(out, "{sep}{}", bright + u16::from(i) - 8),
+                vt100::Color::Idx(i) => write!(out, "{sep}{ext};5;{i}"),
+                vt100::Color::Rgb(r, g, b) => write!(out, "{sep}{ext};2;{r};{g};{b}"),
+            };
+            sep = ";";
+        }
+        out.push(b'm');
+    }
+}
+
+/// 논리 줄 하나(접힌 줄을 이은 것)의 칸
+#[derive(Default)]
+struct Line {
+    text: String,
+    /// (text 안 끝 위치, 넓은 글자인가, 글이 있는가, 모양)
+    cells: Vec<(usize, bool, bool, Look)>,
+}
+
+fn w(wide: bool) -> usize {
+    if wide { 2 } else { 1 }
+}
+
+impl Line {
+    fn push(&mut self, c: &vt100::Cell) {
+        self.text.push_str(c.contents());
+        self.cells.push((self.text.len(), c.is_wide(), c.has_contents(), Look::of(c)));
+    }
+
+    fn width(&self) -> usize {
+        self.cells.iter().map(|c| w(c.1)).sum()
+    }
+
+    /// 줄 끝의 지운 칸을 뺀 칸 수
+    fn trimmed(&self) -> usize {
+        let mut n = self.cells.len();
+        while n > 0 && !self.cells[n - 1].2 && self.cells[n - 1].3.plain() {
+            n -= 1;
+        }
+        n
+    }
+
+    /// 열 offset(줄 처음부터)이 폭 cols로 쓴 줄에서 놓이는 (줄, 칸): 그 offset의 칸이 쓰일 자리. vt100처럼 넓은 글자가 끝 칸
+    /// 하나에 들지 않으면 다음 줄로 가고(`col_wrap`), 줄 끝에 닿으면 다음 줄 처음이다. 글 뒤는 좁은 빈 칸이 이어진다고 본다.
+    fn place(&self, offset: usize, cols: usize) -> (usize, usize) {
+        let (mut row, mut col, mut at) = (0, 0, 0);
+        for i in 0.. {
+            let cw = self.cells.get(i).map_or(1, |c| w(c.1));
+            if col + cw > cols {
+                row += 1;
+                col = 0;
+            }
+            if at + cw > offset {
+                break;
+            }
+            col += cw;
+            at += cw;
+        }
+        (row, col)
+    }
+
+    /// 폭 cols에서 앞 n칸이 차지하는 줄 수(빈 줄도 한 줄)
+    fn rows(&self, n: usize, cols: usize) -> usize {
+        let (mut row, mut col) = (0, 0);
+        for c in &self.cells[..n] {
+            if col + w(c.1) > cols {
+                row += 1;
+                col = 0;
+            }
+            col += w(c.1);
+        }
+        row + 1
+    }
+
+    /// 앞 n칸 가운데 폭 cols의 앞 k행에 드는 칸 수
+    fn fit(&self, n: usize, k: usize, cols: usize) -> usize {
+        let (mut row, mut col) = (0, 0);
+        for (i, c) in self.cells[..n].iter().enumerate() {
+            if col + w(c.1) > cols {
+                row += 1;
+                col = 0;
+            }
+            if row >= k {
+                return i;
+            }
+            col += w(c.1);
+        }
+        n
+    }
+
+    fn write(&self, n: usize, out: &mut Vec<u8>) {
+        let mut look = Look::default();
+        let mut from = 0;
+        for &(end, _, has, l) in &self.cells[..n] {
+            if l != look {
+                l.sgr(&look, out);
+                look = l;
+            }
+            if has {
+                out.extend_from_slice(&self.text.as_bytes()[from..end]);
+            } else {
+                out.push(b' ');
+            }
+            from = end;
+        }
+    }
+}
+
+/// 다시 쓰는 중의 상태: 새 배치에서 쓴 줄 수와 커서·화면 맨 위가 간 자리
+struct Rewrap {
+    cols: usize,
+    out: Vec<u8>,
+    line: Line,
+    /// 새 배치에서 지금까지 쓴 행 수
+    rows: usize,
+    /// 쓴 논리 줄 수(둘째부터 앞에 줄바꿈)
+    lines: usize,
+    /// 아직 쓰지 않은 빈 줄(뒤에 글이 오면 쓰고, 끝까지 비면 버린다)
+    blank: usize,
+    /// 이 논리 줄 안의 열 offset: 커서, 화면 맨 위
+    cursor_at: Option<usize>,
+    top_at: Option<usize>,
+    cursor: (usize, usize),
+    top: usize,
+    /// 커서 줄부터 쓴 것. 줄 수가 줄면 커서 아래 행을 버리려고 둔다(화면 하나 넘게 쌓이지 않는다)
+    tail: Vec<Tail>,
+}
+
+/// 커서 줄부터 쓴 행(들): 첫 행 번호, 그 행을 시작한 줄바꿈 뒤 out 길이, 글 줄이면 그 줄과 쓴 칸 수(빈 행이면 None)
+struct Tail {
+    row: usize,
+    at: usize,
+    line: Option<(Line, usize)>,
+}
+
+impl Rewrap {
+    fn newline(&mut self) {
+        if self.lines > 0 {
+            self.out.extend_from_slice(b"\x1b[0m\r\n");
+        }
+        self.lines += 1;
+    }
+
+    fn finish(&mut self) {
+        let n = self.line.trimmed();
+        if n == 0 && self.cursor_at.is_none() && self.top_at.is_none() {
+            self.blank += 1;
+            self.line = Line::default();
+            return;
+        }
+        for _ in 0..std::mem::take(&mut self.blank) {
+            self.newline();
+            if !self.tail.is_empty() {
+                self.tail.push(Tail { row: self.rows, at: self.out.len(), line: None });
+            }
+            self.rows += 1;
+        }
+        self.newline();
+        let start = self.rows;
+        let at = self.out.len();
+        self.line.write(n, &mut self.out);
+        let mut used = self.line.rows(n, self.cols);
+        let cursor_line = self.cursor_at.is_some();
+        if let Some(off) = self.cursor_at.take() {
+            let (r, c) = self.line.place(off, self.cols);
+            self.cursor = (start + r, c);
+            // 커서가 글 아래 줄이면 그 줄까지 만든다
+            while used < r + 1 {
+                self.out.extend_from_slice(b"\x1b[0m\r\n");
+                used += 1;
+            }
+        }
+        if let Some(off) = self.top_at.take() {
+            self.top = start + self.line.place(off, self.cols).0;
+        }
+        self.rows += used;
+        let line = std::mem::take(&mut self.line);
+        if cursor_line || !self.tail.is_empty() {
+            self.tail.push(Tail { row: start, at, line: Some((line, n)) });
+        }
+    }
+}
+
+/// normal screen(기록과 화면)을 rows×cols로 다시 쓰는 bytes(그 크기의 빈 터미널에 쓴다). xterm처럼 폭을 먼저 다시 접고 줄 수를
+/// 그다음 바꾼다. 화면 맨 위는 전과 같은 줄에서 시작하고(clear 뒤 맨 위의 프롬프트가 그대로), 넘치면 맨 아래에 맞춘다. 커서는
+/// 같은 글자 자리로 간다.
+fn rewrap(screen: &mut vt100::Screen, rows: u16, cols: u16) -> Vec<u8> {
+    let (old_rows, old_cols) = screen.size();
+    let (cur_row, cur_col) = screen.cursor_position();
+    screen.set_scrollback(usize::MAX);
+    let hist = screen.scrollback();
+    let cursor_abs = hist + usize::from(cur_row);
+    let mut st = Rewrap {
+        cols: usize::from(cols),
+        out: Vec::new(),
+        line: Line::default(),
+        rows: 0,
+        lines: 0,
+        blank: 0,
+        cursor_at: None,
+        top_at: None,
+        cursor: (0, 0),
+        top: 0,
+        tail: Vec::new(),
+    };
+    let mut abs = 0usize;
+    // 앞 줄이 이 줄로 이어지는가: 접혔거나, vt100이 넓은 글자를 끝 칸 하나에 넣지 못하고 이음 표시 없이 내린 줄(끝 칸이 비고
+    // 그 앞에 글이 있으며 이 줄 첫 칸이 넓은 글자)
+    let mut wrapped = false;
+    let mut split_wide = false;
+    // 화면에서 글이 있는 마지막 줄
+    let mut last_content: Option<usize> = None;
+    each_row(screen, |s, r| {
+        let first_wide = s.cell(r, 0).is_some_and(vt100::Cell::is_wide);
+        let joins = wrapped || (split_wide && first_wide);
+        if abs > 0 && !joins {
+            st.finish();
+        } else if split_wide && first_wide && !wrapped {
+            // 앞 줄 끝에 남은 빈 칸은 빼고 잇는다
+            st.line.cells.pop();
+        }
+        let base = st.line.width();
+        if abs == cursor_abs {
+            st.cursor_at = Some(base + usize::from(cur_col));
+        }
+        if abs == hist {
+            st.top_at = Some(base);
+        }
+        for c in 0..old_cols {
+            if let Some(cell) = s.cell(r, c)
+                && !cell.is_wide_continuation()
+            {
+                st.line.push(cell);
+            }
+        }
+        wrapped = s.row_wrapped(r);
+        split_wide = wide_split(s, r, old_cols);
+        if abs >= hist && (0..old_cols).any(|c| s.cell(r, c).is_some_and(|c| c.has_contents() || !Look::of(c).plain()))
+        {
+            last_content = Some(abs - hist);
+        }
+        abs += 1;
+        true
+    });
+    st.finish();
+
+    // 폭: 화면 아래의 빈 줄(커서와 글 아래)은 늘어난 글이 먼저 쓰고, 줄어들면 그대로 둔다. 남은 화면은 맨 아래에 맞추므로 넘친
+    // 글은 기록으로 가고, 넓혀서 줄면 기록이 다시 내려온다(xterm·ghostty reflow와 같다). clear 뒤 맨 위 프롬프트는 그대로 맨 위다.
+    let (old_rows, rows) = (usize::from(old_rows), usize::from(rows));
+    let used = last_content.unwrap_or(0).max(usize::from(cur_row));
+    let blank = (old_rows - 1 - used).saturating_sub((st.rows - st.top).saturating_sub(used + 1));
+    let top = (st.rows + blank).saturating_sub(old_rows);
+    // 줄 수: 줄면 커서 아래 행을 먼저 버리고, 그래도 커서가 밖이면 위 행을 기록으로 올린다(xterm `Buffer.resize`). 늘면 아래에
+    // 빈 행이 붙는다(vt100 `set_size`와 같다)
+    let top = if rows < old_rows { top.max((st.cursor.0 + 1).saturating_sub(rows)) } else { top };
+    let end = top + rows;
+    if end >= st.rows {
+        // 글은 다 쓴다. 맨 위가 첫 행이 아니면 end행까지 써야 그 행이 맨 위다
+        if top > 0 {
+            for _ in st.rows..end {
+                st.out.extend_from_slice(b"\x1b[0m\r\n");
+            }
+        }
+    } else {
+        // end행부터는 버린다: 행 end-1을 담은 것(커서 줄부터 둔 것 가운데)에서 자른다
+        let i = st.tail.iter().rposition(|t| t.row < end).expect("커서 줄은 end 앞이다");
+        let t = &st.tail[i];
+        st.out.truncate(t.at);
+        if let Some((line, n)) = &t.line {
+            let k = end - t.row;
+            let m = line.fit(*n, k, st.cols);
+            line.write(m, &mut st.out);
+            // 커서가 글 아래 행이면 그 행까지
+            for _ in line.rows(m, st.cols)..k {
+                st.out.extend_from_slice(b"\x1b[0m\r\n");
+            }
+        }
+    }
+    let row = st.cursor.0 - top;
+    st.out.extend_from_slice(format!("\x1b[0m\x1b[{};{}H", row + 1, st.cursor.1 + 1).as_bytes());
+    st.out
+}
+
+/// 지운 화면에 보이는 줄을 위에서부터 글과 글자 모양으로 쓰고 커서를 둔다(`history_row`, 커서는 vt100 `cursor_state_formatted`).
+/// 다음 줄로 이어지는 줄은 줄바꿈 없이 이어 써서 받는 터미널(xterm)이 같은 폭에서 다시 접고 이음 표시를 갖는다. 그래야 그 화면이
+/// 제 크기를 걸 때 xterm이 줄을 잇는다. vt100 `contents_formatted`는 넓은 글자를 다음 줄로 내린 줄을 줄바꿈으로 써서 잇지 못했다.
+fn screen_rows(s: &vt100::Screen, out: &mut Vec<u8>) {
+    let (rows, cols) = s.size();
+    for r in 0..rows {
+        let last = r + 1 == rows;
+        let joins = !last && joins_next(s, r, cols, s.cell(r + 1, 0).is_some_and(vt100::Cell::is_wide));
+        let at = out.len();
+        history_row(s, r, cols, joins, out);
+        // 맨 아래 줄 뒤 줄바꿈은 화면을 올린다
+        if last && out[at..].ends_with(b"\r\n") {
+            out.truncate(out.len() - 2);
+        }
+    }
+    out.extend_from_slice(&s.cursor_state_formatted());
+}
+
+/// 보이는 줄 r이 다음 줄로 이어지는가: 접혔거나, 넓은 글자를 끝 칸에 넣지 못해 다음 줄로 내렸다(다음 줄 첫 칸이 넓다: `next_wide`)
+fn joins_next(s: &vt100::Screen, r: u16, cols: u16, next_wide: bool) -> bool {
+    s.row_wrapped(r) || (next_wide && wide_split(s, r, cols))
+}
+
+/// 기록 한 줄(보이는 줄 r)을 글과 글자 모양(SGR)만으로, 커서 이동 없이 쓴다. 다음 줄로 이어지면(`joins`) 줄바꿈하지 않아 받는
+/// 터미널이 같은 폭에서 다시 접고 이음 표시를 가진다: 접힌 줄은 빈 칸까지 끝까지, 넓은 글자를 내린 줄은 끝 빈 칸을 빼고 쓴다.
+/// 아니면 끝의 지운 칸을 빼고 줄바꿈한다.
+fn history_row(s: &vt100::Screen, r: u16, cols: u16, joins: bool, out: &mut Vec<u8>) {
+    let mut line = Line::default();
+    for c in 0..cols {
+        if let Some(cell) = s.cell(r, c)
+            && !cell.is_wide_continuation()
+        {
+            line.push(cell);
+        }
+    }
+    let full = joins && s.row_wrapped(r);
+    line.write(if full { line.cells.len() } else { line.trimmed() }, out);
+    out.extend_from_slice(if joins { b"\x1b[m" } else { b"\x1b[m\r\n" });
 }
 
 fn color(c: vt100::Color) -> u32 {
@@ -881,6 +1399,23 @@ mod tests {
         out
     }
 
+    /// 화면 replay도 이어진 줄(넓은 글자를 내린 줄 포함)을 줄바꿈 없이 써서, 받은 터미널이 제 폭으로 넓히면 줄이 이어진다.
+    /// 늦게 붙은 웹이 다른 기기 크기로 받은 뒤 제 크기를 거는 경우다
+    #[test]
+    fn replayed_screen_keeps_joins_for_the_receiver() {
+        let mut a = Vt::new(6, 5);
+        a.feed("가나다라마 끝\r\nabcdefgh\r\n$ ".as_bytes());
+        // xterm은 이음 표시로만 잇는다: 논리 줄 안에 줄바꿈이 없어야 한다(vt100은 글로 알아보므로 아래 비교만으로는 모른다)
+        let bytes = String::from_utf8_lossy(&a.replay()).replace("\x1b[m", "");
+        assert!(bytes.contains("가나다라마 끝\r\nabcdefgh\r\n$"), "{bytes:?}");
+        let mut b = Vt::new(6, 5);
+        b.feed(&a.replay());
+        assert_eq!(screen_lines(&b), screen_lines(&a));
+        assert_eq!(b.cursor(), a.cursor());
+        b.resize(6, 20);
+        assert_eq!(screen_lines(&b)[..3], ["가나다라마 끝", "abcdefgh", "$"]);
+    }
+
     #[test]
     fn replay_says_whether_older_history_is_left_out() {
         let mut vt = Vt::new(10, 40);
@@ -1036,6 +1571,19 @@ mod tests {
         assert_eq!(read(&mut w, ReadSource::RecentUnwrapped, None).text, "0123456789AB\nz\n");
     }
 
+    /// 넓은 글자가 끝 칸 하나에 들지 않아 내려간 줄도 이어 읽는다(ghostty는 그 칸을 spacer로 두고 잇는다)
+    #[test]
+    fn recent_unwrapped_joins_rows_split_before_a_wide_char() {
+        let mut v = Vt::new(4, 5);
+        v.feed("가나다라마 끝\r\n".as_bytes());
+        assert_eq!(read(&mut v, ReadSource::Recent, None).text, "가나\n다라\n마 끝\n");
+        assert_eq!(read(&mut v, ReadSource::RecentUnwrapped, None).text, "가나다라마 끝\n");
+        // 기록과 화면에 걸쳐도
+        let mut h = Vt::new(2, 5);
+        h.feed("가나다라마바사\r\n$ ".as_bytes());
+        assert_eq!(read(&mut h, ReadSource::RecentUnwrapped, None).text, "가나다라마바사\n$\n");
+    }
+
     #[test]
     fn read_alternate_screen_and_ansi() {
         let mut v = Vt::new(3, 10);
@@ -1083,6 +1631,9 @@ mod tests {
         assert_eq!(k(&app, "shift+enter").unwrap(), b"\x1b[27;2;13~");
         assert_eq!(app.paste("hi"), b"\x1b[200~hi\x1b[201~");
         assert_eq!(plain.paste("hi"), b"hi");
+        // 글 안의 ESC·C1 CSI는 빠진다: 붙여넣기를 일찍 끝내지 못한다
+        assert_eq!(app.paste("a\x1b[201~rm x\r\u{9b}201~b"), "\x1b[200~a[201~rm x\r201~b\x1b[201~".as_bytes());
+        assert_eq!(plain.paste("a\x1bb"), b"ab");
     }
 
     #[test]
@@ -1091,5 +1642,250 @@ mod tests {
         assert_eq!(v.modes(), KeyModes::default());
         v.feed(b"\x1b[?1h\x1b[?2004h\x1b[>4;2m");
         assert_eq!(v.modes(), KeyModes { application_cursor: true, bracketed_paste: true, modify_other_keys: 2 });
+    }
+
+    /// 보이는 줄(끝 공백 뺌)
+    fn screen_lines(v: &Vt) -> Vec<String> {
+        v.text("s").lines
+    }
+
+    /// 기록과 화면의 줄, 끝 빈 줄 뺌
+    fn all_lines(v: &Vt) -> Vec<String> {
+        let mut out = all_text(v);
+        while out.last().is_some_and(String::is_empty) {
+            out.pop();
+        }
+        out
+    }
+
+    // 폭 reflow(coordinator 10-18, t-0330 발견): vt100 `set_size`는 폭이 줄면 줄 끝을 버렸다. herdr(ghostty)처럼 다시 접는다
+    #[test]
+    fn shrink_then_widen_keeps_line_ends() {
+        let mut v = Vt::new(5, 20);
+        v.feed(b"0123456789abcdefghij\r\n$ ");
+        v.resize(5, 8);
+        assert_eq!(screen_lines(&v), ["01234567", "89abcdef", "ghij", "$", ""]);
+        assert_eq!(v.cursor(), (3, 2, true));
+        v.resize(5, 20);
+        assert_eq!(screen_lines(&v), ["0123456789abcdefghij", "$", "", "", ""]);
+        assert_eq!(v.cursor(), (1, 2, true));
+        // 다시 접은 화면을 replay해도 같다(새로 붙는 front)
+        let mut fresh = Vt::new(5, 20);
+        fresh.feed(&v.replay());
+        assert_eq!(screen_lines(&fresh), screen_lines(&v));
+    }
+
+    /// 휴대폰은 폭과 줄 수를 함께 줄인다: 폭을 먼저 다시 접고 줄 수를 바꾼다. 아래 빈 줄을 먼저 버리고, 그래도 커서 줄이 밖이면
+    /// 위 줄을 기록으로 올린다(xterm `Buffer.resize`). 빈 줄을 높이 12로 세어 글이 화면 밖(아래)으로 밀리지 않는다
+    #[test]
+    fn rows_and_cols_shrink_together() {
+        let mut v = Vt::new(12, 20);
+        v.feed(b"$ echo 0123456789abcdefgh\r\n0123456789abcdefgh\r\n$ ");
+        v.resize(10, 8);
+        assert_eq!(screen_lines(&v)[..8], ["$ echo 0", "12345678", "9abcdefg", "h", "01234567", "89abcdef", "gh", "$"]);
+        assert_eq!(v.cursor(), (7, 2, true));
+        v.resize(5, 8);
+        assert_eq!(screen_lines(&v), ["h", "01234567", "89abcdef", "gh", "$"]);
+        assert_eq!(all_lines(&v)[..3], ["$ echo 0", "12345678", "9abcdefg"]);
+        assert_eq!(v.cursor(), (4, 2, true));
+        v.resize(12, 20);
+        assert_eq!(screen_lines(&v)[..4], ["$ echo 0123456789abc", "defgh", "0123456789abcdefgh", "$"]);
+        assert_eq!(v.cursor(), (3, 2, true));
+    }
+
+    /// 줄 수만 바뀌어도(휴대폰 키보드) 접힌 줄은 이어진 채라 나중에 넓히면 펴진다. vt100 `set_size`는 보이는 줄의 이음 표시를 지웠다
+    #[test]
+    fn rows_only_resize_keeps_soft_wraps() {
+        let mut v = Vt::new(6, 10);
+        v.feed(b"abcdefghijklmnopqrstuvwxy\r\n$ ");
+        v.resize(4, 10);
+        v.resize(6, 10);
+        v.resize(6, 30);
+        assert_eq!(screen_lines(&v)[..2], ["abcdefghijklmnopqrstuvwxy", "$"]);
+        assert_eq!(v.cursor(), (1, 2, true));
+    }
+
+    /// alternate screen(vim·less)이 떠 있는 동안 줄 수만 바뀌어도 그 밑 normal screen의 접힌 줄은 이어진 채다(vt100 `set_size`는 두
+    /// 화면의 보이는 줄 이음 표시를 다 지운다)
+    #[test]
+    fn rows_only_resize_under_alternate_screen_keeps_soft_wraps() {
+        let mut v = Vt::new(6, 10);
+        v.feed(b"abcdefghijklmnopqrstuvwxy\r\n$ \x1b[?1049h\x1b[HALT");
+        v.resize(4, 10);
+        v.resize(6, 10);
+        assert_eq!(screen_lines(&v)[0], "ALT");
+        v.feed(b"\x1b[?1049l");
+        v.resize(6, 30);
+        assert_eq!(screen_lines(&v)[..2], ["abcdefghijklmnopqrstuvwxy", "$"]);
+    }
+
+    /// 줄이 줄면 커서 아래 행은 버린다(xterm·vt100과 같다). 커서 줄 안에서도 커서 행 아래는 버린다
+    #[test]
+    fn rows_below_cursor_are_dropped_when_rows_shrink() {
+        let mut v = Vt::new(6, 20);
+        v.feed(b"top\r\ninput> abcdefghijk\r\nstatus bar here\x1b[2;3H");
+        v.resize(2, 10);
+        assert_eq!(all_lines(&v), ["top", "input> abc"]);
+        assert_eq!(v.cursor(), (1, 2, true));
+    }
+
+    #[test]
+    fn soft_wrapped_line_unwraps_when_widened() {
+        let mut v = Vt::new(4, 10);
+        v.feed(b"abcdefghijklmnopqrstuvwxy\r\n");
+        v.resize(4, 30);
+        assert_eq!(screen_lines(&v), ["abcdefghijklmnopqrstuvwxy", "", "", ""]);
+    }
+
+    #[test]
+    fn history_rewraps_too() {
+        let mut v = Vt::new(3, 12);
+        for i in 0..10 {
+            v.feed(format!("line-{i}-abcdefg\r\n").as_bytes());
+        }
+        let before = all_lines(&v);
+        v.resize(3, 6);
+        v.resize(3, 12);
+        assert_eq!(all_lines(&v), before);
+        v.resize(3, 40);
+        let wide: Vec<String> = (0..10).map(|i| format!("line-{i}-abcdefg")).collect();
+        assert_eq!(all_lines(&v), wide);
+    }
+
+    #[test]
+    fn colors_survive_reflow() {
+        let mut v = Vt::new(3, 10);
+        v.feed(b"\x1b[31mred\x1b[0m plain \x1b[1;44mbold-on-blue\x1b[0m\r\n");
+        v.resize(3, 5);
+        v.resize(3, 40);
+        assert_eq!(screen_lines(&v)[0], "red plain bold-on-blue");
+        let s = v.parser.screen();
+        assert_eq!(s.cell(0, 0).unwrap().fgcolor(), vt100::Color::Idx(1));
+        assert_eq!(s.cell(0, 4).unwrap().fgcolor(), vt100::Color::Default);
+        let b = s.cell(0, 10).unwrap();
+        assert!(b.bold());
+        assert_eq!(b.bgcolor(), vt100::Color::Idx(4));
+    }
+
+    #[test]
+    fn wide_chars_rejoin() {
+        let mut v = Vt::new(4, 20);
+        v.feed("가나다라마바사 끝\r\n".as_bytes());
+        // 5칸이면 넓은 글자 둘 뒤 끝 칸 하나가 남아 셋째 글자는 이음 표시 없이 다음 줄로 간다(vt100 `col_wrap`)
+        v.resize(4, 5);
+        assert_eq!(all_lines(&v), ["가나", "다라", "마바", "사 끝"]);
+        v.resize(4, 20);
+        assert_eq!(screen_lines(&v)[0], "가나다라마바사 끝");
+    }
+
+    #[test]
+    fn prompt_after_clear_stays_on_top() {
+        let mut v = Vt::new(5, 20);
+        for i in 0..30 {
+            v.feed(format!("old-{i:02}-xxxxxxxxxxxx\r\n").as_bytes());
+        }
+        v.feed(b"\x1b[H\x1b[2J$ ");
+        v.resize(5, 10);
+        assert_eq!(screen_lines(&v), ["$", "", "", "", ""]);
+        assert_eq!(v.cursor(), (0, 2, true));
+    }
+
+    #[test]
+    fn cursor_in_the_middle_of_a_line() {
+        let mut v = Vt::new(4, 20);
+        v.feed(b"abcdefghij");
+        v.resize(4, 4);
+        assert_eq!(screen_lines(&v), ["abcd", "efgh", "ij", ""]);
+        assert_eq!(v.cursor(), (2, 2, true));
+        v.feed(b"K");
+        v.resize(4, 20);
+        assert_eq!(screen_lines(&v)[0], "abcdefghijK");
+    }
+
+    #[test]
+    fn content_below_cursor_stays_below() {
+        let mut v = Vt::new(6, 20);
+        v.feed(b"top\r\ninput> abcdefghijk\r\nstatus bar here\x1b[2A\x1b[8G\x1b[B");
+        assert_eq!(v.cursor(), (1, 7, true));
+        v.resize(6, 10);
+        v.feed(b"Z");
+        v.resize(6, 20);
+        assert_eq!(screen_lines(&v)[..3], ["top", "input> Zbcdefghijk", "status bar here"]);
+    }
+
+    #[test]
+    fn alternate_screen_keeps_normal_underneath() {
+        let mut v = Vt::new(4, 20);
+        v.feed(b"0123456789abcdefghij\r\n$ ");
+        v.feed(b"\x1b[?1049h\x1b[HALT");
+        v.resize(4, 8);
+        assert!(v.parser.screen().alternate_screen());
+        assert_eq!(screen_lines(&v)[0], "ALT");
+        assert_eq!(v.cursor(), (0, 3, true));
+        v.resize(4, 20);
+        assert_eq!(v.cursor(), (0, 3, true));
+        v.feed(b"\x1b[?1049l");
+        assert_eq!(screen_lines(&v)[..2], ["0123456789abcdefghij", "$"]);
+        assert_eq!(v.cursor(), (1, 2, true));
+    }
+
+    #[test]
+    fn input_modes_survive_reflow() {
+        let mut v = Vt::new(4, 20);
+        v.feed(b"0123456789abcdefghij\r\n\x1b[?2004h\x1b[?1h\x1b[?1000h\x1b[?1006h\x1b[>4;2m\x1b[?25l");
+        v.resize(4, 8);
+        let s = v.parser.screen();
+        assert!(s.bracketed_paste());
+        assert!(s.application_cursor());
+        assert!(s.hide_cursor());
+        assert_eq!(s.mouse_protocol_mode(), vt100::MouseProtocolMode::PressRelease);
+        assert_eq!(s.mouse_protocol_encoding(), vt100::MouseProtocolEncoding::Sgr);
+        assert_eq!(v.modes().modify_other_keys, 2);
+    }
+
+    #[test]
+    fn blank_lines_between_stay() {
+        let mut v = Vt::new(6, 20);
+        v.feed(b"one\r\n\r\n\r\nfour-abcdefghijklmnop\r\n$ ");
+        v.resize(6, 10);
+        v.resize(6, 20);
+        // 넓히면 기록에 갔던 "one"이 다시 화면에 내려온다(21자 줄은 20칸에서 두 줄)
+        assert_eq!(screen_lines(&v), ["one", "", "", "four-abcdefghijklmno", "p", "$"]);
+        assert_eq!(v.cursor(), (5, 2, true));
+    }
+
+    #[test]
+    fn no_change_when_nothing_wraps() {
+        let mut v = Vt::new(4, 20);
+        v.feed(b"short\r\n$ ");
+        v.resize(4, 10);
+        assert_eq!(screen_lines(&v)[..2], ["short", "$"]);
+        assert_eq!(v.cursor(), (1, 2, true));
+    }
+
+    /// 기록 replay는 접힌 줄을 줄바꿈 없이 이어 써서, 받은 터미널도 이음 표시를 갖고 폭이 바뀌면 다시 접는다(xterm도 같다)
+    #[test]
+    fn replayed_history_keeps_soft_wraps() {
+        let mut a = Vt::new(3, 10);
+        let lines: Vec<String> =
+            (0..6).map(|i| format!("w{i}-abcdefghijklmnopq")).chain(["가나다라마바사아자".to_string()]).collect();
+        for l in &lines {
+            a.feed(format!("{l}\r\n").as_bytes());
+        }
+        // 화면 경계에 걸친 줄이 없게 빈 줄을 화면만큼
+        a.feed(b"\r\n\r\n");
+        let mut b = Vt::new(3, 10);
+        b.feed(&a.replay());
+        assert_eq!(all_lines(&b), all_lines(&a));
+        b.resize(3, 40);
+        assert_eq!(all_lines(&b), lines);
+        // 위로 굴려 받는 앞 기록도 같다: 셋째 행(w1 첫 행) 앞은 20자 줄 w0의 두 행
+        let anchor = vec![all_text(&a)[2].clone()];
+        let o = a.older(&anchor, all_text(&a).len() - 2, 10).unwrap();
+        assert_eq!(o.lines, 2);
+        let mut c = Vt::new(3, 10);
+        c.feed(&o.data);
+        c.resize(3, 40);
+        assert_eq!(all_lines(&c), [lines[0].clone()]);
     }
 }

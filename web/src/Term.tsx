@@ -55,6 +55,7 @@ import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft 
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
+import { pasteText } from "./pasteText.ts";
 import type { PaneControls } from "./actions";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
@@ -768,7 +769,15 @@ export function TermView({
         pastingRef.current = false;
       });
       const files = pastedFiles(e.clipboardData);
-      if (files.length === 0) return;
+      if (files.length === 0) {
+        // 글에 ESC가 있으면 뺀 글로 xterm 대신 붙인다(pasteText.ts)
+        const text = e.clipboardData?.getData("text/plain") ?? "";
+        if (text === pasteText(text)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        term.paste(pasteText(text));
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       uploadRef.current(files);
@@ -789,7 +798,7 @@ export function TermView({
       if (!text) return;
       pastingRef.current = true;
       try {
-        term.paste(text);
+        term.paste(pasteText(text));
       } finally {
         pastingRef.current = false;
       }
@@ -1551,9 +1560,10 @@ export function TermView({
     // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     autoFit.current(true);
-    let data = value;
-    if (value.includes("\n")) {
-      data = value.replace(/\r?\n/g, "\r");
+    // 붙여 넣은 글처럼 ESC를 뺀다(pasteText.ts)
+    let data = pasteText(value);
+    if (data.includes("\n")) {
+      data = data.replace(/\r?\n/g, "\r");
       if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
     }
     const id = ++submitIdRef.current;

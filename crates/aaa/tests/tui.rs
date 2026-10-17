@@ -937,6 +937,48 @@ fn lease_conflict_with_another_front() {
     drop(other);
 }
 
+/// 다른 front(휴대폰)가 좁게 쥐었다 놓아도 줄 끝이 돌아온다. host의 pane 화면(aaa-vt)이 폭이 바뀔 때 다시 접는다(herdr도
+/// 다시 접는다: src/pane.rs 「Herdr reflows too」). 전에는 vt100 `set_size`가 좁힌 폭 밖 글을 버려 넓혀도 비었다(coordinator
+/// 10-18, t-0330 발견). 셸은 그래서 fish에게 aaa가 다시 접는다고 알린다(`fish_handle_reflow=0`).
+#[test]
+fn narrow_claim_then_release_keeps_line_ends() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "reflow", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["reflow"]);
+    hw.wait("이 화면의 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    // pane 폭(COLS-SIDE) 안에 드는 49자 줄. 입력한 명령 줄에는 이 글이 그대로 나오지 않는다
+    let long = format!("LONG-{}-END", "0".repeat(40));
+    tui.type_line("echo LONG-$(printf %040d 0)-END; echo \"reflow: ${fish_handle_reflow-none}\"");
+    tui.wait_text("긴 줄과 fish 알림", |s| s.contains(&long) && s.contains("reflow: 0"));
+
+    // 다른 front가 30칸으로 쥔다: 줄이 접혀 한 줄에 다 보이지 않는다
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let mut other = rt.block_on(aaa_common::front::FrontClient::connect_as(&h.state, "phone-front")).unwrap();
+    let mut call = |req| {
+        let r = rt.block_on(other.call(req)).unwrap();
+        assert!(r.is_ok(), "{r:?}");
+    };
+    call(aaa_proto::FrontRequest::PaneResize { pane: id.clone(), cols: 30, rows: 15 });
+    hw.wait("좁은 크기", |w| (w.held_by(&id, "phone-front") && w.pane(&id)?.cols == 30).then_some(()));
+    tui.wait_text("좁게 접힌 줄", |s| {
+        s.contains("phone-front 크기") && !s.contains(&long) && s.contains("LONG-0000")
+    });
+
+    // 놓고 이 화면이 되찾으면(focus) 넓은 폭에서 줄 끝까지 다시 한 줄이다
+    call(aaa_proto::FrontRequest::PaneRelease { pane: id.clone() });
+    hw.wait("놓음", |w| w.pane(&id).is_some_and(|p| p.lease.is_none()).then_some(()));
+    tui.send(b"\x1b[I");
+    hw.wait("되찾은 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    tui.wait_text("줄 끝이 돌아옴", |s| s.contains(&long) && !s.contains("phone-front 크기"));
+    // 세션 쪽 화면(`pane read`)도 다시 접었다
+    let read = h.ok(&["pane", "read", &id]);
+    assert!(read.to_string().contains(&long), "pane read: {read}");
+    drop(tui);
+}
+
 /// 고른 줄 바로 위가 「Thread n」 머리인가(목록 맨 위)
 fn at_top(s: &Screen) -> bool {
     let text = s.text();

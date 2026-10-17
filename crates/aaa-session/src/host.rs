@@ -302,6 +302,12 @@ async fn run(dir: PathBuf) -> Result<()> {
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // fish는 다시 접는(reflow) 터미널이면 크기가 바뀔 때 스스로 다시 그리지 않는다. aaa-vt도 다시 접어 겹쳐 그리면 프롬프트가
+    // 겹친다(herdr src/pane.rs `apply_pane_terminal_env`). 물려받은 값이 있으면 두고, spec env가 이긴다. 이름은 소문자 그대로만
+    // 본다(MSYS·Cygwin fish는 소문자만 읽는다).
+    if !cmd.iter_full_env_as_str().any(|(k, _)| k == "fish_handle_reflow") {
+        cmd.env("fish_handle_reflow", "0");
+    }
     cmd.env("AAA_SESSION_ID", &spec.id);
     for (k, v) in &s.env {
         cmd.env(k, v);
