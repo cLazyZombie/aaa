@@ -131,6 +131,7 @@ dependencies = [
  "tokio-rustls",
  "toml",
  "toml_edit",
+ "tower",
  "tracing",
  "webpki-roots",
 ]
