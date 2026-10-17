@@ -1,5 +1,5 @@
 // aaa service worker: 홈 화면 앱(PWA), 셸·파일 캐시, Web Push 알림. 캐시는 herdr-web-ui(aa624cb) public/sw.js 1~190줄을
-// 옮겼다(고지는 web/src/herdr/README.md, plan §8.105, 차이 목록 M5).
+// 옮겼다(고지는 web/src/herdr/README.md, plan §8.106, 차이 목록 M5).
 // - 화면 이동(navigate)은 네트워크 먼저: 연결되면 늘 host가 주는 지금 빌드다. 네트워크가 안 되면 캐시한 셸로 연다
 //   (앱이 뜨고 host에 다시 붙는다). 셸을 아직 갖지 못했으면 미리 둔 「연결 없음」 화면(offline.html, aaa 것)이다.
 // - 해시 붙은 빌드 파일(/assets/)·아이콘·글꼴(/fonts/)은 캐시 먼저: 이름이 내용이거나 거의 바뀌지 않는다.

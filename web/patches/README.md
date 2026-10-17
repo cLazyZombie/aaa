@@ -8,6 +8,12 @@
 - xterm 판을 바꾸면 빌드가 멈춘다. patch를 다시 확인한 뒤 바꾼다.
 - 시험: `e2e/specs/09-ime.mjs`의 「터미널 한글 IME」 단계가 herdr-web-ui `scripts/terminal-safari-ime-regression.ts`·`scripts/terminal-ipad-ime-regression.ts`의 기록된 사건 순서를 재생한다.
 
+## `xterm-5.5.0-viewport.patch`(aaa, 참고에 없음)
+
+- 하는 일: `Viewport.reset()`은 줄 높이(`_currentRowHeight`)를 0으로 두고 rAF 두 번 뒤(`syncScrollArea` → `_refresh` → `_innerRefresh`)에야 다시 잰다. 그 사이 viewport에 scroll 사건이 오면 `_handleScroll`이 `scrollTop / 0`으로 줄을 구한다. scrollTop이 0이면 NaN이 되어 `ydisp`가 NaN에 굳는다. 그러면 화면이 빈 채로 다시 그려지지 않고, 키·창 크기·아래로 굴리기로도 돌아오지 않는다(QA t-0337 Q1, 데스크톱 Chromium에서 앞 기록을 받을 때 휠을 빠르게 굴리면 6/8). 잴 때까지 그 scroll은 옮기지 않는다. `_innerRefresh`가 scrollTop을 ydisp에 맞춘다. 같은 동안 `getLinesScrolled`(mouse 보고 휠)도 Infinity로 `_wheelPartialScroll`을 NaN에 굳히므로 0을 돌려준다.
+- aaa는 앞 기록을 붙일 때(`Term.tsx` `prependHistory`)와 snapshot(`ESC c`)마다 reset한다. herdr-web-ui는 앞 기록을 받지 않아 이 길이 드물다.
+- 시험: `e2e/specs/07-scroll-history.mjs`의 「앞 기록 reset 직후 scroll」 단계. 패치를 빼면 ydisp가 NaN이 되어 실패함을 확인했다(plan §8.105).
+
 ## 고지
 
 herdr-web-ui의 고지에 따르면 이 patch의 queue/watermark 방식은 joonhoekim의 MIT 제안(https://github.com/xtermjs/xterm.js/pull/6090)을 따른다.

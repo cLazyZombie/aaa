@@ -67,7 +67,7 @@ export default async function ({ ctl, page }) {
     // 상태 막대 style은 두지 않는다(참고 index.html: 홈 화면 앱이 상태 막대 아래에 그리지 않는다)
     if ((await page.locator('meta[name="apple-mobile-web-app-status-bar-style"]').count()) !== 0) throw new Error("apple-mobile-web-app-status-bar-style meta가 있다");
     if (got.errors.length || !got.url.endsWith("/manifest.webmanifest?v=2")) throw new Error(`${got.url} ${JSON.stringify(got.errors)}`);
-    // service worker(§8.26·§8.105)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
+    // service worker(§8.26·§8.106)가 이 화면을 맡고, 브라우저가 설치할 수 있다고 본다
     const sw = await fetch(`${base}sw.js`);
     if (sw.status !== 200 || !sw.headers.get("content-type").startsWith("text/javascript")) throw new Error(`sw.js ${sw.status}`);
     if ((await fetch(`${base}offline.html`)).status !== 200) throw new Error("offline.html");
@@ -81,7 +81,7 @@ export default async function ({ ctl, page }) {
     const old = [...man.icons.map((i) => i.src), ...links].filter((u) => !u.endsWith("?v=2"));
     if (links.length !== 3 || old.length) throw new Error(`v 없는 아이콘 주소 ${JSON.stringify(old)} (link ${links.length}개)`);
     if (!sws.includes('"aaa-files-v2"') || !sws.includes('"/icon-192.png?v=2"') || !sws.includes('"/favicon-32.png?v=2"')) throw new Error("sw.js 파일 cache 이름·알림 아이콘이 v2가 아니다");
-    // 빌드마다 worker가 따로다(herdr-web-ui scripts/service-worker-build.ts, 차이 목록 M5, plan §8.105): 이 빌드의 이름과 파일이 찍혀 있다
+    // 빌드마다 worker가 따로다(herdr-web-ui scripts/service-worker-build.ts, 차이 목록 M5, plan §8.106): 이 빌드의 이름과 파일이 찍혀 있다
     const build = /const BUILD = "([0-9a-f]{12})";/.exec(sws)?.[1];
     const listed = /const BUILD_FILES = (\[[^\]]*\]);/.exec(sws)?.[1];
     if (!build || !listed || !JSON.parse(listed).some((f) => /^\/assets\/index-.*\.js$/.test(f))) throw new Error(`sw.js 빌드 도장 ${build} ${listed}`);

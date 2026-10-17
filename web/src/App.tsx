@@ -47,7 +47,7 @@ export function App() {
   useEffect(check, [check]);
   // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다
   useEffect(() => onSignedOut(check), [check]);
-  // host에 닿지 못했다(끊긴 채 캐시한 셸로 연 홈 화면 앱, plan §8.105): 네트워크가 돌아오거나 다시 보이면 다시 묻는다.
+  // host에 닿지 못했다(끊긴 채 캐시한 셸로 연 홈 화면 앱, plan §8.106): 네트워크가 돌아오거나 다시 보이면 다시 묻는다.
   // 참고는 셸이 그대로 뜬 채 주기로 다시 묻는다. aaa는 첫 물음이 기기를 고르므로 그 사건에서 다시 묻는다
   const failed = auth.state === "error";
   useEffect(() => {
