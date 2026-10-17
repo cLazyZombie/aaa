@@ -549,7 +549,16 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .back { display: none; }
 /* 여백은 바깥(.term-scroll)에 둔다. FitAddon은 터미널 부모(.term-box)의 계산된 width·height를 칸 크기로 쓰는데,
    border-box에서 부모의 padding이 그 값에 들어가 cols·rows를 몇 칸 크게 잡았다 */
-.term-scroll { flex: 1; min-height: 0; overflow: auto; background: var(--term-bg); padding: var(--space-3) var(--space-4); }
+/* herdr-web-ui PaneTerminal.css .pane-terminal: 끌기는 우리 것(Term.tsx가 휠로 바꾼다). 없으면 첫 움직임 뒤 브라우저가 몸짓을 가져가
+   페이지를 굴리거나 당겨서 새로 고침을 시작한다. 칸은 굴러가지 않는다(키보드가 grid를 붙잡으면 코드가 scrollTop만 옮긴다) */
+.term-scroll { flex: 1; min-height: 0; overflow: hidden; touch-action: none; overscroll-behavior: contain; background: var(--term-bg); padding: var(--space-3) var(--space-4); }
+/* 이 화면 것이 아닌 grid는 칸보다 클 수 있다: 잘리지 않게 굴러간다(손가락은 Term.tsx 터치 처리로, 마우스는 휠·스크롤바로) */
+.term-scroll[data-adopted-grid] { overflow: auto; }
+/* xterm은 다시 그릴 때마다 줄 요소를 바꾼다. 터치는 첫 대상을 끝까지 지녀서, 줄에 닿은 손가락은 첫 스크롤이 그 줄을 다시 그리면
+   뒤 움직임(과 끝)을 모두 잃고 브라우저가 끌기를 가져갔다. 터치 화면에서는 줄이 터치를 받지 않는다(PaneTerminal.css 351~357줄) */
+@media (pointer: coarse) {
+  .term-box .xterm-rows { pointer-events: none; }
+}
 .term-box { width: 100%; height: 100%; }
 .term-box .xterm .xterm-viewport { background: transparent !important; }
 

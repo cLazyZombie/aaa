@@ -577,6 +577,23 @@ process.stdin.on("data", (d) => process.stdout.write("GOT:" + ++n + ":" + JSON.s
 `,
 );
 // 글자 폭 시험: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️(VS16) 뒤에 글자 하나씩
+// 스크롤 시험 프로그램: 번호 붙은 줄 200개를 쓰고 기다린다. alt면 alternate screen에서, mouse면 거기에 mouse 보고(1000·SGR 1006)를 켠다.
+// "p"를 받으면 줄을 하나 더 쓰고, 다른 조각은 JSON으로 보인다(휠이 화살표·mouse 보고로 왔는지 본다).
+fs.writeFileSync(
+  `${root}/scroll.js`,
+  `const mode = process.argv[2] || "plain";
+process.stdin.setRawMode(true);
+if (mode !== "plain") process.stdout.write("\\x1b[?1049h\\x1b[H");
+if (mode === "mouse") process.stdout.write("\\x1b[?1000h\\x1b[?1006h");
+for (let i = 1; i <= 200; i++) process.stdout.write("s-" + String(i).padStart(3, "0") + "\\r\\n");
+let n = 0;
+process.stdin.on("data", (d) => {
+  const s = d.toString("latin1");
+  if (s === "p") process.stdout.write("more-" + ++n + "\\r\\n");
+  else process.stdout.write("GOT:" + JSON.stringify(s) + "\\r\\n");
+});
+`,
+);
 fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
@@ -1174,6 +1191,130 @@ try {
     const pinched = await settled(mp, "핀치 뒤 PTY", (c) => c < phone * 0.8);
     console.log(`     핀치 ${phone}열(13px) → ${pinched}열(20px)`);
     await mp.context().close();
+  });
+
+  await step("터미널 스크롤(herdr-web-ui PaneTerminal 휠·터치, herdr pane_input 휠 나누기, 사용자 요청 10-17): 열기 전 기록도 굴러가고, 출력이 와도 올려 둔 자리, 키를 치면 맨 아래, alternate screen은 화살표·mouse 보고면 프로그램에, 휴대폰·iPad는 한 손가락으로 손가락만큼", async () => {
+    // 터치용 alt·mouse pane은 따로 둔다(휠로 받은 조각과 섞이지 않게)
+    const names = ["plain", "alt", "mouse", "touch-alt", "touch-mouse"];
+    for (const mode of names) aaa("pane", "run", "--machine", "labA", "--name", `scroll-${mode}`, "--", process.execPath, `${root}/scroll.js`, mode.replace("touch-", ""));
+    for (const mode of names) await until(`scroll-${mode} 200줄`, () => aaa("pane", "read", `scroll-${mode}`).lines.join("\n").includes("s-200"));
+    const got = (name) => aaa("pane", "read", name).lines.join("\n");
+    /** 보이는 첫 줄의 번호(s-NNN), 없으면 null */
+    const firstNo = (p) =>
+      p.evaluate(() => {
+        const m = /s-(\d{3})/.exec(document.querySelector(".xterm-rows")?.firstElementChild?.textContent ?? "");
+        return m ? Number(m[1]) : null;
+      });
+    const bad = [];
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
+    await dp.getByTestId("pane-scroll-plain").click();
+    await until("plain 화면", async () => (await screenText(dp)).includes("s-200"));
+    const box = await dp.getByTestId("terminal").boundingBox();
+    await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await until("휠로 맨 위 s-001", async () => {
+      await dp.mouse.wheel(0, -2000);
+      return (await firstNo(dp)) === 1;
+    }).catch(async (e) => {
+      throw new Error(`${e.message}: 첫 줄 ${await firstNo(dp)}, xterm 기록 ${await dp.locator(".xterm-viewport").evaluate((v) => v.scrollHeight - v.clientHeight)}px`);
+    });
+    // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력)
+    for (let i = 0; i < 3; i++) aaa("pane", "send", "scroll-plain", "--text", "p");
+    await until("more-3 출력", () => got("scroll-plain").includes("more-3"));
+    await sleep(300);
+    if ((await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(첫 줄 ${await firstNo(dp)})`);
+    // 키를 치면 맨 아래로 돌아온다
+    await dp.keyboard.press("x");
+    await until("키를 치면 맨 아래", async () => (await screenText(dp)).includes('GOT:"x"'));
+    if ((await firstNo(dp)) === 1) bad.push("키를 쳤는데 맨 아래로 오지 않았다");
+    // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
+    // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다
+    for (const [mode, want] of [["alt", 'GOT:"\\u001b[A'], ["mouse", 'GOT:"\\u001b[<64;']]) {
+      await dp.getByTestId(`pane-scroll-${mode}`).click();
+      await until(`${mode} 화면`, async () => (await screenText(dp)).includes("s-200"));
+      await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await dp.mouse.wheel(0, -100);
+      await until(`${mode} 휠 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) => bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`));
+    }
+    await dp.context().close();
+
+    // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)
+    const swipeCheck = async (label, p, swipe) => {
+      await p.getByTestId("pane-scroll-plain").click();
+      await until(`${label} 화면`, async () => (await screenText(p)).includes('GOT:"x"'));
+      const cell = await p.evaluate(() => {
+        const screen = document.querySelector(".xterm-screen").getBoundingClientRect();
+        return { h: screen.height / document.querySelectorAll(".xterm-rows > div").length, top: screen.top, x: screen.left + screen.width / 2 };
+      });
+      const before = await firstNo(p);
+      const travel = 240;
+      await swipe(cell, travel);
+      await sleep(200);
+      const after = await firstNo(p);
+      const want = Math.round(travel / cell.h);
+      if (before === null || after === null || Math.abs(before - after - want) > 1)
+        bad.push(`${label}: ${travel}px 끌어 첫 줄 ${before} → ${after}(기대 ${want}줄 위, 한 칸 ${cell.h.toFixed(1)}px)`);
+      // alternate screen·mouse 보고 프로그램(Claude Code·Codex 같은)에서는 xterm 터치 스크롤이 아무것도 하지 않는다:
+      // 끌기가 휠이 되어 화살표·mouse 보고로 프로그램에 가야 한다
+      for (const [mode, want] of [["touch-alt", 'GOT:"\\u001b[A'], ["touch-mouse", 'GOT:"\\u001b[<64;']]) {
+        if (label.startsWith("iPad") && mode === "touch-mouse") continue; // 한 기기에서 한 번이면 된다(iPad는 alt만)
+        // 휴대폰은 pane을 열면 목록이 가려진다
+        const back = p.getByRole("button", { name: "목록으로" });
+        if (await back.isVisible()) await back.click();
+        await p.getByTestId(`pane-scroll-${mode}`).click();
+        await until(`${label} ${mode} 화면`, async () => (await screenText(p)).includes("s-200"));
+        const c = await p.evaluate(() => {
+          const r = document.querySelector(".xterm-screen").getBoundingClientRect();
+          return { top: r.top, x: r.left + r.width / 2 };
+        });
+        await swipe({ ...cell, ...c }, travel);
+        await until(`${label} ${mode} 끌기 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) =>
+          bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`),
+        );
+      }
+      return { before, after, want };
+    };
+    const phone = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    const cdp = await phone.context().newCDPSession(phone);
+    const ph = await swipeCheck("휴대폰(Chromium 터치)", phone, async (cell, travel) => {
+      const y0 = cell.top + 40;
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cell.x, y: y0, id: 1 }] });
+      for (let i = 1; i <= 12; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cell.x, y: y0 + (travel * i) / 12, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    });
+    await phone.context().close();
+    const wk = await webkit.launch();
+    try {
+      const pad = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
+      await swipeCheck("iPad(WebKit 터치)", pad, (cell, travel) =>
+        pad.evaluate(
+          async ({ x, y0, travel }) => {
+            const target = document.querySelector(".xterm-screen");
+            // Playwright WebKit에는 Touch 생성자가 없다(Illegal constructor): 같은 이름의 사건에 손가락 목록을 붙인다
+            const ev = (type, y) => {
+              const t = { identifier: 7, target, clientX: x, clientY: y, pageX: x, pageY: y };
+              const on = type === "touchend" ? [] : [t];
+              const e = new Event(type, { bubbles: true, cancelable: true, composed: true });
+              for (const [key, value] of [["touches", on], ["targetTouches", on], ["changedTouches", [t]]]) Object.defineProperty(e, key, { value });
+              return e;
+            };
+            target.dispatchEvent(ev("touchstart", y0));
+            for (let i = 1; i <= 12; i++) {
+              target.dispatchEvent(ev("touchmove", y0 + (travel * i) / 12));
+              await new Promise((r) => requestAnimationFrame(r));
+            }
+            target.dispatchEvent(ev("touchend", y0 + travel));
+          },
+          { x: cell.x, y0: cell.top + 40, travel },
+        ),
+      );
+      await pad.context().close();
+    } finally {
+      await wk.close();
+    }
+    for (const mode of names) aaa("pane", "kill", `scroll-${mode}`);
+    if (bad.length) throw new Error(bad.join("; "));
+    console.log(`     휴대폰 240px 끌기: 첫 줄 s-${ph.before} → s-${ph.after}(${ph.want}줄)`);
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
@@ -2149,7 +2290,14 @@ try {
             const st = getComputedStyle(view);
             const rows = document.querySelector(".xterm-rows");
             // 비교할 칸: 조합 상자 바로 왼쪽 칸(같은 줄의 「상태 」 뒤 빈칸)
-            const left = document.elementsFromPoint(r.left - 3, r.top + r.height / 2).find((e) => rows.contains(e) && e !== rows);
+            // 자리로 찾는다: 터치 화면은 줄이 터치를 받지 않아(pointer-events: none) elementsFromPoint가 건너뛴다
+            const [x, y] = [r.left - 3, r.top + r.height / 2];
+            const inside = (e) => {
+              const b = e.getBoundingClientRect();
+              return b.left <= x && x < b.right && b.top <= y && y < b.bottom;
+            };
+            const row = [...rows.children].find(inside);
+            const left = row && ([...row.children].find(inside) ?? row);
             let bg = "";
             for (let e = left ?? rows; e && e !== document.documentElement; e = e.parentElement) {
               const c = getComputedStyle(e).backgroundColor;

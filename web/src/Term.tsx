@@ -35,6 +35,7 @@ import { TerminalInput } from "./TerminalInput";
 import { setTerminalFontSize, setTerminalInputMode, useMedia, useTerminalFontSize, useTerminalInputMode } from "./settings";
 import { pinchFontSize } from "./herdr/pinchFontSize.ts";
 import { matchHerdrWidths } from "./herdr/terminalWidths.ts";
+import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSteps.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
@@ -347,7 +348,7 @@ export function TermView({
       fontSize,
       lineHeight: 1.15,
       fontFamily: ready ? family : family.replace(`${WEB_FONT}, `, ""),
-      scrollback: 2000,
+      scrollback: 2000, // aaa-vt REPLAY_HISTORY와 같다: 붙을 때 host가 이만큼 기록을 채운다(plan §8.55)
       convertEol: false,
       theme: termTheme(),
       // herdr-web-ui PaneTerminal 539~562줄: 블록 커서 깜빡임(프로그램의 DECSCUSR는 그대로 바꾼다),
@@ -369,6 +370,15 @@ export function TermView({
     matchHerdrWidths(term);
     term.open(box.current!);
     const el = box.current!;
+    // 휠(herdr-web-ui PaneTerminal 665~694줄): 이 화면 것이 아닌 grid는 휠이 브라우저 몫이라 칸을 옮긴다. 휠은 선택을 지운다.
+    // 참고는 보고가 꺼졌을 때 xterm을 막는다(herdr가 늘 보고를 켜 그럴 일이 없다). aaa는 herdr 서버가 휠을 나누는 것
+    // (server/pane_input.rs 153~183줄: 보고면 프로그램에, alternate screen이면 화살표, 아니면 scrollback)과 같은 xterm 기본에 맡긴다.
+    // 끌어 고르는 중 휠(dragWheel)과 휠 속도 설정은 옮기지 않았다(차이 목록 J).
+    term.attachCustomWheelEventHandler(() => {
+      if (adoptedRef.current) return false;
+      if (term.hasSelection()) term.clearSelection();
+      return true;
+    });
     // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.
     if (!window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
     // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
@@ -649,7 +659,36 @@ export function TermView({
     // 두 손가락으로 글자 크기(herdr-web-ui PaneTerminal 1528~1640줄): 손가락을 따라 글자가 바로 바뀌고 크기를 띄운다.
     // 손을 떼면 설정에 저장하고 PTY 크기를 한 번 다시 건다. aaa 터미널 grid는 늘 PTY 크기를 따르므로(host가 알린다)
     // 참고처럼 핀치 중에 grid를 이 화면에서만 다시 맞추지 않는다: 그 사이 온 출력이 PTY에 없는 grid에 그려진다.
-    // 한 손가락 끌기는 xterm 그대로 둔다(차이 목록 J, 스크롤 묶음과 함께).
+    //
+    // 한 손가락 끌기는 스크롤이다(PaneTerminal 1519~1527줄): 터치 화면에는 휠 사건이 없고 xterm에는 쓸 만한 터치 스크롤이 없다.
+    // 손가락이 간 만큼 줄 단위 휠 사건을 손가락 자리에 보내, 마우스 휠과 똑같이 xterm이 나눈다(mouse 보고면 프로그램에,
+    // alternate screen이면 화살표, 아니면 scrollback). 이 화면 것이 아닌 grid(adopted)는 칸을 손가락대로 옮긴다.
+    let touchX = 0;
+    let touchY = 0;
+    /** 이 동작에서 아직 휠로 보내지 않은 손가락 이동 */
+    let touchPixels = 0;
+    let tracking = false;
+    const cellHeight = (): number => (term.element?.querySelector(".xterm-screen")?.getBoundingClientRect().height ?? term.rows) / term.rows;
+    // 휠 하나가 옮기는 줄: 참고는 herdr가 보고 하나에 3줄(HERDR_MOUSE_SCROLL_LINES)을 굴려 손가락 3줄마다 하나를 보낸다.
+    // aaa는 보고가 꺼진 normal buffer를 xterm 자기 scrollback이 휠 하나에 한 줄씩 굴리므로 그때는 한 줄마다 보낸다(plan §8.55).
+    const stepPixels = (): number =>
+      cellHeight() * (term.buffer.active.type === "normal" && term.modes.mouseTrackingMode === "none" ? 1 : HERDR_MOUSE_SCROLL_LINES);
+    /** `steps`개의 줄 단위 휠을 손가락 자리에 */
+    const sendTouchWheels = (steps: number) => {
+      const target = term.element ?? el;
+      for (let sent = 0; sent < Math.abs(steps); sent += 1) {
+        target.dispatchEvent(
+          new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            deltaY: Math.sign(steps),
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            clientX: touchX,
+            clientY: touchY,
+          }),
+        );
+      }
+    };
     let pinch: { first: number; second: number; startSize: number; startDistance: number; size: number } | null = null;
     // 두 번째 손가락부터 모든 손가락이 뗄 때까지: 이 동작은 핀치이고 스크롤이 아니다
     let pinchStroke = false;
@@ -687,7 +726,17 @@ export function TermView({
         pinchStroke = false;
       }
       if (pinchStroke) return claimPinch(event);
-      if (event.touches.length < 2) return;
+      if (event.touches.length < 2) {
+        tracking = event.touches.length === 1;
+        touchPixels = 0;
+        const first = event.touches[0];
+        if (tracking && first) {
+          touchX = first.clientX;
+          touchY = first.clientY;
+        }
+        return;
+      }
+      tracking = false;
       pinchStroke = true;
       claimPinch(event);
       const a = event.touches[0];
@@ -699,8 +748,32 @@ export function TermView({
       showPinch(startSize);
     };
     const onTouchMove = (event: TouchEvent) => {
-      if (!pinchStroke && event.touches.length > 1) pinchStroke = true;
-      if (!pinchStroke) return;
+      if (!pinchStroke && event.touches.length > 1) {
+        tracking = false;
+        pinchStroke = true;
+      }
+      if (!pinchStroke) {
+        if (!tracking || event.touches.length !== 1) return;
+        event.preventDefault();
+        // xterm 자기 터치 스크롤(Viewport.handleTouchMove)까지 돌면 scrollback이 두 번 굴러간다: 참고는 xterm scrollback이 0이라 그것이 아무 일도 안 했다
+        event.stopPropagation();
+        const first = event.touches[0];
+        if (!first) return;
+        // 손가락이 내려가면(y가 커지면) 오래된 줄이 보인다: 위로 굴리는 휠, deltaY 음수
+        const delta = touchY - first.clientY;
+        const across = touchX - first.clientX;
+        touchX = first.clientX;
+        touchY = first.clientY;
+        if (adoptedRef.current) {
+          kbRef.current.panned = true;
+          scrollRef.current?.scrollBy(across, delta);
+          return;
+        }
+        const { steps, rest } = wheelSteps(touchPixels + delta, stepPixels());
+        touchPixels = rest;
+        sendTouchWheels(steps);
+        return;
+      }
       claimPinch(event);
       if (!pinch || event.touches.length !== 2) return;
       let first: Touch | undefined;
@@ -718,6 +791,10 @@ export function TermView({
       showPinch(size);
     };
     const onTouchEnd = (event: TouchEvent) => {
+      // 뗄 때 남은 이동이 반 걸음을 넘으면 하나 더: 한 걸음보다 짧게 튕겨도 굴러가고, 길게 끌어도 반 걸음 넘게 잃지 않는다
+      if (tracking && event.type === "touchend" && !pinchStroke && !adoptedRef.current) sendTouchWheels(finalStep(touchPixels, stepPixels()));
+      touchPixels = 0;
+      tracking = false;
       if (!pinchStroke) return;
       claimPinch(event);
       if (event.type === "touchcancel" || event.touches.length < 2) finishPinch(event.type === "touchend");
@@ -1164,7 +1241,7 @@ export function TermView({
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" hidden={chatView && chatable}>
-        <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""}>
+        <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""} data-adopted-grid={adopted ? "" : undefined}>
           <div className="term-box" ref={box} data-testid="terminal" />
         </div>
         <div className="terminal-banners">
