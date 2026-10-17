@@ -21,6 +21,7 @@ pub mod keys;
 pub mod list;
 mod mouse;
 mod prompt;
+mod scrollbar;
 mod tabs;
 mod theme;
 
@@ -267,6 +268,8 @@ struct App {
     copy_on_select: bool,
     /// 휠 한 칸에 넘기는 기록 줄 수(`[tui] mouse_scroll_lines`)
     scroll_lines: u16,
+    /// 보통 화면 pane 오른쪽 1칸 scrollbar(`[tui] pane_scrollbars`)
+    pane_scrollbars: bool,
     /// 마지막으로 그린 자리(마우스가 맞힌다)
     hits: std::cell::RefCell<mouse::Hits>,
     drag: Option<mouse::Drag>,
@@ -330,6 +333,7 @@ impl App {
             capture_on: None,
             copy_on_select: true,
             scroll_lines: 3,
+            pane_scrollbars: true,
             hits: Default::default(),
             drag: None,
             selection: None,
@@ -356,6 +360,7 @@ impl App {
         self.mouse_capture = cfg.mouse_capture;
         self.copy_on_select = cfg.copy_on_select;
         self.scroll_lines = cfg.mouse_scroll_lines.max(1);
+        self.pane_scrollbars = cfg.pane_scrollbars;
         self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
         // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
         self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
@@ -1105,9 +1110,21 @@ impl App {
 
     /// 그릴 pane 상자(테두리·PTY 칸). zoom이면 포커스 pane 하나가 칸 전체다(herdr `render_panes`).
     /// 방향 포커스·자리 바꾸기는 zoom과 상관없이 나눈 칸으로 찾는다(`pane_rects`).
+    /// herdr `terminal_inner_rect_for`: scrollbar를 켜면 alt 화면이 아닌 pane은 오른쪽 1칸(폭이 4보다 클 때)을 scrollbar 칸으로 뺀다
+    /// (PTY도 그만큼 좁다, `stable_scrollbar_gutter`: 기록이 없어도 칸은 비워 둔다).
     fn shown(&self, tab: &aaa_proto::Tab, body: Rect) -> Vec<chrome::PaneBox> {
         let zoomed = self.focus.as_deref().filter(|f| tab.zoomed && layout::leaves(&tab.root).iter().any(|p| p == f));
-        chrome::layout(&tab.root, body, self.pane_borders, zoomed)
+        let mut boxes = chrome::layout(&tab.root, body, self.pane_borders, zoomed);
+        if self.pane_scrollbars {
+            for b in &mut boxes {
+                let alt = self.grids.get(&b.pane).is_some_and(|g| g.modes.alt_screen);
+                if !alt && b.inner.w > 4 {
+                    b.inner.w -= 1;
+                    b.gutter = Some(Rect { x: b.inner.x + b.inner.w, w: 1, ..b.inner });
+                }
+            }
+        }
+        boxes
     }
 
     /// 마지막 탭(이고 pane이 `pane`뿐)인가: herdr `confirm_close`는 workspace가 닫힐 때만 묻는다
@@ -1368,6 +1385,10 @@ impl App {
                     let focused = self.focus.as_deref() == Some(b.pane.as_str());
                     if let Some(c) = self.render_pane(buf, &b.pane, b.inner, focused) {
                         cursor = Some(c);
+                    }
+                    // herdr `render_pane_scrollbar`: 기록이 있을 때만
+                    if let (Some(track), Some(g)) = (b.gutter, self.grids.get(&b.pane)) {
+                        scrollbar::render(buf, scrollbar::Metrics::new(g.scroll, g.rows), track, p, focused);
                     }
                 }
             }

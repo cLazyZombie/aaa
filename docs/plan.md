@@ -2508,7 +2508,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **host.** 구독마다 기록 위치를 두고, 장면을 만들 때 pane 화면 사본(aaa-vt `grid_rows_at`)에서 그 위치의 줄을 읽고 같은 잠금 안에서 되돌린다(다른 읽기·웹 snapshot은 늘 지금 화면을 본다). 올라가 있는 동안 기록이 늘면 그만큼 더 올라 보던 줄을 지킨다(ghostty viewport 고정과 같음, 기록 상한에서 앞을 버리면 지키지 못한다). 기록보다 크면 묶고, alt 화면은 기록 0. 올라가 있는 동안 커서를 숨긴다. 모드나 기록 위치만 바뀌어도 한 장 보낸다(커서·모드·위치 hash).
 - **TUI.** 보통 화면(마우스 보고 끔·alt 화면 아님) pane의 휠은 `[tui] mouse_scroll_lines`(기본 3)줄씩 위·아래. 그 pane에 키·글·붙여넣기·그림·마우스 보고를 보내기 전에 올라가 있었으면 맨 아래로 돌린다(누르지 않은 움직임 보고는 그대로). 옛 host(1.15 이하)에서는 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
 - **다른 점.** 기록 위치는 화면(front 연결)마다 둔다. herdr는 pane마다 서버에 하나라 모든 client가 같이 움직인다. aaa는 여러 기기가 한 pane을 보므로 한 화면이 넘겨도 다른 화면은 그대로이고, 맨 아래로 돌리기도 그 화면이 입력을 보낼 때만이다(다른 화면·CLI 입력은 위치를 그대로 둔다).
-- **다음 묶음(5a-2).** pane scrollbar(herdr `pane_scrollbars`: 보통 화면에서 오른쪽 1칸 gutter, PTY가 1칸 좁아짐, 누르기·끌기). 그전에는 올라가 있다는 표시가 숨은 커서뿐이다.
+- **다음 묶음(5a-2).** pane scrollbar(herdr `pane_scrollbars`: 보통 화면에서 오른쪽 1칸 gutter, PTY가 1칸 좁아짐, 누르기·끌기). 그전에는 올라가 있다는 표시가 숨은 커서뿐이다. → §8.113
 - **시험.** 유닛: aaa-vt `grid_rows_at_scrollback_offset`(위치·끝에서 멈춤·되돌림·alt 화면), host `grid_view_keeps_the_lines_it_shows`(끝에서 멈춤·보던 줄 고정·묶기·맨 아래 따라감), 설정 `mouse_scroll_lines`. TUI harness `wheel_scrolls_history_like_herdr`: `seq 1 200` 뒤 휠 위 한 칸이면 170..198, 올라간 동안 CLI `pane run`의 출력 6줄이 와도 보던 줄을 지켜 한 칸 더 올리면 167..195, 휠 아래 네 칸이면 맨 아래, 올라간 채 치면 맨 아래로 돌아와 친 글이 보임.
 
 ### 8.112 TUI pane 이름 바꾸기(herdr `rename_pane`)(10-18, 차이 목록 4장 C, §8.109가 남긴 TUI 몫)
@@ -2516,6 +2516,13 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고(herdr 0.9.5).** `src/config/model.rs` `rename_pane`(`prefix+shift+p`), `src/client/shell/overlay_input.rs` `open_rename_pane_overlay`(붙인 이름이 있으면 그 이름, 없으면 빈 칸 `TextEditor::new(label, label.is_none())`)·`save_rename_overlay`(pane은 늘 보냄), `src/client/shell/context_menu.rs`(pane 메뉴 맨 앞 「Rename pane」, `has_manual_label`이면 「Clear pane name」), `src/input/keybind_help.rs`(「close pane」 뒤 「rename pane」).
 - **TUI.** `prefix shift+p`는 포커스 pane의 이름 창(제목 「pane 이름 바꾸기」), Enter면 host `pane_rename`(§8.109, 비우면 host가 지워 띄울 때 이름). pane 메뉴 맨 앞 「pane 이름 바꾸기」(그 pane의 창, 포커스는 그대로)와 붙인 이름(`PaneView.label`)이 있을 때만 「pane 이름 지우기」(바로 지움). 단축키 창은 「pane 닫기」 뒤. 옛 host(1.14 이하)는 「host를 새 aaa로 다시 띄워야 한다」.
 - **시험.** 유닛: 키 `shift+p`, 메뉴 항목 차례(이름 바꾸기 → 지우기 → 자리 바꾸기 …)·높이. TUI harness `pane_rename_like_herdr`: `prefix P` 창에서 붙이면 host label·사이드바 이름, 메뉴 「pane 이름 지우기」로 지우면 띄울 때 이름, 지운 뒤 메뉴에는 지우기가 없고 「pane 이름 바꾸기」가 창을 연다.
+
+### 8.113 TUI pane scrollbar(herdr `pane_scrollbars`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「scrollbar」)
+
+- **참고(herdr 0.9.5).** `src/ui/panes.rs` `terminal_inner_rect_for`(`pane_scrollbars`이고 alt 화면이 아니고 폭이 4보다 크면 오른쪽 1칸을 scrollbar 칸으로 빼고 PTY도 그만큼 좁다, `stable_scrollbar_gutter`: 기록이 없어도 칸은 비워 둔다), `src/ui/scrollbar.rs`(`ScrollMetrics`, thumb 길이 = 화면 줄 × 트랙 / (기록 + 화면 줄) 반올림·1 이상, 트랙 `▕`, thumb 포커스 `▐`(overlay1)·아니면 `▕`(overlay0), 트랙 색 포커스 overlay0·아니면 surface_dim), `src/client/shell/mouse.rs`(맞히기 차례 scrollbar → 나눔 경계 → pane, 누르면 그 pane에 포커스, thumb 위면 잡은 줄을 지키며 끌기, 아니면 thumb 가운데가 그 줄로 뛰기, 끄는 동안 33ms마다 바뀐 위치만), `[ui] pane_scrollbars`(기본 켬).
+- **TUI.** herdr대로 보통 화면 pane의 오른쪽 1칸을 scrollbar 칸으로 빼고(PTY가 1칸 좁다), alt 화면(vim 등)에 들어가면 칸을 돌려줘 PTY가 넓어졌다가 나오면 다시 좁아진다. 기록이 있을 때만 그 칸에 트랙과 thumb를 그린다(위치는 §8.111 `GridFrame.scroll`). 누르기·끌기는 `PaneScroll { by: offset }`(§8.111, 이 화면만)으로 보내고, 끄는 동안은 나눔 경계 끌기와 같이 33ms마다 바뀐 위치만, 뗄 때 마지막 위치를 보낸다. `[tui] pane_scrollbars = false`면 칸을 빼지 않는다(그때는 PTY가 칸 전체). 기록 위치를 모르는 옛 host(1.15 이하)에서는 기록이 0이라 트랙을 그리지 않는다(칸은 비워 둔다).
+- **다른 점.** 없음(herdr 기본값과 같이 켬). PTY가 1칸 좁아지는 것은 herdr와 같은 값이고, 바꾸려면 `pane_scrollbars = false`.
+- **시험.** 유닛: `scrollbar` `thumb_and_offsets_like_herdr`(thumb 길이·위치, 맨 위·맨 아래 누르기, 잡기·끌기, 그리기 색), 설정 `pane_scrollbars`. TUI harness `pane_scrollbar_like_herdr`: PTY 폭이 칸 − 1, `seq 1 200` 뒤 트랙 `▕`과 맨 아래 thumb `▐`, 트랙 맨 위 누르기면 맨 위(명령 줄 다음 `1`), thumb를 잡아 아래 끝까지 끌고 떼면 맨 아래, alt 화면이면 PTY가 칸 전체로 넓어졌다가 나오면 다시 좁아짐. 다른 harness 시험의 PTY 폭 기대값도 1칸 좁혔다(`GUTTER`).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

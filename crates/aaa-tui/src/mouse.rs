@@ -31,7 +31,9 @@ use crate::bind::Action;
 use crate::chrome::{PaneBox, SplitHit};
 use crate::list::Row;
 use crate::theme::Palette;
-use crate::{App, FrontSender, Mode, Overlay, Pending, SIDEBAR_MAX, SIDEBAR_MIN, clip, help, keys, unicode_width};
+use crate::{
+    App, FrontSender, Mode, Overlay, Pending, SIDEBAR_MAX, SIDEBAR_MIN, clip, help, keys, scrollbar, unicode_width,
+};
 
 /// 두 번 누름으로 보는 사이(herdr `DOUBLE_CLICK_WINDOW`)
 pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
@@ -143,6 +145,8 @@ pub enum Drag {
     Split { hit: SplitHit, tab: String, grab: i32, sent: Option<u16>, at: Option<Instant> },
     /// 마우스 보고를 켠 pane에 넘긴 누름(뗄 때까지 그 pane이 끌기·뗌을 받는다, 밖으로 나가도)
     Pane { pane: String, button: MouseButton },
+    /// pane scrollbar thumb를 `grab`째 줄로 잡고 끈다(herdr `ClientChromeDrag::PaneScrollbar`): 마지막으로 보낸 위치와 때
+    Scrollbar { pane: String, grab: u16, sent: Option<usize>, at: Option<Instant> },
     /// 목록 줄을 눌렀다(같은 줄에서 떼면 연다)
     Row(Row),
     /// 사이드바 경계를 끈다
@@ -646,6 +650,20 @@ impl App {
             self.mode = Mode::Terminal;
             self.list_sel = None;
         }
+        // herdr: 기록이 있는 pane scrollbar를 누르면 그 pane에 포커스, thumb면 끌기, 아니면 thumb 가운데가 그 줄로 뛴다
+        if let Some((pane, m, track)) = hits
+            .panes
+            .iter()
+            .filter(|b| b.gutter.is_some_and(|g| contains(g, x, y)))
+            .find_map(|b| self.scroll_track(hits, &b.pane))
+        {
+            self.focus = Some(pane.clone());
+            match scrollbar::grab(m, track, y) {
+                Some(grab) => self.drag = Some(Drag::Scrollbar { pane, grab, sent: None, at: None }),
+                None => self.scroll_to(tx, pane, scrollbar::offset_from_row(m, track, y)).await?,
+            }
+            return Ok(());
+        }
         // herdr: 나눔 경계를 누르면 끌기(포커스는 그대로)
         if let Some(hit) = hits.splits.iter().find(|s| contains(s.hit, x, y)).cloned() {
             let Some(tab) = self.ws.tabs.get(self.tab).map(|t| t.id.clone()) else { return Ok(()) };
@@ -786,6 +804,24 @@ impl App {
         }
     }
 
+    /// 그 pane의 scrollbar 칸과 기록 위치(기록이 있을 때만)
+    fn scroll_track(&self, hits: &Hits, pane: &str) -> Option<(String, scrollbar::Metrics, Rect)> {
+        let track = hits.panes.iter().find(|b| b.pane == pane)?.gutter?;
+        let g = self.grids.get(pane)?;
+        (g.scroll.max > 0).then(|| (pane.to_string(), scrollbar::Metrics::new(g.scroll, g.rows), track))
+    }
+
+    /// 이 화면의 그 pane 기록 위치를 맨 아래에서 `offset`줄로(herdr `set_scroll_offset_from_bottom`)
+    async fn scroll_to(&mut self, tx: &mut FrontSender, pane: String, offset: usize) -> Result<()> {
+        if !self.host_at_least(16) {
+            return Ok(());
+        }
+        let by = ScrollBy::Offset { lines: offset as u32 };
+        let id = tx.send(FrontRequest::PaneScroll { pane, by }).await?;
+        self.pending.insert(id, Pending::Report("기록 넘기기"));
+        Ok(())
+    }
+
     /// 가운데·오른쪽 누름: 마우스 보고 pane이면 넘긴다
     async fn press_other(
         &mut self,
@@ -828,6 +864,16 @@ impl App {
             Some(Drag::Sidebar) => {
                 let left = hits.sidebar.map_or(0, |s| s.x);
                 self.sidebar_width = (x + 1).saturating_sub(left).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+            }
+            // herdr: 33ms마다 바뀐 위치만 보낸다
+            Some(Drag::Scrollbar { pane, grab, sent, at }) => {
+                let Some((pane, m, track)) = self.scroll_track(hits, &pane) else { return Ok(()) };
+                let offset = scrollbar::offset_from_drag_row(m, track, y, grab);
+                let now = Instant::now();
+                if sent != Some(offset) && at.is_none_or(|t| now.duration_since(t) >= SPLIT_SEND) {
+                    self.drag = Some(Drag::Scrollbar { pane: pane.clone(), grab, sent: Some(offset), at: Some(now) });
+                    self.scroll_to(tx, pane, offset).await?;
+                }
             }
             Some(Drag::Split { hit, tab, grab, sent, at }) => {
                 let ratio = split_ratio(&hit, grab, x, y);
@@ -886,6 +932,14 @@ impl App {
                 }
             }
             // 끄는 동안 마지막으로 보낸 값과 다르면 뗀 자리 값을 보낸다
+            Some(Drag::Scrollbar { pane, grab, sent, .. }) => {
+                if let Some((pane, m, track)) = self.scroll_track(hits, &pane) {
+                    let offset = scrollbar::offset_from_drag_row(m, track, y, grab);
+                    if sent != Some(offset) {
+                        self.scroll_to(tx, pane, offset).await?;
+                    }
+                }
+            }
             Some(Drag::Split { hit, tab, grab, sent, .. }) => {
                 let ratio = split_ratio(&hit, grab, x, y);
                 if sent != Some(ratio) {
