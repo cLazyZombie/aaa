@@ -58,8 +58,22 @@ impl Vt {
         self.parser.process(bytes);
     }
 
+    /// 크기를 바꾼다. 줄이 줄어 커서 줄이 새 높이 밖으로 나가면, 먼저 그만큼 위 줄을 기록으로 올린다.
+    /// vt100 `set_size`는 아래 줄을 잘라 버려(커서 줄과 프롬프트가 사라진다) xterm·herdr(ghostty)와 달랐다(plan §8.59).
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
+        let (rows, cols) = (rows.max(1), cols.max(1));
+        let (old_rows, _) = self.parser.screen().size();
+        let (cursor_row, cursor_col) = self.parser.screen().cursor_position();
+        let lift = (cursor_row + 1).saturating_sub(rows);
+        if rows < old_rows && lift > 0 {
+            // 화면 전체를 lift줄 올린다: scroll region을 풀고 맨 아래에서 줄을 내린다(위 줄은 기록으로).
+            // 프로그램은 SIGWINCH 뒤 region을 다시 건다. 커서는 같은 글 위(lift줄 위)로, 모양은 DECSC·DECRC로 되돌린다.
+            let mut b = format!("\x1b7\x1b[r\x1b[{old_rows};1H").into_bytes();
+            b.extend(std::iter::repeat_n(b'\n', usize::from(lift)));
+            b.extend_from_slice(format!("\x1b8\x1b[{};{}H", cursor_row - lift + 1, cursor_col + 1).as_bytes());
+            self.parser.process(&b);
+        }
+        self.parser.screen_mut().set_size(rows, cols);
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -345,6 +359,35 @@ mod tests {
         let mut s = b.parser.screen().clone();
         s.set_scrollback(usize::MAX);
         assert_eq!(s.rows(0, 20).next().unwrap(), "n1");
+    }
+
+    #[test]
+    fn shrinking_lifts_lines_into_history_and_keeps_the_cursor_line() {
+        let mut v = Vt::new(10, 20);
+        for i in 1..=9 {
+            v.feed(format!("l{i}\r\n").as_bytes());
+        }
+        v.feed(b"\x1b[1m$ cmd");
+        // 커서는 9번째 줄(0부터) 6칸. 5줄로 줄이면 위 5줄이 기록으로 가고 프롬프트 줄이 맨 아래에 남는다
+        v.resize(5, 20);
+        let lines = v.text("s").lines;
+        assert_eq!(lines, vec!["l6", "l7", "l8", "l9", "$ cmd"]);
+        assert_eq!(v.cursor(), (4, 5, true));
+        let mut s = v.parser.screen().clone();
+        s.set_scrollback(usize::MAX);
+        assert_eq!(s.scrollback(), 5);
+        assert_eq!(s.rows(0, 20).next().unwrap(), "l1");
+        // 글자 모양(굵게)도 그대로: 뒤에 쓴 글이 굵다
+        v.feed(b"x");
+        assert!(v.parser.screen().cell(4, 5).unwrap().bold());
+        // 커서가 새 높이 안이면 아래 빈 줄만 줄인다(기록으로 올리지 않는다)
+        let mut w = Vt::new(10, 20);
+        w.feed(b"top\r\nnext");
+        w.resize(5, 20);
+        assert_eq!(w.text("s").lines[..2], ["top".to_string(), "next".to_string()]);
+        let mut s = w.parser.screen().clone();
+        s.set_scrollback(usize::MAX);
+        assert_eq!(s.scrollback(), 0);
     }
 
     #[test]

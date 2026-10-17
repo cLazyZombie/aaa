@@ -892,11 +892,16 @@ export function TermView({
         switch (msg.t) {
           case "snapshot":
             trace("snapshot");
-            term.reset();
-            // replay가 키보드 모드를 처음부터 다시 말한다(herdr-web-ui도 재접속 때 0으로 되돌린다)
-            otherKeysRef.current = 0;
-            term.resize(msg.cols, msg.rows);
-            setSize([msg.cols, msg.rows]);
+            // 지우기와 크기는 흐름 순서대로(herdr-web-ui PaneTerminal 1755~1760줄 「Reset in stream order」): xterm write는
+            // 줄을 서 나중에 읽히는데 reset·resize는 바로 일어난다. 바로 하면 아직 읽지 않은 앞 출력이 새 화면 위에 그려지고,
+            // 곧 온 state의 크기가 replay보다 먼저 걸려 replay가 다른 크기로 읽혔다(CI에서 빈 줄로 보인 실패, plan §8.59).
+            const { cols, rows } = msg;
+            term.write("\x1bc", () => {
+              // replay가 키보드 모드를 처음부터 다시 말한다(herdr-web-ui도 재접속 때 0으로 되돌린다)
+              otherKeysRef.current = 0;
+              term.resize(cols, rows);
+            });
+            setSize([cols, rows]);
             term.write(b64decode(msg.replay));
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
@@ -912,9 +917,13 @@ export function TermView({
             break;
           case "state":
             setLease(msg.pane.lease);
-            if (msg.pane.cols !== term.cols || msg.pane.rows !== term.rows) {
-              term.resize(msg.pane.cols, msg.pane.rows);
-              setSize([msg.pane.cols, msg.pane.rows]);
+            {
+              // 크기도 흐름 순서대로: 앞서 온 출력(snapshot replay 포함)을 다 읽은 뒤 바꾼다
+              const { cols, rows } = msg.pane;
+              setSize((prev) => (prev[0] === cols && prev[1] === rows ? prev : [cols, rows]));
+              term.write("", () => {
+                if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+              });
             }
             break;
           case "attached":
