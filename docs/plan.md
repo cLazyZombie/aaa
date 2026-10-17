@@ -2336,6 +2336,29 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
 - **시험.** 웹 E2E 「줄 메뉴」(`web/e2e/specs/12-threads-push.mjs`): 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다. 파일마다 새 실험실이라 host가 고정을 나눈 적이 없다: 참고대로 그때는 고정만 바꿔서는 보내지 않고 첫 설정 변경에 실려 가므로(`preferencesChange`, 참고 `shared/preferences.ts` 「absent until a browser first shares its pins」), 단계는 빈 고정을 써 두고 다시 연 화면에서 시작한다.
 
+### 8.104 thread start 기본값·restart --profile·auto-resolve를 herdr-projects대로(10-18, 진행 순서 6 나머지, 차이 목록 A1·A15·E8·E11)
+
+- **profile 기본값(A1, hp `src/threads.rs` `thread_profile`).** `thread start`에 `--profile`이 없으면 `--from-task` owner, 그다음 project.toml `thread_profile`이다. 둘 다 없으면 거부한다. 참고의 내장 기본(`claude`)은 aaa에 없다(profile은 머신 agent.toml에만 있다). 허용 목록 검사는 그대로다.
+- **kind 기본값(hp `placement`).** `--kind`가 없으면 `--repo`가 있으면 worktree, 없으면 작업 폴더(dir)다. 참고의 tab이 aaa의 dir이다. `--machine`이 없으면 project.toml `[[repos]]`에 적힌 그 repo의 머신이다(hp `start`의 `listed`).
+- **`--from-task`(A15).** 미할당 task도 `thread_profile`로 시작한다. 이미 열린 thread가 맡은 task는 참고에 그 거부가 없어 막지 않고 경고한다(`warnings`).
+- **restart `--profile`(E8, hp `restart`).** 그 머신 agent가 agent.toml에서 profile을 다시 해석하고(옛 model·args는 쓰지 않는다) 새 대화로 띄운다. `--resume`과 함께는 거부한다. agent 요청 `ThreadRebrief.profile`(AGENT_LINK 1.4)이다. 옛 agent는 그 값을 모르고 저장된 launch를 돌려주므로, host는 돌려받은 `Launch.profile`이 다르면 거부한다.
+- **auto-resolve(E11, hp `src/steps.rs` `auto_resolve`·`resolve_after_copy`).**
+  - 열린 worker thread의 묶음이 쉼이고, 묶음·보고가 마지막으로 바뀐 때와 host가 뜬 때 중 가장 늦은 때부터 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지나면 끝낸다. 두 시각이 없는 옛 기록은 잴 수 없어 두지 않는다(참고와 같다).
+  - 끝내기는 `thread resolve`와 같다. 마지막 사본이 실패하면 끝내지 않고 다음 셈에 다시 한다. worktree는 force 없이 지운다.
+  - 항목은 「쉼으로 auto_resolve_days(N일)가 지나 저절로 끝냈다. `aaa thread resolve <p> <id> --reopen`으로 되돌린다」이다.
+  - 기록에 `group_changed_ms`·`report_changed_ms`를 더했다(hp `last_state_change`·`last_report_change`).
+  - host.toml `[projects] auto_resolve_day_secs`(기본 86400)는 하루 길이다. 시험에서 줄인다.
+  - 연결되지 않은 머신의 thread는 건너뛴다.
+- **`thread resolve --reopen`(hp `resolve`).** 끝낸 thread를 열린 것으로 되돌리고 아무것도 띄우지 않는다(`aaa thread restart`가 띄운다). 다음 셈은 처음 보는 것으로 쳐서 전이 항목을 내지 않는다. 지운 worktree는 돌아오지 않는다.
+- **0.2 설정 옮기기.** `auto_resolve_days`·`goal`·`thread_profile`·`repos`도 project.toml에 같은 이름으로 옮긴다(`coordinator_profile`은 aaa에 없다).
+- **coordinator 안내.** hp COORDINATOR.md 56·68줄(다른 profile로는 `thread restart --profile`, 도는 thread의 model은 harness `/model`)을 옮겼다. auto-resolve·`--reopen`을 한 줄 더했다.
+- **계약.** FrontRequest `thread_start.kind` 생략, `thread_restart.profile`, `thread_resolve.reopen`. FRONT_API 다음 번호, AGENT_LINK 1.4다.
+- **시험.**
+  - m13 `start_defaults_profile_kind_and_task`: profile 없음 거부, thread_profile, kind 기본값 둘, 미할당 task, 이미 맡은 task 경고.
+  - m13 `restart_with_another_profile`: `--resume`과 함께·없는 profile 거부(기록은 그대로), 다른 profile로 새 세션.
+  - m13 `auto_resolve_and_reopen`: 하루 1초·2일에서 쉼 뒤 끝나고 항목이 `--reopen`을 안내한다. 다시 열고, 0이면 끈다.
+  - host `transitions` 유닛: 가장 늦은 때부터 재기, 옛 기록. agent `threads` 유닛: profile 다시 해석·없는 profile.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

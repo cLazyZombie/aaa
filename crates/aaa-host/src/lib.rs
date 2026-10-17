@@ -280,6 +280,8 @@ pub struct Host {
     tick_wake: tokio::sync::Notify,
     /// 시작한 tick 수와 끝난 tick 수(`ticker_tick`이 「이 요청 뒤에 시작한 tick」이 끝나기를 기다린다)
     tick_started: std::sync::atomic::AtomicU64,
+    /// 이 host가 뜬 시각. auto-resolve는 이때부터도 잰다(herdr-projects ticker `started`: 오래 꺼져 있던 뒤 한꺼번에 끝내지 않는다)
+    pub(crate) started_ms: u64,
     tick_done: watch::Sender<u64>,
     /// 머신별 끊김: 이 host 프로세스가 끊김을 처음 본 때와 알렸는지(inbox::Outage)
     outages: Mutex<HashMap<String, inbox::Outage>>,
@@ -426,6 +428,7 @@ impl Host {
             held: Mutex::new(HashMap::new()),
             tick_wake: tokio::sync::Notify::new(),
             tick_started: std::sync::atomic::AtomicU64::new(0),
+            started_ms: aaa_common::util::now_ms(),
             tick_done: watch::channel(0).0,
             outages: Mutex::new(HashMap::new()),
             health_marks: Mutex::new(HashMap::new()),
@@ -838,6 +841,12 @@ impl Host {
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
+                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
+                let kind = kind.unwrap_or(if repo.is_some() {
+                    aaa_proto::ThreadKind::Worktree
+                } else {
+                    aaa_proto::ThreadKind::Dir
+                });
                 let mut a = orch::StartArgs {
                     project,
                     title,
@@ -849,10 +858,20 @@ impl Host {
                     task,
                     role: aaa_proto::Role::Worker,
                 };
-                if let Some(t) = from_task {
-                    self.apply_from_task(&mut a, &t).await?;
+                let warning = match from_task {
+                    Some(t) => self.apply_from_task(&mut a, &t).await?,
+                    None => None,
+                };
+                // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
+                if a.machine.is_none() {
+                    let repos = self.settings(&a.project).repos;
+                    a.machine =
+                        a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
-                self.thread_start(a, actor).await.map(FrontResponse::Thread)
+                self.thread_start(a, actor).await.map(|mut v| {
+                    v.warnings.extend(warning);
+                    FrontResponse::Thread(v)
+                })
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -879,14 +898,18 @@ impl Host {
             FrontRequest::ThreadAck { project, thread } => {
                 self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadResolve { project, thread, keep_worktree } => {
-                self.thread_resolve(&project, &thread, keep_worktree, actor).await.map(FrontResponse::Thread)
+            FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
+                self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
             }
+            FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen: false } => self
+                .thread_resolve(&project, &thread, keep_worktree, orch::ResolveWhy::Manual, actor)
+                .await
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
                 self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadRestart { project, thread, resume } => {
-                self.thread_restart(&project, &thread, resume, actor).await.map(FrontResponse::Thread)
+            FrontRequest::ThreadRestart { project, thread, resume, profile } => {
+                self.thread_restart(&project, &thread, resume, profile, actor).await.map(FrontResponse::Thread)
             }
             FrontRequest::ThreadBrief { project, thread } => {
                 self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
