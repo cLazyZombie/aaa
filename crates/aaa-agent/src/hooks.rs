@@ -112,6 +112,14 @@ pub fn foreign_session(started: Option<&str>, ev: &HarnessEvent) -> bool {
     }
 }
 
+/// Codex 중첩 thread(하위 agent, 세션 안에서 다시 띄운 codex)의 사건인가: hook 프로세스가 물려받은 `CODEX_THREAD_ID`가
+/// 있고 사건의 세션 ID와 다르다(herdr `integration/assets/codex/herdr-agent-state.sh`, herdr-projects progress.rs `hook`).
+/// 세션 ID가 없는 사건도 다르다고 본다(herdr와 같다).
+pub fn nested_codex(inherited: Option<&str>, p: &Value) -> bool {
+    let id = s(p, "session_id").or_else(|| s(p, "thread-id"));
+    inherited.is_some_and(|t| !t.is_empty() && Some(t) != id.as_deref())
+}
+
 /// Codex에 실행마다 줄 notify 설정(`codex -c <이것>`). 사용자 ~/.codex 설정은 고치지 않는다.
 /// Codex는 턴이 끝날 때 JSON을 마지막 인자로 붙여 이 명령을 실행한다(`agent-turn-complete`, `thread-id`).
 pub fn codex_notify(exe: &Path) -> String {
@@ -137,6 +145,10 @@ pub fn claude_settings(exe: &Path) -> Value {
 
 /// 세션 안에서: hook 사건 하나를 agent에 보낸다. 실패해도 harness를 막지 않게 짧게 끝낸다.
 pub async fn send(harness: &str, payload: Value) -> Result<()> {
+    // Codex 중첩 thread의 사건은 보내지 않는다: 이 pane의 thread만 알린다
+    if harness == "codex" && nested_codex(std::env::var("CODEX_THREAD_ID").ok().as_deref(), &payload) {
+        return Ok(());
+    }
     let sock = std::env::var(ENV_SOCK).context("AAA_HOOK_SOCK이 없다(aaa 세션 밖)")?;
     let token = std::env::var(ENV_TOKEN).context("AAA_HOOK_TOKEN이 없다")?;
     let session = std::env::var(ENV_SESSION).context("AAA_SESSION_ID가 없다")?;
@@ -239,6 +251,18 @@ mod tests {
         let r = n("report", json!({"percent":250,"activity":"테스트 중\n이상한 줄"})).unwrap();
         assert_eq!((r.kind.as_str(), r.percent), ("progress", Some(100)));
         assert_eq!(r.message.as_deref(), Some("테스트 중이상한 줄"));
+    }
+
+    /// herdr `tests/cli/hooks.rs`의 Codex 세션 시험과 같은 경우들
+    #[test]
+    fn codex_events_of_nested_threads_are_not_sent() {
+        let notify = |id: &str| json!({"type":"agent-turn-complete","thread-id":id});
+        assert!(!nested_codex(None, &notify("a")));
+        assert!(!nested_codex(Some(""), &notify("a")));
+        assert!(!nested_codex(Some("a"), &notify("a")));
+        assert!(nested_codex(Some("parent"), &notify("nested")));
+        assert!(!nested_codex(Some("s"), &json!({"hook_event_name":"SessionStart","session_id":"s"})));
+        assert!(nested_codex(Some("s"), &json!({"type":"agent-turn-complete"})));
     }
 
     #[test]
