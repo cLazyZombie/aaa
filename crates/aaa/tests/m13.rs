@@ -26,11 +26,11 @@ while IFS= read -r line; do
       path=$(printf '%s' "$line" | sed 's/를 읽고.*//')
       dir=$(dirname "$path")
       echo "brief 받음: $path"
-      task=$(sed -n '/^# 할 일/,$p' "$path" | tail -n +3)
+      task=$(awk '/^# 할 일/{f=1;next} /^# 경로/{f=0} f' "$path" | sed '/^$/d')
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
       ln -s /etc/hosts "$dir/library/link"
-      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
+      printf '## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       case "$task" in
         *commit*) echo change > change.txt && git add change.txt && git -c user.name=t -c user.email=t@example.com commit -qm change ;;
@@ -54,7 +54,7 @@ while IFS= read -r line; do
       printf '{"targets":["t-0002"],"batches":["%s"],"summary":"묶음 %s를 봤다","stages":[{"thread":"t-0002","stage":"전체","minutes":1.4}],"proposals":[{"id":"p1","text":"brief 확인을 자동으로"},{"id":"p2","text":"보고 형식 검사"}]}' "$name" "$name" > "$dir/library/evaluations/e-$name.json"
       [ -f "$dir/library/evaluations/bad.json" ] || printf '{"proposals":[]}' > "$dir/library/evaluations/bad.json"
       echo "$name" >> "$dir/processed.txt"
-      printf '[진행 중]\n\n## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
+      printf '## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       echo "evaluated $name"
       ;;
@@ -110,7 +110,7 @@ while IFS= read -r line; do
       dir=$(dirname "$path")
       "$AA" report --percent 40 --activity '권한 확인 중'
       perm
-      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
+      printf '## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
       ;;
     *ask*) perm ;;
     *slow*)
@@ -136,23 +136,27 @@ done
 /// 안내를 받아도 화면이 바뀌지 않는 agent(echo 없음). 받은 줄은 파일에 남긴다.
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
 
-/// 입력창 「❯ 」에 친 글자를 보이고 첫 Enter는 무시하는 harness(hook 없음): 받지 못한 brief 줄이 입력창에 남는다.
-/// 다음 Enter부터 받는다(`got: …`). 받은 조각은 한 번에 되돌려 찍는다: 한 바이트씩 찍으면 느린 머신(CI)에서
-/// 300ms 뒤에도 찍는 중이라 Enter 뒤 화면이 바뀐 것을 받았다고 보았다.
+/// Claude Code처럼 입력창(위 테두리·`❯ `·아래 테두리)을 그리는 harness(hook 없음, profile harness는 claude). 첫 Enter는
+/// 무시해 brief 줄이 입력창에 남는다. 다음 Enter부터 받아 대화에 `❯ <줄>`·`got: <줄>`을 남기고 입력창을 비운다.
+/// 화면은 바뀔 때마다 통째로 다시 그린다(받은 조각을 한 번에 그려 느린 머신에서도 그리는 중에 Enter가 오지 않는다).
 const STICKY_AGENT: &str = r#"#!/bin/sh
 stty -icanon -echo min 1 time 0
-printf '\342\235\257 '
-buf=''; n=0
+R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
+log=''; buf=''; n=0
+draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n' "$log" "$R" "$buf" "$R"; }
+draw
 while :; do
   c=$(dd bs=4096 count=1 2>/dev/null)
   if [ -z "$c" ]; then
     n=$((n+1))
     [ "$n" -lt 2 ] && continue
-    printf '\ngot: %s\n' "$buf"; buf=''
-    printf '\342\235\257 '
+    log="$log$(printf '\342\235\257 %s\ngot: %s' "$buf" "$buf")
+"
+    buf=''
   else
-    printf '%s' "$c"; buf="$buf$c"
+    buf="$buf$c"
   fi
+  draw
 done
 "#;
 
@@ -175,7 +179,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
          [profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
          [profiles.hooked]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
-         [profiles.sticky]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
+         [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
@@ -244,6 +248,8 @@ fn world_opts(extra: &str, web: bool) -> World {
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
     std::fs::write(scripts.join("hooked.sh"), HOOKED_AGENT).unwrap();
     std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
+    // harness claude는 실행 파일 뒤에 `--settings …`·`--session-id …`를 붙이므로 sh가 아니라 스크립트를 바로 띄운다
+    std::fs::set_permissions(scripts.join("sticky.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     let repo = make_repo(&lab.root);
     let h = lab.node("h", Some(&host_toml(&projects, extra, web)));
@@ -377,12 +383,16 @@ fn worktree_thread_round_trip() {
     assert_eq!(cwd, w.lab.root.join("workA").join("repo").join("demo-t-0001"));
     assert!(cwd.join(".aaa/demo-t-0001/brief.md").is_file());
     let brief = std::fs::read_to_string(cwd.join(".aaa/demo-t-0001/brief.md")).unwrap();
-    assert!(brief.contains("X-42") && brief.contains("# thread 규칙") && brief.contains("# 프로젝트 지침"), "{brief}");
+    assert!(brief.contains("X-42") && brief.contains("# thread brief") && brief.contains("# 프로젝트 지침"), "{brief}");
+    // 작업 폴더·aaa 실행 파일 자리는 agent가 그 머신 값으로 채웠다(plan §8.78)
+    let work = cwd.join(".aaa/demo-t-0001");
+    assert!(brief.contains(&format!("- 보고: `{}/report.md`", work.display())), "{brief}");
+    assert!(brief.contains(&format!("`{} report --percent 25", lab::BIN)), "{brief}");
+    assert!(!brief.contains("{{aaa:") && !brief.contains("[진행 중]"), "{brief}");
     assert!(w.projects.join("demo/threads/t-0001.task.md").is_file());
 
     let v = w.wait_show("보고 사본", "t-0001", |v| v["report_hash"].is_string());
     assert_eq!(v["brief"], "delivered", "{v}");
-    assert_eq!(v["report_state"], "완료");
     assert_eq!(v["next"], serde_json::json!(["결과 확인", "다음 단계"]));
     assert_eq!(v["group"], "ready_for_review");
     // symlink는 복사하지 않아 사본은 partial이다
@@ -497,13 +507,12 @@ fn remote_dir_thread_survives_host_restart() {
     w.lab.kill("host");
     // host가 없는 동안 agent 머신에서 보고가 바뀐다
     let work_dir = PathBuf::from(v["work_dir"].as_str().unwrap());
-    std::fs::write(work_dir.join("report.md"), "[사용자 작업 필요]\n\n## Report\n갱신\n\n## Next\n- 사용자 확인\n")
-        .unwrap();
+    std::fs::write(work_dir.join("report.md"), "## Report\n갱신\n\n## Next\n- 사용자 확인\n").unwrap();
     w.lab.spawn("host2", &w.h, &["host"]);
     wait_for("labB 재연결", Duration::from_secs(60), || connected(&w.h, "labB").then_some(()));
-    let v = w.wait_show("갱신된 보고", &id, |v| v["report_state"] == "사용자 작업 필요");
-    assert_eq!(v["group"], "waiting_on_you");
-    assert_eq!(v["next"], serde_json::json!(["사용자 확인"]));
+    let v = w.wait_show("갱신된 보고", &id, |v| v["next"] == serde_json::json!(["사용자 확인"]));
+    // 보고 첫 줄 태그로 사람 차례를 정하지 않는다(D9): 새 보고는 검토 대기
+    assert_eq!(v["group"], "ready_for_review");
     assert_eq!(w.kinds(seen), ["report_ready"]);
     std::thread::sleep(Duration::from_secs(2));
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
@@ -531,50 +540,52 @@ fn remote_dir_thread_survives_host_restart() {
 }
 
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)
+/// 입력창을 읽을 수 없는 harness(`mute`: 화면이 바뀌지 않는다): ticker는 한 번 보내고, 다시 보내기 전에 화면으로 앞
+/// 시도를 확인할 수 없어 멈춘다(herdr-projects brief.rs `give_up`). 사람이 `thread brief`로 보내면 그때만 한 번 더 간다.
 #[test]
 fn unknown_brief_is_not_resent() {
-    let w = world();
+    let mut w = world();
+    let mut ev = w.lab.follow("events", &w.h, "demo");
     let v = w.start(&["--title", "mute", "--profile", "mute", "--kind", "dir", "--task-file", &w.task("t4.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
-    let v = w.wait_show("unknown", &id, |v| v["brief"] == "unknown");
-    assert_eq!(v["group"], "waiting_on_you");
+    let e = ev.kind("brief_unknown", &id, T);
+    assert!(e["detail"].as_str().unwrap().contains("입력창을 읽을 수 없어"), "{e}");
+    // 배경 task는 멈췄다(brief_unknown 뒤에는 보내는 쪽이 없다): 한 번뿐이다
     let log = w.scripts.join("mute.log");
-    // 더 기다려도 한 번뿐이다
-    std::thread::sleep(Duration::from_secs(5));
     let got = std::fs::read_to_string(&log).unwrap();
     assert_eq!(got.matches("brief.md").count(), 1, "{got}");
-    assert_eq!(w.kinds(0), ["thread_started", "brief_unknown"]);
-    // 사람이 명시적으로 다시 보내면 그때만 한 번 더 간다
-    w.h.ok(&["thread", "brief", "demo", &id]);
-    w.wait_show("다시 unknown", &id, |v| v["brief"] == "unknown");
-    wait_for("두 번째 안내", T, || {
-        (std::fs::read_to_string(&log).unwrap_or_default().matches("brief.md").count() == 2).then_some(())
-    });
-    // brief를 받기 전의 메시지는 거부한다(brief보다 먼저 가지 않게, herdr-projects threads.rs `prompt`)
+    assert_eq!(ev.kinds(), ["thread_started", "brief_unknown"]);
+    let v = w.show(&id);
+    assert_eq!((v["brief"].as_str(), v["group"].as_str()), (Some("unknown"), Some("waiting_on_you")));
+    // 사람이 다시 보내면 한 번 더 간다(받았다는 표지가 없어 여전히 모른다)
+    let e = w.h.json(&["thread", "brief", "demo", &id]).expect_err("받았는지 모른다");
+    assert!(e.contains("아직 보내지 못했다"), "{e}");
+    let got = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(got.matches("brief.md").count(), 2, "{got}");
+    // brief를 받기 전의 메시지는 입력하기 전에 거부한다(brief보다 먼저 가지 않게, herdr-projects threads.rs `prompt`)
     let e = w.h.json(&["thread", "message", "demo", &id, "--text", "MSG-EARLY-1"]).expect_err("brief 전 메시지");
     assert!(e.contains("아직 brief를 받지 않았다"), "{e}");
-    std::thread::sleep(Duration::from_secs(1));
     assert!(!std::fs::read_to_string(&log).unwrap().contains("MSG-EARLY-1"));
     assert!(!w.kinds(0).iter().any(|k| k.starts_with("message_")), "{:?}", w.kinds(0));
 }
 
-/// brief 줄이 입력창에 남으면(전달 불명) `thread brief`는 다시 치지 않고 Enter만 보낸다. 받은 thread에는 brief를
-/// 다시 보내지 않는다(herdr-projects threads.rs `brief`).
+/// brief 줄이 입력창에 남으면 ticker는 다시 치지 않고 Enter만 보낸다(herdr-projects brief.rs: 입력창에 남은 줄은
+/// Enter, 대화에 보이고 입력창이 비면 받은 것). 받은 thread에는 `thread brief`를 다시 보내지 않는다.
 #[test]
 fn brief_left_in_box_is_submitted_not_retyped() {
-    let w = world();
+    let mut w = world();
+    let mut ev = w.lab.follow("events", &w.h, "demo");
     let v =
         w.start(&["--title", "sticky", "--profile", "sticky", "--kind", "dir", "--task-file", &w.task("t9.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
     let pane = v["pane"].as_str().unwrap().to_string();
-    w.wait_show("unknown", &id, |v| v["brief"] == "unknown");
-    assert!(w.h.screen(&pane).contains("brief.md를 읽고 그대로 하라."), "{}", w.h.screen(&pane));
-    w.h.ok(&["thread", "brief", "demo", &id]);
-    w.wait_show("delivered", &id, |v| v["brief"] == "delivered");
+    let e = ev.kind("brief_delivered", &id, T);
+    assert!(e["detail"].as_str().unwrap().starts_with("입력창에 남은 줄을 Enter로 보냈다(시도 2번)"), "{e}");
     let screen = w.h.screen(&pane);
-    // 입력창 줄과 받은 줄에 한 번씩: 다시 쳤으면 입력창에 두 번 이어 붙는다
+    let line = format!(".aaa/demo-{id}/brief.md를 읽고 그대로 하라.");
+    // 대화의 `❯ <줄>`과 `got: <줄>`에 한 번씩: 다시 쳤으면 입력창에 두 번 이어 붙어 `got:` 줄이 두 배가 된다
+    assert!(screen.contains(&format!("got: {line}\n")), "{screen}");
     assert_eq!(screen.matches("brief.md를 읽고").count(), 2, "{screen}");
-    assert!(screen.contains(&format!("got: .aaa/demo-{id}/brief.md를 읽고 그대로 하라.\n")), "{screen}");
     let e = w.h.json(&["thread", "brief", "demo", &id]).expect_err("받은 뒤 brief");
     assert!(e.contains("이미 brief를 받았다"), "{e}");
 }
@@ -769,7 +780,13 @@ fn decisions_and_restart() {
     let pane2 = v["pane"].as_str().unwrap().to_string();
     assert_ne!(pane2, pane);
     let brief = std::fs::read_to_string(&brief_path).unwrap();
-    assert!(brief.starts_with("> 이 thread는 다시 시작했다") && brief.contains("API는 v3로 바꾼다"), "{brief}");
+    // 다시 시작 안내는 thread 규칙 다음, 프로젝트 지침 앞이다(herdr-projects `compose_brief`)
+    let at = |n: &str| brief.find(n).unwrap_or_else(|| panic!("{n} 없음: {brief}"));
+    assert!(
+        at("# thread brief") < at("**이 일을 앞서 시도한 것이")
+            && at("**이 일을 앞서 시도한 것이") < at("# 프로젝트 지침")
+    );
+    assert!(brief.contains("API는 v3로 바꾼다"), "{brief}");
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered" && v["decisions_rev"] == 2);
     // hook이 없는 harness는 일하는지 알 수 없다: 안내를 보낸 뒤에는 「쉼」이다(herdr-projects `group()` 7번 줄)
     assert_eq!(v["group"], "idle");
@@ -1546,7 +1563,7 @@ fn evaluator_flow() {
     assert!(e.contains("이미 사후 평가자가 있다"), "{e}");
     let wd = PathBuf::from(w.show(&eid)["work_dir"].as_str().unwrap());
     let brief = std::fs::read_to_string(wd.join("brief.md")).unwrap();
-    assert!(brief.contains("# 사후 평가자 규칙") && !brief.contains("# thread 규칙"), "{brief}");
+    assert!(brief.contains("# 사후 평가자 규칙") && !brief.contains("# thread brief"), "{brief}");
     assert!(brief.contains("착지 흐름을 본다"), "{brief}");
     w.wait_show("평가자 brief", &eid, |v| v["brief"] == "delivered");
 

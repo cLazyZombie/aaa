@@ -567,9 +567,12 @@ impl Agent {
                     .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                     .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::ThreadRebrief { work_dir, brief, launch } => threads::rebrief(&work_dir, &brief, launch)
-                .map(AgentResponse::Relaunch)
-                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
+            AgentRequest::ThreadRebrief { work_dir, brief, launch } => {
+                let exe = self.threads_cfg.lock().unwrap().exe.clone();
+                threads::rebrief(&work_dir, &brief, launch, &exe)
+                    .map(AgentResponse::Relaunch)
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+            }
             AgentRequest::RunCommand { project, cwd, command, timeout_ms } => {
                 let root = self.threads_cfg.lock().unwrap().work_root.clone();
                 command::run(&root, &project, cwd.as_deref(), &command, Duration::from_millis(timeout_ms))

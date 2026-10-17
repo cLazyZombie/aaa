@@ -351,8 +351,9 @@ pub fn build(root: &Path, slug: &str, opts: &Opts) -> Result<Inventory> {
         .map(|t| {
             let report = std::fs::read(p.report_path(&t.id)).ok().map(|bytes| {
                 let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
-                let (state_tag, next) = aaa_proto::parse_report(&String::from_utf8_lossy(&bytes));
-                ReportInfo { matches_record: sha == t.report_hash, sha256: sha, state_tag, next: next.len() }
+                let text = String::from_utf8_lossy(&bytes);
+                let next = aaa_proto::next_lines(&text).len();
+                ReportInfo { matches_record: sha == t.report_hash, sha256: sha, state_tag: state_tag(&text), next }
             });
             let (library_files, library_bytes) = lib_bytes(&t.id);
             let machine = machine_of(t);
@@ -617,6 +618,12 @@ pub fn render_md(inv: &Inventory) -> String {
         }
     }
     s
+}
+
+/// 0.2 운영 보고 첫 줄의 상태 태그(`[완료]` 등). aaa는 태그로 묶음을 정하지 않는다(plan §8.78). 목록에 적기만 한다.
+fn state_tag(report: &str) -> Option<String> {
+    let first = report.lines().find(|l| !l.trim().is_empty())?.trim();
+    first.strip_prefix('[').and_then(|r| r.split_once(']')).map(|(s, _)| s.trim().to_string())
 }
 
 #[cfg(test)]

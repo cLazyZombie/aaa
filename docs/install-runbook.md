@@ -120,7 +120,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 | 비교 | 기준 |
 |---|---|
 | 상태 | 질문·입력 대기·작업 중이 실제 화면과 맞는다(polling 없음) |
-| 보고 | `[완료]` 보고와 결과물이 host로 오고, 웹에서 열린다 |
+| 보고 | 보고(`## Report`·`## Next`)와 결과물이 host로 오고, 웹에서 열린다 |
 | 알림 | 질문·보고 준비가 coordinator(nudge)와 webhook으로 온다 |
 | 단절 | 한 Mac의 agent를 내렸다 올려도 세션이 이어지고 thread가 실패로 바뀌지 않는다 |
 

@@ -236,7 +236,16 @@ impl Vt {
         let (rows, cols) = screen.size();
         let lines = screen.rows(0, cols).map(|l| l.trim_end().to_string()).collect();
         let (cr, cc) = screen.cursor_position();
-        ScreenText { session: session.to_string(), cols, rows, lines, cursor_row: cr, cursor_col: cc }
+        ScreenText {
+            session: session.to_string(),
+            cols,
+            rows,
+            lines,
+            cursor_row: cr,
+            cursor_col: cc,
+            // herdr `agent read --source visible --format ansi`와 같은 글(`read`의 Visible·Ansi). prompt_box가 읽는다
+            ansi: rows_text(screen.rows_formatted(0, cols).map(ansi_row).collect()),
+        }
     }
 
     /// 글로 읽는다. herdr `read_terminal_snapshot`(src/app/api_helpers.rs)과 `ghostty_recent_*`(src/pane/terminal.rs)의 규칙:
@@ -708,6 +717,17 @@ mod tests {
         assert_eq!((row[1].t.as_str(), row[1].fg, row[1].a), ("B", 0x0100_0001, 1));
         assert!(v.grid_row(1).is_empty());
         assert_eq!(v.cursor(), (0, 6, true));
+    }
+
+    /// `ScreenText.ansi`는 `read`의 Visible·Ansi와 같은 글이다(prompt_box가 흐린 placeholder를 가른다)
+    #[test]
+    fn screen_text_ansi_is_the_visible_ansi_read() {
+        let mut v = Vt::new(3, 30);
+        v.feed("❯ \x1b[2mTry \"fix\"\x1b[0m\r\n\x1b[7mx\x1b[27m \x1b[38;5;135m─\x1b[0m".as_bytes());
+        let a = v.text("s").ansi;
+        assert_eq!(a, v.read(ReadSource::Visible, None, ReadFormat::Ansi).text);
+        assert!(a.contains("\x1b[2m") || a.contains(";2m"), "{a:?}");
+        assert_eq!(strip_sgr(&a), "❯ Try \"fix\"\nx ─\n");
     }
 
     #[test]
