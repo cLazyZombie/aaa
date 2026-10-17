@@ -272,12 +272,16 @@ struct PushInfo {
     you: bool,
     /// 알리는 inbox 종류(`notify.kinds`). 웹의 앱 안 알림·소리·탭 알림도 이 종류에만 띄운다(push와 같은 사건)
     kinds: Vec<String>,
+    /// 이 장치 구독이 고른 알림 종류(차이 목록 N3, 구독이 없으면 없음)
+    alerts: Option<crate::db::Alerts>,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
 async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
-    let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
+    let mine = host.db.push_list(Some(&id)).unwrap_or_default();
+    let subscribed = mine.len();
+    let alerts = mine.first().and_then(|s| s.alerts);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
     let (user, you) = {
@@ -285,7 +289,8 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
         (v.user(), v.is_user(&id))
     };
     let kinds = host.cfg.notify.item_kinds();
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds })).into_response()
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts }))
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -299,6 +304,9 @@ struct PushKeys {
 struct PushSubBody {
     endpoint: String,
     keys: PushKeys,
+    /// 이 기기가 받을 알림(차이 목록 N3). 없으면 전에 고른 것을 둔다
+    #[serde(default)]
+    alerts: Option<crate::db::Alerts>,
 }
 
 async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushSubBody>) -> Response {
@@ -311,13 +319,30 @@ async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(
     {
         return bad_request(e);
     }
-    let sub = crate::db::PushSub { endpoint: b.endpoint, p256dh: b.keys.p256dh, auth: b.keys.auth, device: id.clone() };
-    if let Err(e) = host.db.push_put(&sub) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
-        )
-            .into_response();
+    let sub = crate::db::PushSub {
+        endpoint: b.endpoint,
+        p256dh: b.keys.p256dh,
+        auth: b.keys.auth,
+        device: id.clone(),
+        alerts: b.alerts,
+    };
+    match host.db.push_put(&sub) {
+        Ok(true) => {}
+        Ok(false) => {
+            host.db.audit(&format!("device:{id}"), "push_subscribe", "다른 기기의 구독이라 거절");
+            return (
+                StatusCode::FORBIDDEN,
+                Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "다른 기기의 구독이다"))),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
+            )
+                .into_response();
+        }
     }
     // endpoint는 남기지 않는다(그 기기에 보내는 열쇠다)
     host.db.audit(&format!("device:{id}"), "push_subscribe", "");
@@ -411,8 +436,24 @@ const DIAG_KEEP: usize = 20;
 
 /// 실기 입력 사건 기록(web/src/inputTrace.ts)을 host 상태 폴더 `diag/`에 남긴다. iPad 화면 키보드 같은 OS 입력기의
 /// 사건 순서는 headless로 만들 수 없어 실기에서 모아 E2E 재생으로 옮긴다(herdr-web-ui terminal-ime-diagnostic과 같은 목적).
+/// 친 글 원문이 들어 있어 조작 권한 기기만 쓰고, 파일은 사용자 전용(0600)이다. `application/json`만 받는다: 다른 사이트의
+/// 폼이 보낼 수 있는 `text/plain` 단순 요청으로는 쓸 수 없다(보안 감사 t-0340 A6·B8, herdr-web-ui는 전용 헤더를 요구한다)
 async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
-    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    if !role.can_control() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 조작할 수 없다"))),
+        )
+            .into_response();
+    }
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("application/json")));
+    if !json {
+        return bad_request("content-type이 application/json이 아니다");
+    }
     if body.len() > DIAG_MAX {
         return bad_request(format!("기록은 {}KiB까지", DIAG_MAX >> 10));
     }
@@ -421,7 +462,7 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
     }
     let dir = host.state.join("diag");
     let name = format!("input-{}.json", aaa_common::util::now_ms());
-    let saved = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), &body));
+    let saved = std::fs::create_dir_all(&dir).and_then(|_| aaa_common::util::write_private(&dir.join(&name), &body));
     if let Err(e) = saved {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -641,6 +682,28 @@ struct Outbox {
     stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
 }
 
+/// `Outbox`에 보내기만 하는 손잡이(앞 기록 답처럼 연결 loop 밖에서 끝나는 일)
+struct OutSender {
+    tx: tokio::sync::mpsc::UnboundedSender<Message>,
+    buffered: Arc<AtomicU64>,
+}
+
+impl OutSender {
+    fn msg(&self, m: &TermServerMsg) -> bool {
+        let m = Message::Text(serde_json::to_string(m).unwrap().into());
+        self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
+        self.tx.send(m).is_ok()
+    }
+}
+
+/// 앞 기록 답(plan §8.67): 찾지 못했으면 붙이지 않는다
+fn history_reply(id: u32, o: Option<aaa_vt::Older>) -> TermServerMsg {
+    match o {
+        Some(o) => TermServerMsg::History { id, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
+        None => TermServerMsg::History { id, data: B64(Vec::new()), lines: 0, more: false, found: false },
+    }
+}
+
 fn frame_len(m: &Message) -> u64 {
     match m {
         Message::Text(t) => t.len() as u64,
@@ -690,6 +753,11 @@ impl Outbox {
 
     fn msg(&self, m: &TermServerMsg) -> bool {
         self.send(Message::Text(serde_json::to_string(m).unwrap().into()))
+    }
+
+    /// 다른 task가 이 줄에 보낼 손잡이(보낸 bytes는 같은 `buffered`에 센다)
+    fn sender(&self) -> OutSender {
+        OutSender { tx: self.tx.clone(), buffered: self.buffered.clone() }
     }
 
     fn buffered(&self) -> u64 {
@@ -904,12 +972,21 @@ async fn pane_session(
                             // 앞 기록 한 덩어리(plan §8.67). 출력 흐름(ACK 창) 밖의 답이라 창에 넣지 않는다:
                             // 한 덩어리는 replay 기록 상한(2000줄·384KiB) 안이다.
                             let anchor: Vec<String> = anchor.into_iter().take(8).collect();
-                            let reply = match host.older_history(&id, &anchor, depth as usize) {
-                                Some(o) => TermServerMsg::History { id: hid, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
-                                None => TermServerMsg::History { id: hid, data: B64(Vec::new()), lines: 0, more: false, found: false },
-                            };
-                            if !out.msg(&reply) {
-                                break;
+                            match host.older_history(&id, &anchor, depth as usize) {
+                                crate::OlderHistory::Ready(o) => {
+                                    if !out.msg(&history_reply(hid, o)) {
+                                        break;
+                                    }
+                                }
+                                // mirror에 없는 앞 기록: session host에 묻는 동안 이 연결의 출력·입력을 막지 않는다(plan §8.116)
+                                crate::OlderHistory::Ask(conn) => {
+                                    let out = out.sender();
+                                    let session = id.clone();
+                                    tokio::spawn(async move {
+                                        let o = Host::older_from_agent(&conn, session, anchor, depth as usize).await;
+                                        out.msg(&history_reply(hid, o));
+                                    });
+                                }
                             }
                             None
                         }
