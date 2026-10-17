@@ -1150,15 +1150,20 @@ export default async function ({ ctl, page }) {
     };
     await doneSwitch(false);
     // (1) 보는 동안: 이 기기가 고르지 않은 종류라 앱 안 알림이 없다(이 화면이 그 사건을 받아 처리한 뒤)
+    const kinds = (kind) => aaa("events", "demo").events.filter((e) => e.kind === kind);
+    const skipped = kinds("push_skipped").length;
     await work("완료 알림 끈 동안 봄");
     await pp.evaluate(() => new Promise((r) => setTimeout(r)));
     if ((await pp.locator(".droplet").count()) !== 0) throw new Error("작업 완료를 껐는데 앱 안 알림이 내려왔다");
+    // host가 이 보고를 정할 때까지(모으는 기다림 뒤 쓰는 화면이라 건너뜀). 기다리지 않고 가리면 이 보고가 (2)의 결정이 되고
+    // (2)의 보고가 (3)으로 밀린다(ci-local 07:2x에서 (3)의 push가 (2)의 thread였다)
+    await until("보는 동안 보고는 건너뜀", () => kinds("push_skipped").length > skipped);
     // (2) 가려진 동안: host는 이 기기에 보내지 않고 그 까닭을 남긴다
     await hide(true);
     await until("가려진 휴대폰", async () => (await pushInUse()) === 0);
-    let k = aaa("events", "demo").events.filter((e) => e.kind === "push_unwanted").length;
+    const k = kinds("push_unwanted").length;
     await work("완료 알림 끈 동안 닫음");
-    const unwanted = await until("고르지 않은 종류 기록", () => aaa("events", "demo").events.filter((e) => e.kind === "push_unwanted")[k]);
+    const unwanted = await until("고르지 않은 종류 기록", () => kinds("push_unwanted")[k]);
     if (!/^기기 1개가 고른 알림 종류가 아니다 · 항목 1개$/.test(unwanted.detail)) throw new Error(`push_unwanted ${unwanted.detail}`);
     if (toDev(start).length !== 0) throw new Error(`작업 완료를 껐는데 push ${toDev(start).length}건`);
     // (3) 다시 켜면 보낸다
