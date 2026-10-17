@@ -250,7 +250,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 재연결하면 agent가 실행 사실과 outbox를 보고하고, host가 boot ID로 대조한다. boot ID가 바뀌었으면(재부팅) `interrupted`다.
 - **host가 재시작·업데이트되면** 세션은 유지된다. front와 agent가 다시 접속하고, host는 SQLite에서 목록을 다시 읽는다.
 - **agent backend가 재시작·업데이트되면** session host가 살아 있는 한 registry로 재접속하고 세션을 유지한다. 그때 책임 계보가 유지되는지는 P0 E3이 정한다(§10.6).
-- **머신이 재부팅되면** 프로세스는 사라진다. layout과 resume spec으로 재개를 제안하고, 진행 중이던 build는 `interrupted`로 남긴다.
+- **머신이 재부팅되면** 프로세스는 사라진다. agent가 다시 붙으면 host가 셸 pane을 저장한 폴더에서 되살리고 Claude·Codex 대화와 thread를 이어 띄운다(herdr 복원, §8.111). 다른 프로그램(진행 중이던 build 등)은 다시 실행하지 않고 `interrupted`로 남긴다.
 
 상태 축은 분리한다.
 - `launch_state`: planned·starting·running·exited·failed·interrupted
@@ -1944,7 +1944,7 @@ pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, 
 - **누가 gh를 부르나(결정 3).** host는 실행하지 않는다. thread 머신의 agent가 그 worktree의 `git remote get-url origin`으로 `gh`를 부른다(새 agent 요청 `pr_query`: `view`·`find`·`login`, agent 기능 `pr.v1`). 인자는 `aaa_common::pr`가 만든다: 주소는 늘 `--` 뒤, `github.com` 밖(예: `github.localhost`)이면 이 호출에만 `GH_HOST`와 번호·`--repo`(hp `gh`·`view`). 10초 한도, `GH_PROMPT_DISABLED`. 옛 agent(기능 없음)나 `gh` 실패가 `outage_secs` 넘게 이어지면 `outage`·`gh`·`failing` 항목 하나, 되면 `working again`(hp `gh_failed`·`gh_worked`). 머신이 끊긴 것은 머신 outage 항목이 알린다.
 - **무엇을 남기나(hp `pr::reduce`·`describe_change`·`pr_events`·`pr_event`).** GitHub 글은 공격자가 고른다: 본문·제목은 받지 않고 상태·리뷰 결정·실패한 check 이름(제어 문자 빼고 80자)·작성자별 댓글·리뷰 수·head commit만 남긴다. head branch와 head 저장소가 thread 것이 아니면 「PR ignored」(주소마다 한 번). 요약이 바뀌면 `pr` 항목(사건 말은 hp 그대로: `PR opened`·`PR checks failing`·`PR review activity`·`PR merged`·`PR closed`·`PR updated`)과 흐름 사건 `pr_changed`. 요약은 DB meta에 두어 host를 다시 띄워도 같은 사건을 다시 알리지 않는다. thread 기록에 `pr`·`pr_state`·`pr_review`를 두고 `ThreadView.pr`(주소·상태·리뷰)로 보인다(`thread show`의 `PR … (상태, 리뷰)` 줄).
 - **사건(hp `pr_events`).** `opened`(처음 본 열린 PR), `checks-failed`(실패 목록이 바뀜), `review`(gh 계정 말고 다른 사람의 댓글·리뷰가 늘었거나 리뷰 결정이 바뀜, `REVIEW_REQUIRED` 제외 — thread 자기 답이 다시 thread를 부르지 않게), `merged`.
-- **발화(hp `fire_pr_routines`·`pr_routine_prompt`).** 켜진 pr routine 중 일어난 사건을 원하는 것이 thread에 메시지(queue: 입력 대기면 바로, 일하는 중이면 턴 끝)를 보낸다. 글은 `[aaa routine <이름>] PR <주소>이 바뀌었다: <aaa가 만든 사실>.` + 본문이고, check 이름·댓글·login은 넣지 않는다(thread가 `gh pr checks`·`gh pr view --comments`로 읽는다). `routine`·`prompted its thread`(또는 `could not prompt its thread`) 항목과 `routine_prompted`(·`routine_prompt_failed`) 사건.
+- **발화(hp `fire_pr_routines`·`pr_routine_prompt`).** 켜진 pr routine 중 일어난 사건을 원하는 것이 thread에 메시지(바로 친다. 일하는 중이면 harness가 다음 턴으로 줄 세운다, §8.100)를 보낸다. 글은 `[aaa routine <이름>] PR <주소>이 바뀌었다: <aaa가 만든 사실>.` + 본문이고, check 이름·댓글·login은 넣지 않는다(thread가 `gh pr checks`·`gh pr view --comments`로 읽는다). `routine`·`prompted its thread`(또는 `could not prompt its thread`) 항목과 `routine_prompted`(·`routine_prompt_failed`) 사건.
 - **알림.** 기본 `notify.kinds`에 `pr`을 더했다. `pr` 항목은 병합·check 실패·리뷰 활동만 알린다(hp가 notifier를 부르는 세 경우).
 - **여기서 하지 않는 것.** 병합 뒤 resolve·다른 PR이 열렸는지 보기(hp `resolve_merged`·`other_pr_open`)와 병합 대기열 제거는 병합 흐름(D11, thread 흐름 thread)이 `pr_state` 위에 얹는다.
 - **계약.** AGENT_LINK는 그대로 두고 기능 `pr.v1`로 가린다(옛 agent에는 보내지 않는다). FRONT_API 1.6(`routine_toggle`, `ThreadView.pr`). `inbox` 응답의 `done`은 §8.75.
@@ -2500,6 +2500,38 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
       - host 규칙만 끄면 단위 시험이 실패한다. 표지를 지우지 않으면 다음 질문 단언이 실패한다.
   - 실제 harness: `cargo test -p aaa --test real -- --ignored --test-threads 1`(구독 사용, CI 제외). Claude는 신뢰 창 → brief 수신 → 작업 중 → 권한 질문 → idle(15초), Codex는 brief 수신(작업 중) → 승인 질문 둘 → idle(16초)을 10-18에 확인했다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
+
+### 8.111 재부팅 뒤 복원: 셸 pane·대화 이어가기(10-18, 차이 목록 4장 A, 결정 20 D12)
+
+- **무엇.** agent가 다른 boot ID로 붙으면(재부팅, session host가 기록 없이 사라져 세션이 `interrupted`) host가 연결 직후 그 머신의 pane을 layout 차례로 되살린다(`crates/aaa-host/src/restore.rs`). 한 host 실행에서 pane마다 한 번만 한다.
+  - 셸 pane(argv가 비었거나 셸 이름 + 선택지만): 저장한 cwd에서 같은 셸을 새로 띄워 layout 자리를 바꾸고 옛 기록을 지운다(herdr `src/persist/restore.rs:65`: pane마다 저장한 cwd에서 새 셸).
+  - 그 셸에서 Claude·Codex가 돌았고 harness 세션 ID를 알면 새 셸에 `claude --resume <id>`·`codex resume <id>`와 CR을 친다(herdr `src/app/agent_resume.rs` `start_pending_agent_resume`, `src/agent_resume.rs` `plan`). harness를 바로 띄운 pane(argv 첫 낱말이 claude·codex)은 원래 argv(실행 파일 경로, aaa hook 설정 `--settings`·`-c notify=…`, model)를 두고 대화 인자만 바꿔 띄운다(`resume_in_place`: claude `--session-id <x>` → `--resume <id>`, codex는 실행 파일 뒤 `resume <id>`). herdr는 pane이 늘 셸이라 맨 명령을 치지만, aaa pane은 harness 자체일 수 있어 맨 명령으로 띄우면 hook 설정을 잃는다. 같은 harness 세션은 한 번만 잇는다(herdr `dedupe_key`). 셸에 치는 ID는 UUID 꼴만 받는다(herdr `validate_resume_argv`보다 좁다, §8.112).
+  - thread pane: `thread restart --resume`과 같은 길로 저장한 대화를 잇는다(brief 안내 없음). brief를 받기 전이었으면 이을 것이 없어 새로 띄우고 brief를 다시 보낸다. 대화 ID로 잇지 못하는 harness(custom 등)는 같은 명령을 다시 돌리면 하던 일을 잃은 채 기다리므로 사람에게 넘긴다: 흐름 사건 `restore_failed`, inbox `session`·`restore failed`(「`aaa thread restart <p> <id>`가 새 대화로 띄운다」). 성공은 흐름 사건 `session_restored`.
+  - 그 밖의 프로그램 pane은 다시 실행하지 않는다(재부팅마다 배포 같은 명령이 다시 돌면 안 된다). 중단으로 남고 TUI·웹이 `aaa pane resume <id>`를 보인다. herdr pane은 늘 셸이라 이 경우가 없다.
+  - 다시 띄우지 못하면(저장한 폴더가 없어짐 등) 중단으로 남고 까닭을 `PaneView.restore_error`로 보인다(herdr `restore_error`, herdr-web-ui `RestoreErrorBadge`). TUI 중단 띠와 웹 사이드바 경고에 붙는다.
+  - 사람이 붙인 pane 이름(§8.109)은 다시 띄운 pane이 잇는다(herdr `src/persist/restore.rs` `set_manual_label`). 셸·프로그램·thread pane 모두 layout 자리를 바꾸기 전에 새 세션에 붙인다(`replace_pane`, 이름의 정본은 agent `spec.json`). `pane resume`도 같은 길이다. 다시 띄울 때 이름은 비워 agent가 명령으로 짓게 한다: 붙인 이름을 지우면 명령 이름(`sh` 등)으로 돌아간다. 처음 띄울 때 준 이름(`--name`)으로는 돌아가지 않는다. agent가 `name`을 붙인 이름으로 덮어 알려 host가 처음 이름을 모르기 때문이다(그 이름을 그대로 주면 지워도 붙인 이름이 남는다).
+- **설정(herdr `[session]` 이름·기본값 그대로).** host.toml `[session] resume_agents_on_restore = true`, `startup_per_agent_delay_ms = 100`(이어가기 사이 간격, herdr `start_pending_agent_resumes`). 끄면 셸은 되살리고 대화는 잇지 않는다(셸 안의 agent는 빈 셸로, harness pane과 thread는 중단으로).
+- **결정 8-5와 다름.** 결정 8-5(정할 것 5)는 「자동 이어가기 꺼짐 + opt-in」이었다. 결정 20 D12가 「재부팅 뒤 대화 자동 이어가기」를 참고대로 하기로 바꿔 기본 켬이다. §8.3·§8.5의 턴 끝 자동 이어가기(문구 보내기)는 다른 것이라 그대로 없다.
+- **harness 세션 ID를 연결 즉시 안다.** agent가 세션별 마지막 harness 사건(`harness.json`)을 hello(`AgentHello.harness`)에 싣는다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다(옛 host에는 전처럼 보낸다). AGENT_LINK는 그대로(필드는 serde 기본값), session IPC도 그대로다.
+- **복원 중 묶음 셈.** 복원하는 동안 ticker는 그 머신 thread의 묶음 전이·「세션이 모두 끝났다」를 세지 않는다(사라졌다가 돌아온 것으로 보지 않게). 끝나면 ticker를 깨운다.
+- **t3code와 비교.** t3code `apps/server/src/orchestration-v2/RestartContinuation.ts`는 재시작 때 턴 중이던 run에 「Continue where you left off.」를 보낸다(사람 답을 기다리던 run은 막고, 이어서 3번까지). herdr는 대화만 다시 연다. aaa는 herdr대로 했다(보고 「아침 확인」).
+- **계약.** FRONT_API 1.16(`PaneView.restore_error`, 선택 필드).
+- **시험.** m12 `reboot_restores_shells_and_resumes_agents`(가짜 claude를 PATH에: 셸 둘이 같은 대화 → 앞 것만 `--resume`, claude를 바로 띄운 pane은 원래 경로에 `--resume`으로, 프로그램 pane은 중단 뒤 `pane resume`이 같은 자리에, 폴더가 없어진 셸은 `restore_error`, 이름 붙인 셸·프로그램 pane은 이름을 잇고 지우면 `sh`), `reboot_without_agent_resume_restores_plain_shells`(설정 끔). m13 `reboot_resumes_threads`(claude harness thread는 `--resume <session-id>`로 새 pane, 붙인 이름을 잇는다, 메시지가 간다, custom harness thread는 `restore_failed`·inbox, 「sessions ended」 없음). TUI `interrupted_badge_and_resume`은 프로그램 pane으로 바꿨다(셸 pane은 저절로 되살아난다). 띄울 때마다 차례를 찍어(`run-1`·`run-2`) 새 pane이 그려진 것을 본 뒤 친다(t-0330 a409bce가 찾은 「badge가 포커스보다 먼저 사라진다」). 유닛: `resume_argv`(herdr `plan`·`validate_resume_argv`)·`resume_in_place`·`is_shell`(restore.rs), 웹 `paneProblem`의 복원 실패 까닭(web/test/roster.test.mjs). 기다림은 host 사건(layout·pane 상태, `lab::watch::HostWatch`)·흐름 사건·출력이다.
+
+### 8.112 보안 감사 넘김(10-18, t-0340): hook 세션 ID는 UUID 꼴만, 탭 닫기 경쟁, 탭 이름 빈칸, PR 추적 panic
+
+- **hook 세션 ID(높음).** Claude hook `session_id`·Codex notify `thread-id`는 pane 프로그램이 정하는 값인데 검사 없이 harness 세션 ID로 저장돼(agent `hooks.rs` `normalize` → host `harness.rs` `on_harness`) `thread restart --resume`의 `{session}` 자리(`orch.rs` `thread_restart`)에 argv 낱말 하나로 들어갔다. `--dangerously-skip-permissions` 같은 값이면 Claude가 선택지로 읽는다. 재부팅 복원(§8.105)은 셸에 `claude --resume <id>`를 치므로 `; 명령`이면 명령이 돈다. 이제 `aaa_common::util::harness_session_ok`(8-4-4-4-12 16진수, Claude·Codex 모두 UUID)만 받는다: agent가 정규화에서 버리고, host도 받을 때 버리며(옛 agent), 쓰는 곳(`thread_restart`·`restore.rs`·Codex 기록 파일 이름 `chat.rs`)에서 다시 본다(이 검사 전 저장된 값). 세션 ID가 없으면 claude thread는 aaa가 준 `--session-id`로 잇는다.
+- **탭 닫기 경쟁(중간).** `tab close`가 맨 위에서 복사한 workspace에서 탭을 빼고, 그 안 pane을 끝내기를 기다린(`close_panes`) 뒤 그 복사본을 저장해 그 사이 들어온 layout 변경(새 탭·이름 바꾸기·나누기)이 사라졌다(F §8.75의 `tab close`와 t-0330 병합 3798fe7). 이제 탭을 뺀 layout을 먼저 저장하고(front에서 바로 사라진다), 끝낸 뒤 최신을 다시 읽어 저장한다(새 탭·나누기와 같은 방식).
+- **탭 이름 빈칸(낮음).** t-0330의 `RenameTab` 앞뒤 빈칸 빼기가 병합에서 빠졌다. 다시 넣었다: 빈칸뿐이면 이름 없음(탭 번호로 보인다).
+- **PR 추적 panic(낮음).** 프로젝트마다 따로 도는 한 번(`pr_pass`)이 panic하면 「도는 중」 표시가 남아 그 프로젝트 PR 추적이 멈췄다. 이제 따로 task로 돌려(`pr.rs` `survives`) panic이어도 뒷정리를 하고 오류 로그를 남긴 뒤 다음 간격에 다시 본다.
+- **시험(결함 심기로 확인).** 고친 곳을 옛 동작으로 되돌려 시험이 실패하는 것을 보았다.
+  - m13 `forged_hook_session_id_does_not_reach_resume`: 가짜 Claude가 `--dangerously-skip-permissions`를 세션 ID로 알려도 세션 ID는 비고 `thread restart --resume`이 aaa의 대화 ID로 뜬다. 검사를 늘 참으로 하면 세션 ID가 남고(첫 단언), 그 단언을 빼면 새 pane이 aaa 대화 ID로 뜨지 않는다.
+  - m12 `reboot_does_not_type_a_forged_session_id`: 셸 pane의 hook이 `x; touch pwned`를 알려도 복원한 셸에 치지 않는다. 검사를 늘 참으로 하면 세션 ID가 남고, 그 단언을 빼면 복원한 셸에 그 줄을 쳐 뒤에 친 줄이 돌지 않는다.
+  - m12 `tab_close_keeps_layout_changes_made_while_closing`(Unix): 시험 agent를 SIGSTOP으로 세워 끝내기 응답을 붙잡고, 탭을 뺀 layout 사건을 본 뒤 다른 탭 이름을 바꾸고 SIGCONT. 옛 판·「먼저 저장만」 판 모두 바꾼 이름이 사라져 실패한다.
+  - m12 `herdr_tab_workspace_and_layout`: `tab rename`의 빈칸만·앞뒤 빈칸. trim을 빼면 실패한다.
+  - 유닛: `harness_session_ok`(UUID, 선택지·`;`·경로·전각 숫자 거부), hook 정규화가 UUID 아닌 세션 ID를 버림(사건은 받음), `survives`(panic이면 false, 따로 돌리지 않으면 실패).
+  - 시험 fixture의 세션 ID(`fake-1`·`sess-a1`·`s1` 등)를 UUID로 바꿨다(중첩 세션을 버리는 시험은 두 ID가 달라야 한다).
+- **덤: 이미 등록된 머신의 다시 등록(QA t-0337 Q17, 낮음).** 등록된 장치 키로 `aaa agent enroll`을 다시 하면 host가 인증된 연결로 받아(`link.rs` `serve`) 「hello가 와야 한다」만 답했다. 이제 「이 머신(<이름>)은 이미 이 host에 등록돼 있다」와 두 길(그대로 `aaa agent`로 붙기, 다시 등록하려면 host에서 `aaa machine revoke <이름>`·`aaa machine enroll --open 10m` 뒤 `aaa agent enroll <host:port>`)을 답한다. 시험: e2e `enroll_remote_agent_and_run_short_command`가 다시 등록의 안내를 보고, 안내대로 취소 → 등록 창 → 같은 머신 다시 등록·승인 → 다시 붙기까지 한다(옛 답이면 실패).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

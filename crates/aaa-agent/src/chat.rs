@@ -51,8 +51,7 @@ fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
 
 /// Codex 기록: `sessions/YYYY/MM/DD/rollout-…-<thread-id>.jsonl`
 fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
-    let ok = id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
-    if !ok {
+    if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());
     }
     let suffix = format!("-{id}.jsonl");

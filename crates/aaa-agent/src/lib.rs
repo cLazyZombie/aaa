@@ -265,12 +265,19 @@ impl Agent {
         self.host.lock().unwrap().clone()
     }
 
-    pub fn set_host(&self, tx: Option<FrameTx>) {
+    /// 세션별 마지막 harness 사건(시각 차례). hello에 싣거나 옛 host에 다시 보낸다.
+    pub fn harness_events(&self) -> Vec<aaa_proto::HarnessEvent> {
+        let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
+        last.sort_by_key(|e| e.at_ms);
+        last
+    }
+
+    /// `replay`: hello에 실은 harness 사건을 연결 뒤 다시 보낸다(hello의 것을 읽지 않는 옛 host)
+    pub fn set_host(&self, tx: Option<FrameTx>, replay: bool) {
         let gone = tx.is_none();
-        if let Some(tx) = &tx {
+        if let Some(tx) = tx.as_ref().filter(|_| replay) {
             // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
-            let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
-            last.sort_by_key(|e| e.at_ms);
+            let last = self.harness_events();
             let tx = tx.clone();
             tokio::spawn(async move {
                 for ev in last {
