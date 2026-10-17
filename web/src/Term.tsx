@@ -1,4 +1,5 @@
-// pane 하나의 터미널 보기. 크기는 PTY(cols·rows)를 따르고, 「이 화면에 맞추기」만 PTY 크기를 바꾼다.
+// pane 하나의 터미널 보기. TUI와 같은 규칙으로, 이 화면이 조작(lease) 중이거나 아무도 조작하지 않으면 PTY를 칸 크기에
+// 맞춘다(열 때·창 크기가 바뀔 때). 다른 front가 조작 중이면 PTY 크기 그대로 왼쪽 위에 그린다(§4.5, §8.30).
 // WebSocket 하나가 대화형 front 하나다. 다른 front가 조작(lease) 중이면 입력을 막고 「가져오기」를 보인다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -296,6 +297,31 @@ export function TermView({
     };
     // pane.id가 바뀔 때만 새로 붙는다. cols/rows는 snapshot이 알려 준다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.id]);
+
+  // 자동 맞추기: 조작할 수 있고, 연결돼 있고, 다른 front가 조작 중이 아니고, 터미널이 보일 때만.
+  // 크기를 보내면 host가 lease를 이 연결에 준다(lease가 비어 있을 때). 같은 크기면 보내지 않는다.
+  const autoFit = useRef(() => {});
+  autoFit.current = () => {
+    if (!canControl || readonly || link !== "open" || me === null || heldByOther || (chatView && chatable)) return;
+    const dims = fitRef.current?.proposeDimensions();
+    if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return;
+    if (dims.cols !== size[0] || dims.rows !== size[1]) send({ t: "resize", cols: dims.cols, rows: dims.rows });
+  };
+  useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size]);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let t: number | undefined;
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(t);
+      t = window.setTimeout(() => autoFit.current(), 150);
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      window.clearTimeout(t);
+    };
   }, [pane.id]);
 
   const fitToScreen = () => {
