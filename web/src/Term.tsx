@@ -32,7 +32,8 @@ import { DEFAULT_KEY_BAR_ITEMS, keyBarInputSequence, sanitizeKeyBarItems, type K
 import { chordSequence, IS_MAC } from "./keyChord";
 import { KeyBar } from "./KeyBar";
 import { TerminalInput } from "./TerminalInput";
-import { setTerminalInputMode, useMedia, useTerminalInputMode } from "./settings";
+import { setTerminalFontSize, setTerminalInputMode, useMedia, useTerminalFontSize, useTerminalInputMode } from "./settings";
+import { pinchFontSize } from "./herdr/pinchFontSize.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
@@ -129,6 +130,12 @@ export function TermView({
   const inputLineRef = useRef(inputLine);
   inputLineRef.current = inputLine;
   const coarse = useMedia("(pointer: coarse)");
+  // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
+  const terminalFontSize = useTerminalFontSize();
+  const baseFontRef = useRef(terminalFontSize);
+  const pinchBadgeRef = useRef<HTMLSpanElement>(null);
+  const chatViewRef = useRef(false);
+  chatViewRef.current = chatView && chatable;
   // 입력줄 조합 중: ⌨ 전환 단추만 기다린다(키 막대는 그대로 쓴다)
   const lineComposingRef = useRef(false);
   const [lineComposing, setLineComposingState] = useState(false);
@@ -289,8 +296,8 @@ export function TermView({
   };
 
   useEffect(() => {
-    const narrow = window.matchMedia("(max-width: 700px)").matches;
-    const fontSize = narrow ? 11 : 13;
+    // 모든 기기가 설정한 크기(기본 13px)로 연다. 좁은 화면만 11px로 줄이던 것은 없앴다(herdr-web-ui와 같다)
+    const fontSize = baseFontRef.current;
     // xterm은 처음 연 글꼴로 cell 크기를 잰다. 넣은 WOFF2가 아직 안 받아졌으면 그것을 뺀 목록으로 열고,
     // 받아지면 원래 목록으로 바꿔 다시 재게 한다(그 뒤 자동 맞추기가 다시 돈다).
     const family = token("--font-term") || "ui-monospace, Menlo, monospace";
@@ -500,6 +507,94 @@ export function TermView({
     el.addEventListener("paste", onPaste, true);
     el.addEventListener("dragover", onDragOver);
     el.addEventListener("drop", onDrop);
+    // 두 손가락으로 글자 크기(herdr-web-ui PaneTerminal 1528~1640줄): 손가락을 따라 글자가 바로 바뀌고 크기를 띄운다.
+    // 손을 떼면 설정에 저장하고 PTY 크기를 한 번 다시 건다. aaa 터미널 grid는 늘 PTY 크기를 따르므로(host가 알린다)
+    // 참고처럼 핀치 중에 grid를 이 화면에서만 다시 맞추지 않는다: 그 사이 온 출력이 PTY에 없는 grid에 그려진다.
+    // 한 손가락 끌기는 xterm 그대로 둔다(차이 목록 J, 스크롤 묶음과 함께).
+    let pinch: { first: number; second: number; startSize: number; startDistance: number; size: number } | null = null;
+    // 두 번째 손가락부터 모든 손가락이 뗄 때까지: 이 동작은 핀치이고 스크롤이 아니다
+    let pinchStroke = false;
+    const spread = (a: Touch, b: Touch): number => Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    const showPinch = (size: number | null) => {
+      const badge = pinchBadgeRef.current;
+      if (!badge) return;
+      badge.hidden = size === null;
+      if (size !== null) badge.textContent = `${size}px`;
+    };
+    const applyLiveFont = (size: number) => {
+      if (baseFontRef.current === size) return;
+      baseFontRef.current = size;
+      term.options.fontSize = size;
+    };
+    const finishPinch = (save: boolean) => {
+      const finished = pinch;
+      if (finished && (!save || finished.size === finished.startSize)) applyLiveFont(finished.startSize);
+      pinch = null;
+      if (finished && save && finished.size !== finished.startSize) {
+        setTerminalFontSize(finished.size);
+        autoFit.current(true);
+      }
+      showPinch(null);
+    };
+    const claimPinch = (event: Event) => {
+      event.preventDefault();
+      // capture 단계에서 듣는다: 핀치의 첫 손가락으로 xterm이 화면을 굴리면 안 된다
+      event.stopPropagation();
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      if (chatViewRef.current) return;
+      if (event.touches.length === 1 && pinchStroke) {
+        finishPinch(false);
+        pinchStroke = false;
+      }
+      if (pinchStroke) return claimPinch(event);
+      if (event.touches.length < 2) return;
+      pinchStroke = true;
+      claimPinch(event);
+      const a = event.touches[0];
+      const b = event.touches[1];
+      if (event.touches.length !== 2 || !a || !b || !el.contains(a.target as Node) || !el.contains(b.target as Node) || spread(a, b) <= 0)
+        return;
+      const startSize = baseFontRef.current;
+      pinch = { first: a.identifier, second: b.identifier, startSize, startDistance: spread(a, b), size: startSize };
+      showPinch(startSize);
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!pinchStroke && event.touches.length > 1) pinchStroke = true;
+      if (!pinchStroke) return;
+      claimPinch(event);
+      if (!pinch || event.touches.length !== 2) return;
+      let first: Touch | undefined;
+      let second: Touch | undefined;
+      for (let i = 0; i < event.touches.length; i++) {
+        const touch = event.touches[i]!;
+        if (touch.identifier === pinch.first) first = touch;
+        if (touch.identifier === pinch.second) second = touch;
+      }
+      if (!first || !second) return;
+      const size = pinchFontSize(pinch.startSize, pinch.startDistance, spread(first, second));
+      if (size === pinch.size) return;
+      pinch.size = size;
+      applyLiveFont(size);
+      showPinch(size);
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      if (!pinchStroke) return;
+      claimPinch(event);
+      if (event.type === "touchcancel" || event.touches.length < 2) finishPinch(event.type === "touchend");
+      if (event.touches.length === 0) pinchStroke = false;
+    };
+    // Safari는 touch-action이 none이어도 넘치는 영역(xterm viewport) 안에서 화면을 확대한다
+    const onGesture = (event: Event) => {
+      if (!chatViewRef.current) event.preventDefault();
+    };
+    const touchOpts = { capture: true, passive: false } as const;
+    el.addEventListener("touchstart", onTouchStart, touchOpts);
+    el.addEventListener("touchmove", onTouchMove, touchOpts);
+    el.addEventListener("touchend", onTouchEnd, touchOpts);
+    el.addEventListener("touchcancel", onTouchEnd, touchOpts);
+    el.addEventListener("gesturestart", onGesture, { passive: false });
+    el.addEventListener("gesturechange", onGesture, { passive: false });
     // 터미널을 누르면 이 화면이 지금 쓰는 화면이 된다(크기를 다시 건다)
     const onPointer = () => autoFit.current(true);
     el.addEventListener("pointerdown", onPointer);
@@ -598,6 +693,12 @@ export function TermView({
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
       el.removeEventListener("pointerdown", onPointer);
+      el.removeEventListener("touchstart", onTouchStart, true);
+      el.removeEventListener("touchmove", onTouchMove, true);
+      el.removeEventListener("touchend", onTouchEnd, true);
+      el.removeEventListener("touchcancel", onTouchEnd, true);
+      el.removeEventListener("gesturestart", onGesture);
+      el.removeEventListener("gesturechange", onGesture);
       el.removeEventListener("compositionstart", compositionStart);
       el.removeEventListener("compositionend", compositionEnd);
       el.removeEventListener("keydown", onCommandArrow);
@@ -671,6 +772,15 @@ export function TermView({
     fitted();
   };
   useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
+  // 설정에서 글자 크기를 바꾸면 따라간다(PaneTerminal 1996~2025줄). 같은 크기면(핀치가 이미 바꿨다) 아무 일도 없다.
+  // 쓰는 중이면 이 화면 크기로 PTY를 다시 건다.
+  useEffect(() => {
+    const term = termRef.current;
+    baseFontRef.current = terminalFontSize;
+    if (!term || term.options.fontSize === terminalFontSize) return;
+    term.options.fontSize = terminalFontSize;
+    autoFit.current(true);
+  }, [terminalFontSize]);
   // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 1초 넘게 가려지면 놓는다(herdr-web-ui RELEASE_AFTER_MS).
   const leaseMine = me !== null && lease?.front === me;
   const leaseMineRef = useRef(leaseMine);
@@ -926,6 +1036,7 @@ export function TermView({
       <div className="term-scroll" ref={scrollRef} hidden={chatView && chatable} data-direct-typing={inputLine ? undefined : ""}>
         <div className="term-box" ref={box} data-testid="terminal" />
       </div>
+      <span ref={pinchBadgeRef} className="pinch-badge" data-testid="pinch-badge" aria-live="polite" hidden />
       {dock}
       {/* 입력줄은 그리드 마지막 줄 위에 뜬다. 흐름에는 한 줄 높이만 두어 자라도 PTY 크기를 바꾸지 않는다(PaneTerminal 3008~3016줄) */}
       {inputLine && (

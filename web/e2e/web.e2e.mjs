@@ -999,6 +999,70 @@ try {
     await dp.context().close();
   });
 
+  await step("글자 크기(herdr-web-ui terminalFontSize·핀치): 설정에서 한 칸씩, 휴대폰은 두 손가락으로 글자가 따라오고 손을 떼면 저장하고 PTY를 한 번 다시 건다", async () => {
+    const t1 = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
+    const rowsFont = (pg) => pg.evaluate(() => getComputedStyle(document.querySelector('[data-testid="terminal"] .xterm-rows')).fontSize);
+    /** 이 화면이 PTY 크기를 건 뒤 멈춘 열 수 */
+    const settled = async (pg, what, ok) =>
+      until(what, async () => {
+        const a = t1().cols;
+        await sleep(300);
+        const b = t1().cols;
+        return a === b && ok(b) ? b : null;
+      });
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await dp.getByTestId("pane-t1").click();
+    await until("13px로 연다", async () => (await rowsFont(dp)) === "13px");
+    await dp.getByTestId("terminal").click();
+    const wide = await settled(dp, "데스크톱 크기", () => true);
+    await dp.getByTestId("settings-open").click();
+    const dlg = dp.getByRole("dialog", { name: "설정" });
+    for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 크게" }).click();
+    if ((await dlg.getByRole("group", { name: "글자 크기" }).innerText()).trim() !== "16px") throw new Error("설정에 16px가 아니다");
+    await until("16px", async () => (await rowsFont(dp)) === "16px");
+    // 쓰는 화면이면 바뀐 글자로 PTY 크기를 다시 건다(13 → 16px이면 열이 줄어든다)
+    const big = await settled(dp, "큰 글자 크기", (c) => c < wide * 0.9);
+    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "16") throw new Error("16px 저장이 없다");
+    for (let i = 0; i < 3; i++) await dlg.getByRole("button", { name: "글자 작게" }).click();
+    await settled(dp, "13px로 돌아온 크기", (c) => c === wide);
+    // 기본값이면 저장하지 않는다
+    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("기본값을 저장했다");
+    await dp.keyboard.press("Escape");
+    await dp.context().close();
+    console.log(`     글자 크기 ${wide}열(13px) → ${big}열(16px)`);
+
+    // 휴대폰: 두 손가락을 벌리면 글자가 바로 커지고 크기를 띄운다. 손을 떼면 저장하고 PTY를 다시 건다.
+    const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    await mp.getByTestId("pane-t1").click();
+    await until("휴대폰 13px", async () => (await rowsFont(mp)) === "13px");
+    await mp.getByTestId("terminal").click();
+    const phone = await settled(mp, "휴대폰 크기", (c) => c < wide);
+    const r = await mp.getByTestId("terminal").boundingBox();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + Math.min(r.height / 2, 200);
+    const cdp = await mp.context().newCDPSession(mp);
+    const touch = (type, d) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: d === null ? [] : [{ x: cx - d / 2, y: cy, id: 1 }, { x: cx + d / 2, y: cy, id: 2 }],
+      });
+    await touch("touchStart", 100);
+    await touch("touchMove", 130);
+    await touch("touchMove", 150);
+    // 13 × 150/100 = 19.5 → 20px. 손가락을 떼기 전에는 PTY도 저장도 그대로다
+    await until("핀치 중 20px", async () => (await rowsFont(mp)) === "20px");
+    const badge = await mp.getByTestId("pinch-badge").innerText();
+    if (badge !== "20px") throw new Error(`핀치 표시 ${JSON.stringify(badge)}`);
+    if (t1().cols !== phone) throw new Error("손을 떼기 전에 PTY가 바뀌었다");
+    if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("손을 떼기 전에 저장했다");
+    await touch("touchEnd", null);
+    await until("핀치 표시 사라짐", async () => await mp.getByTestId("pinch-badge").isHidden());
+    if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "20") throw new Error("핀치 크기를 저장하지 않았다");
+    const pinched = await settled(mp, "핀치 뒤 PTY", (c) => c < phone * 0.8);
+    console.log(`     핀치 ${phone}열(13px) → ${pinched}열(20px)`);
+    await mp.context().close();
+  });
+
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "keysapp", "--", process.execPath, `${root}/keys.js`);
     const got = () => aaa("pane", "read", "keysapp").lines.join("\n");

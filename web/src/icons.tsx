@@ -38,6 +38,7 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   plus: <path d="M9 3.5v11M3.5 9h11" />,
+  minus: <path d="M3.5 9h11" />,
   send: <path d="M9 14.5V3.5M4.5 8 9 3.5 13.5 8" />,
   // 설정(톱니)
   settings: (
