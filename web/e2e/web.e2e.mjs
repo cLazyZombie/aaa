@@ -27,6 +27,8 @@ const env = {
   AAA_STATE_DIR: `${root}/s`,
   CLAUDE_CONFIG_DIR: `${root}/claude`,
   RUST_LOG: "aaa=info",
+  // 상태 사건 연결의 WebSocket ping 1초, 3초 동안 아무것도 받지 못하면 host가 끊는다(기본 15초·45초, 「두 기기·죽은 연결」 단계)
+  AAA_TEST_EVENTS_PING_MS: "1000",
 };
 const procs = new Map();
 
@@ -35,7 +37,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function aaa(...args) {
   const sep = args.indexOf("--");
   const a = sep < 0 ? [...args, "--json"] : [...args.slice(0, sep), "--json", ...args.slice(sep)];
-  return JSON.parse(execFileSync(AA, a, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  try {
+    return JSON.parse(execFileSync(AA, a, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  } catch (e) {
+    // 실패하면 CLI가 답한 것(--json은 오류도 stdout에 쓴다)과 stderr를 남긴다
+    if (e.status !== undefined) e.message = `aaa ${args.join(" ")}: 끝 코드 ${e.status} ${String(e.stdout ?? "").trim()} ${String(e.stderr ?? "").trim()}`.slice(0, 600);
+    throw e;
+  }
 }
 
 function start(tag, ...args) {
@@ -4422,7 +4430,136 @@ try {
     if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
     if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
     await pp.context().close();
-    for (const x of [a, b]) aaa("thread", "ack", "demo", x.t.id);
+    // 머신마다 도는 thread 수에 한도가 있다(max_threads_per_machine): 다 본 thread는 정리한다
+    for (const x of [a, b]) aaa("thread", "resolve", "demo", x.t.id);
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
+  });
+
+  await step("두 기기·죽은 연결(coordinator 실기 10-18 00:58 iPhone: push는 「쓰는 화면 1개」로 생략, 앱 안 알림도 없음, herdr-web-ui ws.ts Liveness·server/push.ts inUse): A가 쓰는 동안 보이기만 하는 B에 앱 안 알림이 내려오고 push는 없다, 사건이 오지 않는 연결은 웹이 ping으로 알아채 다시 붙고, 답하지 않는 연결은 host가 끊어 쓰는 화면에서 뺀다, ⋯ 메뉴는 열면 첫 항목에 focus·화살표로 옮기고 Esc로 닫힌다(herdr-web-ui RowMenu)", async () => {
+    // B(휴대폰): 보이지만 focus는 없다. 상태 사건 소켓을 「얼릴」 수 있게 감싼다: 언 뒤에는 받은 것을 버리고 보낸 것을 삼킨다.
+    // 브라우저의 WebSocket ping 응답(pong)은 그대로라 host는 그 연결이 살아 있다고 본다(잠든 휴대폰·바뀐 망의 반쯤 열린 연결)
+    const freezeInit = () => {
+      document.hasFocus = () => false;
+      const log = [];
+      Object.defineProperty(window, "__evSock", { value: log });
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          log.push("new");
+          const me = this;
+          me.frozen = false;
+          window.__freezeEvents = () => void (me.frozen = true);
+          this.addEventListener("message", (e) => {
+            if (!me.frozen) return;
+            log.push(`dropped ${String(e.data).slice(0, 24)}`);
+            e.stopImmediatePropagation();
+          });
+        }
+        send(d) {
+          if (this.frozen) {
+            log.push(`swallowed ${String(d).slice(0, 24)}`);
+            return;
+          }
+          super.send(d);
+        }
+      };
+    };
+    const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: freezeInit });
+    const bp = B.page;
+    await until("A만 쓰는 화면", async () => (await pushInUse()) === 1);
+    const skips = () => aaa("events", "--project", "demo").events.filter((e) => e.kind === "push_skipped");
+    const devicePushes = (from) => pushes.slice(from).filter((x) => !x.path.startsWith("/gone/"));
+    let n = 0;
+    const work = (title) => {
+      fs.writeFileSync(`${root}/task-dead-${++n}.md`, title);
+      return aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-dead-${n}.md`);
+    };
+    const ts = [];
+    // (1) A(본 화면)가 쓰는 동안: 어느 기기에도 push가 없고(참고 inUse는 모든 기기), 보이기만 하는 B에는 앱 안 알림이 내려온다
+    let from = pushes.length;
+    let k = skips().length;
+    ts.push(work("두 기기 A 쓰는 중"));
+    const s1 = await until("A 때문에 보내지 않음", () => skips().slice(k)[0]);
+    if (!/^쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개$/.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
+    await until("보이기만 하는 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("두 기기 A 쓰는 중"));
+    if (devicePushes(from).length !== 0) throw new Error(`A가 쓰는 동안 push ${devicePushes(from).length}건`);
+    await bp.locator(".droplet-close").click();
+    // 머신마다 도는 thread 수에 한도가 있다(max_threads_per_machine): 다 본 thread는 정리한다
+    const done = () => {
+      while (ts.length) aaa("thread", "resolve", "demo", ts.shift().id);
+    };
+    done();
+    // (2) 이제 B만 쓰고, B의 연결이 반쯤 열린 채 죽는다: host는 B를 쓰는 화면으로 세어 push를 생략하고 B는 사건을 받지 못한다(실기와 같은 상태)
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    await bp.evaluate(() => {
+      delete document.hasFocus;
+      window.dispatchEvent(new Event("focus"));
+    });
+    await until("B만 쓰는 화면", async () => (await pushInUse()) === 1 && (await bp.evaluate(() => document.hasFocus())));
+    await bp.evaluate(() => window.__freezeEvents());
+    k = skips().length;
+    ts.push(work("죽은 연결 동안"));
+    await until("죽은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
+    await until("B가 그 사건을 받지 못함", () => bp.evaluate(() => window.__evSock.some((e) => e.startsWith("dropped") && e.includes('"thread"'))));
+    // 웹: 망이 바뀌거나(online) 다시 보이면 ping하고, 그 pong이 두 번 오지 않으면 끊고 바로 다시 붙는다
+    await bp.evaluate(() => window.dispatchEvent(new Event("online")));
+    await until("ping을 보냄", () => bp.evaluate(() => window.__evSock.some((e) => e.startsWith('swallowed {"t":"ping"'))));
+    await until("다시 붙음", () => bp.evaluate(() => window.__evSock.filter((e) => e === "new").length === 2));
+    await until("새 연결이 쓰는 화면", async () => (await pushInUse()) === 1);
+    done();
+    k = skips().length;
+    ts.push(work("다시 붙은 뒤"));
+    await until("다시 붙은 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("다시 붙은 뒤"));
+    await until("다시 붙은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
+    // host: WebSocket ping에도 답하지 않는 연결(읽지 않는 클라이언트)은 끊어 쓰는 화면에서 뺀다
+    const cookie = (await bp.context().cookies()).find((c) => c.name === "aaa" || c.name === "__Host-aaa");
+    const u = new URL(base);
+    const raw = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: u.hostname,
+        port: u.port,
+        path: "/api/v1/events",
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": crypto.randomBytes(16).toString("base64"),
+          "Sec-WebSocket-Version": "13",
+          Origin: base.slice(0, -1),
+          Cookie: `${cookie.name}=${cookie.value}`,
+        },
+      });
+      req.on("upgrade", (_res, socket) => resolve(socket));
+      req.on("response", (res) => reject(new Error(`upgrade 거절 ${res.statusCode}`)));
+      req.on("error", reject);
+      req.end();
+    });
+    const text = Buffer.from(JSON.stringify({ t: "presence", active: true }));
+    const mask = crypto.randomBytes(4);
+    raw.write(Buffer.concat([Buffer.from([0x81, 0x80 | text.length]), mask, Buffer.from(text.map((b, i) => b ^ mask[i % 4]))]));
+    // 그 뒤로는 아무것도 보내지 않는다(pong도)
+    raw.pause();
+    await until("읽지 않는 연결도 쓰는 화면", async () => (await pushInUse()) === 2);
+    const t0 = Date.now();
+    await until("host가 답하지 않는 연결을 끊음", async () => (await pushInUse()) === 1);
+    const gone = Date.now() - t0;
+    raw.destroy();
+    if (gone > 6000) throw new Error(`끊기까지 ${gone}ms(ping 1초·3초 기한)`);
+    // ⋯ 메뉴(사용자 화면 10-18: 미러링 키보드 Esc로 닫히지 않음): 키보드 사건이 메뉴로 오도록 첫 항목에 focus
+    const focused = () => bp.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? document.activeElement?.textContent?.trim());
+    await bp.getByTestId("more").click();
+    await until("열면 첫 항목에 focus", async () => (await focused()) === "링크 복사");
+    await bp.keyboard.press("ArrowDown");
+    if ((await focused()) !== "alerts-item") throw new Error(`아래 화살표 뒤 focus ${await focused()}`);
+    await bp.keyboard.press("Escape");
+    await until("Esc로 닫힘", async () => (await bp.locator(".more-menu").count()) === 0);
+    if ((await focused()) !== "more") throw new Error(`닫힌 뒤 focus ${await focused()}`);
+    if (B.errors.length) throw new Error(`페이지 오류: ${B.errors.join("; ")}`);
+    await bp.context().close();
+    done();
     await setInUse(page, true);
     await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
   });

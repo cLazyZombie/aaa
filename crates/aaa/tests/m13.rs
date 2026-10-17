@@ -1317,6 +1317,10 @@ fn library_view() {
     let (st, _, body) = http_get(&web, &format!("{base}late.txt"));
     assert_eq!((st, body.as_slice()), (200, "늦게\n".as_bytes()));
     assert_eq!(http_get(&web, &format!("{base}big.bin")).0, 404, "지운 파일이 사본에 남았다");
+    // 보고는 그대로라 report_ready는 다시 내지 않고, 바뀐 library만 알린다(바뀌지 않았으면 worktree_thread_round_trip처럼 없다)
+    let kinds = w.kinds(0);
+    assert_eq!(kinds.iter().filter(|k| *k == "report_ready").count(), 1, "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| *k == "library_copied").count(), 1, "{kinds:?}");
 }
 
 /// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.

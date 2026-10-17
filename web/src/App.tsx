@@ -498,21 +498,55 @@ function MoreMenu() {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const box = useRef<HTMLSpanElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  // 닫기와 키(herdr-web-ui RowMenu.tsx 104~165줄): 열면 첫 항목에 focus(키보드 사건이 메뉴로 온다), Esc는 window에서
+  // 먼저 받아 닫고, 바깥 누름·focus가 메뉴 밖으로 나가면 닫는다. 위·아래·Home·End로 옮기고 Tab은 닫는다. 닫히면 ⋯로 돌아간다
+  const close = useCallback(() => {
+    setOpen(false);
+    if (menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     if (!open) return;
+    window.requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>("[role^=menuitem]")?.focus());
     const away = (e: Event) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
     };
     const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      close();
     };
-    document.addEventListener("pointerdown", away, true);
-    document.addEventListener("keydown", esc);
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", esc, true);
     return () => {
-      document.removeEventListener("pointerdown", away, true);
-      document.removeEventListener("keydown", esc);
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", esc, true);
     };
-  }, [open]);
+  }, [open, close]);
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const move = (next: number) => {
+      e.preventDefault();
+      items[(next + items.length) % items.length]?.focus();
+    };
+    if (e.key === "ArrowDown") move(at + 1);
+    else if (e.key === "ArrowUp") move(at - 1);
+    else if (e.key === "Home") move(0);
+    else if (e.key === "End") move(items.length - 1);
+    else if (e.key === "Tab") {
+      e.preventDefault();
+      close();
+    }
+  };
+  const onMenuBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && box.current?.contains(next)) return;
+    // Mac Safari는 누른 단추에 focus를 주지 않아 relatedTarget이 없다: 누름은 pointerdown이 판단한다
+    if (next) setOpen(false);
+  };
   useEffect(() => {
     if (!note) return;
     const t = window.setTimeout(() => setNote(null), 2000);
@@ -522,6 +556,7 @@ function MoreMenu() {
   return (
     <span className="more" ref={box}>
       <button
+        ref={button}
         className="ghost icon"
         data-testid="more"
         aria-label={label}
@@ -539,7 +574,7 @@ function MoreMenu() {
         </span>
       )}
       {open && (
-        <div className="more-menu" role="menu">
+        <div className="more-menu" role="menu" aria-label="더 보기" ref={menu} onKeyDown={onMenuKey} onBlur={onMenuBlur}>
           <button
             role="menuitem"
             onClick={() => {
