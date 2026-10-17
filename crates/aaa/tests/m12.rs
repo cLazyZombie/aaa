@@ -273,7 +273,9 @@ fn reboot_restores_shells_and_resumes_agents() {
     let l = hw.wait("복원", |w| {
         let l = w.leaves();
         let running = |i: usize| w.pane(&l[i]).is_some_and(|p| p.state.is_running());
-        let restored = l.len() == 5 && l[0] != a && l[1] != b && l[2] != c && (0..3).all(running);
+        // 붙인 이름은 state 사건(bump)으로, layout은 따로 와서 차례가 정해지지 않는다: 이름까지 본다
+        let named = l.first().and_then(|p| w.pane(p)).is_some_and(|p| p.label.as_deref() == Some("내 셸"));
+        let restored = l.len() == 5 && l[0] != a && l[1] != b && l[2] != c && (0..3).all(running) && named;
         let left = l.get(3) == Some(&d) && w.pane(&d).is_some_and(|p| p.state == SessionState::Interrupted);
         let failed = l.get(4) == Some(&e) && w.pane(&e).is_some_and(|p| p.restore_error.is_some());
         (restored && left && failed).then(|| l.clone())
@@ -282,7 +284,7 @@ fn reboot_restores_shells_and_resumes_agents() {
     let pa = hw.pane(&l[0]).unwrap().clone();
     assert_eq!((pa.argv.as_slice(), pa.cwd.as_deref()), (&["/bin/sh".to_string()][..], Some(lab::path_str(&wa))));
     h.wait_output(&l[0], &format!("fake-claude --resume {SID_A}"), T);
-    // 붙인 이름을 이었다(layout을 바꾸기 전에 붙인다). 지우면 띄운 명령 이름이다(처음 띄울 때 준 이름 `a`는 host가
+    // 붙인 이름을 이었다. 지우면 띄운 명령 이름이다(처음 띄울 때 준 이름 `a`는 host가
     // 모른다: agent가 `name`을 붙인 이름으로 덮어 알린다). 이름이 없던 pane은 띄울 때 이름 그대로
     assert_eq!((pa.name.as_str(), pa.label.as_deref()), ("내 셸", Some("내 셸")));
     let p = h.ok(&["pane", "rename", &l[0], "--clear"]);
