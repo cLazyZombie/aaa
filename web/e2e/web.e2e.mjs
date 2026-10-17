@@ -783,6 +783,18 @@ try {
         throw new Error(`아이콘 ${icon}: ${r.status} ${r.headers.get("content-type")}`);
       }
     }
+    // 관례 터치 아이콘 주소는 같은 PNG, 없는 파일은 화면(HTML)이 아니라 404, 확장자 없는 주소만 화면(plan §8.61)
+    const touch = Buffer.from(await (await fetch(`${base}apple-touch-icon.png`)).arrayBuffer());
+    for (const alias of ["apple-touch-icon-precomposed.png", "apple-touch-icon-180x180.png", "apple-touch-icon-120x120-precomposed.png"]) {
+      const r = await fetch(`${base}${alias}`);
+      if (r.status !== 200 || r.headers.get("content-type") !== "image/png" || !Buffer.from(await r.arrayBuffer()).equals(touch)) throw new Error(`${alias}: ${r.status} ${r.headers.get("content-type")}`);
+    }
+    for (const missing of ["favicon.ico", "nope.png", "assets/nope.js"]) {
+      const r = await fetch(`${base}${missing}`);
+      if (r.status !== 404) throw new Error(`${missing}: ${r.status} ${r.headers.get("content-type")}`);
+    }
+    const route = await fetch(`${base}thread/t-0001`);
+    if (route.status !== 200 || !route.headers.get("content-type").startsWith("text/html")) throw new Error(`화면 경로 ${route.status}`);
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto(base);

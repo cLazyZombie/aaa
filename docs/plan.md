@@ -1519,6 +1519,13 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **고침.** xterm viewport의 scroll 사건을 xterm 처리 뒤에 하나 더 듣는다. 화면(DOM)은 맨 아래인데 버퍼가 위면 이 사건이다. 그때는 맨 아래로 되돌린다. 사용자가 굴려 올린 것은 화면도 위에 있어 건드리지 않는다. 글자 크기를 바꿀 때도 같은 일이 생길 수 있어 함께 막는다. 참고(herdr-web-ui)는 기본 글꼴 목록이 깔린 글꼴뿐이다. 고른 글꼴을 받은 뒤에야 바꾸므로 이 경로를 따로 두지 않았다. 넣은 글꼴은 aaa가 더한 것이다.
 - **시험.** 웹 E2E 「글꼴이 늦게 와도 맨 아래」: 같은 이름의 `@font-face`를 WOFF2만으로 다시 두어 깔린 글꼴을 쓰지 않는다. WOFF2는 붙은 뒤에 풀어 주고, 대신 글꼴은 Courier New로 한다. 그러면 칸 높이가 17px에서 19px로 바뀐다. 그 뒤에도 viewport가 맨 아래이고 s-200이 보여야 한다. 고치기 전에는 CI와 같이 s-164~s-196에서 멈춰 실패했다. 고친 뒤 통과한다.
 
+### 8.61 터치 아이콘 관례 주소와 없는 파일(10-17, 사용자 확인 「회색격자 맞아」·「이전 아이콘」)
+
+- **사용자가 본 것.** iPhone 앱 전환 화면 아래 aaa 아이콘이 iOS 기본 회색 격자(아이콘 없음)로 나오거나 옛 보라색 「aaa」로 나온다. 앱 안의 표시는 새 아이콘이다.
+- **서버에서 확인한 것.** host가 주는 아이콘(`apple-touch-icon.png`, manifest 아이콘, favicon)은 모두 새 그림이다. 옛 보라색 PNG는 `ea70cc8`(10-17 01:40)~`9d73a03`(16:26) 사이에만 있었고, 지금 binary에는 없다. service worker는 화면 이동(navigate)만 맡고 아이콘 요청은 가로채지 않는다. 아이콘은 인증 없이 받아진다. 그런데 `/apple-touch-icon-precomposed.png` 같은 관례 주소와 없는 파일 주소는 모두 웹 화면(HTML)을 200으로 돌려주었다.
+- **고침(서버에서 확인할 수 있는 범위만).** 관례 터치 아이콘 주소(`apple-touch-icon-precomposed.png`, `apple-touch-icon-NxN.png`, `apple-touch-icon-NxN-precomposed.png`)는 `apple-touch-icon.png`과 같은 PNG를 준다. 확장자가 있는데 없는 파일(`favicon.ico`, `nope.png`, `assets/…`)은 404다. 확장자 없는 주소만 웹 화면이다. 참고(static.ts)는 `/assets/`·`/icons/` 아래만 404이고 나머지는 화면을 준다. 그림 주소에 HTML을 주지 않으려고 넓혔다. 시험은 웹 E2E 「PWA」 단계와 host 유닛 `touch_icon_aliases`다.
+- **보류: iOS 앱 아이콘 캐시(사용자 결정 「아이콘은 넘어가」).** iOS가 홈 화면·앱 전환 화면에 어느 아이콘을 쓰는지, 이 고침으로 회색 격자가 사라지는지는 실기로만 볼 수 있다. 여기서 더 파지 않는다. 홈 화면에 추가할 때 받아 둔 아이콘을 쓴다면(옛 보라색은 01:40~16:26에 추가한 것), 바꾸는 길은 홈 화면에서 지우고 Safari에서 다시 「홈 화면에 추가」하는 것이다. 지우면 그 앱의 저장소(pairing·알림 구독)도 사라져 다시 pairing해야 한다. 차이 목록에도 같은 줄이 있다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
