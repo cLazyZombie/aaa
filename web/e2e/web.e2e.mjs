@@ -2528,8 +2528,15 @@ try {
     // 이전·다음 패널은 목록 차례로 옮기고, 그 키가 떠나는 pane에 가지 않는다(가면 xterm이 ESC[1;6B를 보낸다)
     await open("shortkeys", "keys>");
     const before = gots("shortkeys").length;
+    // 다음 줄은 목록에서 shortkeys 바로 아래 pane 줄이다(뒤에 만든 shortplain·shortalt가 있어 끝이 아니다)
+    const below = await sp.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid="machine-labA"] [role="button"][data-testid^="pane-"]')].map((b) => b.dataset.testid.slice(5));
+      const at = rows.indexOf("shortkeys");
+      return at < 0 ? null : (rows[at + 1] ?? null);
+    });
+    if (below === null) throw new Error("목록에 shortkeys가 없거나 그 아래 줄이 없다(시험이 그 경우를 만들지 못했다)");
     await sp.keyboard.press("Control+Shift+ArrowDown");
-    await until("다음 패널", async () => (await hash()) !== sel("shortkeys"));
+    await until(`다음 패널(목록에서 아래 줄 ${below})`, async () => (await hash()) === sel(below));
     await sp.keyboard.press("Control+Shift+ArrowUp");
     await until("이전 패널(돌아옴)", async () => (await hash()) === sel("shortkeys"));
     await until("돌아온 화면", async () => (await screenText(sp)).includes("keys>"));
