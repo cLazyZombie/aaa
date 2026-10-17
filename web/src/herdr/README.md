@@ -13,6 +13,7 @@
 | `osc52.ts` | `parseOsc52`: pane 프로그램의 OSC 52 클립보드 쓰기(질의는 거절, 100 KiB 상한) |
 | `keyBar.ts` | 키 막대 항목(기본 Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→), 저장값 거르기(`sanitizeKeyBarItems`), 키 이름 → bytes(`keyBarInputSequence`, DECCKM) |
 | `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
+| `draft.ts` | 끊긴 동안 친 글(붙잡은 입력): 글·붙여넣기를 모으고 Enter·줄바꿈은 빼서 알리며, 1024자 상한, 저장 기록은 24시간(`restoreDraft`) |
 | `terminalDraft.ts` | 입력줄 초안: 머신·pane마다 localStorage(32,768자 상한, 막히면 메모리). 보내는 동안 친 글은 두고 보낸 앞부분만 지운다 |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 

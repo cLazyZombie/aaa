@@ -34,6 +34,7 @@ import { KeyBar } from "./KeyBar";
 import { TerminalInput } from "./TerminalInput";
 import { setTerminalInputMode, useMedia, useTerminalInputMode } from "./settings";
 import { parseOsc52 } from "./herdr/osc52.ts";
+import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
@@ -45,6 +46,8 @@ const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
 /** 글 뒤 Enter까지 기다리는 시간(host의 brief·메시지 전달과 같다) */
 const ENTER_GAP_MS = 300;
+/** 붙잡은 입력이 있는 동안 다른 입력을 거절하는 말(herdr-web-ui PaneTerminal 1375줄) */
+const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
 /** 탭이 이만큼 가려져 있으면 「지금 쓰는 화면」을 놓는다(herdr-web-ui와 같은 1초) */
 const RELEASE_AFTER_MS = 1000;
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
@@ -134,6 +137,38 @@ export function TermView({
     setLineComposingState(active);
   }, []);
 
+  // 끊긴 동안 친 글(herdr-web-ui PaneTerminal 363~379·1356~1424줄, lib/draft.ts): 줄을 세워 몰래 다시 보내지 않고 붙잡아 두었다가
+  // 다시 붙으면 사람이 「보내기」·「버리기」를 고른다. Enter·줄바꿈은 붙잡지 않는다(보내기는 Enter를 누르지 않는다).
+  // 이 기기에 머신·pane마다 24시간 남는다(끊긴 동안 다시 열어도 잃지 않는다).
+  const draftKey = `herdr-web-ui:terminal-draft:${pane.machine}:${pane.id}`;
+  const [draft, setDraftState] = useState<InputDraft>(() => {
+    try {
+      return restoreDraft(localStorage.getItem(draftKey), Date.now());
+    } catch {
+      return EMPTY_DRAFT;
+    }
+  });
+  const draftRef = useRef(draft);
+  const setDraft = useCallback((next: (previous: InputDraft) => InputDraft) => {
+    draftRef.current = next(draftRef.current);
+    setDraftState(draftRef.current);
+  }, []);
+  useEffect(() => {
+    try {
+      if (draftIsEmpty(draft)) localStorage.removeItem(draftKey);
+      else localStorage.setItem(draftKey, JSON.stringify({ ...draft, at: Date.now() }));
+    } catch {
+      // private mode: 이 화면 동안만 남는다
+    }
+  }, [draft, draftKey]);
+  /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
+  const [inputError, setInputError] = useState<string | null>(null);
+  const ended = pane.state !== "running";
+  const canControlRef = useRef(canControl);
+  canControlRef.current = canControl;
+  const endedRef = useRef(ended);
+  endedRef.current = ended;
+
   const send = (m: TermClientMsg) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
@@ -165,6 +200,44 @@ export function TermView({
     for (let off = 0; off < bytes.length; off += CHUNK) {
       send({ t: "attach", offset: off, total: bytes.length, sha256, data: b64encode(bytes.subarray(off, off + CHUNK)) });
     }
+  };
+  /**
+   * 터미널로 가는 입력 하나(PaneTerminal onData 1353~1424줄). 붙잡은 입력이 있으면 글·⌫·Enter는 거기에 더하고
+   * chord·바뀐 Enter는 거절한다. ^C·Esc·Tab·화살표는 그대로 간다(중단은 붙잡은 입력을 기다리지 않는다).
+   * 입력할 수 없으면(host·agent 끊김, 붙는 중) 글은 붙잡고 chord는 「아직 키를 받을 수 없다」고 알린다.
+   */
+  const deliver = (data: string, how: { chord?: boolean; modifiedEnter?: boolean } = {}) => {
+    if (!canControlRef.current) return;
+    const pasted = pastingRef.current || data.startsWith("\x1b[200~");
+    if (!draftIsEmpty(draftRef.current)) {
+      if (how.chord || how.modifiedEnter || (pasted && applyToDraft(EMPTY_DRAFT, data) === EMPTY_DRAFT)) {
+        setInputError(HELD_FIRST);
+        return;
+      }
+      if (pasted || /[\r\n\x7f\b]/.test(data) || applyToDraft(EMPTY_DRAFT, data) !== EMPTY_DRAFT) {
+        setDraft((previous) => applyToDraft(previous, data));
+        return;
+      }
+    }
+    if (!readonlyRef.current) return input(data);
+    // 끝난 세션에는 아무것도 붙잡지 않는다
+    if (endedRef.current) return;
+    if (how.chord) {
+      setInputError("보내지 않았다: 터미널이 아직 키를 받을 수 없다.");
+      return;
+    }
+    setDraft((previous) => applyToDraft(previous, data));
+  };
+  const sendDraft = () => {
+    const text = draftRef.current.text;
+    if (readonlyRef.current || text.length === 0) return;
+    input(text);
+    setDraft(() => EMPTY_DRAFT);
+    setInputError(null);
+  };
+  const discardDraft = () => {
+    setDraft(() => EMPTY_DRAFT);
+    setInputError(null);
   };
   const attachRef = useRef(attachFile);
   attachRef.current = attachFile;
@@ -201,7 +274,7 @@ export function TermView({
   }, [pane.id]);
 
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
-  const fromTerminal = (data: string) => {
+  const fromTerminal = (data: string, modifiedEnter = false) => {
     if (!presentRef.current) return;
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
     // 화면 키보드는 keydown 없이 글을 넣는다: 한 글자 키에는 유지 키 chord를 붙인다(PaneTerminal 1360~1363줄)
@@ -210,9 +283,9 @@ export function TermView({
       const key = keyFromData(data);
       const chord = key !== null ? terminalChord(key, m) : null;
       const seq = chord !== null ? chordSequence(chord, chordCtx()) : null;
-      if (seq !== null) return input(seq);
+      if (seq !== null) return deliver(seq, { chord: true });
     }
-    input(data);
+    deliver(data, { modifiedEnter });
   };
 
   useEffect(() => {
@@ -313,7 +386,7 @@ export function TermView({
         if (navigation !== null) {
           if (event.type === "keydown") {
             event.preventDefault();
-            input(navigation);
+            deliver(navigation);
           }
           return false;
         }
@@ -325,7 +398,7 @@ export function TermView({
           if (event.type === "keydown") {
             event.preventDefault();
             const seq = chordSequence(chord, chordCtx());
-            if (seq !== null) input(seq);
+            if (seq !== null) deliver(seq, { chord: true });
           }
           return false;
         }
@@ -432,7 +505,11 @@ export function TermView({
     el.addEventListener("pointerdown", onPointer);
     termRef.current = term;
     fitRef.current = fit;
-    const dataSub = term.onData((data) => fromTerminal(remap(data)));
+    const dataSub = term.onData((data) => {
+      // Shift·Ctrl+Enter는 바꾸기 전에 가린다: 바뀐 꼴에는 줄바꿈이 없을 수 있다(PaneTerminal 1345~1347줄)
+      const modifiedEnter = enterAs !== null && data === "\r";
+      fromTerminal(remap(data), modifiedEnter);
+    });
     const binSub = term.onBinary((s) => {
       if (readonlyRef.current) return;
       const ws = wsRef.current;
@@ -673,7 +750,7 @@ export function TermView({
       (chord !== null ? chordSequence(chord, chordCtx()) : null) ??
       keyBarInputSequence(item.key, term.modes.applicationCursorKeysMode);
     if (seq === null) return;
-    input(seq);
+    deliver(seq, { chord: chord !== null });
     // 입력줄이면 키보드는 입력줄 것이다: 키를 눌러도 터미널로 옮기지 않는다
     if (!inputLineRef.current) term.focus();
   };
@@ -691,6 +768,8 @@ export function TermView({
   const sendTerminalLine = (value: string): false | Promise<true | string> => {
     const term = termRef.current;
     if (!term || readonlyRef.current) return false;
+    // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
+    if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     if (value.includes("\n")) {
       pastingRef.current = true;
       try {
@@ -712,6 +791,7 @@ export function TermView({
   };
   const pressEnter = (): boolean | string => {
     if (readonlyRef.current) return false;
+    if (!draftIsEmpty(draftRef.current)) return HELD_FIRST;
     const m = modifiersRef.current;
     const chord = hasModifiers(m) ? terminalChord("Enter", m) : null;
     input((chord !== null ? chordSequence(chord, chordCtx()) : null) ?? "\r");
@@ -756,8 +836,12 @@ export function TermView({
   }, [inputSlot]);
 
   let banner: string | null = null;
-  if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중(읽기 전용)" : "연결하는 중";
+  if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중";
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
+  // 끊긴 동안 붙잡은 글은 끊김 띠에 보이고, 다시 붙으면 따로 띠가 되어 보내기·버리기를 고른다(PaneTerminal 2777~2800줄)
+  const held = canControl && !draftIsEmpty(draft);
+  if (banner && held && ended) banner += " · 붙잡은 입력은 버렸다";
+  else if (banner && held && draft.text.length > 0) banner += ` · 붙잡은 입력: “${draft.text}”`;
 
   const locked = readonly;
   return (
@@ -800,6 +884,32 @@ export function TermView({
       {!banner && heldByOther && lease && (
         <div className="banner" data-testid="lease-banner">
           {lease.label}이 크기를 정하는 중{canControl && " · 입력하거나 터미널을 누르면 이 화면 크기로"}
+        </div>
+      )}
+      {!banner && held && !ended && (
+        <div className="banner draft" role="status" data-testid="draft-banner">
+          <span className="draft-label">터미널이 준비될 때까지 붙잡은 입력:</span>
+          {draft.text.length > 0 && <code className="draft-text">{draft.text}</code>}
+          {/* 앞부분만 보이면 끝을 잃은 입력도 온전해 보인다 */}
+          {draft.truncated && <span className="draft-note">붙잡지 못한 입력이 있어 뺐다.</span>}
+          {/* Enter는 붙잡지 않는다: 이것이 없으면 두 명령이 한 줄로, 붙여 넣은 글이 온전하게 보인다 */}
+          {draft.leftOut && <span className="draft-note">Enter·줄바꿈은 뺐다: 보내기는 Enter를 누르지 않는다.</span>}
+          <span className="draft-actions">
+            <button type="button" data-testid="draft-send" disabled={draft.text.length === 0 || readonly} onClick={sendDraft}>
+              보내기
+            </button>
+            <button type="button" className="ghost" data-testid="draft-discard" onClick={discardDraft}>
+              버리기
+            </button>
+          </span>
+        </div>
+      )}
+      {inputError && (
+        <div className="banner warn" role="status" data-testid="input-error">
+          {inputError}
+          <button type="button" className="ghost icon small" onClick={() => setInputError(null)} aria-label="닫기">
+            <Icon name="close" />
+          </button>
         </div>
       )}
       {error && <div className="banner err">{error}</div>}

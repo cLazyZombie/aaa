@@ -320,6 +320,21 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .banner.warn { background: var(--warn-bg); color: var(--warn); }
 .banner.err { background: var(--blocked-bg); color: var(--blocked); }
 .banner button { margin-left: auto; height: 26px; }
+/* 끊긴 동안 붙잡은 입력: 글과 두 단추(보내기·버리기) */
+.banner.draft { flex-wrap: wrap; }
+.banner.draft .draft-text {
+  font-family: var(--font-term);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.banner.draft .draft-note { color: var(--text-dim); }
+.banner.draft .draft-actions { margin-left: auto; display: flex; gap: var(--space-2); }
+.banner.draft .draft-actions button { margin-left: 0; }
 
 /* ── 연결(pairing) ─────────────────────────────────── */
 .pair-wrap { min-height: 100%; display: grid; place-items: center; padding: var(--space-6) var(--space-4); }

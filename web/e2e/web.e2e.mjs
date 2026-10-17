@@ -2296,14 +2296,47 @@ try {
     // 입력줄은 그대로 쓸 수 있고 보내기만 막힌다(herdr-web-ui TerminalInput: 끊겨도 쓰던 글은 두고 보내기만 거부)
     if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("끊겼는데 입력줄이 꺼졌다");
     if (!(await page.getByRole("button", { name: "보내기" }).isDisabled())) throw new Error("끊겼는데 보내기가 켜져 있다");
+    // 끊긴 동안 터미널에 친 글은 붙잡는다(herdr-web-ui lib/draft.ts): Enter는 붙잡지 않고 그 자리를 빈칸으로 둔다(참고 규칙)
+    await page.getByTestId("terminal").click();
+    await page.keyboard.type("echo held-$((2+3))");
+    await page.keyboard.press("Enter");
+    await until("끊김 띠에 붙잡은 입력", async () =>
+      (await page.getByTestId("readonly-banner").innerText()).includes("붙잡은 입력: “echo held-$((2+3)) ”"),
+    );
+    const stored = await page.evaluate(() =>
+      Object.keys(localStorage).filter((k) => k.startsWith("herdr-web-ui:terminal-draft:")).map((k) => JSON.parse(localStorage.getItem(k))),
+    );
+    if (stored.length !== 1 || stored[0].text !== "echo held-$((2+3)) " || stored[0].leftOut !== true)
+      throw new Error(`붙잡은 입력 저장: ${JSON.stringify(stored)}`);
     await shot(page, "desktop-disconnected");
   });
 
   await step("agent 복귀 → 다시 입력", async () => {
     start("agent2", "agent", "--host", "local", "--name", "labA");
     await until("배너 사라짐", async () => (await page.getByTestId("readonly-banner").count()) === 0);
+    // 다시 붙어도 붙잡은 입력은 저절로 가지 않는다: 띠에서 사람이 고른다. Enter를 뺐다고 알린다.
+    const draftBanner = page.getByTestId("draft-banner");
+    await draftBanner.waitFor();
+    const draftText = await draftBanner.innerText();
+    if (!draftText.includes("echo held-$((2+3))") || !draftText.includes("Enter·줄바꿈은 뺐다"))
+      throw new Error(`붙잡은 입력 띠: ${draftText}`);
+    if ((await screenText(page)).includes("held-5")) throw new Error("붙잡은 입력이 저절로 보내졌다");
+    // 붙잡은 입력이 있는 동안 입력줄 보내기는 거절한다(그 앞부분 없이 줄이 돌면 안 된다)
     await page.getByLabel("보낼 글").fill("echo again-$((9+1))");
-    await page.getByRole("button", { name: "보내기" }).click();
+    await page.getByRole("button", { name: "터미널에 보내기" }).click();
+    await until("먼저 보내거나 버리라는 말", async () =>
+      (await page.locator(".terminal-input-note").innerText()).includes("붙잡은 입력을 먼저 보내거나 버린다"),
+    );
+    if ((await page.getByLabel("보낼 글").inputValue()) !== "echo again-$((9+1))") throw new Error("거절된 입력줄 글이 사라졌다");
+    await page.getByTestId("draft-send").click();
+    await until("붙잡은 입력 띠 사라짐", async () => (await draftBanner.count()) === 0);
+    // 보내기는 Enter를 누르지 않는다: 글만 줄에 들어가 있다. Enter는 사람이 누른다.
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("Enter");
+    await until("붙잡은 입력 실행", async () => (await screenText(page)).includes("held-5"));
+    const left = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("herdr-web-ui:terminal-draft:")));
+    if (left.length !== 0) throw new Error(`보낸 뒤 저장이 남았다: ${left}`);
+    await page.getByRole("button", { name: "터미널에 보내기" }).click();
     await until("복귀 뒤 입력", async () => (await screenText(page)).includes("again-10"));
   });
 
