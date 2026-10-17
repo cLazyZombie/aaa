@@ -34,13 +34,18 @@ pub fn thread_key(t: &ThreadView) -> String {
     format!("{}/{}", t.project, t.id)
 }
 
-/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순) → 머신마다 새 셸·pane(평가자 제외) →
-/// 사후 평가자 pane(예전 상태 줄에 보이던 것, 웹 목록에는 없다)
+/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 묶음 차례 → 같은 묶음은 최근 바뀐 순) → 머신마다 새 셸·pane
+/// (평가자 제외) → 사후 평가자 pane(예전 상태 줄에 보이던 것, 웹 목록에는 없다)
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
     let mut out = vec![];
     let mut shown: Vec<&ThreadView> =
         threads.values().filter(|t| t.group != ThreadGroup::Resolved && t.role != Role::Evaluator).collect();
-    shown.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| thread_key(a).cmp(&thread_key(b))));
+    // herdr-projects 사이드바는 pane을 묶음 rank(`hp_rank` 표지)로 세운다: 사람 차례가 먼저다(`Group::DISPLAY_ORDER`)
+    shown.sort_by(|a, b| {
+        (a.group.rank().cmp(&b.group.rank()))
+            .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
+            .then_with(|| thread_key(a).cmp(&thread_key(b)))
+    });
     if !shown.is_empty() {
         out.push(Row::Header(format!("Thread {}", shown.len())));
         out.extend(shown.into_iter().map(|t| Row::Thread(thread_key(t))));
@@ -400,6 +405,61 @@ mod tests {
         assert_eq!(step(&r, 6, true), 6);
         assert_eq!(step(&r, 6, false), 3);
         assert_eq!(step(&r, 1, false), 1);
+    }
+
+    fn thread(id: &str, group: ThreadGroup, updated_at_ms: u64) -> ThreadView {
+        ThreadView {
+            project: "p".into(),
+            id: id.into(),
+            title: id.into(),
+            machine: "m".into(),
+            profile: "claude".into(),
+            role: Role::Worker,
+            thread_kind: aaa_proto::ThreadKind::Dir,
+            status: aaa_proto::ThreadStatus::Open,
+            group,
+            brief: aaa_proto::BriefState::Delivered,
+            pane: None,
+            cwd: None,
+            work_dir: None,
+            branch: None,
+            pr: None,
+            report_hash: None,
+            acked_hash: None,
+            next: vec![],
+            copy: None,
+            error: None,
+            agent: None,
+            created_at_ms: 0,
+            updated_at_ms,
+            warnings: vec![],
+        }
+    }
+
+    /// thread 줄은 묶음 차례(herdr-projects `DISPLAY_ORDER`: 사람 차례 → 검토 → 병합 중 → 작업 → 쉼)로, 같은 묶음 안은
+    /// 최근 바뀐 것이 먼저다(차이 목록 3장 C1). 끝난 thread는 목록에 없다
+    #[test]
+    fn threads_follow_the_display_order() {
+        let threads: HashMap<String, ThreadView> = [
+            thread("t-idle", ThreadGroup::Idle, 9),
+            thread("t-work-old", ThreadGroup::Working, 1),
+            thread("t-work-new", ThreadGroup::Working, 8),
+            thread("t-landing", ThreadGroup::Landing, 2),
+            thread("t-review", ThreadGroup::ReadyForReview, 3),
+            thread("t-you", ThreadGroup::WaitingOnYou, 4),
+            thread("t-done", ThreadGroup::Resolved, 10),
+        ]
+        .into_iter()
+        .map(|t| (thread_key(&t), t))
+        .collect();
+        let got: Vec<Row> = rows(&[], &[], &threads);
+        let want: Vec<Row> = std::iter::once(Row::Header("Thread 6".into()))
+            .chain(
+                ["t-you", "t-review", "t-landing", "t-work-new", "t-work-old", "t-idle"]
+                    .map(|id| Row::Thread(format!("p/{id}"))),
+            )
+            .collect();
+        assert_eq!(got, want);
     }
 
     /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
