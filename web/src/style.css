@@ -841,7 +841,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-pop); outline: none;
 }
 .settings-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4); }
-.settings-head h2 { margin: 0; font-size: 15px; }
+.settings-head h2 { flex: 1 1 auto; margin: 0; font-size: 15px; }
 .settings-body { overflow-y: auto; padding: 0 var(--space-4) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 .settings-section h3 { margin: 0 0 var(--space-2); font-size: 12px; font-weight: 600; color: var(--text-dim); }
 .settings-card { border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-elevated); }
@@ -850,6 +850,11 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .settings-row-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .settings-label { font-size: 13px; color: var(--text); }
 .settings-description { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+/* 키 바 편집(herdr/KeyBarSettings.css, 참고 그대로): 참고 styles.css의 token 중 aaa에 없는 것을 이 안에서만 둔다 */
+.key-bar-settings { --fs-xs: 12px; --fs-sm: 13px; --radius-sm: 6px; --radius-md: 8px; --touch-target: 40px; --hairline: 1px; }
+.settings-hint { margin: 0; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.settings-body.key-bar-body { padding-top: var(--space-2); }
+.settings-body[hidden] { display: none; }
 .settings-stepper { display: inline-flex; flex: 0 0 auto; align-items: center; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--bg); }
 .settings-stepper output { min-width: 3.5em; font-family: var(--font-term); font-size: 12px; text-align: center; }
 /* 핀치 중 글자 크기(가운데 잠깐) */

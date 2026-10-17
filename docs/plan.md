@@ -1544,6 +1544,13 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - **모든 웹 화면이 ACK한다.** 참고에서 ACK하지 않는 것은 `watch`(보기 전용 미리보기)다. aaa에는 그것이 없다. TUI(`front.rs`)는 바꾸지 않았다. herdr의 TUI는 herdr 자신이라 견줄 것이 없다.
 - **시험.** `cargo test -p aaa-host output`: 참고 시험 13개. 웹 E2E 「출력이 밀릴 때」: 400KB를 한 번에 쓰는 pane을 두 화면이 연다. ACK를 삼키는 화면(Playwright `routeWebSocket`)은 4008로 닫히고 띠가 뜬다. 닫히기 전에 snapshot을 다시 받지 않고, 닫힌 뒤 스스로 다시 붙지 않는다. ACK하는 화면은 끊기지 않고 끝까지 받는다. `flow=ack` 없이 붙은 옛 웹도 닫히지 않고 400KB를 다 받는다(host가 모든 연결을 ACK 화면으로 보게 바꾸면 이것이 4008로 닫혀 실패한다). 「다시 연결」을 누르면 새로 붙어 snapshot을 받고 입력도 간다. 시험이 가르는지 확인했다. host가 닫지 않게, 브라우저가 ACK하지 않게, 4008에도 다시 붙게 각각 바꾸면 이 단계가 실패한다.
 
+### 8.63 키 바 편집, 재연결 뒤 입력 모드(10-17, 차이 목록 「키 막대 항목 설정」·「화살표가 DECCKM을 따름」)
+
+- **키 바 편집.** herdr-web-ui `src/components/KeyBarSettings.tsx`·`.css`를 `web/src/herdr/`에 옮겼다(README 표에 줄 추가). 키 추가·삭제·순서, 고정 보조 키, 사용자 키 조합(최대 32개), 「기본값」이 참고와 같다. 문구는 참고 `i18n.ko`를 그대로 쓴다. 값은 기기마다 `localStorage` `aaa:keybar-items`에 두고, 읽을 때 `sanitizeKeyBarItems`로 거른다. 기본값과 같아지면 지운다. 다른 탭이 바꾼 것도 `storage` 사건으로 따른다.
+- **다른 곳(이유).** 참고는 설정 창 안 「키 바」 줄에서 편집 화면을 연다. aaa 설정 창(`SettingsDialog.tsx`)에도 같은 줄을 두고, 누르면 같은 창 안에서 편집 화면으로 바뀐다. 뒤로 단추와 Esc로 설정으로 돌아간다. 아이콘은 aaa `Icon`, 단추·select class는 aaa 것으로 바꿨다. 참고 CSS가 쓰는 디자인 토큰(`--fs-xs` 등)은 `.key-bar-settings` 안에서만 같은 값으로 정의했다.
+- **재연결 뒤 입력 모드.** 키 막대 화살표는 xterm의 DECCKM을 따른다(§8.48 무렵 옮김). 다시 붙을 때는 snapshot 재생(vt100 `state_formatted`)이 xterm에 모드를 되살려야 한다. `aaa-vt` 시험 `replay_restores_input_modes_in_a_fresh_vt`가 보통·대체 화면 모두에서 DECCKM·bracketed paste·마우스 보고(누름·놓음, SGR)가 새 vt에 되살아나고, 꺼진 DECCKM은 꺼진 채 오는지 본다. 고칠 것은 없었다.
+- **시험.** 웹 E2E 「키 바 편집」: 설정 → 「키 바 편집」에서 Esc를 지우고 Tab을 옮기고 PgUp을 더하고 Ctrl+← 조합을 더하면 키 막대가 그대로 바뀐다. 조합을 누르면 pane에 `ESC [1;5D`가 간다. 새로 고쳐도 남고, 「기본값」을 누르면 기본 키 막대로 돌아가며 저장값이 지워진다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

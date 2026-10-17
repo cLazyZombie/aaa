@@ -2,6 +2,7 @@
 // 참고는 「shared」 범위 값(구독 사용량 설정)을 server에 두어 기기끼리 나눈다. aaa에는 아직 설정 저장소가 없어
 // 모두 이 기기(localStorage)에 둔다(plan §8.45).
 import { useCallback, useSyncExternalStore } from "react";
+import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarItem } from "./herdr/keyBar.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
 export type TerminalInputMode = "auto" | "line" | "direct";
@@ -27,10 +28,11 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY) return;
   mode = read();
   fontSize = readFontSize();
   wheelSpeed = readWheelSpeed();
+  keyBarItems = readKeyBarItems();
   listeners.forEach((f) => f());
 });
 
@@ -109,6 +111,37 @@ export function setTerminalWheelSpeed(speed: number) {
 
 export function useTerminalWheelSpeed(): number {
   return useSyncExternalStore(subscribe, () => wheelSpeed);
+}
+
+/** 키 막대 항목(herdr-web-ui settings.ts `keyBarItems`: 기기마다, 기본 DEFAULT_KEY_BAR_ITEMS, 잘못된 저장값은 거른다) */
+const KEY_BAR_KEY = "aaa:keybar-items";
+
+function readKeyBarItems(): KeyBarItem[] {
+  try {
+    const raw = localStorage.getItem(KEY_BAR_KEY);
+    return sanitizeKeyBarItems(raw === null ? undefined : JSON.parse(raw));
+  } catch {
+    return DEFAULT_KEY_BAR_ITEMS;
+  }
+}
+
+let keyBarItems = readKeyBarItems();
+
+export function setKeyBarItems(items: readonly KeyBarItem[]) {
+  keyBarItems = sanitizeKeyBarItems(items);
+  const same = (a: readonly KeyBarItem[], b: readonly KeyBarItem[]) =>
+    a.length === b.length && a.every((item, i) => keyBarItemId(item) === keyBarItemId(b[i]!));
+  try {
+    if (same(keyBarItems, DEFAULT_KEY_BAR_ITEMS)) localStorage.removeItem(KEY_BAR_KEY);
+    else localStorage.setItem(KEY_BAR_KEY, JSON.stringify(keyBarItems));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function useKeyBarItems(): readonly KeyBarItem[] {
+  return useSyncExternalStore(subscribe, () => keyBarItems);
 }
 
 export function setTerminalInputMode(next: TerminalInputMode) {

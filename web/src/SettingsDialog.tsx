@@ -1,12 +1,14 @@
 // 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui MachineSidebar 바닥 줄 → SettingsDialog).
 // 참고 SettingsDialog(aa624cb)의 쪽 가운데 aaa가 뒷받침하는 묶음만 옮겼다: 터미널 「글자 크기」·「휠 스크롤 속도」·「입력 방식」(Terminal 쪽 395~409줄)과
 // 「구독 사용량」(Usage 쪽 UsagePage·UsageAccounts 570~631줄). 행·묶음·스위치·여럿 중 하나는 참고 SettingsControls.tsx와 같다.
-// 나머지 쪽(모양·chat·알림·기기·키 막대 편집 등)은 그 기능을 옮길 때 넣는다(plan §8.45).
-import { useEffect, useRef, type ReactNode } from "react";
+// 「키 바」 줄의 「키 바 편집」은 참고처럼 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
+// 나머지 쪽(모양·chat·알림·기기 등)은 그 기능을 옮길 때 넣는다(plan §8.45).
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ProviderUsage } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
+import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
 import {
   setTerminalFontSize,
   setTerminalInputMode,
@@ -197,14 +199,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const fontSize = useTerminalFontSize();
   const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
+  const [keyBarOpen, setKeyBarOpen] = useState(false);
+  const keyBarButton = useRef<HTMLButtonElement>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const wasKeyBar = useRef(false);
   useEffect(() => {
     surface.current?.focus();
+  }, []);
+  // 편집 화면에 들어가면 ← 에, 돌아오면 「키 바 편집」 단추에 focus(참고 1017~1023줄)
+  useEffect(() => {
+    if (keyBarOpen) backButton.current?.focus();
+    else if (wasKeyBar.current) keyBarButton.current?.focus();
+    wasKeyBar.current = keyBarOpen;
+  }, [keyBarOpen]);
+  useEffect(() => {
+    // Esc는 편집 화면이면 설정으로 돌아가고, 아니면 닫는다(참고 1052~1061줄)
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (keyBarOpen) setKeyBarOpen(false);
+      else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, keyBarOpen]);
   // 목록 바닥 줄의 단추 모양을 물려받지 않게 body에 둔다
   return createPortal(
     <div
@@ -213,14 +230,24 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <section ref={surface} className="modal settings-dialog" role="dialog" aria-modal="true" aria-label="설정" tabIndex={-1}>
+      <section ref={surface} className="modal settings-dialog" role="dialog" aria-modal="true" aria-label={keyBarOpen ? "키 바" : "설정"} tabIndex={-1}>
         <header className="settings-head">
-          <h2>설정</h2>
+          {keyBarOpen && (
+            <button type="button" ref={backButton} className="ghost icon" aria-label="설정으로 돌아가기" onClick={() => setKeyBarOpen(false)}>
+              <Icon name="back" />
+            </button>
+          )}
+          <h2>{keyBarOpen ? "키 바" : "설정"}</h2>
           <button type="button" className="ghost icon" aria-label="닫기" onClick={onClose}>
             <Icon name="close" />
           </button>
         </header>
-        <div className="settings-body">
+        {keyBarOpen && (
+          <div className="settings-body key-bar-body">
+            <KeyBarSettings />
+          </div>
+        )}
+        <div className="settings-body" hidden={keyBarOpen}>
           <SettingsGroup title="터미널">
             <SettingsRow label="글자 크기" description="이 기기의 모든 터미널. 터미널을 두 손가락으로 벌리거나 오므려도 바뀐다.">
               <Stepper
@@ -258,6 +285,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 <option value="direct">바로 입력</option>
                 <option value="line">입력줄</option>
               </select>
+            </SettingsRow>
+            {/* 참고 SettingsDialog 410~412줄(문구는 참고 i18n.ko.ts) */}
+            <SettingsRow label="키 바" description="터미널 키와 순서, 사용자 조합을 설정합니다.">
+              <button type="button" ref={keyBarButton} onClick={() => setKeyBarOpen(true)}>
+                키 바 편집
+              </button>
             </SettingsRow>
           </SettingsGroup>
           <UsageGroups />

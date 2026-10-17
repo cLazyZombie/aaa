@@ -1185,6 +1185,60 @@ try {
     await page.getByTestId("pane-t1").click();
   });
 
+  await step("키 바 편집(herdr-web-ui KeyBarSettings, 차이 목록 「키 막대 항목 설정」): 설정에서 키를 빼고·옮기고·더하고 조합을 만들면 터미널 키 막대가 바로 그 순서, 이 기기에 저장, 기본값으로 되돌리기", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "kbset", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await until("kbset 준비", () => aaa("pane", "read", "kbset").lines.join("\n").includes("s-200"));
+    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
+    await tp.getByTestId("pane-kbset").click();
+    await until("kbset 화면", async () => (await screenText(tp)).includes("s-200"));
+    const order = () => tp.locator(".key-bar .key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
+    const defaults = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+    if (JSON.stringify(await order()) !== JSON.stringify(defaults)) throw new Error(`처음 키 막대 ${await order()}`);
+    const openKeyBar = async () => {
+      await tp.getByTestId("settings-open").click();
+      await tp.getByRole("dialog", { name: "설정" }).getByRole("button", { name: "키 바 편집" }).click();
+      return tp.getByRole("dialog", { name: "키 바" });
+    };
+    const kb = await openKeyBar();
+    await kb.getByRole("button", { name: "Esc 제거" }).click();
+    await kb.getByRole("button", { name: "Tab 아래로 이동" }).click();
+    await kb.locator(".key-bar-settings-add select").selectOption("PageUp");
+    await kb.locator(".key-bar-settings-add").getByRole("button", { name: "키 추가" }).click();
+    // 사용자 조합: 기본 키 ←(처음 값)에 Ctrl
+    await kb.getByRole("group", { name: "조합에 사용할 보조 키" }).getByRole("button", { name: "Ctrl" }).click();
+    if ((await kb.locator(".key-bar-settings-preview").innerText()) !== "Ctrl+←") throw new Error(`조합 미리 보기 ${await kb.locator(".key-bar-settings-preview").innerText()}`);
+    await kb.getByRole("button", { name: "조합 추가" }).click();
+    await shot(tp, "tablet-key-bar-settings");
+    const combo = 'key:"ArrowLeft":100';
+    const want = ["direct", "ctrl-c", "Tab", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", combo];
+    // ← 는 설정으로, Esc는 닫기
+    await kb.getByRole("button", { name: "설정으로 돌아가기" }).click();
+    await tp.getByRole("dialog", { name: "설정" }).waitFor();
+    await tp.keyboard.press("Escape");
+    await until("설정 닫힘", async () => (await tp.locator(".settings-dialog").count()) === 0);
+    // 키 막대는 다시 열지 않아도 바로 바뀐다
+    await until("키 막대가 편집한 순서", async () => JSON.stringify(await order()) === JSON.stringify(want));
+    const stored = await tp.evaluate(() => JSON.parse(localStorage.getItem("aaa:keybar-items") ?? "null"));
+    if (!Array.isArray(stored) || stored.length !== want.length - 1) throw new Error(`저장 ${JSON.stringify(stored)}`);
+    // 저장한 조합은 그 보조 키로 간다(Ctrl+← = CSI 1;5D)
+    await tp.locator(".xterm-screen").click();
+    await tp.locator(`.key-bar .key[data-key='${combo}']`).click();
+    await until("Ctrl+← 받음", () => aaa("pane", "read", "kbset").lines.join("\n").includes('GOT:"\\u001b[1;5D"'));
+    // 다시 열어도 이 기기의 순서
+    await tp.reload();
+    await tp.getByTestId("pane-kbset").click();
+    await until("다시 연 키 막대", async () => JSON.stringify(await order()) === JSON.stringify(want));
+    // 기본값으로 되돌리기: 저장값을 지우고 참고 기본 배열
+    await (await openKeyBar()).getByRole("button", { name: "기본값으로 되돌리기" }).click();
+    await tp.keyboard.press("Escape");
+    await tp.keyboard.press("Escape");
+    await until("기본 키 막대", async () => JSON.stringify(await order()) === JSON.stringify(defaults));
+    if ((await tp.evaluate(() => localStorage.getItem("aaa:keybar-items"))) !== null) throw new Error("기본값인데 저장값이 남았다");
+    await shot(tp, "tablet-key-bar-defaults");
+    await tp.context().close();
+    aaa("pane", "kill", "kbset");
+  });
+
   await step("구독 사용량·설정(herdr-web-ui UsageMeters·SettingsDialog): 목록 아래 톱니와 Claude·Codex 칩(herdr-web-ui AgentMark), 펼치면 한도·초기화까지, 다른 구독은 묻지 않음, host는 5분 캐시, 설정에서 남은 양·세션·숨기기·순서·입력 방식", async () => {
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     const strip = dp.getByTestId("usage-strip");
