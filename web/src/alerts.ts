@@ -9,7 +9,7 @@ import { createAlertTurnPlayer } from "./herdr/alertTurns";
 import { showDroplet, type DropletKind } from "./herdr/droplet";
 import { pushTest } from "./api";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./push";
-import { alertSetting, setAlertSetting, useAlertSetting } from "./settings";
+import { alertPrefs, alertSetting, setAlertSetting, useAlertSetting } from "./settings";
 import { beforeAlertSound } from "./silentMode";
 
 export type NotificationState = "unsupported" | "default" | "granted" | "denied";
@@ -45,7 +45,7 @@ export async function enableAlerts(): Promise<boolean> {
   put({ notifications: next });
   if (next !== "granted") return false;
   try {
-    const endpoint = await ensurePushSubscription();
+    const endpoint = await ensurePushSubscription(alertPrefs());
     put({ pushOn: endpoint !== null });
     // the confirmation push proves the whole path (server -> push service -> this device)
     if (endpoint) await pushTest(endpoint);
@@ -75,12 +75,15 @@ export function useAlerts(): { bell: Bell; visible: boolean; offDot: boolean; no
   const s = useSyncExternalStore(subscribe, () => state);
   const alertsOn = useAlertSetting("alertsOn");
   const alertInApp = useAlertSetting("alertInApp");
+  const alertInput = useAlertSetting("alertInput");
+  const alertDone = useAlertSetting("alertDone");
   // a device that already allowed alerts re-registers on every load: idempotent, and it
-  // brings the device back if the server lost its subscriptions
+  // brings the device back if the server lost its subscriptions. Its alert choices go
+  // the same way (참고 App.tsx 652~668줄: `alerts`가 바뀌면 다시 등록)
   useEffect(() => {
     if (s.notifications !== "granted" || !alertsOn || !pushSupported()) return;
     let cancelled = false;
-    ensurePushSubscription()
+    ensurePushSubscription({ input: alertInput, done: alertDone })
       .then((endpoint) => {
         if (!cancelled) put({ pushOn: endpoint !== null });
       })
@@ -90,7 +93,7 @@ export function useAlerts(): { bell: Bell; visible: boolean; offDot: boolean; no
     return () => {
       cancelled = true;
     };
-  }, [s.notifications, alertsOn]);
+  }, [s.notifications, alertsOn, alertInput, alertDone]);
   // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
   // need none, so they count as on. A device that has not answered the permission question is
   // asked by the item; one that has answered gets a plain switch.
@@ -162,6 +165,8 @@ export interface Alert {
 /** 사건 하나를 이 기기에 알린다(켜 둔 길로만). 참고 App.tsx dropIn·chime·showPaneStatusNotification */
 export function raiseAlert(a: Alert) {
   if (!alertSetting("alertsOn")) return;
+  // 이 기기가 고른 종류만(참고 notify-policy.ts `alertsAllow`, 차이 목록 N3)
+  if (!alertSetting(a.kind === "blocked" ? "alertInput" : "alertDone")) return;
   const visible = document.visibilityState === "visible";
   // In-app alerts: only while the app is on screen, never for what is already in front of the user
   if (alertSetting("alertInApp") && visible && !a.showing) {

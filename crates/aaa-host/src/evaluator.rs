@@ -183,7 +183,7 @@ fn times(events: &[FlowEvent]) -> ThreadTimes {
                 t.last_report_ms = Some(e.at_ms);
                 t.reports += 1;
             }
-            // `merge_landed`는 병합 대기열이 있던 때의 기록이다(plan §8.117)
+            // `merge_landed`는 병합 대기열이 있던 때의 기록이다(plan §8.120)
             "pr_merged" | "merge_landed" => t.landed_ms = Some(e.at_ms),
             "thread_resolved" => t.resolved_ms = Some(e.at_ms),
             "thread_restarted" => t.restarts += 1,

@@ -1493,7 +1493,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .clone()
         .filter(|n| !n.is_empty())
         .or_else(|| Some(cfg.agent.name.clone()).filter(|n| !n.is_empty()))
-        .unwrap_or_else(aaa_common::util::hostname);
+        .unwrap_or_else(|| aaa_common::util::machine_name_from(&aaa_common::util::hostname()));
     let rt = runtime()?;
     if let Some(AgentCmd::Enroll { host, name: n }) = a.cmd {
         let name = n.unwrap_or(name);
