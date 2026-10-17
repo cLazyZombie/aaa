@@ -350,6 +350,63 @@ impl Lab {
     }
 }
 
+/// host가 front 연결로 밀어 주는 사건(thread 기록·질문·흐름 사건·pane 목록)을 받아 조건이 맞을 때까지 기다린다.
+/// 시간마다 다시 묻지 않고 사건이 올 때마다 조건을 본다. 받은 사건은 모두 남겨 두고 기다릴 때마다 처음부터 다시 본다
+/// (두 사건이 어느 순서로 와도 차례로 기다릴 수 있게). 조건에는 시각·ID처럼 그 사건만 고르는 것을 넣는다.
+pub struct Events {
+    rt: tokio::runtime::Runtime,
+    client: aaa_common::front::FrontClient,
+    log: Vec<aaa_proto::FrontEvent>,
+}
+
+impl Events {
+    pub fn connect(node: &Node) -> Events {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let client = rt.block_on(aaa_common::front::FrontClient::connect(&node.state)).expect("front 연결");
+        Events { rt, client, log: Vec::new() }
+    }
+
+    /// `f`가 Some을 내는 첫 사건(지금까지 받은 것부터)
+    pub fn wait<T>(&mut self, what: &str, timeout: Duration, f: impl FnMut(&aaa_proto::FrontEvent) -> Option<T>) -> T {
+        self.wait_from(0, what, timeout, f).1
+    }
+
+    /// `from`번째 받은 사건부터 본다. (그 사건의 번호, 값)을 돌려준다: 다음에는 번호 + 1부터 보면 사건을 차례로 받는다.
+    pub fn wait_from<T>(
+        &mut self,
+        from: usize,
+        what: &str,
+        timeout: Duration,
+        mut f: impl FnMut(&aaa_proto::FrontEvent) -> Option<T>,
+    ) -> (usize, T) {
+        if let Some((i, v)) = self.log.iter().enumerate().skip(from).find_map(|(i, e)| f(e).map(|v| (i, v))) {
+            return (i, v);
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let client = &mut self.client;
+            let got = self.rt.block_on(async { tokio::time::timeout_at(deadline, client.next()).await });
+            let e = match got {
+                Ok(Ok(Some(aaa_proto::FrontMsg::Event(e)))) => e,
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) => panic!("{what}: host 연결이 끊겼다"),
+                Ok(Err(e)) => panic!("{what}: {e:#}"),
+                Err(_) => panic!("{timeout:?} 안에 {what} 사건이 오지 않았다. 받은 사건:\n{:#?}", self.log),
+            };
+            let v = f(&e);
+            self.log.push(e);
+            if let Some(v) = v {
+                return (self.log.len() - 1, v);
+            }
+        }
+    }
+}
+
+/// 지금 시각(ms). 사건 조건에 「이 뒤에 생긴」을 넣을 때 쓴다(agent·host가 같은 시계로 적는다).
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
+}
+
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.
 pub fn wait_for<T>(what: &str, timeout: Duration, f: impl FnMut() -> Option<T>) -> T {
     wait_for_diag(what, timeout, f, String::new)
