@@ -1564,6 +1564,16 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 「찾아보기」 아이콘은 aaa `Icon`(돋보기)을 새로 그렸다(lucide를 쓰지 않는다).
 - **시험.** 웹 E2E 「터미널 글꼴」: 넣은 Meslotendard를 다른 주소에서 150% 크기로 받는 시험 글꼴 「E2E Wide」를 두고, 그 face는 0.8초 늦게 준다. 깔린 글꼴 목록은 Menlo·Helvetica·E2E Wide로 바꾼다. 찾아보기는 이름순이고 검색이 되며, Helvetica는 거절해 값이 그대로다. E2E Wide를 고르면 cell이 1.5배가 되고 grid와 host PTY 열 수가 준다. `'E2E Wide'; }, , Menlo`를 적고 Esc로 닫으면 `"E2E Wide", Menlo`로 저장된다. 다시 열어도 1.5배다. 비우고 Enter면 저장값이 지워지고 처음 cell·열 수로 돌아온다. face 기다림을 빼면 이 단계가 실패하는지 확인했다.
 
+### 8.65 보내는 동안 친 글 지키기: 입력줄 submit과 host 답(10-17, 차이 목록 「보내는 동안 친 글 지키기」)
+
+- **전에는.** 입력줄은 글을 `input`으로 보내고, 300ms 뒤 Enter를 따로 보낸 때를 「보냄」으로 쳐서 보낸 앞부분을 지웠다. host 답이 없어 pane이 받지 않았어도(끝난 세션, 끊긴 agent) 글이 사라졌다.
+- **옮긴 것(herdr-web-ui ws.ts `submit`·`submit-result`, TerminalInput 168~179줄, terminalDraft.ts).**
+  - 웹 → host `{"t":"submit","id","data"}` 하나로 보낸다. 여러 줄은 전처럼 터미널 붙여넣기 모양이다(줄바꿈은 CR, bracketed paste면 감쌈).
+  - host는 글을 쓰고 300ms 뒤 Enter를 쓴다(harness 메시지 전달과 같은 간격, Codex가 한 덩어리를 붙여넣기로 보는 문제). 둘 다 들어간 뒤 `{"t":"submitted","id","ok","message"}`로 답한다. 이 연결의 다음 입력은 Enter 뒤에 간다.
+  - 입력줄은 답이 올 때까지 글을 두고 보내기 단추를 잠근다. ok면 보낸 앞부분만 지운다. 그 사이 덧붙인 글은 남고, 글을 바꿨으면 지우지 않는다. 거절이면 「보내지 못했다: 이유」, 답 전에 연결이 닫히거나 90초가 지나면 「확인하지 못했다. 다시 보내기 전에 터미널을 본다」를 보이고 글을 둔다.
+- **다른 곳(이유).** 참고 submit의 `delivery`(queue·hold, chat 대기열)·`draft`·`box`(Claude 입력창 읽기)는 aaa에 그 기능이 없어 옮기지 않았다. 「다시 띄우기 전에 받은 옛 웹」은 submit을 보내지 않으므로 그대로 된다.
+- **시험.** 웹 E2E 「보내는 동안 친 글 지키기」: host 답을 route로 붙잡는다. 답 전에 글과 Enter가 이미 pane에 있고, 입력줄 글은 남고 단추는 잠겨 있다. 그 사이 덧붙인 「 더」만 답 뒤에 남는다. 바꾼 글은 지우지 않는다. 거절 답이면 이유와 글이 남는다. 답 전에 끊기면 「확인하지 못했다」. 끝난 pane에 보낸 submit은 host가 `ok:false`, 「세션이 끝났다」로 답한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
