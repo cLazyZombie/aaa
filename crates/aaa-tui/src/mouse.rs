@@ -990,7 +990,7 @@ impl App {
     }
 
     /// 휠: 탭 막대는 앞·뒤 탭, 펼친 목록은 한 줄씩. pane 안쪽은 포커스를 옮기고 마우스 보고면 넘기고, 보고를 끈 alt 화면이면
-    /// 화살표 하나(herdr `apply_scroll`). 보통 화면의 기록 넘기기는 copy 모드 묶음.
+    /// 화살표 하나, 아니면 이 화면의 기록을 넘긴다(herdr `apply_scroll`). herdr처럼 scrollbar 칸 위 휠은 아무것도 하지 않는다.
     async fn wheel(
         &mut self,
         x: u16,
