@@ -1,8 +1,9 @@
 // herdr-web-ui(MIT, aa624cb) src/components/KeyBar.tsx를 옮긴 것. 바꾼 곳: lucide 아이콘·i18n 대신 aaa 글(한국어 이름표),
-// CSS는 style.css(.key-bar·.key). 입력줄 전환(⌨)은 D1(입력 방식)과 함께 넣는다. 고지는 web/src/herdr/README.md.
+// CSS는 style.css(.key-bar·.key). 맨 앞 입력줄 전환(⌨)은 터치 기기에만(Term.tsx가 넘긴다). 고지는 web/src/herdr/README.md.
 import { useCallback, useLayoutEffect, useRef, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 
 import type { KeyBarExtra, KeyBarKey, StickyModifiers } from "./herdr/keys.ts";
+import { Icon } from "./icons";
 import { keyBarItemId, keyBarItemLabel, type KeyBarItem, type KeyBarKeyItem } from "./herdr/keyBar.ts";
 import { createKeyRepeat, isRepeatableKeyBarItem, type KeyRepeat } from "./herdr/keyRepeat.ts";
 
@@ -218,7 +219,7 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
       {/* first: on a narrow cover screen the row scrolls, and the mode toggle must not be the key cut off */}
       {onToggleDirect && (
         <Key disabled={disabled || directDisabled} dataKey="direct" label={t("Input line")} pressed={!directTyping} onPress={onToggleDirect}>
-          <span aria-hidden="true">⌨</span>
+          <Icon name="keyboard" />
         </Key>
       )}
       {items.map((item) => {

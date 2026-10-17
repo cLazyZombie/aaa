@@ -4,7 +4,7 @@
 // - focus를 얻거나 다시 보이면, 또는 터미널을 누르거나 입력하면 이 화면이 지금 쓰는 화면이 되어 크기를 다시 건다.
 // - 탭이 1초 넘게 가려지면 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
@@ -31,6 +31,8 @@ import {
 import { DEFAULT_KEY_BAR_ITEMS, keyBarInputSequence, sanitizeKeyBarItems, type KeyBarKeyItem } from "./herdr/keyBar.ts";
 import { chordSequence, IS_MAC } from "./keyChord";
 import { KeyBar } from "./KeyBar";
+import { TerminalInput } from "./TerminalInput";
+import { setTerminalInputMode, useMedia, useTerminalInputMode } from "./settings";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -43,8 +45,6 @@ const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
 /** 글 뒤 Enter까지 기다리는 시간(host의 brief·메시지 전달과 같다) */
 const ENTER_GAP_MS = 300;
-/** 조합 중에 누른 보내기가 글자 확정을 기다리는 시간(herdr-web-ui TerminalInput COMMIT_WAIT_MS와 같다) */
-const COMMIT_WAIT_MS = 300;
 /** 탭이 이만큼 가려져 있으면 「지금 쓰는 화면」을 놓는다(herdr-web-ui와 같은 1초) */
 const RELEASE_AFTER_MS = 1000;
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
@@ -110,25 +110,6 @@ export function TermView({
   const [size, setSize] = useState<[number, number]>([pane.cols, pane.rows]);
   // 글꼴이 바뀌어 cell 크기가 달라지면 자동 맞추기를 다시 한다
   const [fontGen, setFontGen] = useState(0);
-  // 쓰다 만 글은 pane마다 이 탭에 남긴다(휴대폰에서 앱을 내렸다 올려도, 다른 pane을 봤다 와도 그대로)
-  const draftKey = `aaa:draft:${pane.id}`;
-  const [text, setTextState] = useState(() => {
-    try {
-      return sessionStorage.getItem(draftKey) ?? "";
-    } catch {
-      return "";
-    }
-  });
-  const setText = (v: string) => {
-    setTextState(v);
-    try {
-      if (v) sessionStorage.setItem(draftKey, v);
-      else sessionStorage.removeItem(draftKey);
-    } catch {
-      // 저장소를 못 쓰는 브라우저면 남기지 않는다
-    }
-  };
-  const textRef = useRef<HTMLTextAreaElement>(null);
   const [me, setMe] = useState<string | null>(null);
   const [lease, setLease] = useState<LeaseView | null>(pane.lease);
   const [attach, setAttach] = useState<{ text: string; ok: boolean } | null>(null);
@@ -139,6 +120,19 @@ export function TermView({
   const canControl = role !== "reader";
   // 다른 front가 지금 쓰는 화면이다(이 연결의 ID를 받기 전에는 판단하지 않는다). 입력은 막지 않는다.
   const heldByOther = me !== null && lease !== null && lease.front !== me;
+  // 입력 방식(herdr-web-ui PaneTerminal 358~361줄): 기본은 바로 입력, 입력줄은 이 기기의 선택이다.
+  const directTyping = useTerminalInputMode() !== "line";
+  const inputLine = !directTyping && !(chatView && chatable) && canControl;
+  const inputLineRef = useRef(inputLine);
+  inputLineRef.current = inputLine;
+  const coarse = useMedia("(pointer: coarse)");
+  // 입력줄 조합 중: ⌨ 전환 단추만 기다린다(키 막대는 그대로 쓴다)
+  const lineComposingRef = useRef(false);
+  const [lineComposing, setLineComposingState] = useState(false);
+  const setLineComposing = useCallback((active: boolean) => {
+    lineComposingRef.current = active;
+    setLineComposingState(active);
+  }, []);
 
   const send = (m: TermClientMsg) => {
     const ws = wsRef.current;
@@ -658,34 +652,6 @@ export function TermView({
     if (dims && dims.cols > 0 && dims.rows > 0) send({ t: "resize", cols: dims.cols, rows: dims.rows });
   };
 
-  // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다.
-  // 여러 줄은 터미널 붙여넣기로 보낸다: 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다(xterm.js).
-  // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다.
-  //
-  // 조합 중에 누른 보내기(herdr-web-ui TerminalInput과 같다): 단추는 focus를 가져가지 않으므로 글자가 확정되지 않는다.
-  // 입력칸을 blur·focus해 확정시키고(키보드는 그대로), compositionend 뒤(WebKit은 그 뒤 input 사건으로 값을 바꾼다)
-  // 확정된 글을 보낸다. 누른 때부터 COMMIT_WAIT_MS 안에 확정되지 않으면 보내지 않고 알린다.
-  const composingRef = useRef(false);
-  const attemptRef = useRef<{ timer: number | null; deadline: number; textSend: boolean } | null>(null);
-  const clearAttempt = () => {
-    const a = attemptRef.current;
-    if (a?.timer != null) window.clearTimeout(a.timer);
-    attemptRef.current = null;
-  };
-  const awaitCommit = (a: { timer: number | null; deadline: number }) => {
-    if (a.timer !== null) window.clearTimeout(a.timer);
-    a.timer = null;
-    const left = a.deadline - Date.now();
-    const giveUp = () => {
-      attemptRef.current = null;
-      setAttach({ text: "글자를 마친 뒤 보낸다", ok: false });
-    };
-    if (left <= 0) return giveUp();
-    setAttach({ text: "글자를 마치는 중…", ok: true });
-    a.timer = window.setTimeout(() => {
-      if (attemptRef.current === a) giveUp();
-    }, left);
-  };
   // 키 막대(herdr-web-ui PaneTerminal 2218~2245줄). 항목은 기기별 저장값(설정 화면은 아직 없다), 없으면 참고 기본 배열.
   const [barItems] = useState(() => {
     try {
@@ -708,64 +674,86 @@ export function TermView({
       keyBarInputSequence(item.key, term.modes.applicationCursorKeysMode);
     if (seq === null) return;
     input(seq);
-    // 입력칸에서 치던 중이면 키보드는 그 칸에 둔다. 아니면 터미널이 받는다.
-    if (document.activeElement !== textRef.current) term.focus();
+    // 입력줄이면 키보드는 입력줄 것이다: 키를 눌러도 터미널로 옮기지 않는다
+    if (!inputLineRef.current) term.focus();
   };
   const toggleModifier = (modifier: keyof StickyModifiers) => {
     if (composingTermRef.current) return;
     setModifiers((m) => ({ ...m, [modifier]: !m[modifier] }));
-    if (document.activeElement !== textRef.current) termRef.current?.focus();
+    if (!inputLineRef.current) termRef.current?.focus();
   };
 
-  const sendText = (enter: boolean, deferred = false) => {
-    const current = attemptRef.current;
-    if (deferred && current === null) return;
-    if (composingRef.current) {
-      if (deferred) return awaitCommit(current!);
-      clearAttempt();
-      // 마지막 렌더가 아니라 입력칸 값을 읽는다: 방금 확정된 글이 아직 렌더되지 않았을 수 있다
-      const tapped = { timer: null, deadline: Date.now() + COMMIT_WAIT_MS, textSend: (textRef.current?.value ?? text).length > 0 };
-      attemptRef.current = tapped;
-      const el = textRef.current;
-      if (el && document.activeElement === el) {
-        el.blur();
-        el.focus({ preventScroll: true });
-      }
-      // 누르는 사이 확정됐으면(Chrome) compositionend가 이미 보내기를 걸었다
-      if (composingRef.current && attemptRef.current === tapped) awaitCommit(tapped);
-      return;
-    }
-    clearAttempt();
-    setAttach((a) => (a?.text.startsWith("글자를 마") ? null : a));
-    const value = textRef.current?.value ?? text;
-    // 지우거나 취소해 비어 버린 글 보내기는 Enter가 아니다
-    if (deferred && current!.textSend && !value) return;
+  // 입력줄(herdr-web-ui PaneTerminal 2318~2373줄 `sendTerminalLine`·`pressEnter`·`toggleDirect`).
+  // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다
+  // (참고는 server가 이 간격을 둔다). 여러 줄은 터미널 붙여넣기로 보낸다: 프로그램이 bracketed paste를 켰으면 감싸고,
+  // 줄바꿈은 CR로 바꾼다(xterm.js). 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다.
+  // 입력줄 글은 유지 키를 붙이지 않고 바로 간다.
+  const sendTerminalLine = (value: string): false | Promise<true | string> => {
+    const term = termRef.current;
+    if (!term || readonlyRef.current) return false;
     if (value.includes("\n")) {
       pastingRef.current = true;
       try {
-        termRef.current?.paste(value);
+        term.paste(value);
       } finally {
         pastingRef.current = false;
       }
-    }
-    else if (value) input(value);
-    if (enter) {
-      if (value) window.setTimeout(() => input("\r"), ENTER_GAP_MS);
-      else input("\r");
-    }
-    // 입력칸이 focus를 지킨다: 화면 키보드가 다음 줄을 위해 그대로 남는다(herdr-web-ui와 같다)
-    setText("");
+    } else input(value);
+    term.scrollToBottom();
+    // aaa 입력에는 host 확인 답이 없다(참고는 server의 submit 답을 기다린다). Enter까지 보낸 때를 「보냄」으로 친다:
+    // 그 사이 친 글은 줄에 남는다(terminalDraft가 보낸 앞부분만 지운다).
+    return new Promise((resolve) =>
+      window.setTimeout(() => {
+        if (readonlyRef.current) return resolve("Enter를 보내지 못했다: 터미널 연결이 끊겼다");
+        input("\r");
+        resolve(true);
+      }, ENTER_GAP_MS),
+    );
   };
-  const sendRef = useRef(sendText);
-  sendRef.current = sendText;
-
-  // 입력칸은 글 줄 수만큼(최대 6줄) 늘어난다
+  const pressEnter = (): boolean | string => {
+    if (readonlyRef.current) return false;
+    const m = modifiersRef.current;
+    const chord = hasModifiers(m) ? terminalChord("Enter", m) : null;
+    input((chord !== null ? chordSequence(chord, chordCtx()) : null) ?? "\r");
+    termRef.current?.scrollToBottom();
+    return true;
+  };
+  const toggleDirect = () => {
+    if (composingTermRef.current || lineComposingRef.current) return;
+    setTerminalInputMode(directTyping ? "line" : "direct");
+  };
+  // 입력줄은 터미널을 눌러도 키보드를 올리지 않게 한다. 바로 입력으로 돌리면 키보드를 돌려준다.
+  // 바로 입력을 켤 때만 올린다: 켜진 채 pane을 고른 것으로는 올리지 않는다.
+  const directTypingRef = useRef(directTyping);
   useEffect(() => {
-    const el = textRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 20)}px`;
-  }, [text]);
+    const turnedOn = directTyping && !directTypingRef.current;
+    directTypingRef.current = directTyping;
+    const textarea = termRef.current?.textarea;
+    if (!textarea) return;
+    if (inputLine) {
+      textarea.setAttribute("inputmode", "none");
+      if (document.activeElement === textarea) textarea.blur();
+    } else {
+      textarea.removeAttribute("inputmode");
+      if (coarse && turnedOn) termRef.current?.focus();
+    }
+  }, [inputLine, coarse, directTyping, pane.id]);
+
+  // 입력줄은 터미널 마지막 줄 위에 떠서 자란다. 터미널 위끝까지만 자란다(--terminal-input-room, TerminalInput.css).
+  const [inputSlot, setInputSlot] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const surface = scrollRef.current;
+    if (!surface || !inputSlot) return;
+    const measure = () => {
+      const room = inputSlot.getBoundingClientRect().bottom - surface.getBoundingClientRect().top;
+      inputSlot.style.setProperty("--terminal-input-room", `${Math.max(0, Math.floor(room))}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    observer.observe(inputSlot);
+    return () => observer.disconnect();
+  }, [inputSlot]);
 
   let banner: string | null = null;
   if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중(읽기 전용)" : "연결하는 중";
@@ -824,106 +812,46 @@ export function TermView({
         </div>
       )}
       {chatView && chatable && <ChatPanel pane={pane.id} />}
-      {/* data-direct-typing: aaa 터미널은 늘 바로 입력이라 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
-      <div className="term-scroll" ref={scrollRef} hidden={chatView && chatable} data-direct-typing="">
+      {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
+      <div className="term-scroll" ref={scrollRef} hidden={chatView && chatable} data-direct-typing={inputLine ? undefined : ""}>
         <div className="term-box" ref={box} data-testid="terminal" />
       </div>
       {dock}
-      {canControl && (
-        <form
-          className="input-bar"
-          onSubmit={(e) => {
-            e.preventDefault();
-            sendText(true);
-          }}
-        >
-          <div className="composer">
-            <button
-              type="button"
-              className="ghost icon"
-              disabled={locked}
-              onClick={() => fileRef.current?.click()}
-              aria-label="그림"
-              title="그림을 대상 머신에 올리고 입력창에 경로를 넣는다"
-            >
-              <Icon name="image" />
-            </button>
-            <textarea
-              ref={textRef}
-              rows={1}
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                // 비운 입력칸에는 기다리는 보내기가 보낼 것이 없다
-                if (!e.target.value) clearAttempt();
-              }}
-              onCompositionStart={() => {
-                composingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                composingRef.current = false;
-                const a = attemptRef.current;
-                if (a === null) return;
-                if (a.timer !== null) window.clearTimeout(a.timer);
-                a.timer = null;
-                // WebKit은 compositionend 뒤 input 사건으로 값을 고친다: 그 뒤 확정된 글을 보낸다
-                window.setTimeout(() => sendRef.current(true, true));
-              }}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                // 한글 등 조합 중의 Enter는 글자를 확정할 뿐이다
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                // 터치 기기(화면 키보드)는 Enter가 줄바꿈이고 보내기는 단추로 한다. 데스크톱은 Shift+Enter가 줄바꿈이다.
-                if (e.shiftKey || e.altKey || window.matchMedia("(hover: none)").matches) return;
+      {/* 입력줄은 그리드 마지막 줄 위에 뜬다. 흐름에는 한 줄 높이만 두어 자라도 PTY 크기를 바꾸지 않는다(PaneTerminal 3008~3016줄) */}
+      {inputLine && (
+        <div ref={setInputSlot} className="terminal-input-slot">
+          <TerminalInput
+            key={pane.id}
+            owner={`${pane.machine}:${pane.id}`}
+            connected={!locked}
+            onComposing={setLineComposing}
+            onSend={sendTerminalLine}
+            onEnter={pressEnter}
+            onFocus={() => autoFit.current(true)}
+            onImage={() => fileRef.current?.click()}
+            onPaste={(e) => {
+              const f = imageOf(e.clipboardData.files);
+              if (f) {
                 e.preventDefault();
-                sendText(true);
-              }}
-              onPaste={(e) => {
-                const f = imageOf(e.clipboardData.files);
-                if (f) {
-                  e.preventDefault();
-                  void attachFile(f);
-                }
-              }}
-              placeholder={
-                locked
-                  ? "입력할 수 없다"
-                  : window.matchMedia("(hover: none)").matches
-                    ? "글을 쓰고 보내기 단추로 보낸다"
-                    : "글을 쓰고 Enter로 보낸다(Shift+Enter 줄바꿈)"
+                void attachFile(f);
               }
-              enterKeyHint="enter"
-              disabled={locked}
-              aria-label="보낼 글"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <button
-              type="submit"
-              className="primary send"
-              disabled={locked}
-              aria-label="보내기"
-              title="보내기(Enter)"
-              // 화면 키보드는 다음 줄을 위해 그대로 둔다(herdr-web-ui와 같다): 단추가 focus를 가져가지 않는다
-              onPointerDown={(e) => e.preventDefault()}
-            >
-              <Icon name="send" />
-            </button>
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            hidden
-            data-testid="attach-file"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) void attachFile(f);
             }}
           />
-        </form>
+        </div>
+      )}
+      {canControl && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          hidden
+          data-testid="attach-file"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void attachFile(f);
+          }}
+        />
       )}
       {canControl && (
         <KeyBar
@@ -933,6 +861,7 @@ export function TermView({
           onToggleModifier={toggleModifier}
           disabled={locked || composing}
           holdScope={pane.id}
+          {...(coarse ? { directTyping, onToggleDirect: toggleDirect, directDisabled: lineComposing } : {})}
         />
       )}
     </section>

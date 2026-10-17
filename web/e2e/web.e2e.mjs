@@ -297,7 +297,8 @@ const softKeyboard = (page, visible) =>
   }, visible);
 const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["insert", result]]);
 
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init } = {}) {
+// line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -308,6 +309,13 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   });
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   if (init) await ctx.addInitScript(init);
+  // 모든 frame에서 돈다: sandbox frame(결과물 보기)은 localStorage를 읽기만 해도 던진다
+  if (line)
+    await ctx.addInitScript(() => {
+      try {
+        localStorage.setItem("aaa:terminal-input-mode", "line");
+      } catch {}
+    });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
@@ -592,7 +600,8 @@ try {
     await ctx.close();
   });
 
-  const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+  // 입력줄을 쓰는 단계가 많아 이 화면은 입력줄로 둔다. 기본(바로 입력)은 「입력 방식」 단계가 본다.
+  const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { line: true });
   const page = ctl.page;
 
   await step("controller: 키보드 입력", async () => {
@@ -690,7 +699,8 @@ try {
     const bar = tp.locator(".key-bar");
     if (!(await bar.isVisible())) throw new Error("터치 기기에 키 막대가 없다");
     const order = await bar.locator(".key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
-    const want = ["Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+    // 터치 기기는 맨 앞에 ⌨(입력줄 전환, KeyBar.tsx 200~205줄)
+    const want = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
     if (JSON.stringify(order) !== JSON.stringify(want)) throw new Error(`키 순서 ${order}`);
     const key = (k) => bar.locator(`.key[data-key="${k}"]`);
     await tp.locator(".xterm-screen").click();
@@ -797,6 +807,99 @@ try {
     await page.getByTestId("pane-t1").click();
   });
 
+  await step("입력 방식(herdr-web-ui terminalInputMode): 기본은 바로 입력, 터치 기기 ⌨로 입력줄, 입력줄은 키보드를 안 올리고 PTY 크기를 안 바꾼다, Enter 보내기·빈 Enter, 조합 중엔 ⌨만 회색", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "lineapp", "--", process.execPath, `${root}/bar.js`);
+    // [일련번호, 받은 조각]
+    const lines = () =>
+      aaa("pane", "read", "lineapp")
+        .lines.map((l) => /^GOT:(\d+):(.*)$/.exec(l))
+        .filter(Boolean)
+        .map((m) => [Number(m[1]), JSON.parse(m[2])]);
+    const last = () => Math.max(0, ...lines().map(([i]) => i));
+    const since = (n) =>
+      lines()
+        .filter(([i]) => i > n)
+        .map(([, d]) => d);
+    const size = () => {
+      const x = aaa("pane", "list").panes.find((q) => q.name === "lineapp");
+      return `${x.cols}x${x.rows}`;
+    };
+    const bad = [];
+    // 데스크톱 기본: 입력줄이 없다(바로 입력)
+    const desk = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 });
+    await desk.page.getByTestId("pane-lineapp").click();
+    await until("bar 화면(데스크톱)", async () => (await screenText(desk.page)).includes("bar>"));
+    if ((await desk.page.locator(".terminal-input").count()) !== 0) bad.push("데스크톱 기본에 입력줄이 있다");
+    await desk.page.context().close();
+    // 터치 기기 기본: 바로 입력. 키 막대 맨 앞 ⌨는 꺼져 있고 xterm 칸이 화면 키보드를 올린다
+    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
+    await tp.getByTestId("pane-lineapp").click();
+    await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
+    const toggle = tp.locator('.key-bar .key[data-key="direct"]');
+    const first = await tp.locator(".key-bar .key").first().getAttribute("data-key");
+    if (first !== "direct") bad.push(`키 막대 맨 앞이 ⌨가 아니다: ${first}`);
+    if ((await toggle.getAttribute("aria-pressed")) !== "false") bad.push("기본인데 ⌨가 켜져 있다");
+    if ((await tp.locator(".terminal-input").count()) !== 0) bad.push("터치 기본에 입력줄이 있다");
+    if ((await tp.locator(".term-scroll[data-direct-typing]").count()) !== 1) bad.push("바로 입력인데 data-direct-typing이 없다");
+    const helper = tp.locator("textarea.xterm-helper-textarea");
+    // ⌨ → 입력줄. xterm 칸은 화면 키보드를 올리지 않는다(inputmode=none)
+    await toggle.click();
+    await tp.locator(".terminal-input").waitFor();
+    if ((await toggle.getAttribute("aria-pressed")) !== "true") bad.push("입력줄인데 ⌨가 꺼져 있다");
+    if ((await helper.getAttribute("inputmode")) !== "none") bad.push(`입력줄인데 xterm inputmode ${await helper.getAttribute("inputmode")}`);
+    if ((await tp.locator(".term-scroll[data-direct-typing]").count()) !== 0) bad.push("입력줄인데 data-direct-typing이 있다");
+    if ((await tp.evaluate(() => localStorage.getItem("aaa:terminal-input-mode"))) !== "line") bad.push("입력 방식이 이 기기에 저장되지 않았다");
+    const line = tp.getByLabel("보낼 글");
+    const sendBtn = tp.locator(".terminal-input-send");
+    // 글 + Enter: 글 다음 Enter가 따로 간다
+    let n = last();
+    await line.fill("echo hi");
+    await line.press("Enter");
+    await until("입력줄 Enter", () => since(n).join("") === "echo hi\r");
+    if ((await line.inputValue()) !== "") bad.push("보낸 뒤 입력줄에 글이 남았다");
+    // 빈 입력줄의 보내기는 Enter만. 단추 이름도 Enter다. 유지 Alt는 붙는다(PaneTerminal pressEnter)
+    if ((await sendBtn.getAttribute("aria-label")) !== "터미널에 Enter 보내기") bad.push(`빈 줄 단추 ${await sendBtn.getAttribute("aria-label")}`);
+    n = last();
+    await sendBtn.click();
+    await until("빈 Enter", () => since(n).join("") === "\r");
+    await tp.locator('.key-bar .key[data-key="Alt"]').click();
+    n = last();
+    await sendBtn.click();
+    await until("Alt + 빈 Enter", () => since(n).join("") === "\x1b\r");
+    await tp.locator('.key-bar .key[data-key="Alt"]').click();
+    // 키 막대 키는 입력줄의 키보드를 터미널로 옮기지 않는다
+    await line.focus();
+    n = last();
+    await tp.locator('.key-bar .key[data-key="Escape"]').click();
+    await until("Esc", () => since(n).join("") === "\x1b");
+    if (!(await line.evaluate((el) => el === document.activeElement))) bad.push("키 막대 키가 입력줄의 focus를 가져갔다");
+    // 입력줄이 4줄까지 자라도 PTY 크기는 그대로다(그리드 위에 뜬다)
+    const before = size();
+    const box0 = await tp.locator(".term-scroll").boundingBox();
+    await line.fill("1\n2\n3\n4\n5\n6");
+    await sleep(800);
+    if ((await line.getAttribute("rows")) !== "4") bad.push(`여섯 줄 입력줄 rows ${await line.getAttribute("rows")}`);
+    const box1 = await tp.locator(".term-scroll").boundingBox();
+    if (size() !== before || Math.abs(box1.height - box0.height) > 0.5) bad.push(`입력줄이 자라며 터미널이 줄었다: ${before} → ${size()}, 높이 ${box0.height} → ${box1.height}`);
+    await line.fill("");
+    // 입력줄 조합 중에는 ⌨만 회색이고 키 막대는 그대로다
+    await line.dispatchEvent("compositionstart", { data: "" });
+    await sleep(100);
+    if (!(await toggle.isDisabled())) bad.push("입력줄 조합 중에 ⌨가 켜져 있다");
+    if (await tp.locator('.key-bar .key[data-key="Escape"]').isDisabled()) bad.push("입력줄 조합 중에 키 막대가 꺼졌다");
+    await line.dispatchEvent("compositionend", { data: "" });
+    await sleep(100);
+    // ⌨를 다시 누르면 바로 입력: 입력줄이 사라지고 터미널이 키보드를 받는다
+    await toggle.click();
+    await until("입력줄 사라짐", async () => (await tp.locator(".terminal-input").count()) === 0);
+    if ((await helper.getAttribute("inputmode")) !== null) bad.push("바로 입력인데 xterm inputmode가 남았다");
+    if (!(await helper.evaluate((el) => el === document.activeElement))) bad.push("바로 입력을 켰는데 터미널이 focus를 받지 않았다");
+    if (bad.length) throw new Error(bad.join("; "));
+    await tp.context().close();
+    aaa("pane", "kill", "lineapp");
+    await page.getByTestId("pane-t1").click();
+  });
+
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "keysapp", "--", process.execPath, `${root}/keys.js`);
     const got = () => aaa("pane", "read", "keysapp").lines.join("\n");
@@ -868,7 +971,7 @@ try {
   });
 
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 놓는다", async () => {
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 });
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
     const op = other.page;
     const t1size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
@@ -996,7 +1099,7 @@ try {
     aaa("pane", "kill", "burst");
   });
 
-  await step("composer: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰 Enter는 줄바꿈", async () => {
+  await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "pasteapp", "--", process.execPath, `${root}/paste.js`);
     const got = () => aaa("pane", "read", "pasteapp").lines.join("\n");
     const gots = () => got().split("GOT:").length - 1;
@@ -1034,7 +1137,7 @@ try {
     {
       const line = page.getByLabel("보낼 글");
       const send = page.getByRole("button", { name: "보내기" });
-      const banner = () => page.getByTestId("attach-banner").evaluateAll((els) => els[0]?.textContent ?? null);
+      const banner = () => page.locator(".terminal-input-note").evaluateAll((els) => els[0]?.textContent ?? null);
       const since = () => got().split('GOT:"MARK"').at(-1);
       const mark = async () => {
         aaa("pane", "send", "pasteapp", "--text", "MARK");
@@ -1098,22 +1201,20 @@ try {
       if (since().includes("GOT:")) throw new Error(`기한 넘은 조합을 보냈다: ${since()}`);
       await line.fill("");
     }
-    // 휴대폰(터치): Enter는 줄바꿈, 보내기는 단추
-    const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    // 휴대폰(터치)도 Enter는 보내기다(herdr-web-ui TerminalInput: enterKeyHint="send", Shift+Enter만 줄바꿈)
+    const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { line: true });
     await mob.page.getByTestId("pane-pasteapp").click();
     const mbox = mob.page.getByLabel("보낼 글");
     // 연결(snapshot)되기 전에는 읽기 전용이다: 화면이 온 뒤에 본다
     await until("휴대폰 paste 화면", async () => (await screenText(mob.page)).includes("paste>"));
     // 데스크톱 화면이 쓰는 중이어도 가져오기 없이 입력된다
     if (await mbox.isDisabled()) throw new Error("휴대폰 입력 막대가 꺼져 있다");
+    if ((await mbox.getAttribute("enterkeyhint")) !== "send") throw new Error(`휴대폰 enterkeyhint ${await mbox.getAttribute("enterkeyhint")}`);
     n = gots();
     await mbox.fill("휴대폰");
     await mbox.press("Enter");
-    await sleep(500);
-    if (gots() !== n || (await mbox.inputValue()) !== "휴대폰\n")
-      throw new Error(`휴대폰 Enter: ${JSON.stringify(await mbox.inputValue())} · 받은 것 ${got().split("GOT:").slice(n + 1).join(" | ")}`);
-    await mob.page.getByRole("button", { name: "보내기" }).click();
-    await until("휴대폰 보내기", () => got().includes("휴대폰"));
+    await until("휴대폰 Enter로 보냄", () => got().includes('GOT:"휴대폰"') && gots() >= n + 2);
+    if ((await mbox.inputValue()) !== "") throw new Error(`휴대폰 보낸 뒤 글이 남았다: ${JSON.stringify(await mbox.inputValue())}`);
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();
     aaa("pane", "kill", "pasteapp");
@@ -1291,7 +1392,7 @@ try {
         await p.getByTestId(`pane-${pane}`).click();
         await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
         // 다른 화면이 쓰던 pane이어도 터미널을 누르고 바로 친다
-        await until("입력 막대", async () => p.getByLabel("보낼 글").isEnabled());
+        await until("입력 가능", async () => (await p.getByTestId("readonly-banner").count()) === 0);
         await p.locator(".xterm-screen").click();
         if (keyboard) await keyboard(p);
         for (const [how, type, want] of ways) {
@@ -1738,13 +1839,22 @@ try {
         const name = `kb-${dev}`;
         aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
         const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { touch: true, init })).page;
+        const direct = p.locator('.key-bar .key[data-key="direct"]');
         await p.getByTestId(`pane-${name}`).click();
         await until("키보드 화면", async () => (await screenText(p)).includes("kb-line-199"));
         await sleep(500);
-        const before = aaa("pane", "list").panes.find((x) => x.name === name);
+        let before = aaa("pane", "list").panes.find((x) => x.name === name);
         for (const field of ["terminal", "input-bar"]) {
+          // 터미널은 바로 입력(기본)에서, 입력줄은 ⌨로 입력줄을 켠 뒤 본다
           if (field === "terminal") await p.locator(".xterm-screen").tap();
-          else await p.getByLabel("보낼 글").focus();
+          else {
+            // 입력줄 칸(한 줄)이 흐름에 들어와 그리드가 한 번 줄어든다(참고와 같다). 키보드가 바꾸는지는 그 뒤부터 본다.
+            await direct.tap();
+            await p.locator(".terminal-input").waitFor();
+            await sleep(800);
+            before = aaa("pane", "list").panes.find((x) => x.name === name);
+            await p.getByLabel("보낼 글").focus();
+          }
           // 화면 키보드가 올라온다: 보이는 높이만 줄고(iOS Safari) 레이아웃은 그대로다
           await softKeyboard(p, viewport.height - kb);
           await sleep(600);
@@ -1758,7 +1868,7 @@ try {
               visible: window.visualViewport.height,
               app: document.querySelector(".app")?.getBoundingClientRect().height,
               cursor: cur ? { top: cur.top, bottom: cur.bottom } : null,
-              input: bottom(".input-bar textarea"),
+              input: bottom(".terminal-input-text"),
               keys: bottom(".key-bar"),
               scroll: window.scrollY,
             };
@@ -1772,7 +1882,8 @@ try {
           // 터미널 영역(입력 막대 위) 안에 보여야 한다: 영역 밖이면 잘려 보이지 않는다
           else if (!seen.area || seen.cursor.top < seen.area.top - 0.5 || seen.cursor.bottom > seen.area.bottom + 0.5)
             bad.push(`${at}: 커서 줄이 터미널 영역 밖이다 ${JSON.stringify(seen.cursor)} ∉ ${JSON.stringify(seen.area)}`);
-          if (seen.input === null || seen.input > vis + 0.5) bad.push(`${at}: 입력 막대 아래 ${seen.input} > ${vis}`);
+          if (field === "input-bar" && (seen.input === null || seen.input > vis + 0.5)) bad.push(`${at}: 입력줄 아래 ${seen.input} > ${vis}`);
+          if (field === "terminal" && seen.input !== null) bad.push(`${at}: 바로 입력인데 입력줄이 있다`);
           if (seen.keys === null || seen.keys > vis + 0.5) bad.push(`${at}: 키 막대 아래 ${seen.keys} > ${vis}`);
           if (rows.cols !== before.cols || rows.rows !== before.rows) bad.push(`${at}: 키보드에 PTY 크기가 바뀌었다 ${before.cols}x${before.rows} → ${rows.cols}x${rows.rows}`);
           // 키보드가 내려간다
@@ -2083,7 +2194,9 @@ try {
       (await page.getByTestId("readonly-banner").innerText()).includes("agent와 연결이 끊겼다"),
     );
     await page.getByText("실행·끊김(읽기 전용)").first().waitFor();
-    if (!(await page.getByLabel("보낼 글").isDisabled())) throw new Error("끊겼는데 입력 막대가 켜져 있다");
+    // 입력줄은 그대로 쓸 수 있고 보내기만 막힌다(herdr-web-ui TerminalInput: 끊겨도 쓰던 글은 두고 보내기만 거부)
+    if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("끊겼는데 입력줄이 꺼졌다");
+    if (!(await page.getByRole("button", { name: "보내기" }).isDisabled())) throw new Error("끊겼는데 보내기가 켜져 있다");
     await shot(page, "desktop-disconnected");
   });
 
