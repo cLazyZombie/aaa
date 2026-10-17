@@ -2125,6 +2125,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고대로.** herdr-web-ui `src/components/PromptCard.tsx`: 누르는 동안 카드 `aria-busy`, 선택지 `disabled={pending}`, 오류는 카드 안 `role="alert"`. 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다(`shown`). 모양은 `PromptCard.css` `[aria-busy="true"]` 선택지 흐림, `.prompt-card-error` 색.
 - **시험.** 웹 E2E 「확인창 답이 실패하면 카드 안에 보인다」: 휴대폰 제어 화면에서 「Esc to cancel」 없는 확인창에 「예」 → 누른 순간 `aria-busy=true`·선택지 막힘 → host 오류 답 → 카드 안 alert(「터미널에서 직접 답한다」)·선택지 풀림(`phone-question-error`). 기다림은 그 요청의 답과 MutationObserver다.
 
+### 8.91 목록 줄 메뉴와 고정을 herdr-web-ui대로(10-18, 차이 목록 2장 L9·L10, 결정 D5)
+
+- **참고대로.** herdr-web-ui `src/components/RowMenu.tsx`(그대로 옮김, `web/src/RowMenu.tsx`·`herdr/RowMenu.css`·`herdr/menu.css`), `Sidebar.tsx` `onRowContextMenu`·`menuItems`, `AgentSidebar.tsx` 고정 메뉴·`refocusPin`, `lib/sidebarPins.ts` `splitPinnedRows`.
+  - 여는 법: 마우스 데스크톱은 줄 오른쪽 클릭(누른 자리에, focus는 옮기지 않음), 터치·좁은 화면은 줄 끝 ⋯ 단추(휴대폰은 아래 sheet, 시스템 「뒤로」로 닫힘). 메뉴는 첫 항목에 focus, 화살표·Home·End, Esc·바깥 누름·Tab으로 닫히고 연 곳으로 focus가 돌아간다.
+  - pane 줄: 「pane 고정/고정 해제」 → 「pane 닫기」(확인 창, 참고 「Close pane {name}?」). 끝난 pane은 닫는 대신 「다시 열기」(`pane_resume`)와 「기록 지우기」(확인 창, `pane_forget`). 실패는 줄 아래 한 줄(참고 `sidebar-inline-error`), 확인 창의 실패는 창 안.
+  - Agents 줄: 「에이전트 고정/고정 해제」 하나(참고 AgentSidebar).
+  - 고정 열쇠는 참고 Agents와 같은 `machine:pane`(`sidebarPinKey`)이다. 그래서 pane 하나를 고정하면 머신 목록과 Agents 양쪽에서 맨 앞 「고정됨」 카드에 핀 표시와 함께 선다. 고정은 host 공유 문서(plan §8.79)로 다른 기기에도 간다. 고정하면 줄이 다른 목록으로 옮겨 가므로, 메뉴를 연 줄(머신 목록·Agents 중 연 쪽)로 focus를 되돌린다.
+- **aaa에만 있는 것.** 프로젝트 머리 메뉴: 「프로젝트 thread 보기」(끝난 것까지, §8.89)와 「접기/펼치기」(참고 worktree 묶음의 fold). thread 줄 메뉴: 「보고」와 「프로젝트 thread 보기」(thread 줄은 누르면 agent pane을 연다).
+- **아직 없는 것.** pane 이름 바꾸기는 host·agent에 그 요청이 없어 다음 묶음(proto·agent·host·CLI)으로 넘긴다. 줄 끌어 옮기기(참고 workspaceOrder)도 다음 묶음.
+- **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
+- **시험.** 웹 E2E 「줄 메뉴」: 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

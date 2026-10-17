@@ -352,8 +352,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const r = await call({ op: "question_answer", id: q.id, choice });
     if (r.kind === "question") putQuestion(r);
   };
+  // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로).
+  // 그 thread를 연 주소 바꿈이 아닌 다른 이동(앱 안 알림·브라우저 뒤로·직접 친 주소)이면 돌아갈 곳을 잊는다
+  const [backTo, setBackTo] = useState<string | null>(null);
+  const openedHash = useRef<string | null>(null);
   useEffect(() => {
-    const on = () => setSel(selectedFromHash());
+    const on = () => {
+      if (location.hash !== openedHash.current) setBackTo(null);
+      openedHash.current = null;
+      setSel(selectedFromHash());
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
@@ -362,11 +370,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
   };
-  // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로)
-  const [backTo, setBackTo] = useState<string | null>(null);
   const chooseThread = (t: ThreadView, from: string | null = null) => {
     setBackTo(from);
-    location.hash = `thread=${encodeURIComponent(threadKey(t))}`;
+    openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;
+    location.hash = openedHash.current;
     setSel(`thread:${threadKey(t)}`);
   };
   const chooseProject = (name: string | null) => {
@@ -439,6 +446,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onPane={(id) => choose(id)}
           onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
+          onProject={chooseProject}
           banners={
             <>
               {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}

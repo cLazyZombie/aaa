@@ -116,6 +116,16 @@ const hashIs = (p, hash, ms = 20_000) =>
     [hash, ms],
   );
 
+// focus 기다림: focusin 사건으로 끝낸다(focus는 DOM을 바꾸지 않아 MutationObserver로는 못 본다)
+const focusIs = (p, what, sel, ms = 20_000) =>
+  p.evaluate(`new Promise((done, fail) => {
+    const ok = () => document.activeElement?.matches(${JSON.stringify(sel)}) === true;
+    if (ok()) return done();
+    const on = () => { if (ok()) { clearTimeout(stuck); removeEventListener("focusin", on, true); done(); } };
+    const stuck = setTimeout(() => { removeEventListener("focusin", on, true); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}에 focus가 오지 않았다`)} + ": " + (document.activeElement?.outerHTML ?? "").slice(0, 160))); }, ${ms});
+    addEventListener("focusin", on, true);
+  })`);
+
 function freePort() {
   return new Promise((resolve) => {
     const s = net.createServer();
@@ -5039,6 +5049,97 @@ try {
     await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
     await closed;
     await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("줄 메뉴(herdr-web-ui RowMenu·Sidebar menuItems·AgentSidebar, 차이 목록 2장 L9·L10): 데스크톱은 오른쪽 클릭·휴대폰은 ⋯ sheet, 고정은 맨 앞 카드로 가고 다른 기기에도(host 공유 문서), pane 닫기·기록 지우기는 확인 창, 끝난 pane은 다시 열기, 프로젝트 머리에서 프로젝트 thread 보기", async () => {
+    const pinWrote = (p) =>
+      p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set").then((r) => r.request().postDataJSON());
+    const opDone = (p, op) => p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === op);
+    const rowOf = (p, name) => p.locator(".machine-list li[data-pin-key]", { has: p.getByTestId(`pane-${name}`) });
+    const menuItems = (p) => p.getByRole("menu").locator('[role="menuitem"]').allInnerTexts();
+    // 1. 데스크톱: 오른쪽 클릭 → 첫 항목에 focus, 차례는 참고대로 고정 → 닫기
+    const key = await rowOf(page, "t1").getAttribute("data-pin-key");
+    await page.getByTestId("pane-t1").click({ button: "right" });
+    await focusIs(page, "메뉴 첫 항목", '[role="menu"] [role="menuitem"]');
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
+    if ((await page.locator(".machine-list .row-menu-toggle").first().isVisible())) throw new Error("마우스 데스크톱에 ⋯ 단추가 보인다(참고는 오른쪽 클릭)");
+    await page.keyboard.press("Escape");
+    await domIs(page, "Esc로 메뉴 닫힘", () => !document.querySelector('[role="menu"]'));
+    // 고정: 맨 앞 카드에 핀 표시와 함께, host 공유 문서에 그 열쇠
+    await page.getByTestId("pane-t1").click({ button: "right" });
+    const sent = pinWrote(page);
+    await page.getByRole("menuitem", { name: "pane 고정" }).click();
+    if (!(await sent).pins?.includes(key)) throw new Error(`고정이 host로 가지 않았다: ${JSON.stringify(await sent)}`);
+    await domIs(page, "고정 카드", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"] .sidebar-pin-mark`) !== null, key);
+    await shot(page, "desktop-row-pinned");
+    // 2. 휴대폰(다른 기기): 고정이 와 있고, ⋯ sheet에서 푼다 → 데스크톱에서도 풀린다
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    await domIs(ph.page, "다른 기기의 고정 카드", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) !== null, key);
+    await ph.page.locator(`.machine-list .sidebar-pinned [data-pin-key="${key}"] .row-menu-toggle`).click();
+    const sheet = ph.page.getByRole("dialog", { name: "t1" });
+    await sheet.waitFor();
+    // 아래에서 올라오는 움직임이 끝난 뒤 찍는다(움직임의 finished, 시간 기다림 없음)
+    await sheet.evaluate((el) => Promise.all(el.closest(".modal-scrim").getAnimations({ subtree: true }).map((a) => a.finished)));
+    await shot(ph.page, "phone-row-menu");
+    const unsent = pinWrote(ph.page);
+    await sheet.getByRole("button", { name: "pane 고정 해제" }).click();
+    if ((await unsent).pins?.includes(key)) throw new Error("고정 해제가 host로 가지 않았다");
+    await domIs(page, "데스크톱에서도 풀림", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) === null && document.querySelector(`.machine-list [data-pin-key="${k}"]`) !== null, key);
+    if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    await ph.page.context().close();
+    // 3. pane 닫기: 확인 창(취소에 focus) → 닫으면 줄이 사라진다
+    aaa("tab", "create", "--machine", "labA", "--label", "rowclose", "--", "/bin/sh", "-c", "read x");
+    await page.getByTestId("pane-rowclose").waitFor();
+    await page.getByTestId("pane-rowclose").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "pane 닫기" }).click();
+    const ask = page.getByRole("alertdialog").filter({ hasText: "rowclose pane을 닫을까요?" });
+    await ask.waitFor();
+    await focusIs(page, "확인 창 취소", '[role="alertdialog"] .modal-footer .btn:not(.btn-danger)');
+    const closed = opDone(page, "pane_close");
+    await ask.getByRole("button", { name: "pane 닫기" }).click();
+    await closed;
+    await domIs(page, "닫은 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowclose"]'));
+    if (aaa("pane", "list").panes.some((x) => x.name === "rowclose")) throw new Error("닫은 pane이 host에 남았다");
+    // 4. 끝난 pane: 다시 열기 → 돈다, 다시 끝내고 기록 지우기(확인 창) → 줄이 사라진다
+    aaa("tab", "create", "--machine", "labA", "--label", "rowend", "--", "/bin/sh", "-c", "read x");
+    await page.getByTestId("pane-rowend").waitFor();
+    const endedRow = () => document.querySelector('li.is-ended:has([data-testid="pane-rowend"])') !== null;
+    aaa("pane", "kill", "rowend");
+    await domIs(page, "끝난 pane", endedRow);
+    await page.getByTestId("pane-rowend").click({ button: "right" });
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "다시 열기", "기록 지우기"])) throw new Error(`끝난 pane 메뉴 ${await menuItems(page)}`);
+    const resumed = opDone(page, "pane_resume");
+    await page.getByRole("menuitem", { name: "다시 열기" }).click();
+    if (!(await (await resumed).json()).ok) throw new Error("다시 열기 실패");
+    await domIs(page, "다시 연 pane이 돈다", () => document.querySelector('li:has([data-testid="pane-rowend"])') !== null && document.querySelector('li.is-ended:has([data-testid="pane-rowend"])') === null);
+    aaa("pane", "kill", "rowend");
+    await domIs(page, "다시 끝난 pane", endedRow);
+    await page.getByTestId("pane-rowend").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "기록 지우기" }).click();
+    const forget = page.getByRole("alertdialog").filter({ hasText: "rowend pane 기록을 지울까요?" });
+    await forget.waitFor();
+    const forgot = opDone(page, "pane_forget");
+    await forget.getByRole("button", { name: "지우기" }).click();
+    await forgot;
+    await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
+    // 5. 프로젝트 머리: 프로젝트 thread 보기(끝난 것까지, plan §8.89)
+    await page.getByTestId("project-labA-demo").locator(".workspace-header").click({ button: "right" });
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["프로젝트 thread 보기", "접기"])) throw new Error(`프로젝트 메뉴 ${await menuItems(page)}`);
+    const toDemo = hashIs(page, "#project=demo");
+    await page.getByRole("menuitem", { name: "프로젝트 thread 보기" }).click();
+    await toDemo;
+    // 프로젝트에서 연 보고의 「뒤로」는 그 프로젝트, 다른 길(앱 안 알림·주소)로 간 thread는 목록으로
+    const toReport = hashIs(page, "#thread=demo%2Ft-0001");
+    await page.getByTestId("project-thread-t-0001").click();
+    await toReport;
+    if ((await page.getByTestId("thread-back").getAttribute("aria-label")) !== "demo 프로젝트로") throw new Error("프로젝트에서 연 보고의 뒤로");
+    const other = aaa("thread", "list", "demo").threads.find((t) => t.id !== "t-0001" && t.role !== "evaluator").id;
+    const toOther = hashIs(page, `#thread=demo%2F${other}`);
+    await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${other}`);
+    await toOther;
+    await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
