@@ -442,7 +442,6 @@ pub fn now_ms() -> u64 {
 }
 
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.
-
 pub fn wait_for<T>(what: &str, timeout: Duration, f: impl FnMut() -> Option<T>) -> T {
     wait_for_diag(what, timeout, f, String::new)
 }
