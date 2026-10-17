@@ -35,8 +35,12 @@ test("고정 sleep을 더하지 않고, 줄면 기준을 낮춘다", () => {
 
 test("기준은 origin/main보다 올리지 않는다", (t) => {
   const git = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
-  const base = git("merge-base", "HEAD", "origin/main");
-  // CI의 얕은 checkout에는 origin/main이 없다: 그때는 위 시험(기준 파일)만 본다
+  // CI(ubuntu, 이력을 모두 받음)는 AAA_SLEEP_BASE로 기준을 준다: main push면 그 전 main, 그 밖에는 origin/main(ci.yml).
+  // 주었으면 건너뛰지 않는다. 얕은 checkout에서는 늘 건너뛰어 CI가 이 검사를 한 번도 하지 않았다(10-18 감사)
+  const given = process.env.AAA_SLEEP_BASE ?? "";
+  const base = git("merge-base", "HEAD", given || "origin/main");
+  if (base.status !== 0 && given) assert.fail(`AAA_SLEEP_BASE=${given}와 HEAD가 갈라진 곳을 찾지 못했다(이력을 받지 않은 checkout?): ${base.stderr.trim()}`);
+  // 기준을 주지 않은 얕은 checkout(macOS·Windows CI job)에는 origin/main이 없다: 그때는 위 시험(기준 파일)만 본다
   if (base.status !== 0) return t.skip("origin/main이 없다(얕은 checkout)");
   const json = git("show", `${base.stdout.trim()}:${BASELINE}`);
   if (json.status !== 0) return t.skip("이 branch가 갈라진 곳에는 기준 파일이 아직 없다");
