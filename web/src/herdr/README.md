@@ -19,7 +19,7 @@
 | `wheelSteps.ts` | 한 손가락 끌기를 휠 걸음으로(`wheelSteps`·`finalStep`, plan §8.55) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 
-구독 표시 `AgentMark`(plan §8.49): `agentMark.ts`·`AgentMark.css`는 `src/lib/agentMark.ts`·`src/components/AgentMark.css`를 그대로, `AgentMark.tsx`는 `src/components/AgentMark.tsx`에서 `ClaudeMark`·`CodexMark`·`FallbackMark`·`AgentMarkProps`를 바꾸지 않고 옮겼다(나머지 agent 표시와 `agentSvgMarks.ts`는 aaa가 보이지 않아 옮기지 않았다). 참고는 이 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표다.** aaa는 구독 이름을 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.
+agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`·`agentMark.ts`는 `src/components/AgentMark.tsx`·`src/components/AgentMark.css`·`src/lib/agentMark.ts`를 그대로 옮겼다(`AgentMark.tsx`는 import 경로만). `agentSvgMarks.ts`는 `src/components/agentSvgMarks.ts`에서 droid(Factory favicon)·maki(maki.sh favicon) 두 줄만 뺐다. 참고가 그 출처의 사용 허락을 적지 않아서다. 그 agent는 머리글자 표시(FallbackMark)로 보인다. 참고는 Claude·Codex·Cursor·OpenCode·omp·gjc·omo 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. `agentSvgMarks.ts`의 나머지는 LobeHub Icons(`@lobehub/icons-static-svg`, 아래 MIT)다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표이며, 그 밖의 표시도 각 소유자의 것이다.** aaa는 pane에서 도는 agent를 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.
 
 그대로 복사하지 못하고 옮긴 파일(import·문구만 바꿈, 고지는 같다): `web/src/herdr/pinchFontSize.ts`(← `src/lib/pinchFontSize.ts`, settings import 경로만), `web/src/usage.ts`(← `src/lib/usage.ts`), `web/src/UsageMeters.tsx`(← `src/components/UsageMeters.tsx`), `web/src/TerminalInput.tsx`, `web/src/KeyBar.tsx`, `web/src/SettingsDialog.tsx`(← `SettingsDialog.tsx`·`SettingsControls.tsx` 일부). host `crates/aaa-host/src/usage.rs`는 `server/usage.ts`를 Rust로 옮긴 것이다(plan §8.45).
 
@@ -29,6 +29,32 @@ aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `matchHerdrWidt
 MIT License
 
 Copyright (c) 2026 devswha
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+LobeHub Icons(`agentSvgMarks.ts`):
+
+```
+MIT License
+
+Copyright (c) 2023 LobeHub
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -35,6 +35,7 @@ import { TerminalInput } from "./TerminalInput";
 import { setTerminalFontSize, setTerminalInputMode, useMedia, useTerminalFontSize, useTerminalInputMode } from "./settings";
 import { pinchFontSize } from "./herdr/pinchFontSize.ts";
 import { matchHerdrWidths } from "./herdr/terminalWidths.ts";
+import { AgentMark } from "./herdr/AgentMark.tsx";
 import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSteps.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
@@ -90,6 +91,7 @@ export function TermView({
   role,
   onBack,
   title,
+  agent,
   crumb,
   status,
   dock,
@@ -99,6 +101,8 @@ export function TermView({
   onBack: () => void;
   /** 목록과 같은 이름(thread pane이면 thread 제목) */
   title?: string;
+  /** pane에서 도는 coding agent(머리 제목 앞 표시, herdr-web-ui App.tsx 1402줄) */
+  agent?: string | null;
   crumb?: string;
   status?: ReactNode;
   /** 입력 위에 붙는 질문 카드 */
@@ -1204,7 +1208,10 @@ export function TermView({
           <Icon name="back" />
         </button>
         <div className="term-title">
-          <strong>{title ?? (pane.name || pane.id)}</strong>
+          <span className="term-title-line">
+            {agent && <AgentMark agent={agent} size={18} />}
+            <strong>{title ?? (pane.name || pane.id)}</strong>
+          </span>
           <span className="muted">
             {crumb ?? pane.machine} · {size[0]}×{size[1]}
           </span>

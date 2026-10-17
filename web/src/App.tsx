@@ -12,6 +12,7 @@ import { ApiError, call, me, pair, watchEvents } from "./api";
 import { TermView } from "./Term";
 import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
+import { AgentMark, hasAgentMark } from "./herdr/AgentMark.tsx";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { setThemePref, useScheme, type ThemePref } from "./theme";
@@ -196,12 +197,30 @@ const threadKey = (t: ThreadView) => `${t.project}/${t.id}`;
 const shortPath = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, "~");
 
 /** 목록 앞 표시: harness 종류 */
-function harnessOf(p: PaneView, t?: ThreadView): string {
-  const h = (p.agent?.harness ?? t?.profile ?? p.argv[0] ?? "").toLowerCase();
-  if (h.includes("claude")) return "claude";
-  if (h.includes("codex")) return "codex";
-  if (p.agent || t) return "agent";
-  return "shell";
+/**
+ * pane에서 도는 coding agent의 이름(herdr의 `pane.agent`처럼 표시 이름): hook이 알린 harness, thread profile, 명령 이름 순으로
+ * 본다. 표시가 있는 이름(herdr/AgentMark `hasAgentMark`)이거나 claude·codex가 든 이름(`claude-opus` profile, 경로 붙은 명령)이면
+ * 그 이름이다. 그 밖의 agent는 그 harness 이름(FallbackMark 머리글자), agent가 아니면 null(셸, 터미널 표시).
+ */
+function agentOf(p: PaneView | undefined, t?: ThreadView): string | null {
+  for (const raw of [p?.agent?.harness, t?.profile, p?.argv[0]]) {
+    const name = (raw ?? "").toLowerCase().split("/").pop() ?? "";
+    if (!name) continue;
+    if (hasAgentMark(name)) return name;
+    if (name.includes("claude")) return "claude";
+    if (name.includes("codex")) return "codex";
+  }
+  if (p?.agent || t) return p?.agent?.harness || t?.profile || "agent";
+  return null;
+}
+
+/** 목록 줄 앞 표시(herdr-web-ui Sidebar.tsx `rowMark`·AgentSidebar `AgentRowBody`): 그 줄이 여는 pane의 agent, 셸이면 터미널 */
+function RowMark({ agent }: { agent: string | null }) {
+  return (
+    <span className="mark" aria-hidden="true" data-agent={agent ?? "shell"}>
+      {agent !== null ? <AgentMark agent={agent} size={18} /> : <Icon name="shell" />}
+    </span>
+  );
 }
 
 function ThemeButton() {
@@ -348,6 +367,8 @@ function Main({ role }: { role: DeviceRole }) {
     const p = panes.find((x) => x.id === q.pane);
     return p ? p.name || p.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8);
   };
+  // thread 줄 표시: 그 thread pane의 agent. pane이 없으면(아직·끝남) profile로 본다
+  const agentOfThread = (t: ThreadView) => agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t);
   const paneTitle = (p: PaneView) => threadOfPane.get(p.id)?.title ?? (p.name || p.argv.join(" ") || p.id);
   const paneSub = (p: PaneView) => {
     const t = threadOfPane.get(p.id);
@@ -390,7 +411,12 @@ function Main({ role }: { role: DeviceRole }) {
               <ul>
                 {shownThreads.map((t) => (
                   <li key={threadKey(t)}>
-                    <ThreadRow t={t} sel={sel === `thread:${threadKey(t)}`} onClick={() => chooseThread(t)} />
+                    <ThreadRow
+                      t={t}
+                      agent={agentOfThread(t)}
+                      sel={sel === `thread:${threadKey(t)}`}
+                      onClick={() => chooseThread(t)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -434,9 +460,7 @@ function Main({ role }: { role: DeviceRole }) {
                           onClick={() => choose(p.id)}
                           data-testid={`pane-${p.name || p.id}`}
                         >
-                          <span className={`mark ${harnessOf(p, t)}`}>
-                            <Icon name={harnessOf(p, t)} />
-                          </span>
+                          <RowMark agent={agentOf(p, t)} />
                           <span className="row-text">
                             <span className="row-title">{paneTitle(p)}</span>
                             <span className="row-sub">{paneSub(p)}</span>
@@ -465,6 +489,7 @@ function Main({ role }: { role: DeviceRole }) {
             pane={current}
             role={role}
             title={paneTitle(current)}
+            agent={agentOf(current, threadOfPane.get(current.id))}
             crumb={`${current.machine} › ${paneSub(current)}`}
             status={<AgentChip p={current} />}
             dock={
@@ -590,13 +615,12 @@ const GROUP_DOT: Record<string, string> = {
   resolved: "",
 };
 
-function ThreadRow({ t, sel, onClick }: { t: ThreadView; sel: boolean; onClick: () => void }) {
+function ThreadRow({ t, agent, sel, onClick }: { t: ThreadView; agent: string | null; sel: boolean; onClick: () => void }) {
   const pct = t.agent?.percent;
   return (
     <button className={`pane ${sel ? "sel" : ""}`} onClick={onClick} data-testid={`thread-${t.project}-${t.id}`}>
-      <span className="mark thread">
-        <Icon name="thread" />
-      </span>
+      {/* 줄이 여는 pane의 agent(herdr-web-ui Sidebar.tsx `rowMark`: 표시는 누르면 닿는 agent만 약속한다) */}
+      <RowMark agent={agent} />
       <span className="row-text">
         <span className="row-title">{t.title}</span>
         <span className="row-sub">

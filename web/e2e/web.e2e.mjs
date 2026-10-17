@@ -1064,6 +1064,50 @@ try {
     await dp.context().close();
   });
 
+  await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 타일 별, Codex는 매듭, 셸은 터미널 표시", async () => {
+    // hook으로 harness를 알린 pane(Claude·Codex)과 셸(t1)
+    for (const [name, agent] of [["markc", "claude"], ["markx", "codex"]])
+      aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '{"hook_event_name":"Stop"}'; exec cat`, AA);
+    const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    for (const name of ["markc", "markx"]) await until(`${name} harness`, async () => (await mp.getByTestId(`agent-${name}`).count()) === 1);
+    const markOf = (name) =>
+      mp.getByTestId(`pane-${name}`).locator(".mark").evaluate((m) => {
+        const a = m.querySelector(".agent-mark");
+        const svg = m.querySelector("svg");
+        return {
+          agent: m.dataset.agent,
+          cls: a?.className ?? null,
+          label: svg?.getAttribute("aria-label") ?? null,
+          size: svg?.getAttribute("width") ?? null,
+          tile: a?.querySelector(".agent-mark-tile")?.getAttribute("fill") ?? null,
+          shell: svg?.classList.contains("i") ?? false,
+        };
+      });
+    const bad = [];
+    const c = await markOf("markc");
+    if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.size !== "18" || c.tile !== "#D77655") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
+    const x = await markOf("markx");
+    if (x.cls !== "agent-mark codex" || x.label !== "codex" || x.size !== "18") bad.push(`Codex 줄 ${JSON.stringify(x)}`);
+    // 셸은 agent 표시가 아니라 터미널 표시(참고 lucide Terminal 자리)
+    const sh = await markOf("t1");
+    if (sh.agent !== "shell" || sh.cls !== null || !sh.shell) bad.push(`셸 줄 ${JSON.stringify(sh)}`);
+    await shot(mp, "phone-agent-marks");
+    // 터미널 머리: 제목 앞에 그 pane의 agent 표시(참고 App.tsx 1402줄, 18px)
+    await mp.getByTestId("pane-markc").click();
+    const head = mp.locator(".term-title .agent-mark");
+    await head.waitFor();
+    const hc = await head.evaluate((a) => `${a.className} ${a.querySelector("svg").getAttribute("width")}`);
+    if (hc !== "agent-mark claude is-brand 18") bad.push(`머리 표시 ${hc}`);
+    await shot(mp, "phone-agent-head");
+    await mp.getByRole("button", { name: "목록으로" }).click();
+    await mp.getByTestId("pane-t1").click();
+    await mp.getByTestId("terminal").waitFor();
+    if ((await mp.locator(".term-title .agent-mark").count()) !== 0) bad.push("셸 머리에 agent 표시가 있다");
+    await mp.context().close();
+    for (const name of ["markc", "markx"]) aaa("pane", "kill", name);
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
   await step("목록 바닥 줄은 늘 맨 아래(herdr-web-ui sidebar-footer, 사용자 요청 10-17): 목록이 길어도·굴려도 설정·사용량 줄은 화면 맨 아래, 휴대폰·iPad·데스크톱·화면 키보드", async () => {
     // 목록이 화면보다 길어야 시험이 된다: 짧으면 예전 판(바닥 줄이 목록 끝을 따라감)도 맨 아래에 있다
     const many = Array.from({ length: 24 }, (_, i) => `foot${i + 1}`);
@@ -2732,6 +2776,9 @@ try {
     await until("보고 회수", () => aaa("thread", "show", "demo", t.id).report_hash);
     const item = page.getByTestId(`thread-demo-${t.id}`);
     await until("thread 목록에 검토 대기", async () => (await item.innerText()).includes("검토 대기"));
+    // thread 줄 표시는 그 thread pane의 agent(참고 Sidebar.tsx rowMark): 표시가 없는 profile(fake)은 머리글자 표시
+    const tm = await item.locator(".mark .agent-mark").evaluate((a) => `${a.className}|${a.textContent}`);
+    if (tm !== "agent-mark fake|F") throw new Error(`thread 줄 표시 ${tm}`);
     await item.click();
     const report = page.getByTestId("report");
     await until("보고 Markdown", async () => (await report.locator("strong").innerText()) === "확인");

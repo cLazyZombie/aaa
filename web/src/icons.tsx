@@ -9,28 +9,7 @@ const paths: Record<string, ReactNode> = {
       <path d="M9 13h6" />
     </>
   ),
-  // Claude: 여덟 갈래 빛
-  claude: (
-    <>
-      <path d="M9 2.5v13M2.5 9h13M4.4 4.4l9.2 9.2M13.6 4.4l-9.2 9.2" />
-    </>
-  ),
-  // Codex: 육각형
-  codex: <path d="M9 2.2 15 5.6v6.8L9 15.8 3 12.4V5.6z" />,
-  // 일반 agent
-  agent: (
-    <>
-      <rect x="3" y="5" width="12" height="9" rx="3" />
-      <path d="M9 2.5V5M6.5 9.5h.01M11.5 9.5h.01" />
-    </>
-  ),
-  // thread: 문서
-  thread: (
-    <>
-      <path d="M4.5 2.5h6l3 3v10h-9z" />
-      <path d="M7 8.5h4M7 11.5h4" />
-    </>
-  ),
+  // agent 표시는 herdr/AgentMark.tsx(참고 그대로), 셸은 위 shell
   machine: (
     <>
       <rect x="2.5" y="3" width="13" height="9" rx="1.5" />

@@ -1473,6 +1473,21 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 줄이 터치를 받지 않는 CSS는 줄 요소를 바꿔도 터치를 이어 받는 iOS 동작이 headless에 없어 E2E로 보지 못한다.
   - `aaa-vt` 유닛 시험: 기록·상한·alternate screen.
 
+### 8.56 agent 표시를 herdr-web-ui대로(10-17, 사용자 요청 「aaa에서 에이전트의 아이콘이 잘못 되어 있어. 레퍼런스 확인해.」)
+
+- **차이.** aaa 목록은 직접 그린 선 아이콘이었다. Claude는 여덟 갈래 빛, Codex는 육각형, 그 밖의 agent는 로봇, thread는 문서였고 터미널 머리에는 표시가 없었다. herdr-web-ui(aa624cb)는 Claude를 주황 타일의 별로, Codex를 매듭으로 그린다(`AgentMark`). 셸은 터미널 표시(lucide `Terminal`)다.
+- **옮긴 것.**
+  - `AgentMark.tsx` 213줄을 그대로 옮겼다(전에는 Claude·Codex·Fallback만). `agentSvgMarks.ts`는 droid·maki 두 줄을 뺐다. 두 favicon은 참고가 사용 허락을 적지 않아 공개 저장소에 싣지 않으며, 그 agent는 머리글자 표시가 된다.
+  - 쓰는 곳은 참고와 같다. 목록 줄 앞은 18px다(`Sidebar.tsx` `rowMark`·`AgentSidebar.tsx` `AgentRowBody`: 그 줄이 여는 pane의 agent, agent가 아니면 터미널 표시). thread 줄은 그 thread pane의 agent다. 터미널 머리 제목 앞도 18px다(`App.tsx` 1402줄 `context-title`). 구독 막대·설정 계정 줄은 §8.49 그대로다.
+  - 쓰지 않게 된 aaa 아이콘 넷(claude·codex·agent·thread)은 지웠다.
+- **agent 이름을 아는 법.** herdr는 pane의 프로세스를 보고 `pane.agent`(claude·codex…)를 정한다. aaa는 셋을 이 순서로 본다. hook이 알린 harness, thread profile, 명령 이름(경로를 뗀 것)이다. 표시가 있는 이름이면 그 이름이다. `claude`·`codex`가 든 이름(`claude-opus` profile, 경로 붙은 명령)이면 claude·codex다. 그 밖의 agent는 그 harness·profile 이름의 머리글자 표시다. agent가 아니면 셸이다.
+- **TUI.** herdr TUI 사이드바(`src/client/shell/agent_sidebar.rs`)에도 agent 표시가 없어 aaa TUI도 그대로 둔다.
+- **시험.** 웹 E2E 「agent 표시」(휴대폰 390×844):
+  - hook으로 claude·codex를 알린 pane 줄은 각각 `agent-mark claude is-brand`(타일 `#D77655`, 18px)와 `agent-mark codex`다. 셸 줄은 터미널 표시다.
+  - Claude pane 머리에는 같은 표시가 있고, 셸 머리에는 없다.
+  - thread 줄(fake profile)은 머리글자 표시 「F」다.
+  - 사용자 사진(herdr-web-ui)과 E2E 캡처를 나란히 놓은 비교는 보고서에 있다(실제 머신 이름이 있어 저장소에 넣지 않는다).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
