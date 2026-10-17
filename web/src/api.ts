@@ -2,6 +2,7 @@
 import type {
   DeviceRole,
   ErrorBody,
+  EventsClientMsg,
   FrontEvent,
   FrontRequest,
   FrontResponse,
@@ -9,6 +10,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
+import { watchPageInUse } from "./herdr/presence";
 
 export class ApiError extends Error {
   constructor(public body: ErrorBody) {
@@ -77,10 +79,21 @@ export function watchEvents(
   let stopped = false;
   let delay = 500;
   let timer: number | undefined;
+  // 이 화면을 지금 쓰는지(herdr-web-ui presence, ws.ts): 바뀔 때와 다시 붙을 때 알린다. 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다
+  let active: boolean | null = null;
+  const tell = () => {
+    if (active !== null && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "presence", active } satisfies EventsClientMsg));
+  };
+  const stopPresence = watchPageInUse((now) => {
+    if (now === active) return;
+    active = now;
+    tell();
+  });
   const open = () => {
     ws = new WebSocket(wsUrl("/api/v1/events"));
     ws.onopen = () => {
       delay = 500;
+      tell();
       onLink(true);
     };
     ws.onmessage = (m) => {
@@ -103,6 +116,7 @@ export function watchEvents(
   open();
   return () => {
     stopped = true;
+    stopPresence();
     window.clearTimeout(timer);
     ws?.close();
   };

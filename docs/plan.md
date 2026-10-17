@@ -1659,6 +1659,30 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 참고 `install.test.ts`의 기기(iPhone, 터치 점 5개인 iPad, Mac Safari, Android, Firefox)마다 펼친 안내 글이 맞는다. Chromium 터치 흉내는 `maxTouchPoints`가 1이라, iPad는 실제처럼 5로 둔다.
   - 홈 화면 앱(`navigator.standalone`)으로 열면 단추가 없고 설정은 「설치됨」이다.
 
+### 8.69 알림: 보내기 직전 다시 보기, 쓰는 화면이 있으면 보내지 않기, thread 한 자리, 누르면 그 자리(10-17, 차이 목록 N4·N5·N6·N7)
+
+- **보내기 직전 다시 보기(N4, 참고 server/push.ts 「기다리는 동안 바뀌면 보내지 않는다」).**
+  - 참고는 질문 10초·끝남 60초를 기다리고, 그 사이 pane 상태가 바뀌면 보내지 않는다.
+  - aaa는 모아 보내기(`notify.debounce_secs`, §8.20)를 그대로 둔다. 다만 보내기 직전에 inbox를 다시 읽는다. 그 사이 끝낸 항목(답한 질문은 `inbox_question_closed`가 끝낸다)과 thread가 이미 확인(ack)한 보고는 뺀다. 남은 것이 없으면 Web Push·webhook 모두 보내지 않는다. 뺀 수는 흐름 사건 `notify_skipped`로 남는다.
+  - inbox를 읽지 못하면 그대로 보낸다(알림을 잃지 않는 쪽).
+- **쓰는 화면이 있으면 보내지 않기(N5, 참고 presence·`inUse`).**
+  - 웹은 events WS로 「이 화면을 지금 쓴다」(보이고 focus가 있다)를 알린다. `presence.ts`는 그대로 옮겼다. host는 연결마다 세고, 연결이 어떻게 끝나든 뺀다.
+  - 쓰는 화면이 하나라도 있으면 host는 어느 기기에도 Web Push를 보내지 않는다(흐름 사건 `push_skipped`). 보낼 때 묻는다.
+  - 차이 목록의 처음 계획(「그 기기의 pane WS가 보이면 그 기기만 건너뛴다」)은 참고와 달라 참고대로 바꿨다. 사람은 이미 바뀐 것을 보이는 화면 앞에 있다.
+  - 시험 알림과 webhook(텔레그램, N12, 참고에 없음)은 이와 상관없이 보낸다.
+  - service worker는 보이는 aaa 창이 있으면 소리·진동 없이(`silent`, `renotify: false`) 띄운다(참고 sw.js push).
+  - `GET /api/v1/push`가 `in_use`(쓰는 화면 수)를 함께 준다(시험·진단용).
+- **thread 한 자리(N6).** 한 thread 항목만이면 제목은 「프로젝트 · thread 제목」이고, 자리(tag)는 `aaa-<프로젝트>/<thread>`다. 새 알림이 같은 thread의 옛 알림을 바꾼다(참고 `paneNotificationTag`는 pane 한 자리). 여러 thread·머신 항목이 섞이면 전처럼 「aaa · 프로젝트」 한 자리다.
+- **누르면 그 자리(N7, 참고 sw.js notificationclick).**
+  - 열린 앱 창에 focus하기 전에 먼저 자리(`{type:"open", hash}`)를 알리고, focus가 끝나면 마지막 자리를 다시 알린다. focus를 거절하면 그 자리 주소로 새 창을 연다.
+  - 연달아 누르면 마지막 누름만 남는다. 늦게 끝난 앞 누름의 focus·창 찾기·새 창이 옛 자리를 보이지 못한다.
+  - host API가 연 파일·결과물 탭과 보내는 파일(`isAppWindow`)은 고르지 않는다.
+  - 참고는 pane을 chat으로 연다. aaa 알림은 inbox 항목(thread 보고·질문)이라 전처럼 thread 보기(`#thread=`)를 연다.
+- **시험.**
+  - host 유닛: `news`(끝낸 항목·ack한 보고만 빠짐, ack 판정은 보고에만), `payloads`(thread 제목·자리, 빈 제목은 thread ID, 섞이면 프로젝트).
+  - 웹 E2E 「service worker 알림」: 내보내는 `sw.js`를 가짜 `self`로 그대로 돌린다(참고 `pwa-notification.test.ts`와 같은 방법). 보이는 창이면 소리 없이, focus 전 알림·거절 뒤 새 창·focus된 창 고르기·자리 없는 알림, 파일 탭, 늦은 focus·밀려난 거절·느린 창 찾기·늦게 열린 창을 본다.
+  - 웹 E2E 「보고 준비 알림」: 보고 알림의 제목·자리를 본다. 화면을 다시 쓰면 새 보고에 `push_skipped`가 남고 기기에는 오지 않는다. 둘째 화면을 열면 쓰는 화면이 2, 닫으면 1이다. 이 단계 앞에서는 화면의 focus만 없애 보고 알림이 가게 하고, 알림이 나간 뒤에 ack한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

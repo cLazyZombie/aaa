@@ -235,6 +235,8 @@ history_more: boolean, } | { "t": "history", id: number, data: B64, lines: numbe
 
 export type TermClientMsg = { "t": "input", data: string, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, };
 
+export type EventsClientMsg = { "t": "presence", active: boolean, };
+
 export type Role = "coordinator" | "worker" | "evaluator";
 
 export type ThreadKind = "worktree" | "dir";

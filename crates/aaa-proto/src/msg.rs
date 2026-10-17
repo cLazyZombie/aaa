@@ -1325,6 +1325,15 @@ pub enum TermClientMsg {
     },
 }
 
+/// 상태 사건 WebSocket(`/api/v1/events`)에서 브라우저가 보내는 메시지
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum EventsClientMsg {
+    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 쓰는 화면이 하나라도 있으면
+    /// host는 어느 기기에도 Web Push를 보내지 않는다(그 화면이 이미 바뀐 것을 보인다). 연결이 끊기면 쓰지 않는 것이다.
+    Presence { active: bool },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

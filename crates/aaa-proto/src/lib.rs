@@ -65,6 +65,7 @@ pub fn typescript_bindings() -> String {
         FrontEvent::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
+        EventsClientMsg::decl(&cfg),
         Role::decl(&cfg),
         ThreadKind::decl(&cfg),
         Launch::decl(&cfg),
