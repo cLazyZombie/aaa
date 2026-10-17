@@ -891,6 +891,16 @@ async fn static_file(req: Request) -> Response {
 mod content_type_tests {
     use super::content_type;
 
+    /// build.rs가 만든 자산 목록은 빌드한 worktree의 절대 경로를 갖지 않는다: build script 실행 결과를 캐시하는
+    /// 도구가 다른 worktree에 이 파일을 되돌려도 그 worktree의 web/dist를 읽어야 한다(t-0327, kache build_script_run)
+    #[test]
+    fn web_assets_do_not_bake_build_paths() {
+        let src = include_str!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
+        for line in src.lines().filter(|l| l.contains("include_bytes!")) {
+            assert!(line.contains("include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../web/dist/"), "{line}");
+        }
+    }
+
     #[test]
     fn touch_icon_aliases() {
         use super::touch_icon_alias;
