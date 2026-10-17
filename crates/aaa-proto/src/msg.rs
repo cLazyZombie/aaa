@@ -181,7 +181,7 @@ pub struct SpawnSpec {
     #[serde(default)]
     pub harness: Option<String>,
     /// 이 머신 agent.toml profile로 harness를 띄운다(argv는 무시하고 profile이 정한다, 상태 hook도 붙는다).
-    /// agent가 `profile.v1` 기능을 알릴 때만 보낸다: 옛 agent는 이 칸을 버리고 셸을 띄운다(plan §8.111).
+    /// agent가 `profile.v1` 기능을 알릴 때만 보낸다: 옛 agent는 이 칸을 버리고 셸을 띄운다(plan §8.120).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub profile: Option<String>,
@@ -314,7 +314,7 @@ pub enum ChatRole {
     Assistant,
     /// 도구 호출 한 줄(예: `Bash: cargo test`). 도구 결과 본문은 싣지 않는다.
     Tool,
-    /// agent의 생각(Claude thinking 블록, Codex reasoning 요약). 「생각 표시」를 켠 화면이 청할 때만 싣는다(plan §8.114).
+    /// agent의 생각(Claude thinking 블록, Codex reasoning 요약). 「생각 표시」를 켠 화면이 청할 때만 싣는다(plan §8.123).
     Thinking,
 }
 
@@ -443,7 +443,7 @@ pub enum AgentRequest {
         transcript: Option<String>,
         /// Codex thread-id(기록 파일 이름에 들어 있다)
         harness_session: Option<String>,
-        /// 생각도 싣는다(plan §8.114). 옛 agent는 이 칸을 모르고 빼고 보낸다
+        /// 생각도 싣는다(plan §8.123). 옛 agent는 이 칸을 모르고 빼고 보낸다
         #[serde(default)]
         thinking: bool,
     },
@@ -1053,7 +1053,7 @@ pub enum FrontRequest {
     /// harness(Claude·Codex) 대화 기록 보기(§8.27, 읽기 전용)
     PaneChat {
         pane: String,
-        /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.114)
+        /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.123)
         #[serde(default)]
         thinking: bool,
     },

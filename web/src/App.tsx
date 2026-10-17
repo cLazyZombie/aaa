@@ -390,7 +390,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
   const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
-  // 명령 팔레트(herdr-web-ui App.tsx 365~367줄 `paletteOpen`, plan §8.117)
+  // 명령 팔레트(herdr-web-ui App.tsx 365~367줄 `paletteOpen`, plan §8.126)
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const { resolvedTheme } = useAppearance();

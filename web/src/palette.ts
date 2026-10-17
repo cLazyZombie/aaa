@@ -1,7 +1,7 @@
 // 명령 팔레트의 검색·묶음(herdr-web-ui aa624cb src/lib/paletteSearch.ts·machinePalette.ts·paletteSettings.ts를 aaa 목록에 맞춰 옮김).
 // 참고는 PC마다 workspace 묶음에 pane 줄을 둔다. aaa의 workspace 자리는 머신 안 프로젝트(thread 줄)와 thread에 딸리지 않은
 // pane 묶음이고, 줄 하나는 목록 줄 하나다(sidebarModel `machineRows`: thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고를 연다).
-// 찾는 점수(`fuzzyScore`)·`>` 동작만·상태 칩과 그 글자 키·동작 이름 찾기(`rankByTitle`)·최근 줄은 참고 그대로다. plan §8.117.
+// 찾는 점수(`fuzzyScore`)·`>` 동작만·상태 칩과 그 글자 키·동작 이름 찾기(`rankByTitle`)·최근 줄은 참고 그대로다. plan §8.126.
 import type { MachineView, PaneView, ThreadView } from "./gen/proto";
 import { knownStatus, type KnownStatus } from "./herdr/status.ts";
 import { machineRoster, paneAgentStatus, shortPath, threadKey } from "./sidebarModel.ts";

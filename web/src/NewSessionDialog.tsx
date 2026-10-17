@@ -1,7 +1,7 @@
 // 머신 머리 +의 새 pane 창(herdr-web-ui aa624cb src/components/NewSessionDialog.tsx를 옮김, 모양 herdr/NewSessionDialog.css 그대로,
 // 문구는 참고 i18n.ko.ts). agent(셸 또는 이 머신 agent.toml profile)·폴더·이름을 고르고 「시작」하면 그 pane을 연다. 마지막 고른 agent와
 // 머신마다 최근 폴더(참고 recent-directories.ts)를 기억한다. 다른 곳: 참고의 workspace 자리는 aaa pane이고, 탭 모드·폴더 찾아보기
-// (머신 폴더 목록 API가 없다)·주소 초안(?new=)·agent가 못 떴을 때 「열기」는 뺐다. plan §8.111.
+// (머신 폴더 목록 API가 없다)·주소 초안(?new=)·agent가 못 떴을 때 「열기」는 뺐다. plan §8.120.
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { X } from "lucide-react";
 
