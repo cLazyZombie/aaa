@@ -506,9 +506,10 @@ export default async function ({ ctl, page }) {
     if (dropped === 0) throw new Error("삼킨 ACK가 없다: 화면이 ACK를 보내지 않는다");
     // 과부하는 다시 보내지 않는다: 닫히기 전 snapshot을 다시 받지 않았고, 닫힌 뒤 스스로 다시 붙지 않는다
     if (count(stalled, "snapshot") !== 1) throw new Error(`snapshot을 다시 받았다: ${JSON.stringify(stalled.filter((e) => e !== "io"))}`);
-    await sleep(1500);
+    // 띠가 보이면 그 close 처리는 끝났다: 거기서 다시 붙기를 걸지 않았다(Term이 걸 때 data-retry를 단다. sleep으로 타이머를 어림하지 않는다)
+    const retry = await slow.getByTestId("terminal").getAttribute("data-retry");
     const later = await log(slow);
-    if (count(later, "ws open") !== 1 || !(await slow.getByTestId("output-stalled").isVisible())) throw new Error(`4008 뒤 스스로 다시 붙었다: ${JSON.stringify(later.filter((e) => e !== "io"))}`);
+    if (retry !== null || count(later, "ws open") !== 1 || !(await slow.getByTestId("output-stalled").isVisible())) throw new Error(`4008 뒤 스스로 다시 붙었다(다시 붙기 ${retry}): ${JSON.stringify(later.filter((e) => e !== "io"))}`);
     // 따라오는 화면은 닫히지 않고 끝까지 받는다
     await until("따라오는 화면 flood-done", async () => (await screenText(fast)).includes("flood-done"));
     const kept = await log(fast);

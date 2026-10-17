@@ -1253,7 +1253,11 @@ export function TermView({
           if (stoppedHidden && document.visibilityState === "visible") queueMicrotask(reattach);
           return;
         }
-        if (!stopped) timer = window.setTimeout(connect, delay);
+        if (!stopped) {
+          timer = window.setTimeout(connect, delay);
+          // 표지: 어느 close 뒤에 몇 ms 뒤 다시 붙기를 걸었다. 시험이 「4008 뒤 스스로 다시 붙지 않는다」를 그 close 처리 뒤에 sleep 없이 본다(웹 E2E 07 흐름 제어)
+          el.dataset.retry = `${event.code} ${delay}`;
+        }
         delay = Math.min(delay * 2, 10_000);
       };
     };
