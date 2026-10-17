@@ -115,7 +115,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "seen1");
   });
 
-  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 도구 결과는 빼고 생각은 설정 「생각 표시」일 때만(C4), 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
+  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 도구 결과는 빼고 생각은 설정 「생각 표시」일 때만(C4), 「채팅 글자 크기」(T4), 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
     const dir = `${root}/claude/projects/-lab-chat`;
     fs.mkdirSync(dir, { recursive: true });
     const tr = `${dir}/s1.jsonl`;
@@ -169,6 +169,20 @@ export default async function ({ ctl, page }) {
     await shot(page, "desktop-chat-thinking");
     await thinkingSetting(false);
     await until("생각을 끄면 뺀다", async () => (await roles()).length === 4);
+    // 설정 「채팅 글자 크기」(herdr-web-ui chatFontSize·--chat-scale, 차이 목록 T4): 한 칸 크게 하면 답 줄 글자가 커지고, 작게 하면 돌아온다
+    const answerPx = () => chat.locator('[data-role="assistant"]').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+    const before = await answerPx();
+    const chatFont = async (button) => {
+      const d = await openSettings(page, "채팅");
+      await d.getByRole("button", { name: button }).click();
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    await chatFont("채팅 글자 크게");
+    const bigger = await answerPx();
+    if (!(bigger > before)) throw new Error(`채팅 글자 크게: ${before} → ${bigger}`);
+    await chatFont("채팅 글자 작게");
+    if ((await answerPx()) !== before) throw new Error(`채팅 글자 작게로 돌아오지 않음: ${await answerPx()} ≠ ${before}`);
     // 터미널로 돌아간다
     await page.getByTestId("chat-toggle").click();
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");

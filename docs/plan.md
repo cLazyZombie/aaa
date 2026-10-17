@@ -2538,6 +2538,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 곳.** 슬래시 명령·파일 멘션·그림 첨부·받아쓰기·제안 칩·크기 손잡이·멈춤 단추·상태 줄(모델·context)·확인창이 열렸을 때 입력을 답으로 바꾸기는 옮기지 않았다. 대화 보기에서는 키 막대를 숨긴다(입력은 입력창 몫).
 - **시험.** 웹 E2E 「대화 입력창」(`specs/11-agent-panes.mjs`): 받은 줄을 파일에 적는 Claude 화면에 Enter로 보내 닿음·칸 비움 → 작업 중 자동 전송 끔이면 붙잡힘(프로그램에 안 감) → 「지금 보내기」로 닿고 칸이 사라짐 → 빠른 답장 「yes」가 닿음(`desktop-chat-composer-held`).
 
+### 8.116 대화 글자 크기와 확인 카드 자리를 herdr-web-ui대로(10-18, 차이 목록 2장 T4·Q1)
+
+- **T4 채팅 글자 크기.** 참고 설정 「채팅 글자 크기」(`chatFontSize`, 이 기기, 11~24px, 기본 null = 인터페이스 크기)와 applyToDocument `--chat-scale`(= 대화 크기 ÷ 인터페이스 크기, `typography.ts` `fontScale`). 모양 store(`theme.ts`)에 두고 설정 「채팅」 쪽에 단계 단추. 대화 산문은 참고처럼 `--fs-chat`, 작은 글(도구 줄·안내·생각)은 `--fs-xs`·`--fs-sm`에 `--chat-scale`을 곱한다. 입력창(`Composer.css`)은 참고 규칙 그대로 같은 배율을 쓴다. 밀도·인터페이스 크기·목록 줄 수는 §8.102에서 했다. 채팅 글꼴(`chatFontFamily`)·폭(`chatWidth`)은 아직 없다.
+- **Q1 확인 카드 자리.** 참고는 카드를 그 pane의 대화 안 입력창 자리에만 두고 목록에는 빨간 ?만 둔다. aaa는 묶음 1에서 목록 구역을 없앴고(줄 ?), 카드는 pane 아래 dock에 있다. 대화 보기에서는 그 dock이 입력창 위(참고 `prompt-dock` 자리)에 선다. 카드 안 선택지 형식(여러 개·직접 쓰기·설명, Q2)은 host가 화면에서 메뉴를 읽어야 해 다음 묶음이다.
+- **시험.** 웹 E2E 「대화 기록」: 「채팅 글자 크게」 한 번이면 답 줄 글자가 커지고 「작게」면 돌아온다. 휴대폰 확인 카드 단계(`specs/11-agent-panes.mjs` 「확인창 답이 실패하면」)는 이제 대화 보기(C1)에서 카드에 답한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

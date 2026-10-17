@@ -63,6 +63,7 @@ import {
   type AaaShortcutId,
 } from "./settings";
 import { forgetPaneViews } from "./paneLens";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, updateAppearance, useAppearance } from "./theme";
 import { DEFAULT_CHAT_SHARED, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS } from "./preferences";
 import { bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutConflict, shortcutDisplayKeys, shortcutKeys } from "./herdr/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "./herdr/shortcutRecorder.ts";
@@ -370,6 +371,7 @@ function ChatPage() {
   const { showThinking, autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
   const touch = useMedia("(pointer: coarse)");
+  const { appearance } = useAppearance();
   return (
     <>
       <SettingsGroup>
@@ -396,6 +398,19 @@ function ChatPage() {
         </SettingsRow>
         <SettingsRow label="생각 표시" description="에이전트의 추론 블록을 함께 보여줍니다">
           <Toggle label="생각 표시" checked={showThinking} onChange={(on) => updateChatShared({ showThinking: on })} />
+        </SettingsRow>
+        {/* 참고 「Chat font size」(이 기기, 차이 목록 T4): 고르지 않으면 인터페이스 크기를 따른다 */}
+        <SettingsRow label="채팅 글자 크기" description="채팅 화면의 메시지, 코드, 프롬프트 카드, 입력창">
+          <Stepper
+            label="채팅 글자 크기"
+            value={chatFontSize(appearance)}
+            text={`${chatFontSize(appearance)}px`}
+            min={CHAT_FONT_MIN}
+            max={CHAT_FONT_MAX}
+            decreaseLabel="채팅 글자 작게"
+            increaseLabel="채팅 글자 크게"
+            onChange={(size) => updateAppearance({ chatFontSize: size })}
+          />
         </SettingsRow>
       </SettingsGroup>
 

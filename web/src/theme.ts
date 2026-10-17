@@ -1,5 +1,5 @@
-// 모양 설정: 테마·팔레트·상태 표시·목록 줄·Agents 정렬·밀도·인터페이스 글자 크기(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·
-// `paletteDark`·`statusIndicators`·`sidebarRows`·`agentOrder`·`density`·`uiFontSize`, lib/paletteFor.ts, lib/typography.ts, applyToDocument).
+// 모양 설정: 테마·팔레트·상태 표시·목록 줄·Agents 정렬·밀도·인터페이스·대화 글자 크기(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·
+// `paletteDark`·`statusIndicators`·`sidebarRows`·`agentOrder`·`density`·`uiFontSize`·`chatFontSize`, lib/paletteFor.ts, lib/typography.ts, applyToDocument).
 // 기본값도 참고와 같다: 어두움, amber, classic, 두 줄, 워크스페이스순, 여유, 밀도를 따르는 글자 크기.
 // <html data-theme>·data-palette·data-density·--ui-scale을 늘 달고(참고 applyToDocument), 실제 색·크기는 herdr/tokens.css에 있다.
 // 참고처럼 theme·palette·sidebarRows·agentOrder는 host 공유 설정이다(preferencesSync.ts, plan §8.79). 나머지는 이 기기 것이다.
@@ -31,10 +31,16 @@ export interface Appearance {
   density: Density;
   /** 인터페이스 본문 글자 크기 px(참고 `uiFontSize`, --fs-md). null이면 밀도를 따른다 */
   uiFontSize: number | null;
+  /** 대화 화면 글자 크기 px(참고 `chatFontSize`, 이 기기). null이면 인터페이스 크기를 따른다 */
+  chatFontSize: number | null;
 }
 
+/** 참고 settings.ts `CHAT_FONT_MIN`·`CHAT_FONT_MAX` */
+export const CHAT_FONT_MIN = 11;
+export const CHAT_FONT_MAX = 24;
+
 export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
-const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", agentOrder: "workspace", density: "comfortable", uiFontSize: null };
+const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", agentOrder: "workspace", density: "comfortable", uiFontSize: null, chatFontSize: null };
 const KEY = "aaa:appearance";
 /** 전에 쓰던 열쇠(밝음·어두움만 남았다). 처음 한 번 옮긴다 */
 const OLD_KEY = "aaa:theme";
@@ -51,6 +57,11 @@ function pick<T extends string>(v: unknown, all: readonly T[], fallback: T): T {
   return all.find((x) => x === v) ?? fallback;
 }
 
+/** 대화 글자 크기 px: 고른 것, 아니면 인터페이스의 것(참고 `chatFontSize`) */
+export function chatFontSize(a: Pick<Appearance, "density" | "uiFontSize" | "chatFontSize">): number {
+  return a.chatFontSize ?? uiFontSize(a);
+}
+
 /** 저장된 값을 거른다(참고 settings.ts `sanitizeSettings`의 해당 줄): 모르는 값은 기본, 짝이 없던 기록은 한 팔레트에서 시작 */
 export function sanitizeAppearance(raw: unknown): Appearance {
   const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -65,6 +76,8 @@ export function sanitizeAppearance(raw: unknown): Appearance {
     agentOrder: pick(r.agentOrder, ["workspace", "activity"] as const, DEFAULT.agentOrder),
     density: pick(r.density, ["comfortable", "compact"] as const, DEFAULT.density),
     uiFontSize: sanitizeUiFontSize(r.uiFontSize),
+    chatFontSize:
+      typeof r.chatFontSize === "number" && Number.isFinite(r.chatFontSize) ? Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(r.chatFontSize))) : null,
   };
 }
 
@@ -115,6 +128,8 @@ function apply() {
   // 참고 applyToDocument: 밀도와, 모든 --fs-*(--fs-input 말고)에 곱하는 배율 = 고른 본문 크기 / 밀도의 본문 크기
   root.dataset["density"] = current.density;
   root.style.setProperty("--ui-scale", String(fontScale(uiFontSize(current), BODY_FONT[current.density])));
+  // 대화는 인터페이스 위의 배율(참고 applyToDocument `--chat-scale`): 고른 크기는 그 크기로, 안 고르면 인터페이스를 따른다
+  root.style.setProperty("--chat-scale", String(fontScale(chatFontSize(current), uiFontSize(current))));
   root.style.colorScheme = resolved;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[palette][resolved]);
   subs.forEach((f) => f());
