@@ -314,6 +314,10 @@ pub struct AgentHello {
     pub selfcheck: Option<serde_json::Value>,
     #[serde(default)]
     pub sessions: Vec<SessionInfo>,
+    /// 세션별 마지막 harness 사건(agent가 `harness.json`에 둔 것). host가 연결 즉시 harness 세션 ID를 알아 재부팅 뒤
+    /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다.
+    #[serde(default)]
+    pub harness: Vec<HarnessEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -733,6 +737,10 @@ pub struct PaneView {
     pub role: Option<Role>,
     /// harness 상태(hook을 보내는 agent 세션만)
     pub agent: Option<Box<AgentStatus>>,
+    /// 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub restore_error: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────

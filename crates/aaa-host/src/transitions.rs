@@ -137,6 +137,8 @@ impl Host {
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
             .filter(|r| matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) && r.role != Role::Evaluator)
             .filter(|r| connected.contains(r.machine_id.as_str()))
+            // 재부팅 뒤 복원 중인 머신의 thread는 끝난 뒤에 센다(사라졌다가 돌아온 것으로 보지 않게, restore.rs)
+            .filter(|r| !self.restoring.lock().unwrap().contains(&r.machine_id))
             .collect();
         // 머신마다 기록된 pane과 사라진 pane(보고를 다시 확인하는 thread도 센다: 세션은 한꺼번에 끝난다)
         let mut per_machine: BTreeMap<String, MachinePanes> = BTreeMap::new();
