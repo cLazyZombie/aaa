@@ -1,4 +1,25 @@
 /*
+ * 웹 터미널 글꼴 Meslotendard 0.3.1(§8.31, OFL 1.1, 고지는 /fonts/meslotendard-0.3.1/). 한글이 영문 정확히 두 칸이다.
+ * 기기에 깔려 있으면 그것을 쓰고(local), 없으면 함께 넣은 WOFF2(Regular·Bold)를 받는다.
+ */
+@font-face {
+  font-family: "Meslotendard Web";
+  src: local("Meslotendard Regular"), local("Meslotendard-Regular"),
+    url("/fonts/meslotendard-0.3.1/Meslotendard-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Meslotendard Web";
+  src: local("Meslotendard Bold"), local("Meslotendard-Bold"),
+    url("/fonts/meslotendard-0.3.1/Meslotendard-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
  * aaa 웹 디자인 token(결정 16). 원칙:
  * - 바탕은 단계가 있는 면(tonal surface)과 가는 선(hairline)으로 나누고, 그림자는 떠 있는 것(질문 카드·메뉴)에만 쓴다.
  * - 강조색(iris)은 고른 것·주 버튼·초점에만 쓰고, 상태색(작업 파랑·막힘 빨강·완료 초록·주의 호박)은 항상 글과 함께 보인다.
@@ -8,6 +29,8 @@
 :root {
   --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Noto Sans KR", sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, "D2Coding", Consolas, monospace;
+  /* 터미널: 깔린 Meslotendard → 넣은 WOFF2 → 기존 목록 */
+  --font-term: Meslotendard, "Meslotendard Web", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, "D2Coding", Consolas, monospace;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;

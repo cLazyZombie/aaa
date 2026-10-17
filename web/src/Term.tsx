@@ -11,6 +11,9 @@ import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { onThemeChange, token } from "./theme";
 
+/** 함께 넣은 터미널 글꼴(style.css @font-face) */
+const WEB_FONT = '"Meslotendard Web"';
+
 /** 한 번에 보내는 조각(host 상한과 같다) */
 const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
@@ -75,6 +78,8 @@ export function TermView({
   const [reason, setReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState<[number, number]>([pane.cols, pane.rows]);
+  // 글꼴이 바뀌어 cell 크기가 달라지면 자동 맞추기를 다시 한다
+  const [fontGen, setFontGen] = useState(0);
   // 쓰다 만 글은 pane마다 이 탭에 남긴다(휴대폰에서 앱을 내렸다 올려도, 다른 pane을 봤다 와도 그대로)
   const draftKey = `aaa:draft:${pane.id}`;
   const [text, setTextState] = useState(() => {
@@ -168,12 +173,18 @@ export function TermView({
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 700px)").matches;
+    const fontSize = narrow ? 11 : 13;
+    // xterm은 처음 연 글꼴로 cell 크기를 잰다. 넣은 WOFF2가 아직 안 받아졌으면 그것을 뺀 목록으로 열고,
+    // 받아지면 원래 목록으로 바꿔 다시 재게 한다(그 뒤 자동 맞추기가 다시 돈다).
+    const family = token("--font-term") || "ui-monospace, Menlo, monospace";
+    const webFont = `${fontSize}px ${WEB_FONT}`;
+    const ready = !family.includes(WEB_FONT) || document.fonts.check(webFont);
     const term = new Terminal({
       cols: pane.cols,
       rows: pane.rows,
-      fontSize: narrow ? 11 : 13,
+      fontSize,
       lineHeight: 1.15,
-      fontFamily: token("--font-mono") || "ui-monospace, Menlo, monospace",
+      fontFamily: ready ? family : family.replace(`${WEB_FONT}, `, ""),
       scrollback: 2000,
       convertEol: false,
       theme: termTheme(),
@@ -184,6 +195,16 @@ export function TermView({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(box.current!);
+    let alive = true;
+    if (!ready) {
+      void Promise.all([document.fonts.load(webFont), document.fonts.load(`bold ${webFont}`)])
+        .then(() => {
+          if (!alive || term.options.fontFamily === family) return;
+          term.options.fontFamily = family;
+          setFontGen((g) => g + 1);
+        })
+        .catch(() => undefined);
+    }
     // xterm의 글 붙여 넣기보다 먼저 본다: 그림이면 가로채고, 아니면 그대로 둔다
     const onPaste = (e: ClipboardEvent) => {
       const f = imageOf(e.clipboardData?.files);
@@ -283,6 +304,7 @@ export function TermView({
     };
     connect();
     return () => {
+      alive = false;
       stopped = true;
       window.clearTimeout(timer);
       wsRef.current?.close();
@@ -308,7 +330,7 @@ export function TermView({
     if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return;
     if (dims.cols !== size[0] || dims.rows !== size[1]) send({ t: "resize", cols: dims.cols, rows: dims.rows });
   };
-  useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size]);
+  useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
   useEffect(() => {
     const el = box.current;
     if (!el) return;

@@ -113,6 +113,44 @@ async function pasteFile(page, bytes, type, name = "shot.png") {
 const bannerPath = (text) => /(\/\S+\.(png|jpg|gif|webp))/.exec(text)?.[1];
 const shot = async (page, name) => shots && (await page.screenshot({ path: path.join(shots, `${name}.png`) }));
 
+/** 터미널 글꼴 측정: xterm cell 너비, 실제 글꼴 목록으로 잰 영문·한글 너비, 넣은 WOFF2만으로 잰 너비 */
+async function termFont(page, cols) {
+  return page.evaluate(async (cols) => {
+    const box = document.querySelector('[data-testid="terminal"]');
+    const rows = box.querySelector(".xterm-rows");
+    const cs = getComputedStyle(rows);
+    const fs = parseFloat(cs.fontSize);
+    const cell = box.querySelector(".xterm-screen").getBoundingClientRect().width / cols;
+    const ctx = document.createElement("canvas").getContext("2d");
+    const w = (font, t) => ((ctx.font = font), ctx.measureText(t).width);
+    const web = new FontFace("aaa-woff2-test", "url(/fonts/meslotendard-0.3.1/Meslotendard-Regular.woff2)");
+    await web.load();
+    document.fonts.add(web);
+    return {
+      family: cs.fontFamily,
+      fs,
+      cell,
+      latin: w(`${fs}px ${cs.fontFamily}`, "M"),
+      hangul: w(`${fs}px ${cs.fontFamily}`, "한"),
+      webLatin: w(`${fs}px aaa-woff2-test`, "M"),
+      webHangul: w(`${fs}px aaa-woff2-test`, "한"),
+    };
+  }, cols);
+}
+
+/** 터미널이 Meslotendard로 그려지고(넣은 WOFF2를 받았으면 그것으로 바뀐 뒤), cell 너비 = 영문, 한글 = 정확히 두 칸 */
+async function fontOk(page, cols) {
+  let m = null;
+  await until("터미널 글꼴 Meslotendard", async () => {
+    m = await termFont(page, cols);
+    return m.family.includes('"Meslotendard Web"');
+  });
+  const near = (a, b, tol) => Math.abs(a - b) <= tol;
+  if (!near(m.cell, m.latin, 0.02) || !near(m.hangul, 2 * m.latin, 0.01) || !near(m.webHangul, 2 * m.webLatin, 0.01) || !near(m.webLatin, m.latin, 0.01))
+    throw new Error(`글꼴 너비가 맞지 않다: ${JSON.stringify(m)}`);
+  return m;
+}
+
 async function pairPage(browser, code, viewport) {
   const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 700, hasTouch: viewport.width < 700 });
   const page = await ctx.newPage();
@@ -396,6 +434,26 @@ try {
     });
   });
 
+  await step("터미널 글꼴: Meslotendard로 cell 너비는 영문, 한글은 정확히 두 칸(1280×800)", async () => {
+    // 넣은 WOFF2와 고지 파일을 host가 보낸다(버전 폴더라 오래 캐시한다)
+    const dir = "fonts/meslotendard-0.3.1/";
+    const want = fs.readFileSync(path.join(repo, "web", "public", dir, "Meslotendard-Regular.woff2"));
+    const r = await fetch(`${base}${dir}Meslotendard-Regular.woff2`);
+    const got = Buffer.from(await r.arrayBuffer());
+    if (r.status !== 200 || r.headers.get("content-type") !== "font/woff2" || !got.equals(want))
+      throw new Error(`woff2 ${r.status} ${r.headers.get("content-type")} ${got.length}`);
+    if (!r.headers.get("cache-control").includes("immutable")) throw new Error(`cache ${r.headers.get("cache-control")}`);
+    for (const f of ["LICENSE", "licenses/THIRD_PARTY_NOTICES.md", "licenses/MESLO_APACHE-2.0.txt", "licenses/NERD_FONTS_LICENSE.txt"]) {
+      if ((await fetch(`${base}${dir}${f}`)).status !== 200) throw new Error(`고지 파일 없음: ${f}`);
+    }
+    await page.getByLabel("보낼 글").fill("echo 한글 간격 확인 ABCD abcd 0123");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await until("한글 줄", async () => (await screenText(page)).includes("한글 간격 확인 ABCD"));
+    const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
+    console.log("     글꼴 측정(1280×800)", JSON.stringify(await fontOk(page, cols)));
+    await shot(page, "desktop-hangul");
+  });
+
   await step("controller: 입력 막대로 한글", async () => {
     await page.getByLabel("보낼 글").fill("echo 한글-$((2*4))");
     await page.getByRole("button", { name: "보내기" }).click();
@@ -463,6 +521,9 @@ try {
     await shot(rp, "mobile-list");
     await rp.getByTestId("pane-t1").click();
     await until("reader 화면", async () => (await screenText(rp)).includes("한글-8"));
+    // 휴대폰 폭(11px)에서도 한글이 두 칸에 꼭 맞는다
+    const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
+    console.log("     글꼴 측정(390×844)", JSON.stringify(await fontOk(rp, cols)));
     const banner = await rp.getByTestId("readonly-banner").innerText();
     if (!banner.includes("보기 권한")) throw new Error(`reader 배너: ${banner}`);
     if ((await rp.getByLabel("보낼 글").count()) !== 0) throw new Error("reader에게 입력 막대");
