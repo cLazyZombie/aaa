@@ -179,6 +179,19 @@ pub fn hostname() -> String {
     std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "unknown".into())
 }
 
+/// 머신 이름으로 쓸 수 있는가: 영문·숫자·`.`·`_`·`-`로 1~64자.
+/// 이름은 CLI 표·push 본문·nudge에 그대로 나간다. 제어 문자로 화면을 위조하지 못하게 막는다(보안 감사 t-0340 B5).
+pub fn machine_name_ok(name: &str) -> bool {
+    (1..=64).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+}
+
+/// hostname 같은 글에서 머신 이름 기본값을 만든다: 쓸 수 없는 글자는 `-`로 바꾸고 64자로 자른다.
+pub fn machine_name_from(raw: &str) -> String {
+    let s: String =
+        raw.chars().map(|c| if c.is_ascii_alphanumeric() || ".-_".contains(c) { c } else { '-' }).take(64).collect();
+    if s.is_empty() { "machine".into() } else { s }
+}
+
 /// 사용자만 읽고 쓰는 폴더(0700)를 만든다.
 pub fn ensure_private_dir(p: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(p)?;
@@ -259,6 +272,20 @@ mod time_tests {
         assert_eq!(parse_iso("2026-10-17"), Some(1_792_195_200_000));
         assert_eq!(parse_iso("not a date"), None);
         assert_eq!(parse_iso("2026-13-01T00:00:00Z"), None);
+    }
+
+    #[test]
+    fn machine_names() {
+        use super::{machine_name_from, machine_name_ok};
+        for ok in ["mac-a", "build_01.lan", "A", &"x".repeat(64)] {
+            assert!(machine_name_ok(ok), "{ok}");
+        }
+        for bad in ["", "mac a", "mac\x1b[2Ja", "탭", "a\nb", "a\u{202e}b", &"x".repeat(65)] {
+            assert!(!machine_name_ok(bad), "{bad:?}");
+        }
+        assert_eq!(machine_name_from("Jo's Mac\x07"), "Jo-s-Mac-");
+        assert_eq!(machine_name_from(""), "machine");
+        assert!(machine_name_ok(&machine_name_from(&"한".repeat(100))));
     }
 
     #[test]

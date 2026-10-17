@@ -481,8 +481,10 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   );
 }
 
-/** 참고 AlertsPage(423~450줄, 문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기별 종류(차이 목록 N3)와 함께 */
+/** 참고 AlertsPage(423~450줄, 문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기마다(차이 목록 N3) */
 function AlertsPage() {
+  const alertInput = useAlertSetting("alertInput");
+  const alertDone = useAlertSetting("alertDone");
   const alertInApp = useAlertSetting("alertInApp");
   const alertSound = useAlertSetting("alertSound");
   const alertSilent = useAlertSetting("alertSilent");
@@ -491,6 +493,13 @@ function AlertsPage() {
   return (
     <SettingsGroup note="이 기기에 적용됩니다. 알림은 잠시 모았다가 보내며, 그사이 질문에 답하거나 보고를 확인하면 보내지 않습니다.">
       <PushTestControls onEnable={enableAlerts} />
+      <SettingsRow label="입력 필요" description="에이전트가 답이나 권한을 기다릴 때">
+        <Toggle label="입력 필요" checked={alertInput} onChange={(on) => setAlertSetting("alertInput", on)} />
+      </SettingsRow>
+      {/* 참고는 끄기·긴 작업·매번이다. aaa의 작업 완료는 thread가 낸 새 보고(일 한 단위)라 길이로 거르지 않는다(plan §8.113) */}
+      <SettingsRow label="작업 완료" description="thread가 새 보고를 내고 검토를 기다릴 때">
+        <Toggle label="작업 완료" checked={alertDone} onChange={(on) => setAlertSetting("alertDone", on)} />
+      </SettingsRow>
       <SettingsRow label="앱 안에서" description="앱을 열어 둔 동안에는 화면 위에서 바로 내려옵니다. 누르면 그 패널을 엽니다.">
         <Toggle label="앱 안에서" checked={alertInApp} onChange={(on) => setAlertSetting("alertInApp", on)} />
       </SettingsRow>

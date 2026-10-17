@@ -1187,6 +1187,13 @@ export function TermView({
               markHistory();
               break;
             }
+            if (msg.lines === 0) {
+              // 붙일 줄이 없다(host mirror 기록 끝에서 session host까지 물었는데 그 앞도 없다, plan §8.112): 버퍼를 다시 쓰지 않는다
+              historyWait = null;
+              historyMore = msg.more;
+              markHistory();
+              break;
+            }
             prependHistory(b64decode(msg.data), msg.lines, msg.more);
             break;
           }

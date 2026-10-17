@@ -1,7 +1,7 @@
 // service worker 등록(PWA)과 이 기기의 Web Push 구독(§8.26). herdr-web-ui src/lib/push.ts를 옮겼다(plan §8.70).
 // 구독은 브라우저가 만들고 host에 endpoint·키를 맡긴다. host는 질문·보고 준비 같은 알림을 암호화해 보낸다.
 // service worker와 PushManager는 secure context(https·localhost)에만 있고, iPhone은 홈 화면 앱에만 있다.
-import { ApiError, pushInfo, pushSubscribe, pushTest, pushUnsubscribe } from "./api";
+import { ApiError, pushInfo, pushSubscribe, pushTest, pushUnsubscribe, type AlertPrefs } from "./api";
 
 /** 앱을 열 때 한 번 등록한다. 등록에 실패해도 화면은 그대로 쓴다. */
 export function registerServiceWorker() {
@@ -74,11 +74,11 @@ let operations: Promise<unknown> = Promise.resolve();
  * subscriptions and keep only the later one, so the confirmation push could go to a
  * dead endpoint. Concurrent callers therefore share one attempt.
  */
-export function ensurePushSubscription(): Promise<string | null> {
+export function ensurePushSubscription(alerts?: AlertPrefs): Promise<string | null> {
   if (pending) return pending;
   const request = operations
     .catch(() => undefined)
-    .then(() => subscribeDevice())
+    .then(() => subscribeDevice(alerts))
     .finally(() => {
       if (pending === request) pending = null;
     });
@@ -89,7 +89,7 @@ export function ensurePushSubscription(): Promise<string | null> {
 
 // aaa: host가 꺼 두었으면(`notify.web_push`) 구독하지 않는다. 참고의 「버려진 endpoint」 거절(#1038, push-retired.json)은
 // aaa host에 없어 그 되살리기도 옮기지 않았다.
-async function subscribeDevice(): Promise<string | null> {
+async function subscribeDevice(alerts?: AlertPrefs): Promise<string | null> {
   if (!pushSupported() || globalThis.Notification?.permission !== "granted") return null;
   const registration = await workerRegistration();
   if (!registration) return null;
@@ -103,7 +103,7 @@ async function subscribeDevice(): Promise<string | null> {
     subscription = null;
   }
   subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-  await pushSubscribe(subscription.toJSON());
+  await pushSubscribe(subscription.toJSON(), alerts);
   return subscription.endpoint;
 }
 

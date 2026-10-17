@@ -125,6 +125,16 @@ struct Mirror {
     vt: Vt,
     offset: u64,
     synced: bool,
+    /// 이 mirror를 채운 snapshot 앞에 session host 기록이 더 있다(plan §8.112): mirror 기록이 끝나면 session host에 묻는다
+    source_more: bool,
+}
+
+/// 앞 기록 한 덩어리를 어디서 받는가(plan §8.67·§8.112)
+pub enum OlderHistory {
+    /// host mirror에서 바로(None이면 anchor를 찾지 못했다)
+    Ready(Option<aaa_vt::Older>),
+    /// mirror에 없다: 그 머신 agent를 거쳐 session host에 묻는다
+    Ask(AgentConn),
 }
 
 /// 웹 터미널 등 구독자에게 보내는 pane 사건
@@ -222,6 +232,9 @@ struct Pairing {
 pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
 /// 코드 하나로 틀릴 수 있는 수(참고 `CODE_ATTEMPTS`)
 const PAIR_CODE_ATTEMPTS: u32 = 5;
+
+/// 머신 이름 규칙(등록·로컬 agent가 새 이름을 쓸 때)
+pub const MACHINE_NAME_RULE: &str = "머신 이름은 영문·숫자·`.`·`_`·`-`로 1~64자다(--name으로 정한다)";
 /// 기기 이름 길이(참고 `LABEL_MAX`)
 const DEVICE_LABEL_MAX: usize = 48;
 /// 마지막으로 본 때를 적는 간격(참고 `LAST_SEEN_WRITE_MS`)
@@ -587,7 +600,7 @@ impl Host {
             Some(s) => {
                 let mut vt = Vt::new(s.rows, s.cols);
                 vt.feed(&s.replay.0);
-                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true });
+                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true, source_more: s.history_more });
                 let _ = p.events.send(PaneEvent::Reset);
             }
             None => match p.mirror.as_mut() {
@@ -744,17 +757,55 @@ impl Host {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 let (replay, more) = m.vt.replay_more();
-                (replay, more, m.offset, rows, cols)
+                (replay, more || m.source_more, m.offset, rows, cols)
             }
             None => (Vec::new(), false, 0, p.info.rows, p.info.cols),
         };
         Some(Attach { rx, replay, more, offset, cols, rows })
     }
 
-    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67)
-    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> Option<aaa_vt::Older> {
+    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67).
+    /// mirror는 처음 구독 snapshot(최근 2000줄)부터 채워진다. 그보다 앞은 session host에만 있으므로, mirror에서 더 줄 것이
+    /// 없으면 session host에 묻는다(plan §8.112, QA t-0337 Q8). 옛 agent·session host면 묻지 않는다.
+    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> OlderHistory {
         let i = self.inner.lock().unwrap();
-        i.panes.get(id)?.mirror.as_ref()?.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY)
+        let Some(p) = i.panes.get(id) else { return OlderHistory::Ready(None) };
+        let Some(m) = p.mirror.as_ref() else { return OlderHistory::Ready(None) };
+        let found = m.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY);
+        match found {
+            Some(mut o) if o.lines > 0 => {
+                o.more |= m.source_more;
+                OlderHistory::Ready(Some(o))
+            }
+            found if m.source_more => {
+                let conn = i
+                    .machines
+                    .get(&p.machine_id)
+                    .filter(|mc| mc.features.iter().any(|f| f == "history.v1"))
+                    .and_then(|mc| mc.conn.clone());
+                match conn {
+                    Some(c) => OlderHistory::Ask(c),
+                    None => OlderHistory::Ready(found),
+                }
+            }
+            found => OlderHistory::Ready(found),
+        }
+    }
+
+    /// session host에 앞 기록을 묻는다(plan §8.112). 실패하면 None(웹은 더 받지 않는다).
+    pub async fn older_from_agent(
+        conn: &AgentConn,
+        session: String,
+        anchor: Vec<String>,
+        depth: usize,
+    ) -> Option<aaa_vt::Older> {
+        let depth = u32::try_from(depth).unwrap_or(u32::MAX);
+        match conn.request(AgentRequest::History { session, anchor, depth }).await {
+            Ok(AgentResponse::History(c)) if c.found => {
+                Some(aaa_vt::Older { data: c.data.0, lines: c.lines as usize, more: c.more })
+            }
+            _ => None,
+        }
     }
 
     fn resolve_pane(&self, prefix: &str) -> Result<(String, String), ErrorBody> {
@@ -1843,8 +1894,8 @@ impl Host {
                 "host에서 `aaa machine enroll --open 10m`으로 등록 창을 먼저 연다",
             ));
         }
-        if name.is_empty() || name.len() > 64 {
-            return Err(err(ErrorCode::BadRequest, "머신 이름은 1~64자"));
+        if !util::machine_name_ok(name) {
+            return Err(err(ErrorCode::BadRequest, MACHINE_NAME_RULE));
         }
         if let Ok(Some(m)) = self.db.machine_by_name(name)
             && m.id != machine_id
@@ -2297,6 +2348,7 @@ mod pairing_tests {
             p256dh: "k".into(),
             auth: "a".into(),
             device: id.clone(),
+            alerts: None,
         };
         h.db.push_put(&sub).unwrap();
         let mut heard = h.device_revoked.subscribe();
@@ -2309,5 +2361,54 @@ mod pairing_tests {
         assert!(devices(&h).await.is_empty());
         let again = FrontRequest::DeviceRevoke { id };
         assert_eq!(h.call(DeviceRole::Local, "test", again).await.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    /// 보안 감사 t-0340 B10: endpoint만 아는 다른 기기는 구독을 가져가지 못하고, 키까지 같은 같은 브라우저(다시 pairing)는 옮긴다
+    #[tokio::test]
+    async fn another_device_takes_a_push_endpoint_only_with_its_keys() {
+        let (h, _t) = host();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+            let (token, _) = h.redeem_pairing(&code, "").unwrap();
+            ids.push(h.device_role(&token).unwrap().0);
+        }
+        let sub = |device: &str, auth: &str| db::PushSub {
+            endpoint: "https://push.example/a".into(),
+            p256dh: "k".into(),
+            auth: auth.into(),
+            device: device.into(),
+            alerts: None,
+        };
+        assert!(h.db.push_put(&sub(&ids[0], "a")).unwrap());
+        // 같은 기기는 키를 바꿀 수 있다
+        assert!(h.db.push_put(&sub(&ids[0], "a2")).unwrap());
+        assert!(!h.db.push_put(&sub(&ids[1], "x")).unwrap());
+        assert_eq!(h.db.push_list(Some(&ids[0])).unwrap().len(), 1);
+        assert!(h.db.push_list(Some(&ids[1])).unwrap().is_empty());
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert!(h.db.push_list(Some(&ids[0])).unwrap().is_empty());
+        assert_eq!(h.db.push_list(Some(&ids[1])).unwrap().len(), 1);
+        // 기기가 고른 알림 종류(N3): 주면 바꾸고, 없이 다시 넣으면(불러올 때마다 다시 구독) 둔다
+        let alerts = |h: &Host| h.db.push_list(Some(&ids[1])).unwrap()[0].alerts.unwrap();
+        assert_eq!(alerts(&h), db::Alerts::default());
+        let quiet = db::Alerts { input: false, done: true };
+        assert!(h.db.push_put(&db::PushSub { alerts: Some(quiet), ..sub(&ids[1], "a2") }).unwrap());
+        assert_eq!(alerts(&h), quiet);
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert_eq!(alerts(&h), quiet);
+    }
+
+    /// 보안 감사 t-0340 B5: 제어 문자·공백이 든 이름으로는 등록을 기다리지 못한다(`aaa machine pending` 화면·push 본문 위조)
+    #[tokio::test]
+    async fn enroll_rejects_machine_names_with_control_characters() {
+        let (h, _t) = host();
+        h.enroll.lock().unwrap().open_until = Some(Instant::now() + Duration::from_secs(60));
+        for bad in ["mac\x1b[2Ja", "mac a", "a\u{202e}b", ""] {
+            let e = h.enroll_request(bad, "01M", "fp", "sas").unwrap_err();
+            assert_eq!(e.code, ErrorCode::BadRequest, "{bad:?}");
+        }
+        assert!(h.enroll.lock().unwrap().pending.is_empty());
+        assert!(h.enroll_request("mac-b", "01M", "fp", "sas").is_ok());
     }
 }
