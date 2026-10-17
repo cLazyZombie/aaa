@@ -1142,6 +1142,8 @@ export function TermView({
         if (wsRef.current === ws) wsRef.current = null;
         // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
         attachDone();
+        // 기다리던 앞 기록 답은 오지 않는다: 다시 붙으면 새 snapshot부터 다시 받는다
+        historyWait = null;
         for (const [id, waiting] of submitsRef.current)
           if (waiting.ws === ws) {
             submitsRef.current.delete(id);

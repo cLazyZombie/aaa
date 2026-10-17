@@ -741,11 +741,11 @@ process.stdin.on("data", (d) => {
 fs.writeFileSync(
   `${root}/history.js`,
   `process.stdin.setRawMode(true);
-process.stdout.write("hist> ");
+process.stdout.write("\\x1b[?2004hhist> ");
 let ticks = 0;
 process.stdin.on("data", (d) => {
   if (d.toString("latin1") === "p") return void process.stdout.write("\\r\\ntick-" + ++ticks + "\\r\\nhist> ");
-  if (d.toString("latin1") !== "h") return;
+  if (d.toString("latin1") !== "h") return void process.stdout.write("\\r\\nGOT:" + JSON.stringify(d.toString("utf8")) + "\\r\\nhist> ");
   let out = "\\r\\n";
   for (let i = 1; i <= 6000; i++) {
     const n = "h-" + String(i).padStart(5, "0");
@@ -2011,6 +2011,14 @@ try {
     if (sweep.count !== 6000 || sweep.min !== 1 || sweep.max !== 6000 || sweep.bad.length) throw new Error(`버퍼 기록 ${JSON.stringify(sweep)}`);
     // 다시 쓰는 사이에 온 줄은 한 번, 기록 뒤에
     if (sweep.tickAt.length !== 1 || !(sweep.tickAt[0] > sweep.last)) throw new Error(`tick-1 자리 ${JSON.stringify(sweep)}`);
+    // 다시 쓴 버퍼도 프로그램이 켠 입력 모드(bracketed paste)를 그대로 갖는다: 붙여 넣은 여러 줄이 감싸여 간다
+    await box.click();
+    await hp.locator(".xterm-helper-textarea").evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "pa\nste");
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await until("감싼 붙여넣기", () => aaa("pane", "read", "histapp").lines.join("\n").includes('GOT:"\\u001b[200~pa\\rste\\u001b[201~"'));
     await hp.context().close();
     aaa("pane", "kill", "histapp");
   });
@@ -3545,6 +3553,10 @@ try {
           if (reg) r(reg.registrationId);
         }),
       );
+      // 실패하면 service worker 판 상태를 남긴다(10-17 22:20 전체 실행에서 한 번 알림이 뜨지 않았고 따로는 재현되지 않았다)
+      const versions = [];
+      cdp.on("ServiceWorker.workerVersionUpdated", (e) => versions.push(...e.versions.map((v) => `${v.versionId}:${v.status}/${v.runningStatus}`)));
+      cdp.on("ServiceWorker.workerErrorReported", (e) => versions.push(`error:${e.errorMessage.errorMessage}`));
       await cdp.send("ServiceWorker.enable");
       const data = JSON.stringify({ title: "aaa · demo", body: "t-0009 question: 확인창", url: "/#thread=demo%2Ft-0009", tag: "aaa-demo" });
       await cdp.send("ServiceWorker.deliverPushMessage", { origin: base.slice(0, -1), registrationId: await regId, data });
@@ -3553,6 +3565,19 @@ try {
           (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => [n.title, n.body, n.data?.url]),
         );
         return v.length ? v : null;
+      }).catch(async (e) => {
+        const state = await mob.page.evaluate(async () => {
+          const reg = await navigator.serviceWorker.getRegistration();
+          return {
+            permission: Notification.permission,
+            controller: !!navigator.serviceWorker.controller,
+            active: reg?.active?.state ?? null,
+            waiting: reg?.waiting?.state ?? null,
+            installing: reg?.installing?.state ?? null,
+            shown: reg ? (await reg.getNotifications()).length : null,
+          };
+        });
+        throw new Error(`${e.message}: ${JSON.stringify(state)} 판 ${versions.slice(-8).join(",")} 오류 ${mob.errors.join("; ")}`);
       });
       if (JSON.stringify(shown[0]) !== JSON.stringify(["aaa · demo", "t-0009 question: 확인창", "/#thread=demo%2Ft-0009"])) {
         throw new Error(JSON.stringify(shown));
