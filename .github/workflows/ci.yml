@@ -165,8 +165,9 @@ jobs:
           # 기본 셸은 -e -o pipefail이다. 찾는 줄이 없어도 요약은 끝까지 간다.
           set +e +o pipefail
           # annotation은 step마다 개수 제한이 있어 파일별이 아니라 묶음별로 하나씩 남긴다.
+          # 제목은 인자가 아니라 stdin 첫 줄로 넘긴다: Windows에서 한국어 인자가 code page를 거쳐 깨졌다(「ëë‚˜ì§€…」).
           annotate() {
-            node -e 'let t=require("fs").readFileSync(0,"utf8"); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+process.argv[1]+"::"+t.replace(/%/g,"%25").replace(/\r/g,"").replace(/\n/g,"%0A"))' "$1"
+            { printf '%s\n' "$1"; cat; } | node -e 'const a=require("fs").readFileSync(0,"utf8").replace(/\r/g,""); const i=a.indexOf("\n"); const e=(s)=>s.replace(/%/g,"%25").replace(/\n/g,"%0A"); let t=a.slice(i+1); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+e(a.slice(0,i)).replace(/:/g,"%3A").replace(/,/g,"%2C")+"::"+e(t))'
           }
           for f in build.log clippy.log; do
             [ -f "$f" ] || continue
