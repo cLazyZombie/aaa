@@ -16,6 +16,10 @@ import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
 import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
 import { attachTrace, trace } from "./inputTrace";
+import { clipboardKey, ctrlEnterSequence, modifyOtherKeysLevel } from "./herdr/keys.ts";
+import { parseOsc52 } from "./herdr/osc52.ts";
+import { isWebLink } from "./herdr/terminalFileLinks.ts";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -215,6 +219,11 @@ export function TermView({
       scrollback: 2000,
       convertEol: false,
       theme: termTheme(),
+      // herdr-web-ui PaneTerminal 539~562줄: 블록 커서 깜빡임(프로그램의 DECSCUSR는 그대로 바꾼다),
+      // macOS에서 Option+누름은 마우스 보고 중에도 선택
+      cursorStyle: "block",
+      cursorBlink: true,
+      macOptionClickForcesSelection: true,
     });
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
@@ -253,6 +262,81 @@ export function TermView({
     });
     // 실기 입력 사건 기록(켜져 있을 때만 모은다, inputTrace.ts)
     const stopTrace = attachTrace(term.textarea!, scrollRef.current!);
+    // ── 키 처리(herdr-web-ui PaneTerminal 585·620~664·1053~1076·1284~1335줄) ──
+    // 웹 링크는 http(s)만 새 탭으로 연다(줄이 링크처럼 보여도 다른 scheme은 열지 않는다)
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+    }));
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const copySelection = () => {
+      const text = term.getSelection();
+      if (!text) return;
+      // 사용자 동작 안에서는 execCommand가 clipboard 권한이 없어도 된다
+      if (document.execCommand("copy")) return;
+      void navigator.clipboard?.writeText(text).catch(() => {});
+    };
+    // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡기고, 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
+    term.attachCustomKeyEventHandler((event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return true;
+      const key = clipboardKey(event.key, event.code);
+      if (key === "v") return false;
+      if (key === "c" && term.hasSelection()) {
+        if (event.type === "keydown") {
+          event.preventDefault();
+          copySelection();
+          term.clearSelection();
+        }
+        return false;
+      }
+      return true;
+    });
+    // OSC 52: pane 프로그램(vim·tmux·Claude Code)의 클립보드 쓰기. 질의는 답하지 않는다.
+    const osc52 = term.parser.registerOscHandler(52, (payload) => {
+      const text = parseOsc52(payload);
+      if (text !== null) void navigator.clipboard?.writeText(text).catch(() => {});
+      return true;
+    });
+    // modifyOtherKeys(CSI > 4 ; n m): xterm.js는 처리하지 않으므로 듣기만 하고 Ctrl+Enter를 그 형식으로 보낸다
+    let modifyOtherKeys = 0;
+    const otherKeys = (final: "m" | "n") =>
+      term.parser.registerCsiHandler({ prefix: ">", final }, (params) => {
+        modifyOtherKeys = modifyOtherKeysLevel(modifyOtherKeys, final, params);
+        return false;
+      });
+    const otherKeysSet = otherKeys("m");
+    const otherKeysOff = otherKeys("n");
+    // xterm.js는 Shift+Enter·Ctrl+Enter를 그냥 Enter로 친다: Shift+Enter는 Alt+Enter 줄바꿈으로, Ctrl+Enter는 프로그램이
+    // 요청한 형식으로 바꾼다. macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
+    let enterAs: string | null = null;
+    let commandBackspace = false;
+    const keySub = term.onKey(({ key, domEvent: event }) => {
+      enterAs = null;
+      commandBackspace = false;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (key === "\r" && event.key === "Enter" && !event.altKey && !event.metaKey) {
+        if (event.shiftKey && !event.ctrlKey) enterAs = "\x1b\r";
+        else if (event.ctrlKey && !event.shiftKey) enterAs = ctrlEnterSequence(modifyOtherKeys);
+      }
+      commandBackspace =
+        isMac && key === "\x7f" && event.key === "Backspace" && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+    });
+    const remap = (data: string) => {
+      if (enterAs !== null && data === "\r") data = enterAs;
+      if (commandBackspace && data === "\x7f") data = "\x15";
+      enterAs = null;
+      commandBackspace = false;
+      return data;
+    };
+    // xterm은 Cmd+화살표를 무시한다: 줄 처음(Ctrl+A)·끝(Ctrl+E). textarea keydown 뒤(bubble)에 IME 글이 먼저 간다.
+    const onCommandArrow = (event: KeyboardEvent) => {
+      if (!isMac || event.target !== term.textarea || event.defaultPrevented || composingTermRef.current) return;
+      if (event.isComposing || event.keyCode === 229 || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      const seq = event.key === "ArrowLeft" ? "\x01" : event.key === "ArrowRight" ? "\x05" : null;
+      if (seq === null) return;
+      event.preventDefault();
+      fromTerminal(seq);
+    };
+    box.current!.addEventListener("keydown", onCommandArrow);
     const stopCompositionView = matchCompositionView(term);
     let alive = true;
     if (!ready) {
@@ -290,7 +374,7 @@ export function TermView({
     el.addEventListener("pointerdown", onPointer);
     termRef.current = term;
     fitRef.current = fit;
-    const dataSub = term.onData(fromTerminal);
+    const dataSub = term.onData((data) => fromTerminal(remap(data)));
     const binSub = term.onBinary((s) => {
       if (readonlyRef.current) return;
       const ws = wsRef.current;
@@ -319,6 +403,8 @@ export function TermView({
           case "snapshot":
             trace("snapshot");
             term.reset();
+            // replay가 키보드 모드를 처음부터 다시 말한다(herdr-web-ui도 재접속 때 0으로 되돌린다)
+            modifyOtherKeys = 0;
             term.resize(msg.cols, msg.rows);
             setSize([msg.cols, msg.rows]);
             term.write(b64decode(msg.replay));
@@ -377,12 +463,17 @@ export function TermView({
       el.removeEventListener("pointerdown", onPointer);
       el.removeEventListener("compositionstart", compositionStart);
       el.removeEventListener("compositionend", compositionEnd);
+      el.removeEventListener("keydown", onCommandArrow);
       if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
       stopGlyphs();
       stopCompositionView();
       dataSub.dispose();
       parsedSub.dispose();
       stopTrace();
+      keySub.dispose();
+      osc52.dispose();
+      otherKeysSet.dispose();
+      otherKeysOff.dispose();
       binSub.dispose();
       offTheme();
       term.dispose();

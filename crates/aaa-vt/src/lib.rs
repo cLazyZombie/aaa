@@ -6,7 +6,36 @@
 use aaa_proto::{GridRun, ScreenText};
 
 pub struct Vt {
-    parser: vt100::Parser,
+    parser: vt100::Parser<Modes>,
+}
+
+/// vt100이 화면에 담지 않는 입력 모드. replay가 다시 말해 늦게 붙은 front도 프로그램이 요청한 형식으로 키를 보낸다.
+#[derive(Default)]
+struct Modes {
+    /// modifyOtherKeys 단계(`CSI > 4 ; n m`). Claude Code는 2를 요청하고 Ctrl+Enter를 `CSI 27;5;13~`로 받는다.
+    modify_other_keys: u16,
+}
+
+impl vt100::Callbacks for Modes {
+    fn unhandled_csi(&mut self, _: &mut vt100::Screen, i1: Option<u8>, i2: Option<u8>, params: &[&[u16]], c: char) {
+        if i1 != Some(b'>') || i2.is_some() || !matches!(c, 'm' | 'n') {
+            return;
+        }
+        // herdr-web-ui keys.ts modifyOtherKeysLevel과 같다: 빈 `CSI > m`·`CSI > 0 m`은 모두 끈다
+        let first = params.first().and_then(|p| p.first()).copied();
+        if params.is_empty() || (params.len() == 1 && first == Some(0)) {
+            self.modify_other_keys = 0;
+            return;
+        }
+        if first != Some(4) {
+            return;
+        }
+        let value = params.get(1).and_then(|p| p.first()).copied();
+        self.modify_other_keys = match (c, value) {
+            ('m', Some(v)) => v,
+            _ => 0,
+        };
+    }
 }
 
 /// scrollback 줄 수(설정 정책은 M1-2에서 TOML로)
@@ -14,7 +43,7 @@ pub const SCROLLBACK: usize = 5000;
 
 impl Vt {
     pub fn new(rows: u16, cols: u16) -> Self {
-        Vt { parser: vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK) }
+        Vt { parser: vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), SCROLLBACK, Modes::default()) }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -34,6 +63,10 @@ impl Vt {
         // 화면을 지우고 처음부터 그린다(재접속한 front의 이전 화면을 덮는다).
         let mut out = b"\x1b[H\x1b[2J".to_vec();
         out.extend_from_slice(&self.parser.screen().state_formatted());
+        let level = self.parser.callbacks().modify_other_keys;
+        if level > 0 {
+            out.extend_from_slice(format!("\x1b[>4;{level}m").as_bytes());
+        }
         out
     }
 
@@ -170,5 +203,20 @@ mod tests {
         assert_eq!(a.text("s").lines, b.text("s").lines);
         assert_eq!(b.text("s").lines[0], "한글 ok");
         assert_eq!((b.text("s").cursor_row, b.text("s").cursor_col), (2, 5));
+    }
+
+    #[test]
+    fn replay_says_modify_other_keys_again() {
+        let mut v = Vt::new(5, 20);
+        assert!(!v.replay().windows(4).any(|w| w == b"\x1b[>4"));
+        v.feed(b"\x1b[>4;2m");
+        assert!(v.replay().ends_with(b"\x1b[>4;2m"));
+        // 다른 자원(1번)은 단계를 바꾸지 않는다
+        v.feed(b"\x1b[>1;1m");
+        assert!(v.replay().ends_with(b"\x1b[>4;2m"));
+        v.feed(b"\x1b[>4n");
+        assert!(!v.replay().windows(4).any(|w| w == b"\x1b[>4"));
+        v.feed(b"\x1b[>4;1m\x1b[>m");
+        assert!(!v.replay().windows(4).any(|w| w == b"\x1b[>4"));
     }
 }

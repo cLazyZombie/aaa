@@ -498,6 +498,21 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
+// 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
+// "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
+fs.writeFileSync(
+  `${root}/keys.js`,
+  `process.stdin.setRawMode(true);
+process.stdout.write("\\x1b[>4;2mkeys> ");
+process.stdin.on("data", (d) => {
+  const s = d.toString("utf8");
+  if (s === "n") process.stdout.write("\\x1b[>4n");
+  if (s === "m") process.stdout.write("\\x1b[>4;2m");
+  if (s === "o") process.stdout.write("\\x1b]52;c;" + Buffer.from("클립 52").toString("base64") + "\\x07");
+  process.stdout.write("\\r\\nGOT:" + JSON.stringify(s) + "\\r\\nkeys> ");
+});
+`,
+);
 base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();
 
@@ -669,6 +684,76 @@ try {
     // 터미널 echo 줄: 한은 그대로, 유지 키 Ctrl은 다음 키 b에 붙는다(한b가 아니라 한^B)
     await until("조합 뒤 유지 키", async () => (await screenText(page)).includes("\n한^B\n"));
     await page.getByRole("button", { name: "^C", exact: true }).click();
+  });
+
+  await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "keysapp", "--", process.execPath, `${root}/keys.js`);
+    const got = () => aaa("pane", "read", "keysapp").lines.join("\n");
+    const gots = () => got().split("GOT:").length - 1;
+    // 클립보드는 기록만 한다(headless 권한·focus와 상관없이 무엇을 썼는지 본다)
+    const clip = () => {
+      window.__clip = [];
+      window.__copies = 0;
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: (t) => (window.__clip.push(t), Promise.resolve()), readText: () => Promise.resolve("") },
+      });
+      document.addEventListener("copy", () => window.__copies++, true);
+    };
+    const mac = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel", init: clip });
+    const mp = mac.page;
+    await mp.getByTestId("pane-keysapp").click();
+    await until("keys 화면", async () => (await screenText(mp)).includes("keys>"));
+    await mp.getByTestId("terminal").click();
+    const press = async (key, want) => {
+      const n = gots();
+      await mp.keyboard.press(key);
+      await until(`${key} → ${want}`, () => gots() > n);
+      const last = got().split("GOT:").at(-1).split("\n")[0];
+      if (last !== want) throw new Error(`${key}가 ${last}로 갔다(기대 ${want})`);
+      // 프로그램이 같은 조각에 쓴 모드 변경을 웹 터미널도 읽은 뒤에 다음 키를 누른다
+      await until(`화면 ${want}`, async () => (await screenText(mp)).split("GOT:").at(-1).split("\n")[0] === want);
+    };
+    await press("Shift+Enter", '"\\u001b\\r"');
+    // 화면을 열 때 이미 켜진 모드는 snapshot replay가 다시 말한다
+    await press("Control+Enter", '"\\u001b[27;5;13~"');
+    await press("n", '"n"');
+    await press("Control+Enter", '"\\r"');
+    await press("m", '"m"');
+    await press("Control+Enter", '"\\u001b[27;5;13~"');
+    await press("Meta+Backspace", '"\\u0015"');
+    await press("Meta+ArrowLeft", '"\\u0001"');
+    await press("Meta+ArrowRight", '"\\u0005"');
+    await press("Enter", '"\\r"');
+    // Ctrl+V는 xterm이 ^V로 보내지 않는다(브라우저 붙여넣기에 맡긴다): 뒤이은 x만 간다
+    await mp.keyboard.press("Control+v");
+    await press("x", '"x"');
+    // 선택이 있으면 Ctrl+C는 복사하고 ^C를 보내지 않는다
+    const rows = await mp.locator(".xterm-rows > div").first().boundingBox();
+    await mp.mouse.move(rows.x + 2, rows.y + rows.height / 2);
+    await mp.mouse.down();
+    await mp.mouse.move(rows.x + 60, rows.y + rows.height / 2, { steps: 4 });
+    await mp.mouse.up();
+    await mp.keyboard.press("Control+c");
+    await press("y", '"y"');
+    if ((await mp.evaluate(() => window.__copies)) < 1) throw new Error("선택 중 Ctrl+C가 복사하지 않았다");
+    // OSC 52: 프로그램이 쓴 글이 클립보드로
+    await press("o", '"o"');
+    await until("OSC 52 클립보드", async () => (await mp.evaluate(() => window.__clip)).includes("클립 52"));
+    // 늦게 붙은 화면: 프로그램은 모드를 다시 말하지 않지만 replay가 말한다
+    const late = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel" });
+    await late.page.getByTestId("pane-keysapp").click();
+    await until("keys 화면(늦게 붙음)", async () => (await screenText(late.page)).includes("keys>"));
+    await late.page.getByTestId("terminal").click();
+    const n = gots();
+    await late.page.keyboard.press("Control+Enter");
+    await until("늦게 붙은 화면 Ctrl+Enter", () => gots() > n);
+    const last = got().split("GOT:").at(-1).split("\n")[0];
+    if (last !== '"\\u001b[27;5;13~"') throw new Error(`늦게 붙은 화면의 Ctrl+Enter가 ${last}`);
+    if (mac.errors.length || late.errors.length) throw new Error([...mac.errors, ...late.errors].join("; "));
+    await late.page.context().close();
+    await mp.context().close();
+    await page.getByTestId("pane-t1").click();
   });
 
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 놓는다", async () => {
