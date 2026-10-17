@@ -27,10 +27,48 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY) return;
   mode = read();
+  fontSize = readFontSize();
   listeners.forEach((f) => f());
 });
+
+/** 터미널 글자 크기 px(herdr-web-ui settings.ts `terminalFontSize`: 기기마다, 기본 13, 10~22). 핀치도 이것을 바꾼다. */
+export const TERMINAL_FONT_MIN = 10;
+export const TERMINAL_FONT_MAX = 22;
+const DEFAULT_FONT_SIZE = 13;
+const FONT_KEY = "aaa:terminal-font-size";
+
+function clampFont(size: number): number {
+  return Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(size)));
+}
+
+function readFontSize(): number {
+  try {
+    const raw = localStorage.getItem(FONT_KEY);
+    const v = raw === null ? NaN : Number(raw);
+    return Number.isFinite(v) ? clampFont(v) : DEFAULT_FONT_SIZE;
+  } catch {
+    return DEFAULT_FONT_SIZE;
+  }
+}
+
+let fontSize = readFontSize();
+
+export function setTerminalFontSize(size: number) {
+  fontSize = clampFont(size);
+  try {
+    if (fontSize === DEFAULT_FONT_SIZE) localStorage.removeItem(FONT_KEY);
+    else localStorage.setItem(FONT_KEY, String(fontSize));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function useTerminalFontSize(): number {
+  return useSyncExternalStore(subscribe, () => fontSize);
+}
 
 export function setTerminalInputMode(next: TerminalInputMode) {
   mode = next;

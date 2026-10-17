@@ -1,5 +1,5 @@
 // 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui MachineSidebar 바닥 줄 → SettingsDialog).
-// 참고 SettingsDialog(aa624cb)의 쪽 가운데 aaa가 뒷받침하는 묶음만 옮겼다: 터미널 「입력 방식」(Terminal 쪽 404~409줄)과
+// 참고 SettingsDialog(aa624cb)의 쪽 가운데 aaa가 뒷받침하는 묶음만 옮겼다: 터미널 「글자 크기」·「입력 방식」(Terminal 쪽 395~409줄)과
 // 「구독 사용량」(Usage 쪽 UsagePage·UsageAccounts 570~631줄). 행·묶음·스위치·여럿 중 하나는 참고 SettingsControls.tsx와 같다.
 // 나머지 쪽(모양·chat·알림·기기·키 막대 편집 등)은 그 기능을 옮길 때 넣는다(plan §8.45).
 import { useEffect, useRef, type ReactNode } from "react";
@@ -7,7 +7,16 @@ import { createPortal } from "react-dom";
 import type { ProviderUsage } from "./gen/proto";
 import { Icon } from "./icons";
 import { ProviderMark } from "./UsageMeters";
-import { setTerminalInputMode, updateUsageSettings, useTerminalInputMode, useUsageSettings } from "./settings";
+import {
+  setTerminalFontSize,
+  setTerminalInputMode,
+  TERMINAL_FONT_MAX,
+  TERMINAL_FONT_MIN,
+  updateUsageSettings,
+  useTerminalFontSize,
+  useTerminalInputMode,
+  useUsageSettings,
+} from "./settings";
 import { moveInOrder, orderProviders, PROVIDER_NAME, usageName, useUsage } from "./usage";
 
 /** 묶음: 제목 아래 카드 하나, 카드 안에 줄들 */
@@ -44,6 +53,21 @@ function Toggle({ checked, label, onChange }: { checked: boolean; label: string;
     <button type="button" className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)}>
       <span className="settings-toggle-thumb" />
     </button>
+  );
+}
+
+/** 숫자 하나를 한 칸씩(참고 SettingsControls `Stepper`) */
+function Stepper({ label, value, text, min, max, decreaseLabel, increaseLabel, onChange }: { label: string; value: number; text: string; min: number; max: number; decreaseLabel: string; increaseLabel: string; onChange: (value: number) => void }) {
+  return (
+    <div className="settings-stepper" role="group" aria-label={label}>
+      <button type="button" className="ghost icon small" aria-label={decreaseLabel} disabled={value <= min} onClick={() => onChange(value - 1)}>
+        <Icon name="minus" />
+      </button>
+      <output aria-live="polite">{text}</output>
+      <button type="button" className="ghost icon small" aria-label={increaseLabel} disabled={value >= max} onClick={() => onChange(value + 1)}>
+        <Icon name="plus" />
+      </button>
+    </div>
   );
 }
 
@@ -166,6 +190,7 @@ function UsageGroups() {
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const mode = useTerminalInputMode();
+  const fontSize = useTerminalFontSize();
   const surface = useRef<HTMLElement>(null);
   useEffect(() => {
     surface.current?.focus();
@@ -192,6 +217,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         </header>
         <div className="settings-body">
           <SettingsGroup title="터미널">
+            <SettingsRow label="글자 크기" description="이 기기의 모든 터미널. 터미널을 두 손가락으로 벌리거나 오므려도 바뀐다.">
+              <Stepper
+                label="글자 크기"
+                value={fontSize}
+                text={`${fontSize}px`}
+                min={TERMINAL_FONT_MIN}
+                max={TERMINAL_FONT_MAX}
+                decreaseLabel="글자 작게"
+                increaseLabel="글자 크게"
+                onChange={setTerminalFontSize}
+              />
+            </SettingsRow>
             <SettingsRow label="입력 방식" htmlFor="terminal-input-mode">
               {/* 저장 기본값 auto는 모든 기기에서 그리드에 바로 친다: 바로 입력으로 읽는다 */}
               <select
