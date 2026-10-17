@@ -431,11 +431,15 @@ pub enum AgentRequest {
         len: u32,
     },
     /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
-    /// (claude는 새 `--session-id`). 저장된 launch를 그대로 쓰고 profile을 다시 해석하지 않는다.
+    /// (claude는 새 `--session-id`). `profile`이 없으면 저장된 launch를 그대로 쓰고, 있으면 이 머신 agent.toml에서
+    /// 그 profile을 다시 해석한다(`thread restart --profile`, AGENT_LINK 1.4). 옛 agent는 `profile`을 모르고 저장된
+    /// launch를 돌려주므로 host는 돌려받은 `Launch.profile`로 확인한다.
     ThreadRebrief {
         work_dir: String,
         brief: String,
         launch: Launch,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -1097,9 +1101,11 @@ pub enum FrontRequest {
         project: String,
         title: String,
         machine: Option<String>,
+        /// 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
         profile: String,
+        /// 없으면 repo가 있으면 worktree, 없으면 dir(herdr-projects `placement`)
         #[serde(default)]
-        kind: ThreadKind,
+        kind: Option<ThreadKind>,
         repo: Option<String>,
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
@@ -1152,6 +1158,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         keep_worktree: bool,
+        /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
+        #[serde(default)]
+        reopen: bool,
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {
@@ -1164,6 +1173,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         resume: bool,
+        /// 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
+        #[serde(default)]
+        profile: Option<String>,
     },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {

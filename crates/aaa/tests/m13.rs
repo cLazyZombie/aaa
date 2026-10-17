@@ -937,6 +937,103 @@ fn memory_and_restart() {
     assert!(!std::fs::read_dir(dir.join("memory")).unwrap().any(|e| e.unwrap().file_name() != "api.md"));
 }
 
+/// thread start 기본값(herdr-projects threads.rs `start`·`placement`·`thread_profile`, 차이 목록 A1·A15): profile을 빼면
+/// project.toml `thread_profile`, kind를 빼면 repo가 있으면 worktree·없으면 작업 폴더. 미할당 task도 `thread_profile`로
+/// 시작하고, 이미 열린 thread가 맡은 task는 막지 않고 경고한다.
+#[test]
+fn start_defaults_profile_kind_and_task() {
+    let w = world();
+    let dir = w.projects.join("demo");
+    let task = w.task("d.txt", "x");
+    let e = w.h.json(&["thread", "start", "demo", "--title", "d", "--task-file", &task]).expect_err("profile 없음");
+    assert!(e.contains("project.toml에 thread_profile"), "{e}");
+    std::fs::write(dir.join("project.toml"), "schema = 1\nthread_profile = \"fake\"\n").unwrap();
+    let a = w.start(&["--title", "d", "--task-file", &task]);
+    assert_eq!((a["profile"].as_str(), a["thread_kind"].as_str()), (Some("fake"), Some("dir")), "{a}");
+    let b = w.start(&["--title", "r", "--repo", path_str(&w.repo), "--task-file", &task]);
+    assert_eq!((b["profile"].as_str(), b["thread_kind"].as_str()), (Some("fake"), Some("worktree")), "{b}");
+    assert!(b["branch"].as_str().is_some_and(|s| s.starts_with("aaa/demo/")), "{b}");
+    // 미할당 task는 thread_profile, 이미 열린 thread가 맡은 task는 경고만 한다(CLI는 `경고:` 줄)
+    let aid = a["id"].as_str().unwrap();
+    std::fs::write(dir.join("TASKS.md"), format!("# Tasks\n\n## Backlog\n- [ ] 새 일\n- [ ] 맡긴 일 · {aid}\n"))
+        .unwrap();
+    let c = w.start(&["--from-task", "새 일"]);
+    assert_eq!((c["profile"].as_str(), c["title"].as_str()), (Some("fake"), Some("새 일")), "{c}");
+    assert!(c.get("warnings").is_none(), "{c}");
+    let o = w.h.run(&["thread", "start", "demo", "--from-task", "맡긴 일"]);
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out.starts_with(&format!("경고: 열린 {aid}가 이미 이 task를 맡고 있다. 그래도 시작했다\n")), "{out}");
+}
+
+/// thread restart --profile(herdr-projects threads.rs `restart`, 차이 목록 E8): 그 머신 agent.toml에서 다시 해석해 새 대화로
+/// 띄운다. 허용 목록에 없는 profile·`--resume`과 함께는 거부한다(agent.toml에 없는 profile은 agent 유닛 시험).
+#[test]
+fn restart_with_another_profile() {
+    let w = world();
+    let v = w.start(&["--title", "p", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("p.txt", "x")]);
+    let (id, pane) = (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string());
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    w.h.ok(&["pane", "kill", &pane]);
+    wait_for("세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+    let o = w.h.run(&["thread", "restart", "demo", &id, "--resume", "--profile", "mute"]);
+    assert_eq!(o.status.code(), Some(2), "{}", String::from_utf8_lossy(&o.stderr));
+    let e = w.h.json(&["thread", "restart", "demo", &id, "--profile", "nope"]).expect_err("허용하지 않은 profile");
+    assert!(e.contains("allow_profiles에 없는 profile: nope"), "{e}");
+    assert_eq!(w.show(&id)["profile"], "fake", "거부한 restart는 기록을 바꾸지 않는다");
+    let v = w.h.ok(&["thread", "restart", "demo", &id, "--profile", "mute"]);
+    assert_eq!(v["profile"], "mute", "{v}");
+    let pane2 = v["pane"].as_str().unwrap().to_string();
+    assert_ne!(pane2, pane);
+    // 새 세션은 mute profile의 명령이다(옛 fake 명령이 아니다)
+    wait_for("새 세션", T, || (w.h.pane(&pane2)["state"] == "running").then_some(()));
+    let argv = w.h.pane(&pane2)["argv"].to_string();
+    assert!(argv.contains("mute.sh") && !argv.contains("fake.sh"), "{argv}");
+    assert_eq!(w.kinds(0).iter().filter(|k| *k == "thread_restarted").count(), 1);
+}
+
+/// auto-resolve(herdr-projects steps.rs `auto_resolve`, 차이 목록 E11): 쉼으로 `auto_resolve_days`가 지나면 마지막 사본 뒤
+/// 끝내고, 항목이 `--reopen`을 안내한다. `--reopen`은 기록만 되돌리고 아무것도 띄우지 않는다. 하루는 시험에서 1초다.
+#[test]
+fn auto_resolve_and_reopen() {
+    let w = world_with("tick_secs = 1\nauto_resolve_day_secs = 1\n");
+    let dir = w.projects.join("demo");
+    std::fs::write(dir.join("project.toml"), "schema = 1\nauto_resolve_days = 2\n").unwrap();
+    let v = w.start(&["--title", "a", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("a.txt", "x")]);
+    let (id, pane) = (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string());
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    w.h.ok(&["thread", "ack", "demo", &id]);
+    w.h.ok(&["pane", "kill", &pane]);
+    w.wait_show("쉼", &id, |v| v["group"] == "idle");
+    let v = w.wait_show("자동 resolve", &id, |v| v["status"] == "resolved");
+    assert_eq!(v["group"], "resolved");
+    let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    let done: Vec<&Value> = items.iter().filter(|i| i["subject"] == id.as_str() && i["event"] == "resolved").collect();
+    assert_eq!(done.len(), 1, "{items:?}");
+    let summary = done[0]["summary"].as_str().unwrap();
+    assert!(
+        summary.contains("쉼으로 auto_resolve_days(2일)가 지나 저절로 끝냈다")
+            && summary.contains(&format!("aaa thread resolve demo {id} --reopen")),
+        "{summary}"
+    );
+    // 다시 연다: 기록만 열리고 아무것도 띄우지 않는다. 다시 끝나지 않게 auto-resolve를 끈다(0)
+    std::fs::write(dir.join("project.toml"), "schema = 1\nauto_resolve_days = 0\n").unwrap();
+    let o = w.h.run(&["thread", "resolve", "demo", &id, "--reopen"]);
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out.starts_with(&format!("경고: 아무것도 띄우지 않았다. `aaa thread restart demo {id}`")), "{out}");
+    assert_eq!(w.show(&id)["status"], "open");
+    let e = w.h.json(&["thread", "resolve", "demo", &id, "--reopen"]).expect_err("열린 thread");
+    assert!(e.contains("끝낸 thread가 아니다"), "{e}");
+    // 작업 폴더 thread는 폴더가 남아 다시 띄울 수 있다. ticker가 두 번 돌아도 다시 끝나지 않는다(0이면 끈다)
+    let v = w.h.ok(&["thread", "restart", "demo", &id]);
+    w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered");
+    w.h.ticks(2);
+    assert_eq!(w.show(&id)["status"], "open", "{v}");
+    let kinds = w.kinds(0);
+    assert!(kinds.contains(&"thread_reopened".to_string()), "{kinds:?}");
+}
+
 /// inbox: 묶음 전이(새 보고·쉼, plan §8.85)·설정 오류가 항목이 되고, coordinator가 입력을 기다릴 때 처음 보는 묶음을 한 번만
 /// 알린다(§8.17)
 #[test]
@@ -1923,12 +2020,10 @@ fn coordinator_flow() {
     );
     let task = std::fs::read_to_string(pdir.join("threads").join(format!("{id}.task.md"))).unwrap();
     assert!(task.contains("## Notes from the task list") && task.contains("메모: 테스트 먼저"), "{task}");
-    // coordinator가 ` · t-…`를 붙이면 같은 task를 다시 맡기지 않는다
+    // coordinator가 ` · t-…`를 붙인다(같은 task를 다시 맡기면 막지 않고 경고한다: `start_defaults_profile_kind_and_task`)
     let md =
         std::fs::read_to_string(pdir.join("TASKS.md")).unwrap().replace("(fake@labA)", &format!("(fake@labA) · {id}"));
     std::fs::write(pdir.join("TASKS.md"), md).unwrap();
-    let e = w.h.json(&["thread", "start", "demo", "--from-task", "로그인 고치기", "--kind", "dir"]).expect_err("중복");
-    assert!(e.contains(&format!("이미 {id}")), "{e}");
 
     // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다
     let report_next = w.wait_show("보고", &id, |v| v["report_hash"].is_string())["next"].clone();
