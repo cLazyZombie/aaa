@@ -2175,7 +2175,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
   - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
   - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 나눈 두 pane 폭 합은 칸 폭 − 4(상자 테두리). 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
-
 ### 8.93 웹 터미널 띠·맨 아래로·같이 쓰기·끌기 중 휠·패널 클립보드를 herdr-web-ui대로(10-18, 차이 목록 1장 나머지, D7)
 
 - **띠는 모두 터미널 위에 뜬다(PaneTerminal 2747~2826줄 `.terminal-banners`).** §8.48 뒤에도 끊김·권한·오류·그림 띠는 터미널 위 흐름에 있었다. 띠가 나고 들 때마다 터미널 칸이 줄었다 늘어 PTY 크기가 바뀌었다(그림을 붙여 넣으면 그 띠 높이만큼 줄 수가 줄었다). 이제 터미널 화면에서는 모든 띠가 `.terminal-banners`(터미널 위 오른쪽, 칸 크기와 상관없음)에 있다. 대화 보기는 grid가 없고 크기도 놓았으므로 거기서는 전처럼 흐름에 둔다(참고도 대화 lens는 ChatView가 그 안에서 말한다).
@@ -2359,6 +2358,45 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `restart_with_another_profile`: `--resume`과 함께·없는 profile 거부(기록은 그대로), 다른 profile로 새 세션.
   - m13 `auto_resolve_and_reopen`: 하루 1초·2일에서 쉼 뒤 끝나고 항목이 `--reopen`을 안내한다. 다시 열고, 0이면 끈다.
   - host `transitions` 유닛: 가장 늦은 때부터 재기, 옛 기록. agent `threads` 유닛: profile 다시 해석·없는 profile.
+
+### 8.105 쓰는 기기: 마지막으로 치거나 누르거나 화면을 켠 한 기기만 push를 막는다(10-18, 사용자 결정), pane 연결 깨어나면 바로 다시 붙기(QA t-0337 Q5), 빠른 휠 앞 기록(Q1)
+
+- **사용자 결정(원문 10-18 01:3x).** 「여러 곳에서 띄웠어. … 지금 입력 받아가는 것 처럼, (최고 나중에 화면 켠 쪽에 입력 과 화면 크기 맞추는), 이걸 이용하면 안될까?」 coordinator가 이것을 아래 규칙으로 정리했다.
+  - 「쓰는 기기」는 한 기기다. 사람이 마지막으로 치거나 누르거나 화면을 켠 기기다.
+  - push는 그 기기가 지금 보이고 focus일 때만 건너뛴다. 다른 기기 창이 보이는 것은 까닭이 아니다.
+  - 그 기기가 가려지거나 다른 기기가 입력을 받으면 바로 바뀐다. 앱 안 알림은 그 기기에 꼭 내려온다(다른 기기도 보이면 내려온다). 판정은 모으는 기다림(debounce) 뒤 보내기 직전에 한다.
+- **참고와 다른 점.** herdr-web-ui `server/index.ts` 1117줄 `inUse: () => present.size > 0`(`server/push.ts` 28~31·468~487줄)는 쓰는 화면이 하나라도 있으면 어느 기기에도 보내지 않는다. 여러 기기에 aaa를 띄워 두면 다른 기기 창 하나 때문에 휴대폰 push가 오지 않았다(10-18 00:58 실기). 그래서 사용자 결정대로 바꿨다.
+- **무엇이 쓰는 기기를 정하나.**
+  - 웹이 상태 사건 연결로 `EventsClientMsg::Touch`를 보낼 때다. 앱을 열거나 이 화면이 보이고 focus가 될 때(`watchPageInUse`가 쓰는 중으로 바뀜), 그리고 쓰는 중에 누를 때(`pointerdown`)·칠 때(`keydown`, 반복 키 제외)다. 붙기 전이나 끊긴 동안 누른 것은 붙으면 보낸다.
+  - host가 pane 연결에서 입력(`input`·binary·`submit`)이나 `take`를 받을 때다.
+  - 다시 붙을 때의 presence 보고와 크기 걸기(`resize`)는 정하지 않는다. host가 다시 뜨거나 연결이 다시 붙을 때, 보이고 focus인 데스크톱 창이 휴대폰에서 쓰는 기기를 빼앗지 않게 하려는 것이다.
+- **host.**
+  - `Viewing.user`(seen.rs)가 쓰는 기기다. `push_items`는 `user_in_use()`(그 기기에 쓰는 화면이 있다)일 때만 건너뛴다.
+  - `push_skipped` 설명: 「쓰는 기기 01ABCDE · 쓰는 화면 2개(기기 01ABCDE, 01FGHIJ) · 항목 1개」.
+  - `GET /api/v1/push`에 `user`(앞 7자)·`you`(이 기기인지)를 더했다. 쓰는 기기는 메모리에만 있어 host를 다시 띄우면 비고, 다음 누름·입력에서 정해진다.
+- **시험(웹 E2E 「쓰는 기기」).** A(데스크톱)는 처음부터 끝까지 보이고 focus이고, B(휴대폰)는 focus 없이 연다.
+  - (1) B에서 pane에 친다. B가 쓰는 기기가 되고(B `you`), B는 쓰는 화면이 아니므로 push가 간다. A가 쓰는 화면이어도 건너뛰지 않는다.
+  - (2) B가 보이고 focus가 된다. push 없이 「쓰는 기기 B · 쓰는 화면 2개」로 건너뛰고, B에 앱 안 알림이 내려온다. B가 가려지면 다음 보고는 push로 간다.
+  - (3) A에서 다시 친다. A가 쓰는 기기가 되고 「쓰는 기기 A」로 건너뛴다.
+  - 단위 시험: `push_waits_only_for_the_device_last_touched`(seen.rs).
+- **QA t-0337 Q5: pane 연결이 깨어나면 바로 다시 붙기.**
+  - 결함: 끊긴 pane 연결은 backoff(최대 10초)를 다 기다렸다. 망이 돌아오거나 화면이 다시 보여도 마찬가지였다(Term.tsx).
+  - 참고: herdr-web-ui `src/lib/ws.ts` `onWake`·`wake()`(150~165·571~600줄)는 online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다. t3code client-runtime `connection/supervisor.ts`도 같다.
+  - 고침: Term.tsx `onWake`가 그대로 한다. 열린 연결과 출력 정지(4008)는 건드리지 않는다. 열린 pane 연결의 probe(참고 `wake`가 하는 일)는 pane 연결에 ping이 없어 아직 아니다.
+  - 시험(웹 E2E 「깨어나면 바로 다시 붙기」): 끊고 다시 붙기 두 번을 거절해 backoff 중으로 만든 뒤 `online`·`pageshow`·`visibilitychange`를 보낸다. 그 사건 안에서 새 연결이 하나 생기고(타이머를 기다리지 않는다) snapshot을 받는다. 고침을 빼면 「새 연결 0개」로 실패함을 확인했다.
+  - Playwright `routeWebSocket`은 서버에 이을 때만 진짜 WebSocket을 만든다. 그래서 길에서 거절한 연결은 진단 기록에 남지 않는다. 시험은 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싸 센다.
+- **QA t-0337 Q1: 빠른 휠 뒤 빈 화면.**
+  - 결함: 긴 출력 pane에서 휠을 연달아 굴려 앞 기록을 붙이는 중에 터미널이 빈 채로 굳었다. 새 출력·친 글이 보이지 않고, 휠·창 크기·「맨 아래로」 단추로도 돌아오지 않았다. 다른 pane에 갔다 와야 풀렸다(데스크톱 Chromium 6/8, WebKit 0). `5b01330`에서도 그대로였다.
+  - 원인(QA 2바퀴가 찾고 여기서 결함 심기로 확인): `term.reset()`이 부르는 xterm 5.5 `Viewport.reset()`은 줄 높이 `_currentRowHeight`를 0으로 두고 rAF 두 번 뒤(`syncScrollArea` → `_refresh` → `_innerRefresh`)에야 다시 잰다. 그 사이 viewport scroll 사건이 오면 `_handleScroll`이 `scrollTop / 0`으로 줄을 구한다. scrollTop이 0이면 NaN이 되어 `ydisp`가 NaN에 굳는다.
+    - 버퍼를 읽는 중이면 남은 출력이 ydisp를 되살린다. 다 읽은 뒤·재기 전(덮개를 뗀 frame과 다음 frame 사이)에 오면 그대로 남는다. 짧은 줄이라 한 번에 다 읽히는 pane에서 휠 연타가 그 틈에 닿았다.
+    - 그러면 `prependHistory`의 그림 기다림(`viewportY !== at`)이 늘 참이라 `done()`을 부르지 않아 붙잡은 출력이 풀리지 않았다. 「맨 아래로」 단추의 `viewportY < baseY`는 늘 거짓이었다.
+  - 이 개발 Mac에서 QA 1바퀴 스크립트(`probe-scroll5.mjs`)로 24번 재현하지 못한 것은 그 pane이 처음 구독 전에 출력을 쏟아(Q8) 덩어리가 작고 줄이 길어(한글·이모지) 읽는 중에 사건이 닿았기 때문으로 보인다.
+  - 고침(QA가 든 세 길 가운데 둘):
+    - 원인 자리를 막는 xterm 패치 `web/patches/xterm-5.5.0-viewport.patch`. 줄 높이를 재기 전의 scroll은 옮기지 않는다(`_innerRefresh`가 scrollTop을 ydisp에 맞춘다). 같은 동안 mouse 보고 휠의 `getLinesScrolled`는 0을 돌려준다(Infinity가 `_wheelPartialScroll`을 NaN에 굳힌다). 앞 기록과 snapshot(`ESC c`) 모두 이 길을 지난다.
+    - 안전장치로 `prependHistory`는 보던 줄이 유한수가 아니면 다시 맞추려 기다리지 않고 붙잡은 출력을 푼다.
+    - 「reset 직후 rAF까지 scroll 막기」는 앱에서 xterm 안의 줄 높이를 볼 수 없어 frame 수를 어림해야 하므로 고르지 않았다.
+  - 시험(웹 E2E 07 「앞 기록 reset 직후 scroll」): 짧은 줄 2600줄 pane에서 앞 기록을 받을 때 덮개가 떨어지는 순간(MutationObserver, 다음 frame 전) scrollTop 0의 scroll 사건을 보낸다. 붙인 뒤 `data-view-top`이 숫자이고, 줄이 그려지고, 덮개가 없고, 키를 치면 새 출력이 보인다. 패치를 빼면 `view-top`이 NaN으로 남아 실패함을 확인했다.
+  - 「앞 기록 빠른 휠」(QA 1바퀴와 같은 줄·휠 40번, 8번)은 회귀 시험으로 둔다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
