@@ -78,7 +78,8 @@ step_web() { (cd web && npm ci --no-audit --no-fund && npm run build && npm test
 step_fmt() { cargo fmt --all --check; }
 step_build() { cargo build --workspace --all-targets --locked; }
 step_clippy() { cargo clippy --workspace --all-targets --locked -- -D warnings; }
-step_test() { cargo test --workspace --locked; }
+# 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary(예: tests/tui.rs) 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
+step_test() { cargo test --workspace --locked --no-fail-fast; }
 step_clipboard() {
   local run=()
   [ "$OS" = linux ] && run=(xvfb-run -a)
