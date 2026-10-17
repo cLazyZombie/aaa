@@ -8,7 +8,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ApiError, call, me, onSignedOut, pushInfo, signOut, watchEvents } from "./api";
+import { ApiError, call, me, onSignedOut, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
@@ -29,7 +29,7 @@ import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
-import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
+import { justWoke, raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
 import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
@@ -281,17 +281,21 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const linkedOnce = useRef({ questions: false, threads: false });
   const now = useRef({ sel, panes, threads, machines, role });
   now.current = { sel, panes, threads, machines, role };
-  const questionNews = (q: QuestionView) => {
+  const questionNews = (q: QuestionView, replay = false) => {
     if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
     seenQuestions.current.add(q.id);
-    if (!alertKinds.current?.has("thread-state")) return;
+    const target = `pane=${encodeURIComponent(q.pane)}`;
+    // 어떻게 했는지 host에 알린다(push 판정 근거, 10-18 실기)
+    const told = (outcome: string) => tellAlert({ project: q.project ?? null, target, kind: "blocked", outcome });
+    if (!alertKinds.current?.has("thread-state")) return told(alertKinds.current ? "host 알림 종류에 없음" : "host 알림 종류 아직 모름");
     const { sel, panes, threads, machines } = now.current;
     const pane = panes.find((p) => p.id === q.pane);
     const thread = q.project && q.thread ? threads.get(`${q.project}/${q.thread}`) : undefined;
     const name = thread?.title || (pane ? pane.name || pane.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8));
-    raiseAlert({
+    const outcome = raiseAlert({
       kind: "blocked",
-      target: `pane=${encodeURIComponent(q.pane)}`,
+      target,
+      late: replay || justWoke(),
       showing: sel === `pane:${q.pane}`,
       title: name,
       machine: machines.length > 1 ? q.machine : null,
@@ -302,29 +306,37 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         tag: q.project && q.thread ? `aaa-${q.project}/${q.thread}` : `aaa-pane-${q.pane}`,
       },
     });
+    told(outcome);
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
   const reviewHash = (t: ThreadView) => (t.group === "ready_for_review" ? t.report_hash : null);
-  const reportNews = (t: ThreadView) => {
+  const reportNews = (t: ThreadView, replay = false) => {
     const key = threadKey(t);
+    const target = `thread=${encodeURIComponent(key)}`;
+    const told = (outcome: string) => tellAlert({ project: t.project, target, kind: "done", outcome });
     if (!seenReports.current.has(key)) {
       seenReports.current.set(key, reviewHash(t));
+      // 처음 보는 thread는 새 소식이 아니다. 검토 대기 보고면 무엇을 하지 않았는지 남긴다(목록을 읽기 전에 온 사건도 여기다)
+      if (reviewHash(t) !== null && t.role !== "evaluator") told("처음 본 thread라 알리지 않음");
       return;
     }
     const hash = reviewHash(t);
     if (hash === null || hash === seenReports.current.get(key)) return;
     seenReports.current.set(key, hash);
-    if (t.role === "evaluator" || !alertKinds.current?.has("thread-state")) return;
+    if (t.role === "evaluator") return;
+    if (!alertKinds.current?.has("thread-state")) return told(alertKinds.current ? "host 알림 종류에 없음" : "host 알림 종류 아직 모름");
     const { sel, panes } = now.current;
-    raiseAlert({
+    const outcome = raiseAlert({
       kind: "done",
-      target: `thread=${encodeURIComponent(key)}`,
+      target,
+      late: replay || justWoke(),
       showing: sel === `thread:${key}`,
       title: t.title || t.id,
       machine: null,
       agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
       notice: { title: `${t.project} · ${t.title || t.id}`, body: "보고 준비", tag: `aaa-${t.project}/${t.id}` },
     });
+    told(outcome);
   };
 
   // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.79): 들어온 뒤에만 읽고, events 사건으로 따라간다
@@ -355,7 +367,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 if (r.kind !== "questions") return;
                 // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
                 // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
-                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q);
+                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q, true);
                 else for (const q of r.questions) seenQuestions.current.add(q.id);
                 linkedOnce.current.questions = true;
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
@@ -371,7 +383,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 if (linkedOnce.current.threads)
                   for (const t of r.threads) {
                     if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
-                    reportNews(t);
+                    reportNews(t, true);
                   }
                 else for (const t of r.threads) seenReports.current.set(threadKey(t), reviewHash(t));
                 linkedOnce.current.threads = true;

@@ -722,6 +722,11 @@ fn remote_dir_thread_survives_host_restart() {
         "host가 끊김을 본 지 기준(5초) 전에 outage가 생겼다: 띄운 뒤 {}ms {down}",
         at as i64 - spawned_ms as i64
     );
+    // 알린 끊김이 이어지는 동안 host를 다시 띄워도 그 끊김은 이어진다(plan §8.134): 다시 「down」을 쓰지 않고, 돌아오면
+    // 「recovered」를 한 번 쓴다. 옛 host는 새로 띄우면 알린 것을 잊어 회복을 영영 쓰지 않았다.
+    w.lab.kill("host3");
+    w.lab.spawn("host4", &w.h, &["host"]);
+    wait_for("host4 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
     let b = w.lab.node("b", None);
     w.lab.spawn("agentB2", &b, &["agent", "--host", &w.addr, "--name", "labB"]);
     wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));

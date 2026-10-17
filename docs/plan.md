@@ -2875,6 +2875,32 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **뺀 것.** 참고의 새 탭·나누기·확대·사이드바 접기·PC 추가·알림 켜기·새로 고침·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없다. 셸 줄 표시(`AgentMark` 「s」)와 상태 없는 줄의 「—」 칸은 참고 그대로다.
 - **시험.** `web/test/palette.test.mjs`(참고 paletteSearch·paletteSettings·machinePalette 시험을 aaa 줄로). 웹 E2E 「명령 팔레트」(`specs/04-app-shell.mjs`): 돋보기로 열면 검색 칸 focus, 이름으로 찾아 Enter면 그 pane, Mod+Shift+K로 다시 열면 「최근」 맨 앞이 앞서 연 줄, `>테마`는 pane 없이 「테마 전환」이 먼저이고 Enter면 테마가 바뀜, 「터미널」로 찾은 설정 쪽은 그 쪽으로 열림, 휴대폰엔 돋보기 없음. 「앱 단축키」(`specs/03-keys.mjs`)는 Mod+Shift+K를 앱 몫으로 본다.
 
+### 8.133 push 판정 근거 기록과 「쓰는 화면」 lease(10-18, 실기 07:39 「쓰는 화면」으로 push 생략·앱 안 알림 없음, 07:43 push와 앱 안 알림 둘 다)
+- **결함.** 07:39 host는 iPhone을 보이고 focus인 쓰는 기기로 보고 push를 건너뛰었는데(`push_skipped` 「쓰는 화면 2개」), 그 화면에는 앱 안 알림이 오지 않았다. 07:43에는 앱이 열려 있는데 push가 가서 앱 안 알림과 겹쳤다. host는 무엇을 보고 그렇게 정했는지 남기지 않아 어느 쪽인지 가를 수 없었다.
+- **판정 근거 기록(먼저).** host는 events 연결마다 알린 것을 시각과 함께 둔다(`seen.rs` `ConnRec`): 연 때, presence(쓰는 중인지, 웹이 보낸 까닭 `focus`·`blur`·`visibilitychange`·`pagehide`·`pageshow`·`freeze`·`resume`·`open`·`heartbeat`와 그때 `visibilityState`·`hasFocus()`), 마지막 앱 글(Text frame), 마지막 WebSocket pong. 쓰는 기기는 알린 길(`touch`·`입력`)과 때를 둔다.
+  - `push_skipped`·`push_sent` 세부 뒤에 「근거: 쓰는 기기 X(touch N초 전) · 연결#n 쓰는 중(presence N초 전 true focus 보임·focus, 앱 글 N초 전, pong N초 전, 연결 N초 전) · 그 밖 연결 K개(쓰는 기기 …)」를 붙인다. 쓰는 기기의 연결만 자세히 쓰고 나머지는 수만 쓴다.
+  - 웹은 사건 하나를 앱 안 알림으로 어떻게 했는지 events 연결로 알린다(`EventsClientMsg::Alert`). host는 아는 프로젝트면 흐름 사건 `alert_outcome`(「기기 X · done · thread=… · 띄움 · focus · 소리」)으로 남긴다. 알리지 않은 까닭(알림 꺼짐·종류 꺼짐·가려짐·보는 중·host 알림 종류 아직 모름·처음 본 thread)도 남긴다.
+  - 07:43 겹침의 유력한 까닭: 웹의 앱 안 알림은 `visibilityState`만 보고, host의 쓰는 화면은 보이고 `hasFocus()`다(herdr-web-ui와 같다). iOS 홈 화면 앱이 보이는데 `hasFocus()`가 false면 둘이 갈린다. 이제 presence 근거와 `alert_outcome`의 `focus 없음`으로 확인한다. 확인되기 전에는 규칙을 바꾸지 않는다.
+- **「쓰는 화면」 lease.** 브라우저는 WebSocket ping에 네트워크 층이 저절로 pong하므로, 페이지가 멈춰도(iOS가 잠재운 앱) host의 살아 있음 검사(§8.105 뒤 「두 기기·죽은 연결」)를 통과한다. 그러면 멈추기 전에 알린 presence true가 시한 없이 남아 어느 기기에도 push가 가지 않는다. 참고 herdr-web-ui도 presence에 시한이 없다(`server/index.ts` `present`). t3code에는 보이는 상태 heartbeat가 없다.
+  - 웹은 쓰는 동안 10초마다 presence를 다시 알린다(`PRESENCE_EVERY_MS`). 멈춘 페이지는 timer가 돌지 않아 알리지 못한다.
+  - host는 그 연결에서 앱 글이 25초(`presence_lease`, 시험만 `AAA_TEST_PRESENCE_LEASE_MS`) 넘게 없으면 쓰는 화면에서 뺀다. 연결은 두고 다음 presence가 오면 다시 센다. pong은 lease를 늘리지 않는다.
+  - Page Lifecycle `freeze`(Chrome·Android)는 쓰지 않는 것으로 알린다. `resume`·`pageshow`는 다시 본다. herdr-web-ui `watchPageInUse`(바꾸지 않고 옮긴 `herdr/presence.ts`)에 없는 사건이라 `api.ts`가 직접 듣는다.
+  - **배포 뒤 잠깐 겹칠 수 있다.** service worker가 새 웹을 받기 전의 옛 페이지는 heartbeat를 보내지 않는다. 그 페이지는 25초 뒤 쓰는 화면이 아니게 되어 push가 앱 안 알림과 겹친다(push가 가는 쪽으로 틀린다). 페이지를 다시 열면 끝난다.
+  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」(멈춘 쓰는 기기 → lease 뒤 쓰는 화면 0 → push와 근거 「lease 끝」 → 깨면 다시 쓰는 화면). headless Chromium은 CDP `Page.setWebLifecycleState frozen`으로 보이는 페이지를 멈추지 않아(timer가 계속 돈다, 최소화해도 가려지지 않는다) 페이지 안에서 멈춘다: timer 일을 세우고, 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. WebSocket pong은 브라우저가 계속 한다. lease를 끈 결함 심기(`AAA_TEST_PRESENCE_LEASE_MS=600000`)는 「lease 끝」에서 실패한다. host 단위 시험 `basis_names_the_user_device_connections`.
+- **늦은 소리는 버린다(실기 07:45: 무음 모드 iPhone, 알림 때는 소리가 없고 앱으로 돌아올 때 울림).** coordinator 결정 「알림 순간에 못 내면 버린다」.
+  - 까닭(유력): iOS는 뒤로 간 홈 화면 앱의 JavaScript와 소리를 멈춘다. 그동안 온 사건은 앱이 다시 앞으로 올 때 한꺼번에 오고, 그때 소리를 냈다. 가려진 채 잠깐 돈 페이지가 예약한 소리도 앱이 돌아올 때 난다.
+  - 웹은 멈췄던 페이지가 깨어난 바로 뒤(2초) 받은 사건과 다시 붙어 읽은 놓친 사건을 늦은 알림으로 본다. 앱 안 알림은 띄우고 소리는 내지 않는다. 멈춤은 1초 timer가 3초 넘게 돌지 않은 것으로 안다. 잠깐 가렸다 다시 보인 것은 깨어남이 아니다.
+  - host 시각(thread `updated_at_ms`)으로 가르지 않는다: 보고가 검토 대기가 되는 때는 agent가 쉴 때라 저장 시각보다 늦을 수 있다.
+  - 가려진 휴대폰(`pointer: coarse`) 페이지는 소리를 내지 않는다. 그 기기에는 host push가 간다(쓰는 화면이 아니다). 데스크톱 탭은 가려져도 소리를 낸다(참고대로).
+  - Web Push 알림의 소리는 iOS 무음 스위치를 따른다(알림 소리는 무음 모드에서 나지 않고 진동만 한다). 무음을 넘는 「중요 알림」(Critical Alerts)은 Apple 승인 entitlement가 있는 앱만 쓰며 Web Push에는 없다. 그래서 07:43의 push가 조용했던 것은 iOS 규칙이고 aaa가 바꿀 수 없다.
+  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
+
+### 8.134 host를 다시 띄워도 알린 끊김(gh·머신)을 이어받는다(10-18, coordinator 실기 확인 중 발견)
+- **결함.** `gh` 실패·머신 끊김은 기준 시간(`outage_secs`)을 넘으면 inbox 항목을 한 번 쓰고, 돌아오면 「다시 된다」를 한 번 쓴다. 이 상태는 host 메모리에만 있어, 알린 뒤 host를 다시 띄우면 새 host는 알린 것을 모른다. 그 뒤 돌아와도 회복 항목이 오지 않아 열린 실패 항목이 그대로 남았다(07:53 재시작, 20:21 shadow 「gh 실패」).
+- **참고와 다르게 둔 것.** herdr-projects `Memory`도 저장하지 않는다(steps.rs 「not persisted」). 같은 결함이 있다.
+- **고침.** host가 그 프로젝트(gh)·머신을 처음 볼 때, 앞 host가 연 실패 항목(`outage`/`gh`/`failing`, `outage`/<머신>/`down`)이 아직 열려 있으면 알린 것으로 시작한다(`Outage::resumed`). 그러면 돌아오면 회복을 한 번 쓰고, 이어 끊겨도 실패를 다시 쓰지 않는다. 시작 시각은 여전히 새 host가 처음 본 때다(다시 띄운 직후 아직 붙지 않은 머신을 끊김으로 세지 않는다).
+- 시험: `m13` `remote_dir_thread_survives_host_restart` 끝(알린 끊김 중 host를 다시 띄우고 머신이 돌아오면 recovered 1, down 1). 이어받지 않는 결함 심기는 「outage recovered」 기다림에서 실패한다. 단위 시험 `short_outages_write_nothing_and_long_ones_write_one_item_each_way` 끝.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

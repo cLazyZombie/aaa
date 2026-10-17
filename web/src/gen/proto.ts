@@ -366,7 +366,19 @@ history_more: boolean, } | { "t": "history", id: number, data: B64, lines: numbe
 
 export type TermClientMsg = { "t": "input", data: string, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, };
 
-export type EventsClientMsg = { "t": "presence", active: boolean, } | { "t": "touch" } | { "t": "ping", id: number, };
+export type EventsClientMsg = { "t": "presence", active: boolean, 
+/**
+ * 무엇이 알리게 했나(focus·blur·visibilitychange·pagehide·pageshow·freeze·resume·open·heartbeat)
+ */
+why?: string, 
+/**
+ * 그때 `document.visibilityState === "visible"`
+ */
+visible?: boolean, 
+/**
+ * 그때 `document.hasFocus()`
+ */
+focus?: boolean, } | { "t": "alert", project: string | null, target: string, kind: string, outcome: string, } | { "t": "touch" } | { "t": "ping", id: number, };
 
 export type Role = "coordinator" | "worker" | "evaluator";
 

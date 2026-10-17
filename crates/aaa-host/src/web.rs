@@ -624,7 +624,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut threads = host.thread_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut revoked = host.device_revoked.subscribe();
-    let mut presence = Presence { host: host.clone(), dev: dev.clone(), active: false };
+    let mut presence = Presence { conn: host.conn_open(&dev), host: host.clone(), dev: dev.clone(), active: false };
+    let conn = presence.conn;
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
@@ -643,6 +644,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let (every, dead_after) = events_liveness();
     let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     let mut heard = tokio::time::Instant::now();
+    // 「쓰는 화면」 lease: 웹은 쓰는 동안 10초마다 presence를 다시 알린다. 이 연결에서 앱 글(Text)이 lease 넘게 없으면 페이지가
+    // 멈춘 것이라(iOS가 잠재운 앱) 쓰는 화면에서 뺀다. 연결은 두고, 다음 presence가 오면 다시 센다. WebSocket pong은
+    // 브라우저 네트워크 층이 답해 멈춘 페이지에서도 오므로 lease를 늘리지 않는다(10-18 iPhone 실기, plan §8.133)
+    let lease = presence_lease();
+    let mut app_heard = tokio::time::Instant::now();
     loop {
         if send_preferences {
             send_preferences = false;
@@ -715,22 +721,39 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     break;
                 }
             }
+            _ = tokio::time::sleep_until(app_heard + lease), if presence.active => {
+                send_state = false;
+                tracing::info!("쓰는 화면 lease 끝: 앱 글이 {}초 동안 없다", lease.as_secs());
+                host.conn_presence(conn, format!("lease 끝(앱 글 {}초 없음)", lease.as_secs()));
+                presence.set(false);
+            }
             m = socket.recv() => {
                 send_state = false;
                 heard = tokio::time::Instant::now();
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
-                        Ok(EventsClientMsg::Presence { active }) => presence.set(active),
-                        Ok(EventsClientMsg::Touch) => host.touch_device(&dev),
-                        Ok(EventsClientMsg::Ping { id }) => {
-                            let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
-                            if socket.send(Message::Text(text.into())).await.is_err() {
-                                break;
+                    Some(Ok(Message::Pong(_))) => host.conn_pong(conn),
+                    Some(Ok(Message::Text(t))) => {
+                        app_heard = tokio::time::Instant::now();
+                        host.conn_text(conn);
+                        match serde_json::from_str::<EventsClientMsg>(&t) {
+                            Ok(EventsClientMsg::Presence { active, why, visible, focus }) => {
+                                host.conn_presence(conn, presence_why(active, why, visible, focus));
+                                presence.set(active)
                             }
+                            Ok(EventsClientMsg::Touch) => host.touch_device(&dev, "touch"),
+                            Ok(EventsClientMsg::Alert { project, target, kind, outcome }) => {
+                                host.alert_outcome(&dev, project.as_deref(), &target, &kind, &outcome)
+                            }
+                            Ok(EventsClientMsg::Ping { id }) => {
+                                let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                                if socket.send(Message::Text(text.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -745,8 +768,30 @@ fn events_liveness() -> (std::time::Duration, std::time::Duration) {
     (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
+/// 「쓰는 화면」 lease(25초: 웹의 10초 presence를 두 번 놓치고도 남는다). `AAA_TEST_PRESENCE_LEASE_MS`는 시험에서만 줄인다
+fn presence_lease() -> std::time::Duration {
+    let ms = std::env::var("AAA_TEST_PRESENCE_LEASE_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(25_000);
+    std::time::Duration::from_millis(ms)
+}
+
+/// presence 판정 근거 한 줄: 웹이 보낸 까닭과 화면 값(옛 웹은 없다)
+fn presence_why(active: bool, why: Option<String>, visible: Option<bool>, focus: Option<bool>) -> String {
+    let flag =
+        |v: Option<bool>, yes: &str, no: &str| v.map_or("?".to_string(), |b| if b { yes } else { no }.to_string());
+    let why: String =
+        why.unwrap_or_else(|| "?".into()).chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(24).collect();
+    format!(
+        "{} {why} {}·{}",
+        if active { "true" } else { "false" },
+        flag(visible, "보임", "가려짐"),
+        flag(focus, "focus", "focus 없음")
+    )
+}
+
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
 struct Presence {
+    /// 판정 근거의 연결 번호(seen.rs `conn_open`)
+    conn: u64,
     host: Arc<Host>,
     /// 이 연결의 기기(그 기기가 연 pane 터미널을 「보는 화면」으로 센다, seen.rs)
     dev: String,
@@ -763,7 +808,7 @@ impl Presence {
             } else {
                 self.host.in_use.fetch_sub(1, SeqCst);
             }
-            self.host.view_presence(&self.dev, active);
+            self.host.view_presence(self.conn, &self.dev, active);
         }
     }
 }
@@ -771,6 +816,7 @@ impl Presence {
 impl Drop for Presence {
     fn drop(&mut self) {
         self.set(false);
+        self.host.conn_close(self.conn);
     }
 }
 
@@ -1081,7 +1127,7 @@ async fn pane_session(
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
                             // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
                             // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
-                            host.touch_device(dev);
+                            host.touch_device(dev, "입력");
                             let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
                             if sent.is_ok() {
@@ -1146,7 +1192,7 @@ async fn pane_session(
                 };
                 // pane에 친 기기가 쓰는 기기다(plan §8.105). 크기 걸기는 다시 붙을 때도 오므로 세지 않는다(누름은 웹이 touch로 알린다)
                 if matches!(req, Some(FrontRequest::PaneInput { .. }) | Some(FrontRequest::PaneTake { .. })) {
-                    host.touch_device(dev);
+                    host.touch_device(dev, "입력");
                 }
                 if let Some(req) = req
                     && let Err(e) = host.call_from(role, &actor, Some(front), req).await

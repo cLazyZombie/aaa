@@ -292,10 +292,13 @@ impl Host {
         // 쓰는 기기(마지막으로 누르거나 치거나 화면을 켠 기기)가 지금 보이고 focus면 그 화면이 이미 바뀐 것을 보인다:
         // 어느 기기에도 보내지 않는다. 다른 기기 창이 떠 있는 것은 까닭이 아니다(사용자 결정 10-18, plan §8.105.
         // 참고 herdr-web-ui server/index.ts 1117줄 `inUse: () => present.size > 0`는 쓰는 화면이 하나라도 있으면 건너뛴다).
-        // 모으는 기다림(debounce) 뒤 보내기 직전에 본다
-        let skip = {
+        // 모으는 기다림(debounce) 뒤 보내기 직전에 본다. 보내든 말든 그때 host가 알던 것(근거)을 흐름 사건에 남긴다(10-18 실기)
+        let (skip, basis) = {
             let v = self.viewing.lock().unwrap();
-            v.user_in_use().then(|| (v.user().unwrap_or_default(), v.devices_in_use()))
+            (
+                v.user_in_use().then(|| (v.user().unwrap_or_default(), v.devices_in_use())),
+                v.basis(aaa_common::util::now_ms()),
+            )
         };
         if let Some((user, devices)) = skip {
             let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
@@ -304,7 +307,7 @@ impl Host {
                 "push_skipped",
                 None,
                 format!(
-                    "쓰는 기기 {user} · 쓰는 화면 {watching}개(기기 {}) · 항목 {}개",
+                    "쓰는 기기 {user} · 쓰는 화면 {watching}개(기기 {}) · 항목 {}개 · 근거: {basis}",
                     devices.join(", "),
                     items.len()
                 ),
@@ -341,7 +344,12 @@ impl Host {
             }
         }
         if ok > 0 {
-            self.flow_project(project, "push_sent", None, format!("기기 {ok}개 · 항목 {}개", items.len()));
+            self.flow_project(
+                project,
+                "push_sent",
+                None,
+                format!("기기 {ok}개 · 항목 {}개 · 근거: {basis}", items.len()),
+            );
         }
         if chose_not > 0 {
             self.flow_project(
