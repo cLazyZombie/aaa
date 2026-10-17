@@ -394,7 +394,8 @@ async function openSettings(p, pageName) {
   return dialog;
 }
 
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route } = {}) {
+// setup(ctx): 화면을 열기 전에 context에 건다(lib/devices.mjs가 기기 기록 binding과 그 기기의 규칙을 건다)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, setup } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -403,6 +404,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
     ...(colorScheme ? { colorScheme } : {}),
     ...(deviceScaleFactor ? { deviceScaleFactor } : {}),
   });
+  if (setup) await setup(ctx);
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   if (init) await ctx.addInitScript(init);
   // 모든 frame에서 돈다: sandbox frame(결과물 보기)은 localStorage를 읽기만 해도 던진다
