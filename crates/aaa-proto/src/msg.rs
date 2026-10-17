@@ -864,9 +864,11 @@ pub enum FrontRequest {
         line: Option<u32>,
         add: Option<String>,
     },
-    /// coordinator용 프로젝트 요약
+    /// coordinator용 프로젝트 요약. 보인 inbox 항목은 「봤다」가 된다(`peek`이면 그대로).
     Context {
         project: String,
+        #[serde(default)]
+        peek: bool,
     },
     /// thread를 맡길 수 있는 owner 목록. `check`를 주면 그 owner를 TASKS.md에 써도 되는지 본다.
     Assignable {
@@ -1057,7 +1059,7 @@ impl FrontRequest {
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::ThreadLibrary { .. }
                 | FrontRequest::ThreadNext { line: None, add: None, .. }
-                | FrontRequest::Context { .. }
+                | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }

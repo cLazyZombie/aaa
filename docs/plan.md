@@ -41,9 +41,11 @@
 | 10 | GUI가 필요한 사용자 작업(인증서·키체인·시스템 설정 화면)은 mac-a에서 한다. 명령만으로 되는 일은 mac-c에 ssh로 한다(ssh 세션은 login 키체인이 잠겨 있어 사용자가 직접 잠금을 푼다) | §10.6, `docs/p0-runbook.md` |
 | 14 | 재부팅 실험은 하지 않는다(시험 Mac 불필요). 개발자 도구에는 한 번 만들고 다시 빌드하지 않는 launcher를 고정 경로에 두고 등록한다(LaunchAgent → launcher → `aaa` 자식). 목록이 일반 실행 파일을 받지 않으면 최소 `.app`으로 감싼다. 결정 9(자체 서명 인증서)는 보류한다. 전체 큰 그림(M1-2~M1-4 운영 대체)을 먼저 완성하고 P0 세부 실측에 시간을 쓰지 않는다 | §10, `docs/p0-runbook.md` |
 | 15 | launcher 등록은 mac-b(coordinator Mac)에서 한다. L1 측정·운영 설치 확인도 mac-b를 첫 대상으로 ssh로 한다(결정 10의 GUI 머신 대신) | §10.6, `docs/p0-runbook.md` |
-| 16 | UI를 참고 도구(herdr-web-ui·herdr TUI·herdr-mobile-relay)와 나란히 비교해 같거나 낫게 다듬는다. 웹(데스크톱·휴대폰)을 먼저, 그다음 TUI. 코드는 복사하지 않고 디자인만 참고한다. 결과는 전후 비교로 사용자 검수를 받는다 | §8.23 |
+| 16 | UI를 참고 도구(herdr-web-ui·herdr TUI·herdr-mobile-relay)와 나란히 비교해 같거나 낫게 다듬는다. 웹(데스크톱·휴대폰)을 먼저, 그다음 TUI. 코드는 복사하지 않고 디자인만 참고한다(코드 복사 금지는 결정 19로 바뀌었다). 결과는 전후 비교로 사용자 검수를 받는다 | §8.23 |
 | 17 | UI 검수 통과(10-17). 검수 때 후보로 남긴 휴대폰 drawer·명령 팔레트·머신 묶음 접기·TUI 왼쪽 목록·thread 줄 하나로 합치기는 이번에 하지 않고 나중 후보로만 둔다. 결정 14·16대로 M3 남은 범위를 이어서 한다 | §8.23 |
 | 18 | 실행 파일·프로젝트 이름을 `aaa`(Any Agent, Anywhere)로 바꾼다(10-17). macOS 기본 Apple Archive 도구 `/usr/bin/aa`와 겹치지 않는다. binary·crate(`aaa-*`)·환경 변수(`AAA_*`)·launchd label(`dev.aaa.*`)·설정/상태/로그 폴더·launcher(`aaa-launcher.app`, 다시 등록 필요)·웹 제목·pairing cookie(`__Host-aaa`, 기존 pairing은 다시 한다)·작업 폴더(`.aaa/`)·branch 접두사(`aaa/`)를 함께 바꾼다. 옛 폴더는 읽지 않고 옮기는 명령을 안내한다. GitHub 저장소는 `cLazyZombie/aaa`다 | §11, `docs/install-runbook.md` |
+| 19 | 참고 세 프로젝트(herdr·herdr-projects·herdr-web-ui)를 철저히 따른다(10-17). 동작은 새로 고안하지 않고 참고 소스를 먼저 보고 옮기며 코드도 그대로 옮긴다(출처·MIT 고지). 다르게 둘 때는 이유(3 OS·보안·사용자 결정)를 적는다. 결정 16의 「코드는 복사하지 않는다」를 바꾼다 | §8.36~§8.39, `library/diff-list.md`(thread 보고) |
+| 20 | 동작 단위 차이 목록의 결정 묶음 D1~D12를 모두 참고대로 한다(10-17). D1 바로 입력 기본·입력줄은 기기별 선택, D2 머신·프로젝트 묶음·drawer·질문 카드(결정 17 보류 해제), D3 chat에서 보내기, D4 기기별 알림 종류(조용한 시간은 만들지 않음), D5 테마는 참고대로·다국어는 한국어 먼저, D6 웹 pairing(controller만), D7 터미널 화면, D8 harness 상태는 화면 감지(§3 「화면 긁기 안 함」을 바꾼다), D9 보고 형식은 THREAD.md, D10 brief 재시도·한도 경고·바로 입력·memory, D11 PR 병합·merged 뒤 resolve(`merge land`·대기열을 바꾼다), D12 herdr 키·재부팅 뒤 대화 자동 이어가기(결정 8을 바꾼다)·목록 기본 펼침·`--json` 기본·profile·safety CLI. 다만 D12의 prefix 동안 영문 입력기 전환·자모 해석은 사용자 요청이라 유지한다(설정으로 끌 수 있게, 기본 켬) | 차이 목록 순서대로 옮긴다 |
 
 **결정 3 세부.** host는 host 역할만 한다(2안).
 - 실행 파일은 하나이고 역할만 나눈다(`aaa host`/`aaa agent`). 경로와 서명은 고정이다.
@@ -732,7 +734,8 @@ host 프로젝트 폴더 구성:
 - **nudge:** 0.2.35를 이어받는다.
   - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aaa inbox] <대상> <사건>, …; …(aaa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
   - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. **coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).
-  - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 10초) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 비어 있을 때만 보낸다. 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
+  - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 60초, herdr-projects `NUDGE_IDLE_SECS`) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 이번 검사와 `nudge_quiet_secs`(기본 10초) 전 검사에서 모두 비어 보일 때만 보낸다(herdr-projects `box_quiet`, 사람이 치는 글과 섞이지 않게). 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
+  - 안 본 항목이 남아 있으면 새 항목이 올 때 다시 나열된다(herdr-projects와 같다). 「봤다」는 `aaa inbox list`(`--peek` 아님)와 `aaa context`(`--peek` 아님)가 보인 항목에 단다(10-17, 차이 목록 G3·F8).
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
 - **닫힌 질문(실제 시험 뒤 결정):** 질문에 답했거나 harness가 넘어가 질문이 닫히면, 그 질문의 `question` 항목은 끝낸 것으로 둔다(기록은 `inbox/done/`에 남는다). 실제 시험에서 이미 답한 질문이 알림마다 「question」으로 섞였기 때문이다.
 - **아직:** 웹·TUI의 inbox 화면, 머신 이상(건강) 항목.
@@ -819,7 +822,7 @@ host 프로젝트 폴더 구성:
 - **남는 한계:** 마지막으로 알린 이상 종류는 host 메모리에만 둔다. host를 다시 시작하면 같은 이상이 이어져도 `problem` 항목이 한 번 더 생긴다.
 
 **coordinator 일 흐름(부록 A의 M1 마무리 항목, 0.2.35 의미)**
-- `aaa context <p>`: coordinator가 매 턴 처음 본다. TASKS.md task(목록·owner·thread·메모), 열린 thread와 Next 줄·harness 상태, `start_threads`, 맡길 수 있는 owner, 끝내지 않은 inbox 수.
+- `aaa context <p>`: coordinator가 매 턴 처음 본다. TASKS.md task(목록·owner·thread·메모), 열린 thread와 Next 줄·harness 상태, `start_threads`, 맡길 수 있는 owner, 끝내지 않은 inbox 항목(id·종류·대상·요약, 지시가 아니라 자료). herdr-projects `context`처럼 보인 항목은 「봤다」가 된다(`--peek`이면 그대로).
 - **TASKS.md:** aaa는 읽기만 하고 coordinator가 쓴다. `- [ ] 제목 (owner) · t-0001`. owner는 비움·`agent`(미할당), `me`, `profile`·`@machine`·`profile@machine`(agent), 그 밖은 사람이다. 옛 표기 `(agent → t-0007)`도 읽는다. 완료는 줄을 지운다.
 - `aaa thread start <p> --from-task "<제목>"`: 제목(대소문자 무시)으로 task를 찾는다. owner가 `--profile`·`--machine` 기본값이 되고 다르면 거부한다. `me`·사람 task, 미할당인데 `--profile`이 없으면 거부한다. 메모는 할 일 끝에 `## Notes from the task list`로 붙는다.
   - 0.2.35와 다른 점: task에 붙은 thread가 아직 열려 있으면 다시 맡기지 않는다(같은 일을 두 thread가 하는 것을 막는다).

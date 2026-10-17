@@ -227,6 +227,8 @@ pub struct Host {
     health_marks: Mutex<HashMap<String, String>>,
     /// hook 없는 coordinator pane: 마지막 화면 hash와 그 화면이 된 때
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
+    /// 프로젝트별로 nudge가 기다리는 coordinator pane과 그 입력창이 비어 보인 때(herdr-projects `box_pane`·`box_empty_since`)
+    nudge_box: Mutex<HashMap<String, (String, Instant)>>,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
@@ -335,6 +337,7 @@ impl Host {
             outages: Mutex::new(HashMap::new()),
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
+            nudge_box: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             view_caps: Mutex::new(HashMap::new()),
             vapid,
@@ -733,7 +736,7 @@ impl Host {
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
             }
-            FrontRequest::Context { project } => self.context(&project).await.map(FrontResponse::Context),
+            FrontRequest::Context { project, peek } => self.context(&project, peek).await.map(FrontResponse::Context),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable().await;
