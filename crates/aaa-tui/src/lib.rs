@@ -33,7 +33,7 @@ use keys::Combo;
 
 use aaa_proto::{
     B64, FrontEvent, FrontMsg, FrontRequest, GridFrame, GridRun, LayoutChange, MachineView, Outcome, PaneDirection,
-    PaneView, SessionState, SplitDir, ThreadView, Workspace,
+    PaneModes, PaneView, SessionState, SplitDir, ThreadView, Workspace,
 };
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -127,6 +127,8 @@ struct Grid {
     rows: u16,
     lines: Vec<Vec<GridRun>>,
     cursor: (u16, u16, bool),
+    /// pane 프로그램이 켠 모드(마우스 보고·alt 화면·DECCKM)
+    modes: PaneModes,
 }
 
 impl Grid {
@@ -142,6 +144,7 @@ impl Grid {
             }
         }
         self.cursor = (f.cursor_row, f.cursor_col, f.cursor_visible);
+        self.modes = f.modes;
     }
 }
 
@@ -574,7 +577,12 @@ impl App {
     }
 
     fn set_ws(&mut self, w: Workspace) {
+        // 탭 차례가 바뀌어도(탭 옮기기) 보던 탭에 남는다(herdr `move_tab`은 지금 탭을 그 탭으로 둔다)
+        let current = self.ws.tabs.get(self.tab).map(|t| t.id.clone());
         self.ws = w;
+        if let Some(i) = current.and_then(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
+            self.tab = i;
+        }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
         }
@@ -735,6 +743,11 @@ impl App {
 
     async fn input(&mut self, tx: &mut FrontSender, data: Vec<u8>) -> Result<()> {
         let Some(pane) = self.focus.clone() else { return Ok(()) };
+        self.input_to(tx, pane, data).await
+    }
+
+    /// 그 pane에 입력을 보낸다(마우스 사건은 포인터 밑 pane에)
+    async fn input_to(&mut self, tx: &mut FrontSender, pane: String, data: Vec<u8>) -> Result<()> {
         if data.is_empty() {
             return Ok(());
         }
@@ -804,7 +817,10 @@ impl App {
                 if c == Combo::new(KeyCode::Char('v'), KeyModifiers::CONTROL) && self.paste_image(tx).await? {
                     return Ok(());
                 }
-                self.input(tx, keys::encode(&k)).await
+                // 화살표는 프로그램이 DECCKM을 켰으면 `ESC O x`(herdr·xterm)
+                let app_cursor =
+                    self.focus.as_ref().and_then(|f| self.grids.get(f)).is_some_and(|g| g.modes.app_cursor);
+                self.input(tx, keys::encode_in(&k, app_cursor)).await
             }
             Mode::Prefix => {
                 self.mode = Mode::Terminal;
@@ -1268,7 +1284,11 @@ impl App {
                 let boxes = self.shown(tab, body);
                 let title = |id: &str| self.panes.get(id).and_then(border_title);
                 chrome::render(buf, &boxes, self.focus.as_deref(), title, p);
-                self.hits.borrow_mut().panes = boxes.clone();
+                let zoomed = boxes.len() == 1 && layout::leaves(&tab.root).len() > 1;
+                let mut hits = self.hits.borrow_mut();
+                hits.splits = chrome::splits(&tab.root, body, &boxes, zoomed);
+                hits.panes = boxes.clone();
+                drop(hits);
                 for b in &boxes {
                     let focused = self.focus.as_deref() == Some(b.pane.as_str());
                     if let Some(c) = self.render_pane(buf, &b.pane, b.inner, focused) {
@@ -1372,6 +1392,14 @@ impl App {
         }
         if strip.more_right && content.w > 0 && strip.ellipsis_right >= content.x {
             buf.set_string(strip.ellipsis_right, r.y, "…", more);
+        }
+        // 끌던 탭을 넣을 자리(herdr `tab_drop_indicator_x`)
+        if let Some(mouse::Drag::Tab { moving: true, insert: Some(i), .. }) = &self.drag
+            && let Some(x) = mouse::drop_x(&hits, *i, self.ws.tabs.len())
+            && content.w > 0
+        {
+            let x = x.min(content.x + content.w - 1);
+            buf.set_string(x, r.y, "│", Style::default().fg(p.accent).bg(p.panel_bg));
         }
         if reserved > 0 {
             let mut x = r.x + r.w - status_w;

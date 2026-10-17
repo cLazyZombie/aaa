@@ -1297,6 +1297,81 @@ fn mouse_like_herdr() {
     tui.wait_screen("마우스 보고 끔", |s| ![1000, 1002, 1003, 1006].iter().any(|m| s.modes.contains(m)));
 }
 
+/// 묶음 3d-2(herdr): 마우스 보고를 켠 프로그램에는 누름·뗌·휠을 넘기고, 보고를 끈 alt 화면은 휠을 화살표로(DECCKM이면 `ESC O`),
+/// 나눔 경계를 끌면 그 나눔 비율, 탭 이름표를 끌면 탭 차례(host `SplitRatio`·`MoveTab`, FRONT_API 1.11)
+#[test]
+fn mouse_reaches_programs_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let prog = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--label", "prog", "--", "/bin/sh"]))[0].clone();
+    h.ok(&["tab", "create", "--machine", "labA", "--label", "b", "--", "/bin/sh"]);
+    h.ok(&["tab", "create", "--machine", "labA", "--label", "c", "--", "/bin/sh"]);
+    let mut tui = Tui::start(&h);
+    tui.wait_text("세 탭", |s| tab_chips(s) == ["prog", "b", "c"]);
+    hw.wait("이 화면 크기", |w| (w.pane(&prog)?.cols == COLS - SIDE).then_some(()));
+    // pane 하나인 탭은 테두리가 없어 안쪽이 (1, SIDE)부터다. 보고 좌표는 안쪽 0부터 + 1
+    let at = (6, SIDE as usize + 4);
+    let (x, y) = (at.1 - SIDE as usize + 1, at.0);
+
+    // 1) SGR 보고(1000·1006)를 켠 프로그램에는 누름·뗌·휠이 간다. tty echo 하나와 cat이 다시 찍은 것 하나를 본 뒤 끊는다
+    tui.type_line("printf '\\033[?1000h\\033[?1006h'; echo mouse-$((1)); cat -v");
+    tui.wait_text("보고 켬", |s| s.contains("mouse-1"));
+    tui.click(at);
+    tui.mouse(65, at, false);
+    tui.send(b"\r");
+    let sent = format!("^[[<0;{x};{y}M^[[<0;{x};{y}m^[[<65;{x};{y}M");
+    tui.wait_text("cat이 읽은 보고", |s| s.matches(&sent).count() >= 2);
+    tui.send(b"\x03");
+
+    // 2) 보고를 끈 alt 화면이면 휠 한 번에 화살표 하나(herdr alternate scroll), DECCKM이면 휠도 키도 `ESC O`
+    tui.type_line("printf '\\033[?1000l\\033[?1006l\\033[?1049h'; echo alt-$((2)); cat -v");
+    tui.wait_text("alt 화면", |s| s.contains("alt-2") && !s.contains("mouse-1"));
+    tui.mouse(65, at, false);
+    tui.mouse(64, at, false);
+    tui.send(b"\r");
+    tui.wait_text("휠 화살표", |s| s.matches("^[[B^[[A").count() >= 2);
+    tui.send(b"\x03");
+    tui.type_line("printf '\\033[?1h'; echo app-$((3)); cat -v");
+    tui.wait_text("DECCKM", |s| s.contains("app-3"));
+    tui.mouse(64, at, false);
+    tui.send(b"\x1b[A");
+    tui.send(b"\r");
+    tui.wait_text("ESC O 화살표", |s| s.matches("^[OA^[OA").count() >= 2);
+    tui.send(b"\x03");
+    tui.type_line("printf '\\033[?1l\\033[?1049l'; clear");
+    tui.wait_text("alt 화면 나감", |s| !s.contains("app-3"));
+
+    // 3) 나눔 경계(맞닿은 두 테두리 `┐┌`)를 끌면 그 나눔 비율: 64칸 반(32)에서 10칸 오른쪽 → 42칸, 왼쪽 안쪽 40칸
+    tui.cmd("v");
+    let right = hw.wait("좌우 나눔", |w| w.tab_of(&prog).filter(|l| l.len() == 2).map(|l| l[1].clone()));
+    hw.wait("나눈 폭", |w| (w.pane(&prog)?.cols == 30).then_some(()));
+    let border = tui.wait_find("┐┌");
+    tui.mouse(0, (10, border.1), false);
+    tui.mouse(32, (10, border.1 + 10), false);
+    tui.mouse(0, (10, border.1 + 10), true);
+    hw.wait("끈 만큼 넓어짐", |w| (w.pane(&prog)?.cols == 40).then_some(()));
+
+    // 4) 이름표를 끌면 넣을 자리에 accent `│`, 떼면 그 자리로(이름표 26·35·44, 마지막 오른쪽 끝 52 = 맨 끝)
+    let chip = tui.wait_find("prog");
+    assert_eq!(chip.0, 0, "탭 막대의 이름표");
+    tui.mouse(0, chip, false);
+    tui.mouse(32, (0, 52), false);
+    tui.wait_text("넣을 자리 표시", |s| s.lines().next().is_some_and(|l| l.chars().nth(52) == Some('│')));
+    tui.mouse(0, (0, 52), true);
+    tui.wait_text("탭 차례", |s| tab_chips(s) == ["b", "c", "prog"]);
+    hw.wait("host 탭 차례", |w| {
+        let names: Vec<String> = w.ws.as_ref()?.tabs.iter().map(|t| t.name.clone()).collect();
+        (names == ["b", "c", "prog"]).then_some(())
+    });
+    // 보던 탭(prog, 포커스는 나눈 새 pane)에 남는다
+    tui.type_line("echo still-$((5))");
+    tui.wait_text("prog 탭에 남음", |s| s.contains("still-5"));
+    assert!(h.screen(&right).contains("still-5"), "보던 pane에 들어가야 한다");
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).

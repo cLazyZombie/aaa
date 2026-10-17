@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use aaa_proto::{
     DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, GridFrame,
-    GridLine, MAX_FRAME, negotiate,
+    GridLine, MAX_FRAME, PaneModes, negotiate,
 };
 use anyhow::{Context, Result, bail};
 
@@ -276,13 +276,15 @@ impl Host {
         use std::hash::{Hash, Hasher};
         let i = self.inner.lock().unwrap();
         let p = i.panes.get(pane)?;
-        let (rows, cols, cursor, src) = match &p.mirror {
+        let (rows, cols, cursor, modes, src) = match &p.mirror {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 let lines: Vec<_> = (0..rows).map(|r| m.vt.grid_row(r)).collect();
-                (rows, cols, m.vt.cursor(), lines)
+                (rows, cols, m.vt.cursor(), m.vt.pane_modes(), lines)
             }
-            None => (p.info.rows, p.info.cols, (0, 0, false), vec![Vec::new(); p.info.rows as usize]),
+            None => {
+                (p.info.rows, p.info.cols, (0, 0, false), PaneModes::default(), vec![Vec::new(); p.info.rows as usize])
+            }
         };
         drop(i);
         let n = rows as usize;
@@ -304,7 +306,12 @@ impl Host {
             }
         }
         let (cursor_row, cursor_col, cursor_visible) = cursor;
-        let c = (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
+        // 모드만 바뀌어도(프로그램이 마우스 보고를 켬) 한 장 보내도록 커서 hash 위 비트에 접는다
+        let m = (modes.mouse as u64)
+            | (modes.mouse_encoding as u64) << 3
+            | u64::from(modes.alt_screen) << 5
+            | u64::from(modes.app_cursor) << 6;
+        let c = (m << 48) | (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
         let cursor_changed = sent[n] != c;
         sent[n] = c;
         let frame = GridFrame {
@@ -316,6 +323,7 @@ impl Host {
             cursor_visible,
             full,
             lines: vec![],
+            modes,
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
     }

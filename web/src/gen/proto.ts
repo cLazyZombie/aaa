@@ -195,7 +195,7 @@ zoomed: boolean, };
 
 export type Workspace = { name: string, tabs: Array<Tab>, };
 
-export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, label: string | null, from: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, ratio: number | null, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, } | { "do": "resize", pane: string, direction: PaneDirection, amount: number | null, } | { "do": "rename_tab", tab: string, name: string, } | { "do": "close_tab", tab: string, } | { "do": "move_to_new_tab", pane: string, name: string | null, } | { "do": "zoom", pane: string, zoomed: boolean | null, } | { "do": "swap", pane: string, with: string, };
+export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, label: string | null, from: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, ratio: number | null, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, } | { "do": "resize", pane: string, direction: PaneDirection, amount: number | null, } | { "do": "rename_tab", tab: string, name: string, } | { "do": "close_tab", tab: string, } | { "do": "move_to_new_tab", pane: string, name: string | null, } | { "do": "zoom", pane: string, zoomed: boolean | null, } | { "do": "swap", pane: string, with: string, } | { "do": "split_ratio", tab: string, path: Array<boolean>, ratio: number, } | { "do": "move_tab", tab: string, index: number, };
 
 export type GridRun = { 
 /**
@@ -209,7 +209,25 @@ a: number, };
 
 export type GridLine = { row: number, runs: Array<GridRun>, };
 
-export type GridFrame = { pane: string, cols: number, rows: number, cursor_row: number, cursor_col: number, cursor_visible: boolean, full: boolean, lines: Array<GridLine>, };
+export type GridFrame = { pane: string, cols: number, rows: number, cursor_row: number, cursor_col: number, cursor_visible: boolean, full: boolean, lines: Array<GridLine>, 
+/**
+ * 그 pane 프로그램이 켠 모드(1.11부터, 옛 host는 기본값)
+ */
+modes: PaneModes, };
+
+export type PaneModes = { mouse: MouseMode, mouse_encoding: MouseEncoding, 
+/**
+ * alternate screen(`CSI ? 1049 h` 등)
+ */
+alt_screen: boolean, 
+/**
+ * DECCKM(`CSI ? 1 h`): 화살표를 `ESC O x`로
+ */
+app_cursor: boolean, };
+
+export type MouseMode = "none" | "press" | "press_release" | "button_motion" | "any_motion";
+
+export type MouseEncoding = "default" | "utf8" | "sgr";
 
 export type PendingEnroll = { name: string, machine_id: string, 
 /**
