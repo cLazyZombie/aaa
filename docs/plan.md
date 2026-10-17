@@ -2379,7 +2379,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **보기 경로(A7).** `/v/<cap>/`는 받은 웹 기기에 묶인다. 그 기기를 폐기하면 바로 401이다(전에는 최대 2시간 더 읽었다). CLI·TUI가 받은 경로는 기기와 무관하다.
 - **API는 저장하지 않는다(A10).** `/api/` 답에 `Cache-Control: no-store`(이미 둔 답은 그대로).
 - **시험(결함 심기).** `web.rs` `guard_tests`는 router를 그대로 부른다(`tower::ServiceExt::oneshot`, dev-dependency, axum이 이미 쓰는 판). Host 다른 포트·포트 없음·localhost → 421, Origin 다른 포트·포트 없음·http·남의 주소 → 403(WS upgrade 포함), 443은 포트 없이, 공개 전 loopback만, 깨진 cookie·HTTPS의 prefix 없는 cookie, API no-store를 본다. `lib.rs` pairing 시험은 기다림 2·4·8·16·32·60초에서 멈춤, 10분 뒤 잊음, 새 코드가 풀음, 폐기한 기기의 보기 경로 401을 본다. 고치기 전 결함 10가지(이름만 비교 2·localhost·새 코드가 안 풂·창 없음·상한 없음·cookie 포기·prefix 없는 cookie·보기 경로·no-store)를 하나씩 되심으면 이 시험이 모두 실패하는 것을 확인했다.
-- **넘긴 것.** A3(UDS 세션 범위 자기 신고)·A6(diag/input 역할·content-type)·A9(폐기와 진행 중 작업의 틈)은 이 묶음 밖이다(t-0340 넘김 범위).
+- **폐기와 진행 중 작업(A9).** 입력줄 보내기는 글을 친 뒤 300ms 기다렸다 Enter를 친다. 그 사이 폐기된 기기의 Enter는 보내지 않고 4401로 닫는다. 그림 업로드는 마지막 조각을 agent가 쓴 뒤 경로를 넣기 직전에 폐기를 다시 본다(§6.4). 참고 t3code `SessionStore.awaitInvalidation`(await 뒤 다시 확인). 시험: 웹 E2E `05-devices` 「폐기와 보내던 Enter」(그 실험실 host만 `AAA_TEST_SUBMIT_GAP_MS=4000`, 글이 들어간 것을 보고 폐기 → 연결 닫힘 → 이어 친 글이 같은 줄에 붙음). 검사를 빼면 이 단계가 실패하는 것을 확인했다. 업로드 쪽은 마지막 조각을 쓰는 틈을 시험이 붙잡을 수 없어 코드로만 확인했다.
+- **넘긴 것.** A3(UDS 세션 범위 자기 신고)·A6(diag/input 역할·content-type)은 이 묶음 밖이다(t-0340 넘김 범위).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
