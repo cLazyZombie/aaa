@@ -8,7 +8,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::service;
 use aaa_doctor as doctor;
-use aaa_proto::{B64, DeviceRole, FrontRequest, FrontResponse, LayoutChange, Role, SplitDir, ThreadKind};
+use aaa_proto::{DeviceRole, FrontRequest, FrontResponse, LayoutChange, Role, SplitDir, ThreadKind};
 
 #[derive(Parser)]
 #[command(name = "aaa", version, about = "여러 머신의 agent 오케스트레이션")]
@@ -40,15 +40,25 @@ enum Cmd {
     },
     /// host 상태
     Status,
-    /// pane(세션) 목록·실행·읽기·입력
+    /// pane: 읽기·입력·나누기·닫기(herdr `pane` 명령과 같은 이름. 출력은 늘 JSON 한 줄)
     Pane {
         #[command(subcommand)]
         cmd: PaneCmd,
     },
-    /// workspace layout(탭·나누기). 정본은 host에 있다
-    Ws {
+    /// 탭: 만들기·목록·이름·닫기(herdr `tab`. 출력은 늘 JSON 한 줄)
+    Tab {
         #[command(subcommand)]
-        cmd: WsCmd,
+        cmd: TabCmd,
+    },
+    /// workspace(이름 있는 layout, `aaa attach -w`로 붙는다): 목록·만들기·이름·닫기(출력은 늘 JSON 한 줄)
+    Workspace {
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
+    },
+    /// 셸 완성 스크립트를 출력한다(bash·elvish·fish·powershell·zsh)
+    Completion {
+        #[arg(value_parser = ["bash", "elvish", "fish", "powershell", "zsh"])]
+        shell: String,
     },
     /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신)
     Attach {
@@ -463,92 +473,188 @@ enum AgentCmd {
 enum PaneCmd {
     /// pane 목록(기본은 평가자 세션을 뺀다)
     List {
+        /// 이 workspace의 layout에 있는 pane만
+        #[arg(long)]
+        workspace: Option<String>,
         /// 이 역할(coordinator·worker·evaluator)의 세션만
         #[arg(long)]
         role: Option<String>,
     },
-    /// 새 pane(세션)을 띄운다. 명령이 없으면 그 머신 사용자의 기본 셸
-    Run {
+    /// pane 하나(ID·ID 앞부분·이름)
+    Get { pane: String },
+    /// 이 명령을 실행한 aaa 세션의 pane(`AAA_SESSION_ID`). `--pane`으로 다른 pane을 줄 수 있다
+    Current {
+        #[arg(long, conflicts_with = "current")]
+        pane: Option<String>,
         #[arg(long)]
-        machine: Option<String>,
+        current: bool,
+    },
+    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). 출력은 글 그대로(--json이면 JSON)
+    Read {
+        pane: String,
+        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped"], default_value = "recent")]
+        source: String,
+        /// 줄 수(최대 1000)
         #[arg(long)]
-        name: Option<String>,
+        lines: Option<u32>,
+        #[arg(long, value_parser = ["text", "ansi"], default_value = "text")]
+        format: String,
+        /// --format ansi와 같다
+        #[arg(long)]
+        ansi: bool,
+    },
+    /// pane 자리를 나눠 새 pane을 띄운다(명령이 없으면 그 머신 사용자의 기본 셸)
+    Split {
+        /// 나눌 pane(없으면 --pane·--current)
+        target: Option<String>,
+        #[arg(long, conflicts_with_all = ["target", "current"])]
+        pane: Option<String>,
+        #[arg(long, conflicts_with = "target")]
+        current: bool,
+        /// right(좌우) 또는 down(위아래)
+        #[arg(long, value_parser = ["right", "down"])]
+        direction: String,
+        /// 원래 pane 쪽 비율(0.1~0.9, 기본 0.5)
+        #[arg(long)]
+        ratio: Option<f32>,
         #[arg(long)]
         cwd: Option<String>,
+        /// 새 pane을 띄울 머신(기본: 나눌 pane의 머신)
+        #[arg(long)]
+        machine: Option<String>,
+        /// 이 workspace의 layout에서 나눈다(기본: 그 pane이 든 workspace)
+        #[arg(long, short)]
+        workspace: Option<String>,
+        #[arg(last = true)]
+        argv: Vec<String>,
+    },
+    /// pane을 지금 자리에서 빼 새 탭에 둔다
+    Move {
+        pane: String,
+        #[arg(long, required = true)]
+        new_tab: bool,
+        /// 이 workspace의 새 탭으로(기본: 그 pane이 든 workspace)
+        #[arg(long, short)]
+        workspace: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// pane을 닫는다: 세션을 끝내고 layout에서 뺀다
+    Close { pane: String },
+    /// pane 가장자리를 그 방향으로 옮긴다(나뉜 자리 비율)
+    Resize {
+        #[arg(long, conflicts_with = "current")]
+        pane: Option<String>,
+        #[arg(long)]
+        current: bool,
+        #[arg(long, value_parser = ["left", "right", "up", "down"])]
+        direction: String,
+        /// 옮길 만큼(0~0.5, 기본 0.05)
+        #[arg(long)]
+        amount: Option<f32>,
+    },
+    /// 글을 그대로 보낸다(Enter 없음, 여러 인자는 빈칸으로 잇는다)
+    SendText {
+        pane: String,
+        #[arg(required = true, allow_hyphen_values = true, trailing_var_arg = true)]
+        text: Vec<String>,
+    },
+    /// 키를 보낸다: enter·esc·tab·shift+tab·backspace·space·up·down·left·right·ctrl+c·alt+x·f1~f20·글자 하나
+    SendKeys {
+        pane: String,
+        #[arg(required = true, allow_hyphen_values = true, trailing_var_arg = true)]
+        keys: Vec<String>,
+    },
+    /// 글 + Enter(명령 실행). 프로그램이 bracketed paste를 켰으면 글을 감싸 보낸다
+    Run {
+        pane: String,
+        #[arg(required = true, allow_hyphen_values = true, trailing_var_arg = true)]
+        command: Vec<String>,
+    },
+    /// 출력에 글이 나올 때까지 기다린다(--match 글 또는 --regex 정규식). 맞은 줄을 JSON으로 보이고, 시한이 지나면 실패한다
+    WaitOutput {
+        pane: String,
+        #[arg(long = "match", conflicts_with = "regex", required_unless_present = "regex")]
+        substring: Option<String>,
+        #[arg(long)]
+        regex: Option<String>,
+        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped"], default_value = "recent")]
+        source: String,
+        #[arg(long)]
+        lines: Option<u32>,
+        /// 밀리초(없으면 끝없이 기다린다)
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 생각·도구 결과 본문은 빼고). 출력은 글(--json이면 JSON)
+    Chat { pane: String },
+    /// 그림 파일(PNG·JPEG·GIF·WebP)을 pane 머신의 세션 폴더에 올린다. harness 입력창이면 경로를 넣는다(Enter 없음).
+    /// clipboard가 없는 raw ssh 셸에서 쓴다. TUI(`aaa attach`)에서는 Ctrl+V가 같은 일을 한다.
+    Attach { pane: String, file: std::path::PathBuf },
+    /// 세션만 끝낸다(layout 자리와 기록은 남아 `pane resume`으로 다시 띄울 수 있다)
+    Kill { pane: String },
+    /// 끝난(중단·유실·종료) pane을 같은 spec으로 다시 띄운다(layout 자리도 바꾼다)
+    Resume { pane: String },
+    /// 끝난 pane 기록을 지운다
+    Forget { pane: String },
+    /// (시험·진단) PTY 크기를 바꾼다. 쓰는 화면(lease)이 없을 때만 된다. 보통은 붙은 화면이 정한다
+    #[command(hide = true)]
+    PtySize { pane: String, cols: u16, rows: u16 },
+}
+
+#[derive(Subcommand)]
+enum TabCmd {
+    /// workspace의 탭(기본 main)
+    List {
+        #[arg(long, short)]
+        workspace: Option<String>,
+    },
+    /// 새 탭에 새 pane을 띄운다(명령이 없으면 그 머신 사용자의 기본 셸)
+    Create {
+        #[arg(long, short)]
+        workspace: Option<String>,
+        /// 띄울 머신(기본: host 머신)
+        #[arg(long)]
+        machine: Option<String>,
+        /// 탭(pane) 이름. pane을 이 이름으로도 부를 수 있다
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        /// 화면이 붙기 전 처음 PTY 폭(기본 120). 붙은 화면이 있으면 그 화면이 크기를 정한다
         #[arg(long)]
         cols: Option<u16>,
+        /// 처음 PTY 높이(기본 32)
         #[arg(long)]
         rows: Option<u16>,
         #[arg(last = true)]
         argv: Vec<String>,
     },
-    /// 보이는 화면을 글자로 읽는다
-    Read {
-        pane: String,
+    /// 탭 하나와 그 workspace
+    Get {
+        tab: String,
     },
-    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 생각·도구 결과 본문은 빼고)
-    Chat {
-        pane: String,
+    Rename {
+        tab: String,
+        label: String,
     },
-    /// 그림 파일(PNG·JPEG·GIF·WebP)을 pane 머신의 세션 폴더에 올린다. harness 입력창이면 경로를 넣는다(Enter 없음).
-    /// clipboard가 없는 raw ssh 셸에서 쓴다. TUI(`aaa attach`)에서는 Ctrl+V가 같은 일을 한다.
-    Attach {
-        pane: String,
-        file: std::path::PathBuf,
-    },
-    /// 입력을 보낸다(문자열 그대로, --enter면 끝에 Enter)
-    Send {
-        pane: String,
-        #[arg(long)]
-        text: String,
-        #[arg(long)]
-        enter: bool,
-    },
-    Resize {
-        pane: String,
-        cols: u16,
-        rows: u16,
-    },
-    Kill {
-        pane: String,
-    },
-    /// 끝난(중단·유실·종료) pane을 같은 spec으로 다시 띄운다(layout 자리도 바꾼다)
-    Resume {
-        pane: String,
-    },
-    /// 끝난 pane 기록을 지운다
-    Forget {
-        pane: String,
+    /// 탭을 닫는다: 그 안 pane을 끝낸다(thread·coordinator pane은 layout에서만 뺀다)
+    Close {
+        tab: String,
     },
 }
 
 #[derive(Subcommand)]
-enum WsCmd {
-    /// workspace의 탭·나누기
-    Show {
-        #[arg(long, short)]
-        workspace: Option<String>,
-    },
-    /// 새 탭에 새 pane(명령이 없으면 기본 셸)
-    Tab {
-        #[arg(long, short)]
-        workspace: Option<String>,
-        #[arg(long)]
-        machine: Option<String>,
-        #[arg(long)]
+enum WorkspaceCmd {
+    List,
+    /// workspace의 탭·나누기(기본 main)
+    Get {
         name: Option<String>,
-        #[arg(long)]
-        cwd: Option<String>,
-        #[arg(last = true)]
-        argv: Vec<String>,
     },
-    /// pane 자리를 나눠 새 pane을 둔다(h: 좌우, v: 위아래)
-    Split {
-        pane: String,
-        #[arg(long, value_parser = ["h", "v"], default_value = "h")]
-        dir: String,
-        #[arg(long, short)]
-        workspace: Option<String>,
+    /// 새 workspace를 만들고 첫 탭에 새 pane을 띄운다
+    Create {
+        #[arg(long)]
+        label: String,
         #[arg(long)]
         machine: Option<String>,
         #[arg(long)]
@@ -556,19 +662,13 @@ enum WsCmd {
         #[arg(last = true)]
         argv: Vec<String>,
     },
-    /// 이미 있는 pane을 새 탭으로 넣는다
-    Add {
-        pane: String,
-        #[arg(long, short)]
-        workspace: Option<String>,
+    Rename {
+        name: String,
+        label: String,
     },
-    /// layout에서 뺀다(--kill이면 세션도 끝낸다)
+    /// workspace를 닫는다: 그 안 pane을 끝내고 layout을 지운다(thread·coordinator pane은 layout에서만 뺀다)
     Close {
-        pane: String,
-        #[arg(long, short)]
-        workspace: Option<String>,
-        #[arg(long)]
-        kill: bool,
+        name: String,
     },
 }
 
@@ -780,87 +880,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Status => front(json, FrontRequest::Status),
-        Cmd::Pane { cmd } => front(
-            json,
-            match cmd {
-                PaneCmd::List { role } => FrontRequest::Panes {
-                    role: match role {
-                        Some(r) => Some(Role::parse(&r).with_context(|| format!("모르는 역할: {r}"))?),
-                        None => None,
-                    },
-                },
-                PaneCmd::Run { machine, name, cwd, cols, rows, argv } => {
-                    FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows }
-                }
-                PaneCmd::Read { pane } => FrontRequest::PaneRead { pane },
-                PaneCmd::Chat { pane } => FrontRequest::PaneChat { pane },
-                PaneCmd::Attach { pane, file } => {
-                    let bytes = std::fs::read(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
-                    if bytes.is_empty() {
-                        anyhow::bail!("{}가 비었다", file.display());
-                    }
-                    let res = runtime()?.block_on(async {
-                        let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
-                        let mut last = Ok(FrontResponse::Done);
-                        for req in aaa_common::front::attach_requests(&pane, &bytes) {
-                            last = c.call(req).await?;
-                            if last.is_err() {
-                                break;
-                            }
-                        }
-                        anyhow::Ok(last)
-                    })?;
-                    return front_print(json, res);
-                }
-                PaneCmd::Send { pane, text, enter } => {
-                    // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측).
-                    // 글을 먼저 보내고 조금 뒤 Enter를 따로 보낸다(host의 brief·메시지 전달과 같은 간격).
-                    if enter && !text.is_empty() {
-                        let first = FrontRequest::PaneSend { pane: pane.clone(), data: B64(text.into_bytes()) };
-                        if let Err(e) = front_call(first)? {
-                            return front_print(json, Err(e));
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                        FrontRequest::PaneSend { pane, data: B64(b"\r".to_vec()) }
-                    } else {
-                        let mut data = text.into_bytes();
-                        if enter {
-                            data.push(b'\r');
-                        }
-                        FrontRequest::PaneSend { pane, data: B64(data) }
-                    }
-                }
-                PaneCmd::Resize { pane, cols, rows } => FrontRequest::PaneResize { pane, cols, rows },
-                PaneCmd::Kill { pane } => FrontRequest::PaneKill { pane },
-                PaneCmd::Resume { pane } => FrontRequest::PaneResume { pane },
-                PaneCmd::Forget { pane } => FrontRequest::PaneForget { pane },
-            },
-        ),
-        Cmd::Ws { cmd } => front(
-            json,
-            match cmd {
-                WsCmd::Show { workspace } => FrontRequest::Workspace { name: workspace },
-                WsCmd::Tab { workspace, machine, name, cwd, argv } => {
-                    FrontRequest::LayoutApply { workspace, change: LayoutChange::NewTab { machine, name, argv, cwd } }
-                }
-                WsCmd::Split { pane, dir, workspace, machine, cwd, argv } => FrontRequest::LayoutApply {
-                    workspace,
-                    change: LayoutChange::Split {
-                        pane,
-                        dir: if dir == "v" { SplitDir::Vertical } else { SplitDir::Horizontal },
-                        machine,
-                        argv,
-                        cwd,
-                    },
-                },
-                WsCmd::Add { pane, workspace } => {
-                    FrontRequest::LayoutApply { workspace, change: LayoutChange::AddTab { pane } }
-                }
-                WsCmd::Close { pane, workspace, kill } => {
-                    FrontRequest::LayoutApply { workspace, change: LayoutChange::Close { pane, kill } }
-                }
-            },
-        ),
+        Cmd::Pane { cmd } => pane_cmd(json, cmd),
+        Cmd::Tab { cmd } => tab_cmd(cmd),
+        Cmd::Workspace { cmd } => workspace_cmd(cmd),
+        Cmd::Completion { shell } => completion(&shell),
         Cmd::Project { cmd } => front(
             json,
             match cmd {
@@ -1038,6 +1061,247 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Service { cmd } => service_cmd(cmd),
         Cmd::Config { cmd } => config_cmd(cmd, json),
     }
+}
+
+/// herdr `parse_read_source`
+fn read_source(s: &str) -> aaa_proto::ReadSource {
+    match s {
+        "visible" => aaa_proto::ReadSource::Visible,
+        "recent-unwrapped" => aaa_proto::ReadSource::RecentUnwrapped,
+        _ => aaa_proto::ReadSource::Recent,
+    }
+}
+
+/// `--pane ID|--current`: 둘 다 없으면 이 aaa 세션(herdr `parse_optional_current_pane_args`, `HERDR_PANE_ID` 대신 `AAA_SESSION_ID`)
+fn current_pane(pane: Option<String>) -> Result<String> {
+    match pane {
+        Some(p) => Ok(p),
+        None => std::env::var("AAA_SESSION_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .context("--current는 aaa 세션 안에서만 쓴다(AAA_SESSION_ID가 없다). --pane으로 pane을 준다"),
+    }
+}
+
+/// herdr `pane` 명령: 출력은 늘 JSON 한 줄(읽기·대화 기록은 글, `--json`이면 JSON)
+fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
+    let req = match cmd {
+        PaneCmd::List { workspace, role } => {
+            let role = match role {
+                Some(r) => Some(Role::parse(&r).with_context(|| format!("모르는 역할: {r}"))?),
+                None => None,
+            };
+            let mut res = front_call(FrontRequest::Panes { role })?;
+            if let (Some(name), Ok(FrontResponse::Panes { panes })) = (workspace, &mut res) {
+                let w = match front_call(FrontRequest::Workspace { name: Some(name) })? {
+                    Ok(FrontResponse::Workspace(w)) => w,
+                    Ok(_) => anyhow::bail!("예상하지 못한 응답"),
+                    Err(e) => return front_print(true, Err(e)),
+                };
+                panes.retain(|p| aaa_proto::layout::ws_contains(&w, &p.id));
+            }
+            return front_print(true, res);
+        }
+        PaneCmd::Get { pane } => FrontRequest::PaneGet { pane },
+        PaneCmd::Current { pane, current: _ } => FrontRequest::PaneGet { pane: current_pane(pane)? },
+        PaneCmd::Read { pane, source, lines, format, ansi } => {
+            let format =
+                if ansi || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
+            return front_print(
+                json,
+                front_call(FrontRequest::PaneReadText { pane, source: read_source(&source), lines, format })?,
+            );
+        }
+        PaneCmd::Chat { pane } => return front(json, FrontRequest::PaneChat { pane }),
+        PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
+            let pane = match target {
+                Some(t) => t,
+                None => current_pane(pane)?,
+            };
+            FrontRequest::LayoutApply {
+                workspace,
+                change: LayoutChange::Split {
+                    pane,
+                    dir: if direction == "down" { SplitDir::Vertical } else { SplitDir::Horizontal },
+                    machine,
+                    argv,
+                    cwd,
+                    ratio: ratio.filter(|r| r.is_finite()).map(|r| (r.clamp(0.1, 0.9) * 1000.0).round() as u16),
+                },
+            }
+        }
+        PaneCmd::Move { pane, new_tab: _, workspace, label } => {
+            FrontRequest::LayoutApply { workspace, change: LayoutChange::MoveToNewTab { pane, name: label } }
+        }
+        PaneCmd::Close { pane } => FrontRequest::PaneClose { pane },
+        PaneCmd::Resize { pane, current: _, direction, amount } => FrontRequest::LayoutApply {
+            workspace: None,
+            change: LayoutChange::Resize {
+                pane: current_pane(pane)?,
+                direction: match direction.as_str() {
+                    "left" => aaa_proto::PaneDirection::Left,
+                    "up" => aaa_proto::PaneDirection::Up,
+                    "down" => aaa_proto::PaneDirection::Down,
+                    _ => aaa_proto::PaneDirection::Right,
+                },
+                amount: amount.filter(|a| a.is_finite()).map(|a| (a.abs().min(0.5) * 1000.0).round() as u16),
+            },
+        },
+        PaneCmd::SendText { pane, text } => FrontRequest::PaneSendText { pane, text: text.join(" ") },
+        PaneCmd::SendKeys { pane, keys } => FrontRequest::PaneSendKeys { pane, keys },
+        PaneCmd::Run { pane, command } => FrontRequest::PaneSubmit { pane, text: command.join(" ") },
+        PaneCmd::WaitOutput { pane, substring, regex, source, lines, timeout } => FrontRequest::PaneWaitOutput {
+            pane,
+            matcher: match (substring, regex) {
+                (_, Some(value)) => aaa_proto::OutputMatch::Regex { value },
+                (Some(value), None) => aaa_proto::OutputMatch::Substring { value },
+                (None, None) => anyhow::bail!("--match 또는 --regex가 필요하다"),
+            },
+            source: read_source(&source),
+            lines,
+            timeout_ms: timeout,
+        },
+        PaneCmd::Attach { pane, file } => {
+            let bytes = std::fs::read(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
+            if bytes.is_empty() {
+                anyhow::bail!("{}가 비었다", file.display());
+            }
+            let res = runtime()?.block_on(async {
+                let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+                let mut last = Ok(FrontResponse::Done);
+                for req in aaa_common::front::attach_requests(&pane, &bytes) {
+                    last = c.call(req).await?;
+                    if last.is_err() {
+                        break;
+                    }
+                }
+                anyhow::Ok(last)
+            })?;
+            return front_print(true, res);
+        }
+        PaneCmd::Kill { pane } => FrontRequest::PaneKill { pane },
+        PaneCmd::Resume { pane } => FrontRequest::PaneResume { pane },
+        PaneCmd::Forget { pane } => FrontRequest::PaneForget { pane },
+        PaneCmd::PtySize { pane, cols, rows } => FrontRequest::PaneResize { pane, cols, rows },
+    };
+    front(true, req)
+}
+
+/// 모든 workspace에서 탭을 찾는다
+fn find_tab(tab: &str) -> Result<Option<(String, aaa_proto::Tab)>> {
+    let names = match front_call(FrontRequest::Workspaces)? {
+        Ok(FrontResponse::Workspaces { workspaces }) => workspaces,
+        Ok(_) => anyhow::bail!("예상하지 못한 응답"),
+        Err(e) => anyhow::bail!("{e}"),
+    };
+    for w in names {
+        if let Ok(FrontResponse::Workspace(w)) = front_call(FrontRequest::Workspace { name: Some(w.name) })?
+            && let Some(t) = w.tabs.iter().find(|t| t.id == tab)
+        {
+            return Ok(Some((w.name.clone(), t.clone())));
+        }
+    }
+    Ok(None)
+}
+
+/// herdr `tab` 명령(출력은 늘 JSON 한 줄)
+fn tab_cmd(cmd: TabCmd) -> Result<ExitCode> {
+    let req = match cmd {
+        TabCmd::List { workspace } => FrontRequest::Workspace { name: workspace },
+        TabCmd::Create { workspace, machine, label, cwd, cols, rows, argv } => FrontRequest::LayoutApply {
+            workspace,
+            change: LayoutChange::NewTab { machine, name: label, argv, cwd, cols, rows },
+        },
+        TabCmd::Get { tab } => {
+            return match find_tab(&tab)? {
+                Some((workspace, t)) => {
+                    println!("{}", serde_json::json!({ "kind": "tab", "workspace": workspace, "tab": t }));
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => front_print(
+                    true,
+                    Err(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::NotFound, format!("탭이 없다: {tab}"))),
+                ),
+            };
+        }
+        TabCmd::Rename { tab, label } => {
+            FrontRequest::LayoutApply { workspace: None, change: LayoutChange::RenameTab { tab, name: label } }
+        }
+        TabCmd::Close { tab } => FrontRequest::LayoutApply { workspace: None, change: LayoutChange::CloseTab { tab } },
+    };
+    front(true, req)
+}
+
+/// herdr `workspace` 명령(출력은 늘 JSON 한 줄)
+fn workspace_cmd(cmd: WorkspaceCmd) -> Result<ExitCode> {
+    let req = match cmd {
+        WorkspaceCmd::List => FrontRequest::Workspaces,
+        WorkspaceCmd::Get { name } => FrontRequest::Workspace { name },
+        WorkspaceCmd::Create { label, machine, cwd, argv } => {
+            if let Ok(FrontResponse::Workspaces { workspaces }) = front_call(FrontRequest::Workspaces)?
+                && workspaces.iter().any(|w| w.name == label && w.tabs > 0)
+            {
+                return front_print(
+                    true,
+                    Err(aaa_proto::ErrorBody::new(
+                        aaa_proto::ErrorCode::NameTaken,
+                        format!("이미 있는 workspace: {label}"),
+                    )),
+                );
+            }
+            FrontRequest::LayoutApply {
+                workspace: Some(label),
+                change: LayoutChange::NewTab { machine, name: None, argv, cwd, cols: None, rows: None },
+            }
+        }
+        WorkspaceCmd::Rename { name, label } => FrontRequest::WorkspaceRename { name, to: label },
+        WorkspaceCmd::Close { name } => FrontRequest::WorkspaceClose { name },
+    };
+    front(true, req)
+}
+
+/// 셸 완성(herdr `completion`, src/cli/completion.rs): clap 명령 정의에서 만든다. zsh는 `--opt=[…]`를 `--opt[…]`로 바꿔
+/// `--opt 값`(빈칸) 꼴을 완성한다(herdr `space_separated_zsh_long_options`).
+fn completion(shell: &str) -> Result<ExitCode> {
+    use clap::CommandFactory as _;
+    use clap_complete::{Shell, generate};
+    let sh = match shell {
+        "bash" => Shell::Bash,
+        "elvish" => Shell::Elvish,
+        "fish" => Shell::Fish,
+        "powershell" => Shell::PowerShell,
+        _ => Shell::Zsh,
+    };
+    let mut cmd = Cli::command();
+    let mut out = Vec::new();
+    generate(sh, &mut cmd, "aaa", &mut out);
+    let script = String::from_utf8(out).context("완성 스크립트가 UTF-8이 아니다")?;
+    let script = if sh == Shell::Zsh { space_separated_zsh_long_options(&script) } else { script };
+    use std::io::Write as _;
+    std::io::stdout().write_all(script.as_bytes())?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn space_separated_zsh_long_options(script: &str) -> String {
+    let mut output = String::with_capacity(script.len());
+    let mut rest = script;
+    while let Some(start) = rest.find("--") {
+        output.push_str(&rest[..start]);
+        let candidate = &rest[start + 2..];
+        let name_len: usize =
+            candidate.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').map(char::len_utf8).sum();
+        if name_len > 0 && candidate[name_len..].starts_with("=[") {
+            output.push_str("--");
+            output.push_str(&candidate[..name_len]);
+            output.push('[');
+            rest = &candidate[name_len + 2..];
+        } else {
+            output.push_str("--");
+            rest = candidate;
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
@@ -1305,11 +1569,12 @@ fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::Erro
     })
 }
 
+/// 응답 출력(herdr `print_response`): JSON은 한 줄. 오류는 표준 오류로 가고 종료 코드 1이다(JSON이면 `{"error":…}` 한 줄).
 fn front_print(json: bool, res: Result<FrontResponse, aaa_proto::ErrorBody>) -> Result<ExitCode> {
     match res {
         Ok(r) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&r)?);
+                println!("{}", serde_json::to_string(&r)?);
             } else {
                 print!("{}", render_front(&r));
             }
@@ -1321,11 +1586,11 @@ fn front_print(json: bool, res: Result<FrontResponse, aaa_proto::ErrorBody>) -> 
         }
         Err(e) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "error": e }))?);
+                eprintln!("{}", serde_json::to_string(&serde_json::json!({ "error": e }))?);
             } else {
                 eprintln!("aaa: {e}");
             }
-            Ok(ExitCode::from(3))
+            Ok(ExitCode::from(1))
         }
     }
 }
@@ -1339,10 +1604,7 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
         let events = match first {
             Ok(FrontResponse::Events { events }) => events,
             Ok(_) => anyhow::bail!("예상하지 못한 응답"),
-            Err(e) => {
-                eprintln!("aaa: {e}");
-                return Ok(ExitCode::from(3));
-            }
+            Err(e) => return front_print(json, Err(e)),
         };
         let show = |e: &aaa_proto::FlowEvent| -> Result<()> {
             if json {
@@ -1355,7 +1617,7 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
         if !follow {
             // 한 번 읽기: 다른 명령처럼 JSON 객체 하나(따라 읽기는 사건마다 한 줄)
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "events": events }))?);
+                println!("{}", serde_json::to_string(&serde_json::json!({ "events": events }))?);
             } else {
                 events.iter().for_each(|e| print!("{}", render_event(e)));
             }
@@ -1742,9 +2004,18 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{m}");
             }
         }
+        FrontResponse::Read(v) => s.push_str(&v.text),
+        FrontResponse::OutputMatched { matched_line, .. } => {
+            let _ = writeln!(s, "{matched_line}");
+        }
+        FrontResponse::Workspaces { workspaces } => {
+            for w in workspaces {
+                let _ = writeln!(s, "{}\t탭 {}\tpane {}", w.name, w.tabs, w.panes);
+            }
+        }
         FrontResponse::Workspace(w) => {
             if w.tabs.is_empty() {
-                let _ = writeln!(s, "workspace {}: 탭 없음(`aaa ws tab`으로 만든다)", w.name);
+                let _ = writeln!(s, "workspace {}: 탭 없음(`aaa tab create`로 만든다)", w.name);
             }
             for (i, t) in w.tabs.iter().enumerate() {
                 let _ = writeln!(s, "탭 {}\t{}", i + 1, render_node(&t.root));

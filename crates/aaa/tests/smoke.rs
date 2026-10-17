@@ -29,9 +29,7 @@ fn connected(node: &Node, name: &str) -> bool {
 }
 
 fn run(node: &Node, machine: &str, name: &str, argv: &[&str]) -> String {
-    let mut args = vec!["pane", "run", "--machine", machine, "--name", name, "--"];
-    args.extend_from_slice(argv);
-    node.ok(&args)["id"].as_str().unwrap().to_string()
+    node.new_pane(None, machine, Some(name), argv, None)
 }
 
 fn diag(h: &Node, id: &str, root: &std::path::Path) -> String {
@@ -56,9 +54,9 @@ fn check_panes(lab: &Lab, h: &Node, machine: &str) {
     assert!(h.screen(&id).contains("smoke-ok"), "짧은 명령 출력이 없다:\n{}", h.screen(&id));
 
     let sh = run(h, machine, "sh", &shell);
-    h.ok(&["pane", "send", &sh, "--text", calc, "--enter"]);
-    wait_for_diag("대화형 입력 결과", T, || h.screen(&sh).contains("1042").then_some(()), || diag(h, &sh, &lab.root));
-    h.ok(&["pane", "resize", &sh, "100", "30"]);
+    h.ok(&["pane", "run", &sh, calc]);
+    h.wait_output(&sh, "1042", T);
+    h.ok(&["pane", "pty-size", &sh, "100", "30"]);
     wait_for("크기 반영", T, || {
         let p = h.pane(&sh);
         (p["cols"] == 100 && p["rows"] == 30).then_some(())

@@ -4,7 +4,7 @@
 //                    NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs [스크린샷 폴더]
 // AAA_BIN으로 실행 파일을 바꿀 수 있다. 실패하면 실험실 폴더를 남기고 종료 코드 1로 끝난다.
 
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -33,9 +33,19 @@ const procs = new Map();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function aaa(...args) {
-  const sep = args.indexOf("--");
-  const a = sep < 0 ? [...args, "--json"] : [...args.slice(0, sep), "--json", ...args.slice(sep)];
+  // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
+  const a = ["--json", ...args];
   return JSON.parse(execFileSync(AA, a, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+}
+
+// pane 출력에 글이 나올 때까지(`pane wait-output`: host가 출력 사건마다 다시 본다). 기다리는 동안 node를 막지 않는다.
+function waitOutput(pane, text, source = "visible", ms = 20_000) {
+  const args = ["--json", "pane", "wait-output", pane, `--match=${text}`, "--source", source, "--timeout", String(ms)];
+  return new Promise((resolve, reject) =>
+    execFile(AA, args, { env, encoding: "utf8" }, (e, out, err) =>
+      e ? reject(new Error(`${pane}에 ${text}이 나오지 않았다: ${err || e.message}`)) : resolve(JSON.parse(out)),
+    ),
+  );
 }
 
 function start(tag, ...args) {
@@ -780,7 +790,7 @@ try {
     await until("host 준비", () => aaa("status").web_listen);
     start("agent", "agent", "--host", "local", "--name", "labA");
     await until("labA 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
-    aaa("pane", "run", "--machine", "labA", "--name", "t1", "--", "/bin/sh");
+    aaa("tab", "create", "--machine", "labA", "--label", "t1", "--", "/bin/sh");
   });
 
   await step("인증 없는 요청·다른 Origin 거부", async () => {
@@ -954,7 +964,7 @@ try {
   });
 
   await step("글자 폭(herdr-web-ui terminalWidths): 이모지·새 이모지·ZWJ 묶음·⚠️는 두 칸", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "widths", "--", process.execPath, `${root}/widths.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "widths", "--", process.execPath, `${root}/widths.js`);
     const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 })).page;
     await wp.getByTestId("pane-widths").click();
     await until("폭 화면", async () => (await screenText(wp)).includes("W"));
@@ -989,11 +999,11 @@ try {
   });
 
   await step("키 막대(herdr-web-ui KeyBar): 터치 기기에서만, 유지 키는 다시 누를 때까지(래치)·하드웨어 키와 같은 bytes, DECCKM, 꾹 누르면 반복, 조합 중 회색, focus를 안 가져감", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "barapp", "--", process.execPath, `${root}/bar.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "barapp", "--", process.execPath, `${root}/bar.js`);
     // [일련번호, 받은 조각]
     const lines = () =>
-      aaa("pane", "read", "barapp")
-        .lines.map((l) => /^GOT:(\d+):(.*)$/.exec(l))
+      aaa("pane", "read", "barapp", "--source", "visible")
+        .text.split("\n").map((l) => /^GOT:(\d+):(.*)$/.exec(l))
         .filter(Boolean)
         .map((m) => [Number(m[1]), JSON.parse(m[2])]);
     const last = () => Math.max(0, ...lines().map(([i]) => i));
@@ -1117,11 +1127,11 @@ try {
   });
 
   await step("입력 방식(herdr-web-ui terminalInputMode): 기본은 바로 입력, 터치 기기 ⌨로 입력줄, 입력줄은 키보드를 안 올리고 PTY 크기를 안 바꾼다, Enter 보내기·빈 Enter, 조합 중엔 ⌨만 회색", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "lineapp", "--", process.execPath, `${root}/bar.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "lineapp", "--", process.execPath, `${root}/bar.js`);
     // [일련번호, 받은 조각]
     const lines = () =>
-      aaa("pane", "read", "lineapp")
-        .lines.map((l) => /^GOT:(\d+):(.*)$/.exec(l))
+      aaa("pane", "read", "lineapp", "--source", "visible")
+        .text.split("\n").map((l) => /^GOT:(\d+):(.*)$/.exec(l))
         .filter(Boolean)
         .map((m) => [Number(m[1]), JSON.parse(m[2])]);
     const last = () => Math.max(0, ...lines().map(([i]) => i));
@@ -1210,8 +1220,8 @@ try {
   });
 
   await step("키 바 편집(herdr-web-ui KeyBarSettings, 차이 목록 「키 막대 항목 설정」): 설정에서 키를 빼고·옮기고·더하고 조합을 만들면 터미널 키 막대가 바로 그 순서, 이 기기에 저장, 기본값으로 되돌리기", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "kbset", "--", process.execPath, `${root}/scroll.js`, "plain");
-    await until("kbset 준비", () => aaa("pane", "read", "kbset").lines.join("\n").includes("s-200"));
+    aaa("tab", "create", "--machine", "labA", "--label", "kbset", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await waitOutput("kbset", "s-200");
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
     await tp.getByTestId("pane-kbset").click();
     await until("kbset 화면", async () => (await screenText(tp)).includes("s-200"));
@@ -1247,7 +1257,7 @@ try {
     // 저장한 조합은 그 보조 키로 간다(Ctrl+← = CSI 1;5D)
     await tp.locator(".xterm-screen").click();
     await tp.locator(`.key-bar .key[data-key='${combo}']`).click();
-    await until("Ctrl+← 받음", () => aaa("pane", "read", "kbset").lines.join("\n").includes('GOT:"\\u001b[1;5D"'));
+    await waitOutput("kbset", 'GOT:"\\u001b[1;5D"');
     // 다시 열어도 이 기기의 순서
     await tp.reload();
     await tp.getByTestId("pane-kbset").click();
@@ -1466,8 +1476,8 @@ try {
   });
 
   await step("터미널 글꼴(herdr-web-ui 설정 「터미널 글꼴」, 차이 목록 「글꼴 종류」): 적은 목록을 거르고 기본 글꼴 앞에, face를 받은 뒤 cell을 재고, 찾아보기는 고정폭만, 비우면 기본", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "fontset", "--", process.execPath, `${root}/scroll.js`, "plain");
-    await until("fontset 준비", () => aaa("pane", "read", "fontset").lines.join("\n").includes("s-200"));
+    aaa("tab", "create", "--machine", "labA", "--label", "fontset", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await waitOutput("fontset", "s-200");
     // 시험 글꼴 「E2E Wide」: 넣은 Meslotendard를 다른 주소로 150% 크기로 받는다(깔린 글꼴에 기대지 않는다).
     // 깔린 글꼴 목록(Chromium queryLocalFonts)은 정해 둔 셋으로 바꾼다. Helvetica는 비례폭이라 거절해야 한다.
     const init = () => {
@@ -1613,7 +1623,7 @@ try {
   await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 타일 별, Codex는 매듭, 셸은 터미널 표시", async () => {
     // hook으로 harness를 알린 pane(Claude·Codex)과 셸(t1)
     for (const [name, agent] of [["markc", "claude"], ["markx", "codex"]])
-      aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '{"hook_event_name":"Stop"}'; exec cat`, AA);
+      aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '{"hook_event_name":"Stop"}'; exec cat`, AA);
     const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
     for (const name of ["markc", "markx"]) await until(`${name} harness`, async () => (await mp.getByTestId(`agent-${name}`).count()) === 1);
     const markOf = (name) =>
@@ -1657,7 +1667,7 @@ try {
   await step("목록 바닥 줄은 늘 맨 아래(herdr-web-ui sidebar-footer, 사용자 요청 10-17): 목록이 길어도·굴려도 설정·사용량 줄은 화면 맨 아래, 휴대폰·iPad·데스크톱·화면 키보드", async () => {
     // 목록이 화면보다 길어야 시험이 된다: 짧으면 예전 판(바닥 줄이 목록 끝을 따라감)도 맨 아래에 있다
     const many = Array.from({ length: 24 }, (_, i) => `foot${i + 1}`);
-    for (const name of many) aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sleep", "600");
+    for (const name of many) aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sleep", "600");
     const footer = (p) =>
       p.evaluate(() => {
         const r = (s) => document.querySelector(s).getBoundingClientRect();
@@ -1786,9 +1796,9 @@ try {
   await step("터미널 스크롤(herdr-web-ui PaneTerminal 휠·터치, herdr pane_input 휠 나누기, 사용자 요청 10-17): 열기 전 기록도 굴러가고, 출력이 와도 올려 둔 자리, 키를 치면 맨 아래, alternate screen은 화살표·mouse 보고면 프로그램에, 휴대폰·iPad는 한 손가락으로 손가락만큼", async () => {
     // 터치용 alt·mouse pane은 따로 둔다(휠로 받은 조각과 섞이지 않게)
     const names = ["plain", "alt", "mouse", "touch-alt", "touch-mouse"];
-    for (const mode of names) aaa("pane", "run", "--machine", "labA", "--name", `scroll-${mode}`, "--", process.execPath, `${root}/scroll.js`, mode.replace("touch-", ""));
-    for (const mode of names) await until(`scroll-${mode} 200줄`, () => aaa("pane", "read", `scroll-${mode}`).lines.join("\n").includes("s-200"));
-    const got = (name) => aaa("pane", "read", name).lines.join("\n");
+    for (const mode of names) aaa("tab", "create", "--machine", "labA", "--label", `scroll-${mode}`, "--", process.execPath, `${root}/scroll.js`, mode.replace("touch-", ""));
+    for (const mode of names) await waitOutput(`scroll-${mode}`, "s-200");
+    const got = (name) => aaa("pane", "read", name, "--source", "visible").text;
     /** 보이는 첫 줄의 번호(s-NNN), 없으면 null */
     const firstNo = (p) =>
       p.evaluate(() => {
@@ -1806,7 +1816,7 @@ try {
         history: await dp.locator(".xterm-viewport").evaluate((vp) => vp.scrollHeight - vp.clientHeight),
         ...(await termDiag(dp)),
       };
-      throw new Error(`${e.message}: ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "scroll-plain").lines.filter(Boolean).slice(-3))}`);
+      throw new Error(`${e.message}: ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "scroll-plain", "--source", "visible").text.split("\n").filter(Boolean).slice(-3))}`);
     });
     const box = await dp.getByTestId("terminal").boundingBox();
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -1817,7 +1827,7 @@ try {
       throw new Error(`${e.message}: 첫 줄 ${await firstNo(dp)}, xterm 기록 ${await dp.locator(".xterm-viewport").evaluate((v) => v.scrollHeight - v.clientHeight)}px`);
     });
     // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력)
-    for (let i = 0; i < 3; i++) aaa("pane", "send", "scroll-plain", "--text", "p");
+    for (let i = 0; i < 3; i++) aaa("pane", "send-text", "scroll-plain", "p");
     await until("more-3 출력", () => got("scroll-plain").includes("more-3"));
     await sleep(300);
     if ((await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(첫 줄 ${await firstNo(dp)})`);
@@ -1941,8 +1951,8 @@ try {
   await step("글꼴이 늦게 와도 맨 아래(넣은 WOFF2, plan §8.60): 터미널을 연 뒤 글꼴이 받아져 칸 높이가 바뀌어도 맨 아래를 보던 화면은 맨 아래에 남는다", async () => {
     // CI 러너와 처음 여는 기기에는 Meslotendard가 깔려 있지 않다: 대신 글꼴로 열고, 넣은 글꼴은 늦게 받는다.
     // 대신 글꼴은 칸 높이가 확실히 다른 것을 쓴다(같으면 이 시험은 아무것도 보지 않는다)
-    aaa("pane", "run", "--machine", "labA", "--name", "fontjump", "--", process.execPath, `${root}/scroll.js`, "plain");
-    await until("fontjump 200줄", () => aaa("pane", "read", "fontjump").lines.join("\n").includes("s-200"));
+    aaa("tab", "create", "--machine", "labA", "--label", "fontjump", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await waitOutput("fontjump", "s-200");
     const init = () =>
       document.addEventListener("DOMContentLoaded", () => {
         const st = document.createElement("style");
@@ -1981,16 +1991,14 @@ try {
   });
 
   await step("줄 수가 줄면 위 줄을 기록으로(xterm·herdr처럼, plan §8.59): 작은 화면이 크기를 걸어도 host 화면에 마지막 줄·커서 줄이 남고, 다시 붙은 웹은 그 위를 굴려 본다", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "shrink", "--", process.execPath, `${root}/scroll.js`, "plain");
-    await until("shrink 200줄", () => aaa("pane", "read", "shrink").lines.join("\n").includes("s-200"));
-    aaa("pane", "resize", "shrink", "80", "8");
-    const r = await until("8줄", () => {
-      const v = aaa("pane", "read", "shrink");
-      return v.rows === 8 && v;
-    });
+    aaa("tab", "create", "--machine", "labA", "--label", "shrink", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await waitOutput("shrink", "s-200");
+    // pty-size는 새 크기가 host에 닿은 뒤 돌아온다: 바로 읽어도 줄인 화면이다
+    aaa("pane", "pty-size", "shrink", "80", "8");
+    const r = aaa("pane", "read", "shrink", "--source", "visible").text.split("\n");
     // 커서는 s-200 다음 빈 줄: 그 위 일곱 줄이 s-194~s-200
     const want = Array.from({ length: 7 }, (_, i) => `s-${194 + i}`);
-    if (JSON.stringify(r.lines.slice(0, 7)) !== JSON.stringify(want)) throw new Error(`줄인 화면 ${JSON.stringify(r.lines)}`);
+    if (JSON.stringify(r.slice(0, 7)) !== JSON.stringify(want)) throw new Error(`줄인 화면 ${JSON.stringify(r)}`);
     // 늦게 붙은 웹: 기록에 줄인 때 올린 줄까지 있어 위로 굴리면 s-001
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await dp.getByTestId("pane-shrink").click();
@@ -2006,8 +2014,8 @@ try {
   });
 
   await step("앞 기록(사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」, plan §8.67): 끊긴 동안 쏟아진 출력을 다시 붙은 뒤 위로 굴리며 차례로 받아 보고, 붙일 때 보던 자리가 튀지 않는다", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "histapp", "--", process.execPath, `${root}/history.js`);
-    await until("histapp 준비", () => aaa("pane", "read", "histapp").lines.join("\n").includes("hist>"));
+    aaa("tab", "create", "--machine", "labA", "--label", "histapp", "--", process.execPath, `${root}/history.js`);
+    await waitOutput("histapp", "hist>");
     // pane WebSocket 문: 닫혀 있으면 새 연결을 바로 끊는다(끊긴 동안). host의 앞 기록 답은 잠깐 붙잡아, 붙이기 전 화면을 잰다
     // 첫 답을 붙잡는 동안 온 출력도 붙잡았다가 답 바로 뒤에 보낸다: 다시 쓰는 사이에 출력이 오는 경우
     let gate = "open";
@@ -2047,8 +2055,8 @@ try {
     gate = "closed";
     pipe.ws.close({ code: 1011, reason: "test offline" });
     pipe.server.close({ code: 1000, reason: "test offline" });
-    aaa("pane", "send", "histapp", "--text", "h");
-    await until("pane에 다 씀", () => aaa("pane", "read", "histapp").lines.join("\n").includes("history-done"));
+    aaa("pane", "send-text", "histapp", "h");
+    await waitOutput("histapp", "history-done");
     gate = "open";
     await until("다시 붙음", async () => (await screenText(hp)).includes("history-done"), 30000);
     if ((await attr("historyMore")) !== "1") throw new Error(`다시 붙은 뒤 앞 기록 표시 ${await attr("historyMore")}`);
@@ -2071,8 +2079,8 @@ try {
       const before = await rows();
       // 첫 덩어리를 기다리는 동안 pane에 새 줄(tick-1): 다시 쓰는 사이에 도착한다
       if (round === 0) {
-        aaa("pane", "send", "histapp", "--text", "p");
-        await until("tick-1을 pane이 씀", () => aaa("pane", "read", "histapp").lines.join("\n").includes("tick-1"));
+        aaa("pane", "send-text", "histapp", "p");
+        await waitOutput("histapp", "tick-1");
       }
       await until(`붙임(${round + 1})`, async () => Number(await attr("historyApplied")) === applied + 1);
       applied += 1;
@@ -2121,14 +2129,14 @@ try {
       dt.setData("text/plain", "pa\nste");
       el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     });
-    await until("감싼 붙여넣기", () => aaa("pane", "read", "histapp").lines.join("\n").includes('GOT:"\\u001b[200~pa\\rste\\u001b[201~"'));
+    await waitOutput("histapp", 'GOT:"\\u001b[200~pa\\rste\\u001b[201~"');
     await hp.context().close();
     aaa("pane", "kill", "histapp");
   });
 
   await step("출력이 밀릴 때(herdr-web-ui OutputWindow·pty-ack·4008 「Reconnect」, D7, plan §8.62): ACK를 못 하는 화면은 host가 4008로 닫고 다시 보내지 않으며 「다시 연결」로 새로 붙는다. 따라오는 화면은 그대로 받는다", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "flood", "--", process.execPath, `${root}/flood.js`);
-    await until("flood 준비", () => aaa("pane", "read", "flood").lines.join("\n").includes("flood>"));
+    aaa("tab", "create", "--machine", "labA", "--label", "flood", "--", process.execPath, `${root}/flood.js`);
+    await waitOutput("flood", "flood>");
     /** 이 화면의 pane WebSocket 기록(진단 기록과 같은 것): snapshot·닫힘·열림 */
     const log = (p) => p.evaluate(() => window.__aaaTermLog.map((x) => x.e ?? x.kind));
     const count = (l, prefix) => l.filter((e) => e.startsWith(prefix)).length;
@@ -2168,7 +2176,7 @@ try {
     // snapshot이 출력 구독의 시작이다. 그 전에 쏟으면 앞부분이 snapshot(text)에 들어가 bytes가 모자란다(t-0327, 착지 검증에서 1/8)
     await until("옛 웹 붙음", async () => await old.evaluate(() => window.oldClient.joined));
     // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
-    aaa("pane", "send", "flood", "--text", "f");
+    aaa("pane", "send-text", "flood", "f");
     await until("출력 정지 띠", async () => await slow.getByTestId("output-stalled").isVisible());
     const stalled = await log(slow);
     if (!stalled.includes("ws close 4008")) throw new Error(`4008로 닫히지 않았다: ${JSON.stringify(stalled.filter((e) => e !== "io"))}`);
@@ -2197,15 +2205,15 @@ try {
     if (count(back, "ws open") !== 2) throw new Error(`다시 연결이 새로 붙지 않았다: ${JSON.stringify(back.filter((e) => e !== "io"))}`);
     await slow.locator(".xterm-helper-textarea").focus();
     await slow.keyboard.type("z");
-    await until("다시 붙은 화면의 입력", () => aaa("pane", "read", "flood").lines.join("\n").includes('GOT:"z"'));
+    await waitOutput("flood", 'GOT:"z"');
     await slow.context().close();
     await fast.context().close();
     aaa("pane", "kill", "flood");
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "keysapp", "--", process.execPath, `${root}/keys.js`);
-    const got = () => aaa("pane", "read", "keysapp").lines.join("\n");
+    aaa("tab", "create", "--machine", "labA", "--label", "keysapp", "--", process.execPath, `${root}/keys.js`);
+    const got = () => aaa("pane", "read", "keysapp", "--source", "visible").text;
     const gots = () => got().split("GOT:").length - 1;
     // 클립보드는 기록만 한다(headless 권한·focus와 상관없이 무엇을 썼는지 본다)
     const clip = () => {
@@ -2274,11 +2282,11 @@ try {
   });
 
   await step("그냥 끌어 고르기·제자리 클릭·크기 되찾기(herdr-web-ui PaneTerminal): 마우스 보고 중에도 왼쪽 끌기는 고르고 놓으면 복사, 제자리 클릭은 프로그램에, 키는 보내기 전에 이 화면 크기를 건다", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "mouseapp", "--", process.execPath, `${root}/mouse.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "mouseapp", "--", process.execPath, `${root}/mouse.js`);
     // [일련번호, 종류, 값]
     const events = () =>
-      aaa("pane", "read", "mouseapp")
-        .lines.map((l) => /^(GOT|SIZE):(\d+):(.*)$/.exec(l))
+      aaa("pane", "read", "mouseapp", "--source", "visible")
+        .text.split("\n").map((l) => /^(GOT|SIZE):(\d+):(.*)$/.exec(l))
         .filter(Boolean)
         .map((m) => [Number(m[2]), m[1], m[1] === "GOT" ? JSON.parse(m[3]) : Number(m[3])]);
     const after = (n) => events().filter(([i]) => i > n);
@@ -2438,14 +2446,14 @@ try {
     await rp.getByTestId("terminal").click();
     await rp.keyboard.type("echo reader-$((1+1))\n");
     await sleep(800);
-    const lines = aaa("pane", "read", "t1").lines.join("\n");
+    const lines = aaa("pane", "read", "t1", "--source", "visible").text;
     if (lines.includes("reader-")) throw new Error("reader 입력이 PTY에 들어갔다");
     await shot(rp, "mobile-reader");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
     // 낮은 화면의 보기 권한: 데스크톱 grid가 칸보다 높으면 칸이 굴러가고 커서 줄을 보이게 따라간다(herdr-web-ui followCursor)
     // t1 화면은 뒤 단계가 본다: 따로 pane을 띄운다(80×40, 줄 80개 뒤 커서는 맨 아래)
-    aaa("pane", "run", "--machine", "labA", "--name", "follow", "--cols", "80", "--rows", "40", "--", "/bin/sh", "-c", "seq 1 80; echo follow-$((6*7)); exec cat");
+    aaa("tab", "create", "--machine", "labA", "--label", "follow", "--cols", "80", "--rows", "40", "--", "/bin/sh", "-c", "seq 1 80; echo follow-$((6*7)); exec cat");
     const low = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 420 });
     await low.page.getByTestId("pane-follow").click();
     const followed = () =>
@@ -2488,7 +2496,7 @@ try {
       'printf "Allow Bash(make test)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
       '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}\'; ' +
       "stty -echo; exec cat > /dev/null";
-    aaa("pane", "run", "--machine", "labA", "--name", "q1", "--", "/bin/sh", "-c", script, AA);
+    aaa("tab", "create", "--machine", "labA", "--label", "q1", "--", "/bin/sh", "-c", script, AA);
     // 목록에는 그 줄의 빨간 ?만(차이 목록 Q1·S2, 참고 Sidebar.tsx StatusBadge): 카드는 그 pane을 열면 터미널 아래에
     const state = (pg) => pg.getByTestId("agent-q1");
     await state(page).and(page.locator('[data-status="blocked"]')).waitFor();
@@ -2523,7 +2531,7 @@ try {
     const script =
       'while read a; do "$0" hook --agent claude \'{"hook_event_name":"UserPromptSubmit"}\'; ' +
       'read b; "$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; done';
-    aaa("pane", "run", "--machine", "labA", "--name", "seen1", "--", "/bin/sh", "-c", script, AA);
+    aaa("tab", "create", "--machine", "labA", "--label", "seen1", "--", "/bin/sh", "-c", script, AA);
     const inUse = (p, on) =>
       p.evaluate((on) => {
         if (on) delete document.hasFocus;
@@ -2534,12 +2542,12 @@ try {
     const is = (s) => state.and(page.locator(`[data-status="${s}"]`)).waitFor();
     const using = async () => (await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.in_use));
     const turn = async (end, inUseNow) => {
-      aaa("pane", "send", "seen1", "--text", "go", "--enter");
+      aaa("pane", "run", "seen1", "go");
       await is("working");
       // presence는 턴을 열기 전에 보냈고 host를 한 바퀴 돈 working이 왔다: host가 이미 안다(기다리지 않고 확인만 한다)
       const n = await using();
       if ((n > 0) !== inUseNow) throw new Error(`host가 아는 쓰는 화면 수 ${n}(쓰는 중 ${inUseNow})`);
-      aaa("pane", "send", "seen1", "--text", "end", "--enter");
+      aaa("pane", "run", "seen1", "end");
       await is(end);
     };
     await inUse(page, true);
@@ -2561,25 +2569,27 @@ try {
     aaa("pane", "kill", "seen1");
   });
 
-  await step("입력 막대·pane send: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "burst", "--", process.execPath, `${root}/burst.js`);
+  await step("입력 막대·CLI send-text 뒤 send-keys enter: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "burst", "--", process.execPath, `${root}/burst.js`);
     await page.getByTestId("pane-burst").click();
     await until("burst 화면", async () => (await screenText(page)).includes("burst>"));
     await page.getByLabel("보낼 글").fill("hello web");
     await page.getByRole("button", { name: "보내기" }).click();
     await until("웹 제출", async () => (await screenText(page)).includes("SUBMIT:hello web"));
-    aaa("pane", "send", "burst", "--text", "hello cli", "--enter");
-    await until("CLI 제출", () => aaa("pane", "read", "burst").lines.join("\n").includes("SUBMIT:hello cli"));
+    // CLI는 글과 Enter를 따로 쓴다(herdr send-text·send-keys). `pane run`은 글+Enter를 한 번에 쓰니(herdr) 여기서는 쓰지 않는다
+    aaa("pane", "send-text", "burst", "hello cli");
+    aaa("pane", "send-keys", "burst", "enter");
+    await waitOutput("burst", "SUBMIT:hello cli");
     if ((await screenText(page)).includes("[newline]")) throw new Error("Enter가 글과 한 덩어리로 갔다");
     // 가짜 입력창이 한 덩어리를 실제로 가려내는지(이 단언이 없으면 위 단언은 아무것도 보지 않는다)
-    aaa("pane", "send", "burst", "--text", "one\r");
+    aaa("pane", "send-text", "burst", "one\r");
     await until("한 덩어리 판정", async () => (await screenText(page)).includes("[newline]"));
     aaa("pane", "kill", "burst");
   });
 
   await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "pasteapp", "--", process.execPath, `${root}/paste.js`);
-    const got = () => aaa("pane", "read", "pasteapp").lines.join("\n");
+    aaa("tab", "create", "--machine", "labA", "--label", "pasteapp", "--", process.execPath, `${root}/paste.js`);
+    const got = () => aaa("pane", "read", "pasteapp", "--source", "visible").text;
     const gots = () => got().split("GOT:").length - 1;
     await page.getByTestId("pane-pasteapp").click();
     await until("paste 화면", async () => (await screenText(page)).includes("paste>"));
@@ -2618,7 +2628,7 @@ try {
       const banner = () => page.locator(".terminal-input-note").evaluateAll((els) => els[0]?.textContent ?? null);
       const since = () => got().split('GOT:"MARK"').at(-1);
       const mark = async () => {
-        aaa("pane", "send", "pasteapp", "--text", "MARK");
+        aaa("pane", "send-text", "pasteapp", "MARK");
         await until("표지", () => got().includes('GOT:"MARK"'));
       };
       // 1) 실제 조합(Chrome IME 길): 누르는 사이 확정되어 바로 보낸다. 입력칸은 focus를 지킨다(키보드가 그대로)
@@ -2701,8 +2711,8 @@ try {
   });
 
   await step("보내는 동안 친 글 지키기(herdr-web-ui submit·submit-result, terminalDraft): 입력줄은 host 답을 받고서야 보낸 앞부분만 지운다. 그 사이 친 글은 남고, 거절·끊김이면 글을 두고 이유", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "submitapp", "--", process.execPath, `${root}/paste.js`);
-    const got = () => aaa("pane", "read", "submitapp").lines.join("\n");
+    aaa("tab", "create", "--machine", "labA", "--label", "submitapp", "--", process.execPath, `${root}/paste.js`);
+    const got = () => aaa("pane", "read", "submitapp", "--source", "visible").text;
     // host의 답(submitted)을 붙잡아 두는 화면: 답이 오기 전 상태를 본다
     const held = [];
     let pipe = null;
@@ -2761,7 +2771,7 @@ try {
     await until("확인 못 함", async () => (await note()) === "확인하지 못했다. 다시 보내기 전에 터미널을 본다");
     if ((await box.inputValue()) !== "넷") throw new Error(`끊긴 뒤 입력줄 ${JSON.stringify(await box.inputValue())}`);
     // 5) 실제 host 거절: 끝난 pane에 보낸 submit은 ok:false와 이유로 답한다(답 없이 두지 않는다)
-    aaa("pane", "run", "--machine", "labA", "--name", "submitend", "--", process.execPath, "-e", "process.exit(0)");
+    aaa("tab", "create", "--machine", "labA", "--label", "submitend", "--", process.execPath, "-e", "process.exit(0)");
     await until("submitend 끝남", () => aaa("pane", "list").panes.find((x) => x.name === "submitend")?.state !== "running");
     // 붙잡는 route가 없는 화면에서 연다
     const refused = await page.evaluate(
@@ -2785,8 +2795,8 @@ try {
   });
 
   await step("터미널 한글 IME(herdr-web-ui xterm 패치): 데스크톱 조합 사건·CDP 실제 IME, macOS Safari·iPad 기록 재생 → pane에는 완성된 글만", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "imeapp", "--", process.execPath, `${root}/paste.js`);
-    aaa("pane", "run", "--machine", "labA", "--name", "imespin", "--", process.execPath, `${root}/spin.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "imeapp", "--", process.execPath, `${root}/paste.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "imespin", "--", process.execPath, `${root}/spin.js`);
     const wk = await webkit.launch();
     const bad = [];
     const textarea = (q) => q.locator("textarea.xterm-helper-textarea");
@@ -2958,15 +2968,15 @@ try {
         await p.locator(".xterm-screen").click();
         if (keyboard) await keyboard(p);
         for (const [how, type, want] of ways) {
-          aaa("pane", "send", pane, "--text", "MARK");
-          await until("표지", () => aaa("pane", "read", pane).lines.join("\n").includes('GOT:"MARK"'));
+          aaa("pane", "send-text", pane, "MARK");
+          await waitOutput(pane, 'GOT:"MARK"');
           // 기록 재생은 빈 편집기에서 시작한다(herdr-web-ui 재생과 같다)
           await textarea(p).evaluate((el) => {
             el.value = "";
           });
           await type(p);
           await sleep(700);
-          const all = aaa("pane", "read", pane).lines.join("\n");
+          const all = aaa("pane", "read", pane, "--source", "visible").text;
           const got = all
             .slice(all.lastIndexOf('GOT:"MARK"') + 10)
             .split("\n")
@@ -2989,7 +2999,7 @@ try {
   });
 
   await step("iPhone 화면 키보드 사용자 기록 재생(10-17): 「한글」을 자모마다 keydown으로 친 뒤 blur → pane에는 완성된 음절만", async () => {
-    aaa("pane", "run", "--machine", "labA", "--name", "iphoneA", "--", process.execPath, `${root}/spin.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "iphoneA", "--", process.execPath, `${root}/spin.js`);
     const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Mobile/15E148 Safari/604.1";
     const IPHONE = { width: 430, height: 932 };
     const wk = await webkit.launch();
@@ -3027,7 +3037,7 @@ try {
         await until("iPhone 화면", async () => (await screenText(p)).includes("paste>")).catch(async (e) => {
           // CI에서만 실패한 적이 있다(10-17 dbacbfe·372e85d·e784eac): 그때 화면이 어땠는지 남긴다
           const seen = await termDiag(p);
-          throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames.slice(-12))} 출력 ${bins}조각 ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "iphoneA").lines.filter(Boolean).slice(-2))}`);
+          throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames.slice(-12))} 출력 ${bins}조각 ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "iphoneA", "--source", "visible").text.split("\n").filter(Boolean).slice(-2))}`);
         });
         const input = p.locator(".xterm-helper-textarea");
         await input.focus();
@@ -3069,7 +3079,7 @@ try {
   await step("iPad IME 회귀(herdr-web-ui scripts/terminal-ipad-ime-regression.ts 그대로): Chromium MacIntel·iPad, 화면 키보드가 올라온 WebKit iPad", async () => {
     // 참고 시험처럼 pane WebSocket을 가로채 보낸 input 프레임을 그대로 본다(입력은 pane에 가지 않는다).
     // 두 pane은 참고처럼 조용한 입력창이다(출력이 오는 동안의 조합은 「터미널 한글 IME」 단계의 화면 키보드 판이 본다).
-    for (const n of ["ipadA", "ipadB"]) aaa("pane", "run", "--machine", "labA", "--name", n, "--", process.execPath, `${root}/paste.js`);
+    for (const n of ["ipadA", "ipadB"]) aaa("tab", "create", "--machine", "labA", "--label", n, "--", process.execPath, `${root}/paste.js`);
     const ids = Object.fromEntries(aaa("pane", "list").panes.filter((x) => x.name.startsWith("ipad")).map((x) => [x.id, x.name]));
     const wk = await webkit.launch();
     const IPAD_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15";
@@ -3219,7 +3229,7 @@ try {
       body: "{}",
     });
     if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
-    aaa("pane", "run", "--machine", "labA", "--name", "traceapp", "--", process.execPath, `${root}/paste.js`);
+    aaa("tab", "create", "--machine", "labA", "--label", "traceapp", "--", process.execPath, `${root}/paste.js`);
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
     await tp.getByTestId("trace-toggle").click();
     if ((await tp.getByTestId("trace-toggle").getAttribute("aria-pressed")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
@@ -3227,7 +3237,7 @@ try {
     await until("trace 화면", async () => (await screenText(tp)).includes("paste>"));
     await tp.locator(".xterm-screen").click();
     await imeType(tp);
-    await until("조합 글 도착", () => aaa("pane", "read", "traceapp").lines.join("\n").includes('GOT:"상"'));
+    await waitOutput("traceapp", 'GOT:"상"');
     await sleep(300);
     await tp.getByRole("button", { name: "목록으로" }).click();
     await tp.getByTestId("trace-send").click();
@@ -3270,7 +3280,7 @@ try {
       ];
       for (const [scheme, dev, viewport, deviceScaleFactor] of devices) {
         const name = `compose-${scheme}-${dev}`;
-        aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
+        aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", app);
         const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { colorScheme: scheme, deviceScaleFactor })).page;
         // 커서는 herdr-web-ui처럼 깜빡인다(cursorBlink). 꺼진 순간에 재면 커서색이 투명이라 샘을 볼 수 없다:
         // 깜빡임만 멈춰 커서가 그려진 상태에서 잰다
@@ -3280,11 +3290,11 @@ try {
         await p.locator(".xterm-screen").click();
         for (const [line, ch] of [["plain", "ㅅ"], ["bg", "ㅅ"], ["bottom", "가"]]) {
           if (line === "bg") {
-            aaa("pane", "send", name, "--text", "", "--enter");
+            aaa("pane", "send-keys", name, "enter");
             await until("배경 줄", async () => (await screenText(p)).includes("› 상태"));
           }
           if (line === "bottom") {
-            aaa("pane", "send", name, "--text", "", "--enter");
+            aaa("pane", "send-keys", name, "enter");
             await until("맨 아래 줄", async () => !(await screenText(p)).includes("plain 상태"));
           }
           await sleep(300);
@@ -3412,7 +3422,7 @@ try {
     try {
       for (const [dev, viewport, kb] of [["ipad", { width: 820, height: 1180 }, 400], ["iphone", { width: 390, height: 844 }, 336]]) {
         const name = `kb-${dev}`;
-        aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
+        aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", app);
         const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { touch: true, init })).page;
         const direct = p.locator('.key-bar .key[data-key="direct"]');
         await p.getByTestId(`pane-${name}`).click();
@@ -3497,7 +3507,7 @@ try {
         L({ type: "user", message: { content: [{ type: "tool_result", content: "도구결과본문" }] } }),
     );
     const hookPane = (name, path) =>
-      aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
+      aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
         JSON.stringify({ hook_event_name: "Stop", session_id: "s1", transcript_path: path }));
     hookPane("chat1", tr);
     await page.getByTestId("pane-chat1").click();
@@ -3528,7 +3538,8 @@ try {
     try {
       aaa("pane", "chat", "chat2");
     } catch (e) {
-      refused = String(e.stdout);
+      // 오류 JSON은 stderr로 온다(herdr와 같다)
+      refused = String(e.stderr);
     }
     if (!refused.includes("기록 폴더 밖") || refused.includes("비밀")) throw new Error(`밖의 파일: ${refused}`);
     for (const n of ["chat1", "chat2"]) aaa("pane", "kill", n);
@@ -3548,11 +3559,12 @@ try {
     if (!p1?.startsWith(`${root}/s/agent/sessions/`)) throw new Error(`저장 경로: ${await banner.innerText()}`);
     if (!fs.readFileSync(p1).equals(png)) throw new Error("저장한 그림이 다르다");
     if ((fs.statSync(p1).mode & 0o777) !== 0o600) throw new Error(`권한 ${(fs.statSync(p1).mode & 0o777).toString(8)}`);
-    await until("셸 줄에 따옴표 경로", () => aaa("pane", "read", "t1").lines.join("").includes(`'${p1}'`));
+    // 긴 경로는 화면에서 줄이 접힌다: 접힌 줄을 이어 본다(herdr recent-unwrapped)
+    await waitOutput("t1", `'${p1}'`, "recent-unwrapped");
     // Enter가 없었다: 셸은 실행하지 않았다(그 줄을 지운다)
     await sleep(300);
-    if (aaa("pane", "read", "t1").lines.join("").includes("No such file")) throw new Error("셸이 경로를 실행했다");
-    aaa("pane", "send", "t1", "--text", "\u0015");
+    if (aaa("pane", "read", "t1", "--source", "visible").text.replaceAll("\n", "").includes("No such file")) throw new Error("셸이 경로를 실행했다");
+    aaa("pane", "send-text", "t1", "\u0015");
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
@@ -3560,7 +3572,7 @@ try {
     // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
     const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);
     const recv = `${root}/h1.in`;
-    aaa("pane", "run", "--machine", "labA", "--name", "h1", "--", "/bin/sh", "-c",
+    aaa("tab", "create", "--machine", "labA", "--label", "h1", "--", "/bin/sh", "-c",
       '"$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; stty raw -echo; printf "\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
     await until("h1 harness 상태", async () => (await page.getByTestId("agent-h1").count()) === 1);
     await page.getByTestId("pane-h1").click();
@@ -3620,7 +3632,7 @@ try {
 
     // 4) 확인창이 떠 있는 harness pane에는 넣지 않는다
     const recv2 = `${root}/h2.in`;
-    aaa("pane", "run", "--machine", "labA", "--name", "h2", "--", "/bin/sh", "-c",
+    aaa("tab", "create", "--machine", "labA", "--label", "h2", "--", "/bin/sh", "-c",
       'printf "Allow Bash(rm x)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
         '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}\'; ' +
         'stty raw -echo; exec cat > "$1"', AA, recv2);

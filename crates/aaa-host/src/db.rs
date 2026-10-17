@@ -110,6 +110,12 @@ impl Db {
         Ok(())
     }
 
+    pub fn delete_workspace(&self, name: &str) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute("DELETE FROM workspaces WHERE name=?1", params![name])?;
+        Ok(())
+    }
+
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
         let c = self.conn.lock().unwrap();
         Ok(c.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)

@@ -457,7 +457,14 @@ impl App {
                 }
             },
             list::Row::NewShell(machine) => {
-                let change = LayoutChange::NewTab { machine: Some(machine), name: None, argv: vec![], cwd: None };
+                let change = LayoutChange::NewTab {
+                    machine: Some(machine),
+                    name: None,
+                    argv: vec![],
+                    cwd: None,
+                    cols: None,
+                    rows: None,
+                };
                 return self.layout(tx, change, true).await;
             }
             _ => return Ok(()),
@@ -743,7 +750,12 @@ impl App {
             }
             Action::NewTab => {
                 let machine = self.focused_machine();
-                self.layout(tx, LayoutChange::NewTab { machine, name: None, argv: vec![], cwd: None }, true).await?;
+                self.layout(
+                    tx,
+                    LayoutChange::NewTab { machine, name: None, argv: vec![], cwd: None, cols: None, rows: None },
+                    true,
+                )
+                .await?;
             }
             Action::PreviousTab if !self.ws.tabs.is_empty() => {
                 self.tab = (self.tab + self.ws.tabs.len() - 1) % self.ws.tabs.len()
@@ -755,8 +767,12 @@ impl App {
             Action::SplitVertical | Action::SplitHorizontal => {
                 let Some(pane) = focus else { return Ok(()) };
                 let dir = if a == Action::SplitVertical { SplitDir::Horizontal } else { SplitDir::Vertical };
-                self.layout(tx, LayoutChange::Split { pane, dir, machine: None, argv: vec![], cwd: None }, true)
-                    .await?;
+                self.layout(
+                    tx,
+                    LayoutChange::Split { pane, dir, machine: None, argv: vec![], cwd: None, ratio: None },
+                    true,
+                )
+                .await?;
             }
             Action::ClosePane => {
                 let Some(pane) = focus else { return Ok(()) };

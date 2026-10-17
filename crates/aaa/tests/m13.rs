@@ -787,23 +787,11 @@ fn decisions_and_restart() {
 fn inbox_and_nudge() {
     let w = world_with("tick_secs = 1\nnudge_idle_secs = 2\nnudge_quiet_secs = 1\n");
     let dir = w.projects.join("demo");
-    let coord = w.h.ok(&[
-        "pane",
-        "run",
-        "--machine",
-        "labA",
-        "--cwd",
-        path_str(&dir),
-        "--",
-        "/bin/sh",
-        path_str(&w.scripts.join("coord.sh")),
-    ])["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let coord =
+        w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
     w.wait_screen(&coord, "❯");
     // 사람이 입력창에 쓰던 글이 있으면 알리지 않는다
-    w.h.ok(&["pane", "send", &coord, "--text", "draft-text"]);
+    w.h.ok(&["pane", "send-text", &coord, "draft-text"]);
     w.wait_screen(&coord, "❯ draft-text");
 
     let v = w.start(&["--title", "inbox", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("t7.txt", "x")]);
@@ -817,7 +805,7 @@ fn inbox_and_nudge() {
     assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
 
     // 쓰던 글을 보내고 나면 알린다
-    w.h.ok(&["pane", "send", &coord, "--text", "", "--enter"]);
+    w.h.ok(&["pane", "send-keys", &coord, "enter"]);
     w.wait_screen(&coord, "got: draft-text");
     let screen = w.wait_screen(&coord, "got: [aaa inbox]");
     assert!(screen.contains(&format!("got: [aaa inbox] {id} report ready (aaa inbox list demo)")), "{screen}");
@@ -890,19 +878,16 @@ fn worker_session_cli_is_read_only() {
     let w = world();
     let t = w.start(&["--title", "w", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("w.txt", "x")]);
     let (id, pane) = (t["id"].as_str().unwrap(), t["pane"].as_str().unwrap());
-    let shell = w.h.ok(&["pane", "run", "--machine", "labA", "--name", "sh", "--", "/bin/sh"])["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
     let as_session = |s: &str, args: &[&str]| w.h.cmd(args).env("AAA_SESSION_ID", s).output().unwrap();
     for args in [
         &["decision", "add", "demo", "--text", "thread가 정한 결정"][..],
         &["thread", "message", "demo", id, "--text", "x"],
-        &["pane", "send", &shell, "--text", "echo hi"],
+        &["pane", "send-text", &shell, "echo hi"],
         &["merge", "enqueue", "demo", id],
     ] {
         let o = as_session(pane, args);
-        assert_eq!(o.status.code(), Some(3), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
+        assert_eq!(o.status.code(), Some(1), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
         assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "{}", String::from_utf8_lossy(&o.stderr));
     }
     let o = as_session(pane, &["--json", "thread", "show", "demo", id]);
@@ -1133,20 +1118,8 @@ fn routines() {
     assert_eq!(items("config-error", "pr").len(), 1);
     assert!(routine("pr")["error"].as_str().unwrap().contains("M3"));
 
-    let coord = w.h.ok(&[
-        "pane",
-        "run",
-        "--machine",
-        "labA",
-        "--cwd",
-        path_str(&dir),
-        "--",
-        "/bin/sh",
-        path_str(&w.scripts.join("coord.sh")),
-    ])["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let coord =
+        w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
     w.wait_screen(&coord, "❯");
     // 안내 routine: 처리하지 않은 항목이 있으면 새로 만들지 않고 건너뛴다
     let ping = wait_for("ping 항목", T, || items("routine", "ping").into_iter().next());
@@ -1420,7 +1393,7 @@ fn machine_health() {
     assert_eq!((tools[1]["name"].as_str(), tools[1]["version"].as_str()), (Some("ok"), Some("tool 9.9")), "{m}");
     assert!(m["clock_skew_ms"].as_i64().unwrap().abs() < 5_000, "{m}");
     // 새 세션·thread는 거부한다
-    let e = w.h.json(&["pane", "run", "--machine", "labA", "--", "/bin/sh"]).expect_err("점검 이상");
+    let e = w.h.json(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]).expect_err("점검 이상");
     assert!(e.contains("점검 이상") && e.contains("toolchain bad"), "{e}");
     let e =
         w.h.json(&[
@@ -1462,7 +1435,7 @@ fn machine_health() {
     });
     let items = wait_for("inbox 회복 항목", T, || Some(health(&w)).filter(|v| v.len() == 2));
     assert_eq!(items[1].0, "ok", "{items:?}");
-    w.h.ok(&["pane", "run", "--machine", "labA", "--", "/bin/sh"]);
+    w.h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
 }
 
 /// coordinator 일 흐름(부록 A): TASKS.md owner로 thread 시작, assignable 확인, Next 목록·보내기, context 요약.
@@ -1590,7 +1563,7 @@ fn evaluator_flow() {
         &["thread", "start", "demo", "--title", "x", "--profile", "fake", "--kind", "dir", "--task-file", "/dev/null"],
     ] {
         let o = as_eval(args);
-        assert_eq!(o.status.code(), Some(3), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
+        assert_eq!(o.status.code(), Some(1), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));
         assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "{}", String::from_utf8_lossy(&o.stderr));
     }
     let o = as_eval(&["--json", "evaluator", "status", "demo"]);
