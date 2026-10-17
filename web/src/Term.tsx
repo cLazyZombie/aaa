@@ -1019,9 +1019,14 @@ export function TermView({
         term.write(all, () => {
           otherKeysRef.current = keys;
           term.scrollToLine(top + lines);
-          cover?.remove();
-          trace("history-applied", { lines, more });
-          done();
+          // 덮개는 새 자리가 그려진 뒤에 걷는다. xterm은 다음 frame에 그리므로 여기서 걷으면 한 frame 동안 다시 쓰던 화면(빈 줄)이 보인다
+          const drawn = term.onRender(() => {
+            drawn.dispose();
+            cover?.remove();
+            trace("history-applied", { lines, more });
+            done();
+          });
+          term.refresh(0, term.rows - 1);
         });
       });
     };
