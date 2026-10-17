@@ -437,6 +437,10 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(base);
+  // 넣은 글꼴을 터미널을 열기 전에 받아 둔다(늘 쓰는 기기처럼 cache에 있는 상태). 늦게 받아지면 칸 높이·줄 수가 바뀌어
+  // 그 단계가 재는 것(끌기 줄 수·크기)과 겹친다: CI 러너에는 깔린 글꼴이 없어 매번 늦게 받았다(41e81eb 휴대폰 끌기).
+  // 늦게 받는 경우는 「글꼴이 늦게 와도 맨 아래」 단계가 따로 본다(route로 글꼴을 붙잡으므로 그때는 기다리지 않는다).
+  if (!route) await page.evaluate(() => Promise.all([400, 700].map((w) => document.fonts.load(`${w} 13px "Meslotendard Web"`))));
   await page.getByLabel("pairing 코드").fill(code);
   await page.getByRole("button", { name: "연결" }).click();
   await page.getByTestId("machine-labA").waitFor();

@@ -35,7 +35,10 @@ const HOLD_MAX: usize = 32;
 pub(crate) type Held = std::collections::HashMap<String, Vec<(Instant, String, HarnessEvent)>>;
 
 /// 사건 kind를 기다리는 대기자(pane별)
-pub(crate) type Waiters = std::collections::HashMap<String, Vec<(&'static [&'static str], oneshot::Sender<String>)>>;
+/// 사건이 오면 hook 처리 안에서 바로 할 일(기다리던 쪽이 깨어나기 전에, 다음 사건보다 먼저)
+pub(crate) type OnFire = Box<dyn FnOnce() + Send>;
+pub(crate) type Waiters =
+    std::collections::HashMap<String, Vec<(&'static [&'static str], oneshot::Sender<String>, Option<OnFire>)>>;
 
 /// 선택 창이 떠 있다는 표지(Claude Code·Codex). 이 화면에는 안내·메시지를 입력하지 않는다.
 const MODAL_MARKS: &[&str] = &[
@@ -133,8 +136,19 @@ fn ready(a: Option<AgentActivity>) -> bool {
 impl Host {
     /// 이 pane의 다음 사건 중 `kinds`에 드는 것을 기다린다
     fn wait_kind(&self, pane: &str, kinds: &'static [&'static str]) -> oneshot::Receiver<String> {
+        self.wait_kind_then(pane, kinds, None)
+    }
+
+    /// `on_fire`는 그 사건을 처리하는 자리에서 바로 돈다: 기다리던 task가 깨어나 기록하면 그 사이 처리된 다음 사건
+    /// (예: 메시지를 받자마자 뜬 확인창)보다 기록이 늦을 수 있다
+    fn wait_kind_then(
+        &self,
+        pane: &str,
+        kinds: &'static [&'static str],
+        on_fire: Option<OnFire>,
+    ) -> oneshot::Receiver<String> {
         let (tx, rx) = oneshot::channel();
-        self.waiters.lock().unwrap().entry(pane.to_string()).or_default().push((kinds, tx));
+        self.waiters.lock().unwrap().entry(pane.to_string()).or_default().push((kinds, tx, on_fire));
         rx
     }
 
@@ -241,17 +255,27 @@ impl Host {
         if matches!(activity, Some(AgentActivity::Idle)) {
             self.tick_wake.notify_one();
         }
-        // 기다리던 사건
+        // 기다리던 사건. 할 일(on_fire)은 잠금을 놓고 돌린 뒤 깨운다(기다리던 쪽이 그 기록을 본 뒤에 이어 가게)
+        let mut fired = Vec::new();
         if let Some(list) = self.waiters.lock().unwrap().get_mut(&ev.session) {
             let mut keep = Vec::new();
-            for (kinds, tx) in list.drain(..) {
+            for (kinds, tx, on_fire) in list.drain(..) {
                 if kinds.contains(&ev.kind.as_str()) {
-                    let _ = tx.send(ev.kind.clone());
+                    // 이미 그만 기다린 쪽(시간 넘김)의 할 일은 하지 않는다
+                    if !tx.is_closed() {
+                        fired.push((tx, on_fire));
+                    }
                 } else if !tx.is_closed() {
-                    keep.push((kinds, tx));
+                    keep.push((kinds, tx, on_fire));
                 }
             }
             *list = keep;
+        }
+        for (tx, on_fire) in fired {
+            if let Some(f) = on_fire {
+                f();
+            }
+            let _ = tx.send(ev.kind.clone());
         }
         // 질문: 열리거나, harness가 넘어가면 닫힌다
         match activity {
@@ -419,22 +443,30 @@ impl Host {
 
     /// 글을 입력하고 Enter. harness가 받았다고 알리면 true. 여러 줄은 bracketed paste로 보낸다.
     pub(crate) async fn send_prompt(self: &Arc<Self>, mid: &str, pane: &str, text: &str) -> Result<bool, String> {
-        self.submit(mid, pane, Some(text)).await
+        self.submit(mid, pane, Some(text), None).await
     }
 
     /// 입력창에 남은 글을 Enter로만 보낸다(다시 치지 않는다). 받았다고 알리면 true.
     pub(crate) async fn send_enter(self: &Arc<Self>, mid: &str, pane: &str) -> Result<bool, String> {
-        self.submit(mid, pane, None).await
+        self.submit(mid, pane, None, None).await
     }
 
-    async fn submit(self: &Arc<Self>, mid: &str, pane: &str, text: Option<&str>) -> Result<bool, String> {
+    /// `on_accept`는 받았다고 알게 된 그 자리에서 한 번 돈다(Ok(true)일 때만): hook이면 그 hook 처리 안에서
+    async fn submit(
+        self: &Arc<Self>,
+        mid: &str,
+        pane: &str,
+        text: Option<&str>,
+        on_accept: Option<OnFire>,
+    ) -> Result<bool, String> {
         let conn = self.live_conn(mid).map_err(|e| e.message)?;
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
         if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
             return Err(format!("선택 창이 떠 있어 입력하지 않았다: {q}"));
         }
         let hooked = self.pane_agent(pane).is_some_and(|a| a.harness != "report");
-        let accepted = self.wait_kind(pane, &["turn_start", "working"]);
+        let (hook_accept, mut screen_accept) = if hooked { (on_accept, None) } else { (None, on_accept) };
+        let accepted = self.wait_kind_then(pane, &["turn_start", "working"], hook_accept);
         if let Some(text) = text {
             let body = if text.contains('\n') {
                 format!("\x1b[200~{}\x1b[201~", text.trim_end())
@@ -458,6 +490,9 @@ impl Host {
         while Instant::now() < until {
             tokio::time::sleep(Duration::from_millis(250)).await;
             if self.screen_lines(mid, pane).await != typed {
+                if let Some(f) = screen_accept.take() {
+                    f();
+                }
                 return Ok(true);
             }
         }
@@ -588,7 +623,13 @@ impl Host {
     }
 
     async fn deliver(self: &Arc<Self>, m: &mut MessageView, mid: &str, pane: &str) {
-        let r = self.send_prompt(mid, pane, &m.text).await;
+        // 「받았다」는 받았다고 안 그 자리에서 기록한다: 받자마자 뜬 확인창(question_shown)보다 앞에 남게(CI m13)
+        let on_accept: Option<OnFire> = self.load(&m.project, &m.thread).ok().map(|rec| {
+            let me = self.clone();
+            let id = m.id.clone();
+            Box::new(move || me.flow(&rec, "message_accepted", None, id)) as OnFire
+        });
+        let r = self.submit(mid, pane, Some(&m.text), on_accept).await;
         m.state = if r == Ok(true) { DeliveryState::Accepted } else { DeliveryState::Unknown };
         self.save_message(m);
         // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
@@ -598,14 +639,14 @@ impl Host {
         {
             tracing::warn!(project = %m.project, thread = %m.thread, "Follow-ups를 쓰지 못했다: {e}");
         }
-        if let Ok(rec) = self.load(&m.project, &m.thread) {
-            let kind = if m.state == DeliveryState::Accepted { "message_accepted" } else { "message_unknown" };
+        if m.state != DeliveryState::Accepted
+            && let Ok(rec) = self.load(&m.project, &m.thread)
+        {
             let why = match r {
-                Ok(true) => String::new(),
-                Ok(false) => " (받았다는 사건·화면 변화가 없었다. 다시 보내지 않는다)".into(),
+                Ok(_) => " (받았다는 사건·화면 변화가 없었다. 다시 보내지 않는다)".to_string(),
                 Err(e) => format!(" ({e})"),
             };
-            self.flow(&rec, kind, None, format!("{}{why}", m.id));
+            self.flow(&rec, "message_unknown", None, format!("{}{why}", m.id));
         }
     }
 
