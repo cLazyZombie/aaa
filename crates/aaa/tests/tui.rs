@@ -1453,6 +1453,49 @@ fn context_menu_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// pane 이름(herdr `prefix+shift+p`·pane 메뉴 「Rename pane」·「Clear pane name」, host `pane_rename` plan §8.109):
+/// 이름 창에서 붙이면 host·사이드바에 그 이름, 메뉴의 「pane 이름 지우기」는 붙인 이름이 있을 때만 있고 누르면 띄울 때 이름으로
+#[test]
+fn pane_rename_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "one", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    let right = |tui: &mut Tui, at: (usize, usize)| {
+        tui.mouse(2, at, false);
+        tui.mouse(2, at, true);
+    };
+
+    // 1) prefix shift+p: 붙인 이름이 없으니 빈 창, 치고 Enter면 host 이름과 사이드바 줄
+    tui.cmd("P");
+    tui.wait_text("pane 이름 창", |s| s.contains("pane 이름 바꾸기") && s.contains("↵ 저장"));
+    tui.send(b"api-log\r");
+    hw.wait("붙인 이름", |w| (w.pane(&id)?.label.as_deref() == Some("api-log")).then_some(()));
+    tui.wait_text("사이드바 이름", |s| s.contains("api-log") && !s.contains("↵ 저장"));
+
+    // 2) pane 메뉴: 붙인 이름이 있으면 「pane 이름 지우기」, 누르면 띄울 때 이름으로
+    let at = (10, SIDE as usize + 20);
+    right(&mut tui, at);
+    let clear = tui.wait_find("pane 이름 지우기");
+    tui.click(clear);
+    hw.wait("이름 지움", |w| w.pane(&id)?.label.is_none().then_some(()));
+    tui.wait_text("사이드바 처음 이름", |s| !s.contains("api-log"));
+
+    // 3) 지운 뒤 메뉴에는 지우기가 없고, 「pane 이름 바꾸기」는 이름 창을 연다
+    right(&mut tui, at);
+    let rename = tui.wait_find("pane 이름 바꾸기");
+    assert!(!tui.text().contains("pane 이름 지우기"), "붙인 이름이 없는데 지우기가 있다");
+    tui.click(rename);
+    tui.wait_text("이름 창", |s| s.contains("↵ 저장"));
+    tui.send(b"db\r");
+    hw.wait("다시 붙인 이름", |w| (w.pane(&id)?.label.as_deref() == Some("db")).then_some(()));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// 묶음 5a-1(herdr `apply_scroll`·`scroll_reset`): 보통 화면 pane의 휠은 이 화면의 기록을 3줄씩 넘기고(프로그램에는 안 감),
 /// 올라가 있는 동안 새 출력이 와도 보던 줄을 지키며, 글자를 치면 맨 아래로 돌아온다(host `PaneScroll`, FRONT_API 1.16).
 #[test]

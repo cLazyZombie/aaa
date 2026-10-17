@@ -2511,6 +2511,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다음 묶음(5a-2).** pane scrollbar(herdr `pane_scrollbars`: 보통 화면에서 오른쪽 1칸 gutter, PTY가 1칸 좁아짐, 누르기·끌기). 그전에는 올라가 있다는 표시가 숨은 커서뿐이다.
 - **시험.** 유닛: aaa-vt `grid_rows_at_scrollback_offset`(위치·끝에서 멈춤·되돌림·alt 화면), host `grid_view_keeps_the_lines_it_shows`(끝에서 멈춤·보던 줄 고정·묶기·맨 아래 따라감), 설정 `mouse_scroll_lines`. TUI harness `wheel_scrolls_history_like_herdr`: `seq 1 200` 뒤 휠 위 한 칸이면 170..198, 올라간 동안 CLI `pane run`의 출력 6줄이 와도 보던 줄을 지켜 한 칸 더 올리면 167..195, 휠 아래 네 칸이면 맨 아래, 올라간 채 치면 맨 아래로 돌아와 친 글이 보임.
 
+### 8.112 TUI pane 이름 바꾸기(herdr `rename_pane`)(10-18, 차이 목록 4장 C, §8.109가 남긴 TUI 몫)
+
+- **참고(herdr 0.9.5).** `src/config/model.rs` `rename_pane`(`prefix+shift+p`), `src/client/shell/overlay_input.rs` `open_rename_pane_overlay`(붙인 이름이 있으면 그 이름, 없으면 빈 칸 `TextEditor::new(label, label.is_none())`)·`save_rename_overlay`(pane은 늘 보냄), `src/client/shell/context_menu.rs`(pane 메뉴 맨 앞 「Rename pane」, `has_manual_label`이면 「Clear pane name」), `src/input/keybind_help.rs`(「close pane」 뒤 「rename pane」).
+- **TUI.** `prefix shift+p`는 포커스 pane의 이름 창(제목 「pane 이름 바꾸기」), Enter면 host `pane_rename`(§8.109, 비우면 host가 지워 띄울 때 이름). pane 메뉴 맨 앞 「pane 이름 바꾸기」(그 pane의 창, 포커스는 그대로)와 붙인 이름(`PaneView.label`)이 있을 때만 「pane 이름 지우기」(바로 지움). 단축키 창은 「pane 닫기」 뒤. 옛 host(1.14 이하)는 「host를 새 aaa로 다시 띄워야 한다」.
+- **시험.** 유닛: 키 `shift+p`, 메뉴 항목 차례(이름 바꾸기 → 지우기 → 자리 바꾸기 …)·높이. TUI harness `pane_rename_like_herdr`: `prefix P` 창에서 붙이면 host label·사이드바 이름, 메뉴 「pane 이름 지우기」로 지우면 띄울 때 이름, 지운 뒤 메뉴에는 지우기가 없고 「pane 이름 바꾸기」가 창을 연다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

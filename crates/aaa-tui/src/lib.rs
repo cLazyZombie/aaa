@@ -1021,7 +1021,34 @@ impl App {
                 }
                 self.layout(tx, LayoutChange::RenameTab { tab: id, name: text }, false).await
             }
+            // herdr: pane 이름은 저장하면 늘 보낸다(비우면 host가 지운다)
+            prompt::RenameTarget::Pane { id } => self.rename_pane(tx, id, Some(text)).await,
         }
+    }
+
+    /// pane 이름 붙이기·지우기(host `pane_rename`, 1.15)
+    pub(crate) async fn rename_pane(
+        &mut self,
+        tx: &mut FrontSender,
+        pane: String,
+        label: Option<String>,
+    ) -> Result<()> {
+        if !self.host_at_least(15) {
+            return Ok(());
+        }
+        let id = tx.send(FrontRequest::PaneRename { pane, label }).await?;
+        self.pending.insert(id, Pending::Report("pane 이름"));
+        Ok(())
+    }
+
+    /// pane 이름 창(herdr `open_rename_pane_overlay`): 붙인 이름이 있으면 그 이름, 없으면 빈 칸
+    pub(crate) fn open_rename_pane(&mut self, pane: String) {
+        let label = self.panes.get(&pane).and_then(|p| p.label.clone());
+        self.overlay = Some(Overlay::Rename(prompt::Rename {
+            title: "pane 이름 바꾸기",
+            input: editor::Editor::new(label.as_deref().unwrap_or_default(), label.is_none()),
+            target: prompt::RenameTarget::Pane { id: pane },
+        }));
     }
 
     /// 새 탭: 포커스 pane의 머신에, 그 pane이 지금 있는 폴더에서(host `[terminal] new_cwd`)
@@ -1187,6 +1214,11 @@ impl App {
                         input: editor::Editor::new(&original, false),
                         target: prompt::RenameTarget::Tab { id: t.id.clone(), auto: t.name.is_empty(), original },
                     }));
+                }
+            }
+            Action::RenamePane => {
+                if let Some(pane) = self.focus.clone() {
+                    self.open_rename_pane(pane);
                 }
             }
             Action::CloseTab => {

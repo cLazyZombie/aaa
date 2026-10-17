@@ -157,11 +157,13 @@ pub enum MenuTarget {
     Tab {
         index: usize,
     },
-    /// `source`는 메뉴를 열 때 포커스였던 다른 pane(자리 바꾸기), `passthrough`는 오른쪽 누름을 pane에 보내나
+    /// `source`는 메뉴를 열 때 포커스였던 다른 pane(자리 바꾸기), `passthrough`는 오른쪽 누름을 pane에 보내나,
+    /// `labeled`는 사람이 붙인 이름이 있나(herdr `has_manual_label`)
     Pane {
         pane: String,
         source: Option<String>,
         passthrough: bool,
+        labeled: bool,
     },
 }
 
@@ -170,6 +172,8 @@ pub enum MenuAction {
     NewTab,
     Rename,
     Close,
+    RenamePane,
+    ClearPaneName,
     Swap,
     SplitRight,
     SplitDown,
@@ -188,13 +192,16 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// 항목(herdr `ClientContextMenuOverlay::items`). pane 이름 바꾸기·지우기는 pane 이름 묶음(`P`)에서.
+    /// 항목(herdr `ClientContextMenuOverlay::items`)
     pub fn items(&self) -> Vec<(&'static str, MenuAction)> {
         use MenuAction::*;
         match &self.target {
             MenuTarget::Tab { .. } => vec![("새 탭", NewTab), ("이름 바꾸기", Rename), ("닫기", Close)],
-            MenuTarget::Pane { source, passthrough, .. } => {
-                let mut items = Vec::new();
+            MenuTarget::Pane { source, passthrough, labeled, .. } => {
+                let mut items = vec![("pane 이름 바꾸기", RenamePane)];
+                if *labeled {
+                    items.push(("pane 이름 지우기", ClearPaneName));
+                }
                 if source.is_some() {
                     items.push(("포커스 pane과 자리 바꾸기", Swap));
                 }
@@ -710,7 +717,12 @@ impl App {
             MenuTarget::Tab { index }
         } else if let Some(b) = hits.pane_at(x, y) {
             let source = self.focus.clone().filter(|f| *f != b.pane);
-            MenuTarget::Pane { pane: b.pane.clone(), source, passthrough: self.right_click.contains(&b.pane) }
+            MenuTarget::Pane {
+                pane: b.pane.clone(),
+                source,
+                passthrough: self.right_click.contains(&b.pane),
+                labeled: self.panes.get(&b.pane).is_some_and(|p| p.label.is_some()),
+            }
         } else {
             return Ok(());
         };
@@ -740,6 +752,12 @@ impl App {
                 self.act(a, tx).await
             }
             MenuTarget::Pane { pane, source, .. } => match action {
+                // herdr: 그 pane의 이름 창(포커스는 그대로), 지우기는 바로 보낸다
+                MenuAction::RenamePane => {
+                    self.open_rename_pane(pane);
+                    Ok(())
+                }
+                MenuAction::ClearPaneName => self.rename_pane(tx, pane, None).await,
                 MenuAction::Swap => {
                     let Some(source) = source else { return Ok(()) };
                     if self.host_at_least(10) {
@@ -1102,24 +1120,36 @@ mod tests {
         let tab = Menu { target: MenuTarget::Tab { index: 1 }, x: 70, y: 0, highlighted: 0 };
         assert_eq!(tab.items().iter().map(|(l, _)| *l).collect::<Vec<_>>(), ["새 탭", "이름 바꾸기", "닫기"]);
         let mut pane = Menu {
-            target: MenuTarget::Pane { pane: "p".into(), source: Some("q".into()), passthrough: false },
+            target: MenuTarget::Pane { pane: "p".into(), source: Some("q".into()), passthrough: false, labeled: true },
             x: 5,
             y: 28,
             highlighted: 0,
         };
-        assert_eq!(pane.items().first().map(|i| i.1), Some(MenuAction::Swap));
-        assert_eq!(pane.items().len(), 6);
+        assert_eq!(
+            pane.items().iter().take(3).map(|i| i.1).collect::<Vec<_>>(),
+            [MenuAction::RenamePane, MenuAction::ClearPaneName, MenuAction::Swap]
+        );
+        assert_eq!(pane.items().len(), 8);
         pane.step(false);
         assert_eq!(pane.highlighted, 0);
         for _ in 0..9 {
             pane.step(true);
         }
-        assert_eq!(pane.highlighted, 5);
-        let solo =
-            Menu { target: MenuTarget::Pane { pane: "p".into(), source: None, passthrough: true }, ..pane.clone() };
+        assert_eq!(pane.highlighted, 7);
+        let solo = Menu {
+            target: MenuTarget::Pane { pane: "p".into(), source: None, passthrough: true, labeled: false },
+            ..pane.clone()
+        };
         assert_eq!(
             solo.items().iter().map(|(l, _)| *l).collect::<Vec<_>>(),
-            ["오른쪽으로 나누기", "아래로 나누기", "크게 보기", "오른쪽 누름은 aaa 메뉴로", "pane 닫기"]
+            [
+                "pane 이름 바꾸기",
+                "오른쪽으로 나누기",
+                "아래로 나누기",
+                "크게 보기",
+                "오른쪽 누름은 aaa 메뉴로",
+                "pane 닫기"
+            ]
         );
 
         let p = Palette::catppuccin();
@@ -1131,8 +1161,8 @@ mod tests {
         assert_eq!(rows.iter().map(|(r, i)| (r.x, r.y, *i)).collect::<Vec<_>>(), [(66, 1, 0), (66, 2, 1), (66, 3, 2)]);
         assert_eq!((buf[(66, 1)].bg, buf[(66, 2)].bg), (p.accent, p.panel_bg));
         assert_eq!(buf[(65, 0)].symbol(), "┌");
-        // 「오른쪽 누름을 pane에 보내기」 27칸 + 4, 아래 끝에서 위로
+        // 「오른쪽 누름을 pane에 보내기」 27칸 + 4, 높이 항목 8 + 2, 아래 끝에서 위로
         let (r, _) = render_menu(&mut buf, area, &pane, &p);
-        assert_eq!(r, Rect { x: 5, y: 22, w: 31, h: 8 });
+        assert_eq!(r, Rect { x: 5, y: 20, w: 31, h: 10 });
     }
 }

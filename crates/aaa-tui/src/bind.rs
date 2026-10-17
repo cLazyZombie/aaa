@@ -21,6 +21,7 @@ pub enum Action {
     SplitVertical,
     SplitHorizontal,
     ClosePane,
+    RenamePane,
     Zoom,
     ResizeMode,
     ToggleSidebar,
@@ -61,6 +62,7 @@ const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('v'), Action::SplitVertical),
     (Combo::plain('-'), Action::SplitHorizontal),
     (Combo::plain('x'), Action::ClosePane),
+    (Combo::shift('p'), Action::RenamePane),
     (Combo::plain('z'), Action::Zoom),
     (Combo::plain('r'), Action::ResizeMode),
     (Combo::plain('b'), Action::ToggleSidebar),
@@ -130,6 +132,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 (p(SplitVertical), "좌우로 나누기"),
                 (p(SplitHorizontal), "위아래로 나누기"),
                 (p(ClosePane), "pane 닫기"),
+                (p(RenamePane), "pane 이름 바꾸기"),
                 (p(Zoom), "pane 크게 보기"),
                 (p(ResizeMode), "크기 모드(h/j/k/l, esc 끝)"),
                 (p(ToggleSidebar), "목록 펴기·접기"),
@@ -186,6 +189,7 @@ mod tests {
         assert_eq!(k("shift+r"), Some(ReloadConfig));
         assert_eq!(k("3"), Some(SwitchTab(2)));
         assert_eq!(k("shift+t"), Some(RenameTab));
+        assert_eq!(k("shift+p"), Some(RenamePane));
         assert_eq!(k("shift+x"), Some(CloseTab));
         assert_eq!(k("x"), Some(ClosePane));
         assert_eq!(k("z"), Some(Zoom));
