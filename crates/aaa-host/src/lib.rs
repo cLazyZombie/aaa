@@ -93,6 +93,20 @@ impl AgentConn {
             Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
+                // 무슨 요청이었는지 남긴다(op과 세션만: 입력 바이트 같은 내용은 남기지 않는다)
+                let what = match &msg {
+                    LinkMsg::Req { body, .. } => serde_json::to_value(body).ok(),
+                    _ => None,
+                };
+                let field =
+                    |k: &str| what.as_ref().and_then(|v| v.get(k)?.as_str().map(str::to_string)).unwrap_or_default();
+                tracing::warn!(
+                    id,
+                    op = field("op"),
+                    session = field("session"),
+                    wait_ms = wait.as_millis() as u64,
+                    "agent 응답 시간 초과"
+                );
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         }

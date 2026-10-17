@@ -38,12 +38,12 @@ const thread = (project, id, title, pane, machineName) => ({ project, id, title,
 
 const machines = [machine("m1", "mac-a"), machine("m2", "mac-b"), machine("m3", "mac-off", "disconnected")];
 const panes = [
-  pane("p1", "m1", { name: "dashboard", cwd: "/Users/u/front/dashboard", agent: agent("claude", "idle") }),
-  pane("p2", "m1", { name: "server", cwd: "/Users/u/backend", agent: agent("codex", "working") }),
-  pane("p3", "m2", { name: "frontend", cwd: "/Users/u/front", agent: agent("claude", "question") }),
+  pane("p1", "m1", { name: "dashboard", cwd: "/srv/front/dashboard", agent: agent("claude", "idle") }),
+  pane("p2", "m1", { name: "server", cwd: "/srv/backend", agent: agent("codex", "working") }),
+  pane("p3", "m2", { name: "frontend", cwd: "/srv/front", agent: agent("claude", "question") }),
   pane("p4", "m2", { name: "shell" }),
   pane("p5", "m3", { name: "away" }),
-  pane("t1pane", "m1", { name: "t-0001", cwd: "/Users/u/work/demo", agent: agent("claude", "idle", false) }),
+  pane("t1pane", "m1", { name: "t-0001", cwd: "/srv/work/demo", agent: agent("claude", "idle", false) }),
 ];
 const threads = [thread("demo", "t-0001", "결제 지연 줄이기", "t1pane", "mac-a")];
 const keys = (targets) => targets.map((t) => t.key);
