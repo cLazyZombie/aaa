@@ -1,8 +1,11 @@
-// 조합 상자(xterm .composition-view)의 색을 그 자리 터미널 칸과 맞춘다(사용자 지시 10-17, plan §8.37).
+// 조합 상자(xterm .composition-view)를 그 자리 터미널 칸에 맞춘다(사용자 지시 10-17, plan §8.37).
 //
-// herdr-web-ui(aa624cb)는 이 상자 색을 정하지 않는다: xterm.css의 검은 배경·흰 글자 그대로라, 밝은 테마나
-// 배경이 있는 줄(입력줄)에서 조합 중인 글자가 검은 사각형으로 보인다. 크기·자간·여백은 herdr-web-ui의
-// terminalGlyphs.ts fitView가 맞추고, 여기서는 색만 바꾼다(배경 = 그 칸의 배경, 글자 = 그 칸의 글자색, 테두리 없음).
+// herdr-web-ui(aa624cb)는 이 상자의 색·자리를 따로 정하지 않는다: xterm.css의 검은 배경·흰 글자, xterm이 계산한 자리 그대로다.
+// 크기·자간·여백은 herdr-web-ui의 terminalGlyphs.ts fitView가 맞추고, 여기서는 두 가지를 더 한다.
+// - 색: 배경 = 그 칸의 배경, 글자 = 그 칸의 글자색, 테두리 없음(밝은 테마·배경 있는 줄에서 검은 사각형이 보였다).
+// - 세로 자리: xterm은 top을 `줄 번호 × cell 높이`로 계산한다. cell 높이가 1/64px로 나눠지지 않으면(DPR 3의 14.6667px 등)
+//   브라우저가 쌓은 실제 줄은 조금씩 덜 내려가, 아래 줄일수록 상자가 그 줄보다 낮아진다. 그러면 상자 위로 커서
+//   블록이 가는 줄로 보인다(사용자 캡처 12:05, iPhone 크기 맨 아래 줄 0.45px). 그래서 top·높이를 실제 커서 줄에 맞춘다.
 import type { Terminal } from "@xterm/xterm";
 
 const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/;
@@ -34,18 +37,36 @@ function cellColors(term: Terminal, view: HTMLElement): { bg: string; fg: string
   return { bg, fg };
 }
 
-/** 색 맞추기를 건다. 끌 함수를 돌려준다. */
-export function matchCompositionColors(term: Terminal): () => void {
+/** 커서가 있는 줄 요소의 화면(.xterm-screen) 안 top·높이. 커서가 화면 밖이면 없다. */
+function cursorRow(term: Terminal): { top: number; height: number } | null {
+  const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
+  const rows = term.element?.querySelector<HTMLElement>(".xterm-rows");
+  const b = term.buffer.active;
+  const row = rows?.children[b.cursorY + b.baseY - b.viewportY];
+  if (!screen || !(row instanceof HTMLElement)) return null;
+  const r = row.getBoundingClientRect();
+  return { top: r.top - screen.getBoundingClientRect().top, height: r.height };
+}
+
+/** 조합 상자 맞추기를 건다. 끌 함수를 돌려준다. */
+export function matchCompositionView(term: Terminal): () => void {
   const view = term.element?.querySelector<HTMLElement>(".composition-view");
   if (!view) return () => {};
   const probe = document.createElement("span").style;
-  const set = (k: "background" | "color" | "border" | "outline" | "boxShadow", v: string) => {
+  type Key = "background" | "color" | "border" | "outline" | "boxShadow" | "top" | "height" | "lineHeight";
+  const set = (k: Key, v: string) => {
     probe[k] = v;
     // 쓰기마다 이 observer가 다시 보므로 다를 때만 쓴다(브라우저가 저장한 모양으로 비교)
     if (view.style[k] !== probe[k]) view.style[k] = probe[k];
   };
   const fit = () => {
     if (!view.classList.contains("active")) return;
+    const row = cursorRow(term);
+    if (row) {
+      set("top", `${row.top}px`);
+      set("height", `${row.height}px`);
+      set("lineHeight", `${row.height}px`);
+    }
     const { bg, fg } = cellColors(term, view);
     set("background", bg);
     set("color", fg);
