@@ -59,6 +59,8 @@ pub struct Agent {
     /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). harness(Claude·Codex) 마지막 하나와
     /// 진행 보고(`aaa report`) 마지막 하나다. 세션 폴더 `harness.json`에도 적어 agent가 다시 떠도 남는다.
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
+    /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
+    harness_started: Mutex<HashMap<String, String>>,
     /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
@@ -90,6 +92,7 @@ impl Agent {
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
+            harness_started: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -127,6 +130,17 @@ impl Agent {
         let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
             return Ok(());
         };
+        // 이 pane이 시작한 harness 세션과 다른 세션(중첩 Codex thread 등)의 사건은 버린다(herdr-projects `foreign_session`)
+        if ev.harness != "report" {
+            let mut started = self.harness_started.lock().unwrap();
+            if ev.kind == "session_start" {
+                if let Some(id) = &ev.harness_session {
+                    started.insert(ev.session.clone(), id.clone());
+                }
+            } else if hooks::foreign_session(started.get(&ev.session).map(String::as_str), &ev) {
+                return Ok(());
+            }
+        }
         let me = self.clone();
         let kept = ev.clone();
         let _ = tokio::task::spawn_blocking(move || me.remember_harness(kept)).await;

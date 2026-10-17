@@ -108,7 +108,26 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         _ => return None,
     }
     .to_string();
+    // 하위 agent의 사건은 버린다(herdr-projects progress.rs `eligible`). 확인창은 하위 agent 것도 세션을 막으므로 둔다.
+    if ev.kind != "question" && subagent(p) {
+        return None;
+    }
     Some(ev)
+}
+
+/// 하위 agent(subagent)가 낸 사건인가: 자기 ID나 `/subagents/` 아래 기록을 가진다(herdr-projects progress.rs `eligible`)
+fn subagent(p: &Value) -> bool {
+    ["agent_id", "subagent_id", "agent_transcript_path"].iter().any(|k| p.get(k).is_some_and(|v| !v.is_null()))
+        || s(p, "transcript_path").is_some_and(|t| t.contains("/subagents/"))
+}
+
+/// 이 세션이 시작한 harness 세션과 다른 세션의 사건인가(herdr-projects progress.rs `foreign_session`).
+/// `started`는 SessionStart 때 적은 harness 세션 ID다. 모르면 버리지 않는다.
+pub fn foreign_session(started: Option<&str>, ev: &HarnessEvent) -> bool {
+    match (started, ev.harness_session.as_deref()) {
+        (Some(a), Some(b)) => ev.kind != "session_start" && ev.kind != "question" && !a.is_empty() && a != b,
+        _ => false,
+    }
 }
 
 /// Codex에 실행마다 줄 notify 설정(`codex -c <이것>`). 사용자 ~/.codex 설정은 고치지 않는다.
@@ -182,6 +201,27 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn subagent_and_foreign_session_events_are_dropped() {
+        // herdr-projects progress.rs eligible·foreign_session 시험과 같은 경우
+        let n = |p: Value| normalize("S", "claude", &p, 1);
+        assert!(n(json!({"hook_event_name":"PostToolUse","session_id":"a","agent_id":"x"})).is_none());
+        assert!(
+            n(json!({"hook_event_name":"Stop","session_id":"a","transcript_path":"/p/subagents/x.jsonl"})).is_none()
+        );
+        assert!(n(json!({"hook_event_name":"PostToolUse","session_id":"a","agent_id":null})).is_some());
+        // 하위 agent의 확인창도 세션을 막는다: 둔다
+        let q = n(json!({"hook_event_name":"PermissionRequest","session_id":"a","agent_id":"x","tool_name":"Bash"}))
+            .unwrap();
+        assert_eq!(q.kind, "question");
+        let other = n(json!({"hook_event_name":"Stop","session_id":"b"})).unwrap();
+        assert!(foreign_session(Some("a"), &other));
+        assert!(!foreign_session(Some("b"), &other));
+        assert!(!foreign_session(None, &other));
+        let start = n(json!({"hook_event_name":"SessionStart","session_id":"b"})).unwrap();
+        assert!(!foreign_session(Some("a"), &start));
+    }
 
     #[test]
     fn claude_and_codex_events_normalize() {

@@ -136,6 +136,14 @@ fn decisions_rev(dir: &Path) -> Option<u32> {
     parse_decisions(&std::fs::read_to_string(dir.join("decisions.md")).ok()?).iter().map(|d| d.num).max()
 }
 
+/// 입력창(맨 아래 쪽 `❯`·`›` 줄)에 brief 안내 줄이 그대로 남아 있나
+fn brief_in_box(lines: &[String], line: &str) -> bool {
+    lines.iter().rev().filter(|l| !l.trim().is_empty()).take(8).any(|l| {
+        let t = l.trim_start();
+        ['❯', '›', '>'].iter().any(|c| t.strip_prefix(*c).is_some_and(|rest| rest.trim() == line))
+    })
+}
+
 /// `Starting`이 이보다 길면 사람 차례(herdr-projects `STARTING_TIMEOUT_SECS`)
 const STARTING_TIMEOUT_MS: u64 = 300_000;
 /// 확인창이 이보다 오래 떠 있으면 사람 차례. 금방 답한 확인창은 보이지 않는다(`BLOCKED_DEBOUNCE_SECS`).
@@ -746,7 +754,11 @@ impl Host {
                 }
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            match self.send_prompt(&mid, &pane, &line).await? {
+            // 전에 입력한 줄이 입력창에 남아 있으면(전달 불명) 다시 치지 않고 Enter만 보낸다(herdr-projects brief.rs:
+            // 화면에 그 줄이 있으면 전달로 친다)
+            let in_box = last.as_deref().is_some_and(|l| brief_in_box(l, &line));
+            let sent = if in_box { self.send_enter(&mid, &pane).await } else { self.send_prompt(&mid, &pane, &line).await };
+            match sent? {
                 true => Ok(()),
                 false => Err("Enter 뒤 받았다는 사건·화면 변화가 없었다".into()),
             }
@@ -891,6 +903,16 @@ impl Host {
         let mut rec = self.load(project, id)?;
         if rec.status != ThreadStatus::Open {
             return Err(bad("열린 thread만 brief를 보낼 수 있다"));
+        }
+        // 두 번 입력하지 않는다(herdr-projects threads.rs `brief`): 받았으면 더 보낼 것은 메시지로, 보내는 중이면 기다린다
+        match rec.brief {
+            BriefState::Delivered => {
+                return Err(bad(format!(
+                    "{id}는 이미 brief를 받았다. 더 보낼 것은 `aaa thread message {project} {id} --text …`로 보낸다"
+                )));
+            }
+            BriefState::Pending => return Err(bad(format!("{id}의 brief를 보내는 중이다"))),
+            BriefState::Unknown => {}
         }
         rec.brief = BriefState::Pending;
         self.save(&mut rec);

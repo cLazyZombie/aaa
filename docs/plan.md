@@ -1243,6 +1243,21 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 커서 줄이 터미널 영역 안에, 입력 막대·키 막대가 보이는 높이 안에 있다. PTY 크기는 그대로다.
   - 고치기 전에는 `.app`이 1180·844 그대로였고, 입력 막대(아래 1091·787)와 키 막대(1168·836)가 키보드 뒤에 있었다.
 
+### 8.40 thread 흐름 나머지를 herdr-projects대로(10-17, 차이 목록 1)
+
+- **B7 다른 세션·하위 agent 사건 거르기.** herdr-projects progress.rs `eligible`·`foreign_session`을 옮겼다.
+  - `agent_id`·`subagent_id`·`agent_transcript_path`가 있거나 기록이 `/subagents/` 아래인 사건은 버린다.
+  - SessionStart 때 적은 harness 세션과 다른 session_id의 사건도 버린다(중첩 Codex thread 등). 적은 ID는 agent 메모리에만 있다(agent를 다시 띄우면 다음 SessionStart까지 거르지 않는다).
+  - 다르게 둔 것: 확인창(question) 사건은 하위 agent 것도 둔다. aaa는 hook으로 질문을 알고, 하위 agent의 확인창도 세션을 막는다(herdr는 화면으로 본다).
+- **E5 보낸 메시지 기록.** 입력한 메시지는(받았는지 몰라도) `threads/<id>.task.md`의 `## Follow-ups` 아래에 시각과 함께 덧붙인다(herdr-projects `append_follow_up`). 다시 시작하면 task와 함께 brief에 들어간다. 입력 전에 거부되면 남기지 않는다.
+- **A11 `thread brief` 두 번 입력 막기(herdr-projects threads.rs `brief`).**
+  - brief를 받았으면 거부한다(더 보낼 것은 `thread message`). 보내는 중이면 거부한다.
+  - 전달 불명인데 입력창에 그 줄이 남아 있으면 다시 치지 않고 Enter만 보낸다. 전에는 줄이 입력창에 두 번 이어 붙었다(시험으로 재현).
+- **E2 brief 전 메시지 거부.** brief를 받기 전(`pending`·`unknown`)에는 메시지를 거부한다(herdr-projects `prompt`: prompt_pending이면 거부). 전에는 대기열이 brief보다 먼저 보낼 수 있었다.
+  - 아직: 입력창에 사람이 쓴 글이 있으면 거부(`draft_in_box`)는 herdr-projects `prompt_box`(ANSI 화면 해석)를 옮길 때 한다.
+- **A12 시작 시한.** 묶음(§8.38)이 시작 5분을 넘으면 사람 차례로 보인다. herdr-projects ticker는 상태를 failed로 바꾸지만, aaa는 시작 작업이 아직 끝날 수 있어 상태는 그대로 둔다.
+- **시험(m13).** 하위 agent·중첩 세션 Stop을 보내도 「작업 중」이 남는다. 메시지 둘이 Follow-ups에 순서대로 남는다. 입력창에 남은 brief는 Enter만으로 받고 줄이 한 번만 보인다. 받은 뒤 `thread brief`와 brief 전 메시지는 거부한다. 앞 셋은 옛 코드로 돌리면 실패한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
