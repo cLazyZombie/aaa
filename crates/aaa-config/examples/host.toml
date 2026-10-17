@@ -27,6 +27,14 @@ prefix_jamo_keys = true
 prompt_new_tab_name = true
 # 마지막 탭·마지막 pane을 닫기 전에 묻는다.
 confirm_close = true
+# 왼쪽 사이드바 폭(구분선 포함, 18~36), 접힌 채 시작, 접으면 "compact"(번호·상태 점 4칸)나 "hidden"(없음).
+sidebar_width = 26
+sidebar_start_collapsed = false
+sidebar_collapsed_mode = "compact"
+# 이 폭 이하 터미널은 사이드바·탭 막대 대신 두 줄 머리를 쓴다.
+mobile_width_threshold = 64
+# 색 테마(herdr와 같은 이름: catppuccin·terminal·tokyo-night·dracula·nord·gruvbox 등 18개).
+theme = "catppuccin"
 
 [terminal]
 # 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로

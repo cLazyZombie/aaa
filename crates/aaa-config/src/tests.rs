@@ -154,6 +154,23 @@ fn tui_keys_like_herdr() {
     assert!(!t.prefix_jamo_keys && t.switch_ascii());
 }
 
+/// herdr `[ui]` 사이드바: 폭 26, 펼친 채 시작, 접으면 compact, 64칸 이하는 머리줄
+#[test]
+fn sidebar_like_herdr() {
+    let d = Dir::new("sidebar");
+    let t = load_host(&d.0).unwrap().config.tui;
+    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (26, false, 64));
+    assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Compact);
+    assert_eq!(t.theme, "catppuccin");
+    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\n");
+    let t = load_host(&d.0).unwrap().config.tui;
+    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed), (30, true));
+    assert_eq!(t.theme, "terminal");
+    assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Hidden);
+    d.write("host.toml", "schema = 1\n[tui]\nsidebar_collapsed_mode = \"tiny\"\n");
+    assert!(load_host(&d.0).is_err(), "모르는 접기 방식은 거부한다");
+}
+
 /// herdr `[ui] prompt_new_tab_name`·`confirm_close`(기본 켬)과 `[terminal] new_cwd`(기본 follow)
 #[test]
 fn new_tab_prompt_and_new_cwd_like_herdr() {

@@ -5,7 +5,8 @@ use aaa_proto::layout::Rect;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Modifier, Style};
 
-use crate::{ACCENT, DIM, Help, MAUVE, ON_CHIP, bind, unicode_width};
+use crate::theme::{Palette, contrast};
+use crate::{Help, bind, unicode_width};
 
 /// 창 자리(herdr `popup`: 화면에서 좌우 4칸·위아래 2칸은 남긴다)
 pub(crate) fn popup(a: Rect, w: u16, h: u16) -> Option<Rect> {
@@ -14,10 +15,10 @@ pub(crate) fn popup(a: Rect, w: u16, h: u16) -> Option<Rect> {
     (w >= 4 && h >= 4).then(|| Rect { x: a.x + (a.w - w) / 2, y: a.y + (a.h - h) / 2, w, h })
 }
 
-/// 테두리 창을 그리고 안쪽 칸을 준다(herdr `panel`)
-pub(crate) fn panel(buf: &mut Buffer, a: Rect, border: ratatui::style::Color) -> Rect {
-    let bg = Style::default();
-    let line = Style::default().fg(border);
+/// 테두리 창을 그리고 안쪽 칸을 준다(herdr `panel`: 판 바탕 `bg`, 테두리 색 `border`)
+pub(crate) fn panel(buf: &mut Buffer, a: Rect, border: ratatui::style::Color, bg: ratatui::style::Color) -> Rect {
+    let line = Style::default().fg(border).bg(bg).remove_modifier(Modifier::DIM);
+    let bg = Style::default().bg(bg).remove_modifier(Modifier::DIM);
     for y in a.y..a.y + a.h {
         for x in a.x..a.x + a.w {
             buf.set_string(x, y, " ", bg);
@@ -68,31 +69,38 @@ pub(crate) fn max_scroll(area: Rect, prefixes: &str, query: &str) -> usize {
 }
 
 /// 창을 그리고, 검색 줄에 쓰는 중이면 커서 자리를 준다
-pub(crate) fn render(buf: &mut Buffer, area: Rect, h: &Help, prefixes: &str) -> Option<(u16, u16)> {
+pub(crate) fn render(buf: &mut Buffer, area: Rect, h: &Help, prefixes: &str, p: &Palette) -> Option<(u16, u16)> {
     let q = popup(area, 76, 22)?;
-    let i = panel(buf, q, ACCENT);
+    let i = panel(buf, q, p.accent, p.panel_bg);
     if i.w < 20 || i.h < 6 {
         return None;
     }
     let right = i.x + i.w;
-    buf.set_stringn(i.x, i.y, "단축키", i.w as usize, Style::default().add_modifier(Modifier::BOLD));
+    let on_panel = Style::default().fg(p.text).bg(p.panel_bg);
+    buf.set_stringn(i.x, i.y, "단축키", i.w as usize, on_panel.add_modifier(Modifier::BOLD));
+    // herdr: 닫기 단추는 13칸, 글은 가운데
     let close = if h.search { " esc 돌아가기 " } else { " esc 닫기 " };
-    let cw = unicode_width(close) as u16;
-    buf.set_stringn(
-        right.saturating_sub(cw),
-        i.y,
-        close,
-        cw as usize,
-        Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD),
-    );
+    let button = Style::default().fg(contrast(p)).bg(p.accent).add_modifier(Modifier::BOLD);
+    let cx = right.saturating_sub(13);
+    for x in cx..right {
+        buf.set_string(x, i.y, " ", button);
+    }
+    let cw = (unicode_width(close) as u16).min(13);
+    buf.set_stringn(cx + (13 - cw) / 2, i.y, close, cw as usize, button);
     let sy = i.y + 1;
     let mut cursor = None;
     if h.search {
-        buf.set_stringn(i.x, sy, " / ", i.w as usize, Style::default());
-        let end = buf.set_stringn(i.x + 3, sy, &h.query, i.w.saturating_sub(3) as usize, Style::default()).0;
+        buf.set_stringn(i.x, sy, " / ", i.w as usize, on_panel);
+        let end = buf.set_stringn(i.x + 3, sy, &h.query, i.w.saturating_sub(3) as usize, on_panel).0;
         cursor = Some((end.min(right - 1), sy));
     } else {
-        buf.set_stringn(i.x, sy, " / 를 누르면 명령·키로 거른다", i.w as usize, Style::default().fg(DIM));
+        buf.set_stringn(
+            i.x,
+            sy,
+            " / 를 누르면 명령·키로 거른다",
+            i.w as usize,
+            Style::default().fg(p.overlay0).bg(p.panel_bg),
+        );
     }
     let body = Rect { x: i.x, y: i.y + 3, w: i.w, h: i.h.saturating_sub(5) };
     let all = lines(prefixes, &h.query);
@@ -103,13 +111,15 @@ pub(crate) fn render(buf: &mut Buffer, area: Rect, h: &Help, prefixes: &str) -> 
     for (n, (head, k, l)) in all.iter().skip(scroll).take(rows).enumerate() {
         let y = body.y + n as u16;
         if *head {
-            buf.set_stringn(body.x, y, l, text_w as usize, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
+            let st = Style::default().fg(p.accent).bg(p.panel_bg).add_modifier(Modifier::BOLD);
+            buf.set_stringn(body.x, y, l, text_w as usize, st);
             continue;
         }
-        let x =
-            buf.set_stringn(body.x, y, k, text_w as usize, Style::default().fg(MAUVE).add_modifier(Modifier::BOLD)).0;
+        let key = Style::default().fg(p.mauve).bg(p.panel_bg).add_modifier(Modifier::BOLD);
+        let x = buf.set_stringn(body.x, y, k, text_w as usize, key).0;
         let room = (body.x + text_w).saturating_sub(x) as usize;
-        buf.set_stringn(x, y, l, room, Style::default());
+        let label = if k.is_empty() { p.overlay1 } else { p.text };
+        buf.set_stringn(x, y, l, room, Style::default().fg(label).bg(p.panel_bg));
     }
     // herdr scrollbar: 넘칠 때만, 칸 전체는 흐린 ▐, 보이는 자리는 밝은 ▐
     let len = (body.h as usize * rows / all.len()).max(1);
@@ -117,7 +127,12 @@ pub(crate) fn render(buf: &mut Buffer, area: Rect, h: &Help, prefixes: &str) -> 
         let x = body.x + body.w - 1;
         for dy in 0..body.h {
             let on = (dy as usize) >= top && (dy as usize) < top + len;
-            buf.set_string(x, body.y + dy, "▐", Style::default().fg(if on { DIM } else { crate::FAINT }));
+            buf.set_string(
+                x,
+                body.y + dy,
+                "▐",
+                Style::default().fg(if on { p.overlay1 } else { p.overlay0 }).bg(p.panel_bg),
+            );
         }
     }
     let footer = if h.search {
@@ -125,6 +140,6 @@ pub(crate) fn render(buf: &mut Buffer, area: Rect, h: &Help, prefixes: &str) -> 
     } else {
         " 검색 / · 넘기기 j/k/↑↓/pgup/pgdn · 닫기 esc/enter"
     };
-    buf.set_stringn(i.x, i.y + i.h - 1, footer, i.w as usize, Style::default().fg(DIM));
+    buf.set_stringn(i.x, i.y + i.h - 1, footer, i.w as usize, Style::default().fg(p.overlay0).bg(p.panel_bg));
     cursor
 }
