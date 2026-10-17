@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
-const { chromium } = require("playwright");
+const { chromium, webkit } = require("playwright");
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
@@ -149,6 +149,42 @@ async function fontOk(page, cols) {
   if (!near(m.cell, m.latin, 0.02) || !near(m.hangul, 2 * m.latin, 0.01) || !near(m.webHangul, 2 * m.webLatin, 0.01) || !near(m.webLatin, m.latin, 0.01))
     throw new Error(`글꼴 너비가 맞지 않다: ${JSON.stringify(m)}`);
   return m;
+}
+
+/**
+ * 터미널(xterm 숨은 textarea)에 macOS 두벌식으로 「상태」를 조합해 넣는다. 키마다 keydown(229) → 조합 사건 → input.
+ * late: 첫 자모가 textarea에 들어간 다음 task에 compositionstart가 온다(keydown과 조합 사건이 따로 오는 브라우저).
+ * xterm 6.0.0은 이때 첫 자모만 보내고 완성 음절을 잘랐다(사용자 보고 「상태」 → 「ㅅㅌ」).
+ */
+async function imeType(page, late) {
+  await page.locator("textarea.xterm-helper-textarea").evaluate(
+    async (el, late) => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const key = (type) => el.dispatchEvent(new KeyboardEvent(type, { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
+      const input = (d) => el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertCompositionText", isComposing: true, bubbles: true }));
+      for (const syl of [["ㅅ", "사", "상"], ["ㅌ", "태"]]) {
+        const base = el.value;
+        for (const [i, d] of syl.entries()) {
+          key("keydown");
+          if (i === 0) {
+            if (late) {
+              el.value = base + d;
+              await sleep(5);
+            }
+            el.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+          }
+          el.dispatchEvent(new CompositionEvent("compositionupdate", { data: d, bubbles: true }));
+          el.value = base + d;
+          input(d);
+          key("keyup");
+          await sleep(40);
+        }
+        el.dispatchEvent(new CompositionEvent("compositionend", { data: syl.at(-1), bubbles: true }));
+        await sleep(40);
+      }
+    },
+    late,
+  );
 }
 
 async function pairPage(browser, code, viewport) {
@@ -637,6 +673,81 @@ try {
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();
     aaa("pane", "kill", "pasteapp");
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("터미널 한글 IME: 조합 사건 순서 두 가지(Chromium·WebKit)와 Chromium 실제 IME 사건(CDP) → pane에는 「상태」만, 조합 없는 숫자도 그대로", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "imeapp", "--", process.execPath, `${root}/paste.js`);
+    const wk = await webkit.launch();
+    const bad = [];
+    try {
+      for (const [engine, p] of [
+        ["Chromium", page],
+        ["WebKit", (await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 })).page],
+      ]) {
+        await p.getByTestId("pane-imeapp").click();
+        await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
+        // 조작 권한을 이 화면으로(다른 화면이 가졌으면 가져온다)
+        const take = p.getByRole("button", { name: "가져오기" });
+        await sleep(500);
+        if (await take.count()) await take.click();
+        await until("조작 권한", async () => (await take.count()) === 0 && (await p.getByLabel("보낼 글").isEnabled()));
+        await p.locator(".xterm-screen").click();
+        const ways = [
+          ["같은 task", (q) => imeType(q, false), "상태"],
+          ["늦은 compositionstart", (q) => imeType(q, true), "상태"],
+          // 한글 입력기에서 숫자·문장부호: keydown(229) 뒤 조합 없이 글만 늘어난다(xterm 판정 그대로 보낸다)
+          [
+            "조합 없는 229(숫자)",
+            (q) =>
+              q.locator("textarea.xterm-helper-textarea").evaluate(async (el) => {
+                for (const d of ["7", "."]) {
+                  el.dispatchEvent(new KeyboardEvent("keydown", { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
+                  el.value += d;
+                  el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertText", bubbles: true, composed: true }));
+                  el.dispatchEvent(new KeyboardEvent("keyup", { key: d, keyCode: 229, bubbles: true }));
+                  await new Promise((r) => setTimeout(r, 40));
+                }
+              }),
+            "7.",
+          ],
+        ];
+        if (engine === "Chromium")
+          ways.push([
+            "CDP 실제 IME",
+            async (q) => {
+              const cdp = await q.context().newCDPSession(q);
+              for (const syl of [["ㅅ", "사", "상"], ["ㅌ", "태"]]) {
+                for (const t of syl) await cdp.send("Input.imeSetComposition", { text: t, selectionStart: t.length, selectionEnd: t.length });
+                await cdp.send("Input.insertText", { text: syl.at(-1) });
+              }
+              await cdp.detach();
+            },
+            "상태",
+          ]);
+        for (const [how, type, want] of ways) {
+          aaa("pane", "send", "imeapp", "--text", "MARK");
+          await until("표지", () => aaa("pane", "read", "imeapp").lines.join("\n").includes('GOT:"MARK"'));
+          await type(p);
+          await sleep(700);
+          const all = aaa("pane", "read", "imeapp").lines.join("\n");
+          const got = all
+            .slice(all.lastIndexOf('GOT:"MARK"') + 10)
+            .split("\n")
+            .filter((l) => l.startsWith("GOT:"))
+            .map((l) => JSON.parse(l.slice(4)))
+            .join("");
+          console.log(`     IME ${engine} ${how}: ${JSON.stringify(got)}`);
+          if (got !== want) bad.push(`${engine} ${how}: pane이 받은 글 ${JSON.stringify(got)}`);
+        }
+        if (p !== page) await p.context().close();
+      }
+    } finally {
+      await wk.close();
+    }
+    if (bad.length) throw new Error(bad.join("; "));
+    aaa("pane", "kill", "imeapp");
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });

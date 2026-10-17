@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { fixImeComposition } from "./ime";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, wsUrl } from "./api";
 import { Icon } from "./icons";
@@ -195,6 +196,7 @@ export function TermView({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(box.current!);
+    if (!fixImeComposition(term)) console.warn("aaa: xterm IME 보정을 걸지 못했다(xterm 판이 바뀌었다)");
     let alive = true;
     if (!ready) {
       void Promise.all([document.fonts.load(webFont), document.fonts.load(`bold ${webFont}`)])
