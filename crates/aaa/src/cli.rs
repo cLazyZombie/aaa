@@ -367,12 +367,12 @@ enum ThreadCmd {
         title: Option<String>,
         #[arg(long)]
         machine: Option<String>,
-        /// profile(--from-task의 owner가 정하면 비워도 된다)
+        /// profile. 없으면 --from-task의 owner, 그다음 project.toml thread_profile
         #[arg(long)]
         profile: Option<String>,
-        /// worktree(기본, --repo 필요) 또는 dir(repo 없는 작업 폴더)
-        #[arg(long, value_parser = ["worktree", "dir"], default_value = "worktree")]
-        kind: String,
+        /// worktree(--repo 필요) 또는 dir(repo 없는 작업 폴더). 없으면 --repo가 있으면 worktree, 없으면 dir
+        #[arg(long, value_parser = ["worktree", "dir"])]
+        kind: Option<String>,
         /// 그 머신의 repo 경로
         #[arg(long)]
         repo: Option<String>,
@@ -424,6 +424,9 @@ enum ThreadCmd {
         thread: String,
         #[arg(long)]
         keep_worktree: bool,
+        /// 끝낸 thread를 다시 연다(아무것도 띄우지 않는다. 띄우려면 restart)
+        #[arg(long, conflicts_with = "keep_worktree")]
+        reopen: bool,
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
@@ -460,6 +463,9 @@ enum ThreadCmd {
         /// 저장된 대화를 잇는다(brief 안내 없음)
         #[arg(long)]
         resume: bool,
+        /// 이 profile로 새 대화를 띄운다(그 머신 agent.toml에서 다시 해석한다)
+        #[arg(long, conflicts_with = "resume")]
+        profile: Option<String>,
     },
     /// thread agent에 메시지를 보낸다. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다)
     Message {
@@ -976,8 +982,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 ThreadCmd::Start { project, title, machine, profile, kind, repo, base, task_file, from_task } => {
-                    if from_task.is_none() && (title.is_none() || profile.is_none() || task_file.is_none()) {
-                        anyhow::bail!("--title·--profile·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
+                    if from_task.is_none() && (title.is_none() || task_file.is_none()) {
+                        anyhow::bail!("--title·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
                     }
                     let task = match task_file.as_deref() {
                         None => String::new(),
@@ -988,7 +994,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         }
                         Some(f) => std::fs::read_to_string(f).with_context(|| format!("할 일 파일: {f}"))?,
                     };
-                    let kind = if kind == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree };
+                    let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     FrontRequest::ThreadStart {
                         project,
                         title: title.unwrap_or_default(),
@@ -1010,8 +1016,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
                 ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
-                ThreadCmd::Resolve { project, thread, keep_worktree } => {
-                    FrontRequest::ThreadResolve { project, thread, keep_worktree }
+                ThreadCmd::Resolve { project, thread, keep_worktree, reopen } => {
+                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen }
                 }
                 ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
                 ThreadCmd::Read { project, thread, lines } => FrontRequest::ThreadRead { project, thread, lines },
@@ -1019,8 +1025,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::ThreadKeys { project, thread, keys, text }
                 }
                 ThreadCmd::Stop { project, thread } => FrontRequest::ThreadStop { project, thread },
-                ThreadCmd::Restart { project, thread, resume } => {
-                    FrontRequest::ThreadRestart { project, thread, resume }
+                ThreadCmd::Restart { project, thread, resume, profile } => {
+                    FrontRequest::ThreadRestart { project, thread, resume, profile }
                 }
                 ThreadCmd::Message { project, thread, interrupt, text_file, text } => {
                     let text = text_arg(text, text_file)?;
