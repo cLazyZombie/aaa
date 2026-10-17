@@ -14,7 +14,7 @@
 #      이 파일이 없는 clone(다른 머신·CI)에서는 4)를 건너뛴다. 그때의 「통과」는 1)~3)만 본 결과다.
 #
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
-#       noreply@anthropic.com·git@github.com·*@example.com, /Users/<이름> 같은 자리표시자.
+#       noreply@anthropic.com·git@github.com·*@example.com, /Users/<이름>·/Users/me/ 같은 자리표시자(me는 참고 프로젝트에서 그대로 옮긴 예시).
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 HISTORY=0
@@ -51,7 +51,7 @@ add '개인 키·인증서 블록' '-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-
 add 'token 형식' '(tskey-[a-z]+-[A-Za-z0-9]{6,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,})' ''
 add 'tailnet 주소' '[A-Za-z0-9-]+\.ts\.net' '(example\.ts\.net|>\.ts\.net|[`*]\.ts\.net|이름\.ts\.net)'
 add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\.1|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.255\.)'
-add '사용자 홈 경로' '(/Users/|/home/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|/Users/Shared|/Users/runner|/home/runner)'
+add '사용자 홈 경로' '(/Users/|/home/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|/Users/me/|/Users/Shared|/Users/runner|/home/runner)'
 add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|@example\.(com|org|net))'
 add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' ''
 

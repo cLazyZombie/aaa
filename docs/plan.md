@@ -1285,6 +1285,21 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 찾은 결함: 조합 중 pane을 바꾸면 Chromium에서 조합 중 글자가 옛 pane으로 갔다. 지워지는 textarea의 blur가 effect 정리보다 먼저 온다. 참고 `presentedRef`처럼 화면에서 지우기 전(layout effect 정리)에 내리는 `presentRef`로 막았다.
 - **시험 도구 고침.** m13 가짜 harness `sticky`가 한 바이트씩 `dd`로 되돌려 찍어, 느린 CI에서 Enter 뒤에도 찍는 중이라 받았다고 판정됐다(`bf056ae` macOS CI 실패). 받은 조각을 한 번에 찍는다.
 
+### 8.42 웹 터미널 키 처리를 herdr-web-ui대로(10-17, 차이 목록 2)
+
+- **옮긴 것(PaneTerminal 539~562·585·620~664·1053~1076·1284~1335줄).** `herdr/keys.ts`·`osc52.ts`·`terminalFileLinks.ts`는 그대로 복사했다.
+  - 블록 커서 깜빡임. macOS Option+누름은 마우스 보고 중에도 선택한다.
+  - 웹 링크는 http(s)만 새 탭으로 연다(`isWebLink`).
+  - Ctrl+V는 브라우저 붙여넣기에 맡긴다(xterm이 ^V를 보내지 않는다). 선택이 있을 때 Ctrl+C는 복사하고 ^C를 보내지 않는다.
+  - Shift+Enter는 `ESC CR`(줄바꿈)로 보낸다. Ctrl+Enter는 프로그램이 modifyOtherKeys를 요청했으면 `CSI 27;5;13~`(Claude Code 「지금 보내기」)로 보내고, 아니면 Enter다.
+  - macOS Cmd+⌫는 `^U`, Cmd+←/→는 `^A`/`^E`로 보낸다(조합 글 뒤, bubble keydown).
+  - OSC 52(vim·tmux·Claude Code의 클립보드 쓰기)를 클립보드에 쓴다. 질의는 답하지 않는다.
+- **aaa만의 것: replay가 modifyOtherKeys를 다시 말한다.** vt100은 이 모드를 화면 상태에 담지 않는다. 그래서 프로그램이 모드를 켠 뒤에 붙은 화면은 Ctrl+Enter를 그냥 Enter로 보냈다. `aaa-vt`가 `CSI > 4 ; n m`을 추적해 replay 끝에 붙인다. herdr도 replay에 키보드 모드를 담는다.
+- **시험.** 웹 E2E 「키 처리」 단계(macOS platform)로 키마다 pane이 받은 bytes를 본다. 늦게 붙은 화면의 Ctrl+Enter도 본다.
+  - 고치기 전 웹: Shift+Enter가 `\r`로 갔다.
+  - 새 웹과 옛 vt: Ctrl+Enter가 `\r`로 갔다.
+  - `aaa-vt` 유닛 시험 `replay_says_modify_other_keys_again`.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

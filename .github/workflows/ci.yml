@@ -32,20 +32,16 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - name: 웹 front 빌드(host 실행 파일에 포함)
-        working-directory: web
-        run: npm ci --no-audit --no-fund && npm run build
-      - name: build
-        run: cargo build -p aaa --locked
+      # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령)
       - name: Playwright(Chromium·WebKit)
         run: npm install -g --no-audit --no-fund playwright@1.59.1 && npx -y playwright@1.59.1 install chromium webkit
-      - name: 웹 E2E
-        run: NODE_PATH="$(npm root -g)" node web/e2e/web.e2e.mjs 2>&1 | tee web-e2e.log; exit ${PIPESTATUS[0]}
+      - name: 웹 빌드·build·웹 E2E
+        run: bash scripts/ci-local.sh --only web,build,e2e --logs . --tee
       - name: 실패 요약
         if: failure()
         run: |
           set +e +o pipefail
-          grep -nE '^(ok|FAIL) |IME ' web-e2e.log | tail -60
+          grep -nE '^(ok|FAIL) |IME ' e2e.log | tail -60
           for d in /tmp/aaw-*; do
             [ -d "$d" ] || continue
             for f in "$d"/*.log; do echo "## $f"; tail -c 3000 "$f"; done
@@ -72,22 +68,22 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+      # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령). 여기서는 OS별로 어느 단계를 도는지만 정한다.
       - name: 웹 front 빌드(host 실행 파일에 포함)
-        working-directory: web
-        run: npm ci --no-audit --no-fund && npm run build
+        run: bash scripts/ci-local.sh --only web --logs . --tee
       - name: fmt
         if: matrix.os == 'ubuntu-24.04'
-        run: cargo fmt --all --check
+        run: bash scripts/ci-local.sh --only fmt --logs . --tee
       - name: build
         id: build
-        run: cargo build --workspace --all-targets --locked 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+        run: bash scripts/ci-local.sh --only build --logs . --tee
       - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee clippy.log; exit ${PIPESTATUS[0]}
+        run: bash scripts/ci-local.sh --only clippy --logs . --tee
       # 유닛·프로토콜 계약 테스트와 PTY smoke(Windows는 ConPTY + Named Pipe). e2e는 Unix에서만 돈다.
       - name: test
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: cargo test --workspace --locked 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
+        run: bash scripts/ci-local.sh --only test --logs . --tee
       # 실제 시스템 clipboard(§8.28): 그림을 쓰고 TUI front가 Ctrl+V로 읽어 대상 세션 폴더까지 가는지 본다.
       # 개발 Mac에서는 사람의 clipboard를 덮어쓰므로 CI에서만 켠다. Linux는 Xvfb 위 X11, Windows는 TUI E2E(Unix 전용) 없이 읽기만.
       - name: clipboard(실제)
@@ -95,13 +91,8 @@ jobs:
         env:
           AAA_CLIP_NATIVE: "1"
         run: |
-          run() { if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$@"; else "$@"; fi; }
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xvfb >/dev/null; fi
-          run cargo test --locked -p aaa-tui native_clipboard_roundtrip -- --nocapture 2>&1 | tee -a test.log; s=${PIPESTATUS[0]}
-          [ "$s" = 0 ] || exit "$s"
-          if [ "$RUNNER_OS" != Windows ]; then
-            run cargo test --locked -p aaa --test tui ctrl_v_pastes_clipboard_image -- --nocapture 2>&1 | tee -a test.log; exit ${PIPESTATUS[0]}
-          fi
+          bash scripts/ci-local.sh --only clipboard --logs . --tee
       # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
       - name: 실패 요약
         if: failure()
@@ -117,9 +108,11 @@ jobs:
             grep -nE -A8 "^error|^warning" "$f" | head -80 | annotate "$f"
           done
           # 테스트 실패 본문(진단 출력 포함)
-          [ -f test.log ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' test.log | annotate test.log
+          for f in test.log clipboard.log; do
+            [ -f "$f" ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' "$f" | annotate "$f"
+          done
           # 실험실: 남겨진 host·agent 로그와 세션 폴더(session-host.log, exit.json, meta.json)
-          for d in $(grep -o '실험실 기록을 남겼다: .*' test.log 2>/dev/null | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
+          for d in $(cat test.log clipboard.log 2>/dev/null | grep -o '실험실 기록을 남겼다: .*'  | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
             [ -d "$d" ] || d=$(cygpath -u "$d" 2>/dev/null)
             [ -d "$d" ] || continue
             find "$d" -type f \( -name '*.log' -o -name '*.json' \) | while read -r f; do

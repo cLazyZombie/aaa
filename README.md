@@ -98,6 +98,22 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 
 모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. 자세한 것은 `aaa <명령> --help`입니다.
 
+## 개발
+
+CI(`.github/workflows/ci.yml`)와 같은 단계를 로컬에서 한 번에 돈다. 단계의 명령은 `scripts/ci-local.sh`에만 있고 CI도 이 스크립트를 단계별로 부른다(로컬과 CI의 명령이 어긋나지 않는다).
+
+```sh
+bash scripts/ci-local.sh                     # 전부: web fmt build clippy test clipboard e2e public
+bash scripts/ci-local.sh --only test,e2e     # 고른 단계만
+bash scripts/ci-local.sh --skip e2e          # 빼고 전부
+bash scripts/ci-local.sh --native-clipboard  # clipboard 단계를 이 머신의 실제 clipboard로(덮어쓴다)
+```
+
+- 끝에 단계마다 시작·끝 시각, 걸린 시간, 결과를 요약한다. 실패한 단계는 로그 위치를 보인다(기본 `target/ci-local/<시각>/<단계>.log`). 하나라도 실패하면 1로 끝난다. 실패를 다시 돌려 통과시키지 않는다.
+- `clipboard`는 사람의 clipboard를 덮어쓰므로 기본으로 건너뛴다(CI는 `AAA_CLIP_NATIVE=1`로 켠다).
+- `e2e`는 웹 E2E(Playwright Chromium·WebKit, 한글 IME 기록 재생 포함)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit`.
+- `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. CI에서는 돌지 않는다(push 전 로컬 검사).
+
 ## 라이선스
 
 aaa 코드는 [MIT](LICENSE)입니다.
