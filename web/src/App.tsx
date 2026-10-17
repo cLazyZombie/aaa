@@ -41,15 +41,48 @@ export function App() {
   const check = useCallback(() => {
     me()
       .then((m) => setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" }))
-      .catch((e: unknown) => setAuth({ state: "error", msg: String(e) }));
+      // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed)
+      .catch((e: unknown) => setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : String(e) }));
   }, []);
   useEffect(check, [check]);
   // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다
   useEffect(() => onSignedOut(check), [check]);
+  // host에 닿지 못했다(끊긴 채 캐시한 셸로 연 홈 화면 앱, plan §8.106): 네트워크가 돌아오거나 다시 보이면 다시 묻는다.
+  // 참고는 셸이 그대로 뜬 채 주기로 다시 묻는다. aaa는 첫 물음이 기기를 고르므로 그 사건에서 다시 묻는다
+  const failed = auth.state === "error";
+  useEffect(() => {
+    if (!failed) return;
+    const again = () => document.visibilityState === "visible" && check();
+    window.addEventListener("online", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.removeEventListener("online", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [failed, check]);
   if (auth.state === "loading") return <p className="center muted">불러오는 중</p>;
-  if (auth.state === "error") return <p className="center err">{auth.msg}</p>;
+  if (auth.state === "error") return <Unreachable reason={auth.msg} onRetry={check} />;
   if (auth.state === "pair") return <AccessGate initialCode={pairCode} onUnlocked={check} />;
   return <Main role={auth.role} device={auth.device} onSignedOut={check} />;
+}
+
+/** host에 닿지 못한 첫 화면(모양은 연결 화면 카드, 문구는 offline.html과 같다). 네트워크가 돌아오면 App이 다시 묻는다 */
+function Unreachable({ reason, onRetry }: { reason: string; onRetry: () => void }) {
+  return (
+    <main className="access-gate-screen">
+      <div className="access-gate" data-testid="unreachable">
+        <img src="/icon.svg" alt="" width="44" height="44" className="access-gate-mark" />
+        <h1 className="access-gate-title">host에 연결할 수 없다</h1>
+        <p className="access-gate-copy">네트워크(tailnet) 연결과 host가 떠 있는지 확인한다. 연결이 돌아오면 다시 붙는다.</p>
+        <button type="button" className="access-gate-submit" onClick={onRetry}>
+          다시 시도
+        </button>
+        <p className="access-gate-error" role="status">
+          {reason}
+        </p>
+      </div>
+    </main>
+  );
 }
 
 const ACTIVITY_LABEL: Record<AgentActivity, string> = {

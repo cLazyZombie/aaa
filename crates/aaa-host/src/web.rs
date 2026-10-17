@@ -48,6 +48,9 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     host.web_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
     *host.web_listen.lock().unwrap() = Some(listener.local_addr()?.to_string());
     tracing::info!(%addr, "웹 listen(loopback)");
+    // 공개 주소(Host·Origin 허용)를 지금 serve 상태로 맞춘다. tailscale을 기다리지 않고 연다(그동안은 지난 값)
+    let h = host.clone();
+    tokio::spawn(async move { h.refresh_publish().await });
     let app = router(host.clone());
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -90,32 +93,28 @@ fn via_https(h: &HeaderMap) -> bool {
     proto == Some("https") || !is_loopback_host(&host_header(h))
 }
 
-fn origin_allowed(host: &Host, origin: &str) -> bool {
-    let port = host.web_port();
-    if origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}") {
-        return true;
-    }
-    let Some(rest) = origin.strip_prefix("https://") else { return false };
-    let name = rest.rsplit_once(':').map(|(h, _)| h).unwrap_or(rest);
-    host.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
-}
-
 async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Response {
     let h = req.headers();
-    let hh = host_header(h);
-    if !host.host_allowed(&hh) {
+    // Host는 이 host의 두 주소 중 하나(포트까지), Origin은 그 주소와 정확히 같아야 한다: 같은 이름의 다른 포트
+    // (같은 머신의 다른 웹 서비스)나 포트 없는 Origin도 남이다(herdr-web-ui `sameOrigin`, t3code `EnvironmentAuth`)
+    let Some(expected) = host.web_origin(&host_header(h)) else {
         return (StatusCode::MISDIRECTED_REQUEST, "알 수 없는 Host").into_response();
-    }
+    };
     let is_ws =
         h.get(header::UPGRADE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
     if !matches!(*req.method(), Method::GET | Method::HEAD) || is_ws {
         let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
-        if !origin_allowed(&host, origin) {
+        if !origin.eq_ignore_ascii_case(&expected) {
             return (StatusCode::FORBIDDEN, "허용하지 않은 Origin").into_response();
         }
     }
+    let api = req.uri().path().starts_with("/api/");
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
+    // 기기·pane 상태를 담은 API 답은 브라우저·proxy가 두지 않는다(herdr-web-ui `index.ts` API no-store)
+    if api {
+        hs.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-store"));
+    }
     // 결과물 보기(/v/)는 자기 CSP(sandbox)·frame 정책을 둔다
     hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(CSP));
     hs.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -173,13 +172,17 @@ async fn view_file(State(host): State<Arc<Host>>, Path((cap, path)): Path<(Strin
         .unwrap()
 }
 
+/// 장치 cookie. HTTPS에서는 `__Host-aaa`만 본다: prefix 없는 `aaa`는 같은 이름의 다른 서비스(다른 포트)나
+/// 하위 경로가 심을 수 있다. `=`이 없는 등 깨진 항목은 건너뛴다(herdr-web-ui `parseCookies`: 남의 cookie 하나가
+/// 주인을 막지 않는다)
 fn cookie_token(h: &HeaderMap) -> Option<String> {
+    let name = if via_https(h) { "__Host-aaa" } else { "aaa" };
     for v in h.get_all(header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
         for part in s.split(';') {
-            let (k, val) = part.trim().split_once('=')?;
-            if k == "__Host-aaa" || k == "aaa" {
-                return Some(val.to_string());
+            let Some((k, val)) = part.split_once('=') else { continue };
+            if k.trim() == name {
+                return Some(val.trim().to_string());
             }
         }
     }
@@ -1066,5 +1069,174 @@ mod content_type_tests {
         assert_eq!(content_type("assets/index-abc.js"), "text/javascript; charset=utf-8");
         assert_eq!(content_type("index.html"), "text/html; charset=utf-8");
         assert_eq!(content_type("v1.2/blob"), "application/octet-stream");
+    }
+}
+
+/// 입구 검사(t-0340 보안 감사 A1·A4·A5·A8·A10): router를 그대로 부른다. 공개 주소는 같은 이름의 8443이고, 같은
+/// 머신 443에 다른 웹 서비스가 있는 운영 배치를 흉내 낸다.
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    use std::time::Instant;
+    use tower::ServiceExt;
+
+    const PUBLIC: &str = "mac-a.example.ts.net:8443";
+    const LOOP: &str = "127.0.0.1:7000";
+
+    struct Lab(Arc<Host>, std::path::PathBuf);
+    impl Drop for Lab {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+
+    fn lab(public_origin: &str) -> Lab {
+        let dir = std::env::temp_dir().join(format!("aaa-guard-test-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, dir.clone()).unwrap();
+        h.web_port.store(7000, std::sync::atomic::Ordering::Relaxed);
+        h.db.set_meta("publish_origin", public_origin).unwrap();
+        Lab(h, dir)
+    }
+
+    fn token(h: &Host) -> String {
+        let (code, _) = h.mint_pairing(DeviceRole::Controller, Instant::now());
+        h.redeem_pairing(&code, "").unwrap().0
+    }
+
+    async fn ask(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> Response {
+        let mut req = Request::builder().method(method).uri(path).header(header::HOST, host);
+        for (k, v) in more {
+            req = req.header(*k, *v);
+        }
+        router(h.clone()).oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+    }
+
+    async fn code(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> StatusCode {
+        ask(h, method, path, host, more).await.status()
+    }
+
+    #[tokio::test]
+    async fn host_must_be_this_host_with_its_port() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        assert_ne!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_ne!(code(&l.0, "GET", "/", "MAC-A.example.ts.net:8443", &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_ne!(code(&l.0, "GET", "/", LOOP, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        // 같은 이름의 다른 포트·포트 없음(443의 다른 서비스), localhost, 다른 loopback 포트, 다른 이름
+        for other in [
+            "mac-a.example.ts.net:9999",
+            "mac-a.example.ts.net",
+            "localhost:7000",
+            "127.0.0.1:7001",
+            "evil.example:8443",
+        ] {
+            assert_eq!(code(&l.0, "GET", "/", other, &[]).await, StatusCode::MISDIRECTED_REQUEST, "{other}");
+        }
+    }
+
+    #[tokio::test]
+    async fn origin_must_match_the_whole_origin() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let ok = [("origin", "https://mac-a.example.ts.net:8443")];
+        assert_eq!(code(&l.0, "DELETE", "/api/v1/me", PUBLIC, &ok).await, StatusCode::NO_CONTENT);
+        assert_eq!(
+            code(&l.0, "DELETE", "/api/v1/me", LOOP, &[("origin", "http://127.0.0.1:7000")]).await,
+            StatusCode::NO_CONTENT
+        );
+        for bad in [
+            "https://mac-a.example.ts.net:9999",
+            "https://mac-a.example.ts.net",
+            "http://mac-a.example.ts.net:8443",
+            "http://127.0.0.1:7000",
+            "http://localhost:7000",
+            "null",
+            "",
+        ] {
+            assert_eq!(
+                code(&l.0, "DELETE", "/api/v1/me", PUBLIC, &[("origin", bad)]).await,
+                StatusCode::FORBIDDEN,
+                "{bad:?}"
+            );
+        }
+        assert_eq!(code(&l.0, "DELETE", "/api/v1/me", PUBLIC, &[]).await, StatusCode::FORBIDDEN);
+        // loopback 주소에는 그 주소의 origin만
+        let other = [("origin", "https://mac-a.example.ts.net:8443")];
+        assert_eq!(code(&l.0, "DELETE", "/api/v1/me", LOOP, &other).await, StatusCode::FORBIDDEN);
+        // WebSocket upgrade도 GET이지만 Origin을 본다(cookie가 있어도)
+        let t = format!("__Host-aaa={}", token(&l.0));
+        let ws = |origin| {
+            [
+                ("origin", origin),
+                ("connection", "upgrade"),
+                ("upgrade", "websocket"),
+                ("sec-websocket-version", "13"),
+                ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="),
+                ("cookie", t.as_str()),
+            ]
+        };
+        for bad in ["https://mac-a.example.ts.net:9999", "https://mac-a.example.ts.net"] {
+            assert_eq!(code(&l.0, "GET", "/api/v1/events", PUBLIC, &ws(bad)).await, StatusCode::FORBIDDEN, "{bad}");
+        }
+        assert_ne!(
+            code(&l.0, "GET", "/api/v1/events", PUBLIC, &ws("https://mac-a.example.ts.net:8443")).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn the_default_https_port_has_no_port_in_host_or_origin() {
+        let l = lab("https://mac-a.example.ts.net");
+        for host in ["mac-a.example.ts.net", "mac-a.example.ts.net:443"] {
+            let ok = [("origin", "https://mac-a.example.ts.net")];
+            assert_eq!(code(&l.0, "DELETE", "/api/v1/me", host, &ok).await, StatusCode::NO_CONTENT, "{host}");
+            let bad = [("origin", "https://mac-a.example.ts.net:8443")];
+            assert_eq!(code(&l.0, "DELETE", "/api/v1/me", host, &bad).await, StatusCode::FORBIDDEN, "{host}");
+        }
+        assert_eq!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn not_published_means_loopback_only() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        l.0.db.del_meta("publish_origin").unwrap();
+        // 이름만 알던 옛 기록(publish_dns)으로는 열리지 않는다
+        l.0.db.set_meta("publish_dns", "mac-a.example.ts.net").unwrap();
+        assert_eq!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_ne!(code(&l.0, "GET", "/", LOOP, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn cookies_skip_junk_and_https_takes_only_the_host_prefix() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let t = token(&l.0);
+        let me = |cookie: String| {
+            let h = l.0.clone();
+            let host = if cookie.contains("__Host-") { PUBLIC } else { LOOP };
+            async move { code(&h, "GET", "/api/v1/me", host, &[("cookie", cookie.as_str())]).await }
+        };
+        // 같은 host의 다른 서비스가 심은 `=` 없는 항목·빈 이름이 앞에 있어도
+        assert_eq!(me(format!("foo; =x; __Host-aaa={t}")).await, StatusCode::OK);
+        assert_eq!(me(format!("junk; aaa={t}")).await, StatusCode::OK);
+        // HTTPS에서 prefix 없는 cookie는 장치 cookie가 아니다(다른 포트·하위 경로가 심을 수 있다)
+        assert_eq!(
+            code(&l.0, "GET", "/api/v1/me", PUBLIC, &[("cookie", &format!("aaa={t}"))]).await,
+            StatusCode::UNAUTHORIZED
+        );
+        let planted = format!("aaa=junk; __Host-aaa={t}");
+        assert_eq!(code(&l.0, "GET", "/api/v1/me", PUBLIC, &[("cookie", planted.as_str())]).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_answers_are_not_stored() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        for path in ["/api/v1/me", "/api/v1/usage", "/api/v1/push"] {
+            let res = ask(&l.0, "GET", path, LOOP, &[]).await;
+            assert_eq!(
+                res.headers().get(header::CACHE_CONTROL).map(|v| v.to_str().unwrap()),
+                Some("no-store"),
+                "{path}"
+            );
+        }
     }
 }
