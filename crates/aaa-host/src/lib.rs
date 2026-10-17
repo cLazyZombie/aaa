@@ -5,6 +5,7 @@
 
 mod attach;
 mod brief;
+mod brief_text;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -1487,6 +1488,11 @@ impl Host {
         }
         let name = host_header.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_header);
         self.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
+    }
+
+    /// host와 같은 머신의 agent인가(brief의 uploads 주석)
+    pub(crate) fn machine_is_local(&self, machine_id: &str) -> bool {
+        self.inner.lock().unwrap().machines.get(machine_id).is_some_and(|m| m.local)
     }
 
     pub fn local_machine_connected(&self) -> bool {

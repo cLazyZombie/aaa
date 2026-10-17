@@ -73,9 +73,6 @@ function inline(s: string): ReactNode[] {
   });
 }
 
-/** 첫 줄 상태 태그(`[완료]` 등)는 위 meta에 이미 보인다 */
-const withoutStateLine = (r: string) => r.replace(/^\s*\[[^\]\n]{1,20}\]\s*\n/, "");
-
 const fmtSize = (n: number) =>
   n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)}MB` : n >= 1024 ? `${(n / 1024).toFixed(1)}KB` : `${n}B`;
 
@@ -154,13 +151,12 @@ export function ThreadPanel({
                 {t.profile}@{t.machine}
               </span>
               {t.branch && <span className="mono">{t.branch}</span>}
-              {t.report_state && <span className="tag">보고 {t.report_state}</span>}
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
             </div>
           </div>
           <section className="card report" data-testid="report">
             <h2>보고</h2>
-            {lib?.report ? <Markdown text={withoutStateLine(lib.report)} /> : <p className="muted">아직 회수한 보고가 없다</p>}
+            {lib?.report ? <Markdown text={lib.report} /> : <p className="muted">아직 회수한 보고가 없다</p>}
           </section>
           {lib && lib.files.length > 0 && (
             <section className="card files" data-testid="files">

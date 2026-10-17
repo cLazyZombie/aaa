@@ -650,6 +650,7 @@ host 프로젝트 폴더 구성:
 - **보고 형식(0.2.35에 없던 규칙)**
   - 첫 줄 상태 태그(`[진행 중]`·`[사용자 작업 필요]`·`[결정 필요]`·`[완료]`)와 `## Next` 줄을 읽는다. 지금 운영 brief가 쓰는 형식이다.
   - `[사용자 작업 필요]`·`[결정 필요]`면 목록 묶음이 「사람 차례」다(harness가 일하는 중이 아닐 때, §8.38).
+  - → §8.76에서 herdr-projects 형식으로 바꿨다(태그 없음, 첫 줄 `PR:` 선택, 사람 차례는 `Waiting for you` 진행 보고로).
 - **resolve**
   - 마지막 사본이 실패하면 거부한다. 그다음 세션을 끝내고 worktree를 force 없이 지운다. 고친 파일이 있으면 남긴다.
   - branch는 기준 ref에 병합(조상)됐을 때만 지운다.
@@ -1225,7 +1226,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   6. 작업 중: harness 작업 중·확인창, brief 대기, 5분 안의 100% 아래 진행 보고.
   7. 쉼(`idle`, 새 묶음).
   - 대응: prompt_pending = brief `pending`, brief_stuck = `unknown`, blocked = `question`, 준비 상태 = `started`·`idle`. 진행 보고 시각(`progress_at_ms`)을 새로 기록한다. 새 harness 세션은 진행 보고를 지우고, 사용자 입력(turn_start)은 `Waiting for you`를 지운다(herdr-projects progress `respond`).
-  - 다르게 둔 것: PR Landing 묶음 없음(aaa는 merge 대기열, D11). 보고 사본 실패와 `[사용자 작업 필요]`·`[결정 필요]` 태그는 사람 차례(aaa는 보고를 host로 복사하고 태그로 사람 일을 알린다, D9).
+  - 다르게 둔 것: PR Landing 묶음 없음(aaa는 merge 대기열, D11). 보고 사본 실패와 `[사용자 작업 필요]`·`[결정 필요]` 태그는 사람 차례(aaa는 보고를 host로 복사하고 태그로 사람 일을 알린다, D9). → 태그 규칙은 §8.76에서 뺐다.
   - hook이 없는 harness나 지금의 Codex(턴 끝 notify만, D8)는 일하는지 몰라 진행 보고가 없으면 「쉼」으로 보인다.
 - **outage(F7).** herdr-projects steps.rs `Outage`를 옮겼다. 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 재고(저장하지 않음), 기준을 넘으면 한 번, 돌아오면 한 번 알린다. 옛 코드는 연결할 때만 바뀌는 `last_seen`으로 재서 host를 다시 띄우면 오래 붙어 있던 머신이 곧바로 「34분째 끊김」이었다(운영 11:22).
 - **시험.** host 단위 시험(묶음 9개는 herdr-projects 시험을 옮김, outage 1개). m13 재시작 시험: 머신이 끊긴 채 host를 다시 띄우면 기준(5초) 전에는 outage 없음 → 기준 뒤 down 한 번 → 다시 붙으면 recovered 한 번. 옛 코드로 돌리면 실패한다.
@@ -1705,6 +1706,19 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **메시지 보내기 전 검사(차이 목록 E2 남은 것).** 참고 threads.rs `prompt`처럼, 신뢰 창이면 거부하고(누가 답하는지 `trust_screens`로 알린다) 입력창에 사람이 쓰던 글이 있으면 `draft_in_box`로 거부한다. 기록·대기열에 넣기 전에 거부한다.
 - **프로젝트 설정 한곳(`crates/aaa-host/src/project.rs`).** project.toml에서 `goal`·`[[repos]] path/machine`·`thread_profile`·`max_parallel_threads`(기본 10)·`auto_resolve_days`(기본 7)·`start_threads`·`trust_screens`(기본 user)를 읽는다(참고 `Settings`·`Safety`). 값이 잘못된 key만 기본값을 쓴다. 이 파일을 쓰는 CLI는 세션·CLI thread 몫이다.
 - **시험.** host 유닛: prompt_box 참고 시험 전부 + vt 다시 그리기, trust_screen, brief `step` 판정(준비·입력창·Enter만·다시 치기·시도 상한·읽을 수 없는 입력창·신뢰 창), project 설정. m13: `unknown_brief_is_not_resent`(입력창을 못 읽는 harness는 한 번 보내고 멈춤, 사람이 보내면 한 번 더), `brief_left_in_box_is_submitted_not_retyped`(Claude 모양 입력창에 남은 줄을 ticker가 Enter만으로 보냄, `시도 2번`). 둘 다 흐름 사건을 따라 읽어(`lab::Follow`) 기다린다(고정 sleep 없음).
+
+### 8.76 보고 형식·brief를 herdr-projects대로: brief 머리·THREAD.md·진행 보고 안내, 첫 줄 태그 해석 제거(10-18, 차이 목록 3장 A5·A6·A8·C3, 결정 D9 「참고대로」)
+
+- **brief 차례(herdr-projects `src/thread.rs` `compose_brief`).** 머리(`# 프로젝트`) → thread 규칙(THREAD.md) → 다시 시작 안내 → 프로젝트 지침 → 프로젝트 memory → 결정 기록(§8.6, D10 G9에서 memory로 옮긴다) → 진행 보고 → 할 일 → 경로(`# 경로`). 전에는 다시 시작 안내가 맨 앞이었고 진행 보고 안내는 한 줄, 경로 절은 없었다.
+- **머리(A5, `brief_header`).** 프로젝트(PROJECT.md 첫 `# ` 제목과 이름), 목표(project.toml `goal`, 없으면 「정하지 않음」), 저장소(`[[repos]]`, 머신이 있으면 그 머신, 없으면 host 머신), 사용자가 준 파일(host의 `uploads/`, thread가 다른 머신이면 「host 머신에만 있다」), 사용자에게 줄 파일(thread의 `library/`), 보고(thread의 `report.md`). thread ID·제목 줄은 참고에 없어 뺐다.
+  - 참고는 절대 경로를 쓴다. aaa host는 agent가 작업 폴더를 만들기 전에 brief를 짓는다. 그래서 host는 `{{aaa:work_dir}}`·`{{aaa:exe}}` 자리를 남기고, brief.md를 쓰는 agent(`threads::prepare`·`rebrief`)가 그 머신의 작업 폴더 절대 경로와 aaa 실행 파일 경로로 채운다(`aaa_proto::fill_brief`). protocol은 그대로다. host와 agent는 함께 배포한다(옛 agent는 자리를 채우지 않는다).
+- **thread 규칙(A6, `skill/THREAD.md`).** 참고 문장을 한국어로 옮겼다: 작업 폴더 안에, 목록에 없는 저장소는 보고에 적기, uploads 읽기, 지침·memory 따르기, memory 고치지 않기(교훈은 `## Remember`), 끝낼 때와 사용자를 기다릴 때 보고 쓰기, 첫 줄 `PR: <url>`(선택), `## Report`, `## Next`(필수, 명령형 100자 이하, 착지 뒤 정리 포함), `## Remember`(선택), 매번 통째로 다시 쓰기. 첫 줄 상태 태그 규칙은 뺐다.
+  - aaa에서 더한 두 줄(「aaa에서」): host가 report.md가 바뀔 때 보고와 library를 복사하므로 library를 먼저 두고 report.md를 마지막에 쓴다(symlink는 복사되지 않는다). 세션 안의 `aaa`는 보기만 된다(§8.25). 참고는 보고를 같은 머신에서 읽어 이 줄이 필요 없다.
+  - 사후 평가자 규칙(§8.13)의 report.md 첫 줄 `[진행 중]`도 뺐다.
+- **진행 보고(A8, `progress.rs` `guidance`).** 안내 전문을 옮겼다: 5 단위 백분율, `--unknown`, 두~네 단어 활동, 사용자에게 묻기 전 `Waiting for you`(host가 이 말로 사람 차례를 안다, §8.38), 고비마다·1분에 한 번쯤, 지어내지 않기, 100은 결과와 확인이 다 끝났을 때(`Done`으로 보인다), 맨 위 agent만, 배경으로 돌리지 않기. 명령은 그 머신 aaa 실행 파일의 절대 경로다.
+  - `aaa report`를 참고 `report`와 같게 했다: `--percent`(0~100)나 `--unknown` 중 하나, `--activity`는 필수, `--percent 100`이면 활동은 `Done`.
+- **첫 줄 태그 해석 제거(C3).** 보고 첫 줄 `[사용자 작업 필요]`·`[결정 필요]`로 사람 차례를 정하던 규칙(§8.14·§8.38)과 `report_state`(기록·ThreadView·CLI·웹 칩·알림 본문·`report_ready` 사건 글)를 없앴다. 새 보고는 harness가 일하지 않으면 「검토 대기」다. 사람 차례는 참고처럼 `Waiting for you` 진행 보고·확인창·시작 실패·닫힌 pane으로만 정한다. `## Next` 읽기는 참고 `next_lines`를 그대로 옮겼다. `PR:` 줄 읽기와 추적은 D11 절에서 한다.
+- **시험.** host 유닛 `brief_follows_herdr_projects_order`(차례·머리·경로·memory 상한·다시 시작 안내·원격 uploads 주석), proto `next_lines`(참고 시험 그대로), `fill_brief`, cli `report` 인자. m13·웹 E2E의 가짜 보고는 새 형식(태그 없음)이고, 「갱신된 보고」 시험은 태그 대신 `## Next` 변화로 사본을 확인한다. 「사람 차례」 시험은 `Waiting for you` 진행 보고로 본다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

@@ -26,11 +26,11 @@ while IFS= read -r line; do
       path=$(printf '%s' "$line" | sed 's/를 읽고.*//')
       dir=$(dirname "$path")
       echo "brief 받음: $path"
-      task=$(sed -n '/^# 할 일/,$p' "$path" | tail -n +3)
+      task=$(awk '/^# 할 일/{f=1;next} /^# 경로/{f=0} f' "$path" | sed '/^$/d')
       echo "결과물" > "$dir/library/out.txt"
       mkdir -p "$dir/library/sub" && echo deep > "$dir/library/sub/d.txt"
       ln -s /etc/hosts "$dir/library/link"
-      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
+      printf '## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       case "$task" in
         *commit*) echo change > change.txt && git add change.txt && git -c user.name=t -c user.email=t@example.com commit -qm change ;;
@@ -54,7 +54,7 @@ while IFS= read -r line; do
       printf '{"targets":["t-0002"],"batches":["%s"],"summary":"묶음 %s를 봤다","stages":[{"thread":"t-0002","stage":"전체","minutes":1.4}],"proposals":[{"id":"p1","text":"brief 확인을 자동으로"},{"id":"p2","text":"보고 형식 검사"}]}' "$name" "$name" > "$dir/library/evaluations/e-$name.json"
       [ -f "$dir/library/evaluations/bad.json" ] || printf '{"proposals":[]}' > "$dir/library/evaluations/bad.json"
       echo "$name" >> "$dir/processed.txt"
-      printf '[진행 중]\n\n## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
+      printf '## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       echo "evaluated $name"
       ;;
@@ -110,7 +110,7 @@ while IFS= read -r line; do
       dir=$(dirname "$path")
       "$AA" report --percent 40 --activity '권한 확인 중'
       perm
-      printf '[완료]\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
+      printf '## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md"
       ;;
     *ask*) perm ;;
     *slow*)
@@ -383,12 +383,16 @@ fn worktree_thread_round_trip() {
     assert_eq!(cwd, w.lab.root.join("workA").join("repo").join("demo-t-0001"));
     assert!(cwd.join(".aaa/demo-t-0001/brief.md").is_file());
     let brief = std::fs::read_to_string(cwd.join(".aaa/demo-t-0001/brief.md")).unwrap();
-    assert!(brief.contains("X-42") && brief.contains("# thread 규칙") && brief.contains("# 프로젝트 지침"), "{brief}");
+    assert!(brief.contains("X-42") && brief.contains("# thread brief") && brief.contains("# 프로젝트 지침"), "{brief}");
+    // 작업 폴더·aaa 실행 파일 자리는 agent가 그 머신 값으로 채웠다(plan §8.76)
+    let work = cwd.join(".aaa/demo-t-0001");
+    assert!(brief.contains(&format!("- 보고: `{}/report.md`", work.display())), "{brief}");
+    assert!(brief.contains(&format!("`{} report --percent 25", lab::BIN)), "{brief}");
+    assert!(!brief.contains("{{aaa:") && !brief.contains("[진행 중]"), "{brief}");
     assert!(w.projects.join("demo/threads/t-0001.task.md").is_file());
 
     let v = w.wait_show("보고 사본", "t-0001", |v| v["report_hash"].is_string());
     assert_eq!(v["brief"], "delivered", "{v}");
-    assert_eq!(v["report_state"], "완료");
     assert_eq!(v["next"], serde_json::json!(["결과 확인", "다음 단계"]));
     assert_eq!(v["group"], "ready_for_review");
     // symlink는 복사하지 않아 사본은 partial이다
@@ -498,13 +502,12 @@ fn remote_dir_thread_survives_host_restart() {
     w.lab.kill("host");
     // host가 없는 동안 agent 머신에서 보고가 바뀐다
     let work_dir = PathBuf::from(v["work_dir"].as_str().unwrap());
-    std::fs::write(work_dir.join("report.md"), "[사용자 작업 필요]\n\n## Report\n갱신\n\n## Next\n- 사용자 확인\n")
-        .unwrap();
+    std::fs::write(work_dir.join("report.md"), "## Report\n갱신\n\n## Next\n- 사용자 확인\n").unwrap();
     w.lab.spawn("host2", &w.h, &["host"]);
     wait_for("labB 재연결", Duration::from_secs(60), || connected(&w.h, "labB").then_some(()));
-    let v = w.wait_show("갱신된 보고", &id, |v| v["report_state"] == "사용자 작업 필요");
-    assert_eq!(v["group"], "waiting_on_you");
-    assert_eq!(v["next"], serde_json::json!(["사용자 확인"]));
+    let v = w.wait_show("갱신된 보고", &id, |v| v["next"] == serde_json::json!(["사용자 확인"]));
+    // 보고 첫 줄 태그로 사람 차례를 정하지 않는다(D9): 새 보고는 검토 대기
+    assert_eq!(v["group"], "ready_for_review");
     assert_eq!(w.kinds(seen), ["report_ready"]);
     std::thread::sleep(Duration::from_secs(2));
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
@@ -772,7 +775,13 @@ fn decisions_and_restart() {
     let pane2 = v["pane"].as_str().unwrap().to_string();
     assert_ne!(pane2, pane);
     let brief = std::fs::read_to_string(&brief_path).unwrap();
-    assert!(brief.starts_with("> 이 thread는 다시 시작했다") && brief.contains("API는 v3로 바꾼다"), "{brief}");
+    // 다시 시작 안내는 thread 규칙 다음, 프로젝트 지침 앞이다(herdr-projects `compose_brief`)
+    let at = |n: &str| brief.find(n).unwrap_or_else(|| panic!("{n} 없음: {brief}"));
+    assert!(
+        at("# thread brief") < at("**이 일을 앞서 시도한 것이")
+            && at("**이 일을 앞서 시도한 것이") < at("# 프로젝트 지침")
+    );
+    assert!(brief.contains("API는 v3로 바꾼다"), "{brief}");
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered" && v["decisions_rev"] == 2);
     // hook이 없는 harness는 일하는지 알 수 없다: 안내를 보낸 뒤에는 「쉼」이다(herdr-projects `group()` 7번 줄)
     assert_eq!(v["group"], "idle");
@@ -1573,7 +1582,7 @@ fn evaluator_flow() {
     assert!(e.contains("이미 사후 평가자가 있다"), "{e}");
     let wd = PathBuf::from(w.show(&eid)["work_dir"].as_str().unwrap());
     let brief = std::fs::read_to_string(wd.join("brief.md")).unwrap();
-    assert!(brief.contains("# 사후 평가자 규칙") && !brief.contains("# thread 규칙"), "{brief}");
+    assert!(brief.contains("# 사후 평가자 규칙") && !brief.contains("# thread brief"), "{brief}");
     assert!(brief.contains("착지 흐름을 본다"), "{brief}");
     w.wait_show("평가자 brief", &eid, |v| v["brief"] == "delivered");
 

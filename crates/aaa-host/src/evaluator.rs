@@ -58,7 +58,7 @@ pub(crate) const EVALUATOR_GUIDE: &str = "\
     \"tool_issues\":[\"…\"],\"defects\":[{\"what\":\"…\",\"found_by\":\"CI\",\"stage\":\"착지 뒤\"}],
     \"proposals\":[{\"id\":\"p1\",\"text\":\"무엇을 바꾸나\",\"effect\":\"예상 효과\",\"tool\":\"대상 도구\"}]}`
   - `summary`는 꼭 쓴다. 개선안 `id`는 기록 안에서 겹치지 않게 한다. 같은 이름의 `.md`에 사람이 읽는 본문을 둘 수 있다.
-- 기록을 쓴 뒤 `{work}/report.md`를 다시 쓴다(첫 줄 `[진행 중]`, 낸 평가 목록). host는 report.md가 바뀔 때 기록을 가져간다.
+- 기록을 쓴 뒤 `{work}/report.md`를 다시 쓴다(`## Report`에 낸 평가 목록, `## Next`). host는 report.md가 바뀔 때 기록을 가져간다.
 - 할 말이 없는 묶음이면 기록을 쓰지 않고 processed.txt에만 적는다.
 
 ## 하지 않는 것

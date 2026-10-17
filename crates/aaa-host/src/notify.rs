@@ -241,7 +241,7 @@ mod tests {
             item_kind: "report".into(),
             subject: subject.into(),
             event: event.into(),
-            summary: "[완료] 사본 complete".into(),
+            summary: "사본 complete".into(),
             body: String::new(),
             done: false,
             seen: false,
@@ -278,10 +278,7 @@ mod tests {
         let items = [item("t-0001", "report ready"), item("t-0002", "question")];
         let t = notify_body("telegram", "-100", "demo", &items);
         assert_eq!(t["chat_id"], "-100");
-        assert_eq!(
-            t["text"],
-            "[aaa] demo\n- t-0001 report ready: [완료] 사본 complete\n- t-0002 question: [완료] 사본 complete"
-        );
+        assert_eq!(t["text"], "[aaa] demo\n- t-0001 report ready: 사본 complete\n- t-0002 question: 사본 complete");
         let j = notify_body("json", "", "demo", &items);
         assert_eq!((j["project"].as_str(), j["items"][1]["event"].as_str()), (Some("demo"), Some("question")));
         let many: Vec<_> = (0..100).map(|n| item(&format!("t-{n:04}"), "report ready")).collect();

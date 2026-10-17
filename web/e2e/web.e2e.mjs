@@ -623,7 +623,7 @@ while IFS= read -r line; do
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"
-      printf '[완료]\\n\\n## Report\\n- 웹 보기 **확인**: \\140index.html\\140\\n\\n## Next\\n- 결과 확인\\n' > "$dir/report.md"
+      printf '## Report\\n- 웹 보기 **확인**: \\140index.html\\140\\n\\n## Next\\n- 결과 확인\\n' > "$dir/report.md"
       echo done ;;
   esac
   printf 'fake> '

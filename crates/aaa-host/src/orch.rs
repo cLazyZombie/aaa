@@ -1,7 +1,7 @@
 //! 오케스트레이션(M1-3a, §8): 프로젝트 폴더, thread 시작·brief 전달·보고 회수·ack·resolve, 흐름 사건.
 //!
 //! - host는 git을 실행하지 않는다. worktree·작업 폴더는 그 머신의 agent가 만들고(`ThreadPrepare`), host는 기록과 사본만 갖는다.
-//! - brief 안내는 화면이 3초 멈춘 뒤 한 번 보낸다. 전달을 확인하지 못하면 `unknown`으로 남기고 **자동으로 다시 보내지 않는다**(§8.5 a).
+//! - brief.md 글은 brief_text.rs, 안내 줄 보내기(준비 판정·화면 확인 뒤 최대 3번)는 brief.rs가 맡는다.
 //! - report.md hash가 바뀌면 agent에서 본문과 library를 받아 `threads/<id>.md`·`library/<id>/`에 원자적으로 둔다.
 //! - 흐름 사건은 프로젝트별 순번으로 DB에 쌓고, 연결된 front에 알린다. 구독자는 cursor부터 다시 읽는다.
 
@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use aaa_proto::{
     AgentActivity, AgentRequest, AgentResponse, AgentStatus, BriefState, DecisionView, ErrorBody, ErrorCode, FlowEvent,
-    FrontResponse, Launch, ProjectView, Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView,
-    parse_decisions, parse_report, render_decision, valid_project, valid_thread, waits_on_user,
+    FrontResponse, Launch, ProjectView, Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, next_lines,
+    parse_decisions, render_decision, valid_project, valid_thread,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -52,8 +52,6 @@ pub(crate) struct ThreadRec {
     pub report_hash: Option<String>,
     #[serde(default)]
     pub acked_hash: Option<String>,
-    #[serde(default)]
-    pub report_state: Option<String>,
     #[serde(default)]
     pub next: Vec<String>,
     #[serde(default)]
@@ -145,8 +143,8 @@ pub(crate) const WAITING: &str = "Waiting for you";
 
 /// thread 묶음. 위에서부터 처음 맞는 줄이 이긴다. herdr-projects `thread::group()`(src/thread.rs)을 옮겼다.
 /// prompt_pending은 brief `Pending`, brief_stuck은 `Unknown`(aaa는 다시 보내지 않는다), harness 상태는 pane agent 활동,
-/// blocked는 `Question`이다. 다른 점: PR(Landing)은 없고(aaa는 merge 대기열), 보고 사본 실패와 보고의
-/// `[사용자 작업 필요]`·`[결정 필요]` 태그는 사람 차례로 둔다(aaa는 보고를 host로 복사하고 태그로 사람 일을 알린다, D9).
+/// blocked는 `Question`이다. 다른 점: PR(Landing)은 없고(aaa는 merge 대기열), 보고 사본 실패는 사람 차례로 둔다
+/// (aaa는 보고를 host로 복사한다). 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.76).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
     use AgentActivity as A;
     let state = agent.map(|a| a.activity);
@@ -191,11 +189,7 @@ pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&Agen
     // 5: 새 보고. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는 결과가 아니다).
     let new_report = has_report && r.report_hash != r.acked_hash;
     if new_report && !prompt_pending && state != Some(A::Working) {
-        return if waits_on_user(r.report_state.as_deref()) {
-            ThreadGroup::WaitingOnYou
-        } else {
-            ThreadGroup::ReadyForReview
-        };
+        return ThreadGroup::ReadyForReview;
     }
     // 6: harness나 진행 보고로 작업 중
     if matches!(state, Some(A::Working | A::Question)) || prompt_pending || self_working {
@@ -213,27 +207,6 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
 }
-
-/// 다시 시작한 thread의 brief 맨 앞
-const RESTART_NOTE: &str = "\
-> 이 thread는 다시 시작했다. 같은 작업 폴더(와 branch)에 이전 시도가 있다.
-> 먼저 지금 상태(파일·커밋·report.md)를 확인하고 이어서 한다.
-
-";
-
-/// thread 규칙(brief 앞부분). 보고 형식은 운영 coordinator가 읽는 형식이다.
-const THREAD_GUIDE: &str = "\
-# thread 규칙
-
-- 이 파일은 aaa host가 만든 작업 지시다. 아래 「할 일」을 하고 결과를 보고한다.
-- 보고는 `{report}`에 **매번 통째로 다시 쓴다**. coordinator는 이 파일만 읽는다(채팅으로 보고하지 않는다).
-  - 첫 줄은 상태 하나다: `[진행 중]`, `[사용자 작업 필요]`, `[결정 필요]`, `[완료]`
-  - `## Report`(무엇을 했고 어떻게 확인했나), `## Next`(필수, 한 줄에 행동 하나), 선택 `## Remember`
-- 결과물(스크린샷·로그·보고서)은 `{library}`에 둔다. symlink는 복사되지 않는다.
-- host는 report.md가 바뀔 때 library를 함께 복사한다. 결과물을 먼저 두고 report.md를 마지막에 쓴다.
-- 작업 폴더 밖의 다른 작업 파일·프로세스는 건드리지 않는다.
-- 이 세션 안의 `aaa` CLI는 보기만 된다(다른 thread·pane에 지시하지 않는다). 진행률은 `aaa report --percent N --activity …`로 알린다.
-";
 
 impl Host {
     pub(crate) fn projects_root(&self) -> PathBuf {
@@ -371,7 +344,6 @@ impl Host {
             branch: r.branch.clone(),
             report_hash: r.report_hash.clone(),
             acked_hash: r.acked_hash.clone(),
-            report_state: r.report_state.clone(),
             next: r.next.clone(),
             agent: agent.map(Box::new),
             decisions_rev: r.decisions_rev,
@@ -478,32 +450,14 @@ impl Host {
         self.cfg.projects.allow_profiles.iter().any(|a| a == "*" || a == name)
     }
 
-    /// brief.md: thread 규칙 + 프로젝트 지침 + 결정 기록 + memory(상한) + 할 일
-    fn brief(&self, dir: &Path, r: &ThreadRec, task: &str) -> String {
+    /// brief.md(herdr-projects `brief_for`): 프로젝트 설정·지침·memory·결정 기록을 읽어 `compose_brief`로 짓는다.
+    /// memory 파일은 `memory/*.md`(이름순, symlink·숨은 파일 제외)다.
+    fn brief(&self, dir: &Path, r: &ThreadRec, task: &str, restart: bool) -> String {
+        use crate::brief_text::{BriefInput, THREAD_GUIDE, compose_brief};
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
-        let work = format!(".aaa/{}-{}", r.project, r.id);
-        let mut out = format!(
-            "# 프로젝트\n\n- 프로젝트: {}\n- thread: {} — {}\n- 보고: `{work}/report.md`\n- 결과물: `{work}/library/`\n\n",
-            r.project, r.id, r.title
-        );
-        if r.role == Role::Evaluator {
-            out.push_str(&crate::evaluator::EVALUATOR_GUIDE.replace("{work}", &work));
-        } else {
-            out.push_str(
-                &THREAD_GUIDE
-                    .replace("{report}", &format!("{work}/report.md"))
-                    .replace("{library}", &format!("{work}/library/")),
-            );
-        }
-        out.push_str("\n# 프로젝트 지침\n\n");
-        out.push_str(read("PROJECT.md").trim());
-        out.push_str("\n\n# 결정 기록\n\n");
-        out.push_str(read("decisions.md").trim());
-        // memory: MEMORY.md 다음 memory/*.md(이름순, symlink 제외). 상한을 넘는 파일은 이름만 적는다.
-        out.push_str("\n\n# 프로젝트 memory\n\n");
-        let cap = self.cfg.projects.brief_memory_chars;
-        let mut used = 0usize;
-        let mut files = vec![dir.join("MEMORY.md")];
+        let settings = crate::project::ProjectSettings::load(dir);
+        let instructions = read("PROJECT.md");
+        let title = instructions.lines().find_map(|l| l.strip_prefix("# ")).unwrap_or_default().trim().to_string();
         let mut mem: Vec<PathBuf> = std::fs::read_dir(dir.join("memory"))
             .into_iter()
             .flatten()
@@ -511,24 +465,37 @@ impl Host {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
             .collect();
         mem.sort();
-        files.extend(mem);
-        for f in files {
-            let Ok(text) = std::fs::read_to_string(&f) else { continue };
-            let n = text.chars().count();
-            let rel = f.strip_prefix(dir).unwrap_or(&f).to_string_lossy().to_string();
-            if used + n > cap {
-                out.push_str(&format!("- `{rel}`: 상한({cap}자)을 넘어 넣지 않았다. 필요하면 직접 읽는다.\n"));
-            } else {
-                used += n;
-                out.push_str(&format!("## {rel}\n\n{}\n\n", text.trim()));
-            }
-        }
-        out.push_str("\n# 할 일\n\n");
-        out.push_str(task.trim());
-        out.push('\n');
-        out
+        let memory_files: Vec<(String, String)> = mem
+            .iter()
+            .filter_map(|f| {
+                let text = std::fs::read_to_string(f).ok()?;
+                Some((f.file_name()?.to_string_lossy().to_string(), text))
+            })
+            .collect();
+        let guide = if r.role == Role::Evaluator {
+            crate::evaluator::EVALUATOR_GUIDE.replace("{work}", aaa_proto::BRIEF_WORK_DIR)
+        } else {
+            THREAD_GUIDE.to_string()
+        };
+        compose_brief(&BriefInput {
+            title: &title,
+            project: &r.project,
+            goal: &settings.goal,
+            repos: &settings.repos,
+            uploads_path: &dir.join("uploads").to_string_lossy(),
+            remote: !self.machine_is_local(&r.machine_id),
+            guide: &guide,
+            instructions: &instructions,
+            memory_index: &read("MEMORY.md"),
+            memory_files: &memory_files,
+            memory_cap: self.cfg.projects.brief_memory_chars,
+            decisions: &read("decisions.md"),
+            task,
+            restart,
+        })
     }
 
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
@@ -619,7 +586,6 @@ impl Host {
             launch: None,
             report_hash: None,
             acked_hash: None,
-            report_state: None,
             next: vec![],
             copy: None,
             error: None,
@@ -641,7 +607,7 @@ impl Host {
         rec.id = id.clone();
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()).map_err(internal)?;
-        let brief = self.brief(&dir, &rec, &a.task);
+        let brief = self.brief(&dir, &rec, &a.task, false);
         rec.decisions_rev = decisions_rev(&dir);
         self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
 
@@ -781,8 +747,7 @@ impl Host {
         } else {
             let dir = self.project_dir(project)?;
             let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
-            let mut brief = self.brief(&dir, &rec, &task);
-            brief.insert_str(0, RESTART_NOTE);
+            let brief = self.brief(&dir, &rec, &task, true);
             let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
             let relaunched = match conn.request(AgentRequest::ThreadRebrief { work_dir, brief, launch }).await? {
                 AgentResponse::Relaunch(l) => l,
@@ -903,14 +868,13 @@ impl Host {
             Ok(Some((hash, skipped, copy, report))) => {
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
-                let (state, next) = parse_report(&text);
+                let next = next_lines(&text);
                 let rec = self.update_rec(project, id, |r| {
                     r.report_hash = Some(hash);
-                    r.report_state = state.clone();
                     r.next = next;
                     r.copy = Some(copy.clone());
                 })?;
-                let mut detail = format!("[{}] 사본 {copy}", state.as_deref().unwrap_or("상태 없음"));
+                let mut detail = format!("사본 {copy}");
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
                 }
@@ -932,15 +896,11 @@ impl Host {
         let mut rec = self.load(project, id)?;
         let Some(h) = rec.report_hash.clone() else { return Err(bad("아직 보고가 없다")) };
         if rec.acked_hash.as_ref() != Some(&h) {
+            let short = h.chars().take(12).collect::<String>();
             rec.acked_hash = Some(h);
             self.save(&mut rec);
             self.db.audit(actor, "thread_ack", &format!("{project}/{id}"));
-            self.flow(
-                &rec,
-                "review_acked",
-                Some(format!("threads/{id}.md")),
-                rec.report_state.clone().unwrap_or_default(),
-            );
+            self.flow(&rec, "review_acked", Some(format!("threads/{id}.md")), format!("보고 {short}"));
         }
         Ok(self.thread_view(&rec))
     }
@@ -1068,7 +1028,6 @@ mod tests {
             launch: None,
             report_hash: None,
             acked_hash: None,
-            report_state: None,
             next: Vec::new(),
             copy: None,
             error: None,
@@ -1158,14 +1117,6 @@ mod tests {
         // brief를 아직 못 보냈으면 보고가 있어도 작업 중
         let pending = ThreadRec { brief: BriefState::Pending, ..t };
         assert_eq!(g(&pending, Some(agent(Idle, 0))), ThreadGroup::Working);
-    }
-
-    #[test]
-    fn report_tags_that_need_the_user_wait_on_you() {
-        let t = ThreadRec { report_state: Some("결정 필요".into()), ..with_report(open_thread()) };
-        assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::WaitingOnYou);
-        // 일하는 중에 쓴 보고는 아직 결과가 아니다
-        assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Working);
     }
 
     #[test]

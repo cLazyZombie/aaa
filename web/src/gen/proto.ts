@@ -284,10 +284,6 @@ export type ThreadView = { project: string, id: string, title: string, machine: 
  */
 thread_kind: ThreadKind, status: ThreadStatus, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null, report_hash: string | null, acked_hash: string | null, 
 /**
- * report.md 첫 줄 상태 태그(예: `진행 중`, `완료`)
- */
-report_state: string | null, 
-/**
  * report.md `## Next` 줄
  */
 next: Array<string>, 

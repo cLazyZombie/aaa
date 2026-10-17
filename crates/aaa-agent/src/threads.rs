@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use aaa_config::Profile;
 use aaa_proto::{
-    Cleanup, Launch, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadKind, ThreadPrepare, ThreadReady, slug,
-    valid_project, valid_thread,
+    Cleanup, Launch, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadKind, ThreadPrepare, ThreadReady, fill_brief,
+    slug, valid_project, valid_thread,
 };
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -40,10 +40,11 @@ pub fn profile_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
         .collect()
 }
 
-/// 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 만든다(claude는 새 session ID)
-pub fn rebrief(work_dir: &str, brief: &str, mut launch: Launch) -> Result<Launch> {
+/// 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 만든다(claude는 새 session ID).
+/// brief의 작업 폴더·aaa 실행 파일 자리는 이 머신 값으로 채운다(`fill_brief`).
+pub fn rebrief(work_dir: &str, brief: &str, mut launch: Launch, exe: &Path) -> Result<Launch> {
     let dir = check_work_dir(work_dir)?;
-    std::fs::write(dir.join("brief.md"), brief)?;
+    std::fs::write(dir.join("brief.md"), fill_brief(brief, &dir.to_string_lossy(), &exe.to_string_lossy()))?;
     if let Some(i) = launch.argv.iter().position(|a| a == "--session-id")
         && i + 1 < launch.argv.len()
     {
@@ -203,7 +204,10 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     };
     let work_dir = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
     std::fs::create_dir_all(work_dir.join("library"))?;
-    std::fs::write(work_dir.join("brief.md"), &p.brief)?;
+    std::fs::write(
+        work_dir.join("brief.md"),
+        fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
+    )?;
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
@@ -463,8 +467,13 @@ mod tests {
         let wd = root.join(".aaa").join("p-t-0001");
         std::fs::create_dir_all(&wd).unwrap();
         let old = resolve("c", &profile("claude")).unwrap();
-        let new = rebrief(wd.to_str().unwrap(), "새 brief", old.clone()).unwrap();
-        assert_eq!(std::fs::read_to_string(wd.join("brief.md")).unwrap(), "새 brief");
+        let brief = format!("새 brief `{}/report.md` `{} report`", aaa_proto::BRIEF_WORK_DIR, aaa_proto::BRIEF_EXE);
+        let new = rebrief(wd.to_str().unwrap(), &brief, old.clone(), Path::new("/opt/aaa")).unwrap();
+        // 작업 폴더·실행 파일 자리는 이 머신 값으로 채운다
+        assert_eq!(
+            std::fs::read_to_string(wd.join("brief.md")).unwrap(),
+            format!("새 brief `{}/report.md` `/opt/aaa report`", wd.display())
+        );
         assert_ne!(new.session_key, old.session_key);
         let i = new.argv.iter().position(|a| a == "--session-id").unwrap();
         assert_eq!(Some(&new.argv[i + 1]), new.session_key.as_ref());
