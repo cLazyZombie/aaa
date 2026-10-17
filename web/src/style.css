@@ -651,7 +651,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .usage-popover-head .is-spinning { animation: none; }
 }
 
-/* 설정 창은 herdr/modal.css·SettingsControls.css·SettingsDialog.css(참고 그대로, plan §8.81) */
+/* 설정 창은 herdr/modal.css·SettingsControls.css·SettingsDialog.css(참고 그대로, plan §8.82) */
 /* 핀치 중 글자 크기(가운데 잠깐) */
 .pinch-badge { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); z-index: 30; padding: var(--space-2) var(--space-3); border-radius: var(--r-md); background: var(--bg-elevated); color: var(--text); border: 1px solid var(--border-strong); font-family: var(--font-term); font-size: 14px; pointer-events: none; }
 .pinch-badge[hidden] { display: none; }

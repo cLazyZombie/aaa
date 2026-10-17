@@ -1960,6 +1960,16 @@ pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, 
   - 유닛 `pairing_tests`(시각은 넣어 준 `Instant`): 1회용·역할, 새 코드가 앞 코드를 버림, 10분 만료(1초 전은 됨), 5번 틀리면 잠그고 풀려도 그 코드는 버림, 웹은 controller 코드만·보기 기기는 만들기·이름·폐기 403, 이름 48자, 폐기하면 broadcast·`is_revoked`·token 무효·push 구독 삭제·목록에서 빠짐.
   - 웹 E2E 「기기·pairing」: `web_status` 답만 바꿔(`mac-a.example.ts.net`) 시험 host의 실제 Tailscale에 기대지 않는다. 코드·QR·링크·남은 시간, 새 코드가 앞 코드를 버림(401), 휴대폰이 `/?pair=`로 열면 바로 들어가고 주소에서 지움, 데스크톱이 「페어링됨: iPhone · Safari.」, 이름 바꾸기(CLI 목록과 같음), 폐기하면 터미널을 연 휴대폰이 바로 pairing 화면(`/api/v1/me` 401), 틀린 코드의 말, 휴대폰·iPad에서 넘치지 않음, 보기 기기는 목록만·코드 403, 웹은 보기 코드 403, 로그아웃 확인 창(취소 focus) → pairing 화면·기록은 남음. 기다림은 DOM 상태(`waitFor`)로 끝낸다.
 
+### 8.82 설정 창을 쪽으로 나눈다(herdr-web-ui SettingsDialog대로, 10-18, 차이 목록 2장 T1)
+
+- **참고(herdr-web-ui aa624cb).** `src/components/SettingsDialog.tsx`(`PAGES` 198~210줄, `OpenSettingsDialog` 954~1110줄: `settings-nav` 목록·쪽·키 바 편집·Esc·화살표), `src/components/SettingsDialog.css`·`SettingsControls.tsx`·`SettingsControls.css`(그대로 옮김), `src/lib/settingsHistory.ts`(쪽마다 history 한 칸), `src/App.tsx` 398~405줄(마지막 칸에서 뒤로면 닫힘).
+- **배치.** 641px부터는 왼쪽 목록(모양·터미널·알림·구독 사용량·폰 및 기기) 옆에 쪽, 머리줄(쪽 제목·닫기)은 쪽 위다. 640px까지(휴대폰)는 목록으로 열고, 고르면 쪽만 보이며 ←(「설정으로 돌아가기」)와 시스템 뒤로가 목록으로 온다. 휴대폰 창은 높이가 고정된 아래 sheet라 쪽을 넘겨도 가장자리가 움직이지 않는다.
+- **키보드·focus.** 목록은 Tab 한 번에 하나(roving tabindex), ↑↓·Home·End가 목록을 걷고 넓은 창이면 쪽도 넘긴다. 열면 고른 줄에, 휴대폰은 쪽에 들어가면 ←에, 나오면 그 줄에 focus. 키 바 편집에서 돌아오면 보던 자리와 「키 바 편집」 단추로. Esc는 키 바 편집이면 거기서 나오고 아니면 어느 쪽에서든 창을 닫는다(참고 1052~1061줄). 닫으면 톱니로 focus가 돌아간다(useFocusTrap).
+- **history.** 넓은 창은 열면 한 칸(쪽을 바꾸면 그 칸을 바꿈), 휴대폰은 목록 한 칸 + 쪽 한 칸 + 키 바 편집 한 칸. ←·X·Esc도 쌓은 칸을 지운다.
+- **조작 모양.** 줄·스위치·여럿 중 하나·한 칸씩(Stepper)은 참고 SettingsControls 그대로, 단추·입력은 참고 class(`btn`·`icon-button`·`input`·`select`)와 lucide 아이콘. aaa가 따로 쓰던 설정 창 CSS(style.css)는 지웠다.
+- **다르게 둔 것.** 참고의 채팅·음성 입력·단축키·원격 PC·에이전트 연동·정보 쪽은 그 기능이 aaa에 없어 뺐다. 「구독 사용량」·「폰 및 기기」 쪽은 aaa 것이다(§8.81, §8.45·§8.49). 참고의 주소(`?settings=`)로 쪽 열기는 aaa에 그런 링크가 없어 두지 않았다.
+- **시험.** 웹 E2E 「설정 쪽」: 넓은 창 목록·머리·쪽 자리, 고른 줄에만 바탕(transition이 끝난 뒤), 화살표·Home·End, Esc 뒤 focus가 톱니, 넓은 창 뒤로가 닫음; 휴대폰 목록만 → 쪽만·제목·←에 focus → 키 바 편집 → 뒤로 세 번(키 바 편집 단추·「터미널」 줄 focus·닫힘), ←·Esc, X 뒤 설정 칸 없음, sheet가 다 올라온 뒤 화면 안; iPad(WebKit 820×1180) 넓은 배치·넘침 없음. 다른 단계는 `openSettings(page, 쪽)`으로 그 쪽을 연다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

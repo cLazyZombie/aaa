@@ -1,5 +1,5 @@
 // herdr-web-ui(MIT, aa624cb) src/components/KeyBarSettings.tsx를 옮긴 것. 바꾼 곳: useSettings 대신 aaa settings.ts(useKeyBarItems·setKeyBarItems),
-// i18n 대신 참고 i18n.ko.ts 문구(KO). 아이콘(lucide)·단추 class(icon-button·input·btn)는 참고 그대로다(plan §8.81). 고지는 web/src/herdr/README.md.
+// i18n 대신 참고 i18n.ko.ts 문구(KO). 아이콘(lucide)·단추 class(icon-button·input·btn)는 참고 그대로다(plan §8.82). 고지는 web/src/herdr/README.md.
 import { useEffect, useState } from "react";
 
 import "./KeyBarSettings.css";

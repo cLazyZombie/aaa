@@ -1,4 +1,4 @@
-// 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui aa624cb MachineSidebar 바닥 줄 → SettingsDialog, plan §8.81).
+// 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui aa624cb MachineSidebar 바닥 줄 → SettingsDialog, plan §8.82).
 // 참고 OpenSettingsDialog(954~1110줄)대로 쪽 목록과 쪽이다: 641px부터는 왼쪽 목록 옆에 쪽, 휴대폰은 목록 → 쪽(← 로 돌아감).
 // 쪽마다 history 한 칸(herdr/settingsHistory.ts): 시스템 「뒤로」가 한 칸씩 나온다. Tab은 창 안에 머물고(useFocusTrap) 닫으면 연 곳으로
 // focus가 돌아간다. 휴대폰은 아래로 밀어 닫는다(useSheetSwipe). 묶음·줄·스위치·여럿 중 하나·한 칸씩은 참고 SettingsControls 그대로다.
