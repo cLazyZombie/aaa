@@ -1726,19 +1726,21 @@ fn notify_webhook() {
                 .to_string()
         })
         .collect();
-    // 두 보고가 debounce 안에 오면 한 통이다
+    // 두 보고가 debounce 안에 오면 한 통이다. 항목은 만든 차례(id 끝 번호)다. 두 thread가 보고하는 차례는 시작 차례와
+    // 다를 수 있다(부하가 크면 뒤에 띄운 thread가 brief를 먼저 받는다)
     let (line, body) = rx.recv_timeout(T).expect("알림");
     assert_eq!(line, "POST /hook HTTP/1.1");
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["project"], "demo");
-    let got: Vec<_> = v["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
-        .collect();
-    assert_eq!(got, [(ids[0].as_str(), "new report"), (ids[1].as_str(), "new report")], "{body}");
-    assert!(v["text"].as_str().unwrap().starts_with("[aaa] demo\n- t-0001 new report"), "{body}");
+    let items = v["items"].as_array().unwrap();
+    let got: Vec<_> = items.iter().map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap())).collect();
+    let mut sorted = got.clone();
+    sorted.sort();
+    assert_eq!(sorted, [(ids[0].as_str(), "new report"), (ids[1].as_str(), "new report")], "{body}");
+    let made: Vec<u64> =
+        items.iter().map(|i| i["id"].as_str().unwrap().rsplit('-').next().unwrap().parse().unwrap()).collect();
+    assert!(made[0] < made[1], "{body}");
+    assert!(v["text"].as_str().unwrap().starts_with(&format!("[aaa] demo\n- {} new report", got[0].0)), "{body}");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
     // 보고 없이 쉬던 thread의 세션이 끝나면 사람 차례(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
     // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
