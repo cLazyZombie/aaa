@@ -211,7 +211,7 @@ export function useKeepScreenOn(): boolean {
  * - 켜짐(기본 켬): 이 기기의 알림 전체. 끄면 push 구독도 지운다.
  * - 앱 안(기본 켬): 앱을 보는 동안 위에서 내려오는 알림(Droplet).
  * - 소리(기본 끔): 앱 탭이 열려 있으면 알림마다 소리.
- * - 무음 모드에서도(기본 끔, aaa): iPhone·iPad 무음 스위치를 켜 두어도 소리. 그 소리 동안 다른 앱 소리가 멈춘다(plan §8.72).
+ * - 무음 모드에서도(기본 끔, aaa): iPhone·iPad 무음 스위치를 켜 두어도 소리. 그 소리 동안 다른 앱 소리가 멈춘다(plan §8.75).
  * 기본값이면 지운다. 값은 "1"·"0".
  */
 export type AlertSetting = "alertsOn" | "alertInApp" | "alertSound" | "alertSilent";

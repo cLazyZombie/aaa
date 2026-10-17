@@ -212,6 +212,14 @@ pub struct AgentStatus {
     #[ts(type = "number | null")]
     pub progress_at_ms: Option<u64>,
     pub harness_session: Option<String>,
+    /// 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
+    /// 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
+    #[serde(default = "seen_default")]
+    pub seen: bool,
+}
+
+fn seen_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

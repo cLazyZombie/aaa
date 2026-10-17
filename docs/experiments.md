@@ -15,7 +15,7 @@
 - 측정 프로세스의 PID·PPID·SID, `responsibility_get_pid_responsible_for_pid`와 proc_pidpath, TCC DeveloperTool preflight raw 값, `SecKeychainGetStatus`를 함께 기록했다. preflight는 비공개 API의 참고값일 뿐이고 빠른 시간만으로 면제 여부를 단정하지 않는다.
 - 키체인 상태 확인은 기본 키체인의 잠금 bit만 읽었다. 실제 agent 인증 항목의 ACL·키 접근 성공을 입증한 것은 아니다.
 - baseline은 현재 WezTerm 책임 계보다. disclaim은 `responsibility_spawnattrs_setdisclaim(&attr, bool)`을 `dlsym`으로 찾아 자식 spawn에 설정했다. 이 API는 책임을 **버리는** 플래그이며 임의의 기존 GUI PID를 새 책임자로 지정하는 API가 아니다. [LLVM의 실제 사용](https://github.com/llvm/llvm-project/blob/main/lldb/source/Host/macosx/objcxx/PosixSpawnResponsible.h)도 참고했다.
-- GUI 실험은 research 아래 `AAResearchHost.app`를 현재 소스로 빌드·adhoc 서명하고 LaunchServices의 `open -n -W`로 실행했다. UI 창이 없는 LSUIElement 앱이며 자기 자식 측정이 끝나면 모두 종료했다. 권한 등록·login item 등록은 하지 않았다.
+- GUI 실험은 research 아래 `AAResearchHost.app`을 현재 소스로 빌드·adhoc 서명하고 LaunchServices의 `open -n -W`로 실행했다. UI 창이 없는 LSUIElement 앱이며 자기 자식 측정이 끝나면 모두 종료했다. 권한 등록·login item 등록은 하지 않았다.
 - SSH 비교는 `mac-b → mac-c` 경로다. mac-c self-SSH는 host key verification 단계에서 실패했으므로 known_hosts를 바꾸지 않고, 이미 인증된 mac-b 경로를 사용했다. 실패한 호출은 성능 표본에 포함되지 않는다. SSH handshake 시간은 측정 대상이 아니다.
 
 원본: `research/experiments/spawn_probe.c`, `run_spawn_probe.py`, `run_ssh_probe.py`, `spawn-results.json`, `ssh-results.json`, `fixed-path-signatures.json`. 소스와 로그는 외부 참고 자료와 함께 git에서 제외했고 이 문서에 수치를 보존했다.

@@ -331,6 +331,13 @@ impl Host {
         serde_json::from_str(&json).map_err(internal)
     }
 
+    /// 그 pane의 thread 사건을 다시 낸다(그 thread의 agent 상태가 바뀌었다)
+    pub(crate) fn thread_changed(&self, pane: &str) {
+        if let Some(rec) = self.thread_of_pane(pane) {
+            let _ = self.thread_events.send(self.thread_view(&rec));
+        }
+    }
+
     pub(crate) fn save(&self, rec: &mut ThreadRec) {
         rec.updated_at_ms = aaa_common::util::now_ms();
         let json = serde_json::to_string(&rec).expect("thread 기록 직렬화");
@@ -1213,6 +1220,7 @@ mod tests {
             progress: None,
             progress_at_ms: None,
             harness_session: None,
+            seen: true,
         }
     }
 

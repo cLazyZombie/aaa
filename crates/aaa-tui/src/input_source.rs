@@ -1,17 +1,22 @@
-//! prefix 뒤 명령 키를 영문 입력기로 받는다(macOS Text Input Sources, `[tui] prefix_ascii`).
+//! prefix·탐색 모드 동안 명령 키를 영문 입력기로 받는다(`[tui] switch_ascii_input_source_in_prefix`, 기본 끔).
+//! herdr 0.9.5 `switch_to_ascii_input_source`(`src/platform/macos.rs`·`src/platform/windows.rs`)와 같은 일을 한다.
 //!
-//! 지금 입력기가 영문 자판 배치가 아니면(한글 두벌식 등 입력기) 영문 배치(ABC 등 사용자의 영문 입력기)를 고르고,
-//! [`Ascii`]가 사라질 때(명령 키 처리·취소·시간 초과·TUI 종료·panic) 원래 입력기로 되돌린다.
-//! 지속 설정이 아니라 지금 입력기만 바꾼다. ssh 세션에서는 바꾸지 않는다(그 Mac의 입력기가 아니다).
+//! - macOS: 지금 입력기가 영문 자판 배치가 아니면(한글 두벌식 등 입력기) 영문 배치(ABC 등 사용자의 영문 입력기)를 고른다.
+//! - Windows: 앞 창의 자판 언어가 한국어이고 IME가 한글 상태면 한/영 키(`VK_HANGUL`)를 눌러 영문으로 바꾼다
+//!   (다른 언어 IME는 바꾸는 키가 달라 건드리지 않는다).
+//! - [`Ascii`]가 사라질 때(모드 끝·TUI 종료·panic) 원래대로 되돌린다. 지속 설정이 아니라 지금 입력기만 바꾼다.
+//!   ssh 세션에서는 바꾸지 않는다(그 머신의 입력기가 아니다). 다른 OS에서는 아무것도 하지 않는다.
 
 /// 영문 입력기로 바꿔 둔 동안의 표. 없앨 때 원래 입력기로 되돌린다.
 pub struct Ascii {
     #[cfg(target_os = "macos")]
     prev: mac::Source,
+    #[cfg(windows)]
+    _restore: win::Restore,
 }
 
 impl Ascii {
-    /// 지금 입력기가 영문 자판 배치가 아니면 영문 배치로 바꾸고 되돌릴 표를 준다. 이미 영문이거나 바꿀 수 없으면 None.
+    /// 지금 입력기가 영문이 아니면 영문으로 바꾸고 되돌릴 표를 준다. 이미 영문이거나 바꿀 수 없으면 None.
     pub fn switch() -> Option<Ascii> {
         if remote_session() {
             return None;
@@ -19,13 +24,17 @@ impl Ascii {
         Self::switch_here()
     }
 
-    /// ssh 여부를 보지 않고 이 Mac의 입력기를 바꾼다
+    /// ssh 여부를 보지 않고 이 머신의 입력기를 바꾼다
     fn switch_here() -> Option<Ascii> {
         #[cfg(target_os = "macos")]
         {
             mac::switch().map(|prev| Ascii { prev })
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
+        {
+            win::switch().map(|r| Ascii { _restore: r })
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             None
         }
@@ -36,6 +45,7 @@ impl Drop for Ascii {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
         mac::select(&self.prev);
+        // Windows는 win::Restore가 사라질 때 되돌린다
     }
 }
 
@@ -206,6 +216,128 @@ mod mac {
             }
             CFRelease(list);
             found
+        }
+    }
+}
+
+/// herdr `src/platform/windows.rs`(prefix-mode ASCII input source support)를 옮긴 것.
+///
+/// IME는 터미널 에뮬레이터 프로세스에 있다. 다른 프로세스의 IME 상태는 `WM_IME_CONTROL`/`IMC_GETOPENSTATUS`로 읽을 수
+/// 있지만 쓰기(`IMC_SETOPENSTATUS`)는 실제 입력에 듣지 않는다. 그래서 바꾸기는 진짜 키처럼 `SendInput`으로 한/영 키를
+/// 누른다(kren-select와 같은 방식). 상태 읽기는 `SendMessageTimeoutW`(`SMTO_ABORTIFHUNG`, 200ms)로 해서 멈춘 터미널에
+/// 붙잡히지 않는다.
+#[cfg(windows)]
+mod win {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetKeyboardLayout, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_IME_CONTROL,
+    };
+
+    /// IME가 열렸나(한국어 IME는 열림 = 한글, 닫힘 = 영문)
+    const IMC_GETOPENSTATUS: usize = 0x0005;
+    /// 한국어 IME의 한/영 키
+    const VK_HANGUL: u16 = 0x15;
+    /// LANGID 주 언어(아래 10비트) 한국어
+    const LANG_KOREAN: u32 = 0x12;
+    const READ_TIMEOUT_MS: u32 = 200;
+
+    fn open_status(ime: HWND) -> Option<bool> {
+        let mut result: usize = 0;
+        // SAFETY: ime는 ImmGetDefaultIMEWnd가 준 null 아닌 창, result는 DWORD_PTR 결과 자리
+        let ok = unsafe {
+            SendMessageTimeoutW(
+                ime,
+                WM_IME_CONTROL,
+                IMC_GETOPENSTATUS,
+                0,
+                SMTO_ABORTIFHUNG,
+                READ_TIMEOUT_MS,
+                &mut result,
+            )
+        };
+        (ok != 0).then_some(result != 0)
+    }
+
+    /// 자판 언어의 바꾸기 키. 한국어만 안다(일본어·중국어는 IME마다 키가 달라 건드리지 않는다).
+    fn toggle_key(langid: u32) -> Option<u16> {
+        (langid & 0x3FF == LANG_KOREAN).then_some(VK_HANGUL)
+    }
+
+    /// 키를 눌렀다 뗀다. 누름이 들어갔으면 true(바뀌었을 수 있으니 되돌릴 표를 남긴다). 뗌만 빠졌으면 다시 뗀다.
+    fn tap(vk: u16) -> bool {
+        let ev = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+        };
+        let inputs = [ev(0), ev(KEYEVENTF_KEYUP)];
+        let size = std::mem::size_of::<INPUT>() as i32;
+        // SAFETY: inputs는 호출 동안 살아 있고 ki가 채워진 INPUT_KEYBOARD다
+        let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size) };
+        if sent == 1 {
+            // SAFETY: 위와 같다
+            unsafe { SendInput(1, inputs[1..].as_ptr(), size) };
+        }
+        sent >= 1
+    }
+
+    /// 바꾼 창과 키. 사라질 때 그 창이 아직 앞에 있고 IME가 아직 영문이면 같은 키로 되돌린다.
+    pub struct Restore {
+        vk: u16,
+        hwnd: isize,
+    }
+
+    pub fn switch() -> Option<Restore> {
+        // SAFETY: Win32 UI 함수, 모든 HWND는 쓰기 전에 null을 본다
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.is_null() {
+                return None;
+            }
+            let thread = GetWindowThreadProcessId(fg, std::ptr::null_mut());
+            let langid = (GetKeyboardLayout(thread) as usize as u32) & 0xFFFF;
+            let vk = toggle_key(langid)?;
+            let ime = ImmGetDefaultIMEWnd(fg);
+            if ime.is_null() || !open_status(ime)? {
+                return None;
+            }
+            // 상태를 읽는 동안 focus가 바뀌었을 수 있다
+            if GetForegroundWindow() != fg || !tap(vk) {
+                return None;
+            }
+            Some(Restore { vk, hwnd: fg as isize })
+        }
+    }
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            // SAFETY: 위와 같다
+            unsafe {
+                // 다른 창으로 갔으면 그 창에 키가 가니 되돌리지 않는다
+                let fg = GetForegroundWindow();
+                if fg.is_null() || fg as isize != self.hwnd {
+                    return;
+                }
+                let ime = ImmGetDefaultIMEWnd(fg);
+                // 사용자가 그새 한글로 돌렸으면 그대로 둔다
+                if ime.is_null() || open_status(ime) != Some(false) || GetForegroundWindow() != fg {
+                    return;
+                }
+                tap(self.vk);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn only_korean_has_a_toggle_key() {
+            assert_eq!(super::toggle_key(0x0412), Some(super::VK_HANGUL));
+            assert_eq!(super::toggle_key(0x0411), None);
+            assert_eq!(super::toggle_key(0x0409), None);
         }
     }
 }

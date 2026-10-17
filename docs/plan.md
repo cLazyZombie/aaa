@@ -269,7 +269,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
   - M1-2 구현: `aaa attach [-w workspace]`(설계 예시의 `aaa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
-  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 이 화면 크기로(보통은 필요 없다, §8.33), `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다. 3초 안에 명령 키가 없으면 취소한다. 한글 입력기면 prefix 동안 영문 입력기로 바꾼다(§8.34).
+  - 키는 herdr 0.9.5 기본 키와 모드를 따른다(§8.73). prefix(`[tui] prefix`, 기본 `ctrl+b`) 뒤 명령 키 하나: `c` 새 탭, `v`·`-` 나누기, `h/j/k/l`·`Tab`·`Shift+Tab` 포커스, `n`·`p`·숫자 탭, `x` 닫기, `b` 목록, `w` 탐색 모드, `o` 질문 pane, `?` 단축키, `Shift+R` 설정 다시 읽기, `q` 나가기. prefix 두 번은 prefix 키를 그대로 보낸다. 시간 제한은 없고 Esc·모르는 키는 취소한다. 입력기 전환(§8.34)은 herdr처럼 기본 끔이다.
   - 다른 front가 지금 쓰는 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. 입력하거나 터미널 focus를 다시 얻으면 그 칸 크기로 맞추면서 이 화면이 지금 쓰는 화면이 된다(§8.33). lease가 빈 pane에 포커스해도 같다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. lease는 host가 둔다.
@@ -1143,7 +1143,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - herdr-web-ui: 조작 연결이면 언제나 입력된다. 보이고 focus가 있을 때(`inUse`)만 크기를 건다. focus·보임을 얻거나, 크기가 어긋난 채 클릭·입력하면 다시 맞춘다. 가려지면 1초 뒤 놓는다. observe 연결은 입력·크기 불가다.
 - **aaa 규칙.**
   - host: 대화형 front의 입력·크기·그림은 거부하지 않고, 보낸 연결을 「지금 쓰는 화면」(lease)으로 둔다. 한 번 보내는 CLI(`cli` 연결)는 바꾸지 않는다. `lease_held`는 CLI `pane resize`(누가 쓰는 중)에만 남는다.
-  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다.
+  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다(→ §8.73에서 herdr처럼 없앴다).
   - 웹: 입력 막대·키 줄·그림을 막지 않는다. 보이고 focus가 있을 때만 크기를 건다. window focus·다시 보임·터미널 누름이면 크기를 다시 건다. 1초 넘게 가려지면 `release`한다. 「가져오기」 단추를 없애고 「<화면>이 크기를 정하는 중 · 입력하거나 터미널을 누르면 이 화면 크기로」만 보인다.
   - 보기 권한(reader)은 그대로 입력·크기 불가다.
   - 두 화면이 번갈아 입력하면 크기가 그때마다 바뀐다(herdr와 같다).
@@ -1160,7 +1160,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 두벌식 같은 입력기도 macOS는 ASCII 가능으로 보고한다. 그래서 종류(자판 배치인지)까지 본다.
   - 명령 키를 처리한 뒤, 취소, 시간 초과(3초), TUI 종료·오류·panic에 원래 입력기로 되돌린다(값이 사라질 때 되돌리는 guard).
   - 지속 설정이 아니라 지금 입력기만 바꾼다. ssh 세션(`SSH_CONNECTION`·`SSH_CLIENT`·`SSH_TTY`)에서는 바꾸지 않는다(그 Mac의 입력기는 앞에 앉은 기기의 것이 아니다).
-  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다.
+  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다. → §8.73에서 herdr 이름 `switch_ascii_input_source_in_prefix`·기본 끔으로 바꿨다(예전 이름도 읽는다).
 - **보조: 자모 해석.** prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다(ㅊ=c, ㅅ=t, ㅌ=x, ㅇ=d, ㄱ=r, ㅜ=n, ㅔ=p, ㅐ=o, 쌍자음·ㅒ·ㅖ는 Shift 자리). 바꾸기 전에 들어온 키, ssh·다른 OS를 위한 것이다.
 - **시험.**
   - 유닛: 자모 → 키, ssh 판정.
@@ -1174,7 +1174,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지).
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
   - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다.
-  - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다.
+  - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
   - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
   - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널).
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
@@ -1526,7 +1526,6 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **서버에서 확인한 것.** host가 주는 아이콘(`apple-touch-icon.png`, manifest 아이콘, favicon)은 모두 새 그림이다. 옛 보라색 PNG는 `ea70cc8`(10-17 01:40)~`9d73a03`(16:26) 사이에만 있었고, 지금 binary에는 없다. service worker는 화면 이동(navigate)만 맡고 아이콘 요청은 가로채지 않는다. 아이콘은 인증 없이 받아진다. 그런데 `/apple-touch-icon-precomposed.png` 같은 관례 주소와 없는 파일 주소는 모두 웹 화면(HTML)을 200으로 돌려주었다.
 - **고침(서버에서 확인할 수 있는 범위만).** 관례 터치 아이콘 주소(`apple-touch-icon-precomposed.png`, `apple-touch-icon-NxN.png`, `apple-touch-icon-NxN-precomposed.png`)는 `apple-touch-icon.png`과 같은 PNG를 준다. 확장자가 있는데 없는 파일(`favicon.ico`, `nope.png`, `assets/…`)은 404다. 확장자 없는 주소만 웹 화면이다. 참고(static.ts)는 `/assets/`·`/icons/` 아래만 404이고 나머지는 화면을 준다. 그림 주소에 HTML을 주지 않으려고 넓혔다. 시험은 웹 E2E 「PWA」 단계와 host 유닛 `touch_icon_aliases`다.
 - **보류: iOS 앱 아이콘 캐시(사용자 결정 「아이콘은 넘어가」).** iOS가 홈 화면·앱 전환 화면에 어느 아이콘을 쓰는지, 이 고침으로 회색 격자가 사라지는지는 실기로만 볼 수 있다. 여기서 더 파지 않는다. 홈 화면에 추가할 때 받아 둔 아이콘을 쓴다면(옛 보라색은 01:40~16:26에 추가한 것), 바꾸는 길은 홈 화면에서 지우고 Safari에서 다시 「홈 화면에 추가」하는 것이다. 지우면 그 앱의 저장소(pairing·알림 구독)도 사라져 다시 pairing해야 한다. 차이 목록에도 같은 줄이 있다.
-||||||| parent of 2142dc4 (출력이 밀릴 때: herdr-web-ui ACK 흐름 제어, 따라오지 못한 화면은 4008로 닫고 「다시 연결」)
 
 ### 8.62 출력이 밀릴 때: ACK 흐름 제어, 4008, 「다시 연결」(10-17, 차이 목록 「출력이 밀릴 때」, D7 참고대로)
 
@@ -1734,7 +1733,68 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 「보고 준비 알림」 단계: 쓰는 화면에서 push를 보내지 않은 보고는 그 화면에 앱 안 알림으로 온다.
   - 시험이 찾은 것: 미리 듣기 소리(0.46초) 사이에 다음 보고가 오면 참고 규칙대로 소리를 겹치지 않는다. 시험은 앞 소리가 끝난 뒤 다음 보고를 낸다.
 
-### 8.71 쓰는 동안 휴대폰에 뜬 시스템 배너, 입력 기록은 설정 「진단」으로(10-18, 사용자 화면)
+### 8.71 웹 목록·상태 칸·모양 token을 herdr-web-ui대로(10-18, 차이 목록 2장 L1~L7·S2~S4·Q1·T3, 결정 D2·D5 「참고대로」)
+
+- **모양 token(T3).**
+  - herdr-web-ui `src/styles.css` 18~494줄(색·글자·크기·움직임 token, 기본 amber, 밝음, charcoal·catppuccin 팔레트, 밀도)을 `web/src/herdr/tokens.css`로 그대로 옮겼다. aaa 화면이 써 온 이름(`--working`·`--accent-bg`·`--bg-active` 등)은 `style.css`가 참고 token으로 잇기만 한다. 결정 16의 iris 팔레트는 없어졌다.
+  - 테마는 참고 settings.ts처럼 어둡게·밝게·시스템(기본 어둡게)이고 색상은 앰버·차콜·Catppuccin이다. 시스템이면 라이트·다크 색상을 따로 고른다(`paletteFor`). `<html data-theme data-palette>`를 늘 달고(`applyToDocument`) PWA 제목 막대 색도 참고 `THEME_COLOR`를 따른다(`web/src/theme.ts`).
+  - 설정 → 「모양」에 테마·색상·사이드바 행·상태 표시를 넣었다(참고 `AppearancePage`, 문구는 참고 `i18n.ko.ts`). 목록 머리의 테마 순환 단추는 없앴다(참고에 없음).
+  - 다르게 둔 것: 터미널 16색. 참고는 xterm 기본 16색인데 그 흰색·노랑은 밝은 바탕에서 읽히지 않는다. aaa는 어두움·밝음마다 전과 같은 16색을 둔다.
+  - 참고는 테마·색상·사이드바 행을 서버에 두고 기기끼리 나눈다(「shared」). aaa는 host 공유 설정 저장소가 생길 때까지(T2) 이 기기에 둔다. 전에 쓰던 `aaa:theme`의 밝음·어두움은 처음 한 번 옮긴다.
+- **목록 구성(L1·L4~L7).** 참고 `MachineSidebar`·`Sidebar`·`AgentSidebar`의 마크업과 CSS(`Sidebar.css`·`AgentSidebar.css`·`Machines.css`, 공용 `badge`·`btn`은 `primitives.css`)를 그대로 쓴다(`web/src/Sidebar.tsx`). 아이콘은 참고처럼 lucide(`lucide-react` 1.47.0, 참고 bun.lock과 같은 판, ISC)다.
+  - 머신 묶음: 머리(모니터·이름·host·연결 점·접기·+), 연결이 아니면 이름 아래 상태 글. 접기는 기기별(`aaa:pc-collapsed:<id>`, 참고 `herdr-web-ui:pc-collapsed:<id>`).
+  - aaa에는 herdr workspace가 없어 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다. 프로젝트 머리는 접기 단추(폴더)이고 굵다(herdr-projects grouping 머리 줄). 둘째 줄은 herdr-projects `project_line`(「사람 차례 2 · 작업 중 1」)이다. 접힌 머리는 자식 상태를 대표하고(`rollupStatus`) 「+n」을 보인다. 고른 thread는 접혀도 보인다(참고: 접힌 묶음도 열린 checkout은 보인다).
+  - thread는 자기 줄 하나로만 보인다(L4). 이름은 「id · 제목」(herdr-projects `thread_display`), 둘째 줄은 「묶음 · 사실」(`state_line`: ~n%·「n분 조용」·pane 닫힘·실패·확인창·보고). 줄을 누르면 그 thread의 agent pane이 열린다(herdr-projects: thread는 자기 agent 줄). pane이 없으면 보고서다. 터미널 머리 「보고」와 보고서 머리 「터미널」로 오간다. 그 thread pane은 pane 줄에서 뺐다.
+  - 「Agents」 구역(L7): 모든 머신의 도는 agent(harness 상태를 알리는 pane, agent 명령으로 뜬 pane), 접기, 768px 이하는 접힌 채 시작. 둘째 줄은 참고 `agentContext`(종류·머신(둘 이상일 때)·자리).
+  - 결정 17로 미뤘던 머신 접기·thread 줄 하나로 합치기는 D2로 풀렸다.
+- **thread 순서(L2).** herdr-projects `Group::rank`(사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6), 같은 rank는 최근 바뀐 것부터(`web/src/sidebarModel.ts`). 「병합 중」(landing) 묶음은 아직 aaa에 없고 thread 흐름 thread가 넣는다. 자리만 잡아 두었다.
+- **상태 칸(S2·S4).** 참고 `StatusBadge` compact를 그대로: 기본(classic)은 볼 일이 있는 상태만(답을 기다리면 빨간 ?, 끝나고 안 봤으면 초록 점, 작업 중은 숨쉬는 점), 말은 `aria-label`·`title`. 설정 「상태 표시」 점·기호는 herdr TUI 글자(`indicatorGlyph`). `lib/status.ts`는 `web/src/herdr/status.ts`로 그대로 옮겼다.
+  - aaa harness 상태 → herdr 상태: 확인창 → blocked, 턴 진행 → working, 쉼·시작 → idle. 안 본 쉼은 「끝남(안 봄)」(done)이다(§8.72).
+  - 중단·유실·harness 오류는 상태 칸 대신 경고 하나와 이유 title이다(참고 `RestoreErrorBadge`). 끝난 pane은 이름이 흐리고 둘째 줄 끝에 「종료(code)」다. 끊긴 머신의 줄은 흐리고 누를 수 없으며 상태를 말하지 않는다(참고 `is-offline`·`inert`).
+  - §8.23의 「상태색은 늘 글과 함께」는 D2(S2 참고대로)로 바뀌었다. 글은 화면 낭독·tooltip에 남는다.
+- **질문 위치(Q1).** 목록 맨 위 「답을 기다림」 구역을 없앴다. 목록에는 그 줄의 ?만 있고, 카드는 그 pane을 열면 터미널 아래에 있다(chat 안 카드는 C 묶음). 빈 화면 안내 글도 바꿨다.
+- **시험.** 웹 E2E: 질문 단계는 목록 ?(`data-status="blocked"`·말)와 터미널 아래 카드, reader 카드, 답한 뒤 working을 본다. thread 보고 단계는 thread 줄 → pane → 「보고」로 연다. agent 표시 단계는 참고 class(`.sidebar-mark`, lucide Terminal)를 본다. 기다림은 DOM 상태(`locator.waitFor`)로 끝낸다. `web/e2e/showcase.mjs`는 패드(820×1180)를 더하고 테마를 설정 값으로 연다.
+
+### 8.72 「끝남(안 봄)」을 herdr대로(10-18, 차이 목록 S1)
+
+- **규칙은 herdr 0.9.5 것이다**(`src/app/actions.rs` `apply_pane_state_change`·`is_background_completion_transition`·`mark_active_tab_seen`, `src/pane/state.rs` `PaneState::seen`).
+  - 쉼이 아닌 상태가 되면 봤다. 작업·질문에서 쉼으로 끝날 때 그 pane을 보는 화면이 있으면 봤고, 없으면 안 봤다(「끝남」). 그 밖의 쉼(시작 뒤 쉼)은 앞 값을 둔다. 그 pane을 보는 화면이 생기면 봤다.
+  - host가 `AgentStatus.seen`(기본 true)으로 기록하고 웹·TUI에 보인다. 웹 목록은 안 본 쉼을 herdr `done`(초록 점, 「끝남(안 봄)」)으로 그린다(§8.71 상태 칸).
+- **「보는 화면」**(`crates/aaa-host/src/seen.rs`).
+  - herdr는 「지금 보이는 탭이고 바깥 터미널에 focus가 있다」다. aaa 웹은 그 pane 터미널 연결이 열려 있고, 그 기기의 events 연결이 「쓰는 화면」(보이고 focus, `presence`, §8.69)일 때다. 가려진 탭은 lease를 놓을 뿐 연결을 두므로(§8.50) 「보는 중」은 presence가 정한다.
+  - TUI는 그 pane의 lease를 쥐었을 때다(TUI는 그 pane을 앞에 두고 입력·크기를 건다).
+  - 다르게 둔 것: herdr-web-ui는 웹에서 pane을 열어도 herdr의 seen을 바꾸지 않는다(웹 터미널은 herdr TUI client가 아니어서 `outer_terminal_focus`가 없다. `focusPane`은 나눈 화면에서만 부른다). 웹으로만 보는 사람에게는 「끝남」이 지워지지 않으므로 aaa는 웹 화면도 보는 화면으로 센다.
+- **시험.** host 유닛 `seen`: 끝나는 전이와 보는 화면, 쓰는 기기의 연 pane만 본다. 웹 E2E 「끝남(안 봄)」: 다른 pane을 보는 동안 끝나면 초록 점과 말, 열면 사라짐, 보는 동안 끝난 턴은 남지 않음, 가려진 동안 끝나면 끝남이고 다시 쓰는 화면이 되면 사라짐. 턴의 시작·끝은 시험이 pane에 줄을 보내 정하고(hook), 기다림은 상태 칸의 `data-status`로 끝낸다.
+
+### 8.73 TUI 키와 모드를 herdr대로(10-18, 차이 목록 4장 B·C, D12 「참고대로」)
+
+- **참고(herdr 0.9.5).** 기본 키 `src/config/model.rs` `KeysConfig::default`, 모드 `src/client/shell/input.rs` `route_key`·`route_navigate_key`, 모드 막대 `src/client/shell/render.rs` `render_mode_bar`, 단축키 창 `src/client/shell/overlays.rs` `render_help_overlay`·`src/input/keybind_help.rs`, 키 이름 `src/config/keybinds.rs` `parse_key_combo`·`format_key_combo`, 방향 포커스 `src/layout.rs` `find_in_direction`, 입력기 `src/client/shell/input_source.rs`·`src/platform/windows.rs`.
+- **모드(`aaa-tui` `Mode`).**
+  - Terminal: 키는 포커스 pane으로 간다. prefix 키면 Prefix로.
+  - Prefix: 다음 키 하나가 명령이다. 시간 제한이 없다(예전 3초를 뺐다). Esc와 모르는 키는 아무것도 보내지 않고 취소한다. prefix를 한 번 더 누르면 그 키를 pane에 보낸다.
+  - Navigate(`prefix w`): `↑↓` 목록 고르기, `Enter` 열기, `1`~`9` 목록 n번째 열기, `h/j/k/l`·`←→`·`Tab`·`Shift+Tab` pane 포커스(탐색은 이어진다), 다른 prefix 명령은 하고 탐색을 끝낸다. Esc·prefix는 취소. 목록이 접혀 있으면 pane 위에 띄워 보인다(pane 크기는 그대로).
+  - 예전 「목록 포커스」(`prefix Tab` 목록 ↔ pane, 목록에서 `j/k`)는 탐색 모드로 바뀌었다.
+- **키(herdr 기본값).** `c` 새 탭, `v` 오른쪽에 나누기(split_vertical), `-` 아래에 나누기(split_horizontal), `x` pane 닫기, `h/j/k/l` 방향 포커스, `Tab`·`Shift+Tab` pane 차례로, `n`·`p`·`1`~`9` 탭, `b` 목록 펴기·접기(포커스는 그대로), `w` 탐색, `o` 질문이 열린 pane으로(여럿이면 차례로), `?` 단축키 창, `Shift+R` `[tui]` 설정 다시 읽기, `q` 나가기.
+  - 없앤 키: `d`(→ `q`), `%`·`|`(→ `v`), `"`(→ `-`), 화살표(→ `h/j/k/l`, 화살표는 탐색 모드), `o` 다음 pane(→ `Tab`), `s`(herdr는 설정 창 자리), `t` 이 화면 크기로(§8.33으로 이미 자동), `r` 재개.
+  - `r` 재개를 없앤 이유: herdr에는 재개 키가 없다(복원 때 자동). 자동 이어가기는 세션·CLI thread 몫이다(D12). 그때까지 중단 pane의 표시는 다시 띄우는 명령(`aaa pane resume <id 앞 8자>`)을 보인다. `r`은 herdr처럼 크기 모드 자리다(다음 묶음).
+  - `Shift+R`은 TUI가 `[tui]`를 다시 읽는 데까지다. herdr는 서버 설정도 다시 읽는다. host 쪽 `aaa config reload`는 CLI thread 몫이다.
+- **설정 `[tui]`(host.toml).**
+  - `prefix`: herdr 형식 `"ctrl+b"`, 여러 개면 배열. 예전 `C-b`도 읽는다. 읽지 못한 값은 빼고, 남는 것이 없으면 `ctrl+b`로 두고 ERROR 막대로 알린다(herdr `parse_prefix_keys`).
+  - `switch_ascii_input_source_in_prefix`(기본 끔, herdr 이름): Prefix·Navigate 모드와 단축키 창 동안 영문 입력기. 예전 이름 `prefix_ascii`가 적혀 있으면 그 값을 쓴다(그대로 둔 사용자는 계속 켜진다).
+  - `prefix_jamo_keys`(기본 끔): prefix 뒤 두벌식 자모를 같은 자리 영문 키로 읽는다.
+  - 두 기능은 사용자가 전에 요청한 것이라 남기고, 참고처럼 기본은 끈다(brief). 결정 20 표의 「기본 켬」과 어긋난다 — coordinator 확인 대기.
+  - 입력기 전환 범위와 미루기는 herdr `reconcile_input_source`대로다: 모드가 끝나면 되돌리고, 터미널 focus가 없는 동안은 바꾸지도 되돌리지도 않고 돌아온 뒤 맞춘다.
+  - Windows: 앞 창 자판이 한국어이고 IME가 한글이면 `VK_HANGUL`을 `SendInput`으로 눌러 영문으로 바꾸고, 같은 창이 앞에 있고 아직 영문이면 되돌린다(herdr와 같다. IME 상태 읽기는 `WM_IME_CONTROL`/`IMC_GETOPENSTATUS`, 200ms 한도). 다른 언어 IME는 건드리지 않는다.
+  - kitty keyboard `REPORT_ALTERNATE_KEYS`로 기본 배치 키를 읽는 일(herdr `src/input/parse.rs`)은 crossterm 0.29가 그 값을 `KeyEvent`에 싣지 않아 하지 못한다. herdr도 prefix 뒤 일반 키는 글자 그대로 읽으므로, 한글 입력기에서는 입력기 전환이나 자모 해석을 켠다.
+- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다.
+  - 단축키 창: 가운데 76×22 테두리 창, 묶음(전체·탐색·목록/탭·pane)마다 `prefix+키`와 설명, `/` 검색(키·설명), `j/k/↑↓/pgup/pgdn` 넘기기, Esc·Enter 닫기, 넘칠 때 scrollbar.
+- **시험.**
+  - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 끔·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
+  - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane, `o` 질문 pane, `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
+  - 다른 TUI 시험도 새 키로 바꿨다(`q` 나가기, `v` 나누기, `w` 탐색과 `↑↓`, `b` 접기, 재개는 CLI).
+  - harness의 기다림은 시간이 아니라 사건이다: 화면은 bytes가 올 때마다 깨우고(Condvar), host 상태는 Front 연결의 Workspace·State 사건을 받는다. `cmd`는 PREFIX 막대가 보인 뒤 명령 키를 보낸다.
+
+### 8.74 쓰는 동안 휴대폰에 뜬 시스템 배너, 입력 기록은 설정 「진단」으로(10-18, 사용자 화면)
 
 사용자 화면(10-18 00:27, iPhone 홈 화면 앱, binary cbf4e790): 앱을 쓰는 중에 앱 안 알림이 아니라 iOS 시스템 배너(「aaa · 알림이 켜졌다」)가 내려왔다.
 - **어디서 왔나(운영 host Mac의 host DB, 읽기만).**
@@ -1755,7 +1815,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 처음부터 끝까지 이 기기 앞 push는 그 하나뿐이다.
 - **입력 기록(실기 키보드 진단).** 터치 기기 목록 맨 아래에 늘 보이던 「입력 기록 켜기」 단추를 설정 맨 끝 「진단」 묶음의 「입력 기록」 스위치·「보내기」로 옮겼다. 참고에는 목록에도 설정에도 그런 진단 자리가 없다(`MachineSidebar.tsx`·`SettingsDialog.tsx` 묶음: 글꼴·입력·빠른 답·파일 보기·계정·단축키·휴대폰·기기·plugin·정보). aaa에만 있는 것이라 늘 보이는 목록에서 뺐다.
 
-### 8.72 무음 모드에서도 알림 소리(10-18, 사용자 보고 iPhone)
+### 8.75 무음 모드에서도 알림 소리(10-18, 사용자 보고 iPhone)
 
 사용자 보고(원문 10-18): 「소리 나는데 무음모드일때 볼륨을 올려도 안나와. 아이폰」. 앱 안 알림 소리는 나지만 무음 스위치를 켜면 볼륨을 올려도 들리지 않는다.
 - **참고(herdr-web-ui).** 이 문제를 풀지 않았다. `src/lib/alertSound.ts`(aaa `web/src/herdr/alertSound.ts`와 같다)는 AudioContext·Oscillator로 소리를 내고(84~104줄), 누르거나 키를 칠 때 `resume`한다(39~54줄, `App.tsx` 545~551줄). `navigator.audioSession`·`<audio>`·무음 스위치 이야기는 소스·CHANGELOG 어디에도 없다. CHANGELOG 2395~2397줄은 macOS 집중 모드·방해 금지에서도 들린다는 것뿐이다.

@@ -1,4 +1,4 @@
-// iPhone·iPad 무음 스위치를 켜 두어도 알림 소리를 낸다(plan §8.72, 사용자 보고 10-18). 참고(herdr-web-ui alertSound.ts)에는 없다.
+// iPhone·iPad 무음 스위치를 켜 두어도 알림 소리를 낸다(plan §8.75, 사용자 보고 10-18). 참고(herdr-web-ui alertSound.ts)에는 없다.
 // WebKit은 Web Audio만 쓰는 페이지를 AmbientSound 범주로 둔다(MediaSessionManagerCocoa.mm). 이 범주는 다른 앱 소리와
 // 섞이는 대신 무음 스위치를 따른다. 무음 스위치를 무시하는 범주는 Audio Session API(Safari 16.4+)의 "playback"뿐이다.
 // "transient"·"ambient"도 WebKit에서는 AmbientSound라 무음에서 들리지 않는다(DOMAudioSession.cpp).

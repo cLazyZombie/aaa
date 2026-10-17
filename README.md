@@ -51,34 +51,35 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 
 host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w <이름>`)로 엽니다. 탭·나누기 layout은 host에 저장되므로 나갔다 다시 붙어도 같습니다.
 
-- **왼쪽 목록**: 웹처럼 Thread(상태 배지)와 머신별 pane, 「+ 새 셸」이 보입니다. 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). 100칸보다 좁은 터미널에서는 접힌 채 시작합니다. 목록에서는 `↑↓`·`j/k`로 고르고 `Esc`로 pane에 돌아갑니다.
+- **왼쪽 목록**: 웹처럼 Thread(상태 배지)와 머신별 pane, 「+ 새 셸」이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). 100칸보다 좁은 터미널에서는 접힌 채 시작합니다.
 - 명령으로도 됩니다: 이미 있는 pane을 탭으로 넣기 `aaa ws add <pane> -w <이름>`, 새 pane을 새 탭으로 `aaa ws tab --machine mac-b -- <명령>`.
 - 입력은 포커스 pane으로 바로 갑니다. 다른 화면(웹 등)이 쓰던 pane도 입력하면 이 화면 크기가 되고, 터미널 focus를 다시 얻어도 크기를 다시 겁니다.
-- **prefix(기본 `Ctrl+B`) 다음 키**(3초 안에 누르지 않으면 취소):
+- **키는 herdr와 같습니다.** prefix(기본 `ctrl+b`) 다음 키 하나(시간 제한 없음, `Esc`나 모르는 키는 취소). `prefix ?`로 단축키 창(`/`로 검색)이 뜹니다.
 
 | 키 | 하는 일 |
 |---|---|
 | `c` | 새 탭(포커스 pane 머신의 기본 셸) |
-| `%` · `\|` | 좌우로 나누기 |
-| `"` · `-` | 위아래로 나누기 |
-| 화살표 · `o` | pane 이동 |
+| `v` · `-` | 오른쪽에 · 아래에 나누기 |
+| `h` `j` `k` `l` · `Tab` · `Shift+Tab` | pane 포커스 옮기기 · 차례로 |
 | `n` · `p` · `1`~`9` | 탭 이동 |
-| `s` | 왼쪽 목록 펴기·접기(펴면 목록으로 포커스) |
-| `Tab` | 목록 ↔ pane 포커스 |
-| `t` | 이 화면 크기로(보통은 입력만으로 된다) |
-| `r` | 끝난 pane 재개 |
-| `x` | 닫기(세션도 끝냄) |
-| `d` | 나가기(세션은 그대로) |
-| `Ctrl+B` | `Ctrl+B`를 pane에 보냄 |
+| `x` | pane 닫기(세션도 끝냄) |
+| `b` | 왼쪽 목록 펴기·접기 |
+| `w` | 목록 탐색(`↑↓` 고르기, `Enter` 열기, `1`~`9` n번째 열기, `h/j/k/l`·`Tab` pane, `Esc` 끝) |
+| `o` | 질문이 열린 pane으로 |
+| `?` | 단축키 창 |
+| `Shift+R` | `[tui]` 설정 다시 읽기 |
+| `q` | 나가기(세션은 그대로) |
+| prefix 한 번 더 | prefix 키를 pane에 보냄 |
 
 - `Ctrl+V`(prefix 없이): 이 기기 clipboard에 그림이 있으면 pane 머신에 올리고, 입력창이면 경로를 넣습니다. 그림이 없으면 원래 `Ctrl+V`입니다.
-- 한글 입력기가 켜져 있으면 prefix 동안 영문 입력기(ABC 등)로 바꿨다가 되돌립니다. 자모로 들어와도 같은 자리 키로 읽습니다(ㅊ = `c`).
+- 재부팅 등으로 중단된 pane에는 다시 띄우는 명령(`aaa pane resume <id>`)이 보입니다.
 - 설정(`host.toml`):
 
   ```toml
   [tui]
-  prefix = "C-b"        # tmux 안에서 쓰면 겹치지 않게(예: "C-g")
-  prefix_ascii = true   # prefix 동안 영문 입력기로 바꾸기(macOS, ssh 밖)
+  prefix = "ctrl+b"                             # 여러 개면 ["ctrl+b", "ctrl+a"]. tmux 안에서 쓰면 겹치지 않게(예: "ctrl+g")
+  switch_ascii_input_source_in_prefix = false   # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
+  prefix_jamo_keys = false                      # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
   ```
 
 ### 자주 쓰는 CLI

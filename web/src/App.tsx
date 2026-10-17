@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -10,12 +10,13 @@ import type {
 } from "./gen/proto";
 import { ApiError, call, me, pair, pushInfo, watchEvents } from "./api";
 import { TermView } from "./Term";
-import { GROUP_LABEL, ThreadPanel } from "./ThreadPanel";
+import { ThreadPanel } from "./ThreadPanel";
 import { Icon } from "./icons";
-import { AgentMark, hasAgentMark } from "./herdr/AgentMark.tsx";
+import { hasAgentMark } from "./herdr/AgentMark.tsx";
+import { Sidebar } from "./Sidebar";
+import { shortPath, threadKey } from "./sidebarModel";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
-import { setThemePref, useScheme, type ThemePref } from "./theme";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
@@ -85,14 +86,6 @@ function Pair({ onDone }: { onDone: (r: DeviceRole) => void }) {
       </main>
     </div>
   );
-}
-
-/** 「실행」은 평소 상태라 적지 않는다. 끝났거나 끊긴 것만 보인다. */
-function paneBadge(p: PaneView): { text: string; cls: string } | null {
-  if (p.state === "running" && p.connection === "disconnected") return { text: "실행·끊김(읽기 전용)", cls: "warn" };
-  if (p.state === "running") return null;
-  if (p.state === "exited") return { text: p.code == null ? "종료" : `종료(${p.code})`, cls: "" };
-  return { text: p.state === "interrupted" ? "중단" : "유실", cls: "warn" };
 }
 
 const ACTIVITY_LABEL: Record<AgentActivity, string> = {
@@ -193,12 +186,6 @@ function selectedFromHash(): string | null {
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
-const threadKey = (t: ThreadView) => `${t.project}/${t.id}`;
-
-/** 홈 폴더를 ~로 줄인다(화면에 사용자 이름을 늘어놓지 않는다) */
-const shortPath = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, "~");
-
-/** 목록 앞 표시: harness 종류 */
 /**
  * pane에서 도는 coding agent의 이름(herdr의 `pane.agent`처럼 표시 이름): hook이 알린 harness, thread profile, 명령 이름 순으로
  * 본다. 표시가 있는 이름(herdr/AgentMark `hasAgentMark`)이거나 claude·codex가 든 이름(`claude-opus` profile, 경로 붙은 명령)이면
@@ -214,43 +201,6 @@ function agentOf(p: PaneView | undefined, t?: ThreadView): string | null {
   }
   if (p?.agent || t) return p?.agent?.harness || t?.profile || "agent";
   return null;
-}
-
-/** 목록 줄 앞 표시(herdr-web-ui Sidebar.tsx `rowMark`·AgentSidebar `AgentRowBody`): 그 줄이 여는 pane의 agent, 셸이면 터미널 */
-function RowMark({ agent }: { agent: string | null }) {
-  return (
-    <span className="mark" aria-hidden="true" data-agent={agent ?? "shell"}>
-      {agent !== null ? <AgentMark agent={agent} size={18} /> : <Icon name="shell" />}
-    </span>
-  );
-}
-
-function ThemeButton() {
-  const [scheme, pref] = useScheme();
-  const next: Record<ThemePref, ThemePref> = { system: scheme === "dark" ? "light" : "dark", light: "dark", dark: "system" };
-  const label: Record<ThemePref, string> = { system: "시스템", light: "밝음", dark: "어두움" };
-  return (
-    <button
-      className="ghost icon theme-btn"
-      onClick={() => setThemePref(next[pref])}
-      aria-label={`테마: ${label[pref]}`}
-      title={`테마: ${label[pref]} (누르면 ${label[next[pref]]})`}
-    >
-      <Icon name={pref === "system" ? "auto" : pref === "light" ? "sun" : "moon"} />
-    </button>
-  );
-}
-
-function Section({ title, count, alert, children, testid }: { title: string; count?: number; alert?: boolean; children: ReactNode; testid?: string }) {
-  return (
-    <section className={`sec ${testid ?? ""}`} data-testid={testid}>
-      <h2 className={`sec-head ${alert ? "alert" : ""}`}>
-        {title}
-        {count != null && <span className="count">{count}</span>}
-      </h2>
-      {children}
-    </section>
-  );
 }
 
 function Main({ role }: { role: DeviceRole }) {
@@ -419,9 +369,7 @@ function Main({ role }: { role: DeviceRole }) {
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
   useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
-  const shownThreads = [...threads.values()]
-    .filter((t) => t.group !== "resolved" && t.role !== "evaluator")
-    .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+  const shownThreads = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
@@ -433,8 +381,6 @@ function Main({ role }: { role: DeviceRole }) {
     const p = panes.find((x) => x.id === q.pane);
     return p ? p.name || p.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8);
   };
-  // thread 줄 표시: 그 thread pane의 agent. pane이 없으면(아직·끝남) profile로 본다
-  const agentOfThread = (t: ThreadView) => agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t);
   const paneTitle = (p: PaneView) => threadOfPane.get(p.id)?.title ?? (p.name || p.argv.join(" ") || p.id);
   const paneSub = (p: PaneView) => {
     const t = threadOfPane.get(p.id);
@@ -445,7 +391,7 @@ function Main({ role }: { role: DeviceRole }) {
 
   return (
     <div className={`app ${current || currentThread ? "has-sel" : ""}`}>
-      <aside className="list">
+      <aside className="list sidebar-shell">
         <header className="list-head">
           <span className="brand">
             <img className="logo" src="/icon.svg" alt="aaa" />
@@ -458,98 +404,40 @@ function Main({ role }: { role: DeviceRole }) {
           {evaluators.map((v) => (
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
-          <ThemeButton />
           <MoreMenu />
         </header>
-        {/* 목록만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar: machine-list가 굴러가고 sidebar-footer는 맨 아래) */}
-        <div className="list-body">
-          {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
-          {msg && <div className="banner err">{msg}</div>}
-          {!loaded && <p className="muted pad">불러오는 중</p>}
-          {open.length > 0 && (
-            <Section title="답을 기다림" count={open.length} alert testid="questions">
-              {open.map((q) => (
-                <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} />
-              ))}
-            </Section>
-          )}
-          {shownThreads.length > 0 && (
-            <Section title="Thread" count={shownThreads.length} testid="threads">
-              <ul>
-                {shownThreads.map((t) => (
-                  <li key={threadKey(t)}>
-                    <ThreadRow
-                      t={t}
-                      agent={agentOfThread(t)}
-                      sel={sel === `thread:${threadKey(t)}`}
-                      onClick={() => chooseThread(t)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-          {machines.map((m) => {
-            const mine = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator");
-            const on = m.connection === "connected";
-            return (
-              <section key={m.id} className="sec machine" data-testid={`machine-${m.name}`}>
-                <div className="machine-head">
-                  <Icon name="machine" />
-                  <span className="name">{m.name}</span>
-                  {m.local && <span className="tag">host</span>}
-                  <span className={`dot ${on ? "on" : "off"}`} title={on ? "연결됨" : "끊김"} />
-                  {!on && <span className="chip warn">끊김</span>}
-                  {on && m.problems.length > 0 && (
-                    <span className="chip warn" title={m.problems.map((p) => p.text).join("\n")} data-testid={`health-${m.name}`}>
-                      점검 이상
-                    </span>
-                  )}
-                  {canControl && on && (
-                    <button className="ghost small" onClick={() => newShell(m)}>
-                      <Icon name="plus" />
-                      새 셸
-                    </button>
-                  )}
-                </div>
-                {on && m.problems.length > 0 && (
-                  <p className="note">새 세션을 시작하지 않는다: {m.problems.map((p) => p.text).join("; ")}</p>
-                )}
-                {mine.length === 0 && <p className="empty">pane 없음</p>}
-                <ul>
-                  {mine.map((p) => {
-                    const badge = paneBadge(p);
-                    const t = threadOfPane.get(p.id);
-                    return (
-                      <li key={p.id}>
-                        <button
-                          className={`pane ${`pane:${p.id}` === sel ? "sel" : ""} ${p.state !== "running" ? "dim" : ""}`}
-                          onClick={() => choose(p.id)}
-                          data-testid={`pane-${p.name || p.id}`}
-                        >
-                          <RowMark agent={agentOf(p, t)} />
-                          <span className="row-text">
-                            <span className="row-title">{paneTitle(p)}</span>
-                            <span className="row-sub">{paneSub(p)}</span>
-                          </span>
-                          <span className="row-end">
-                            <AgentChip p={p} testid />
-                            {badge && <span className={`chip ${badge.cls}`}>{badge.text}</span>}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            );
-          })}
-        </div>
+        {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
+        <Sidebar
+          machines={machines}
+          panes={panes}
+          threads={shownThreads}
+          selected={sel}
+          canControl={canControl}
+          agentOf={agentOf}
+          onPane={(id) => choose(id)}
+          onThread={chooseThread}
+          onNewShell={newShell}
+          banners={
+            <>
+              {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
+              {msg && <div className="banner err">{msg}</div>}
+              {!loaded && <p className="tree-state">불러오는 중</p>}
+            </>
+          }
+        />
         <ListFoot />
       </aside>
       <main className="view">
         {currentThread ? (
-          <ThreadPanel key={threadKey(currentThread)} t={currentThread} role={role} onBack={() => choose(null)} />
+          <ThreadPanel
+            key={threadKey(currentThread)}
+            t={currentThread}
+            role={role}
+            onBack={() => choose(null)}
+            onOpenPane={
+              currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
+            }
+          />
         ) : current ? (
           <TermView
             key={current.id}
@@ -558,7 +446,18 @@ function Main({ role }: { role: DeviceRole }) {
             title={paneTitle(current)}
             agent={agentOf(current, threadOfPane.get(current.id))}
             crumb={`${current.machine} › ${paneSub(current)}`}
-            status={<AgentChip p={current} />}
+            status={
+              <>
+                <AgentChip p={current} />
+                {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
+                {threadOfPane.get(current.id) && (
+                  <button className="ghost small" data-testid="open-report" onClick={() => chooseThread(threadOfPane.get(current.id)!)}>
+                    <Icon name="file" />
+                    보고
+                  </button>
+                )}
+              </>
+            }
             dock={
               currentQ.length > 0 ? (
                 <div className="dock">
@@ -575,9 +474,7 @@ function Main({ role }: { role: DeviceRole }) {
             <img className="logo big" src="/icon.svg" alt="" />
             <h2>{open.length > 0 ? `답을 기다리는 질문 ${open.length}개` : "왼쪽에서 하나를 고른다"}</h2>
             <p>
-              Thread를 고르면 보고와 결과물을, pane을 고르면 터미널을 본다.
-              <br />
-              질문은 목록 맨 위에서 바로 답할 수 있다.
+              pane이나 thread를 고르면 터미널을 본다. 질문은 목록에 빨간 ?로 보이고, 그 pane을 열면 답할 수 있다.
             </p>
           </div>
         )}
@@ -717,37 +614,6 @@ function ListFoot() {
       </div>
       {settingsOpen && <SettingsDialog onClose={closeSettings} />}
     </div>
-  );
-}
-
-const GROUP_DOT: Record<string, string> = {
-  working: "working",
-  waiting_on_you: "blocked",
-  ready_for_review: "done",
-  idle: "",
-  resolved: "",
-};
-
-function ThreadRow({ t, agent, sel, onClick }: { t: ThreadView; agent: string | null; sel: boolean; onClick: () => void }) {
-  const pct = t.agent?.percent;
-  return (
-    <button className={`pane ${sel ? "sel" : ""}`} onClick={onClick} data-testid={`thread-${t.project}-${t.id}`}>
-      {/* 줄이 여는 pane의 agent(herdr-web-ui Sidebar.tsx `rowMark`: 표시는 누르면 닿는 agent만 약속한다) */}
-      <RowMark agent={agent} />
-      <span className="row-text">
-        <span className="row-title">{t.title}</span>
-        <span className="row-sub">
-          {t.project}/{t.id} · {t.machine}
-        </span>
-      </span>
-      <span className="row-end">
-        <span className={`chip ${t.group}`}>
-          {t.group === "working" && <span className={`dot ${GROUP_DOT[t.group]}`} aria-hidden />}
-          {GROUP_LABEL[t.group] ?? t.group}
-          {t.group === "working" && pct != null && <span className="pct"> {pct}%</span>}
-        </span>
-      </span>
-    </button>
   );
 }
 
