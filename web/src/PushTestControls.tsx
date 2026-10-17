@@ -1,5 +1,5 @@
 // 설정 → 알림 「테스트 알림」 줄(herdr-web-ui src/components/PushTestControls.tsx를 옮김: 문구는 참고 i18n.ko.ts,
-// 단추 class·설정 읽기만 aaa 것). 구독을 고치지 않고 지금 구독에 보내 본다. 없거나 버려졌으면 「알림 다시 켜기」를 권한다.
+// 설정 읽기만 aaa 것). 구독을 고치지 않고 지금 구독에 보내 본다. 없거나 버려졌으면 「알림 다시 켜기」를 권한다.
 import { useState } from "react";
 import { pushErrorCode, pushSupported, testDevicePush } from "./push";
 import { useAlertSetting } from "./settings";
@@ -53,13 +53,13 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
                             : null}
           </span>
         </div>
-        <button type="button" disabled={busy || !alertsOn || !supported || denied} onClick={() => void send(false)}>
+        <button type="button" className="btn" disabled={busy || !alertsOn || !supported || denied} onClick={() => void send(false)}>
           {busy ? "보내는 중…" : "테스트 보내기"}
         </button>
       </div>
       {enable && supported && !denied && (
         <div className="settings-actions">
-          <button type="button" disabled={busy} onClick={() => void send(true)}>
+          <button type="button" className="btn" disabled={busy} onClick={() => void send(true)}>
             알림 다시 켜기
           </button>
         </div>

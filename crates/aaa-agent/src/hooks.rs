@@ -61,6 +61,7 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         percent: None,
         at_ms: now_ms,
         transcript: s(p, "transcript_path"),
+        hook: None,
     };
     if harness == "report" {
         ev.kind = "progress".into();
@@ -76,6 +77,7 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
     }
     // Claude Code·Codex hook(같은 사건 이름)
     let name = s(p, "hook_event_name")?;
+    ev.hook = Some(name.clone());
     ev.kind = match name.as_str() {
         "SessionStart" => "session_start",
         "UserPromptSubmit" => "turn_start",

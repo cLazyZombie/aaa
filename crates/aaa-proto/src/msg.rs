@@ -13,9 +13,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry,
-    MessageMode, MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
-    Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
+    MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role,
+    RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
 
@@ -431,11 +431,15 @@ pub enum AgentRequest {
         len: u32,
     },
     /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
-    /// (claude는 새 `--session-id`). 저장된 launch를 그대로 쓰고 profile을 다시 해석하지 않는다.
+    /// (claude는 새 `--session-id`). `profile`이 없으면 저장된 launch를 그대로 쓰고, 있으면 이 머신 agent.toml에서
+    /// 그 profile을 다시 해석한다(`thread restart --profile`, AGENT_LINK 1.4). 옛 agent는 `profile`을 모르고 저장된
+    /// launch를 돌려주므로 host는 돌려받은 `Launch.profile`로 확인한다.
     ThreadRebrief {
         work_dir: String,
         brief: String,
         launch: Launch,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -833,7 +837,7 @@ pub enum LayoutChange {
     /// 방향 이웃은 화면 크기를 아는 front가 찾는다(host는 front마다 다른 칸을 모른다).
     Swap { pane: String, with: String },
     /// 나눔 하나의 비율을 바로 정한다(herdr `layout.set_split_ratio`, 나눔 경계 끌기). `path`는 탭 뿌리에서 그 나눔까지
-    /// (false = a, true = b), `ratio`는 a 쪽 천분율이고 100..=900으로 묶는다(plan §8.96)
+    /// (false = a, true = b), `ratio`는 a 쪽 천분율이고 100..=900으로 묶는다(plan §8.106)
     SplitRatio { tab: String, path: Vec<bool>, ratio: u16 },
     /// 탭을 `index` 앞으로 옮긴다(herdr `tab.move`의 `insert_index`: 0..=탭 수, 옮기기 전 차례로 센다)
     MoveTab { tab: String, index: u16 },
@@ -869,7 +873,7 @@ pub struct GridFrame {
     pub cursor_visible: bool,
     pub full: bool,
     pub lines: Vec<GridLine>,
-    /// 그 pane 프로그램이 켠 모드(1.11부터, 옛 host는 기본값)
+    /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
 }
@@ -1146,9 +1150,11 @@ pub enum FrontRequest {
         project: String,
         title: String,
         machine: Option<String>,
+        /// 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
         profile: String,
+        /// 없으면 repo가 있으면 worktree, 없으면 dir(herdr-projects `placement`)
         #[serde(default)]
-        kind: ThreadKind,
+        kind: Option<ThreadKind>,
         repo: Option<String>,
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
@@ -1201,6 +1207,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         keep_worktree: bool,
+        /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
+        #[serde(default)]
+        reopen: bool,
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {
@@ -1213,6 +1222,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         resume: bool,
+        /// 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
+        #[serde(default)]
+        profile: Option<String>,
     },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {
@@ -1253,17 +1265,6 @@ pub enum FrontRequest {
         text: String,
         #[serde(default)]
         mode: MessageMode,
-    },
-    /// 결정을 기록한다(decisions.md에 덧붙이고 흐름 사건을 낸다)
-    DecisionAdd {
-        project: String,
-        text: String,
-        #[serde(default)]
-        replaces: Option<u32>,
-    },
-    /// 결정 기록 목록
-    Decisions {
-        project: String,
     },
     /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
     Preferences,
@@ -1400,7 +1401,6 @@ impl FrontRequest {
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
-                | FrontRequest::Decisions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
@@ -1516,16 +1516,18 @@ pub enum FrontResponse {
     },
     Question(QuestionView),
     Message(MessageView),
-    Decisions {
-        decisions: Vec<DecisionView>,
-    },
-    Decision(DecisionView),
     Inbox {
         items: Vec<InboxItem>,
         /// `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         done: Option<u32>,
+        /// 응답 크기 한도로 싣지 못한 끝내지 않은 항목 수(실은 것은 오래된 것부터다)
+        #[serde(default)]
+        omitted_open: u32,
+        /// 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
+        #[serde(default)]
+        omitted_done: u32,
     },
     Merge {
         queue: Vec<MergeEntry>,
@@ -1716,9 +1718,12 @@ pub enum TermClientMsg {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum EventsClientMsg {
-    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 쓰는 화면이 하나라도 있으면
-    /// host는 어느 기기에도 Web Push를 보내지 않는다(그 화면이 이미 바뀐 것을 보인다). 연결이 끊기면 쓰지 않는 것이다.
+    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 연결이 끊기면 쓰지 않는 것이다.
     Presence { active: bool },
+    /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다(보이고 focus가 됐다·앱을 열었다). host는 마지막으로 이것을 보낸
+    /// 기기(또는 pane에 입력한 기기)를 「쓰는 기기」로 두고, 그 기기가 지금 쓰는 화면일 때만 Web Push를 건너뛴다
+    /// (사용자 결정 10-18, plan §8.105. 참고는 쓰는 화면이 하나라도 있으면 건너뛴다)
+    Touch,
     /// 연결이 살아 있는지 묻는다. host는 같은 `id`의 `pong`으로 답한다(herdr-web-ui ws.ts `probe`·server `ping`).
     /// 휴대폰이 잠들었다 깨거나 망이 바뀌면 열린 것처럼 보이는 죽은 연결이 몇 분씩 남는다.
     Ping { id: u32 },

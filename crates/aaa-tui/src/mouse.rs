@@ -640,7 +640,7 @@ impl App {
         // herdr: 나눔 경계를 누르면 끌기(포커스는 그대로)
         if let Some(hit) = hits.splits.iter().find(|s| contains(s.hit, x, y)).cloned() {
             let Some(tab) = self.ws.tabs.get(self.tab).map(|t| t.id.clone()) else { return Ok(()) };
-            if self.host_at_least(11) {
+            if self.host_at_least(14) {
                 let pointer = if hit.dir == SplitDir::Horizontal { x } else { y };
                 self.drag =
                     Some(Drag::Split { grab: i32::from(hit.pos) - i32::from(pointer), hit, tab, sent: None, at: None });
@@ -877,7 +877,7 @@ impl App {
                 let count = self.ws.tabs.len();
                 if let Some(insert) = drop_index(hits, x, y, count)
                     && let Some(tab) = self.ws.tabs.get(index).map(|t| t.id.clone())
-                    && self.host_at_least(11)
+                    && self.host_at_least(14)
                 {
                     self.layout(tx, LayoutChange::MoveTab { tab, index: insert as u16 }, false).await?;
                 }

@@ -414,7 +414,6 @@ host 프로젝트 폴더 구성:
 | `AGENTS.md`, `PROJECT.md`, `MEMORY.md`, `memory/` | 사람이 읽는 문맥 |
 | `project.toml` | 기계가 읽는 값(nudge, 자동 승인 정책, 결과물 상한 등) |
 | `TASKS.md` | `(profile@machine)` 소유 표기 |
-| `decisions.md` | 결정 기록(§8.6) |
 | `routines/` | routine 정의 |
 | `threads/<id>.md` | 보고 사본 |
 | `library/<id>/` | 결과물 |
@@ -511,6 +510,7 @@ host 프로젝트 폴더 구성:
 - **보내기:** `aaa thread message <id> --interrupt|--queue`로 보낸다.
   - interrupt: 지금 입력한다. 작업 중이면 harness가 지원하는 끼어들기 방식을 쓴다.
   - queue: host 대기열에 순서대로 넣고, 다음 턴이 시작될 때 전달한다.
+  - (10-18) host 대기열을 없앴다: 작업 중이어도 바로 입력하고 harness가 줄 세운다(§8.100).
 - **입력 방식:** 키를 하나씩 치지 않고 adapter 입력(bracketed paste + harness별 전송 키)으로 보낸다. 특수문자가 깨지지 않는다. 원문은 기록한다.
 - **수신 확인:** deadline 안에 `turn_start` 사건(없으면 화면 변화)이 오면 `accepted`다. 오지 않으면 `delivery_unknown`이다.
 - **brief 전달:** 0.2.35 규칙을 이어받는다. settle 3초, 최대 3회, 다시 보내기 전에 화면으로 앞 시도를 확인하고, 실패하면 inbox item을 남긴다(§8.77).
@@ -521,6 +521,7 @@ host 프로젝트 폴더 구성:
 
 ### 8.6 결정 기록
 
+- (10-18) 없앴다. 결정은 프로젝트 memory에 적는다(D10 G9, §8.101). 아래는 옛 설계다.
 - **기록:** `projects/<p>/decisions.md`에 번호, 시각, 내용, 대체한 번호를 적는다. DB에 revision을 두고 `aaa decision add|list`로 다룬다.
 - **전달:** brief와 context에 최신 revision을 자동으로 넣는다. thread가 시작할 때 읽은 revision을 기록해, 결정이 바뀌었는데 이전 결정으로 일하는 thread를 찾을 수 있다.
 
@@ -569,6 +570,7 @@ host 프로젝트 폴더 구성:
   - 전원(AC), 시계
 - **이상 처리:** 변화나 이상은 inbox와 알림으로 낸다. 점검에 실패한 머신에서는 새 세션 시작을 거부하고 사유를 보인다. 재부팅 중 작업이 조용히 실패하던 문제는 boot fencing으로 `interrupted`가 된다.
 - **동시 작업 한도:** 머신별 동시 thread 한도를 둔다(운영값 예: 6).
+  - (10-18) 프로젝트 `max_parallel_threads` 경고로 바꿨다(거부하지 않는다, §8.100).
 - **우선순위:** nice, Windows priority class를 쓴다. macOS QoS는 P0에서 측정한 뒤 정한다.
 - **빌드 병렬도는 제한하지 않는다.** 사용자 규칙이다.
 - **종료:** session host가 자기 자식만 PID+시작 identity(Windows는 handle)로 종료한다.
@@ -616,7 +618,7 @@ host 프로젝트 폴더 구성:
 **출력: 정해진 평가 기록.**
 - 평가자는 `aaa evaluation submit --file F`로 기록을 낸다. host가 `projects/<p>/evaluations/<id>.md`(사람이 읽는 본문)와 DB 구조화 기록을 저장한다.
 - 구조화 기록 항목: 대상 사건·thread, 단계별 시간, 재작업(횟수·원인), 막힌 곳, 도구 문제, 결함을 누가 어느 단계에서 잡았나, 개선안 목록(id·내용·예상 효과·대상 도구).
-- coordinator나 사용자가 `aaa evaluation adopt|hold <id>`로 개선안마다 채택·보류를 정한다. inbox에 `evaluation` item으로 뜨고 결정 기록(§8.6)과 연결된다.
+- coordinator나 사용자가 `aaa evaluation adopt|hold <id>`로 개선안마다 채택·보류를 정한다. inbox에 `evaluation` item으로 뜬다. 채택한 것을 뒤 thread가 알아야 하면 coordinator가 memory에 적는다(§8.101).
 - 채택된 개선의 구현은 coordinator가 정한다. 평가자 자신의 worktree에서 고쳐 일반 착지 절차를 밟게 할 수도 있고(t-0250 방식), 별도 thread를 시작할 수도 있다.
 
 **금지.**
@@ -690,7 +692,7 @@ host 프로젝트 폴더 구성:
 - **interrupt 멈춤 판정은 새 「Interrupted」만 본다.** Esc 전후 화면의 개수를 비교한다. 지난 interrupt의 글이 남아 있으면 곧바로 입력해 사라지게 하던 문제를 막는다.
 - **선택 창이 떠 있으면 아무것도 입력하지 않는다.** 표지는 「Enter to confirm」「Esc to cancel」, 신뢰 문구 등이다. brief 안내와 메시지 모두 해당한다. 질문이 열려 있는 동안 brief 안내는 최대 30분 기다린다.
 - **입력과 수신 확인(§8.5)**
-  - 한 줄은 그대로, 여러 줄은 bracketed paste로 보낸 뒤 Enter를 보낸다.
+  - 글을 보낸 뒤 300ms 뒤 Enter를 보낸다. 프로그램이 bracketed paste를 켰을 때만 글을 감싼다(herdr `encode_api_submission_parts`, §8.80 끝). 줄 수와 상관없다.
   - hook이 있는 세션은 `accept_wait_ms`(기본 10초) 안에 `turn_start`가 오면 `accepted`, hook이 없으면 화면 변화로 본다. 확인 못 하면 `unknown`이고 다시 보내지 않는다.
   - 기다림 두 가지(받음 `accept_wait_ms`, interrupt 멈춤 `stop_wait_ms`)는 host.toml `[projects]`로 바꿀 수 있다(t-0327, 10-18). 기본값은 예전 상수와 같아 동작은 그대로다. 시험이 시간을 기다리지 않고 판정을 보려고 뺐다: m13은 전달 불명 시험에서 받음 기다림을 3·5초로 줄이고, interrupt 시험은 멈춤 상한을 120초로 늘린다. 그러면 화면으로 멈춤을 알지 못할 때 받은 줄이 시험 기다림(30초) 안에 오지 않아, 「10초 안」 같은 시간 단언 없이 구별된다.
 - **메시지(§8.5 보충)**
@@ -711,6 +713,7 @@ host 프로젝트 폴더 구성:
 
 ### 8.16 M1-3c 구현 결정(10-16): 결정 기록, thread stop·restart
 
+- (10-18) 결정 기록은 없앴다(§8.101). thread stop·restart는 그대로다.
 - **결정 기록(§8.6):** `aaa decision add <p> --text|--text-file [--replaces N]`, `aaa decision list <p>`
   - `decisions.md`가 원본이다. `## <번호> · <UTC 시각>[ · <번호>번 대체]` 묶음으로 덧붙인다. 사람이 고친 파일도 `## <번호>` 제목으로 읽는다.
   - 흐름 사건은 `decision_added`(thread 없는 프로젝트 사건)다.
@@ -728,6 +731,7 @@ host 프로젝트 폴더 구성:
 - **inbox(§8.9):** host DB가 원본이고 `projects/<p>/inbox/<id>.md`(0.2.35와 같은 `+++` TOML front matter)는 투영이다.
   - ID는 `<UTC>-<종류>-<대상>-<순번>`이다. 끝내면 파일을 `inbox/done/`으로 옮기고, `inbox_done_days`(기본 30일)가 지나면 지운다.
   - `aaa inbox list <p> [--all] [--peek]`, `aaa inbox done <p> <id…>|--all`. `--peek`이 아니면 보인 항목을 「봤다」로 표시한다.
+  - (10-18) 한 응답은 크기 한도(512 KiB) 안에서만 싣는다(끝내지 않은 것은 오래된 것부터, 끝낸 것은 최근 것부터, §8.98).
 - **항목 출처**
   - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
   - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
@@ -751,6 +755,7 @@ host 프로젝트 폴더 구성:
   - 흐름 사건: `merge_enqueued`(순번), `merge_head`(맨 앞이 바뀜), `merge_landed`(`done`), `merge_dropped`(`drop`·resolve).
   - 단계 실행과 훅은 M3에서 한다(원래 배치). 맨 앞이 된 thread에 무엇을 보낼지는 coordinator가 `merge_head` 사건을 보고 정한다.
 - **동시 thread 한도(§8.10):** `[projects] max_threads_per_machine`(기본 6, 0이면 제한 없음)
+  - (10-18) 없앴다. 프로젝트 `max_parallel_threads` 경고만 한다(§8.100).
   - 시작 중이거나 세션이 실행 중인 열린 thread를 머신별로 센다. `thread start`·`restart`가 한도에 닿으면 거부하고, 어느 thread가 도는지 보인다.
 - **미룬 것(이유: 결정 14의 「큰 그림 우선」, M1-4와 운영 대체 경로가 먼저다)**
   - 머신 건강 보고(디스크·부하·toolchain·전원·시계)와 이상 시 새 세션 거부 → M1 마무리(M1-4 뒤). boot fencing과 단절(`outage`)은 이미 있다. **M1 마무리에서 했다(§8.21).**
@@ -808,7 +813,7 @@ host 프로젝트 폴더 구성:
   - 전송: **pane WebSocket(대화형 front)**으로 512KiB 조각을 base64 JSON(`attach`)으로 보낸다. 별도 POST 경로를 두지 않은 이유: 조작 lease가 그 WebSocket 연결(front)에 묶여 있어, 조각마다 같은 권한·lease 판정을 그대로 쓸 수 있다. 조각은 Agent link frame(1MiB) 안에 든다. 메시지 상한도 1MiB로 둔다.
   - host는 모으지 않고 조각마다 agent로 넘긴다(그 사이 화면 출력이 끼어든다). 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고(브라우저가 알린 MIME은 믿지 않는다), 이름은 host가 무작위로 정한다. 상한 16MiB, offset이 맞지 않으면 거부한다.
   - 대상 경로: 모든 pane이 **세션 범위** `<agent state>/sessions/<id>/attachments/<hex>.<ext>`다(§9 표의 thread `.aaa/…/attachments` 대신). thread 작업 폴더(worktree)에 두면 그림이 git에 섞일 수 있고, 세션 폴더는 이미 0700이며 세션 기록을 지울 때 함께 지워진다. 폴더 0700·파일 0600, 세션당 64개까지. `.part`에 이어 쓰고 마지막 조각에서 sha256을 대조한 뒤 이름을 바꾼다.
-  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 bracketed paste로 넣고 Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
+  - 입력: 다 받은 뒤 **다시 확인**한다(실행 중, lease가 이 연결, hook 상태가 있는 harness pane, 열린 질문 없음, 화면에 선택 창 없음). 모두 맞으면 절대 경로를 넣고(프로그램이 bracketed paste를 켰으면 감싼다) Enter는 보내지 않는다. 아니면 저장한 경로와 이유만 돌려준다(일반 셸·시작 전·확인창).
   - 실제 확인(Claude Code 2.1, macOS): 넣은 경로가 `[Image #1]`로 바뀌고, 글을 덧붙여 보내자 그림 내용을 읽고 답했다. 신뢰 창이 떠 있을 때(hook 전)는 넣지 않았다. Codex(codex-cli 0.163)도 `[Image #1]`로 받아 그림 색을 답했다(§8.21).
   - 미룬 것: 끊긴 전송의 offset 재개·receipt 조회(지금은 다시 붙여 넣는다), 업로드 중 Send 보류(경로가 들어간 뒤에야 사람이 보낼 수 있다), 보존 기한 정리(지금은 세션 기록을 지울 때). → M1 마무리
 
@@ -864,7 +869,7 @@ host 프로젝트 폴더 구성:
   - 받은 기록은 DB와 `projects/<p>/evaluations/<이름>.md`에 둔다. inbox에는 `evaluation` 항목으로 뜬다.
   - 형식이 틀리거나 이미 받은 이름의 내용이 바뀌었으면 받지 않는다. 같은 내용당 한 번 `evaluation`·`invalid` 항목으로 알린다.
   - 평가자의 보고 자체는 `report` 항목으로 알리지 않는다.
-- **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 결정 기록(§8.6)에 한 줄로 남기고 그 번호를 붙인다. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
+- **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 평가 기록에만 남는다(10-18 결정 기록을 없앴다, §8.101). 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
 - **금지(부분 thread 범위 token).** CLI는 aaa 세션 안이면 `AAA_SESSION_ID`를 Hello에 담는다. 그 세션의 역할이 평가자면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다.
   - 남는 한계: env를 지운 프로세스는 사람의 CLI와 구별되지 않는다(routine 승인과 같은 수준, §8.21). 원격 머신의 평가자는 Front API에 닿지 않는다.
 - **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다(→ §8.92에서 사이드바 맨 아래 「평가」 묶음으로). `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
@@ -872,7 +877,7 @@ host 프로젝트 폴더 구성:
   - 목록·context·pane 목록에 섞이지 않는다.
   - 평가자 세션의 지시·채택은 거부되고 보기는 된다.
   - 묶음에 평가자 사건이 없고, seq가 겹치지 않고, 이력·보고 본문을 담는다.
-  - 채택이 결정 기록에 남고, 두 번 채택은 거부된다. 보류까지 하면 inbox가 정리된다.
+  - 채택이 평가 기록에 남고, 두 번 채택은 거부된다. 보류까지 하면 inbox가 정리된다.
   - 평가자를 끝내고 다시 띄워도 앞 사건을 다시 넘기지 않는다.
   - 단위 시험: 기록 검사(요약 필수, 개선안 id 중복·형식, 소수 분 반올림, 평가자가 쓴 decision 무시), thread 시간 요약.
 
@@ -1430,7 +1435,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 클립보드에 글이 있으면 글이다(그림이 같이 있어도). 파일만 있을 때 그 파일 전부를 올린다. 전에는 그림이 있으면 그림이 먼저였다.
   - 파일 여러 개를 붙여 넣거나 끌어 놓으면 놓은 순서대로 하나씩 올린다(겹쳐 놓아도 그 순서). 한 묶음에 상한을 넘는 것이 있으면 아무것도 올리지 않는다. 「그림」 단추도 여러 개를 고른다.
   - 글을 끌어 놓으면 붙여 넣는다(Enter 없음, 유지 키 안 붙음). 입력할 수 없으면 끌어 놓기를 받지 않는다(`dropEffect` none).
-  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness 입력창은 bracketed paste 안에, 셸 등은 친 글처럼 넣는다(host는 그 프로그램의 bracketed paste 모드를 모르고, 줄바꿈·제어 문자 없는 따옴표 경로는 bracketed paste가 꺼진 붙여넣기와 같다). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
+  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness든 셸이든 그 프로그램이 bracketed paste를 켰으면 감싸고, 아니면 친 글처럼 넣는다(herdr-web-ui는 xterm `paste`로 넣는다. host는 §8.75부터 pane mirror에서 모드를 안다, §8.80 끝). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
 - **다른 곳.**
   - 확인창·선택 창이 떠 있는 harness pane에는 넣지 않는다. 붙여 넣은 글이 그 답으로 읽힐 수 있다(참고에는 이 막기가 없다).
   - **그림만 받는다(PNG·JPEG·GIF·WebP, 16MiB).** 참고는 아무 파일이나 이름을 다듬어 저장한다(32MiB). §9의 형식 규칙(signature로 확인)이라 결정 없이 넓히지 않았다. 다른 파일은 host가 「PNG·JPEG·GIF·WebP 그림만」으로 거절한다.
@@ -1897,7 +1902,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 ### 8.78 보고 형식·brief를 herdr-projects대로: brief 머리·THREAD.md·진행 보고 안내, 첫 줄 태그 해석 제거(10-18, 차이 목록 3장 A5·A6·A8·C3, 결정 D9 「참고대로」)
 
-- **brief 차례(herdr-projects `src/thread.rs` `compose_brief`).** 머리(`# 프로젝트`) → thread 규칙(THREAD.md) → 다시 시작 안내 → 프로젝트 지침 → 프로젝트 memory → 결정 기록(§8.6, D10 G9에서 memory로 옮긴다) → 진행 보고 → 할 일 → 경로(`# 경로`). 전에는 다시 시작 안내가 맨 앞이었고 진행 보고 안내는 한 줄, 경로 절은 없었다.
+- **brief 차례(herdr-projects `src/thread.rs` `compose_brief`).** 머리(`# 프로젝트`) → thread 규칙(THREAD.md) → 다시 시작 안내 → 프로젝트 지침 → 프로젝트 memory → 진행 보고(결정 기록은 D10 G9에서 없앴다, §8.101) → 할 일 → 경로(`# 경로`). 전에는 다시 시작 안내가 맨 앞이었고 진행 보고 안내는 한 줄, 경로 절은 없었다.
 - **머리(A5, `brief_header`).** 프로젝트(PROJECT.md 첫 `# ` 제목과 이름), 목표(project.toml `goal`, 없으면 「정하지 않음」), 저장소(`[[repos]]`, 머신이 있으면 그 머신, 없으면 host 머신), 사용자가 준 파일(host의 `uploads/`, thread가 다른 머신이면 「host 머신에만 있다」), 사용자에게 줄 파일(thread의 `library/`), 보고(thread의 `report.md`). thread ID·제목 줄은 참고에 없어 뺐다.
   - 참고는 절대 경로를 쓴다. aaa host는 agent가 작업 폴더를 만들기 전에 brief를 짓는다. 그래서 host는 `{{aaa:work_dir}}`·`{{aaa:exe}}` 자리를 남기고, brief.md를 쓰는 agent(`threads::prepare`·`rebrief`)가 그 머신의 작업 폴더 절대 경로와 aaa 실행 파일 경로로 채운다(`aaa_proto::fill_brief`). protocol은 그대로다. host와 agent는 함께 배포한다(옛 agent는 자리를 채우지 않는다).
 - **thread 규칙(A6, `skill/THREAD.md`).** 참고 문장을 한국어로 옮겼다: 작업 폴더 안에, 목록에 없는 저장소는 보고에 적기, uploads 읽기, 지침·memory 따르기, memory 고치지 않기(교훈은 `## Remember`), 끝낼 때와 사용자를 기다릴 때 보고 쓰기, 첫 줄 `PR: <url>`(선택), `## Report`, `## Next`(필수, 명령형 100자 이하, 착지 뒤 정리 포함), `## Remember`(선택), 매번 통째로 다시 쓰기. 첫 줄 상태 태그 규칙은 뺐다.
@@ -1943,6 +1948,7 @@ pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, 
 - **여기서 하지 않는 것.** 병합 뒤 resolve·다른 PR이 열렸는지 보기(hp `resolve_merged`·`other_pr_open`)와 병합 대기열 제거는 병합 흐름(D11, thread 흐름 thread)이 `pr_state` 위에 얹는다.
 - **계약.** AGENT_LINK는 그대로 두고 기능 `pr.v1`로 가린다(옛 agent에는 보내지 않는다). FRONT_API 1.6(`routine_toggle`, `ThreadView.pr`). `inbox` 응답의 `done`은 §8.75.
 - **출처.** 옮긴 hp 코드의 MIT 고지(Copyright (c) 2026 Elias Stravik)는 `crates/aaa-common/src/pr.rs` 머리에 있다.
+- **넣는 글의 감싸기(보고 화면에서 찾은 결함, 10-18).** routine 글은 여러 줄이라, host가 메시지를 늘 bracketed paste로 감싸던 것이 그 모드를 켜지 않은 프로그램 화면에 `^[[200~ … ^[[201~`로 남았다. herdr `agent prompt`(src/app/api/agents.rs → src/app/api_helpers.rs `encode_api_submission_parts`)는 프로그램이 켰을 때만 감싸고 Enter도 터미널 모드로 쓴다. brief·메시지 입력(`harness.rs` `submit_checked`)과 그림 경로 넣기(`attach.rs`)가 이제 pane mirror의 모드(§8.75)를 본다. Claude·Codex는 켜므로 받는 bytes는 그대로다. 시험: m13 `thread_message_paste_follows_program_mode`(꺼진 채 여러 줄 → 그대로+CR, 프로그램이 켠 뒤 → 감쌈+CR, 받은 bytes를 16진수로 본다), 웹 E2E 그림 넣기의 가짜 harness는 Claude처럼 모드를 켠다.
 - **시험.** 단위: PR 주소·origin 꼴·gh 인자(`--` 뒤 주소, `GH_HOST`)·찾기 순서·이름 거르기(aaa-common), `PR:` 줄·fork·head 불일치·본문 없음·사건·문구(aaa-host pr), pr routine 파일·기본 template(routine). E2E m13 `pr_followup`: 가짜 `gh`(인자 기록, 파일로 답함)를 agent PATH에 두고, 꺼진 pr routine은 오류 없음 → branch로 찾은 열린 PR → check 실패에 pr-followup이 thread 화면에 글을 넣음 → 자기 계정 댓글은 review 아님, 다른 사람 댓글은 review → `routine toggle --on`(파일은 `enabled`만 바뀜) 뒤 병합에 그 routine이 보냄 → 틀린 `PR:` 줄 알림(보고 사본·Next는 그대로), 항목 차례·댓글 본문 없음·gh 인자 확인. 기다림은 모두 흐름 사건(`events --follow`)과 `pane wait-output`이다. m13 `routines`는 꺼진 pr routine이 오류가 아니고 없는 trigger만 오류인 것을 본다.
 
 ### 8.81 기기 pairing·목록·폐기·로그아웃을 herdr-web-ui대로(10-18, 차이 목록 2장 P1·P2·P3, 결정 D6 「참고대로(controller만)」)
@@ -2169,7 +2175,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
   - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
   - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 나눈 두 pane 폭 합은 칸 폭 − 4(상자 테두리). 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
-
 ### 8.93 웹 터미널 띠·맨 아래로·같이 쓰기·끌기 중 휠·패널 클립보드를 herdr-web-ui대로(10-18, 차이 목록 1장 나머지, D7)
 
 - **띠는 모두 터미널 위에 뜬다(PaneTerminal 2747~2826줄 `.terminal-banners`).** §8.48 뒤에도 끊김·권한·오류·그림 띠는 터미널 위 흐름에 있었다. 띠가 나고 들 때마다 터미널 칸이 줄었다 늘어 PTY 크기가 바뀌었다(그림을 붙여 넣으면 그 띠 높이만큼 줄 수가 줄었다). 이제 터미널 화면에서는 모든 띠가 `.terminal-banners`(터미널 위 오른쪽, 칸 크기와 상관없음)에 있다. 대화 보기는 grid가 없고 크기도 놓았으므로 거기서는 전처럼 흐름에 둔다(참고도 대화 lens는 ChatView가 그 안에서 말한다).
@@ -2197,6 +2202,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **설정 「단축키」(문구는 참고 i18n.ko.ts).** 찾기 칸, 줄마다 「기록」(누른 조합을 그대로, 터미널·브라우저도 쓰는 조합은 「그래도 저장」을 묻는다)과 고르기(기본값·끄기·Mod+Shift 키), 「단축키 초기화」. 기기 설정이다(localStorage `aaa:shortcut-overrides`, 참고 SETTING_SCOPE `device`).
 - **다른 곳.** 참고의 「대화 / 터미널 전환」은 모든 pane의 보기를 바꾼다. aaa는 대화 기록이 있는 pane(Claude·Codex)만 대화 보기가 있어 거기서만 바뀐다. 「음성 입력(누르고 있기)」 줄은 aaa에 음성 입력이 없어 보이지 않는다.
 - **잇달아 넘기기에서 찾은 것(참고 `src/lib/terminalDispose.ts`를 옮김).** 단축키로 pane을 빨리 넘기면 page error 「Cannot read properties of undefined (reading 'dimensions')」가 났다(웹 E2E 세 판 중 한 판, 격리 반복 두 판째). stack은 xterm `Viewport.reset`의 `requestAnimationFrame(() => this.syncScrollArea())`였다. snapshot마다 쓰는 RIS(`\x1bc`)로 xterm이 다음 frame에 renderer 크기를 읽기로 하는데, 그 frame 전에 pane이 내려가 `term.dispose()`가 renderer를 치웠다. 참고는 이미 `disposeAfterPendingFrame`(걸어 둔 frame 다음, 그 뒤 task에서 치움, PaneTerminal 1982줄)으로 풀었다. 그대로 옮기고 참고 유닛 시험도 옮겼다(`web/test/terminalDispose.test.mjs`). 웹 E2E 「앱 단축키」는 frame을 잡아 두고 다음 pane이 snapshot을 읽은 것(ACK)을 본 뒤 되돌아와 frame을 놓아, 이 순서를 늘 만든다. 고치기 전 판은 세 번 모두 실패, 고친 판은 다섯 번 모두 통과(격리 사본).
+- **읽기 전에 넘기기(10-18, main 간헐 실패, coordinator·t-0332가 6번 중 1번 재현).** 위 고침 뒤에도 같은 page error가 났다. Chromium을 4배 느리게(`AAA_E2E_THROTTLE=4`) 하면 이 머신에서도 25번 중 2번 났다. stack은 같은 `Viewport.reset`의 frame이었다. 기록을 붙여 보니 순서가 달랐다: 다음 pane이 snapshot을 받은 직전에 다시 넘기면, xterm이 그 snapshot을 아직 읽지 않았다(WriteBuffer는 받은 출력을 setTimeout task에서 읽는다). 치우기를 기다리는 frame이 먼저 돌고, 그다음 task가 RIS를 읽어 reset frame을 걸고, 치우는 task가 그 frame보다 먼저 돌았다. 참고 `disposeAfterPendingFrame`은 xterm이 frame을 *이미* 걸었다고 본다. 참고는 같은 탭 안 pane 전환에서 터미널을 내리지 않아(terminalDispose.ts 머리 설명) 이 경우가 드물지만, aaa는 한 화면에 pane 하나라 넘길 때마다 내린다. 그래서 내릴 때 받은 출력을 xterm이 다 읽은 뒤(`term.write("", …)`의 callback)에 참고의 frame·task 기다림을 시작한다(`Term.tsx` 정리). 앞 기록을 붙이는 중에 붙잡은 출력도 버린다(내린 터미널에 더 쓰지 않는다). 참고 파일은 그대로 둔다. 웹 E2E 「앱 단축키」에 「읽기 전에 넘기기」를 더했다: frame과 timer task를 함께 잡고, 다음 pane이 snapshot을 받은 것만 본 뒤(ACK 없음을 확인) 되돌아와, 잡힌 frame을 먼저 돌리고 task를 놓는다. 고침을 뺀 판은 3번 모두 이 검사에서 실패, 고친 판은 25번 모두 통과(그냥 25/25, 4배 느리게 25/25).
 - **시험.** 웹 유닛 `web/test/roster.test.mjs`(줄 차례: 프로젝트 묶음의 thread, 그다음 pane, thread 줄이 여는 것). 웹 E2E 「앱 단축키」는 새는 키가 보이는 Linux 화면(Ctrl+Shift)에서 본다. macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않아 새도 보이지 않는다(첫 판이 「끈 키는 터미널로」에서 멈춰 알았다). Ctrl+Shift+↓는 목록에서 바로 아래 줄로, ↑는 돌아오고, 그 뒤 친 z만 pane에 간다(새면 `ESC[1;6B`가 먼저 온다), aaa에 없는 Ctrl+Shift+K·F·B·O는 앱이 가져가지 않고 Ctrl+Shift+E는 가져간다, Ctrl+Shift+E로 터미널 focus, Ctrl+Shift+PgUp은 한 화면(줄 수 − 1) 위·PgDn은 맨 아래이고 pane에 아무것도 안 가며 alternate screen에는 `ESC[5~`·`ESC[6~`, 설정에서 「다음 패널」을 끄면 Ctrl+Shift+↓가 pane에 `ESC[1;6B`로 가고, 기록한 Ctrl+Shift+L이 다음 패널이 되며, 초기화하면 저장값이 지워진다. 맥 platform 휴대폰·iPad 화면에서 ⌘⇧,가 설정을 열고, 단축키 줄이 설정 칸 안에 든다. 변형 확인: 터미널 거르기(`isAppShortcut`)를 빼면 xterm도 Shift+PageUp으로 한 화면 굴려 두 화면이 된다(「한 화면 위」 실패). 옮기는 화살표는 거르기가 없어도 새지 않는다: 창 capture 처리기가 고른 pane을 바꾸면 React가 그 처리기 뒤 microtask에서 그 터미널을 내려 xterm이 키를 받지 못한다. 목록에 없는 동작을 켜 두면 Ctrl+Shift+K를 앱이 가져가고, 한 화면을 줄 수만큼 굴리면·방향을 거꾸로 하면 각 검사가 실패한다.
 
 ### 8.95 TUI 마우스를 herdr대로(1): 누르기·휠·끌어 고르기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
@@ -2208,23 +2214,204 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **pane.** 누르면(테두리 포함) 포커스, 휠은 포커스만 옮긴다. 안쪽을 누른 칸에서 벗어나 끌면 보이는 화면 글을 고르고(밖으로 끌면 가장자리로 묶음), 떼는 때 복사한다(`[tui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사, 다른 키는 지우고 그대로 처리한다. 350ms 안에 같은 칸 근처를 두 번 누르면 낱말(빈칸·따옴표·괄호·`,;|`로 가르고 URL·경로는 한 낱말)을 복사하고 0.5초 보인다. 고른 칸 색은 herdr처럼 `panel_bg`를 흰색(어두운 테마)·검정 쪽으로 28% 섞고 글은 대비가 큰 쪽.
 - **복사.** 이 기기 시스템 clipboard에 쓴다. ssh·WSL·VS Code 터미널이거나 clipboard를 못 열면 OSC 52(`ESC ] 52 ; c ; <base64> BEL`). 알림 카드 「클립보드에 복사했다」. 시험은 `AAA_TEST_CLIPBOARD_TEXT=<파일>`로 사람의 clipboard 대신 파일에 쓴다.
 - **창.** 이름 창은 저장·지우기 단추, 닫기 확인은 닫기 단추만 하고 그 밖(안쪽 포함)을 누르면 취소하고 닫는다. 단축키 창은 밖을 누를 때만 닫고 휠로 3줄씩 민다(herdr).
-- **다음 묶음(3d-2, host 요청 필요).** 마우스 보고를 켠 프로그램(vim·htop 등)에 누름·휠을 넘기기(화면 장면에 그 pane의 마우스 모드), alt 화면 휠을 화살표로, 나눔 경계 끌기(비율 바로 정하기), 탭 끌어 옮기기, 오른쪽 누름 메뉴(탭 닫기 등). 기록 넘기기 휠은 copy 모드 묶음. → §8.96(오른쪽 누름 메뉴는 3d-3)
+- **다음 묶음(3d-2, host 요청 필요).** 마우스 보고를 켠 프로그램(vim·htop 등)에 누름·휠을 넘기기(화면 장면에 그 pane의 마우스 모드), alt 화면 휠을 화살표로, 나눔 경계 끌기(비율 바로 정하기), 탭 끌어 옮기기, 오른쪽 누름 메뉴(탭 닫기 등). 기록 넘기기 휠은 copy 모드 묶음. → §8.106(오른쪽 누름 메뉴는 3d-3)
 - **시험.** 유닛: 고른 글(넓은 글자 두 칸·끝 빈칸), 낱말 경계, 선택 색, 탭 막대 단추 자리(` + `·` < ` ` > `·넘긴 자리 지키기·17칸 밑), 그린 자리(이름표·` + `·`«`·경계). TUI harness `mouse_like_herdr`: SGR 마우스(`CSI < b ; x ; y M/m`)로 보고 켬, 이름표 누르기·휠, ` + `·이름 창 밖 누르기, 단축키 창 안·밖, 사이드바 줄·`«`/`»`·경계 끌기(32, 36에서 멈춤), pane 누르기 포커스, 끌어 고르기·두 번 누름 복사(파일), 나가면 보고 끔.
 
-### 8.96 TUI 마우스를 herdr대로(2): 프로그램에 넘기기·나눔 경계 끌기·탭 끌어 옮기기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D, FRONT_API 1.11)
+### 8.96 웹 E2E를 기능별 파일로(10-18, 사용자 「e2e testability가 중요해」, t-0338)
+
+- **왜.** 웹 E2E가 한 파일(5442줄·58단계)이라 한 단계만 혼자 돌릴 수 없고 늘 전부(3~5분)를 돌았으며, 기능 thread 여럿이 같은 파일을 고쳤다. herdr-web-ui는 기능마다 혼자 도는 브라우저 시험(`scripts/*-regression.ts`)과 묶음 실행(`scripts/ui-regression.ts`, `BROWSER_SCRIPTS`로 고르기)을 둔다.
+- **구조.** 입구 `web/e2e/web.e2e.mjs`가 `web/e2e/specs/NN-기능.mjs` 14개를 파일마다 새 프로세스·새 실험실(`lib/child.mjs` → `lib/harness.mjs`의 `runSpec`: host·agent·t1·첫 화면)로 차례로 돈다. 고르기 `--spec`·`--grep`(= `AAA_E2E_ONLY`)·`--repeat`·`--list`. 한 파일이 실패해도 다음 파일을 돌아 한 번에 여러 실패를 본다. 단계 이름과 결과 줄(`ok`·`FAIL`)·실험실 폴더(`/tmp/aaw-<pid>`)는 그대로라 ci.yml·ci-local.sh는 바꾸지 않았다. 쓰는 법은 [docs/testing.md 「웹 E2E」](testing.md#웹-e2e).
+- **새 실험실.** 앞 단계가 남긴 상태(pane 수·질문 수·구독 수·공유 설정 revision·usage 조회 수·diag 수)에 기대던 단언이 파일 안 차례로만 남는다. 그래서 파일 하나를 혼자·되풀이해(간헐 실패 재기) 돌릴 수 있다. 값은 파일마다 준비·정리 약 1.5초(부하가 크면 4초).
+- **글자 그대로 옮겼다.** 단계 본문은 들여쓰기까지 그대로다. 바꾼 줄은 둘이다: 「t1로 돌아왔다」 기다림 7곳(`한글-8`은 「입력 막대로 한글」 단계가 찍은 글이라, 준비가 t1에 `t1-42`를 찍고 그것을 본다)과 push 키 대입(spec은 import한 이름에 쓸 수 없어 `setPushKey`).
+- **ratchet.** spec이 harness의 `sleep`을 import해 쓰므로 scanner가 저장소 안 다른 파일에서 import한 helper도 그 정의로 센다(전에는 같은 파일 정의만 보아 나눈 뒤 53곳 중 6곳만 셌다). origin/main 비교는 main에 있던 파일은 파일마다, 새 파일은 합계로 한다. 웹 E2E 합계는 나누기 전과 같은 53이다.
+- **공유 설정은 자기 파일(`14-shared-preferences`).** 이 단계는 host의 공유 설정 문서가 비어 있다(revision 0, 쓰는 순서대로 1·2·3)에서 시작한다. 앞 「구독 사용량」 단계가 바꾼 설정은 600ms 뒤(`preferencesSync.ts SEND_AFTER_MS`)에 host로 가므로, 그 화면을 닫는 때에 따라 써지기도 했다(부하가 크면 써진다: 나눈 뒤 첫 ci-local에서 「열기 전에 공유 설정이 있다 revision 1」, 나누기 전 한 파일에도 있던 경쟁). 파일마다 새 실험실이므로 자기 파일이면 빈 문서가 보장된다. 단계 본문은 그대로다.
+- **틀 검사.** `web/test/e2e-layout.test.mjs`: spec 이름 꼴·기본 함수, 단계 이름은 모든 spec에서 하나, harness는 위에 둔 이름을 모두 export, spec은 harness에 있는 이름만 import.
+- **나누기 전 branch.** `web/e2e/tools/port-patch.mjs`가 옛 한 파일의 hunk를 같은 글이 있는 spec·harness로 옮기고 새 helper는 export·import까지 맞춘다. 착지 때 아직 main에 없던 t-0329·t-0333 branch의 변경(hunk 4개, 새 helper `focusIs`)으로 시험했다. 모든 thread가 나눈 main을 받으면 지운다.
+
+### 8.97 설정 창을 쪽으로 나눈다(herdr-web-ui SettingsDialog대로, 10-18, 차이 목록 2장 T1)
+
+- **참고(herdr-web-ui aa624cb).** `src/components/SettingsDialog.tsx`(`PAGES` 198~210줄, `OpenSettingsDialog` 954~1110줄: `settings-nav` 목록·쪽·키 바 편집·Esc·화살표), `src/components/SettingsDialog.css`·`SettingsControls.tsx`·`SettingsControls.css`(그대로 옮김), `src/lib/settingsHistory.ts`(쪽마다 history 한 칸), `src/App.tsx` 398~405줄(마지막 칸에서 뒤로면 닫힘).
+- **배치.** 641px부터는 왼쪽 목록(모양·터미널·알림·구독 사용량·폰 및 기기) 옆에 쪽, 머리줄(쪽 제목·닫기)은 쪽 위다. 640px까지(휴대폰)는 목록으로 열고, 고르면 쪽만 보이며 ←(「설정으로 돌아가기」)와 시스템 뒤로가 목록으로 온다. 휴대폰 창은 높이가 고정된 아래 sheet라 쪽을 넘겨도 가장자리가 움직이지 않는다.
+- **키보드·focus.** 목록은 Tab 한 번에 하나(roving tabindex), ↑↓·Home·End가 목록을 걷고 넓은 창이면 쪽도 넘긴다. 열면 고른 줄에, 휴대폰은 쪽에 들어가면 ←에, 나오면 그 줄에 focus. 키 바 편집에서 돌아오면 보던 자리와 「키 바 편집」 단추로. Esc는 키 바 편집이면 거기서 나오고 아니면 어느 쪽에서든 창을 닫는다(참고 1052~1061줄). 닫으면 톱니로 focus가 돌아간다(useFocusTrap).
+- **history.** 넓은 창은 열면 한 칸(쪽을 바꾸면 그 칸을 바꿈), 휴대폰은 목록 한 칸 + 쪽 한 칸 + 키 바 편집 한 칸. ←·X·Esc도 쌓은 칸을 지운다.
+- **조작 모양.** 줄·스위치·여럿 중 하나·한 칸씩(Stepper)은 참고 SettingsControls 그대로, 단추·입력은 참고 class(`btn`·`icon-button`·`input`·`select`)와 lucide 아이콘. aaa가 따로 쓰던 설정 창 CSS(style.css)는 지웠다.
+- **다르게 둔 것.** 참고의 채팅·음성 입력·단축키·원격 PC·에이전트 연동·정보 쪽은 그 기능이 aaa에 없어 뺐다. 「구독 사용량」·「폰 및 기기」 쪽은 aaa 것이다(§8.81, §8.45·§8.49). 참고의 주소(`?settings=`)로 쪽 열기는 aaa에 그런 링크가 없어 두지 않았다. §8.94의 「단축키」는 참고 `ShortcutsPage`처럼 쪽 하나(찾기 칸·묶음·「단축키 초기화」, 차례도 참고 PAGES대로 구독 사용량 다음)이고, §8.93의 「패널에서 클립보드로 복사」·「터미널의 aaa와 같이 쓰기」는 터미널 쪽 「키 바」 아래(참고 413~418줄)다. Mod+Shift+,는 창을 첫 쪽(휴대폰은 목록)으로 연다. §8.82의 「진단」(입력 기록)은 참고에 없는 aaa 진단이라 그 기록이 보는 「터미널」 쪽 맨 끝에, §8.83의 「무음 모드에서도」는 「알림」 쪽 「소리」 아래에 둔다.
+- **시험.** 웹 E2E 「설정 쪽」: 넓은 창 목록·머리·쪽 자리, 고른 줄에만 바탕(transition이 끝난 뒤), 화살표·Home·End, Esc 뒤 focus가 톱니, 넓은 창 뒤로가 닫음; 휴대폰 목록만 → 쪽만·제목·←에 focus → 키 바 편집 → 뒤로 세 번(키 바 편집 단추·「터미널」 줄 focus·닫힘), ←·Esc, X 뒤 설정 칸 없음, sheet가 다 올라온 뒤 화면 안; iPad(WebKit 820×1180) 넓은 배치·넘침 없음. 다른 단계는 `openSettings(page, 쪽)`(lib/harness.mjs)으로 그 쪽을 연다. 단계는 `web/e2e/specs/06-settings.mjs` 끝.
+
+### 8.98 큰 응답: frame 상한을 넘으면 오류로 답하고, inbox는 크기 한도 안에서 싣는다(10-18, t-0334 pilot 결함 2)
+
+- **결함.** 0.2에서 옮긴 프로젝트는 끝낸 inbox가 수천 건이다. 그래서 `aaa inbox list --all` 응답(4000건이면 약 2.2 MB)이 front 연결 frame 상한(1 MiB)을 넘었다.
+  - host 쓰기 task는 그 frame을 쓰지 못하자 연결을 닫았고, 로그는 debug 한 줄뿐이었다.
+  - CLI에는 「상대가 연결을 닫았다」만 보였다.
+- **모든 응답(`front.rs` `res_frame`).** host는 응답 JSON을 만든 뒤 크기를 본다. 상한을 넘으면 `too_large` 오류로 바꿔 답하고 경고 로그를 남긴다.
+  - 오류 문구: 「<종류> 응답이 N KiB라 frame 상한 1024 KiB를 넘는다. 범위를 좁혀 다시 묻는다」.
+  - 쓰기 task(`aaa-common` `spawn_writer`)도 상한을 넘는 frame(사건, agent 쪽 응답 등)을 경고로 남기고 닫는다. 그 연결에 남은 요청이 무엇인지 알 수 없어 그 frame만 버리지는 않는다.
+- **inbox(`inbox.rs` `fit_inbox`).** 다음 셋은 항목 JSON 합이 512 KiB(상한의 절반)까지만 싣는다.
+  - 대상: `inbox list`, `inbox done`이 돌려주는 남은 항목, `context`의 inbox.
+  - 끝내지 않은 항목이 먼저 자리를 받고 오래된 것부터 싣는다(처리할 차례다). 끝낸 항목(`--all`)은 최근 것부터 싣는다. 한 번 넘치면 그 뒤는 싣지 않아, 실은 것은 늘 이어진 앞이다.
+  - 응답에 `omitted_open`·`omitted_done`을 담는다. CLI 문구: 「끝낸 항목 N개는 싣지 못했다(최근 것부터 실었다). 모두는 프로젝트 폴더 inbox/done/에 있다」. `context`는 `inbox_open`이 전체 수이고, 실은 수가 적으면 「… 항목 N개는 더 싣지 못했다」다.
+  - 「봤다」 표시는 실은 항목에만 한다. 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
+  - 참고와 다른 점: 참고에는 `inbox list`가 없다. coordinator는 `context`의 Inbox 절로 본다(herdr-projects `src/coordinator.rs`). 참고는 파일을 바로 읽어 상한도 없다. `--all`과 한도는 aaa 것이다.
+- **계약.** FRONT_API 1.11(`inbox` 응답의 두 수). 옛 CLI는 두 수를 모르고 실은 항목만 보인다.
+- **시험.**
+  - host 유닛: `inbox_page_fits_open_first_then_recent_done`, `oversized_response_becomes_an_error`.
+  - m13 `big_inbox_lists_within_frame`: 가짜 0.2 프로젝트(끝낸 4000건·열린 2건)를 `aaa migrate inventory`·`import`로 넣고 host를 띄운다. 그다음 `inbox list --all`·`--peek`·`context`·`inbox done --all`을 본다.
+  - mutation(되돌림)
+    - 한도를 없애면 `too_large` 오류로 실패한다. host 로그는 `응답이 frame 상한을 넘어 오류로 답한다 kind="inbox" bytes=2276113`.
+    - 응답 검사까지 없애면 「상대가 연결을 닫았다」로 실패한다(원래 결함). host 로그는 `frame을 보내지 못해 연결을 닫는다`.
+
+### 8.99 답보다 늦게 온 확인창 hook이 질문을 다시 열던 것(10-18, ci-local 경쟁)
+
+- **결함.** Claude Code는 권한 확인창 하나에 hook 둘(`PermissionRequest`, `Notification(permission_prompt)`)을 따로 낸다.
+  - hook 사건은 agent 연결로 차례대로 오지만, 답은 front 연결(`aaa question answer`·웹 카드)로 온다. 그래서 답이 두 hook 사이에 낄 수 있다.
+  - 그러면 늦은 둘째 hook이 열린 질문을 찾지 못해 새 질문을 연다. 거절한 뒤라 다음 hook이 오지 않으면 그 질문이 닫히지 않는다. thread는 사람 차례에 남고, 30초 뒤 「blocked on a prompt」 알림이 간다.
+  - m13 `hooked_thread_questions_and_messages`가 ci-local(ci8)에서 이것으로 한 번 실패했다. 사건 차례: 질문 → 답(no) → 같은 확인창의 질문 사건.
+- **고침(`harness.rs` `late_pair`).**
+  - agent가 사건에 hook 이름을 싣는다(`HarnessEvent.hook`, 빠져도 되는 칸이라 AGENT_LINK는 그대로다).
+  - host는 열린 질문이 받은 hook을 pane마다 기억한다. 답할 때 그것을 「답한 확인창의 hook」으로 옮긴다.
+  - 그 확인창이 짝 중 하나만 받았고, 다음 hook 사건이 나머지 하나면 그 확인창의 늦은 짝이다. 질문도 상태도 바꾸지 않고 버린다.
+  - 다른 hook 사건이 오거나 같은 hook이 다시 오면(새 확인창) 기억을 비운다.
+  - 옛 agent(hook 이름 없음)는 전과 같다.
+- **참고와 다른 점.** 참고에는 질문이라는 것이 없다. herdr는 agent 상태를 hook과 화면으로 정해, 늦은 사건으로 blocked가 돼도 화면이 바로잡는다. aaa 질문(원격 답, §8.15)은 hook으로만 열리고 닫혀 이 짝짓기가 필요하다.
+- **시험.**
+  - host 유닛 `late_pair_is_the_missing_half_of_an_answered_prompt`.
+  - m13 `hooked_thread_questions_and_messages`: 가짜 Claude가 `late`에서 PermissionRequest → 답 → Notification → 진행 보고 차례로 낸다. 진행 보고가 보이면 host가 늦은 Notification을 처리한 뒤다. 그때 thread는 쉼(idle)이고 열린 질문이 없다.
+  - 결함 심기: `late_pair` 검사를 끄면 이 시험이 「늦은 짝 hook이 질문을 다시 열었다(activity question)」로 늘 실패한다.
+
+### 8.100 메시지는 작업 중에도 바로 입력하고, 동시 thread 한도는 경고만 한다(10-18, 차이 목록 3장 E1·E6·A13, 결정 D10 「참고대로」)
+
+- **바로 입력(E1, hp `src/threads.rs` `prompt`).** `aaa thread message`의 기본은 지금 친다. 작업 중이면 harness가 다음 턴으로 줄 세운다(Claude Code 대기 메시지). host의 턴 끝 대기열(`deliver_queued`)은 없앴다.
+  - 받음 판정: 일하는 중에 보낸 글은 보낸 뒤에도 일하는 중(또는 확인창)이면 받은 것이다. herdr `agent prompt --wait --until working`이 보낸 직후 working·blocked를 받음으로 친다(`src/api/wait.rs` `prompt_activity_observed`). 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다(`harness.rs` `submit_checked`).
+  - 확인창이 떠 있으면 두 방식 모두 거부한다(`agent_blocked`, `aaa thread read`·`keys` 안내, hp `prompt_state`). 친 글과 Enter는 확인창이 받는다.
+  - 받았는지 모르면 다시 보내지 않는다. inbox `message not delivered`가 `thread read`로 입력창을 보고 남았으면 `thread keys … enter`를 안내한다(hp `prompt_unconfirmed`).
+  - `--interrupt`는 aaa에 남겼다. 참고의 `thread stop` 뒤 `thread prompt`를 멈춤까지 기다려 한 번에 한다. 이름 `queue`(JSON `mode`)는 옛 판 그대로다.
+  - `aaa thread next --line N`(E6)도 같은 길로 바로 친다.
+  - 옛 host가 대기열에 남긴 메시지: 새 host는 시작할 때 「보냈는지 모른다」로 바꾸고 `message_unknown`을 남긴다(다시 보내지 않는다, §8.5 a).
+- **동시 thread 한도(A13, hp `src/threads.rs` `start`).** 프로젝트 `project.toml max_parallel_threads`(기본 10)만큼 열려 있으면 `thread start`가 경고하고 시작은 한다.
+  - 한도는 coordinator가 지키는 규칙이다(hp COORDINATOR.md 「Parallel cap」: 그만큼 열려 일하면 시작하지 말고 제안한다). 새 프로젝트 AGENTS.md에 그 줄을 옮겼다. CLI는 `경고: …` 줄, JSON은 `warnings`다.
+  - 사후 평가자 thread는 세지 않는다(참고에 없는 배경 역할).
+  - host.toml `[projects] max_threads_per_machine`과 거부(`check_capacity`)를 없앴다. 그 key가 남은 host.toml은 「모르는 key는 무시한다」 경고를 낸다.
+  - `aaa migrate import`는 0.2 `max_parallel_threads`를 project.toml로 옮긴다.
+- **계약.** ThreadView `warnings`(빠져도 된다). FRONT_API는 착지 때 다음 번호다.
+- **시험.**
+  - m13 `hooked_thread_questions_and_messages`: 일하는 중에 보낸 「second」가 바로 accepted이고, 턴이 끝난 뒤에 읽힌다. 확인창 중 메시지는 두 방식 모두 거부한다.
+  - m13 `merge_queue_and_capacity`: 한도 2에서 셋째 시작이 경고와 함께 된다.
+  - host `migrate::convert` e2e: project.toml에 `max_parallel_threads`가 옮겨진다.
+
+### 8.101 결정 기록을 memory로 합친다(10-18, 차이 목록 3장 G9, 결정 D10 「참고대로」)
+
+- **참고.** herdr-projects에는 결정 기록이 따로 없다. 사용자가 채팅에서 정한 것 중 뒤 thread가 알아야 할 것은 coordinator가 그때 바로 memory에 적는다. memory는 모든 thread brief에 들어간다(`skill/COORDINATOR.md` 「Memory and preferences」, `src/thread.rs` `compose_brief`). binary는 memory를 쓰지 않는다.
+- **없앤 것.**
+  - `aaa decision add|list`와 Front 요청·응답(`decision_add`·`decisions`).
+  - 새 프로젝트의 decisions.md, brief의 「# 결정 기록」 절.
+  - thread의 `decisions_rev`·`decisions_now`와 「결정 N번까지 보고 시작했다」 줄, 흐름 사건 `decision_added`.
+  - 평가 채택의 `decision_num`.
+  - 남은 `aaa decision`은 숨은 명령이다. 결정은 memory에 적는다고 말하고 실패한다(옛 AGENTS.md를 따르는 coordinator를 위해).
+- **coordinator 안내.** 새 프로젝트 AGENTS.md에 참고의 「Memory and preferences」 네 줄을 옮겼다: 운영 선호는 묻지 않고 `memory/preferences.md`에, 프로젝트 사실은 사용자가 말하거나 보고 `## Remember`에서, 짧게, 결정은 그때 바로.
+- **옛 decisions.md.** 결정이 적혀 있으면 ticker가 내용 hash당 한 번 inbox `config-error`(`decisions.md`, `not read`) 항목을 낸다. coordinator가 memory로 옮기고 파일을 지운다. host는 memory를 쓰지 않는다(참고: binary는 `memory/`를 쓰지 않는다).
+- **평가 채택.** 채택·보류는 평가 기록에만 남는다. 뒤 thread가 알아야 하면 coordinator가 memory에 적는다.
+- **계약.** FrontRequest·FrontResponse에서 두 갈래가 빠지고 ThreadView에서 두 값이 빠진다. FRONT_API는 착지 때 다음 번호다.
+- **시험.**
+  - m13 `memory_and_restart`(옛 `decisions_and_restart`): memory가 brief에 들어가고, 다시 시작하면 바뀐 memory를 읽는다. `aaa decision`은 안내와 함께 실패한다. 옛 decisions.md는 항목 하나가 되고 memory는 그대로다. resume 확인의 고정 sleep(4초)은 화면과 `ticker tick` 두 번으로 바꿨다.
+  - m13 `worker_session_cli_is_read_only`: 조작 예시를 `thread next --add`로 바꿨다.
+  - host `brief_text`: brief에 결정 기록 절이 없다.
+
+### 8.102 밀도·인터페이스 글자 크기를 herdr-web-ui대로, 설정 닫는 길·조작 크기 확인(10-18, 차이 목록 2장 T4, QA t-0337 Q10·Q12)
+
+- **참고(herdr-web-ui aa624cb).** `src/lib/settings.ts` `density`·`uiFontSize`·`BODY_FONT`(여유 14·촘촘 13)·`applyToDocument`(`data-density`, `--ui-scale` = 고른 본문 크기 / 밀도의 본문 크기), `src/lib/typography.ts`(그대로 `web/src/herdr/typography.ts`: 11~20px, `sanitizeUiFontSize`, `fontScale`), `SettingsDialog.tsx` `AppearancePage` 「밀도」·「타이포그래피 → 인터페이스 글자 크기」(문구 i18n.ko.ts), tokens.css `[data-density="compact"]`.
+- **설정.** 설정 → 모양에 「밀도」(여유·촘촘, 색상 다음)와 「타이포그래피」 묶음의 「인터페이스 글자 크기」(한 칸씩, 고르지 않았으면 밀도의 크기). 둘 다 참고처럼 이 기기 설정이다(`aaa:appearance`, host 공유 설정에 가지 않는다). `theme.ts`가 `<html data-density>`와 `--ui-scale`을 단다.
+- **글자 크기 토큰.** aaa `style.css`의 고정 px 글자 크기 51곳을 참고 토큰(`--fs-2xs`~`--fs-display`)으로 바꿨다. 토큰에 없는 크기(9·10.5·11.5·12.5·13.5·17·19px)는 가까운 토큰에 비율을 곱해(`calc(var(--fs-xs) * 12.5 / 12)`) 기본 화면은 그대로이고 밀도·배율을 따른다. 입력줄의 16px(iOS가 focus 때 키우지 않는 하한)은 참고처럼 배율을 받지 않는 `--fs-input`이다. 터미널 글자는 제 설정(§8.47 글자 크기)을 따른다.
+- **QA t-0337 Q10·Q12(옛 설정 창의 결함).** §8.97의 쪽 나눈 창(참고 `useFocusTrap`·`useSheetSwipe`·`settingsHistory`, `SettingsControls`·primitives 터치 크기)으로 없어졌다. E2E로 확인한다: 휴대폰 시스템 뒤로는 한 걸음씩 닫고 앱을 나가지 않는다, 아래로 밀면 닫힌다, 닫으면 focus는 톱니로, 단축키로 연 창을 Esc로 닫으면 focus가 터미널로 돌아가 친 글이 pane에 닿는다. 390×844 터치에서 쪽 줄 48px, 아이콘 단추 40×40, 글 단추 높이 40, 스위치 48×40(참고 그대로). 여럿 중 하나(segmented) 단추는 참고도 `--control-h − 6px`(28px)이고 휴대폰 넓은 줄에서는 줄 폭을 나눠 가진다(아침 확인: t3code 44px와 비교).
+- **시험.** 웹 E2E `specs/06-settings.mjs` 「밀도·인터페이스 글자 크기」(촘촘 13px, 18px 배율 18/13로 목록·설정 글자가 함께, 터미널 13px 그대로, 20px에서 키우기 꺼짐, 이 기기에만 저장·공유 설정에 없음, 다시 열어도 남음, 다른 기기는 여유, 휴대폰 20px 넘침 없음)와 「설정 닫는 길·조작 크기」.
+
+### 8.103 목록 줄 메뉴와 고정을 herdr-web-ui대로(10-18, 차이 목록 2장 L9·L10, 결정 D5)
+
+- **참고대로.** herdr-web-ui `src/components/RowMenu.tsx`(그대로 옮김, `web/src/RowMenu.tsx`·`herdr/RowMenu.css`·`herdr/menu.css`), `Sidebar.tsx` `onRowContextMenu`·`menuItems`, `AgentSidebar.tsx` 고정 메뉴·`refocusPin`, `lib/sidebarPins.ts` `splitPinnedRows`.
+  - 여는 법: 마우스 데스크톱은 줄 오른쪽 클릭(누른 자리에, focus는 옮기지 않음), 터치·좁은 화면은 줄 끝 ⋯ 단추(휴대폰은 아래 sheet, 시스템 「뒤로」로 닫힘). 메뉴는 첫 항목에 focus, 화살표·Home·End, Esc·바깥 누름·Tab으로 닫히고 연 곳으로 focus가 돌아간다.
+  - pane 줄: 「pane 고정/고정 해제」 → 「pane 닫기」(확인 창, 참고 「Close pane {name}?」). 끝난 pane은 닫는 대신 「다시 열기」(`pane_resume`)와 「기록 지우기」(확인 창, `pane_forget`). 실패는 줄 아래 한 줄(참고 `sidebar-inline-error`), 확인 창의 실패는 창 안.
+  - Agents 줄: 「에이전트 고정/고정 해제」 하나(참고 AgentSidebar).
+  - 고정 열쇠는 참고 Agents와 같은 `machine:pane`(`sidebarPinKey`)이다. 그래서 pane 하나를 고정하면 머신 목록과 Agents 양쪽에서 맨 앞 「고정됨」 카드에 핀 표시와 함께 선다. 고정은 host 공유 문서(plan §8.79)로 다른 기기에도 간다. 고정하면 줄이 다른 목록으로 옮겨 가므로, 메뉴를 연 줄(머신 목록·Agents 중 연 쪽)로 focus를 되돌린다.
+- **aaa에만 있는 것.** 프로젝트 머리 메뉴: 「프로젝트 thread 보기」(끝난 것까지, §8.89)와 「접기/펼치기」(참고 worktree 묶음의 fold). thread 줄 메뉴: 「보고」와 「프로젝트 thread 보기」(thread 줄은 누르면 agent pane을 연다).
+- **아직 없는 것.** pane 이름 바꾸기는 host·agent에 그 요청이 없어 다음 묶음(proto·agent·host·CLI)으로 넘긴다. 줄 끌어 옮기기(참고 workspaceOrder)도 다음 묶음.
+- **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
+- **시험.** 웹 E2E 「줄 메뉴」(`web/e2e/specs/12-threads-push.mjs`): 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다. 파일마다 새 실험실이라 host가 고정을 나눈 적이 없다: 참고대로 그때는 고정만 바꿔서는 보내지 않고 첫 설정 변경에 실려 가므로(`preferencesChange`, 참고 `shared/preferences.ts` 「absent until a browser first shares its pins」), 단계는 빈 고정을 써 두고 다시 연 화면에서 시작한다.
+
+### 8.104 thread start 기본값·restart --profile·auto-resolve를 herdr-projects대로(10-18, 진행 순서 6 나머지, 차이 목록 A1·A15·E8·E11)
+
+- **profile 기본값(A1, hp `src/threads.rs` `thread_profile`).** `thread start`에 `--profile`이 없으면 `--from-task` owner, 그다음 project.toml `thread_profile`이다. 둘 다 없으면 거부한다. 참고의 내장 기본(`claude`)은 aaa에 없다(profile은 머신 agent.toml에만 있다). 허용 목록 검사는 그대로다.
+- **kind 기본값(hp `placement`).** `--kind`가 없으면 `--repo`가 있으면 worktree, 없으면 작업 폴더(dir)다. 참고의 tab이 aaa의 dir이다. `--machine`이 없으면 project.toml `[[repos]]`에 적힌 그 repo의 머신이다(hp `start`의 `listed`).
+- **`--from-task`(A15).** 미할당 task도 `thread_profile`로 시작한다. 이미 열린 thread가 맡은 task는 참고에 그 거부가 없어 막지 않고 경고한다(`warnings`).
+- **restart `--profile`(E8, hp `restart`).** 그 머신 agent가 agent.toml에서 profile을 다시 해석하고(옛 model·args는 쓰지 않는다) 새 대화로 띄운다. `--resume`과 함께는 거부한다. agent 요청 `ThreadRebrief.profile`(AGENT_LINK 1.4)이다. 옛 agent는 그 값을 모르고 저장된 launch를 돌려주므로, host는 돌려받은 `Launch.profile`이 다르면 거부한다.
+- **auto-resolve(E11, hp `src/steps.rs` `auto_resolve`·`resolve_after_copy`).**
+  - 열린 worker thread의 묶음이 쉼이고, 묶음·보고가 마지막으로 바뀐 때와 host가 뜬 때 중 가장 늦은 때부터 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지나면 끝낸다. 두 시각이 없는 옛 기록은 잴 수 없어 두지 않는다(참고와 같다).
+  - 끝내기는 `thread resolve`와 같다. 마지막 사본이 실패하면 끝내지 않고 다음 셈에 다시 한다. worktree는 force 없이 지운다.
+  - 항목은 「쉼으로 auto_resolve_days(N일)가 지나 저절로 끝냈다. `aaa thread resolve <p> <id> --reopen`으로 되돌린다」이다.
+  - 기록에 `group_changed_ms`·`report_changed_ms`를 더했다(hp `last_state_change`·`last_report_change`).
+  - host.toml `[projects] auto_resolve_day_secs`(기본 86400)는 하루 길이다. 시험에서 줄인다.
+  - 연결되지 않은 머신의 thread는 건너뛴다.
+- **`thread resolve --reopen`(hp `resolve`).** 끝낸 thread를 열린 것으로 되돌리고 아무것도 띄우지 않는다(`aaa thread restart`가 띄운다). 다음 셈은 처음 보는 것으로 쳐서 전이 항목을 내지 않는다. 지운 worktree는 돌아오지 않는다.
+- **0.2 설정 옮기기.** `auto_resolve_days`·`goal`·`thread_profile`·`repos`도 project.toml에 같은 이름으로 옮긴다(`coordinator_profile`은 aaa에 없다).
+- **coordinator 안내.** hp COORDINATOR.md 56·68줄(다른 profile로는 `thread restart --profile`, 도는 thread의 model은 harness `/model`)을 옮겼다. auto-resolve·`--reopen`을 한 줄 더했다.
+- **계약.** FrontRequest `thread_start.kind` 생략, `thread_restart.profile`, `thread_resolve.reopen`. FRONT_API 다음 번호, AGENT_LINK 1.4다.
+- **시험.**
+  - m13 `start_defaults_profile_kind_and_task`: profile 없음 거부, thread_profile, kind 기본값 둘, 미할당 task, 이미 맡은 task 경고.
+  - m13 `restart_with_another_profile`: `--resume`과 함께·없는 profile 거부(기록은 그대로), 다른 profile로 새 세션.
+  - m13 `auto_resolve_and_reopen`: 하루 1초·2일에서 쉼 뒤 끝나고 항목이 `--reopen`을 안내한다. 다시 열고, 0이면 끈다.
+  - host `transitions` 유닛: 가장 늦은 때부터 재기, 옛 기록. agent `threads` 유닛: profile 다시 해석·없는 profile.
+
+### 8.105 쓰는 기기: 마지막으로 치거나 누르거나 화면을 켠 한 기기만 push를 막는다(10-18, 사용자 결정), pane 연결 깨어나면 바로 다시 붙기(QA t-0337 Q5), 빠른 휠 앞 기록(Q1)
+
+- **사용자 결정(원문 10-18 01:3x).** 「여러 곳에서 띄웠어. … 지금 입력 받아가는 것 처럼, (최고 나중에 화면 켠 쪽에 입력 과 화면 크기 맞추는), 이걸 이용하면 안될까?」 coordinator가 이것을 아래 규칙으로 정리했다.
+  - 「쓰는 기기」는 한 기기다. 사람이 마지막으로 치거나 누르거나 화면을 켠 기기다.
+  - push는 그 기기가 지금 보이고 focus일 때만 건너뛴다. 다른 기기 창이 보이는 것은 까닭이 아니다.
+  - 그 기기가 가려지거나 다른 기기가 입력을 받으면 바로 바뀐다. 앱 안 알림은 그 기기에 꼭 내려온다(다른 기기도 보이면 내려온다). 판정은 모으는 기다림(debounce) 뒤 보내기 직전에 한다.
+- **참고와 다른 점.** herdr-web-ui `server/index.ts` 1117줄 `inUse: () => present.size > 0`(`server/push.ts` 28~31·468~487줄)는 쓰는 화면이 하나라도 있으면 어느 기기에도 보내지 않는다. 여러 기기에 aaa를 띄워 두면 다른 기기 창 하나 때문에 휴대폰 push가 오지 않았다(10-18 00:58 실기). 그래서 사용자 결정대로 바꿨다.
+- **무엇이 쓰는 기기를 정하나.**
+  - 웹이 상태 사건 연결로 `EventsClientMsg::Touch`를 보낼 때다. 앱을 열거나 이 화면이 보이고 focus가 될 때(`watchPageInUse`가 쓰는 중으로 바뀜), 그리고 쓰는 중에 누를 때(`pointerdown`)·칠 때(`keydown`, 반복 키 제외)다. 붙기 전이나 끊긴 동안 누른 것은 붙으면 보낸다.
+  - host가 pane 연결에서 입력(`input`·binary·`submit`)이나 `take`를 받을 때다.
+  - 다시 붙을 때의 presence 보고와 크기 걸기(`resize`)는 정하지 않는다. host가 다시 뜨거나 연결이 다시 붙을 때, 보이고 focus인 데스크톱 창이 휴대폰에서 쓰는 기기를 빼앗지 않게 하려는 것이다.
+- **host.**
+  - `Viewing.user`(seen.rs)가 쓰는 기기다. `push_items`는 `user_in_use()`(그 기기에 쓰는 화면이 있다)일 때만 건너뛴다.
+  - `push_skipped` 설명: 「쓰는 기기 01ABCDE · 쓰는 화면 2개(기기 01ABCDE, 01FGHIJ) · 항목 1개」.
+  - `GET /api/v1/push`에 `user`(앞 7자)·`you`(이 기기인지)를 더했다. 쓰는 기기는 메모리에만 있어 host를 다시 띄우면 비고, 다음 누름·입력에서 정해진다.
+- **시험(웹 E2E 「쓰는 기기」).** A(데스크톱)는 처음부터 끝까지 보이고 focus이고, B(휴대폰)는 focus 없이 연다.
+  - (1) B에서 pane에 친다. B가 쓰는 기기가 되고(B `you`), B는 쓰는 화면이 아니므로 push가 간다. A가 쓰는 화면이어도 건너뛰지 않는다.
+  - (2) B가 보이고 focus가 된다. push 없이 「쓰는 기기 B · 쓰는 화면 2개」로 건너뛰고, B에 앱 안 알림이 내려온다. B가 가려지면 다음 보고는 push로 간다.
+  - (3) A에서 다시 친다. A가 쓰는 기기가 되고 「쓰는 기기 A」로 건너뛴다.
+  - 단위 시험: `push_waits_only_for_the_device_last_touched`(seen.rs).
+- **QA t-0337 Q5: pane 연결이 깨어나면 바로 다시 붙기.**
+  - 결함: 끊긴 pane 연결은 backoff(최대 10초)를 다 기다렸다. 망이 돌아오거나 화면이 다시 보여도 마찬가지였다(Term.tsx).
+  - 참고: herdr-web-ui `src/lib/ws.ts` `onWake`·`wake()`(150~165·571~600줄)는 online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다. t3code client-runtime `connection/supervisor.ts`도 같다.
+  - 고침: Term.tsx `onWake`가 그대로 한다. 열린 연결과 출력 정지(4008)는 건드리지 않는다. 열린 pane 연결의 probe(참고 `wake`가 하는 일)는 pane 연결에 ping이 없어 아직 아니다.
+  - 시험(웹 E2E 「깨어나면 바로 다시 붙기」): 끊고 다시 붙기 두 번을 거절해 backoff 중으로 만든 뒤 `online`·`pageshow`·`visibilitychange`를 보낸다. 그 사건 안에서 새 연결이 하나 생기고(타이머를 기다리지 않는다) snapshot을 받는다. 고침을 빼면 「새 연결 0개」로 실패함을 확인했다.
+  - Playwright `routeWebSocket`은 서버에 이을 때만 진짜 WebSocket을 만든다. 그래서 길에서 거절한 연결은 진단 기록에 남지 않는다. 시험은 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싸 센다.
+- **QA t-0337 Q1: 빠른 휠 뒤 빈 화면.**
+  - 결함: 긴 출력 pane에서 휠을 연달아 굴려 앞 기록을 붙이는 중에 터미널이 빈 채로 굳었다. 새 출력·친 글이 보이지 않고, 휠·창 크기·「맨 아래로」 단추로도 돌아오지 않았다. 다른 pane에 갔다 와야 풀렸다(데스크톱 Chromium 6/8, WebKit 0). `5b01330`에서도 그대로였다.
+  - 원인(QA 2바퀴가 찾고 여기서 결함 심기로 확인): `term.reset()`이 부르는 xterm 5.5 `Viewport.reset()`은 줄 높이 `_currentRowHeight`를 0으로 두고 rAF 두 번 뒤(`syncScrollArea` → `_refresh` → `_innerRefresh`)에야 다시 잰다. 그 사이 viewport scroll 사건이 오면 `_handleScroll`이 `scrollTop / 0`으로 줄을 구한다. scrollTop이 0이면 NaN이 되어 `ydisp`가 NaN에 굳는다.
+    - 버퍼를 읽는 중이면 남은 출력이 ydisp를 되살린다. 다 읽은 뒤·재기 전(덮개를 뗀 frame과 다음 frame 사이)에 오면 그대로 남는다. 짧은 줄이라 한 번에 다 읽히는 pane에서 휠 연타가 그 틈에 닿았다.
+    - 그러면 `prependHistory`의 그림 기다림(`viewportY !== at`)이 늘 참이라 `done()`을 부르지 않아 붙잡은 출력이 풀리지 않았다. 「맨 아래로」 단추의 `viewportY < baseY`는 늘 거짓이었다.
+  - 이 개발 Mac에서 QA 1바퀴 스크립트(`probe-scroll5.mjs`)로 24번 재현하지 못한 것은 그 pane이 처음 구독 전에 출력을 쏟아(Q8) 덩어리가 작고 줄이 길어(한글·이모지) 읽는 중에 사건이 닿았기 때문으로 보인다.
+  - 고침(QA가 든 세 길 가운데 둘):
+    - 원인 자리를 막는 xterm 패치 `web/patches/xterm-5.5.0-viewport.patch`. 줄 높이를 재기 전의 scroll은 옮기지 않는다(`_innerRefresh`가 scrollTop을 ydisp에 맞춘다). 같은 동안 mouse 보고 휠의 `getLinesScrolled`는 0을 돌려준다(Infinity가 `_wheelPartialScroll`을 NaN에 굳힌다). 앞 기록과 snapshot(`ESC c`) 모두 이 길을 지난다.
+    - 안전장치로 `prependHistory`는 보던 줄이 유한수가 아니면 다시 맞추려 기다리지 않고 붙잡은 출력을 푼다.
+    - 「reset 직후 rAF까지 scroll 막기」는 앱에서 xterm 안의 줄 높이를 볼 수 없어 frame 수를 어림해야 하므로 고르지 않았다.
+  - 시험(웹 E2E 07 「앞 기록 reset 직후 scroll」): 짧은 줄 2600줄 pane에서 앞 기록을 받을 때 덮개가 떨어지는 순간(MutationObserver, 다음 frame 전) scrollTop 0의 scroll 사건을 보낸다. 붙인 뒤 `data-view-top`이 숫자이고, 줄이 그려지고, 덮개가 없고, 키를 치면 새 출력이 보인다. 패치를 빼면 `view-top`이 NaN으로 남아 실패함을 확인했다.
+  - 「앞 기록 빠른 휠」(QA 1바퀴와 같은 줄·휠 40번, 8번)은 회귀 시험으로 둔다.
+
+### 8.106 TUI 마우스를 herdr대로(2): 프로그램에 넘기기·나눔 경계 끌기·탭 끌어 옮기기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D, FRONT_API 1.14)
 
 - **참고(herdr 0.9.5).** `src/client/shell/mouse.rs`(보고 pane에 누름 넘기기 `push_pane_mouse_event`·`pane_mouse_position`, 나눔 끌기 `pane_split_ratio`·33ms, 탭 끌기 `tab_drop_index_at`), `src/client/shell/tabs.rs` `tab_drop_indicator_x`, `src/server/client_shell.rs` `split_hit_rect`, `src/layout.rs` `collect_splits`·`set_ratio_at`, `src/workspace.rs` `move_tab`, `src/app/api/layouts.rs` `handle_layout_set_split_ratio`, `src/app/api/tabs.rs` `handle_tab_move`, `src/server/pane_input.rs` `apply_scroll`, `src/pane.rs` `encode_alternate_scroll`. 마우스 보고 bytes는 herdr가 ghostty 인코더를 쓰므로 xterm 규칙대로 새로 썼다.
-- **proto(FRONT_API 1.11).** `GridFrame.modes`(`PaneModes`): 마우스 보고 모드(none·press 9·press_release 1000·button_motion 1002·any_motion 1003), 인코딩(default·utf8 1005·sgr 1006), `alt_screen`, `app_cursor`(DECCKM). host는 pane 화면 사본(aaa-vt)에서 읽고, 모드만 바뀌어도 한 장 보내도록 커서 hash 위 비트에 접는다. 옛 host는 보내지 않아 기본값(넘기기 없음, 3d-1과 같음). `LayoutChange::SplitRatio { tab, path, ratio }`(herdr `layout.set_split_ratio`: path는 탭 뿌리에서 false = a, ratio는 천분율 100..=900, 그 자리에 나눔이 없으면 NotFound), `LayoutChange::MoveTab { tab, index }`(herdr `tab.move`의 insert_index, 0..=탭 수). 옛 host에는 보내지 않고 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
+- **proto(FRONT_API 1.14).** `GridFrame.modes`(`PaneModes`): 마우스 보고 모드(none·press 9·press_release 1000·button_motion 1002·any_motion 1003), 인코딩(default·utf8 1005·sgr 1006), `alt_screen`, `app_cursor`(DECCKM). host는 pane 화면 사본(aaa-vt)에서 읽고, 모드만 바뀌어도 한 장 보내도록 커서 hash 위 비트에 접는다. 옛 host는 보내지 않아 기본값(넘기기 없음, 3d-1과 같음). `LayoutChange::SplitRatio { tab, path, ratio }`(herdr `layout.set_split_ratio`: path는 탭 뿌리에서 false = a, ratio는 천분율 100..=900, 그 자리에 나눔이 없으면 NotFound), `LayoutChange::MoveTab { tab, index }`(herdr `tab.move`의 insert_index, 0..=탭 수). 옛 host에는 보내지 않고 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
 - **넘기기.** 보고를 켠 pane의 안쪽을 누르면 포커스를 옮기고 누름을 넘기며, 뗄 때까지 그 pane이 끌기·뗌을 받는다(밖으로 나가도, 좌표는 안쪽 0부터 왼쪽·위로만 묶음). 가운데·오른쪽 누름도 넘긴다. 1003이면 누르지 않은 움직임도. 인코딩은 X10 바이트(223칸까지), UTF-8(2015칸까지), SGR(`CSI < b ; x ; y M/m`, 뗌은 그 버튼에 `m`), 수정키 shift 4·alt 8·ctrl 16(9 모드는 수정키 없음). 보고 pane에서는 끌어 고르기·두 번 누름 낱말이 없다(herdr).
 - **pane 휠.** 안쪽 휠은 포커스를 옮기고, 보고 pane이면 휠 보고(64·65), 보고를 끈 alt 화면이면 화살표 하나(DECCKM이면 `ESC O A/B`), 보통 화면이면 아직 아무것도 보내지 않는다(기록 넘기기는 copy 모드 묶음).
 - **화살표 키.** 프로그램이 DECCKM을 켰으면 수정키 없는 화살표를 `ESC O x`로 보낸다(xterm·herdr, aaa-vt `KeyModes::key`와 같다). 예전 TUI는 늘 `ESC [ x`였다.
 - **나눔 경계 끌기.** 테두리를 두르면 맞닿은 두 선(`pos-1`·`pos`), `off`면 그 빈 칸이 누를 자리다(바깥 나눔이 먼저, zoom이면 없음). 누른 칸과 경계의 차이를 지키며 비율 = (포인터 + 차이 − 원점) / 길이(0.1~0.9)를 천분율로 반올림해(1000칸보다 좁으면 `split_rect`가 그 칸을 되돌린다) 33ms마다, 뗄 때 마지막 값과 다르면 한 번 더 보낸다. 포커스는 그대로.
 - **탭 끌어 옮기기.** 이름표를 누른 칸에서 한 칸 넘게 끌면 넣을 자리(이름표 가운데보다 왼쪽이면 그 앞, ` < `·` > `는 맨 앞·맨 끝)에 accent `│`를 두고, 떼면 `MoveTab`. 그 자리에서 떼면 예전처럼 그 탭. 보던 탭은 탭 id로 따라간다(다른 화면이 탭 차례를 바꿔도 그대로).
 - **다른 점.** vt100(aaa-vt)은 1015(urxvt)·1016(SGR 픽셀)·1007(alternate scroll 끄기)을 모른다: 1015·1016만 켠 프로그램에는 기본 인코딩으로 넘기고, 보고를 끈 alt 화면의 휠은 늘 화살표다. herdr는 서버가 사건을 받아 그때 모드로 인코딩한다. aaa는 TUI가 받은 화면 장면의 모드로 인코딩하므로 프로그램이 모드를 바꾼 바로 뒤(다음 장면이 오기 전) 사건은 옛 모드로 갈 수 있다.
-- **다음 묶음(3d-3).** 오른쪽 누름 메뉴(탭·pane 닫기·이름 바꾸기 등). herdr 탭 막대에는 닫기 단추가 없어 마우스 탭 닫기는 그 메뉴다. → §8.97
+- **다음 묶음(3d-3).** 오른쪽 누름 메뉴(탭·pane 닫기·이름 바꾸기 등). herdr 탭 막대에는 닫기 단추가 없어 마우스 탭 닫기는 그 메뉴다. → §8.107
 - **시험.** 유닛: 보고 인코딩(모드별 받는 사건·X10 223칸·UTF-8·SGR 뗌·수정키), 나눔 비율(차이·묶음·`split_rect` 반올림), 탭 넣을 자리·표시 열, 나눔 누를 자리(테두리·off·zoom), proto `set_ratio_at`·`move_tab`, aaa-vt `pane_modes`, 화살표 DECCKM. TUI harness `mouse_reaches_programs_like_herdr`: `cat -v`로 SGR 누름·뗌·휠이 pane에 닿음, alt 화면 휠 → `ESC [ B`·`ESC [ A`, DECCKM이면 휠·키 모두 `ESC O A`, `┐┌`를 10칸 끌면 왼쪽 안쪽 30 → 40칸, 이름표를 끌면 `│`가 보이고 떼면 탭 차례(host도) `b c prog`, 보던 탭에 남음.
 
-### 8.97 TUI 마우스를 herdr대로(3): 오른쪽 누름 메뉴(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
+### 8.107 TUI 마우스를 herdr대로(3): 오른쪽 누름 메뉴(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
 
 - **참고(herdr 0.9.5).** `src/client/shell/context_menu.rs`(`items`·`move_context_menu_selection`·`activate_context_menu_item`·탭·pane 동작), `src/client/shell/overlays.rs` `render_context_menu`, `src/client/shell/mouse.rs`(오른쪽 누름 차례·메뉴 위 움직임·누름), `src/client/shell/overlay_input.rs`(메뉴 키). host 요청은 새로 없다.
 - **여는 자리.** 오른쪽 누름: 「오른쪽 누름을 pane에 보내기」를 켠 마우스 보고 pane의 안쪽이면(수정키 없음) 프로그램에 넘긴다. 아니면 탭 이름표는 탭 메뉴, pane(테두리 포함)은 pane 메뉴. 메뉴는 누른 자리에 띄우고 화면 밖이면 안으로 민다. 사이드바 줄 메뉴(herdr workspace 메뉴: 이름·닫기·worktree)는 없다(aaa 목록 줄은 thread·머신·pane이다).

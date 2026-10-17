@@ -166,8 +166,9 @@ impl Host {
         }
         let Ok(conn) = self.live_conn(mid) else { return no("agent와 연결이 끊겼다") };
         let quoted = shell_quoted(path);
-        let paste = if harness { format!("\x1b[200~{quoted}\x1b[201~") } else { quoted };
-        match conn.request(AgentRequest::Input { session: id.to_string(), data: B64(paste.into_bytes()) }).await {
+        // herdr-web-ui는 xterm `paste`로 넣는다: 프로그램이 bracketed paste를 켰을 때만 감싼다(셸·harness 같다)
+        let paste = self.key_modes(id).paste(&quoted);
+        match conn.request(AgentRequest::Input { session: id.to_string(), data: B64(paste) }).await {
             Ok(_) => (true, None),
             Err(e) => (false, Some(format!("경로를 넣지 못했다: {}", e.message))),
         }

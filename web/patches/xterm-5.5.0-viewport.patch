@@ -1,0 +1,55 @@
+diff --git a/src/browser/Viewport.ts b/src/browser/Viewport.ts
+--- a/src/browser/Viewport.ts
++++ b/src/browser/Viewport.ts
+@@ -187,20 +187,26 @@ export class Viewport extends Disposable implements IViewport {
+     }
+ 
+     // Ignore the event if it was flagged to ignore (when the source of the event is from Viewport)
+     if (this._ignoreNextScrollEvent) {
+       this._ignoreNextScrollEvent = false;
+       // Still trigger the scroll so lines get refreshed
+       this._onRequestScrollLines.fire({ amount: 0, suppressScrollEvent: true });
+       return;
+     }
+ 
++    // aaa(plan §8.105, QA t-0337 Q1): reset() 뒤 줄 높이를 다시 잴 때까지(rAF 두 번) _currentRowHeight는 0이다. 그 사이 온
++    // scroll 사건은 scrollTop/0으로 ydisp를 NaN(scrollTop 0)에 굳혀 화면이 비고 다시 그려지지 않는다. 잴 때까지는 옮기지
++    // 않는다: _innerRefresh가 scrollTop을 ydisp에 맞춘다
++    if (!this._currentRowHeight) {
++      return;
++    }
+     const newRow = Math.round(this._lastScrollTop / this._currentRowHeight);
+     const diff = newRow - this._bufferService.buffer.ydisp;
+     this._onRequestScrollLines.fire({ amount: diff, suppressScrollEvent: true });
+   }
+ 
+   private _smoothScroll(): void {
+     // Check valid state
+     if (this._isDisposed || this._smoothScrollState.origin === -1 || this._smoothScrollState.target === -1) {
+       return;
+     }
+@@ -348,20 +354,24 @@ export class Viewport extends Disposable implements IViewport {
+    */
+   public getLinesScrolled(ev: WheelEvent): number {
+     // Do nothing if it's not a vertical scroll event
+     if (ev.deltaY === 0 || ev.shiftKey) {
+       return 0;
+     }
+ 
+     // Fallback to WheelEvent.DOM_DELTA_LINE
+     let amount = this._applyScrollModifier(ev.deltaY, ev);
+     if (ev.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
++      // aaa(plan §8.105): 줄 높이를 다시 재기 전에는 Infinity가 _wheelPartialScroll을 NaN에 굳힌다
++      if (!this._currentRowHeight) {
++        return 0;
++      }
+       amount /= this._currentRowHeight + 0.0; // Prevent integer division
+       this._wheelPartialScroll += amount;
+       amount = Math.floor(Math.abs(this._wheelPartialScroll)) * (this._wheelPartialScroll > 0 ? 1 : -1);
+       this._wheelPartialScroll %= 1;
+     } else if (ev.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+       amount *= this._bufferService.rows;
+     }
+     return amount;
+   }
+ 

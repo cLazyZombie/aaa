@@ -195,10 +195,10 @@ pub struct ProjectsSection {
     /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
     /// 넘으면 그대로 보낸다.
     pub stop_wait_ms: u64,
+    /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
+    pub auto_resolve_day_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
-    /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
-    pub max_threads_per_machine: u32,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
     pub routine_commands: Vec<String>,
 }
@@ -217,8 +217,8 @@ impl Default for ProjectsSection {
             pr_poll_secs: 120,
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
+            auto_resolve_day_secs: 86_400,
             inbox_done_days: 30,
-            max_threads_per_machine: 6,
             routine_commands: Vec::new(),
         }
     }
@@ -546,6 +546,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     }
     if c.projects.tick_secs == 0 {
         out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });
+    }
+    if c.projects.auto_resolve_day_secs == 0 {
+        out.push(Invalid {
+            path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
+        });
     }
     for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {
         if v == 0 {

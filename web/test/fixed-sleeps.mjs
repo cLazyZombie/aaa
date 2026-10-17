@@ -174,8 +174,11 @@ function jsBoundedLoop(code, at) {
   }
 }
 
-/** sleep에 묶인 이름(`const sleep = (ms) => new Promise(…setTimeout…)`)과 그 정의 자리, 기본이 0ms라 그냥 부르면 넘기기인 것 */
-function jsSleepHelpers(code, source) {
+/**
+ * sleep에 묶인 이름(`const sleep = (ms) => new Promise(…setTimeout…)`)과 그 정의 자리, 기본이 0ms라 그냥 부르면 넘기기인 것.
+ * 저장소 안 다른 파일에서 import한 helper(`import { sleep } from "../lib/harness.mjs"`)도 그 파일의 정의를 보고 센다.
+ */
+function jsSleepHelpers(code, source, file, seen = new Set()) {
   const names = new Set();
   const definitions = new Set();
   const yields = new Set();
@@ -193,6 +196,18 @@ function jsSleepHelpers(code, source) {
     const named = /\bsetTimeout(?:\s+as\s+(\w+))?\b/.exec(m[1]);
     if (named) names.add(named[1] ?? "setTimeout");
   }
+  for (const m of source.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*["'](\.{1,2}\/[^"']+)["']/g)) {
+    const from = path.join(path.dirname(file), m[2]).split(path.sep).join("/");
+    if (seen.has(from) || !fs.existsSync(path.join(repo, from))) continue;
+    seen.add(from);
+    const text = read(from);
+    const there = jsSleepHelpers(stripJs(text, { strings: true }), stripJs(text), from, seen);
+    for (const part of m[1].split(",")) {
+      const [name, local = name] = part.trim().split(/\s+as\s+/);
+      if (there.names.has(name)) names.add(local);
+      if (there.yields.has(name)) yields.add(local);
+    }
+  }
   return { names, definitions, yields };
 }
 
@@ -200,7 +215,7 @@ function jsFixedSleeps(file, text) {
   const code = stripJs(text, { strings: true });
   const lines = text.split("\n");
   const codeLines = code.split("\n");
-  const helpers = jsSleepHelpers(code, stripJs(text));
+  const helpers = jsSleepHelpers(code, stripJs(text), file);
   const calls = helpers.names.size ? [...code.matchAll(new RegExp(`(?<![\\w.])(?:${[...helpers.names].join("|")})\\s*\\((?!\\s*0\\s*\\))`, "g"))] : [];
   const sleeps = [...code.matchAll(JS_SLEEP)].filter((m) => !helpers.definitions.has(m.index));
   const waits = [

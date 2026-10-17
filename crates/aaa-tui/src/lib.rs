@@ -1026,7 +1026,7 @@ impl App {
         self.layout(tx, change, true).await
     }
 
-    /// 새 layout 요청은 그것을 아는 host에만 보낸다(탭 닫기·이름·크기 1.4, zoom·자리 바꾸기 1.10, 나눔 비율·탭 옮기기 1.11).
+    /// 새 layout 요청은 그것을 아는 host에만 보낸다(탭 닫기·이름·크기 1.4, zoom·자리 바꾸기 1.10, 나눔 비율·탭 옮기기 1.14).
     /// 옛 host에 보내면 연결이 끊기므로 알리고 보내지 않는다.
     fn host_at_least(&mut self, minor: u16) -> bool {
         if self.host_minor >= minor {

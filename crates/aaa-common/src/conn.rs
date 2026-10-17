@@ -27,7 +27,11 @@ pub struct Closed;
 
 impl FrameTx {
     pub async fn json<T: Serialize>(&self, v: &T) -> Result<(), Closed> {
-        let bytes = serde_json::to_vec(v).expect("JSON 직렬화");
+        self.control(serde_json::to_vec(v).expect("JSON 직렬화")).await
+    }
+
+    /// 이미 JSON으로 만든 제어 메시지(크기를 먼저 본 응답 등)
+    pub async fn control(&self, bytes: Vec<u8>) -> Result<(), Closed> {
         self.tx.send(Out::Frame(FrameKind::Control, bytes)).await.map_err(|_| Closed)
     }
 
@@ -55,7 +59,12 @@ pub fn spawn_writer<W: AsyncWrite + Unpin + Send + 'static>(mut w: W, max: usize
     tokio::spawn(async move {
         while let Some(Out::Frame(kind, payload)) = rx.recv().await {
             if let Err(e) = write_frame(&mut w, kind, &payload, max).await {
-                tracing::debug!("frame 쓰기 실패: {e}");
+                // 상한을 넘는 frame은 보낸 쪽 결함이다: 연결이 닫히므로 상대가 까닭을 알 수 없어 경고로 남긴다
+                if matches!(e, FrameError::TooLarge { .. }) {
+                    tracing::warn!("frame을 보내지 못해 연결을 닫는다: {e}");
+                } else {
+                    tracing::debug!("frame 쓰기 실패: {e}");
+                }
                 break;
             }
         }
