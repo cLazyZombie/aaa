@@ -1225,7 +1225,11 @@ try {
     if ((await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(첫 줄 ${await firstNo(dp)})`);
     // 키를 치면 맨 아래로 돌아온다
     await dp.keyboard.press("x");
-    await until("키를 치면 맨 아래", async () => (await screenText(dp)).includes('GOT:"x"'));
+    // 맨 아래에는 올려 둔 동안 온 출력도 있다(그 출력이 이 화면에 왔는데도 자리를 지켰다는 뜻)
+    await until("키를 치면 맨 아래", async () => {
+      const text = await screenText(dp);
+      return text.includes('GOT:"x"') && text.includes("more-3");
+    });
     if ((await firstNo(dp)) === 1) bad.push("키를 쳤는데 맨 아래로 오지 않았다");
     // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
     // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다

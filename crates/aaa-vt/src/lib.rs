@@ -45,6 +45,10 @@ pub const SCROLLBACK: usize = 5000;
 /// 붙을 때마다 보내므로 5000줄 다 싣지 않는다(색이 많은 120칸 5000줄이면 약 650KB, 2000줄이면 약 270KB).
 pub const REPLAY_HISTORY: usize = 2000;
 
+/// replay가 앞에 싣는 기록 bytes 상한. snapshot은 JSON 한 frame(base64, `aaa_proto::MAX_FRAME` 1MiB)으로 session host →
+/// agent → host를 지나므로, 줄마다 색이 바뀌는 넓은 줄이 많아도 화면과 함께 그 안에 들게 최근 줄만 싣는다.
+pub const REPLAY_HISTORY_BYTES: usize = 384 << 10;
+
 impl Vt {
     pub fn new(rows: u16, cols: u16) -> Self {
         Vt { parser: vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), SCROLLBACK, Modes::default()) }
@@ -67,6 +71,13 @@ impl Vt {
     /// 프로그램 화면에 맞게 나누고(plan §8.55, herdr `WheelRouting`), 프로그램이 나가면 그 밑 화면이 돌아온다.
     pub fn replay(&self) -> Vec<u8> {
         let screen = self.parser.screen();
+        // 화면을 지우고 처음부터 그린다(재접속한 front의 이전 화면을 덮는다).
+        let mut tail = b"\x1b[H\x1b[2J".to_vec();
+        tail.extend_from_slice(&screen.state_formatted());
+        let level = self.parser.callbacks().modify_other_keys;
+        if level > 0 {
+            tail.extend_from_slice(format!("\x1b[>4;{level}m").as_bytes());
+        }
         let mut out = Vec::new();
         if screen.alternate_screen() {
             // vt100은 보이는 grid만 내준다: 사본에서 alternate screen을 나가 normal screen을 얻는다(1049l은 커서도 되돌린다)
@@ -74,20 +85,15 @@ impl Vt {
             let mut normal = vt100::Parser::new(rows, cols, 0);
             *normal.screen_mut() = screen.clone();
             normal.process(b"\x1b[?1049l");
-            out.extend_from_slice(&history(normal.screen()));
-            out.extend_from_slice(b"\x1b[H\x1b[2J");
-            out.extend_from_slice(&normal.screen().contents_formatted());
-            out.extend_from_slice(b"\x1b[?1049h");
+            let mut under = b"\x1b[H\x1b[2J".to_vec();
+            under.extend_from_slice(&normal.screen().contents_formatted());
+            under.extend_from_slice(b"\x1b[?1049h");
+            out.extend_from_slice(&history(normal.screen(), history_budget(under.len() + tail.len())));
+            out.extend_from_slice(&under);
         } else {
-            out.extend_from_slice(&history(screen));
+            out.extend_from_slice(&history(screen, history_budget(tail.len())));
         }
-        // 화면을 지우고 처음부터 그린다(재접속한 front의 이전 화면을 덮는다).
-        out.extend_from_slice(b"\x1b[H\x1b[2J");
-        out.extend_from_slice(&screen.state_formatted());
-        let level = self.parser.callbacks().modify_other_keys;
-        if level > 0 {
-            out.extend_from_slice(format!("\x1b[>4;{level}m").as_bytes());
-        }
+        out.extend_from_slice(&tail);
         out
     }
 
@@ -149,10 +155,15 @@ impl Vt {
     }
 }
 
+/// 화면 bytes가 `screen`일 때 기록에 쓸 수 있는 bytes: snapshot JSON(base64는 4/3배)이 한 frame에 들고 64KiB가 남게
+fn history_budget(screen: usize) -> usize {
+    REPLAY_HISTORY_BYTES.min((aaa_proto::MAX_FRAME / 4 * 3).saturating_sub(screen + (64 << 10)))
+}
+
 /// scrollback 줄을 오래된 것부터 한 줄씩 쓰고, 마지막 줄까지 화면 위로 밀어 올리는 bytes.
 /// 빈 터미널이 이것을 받으면 그 scrollback에 같은 줄이 생긴다(plan §8.55: 기록은 session host vt가 갖고, 붙는 front에 채운다).
 /// 화면 밖 줄이라 줄 이음(soft wrap)은 남기지 않는다.
-fn history(screen: &vt100::Screen) -> Vec<u8> {
+fn history(screen: &vt100::Screen, budget: usize) -> Vec<u8> {
     let mut screen = screen.clone();
     let (rows, cols) = screen.size();
     // 크게 주면 실제 scrollback 길이로 줄어든다
@@ -162,16 +173,30 @@ fn history(screen: &vt100::Screen) -> Vec<u8> {
     if len == 0 {
         return out;
     }
-    // 위로 k줄 올린 화면의 첫 줄이 끝에서 k번째 기록 줄이다: 한 화면씩 내려오며 쓴다
+    // 위로 k줄 올린 화면의 첫 줄이 끝에서 k번째 기록 줄이다: 한 화면씩 내려오며 모은다
+    let mut lines: Vec<Vec<u8>> = Vec::with_capacity(len);
     let mut back = len;
     while back > 0 {
         screen.set_scrollback(back);
         let take = back.min(usize::from(rows));
-        for row in screen.rows_formatted(0, cols).take(take) {
-            out.extend_from_slice(&row);
-            out.extend_from_slice(b"\x1b[m\r\n");
+        for mut row in screen.rows_formatted(0, cols).take(take) {
+            row.extend_from_slice(b"\x1b[m\r\n");
+            lines.push(row);
         }
         back -= take;
+    }
+    // bytes 상한 안의 최근 줄만
+    let mut size = 0;
+    let keep = lines.iter().rev().take_while(|l| {
+        size += l.len();
+        size <= budget
+    });
+    let first = lines.len() - keep.count();
+    if first == lines.len() {
+        return out;
+    }
+    for line in &lines[first..] {
+        out.extend_from_slice(line);
     }
     // 커서는 마지막 기록 줄 다음 줄 맨 앞이다. rows-1번 더 내리면 기록이 모두 화면 위로 넘어간다
     out.extend(std::iter::repeat_n(b'\n', usize::from(rows) - 1));
@@ -273,6 +298,29 @@ mod tests {
         assert_eq!(s.scrollback(), REPLAY_HISTORY);
         // 화면은 마지막 4줄과 빈 커서 줄이라 기록은 n1~n(N-4): 그 가운데 끝 REPLAY_HISTORY줄
         assert_eq!(s.rows(0, 20).next().unwrap(), format!("n{}", 100 - 4 + 1));
+        // 칸마다 색이 바뀌는 넓은 줄이 가득해도 snapshot이 한 frame 안에 든다(base64는 4/3배)
+        let mut dense = Vt::new(50, 250);
+        for i in 0..REPLAY_HISTORY + 50 {
+            let mut line = String::new();
+            for c in 0..250 {
+                line.push_str(&format!(
+                    "\x1b[38;2;{};{};{}m{}",
+                    (i + c) % 256,
+                    c % 256,
+                    i % 256,
+                    char::from(b'a' + (c % 26) as u8)
+                ));
+            }
+            dense.feed(format!("{line}\x1b[m\r\n").as_bytes());
+        }
+        let replay = dense.replay();
+        assert!(replay.len() * 4 / 3 + 4096 < aaa_proto::MAX_FRAME, "replay {} bytes", replay.len());
+        let mut e = Vt::new(50, 250);
+        e.feed(&replay);
+        assert_eq!(e.text("s").lines, dense.text("s").lines);
+        let mut s = e.parser.screen().clone();
+        s.set_scrollback(usize::MAX);
+        assert!(s.scrollback() > 50, "기록 {}줄", s.scrollback());
         // 기록이 없으면 앞에 아무것도 붙이지 않는다
         let mut c = Vt::new(5, 20);
         c.feed(b"x");
