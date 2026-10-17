@@ -5,7 +5,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import {
-  AA, root, sleep, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
+  AA, root, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -200,10 +200,14 @@ export default async function ({ ctl, page }) {
     if ((fs.statSync(p1).mode & 0o777) !== 0o600) throw new Error(`권한 ${(fs.statSync(p1).mode & 0o777).toString(8)}`);
     // 긴 경로는 화면에서 줄이 접힌다: 접힌 줄을 이어 본다(herdr recent-unwrapped)
     await waitOutput("t1", `'${p1}'`, "recent-unwrapped");
-    // Enter가 없었다: 셸은 실행하지 않았다(그 줄을 지운다)
-    await sleep(300);
-    if (aaa("pane", "read", "t1", "--source", "visible").text.replaceAll("\n", "").includes("No such file")) throw new Error("셸이 경로를 실행했다");
+    // Enter가 없었다: 셸은 실행하지 않았다. 그 줄을 지우고 표지를 실행한다: 셸은 입력을 차례로 처리하므로 경로를 실행했다면
+    // 그 오류가 표지보다 먼저 나온다
     aaa("pane", "send-text", "t1", "\u0015");
+    aaa("pane", "run", "t1", "echo paste-fence-$((2+2))");
+    await waitOutput("t1", "paste-fence-4");
+    // 붙인 파일은 있으니 실행했다면 「Permission denied」다(0600). 옛 단언은 「No such file」만 봐 이 결함을 잡지 못했다
+    const ran = /No such file|Permission denied|command not found|cannot execute/.exec(aaa("pane", "read", "t1", "--source", "visible").text.replaceAll("\n", ""));
+    if (ran) throw new Error(`셸이 경로를 실행했다: ${ran[0]}`);
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
@@ -238,9 +242,9 @@ export default async function ({ ctl, page }) {
       { b64: png.toString("base64") },
     );
     await until("글만 붙여 넣음", () => recvNext() === "\x1b[200~mixed-text\x1b[201~");
-    await sleep(300);
-    if (recvNext() !== "\x1b[200~mixed-text\x1b[201~") throw new Error(`글과 그림: ${JSON.stringify(recvNext())}`);
-    seen = fs.readFileSync(recv, "latin1").length;
+    // 그림까지 올렸다면 그 경로는 다음 3b의 올리기보다 먼저 온다(올리기는 한 줄로 선다, Term.tsx fileQueueRef). 그래서 받은 글
+    // 길이만큼만 넘긴다: 늦게 온 경로는 3b의 「두 경로」 앞에 남아 그 단언이 실패한다
+    seen += "\x1b[200~mixed-text\x1b[201~".length;
     // 3b) 파일 여러 개를 끌어 놓으면 놓은 순서대로 올리고 경로를 차례로 넣는다
     const pa = Buffer.concat([png.subarray(0, 8), Buffer.alloc(300_000, 1)]);
     const pb = Buffer.concat([png.subarray(0, 8), Buffer.alloc(2_000, 2)]);
@@ -264,6 +268,8 @@ export default async function ({ ctl, page }) {
     const two = await until("두 경로", () => {
       const m = /^\x1b\[200~'([^']+)' \x1b\[201~\x1b\[200~'([^']+)' \x1b\[201~$/.exec(recvNext());
       return m ? [m[1], m[2]] : null;
+    }).catch((e) => {
+      throw new Error(`${e.message}: 받은 것 ${JSON.stringify(recvNext())}`);
     });
     if (!fs.readFileSync(two[0]).equals(pa) || !fs.readFileSync(two[1]).equals(pb)) throw new Error(`놓은 순서가 아니다: ${two}`);
     seen = fs.readFileSync(recv, "latin1").length;
@@ -282,8 +288,10 @@ export default async function ({ ctl, page }) {
     await until("h2 터미널", async () => (await screenText(page)).includes("Esc to cancel"));
     await pasteFile(page, png, "image/png");
     await until("확인창 배너", async () => (await banner.innerText()).includes("확인창이 떠 있어"));
-    await sleep(300);
-    if (fs.readFileSync(recv2, "latin1") !== "") throw new Error(`확인창에 입력이 갔다: ${fs.readFileSync(recv2, "latin1")}`);
+    // host는 넣지 않기로 정한 뒤 답했다. 같은 host → agent 길로 표지 글을 보내 그것만 왔는지 본다(넣었다면 경로가 먼저 온다)
+    aaa("pane", "send-text", "h2", "fence-h2");
+    await until("h2 표지", () => fs.readFileSync(recv2, "latin1").includes("fence-h2"));
+    if (fs.readFileSync(recv2, "latin1") !== "fence-h2") throw new Error(`확인창에 입력이 갔다: ${JSON.stringify(fs.readFileSync(recv2, "latin1"))}`);
 
     // 5) reader 연결은 화면 밖에서 직접 보내도 host가 거부한다
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
