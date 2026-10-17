@@ -128,3 +128,37 @@ export function threadMachine(t: ThreadView, m: MachineView, paneOf: (id: string
 }
 
 export const threadKey = (t: Pick<ThreadView, "project" | "id">) => `${t.project}/${t.id}`;
+
+/** 머신 묶음의 줄 차례: 프로젝트(처음 나온 차례) 묶음의 thread, 그다음 thread에 딸리지 않은 pane. 목록(Sidebar)과 단축키가 같이 쓴다 */
+export function machineRoster(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[]) {
+  const paneOf = (id: string) => panes.find((p) => p.id === id);
+  const mThreads = sortThreads(threads.filter((t) => threadMachine(t, m, paneOf)));
+  const threadPanes = new Set(mThreads.flatMap((t) => (t.pane ? [t.pane] : [])));
+  const mPanes = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id));
+  // 프로젝트 묶음은 처음 나온 순서(가장 앞 rank의 thread가 있는 프로젝트가 먼저)
+  const projects: string[] = [];
+  for (const t of mThreads) if (!projects.includes(t.project)) projects.push(t.project);
+  return { threads: mThreads, projects, panes: mPanes };
+}
+
+/** 목록 줄 하나: 누르면 여는 것과, 그 줄이 골랐다고 보는 선택 값들(thread 줄은 그 thread와 그 pane) */
+export interface RosterRow {
+  open: { pane: string } | { thread: ThreadView };
+  keys: string[];
+}
+
+/**
+ * 「이전·다음 패널」 단축키가 밟는 줄(herdr-web-ui App.tsx `selectAdjacentPane`·`rosterPanes`): 목록에 보이는 차례 그대로,
+ * 접힌 묶음 안의 줄도 센다. thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고서를 연다(ThreadRow와 같다).
+ */
+export function machineRows(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[]): RosterRow[] {
+  const roster = machineRoster(m, panes, threads);
+  const rows: RosterRow[] = [];
+  for (const project of roster.projects)
+    for (const t of roster.threads.filter((x) => x.project === project)) {
+      const pane = t.pane ? panes.find((p) => p.id === t.pane) : undefined;
+      rows.push({ open: pane?.state === "running" ? { pane: pane.id } : { thread: t }, keys: [`thread:${threadKey(t)}`, ...(pane ? [`pane:${pane.id}`] : [])] });
+    }
+  for (const p of roster.panes) rows.push({ open: { pane: p.id }, keys: [`pane:${p.id}`] });
+  return rows;
+}

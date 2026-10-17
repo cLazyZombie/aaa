@@ -9,7 +9,7 @@ import type { MachineView, PaneView, ThreadView } from "./gen/proto";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
-import { GROUP_WORD, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, sortThreads, stateLine, threadKey, threadMachine } from "./sidebarModel";
+import { GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
@@ -150,13 +150,8 @@ export function Sidebar(props: SidebarProps) {
 function MachineGroup({ machine: m, ...props }: SidebarProps & { machine: MachineView }) {
   const [collapsed, toggle] = useFold(`aaa:pc-collapsed:${m.id}`);
   const online = m.connection === "connected";
-  const paneOf = (id: string) => props.panes.find((p) => p.id === id);
-  const threads = sortThreads(props.threads.filter((t) => threadMachine(t, m, paneOf)));
-  const threadPanes = new Set(threads.flatMap((t) => (t.pane ? [t.pane] : [])));
-  const panes = props.panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id));
-  // 프로젝트 묶음은 처음 나온 순서(가장 앞 rank의 thread가 있는 프로젝트가 먼저)
-  const projects: string[] = [];
-  for (const t of threads) if (!projects.includes(t.project)) projects.push(t.project);
+  // 줄 차례는 단축키 「이전·다음 패널」과 같은 계산(sidebarModel machineRoster)
+  const { threads, projects, panes } = machineRoster(m, props.panes, props.threads);
   const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
   return (
     <section className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
