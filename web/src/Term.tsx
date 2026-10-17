@@ -526,6 +526,11 @@ export function TermView({
     const parsedSub = term.onWriteParsed(() => {
       if (document.activeElement === term.textarea) trace("write");
       followCursor.current();
+      // 받은 출력을 다 읽은 뒤의 버퍼 자리(맨 위 줄·baseY). 올려 둔 동안 아래에 줄이 붙으면 그리기(onRender, data-view-*)는 오지 않아,
+      // 시험이 「출력이 와도 올려 둔 자리」를 이 표지 뒤에 본다(웹 E2E 07 「터미널 스크롤」)
+      const buf = term.buffer.active;
+      el.dataset.parsedTop = String(buf.viewportY);
+      el.dataset.parsedBase = String(buf.baseY);
     });
     // 실기 입력 사건 기록(켜져 있을 때만 모은다, inputTrace.ts)
     const stopTrace = attachTrace(term.textarea!, scrollRef.current!);

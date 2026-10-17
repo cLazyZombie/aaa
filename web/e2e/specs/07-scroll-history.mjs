@@ -45,11 +45,18 @@ export default async function ({ ctl, page }) {
     }).catch(async (e) => {
       throw new Error(`${e.message}: 첫 줄 ${await firstNo(dp)}, xterm 기록 ${await dp.locator(".xterm-viewport").evaluate((v) => v.scrollHeight - v.clientHeight)}px`);
     });
-    // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력)
+    // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력). 울타리는 이 화면이 그 세 줄을 다 읽은 것이다:
+    // 버퍼가 세 줄 밀린 뒤의 자리(Term onWriteParsed가 data-parsed-*에 적는다. 아래에 줄만 붙으면 그리기는 오지 않는다)
+    const parsed = () => dp.getByTestId("terminal").evaluate((b) => ({ top: Number(b.dataset.parsedTop), base: Number(b.dataset.parsedBase) }));
+    // 지금 자리: 맨 위 줄은 휠 뒤에 그린 자리(data-view-top), baseY는 마지막으로 읽은 출력 뒤
+    const held = { ...(await parsed()), top: Number(await dp.getByTestId("terminal").getAttribute("data-view-top")) };
     for (let i = 0; i < 3; i++) aaa("pane", "send-text", "scroll-plain", "p");
     await until("more-3 출력", () => got("scroll-plain").includes("more-3"));
-    await sleep(300);
-    if ((await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(첫 줄 ${await firstNo(dp)})`);
+    await until("세 줄을 읽음", async () => (await parsed()).base >= held.base + 3).catch(async (e) => {
+      throw new Error(`${e.message}: 전 ${JSON.stringify(held)} 지금 ${JSON.stringify(await parsed())}`);
+    });
+    const now = await parsed();
+    if (now.top !== held.top || (await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(버퍼 맨 위 ${held.top} → ${now.top}, baseY ${held.base} → ${now.base}, 첫 줄 ${await firstNo(dp)})`);
     // 키를 치면 맨 아래로 돌아온다
     await dp.keyboard.press("x");
     // 맨 아래에는 올려 둔 동안 온 출력도 있다(그 출력이 이 화면에 왔는데도 자리를 지켰다는 뜻)
