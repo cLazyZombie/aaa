@@ -2415,6 +2415,9 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     (`gh pr list --author @me`, `PrQuery::OpenOwn`, agent 기능 `pr.v2`). gh 실패와 옛 agent는 열린 것으로 친다.
     `#n`의 저장소는 PR 조회 때 받은 thread origin이다(`pr_origin` meta).
   - 끝내기는 `thread resolve`와 같다(마지막 사본이 실패하면 다음 셈). 항목은 「PR이 병합돼 저절로 끝냈다」다.
+  - 그 프로젝트의 PR 조회가 도는 동안은 끝내지 않는다. 참고는 한 tick 안에서 PR 조회·routine 발화 뒤에 끝낸다. aaa의 조회는
+    따로 돌아(gh가 느려도 ticker를 막지 않게) 순서가 정해져 있지 않다. 처음 본 PR이 이미 승인·병합이면 pr-followup(`review`)이
+    그 thread에 글을 보내는데, 받음을 확인하는 동안 끝내기가 session을 죽여 「message not delivered」가 생겼다(화면 견본에서 찾음).
   - 병합된 thread를 `--reopen`하면 기다림을 다시 재고, agent가 쉬면 다시 끝낸다(참고와 같다).
 - **branch 정리(hp threads.rs `clean`·`delete_branch`·`last_pr_lookup`).**
   - PR이 병합됐고 worktree를 지웠고 branch 끝이 병합된 PR head commit일 때만 `branch -D`다(squash 병합 때문에 `-D`).
@@ -2433,6 +2436,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `merged_pr_resolves_the_thread`(가짜 gh, 로컬 bare repo): 승인 → 병합 중·`landing` 항목, 병합돼도 35%면 끝내지 않음,
     `Done` → 끝냄·branch 삭제, 다른 내 PR이 열려 있으면 기다림 → 닫히면 끝냄·병합 뒤 commit이 있는 branch는 남김.
   - m13 `resolve_looks_up_the_pull_request_once_more`: ticker가 병합을 보기 전에 사람이 끝내도 PR을 다시 보고 branch를 지운다.
+  - m13 `merged_resolve_waits_for_the_routine_prompt`: `Done` 뒤 입력을 보이지 않는 agent에 처음 본 PR이 승인·병합이면 routine
+    글의 받음 확인(`accept_wait_ms` 3초)이 끝난 뒤에 끝낸다. 조회 중 건너뛰기를 빼면 끝내기가 먼저 와 실패한다.
   - m13 `pr_followup`: 틀린 `PR:` 줄을 병합 전에 쓴다(병합 뒤 새 보고는 끝 신호다). `worktree_thread_round_trip`: PR 없는 branch는 남는다.
   - 유닛: host `row5_landing_and_an_open_pull_request`·`a_merged_thread_resolves_once_its_agent_is_done`, common `report_refs`·
     `open_own_numbers`, 웹 `stateLine.test.mjs`.

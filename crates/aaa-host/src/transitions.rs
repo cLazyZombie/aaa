@@ -232,6 +232,11 @@ impl Host {
     /// 기다리지 않고, 끝났고(`merged_may_resolve`), 보고가 이름 붙인 다른 PR이 열려 있지 않을 때. 사본이 실패하면 다음 셈에
     /// 다시 한다. 연결되지 않은 머신의 thread는 건너뛴다.
     pub(crate) async fn resolve_merged_pass(self: &Arc<Self>, project: &str) {
+        // 참고는 한 tick 안에서 PR 조회(병합 기록·routine 발화) 뒤에 끝낸다. aaa의 PR 조회는 따로 돌아(`pr_tick`) 그 조회가
+        // 보내는 routine 글(처음 본 PR이 이미 승인·병합이면 `review`)을 끝내기가 자를 수 있다: 조회가 도는 동안은 끝내지 않는다
+        if self.pr_running(project) {
+            return;
+        }
         let now = aaa_common::util::now_ms();
         let grace = self.cfg.projects.merge_grace_secs * 1000;
         let merged: Vec<ThreadRec> = self

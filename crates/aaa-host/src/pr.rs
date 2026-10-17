@@ -293,6 +293,11 @@ impl Host {
         });
     }
 
+    /// 이 프로젝트의 PR 조회가 도는 중이다(병합을 막 기록하고 routine 글을 보내는 중일 수 있다)
+    pub(crate) fn pr_running(&self, project: &str) -> bool {
+        self.pr.lock().unwrap().running.contains(project)
+    }
+
     /// 다음 조회 때(ticker가 그때까지만 잔다). 도는 중인 프로젝트는 끝난 뒤 다시 센다.
     pub(crate) fn pr_next_due(&self) -> Option<Instant> {
         let every = self.pr_every();

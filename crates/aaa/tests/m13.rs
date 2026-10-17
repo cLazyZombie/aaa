@@ -178,7 +178,9 @@ while IFS= read -r line; do
       printf '[완료] 끝냈다\n\n## Report\n끝\n\n## Next\n- 병합\n' > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       "$AA" report --percent 100 --activity Done
-      echo "finished" ;;
+      echo "finished"
+      # 끝낸 뒤 받은 입력을 보이지 않는다: host는 받음 확인(화면 바뀜)을 accept_wait_ms까지 기다린다
+      case "$line" in *quiet*) stty -echo; exec cat > /dev/null ;; esac ;;
     *) echo "got: $line" ;;
   esac
   printf 'prog> '
@@ -2687,6 +2689,53 @@ fn merged_pr_resolves_the_thread() {
         "{e}"
     );
     assert_eq!(git(&w.repo, &["branch", "--list", &b_branch, "--format=%(refname:short)"]), b_branch);
+}
+
+/// 처음 본 PR이 이미 승인·병합이면 PR 조회가 pr-followup(`review`)을 그 thread에 보낸다. 병합 뒤 끝내기는 그 글의 받음
+/// 확인이 끝난 뒤에 한다(herdr-projects는 한 tick 안에서 PR 조회·routine 뒤에 `resolve_merged`). agent는 `Done` 뒤 입력을
+/// 보이지 않아 받음 확인이 `accept_wait_ms`(3초) 동안 이어진다. 그동안 tick(1초)이 여러 번 돌아도 끝내지 않는다.
+#[test]
+fn merged_resolve_waits_for_the_routine_prompt() {
+    let mut w =
+        world_setup("tick_secs = 1\npr_poll_secs = 1\nmerge_grace_secs = 1\naccept_wait_ms = 3000\n", false, fake_gh);
+    let stub = w.lab.root.join("gh");
+    let mut f = w.lab.follow("follow", &w.h, "demo");
+    git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
+    let t = w.start(&[
+        "--title",
+        "Q",
+        "--profile",
+        "prog",
+        "--repo",
+        path_str(&w.repo),
+        "--task-file",
+        &w.task("q.md", "q"),
+    ]);
+    let id = t["id"].as_str().unwrap().to_string();
+    f.kind("report_ready", &id, T);
+    w.message(&id, "finish quiet", false);
+    w.wait_show("Done", &id, |v| v["agent"]["percent"] == 100);
+    let branch = w.show(&id)["branch"].as_str().unwrap().to_string();
+    let tip = git(&w.repo, &["rev-parse", &branch]);
+    std::fs::write(stub.join("view-21.json"), pr_view_json(&branch, "MERGED", "APPROVED", &tip)).unwrap();
+    std::fs::write(
+        stub.join(format!("list-{}.json", branch.replace('/', "_"))),
+        r#"[{"url":"https://github.com/o/app/pull/21","state":"MERGED","createdAt":"2026-10-18T00:00:00Z"}]"#,
+    )
+    .unwrap();
+    let prompted = f.until("routine 발화", T, |e| {
+        e["thread"] == id.as_str() && (e["kind"] == "routine_prompted" || e["kind"] == "thread_resolved")
+    });
+    assert_eq!(prompted["kind"], "routine_prompted", "routine 글을 받기 전에 끝냈다: {prompted}");
+    let e = f.kind("thread_resolved", &id, T);
+    assert!(e["detail"].as_str().unwrap().contains(&format!("branch {branch}를 지웠다(PR이 병합됐다)")), "{e}");
+    // 글은 받았는지 모르는 것으로 남는다(보이지 않는 agent). 끝내기가 session을 죽여 생긴 실패는 없다
+    let cut: Vec<&Value> = f
+        .seen
+        .iter()
+        .filter(|e| e["thread"] == id.as_str() && e["detail"].as_str().is_some_and(|d| d.contains("세션이 끝났다")))
+        .collect();
+    assert!(cut.is_empty(), "{cut:?}");
 }
 
 /// 사람이 끝낼 때 PR을 한 번 더 본다(herdr-projects threads.rs `last_pr_lookup`): ticker가 아직 병합을 보지 못했어도
