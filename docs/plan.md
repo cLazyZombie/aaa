@@ -1888,11 +1888,17 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **모드 막대·알림.** herdr처럼 평소에는 없고, prefix·탐색·크기 모드와 오류 때 pane 맨 아랫줄에 겹친다(바탕 `panel_bg`, 글 `overlay0`, 키 accent 굵게, 모드 이름 accent 바탕(RESIZE는 mauve)). 커서가 그 줄이면 숨긴다. 알림(설정 다시 읽음·그림 경로 넣음 등, 5초)은 오른쪽 위 테두리 카드(`overlay0` 테두리, `●`와 굵은 글).
 - **좁은 화면(64칸 이하).** herdr 머리 두 줄: 첫 줄 가장 급한 상태 점·workspace·`탭 <이름> · i/n`, 둘째 줄 agent 요약(`◉ n 질문 · n 작업 중 · n 대기`, 첫 조각만 그 색, 없으면 「agent 없음」·「모두 대기」), 오른쪽 10칸 `목록` 단추 자리(질문이 있으면 빨강 `●`).
 - **창.** 단축키·이름·닫기 확인 창은 묶음 1·2a의 herdr 모양에 색만 팔레트로(테두리 accent·확인은 red, 바탕 `panel_bg`, 입력 칸·단추 `surface0`).
-- **pane 표시.** 나눔선은 포커스 pane에 닿은 칸 accent, 나머지 `overlay0`(herdr). 끊김·중단·질문·종료 badge(aaa에만 있음)는 팔레트 색. pane 테두리·제목(herdr `pane_border_title`)과 `P` pane 이름은 다음 묶음이다.
-- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`. 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다.
+- **pane 표시.** 끊김·중단·질문·종료 badge(aaa에만 있음)는 팔레트 색. `P` pane 이름(herdr `rename_pane`)은 host 요청이 필요해 다음 묶음이다.
+- **pane 테두리(묶음 3b).** herdr `src/ui/panes.rs` `apply_pane_chrome`·`zoomed_pane_borders`·`render_pane_borders`·`line_touches_pane`·`render_pane_border_titles`·`pane_border_title`, `src/layout.rs` `split_rect`를 `aaa-tui/src/chrome.rs`로 옮겼다(결정 17 「테두리 없이 PTY 크기 유지」보다 뒤인 사용자 지시 「herdr 수준」을 따른다).
+  - `[tui] pane_borders`(herdr 이름·값): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 온 상자를 두른다(zoom이어도 상자 하나). `always`는 하나여도, `off`는 테두리 없이 오른쪽·아래 이웃 쪽에 빈 칸 하나(herdr `pane_gaps`, 선 없음).
+  - 나누기는 herdr `split_rect`: 나눔 칸 없이 첫 쪽이 `round(길이 × 비율)`. 상자끼리 붙는다(`┐┌`). PTY 크기는 테두리 안쪽(90×30에서 반반이면 30×27 둘). 방향 포커스·자리 바꾸기는 바깥 상자로 찾는다.
+  - 포커스 pane 자기 테두리 칸은 accent, 나머지 `overlay0`. 위 테두리 x+1에 제목 ` <이름> `(폭−4로 `…` 자름, 포커스면 accent 굵게, 아니면 `overlay0`). 제목은 pane 이름이다(thread pane은 `project/id`, 셸 pane은 이름이 없어 제목 없음). herdr는 agent 제목·사람이 붙인 이름을 쓰고 agent 이름은 설정(`show_agent_labels_on_pane_borders`, 기본 끔)으로만 보인다.
+  - 모드 막대는 pane 칸 맨 아랫줄(나눈 탭이면 아래 테두리)에 겹친다.
+- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다.
 - **시험.**
   - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
-  - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
+  - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자.
+  - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 나눈 두 pane 폭 합은 칸 폭 − 4(상자 테두리). 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

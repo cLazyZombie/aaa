@@ -503,14 +503,17 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // prefix v(herdr split_vertical)로 좌우로 나누면 host layout이 바뀌고 구분선과 새 pane이 그려진다.
+    // prefix v(herdr split_vertical)로 좌우로 나누면 host layout이 바뀌고 pane마다 테두리 상자와 새 pane이 그려진다.
     // 포커스는 새 pane(오른쪽)으로 간다.
     tui.cmd("v");
     let second = hw.wait("split 반영", |w| {
         let l = w.leaves();
         (l.len() == 2).then(|| l[1].clone())
     });
-    tui.wait_text("구분선", |s| s.lines().nth(5).is_some_and(|l| panes_part(l).contains('│')));
+    tui.wait_text("테두리", |s| {
+        s.lines().nth(1).is_some_and(|l| panes_part(l).starts_with('┌') && panes_part(l).contains("┐┌"))
+            && s.lines().nth(5).is_some_and(|l| panes_part(l).contains("││"))
+    });
     tui.type_line("echo right-$((5+5))");
     tui.wait_text("오른쪽 출력", |s| {
         s.lines().map(panes_part).any(|l| l.find("right-10").is_some_and(|i| l[..i].contains('│')))
@@ -1062,7 +1065,8 @@ fn side_list_like_web() {
     tui.wait_text("탐색 끝", |s| !s.contains(" NAVIGATE ") && both(s));
     tui.cmd("b");
     tui.wait_text("접힘", |s| !s.contains(" ▾ labA"));
-    hw.wait("compact 옆 폭", |w| (w.pane(&right)?.cols + w.pane(&first)?.cols + 1 == COLS - COMPACT).then_some(()));
+    // 나눈 탭은 pane마다 테두리 상자라(herdr `pane_borders = "auto"`) 두 pane 폭 합은 칸 폭에서 4칸 작다
+    hw.wait("compact 옆 폭", |w| (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 == COLS - COMPACT).then_some(()));
     let cols = hw.pane(&first).unwrap().cols;
     tui.cmd("w");
     tui.wait_screen("띄운 목록", |s| {
@@ -1075,7 +1079,7 @@ fn side_list_like_web() {
     tui.cmd("b");
     tui.wait_text("펼침", |s| s.contains(" ▾ labA") && !s.contains(" NAVIGATE "));
     hw.wait("사이드바 옆 크기", |w| {
-        (w.pane(&right)?.cols + w.pane(&first)?.cols + 1 == COLS - SIDE).then_some(())
+        (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 == COLS - SIDE).then_some(())
     });
     tui.type_line("echo still-$((3*3))");
     tui.wait_text("포커스 그대로", |s| s.contains("still-9"));

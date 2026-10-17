@@ -226,6 +226,18 @@ pub struct TuiSection {
     pub mobile_width_threshold: u16,
     /// 색 테마 이름(herdr `[theme] name`, 기본 `catppuccin`). 모르는 이름이면 TUI가 오류 막대로 알리고 기본을 쓴다.
     pub theme: String,
+    /// pane 테두리(herdr `[ui] pane_borders`): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 상자를 두르고,
+    /// `always`는 하나여도, `off`는 테두리 없이 빈 칸 하나로 띄운다. 테두리만큼 PTY 크기가 준다.
+    pub pane_borders: PaneBorders,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneBorders {
+    #[default]
+    Auto,
+    Always,
+    Off,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -257,6 +269,7 @@ impl Default for TuiSection {
             sidebar_collapsed_mode: SidebarCollapsedMode::Compact,
             mobile_width_threshold: 64,
             theme: "catppuccin".into(),
+            pane_borders: PaneBorders::Auto,
         }
     }
 }
