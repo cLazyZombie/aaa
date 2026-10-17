@@ -209,9 +209,10 @@ export default async function ({ ctl, page }) {
   });
 
   await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 타일 별, Codex는 매듭, 셸은 터미널 표시", async () => {
-    // hook으로 harness를 알린 pane(Claude·Codex)과 셸(t1)
+    // 세션 ID hook으로 harness를 알린 pane(Claude SessionStart·Codex notify)과 셸(t1)
+    const idHook = { claude: '{"hook_event_name":"SessionStart","session_id":"m1","source":"startup"}', codex: '{"type":"agent-turn-complete","thread-id":"m2"}' };
     for (const [name, agent] of [["markc", "claude"], ["markx", "codex"]])
-      aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '{"hook_event_name":"Stop"}'; exec cat`, AA);
+      aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '${idHook[agent]}'; exec cat`, AA);
     const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
     for (const name of ["markc", "markx"]) await until(`${name} harness`, async () => (await mp.getByTestId(`agent-${name}`).count()) === 1);
     const markOf = (name) =>

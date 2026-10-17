@@ -31,6 +31,15 @@ listen = ""
 mode = "none"
 "#;
 
+/// 쉬고 있는 가짜 Claude: SessionStart hook(대화 기록 위치)과 진행 보고를 내고 입력 상자를 그린 채 기다린다.
+/// `$1`은 aaa 실행 파일, `$2`는 hook JSON이다.
+const IDLE_CLAUDE: &str = r#"#!/bin/sh
+"$1" hook --agent claude "$2"
+"$1" report --percent 40 --activity 정리
+printf '────────────────\n\342\235\257 \n────────────────\n  ? for shortcuts'
+exec cat
+"#;
+
 /// host를 죽였다 살려도 세션이 남고, agent가 끊기면 읽기 전용이 되며, agent가 돌아오면 다시 입력된다.
 /// host와 agent를 함께 다시 띄워도 harness 상태·진행·대화 기록 위치가 되살아난다(다음 hook을 기다리지 않는다).
 #[test]
@@ -48,7 +57,8 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     h.ok(&["pane", "run", &id, "echo mark-$((6*7))"]);
     h.wait_output(&id, "mark-42", T);
 
-    // 쉬고 있는 Claude pane(Stop hook과 진행 보고 뒤 입력 없음): 다시 떠도 상태·진행·대화 보기가 남아야 한다
+    // 쉬고 있는 Claude pane(SessionStart hook과 진행 보고 뒤 입력 상자에서 기다린다): 다시 떠도 상태·진행·대화 보기가
+    // 남아야 한다. 상태는 화면(입력 상자, herdr claude.toml `live_prompt_box`)으로 안다.
     let dir = claude.join("projects").join("-lab");
     std::fs::create_dir_all(&dir).unwrap();
     let tr = dir.join("s1.jsonl");
@@ -62,22 +72,28 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         ),
     )
     .unwrap();
-    let hook = serde_json::json!({ "hook_event_name": "Stop", "session_id": "s1", "transcript_path": tr }).to_string();
-    let cid = h.new_pane(
-        None,
-        "labA",
-        Some("c1"),
-        &[
-            "/bin/sh",
-            "-c",
-            r#""$0" hook --agent claude "$1"; "$0" report --percent 40 --activity 정리; exec cat"#,
-            lab::BIN,
-            &hook,
-        ],
-        None,
-    );
+    let hook =
+        serde_json::json!({ "hook_event_name": "SessionStart", "session_id": "s1", "transcript_path": tr }).to_string();
+    // 실행 파일 이름이 claude라 agent가 Claude 화면 규칙으로 본다
+    let fake = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
+    std::fs::write(&fake, IDLE_CLAUDE).unwrap();
+    std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let mut ev = lab::Events::connect(&h);
+    let cid = h.new_pane(None, "labA", Some("c1"), &[fake.to_str().unwrap(), lab::BIN, &hook], None);
     let chat_len = || h.json(&["pane", "chat", &cid]).ok().and_then(|v| v["messages"].as_array().map(|m| m.len()));
-    wait_for("hook 반영", T, || (chat_len() == Some(2) && h.pane(&cid)["agent"]["percent"] == 40).then_some(()));
+    ev.wait("쉬는 Claude 상태·진행", T, |e| {
+        match e {
+            aaa_proto::FrontEvent::State { panes, .. } => panes
+                .iter()
+                .find(|p| p.id == cid)
+                .and_then(|p| p.agent.as_ref())
+                .filter(|a| a.activity == aaa_proto::AgentActivity::Idle && a.percent == Some(40)),
+            _ => None,
+        }
+        .map(|_| ())
+    });
+    assert_eq!(chat_len(), Some(2));
     let before = h.pane(&cid)["agent"].clone();
     assert_eq!((before["harness"].as_str(), before["activity"].as_str()), (Some("claude"), Some("idle")), "{before}");
     let restored = |what: &str| {
@@ -133,6 +149,70 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         (p["state"] == "exited" && p["code"] == 3).then_some(())
     });
     assert!(h.screen(&id).contains("back-4"));
+}
+
+/// 운영 pane(shadow/t-0002)을 읽은 화면: 턴이 끝난 뒤 보내지 않은 글이 입력 상자에 남아 있다
+const T0002_SCREEN: &str = include_str!("../../aaa-agent/src/detect/fixtures/claude-idle-typed.txt");
+
+/// pane `id`가 `from` 뒤에 idle이 됐다는 상태 사건을 기다린다
+fn idle_after(ev: &mut lab::Events, what: &str, id: &str, from: u64) {
+    ev.wait(what, T, |e| match e {
+        aaa_proto::FrontEvent::State { panes, .. } => panes
+            .iter()
+            .find(|p| p.id == id)
+            .and_then(|p| p.agent.as_ref())
+            .filter(|a| a.activity == aaa_proto::AgentActivity::Idle && a.since_ms >= from)
+            .map(|_| ()),
+        _ => None,
+    });
+}
+
+/// 옛 agent가 남긴 「작업 중」을 새 agent가 화면으로 바로잡는다(t-0334 결함 1, plan §8.97).
+/// 운영 shadow/t-0002는 보낸 글이 답 없이 입력 상자로 돌아와(응답 전 interrupt로 보인다. Claude는 사용자 interrupt에
+/// Stop hook을 내지 않는다) UserPromptSubmit의 `turn_start`만 남아 10시간 넘게 작업 중이었다. 그 화면과 harness.json을
+/// 그대로 두고 binary를 바꿀 때처럼 host와 agent를 함께 다시 띄운다.
+#[test]
+fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
+    let mut lab = Lab::new();
+    let h = lab.node("h", Some(LOCAL_ONLY));
+    lab.spawn("host", &h, &["host"]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
+    wait_for("labA 연결", T, || h.connected("labA").then_some(()));
+
+    // 실행 파일 이름이 claude인 가짜가 운영 pane 화면을 그린 채 기다린다(같은 66×42)
+    let screen = lab.root.join("t-0002.txt");
+    std::fs::write(&screen, T0002_SCREEN).unwrap();
+    let fake = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
+    std::fs::write(&fake, "#!/bin/sh\ncat \"$1\"\nexec cat\n").unwrap();
+    std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let mut ev = lab::Events::connect(&h);
+    let argv = [fake.to_str().unwrap(), screen.to_str().unwrap()];
+    let w = h.ok(&[&["tab", "create", "--machine", "labA", "--cols", "66", "--rows", "42", "--"][..], &argv].concat());
+    let id = w["tabs"].as_array().and_then(|t| t.last()).unwrap()["root"]["pane"].as_str().unwrap().to_string();
+    idle_after(&mut ev, "운영 pane 화면으로 idle", &id, 0);
+
+    // 옛 agent가 둔 것처럼: 마지막 사건이 `turn_start`이고 턴 끝은 오지 않았다. 새 host는 이 기억만 듣는다.
+    lab.kill("agent");
+    lab.kill("host");
+    let file = h.state.join("agent").join("sessions").join(&id).join("harness.json");
+    let old = serde_json::json!([{
+        "session": id, "harness": "claude", "kind": "turn_start", "harness_session": "s1",
+        "message": null, "question_kind": null, "percent": null, "at_ms": lab::now_ms() - 10 * 3600 * 1000,
+    }]);
+    std::fs::write(&file, old.to_string()).unwrap();
+    lab.spawn("host2", &h, &["host"]);
+    wait_for("host2 준비", T, || h.json(&["status"]).ok());
+    let mut ev = lab::Events::connect(&h);
+    let t1 = lab::now_ms();
+    lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
+    idle_after(&mut ev, "새 agent가 화면으로 idle", &id, t1);
+    let a = h.pane(&id)["agent"].clone();
+    assert_eq!((a["harness"].as_str(), a["activity"].as_str()), (Some("claude"), Some("idle")), "{a}");
+    // 바로잡은 상태를 기억한다: 다시 떠도 옛 「작업 중」이 돌아오지 않는다
+    let kept = std::fs::read_to_string(&file).unwrap();
+    assert!(kept.contains("\"idle\"") && !kept.contains("turn_start"), "{kept}");
 }
 
 /// 원격 agent 등록(TLS 1.3 + 확인 코드)과 원격 pane. 틀린 코드는 거부되고 곧바로 끝나는 명령도 결과가 남는다.

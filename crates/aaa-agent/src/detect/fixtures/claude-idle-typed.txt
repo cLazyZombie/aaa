@@ -1,0 +1,42 @@
+  확인하지도 않았습니다. 확인한 것은 Write 도구가 두 파일 모두
+  성공을 반환했다는 것뿐입니다. 이 두 파일 말고는 만들거나 고친
+  것이 없습니다.
+
+✻ Cooked for 12s · done 8:58 AM
+
+❯ 상태
+
+⏺ 할 일은 끝났고, 보고 상태는 [완료]입니다.
+
+  - .aaa/shadow-t-0002/library/check.md: "aaa shadow 두 번째
+    thread가 끝났다." 한 문장이 들어 있습니다.
+  - .aaa/shadow-t-0002/report.md: [완료] 보고를 썼습니다. 이
+    파일이 바뀌면 host가 library/를 함께 복사합니다.
+  - 남은 일: 이 thread에서 할 일은 없습니다. coordinator가
+    check.md 내용을 확인하면 됩니다.
+
+  brief가 파일 쓰기 외의 명령을 금지해서 aaa report 진행률 알림은
+  보내지 않았습니다. 두 파일도 다시 열어 보지 않았고, 확인한 것은
+  Write 도구가 성공을 반환했다는 것뿐입니다.
+
+✻ Worked for 4s · done 10:21 AM
+
+❯ ㅅㅌ
+
+⏺ 이전과 같습니다. 할 일은 끝났고, 보고 상태는 [완료]입니다.
+
+  - check.md: .aaa/shadow-t-0002/library/check.md에 "aaa shadow 두
+    번째 thread가 끝났다." 한 문장을 썼습니다.
+  - report.md: .aaa/shadow-t-0002/report.md에 [완료] 보고를
+    썼습니다.
+
+  마지막 보고 뒤로 바뀐 것은 없고, 이 thread에서 남은 일도
+  없습니다.
+
+✻ Sautéed for 2s · done 10:21 AM
+
+──────────────────────────────────────────────────────────────────
+❯ 한글 상태
+──────────────────────────────────────────────────────────────────
+  Opus 5.5 high | ctx 95% left | 7d 10% left (1d 4h) | t-0002
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
