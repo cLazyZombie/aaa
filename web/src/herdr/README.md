@@ -12,7 +12,7 @@
 | `keys.ts` | 키 처리: `clipboardKey`(Ctrl+C·V를 자판 위치로도 읽는다), `modifyOtherKeysLevel`(`CSI > 4 ; n m` 추적), `ctrlEnterSequence`(modifyOtherKeys면 `CSI 27;5;13~`), 키 막대 유지 키(`StickyModifiers`, chord는 `terminalChord`·`keyFromData`·`physicalKey`) |
 | `osc52.ts` | `parseOsc52`: pane 프로그램의 OSC 52 클립보드 쓰기(질의는 거절, 100 KiB 상한) |
 | `keyBar.ts` | 키 막대 항목(기본 Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→), 저장값 거르기(`sanitizeKeyBarItems`), 키 이름 → bytes(`keyBarInputSequence`, DECCKM) |
-| `KeyBarSettings.tsx`·`KeyBarSettings.css` | 설정 「키 바 편집」: 키 목록 순서·지우기, 키 추가, 고정 보조 키, 사용자 조합, 기본값으로 되돌리기(`src/components/KeyBarSettings.*`). CSS는 그대로, tsx는 lucide·i18n·useSettings 대신 aaa Icon·한국어 문구·`settings.ts`, 단추 class만 aaa 것 |
+| `KeyBarSettings.tsx`·`KeyBarSettings.css` | 설정 「키 바 편집」: 키 목록 순서·지우기, 키 추가, 고정 보조 키, 사용자 조합, 기본값으로 되돌리기(`src/components/KeyBarSettings.*`). CSS는 그대로, tsx는 i18n·useSettings 대신 한국어 문구·`settings.ts`(아이콘·단추 class는 참고 그대로) |
 | `fontFamily.ts` | 설정 「터미널 글꼴」: 쉼표로 적은 글꼴 목록을 CSS 값으로 거르고(`sanitizeFontFamily`), 그 face를 받을 때까지 기다린다(`loadFontStack`). aaa는 `terminalFontStack` 대신 Meslotendard 목록 앞에 붙인다(plan §8.64) |
 | `installedFonts.ts` | 「찾아보기」: 이 기기에 깔린 글꼴 목록(Chromium `queryLocalFonts`), 이름 거르기, 고정폭 판정(`isMonospaceFamily`) |
 | `presence.ts` | 이 화면을 지금 쓰는지(보이고 focus가 있다): events WS로 host에 알린다. 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다(`watchPageInUse`, plan §8.69) |
@@ -36,6 +36,8 @@
 | `AccessGate.css`·`DevicesPanel.css`·`PhonePanel.css`·`ConfirmDialog.css` | `src/components/` 것 그대로. 마크업은 `web/src/AccessGate.tsx`·`DevicesPanel.tsx`·`PhonePanel.tsx`·`ConfirmDialog.tsx` |
 | `modal.css` | `src/styles.css` 1269~1451줄 그대로: `.modal-scrim`·`.modal`·머리·몸·바닥, 휴대폰 sheet 움직임, 키보드가 있을 때, `.input`·`.select` |
 | `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
+| `SettingsControls.tsx`·`SettingsControls.css`·`SettingsDialog.css` | 설정 창의 묶음·줄·스위치·여럿 중 하나·한 칸씩(`src/components/SettingsControls.*` 그대로)과 창 배치(쪽 목록·쪽, 휴대폰은 목록 → 쪽, `src/components/SettingsDialog.css` 그대로). 마크업은 `web/src/SettingsDialog.tsx`. plan §8.91 |
+| `settingsHistory.ts` | 설정 창의 한 걸음(창·쪽·키 바 편집)마다 history 한 칸: 시스템 「뒤로」가 한 칸씩 나온다(`src/lib/settingsHistory.ts`, history 열쇠 이름만 `aaa:`) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. `fileUriPath`는 보고 Markdown의 `file://` 링크를 파일 이름으로 읽을 때 쓴다(`markdown.ts`) |
 | `markdown.ts`·`markdownHtml.ts` | 보고서 Markdown 파서(`parseMarkdown`: 제목·문단·목록·할 일·인용·code block·표·수식 원문, 굵게·기울임·지움·code·링크·파일 링크, `foldCode`). aaa는 HTML을 해석하지 않게(`html=false`) 부른다. 차이 목록 R1, plan §8.88 |
 | `Markdown.css` | 그 모양: `src/components/ChatView.css`의 `.markdown` 규칙과 `src/components/HighlightedCode.css` `.hl-code`를 바꾸지 않고 골라 옮겼다(그림·수식·mermaid·skill·파일 단추·chat 말풍선 규칙은 뺐다). 맨 앞 `--chat-fs-body` 한 줄만 aaa가 둔다(참고는 `.chat-view`가 정한다) |
