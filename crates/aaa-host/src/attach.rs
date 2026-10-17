@@ -3,8 +3,12 @@
 //! - 브라우저는 pane WebSocket, TUI·CLI는 Front API(`PaneAttach`)로 512KiB 조각을 보낸다. 조각마다 조작 권한을 확인하고(그 front가 지금 쓰는 화면이 된다),
 //!   host에 모으지 않고 바로 대상 머신 agent로 넘긴다(그 사이 화면 출력이 끼어든다).
 //! - 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고, 이름은 host가 정한다. agent는 세션 폴더에 0600으로 쓴다.
-//! - 다 받으면 sha256을 대조하고, harness pane이고 확인창이 없을 때만 입력창에 경로를 bracketed paste로 넣는다.
-//!   Enter는 보내지 않는다(사람이 글을 덧붙여 보낸다). 그 밖에는 경로만 돌려준다.
+//! - 다 받으면 sha256을 대조하고 그 pane에 경로를 셸 따옴표로 감싸 뒤에 빈칸 하나를 붙여 넣는다(herdr-web-ui·herdr처럼
+//!   셸에도, 결정 20 D7). Enter는 보내지 않는다(사람이 글을 덧붙여 보낸다).
+//!   - harness(Claude·Codex) 입력창에는 bracketed paste로 넣는다. 확인창·선택 창이 떠 있으면 넣지 않는다: 붙여 넣은 글이
+//!     그 답으로 읽힐 수 있다(참고에는 이 막기가 없다, plan §8.51).
+//!   - 그 밖(셸 등)은 친 글처럼 넣는다. host는 그 프로그램이 bracketed paste를 켰는지 모르고, 줄바꿈·제어 문자가 없는
+//!     따옴표 경로는 bracketed paste가 꺼진 붙여넣기와 같다.
 
 use std::sync::Arc;
 
@@ -141,27 +145,28 @@ impl Host {
         Ok(Some(Attached { path, inserted, note }))
     }
 
-    /// 입력창에 경로를 넣을지 다시 확인하고 넣는다. 넣지 않으면 그 이유를 돌려준다.
+    /// pane에 경로를 넣을지 다시 확인하고 넣는다. 넣지 않으면 그 이유를 돌려준다.
     async fn attach_insert(self: &Arc<Self>, id: &str, mid: &str, path: &str) -> (bool, Option<String>) {
         let no = |s: &str| (false, Some(s.to_string()));
-        // hook을 보내는 harness(Claude·Codex) pane만. 일반 셸에는 넣지 않는다.
-        if !self.pane_agent(id).is_some_and(|a| a.harness != "report") {
-            return no("harness 상태를 받지 못한 pane(일반 셸이거나 아직 시작 전)이라 경로만 저장했다");
-        }
         if self.check_running(id).is_err() {
             return no("그 사이 세션이 끝났다");
         }
-        if self.open_question_of(id).is_some() {
-            return no("확인창이 떠 있어 경로를 넣지 않았다");
-        }
-        let Some(lines) = self.screen_lines(mid, id).await else {
-            return no("화면을 읽지 못해 경로를 넣지 않았다");
-        };
-        if modal_of(&lines).is_some() {
-            return no("선택 창이 떠 있어 경로를 넣지 않았다");
+        // hook을 보내는 harness(Claude·Codex) pane은 입력창일 때만
+        let harness = self.pane_agent(id).is_some_and(|a| a.harness != "report");
+        if harness {
+            if self.open_question_of(id).is_some() {
+                return no("확인창이 떠 있어 경로를 넣지 않았다");
+            }
+            let Some(lines) = self.screen_lines(mid, id).await else {
+                return no("화면을 읽지 못해 경로를 넣지 않았다");
+            };
+            if modal_of(&lines).is_some() {
+                return no("선택 창이 떠 있어 경로를 넣지 않았다");
+            }
         }
         let Ok(conn) = self.live_conn(mid) else { return no("agent와 연결이 끊겼다") };
-        let paste = format!("\x1b[200~{path}\x1b[201~");
+        let quoted = shell_quoted(path);
+        let paste = if harness { format!("\x1b[200~{quoted}\x1b[201~") } else { quoted };
         match conn.request(AgentRequest::Input { session: id.to_string(), data: B64(paste.into_bytes()) }).await {
             Ok(_) => (true, None),
             Err(e) => (false, Some(format!("경로를 넣지 못했다: {}", e.message))),
@@ -169,9 +174,20 @@ impl Host {
     }
 }
 
+/// herdr-web-ui PaneTerminal 1443줄: 작은따옴표로 감싸고(안의 `'`는 `'\''`) 뒤에 빈칸 하나
+fn shell_quoted(path: &str) -> String {
+    format!("'{}' ", path.replace('\'', "'\\''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_like_the_reference() {
+        assert_eq!(shell_quoted("/a b/x.png"), "'/a b/x.png' ");
+        assert_eq!(shell_quoted("/it's/x.png"), "'/it'\\''s/x.png' ");
+    }
 
     #[test]
     fn signatures() {

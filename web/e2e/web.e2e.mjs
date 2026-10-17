@@ -2251,20 +2251,23 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
-  await step("그림 붙여 넣기: 셸은 저장만, harness 입력창에는 경로(Enter 없음), 확인창·형식·reader 거부", async () => {
+  await step("그림 붙여 넣기·끌어 놓기(herdr-web-ui): 셸·harness 입력창에 따옴표 경로(Enter 없음), 글이 있으면 글, 여러 파일은 놓은 순서, 글 놓기, 확인창·형식·reader 거부", async () => {
     const png = fs.readFileSync(`${root}/pic.png`);
     const banner = page.getByTestId("attach-banner");
-    // 1) 일반 셸(t1): 대상 머신 세션 폴더에 저장하고 PTY에는 아무것도 넣지 않는다
+    // 1) 일반 셸(t1): 대상 머신 세션 폴더에 저장하고 셸에도 따옴표 경로와 빈칸을 넣는다(결정 20 D7, Enter 없음)
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("$"));
     await pasteFile(page, png, "image/png");
-    await until("셸 저장 배너", async () => (await banner.innerText()).includes("경로만 저장했다"));
+    await until("셸 경로 배너", async () => (await banner.innerText()).includes("경로를 넣었다"));
     const p1 = bannerPath(await banner.innerText());
     if (!p1?.startsWith(`${root}/s/agent/sessions/`)) throw new Error(`저장 경로: ${await banner.innerText()}`);
     if (!fs.readFileSync(p1).equals(png)) throw new Error("저장한 그림이 다르다");
     if ((fs.statSync(p1).mode & 0o777) !== 0o600) throw new Error(`권한 ${(fs.statSync(p1).mode & 0o777).toString(8)}`);
+    await until("셸 줄에 따옴표 경로", () => aaa("pane", "read", "t1").lines.join("").includes(`'${p1}'`));
+    // Enter가 없었다: 셸은 실행하지 않았다(그 줄을 지운다)
     await sleep(300);
-    if (aaa("pane", "read", "t1").lines.join("\n").includes("attachments")) throw new Error("셸에 경로가 들어갔다");
+    if (aaa("pane", "read", "t1").lines.join("").includes("No such file")) throw new Error("셸이 경로를 실행했다");
+    aaa("pane", "send", "t1", "--text", "\u0015");
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
@@ -2278,11 +2281,57 @@ try {
     await page.getByTestId("pane-h1").click();
     await until("h1 터미널", async () => (await screenText(page)).includes("❯"));
     await pasteFile(page, big, "image/png");
-    await until("입력창 배너", async () => (await banner.innerText()).includes("입력창에 넣었다"));
+    await until("입력창 배너", async () => (await banner.innerText()).includes("경로를 넣었다"));
     const p2 = bannerPath(await banner.innerText());
     if (!fs.readFileSync(p2).equals(big)) throw new Error("여러 조각 그림이 다르다");
-    await until("PTY가 받은 경로", () => fs.readFileSync(recv, "latin1") === `\x1b[200~${p2}\x1b[201~`);
+    await until("PTY가 받은 경로", () => fs.readFileSync(recv, "latin1") === `\x1b[200~'${p2}' \x1b[201~`);
     await shot(page, "desktop-attach");
+    // 받은 것 가운데 이 뒤에 온 것
+    let seen = fs.readFileSync(recv, "latin1").length;
+    const recvNext = () => fs.readFileSync(recv, "latin1").slice(seen);
+    // 3a) 클립보드에 글과 그림이 같이 있으면 글이다(복사한 경로도 글로 남는다)
+    await page.evaluate(
+      ({ b64 }) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", "mixed-text");
+        dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "m.png", { type: "image/png" }));
+        document.querySelector('[data-testid="terminal"] textarea').dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      },
+      { b64: png.toString("base64") },
+    );
+    await until("글만 붙여 넣음", () => recvNext() === "mixed-text");
+    await sleep(300);
+    if (recvNext() !== "mixed-text") throw new Error(`글과 그림: ${JSON.stringify(recvNext())}`);
+    seen = fs.readFileSync(recv, "latin1").length;
+    // 3b) 파일 여러 개를 끌어 놓으면 놓은 순서대로 올리고 경로를 차례로 넣는다
+    const pa = Buffer.concat([png.subarray(0, 8), Buffer.alloc(300_000, 1)]);
+    const pb = Buffer.concat([png.subarray(0, 8), Buffer.alloc(2_000, 2)]);
+    const drop = (files, text) =>
+      page.evaluate(
+        ({ files, text }) => {
+          const dt = new DataTransfer();
+          for (const f of files) dt.items.add(new File([Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0))], f.name, { type: "image/png" }));
+          if (text) dt.setData("text/plain", text);
+          const at = document.querySelector('[data-testid="terminal"] .xterm-screen');
+          const over = new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true });
+          at.dispatchEvent(over);
+          at.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+          // dropEffect는 볼 수 없다: 지어낸 DataTransfer는 끌기 중이 아니라 dropEffect 대입을 버린다(Chromium에서 확인)
+          return { prevented: over.defaultPrevented };
+        },
+        { files: files.map(([name, b]) => ({ name, b64: b.toString("base64") })), text },
+      );
+    const over = await drop([["a.png", pa], ["b.png", pb]]);
+    if (!over.prevented) throw new Error(`끌어 오기를 받지 않았다 ${JSON.stringify(over)}`);
+    const two = await until("두 경로", () => {
+      const m = /^\x1b\[200~'([^']+)' \x1b\[201~\x1b\[200~'([^']+)' \x1b\[201~$/.exec(recvNext());
+      return m ? [m[1], m[2]] : null;
+    });
+    if (!fs.readFileSync(two[0]).equals(pa) || !fs.readFileSync(two[1]).equals(pb)) throw new Error(`놓은 순서가 아니다: ${two}`);
+    seen = fs.readFileSync(recv, "latin1").length;
+    // 3c) 글을 끌어 놓으면 붙여 넣는다(Enter 없음)
+    await drop([], "dropped-text");
+    await until("놓은 글", () => recvNext() === "dropped-text");
 
     // 4) 확인창이 떠 있는 harness pane에는 넣지 않는다
     const recv2 = `${root}/h2.in`;
