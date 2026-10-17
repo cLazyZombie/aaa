@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 use super::{AgentConn, Host};
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use aaa_common::tls;
+use aaa_common::util;
 use aaa_proto::{LINK_DEAD_AFTER as DEAD_AFTER, LINK_PING_EVERY as PING_EVERY};
 
 /// 인증 전 동시 연결 상한
@@ -264,10 +265,15 @@ async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Opt
 
 /// 같은 머신의 agent(UDS, 같은 사용자): 등록 없이 로컬 머신으로 받아들인다.
 async fn register_local(host: &Host, hello: &AgentHello, tx: &FrameTx) -> Result<()> {
-    if let Ok(Some(m)) = host.db.machine_by_name(&hello.machine_name)
+    let known = host.db.machine_by_name(&hello.machine_name).ok().flatten();
+    if let Some(m) = &known
         && m.id != hello.machine_id
     {
         return reject(tx, ErrorCode::NameTaken, &format!("이름 {}은 다른 머신이 쓴다", hello.machine_name)).await;
+    }
+    // 새 이름만 검사한다. 이미 이 머신의 이름으로 등록된 것은 그대로 받는다(올리기 전 이름).
+    if known.is_none() && !util::machine_name_ok(&hello.machine_name) {
+        return reject(tx, ErrorCode::BadRequest, crate::MACHINE_NAME_RULE).await;
     }
     host.db.upsert_machine(&hello.machine_id, &hello.machine_name, None, true)?;
     Ok(())
