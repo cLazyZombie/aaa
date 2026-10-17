@@ -20,12 +20,13 @@ export class ApiError extends Error {
   }
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function post<T>(path: string, body: unknown, keepalive = false): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     credentials: "same-origin",
+    keepalive,
   });
   return unwrap<T>(res);
 }
@@ -73,7 +74,7 @@ export async function signOut(): Promise<void> {
   const res = await fetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
   if (!res.ok) throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
 }
-export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
+export const call = (req: FrontRequest, keepalive = false) => post<FrontResponse>("/api/v1/call", req, keepalive);
 
 /** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.79, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
 export async function loadPreferences(): Promise<SharedPreferences> {
@@ -82,8 +83,9 @@ export async function loadPreferences(): Promise<SharedPreferences> {
   const { kind: _kind, ...doc } = r;
   return doc;
 }
-export async function savePreferences(change: PreferencesChange): Promise<SharedPreferences> {
-  const r = await call({ op: "preferences_set", settings: change.settings, pins: change.pins ?? null });
+/** `keepalive`: 화면이 닫혀도 브라우저가 요청을 마저 보낸다(떠날 때 보내기, QA t-0337 Q11) */
+export async function savePreferences(change: PreferencesChange, keepalive = false): Promise<SharedPreferences> {
+  const r = await call({ op: "preferences_set", settings: change.settings, pins: change.pins ?? null }, keepalive);
   if (r.kind !== "preferences") throw new ApiError({ code: "internal", message: `뜻밖의 답 ${r.kind}` });
   const { kind: _kind, ...doc } = r;
   return doc;

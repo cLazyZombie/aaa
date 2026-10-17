@@ -63,6 +63,16 @@ pub struct SpecFile {
     pub boot_id: String,
     pub created_at_ms: u64,
     pub spec: SpawnSpec,
+    /// 사람이 붙인 이름(`pane rename`). 있으면 `spec.name` 대신 보인다. 지우면 `spec.name`으로 돌아간다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+impl SpecFile {
+    /// 보이는 이름: 붙인 이름, 없으면 띄울 때 이름
+    pub fn name(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.spec.name)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

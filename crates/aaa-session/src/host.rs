@@ -114,7 +114,7 @@ impl State {
         let (rows, cols) = self.vt.size();
         SessionInfo {
             id: self.id.clone(),
-            name: self.spec.spec.name.clone(),
+            name: self.spec.name().to_string(),
             argv: self.spec.spec.argv.clone(),
             cwd: self.spec.spec.cwd.clone(),
             pid: self.child_pid,
@@ -127,6 +127,7 @@ impl State {
                 Some(code) => SessionState::Exited { code },
             },
             role: self.spec.spec.role,
+            label: self.spec.label.clone(),
         }
     }
 

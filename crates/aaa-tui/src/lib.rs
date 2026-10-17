@@ -1980,6 +1980,7 @@ mod tests {
             lease: None,
             role: None,
             agent: None,
+            label: None,
         }
     }
 
