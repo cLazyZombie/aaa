@@ -15,6 +15,8 @@ import { takePairCode } from "./herdr/phone";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { ThreadPanel } from "./ThreadPanel";
+import { ProjectThreads } from "./ProjectThreads";
+import { Folder } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
@@ -96,6 +98,9 @@ export function splitQuestion(text: string): { tool: string | null; body: string
 /**
  * 확인창 질문 카드. 답은 host가 질문이 아직 열려 있는지 다시 확인한 뒤 harness 키로 보낸다.
  * 목록에서는 작게(예·아니오 버튼), 터미널 아래에서는 선택지를 한 줄씩 번호와 함께 보인다.
+ * 답이 가는 동안과 실패는 카드 안에 보인다(herdr-web-ui PromptCard.tsx: `aria-busy`, 선택지 `disabled={pending}`,
+ * 카드 안 `role="alert"`). 휴대폰은 pane을 보는 동안 목록(머리 띠)이 숨으므로 오류가 카드 밖이면 아무도 못 본다.
+ * 카드는 질문 하나에 하나(`key`)라, 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다.
  */
 function QuestionCard({
   q,
@@ -107,12 +112,31 @@ function QuestionCard({
   q: QuestionView;
   where: string;
   canControl: boolean;
-  onPick: (q: QuestionView, c: string) => void;
+  onPick: (q: QuestionView, c: string) => Promise<void>;
   docked?: boolean;
 }) {
   const { tool, body } = splitQuestion(q.text);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shown = useRef(false);
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
+  const pick = async (choice: string) => {
+    setPending(true);
+    setError(null);
+    try {
+      await onPick(q, choice);
+    } catch (e) {
+      if (shown.current) setError(e instanceof ApiError ? e.message : String(e));
+    }
+    if (shown.current) setPending(false);
+  };
   return (
-    <div className="question" data-testid={docked ? `dock-question-${q.id}` : `question-${q.id}`}>
+    <div className="question" aria-busy={pending} data-testid={docked ? `dock-question-${q.id}` : `question-${q.id}`}>
       <div className="q-head">
         <span className="q-title">{KIND_LABEL[q.question_kind] ?? q.question_kind}</span>
         <span className="q-where">
@@ -126,7 +150,7 @@ function QuestionCard({
       {canControl ? (
         <div className="q-actions">
           {q.options.map((o, n) => (
-            <button key={o} className={o === "yes" ? "primary" : ""} onClick={() => onPick(q, o)}>
+            <button key={o} className={o === "yes" ? "primary" : ""} disabled={pending} onClick={() => void pick(o)}>
               {docked && <span className="key">{n + 1}</span>}
               {CHOICE_LABEL[o] ?? o}
             </button>
@@ -135,13 +159,19 @@ function QuestionCard({
       ) : (
         <p className="muted small-text">보기 권한이라 답할 수 없다</p>
       )}
+      {error !== null && (
+        <p className="q-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
-/** 고른 것: `#pane=<id>` 또는 `#thread=<project>/<id>` */
+/** 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects` */
 function selectedFromHash(): string | null {
-  const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
+  if (location.hash === "#projects") return "projects:";
+  const m = /^#(pane|thread|project)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -255,7 +285,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
   };
 
-  // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.73): 들어온 뒤에만 읽고, events 사건으로 따라간다
+  // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.79): 들어온 뒤에만 읽고, events 사건으로 따라간다
   const syncPreferences = usePreferencesSync(true);
   const receivePreferences = useRef(syncPreferences);
   receivePreferences.current = syncPreferences;
@@ -317,14 +347,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   );
   useAlertSoundUnlock();
 
+  // 실패는 그 카드가 보인다(QuestionCard): 목록 머리 띠는 휴대폰에서 pane을 보는 동안 숨는다
   const answer = async (q: QuestionView, choice: string) => {
-    setMsg(null);
-    try {
-      const r = await call({ op: "question_answer", id: q.id, choice });
-      if (r.kind === "question") putQuestion(r);
-    } catch (e) {
-      setMsg(e instanceof ApiError ? e.message : String(e));
-    }
+    const r = await call({ op: "question_answer", id: q.id, choice });
+    if (r.kind === "question") putQuestion(r);
   };
   useEffect(() => {
     const on = () => setSel(selectedFromHash());
@@ -336,9 +362,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
   };
-  const chooseThread = (t: ThreadView) => {
+  // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로)
+  const [backTo, setBackTo] = useState<string | null>(null);
+  const chooseThread = (t: ThreadView, from: string | null = null) => {
+    setBackTo(from);
     location.hash = `thread=${encodeURIComponent(threadKey(t))}`;
     setSel(`thread:${threadKey(t)}`);
+  };
+  const chooseProject = (name: string | null) => {
+    location.hash = name === null ? "projects" : `project=${encodeURIComponent(name)}`;
+    setSel(name === null ? "projects:" : `project:${name}`);
   };
 
   const newShell = async (m: MachineView) => {
@@ -355,7 +388,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
   useScreenWakeLock(useKeepScreenOn() && (current !== null || currentThread !== null));
-  const shownThreads = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+  // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads)
+  const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator");
+  const shownThreads = allThreads.filter((t) => t.group !== "resolved");
+  const viewProject = sel === "projects:" ? null : sel?.startsWith("project:") ? sel.slice(8) : undefined;
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
@@ -376,7 +412,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   return (
-    <div className={`app ${current || currentThread ? "has-sel" : ""}`}>
+    <div className={`app ${current || currentThread || viewProject !== undefined ? "has-sel" : ""}`}>
       <aside className="list sidebar-shell">
         <header className="list-head">
           <span className="brand">
@@ -390,7 +426,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           {evaluators.map((v) => (
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
-          <MoreMenu />
+          <MoreMenu onProjects={() => chooseProject(null)} />
         </header>
         {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
         <Sidebar
@@ -401,7 +437,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           canControl={canControl}
           agentOf={agentOf}
           onPane={(id) => choose(id)}
-          onThread={chooseThread}
+          onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
           banners={
             <>
@@ -419,10 +455,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             key={threadKey(currentThread)}
             t={currentThread}
             role={role}
-            onBack={() => choose(null)}
+            backTo={backTo?.startsWith("project:") ? backTo.slice(8) : undefined}
+            onBack={() => (backTo !== null && backTo.startsWith("project:") ? chooseProject(backTo.slice(8)) : choose(null))}
             onOpenPane={
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
+          />
+        ) : viewProject !== undefined ? (
+          <ProjectThreads
+            project={viewProject}
+            threads={allThreads}
+            onProject={chooseProject}
+            onThread={(t) => chooseThread(t, `project:${t.project}`)}
+            onBack={() => choose(null)}
           />
         ) : current ? (
           <TermView
@@ -479,7 +524,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
  * 머리의 「더 보기」 메뉴(참고 App.tsx moreItems·header-more): 링크 복사와 「알림」(이 기기 상태를 말하고 누르면 켜고 끈다).
  * 알림이 꺼져 있으면 메뉴 단추에 점을 단다. 찾기·파일 보기 항목은 그 기능을 옮길 때 넣는다.
  */
-function MoreMenu() {
+function MoreMenu({ onProjects }: { onProjects: () => void }) {
   const alerts = useAlerts();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -590,6 +635,18 @@ function MoreMenu() {
               <span className="more-hint">{alerts.bell.state}</span>
             </button>
           )}
+          {/* 프로젝트마다 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리. 참고 moreItems에 없는 항목이라 맨 끝 */}
+          <button
+            role="menuitem"
+            data-testid="projects-item"
+            onClick={() => {
+              setOpen(false);
+              onProjects();
+            }}
+          >
+            <Folder className="i" aria-hidden="true" />
+            <span className="more-label">프로젝트</span>
+          </button>
         </div>
       )}
     </span>

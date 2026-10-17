@@ -75,7 +75,7 @@ export async function signOut(): Promise<void> {
 }
 export const call = (req: FrontRequest) => post<FrontResponse>("/api/v1/call", req);
 
-/** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.73, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
+/** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.79, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
 export async function loadPreferences(): Promise<SharedPreferences> {
   const r = await call({ op: "preferences" });
   if (r.kind !== "preferences") throw new ApiError({ code: "internal", message: `뜻밖의 답 ${r.kind}` });

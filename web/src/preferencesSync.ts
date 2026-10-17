@@ -1,5 +1,5 @@
 // 공유 설정과 고정(preferences.ts)을 이 host의 모든 웹 화면에서 같게 둔다(herdr-web-ui `src/lib/preferencesSync.ts`
-// `usePreferencesSync`를 옮김, plan §8.73). 들어온 뒤 한 번 읽어 host 값을 설정마다 이 화면 값 위에 놓는다.
+// `usePreferencesSync`를 옮김, plan §8.79). 들어온 뒤 한 번 읽어 host 값을 설정마다 이 화면 값 위에 놓는다.
 // 아무도 나누지 않은 설정은 이 화면 것으로 남고, 화면을 여는 것만으로는 쓰지 않는다. 여기서 바꾸면 설정이 멈춘 뒤 바뀐 것만 보내고,
 // 다른 화면의 변경은 events의 `preferences` 사건으로 온다. host는 events 연결이 열릴 때마다 문서 전체를 보내 다시 붙은 화면도 따라잡는다.
 // 설정마다 마지막 쓰기가 이긴다: 여기서 바꾸고 아직 안 보낸 값은 남아, 온 것 위로 나간다.

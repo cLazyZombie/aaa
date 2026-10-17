@@ -2086,6 +2086,35 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **계약.** FRONT_API 1.8(`ThreadRead`·`ThreadKeys`, `ThreadPaneView`).
 - **시험.** E2E m13 `thread_read_and_keys`(가짜 Claude): 신뢰 창을 읽고(상태 모름) 키는 거부 → 질문으로 답한 뒤 권한 확인창을 읽고 Enter로 답해 넘어감 → `--lines` → 세션이 끝나면 거부. proto 유닛: 읽기는 보기, 키는 조작.
 
+### 8.87 보고서 Markdown을 herdr-web-ui대로(10-18, 차이 목록 2장 R1, t-0334 pilot 결함 4)
+
+- **결함.** 옛 렌더(ThreadPanel.tsx `Markdown`, 줄마다 정규식)는 표를 글자 그대로 두고, 굵게 안 code(`**\`x\`**`)를 `**` 글자로 보였다. 번호 목록도 글머리표였고 안쪽 목록은 여백으로만 흉내 냈다(실제 보고에서 재현).
+- **참고대로.** herdr-web-ui(aa624cb) 파서 `src/lib/markdown.ts`·`markdownHtml.ts`를 바꾸지 않고 옮기고(`web/src/herdr/`), 렌더 `src/components/Markdown.tsx`를 `web/src/Markdown.tsx`로, 모양 `ChatView.css` `.markdown` 규칙과 `HighlightedCode.css` `.hl-code`를 `web/src/herdr/Markdown.css`로 옮겼다.
+  - 그리는 것: 제목(몇 단계든 `h3`, 단계는 class), 문단·줄바꿈, 번호·글머리 목록과 안쪽 목록·표, 할 일 상자, 인용, code block(언어·복사 단추·긴 것 접기 「n줄 모두 보기」), 표(`.markdown-table-wrap` 안에서만 옆으로 밀림), 굵게·기울임·지움·code·링크(새 창), backtick 안 http 주소는 열리는 code.
+  - HTML은 해석하지 않는다(`parseMarkdown(…, html=false)`, 참고의 기본값). 보고는 agent가 쓴 글이라 글자로 둔다.
+  - 표 구분 줄은 칸마다 `-` 셋 이상이다(참고 `isTableSeparator`, 참고 시험이 `|--|--|`를 표가 아니라고 정한다). GFM은 하나여도 표라 `|--|` 보고는 글자로 남는다. 참고대로 둔다.
+  - aaa `style.css`의 전역 `code` 칩 규칙이 code block 안 code에도 바탕을 입혔다(참고에는 전역 규칙이 없다). 글꼴은 모든 code에, 칩 모양은 `:not(pre) > code`에만 둔다.
+  - 다르게 둔 것: 문법 강조(참고 `HighlightedCode`, highlight.js)·KaTeX·mermaid·그림 보기·앱 안 파일 열기는 aaa에 아직 없어 참고가 그것을 못 쓸 때의 모양을 쓴다(code 글자, 수식 원문, 그림 대체 글, 파일은 이름 뒤 경로). 파일 열기는 R1 파일 viewer 묶음에서 잇는다.
+- **t3code와 비교.** t3code(4b1024da)는 `apps/web/src/components/ChatMarkdown.tsx`에서 react-markdown + remark-gfm을 쓴다. 표·GFM은 같게 그리지만 의존성 둘(과 그 아래 unified 묶음)이 들고, 동작 기준은 결정 D1~D12대로 herdr-web-ui라 그쪽 파서를 옮겼다(report 「아침 확인」).
+- **시험.** 웹 E2E 「thread 보고서·결과물」: fake 보고에 표(칸 안 code·굵게)·굵게 안 code·링크·번호 목록 안 목록·code block을 넣고, 그려진 DOM(`th`·`td`·`strong > code`·`a[target=_blank]`·`ol > li > ul`·`.markdown-code[data-language]`)과 `**`·`|` 글자가 남지 않음을 본다. 휴대폰 폭(390)에서 화면이 옆으로 밀리지 않는지 보고 캡처한다(`desktop-thread-library`·`phone-report-markdown`).
+
+### 8.88 끝난 thread 보기를 herdr-projects popup대로(10-18, 차이 목록 2장 L3·3장 C1, t-0334 pilot 결함 3)
+
+- **결함.** 웹 목록은 끝난(resolved) thread를 빼고(herdr-projects `sidebar.rs`처럼), 그 밖에 끝난 thread를 볼 곳이 없었다. 옮겨 온 thread 323개는 `#thread=` 주소로만 열렸다.
+- **참고대로.** herdr-projects는 사이드바에 열린 thread만 두고, 끝난 thread는 popup(`prefix+a`)에서 본다. `popup.rs` `build`(Section::Threads)·`thread_line`·`group_color`를 웹 화면 `web/src/ProjectThreads.tsx`로 옮겼다.
+  - 프로젝트 고르기(popup 첫 화면 `projects_in_scope`): 프로젝트마다 열린 묶음 줄(`projectLine`)과 「끝남 n」. 이름은 host 프로젝트 목록과 thread가 있는 프로젝트를 합친다(옮겨 온 기록만 있는 프로젝트도).
+  - 프로젝트 하나: 묶음을 `Group::DISPLAY_ORDER`대로 머리 「묶음 (n)」 아래 두고, 끝남은 맨 아래 흐리게(`DarkGrey` → `--text-dim`). 줄은 「id · 제목」과 그 아래 상태 줄·머신·profile·남은 Next 수. 「/」 거르기처럼 id·제목에 든 글로 거른다.
+  - 줄을 고르면 보고(popup detail). 거기서 「뒤로」는 그 프로젝트로 돌아간다(popup: detail에서 목록으로). 이때만 넓은 화면에도 뒤로 단추를 보인다.
+  - 여는 곳: 웹에는 prefix 키가 없어 머리 「더 보기」 메뉴 「프로젝트」가 popup 키 자리다. 주소는 `#projects`·`#project=<이름>`이라 링크·되돌리기가 된다. 사이드바 프로젝트 머리를 누르면 접고 펴기는 그대로다(herdr-web-ui 목록 머리).
+- **t3code와 비교.** t3code(4b1024da)는 보관한 thread를 설정 「Archived」(`apps/web/src/components/settings/SettingsPanels.tsx` `ArchivedThreadsPanel`)에 모은다. 동작 기준은 결정대로 herdr-projects라 popup 모양을 옮겼다(report 「아침 확인」).
+- **시험.** 웹 E2E 「끝난 thread 보기」: t-0001을 끝내면 목록에서 빠지고, 「더 보기 → 프로젝트」에서 demo 줄이 「끝남 n」(host가 말하는 끝난 수), 프로젝트 보기에서 「끝남 (n)」 묶음이 맨 아래 흐리게, 거르기·맞는 것 없음, 고르면 보고, 뒤로는 그 프로젝트, 휴대폰 폭에서 옆으로 밀리지 않음(`desktop-project-threads`·`phone-project-threads`). 기다림은 MutationObserver(`waitForFunction` polling `mutation`)와 `hashchange`로 끝낸다(`domIs`·`hashIs`).
+
+### 8.89 확인창 답의 진행과 실패를 카드 안에(10-18, QA t-0337 Q3, 차이 목록 2장 Q2 일부)
+
+- **결함.** 답이 실패해도(host가 화면에서 선택 창을 못 찾음 등) 오류는 목록 머리 띠에만 떴다. 휴대폰은 pane을 보는 동안 목록이 숨어 아무 표시가 없었다. 실패 답이 오기까지 3초(`MENU_WAIT`) 동안 단추가 그대로 눌렸다.
+- **참고대로.** herdr-web-ui `src/components/PromptCard.tsx`: 누르는 동안 카드 `aria-busy`, 선택지 `disabled={pending}`, 오류는 카드 안 `role="alert"`. 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다(`shown`). 모양은 `PromptCard.css` `[aria-busy="true"]` 선택지 흐림, `.prompt-card-error` 색.
+- **시험.** 웹 E2E 「확인창 답이 실패하면 카드 안에 보인다」: 휴대폰 제어 화면에서 「Esc to cancel」 없는 확인창에 「예」 → 누른 순간 `aria-busy=true`·선택지 막힘 → host 오류 답 → 카드 안 alert(「터미널에서 직접 답한다」)·선택지 풀림(`phone-question-error`). 기다림은 그 요청의 답과 MutationObserver다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

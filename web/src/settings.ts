@@ -1,5 +1,5 @@
 // 이 기기의 설정(herdr-web-ui lib/settings.ts). 설정 창(SettingsDialog.tsx)과 키 막대 ⌨ 단추가 바꾼다.
-// 참고처럼 「shared」 범위 값(구독 사용량 설정)은 host에 두어 기기끼리 나눈다(preferencesSync.ts, plan §8.73).
+// 참고처럼 「shared」 범위 값(구독 사용량 설정)은 host에 두어 기기끼리 나눈다(preferencesSync.ts, plan §8.79).
 // 이 파일은 그 값의 이 기기 사본도 localStorage에 둔다. 나머지는 이 기기 것이다(plan §8.45).
 import { useCallback, useSyncExternalStore } from "react";
 import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarItem } from "./herdr/keyBar.ts";
@@ -287,7 +287,7 @@ export function useTerminalInputMode(): TerminalInputMode {
   return useSyncExternalStore(subscribe, () => mode);
 }
 
-// 사용량 막대 설정은 host 공유 설정이라 그 형·기본값·거르기는 preferences.ts에 있다(plan §8.73)
+// 사용량 막대 설정은 host 공유 설정이라 그 형·기본값·거르기는 preferences.ts에 있다(plan §8.79)
 export { DEFAULT_USAGE, type UsageCount, type UsageGlance, type UsageSettings } from "./preferences.ts";
 
 const USAGE_KEY = "aaa:usage-settings";

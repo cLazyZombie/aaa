@@ -151,7 +151,9 @@ input {
   min-width: 0;
 }
 input::placeholder { color: var(--text-faint); }
-code { font-family: var(--font-mono); font-size: 0.9em; background: var(--bg-hover); padding: 1px 5px; border-radius: 4px; }
+code { font-family: var(--font-mono); }
+/* 칩 모양은 글 안 code만(code block 안은 그 블록 바탕, herdr-web-ui ChatView.css `.markdown :not(pre) > code`) */
+:not(pre) > code { font-size: 0.9em; background: var(--bg-hover); padding: 1px 5px; border-radius: 4px; }
 svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .muted { color: var(--text-dim); }
 .err { color: var(--blocked); }
@@ -307,6 +309,9 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .q-text { margin: var(--space-2) 0; font-size: 13px; overflow-wrap: anywhere; }
 .q-actions { display: flex; gap: var(--space-2); }
 .q-actions button { min-width: 72px; }
+/* 답이 가는 동안: 선택지를 흐리게 막는다(herdr-web-ui PromptCard.css .prompt-card[aria-busy="true"] .prompt-card-option) */
+.question[aria-busy="true"] .q-actions button { opacity: 0.55; cursor: default; }
+.q-error { margin: var(--space-2) 0 0; color: var(--blocked); font-size: 12px; }
 .q-actions .key, .opt .key {
   display: inline-grid;
   place-items: center;
@@ -354,6 +359,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .term-title .muted { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumb-sep { color: var(--text-faint); margin: 0 3px; }
 .back { display: none; }
+.back.is-shown { display: inline-flex; }
 /* 여백은 바깥(.term-scroll)에 둔다. FitAddon은 터미널 부모(.term-box)의 계산된 width·height를 칸 크기로 쓰는데,
    border-box에서 부모의 padding이 그 값에 들어가 cols·rows를 몇 칸 크게 잡았다 */
 /* herdr-web-ui PaneTerminal.css .pane-terminal: 끌기는 우리 것(Term.tsx가 휠로 바꾼다). 없으면 첫 움직임 뒤 브라우저가 몸짓을 가져가
@@ -540,18 +546,6 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .t-next ul { margin: 0; padding-left: 18px; }
 .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--space-4) var(--space-5); }
 .card > h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
-.md { line-height: 1.7; overflow-wrap: anywhere; font-size: 14px; }
-.md > :first-child { margin-top: 0; }
-.md > :last-child { margin-bottom: 0; }
-.md h2, .md h3, .md h4, .md h5 { color: var(--text-strong); margin: 18px 0 6px; line-height: 1.35; }
-.md h2 { font-size: 17px; }
-.md h3 { font-size: 15px; }
-.md h4, .md h5 { font-size: 14px; }
-.md p { margin: 8px 0; }
-.md strong { color: var(--text-strong); }
-.md pre { background: var(--bg-inset); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--space-3); overflow-x: auto; font: 12.5px/1.55 var(--font-mono); }
-.md ul { padding-left: 20px; margin: 6px 0; }
-.md li { margin: 2px 0; }
 .files ul { list-style: none; margin: var(--space-3) 0 0; padding: 0; border-top: 1px solid var(--border); }
 .files li { display: flex; align-items: center; gap: var(--space-2); min-height: 38px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .files li svg.i { color: var(--text-dim); }
