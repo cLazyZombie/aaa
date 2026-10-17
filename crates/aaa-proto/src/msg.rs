@@ -1211,6 +1211,12 @@ pub enum FrontRequest {
         pane: String,
         data: B64,
     },
+    /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
+    /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
+    PanePaste {
+        pane: String,
+        text: String,
+    },
     /// 조작 lease를 이 연결로 가져온다(이전 보유자에게는 State로 알린다)
     PaneTake {
         pane: String,
@@ -1959,6 +1965,7 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(

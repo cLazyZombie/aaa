@@ -1245,6 +1245,18 @@ impl Host {
                 self.lease_use(&id, f);
                 conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
             }
+            // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
+            FrontRequest::PanePaste { pane, text } => {
+                let f = front.ok_or_else(|| {
+                    err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다(한 번 보내기는 pane_send)")
+                })?;
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                let conn = self.live_conn(&mid)?;
+                self.lease_use(&id, f);
+                let data = aaa_proto::B64(self.key_modes(&id).paste(&text));
+                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+            }
             FrontRequest::PaneTake { pane } => {
                 let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
                 let (id, _) = self.resolve_pane(&pane)?;
