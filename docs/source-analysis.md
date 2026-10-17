@@ -15,7 +15,7 @@
 | herdr-web-ui | [고정 commit](https://github.com/devswha/herdr-web-ui/tree/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741) | 0.4.10, remote runtime v29, `aa624cb56f550f9a7dd8bf4d59ed99ffc3921741` | MIT |
 | 별도 보조 조사: mobile-relay | [설치본과 같은 tag](https://github.com/0cv/herdr-mobile-relay/tree/v0.21.3) | 0.21.3, `a58f1fc63469995534f4ae7de8e55220ce10ffaa` | **AGPL-3.0-or-later** |
 
-공식 사이트의 저장소 연결로 herdr의 출처를 확인했다. mac-c 설치된 projects checkout도 `1f05c002…`였다. mac-a의 `~/.local/share/herdr-web-ui/remote-v29`는 `remote-v29-5c20f56c2190819f`를 가리켰다. 그 아래 server의 TypeScript 파일 100개를 복사하여 공개 저장소와 비교했고 **100개 모두 바이트 단위로 일치**했다. 따라서 설치 소스로만 추정한 분석이 아니다. mac-b mobile-relay의 release-manifest도 위 revision·darwin/arm64를 명시한다.
+공식 사이트의 저장소 연결로 herdr의 출처를 확인했다. mac-c에 설치된 projects checkout도 `1f05c002…`였다. mac-a의 `~/.local/share/herdr-web-ui/remote-v29`는 `remote-v29-5c20f56c2190819f`를 가리켰다. 그 아래 server의 TypeScript 파일 100개를 복사하여 공개 저장소와 비교했고 **100개 모두 바이트 단위로 일치**했다. 따라서 설치 소스로만 추정한 분석이 아니다. mac-b mobile-relay의 release-manifest도 위 revision·darwin/arm64를 명시한다.
 
 원격 운영 자료는 mac-b의 `~/.herdr-projects/projects/memory/{machines,preferences}.md`와 `library/t-0087/index.html`, `library/t-0088/index.html`을 SSH로 읽어 사본을 남겼다. 비밀 파일, 설정 전체, 인증서·키체인 항목은 가져오지 않았다.
 
@@ -43,7 +43,7 @@ flowchart LR
 - **머신.** `machine add/list`로 저장한 머신을 `--machine`으로 선택한다. SSH stdio bridge가 원격 client socket으로 바이트를 전달한다. 중요한 결함은 `ensure_remote_server_running`이 서버 부재 시 **SSH 안에서 자동 기동**한다는 점이다. 웹이나 원격 클라이언트가 먼저 접근하면 잘못된 책임 프로세스·보안 세션으로 서버가 생길 수 있다. 근거: [remote/host.rs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/remote/host.rs).
 - **상태 감지.** 프로세스 식별과 화면 패턴, 잠깐의 idle 전환을 억제하는 확인 절차를 결합한다.
   - 프로세스 식별은 `src/detect/mod.rs:245-290`이고, 화면 규칙은 `src/detect/manifests/*.toml`이다. `agent_detection.rs`는 idle 전환 억제만 맡는다.
-  - Claude hook v11과 Codex hook v10은 모두 **SessionStart에서 session ID만** 보고한다(`src/integration/targets.rs:195-201`). 턴 시작·끝, 질문, 오류는 hook으로 오지 않는다. 그래서 aa는 harness별 사건 출처를 따로 정해야 한다(plan §8.3).
+  - Claude hook v11과 Codex hook v10은 모두 **SessionStart에서 session ID만** 보고한다(Claude `src/integration/claude_settings.rs:76-82`, Codex `src/integration/targets.rs:195-201`). 턴 시작·끝, 질문, 오류는 hook으로 오지 않는다. 그래서 aa는 harness별 사건 출처를 따로 정해야 한다(plan §8.3).
   - 화면 기반 working/blocked 판정과 hook 정보를 같은 신뢰도로 취급하면 안 된다.
   - 서버는 감지 manifest를 `https://herdr.dev/agent-detection/index.toml`에서 자동으로 갱신한다(`src/detect/manifest_update.rs:16`). aa는 감지 규칙을 버전 pin하고 원격 자동 갱신을 하지 않는다.
   - 근거: [detect/mod.rs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/detect/mod.rs), [agent_detection.rs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/pane/agent_detection.rs), [Codex hook](https://github.com/herdrdev/herdr/blob/v0.9.5/src/integration/assets/codex/herdr-agent-state.sh), [Claude hook](https://github.com/herdrdev/herdr/blob/v0.9.5/src/integration/assets/claude/herdr-agent-state.sh).
@@ -102,7 +102,7 @@ flowchart LR
 
 | 관심 항목 | 확인한 동작 | 새 프로그램에서의 선택 |
 |---|---|---|
-| profile | 이름·description·harness·model·effort·args, 허용 목록(`src/profiles.rs:65-71`); 로컬과 원격 정의가 다를 수 있고, 원격 resolve는 name·agent·args만 돌려준다(`src/remote.rs:113-120`) | 이름뿐 아니라 실제 해석 결과와 revision을 thread에 저장 |
+| profile | 이름·description·harness·model·effort·args, 허용 목록(`src/profiles.rs:65-71, 168-173`); 로컬과 원격 정의가 다를 수 있고, 원격 resolve는 name·agent·args만 돌려준다(`src/remote.rs:113-120`) | 이름뿐 아니라 실제 해석 결과와 revision을 thread에 저장 |
 | coordinator | 프로젝트 cwd로 발견; context를 매 turn 읽음 | 프로젝트 폴더·AGENTS.md·memory 중심 유지, event cursor 추가 |
 | ticker | 기본 15초, brief 2초(`src/ticker.rs:22,24`), 원격은 4 tick마다(약 1분, `src/steps.rs:97` `REMOTE_EVERY_TICKS = 4`); cheap pass 먼저, 느린 복사 뒤 | event subscription 우선 + 제한된 reconciliation timer |
 | inbox | timestamp·kind·subject·counter 이름의 Markdown; 처리 완료 별도 폴더 | 잃지 않는 이벤트/ack, Markdown은 읽을 수 있는 투영으로 유지 |
@@ -208,7 +208,7 @@ Apache-2.0/MIT 소스의 선택적 재사용은 각 라이선스·저작권·필
 
 ## 실제 운영에서 가져온 요구
 
-mac-b가 coordinator·ticker를 맡고 mac-a/mac-c은 agent를 실행한다. 10-16 기준 운영 조합은 herdr 0.9.5 + projects 0.2.35다. 오래된 memory의 0.2.34 줄보다 같은 파일의 11:55 업데이트 기록과 설치 checkout을 우선했다. 무조건 update 명령을 실행하지 않았다.
+mac-b가 coordinator·ticker를 맡고 mac-a/mac-c는 agent를 실행한다. 10-16 기준 운영 조합은 herdr 0.9.5 + projects 0.2.35다. 오래된 memory의 0.2.34 줄보다 같은 파일의 11:55 업데이트 기록과 설치 checkout을 우선했다. 무조건 update 명령을 실행하지 않았다.
 
 10-16 mac-a 재부팅 뒤 remote-v29 Bun이 먼저 herdr를 띄워 잘못된 계보·detached=false·키체인 locked가 생겼다. 그때 개발자 도구 probe는 OK였다. 따라서 **빠른 첫 실행 하나만으로 서비스가 건강하다고 판정할 수 없다.** t-0087의 초기 LaunchAgent 추천은 t-0088의 detached/경합 조사와 이후 실제 운영 교훈으로 수정됐다. 오래된 권고를 새 프로그램의 검증된 해결책으로 재사용하지 않는다.
 
