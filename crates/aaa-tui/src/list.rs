@@ -227,6 +227,15 @@ pub fn thread_dot(t: &ThreadView) -> Dot {
     }
 }
 
+/// thread 줄 점: 그 pane에서 harness가 돌면 pane 상태(herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`,
+/// 웹 thread 줄 `PaneState`), 아니면 thread 묶음. 확인창이 뜨면 묶음이 사람 차례로 바뀌기(30초) 전에도 빨강이다.
+pub fn thread_row_dot(t: &ThreadView, panes: &HashMap<String, PaneView>) -> Dot {
+    match t.pane.as_deref().and_then(|id| panes.get(id)).map(pane_dot) {
+        Some(d) if d != Dot::Unknown => d,
+        _ => thread_dot(t),
+    }
+}
+
 /// 다음(앞·뒤) 고를 수 있는 줄. 없으면 그대로.
 pub fn step(rows: &[Row], from: usize, down: bool) -> usize {
     let mut i = from;
@@ -418,7 +427,10 @@ fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
         }
         // thread 줄(herdr-projects `thread_display`): 상태 점과 「id · 제목」, 둘째 줄에 상태 말(묶음 색)
         Row::Thread(k) => match v.threads.get(k) {
-            Some(t) => (vec![("  ".into(), name), dot(thread_dot(t)), (format!("{} · {}", t.id, t.title), name)], None),
+            Some(t) => (
+                vec![("  ".into(), name), dot(thread_row_dot(t, v.panes)), (format!("{} · {}", t.id, t.title), name)],
+                None,
+            ),
             None => (vec![("  ".into(), name), dot(Dot::Unknown), (k.clone(), name)], None),
         },
         Row::ThreadSub(k) => match v.threads.get(k) {
@@ -486,7 +498,7 @@ pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> Vec<
             (None, Style::default().fg(p.overlay0))
         };
         let d = match row {
-            Row::Thread(k) => v.threads.get(k).map_or(Dot::Unknown, thread_dot),
+            Row::Thread(k) => v.threads.get(k).map_or(Dot::Unknown, |t| thread_row_dot(t, v.panes)),
             Row::Pane(id) => v.panes.get(id).map_or(Dot::Unknown, pane_dot),
             _ => Dot::Unknown,
         };
@@ -722,8 +734,10 @@ mod tests {
     #[test]
     fn thread_rows_render_two_lines_like_herdr_projects() {
         let machines = [machine("m1", "mac-a", Connection::Connected)];
-        let panes: HashMap<String, PaneView> =
-            [pane("p1", "m1", Some(Role::Worker))].into_iter().map(|p| (p.id.clone(), p)).collect();
+        // thread는 아직 작업 중이지만 그 pane에 확인창이 떴다
+        let mut asking = pane("p1", "m1", Some(Role::Worker));
+        asking.agent = agent(AgentActivity::Question, None, None);
+        let panes: HashMap<String, PaneView> = [asking].into_iter().map(|p| (p.id.clone(), p)).collect();
         let mut working = thread("demo", "t-0001", ThreadGroup::Working, 0, "mac-a", Some("p1"));
         working.agent = agent(AgentActivity::Working, Some(40), Some(1_000));
         let threads: HashMap<String, ThreadView> =
@@ -773,6 +787,16 @@ mod tests {
         );
         assert_eq!(buf[(5, 6)].fg, pal.yellow);
         assert_eq!(buf[(5, 4)].fg, pal.red);
+        // 점은 pane이 돌면 pane 상태(확인창 빨강), pane이 없으면 묶음(사람 차례 빨강)
+        assert_eq!((buf[(3, 5)].symbol(), buf[(3, 5)].fg), ("●", pal.red));
+        assert_eq!((buf[(3, 3)].symbol(), buf[(3, 3)].fg), ("●", pal.red));
+        let mut working = panes.clone();
+        working.get_mut("p1").unwrap().agent = agent(AgentActivity::Working, None, None);
+        assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
+        working.get_mut("p1").unwrap().agent = None;
+        assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
+        working.get_mut("p1").unwrap().agent = agent(AgentActivity::Idle, None, None);
+        assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Idle);
         let selection = if pal.selection_bg == Color::Reset { pal.active_row_bg } else { pal.selection_bg };
         assert_eq!((buf[(0, 5)].bg, buf[(0, 6)].bg), (selection, selection));
         assert_ne!(buf[(0, 4)].bg, selection);
