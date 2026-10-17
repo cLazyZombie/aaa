@@ -1357,7 +1357,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **시험.**
   - 유닛(`usage::tests`, 가짜 집·keychain·gh·loopback 서버): 일곱 구독 읽기, 5분 캐시와 30초 다시 읽기, 429 Retry-After, 끝난 token은 묻지 않음, keychain과 파일 중 늦은 것, 잠긴 keychain, 이름 없는 계정 번호와 경로 없는 key. `http::tests`: Content-Length·chunked(작은 chunk 5000개)·닫힘·상한.
   - 웹 E2E 「구독 사용량·설정」: 칩(95% 빨강, 429는 「—」 흐림), 펼친 한도·초기화까지·plan·계정, 여러 화면을 열어도 구독마다 한 번만 물음, 남은 양·세션·숨기기·순서, 설정 창에서 입력줄, 다시 열어도 남음, 끄면 사라짐.
-  - 실제로 읽어 본 구독은 없다. Cursor·Copilot·Grok·Antigravity·OpenCode는 지어낸 답으로만 시험했다. 운영 host 머신(mac-a)의 Claude·Codex는 host를 다시 띄운 뒤 사용자 화면에서 처음 읽는다. 이때 macOS keychain 허용 창이 그 머신에 뜰 수 있다.
+  - 실제로 읽어 본 구독은 없다. Cursor·Copilot·Grok·Antigravity·OpenCode는 지어낸 답으로만 시험했다(§8.49에서 그 다섯은 지웠다). 운영 host 머신(mac-a)의 Claude·Codex는 host를 다시 띄운 뒤 사용자 화면에서 처음 읽는다. 이때 macOS keychain 허용 창이 그 머신에 뜰 수 있다.
 
 ### 8.46 끊긴 동안 친 글을 붙잡는다(10-17, 차이 목록 2 E)
 
@@ -1398,6 +1398,15 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 끌기는 프로그램에 아무것도 보내지 않고 `pick-this-word`를 복사하며 알린다.
   - 다른 화면이 크기를 가져간 뒤 친 `z`는 이 화면이 WebSocket에 `resize`를 먼저 쓰고 `input`을 쓴다. 프로그램 쪽 순서는 SIGWINCH와 입력 읽기 순서가 정해지지 않아 보지 않는다.
   - keydown 되찾기를 뺀 판으로 돌리면 `[input z]`만 가서 실패한다(웹 번들을 다시 지은 판으로 확인).
+
+### 8.49 구독 사용량은 Claude·Codex만, 표시는 herdr-web-ui AgentMark(10-17, 사용자 요청)
+
+- **요청(원문: 「사용량은 claude codex만. 사용량 아이콘은 herdr web ui 같은거 사용」).**
+- **Claude·Codex만 묻고 보인다.** host는 그 둘의 로그인만 찾고 그 둘의 주소에만 묻는다. 참고가 함께 읽는 Cursor·Copilot·Grok·Antigravity·OpenCode 읽기는 지웠다. proto `UsageProviderId`도 둘이다. 그래서 그 구독들의 keychain 항목·`gh` 명령·Cursor 앱 DB도 열지 않는다.
+- **표시는 참고와 같다.** `web/src/herdr/AgentMark.tsx`의 `ClaudeMark`(주황 타일의 별)·`CodexMark`(글자색 매듭)·`FallbackMark`와 `AgentMark.css`·`agentMark.ts`는 참고 그대로다. `PROVIDER_MARK`(`usage.ts`)도 참고와 같다(둘만 남음). 칩 14px, 펼친 창·설정 계정 16px도 참고 크기다.
+- **다른 곳: 참고의 다른 agent 표시는 옮기지 않았다.** 참고 `AgentMark.tsx`는 omp·cursor·opencode·gjc·omo도 그리고, `agentSvgMarks.ts`에서 LobeHub Icons(MIT)와 출처 favicon(droid·maki) 표시를 가져온다. aaa는 Claude·Codex만 보인다. 라이선스가 적히지 않은 favicon 표시를 공개 저장소에 들이지 않으려고 그 둘의 표시만 남겼다.
+- **출처·라이선스.** 표시 코드는 herdr-web-ui(MIT, Copyright (c) 2026 devswha)의 것이다(`web/src/herdr/README.md`에 그 MIT 고지가 있다). 참고는 이 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. Claude와 OpenAI(Codex) 로고는 각 상표권자(Anthropic·OpenAI)의 것이다. aaa는 구독 이름을 가리키는 데만 쓰고 그들과 관계를 뜻하지 않는다.
+- **시험.** 유닛: 다른 구독 읽기 시험 둘을 지웠다(Claude·Codex 시험 여섯은 그대로). 웹 E2E 「구독 사용량·설정」: 가짜 집에 OpenCode 로그인이 있어도 칩은 Claude·Codex 둘이고 OpenCode 주소에는 묻지 않는다(0번). 칩 표시는 `agent-mark claude is-brand`(svg 14px, 타일 `#D77655`)와 `agent-mark codex`(`currentColor`). 숨기기는 Claude로 본다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

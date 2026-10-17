@@ -779,11 +779,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 }
 .list-foot button.usage-strip[aria-expanded="true"] { background: var(--bg-hover); }
 .usage-chip { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; height: 18px; padding: 0 2px 2px; }
-.usage-chip svg.i { width: 14px; height: 14px; }
-.usage-mark {
-  display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 3px;
-  background: var(--bg-active); color: var(--text-dim); font: 600 9px/1 var(--font-mono);
-}
+/* 구독 표시(herdr/AgentMark.tsx): 크기는 svg width·height가 정한다 */
+.agent-mark { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; line-height: 0; }
 .usage-chip-value, .usage-more { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1; color: var(--text); white-space: nowrap; }
 .usage-more { color: var(--text-dim); }
 /* 고른 한도의 몫을 칩 아래 가는 줄로 */

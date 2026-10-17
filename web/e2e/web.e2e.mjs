@@ -955,7 +955,7 @@ try {
     await page.getByTestId("pane-t1").click();
   });
 
-  await step("구독 사용량·설정(herdr-web-ui UsageMeters·SettingsDialog): 목록 아래 톱니와 구독별 칩, 펼치면 한도·초기화까지, 429는 숫자 없이 알림, host는 5분 캐시·Retry-After를 지킴, 설정에서 남은 양·세션·숨기기·순서·입력 방식", async () => {
+  await step("구독 사용량·설정(herdr-web-ui UsageMeters·SettingsDialog): 목록 아래 톱니와 Claude·Codex 칩(herdr-web-ui AgentMark), 펼치면 한도·초기화까지, 다른 구독은 묻지 않음, host는 5분 캐시, 설정에서 남은 양·세션·숨기기·순서·입력 방식", async () => {
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     const strip = dp.getByTestId("usage-strip");
     await strip.waitFor();
@@ -963,7 +963,13 @@ try {
     const bad = [];
     // 기본: 쓴 양·주간. 80% 넘으면 막힘 색. 늦추라고 한 구독은 숫자 없이 흐리게
     let got = JSON.stringify(await chips());
-    if (got !== JSON.stringify(["claude 95% high", "codex 73%", "opencode — problem"])) bad.push(`기본 칩 ${got}`);
+    // 구독은 Claude·Codex만 보인다: 이 집에 OpenCode 로그인이 있어도 묻지도 보이지도 않는다(사용자 요청 10-17)
+    if (got !== JSON.stringify(["claude 95% high", "codex 73%"])) bad.push(`기본 칩 ${got}`);
+    // 구독 표시는 herdr-web-ui AgentMark다: Claude는 주황 타일의 별, Codex는 글자색 매듭
+    const marks = await strip.locator(".usage-chip .agent-mark").evaluateAll((els) =>
+      els.map((e) => `${e.className} ${e.querySelector("svg").getAttribute("aria-label")} ${e.querySelector("svg").getAttribute("width")} ${e.querySelector("path").getAttribute("fill")}`),
+    );
+    if (JSON.stringify(marks) !== JSON.stringify(["agent-mark claude is-brand claude 14 #D77655", "agent-mark codex codex 14 currentColor"])) bad.push(`구독 표시 ${JSON.stringify(marks)}`);
     if ((await dp.getByTestId("settings-open").innerText()).trim() !== "설정") bad.push("톱니 「설정」이 없다");
     // 펼치면 구독마다 한도·초기화까지·계정·plan
     await strip.click();
@@ -971,27 +977,29 @@ try {
     await pop.waitFor();
     const claude = await pop.getByRole("region", { name: "Claude · me@example.com" }).innerText();
     for (const want of ["Max", "세션", "20%", "주간", "95%", "주간 · Sonnet", "40%", "뒤 초기화"]) if (!claude.includes(want)) bad.push(`펼친 Claude에 「${want}」가 없다: ${JSON.stringify(claude)}`);
-    const oc = await pop.getByRole("region", { name: "OpenCode" }).innerText();
-    if (!oc.includes("늦추라고 했다")) bad.push(`OpenCode 알림: ${JSON.stringify(oc)}`);
-    // 화면을 여러 번 열었어도 host는 구독마다 한 번만 물었다(5분 캐시, 429는 10분)
+    if ((await pop.getByRole("region", { name: "OpenCode" }).count()) !== 0) bad.push("펼친 창에 OpenCode가 있다");
+    // 화면을 여러 번 열었어도 host는 구독마다 한 번만 물었다(5분 캐시). OpenCode에는 묻지 않았다
     await dp.reload();
     await strip.waitFor();
     await sleep(300);
     const hits = ["/api/oauth/usage", "/backend-api/wham/usage", "/zen/go/v1/usage"].map((p) => usageHits.get(p) ?? 0);
-    if (JSON.stringify(hits) !== "[1,1,1]") bad.push(`구독에 물은 수 ${JSON.stringify(hits)}`);
+    if (JSON.stringify(hits) !== "[1,1,0]") bad.push(`구독에 물은 수 ${JSON.stringify(hits)}`);
     if (shots) await dp.screenshot({ path: path.join(shots, "usage-popover.png") });
     // 설정: 남은 양, 세션
     await dp.getByTestId("settings-open").click();
     const dlg = dp.getByRole("dialog", { name: "설정" });
     await dlg.waitFor();
     await dlg.getByRole("group", { name: "막대가 보이는 것" }).getByRole("button", { name: "남은 양" }).click();
-    await until("남은 양", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 5% high", "codex 27%", "opencode — problem"]));
+    await until("남은 양", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 5% high", "codex 27%"]));
     await dlg.getByRole("group", { name: "보이는 한도" }).getByRole("button", { name: "세션" }).click();
-    await until("세션", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 80%", "codex 90%", "opencode — problem"]));
+    await until("세션", async () => JSON.stringify(await chips()) === JSON.stringify(["claude 80%", "codex 90%"]));
     // 계정 숨기기와 순서
-    await dlg.getByRole("switch", { name: "OpenCode 보이기" }).click();
+    const hideClaude = dlg.getByRole("switch", { name: "Claude · me@example.com 보이기" });
+    await hideClaude.click();
+    await until("숨기기", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%"]));
+    await hideClaude.click();
     await dlg.getByRole("button", { name: "Codex · me@example.com 위로" }).click();
-    await until("숨기기·순서", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
+    await until("순서", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
     if (shots) await dp.screenshot({ path: path.join(shots, "settings-dialog.png") });
     // 데스크톱에서 입력줄 고르기(D1에서 남은 빈 곳)
     await dlg.getByLabel("입력 방식").selectOption("line");

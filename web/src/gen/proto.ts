@@ -563,7 +563,7 @@ evaluator: string, created_at_ms: number,
  */
 file: string, doc: EvaluationDoc, };
 
-export type UsageProviderId = "claude" | "codex" | "cursor" | "copilot" | "grok" | "antigravity" | "opencode";
+export type UsageProviderId = "claude" | "codex";
 
 export type UsageWindowKind = "session" | "day" | "week" | "month";
 

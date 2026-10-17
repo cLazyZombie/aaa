@@ -1,6 +1,7 @@
 // 구독 사용량(plan 한도) 화면 쪽. herdr-web-ui `src/lib/usage.ts`(aa624cb)를 옮겼다.
 // 그대로 복사하지 못한 까닭: 참고는 api.ts·settings.ts·i18n·visibility를 부른다. aaa에 맞춰 그 import만 바꾸고
 // 문구를 한국어로 옮겼다(함수와 규칙은 같다). chat 입력칸의 `composerUsage`는 aaa에 chat 입력칸이 없어 뺐다.
+// 구독은 Claude·Codex 둘이다(사용자 요청 10-17, plan §8.49): PROVIDER_NAME·PROVIDER_MARK도 그 둘만 남았다.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Outcome, ProviderUsage, UsageProviderId, UsageReport, UsageWindow, UsageWindowKind } from "./gen/proto";
 import type { UsageCount, UsageGlance } from "./settings";
@@ -13,11 +14,11 @@ export const HIGH_PERCENT = 80;
 export const PROVIDER_NAME: Readonly<Record<UsageProviderId, string>> = {
   claude: "Claude",
   codex: "Codex",
-  cursor: "Cursor",
-  copilot: "Copilot",
-  grok: "Grok",
-  antigravity: "Antigravity",
-  opencode: "OpenCode",
+};
+
+/** AgentMark's name for each provider's logo */
+export const PROVIDER_MARK: Readonly<Record<UsageProviderId, string>> = {
+  claude: "claude", codex: "codex",
 };
 
 export const WINDOW_LABEL: Readonly<Record<UsageWindowKind, string>> = {
@@ -28,7 +29,7 @@ export const WINDOW_LABEL: Readonly<Record<UsageWindowKind, string>> = {
 };
 
 /** host가 구독 이름 그대로 보내는 몫 이름 가운데 옮길 것 */
-const SCOPE_LABEL: Readonly<Record<string, string>> = { "Other models": "다른 모델", "Cursor models": "Cursor 모델" };
+const SCOPE_LABEL: Readonly<Record<string, string>> = { "Other models": "다른 모델" };
 
 /** 5시간 세션 다음 주간, plan 전체 한도만. 모델 몫은 그 둘을 대신하지 않는다. */
 export function statusWindows(usage: ProviderUsage): UsageWindow[] {
