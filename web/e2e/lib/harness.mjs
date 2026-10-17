@@ -617,6 +617,17 @@ async function step(name, fn) {
 fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(`${root}/c`, { recursive: true });
 if (shots) fs.mkdirSync(shots, { recursive: true });
+// 실행 파일 이름이 claude인 셸: agent가 그 pane 화면을 Claude 규칙(herdr claude.toml)으로 보고 상태를 정한다(plan §8.108)
+const claudeSh = `${root}/bin/claude`;
+fs.mkdirSync(`${root}/bin`, { recursive: true });
+fs.writeFileSync(claudeSh, '#!/bin/sh\nexec /bin/sh "$@"\n', { mode: 0o755 });
+// Claude Code 화면 조각(sh 명령, 화면을 지우고 그린다). 판정은 herdr 원본 엔진으로 확인했다: 권한 확인창
+// `bash_permission_prompt`(질문), spinner `live_turn_working`(작업 중), 입력 상자 `live_prompt_box`(idle)
+const clearScreen = "printf '\\033[2J\\033[H'";
+const claudeAsk = (cmd) =>
+  `${clearScreen}; printf '%s\\n' ' Bash command' '' '   ${cmd}' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel · Tab to amend'`;
+const claudeWorking = `${clearScreen}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'`;
+const claudeIdle = `${clearScreen}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'`;
 const webPort = await freePort();
 
 // 구독 사용량(host usage.rs): 실험실 집과 가짜 구독 서버. host는 이 집만 읽고 keychain·gh·실제 구독 주소에 닿지 않는다
@@ -940,5 +951,6 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, claudeSh, clearScreen,
+  claudeAsk, claudeWorking, claudeIdle,
 };
