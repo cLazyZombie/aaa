@@ -1,5 +1,5 @@
 // 설정 → 기기: pairing한 기기 목록과, 하나 더 연결할 코드(herdr-web-ui aa624cb src/components/DevicesPanel.tsx, 모양 herdr/DevicesPanel.css
-// 그대로, 문구는 참고 i18n.ko.ts). host Front API `devices`·`web_pair`·`device_rename`·`device_revoke`를 쓴다(plan §8.77).
+// 그대로, 문구는 참고 i18n.ko.ts). host Front API `devices`·`web_pair`·`device_rename`·`device_revoke`를 쓴다(plan §8.81).
 // 다른 곳:
 // - 역할(reader·controller)을 줄마다 보인다(§6.4 P3). 웹에서 만드는 코드는 controller만이다(D6). 보기 기기는 host 머신의 `aaa web pair --reader`로.
 // - 보기 권한 기기는 목록만 본다: 코드·이름 바꾸기·폐기 단추를 끄고 까닭을 적는다(host도 막는다).
