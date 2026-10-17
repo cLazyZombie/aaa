@@ -62,7 +62,7 @@ pub(crate) const EVALUATOR_GUIDE: &str = "\
 - 할 말이 없는 묶음이면 기록을 쓰지 않고 processed.txt에만 적는다.
 
 ## 하지 않는 것
-- 다른 thread·agent에 지시하지 않는다. 평가자 세션에서 `aaa thread message`·`thread start`·`question answer`·`pane send` 같은
+- 다른 thread·agent에 지시하지 않는다. 평가자 세션에서 `aaa thread message`·`thread start`·`question answer`·`pane run`·`pane send-text` 같은
   명령은 거부된다(보기 명령만 된다).
 - 작업 폴더 밖의 다른 작업 파일·프로세스는 건드리지 않는다. 채택된 개선을 고치라는 지시가 오면 그때 고친다.
 ";

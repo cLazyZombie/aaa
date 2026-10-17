@@ -15,22 +15,24 @@ fn main() {
         collect(&dist, &dist, &mut files);
     }
     files.sort();
+    // 절대 경로를 적지 않는다: 컴파일 캐시(kache)가 build script 결과를 다른 worktree에서 가져오면 그 경로가 남는다.
+    // 경로는 컴파일할 때 이 crate 폴더 기준으로 푼다.
     let mut src = String::from("pub static WEB_ASSETS: &[(&str, &[u8])] = &[\n");
-    for (rel, abs) in &files {
-        writeln!(src, "    ({rel:?}, include_bytes!({abs:?})),").unwrap();
+    for rel in &files {
+        let at = format!("/../../web/dist/{rel}");
+        writeln!(src, "    ({rel:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {at:?}))),").unwrap();
     }
     src.push_str("];\n");
     std::fs::write(out.join("web_assets.rs"), src).unwrap();
 }
 
-fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
+fn collect(root: &Path, dir: &Path, out: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
             collect(root, &path, out);
         } else {
-            let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
-            out.push((rel, path.canonicalize().unwrap().to_string_lossy().into_owned()));
+            out.push(path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"));
         }
     }
 }

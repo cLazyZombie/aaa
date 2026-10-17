@@ -30,6 +30,8 @@ webpki-roots.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
 # Retry-After의 HTTP 날짜(구독 사용량 429). hyper가 이미 쓰는 판이다
 httpdate = "1"
+# `pane wait-output --regex`(Cargo.lock에 이미 있는 판)
+regex = "1"
 axum = { version = "0.8", features = ["ws"] }
 
 [target.'cfg(unix)'.dependencies]

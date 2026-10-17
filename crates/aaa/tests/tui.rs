@@ -364,7 +364,7 @@ fn leaves(w: &serde_json::Value) -> Vec<String> {
 fn attach_draws_layout_and_detach_keeps_sessions() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "first", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
@@ -436,7 +436,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 fn herdr_keys_and_modes() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "keys", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "keys", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
     let mut tui = Tui::start(&h);
     tui.wait_text("첫 화면", |s| s.contains("1:keys") && s.contains("이 화면 크기"));
@@ -494,14 +494,12 @@ fn herdr_keys_and_modes() {
     // 4) o: 질문이 열린 pane으로 간다
     h.ok(&[
         "pane",
-        "send",
+        "run",
         &bottom,
-        "--text",
         &format!(
             "'{}' hook --agent claude '{{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}}'; clear",
             lab::BIN
         ),
-        "--enter",
     ]);
     hw.wait("질문", |w| {
         w.pane(&bottom)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
@@ -559,7 +557,7 @@ fn herdr_keys_and_modes() {
 fn lease_conflict_with_another_front() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "shared", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "shared", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
 
     // 다른 front(같은 계약을 쓰는 연결)가 먼저 쓰고 크기를 건다
@@ -663,12 +661,10 @@ fn side_list_like_web() {
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
     hw.wait("labA 연결", |w| w.connected("labA").then_some(()));
 
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "first", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
-    let loose = h.ok(&["pane", "run", "--machine", "labA", "--name", "loose", "--", "/bin/sh"])["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    // 지금 workspace(main) 탭에 없는 pane: 다른 workspace에 띄운다
+    let loose = h.new_pane(Some("scratch"), "labA", Some("loose"), &["/bin/sh"], None);
     h.ok(&["project", "create", "demo"]);
     let task = lab.root.join("task.md");
     std::fs::write(&task, "목록 시험\n").unwrap();
@@ -782,9 +778,9 @@ fn side_list_like_web() {
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "job", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh"]);
     let old = leaves(&w)[0].clone();
-    h.ok(&["pane", "send", &old, "--text", "echo before-$((1+1))", "--enter"]);
+    h.ok(&["pane", "run", &old, "echo before-$((1+1))"]);
 
     let mut tui = Tui::start(&h);
     tui.wait_text("첫 화면", |s| s.contains("before-2"));
@@ -846,7 +842,7 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
 fn ctrl_v_pastes_clipboard_image() {
     let mut lab = Lab::new();
     let (h, _hw) = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "pic", "--", "/bin/sh"]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "pic", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
     let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
     let rgba: Vec<u8> = PIXELS.concat();

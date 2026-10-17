@@ -35,10 +35,6 @@ fn connected(node: &Node, name: &str) -> bool {
     node.machine(name).is_some_and(|m| m["connection"] == "connected")
 }
 
-fn screen_has(node: &Node, pane: &str, needle: &str) -> Option<()> {
-    node.json(&["pane", "read", pane]).ok().filter(|v| v.to_string().contains(needle)).map(|_| ())
-}
-
 /// host를 죽였다 살려도 세션이 남고, agent가 끊기면 읽기 전용이 되며, agent가 돌아오면 다시 입력된다.
 /// host와 agent를 함께 다시 띄워도 harness 상태·진행·대화 기록 위치가 되살아난다(다음 hook을 기다리지 않는다).
 #[test]
@@ -52,10 +48,9 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     lab.spawn_env("agent", &h, &["agent", "--host", "local", "--name", "labA"], &[("CLAUDE_CONFIG_DIR", &claude_s)]);
     wait_for("labA 연결", T, || connected(&h, "labA").then_some(()));
 
-    let p = h.ok(&["pane", "run", "--machine", "labA", "--name", "t1", "--", "/bin/sh"]);
-    let id = p["id"].as_str().unwrap().to_string();
-    h.ok(&["pane", "send", &id, "--text", "echo mark-$((6*7))", "--enter"]);
-    wait_for("첫 출력", T, || screen_has(&h, &id, "mark-42"));
+    let id = h.new_pane(None, "labA", Some("t1"), &["/bin/sh"], None);
+    h.ok(&["pane", "run", &id, "echo mark-$((6*7))"]);
+    h.wait_output(&id, "mark-42", T);
 
     // 쉬고 있는 Claude pane(Stop hook과 진행 보고 뒤 입력 없음): 다시 떠도 상태·진행·대화 보기가 남아야 한다
     let dir = claude.join("projects").join("-lab");
@@ -72,21 +67,19 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     )
     .unwrap();
     let hook = serde_json::json!({ "hook_event_name": "Stop", "session_id": "s1", "transcript_path": tr }).to_string();
-    let c = h.ok(&[
-        "pane",
-        "run",
-        "--machine",
+    let cid = h.new_pane(
+        None,
         "labA",
-        "--name",
-        "c1",
-        "--",
-        "/bin/sh",
-        "-c",
-        r#""$0" hook --agent claude "$1"; "$0" report --percent 40 --activity 정리; exec cat"#,
-        lab::BIN,
-        &hook,
-    ]);
-    let cid = c["id"].as_str().unwrap().to_string();
+        Some("c1"),
+        &[
+            "/bin/sh",
+            "-c",
+            r#""$0" hook --agent claude "$1"; "$0" report --percent 40 --activity 정리; exec cat"#,
+            lab::BIN,
+            &hook,
+        ],
+        None,
+    );
     let chat_len = || h.json(&["pane", "chat", &cid]).ok().and_then(|v| v["messages"].as_array().map(|m| m.len()));
     wait_for("hook 반영", T, || (chat_len() == Some(2) && h.pane(&cid)["agent"]["percent"] == 40).then_some(()));
     let before = h.pane(&cid)["agent"].clone();
@@ -104,9 +97,9 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     // 새 hook 없이 같은 harness 상태(때 포함)와 대화 보기(agent 메모리에서 다시 알린다)
     wait_for("host 재시작 뒤 harness 상태", T, || (h.pane(&cid)["agent"] == before).then_some(()));
     restored("host만 다시 띄움");
-    wait_for("재시작 뒤 화면", T, || screen_has(&h, &id, "mark-42"));
-    h.ok(&["pane", "send", &id, "--text", "echo after-$((1+1))", "--enter"]);
-    wait_for("재시작 뒤 입력", T, || screen_has(&h, &id, "after-2"));
+    h.wait_output(&id, "mark-42", T);
+    h.ok(&["pane", "run", &id, "echo after-$((1+1))"]);
+    h.wait_output(&id, "after-2", T);
 
     // agent 종료 → pane은 「실행·끊김」 읽기 전용, 입력은 거부, 마지막 화면은 읽힌다
     lab.kill("agent");
@@ -115,7 +108,7 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         (p["connection"] == "disconnected" && p["readonly"] == true).then_some(())
     });
     assert_eq!(h.pane(&id)["state"], "running", "끊긴 것은 종료가 아니다");
-    let err = h.json(&["pane", "send", &id, "--text", "x"]).expect_err("끊긴 pane 입력은 실패해야 한다");
+    let err = h.json(&["pane", "send-text", &id, "x"]).expect_err("끊긴 pane 입력은 실패해야 한다");
     assert!(err.contains("agent_disconnected"), "{err}");
     assert!(h.screen(&id).contains("after-2"), "끊긴 뒤에도 마지막 화면을 읽는다");
 
@@ -134,11 +127,11 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     // agent가 세션 폴더(harness.json)에서 읽어 다시 알린다
     wait_for("둘 다 다시 띄운 뒤 harness 상태", T, || (h.pane(&cid)["agent"] == before).then_some(()));
     restored("host·agent 함께 다시 띄움");
-    h.ok(&["pane", "send", &id, "--text", "echo back-$((2+2))", "--enter"]);
-    wait_for("재부착 뒤 입력", T, || screen_has(&h, &id, "back-4"));
+    h.ok(&["pane", "run", &id, "echo back-$((2+2))"]);
+    h.wait_output(&id, "back-4", T);
 
     // 세션이 끝나면 종료 상태와 마지막 화면이 남는다
-    h.ok(&["pane", "send", &id, "--text", "exit 3", "--enter"]);
+    h.ok(&["pane", "run", &id, "exit 3"]);
     wait_for("종료 반영", T, || {
         let p = h.pane(&id);
         (p["state"] == "exited" && p["code"] == 3).then_some(())
@@ -178,26 +171,23 @@ fn enroll_remote_agent_and_run_short_command() {
     wait_for("labB 연결", T, || connected(&h, "labB").then_some(()));
 
     // 곧바로 끝나는 명령도 종료 코드와 출력이 남는다
-    let p = h.ok(&["pane", "run", "--machine", "labB", "--", "/bin/sh", "-c", "echo remote-$((2+3)); exit 7"]);
-    let id = p["id"].as_str().unwrap().to_string();
+    let id = h.new_pane(None, "labB", None, &["/bin/sh", "-c", "echo remote-$((2+3)); exit 7"], None);
     wait_for("짧은 명령 종료", T, || {
         let p = h.pane(&id);
         (p["state"] == "exited" && p["code"] == 7).then_some(())
     });
     assert!(h.screen(&id).contains("remote-5"), "{}", h.screen(&id));
     // 종료가 보이자마자 지울 수 있다(session host가 종료 뒤 2초 더 응답하는 동안에도)
-    let q = h.ok(&["pane", "run", "--machine", "labB", "--", "/bin/sh", "-c", "exit 0"]);
-    let qid = q["id"].as_str().unwrap().to_string();
+    let qid = h.new_pane(None, "labB", None, &["/bin/sh", "-c", "exit 0"], None);
     wait_for("곧바로 끝남", T, || (h.pane(&qid)["state"] == "exited").then_some(()));
     h.ok(&["pane", "forget", &qid]);
     std::thread::sleep(Duration::from_millis(2500));
     assert!(!h.ok(&["pane", "list"]).to_string().contains(&qid), "지운 pane이 되살아났다");
 
     // 원격 셸에 입력
-    let p = h.ok(&["pane", "run", "--machine", "labB", "--name", "rsh", "--", "/bin/sh"]);
-    let rid = p["id"].as_str().unwrap().to_string();
-    h.ok(&["pane", "send", "rsh", "--text", "echo 원격-$((3*3))", "--enter"]);
-    wait_for("원격 입력", T, || screen_has(&h, &rid, "원격-9"));
+    let rid = h.new_pane(None, "labB", Some("rsh"), &["/bin/sh"], None);
+    h.ok(&["pane", "run", "rsh", "echo 원격-$((3*3))"]);
+    h.wait_output(&rid, "원격-9", T);
 
     // 등록을 취소하면 그 장치는 다시 붙지 못한다
     h.ok(&["machine", "revoke", "labB"]);

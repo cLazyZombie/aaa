@@ -52,7 +52,7 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w <이름>`)로 엽니다. 탭·나누기 layout은 host에 저장되므로 나갔다 다시 붙어도 같습니다.
 
 - **왼쪽 목록**: 웹처럼 Thread(상태 배지)와 머신별 pane, 「+ 새 셸」이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). 100칸보다 좁은 터미널에서는 접힌 채 시작합니다.
-- 명령으로도 됩니다: 이미 있는 pane을 탭으로 넣기 `aaa ws add <pane> -w <이름>`, 새 pane을 새 탭으로 `aaa ws tab --machine mac-b -- <명령>`.
+- 명령으로도 됩니다: 새 pane을 새 탭으로 `aaa tab create --machine mac-b -- <명령>`, 있는 pane을 다른 workspace의 새 탭으로 `aaa pane move <pane> --new-tab -w <이름>`, 나누기 `aaa pane split <pane> --direction right`.
 - 입력은 포커스 pane으로 바로 갑니다. 다른 화면(웹 등)이 쓰던 pane도 입력하면 이 화면 크기가 되고, 터미널 focus를 다시 얻어도 크기를 다시 겁니다.
 - **키는 herdr와 같습니다.** prefix(기본 `ctrl+b`) 다음 키 하나(시간 제한 없음, `Esc`나 모르는 키는 취소). `prefix ?`로 단축키 창(`/`로 검색)이 뜹니다.
 
@@ -87,9 +87,11 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | 명령 | 하는 일 |
 |---|---|
 | `aaa machine list` | 머신 연결·디스크·이상 |
-| `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 지금 화면 글자 |
-| `aaa pane run --machine mac-b -- <명령>` | 새 pane |
-| `aaa pane send <pane> --text "…" --enter` | 입력 보내기(사람의 attach에 막히지 않음) |
+| `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 최근 출력 글(`--source visible`이면 지금 화면) |
+| `aaa tab create --machine mac-b -- <명령>` | 새 탭에 새 pane |
+| `aaa pane run <pane> "…"` | 명령 실행(글 + Enter, 사람의 attach에 막히지 않음) |
+| `aaa pane send-text <pane> "…"` · `aaa pane send-keys <pane> enter` | 글만 · 키만 보내기 |
+| `aaa pane wait-output <pane> --match "…" --timeout 30000` | 출력에 글이 나올 때까지 기다리기 |
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
 | `aaa project create <p>` · `aaa context <p>` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox) |
 | `aaa thread start <p> --title "…" --machine mac-b --profile codex --kind dir --task-file task.md` | thread 시작 |
@@ -97,7 +99,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `aaa thread ack <p> <id>` · `aaa thread resolve <p> <id>` | 보고 확인 · 끝내기(worktree 정리) |
 | `aaa inbox list <p>` · `aaa inbox done <p> <id>` | 보고·질문·끊김 같은 놓치면 안 되는 항목 |
 
-모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. 자세한 것은 `aaa <명령> --help`입니다.
+모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. `pane`·`tab`·`workspace`는 늘 JSON 한 줄이고, 실패하면 stderr에 `{"error":…}`를 쓰고 종료 코드 1입니다(herdr와 같다). 셸 완성은 `aaa completion zsh`(bash·fish·elvish·powershell)입니다. 자세한 것은 `aaa <명령> --help`입니다.
 
 ## 개발
 
