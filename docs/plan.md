@@ -1813,7 +1813,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **이름(herdr `src/cli/pane.rs`·`tab.rs`·`workspace.rs`·`completion.rs`).** 옛 이름(`pane send`·`ws show|tab|split|add|close`·`pane run --machine`)은 남기지 않는다(herdr에 별칭이 없다). 저장소 안에서 쓰던 곳(cargo 시험·웹 E2E·showcase·README·runbook·평가자 안내)을 모두 바꿨다.
   - `pane run <pane> <글…>`: 이미 있는 pane에 글 + Enter(herdr `pane_run` → `PaneSendInput{keys:["Enter"]}`). 새 pane은 `tab create`·`pane split`·`workspace create`로 띄운다.
   - `pane send-text <pane> <글…>`(그대로), `pane send-keys <pane> <키…>`(키 이름은 herdr `parse_api_key`·`parse_key_combo`, src/config/keybinds.rs). 여러 인자는 빈칸으로 잇는다(herdr와 같다: 뒤 인자를 모두 글로 받으므로 `--json`은 명령 앞에 쓴다).
-  - `pane read --source visible|recent|recent-unwrapped --lines N --format text|ansi`: recent 범위는 herdr `ghostty_recent_read_range`(src/pane/terminal.rs) — 마지막 글 줄과 커서 줄 중 아래쪽까지, 기본 80줄·최대 1000줄. 출력은 글 그대로(`--json`이면 JSON).
+  - `pane read --source visible|recent|recent-unwrapped|detection --lines N --format text|ansi [--ansi] [--raw]`(detection은 §8.110): recent 범위는 herdr `ghostty_recent_read_range`(src/pane/terminal.rs) — 마지막 글 줄과 커서 줄 중 아래쪽까지, 기본 80줄·최대 1000줄. 출력은 글 그대로(`--json`이면 JSON).
   - `pane wait-output --match|--regex --source --lines --timeout`(herdr src/api/wait.rs, `match_output` src/api/subscriptions.rs): 맞은 첫 줄과 읽은 글을 준다. 시한이 지나면 `timeout` 오류.
   - `pane get`·`pane current [--pane|--current]`(`AAA_SESSION_ID`, herdr `HERDR_PANE_ID`)·`pane split [--pane|--current] --direction right|down --ratio`·`pane resize --direction --amount`(herdr `resize_focused` src/layout.rs: 그쪽 가장자리 나눔, 없으면 반대쪽, 기본 0.05·최대 0.5, 비율 0.1~0.9)·`pane move --new-tab`·`pane close`.
   - `tab list|create|get|rename|close`, `workspace list|create|get|rename|close`, `completion bash|zsh|fish|elvish|powershell`(clap 정의에서 만든다. zsh는 herdr `space_separated_zsh_long_options`처럼 `--opt 값` 꼴로 고친다).
@@ -1830,7 +1830,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - `pane close`는 끝내기를 보내고, 끝났다는 상태 사건이 온 뒤 기록을 지운다. agent가 끊겨 있으면 끝낼 수 없어 거부한다.
   - PTY 크기 바꾸기(시험·진단)는 숨은 `pane pty-size <pane> <cols> <rows>`로 옮겼다(`pane resize`는 herdr 뜻인 layout 비율). 이 CLI는 새 크기가 host에 닿은 뒤(상태 사건) 돌아온다. 보통은 붙은 화면이 크기를 정한다(§8.33).
   - 사본이 아직 없으면(붙자마자) `pane read`는 agent의 보이는 화면을 주고 `source: visible`이라고 밝힌다.
-  - aaa에만 있는 `pane kill|resume|forget|attach|chat`은 그대로 둔다. `pane read --source detection`은 화면 감지(D8)가 들어올 때 함께 둔다.
+  - aaa에만 있는 `pane kill|resume|forget|attach|chat`은 그대로 둔다. `pane read --source detection`은 화면 감지(D8) 뒤에 뒀다(§8.110).
 - **pilot(t-0334) 뒤 맞춘 것.** `thread list [<프로젝트>]`는 herdr-projects `thread list <slug>`(src/cli.rs `ThreadCommand::List`)처럼 위치 인자다. 옛 `-p/--project`는 없앴다. 같은 꼴이던 `events`도 위치 인자로 바꿔 프로젝트를 받는 명령은 모두 위치 인자다. 생략하면 모든 프로젝트를 보인다(aaa 확장). 끝난 thread도 늘 보이고 group은 「끝남」이다(hp `threads::rows`가 resolved도 낸다). 그래서 hp처럼 `--all`은 두지 않는다. `inbox done`은 끝낸 수를 말한다(hp src/cli.rs:703 `{moved} item(s) moved to inbox/done`). 응답 `inbox`에 `done`(끝낸 수)이 붙고 `items`는 남은 항목이다(Front API 1.4 안의 선택 필드라 옛 client는 무시한다).
 - **계약.** Front API 1.4(새 요청 `pane_read_text`·`pane_send_text`·`pane_send_keys`·`pane_submit`·`pane_wait_output`·`pane_get`·`pane_close`·`workspaces`·`workspace_close`·`workspace_rename`, layout 변경 `resize`·`rename_tab`·`close_tab`·`move_to_new_tab`, `split.ratio`, `new_tab.cols/rows`). 옛 요청(`pane_run` 띄우기·`pane_send` bytes·`pane_resize` PTY)은 웹·TUI가 그대로 쓴다. 새 CLI가 옛 host에 보내면 모르는 요청 오류로 끝난다(이름이 같은 요청이 뜻을 바꾸지 않는다).
 - **시험.** m12 `herdr_pane_input_read_and_wait`: 받은 bytes를 16진수로 보이는 고정 프로그램으로 `pane run` 감싸기, `send-text` 그대로, `send-keys` DECCKM·모르는 키면 아무것도 안 보냄, `read` 글·JSON·recent 범위, `wait-output` 정규식·시한(설정 값), stderr 오류 JSON·종료 1·사용법 종료 2. m12 `herdr_tab_workspace_and_layout`: split 비율, resize 가장자리·한계, move --new-tab, tab list·get·rename·close(기록 지움), workspace list·rename(겹치는 이름 거부)·get·close, completion zsh·bash. VT 유닛: recent 범위·unwrapped·키 인코딩·모드. 기다림은 모두 출력·상태 사건으로 끝난다.
@@ -2499,6 +2499,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
       - 여기에 host 규칙까지 끄면 ②가 「늦은 짝 hook이 질문을 다시 열었다」로 2번 모두 실패한다.
       - host 규칙만 끄면 단위 시험이 실패한다. 표지를 지우지 않으면 다음 질문 단언이 실패한다.
   - 실제 harness: `cargo test -p aaa --test real -- --ignored --test-threads 1`(구독 사용, CI 제외). Claude는 신뢰 창 → brief 수신 → 작업 중 → 권한 질문 → idle(15초), Codex는 brief 수신(작업 중) → 승인 질문 둘 → idle(16초)을 10-18에 확인했다.
+- **`pane read --source detection`(10-18, 차이 목록 4장 F #579, §8.75에서 미룬 것).** herdr `read_terminal_snapshot`(src/app/api_helpers.rs)대로 감지 글(`Vt::detection_text`)을 그대로 준다. host가 가진 화면 사본에서 읽는다.
+  - `--lines`가 없으면 자르지 않고, 있으면 마지막 줄들이다(최대 1000줄).
+  - `--format ansi`여도 모양 없는 글이다(herdr도 두 형식 모두 `detection_text`). `--raw`는 herdr pane read처럼 `--format ansi`와 같다.
+  - `wait-output`은 detection을 받지 않는다(herdr `read_source_option(false)`).
+  - 계약: FRONT_API 1.17(`ReadSource::Detection`). 옛 host는 detection이 든 요청을 읽지 못해 그 연결을 닫고(`front.rs` 요청 해석), 새 CLI는 오류로 끝난다.
+  - 시험: VT 유닛 `read_detection_is_the_detection_text`(보이는 화면도 기록 전부도 아닌 감지 범위, `lines`, ansi여도 모양 없음), m12 `herdr_pane_input_read_and_wait`(`--source detection --raw`의 source·format과 글). 결함 심기(되돌렸다): detection을 recent로 읽으면 둘 다, `lines`를 무시하면 유닛, CLI가 detection을 recent로 바꾸거나 `--raw`를 무시하면 m12가 실패한다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
 
 ### 8.111 재부팅 뒤 복원: 셸 pane·대화 이어가기(10-18, 차이 목록 4장 A, 결정 20 D12)

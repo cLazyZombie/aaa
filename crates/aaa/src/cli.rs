@@ -528,10 +528,11 @@ enum PaneCmd {
         #[arg(long)]
         current: bool,
     },
-    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). 출력은 글 그대로(--json이면 JSON)
+    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). detection은 상태 감지가 읽는 글이다.
+    /// 출력은 글 그대로(--json이면 JSON)
     Read {
         pane: String,
-        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped"], default_value = "recent")]
+        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped", "detection"], default_value = "recent")]
         source: String,
         /// 줄 수(최대 1000)
         #[arg(long)]
@@ -541,6 +542,9 @@ enum PaneCmd {
         /// --format ansi와 같다
         #[arg(long)]
         ansi: bool,
+        /// --format ansi와 같다(herdr `--raw`)
+        #[arg(long)]
+        raw: bool,
     },
     /// pane 자리를 나눠 새 pane을 띄운다(명령이 없으면 그 머신 사용자의 기본 셸)
     Split {
@@ -1145,6 +1149,7 @@ fn read_source(s: &str) -> aaa_proto::ReadSource {
     match s {
         "visible" => aaa_proto::ReadSource::Visible,
         "recent-unwrapped" => aaa_proto::ReadSource::RecentUnwrapped,
+        "detection" => aaa_proto::ReadSource::Detection,
         _ => aaa_proto::ReadSource::Recent,
     }
 }
@@ -1181,9 +1186,9 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
         }
         PaneCmd::Get { pane } => FrontRequest::PaneGet { pane },
         PaneCmd::Current { pane, current: _ } => FrontRequest::PaneGet { pane: current_pane(pane)? },
-        PaneCmd::Read { pane, source, lines, format, ansi } => {
+        PaneCmd::Read { pane, source, lines, format, ansi, raw } => {
             let format =
-                if ansi || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
+                if ansi || raw || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
             return front_print(
                 json,
                 front_call(FrontRequest::PaneReadText { pane, source: read_source(&source), lines, format })?,

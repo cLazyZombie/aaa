@@ -519,6 +519,11 @@ fn herdr_pane_input_read_and_wait() {
         (Some("read"), Some("recent"), Some("text"))
     );
     assert_eq!(v["text"], "GOT:2e\nGOT:\n", "{v}");
+    // --source detection: 상태 감지가 읽는 글. --raw는 --format ansi와 같지만 detection은 모양 없는 글이다(herdr).
+    // 화면이 덜 찼으니 글은 recent와 같다(범위 차이는 VT 유닛)
+    let d = h.ok(&["pane", "read", &id, "--source", "detection", "--raw"]);
+    assert_eq!((d["source"].as_str(), d["format"].as_str()), (Some("detection"), Some("ansi")), "{d}");
+    assert_eq!(d["text"], h.ok(&["pane", "read", &id])["text"], "{d}");
 
     // wait-output: 정규식, 맞은 줄과 읽은 글을 준다
     let m = h.ok(&["pane", "wait-output", &id, "--regex", "^GOT:78", "--timeout", "5000"]);
