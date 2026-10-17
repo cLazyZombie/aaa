@@ -485,6 +485,18 @@ impl World {
         )
     }
 
+    /// coordinator nudge의 시간 창이 지난 뒤 tick한다. host는 화면이 `idle` 동안 그대로여야 입력창을 보고, 입력창이
+    /// `quiet` 동안 비어 보여야 보낸다(inbox.rs `nudge`). 창마다 host가 지금 화면·입력창을 본 tick이 끝난 뒤부터 잰다:
+    /// 창보다 일찍 tick하면 결함이 있어도 보내지 않아 「보내지 않았다」 단언이 늘 통과한다.
+    fn nudge_windows(&self, idle: Duration, quiet: Duration) {
+        for window in [idle, quiet] {
+            self.h.ticks(1);
+            // fixed wait: 시간 규칙의 창 자체다(설정 값). 지난 뒤의 tick이 판정한다
+            std::thread::sleep(window);
+        }
+        self.h.ticks(1);
+    }
+
     fn wait_for_count(&self, pane: &str, needle: &str, n: usize) {
         wait_for_diag(
             &format!("화면 {needle:?} {n}번"),
@@ -1141,8 +1153,7 @@ fn claude_thread_states_questions_and_messages() {
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
 
     // 치는 동안 뜬 확인창(t-0340 보안 감사): 글을 친 뒤 Enter 전에 권한 창이 뜨면 Enter를 보내지 않는다. 보내면 Enter가
-    // 사람이 보지 않은 권한 창의 기본 선택(1. Yes)을 고른다. 고치기 전에는 메시지가 받았다(그 창이 질문이라)고 돌아오고
-    // 화면에 「race 1. Yes」가 있다.
+    // 사람이 보지 않은 권한 창의 기본 선택(1. Yes)을 고른다. Enter 전 검사가 없으면 화면에 「race 1. Yes」가 있다.
     assert_eq!(w.message(&id, "race", false)["state"], "accepted");
     let t = lab::now_ms();
     finish_turn(&w, &pane);
@@ -1152,6 +1163,16 @@ fn claude_thread_states_questions_and_messages() {
     assert_eq!(m["state"], "unknown", "{m}");
     assert!(!w.h.screen(&pane).contains("race 1. Yes"), "Enter가 권한 창을 골랐다: {}", w.h.screen(&pane));
     flow_event(&mut ev, "message_unknown", "Enter를 보내지 않았다");
+    // 받음은 Enter가 일으킨 사건으로만 센다: 치는 동안 뜬 확인창(질문)도 받음 사건이라 친 글 앞부터 기다리면 그 글을
+    // 받았다고도 적었다(origin 화면 감지와 합친 뒤 난 차례)
+    let mid = m["id"].as_str().unwrap();
+    let evs = w.h.ok(&["events", "demo"]);
+    let said = evs["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "message_accepted" && e["detail"].as_str().is_some_and(|d| d.contains(mid)));
+    assert!(!said, "Enter를 보내지 않은 글을 받았다고 적었다: {evs}");
     let pr = open_question(&mut ev, &id, "permission", &[&p1.id, &pl.id]);
     let t = lab::now_ms();
     // 「no」는 Esc다(권한 창의 「No, … (esc)」)
@@ -1189,7 +1210,8 @@ fn claude_thread_states_questions_and_messages() {
     assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
     let (m5, screen) = w.interrupt(&id, &pane, "urgent2");
     assert_eq!(m5["state"], "accepted", "{m5}");
-    assert_eq!(screen.matches("Interrupted").count(), 4, "{screen}");
+    // 거절 셋(늦은 짝·치는 동안 뜬 권한 창·Esc 거절)과 interrupt 둘
+    assert_eq!(screen.matches("Interrupted").count(), 5, "{screen}");
     // thread stop: Esc 한 번(세션은 그대로)
     let t = lab::now_ms();
     finish_turn(&w, &pane);
@@ -1199,7 +1221,7 @@ fn claude_thread_states_questions_and_messages() {
     w.h.ok(&["thread", "stop", "demo", &id]);
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
     let screen = w.h.screen(&pane);
-    assert_eq!(screen.matches("Interrupted").count(), 5, "{screen}");
+    assert_eq!(screen.matches("Interrupted").count(), 6, "{screen}");
     assert_eq!(w.h.pane(&pane)["state"], "running");
     assert!(!screen.contains("NEVER-SENT"), "{screen}");
 
@@ -1500,7 +1522,13 @@ fn auto_resolve_and_reopen() {
 /// 알린다(§8.17)
 #[test]
 fn inbox_and_nudge() {
-    let w = world_with("tick_secs = 1\nnudge_idle_secs = 2\nnudge_quiet_secs = 1\n");
+    let (idle, quiet) = (Duration::from_secs(2), Duration::from_secs(1));
+    let w = world_with(&format!(
+        "tick_secs = 1\nnudge_idle_secs = {}\nnudge_quiet_secs = {}\n",
+        idle.as_secs(),
+        quiet.as_secs()
+    ));
+    let nudges = || w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     let dir = w.projects.join("demo");
     let coord =
         w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
@@ -1521,7 +1549,9 @@ fn inbox_and_nudge() {
         (items[0]["item_kind"].as_str(), items[0]["event"].as_str()),
         (Some("thread-state"), Some("new report"))
     );
-    std::thread::sleep(Duration::from_secs(5));
+    // 쓰던 글이 남아 있으면 nudge 창이 지나도 보내지 않는다
+    w.nudge_windows(idle, quiet);
+    assert_eq!(nudges(), 0, "{:?}", w.kinds(0));
     assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
 
     // 쓰던 글을 보내고 나면 알린다
@@ -1529,8 +1559,15 @@ fn inbox_and_nudge() {
     w.wait_screen(&coord, "got: draft-text");
     let screen = w.wait_screen(&coord, "got: [aaa inbox]");
     assert!(screen.contains(&format!("got: [aaa inbox] {id} new report (aaa inbox list demo)")), "{screen}");
-    // 같은 묶음은 다시 보내지 않는다
-    std::thread::sleep(Duration::from_secs(4));
+    // 같은 묶음은 다시 보내지 않는다: 받은 뒤 화면이 그대로 머문 다음 nudge 창이 다시 지나도 한 번이다
+    wait_for_diag(
+        "알림을 받은 뒤 입력 대기",
+        T,
+        || w.h.screen(&coord).trim_end().ends_with('❯').then_some(()),
+        || w.h.screen(&coord),
+    );
+    w.nudge_windows(idle, quiet);
+    assert_eq!(nudges(), 1, "{:?}", w.kinds(0));
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 1, "{}", w.h.screen(&coord));
 
     // context가 보인 항목은 「봤다」가 되어 다음 알림에 다시 나오지 않는다(herdr-projects `context`).
@@ -1943,7 +1980,9 @@ fn routines() {
     assert_eq!(items("routine", "ping").len(), 1);
     // 승인 전에는 실행하지 않고, 같은 명령에는 「승인 필요」를 한 번만 남긴다
     wait_for("승인 필요", T, || items("routine-approval", "cmd").into_iter().next());
-    std::thread::sleep(Duration::from_secs(3));
+    // 항목을 본 뒤 차례가 한 번 더 돈 것은 지난 실행 시각으로 본다(승인이 없어도 차례마다 옮기고, 항목을 먼저 남긴다)
+    let last = routine("cmd")["last_run_ms"].as_u64().expect("last_run_ms");
+    wait_for("승인 없이 다음 차례", T, || (routine("cmd")["last_run_ms"].as_u64() > Some(last)).then_some(()));
     assert_eq!(items("routine-approval", "cmd").len(), 1);
     assert!(items("routine", "cmd").is_empty());
 
@@ -2006,8 +2045,20 @@ fn routines() {
     assert!(first["body"].as_str().unwrap().contains("```text\nv1\n```"), "{first}");
     let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
     assert!(md.contains("```text\nv1\n```"), "{md}");
-    std::thread::sleep(Duration::from_secs(4));
-    assert_eq!(items("routine", "cmd").len(), 1);
+    // 같은 출력으로 한 번 더 돈 뒤에도 항목은 하나다. 돈 것은 흐름 사건 routine_ran으로 본다(항목은 그 사건보다 먼저
+    // 남긴다): 첫 실행(출력 바뀜, 위 항목) 다음 실행이 「출력 같음」이어야 한다
+    let ran = || -> Vec<String> {
+        w.h.ok(&["events", "demo"])["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "routine_ran")
+            .filter_map(|e| e["detail"].as_str().filter(|d| d.starts_with("cmd: ")).map(String::from))
+            .collect()
+    };
+    let runs = wait_for("cmd 두 번째 실행", T, || Some(ran()).filter(|r| r.len() >= 2));
+    assert_eq!(items("routine", "cmd").len(), 1, "{runs:?}");
+    assert!(runs[0].ends_with("출력 바뀜") && runs[1].ends_with("출력 같음"), "{runs:?}");
     std::fs::write(dir.join("value.txt"), "v2\n").unwrap();
     wait_for("두 번째 출력", T, || (items("routine", "cmd").len() == 2).then_some(()));
     // 명령을 고치면 승인이 풀린다
@@ -2280,7 +2331,11 @@ fn machine_health() {
     };
     let items = wait_for("inbox 이상 항목", T, || Some(health(&w)).filter(|v| !v.is_empty()));
     assert!(items.len() == 1 && items[0].0 == "problem" && items[0].1.contains("labA"), "{items:?}");
-    std::thread::sleep(Duration::from_secs(3));
+    // 같은 이상의 새 점검(at_ms)이 오고 ticker가 그것을 본 뒤에도 하나다
+    let at = |w: &World| w.h.machine("labA").and_then(|m| m["health"]["at_ms"].as_u64());
+    let seen = at(&w).expect("health at_ms");
+    wait_for("다음 점검", T, || (at(&w) > Some(seen)).then_some(()));
+    w.h.ticks(1);
     assert_eq!(health(&w).len(), 1, "같은 이상은 다시 남기지 않는다");
 
     // 고치고 다시 띄우면 풀린다

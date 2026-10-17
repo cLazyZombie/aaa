@@ -334,7 +334,7 @@ mod tests {
 
     /// 실제 https(webpki 루트) 확인: `cargo test -p aaa-host notify_https -- --ignored`(네트워크 필요)
     #[tokio::test]
-    #[ignore]
+    #[ignore = "실제 외부 서버(example.com·badssl.com·Apple push)에 요청한다: 손으로만 돌린다(ci-local·CI는 --ignored를 쓰지 않는다)"]
     async fn notify_https() {
         let code = post("https://example.com/", b"{}").await.unwrap();
         assert!((200..600).contains(&code), "{code}");

@@ -511,7 +511,6 @@ impl Host {
         // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
         let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
-        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         // 프로그램이 bracketed paste를 켰을 때만 감싸고 Enter도 그 터미널 모드대로 쓴다(herdr `encode_api_submission_parts`,
         // src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
         let modes = self.key_modes(pane);
@@ -530,6 +529,9 @@ impl Host {
         if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
             return Err(after("치는 동안 확인창이 떠 Enter를 보내지 않았다".into()));
         }
+        // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
+        // 그 전부터 기다리면 Enter를 보내지 않은 글을 받았다고 적는다
+        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         let enter = modes.key("enter").unwrap_or_else(|| b"\r".to_vec());
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(enter) })
             .await

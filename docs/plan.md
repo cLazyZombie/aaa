@@ -2587,6 +2587,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - Enter 바로 전: 친 뒤 화면의 선택 창과 harness 확인창을 다시 보고, 있으면 Enter를 보내지 않는다(`typed = true`: 메시지는
     「받았는지 모른다」, 다시 보내지 않는다). 질문은 열린 채로 둔다.
   - 일하는 중 받음 판정은 Enter 뒤 `Working`일 때만이다(확인창이면 그 Enter가 창에 갔을 수 있다).
+  - 받음 사건(작업 중·질문, §8.110)은 Enter 바로 전부터 기다린다. 친 글 앞부터 기다리면 치는 동안 뜬 확인창(질문)이 받음으로
+    잡혀, Enter를 보내지 않은 글을 「받았다」로도 적었다(t-0332 화면 감지와 합친 뒤 m13이 잡았다).
   - 화면 검사와 Enter 사이의 아주 짧은 틈은 남는다(참고 herdr `agent prompt`도 같다). 친 글자가 바로 선택지를 고르는 창(숫자
     키)은 치기 전 검사만 막는다.
 - **낮음.**
@@ -2594,8 +2596,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - host가 모르는 front 요청(1.12에서 없앤 `decision_add` 등을 1.11 front가 보냄)에 연결을 끊지 않고 그 요청 id로 오류를 답한다.
   - 옛 판의 보내던 메시지 잊기를 front·web 입구를 열기 전으로 옮겼다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀔 수 있었다).
   - `evaluation_decide` 설명의 낡은 「결정 기록」 문구.
-- **시험(결함 심기).** m13 `hooked_thread_questions_and_messages` 「race」: 가짜 Claude가 다음 입력의 첫 글자에서(Enter 전) 권한
-  창을 그린다. Enter 전 검사를 빼면 「race Yes」로 실패하고(확인), 고치면 메시지는 `unknown`, 질문은 열려 사람이 답한다.
+- **시험(결함 심기).** m13 `claude_thread_states_questions_and_messages` 「race」: 가짜 Claude(화면으로 상태를 안다, §8.110)가
+  턴을 마치고 입력 상자를 보인 채 다음 입력의 첫 글자에서(Enter 전) 권한 창을 그린다. Enter 전 검사를 빼면 화면에
+  「race 1. Yes」가 남아 실패하고, 받음 대기를 친 글 앞으로 되돌리면 그 글의 `message_accepted`로 실패한다(둘 다 확인).
+  고치면 메시지는 `unknown`, 질문은 열려 사람이 답한다.
   `memory_and_restart`: symlink·FIFO decisions.md는 항목도 멈춤도 없다. host 유닛 `unknown_requests_get_an_error_answer`.
 
 ### 8.115 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」(10-18, D11, 차이 목록 4장 I)
