@@ -309,6 +309,10 @@ pub enum AgentRequest {
     Screen {
         session: String,
     },
+    /// 그 세션이 지금 있는 폴더(앞 프로그램, 없으면 셸). agent가 `cwd.v1` 기능을 알릴 때만 보낸다.
+    Cwd {
+        session: String,
+    },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
@@ -430,6 +434,10 @@ pub enum AgentResponse {
     Attached {
         path: String,
         sha256: String,
+    },
+    /// 세션이 지금 있는 폴더(읽지 못하면 None)
+    Cwd {
+        cwd: Option<String>,
     },
 }
 
@@ -662,10 +670,24 @@ pub struct Workspace {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum LayoutChange {
-    /// 새 탭에 새 pane
-    NewTab { machine: Option<String>, name: Option<String>, argv: Vec<String>, cwd: Option<String> },
-    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다
+    /// 새 탭에 새 pane. `name`은 pane(세션) 이름, `label`은 탭 이름(없으면 자리 번호).
+    /// cwd를 주지 않으면 host `[terminal] new_cwd`를 따른다(follow면 `from` pane이 지금 있는 폴더, plan §8.74).
+    NewTab {
+        machine: Option<String>,
+        name: Option<String>,
+        argv: Vec<String>,
+        cwd: Option<String>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        from: Option<String>,
+    },
+    /// pane 자리를 나눠 새 pane을 b 쪽에 둔다. cwd를 주지 않으면 `[terminal] new_cwd`(follow면 나눈 pane의 폴더)
     Split { pane: String, dir: SplitDir, machine: Option<String>, argv: Vec<String>, cwd: Option<String> },
+    /// 탭을 닫는다: 그 탭의 pane 세션을 모두 끝내고 탭을 뺀다(herdr `tab close`)
+    CloseTab { tab: String },
+    /// 탭 이름. 빈 이름이면 자리 번호로 돌아간다(herdr `tab rename`)
+    RenameTab { tab: String, name: String },
     /// 이미 있는 pane을 새 탭으로 넣는다
     AddTab { pane: String },
     /// layout에서 뺀다(kill이면 세션도 끝낸다)

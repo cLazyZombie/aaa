@@ -343,6 +343,15 @@ fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
     (h, hw)
 }
 
+/// 탭 줄의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 ` aaa `·workspace 이름 뒤, 질문 표시 앞.
+/// 시험의 탭 이름에는 빈칸을 쓰지 않는다.
+fn tab_chips(text: &str) -> Vec<String> {
+    let first = text.lines().next().unwrap_or("");
+    let rest = first.split_once(" main ").map_or("", |(_, r)| r);
+    let rest = rest.split(" ? 질문").next().unwrap_or(rest);
+    rest.split_whitespace().map(str::to_string).collect()
+}
+
 fn leaves(w: &serde_json::Value) -> Vec<String> {
     fn walk(n: &serde_json::Value, out: &mut Vec<String>) {
         if let Some(p) = n["pane"].as_str() {
@@ -368,7 +377,10 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
-    tui.wait_text("탭과 상태 줄", |s| s.contains("1:first") && s.contains("labA") && s.contains("실행"));
+    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다(pane 이름 first는 상태 줄에)
+    tui.wait_text("탭과 상태 줄", |s| {
+        tab_chips(s) == ["1"] && s.contains("first") && s.contains("labA") && s.contains("실행")
+    });
     // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기로 맞추고 이 화면이 지금 쓰는 화면이 된다
     tui.wait_text("lease", |s| s.contains("이 화면 크기"));
     hw.wait("칸 크기와 lease", |w| {
@@ -403,12 +415,17 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     assert!(h.screen(&second).contains("right-10"));
     assert!(!h.screen(&first).contains("right-10"), "포커스한 pane에만 들어가야 한다");
 
-    // 새 탭과 탭 전환. 한글 입력기가 켜진 채 누른 명령 키(ㅊ = c 자리)도 같은 명령이다
+    // 새 탭과 탭 전환. herdr처럼 이름을 먼저 묻는다: 기본값(탭 수+1) 그대로 Enter면 자리 번호다.
+    // 한글 입력기가 켜진 채 누른 명령 키(ㅊ = c 자리)도 같은 명령이다
     // (시험 설정 prefix_jamo_keys = true. 기본은 끔이고 입력기 전환도 기본 끔이라 사용자 입력기를 건드리지 않는다)
     tui.cmd("c");
-    tui.wait_text("둘째 탭", |s| s.lines().next().is_some_and(|l| l.contains("1:first") && l.contains(" 2:")));
+    tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
+    tui.send(b"\r");
+    tui.wait_text("둘째 탭", |s| tab_chips(s) == ["1", "2"]);
     tui.cmd("ㅊ");
-    tui.wait_text("셋째 탭(자모 ㅊ)", |s| s.lines().next().is_some_and(|l| l.contains(" 3:")));
+    tui.wait_text("새 탭 이름 창(자모 ㅊ)", |s| s.contains("새 탭") && s.contains("↵ 저장"));
+    tui.send("작업\r".as_bytes());
+    tui.wait_text("셋째 탭(이름 작업)", |s| tab_chips(s) == ["1", "2", "작업"]);
     tui.cmd("1");
     tui.wait_text("첫 탭으로", |s| s.contains("tui-42") && s.contains("right-10"));
 
@@ -422,7 +439,9 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 
     // 다시 붙으면 같은 layout과 화면이 보인다
     let tui = Tui::start(&h);
-    tui.wait_text("다시 붙기", |s| s.contains("tui-42") && s.contains("right-10") && s.contains(" 2:"));
+    tui.wait_text("다시 붙기", |s| {
+        s.contains("tui-42") && s.contains("right-10") && tab_chips(s) == ["1", "2", "작업"]
+    });
     // 보고서용 화면 텍스트(`AAA_TUI_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
@@ -439,7 +458,7 @@ fn herdr_keys_and_modes() {
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "keys", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
     let mut tui = Tui::start(&h);
-    tui.wait_text("첫 화면", |s| s.contains("1:keys") && s.contains("이 화면 크기"));
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["1"] && s.contains("keys") && s.contains("이 화면 크기"));
 
     // 1) PREFIX 막대(herdr render_mode_bar)와 Esc 취소: ESC는 셸에 가지 않는다
     tui.send(b"\x02");
@@ -550,6 +569,95 @@ fn herdr_keys_and_modes() {
     tui.send(b"\x02");
     tui.wait_text("기본 prefix", |s| s.contains(" PREFIX ") && s.contains("ctrl+b prefix 보내기"));
     tui.send(b"q");
+    assert!(tui.wait_exit());
+}
+
+/// 탭(herdr 0.9.5 `open_new_tab_overlay`·`save_rename_overlay`·`request_tab_close`, `[terminal] new_cwd = "follow"`):
+/// 새 탭은 이름을 묻고, 새 pane(나누기·새 탭)은 원래 pane이 지금 있는 폴더에서 뜬다. `T` 이름, `X` 닫기(그 탭 세션도 끝냄),
+/// 마지막 탭은 닫기 전에 묻는다.
+#[test]
+fn tabs_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let deep = lab.root.join("작업 폴더");
+    std::fs::create_dir_all(&deep).unwrap();
+    let want = deep.canonicalize().unwrap();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["1"] && s.contains("이 화면 크기"));
+
+    // 1) 셸이 cd한 폴더를 나눈 pane이 이어받는다(host가 agent에 그 pane의 지금 폴더를 묻는다)
+    tui.type_line(&format!("cd '{}' && echo moved-$((3*3))", lab::path_str(&deep)));
+    tui.wait_text("cd", |s| s.contains("moved-9"));
+    // 나누기 바로 뒤에 친 키도 새 pane으로 간다(TUI는 응답이 올 때까지 키를 붙잡는다. herdr는 서버가 차례대로 처리한다)
+    tui.cmd("v");
+    tui.type_line("pwd; echo held-$((2*2))");
+    let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
+    // TUI는 host 화면(grid)을 그리므로, 보였으면 host 화면에도 있다
+    tui.wait_text("새 pane 출력", |s| s.contains("held-4"));
+    assert!(
+        h.screen(&right).contains("held-4") && h.screen(&right).contains("작업 폴더"),
+        "새 pane이 옮긴 폴더에서 뜨지 않았다:\n{}",
+        h.screen(&right)
+    );
+    assert!(!h.screen(&first).contains("held-4"), "나누기 뒤 키가 옛 pane으로 갔다");
+    let cwd_of = |hw: &HostWatch, id: &str| hw.pane(id).and_then(|p| p.cwd.clone()).map(std::path::PathBuf::from);
+    hw.wait("나눈 pane의 폴더", |w| cwd_of(w, &right).map(|c| c.canonicalize().ok() == Some(want.clone())));
+    assert_eq!(cwd_of(&hw, &right).and_then(|c| c.canonicalize().ok()), Some(want.clone()));
+
+    // 2) 새 탭: 이름 창(기본값 "2"가 골라져 있어 처음 친 글이 바꾼다), 포커스 pane의 폴더에서 뜬다
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장") && s.contains("esc 취소"));
+    tui.send("빌드\r".as_bytes());
+    let (tab2, pane2) = hw.wait("새 탭", |w| {
+        let t = w.ws.as_ref()?.tabs.get(1)?;
+        (t.name == "빌드").then(|| (t.id.clone(), aaa_proto::layout::leaves(&t.root)[0].clone()))
+    });
+    hw.wait("새 탭 pane의 폴더", |w| cwd_of(w, &pane2).map(|c| c.canonicalize().ok() == Some(want.clone())));
+    tui.wait_text("이름표", |s| tab_chips(s) == ["1", "빌드"]);
+    // Esc는 아무것도 만들지 않는다
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("↵ 저장"));
+    tui.send(b"\x1b");
+    tui.wait_text("창 닫힘", |s| !s.contains("↵ 저장"));
+
+    // 3) T: 지금 탭 이름(^u로 지우고 새로 쓴다), 비우고 Enter면 그대로 둔다
+    tui.cmd("T");
+    tui.wait_text("이름 창", |s| s.contains("탭 이름 바꾸기") && s.contains("빌드"));
+    tui.send(b"\x15");
+    tui.send("서버\r".as_bytes());
+    hw.wait("이름 바뀜", |w| w.ws.as_ref()?.tabs.iter().any(|t| t.id == tab2 && t.name == "서버").then_some(()));
+    tui.wait_text("이름표", |s| tab_chips(s) == ["1", "서버"]);
+    tui.cmd("T");
+    tui.wait_text("이름 창", |s| s.contains("탭 이름 바꾸기"));
+    tui.send(b"\x03\r");
+    tui.wait_text("창 닫힘", |s| !s.contains("탭 이름 바꾸기"));
+    assert_eq!(tab_chips(&tui.text()), ["1", "서버"]);
+
+    // 4) X: 지금 탭(서버)을 닫는다. 그 탭의 세션도 끝난다. 묻지 않는다(마지막 탭이 아니다)
+    tui.cmd("X");
+    hw.wait("탭 닫힘", |w| (w.ws.as_ref()?.tabs.len() == 1).then_some(()));
+    hw.wait("세션 끝남", |w| w.pane(&pane2).is_some_and(|p| !p.state.is_running()).then_some(()));
+    tui.wait_text("이름표", |s| tab_chips(s) == ["1"]);
+
+    // 5) 마지막 탭은 묻는다: Esc는 그대로, Enter는 닫는다
+    tui.cmd("X");
+    tui.wait_text("확인 창", |s| {
+        s.contains("마지막 탭을 닫을까?") && s.contains("pane 2개") && s.contains("↵ 닫기")
+    });
+    tui.send(b"\x1b");
+    tui.wait_text("창 닫힘", |s| !s.contains("마지막 탭을 닫을까?"));
+    assert_eq!(hw.leaves(), vec![first.clone(), right.clone()]);
+    tui.cmd("X");
+    tui.wait_text("확인 창", |s| s.contains("마지막 탭을 닫을까?"));
+    tui.send(b"\r");
+    hw.wait("모두 닫힘", |w| w.ws.as_ref()?.tabs.is_empty().then_some(()));
+    tui.wait_text("빈 화면", |s| s.contains("탭이 없다"));
+    hw.wait("세션 끝남", |w| {
+        [&first, &right].iter().all(|p| w.pane(p).is_some_and(|p| !p.state.is_running())).then_some(())
+    });
+    tui.cmd("q");
     assert!(tui.wait_exit());
 }
 
@@ -762,7 +870,7 @@ fn side_list_like_web() {
     // 9) 좁은 터미널은 접힌 채 시작한다. 탐색 모드는 접힌 목록을 pane 위에 띄워 보이고(pane 크기는 그대로),
     //    prefix b로 펴면 목록 옆 크기가 된다(포커스는 pane 그대로: 바로 입력된다)
     let mut tui = Tui::start(&h);
-    tui.wait_text("접힌 채 시작", |s| s.contains("list-42") && s.contains("1:first"));
+    tui.wait_text("접힌 채 시작", |s| s.contains("list-42") && tab_chips(s).first().is_some_and(|c| c == "1"));
     hw.wait("전체 폭", |w| (w.pane(&first)?.cols == COLS).then_some(()));
     assert!(!tui.text().contains("■ labA"));
     tui.cmd("w");

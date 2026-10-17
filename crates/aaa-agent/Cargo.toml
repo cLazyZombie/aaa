@@ -24,3 +24,18 @@ sha2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+# pane cwd follow: 다른 프로세스의 PEB에서 작업 폴더를 읽는다(herdr 방식, cwd::win)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Wdk_System_Threading",
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Kernel",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+# cwd 시험: pane처럼 PTY 안에서 셸을 띄운다(제어 터미널의 앞 그룹을 읽는 길)
+portable-pty.workspace = true

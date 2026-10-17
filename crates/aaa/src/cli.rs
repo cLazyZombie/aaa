@@ -840,9 +840,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 WsCmd::Show { workspace } => FrontRequest::Workspace { name: workspace },
-                WsCmd::Tab { workspace, machine, name, cwd, argv } => {
-                    FrontRequest::LayoutApply { workspace, change: LayoutChange::NewTab { machine, name, argv, cwd } }
-                }
+                WsCmd::Tab { workspace, machine, name, cwd, argv } => FrontRequest::LayoutApply {
+                    workspace,
+                    change: LayoutChange::NewTab { machine, name, argv, cwd, label: None, from: None },
+                },
                 WsCmd::Split { pane, dir, workspace, machine, cwd, argv } => FrontRequest::LayoutApply {
                     workspace,
                     change: LayoutChange::Split {

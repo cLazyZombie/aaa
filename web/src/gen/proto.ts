@@ -159,7 +159,7 @@ export type Tab = { id: string, name: string, root: LayoutNode, };
 
 export type Workspace = { name: string, tabs: Array<Tab>, };
 
-export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, };
+export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, label: string | null, from: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, } | { "do": "close_tab", tab: string, } | { "do": "rename_tab", tab: string, name: string, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, };
 
 export type GridRun = { 
 /**

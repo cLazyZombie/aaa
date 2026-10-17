@@ -58,8 +58,9 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 
 | 키 | 하는 일 |
 |---|---|
-| `c` | 새 탭(포커스 pane 머신의 기본 셸) |
-| `v` · `-` | 오른쪽에 · 아래에 나누기 |
+| `c` | 새 탭: 이름 창(Enter면 번호 탭), 포커스 pane 머신의 기본 셸을 그 pane의 지금 폴더에서 |
+| `Shift+T` · `Shift+X` | 탭 이름 바꾸기 · 탭 닫기(세션도 끝냄, 마지막 탭은 확인) |
+| `v` · `-` | 오른쪽에 · 아래에 나누기(새 pane은 나눈 pane의 지금 폴더에서) |
 | `h` `j` `k` `l` · `Tab` · `Shift+Tab` | pane 포커스 옮기기 · 차례로 |
 | `n` · `p` · `1`~`9` | 탭 이동 |
 | `x` | pane 닫기(세션도 끝냄) |
@@ -80,6 +81,11 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   prefix = "ctrl+b"                             # 여러 개면 ["ctrl+b", "ctrl+a"]. tmux 안에서 쓰면 겹치지 않게(예: "ctrl+g")
   switch_ascii_input_source_in_prefix = false   # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
   prefix_jamo_keys = false                      # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
+  prompt_new_tab_name = true                    # prefix c에서 이름 창을 띄우기
+  confirm_close = true                          # 마지막 탭·마지막 pane을 닫을 때 묻기
+
+  [terminal]
+  new_cwd = "follow"                            # 새 탭·나누기의 폴더: follow(포커스 pane의 지금 폴더) · home · 절대 경로
   ```
 
 ### 자주 쓰는 CLI

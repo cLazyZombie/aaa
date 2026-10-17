@@ -13,6 +13,8 @@ pub enum Action {
     OpenNotificationTarget,
     WorkspacePicker,
     NewTab,
+    RenameTab,
+    CloseTab,
     PreviousTab,
     NextTab,
     SwitchTab(usize),
@@ -46,6 +48,8 @@ const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('o'), Action::OpenNotificationTarget),
     (Combo::plain('w'), Action::WorkspacePicker),
     (Combo::plain('c'), Action::NewTab),
+    (Combo::shift('t'), Action::RenameTab),
+    (Combo::shift('x'), Action::CloseTab),
     (Combo::plain('p'), Action::PreviousTab),
     (Combo::plain('n'), Action::NextTab),
     (Combo::plain('v'), Action::SplitVertical),
@@ -101,9 +105,11 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
             vec![
                 (p(WorkspacePicker), "목록 탐색"),
                 (p(NewTab), "새 탭"),
+                (p(RenameTab), "탭 이름 바꾸기"),
                 (p(PreviousTab), "이전 탭"),
                 (p(NextTab), "다음 탭"),
                 ("prefix+1..9".into(), "탭 1-9로"),
+                (p(CloseTab), "탭 닫기"),
             ],
         ),
         (
@@ -160,6 +166,9 @@ mod tests {
         assert_eq!(k("shift+tab"), Some(CyclePrevious));
         assert_eq!(k("shift+r"), Some(ReloadConfig));
         assert_eq!(k("3"), Some(SwitchTab(2)));
+        assert_eq!(k("shift+t"), Some(RenameTab));
+        assert_eq!(k("shift+x"), Some(CloseTab));
+        assert_eq!(k("x"), Some(ClosePane));
         // tmux식 예전 키는 없다
         for old in ["d", "t", "s", "%", "\"", "|"] {
             assert_eq!(k(old), None, "{old}");

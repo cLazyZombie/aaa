@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aaa_proto::{
-    ATTACH_CHUNK, B64, ErrorBody, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, MAX_FRAME,
+    ATTACH_CHUNK, B64, ErrorBody, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, MAX_FRAME, Version,
 };
 use anyhow::{Context, Result, bail};
 
@@ -25,6 +25,8 @@ pub struct FrontClient {
     events: VecDeque<FrontEvent>,
     /// host가 준 이 연결의 front ID
     pub front: String,
+    /// host와 합의한 Front API 판(옛 host면 minor가 낮다: 새 요청을 보내기 전에 본다)
+    pub proto: Version,
 }
 
 /// 한 번 보내고 끝나는 CLI 연결의 이름. 대화형 front(TUI·웹)와 달리 「지금 쓰는 화면」이 되지 않는다.
@@ -46,12 +48,12 @@ impl FrontClient {
         // aaa 세션 안에서 실행했으면 그 세션을 알린다(사후 평가자 세션은 보기만 한다, §8.13)
         let session = std::env::var("AAA_SESSION_ID").ok().filter(|s| !s.is_empty());
         tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into(), session }).await?;
-        let front = match tokio::time::timeout(Duration::from_secs(10), rx.control::<FrontMsg>()).await?? {
-            FrontMsg::Welcome { front, .. } => front,
+        let (front, proto) = match tokio::time::timeout(Duration::from_secs(10), rx.control::<FrontMsg>()).await?? {
+            FrontMsg::Welcome { front, proto, .. } => (front, proto),
             FrontMsg::Reject(e) => bail!("host가 거부했다: {e}"),
             other => bail!("예상하지 못한 응답: {other:?}"),
         };
-        Ok(FrontClient { tx, rx, seq: 0, events: VecDeque::new(), front })
+        Ok(FrontClient { tx, rx, seq: 0, events: VecDeque::new(), front, proto })
     }
 
     pub async fn call(&mut self, body: FrontRequest) -> Result<Result<FrontResponse, ErrorBody>> {
