@@ -775,6 +775,8 @@ impl Host {
             cols: 120,
             rows: 32,
             role: Some(rec.role),
+            // agent가 이 harness(claude·codex)의 화면으로 상태를 본다(plan §8.110)
+            harness: Some(launch.harness.clone()),
             profile: None,
         };
         let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;

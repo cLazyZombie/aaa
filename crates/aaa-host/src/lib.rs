@@ -155,14 +155,13 @@ struct PaneRt {
     /// 지금 쓰는 대화형 front(lease, 연결 하나). PTY 크기를 그 화면이 정한다. 다른 front가 입력·크기·그림을 보내면
     /// 그 front로 바뀌고(마지막 입력이 이긴다), 연결이 끝나거나 놓으면 비운다.
     lease: Option<FrontRef>,
-    /// harness 상태(hook 사건으로만 바뀐다)
+    /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
+    /// 다시 열지 않게 한다(harness.rs `on_harness`)
+    answered: bool,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
-    /// 열린 확인창 질문에 사건을 낸 hook들과, 방금 답한 확인창이 받은 hook들(다음 hook 사건까지). Claude는 확인창
-    /// 하나에 hook 둘(`PermissionRequest`·`Notification`)을 따로 내고, 둘째가 답보다 늦게 올 수 있다(harness.rs `late_pair`).
-    prompt_hooks: Vec<String>,
-    answered_hooks: Option<Vec<String>>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -504,8 +503,7 @@ impl Host {
                     lease: None,
                     agent: None,
                     transcript: None,
-                    prompt_hooks: Vec::new(),
-                    answered_hooks: None,
+                    answered: false,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -520,6 +518,19 @@ impl Host {
                 .collect();
         }
         self.bump();
+        // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
+        let open = self.questions(false);
+        let gone: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            open.into_iter()
+                .filter(|q| q.machine == hello.machine_name)
+                .filter(|q| !i.panes.get(&q.pane).is_some_and(|p| p.info.state.is_running()))
+                .map(|q| q.pane)
+                .collect()
+        };
+        for pane in gone {
+            self.close_questions_of(&pane);
+        }
         for (sid, from) in subscribe {
             self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
@@ -627,8 +638,7 @@ impl Host {
                 lease: None,
                 agent: None,
                 transcript: None,
-                prompt_hooks: Vec::new(),
-                answered_hooks: None,
+                answered: false,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -639,6 +649,9 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        if !info.state.is_running() {
+            self.close_questions_of(&info.id);
+        }
         self.replay_harness(&info.id);
         // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
         if !info.state.is_running() {
@@ -1019,6 +1032,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                     profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
@@ -1404,6 +1418,7 @@ impl Host {
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            harness: info.harness.clone(),
             profile: None,
         };
         let new_id = self.spawn_on(&mid, spec, actor).await?;
@@ -1485,6 +1500,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                     profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
@@ -1516,6 +1532,7 @@ impl Host {
                     cols: 80,
                     rows: 24,
                     role: None,
+                    harness: None,
                     profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
