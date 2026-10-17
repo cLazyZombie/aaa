@@ -338,6 +338,9 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap, body: Opti
             crate::push::Sent::Failed(e) => failed.push(e),
         }
     }
+    // 시험 알림은 사람이 켜거나 「테스트 보내기」를 누를 때만 간다(쓰는 화면이 있어도 보낸다, 참고 server/push.ts sendTest).
+    // 휴대폰에 뜬 배너가 어디서 왔는지 가릴 수 있게 남긴다(사용자 화면 10-18 00:27, plan §8.71)
+    host.db.audit(&format!("device:{id}"), "push_test", &format!("sent {sent} failed {}", failed.len()));
     if only.is_some() && sent == 0 {
         let gone = failed.first().is_some_and(|f| f.starts_with("브라우저가 구독을 버렸다"));
         let err = if gone {

@@ -21,7 +21,6 @@ import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
-import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole } | { state: "error"; msg: string };
 
@@ -679,30 +678,15 @@ function MoreMenu() {
   );
 }
 
-/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에 있다 */
+/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에,
+ * 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다(참고 목록에 그런 자리가 없다) */
 function ListFoot() {
   const { canInstall, installed, install, help } = useInstallPrompt();
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
-  const tr = useInputTrace();
-  // 진단 단추는 터치 기기(화면 키보드)에서, 또는 켜져 있을 때만 보인다
-  const showTrace = tr.on || window.matchMedia("(pointer: coarse)").matches;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   return (
     <div className="list-foot">
-      {showTrace && (
-        <button className="ghost" data-testid="trace-toggle" aria-pressed={tr.on} onClick={() => setTrace(!tr.on)}>
-          <Icon name="file" />
-          {tr.on ? `입력 기록 끄기(${tr.count}개 모음)` : "입력 기록 켜기(실기 키보드 진단)"}
-        </button>
-      )}
-      {tr.on && (
-        <button className="ghost" data-testid="trace-send" disabled={tr.count === 0} onClick={() => void tr.send()}>
-          <Icon name="send" />
-          입력 기록 보내기
-        </button>
-      )}
-      {tr.msg && <p className="foot-msg">{tr.msg}</p>}
       {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
       {!installed && (
         <button
@@ -734,29 +718,6 @@ function ListFoot() {
       {settingsOpen && <SettingsDialog onClose={closeSettings} />}
     </div>
   );
-}
-
-/** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
-function useInputTrace() {
-  const [on, setOn] = useState(traceOn());
-  const [count, setCount] = useState(traceCount());
-  const [msg, setMsg] = useState<string | null>(null);
-  useEffect(
-    () =>
-      onTraceChange(() => {
-        setOn(traceOn());
-        setCount(traceCount());
-      }),
-    [],
-  );
-  const send = async () => {
-    try {
-      setMsg(`보냈다: ${await sendTrace()}`);
-    } catch (e) {
-      setMsg(`보내지 못했다: ${(e as Error).message}`);
-    }
-  };
-  return { on, count, msg, send };
 }
 
 const GROUP_DOT: Record<string, string> = {

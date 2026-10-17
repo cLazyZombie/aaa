@@ -947,6 +947,8 @@ button.settings-toggle[aria-checked="true"] { background: var(--accent); }
 .settings-note { margin: 0 0 var(--space-2); font-size: 12px; color: var(--text-dim); line-height: 1.45; }
 .settings-item .settings-actions { display: flex; justify-content: flex-end; padding: 0 var(--space-3) var(--space-3); }
 .settings-item .settings-hint:empty { display: none; }
+.settings-row > .settings-actions { flex: none; display: flex; align-items: center; gap: var(--space-2); }
+.settings-status { display: block; margin-top: 2px; color: var(--text); overflow-wrap: anywhere; }
 /* 표시가 없는 agent의 머리글자 표시(AgentMark FallbackMark)는 테마의 --bg-elevated 원에 글자색을 쓴다. 검은 카드 위에서는
    밝은 테마의 흰 원에 흰 글자가 되어 글자가 사라진다(참고도 같다): 카드 색으로 그린다 */
 .droplet-mark .agent-mark { --bg-elevated: var(--droplet-mark-bg); --border: var(--droplet-ring); }

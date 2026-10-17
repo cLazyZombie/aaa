@@ -654,7 +654,7 @@ host 프로젝트 폴더 구성:
   - 마지막 사본이 실패하면 거부한다. 그다음 세션을 끝내고 worktree를 force 없이 지운다. 고친 파일이 있으면 남긴다.
   - branch는 기준 ref에 병합(조상)됐을 때만 지운다.
 - **흐름 사건**
-  - 프로젝트별 seq로 DB에 쌓는다. 지금 내는 사건: `thread_started`·`brief_delivered`·`brief_unknown`·`report_ready`·`copy_failed`·`review_acked`·`thread_resolved`·`thread_failed`.
+  - 프로젝트별 seq로 DB에 쌓는다. 지금 내는 사건: `thread_started`·`brief_delivered`·`brief_unknown`·`report_ready`·`copy_failed`·`library_copied`(resolve의 마지막 사본이 보고는 그대로이고 library만 다시 받음)·`review_acked`·`thread_resolved`·`thread_failed`.
   - 연결된 front에는 `Flow` 사건으로 알린다. `aaa events --after <seq>`는 cursor부터 다시 읽는다.
 - **역할:** `SpawnSpec`·`SessionInfo`·`PaneView`에 role이 있다. pane 목록은 기본으로 평가자를 빼고 `--role`로 거른다.
 
@@ -1106,7 +1106,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 「터미널 글꼴」 단계(1280×800, 13px): host가 WOFF2(bytes 같음·`font/woff2`·immutable)와 고지 네 파일을 보낸다. 터미널 글꼴 목록이 바뀐 뒤 xterm cell 너비 7.828px = 영문 7.827px, 한글 15.653px = 영문의 정확히 2배다. 넣은 WOFF2만으로 잰 값도 같다.
   - 휴대폰 폭(390×844, 11px): cell 6.62px, 한글 13.25px.
   - 개발 Mac에는 Meslotendard가 깔려 있어 `local()`로 그린다. 그래도 터미널은 「WOFF2를 뺀 목록으로 열고 → 받아지면 바꿔 다시 잼」 길을 지난다. 처음 열 때 `"Meslotendard Web"` face가 아직 불러지지 않았기 때문이다. 넣은 WOFF2 자체(받기·bytes·2:1 너비)는 `FontFace(url)`로 따로 잰다.
-  - **웹 E2E는 CI에 없다**(개발 Mac에서만 돈다). 그래서 글꼴이 없는 기기에서 브라우저가 `url()`로 받는 것은 자동 시험이 없다. 운영 휴대폰에서 눈으로 확인한다. 처음 착지(`dcb0cea`) 커밋 메시지의 「CI가 지난다」는 틀린 말이었다.
+  - 처음 착지(`dcb0cea`) 때는 웹 E2E가 CI에 없었다(그 커밋 메시지의 「CI가 지난다」는 틀린 말이었다). 지금은 GitHub CI `web-e2e (macos-15)` 작업이 돈다(t-0327, `.github/workflows/ci.yml`). 러너에는 Meslotendard가 깔려 있지 않아, 글꼴이 없는 기기처럼 넣은 WOFF2를 `url()`로 받아 그리는 길을 지난다.
 - **남는 것.** 웹 UI의 다른 고정폭 글자(코드·질문 카드 등)는 바꾸지 않았다(`--font-mono`).
 - **운영 확인(사용자).** Mac Safari는 깔린 글꼴을 숨겨도 넣은 WOFF2로 그린다. 한글이 두 칸 안에서 띄어 보이는 것은 같은 글꼴의 네이티브 터미널과 같은 모양이다. iPad(글꼴 없음)도 사용자 확인으로 통과했다.
   - 기록: Safari 27은 페이지가 열린 직후 넣은 face를 `error`로 두고 `document.fonts.check()`가 true다. 1초 안에 스스로 `loaded`가 된다. 그 순간 터미널이 열리면 cell을 대체 글꼴로 잴 수 있다. 실제 화면 문제가 없어 고치지 않았다. 다시 보이면 `check()` 대신 face 상태로 판단한다.
@@ -1643,6 +1643,12 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 끝에 버퍼 전체를 훑는다. h-00001~h-06000이 빠짐·겹침 없이 차례로 있고, tick-1은 한 번, 기록 뒤에 있다.
     - 다시 쓴 뒤에도 프로그램이 켠 bracketed paste가 남아, 붙여 넣은 여러 줄이 `ESC[200~`로 감싸여 간다.
     - 자리 맞추기(`top + lines`)를 빼거나 붙잡기를 빼면 이 단계가 「화면이 튀었다」로 실패함을 확인했다.
+- **붙인 직후 빈 줄(10-18, t-0327 넘김 (가)).**
+  - 다른 thread의 시험 Mac에서 부하 아래 25번 중 10번, 덩어리를 붙인 직후 보이는 줄이 비어 「화면이 튀었다」로 실패했다.
+  - 원인: 덮개를 `term.write` 콜백에서 뗐다. 이 콜백은 parse가 끝난 뒤, 그리기 전이다. xterm 5.5는 그리기를 rAF로 미룬다(`RenderService.refreshRows` → `RenderDebouncer` → `_renderRows` → `onRender`). 그래서 덮개를 떼고 다음 frame이 그려지기 전 한 frame 동안 비운 버퍼가 보였다. 부하가 높으면 그 frame이 길어져 잡혔다.
+  - 고침: 덮개는 새 버퍼가 그려진 뒤 `term.onRender`에서 뗀다. 참고 herdr-web-ui `TerminalViewportTools.tsx` 216줄(`terminal.onRender(paintHits)`)도 그린 뒤를 이 사건으로 기다린다.
+  - 그린 뒤 보던 줄이 맞는지도 본다. `Viewport._innerRefresh`가 rAF에서 scroll 영역 높이를 바꾸면 native scroll 사건이 나고, `Viewport._handleScroll`이 보던 줄(ydisp)을 옮길 수 있다. 그 frame이 `min(top + lines, baseY)`가 아니면 다시 `scrollToLine`하고 다음 그리기를 기다린다.
+  - 시험: 훑기의 tick-1 검사를 「바로 위 줄이 h-06000이고 한 번」으로 바꿨다(화소에서 줄을 거꾸로 계산하던 것이 흔들렸다). 이 단계만 되풀이하는 `AAA_E2E_ONLY=<정규식>`을 두었다. 개발 Mac(10코어)에서 25번 연속 통과했다(1분 load 5.7~16.0, 줄마다 기록).
 
 ### 8.68 앱 설치 단추: 설치 전엔 늘 보이고, 신호가 없으면 방법을 펼친다(10-17, 차이 목록 M4)
 
@@ -1727,6 +1733,52 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 휴대폰(390×844)에서 앱 안 알림·메뉴가 화면 안·머리 아래에 있다.
   - 「보고 준비 알림」 단계: 쓰는 화면에서 push를 보내지 않은 보고는 그 화면에 앱 안 알림으로 온다.
   - 시험이 찾은 것: 미리 듣기 소리(0.46초) 사이에 다음 보고가 오면 참고 규칙대로 소리를 겹치지 않는다. 시험은 앞 소리가 끝난 뒤 다음 보고를 낸다.
+
+### 8.71 쓰는 동안 휴대폰에 뜬 시스템 배너, 입력 기록은 설정 「진단」으로(10-18, 사용자 화면)
+
+사용자 화면(10-18 00:27, iPhone 홈 화면 앱, binary cbf4e790): 앱을 쓰는 중에 앱 안 알림이 아니라 iOS 시스템 배너(「aaa · 알림이 켜졌다」)가 내려왔다.
+- **어디서 왔나(운영 host Mac의 host DB, 읽기만).**
+  - 보고·질문 알림은 보낼 때마다 흐름 사건 `push_sent`(못 보내면 `push_skipped`)를 남긴다. 00:22~00:30에 둘 다 없다. 그러니 그 배너는 사건 알림이 아니다.
+  - 「알림이 켜졌다」는 시험 알림(`POST /api/v1/push/test`)의 글이다. 웹은 이것을 두 곳에서만 보낸다. 「더 보기 → 알림」으로 켤 때(`enableAlerts`)와 설정 「테스트 보내기」다.
+  - audit에 그 휴대폰 기기의 `push_unsubscribe` → 약 2초 뒤 `push_subscribe` 짝이 7번 있다(00:22:40~00:29:42). 00:27:23·00:27:25가 그중 하나다. `push_unsubscribe`는 알림을 끌 때(`disableAlerts`)만 나간다. 그러니 「알림」을 끄고 다시 켤 때마다 확인 push가 하나씩 갔다.
+  - 열 때의 다시 등록(00:22:37·00:23:54·00:26:00, 앞에 끄기가 없는 `push_subscribe`)은 시험 알림을 보내지 않는다(`useAlerts`의 다시 등록은 `ensurePushSubscription`만 부른다).
+  - 시험 알림은 audit에 남지 않아 위처럼 거꾸로 짚었다. 이제 `push_test`(보낸 수·실패 수)를 남긴다.
+- **참고(herdr-web-ui).**
+  - 켤 때 확인 push: `App.tsx` 625~642줄 `enableNotifications` → `sendTestPush(endpoint)`. 서버 `server/push.ts` 398줄 `sendTest`는 `inUse`를 묻지 않는다. 그래서 쓰는 중에 켜도 배너가 뜬다. aaa도 같다.
+  - 열 때 다시 등록: `App.tsx` 655~668줄. 구독만 하고 시험 알림은 보내지 않는다.
+  - 사건 알림은 쓰는 화면이 있으면 어느 기기에도 보내지 않는다(`server/push.ts` 28~31줄·468~487줄 `inUse`, `src/lib/presence.ts` `pageInUse` = 보이고 focus). iOS는 push마다 알림을 보여야 하므로(`public/sw.js` 193~212줄: 보이는 창이 있으면 `silent`일 뿐 보여 준다) 막는 곳은 서버다. aaa도 §8.69대로 같다.
+- **정한 것.** 확인 push는 참고대로 사람이 켜거나 「테스트 보내기」를 누를 때만 보낸다. 열 때 다시 등록은 조용하다. 보는 동안의 사건은 push 없이 앱 안 알림만이다. 코드는 이미 이렇다. 바꾼 것은 `push_test` 기록과 아래 시험이다.
+- **시험(웹 E2E 「보는 동안은 push 대신 앱 안 알림」).** 휴대폰(390×844)이 이미 구독을 가진 채(가짜 push 서비스 주소) 연다. 확인 push가 오면 그 기기 앞으로 간 push 수에 잡힌다.
+  - (1) 열 때와 다시 열 때 다시 등록한다(「켜짐, 이 기기로 푸시」). 구독은 바뀌지 않는다.
+  - (2) 보는 동안 새 보고: host는 `push_skipped`를 남기고, 이 화면에 앱 안 알림이 하나 내려온다. 이 기기 앞 push는 0건이다.
+  - (3) 가려지면(보이지 않고 focus 없음): 쓰는 화면이 0이 된다. 새 보고의 push가 하나 온다(제목 「demo · thread 제목」, 자리는 그 thread). 앱 안 알림·탭 알림은 없다.
+  - 처음부터 끝까지 이 기기 앞 push는 그 하나뿐이다.
+- **입력 기록(실기 키보드 진단).** 터치 기기 목록 맨 아래에 늘 보이던 「입력 기록 켜기」 단추를 설정 맨 끝 「진단」 묶음의 「입력 기록」 스위치·「보내기」로 옮겼다. 참고에는 목록에도 설정에도 그런 진단 자리가 없다(`MachineSidebar.tsx`·`SettingsDialog.tsx` 묶음: 글꼴·입력·빠른 답·파일 보기·계정·단축키·휴대폰·기기·plugin·정보). aaa에만 있는 것이라 늘 보이는 목록에서 뺐다.
+
+### 8.72 무음 모드에서도 알림 소리(10-18, 사용자 보고 iPhone)
+
+사용자 보고(원문 10-18): 「소리 나는데 무음모드일때 볼륨을 올려도 안나와. 아이폰」. 앱 안 알림 소리는 나지만 무음 스위치를 켜면 볼륨을 올려도 들리지 않는다.
+- **참고(herdr-web-ui).** 이 문제를 풀지 않았다. `src/lib/alertSound.ts`(aaa `web/src/herdr/alertSound.ts`와 같다)는 AudioContext·Oscillator로 소리를 내고(84~104줄), 누르거나 키를 칠 때 `resume`한다(39~54줄, `App.tsx` 545~551줄). `navigator.audioSession`·`<audio>`·무음 스위치 이야기는 소스·CHANGELOG 어디에도 없다. CHANGELOG 2395~2397줄은 macOS 집중 모드·방해 금지에서도 들린다는 것뿐이다.
+- **WebKit(main).**
+  - Web Audio만 쓰는 페이지는 AmbientSound 범주다(`MediaSessionManagerCocoa.mm` 193~194줄). Ambient는 다른 앱 소리와 섞이는 대신 무음 스위치를 따른다. 그래서 지금 무음에서 안 들린다.
+  - Audio Session API(Safari 16.4+)의 `navigator.audioSession.type`과 범주(`DOMAudioSession.cpp` 47~66줄): `playback` → MediaPlayback, `transient`·`ambient` → AmbientSound, `transient-solo` → SoloAmbientSound, `play-and-record` → PlayAndRecord.
+  - iOS 범주로 바꿀 때 Ambient·SoloAmbient·Playback 모두 옵션이 없다(`AudioSessionIOS.mm` 208~249줄). MixWithOthers·DuckOthers가 없으므로 섞이는 것은 Ambient뿐이다(`RemoteAudioSessionProxyManager.cpp` 49~51줄).
+  - 명세는 `transient`를 「다른 소리 위에, 필요하면 줄여서」로 정의하지만 WebKit에서는 Ambient라 무음에서 들리지 않는다.
+  - 세션을 끌 때 `NotifyOthersOnDeactivation`을 주지 않는다(`AudioSessionCocoa.mm` 127줄). 그래서 멈춘 음악은 저절로 다시 재생되지 않는다.
+  - WebKit bug 252746(comment 3): Web Audio를 Ambient로 둔 것은 다른 앱과 섞이려는 것이고, 그 대가가 무음 스위치다. 둘을 떼는 간단한 방법은 없다고 한다.
+  - 결론: 무음 스위치를 무시하면서 다른 앱 소리를 끊지 않는 범주는 WebKit에 없다. 무음에서 들리게 하려면 `playback`뿐이고, 그동안 음악이 멈춘다.
+- **정한 것.**
+  - 설정 「알림 → 소리」 아래에 「무음 모드에서도」를 둔다(기본 끔, 기기마다 `aaa:alert-silent`). 소리 범주를 바꿀 수 있는 브라우저(`navigator.audioSession`이 있는 곳)에서 소리를 켰을 때만 보인다. 설명에 「소리가 나는 동안 음악 같은 다른 앱의 소리가 멈추고, 저절로 다시 재생되지 않습니다」를 적었다.
+  - 기본을 끔으로 둔 까닭: Apple HIG(Playing audio)는 무음 모드에서 사람이 시작한 소리만 내라고 하고, 필요 없이 다른 앱 음악을 멈추지 말라고 한다. 알림마다 듣던 음악이 멈추는 것은 켠 사람만 받아들일 일이다.
+  - 켠 기기에서는 소리를 내기 바로 전에 `type = "playback"`으로 두고, 1.5초(소리 두 음 0.46초와 이어 울릴 미리 듣기 하나) 뒤에 `"auto"`로 되돌린다(`web/src/silentMode.ts`). 켜는 누름이 미리 듣기다. 무음 스위치를 켠 채로 들리는지 바로 안다.
+  - `<audio>` 무음 파일을 재생하는 방법도 같은 MediaPlayback이 되어 음악을 멈춘다. API보다 나은 것이 없어 쓰지 않았다.
+- **시험(웹 E2E 「이 기기 알림」).** 가짜 `navigator.audioSession`이 바뀔 때마다 기록한다. 끈 동안은 범주를 건드리지 않는다. 켜는 누름의 미리 듣기와 새 보고의 소리가 모두 `session playback → 두 음 → session auto` 순서다. 끄면 저장값이 지워진다.
+- **실기 확인(headless로 못 보는 것).** iPhone 홈 화면 앱에서:
+  - 무음 스위치를 켜고 「무음 모드에서도」를 켜면 미리 듣기와 알림 소리가 들리는지.
+  - 음악 앱이 멈추는지, 되돌린 뒤 저절로 다시 재생되지 않는지(예상: 멈추고 다시 재생되지 않는다).
+  - 소리 도중 범주를 바꿀 때 잡음이 나거나 AudioContext가 `interrupted`가 되는지.
+  - 누름 직후가 아닌 때(상태 사건이 온 때) 바꿔도 적용되는지.
+  - 앱을 닫거나 화면이 꺼지면 iOS가 페이지를 멈추므로 소리는 없다(그때는 push 알림이 간다).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

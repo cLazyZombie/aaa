@@ -1893,9 +1893,18 @@ try {
           return { top: r.top, x: r.left + r.width / 2 };
         });
         await swipe({ ...cell, ...c }, travel);
-        await until(`${label} ${mode} 끌기 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) =>
-          bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`),
-        );
+        await until(`${label} ${mode} 끌기 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch(async (e) => {
+          // 실패하면 그때 xterm이 mouse 보고 중이었는지(xterm Terminal.ts `enable-mouse-events`)와 viewport를 남긴다(t-0327 넘김 (마))
+          const at = await p.evaluate(() => {
+            const vp = document.querySelector(".xterm-viewport");
+            return {
+              mouse: !!document.querySelector(".xterm.enable-mouse-events"),
+              viewport: vp ? [vp.scrollTop, vp.scrollHeight, vp.clientHeight] : null,
+              log: (window.__aaaTermLog ?? []).slice(-12).map((x) => (x.kind ? `${x.at} bin×${x.bins}` : `${x.at} ${x.e}`)),
+            };
+          });
+          bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")} ‖ ${JSON.stringify(at)}`);
+        });
       }
       return { before, after, want };
     };
@@ -3172,8 +3181,14 @@ try {
     if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
     aaa("pane", "run", "--machine", "labA", "--name", "traceapp", "--", process.execPath, `${root}/paste.js`);
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    await tp.getByTestId("trace-toggle").click();
-    if ((await tp.getByTestId("trace-toggle").getAttribute("aria-pressed")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
+    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 「진단」에 있다(사용자 화면 10-18, plan §8.71)
+    if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
+    const dialog = tp.getByRole("dialog", { name: "설정" });
+    const traceSwitch = dialog.getByRole("switch", { name: "입력 기록" });
+    await tp.getByTestId("settings-open").click();
+    await traceSwitch.click();
+    if ((await traceSwitch.getAttribute("aria-checked")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
+    await tp.keyboard.press("Escape");
     await tp.getByTestId("pane-traceapp").click();
     await until("trace 화면", async () => (await screenText(tp)).includes("paste>"));
     await tp.locator(".xterm-screen").click();
@@ -3181,8 +3196,9 @@ try {
     await until("조합 글 도착", () => aaa("pane", "read", "traceapp").lines.join("\n").includes('GOT:"상"'));
     await sleep(300);
     await tp.getByRole("button", { name: "목록으로" }).click();
-    await tp.getByTestId("trace-send").click();
-    await until("보냄 표시", async () => (await tp.locator(".foot-msg").allInnerTexts()).some((t) => t.startsWith("보냈다: input-")));
+    await tp.getByTestId("settings-open").click();
+    await dialog.getByTestId("trace-send").click();
+    await until("보냄 표시", async () => (await dialog.getByTestId("trace-msg").innerText()).startsWith("보냈다: input-"));
     const dir = `${root}/s/host/diag`;
     const files = fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n));
     if (files.length !== 1) throw new Error(`diag 파일 ${files}`);
@@ -3195,8 +3211,9 @@ try {
     const upd = rec.events.find((e) => e.type === "compositionupdate" && e.data === "사");
     if (!upd || typeof upd.value !== "string" || !Array.isArray(upd.sel) || typeof upd.kb !== "boolean") throw new Error(`상태가 빠졌다 ${JSON.stringify(upd)}`);
     // 보내면 비우고, 끄면 모으지 않는다
-    if ((await tp.getByTestId("trace-toggle").innerText()).includes("(0개") === false) throw new Error("보낸 뒤 비우지 않았다");
-    await tp.getByTestId("trace-toggle").click();
+    await until("보낸 뒤 비움", async () => (await dialog.locator(".settings-row:has([role=switch][aria-label='입력 기록'])").innerText()).includes("0개 모았습니다"));
+    await traceSwitch.click();
+    if ((await traceSwitch.getAttribute("aria-checked")) !== "false") throw new Error("입력 기록이 꺼지지 않았다");
     await tp.context().close();
     aaa("pane", "kill", "traceapp");
   });
@@ -4039,6 +4056,18 @@ try {
         }
       }
       Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudio });
+      // iPhone·iPad Safari의 소리 범주(Audio Session API, plan §8.72): 바꿀 때마다 남긴다
+      let sessionType = "auto";
+      const session = {
+        get type() {
+          return sessionType;
+        },
+        set type(v) {
+          sessionType = v;
+          log.push(`session ${v}`);
+        },
+      };
+      Object.defineProperty(navigator, "audioSession", { configurable: true, value: session });
       // 진단: 상태 사건 WS의 열림·닫힘과 thread 사건(보고 hash)
       const ev = [];
       Object.defineProperty(window, "__evLog", { value: ev });
@@ -4132,6 +4161,24 @@ try {
     await report("소리");
     await waitLog("알림 소리", (l) => l === "tone 880,tone 660");
     await until("소리와 함께 앱 안 알림", async () => (await droplet.count()) === 1);
+    // 무음 모드에서도(사용자 보고 10-18 iPhone, plan §8.72): 끈 동안은 소리 범주를 건드리지 않는다(위 기록에 session이 없다).
+    // 켜는 누름이 미리 듣기이고, 소리를 낼 때만 "playback"(무음 스위치를 무시)으로 두었다가 끝나면 "auto"로 되돌린다
+    await ap.getByTestId("settings-open").click();
+    const silent = dialog.getByRole("switch", { name: "무음 모드에서도" });
+    await until("앞 소리 끝", () => ap.evaluate(() => performance.now() / 1000 > (window.__chimeEnd ?? 0)));
+    await clear();
+    await silent.click();
+    await waitLog("무음에서도 미리 듣기", (l) => l === "session playback,tone 880,tone 660,session auto");
+    await ap.keyboard.press("Escape");
+    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== "1") throw new Error("무음 모드 설정이 저장되지 않았다");
+    await until("앞 알림 접힘", async () => (await droplet.count()) === 0);
+    await clear();
+    await report("무음에서도");
+    await waitLog("무음에서도 알림 소리", (l) => l === "session playback,tone 880,tone 660,session auto");
+    await ap.getByTestId("settings-open").click();
+    await silent.click();
+    await ap.keyboard.press("Escape");
+    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== null) throw new Error("끈 무음 모드 설정이 남았다");
     // 가려지면: 앱 안 알림은 없고, 소리와 탭 알림(이 기기에 push 구독이 없다)
     const hide = (h) =>
       ap.evaluate((h) => {
@@ -4207,6 +4254,118 @@ try {
     await shot(pp, "phone-more-menu");
     await pp.context().close();
     aaa("thread", "ack", "demo", t.id);
+  });
+
+  await step("보는 동안은 push 대신 앱 안 알림(사용자 화면 10-18 00:27 iPhone 홈 화면 앱 배너, herdr-web-ui server/push.ts inUse·sendTest·App.tsx 다시 등록): 구독이 있는 휴대폰을 열고 다시 열어도(다시 등록) push 0건, 보는 동안 새 보고는 push 0건·앱 안 알림 1건, 가려지면 push 1건", async () => {
+    // 이 기기(휴대폰)는 알림을 켜 두어 이미 구독이 있다(홈 화면 앱처럼). 브라우저 push 서비스 대신 가짜 push 서비스의 주소를 준다
+    const dev = pushDevice("push/dev3");
+    const devPath = new URL(dev.json.endpoint).pathname;
+    const toDev = (from) => pushes.slice(from).filter((x) => x.path === devPath);
+    const subInit = (a) => {
+      const log = [];
+      Object.defineProperty(window, "__pushLog", { value: log });
+      class FakeNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        constructor(t) {
+          log.push(`new ${t}`);
+        }
+        addEventListener() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, value: FakeNotification });
+      ServiceWorkerRegistration.prototype.showNotification = async function (t) {
+        log.push(`tab ${t}`);
+      };
+      const key = Uint8Array.from(atob(a.key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)).buffer;
+      const sub = {
+        endpoint: a.sub.endpoint,
+        options: { applicationServerKey: key },
+        toJSON: () => a.sub,
+        unsubscribe: async () => (log.push("unsubscribe"), true),
+      };
+      PushManager.prototype.getSubscription = async () => sub;
+      PushManager.prototype.subscribe = async () => (log.push("subscribe"), sub);
+      try {
+        localStorage.setItem("aaa:alerts-on", "1");
+      } catch {}
+      // 이 화면이 받은 thread 사건(보고 hash)
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          this.addEventListener("message", (m) => {
+            try {
+              const d = JSON.parse(m.data);
+              if (d.ev === "thread") log.push(`thr ${String(d.report_hash).slice(0, 6)}`);
+            } catch {}
+          });
+        }
+      };
+    };
+    const init = `(${subInit})(${JSON.stringify({ key: pushKey, sub: dev.json })})`;
+    // 다른 화면은 쓰지 않는 것으로 둔다: 이 휴대폰 하나만 본다
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    const start = pushes.length;
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init });
+    const pp = phone.page;
+    const subscribed = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed);
+    const bellPush = async () => {
+      await pp.getByTestId("more").click();
+      const ok = (await pp.getByTestId("alerts-item").innerText()).includes("켜짐, 이 기기로 푸시");
+      await pp.keyboard.press("Escape");
+      return ok;
+    };
+    // (1) 열면 권한·구독이 있는 기기는 조용히 다시 등록한다(참고 App.tsx 「re-registers on every load」). 다시 열어도 같다
+    await until("열 때 다시 등록", async () => (await subscribed()) === 1 && (await bellPush()));
+    await pp.reload();
+    await pp.getByTestId("machine-labA").waitFor();
+    await until("다시 열 때 다시 등록", () => bellPush());
+    if ((await pp.evaluate(() => window.__pushLog.join(","))) !== "") throw new Error(`다시 등록이 구독을 바꿨다: ${await pp.evaluate(() => window.__pushLog.join(","))}`);
+    await until("휴대폰을 봄", async () => (await pushInUse()) === 1);
+    const work = (title) => {
+      fs.writeFileSync(`${root}/task-${title}.md`, title);
+      const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-${title}.md`);
+      const hash = until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
+      return { t, hash };
+    };
+    const seen = (hash) => until("보고 사건 받음", () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
+    // (2) 보는 동안: host는 보내지 않고(push_skipped) 이 화면에 앱 안 알림이 하나 내려온다
+    const skippedBefore = aaa("events", "--project", "demo").events.filter((e) => e.kind === "push_skipped").length;
+    const a = work("휴대폰으로 보는 중");
+    await seen(await a.hash);
+    await until("보내지 않음 기록", () => aaa("events", "--project", "demo").events.filter((e) => e.kind === "push_skipped").length > skippedBefore);
+    await until("보는 동안 앱 안 알림", async () => (await pp.locator(".droplet-title").allInnerTexts()).includes("휴대폰으로 보는 중"));
+    if ((await pp.locator(".droplet").count()) !== 1) throw new Error(`앱 안 알림 ${await pp.locator(".droplet").count()}개`);
+    if (toDev(start).length !== 0) throw new Error(`보는 동안·여는 동안 push ${toDev(start).length}건`);
+    await pp.locator(".droplet-close").click();
+    await until("앱 안 알림 닫힘", async () => (await pp.locator(".droplet").count()) === 0);
+    // (3) 가려지면(홈 화면으로 나감): 쓰는 화면이 없어 이 기기에 push가 하나 간다. 앱 안 알림·탭 알림은 없다
+    await pp.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.hasFocus = () => false;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until("가려진 휴대폰", async () => (await pushInUse()) === 0);
+    const b = work("휴대폰을 닫은 동안");
+    const { msg } = await nextPush(dev, start, "가려진 동안 push");
+    if (msg.title !== "demo · 휴대폰을 닫은 동안" || msg.tag !== `aaa-demo/${b.t.id}`) throw new Error(JSON.stringify(msg));
+    await seen(await b.hash);
+    await pp.evaluate(() => new Promise((r) => setTimeout(r)));
+    if ((await pp.locator(".droplet").count()) !== 0) throw new Error("가려진 동안 앱 안 알림이 내려왔다");
+    const tabs = (await pp.evaluate(() => window.__pushLog.filter((e) => !e.startsWith("thr ")).join(",")));
+    if (tabs !== "") throw new Error(`push가 있는 기기에 탭 알림: ${tabs}`);
+    // 처음부터 끝까지 이 기기에 간 push는 가려진 동안의 하나뿐(확인 push 「알림이 켜졌다」 없음)
+    if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
+    if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
+    await pp.context().close();
+    for (const x of [a, b]) aaa("thread", "ack", "demo", x.t.id);
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
