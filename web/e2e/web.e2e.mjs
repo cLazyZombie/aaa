@@ -1020,35 +1020,50 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
-  await step("조합 상자(WebKit iPad 크기, 어두운·밝은 테마): 크기는 herdr-web-ui fitView, 색은 그 칸 배경·글자색, 테두리 없음", async () => {
+  await step("조합 상자(WebKit iPad·iPhone 크기, 어두운·밝은 테마): 크기는 herdr-web-ui fitView, 색은 그 칸 배경·글자색, 테두리 없음, 세로는 커서 줄에 맞춰 커서가 새지 않음", async () => {
     // 배경 있는 입력줄(Claude 입력줄처럼)과 배경 없는 줄, 커서는 줄 끝에 둔다
     const app = `${root}/compose.sh`;
-    fs.writeFileSync(app, "printf 'plain 상태 '; read a; printf '\\033[48;5;238m› 상태 \\033[K'; cat >/dev/null\n");
+    // 셋째 줄은 Codex 입력줄처럼 화면 맨 아래 배경 줄의 「› 」 뒤에서 「가」를 조합한다(사용자 캡처 12:05)
+    fs.writeFileSync(
+      app,
+      "printf 'plain 상태 '; read a; printf '\\033[48;5;238m› 상태 \\033[K'; read b; printf '\\033[0m'; " +
+        "i=0; while [ $i -lt 80 ]; do echo; i=$((i+1)); done; printf '\\033[48;5;238m› \\033[K'; cat >/dev/null\n",
+    );
     const wk = await webkit.launch();
     const bad = [];
     try {
-      for (const scheme of ["dark", "light"]) {
-        const name = `compose-${scheme}`;
+      const devices = [
+        ["dark", "ipad", { width: 820, height: 1180 }, 2],
+        ["light", "ipad", { width: 820, height: 1180 }, 2],
+        ["dark", "ipad-land", { width: 1180, height: 820 }, 2],
+        ["dark", "iphone", { width: 390, height: 844 }, 3],
+      ];
+      for (const [scheme, dev, viewport, deviceScaleFactor] of devices) {
+        const name = `compose-${scheme}-${dev}`;
         aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", app);
-        const p = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { colorScheme: scheme, deviceScaleFactor: 2 })).page;
+        const p = (await pairPage(wk, aaa("web", "pair").code, viewport, { colorScheme: scheme, deviceScaleFactor })).page;
         await p.getByTestId(`pane-${name}`).click();
         await until("조합 화면", async () => (await screenText(p)).includes("plain 상태"));
         await p.locator(".xterm-screen").click();
-        for (const line of ["plain", "bg"]) {
+        for (const [line, ch] of [["plain", "ㅅ"], ["bg", "ㅅ"], ["bottom", "가"]]) {
           if (line === "bg") {
             aaa("pane", "send", name, "--text", "", "--enter");
             await until("배경 줄", async () => (await screenText(p)).includes("› 상태"));
           }
+          if (line === "bottom") {
+            aaa("pane", "send", name, "--text", "", "--enter");
+            await until("맨 아래 줄", async () => !(await screenText(p)).includes("plain 상태"));
+          }
           await sleep(300);
           const ta = p.locator("textarea.xterm-helper-textarea");
-          await ta.evaluate(async (el) => {
+          await ta.evaluate(async (el, ch) => {
             el.focus();
             el.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
-            el.value += "ㅅ";
-            el.dispatchEvent(new CompositionEvent("compositionupdate", { data: "ㅅ", bubbles: true }));
-            el.dispatchEvent(new InputEvent("input", { data: "ㅅ", inputType: "insertCompositionText", isComposing: true, bubbles: true }));
+            el.value += ch;
+            el.dispatchEvent(new CompositionEvent("compositionupdate", { data: ch, bubbles: true }));
+            el.dispatchEvent(new InputEvent("input", { data: ch, inputType: "insertCompositionText", isComposing: true, bubbles: true }));
             await new Promise((r) => setTimeout(r, 100));
-          });
+          }, ch);
           const info = await p.evaluate(() => {
             const view = document.querySelector(".xterm .composition-view.active");
             if (!view) return null;
@@ -1066,8 +1081,12 @@ try {
               }
             }
             const screen = document.querySelector(".xterm-screen");
+            const cur = document.querySelector(".xterm-rows .xterm-cursor");
+            const c = cur?.getBoundingClientRect();
             return {
               rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+              cursor: c ? { x: c.x, y: c.y, width: c.width, height: c.height, cls: cur.className, bg: getComputedStyle(cur).backgroundColor, outline: getComputedStyle(cur).outlineStyle, shadow: getComputedStyle(cur).boxShadow } : null,
+              rowH: parseFloat(screen.style.height) / document.querySelectorAll(".xterm-rows > div").length,
               bg: st.backgroundColor,
               fg: st.color,
               border: st.borderTopWidth,
@@ -1078,13 +1097,41 @@ try {
             };
           });
           const cols = aaa("pane", "list").panes.find((x) => x.name === name).cols;
+          // 조합 상자 둘레(위·아래·옆 3px)에 커서색 픽셀이 새는지 캡처로 센다(사용자 캡처 12:05: 「가」 위 가로줄)
+          if (info?.cursor) {
+            const m = 3;
+            const png = await p.screenshot({ clip: { x: info.rect.x - m, y: info.rect.y - m, width: info.rect.width + 2 * m, height: info.rect.height + 2 * m } });
+            info.leak = await p.evaluate(
+              async ({ b64, color, m }) => {
+                const img = new Image();
+                img.src = `data:image/png;base64,${b64}`;
+                await img.decode();
+                const c = document.createElement("canvas");
+                c.width = img.width;
+                c.height = img.height;
+                const g = c.getContext("2d");
+                g.drawImage(img, 0, 0);
+                const d = g.getImageData(0, 0, c.width, c.height).data;
+                const [cr, cg, cb] = color.match(/\d+/g).map(Number);
+                const k = c.width / (c.width / devicePixelRatio);
+                const rows = new Map();
+                for (let y = 0; y < c.height; y++)
+                  for (let x = 0; x < c.width; x++) {
+                    const i = (y * c.width + x) * 4;
+                    if (Math.abs(d[i] - cr) + Math.abs(d[i + 1] - cg) + Math.abs(d[i + 2] - cb) < 60) rows.set(y, (rows.get(y) ?? 0) + 1);
+                  }
+                return { dpr: k, size: [c.width, c.height], inner: [Math.round(m * k), Math.round(c.height - m * k)], rows: [...rows] };
+              },
+              { b64: png.toString("base64"), color: info.cursor.bg, m },
+            );
+          }
           if (shots && info) {
             await p.screenshot({
-              path: path.join(shots, `compose-${scheme}-${line}.png`),
+              path: path.join(shots, `${name}-${line}.png`),
               clip: { x: Math.max(0, info.rect.x - 160), y: Math.max(0, info.rect.y - 24), width: 260, height: info.rect.height + 48 },
             });
           }
-          console.log(`     조합 상자 ${scheme} ${line}: ${JSON.stringify(info)}`);
+          console.log(`     조합 상자 ${scheme} ${dev} ${line}: ${JSON.stringify(info)}`);
           if (!info) bad.push(`${scheme} ${line}: 조합 상자가 없다`);
           else {
             const cell = info.screenW / cols;
@@ -1092,6 +1139,11 @@ try {
             if (info.fg !== info.cellFg) bad.push(`${scheme} ${line}: 글자 ${info.fg} ≠ 칸 ${info.cellFg}`);
             if (info.border !== "0px" || info.outline !== "none") bad.push(`${scheme} ${line}: 테두리 ${info.border} ${info.outline}`);
             if (Math.abs(info.rect.width - 2 * cell) > 1.5) bad.push(`${scheme} ${line}: 폭 ${info.rect.width} ≠ 두 칸 ${2 * cell}`);
+            const at = `${scheme} ${dev} ${line}`;
+            if (!info.cursor) bad.push(`${at}: 커서 칸이 없다`);
+            else if (Math.abs(info.rect.y - info.cursor.y) > 0.02 || Math.abs(info.rect.height - info.cursor.height) > 0.02)
+              bad.push(`${at}: 상자 세로 ${info.rect.y}+${info.rect.height} ≠ 커서 줄 ${info.cursor.y}+${info.cursor.height}`);
+            if (info.leak?.rows.length) bad.push(`${at}: 상자 둘레에 커서색이 샌다(device 줄, 픽셀 수) ${JSON.stringify(info.leak.rows)}`);
           }
           // 조합을 끝내 지운다(보내지 않는다: 값을 비운 뒤 끝낸다)
           await ta.evaluate((el) => {
