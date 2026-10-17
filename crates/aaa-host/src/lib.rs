@@ -458,6 +458,19 @@ impl Host {
                 .collect();
         }
         self.bump();
+        // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
+        let open = self.questions(false);
+        let gone: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            open.into_iter()
+                .filter(|q| q.machine == hello.machine_name)
+                .filter(|q| !i.panes.get(&q.pane).is_some_and(|p| p.info.state.is_running()))
+                .map(|q| q.pane)
+                .collect()
+        };
+        for pane in gone {
+            self.close_questions_of(&pane);
+        }
         for (sid, from) in subscribe {
             self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
@@ -575,6 +588,9 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        if !info.state.is_running() {
+            self.close_questions_of(&info.id);
+        }
         self.replay_harness(&info.id);
         if started {
             self.spawn_subscribe(machine_id.to_string(), info.id, None);

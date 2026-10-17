@@ -174,6 +174,14 @@ while :; do
 done
 "#;
 
+/// 시작하자마자 폴더 신뢰 확인창을 그리고 기다리는 harness(profile harness custom: hook도 화면 감지도 없다). brief 보내기가
+/// 이 창을 보고 질문을 연다. 작업 폴더의 `ask.fifo`에 한 줄이 오면 끝난다(host가 없을 때 세션을 끝내는 시험용).
+const ASKER_AGENT: &str = r#"#!/bin/sh
+mkfifo ask.fifo
+printf ' Quick safety check: Do you trust the files in this folder?\n\n \342\235\257 No, exit\n   Yes, I trust this folder\n\n Enter to confirm \302\267 Esc to cancel'
+read x < ask.fifo
+"#;
+
 /// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
 const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
@@ -182,7 +190,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     let listen = if web { "127.0.0.1:0" } else { "" };
     format!(
         "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"claude\", \"sticky\"]\nlibrary_copy_mb = 1\n{extra}",
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"claude\", \"sticky\", \"asker\"]\nlibrary_copy_mb = 1\n{extra}",
         path_str(projects)
     )
 }
@@ -194,6 +202,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
          [profiles.claude]\nharness = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
+         [profiles.asker]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(work_root),
         path_str(&scripts.join("fake.sh")),
@@ -202,6 +211,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         path_str(&scripts.join("claude.sh")),
         lab::BIN,
         path_str(&scripts.join("sticky.sh")),
+        path_str(&scripts.join("asker.sh")),
     )
 }
 
@@ -262,6 +272,7 @@ fn world_opts(extra: &str, web: bool) -> World {
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
     std::fs::write(scripts.join("claude.sh"), CLAUDE_AGENT).unwrap();
     std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
+    std::fs::write(scripts.join("asker.sh"), ASKER_AGENT).unwrap();
     // harness claude는 실행 파일 뒤에 `--settings …`·`--session-id …`를 붙이므로 sh가 아니라 스크립트를 바로 띄운다
     for f in ["claude.sh", "sticky.sh"] {
         std::fs::set_permissions(scripts.join(f), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
@@ -626,6 +637,51 @@ fn flow_event(ev: &mut Events, kind: &str, about: &str) -> FlowEvent {
         FrontEvent::Flow(f) if f.kind == kind && f.detail.contains(about) => Some(f.clone()),
         _ => None,
     })
+}
+
+/// 질문이 닫혔다(Gone)는 사건
+fn question_gone(ev: &mut Events, id: &str) {
+    ev.wait(&format!("{id} 닫힘"), T, |e| match e {
+        FrontEvent::Question(q) if q.id == id && q.state == QuestionState::Gone => Some(()),
+        _ => None,
+    });
+}
+
+/// 끝나거나 닫힌 pane의 질문은 닫힌다(QA t-0337 Q4: 빈 화면이 「답을 기다리는 질문」을 세고, 답하면 「pane이 없다」).
+/// 질문은 brief 보내기가 확인창을 보고 열었다(custom harness라 harness 사건으로는 닫히지 않는다). 세션이 끝나면 host가
+/// 닫는다: host가 떠 있으면 그때, host·agent가 내려가 있었으면 agent가 다시 붙어 세션을 알릴 때. 참고 herdr-web-ui는
+/// 살아 있는 pane 화면에서만 질문을 읽어 닫힌 pane에는 질문이 없다(`server/prompt.ts`·`collector.ts`).
+#[test]
+fn questions_of_ended_panes_are_closed() {
+    let mut w = world();
+    let mut ev = Events::connect(&w.h);
+    let start = |w: &World, title: &str| {
+        let v = w.start(&["--title", title, "--profile", "asker", "--kind", "dir", "--task-file", &w.task(title, "x")]);
+        (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string())
+    };
+    // 1) host가 떠 있을 때 pane을 닫는다
+    let (a, pa) = start(&w, "ask-a");
+    let qa = open_question(&mut ev, &a, "trust", &[]);
+    w.h.ok(&["pane", "kill", &pa]);
+    question_gone(&mut ev, &qa.id);
+    let e = w.h.json(&["question", "answer", &qa.id, "yes"]).expect_err("닫힌 질문");
+    assert!(e.contains("이미 닫힌"), "{e}");
+
+    // 2) host·agent가 내려가 있는 동안 세션이 끝난다(운영 업그레이드 중처럼)
+    let (b, _) = start(&w, "ask-b");
+    let qb = open_question(&mut ev, &b, "trust", &[]);
+    let cwd = PathBuf::from(w.show(&b)["cwd"].as_str().unwrap());
+    w.lab.kill("agentA");
+    w.lab.kill("host");
+    // 확인창을 띄운 harness가 끝난다(읽는 쪽이 열 때까지 쓰기가 기다린다)
+    std::fs::write(cwd.join("ask.fifo"), "end\n").unwrap();
+    w.lab.spawn("host2", &w.h, &["host"]);
+    wait_for("host2 준비", T, || w.h.json(&["status"]).ok());
+    let mut ev = Events::connect(&w.h);
+    w.lab.spawn("agentA2", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    question_gone(&mut ev, &qb.id);
+    let open: Vec<String> = w.questions(false).iter().map(|q| q["id"].as_str().unwrap().to_string()).collect();
+    assert!(open.is_empty(), "열린 질문이 남았다: {open:?}");
 }
 
 /// 가짜 Claude의 지금 턴을 마친다(BEL)
@@ -1532,7 +1588,7 @@ fn coordinator_flow() {
     // 맡길 수 있는 owner: host 허용 목록 ∩ 그 머신 profile
     let a = w.h.ok(&["assignable", "demo"]);
     let la = a["owners"].as_array().unwrap().iter().find(|o| o["machine"] == "labA").unwrap().clone();
-    assert_eq!(la["profiles"], serde_json::json!(["claude", "fake", "mute", "sticky"]), "{a}");
+    assert_eq!(la["profiles"], serde_json::json!(["asker", "claude", "fake", "mute", "sticky"]), "{a}");
     w.h.ok(&["assignable", "demo", "--check", "fake@labA"]);
     for (bad, why) in
         [("other@labA", "쓸 수 있는 profile이 아니다"), ("Priya Rao", "사람"), ("@nowhere", "모르는 머신")]

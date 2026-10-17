@@ -1944,6 +1944,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 입력 수신은 `working`·`question`(옛 agent는 `turn_start`)이 오면 `accepted`다.
   - 질문에 답한 뒤 상태를 꾸며 넣지 않는다(화면이 알린다). interrupt는 Esc 뒤 `idle`을 기다린다(「Interrupted」 화면 세기를 없앴다).
   - 지금 상태가 된 때보다 오래된 사건은 상태를 바꾸지 않는다(`next_activity`). agent가 다시 붙을 때 보내는 기억(agent `set_host`, 따로 도는 task)이 그 사이 화면 감지가 낸 새 상태보다 늦게 도착할 수 있다. 사건 때는 모두 그 pane agent의 시계라 비교할 수 있다. host가 처음 듣는 pane(host 재시작)은 기억으로 정한다.
+  - 질문은 그 pane 세션이 끝나거나 pane이 없어지면 닫는다(Gone, QA t-0337 Q4: 닫은 pane의 질문이 「답을 기다리는 질문」에 남고 답하면 「pane이 없다」). 세션 상태가 끝남으로 바뀔 때(`on_session`)와, agent가 다시 붙어 세션을 모두 알릴 때 이 머신에서 살아 있지 않은 pane의 질문(host·agent가 내려간 사이 끝난 세션)이다. 화면 감지로 working·idle·끝남이 와도 그 pane의 열린 질문을 모두 닫는다. 참고 herdr-web-ui는 질문을 기록하지 않고 살아 있는 blocked pane 화면에서 읽어(`server/prompt.ts`), pane_exited·pane_closed면 pane과 함께 질문도 사라진다(`server/collector.ts` `parseStructureFrame`).
   - 답 키: Codex 0.163 승인 창의 맨 아래 줄 「Press enter to confirm or esc to cancel」을 선택 창 표지에 더했다(실측). 참고 herdr-projects는 사람이 고른 키(`thread keys`)를 보내고 선택지를 읽지 않는다. aaa `question answer`는 aaa 기능이라 표지를 실제 화면으로 맞춘다.
 - **herdr와 다르게 둔 것.**
   - 프로세스 판별(foreground 프로세스 이름으로 agent 찾기·바뀜·끝남, herdr `src/detect/mod.rs` 186~290줄)은 없다. aaa 세션은 harness 하나를 띄우고 끝나면 세션도 끝난다. 셸에서 사람이 띄운 claude·codex는 감지하지 않는다(차이 목록에 줄이 없고 3 OS 프로세스 코드가 필요하다).
@@ -1966,6 +1967,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - m13 `claude_thread_states_questions_and_messages`: 가짜 Claude가 Claude 화면(입력 상자·spinner·확인창)을 그린다(모양은 herdr 원본으로 확인). 신뢰 창 질문, brief 수신, 권한 질문, queue·거절·interrupt·stop을 보고, 기다림은 모두 host가 밀어 주는 사건(`lab::Events`: thread 기록·질문·흐름)으로 끝난다. 턴 끝은 시험이 정한다(BEL).
   - e2e 재시작 시험·TUI 상태 줄 시험도 hook 대신 화면으로 상태를 낸다. main에서 들어온 hook 상태 시험(TUI `o` 키 질문, 웹 질문 카드·끝남(안 봄)·첨부 확인창, agent 표시·대화·첨부 harness pane, showcase)도 실행 파일 이름이 claude인 셸의 Claude 화면 조각이나 세션 ID hook(SessionStart·Codex notify)으로 바꿨다. 나눈 pane은 harness가 없어(프로세스 판별 없음) 질문 pane은 claude 셸로 띄운다.
   - e2e `stale_working_left_by_hooks_turns_idle_from_the_screen`: 운영 pane 화면을 그린 가짜 Claude와 옛 agent의 `turn_start` harness.json을 두고 host·agent를 함께 다시 띄우면 idle이 되고, 기억도 idle로 바뀐다. host `older_events_do_not_change_the_activity`: 늦게 온 옛 기억이 새 상태를 덮지 않는다(도착 순서는 E2E로 정할 수 없어 단위 시험으로 본다).
+  - m13 `questions_of_ended_panes_are_closed`: 신뢰 창을 띄운 custom harness의 질문이 pane을 닫으면 닫히고(답하면 「이미 닫힌 질문」), host·agent가 내려간 사이 세션이 끝나면 다시 붙을 때 닫힌다.
   - 실제 harness: `cargo test -p aaa --test real -- --ignored --test-threads 1`(구독 사용, CI 제외). Claude는 신뢰 창 → brief 수신 → 작업 중 → 권한 질문 → idle(15초), Codex는 brief 수신(작업 중) → 승인 질문 둘 → idle(16초)을 10-18에 확인했다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
 

@@ -310,10 +310,7 @@ impl Host {
                 self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
             }
             Some(AgentActivity::Working) | Some(AgentActivity::Idle) | Some(AgentActivity::Exited) => {
-                if let Some(mut q) = self.open_question_of(&ev.session) {
-                    q.state = QuestionState::Gone;
-                    self.save_question(&q);
-                }
+                self.close_questions_of(&ev.session);
             }
             _ => {}
         }
@@ -331,6 +328,17 @@ impl Host {
 
     pub(crate) fn open_question_of(&self, pane: &str) -> Option<QuestionView> {
         self.questions(false).into_iter().find(|q| q.pane == pane)
+    }
+
+    /// 그 pane의 열린 질문을 모두 닫는다(Gone). 확인창이 사라졌거나, 세션이 끝났거나 pane이 없어졌을 때다.
+    /// 참고 herdr-web-ui는 질문을 기록하지 않고 살아 있는 blocked pane 화면에서 읽어(`server/prompt.ts`), pane이 끝나거나
+    /// 닫히면(`server/collector.ts` `parseStructureFrame`의 pane_exited·pane_closed) 질문도 없다. aaa는 질문을 기록하므로
+    /// 그때 닫는다(QA t-0337 Q4, plan §8.80).
+    pub(crate) fn close_questions_of(&self, pane: &str) {
+        for mut q in self.questions(false).into_iter().filter(|q| q.pane == pane) {
+            q.state = QuestionState::Gone;
+            self.save_question(&q);
+        }
     }
 
     pub(crate) fn save_question(&self, q: &QuestionView) {
