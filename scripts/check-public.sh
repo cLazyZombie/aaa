@@ -105,6 +105,15 @@ for i in "${!NAMES[@]}"; do
     sed -E "s~${re}~~g" </dev/null >/dev/null 2>"$ERR" || broke "${NAMES[$i]}: sed 정규식 오류"
   done
 done
+# 공동 작성자 줄: GitHub는 commit 메시지의 Co-authored-by 줄로 그 사람을 contributor로 보인다. 이 저장소는 누구의 줄도 넣지 않는다.
+# 대소문자·들여쓰기·콜론 앞 공백이 달라도, 제목·본문 중간이어도 막는다(%x01이 commit의 경계). 출력에는 commit과 email domain만 보인다
+coauthors() {
+  awk 'substr($0, 1, 1) == "\001" { h = substr($0, 2); next }
+    tolower($0) ~ /^[ \t]*co-authored-by[ \t]*:/ { d = $0; if (!sub(/^[^@]*@/, "", d)) d = "?"; sub(/>.*/, "", d); print h " …@" d }'
+}
+# awk 판(macOS BSD awk·CI mawk·gawk)이 escape·tolower를 다르게 읽으면 아무것도 찾지 못해 통과로 보인다: 같은 함수를 먼저 재 본다
+[ "$(printf '\001abc1234\n제목\n\tCO-AUTHORED-BY : x <a@b.c>\n\001def5678\nCo-Authored-By 줄 설명\n' | coauthors)" = "abc1234 …@b.c" ] ||
+  broke "공동 작성자 검사: awk가 심어 둔 줄을 찾지 못했다"
 [ "$fail" = 0 ] || { echo "공개 저장소 검사 실패: 검사 패턴을 고친다."; exit 2; }
 
 # $1=설명, $2..=검사할 rev(없으면 작업 트리의 추적 파일). 커밋 메시지는 COMMITS 변수로 검사한다.
@@ -146,20 +155,18 @@ if [ "$HISTORY" = 1 ]; then
   COMMITS=$(git log --no-walk=unsorted --format='%H %B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   CO=$(git log --no-walk=unsorted --format='%x01%h%n%B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   scan "커밋 메시지(이력)"
-elif git rev-parse -q --verify "$BASE" >/dev/null; then
+elif git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
   COMMITS=$(git log --format='%H %B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   CO=$(git log --format='%x01%h%n%B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   [ -n "$COMMITS" ] && scan "커밋 메시지 $BASE..HEAD"
 elif [ -n "${CI:-}" ]; then
   # CI의 통과가 커밋 메시지·author를 본 결과이게 한다(얕은 checkout이면 기준이 없어 늘 건너뛰었다)
-  report "기준 ref ${BASE}가 없다: CI는 그 push·PR의 커밋을 볼 수 있게 이력을 받는다(ci.yml checkout fetch-depth)"
+  # 40자 sha도 객체가 없으면 여기로 온다(force push로 before가 어느 ref에서도 닿지 않으면 clone에 없다)
+  report "기준 ref ${BASE}가 없다(commit이 clone에 없음): CI는 그 push·PR의 커밋을 볼 수 있게 이력을 받는다(ci.yml checkout fetch-depth). force push면 --history로 본다"
 else
   echo "기준 ref ${BASE}가 없어 커밋 메시지는 건너뛴다"
 fi
-# 공동 작성자 줄: GitHub는 commit 메시지의 Co-authored-by 줄로 그 사람을 contributor로 보인다. 이 저장소는 누구의 줄도 넣지 않는다.
-# 대소문자·들여쓰기·콜론 앞 공백이 달라도, 제목·본문 중간이어도 막는다(%x01이 commit의 경계). 출력에는 commit과 email domain만 보인다
-co=$(awk 'substr($0, 1, 1) == "\001" { h = substr($0, 2); next }
-  tolower($0) ~ /^[ \t]*co-authored-by[ \t]*:/ { d = $0; if (!sub(/^[^@]*@/, "", d)) d = "?"; sub(/>.*/, "", d); print h " …@" d }' <<<"$CO")
+co=$(coauthors <<<"$CO")
 if [ -n "$co" ]; then
   report "커밋 메시지에 공동 작성자(Co-authored-by) 줄이 있다: GitHub가 그 사람을 contributor로 보인다. 그 줄을 지운다"
   head -10 <<<"$co" | sed 's/^/    /'
@@ -170,7 +177,7 @@ IDENTS=""
 if [ "$HISTORY" = 1 ]; then
   # shellcheck disable=SC2086
   IDENTS=$(git log --no-walk=unsorted --format='%h|%an|%ae|%cn|%ce' $REVS 2>"$ERR") || broke "author·committer를 읽지 못했다"
-elif git rev-parse -q --verify "$BASE" >/dev/null; then
+elif git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
   IDENTS=$(git log --format='%h|%an|%ae|%cn|%ce' "$BASE..HEAD" 2>"$ERR") || broke "author·committer를 읽지 못했다"
 fi
 noreply() { case "$1" in *@users.noreply.github.com | noreply@github.com) return 0 ;; esac; return 1; }
