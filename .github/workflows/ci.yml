@@ -125,6 +125,9 @@ jobs:
       - name: test
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        # 끝나지 않는 시험은 job 한도(40분)에 취소되면 실패 요약이 돌지 않는다. 단계 한도로 실패로 끝내 요약을 남긴다
+        # (지금 가장 긴 test 단계는 macOS 2분 안팎이다)
+        timeout-minutes: 15
         run: bash scripts/ci-local.sh --only test --logs . --tee
       # 실제 시스템 clipboard(§8.28): 그림을 쓰고 TUI front가 Ctrl+V로 읽어 대상 세션 폴더까지 가는지 본다.
       # 개발 Mac에서는 사람의 clipboard를 덮어쓰므로 CI에서만 켠다. Linux는 Xvfb 위 X11, Windows는 TUI E2E(Unix 전용) 없이 읽기만.
@@ -157,6 +160,10 @@ jobs:
           # 테스트 실패 본문(진단 출력 포함)
           for f in test.log clipboard.log; do
             [ -f "$f" ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' "$f" | annotate "$f"
+          done
+          # 단계 한도로 멈춘 시험: 어느 binary(Running 줄)의 어느 시험이 끝나지 않았는지(libtest가 60초 넘으면 알린다)
+          for f in test.log clipboard.log; do
+            [ -f "$f" ] && grep -q 'has been running for over' "$f" && grep -E '^ +Running |has been running for over' "$f" | tail -20 | annotate "$f: 끝나지 않은 시험"
           done
           # 실험실: 남겨진 host·agent 로그와 세션 폴더(session-host.log, exit.json, meta.json)
           for d in $(cat test.log clipboard.log 2>/dev/null | grep -o '실험실 기록을 남겼다: .*'  | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
