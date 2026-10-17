@@ -286,6 +286,9 @@ fn make_repo(root: &Path) -> PathBuf {
     git(root, &["clone", "-q", "--bare", path_str(&seed), path_str(&origin)]);
     let repo = root.join("repo");
     git(root, &["clone", "-q", path_str(&origin), path_str(&repo)]);
+    // PR 시험은 origin을 github 주소로 바꾼다: thread 시작의 fetch가 github.com에 나가거나 credential helper(키체인)를
+    // 부르지 않게 https 전송을 막는다(로컬 ref로 진행한다). worktree도 이 설정을 쓴다.
+    git(&repo, &["config", "protocol.https.allow", "never"]);
     repo
 }
 
