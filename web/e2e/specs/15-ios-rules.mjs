@@ -3,19 +3,15 @@
 // 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 탭에 없는 Notification을 부름)을 못 잡는다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 15-ios-rules(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { AA, aaa, until, step, browser, openSettings, shot } from "../lib/harness.mjs";
+import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 export default async function () {
-  // 확인창(PermissionRequest hook)을 띄우는 pane 하나가 이 기기 알림 하나다(11-agent-panes 「확인창 질문」과 같은 가짜)
+  // 확인창(Claude Code 권한 확인창 화면, 화면 감지 plan §8.110)을 띄우는 pane 하나가 이 기기 알림 하나다(11-agent-panes 「확인창 질문」과 같은 가짜)
   let asked = 0;
   const ask = () => {
     const label = `iosq${++asked}`;
-    const script =
-      `printf "Allow Bash(echo ${label})?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ` +
-      `"$0" hook --agent claude '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"echo ${label}"}}'; ` +
-      "stty -echo; exec cat > /dev/null";
-    aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", script, AA);
+    aaa("tab", "create", "--machine", "labA", "--label", label, "--", claudeSh, "-c", `stty -echo; ${claudeAsk(`echo ${label}`)}; exec cat > /dev/null`);
     return label;
   };
   const sounds = (device, from) => device.since(from).filter((e) => /^(tone|muted|silent) /.test(e));
