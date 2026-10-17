@@ -884,6 +884,40 @@ try {
     await until("연결 화면 아이콘", async () => (await gate(pp)).join() === "IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await gate(pp)}`));
     await shot(pp, "phone-pair-icon");
     await ctx.close();
+    // iPhone WebKit 390×844(QA t-0337 Q2): 옛 .pair는 입력칸 고유 폭(20px mono·자간)이 grid 항목 카드를 47px 밀어 오른쪽이 잘렸다.
+    // AccessGate는 카드 폭이 min(100%, …)이고 입력칸이 100%라 카드·입력칸·단추·설명·틀린 코드 말이 모두 화면 안이다
+    const wk = await webkit.launch();
+    try {
+      const wctx = await wk.newContext({
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      });
+      const wp = await wctx.newPage();
+      await wp.goto(base);
+      const input = wp.getByLabel("페어링 코드");
+      await input.waitFor();
+      await input.fill("000000");
+      await wp.getByRole("button", { name: "이 기기 페어링" }).click();
+      await wp.getByRole("alert").waitFor();
+      const fit = await wp.evaluate(() => {
+        const right = (sel) => [...document.querySelectorAll(sel)].map((e) => Math.round(e.getBoundingClientRect().right));
+        const card = document.querySelector(".access-gate").getBoundingClientRect();
+        return {
+          page: document.documentElement.scrollWidth,
+          view: window.innerWidth,
+          card: [Math.round(card.left), Math.round(card.right)],
+          parts: right(".access-gate-input, .access-gate-submit, .access-gate-copy, .access-gate-error"),
+        };
+      });
+      if (fit.page > fit.view || fit.card[0] < 0 || fit.card[1] > fit.view || fit.parts.some((r) => r > fit.card[1]))
+        bad.push(`iPhone WebKit 연결 화면이 넘친다: ${JSON.stringify(fit)}`);
+      await shot(wp, "phone-webkit-pair-gate");
+      await wctx.close();
+    } finally {
+      await wk.close();
+    }
     // 머리(목록 왼쪽 위)와 아무것도 고르지 않은 빈 화면
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     await until("머리·빈 화면 아이콘", async () => (await logos(dp)).join("|") === "IMG /icon.svg true 22 |IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(dp)}`));
@@ -2771,6 +2805,8 @@ try {
     await page.reload();
     await page.getByTestId("machine-labA").waitFor();
     await until("초안 보존", async () => (await page.getByLabel("보낼 글").inputValue()) === "a\nb");
+    // 다시 연 화면은 host의 readonly 알림이 올 때까지 입력줄이 꺼져 있고, 꺼진 동안의 Enter는 초안을 두고 보내지 않는다
+    await until("입력줄 켜짐", () => page.getByLabel("보낼 글").isEnabled());
     await page.getByLabel("보낼 글").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     // 여러 줄 붙여넣기 다음 Enter는 300ms 뒤 따로 온다(둘 다 와야 끝난다)
     await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>'));
