@@ -133,7 +133,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   말고 까닭을 들어 제안한다. 사용자가 채팅에서 그때 한 번 넘기게 할 수 있다(`thread start`는 경고만 한다).
 - TASKS.md task로 시작: `aaa thread start {p} --from-task \"<제목>\" [--kind dir | --repo <경로>]`. owner가 profile·machine을 정한다.
 - 그 밖: `aaa thread start {p} --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
-  project.toml `thread_profile`이다. `--repo`가 있으면 worktree, 없으면 repo 없는 작업 폴더다.
+  project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
+  작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project {p}`가 보인다.
 - 보고 확인: `aaa thread show {p} <id>`, `aaa thread library {p} <id>`, 다 봤으면 `aaa thread ack {p} <id>`, 끝나면 `aaa thread resolve {p} <id>`.
 - 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart {p} <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된) profile로
   띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
@@ -144,6 +145,12 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
   확인창 질문은 `aaa question list`·`aaa question answer`.
+
+## safety(사용자만 바꾼다)
+`start_threads`·`trust_screens`·yolo·`thread_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의 safety 설정이다.
+`aaa safety show {p}`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
+터미널에서만 한다: 필요하면 사용자에게 그 명령을 알린다. project.toml의 `start_threads`·`trust_screens`는 옛 자리라
+safety 표에 값이 있으면 먹지 않는다.
 
 ## thread pane의 확인창
 thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명령·편집 권한 확인창)에 멈출 수 있다. 사용자가 pane에 가지 않게

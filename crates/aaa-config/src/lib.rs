@@ -434,7 +434,8 @@ pub struct AgentConfig {
     pub reconnect: ReconnectSection,
     pub selfcheck: SelfcheckSection,
     pub health: HealthSection,
-    /// thread를 띄우는 profile(§8.2). host.toml `[projects] allow_profiles`가 허용한 것만 쓴다.
+    /// thread를 띄우는 profile(§8.2). host.toml `[safety.*] thread_profiles`(옛 `[projects] allow_profiles`)가 허용한 것만
+    /// 쓴다. claude·codex는 없어도 기본 profile이다(plan §8.115).
     pub profiles: std::collections::BTreeMap<String, Profile>,
 }
 

@@ -320,11 +320,8 @@ fn set(json: bool, target: &str, key: &str, words: &[String]) -> Result<ExitCode
         );
         println!("agent가 묻지 않고 명령을 실행하고 파일을 고친다.");
     }
-    if !crate::person::confirm(&format!(
-        "{}: {key}는 지금 {before}다. `{}`로 바꿀까?",
-        target.label(),
-        words.join(" ")
-    ))? {
+    let after = if words.is_empty() { "(빈 목록)".to_string() } else { words.join(" ") };
+    if !crate::person::confirm(&format!("{}의 {key}: 지금 {before} → `{after}`. 바꿀까?", target.label()))? {
         bail!("바꾸지 않았다");
     }
     let (path, text) = host_text();
