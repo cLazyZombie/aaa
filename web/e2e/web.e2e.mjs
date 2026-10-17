@@ -598,6 +598,17 @@ async function step(name, fn) {
 fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(`${root}/c`, { recursive: true });
 if (shots) fs.mkdirSync(shots, { recursive: true });
+// 실행 파일 이름이 claude인 셸: agent가 그 pane 화면을 Claude 규칙(herdr claude.toml)으로 보고 상태를 정한다(plan §8.95)
+const claudeSh = `${root}/bin/claude`;
+fs.mkdirSync(`${root}/bin`, { recursive: true });
+fs.writeFileSync(claudeSh, '#!/bin/sh\nexec /bin/sh "$@"\n', { mode: 0o755 });
+// Claude Code 화면 조각(sh 명령, 화면을 지우고 그린다). 판정은 herdr 원본 엔진으로 확인했다: 권한 확인창
+// `bash_permission_prompt`(질문), spinner `live_turn_working`(작업 중), 입력 상자 `live_prompt_box`(idle)
+const clearScreen = "printf '\\033[2J\\033[H'";
+const claudeAsk = (cmd) =>
+  `${clearScreen}; printf '%s\\n' ' Bash command' '' '   ${cmd}' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel · Tab to amend'`;
+const claudeWorking = `${clearScreen}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'`;
+const claudeIdle = `${clearScreen}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'`;
 const webPort = await freePort();
 
 // 구독 사용량(host usage.rs): 실험실 집과 가짜 구독 서버. host는 이 집만 읽고 keychain·gh·실제 구독 주소에 닿지 않는다
@@ -1821,9 +1832,10 @@ try {
   });
 
   await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 타일 별, Codex는 매듭, 셸은 터미널 표시", async () => {
-    // hook으로 harness를 알린 pane(Claude·Codex)과 셸(t1)
+    // 세션 ID hook으로 harness를 알린 pane(Claude SessionStart·Codex notify)과 셸(t1)
+    const idHook = { claude: '{"hook_event_name":"SessionStart","session_id":"m1","source":"startup"}', codex: '{"type":"agent-turn-complete","thread-id":"m2"}' };
     for (const [name, agent] of [["markc", "claude"], ["markx", "codex"]])
-      aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '{"hook_event_name":"Stop"}'; exec cat`, AA);
+      aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '${idHook[agent]}'; exec cat`, AA);
     const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
     for (const name of ["markc", "markx"]) await until(`${name} harness`, async () => (await mp.getByTestId(`agent-${name}`).count()) === 1);
     const markOf = (name) =>
@@ -3007,12 +3019,9 @@ try {
   });
 
   await step("확인창 질문: 카드·상태 표시 → reader는 못 답함 → 예", async () => {
-    // 세션 안에서 Claude처럼 선택 창을 그리고 hook 사건(PermissionRequest)을 보낸다
-    const script =
-      'printf "Allow Bash(make test)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
-      '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}\'; ' +
-      "stty -echo; exec cat > /dev/null";
-    aaa("tab", "create", "--machine", "labA", "--label", "q1", "--", "/bin/sh", "-c", script, AA);
+    // 세션 안에서 Claude 권한 확인창을 그린다(화면 감지가 질문을 연다). 답(Enter)을 받으면 일하는 화면으로 바뀐다.
+    const script = `stty -echo; ${claudeAsk("make test")}; read a; ${claudeWorking}; exec cat > /dev/null`;
+    const q1 = aaa("tab", "create", "--machine", "labA", "--label", "q1", "--", claudeSh, "-c", script).tabs.at(-1).root.pane;
     // 목록에는 그 줄의 빨간 ?만(차이 목록 Q1·S2, 참고 Sidebar.tsx StatusBadge): 카드는 그 pane을 열면 터미널 아래에
     const state = (pg) => pg.getByTestId("agent-q1");
     await state(page).and(page.locator('[data-status="blocked"]')).waitFor();
@@ -3020,10 +3029,11 @@ try {
     if ((await state(page).getAttribute("aria-label")) !== "agent 답을 기다림") throw new Error(`상태 말: ${await state(page).getAttribute("aria-label")}`);
     if ((await page.locator(".question").count()) !== 0) throw new Error("pane을 열기 전에 목록에 질문 카드가 있다");
     await page.getByTestId("pane-q1").click();
-    const q = aaa("question", "list").questions.find((x) => x.text.includes("make test"));
+    // 질문 본문은 화면에서 물음표가 있는 마지막 줄이다(host `modal_of`·agent `question_of`)
+    const q = aaa("question", "list").questions.find((x) => x.pane === q1);
     const card = page.getByTestId(`dock-question-${q.id}`);
     await card.waitFor();
-    if (!(await card.innerText()).includes("make test")) throw new Error(`카드 본문: ${await card.innerText()}`);
+    if (!(await card.innerText()).includes("Do you want to proceed?")) throw new Error(`카드 본문: ${await card.innerText()}`);
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     await state(rd.page).and(rd.page.locator('[data-status="blocked"]')).waitFor();
     await rd.page.getByTestId("pane-q1").click();
@@ -3043,16 +3053,14 @@ try {
   });
 
   await step("확인창 답이 실패하면 카드 안에 보인다(herdr-web-ui PromptCard.tsx pending·role=alert, QA t-0337 Q3): 휴대폰에서 답하는 동안 선택지가 막히고, host가 선택 창을 못 찾은 오류가 그 카드에 뜨며 다시 누를 수 있다", async () => {
-    // 선택 창 끝 줄(「Esc to cancel」)이 없는 확인창: host는 MENU_WAIT 동안 찾다가 오류로 답한다
-    const script =
-      'printf "Allow Bash(make lint)?\\n\\342\\235\\257 1. Yes\\n  2. No\\n"; ' +
-      '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make lint"}}\'; ' +
-      "stty -echo; exec cat > /dev/null";
-    aaa("tab", "create", "--machine", "labA", "--label", "q2", "--", "/bin/sh", "-c", script, AA);
+    // 선택 창 끝 줄(「Esc to cancel」)이 없는 확인창: 화면 감지는 Claude 권한 창으로 보고(herdr bash_permission_prompt),
+    // host는 MENU_WAIT 동안 선택 창 끝 줄을 찾다가 오류로 답한다
+    const script = `${clearScreen}; printf '%s\\n' ' Bash command' '' '   make lint' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No'; stty -echo; exec cat > /dev/null`;
+    const q2 = aaa("tab", "create", "--machine", "labA", "--label", "q2", "--", claudeSh, "-c", script).tabs.at(-1).root.pane;
     const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await ph.page.getByTestId("agent-q2").and(ph.page.locator('[data-status="blocked"]')).waitFor();
     await ph.page.getByTestId("pane-q2").click();
-    const q = aaa("question", "list").questions.find((x) => x.text.includes("make lint"));
+    const q = aaa("question", "list").questions.find((x) => x.pane === q2);
     const id = `dock-question-${q.id}`;
     const card = ph.page.getByTestId(id);
     await card.waitFor();
@@ -3075,11 +3083,9 @@ try {
   });
 
   await step("끝남(안 봄)(herdr PaneState::seen, 차이 목록 S1): 보는 화면 없이 턴이 끝나면 초록 점, 그 pane을 열면 사라지고, 보는 동안 끝난 턴은 남지 않으며, 가려진 동안 끝나면 다시 보일 때 사라진다", async () => {
-    // 줄 하나를 받을 때마다 턴을 열고(UserPromptSubmit) 다음 줄에 닫는다(Stop): 시험이 턴의 끝을 정한다
-    const script =
-      'while read a; do "$0" hook --agent claude \'{"hook_event_name":"UserPromptSubmit"}\'; ' +
-      'read b; "$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; done';
-    aaa("tab", "create", "--machine", "labA", "--label", "seen1", "--", "/bin/sh", "-c", script, AA);
+    // 줄 하나를 받을 때마다 턴을 열고(일하는 화면) 다음 줄에 닫는다(입력 상자): 시험이 턴의 끝을 정한다
+    const script = `stty -echo; ${claudeIdle}; while read a; do ${claudeWorking}; read b; ${claudeIdle}; done`;
+    aaa("tab", "create", "--machine", "labA", "--label", "seen1", "--", claudeSh, "-c", script);
     const inUse = (p, on) =>
       p.evaluate((on) => {
         if (on) delete document.hasFocus;
@@ -4064,7 +4070,7 @@ try {
     );
     const hookPane = (name, path) =>
       aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
-        JSON.stringify({ hook_event_name: "Stop", session_id: "s1", transcript_path: path }));
+        JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1", source: "startup", transcript_path: path }));
     hookPane("chat1", tr);
     await page.getByTestId("pane-chat1").click();
     await until("대화 단추", async () => (await page.getByTestId("chat-toggle").count()) === 1);
@@ -4130,11 +4136,11 @@ try {
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
     if ((await termBox()) !== boxBefore) throw new Error(`오류 띠가 터미널 칸을 바꿨다: ${boxBefore} → ${await termBox()}`);
 
-    // 3) harness pane(hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
+    // 3) harness pane(세션 ID hook 보냄, 입력 대기): 여러 조각(1.2MB) 그림의 경로를 bracketed paste로 넣고 Enter는 보내지 않는다
     const big = Buffer.concat([png.subarray(0, 8), Buffer.alloc(1_200_000, 7)]);
     const recv = `${root}/h1.in`;
     aaa("tab", "create", "--machine", "labA", "--label", "h1", "--", "/bin/sh", "-c",
-      '"$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; stty raw -echo; printf "\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
+      '"$0" hook --agent claude \'{"hook_event_name":"SessionStart","session_id":"h1","source":"startup"}\'; stty raw -echo; printf "\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
     await until("h1 harness 상태", async () => (await page.getByTestId("agent-h1").count()) === 1);
     await page.getByTestId("pane-h1").click();
     await until("h1 터미널", async () => (await screenText(page)).includes("❯"));
@@ -4193,10 +4199,7 @@ try {
 
     // 4) 확인창이 떠 있는 harness pane에는 넣지 않는다
     const recv2 = `${root}/h2.in`;
-    aaa("tab", "create", "--machine", "labA", "--label", "h2", "--", "/bin/sh", "-c",
-      'printf "Allow Bash(rm x)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
-        '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}\'; ' +
-        'stty raw -echo; exec cat > "$1"', AA, recv2);
+    aaa("tab", "create", "--machine", "labA", "--label", "h2", "--", claudeSh, "-c", `${claudeAsk("rm x")}; stty raw -echo; exec cat > "$1"`, AA, recv2);
     await page.getByTestId("agent-h2").and(page.locator('[data-status="blocked"]')).waitFor();
     await page.getByTestId("pane-h2").click();
     await until("h2 터미널", async () => (await screenText(page)).includes("Esc to cancel"));
