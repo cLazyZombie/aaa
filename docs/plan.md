@@ -1683,6 +1683,23 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 웹 E2E 「service worker 알림」: 내보내는 `sw.js`를 가짜 `self`로 그대로 돌린다(참고 `pwa-notification.test.ts`와 같은 방법). 보이는 창이면 소리 없이, focus 전 알림·거절 뒤 새 창·focus된 창 고르기·자리 없는 알림, 파일 탭, 늦은 focus·밀려난 거절·느린 창 찾기·늦게 열린 창을 본다.
   - 웹 E2E 「보고 준비 알림」: 보고 알림의 제목·자리를 본다. 화면을 다시 쓰면 새 보고에 `push_skipped`가 남고 기기에는 오지 않는다. 둘째 화면을 열면 쓰는 화면이 2, 닫으면 1이다. 이 단계 앞에서는 화면의 focus만 없애 보고 알림이 가게 하고, 알림이 나간 뒤에 ack한다.
 
+### 8.70 M4 이전 도구: inventory·import·shadow(10-18, plan §15)
+
+절차와 전환 gate·rollback은 [migration.md](migration.md)에 있다. 여기에는 구현 결정만 적는다.
+
+- **자리.** `aaa-host::migrate`(source·inventory·convert·shadow)와 `aaa migrate` 하위 명령, `scripts/m4/inventory.sh`·`shadow-capture.sh`. host DB와 thread 기록(`ThreadRec`)을 쓰므로 host crate에 둔다. 0.2 형식을 읽는 것은 이 모듈뿐이다.
+- **0.2 형식은 참고 소스대로 읽는다(1f05c00).** thread 기록은 `src/thread.rs` `Thread`, 보고 사본은 `home_report_path`(`threads/<id>.md`), inbox는 `src/inbox.rs`(`+++` TOML, 끝낸 것은 `done/`), agent 맞추기는 `thread::agent_matches`·`pane_matches`(pane ID·작업 폴더·종류·이름, 복원된 이름 없는 agent도 우리 것), 진행 보고는 `progress::self_report`(pane·terminal ID). herdr 상태 말은 0.9.5 `src/api/schema/common.rs` `AgentStatus`(idle·working·blocked·done·unknown).
+- **보고 hash는 두 도구가 같다.** 0.2 `sha256_hex(report.md)`(`thread.rs:694`, 원격은 `remote.rs:201` `shasum -a 256`)와 aaa agent `report_hash`(`threads.rs:242`) 모두 report.md 바이트의 sha256 hex다. 그래서 확인(ack) 상태를 옮긴다. 단 0.2 기록 hash와 집 보고 사본이 같을 때만(다르면 ticker가 아직 못 본 새 보고다).
+- **열린 thread는 가져오지 않는다.** 소유 도구 하나(§15 3)를 지킨다. 대신 재개 정보를 inventory에 남긴다: herdr 스냅샷에서 찾은 harness 세션 ID와 재개 명령(herdr 0.9.5가 복원할 때 쓰는 `claude --resume <id>`·`codex resume <id>` 꼴). profile 인자는 원격 thread는 기록(`profile_args`, 시작 때 해석)에서, 로컬 thread는 기록에 없으므로(`remote_profile = false`) home 머신 `herdr-projects profile resolve`로 푼다. 출처를 함께 적는다. 운영에서 옵션 없이 resume되면 model·effort가 바뀌던 일(10-15 herdr 재시작)을 막는다.
+- **routine은 꺼서 넣는다.** 0.2 ticker와 aaa ticker가 같은 일을 두 번 하지 않게 한다. 전환 gate G9.
+- **끝내지 않은 inbox 항목은 「봤음」으로 넣는다.** 0.2 coordinator가 이미 알림을 받았다. gate G3은 0개를 요구한다.
+- **비밀값이 있을 수 있는 곳은 읽지 않는다.** `.env*`·`.herdr-web-ui/`·`.claude/`·`.git/`, 키·인증서 확장자. inventory와 import가 같은 규칙(`inventory::exclusion`)을 쓴다. symlink는 따라가지 않는다(0.2.35 사본 규칙).
+- **사본은 대조한다.** 복사 뒤 사본 sha256을 inventory와 비교한다. macOS에서 `std::fs::copy`는 clone을 먼저 쓰므로 같은 APFS volume이면 공간이 거의 들지 않는다. 넣은 thread 수는 DB를 다시 읽어 센다(처음 판은 UPDATE만 하는 `thread_save`를 써서 아무것도 넣지 못했는데 「323개 넣음」으로 보였다. 시험이 잡았다. 이제 `Db::thread_import`).
+- **덮어쓰지 않는다.** 대상 프로젝트 폴더가 있으면, 그 상태 폴더의 host가 떠 있으면 거부한다. 뼈대는 `project create`와 같은 `write_skeleton`(PROJECT.md를 마지막에).
+- **shadow는 규칙을 같은 입력에 다시 돌린다.** aaa host는 herdr pane을 보지 못한다. 그래서 같은 tick의 입력을 0.2 `thread::group()`(`thread.rs:565`, 옮긴 것)과 aaa `orch::thread_group`(실제 코드)에 넣는다. 0.2 재현이 0.2 CLI 출력과 다른 줄은 입력이 모자란 것이라 판정하지 않는다. 원격 thread는 0.2 CLI처럼 ticker 기록 상태를 쓰고(`threads.rs` row: 「the CLI makes no ssh call」), 그 머신 지금 상태를 넣은 결과를 따로 둔다.
+- **화면 단서.** aaa thread의 상태가 화면과 맞는지 볼 때 herdr `src/detect/manifests/claude.toml`의 표지 일부(`esc to interrupt`, `Do you want to proceed?`)만 쓴다. 판정 엔진은 D8(상태 감지 thread)이 옮긴다.
+- **수집은 해석하지 않는다.** 수집 스크립트는 운영 읽기 명령의 출력을 그대로 tick 폴더에 둔다. 분석기 결함이 몇 시간치 수집을 버리지 않게 한다. `aaa inbox list`는 `--peek`로만 부른다(아니면 「봤다」를 찍는다).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -2012,7 +2029,7 @@ primary 근거:
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
 | M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only(§8.27, **10-17 구현**), PWA·Web Push(§8.23·§8.26, **10-17 구현**), TUI Ctrl+V·세 OS front clipboard(§8.28, **10-17 구현**), thread 범위 token(§8.25, **10-17 세션 역할로 구현**) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
-| M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal | §15, 기존 작업 보존 |
+| M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal(**10-18 도구·pilot·rehearsal**, §8.70, [migration.md](migration.md)) | §15, 기존 작업 보존. 실제 전환·coordinator 이동은 사용자 승인 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.
 - **사후 평가자 배치:** MVP 필수가 아니므로 M3에 두었다. 역할 필드·흐름 사건은 M1-3에 있으므로, 원하면 M1 직후 M2와 독립적으로 먼저 할 수 있다.
@@ -2024,6 +2041,8 @@ primary 근거:
   - 실제 일정을 정하는 것은 구현 시간보다 사용자 작업·승인 대기다. launcher 등록(결정 14로 시험 Mac 불필요), 실제 Claude·Codex smoke, 휴대폰 확인, 운영 이전 shadow 기간이 여기에 든다. 그래서 위 표의 「일」 단위는 대기와 검증을 포함한 상한으로 남긴다.
 
 ## 15. 현재 운영에서 이전
+
+도구·전환 gate·전환 순서·rollback과 그 rehearsal은 [migration.md](migration.md), 구현 결정은 §8.70에 있다(10-18).
 
 1. **읽기 전용 inventory.**
    - herdr 0.9.5와 projects 0.2.35의 machine·session·pane·thread·profile·report·library를 export하고 hash를 보존한다.
