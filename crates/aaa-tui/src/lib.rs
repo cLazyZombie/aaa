@@ -20,6 +20,7 @@ pub mod keys;
 pub mod list;
 mod prompt;
 mod tabs;
+mod theme;
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
@@ -43,6 +44,26 @@ use aaa_proto::layout::{self, Rect};
 
 /// 오류 막대를 보이는 시간(herdr `ENDPOINT_ERROR_TIMEOUT_SECS`)
 const ERROR_SHOWN: Duration = Duration::from_secs(5);
+/// 알림 카드가 보이는 시간
+const MESSAGE_SHOWN: Duration = Duration::from_secs(5);
+/// 펼친 사이드바 폭의 범위(herdr `validated_sidebar_bounds` 기본 18~36)와 접힌 compact 폭(herdr 4)
+const SIDEBAR_MIN: u16 = 18;
+const SIDEBAR_MAX: u16 = 36;
+const COMPACT_WIDTH: u16 = 4;
+/// 좁은 화면 머리의 오른쪽 단추 폭(herdr `MOBILE_BUTTON_WIDTH`)
+const MOBILE_BUTTON_WIDTH: u16 = 10;
+/// 탭 막대 오른쪽 조각을 두려면 이름표 자리가 이만큼 남아야 한다(herdr `MIN_TAB_STRIP_WIDTH` = 8 + 3 + 3×2)
+const MIN_TAB_STRIP_WIDTH: u16 = tabs::MIN_TAB_WIDTH + 3 + 6;
+
+/// 화면 배치(herdr `ClientShellLayout`). 쓰지 않는 칸은 폭이나 높이가 0이다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Shell {
+    sidebar: Rect,
+    tab_bar: Rect,
+    /// 좁은 화면 두 줄 머리(herdr `mobile_header`)
+    header: Rect,
+    panes: Rect,
+}
 
 /// host.toml `[tui]`(읽지 못하면 기본값)
 fn tui_config() -> aaa_config::TuiSection {
@@ -164,8 +185,15 @@ struct App {
     machines: Vec<MachineView>,
     /// thread 기록(`project/id`). 처음에 목록을 읽고, 바뀌면 사건으로 온다.
     threads: HashMap<String, ThreadView>,
-    /// 왼쪽 목록을 펼쳤나. 정하지 않았으면 터미널 폭으로 정한다(좁으면 접힘).
-    list_open: Option<bool>,
+    /// 왼쪽 목록을 접었나(설정을 읽기 전에는 None, `[tui] sidebar_start_collapsed`로 시작)
+    sidebar_collapsed: Option<bool>,
+    /// 펼친 목록 폭(구분선 포함, `[tui] sidebar_width`)
+    sidebar_width: u16,
+    collapsed_mode: aaa_config::SidebarCollapsedMode,
+    /// 이 폭 이하면 두 줄 머리(`[tui] mobile_width_threshold`)
+    mobile_width: u16,
+    /// 색(`[tui] theme`, herdr 팔레트)
+    palette: theme::Palette,
     /// 탐색 모드에서 고른 줄(줄이 늘거나 줄어도 같은 것을 가리킨다)
     list_sel: Option<list::Row>,
     /// 마지막으로 그린 터미널 크기
@@ -177,8 +205,8 @@ struct App {
     focus: Option<String>,
     mode: Mode,
     overlay: Option<Overlay>,
-    /// 알림 글(상태 줄)
-    message: Option<String>,
+    /// 알림 글(오른쪽 위 카드, MESSAGE_SHOWN 뒤 사라진다)
+    message: Option<(String, tokio::time::Instant)>,
     /// 오류(ERROR 막대, ERROR_SHOWN 뒤 사라진다)
     error: Option<(String, tokio::time::Instant)>,
     pending: HashMap<String, Pending>,
@@ -222,7 +250,11 @@ impl App {
             pane_order: vec![],
             machines: vec![],
             threads: HashMap::new(),
-            list_open: None,
+            sidebar_collapsed: None,
+            sidebar_width: 26,
+            collapsed_mode: aaa_config::SidebarCollapsedMode::Compact,
+            mobile_width: 64,
+            palette: theme::Palette::catppuccin(),
             list_sel: None,
             width: 0,
             height: 0,
@@ -261,6 +293,20 @@ impl App {
         self.jamo_keys = cfg.prefix_jamo_keys;
         self.prompt_new_tab = cfg.prompt_new_tab_name;
         self.confirm_close = cfg.confirm_close;
+        // herdr: 폭은 설정을 따르고, 펴고 접은 상태는 처음에만 설정에서 정한다(다시 읽어도 사용자가 바꾼 대로)
+        self.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        self.collapsed_mode = cfg.sidebar_collapsed_mode;
+        self.mobile_width = cfg.mobile_width_threshold;
+        self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
+        // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
+        self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
+        if theme::Palette::from_name(&cfg.theme).is_none() {
+            self.set_error(format!(
+                "[tui] theme 「{}」을 모른다: {} 중 하나",
+                cfg.theme,
+                theme::THEME_NAMES.join(", ")
+            ));
+        }
         if !bad.is_empty() {
             self.set_error(format!("[tui] prefix 값을 읽지 못했다: {} (예: \"ctrl+b\")", bad.join(", ")));
         }
@@ -269,6 +315,10 @@ impl App {
 
     fn set_error(&mut self, e: impl Into<String>) {
         self.error = Some((e.into(), tokio::time::Instant::now() + ERROR_SHOWN));
+    }
+
+    fn set_message(&mut self, m: impl Into<String>) {
+        self.message = Some((m.into(), tokio::time::Instant::now() + MESSAGE_SHOWN));
     }
 
     fn is_prefix(&self, c: Combo) -> bool {
@@ -353,6 +403,11 @@ impl App {
                     self.error = None;
                     dirty = true;
                 }
+                // 알림 카드도(herdr 알림처럼)
+                _ = tokio::time::sleep_until(self.message.as_ref().map_or_else(tokio::time::Instant::now, |m| m.1)), if self.message.is_some() => {
+                    self.message = None;
+                    dirty = true;
+                }
             }
             // 쌓인 메시지를 마저 처리해 한 번만 그린다
             while let Ok(m) = rx.try_recv() {
@@ -418,7 +473,7 @@ impl App {
                         self.threads = threads.into_iter().map(|t| (list::thread_key(&t), t)).collect();
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Attached { path, inserted, note }), _) => {
-                        self.message = Some(match (inserted, note) {
+                        self.set_message(match (inserted, note) {
                             (true, _) => format!("그림 경로를 넣었다(Enter 없음): {path}"),
                             (false, Some(n)) => format!("그림을 저장했다: {path} — {n}"),
                             (false, None) => format!("그림을 저장했다: {path}"),
@@ -470,18 +525,43 @@ impl App {
     }
 
     /// 왼쪽 목록이 보이나(정하지 않았으면 좁은 터미널에서는 접힘)
-    fn list_shown(&self, w: u16) -> bool {
-        self.list_open.unwrap_or(w >= list::NARROW) && w > list::WIDTH + 20
+    fn collapsed(&self) -> bool {
+        self.sidebar_collapsed.unwrap_or(false)
     }
 
-    /// pane 칸 영역: 맨 위 한 줄은 탭, 맨 아래 한 줄은 상태 줄, 목록이 보이면 그 오른쪽(구분선 다음)
+    /// 화면 칸 나누기(herdr `ClientShellConfig::layout`). 좁으면(mobile 폭 이하) 두 줄 머리 + pane 칸.
+    /// 아니면 왼쪽에 목록(전체 높이, 접으면 compact 4칸·hidden 0칸), 그 오른쪽 맨 위 한 줄이 탭 줄, 나머지가 pane 칸이다.
+    /// 상태 줄은 없다: 모드·오류 막대는 pane 칸 맨 아래 줄에 겹쳐 그린다(PTY 크기는 그대로).
+    fn shell(&self, area: Rect) -> Shell {
+        let none = Rect { w: 0, h: 0, ..area };
+        if area.w <= self.mobile_width {
+            let hh = area.h.min(2);
+            return Shell {
+                sidebar: none,
+                tab_bar: none,
+                header: Rect { h: hh, ..area },
+                panes: Rect { y: area.y + hh, h: area.h - hh, ..area },
+            };
+        }
+        let side = match (self.collapsed(), self.collapsed_mode) {
+            (false, _) => self.sidebar_width,
+            (true, aaa_config::SidebarCollapsedMode::Compact) => COMPACT_WIDTH,
+            (true, aaa_config::SidebarCollapsedMode::Hidden) => 0,
+        }
+        .min(area.w.saturating_sub(1));
+        let main = Rect { x: area.x + side, w: area.w - side, ..area };
+        let tab_h = u16::from(area.h > 1);
+        Shell {
+            sidebar: Rect { w: side, ..area },
+            tab_bar: Rect { h: tab_h, ..main },
+            header: none,
+            panes: Rect { y: main.y + tab_h, h: main.h - tab_h, ..main },
+        }
+    }
+
+    /// pane 칸 영역
     fn body(&self, area: Rect) -> Rect {
-        let side = if self.list_shown(area.w) { list::WIDTH + 1 } else { 0 };
-        Rect { x: area.x + side, y: area.y + 1, w: area.w - side, h: area.h.saturating_sub(2) }
-    }
-
-    fn list_rect(area: Rect) -> Rect {
-        Rect { x: area.x, y: area.y + 1, w: list::WIDTH, h: area.h.saturating_sub(2) }
+        self.shell(area).panes
     }
 
     fn list_rows(&self) -> Vec<list::Row> {
@@ -501,7 +581,7 @@ impl App {
 
     /// 목록 펴기·접기(herdr `ToggleSidebar`: 포커스는 그대로)
     fn toggle_list(&mut self) {
-        self.list_open = Some(!self.list_shown(self.width));
+        self.sidebar_collapsed = Some(!self.collapsed());
     }
 
     /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 새 셸이면 새 탭
@@ -597,7 +677,7 @@ impl App {
         let Some(pane) = self.focus.clone() else { return Ok(false) };
         let Some(png) = tokio::task::spawn_blocking(clip::image_png).await.ok().flatten() else { return Ok(false) };
         self.attach_seq += 1;
-        self.message = Some(format!("그림 보내는 중({}KB)…", png.len().div_ceil(1024)));
+        self.set_message(format!("그림 보내는 중({}KB)…", png.len().div_ceil(1024)));
         for req in aaa_common::front::attach_requests(&pane, &png) {
             let id = tx.send(req).await?;
             self.pending.insert(id, Pending::Attach(self.attach_seq));
@@ -929,7 +1009,7 @@ impl App {
                 let cfg = tui_config();
                 self.apply_config(&cfg);
                 if self.error.is_none() {
-                    self.message = Some("설정을 다시 읽었다".into());
+                    self.set_message("설정을 다시 읽었다");
                 }
             }
             Action::OpenNotificationTarget => {
@@ -1068,38 +1148,31 @@ impl App {
         }
     }
 
-    /// 그리고 포커스 pane의 커서 위치를 돌려준다
+    /// 그리고 포커스 pane의 커서 위치를 돌려준다. 배치는 herdr `ClientShellConfig::layout`·`render_shell`:
+    /// 왼쪽 사이드바(온 높이) · 오른쪽 위 탭 막대 · 그 아래 pane, 좁으면 두 줄 머리. 상태 줄은 없고 모드 막대는 pane 맨 아랫줄에 겹친다.
     fn render(&self, buf: &mut Buffer, area: Rect) -> Option<(u16, u16)> {
-        // 탭 줄: 이름표 · workspace · 탭 이름표(herdr `render_tab_bar`) … 오른쪽에 열린 질문 수
-        let right_edge = area.x + area.w;
-        let put = |buf: &mut Buffer, x: u16, s: &str, st: Style| {
-            buf.set_stringn(x, area.y, s, right_edge.saturating_sub(x) as usize, st).0
-        };
-        let mut x = put(buf, area.x, " aaa ", Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD));
-        x = put(buf, x, &format!(" {} ", self.ws_name), Style::default().fg(DIM));
-        let asking = self.panes.values().filter(|p| is_asking(p)).count();
-        let ask_label = format!(" ? 질문 {asking} ");
-        let ask_w = if asking > 0 { unicode_width(&ask_label) as u16 + 1 } else { 0 };
-        self.render_tabs(buf, Rect { x, y: area.y, w: right_edge.saturating_sub(x).saturating_sub(ask_w), h: 1 });
-        if asking > 0 && x + ask_w <= right_edge {
-            put(
-                buf,
-                right_edge - ask_w + 1,
-                &ask_label,
-                Style::default().fg(ON_CHIP).bg(BLOCKED).add_modifier(Modifier::BOLD),
-            );
+        let p = &self.palette;
+        let sh = self.shell(area);
+        if sh.header.h > 0 {
+            self.render_header(buf, sh.header);
         }
-        let body = self.body(area);
-        let list_shown = self.list_shown(area.w);
-        if list_shown {
-            self.render_list(buf, area);
+        if sh.sidebar.w > 0 {
+            if self.collapsed() {
+                self.render_compact(buf, sh.sidebar);
+            } else {
+                self.render_sidebar(buf, sh.sidebar);
+            }
         }
+        if sh.tab_bar.h > 0 {
+            self.render_tab_bar(buf, sh.tab_bar);
+        }
+        let body = sh.panes;
         let mut cursor = None;
         match self.ws.tabs.get(self.tab) {
             None => {
                 let lines = [
-                    ("탭이 없다".to_string(), Style::default().add_modifier(Modifier::BOLD)),
-                    (format!("{} 다음 c로 새 탭 · ?로 단축키", self.prefix_label()), Style::default().fg(DIM)),
+                    ("탭이 없다".to_string(), Style::default().fg(p.text).add_modifier(Modifier::BOLD)),
+                    (format!("{} 다음 c로 새 탭 · ?로 단축키", self.prefix_label()), Style::default().fg(p.overlay0)),
                 ];
                 for (n, (msg, st)) in lines.iter().enumerate() {
                     let w = unicode_width(msg).min(body.w as usize) as u16;
@@ -1109,7 +1182,7 @@ impl App {
             }
             Some(tab) => {
                 let (rects, lines) = self.shown_rects(tab, body);
-                // 포커스 pane과 맞닿은 구분선만 강조색으로 그린다(여럿일 때 어디가 포커스인지 보인다)
+                // herdr 나눔선: 포커스 pane에 닿은 칸은 accent, 나머지는 overlay0
                 let focus_rect = rects.iter().find(|(p, _)| Some(p) == self.focus.as_ref()).map(|(_, r)| *r);
                 for (dir, r) in lines {
                     let ch = if dir == SplitDir::Horizontal { "│" } else { "─" };
@@ -1123,7 +1196,7 @@ impl App {
                                     (cy + 1 == f.y || cy == f.y + f.h) && cx >= f.x && cx < f.x + f.w
                                 }
                             });
-                            buf.set_string(cx, cy, ch, Style::default().fg(if near { ACCENT } else { FAINT }));
+                            buf.set_string(cx, cy, ch, Style::default().fg(if near { p.accent } else { p.overlay0 }));
                         }
                     }
                 }
@@ -1135,29 +1208,30 @@ impl App {
                 }
             }
         }
-        // 탐색 모드인데 목록이 접혀 있으면 pane 위에 띄워 보인다(pane 크기는 그대로)
-        if self.mode == Mode::Navigate && !list_shown {
-            self.render_list(buf, area);
+        // 탐색 모드인데 사이드바가 펼쳐져 있지 않으면 펼친 목록을 pane 위에 띄운다(pane 크기는 그대로).
+        // herdr는 접힌 칸의 번호만 강조한다: 이름을 보며 고를 수 있게 aaa는 띄운다(plan §8.73).
+        if self.mode == Mode::Navigate && (self.collapsed() || sh.sidebar.w == 0) {
+            // 모드 막대(pane 맨 아랫줄) 위까지
+            let over = if sh.header.h > 0 {
+                Rect { h: body.h.saturating_sub(1), ..body }
+            } else {
+                Rect { w: self.sidebar_width.min(area.w), h: area.h.saturating_sub(1), ..area }
+            };
+            self.render_sidebar(buf, over);
         }
-        // 상태 줄: 오류나 모드가 있으면 herdr 모드 막대(`render_mode_bar`), 아니면 색 조각들(머신 · pane · 상태 …)
-        let y = area.y + area.h.saturating_sub(1);
-        for dx in 0..area.w {
-            buf.set_string(area.x + dx, y, " ", Style::default());
+        if let Some(bar) = self.render_mode_bar(buf, body)
+            && cursor.is_some_and(|(_, y)| y == bar.y)
+        {
+            cursor = None;
         }
-        let mut x = area.x;
-        let segments = self.mode_bar().unwrap_or_else(|| self.status_segments());
-        for (text, st) in segments {
-            let room = right_edge.saturating_sub(x) as usize;
-            if room == 0 {
-                break;
-            }
-            x = buf.set_stringn(x, y, &text, room, st).0;
+        if let Some((m, _)) = &self.message {
+            render_notice(buf, area, m, p);
         }
         match &self.overlay {
-            Some(Overlay::Help(h)) => return help::render(buf, area, h, &self.prefix_label()),
-            Some(Overlay::Rename(r)) => return prompt::render_rename(buf, area, r),
+            Some(Overlay::Help(h)) => return help::render(buf, area, h, &self.prefix_label(), p),
+            Some(Overlay::Rename(r)) => return prompt::render_rename(buf, area, r, p),
             Some(Overlay::Confirm(c)) => {
-                prompt::render_confirm(buf, area, c);
+                prompt::render_confirm(buf, area, c, p);
                 return None;
             }
             None => {}
@@ -1165,54 +1239,253 @@ impl App {
         cursor
     }
 
-    /// 탭 이름표들(herdr: 지금 탭은 강조색 바탕, 이름을 붙인 탭은 굵게·밝게, 넘치면 지금 탭을 가운데로 밀고 `…`)
-    fn render_tabs(&self, buf: &mut Buffer, r: Rect) {
+    /// 탭 막대(herdr `render_tab_bar`): `panel_bg` 줄에 이름표들. 지금 탭은 accent 바탕(이름을 붙였으면 굵게),
+    /// 다른 탭은 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`. 넘치면 지금 탭을 가운데로 밀고 `…`.
+    /// 오른쪽 끝은 herdr `tab_bar_right` 자리: 열린 질문 수, 다른 화면이 크기를 쥔 포커스 pane.
+    fn render_tab_bar(&self, buf: &mut Buffer, r: Rect) {
+        let p = &self.palette;
+        fill(buf, r, Style::default().bg(p.panel_bg));
+        let status = self.tab_bar_right();
+        let status_w: u16 =
+            status.iter().map(|(t, _)| unicode_width(t) as u16).sum::<u16>() + status.len().saturating_sub(1) as u16;
+        let reserved =
+            if status_w > 0 && r.w.saturating_sub(status_w + 1) >= MIN_TAB_STRIP_WIDTH { status_w + 1 } else { 0 };
+        let content = Rect { w: r.w - reserved, ..r };
         let labels: Vec<String> = (0..self.ws.tabs.len()).map(|i| self.chip_label(i)).collect();
-        let strip = tabs::layout(&labels, self.tab, r.x, r.w);
+        let strip = tabs::layout(&labels, self.tab, content.x, content.w);
         for c in &strip.chips {
             let custom = !self.ws.tabs[c.index].name.is_empty();
-            let mut style = if c.index == self.tab {
-                Style::default().fg(ON_CHIP).bg(ACCENT)
+            let style = if c.index == self.tab {
+                let s = Style::default().fg(theme::contrast(p)).bg(p.accent);
+                if custom { s.add_modifier(Modifier::BOLD) } else { s }
             } else if custom {
-                Style::default().fg(ON_SURFACE).bg(SURFACE)
+                Style::default().fg(p.overlay1).bg(p.surface0)
             } else {
-                Style::default().fg(DIM).bg(SURFACE)
+                Style::default().fg(p.overlay0).bg(p.surface0)
             };
-            if custom && c.index == self.tab {
-                style = style.add_modifier(Modifier::BOLD);
-            }
             let name = &labels[c.index];
             let pad = c.w.saturating_sub(unicode_width(name) as u16);
             let left = pad / 2;
             let text = format!("{:l$}{name}{:r$}", "", "", l = left as usize, r = pad.saturating_sub(left) as usize);
             buf.set_stringn(c.x, r.y, &text, c.w as usize, style);
         }
+        let more = Style::default().fg(p.overlay0).bg(p.panel_bg);
         if strip.more_left {
-            buf.set_string(r.x, r.y, "…", Style::default().fg(FAINT));
+            buf.set_string(content.x, r.y, "…", more);
         }
-        if strip.more_right && r.w > 0 {
-            buf.set_string(r.x + r.w - 1, r.y, "…", Style::default().fg(FAINT));
+        if strip.more_right && content.w > 0 {
+            buf.set_string(content.x + content.w - 1, r.y, "…", more);
+        }
+        if reserved > 0 {
+            let mut x = r.x + r.w - status_w;
+            for (i, (t, st)) in status.iter().enumerate() {
+                if i > 0 {
+                    x = buf.set_stringn(x, r.y, " ", usize::from(u16::MAX), Style::default().bg(p.panel_bg)).0;
+                }
+                x = buf.set_stringn(x, r.y, t, usize::from(u16::MAX), *st).0;
+            }
         }
     }
 
-    fn render_list(&self, buf: &mut Buffer, area: Rect) {
-        let rows = self.list_rows();
-        let view = list::View {
+    /// 탭 막대 오른쪽 조각들(herdr `tab_bar_right` 모양: 강조 조각은 accent 바탕 굵게, 아니면 `overlay1`)
+    fn tab_bar_right(&self) -> Vec<(String, Style)> {
+        let p = &self.palette;
+        let mut out = Vec::new();
+        let asking = self.panes.values().filter(|v| is_asking(v)).count();
+        if asking > 0 {
+            out.push((
+                format!(" ● 질문 {asking} "),
+                Style::default().fg(theme::contrast(p)).bg(p.red).add_modifier(Modifier::BOLD),
+            ));
+        }
+        // 다른 화면이 이 pane의 PTY 크기를 쥐고 있다(입력하거나 이 터미널로 돌아오면 이 화면 크기로 바뀐다)
+        if let Some(l) = self.focus.as_ref().and_then(|f| self.panes.get(f)).and_then(|v| v.lease.as_ref())
+            && l.front != self.me
+        {
+            out.push((format!("{} 크기", l.label), Style::default().fg(p.peach).bg(p.panel_bg)));
+        }
+        out
+    }
+
+    fn list_view<'a>(&'a self, rows: &[list::Row]) -> list::View<'a> {
+        list::View {
             machines: &self.machines,
             panes: &self.panes,
             threads: &self.threads,
             current: self.focus.as_deref(),
-            sel: self.list_index(&rows),
+            sel: self.list_index(rows),
             focused: self.mode == Mode::Navigate,
-        };
-        list::render(buf, Self::list_rect(area), &rows, &view);
+            pal: &self.palette,
+        }
     }
 
-    /// herdr `render_mode_bar`: 오류가 있으면 ERROR, prefix·탐색 모드면 그 안내. 평소에는 없다.
+    /// 펼친 사이드바(herdr `render_sidebar`): 바탕과 오른쪽 구분선, 머리 ` {workspace}`(herdr ` spaces` 자리)와 빈 줄,
+    /// 목록, 맨 아래 오른쪽 접기 표시 `«`
+    fn render_sidebar(&self, buf: &mut Buffer, r: Rect) {
+        let p = &self.palette;
+        sidebar_background(buf, r, p);
+        let content = Rect { w: r.w.saturating_sub(1), ..r };
+        buf.set_stringn(
+            content.x,
+            content.y,
+            format!(" {}", self.ws_name),
+            content.w as usize,
+            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+        );
+        let body = Rect { y: r.y + 2, h: r.h.saturating_sub(3), ..content };
+        let rows = self.list_rows();
+        if body.h > 0 {
+            list::render(buf, body, &rows, &self.list_view(&rows));
+        }
+        if r.w > 1 && r.h > 0 {
+            buf.set_string(r.x + r.w - 2, r.y + r.h - 1, "«", Style::default().fg(p.overlay0));
+        }
+    }
+
+    /// 접힌 사이드바(herdr `render_collapsed_sidebar`): 번호와 상태 점, 맨 아래 가운데 `»`
+    fn render_compact(&self, buf: &mut Buffer, r: Rect) {
+        let p = &self.palette;
+        sidebar_background(buf, r, p);
+        let content = Rect { w: r.w.saturating_sub(1), h: r.h.saturating_sub(1), ..r };
+        let rows = self.list_rows();
+        list::render_compact(buf, content, &rows, &self.list_view(&rows));
+        if content.w > 0 && r.h > 0 {
+            buf.set_string(content.x + content.w / 2, r.y + r.h - 1, "»", Style::default().fg(p.overlay0));
+        }
+    }
+
+    /// 좁은 화면 두 줄 머리(herdr `render_mobile_header`): 상태 점·workspace·탭 자리, 둘째 줄 agent 요약,
+    /// 오른쪽 `목록` 단추 자리(herdr `switch`, 탐색 모드로 연다)
+    fn render_header(&self, buf: &mut Buffer, r: Rect) {
+        let p = &self.palette;
+        fill(buf, r, Style::default().bg(p.panel_bg));
+        let bw = MOBILE_BUTTON_WIDTH.min(r.w);
+        let button = Rect { x: r.x + r.w - bw, w: bw, ..r };
+        fill(buf, button, Style::default().bg(p.surface0));
+        for y in button.y..button.y + button.h {
+            buf.set_string(button.x, y, "│", Style::default().fg(p.surface_dim).bg(p.surface0));
+        }
+        let label = "목록";
+        let ly = if button.h > 1 { button.y + 1 } else { button.y };
+        let lx = button.x + 1 + button.w.saturating_sub(1 + unicode_width(label) as u16) / 2;
+        buf.set_stringn(
+            lx,
+            ly,
+            label,
+            button.w.saturating_sub(1) as usize,
+            Style::default().fg(p.text).bg(p.surface0).add_modifier(Modifier::BOLD),
+        );
+        let panes: Vec<&PaneView> = self.pane_order.iter().filter_map(|id| self.panes.get(id)).collect();
+        let dots: Vec<list::Dot> = panes.iter().map(|v| list::pane_dot(v)).collect();
+        if dots.contains(&list::Dot::Blocked) && button.w > 1 {
+            buf.set_string(
+                button.x + button.w - 1,
+                button.y,
+                list::Dot::Blocked.icon(),
+                Style::default().fg(p.red).bg(p.surface0),
+            );
+        }
+        let status = Rect { w: button.x.saturating_sub(r.x).saturating_sub(1), ..r };
+        let worst = [list::Dot::Blocked, list::Dot::Working, list::Dot::Idle]
+            .into_iter()
+            .find(|d| dots.contains(d))
+            .unwrap_or(list::Dot::Unknown);
+        let tab = match self.ws.tabs.len() {
+            0 => String::new(),
+            1 => format!("탭 {}", self.tab_label(0)),
+            n => format!("탭 {} · {}/{n}", self.tab_label(self.tab), self.tab + 1),
+        };
+        let tab_w = (unicode_width(&tab) as u16 + 1).min(status.w);
+        let name_w = status.w.saturating_sub(tab_w);
+        buf.set_stringn(
+            status.x,
+            status.y,
+            format!(" {} ", worst.icon()),
+            name_w.min(3) as usize,
+            Style::default().fg(worst.color(p)).bg(p.panel_bg),
+        );
+        buf.set_stringn(
+            status.x + 3,
+            status.y,
+            &self.ws_name,
+            name_w.saturating_sub(4) as usize,
+            Style::default().fg(p.text).bg(p.panel_bg).add_modifier(Modifier::BOLD),
+        );
+        buf.set_stringn(
+            status.x + status.w - tab_w + 1,
+            status.y,
+            &tab,
+            tab_w.saturating_sub(1) as usize,
+            Style::default().fg(p.overlay1).bg(p.panel_bg),
+        );
+        if status.h > 1 {
+            self.render_agent_summary(buf, Rect { y: status.y + 1, h: 1, ..status }, &dots);
+        }
+    }
+
+    /// herdr `render_agent_summary`: 상태별 agent 수(첫 조각만 그 색 굵게, 나머지는 `overlay1`, 넘치면 ` …`)
+    fn render_agent_summary(&self, buf: &mut Buffer, r: Rect, dots: &[list::Dot]) {
+        let p = &self.palette;
+        let counts = [(list::Dot::Blocked, "질문"), (list::Dot::Working, "작업 중"), (list::Dot::Idle, "대기")]
+            .map(|(d, label)| (d, label, dots.iter().filter(|x| **x == d).count()));
+        let total: usize = counts.iter().map(|c| c.2).sum();
+        let base = Style::default().bg(p.panel_bg);
+        if total == 0 || counts[..2].iter().all(|c| c.2 == 0) {
+            let t = if total == 0 { " agent 없음" } else { " 모두 대기" };
+            buf.set_stringn(r.x, r.y, t, r.w as usize, base.fg(p.overlay1));
+            return;
+        }
+        let end = r.x + r.w;
+        let mut x = r.x + 1;
+        let mut shown = 0;
+        for (d, label, n) in counts {
+            if n == 0 {
+                continue;
+            }
+            let text = if d == list::Dot::Blocked { format!("◉ {n} {label}") } else { format!("{n} {label}") };
+            let sep = if shown == 0 { "" } else { " · " };
+            if end.saturating_sub(x) < (unicode_width(sep) + unicode_width(&text)) as u16 {
+                if end.saturating_sub(x) >= 2 {
+                    buf.set_string(x, r.y, " …", base.fg(p.overlay0));
+                }
+                return;
+            }
+            x = buf.set_stringn(x, r.y, sep, usize::from(u16::MAX), base.fg(p.overlay0)).0;
+            let st = if shown == 0 { base.fg(d.color(p)).add_modifier(Modifier::BOLD) } else { base.fg(p.overlay1) };
+            x = buf.set_stringn(x, r.y, &text, usize::from(u16::MAX), st).0;
+            shown += 1;
+        }
+    }
+
+    /// herdr `render_mode_bar`: 오류가 있으면 ERROR, 모드면 그 안내를 pane 맨 아랫줄에 겹쳐 그린다. 평소에는 없다.
+    fn render_mode_bar(&self, buf: &mut Buffer, pane_area: Rect) -> Option<Rect> {
+        let segments = self.mode_bar()?;
+        if pane_area.w == 0 || pane_area.h == 0 {
+            return None;
+        }
+        let bar = Rect { y: pane_area.y + pane_area.h - 1, h: 1, ..pane_area };
+        fill(buf, bar, Style::default().fg(self.palette.overlay0).bg(self.palette.panel_bg));
+        let mut x = bar.x;
+        let end = bar.x + bar.w;
+        for (text, st) in segments {
+            if x >= end {
+                break;
+            }
+            x = buf.set_stringn(x, bar.y, &text, (end - x) as usize, st).0;
+        }
+        Some(bar)
+    }
+
+    /// 모드 막대 조각(herdr `render_mode_bar`의 색: 바탕 `panel_bg`, 글 `overlay0`, 키 accent 굵게,
+    /// 모드 이름은 accent(크기 모드는 mauve) 바탕에 `panel_bg` 글자)
     fn mode_bar(&self) -> Option<Vec<(String, Style)>> {
-        let base = Style::default().fg(DIM);
-        let key = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
-        let chip = Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD);
+        let p = &self.palette;
+        let base = Style::default().fg(p.overlay0).bg(p.panel_bg);
+        let key = Style::default().fg(p.accent).bg(p.panel_bg).add_modifier(Modifier::BOLD);
+        let chip = Style::default()
+            .fg(theme::contrast(p))
+            .bg(if self.mode == Mode::Resize && self.error.is_none() { p.mauve } else { p.accent })
+            .add_modifier(Modifier::BOLD);
         let s = |t: &str, st: Style| (t.to_string(), st);
         if let Some((e, _)) = &self.error {
             return Some(vec![s(" ERROR ", chip), (format!(" {e}"), base)]);
@@ -1232,9 +1505,8 @@ impl App {
                 (help, key),
                 s(" 단축키", base),
             ]),
-            // herdr: 크기 모드 막대는 mauve 바탕
             Mode::Resize => Some(vec![
-                s(" RESIZE ", chip.bg(MAUVE)),
+                s(" RESIZE ", chip),
                 s("  ", base),
                 s("h/l", key),
                 s(" 너비  ", base),
@@ -1275,107 +1547,55 @@ impl App {
             }
             let (cr, cc, visible) = g.cursor;
             if focused && visible && cr < r.h && cc < r.w {
-                return badge(buf, view, r, focused).or(Some((r.x + cc, r.y + cr)));
+                return badge(buf, view, r, focused, &self.palette).or(Some((r.x + cc, r.y + cr)));
             }
         }
-        badge(buf, view, r, focused);
+        badge(buf, view, r, focused, &self.palette);
         None
-    }
-
-    /// 상태 줄 조각. 글을 이어 붙이면 예전 상태 줄과 같은 내용이다(시험은 글로 본다).
-    fn status_segments(&self) -> Vec<(String, Style)> {
-        let mut out: Vec<(String, Style)> = Vec::new();
-        if let Some(p) = self.focus.as_ref().and_then(|f| self.panes.get(f)) {
-            out.push((
-                format!(" {} ", p.machine),
-                Style::default().fg(ON_CHIP).bg(ACCENT).add_modifier(Modifier::BOLD),
-            ));
-            out.push((
-                format!(" {} ", if p.name.is_empty() { &p.id } else { &p.name }),
-                Style::default().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED),
-            ));
-            out.push((format!(" {}", state_text(p)), Style::default().fg(state_color(p))));
-            match &p.lease {
-                Some(l) if l.front == self.me => out.push((" · 이 화면 크기".into(), Style::default().fg(DIM))),
-                // 입력하거나 이 터미널로 돌아오면 이 화면 크기로 바뀐다
-                Some(l) => out.push((format!(" · {} 크기", l.label), Style::default().fg(WARN))),
-                None => {}
-            }
-        }
-        // 사후 평가자는 탭에 없어도 여기 작게 보인다(열기: aaa evaluator open <project>)
-        let mut evals: Vec<&PaneView> =
-            self.panes.values().filter(|p| p.role == Some(aaa_proto::Role::Evaluator)).collect();
-        evals.sort_by(|a, b| a.name.cmp(&b.name));
-        for p in evals {
-            let (mark, c) = match (&p.state, p.agent.as_ref().map(|a| a.activity)) {
-                (st, _) if !st.is_running() => ("끝남", WARN),
-                (_, Some(aaa_proto::AgentActivity::Working)) => ("평가 중", WORKING),
-                _ => ("대기", DONE),
-            };
-            let project = p.name.split('/').next().unwrap_or(&p.name);
-            out.push((" · 평가 ".into(), Style::default().fg(DIM)));
-            out.push(("●".into(), Style::default().fg(c)));
-            out.push((format!(" {project} {mark}"), Style::default().fg(DIM)));
-        }
-        if let Some(m) = &self.message {
-            out.push((format!(" · {m}"), Style::default().fg(WARN)));
-        }
-        out
     }
 }
 
-/// 색(256색 번호: 밝은 터미널·어두운 터미널 모두에서 읽힌다). 웹 token과 같은 뜻으로 쓴다.
-pub(crate) const ACCENT: Color = Color::Indexed(141);
-pub(crate) const WORKING: Color = Color::Indexed(75);
-pub(crate) const BLOCKED: Color = Color::Indexed(210);
-pub(crate) const DONE: Color = Color::Indexed(114);
-pub(crate) const WARN: Color = Color::Indexed(221);
-pub(crate) const DIM: Color = Color::Indexed(245);
-pub(crate) const FAINT: Color = Color::Indexed(240);
-/// 도움말의 키 글자(herdr palette `mauve` 자리)
-pub(crate) const MAUVE: Color = Color::Indexed(176);
-/// 입력 칸·탭 이름표 바탕(herdr palette `surface0` 자리)과 그 위 글자: 밝은·어두운 터미널 모두에서 읽히게 글자색도 정한다
-pub(crate) const SURFACE: Color = Color::Indexed(237);
-pub(crate) const ON_SURFACE: Color = Color::Indexed(252);
-/// 색 바탕 위 글자. ANSI 0(검정)은 굵게 쓰면 많은 터미널이 밝은 회색으로 바꾸므로 256색 검정(16)을 쓴다.
-pub(crate) const ON_CHIP: Color = Color::Indexed(16);
+/// 사이드바 바탕과 오른쪽 구분선(herdr `render_sidebar_background`: `sidebar_bg`, `│`는 `surface_dim`)
+fn sidebar_background(buf: &mut Buffer, r: Rect, p: &theme::Palette) {
+    fill(buf, r, Style::default().bg(p.sidebar_bg));
+    if r.w > 0 {
+        for y in r.y..r.y + r.h {
+            buf.set_string(r.x + r.w - 1, y, "│", Style::default().fg(p.surface_dim).bg(p.sidebar_bg));
+        }
+    }
+}
+
+/// 칸을 빈칸과 그 모양으로 채운다
+fn fill(buf: &mut Buffer, r: Rect, st: Style) {
+    for y in r.y..r.y + r.h {
+        for x in r.x..r.x + r.w {
+            buf.set_string(x, y, " ", st);
+        }
+    }
+}
+
+/// 알림 카드(herdr `render_notification_card`, 오른쪽 위): `overlay0` 테두리, `panel_bg` 바탕, `●` 와 굵은 제목
+fn render_notice(buf: &mut Buffer, area: Rect, title: &str, p: &theme::Palette) {
+    let w = (unicode_width(title) as u16 + 6).min(area.w);
+    let h = 3.min(area.h);
+    if w < 3 || h < 3 {
+        return;
+    }
+    let r = Rect { x: area.x + area.w - w, y: area.y, w, h };
+    let i = help::panel(buf, r, p.overlay0, p.panel_bg);
+    let x = buf.set_stringn(i.x, i.y, "●", usize::from(u16::MAX), Style::default().fg(p.accent).bg(p.panel_bg)).0;
+    let x = buf.set_stringn(x, i.y, " ", usize::from(u16::MAX), Style::default().bg(p.panel_bg)).0;
+    buf.set_stringn(
+        x,
+        i.y,
+        title,
+        (i.x + i.w).saturating_sub(x) as usize,
+        Style::default().fg(p.text).bg(p.panel_bg).add_modifier(Modifier::BOLD),
+    );
+}
 
 fn is_asking(p: &PaneView) -> bool {
     p.state.is_running() && p.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question)
-}
-
-fn state_color(p: &PaneView) -> Color {
-    use aaa_proto::AgentActivity::*;
-    if p.connection == aaa_proto::Connection::Disconnected {
-        return WARN;
-    }
-    match (&p.state, p.agent.as_ref().map(|a| a.activity)) {
-        (SessionState::Running, Some(Working)) => WORKING,
-        (SessionState::Running, Some(Question | Error)) => BLOCKED,
-        (SessionState::Running, Some(Idle)) => DONE,
-        (SessionState::Running, _) => DIM,
-        (SessionState::Exited { .. }, _) => DIM,
-        _ => WARN,
-    }
-}
-
-fn state_text(p: &PaneView) -> String {
-    if p.connection == aaa_proto::Connection::Disconnected {
-        return "끊김(읽기 전용)".into();
-    }
-    match &p.state {
-        SessionState::Running => match &p.agent {
-            // harness 상태(hook 사건)
-            Some(a) => {
-                let pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
-                format!("실행 · {}{pct}", activity_text(a.activity))
-            }
-            None => "실행".into(),
-        },
-        SessionState::Exited { code } => format!("종료({})", code.map(|c| c.to_string()).unwrap_or("?".into())),
-        SessionState::Interrupted => "중단(재부팅)".into(),
-        SessionState::Lost => "유실".into(),
-    }
 }
 
 pub(crate) fn activity_text(a: aaa_proto::AgentActivity) -> &'static str {
@@ -1391,7 +1611,13 @@ pub(crate) fn activity_text(a: aaa_proto::AgentActivity) -> &'static str {
 }
 
 /// 실행 중이 아니거나 끊긴 pane, 확인창 질문이 열린 pane에는 오른쪽 위에 표시를 그린다
-fn badge(buf: &mut Buffer, view: Option<&PaneView>, r: Rect, focused: bool) -> Option<(u16, u16)> {
+fn badge(
+    buf: &mut Buffer,
+    view: Option<&PaneView>,
+    r: Rect,
+    focused: bool,
+    pal: &theme::Palette,
+) -> Option<(u16, u16)> {
     let p = view?;
     let text = match (&p.state, p.connection) {
         (_, aaa_proto::Connection::Disconnected) => " 끊김·읽기 전용 ".to_string(),
@@ -1412,12 +1638,12 @@ fn badge(buf: &mut Buffer, view: Option<&PaneView>, r: Rect, focused: bool) -> O
     let w = unicode_width(&text).min(r.w as usize) as u16;
     // 색은 상태를 따른다(질문 빨강·끊김과 중단 호박·종료 회색). 포커스가 아니면 조금 흐리게.
     let bg = match (&p.state, p.connection) {
-        (_, aaa_proto::Connection::Disconnected) => WARN,
-        (SessionState::Running, _) => BLOCKED,
-        (SessionState::Exited { .. }, _) => FAINT,
-        _ => WARN,
+        (_, aaa_proto::Connection::Disconnected) => pal.peach,
+        (SessionState::Running, _) => pal.red,
+        (SessionState::Exited { .. }, _) => pal.overlay0,
+        _ => pal.peach,
     };
-    let mut style = Style::default().fg(ON_CHIP).bg(bg).add_modifier(Modifier::BOLD);
+    let mut style = Style::default().fg(theme::contrast(pal)).bg(bg).add_modifier(Modifier::BOLD);
     if !focused {
         style = style.remove_modifier(Modifier::BOLD).add_modifier(Modifier::DIM);
     }
@@ -1526,9 +1752,66 @@ mod tests {
         app
     }
 
-    /// 탭 줄에서 이름표 부분(` aaa ` ` main ` 뒤)
-    fn tab_strip(top: &str) -> &str {
-        top.split_once(" main ").map(|(_, r)| r).unwrap_or(top)
+    /// 줄의 `x`칸에 있는 글자(넓은 글자는 두 칸)
+    fn at_col(line: &str, x: usize) -> Option<char> {
+        let mut col = 0;
+        for c in line.chars() {
+            if col == x {
+                return Some(c);
+            }
+            col += unicode_width(&c.to_string()).max(1);
+            if col > x {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// 사이드바(펼침 26칸) 오른쪽 부분: 맨 윗줄이면 탭 막대
+    fn right_of_sidebar(line: &str) -> String {
+        let mut col = 0;
+        line.chars()
+            .skip_while(|c| {
+                let skip = col < 26;
+                col += unicode_width(&c.to_string()).max(1);
+                skip
+            })
+            .collect()
+    }
+
+    fn pane_view(id: &str, machine: &str, name: &str) -> PaneView {
+        PaneView {
+            id: id.into(),
+            machine_id: machine.into(),
+            machine: machine.into(),
+            name: name.into(),
+            argv: vec![],
+            cwd: None,
+            state: SessionState::Running,
+            connection: aaa_proto::Connection::Connected,
+            readonly: false,
+            cols: 80,
+            rows: 24,
+            lease: None,
+            role: None,
+            agent: None,
+        }
+    }
+
+    fn machine(id: &str, name: &str) -> MachineView {
+        MachineView {
+            id: id.into(),
+            name: name.into(),
+            local: true,
+            connection: aaa_proto::Connection::Connected,
+            os: None,
+            boot_id: None,
+            dev_mode: false,
+            last_seen_ms: None,
+            health: None,
+            clock_skew_ms: None,
+            problems: vec![],
+        }
     }
 
     fn draw(app: &App) -> (Vec<String>, Option<(u16, u16)>) {
@@ -1557,17 +1840,20 @@ mod tests {
         app.tab = 1;
         let (lines, _) = draw(&app);
         let top = &lines[0];
-        // " main " 뒤에 "   1    " "  빌드  " "   3    "(사이 한 칸)
-        assert!(top.starts_with(" aaa  main    1       빌드      3    "), "{top:?}");
+        // 사이드바 머리 ` main`·구분선 뒤 탭 막대에 "   1    " "  빌드  " "   3    "(사이 한 칸)
+        assert!(top.starts_with(" main"), "{top:?}");
+        assert!(right_of_sidebar(top).starts_with("   1       빌드      3    "), "{top:?}");
         let area = Rect { x: 0, y: 0, w: 90, h: 30 };
         let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, 90, 30));
         app.render(&mut buf, area);
+        let p = app.palette;
         let x = top.find("빌드").map(|b| unicode_width(&top[..b]) as u16).unwrap();
-        assert_eq!((buf[(x, 0)].bg, buf[(x, 0)].fg), (ACCENT, ON_CHIP));
+        assert_eq!((buf[(x, 0)].bg, buf[(x, 0)].fg), (p.accent, theme::contrast(&p)));
         assert!(buf[(x, 0)].modifier.contains(Modifier::BOLD), "붙인 이름의 지금 탭은 굵게");
-        assert_eq!(buf[(x - 2, 0)].bg, ACCENT, "이름표는 이름 양옆 빈칸까지 칠한다");
-        assert_ne!(buf[(x - 3, 0)].bg, ACCENT, "이름표 사이 한 칸");
-        assert_eq!((buf[(x - 4, 0)].bg, buf[(x - 4, 0)].fg), (SURFACE, DIM), "자동 이름은 흐리게");
+        assert_eq!(buf[(x - 2, 0)].bg, p.accent, "이름표는 이름 양옆 빈칸까지 칠한다");
+        assert_eq!(buf[(x - 3, 0)].bg, p.panel_bg, "이름표 사이 한 칸은 탭 막대 바탕");
+        assert_eq!((buf[(x - 4, 0)].bg, buf[(x - 4, 0)].fg), (p.surface0, p.overlay0), "자동 이름은 흐리게");
+        assert_eq!(buf[(89, 0)].bg, p.panel_bg, "탭 막대는 줄 끝까지 panel_bg");
     }
 
     /// 새 탭 이름 창(herdr `render_rename_overlay`): 가운데 56×7 테두리 창, 제목, 입력 칸(커서는 글 뒤), 단추 줄
@@ -1627,8 +1913,8 @@ mod tests {
         let body = app.body(area);
         assert_eq!(app.shown_rects(&app.ws.tabs[0], body), (vec![("p1".to_string(), body)], vec![]));
         let (lines, _) = draw(&app);
-        assert!(tab_strip(&lines[0]).contains("  1 Z  "), "{:?}", lines[0]);
-        assert!(lines[1..lines.len() - 1].iter().all(|l| !l.contains('│')), "zoom이면 구분선이 없다");
+        assert!(right_of_sidebar(&lines[0]).contains("  1 Z  "), "{:?}", lines[0]);
+        assert!(lines[1..].iter().all(|l| !right_of_sidebar(l).contains('│')), "zoom이면 pane 구분선이 없다");
         app.move_focus(Dir::Left);
         assert_eq!(app.focus.as_deref(), Some("p0"));
         assert_eq!(app.shown_rects(&app.ws.tabs[0], body).0[0].0, "p0");
@@ -1646,9 +1932,124 @@ mod tests {
         let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, area.w, area.h));
         app.render(&mut buf, area);
         let (lines, _) = draw(&app);
-        let bar = lines.last().unwrap();
+        let bar = right_of_sidebar(lines.last().unwrap());
         assert!(bar.starts_with(" RESIZE   h/l 너비  j/k 높이  esc 끝"), "{bar:?}");
-        assert_eq!(buf[(1, area.h - 1)].bg, MAUVE);
+        assert_eq!(buf[(27, area.h - 1)].bg, app.palette.mauve);
+        assert_eq!(buf[(89, area.h - 1)].bg, app.palette.panel_bg, "막대는 pane 폭 끝까지");
+        assert_eq!(at_col(lines.last().unwrap(), 25), Some('│'), "사이드바는 막대 밑에 그대로");
+    }
+
+    /// 화면 배치(herdr `ClientShellConfig::layout`): 펼친 사이드바 26칸 온 높이, 그 오른쪽 위 탭 막대 한 줄, 나머지 pane.
+    /// 접으면 compact 4칸 또는 없음, 64칸 이하는 두 줄 머리, 폭은 18~36으로 묶는다.
+    #[test]
+    fn shell_layout_like_herdr() {
+        let mut app = App::new("main".into(), "me".into());
+        let area = r(0, 0, 90, 30);
+        let none = |a: Rect| Rect { w: 0, h: 0, ..a };
+        assert_eq!(
+            app.shell(area),
+            Shell { sidebar: r(0, 0, 26, 30), tab_bar: r(26, 0, 64, 1), header: none(area), panes: r(26, 1, 64, 29) }
+        );
+        app.toggle_list();
+        assert_eq!(app.shell(area).sidebar, r(0, 0, 4, 30));
+        assert_eq!(app.shell(area).panes, r(4, 1, 86, 29));
+        let mut cfg = aaa_config::TuiSection {
+            sidebar_collapsed_mode: aaa_config::SidebarCollapsedMode::Hidden,
+            ..Default::default()
+        };
+        app.apply_config(&cfg);
+        assert!(app.collapsed(), "다시 읽어도 사용자가 접은 그대로");
+        assert_eq!(app.shell(area).sidebar.w, 0);
+        assert_eq!(app.shell(area).panes, r(0, 1, 90, 29));
+        app.toggle_list();
+        cfg.sidebar_width = 50;
+        app.apply_config(&cfg);
+        assert_eq!(app.shell(area).sidebar.w, 36);
+        cfg.sidebar_width = 5;
+        app.apply_config(&cfg);
+        assert_eq!(app.shell(area).sidebar.w, 18);
+        // 64칸 이하: 머리 두 줄, 사이드바·탭 막대 없음
+        let narrow = r(0, 0, 64, 20);
+        assert_eq!(app.shell(narrow).header, r(0, 0, 64, 2));
+        assert_eq!(app.shell(narrow).panes, r(0, 2, 64, 18));
+        assert_eq!((app.shell(narrow).sidebar.w, app.shell(narrow).tab_bar.h), (0, 0));
+        // 시작할 때 접기
+        let mut fresh = App::new("main".into(), "me".into());
+        fresh.apply_config(&aaa_config::TuiSection { sidebar_start_collapsed: true, ..Default::default() });
+        assert_eq!(fresh.shell(area).sidebar.w, 4);
+    }
+
+    /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 머리 ` {workspace}`, 오른쪽 `│`, 맨 아래 `«`.
+    /// 접으면 번호와 상태 점, `»`. 탐색 모드면 접힌 채여도 펼친 목록을 pane 위에 띄운다.
+    #[test]
+    fn sidebar_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        app.focus = Some("p0".into());
+        app.panes.insert("p0".into(), pane_view("p0", "m", "build"));
+        app.pane_order = vec!["p0".into()];
+        app.machines = vec![machine("m", "mac-a")];
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(lines[0].starts_with(" main "), "{shown}");
+        assert!(lines.iter().all(|l| at_col(l, 25) == Some('│')), "{shown}");
+        assert!(lines.iter().any(|l| l.starts_with(" ▾ mac-a")), "{shown}");
+        assert!(lines.iter().any(|l| l.starts_with(" · build")), "셸 pane은 unknown 점: {shown}");
+        assert_eq!(lines[29].chars().nth(24), Some('«'), "{shown}");
+        app.toggle_list();
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(lines[0].starts_with("1 ·│"), "{shown}");
+        assert_eq!(lines[29].chars().nth(1), Some('»'), "{shown}");
+        assert!(!shown.contains("mac-a"), "{shown}");
+        app.mode = Mode::Navigate;
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(lines.iter().any(|l| l.starts_with(" ▾ mac-a")), "탐색이면 띄운다: {shown}");
+        assert!(lines[28].starts_with("                        «│"), "띄운 목록은 막대 위까지: {shown}");
+        assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
+    }
+
+    /// 모드 막대는 평소에 없고(pane 맨 아랫줄은 pane 것), 오류는 ERROR 막대, 알림은 오른쪽 위 카드(herdr)
+    #[test]
+    fn mode_bar_error_and_notice_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        let (lines, _) = draw(&app);
+        assert!(!lines.join("\n").contains("PREFIX"));
+        assert_eq!(right_of_sidebar(lines.last().unwrap()).trim(), "");
+        app.mode = Mode::Prefix;
+        let (lines, _) = draw(&app);
+        assert!(right_of_sidebar(lines.last().unwrap()).starts_with(" PREFIX  esc 취소  ctrl+b prefix 보내기"));
+        app.mode = Mode::Terminal;
+        app.apply_config(&aaa_config::TuiSection { theme: "없는색".into(), ..Default::default() });
+        assert_eq!(app.palette, theme::Palette::catppuccin());
+        let (lines, _) = draw(&app);
+        assert!(
+            right_of_sidebar(lines.last().unwrap()).starts_with(" ERROR  [tui] theme 「없는색」을 모른다"),
+            "{:?}",
+            lines.last()
+        );
+        app.apply_config(&aaa_config::TuiSection { theme: "terminal".into(), ..Default::default() });
+        assert_eq!(app.palette, theme::Palette::terminal());
+        app.set_message("탭을 닫았다");
+        let (lines, _) = draw(&app);
+        // 글 폭 11 + 6 = 17칸, 오른쪽 위 세 줄
+        assert!(lines[0].ends_with(&format!("┌{}┐", "─".repeat(15))), "{:?}", lines[0]);
+        assert!(lines[1].ends_with("│● 탭을 닫았다  │"), "{:?}", lines[1]);
+    }
+
+    /// 좁은 화면 머리(herdr `render_mobile_header`): 상태 점·workspace·탭, 둘째 줄 agent 요약, 오른쪽 `목록` 단추
+    #[test]
+    fn mobile_header_like_herdr() {
+        let mut app = app_with_tabs(&["", "로그"]);
+        app.width = 60;
+        app.height = 20;
+        app.tab = 1;
+        let (lines, _) = draw(&app);
+        assert!(lines[0].starts_with(" · main"), "{lines:?}");
+        assert!(lines[0].contains("탭 로그 · 2/2"), "{lines:?}");
+        assert!(lines[0].ends_with("│         "), "{lines:?}");
+        assert!(lines[1].starts_with(" agent 없음"), "{lines:?}");
+        assert!(lines[1].ends_with("│  목록   "), "{lines:?}");
     }
 
     #[test]

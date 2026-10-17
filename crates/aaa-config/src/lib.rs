@@ -216,6 +216,24 @@ pub struct TuiSection {
     pub prompt_new_tab_name: bool,
     /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
     pub confirm_close: bool,
+    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width` 26, 18~36으로 묶는다)
+    pub sidebar_width: u16,
+    /// 접힌 채 시작(herdr `[ui] sidebar_start_collapsed`, 기본 펼침)
+    pub sidebar_start_collapsed: bool,
+    /// 접으면: `compact`는 번호와 상태 점만 든 4칸 열, `hidden`은 없앤다(herdr `[ui] sidebar_collapsed_mode`)
+    pub sidebar_collapsed_mode: SidebarCollapsedMode,
+    /// 이 폭(칸) 이하면 목록·탭 줄 대신 두 줄 머리(herdr `[ui] mobile_width_threshold` 64)
+    pub mobile_width_threshold: u16,
+    /// 색 테마 이름(herdr `[theme] name`, 기본 `catppuccin`). 모르는 이름이면 TUI가 오류 막대로 알리고 기본을 쓴다.
+    pub theme: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarCollapsedMode {
+    #[default]
+    Compact,
+    Hidden,
 }
 
 impl TuiSection {
@@ -234,6 +252,11 @@ impl Default for TuiSection {
             prefix_jamo_keys: true,
             prompt_new_tab_name: true,
             confirm_close: true,
+            sidebar_width: 26,
+            sidebar_start_collapsed: false,
+            sidebar_collapsed_mode: SidebarCollapsedMode::Compact,
+            mobile_width_threshold: 64,
+            theme: "catppuccin".into(),
         }
     }
 }

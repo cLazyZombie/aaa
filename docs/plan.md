@@ -699,7 +699,7 @@ host 프로젝트 폴더 구성:
 - **front 표시(M1-3c-1)**
   - 웹 events WS는 목록(state)과 질문(question) 사건을 보낸다. 웹은 연결할 때마다 `questions`로 한 번 읽고, 이후는 사건으로 따라간다. 사건을 놓치면(broadcast lag) host가 WS를 끊어 다시 읽게 한다.
   - 웹 목록 위에 「답을 기다리는 질문」 카드가 있고, 고른 pane 위에도 그 pane의 질문 카드가 있다. reader에게는 답 버튼이 없다. pane마다 harness 상태 badge가 있다.
-  - TUI는 상태 줄에 `실행 · 작업 중` 같은 상태를 보이고, 질문이 열린 pane에는 「질문 — aaa question」 badge를 그린다.
+  - TUI는 상태 줄에 `실행 · 작업 중` 같은 상태를 보이고, 질문이 열린 pane에는 「질문 — aaa question」 badge를 그린다. → §8.80에서 상태 줄을 없애고 사이드바 줄의 상태 점·글과 탭 막대 오른쪽 `● 질문 n`으로 옮겼다.
 - **pane 등록 전에 온 hook 사건:** 세션이 시작하자마자 보낸 hook이 세션 시작 사건보다 먼저 host에 닿으면 버려지던 문제를 고쳤다. host는 모르는 pane의 사건을 60초(최대 32개) 보관했다가 pane이 등록되면 순서대로 적용한다.
 - **계약:** AGENT_LINK·FRONT_API를 1.3으로 올렸다(`AgentEvent::Harness`, 질문·메시지 요청, `PaneView.agent`·`ThreadView.agent`). 1.2 메시지를 읽는 시험이 있다.
 - **확인 방법**
@@ -862,7 +862,7 @@ host 프로젝트 폴더 구성:
 - **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 결정 기록(§8.6)에 한 줄로 남기고 그 번호를 붙인다. 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
 - **금지(부분 thread 범위 token).** CLI는 aaa 세션 안이면 `AAA_SESSION_ID`를 Hello에 담는다. 그 세션의 역할이 평가자면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다.
   - 남는 한계: env를 지운 프로세스는 사람의 CLI와 구별되지 않는다(routine 승인과 같은 수준, §8.21). 원격 머신의 평가자는 Front API에 닿지 않는다.
-- **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다. `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
+- **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다(→ §8.80에서 사이드바 맨 아래 「평가」 묶음으로). `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
 - **시험.** m13 `evaluator_flow`: 가짜 평가자가 착지·완료 묶음을 받아 평가 기록(정상 1, 잘못된 1)을 낸다. 확인하는 것은 다음과 같다.
   - 목록·context·pane 목록에 섞이지 않는다.
   - 평가자 세션의 지시·채택은 거부되고 보기는 된다.
@@ -900,7 +900,7 @@ host 프로젝트 폴더 구성:
 - **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다.
   - 탭 줄은 이름표·workspace·탭(지금 탭은 강조색 바탕)으로 짜고, 오른쪽에 열린 질문 수를 둔다.
   - 포커스 pane과 맞닿은 구분선만 강조색으로 그린다.
-  - 상태 줄은 색 조각(머신·pane·상태색 글·조작 중·평가자)으로 짜고, 오른쪽에 prefix 도움말을 둔다.
+  - 상태 줄은 색 조각(머신·pane·상태색 글·조작 중·평가자)으로 짜고, 오른쪽에 prefix 도움말을 둔다. → §8.80에서 herdr 배치·팔레트로 바꿨다(상태 줄 없음).
   - pane 표시는 상태 색(질문 빨강, 끊김·중단 호박, 종료 회색)을 따른다.
   - 색은 256색 번호이고, 색 바탕 위 글자는 굵게 써도 밝아지지 않게 256색 검정(16)을 쓴다.
 - **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)와 TUI(`aaa attach`를 웹 터미널로)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다.
@@ -1143,7 +1143,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - herdr-web-ui: 조작 연결이면 언제나 입력된다. 보이고 focus가 있을 때(`inUse`)만 크기를 건다. focus·보임을 얻거나, 크기가 어긋난 채 클릭·입력하면 다시 맞춘다. 가려지면 1초 뒤 놓는다. observe 연결은 입력·크기 불가다.
 - **aaa 규칙.**
   - host: 대화형 front의 입력·크기·그림은 거부하지 않고, 보낸 연결을 「지금 쓰는 화면」(lease)으로 둔다. 한 번 보내는 CLI(`cli` 연결)는 바꾸지 않는다. `lease_held`는 CLI `pane resize`(누가 쓰는 중)에만 남는다.
-  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다(→ §8.73에서 herdr처럼 없앴다).
+  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다(→ §8.80: 다른 화면이 쥘 때만 탭 막대 오른쪽에 「<화면> 크기」). `prefix t`는 남겼다(→ §8.73에서 herdr처럼 없앴다).
   - 웹: 입력 막대·키 줄·그림을 막지 않는다. 보이고 focus가 있을 때만 크기를 건다. window focus·다시 보임·터미널 누름이면 크기를 다시 건다. 1초 넘게 가려지면 `release`한다. 「가져오기」 단추를 없애고 「<화면>이 크기를 정하는 중 · 입력하거나 터미널을 누르면 이 화면 크기로」만 보인다.
   - 보기 권한(reader)은 그대로 입력·크기 불가다.
   - 두 화면이 번갈아 입력하면 크기가 그때마다 바뀐다(herdr와 같다).
@@ -1173,10 +1173,10 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **구현(`aaa-tui::list`).**
   - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지).
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
-  - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다.
+  - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다. → §8.80에서 herdr대로 26칸(구분선 포함)·늘 펼친 채 시작·접으면 4칸 compact로 바꿨다.
   - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
   - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
-  - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널).
+  - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널). → §8.80에서 herdr대로 `selection_bg` 바탕만 쓴다.
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
 
 ### 8.36 웹 한글 IME를 herdr-web-ui 방식으로(10-17, 사용자 지시)
@@ -1780,7 +1780,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 입력기 전환 범위와 미루기는 herdr `reconcile_input_source`대로다: 모드가 끝나면 되돌리고, 터미널 focus가 없는 동안은 바꾸지도 되돌리지도 않고 돌아온 뒤 맞춘다.
   - Windows: 앞 창 자판이 한국어이고 IME가 한글이면 `VK_HANGUL`을 `SendInput`으로 눌러 영문으로 바꾸고, 같은 창이 앞에 있고 아직 영문이면 되돌린다(herdr와 같다. IME 상태 읽기는 `WM_IME_CONTROL`/`IMC_GETOPENSTATUS`, 200ms 한도). 다른 언어 IME는 건드리지 않는다.
   - kitty keyboard `REPORT_ALTERNATE_KEYS`로 기본 배치 키를 읽는 일(herdr `src/input/parse.rs`)은 crossterm 0.29가 그 값을 `KeyEvent`에 싣지 않아 하지 못한다. herdr도 prefix 뒤 일반 키는 글자 그대로 읽으므로, 한글 입력기에서는 입력기 전환이나 자모 해석을 켠다.
-- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다.
+- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다(→ §8.80).
   - 단축키 창: 가운데 76×22 테두리 창, 묶음(전체·탐색·목록/탭·pane)마다 `prefix+키`와 설명, `/` 검색(키·설명), `j/k/↑↓/pgup/pgdn` 넘기기, Esc·Enter 닫기, 넘칠 때 scrollbar.
 - **시험.**
   - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 켬·끄기·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
@@ -1866,6 +1866,33 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **시험.**
   - 유닛: `layout::swap`(잎만 바뀌고 칸 그대로), pane이 빠진 탭은 zoom 풀림, 키 표(`z`·`r`·`shift+h/l`), zoom 그리기(포커스 pane이 칸 전체·구분선 없음·` Z`·zoom 중 방향 포커스), RESIZE 막대(mauve), 옛 host 막기(1.5면 zoom 안 보냄).
   - TUI harness `pane_modes_like_herdr`: `r` 막대와 `l` 두 번에 비율 500→550→600·왼쪽 PTY가 넓어짐·Esc 뒤 키는 pane으로, `z` host zoom·이름표 `1 Z`·포커스 pane만 보임·칸 전체 크기, zoom 중 `h`로 왼쪽이 크게, `z` 풀기, `L` 자리 바꿈(비율 그대로, 포커스가 따라가 입력이 옮긴 pane으로), zoom 중 나누면 풀림.
+
+### 8.80 TUI 화면을 herdr대로: 배치·팔레트·사이드바·탭 막대·모드 막대·창(10-18, 사용자 지시 「tui도 ui 미려하게, 최소 herdr-projects 정도」, 차이 목록 2장 U3·4장 E)
+
+- **참고(herdr 0.9.5).**
+  - 배치 `src/client/shell/config.rs` `layout`, 그리기 `render.rs` `render_shell`·`render_mode_bar`·`render_sidebar_background`.
+  - 사이드바 `sidebar.rs` `render_sidebar`·`render_collapsed_sidebar`·`render_workspace_rows`·`workspace_selection_background`·`workspace_active_background`, 머신 줄 `endpoint_sidebar.rs` `render_endpoint_row`, agent 줄 `agent_sidebar.rs` `render_agent_row`.
+  - 탭 막대 `tabs.rs` `render_tab_bar`·`render_tab_bar_status`, 좁은 화면 `mobile.rs` `render_mobile_header`·`render_agent_summary`, 알림 `notifications.rs` `render_notification_card`, 창 `overlays.rs`(단축키·이름·닫기 확인), 나눔선 색 `src/ui/panes.rs`.
+  - 팔레트 `src/app/state.rs` `Palette`(테마 18개)·`src/config/theme.rs` `THEME_NAMES`·`canonical_theme_name`. 옮긴 `aaa-tui/src/theme.rs` 머리에 herdr Apache-2.0 출처를 적었다.
+- **배치.** 65칸 이상이면 왼쪽 사이드바가 온 높이(폭 26, 구분선 포함, 18~36으로 묶음), 그 오른쪽 맨 윗줄이 탭 막대, 나머지가 pane이다. 상태 줄은 없다. 64칸 이하면 사이드바·탭 막대 대신 두 줄 머리다. PTY 크기는 이 pane 칸으로 건다(90×30이면 64×29).
+- **팔레트.** herdr 테마 18개를 그대로 옮겼다. `[tui] theme`(기본 `catppuccin`, herdr 기본과 같음). 모르는 이름은 ERROR 막대로 알리고 기본을 쓴다. 256색 번호 상수(§8.27 무렵)는 없앴다.
+- **사이드바(펼침).** `sidebar_bg` 바탕, 오른쪽 `│`(`surface_dim`), 머리 ` <workspace>`(`overlay0` 굵게, herdr ` spaces` 자리), 빈 줄, 목록, 맨 아래 오른쪽 `«`.
+  - 줄: thread·pane은 ` <상태 점> <이름>`(herdr `state_icon` + 이름, 점은 working 노랑 `●`·blocked 빨강 `●`·done 청록 `●`·idle 초록 `○`·셸 등 `·`), 오른쪽에 상태 글. 머신은 ` ▾ <이름>`(`text` 굵게)과 붙은 원격 머신 초록 `●`·끊긴 머신 노랑 `◐ 끊김`(herdr `render_endpoint_row`).
+  - 이름은 `subtext0`, 지금 pane 줄은 `active_row_bg` 바탕에 `text` 굵게. 탐색 중 고른 줄은 `selection_bg` 바탕(없는 테마면 `active_row_bg`)이다. `▸` 표시는 뺐다(herdr는 바탕색만).
+  - 사후 평가자 pane은 상태 줄 대신 목록 맨 아래 「평가」 묶음에 보인다.
+- **사이드바(접힘).** `[tui] sidebar_collapsed_mode = "compact"`(기본)면 4칸 열에 thread·pane마다 번호와 상태 점, 맨 아래 가운데 `»`. `"hidden"`이면 없다. `[tui] sidebar_start_collapsed`(기본 끔)로 접힌 채 시작한다. herdr처럼 터미널 폭으로는 접지 않는다.
+- **탐색 모드(`prefix w`).** 펼쳐져 있으면 그 목록에서 고른다. 접혀 있거나 좁은 화면이면 펼친 목록을 pane 위에 띄운다(모드 막대 위 줄까지, pane 크기는 그대로). herdr는 접힌 칸의 번호만 강조한다: aaa는 이름을 보며 고르게 띄운다(§8.73 그대로).
+- **탭 막대.** `panel_bg` 줄에 이름표(지금 탭 accent 바탕·`panel_bg` 글자, 붙인 이름이면 굵게, 다른 탭 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`, 넘치면 `…` `overlay0`). 앞에 있던 ` aaa `·workspace 이름 조각은 뺐다(workspace 이름은 사이드바 머리).
+  - 오른쪽 끝은 herdr `tab_bar_right` 자리: 열린 질문 수 ` ● 질문 n `(빨강 바탕), 다른 화면이 포커스 pane 크기를 쥐면 `<화면> 크기`(peach). 이름표 자리가 17칸(herdr `MIN_TAB_STRIP_WIDTH`) 밑으로 줄면 오른쪽 조각을 뺀다. 「이 화면 크기」는 보이지 않는다(평소 상태라).
+  - `+` 새 탭·`<` `>` 넘기기 단추는 마우스 묶음에서 넣는다(herdr도 마우스를 켰을 때만 그린다).
+- **모드 막대·알림.** herdr처럼 평소에는 없고, prefix·탐색·크기 모드와 오류 때 pane 맨 아랫줄에 겹친다(바탕 `panel_bg`, 글 `overlay0`, 키 accent 굵게, 모드 이름 accent 바탕(RESIZE는 mauve)). 커서가 그 줄이면 숨긴다. 알림(설정 다시 읽음·그림 경로 넣음 등, 5초)은 오른쪽 위 테두리 카드(`overlay0` 테두리, `●`와 굵은 글).
+- **좁은 화면(64칸 이하).** herdr 머리 두 줄: 첫 줄 가장 급한 상태 점·workspace·`탭 <이름> · i/n`, 둘째 줄 agent 요약(`◉ n 질문 · n 작업 중 · n 대기`, 첫 조각만 그 색, 없으면 「agent 없음」·「모두 대기」), 오른쪽 10칸 `목록` 단추 자리(질문이 있으면 빨강 `●`).
+- **창.** 단축키·이름·닫기 확인 창은 묶음 1·2a의 herdr 모양에 색만 팔레트로(테두리 accent·확인은 red, 바탕 `panel_bg`, 입력 칸·단추 `surface0`).
+- **pane 표시.** 나눔선은 포커스 pane에 닿은 칸 accent, 나머지 `overlay0`(herdr). 끊김·중단·질문·종료 badge(aaa에만 있음)는 팔레트 색. pane 테두리·제목(herdr `pane_border_title`)과 `P` pane 이름은 다음 묶음이다.
+- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`. 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다.
+- **시험.**
+  - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
+  - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
