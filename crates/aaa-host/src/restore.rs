@@ -6,7 +6,7 @@
 //!   cwd에서 새 셸).
 //! - 그 셸 안에서 Claude·Codex가 돌았고 harness 세션 ID를 알면 새 셸에 이어가기 명령을 친다(herdr
 //!   `start_pending_agent_resume`: `claude --resume <id>`·`codex resume <id>` + Enter). harness를 바로 띄운 pane(argv 첫
-//!   낱말이 claude·codex)은 그 명령으로 바로 띄운다. aaa pane은 셸 아래가 아닐 수 있다.
+//!   낱말이 claude·codex)은 원래 argv에서 대화 인자만 바꿔 띄운다(`resume_in_place`). aaa pane은 셸 아래가 아닐 수 있다.
 //! - **thread pane**: `aaa thread restart --resume`과 같은 길(저장한 대화를 잇고 brief 안내는 없다). 못 하면 흐름 사건
 //!   `restore_failed`와 inbox `session` 항목을 남긴다.
 //! - **그 밖의 프로그램 pane**은 그대로 둔다(`aaa pane resume`으로 다시 띄운다). 명령을 다시 실행하지 않는다: 배포 같은
@@ -31,11 +31,7 @@ const ACTOR: &str = "restore";
 /// herdr `agent_resume::plan`(src/agent_resume.rs): harness 세션 ID로 대화를 이어 띄우는 명령. aaa harness는 둘이다.
 /// 셸에 치는 줄이 되므로 빈칸·따옴표·제어 문자가 든 ID는 받지 않는다(herdr `validate_resume_argv`).
 pub(crate) fn resume_argv(harness: &str, session: &str) -> Option<Vec<String>> {
-    let plain = !session.is_empty()
-        && session.len() <= 512
-        && !session.starts_with('-')
-        && session.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'));
-    if !plain {
+    if !plain_id(session) {
         return None;
     }
     match harness {
@@ -43,6 +39,50 @@ pub(crate) fn resume_argv(harness: &str, session: &str) -> Option<Vec<String>> {
         "codex" => Some(vec!["codex".into(), "resume".into(), session.into()]),
         _ => None,
     }
+}
+
+/// 셸에 치거나 인자로 넘겨도 안전한 harness 세션 ID(herdr `validate_resume_argv`)
+fn plain_id(session: &str) -> bool {
+    !session.is_empty()
+        && session.len() <= 512
+        && !session.starts_with('-')
+        && session.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+}
+
+/// harness를 바로 띄운 pane: 원래 argv(실행 파일 경로, aaa hook 설정 `--settings`·`-c notify=…`, model 등)를 그대로 두고
+/// 대화 인자만 이어가기로 바꾼다. herdr는 pane이 늘 셸이라 맨 명령(`resume_argv`)을 치지만, aaa pane은 harness 자체일
+/// 수 있어 맨 명령으로 띄우면 hook 설정을 잃는다(상태가 보이지 않는다).
+/// - claude: `--session-id <x>`·`--resume <x>`·`-r <x>`의 값을, `--continue`·`-c`는 `--resume <id>`로 바꾸고 없으면 붙인다.
+/// - codex: `resume <x>`의 값을 바꾸고, 없으면 실행 파일 바로 뒤에 `resume <id>`를 넣는다(agent threads.rs `resolve`와 같은 꼴).
+pub(crate) fn resume_in_place(argv: &[String], harness: &str, session: &str) -> Option<Vec<String>> {
+    if !plain_id(session) || argv.is_empty() {
+        return None;
+    }
+    let mut out = argv.to_vec();
+    match harness {
+        "claude" => {
+            if let Some(i) = out.iter().position(|a| matches!(a.as_str(), "--session-id" | "--resume" | "-r")) {
+                out[i] = "--resume".into();
+                match out.get_mut(i + 1) {
+                    Some(v) => *v = session.into(),
+                    None => out.push(session.into()),
+                }
+            } else if let Some(i) = out.iter().position(|a| matches!(a.as_str(), "--continue" | "-c")) {
+                out.splice(i..=i, ["--resume".to_string(), session.to_string()]);
+            } else {
+                out.extend(["--resume".to_string(), session.to_string()]);
+            }
+        }
+        "codex" => match out.iter().position(|a| a == "resume") {
+            Some(i) => match out.get_mut(i + 1) {
+                Some(v) if !v.starts_with('-') => *v = session.into(),
+                _ => out.insert(i + 1, session.into()),
+            },
+            None => out.splice(1..1, ["resume".to_string(), session.to_string()]).for_each(drop),
+        },
+        _ => return None,
+    }
+    Some(out)
 }
 
 /// 실행 파일 이름(경로·`.exe` 뺌, 소문자)
@@ -213,14 +253,21 @@ impl Host {
                 }
             };
         }
-        let plan = key.as_ref().and_then(|(h, s)| resume_argv(h, s));
-        // 셸이면 같은 셸을 띄우고 이어가기 명령을 친다. harness를 바로 띄운 pane은 그 명령으로 띄운다.
-        let (argv, typed) = if is_shell(&info.argv) {
-            (info.argv.clone(), plan.clone())
-        } else if let Some(p) = plan.clone().filter(|p| program(&info.argv) == program(p)) {
-            (p, None)
-        } else {
-            return false;
+        // 셸이면 같은 셸을 띄우고 이어가기 명령을 친다. harness를 바로 띄운 pane은 원래 argv에서 대화 인자만 바꿔 띄운다.
+        let shell = is_shell(&info.argv);
+        let plan = key.as_ref().and_then(|(h, s)| {
+            if shell {
+                resume_argv(h, s)
+            } else if program(&info.argv).as_deref() == Some(h.as_str()) {
+                resume_in_place(&info.argv, h, s)
+            } else {
+                None
+            }
+        });
+        let (argv, typed) = match (&plan, shell) {
+            (_, true) => (info.argv.clone(), plan.clone()),
+            (Some(p), false) => (p.clone(), None),
+            (None, false) => return false,
         };
         let spec = SpawnSpec {
             name: info.name.clone(),
@@ -300,5 +347,28 @@ mod tests {
         assert!(!is_shell(&v(&["bash", "script.sh"])));
         assert!(!is_shell(&v(&["claude", "--resume", "x"])));
         assert_eq!(program(&v(&["/opt/bin/Claude.exe"])).as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn direct_harness_keeps_its_argv_and_swaps_the_conversation() {
+        let r = |a: &[&str], h: &str| resume_in_place(&v(a), h, "s1");
+        // 경로·hook 설정·model은 그대로, 대화 인자만
+        assert_eq!(
+            r(&["/opt/claude", "--settings", "/w/s.json", "--model", "m", "--session-id", "k0"], "claude"),
+            Some(v(&["/opt/claude", "--settings", "/w/s.json", "--model", "m", "--resume", "s1"]))
+        );
+        assert_eq!(r(&["claude", "-r", "old"], "claude"), Some(v(&["claude", "--resume", "s1"])));
+        assert_eq!(
+            r(&["claude", "--continue", "--model", "m"], "claude"),
+            Some(v(&["claude", "--resume", "s1", "--model", "m"]))
+        );
+        assert_eq!(r(&["claude", "--model", "m"], "claude"), Some(v(&["claude", "--model", "m", "--resume", "s1"])));
+        assert_eq!(
+            r(&["codex", "-c", "notify=x", "-m", "g"], "codex"),
+            Some(v(&["codex", "resume", "s1", "-c", "notify=x", "-m", "g"]))
+        );
+        assert_eq!(r(&["codex", "resume", "old", "-m", "g"], "codex"), Some(v(&["codex", "resume", "s1", "-m", "g"])));
+        assert_eq!(resume_in_place(&v(&["claude"]), "claude", "a b"), None);
+        assert_eq!(r(&["sh"], "custom"), None);
     }
 }

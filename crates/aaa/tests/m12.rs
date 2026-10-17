@@ -275,8 +275,8 @@ fn reboot_restores_shells_and_resumes_agents() {
     let pa = hw.pane(&l[0]).unwrap().clone();
     assert_eq!((pa.argv.as_slice(), pa.cwd.as_deref()), (&["/bin/sh".to_string()][..], Some(lab::path_str(&wa))));
     h.wait_output(&l[0], "fake-claude --resume sess-a1", T);
-    // Claude를 바로 띄운 pane은 이어가기 명령으로 띄웠다
-    assert_eq!(hw.pane(&l[2]).unwrap().argv, ["claude", "--resume", "sess-c3"]);
+    // Claude를 바로 띄운 pane은 원래 argv(실행 파일 경로)에서 대화 인자만 바꿔 띄웠다
+    assert_eq!(hw.pane(&l[2]).unwrap().argv, [claude.as_str(), "--resume", "sess-c3"]);
     h.wait_output(&l[2], "fake-claude --resume sess-c3", T);
     // 같은 대화는 한 번만 잇는다: b는 빈 셸(뒤에 친 줄보다 먼저 쳤을 이어가기 명령이 화면에 없다)
     h.ok(&["pane", "run", &l[1], "echo plain-$((2+2))"]);

@@ -797,8 +797,13 @@ fn reboot_resumes_threads() {
             && i["summary"].as_str().is_some_and(|s| s.contains(&fid))),
         "{items:?}"
     );
-    // 복원 중에는 「세션이 모두 끝났다」를 내지 않았다(사라졌다가 돌아온 것으로 보지 않는다)
+    // 복원 뒤 ticker가 돌아도 「세션이 모두 끝났다」·이은 thread의 「pane closed」는 없다(사라졌다가 돌아온 것으로 보지
+    // 않는다). 실패한 thread에는 까닭이 든 항목 하나만 있다
+    w.h.ticks(2);
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
     assert!(!items.iter().any(|i| i["event"] == "sessions ended"), "{items:?}");
+    assert!(!items.iter().any(|i| i["event"] == "pane closed"), "{items:?}");
+    assert_eq!(items.iter().filter(|i| i["event"] == "restore failed").count(), 1, "{items:?}");
     // 옛 pane 기록은 지웠다
     assert!(w.h.json(&["pane", "get", &pane]).is_err());
 }
