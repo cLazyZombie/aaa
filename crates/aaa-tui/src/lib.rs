@@ -276,7 +276,7 @@ impl App {
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Attached { path, inserted, note }), _) => {
                         self.message = Some(match (inserted, note) {
-                            (true, _) => format!("그림을 붙였다(입력창에 경로, Enter 없음): {path}"),
+                            (true, _) => format!("그림 경로를 넣었다(Enter 없음): {path}"),
                             (false, Some(n)) => format!("그림을 저장했다: {path} — {n}"),
                             (false, None) => format!("그림을 저장했다: {path}"),
                         })
