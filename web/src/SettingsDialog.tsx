@@ -22,6 +22,7 @@ import {
   setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalInputMode,
+  setTerminalToggle,
   setTerminalWheelSpeed,
   TERMINAL_FONT_MAX,
   TERMINAL_FONT_MIN,
@@ -34,6 +35,7 @@ import {
   useTerminalFontFamily,
   useTerminalFontSize,
   useTerminalInputMode,
+  useTerminalToggle,
   useTerminalWheelSpeed,
   useUsageSettings,
 } from "./settings";
@@ -349,6 +351,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(alertSound);
   const wheelSpeed = useTerminalWheelSpeed();
+  const paneClipboard = useTerminalToggle("paneClipboard");
+  const releasePaneAway = useTerminalToggle("releasePaneAway");
   const surface = useRef<HTMLElement>(null);
   const [keyBarOpen, setKeyBarOpen] = useState(false);
   const keyBarButton = useRef<HTMLButtonElement>(null);
@@ -447,6 +451,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <button type="button" ref={keyBarButton} onClick={() => setKeyBarOpen(true)}>
                 키 바 편집
               </button>
+            </SettingsRow>
+            {/* 참고 SettingsDialog 413~418줄(문구는 참고 i18n.ko.ts) */}
+            <SettingsRow
+              label="패널에서 클립보드로 복사"
+              description="패널에서 복사하는 프로그램(vim, tmux, Claude Code)은 직접 복사한 것과 같이 이 기기의 클립보드에 텍스트를 넣습니다. 믿을 수 없는 출력을 실행하는 패널이 있다면 끄세요. 다음에 붙여 넣을 내용이 바뀔 수 있습니다."
+            >
+              <Toggle label="패널에서 클립보드로 복사" checked={paneClipboard} onChange={(on) => setTerminalToggle("paneClipboard", on)} />
+            </SettingsRow>
+            {/* 참고 「터미널의 herdr와 같이 쓰기」: herdr 창 자리에 aaa TUI(`aaa attach`)를 넣은 문구 */}
+            <SettingsRow
+              label="터미널의 aaa와 같이 쓰기"
+              description="이 컴퓨터의 터미널 창에서도 aaa를 띄워 쓴다면 켜세요. 다른 창으로 옮기고 1초가 지나면 이 탭은 패널을 보기만 해서, 터미널 창이 패널을 이 창 크기가 아닌 자기 크기로 유지합니다. 다시 입력하려면 탭을 클릭하세요. 보는 동안 패널은 터미널 창 크기로 그려져 이 창을 다 채우지 않을 수 있습니다."
+            >
+              <Toggle label="터미널의 aaa와 같이 쓰기" checked={releasePaneAway} onChange={(on) => setTerminalToggle("releasePaneAway", on)} />
             </SettingsRow>
           </SettingsGroup>
           {/* 참고 SettingsDialog AlertsPage(문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기별 종류(차이 목록 N3)와 함께 */}

@@ -208,6 +208,60 @@ export function useKeepScreenOn(): boolean {
 }
 
 /**
+ * 켜고 끄는 터미널 설정(herdr-web-ui settings.ts: 둘 다 `device` 범위).
+ * - paneClipboard(기본 켬): pane 프로그램의 클립보드 쓰기(OSC 52)를 이 기기 클립보드에 넣는다.
+ * - releasePaneAway(기본 꺼짐): 다른 창으로 옮기고 1초 뒤 이 탭은 pane을 보기만 하고 크기를 놓는다(터미널의 aaa TUI와 같이 쓸 때).
+ * 기본값이면 지운다. 값은 "1"·"0".
+ */
+export type TerminalToggle = "paneClipboard" | "releasePaneAway";
+const TOGGLE_KEYS: Record<TerminalToggle, string> = {
+  paneClipboard: "aaa:pane-clipboard",
+  releasePaneAway: "aaa:release-pane-away",
+};
+const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false };
+
+function readToggle(name: TerminalToggle): boolean {
+  try {
+    const v = localStorage.getItem(TOGGLE_KEYS[name]);
+    return v === "1" ? true : v === "0" ? false : TOGGLE_DEFAULTS[name];
+  } catch {
+    return TOGGLE_DEFAULTS[name];
+  }
+}
+
+const toggles: Record<TerminalToggle, boolean> = {
+  paneClipboard: readToggle("paneClipboard"),
+  releasePaneAway: readToggle("releasePaneAway"),
+};
+
+window.addEventListener("storage", (e) => {
+  const name = (Object.keys(TOGGLE_KEYS) as TerminalToggle[]).find((k) => TOGGLE_KEYS[k] === e.key);
+  if (!name) return;
+  toggles[name] = readToggle(name);
+  listeners.forEach((f) => f());
+});
+
+export function setTerminalToggle(name: TerminalToggle, on: boolean) {
+  toggles[name] = on;
+  try {
+    if (on === TOGGLE_DEFAULTS[name]) localStorage.removeItem(TOGGLE_KEYS[name]);
+    else localStorage.setItem(TOGGLE_KEYS[name], on ? "1" : "0");
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+/** 사건 처리기에서 읽는 지금 값 */
+export function terminalToggle(name: TerminalToggle): boolean {
+  return toggles[name];
+}
+
+export function useTerminalToggle(name: TerminalToggle): boolean {
+  return useSyncExternalStore(subscribe, () => toggles[name]);
+}
+
+/**
  * 알림(herdr-web-ui settings.ts `alertsOn`·`alertInApp`·`alertSound`: 기기마다).
  * - 켜짐(기본 켬): 이 기기의 알림 전체. 끄면 push 구독도 지운다.
  * - 앱 안(기본 켬): 앱을 보는 동안 위에서 내려오는 알림(Droplet).
