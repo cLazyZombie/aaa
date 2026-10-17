@@ -80,23 +80,26 @@ done
 /// herdr `agent explain --file`로 확인했다). 폴더 신뢰 창 → SessionStart hook(세션 ID) → 입력 상자에서 기다린다.
 /// 입력을 받으면 UserPromptSubmit hook을 내고 spinner를 그린 채 일한다. 턴은 시험이 끝낸다: 일하는 동안 키를 기다려
 /// BEL(^G)이면 마치고, Esc면 Claude처럼 「Interrupted」를 보이고 멈춘다. 멈추는 동안(0.5초 조용할 때까지) 들어온 입력은
-/// 버린다: 멈춤이 화면에 보이기 전에 입력하면 사라진다. 일하는 동안 친 글은 Claude처럼 줄 세웠다가 턴이 끝나면 다음
-/// 턴으로 받는다.
-/// 선택 창은 Claude처럼 그린다(❯ 커서, 화살표로 옮기고 Enter로 고름, Esc는 취소). 폴더 신뢰 창의 기본 선택은
-/// 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하면 턴이 「Interrupted」로 끝난다.
+/// 버린다: 멈춤이 화면에 보이기 전에 입력하면 사라진다. 일하는 동안 친 글은 Claude처럼 입력 상자에 보이고 줄 세웠다가
+/// 턴이 끝나면 다음 턴으로 받는다. 키는 echo 없이 읽는다(키 사이에 echo를 켜면 부하 아래 친 글이 tty echo로 찍혀 상대
+/// 커서로 지우는 spinner가 남았다).
+/// 선택 창은 Claude처럼 그린다(❯ 커서, 화살표로 옮기고 Enter로 고름, Esc는 취소). 창 하나는 한 번의 write다. 폴더 신뢰
+/// 창의 기본 선택은 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하면 턴이 「Interrupted」로 끝난다.
 const CLAUDE_AGENT: &str = r#"#!/bin/sh
 ESC=$(printf '\033'); BEL=$(printf '\007'); LATE=$(printf '\016'); NL='
 '; typed=; queued=
 RULE='────────────────────────────────────────'
 hook() { "$AA" hook --agent claude "$1"; }
-key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
-keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
+key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon; }
+keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); stty icanon; }
 box() { printf '%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE"; }
 # 입력 대기: 커서를 입력 상자 「❯ 」 뒤에 둔다. Enter 뒤(커서는 상자 아래 선)에는 상자를 지운다.
-prompt() { box; printf '\033[2A\r\033[2C'; }
+prompt() { stty echo; box; printf '\033[2A\r\033[2C'; }
 taken() { printf '\033[2A\r\033[J'; }
 spin() { printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
 unspin() { printf '\033[4A\r\033[J'; }
+# 일하는 동안 친 글은 Claude처럼 입력 상자에 보인다(커서는 상자 아래 안내 줄 첫 칸)
+shown() { printf '\033[2A\r\342\235\257 %s\033[K\033[2B\r' "$typed"; }
 interrupted() { printf '  \342\216\277  Interrupted \302\267 What should Claude do instead?\n'; }
 # 옛 agent가 띄운 세션의 Claude는 확인창에 답한 뒤에도 Notification(permission_prompt) hook을 늦게 낸다(t-0333).
 # 끝은 진행 보고로 알린다(hook은 차례로 host에 간다)
@@ -110,19 +113,25 @@ turn() {
       "$BEL") unspin; return ;;
       "$LATE") late ;;
       "$ESC") while keyt 5; [ -n "$k" ]; do :; done; typed=; unspin; interrupted; return ;;
-      '') [ -z "$typed" ] || { queued="$queued$typed$NL"; typed=; } ;;
-      *) typed="$typed$k" ;;
+      '') [ -z "$typed" ] || { queued="$queued$typed$NL"; typed=; shown; } ;;
+      *) typed="$typed$k"; shown ;;
     esac
   done
 }
-# $1 본문 $2 기본 선택(0·1) $3·$4 선택지 $5 아래 안내. 그린 자리에서 다시 그리고, 고른 뒤 지운다.
+# 한 번의 write로 쓴다: dd가 here-doc(끝에 줄바꿈 하나)을 한 블록으로 읽어 쓴다. printf는 줄마다 나눠 써서 host가
+# 반쯤 그린 창(아래 안내 줄 전)을 볼 수 있다
+out() { dd bs=8192 count=1 2>/dev/null <<EOF
+$1
+EOF
+}
+# $1 본문 $2 기본 선택(0·1) $3·$4 선택지 $5 아래 안내 $6 처음 그리기 앞에 함께 쓸 것. 창 하나를 한 번에 그리고(커서는
+# 안내 줄 아래), 그린 자리에서 다시 그리고, 고른 뒤 지운다.
 menu() {
-  sel=$2; h=$(( $(printf '%s\n' "$1" | wc -l) + 4 )); drawn=0
+  sel=$2; h=$(( $(printf '%s\n' "$1" | wc -l) + 5 )); pre=${6:-}
   while :; do
-    [ "$drawn" = 1 ] && printf '\033[%sA\r\033[J' "$h"
-    printf '%s\n%s\n' "$RULE" "$1"
-    if [ "$sel" = 0 ]; then printf ' \342\235\257 %s\n   %s\n' "$3" "$4"; else printf '   %s\n \342\235\257 %s\n' "$3" "$4"; fi
-    printf '\n %s' "$5"; drawn=1
+    if [ "$sel" = 0 ]; then o=$(printf ' \342\235\257 %s\n   %s' "$3" "$4"); else o=$(printf '   %s\n \342\235\257 %s' "$3" "$4"); fi
+    out "$pre$(printf '%s\n%s\n%s\n\n %s' "$RULE" "$1" "$o" "$5")"
+    pre=$(printf '\033[%sA\r\033[J' "$h")
     key
     if [ "$k" = "$ESC" ]; then
       keyt 2
@@ -169,14 +178,15 @@ while :; do
       "$AA" report --percent 40 --activity '늦은 짝 뒤' ;;
     *race*)
       # 치는 동안 뜨는 권한 창(t-0340 보안 감사): 받은 턴(작업 중)을 BEL로 마치면 입력 상자를 보인 채(쉼) 다음 입력의 첫
-      # 글자를 받고, Enter 전에 권한 창을 그린다. 그 Enter는 사람이 보지 않은 창의 기본 선택(「1. Yes」)을 고른다
-      spin; turn; echo "race armed"; prompt; key; printf '\033[1A\r\033[J'
+      # 글자를 받고, Enter 전에 권한 창을 그린다(상자 지우기와 함께 한 번에: host는 친 글에 화면이 반응한 뒤 Enter 전
+      # 검사를 한다). 그 Enter는 사람이 보지 않은 창의 기본 선택(「1. Yes」)을 고른다
+      spin; turn; echo "race armed"; prompt; key
       menu " Bash command
 
    rm -rf build
    Clean the build
 
- Do you want to proceed?" 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain'
+ Do you want to proceed?" 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain' "$(printf '\033[1A\r\033[J')"
       echo "race $pick" ;;
     *ask*) spin; perm 'make test' ;;
     *) printf 'got: %s\n' "$line"; spin ;;
@@ -268,7 +278,8 @@ read x < ask.fifo
 /// 이어 띄울 수 있는 가짜 Claude(harness claude, hook 없음): 대화 ID 인자를 보이고, STICKY_AGENT처럼 입력창 상자를 그려
 /// Enter마다 받은 줄을 대화에 `got: <줄>`로 남긴다. 처음에는 `--session-id <id>`로, 이어 띄우면 `--resume <id>`로
 /// 뜬다(agent threads.rs `resolve`). `EVIL_SID`가 있으면 줄을 받을 때마다 그 값을 세션 ID로 hook(`UserPromptSubmit`)을
-/// 낸다(보안 시험: pane 프로그램이 세션 ID를 지어낸다).
+/// 낸다(보안 시험: pane 프로그램이 세션 ID를 지어낸다). 한 번에 읽은 글 안의 줄 끝도 Enter다(부하 아래 친 글과 Enter가
+/// 한 번에 읽혔다).
 const RESUMABLE_AGENT: &str = r#"#!/bin/sh
 stty -icanon -echo min 1 time 0
 R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
@@ -279,19 +290,24 @@ while [ $# -gt 0 ]; do
 " ;; esac
   shift
 done
-buf=''
+buf=''; NL='
+'
 draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n' "$log" "$R" "$buf" "$R"; }
 draw
 while :; do
-  c=$(dd bs=4096 count=1 2>/dev/null)
-  if [ -z "$c" ]; then
-    log="$log$(printf 'got: %s' "$buf")
+  c=$(dd bs=4096 count=1 2>/dev/null; printf x); c=${c%x}
+  [ -n "$c" ] || break
+  while :; do
+    case "$c" in
+      *"$NL"*)
+        buf="$buf${c%%"$NL"*}"; c=${c#*"$NL"}
+        log="$log$(printf 'got: %s' "$buf")
 "
-    buf=''
-    [ -n "$EVIL_SID" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$EVIL_SID\"}"
-  else
-    buf="$buf$c"
-  fi
+        buf=''
+        [ -n "$EVIL_SID" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$EVIL_SID\"}" ;;
+      *) buf="$buf$c"; break ;;
+    esac
+  done
   draw
 done
 "#;
@@ -1217,7 +1233,8 @@ fn claude_thread_states_questions_and_messages() {
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
 
     // 치는 동안 뜬 확인창(t-0340 보안 감사): 글을 친 뒤 Enter 전에 권한 창이 뜨면 Enter를 보내지 않는다. 보내면 Enter가
-    // 사람이 보지 않은 권한 창의 기본 선택(1. Yes)을 고른다. Enter 전 검사가 없으면 화면에 「race 1. Yes」가 있다.
+    // 사람이 보지 않은 권한 창의 기본 선택(1. Yes)을 고른다. Enter 전 검사가 없으면 화면에 「race 1. Yes」가 있다. 검사는
+    // 프로그램이 친 글에 반응한 뒤다: 고정 300ms에 보면 부하 아래 아직 그리지 않은 창이 Enter를 받았다(ci-local)
     assert_eq!(w.message(&id, "race", false)["state"], "accepted");
     let t = lab::now_ms();
     finish_turn(&w, &pane);
@@ -3096,6 +3113,9 @@ fn merged_resolve_waits_for_the_routine_prompt() {
     ]);
     let id = t["id"].as_str().unwrap().to_string();
     f.kind("report_ready", &id, T);
+    // agent는 안내 줄을 받자마자 보고하므로, host가 전달을 확인하는 것이 보고보다 늦을 수 있다(그 사이 메시지는 「아직
+    // brief를 받지 않았다」로 거절된다, 부하 아래 ci-local)
+    w.wait_show("brief 전달", &id, |v| v["brief"] == "delivered");
     w.message(&id, "finish quiet", false);
     w.wait_show("Done", &id, |v| v["agent"]["percent"] == 100);
     let branch = w.show(&id)["branch"].as_str().unwrap().to_string();

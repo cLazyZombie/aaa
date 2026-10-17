@@ -2592,6 +2592,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     잡혀, Enter를 보내지 않은 글을 「받았다」로도 적었다(t-0332 화면 감지와 합친 뒤 m13이 잡았다).
   - 화면 검사와 Enter 사이의 아주 짧은 틈은 남는다(참고 herdr `agent prompt`도 같다). 친 글자가 바로 선택지를 고르는 창(숫자
     키)은 치기 전 검사만 막는다.
+  - 검사 때를 고정 300ms에서 「친 글에 화면이 반응한 뒤」로 옮겼다(§8.122, 부하 아래 아직 친 글 앞 상태를 보았다).
 - **낮음.**
   - 옛 decisions.md: symlink·FIFO·1MiB 넘는 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다(FIFO를 열면 ticker가 멈췄다).
   - host가 모르는 front 요청(1.12에서 없앤 `decision_add` 등을 1.11 front가 보냄)에 연결을 끊지 않고 그 요청 id로 오류를 답한다.
@@ -2755,6 +2756,33 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     `nudge_sent`로, 설정을 무시하면 4단계의 두 번째 알림으로 실패함을 확인했다.
   - 유닛: project `keys_fall_back_one_by_one`(`nudge = 0`은 기본값, `nudge = false`), migrate `inventory_then_convert`(`nudge = false`가
     project.toml로 간다).
+
+### 8.122 Enter 전 검사는 프로그램이 친 글에 반응한 뒤에 한다·m13 부하 경쟁 넷(10-18, coordinator 최우선)
+
+- **실패(main 699383a·branch 40aae94의 ci-local, load 60 넘음).**
+  - (1) `claude_thread_states_questions_and_messages` race: 「Enter가 권한 창을 골랐다」(t-0338)와, 같은 원인으로 race 글을
+    「받았다」로 적음.
+  - (2) `merged_resolve_waits_for_the_routine_prompt`: `report_ready` 바로 뒤 메시지가 「아직 brief를 받지 않았다」(t-0338).
+  - (3) 같은 시험의 「second」 뒤 Idle이 오지 않음, (4) `reboot_resumes_threads` 「got: after reboot」 없음(ci35).
+- **판정(결함 심기로 확인).**
+  - (1)은 제품 쪽이다. Enter 전 검사(§8.114)는 친 뒤 고정 300ms(참고 herdr `AGENT_PROMPT_SUBMIT_DELAY`)에 화면을 봤다. 부하
+    아래 프로그램이 300ms 안에 친 글을 읽지 못하면 검사는 친 글 앞 상태를 보고, 그 뒤 그린 확인창이 Enter를 받는다. 가짜가
+    첫 글자를 읽고 1초 뒤 창을 그리게 하면 같은 실패가 난다.
+  - (2)·(3)·(4)는 시험 쪽이다. (2) 가짜는 안내 줄을 받자마자 보고해 host의 전달 확인이 보고보다 늦을 수 있다(제품의 거절은
+    참고 threads.rs `prompt`와 같다). (3) 가짜 Claude가 키 사이마다 echo를 켜, 그 틈에 온 글이 tty echo로 찍혀 상대 커서로
+    지우는 spinner가 화면에 남았다. (4) 이어 띄운 가짜는 한 번에 읽은 「글+줄 끝」의 줄 끝을 Enter로 보지 않았다.
+  - 지연을 심어(보고 2초 늦게, 키 사이 0.3초, 읽기 1초 늦게) 각 실패를 다시 냈고, 고친 뒤에는 심은 채로 통과한다.
+- **고침.**
+  - harness.rs `submit_checked`: 입력 상자에 친 글을 보이는 harness(hook·화면 감지가 있는 Claude 등)는 300ms 뒤 화면이
+    치기 전과 달라질 때까지(100ms마다) 기다린 뒤 선택 창·확인창을 보고 Enter한다. 화면이 바뀌지 않으면 받음 시한까지
+    기다려 보낸다. 받음 시한(`accept_wait_ms`)은 친 때부터 센다(Enter 뒤 기다림은 남은 시간). custom·보고만 하는
+    프로그램은 Enter 전에 글을 보이지 않을 수 있어(PASTE 가짜) 참고처럼 300ms 뒤에 본다.
+  - 남는 틈: 친 글에 반응한 뒤 그리는 창, 반응을 여러 번 나눠 그리는 중(먼저 그린 조각이 「반응」이다)에 뜬 창은 여전히 Enter를
+    받는다. 가짜가 상자를 먼저 지우고 1초 뒤 창을 그리면 실패한다(확인). 바깥에서 막을 수 없는 틈이라 가짜는 창을 한 번에 그린다.
+  - 가짜 Claude: 키는 echo 없이 읽고 입력 대기(`prompt`)에서만 켠다. 일하는 동안 친 글은 Claude처럼 입력 상자에 보인다.
+    선택 창 하나는 한 번의 write다(dd가 here-doc을 한 블록으로 쓴다. printf는 줄마다 나눠 쓴다).
+  - 이어 띄운 가짜: 한 번에 읽은 글 안의 줄 끝도 Enter다. routine 시험: 보고 뒤 brief 전달(`brief = delivered`)을 보고 메시지를 보낸다.
+- **시험.** 결함 심기: 반응 기다림을 빼면 늦게 그린 창으로 race 글이 「accepted」가 되어 실패하고, 넣으면 통과한다. m13 31개 통과.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
