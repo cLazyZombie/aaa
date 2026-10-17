@@ -20,72 +20,50 @@
 }
 
 /*
- * aaa 웹 디자인 token(결정 16). 원칙:
- * - 바탕은 단계가 있는 면(tonal surface)과 가는 선(hairline)으로 나누고, 그림자는 떠 있는 것(질문 카드·메뉴)에만 쓴다.
- * - 강조색(iris)은 고른 것·주 버튼·초점에만 쓰고, 상태색(작업 파랑·막힘 빨강·완료 초록·주의 호박)은 항상 글과 함께 보인다.
- * - 간격은 4px 단위, 모서리는 6/8/12/16px, 움직임은 120/180ms(움직임 줄이기 설정이면 멈춘다).
- * - 테마는 시스템을 따르고 <html data-theme>로 손수 고를 수 있다. 터미널 색도 같은 token에서 읽는다.
+ * 색·글자·크기 token은 herdr-web-ui 것이다(web/src/herdr/tokens.css, 결정 D5 「테마는 참고대로」).
+ * <html data-theme>(어두움·밝음)과 data-palette(amber·charcoal·catppuccin)는 appearance.ts가 늘 단다(참고 settings.ts applyToDocument).
+ * 아래는 aaa 화면이 써 온 이름을 참고 token으로 잇는 것뿐이다. 새 색을 만들지 않는다(plan §8.70).
+ * - 간격 4px 단위, 모서리 6/8/12/16px, 움직임 120/180ms는 참고와 같은 값이다.
  */
 :root {
-  --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Noto Sans KR", sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, "D2Coding", Consolas, monospace;
-  /* 터미널: 깔린 Meslotendard → 넣은 WOFF2 → 기존 목록 */
+  /* 터미널: 깔린 Meslotendard → 넣은 WOFF2 → 기존 목록(사용자 결정 §8.31). 참고 --font-mono는 그대로 쓴다 */
   --font-term: Meslotendard, "Meslotendard Web", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, "D2Coding", Consolas, monospace;
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 12px;
-  --r-xl: 16px;
-  --sidebar: 320px;
-  --head: 46px;
+  --r-sm: var(--radius-sm);
+  --r-md: var(--radius-md);
+  --r-lg: var(--radius-lg);
+  --r-xl: var(--radius-xl);
+  --sidebar: var(--sidebar-w);
+  --head: var(--header-h);
   --control: 32px;
   --touch: 44px;
-  --fast: 120ms;
-  --slow: 180ms;
-  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --fast: var(--dur-fast);
+  --slow: var(--dur-base);
+  --ease: var(--ease-out);
+  /* 참고 token으로 잇는 aaa 이름 */
+  --bg-active: var(--bg-hover);
+  --bg-inset: var(--bg-input);
+  --text-faint: color-mix(in srgb, var(--text-dim) 72%, var(--bg));
+  --accent-strong: var(--primary-hover);
+  --accent-bg: var(--accent-tint);
+  --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
+  --on-accent: var(--primary-text);
+  --working: var(--status-working);
+  --working-bg: var(--status-working-tint);
+  --blocked: var(--status-blocked);
+  --blocked-bg: var(--status-blocked-tint);
+  --blocked-line: color-mix(in srgb, var(--status-blocked) 40%, transparent);
+  --done: var(--status-done);
+  --done-bg: var(--status-done-tint);
+  --warn: var(--notice);
+  --warn-bg: color-mix(in srgb, var(--notice) 13%, transparent);
+  --glass: var(--bar-bg);
 }
 
-/* 어두움(기본): 차가운 흑연 */
+/*
+ * 터미널 16색. 참고는 xterm 기본 16색을 쓰는데(settings.ts terminalTheme은 바탕·글·커서·고른 곳만), 그 흰색·노랑은 밝은 바탕에서
+ * 읽히지 않는다. 그래서 aaa는 어두움·밝음마다 16색을 둔다(참고와 다르게 둔 것, plan §8.70).
+ */
 :root {
-  color-scheme: dark;
-  --bg: #0f1115;
-  --bg-panel: #14171c;
-  --bg-elevated: #1b1f26;
-  --bg-hover: #20252d;
-  --bg-active: #262c36;
-  --bg-inset: #0b0d10;
-  --border: #232831;
-  --border-strong: #343b47;
-  --text: #d6dbe3;
-  --text-dim: #8a93a3;
-  --text-faint: #5d6574;
-  --text-strong: #f4f6f9;
-  --accent: #9d8fff;
-  --accent-strong: #b3a8ff;
-  --accent-bg: rgba(157, 143, 255, 0.14);
-  --accent-line: rgba(157, 143, 255, 0.42);
-  --on-accent: #12101f;
-  --working: #5cb3ff;
-  --working-bg: rgba(92, 179, 255, 0.12);
-  --blocked: #ff7b86;
-  --blocked-bg: rgba(255, 123, 134, 0.12);
-  --blocked-line: rgba(255, 123, 134, 0.38);
-  --done: #5fd08b;
-  --done-bg: rgba(95, 208, 139, 0.12);
-  --warn: #f0b85a;
-  --warn-bg: rgba(240, 184, 90, 0.12);
-  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
-  --glass: rgba(15, 17, 21, 0.78);
-  --term-bg: var(--bg);
-  --term-fg: #d6dbe3;
-  --term-cursor: #b3a8ff;
-  --term-selection: rgba(157, 143, 255, 0.3);
   --ansi-0: #1b1f26;
   --ansi-1: #ff7b86;
   --ansi-2: #5fd08b;
@@ -103,41 +81,7 @@
   --ansi-14: #8ae3ea;
   --ansi-15: #f4f6f9;
 }
-
-/* 밝음: 종이처럼 따뜻한 회색 바탕에 같은 위계 */
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f8f8f6;
-  --bg-panel: #f1f1ee;
-  --bg-elevated: #ffffff;
-  --bg-hover: #e9e9e5;
-  --bg-active: #e1e1dc;
-  --bg-inset: #ffffff;
-  --border: #e2e2dd;
-  --border-strong: #cdcdc6;
-  --text: #24262b;
-  --text-dim: #6a6f79;
-  --text-faint: #9a9ea6;
-  --text-strong: #0f1115;
-  --accent: #5b4bd6;
-  --accent-strong: #4a3bc4;
-  --accent-bg: rgba(91, 75, 214, 0.1);
-  --accent-line: rgba(91, 75, 214, 0.38);
-  --on-accent: #ffffff;
-  --working: #1f6fbf;
-  --working-bg: rgba(31, 111, 191, 0.1);
-  --blocked: #c4283b;
-  --blocked-bg: rgba(196, 40, 59, 0.08);
-  --blocked-line: rgba(196, 40, 59, 0.32);
-  --done: #1d7f45;
-  --done-bg: rgba(29, 127, 69, 0.1);
-  --warn: #9a5b00;
-  --warn-bg: rgba(186, 117, 0, 0.1);
-  --shadow-pop: 0 12px 32px rgba(30, 30, 40, 0.14), 0 2px 6px rgba(30, 30, 40, 0.08);
-  --glass: rgba(248, 248, 246, 0.82);
-  --term-fg: #24262b;
-  --term-cursor: #5b4bd6;
-  --term-selection: rgba(91, 75, 214, 0.22);
+[data-theme="light"] {
   --ansi-0: #24262b;
   --ansi-1: #c4283b;
   --ansi-2: #1d7f45;
@@ -154,58 +98,6 @@
   --ansi-13: #9157d8;
   --ansi-14: #1693a0;
   --ansi-15: #0f1115;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    color-scheme: light;
-    --bg: #f8f8f6;
-    --bg-panel: #f1f1ee;
-    --bg-elevated: #ffffff;
-    --bg-hover: #e9e9e5;
-    --bg-active: #e1e1dc;
-    --bg-inset: #ffffff;
-    --border: #e2e2dd;
-    --border-strong: #cdcdc6;
-    --text: #24262b;
-    --text-dim: #6a6f79;
-    --text-faint: #9a9ea6;
-    --text-strong: #0f1115;
-    --accent: #5b4bd6;
-    --accent-strong: #4a3bc4;
-    --accent-bg: rgba(91, 75, 214, 0.1);
-    --accent-line: rgba(91, 75, 214, 0.38);
-    --on-accent: #ffffff;
-    --working: #1f6fbf;
-    --working-bg: rgba(31, 111, 191, 0.1);
-    --blocked: #c4283b;
-    --blocked-bg: rgba(196, 40, 59, 0.08);
-    --blocked-line: rgba(196, 40, 59, 0.32);
-    --done: #1d7f45;
-    --done-bg: rgba(29, 127, 69, 0.1);
-    --warn: #9a5b00;
-    --warn-bg: rgba(186, 117, 0, 0.1);
-    --shadow-pop: 0 12px 32px rgba(30, 30, 40, 0.14), 0 2px 6px rgba(30, 30, 40, 0.08);
-    --glass: rgba(248, 248, 246, 0.82);
-    --term-fg: #24262b;
-    --term-cursor: #5b4bd6;
-    --term-selection: rgba(91, 75, 214, 0.22);
-    --ansi-0: #24262b;
-    --ansi-1: #c4283b;
-    --ansi-2: #1d7f45;
-    --ansi-3: #8a5a00;
-    --ansi-4: #1f6fbf;
-    --ansi-5: #7a3fc4;
-    --ansi-6: #0f7c86;
-    --ansi-7: #6a6f79;
-    --ansi-8: #8a8f99;
-    --ansi-9: #d9434f;
-    --ansi-10: #2a9a5a;
-    --ansi-11: #a56d00;
-    --ansi-12: #3487d6;
-    --ansi-13: #9157d8;
-    --ansi-14: #1693a0;
-    --ansi-15: #0f1115;
-  }
 }
 
 /* ── 바탕 ───────────────────────────────────────────── */
@@ -243,8 +135,9 @@ button {
       .pane:hover:not(:disabled) { background: var(--bg-hover); border-color: transparent; }
     }
 button:disabled { opacity: 0.45; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
-button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+/* 주 단추는 참고 .btn-primary처럼 --primary(채움)·--primary-text */
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
 button.ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
 button.ghost:hover:not(:disabled) { background: var(--bg-hover); border-color: transparent; color: var(--text); }
 button.icon { width: var(--control); padding: 0; }
@@ -403,60 +296,6 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 }
 .list-head .spacer { flex: 1; }
 .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
-.sec { padding: var(--space-2) var(--space-2) var(--space-1); }
-.sec + .sec { border-top: 1px solid var(--border); }
-.sec-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 30px;
-  margin: 0;
-  padding: 0 var(--space-2);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.sec-head .count { font-weight: 500; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.sec-head.alert { color: var(--blocked); }
-.sec-head button { margin-left: auto; }
-.list ul { list-style: none; margin: 0; padding: 0; }
-.list li + li { margin-top: 1px; }
-
-/* 목록 한 줄: 앞 표시 + 제목/부제 두 줄 + 뒤 상태 */
-.pane {
-  width: 100%;
-  height: auto;
-  min-height: 44px;
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 5px var(--space-2);
-  text-align: left;
-  font-size: 13.5px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-}
-.pane.sel, .pane.sel:hover:not(:disabled) { background: var(--bg-active); }
-.pane.dim .row-title { color: var(--text-dim); }
-.mark { width: 20px; height: 20px; display: grid; place-items: center; color: var(--text-dim); border-radius: 6px; }
-.mark svg.i { width: 15px; height: 15px; }
-/* currentColor를 따르는 표시(codex·cursor·pi)는 제목처럼 읽힌다(herdr-web-ui Sidebar.css .sidebar-mark .agent-mark) */
-.mark .agent-mark { display: inline-flex; color: var(--text); }
-.row-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
-.row-title { color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.row-sub { color: var(--text-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-end { display: inline-flex; align-items: center; gap: 6px; }
-.pane-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.machine-head { display: flex; align-items: center; gap: var(--space-2); height: 34px; padding: 0 var(--space-1) 0 var(--space-2); }
-.machine-head .name { font-size: 13px; font-weight: 600; color: var(--text-strong); }
-.machine-head svg.i { color: var(--text-dim); }
-.machine-head button { margin-left: auto; }
-.machine .note { margin: 0 var(--space-2) var(--space-2); padding: var(--space-2); border-radius: var(--r-sm); font-size: 12px; color: var(--warn); background: var(--warn-bg); }
-.machine .empty { margin: 0; padding: var(--space-1) var(--space-2) var(--space-2) 38px; font-size: 12.5px; color: var(--text-faint); }
-
 /* herdr-web-ui Sidebar.css .sidebar-footer: 늘지도 줄지도 않는다 */
 .list-foot { flex: 0 0 auto; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
 .list-foot button { width: 100%; justify-content: flex-start; }
@@ -469,7 +308,6 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .eval-badge.working .eval-dot { color: var(--working); animation: breathe 2000ms ease-in-out infinite; }
 .eval-badge.idle .eval-dot { color: var(--done); }
 .eval-badge.ended .eval-dot { color: var(--warn); }
-.theme-btn { width: 30px; height: 30px; }
 
 /* ── 질문 카드 ─────────────────────────────────────── */
 .question {
@@ -478,9 +316,6 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   background: var(--bg-elevated);
   padding: var(--space-3);
 }
-.questions .question + .question { margin-top: var(--space-2); }
-.questions { padding-bottom: var(--space-3); }
-.questions .question { margin: 0 var(--space-1); }
 .q-head { display: flex; gap: var(--space-2); align-items: center; font-size: 12px; min-width: 0; }
 .q-title { color: var(--blocked); font-weight: 650; font-size: 13px; white-space: nowrap; }
 .q-where { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

@@ -1,0 +1,481 @@
+/*
+ * herdr-web-ui(aa624cb) src/styles.css 18~494줄(디자인 token: 기본 amber 팔레트, 밝음, charcoal·catppuccin 팔레트, 밀도)을 바꾸지 않고 옮겼다.
+ * 고지는 web/src/herdr/README.md. aaa 고유 이름(--working·--accent-bg 등)은 style.css가 이 token으로 잇는다(plan §8.70).
+ */
+:root {
+  color-scheme: dark;
+
+  /* surfaces (tonal steps, darkest to lightest): lamp-lit graphite, warm not tinted */
+  --bg: #12100e;
+  --bg-panel: #181613;
+  --bg-elevated: #211e1a;
+  --bg-hover: #2a2621;
+  --bg-input: #1c1916;
+  --border: #2d2924;
+  --border-strong: #3e3830;
+  /* the chat's user bubble: no edge where --bg-elevated alone parts it from --bg (the dark
+     amber and charcoal palettes), --border where the two surfaces sit close */
+  --bubble-border: transparent;
+
+  /* text */
+  --text: #d8d0c3;
+  --text-dim: #9b9183;
+  --text-strong: #f2ebdf;
+
+  /* the saturated colors: ONE amber (selection, focus, cursor and the user's own
+     action - an amber-phosphor terminal) and the four agent states, none of them amber */
+  --accent: #f0a830;
+  --accent-tint: rgba(240, 168, 48, 0.13);
+  --primary: #f0a830;
+  --primary-hover: #f6bb55;
+  --primary-text: #1b1407;
+  --primary-tint: rgba(240, 168, 48, 0.16);
+  --status-idle: #9b9183;
+  --status-working: #6cb8d6;
+  --status-blocked: #ff7b70;
+  --status-done: #93c36b;
+  --status-working-tint: rgba(108, 184, 214, 0.14);
+  --status-blocked-tint: rgba(255, 123, 112, 0.14);
+  --status-done-tint: rgba(147, 195, 107, 0.14);
+  --danger-tint: rgba(255, 123, 112, 0.12);
+  --danger-text: #ffd9d4;
+  /* herdr's TUI state colors, from its default theme (Catppuccin Mocha; Latte in light) */
+  --indicator-working: #f9e2af;
+  --indicator-blocked: #f38ba8;
+  --indicator-done: #94e2d5;
+  --indicator-idle: #a6e3a1;
+  --indicator-unknown: #6c7086;
+  /* a note that the view is partial (a file cut short, code left plain): warning yellow */
+  --notice: #e8c55c;
+
+  /* overlays */
+  --scrim: rgba(8, 6, 4, 0.55);
+  /* glass: a phone's header over the chat and the input card over the transcript's end, as an
+     iPhone's bars are. Mixed from the theme's own surfaces, so every theme and palette has them */
+  --bar-bg: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  --card-glass: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  --glass-blur: saturate(180%) blur(20px);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+
+  /* document surfaces: NOT theme-driven. A PDF page is paper, not UI — it is white in either
+     theme, so it is named here and never overridden by the theme blocks below
+     (FileViewer's .file-viewer-pdf) */
+  --pdf-page: #ffffff;
+
+  /* terminal theme: mirrored verbatim in src/lib/settings.ts terminalTheme() */
+  --term-bg: #181613;
+  --term-fg: #d8d0c3;
+  --term-cursor: #f0a830;
+  --term-selection: #4a3d26;
+
+  /* syntax highlighting (components/HighlightedCode.css): the four derived roles follow the
+     palette because they are resolved on <html>, where data-theme and data-palette sit */
+  /* the file viewer's line numbers: tertiary text, quieter than the code beside them */
+  --line-number: var(--text-dim);
+  --syntax-comment: var(--text-dim);
+  --syntax-function: var(--accent);
+  --syntax-inserted: var(--status-done);
+  --syntax-deleted: var(--status-blocked);
+  --syntax-keyword: #e8875f;
+  --syntax-string: #a8c17c;
+  --syntax-number: #d6a0c9;
+  --syntax-type: #6cb8d6;
+  --syntax-variable: #e0c08f;
+  --syntax-meta: #b49dd6;
+
+  /* type (comfortable density; compact overrides below) */
+  --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
+  /* "JetBrains Mono Web" is the bundled face (fonts/fonts.css): after the icon font, which draws
+     the private use area alone, and never in the terminal's own stack (lib/fontFamily.ts) */
+  --font-mono: "Symbols Nerd Font Mono", "JetBrains Mono Web", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "D2Coding", monospace;
+  /* Settings → Appearance → Interface font size: the chosen body size over the density's (lib/settings.ts
+     writes it on <html>). Every size below is the scale at 1, except --fs-input: the floor under which
+     iOS Safari zooms a focused field stays a floor */
+  --ui-scale: 1;
+  --fs-2xs: calc(11px * var(--ui-scale));
+  --fs-xs: calc(12px * var(--ui-scale));
+  --fs-sm: calc(13px * var(--ui-scale));
+  --fs-md: calc(14px * var(--ui-scale));
+  --fs-chat: calc(15px * var(--ui-scale)); /* text that is read at length: chat prose, the user's bubble, the message box with a mouse */
+  --fs-lg: calc(16px * var(--ui-scale));
+  --fs-xl: calc(18px * var(--ui-scale));
+  --fs-display: calc(22px * var(--ui-scale));
+  /* the pairing code: a size of its own, still on the density scale (compact overrides it) */
+  --fs-pairing: calc(32px * var(--ui-scale));
+  --fs-input: 16px; /* the one size iOS Safari does not zoom on focus */
+  --lh-tight: 1.2;
+  --lh-base: 1.5;
+  --lh-code: 1.6;
+  --lh-prose: 1.65;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --tracking-tight: -0.01em;
+  --tracking-display: -0.02em;
+  --tracking-caps: 0.06em;
+
+  /* space (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* radii */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+
+  /* sizes */
+  --header-h: 52px;
+  /* the header from 769px, in either density: one line beside the sidebar's own top row */
+  --header-h-wide: 46px;
+  --sidebar-w: 320px;
+  --control-h: 34px;
+  --touch-target: 40px;
+  --keybar-h: 48px;
+  --row-h: 56px;
+  --chip-h: 20px;
+  --icon-size: 18px;
+  --mark-size: 22px;
+  --avatar-size: 32px;
+  --dot-size: 7px;
+  --rail-w: 3px;
+  --hairline: 1px;
+  --content-w: 820px;
+  /* the chat lane: transcript, composer column, held list (Settings → Chat width, lib/settings.ts).
+     At the Default step PaneTerminal writes the pane's own lane on .terminal-stack, as one
+     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem), and a file viewer
+     writes the lane of the pane that opened it on itself; this is that rule's floor, for a
+     pane not measured yet. Never a percentage here: each column would resolve it against its
+     own box and the columns would differ by their gutters */
+  --chat-w: var(--content-w);
+  /* a long user message folds to this many lines of its prose (ChatView.css caps the bubble's body
+     at the count; lib/userMessageFold.ts folds a message past it) */
+  --chat-fold-lines: 12;
+  --pending-max-h: min(20dvh, 12rem);
+  --palette-w: 640px;
+  --palette-top: 12vh;
+
+  /* focus */
+  --ring: 2px solid var(--accent);
+  --ring-offset: 2px;
+
+  /* motion: only real state changes move (drawer, dialogs, working/reconnecting pulse) */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-pulse: 1600ms;
+  /* one turn of a stepped spinner: it draws its steps and nothing else, so the step count is
+     the frame rate and this only sets how fast it looks */
+  --dur-spin: 1600ms;
+  /* one breath of the sidebar's working dot: held full, dimmed, held, back (Sidebar.css) */
+  --dur-breathe: 2000ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
+     every display refresh for as long as an agent works (60+ a second), which stutters a
+     video playing beside the app; two steps draw about one frame a second */
+  --ease-pulse: steps(2, jump-none);
+  /* a phone's sheet rises on the spring and drops faster than it rose */
+  --dur-sheet: 360ms;
+  --dur-sheet-out: 240ms;
+
+  /* layers */
+  --z-header: 4;
+  --z-banner: 5;
+  --z-popover: 10;
+  --z-scrim: 15;
+  --z-drawer: 20;
+  --z-modal: 30;
+  --z-palette: 35;
+  --z-droplet: 40;
+
+  /* in-app alert (components/Droplet.css): island black in either theme, so one set */
+  --droplet-bg: #000;
+  --droplet-text: #f5f5f7;
+  --droplet-text-dim: rgba(245, 245, 247, 0.62);
+  --droplet-blocked: #ff8a80;
+  --droplet-done: #9fd47a;
+  --droplet-mark-bg: rgba(255, 255, 255, 0.1);
+  --droplet-ring: rgba(255, 255, 255, 0.1);
+  --droplet-shadow: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eeeae2;
+  --bg-panel: #faf8f3;
+  --bg-elevated: #f2eee6;
+  --bg-hover: #e8e2d6;
+  --bg-input: #fffdf9;
+  --border: #dcd4c6;
+  --border-strong: #c5baa8;
+  --bubble-border: var(--border);
+  --text: #2a251f;
+  --text-dim: #685e52;
+  --text-strong: #16120d;
+  --accent: #8c5000;
+  --accent-tint: rgba(140, 80, 0, 0.1);
+  --primary: #c57d12;
+  --primary-hover: #d48c1f;
+  --primary-text: #1b1407;
+  --primary-tint: rgba(197, 125, 18, 0.14);
+  --status-idle: #685e52;
+  --status-working: #155a72;
+  --status-blocked: #a82323;
+  --status-done: #2f6317;
+  --status-working-tint: rgba(21, 90, 114, 0.12);
+  --status-blocked-tint: rgba(168, 35, 35, 0.12);
+  --status-done-tint: rgba(47, 99, 23, 0.12);
+  --danger-tint: rgba(168, 35, 35, 0.1);
+  --indicator-working: #df8e1d;
+  --indicator-blocked: #d20f39;
+  --indicator-done: #179299;
+  --indicator-idle: #40a02b;
+  --indicator-unknown: #9ca0b0;
+  --danger-text: #8f1d1d;
+  --notice: #7a5a00;
+  --scrim: rgba(40, 32, 22, 0.35);
+  --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
+  --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(40, 32, 22, 0.07);
+  --term-bg: #faf8f3;
+  --term-fg: #2a251f;
+  --term-cursor: #8c5000;
+  --term-selection: #f0d9ae;
+  --syntax-keyword: #a33a17;
+  --syntax-string: #4b6b18;
+  --syntax-number: #8a3f7a;
+  --syntax-type: #155a72;
+  --syntax-variable: #7a5418;
+  --syntax-meta: #5d4791;
+}
+
+/* Charcoal in light: plain paper with ink for the accent and the cursor */
+[data-theme="light"][data-palette="charcoal"] {
+  --notice: #8a5300;
+  --bg: #f2f2f0;
+  --bg-panel: #fafaf9;
+  --bg-elevated: #efefed;
+  --bg-hover: #e6e6e3;
+  --bg-input: #ffffff;
+  --border: #dcdcd8;
+  --border-strong: #c4c4bf;
+  --text: #242424;
+  --text-dim: #5f5b56;
+  --text-strong: #111111;
+  --accent: #242424;
+  --accent-tint: rgba(36, 36, 36, 0.08);
+  --primary: #242424;
+  --primary-hover: #3a3a3a;
+  --primary-text: #fafaf9;
+  --primary-tint: rgba(36, 36, 36, 0.1);
+  --scrim: rgba(20, 20, 20, 0.35);
+  --shadow-drawer: 0 0 40px rgba(20, 20, 20, 0.2);
+  --shadow-pop: 0 16px 48px rgba(20, 20, 20, 0.14), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(20, 20, 20, 0.06);
+  --term-bg: #fafaf9;
+  --term-fg: #242424;
+  --term-cursor: #242424;
+  --term-selection: #dedad3;
+  --syntax-keyword: #b3261e;
+  --syntax-string: #22743a;
+  --syntax-number: #8a5300;
+  --syntax-type: #0b6e8a;
+  --syntax-variable: #3b3b3b;
+  --syntax-meta: #6f42c1;
+}
+
+/* Charcoal: neutral charcoal, a Ghostty-style terminal (the panel is its #171717), no
+   chrome hue - selection, focus, cursor and the user's action are near-white; agent
+   states are muted as in the terminal palette. Light is the paper block above. */
+[data-theme="dark"][data-palette="charcoal"] {
+  --notice: #d9b26a;
+  --bg: #0f0f0f;
+  --bg-panel: #171717;
+  --bg-elevated: #1f1f1f;
+  --bg-hover: #262626;
+  --bg-input: #141414;
+  --border: #262626;
+  --border-strong: #363636;
+  --text: #cbc7c0;
+  --text-dim: #918c85;
+  --text-strong: #f5f2ec;
+  --accent: #e8e4dc;
+  --accent-tint: rgba(232, 228, 220, 0.1);
+  --primary: #e8e4dc;
+  --primary-hover: #f5f2ec;
+  --primary-text: #171717;
+  --primary-tint: rgba(232, 228, 220, 0.12);
+  --status-idle: #9a958e;
+  --status-working: #c2a2af;
+  --status-blocked: #e0877f;
+  --status-done: #a7b789;
+  --status-working-tint: rgba(194, 162, 175, 0.14);
+  --status-blocked-tint: rgba(224, 135, 127, 0.14);
+  --status-done-tint: rgba(167, 183, 137, 0.14);
+  --danger-tint: rgba(224, 135, 127, 0.12);
+  --danger-text: #f2c9c4;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --term-bg: #171717;
+  --term-fg: #cbc7c0;
+  --term-cursor: #cbc7c0;
+  --term-selection: #49443d;
+  --syntax-keyword: #d7a08a;
+  --syntax-string: #a7b789;
+  --syntax-number: #c2a2af;
+  --syntax-type: #9fb4c2;
+  --syntax-variable: #dcd8d0;
+  --syntax-meta: #b8a5c9;
+}
+
+/* Catppuccin (catppuccin.com/palette): Mocha in dark, Latte in light, mapped by the
+   Catppuccin style guide and its Zed port's surfaces - the content (chat canvas, terminal)
+   on Base, the chrome (sidebar, header, tabs) and popovers on Mantle, dimmed text in
+   Subtext1, a Surface0 hover in Mocha and a Crust one in Latte (the darkest Subtext1 stays
+   AA on). Surface borders, Mauve for the accent, Blue/Maroon/Green for working/input/done,
+   a Rosewater cursor and the style guide's Overlay2-at-25% selection. Mocha uses palette
+   colors; only the primary hover (Mauve lightened) and the tints are derived. Maroon, not
+   Red, keeps input readable on a hovered row. Latte's accents sit under 4.5:1 on its own
+   surfaces, so the style guide's "legibility first" applies: each keeps its hue and is
+   darkened until it passes AA (Mauve 17%, Red 18%, Blue 22%, Green 37%). */
+[data-theme="dark"][data-palette="catppuccin"] {
+  --notice: #f9e2af;
+  /* overlay2: --text-dim (subtext1) is nearly --text here */
+  --line-number: #9399b2;
+  --bg: #1e1e2e;
+  --bg-panel: #181825;
+  --bg-elevated: #181825;
+  --bg-hover: #313244;
+  --bg-input: #11111b;
+  --border: #313244;
+  --border-strong: #45475a;
+  --bubble-border: var(--border);
+  --text: #cdd6f4;
+  --text-dim: #bac2de;
+  --text-strong: #cdd6f4;
+  --accent: #cba6f7;
+  --accent-tint: rgba(203, 166, 247, 0.12);
+  --primary: #cba6f7;
+  --primary-hover: #d3b3f8;
+  --primary-text: #11111b;
+  --primary-tint: rgba(203, 166, 247, 0.16);
+  --status-idle: #a6adc8;
+  --status-working: #89b4fa;
+  --status-blocked: #eba0ac;
+  --status-done: #a6e3a1;
+  --status-working-tint: rgba(137, 180, 250, 0.14);
+  --status-blocked-tint: rgba(235, 160, 172, 0.14);
+  --status-done-tint: rgba(166, 227, 161, 0.14);
+  --danger-tint: rgba(235, 160, 172, 0.12);
+  --danger-text: #f2cdcd;
+  --scrim: rgba(17, 17, 27, 0.6);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --term-bg: #1e1e2e;
+  --term-fg: #cdd6f4;
+  --term-cursor: #f5e0dc;
+  --term-selection: #3b3d4f;
+  /* Catppuccin's own mapping: keywords mauve, so functions take blue instead of --accent */
+  --syntax-keyword: #cba6f7;
+  --syntax-string: #a6e3a1;
+  --syntax-number: #fab387;
+  --syntax-type: #f9e2af;
+  --syntax-variable: #f5e0dc;
+  --syntax-meta: #f5c2e7;
+  --syntax-function: #89b4fa;
+}
+
+[data-theme="light"][data-palette="catppuccin"] {
+  --notice: #8a5710;
+  /* subtext0, darkened to 4.5:1 on --bg */
+  --line-number: #64677d;
+  --bg: #eff1f5;
+  --bg-panel: #e6e9ef;
+  --bg-elevated: #e6e9ef;
+  --bg-hover: #dce0e8;
+  --bg-input: #eff1f5;
+  --border: #ccd0da;
+  --border-strong: #bcc0cc;
+  --text: #4c4f69;
+  --text-dim: #5c5f77;
+  --text-strong: #4c4f69;
+  --accent: #712fc6;
+  --accent-tint: rgba(113, 47, 198, 0.1);
+  --primary: #712fc6;
+  --primary-hover: #8839ef;
+  --primary-text: #eff1f5;
+  --primary-tint: rgba(113, 47, 198, 0.14);
+  --status-idle: #5c5f77;
+  --status-working: #1750bf;
+  --status-blocked: #ac0c2f;
+  --status-done: #28651b;
+  --status-working-tint: rgba(23, 80, 191, 0.12);
+  --status-blocked-tint: rgba(172, 12, 47, 0.12);
+  --status-done-tint: rgba(40, 101, 27, 0.12);
+  --danger-tint: rgba(172, 12, 47, 0.1);
+  --danger-text: #ac0c2f;
+  --scrim: rgba(76, 79, 105, 0.35);
+  --shadow-drawer: 0 0 40px rgba(76, 79, 105, 0.22);
+  --shadow-pop: 0 16px 48px rgba(76, 79, 105, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(76, 79, 105, 0.07);
+  --term-bg: #eff1f5;
+  --term-fg: #4c4f69;
+  --term-cursor: #dc8a78;
+  --term-selection: #d2d4dc;
+  --syntax-keyword: #712fc6;
+  --syntax-string: #2f7620;
+  --syntax-number: #b44201;
+  --syntax-type: #905c13;
+  --syntax-variable: #4c4f69;
+  --syntax-meta: #bc1d91;
+  --syntax-function: #0b59f4;
+}
+
+[data-chat-width="narrow"] {
+  --chat-w: var(--content-w);
+}
+
+[data-chat-width="wide"] {
+  --chat-w: 72rem;
+}
+
+/* the whole pane: each column keeps its own gutter */
+[data-chat-width="full"] {
+  --chat-w: 100%;
+}
+
+[data-density="compact"] {
+  --fs-2xs: calc(10px * var(--ui-scale));
+  --fs-xs: calc(11px * var(--ui-scale));
+  --fs-sm: calc(12px * var(--ui-scale));
+  --fs-md: calc(13px * var(--ui-scale));
+  --fs-chat: calc(14px * var(--ui-scale));
+  --fs-lg: calc(15px * var(--ui-scale));
+  --fs-xl: calc(17px * var(--ui-scale));
+  --fs-display: calc(21px * var(--ui-scale));
+  --fs-pairing: calc(26px * var(--ui-scale));
+  --lh-base: 1.45;
+  --header-h: 46px;
+  --sidebar-w: 300px;
+  --control-h: 32px;
+  --row-h: 44px;
+  --chip-h: 18px;
+  --avatar-size: 26px;
+}
+
+/* after the density block on purpose: same specificity, and from 769px both densities share one
+   header height */
+@media (min-width: 769px) {
+  :root {
+    --header-h: var(--header-h-wide);
+  }
+}

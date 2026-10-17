@@ -1,0 +1,17 @@
+/*
+ * aaa 목록에서 참고 CSS(herdr/Sidebar.css·AgentSidebar.css·Machines.css)에 더하는 것만 둔다.
+ * aaa의 기본 button 규칙(style.css: 높이·바탕·테두리)이 참고의 줄 단추에 끼어들지 않게 참고가 기대는 값으로 되돌린다.
+ */
+.sidebar-shell button.agent-row,
+.sidebar-shell button.agent-section-toggle,
+.sidebar-shell button.sidebar-row-action { height: auto; background: transparent; border: 0; gap: 0; transition: none; }
+.sidebar-shell button.sidebar-row-action { height: var(--side-row); }
+.sidebar-shell button.agent-row { justify-content: flex-start; white-space: normal; }
+.sidebar-shell button.agent-section-toggle { justify-content: flex-start; padding: 0; }
+.sidebar-shell .btn { height: var(--control-h); }
+
+/* 프로젝트 머리는 herdr-projects처럼 굵게(grouping.rs: 머리 줄은 bold) */
+.project-name { font-weight: var(--fw-semibold); color: var(--text-strong); }
+
+/* 끝난 pane: 이름을 흐리게(참고의 오래된 줄처럼 상태는 말하지 않는다) */
+.workspace.is-ended .workspace-name { color: var(--text-dim); }

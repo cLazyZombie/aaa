@@ -211,17 +211,29 @@ try {
   for (const scheme of ["dark", "light"]) {
     for (const [w, h, kind] of [
       [1920, 1080, "desktop"],
+      [820, 1180, "pad"],
       [390, 844, "phone"],
     ]) {
       const phone = kind === "phone";
+      const touch = kind !== "desktop";
       const ctx = await browser.newContext({
         viewport: { width: w, height: h },
-        deviceScaleFactor: phone ? 2 : 1,
+        deviceScaleFactor: touch ? 2 : 1,
         isMobile: phone,
-        hasTouch: phone,
+        hasTouch: touch,
         colorScheme: scheme,
       });
+      // 테마는 설정이 정한다(기본 어두움, herdr-web-ui settings.ts): 밝음 견본은 설정 값을 넣고 연다
+      await ctx.addInitScript((theme) => localStorage.setItem("aaa:appearance", JSON.stringify({ theme })), scheme);
       const page = await ctx.newPage();
+      // thread 줄은 그 agent pane을 연다(차이 목록 L4): 보고서는 터미널 머리의 「보고」로
+      const openReport = async (id) => {
+        await page.getByTestId(`thread-shop-${id}`).click();
+        const report = page.getByTestId("open-report");
+        await Promise.race([page.getByTestId("report").waitFor(), report.waitFor()]);
+        if (await report.isVisible()) await report.click();
+        await until("보고", async () => (await page.getByTestId("report").innerText()).includes("p95"));
+      };
       const shot = async (name) => {
         await sleep(400);
         const f = path.join(out, `${prefix}-${kind}-${name}-${scheme}.png`);
@@ -240,8 +252,7 @@ try {
         await page.getByTestId("pane-claude-infra").click();
         await until("질문 화면", async () => (await page.locator(".xterm-rows").innerText()).includes("proceed"));
         await shot("question");
-        await page.getByTestId(`thread-shop-${t1.id}`).click();
-        await until("보고", async () => (await page.getByTestId("report").innerText()).includes("p95"));
+        await openReport(t1.id);
         await shot("thread");
       } else {
         await shot("list");
@@ -250,8 +261,7 @@ try {
         await shot("terminal");
         await page.goBack().catch(() => {});
         await page.goto(base);
-        await page.getByTestId(`thread-shop-${t1.id}`).click();
-        await until("보고", async () => (await page.getByTestId("report").innerText()).includes("p95"));
+        await openReport(t1.id);
         await shot("thread");
       }
       await ctx.close();
@@ -267,6 +277,7 @@ try {
     "/usr/bin/env", `AAA_CONFIG_DIR=${root}/c`, `AAA_STATE_DIR=${root}/s`, "TERM=xterm-256color", AA, "attach", "-w", "demo");
   for (const scheme of ["dark", "light"]) {
     const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: scheme });
+    await ctx.addInitScript((theme) => localStorage.setItem("aaa:appearance", JSON.stringify({ theme })), scheme);
     const page = await ctx.newPage();
     await page.goto(base);
     await page.getByLabel("pairing 코드").fill(aaa("web", "pair").code);

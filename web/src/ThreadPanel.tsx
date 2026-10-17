@@ -86,10 +86,13 @@ export function ThreadPanel({
   t,
   role,
   onBack,
+  onOpenPane,
 }: {
   t: ThreadView;
   role: DeviceRole;
   onBack: () => void;
+  /** 그 thread의 agent pane이 돌고 있으면 터미널로(목록의 thread 줄과 같은 곳) */
+  onOpenPane?: () => void;
 }) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -133,6 +136,12 @@ export function ThreadPanel({
           {t.group === "working" && <span className="dot working" aria-hidden />}
           {GROUP_LABEL[t.group] ?? t.group}
         </span>
+        {onOpenPane && (
+          <button className="ghost small" data-testid="open-terminal" onClick={onOpenPane}>
+            <Icon name="shell" />
+            터미널
+          </button>
+        )}
         {role !== "reader" && t.group === "ready_for_review" && (
           <button className="primary" onClick={ack}>
             <Icon name="check" />

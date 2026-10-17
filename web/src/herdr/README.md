@@ -22,11 +22,17 @@
 | `terminalDraft.ts` | 입력줄 초안: 머신·pane마다 localStorage(32,768자 상한, 막히면 메모리). 보내는 동안 친 글은 두고 보낸 앞부분만 지운다 |
 | `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53) |
 | `wheelSteps.ts` | 한 손가락 끌기를 휠 걸음으로(`wheelSteps`·`finalStep`, plan §8.55) |
+| `status.ts` | agent 상태 말·herdr TUI 글자(`indicatorGlyph`)·여러 pane 대표 상태(`rollupStatus`). `src/lib/status.ts`에서 `AgentStatus` import 한 줄만 그 타입 선언으로 바꿨다(plan §8.70) |
+| `tokens.css` | 디자인 token: 색(기본 amber, 밝음, charcoal·catppuccin 팔레트)·글자·크기·움직임·밀도. `src/styles.css` 18~494줄 그대로(plan §8.70) |
+| `primitives.css` | 공용 조각 `visually-hidden`·`icon-button`·`btn`·`badge`. `src/styles.css` 549~561·981~1116·1149~1205줄 그대로 |
+| `Sidebar.css`·`AgentSidebar.css`·`Machines.css` | 왼쪽 목록(머신 묶음·줄·상태 칸·Agents 구역·바닥 줄). `src/components/` 것 그대로. aaa 마크업은 `web/src/Sidebar.tsx` |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. 파일 링크 함수는 아직 aaa가 쓰지 않는다 |
 
 agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`·`agentMark.ts`는 `src/components/AgentMark.tsx`·`src/components/AgentMark.css`·`src/lib/agentMark.ts`를 그대로 옮겼다(`AgentMark.tsx`는 import 경로만). `agentSvgMarks.ts`는 `src/components/agentSvgMarks.ts`에서 droid(Factory favicon)·maki(maki.sh favicon) 두 줄만 뺐다. 참고가 그 출처의 사용 허락을 적지 않아서다. 그 agent는 머리글자 표시(FallbackMark)로 보인다. 참고는 Claude·Codex·Cursor·OpenCode·omp·gjc·omo 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. `agentSvgMarks.ts`의 나머지는 LobeHub Icons(`@lobehub/icons-static-svg`, 아래 MIT)다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표이며, 그 밖의 표시도 각 소유자의 것이다.** aaa는 pane에서 도는 agent를 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.
 
 그대로 복사하지 못하고 옮긴 파일(import·문구만 바꿈, 고지는 같다): `web/src/herdr/install.ts`(← `src/lib/install.ts`, `t("…")`를 참고 `i18n.ko.ts`의 한국어로, 앱 설치 단추·설정 「설치」 줄, plan §8.68), `web/src/herdr/pinchFontSize.ts`(← `src/lib/pinchFontSize.ts`, settings import 경로만), `web/src/usage.ts`(← `src/lib/usage.ts`), `web/src/UsageMeters.tsx`(← `src/components/UsageMeters.tsx`), `web/src/TerminalInput.tsx`, `web/src/KeyBar.tsx`, `web/src/SettingsDialog.tsx`(← `SettingsDialog.tsx`·`SettingsControls.tsx` 일부). host `crates/aaa-host/src/usage.rs`는 `server/usage.ts`를 Rust로 옮긴 것이다(plan §8.45).
+
+아이콘은 참고처럼 `lucide-react`(1.47.0, ISC, 참고 bun.lock과 같은 판)를 쓴다.
 
 aaa에서 쓰는 곳: `web/src/Term.tsx`(`adjustTerminalGlyphs`, `matchHerdrWidths`, `wheelSteps`, `keyboardHoldsGrid`·`keyboardUp`, 키 처리·OSC 52·웹 링크·유지 키), `web/src/KeyBar.tsx`(참고 `KeyBar.tsx`를 옮김), `web/src/TerminalInput.tsx`(참고 `TerminalInput.tsx`를 옮김, `terminalDraft.ts`), `web/src/main.tsx`(`viewport.ts`), `web/src/api.ts`(`presence.ts`: events WS `presence`). 조합 상자의 색은 herdr-web-ui가 정하지 않아(xterm.css 검은 배경 그대로) aaa가 `web/src/compositionView.ts`에서 그 칸 색과 실제 커서 줄 자리에 맞춘다(사용자 지시·보고, plan §8.37).
 

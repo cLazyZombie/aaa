@@ -1683,6 +1683,39 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 웹 E2E 「service worker 알림」: 내보내는 `sw.js`를 가짜 `self`로 그대로 돌린다(참고 `pwa-notification.test.ts`와 같은 방법). 보이는 창이면 소리 없이, focus 전 알림·거절 뒤 새 창·focus된 창 고르기·자리 없는 알림, 파일 탭, 늦은 focus·밀려난 거절·느린 창 찾기·늦게 열린 창을 본다.
   - 웹 E2E 「보고 준비 알림」: 보고 알림의 제목·자리를 본다. 화면을 다시 쓰면 새 보고에 `push_skipped`가 남고 기기에는 오지 않는다. 둘째 화면을 열면 쓰는 화면이 2, 닫으면 1이다. 이 단계 앞에서는 화면의 focus만 없애 보고 알림이 가게 하고, 알림이 나간 뒤에 ack한다.
 
+### 8.70 웹 목록·상태 칸·모양 token을 herdr-web-ui대로(10-18, 차이 목록 2장 L1~L7·S2~S4·Q1·T3, 결정 D2·D5 「참고대로」)
+
+- **모양 token(T3).**
+  - herdr-web-ui `src/styles.css` 18~494줄(색·글자·크기·움직임 token, 기본 amber, 밝음, charcoal·catppuccin 팔레트, 밀도)을 `web/src/herdr/tokens.css`로 그대로 옮겼다. aaa 화면이 써 온 이름(`--working`·`--accent-bg`·`--bg-active` 등)은 `style.css`가 참고 token으로 잇기만 한다. 결정 16의 iris 팔레트는 없어졌다.
+  - 테마는 참고 settings.ts처럼 어둡게·밝게·시스템(기본 어둡게)이고 색상은 앰버·차콜·Catppuccin이다. 시스템이면 라이트·다크 색상을 따로 고른다(`paletteFor`). `<html data-theme data-palette>`를 늘 달고(`applyToDocument`) PWA 제목 막대 색도 참고 `THEME_COLOR`를 따른다(`web/src/theme.ts`).
+  - 설정 → 「모양」에 테마·색상·사이드바 행·상태 표시를 넣었다(참고 `AppearancePage`, 문구는 참고 `i18n.ko.ts`). 목록 머리의 테마 순환 단추는 없앴다(참고에 없음).
+  - 다르게 둔 것: 터미널 16색. 참고는 xterm 기본 16색인데 그 흰색·노랑은 밝은 바탕에서 읽히지 않는다. aaa는 어두움·밝음마다 전과 같은 16색을 둔다.
+  - 참고는 테마·색상·사이드바 행을 서버에 두고 기기끼리 나눈다(「shared」). aaa는 host 공유 설정 저장소가 생길 때까지(T2) 이 기기에 둔다. 전에 쓰던 `aaa:theme`의 밝음·어두움은 처음 한 번 옮긴다.
+- **목록 구성(L1·L4~L7).** 참고 `MachineSidebar`·`Sidebar`·`AgentSidebar`의 마크업과 CSS(`Sidebar.css`·`AgentSidebar.css`·`Machines.css`, 공용 `badge`·`btn`은 `primitives.css`)를 그대로 쓴다(`web/src/Sidebar.tsx`). 아이콘은 참고처럼 lucide(`lucide-react` 1.47.0, 참고 bun.lock과 같은 판, ISC)다.
+  - 머신 묶음: 머리(모니터·이름·host·연결 점·접기·+), 연결이 아니면 이름 아래 상태 글. 접기는 기기별(`aaa:pc-collapsed:<id>`, 참고 `herdr-web-ui:pc-collapsed:<id>`).
+  - aaa에는 herdr workspace가 없어 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다. 프로젝트 머리는 접기 단추(폴더)이고 굵다(herdr-projects grouping 머리 줄). 둘째 줄은 herdr-projects `project_line`(「사람 차례 2 · 작업 중 1」)이다. 접힌 머리는 자식 상태를 대표하고(`rollupStatus`) 「+n」을 보인다. 고른 thread는 접혀도 보인다(참고: 접힌 묶음도 열린 checkout은 보인다).
+  - thread는 자기 줄 하나로만 보인다(L4). 이름은 「id · 제목」(herdr-projects `thread_display`), 둘째 줄은 「묶음 · 사실」(`state_line`: ~n%·「n분 조용」·pane 닫힘·실패·확인창·보고). 줄을 누르면 그 thread의 agent pane이 열린다(herdr-projects: thread는 자기 agent 줄). pane이 없으면 보고서다. 터미널 머리 「보고」와 보고서 머리 「터미널」로 오간다. 그 thread pane은 pane 줄에서 뺐다.
+  - 「Agents」 구역(L7): 모든 머신의 도는 agent(harness 상태를 알리는 pane, agent 명령으로 뜬 pane), 접기, 768px 이하는 접힌 채 시작. 둘째 줄은 참고 `agentContext`(종류·머신(둘 이상일 때)·자리).
+  - 결정 17로 미뤘던 머신 접기·thread 줄 하나로 합치기는 D2로 풀렸다.
+- **thread 순서(L2).** herdr-projects `Group::rank`(사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6), 같은 rank는 최근 바뀐 것부터(`web/src/sidebarModel.ts`). 「병합 중」(landing) 묶음은 아직 aaa에 없고 thread 흐름 thread가 넣는다. 자리만 잡아 두었다.
+- **상태 칸(S2·S4).** 참고 `StatusBadge` compact를 그대로: 기본(classic)은 볼 일이 있는 상태만(답을 기다리면 빨간 ?, 끝나고 안 봤으면 초록 점, 작업 중은 숨쉬는 점), 말은 `aria-label`·`title`. 설정 「상태 표시」 점·기호는 herdr TUI 글자(`indicatorGlyph`). `lib/status.ts`는 `web/src/herdr/status.ts`로 그대로 옮겼다.
+  - aaa harness 상태 → herdr 상태: 확인창 → blocked, 턴 진행 → working, 쉼·시작 → idle. 안 본 쉼은 「끝남(안 봄)」(done)이다(§8.71).
+  - 중단·유실·harness 오류는 상태 칸 대신 경고 하나와 이유 title이다(참고 `RestoreErrorBadge`). 끝난 pane은 이름이 흐리고 둘째 줄 끝에 「종료(code)」다. 끊긴 머신의 줄은 흐리고 누를 수 없으며 상태를 말하지 않는다(참고 `is-offline`·`inert`).
+  - §8.23의 「상태색은 늘 글과 함께」는 D2(S2 참고대로)로 바뀌었다. 글은 화면 낭독·tooltip에 남는다.
+- **질문 위치(Q1).** 목록 맨 위 「답을 기다림」 구역을 없앴다. 목록에는 그 줄의 ?만 있고, 카드는 그 pane을 열면 터미널 아래에 있다(chat 안 카드는 C 묶음). 빈 화면 안내 글도 바꿨다.
+- **시험.** 웹 E2E: 질문 단계는 목록 ?(`data-status="blocked"`·말)와 터미널 아래 카드, reader 카드, 답한 뒤 working을 본다. thread 보고 단계는 thread 줄 → pane → 「보고」로 연다. agent 표시 단계는 참고 class(`.sidebar-mark`, lucide Terminal)를 본다. 기다림은 DOM 상태(`locator.waitFor`)로 끝낸다. `web/e2e/showcase.mjs`는 패드(820×1180)를 더하고 테마를 설정 값으로 연다.
+
+### 8.71 「끝남(안 봄)」을 herdr대로(10-18, 차이 목록 S1)
+
+- **규칙은 herdr 0.9.5 것이다**(`src/app/actions.rs` `apply_pane_state_change`·`is_background_completion_transition`·`mark_active_tab_seen`, `src/pane/state.rs` `PaneState::seen`).
+  - 쉼이 아닌 상태가 되면 봤다. 작업·질문에서 쉼으로 끝날 때 그 pane을 보는 화면이 있으면 봤고, 없으면 안 봤다(「끝남」). 그 밖의 쉼(시작 뒤 쉼)은 앞 값을 둔다. 그 pane을 보는 화면이 생기면 봤다.
+  - host가 `AgentStatus.seen`(기본 true)으로 기록하고 웹·TUI에 보인다. 웹 목록은 안 본 쉼을 herdr `done`(초록 점, 「끝남(안 봄)」)으로 그린다(§8.70 상태 칸).
+- **「보는 화면」**(`crates/aaa-host/src/seen.rs`).
+  - herdr는 「지금 보이는 탭이고 바깥 터미널에 focus가 있다」다. aaa 웹은 그 pane 터미널 연결이 열려 있고, 그 기기의 events 연결이 「쓰는 화면」(보이고 focus, `presence`, §8.69)일 때다. 가려진 탭은 lease를 놓을 뿐 연결을 두므로(§8.50) 「보는 중」은 presence가 정한다.
+  - TUI는 그 pane의 lease를 쥐었을 때다(TUI는 그 pane을 앞에 두고 입력·크기를 건다).
+  - 다르게 둔 것: herdr-web-ui는 웹에서 pane을 열어도 herdr의 seen을 바꾸지 않는다(웹 터미널은 herdr TUI client가 아니어서 `outer_terminal_focus`가 없다. `focusPane`은 나눈 화면에서만 부른다). 웹으로만 보는 사람에게는 「끝남」이 지워지지 않으므로 aaa는 웹 화면도 보는 화면으로 센다.
+- **시험.** host 유닛 `seen`: 끝나는 전이와 보는 화면, 쓰는 기기의 연 pane만 본다. 웹 E2E 「끝남(안 봄)」: 다른 pane을 보는 동안 끝나면 초록 점과 말, 열면 사라짐, 보는 동안 끝난 턴은 남지 않음, 가려진 동안 끝나면 끝남이고 다시 쓰는 화면이 되면 사라짐. 턴의 시작·끝은 시험이 pane에 줄을 보내 정하고(hook), 기다림은 상태 칸의 `data-status`로 끝낸다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

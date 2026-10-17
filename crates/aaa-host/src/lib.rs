@@ -20,6 +20,7 @@ mod orch;
 mod output;
 mod push;
 mod routine;
+mod seen;
 pub mod tailscale;
 mod tasks;
 pub mod usage;
@@ -253,6 +254,8 @@ pub struct Host {
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 지금 쓰는(보이고 focus가 있는) 웹 화면 수(events WS `presence`). 하나라도 있으면 Web Push를 보내지 않는다
     pub(crate) in_use: std::sync::atomic::AtomicUsize,
+    /// 지금 pane을 보는 웹 화면(「끝남(안 봄)」, seen.rs)
+    viewing: Mutex<seen::Viewing>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
     eval_due: Mutex<HashMap<String, Instant>>,
     /// 사후 평가자 묶음은 한 번에 하나씩 만든다
@@ -361,6 +364,7 @@ impl Host {
             usage: usage::UsageService::new(usage::UsageContext::system()),
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
+            viewing: Mutex::new(seen::Viewing::default()),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
@@ -1083,6 +1087,10 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        // TUI가 그 pane을 쓰기 시작했다: 봤다(herdr `mark_active_tab_seen`). 웹 화면은 presence로 센다(seen.rs)
+        if self.inner.lock().unwrap().panes.get(id).is_some_and(|p| self.someone_sees(id, p.lease.as_ref())) {
+            self.mark_seen(&[id.to_string()]);
+        }
     }
 
     /// 이 front가 지금 쓰는 화면이 된다(herdr-web-ui처럼 명시적 가져오기 없이, 마지막 입력이 이긴다).
