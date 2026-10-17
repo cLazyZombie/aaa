@@ -421,14 +421,14 @@ impl World {
         self.kinds(0).iter().filter(|k| *k == "nudge_sent").count()
     }
 
-    /// coordinator nudge(inbox.rs `nudge`, `inbox_and_nudge`의 nudge_idle_secs 2·nudge_quiet_secs 1)가 보낼 수 있는 때를 지나며
-    /// tick을 돌린다: 첫 tick이 화면을 처음 보고, 2초 뒤 tick이 입력창을 처음 보고, 1초 뒤 tick이 보낸다. 보내는 것은 tick 안에서
-    /// `nudge_sent` 사건으로 남으므로, 이 뒤에 그 사건이 없으면 host가 막았다(고정 sleep 뒤 화면을 보면 늦은 tick을 놓친다)
+    /// coordinator nudge(inbox.rs `nudge`)가 보낼 수 있는 때를 지나며 tick을 돌린다: 첫 tick이 화면을 처음 보고, NUDGE_IDLE_SECS 뒤
+    /// tick이 입력창을 처음 보고, NUDGE_QUIET_SECS 뒤 tick이 보낸다. 보내는 것은 tick 안에서 `nudge_sent` 사건으로 남으므로, 이 뒤에
+    /// 그 사건이 없으면 host가 막았다(고정 sleep 뒤 화면을 보면 늦은 tick을 놓친다). 창은 그 시험의 host.toml과 같은 상수다
     fn nudge_window(&self) {
         self.h.ticks(1);
-        window(Duration::from_secs(2));
+        window(Duration::from_secs(NUDGE_IDLE_SECS));
         self.h.ticks(1);
-        window(Duration::from_secs(1));
+        window(Duration::from_secs(NUDGE_QUIET_SECS));
         self.h.ticks(1);
     }
 
@@ -1008,11 +1008,17 @@ fn memory_and_restart() {
     assert!(!std::fs::read_dir(dir.join("memory")).unwrap().any(|e| e.unwrap().file_name() != "api.md"));
 }
 
+/// `inbox_and_nudge`의 nudge 창(host.toml과 `World::nudge_window`가 같이 쓴다)
+const NUDGE_IDLE_SECS: u64 = 2;
+const NUDGE_QUIET_SECS: u64 = 1;
+
 /// inbox: 묶음 전이(새 보고·쉼, plan §8.85)·설정 오류가 항목이 되고, coordinator가 입력을 기다릴 때 처음 보는 묶음을 한 번만
 /// 알린다(§8.17)
 #[test]
 fn inbox_and_nudge() {
-    let w = world_with("tick_secs = 1\nnudge_idle_secs = 2\nnudge_quiet_secs = 1\n");
+    let w = world_with(&format!(
+        "tick_secs = 1\nnudge_idle_secs = {NUDGE_IDLE_SECS}\nnudge_quiet_secs = {NUDGE_QUIET_SECS}\n"
+    ));
     let dir = w.projects.join("demo");
     let coord =
         w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));

@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 03-keys(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentText,
+  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentCount, sentText,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -35,7 +35,7 @@ export default async function ({ ctl, page }) {
     // 되풀이는 뗄 때까지). 그 글을 pane이 다 받을 때까지 기다린다: 더 오면 같아지지 않아 실패한다(「더 오지 않음」을 sleep으로 어림하지 않는다)
     const sent = async (act, what = "") => {
       const n = last();
-      const k = (await sentFrames(tp)).length;
+      const k = await sentCount(tp);
       await act();
       await until(`pane 받음 ${what}`, () => last() > n);
       const data = sentText(await sentFrames(tp, k));
@@ -108,7 +108,7 @@ export default async function ({ ctl, page }) {
     if (repeats < 3 || held.replaceAll("\x1b[D", "") !== "") bad.push(`꾹 누름: ${JSON.stringify(held)}`);
     // 누른 채 밀면 취소(아무것도 안 감). 누름·되풀이·뗌은 화면이 그 사건 안에서 보낸다: 뗀 뒤 이 화면이 보낸 글이 없으면 가지 않았다
     const n0 = last();
-    const k0 = (await sentFrames(tp)).length;
+    const k0 = await sentCount(tp);
     await tp.mouse.move(left.x + left.width / 2, left.y + left.height / 2);
     await tp.mouse.down();
     await tp.mouse.move(left.x + left.width / 2 + 15, left.y + left.height / 2, { steps: 3 });
@@ -599,7 +599,7 @@ export default async function ({ ctl, page }) {
     // 끌기는 고른다: 프로그램에 마우스 보고가 가지 않고, 놓으면 복사하고 알린다
     await sleep(300);
     n = lastSeq();
-    const k = (await sentFrames(dp)).length;
+    const k = await sentCount(dp);
     const from = await cell(0, 0);
     // xterm은 끝을 가까운 칸 경계로 잡는다: 마지막 글자 다음 칸 가운데까지 끈다
     const to = await cell(14, 0);

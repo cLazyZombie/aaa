@@ -160,6 +160,8 @@ const screenText = (page) => page.locator(".xterm-rows").innerText();
 /** 이 화면이 pane WebSocket으로 보낸 메시지({t: "input", data}·submit·resize·take…, 바이너리 마우스 보고는 {t: "bin", data})를
  *  from번째부터. 사건 처리 안에서 보낸 것은 그 동작(click·press·evaluate)이 끝났을 때 이미 있다 */
 const sentFrames = (page, from = 0) => page.evaluate((n) => window.__aaaSent.slice(n), from);
+/** 지금까지 보낸 메시지 수(sentFrames의 from으로 쓴다) */
+const sentCount = (page) => page.evaluate(() => window.__aaaSent.length);
 /** 그중 터미널에 들어가는 글(input·bin)을 이어 붙인 것 */
 const sentText = (frames) => frames.filter((f) => f.t === "input" || f.t === "bin").map((f) => f.data).join("");
 
@@ -947,5 +949,5 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, sentFrames, sentText,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
 };

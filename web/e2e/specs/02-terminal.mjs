@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  repo, root, sleep, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames,
+  repo, root, sleep, aaa, until, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -219,7 +219,7 @@ export default async function ({ ctl, page }) {
     if ((await rp.getByLabel("보낼 글").count()) !== 0) throw new Error("reader에게 입력 막대");
     await rp.getByTestId("terminal").click();
     // 키 입력은 그 키 사건 안에서 보낸다: 다 친 뒤 이 화면이 보낸 입력이 없으면 PTY에 갈 것이 없다(host 쪽 거부는 11 「그림 붙여 넣기」 5))
-    const k = (await sentFrames(rp)).length;
+    const k = await sentCount(rp);
     await rp.keyboard.type("echo reader-$((1+1))\n");
     const typed = (await sentFrames(rp, k)).filter((f) => f.t === "input" || f.t === "bin" || f.t === "submit");
     if (typed.length) throw new Error(`reader 화면이 입력을 보냈다: ${JSON.stringify(typed)}`);
