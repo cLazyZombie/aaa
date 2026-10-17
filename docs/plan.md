@@ -2342,7 +2342,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **aaa 경로.** 캐시 먼저는 `/assets/`(빌드 파일), `/fonts/`(Meslotendard), 아이콘(`/icon*.png`·`/icon.svg`·`/apple-touch-icon.png`·`/favicon-32.png`, `?v=2` 주소 그대로)와 `offline.html`. 빌드를 넘어 남는 것(`aaa-files-v2`)은 글꼴·아이콘·offline.html. `/api/`(REST·WebSocket)와 `/v/`(결과물 보기)는 지나간다.
 - **앱의 첫 물음.** 셸로 뜬 앱이 host에 닿지 못하면(`/api/v1/me`가 네트워크 오류) 「host에 연결할 수 없다」 카드(연결 화면 모양, 「다시 시도」)를 보이고, `online`이나 다시 보일 때(visibilitychange) 스스로 다시 묻는다. 전에는 오류 글(TypeError)만 남고 다시 묻지 않았다. 참고는 셸이 그대로 뜬 채 주기로 다시 묻는다(App.tsx `loadHealth` tick). aaa는 첫 물음이 기기·역할을 고르므로 그 사건들에서 다시 묻는다.
 - **다르게 둔 것.** 셸을 갖기 전에 끊긴 처음 실행은 참고처럼 `Response.error()`가 아니라 aaa `offline.html`(「host에 연결할 수 없다」)을 보인다. 그 한 장만 install 때 미리 둔다(참고는 아무것도 미리 두지 않는다). 이유: 빈 오류 화면보다 무엇이 안 되는지 말하는 화면이 낫고, 크기가 작아 모든 기기에 받아도 된다.
-- **시험.** 단위 `web/test/service-worker-build.test.mjs`(참고 사례: 빌드 이름은 해시 파일만으로·순서 무관, 도장은 BUILD 한 줄만, 못 찍는 worker·이상한 id·파일 거부, 글꼴·압축본 빼고 목록). 웹 E2E `specs/01-http-pwa.mjs` 「PWA」: dist/sw.js에 빌드 이름·파일이 찍힘, 셸과 입구 script·stylesheet가 이 빌드 cache에 놓임, 끊긴 채 새로 고치면 offline.html이 아니라 셸로 앱이 뜸, offline.html은 미리 놓임.
+- **시험.** 단위 `web/test/service-worker-build.test.mjs`(참고 사례: 빌드 이름은 해시 파일만으로·순서 무관, 도장은 BUILD 한 줄만, 못 찍는 worker·이상한 id·파일 거부, 글꼴·압축본 빼고 목록). 웹 E2E `specs/01-http-pwa.mjs` 「PWA」: dist/sw.js에 빌드 이름·파일이 찍힘, 셸과 입구 script·stylesheet가 이 빌드 cache에 놓임, 끊긴 채 새로 고치면 offline.html이 아니라 셸로 앱이 뜸, offline.html은 미리 놓임. 다른 spec이 `ctx.route`로 늦게 주는 파일을 worker가 맡으면 그 route를 거치지 않는다: 「터미널 글꼴」(06)은 다시 연 뒤에도 늦게 온 face를 받은 다음 재는지 보므로 그 기기만 `serviceWorkers: "block"`으로 연다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
