@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use aaa_proto::{
     DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, GridFrame,
-    GridLine, MAX_FRAME, negotiate,
+    GridLine, MAX_FRAME, PaneModes, negotiate,
 };
 use anyhow::{Context, Result, bail};
 
@@ -19,6 +19,32 @@ use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 
 /// 화면 frame 사이 최소 간격(초당 약 30장)
 const GRID_INTERVAL: Duration = Duration::from_millis(33);
+
+/// 응답 frame(JSON). frame 상한(`MAX_FRAME`)을 넘는 응답은 `too_large` 오류로 바꾼다. 그대로 보내면 쓰기 task가
+/// 연결을 닫아 front는 까닭 없이 끊긴다(t-0334 pilot 결함 2: 끝낸 inbox가 많을 때 `inbox list --all`).
+pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) -> Vec<u8> {
+    let msg = FrontMsg::Res { id, result: result.into() };
+    let bytes = serde_json::to_vec(&msg).expect("JSON 직렬화");
+    if bytes.len() <= MAX_FRAME {
+        return bytes;
+    }
+    let FrontMsg::Res { id, result } = msg else { unreachable!() };
+    // 드문 일이라 종류 이름을 얻으려고 한 번 더 직렬화한다
+    let kind = serde_json::to_value(&result)
+        .ok()
+        .and_then(|v| v.get("ok").and_then(|r| r.get("kind")).and_then(|k| k.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "?".into());
+    tracing::warn!(kind, bytes = bytes.len(), "응답이 frame 상한을 넘어 오류로 답한다");
+    let e = ErrorBody::new(
+        ErrorCode::TooLarge,
+        format!(
+            "{kind} 응답이 {} KiB라 frame 상한 {} KiB를 넘는다. 범위를 좁혀 다시 묻는다",
+            bytes.len() >> 10,
+            MAX_FRAME >> 10
+        ),
+    );
+    serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
+}
 
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let path = host.state.join("front.sock");
@@ -145,7 +171,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     }
                     body => host.call_from(role, &actor, Some(&front), body).await,
                 };
-                if tx.json(&FrontMsg::Res { id, result: result.into() }).await.is_err() {
+                if tx.control(res_frame(id, result)).await.is_err() {
                     break;
                 }
             }
@@ -156,7 +182,14 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
             let Incoming::Control(b) = m else { continue };
-            let FrontMsg::Req { id, body } = serde_json::from_slice(&b)? else { continue };
+            let (id, body) = match read_req(&b)? {
+                ReqFrame::Req(id, body) => (id, body),
+                ReqFrame::Unknown(id, e) => {
+                    tx.control(res_frame(id, Err(e))).await?;
+                    continue;
+                }
+                ReqFrame::Other => continue,
+            };
             match body {
                 FrontRequest::PaneWatch { pane } => {
                     let result = match host.pane_view_of(&pane, DeviceRole::Local) {
@@ -169,7 +202,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                         }
                         None => Err(ErrorBody::new(ErrorCode::NotFound, format!("pane이 없다: {pane}"))),
                     };
-                    tx.json(&FrontMsg::Res { id, result: result.into() }).await?;
+                    tx.control(res_frame(id, result)).await?;
                 }
                 FrontRequest::PaneUnwatch { pane } => {
                     if let Some(t) = watches.remove(&pane) {
@@ -183,7 +216,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     waits.retain(|t| !t.is_finished());
                     waits.push(tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
-                        let _ = tx.json(&FrontMsg::Res { id, result: result.into() }).await;
+                        let _ = tx.control(res_frame(id, result)).await;
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
@@ -202,7 +235,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
-                        let _ = tx.json(&FrontMsg::Res { id, result: result.into() }).await;
+                        let _ = tx.control(res_frame(id, result)).await;
                     });
                 }
             }
@@ -222,6 +255,35 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     }
     host.front_gone(&front.id);
     result
+}
+
+/// front가 보낸 control frame 하나
+enum ReqFrame {
+    Req(String, FrontRequest),
+    /// 이 host가 모르는 요청(옛 front가 보낸 없앤 요청, 새 front의 새 요청): 그 요청에 이 오류로 답한다
+    Unknown(String, ErrorBody),
+    Other,
+}
+
+/// 모르는 요청이어도 `id`가 있으면 연결을 끊지 않는다(t-0340 보안 감사: 1.11 front의 `decision_add`가 답 없이 끊겼다).
+/// `id`도 없는 frame은 front가 아니다: 끊는다.
+fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
+    match serde_json::from_slice::<FrontMsg>(b) {
+        Ok(FrontMsg::Req { id, body }) => Ok(ReqFrame::Req(id, body)),
+        Ok(_) => Ok(ReqFrame::Other),
+        Err(e) => {
+            let id = serde_json::from_slice::<serde_json::Value>(b)
+                .ok()
+                .and_then(|v| v.get("id")?.as_str().map(str::to_string));
+            match id {
+                Some(id) => {
+                    let why = format!("이 host(FRONT_API {FRONT_API})가 모르는 요청이다. CLI·host 판을 맞춘다: {e}");
+                    Ok(ReqFrame::Unknown(id, ErrorBody::new(ErrorCode::BadRequest, why)))
+                }
+                None => Err(e),
+            }
+        }
+    }
 }
 
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
@@ -276,13 +338,15 @@ impl Host {
         use std::hash::{Hash, Hasher};
         let i = self.inner.lock().unwrap();
         let p = i.panes.get(pane)?;
-        let (rows, cols, cursor, src) = match &p.mirror {
+        let (rows, cols, cursor, modes, src) = match &p.mirror {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 let lines: Vec<_> = (0..rows).map(|r| m.vt.grid_row(r)).collect();
-                (rows, cols, m.vt.cursor(), lines)
+                (rows, cols, m.vt.cursor(), m.vt.pane_modes(), lines)
             }
-            None => (p.info.rows, p.info.cols, (0, 0, false), vec![Vec::new(); p.info.rows as usize]),
+            None => {
+                (p.info.rows, p.info.cols, (0, 0, false), PaneModes::default(), vec![Vec::new(); p.info.rows as usize])
+            }
         };
         drop(i);
         let n = rows as usize;
@@ -304,7 +368,12 @@ impl Host {
             }
         }
         let (cursor_row, cursor_col, cursor_visible) = cursor;
-        let c = (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
+        // 모드만 바뀌어도(프로그램이 마우스 보고를 켬) 한 장 보내도록 커서 hash 위 비트에 접는다
+        let m = (modes.mouse as u64)
+            | (modes.mouse_encoding as u64) << 3
+            | u64::from(modes.alt_screen) << 5
+            | u64::from(modes.app_cursor) << 6;
+        let c = (m << 48) | (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
         let cursor_changed = sent[n] != c;
         sent[n] = c;
         let frame = GridFrame {
@@ -316,7 +385,65 @@ impl Host {
             cursor_visible,
             full,
             lines: vec![],
+            modes,
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 없앤 요청(1.12의 `decision_add`)·모르는 요청에는 그 id로 오류를 답하고, id도 없는 것만 끊는다(t-0340 보안 감사)
+    #[test]
+    fn unknown_requests_get_an_error_answer() {
+        let known = br#"{"t":"req","id":"1","body":{"op":"projects"}}"#;
+        assert!(matches!(read_req(known), Ok(ReqFrame::Req(id, FrontRequest::Projects)) if id == "1"));
+        let removed = br#"{"t":"req","id":"2","body":{"op":"decision_add","project":"p","text":"x"}}"#;
+        match read_req(removed) {
+            Ok(ReqFrame::Unknown(id, e)) => {
+                assert_eq!((id.as_str(), e.code), ("2", ErrorCode::BadRequest));
+                assert!(
+                    e.message.starts_with(&format!("이 host(FRONT_API {FRONT_API})가 모르는 요청이다")),
+                    "{}",
+                    e.message
+                );
+            }
+            _ => panic!("모르는 요청에 답하지 않는다"),
+        }
+        assert!(read_req(b"not json").is_err());
+        assert!(read_req(br#"{"t":"req","body":{"op":"nope"}}"#).is_err());
+    }
+
+    /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)
+    #[test]
+    fn oversized_response_becomes_an_error() {
+        let parse = |b: &[u8]| match serde_json::from_slice::<FrontMsg>(b).unwrap() {
+            FrontMsg::Res { id, result } => (id, result.into_result()),
+            other => panic!("{other:?}"),
+        };
+        let (id, r) = parse(&res_frame("7".into(), Ok(FrontResponse::Done)));
+        assert_eq!((id.as_str(), r), ("7", Ok(FrontResponse::Done)));
+        let item = aaa_proto::InboxItem {
+            id: "i".into(),
+            project: "p".into(),
+            item_kind: "routine".into(),
+            subject: "s".into(),
+            event: "due".into(),
+            summary: String::new(),
+            body: "x".repeat(MAX_FRAME),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let big = FrontResponse::Inbox { items: vec![item], done: None, omitted_open: 0, omitted_done: 0 };
+        let bytes = res_frame("8".into(), Ok(big));
+        assert!(bytes.len() < 1024, "{}", bytes.len());
+        let (id, r) = parse(&bytes);
+        let e = r.unwrap_err();
+        assert_eq!((id.as_str(), e.code), ("8", ErrorCode::TooLarge));
+        assert!(e.message.starts_with("inbox 응답이 1024 KiB라 frame 상한 1024 KiB를 넘는다"), "{}", e.message);
     }
 }

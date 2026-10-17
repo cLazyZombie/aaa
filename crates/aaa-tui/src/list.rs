@@ -9,11 +9,8 @@ use aaa_proto::{AgentActivity, Connection, MachineView, PaneView, Role, SessionS
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::{ACCENT, BLOCKED, DIM, DONE, FAINT, ON_CHIP, WARN, WORKING, activity_text, unicode_width};
-
-/// 목록 폭(구분선 제외). 이보다 좁은 터미널(NARROW)에서는 접힌 채 시작한다.
-pub const WIDTH: u16 = 32;
-pub const NARROW: u16 = 100;
+use crate::theme::Palette;
+use crate::{activity_text, unicode_width};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -37,7 +34,8 @@ pub fn thread_key(t: &ThreadView) -> String {
     format!("{}/{}", t.project, t.id)
 }
 
-/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순) → 머신마다 새 셸·pane(평가자 제외)
+/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순) → 머신마다 새 셸·pane(평가자 제외) →
+/// 사후 평가자 pane(예전 상태 줄에 보이던 것, 웹 목록에는 없다)
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
     let mut out = vec![];
     let mut shown: Vec<&ThreadView> =
@@ -59,7 +57,69 @@ pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<Stri
         }
         out.extend(mine.into_iter().map(|p| Row::Pane(p.id.clone())));
     }
+    let mut evals: Vec<&PaneView> = panes.iter().filter(|p| p.role == Some(Role::Evaluator)).collect();
+    evals.sort_by(|a, b| a.name.cmp(&b.name));
+    if !evals.is_empty() {
+        out.push(Row::Header("평가".into()));
+        out.extend(evals.into_iter().map(|p| Row::Pane(p.id.clone())));
+    }
     out
+}
+
+/// herdr `AgentStatus` 자리(상태 점의 모양과 색, `status_icon`·`status_color`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dot {
+    Working,
+    Blocked,
+    Done,
+    Idle,
+    Unknown,
+}
+
+impl Dot {
+    /// herdr `status_icon`(Dots)
+    pub fn icon(self) -> &'static str {
+        match self {
+            Dot::Working | Dot::Blocked | Dot::Done => "●",
+            Dot::Idle => "○",
+            Dot::Unknown => "·",
+        }
+    }
+
+    /// herdr `status_color`
+    pub fn color(self, p: &Palette) -> Color {
+        match self {
+            Dot::Working => p.yellow,
+            Dot::Blocked => p.red,
+            Dot::Done => p.teal,
+            Dot::Idle => p.green,
+            Dot::Unknown => p.overlay0,
+        }
+    }
+}
+
+/// pane 상태 점: harness가 일하면 working, 질문·오류는 blocked, 기다리면 idle, 셸·끝난 pane은 unknown
+pub fn pane_dot(p: &PaneView) -> Dot {
+    if !p.state.is_running() {
+        return Dot::Unknown;
+    }
+    match p.agent.as_ref().map(|a| a.activity) {
+        Some(AgentActivity::Working) => Dot::Working,
+        Some(AgentActivity::Question | AgentActivity::Error) => Dot::Blocked,
+        Some(AgentActivity::Idle | AgentActivity::Started) => Dot::Idle,
+        Some(AgentActivity::Exited) | None => Dot::Unknown,
+    }
+}
+
+/// thread 상태 점: 사람 차례 blocked, 검토 대기 done(herdr 「끝났고 아직 안 봄」 자리), 작업 중 working
+pub fn thread_dot(t: &ThreadView) -> Dot {
+    match t.group {
+        ThreadGroup::WaitingOnYou => Dot::Blocked,
+        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Dot::Done,
+        ThreadGroup::Working => Dot::Working,
+        ThreadGroup::Idle => Dot::Idle,
+        ThreadGroup::Resolved => Dot::Unknown,
+    }
 }
 
 /// 다음(앞·뒤) 고를 수 있는 줄. 없으면 그대로.
@@ -84,39 +144,44 @@ pub fn group_label(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "사람 차례",
         ThreadGroup::ReadyForReview => "검토 대기",
+        ThreadGroup::Landing => "병합 중",
         ThreadGroup::Working => "작업 중",
         ThreadGroup::Idle => "쉼",
         ThreadGroup::Resolved => "끝남",
     }
 }
 
-fn group_color(g: ThreadGroup) -> Color {
+fn group_color(g: ThreadGroup, p: &Palette) -> Color {
     match g {
-        ThreadGroup::WaitingOnYou => WARN,
-        ThreadGroup::ReadyForReview => ACCENT,
-        ThreadGroup::Working => WORKING,
-        ThreadGroup::Idle | ThreadGroup::Resolved => DIM,
+        ThreadGroup::WaitingOnYou => p.red,
+        ThreadGroup::ReadyForReview => p.teal,
+        // herdr-projects popup `group_color`
+        ThreadGroup::Landing => p.green,
+        ThreadGroup::Working => p.yellow,
+        ThreadGroup::Idle | ThreadGroup::Resolved => p.overlay0,
     }
 }
 
 /// pane 줄 오른쪽 배지(웹 목록과 같은 말). 실행 중이고 harness 상태가 없으면 없다.
-pub fn pane_badge(p: &PaneView) -> Option<(String, Color)> {
+pub fn pane_badge(p: &PaneView, pal: &Palette) -> Option<(String, Color)> {
     if p.state.is_running() && p.connection == Connection::Disconnected {
-        return Some(("끊김".into(), WARN));
+        return Some(("끊김".into(), pal.peach));
     }
     match &p.state {
         SessionState::Running => p.agent.as_ref().map(|a| {
             let pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
             let color = match a.activity {
-                AgentActivity::Working => WORKING,
-                AgentActivity::Question | AgentActivity::Error => BLOCKED,
-                _ => DIM,
+                AgentActivity::Working => pal.yellow,
+                AgentActivity::Question | AgentActivity::Error => pal.red,
+                _ => pal.overlay0,
             };
             (format!("{}{pct}", activity_text(a.activity)), color)
         }),
-        SessionState::Exited { code } => Some((code.map_or_else(|| "종료".into(), |c| format!("종료({c})")), FAINT)),
-        SessionState::Interrupted => Some(("중단".into(), WARN)),
-        SessionState::Lost => Some(("유실".into(), WARN)),
+        SessionState::Exited { code } => {
+            Some((code.map_or_else(|| "종료".into(), |c| format!("종료({c})")), pal.overlay0))
+        }
+        SessionState::Interrupted => Some(("중단".into(), pal.peach)),
+        SessionState::Lost => Some(("유실".into(), pal.peach)),
     }
 }
 
@@ -142,46 +207,90 @@ pub struct View<'a> {
     pub current: Option<&'a str>,
     pub sel: usize,
     pub focused: bool,
+    /// 휠로 민 첫 줄(없으면 고른 줄이 보이게 내린다)
+    pub top: Option<usize>,
+    pub pal: &'a Palette,
 }
 
-/// 목록을 그린다(오른쪽 구분선 포함). 줄이 넘치면 고른 줄이 보이게 내린다.
-pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) {
-    let sep_x = r.x + r.w;
-    for y in r.y..r.y + r.h {
-        buf.set_string(sep_x, y, "│", Style::default().fg(if v.focused { ACCENT } else { FAINT }));
-    }
-    let skip = (v.sel + 1).saturating_sub(r.h as usize);
+/// 줄들을 그리고 (줄 y, 줄 차례)들과 첫 보이는 줄을 준다(사이드바 바탕·구분선은 부르는 쪽).
+/// 줄이 넘치면 고른 줄이 보이게 내린다(휠로 민 자리가 있으면 그 자리).
+/// herdr 사이드바처럼 탐색 중 고른 줄은 `selection_bg`(없으면 `active_row_bg`), 지금 pane 줄은 `active_row_bg` 바탕이고
+/// 이름은 `text` 굵게(아니면 `subtext0`)다(`workspace_selection_background`·`workspace_active_background`·`render_workspace_rows`).
+pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, usize)>, usize) {
+    let p = v.pal;
+    let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
+    let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
+    let skip = match v.top {
+        Some(t) => t.min(rows.len().saturating_sub(r.h as usize)),
+        None => (v.sel + 1).saturating_sub(r.h as usize),
+    };
+    let mut placed = Vec::new();
     for (n, row) in rows.iter().enumerate().skip(skip).take(r.h as usize) {
         let y = r.y + (n - skip) as u16;
+        placed.push((y, n));
         let sel = n == v.sel && v.focused;
-        let (mut left, right, mut st, badge_st) = line(row, v);
-        if sel {
-            // 색이 없는 터미널에서도 고른 줄이 보이게 표시한다
-            left = left.replacen(' ', "▸", 1);
+        let current = is_current(row, v);
+        let bg = if sel {
+            Some(selection)
+        } else if current {
+            Some(active)
+        } else {
+            None
+        };
+        let (left, right) = line(row, v, current || sel);
+        // 오른쪽 글(상태)은 이름과 한 칸 띄우고 끝 한 칸을 비운다. 넘치는 이름은 herdr `truncate_end`처럼 「…」로 자른다
+        // (herdr `resolved_token_spans`: 토큰 사이 구분자, 잘린 토큰 끝 「…」)
+        let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16).unwrap_or(0);
+        let end = r.x + r.w.saturating_sub(if rw > 0 { rw + 2 } else { 0 });
+        let overflow = left.iter().map(|(t, _)| unicode_width(t)).sum::<usize>() > (end - r.x) as usize;
+        let mut x = r.x;
+        for (t, st) in &left {
+            if x >= end {
+                break;
+            }
+            let room = (end - x) as usize;
+            let t = if overflow { crate::chrome::truncate_end(t, room) } else { t.clone() };
+            x = buf.set_stringn(x, y, &t, room, *st).0;
         }
-        let current = matches!(row, Row::Pane(p) if Some(p.as_str()) == v.current)
-            || matches!(row, Row::Thread(k) if v.threads.get(k).and_then(|t| t.pane.as_deref()) == v.current && v.current.is_some());
-        if current {
-            st = st.add_modifier(Modifier::BOLD);
+        if let Some((t, st)) = right {
+            buf.set_stringn(end + 1, y, &t, rw as usize, st);
         }
-        let base = if sel { Style::default().fg(ON_CHIP).bg(ACCENT) } else { Style::default() };
-        for dx in 0..r.w {
-            buf.set_string(r.x + dx, y, " ", base);
+        if let Some(c) = bg {
+            for dx in 0..r.w {
+                if let Some(cell) = buf.cell_mut((r.x + dx, y)) {
+                    cell.set_bg(c);
+                }
+            }
         }
-        let rw = right.as_ref().map(|s| unicode_width(s) as u16 + 1).unwrap_or(0);
-        let room = r.w.saturating_sub(rw) as usize;
-        buf.set_stringn(r.x, y, &left, room, if sel { base.add_modifier(Modifier::BOLD) } else { st });
-        if let Some(b) = right {
-            let x = r.x + r.w.saturating_sub(rw);
-            buf.set_stringn(x, y, &b, rw as usize, if sel { base } else { badge_st });
-        }
+    }
+    (placed, skip)
+}
+
+/// 이 줄이 지금 포커스 pane(또는 그 pane의 thread)인가
+fn is_current(row: &Row, v: &View) -> bool {
+    let Some(cur) = v.current else { return false };
+    match row {
+        Row::Pane(p) => p == cur,
+        Row::Thread(k) => v.threads.get(k).and_then(|t| t.pane.as_deref()) == Some(cur),
+        _ => false,
     }
 }
 
-fn line(row: &Row, v: &View) -> (String, Option<String>, Style, Style) {
-    let plain = Style::default();
+/// 줄의 왼쪽 조각들과 오른쪽 표시. herdr 기본 줄(`state_icon` + 이름, 머신은 ` ▾ 이름`과 연결 점)을 한 줄로 쓴다.
+/// 글과 그 모양
+type Span = (String, Style);
+
+fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
+    let pal = v.pal;
+    let name = if highlighted {
+        Style::default().fg(pal.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(pal.subtext0)
+    };
+    let faint = Style::default().fg(pal.overlay0);
+    let dot = |d: Dot| (format!(" {} ", d.icon()), Style::default().fg(d.color(pal)));
     match row {
-        Row::Header(t) => (format!(" {t}"), None, Style::default().fg(DIM).add_modifier(Modifier::BOLD), plain),
+        Row::Header(t) => (vec![(format!(" {t}"), faint.add_modifier(Modifier::BOLD))], None),
         Row::Thread(k) => match v.threads.get(k) {
             Some(t) => {
                 let pct = match (t.group, t.agent.as_ref().and_then(|a| a.percent)) {
@@ -189,38 +298,81 @@ fn line(row: &Row, v: &View) -> (String, Option<String>, Style, Style) {
                     _ => String::new(),
                 };
                 (
-                    format!(" ≡ {}", t.title),
-                    Some(format!("{}{pct}", group_label(t.group))),
-                    plain,
-                    Style::default().fg(group_color(t.group)),
+                    vec![dot(thread_dot(t)), (t.title.clone(), name)],
+                    Some((format!("{}{pct}", group_label(t.group)), Style::default().fg(group_color(t.group, pal)))),
                 )
             }
-            None => (format!(" ≡ {k}"), None, plain, plain),
+            None => (vec![dot(Dot::Unknown), (k.clone(), name)], None),
         },
-        Row::Machine(id) => match v.machines.iter().find(|m| &m.id == id) {
-            Some(m) => {
-                let on = m.connection == Connection::Connected;
-                let tag = if m.local { " host" } else { "" };
-                (
-                    format!(" ■ {}{tag}", m.name),
-                    Some(if on { "●".into() } else { "끊김".into() }),
-                    Style::default().add_modifier(Modifier::BOLD),
-                    Style::default().fg(if on { DONE } else { WARN }),
-                )
-            }
-            None => (format!(" ■ {id}"), None, plain, plain),
-        },
-        Row::NewShell(_) => ("   + 새 셸".into(), None, Style::default().fg(DIM), plain),
-        Row::Empty => ("   pane 없음".into(), None, Style::default().fg(FAINT), plain),
+        Row::Machine(id) => {
+            let m = v.machines.iter().find(|m| &m.id == id);
+            let label = m.map_or(id.as_str(), |m| m.name.as_str());
+            // herdr `render_endpoint_row`: 이 머신(host)은 표시 없음, 붙은 머신은 초록 점, 끊긴 머신은 노랑 반달
+            let signal = match m {
+                Some(m) if m.connection != Connection::Connected => Some(("◐ 끊김".to_string(), pal.yellow)),
+                Some(m) if !m.local => Some(("●".to_string(), pal.green)),
+                _ => None,
+            };
+            (
+                vec![(format!(" ▾ {label}"), Style::default().fg(pal.text).add_modifier(Modifier::BOLD))],
+                signal.map(|(t, c)| (t, Style::default().fg(c))),
+            )
+        }
+        Row::NewShell(_) => (vec![(" + 새 셸".into(), faint)], None),
+        Row::Empty => (vec![("   pane 없음".into(), faint)], None),
         Row::Pane(id) => match v.panes.get(id) {
             Some(p) => {
-                let st = if p.state.is_running() { plain } else { Style::default().fg(DIM) };
-                let (badge, color) = pane_badge(p).map_or((None, DIM), |(b, c)| (Some(b), c));
-                (format!("   {}", pane_title(p, v.threads)), badge, st, Style::default().fg(color))
+                let st = if p.state.is_running() { name } else { faint };
+                (
+                    vec![dot(pane_dot(p)), (pane_title(p, v.threads), st)],
+                    pane_badge(p, pal).map(|(b, c)| (b, Style::default().fg(c))),
+                )
             }
-            None => (format!("   {id}"), None, plain, plain),
+            None => (vec![dot(Dot::Unknown), (id.clone(), name)], None),
         },
     }
+}
+
+/// 접힌 사이드바(herdr `render_collapsed_sidebar`): 고를 수 있는 thread·pane 줄마다 번호와 상태 점
+pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> Vec<(u16, usize)> {
+    let p = v.pal;
+    let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
+    let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
+    let items: Vec<(usize, &Row)> =
+        rows.iter().enumerate().filter(|(_, r)| matches!(r, Row::Thread(_) | Row::Pane(_))).collect();
+    let sel_at = items.iter().position(|(n, _)| *n == v.sel).unwrap_or(0);
+    let skip = (sel_at + 1).saturating_sub(r.h as usize);
+    let mut placed = Vec::new();
+    for (i, (n, row)) in items.iter().enumerate().skip(skip).take(r.h as usize) {
+        let y = r.y + (i - skip) as u16;
+        placed.push((y, *n));
+        let sel = *n == v.sel && v.focused;
+        let current = is_current(row, v);
+        let (bg, num) = if sel {
+            (Some(selection), Style::default().fg(p.overlay1))
+        } else if current {
+            (Some(active), Style::default().fg(p.text))
+        } else {
+            (None, Style::default().fg(p.overlay0))
+        };
+        let d = match row {
+            Row::Thread(k) => v.threads.get(k).map_or(Dot::Unknown, thread_dot),
+            Row::Pane(id) => v.panes.get(id).map_or(Dot::Unknown, pane_dot),
+            _ => Dot::Unknown,
+        };
+        buf.set_stringn(r.x, y, format!("{:<2}", i + 1), r.w.min(2) as usize, num);
+        if r.w > 2 {
+            buf.set_stringn(r.x + 2, y, d.icon(), (r.w - 2) as usize, Style::default().fg(d.color(p)));
+        }
+        if let Some(c) = bg {
+            for dx in 0..r.w {
+                if let Some(cell) = buf.cell_mut((r.x + dx, y)) {
+                    cell.set_bg(c);
+                }
+            }
+        }
+    }
+    placed
 }
 
 #[cfg(test)]
@@ -248,5 +400,50 @@ mod tests {
         assert_eq!(step(&r, 6, true), 6);
         assert_eq!(step(&r, 6, false), 3);
         assert_eq!(step(&r, 1, false), 1);
+    }
+
+    /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
+    #[test]
+    fn long_name_is_cut_with_ellipsis_before_the_right_text() {
+        let machines = [MachineView {
+            id: "m".into(),
+            name: "studio-very-long-machine".into(),
+            local: false,
+            connection: Connection::Disconnected,
+            os: None,
+            boot_id: None,
+            dev_mode: false,
+            last_seen_ms: None,
+            health: None,
+            clock_skew_ms: None,
+            problems: vec![],
+        }];
+        let (panes, threads) = (HashMap::new(), HashMap::new());
+        let pal = Palette::catppuccin();
+        let v = View {
+            machines: &machines,
+            panes: &panes,
+            threads: &threads,
+            current: None,
+            sel: 0,
+            focused: false,
+            top: None,
+            pal: &pal,
+        };
+        let line = |w: u16| {
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
+            render(&mut buf, Rect { x: 0, y: 0, w, h: 1 }, &[Row::Machine("m".into())], &v);
+            // 넓은 글자 뒤 칸은 건너뛴다(터미널에 보이는 대로)
+            let (mut out, mut x) = (String::new(), 0);
+            while x < w {
+                let sym = buf[(x, 0)].symbol().to_string();
+                x += (unicode_width(&sym) as u16).max(1);
+                out.push_str(&sym);
+            }
+            out
+        };
+        assert_eq!(line(20), " ▾ studio-v… ◐ 끊김 ");
+        // 넉넉하면 그대로
+        assert_eq!(line(40), format!(" ▾ studio-very-long-machine{}◐ 끊김 ", " ".repeat(6)));
     }
 }

@@ -48,6 +48,9 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     host.web_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
     *host.web_listen.lock().unwrap() = Some(listener.local_addr()?.to_string());
     tracing::info!(%addr, "웹 listen(loopback)");
+    // 공개 주소(Host·Origin 허용)를 지금 serve 상태로 맞춘다. tailscale을 기다리지 않고 연다(그동안은 지난 값)
+    let h = host.clone();
+    tokio::spawn(async move { h.refresh_publish().await });
     let app = router(host.clone());
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -90,32 +93,28 @@ fn via_https(h: &HeaderMap) -> bool {
     proto == Some("https") || !is_loopback_host(&host_header(h))
 }
 
-fn origin_allowed(host: &Host, origin: &str) -> bool {
-    let port = host.web_port();
-    if origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}") {
-        return true;
-    }
-    let Some(rest) = origin.strip_prefix("https://") else { return false };
-    let name = rest.rsplit_once(':').map(|(h, _)| h).unwrap_or(rest);
-    host.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
-}
-
 async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Response {
     let h = req.headers();
-    let hh = host_header(h);
-    if !host.host_allowed(&hh) {
+    // Host는 이 host의 두 주소 중 하나(포트까지), Origin은 그 주소와 정확히 같아야 한다: 같은 이름의 다른 포트
+    // (같은 머신의 다른 웹 서비스)나 포트 없는 Origin도 남이다(herdr-web-ui `sameOrigin`, t3code `EnvironmentAuth`)
+    let Some(expected) = host.web_origin(&host_header(h)) else {
         return (StatusCode::MISDIRECTED_REQUEST, "알 수 없는 Host").into_response();
-    }
+    };
     let is_ws =
         h.get(header::UPGRADE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
     if !matches!(*req.method(), Method::GET | Method::HEAD) || is_ws {
         let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
-        if !origin_allowed(&host, origin) {
+        if !origin.eq_ignore_ascii_case(&expected) {
             return (StatusCode::FORBIDDEN, "허용하지 않은 Origin").into_response();
         }
     }
+    let api = req.uri().path().starts_with("/api/");
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
+    // 기기·pane 상태를 담은 API 답은 브라우저·proxy가 두지 않는다(herdr-web-ui `index.ts` API no-store)
+    if api {
+        hs.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-store"));
+    }
     // 결과물 보기(/v/)는 자기 CSP(sandbox)·frame 정책을 둔다
     hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(CSP));
     hs.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -173,13 +172,17 @@ async fn view_file(State(host): State<Arc<Host>>, Path((cap, path)): Path<(Strin
         .unwrap()
 }
 
+/// 장치 cookie. HTTPS에서는 `__Host-aaa`만 본다: prefix 없는 `aaa`는 같은 이름의 다른 서비스(다른 포트)나
+/// 하위 경로가 심을 수 있다. `=`이 없는 등 깨진 항목은 건너뛴다(herdr-web-ui `parseCookies`: 남의 cookie 하나가
+/// 주인을 막지 않는다)
 fn cookie_token(h: &HeaderMap) -> Option<String> {
+    let name = if via_https(h) { "__Host-aaa" } else { "aaa" };
     for v in h.get_all(header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
         for part in s.split(';') {
-            let (k, val) = part.trim().split_once('=')?;
-            if k == "__Host-aaa" || k == "aaa" {
-                return Some(val.to_string());
+            let Some((k, val)) = part.split_once('=') else { continue };
+            if k.trim() == name {
+                return Some(val.trim().to_string());
             }
         }
     }
@@ -264,20 +267,33 @@ struct PushInfo {
     key: Option<String>,
     /// 이 장치의 구독 수
     subscribed: usize,
-    /// 지금 쓰는 웹 화면 수(그동안 Web Push를 보내지 않는다)
+    /// 지금 쓰는 웹 화면 수(보이고 focus)
     in_use: usize,
+    /// 쓰는 기기(앞 7자): 마지막으로 누르거나 치거나 화면을 켠 기기. 그 기기가 쓰는 화면인 동안 Web Push를 보내지 않는다(plan §8.105)
+    user: Option<String>,
+    /// 이 장치가 쓰는 기기다
+    you: bool,
     /// 알리는 inbox 종류(`notify.kinds`). 웹의 앱 안 알림·소리·탭 알림도 이 종류에만 띄운다(push와 같은 사건)
     kinds: Vec<String>,
+    /// 이 장치 구독이 고른 알림 종류(차이 목록 N3, 구독이 없으면 없음)
+    alerts: Option<crate::db::Alerts>,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
 async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
-    let subscribed = host.db.push_list(Some(&id)).map(|v| v.len()).unwrap_or(0);
+    let mine = host.db.push_list(Some(&id)).unwrap_or_default();
+    let subscribed = mine.len();
+    let alerts = mine.first().and_then(|s| s.alerts);
     let key = host.vapid.as_ref().map(|v| v.public_b64());
     let in_use = host.in_use.load(std::sync::atomic::Ordering::SeqCst);
-    let kinds = host.cfg.notify.kinds.clone();
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, kinds })).into_response()
+    let (user, you) = {
+        let v = host.viewing.lock().unwrap();
+        (v.user(), v.is_user(&id))
+    };
+    let kinds = host.cfg.notify.item_kinds();
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts }))
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -291,6 +307,9 @@ struct PushKeys {
 struct PushSubBody {
     endpoint: String,
     keys: PushKeys,
+    /// 이 기기가 받을 알림(차이 목록 N3). 없으면 전에 고른 것을 둔다
+    #[serde(default)]
+    alerts: Option<crate::db::Alerts>,
 }
 
 async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushSubBody>) -> Response {
@@ -303,13 +322,30 @@ async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(
     {
         return bad_request(e);
     }
-    let sub = crate::db::PushSub { endpoint: b.endpoint, p256dh: b.keys.p256dh, auth: b.keys.auth, device: id.clone() };
-    if let Err(e) = host.db.push_put(&sub) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
-        )
-            .into_response();
+    let sub = crate::db::PushSub {
+        endpoint: b.endpoint,
+        p256dh: b.keys.p256dh,
+        auth: b.keys.auth,
+        device: id.clone(),
+        alerts: b.alerts,
+    };
+    match host.db.push_put(&sub) {
+        Ok(true) => {}
+        Ok(false) => {
+            host.db.audit(&format!("device:{id}"), "push_subscribe", "다른 기기의 구독이라 거절");
+            return (
+                StatusCode::FORBIDDEN,
+                Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "다른 기기의 구독이다"))),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Internal, e.to_string()))),
+            )
+                .into_response();
+        }
     }
     // endpoint는 남기지 않는다(그 기기에 보내는 열쇠다)
     host.db.audit(&format!("device:{id}"), "push_subscribe", "");
@@ -359,6 +395,9 @@ async fn push_test(State(host): State<Arc<Host>>, headers: HeaderMap, body: Opti
             crate::push::Sent::Failed(e) => failed.push(e),
         }
     }
+    // 시험 알림은 사람이 켜거나 「테스트 보내기」를 누를 때만 간다(쓰는 화면이 있어도 보낸다, 참고 server/push.ts sendTest).
+    // 휴대폰에 뜬 배너가 어디서 왔는지 가릴 수 있게 남긴다(사용자 화면 10-18 00:27, plan §8.82)
+    host.db.audit(&format!("device:{id}"), "push_test", &format!("sent {sent} failed {}", failed.len()));
     if only.is_some() && sent == 0 {
         let gone = failed.first().is_some_and(|f| f.starts_with("브라우저가 구독을 버렸다"));
         let err = if gone {
@@ -392,16 +431,37 @@ async fn usage_report(
     res
 }
 
+/// 입력줄 `Submit`의 글과 Enter 사이(harness 메시지 전달과 같다, 300ms). `AAA_TEST_SUBMIT_GAP_MS`는 시험에서만
+/// 늘린다(그 틈에 기기를 폐기하는 시험)
+fn submit_enter_gap() -> std::time::Duration {
+    let ms = std::env::var("AAA_TEST_SUBMIT_GAP_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(300);
+    std::time::Duration::from_millis(ms)
+}
+
 /// 입력 사건 기록 하나의 상한과 남기는 개수
-/// 입력줄 `Submit`의 글과 Enter 사이(harness 메시지 전달과 같다)
-const SUBMIT_ENTER_GAP: std::time::Duration = std::time::Duration::from_millis(300);
 const DIAG_MAX: usize = 1 << 20;
 const DIAG_KEEP: usize = 20;
 
 /// 실기 입력 사건 기록(web/src/inputTrace.ts)을 host 상태 폴더 `diag/`에 남긴다. iPad 화면 키보드 같은 OS 입력기의
 /// 사건 순서는 headless로 만들 수 없어 실기에서 모아 E2E 재생으로 옮긴다(herdr-web-ui terminal-ime-diagnostic과 같은 목적).
+/// 친 글 원문이 들어 있어 조작 권한 기기만 쓰고, 파일은 사용자 전용(0600)이다. `application/json`만 받는다: 다른 사이트의
+/// 폼이 보낼 수 있는 `text/plain` 단순 요청으로는 쓸 수 없다(보안 감사 t-0340 A6·B8, herdr-web-ui는 전용 헤더를 요구한다)
 async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
-    let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    if !role.can_control() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 조작할 수 없다"))),
+        )
+            .into_response();
+    }
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("application/json")));
+    if !json {
+        return bad_request("content-type이 application/json이 아니다");
+    }
     if body.len() > DIAG_MAX {
         return bad_request(format!("기록은 {}KiB까지", DIAG_MAX >> 10));
     }
@@ -410,7 +470,7 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
     }
     let dir = host.state.join("diag");
     let name = format!("input-{}.json", aaa_common::util::now_ms());
-    let saved = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), &body));
+    let saved = std::fs::create_dir_all(&dir).and_then(|_| aaa_common::util::write_private(&dir.join(&name), &body));
     if let Err(e) = saved {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -459,6 +519,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     if host.is_revoked(&dev) {
         return close_revoked(socket).await;
     }
+    // 살아 있는지: 브라우저는 WebSocket ping에 저절로 pong한다. 휴대폰이 잠들거나 망이 바뀌어 반쯤 열린 연결은 보내기가
+    // 실패하지 않고 몇 분씩 남는다. 그동안 이 연결의 「쓰는 화면」이 남아 어느 기기에도 push가 가지 않고, 그 화면은 사건을
+    // 받지 못한다(10-18 iPhone 실기). 아무것도 받지 못한 채 EVENTS_DEAD_AFTER가 지나면 끊는다(herdr-web-ui는 Bun
+    // WebSocket의 ping·idleTimeout과 웹 ws.ts 「Liveness」 probe가 같은 일을 한다).
+    let (every, dead_after) = events_liveness();
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    let mut heard = tokio::time::Instant::now();
     loop {
         if send_preferences {
             send_preferences = false;
@@ -521,12 +588,30 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 send_state = false;
                 send_preferences = true;
             }
+            _ = ping.tick() => {
+                send_state = false;
+                if heard.elapsed() >= dead_after {
+                    tracing::info!("상태 사건 연결이 {}초 동안 답하지 않아 끊는다", dead_after.as_secs());
+                    break;
+                }
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
             m = socket.recv() => {
                 send_state = false;
+                heard = tokio::time::Instant::now();
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
                         Ok(EventsClientMsg::Presence { active }) => presence.set(active),
+                        Ok(EventsClientMsg::Touch) => host.touch_device(&dev),
+                        Ok(EventsClientMsg::Ping { id }) => {
+                            let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                            if socket.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
                         Err(_) => {}
                     },
                     _ => {}
@@ -534,6 +619,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             }
         }
     }
+}
+
+/// 상태 사건 연결의 WebSocket ping 간격과, 아무것도 받지 못하면 끊는 시간(15초·45초: ping 두 번을 놓치고도 남는다).
+/// `AAA_TEST_EVENTS_PING_MS`는 시험에서만 줄인다(끊는 시간은 그 세 배).
+fn events_liveness() -> (std::time::Duration, std::time::Duration) {
+    let ms = std::env::var("AAA_TEST_EVENTS_PING_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(15_000);
+    (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
@@ -598,6 +690,28 @@ struct Outbox {
     stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
 }
 
+/// `Outbox`에 보내기만 하는 손잡이(앞 기록 답처럼 연결 loop 밖에서 끝나는 일)
+struct OutSender {
+    tx: tokio::sync::mpsc::UnboundedSender<Message>,
+    buffered: Arc<AtomicU64>,
+}
+
+impl OutSender {
+    fn msg(&self, m: &TermServerMsg) -> bool {
+        let m = Message::Text(serde_json::to_string(m).unwrap().into());
+        self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
+        self.tx.send(m).is_ok()
+    }
+}
+
+/// 앞 기록 답(plan §8.67): 찾지 못했으면 붙이지 않는다
+fn history_reply(id: u32, o: Option<aaa_vt::Older>) -> TermServerMsg {
+    match o {
+        Some(o) => TermServerMsg::History { id, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
+        None => TermServerMsg::History { id, data: B64(Vec::new()), lines: 0, more: false, found: false },
+    }
+}
+
 fn frame_len(m: &Message) -> u64 {
     match m {
         Message::Text(t) => t.len() as u64,
@@ -647,6 +761,11 @@ impl Outbox {
 
     fn msg(&self, m: &TermServerMsg) -> bool {
         self.send(Message::Text(serde_json::to_string(m).unwrap().into()))
+    }
+
+    /// 다른 task가 이 줄에 보낼 손잡이(보낸 bytes는 같은 `buffered`에 센다)
+    fn sender(&self) -> OutSender {
+        OutSender { tx: self.tx.clone(), buffered: self.buffered.clone() }
     }
 
     fn buffered(&self) -> u64 {
@@ -747,7 +866,7 @@ async fn pane_session(
     }
     let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()) else { return };
     let mut rx = attach.rx;
-    if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) {
+    if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) {
         return;
     }
     // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
@@ -807,7 +926,7 @@ async fn pane_session(
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
                     Ok(PaneEvent::State) => {
                         let Some(view) = host.pane_view_of(&id, role) else { break };
-                        if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) { break; }
+                        if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) { break; }
                         false
                     }
                     Err(RecvError::Closed) => break,
@@ -844,10 +963,16 @@ async fn pane_session(
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
                             // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
                             // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
+                            host.touch_device(dev);
                             let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
                             if sent.is_ok() {
-                                tokio::time::sleep(SUBMIT_ENTER_GAP).await;
+                                tokio::time::sleep(submit_enter_gap()).await;
+                                // 기다리는 동안 폐기된 기기의 Enter는 보내지 않는다(t-0340 감사 A9, t3code `awaitInvalidation`)
+                                if host.is_revoked(dev) {
+                                    out.revoked();
+                                    break;
+                                }
                                 sent = host.call_from(role, &actor, Some(front), typed(b"\r".to_vec())).await;
                             }
                             let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
@@ -860,12 +985,21 @@ async fn pane_session(
                             // 앞 기록 한 덩어리(plan §8.67). 출력 흐름(ACK 창) 밖의 답이라 창에 넣지 않는다:
                             // 한 덩어리는 replay 기록 상한(2000줄·384KiB) 안이다.
                             let anchor: Vec<String> = anchor.into_iter().take(8).collect();
-                            let reply = match host.older_history(&id, &anchor, depth as usize) {
-                                Some(o) => TermServerMsg::History { id: hid, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
-                                None => TermServerMsg::History { id: hid, data: B64(Vec::new()), lines: 0, more: false, found: false },
-                            };
-                            if !out.msg(&reply) {
-                                break;
+                            match host.older_history(&id, &anchor, depth as usize) {
+                                crate::OlderHistory::Ready(o) => {
+                                    if !out.msg(&history_reply(hid, o)) {
+                                        break;
+                                    }
+                                }
+                                // mirror에 없는 앞 기록: session host에 묻는 동안 이 연결의 출력·입력을 막지 않는다(plan §8.118)
+                                crate::OlderHistory::Ask(conn) => {
+                                    let out = out.sender();
+                                    let session = id.clone();
+                                    tokio::spawn(async move {
+                                        let o = Host::older_from_agent(&conn, session, anchor, depth as usize).await;
+                                        out.msg(&history_reply(hid, o));
+                                    });
+                                }
                             }
                             None
                         }
@@ -892,6 +1026,10 @@ async fn pane_session(
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => None,
                 };
+                // pane에 친 기기가 쓰는 기기다(plan §8.105). 크기 걸기는 다시 붙을 때도 오므로 세지 않는다(누름은 웹이 touch로 알린다)
+                if matches!(req, Some(FrontRequest::PaneInput { .. }) | Some(FrontRequest::PaneTake { .. })) {
+                    host.touch_device(dev);
+                }
                 if let Some(req) = req
                     && let Err(e) = host.call_from(role, &actor, Some(front), req).await
                     && !out.msg(&TermServerMsg::Error(e))
@@ -977,6 +1115,16 @@ async fn static_file(req: Request) -> Response {
 mod content_type_tests {
     use super::content_type;
 
+    /// build.rs가 만든 자산 목록은 빌드한 worktree의 절대 경로를 갖지 않는다: build script 실행 결과를 캐시하는
+    /// 도구가 다른 worktree에 이 파일을 되돌려도 그 worktree의 web/dist를 읽어야 한다(t-0327, kache build_script_run)
+    #[test]
+    fn web_assets_do_not_bake_build_paths() {
+        let src = include_str!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
+        for line in src.lines().filter(|l| l.contains("include_bytes!")) {
+            assert!(line.contains("include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../web/dist/"), "{line}");
+        }
+    }
+
     #[test]
     fn touch_icon_aliases() {
         use super::touch_icon_alias;
@@ -1008,5 +1156,178 @@ mod content_type_tests {
         assert_eq!(content_type("assets/index-abc.js"), "text/javascript; charset=utf-8");
         assert_eq!(content_type("index.html"), "text/html; charset=utf-8");
         assert_eq!(content_type("v1.2/blob"), "application/octet-stream");
+    }
+}
+
+/// 입구 검사(t-0340 보안 감사 A1·A4·A5·A8·A10): router를 그대로 부른다. 공개 주소는 같은 이름의 8443이고, 같은
+/// 머신 443에 다른 웹 서비스가 있는 운영 배치를 흉내 낸다.
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    use std::time::Instant;
+    use tower::ServiceExt;
+
+    const PUBLIC: &str = "mac-a.example.ts.net:8443";
+    const LOOP: &str = "127.0.0.1:7000";
+
+    struct Lab(Arc<Host>, std::path::PathBuf);
+    impl Drop for Lab {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+
+    fn lab(public_origin: &str) -> Lab {
+        let dir = std::env::temp_dir().join(format!("aaa-guard-test-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, dir.clone()).unwrap();
+        h.web_port.store(7000, std::sync::atomic::Ordering::Relaxed);
+        h.db.set_meta("publish_origin", public_origin).unwrap();
+        Lab(h, dir)
+    }
+
+    fn token(h: &Host) -> String {
+        let (code, _) = h.mint_pairing(DeviceRole::Controller, Instant::now());
+        h.redeem_pairing(&code, "").unwrap().0
+    }
+
+    async fn ask(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> Response {
+        let mut req = Request::builder().method(method).uri(path).header(header::HOST, host);
+        for (k, v) in more {
+            req = req.header(*k, *v);
+        }
+        router(h.clone()).oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+    }
+
+    async fn code(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> StatusCode {
+        ask(h, method, path, host, more).await.status()
+    }
+
+    #[tokio::test]
+    async fn host_must_be_this_host_with_its_port() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        assert_ne!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_ne!(code(&l.0, "GET", "/", "MAC-A.example.ts.net:8443", &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_ne!(code(&l.0, "GET", "/", LOOP, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        // 같은 이름의 다른 포트·포트 없음(443의 다른 서비스), localhost, 다른 loopback 포트, 다른 이름
+        for other in [
+            "mac-a.example.ts.net:9999",
+            "mac-a.example.ts.net",
+            "localhost:7000",
+            "127.0.0.1:7001",
+            "evil.example:8443",
+        ] {
+            assert_eq!(code(&l.0, "GET", "/", other, &[]).await, StatusCode::MISDIRECTED_REQUEST, "{other}");
+        }
+    }
+
+    #[tokio::test]
+    async fn origin_must_match_the_whole_origin() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let ok = [("origin", "https://mac-a.example.ts.net:8443")];
+        assert_eq!(code(&l.0, "DELETE", "/api/v1/me", PUBLIC, &ok).await, StatusCode::NO_CONTENT);
+        assert_eq!(
+            code(&l.0, "DELETE", "/api/v1/me", LOOP, &[("origin", "http://127.0.0.1:7000")]).await,
+            StatusCode::NO_CONTENT
+        );
+        for bad in [
+            "https://mac-a.example.ts.net:9999",
+            "https://mac-a.example.ts.net",
+            "http://mac-a.example.ts.net:8443",
+            "http://127.0.0.1:7000",
+            "http://localhost:7000",
+            "null",
+            "",
+        ] {
+            assert_eq!(
+                code(&l.0, "DELETE", "/api/v1/me", PUBLIC, &[("origin", bad)]).await,
+                StatusCode::FORBIDDEN,
+                "{bad:?}"
+            );
+        }
+        assert_eq!(code(&l.0, "DELETE", "/api/v1/me", PUBLIC, &[]).await, StatusCode::FORBIDDEN);
+        // loopback 주소에는 그 주소의 origin만
+        let other = [("origin", "https://mac-a.example.ts.net:8443")];
+        assert_eq!(code(&l.0, "DELETE", "/api/v1/me", LOOP, &other).await, StatusCode::FORBIDDEN);
+        // WebSocket upgrade도 GET이지만 Origin을 본다(cookie가 있어도)
+        let t = format!("__Host-aaa={}", token(&l.0));
+        let ws = |origin| {
+            [
+                ("origin", origin),
+                ("connection", "upgrade"),
+                ("upgrade", "websocket"),
+                ("sec-websocket-version", "13"),
+                ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="),
+                ("cookie", t.as_str()),
+            ]
+        };
+        for bad in ["https://mac-a.example.ts.net:9999", "https://mac-a.example.ts.net"] {
+            assert_eq!(code(&l.0, "GET", "/api/v1/events", PUBLIC, &ws(bad)).await, StatusCode::FORBIDDEN, "{bad}");
+        }
+        assert_ne!(
+            code(&l.0, "GET", "/api/v1/events", PUBLIC, &ws("https://mac-a.example.ts.net:8443")).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn the_default_https_port_has_no_port_in_host_or_origin() {
+        let l = lab("https://mac-a.example.ts.net");
+        for host in ["mac-a.example.ts.net", "mac-a.example.ts.net:443"] {
+            let ok = [("origin", "https://mac-a.example.ts.net")];
+            assert_eq!(code(&l.0, "DELETE", "/api/v1/me", host, &ok).await, StatusCode::NO_CONTENT, "{host}");
+            let bad = [("origin", "https://mac-a.example.ts.net:8443")];
+            assert_eq!(code(&l.0, "DELETE", "/api/v1/me", host, &bad).await, StatusCode::FORBIDDEN, "{host}");
+        }
+        assert_eq!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn not_published_means_loopback_only() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        l.0.db.del_meta("publish_origin").unwrap();
+        // 이름만 알던 옛 기록(publish_dns)으로는 열리지 않는다
+        l.0.db.set_meta("publish_dns", "mac-a.example.ts.net").unwrap();
+        assert_eq!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_ne!(code(&l.0, "GET", "/", LOOP, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        // serve 상태를 아직 못 읽었어도 aaa가 만든 공개(포트를 안다)는 그 포트로만 열린다
+        l.0.db.set_meta("publish_port", "8443").unwrap();
+        assert_ne!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
+        assert_eq!(code(&l.0, "GET", "/", "mac-a.example.ts.net", &[]).await, StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn cookies_skip_junk_and_https_takes_only_the_host_prefix() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let t = token(&l.0);
+        let me = |cookie: String| {
+            let h = l.0.clone();
+            let host = if cookie.contains("__Host-") { PUBLIC } else { LOOP };
+            async move { code(&h, "GET", "/api/v1/me", host, &[("cookie", cookie.as_str())]).await }
+        };
+        // 같은 host의 다른 서비스가 심은 `=` 없는 항목·빈 이름이 앞에 있어도
+        assert_eq!(me(format!("foo; =x; __Host-aaa={t}")).await, StatusCode::OK);
+        assert_eq!(me(format!("junk; aaa={t}")).await, StatusCode::OK);
+        // HTTPS에서 prefix 없는 cookie는 장치 cookie가 아니다(다른 포트·하위 경로가 심을 수 있다)
+        assert_eq!(
+            code(&l.0, "GET", "/api/v1/me", PUBLIC, &[("cookie", &format!("aaa={t}"))]).await,
+            StatusCode::UNAUTHORIZED
+        );
+        let planted = format!("aaa=junk; __Host-aaa={t}");
+        assert_eq!(code(&l.0, "GET", "/api/v1/me", PUBLIC, &[("cookie", planted.as_str())]).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_answers_are_not_stored() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        for path in ["/api/v1/me", "/api/v1/usage", "/api/v1/push"] {
+            let res = ask(&l.0, "GET", path, LOOP, &[]).await;
+            assert_eq!(
+                res.headers().get(header::CACHE_CONTROL).map(|v| v.to_str().unwrap()),
+                Some("no-store"),
+                "{path}"
+            );
+        }
     }
 }

@@ -19,14 +19,28 @@ mode = "child"
 [tui]
 # aaa attach의 명령 prefix 키(herdr 형식, 여러 개면 배열). tmux 안에서 쓰면 tmux와 겹치지 않게 바꾼다(예: "ctrl+g").
 prefix = "ctrl+b"
-# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·ssh 밖, herdr처럼 기본 끔).
-switch_ascii_input_source_in_prefix = false
-# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 끔).
-prefix_jamo_keys = false
+# prefix·탐색 모드 동안 한글 입력기면 잠깐 영문 입력기로 바꾸고 되돌린다(macOS·Windows 한국어 IME, ssh 밖, 기본 켬).
+switch_ascii_input_source_in_prefix = true
+# prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 영문 키(c)로 읽는다(기본 켬).
+prefix_jamo_keys = true
 # 새 탭(prefix c)을 만들기 전에 이름을 묻는다(빈 채로·기본값 그대로 Enter면 자리 번호).
 prompt_new_tab_name = true
 # 마지막 탭·마지막 pane을 닫기 전에 묻는다.
 confirm_close = true
+# 왼쪽 사이드바 폭(구분선 포함, 18~36), 접힌 채 시작, 접으면 "compact"(번호·상태 점 4칸)나 "hidden"(없음).
+sidebar_width = 26
+sidebar_start_collapsed = false
+sidebar_collapsed_mode = "compact"
+# 이 폭 이하 터미널은 사이드바·탭 막대 대신 두 줄 머리를 쓴다.
+mobile_width_threshold = 64
+# 색 테마(herdr와 같은 이름: catppuccin·terminal·tokyo-night·dracula·nord·gruvbox 등 18개).
+theme = "catppuccin"
+# pane 테두리: "auto"(pane이 둘 이상인 탭만 pane마다 상자), "always"(하나여도), "off"(테두리 없이 빈 칸 하나).
+pane_borders = "auto"
+# 마우스(탭·사이드바·pane 누르기, 휠, 끌어 고르기). 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고르고 복사한다.
+mouse_capture = true
+# 끌어 고른 글을 떼는 때 복사한다(끄면 고른 채 두고 ctrl+c·cmd+c로 복사).
+copy_on_select = true
 
 [terminal]
 # 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로
@@ -51,10 +65,12 @@ nudge_quiet_secs = 10
 outage_secs = 600
 # 열린 thread의 PR을 이만큼(초)마다 thread 머신의 `gh`로 본다. 보고가 새로 오면 바로 본다.
 pr_poll_secs = 120
+# brief 안내·메시지를 Enter한 뒤 harness가 받았다고 알리기를 기다리는 시간(밀리초). 넘으면 전달 불명(다시 보내지 않는다)
+accept_wait_ms = 10000
+# interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기를 기다리는 상한(밀리초). 넘으면 그대로 보낸다
+stop_wait_ms = 15000
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
-# 머신 하나에서 동시에 도는 thread 한도(0이면 제한 없음)
-max_threads_per_machine = 6
 # routine 명령을 실행해도 되는 프로젝트("*"는 모두). 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.
 routine_commands = []
 
@@ -65,13 +81,20 @@ webhook = ""
 # json(항목 목록과 글) 또는 telegram
 format = "json"
 telegram_chat_id = ""
-# 알릴 inbox 항목 종류(pr은 병합·check 실패·리뷰 활동만 알린다)
-kinds = ["report", "question", "delivery", "thread", "session", "outage", "health", "routine-approval", "pr"]
+# 알릴 inbox 항목 종류. thread-state는 사람 차례·새 보고·시작 실패만, pr은 병합·check 실패·리뷰 활동만 보낸다
+# (옛 이름 report·question·delivery·thread도 thread-state로 읽는다)
+kinds = ["thread-state", "session", "outage", "health", "routine-approval", "pr"]
 # 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다
 debounce_secs = 15
 # 웹에서 「알림 켜기」한 기기에 Web Push로도 보낸다(내용은 암호화돼 push 서비스가 읽지 못한다)
 web_push = true
 # 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름, https만)
 push_hosts = ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
-# VAPID 연락처(비우면 공개 주소 https://<이름>.ts.net)
+# VAPID 연락처(비우면 프로젝트 저장소 주소. 공개 주소는 push 사업자에게 보내지 않는다)
 push_subject = ""
+
+[session]
+# 재부팅 뒤 Claude·Codex pane과 thread를 저장한 대화로 이어 띄운다(herdr와 같다). 꺼도 셸 pane은 저장한 폴더에서 되살린다.
+resume_agents_on_restore = true
+# 이어 띄우기 사이 간격(ms)
+startup_per_agent_delay_ms = 100

@@ -1,0 +1,162 @@
+/* 프로젝트 thread 화면(ProjectThreads.tsx, herdr-projects popup Threads). 색·크기는 herdr-web-ui token만 쓴다.
+   줄 모양은 참고 목록 줄(Sidebar.css workspace-select)처럼 두 줄: 이름, 그 아래 흐린 사실. 끝난 thread는 popup DarkGrey처럼 흐리다. */
+.project-threads {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom));
+  overflow-y: auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.project-threads-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.project-threads-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.project-threads-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--bg-input);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.project-filter:focus-within {
+  border-color: var(--accent);
+}
+
+.project-filter svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.project-filter .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+
+.project-threads-group + .project-threads-group {
+  margin-top: var(--space-4);
+}
+
+.project-threads-group-head {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dim);
+}
+
+.project-threads-group.is-waiting_on_you .project-threads-group-head { color: var(--status-blocked); }
+.project-threads-group.is-ready_for_review .project-threads-group-head { color: var(--notice); }
+.project-threads-group.is-landing .project-threads-group-head { color: var(--status-done); }
+
+.project-threads-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-threads-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h);
+  height: auto;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .project-threads-row:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.project-threads-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.project-threads-row.is-resolved .project-threads-name {
+  color: var(--text-dim);
+}
+
+.project-threads-mark,
+.project-threads-go {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.project-threads-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.project-threads-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text-strong);
+}
+
+.project-threads-facts {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.project-threads-empty {
+  padding: var(--space-3) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+@media (pointer: coarse) {
+  .project-threads-row {
+    min-height: var(--touch-target);
+  }
+}

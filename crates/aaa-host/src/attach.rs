@@ -140,6 +140,10 @@ impl Host {
         if got != u.sha256 {
             return Err(err(ErrorCode::Internal, "저장한 그림의 sha256이 보낸 것과 다르다"));
         }
+        // 마지막 조각을 쓰는 동안 기기가 폐기됐으면 경로를 넣지 않는다(§6.4 「전송이 끝나기 직전에 권한을 다시」, t-0340 A9)
+        if actor.strip_prefix("device:").is_some_and(|d| self.is_revoked(d)) {
+            return Err(err(ErrorCode::Unauthorized, "기기가 폐기됐다"));
+        }
         let (inserted, note) = self.attach_insert(&id, &mid, &path).await;
         self.db.audit(actor, "pane_attach", &format!("{id} {} {} bytes inserted={inserted}", u.att, u.total));
         Ok(Some(Attached { path, inserted, note }))
@@ -166,8 +170,9 @@ impl Host {
         }
         let Ok(conn) = self.live_conn(mid) else { return no("agent와 연결이 끊겼다") };
         let quoted = shell_quoted(path);
-        let paste = if harness { format!("\x1b[200~{quoted}\x1b[201~") } else { quoted };
-        match conn.request(AgentRequest::Input { session: id.to_string(), data: B64(paste.into_bytes()) }).await {
+        // herdr-web-ui는 xterm `paste`로 넣는다: 프로그램이 bracketed paste를 켰을 때만 감싼다(셸·harness 같다)
+        let paste = self.key_modes(id).paste(&quoted);
+        match conn.request(AgentRequest::Input { session: id.to_string(), data: B64(paste) }).await {
             Ok(_) => (true, None),
             Err(e) => (false, Some(format!("경로를 넣지 못했다: {}", e.message))),
         }

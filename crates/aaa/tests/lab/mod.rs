@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+pub mod watch;
+
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -37,6 +39,9 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             .env_remove("NO_COLOR")
             .stdin(Stdio::null());
+        // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
+        #[cfg(unix)]
+        c.env("SHELL", "/bin/sh");
         c
     }
 
@@ -141,6 +146,17 @@ impl Node {
         let v = self.json(&["machine", "list"]).ok()?;
         v["machines"].as_array()?.iter().find(|m| m["name"] == name).cloned()
     }
+
+    pub fn connected(&self, name: &str) -> bool {
+        self.machine(name).is_some_and(|m| m["connection"] == "connected")
+    }
+
+    /// host ticker를 `n`번 돌리고(`aaa ticker tick`: 이 명령 뒤에 시작한 tick이 끝나면 돌아온다) 끝난 tick 수를 돌려준다.
+    /// 「host가 보고도 아무것도 하지 않았다」를 고정 sleep 없이 단언할 때 쓴다(herdr-projects 시험의 `ticker::tick_project`).
+    /// 시간 규칙(idle·quiet·schedule·outage_secs)이 막는 일은 tick만으로 일어나지 않는다: 그 규칙은 시간이 지났음을 먼저 보인다.
+    pub fn ticks(&self, n: usize) -> u64 {
+        (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
+    }
 }
 
 impl Lab {
@@ -197,6 +213,13 @@ impl Lab {
     }
 
     /// 띄운 프로세스 하나를 SIGKILL로 끝낸다(갑작스러운 죽음을 흉내 낸다).
+    /// 이 실험실이 띄운 프로세스에 신호를 보낸다(SIGSTOP·SIGCONT로 응답을 붙잡는 시험)
+    #[cfg(unix)]
+    pub fn signal(&self, tag: &str, sig: i32) {
+        let (_, c) = self.procs.iter().find(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
+        assert_eq!(unsafe { libc::kill(c.id() as i32, sig) }, 0, "{tag}에 신호 {sig}");
+    }
+
     pub fn kill(&mut self, tag: &str) {
         let i = self.procs.iter().position(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
         let (_, mut c) = self.procs.remove(i);
@@ -348,6 +371,63 @@ impl Lab {
         });
         Follow { rx, seen: Vec::new() }
     }
+}
+
+/// host가 front 연결로 밀어 주는 사건(thread 기록·질문·흐름 사건·pane 목록)을 받아 조건이 맞을 때까지 기다린다.
+/// 시간마다 다시 묻지 않고 사건이 올 때마다 조건을 본다. 받은 사건은 모두 남겨 두고 기다릴 때마다 처음부터 다시 본다
+/// (두 사건이 어느 순서로 와도 차례로 기다릴 수 있게). 조건에는 시각·ID처럼 그 사건만 고르는 것을 넣는다.
+pub struct Events {
+    rt: tokio::runtime::Runtime,
+    client: aaa_common::front::FrontClient,
+    log: Vec<aaa_proto::FrontEvent>,
+}
+
+impl Events {
+    pub fn connect(node: &Node) -> Events {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let client = rt.block_on(aaa_common::front::FrontClient::connect(&node.state)).expect("front 연결");
+        Events { rt, client, log: Vec::new() }
+    }
+
+    /// `f`가 Some을 내는 첫 사건(지금까지 받은 것부터)
+    pub fn wait<T>(&mut self, what: &str, timeout: Duration, f: impl FnMut(&aaa_proto::FrontEvent) -> Option<T>) -> T {
+        self.wait_from(0, what, timeout, f).1
+    }
+
+    /// `from`번째 받은 사건부터 본다. (그 사건의 번호, 값)을 돌려준다: 다음에는 번호 + 1부터 보면 사건을 차례로 받는다.
+    pub fn wait_from<T>(
+        &mut self,
+        from: usize,
+        what: &str,
+        timeout: Duration,
+        mut f: impl FnMut(&aaa_proto::FrontEvent) -> Option<T>,
+    ) -> (usize, T) {
+        if let Some((i, v)) = self.log.iter().enumerate().skip(from).find_map(|(i, e)| f(e).map(|v| (i, v))) {
+            return (i, v);
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let client = &mut self.client;
+            let got = self.rt.block_on(async { tokio::time::timeout_at(deadline, client.next()).await });
+            let e = match got {
+                Ok(Ok(Some(aaa_proto::FrontMsg::Event(e)))) => e,
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) => panic!("{what}: host 연결이 끊겼다"),
+                Ok(Err(e)) => panic!("{what}: {e:#}"),
+                Err(_) => panic!("{timeout:?} 안에 {what} 사건이 오지 않았다. 받은 사건:\n{:#?}", self.log),
+            };
+            let v = f(&e);
+            self.log.push(e);
+            if let Some(v) = v {
+                return (self.log.len() - 1, v);
+            }
+        }
+    }
+}
+
+/// 지금 시각(ms). 사건 조건에 「이 뒤에 생긴」을 넣을 때 쓴다(agent·host가 같은 시계로 적는다).
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.

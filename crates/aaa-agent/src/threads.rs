@@ -42,9 +42,19 @@ pub fn profile_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
 
 /// 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 만든다(claude는 새 session ID).
 /// brief의 작업 폴더·aaa 실행 파일 자리는 이 머신 값으로 채운다(`fill_brief`).
-pub fn rebrief(work_dir: &str, brief: &str, mut launch: Launch, exe: &Path) -> Result<Launch> {
+pub fn rebrief(
+    cfg: &ThreadsConfig,
+    work_dir: &str,
+    brief: &str,
+    mut launch: Launch,
+    profile: Option<&str>,
+) -> Result<Launch> {
     let dir = check_work_dir(work_dir)?;
-    std::fs::write(dir.join("brief.md"), fill_brief(brief, &dir.to_string_lossy(), &exe.to_string_lossy()))?;
+    std::fs::write(dir.join("brief.md"), fill_brief(brief, &dir.to_string_lossy(), &cfg.exe.to_string_lossy()))?;
+    if let Some(name) = profile {
+        // profile이 모든 설정을 가진다: 옛 model·args는 쓰지 않는다(herdr-projects threads.rs `restart`)
+        return launch_in(cfg, name, &dir);
+    }
     if let Some(i) = launch.argv.iter().position(|a| a == "--session-id")
         && i + 1 < launch.argv.len()
     {
@@ -147,14 +157,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
     }
-    let profile = cfg.profiles.get(&p.profile).with_context(|| {
-        format!(
-            "이 머신 agent.toml에 profile `{}`가 없다(있는 것: {:?})",
-            p.profile,
-            cfg.profiles.keys().collect::<Vec<_>>()
-        )
-    })?;
-    let mut launch = resolve(&p.profile, profile)?;
+    let profile = find_profile(cfg, &p.profile)?;
     let (cwd, branch, base) = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -208,6 +211,29 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         work_dir.join("brief.md"),
         fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
     )?;
+    let launch = with_hooks(cfg, resolve(&p.profile, profile)?, &work_dir)?;
+    Ok(ThreadReady {
+        cwd: cwd.to_string_lossy().to_string(),
+        work_dir: work_dir.to_string_lossy().to_string(),
+        branch,
+        base,
+        launch,
+    })
+}
+
+fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
+    cfg.profiles.get(name).with_context(|| {
+        format!("이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?})", cfg.profiles.keys().collect::<Vec<_>>())
+    })
+}
+
+/// 있는 작업 폴더에서 profile을 다시 해석한다(brief.md는 host가 준 것을 이미 썼다)
+fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path) -> Result<Launch> {
+    with_hooks(cfg, resolve(name, find_profile(cfg, name)?)?, work_dir)
+}
+
+/// harness별 상태 hook을 launch에 붙인다
+fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path) -> Result<Launch> {
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
@@ -226,13 +252,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
             argv.insert(1, "-c".into());
         }
     }
-    Ok(ThreadReady {
-        cwd: cwd.to_string_lossy().to_string(),
-        work_dir: work_dir.to_string_lossy().to_string(),
-        branch,
-        base,
-        launch,
-    })
+    Ok(launch)
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -386,11 +406,13 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// thread 정리(herdr-projects threads.rs `clean`). worktree는 force 없이 지운다. branch는 PR이 병합됐고(`merged_head`가
+/// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다.
 pub async fn cleanup(
     repo: Option<&str>,
     cwd: &str,
     branch: Option<&str>,
-    base: Option<&str>,
+    merged_head: Option<&str>,
     keep_worktree: bool,
 ) -> Result<Cleanup> {
     let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
@@ -409,17 +431,41 @@ pub async fn cleanup(
         }
         let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
     }
-    if let (Some(branch), Some(base), true) = (branch, base, c.worktree_removed) {
-        let _ = git(&repo, &["fetch", "--quiet", "origin"], Duration::from_secs(15)).await;
-        match git(&repo, &["merge-base", "--is-ancestor", branch, base], GIT_T).await {
-            Ok(_) => match git(&repo, &["branch", "-D", branch], GIT_T).await {
-                Ok(_) => c.branch_deleted = true,
-                Err(e) => c.notes.push(format!("branch 삭제 실패: {e:#}")),
+    if let Some(branch) = branch.filter(|b| !b.is_empty()) {
+        match (merged_head, c.worktree_removed) {
+            (Some(head), true) => match delete_branch(&repo, branch, head).await {
+                Ok(true) => {
+                    c.branch_deleted = true;
+                    c.notes.push(format!("branch {branch}를 지웠다(PR이 병합됐다)"));
+                }
+                Ok(false) => c.notes.push(format!("branch {branch}는 이미 지워졌다")),
+                Err(e) => c.notes.push(format!("branch {branch}를 남겼다: {e:#}")),
             },
-            Err(_) => c.notes.push(format!("branch {branch}는 {base}에 병합되지 않아 남겼다")),
+            (None, _) => c.notes.push(format!("branch {branch}를 남겼다: PR이 병합되지 않았다")),
+            (Some(_), false) => c.notes.push(format!("branch {branch}를 남겼다: worktree가 남아 있다")),
         }
     }
     Ok(c)
+}
+
+/// branch 끝이 병합된 PR의 head commit일 때만 지운다(herdr-projects `delete_branch`): 병합 뒤 push하지 않은 commit이
+/// 있으면 남는다. `-D`인 까닭: GitHub가 병합됐다고 하고, squash 병합은 git이 보기에 병합되지 않은 branch를 남긴다.
+/// `false`: 지울 branch가 없었다.
+async fn delete_branch(repo: &Path, branch: &str, head: &str) -> Result<bool> {
+    if head.is_empty() {
+        bail!("병합된 PR의 head commit을 모른다");
+    }
+    let tip = git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
+        .await
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if tip.is_empty() {
+        return Ok(false);
+    }
+    if tip != head {
+        bail!("병합된 PR에 없는 commit이 있다");
+    }
+    git(repo, &["branch", "-D", branch], GIT_T).await.map(|_| true)
 }
 
 #[cfg(test)]
@@ -468,7 +514,8 @@ mod tests {
         std::fs::create_dir_all(&wd).unwrap();
         let old = resolve("c", &profile("claude")).unwrap();
         let brief = format!("새 brief `{}/report.md` `{} report`", aaa_proto::BRIEF_WORK_DIR, aaa_proto::BRIEF_EXE);
-        let new = rebrief(wd.to_str().unwrap(), &brief, old.clone(), Path::new("/opt/aaa")).unwrap();
+        let mut cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
+        let new = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), None).unwrap();
         // 작업 폴더·실행 파일 자리는 이 머신 값으로 채운다
         assert_eq!(
             std::fs::read_to_string(wd.join("brief.md")).unwrap(),
@@ -478,6 +525,13 @@ mod tests {
         let i = new.argv.iter().position(|a| a == "--session-id").unwrap();
         assert_eq!(Some(&new.argv[i + 1]), new.session_key.as_ref());
         assert_eq!(new.resume_argv, old.resume_argv);
+        // --profile: 이 머신 agent.toml에서 다시 해석하고 그 harness의 hook을 붙인다(옛 launch는 쓰지 않는다)
+        cfg.profiles.insert("x".into(), profile("codex"));
+        let other = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), Some("x")).unwrap();
+        assert_eq!((other.profile.as_str(), other.harness.as_str()), ("x", "codex"));
+        assert_eq!(other.argv[1], "-c", "{:?}", other.argv);
+        let e = rebrief(&cfg, wd.to_str().unwrap(), &brief, old, Some("nope")).unwrap_err();
+        assert!(format!("{e:#}").contains("profile `nope`가 없다"), "{e:#}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

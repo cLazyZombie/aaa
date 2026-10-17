@@ -26,16 +26,18 @@ mod prefs;
 mod project;
 mod prompt_box;
 mod push;
+mod restore;
 mod routine;
 mod seen;
 pub mod tailscale;
 mod tasks;
 mod text;
+mod transitions;
 mod trust_screen;
 pub mod usage;
 pub mod web;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -124,6 +126,16 @@ struct Mirror {
     vt: Vt,
     offset: u64,
     synced: bool,
+    /// 이 mirror를 채운 snapshot 앞에 session host 기록이 더 있다(plan §8.118): mirror 기록이 끝나면 session host에 묻는다
+    source_more: bool,
+}
+
+/// 앞 기록 한 덩어리를 어디서 받는가(plan §8.67·§8.118)
+pub enum OlderHistory {
+    /// host mirror에서 바로(None이면 anchor를 찾지 못했다)
+    Ready(Option<aaa_vt::Older>),
+    /// mirror에 없다: 그 머신 agent를 거쳐 session host에 묻는다
+    Ask(AgentConn),
 }
 
 /// 웹 터미널 등 구독자에게 보내는 pane 사건
@@ -154,10 +166,15 @@ struct PaneRt {
     /// 지금 쓰는 대화형 front(lease, 연결 하나). PTY 크기를 그 화면이 정한다. 다른 front가 입력·크기·그림을 보내면
     /// 그 front로 바뀌고(마지막 입력이 이긴다), 연결이 끝나거나 놓으면 비운다.
     lease: Option<FrontRef>,
-    /// harness 상태(hook 사건으로만 바뀐다)
+    /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
+    /// 다시 열지 않게 한다(harness.rs `on_harness`)
+    answered: bool,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
+    /// 재부팅 뒤 다시 띄우지 못한 까닭(restore.rs)
+    restore_error: Option<String>,
 }
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
@@ -209,15 +226,43 @@ struct PendingCode {
 #[derive(Default)]
 struct Pairing {
     pending: Option<PendingCode>,
-    /// 연속으로 틀린 수(코드와 상관없이). 5번부터 점점 길게 잠근다(§6.4)
-    failures: u32,
-    locked_until: Option<Instant>,
+    /// 코드와 상관없이 틀린 때, `PAIR_FAIL_WINDOW` 안의 것만(§6.4). 창이 지나면 저절로 줄어든다
+    failures: VecDeque<Instant>,
+}
+
+impl Pairing {
+    fn forget_old(&mut self, now: Instant) {
+        while self.failures.front().is_some_and(|t| now.saturating_duration_since(*t) >= PAIR_FAIL_WINDOW) {
+            self.failures.pop_front();
+        }
+    }
+
+    /// 다음 시도를 받을 때. 창 안에서 `PAIR_FAIL_BUDGET`번까지는 기다리지 않고, 그 뒤로는 마지막 실패부터
+    /// 1초·2초·4초… 60초까지(herdr-web-ui `recordAuthFailure`)
+    fn open_at(&self) -> Option<Instant> {
+        let n = self.failures.len();
+        if n < PAIR_FAIL_BUDGET {
+            return None;
+        }
+        let wait = PAIR_BACKOFF.saturating_mul(1u32 << (n - PAIR_FAIL_BUDGET).min(16)).min(PAIR_BACKOFF_MAX);
+        self.failures.back().map(|t| *t + wait)
+    }
 }
 
 /// pairing 코드 수명(herdr-web-ui `CODE_TTL_MS` 10분)
 pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
 /// 코드 하나로 틀릴 수 있는 수(참고 `CODE_ATTEMPTS`)
 const PAIR_CODE_ATTEMPTS: u32 = 5;
+/// 틀린 시도를 세는 창(참고 `SHARED_WINDOW_MS` 10분): 실패가 이보다 오래되면 잊는다
+const PAIR_FAIL_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// 기다리지 않고 틀릴 수 있는 수(참고 `AUTH_FAILURE_BUDGET`)
+const PAIR_FAIL_BUDGET: usize = 5;
+/// 그 뒤 기다림의 처음과 상한(참고 `AUTH_BACKOFF_MS` 1초·`AUTH_BACKOFF_MAX_MS` 60초)
+const PAIR_BACKOFF: Duration = Duration::from_secs(1);
+const PAIR_BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+/// 머신 이름 규칙(등록·로컬 agent가 새 이름을 쓸 때)
+pub const MACHINE_NAME_RULE: &str = "머신 이름은 영문·숫자·`.`·`_`·`-`로 1~64자다(--name으로 정한다)";
 /// 기기 이름 길이(참고 `LABEL_MAX`)
 const DEVICE_LABEL_MAX: usize = 48;
 /// 마지막으로 본 때를 적는 간격(참고 `LAST_SEEN_WRITE_MS`)
@@ -271,10 +316,13 @@ pub struct Host {
     deliver_lock: tokio::sync::Mutex<()>,
     /// pane 등록 전에 온 harness 사건
     held: Mutex<harness::Held>,
-    /// decisions.md 덧붙이기는 한 번에 하나씩
-    decision_lock: Mutex<()>,
     /// ticker를 바로 깨운다(흐름 사건·harness 사건)
     tick_wake: tokio::sync::Notify,
+    /// 시작한 tick 수와 끝난 tick 수(`ticker_tick`이 「이 요청 뒤에 시작한 tick」이 끝나기를 기다린다)
+    tick_started: std::sync::atomic::AtomicU64,
+    /// 이 host가 뜬 시각. auto-resolve는 이때부터도 잰다(herdr-projects ticker `started`: 오래 꺼져 있던 뒤 한꺼번에 끝내지 않는다)
+    pub(crate) started_ms: u64,
+    tick_done: watch::Sender<u64>,
     /// 머신별 끊김: 이 host 프로세스가 끊김을 처음 본 때와 알렸는지(inbox::Outage)
     outages: Mutex<HashMap<String, inbox::Outage>>,
     /// 머신별 마지막으로 알린 건강 이상(이어 붙인 글, 정상이면 빈 글)
@@ -313,6 +361,13 @@ pub struct Host {
     brief_loops: Mutex<HashSet<String>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
+    /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
+    /// 끝날 때까지 이 thread를 건너뛴다(orch.rs `refresh_report`)
+    report_refresh: Mutex<HashMap<String, bool>>,
+    /// 재부팅 뒤 복원 중인 머신. 묶음 셈(transitions.rs)은 끝날 때까지 그 머신 thread를 건너뛴다(restore.rs)
+    restoring: Mutex<HashSet<String>>,
+    /// 이 host 실행에서 복원해 본 pane(한 번만 한다)
+    restore_tried: Mutex<HashSet<String>>,
 }
 
 fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
@@ -327,6 +382,13 @@ fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
 
 pub fn token_hash(token: &str) -> String {
     hex::encode(sha2::Sha256::digest(token.as_bytes()))
+}
+
+/// 끝난 pane을 다시 띄울 때 줄 이름. 사람이 붙인 이름은 agent가 `name`에 덮어 알리므로 그대로 주면 그 이름이 띄울 때
+/// 이름이 되어 지워도 돌아가지 않는다. 비워 agent가 명령으로 짓게 하고, 붙인 이름은 `replace_pane`이 label로 다시 붙인다
+/// (처음 띄울 때 준 이름은 host가 모른다)
+pub(crate) fn respawn_name(info: &SessionInfo) -> String {
+    if info.label.is_some() { String::new() } else { info.name.clone() }
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>) -> ErrorBody {
@@ -415,8 +477,10 @@ impl Host {
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
-            decision_lock: Mutex::new(()),
             tick_wake: tokio::sync::Notify::new(),
+            tick_started: std::sync::atomic::AtomicU64::new(0),
+            started_ms: aaa_common::util::now_ms(),
+            tick_done: watch::channel(0).0,
             outages: Mutex::new(HashMap::new()),
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
@@ -436,6 +500,9 @@ impl Host {
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             brief_claims: Mutex::new(HashSet::new()),
+            report_refresh: Mutex::new(HashMap::new()),
+            restoring: Mutex::new(HashSet::new()),
+            restore_tried: Mutex::new(HashSet::new()),
         }))
     }
 
@@ -454,6 +521,11 @@ impl Host {
     /// hello를 받아들였다: 머신·pane 목록을 갱신하고 모든 세션을 구독한다.
     pub fn agent_connected(self: &Arc<Self>, hello: &aaa_proto::AgentHello, local: bool, conn: AgentConn) {
         let _ = self.db.touch_machine(&hello.machine_id, &hello.os, &hello.boot_id);
+        let generation = conn.generation;
+        // 재부팅 뒤 복원할 pane이 있으면 연결로 보이기 전부터 묶음 셈을 멈춘다(restore.rs `restore_after_reboot`이 푼다)
+        if hello.sessions.iter().any(|s| s.state == SessionState::Interrupted) {
+            self.restoring.lock().unwrap().insert(hello.machine_id.clone());
+        }
         let subscribe: Vec<(String, Option<u64>)>;
         {
             let mut i = self.inner.lock().unwrap();
@@ -490,6 +562,8 @@ impl Host {
                     lease: None,
                     agent: None,
                     transcript: None,
+                    answered: false,
+                    restore_error: None,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -504,11 +578,29 @@ impl Host {
                 .collect();
         }
         self.bump();
+        // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
+        let open = self.questions(false);
+        let gone: Vec<String> = {
+            let i = self.inner.lock().unwrap();
+            open.into_iter()
+                .filter(|q| q.machine == hello.machine_name)
+                .filter(|q| !i.panes.get(&q.pane).is_some_and(|p| p.info.state.is_running()))
+                .map(|q| q.pane)
+                .collect()
+        };
+        for pane in gone {
+            self.close_questions_of(&pane);
+        }
+        // agent가 남겨 둔 세션별 마지막 harness 상태(재부팅 복원이 harness 세션 ID를 바로 안다)
+        for ev in &hello.harness {
+            self.on_harness(&hello.machine_id, ev.clone());
+        }
         for (sid, from) in subscribe {
             self.replay_harness(&sid);
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
         }
         self.rewatch(hello.machine_id.clone());
+        self.restore_after_reboot(&hello.machine_id, generation);
     }
 
     pub fn agent_disconnected(&self, machine_id: &str, generation: u64) {
@@ -560,7 +652,7 @@ impl Host {
             Some(s) => {
                 let mut vt = Vt::new(s.rows, s.cols);
                 vt.feed(&s.replay.0);
-                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true });
+                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true, source_more: s.history_more });
                 let _ = p.events.send(PaneEvent::Reset);
             }
             None => match p.mirror.as_mut() {
@@ -611,6 +703,8 @@ impl Host {
                 lease: None,
                 agent: None,
                 transcript: None,
+                answered: false,
+                restore_error: None,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -621,7 +715,17 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
+        if !info.state.is_running() {
+            self.close_questions_of(&info.id);
+        }
         self.replay_harness(&info.id);
+        // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
+        if !info.state.is_running() {
+            match self.thread_of_pane(&info.id) {
+                Some(r) if r.status == aaa_proto::ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
+                _ => self.tick_wake.notify_one(),
+            }
+        }
         if started {
             self.spawn_subscribe(machine_id.to_string(), info.id, None);
         }
@@ -681,6 +785,8 @@ impl Host {
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
             agent: p.agent.clone().map(Box::new),
+            label: p.info.label.clone(),
+            restore_error: p.restore_error.clone(),
         }
     }
 
@@ -705,17 +811,55 @@ impl Host {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 let (replay, more) = m.vt.replay_more();
-                (replay, more, m.offset, rows, cols)
+                (replay, more || m.source_more, m.offset, rows, cols)
             }
             None => (Vec::new(), false, 0, p.info.rows, p.info.cols),
         };
         Some(Attach { rx, replay, more, offset, cols, rows })
     }
 
-    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67)
-    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> Option<aaa_vt::Older> {
+    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67).
+    /// mirror는 처음 구독 snapshot(최근 2000줄)부터 채워진다. 그보다 앞은 session host에만 있으므로, mirror에서 더 줄 것이
+    /// 없으면 session host에 묻는다(plan §8.118, QA t-0337 Q8). 옛 agent·session host면 묻지 않는다.
+    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> OlderHistory {
         let i = self.inner.lock().unwrap();
-        i.panes.get(id)?.mirror.as_ref()?.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY)
+        let Some(p) = i.panes.get(id) else { return OlderHistory::Ready(None) };
+        let Some(m) = p.mirror.as_ref() else { return OlderHistory::Ready(None) };
+        let found = m.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY);
+        match found {
+            Some(mut o) if o.lines > 0 => {
+                o.more |= m.source_more;
+                OlderHistory::Ready(Some(o))
+            }
+            found if m.source_more => {
+                let conn = i
+                    .machines
+                    .get(&p.machine_id)
+                    .filter(|mc| mc.features.iter().any(|f| f == "history.v1"))
+                    .and_then(|mc| mc.conn.clone());
+                match conn {
+                    Some(c) => OlderHistory::Ask(c),
+                    None => OlderHistory::Ready(found),
+                }
+            }
+            found => OlderHistory::Ready(found),
+        }
+    }
+
+    /// session host에 앞 기록을 묻는다(plan §8.118). 실패하면 None(웹은 더 받지 않는다).
+    pub async fn older_from_agent(
+        conn: &AgentConn,
+        session: String,
+        anchor: Vec<String>,
+        depth: usize,
+    ) -> Option<aaa_vt::Older> {
+        let depth = u32::try_from(depth).unwrap_or(u32::MAX);
+        match conn.request(AgentRequest::History { session, anchor, depth }).await {
+            Ok(AgentResponse::History(c)) if c.found => {
+                Some(aaa_vt::Older { data: c.data.0, lines: c.lines as usize, more: c.more })
+            }
+            _ => None,
+        }
     }
 
     fn resolve_pane(&self, prefix: &str) -> Result<(String, String), ErrorBody> {
@@ -816,6 +960,12 @@ impl Host {
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
+                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
+                let kind = kind.unwrap_or(if repo.is_some() {
+                    aaa_proto::ThreadKind::Worktree
+                } else {
+                    aaa_proto::ThreadKind::Dir
+                });
                 let mut a = orch::StartArgs {
                     project,
                     title,
@@ -827,10 +977,20 @@ impl Host {
                     task,
                     role: aaa_proto::Role::Worker,
                 };
-                if let Some(t) = from_task {
-                    self.apply_from_task(&mut a, &t).await?;
+                let warning = match from_task {
+                    Some(t) => self.apply_from_task(&mut a, &t).await?,
+                    None => None,
+                };
+                // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
+                if a.machine.is_none() {
+                    let repos = self.settings(&a.project).repos;
+                    a.machine =
+                        a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
-                self.thread_start(a, actor).await.map(FrontResponse::Thread)
+                self.thread_start(a, actor).await.map(|mut v| {
+                    v.warnings.extend(warning);
+                    FrontResponse::Thread(v)
+                })
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -852,22 +1012,30 @@ impl Host {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadLibrary { project, thread } => {
-                self.thread_library(&project, &thread).map(FrontResponse::Library)
+                self.thread_library(&project, &thread, actor.strip_prefix("device:")).map(FrontResponse::Library)
             }
             FrontRequest::ThreadAck { project, thread } => {
                 self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadResolve { project, thread, keep_worktree } => {
-                self.thread_resolve(&project, &thread, keep_worktree, actor).await.map(FrontResponse::Thread)
+            FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
+                self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
             }
+            FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen: false } => self
+                .thread_resolve(&project, &thread, keep_worktree, orch::ResolveWhy::Manual, actor)
+                .await
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
                 self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadRestart { project, thread, resume } => {
-                self.thread_restart(&project, &thread, resume, actor).await.map(FrontResponse::Thread)
+            FrontRequest::ThreadRestart { project, thread, resume, profile } => {
+                self.thread_restart(&project, &thread, resume, profile, actor).await.map(FrontResponse::Thread)
             }
             FrontRequest::ThreadBrief { project, thread } => {
                 self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadRead { project, thread, lines } => self.thread_read(&project, &thread, lines).await,
+            FrontRequest::ThreadKeys { project, thread, keys, text } => {
+                self.thread_keys(&project, &thread, &keys, text, actor).await
             }
             FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
             FrontRequest::QuestionAnswer { id, choice } => {
@@ -875,12 +1043,6 @@ impl Host {
             }
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
-            }
-            FrontRequest::DecisionAdd { project, text, replaces } => {
-                self.decision_add(&project, &text, replaces, actor).map(FrontResponse::Decision)
-            }
-            FrontRequest::Decisions { project } => {
-                self.decisions(&project).map(|decisions| FrontResponse::Decisions { decisions })
             }
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
@@ -890,11 +1052,22 @@ impl Host {
                 Ok(FrontResponse::Preferences(doc))
             }
             FrontRequest::Inbox { project, all, peek } => {
-                self.inbox(&project, all, peek).map(|items| FrontResponse::Inbox { items, done: None })
+                self.inbox(&project, all, peek).map(|p| FrontResponse::Inbox {
+                    items: p.items,
+                    done: None,
+                    omitted_open: p.omitted_open,
+                    omitted_done: p.omitted_done,
+                })
             }
-            FrontRequest::InboxDone { project, ids, all } => self
-                .inbox_done(&project, &ids, all, actor)
-                .map(|(done, items)| FrontResponse::Inbox { items, done: Some(done) }),
+            FrontRequest::InboxDone { project, ids, all } => {
+                self.inbox_done(&project, &ids, all, actor).map(|(done, p)| FrontResponse::Inbox {
+                    items: p.items,
+                    done: Some(done),
+                    omitted_open: p.omitted_open,
+                    omitted_done: p.omitted_done,
+                })
+            }
+            FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
             FrontRequest::MergeEnqueue { project, thread } => {
                 self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
             }
@@ -949,6 +1122,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1089,6 +1263,7 @@ impl Host {
                 self.forget(&id, &mid, actor).await?;
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
             FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
@@ -1106,8 +1281,13 @@ impl Host {
                     LayoutChange::Split { pane, .. }
                     | LayoutChange::Close { pane, .. }
                     | LayoutChange::Resize { pane, .. }
-                    | LayoutChange::MoveToNewTab { pane, .. } => self.workspace_of_pane(pane),
-                    LayoutChange::RenameTab { tab, .. } | LayoutChange::CloseTab { tab } => self.workspace_of_tab(tab),
+                    | LayoutChange::MoveToNewTab { pane, .. }
+                    | LayoutChange::Zoom { pane, .. }
+                    | LayoutChange::Swap { pane, .. } => self.workspace_of_pane(pane),
+                    LayoutChange::RenameTab { tab, .. }
+                    | LayoutChange::CloseTab { tab }
+                    | LayoutChange::SplitRatio { tab, .. }
+                    | LayoutChange::MoveTab { tab, .. } => self.workspace_of_tab(tab),
                     LayoutChange::NewTab { .. } | LayoutChange::AddTab { .. } => None,
                 };
                 let name = workspace.or(found).unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
@@ -1272,6 +1452,40 @@ impl Host {
     // ───────────── 재개·정리 ─────────────
 
     /// 끝난 pane을 같은 spec(이름·argv·cwd·크기)으로 다시 띄우고 layout 자리를 새 pane으로 바꾼 뒤 옛 기록을 지운다.
+    /// pane에 사람이 붙인 이름(herdr `pane rename`). 이름의 정본은 agent의 세션 기록이라 agent까지 간다(plan §8.109).
+    async fn rename(
+        self: &Arc<Self>,
+        pane: &str,
+        label: Option<String>,
+        role: DeviceRole,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        if label.as_ref().is_some_and(|l| l.chars().count() > aaa_proto::MAX_PANE_LABEL_CHARS) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!("이름은 {}자 안이어야 한다", aaa_proto::MAX_PANE_LABEL_CHARS),
+            ));
+        }
+        let conn = self.live_conn(&mid)?;
+        // 옛 agent는 모르는 요청에 연결을 끊는다: 보내기 전에 거른다
+        let knows =
+            self.inner.lock().unwrap().machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "rename.v1"));
+        if !knows {
+            return Err(err(
+                ErrorCode::BadRequest,
+                "이 머신의 agent가 pane 이름 바꾸기를 모른다(agent binary 반영 필요)",
+            ));
+        }
+        self.db.audit(actor, "pane_rename", &format!("{id} {}", label.as_deref().unwrap_or("-")));
+        match conn.request(AgentRequest::Rename { session: id.clone(), label }).await? {
+            AgentResponse::Session(info) => self.on_session(&mid, info, false),
+            other => return Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+        }
+        self.pane_view_of(&id, role).map(FrontResponse::Pane).ok_or_else(|| err(ErrorCode::NotFound, "pane이 없다"))
+    }
+
     async fn resume(self: &Arc<Self>, pane: &str, role: DeviceRole, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let (id, mid) = self.resolve_pane(pane)?;
         let info = self
@@ -1286,33 +1500,63 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "실행 중인 pane은 재개할 수 없다"));
         }
         let spec = SpawnSpec {
-            name: info.name.clone(),
+            name: respawn_name(&info),
             argv: info.argv.clone(),
             cwd: info.cwd.clone(),
             env: vec![],
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            harness: info.harness.clone(),
         };
-        let new_id = self.spawn_on(&mid, spec, actor).await?;
+        let new_id = self.respawn(&id, &mid, spec, actor).await?;
+        self.pane_view_of(&new_id, role)
+            .map(FrontResponse::Pane)
+            .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
+    }
+
+    /// 끝난 pane 자리에 새 세션을 띄운다(`pane resume`·재부팅 복원): layout 자리를 바꾸고 옛 기록을 지운다.
+    /// spec 이름은 [`respawn_name`]으로 짓는다
+    pub(crate) async fn respawn(
+        self: &Arc<Self>,
+        id: &str,
+        mid: &str,
+        spec: SpawnSpec,
+        actor: &str,
+    ) -> Result<String, ErrorBody> {
+        let new_id = self.spawn_on(mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
+        self.replace_pane(id, &new_id, mid, actor).await;
+        Ok(new_id)
+    }
+
+    /// layout에서 `old` 자리를 `new`로 바꾸고 `old` 기록을 지운다. 사람이 붙인 이름은 `new`가 잇는다(herdr 복원
+    /// `set_manual_label`). 이름의 정본은 agent 세션 기록이라 agent에 붙인다(plan §8.109)
+    pub(crate) async fn replace_pane(self: &Arc<Self>, old: &str, new: &str, mid: &str, actor: &str) {
+        let label = self.inner.lock().unwrap().panes.get(old).and_then(|p| p.info.label.clone());
+        if let Some(label) = label.filter(|_| self.machine_feature(mid, "rename.v1")) {
+            let renamed = match self.live_conn(mid) {
+                Ok(conn) => conn.request(AgentRequest::Rename { session: new.to_string(), label: Some(label) }).await,
+                Err(e) => Err(e),
+            };
+            match renamed {
+                Ok(AgentResponse::Session(info)) => self.on_session(mid, info, false),
+                Ok(other) => tracing::warn!(pane = %new, "이름 잇기: 예상하지 못한 응답 {other:?}"),
+                Err(e) => tracing::warn!(pane = %new, "이름 잇기 실패: {}", e.message),
+            }
+        }
         {
             let mut ws = self.workspaces.lock().unwrap();
-            let changed: Vec<Workspace> = ws
-                .values_mut()
-                .filter_map(|w| aaa_proto::layout::ws_replace(w, &id, &new_id).then(|| w.clone()))
-                .collect();
+            let changed: Vec<Workspace> =
+                ws.values_mut().filter_map(|w| aaa_proto::layout::ws_replace(w, old, new).then(|| w.clone())).collect();
             drop(ws);
             for w in changed {
                 self.save_workspace(&w);
             }
         }
-        if let Err(e) = self.forget(&id, &mid, actor).await {
-            tracing::warn!(pane = %id, "재개 뒤 옛 기록 정리 실패: {}", e.message);
+        if let Err(e) = self.forget(old, mid, actor).await {
+            tracing::warn!(pane = %old, "재개 뒤 옛 기록 정리 실패: {}", e.message);
         }
-        self.pane_view_of(&new_id, role)
-            .map(FrontResponse::Pane)
-            .ok_or_else(|| err(ErrorCode::Internal, "pane 목록에 없다"))
     }
 
     async fn forget(self: &Arc<Self>, id: &str, mid: &str, actor: &str) -> Result<(), ErrorBody> {
@@ -1373,12 +1617,18 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
                 w = self.workspace(name);
                 let label = label.map(|l| l.trim().to_string()).unwrap_or_default();
-                w.tabs.push(Tab { id: util::new_id(), name: label, root: LayoutNode::Pane { pane: id } });
+                w.tabs.push(Tab {
+                    id: util::new_id(),
+                    name: label,
+                    root: LayoutNode::Pane { pane: id },
+                    zoomed: false,
+                });
             }
             LayoutChange::Split { pane, dir, machine, argv, cwd, ratio } => {
                 let (target, target_mid) = self.resolve_pane(&pane)?;
@@ -1390,10 +1640,24 @@ impl Host {
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
                 let cwd = self.new_pane_cwd(cwd, Some(&target), &mid).await;
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
+                let spec = SpawnSpec {
+                    name: String::new(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 80,
+                    rows: 24,
+                    role: None,
+                    harness: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
-                let done = w.tabs.iter_mut().any(|t| aaa_proto::layout::split(&mut t.root, &target, &id, dir));
+                let done = w.tabs.iter_mut().any(|t| {
+                    // herdr: 나누면 그 탭의 zoom을 푼다
+                    let hit = aaa_proto::layout::split(&mut t.root, &target, &id, dir);
+                    t.zoomed &= !hit;
+                    hit
+                });
                 if let Some(r) = ratio {
                     // herdr `pane split --ratio`: 새로 생긴 나눔의 a 쪽 비율
                     for t in &mut w.tabs {
@@ -1409,7 +1673,12 @@ impl Host {
                 if aaa_proto::layout::ws_contains(&w, &id) {
                     return Err(err(ErrorCode::BadRequest, "이미 이 workspace에 있다"));
                 }
-                w.tabs.push(Tab { id: util::new_id(), name: String::new(), root: LayoutNode::Pane { pane: id } });
+                w.tabs.push(Tab {
+                    id: util::new_id(),
+                    name: String::new(),
+                    root: LayoutNode::Pane { pane: id },
+                    zoomed: false,
+                });
             }
             LayoutChange::Close { pane, kill } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
@@ -1443,7 +1712,8 @@ impl Host {
                     .iter_mut()
                     .find(|t| t.id == tab)
                     .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
-                t.name = label;
+                // 앞뒤 빈칸은 뺀다. 빈 이름은 이름 없음(탭 번호로 보인다)
+                t.name = label.trim().to_string();
             }
             LayoutChange::CloseTab { tab } => {
                 let at = w
@@ -1452,7 +1722,12 @@ impl Host {
                     .position(|t| t.id == tab)
                     .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
                 let t = w.tabs.remove(at);
+                // 탭을 뺀 layout을 먼저 저장한다(front에서 바로 사라진다). pane을 끝내는 동안 기다리므로, 그 사이 다른
+                // 변경(새 탭·이름 바꾸기·나누기)이 있을 수 있다: 끝낸 뒤 최신을 다시 읽어 그것을 저장한다(보안 감사 t-0340:
+                // 맨 위에서 복사한 것을 저장하면 그 사이 변경이 사라졌다)
+                self.save_workspace(&w);
                 self.close_panes(&aaa_proto::layout::leaves(&t.root), name, actor).await;
+                w = self.workspace(name);
             }
             LayoutChange::MoveToNewTab { pane, name: label } => {
                 let (id, _) = self.resolve_pane(&pane)?;
@@ -1472,7 +1747,58 @@ impl Host {
                     id: util::new_id(),
                     name: label.unwrap_or_default(),
                     root: LayoutNode::Pane { pane: id },
+                    zoomed: false,
                 });
+            }
+            LayoutChange::Zoom { pane, zoomed } => {
+                let (id, _) = self.resolve_pane(&pane)?;
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| aaa_proto::layout::leaves(&t.root).contains(&id))
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")))?;
+                // herdr `apply_pane_zoom`: pane이 하나뿐인 탭은 그대로
+                if aaa_proto::layout::leaves(&t.root).len() > 1 {
+                    t.zoomed = zoomed.unwrap_or(!t.zoomed);
+                }
+            }
+            LayoutChange::Swap { pane, with } => {
+                let (a, _) = self.resolve_pane(&pane)?;
+                let (b, _) = self.resolve_pane(&with)?;
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| {
+                        let l = aaa_proto::layout::leaves(&t.root);
+                        l.contains(&a) && l.contains(&b)
+                    })
+                    .ok_or_else(|| {
+                        err(ErrorCode::BadRequest, format!("workspace {name}의 한 탭에 {pane}·{with}가 함께 없다"))
+                    })?;
+                aaa_proto::layout::swap(&mut t.root, &a, &b);
+            }
+            LayoutChange::SplitRatio { tab, path, ratio } => {
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                // herdr `handle_layout_set_split_ratio`: 그 자리에 나눔이 없으면 split_not_found
+                if !aaa_proto::layout::set_ratio_at(&mut t.root, &path, ratio) {
+                    return Err(err(ErrorCode::NotFound, format!("탭 {tab}에 그 나눔({path:?})이 없다")));
+                }
+            }
+            LayoutChange::MoveTab { tab, index } => {
+                let from = w
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                // herdr `handle_tab_move`: insert_index는 0..=탭 수
+                if usize::from(index) > w.tabs.len() {
+                    return Err(err(ErrorCode::BadRequest, format!("탭 자리 {index}가 0..={} 밖이다", w.tabs.len())));
+                }
+                aaa_proto::layout::move_tab(&mut w.tabs, from, usize::from(index));
             }
         }
         self.db.audit(actor, "layout", name);
@@ -1657,8 +1983,8 @@ impl Host {
                 "host에서 `aaa machine enroll --open 10m`으로 등록 창을 먼저 연다",
             ));
         }
-        if name.is_empty() || name.len() > 64 {
-            return Err(err(ErrorCode::BadRequest, "머신 이름은 1~64자"));
+        if !util::machine_name_ok(name) {
+            return Err(err(ErrorCode::BadRequest, MACHINE_NAME_RULE));
         }
         if let Ok(Some(m)) = self.db.machine_by_name(name)
             && m.id != machine_id
@@ -1736,22 +2062,26 @@ impl Host {
     // ───────────── pairing ─────────────
 
     /// 새 pairing 코드. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`: 「새 코드」·CLI가 같은 자리를 쓴다).
+    /// 코드를 만드는 것은 주인(이 머신의 CLI나 controller 기기)이라, 앞서 틀린 시도의 잠금도 푼다: 남이 틀려 둔
+    /// 잠금이 주인의 새 코드를 막지 않는다.
     fn mint_pairing(&self, role: DeviceRole, now: Instant) -> (String, u64) {
         let code = format!("{:06}", rand::random_range(0..1_000_000u32));
-        self.pairing.lock().unwrap().pending =
-            Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        let mut p = self.pairing.lock().unwrap();
+        p.pending = Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        p.failures.clear();
         (code, PAIR_CODE_TTL.as_secs())
     }
 
     /// 웹 pairing 코드를 장치 token으로 바꾼다. 코드는 한 번만 쓰고, 한 코드로 5번 틀리면 그 코드를 버린다.
-    /// 코드와 상관없이 5번 넘게 틀리면 점점 길게 잠근다.
+    /// 코드와 상관없이 10분 안에 5번 넘게 틀리면 1초부터 두 배씩 60초까지 기다리게 한다.
     pub fn redeem_pairing(&self, code: &str, label: &str) -> Result<(String, DeviceRole), ErrorBody> {
         self.redeem_pairing_at(code, label, Instant::now())
     }
 
     fn redeem_pairing_at(&self, code: &str, label: &str, now: Instant) -> Result<(String, DeviceRole), ErrorBody> {
         let mut p = self.pairing.lock().unwrap();
-        if let Some(t) = p.locked_until
+        p.forget_old(now);
+        if let Some(t) = p.open_at()
             && t > now
         {
             return Err(err(
@@ -1774,15 +2104,11 @@ impl Host {
                     p.pending = None;
                 }
             }
-            p.failures += 1;
-            if p.failures >= 5 {
-                let secs = 30u64 << (p.failures - 5).min(7);
-                p.locked_until = Some(now + Duration::from_secs(secs));
-            }
+            p.failures.push_back(now);
             return Err(err(ErrorCode::Unauthorized, "코드가 틀렸거나 이미 썼거나 만료됐다"));
         }
         let role = p.pending.take().map(|c| c.role).unwrap_or(DeviceRole::Reader);
-        p.failures = 0;
+        p.failures.clear();
         drop(p);
         let token =
             base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, rand::random::<[u8; 32]>());
@@ -1831,6 +2157,16 @@ impl Host {
         let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
         if let Some(dns) = &plan.dns_name {
             let _ = self.db.set_meta("publish_dns", dns);
+        }
+        // 웹이 받는 Host·Origin은 이 주소(포트까지)뿐이다. tailscale이 돌 때만 고친다: 꺼졌거나 못 읽으면 지난 값을 둔다
+        match &plan.serving {
+            Some((url, _)) => {
+                let _ = self.db.set_meta("publish_origin", &url.to_ascii_lowercase());
+            }
+            None if plan.state == "running" => {
+                let _ = self.db.del_meta("publish_origin");
+            }
+            None => {}
         }
         PublishState {
             tailscale: plan.state.into(),
@@ -1884,13 +2220,38 @@ impl Host {
         self.web_port.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn host_allowed(&self, host_header: &str) -> bool {
-        let loopback = [format!("127.0.0.1:{}", self.web_port()), format!("localhost:{}", self.web_port())];
-        if loopback.iter().any(|l| l == host_header) {
-            return true;
+    /// Host 헤더가 가리키는 이 host의 origin. `http://127.0.0.1:<web_port>`와 tailscale serve 공개 주소
+    /// (`https://<이름>[:포트]`, 443은 포트 없이) 둘뿐이고 포트까지 같아야 한다(§6.3, herdr-web-ui `sameOrigin`이
+    /// 요청 주소의 origin 전체를 비교하는 것과 같다). 아니면 None
+    pub fn web_origin(&self, host_header: &str) -> Option<String> {
+        let loopback = format!("127.0.0.1:{}", self.web_port());
+        if host_header == loopback {
+            return Some(format!("http://{loopback}"));
         }
-        let name = host_header.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_header);
-        self.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
+        let public = self.public_origin()?;
+        let asked = host_header.to_ascii_lowercase();
+        let asked = asked.strip_suffix(":443").unwrap_or(&asked);
+        (format!("https://{asked}") == public).then_some(public)
+    }
+
+    /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
+    /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
+    fn public_origin(&self) -> Option<String> {
+        if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
+            return Some(o);
+        }
+        let dns = self.db.meta("publish_dns").ok().flatten()?;
+        let port = self.db.meta("publish_port").ok().flatten()?.parse().ok()?;
+        Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+    }
+
+    pub fn host_allowed(&self, host_header: &str) -> bool {
+        self.web_origin(host_header).is_some()
+    }
+
+    /// 공개 주소를 tailscale에서 다시 읽는다(host 시작 때: 지난 실행 뒤 serve 포트가 바뀌었을 수 있다)
+    pub async fn refresh_publish(&self) {
+        let _ = self.publish_status().await;
     }
 
     /// host와 같은 머신의 agent인가(brief의 uploads 주석)
@@ -1907,6 +2268,8 @@ impl Host {
 pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
+    // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.forget_queued_messages();
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
@@ -2058,7 +2421,7 @@ mod pairing_tests {
     }
 
     #[tokio::test]
-    async fn five_wrong_tries_spend_the_code_and_lock_for_a_while() {
+    async fn five_wrong_tries_spend_the_code_and_then_wait_doubles_up_to_a_minute() {
         let (h, _t) = host();
         let now = Instant::now();
         let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
@@ -2066,14 +2429,79 @@ mod pairing_tests {
         for _ in 0..5 {
             assert_eq!(h.redeem_pairing_at(wrong, "", now).unwrap_err().code, ErrorCode::Unauthorized);
         }
-        // 잠긴 동안은 맞는 코드도 막는다
+        // 기다리는 동안은 맞는 코드도 비교하지 않는다
         assert_eq!(h.redeem_pairing_at(&code, "", now).unwrap_err().code, ErrorCode::Unavailable);
-        // 잠금이 풀려도 그 코드는 이미 버렸다
-        let later = now + Duration::from_secs(31);
-        assert_eq!(h.redeem_pairing_at(&code, "", later).unwrap_err().code, ErrorCode::Unauthorized);
-        let (fresh, _) = h.mint_pairing(DeviceRole::Controller, later);
-        let later = later + Duration::from_secs(61);
-        assert!(h.redeem_pairing_at(&fresh, "", later).is_ok());
+        // 1초 뒤에는 받지만 그 코드는 이미 버렸다(한 코드로 5번)
+        let mut at = now + PAIR_BACKOFF;
+        assert_eq!(h.redeem_pairing_at(&code, "", at).unwrap_err().code, ErrorCode::Unauthorized);
+        // 틀릴 때마다 기다림이 두 배, 60초에서 멈춘다(참고 1초·60초)
+        let mut waits = vec![];
+        for _ in 0..10 {
+            let wait = (0..=120)
+                .map(Duration::from_secs)
+                .find(|d| h.redeem_pairing_at(wrong, "", at + *d).unwrap_err().code == ErrorCode::Unauthorized)
+                .unwrap();
+            waits.push(wait.as_secs());
+            at += wait;
+        }
+        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60, 60, 60, 60]);
+    }
+
+    #[tokio::test]
+    async fn wrong_tries_older_than_ten_minutes_are_forgotten() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        h.mint_pairing(DeviceRole::Controller, now);
+        for i in 0..5 {
+            // 다른 코드로 틀린다(한 코드의 5번 한도와 따로 센다)
+            let _ = h.redeem_pairing_at(&format!("{i:06}x"), "", now);
+        }
+        assert_eq!(h.redeem_pairing_at("1", "", now).unwrap_err().code, ErrorCode::Unavailable);
+        // 창이 지나면 처음처럼 기다림 없이 다섯 번
+        let later = now + PAIR_FAIL_WINDOW;
+        for _ in 0..5 {
+            assert_eq!(h.redeem_pairing_at("1", "", later).unwrap_err().code, ErrorCode::Unauthorized);
+        }
+        assert_eq!(h.redeem_pairing_at("1", "", later).unwrap_err().code, ErrorCode::Unavailable);
+    }
+
+    #[tokio::test]
+    async fn a_new_code_from_the_owner_lifts_the_wait() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        h.mint_pairing(DeviceRole::Controller, now);
+        for _ in 0..12 {
+            let _ = h.redeem_pairing_at("1", "", now);
+        }
+        // CLI(`aaa web pair`)나 controller 기기가 새 코드를 만들면 남이 틀려 둔 잠금 없이 바로 쓴다
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        assert!(h.redeem_pairing_at(&code, "", now).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_view_path_ends_with_the_device_that_got_it() {
+        let (h, _t) = host();
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        let (token, _) = h.redeem_pairing(&code, "").unwrap();
+        let (id, _) = h.device_role(&token).unwrap();
+        let until = Instant::now() + library::VIEW_TTL;
+        let cap = |device: Option<&str>| library::ViewCap {
+            project: "nope".into(),
+            thread: "t-0001".into(),
+            until,
+            device: device.map(str::to_string),
+        };
+        h.view_caps.lock().unwrap().insert("dev".into(), cap(Some(&id)));
+        h.view_caps.lock().unwrap().insert("cli".into(), cap(None));
+        // 경로 검사를 지나면 다음은 프로젝트 찾기(없는 프로젝트)다
+        let reach = |name: &'static str| {
+            let h = h.clone();
+            async move { h.view_source(name, "a.txt").await.err().map(|e| e.code) }
+        };
+        assert_ne!(reach("dev").await, Some(ErrorCode::Unauthorized));
+        h.revoke_device(&id).unwrap();
+        assert_eq!(reach("dev").await, Some(ErrorCode::Unauthorized));
+        assert_ne!(reach("cli").await, Some(ErrorCode::Unauthorized));
     }
 
     #[tokio::test]
@@ -2110,6 +2538,7 @@ mod pairing_tests {
             p256dh: "k".into(),
             auth: "a".into(),
             device: id.clone(),
+            alerts: None,
         };
         h.db.push_put(&sub).unwrap();
         let mut heard = h.device_revoked.subscribe();
@@ -2122,5 +2551,54 @@ mod pairing_tests {
         assert!(devices(&h).await.is_empty());
         let again = FrontRequest::DeviceRevoke { id };
         assert_eq!(h.call(DeviceRole::Local, "test", again).await.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    /// 보안 감사 t-0340 B10: endpoint만 아는 다른 기기는 구독을 가져가지 못하고, 키까지 같은 같은 브라우저(다시 pairing)는 옮긴다
+    #[tokio::test]
+    async fn another_device_takes_a_push_endpoint_only_with_its_keys() {
+        let (h, _t) = host();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+            let (token, _) = h.redeem_pairing(&code, "").unwrap();
+            ids.push(h.device_role(&token).unwrap().0);
+        }
+        let sub = |device: &str, auth: &str| db::PushSub {
+            endpoint: "https://push.example/a".into(),
+            p256dh: "k".into(),
+            auth: auth.into(),
+            device: device.into(),
+            alerts: None,
+        };
+        assert!(h.db.push_put(&sub(&ids[0], "a")).unwrap());
+        // 같은 기기는 키를 바꿀 수 있다
+        assert!(h.db.push_put(&sub(&ids[0], "a2")).unwrap());
+        assert!(!h.db.push_put(&sub(&ids[1], "x")).unwrap());
+        assert_eq!(h.db.push_list(Some(&ids[0])).unwrap().len(), 1);
+        assert!(h.db.push_list(Some(&ids[1])).unwrap().is_empty());
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert!(h.db.push_list(Some(&ids[0])).unwrap().is_empty());
+        assert_eq!(h.db.push_list(Some(&ids[1])).unwrap().len(), 1);
+        // 기기가 고른 알림 종류(N3): 주면 바꾸고, 없이 다시 넣으면(불러올 때마다 다시 구독) 둔다
+        let alerts = |h: &Host| h.db.push_list(Some(&ids[1])).unwrap()[0].alerts.unwrap();
+        assert_eq!(alerts(&h), db::Alerts::default());
+        let quiet = db::Alerts { input: false, done: true };
+        assert!(h.db.push_put(&db::PushSub { alerts: Some(quiet), ..sub(&ids[1], "a2") }).unwrap());
+        assert_eq!(alerts(&h), quiet);
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert_eq!(alerts(&h), quiet);
+    }
+
+    /// 보안 감사 t-0340 B5: 제어 문자·공백이 든 이름으로는 등록을 기다리지 못한다(`aaa machine pending` 화면·push 본문 위조)
+    #[tokio::test]
+    async fn enroll_rejects_machine_names_with_control_characters() {
+        let (h, _t) = host();
+        h.enroll.lock().unwrap().open_until = Some(Instant::now() + Duration::from_secs(60));
+        for bad in ["mac\x1b[2Ja", "mac a", "a\u{202e}b", ""] {
+            let e = h.enroll_request(bad, "01M", "fp", "sas").unwrap_err();
+            assert_eq!(e.code, ErrorCode::BadRequest, "{bad:?}");
+        }
+        assert!(h.enroll.lock().unwrap().pending.is_empty());
+        assert!(h.enroll_request("mac-b", "01M", "fp", "sas").is_ok());
     }
 }

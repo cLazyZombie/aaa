@@ -1,10 +1,12 @@
-// 모양 설정: 테마·팔레트·상태 표시·목록 줄(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·`paletteDark`·
-// `statusIndicators`·`sidebarRows`, lib/paletteFor.ts, applyToDocument). 기본값도 참고와 같다: 어두움, amber, classic, 두 줄.
-// <html data-theme>·data-palette를 늘 달고(참고 applyToDocument), 실제 색은 herdr/tokens.css에 있다.
-// 참고처럼 theme·palette·sidebarRows는 host 공유 설정이다(preferencesSync.ts, plan §8.73). 나머지는 이 기기 것이다.
+// 모양 설정: 테마·팔레트·상태 표시·목록 줄·밀도·인터페이스 글자 크기(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·
+// `paletteDark`·`statusIndicators`·`sidebarRows`·`density`·`uiFontSize`, lib/paletteFor.ts, lib/typography.ts, applyToDocument).
+// 기본값도 참고와 같다: 어두움, amber, classic, 두 줄, 여유, 밀도를 따르는 글자 크기.
+// <html data-theme>·data-palette·data-density·--ui-scale을 늘 달고(참고 applyToDocument), 실제 색·크기는 herdr/tokens.css에 있다.
+// 참고처럼 theme·palette·sidebarRows는 host 공유 설정이다(preferencesSync.ts, plan §8.79). 나머지는 이 기기 것이다.
 // 이 store는 이 기기 사본을 localStorage에 두고, 공유 값이 오면 preferencesSync가 updateAppearance로 놓는다.
 import { useSyncExternalStore } from "react";
 import type { StatusIndicators } from "./herdr/status.ts";
+import { fontScale, sanitizeUiFontSize } from "./herdr/typography.ts";
 
 export type ThemeSetting = "dark" | "light" | "system";
 export type ResolvedTheme = "dark" | "light";
@@ -12,6 +14,7 @@ export type ResolvedTheme = "dark" | "light";
 export type Palette = "amber" | "charcoal" | "catppuccin";
 /** 한 줄은 이름, 두 줄은 하는 일과 그 아래 이름(참고 `SidebarRows`) */
 export type SidebarRows = "one" | "two";
+export type Density = "comfortable" | "compact";
 
 export interface Appearance {
   theme: ThemeSetting;
@@ -21,13 +24,25 @@ export interface Appearance {
   paletteDark: Palette;
   statusIndicators: StatusIndicators;
   sidebarRows: SidebarRows;
+  /** 밀도(참고 settings.ts `density`): 촘촘이면 글자·줄이 한 단계 작다(tokens.css `[data-density="compact"]`) */
+  density: Density;
+  /** 인터페이스 본문 글자 크기 px(참고 `uiFontSize`, --fs-md). null이면 밀도를 따른다 */
+  uiFontSize: number | null;
 }
 
 export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
-const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two" };
+const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", density: "comfortable", uiFontSize: null };
 const KEY = "aaa:appearance";
 /** 전에 쓰던 열쇠(밝음·어두움만 남았다). 처음 한 번 옮긴다 */
 const OLD_KEY = "aaa:theme";
+
+/** 밀도마다 본문 크기(--fs-md, tokens.css): 고른 크기가 없을 때의 인터페이스 크기(참고 settings.ts `BODY_FONT`) */
+const BODY_FONT: Record<Density, number> = { comfortable: 14, compact: 13 };
+
+/** 인터페이스 본문 글자 크기 px: 고른 것, 아니면 밀도의 것(참고 `uiFontSize`) */
+export function uiFontSize(a: Pick<Appearance, "density" | "uiFontSize">): number {
+  return a.uiFontSize ?? BODY_FONT[a.density];
+}
 
 function pick<T extends string>(v: unknown, all: readonly T[], fallback: T): T {
   return all.find((x) => x === v) ?? fallback;
@@ -44,6 +59,8 @@ export function sanitizeAppearance(raw: unknown): Appearance {
     paletteDark: pick(r.paletteDark, PALETTES, palette),
     statusIndicators: pick(r.statusIndicators, ["classic", "dots", "symbols"] as const, DEFAULT.statusIndicators),
     sidebarRows: pick(r.sidebarRows, ["one", "two"] as const, DEFAULT.sidebarRows),
+    density: pick(r.density, ["comfortable", "compact"] as const, DEFAULT.density),
+    uiFontSize: sanitizeUiFontSize(r.uiFontSize),
   };
 }
 
@@ -91,6 +108,9 @@ function apply() {
   const root = document.documentElement;
   root.dataset["theme"] = resolved;
   root.dataset["palette"] = palette;
+  // 참고 applyToDocument: 밀도와, 모든 --fs-*(--fs-input 말고)에 곱하는 배율 = 고른 본문 크기 / 밀도의 본문 크기
+  root.dataset["density"] = current.density;
+  root.style.setProperty("--ui-scale", String(fontScale(uiFontSize(current), BODY_FONT[current.density])));
   root.style.colorScheme = resolved;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[palette][resolved]);
   subs.forEach((f) => f());

@@ -253,9 +253,9 @@ pub struct QuestionView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageMode {
-    /// 지금 보낸다(작업 중이면 먼저 멈춘다)
+    /// 지금 보낸다(작업 중이면 Esc로 먼저 멈춘다)
     Interrupt,
-    /// host 대기열에 두고 턴이 끝나면 보낸다
+    /// 바로 입력한다. 작업 중이면 harness가 다음 턴으로 줄 세운다(herdr-projects `thread prompt`). 이름은 옛 판 그대로다
     #[default]
     Queue,
 }
@@ -263,6 +263,7 @@ pub enum MessageMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryState {
+    /// 기록했고 아직 보내는 중이다
     Queued,
     /// harness가 입력을 받았다(turn_start)
     Accepted,
@@ -357,12 +358,28 @@ pub enum ThreadGroup {
     /// 사람이나 coordinator가 할 일이 있다(시작 실패·5분 넘은 시작, 닫힌 pane, brief 전달 불명, 30초 넘은 확인창,
     /// `Waiting for you` 진행 보고). 보고 내용으로는 정하지 않는다(herdr-projects `group`, plan §8.78).
     WaitingOnYou,
-    /// 아직 확인(ack)하지 않은 새 보고
+    /// 아직 확인(ack)하지 않은 새 보고, 또는 보고가 있고 PR이 열려 있다
     ReadyForReview,
+    /// PR이 열려 있고 승인됐다(herdr-projects `Group::Landing`). thread가 자기 도구로 병합한다(D11)
+    Landing,
     Working,
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
     Resolved,
+}
+
+impl ThreadGroup {
+    /// 사람이 읽는 이름(CLI·TUI·웹과 같은 말)
+    pub fn label(self) -> &'static str {
+        match self {
+            ThreadGroup::WaitingOnYou => "사람 차례",
+            ThreadGroup::ReadyForReview => "검토 대기",
+            ThreadGroup::Landing => "병합 중",
+            ThreadGroup::Working => "작업 중",
+            ThreadGroup::Idle => "쉼",
+            ThreadGroup::Resolved => "끝남",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -393,14 +410,14 @@ pub struct ThreadView {
     pub error: Option<String>,
     /// agent harness 상태(hook으로 안다)
     pub agent: Option<Box<AgentStatus>>,
-    /// thread를 시작할 때 brief에 넣은 결정 기록 번호(가장 큰 번호). 지금 번호보다 작으면 옛 결정으로 일한다.
-    pub decisions_rev: Option<u32>,
-    /// 프로젝트의 지금 결정 번호
-    pub decisions_now: Option<u32>,
     #[ts(type = "number")]
     pub created_at_ms: u64,
     #[ts(type = "number")]
     pub updated_at_ms: u64,
+    /// `thread start`가 알리는 경고(시작은 했다, 예: 동시 thread 한도). 다른 응답에는 없다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub warnings: Vec<String>,
 }
 
 /// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)
@@ -577,55 +594,6 @@ pub struct MergeLandView {
     pub queue: Vec<MergeEntry>,
 }
 
-/// 결정 기록 한 건(`projects/<p>/decisions.md`의 `## <번호> · <시각>[ · <번호>번 대체]` 묶음)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct DecisionView {
-    pub num: u32,
-    /// 적은 시각(파일에 적힌 글 그대로)
-    pub at: String,
-    pub text: String,
-    /// 이 결정이 대체한 번호
-    pub replaces: Option<u32>,
-    /// 나중 결정이 이 결정을 대체했다
-    pub replaced_by: Option<u32>,
-}
-
-/// decisions.md를 읽는다. 사람이 고친 파일도 읽게 `## <번호>`로 시작하는 제목만 본다.
-pub fn parse_decisions(md: &str) -> Vec<DecisionView> {
-    let mut out: Vec<DecisionView> = Vec::new();
-    for line in md.lines() {
-        if let Some(h) = line.strip_prefix("## ") {
-            let mut parts = h.split('·').map(str::trim);
-            if let Some(num) = parts.next().and_then(|n| n.trim_end_matches('.').parse::<u32>().ok()) {
-                let at = parts.next().unwrap_or_default().to_string();
-                let replaces = parts.find_map(|p| p.strip_suffix("번 대체").and_then(|n| n.trim().parse().ok()));
-                out.push(DecisionView { num, at, text: String::new(), replaces, replaced_by: None });
-                continue;
-            }
-        }
-        if let Some(d) = out.last_mut() {
-            d.text.push_str(line);
-            d.text.push('\n');
-        }
-    }
-    for d in &mut out {
-        d.text = d.text.trim().to_string();
-    }
-    let pairs: Vec<(u32, u32)> = out.iter().filter_map(|d| d.replaces.map(|r| (r, d.num))).collect();
-    for (old, by) in pairs {
-        if let Some(d) = out.iter_mut().find(|d| d.num == old) {
-            d.replaced_by = Some(by);
-        }
-    }
-    out
-}
-
-/// decisions.md 끝에 붙일 한 건
-pub fn render_decision(d: &DecisionView) -> String {
-    let rep = d.replaces.map(|r| format!(" · {r}번 대체")).unwrap_or_default();
-    format!("\n## {} · {}{rep}\n\n{}\n", d.num, d.at, d.text.trim())
-}
-
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)
 pub fn valid_project(s: &str) -> bool {
     !s.is_empty()
@@ -692,32 +660,6 @@ mod tests {
         let e = FrontEvent::Question(q);
         let j = serde_json::to_string(&e).unwrap();
         assert_eq!(serde_json::from_str::<FrontEvent>(&j).unwrap(), e, "{j}");
-    }
-
-    #[test]
-    fn decisions_parse_and_render() {
-        let mut md = String::from("# 결정 기록\n\n머리말\n");
-        md.push_str(&render_decision(&DecisionView {
-            num: 1,
-            at: "2026-10-16 12:00Z".into(),
-            text: "A로 한다".into(),
-            replaces: None,
-            replaced_by: None,
-        }));
-        md.push_str("\n## 2. · 사람이 쓴 시각\n\n여러 줄\n- 둘째 줄\n");
-        md.push_str(&render_decision(&DecisionView {
-            num: 3,
-            at: "2026-10-16 12:05Z".into(),
-            text: "B로 바꾼다".into(),
-            replaces: Some(1),
-            replaced_by: None,
-        }));
-        let d = parse_decisions(&md);
-        assert_eq!(d.iter().map(|d| d.num).collect::<Vec<_>>(), [1, 2, 3]);
-        assert_eq!((d[0].text.as_str(), d[0].replaced_by), ("A로 한다", Some(3)));
-        assert_eq!((d[1].at.as_str(), d[1].text.as_str()), ("사람이 쓴 시각", "여러 줄\n- 둘째 줄"));
-        assert_eq!(d[2].replaces, Some(1));
-        assert!(parse_decisions("# 결정 기록\n\n## 메모\n").is_empty());
     }
 
     #[test]
@@ -789,6 +731,7 @@ pub struct ProjectContext {
     /// 끝내지 않은 inbox 항목 수
     pub inbox_open: u32,
     /// 끝내지 않은 inbox 항목(herdr-projects `context`의 Inbox 절). 지시가 아니라 자료다.
+    /// 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
     #[serde(default)]
     pub inbox: Vec<InboxItem>,
     /// 사후 평가자(지정했을 때만)
@@ -904,8 +847,6 @@ pub struct ProposalDecision {
     #[ts(type = "number")]
     pub at_ms: u64,
     pub note: Option<String>,
-    /// 채택이면 남긴 결정 기록 번호
-    pub decision_num: Option<u32>,
 }
 
 /// 받은 평가 기록 하나

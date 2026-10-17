@@ -13,9 +13,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, DecisionView, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry,
-    MessageMode, MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
-    Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
+    MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role,
+    RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
 
@@ -153,7 +153,17 @@ pub struct SessionInfo {
     /// agent 세션 역할(thread가 띄운 세션만). 이전 session host는 보내지 않는다.
     #[serde(default)]
     pub role: Option<Role>,
+    /// 사람이 붙인 이름(`pane rename`, herdr `manual_label`). 있으면 `name`이 이것이고, 지우면 띄울 때 이름으로 돌아간다.
+    /// 정본은 agent의 `spec.json`이다(이전 session host는 모른다, plan §8.109).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// 띄울 때 알려 준 harness(`SpawnSpec.harness`). 다시 띄울 때(resume) 그대로 넘긴다.
+    #[serde(default)]
+    pub harness: Option<String>,
 }
+
+/// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
+pub const MAX_PANE_LABEL_CHARS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SpawnSpec {
@@ -167,6 +177,9 @@ pub struct SpawnSpec {
     pub rows: u16,
     #[serde(default)]
     pub role: Option<Role>,
+    /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -179,6 +192,21 @@ pub struct Snapshot {
     pub cols: u16,
     pub rows: u16,
     pub replay: B64,
+    /// `replay`의 기록 앞에 session host가 가진 기록이 더 있다(plan §8.118). 그 앞은 `History` 요청으로 받는다.
+    /// 옛 session host는 보내지 않는다(false: 묻지 않는다).
+    #[serde(default)]
+    pub history_more: bool,
+}
+
+/// 받은 기록 맨 위 줄들(`anchor`) 바로 앞 기록 한 덩어리(plan §8.67·§8.118). replay 기록과 같은 모양(색 포함)이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryChunk {
+    pub data: B64,
+    pub lines: u32,
+    /// 그 앞이 더 있다
+    pub more: bool,
+    /// anchor를 찾았다(못 찾으면 붙이지 않는다)
+    pub found: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -228,6 +256,21 @@ pub struct ReadView {
     pub truncated: bool,
 }
 
+/// `thread read`·`thread keys` 결과: 그 thread의 pane과 그때의 harness 상태, 읽은 화면(read) 또는 한 일(keys)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPaneView {
+    pub project: String,
+    pub thread: String,
+    pub pane: String,
+    /// 읽거나 보내기 전 harness 상태(hook 없는 harness는 없다)
+    pub agent: Option<crate::AgentActivity>,
+    pub read: Option<ReadView>,
+    /// 친 글자 수
+    pub typed: u32,
+    /// 누른 키
+    pub pressed: Vec<String>,
+}
+
 /// `pane wait-output`이 찾는 것(herdr `OutputMatch`)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -252,6 +295,19 @@ pub struct WorkspaceSummary {
     pub name: String,
     pub tabs: u32,
     pub panes: u32,
+}
+
+/// harness 상태 감지 입력(plan §8.110). herdr처럼 화면 끝 글과 마지막 OSC 제목·진행을 함께 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectScreen {
+    /// 화면 변화 순번(출력이 오거나 크기가 바뀔 때마다 는다)
+    pub seq: u64,
+    /// 화면 끝 글(herdr `detection_text`). 요청의 `unchanged_since`와 순번이 같으면 None이다(다시 볼 것이 없다).
+    pub text: Option<String>,
+    /// 마지막 OSC 0/2 제목(없으면 빈 글)
+    pub osc_title: String,
+    /// 마지막 OSC 9 payload(없으면 빈 글)
+    pub osc_progress: String,
 }
 
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
@@ -299,6 +355,10 @@ pub struct AgentHello {
     pub selfcheck: Option<serde_json::Value>,
     #[serde(default)]
     pub sessions: Vec<SessionInfo>,
+    /// 세션별 마지막 harness 사건(agent가 `harness.json`에 둔 것). host가 연결 즉시 harness 세션 ID를 알아 재부팅 뒤
+    /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다.
+    #[serde(default)]
+    pub harness: Vec<HarnessEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -379,9 +439,21 @@ pub enum AgentRequest {
     Cwd {
         session: String,
     },
+    /// session host 기록에서 `anchor` 바로 앞 덩어리(host mirror에 없는 앞 기록, plan §8.118).
+    /// agent가 `history.v1` 기능을 알리고 snapshot이 `history_more`였을 때만 보낸다.
+    History {
+        session: String,
+        anchor: Vec<String>,
+        depth: u32,
+    },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
+    },
+    /// 세션에 사람이 붙인 이름(`None`이면 지움). 답은 바뀐 `Session`이다. agent가 `rename.v1` 기능을 알릴 때만 보낸다.
+    Rename {
+        session: String,
+        label: Option<String>,
     },
     /// harness 대화 기록의 끝부분(§8.27). agent는 자기 Claude·Codex 기록 폴더 안의 파일만 읽는다.
     Chat {
@@ -416,11 +488,15 @@ pub enum AgentRequest {
         len: u32,
     },
     /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
-    /// (claude는 새 `--session-id`). 저장된 launch를 그대로 쓰고 profile을 다시 해석하지 않는다.
+    /// (claude는 새 `--session-id`). `profile`이 없으면 저장된 launch를 그대로 쓰고, 있으면 이 머신 agent.toml에서
+    /// 그 profile을 다시 해석한다(`thread restart --profile`, AGENT_LINK 1.4). 옛 agent는 `profile`을 모르고 저장된
+    /// launch를 돌려주므로 host는 돌려받은 `Launch.profile`로 확인한다.
     ThreadRebrief {
         work_dir: String,
         brief: String,
         launch: Launch,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -454,12 +530,16 @@ pub enum AgentRequest {
         target: String,
         message: String,
     },
-    /// thread 정리: worktree를 force 없이 지우고, 기준에 병합된 branch만 지운다
+    /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
+    /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.113).
+    /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
+    /// `base`는 읽지 않는다(branch를 남긴다).
     ThreadCleanup {
         repo: Option<String>,
         cwd: String,
         branch: Option<String>,
-        base: Option<String>,
+        #[serde(default)]
+        merged_head: Option<String>,
         keep_worktree: bool,
     },
     /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
@@ -480,6 +560,9 @@ pub enum PrQuery {
     Find { branch: String },
     /// `gh`가 쓰는 계정 login
     Login,
+    /// `repo`(`owner/repo`)에서 `gh` 계정이 연 열린 PR 번호들, 쉼표로(herdr-projects `open_own_numbers`).
+    /// agent 기능 `pr.v2`가 있을 때만 보낸다.
+    OpenOwn { repo: String },
 }
 
 /// PR 조회 결과. `out`은 질문마다 view JSON·찾은 주소·login이다.
@@ -504,6 +587,8 @@ pub enum AgentResponse {
         offset: u64,
     },
     Screen(ScreenText),
+    /// 상태 감지 입력(session host → agent, SESSION_IPC 1.1)
+    Detect(DetectScreen),
     Done,
     Chat {
         messages: Vec<ChatMessage>,
@@ -532,6 +617,7 @@ pub enum AgentResponse {
         cwd: Option<String>,
     },
     Pr(PrAnswer),
+    History(HistoryChunk),
 }
 
 /// routine 명령 실행 결과
@@ -596,12 +682,28 @@ pub enum SessionMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
-    Subscribe { from: Option<u64> },
+    Subscribe {
+        from: Option<u64>,
+    },
     Unsubscribe,
-    Input { data: B64 },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: B64,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Kill,
     Screen,
+    /// 상태 감지 입력(SESSION_IPC 1.1부터). 순번이 `unchanged_since`와 같으면 글을 싣지 않는다.
+    Detect {
+        unchanged_since: Option<u64>,
+    },
+    /// 기록에서 `anchor` 바로 앞 덩어리(plan §8.118). snapshot에 `history_more`를 실은 session host에만 보낸다.
+    History {
+        anchor: Vec<String>,
+        depth: u32,
+    },
 }
 
 // ───────────────────────── Front API ─────────────────────────
@@ -718,6 +820,14 @@ pub struct PaneView {
     pub role: Option<Role>,
     /// harness 상태(hook을 보내는 agent 세션만)
     pub agent: Option<Box<AgentStatus>>,
+    /// 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+    /// 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub restore_error: Option<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -751,6 +861,10 @@ pub struct Tab {
     pub id: String,
     pub name: String,
     pub root: LayoutNode,
+    /// pane 하나를 탭 가득 보인다(herdr `Tab.zoomed`). 보이는 pane은 front마다 그 front의 포커스 pane이다.
+    /// 나누기·닫기·옮기기로 탭의 pane이 바뀌면 풀린다.
+    #[serde(default)]
+    pub zoomed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -804,6 +918,20 @@ pub enum LayoutChange {
     CloseTab { tab: String },
     /// pane을 지금 자리에서 빼 새 탭에 둔다(herdr `pane move --new-tab`)
     MoveToNewTab { pane: String, name: Option<String> },
+    /// 탭 가득 보이기(herdr `pane zoom`). `zoomed`가 없으면 뒤집는다. pane이 하나뿐인 탭은 그대로다(plan §8.91)
+    Zoom {
+        pane: String,
+        #[serde(default)]
+        zoomed: Option<bool>,
+    },
+    /// 같은 탭의 두 pane 자리를 바꾼다(herdr `pane swap`의 source·target 꼴). 칸과 비율은 그대로다.
+    /// 방향 이웃은 화면 크기를 아는 front가 찾는다(host는 front마다 다른 칸을 모른다).
+    Swap { pane: String, with: String },
+    /// 나눔 하나의 비율을 바로 정한다(herdr `layout.set_split_ratio`, 나눔 경계 끌기). `path`는 탭 뿌리에서 그 나눔까지
+    /// (false = a, true = b), `ratio`는 a 쪽 천분율이고 100..=900으로 묶는다(plan §8.106)
+    SplitRatio { tab: String, path: Vec<bool>, ratio: u16 },
+    /// 탭을 `index` 앞으로 옮긴다(herdr `tab.move`의 `insert_index`: 0..=탭 수, 옮기기 전 차례로 센다)
+    MoveTab { tab: String, index: u16 },
 }
 
 // ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
@@ -836,6 +964,50 @@ pub struct GridFrame {
     pub cursor_visible: bool,
     pub full: bool,
     pub lines: Vec<GridLine>,
+    /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
+    #[serde(default)]
+    pub modes: PaneModes,
+}
+
+/// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PaneModes {
+    #[serde(default)]
+    pub mouse: MouseMode,
+    #[serde(default)]
+    pub mouse_encoding: MouseEncoding,
+    /// alternate screen(`CSI ? 1049 h` 등)
+    #[serde(default)]
+    pub alt_screen: bool,
+    /// DECCKM(`CSI ? 1 h`): 화살표를 `ESC O x`로
+    #[serde(default)]
+    pub app_cursor: bool,
+}
+
+/// 마우스 보고 모드(xterm `CSI ? 9/1000/1002/1003 h`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseMode {
+    #[default]
+    None,
+    /// 9: 누름만
+    Press,
+    /// 1000: 누름·뗌·휠
+    PressRelease,
+    /// 1002: 누른 채 움직임도
+    ButtonMotion,
+    /// 1003: 모든 움직임
+    AnyMotion,
+}
+
+/// 마우스 보고 인코딩(기본 X10 바이트, `CSI ? 1005 h` UTF-8, `CSI ? 1006 h` SGR)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseEncoding {
+    #[default]
+    Default,
+    Utf8,
+    Sgr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1014,6 +1186,11 @@ pub enum FrontRequest {
     PaneForget {
         pane: String,
     },
+    /// pane에 이름을 붙인다(herdr `pane rename`). 앞뒤 공백을 떼고, `None`이나 빈 이름은 붙인 이름을 지워 띄울 때 이름으로 돌린다.
+    PaneRename {
+        pane: String,
+        label: Option<String>,
+    },
     /// 이 연결로 pane 화면(cell grid)을 보낸다. 같은 머신 front 연결(UDS)에서만 쓴다.
     PaneWatch {
         pane: String,
@@ -1069,9 +1246,11 @@ pub enum FrontRequest {
         project: String,
         title: String,
         machine: Option<String>,
+        /// 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
         profile: String,
+        /// 없으면 repo가 있으면 worktree, 없으면 dir(herdr-projects `placement`)
         #[serde(default)]
-        kind: ThreadKind,
+        kind: Option<ThreadKind>,
         repo: Option<String>,
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
@@ -1124,6 +1303,9 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         keep_worktree: bool,
+        /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
+        #[serde(default)]
+        reopen: bool,
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {
@@ -1136,11 +1318,31 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         resume: bool,
+        /// 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
+        #[serde(default)]
+        profile: Option<String>,
     },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {
         project: String,
         thread: String,
+    },
+    /// thread pane이 지금 보이는 것(신뢰 창·질문 메뉴·권한 확인창, herdr-projects `thread read`). `lines`면 보이는 화면 대신
+    /// 기록 끝 N줄
+    ThreadRead {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        lines: Option<u32>,
+    },
+    /// thread pane이 보이는 것에 답한다(herdr-projects `thread keys`): `text`를 치고(Enter 없음) `keys`를 누른다
+    ThreadKeys {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        keys: Vec<String>,
+        #[serde(default)]
+        text: Option<String>,
     },
     /// 열린 확인창 질문(기본은 열린 것만)
     Questions {
@@ -1159,17 +1361,6 @@ pub enum FrontRequest {
         text: String,
         #[serde(default)]
         mode: MessageMode,
-    },
-    /// 결정을 기록한다(decisions.md에 덧붙이고 흐름 사건을 낸다)
-    DecisionAdd {
-        project: String,
-        text: String,
-        #[serde(default)]
-        replaces: Option<u32>,
-    },
-    /// 결정 기록 목록
-    Decisions {
-        project: String,
     },
     /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
     Preferences,
@@ -1196,6 +1387,9 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
+    /// ticker를 지금 한 번 돌리고, 이 요청 뒤에 시작한 tick이 끝나면 답한다(herdr-projects 시험의 `ticker::tick_project`,
+    /// t3code worker `drain`과 같은 자리). host가 「봤는데 할 일이 없었다」를 시험이 기다릴 수 있다(docs/testing.md).
+    TickerTick,
     /// 병합 대기열 맨 뒤에 넣는다(이미 있으면 그 자리)
     MergeEnqueue {
         project: String,
@@ -1274,7 +1468,7 @@ pub enum FrontRequest {
         project: String,
         id: String,
     },
-    /// 개선안 채택·보류(채택은 결정 기록에 남는다)
+    /// 개선안 채택·보류(평가 기록에 누가 언제 정했는지 남는다)
     EvaluationDecide {
         project: String,
         id: String,
@@ -1303,10 +1497,10 @@ impl FrontRequest {
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
-                | FrontRequest::Decisions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
                 | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
+                | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
                 | FrontRequest::PaneWaitOutput { .. }
@@ -1337,6 +1531,7 @@ impl FrontRequest {
                 | FrontRequest::MergeLand { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
+                | FrontRequest::TickerTick
         )
     }
 }
@@ -1365,6 +1560,8 @@ pub enum FrontResponse {
     },
     Screen(ScreenText),
     Read(ReadView),
+    /// `thread read`·`thread keys`
+    ThreadPane(ThreadPaneView),
     /// `pane wait-output`이 찾았다: 맞은 줄과 그때 읽은 글
     OutputMatched {
         matched_line: String,
@@ -1415,19 +1612,25 @@ pub enum FrontResponse {
     },
     Question(QuestionView),
     Message(MessageView),
-    Decisions {
-        decisions: Vec<DecisionView>,
-    },
-    Decision(DecisionView),
     Inbox {
         items: Vec<InboxItem>,
         /// `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         done: Option<u32>,
+        /// 응답 크기 한도로 싣지 못한 끝내지 않은 항목 수(실은 것은 오래된 것부터다)
+        #[serde(default)]
+        omitted_open: u32,
+        /// 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
+        #[serde(default)]
+        omitted_done: u32,
     },
     Merge {
         queue: Vec<MergeEntry>,
+    },
+    /// `ticker_tick`: 이 host 실행에서 끝난 tick 수(방금 돈 것까지)
+    Ticker {
+        runs: u64,
     },
     MergeLand(Box<MergeLandView>),
     Routines {
@@ -1477,6 +1680,8 @@ pub enum FrontEvent {
     Question(QuestionView),
     /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)
     Preferences(SharedPreferences),
+    /// 상태 사건 연결의 `ping`에 대한 답(herdr-web-ui ws.ts 「Liveness」: 그 ping의 답만 연결이 살아 있음을 말한다)
+    Pong { id: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1538,7 +1743,8 @@ pub enum TermServerMsg {
         reason: Option<String>,
     },
     State {
-        pane: PaneView,
+        // box: PaneView가 커서 다른 variant까지 크게 만든다(clippy large_enum_variant). wire 모양은 같다
+        pane: Box<PaneView>,
     },
     /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
     Front {
@@ -1609,9 +1815,15 @@ pub enum TermClientMsg {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum EventsClientMsg {
-    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 쓰는 화면이 하나라도 있으면
-    /// host는 어느 기기에도 Web Push를 보내지 않는다(그 화면이 이미 바뀐 것을 보인다). 연결이 끊기면 쓰지 않는 것이다.
+    /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 연결이 끊기면 쓰지 않는 것이다.
     Presence { active: bool },
+    /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다(보이고 focus가 됐다·앱을 열었다). host는 마지막으로 이것을 보낸
+    /// 기기(또는 pane에 입력한 기기)를 「쓰는 기기」로 두고, 그 기기가 지금 쓰는 화면일 때만 Web Push를 건너뛴다
+    /// (사용자 결정 10-18, plan §8.105. 참고는 쓰는 화면이 하나라도 있으면 건너뛴다)
+    Touch,
+    /// 연결이 살아 있는지 묻는다. host는 같은 `id`의 `pong`으로 답한다(herdr-web-ui ws.ts `probe`·server `ping`).
+    /// 휴대폰이 잠들었다 깨거나 망이 바뀌면 열린 것처럼 보이는 죽은 연결이 몇 분씩 남는다.
+    Ping { id: u32 },
 }
 
 #[cfg(test)]
@@ -1663,6 +1875,8 @@ mod tests {
             rows: 24,
             state: SessionState::Exited { code: Some(2) },
             role: None,
+            label: None,
+            harness: Some("codex".into()),
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["state"], "exited");
@@ -1679,6 +1893,12 @@ mod tests {
     fn control_classification() {
         // reader가 보낼 수 있는 요청은 읽기뿐이어야 한다.
         assert!(!FrontRequest::PaneRead { pane: "p".into() }.needs_control());
+        // thread pane 읽기는 보기, 키로 답하기는 조작이다(세션 안 CLI는 보기만, §8.25)
+        let (project, thread) = ("p".to_string(), "t-0001".to_string());
+        assert!(
+            !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
+        );
+        assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
         assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());

@@ -1,5 +1,5 @@
 // 공유 설정과 고정(preferences.ts)을 이 host의 모든 웹 화면에서 같게 둔다(herdr-web-ui `src/lib/preferencesSync.ts`
-// `usePreferencesSync`를 옮김, plan §8.73). 들어온 뒤 한 번 읽어 host 값을 설정마다 이 화면 값 위에 놓는다.
+// `usePreferencesSync`를 옮김, plan §8.79). 들어온 뒤 한 번 읽어 host 값을 설정마다 이 화면 값 위에 놓는다.
 // 아무도 나누지 않은 설정은 이 화면 것으로 남고, 화면을 여는 것만으로는 쓰지 않는다. 여기서 바꾸면 설정이 멈춘 뒤 바뀐 것만 보내고,
 // 다른 화면의 변경은 events의 `preferences` 사건으로 온다. host는 events 연결이 열릴 때마다 문서 전체를 보내 다시 붙은 화면도 따라잡는다.
 // 설정마다 마지막 쓰기가 이긴다: 여기서 바꾸고 아직 안 보낸 값은 남아, 온 것 위로 나간다.
@@ -113,10 +113,12 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
   useEffect(() => {
     if (!enabled || !loaded || readOnly.current || pending === null || inFlight.current !== null) return;
     let retry: number | undefined;
-    const timer = window.setTimeout(() => {
+    const send = (keepalive: boolean) => {
+      window.clearTimeout(timer);
+      if (inFlight.current !== null) return;
       const body = JSON.parse(pending) as PreferencesChange;
       inFlight.current = body;
-      savePreferences(body).then(
+      savePreferences(body, keepalive).then(
         (saved) => {
           // 답은 이 변경이 남긴 문서 전체다: 앞서 다른 곳에서 온 것은 함께 오고, 뒤에 온 것은 붙잡아 두었다가 이제 읽는다
           absorb(saved);
@@ -131,10 +133,20 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
           else retry = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
         },
       );
-    }, SEND_AFTER_MS);
+    };
+    const timer = window.setTimeout(() => send(false), SEND_AFTER_MS);
+    // 바꾸고 곧 탭·앱을 닫거나 다른 앱으로 가면 기다림을 건너뛰고 지금 보낸다(QA t-0337 Q11). 참고는 여기서 잃고,
+    // t3code는 떠날 때 미룬 저장을 마저 쓴다(uiStateStore.ts `beforeunload → flush()`). iOS는 beforeunload를 믿을 수 없어
+    // pagehide와 가려짐을 듣고, keepalive로 화면이 사라져도 요청이 끝까지 가게 한다.
+    const leave = () => send(true);
+    const hidden = () => document.visibilityState === "hidden" && send(true);
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", hidden);
     return () => {
       window.clearTimeout(timer);
       window.clearTimeout(retry);
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", hidden);
     };
   }, [enabled, loaded, pending, attempt, absorb, settled]);
 

@@ -130,6 +130,7 @@ pub fn token(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "waiting-on-you",
         ThreadGroup::ReadyForReview => "ready-for-review",
+        ThreadGroup::Landing => "landing",
         ThreadGroup::Working => "working",
         ThreadGroup::Idle => "idle",
         ThreadGroup::Resolved => "resolved",
@@ -151,8 +152,8 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         base: None,
         branch: None,
         pr: None,
-        pr_state: None,
-        pr_review: None,
+        pr_state: (!f.pr_state.is_empty()).then(|| f.pr_state.clone()),
+        pr_review: (!f.pr_review.is_empty()).then(|| f.pr_review.clone()),
         cwd: None,
         work_dir: None,
         pane: None,
@@ -164,13 +165,20 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
             (true, false) => BriefState::Pending,
         },
         brief_attempts: 0,
+        delivered_at_ms: None,
+        delivered_report: None,
         launch: None,
         report_hash: (!f.report_hash.is_empty()).then(|| f.report_hash.clone()),
         acked_hash: (!f.acked_hash.is_empty()).then(|| f.acked_hash.clone()),
         next: Vec::new(),
         copy: None,
+        copy_notes: Vec::new(),
+        last_group: None,
+        review_item_hash: None,
+        group_changed_ms: None,
+        report_changed_ms: None,
+        merged_seen_ms: None,
         error: None,
-        decisions_rev: None,
         eval_cursor: 0,
         eval_batches: 0,
         eval_last_batch_ms: None,
@@ -194,17 +202,14 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
 
 /// 차이의 까닭(규칙을 읽고 정한 분류)
 pub fn reason(f: &Facts, hp: &str, _aaa: &str) -> String {
-    if hp == "landing" {
-        return "aaa에는 Landing(PR 승인) 묶음이 없다(4장 I「누가 병합하나」, D11 옮기는 중)".into();
-    }
-    if hp == "ready-for-review" && f.pr_state.eq_ignore_ascii_case("open") && f.report_hash == f.acked_hash {
-        return "PR이 열린 확인된 보고: 0.2는 검토 대기, aaa는 PR을 모른다(4장 I)".into();
-    }
     if f.agent_state.as_deref() == Some("unknown") {
         return "herdr `unknown`(셸·모르는 프로그램)을 aaa는 agent 없음으로 본다".into();
     }
     if f.agent_state.is_none() && f.self_activity.is_some() {
         return "agent 없이 진행 보고만 있다: aaa 상태는 harness 활동이 있어야 진행 보고를 담는다".into();
+    }
+    if hp == "ready-for-review" && f.pane_exists && f.self_age_secs.is_some() && f.self_percent != Some(100) {
+        return "진행을 보고하는 agent의 중간 보고: aaa는 `Done`일 때만 검토 대기다(plan §8.85)".into();
     }
     "분류 안 됨(규칙을 다시 본다)".into()
 }
@@ -629,13 +634,16 @@ mod tests {
         d.agent_state = Some("idle".into());
         d.report_hash = "h".into();
         assert_eq!(both(&d), ("ready-for-review", "ready-for-review"));
-        // PR 승인: 0.2만 Landing
+        // PR 승인: 둘 다 병합 중(D11). 확인한 보고라도 PR이 열려 있으면 둘 다 검토 대기
         let mut l = open();
         l.agent_state = Some("idle".into());
         l.pr_state = "OPEN".into();
         l.pr_review = "APPROVED".into();
-        assert_eq!(hp_group(&l, NOW), "landing");
-        assert!(reason(&l, "landing", token(aaa_group(&l, NOW))).contains("Landing"));
+        assert_eq!(both(&l), ("landing", "landing"));
+        l.pr_review.clear();
+        l.report_hash = "h".into();
+        l.acked_hash = "h".into();
+        assert_eq!(both(&l), ("ready-for-review", "ready-for-review"));
     }
 
     #[test]

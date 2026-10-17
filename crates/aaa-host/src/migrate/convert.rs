@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use aaa_proto::{BriefState, FlowEvent, InboxItem, Role, ThreadKind, ThreadStatus, next_lines};
+use aaa_proto::{BriefState, FlowEvent, InboxItem, Role, ThreadGroup, ThreadKind, ThreadStatus, next_lines};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -64,19 +64,9 @@ pub struct Outcome {
 fn setting_note(key: &str) -> Option<&'static str> {
     Some(match key {
         "name" => "aaa 프로젝트는 폴더 이름(slug) 하나다. 표시 이름 없음",
-        "goal" => {
-            "aaa에 프로젝트 goal 칸이 없다(4장 G「프로젝트 만들기」 `--goal` 옮길 예정). PROJECT.herdr.toml에 남김"
-        }
-        "max_parallel_threads" => {
-            "aaa 한도는 host.toml [projects] max_threads_per_machine(머신별)이다. 프로젝트별 한도 없음"
-        }
-        "auto_resolve_days" => "aaa는 자동 resolve가 없다(4장 I「병합 뒤 정리」 옮길 예정)",
         "nudge" => "aaa nudge는 host.toml nudge_idle_secs로 늘 켜져 있다(3장 G6 `nudge` 설정 옮길 예정)",
         "mute" => "aaa 알림은 기기별 설정이다(D4). 프로젝트 mute 없음",
-        "thread_profile" | "coordinator_profile" => {
-            "aaa는 프로젝트 기본 profile이 없다(thread start --profile, TASKS owner)"
-        }
-        "repos" => "aaa는 프로젝트 repo 목록이 없다(thread start --repo)",
+        "coordinator_profile" => "aaa는 coordinator를 띄우지 않는다(사람이 프로젝트 폴더에서 agent를 띄운다)",
         "paused" | "archived" => "aaa에 멈춤·보관이 없다(4장 G「멈추기·보관」 옮길 예정)",
         _ => return None,
     })
@@ -151,6 +141,8 @@ pub(crate) fn thread_rec(
         status: ThreadStatus::Resolved,
         brief: BriefState::Delivered,
         brief_attempts: 0,
+        delivered_at_ms: None,
+        delivered_report: None,
         launch: None,
         acked_hash: if acked && copy_hash.as_deref() == Some(t.report_hash.as_str()) {
             copy_hash.clone()
@@ -160,8 +152,13 @@ pub(crate) fn thread_rec(
         report_hash: copy_hash,
         next,
         copy: report.map(|_| "complete".to_string()),
+        copy_notes: vec![],
+        last_group: Some(ThreadGroup::Resolved),
+        review_item_hash: None,
+        group_changed_ms: None,
+        report_changed_ms: None,
+        merged_seen_ms: None,
         error: opt(&t.error),
-        decisions_rev: None,
         eval_cursor: 0,
         eval_batches: 0,
         eval_last_batch_ms: None,
@@ -318,7 +315,10 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
     let mut project_toml = String::from("schema = 1\n");
     for (k, v) in &p.settings {
         match k.as_str() {
-            "start_threads" => project_toml.push_str(&format!("start_threads = {v}\n")),
+            // project.toml에서 같은 이름·같은 뜻이다
+            "start_threads" | "max_parallel_threads" | "auto_resolve_days" | "goal" | "thread_profile" | "repos" => {
+                project_toml.push_str(&format!("{k} = {v}\n"))
+            }
             _ => {
                 let note = setting_note(k).unwrap_or("aaa에 같은 설정이 없다");
                 out.settings_not_mapped.push((k.clone(), front_value(v), note.to_string()));
@@ -566,7 +566,9 @@ mod e2e {
         put(
             &src,
             "PROJECT.md",
-            "+++\nname = \"Demo\"\nmax_parallel_threads = 2\nstart_threads = \"auto\"\n+++\n\n# 지침\n규칙\n",
+            "+++\nname = \"Demo\"\ngoal = \"배포\"\nmax_parallel_threads = 2\nstart_threads = \"auto\"\nauto_resolve_days = 3\n\
+             thread_profile = \"opus\"\ncoordinator_profile = \"opus\"\n\n[[repos]]\npath = \"/srv/app\"\nmachine = \"mac-a\"\n\n\
+             [[repos]]\npath = \"/work/lib\"\n+++\n\n# 지침\n규칙\n",
         );
         put(&src, "AGENTS.md", "0.2 안내\n");
         put(&src, "MEMORY.md", "- [a](memory/a.md)\n");
@@ -646,18 +648,30 @@ mod e2e {
         assert_eq!(o.excluded.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["scratch/k.pem"]);
         assert_eq!(o.threads_imported, ["t-0001"]);
         assert_eq!((o.inbox_open, o.inbox_done), (1, 1));
-        assert!(o.settings_not_mapped.iter().any(|(k, _, _)| k == "max_parallel_threads"));
         let dir = base.join("projects/demo");
         assert!(!dir.join(".env").exists() && !dir.join("scratch/k.pem").exists());
         assert_eq!(std::fs::read_to_string(dir.join("library/t-0001/out.txt")).unwrap(), "결과물\n");
         assert!(std::fs::read_to_string(dir.join("routines/audit.md")).unwrap().contains("enabled = false"));
+        // 같은 이름·같은 뜻인 설정은 project.toml로 옮기고, aaa가 그대로 읽는다
+        assert!(std::fs::read_to_string(dir.join("project.toml")).unwrap().starts_with("schema = 1\n"));
+        let set = crate::project::ProjectSettings::load(&dir);
         assert_eq!(
-            std::fs::read_to_string(dir.join("project.toml")).unwrap(),
-            "schema = 1\nstart_threads = \"auto\"\n"
+            (set.goal.as_str(), set.max_parallel_threads, set.start_threads.as_str(), set.auto_resolve_days),
+            ("배포", 2, "auto", 3)
         );
+        assert_eq!(set.thread_profile, "opus");
+        assert_eq!(
+            set.repos,
+            [
+                crate::project::Repo { path: "/srv/app".into(), machine: Some("mac-a".into()) },
+                crate::project::Repo { path: "/work/lib".into(), machine: None }
+            ]
+        );
+        let not: Vec<&str> = o.settings_not_mapped.iter().map(|(k, _, _)| k.as_str()).collect();
+        assert_eq!(not, ["coordinator_profile", "name"], "{not:?}");
         assert!(std::fs::read_to_string(dir.join("PROJECT.md")).unwrap().starts_with("# demo\n\n# 지침\n규칙"));
         assert!(dir.join("AGENTS.md").is_file() && dir.join("imported/AGENTS.herdr.md").is_file());
-        assert!(dir.join("decisions.md").is_file());
+        assert!(dir.join("MEMORY.md").is_file() && !dir.join("decisions.md").exists());
         // 원본은 그대로
         assert!(src.join(".env").is_file() && src.join("routines/audit.md").is_file());
         assert!(std::fs::read_to_string(src.join("routines/audit.md")).unwrap().contains("enabled = true"));

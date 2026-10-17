@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use aaa_proto::{
     AgentRequest, B64, ErrorBody, ErrorCode, FrontResponse, OutputMatch, ReadFormat, ReadSource, ReadView,
+    ThreadPaneView,
 };
 use tokio::sync::broadcast::{self, error::RecvError};
 
@@ -75,7 +76,99 @@ impl Host {
         }
     }
 
-    fn key_modes(&self, id: &str) -> aaa_vt::KeyModes {
+    /// thread의 pane(herdr-projects threads.rs `pane_agent`). 끝났거나 pane이 없거나 세션이 끝났으면 거부한다.
+    /// 참고는 pane에 agent가 보여야 읽고 쓴다(맨 셸에 치지 않는다). aaa thread pane은 harness 프로세스 자체라(셸 아래에서
+    /// 돌지 않는다) 세션이 살아 있으면 그 harness다. hook 없는 harness는 상태가 없어도 읽고 쓴다.
+    fn thread_pane(&self, project: &str, id: &str) -> Result<(crate::orch::ThreadRec, String, String), ErrorBody> {
+        let rec = self.load(project, id)?;
+        let pane = rec
+            .pane
+            .clone()
+            .filter(|_| rec.status != aaa_proto::ThreadStatus::Resolved)
+            .ok_or_else(|| err(ErrorCode::BadRequest, format!("{id}에 pane이 없다")))?;
+        let (pid, mid) = self.resolve_pane(&pane)?;
+        if !self.pane_view_of(&pid, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running()) {
+            return Err(err(
+                ErrorCode::SessionExited,
+                format!("{id}의 세션이 끝났다. `aaa thread restart {project} {id}`가 다시 띄운다"),
+            ));
+        }
+        Ok((rec, pid, mid))
+    }
+
+    /// `thread read`: thread pane이 지금 보이는 것(herdr-projects threads.rs `read`). `lines`면 기록 끝 N줄이다.
+    pub(crate) async fn thread_read(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        lines: Option<u32>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (_, pid, _) = self.thread_pane(project, id)?;
+        let agent = self.pane_agent(&pid).map(|a| a.activity);
+        let source = if lines.is_some() { ReadSource::Recent } else { ReadSource::Visible };
+        let FrontResponse::Read(view) = self.pane_read_text(&pid, source, lines, ReadFormat::Text).await? else {
+            return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
+        };
+        Ok(FrontResponse::ThreadPane(ThreadPaneView {
+            project: project.to_string(),
+            thread: id.to_string(),
+            pane: pid,
+            agent,
+            read: Some(view),
+            typed: 0,
+            pressed: Vec::new(),
+        }))
+    }
+
+    /// `thread keys`: 글을 치고(Enter 없음) 키를 누른다(herdr-projects threads.rs `keys`). 아무것도 기록하지 않는다:
+    /// 키는 그것이 답한 화면에서만 뜻이 있다. `trust_screens = user`면 신뢰 창에는 사용자만 답한다.
+    pub(crate) async fn thread_keys(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        keys: &[String],
+        text: Option<String>,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let text = text.filter(|t| !t.is_empty());
+        if keys.is_empty() && text.is_none() {
+            return Err(err(ErrorCode::BadRequest, "키나 --text가 하나는 있어야 한다"));
+        }
+        if keys.iter().any(|k| k.trim().is_empty()) {
+            return Err(err(ErrorCode::BadRequest, "빈 키 이름이 있다"));
+        }
+        let (rec, pid, mid) = self.thread_pane(project, id)?;
+        let agent = self.pane_agent(&pid).map(|a| a.activity);
+        if self.trust_screens(project) == crate::trust_screen::USER {
+            let kind = rec.launch.as_ref().map(|l| l.harness.clone()).unwrap_or_default();
+            let screen = self
+                .screen(&mid, &pid)
+                .await
+                .ok_or_else(|| err(ErrorCode::Unavailable, format!("{id}의 pane 화면을 읽지 못해 보내지 않는다")))?;
+            if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
+                return Err(err(ErrorCode::BadRequest, crate::trust_screen::refusal(project, id, &pid, phrase, true)));
+            }
+        }
+        let typed = text.as_deref().map_or(0, |t| t.chars().count() as u32);
+        if let Some(t) = text {
+            self.pane_send_text(&pid, t, actor).await?;
+        }
+        if !keys.is_empty() {
+            self.pane_send_keys(&pid, keys, actor).await?;
+        }
+        Ok(FrontResponse::ThreadPane(ThreadPaneView {
+            project: project.to_string(),
+            thread: id.to_string(),
+            pane: pid,
+            agent,
+            read: None,
+            typed,
+            pressed: keys.to_vec(),
+        }))
+    }
+
+    /// pane 프로그램이 켠 입력 모드(mirror에서 본다). mirror가 아직 없으면 모두 꺼짐.
+    pub(crate) fn key_modes(&self, id: &str) -> aaa_vt::KeyModes {
         let i = self.inner.lock().unwrap();
         i.panes.get(id).and_then(|p| p.mirror.as_ref()).map(|m| m.vt.modes()).unwrap_or_default()
     }

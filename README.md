@@ -51,7 +51,7 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 
 host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w <이름>`)로 엽니다. 탭·나누기 layout은 host에 저장되므로 나갔다 다시 붙어도 같습니다.
 
-- **왼쪽 목록**: 웹처럼 Thread(상태 배지)와 머신별 pane, 「+ 새 셸」이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). 100칸보다 좁은 터미널에서는 접힌 채 시작합니다.
+- **왼쪽 목록**: 웹처럼 Thread(상태 배지)와 머신별 pane, 「+ 새 셸」이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
 - 명령으로도 됩니다: 새 pane을 새 탭으로 `aaa tab create --machine mac-b -- <명령>`, 있는 pane을 다른 workspace의 새 탭으로 `aaa pane move <pane> --new-tab -w <이름>`, 나누기 `aaa pane split <pane> --direction right`.
 - 입력은 포커스 pane으로 바로 갑니다. 다른 화면(웹 등)이 쓰던 pane도 입력하면 이 화면 크기가 되고, 터미널 focus를 다시 얻어도 크기를 다시 겁니다.
 - **키는 herdr와 같습니다.** prefix(기본 `ctrl+b`) 다음 키 하나(시간 제한 없음, `Esc`나 모르는 키는 취소). `prefix ?`로 단축키 창(`/`로 검색)이 뜹니다.
@@ -64,7 +64,10 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `h` `j` `k` `l` · `Tab` · `Shift+Tab` | pane 포커스 옮기기 · 차례로 |
 | `n` · `p` · `1`~`9` | 탭 이동 |
 | `x` | pane 닫기(세션도 끝냄) |
-| `b` | 왼쪽 목록 펴기·접기 |
+| `z` | 포커스 pane 크게 보기(다시 누르면 원래대로) |
+| `r` | 크기 모드: `h/j/k/l`로 가장자리 옮기기, `Esc` 끝 |
+| `Shift+H/J/K/L` | 그 방향 pane과 자리 바꾸기 |
+| `b` | 왼쪽 사이드바 펴기·접기 |
 | `w` | 목록 탐색(`↑↓` 고르기, `Enter` 열기, `1`~`9` n번째 열기, `h/j/k/l`·`Tab` pane, `Esc` 끝) |
 | `o` | 질문이 열린 pane으로 |
 | `?` | 단축키 창 |
@@ -72,17 +75,26 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `q` | 나가기(세션은 그대로) |
 | prefix 한 번 더 | prefix 키를 pane에 보냄 |
 
+- **마우스(herdr와 같음)**: 탭 이름표를 누르면 그 탭, 탭 막대 휠은 앞·뒤 탭, ` + `는 새 탭, 넘치면 ` < ` ` > `로 넘깁니다. 사이드바 줄을 누르면 엽니다. `«`·`»`는 접기·펴기, 사이드바 오른쪽 경계를 끌면 폭(18~36)이 바뀝니다. pane을 누르면 포커스, 끌면 글을 골라 떼는 때 이 기기 clipboard에 복사합니다(두 번 누르면 낱말, ssh 셸이면 OSC 52). vim·htop처럼 마우스를 켠 프로그램에는 누르기·끌기·휠이 그대로 가고, less처럼 alt 화면을 쓰는 프로그램에는 휠이 위·아래 화살표로 갑니다. 나눈 pane 사이 테두리를 끌면 크기가, 탭 이름표를 끌어 놓으면 탭 차례가 바뀝니다. 오른쪽 누름은 탭 이름표에서 탭 메뉴(새 탭·이름 바꾸기·닫기), pane에서 pane 메뉴(포커스 pane과 자리 바꾸기·나누기·크게 보기·닫기)를 엽니다. 마우스를 켠 프로그램에 오른쪽 누름을 보내려면 pane 메뉴의 「오른쪽 누름을 pane에 보내기」를 켭니다. 창과 메뉴는 밖을 누르면 닫힙니다. 터미널 자체의 끌어 고르기는 `[tui] mouse_capture = false`로 돌아옵니다(켠 채로도 WezTerm은 shift, iTerm2는 option을 누른 채 끌면 터미널이 고릅니다).
 - `Ctrl+V`(prefix 없이): 이 기기 clipboard에 그림이 있으면 pane 머신에 올리고, 입력창이면 경로를 넣습니다. 그림이 없으면 원래 `Ctrl+V`입니다.
-- 재부팅 등으로 중단된 pane에는 다시 띄우는 명령(`aaa pane resume <id>`)이 보입니다.
+- 재부팅 뒤 agent가 다시 붙으면 셸 pane은 저장한 폴더에서 되살아나고, Claude·Codex 대화와 thread는 이어 뜹니다(herdr처럼, `[session] resume_agents_on_restore`로 끔). 다른 프로그램 pane은 다시 실행하지 않고 중단으로 남아 다시 띄우는 명령(`aaa pane resume <id>`)이 보입니다.
 - 설정(`host.toml`):
 
   ```toml
   [tui]
   prefix = "ctrl+b"                             # 여러 개면 ["ctrl+b", "ctrl+a"]. tmux 안에서 쓰면 겹치지 않게(예: "ctrl+g")
-  switch_ascii_input_source_in_prefix = false   # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
-  prefix_jamo_keys = false                      # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
+  switch_ascii_input_source_in_prefix = true    # prefix·탐색 동안 한글 입력기를 영문으로(macOS·Windows 한국어 IME, ssh 밖)
+  prefix_jamo_keys = true                       # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
   prompt_new_tab_name = true                    # prefix c에서 이름 창을 띄우기
   confirm_close = true                          # 마지막 탭·마지막 pane을 닫을 때 묻기
+  sidebar_width = 26                            # 사이드바 폭(18~36)
+  sidebar_start_collapsed = false               # 접힌 채 시작
+  sidebar_collapsed_mode = "compact"            # 접으면 번호·상태 점 4칸(compact) 또는 없음(hidden)
+  mobile_width_threshold = 64                   # 이 폭 이하면 사이드바·탭 막대 대신 두 줄 머리
+  theme = "catppuccin"                          # herdr 테마 이름(terminal·tokyo-night·dracula·nord 등 18개)
+  pane_borders = "auto"                         # pane 테두리: auto(나눈 탭만) · always · off
+  mouse_capture = true                          # 마우스: 탭·사이드바·pane 누르기, 휠, 끌어 고르기
+  copy_on_select = true                         # 끌어 고른 글을 떼는 때 복사(끄면 ctrl+c·cmd+c)
 
   [terminal]
   new_cwd = "follow"                            # 새 탭·나누기의 폴더: follow(포커스 pane의 지금 폴더) · home · 절대 경로

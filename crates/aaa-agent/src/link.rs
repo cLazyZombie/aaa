@@ -60,7 +60,7 @@ pub async fn run(agent: Arc<Agent>, target: Target, max_backoff: Duration) {
             },
             Err(e) => tracing::debug!("host 연결 실패({target}): {e:#}"),
         }
-        agent.set_host(None);
+        agent.set_host(None, false);
         if started.elapsed() > Duration::from_secs(10) {
             backoff = Duration::from_millis(250);
         }
@@ -79,11 +79,20 @@ pub fn hello(agent: &Agent) -> AgentHello {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         software: aaa_common::util::software(),
-        // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다)
-        features: vec!["terminal.v1".into(), "cwd.v1".into(), "pr.v1".into()],
+        // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`,
+        // history.v1: `AgentRequest::History`(plan §8.118)
+        features: vec![
+            "terminal.v1".into(),
+            "cwd.v1".into(),
+            "pr.v1".into(),
+            "pr.v2".into(),
+            "rename.v1".into(),
+            "history.v1".into(),
+        ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
         sessions: agent.sessions(),
+        harness: agent.harness_events(),
     }
 }
 
@@ -94,16 +103,17 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     tx.json(&LinkMsg::Hello(hello(agent))).await?;
     let first: LinkMsg =
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("welcome 대기")??;
-    let health = match first {
+    let (health, replay) = match first {
         LinkMsg::Welcome(w) => {
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
-            w.features.iter().any(|f| f == "health.v1")
+            // harness_hello.v1: host가 hello의 harness 사건을 읽었다. 옛 host에는 연결 뒤 다시 보낸다
+            (w.features.iter().any(|f| f == "health.v1"), !w.features.iter().any(|f| f == "harness_hello.v1"))
         }
         LinkMsg::Reject(e) => bail!("host가 거부했다: {e}"),
         other => bail!("예상하지 못한 응답: {other:?}"),
     };
     agent.host_health.store(health, std::sync::atomic::Ordering::Relaxed);
-    agent.set_host(Some(tx.clone()));
+    agent.set_host(Some(tx.clone()), replay);
     let cached = agent.health.lock().unwrap().clone();
     if let Some(h) = cached {
         agent.send_health(h).await;

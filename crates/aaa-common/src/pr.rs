@@ -2,7 +2,7 @@
 //! GitHub에서 읽은 것은 모두 공격자가 고른 글이다: 정해진 꼴만 받고 이름은 거른다.
 //!
 //! herdr-projects 0.2.35 `src/pr.rs`(`valid_pr_url`·`parse_remote`·`normalize_origin`·`host_of`·`gh`·`sanitize`·
-//! `view`·`find_by_branch`)에서 옮겼다. 그 코드의 고지:
+//! `view`·`find_by_branch`·`report_refs`·`open_own_numbers`)에서 옮겼다. 그 코드의 고지:
 //!
 //! > MIT License
 //! >
@@ -21,6 +21,7 @@
 //! > COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 //! > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -154,6 +155,65 @@ pub fn login_call(origin: &str) -> GhCall {
     call(&host_of(origin), &["api", "user", "--jq", ".login"])
 }
 
+/// `repo`(`owner/repo`)에서 `gh` 계정이 연 열린 PR(`gh pr list` 한 번, herdr-projects `open_own_numbers`).
+/// `GH_HOST`는 thread origin의 host다.
+pub fn open_own_call(origin: &str, repo: &str) -> GhCall {
+    call(
+        &host_of(origin),
+        &["pr", "list", "--repo", repo, "--state", "open", "--author", "@me", "--limit", "100", "--json", "number"],
+    )
+}
+
+/// `open_own_call` 출력의 번호들
+pub fn pick_numbers(json: &str) -> Result<BTreeSet<u32>, serde_json::Error> {
+    #[derive(Deserialize)]
+    struct Numbered {
+        number: u32,
+    }
+    let listed: Vec<Numbered> = serde_json::from_str(json)?;
+    Ok(listed.into_iter().map(|p| p.number).collect())
+}
+
+/// 보고가 이름 붙인 PR 중 `except`(추적하는 것)를 뺀 것, 저장소(`owner/repo`, 소문자)마다 번호(herdr-projects
+/// `report_refs`). `#12`는 thread origin 저장소다. `repo#12`·주소 조각·HTML 개체는 세지 않는다. 전체 PR 주소도 센다.
+pub fn report_refs(report: &str, origin: &str, except: &str) -> BTreeMap<String, BTreeSet<u32>> {
+    let mut refs: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+    let own = normalize_origin(origin);
+    let chars: Vec<char> = report.chars().collect();
+    for (i, c) in chars.iter().enumerate() {
+        if *c == '#' {
+            let before = i.checked_sub(1).map(|j| chars[j]);
+            if before.is_some_and(|b| b.is_alphanumeric() || matches!(b, '/' | '-' | '_' | '.' | '&')) {
+                continue;
+            }
+            let digits: String = chars[i + 1..].iter().take_while(|d| d.is_ascii_digit()).collect();
+            if let (Some(repo), Ok(n)) = (&own, digits.parse::<u32>()) {
+                refs.entry(repo.clone()).or_default().insert(n);
+            }
+        }
+    }
+    let split = |c: char| c.is_whitespace() || matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | '`' | ',' | ';' | '"');
+    for word in report.split(split) {
+        let url = word.trim_end_matches(['.', ':', '!', '?']);
+        if !valid_pr_url(url) {
+            continue;
+        }
+        let parts: Vec<&str> = url.trim_start_matches("https://github.com/").split('/').collect();
+        if let Ok(n) = parts[3].parse::<u32>() {
+            refs.entry(format!("{}/{}", parts[0], parts[1]).to_lowercase()).or_default().insert(n);
+        }
+    }
+    if valid_pr_url(except) {
+        let parts: Vec<&str> = except.trim_start_matches("https://github.com/").split('/').collect();
+        let repo = format!("{}/{}", parts[0], parts[1]).to_lowercase();
+        if let (Some(set), Ok(n)) = (refs.get_mut(&repo), parts[3].parse::<u32>()) {
+            set.remove(&n);
+        }
+    }
+    refs.retain(|_, set| !set.is_empty());
+    refs
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct Listed {
@@ -179,6 +239,31 @@ pub fn pick_listed(json: &str) -> Result<Option<String>, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// herdr-projects pr.rs `report_refs_names_other_pull_requests_only`
+    #[test]
+    fn report_refs_names_other_pull_requests_only() {
+        let report = "PR: https://github.com/o/app/pull/146\n## Report\n#146 merged. #147 fixes the docs (https://github.com/o/app/pull/147).\n\
+                      Workspace PRs: https://github.com/o/ws/pull/38, and other#29.\n## Next\nMerge #148\n";
+        let refs = report_refs(report, "git@github.com:O/App.git", "https://github.com/o/app/pull/146");
+        assert_eq!(refs.get("o/app").unwrap().iter().copied().collect::<Vec<_>>(), [147, 148]);
+        assert_eq!(refs.get("o/ws").unwrap().iter().copied().collect::<Vec<_>>(), [38]);
+        assert_eq!(refs.len(), 2, "`other#29` names another repository by a short name and is skipped");
+        let one = "PR: https://github.com/o/app/pull/1\n## Report\ndone, #1 merged\n";
+        assert!(report_refs(one, "https://github.com/o/app", "https://github.com/o/app/pull/1").is_empty());
+        // origin을 모르면 `#n`은 셀 저장소가 없다
+        assert!(report_refs("#7", "", "").is_empty());
+    }
+
+    #[test]
+    fn open_own_numbers_call_and_output() {
+        let c = open_own_call("git@github.com:o/app.git", "o/app");
+        assert_eq!(c.args.join(" "), "pr list --repo o/app --state open --author @me --limit 100 --json number");
+        assert_eq!(c.gh_host, None);
+        assert_eq!(pick_numbers(r#"[{"number":8},{"number":3}]"#).unwrap().into_iter().collect::<Vec<_>>(), [3, 8]);
+        assert!(pick_numbers("[]").unwrap().is_empty());
+        assert!(pick_numbers("nope").is_err());
+    }
 
     #[test]
     fn pr_urls() {

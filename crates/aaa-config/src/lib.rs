@@ -77,6 +77,7 @@ pub struct HostConfig {
     pub terminal: TerminalSection,
     pub projects: ProjectsSection,
     pub notify: NotifySection,
+    pub session: SessionSection,
 }
 
 /// 새 pane(새 탭·나누기). 이름과 값은 herdr 0.9.5 `[terminal] new_cwd`를 따른다(plan §8.76).
@@ -94,6 +95,23 @@ impl Default for TerminalSection {
     }
 }
 
+/// 재부팅 뒤 복원(herdr 0.9.5 `[session]`, src/config/model.rs `SessionConfig`). 이름·기본값이 herdr와 같다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionSection {
+    /// 재부팅 뒤 Claude·Codex pane과 thread를 저장한 대화로 이어 띄운다. 기본 켬(herdr와 같고, 결정 8-5 「꺼짐」을
+    /// 결정 20 D12가 바꿨다). 꺼도 셸 pane은 되살린다.
+    pub resume_agents_on_restore: bool,
+    /// 이어 띄우기 사이 간격(ms). 0이면 간격 없이.
+    pub startup_per_agent_delay_ms: u32,
+}
+
+impl Default for SessionSection {
+    fn default() -> Self {
+        SessionSection { resume_agents_on_restore: true, startup_per_agent_delay_ms: 100 }
+    }
+}
+
 /// 알림 webhook(§8.7). 봇 token 같은 비밀값이 주소에 들어갈 수 있으니 `host.local.toml`(커밋하지 않는 파일)에 둔다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -104,7 +122,7 @@ pub struct NotifySection {
     pub format: String,
     /// format이 telegram일 때 받을 chat
     pub telegram_chat_id: String,
-    /// 알릴 inbox 항목 종류
+    /// 알릴 inbox 항목 종류(`item_kinds`가 옛 이름을 바꿔 읽는다). `thread-state`는 사람 차례·새 보고·시작 실패만 보낸다
     pub kinds: Vec<String>,
     /// 이 시간(초) 동안 모아 프로젝트마다 한 번에 보낸다(질문이 몰려도 한 통)
     pub debounce_secs: u64,
@@ -112,8 +130,26 @@ pub struct NotifySection {
     pub web_push: bool,
     /// Web Push 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름). https만. 시험용 loopback(127.0.0.1 등)은 적었을 때만 http도 받는다
     pub push_hosts: Vec<String>,
-    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 공개 주소(https://<이름>.ts.net), 없으면 `mailto:aaa@example.com`
+    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 프로젝트 저장소 주소(herdr-web-ui와 같다). 공개 주소는 보내지 않는다
     pub push_subject: String,
+}
+
+impl NotifySection {
+    /// 알릴 inbox 종류. 옛 thread 항목 종류(report·question·delivery·thread)는 `thread-state`로 읽는다: thread 항목을
+    /// 묶음 전이 하나로 합쳤다(plan §8.85). 이미 쓴 host.toml이 알림을 잃지 않게 한다.
+    pub fn item_kinds(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for k in &self.kinds {
+            let k = match k.as_str() {
+                "report" | "question" | "delivery" | "thread" => "thread-state",
+                other => other,
+            };
+            if !out.iter().any(|x| x == k) {
+                out.push(k.to_string());
+            }
+        }
+        out
+    }
 }
 
 impl Default for NotifySection {
@@ -122,19 +158,7 @@ impl Default for NotifySection {
             webhook: String::new(),
             format: "json".into(),
             telegram_chat_id: String::new(),
-            kinds: [
-                "report",
-                "question",
-                "delivery",
-                "thread",
-                "session",
-                "outage",
-                "health",
-                "routine-approval",
-                "pr",
-            ]
-            .map(String::from)
-            .to_vec(),
+            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "pr"].map(String::from).to_vec(),
             debounce_secs: 15,
             web_push: true,
             push_hosts: ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
@@ -156,6 +180,7 @@ impl Default for HostConfig {
             terminal: TerminalSection::default(),
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
+            session: SessionSection::default(),
         }
     }
 }
@@ -183,10 +208,18 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
+    /// brief 안내·메시지를 입력하고 Enter한 뒤 harness가 받았다고 알리기(hook이 없으면 화면 변화)를 기다리는 시간(밀리초).
+    /// 넘으면 전달 불명(unknown)이고 다시 보내지 않는다.
+    pub accept_wait_ms: u64,
+    /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
+    /// 넘으면 그대로 보낸다.
+    pub stop_wait_ms: u64,
+    /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
+    pub auto_resolve_day_secs: u64,
+    /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
+    pub merge_grace_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
-    /// 머신 하나에서 동시에 도는(세션 실행 중) thread 한도. 0이면 제한하지 않는다.
-    pub max_threads_per_machine: u32,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
     pub routine_commands: Vec<String>,
 }
@@ -203,8 +236,11 @@ impl Default for ProjectsSection {
             nudge_quiet_secs: 10,
             outage_secs: 600,
             pr_poll_secs: 120,
+            accept_wait_ms: 10_000,
+            stop_wait_ms: 15_000,
+            auto_resolve_day_secs: 86_400,
+            merge_grace_secs: 600,
             inbox_done_days: 30,
-            max_threads_per_machine: 6,
             routine_commands: Vec::new(),
         }
     }
@@ -217,17 +253,53 @@ pub struct TuiSection {
     /// 명령 prefix 키. herdr 형식(`ctrl+b`, 여러 개면 배열 `["ctrl+b", "ctrl+a"]`). 예전 `C-b` 형식도 읽는다.
     pub prefix: KeyList,
     /// prefix·탐색·크기·copy 모드 동안 입력기가 한글 등(영문 아님)이면 영문 입력기로 바꾸고, 모드가 끝나면 되돌린다
-    /// (macOS, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같다(기본 끔).
+    /// (macOS·Windows 한국어 IME, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같은 이름이다.
+    /// herdr는 기본 끔이지만 사용자 요청이라 기본 켬이다(plan 결정 20 D12).
     pub switch_ascii_input_source_in_prefix: bool,
     /// 예전 이름(`prefix_ascii`). 적혀 있으면 위 값 대신 쓴다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_ascii: Option<bool>,
-    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 끔). 입력기를 바꾸지 못하는 ssh·다른 OS용.
+    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 켬, 결정 20 D12). 입력기를 바꾸기 전에 들어온 키·ssh·다른 OS용.
     pub prefix_jamo_keys: bool,
     /// 새 탭(`prefix c`)을 만들기 전에 이름을 묻는다(herdr `[ui] prompt_new_tab_name`, 기본 켬)
     pub prompt_new_tab_name: bool,
     /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
     pub confirm_close: bool,
+    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width` 26, 18~36으로 묶는다)
+    pub sidebar_width: u16,
+    /// 접힌 채 시작(herdr `[ui] sidebar_start_collapsed`, 기본 펼침)
+    pub sidebar_start_collapsed: bool,
+    /// 접으면: `compact`는 번호와 상태 점만 든 4칸 열, `hidden`은 없앤다(herdr `[ui] sidebar_collapsed_mode`)
+    pub sidebar_collapsed_mode: SidebarCollapsedMode,
+    /// 이 폭(칸) 이하면 목록·탭 줄 대신 두 줄 머리(herdr `[ui] mobile_width_threshold` 64)
+    pub mobile_width_threshold: u16,
+    /// 색 테마 이름(herdr `[theme] name`, 기본 `catppuccin`). 모르는 이름이면 TUI가 오류 막대로 알리고 기본을 쓴다.
+    pub theme: String,
+    /// pane 테두리(herdr `[ui] pane_borders`): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 상자를 두르고,
+    /// `always`는 하나여도, `off`는 테두리 없이 빈 칸 하나로 띄운다. 테두리만큼 PTY 크기가 준다.
+    pub pane_borders: PaneBorders,
+    /// TUI가 마우스를 받는다(herdr `[ui] mouse_capture`, 기본 켬): 탭·사이드바·pane 누르기, 휠, 끌어 고르기.
+    /// 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고르고 복사한다.
+    pub mouse_capture: bool,
+    /// 끌어 고른 글을 떼는 때 복사한다(herdr `[ui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사한다.
+    pub copy_on_select: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneBorders {
+    #[default]
+    Auto,
+    Always,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarCollapsedMode {
+    #[default]
+    Compact,
+    Hidden,
 }
 
 impl TuiSection {
@@ -241,11 +313,19 @@ impl Default for TuiSection {
     fn default() -> Self {
         TuiSection {
             prefix: KeyList::One("ctrl+b".into()),
-            switch_ascii_input_source_in_prefix: false,
+            switch_ascii_input_source_in_prefix: true,
             prefix_ascii: None,
-            prefix_jamo_keys: false,
+            prefix_jamo_keys: true,
             prompt_new_tab_name: true,
             confirm_close: true,
+            sidebar_width: 26,
+            sidebar_start_collapsed: false,
+            sidebar_collapsed_mode: SidebarCollapsedMode::Compact,
+            mobile_width_threshold: 64,
+            theme: "catppuccin".into(),
+            pane_borders: PaneBorders::Auto,
+            mouse_capture: true,
+            copy_on_select: true,
         }
     }
 }
@@ -488,6 +568,16 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     }
     if c.projects.tick_secs == 0 {
         out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });
+    }
+    if c.projects.auto_resolve_day_secs == 0 {
+        out.push(Invalid {
+            path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
+        });
+    }
+    for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {
+        if v == 0 {
+            out.push(Invalid { path: key(&["projects", name]), message: "1밀리초 이상이어야 한다".into() });
+        }
     }
     let n = &c.notify;
     if !n.webhook.is_empty() {

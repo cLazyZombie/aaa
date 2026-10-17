@@ -1,4 +1,4 @@
-//! prefix·탐색 모드 동안 명령 키를 영문 입력기로 받는다(`[tui] switch_ascii_input_source_in_prefix`, 기본 끔).
+//! prefix·탐색 모드 동안 명령 키를 영문 입력기로 받는다(`[tui] switch_ascii_input_source_in_prefix`, 기본 켬).
 //! herdr 0.9.5 `switch_to_ascii_input_source`(`src/platform/macos.rs`·`src/platform/windows.rs`)와 같은 일을 한다.
 //!
 //! - macOS: 지금 입력기가 영문 자판 배치가 아니면(한글 두벌식 등 입력기) 영문 배치(ABC 등 사용자의 영문 입력기)를 고른다.
@@ -363,6 +363,8 @@ mod tests {
     #[test]
     fn switch_and_restore_native() {
         if std::env::var_os("AAA_IME_NATIVE").is_none() {
+            // 통과로 보이지 않게 남긴다(clip.rs native_clipboard_roundtrip과 같다, t-0327 넘김 (다))
+            eprintln!("건너뜀: AAA_IME_NATIVE=1일 때만 이 Mac의 입력기를 바꿔 본다");
             return;
         }
         let first = current_id().expect("지금 입력기");

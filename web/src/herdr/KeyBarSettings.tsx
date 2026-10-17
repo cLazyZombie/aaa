@@ -1,11 +1,10 @@
-// herdr-web-ui(MIT, aa624cb) src/components/KeyBarSettings.tsx를 옮긴 것. 바꾼 곳: lucide 아이콘 대신 aaa Icon(up·down·close·plus),
-// useSettings 대신 aaa settings.ts(useKeyBarItems·setKeyBarItems), i18n 대신 참고 i18n.ko.ts 문구(KO), 단추 class는 aaa 것
-// (icon-button → ghost icon small, input → settings-select, btn btn-ghost → ghost). 고지는 web/src/herdr/README.md.
+// herdr-web-ui(MIT, aa624cb) src/components/KeyBarSettings.tsx를 옮긴 것. 바꾼 곳: useSettings 대신 aaa settings.ts(useKeyBarItems·setKeyBarItems),
+// i18n 대신 참고 i18n.ko.ts 문구(KO). 아이콘(lucide)·단추 class(icon-button·input·btn)는 참고 그대로다(plan §8.97). 고지는 web/src/herdr/README.md.
 import { useEffect, useState } from "react";
 
 import "./KeyBarSettings.css";
 
-import { Icon } from "../icons";
+import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import { setKeyBarItems, useKeyBarItems } from "../settings";
 import { DEFAULT_KEY_BAR_ITEMS, KEY_BAR_ITEMS_MAX, KEY_BAR_KEYS, keyBarInputSequence, keyBarItemId, keyBarItemLabel, type KeyBarItem } from "./keyBar.ts";
 import { NO_STICKY_MODIFIERS, type StickyModifiers } from "./keys.ts";
@@ -90,9 +89,9 @@ export function KeyBarSettings() {
               <span className="key-bar-settings-cap" title={name}>{name}</span>
               <span className="key-bar-settings-kind">{item.type === "modifier" ? t("Held modifier") : item.modifiers ? t("Saved combination") : null}</span>
               <span className="key-bar-settings-actions">
-                <button type="button" className="ghost icon small" disabled={index === 0} aria-label={t("Move {name} up", { name })} title={t("Move {name} up", { name })} onClick={() => move(index, -1)}><Icon name="up" /></button>
-                <button type="button" className="ghost icon small" disabled={index === items.length - 1} aria-label={t("Move {name} down", { name })} title={t("Move {name} down", { name })} onClick={() => move(index, 1)}><Icon name="down" /></button>
-                <button type="button" className="ghost icon small" aria-label={t("Remove {name}", { name })} title={t("Remove {name}", { name })} onClick={() => remove(index)}><Icon name="close" /></button>
+                <button type="button" className="icon-button" disabled={index === 0} aria-label={t("Move {name} up", { name })} title={t("Move {name} up", { name })} onClick={() => move(index, -1)}><ChevronUp aria-hidden="true" /></button>
+                <button type="button" className="icon-button" disabled={index === items.length - 1} aria-label={t("Move {name} down", { name })} title={t("Move {name} down", { name })} onClick={() => move(index, 1)}><ChevronDown aria-hidden="true" /></button>
+                <button type="button" className="icon-button" aria-label={t("Remove {name}", { name })} title={t("Remove {name}", { name })} onClick={() => remove(index)}><X aria-hidden="true" /></button>
               </span>
             </li>
           );
@@ -102,12 +101,12 @@ export function KeyBarSettings() {
       <div className="key-bar-settings-add">
         <label className="key-bar-settings-field">
           <span className="settings-label">{t("Add key")}</span>
-          <select className="settings-select" value={chosenKey} disabled={full || available.length === 0} onChange={(event) => setChosenKey(event.target.value)}>
+          <select className="input" value={chosenKey} disabled={full || available.length === 0} onChange={(event) => setChosenKey(event.target.value)}>
             {available.length === 0 && <option value="">{t("All keys added")}</option>}
             {available.map((key) => <option value={key} key={key}>{keyBarItemLabel({ type: "key", key })}</option>)}
           </select>
         </label>
-        <button type="button" disabled={full || chosenKey === ""} onClick={() => add({ type: "key", key: chosenKey })}><Icon name="plus" />{t("Add key")}</button>
+        <button type="button" className="btn" disabled={full || chosenKey === ""} onClick={() => add({ type: "key", key: chosenKey })}><Plus aria-hidden="true" />{t("Add key")}</button>
       </div>
       <div className="key-bar-settings-modifiers" role="group" aria-label={t("Held modifiers")}>
         <span className="settings-label key-bar-settings-modifier-label">{t("Held modifiers")}</span>
@@ -123,14 +122,14 @@ export function KeyBarSettings() {
         <div className="key-bar-settings-combo-key">
           <label className="key-bar-settings-field">
             <span className="settings-label">{t("Base key")}</span>
-            <select className="settings-select" value={comboKey} onChange={(event) => setComboKey(event.target.value)}>
+            <select className="input" value={comboKey} onChange={(event) => setComboKey(event.target.value)}>
               {comboKeys.map((key) => <option value={key} key={key}>{keyBarItemLabel({ type: "key", key })}</option>)}
               <option value={CHARACTER_KEY}>{t("Single character")}</option>
             </select>
           </label>
           {comboKey === CHARACTER_KEY && <label className="key-bar-settings-field">
             <span className="settings-label">{t("Character")}</span>
-            <input className="settings-select" value={character} maxLength={2} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setCharacter(event.target.value)} />
+            <input className="input" value={character} maxLength={2} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setCharacter(event.target.value)} />
           </label>}
         </div>
         <div className="key-bar-settings-modifiers" role="group" aria-label={t("Combination modifiers")}>
@@ -138,11 +137,11 @@ export function KeyBarSettings() {
         </div>
         <div className="key-bar-settings-combo-actions">
           <span className="key-bar-settings-preview" aria-live="polite">{characterValid ? keyBarItemLabel(combo) : t("Enter one character.")}</span>
-          <button type="button" disabled={full || !characterValid || base === "" || comboExists} onClick={() => add(combo)}><Icon name="plus" />{t("Add combination")}</button>
+          <button type="button" className="btn" disabled={full || !characterValid || base === "" || comboExists} onClick={() => add(combo)}><Plus aria-hidden="true" />{t("Add combination")}</button>
         </div>
         {comboExists && <p className="settings-hint">{t("Already added")}</p>}
       </div>
-      <button type="button" className="ghost key-bar-settings-restore" onClick={() => update({ keyBarItems: [...DEFAULT_KEY_BAR_ITEMS] })}>{t("Restore defaults")}</button>
+      <button type="button" className="btn btn-ghost key-bar-settings-restore" onClick={() => update({ keyBarItems: [...DEFAULT_KEY_BAR_ITEMS] })}>{t("Restore defaults")}</button>
     </div>
   );
 }

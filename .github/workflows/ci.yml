@@ -84,7 +84,11 @@ jobs:
     steps:
       # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
       - run: git config --global core.autocrlf false
+      # ubuntu는 이력을 모두 받는다(약 11MiB): 공개 검사가 이번 push·PR의 커밋 메시지·author를, 고정 sleep ratchet이
+      # 기준의 기준 파일을 본다. 얕은 checkout이면 둘 다 볼 커밋이 없어 늘 건너뛰었다(10-18 감사)
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: ${{ matrix.os == 'ubuntu-24.04' && '0' || '1' }}
       - name: Rust stable
         id: rust
         run: |
@@ -112,6 +116,10 @@ jobs:
           node-version: 24
       # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령). 여기서는 OS별로 어느 단계를 도는지만 정한다.
       - name: 웹 front 빌드(host 실행 파일에 포함)
+        env:
+          # 고정 sleep ratchet 「origin/main보다 올리지 않는다」의 기준(web/test/fixed-sleeps.test.mjs). 주면 건너뛰지 않는다.
+          # main push는 그 전 main(origin/main이 이미 HEAD라 자기와 비교하게 된다), 그 밖에는 origin/main. 이력이 있는 ubuntu만
+          AAA_SLEEP_BASE: ${{ matrix.os == 'ubuntu-24.04' && (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before || 'origin/main') || '' }}
         run: bash scripts/ci-local.sh --only web --logs . --tee
       - name: fmt
         if: matrix.os == 'ubuntu-24.04'
@@ -125,6 +133,13 @@ jobs:
       - name: test
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        # 끝나지 않는 시험은 job 한도(40분)에 취소되면 실패 요약이 돌지 않는다. 단계 한도로 실패로 끝내 요약을 남긴다
+        # (지금 가장 긴 test 단계는 macOS 2분 안팎이다)
+        timeout-minutes: 15
+        # 시험 binary 안의 동시 수(결정 D2). 기본은 러너 코어 수(3~4)인데 m13 등은 대부분 host·agent 사건을 기다리는
+        # 시험이라 코어보다 많이 돌려도 된다(개발 Mac m13: 3개 72.6초, 8개 39.0초). 시간 단언은 사건·기록 기준으로 바꿨다.
+        env:
+          RUST_TEST_THREADS: "8"
         run: bash scripts/ci-local.sh --only test --logs . --tee
       # 실제 시스템 clipboard(§8.28): 그림을 쓰고 TUI front가 Ctrl+V로 읽어 대상 세션 폴더까지 가는지 본다.
       # 개발 Mac에서는 사람의 clipboard를 덮어쓰므로 CI에서만 켠다. Linux는 Xvfb 위 X11, Windows는 TUI E2E(Unix 전용) 없이 읽기만.
@@ -135,10 +150,13 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xvfb >/dev/null; fi
           bash scripts/ci-local.sh --only clipboard --logs . --tee
-      # 공개 저장소 검사(push 전 로컬 검사의 안전망). 얕은 checkout이라 origin/main..HEAD가 비어 커밋 메시지·author는 보지 않고,
-      # private-words가 없어 실제 이름도 보지 않는다: 여기의 통과는 추적 파일의 확장자·크기·내용 패턴만 본 결과다.
+      # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
+      # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
+      # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
       - name: public
         if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
+        env:
+          AAA_PUBLIC_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (!github.event.created && github.event.before) || 'origin/main' }}
         run: bash scripts/ci-local.sh --only public --logs . --tee
       # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
       - name: 실패 요약
@@ -147,8 +165,9 @@ jobs:
           # 기본 셸은 -e -o pipefail이다. 찾는 줄이 없어도 요약은 끝까지 간다.
           set +e +o pipefail
           # annotation은 step마다 개수 제한이 있어 파일별이 아니라 묶음별로 하나씩 남긴다.
+          # 제목은 인자가 아니라 stdin 첫 줄로 넘긴다: Windows에서 한국어 인자가 code page를 거쳐 깨졌다(「ëë‚˜ì§€…」).
           annotate() {
-            node -e 'let t=require("fs").readFileSync(0,"utf8"); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+process.argv[1]+"::"+t.replace(/%/g,"%25").replace(/\r/g,"").replace(/\n/g,"%0A"))' "$1"
+            { printf '%s\n' "$1"; cat; } | node -e 'const a=require("fs").readFileSync(0,"utf8").replace(/\r/g,""); const i=a.indexOf("\n"); const e=(s)=>s.replace(/%/g,"%25").replace(/\n/g,"%0A"); let t=a.slice(i+1); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+e(a.slice(0,i)).replace(/:/g,"%3A").replace(/,/g,"%2C")+"::"+e(t))'
           }
           for f in build.log clippy.log; do
             [ -f "$f" ] || continue
@@ -158,12 +177,17 @@ jobs:
           for f in test.log clipboard.log; do
             [ -f "$f" ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' "$f" | annotate "$f"
           done
+          # 단계 한도로 멈춘 시험: 어느 binary(Running 줄)의 어느 시험이 끝나지 않았는지(libtest가 60초 넘으면 알린다)
+          for f in test.log clipboard.log; do
+            [ -f "$f" ] && grep -q 'has been running for over' "$f" && grep -E '^ +Running |has been running for over' "$f" | tail -20 | annotate "$f: 끝나지 않은 시험"
+          done
           # 실험실: 남겨진 host·agent 로그와 세션 폴더(session-host.log, exit.json, meta.json)
           for d in $(cat test.log clipboard.log 2>/dev/null | grep -o '실험실 기록을 남겼다: .*'  | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
             [ -d "$d" ] || d=$(cygpath -u "$d" 2>/dev/null)
             [ -d "$d" ] || continue
+            # annotation은 공개다: 세션 spec.json의 token 값은 가린다(일회용 러너 세션이라도 비밀값 모양을 남기지 않는다)
             find "$d" -type f \( -name '*.log' -o -name '*.json' \) | while read -r f; do
               echo "## ${f#"$d"/}"; tail -c 1500 "$f"; echo
-            done | annotate "$(basename "$d")"
+            done | sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1<가림>"/g' | annotate "$(basename "$d")"
           done
           true

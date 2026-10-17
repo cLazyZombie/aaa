@@ -15,14 +15,39 @@ use aaa_proto::AgentActivity;
 
 use crate::{FrontRef, Host, PaneEvent};
 
-/// 웹 화면들: 기기마다 쓰는 events 연결 수, 열린 pane 터미널 연결(front → 기기·pane)
+/// 웹 화면들: 기기마다 쓰는 events 연결 수, 열린 pane 터미널 연결(front → 기기·pane), 쓰는 기기
 #[derive(Default)]
 pub(crate) struct Viewing {
     active: HashMap<String, usize>,
     terms: HashMap<String, (String, String)>,
+    /// 사람이 마지막으로 누르거나 치거나 화면을 켠 기기(사용자 결정 10-18 「쓰는 기기」, plan §8.105).
+    /// 다른 기기가 그러면 바로 바뀐다. 가려지면 그대로 두되 쓰는 화면이 아니므로 push가 간다
+    user: Option<String>,
 }
 
 impl Viewing {
+    /// 쓰는 기기(앞 7자)
+    pub(crate) fn user(&self) -> Option<String> {
+        self.user.as_ref().map(|d| d.chars().take(7).collect())
+    }
+
+    /// 쓰는 기기가 지금 쓰는 화면(보이고 focus)이다: 그때만 Web Push를 건너뛴다
+    pub(crate) fn user_in_use(&self) -> bool {
+        self.user.as_deref().is_some_and(|d| self.device_active(d))
+    }
+
+    pub(crate) fn is_user(&self, dev: &str) -> bool {
+        self.user.as_deref() == Some(dev)
+    }
+
+    /// 지금 쓰는 화면이 있는 기기(앞 7자, 정렬). push를 보내지 않은 까닭을 흐름 사건에 남길 때 쓴다
+    pub(crate) fn devices_in_use(&self) -> Vec<String> {
+        let mut v: Vec<String> =
+            self.active.iter().filter(|(_, n)| **n > 0).map(|(d, _)| d.chars().take(7).collect()).collect();
+        v.sort();
+        v
+    }
+
     fn device_active(&self, dev: &str) -> bool {
         self.active.get(dev).is_some_and(|n| *n > 0)
     }
@@ -97,6 +122,14 @@ impl Host {
         self.mark_seen(&panes);
     }
 
+    /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다: 이 기기가 쓰는 기기다
+    pub(crate) fn touch_device(&self, dev: &str) {
+        let mut v = self.viewing.lock().unwrap();
+        if !v.is_user(dev) {
+            v.user = Some(dev.to_string());
+        }
+    }
+
     /// 웹 터미널 연결이 그 pane을 연다(`Some`)·닫는다(`None`)
     pub(crate) fn view_term(&self, front: &str, dev: &str, pane: Option<&str>) {
         let see = {
@@ -138,6 +171,24 @@ mod tests {
         assert!(!seen_after(Some(Idle), Idle, false, true));
         assert!(seen_after(Some(Started), Idle, true, false));
         assert!(seen_after(None, Idle, true, false));
+    }
+
+    #[test]
+    fn push_waits_only_for_the_device_last_touched() {
+        let mut v = Viewing::default();
+        v.active.insert("desk".into(), 1);
+        // 쓰는 화면이 있어도 아무도 만지지 않았으면 쓰는 기기가 없다
+        assert!(!v.user_in_use());
+        v.user = Some("desk".into());
+        assert!(v.user_in_use());
+        // 휴대폰에서 쳤다: 데스크톱이 보이고 focus여도 쓰는 기기는 휴대폰, 휴대폰이 가려지면 push가 간다
+        v.user = Some("phone".into());
+        assert!(!v.user_in_use());
+        v.active.insert("phone".into(), 1);
+        assert!(v.user_in_use());
+        v.active.remove("phone");
+        assert!(!v.user_in_use());
+        assert_eq!(v.user().as_deref(), Some("phone"));
     }
 
     #[test]

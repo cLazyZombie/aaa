@@ -137,15 +137,17 @@ impl Host {
     }
 
     /// `thread start --from-task`: owner를 profile·machine 기본값으로, 메모를 할 일에 붙인다
-    pub(crate) async fn apply_from_task(&self, a: &mut StartArgs, title: &str) -> Result<(), ErrorBody> {
+    /// 돌려주는 것은 경고 한 줄이다(이미 열린 thread가 맡은 task: 참고에는 그 거부가 없어 막지 않는다).
+    pub(crate) async fn apply_from_task(&self, a: &mut StartArgs, title: &str) -> Result<Option<String>, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
         let list = tasks::parse(&text);
         let t = tasks::find(&list, title).ok_or_else(|| bad(format!("TASKS.md에 없는 task: {title}")))?.clone();
+        let mut warning = None;
         if let Some(tid) = &t.thread
             && self.thread_show(&a.project, tid).is_ok_and(|r| r.status == ThreadStatus::Open)
         {
-            return Err(bad(format!("이미 {tid}가 이 task를 맡고 있다")));
+            warning = Some(format!("열린 {tid}가 이미 이 task를 맡고 있다. 그래도 시작했다"));
         }
         let all: Vec<String> = self.assignable().await.into_iter().flat_map(|o| o.profiles).collect();
         match Owner::parse(t.owner.as_deref(), &all) {
@@ -169,9 +171,6 @@ impl Host {
                 }
             }
         }
-        if a.profile.is_empty() {
-            return Err(bad("미할당 task다. --profile을 고른다"));
-        }
         if a.title.trim().is_empty() {
             a.title = t.title.clone();
         }
@@ -181,7 +180,7 @@ impl Host {
         if !t.notes.is_empty() {
             a.task = format!("{}\n\n## Notes from the task list\n\n{}\n", a.task.trim_end(), t.notes.join("\n"));
         }
-        Ok(())
+        Ok(warning)
     }
 
     /// coordinator용 요약. herdr-projects `context`처럼 처리 안 한 inbox 항목을 보이고, `peek`이 아니면 「봤다」로 표시한다
@@ -194,7 +193,7 @@ impl Host {
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);
         }
-        let inbox = self.inbox(project, false, peek)?;
+        let page = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
             project: project.to_string(),
             path: dir.display().to_string(),
@@ -202,8 +201,8 @@ impl Host {
             tasks,
             threads,
             assignable: self.assignable().await,
-            inbox_open: inbox.len() as u32,
-            inbox,
+            inbox_open: page.items.len() as u32 + page.omitted_open,
+            inbox: page.items,
             evaluator: self.evaluator_rec(project).map(|r| Box::new(self.evaluator_view(&r))),
         })
     }

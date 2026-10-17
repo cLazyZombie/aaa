@@ -1,0 +1,32 @@
+ ▐▛███▛█   Claude Code v2.1.302
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   /work/lab/work/demo/t-0001
+
+
+❯ .aaa/demo-t-0001/brief.md를 읽고 그대로 하라.
+
+  Read 1 file, ran 1 shell command
+
+⏺ Write(.aaa/demo-t-0001/report.md)
+  ⎿  Wrote 11 lines to .aaa/demo-t-0001/report.md
+      1 [완료]
+      2
+      3 ## Report
+      4
+      5 - 작업 지시(`brief.md`의 「할 일」)대로 셸 명령 `touch probe.txt`를 한 번 실행했다.
+      6 - 확인: `/work/lab/work/demo/t-0001/probe.txt`가 생성됐고(0 B, 소유자 user), `ls -l`로 존재
+        를 확인했다.
+      7 - 결과물 파일은 없어서 `library/`에는 넣지 않았다.
+      8
+      9 ## Next
+     … +2 lines
+
+⏺ done
+
+✻ Brewed for 8s · done 12:48 AM
+                                                  Advisor Tool (experimental) is on and may use more tokens · /advisor
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 medium | ctx 95% left | 7d 92% left (16h) · 5h 70% left (2h 31m) | t-0001
+  ⏸ manual mode on

@@ -4,7 +4,7 @@
 // - focus를 얻거나 다시 보이면, 또는 터미널을 누르거나 입력하면 이 화면이 지금 쓰는 화면이 되어 크기를 다시 건다.
 // - 탭이 가려지거나 대화 보기로 바꾸면 바로 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -37,6 +37,8 @@ import {
   getTerminalWheelSpeed,
   setTerminalFontSize,
   setTerminalInputMode,
+  shortcutOverrides,
+  terminalToggle,
   useKeyBarItems,
   useMedia,
   useTerminalFontFamily,
@@ -51,7 +53,11 @@ import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSt
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { isWebLink } from "./herdr/terminalFileLinks.ts";
+import { isAppShortcut } from "./herdr/shortcuts.ts";
+import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
+import type { PaneControls } from "./actions";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { ArrowDown } from "lucide-react";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -74,6 +80,8 @@ const SUBMIT_TIMEOUT_MS = 90_000;
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
 const inUse = () => document.visibilityState === "visible" && document.hasFocus();
+/** 「터미널의 aaa와 같이 쓰기」: 다른 창으로 옮기고 이만큼 뒤 보기만 한다(herdr-web-ui PaneTerminal `RELEASE_AFTER_MS`) */
+const RELEASE_AFTER_MS = 1000;
 
 /**
  * 붙여 넣기에서 올릴 파일들(herdr-web-ui PaneTerminal 1449~1458줄): 클립보드에 글이 있으면 글이다(xterm이 붙여 넣는다,
@@ -120,6 +128,7 @@ export function TermView({
   crumb,
   status,
   dock,
+  controls,
 }: {
   pane: PaneView;
   role: DeviceRole;
@@ -132,6 +141,8 @@ export function TermView({
   status?: ReactNode;
   /** 입력 위에 붙는 질문 카드 */
   dock?: ReactNode;
+  /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
+  controls?: MutableRefObject<PaneControls | null>;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -220,6 +231,16 @@ export function TermView({
   /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
   const [inputError, setInputError] = useState<string | null>(null);
   const ended = pane.state !== "running";
+  // 다른 창을 쓰는 동안 보기만 한다(설정 「터미널의 aaa와 같이 쓰기」, herdr-web-ui PaneTerminal 288~297·1725~1918줄 `released`).
+  // 크기를 놓고 이 화면은 PTY 크기 그대로 그린다. 이 탭을 누르거나 focus가 돌아오면 다시 입력하고 크기를 건다.
+  const releasedRef = useRef(false);
+  const [released, setReleasedState] = useState(false);
+  const setReleased = useCallback((next: boolean) => {
+    releasedRef.current = next;
+    setReleasedState(next);
+  }, []);
+  // 위로 굴려 맨 아래가 아니다: 「맨 아래로 이동」 단추(herdr-web-ui TerminalViewportTools `terminal-jump-bottom`)
+  const [scrolledUp, setScrolledUp] = useState(false);
   const canControlRef = useRef(canControl);
   canControlRef.current = canControl;
   const endedRef = useRef(ended);
@@ -429,15 +450,27 @@ export function TermView({
       if (viewport && viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 1 && buf.viewportY < buf.baseY) term.scrollToBottom();
     };
     viewport?.addEventListener("scroll", onViewportScroll);
+    // 맨 아래가 아닌 보통 화면이면 「맨 아래로 이동」을 보인다. 참고는 herdr 기록 위치(offset_from_bottom)를 묻고, aaa는 xterm 기록을 본다.
+    const markScrolled = () => {
+      const buf = term.buffer.active;
+      setScrolledUp(buf.type === "normal" && buf.viewportY < buf.baseY);
+    };
+    viewport?.addEventListener("scroll", markScrolled, { passive: true });
+    const scrolledSub = term.onScroll(markScrolled);
+    const bufferSub = term.buffer.onBufferChange(markScrolled);
     // 휠(herdr-web-ui PaneTerminal 665~694줄): 이 화면 것이 아닌 grid는 휠이 브라우저 몫이라 칸을 옮긴다. 휠은 선택을 지운다.
     // 참고는 보고가 꺼졌을 때 xterm을 막는다(herdr가 늘 보고를 켜 그럴 일이 없다). aaa는 herdr 서버가 휠을 나누는 것
     // (server/pane_input.rs 153~183줄: 보고면 프로그램에, alternate screen이면 화살표, 아니면 scrollback)과 같은 xterm 기본에 맡긴다.
-    // 끌어 고르는 중 휠(dragWheel)은 옮기지 않았다(차이 목록 J).
+    // 끌어 고르는 중 휠은 고르는 끌기 몫이다(dragWheel, 참고 883~893줄): 선택을 지우지 않고 기록을 굴린다(아래 onMouseDown 곁).
     // xterm은 휠 사건 하나에 delta와 상관없이 mouse 보고를 하나 보낸다: 휠 속도가 1보다 크면 진짜 휠을 그만큼 다시 보낸다
     // (참고 681~690줄). 다시 보낸 것과 터치에서 바꾼 휠은 isTrusted가 아니라 되풀이하지 않는다. 트랙패드 핀치(Ctrl 휠)도 한 번만.
     // 참고는 보고가 켜졌을 때만 되풀이하지만 거기서는 휠이 늘 herdr로 가는 보고라, 속도가 herdr의 기록 굴리기·화살표에도 든다.
     // aaa는 기록·화살표를 xterm이 맡으므로 보고가 아니어도 되풀이해 같은 결과를 낸다(plan §8.57).
     term.attachCustomWheelEventHandler((event) => {
+      if (drag) {
+        dragWheel(event);
+        return false;
+      }
       if (adoptedRef.current) return false;
       if (term.hasSelection()) term.clearSelection();
       if (event.isTrusted && event.target && !event.ctrlKey) {
@@ -546,10 +579,13 @@ export function TermView({
           : null;
       if (reporting) Object.defineProperty(event, isMac ? "altKey" : "shiftKey", { value: true });
       drag = { pane: pane.id, anchor: cellAt(event).cell, click };
+      dragWheelPixels = 0;
+      dragPointer = { clientX: event.clientX, clientY: event.clientY };
     };
     // window capture: xterm의 document 처리보다 먼저 본다
     const onMouseMove = (event: MouseEvent) => {
       const d = drag;
+      if (d) dragPointer = { clientX: event.clientX, clientY: event.clientY };
       if (!d || d.click === null) return;
       const { cell, edge } = cellAt(event);
       // 제 칸을 떠난 누름은 돌아와도 끌기다(옆으로 나가면 cellAt이 끝 열로 붙이므로 따로 본다)
@@ -569,6 +605,22 @@ export function TermView({
     const onWindowBlur = () => {
       drag = null;
     };
+    // 고르는 끌기 중 휠(herdr-web-ui PaneTerminal 883~893줄 `dragWheel`): 선택은 두고 xterm 기록을 줄 단위로 굴린 뒤, 마지막 마우스
+    // 자리로 끌기를 한 번 더 알려 선택 끝이 굴린 줄까지 따라오게 한다. 참고는 herdr 기록을 굴리고 다시 그린다(xterm scrollback 0).
+    // 마우스 보고 중에도 프로그램에 휠을 보내지 않는다(끌기는 고르기다). alternate screen은 기록이 없어 굴릴 것이 없다.
+    let dragWheelPixels = 0;
+    let dragPointer: { clientX: number; clientY: number } | null = null;
+    const dragWheel = (event: WheelEvent) => {
+      const lineHeight = cellHeight();
+      const { steps, rest } = wheelSteps(
+        dragWheelPixels + (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * lineHeight : event.deltaY),
+        lineHeight,
+      );
+      dragWheelPixels = rest;
+      if (steps === 0) return;
+      term.scrollLines(steps);
+      if (dragPointer) document.dispatchEvent(new MouseEvent("mousemove", { ...dragPointer, buttons: 1, bubbles: true }));
+    };
     // window bubble: xterm의 document 처리 뒤, 아직 놓는 동작 안이다(타이머를 쓰면 일부 브라우저가 클립보드 권한을 잃는다)
     const onMouseUp = (event: MouseEvent) => {
       const d = drag;
@@ -587,6 +639,9 @@ export function TermView({
     window.addEventListener("mouseup", onMouseUp);
     // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡기고, 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
     term.attachCustomKeyEventHandler((event) => {
+      // 앱 단축키는 앱 몫이다(PaneTerminal 621줄): 창의 capture 처리기(herdr/shortcuts.ts useShortcuts)는 브라우저 기본만 막으므로
+      // xterm이 그 키를 pane에 보내지 않게 먼저 거른다
+      if (isAppShortcut(event, shortcutOverrides())) return false;
       // 유지 키 + 하드웨어 키(PaneTerminal 620~651줄): 비라틴 자판 글자는 자판 위치로 읽는다(ㅊ on KeyC + Ctrl = Ctrl+C)
       const held = modifiersRef.current;
       if (
@@ -639,8 +694,10 @@ export function TermView({
       return true;
     });
     // OSC 52: pane 프로그램(vim·tmux·Claude Code)의 클립보드 쓰기. 질의는 답하지 않는다.
+    // 설정 「패널에서 클립보드로 복사」(기본 켬, PaneTerminal 1050~1063줄)를 끄면 받기만 하고 버린다: pane 안 아무 프로세스나
+    // (agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있다.
     const osc52 = term.parser.registerOscHandler(52, (payload) => {
-      const text = parseOsc52(payload);
+      const text = terminalToggle("paneClipboard") ? parseOsc52(payload) : null;
       if (text !== null)
         void navigator.clipboard?.writeText(text).then(
           () => !disposed && noteClipboard("클립보드에 복사했다"),
@@ -952,6 +1009,20 @@ export function TermView({
       if (outputStopped && stoppedHidden) reattach();
     };
     document.addEventListener("visibilitychange", onVisibility);
+    // 다시 보이거나 망이 돌아오면 backoff(최대 10초)를 기다리지 않고 바로 다시 붙는다(QA t-0337 Q5, herdr-web-ui ws.ts
+    // `onWake`·`wake()`: online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다.
+    // t3code client-runtime connection/supervisor.ts도 같다). 열린 연결·출력 정지(4008)는 그대로 둔다
+    const onWake = () => {
+      if (stopped || outputStopped || document.visibilityState !== "visible" || timer === undefined) return;
+      window.clearTimeout(timer);
+      timer = undefined;
+      delay = 500;
+      trace("wake");
+      connect();
+    };
+    window.addEventListener("online", onWake);
+    window.addEventListener("pageshow", onWake);
+    document.addEventListener("visibilitychange", onWake);
     // 앞 기록 받기(plan §8.67, 사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」). 붙을 때는 최근 기록만 오고
     // (`history_more`면 host에 더 있다), 위로 굴려 받은 기록 맨 위에서 한 화면 안에 들어오면 그 앞 덩어리를 받는다.
     // xterm은 버퍼 앞에 줄을 끼울 수 없으므로 「받은 덩어리 + 지금 버퍼(serialize)」로 다시 쓰고, 보던 줄 자리를 덩어리 줄 수만큼
@@ -1025,9 +1096,22 @@ export function TermView({
         all.set(body, data.length);
         term.write(all, () => {
           otherKeysRef.current = keys;
-          term.scrollToLine(top + lines);
-          // 덮개는 새 자리가 그려진 뒤에 걷는다. xterm은 다음 frame에 그리므로 여기서 걷으면 한 frame 동안 다시 쓰던 화면(빈 줄)이 보인다
+          const want = top + lines;
+          term.scrollToLine(want);
+          // 덮개는 새 버퍼를 그린 뒤에 뗀다. write 콜백은 읽기가 끝난 때이고, 줄은 다음 frame에 그린다(xterm RenderService
+          // RenderDebouncer → _renderRows → onRender). 그 전에 떼면 reset한 빈 화면이 한 frame 보인다(t-0327 측정: 25번 중 10번).
+          // 참고도 그린 뒤 시점을 onRender로 잡는다(herdr-web-ui TerminalViewportTools.tsx 216줄 `terminal.onRender(paintHits)`).
+          // 그 그림이 보던 줄 자리여야 한다: viewport 요소의 scroll 사건(xterm Viewport._handleScroll)이 그 사이 자리를 옮겼으면
+          // 다시 맞추고 다음 그림을 기다린다(버퍼 끝을 넘는 자리는 끝으로 본다). 붙잡은 출력은 그 뒤에 쓴다.
           const drawn = term.onRender(() => {
+            const b = term.buffer.active;
+            const at = Math.min(want, b.baseY);
+            // 보던 줄이 숫자가 아니면(xterm이 줄 높이를 재기 전 scroll로 NaN, patches/xterm-5.5.0-viewport.patch가 막는다)
+            // 다시 맞출 수 없다: 기다리지 않고 붙잡은 출력을 푼다(QA t-0337 Q1, plan §8.105)
+            if (Number.isFinite(b.viewportY) && b.viewportY !== at) {
+              term.scrollToLine(at);
+              return;
+            }
             drawn.dispose();
             cover?.remove();
             trace("history-applied", { lines, more });
@@ -1100,6 +1184,13 @@ export function TermView({
               // host 기록에서 받은 기록 맨 위를 찾지 못했다(크기가 바뀌어 줄이 달라졌거나 기록에서 빠짐): 더 받지 않는다
               historyWait = null;
               historyMore = false;
+              markHistory();
+              break;
+            }
+            if (msg.lines === 0) {
+              // 붙일 줄이 없다(host mirror 기록 끝에서 session host까지 물었는데 그 앞도 없다, plan §8.118): 버퍼를 다시 쓰지 않는다
+              historyWait = null;
+              historyMore = msg.more;
               markHistory();
               break;
             }
@@ -1180,7 +1271,11 @@ export function TermView({
           if (stoppedHidden && document.visibilityState === "visible") queueMicrotask(reattach);
           return;
         }
-        if (!stopped) timer = window.setTimeout(connect, delay);
+        if (!stopped)
+          timer = window.setTimeout(() => {
+            timer = undefined;
+            connect();
+          }, delay);
         delay = Math.min(delay * 2, 10_000);
       };
     };
@@ -1190,9 +1285,15 @@ export function TermView({
       stopped = true;
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onWake);
+      window.removeEventListener("pageshow", onWake);
+      document.removeEventListener("visibilitychange", onWake);
       wsRef.current?.close();
       el.removeEventListener("paste", onPaste, true);
       viewport?.removeEventListener("scroll", onViewportScroll);
+      viewport?.removeEventListener("scroll", markScrolled);
+      scrolledSub.dispose();
+      bufferSub.dispose();
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
       el.removeEventListener("pointerdown", onPointer);
@@ -1226,8 +1327,15 @@ export function TermView({
       renderSub.dispose();
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
-      term.dispose();
       termRef.current = null;
+      // 앞 기록을 붙이는 중에 붙잡은 출력은 버린다: 이 터미널에 더 쓰지 않는다
+      holding = null;
+      // xterm이 걸어 둔 frame·task가 돈 뒤에 치운다(PaneTerminal 1982줄 `disposeAfterPendingFrame`): snapshot의 RIS로 Viewport.reset이
+      // 다음 frame에 renderer 크기를 읽는데, 단축키로 pane을 잇달아 넘기면 그 frame 전에 내려가 TypeError가 났다.
+      // 받은 출력을 xterm이 다 읽은 뒤에 기다리기 시작한다: 참고는 같은 탭 안 pane 전환에서 터미널을 내리지 않지만(terminalDispose.ts
+      // 머리 설명) aaa는 pane을 넘길 때마다 내린다. 막 온 snapshot을 아직 읽지 않은 채(WriteBuffer task가 남음) 내려가면, 그 task가 기다림
+      // frame 뒤에 RIS를 읽어 reset frame이 치운 뒤에 돌았다(CI 6번 중 1번, t-0332 재현).
+      term.write("", () => disposeAfterPendingFrame(term));
     };
     // pane.id가 바뀔 때만 새로 붙는다. cols/rows는 snapshot이 알려 준다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1284,6 +1392,8 @@ export function TermView({
   const autoFit = useRef((_claim?: boolean) => {});
   autoFit.current = (claim = false) => {
     if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return;
+    // 보기만 하는 동안은 크기를 걸지 않는다(돌아올 때 back이 풀고 건다)
+    if (releasedRef.current) return;
     if (heldByOther && !claim) return;
     if (keyboardHolds()) return;
     const dims = fitRef.current?.proposeDimensions();
@@ -1331,22 +1441,56 @@ export function TermView({
   }, [terminalFontFamily, pane.id]);
   // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 가려지면 바로 크기를 놓는다(herdr-web-ui PaneTerminal 1831~1842줄
   // `keepSize(hidden)`: 숨은 문서는 서버 grid를 놓고 연결은 둔다). 보이는 채 focus만 잃으면 그대로 둔다.
-  // 참고의 「가려지면 1초 뒤 보기 전용으로」(`releasePaneAway`)는 기본 꺼짐 설정이라 옮기지 않았다(host에 watch가 없다).
+  // 설정 「터미널의 aaa와 같이 쓰기」(`releasePaneAway`, 기본 꺼짐)를 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고 보기만 한다
+  // (참고 `leave`·`release`). 참고는 attach를 떼고 보기 전용 구독(watch)으로 바꾼다. aaa는 한 연결이 출력을 계속 받고 크기만 놓으면
+  // 같은 일이 된다(크기는 host lease, 보기는 그 연결). 그래서 host에 새 구독을 두지 않았다.
+  // 돌아오면(focus, 이 화면 누르기·치기) 보기를 풀고 크기를 건다(참고 `back`·`reclaim`).
   const leaseMine = me !== null && lease?.front === me;
   const leaseMineRef = useRef(leaseMine);
   leaseMineRef.current = leaseMine;
+  const sectionRef = useRef<HTMLElement>(null);
+  const stackRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const back = () => autoFit.current(true);
-    const vis = () => {
-      if (document.visibilityState === "visible") return back();
+    let releaseTimer: number | undefined;
+    const cancelLeave = () => {
+      window.clearTimeout(releaseTimer);
+      releaseTimer = undefined;
+    };
+    const release = () => {
+      cancelLeave();
+      if (releasedRef.current || inUse() || endedRef.current || !canControlRef.current) return;
       if (leaseMineRef.current) send({ t: "release" });
+      setReleased(true);
+    };
+    const leave = () => {
+      if (inUse()) return;
+      if (document.visibilityState === "hidden" && leaseMineRef.current) send({ t: "release" });
+      if (terminalToggle("releasePaneAway") && releaseTimer === undefined && !releasedRef.current)
+        releaseTimer = window.setTimeout(release, RELEASE_AFTER_MS);
+    };
+    const back = () => {
+      cancelLeave();
+      if (releasedRef.current) setReleased(false);
+      autoFit.current(true);
+    };
+    const vis = () => (inUse() ? back() : leave());
+    // 누름은 창이 focus를 말하지 않아도 사용자가 여기 있다는 것이다(참고 onPointer): 보기만 하던 화면을 먼저 되찾는다
+    const onPointer = (event: PointerEvent) => {
+      if (releasedRef.current && sectionRef.current?.contains(event.target as Node)) back();
     };
     window.addEventListener("focus", back);
+    window.addEventListener("blur", leave);
+    window.addEventListener("pointerdown", onPointer, { capture: true });
     document.addEventListener("visibilitychange", vis);
     return () => {
+      cancelLeave();
+      setReleased(false);
       window.removeEventListener("focus", back);
+      window.removeEventListener("blur", leave);
+      window.removeEventListener("pointerdown", onPointer, { capture: true });
       document.removeEventListener("visibilitychange", vis);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id]);
   useEffect(() => {
     const el = box.current;
@@ -1496,9 +1640,80 @@ export function TermView({
   if (banner && held && ended) banner += " · 붙잡은 입력은 버렸다";
   else if (banner && held && draft.text.length > 0) banner += ` · 붙잡은 입력: “${draft.text}”`;
 
+  // 단축키가 시키는 일(PaneTerminal 2665~2692줄 `focusInput`·`scrollPage`·`sendApplicationPage`). 열린 창(설정 등)이 있으면 하지 않는다
+  useLayoutEffect(() => {
+    if (!controls) return;
+    const modalOpen = () => document.querySelector("[aria-modal='true'], dialog[open]") !== null;
+    const current: PaneControls = {
+      focusInput: () => {
+        if (modalOpen() || !canControl) return;
+        // 대화 보기에는 입력창이 없다(읽기 전용)
+        if (chatView && chatable) return;
+        const line = sectionRef.current?.querySelector<HTMLTextAreaElement>(".terminal-input-text");
+        if (line) line.focus({ preventScroll: true });
+        else if (!ended) termRef.current?.focus();
+      },
+      scrollPage: (direction) => {
+        if (modalOpen()) return;
+        if (chatView && chatable) {
+          // 한 화면에서 한 줄을 남기고(참고 pageScrollDistance, PAGE_OVERLAP_ROWS 1)
+          const chat = sectionRef.current?.querySelector<HTMLElement>(".chat");
+          if (!chat) return;
+          const line = parseFloat(getComputedStyle(chat).lineHeight) || 20;
+          chat.scrollBy({ top: direction * Math.max(1, chat.clientHeight - line) });
+          return;
+        }
+        const term = termRef.current;
+        if (!term) return;
+        const buf = term.buffer.active;
+        // 기록이 있으면 한 화면에서 한 줄을 남기고 굴린다
+        if (buf.type === "normal" && buf.baseY > 0) {
+          term.scrollLines(direction * Math.max(1, term.rows - 1));
+          return;
+        }
+        // 기록이 없으면(alternate screen 프로그램) 그 프로그램의 PageUp·PageDown. 지금 받을 수 있을 때만 보내고 미뤄 두지 않는다
+        if (!canControl || readonlyRef.current || endedRef.current || releasedRef.current || !draftIsEmpty(draftRef.current)) return;
+        if (composingTermRef.current || commitPendingRef.current) return;
+        input(direction < 0 ? "\x1b[5~" : "\x1b[6~");
+      },
+      toggleView: () => {
+        if (chatable) setChatView((v) => !v);
+      },
+    };
+    controls.current = current;
+    return () => {
+      if (controls.current === current) controls.current = null;
+    };
+  });
+
   const locked = readonly;
+  // 대화 보기는 grid가 없고 크기도 놓았다: 거기서는 띠가 흐름에 있다. 터미널에서는 터미널 위 오른쪽에 뜬다(참고 PaneTerminal.css
+  // .terminal-banners): 흐름에 넣으면 띠가 나고 들 때마다 칸이 줄었다 늘어 PTY 크기가 바뀐다(차이 목록 1장 G·§8.48 남은 것).
+  const flowNotices = chatView && chatable;
+  const notices = (
+    <>
+      {error && (
+        <div className="banner err" role="alert">
+          {error}
+        </div>
+      )}
+      {banner && (
+        <div className={`banner ${readonly ? "warn" : ""}`} role="status" data-testid="readonly-banner">
+          {banner}
+        </div>
+      )}
+      {attach && (
+        <div className={`banner ${attach.ok ? "" : "warn"}`} role="status" data-testid="attach-banner">
+          {attach.text}
+          <button type="button" className="ghost icon small" onClick={() => setAttach(null)} aria-label="닫기">
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
+    </>
+  );
   return (
-    <section className="term">
+    <section className="term" ref={sectionRef}>
       <header className="term-head">
         <button className="back ghost icon" onClick={onBack} aria-label="목록으로">
           <Icon name="back" />
@@ -1526,26 +1741,14 @@ export function TermView({
           </button>
         )}
       </header>
-      {banner && (
-        <div className={`banner ${readonly ? "warn" : ""}`} data-testid="readonly-banner">
-          {banner}
-        </div>
-      )}
-      {error && <div className="banner err">{error}</div>}
-      {attach && (
-        <div className={`banner ${attach.ok ? "" : "warn"}`} data-testid="attach-banner">
-          {attach.text}
-          <button type="button" className="ghost icon small" onClick={() => setAttach(null)} aria-label="닫기">
-            <Icon name="close" />
-          </button>
-        </div>
-      )}
+      {flowNotices && notices}
       {chatView && chatable && <ChatPanel pane={pane.id} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
-      {/* 띠(붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
-      <div className="term-stack" hidden={chatView && chatable}>
+      {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
+      <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
         <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""} data-adopted-grid={adopted ? "" : undefined}>
-          <div className="term-box" ref={box} data-testid="terminal" />
+          {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
+          <div className="term-box" ref={box} data-testid="terminal" data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
         </div>
         <div className="terminal-banners">
           {link === "stopped" && (
@@ -1554,6 +1757,13 @@ export function TermView({
               <button type="button" data-testid="output-reconnect" onClick={() => reattachRef.current()}>
                 다시 연결
               </button>
+            </div>
+          )}
+          {!flowNotices && notices}
+          {/* 참고 i18n.ko 「View only while you use another window · click to type」 */}
+          {released && (
+            <div className="banner observe" role="status" data-testid="released-banner">
+              다른 창을 쓰는 동안 보기 전용 · 클릭하면 입력
             </div>
           )}
           {!banner && held && !ended && (
@@ -1588,6 +1798,10 @@ export function TermView({
             </div>
           )}
         </div>
+        {/* 위로 굴린 동안 grid 오른쪽 아래(칸이 보이는 끝)에 뜬다. 누름이 focus를 가져가지 않는다(참고 TerminalViewportTools 244~247줄) */}
+        {scrolledUp && !chatView && (
+          <JumpToBottom stack={stackRef} onJump={() => termRef.current?.scrollToBottom()} />
+        )}
       </div>
       <span ref={pinchBadgeRef} className="pinch-badge" data-testid="pinch-badge" aria-live="polite" hidden />
       {dock}
@@ -1640,5 +1854,53 @@ export function TermView({
         />
       )}
     </section>
+  );
+}
+
+/**
+ * 「맨 아래로 이동」 단추(herdr-web-ui TerminalViewportTools 64~82·244~247줄 `paintBox`·`terminal-jump-bottom`). grid 오른쪽 아래에 두되
+ * 칸이 보이는 끝까지만이다: 이 화면 것이 아닌 grid(보기 권한, 다른 화면이 정한 크기)는 칸보다 커서 칸 안에서 굴러간다.
+ * 자리는 칸 크기가 바뀌거나 칸이 굴러갈 때만 다시 잰다(그린 frame마다가 아니다).
+ */
+function JumpToBottom({ stack, onJump }: { stack: RefObject<HTMLDivElement | null>; onJump: () => void }) {
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    const outer = stack.current;
+    const mount = outer?.querySelector<HTMLElement>(".term-scroll");
+    const screen = outer?.querySelector<HTMLElement>(".xterm-screen");
+    if (!outer || !mount || !screen) return;
+    const paint = () => {
+      const rect = screen.getBoundingClientRect();
+      const box = outer.getBoundingClientRect();
+      const view = mount.getBoundingClientRect();
+      const right = Math.min(rect.right, box.right, view.left + mount.clientLeft + mount.clientWidth);
+      const bottom = Math.min(rect.bottom, box.bottom, view.top + mount.clientTop + mount.clientHeight);
+      const next = { x: right - box.left, y: bottom - box.top };
+      setAnchor((old) => (old && old.x === next.x && old.y === next.y ? old : next));
+    };
+    paint();
+    const observer = new ResizeObserver(paint);
+    observer.observe(outer);
+    observer.observe(screen);
+    mount.addEventListener("scroll", paint, { passive: true });
+    return () => {
+      observer.disconnect();
+      mount.removeEventListener("scroll", paint);
+    };
+  }, [stack]);
+  if (!anchor) return null;
+  return (
+    <button
+      type="button"
+      className="terminal-jump-bottom"
+      data-testid="jump-bottom"
+      aria-label="맨 아래로 이동"
+      title="맨 아래로 이동"
+      style={{ left: anchor.x, top: anchor.y }}
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={onJump}
+    >
+      <ArrowDown aria-hidden="true" />
+    </button>
   );
 }

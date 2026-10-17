@@ -189,11 +189,10 @@ pub(crate) fn check_keys(p256dh: &str, auth: &str) -> Result<(), String> {
 /// 알림 내용. 한 thread 항목만이면 제목은 「프로젝트 · thread 제목」(`title`이 비면 thread ID), 자리(tag)는 그 thread,
 /// 누르면 그 thread 보기로 연다. 아니면 「aaa · 프로젝트」와 프로젝트 자리다.
 pub(crate) fn payload(project: &str, items: &[InboxItem], title: Option<&str>) -> serde_json::Value {
-    let thread_kinds = ["report", "question", "delivery", "thread", "session"];
     let one = items
         .first()
         .map(|i| i.subject.as_str())
-        .filter(|s| items.iter().all(|i| i.subject == *s && thread_kinds.contains(&i.item_kind.as_str())));
+        .filter(|s| items.iter().all(|i| i.subject == *s && i.item_kind == "thread-state"));
     let (url, head, tag) = match one {
         Some(t) => (
             format!("/#thread={}", url_escape(&format!("{project}/{t}"))),
@@ -239,16 +238,18 @@ pub(crate) enum Sent {
     Failed(String),
 }
 
+/// VAPID `sub` 기본값(설정 `notify.push_subject`가 비었을 때)
+const DEFAULT_PUSH_SUBJECT: &str = "https://github.com/cLazyZombie/aaa";
+
 impl Host {
     fn push_subject(&self) -> String {
         let s = &self.cfg.notify.push_subject;
         if !s.is_empty() {
             return s.clone();
         }
-        match self.db.meta("publish_dns").ok().flatten() {
-            Some(dns) => format!("https://{dns}"),
-            None => "mailto:aaa@example.com".into(),
-        }
+        // 공개 주소(tailnet 이름)는 push 사업자에게 보내지 않는다(보안 감사 t-0340 B11). 참고 herdr-web-ui server/push.ts
+        // `DEFAULT_SUBJECT`처럼 프로젝트 저장소 주소를 쓴다
+        DEFAULT_PUSH_SUBJECT.into()
     }
 
     /// 구독 하나에 보낸다
@@ -288,13 +289,25 @@ impl Host {
         if self.vapid.is_none() {
             return;
         }
-        let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
-        if watching > 0 {
+        // 쓰는 기기(마지막으로 누르거나 치거나 화면을 켠 기기)가 지금 보이고 focus면 그 화면이 이미 바뀐 것을 보인다:
+        // 어느 기기에도 보내지 않는다. 다른 기기 창이 떠 있는 것은 까닭이 아니다(사용자 결정 10-18, plan §8.105.
+        // 참고 herdr-web-ui server/index.ts 1117줄 `inUse: () => present.size > 0`는 쓰는 화면이 하나라도 있으면 건너뛴다).
+        // 모으는 기다림(debounce) 뒤 보내기 직전에 본다
+        let skip = {
+            let v = self.viewing.lock().unwrap();
+            v.user_in_use().then(|| (v.user().unwrap_or_default(), v.devices_in_use()))
+        };
+        if let Some((user, devices)) = skip {
+            let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
             self.flow_project(
                 project,
                 "push_skipped",
                 None,
-                format!("쓰는 화면 {watching}개 · 항목 {}개", items.len()),
+                format!(
+                    "쓰는 기기 {user} · 쓰는 화면 {watching}개(기기 {}) · 항목 {}개",
+                    devices.join(", "),
+                    items.len()
+                ),
             );
             return;
         }
@@ -306,15 +319,21 @@ impl Host {
                 return;
             }
         };
-        // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
-        let title = items
-            .first()
-            .filter(|f| items.iter().all(|i| i.subject == f.subject))
-            .and_then(|f| self.load(project, &f.subject).ok())
-            .map(|r| r.title);
-        let body = payload(project, items, title.as_deref()).to_string();
-        let (mut ok, mut gone, mut failed) = (0, 0, Vec::new());
+        let (mut ok, mut gone, mut failed, mut chose_not) = (0, 0, Vec::new(), 0);
         for s in &subs {
+            // 이 기기가 고른 종류만(차이 목록 N3, 참고 notify-policy.ts `alertsAllow`)
+            let mine = for_device(s.alerts.unwrap_or_default(), items);
+            if mine.is_empty() {
+                chose_not += 1;
+                continue;
+            }
+            // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
+            let title = mine
+                .first()
+                .filter(|f| mine.iter().all(|i| i.subject == f.subject))
+                .and_then(|f| self.load(project, &f.subject).ok())
+                .map(|r| r.title);
+            let body = payload(project, &mine, title.as_deref()).to_string();
             match self.push_one(s, body.as_bytes()).await {
                 Sent::Ok => ok += 1,
                 Sent::Gone => gone += 1,
@@ -323,6 +342,14 @@ impl Host {
         }
         if ok > 0 {
             self.flow_project(project, "push_sent", None, format!("기기 {ok}개 · 항목 {}개", items.len()));
+        }
+        if chose_not > 0 {
+            self.flow_project(
+                project,
+                "push_unwanted",
+                None,
+                format!("기기 {chose_not}개가 고른 알림 종류가 아니다 · 항목 {}개", items.len()),
+            );
         }
         if gone > 0 {
             self.flow_project(project, "push_gone", None, format!("버려진 구독 {gone}개를 지웠다"));
@@ -334,9 +361,44 @@ impl Host {
     }
 }
 
+/// 기기가 고른 알림 종류(N3)에 드는 항목. thread 항목만 가른다: 새 보고는 「작업 완료」, 나머지(질문·확인창·기다림·시작 실패)는
+/// 「입력 필요」. PR·머신·routine 같은 다른 종류는 host 설정(`notify.kinds`)대로 모든 기기에 간다(참고에 없는 aaa 항목)
+pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
+    items
+        .iter()
+        .filter(|i| i.item_kind != "thread-state" || if i.event == "new report" { a.done } else { a.input })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_alert_kinds() {
+        let it = |kind: &str, event: &str| InboxItem {
+            id: event.into(),
+            project: "demo".into(),
+            item_kind: kind.into(),
+            subject: "t-0001".into(),
+            event: event.into(),
+            summary: String::new(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let items =
+            [it("thread-state", "new report"), it("thread-state", "blocked on a prompt"), it("pr", "PR merged")];
+        let ids = |a| for_device(a, &items).into_iter().map(|i| i.id).collect::<Vec<_>>();
+        use crate::db::Alerts;
+        assert_eq!(ids(Alerts::default()).len(), 3);
+        assert_eq!(ids(Alerts { input: false, done: true }), ["new report", "PR merged"]);
+        assert_eq!(ids(Alerts { input: true, done: false }), ["blocked on a prompt", "PR merged"]);
+        assert_eq!(ids(Alerts { input: false, done: false }), ["PR merged"]);
+    }
 
     fn hosts() -> Vec<String> {
         aaa_config::NotifySection::default().push_hosts
@@ -431,7 +493,7 @@ mod tests {
             project: "demo".into(),
             item_kind: kind.into(),
             subject: subject.into(),
-            event: "question".into(),
+            event: "blocked on a prompt".into(),
             summary: "확인창".into(),
             body: String::new(),
             done: false,
@@ -440,21 +502,23 @@ mod tests {
             done_at_ms: None,
         };
         // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread
-        let p = payload("demo", &[item("t-0001", "question"), item("t-0001", "report")], Some("웹 결과물"));
+        let p = payload("demo", &[item("t-0001", "thread-state"), item("t-0001", "thread-state")], Some("웹 결과물"));
         assert_eq!(p["url"], "/#thread=demo%2Ft-0001");
         assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("demo · 웹 결과물"), Some("aaa-demo/t-0001")));
         // 제목이 없거나 비면 thread ID
-        assert_eq!(payload("demo", &[item("t-0001", "report")], Some("  "))["title"], "demo · t-0001");
-        assert_eq!(payload("demo", &[item("t-0001", "report")], None)["title"], "demo · t-0001");
+        assert_eq!(payload("demo", &[item("t-0001", "thread-state")], Some("  "))["title"], "demo · t-0001");
+        assert_eq!(payload("demo", &[item("t-0001", "thread-state")], None)["title"], "demo · t-0001");
+        // 머신 항목(세션 끝남)은 thread 자리가 아니다
+        assert_eq!(payload("demo", &[item("mac-b", "session")], None)["title"], "aaa · demo");
         // 섞이면 프로젝트 한 자리
-        let p = payload("demo", &[item("t-0001", "question"), item("mac-b", "outage")], Some("웹 결과물"));
+        let p = payload("demo", &[item("t-0001", "thread-state"), item("mac-b", "outage")], Some("웹 결과물"));
         assert_eq!(
             (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str()),
             (Some("/"), Some("aaa · demo"), Some("aaa-demo"))
         );
-        let p = payload("demo", &[item("t-0001", "report"), item("t-0002", "report")], None);
+        let p = payload("demo", &[item("t-0001", "thread-state"), item("t-0002", "thread-state")], None);
         assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("aaa · demo"), Some("aaa-demo")));
-        let many: Vec<_> = (0..200).map(|n| item(&format!("t-{n:04}"), "report")).collect();
+        let many: Vec<_> = (0..200).map(|n| item(&format!("t-{n:04}"), "thread-state")).collect();
         assert!(payload("demo", &many, None)["body"].as_str().unwrap().len() <= BODY_CAP + 3);
     }
 }

@@ -102,7 +102,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 1. aaa에서 새 thread를 더 시작하지 않는다. 켠 aaa routine을 끈다(`enabled = false`).
 2. aaa에서 생긴 일을 0.2 coordinator가 읽을 수 있게 내보낸다. aaa 프로젝트 폴더는 0.2와 같은 Markdown이다.
    - `aaa thread list <p> --json > <밖의 폴더>/rollback/threads.json`
-   - 보고: `~/.aaa/projects/<p>/threads/<id>.md`, 결과물: `library/<id>/`, inbox 투영: `inbox/*.md`(0.2.35와 같은 `+++` 형식), 결정: `decisions.md`
+   - 보고: `~/.aaa/projects/<p>/threads/<id>.md`, 결과물: `library/<id>/`, inbox 투영: `inbox/*.md`(0.2.35와 같은 `+++` 형식)
    - 0.2 coordinator brief에 위 경로를 적어 준다(0.2 폴더에 복사하지 않는다. 쓰기를 늘리지 않는다).
 3. aaa에서 열린 thread는 둘 중 하나로 한다.
    - aaa에서 끝까지 맡긴다(aaa agent·session host는 host와 따로 산다).
