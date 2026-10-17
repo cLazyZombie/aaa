@@ -383,10 +383,13 @@ mod tests {
         };
         #[cfg(windows)]
         let cmd = {
-            // cmd가 cd한 뒤 표지를 쓰고 줄을 기다린다
+            // cmd가 cd한 뒤 표지를 쓰고 줄을 기다린다. 경로는 환경 변수로 넘기고 따옴표를 쓰지 않는다: portable-pty는
+            // 공백·따옴표가 든 인자를 `"…"`로 감싸며 안의 `"`를 `\"`로 바꾸는데(CommandLineToArgvW 규칙), cmd.exe는 `\"`를
+            // 모른다(CI ccbabcb: 「The filename, directory name, or volume label syntax is incorrect.」). cmd의 cd는 공백을
+            // 구분자로 보지 않는다. `&&` 앞에 공백을 두지 않아 경로 끝에 공백이 붙지 않게 한다.
             let mut c = portable_pty::CommandBuilder::new("cmd");
-            c.args(["/d", "/q", "/c"]);
-            c.arg(format!("cd /d \"{}\" && echo ready&& set /p _=", deep.display()));
+            c.args(["/d", "/q", "/c", "cd /d %AAA_CWD_TEST%&& echo ready&& set /p _="]);
+            c.env("AAA_CWD_TEST", &deep);
             c
         };
         let mut child = pair.slave.spawn_command(cmd).unwrap();
