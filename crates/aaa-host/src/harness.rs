@@ -210,7 +210,7 @@ impl Host {
             tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
             ev.harness_session = None;
         }
-        let (activity, answered_block) = {
+        let (activity, answered_block, running) = {
             let mut i = self.inner.lock().unwrap();
             let Some(p) = i.panes.get_mut(&ev.session) else {
                 // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
@@ -279,7 +279,7 @@ impl Host {
             }
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
-            (next, answered_block)
+            (next, answered_block, p.info.state.is_running())
         };
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
@@ -317,8 +317,11 @@ impl Host {
         // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
         // 때만 알리므로, 한 막힘에 질문은 하나다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음
         // 확인창은 새 막힘이다(t-0333 m13 사건 16, plan §8.99·§8.110)
+        // 끝난 세션(재부팅으로 끊김·종료)에는 질문을 열지 않는다: 다시 붙은 agent가 알리는 세션별 마지막 상태
+        // (`hello.harness`, 재부팅 복원이 harness 세션 ID를 알려고)가 확인창이면 그 pane 질문을 닫은 뒤 다시 열었다
+        // (QA t-0337 Q20). 참고 herdr-web-ui는 살아 있는 blocked pane 화면에서만 질문을 읽는다(`server/prompt.ts`).
         match activity {
-            Some(AgentActivity::Question) if answered_block => {}
+            Some(AgentActivity::Question) if answered_block || !running => {}
             Some(AgentActivity::Question) => {
                 let kind = ev.question_kind.clone().unwrap_or_else(|| "permission".into());
                 self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());

@@ -194,6 +194,8 @@ echo "fake-claude $*"
 sid=$FAKE_SID
 case "$1" in --resume|--session-id) sid=$2 ;; esac
 [ -n "$sid" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$sid\",\"source\":\"startup\"}"
+# `--ask`: 확인창을 띄운 채 기다린다(화면 감지가 질문으로 본다)
+[ "$3" = --ask ] && printf '%s\n' ' Bash command' '' '   make test' '' ' Do you want to proceed?' ' \342\235\257 1. Yes' '   2. No' '' ' Esc to cancel'
 exec cat
 "#;
 
@@ -313,6 +315,30 @@ fn reboot_restores_shells_and_resumes_agents() {
     let nd = p["id"].as_str().unwrap().to_string();
     h.wait_output(&nd, "job-ran-9", T);
     hw.wait("재개 자리", |w| (w.leaves().get(3) == Some(&nd)).then_some(()));
+}
+
+/// QA t-0337 Q20: 확인창을 띄운 채 재부팅으로 끊긴 Claude pane. 다시 붙은 agent가 그 세션의 마지막 상태(질문)를
+/// 알려도(`hello.harness`) 끊긴 pane에 질문을 다시 열지 않는다(전에는 닫은 뒤 옛 pane ID로 다시 열려 복원 뒤에도 남았다).
+/// 질문은 agent가 다시 붙는 처리 안에서 열렸으므로, 복원한 pane이 보이면 이미 열렸을 때다.
+#[test]
+fn reboot_does_not_reopen_the_question_of_an_interrupted_pane() {
+    let mut lab = Lab::new();
+    let (claude, env) = fake_claude_env(&lab);
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", SID_C, "--ask"], None);
+    let asks = |pane: &str| -> Vec<serde_json::Value> {
+        let v = h.ok(&["question", "list"]);
+        v["questions"].as_array().unwrap().iter().filter(|q| q["pane"] == pane).cloned().collect()
+    };
+    hw.wait("harness 세션 ID", |w| has_session(w, &c).then_some(()));
+    wait_for("확인창 질문", T, || (!asks(&c).is_empty()).then_some(()));
+    reboot(&mut lab, &h, &env, 1);
+    let n = hw.wait("복원", |w| {
+        let l = w.leaves();
+        (l.len() == 1 && l[0] != c && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then(|| l[0].clone())
+    });
+    h.wait_output(&n, &format!("fake-claude --resume {SID_C}"), T);
+    assert_eq!(asks(&c), Vec::<serde_json::Value>::new(), "끊긴 pane의 질문이 다시 열렸다");
 }
 
 /// 보안 감사 t-0340: hook이 알린 harness 세션 ID는 UUID 꼴만 받는다(`aaa_common::util::harness_session_ok`). 셸 pane의
