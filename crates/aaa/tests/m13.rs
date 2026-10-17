@@ -680,7 +680,8 @@ fn question_gone(ev: &mut Events, id: &str) {
 
 /// 끝나거나 닫힌 pane의 질문은 닫힌다(QA t-0337 Q4: 빈 화면이 「답을 기다리는 질문」을 세고, 답하면 「pane이 없다」).
 /// 질문은 brief 보내기가 확인창을 보고 열었다(custom harness라 harness 사건으로는 닫히지 않는다). 세션이 끝나면 host가
-/// 닫는다: host가 떠 있으면 그때, host·agent가 내려가 있었으면 agent가 다시 붙어 세션을 알릴 때. 참고 herdr-web-ui는
+/// 닫는다: host가 떠 있으면 그때, host·agent가 내려가 있었으면 agent가 다시 붙어 세션을 알릴 때(살아 있는 pane의 질문은
+/// 그대로). 참고 herdr-web-ui는
 /// 살아 있는 pane 화면에서만 질문을 읽어 닫힌 pane에는 질문이 없다(`server/prompt.ts`·`collector.ts`).
 #[test]
 fn questions_of_ended_panes_are_closed() {
@@ -698,7 +699,10 @@ fn questions_of_ended_panes_are_closed() {
     let e = w.h.json(&["question", "answer", &qa.id, "yes"]).expect_err("닫힌 질문");
     assert!(e.contains("이미 닫힌"), "{e}");
 
-    // 2) host·agent가 내려가 있는 동안 세션이 끝난다(운영 업그레이드 중처럼)
+    // 2) host·agent가 내려가 있는 동안 세션이 끝난다(운영 업그레이드 중처럼). 그동안 살아 있던 pane(c)의 질문은 남는다.
+    //    c의 질문을 먼저 만든다: 다시 붙을 때 질문을 만든 차례로 보므로, 모두 닫는 결함이면 qb보다 먼저 닫힌다
+    let (c, _) = start(&w, "ask-c");
+    let qc = open_question(&mut ev, &c, "trust", &[]);
     let (b, _) = start(&w, "ask-b");
     let qb = open_question(&mut ev, &b, "trust", &[]);
     let cwd = PathBuf::from(w.show(&b)["cwd"].as_str().unwrap());
@@ -712,7 +716,7 @@ fn questions_of_ended_panes_are_closed() {
     w.lab.spawn("agentA2", &w.h, &["agent", "--host", "local", "--name", "labA"]);
     question_gone(&mut ev, &qb.id);
     let open: Vec<String> = w.questions(false).iter().map(|q| q["id"].as_str().unwrap().to_string()).collect();
-    assert!(open.is_empty(), "열린 질문이 남았다: {open:?}");
+    assert_eq!(open, std::slice::from_ref(&qc.id), "살아 있는 pane의 질문만 남아야 한다");
 }
 
 /// 가짜 Claude의 지금 턴을 마친다(BEL)
