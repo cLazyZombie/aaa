@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+pub mod watch;
+
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -222,6 +224,13 @@ impl Lab {
     }
 
     /// 띄운 프로세스 하나를 SIGKILL로 끝낸다(갑작스러운 죽음을 흉내 낸다).
+    /// 이 실험실이 띄운 프로세스에 신호를 보낸다(SIGSTOP·SIGCONT로 응답을 붙잡는 시험)
+    #[cfg(unix)]
+    pub fn signal(&self, tag: &str, sig: i32) {
+        let (_, c) = self.procs.iter().find(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
+        assert_eq!(unsafe { libc::kill(c.id() as i32, sig) }, 0, "{tag}에 신호 {sig}");
+    }
+
     pub fn kill(&mut self, tag: &str) {
         let i = self.procs.iter().position(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
         let (_, mut c) = self.procs.remove(i);

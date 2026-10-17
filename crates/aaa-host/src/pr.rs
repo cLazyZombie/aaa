@@ -267,6 +267,14 @@ fn label(r: &ThreadRec) -> String {
     format!("{} \"{}\"", r.id, r.title)
 }
 
+/// 따로 도는 task로 돌려 끝까지 갔는지(panic이면 false). 부른 쪽은 결과와 상관없이 뒷정리를 한다.
+async fn survives<F>(fut: F) -> bool
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(fut).await.is_ok()
+}
+
 impl Host {
     fn pr_every(&self) -> Duration {
         Duration::from_secs(self.cfg.projects.pr_poll_secs.max(1))
@@ -285,7 +293,13 @@ impl Host {
         let me = self.clone();
         let project = project.to_string();
         tokio::spawn(async move {
-            me.pr_pass(&project).await;
+            // 한 번이 panic해도 「도는 중」 표시를 지워 다음 간격에 다시 본다(전에는 그 프로젝트 PR 추적이 멈췄다,
+            // 보안 감사 t-0340)
+            let inner = me.clone();
+            let p = project.clone();
+            if !survives(async move { inner.pr_pass(&p).await }).await {
+                tracing::error!(project = %project, "PR 추적 한 번이 panic했다. 다음 간격에 다시 본다");
+            }
             let mut m = me.pr.lock().unwrap();
             m.running.remove(&project);
             m.last.insert(project, Instant::now());
@@ -305,7 +319,7 @@ impl Host {
         self.tick_wake.notify_one();
     }
 
-    fn machine_feature(&self, mid: &str, feature: &str) -> bool {
+    pub(crate) fn machine_feature(&self, mid: &str, feature: &str) -> bool {
         self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == feature))
     }
 
@@ -505,6 +519,13 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PR 추적 한 번이 panic해도 뒷정리(「도는 중」 지우기)가 돈다(보안 감사 t-0340)
+    #[tokio::test]
+    async fn a_panicking_pass_still_lets_the_caller_clean_up() {
+        assert!(survives(async {}).await);
+        assert!(!survives(async { panic!("gh 응답이 이상했다") }).await);
+    }
 
     #[test]
     fn pr_line_validation() {

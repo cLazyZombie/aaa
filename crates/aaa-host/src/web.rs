@@ -790,7 +790,7 @@ async fn pane_session(
     }
     let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()) else { return };
     let mut rx = attach.rx;
-    if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) {
+    if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) {
         return;
     }
     // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
@@ -850,7 +850,7 @@ async fn pane_session(
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
                     Ok(PaneEvent::State) => {
                         let Some(view) = host.pane_view_of(&id, role) else { break };
-                        if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: view }) { break; }
+                        if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) { break; }
                         false
                     }
                     Err(RecvError::Closed) => break,
