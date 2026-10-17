@@ -647,7 +647,9 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let id = v["id"].as_str().unwrap().to_string();
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
     let pane = v["pane"].as_str().unwrap().to_string();
-    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    // fake agent는 안내 줄을 받자마자 보고하므로, host가 전달을 확인해 brief_delivered를 남기는 것이 보고보다 늦을 수 있다.
+    // 둘 다 본 뒤 resolve해야 마지막 사건이 thread_resolved다(부하 아래 brief_delivered가 resolve 뒤에 남아 실패했다)
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     let v = w.h.ok(&["thread", "resolve", "demo", &id]);
     assert_eq!(v["status"], "resolved");
     assert!(cwd.join("dirty.txt").exists(), "고친 worktree는 남아야 한다");
@@ -660,20 +662,22 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     wait_for("남긴 worktree의 세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
 
     let listed = |p: &str| w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|x| x["id"] == p);
+    // 끝낸 항목은 그 thread의 thread_resolved 사건에서 읽는다(늦게 남는 brief_delivered가 마지막 사건일 수 있다, 위)
     let resolved_with = |id: &str, flags: &[&str]| {
         let mut a = vec!["thread", "resolve", "demo", id];
         a.extend_from_slice(flags);
         w.h.ok(&a);
-        w.h.ok(&["events", "demo"])["events"].as_array().unwrap().last().unwrap()["detail"]
-            .as_str()
-            .unwrap()
-            .to_string()
+        let ev = w.h.ok(&["events", "demo"]);
+        let found =
+            ev["events"].as_array().unwrap().iter().rev().find(|e| e["kind"] == "thread_resolved" && e["thread"] == id);
+        found.unwrap_or_else(|| panic!("{id} thread_resolved가 없다: {ev}"))["detail"].as_str().unwrap().to_string()
     };
+    let ready = |id: &str| w.wait_show("보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     let resolved = |id: &str| resolved_with(id, &[]);
     // 작업 폴더 thread는 늘 닫는다
     let d = w.start(&["--title", "dir", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("d.txt", "x")]);
     let (did, dpane) = (d["id"].as_str().unwrap().to_string(), d["pane"].as_str().unwrap().to_string());
-    w.wait_show("보고", &did, |v| v["report_hash"].is_string());
+    ready(&did);
     let detail = resolved(&did);
     assert!(detail.contains("pane을 닫았다"), "{detail}");
     assert!(!listed(&dpane), "작업 폴더 thread의 pane이 남았다");
@@ -690,7 +694,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     ]);
     let (gid, gpane) = (g["id"].as_str().unwrap().to_string(), g["pane"].as_str().unwrap().to_string());
     let gcwd = PathBuf::from(g["cwd"].as_str().unwrap());
-    w.wait_show("보고", &gid, |v| v["report_hash"].is_string());
+    ready(&gid);
     std::fs::remove_dir_all(&gcwd).unwrap();
     let detail = resolved(&gid);
     assert!(detail.contains("worktree 삭제") && detail.contains("worktree는 이미 없다"), "{detail}");
@@ -712,7 +716,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
             &w.task(&format!("{title}.txt"), "link"),
         ]);
         let id = v["id"].as_str().unwrap().to_string();
-        assert_eq!(w.wait_show("보고", &id, |v| v["report_hash"].is_string())["copy"], "partial");
+        assert_eq!(ready(&id)["copy"], "partial");
         (id, v["pane"].as_str().unwrap().to_string(), PathBuf::from(v["work_dir"].as_str().unwrap()))
     };
     let (pid, ppane, pwork) = partial("part");
@@ -739,7 +743,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     ]);
     let sid = s["id"].as_str().unwrap().to_string();
     let swork = PathBuf::from(s["work_dir"].as_str().unwrap());
-    w.wait_show("보고", &sid, |v| v["report_hash"].is_string());
+    ready(&sid);
     let e = w.h.json(&["thread", "resolve", "demo", &sid, "--reopen", "--skip-copy"]).expect_err("reopen과 skip-copy");
     assert!(e.contains("cannot be used with"), "{e}");
     let detail = resolved_with(&sid, &["--skip-copy"]);

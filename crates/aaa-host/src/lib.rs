@@ -36,7 +36,7 @@ mod trust_screen;
 pub mod usage;
 pub mod web;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -215,15 +215,40 @@ struct PendingCode {
 #[derive(Default)]
 struct Pairing {
     pending: Option<PendingCode>,
-    /// 연속으로 틀린 수(코드와 상관없이). 5번부터 점점 길게 잠근다(§6.4)
-    failures: u32,
-    locked_until: Option<Instant>,
+    /// 코드와 상관없이 틀린 때, `PAIR_FAIL_WINDOW` 안의 것만(§6.4). 창이 지나면 저절로 줄어든다
+    failures: VecDeque<Instant>,
+}
+
+impl Pairing {
+    fn forget_old(&mut self, now: Instant) {
+        while self.failures.front().is_some_and(|t| now.saturating_duration_since(*t) >= PAIR_FAIL_WINDOW) {
+            self.failures.pop_front();
+        }
+    }
+
+    /// 다음 시도를 받을 때. 창 안에서 `PAIR_FAIL_BUDGET`번까지는 기다리지 않고, 그 뒤로는 마지막 실패부터
+    /// 1초·2초·4초… 60초까지(herdr-web-ui `recordAuthFailure`)
+    fn open_at(&self) -> Option<Instant> {
+        let n = self.failures.len();
+        if n < PAIR_FAIL_BUDGET {
+            return None;
+        }
+        let wait = PAIR_BACKOFF.saturating_mul(1u32 << (n - PAIR_FAIL_BUDGET).min(16)).min(PAIR_BACKOFF_MAX);
+        self.failures.back().map(|t| *t + wait)
+    }
 }
 
 /// pairing 코드 수명(herdr-web-ui `CODE_TTL_MS` 10분)
 pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
 /// 코드 하나로 틀릴 수 있는 수(참고 `CODE_ATTEMPTS`)
 const PAIR_CODE_ATTEMPTS: u32 = 5;
+/// 틀린 시도를 세는 창(참고 `SHARED_WINDOW_MS` 10분): 실패가 이보다 오래되면 잊는다
+const PAIR_FAIL_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// 기다리지 않고 틀릴 수 있는 수(참고 `AUTH_FAILURE_BUDGET`)
+const PAIR_FAIL_BUDGET: usize = 5;
+/// 그 뒤 기다림의 처음과 상한(참고 `AUTH_BACKOFF_MS` 1초·`AUTH_BACKOFF_MAX_MS` 60초)
+const PAIR_BACKOFF: Duration = Duration::from_secs(1);
+const PAIR_BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// 기기 이름 길이(참고 `LABEL_MAX`)
 const DEVICE_LABEL_MAX: usize = 48;
 /// 마지막으로 본 때를 적는 간격(참고 `LAST_SEEN_WRITE_MS`)
@@ -935,7 +960,7 @@ impl Host {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadLibrary { project, thread } => {
-                self.thread_library(&project, &thread).map(FrontResponse::Library)
+                self.thread_library(&project, &thread, actor.strip_prefix("device:")).map(FrontResponse::Library)
             }
             FrontRequest::ThreadAck { project, thread } => {
                 self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
@@ -1986,22 +2011,26 @@ impl Host {
     // ───────────── pairing ─────────────
 
     /// 새 pairing 코드. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`: 「새 코드」·CLI가 같은 자리를 쓴다).
+    /// 코드를 만드는 것은 주인(이 머신의 CLI나 controller 기기)이라, 앞서 틀린 시도의 잠금도 푼다: 남이 틀려 둔
+    /// 잠금이 주인의 새 코드를 막지 않는다.
     fn mint_pairing(&self, role: DeviceRole, now: Instant) -> (String, u64) {
         let code = format!("{:06}", rand::random_range(0..1_000_000u32));
-        self.pairing.lock().unwrap().pending =
-            Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        let mut p = self.pairing.lock().unwrap();
+        p.pending = Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        p.failures.clear();
         (code, PAIR_CODE_TTL.as_secs())
     }
 
     /// 웹 pairing 코드를 장치 token으로 바꾼다. 코드는 한 번만 쓰고, 한 코드로 5번 틀리면 그 코드를 버린다.
-    /// 코드와 상관없이 5번 넘게 틀리면 점점 길게 잠근다.
+    /// 코드와 상관없이 10분 안에 5번 넘게 틀리면 1초부터 두 배씩 60초까지 기다리게 한다.
     pub fn redeem_pairing(&self, code: &str, label: &str) -> Result<(String, DeviceRole), ErrorBody> {
         self.redeem_pairing_at(code, label, Instant::now())
     }
 
     fn redeem_pairing_at(&self, code: &str, label: &str, now: Instant) -> Result<(String, DeviceRole), ErrorBody> {
         let mut p = self.pairing.lock().unwrap();
-        if let Some(t) = p.locked_until
+        p.forget_old(now);
+        if let Some(t) = p.open_at()
             && t > now
         {
             return Err(err(
@@ -2024,15 +2053,11 @@ impl Host {
                     p.pending = None;
                 }
             }
-            p.failures += 1;
-            if p.failures >= 5 {
-                let secs = 30u64 << (p.failures - 5).min(7);
-                p.locked_until = Some(now + Duration::from_secs(secs));
-            }
+            p.failures.push_back(now);
             return Err(err(ErrorCode::Unauthorized, "코드가 틀렸거나 이미 썼거나 만료됐다"));
         }
         let role = p.pending.take().map(|c| c.role).unwrap_or(DeviceRole::Reader);
-        p.failures = 0;
+        p.failures.clear();
         drop(p);
         let token =
             base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, rand::random::<[u8; 32]>());
@@ -2081,6 +2106,16 @@ impl Host {
         let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
         if let Some(dns) = &plan.dns_name {
             let _ = self.db.set_meta("publish_dns", dns);
+        }
+        // 웹이 받는 Host·Origin은 이 주소(포트까지)뿐이다. tailscale이 돌 때만 고친다: 꺼졌거나 못 읽으면 지난 값을 둔다
+        match &plan.serving {
+            Some((url, _)) => {
+                let _ = self.db.set_meta("publish_origin", &url.to_ascii_lowercase());
+            }
+            None if plan.state == "running" => {
+                let _ = self.db.del_meta("publish_origin");
+            }
+            None => {}
         }
         PublishState {
             tailscale: plan.state.into(),
@@ -2134,13 +2169,38 @@ impl Host {
         self.web_port.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn host_allowed(&self, host_header: &str) -> bool {
-        let loopback = [format!("127.0.0.1:{}", self.web_port()), format!("localhost:{}", self.web_port())];
-        if loopback.iter().any(|l| l == host_header) {
-            return true;
+    /// Host 헤더가 가리키는 이 host의 origin. `http://127.0.0.1:<web_port>`와 tailscale serve 공개 주소
+    /// (`https://<이름>[:포트]`, 443은 포트 없이) 둘뿐이고 포트까지 같아야 한다(§6.3, herdr-web-ui `sameOrigin`이
+    /// 요청 주소의 origin 전체를 비교하는 것과 같다). 아니면 None
+    pub fn web_origin(&self, host_header: &str) -> Option<String> {
+        let loopback = format!("127.0.0.1:{}", self.web_port());
+        if host_header == loopback {
+            return Some(format!("http://{loopback}"));
         }
-        let name = host_header.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_header);
-        self.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
+        let public = self.public_origin()?;
+        let asked = host_header.to_ascii_lowercase();
+        let asked = asked.strip_suffix(":443").unwrap_or(&asked);
+        (format!("https://{asked}") == public).then_some(public)
+    }
+
+    /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
+    /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
+    fn public_origin(&self) -> Option<String> {
+        if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
+            return Some(o);
+        }
+        let dns = self.db.meta("publish_dns").ok().flatten()?;
+        let port = self.db.meta("publish_port").ok().flatten()?.parse().ok()?;
+        Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+    }
+
+    pub fn host_allowed(&self, host_header: &str) -> bool {
+        self.web_origin(host_header).is_some()
+    }
+
+    /// 공개 주소를 tailscale에서 다시 읽는다(host 시작 때: 지난 실행 뒤 serve 포트가 바뀌었을 수 있다)
+    pub async fn refresh_publish(&self) {
+        let _ = self.publish_status().await;
     }
 
     /// host와 같은 머신의 agent인가(brief의 uploads 주석)
@@ -2310,7 +2370,7 @@ mod pairing_tests {
     }
 
     #[tokio::test]
-    async fn five_wrong_tries_spend_the_code_and_lock_for_a_while() {
+    async fn five_wrong_tries_spend_the_code_and_then_wait_doubles_up_to_a_minute() {
         let (h, _t) = host();
         let now = Instant::now();
         let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
@@ -2318,14 +2378,79 @@ mod pairing_tests {
         for _ in 0..5 {
             assert_eq!(h.redeem_pairing_at(wrong, "", now).unwrap_err().code, ErrorCode::Unauthorized);
         }
-        // 잠긴 동안은 맞는 코드도 막는다
+        // 기다리는 동안은 맞는 코드도 비교하지 않는다
         assert_eq!(h.redeem_pairing_at(&code, "", now).unwrap_err().code, ErrorCode::Unavailable);
-        // 잠금이 풀려도 그 코드는 이미 버렸다
-        let later = now + Duration::from_secs(31);
-        assert_eq!(h.redeem_pairing_at(&code, "", later).unwrap_err().code, ErrorCode::Unauthorized);
-        let (fresh, _) = h.mint_pairing(DeviceRole::Controller, later);
-        let later = later + Duration::from_secs(61);
-        assert!(h.redeem_pairing_at(&fresh, "", later).is_ok());
+        // 1초 뒤에는 받지만 그 코드는 이미 버렸다(한 코드로 5번)
+        let mut at = now + PAIR_BACKOFF;
+        assert_eq!(h.redeem_pairing_at(&code, "", at).unwrap_err().code, ErrorCode::Unauthorized);
+        // 틀릴 때마다 기다림이 두 배, 60초에서 멈춘다(참고 1초·60초)
+        let mut waits = vec![];
+        for _ in 0..10 {
+            let wait = (0..=120)
+                .map(Duration::from_secs)
+                .find(|d| h.redeem_pairing_at(wrong, "", at + *d).unwrap_err().code == ErrorCode::Unauthorized)
+                .unwrap();
+            waits.push(wait.as_secs());
+            at += wait;
+        }
+        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60, 60, 60, 60]);
+    }
+
+    #[tokio::test]
+    async fn wrong_tries_older_than_ten_minutes_are_forgotten() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        h.mint_pairing(DeviceRole::Controller, now);
+        for i in 0..5 {
+            // 다른 코드로 틀린다(한 코드의 5번 한도와 따로 센다)
+            let _ = h.redeem_pairing_at(&format!("{i:06}x"), "", now);
+        }
+        assert_eq!(h.redeem_pairing_at("1", "", now).unwrap_err().code, ErrorCode::Unavailable);
+        // 창이 지나면 처음처럼 기다림 없이 다섯 번
+        let later = now + PAIR_FAIL_WINDOW;
+        for _ in 0..5 {
+            assert_eq!(h.redeem_pairing_at("1", "", later).unwrap_err().code, ErrorCode::Unauthorized);
+        }
+        assert_eq!(h.redeem_pairing_at("1", "", later).unwrap_err().code, ErrorCode::Unavailable);
+    }
+
+    #[tokio::test]
+    async fn a_new_code_from_the_owner_lifts_the_wait() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        h.mint_pairing(DeviceRole::Controller, now);
+        for _ in 0..12 {
+            let _ = h.redeem_pairing_at("1", "", now);
+        }
+        // CLI(`aaa web pair`)나 controller 기기가 새 코드를 만들면 남이 틀려 둔 잠금 없이 바로 쓴다
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        assert!(h.redeem_pairing_at(&code, "", now).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_view_path_ends_with_the_device_that_got_it() {
+        let (h, _t) = host();
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        let (token, _) = h.redeem_pairing(&code, "").unwrap();
+        let (id, _) = h.device_role(&token).unwrap();
+        let until = Instant::now() + library::VIEW_TTL;
+        let cap = |device: Option<&str>| library::ViewCap {
+            project: "nope".into(),
+            thread: "t-0001".into(),
+            until,
+            device: device.map(str::to_string),
+        };
+        h.view_caps.lock().unwrap().insert("dev".into(), cap(Some(&id)));
+        h.view_caps.lock().unwrap().insert("cli".into(), cap(None));
+        // 경로 검사를 지나면 다음은 프로젝트 찾기(없는 프로젝트)다
+        let reach = |name: &'static str| {
+            let h = h.clone();
+            async move { h.view_source(name, "a.txt").await.err().map(|e| e.code) }
+        };
+        assert_ne!(reach("dev").await, Some(ErrorCode::Unauthorized));
+        h.revoke_device(&id).unwrap();
+        assert_eq!(reach("dev").await, Some(ErrorCode::Unauthorized));
+        assert_ne!(reach("cli").await, Some(ErrorCode::Unauthorized));
     }
 
     #[tokio::test]

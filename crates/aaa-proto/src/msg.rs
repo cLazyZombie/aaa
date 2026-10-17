@@ -510,7 +510,7 @@ pub enum AgentRequest {
         #[serde(default)]
         merged_head: Option<String>,
         keep_worktree: bool,
-        /// 마지막 사본에 집에 오지 않은 것이 있다(herdr-projects `clean` `copy_complete`, plan §8.115): 폴더가 남아 있으면
+        /// 마지막 사본에 집에 오지 않은 것이 있다(herdr-projects `clean` `copy_complete`, plan §8.117): 폴더가 남아 있으면
         /// worktree를 남긴다. 이 칸을 모르는 옛 agent도 지우지 않게 host는 `keep_worktree`를 함께 켠다(둘 다 켜져 있으면
         /// 사람의 「남기기」가 아니라 이것이다).
         #[serde(default)]
