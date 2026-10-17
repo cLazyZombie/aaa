@@ -284,6 +284,40 @@ pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&Agen
     ThreadGroup::Idle
 }
 
+/// `thread restart`가 할 일(herdr-projects threads.rs `RestartPlan`). aaa는 세션이 끝나면 pane도 끝나므로 참고의 (c)
+/// 「셸에 있는 pane 다시 쓰기」는 없다.
+#[derive(Debug, PartialEq)]
+enum RestartPlan {
+    /// (a) 자리를 만들지 못했다(launch 기록이 없다): 자리 만들기부터 다시 한다
+    Create,
+    /// (e) 있는 자리에서 다시 띄운다(새 대화, `--resume`이면 이어서)
+    Reopen,
+}
+
+/// herdr-projects threads.rs `restart_plan`. 시작 중(aaa는 시작에 시한이 없다, §8.40)·끝낸 thread와 (d) 실행 중인 세션은
+/// 거부한다. (b) 기록된 worktree 없이 branch만 있는 것은 그 머신 agent가 자리를 만들 때 거부한다(host는 repo를 보지 않는다).
+fn restart_plan(rec: &ThreadRec, resume: bool, running: bool) -> Result<RestartPlan, ErrorBody> {
+    let id = &rec.id;
+    match rec.status {
+        ThreadStatus::Open | ThreadStatus::Failed => {}
+        ThreadStatus::Starting => return Err(bad(format!("{id}는 아직 시작 중이다"))),
+        ThreadStatus::Resolved => {
+            return Err(bad(format!("{id}는 끝냈다. 먼저 `aaa thread resolve {} {id} --reopen`", rec.project)));
+        }
+    }
+    if running {
+        let pane = rec.pane.as_deref().unwrap_or_default();
+        return Err(bad(format!("세션이 아직 실행 중이다. 끝내려면 `aaa pane kill {pane}`")));
+    }
+    if rec.launch.is_some() {
+        return Ok(RestartPlan::Reopen);
+    }
+    if resume {
+        return Err(bad("시작하지 못한 thread는 이을 대화가 없다. --resume 없이 다시 시작한다"));
+    }
+    Ok(RestartPlan::Create)
+}
+
 /// 프로젝트 폴더 뼈대. 이미 있는 파일은 두고, PROJECT.md를 마지막에 써서 중간에 멈춘 폴더는 프로젝트로 치지 않는다
 /// (`project create`와 옮기기 `migrate::convert`가 함께 쓴다).
 pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::io::Result<()> {
@@ -691,42 +725,21 @@ impl Host {
         let brief = self.brief(&dir, &rec, &a.task, false);
         self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
 
-        // 기록은 늘 다시 읽어 고친다(ticker가 그 사이 쓴 `last_group`을 옛 값으로 덮지 않게)
-        let fail = |me: &Arc<Host>, rec: &mut ThreadRec, e: ErrorBody| -> ErrorBody {
-            if let Ok(r) = me.update_rec(&rec.project, &rec.id, |r| {
+        // 정리하지 않는다: `thread restart`가 다시 한다(herdr-projects threads.rs `start`). 기록은 늘 다시 읽어 고친다(ticker가
+        // 그 사이 쓴 `last_group`을 옛 값으로 덮지 않게).
+        if let Err(e) = self.place_and_launch(&conn, &mut rec, brief, actor).await {
+            if let Ok(r) = self.update_rec(&rec.project, &rec.id, |r| {
                 r.status = ThreadStatus::Failed;
                 r.error = Some(e.message.clone());
             }) {
-                *rec = r;
+                rec = r;
             }
-            me.flow(rec, "thread_failed", None, e.message.clone());
-            e
-        };
-        let prep = aaa_proto::ThreadPrepare {
-            project: a.project.clone(),
-            thread: id.clone(),
-            title: rec.title.clone(),
-            kind: a.kind,
-            repo: a.repo.clone(),
-            base: a.base.clone(),
-            profile: a.profile.clone(),
-            brief,
-        };
-        let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await {
-            Ok(AgentResponse::ThreadReady(r)) => r,
-            Ok(other) => return Err(fail(self, &mut rec, internal(format!("예상하지 못한 응답: {other:?}")))),
-            Err(e) => return Err(fail(self, &mut rec, e)),
-        };
-        rec = self.update_rec(&a.project, &id, |r| {
-            r.cwd = Some(ready.cwd.clone());
-            r.work_dir = Some(ready.work_dir.clone());
-            r.branch = ready.branch.clone();
-            r.base = ready.base.clone();
-            r.launch = Some(ready.launch.clone());
-        })?;
-
-        if let Err(e) = self.launch_session(&mut rec, &ready.launch.argv, actor).await {
-            return Err(fail(self, &mut rec, e));
+            self.flow(&rec, "thread_failed", None, e.message.clone());
+            let why = format!(
+                "thread {id}를 시작하지 못했다. `aaa thread restart {} {id}`로 다시 한다: {}",
+                a.project, e.message
+            );
+            return Err(ErrorBody { message: why, ..e });
         }
         self.spawn_brief(&a.project, &id);
         let mut view = self.thread_view(&rec);
@@ -765,7 +778,41 @@ impl Host {
         }
     }
 
-    /// thread 세션을 띄우고 보고 감시를 건다(시작·다시 시작 공통)
+    /// 그 머신 agent가 자리(worktree·작업 폴더)와 brief.md를 만들고 profile을 해석한 뒤 세션을 띄운다. 시작과, 아무것도
+    /// 만들지 못하고 실패한 thread의 다시 시작이 쓴다(herdr-projects threads.rs `place_and_brief`, `RestartPlan::Create`).
+    async fn place_and_launch(
+        self: &Arc<Self>,
+        conn: &crate::AgentConn,
+        rec: &mut ThreadRec,
+        brief: String,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        let prep = aaa_proto::ThreadPrepare {
+            project: rec.project.clone(),
+            thread: rec.id.clone(),
+            title: rec.title.clone(),
+            kind: rec.kind,
+            repo: rec.repo.clone(),
+            base: rec.base.clone(),
+            profile: rec.profile.clone(),
+            brief,
+        };
+        let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await? {
+            AgentResponse::ThreadReady(r) => r,
+            other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+        };
+        *rec = self.update_rec(&rec.project, &rec.id, |r| {
+            r.cwd = Some(ready.cwd.clone());
+            r.work_dir = Some(ready.work_dir.clone());
+            r.branch = ready.branch.clone();
+            r.base = ready.base.clone();
+            r.launch = Some(ready.launch.clone());
+        })?;
+        self.launch_session(rec, &ready.launch.argv, actor).await
+    }
+
+    /// thread 세션을 띄우고 보고 감시를 건다(시작·다시 시작 공통). 띄우면 열린 thread다(전의 시작 실패는 지운다,
+    /// herdr-projects `finish_placement`).
     async fn launch_session(
         self: &Arc<Self>,
         rec: &mut ThreadRec,
@@ -791,6 +838,7 @@ impl Host {
         *rec = self.update_rec(&rec.project, &rec.id, |r| {
             r.pane = Some(pane);
             r.status = ThreadStatus::Open;
+            r.error = None;
         })?;
         if let (Ok(conn), Some(wd)) = (self.live_conn(&rec.machine_id), rec.work_dir.clone()) {
             let _ = conn
@@ -812,8 +860,10 @@ impl Host {
         Ok(self.thread_view(&rec))
     }
 
-    /// 끝난 thread 세션을 다시 띄운다. 실행 중이면 거부한다(먼저 `aaa pane kill`).
+    /// 끝났거나 시작이 실패한 thread 세션을 다시 띄운다(herdr-projects threads.rs `restart_plan`). 실행 중이면 거부한다(먼저
+    /// `aaa pane kill`). 시작 중이거나 끝낸 thread도 거부한다.
     /// - 기본: task(Follow-ups 포함)·프로젝트 지침·memory를 다시 읽어 brief를 새로 쓰고 새 대화로 띄운 뒤 안내한다.
+    /// - 자리를 만들지 못하고 실패한 thread(launch 기록이 없다)는 자리 만들기부터 다시 한다(`RestartPlan::Create`).
     /// - resume: 저장된 대화를 잇는다(brief 안내 없음). harness 세션 ID를 모르면 거부한다.
     pub(crate) async fn thread_restart(
         self: &Arc<Self>,
@@ -824,9 +874,11 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let mut rec = self.load(project, id)?;
-        if rec.status != ThreadStatus::Open {
-            return Err(bad(format!("열린 thread만 다시 시작한다(지금 {})", rec.status.as_str())));
-        }
+        let running = rec
+            .pane
+            .as_deref()
+            .is_some_and(|p| self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running()));
+        let plan = restart_plan(&rec, resume, running)?;
         if let Some(p) = &profile {
             if resume {
                 return Err(bad("--profile은 새 대화로 다시 시작할 때만 쓴다(--resume과 함께 쓰지 않는다)"));
@@ -838,14 +890,27 @@ impl Host {
                 ));
             }
         }
-        if let Some(p) = &rec.pane
-            && self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
-        {
-            return Err(bad(format!("세션이 아직 실행 중이다. 끝내려면 `aaa pane kill {p}`")));
-        }
-        let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
         self.check_health(&rec.machine_id)?;
+        let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
+        if plan == RestartPlan::Create {
+            let dir = self.project_dir(project)?;
+            let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
+            rec = self.update_rec(project, id, |r| {
+                if let Some(p) = &profile {
+                    r.profile = p.clone();
+                }
+                r.brief = BriefState::Pending;
+                r.brief_attempts = 0;
+            })?;
+            let brief = self.brief(&dir, &rec, &task, true);
+            self.db.audit(actor, "thread_restart", &format!("{project}/{id} 자리부터{profile_note}"));
+            self.place_and_launch(&conn, &mut rec, brief, actor).await?;
+            self.flow(&rec, "thread_restarted", None, format!("자리부터 다시 만듦{profile_note}"));
+            self.spawn_brief(project, id);
+            return Ok(self.thread_view(&rec));
+        }
+        let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let argv = if resume {
             let key = rec
                 .pane
@@ -896,7 +961,6 @@ impl Host {
             })?;
             relaunched.argv
         };
-        let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
         self.db.audit(actor, "thread_restart", &format!("{project}/{id} resume={resume}{profile_note}"));
         self.launch_session(&mut rec, &argv, actor).await?;
         let detail = if resume { "resume".to_string() } else { format!("새 대화·brief 다시 씀{profile_note}") };
@@ -1370,6 +1434,33 @@ mod tests {
         assert_eq!(g(&young, None), ThreadGroup::Working);
         let old = ThreadRec { status: ThreadStatus::Starting, created_at_ms: NOW - 301_000, ..open_thread() };
         assert_eq!(g(&old, None), ThreadGroup::WaitingOnYou);
+    }
+
+    /// herdr-projects threads.rs `restart_case_*`: 아무것도 못 만든 실패는 자리부터(a), 자리가 있으면 다시 띄우고(e),
+    /// 실행 중(d)·시작 중·끝낸 thread는 거부한다. 이을 대화가 없으면 --resume도 거부한다.
+    #[test]
+    fn restart_plan_follows_herdr_projects() {
+        let launch = aaa_proto::Launch {
+            profile: "claude".into(),
+            harness: "claude".into(),
+            argv: vec!["claude".into()],
+            env: Vec::new(),
+            resume_argv: Vec::new(),
+            session_key: None,
+        };
+        let failed = ThreadRec { status: ThreadStatus::Failed, pane: None, ..open_thread() };
+        assert_eq!(restart_plan(&failed, false, false), Ok(RestartPlan::Create));
+        let e = restart_plan(&failed, true, false).unwrap_err();
+        assert!(e.message.contains("이을 대화가 없다"), "{e:?}");
+        let launched = ThreadRec { launch: Some(launch), ..failed.clone() };
+        assert_eq!(restart_plan(&launched, false, false), Ok(RestartPlan::Reopen));
+        let ended = ThreadRec { status: ThreadStatus::Open, ..launched.clone() };
+        assert_eq!(restart_plan(&ended, true, false), Ok(RestartPlan::Reopen));
+        assert!(restart_plan(&ended, false, true).unwrap_err().message.contains("aaa pane kill"));
+        let starting = ThreadRec { status: ThreadStatus::Starting, ..failed.clone() };
+        assert!(restart_plan(&starting, false, false).unwrap_err().message.contains("시작 중"));
+        let resolved = ThreadRec { status: ThreadStatus::Resolved, ..launched };
+        assert!(restart_plan(&resolved, false, false).unwrap_err().message.contains("--reopen"));
     }
 
     #[test]
