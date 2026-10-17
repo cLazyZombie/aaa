@@ -2275,6 +2275,21 @@ fn routines() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
     let o = w.h.cmd(&["routine", "approve", "demo", "cmd"]).env_remove("AAA_SESSION_ID").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
+    // aaa pane 안에서 변수를 지우고 이름까지 쳐도 host가 그 pane을 판정해 거부한다(plan §8.116)
+    let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
+    let out = w.lab.root.join("approve-in-pane.txt");
+    let line = format!(
+        "env -u AAA_SESSION_ID -u AAA_HOOK_SOCK {} routine approve demo cmd > {} 2>&1; echo rc=$? >> {}",
+        lab::shell_word(lab::BIN),
+        lab::shell_word(path_str(&out)),
+        lab::shell_word(path_str(&out))
+    );
+    w.h.ok(&["pane", "run", &shell, &line]);
+    wait_for("이름 물음", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("이름을 친다")));
+    w.h.ok(&["pane", "run", &shell, "cmd"]);
+    let got = wait_for("pane 안 승인 끝", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")));
+    assert!(got.contains("routine 명령 승인은 사람이 aaa 세션 밖 터미널에서 한다") && got.ends_with("rc=1\n"), "{got}");
+    assert_eq!(routine("cmd")["approved"], false);
     // 사람이 터미널에서 이름을 치면 승인된다(시험은 script로 PTY를 만든다)
     let approve =
         |name: &str, typed: &str| w.h.in_terminal(&["routine", "approve", "demo", name], &[("이름을 친다", typed)], T);
