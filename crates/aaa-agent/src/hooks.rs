@@ -51,8 +51,9 @@ fn clip(t: &str, n: usize) -> String {
     out
 }
 
-/// harness 사건 → 정규화. 모르는 사건은 None(무시). 옛 agent가 띄운 세션은 Stop·PermissionRequest 등도 보내지만
-/// 상태는 화면 감지가 정하므로 버린다.
+/// harness 사건 → 정규화. 모르는 사건은 None(무시). 옛 agent가 띄운 세션은 Stop·PermissionRequest·Notification 등도
+/// 보내지만 상태는 화면 감지가 정하므로 버린다(herdr 0.9.5 `integration/assets/claude/herdr-agent-state.sh`도 옛 설치의
+/// 상태 hook을 `session` 말고는 exit 0으로 버린다). 답한 확인창 뒤 늦게 온 Notification이 질문을 다시 열지 않는다(t-0333).
 pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option<HarnessEvent> {
     let mut ev = HarnessEvent {
         session: session.to_string(),

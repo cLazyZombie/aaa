@@ -209,7 +209,7 @@ impl Host {
 
     /// agent가 harness 사건을 보냈다
     pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, ev: HarnessEvent) {
-        let activity = {
+        let (activity, answered_block) = {
             let mut i = self.inner.lock().unwrap();
             let Some(p) = i.panes.get_mut(&ev.session) else {
                 // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
@@ -260,6 +260,13 @@ impl Host {
                 st.progress = None;
                 st.progress_at_ms = None;
             }
+            // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
+            let answered_block = next == Some(AgentActivity::Question)
+                && prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question)
+                && p.answered;
+            if next.is_some_and(|a| a != AgentActivity::Question) {
+                p.answered = false;
+            }
             if let Some(a) = next {
                 if a != st.activity {
                     st.since_ms = ev.at_ms;
@@ -271,7 +278,7 @@ impl Host {
             }
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
-            next
+            (next, answered_block)
         };
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
@@ -304,8 +311,12 @@ impl Host {
             }
             let _ = tx.send(ev.kind.clone());
         }
-        // 질문: 열리거나, harness가 넘어가면 닫힌다
+        // 질문: 열리거나, harness가 넘어가면 닫힌다. 답한 확인창 뒤에 늦게 온 질문 사건(옛 agent가 띄운 세션의 Claude
+        // Notification `permission_prompt`가 답보다 늦게 도착)은 그 질문을 다시 열지 않는다. 참고 herdr 0.9.5는 상태 hook을
+        // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
+        // 때만 알리므로, 한 막힘에 질문은 하나다(t-0333 m13 사건 16, plan §8.93)
         match activity {
+            Some(AgentActivity::Question) if answered_block => {}
             Some(AgentActivity::Question) => {
                 let kind = ev.question_kind.clone().unwrap_or_else(|| "permission".into());
                 self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
@@ -343,6 +354,11 @@ impl Host {
     }
 
     pub(crate) fn save_question(&self, q: &QuestionView) {
+        if q.state == QuestionState::Answered
+            && let Some(p) = self.inner.lock().unwrap().panes.get_mut(&q.pane)
+        {
+            p.answered = true;
+        }
         let state = match q.state {
             QuestionState::Open => "open",
             QuestionState::Answered => "answered",
@@ -856,5 +872,67 @@ mod tests {
         assert_eq!(next_activity(None, &ev("turn_start", 1_000)), Some(AgentActivity::Working));
         assert_eq!(next_activity(None, &ev("session_start", 1_000)), Some(AgentActivity::Started));
         assert_eq!(next_activity(Some(&idle), &ev("session_start", 3_000)), None);
+    }
+
+    struct Tmp(std::path::PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 머신 `m`의 Claude pane `s` 하나가 있는 host(agent 연결 없음)
+    fn host_with_pane() -> (Arc<Host>, Tmp) {
+        let dir = std::env::temp_dir().join(format!("aaa-harness-test-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, dir.clone()).unwrap();
+        let info = aaa_proto::SessionInfo {
+            id: "s".into(),
+            name: "claude".into(),
+            argv: vec!["claude".into()],
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state: aaa_proto::SessionState::Running,
+            role: None,
+            harness: Some("claude".into()),
+        };
+        h.on_session("m", info, false);
+        (h, Tmp(dir))
+    }
+
+    /// 답한 확인창 뒤 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16: 부하에서 PermissionRequest → 답 →
+    /// 1.3초 뒤 Notification `permission_prompt`). 막힘이 끝난 뒤(작업 중)의 질문 사건은 새 질문이다.
+    #[tokio::test]
+    async fn a_late_question_event_does_not_reopen_the_answered_question() {
+        let (h, _t) = host_with_pane();
+        let ev = |kind: &str, at_ms| HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: kind.into(),
+            harness_session: None,
+            message: Some("Bash make test".into()),
+            question_kind: Some("permission".into()),
+            percent: None,
+            at_ms,
+            transcript: None,
+        };
+        h.on_harness("m", ev("question", 1_000));
+        let mut q = h.open_question_of("s").expect("질문");
+        // 답의 마지막 걸음(`answer`: 키를 보낸 뒤 Answered로 적는다)
+        q.state = QuestionState::Answered;
+        q.answer = Some("yes".into());
+        h.save_question(&q);
+        h.on_harness("m", ev("question", 2_300));
+        assert_eq!(h.open_question_of("s").map(|x| x.id), None, "답한 질문을 다시 열었다");
+        assert_eq!(h.questions(true).len(), 1);
+        h.on_harness("m", ev("working", 3_000));
+        h.on_harness("m", ev("question", 4_000));
+        let again = h.open_question_of("s").expect("다음 확인창의 질문");
+        assert_ne!(again.id, q.id);
     }
 }

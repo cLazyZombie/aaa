@@ -80,7 +80,7 @@ done
 /// 선택 창은 Claude처럼 그린다(❯ 커서, 화살표로 옮기고 Enter로 고름, Esc는 취소). 폴더 신뢰 창의 기본 선택은
 /// 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하면 턴이 「Interrupted」로 끝난다.
 const CLAUDE_AGENT: &str = r#"#!/bin/sh
-ESC=$(printf '\033'); BEL=$(printf '\007')
+ESC=$(printf '\033'); BEL=$(printf '\007'); LATE=$(printf '\016')
 RULE='────────────────────────────────────────'
 hook() { "$AA" hook --agent claude "$1"; }
 key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon echo; }
@@ -92,10 +92,17 @@ taken() { printf '\033[2A\r\033[J'; }
 spin() { printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
 unspin() { printf '\033[4A\r\033[J'; }
 interrupted() { printf '  \342\216\277  Interrupted \302\267 What should Claude do instead?\n'; }
+# 옛 agent가 띄운 세션의 Claude는 확인창에 답한 뒤에도 Notification(permission_prompt) hook을 늦게 낸다(t-0333).
+# 끝은 진행 보고로 알린다(hook은 차례로 host에 간다)
+late() {
+  hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
+  "$AA" report --percent 60 --activity '늦은 알림 뒤'
+}
 turn() {
   while key; do
     case "$k" in
       "$BEL") unspin; return ;;
+      "$LATE") late ;;
       "$ESC") while keyt 5; [ -n "$k" ]; do :; done; unspin; interrupted; return ;;
     esac
   done
@@ -788,6 +795,20 @@ fn claude_thread_states_questions_and_messages() {
     assert!(e.contains("닫힌"), "{e}");
     // 허락하면 도구가 돈다(spinner). 턴이 끝나 입력 상자가 보이면 idle이다.
     agent_became(&mut ev, &id, AgentActivity::Working, t);
+    // 답한 뒤 늦게 온 Notification(permission_prompt) hook(옛 agent가 띄운 세션, t-0333 m13 사건 16)은 답한 질문을 다시
+    // 열지 않는다: 참고 herdr 0.9.5처럼 상태 hook은 버린다(`herdr-agent-state.sh`는 `session` 말고는 exit 0). 그 hook 뒤에 낸
+    // 진행 보고가 오면 본다
+    w.h.ok(&["pane", "send-text", &pane, "\u{e}"]);
+    ev.wait("늦은 알림 뒤 진행 보고", T, |e| match e {
+        FrontEvent::Thread(v)
+            if v.id == id && v.agent.as_ref().and_then(|a| a.progress.as_deref()) == Some("늦은 알림 뒤") =>
+        {
+            Some(())
+        }
+        _ => None,
+    });
+    assert!(w.questions(false).is_empty(), "답한 질문이 다시 열렸다: {:?}", w.questions(false));
+    assert_eq!(w.h.pane(&pane)["agent"]["activity"], "working");
     let t = lab::now_ms();
     finish_turn(&w, &pane);
     agent_became(&mut ev, &id, AgentActivity::Idle, t);

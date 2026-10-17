@@ -155,8 +155,11 @@ struct PaneRt {
     /// 지금 쓰는 대화형 front(lease, 연결 하나). PTY 크기를 그 화면이 정한다. 다른 front가 입력·크기·그림을 보내면
     /// 그 front로 바뀌고(마지막 입력이 이긴다), 연결이 끝나거나 놓으면 비운다.
     lease: Option<FrontRef>,
-    /// harness 상태(hook 사건으로만 바뀐다)
+    /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
+    /// 다시 열지 않게 한다(harness.rs `on_harness`)
+    answered: bool,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
 }
@@ -500,6 +503,7 @@ impl Host {
                     lease: None,
                     agent: None,
                     transcript: None,
+                    answered: false,
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -634,6 +638,7 @@ impl Host {
                 lease: None,
                 agent: None,
                 transcript: None,
+                answered: false,
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
