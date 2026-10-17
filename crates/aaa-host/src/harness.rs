@@ -436,6 +436,23 @@ impl Host {
             self.save_question(&q);
             return Err(e);
         }
+        // `trust_screens = user`: aaa 세션 안 CLI(coordinator)는 thread pane의 신뢰 창에 답하지 않는다(`thread keys`와 같다).
+        // 사람은 터미널·웹에서 답한다.
+        if crate::front::in_session(actor)
+            && let Some(r) = self.thread_of_pane(&q.pane)
+            && self.trust_screens(&r.project) == crate::trust_screen::USER
+        {
+            let kind = r.launch.as_ref().map(|l| l.harness.clone()).unwrap_or_default();
+            let screen = self.screen(&mid, &pid).await.ok_or_else(|| {
+                err(ErrorCode::Unavailable, format!("{}의 pane 화면을 읽지 못해 답하지 않는다", r.id))
+            })?;
+            if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    crate::trust_screen::refusal(&r.project, &r.id, &pid, phrase, true),
+                ));
+            }
+        }
         // hook 사건이 화면보다 먼저 올 수 있다: 선택 창이 그려지기를 잠깐 기다린다
         let until = Instant::now() + MENU_WAIT;
         let keys = loop {

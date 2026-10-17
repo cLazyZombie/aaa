@@ -69,6 +69,12 @@ pub struct ProfileView {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub description: String,
+    /// profile이 붙이는 인자(옛 agent는 보내지 않는다)
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// agent.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 /// host → agent: thread 자리를 만든다(worktree 또는 작업 폴더)와 brief.md 쓰기, profile 해석

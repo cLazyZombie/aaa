@@ -334,6 +334,10 @@ impl Host {
         if !valid_project(name) {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
         }
+        if name == aaa_config::safety::DEFAULT_TABLE {
+            // host.toml `[safety.default]`는 모든 프로젝트 표다(plan §8.115)
+            return Err(bad("`default`는 safety의 모든 프로젝트 표 이름이라 프로젝트 이름으로 쓰지 않는다"));
+        }
         let dir = self.projects_root().join(name);
         if dir.join("PROJECT.md").exists() {
             return Err(err(ErrorCode::NameTaken, format!("이미 있다: {}", dir.display())));
@@ -546,8 +550,34 @@ impl Host {
         }
     }
 
-    pub(crate) fn profile_allowed(&self, name: &str) -> bool {
-        self.cfg.projects.allow_profiles.iter().any(|a| a == "*" || a == name)
+    /// thread가 그 프로젝트에서 이 profile을 써도 되는가(safety `thread_profiles`, 참고 `check_allowed`). 목록은 사람만 바꾼다.
+    pub(crate) fn check_profile_allowed(&self, project: &str, name: &str) -> Result<(), ErrorBody> {
+        let safety = self.safety(project);
+        if safety.profile_allowed(name) {
+            return Ok(());
+        }
+        let list = safety.thread_profiles.unwrap_or_default();
+        Err(err(
+            ErrorCode::Forbidden,
+            format!(
+                "profile `{name}`는 `{project}`의 thread에 허용되지 않았다. 허용: {}. 이 목록은 사람만 바꾼다(`aaa profile allow threads … --project {project}`)",
+                if list.is_empty() { "없음".to_string() } else { list.join(", ") }
+            ),
+        ))
+    }
+
+    /// `thread start`에 profile이 없을 때(참고 `resolve`·`new_project_default`): project.toml `thread_profile` → host.toml
+    /// `[defaults] thread_profile` → 기본 profile `claude`. host.toml은 쓸 때마다 다시 읽는다.
+    pub(crate) fn default_thread_profile(&self, project: &str) -> String {
+        let own = self.settings(project).thread_profile;
+        if !own.is_empty() {
+            return own;
+        }
+        let global = match self.config_dir.get() {
+            Some(dir) => aaa_config::safety::default_thread_profile(dir),
+            None => self.cfg.defaults.thread_profile.clone(),
+        };
+        if global.is_empty() { "claude".into() } else { global }
     }
 
     /// brief.md(herdr-projects `brief_for`): 프로젝트 설정·지침·memory를 읽어 `compose_brief`로 짓는다.
@@ -606,20 +636,10 @@ impl Host {
         if a.task.trim().is_empty() {
             return Err(bad("할 일이 비었다"));
         }
-        // herdr-projects `thread_profile`: --profile이 없으면 프로젝트 기본. 참고의 내장 기본(claude)은 aaa에 없다
-        // (profile은 머신 agent.toml에만 있다)
         if a.profile.is_empty() {
-            a.profile = self.settings(&a.project).thread_profile;
+            a.profile = self.default_thread_profile(&a.project);
         }
-        if a.profile.is_empty() {
-            return Err(bad("profile이 없다: --profile을 주거나 project.toml에 thread_profile을 둔다"));
-        }
-        if !self.profile_allowed(&a.profile) {
-            return Err(err(
-                ErrorCode::Forbidden,
-                format!("host.toml [projects] allow_profiles에 없는 profile: {}", a.profile),
-            ));
-        }
+        self.check_profile_allowed(&a.project, &a.profile)?;
         if a.kind == ThreadKind::Worktree && a.repo.is_none() {
             return Err(bad("worktree thread에는 --repo(그 머신의 repo 경로)가 필요하다. repo 없이 하려면 --kind dir"));
         }
@@ -822,12 +842,7 @@ impl Host {
             if resume {
                 return Err(bad("--profile은 새 대화로 다시 시작할 때만 쓴다(--resume과 함께 쓰지 않는다)"));
             }
-            if !self.profile_allowed(p) {
-                return Err(err(
-                    ErrorCode::Forbidden,
-                    format!("host.toml [projects] allow_profiles에 없는 profile: {p}"),
-                ));
-            }
+            self.check_profile_allowed(project, p)?;
         }
         if let Some(p) = &rec.pane
             && self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())

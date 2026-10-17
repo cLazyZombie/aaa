@@ -46,6 +46,11 @@ pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) ->
     serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
 }
 
+/// aaa 세션(pane) 안에서 실행한 CLI인가(`local:<client>@<세션>`). coordinator가 여기에 든다.
+pub(crate) fn in_session(actor: &str) -> bool {
+    actor.strip_prefix("local:").is_some_and(|rest| rest.contains('@'))
+}
+
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let path = host.state.join("front.sock");
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
@@ -83,8 +88,10 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     let scoped = matches!(session_role, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
     let role = if scoped { DeviceRole::Reader } else { DeviceRole::Local };
     tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
+    // aaa 세션 안 CLI(coordinator·사람의 셸 pane)는 `@<세션>`을 붙인다: 사람만 하는 일(신뢰 창 답 등)을 가른다
     let actor = match (&session, session_role) {
         (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
+        (Some(s), _) => format!("local:{client}@{s}"),
         _ => format!("local:{client}"),
     };
 

@@ -378,7 +378,15 @@ resume_argv: Array<string>,
  */
 session_key: string | null, };
 
-export type ProfileView = { name: string, harness: string, model: string | null, effort: string | null, description: string, };
+export type ProfileView = { name: string, harness: string, model: string | null, effort: string | null, description: string, 
+/**
+ * profile이 붙이는 인자(옛 agent는 보내지 않는다)
+ */
+args: Array<string>, 
+/**
+ * agent.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
+ */
+builtin: boolean, };
 
 export type LibFile = { path: string, size: number, sha256: string, };
 

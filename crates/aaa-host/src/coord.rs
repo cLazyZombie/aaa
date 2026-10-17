@@ -88,8 +88,10 @@ impl Host {
         Ok(FrontResponse::Next { lines, message })
     }
 
-    /// 머신마다 맡길 수 있는 profile(host 허용 목록 ∩ 그 머신 agent.toml). 끊긴 머신은 모른다.
-    pub(crate) async fn assignable(&self) -> Vec<OwnerChoice> {
+    /// 머신마다 맡길 수 있는 profile(그 프로젝트 safety `thread_profiles` ∩ 그 머신 agent.toml과 설치·로그인한 기본
+    /// profile). 허용 목록에 이름이 있는 기본 profile은 설치를 몰라도 넣는다(참고 `usable`). 끊긴 머신은 모른다.
+    pub(crate) async fn assignable(&self, project: &str) -> Vec<OwnerChoice> {
+        let safety = self.safety(project);
         let mut out = Vec::new();
         for m in self.machine_views() {
             let mut profiles = Vec::new();
@@ -98,7 +100,14 @@ impl Host {
                 && let Some(conn) = self.conn_of(&m.id)
                 && let Ok(AgentResponse::Profiles { profiles: ps }) = conn.request(AgentRequest::Profiles).await
             {
-                profiles = ps.into_iter().map(|p| p.name).filter(|n| self.profile_allowed(n)).collect();
+                profiles = ps.into_iter().map(|p| p.name).filter(|n| safety.profile_allowed(n)).collect();
+                if self.machine_feature(&m.id, "profiles.v2") {
+                    for b in safety.thread_profiles.iter().flatten() {
+                        if aaa_config::profile_edit::builtin(b).is_some() && !profiles.contains(b) {
+                            profiles.push(b.clone());
+                        }
+                    }
+                }
             }
             out.push(OwnerChoice { machine: m.name, connected, profiles });
         }
@@ -149,7 +158,7 @@ impl Host {
         {
             warning = Some(format!("열린 {tid}가 이미 이 task를 맡고 있다. 그래도 시작했다"));
         }
-        let all: Vec<String> = self.assignable().await.into_iter().flat_map(|o| o.profiles).collect();
+        let all: Vec<String> = self.assignable(&a.project).await.into_iter().flat_map(|o| o.profiles).collect();
         match Owner::parse(t.owner.as_deref(), &all) {
             Owner::Me => return Err(bad(format!("사용자의 할 일(me)이다: {}", t.title))),
             Owner::Person(p) => return Err(bad(format!("사람({p})이 맡은 task다: {}", t.title))),
@@ -197,10 +206,10 @@ impl Host {
         Ok(ProjectContext {
             project: project.to_string(),
             path: dir.display().to_string(),
-            start_threads: crate::project::ProjectSettings::load(&dir).start_threads,
+            start_threads: self.safety(project).start_threads,
             tasks,
             threads,
-            assignable: self.assignable().await,
+            assignable: self.assignable(project).await,
             inbox_open: page.items.len() as u32 + page.omitted_open,
             inbox: page.items,
             evaluator: self.evaluator_rec(project).map(|r| Box::new(self.evaluator_view(&r))),

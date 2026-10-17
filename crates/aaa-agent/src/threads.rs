@@ -25,19 +25,45 @@ pub struct ThreadsConfig {
     /// hook 명령에 쓰는 aaa 실행 파일
     pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
+    /// agent.toml이 있는 설정 폴더. 있으면 profile을 쓸 때마다 다시 읽는다(plan §8.115): 사람이 `aaa profile`로 고친 것이
+    /// agent를 다시 띄우지 않아도 닿는다.
+    pub config_dir: Option<PathBuf>,
 }
 
+impl ThreadsConfig {
+    /// 지금 agent.toml의 profile로 바꾼 설정. 읽지 못하면 그 까닭이 오류다(옛 값으로 띄우지 않는다).
+    pub fn fresh(&self) -> Result<ThreadsConfig> {
+        let Some(dir) = &self.config_dir else { return Ok(self.clone()) };
+        let loaded = aaa_config::load_agent(dir)
+            .map_err(|e| anyhow::anyhow!("이 머신 agent.toml을 읽지 못했다:\n{}", e.render()))?;
+        Ok(ThreadsConfig { profiles: loaded.config.profiles, ..self.clone() })
+    }
+}
+
+fn view(name: &str, p: &Profile, builtin: bool) -> ProfileView {
+    ProfileView {
+        name: name.to_string(),
+        harness: p.harness.clone(),
+        model: Some(p.model.clone()).filter(|m| !m.is_empty()),
+        effort: Some(p.effort.clone()).filter(|m| !m.is_empty()),
+        description: p.description.clone(),
+        args: p.args.clone(),
+        builtin,
+    }
+}
+
+/// agent.toml profile과, 같은 이름이 없는 기본 profile 중 이 머신에 설치·로그인한 것(참고 `Config::listed`)
 pub fn profile_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
-    cfg.profiles
-        .iter()
-        .map(|(name, p)| ProfileView {
-            name: name.clone(),
-            harness: p.harness.clone(),
-            model: Some(p.model.clone()).filter(|m| !m.is_empty()),
-            effort: Some(p.effort.clone()).filter(|m| !m.is_empty()),
-            description: p.description.clone(),
-        })
-        .collect()
+    let home = aaa_config::paths::home();
+    let detected =
+        aaa_config::profile_edit::detect(std::env::var("PATH").ok().as_deref(), &home, |n| std::env::var(n).ok());
+    let mut out: Vec<ProfileView> = cfg.profiles.iter().map(|(name, p)| view(name, p, false)).collect();
+    for name in detected.iter().filter(|n| !cfg.profiles.contains_key(*n)) {
+        if let Some(p) = aaa_config::profile_edit::builtin(name) {
+            out.push(view(name, &p, true));
+        }
+    }
+    out
 }
 
 /// 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 만든다(claude는 새 session ID).
@@ -79,14 +105,7 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
     let env: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let (argv, resume_argv, session_key) = match p.harness.as_str() {
         "claude" => {
-            let mut flags = Vec::new();
-            if !p.model.is_empty() {
-                flags.extend(["--model".to_string(), p.model.clone()]);
-            }
-            if !p.effort.is_empty() {
-                flags.extend(["--effort".to_string(), p.effort.clone()]);
-            }
-            flags.extend(p.args.iter().cloned());
+            let flags = aaa_config::profile_edit::launch_flags(p);
             let key = uuid_v4();
             let mut argv = base("claude");
             argv.extend(flags.iter().cloned());
@@ -97,14 +116,7 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
             (argv, resume, Some(key))
         }
         "codex" => {
-            let mut flags = Vec::new();
-            if !p.model.is_empty() {
-                flags.extend(["-m".to_string(), p.model.clone()]);
-            }
-            if !p.effort.is_empty() {
-                flags.extend(["-c".to_string(), format!("model_reasoning_effort={}", p.effort)]);
-            }
-            flags.extend(p.args.iter().cloned());
+            let flags = aaa_config::profile_edit::launch_flags(p);
             let mut argv = base("codex");
             argv.extend(flags.iter().cloned());
             let mut resume = base("codex");
@@ -157,7 +169,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
     }
-    let profile = find_profile(cfg, &p.profile)?;
+    let (profile, _) = find_profile(cfg, &p.profile)?;
     let (cwd, branch, base) = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -211,7 +223,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         work_dir.join("brief.md"),
         fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
     )?;
-    let launch = with_hooks(cfg, resolve(&p.profile, profile)?, &work_dir)?;
+    let launch = with_hooks(cfg, resolve(&p.profile, &profile)?, &work_dir)?;
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),
@@ -221,15 +233,22 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     })
 }
 
-fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
-    cfg.profiles.get(name).with_context(|| {
-        format!("이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?})", cfg.profiles.keys().collect::<Vec<_>>())
+/// 이름의 profile과 기본 profile인지: agent.toml `[profiles.*]`, 없으면 같은 이름의 기본 profile(claude·codex, 참고 `get`)
+fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, bool)> {
+    if let Some(p) = cfg.profiles.get(name) {
+        return Ok((p.clone(), false));
+    }
+    aaa_config::profile_edit::builtin(name).map(|p| (p, true)).with_context(|| {
+        format!(
+            "이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?}, 기본 profile: claude, codex). 사람이 `aaa profile add`로 더한다",
+            cfg.profiles.keys().collect::<Vec<_>>()
+        )
     })
 }
 
 /// 있는 작업 폴더에서 profile을 다시 해석한다(brief.md는 host가 준 것을 이미 썼다)
 fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path) -> Result<Launch> {
-    with_hooks(cfg, resolve(name, find_profile(cfg, name)?)?, work_dir)
+    with_hooks(cfg, resolve(name, &find_profile(cfg, name)?.0)?, work_dir)
 }
 
 /// harness별 상태 hook을 launch에 붙인다

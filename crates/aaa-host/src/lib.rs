@@ -258,6 +258,8 @@ pub struct Host {
     front_seq: AtomicU64,
     /// 이 host 실행의 boot ID(흐름 사건에 같이 적는다)
     pub boot_id: String,
+    /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.115)
+    pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다)
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
     /// thread 기록이 바뀌었다
@@ -429,6 +431,7 @@ impl Host {
             layout_events: broadcast::channel(64).0,
             front_seq: AtomicU64::new(0),
             boot_id: util::boot_id(),
+            config_dir: std::sync::OnceLock::new(),
             flow_events: broadcast::channel(256).0,
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
@@ -922,7 +925,7 @@ impl Host {
             FrontRequest::Context { project, peek } => self.context(&project, peek).await.map(FrontResponse::Context),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
-                let owners = self.assignable().await;
+                let owners = self.assignable(&project).await;
                 let valid = match check {
                     Some(c) => Some(self.check_owner(&owners, &c)?),
                     None => None,
@@ -2156,6 +2159,7 @@ impl Host {
 /// `aaa host` 실행
 pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
+    let _ = host.config_dir.set(aaa_config::paths::config_dir());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
     link::start(&host).await?;
     front::start(&host).await?;
