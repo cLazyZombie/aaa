@@ -934,14 +934,16 @@ impl Host {
         let (p, t) = (project.to_string(), id.to_string());
         tokio::spawn(async move {
             let _guard = me.collect_lock.lock().await;
-            if let Err(e) = me.collect(&p, &t).await {
+            if let Err(e) = me.collect(&p, &t, false).await {
                 tracing::warn!(thread = %t, "보고 사본 실패: {}", e.message);
             }
         });
     }
 
     /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash를 바꾸지 않는다(다음 변화·정리 때 다시 한다).
-    async fn collect(self: &Arc<Self>, project: &str, id: &str) -> Result<(), ErrorBody> {
+    /// `last`(resolve의 마지막 사본)는 보고가 그대로여도 library를 다시 받는다. 보고 뒤에 바뀐 결과물이 옛 사본으로
+    /// 남지 않게 한다(herdr-projects threads.rs `final_copy`가 늘 `copy_home_*`로 library까지 다시 복사하는 것과 같다).
+    async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         let rec = self.load(project, id)?;
         let dir = self.project_dir(project)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
@@ -959,7 +961,7 @@ impl Host {
                 AgentResponse::Report(s) => s,
                 other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
             };
-            if Some(&snap.hash) == rec.report_hash.as_ref() && rec.copy.as_deref() != Some("failed") {
+            if !last && Some(&snap.hash) == rec.report_hash.as_ref() && rec.copy.as_deref() != Some("failed") {
                 return Ok(None);
             }
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
@@ -1017,6 +1019,16 @@ impl Host {
         match result {
             Ok(None) => Ok(()),
             Ok(Some((hash, skipped, copy, report))) => {
+                // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않는다
+                if rec.report_hash.as_ref() == Some(&hash) && rec.copy.as_deref() != Some("failed") {
+                    let rec = self.update_rec(project, id, |r| r.copy = Some(copy.clone()))?;
+                    let mut detail = format!("마지막 사본 {copy}");
+                    if !skipped.is_empty() {
+                        detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                    }
+                    self.flow(&rec, "library_copied", Some(format!("library/{id}")), detail);
+                    return Ok(());
+                }
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let (state, next) = parse_report(&text);
@@ -1081,7 +1093,7 @@ impl Host {
             );
             if has_report {
                 let _guard = self.collect_lock.lock().await;
-                self.collect(project, id)
+                self.collect(project, id, true)
                     .await
                     .map_err(|e| bad(format!("마지막 사본이 실패해 resolve하지 않는다: {}", e.message)))?;
             }
