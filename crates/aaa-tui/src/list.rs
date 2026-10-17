@@ -240,12 +240,14 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
         let (left, right) = line(row, v, current || sel);
         let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16 + 1).unwrap_or(0);
         let end = r.x + r.w.saturating_sub(rw);
+        // 왼쪽 글이 잘려도 오른쪽 표시(묶음 말)와 붙지 않게 한 칸 띄운다(「주문 목록 페검토 대기」가 됐다)
+        let stop = if rw > 0 { end.saturating_sub(1).max(r.x) } else { end };
         let mut x = r.x;
         for (t, st) in &left {
-            if x >= end {
+            if x >= stop {
                 break;
             }
-            x = buf.set_stringn(x, y, t, (end - x) as usize, *st).0;
+            x = buf.set_stringn(x, y, t, (stop - x) as usize, *st).0;
         }
         if let Some((t, st)) = right {
             buf.set_stringn(end, y, &t, rw as usize, st);
