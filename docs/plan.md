@@ -2388,6 +2388,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m12 `herdr_tab_workspace_and_layout`: `tab rename`의 빈칸만·앞뒤 빈칸. trim을 빼면 실패한다.
   - 유닛: `harness_session_ok`(UUID, 선택지·`;`·경로·전각 숫자 거부), hook 정규화가 UUID 아닌 세션 ID를 버림(사건은 받음), `survives`(panic이면 false, 따로 돌리지 않으면 실패).
   - 시험 fixture의 세션 ID(`fake-1`·`sess-a1`·`s1` 등)를 UUID로 바꿨다(중첩 세션을 버리는 시험은 두 ID가 달라야 한다).
+- **덤: 이미 등록된 머신의 다시 등록(QA t-0337 Q17, 낮음).** 등록된 장치 키로 `aaa agent enroll`을 다시 하면 host가 인증된 연결로 받아(`link.rs` `serve`) 「hello가 와야 한다」만 답했다. 이제 「이 머신(<이름>)은 이미 이 host에 등록돼 있다」와 두 길(그대로 `aaa agent`로 붙기, 다시 등록하려면 host에서 `aaa machine revoke <이름>`·`aaa machine enroll --open 10m` 뒤 `aaa agent enroll <host:port>`)을 답한다. 시험: e2e `enroll_remote_agent_and_run_short_command`가 다시 등록의 안내를 보고, 안내대로 취소 → 등록 창 → 같은 머신 다시 등록·승인 → 다시 붙기까지 한다(옛 답이면 실패).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
