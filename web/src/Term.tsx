@@ -4,7 +4,7 @@
 // - focus를 얻거나 다시 보이면, 또는 터미널을 누르거나 입력하면 이 화면이 지금 쓰는 화면이 되어 크기를 다시 건다.
 // - 탭이 1초 넘게 가려지면 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
@@ -181,8 +181,19 @@ export function TermView({
   const composingTermRef = useRef(false);
   const commitPendingRef = useRef(false);
 
+  // 이 터미널이 화면에 있다. 다른 pane으로 바꾸면 화면에서 지우기 전에(layout effect 정리) 내린다: 지워지는 textarea의
+  // blur가 조합 중 글자를 확정하는데, 버려진 그 글이 옛 pane으로 가면 안 된다(herdr-web-ui PaneTerminal presentedRef 검사).
+  const presentRef = useRef(true);
+  useLayoutEffect(() => {
+    presentRef.current = true;
+    return () => {
+      presentRef.current = false;
+    };
+  }, [pane.id]);
+
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
   const fromTerminal = (data: string) => {
+    if (!presentRef.current) return;
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
     input(composingTermRef.current || commitPendingRef.current ? data : withMods(data));
   };

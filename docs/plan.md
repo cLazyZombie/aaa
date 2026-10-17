@@ -1273,6 +1273,17 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 기록을 E2E 재생으로 옮겨 고치기 전 실패를 보인 뒤 고친다.
 - **IME 재생을 매 commit에.** CI에 `web-e2e (macos-15)` job을 더했다. 웹 E2E 전체(IME 기록 재생 포함)를 headless Chromium·WebKit(Playwright 1.59.1)으로 돌린다. binary를 바꾸기 전에도 로컬에서 웹 E2E를 돌리고 결과를 report.md에 적는다.
 - **E2E 고침.** composer 단계의 「휴대폰 입력 막대」 검사가 연결 전에 봐서 타이밍에 따라 실패했다. 화면이 온 뒤에 본다(기대값은 그대로).
+- **실기 기록과 원인(10-17 13:30).** 사용자 기록은 iPhone(iOS 18.7, Safari 27.0.1, 홈 화면 앱) 화면 키보드였다(처음에 iPad로 적은 것을 고친다).
+  - 자모마다 keydown(key는 자모, code `Unidentified`, keyCode 0, 조합 사건 없음)이 오고, 편집기가 새 음절은 insertText, 바뀐 음절은 deleteContentBackward 뒤 insertText로 고친다. iPad 하드웨어 키보드와 같은 꼴이다.
+  - herdr-web-ui xterm patch는 이 경로(`passHangulKey`·`beforeinput` 바꿔 넣기)를 `isMac || isIpad`에서만 켠다. iPhone(`navigator.platform` `iPhone`)에서는 keydown이 자모를 바로 보냈다(기록의 send: ㅎ ㅏ ㄴ ㄱ ㅡ ㄹ).
+  - 화면 키보드 고침(§8.39)과는 상관이 없다. 갈림은 keydown에서 정해지고 그 조건은 플랫폼뿐이다.
+- **고침(참고와 다름, 사용자 지시 「직접 고쳐」).** patch의 두 조건에 `isIphone`을 더했다. 사용자 확인으로는 herdr-web-ui도 같은 결함이 있어, 참고에서 고침을 찾지 않고 aaa에서 고쳤다. `web/patches/README.md`와 차이 목록에도 적었다.
+  - E2E 「iPhone 화면 키보드 사용자 기록 재생」: 기록 순서 그대로(iPhone UA·platform·430×932, WebKit은 화면 키보드를 올린 상태). 고치기 전 `"ㅎㅏㄴㄱㅡㄹ"`, 고친 뒤 `"한글"`. 기존 IME 재생 24가지도 그대로 통과한다.
+- **참고 iPad 회귀 시험 옮김(사용자 지시).** herdr-web-ui `scripts/terminal-ipad-ime-regression.ts`를 그대로 옮겼다. 참고처럼 pane WebSocket을 가로채 보낸 프레임을 본다.
+  - 판: Chromium MacIntel·iPad, 화면 키보드를 올린 WebKit iPad.
+  - 경우: 영문 뒤 한글, 조합 중 자모를 보내지 않음, 조합 글자 크기, 두 음절 바꿔 넣기, Enter·Ctrl+C·Tab 앞 확정, blur 확정, 조합 중 pane 바꾸기.
+  - 찾은 결함: 조합 중 pane을 바꾸면 Chromium에서 조합 중 글자가 옛 pane으로 갔다. 지워지는 textarea의 blur가 effect 정리보다 먼저 온다. 참고 `presentedRef`처럼 화면에서 지우기 전(layout effect 정리)에 내리는 `presentRef`로 막았다.
+- **시험 도구 고침.** m13 가짜 harness `sticky`가 한 바이트씩 `dd`로 되돌려 찍어, 느린 CI에서 Enter 뒤에도 찍는 중이라 받았다고 판정됐다(`bf056ae` macOS CI 실패). 받은 조각을 한 번에 찍는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

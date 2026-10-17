@@ -207,6 +207,36 @@ async function safariSyllable(page, parts, at = 0) {
 }
 
 /** iPadOS Safari + 하드웨어 키보드: 자모마다 제 keyCode의 keydown·keypress, 뒤이어 편집기가 지우고 넣는다(조합 사건 없음) */
+/** 사용자 기록(iOS 18.7 iPhone 홈 화면 앱, Safari 27.0.1, 화면 키보드 두벌식, 10-17 13:30): 자모마다 keydown(key는 자모,
+ * code "Unidentified", keyCode 0, isComposing false) → keypress(keyCode·charCode는 자모 코드) → 편집기가 새 음절은 insertText,
+ * 바뀐 음절은 deleteContentBackward 뒤 insertText로 고친다 → keyup. 조합 사건은 없다(iPad 하드웨어 키보드와 같은 꼴). */
+async function iphoneKey(page, jamo, edits) {
+  return page.locator("textarea.xterm-helper-textarea").evaluate(
+    async (box, { jamo, edits }) => {
+      const down = box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: jamo, code: "Unidentified", keyCode: 0, isComposing: false }));
+      const press = down && box.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: jamo, code: "Unidentified", keyCode: jamo.charCodeAt(0), charCode: jamo.charCodeAt(0) }));
+      if (down && press) {
+        for (const edit of edits) {
+          const end = box.value.length;
+          if (edit[0] === "delete") {
+            box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, inputType: "deleteContentBackward", isComposing: false }));
+            box.setRangeText("", end - 1, end, "end");
+            box.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "deleteContentBackward", isComposing: false }));
+          } else {
+            box.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, inputType: "insertText", data: edit[1], isComposing: false }));
+            box.setRangeText(edit[1], end, end, "end");
+            box.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: edit[1], isComposing: false }));
+          }
+        }
+      }
+      box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: jamo, code: "Unidentified", keyCode: 0, isComposing: false }));
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      return down;
+    },
+    { jamo, edits },
+  );
+}
+
 const IPAD_KEYCODES = { "ㅎ": 71, "ㅏ": 75, "ㄴ": 83, "ㄱ": 82, "ㅡ": 77, "ㄹ": 70, "ㅇ": 68, "ㅁ": 65 };
 async function ipadKey(page, jamo, edits) {
   return page.locator("textarea.xterm-helper-textarea").evaluate(
@@ -1092,6 +1122,223 @@ try {
     aaa("pane", "kill", "imespin");
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
+  });
+
+  await step("iPhone 화면 키보드 사용자 기록 재생(10-17): 「한글」을 자모마다 keydown으로 친 뒤 blur → pane에는 완성된 음절만", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "iphoneA", "--", process.execPath, `${root}/spin.js`);
+    const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Mobile/15E148 Safari/604.1";
+    const IPHONE = { width: 430, height: 932 };
+    const wk = await webkit.launch();
+    const bad = [];
+    try {
+      for (const [label, b, keyboard] of [["WebKit iPhone 화면 키보드", wk, true], ["Chromium iPhone", browser, false]]) {
+        const { page: p } = await pairPage(b, aaa("web", "pair").code, IPHONE, { userAgent: IPHONE_UA, platform: "iPhone", touch: true, init: fakeViewport });
+        const sent = [];
+        const frames = [];
+        let ready = false;
+        await p.routeWebSocket(/\/api\/v1\/panes\/[^/]+\/ws/, (socket) => {
+          const server = socket.connectToServer();
+          server.onMessage((raw) => {
+            if (typeof raw === "string") {
+              const m = JSON.parse(raw);
+              frames.push(m.t);
+              if (m.t === "snapshot" || m.t === "readonly") ready = m.readonly === false;
+            }
+            socket.send(raw);
+          });
+          socket.onMessage((raw) => {
+            const m = typeof raw === "string" ? JSON.parse(raw) : null;
+            if (m?.t === "input") sent.push(m.data);
+            else server.send(raw);
+          });
+        });
+        // 가로채기는 새로 연 문서부터 붙는다(참고 시험도 reset마다 다시 연다)
+        await p.goto(base);
+        await p.getByTestId("pane-iphoneA").evaluate((node) => node.click());
+        await until("iPhone 준비", () => ready).catch(async (e) => {
+          throw new Error(`${e.message}: ${label} 프레임 ${JSON.stringify(frames)} 화면 ${JSON.stringify((await p.locator("body").innerText()).slice(0, 300))}`);
+        });
+        await until("iPhone 화면", async () => (await screenText(p)).includes("paste>"));
+        const input = p.locator(".xterm-helper-textarea");
+        await input.focus();
+        // 기록처럼 화면 키보드가 올라온다(보이는 높이 873 → 485)
+        if (keyboard) {
+          await softKeyboard(p, 485);
+          await until("화면 키보드", () => p.evaluate(() => document.documentElement.hasAttribute("data-keyboard")));
+          await sleep(300);
+        }
+        await input.evaluate((box) => {
+          box.value = "";
+        });
+        sent.length = 0;
+        const fresh = (jamo) => iphoneKey(p, jamo, [["insert", jamo]]);
+        const replace = (jamo, result) => iphoneKey(p, jamo, [["delete"], ["insert", result]]);
+        await fresh("ㅎ");
+        await replace("ㅏ", "하");
+        await replace("ㄴ", "한");
+        if (sent.join("") !== "") bad.push(`${label}: 조합 중 자모를 보냈다 ${JSON.stringify(sent)}`);
+        await fresh("ㄱ");
+        await replace("ㅡ", "그");
+        await replace("ㄹ", "글");
+        // 기록 끝: 키보드를 내리며 blur
+        await input.evaluate((box) => box.blur());
+        await until(`${label} blur 확정`, () => sent.join("").length >= 2, 3000).catch(() => {});
+        await sleep(300);
+        console.log(`     iPhone 기록 ${label}: ${JSON.stringify(sent.join(""))}`);
+        if (sent.join("") !== "한글") bad.push(`${label}: pane이 받은 글 ${JSON.stringify(sent.join(""))}(기대 "한글")`);
+        await p.goto("about:blank").catch(() => {});
+        await p.context().close();
+      }
+    } finally {
+      await wk.close();
+    }
+    aaa("pane", "kill", "iphoneA");
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("iPad IME 회귀(herdr-web-ui scripts/terminal-ipad-ime-regression.ts 그대로): Chromium MacIntel·iPad, 화면 키보드가 올라온 WebKit iPad", async () => {
+    // 참고 시험처럼 pane WebSocket을 가로채 보낸 input 프레임을 그대로 본다(입력은 pane에 가지 않는다).
+    // 두 pane은 참고처럼 조용한 입력창이다(출력이 오는 동안의 조합은 「터미널 한글 IME」 단계의 화면 키보드 판이 본다).
+    for (const n of ["ipadA", "ipadB"]) aaa("pane", "run", "--machine", "labA", "--name", n, "--", process.execPath, `${root}/paste.js`);
+    const ids = Object.fromEntries(aaa("pane", "list").panes.filter((x) => x.name.startsWith("ipad")).map((x) => [x.id, x.name]));
+    const wk = await webkit.launch();
+    const IPAD_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15";
+    const IPAD_PORTRAIT = { width: 820, height: 1180 };
+    const runs = [
+      ["Chromium MacIntel", () => pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { userAgent: IPAD_UA, platform: "MacIntel" }), false],
+      ["Chromium iPad", () => pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { userAgent: IPAD_UA, platform: "iPad" }), false],
+      [
+        "WebKit iPad 화면 키보드",
+        () => pairPage(wk, aaa("web", "pair").code, IPAD_PORTRAIT, { userAgent: IPAD_UA, platform: "iPad", touch: true, init: fakeViewport }),
+        true,
+      ],
+    ];
+    const bad = [];
+    try {
+      for (const [label, open, keyboard] of runs) {
+        const { page: p } = await open();
+        const sent = [];
+        let ready = false;
+        // pane이 쓴 것처럼 화면에 보낼 출력(참고 toPage)
+        let toPage = () => {};
+        await p.routeWebSocket(/\/api\/v1\/panes\/[^/]+\/ws/, (socket) => {
+          const pane = ids[decodeURIComponent(socket.url().split("/panes/")[1].split("/")[0])];
+          const server = socket.connectToServer();
+          toPage = (data) => socket.send(Buffer.from(data));
+          server.onMessage((raw) => {
+            if (typeof raw === "string") {
+              const m = JSON.parse(raw);
+              if (m.t === "snapshot" || m.t === "readonly") ready = m.readonly === false;
+            }
+            socket.send(raw);
+          });
+          socket.onMessage((raw) => {
+            const m = typeof raw === "string" ? JSON.parse(raw) : null;
+            if (m?.t === "input") sent.push({ pane, data: m.data });
+            else server.send(raw);
+          });
+        });
+        const input = p.locator(".xterm-helper-textarea");
+        const select = async (name) => {
+          ready = false;
+          // 참고처럼 focus를 옮기지 않는 click(조합 중 글자가 blur로 확정되지 않게)
+          await p.getByTestId(`pane-${name}`).evaluate((node) => node.click());
+          await until(`${name} 준비`, () => ready);
+          await until(`${name} 화면`, async () => (await screenText(p)).includes("paste>"));
+          await input.focus();
+          if (keyboard) {
+            await softKeyboard(p, IPAD_PORTRAIT.height - 400);
+            await until("화면 키보드", () => p.evaluate(() => document.documentElement.hasAttribute("data-keyboard")));
+            await sleep(300);
+          }
+        };
+        const reset = async () => {
+          await p.goto(base);
+          await select("ipadA");
+          await input.evaluate((box) => {
+            box.value = "";
+          });
+          sent.length = 0;
+        };
+        const fresh = (jamo) => ipadKey(p, jamo, [["insert", jamo]]);
+        const replace = (jamo, result) => ipadKey(p, jamo, [["delete"], ["insert", result]]);
+        const text = () => sent.map((f) => f.data).join("");
+        const check = async (expected, what) => {
+          await input.press("Control+g");
+          await until(`${what}: ^G`, () => sent.at(-1)?.data === "\x07");
+          if (text() !== expected + "\x07") bad.push(`${label} ${what}: ${JSON.stringify(text())}(기대 ${JSON.stringify(expected + "\x07")})`);
+          if (!sent.every((f) => f.pane === "ipadA")) bad.push(`${label} ${what}: 다른 pane으로 갔다 ${JSON.stringify(sent)}`);
+        };
+        await reset();
+        await input.press("a");
+        await input.press("b");
+        await input.press("c");
+        if ((await fresh("ㅎ")) !== true) bad.push(`${label}: 한글 keydown을 편집기에 맡기지 않았다`);
+        await replace("ㅏ", "하");
+        await replace("ㄴ", "한");
+        if (text() !== "abc") bad.push(`${label}: 조합 중 자모를 보냈다 ${JSON.stringify(text())}`);
+        await fresh("ㄱ");
+        await replace("ㅡ", "그");
+        await replace("ㄹ", "글");
+        await input.press("Space");
+        await check("abc한글 ", "영문 뒤 한글은 음절마다 한 번씩 순서대로");
+        // 조합 중 글자는 그 줄의 확정 글자 크기로 그린다
+        toPage("\r\n한 ");
+        await p.waitForFunction(() => [...document.querySelectorAll(".xterm-rows span")].some((span) => span.textContent?.includes("한")));
+        await fresh("ㄱ");
+        await replace("ㅡ", "그");
+        const sizes = await p.evaluate(() => {
+          const row = [...document.querySelectorAll(".xterm-rows span")].find((span) => span.textContent?.includes("한"));
+          const view = document.querySelector(".composition-view");
+          return { row: getComputedStyle(row).fontSize, view: getComputedStyle(view).fontSize, pending: view.classList.contains("active") ? view.textContent : null };
+        });
+        if (sizes.pending !== "그") bad.push(`${label}: 조합 중 글자 ${JSON.stringify(sizes.pending)}`);
+        else if (Math.abs(parseFloat(sizes.view) - parseFloat(sizes.row)) >= 0.01) bad.push(`${label}: 조합 글자 크기 ${sizes.view} ≠ 줄 ${sizes.row}`);
+
+        await reset();
+        // 망 다음 ㅏ: 받침 ㅇ이 넘어가며 편집기가 두 음절을 한 번에 바꿔 넣는다
+        await fresh("ㅁ");
+        await replace("ㅏ", "마");
+        await replace("ㅇ", "망");
+        await replace("ㅏ", "마아");
+        await input.press("Space");
+        await check("마아 ", "두 음절 바꿔 넣기");
+
+        for (const [key, expected] of [["Enter", "\r"], ["Control+c", "\x03"], ["Tab", "\t"]]) {
+          await reset();
+          await fresh("ㅎ");
+          await replace("ㅏ", "하");
+          await replace("ㄴ", "한");
+          await input.press(key);
+          await check("한" + expected, `${key} 앞 확정`);
+        }
+
+        await reset();
+        await fresh("ㅎ");
+        await replace("ㅏ", "하");
+        await replace("ㄴ", "한");
+        await input.evaluate((box) => box.blur());
+        await until("blur 확정", () => sent.length > 0);
+        await input.focus();
+        await check("한", "blur가 조합 중 글자를 한 번 확정");
+
+        await reset();
+        await fresh("ㅎ");
+        await replace("ㅏ", "하");
+        await select("ipadB");
+        await input.press("Control+g");
+        await until("다른 pane ^G", () => sent.at(-1)?.data === "\x07");
+        if (text() !== "\x07" || sent.some((f) => f.pane !== "ipadB"))
+          bad.push(`${label}: 조합 중 글자가 다른 pane으로 갔다 ${JSON.stringify(sent)}`);
+        console.log(`     iPad IME 회귀 ${label}: ${bad.length ? "실패 있음" : "통과"}`);
+        await p.goto("about:blank").catch(() => {});
+        await p.context().close();
+      }
+    } finally {
+      await wk.close();
+    }
+    for (const n of ["ipadA", "ipadB"]) aaa("pane", "kill", n);
+    if (bad.length) throw new Error(bad.join("; "));
   });
 
   await step("입력 기록(실기 키보드 진단): 켜면 터미널 사건·textarea 값·화면 키보드 상태·보낸 글을 모으고, 보내면 host diag/에 남는다", async () => {
