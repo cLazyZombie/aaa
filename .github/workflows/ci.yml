@@ -23,18 +23,39 @@ jobs:
     name: web-e2e (macos-15)
     runs-on: macos-15
     timeout-minutes: 40
+    env:
+      PLAYWRIGHT_VERSION: "1.59.1"
     steps:
       - uses: actions/checkout@v5
       - name: Rust stable
+        id: rust
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
+          echo "rustc=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      # Rust 빌드 캐시(결정 D1). 설명은 rust job의 같은 단계에 있다.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+      # Playwright 브라우저 캐시(결정 D3). 키는 playwright 판이다. 복원한 뒤에도 install을 돈다:
+      # 다 있으면 받지 않고 넘어가고, 빠진 브라우저만 받는다.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.PLAYWRIGHT_VERSION }}
       # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령)
       - name: Playwright(Chromium·WebKit)
-        run: npm install -g --no-audit --no-fund playwright@1.59.1 && npx -y playwright@1.59.1 install chromium webkit
+        run: npm install -g --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION" && npx -y "playwright@$PLAYWRIGHT_VERSION" install chromium webkit
       # e2e는 target/debug/aaa만 쓴다: build 단계(--all-targets, 시험 binary 포함) 대신 e2e 단계가 그 binary만 빌드한다.
       # 단계를 나눠 두면 GitHub step 시간에 웹 빌드와 E2E가 따로 보인다.
       - name: 웹 빌드
@@ -65,10 +86,27 @@ jobs:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
       - name: Rust stable
+        id: rust
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
           rustup default stable
           rustc --version
+          echo "rustc=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      # Rust 빌드 캐시(결정 D1): 의존 crate 받은 것(registry·git)과 target. 키는 job·OS·rustc 판·주·Cargo.lock이다.
+      # - 키가 꼭 맞으면 복원만 하고 다시 저장하지 않는다(키마다 한 번 쓴다). 그래서 한 주 안에서는 커지지 않는다.
+      # - Cargo.lock이 바뀌면 같은 주의 캐시를 이어 받아 짓고 새 키로 저장한다. 주가 바뀌면 처음부터 지어 새로 저장한다.
+      # - 복원이 실패하면(받기 오류·없음) 캐시 없이 처음부터 짓는다. 다시 짓는 판단은 cargo fingerprint가 한다.
+      #   받은 파일이 깨져 빌드가 실패하면 통과로 넘어가지 않는다: 그때는 key의 v1을 올려 버린다.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -97,7 +135,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xvfb >/dev/null; fi
           bash scripts/ci-local.sh --only clipboard --logs . --tee
-      # 공개 저장소 검사(push 전 로컬 검사의 안전망). 얕은 checkout이라 origin/main..HEAD가 비어 커밋 메시지는 보지 않고,
+      # 공개 저장소 검사(push 전 로컬 검사의 안전망). 얕은 checkout이라 origin/main..HEAD가 비어 커밋 메시지·author는 보지 않고,
       # private-words가 없어 실제 이름도 보지 않는다: 여기의 통과는 추적 파일의 확장자·크기·내용 패턴만 본 결과다.
       - name: public
         if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
