@@ -2682,6 +2682,35 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 시간대 조용한 시간은 만들지 않는다(결정 D4, 참고에도 없다).
   - 시험: `mute_keeps_errors_only`, `keys_fall_back_one_by_one`의 `mute`.
 
+### 8.123 셸에서 `exit`하면 pane·탭·workspace를 닫는다(10-18, 사용자 요청 「다 사용한 탭은 exit로 하면 자동으로 닫히면 좋겠어」)
+- **참고.** herdr 0.9.5는 pane 프로세스가 끝나면(`AppEvent::PaneDied` → `handle_pane_died`) 그 pane을 layout에서 뺀다(`Workspace::remove_pane`).
+  - 탭의 마지막 pane이면 탭을, workspace의 마지막 탭이면 workspace를 지운다. workspace가 하나도 남지 않으면 Navigate 모드로 간다.
+  - 끝난 pane을 남겨 두는 설정(remain-on-exit)은 없다.
+- **aaa.** host가 셸 pane이 실행 중에서 `Exited`로 바뀌는 것을 보면 그 pane을 닫는다. 보는 길은 agent 사건(`on_session`)과 agent가 다시 붙을 때의 `hello.sessions` 둘이다.
+  - 기록을 지우고(`forget`, 감사 actor `exit`) 모든 layout에서 뺀다. 빈 탭은 없어진다.
+  - 그래서 탭이 남지 않은 workspace도 지운다(`workspace_close`와 같은 감사·빈 Workspace 사건). main은 지워도 목록에 늘 보인다(빈 main, TUI 「탭이 없다」).
+- **닫지 않는 것.**
+  - 재부팅으로 끊긴 pane(`Interrupted`)·session host 유실(`Lost`): 복원 대상이다(§8.111). 끝남(`Exited`)이 아니라 닫히지 않는다.
+  - host가 실행 중을 본 적이 없는 세션: host를 다시 띄운 뒤 처음 듣는 끝난 세션이다(host는 pane 기록을 메모리에만 둔다). 다시 붙어 실행 중을 본 뒤 끝나면 닫는다.
+  - host가 끝내기를 보낸 pane(`pane kill`): 다시 열려고 남긴다(aaa 확장, 웹 줄 메뉴 「다시 열기」). 탭·pane 닫기는 스스로 기록을 지운다.
+  - 역할 pane(thread·평가자): 수명은 thread 명령이 정한다(`close_panes`와 같은 규칙).
+  - 프로그램 pane(셸이 아닌 명령, `sh -c …`): 끝난 화면과 종료 코드를 남긴다. herdr pane은 늘 셸이라 이 경우가 없다(aaa 확장).
+- **초점(TUI).** 보던 pane이 빠지면 차례상 다음 pane, 끝이면 앞 pane이다(herdr `TileLayout::close_focused`). 보던 탭이 없어지면 앞 탭이다(herdr `Workspace::close_tab`·`remove_pane`).
+  - 다른 front의 탭 닫기에도 같다. herdr의 「초점이 왔던 pane」 기억(`prev_focus`)은 aaa TUI에 없어 차례만 본다.
+- **웹.** 목록이 host 상태 사건으로 바뀌어 닫힌 pane 줄이 사라진다. 고른 pane이 닫히면 선택을 놓는다.
+  - herdr-web-ui는 그 PC의 herdr 초점 pane을 고른다. aaa 웹은 layout을 받지 않아 고를 초점이 없다.
+- **herdr와 다른 것.** herdr는 신호로 끝난 pane(`ChildExitReason::Interrupted`)도 닫되, 그 전에 세션을 저장해 다음 시작에 되살린다(`checkpoint_session_before_pane_exit`).
+  - aaa session host는 종료 코드만 적는다(portable-pty `exit_code`, 신호는 1). 그래서 사람의 `exit 1`과 신호를 가르지 못하고, 다른 프로세스가 신호로 끝낸 셸도 닫힌다.
+  - 재부팅은 boot ID로 가린다(`Interrupted`).
+- **시험.** `m12 shell_exit_closes_its_pane_tab_and_workspace`:
+  - 나눈 pane의 exit → 그 자리에서 빠진다. 탭의 마지막 pane `exit 3` → 탭이 없어진다. 다른 workspace의 마지막 탭 → workspace가 없어진다.
+  - agent를 내린 사이 fifo로 끝낸 셸 → 다시 붙을 때 닫힌다.
+  - `pane kill`한 셸과 프로그램 pane(`exit 4`)은 남는다. 둘은 뒤에 닫힌 pane보다 먼저 끝났다.
+  - `e2e host_restart_keeps_sessions_and_disconnect_is_readonly`: host를 다시 띄운 뒤의 셸 `exit 3`도 닫힌다.
+  - host 단위 `only_a_shell_that_exited_by_itself_closes`(복원 대상·kill·역할·프로그램·이미 끝난 것), TUI 단위 `a_removed_tab_or_pane_moves_like_herdr`.
+  - 기다림은 host 사건·출력·종료 기록 파일뿐이다.
+  - 결함 심기 아홉(다시 붙는 길·kill 표시·빈 workspace·live 길·셸·역할·실행 중 검사·앞 탭·다음 pane)을 모두 잡았다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

@@ -440,6 +440,73 @@ fn pane_rename_survives_agent_restart_exit_and_resume() {
     assert_eq!((p["name"].as_str(), p["state"].as_str()), (Some("끝난 뒤"), Some("running")));
 }
 
+/// 셸에서 `exit`하면(셸이 스스로 끝남) 그 pane을 닫는다(herdr 0.9.5 `handle_pane_died`·`Workspace::remove_pane`, plan §8.123):
+/// 나눈 자리에서 빠지고, 탭의 마지막 pane이면 탭이, workspace의 마지막 탭이면 workspace가 없어진다. agent가 내려간 사이
+/// 끝난 셸도 다시 붙을 때 닫는다. `pane kill`로 끝낸 셸과 프로그램 pane은 끝난 화면과 종료 코드를 남긴다.
+#[test]
+fn shell_exit_closes_its_pane_tab_and_workspace() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &[]);
+    let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], None);
+    let w = h.ok(&["pane", "split", &a, "--direction", "right"]);
+    let b = w["tabs"][0]["root"]["b"]["pane"].as_str().unwrap().to_string();
+    let c = h.new_pane(None, "labA", Some("c"), &["/bin/sh"], None);
+    let k = h.new_pane(None, "labA", Some("k"), &["/bin/sh"], None);
+    let p = h.new_pane(None, "labA", Some("p"), &["/bin/sh", "-c", "read x; exit 4"], None);
+    let up = [&a, &b, &c, &k, &p];
+    hw.wait("모두 실행 중", |w| {
+        up.iter().all(|id| w.pane(id).is_some_and(|v| v.state.is_running())).then_some(())
+    });
+
+    // 남기는 것 먼저 끝낸다: 사람이 끝낸 셸, 프로그램 pane
+    h.ok(&["pane", "kill", &k]);
+    h.ok(&["pane", "run", &p, "go"]);
+    hw.wait("k·p 끝남", |w| {
+        let k_done = w.pane(&k).is_some_and(|v| matches!(v.state, SessionState::Exited { .. }));
+        (k_done && w.pane(&p)?.state == SessionState::Exited { code: Some(4) }).then_some(())
+    });
+    // 나눈 pane 하나: 그 자리에서 빠지고 옆 pane이 탭을 채운다
+    h.ok(&["pane", "run", &b, "exit"]);
+    let tabs = |w: &HostWatch| -> Vec<Vec<String>> {
+        w.ws.iter().flat_map(|ws| ws.tabs.iter().map(|t| aaa_proto::layout::leaves(&t.root))).collect()
+    };
+    hw.wait("b 닫힘", |w| (w.pane(&b).is_none() && tabs(w)[0] == [a.clone()]).then_some(()));
+    // 앞서 끝난 k·p는 닫는 일이 그 앞에 끝났을 것이다: 그대로 남았다
+    assert_eq!(tabs(&hw), [vec![a.clone()], vec![c.clone()], vec![k.clone()], vec![p.clone()]]);
+    assert!(matches!(hw.pane(&k).unwrap().state, SessionState::Exited { .. }));
+    assert!(h.screen(&p).contains("go"), "프로그램 pane은 끝난 화면을 남긴다");
+    // 탭의 마지막 pane이면 탭이 없어진다
+    h.ok(&["pane", "run", &c, "exit 3"]);
+    hw.wait("c의 탭 닫힘", |w| (w.pane(&c).is_none() && tabs(w).len() == 3).then_some(()));
+
+    // workspace의 마지막 탭이면 workspace가 없어진다(main은 늘 보인다)
+    let s = h.new_pane(Some("side"), "labA", None, &["/bin/sh"], None);
+    hw.wait("s 실행 중", |w| w.pane(&s).is_some_and(|v| v.state.is_running()).then_some(()));
+    h.ok(&["pane", "run", &s, "exit"]);
+    hw.wait("s 닫힘", |w| w.pane(&s).is_none().then_some(()));
+    let names = || -> Vec<String> {
+        let v = h.ok(&["workspace", "list"]);
+        v["workspaces"].as_array().unwrap().iter().map(|w| w["name"].as_str().unwrap().to_string()).collect()
+    };
+    wait_for("side 닫힘", T, || (names() == ["main"]).then_some(()));
+
+    // agent가 내려간 사이 끝난 셸: 다시 붙을 때 닫는다(host는 그 전에 실행 중을 봤다)
+    let d = h.new_pane(None, "labA", Some("d"), &["/bin/sh"], None);
+    let fifo = lab.root.join("go");
+    let cpath = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    h.ok(&["pane", "run", &d, &format!("echo ready-$((1+1)); read x < {}; exit", fifo.display())]);
+    h.wait_output(&d, "ready-2", T);
+    lab.kill("agent");
+    hw.wait("labA 끊김", |w| (!w.connected("labA")).then_some(()));
+    std::fs::write(&fifo, "x\n").unwrap();
+    let exit = h.state.join("agent").join("sessions").join(&d).join("exit.json");
+    wait_for("d 종료 기록", T, || exit.exists().then_some(()));
+    lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
+    hw.wait("d 닫힘", |w| (w.connected("labA") && w.pane(&d).is_none() && !w.leaves().contains(&d)).then_some(()));
+    assert_eq!(tabs(&hw), [vec![a], vec![k], vec![p]]);
+}
+
 /// 한 front 연결에서 응답을 기다리지 않고 보낸 키 입력은 보낸 순서대로 PTY에 들어간다(TUI가 키마다 보낸다).
 #[test]
 fn inputs_from_one_front_keep_order() {
