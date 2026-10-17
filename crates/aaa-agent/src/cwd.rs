@@ -403,12 +403,19 @@ mod tests {
             }
         });
         let mut writer = pair.master.take_writer().unwrap();
-        // 표지(ready)가 보이면 cd가 끝났다
+        // 표지(ready)가 보이면 cd가 끝났다. Windows ConPTY(portable-pty는 INHERIT_CURSOR로 연다)는 시작할 때 커서 위치를
+        // 묻고(DSR 6, `ESC [ 6 n`) 답이 올 때까지 자식의 출력과 종료를 막는다: session host처럼 한 번 답한다
+        // (aaa-vt `DsrScanner`). Unix 셸은 묻지 않는다.
         let mut seen = Vec::new();
+        let mut answered = false;
         while !String::from_utf8_lossy(&seen).contains("ready") {
             let chunk =
                 rx.recv().unwrap_or_else(|_| panic!("셸이 표지 전에 끝났다: {}", String::from_utf8_lossy(&seen)));
             seen.extend_from_slice(&chunk);
+            if !answered && seen.windows(4).any(|w| w == b"\x1b[6n") {
+                std::io::Write::write_all(&mut writer, b"\x1b[1;1R").unwrap();
+                answered = true;
+            }
         }
         let pid = child.process_id().unwrap();
         let got = follow_cwd(pid);
