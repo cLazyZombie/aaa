@@ -11,12 +11,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aaa_proto::{
-    AgentRequest, B64, ErrorBody, ErrorCode, FrontResponse, OutputMatch, ReadFormat, ReadSource, ReadView,
+    AgentRequest, B64, ErrorBody, ErrorCode, FrontResponse, OutputMatch, ReadFormat, ReadSource, ReadView, TextPoint,
     ThreadPaneView,
 };
 use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::{Host, err};
+
+/// 고른 글 상한: JSON 한 frame(`aaa_proto::MAX_FRAME` 1MiB)에 escape까지 들게 그 반
+pub(crate) const SELECTION_MAX_BYTES: usize = aaa_proto::MAX_FRAME / 2;
 
 /// herdr `match_output`(src/api/subscriptions.rs): 맞은 첫 줄
 fn match_output(text: &str, matcher: &OutputMatch, regex: Option<&regex::Regex>) -> Option<String> {
@@ -39,6 +42,25 @@ impl Host {
         let m = i.panes.get_mut(id)?.mirror.as_mut()?;
         let r = m.vt.read(source, lines, format);
         Some(ReadView { pane: id.to_string(), source, format, text: r.text, truncated: r.truncated })
+    }
+
+    /// TUI 고른 글(herdr `PaneSelectionRead`): 화면 사본에서 기록까지 읽는다. 한 frame(`MAX_FRAME`)에 들게 앞쪽만 둔다.
+    pub(crate) fn pane_selection_read(
+        &self,
+        pane: &str,
+        from: TextPoint,
+        to: TextPoint,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, _) = self.resolve_pane(pane)?;
+        let mut i = self.inner.lock().unwrap();
+        let m = i
+            .panes
+            .get_mut(&id)
+            .and_then(|p| p.mirror.as_mut())
+            .ok_or_else(|| err(ErrorCode::NotFound, "화면 사본이 없다"))?;
+        let point = |p: TextPoint| (p.row as usize, p.col);
+        let (text, truncated) = m.vt.selection_text(point(from), point(to), SELECTION_MAX_BYTES);
+        Ok(FrontResponse::Selection { pane: id, text, truncated })
     }
 
     /// `pane read`: 사본이 아직 없으면(붙자마자) 그 머신 agent가 보이는 화면을 준다

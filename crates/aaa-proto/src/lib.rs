@@ -71,6 +71,7 @@ pub fn typescript_bindings() -> String {
         MouseEncoding::decl(&cfg),
         GridScroll::decl(&cfg),
         ScrollBy::decl(&cfg),
+        TextPoint::decl(&cfg),
         PendingEnroll::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),

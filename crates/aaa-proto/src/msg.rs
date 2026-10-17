@@ -954,6 +954,14 @@ pub enum ScrollBy {
     },
 }
 
+/// pane 화면 사본의 글 자리(herdr `PaneTextPoint`). `row`는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는 줄 번호
+/// (alt 화면이면 화면 줄만), `col`은 칸. `GridScroll`로 보면 화면 맨 위 줄은 `max - offset`이다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+pub struct TextPoint {
+    pub row: u32,
+    pub col: u16,
+}
+
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PaneModes {
@@ -1187,6 +1195,13 @@ pub enum FrontRequest {
     PaneScroll {
         pane: String,
         by: ScrollBy,
+    },
+    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.17부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.114).
+    PaneSelectionRead {
+        pane: String,
+        from: TextPoint,
+        to: TextPoint,
     },
     Workspace {
         name: Option<String>,
@@ -1500,6 +1515,7 @@ impl FrontRequest {
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::PaneScroll { .. }
+                | FrontRequest::PaneSelectionRead { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -1577,6 +1593,12 @@ pub enum FrontResponse {
     },
     Workspace(Workspace),
     Done,
+    /// `PaneSelectionRead`: 고른 글. 한 frame에 들게 앞쪽만 두었으면 `truncated`
+    Selection {
+        pane: String,
+        text: String,
+        truncated: bool,
+    },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {
         path: String,

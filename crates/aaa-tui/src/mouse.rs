@@ -20,7 +20,9 @@
 use std::time::Duration;
 
 use aaa_proto::layout::Rect;
-use aaa_proto::{FrontRequest, GridRun, LayoutChange, MouseEncoding, MouseMode, PaneModes, ScrollBy, SplitDir};
+use aaa_proto::{
+    FrontRequest, GridRun, GridScroll, LayoutChange, MouseEncoding, MouseMode, PaneModes, ScrollBy, SplitDir, TextPoint,
+};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -41,6 +43,18 @@ pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 pub const WORD_SHOWN: Duration = Duration::from_millis(500);
 /// 나눔을 끄는 동안 비율을 보내는 사이(herdr 33ms)
 pub const SPLIT_SEND: Duration = Duration::from_millis(33);
+/// 끌어 고르다 가장자리에 닿았을 때 한 줄씩 넘기는 사이(herdr `SELECTION_AUTOSCROLL_INTERVAL`)
+pub const SELECTION_AUTOSCROLL: Duration = Duration::from_millis(30);
+
+/// pane 밖으로 `d`줄 끌었을 때 바로 넘기는 줄 수(herdr `selection_edge_scroll_lines`)
+pub fn edge_lines(d: u16) -> i64 {
+    (i64::from(d) * 3).clamp(3, 15)
+}
+
+/// 화면 맨 위 줄의 번호(기록 맨 앞 줄이 0, herdr `viewport_top`)
+pub fn view_top(s: GridScroll) -> u32 {
+    s.max.saturating_sub(s.offset)
+}
 
 /// 창의 단추
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,25 +129,43 @@ impl Hits {
 /// pane 화면의 한 칸(줄, 열). 0부터.
 pub type Cell = (u16, u16);
 
-/// 고른 글 범위(pane 화면 칸, 읽는 차례로 `start` ≤ `end`, 끝 칸 포함)
+/// pane 글 자리(줄, 열): 줄은 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는다(herdr selection 절대 줄, `TextPoint`)
+pub type Point = (u32, u16);
+
+/// 고른 글 범위(끝 칸 포함). 기록 줄 번호로 두어 기록을 넘겨도 고른 글을 따라간다(herdr `Selection`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     pub pane: String,
-    pub anchor: Cell,
-    pub head: Cell,
+    pub anchor: Point,
+    pub head: Point,
     /// 두 번 누름 낱말: 이 때까지만 보인다
     pub until: Option<Instant>,
 }
 
 impl Selection {
-    pub fn range(&self) -> (Cell, Cell) {
+    /// 읽는 차례로(`start` ≤ `end`)
+    pub fn range(&self) -> (Point, Point) {
         if self.anchor <= self.head { (self.anchor, self.head) } else { (self.head, self.anchor) }
     }
 
-    pub fn covers(&self, row: u16, col: u16) -> bool {
-        let ((r1, c1), (r2, c2)) = self.range();
-        (row, col) >= (r1, c1) && (row, col) <= (r2, c2) && row >= r1 && row <= r2
+    /// 화면 맨 위 줄이 `top`일 때 화면 칸 (row, col)을 골랐나
+    pub fn covers(&self, top: u32, row: u16, col: u16) -> bool {
+        let at = (top + u32::from(row), col);
+        let (start, end) = self.range();
+        at >= start && at <= end
     }
+}
+
+/// 끌어 고르다 pane 위·아래 가장자리(밖 포함)에 닿았다: `at`마다 한 줄씩 그쪽으로 넘긴다(herdr selection autoscroll).
+/// 마지막 마우스 자리와 그때의 pane 칸을 둔다(칸이 바뀌면 멈춘다).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoScroll {
+    pub pane: String,
+    pub up: bool,
+    pub x: u16,
+    pub y: u16,
+    pub inner: Rect,
+    pub at: Instant,
 }
 
 /// 누른 채 끄는 것
@@ -151,8 +183,9 @@ pub enum Drag {
     Row(Row),
     /// 사이드바 경계를 끈다
     Sidebar,
-    /// pane 글을 고른다. `moved`는 누른 칸을 벗어났나(herdr: 벗어나야 보인다)
-    Select { pane: String, anchor: Cell, moved: bool },
+    /// pane 글을 고른다. `moved`는 누른 칸을 벗어났나(herdr: 벗어나야 보인다). `offset`은 고르는 동안 보낸 기록 위치
+    /// (herdr처럼 화면 frame을 기다리지 않고 그 위치로 고른 끝을 잡는다, 보낸 적이 없으면 화면의 위치)
+    Select { pane: String, anchor: Point, moved: bool, offset: Option<u32> },
 }
 
 /// 오른쪽 누름 메뉴의 대상(herdr `ClientContextMenuTarget`)
@@ -685,6 +718,8 @@ impl App {
             return Ok(());
         }
         let cell = (y - b.inner.y, x - b.inner.x);
+        let top = self.grids.get(&b.pane).map_or(0, |g| view_top(g.scroll));
+        let at = (top + u32::from(cell.0), cell.1);
         let now = Instant::now();
         let double = self.last_click.as_ref().is_some_and(|(t, p, c)| {
             now.duration_since(*t) <= DOUBLE_CLICK && *p == b.pane && c.0 == cell.0 && c.1.abs_diff(cell.1) <= 1
@@ -695,15 +730,14 @@ impl App {
             let word =
                 self.grids.get(&b.pane).and_then(|g| g.lines.get(cell.0 as usize)).and_then(|l| word_at(l, cell.1));
             if let Some((a, z)) = word {
-                let sel =
-                    Selection { pane: b.pane, anchor: (cell.0, a), head: (cell.0, z), until: Some(now + WORD_SHOWN) };
-                self.copy_selection(&sel);
+                let sel = Selection { pane: b.pane, anchor: (at.0, a), head: (at.0, z), until: Some(now + WORD_SHOWN) };
+                self.copy_selection(tx, &sel).await?;
                 self.selection = Some(sel);
             }
             return Ok(());
         }
         self.last_click = Some((now, b.pane.clone(), cell));
-        self.drag = Some(Drag::Select { pane: b.pane, anchor: cell, moved: false });
+        self.drag = Some(Drag::Select { pane: b.pane, anchor: at, moved: false, offset: None });
         Ok(())
     }
 
@@ -890,18 +924,30 @@ impl App {
                 let moving = moving || (x.abs_diff(from.0).max(y.abs_diff(from.1)) >= 1 && insert.is_some());
                 self.drag = Some(Drag::Tab { index, from, moving, insert: if moving { insert } else { None } });
             }
-            // 누른 칸을 벗어나야 고른다. pane 밖으로 끌면 가장자리 칸으로 묶는다.
-            Some(Drag::Select { pane, anchor, moved }) => {
+            // 누른 칸을 벗어나야 고른다. pane 밖으로 끌면 가장자리 칸으로 묶는다. herdr: pane 위·아래 밖이면 그 거리만큼
+            // 바로 넘기고(3~15줄), 가장자리 줄을 포함해 그쪽에 있는 동안 30ms마다 한 줄씩 더 넘긴다.
+            Some(Drag::Select { pane, anchor, moved, offset }) => {
                 let Some(i) = hits.panes.iter().find(|b| b.pane == pane).map(|b| b.inner) else { return Ok(()) };
                 if i.w == 0 || i.h == 0 {
                     return Ok(());
                 }
-                let cell = (y.clamp(i.y, i.y + i.h - 1) - i.y, x.clamp(i.x, i.x + i.w - 1) - i.x);
-                let moved = moved || cell != anchor;
-                self.drag = Some(Drag::Select { pane: pane.clone(), anchor, moved });
-                if moved {
-                    self.selection = Some(Selection { pane, anchor, head: cell, until: None });
-                }
+                let bottom = i.y + i.h - 1;
+                let (up, jump) = match y {
+                    y if y < i.y => (Some(true), edge_lines(i.y - y)),
+                    y if y > bottom => (Some(false), -edge_lines(y - bottom)),
+                    y if y == i.y => (Some(true), 0),
+                    y if y == bottom => (Some(false), 0),
+                    _ => (None, 0),
+                };
+                self.autoscroll = up.map(|up| AutoScroll {
+                    pane: pane.clone(),
+                    up,
+                    x,
+                    y,
+                    inner: i,
+                    at: Instant::now() + SELECTION_AUTOSCROLL,
+                });
+                self.select_to(tx, pane, anchor, moved, offset, jump, (x, y), i).await?;
             }
             _ => {}
         }
@@ -925,6 +971,7 @@ impl App {
         if button != held {
             return Ok(());
         }
+        self.autoscroll = None;
         match self.drag.take() {
             Some(Drag::Pane { pane, button }) => {
                 if let Some(b) = hits.panes.iter().find(|b| b.pane == pane).cloned() {
@@ -970,7 +1017,7 @@ impl App {
                 if let Some(sel) = self.selection.clone().filter(|s| s.pane == pane)
                     && self.copy_on_select
                 {
-                    self.copy_selection(&sel);
+                    self.copy_selection(tx, &sel).await?;
                     self.selection = None;
                 }
             }
@@ -1000,6 +1047,17 @@ impl App {
         hits: &Hits,
         tx: &mut FrontSender,
     ) -> Result<()> {
+        // herdr `scroll_in_progress_selection`: 끌어 고르는 중 휠은 그 pane 기록을 넘기며 고른 끝을 다시 잡는다(프로그램에는 안 감)
+        if let Some(Drag::Select { pane, anchor, moved, offset }) = self.drag.clone() {
+            if let Some(i) = hits.panes.iter().find(|b| b.pane == pane).map(|b| b.inner)
+                && i.w > 0
+                && i.h > 0
+            {
+                let lines = i64::from(self.scroll_lines);
+                self.select_to(tx, pane, anchor, moved, offset, if down { -lines } else { lines }, (x, y), i).await?;
+            }
+            return Ok(());
+        }
         if hits.on(hits.tab_bar, x, y) {
             return self.act(if down { Action::NextTab } else { Action::PreviousTab }, tx).await;
         }
@@ -1031,27 +1089,100 @@ impl App {
         Ok(())
     }
 
-    /// 고른 글을 복사하고 알린다(herdr 「copied to clipboard」)
-    pub(crate) fn copy_selection(&mut self, sel: &Selection) {
-        let Some(g) = self.grids.get(&sel.pane) else { return };
-        let t = text(&g.lines, sel.range());
+    /// 고르는 중 기록 위치를 `delta`줄(+면 위로) 옮기고 화면 자리 `at`까지 고른다(herdr `drag_selection_with_metrics`).
+    /// 기록 위치가 바뀌었으면 true.
+    #[allow(clippy::too_many_arguments)]
+    async fn select_to(
+        &mut self,
+        tx: &mut FrontSender,
+        pane: String,
+        anchor: Point,
+        moved: bool,
+        offset: Option<u32>,
+        delta: i64,
+        (x, y): (u16, u16),
+        i: Rect,
+    ) -> Result<bool> {
+        let Some(scroll) = self.grids.get(&pane).map(|g| g.scroll) else { return Ok(false) };
+        let now = offset.unwrap_or(scroll.offset).min(scroll.max);
+        let next = (i64::from(now) + delta).clamp(0, i64::from(scroll.max)) as u32;
+        let changed = next != now;
+        if changed {
+            self.scroll_to(tx, pane.clone(), next as usize).await?;
+        }
+        let cell = (y.clamp(i.y, i.y + i.h - 1) - i.y, x.clamp(i.x, i.x + i.w - 1) - i.x);
+        let head = (scroll.max - next + u32::from(cell.0), cell.1);
+        let moved = moved || head != anchor;
+        let offset = if changed { Some(next) } else { offset };
+        self.drag = Some(Drag::Select { pane: pane.clone(), anchor, moved, offset });
+        if moved {
+            self.selection = Some(Selection { pane, anchor, head, until: None });
+        }
+        Ok(changed)
+    }
+
+    /// 가장자리 자동 넘기기 한 번(herdr `tick_selection_autoscroll`): 한 줄 넘기고 마지막 마우스 자리까지 고른다.
+    /// 더 넘길 수 없거나, 끌기가 끝났거나, pane 칸이 바뀌면 멈춘다.
+    pub(crate) async fn autoscroll_tick(&mut self, tx: &mut FrontSender) -> Result<()> {
+        let Some(a) = self.autoscroll.take() else { return Ok(()) };
+        let Some(Drag::Select { pane, anchor, moved, offset }) = self.drag.clone() else { return Ok(()) };
+        let inner = self.hits.borrow().panes.iter().find(|b| b.pane == pane).map(|b| b.inner);
+        if pane != a.pane || inner != Some(a.inner) {
+            return Ok(());
+        }
+        if self.select_to(tx, pane, anchor, moved, offset, if a.up { 1 } else { -1 }, (a.x, a.y), a.inner).await? {
+            self.autoscroll = Some(AutoScroll { at: Instant::now() + SELECTION_AUTOSCROLL, ..a });
+        }
+        Ok(())
+    }
+
+    /// 고른 글을 복사한다(herdr `PaneSelectionRead`). 새 host(1.17부터)는 화면 사본에서 기록까지 읽어 응답이 오면 복사하고,
+    /// 옛 host면 이 화면에 보이는 줄만 바로 복사한다.
+    pub(crate) async fn copy_selection(&mut self, tx: &mut FrontSender, sel: &Selection) -> Result<()> {
+        let ((r1, c1), (r2, c2)) = sel.range();
+        if self.host_at_least(17) {
+            let (from, to) = (TextPoint { row: r1, col: c1 }, TextPoint { row: r2, col: c2 });
+            let id = tx.send(FrontRequest::PaneSelectionRead { pane: sel.pane.clone(), from, to }).await?;
+            self.pending.insert(id, Pending::Copy);
+            return Ok(());
+        }
+        let Some(g) = self.grids.get(&sel.pane) else { return Ok(()) };
+        let (top, rows) = (view_top(g.scroll), u32::from(g.rows));
+        if r2 < top || r1 >= top + rows || rows == 0 {
+            return Ok(());
+        }
+        let from = if r1 < top { (0, 0) } else { ((r1 - top) as u16, c1) };
+        let to = if r2 >= top + rows { ((rows - 1) as u16, u16::MAX) } else { ((r2 - top) as u16, c2) };
+        let t = text(&g.lines, (from, to));
+        self.copied(&t, false);
+        Ok(())
+    }
+
+    /// 복사하고 알린다(herdr 「copied to clipboard」)
+    pub(crate) fn copied(&mut self, t: &str, truncated: bool) {
         if t.trim().is_empty() {
             return;
         }
-        match clip::copy_text(&t) {
+        match clip::copy_text(t) {
+            Ok(()) if truncated => self.set_message("클립보드에 복사했다(너무 길어 앞쪽만)"),
             Ok(()) => self.set_message("클립보드에 복사했다"),
             Err(e) => self.set_error(format!("복사하지 못했다: {e}")),
         }
     }
 
     /// 고른 채 둔 글(`copy_on_select` 끔)은 ctrl+c·cmd+c로 복사하고, 다른 키는 지우고 그대로 처리한다(herdr)
-    pub(crate) fn selection_key(&mut self, mods: KeyModifiers, ch: Option<char>) -> bool {
-        let Some(sel) = self.selection.take() else { return false };
+    pub(crate) async fn selection_key(
+        &mut self,
+        tx: &mut FrontSender,
+        mods: KeyModifiers,
+        ch: Option<char>,
+    ) -> Result<bool> {
+        let Some(sel) = self.selection.take() else { return Ok(false) };
         let copy = ch == Some('c') && (mods == KeyModifiers::CONTROL || mods == KeyModifiers::SUPER);
         if copy && sel.until.is_none() {
-            self.copy_selection(&sel);
+            self.copy_selection(tx, &sel).await?;
         }
-        copy
+        Ok(copy)
     }
 }
 
@@ -1073,7 +1204,19 @@ mod tests {
         assert_eq!(text(&lines, ((0, 0), (2, 100))), "ab 한글 cd\n둘째 줄\n셋째");
         let s = Selection { pane: "p".into(), anchor: (1, 3), head: (0, 5), until: None };
         assert_eq!(s.range(), ((0, 5), (1, 3)));
-        assert!(s.covers(0, 9) && s.covers(1, 0) && !s.covers(1, 4) && !s.covers(0, 4));
+        assert!(s.covers(0, 0, 9) && s.covers(0, 1, 0) && !s.covers(0, 1, 4) && !s.covers(0, 0, 4));
+        // 기록 줄 번호로 고르므로 화면 맨 위 줄(top)이 바뀌면 고른 칸도 따라 움직인다
+        let s = Selection { pane: "p".into(), anchor: (12, 2), head: (11, 0), until: None };
+        assert!(
+            s.covers(10, 1, 7)
+                && s.covers(10, 2, 2)
+                && !s.covers(10, 2, 3)
+                && s.covers(11, 0, 0)
+                && !s.covers(12, 1, 0)
+        );
+        assert_eq!(view_top(GridScroll { offset: 5, max: 30 }), 25);
+        // herdr `selection_edge_scroll_lines`: 밖으로 나간 줄 × 3, 3~15
+        assert_eq!([1, 2, 5, 9].map(edge_lines), [3, 6, 15, 15]);
     }
 
     /// 두 번 누름 낱말: 구분자로 가르고 URL·경로는 한 낱말(herdr `word_bounds_at_column`)

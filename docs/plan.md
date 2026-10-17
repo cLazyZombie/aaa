@@ -2524,6 +2524,15 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 점.** 없음(herdr 기본값과 같이 켬). PTY가 1칸 좁아지는 것은 herdr와 같은 값이고, 바꾸려면 `pane_scrollbars = false`.
 - **시험.** 유닛: `scrollbar` `thumb_and_offsets_like_herdr`(thumb 길이·위치, 맨 위·맨 아래 누르기, 잡기·끌기, 그리기 색), 설정 `pane_scrollbars`. TUI harness `pane_scrollbar_like_herdr`: PTY 폭이 칸 − 1, `seq 1 200` 뒤 트랙 `▕`과 맨 아래 thumb `▐`, 트랙 맨 위 누르기면 맨 위(명령 줄 다음 `1`), thumb를 잡아 아래 끝까지 끌고 떼면 맨 아래, alt 화면이면 PTY가 칸 전체로 넓어졌다가 나오면 다시 좁아짐. 다른 harness 시험의 PTY 폭 기대값도 1칸 좁혔다(`GUTTER`).
 
+### 8.114 TUI 끌어 고르기를 기록까지(herdr selection autoscroll·`PaneSelectionRead`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「끌어 선택·자동 스크롤」, FRONT_API 1.17)
+
+- **참고(herdr 0.9.5).** `src/selection.rs`(고른 범위는 기록 맨 앞 줄이 0인 절대 줄 번호, 화면 맨 위 줄 = 기록 줄 수 − 맨 아래에서 올라간 줄 수), `src/client/shell/mouse.rs`(끌기가 pane 위·아래 밖이면 그 거리 × 3줄(3~15)을 바로 넘기고, 가장자리 줄 포함 그쪽에 있는 동안 `SELECTION_AUTOSCROLL_INTERVAL` 30ms마다 한 줄씩 더, 더 넘길 수 없거나 끌기가 끝나거나 pane 칸이 바뀌면 멈춤, 고른 끝은 화면 frame을 기다리지 않고 보낸 위치로 잡음. 끄는 중 휠은 `mouse_scroll_lines`줄 넘기며 고른 끝을 다시 잡고 pane에 넘기지 않음 `scroll_in_progress_selection`), `src/app/api/panes.rs` `PaneSelectionRead`(고른 글은 서버가 화면 사본에서 기록까지 읽는다, client는 기록 글을 갖지 않는다).
+- **proto(FRONT_API 1.17).** `TextPoint { row, col }`(row는 기록 맨 앞 줄이 0, alt 화면은 화면 줄만), `FrontRequest::PaneSelectionRead { pane, from, to }`(읽기 전용, 차례 상관없음, 끝 칸 포함) → `FrontResponse::Selection { pane, text, truncated }`.
+- **host·vt.** aaa-vt `selection_text`: 기록 위치를 잠깐 옮겨 줄마다 칸 범위의 글을 읽고 되돌린다(`grid_rows_at`과 같은 잠금 안). 화면 폭에서 접힌 줄은 줄바꿈 없이 잇고, 접히지 않은 줄은 끝 공백을 뺀다. 응답이 front frame(`MAX_FRAME` 1MiB)에 들게 512KiB에서 앞쪽만 두고 `truncated`.
+- **TUI.** 고른 범위(`Selection`)를 기록 줄 번호로 두어 휠로 넘겨도 고른 글을 따라 칠한다. 끌기·가장자리 자동 넘기기·끄는 중 휠은 herdr 값 그대로(`PaneScroll { by: offset }`, §8.111). 떼면(또는 `copy_on_select`를 끈 채 ctrl+c·cmd+c, 두 번 누름 낱말) host에 `PaneSelectionRead`를 보내고 응답 글을 복사한다(너무 길면 「앞쪽만」 알림). 옛 host(1.16 이하)면 이 화면에 보이는 줄만 바로 복사한다.
+- **다른 점.** 기록이 상한(`SCROLLBACK` 10,000줄)에 차서 앞 줄을 버리기 시작하면 줄 번호가 밀려, 그 사이 고른 글이 몇 줄 어긋날 수 있다(herdr도 고른 글 읽기는 `content_revision`을 보지 않는다). 512KiB 상한은 aaa만(front frame 한도). 고르는 동안 새 출력으로 host가 보던 줄을 지키려 위치를 올리면, 다음 끌기가 보낸 위치로 되돌린다(herdr도 고르는 동안 자기 위치를 쓴다).
+- **시험.** 유닛: aaa-vt `selection_text_spans_history`(기록·화면 걸침, 끝 칸, 거꾸로, 접힌 줄, 끝 넘김, 상한, 읽은 뒤 그대로, alt 화면), TUI `selection_text_by_columns`(기록 줄 번호로 칠하기·`view_top`·`edge_lines`). TUI harness `drag_select_scrolls_history_like_herdr`: `seq 1 200` 뒤 「182」를 누르고 탭 막대로 끌어 잡고 있으면 맨 위 줄이 150 이하까지 올라가고, 떼면 누를 때 화면에 없던 줄(160 등)부터 181과 「1」까지 이어진 숫자로 복사, 「w-6」을 누르고 끈 채 휠 위 한 칸이면 고른 끝이 세 줄 위 「199」로 가 네 줄 복사·셸에는 아무것도 가지 않음.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

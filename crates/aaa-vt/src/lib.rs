@@ -270,6 +270,48 @@ impl Vt {
         (lines, max)
     }
 
+    /// 고른 글(herdr `PaneSelectionRead` → ghostty `read_text_screen`). 줄 번호는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에
+    /// 잇는다(alt 화면이면 화면 줄만). `from`·`to`는 읽는 차례와 상관없고 끝 칸까지 넣는다. 화면 폭에서 접힌 줄은 줄바꿈 없이
+    /// 잇고, 접히지 않은 줄은 끝 공백을 뺀다. `max_bytes`를 넘으면 앞쪽만 두고 `true`.
+    pub fn selection_text(&mut self, from: (usize, u16), to: (usize, u16), max_bytes: usize) -> (String, bool) {
+        let ((r1, c1), (r2, c2)) = if from <= to { (from, to) } else { (to, from) };
+        let back = if self.parser.screen().alternate_screen() { 0 } else { self.history_len() };
+        let screen = self.parser.screen_mut();
+        let (rows, cols) = screen.size();
+        let last = back + usize::from(rows) - 1;
+        if r1 > last {
+            return (String::new(), false);
+        }
+        let r2 = r2.min(last);
+        let mut out = String::new();
+        let mut truncated = false;
+        for i in r1..=r2 {
+            // 기록 줄 i를 맨 위에 두려면 위로 (back - i)줄 올린다. 화면 줄이면 올리지 않는다.
+            let (offset, row) = if i < back { (back - i, 0) } else { (0, i - back) };
+            screen.set_scrollback(offset);
+            let start = if i == r1 { c1.min(cols) } else { 0 };
+            let end = if i == r2 { c2.saturating_add(1).min(cols) } else { cols };
+            let mut t = screen.rows(start, end.saturating_sub(start)).nth(row).unwrap_or_default();
+            let wrapped = screen.row_wrapped(row as u16);
+            if !wrapped || i == r2 {
+                t.truncate(t.trim_end().len());
+            }
+            if out.len() + t.len() + 1 > max_bytes {
+                truncated = true;
+                if out.ends_with('\n') {
+                    out.pop();
+                }
+                break;
+            }
+            out.push_str(&t);
+            if i < r2 && !wrapped {
+                out.push('\n');
+            }
+        }
+        screen.set_scrollback(0);
+        (out, truncated)
+    }
+
     /// normal screen 기록 줄 수(alt 화면이면 0)
     pub fn history_rows(&mut self) -> usize {
         if self.parser.screen().alternate_screen() { 0 } else { self.history_len() }
@@ -1094,6 +1136,31 @@ mod tests {
         v.feed(b"\x1b[?1049hA");
         let (alt, max) = v.grid_rows_at(5);
         assert_eq!((text(alt)[0].as_str(), max), ("A", 0));
+    }
+
+    /// 고른 글: 기록과 화면에 걸친 범위, 끝 칸 포함, 거꾸로 고른 범위, 접힌 줄 잇기, 끝을 넘으면 마지막 줄까지, 크기 상한,
+    /// 읽은 뒤 지금 화면 그대로, alt 화면은 화면 줄만
+    #[test]
+    fn selection_text_spans_history() {
+        let mut v = Vt::new(3, 10);
+        for i in 1..=8 {
+            v.feed(format!("line{i}\r\n").as_bytes());
+        }
+        // 기록 1..6(줄 0..5), 화면 7·8·빈 줄(줄 6..8)
+        assert_eq!(
+            v.selection_text((1, 2), (6, 3), usize::MAX),
+            ("ne2\nline3\nline4\nline5\nline6\nline".into(), false)
+        );
+        assert_eq!(v.selection_text((6, 3), (1, 2), usize::MAX).0, "ne2\nline3\nline4\nline5\nline6\nline");
+        assert_eq!(v.selection_text((7, 0), (99, 9), usize::MAX).0, "line8\n");
+        assert_eq!(v.selection_text((0, 0), (5, 9), 12), ("line1\nline2".into(), true));
+        assert_eq!(v.grid_row(0)[0].t, "line7");
+        // 접힌 줄은 줄바꿈 없이(앞 글자 공백도 그대로)
+        v.feed(b"abcdefghij  klm\r\n");
+        let n = v.history_rows() + 3;
+        assert_eq!(v.selection_text((n - 3, 0), (n - 2, 9), usize::MAX).0, "abcdefghij  klm");
+        v.feed(b"\x1b[?1049h\x1b[HA\r\nB");
+        assert_eq!(v.selection_text((0, 0), (1, 9), usize::MAX).0, "A\nB");
     }
 
     #[test]

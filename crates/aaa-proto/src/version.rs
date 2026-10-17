@@ -26,8 +26,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.13: thread start `kind` 생략·restart `profile`·resolve `reopen`(plan §8.104),
 /// 1.14: TUI 마우스(`GridFrame.modes`, `LayoutChange::SplitRatio`·`MoveTab`)(plan §8.106),
 /// 1.15: `pane_rename`과 PaneView `label`(plan §8.109),
-/// 1.16: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.111)
-pub const FRONT_API: Version = Version { major: 1, minor: 16 };
+/// 1.16: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.111),
+/// 1.17: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)(plan §8.114)
+pub const FRONT_API: Version = Version { major: 1, minor: 17 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

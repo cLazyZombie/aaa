@@ -1069,6 +1069,7 @@ impl Host {
             FrontRequest::PaneReadText { pane, source, lines, format } => {
                 self.pane_read_text(&pane, source, lines, format).await
             }
+            FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
             FrontRequest::PaneSubmit { pane, text } => self.pane_submit(&pane, &text, actor).await,

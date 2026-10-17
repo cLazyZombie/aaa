@@ -2124,6 +2124,7 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Read(v) => s.push_str(&v.text),
+        FrontResponse::Selection { text, .. } => s.push_str(text),
         FrontResponse::ThreadPane(v) => render_thread_pane(&mut s, v),
         FrontResponse::OutputMatched { matched_line, .. } => {
             let _ = writeln!(s, "{matched_line}");

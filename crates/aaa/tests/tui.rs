@@ -1608,6 +1608,62 @@ fn pane_scrollbar_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// 묶음 5b-1(herdr `selection.rs`·`mouse.rs` selection autoscroll·`PaneSelectionRead`): 끌어 고르다 pane 위 밖으로 나가면
+/// 그 거리만큼 넘기고 30ms마다 한 줄씩 더 넘기며 고르고, 떼면 host가 화면 사본의 기록까지 읽어 복사한다. 고르는 중 휠은
+/// 기록을 넘기며 고른 끝을 다시 잡는다(host `PaneSelectionRead`, FRONT_API 1.17).
+#[test]
+fn drag_select_scrolls_history_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let copied = lab.root.join("copied.txt");
+    let copied_s = lab::path_str(&copied);
+    let read_copied = || std::fs::read_to_string(&copied).unwrap_or_default();
+    let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)]);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
+    let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
+    let top = |s: &str| rows(s).first().and_then(|l| l.parse::<u32>().ok());
+    tui.type_line("seq 1 200");
+    tui.wait_text("seq 끝", |s| top(s) == Some(173) && rows(s).last().is_some_and(|l| l.ends_with('$')));
+    let col = SIDE as usize;
+
+    // 1) 「182」 줄(화면 10째 줄) 첫 칸을 누르고 탭 막대(pane 위 밖 1줄)로 끌어 잡고 있으면 3줄 바로, 그 뒤 30ms마다 한 줄씩 올라간다
+    tui.mouse(0, (10, col), false);
+    tui.mouse(32, (0, col + 2), false);
+    tui.wait_text("끌어 고르며 기록 넘기기", |s| top(s).is_some_and(|n| n <= 150));
+    tui.mouse(0, (0, col + 2), true);
+    // 고른 끝은 뗄 때의 맨 위 줄 셋째 칸, 처음은 「182」의 첫 칸: 누를 때 화면에 없던 기록 줄까지 이어진 숫자로 복사된다
+    let got = wait_for("기록까지 복사", T, || {
+        let c = read_copied();
+        c.ends_with("\n181\n1").then_some(c)
+    });
+    let nums: Vec<u32> = got.lines().skip(1).map(|l| l.parse().unwrap()).collect();
+    assert!(nums.first().is_some_and(|n| *n <= 152) && nums.contains(&160), "{got}");
+    assert!(nums.windows(2).all(|w| w[1] == w[0] + 1 || w[1] == 1), "{got}");
+    tui.wait_text("복사 알림", |s| s.contains("클립보드에 복사했다"));
+
+    // 2) 치면 맨 아래로 돌아온다. 「w-6」 첫 칸을 누르고 두 칸 끈 채 휠 위 한 칸이면 3줄 위가 고른 끝이 된다(셸에는 안 감)
+    tui.type_line("echo w-$((6))");
+    let at = tui.wait_find("w-6");
+    tui.mouse(0, at, false);
+    tui.mouse(32, (at.0, at.1 + 2), false);
+    tui.mouse(64, (at.0, at.1 + 2), false);
+    // 「w-6」이 있던 줄에 세 줄 위의 「199」가 보인다(사이는 명령 줄과 200)
+    tui.wait_text("고르며 휠", |s| s.lines().nth(at.0).map(text).as_deref() == Some("199"));
+    tui.mouse(0, (at.0, at.1 + 2), true);
+    let got = wait_for("휠로 넓힌 고르기 복사", T, || {
+        let c = read_copied();
+        c.ends_with("\nw").then_some(c)
+    });
+    assert!(got.starts_with("9\n200\n") && got.lines().count() == 4, "{got}");
+    assert!(h.screen(&id).trim_end().ends_with('$'), "휠이 셸에 가지 않았다: {}", h.screen(&id));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).

@@ -161,6 +161,8 @@ enum Pending {
     Focus(HashSet<String>),
     /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
     Attach(u64),
+    /// 고른 글 읽기: 응답이 오면 복사한다
+    Copy,
 }
 
 /// herdr `ClientShellMode`(Copy·Resize는 다음 묶음)
@@ -275,6 +277,8 @@ struct App {
     drag: Option<mouse::Drag>,
     /// 고른 글(pane 화면 칸)
     selection: Option<mouse::Selection>,
+    /// 끌어 고르다 가장자리에 닿아 기록을 넘기는 중
+    autoscroll: Option<mouse::AutoScroll>,
     /// 마지막 누름(두 번 누름을 본다): 시각, pane, 칸
     last_click: Option<(tokio::time::Instant, String, mouse::Cell)>,
     /// 사용자가 넘긴 탭 막대 자리와 그때의 탭(탭이 바뀌면 다시 지금 탭을 가운데로)
@@ -337,6 +341,7 @@ impl App {
             hits: Default::default(),
             drag: None,
             selection: None,
+            autoscroll: None,
             last_click: None,
             tab_scroll: None,
             list_top: None,
@@ -498,6 +503,11 @@ impl App {
                     self.message = None;
                     dirty = true;
                 }
+                // 끌어 고르다 가장자리에 닿아 있으면 30ms마다 한 줄씩(herdr selection autoscroll)
+                _ = tokio::time::sleep_until(self.autoscroll.as_ref().map_or_else(tokio::time::Instant::now, |a| a.at)), if self.autoscroll.is_some() => {
+                    self.autoscroll_tick(&mut tx).await?;
+                    dirty = true;
+                }
             }
             // 쌓인 메시지를 마저 처리해 한 번만 그린다
             while let Ok(m) = rx.try_recv() {
@@ -570,7 +580,11 @@ impl App {
                             (false, None) => format!("그림을 저장했다: {path}"),
                         })
                     }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Selection { text, truncated, .. }), Some(Pending::Copy)) => {
+                        self.copied(&text, truncated)
+                    }
                     (Outcome::Ok(_), _) => {}
+                    (Outcome::Err(e), Some(Pending::Copy)) => self.set_error(format!("복사하지 못했다: {}", e.message)),
                     (Outcome::Err(e), Some(Pending::Attach(n))) => {
                         if self.attach_failed != Some(n) {
                             self.attach_failed = Some(n);
@@ -814,7 +828,7 @@ impl App {
     /// 키 하나. herdr `route_key`처럼 창 → 모드 순으로 고른다. 끝나면 입력기를 모드에 맞춘다.
     async fn on_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         let ch = if let KeyCode::Char(c) = k.code { Some(c) } else { None };
-        if self.selection_key(k.modifiers, ch) {
+        if self.selection_key(tx, k.modifiers, ch).await? {
             return Ok(());
         }
         let r = self.route_key(k, tx).await;
@@ -1791,9 +1805,10 @@ impl App {
             // 고른 글(herdr 선택 색)
             if let Some(sel) = self.selection.as_ref().filter(|s| s.pane == pane) {
                 let (bg, fg) = mouse::selection_colors(&self.palette);
+                let top = mouse::view_top(g.scroll);
                 for row in 0..r.h {
                     for col in 0..r.w {
-                        if sel.covers(row, col)
+                        if sel.covers(top, row, col)
                             && let Some(cell) = buf.cell_mut((r.x + col, r.y + row))
                         {
                             cell.set_bg(bg).set_fg(fg);
