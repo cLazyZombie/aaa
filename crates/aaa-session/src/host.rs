@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use aaa_proto::{
-    AgentResponse, B64, DetectScreen, ErrorBody, ErrorCode, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo, SessionMsg,
-    SessionRequest, SessionState, Snapshot, TerminalChunk, negotiate,
+    AgentResponse, B64, DetectScreen, ErrorBody, ErrorCode, HistoryChunk, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo,
+    SessionMsg, SessionRequest, SessionState, Snapshot, TerminalChunk, negotiate,
 };
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
@@ -136,7 +136,8 @@ impl State {
 
     fn snapshot(&self) -> Snapshot {
         let (rows, cols) = self.vt.size();
-        Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(self.vt.replay()) }
+        let (replay, history_more) = self.vt.replay_more();
+        Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(replay), history_more }
     }
 
     fn output(&mut self, data: &[u8]) {
@@ -255,6 +256,13 @@ impl State {
                 osc_title: self.vt.osc_title().to_string(),
                 osc_progress: self.vt.osc_progress().to_string(),
             })),
+            SessionRequest::History { anchor, depth } => {
+                let chunk = match self.vt.older(&anchor, depth as usize, aaa_vt::REPLAY_HISTORY) {
+                    Some(o) => HistoryChunk { data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
+                    None => HistoryChunk { data: B64(Vec::new()), lines: 0, more: false, found: false },
+                };
+                Ok(AgentResponse::History(chunk))
+            }
         };
         let _ = tx.json(&SessionMsg::Res { id, result: result.into() }).await;
     }

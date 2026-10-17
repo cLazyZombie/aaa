@@ -130,7 +130,7 @@ pub struct NotifySection {
     pub web_push: bool,
     /// Web Push 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름). https만. 시험용 loopback(127.0.0.1 등)은 적었을 때만 http도 받는다
     pub push_hosts: Vec<String>,
-    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 공개 주소(https://<이름>.ts.net), 없으면 `mailto:aaa@example.com`
+    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 프로젝트 저장소 주소(herdr-web-ui와 같다). 공개 주소는 보내지 않는다
     pub push_subject: String,
 }
 

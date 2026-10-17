@@ -984,7 +984,7 @@ host 프로젝트 폴더 구성:
   - host는 VAPID(RFC 8292, ES256) 키를 상태 폴더 `push/vapid.p8`(0600)에 한 번 만들고 요청마다 서명한다. 새 의존성 없이 rustls가 이미 쓰는 ring으로 구현했다.
   - 구독 주소는 기기가 준다. host가 아무 주소로나 요청하지 않게 `notify.push_hosts`(fcm.googleapis.com·push.apple.com·push.services.mozilla.com·notify.windows.com과 그 아래 이름)의 https만 받는다. loopback http는 시험용으로 목록에 적었을 때만 받는다.
   - 구독 주소는 그 기기에 보내는 열쇠라 로그·흐름 사건·감사 기록에 넣지 않는다. 취소한 장치의 구독에는 보내지 않는다. 404·410이면 브라우저가 버린 구독이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
-- **설정(`[notify]`).** `web_push = true`(기본), `push_hosts`, `push_subject`(비우면 공개 주소 `https://<이름>.ts.net`, 없으면 `mailto:aaa@example.com`).
+- **설정(`[notify]`).** `web_push = true`(기본), `push_hosts`, `push_subject`(비우면 프로젝트 저장소 주소. 참고 herdr-web-ui `DEFAULT_SUBJECT`와 같다. 처음에는 공개 주소를 썼지만, tailnet 이름이 push 사업자에게 가서 보안 감사 t-0340 B11로 바꿨다).
 - **service worker.** 설치·Web Push 알림·알림 누르기를 맡는다. 캐시는 「연결 없음」 화면 하나뿐이다.
 - **API.** `GET /api/v1/push`(키·구독 수), `POST /api/v1/push/subscribe`·`unsubscribe`·`test`. 장치 cookie와 Origin 검사는 다른 API와 같다.
 - **시험(웹 E2E).**
@@ -1639,6 +1639,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 선택지 2: host가 다시 뜰 때 session host가 기록 전체를 여러 frame으로 나눠 보낸다(10,000줄이면 수 MB를 매번).
     - 선택지 3: 두고 쓴다.
     - **추천은 1이다.** 필요한 만큼만 받고, 이번 웹 요청(anchor·depth)을 그대로 넘기면 된다. 이번에는 만들지 않았다.
+    - **10-18 선택지 1로 만들었다(§8.114, QA t-0337 Q8).**
   - **(나) 폭이 바뀐 기록.** xterm은 폭이 바뀌면 줄을 다시 접고 vt100은 접지 않는다. 그래서 폭이 바뀐 뒤에는 받은 기록 맨 위 글이 host와 달라 찾지 못할 수 있다. 그때 host는 `found: false`로 답하고, 웹은 더 받지 않는다(어긋난 자리에 붙이지 않는다).
   - **(라) 그 밖에 알고 둔 것.**
     - 다시 쓸 때 입력 모드(DECCKM·bracketed paste·마우스 보고)는 serialize가 다시 켠다. scroll region(DECSTBM)과 커서 숨김(DECTCEM)은 serialize에 없다. 보통 화면 셸에서는 쓰지 않아 두었다.
@@ -2532,6 +2533,63 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: `harness_session_ok`(UUID, 선택지·`;`·경로·전각 숫자 거부), hook 정규화가 UUID 아닌 세션 ID를 버림(사건은 받음), `survives`(panic이면 false, 따로 돌리지 않으면 실패).
   - 시험 fixture의 세션 ID(`fake-1`·`sess-a1`·`s1` 등)를 UUID로 바꿨다(중첩 세션을 버리는 시험은 두 ID가 달라야 한다).
 - **덤: 이미 등록된 머신의 다시 등록(QA t-0337 Q17, 낮음).** 등록된 장치 키로 `aaa agent enroll`을 다시 하면 host가 인증된 연결로 받아(`link.rs` `serve`) 「hello가 와야 한다」만 답했다. 이제 「이 머신(<이름>)은 이미 이 host에 등록돼 있다」와 두 길(그대로 `aaa agent`로 붙기, 다시 등록하려면 host에서 `aaa machine revoke <이름>`·`aaa machine enroll --open 10m` 뒤 `aaa agent enroll <host:port>`)을 답한다. 시험: e2e `enroll_remote_agent_and_run_short_command`가 다시 등록의 안내를 보고, 안내대로 취소 → 등록 창 → 같은 머신 다시 등록·승인 → 다시 붙기까지 한다(옛 답이면 실패).
+
+### 8.113 보안 감사(t-0340) 낮음 넷: 진단 입력 기록·push 구독 겹침·VAPID 연락처·머신 이름(10-18)
+- **`/api/v1/diag/input`(B8).** 진단 「입력 기록」은 친 글을 원문으로 남긴다.
+  - 이제 controller만 쓴다. 보기 권한이면 403이다.
+  - 본문은 `application/json`이어야 한다. 아니면 400이다. 다른 site의 `text/plain` form이 preflight 없이 닿지 못한다.
+  - 파일은 `write_private`(0600)로 쓴다.
+  - 시험: 웹 E2E 09 「입력 기록」(0600, text/plain 400, reader 403, 파일이 늘지 않음).
+- **push 구독 endpoint 겹침(B10).** 참고 herdr-web-ui는 endpoint가 같으면 늘 덮어쓴다. aaa는 구독을 기기에 묶는다(쓰는 기기, 폐기 때 함께 지움). 그래서 덮어쓰면 다른 기기의 구독을 가져가게 된다.
+  - 이제 다른 기기의 행은 키(`p256dh`·`auth`)까지 같을 때만 옮긴다. 키까지 같으면 같은 브라우저가 다시 pairing한 것이다. 키는 브라우저 밖에서는 모른다.
+  - 그 밖에는 403 「다른 기기의 구독이다」를 답하고 audit에 남긴다. 같은 기기는 키를 바꿀 수 있다.
+  - 시험: `another_device_takes_a_push_endpoint_only_with_its_keys`.
+- **VAPID 연락처(B11, 정보).** `push_subject`를 비우면 지금까지는 공개 주소 `https://<이름>.ts.net`을 썼다. 그러면 tailnet 이름이 push 사업자(Apple·Google·Mozilla)에게 간다.
+  - 이제 참고 herdr-web-ui `DEFAULT_SUBJECT`처럼 프로젝트 저장소 주소를 쓴다.
+- **머신 이름(B5).** 지금까지는 길이만 봤다. 이름은 `aaa machine pending`·목록·nudge·push 본문에 그대로 나가므로, 등록 창이 열린 동안 ANSI 이름으로 화면을 위조할 수 있었다.
+  - 이제 새 이름은 영문·숫자·`.`·`_`·`-`로 1~64자만 받는다(등록 요청, 로컬 agent의 새 이름).
+  - 이미 이 머신의 이름으로 DB에 있는 로컬 이름은 그대로 받는다. 올린 뒤 로컬 agent가 끊기지 않게 하려는 것이다.
+  - agent의 기본 이름(hostname)은 쓸 수 없는 글자를 `-`로 바꾼다.
+  - 시험: `enroll_rejects_machine_names_with_control_characters`, `machine_names`.
+
+### 8.114 host를 다시 띄운 뒤 앞 기록: mirror에 없으면 session host에 묻는다(10-18, QA t-0337 Q8, §8.67 (가) 선택지 1)
+- **결함.** host를 다시 띄우면 mirror는 session host snapshot(최근 2000줄·384KiB)으로 처음 채워진다. 그래서 그 앞 기록은 session host에만 있고 웹은 받아 오지 못했다.
+  - 웹은 snapshot의 `history_more`가 거짓이라 위로 굴려도 더 묻지 않았다. 처음 구독 전에 2000줄 넘게 쏟은 pane도 같다(QA `probe-hist3`).
+- **고침.**
+  - session host snapshot에 `history_more`(replay 기록 앞에 더 있다)를 싣는다. host mirror는 이것을 `source_more`로 기억한다. 웹 snapshot의 `history_more`는 mirror에 더 있거나 `source_more`면 참이다.
+  - 웹의 앞 기록 요청(anchor·depth)은 먼저 mirror에서 찾는다. mirror에서 줄을 찾으면 그것을 준다. `source_more`면 「더 있다」를 붙인다.
+  - mirror에 더 줄 것이 없거나 anchor가 mirror에 없으면(이미 session host에서 받은 줄), 같은 요청을 agent link `History { session, anchor, depth }`로 session host에 넘긴다. session host는 자기 vt 기록에서 mirror와 같은 방법(`Vt::older`, 2000줄·384KiB 상한)으로 답한다.
+  - host는 그 답을 기다리는 동안 pane 연결 loop를 막지 않는다(별 task가 답을 같은 보내기 줄에 넣는다).
+  - 붙일 줄이 0인 답이면 웹은 버퍼를 다시 쓰지 않고 「더 없음」으로 둔다.
+- **같은 원인의 간헐 실패(t-0338 측정, 웹 E2E 07 「앞 기록 빠른 휠」 시도 1에서 6번 중 1번, 부하가 크면 8번 중 4번).** 새 pane은 session host가 프로그램을 먼저 띄우고, host는 `SessionStarted`를 받은 뒤에야 따로 구독한다(`on_session` → `spawn_subscribe`). 그 사이 프로그램이 출력을 쏟으면 mirror는 첫 구독 snapshot(최근 2000줄)부터 채워진다. 그러면 웹은 `history_more` 거짓을 받아 앞 기록을 묻지 않았다.
+  - 시험의 `long.js`는 뜨자마자 3000줄을 쓴다. 부하가 크면 첫 구독이 그 뒤가 되었다.
+  - 판정 근거: 실패 때 웹 버퍼가 기록 2000줄 + 화면이었고 `history_more`가 거짓이었다. `aaa-vt` `history()`는 mirror 기록이 실은 줄보다 많으면 늘 참이므로, mirror 기록이 2000줄 이하였다. 그때 함께 보인 크기 바꾸기(137x43)는 원인이 아니다.
+  - 그래서 시험이 아니라 제품 결함이다. 이 절의 고침(session host snapshot의 `history_more`, mirror에 없으면 session host에 묻기)으로 첫 구독 순서와 상관없이 앞 기록을 받는다.
+- **옛 binary.**
+  - `history_more`는 serde 기본값 거짓이다. 옛 session host(올리기 전에 띄운 pane)나 옛 agent를 거친 snapshot은 거짓이라 묻지 않는다(지금과 같다).
+  - host는 agent가 `history.v1` 기능을 알릴 때만 묻는다. 그래서 session host에 모르는 요청이 가지 않는다.
+  - 새 pane(새 binary의 session host)부터 된다.
+- **시험.** 웹 E2E 07 「host를 다시 띄운 뒤 앞 기록」: pane이 6000줄을 쓴 뒤 host를 다시 띄우고, 새로 붙은 웹이 위로 굴려 h-00001~h-06000을 빠짐·겹침 없이 본다. session host에서 두 덩어리를 받는다.
+  - 결함 심기 둘: mirror의 `source_more`를 늘 거짓으로 두면 「앞 기록 표시 0」으로, session host에 묻지 않고 mirror 답만 주면 「앞 기록을 0번 붙였다」로 실패한다. 고친 판은 5/5 통과.
+- **알려진 한계.**
+  - session host에 묻기가 실패하면(agent 끊김, 15초 `REQUEST_TIMEOUT`) host는 `found: false`로 답한다. 웹은 그 연결에서 더 묻지 않는다(§8.67 「찾지 못하면 더 받지 않는다」와 같다). 다시 붙거나 새 snapshot을 받으면 다시 묻는다.
+  - 이미 떠 있는 pane은 옛 session host라 `history_more`를 보내지 않는다. 그래서 고침은 agent를 다시 띄운 뒤 새로 연 pane부터 보인다.
+
+### 8.115 기기별 알림 종류(차이 목록 N3)와 프로젝트 mute(N10)(10-18, 결정 D4 「참고대로, 조용한 시간은 만들지 않음」)
+- **N3 기기별 알림 종류.** 참고 herdr-web-ui처럼 기기마다 「입력 필요」·「작업 완료」를 고른다(설정 → 알림, 기본 둘 다 켬, 기기 저장소 `aaa:alert-input`·`aaa:alert-done`).
+  - 앱 안 알림·소리·탭 알림은 그 기기에서 바로 거른다(참고 notify-policy.ts `alertsAllow`).
+  - push는 구독과 함께 host에 보낸다(참고 `registerPushSubscription(subscription, alerts)`). 고른 것을 바꾸면 다시 등록한다. `alerts` 없이 온 다시 등록(불러올 때마다)은 전에 고른 것을 둔다.
+  - host는 `push_subs`에 `alert_input`·`alert_done` 열을 두고(열만 더한다, 옛 aaa도 연다), 보낼 때 기기마다 거른다(`push::for_device`).
+  - 아무것도 남지 않은 기기에는 보내지 않고 흐름 사건 `push_unwanted`(「기기 N개가 고른 알림 종류가 아니다 · 항목 K개」)를 남긴다.
+  - **가르는 기준.** thread 항목 중 「new report」는 작업 완료이고, 나머지 사람 차례(확인창·기다림·pane 닫힘·agent 사라짐·시작 실패)는 입력 필요다. PR·머신·routine·세션처럼 참고에 없는 aaa 항목은 host `notify.kinds`대로 모든 기기에 간다.
+  - **참고와 다른 것(아침 확인).** 참고의 「작업 완료」는 끄기·긴 작업(1분 이상)·매번이다. aaa의 작업 완료는 pane 차례가 아니라 thread가 낸 새 보고(일 한 단위)다. 그래서 「빨리 끝난 답」을 거를 차례 길이가 없어 켜기·끄기만 둔다. pane 차례마다 알리는 참고의 길(pane 상태 push)을 따로 넣을지는 사용자 결정이다(넣으면 thread 알림과 겹친다).
+  - 시험: 웹 E2E 12 「기기별 알림 종류」(작업 완료를 끄면 다시 등록 → 보는 동안 앱 안 알림 없음 → 가려진 동안 push 없음과 `push_unwanted` → 다시 켜면 push). host 단위 시험 `device_alert_kinds`, 구독 갱신 시험 `another_device_takes_a_push_endpoint_only_with_its_keys` 끝부분.
+  - 결함 심기 둘: host가 기기마다 거르지 않으면 「고르지 않은 종류 기록이 되지 않았다」, 웹이 거르지 않으면 「앱 안 알림이 내려왔다」로 실패한다.
+- **N10 프로젝트 mute.** herdr-projects처럼 `project.toml` `mute = true`면 그 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류만 남기고 끈다.
+  - 남는 것: `outage`(`gh` 실패 등)·`config-error`·`health`(머신 이상). herdr-projects가 error로 보내는 「gh keeps failing」·「file is not usable」과 차이 목록의 「오류·머신 이상은 보냄」을 따랐다.
+  - inbox 항목과 앱 안 알림은 그대로다(참고 mute도 Herdr 알림만 끈다).
+  - 시간대 조용한 시간은 만들지 않는다(결정 D4, 참고에도 없다).
+  - 시험: `mute_keeps_errors_only`, `keys_fall_back_one_by_one`의 `mute`.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
