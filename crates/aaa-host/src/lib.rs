@@ -223,6 +223,9 @@ struct Pairing {
 pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
 /// 코드 하나로 틀릴 수 있는 수(참고 `CODE_ATTEMPTS`)
 const PAIR_CODE_ATTEMPTS: u32 = 5;
+
+/// 머신 이름 규칙(등록·로컬 agent가 새 이름을 쓸 때)
+pub const MACHINE_NAME_RULE: &str = "머신 이름은 영문·숫자·`.`·`_`·`-`로 1~64자다(--name으로 정한다)";
 /// 기기 이름 길이(참고 `LABEL_MAX`)
 const DEVICE_LABEL_MAX: usize = 48;
 /// 마지막으로 본 때를 적는 간격(참고 `LAST_SEEN_WRITE_MS`)
@@ -1756,8 +1759,8 @@ impl Host {
                 "host에서 `aaa machine enroll --open 10m`으로 등록 창을 먼저 연다",
             ));
         }
-        if name.is_empty() || name.len() > 64 {
-            return Err(err(ErrorCode::BadRequest, "머신 이름은 1~64자"));
+        if !util::machine_name_ok(name) {
+            return Err(err(ErrorCode::BadRequest, MACHINE_NAME_RULE));
         }
         if let Ok(Some(m)) = self.db.machine_by_name(name)
             && m.id != machine_id
@@ -2222,5 +2225,45 @@ mod pairing_tests {
         assert!(devices(&h).await.is_empty());
         let again = FrontRequest::DeviceRevoke { id };
         assert_eq!(h.call(DeviceRole::Local, "test", again).await.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    /// 보안 감사 t-0340 B10: endpoint만 아는 다른 기기는 구독을 가져가지 못하고, 키까지 같은 같은 브라우저(다시 pairing)는 옮긴다
+    #[tokio::test]
+    async fn another_device_takes_a_push_endpoint_only_with_its_keys() {
+        let (h, _t) = host();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+            let (token, _) = h.redeem_pairing(&code, "").unwrap();
+            ids.push(h.device_role(&token).unwrap().0);
+        }
+        let sub = |device: &str, auth: &str| db::PushSub {
+            endpoint: "https://push.example/a".into(),
+            p256dh: "k".into(),
+            auth: auth.into(),
+            device: device.into(),
+        };
+        assert!(h.db.push_put(&sub(&ids[0], "a")).unwrap());
+        // 같은 기기는 키를 바꿀 수 있다
+        assert!(h.db.push_put(&sub(&ids[0], "a2")).unwrap());
+        assert!(!h.db.push_put(&sub(&ids[1], "x")).unwrap());
+        assert_eq!(h.db.push_list(Some(&ids[0])).unwrap().len(), 1);
+        assert!(h.db.push_list(Some(&ids[1])).unwrap().is_empty());
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert!(h.db.push_list(Some(&ids[0])).unwrap().is_empty());
+        assert_eq!(h.db.push_list(Some(&ids[1])).unwrap().len(), 1);
+    }
+
+    /// 보안 감사 t-0340 B5: 제어 문자·공백이 든 이름으로는 등록을 기다리지 못한다(`aaa machine pending` 화면·push 본문 위조)
+    #[tokio::test]
+    async fn enroll_rejects_machine_names_with_control_characters() {
+        let (h, _t) = host();
+        h.enroll.lock().unwrap().open_until = Some(Instant::now() + Duration::from_secs(60));
+        for bad in ["mac\x1b[2Ja", "mac a", "a\u{202e}b", ""] {
+            let e = h.enroll_request(bad, "01M", "fp", "sas").unwrap_err();
+            assert_eq!(e.code, ErrorCode::BadRequest, "{bad:?}");
+        }
+        assert!(h.enroll.lock().unwrap().pending.is_empty());
+        assert!(h.enroll_request("mac-b", "01M", "fp", "sas").is_ok());
     }
 }

@@ -983,7 +983,7 @@ host 프로젝트 폴더 구성:
   - host는 VAPID(RFC 8292, ES256) 키를 상태 폴더 `push/vapid.p8`(0600)에 한 번 만들고 요청마다 서명한다. 새 의존성 없이 rustls가 이미 쓰는 ring으로 구현했다.
   - 구독 주소는 기기가 준다. host가 아무 주소로나 요청하지 않게 `notify.push_hosts`(fcm.googleapis.com·push.apple.com·push.services.mozilla.com·notify.windows.com과 그 아래 이름)의 https만 받는다. loopback http는 시험용으로 목록에 적었을 때만 받는다.
   - 구독 주소는 그 기기에 보내는 열쇠라 로그·흐름 사건·감사 기록에 넣지 않는다. 취소한 장치의 구독에는 보내지 않는다. 404·410이면 브라우저가 버린 구독이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
-- **설정(`[notify]`).** `web_push = true`(기본), `push_hosts`, `push_subject`(비우면 공개 주소 `https://<이름>.ts.net`, 없으면 `mailto:aaa@example.com`).
+- **설정(`[notify]`).** `web_push = true`(기본), `push_hosts`, `push_subject`(비우면 프로젝트 저장소 주소. 참고 herdr-web-ui `DEFAULT_SUBJECT`와 같다. 처음에는 공개 주소를 썼지만, tailnet 이름이 push 사업자에게 가서 보안 감사 t-0340 B11로 바꿨다).
 - **service worker.** 설치·Web Push 알림·알림 누르기를 맡는다. 캐시는 「연결 없음」 화면 하나뿐이다.
 - **API.** `GET /api/v1/push`(키·구독 수), `POST /api/v1/push/subscribe`·`unsubscribe`·`test`. 장치 cookie와 Origin 검사는 다른 API와 같다.
 - **시험(웹 E2E).**
@@ -2397,6 +2397,24 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - 「reset 직후 rAF까지 scroll 막기」는 앱에서 xterm 안의 줄 높이를 볼 수 없어 frame 수를 어림해야 하므로 고르지 않았다.
   - 시험(웹 E2E 07 「앞 기록 reset 직후 scroll」): 짧은 줄 2600줄 pane에서 앞 기록을 받을 때 덮개가 떨어지는 순간(MutationObserver, 다음 frame 전) scrollTop 0의 scroll 사건을 보낸다. 붙인 뒤 `data-view-top`이 숫자이고, 줄이 그려지고, 덮개가 없고, 키를 치면 새 출력이 보인다. 패치를 빼면 `view-top`이 NaN으로 남아 실패함을 확인했다.
   - 「앞 기록 빠른 휠」(QA 1바퀴와 같은 줄·휠 40번, 8번)은 회귀 시험으로 둔다.
+
+### 8.106 보안 감사(t-0340) 낮음 넷: 진단 입력 기록·push 구독 겹침·VAPID 연락처·머신 이름(10-18)
+- **`/api/v1/diag/input`(B8).** 진단 「입력 기록」은 친 글을 원문으로 남긴다.
+  - 이제 controller만 쓴다. 보기 권한이면 403이다.
+  - 본문은 `application/json`이어야 한다. 아니면 400이다. 다른 site의 `text/plain` form이 preflight 없이 닿지 못한다.
+  - 파일은 `write_private`(0600)로 쓴다.
+  - 시험: 웹 E2E 09 「입력 기록」(0600, text/plain 400, reader 403, 파일이 늘지 않음).
+- **push 구독 endpoint 겹침(B10).** 참고 herdr-web-ui는 endpoint가 같으면 늘 덮어쓴다. aaa는 구독을 기기에 묶는다(쓰는 기기, 폐기 때 함께 지움). 그래서 덮어쓰면 다른 기기의 구독을 가져가게 된다.
+  - 이제 다른 기기의 행은 키(`p256dh`·`auth`)까지 같을 때만 옮긴다. 키까지 같으면 같은 브라우저가 다시 pairing한 것이다. 키는 브라우저 밖에서는 모른다.
+  - 그 밖에는 403 「다른 기기의 구독이다」를 답하고 audit에 남긴다. 같은 기기는 키를 바꿀 수 있다.
+  - 시험: `another_device_takes_a_push_endpoint_only_with_its_keys`.
+- **VAPID 연락처(B11, 정보).** `push_subject`를 비우면 지금까지는 공개 주소 `https://<이름>.ts.net`을 썼다. 그러면 tailnet 이름이 push 사업자(Apple·Google·Mozilla)에게 간다.
+  - 이제 참고 herdr-web-ui `DEFAULT_SUBJECT`처럼 프로젝트 저장소 주소를 쓴다.
+- **머신 이름(B5).** 지금까지는 길이만 봤다. 이름은 `aaa machine pending`·목록·nudge·push 본문에 그대로 나가므로, 등록 창이 열린 동안 ANSI 이름으로 화면을 위조할 수 있었다.
+  - 이제 새 이름은 영문·숫자·`.`·`_`·`-`로 1~64자만 받는다(등록 요청, 로컬 agent의 새 이름).
+  - 이미 이 머신의 이름으로 DB에 있는 로컬 이름은 그대로 받는다. 올린 뒤 로컬 agent가 끊기지 않게 하려는 것이다.
+  - agent의 기본 이름(hostname)은 쓸 수 없는 글자를 `-`로 바꾼다.
+  - 시험: `enroll_rejects_machine_names_with_control_characters`, `machine_names`.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

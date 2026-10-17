@@ -286,14 +286,17 @@ impl Db {
 
     // ───────────── Web Push 구독(§8.26) ─────────────
 
-    /// 구독을 넣는다. 같은 endpoint면 키·장치를 바꾼다(브라우저가 구독을 새로 만든 경우).
-    pub fn push_put(&self, s: &PushSub) -> Result<()> {
-        self.conn.lock().unwrap().execute(
+    /// 구독을 넣는다. 같은 장치의 같은 endpoint면 키를 바꾼다(브라우저가 구독을 새로 만든 경우).
+    /// 다른 장치의 endpoint는 키까지 같을 때만 옮긴다: 같은 브라우저가 다시 pairing한 경우다. endpoint만 아는 요청이
+    /// 남의 구독을 가져가지 못한다(보안 감사 t-0340 B10. 참고 herdr-web-ui server/push.ts는 늘 옮긴다). 옮기지 않았으면 false.
+    pub fn push_put(&self, s: &PushSub) -> Result<bool> {
+        let n = self.conn.lock().unwrap().execute(
             "INSERT INTO push_subs(endpoint,p256dh,auth,device,created_at) VALUES(?1,?2,?3,?4,?5)
-             ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device=excluded.device",
+             ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device=excluded.device
+             WHERE push_subs.device=excluded.device OR (push_subs.p256dh=excluded.p256dh AND push_subs.auth=excluded.auth)",
             params![s.endpoint, s.p256dh, s.auth, s.device, aaa_common::util::now_ms() as i64],
         )?;
-        Ok(())
+        Ok(n > 0)
     }
 
     /// endpoint를 지운다. `device`를 주면 그 장치의 구독만 지운다.
