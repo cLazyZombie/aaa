@@ -1,6 +1,6 @@
 //! 붙여 넣은 그림(§8.20 M1-4 웹, §8.28 M3 TUI·CLI).
 //!
-//! - 브라우저는 pane WebSocket, TUI·CLI는 Front API(`PaneAttach`)로 512KiB 조각을 보낸다. 조각마다 조작 권한·lease를 확인하고,
+//! - 브라우저는 pane WebSocket, TUI·CLI는 Front API(`PaneAttach`)로 512KiB 조각을 보낸다. 조각마다 조작 권한을 확인하고(그 front가 지금 쓰는 화면이 된다),
 //!   host에 모으지 않고 바로 대상 머신 agent로 넘긴다(그 사이 화면 출력이 끼어든다).
 //! - 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고, 이름은 host가 정한다. agent는 세션 폴더에 0600으로 쓴다.
 //! - 다 받으면 sha256을 대조하고, harness pane이고 확인창이 없을 때만 입력창에 경로를 bracketed paste로 넣는다.
@@ -86,7 +86,9 @@ impl Host {
         }
         let (id, mid) = self.resolve_pane(pane)?;
         self.check_running(&id)?;
-        self.lease_acquire(&id, front)?;
+        if front.interactive() {
+            self.lease_use(&id, front);
+        }
         if data.is_empty() || data.len() > CHUNK {
             return Err(err(ErrorCode::BadRequest, format!("조각은 1..{CHUNK}바이트다")));
         }
@@ -134,26 +136,20 @@ impl Host {
         if got != u.sha256 {
             return Err(err(ErrorCode::Internal, "저장한 그림의 sha256이 보낸 것과 다르다"));
         }
-        let (inserted, note) = self.attach_insert(&id, &mid, front, &path).await;
+        let (inserted, note) = self.attach_insert(&id, &mid, &path).await;
         self.db.audit(actor, "pane_attach", &format!("{id} {} {} bytes inserted={inserted}", u.att, u.total));
         Ok(Some(Attached { path, inserted, note }))
     }
 
     /// 입력창에 경로를 넣을지 다시 확인하고 넣는다. 넣지 않으면 그 이유를 돌려준다.
-    async fn attach_insert(
-        self: &Arc<Self>,
-        id: &str,
-        mid: &str,
-        front: &FrontRef,
-        path: &str,
-    ) -> (bool, Option<String>) {
+    async fn attach_insert(self: &Arc<Self>, id: &str, mid: &str, path: &str) -> (bool, Option<String>) {
         let no = |s: &str| (false, Some(s.to_string()));
         // hook을 보내는 harness(Claude·Codex) pane만. 일반 셸에는 넣지 않는다.
         if !self.pane_agent(id).is_some_and(|a| a.harness != "report") {
             return no("harness 상태를 받지 못한 pane(일반 셸이거나 아직 시작 전)이라 경로만 저장했다");
         }
-        if self.check_running(id).is_err() || self.lease_acquire(id, front).is_err() {
-            return no("그 사이 세션이 끝났거나 다른 화면이 조작을 가져갔다");
+        if self.check_running(id).is_err() {
+            return no("그 사이 세션이 끝났다");
         }
         if self.open_question_of(id).is_some() {
             return no("확인창이 떠 있어 경로를 넣지 않았다");

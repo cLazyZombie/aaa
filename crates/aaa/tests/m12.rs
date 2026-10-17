@@ -49,7 +49,8 @@ fn code(r: Result<FrontResponse, aaa_proto::ErrorBody>) -> Option<ErrorCode> {
     r.err().map(|e| e.code)
 }
 
-/// 두 대화형 front(TUI 두 개를 흉내 낸 Front 연결)가 같은 pane을 조작한다.
+/// 두 대화형 front(TUI 두 개를 흉내 낸 Front 연결)가 같은 pane을 쓴다(§8.33, herdr와 같은 모델).
+/// 거부는 없다: 입력·크기를 보낸 front가 「지금 쓰는 화면」(lease)이 되고, 마지막 입력이 이긴다.
 #[test]
 fn lease_between_fronts() {
     let mut lab = Lab::new();
@@ -61,35 +62,40 @@ fn lease_between_fronts() {
         let mut b = FrontClient::connect_as(&h.state, "tui-b").await.unwrap();
         assert_ne!(a.front, b.front);
 
-        // 비어 있으면 처음 입력한 front가 갖는다
+        // 처음 입력한 front가 지금 쓰는 화면이 된다
         assert_eq!(code(a.call(input(&id, "echo a-$((1+1))")).await.unwrap()), None);
         assert_eq!(h.pane(&id)["lease"]["front"], a.front.as_str());
         assert_eq!(h.pane(&id)["lease"]["label"], "tui-a");
 
-        // 다른 front의 입력·크기 바꾸기는 거부된다
-        assert_eq!(code(b.call(input(&id, "echo b")).await.unwrap()), Some(ErrorCode::LeaseHeld));
-        let resize = FrontRequest::PaneResize { pane: id.clone(), cols: 90, rows: 20 };
-        assert_eq!(code(b.call(resize).await.unwrap()), Some(ErrorCode::LeaseHeld));
-        // 한 번 보내는 CLI 크기 바꾸기도 거부, 한 번 보내는 입력(API)은 lease 대상이 아니다
-        let e = h.json(&["pane", "resize", &id, "90", "20"]).expect_err("lease 중 CLI resize");
+        // 다른 front도 바로 입력된다(가져오기 없이). 그 front가 지금 쓰는 화면이 된다
+        assert_eq!(code(b.call(input(&id, "echo b-$((4+4))")).await.unwrap()), None);
+        assert_eq!(h.pane(&id)["lease"]["front"], b.front.as_str());
+        // 한 번 보내는 CLI 크기 바꾸기는 누가 쓰는 동안 거부, 한 번 보내는 입력(API)은 대상이 아니다
+        let e = h.json(&["pane", "resize", &id, "90", "20"]).expect_err("쓰는 중 CLI resize");
         assert!(e.contains("lease_held"), "{e}");
         h.ok(&["pane", "send", &id, "--text", "echo api-$((2+2))", "--enter"]);
-
-        // 가져오기: 이제 b가 갖고 a는 거부된다
-        assert_eq!(code(b.call(FrontRequest::PaneTake { pane: id.clone() }).await.unwrap()), None);
         assert_eq!(h.pane(&id)["lease"]["front"], b.front.as_str());
-        assert_eq!(code(a.call(input(&id, "echo a2")).await.unwrap()), Some(ErrorCode::LeaseHeld));
-        let resize = FrontRequest::PaneResize { pane: id.clone(), cols: 90, rows: 20 };
-        assert_eq!(code(b.call(resize).await.unwrap()), None);
 
-        // b 연결이 끝나면 lease가 풀리고 a가 다시 입력한다
+        // 크기를 건 front도 지금 쓰는 화면이 된다(focus를 얻은 화면이 크기를 다시 건다)
+        let resize = FrontRequest::PaneResize { pane: id.clone(), cols: 90, rows: 20 };
+        assert_eq!(code(a.call(resize).await.unwrap()), None);
+        assert_eq!(h.pane(&id)["lease"]["front"], a.front.as_str());
+        // 놓기(가려진 웹 탭): 자기 것만 놓는다
+        assert_eq!(code(b.call(FrontRequest::PaneRelease { pane: id.clone() }).await.unwrap()), None);
+        assert_eq!(h.pane(&id)["lease"]["front"], a.front.as_str());
+        assert_eq!(code(a.call(FrontRequest::PaneRelease { pane: id.clone() }).await.unwrap()), None);
+        assert!(h.pane(&id)["lease"].is_null());
+
+        // 연결이 끝나면 그 front가 쓰던 것도 풀린다
+        assert_eq!(code(b.call(input(&id, "echo b2")).await.unwrap()), None);
+        assert_eq!(h.pane(&id)["lease"]["front"], b.front.as_str());
         drop(b);
         wait_for("lease 해제", T, || h.pane(&id)["lease"].is_null().then_some(()));
         assert_eq!(code(a.call(input(&id, "echo a-$((3+3))")).await.unwrap()), None);
     });
     wait_for("출력", T, || {
         let s = h.screen(&id);
-        (s.contains("a-2") && s.contains("api-4") && s.contains("a-6")).then_some(())
+        (s.contains("a-2") && s.contains("b-8") && s.contains("api-4") && s.contains("a-6")).then_some(())
     });
     assert_eq!((h.pane(&id)["cols"].as_u64(), h.pane(&id)["rows"].as_u64()), (Some(90), Some(20)));
 }

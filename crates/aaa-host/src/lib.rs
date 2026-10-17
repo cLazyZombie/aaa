@@ -129,7 +129,8 @@ struct PaneRt {
     info: SessionInfo,
     mirror: Option<Mirror>,
     events: broadcast::Sender<PaneEvent>,
-    /// 조작 lease(대화형 front 연결 하나). 연결이 끊기거나 다른 front가 가져가면 바뀐다.
+    /// 지금 쓰는 대화형 front(lease, 연결 하나). PTY 크기를 그 화면이 정한다. 다른 front가 입력·크기·그림을 보내면
+    /// 그 front로 바뀌고(마지막 입력이 이긴다), 연결이 끝나거나 놓으면 비운다.
     lease: Option<FrontRef>,
     /// harness 상태(hook 사건으로만 바뀐다)
     agent: Option<aaa_proto::AgentStatus>,
@@ -142,6 +143,13 @@ struct PaneRt {
 pub struct FrontRef {
     pub id: String,
     pub label: String,
+}
+
+impl FrontRef {
+    /// 대화형 front(TUI·웹 터미널). 한 번 보내는 CLI는 아니다.
+    pub fn interactive(&self) -> bool {
+        self.label != aaa_common::front::CLI_CLIENT
+    }
 }
 
 pub use aaa_proto::DEFAULT_WORKSPACE;
@@ -887,10 +895,10 @@ impl Host {
             FrontRequest::PaneResize { pane, cols, rows } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 self.check_running(&id)?;
-                // PTY 크기는 lease 보유자가 정한다. 한 번 보내는 CLI는 아무도 조작하지 않을 때만 바꾼다.
+                // 대화형 front가 크기를 걸면 그 화면이 지금 쓰는 화면이 된다. 한 번 보내는 CLI는 아무도 쓰지 않을 때만 바꾼다.
                 match front {
-                    Some(f) => self.lease_acquire(&id, f)?,
-                    None => self.lease_free(&id)?,
+                    Some(f) if f.interactive() => self.lease_use(&id, f),
+                    _ => self.lease_free(&id)?,
                 }
                 let conn = self.live_conn(&mid)?;
                 conn.request(AgentRequest::Resize { session: id, cols, rows }).await.map(|_| FrontResponse::Done)
@@ -902,7 +910,7 @@ impl Host {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 self.check_running(&id)?;
                 let conn = self.live_conn(&mid)?;
-                self.lease_acquire(&id, f)?;
+                self.lease_use(&id, f);
                 conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
             }
             FrontRequest::PaneTake { pane } => {
@@ -1048,22 +1056,15 @@ impl Host {
         self.bump();
     }
 
-    /// 비어 있으면 이 front가 갖고, 이미 가졌으면 그대로, 다른 front가 가졌으면 거부한다.
-    pub(crate) fn lease_acquire(&self, id: &str, f: &FrontRef) -> Result<(), ErrorBody> {
-        let holder = self.inner.lock().unwrap().panes.get(id).and_then(|p| p.lease.clone());
-        match holder {
-            Some(h) if h.id == f.id => Ok(()),
-            Some(h) => Err(err(ErrorCode::LeaseHeld, format!("{}이 조작 중이다(가져오려면 take)", h.label))),
-            None => {
-                self.lease_set(id, Some(f.clone()));
-                Ok(())
-            }
-        }
+    /// 이 front가 지금 쓰는 화면이 된다(herdr-web-ui처럼 명시적 가져오기 없이, 마지막 입력이 이긴다).
+    /// 바뀌면 pane 상태 사건이 나가고, 각 front는 자기 규칙으로 크기를 다시 건다.
+    pub(crate) fn lease_use(&self, id: &str, f: &FrontRef) {
+        self.lease_set(id, Some(f.clone()));
     }
 
     fn lease_free(&self, id: &str) -> Result<(), ErrorBody> {
         match self.inner.lock().unwrap().panes.get(id).and_then(|p| p.lease.clone()) {
-            Some(h) => Err(err(ErrorCode::LeaseHeld, format!("{}이 조작 중이다", h.label))),
+            Some(h) => Err(err(ErrorCode::LeaseHeld, format!("{}이 쓰는 중이라 크기를 바꾸지 않았다", h.label))),
             None => Ok(()),
         }
     }

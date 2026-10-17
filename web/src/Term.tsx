@@ -1,6 +1,8 @@
-// pane 하나의 터미널 보기. TUI와 같은 규칙으로, 이 화면이 조작(lease) 중이거나 아무도 조작하지 않으면 PTY를 칸 크기에
-// 맞춘다(열 때·창 크기가 바뀔 때). 다른 front가 조작 중이면 PTY 크기 그대로 왼쪽 위에 그린다(§4.5, §8.30).
-// WebSocket 하나가 대화형 front 하나다. 다른 front가 조작(lease) 중이면 입력을 막고 「가져오기」를 보인다.
+// pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
+// PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
+// - 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않으면 칸 크기에 맞춘다(열 때·창 크기가 바뀔 때).
+// - focus를 얻거나 다시 보이면, 또는 터미널을 누르거나 입력하면 이 화면이 지금 쓰는 화면이 되어 크기를 다시 건다.
+// - 탭이 1초 넘게 가려지면 놓는다(다른 화면이 크기를 되찾는다). 다른 화면이 쓰는 동안은 PTY 크기 그대로 왼쪽 위에 그린다.
 // 그림을 붙여 넣거나(끌어 놓기·「그림」 버튼) 하면 대상 머신 세션 폴더에 저장하고, harness 입력창이면 경로를 넣는다.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
@@ -20,6 +22,10 @@ const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
 /** 글 뒤 Enter까지 기다리는 시간(host의 brief·메시지 전달과 같다) */
 const ENTER_GAP_MS = 300;
+/** 탭이 이만큼 가려져 있으면 「지금 쓰는 화면」을 놓는다(herdr-web-ui와 같은 1초) */
+const RELEASE_AFTER_MS = 1000;
+/** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
+const inUse = () => document.visibilityState === "visible" && document.hasFocus();
 
 /** 붙여 넣기·끌어 놓기에서 그림 파일 하나 */
 function imageOf(list: FileList | undefined | null): File | null {
@@ -73,7 +79,6 @@ export function TermView({
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const readonlyRef = useRef(true);
-  const blockedRef = useRef(false);
   const [link, setLink] = useState<Link>("connecting");
   const [readonly, setReadonly] = useState(true);
   const [reason, setReason] = useState<string | null>(null);
@@ -108,20 +113,19 @@ export function TermView({
   const [chatView, setChatView] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const canControl = role !== "reader";
-  // 다른 front가 조작 중이다(이 연결의 ID를 받기 전에는 판단하지 않는다)
+  // 다른 front가 지금 쓰는 화면이다(이 연결의 ID를 받기 전에는 판단하지 않는다). 입력은 막지 않는다.
   const heldByOther = me !== null && lease !== null && lease.front !== me;
-  blockedRef.current = heldByOther;
 
   const send = (m: TermClientMsg) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
   };
   const input = (data: string) => {
-    if (!readonlyRef.current && !blockedRef.current) send({ t: "input", data });
+    if (!readonlyRef.current) send({ t: "input", data });
   };
   /** 그림을 조각으로 보낸다. 결과(attached·error)는 WebSocket으로 온다. */
   const attachFile = async (f: File) => {
-    if (readonlyRef.current || blockedRef.current) {
+    if (readonlyRef.current) {
       setAttach({ text: "지금은 입력할 수 없어 그림을 보내지 않았다", ok: false });
       return;
     }
@@ -228,11 +232,14 @@ export function TermView({
     el.addEventListener("paste", onPaste, true);
     el.addEventListener("dragover", onDragOver);
     el.addEventListener("drop", onDrop);
+    // 터미널을 누르면 이 화면이 지금 쓰는 화면이 된다(크기를 다시 건다)
+    const onPointer = () => autoFit.current(true);
+    el.addEventListener("pointerdown", onPointer);
     termRef.current = term;
     fitRef.current = fit;
     const dataSub = term.onData(fromTerminal);
     const binSub = term.onBinary((s) => {
-      if (readonlyRef.current || blockedRef.current) return;
+      if (readonlyRef.current) return;
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) ws.send(Uint8Array.from(s, (c) => c.charCodeAt(0)));
     });
@@ -313,6 +320,7 @@ export function TermView({
       el.removeEventListener("paste", onPaste, true);
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
+      el.removeEventListener("pointerdown", onPointer);
       dataSub.dispose();
       binSub.dispose();
       offTheme();
@@ -323,16 +331,44 @@ export function TermView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id]);
 
-  // 자동 맞추기: 조작할 수 있고, 연결돼 있고, 다른 front가 조작 중이 아니고, 터미널이 보일 때만.
-  // 크기를 보내면 host가 lease를 이 연결에 준다(lease가 비어 있을 때). 같은 크기면 보내지 않는다.
-  const autoFit = useRef(() => {});
-  autoFit.current = () => {
-    if (!canControl || readonly || link !== "open" || me === null || heldByOther || (chatView && chatable)) return;
+  // 자동 맞추기: 조작할 수 있고, 연결돼 있고, 터미널이 보이고, 이 탭을 쓰는 중(보이고 focus)일 때만.
+  // claim이 아니면 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않을 때만 맞춘다. claim이면(focus를 얻음·터미널 누름)
+  // 크기가 같아도 보내 이 화면이 지금 쓰는 화면이 된다. 크기를 보내면 host가 이 연결을 지금 쓰는 화면으로 둔다.
+  const autoFit = useRef((_claim?: boolean) => {});
+  autoFit.current = (claim = false) => {
+    if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return;
+    if (heldByOther && !claim) return;
     const dims = fitRef.current?.proposeDimensions();
     if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return;
-    if (dims.cols !== size[0] || dims.rows !== size[1]) send({ t: "resize", cols: dims.cols, rows: dims.rows });
+    if (dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther))
+      send({ t: "resize", cols: dims.cols, rows: dims.rows });
   };
   useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
+  // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 1초 넘게 가려지면 놓는다(herdr-web-ui RELEASE_AFTER_MS).
+  const leaseMine = me !== null && lease?.front === me;
+  const leaseMineRef = useRef(leaseMine);
+  leaseMineRef.current = leaseMine;
+  useEffect(() => {
+    let away: number | undefined;
+    const back = () => {
+      window.clearTimeout(away);
+      autoFit.current(true);
+    };
+    const vis = () => {
+      if (document.visibilityState === "visible") return back();
+      window.clearTimeout(away);
+      away = window.setTimeout(() => {
+        if (document.visibilityState === "hidden" && leaseMineRef.current) send({ t: "release" });
+      }, RELEASE_AFTER_MS);
+    };
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", vis);
+    return () => {
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", vis);
+      window.clearTimeout(away);
+    };
+  }, [pane.id]);
   useEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -351,11 +387,6 @@ export function TermView({
   const fitToScreen = () => {
     const dims = fitRef.current?.proposeDimensions();
     if (dims && dims.cols > 0 && dims.rows > 0) send({ t: "resize", cols: dims.cols, rows: dims.rows });
-  };
-
-  const take = () => {
-    setError(null);
-    send({ t: "take" });
   };
 
   // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다.
@@ -384,7 +415,7 @@ export function TermView({
   if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중(읽기 전용)" : "연결하는 중";
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
 
-  const locked = readonly || heldByOther;
+  const locked = readonly;
   return (
     <section className="term">
       <header className="term-head">
@@ -423,13 +454,8 @@ export function TermView({
         </div>
       )}
       {!banner && heldByOther && lease && (
-        <div className="banner warn" data-testid="lease-banner">
-          {lease.label}이 조작 중이다(보기만 된다)
-          {canControl && (
-            <button type="button" onClick={take} data-testid="take">
-              가져오기
-            </button>
-          )}
+        <div className="banner" data-testid="lease-banner">
+          {lease.label}이 크기를 정하는 중{canControl && " · 입력하거나 터미널을 누르면 이 화면 크기로"}
         </div>
       )}
       {error && <div className="banner err">{error}</div>}

@@ -1,7 +1,7 @@
 //! Front API의 같은 머신 경로 서버(UDS, peer UID 확인 → Local 역할). 클라이언트는 `aaa_common::front`다.
 //! front는 backend를 띄우지 않는다: host가 없으면 「host 없음」만 알린다(§4.2 2).
 //!
-//! 연결 하나가 front 하나다. 조작 lease는 이 연결에 묶이고 연결이 끝나면 풀린다.
+//! 연결 하나가 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고, 다른 front가 입력하면 옮겨 가며, 연결이 끝나면 풀린다.
 //! `PaneWatch`로 pane 화면(cell grid)을, 연결하면 workspace layout 변경을 사건으로 받는다.
 
 use std::collections::HashMap;

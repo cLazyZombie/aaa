@@ -517,40 +517,58 @@ try {
     await page.getByRole("button", { name: "^C", exact: true }).click();
   });
 
-  await step("두 controller: 조작 중 표시 → 가져오기 → 연결이 끝나면 풀린다", async () => {
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+  await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 놓는다", async () => {
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 });
     const op = other.page;
-    await op.getByTestId("pane-t1").click();
-    await until("다른 웹이 조작 중 표시", async () =>
-      /웹\(.{4}\)이 조작 중/.test(await op.getByTestId("lease-banner").innerText()),
-    );
-    if (!(await op.getByLabel("보낼 글").isDisabled())) throw new Error("조작 중인데 입력 막대가 켜져 있다");
-    // 보기만 하는 쪽은 창 크기가 달라도 PTY 크기를 바꾸지 않는다
     const t1size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       return `${p.cols}x${p.rows}`;
     };
+    const holder = () => aaa("pane", "list").panes.find((x) => x.name === "t1").lease?.label ?? null;
     const held = t1size();
-    await op.setViewportSize({ width: 1000, height: 640 });
+    const first = holder();
+    await op.getByTestId("pane-t1").click();
+    await until("다른 웹이 크기를 정하는 중 표시", async () =>
+      /웹\(.{4}\)이 크기를 정하는 중/.test(await op.getByTestId("lease-banner").innerText()),
+    );
+    // 입력 막대가 켜져 있다(보기 권한이 아니면 언제나 입력된다). 열기만 해서는 크기를 바꾸지 않는다
+    if (await op.getByLabel("보낼 글").isDisabled()) throw new Error("다른 화면이 쓰는 중이라고 입력 막대가 꺼졌다");
     await sleep(600);
-    if (t1size() !== held) throw new Error(`보기만 하는 쪽이 크기를 바꿨다: ${held} → ${t1size()}`);
-    await op.getByTestId("take").click();
-    // 가져오면 그 화면 칸 크기를 따른다
-    await until("가져온 쪽 크기", () => t1size() !== held);
-    await until("가져온 쪽 배너 사라짐", async () => (await op.getByTestId("lease-banner").count()) === 0);
-    await until("빼앗긴 쪽 표시", async () => (await page.getByTestId("lease-banner").count()) === 1);
-    if (!(await page.getByLabel("보낼 글").isDisabled())) throw new Error("빼앗긴 쪽 입력 막대가 켜져 있다");
-    await op.getByLabel("보낼 글").fill("echo taken-$((3*7))");
+    if (t1size() !== held || holder() !== first) throw new Error(`열기만 했는데 크기·쓰는 화면이 바뀌었다: ${held} → ${t1size()}`);
+    // 1) 입력하면 바로 들어가고, 그 화면이 지금 쓰는 화면이 되어 자기 칸 크기로 맞춘다
+    await op.getByLabel("보낼 글").fill("echo direct-$((3*7))");
     await op.getByRole("button", { name: "보내기" }).click();
-    await until("가져온 쪽 입력", async () => (await screenText(page)).includes("taken-21"));
+    await until("다른 화면 입력", async () => (await screenText(page)).includes("direct-21"));
+    await until("입력한 화면 크기", () => t1size() !== held && holder() !== first);
+    const otherSize = t1size();
+    await until("원래 화면에 표시", async () => (await page.getByTestId("lease-banner").count()) === 1);
     await shot(page, "desktop-lease-held");
+    // 2) 번갈아 입력하면 크기가 그때마다 바뀐다(지금 규칙): 원래 화면 터미널에 직접 친다
+    await page.locator(".xterm-screen").click();
+    await page.keyboard.type("echo back-$((2*5))\n");
+    await until("원래 화면 입력", async () => (await screenText(page)).includes("back-10"));
+    await until("원래 화면 크기로", () => t1size() === held && holder() === first);
+    await op.getByLabel("보낼 글").fill("echo again-$((4*4))");
+    await op.getByRole("button", { name: "보내기" }).click();
+    await until("다시 다른 화면 크기", () => t1size() === otherSize);
+    // 3) focus를 얻은 화면이 크기를 다시 건다(입력 없이)
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
+    // 4) 쓰던 화면이 1초 넘게 가려지면 놓고, 보이고 focus 있는 화면이 자기 크기로 맞춘다
+    await op.getByLabel("보낼 글").fill("echo hide");
+    await op.getByRole("button", { name: "보내기" }).click();
+    await until("다른 화면 크기", () => t1size() === otherSize);
+    await op.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until("가려진 화면이 놓음 → 남은 화면 크기", () => t1size() === held && holder() === first, 5000);
     if (other.errors.length) throw new Error(other.errors.join("; "));
     await other.page.context().close();
-    await until("연결이 끝나 lease 해제", async () => (await page.getByTestId("lease-banner").count()) === 0);
-    if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("풀렸는데 입력 막대가 꺼져 있다");
-    // 아무도 조작하지 않게 되면 남은 화면이 다시 자기 칸 크기로 맞춘다
-    await until("남은 화면 크기로", () => t1size() === held);
+    await until("표시 없음", async () => (await page.getByTestId("lease-banner").count()) === 0);
+    if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("입력 막대가 꺼져 있다");
   });
+
 
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
@@ -654,20 +672,21 @@ try {
     await page.getByTestId("machine-labA").waitFor();
     await until("초안 보존", async () => (await page.getByLabel("보낼 글").inputValue()) === "a\nb");
     await page.getByLabel("보낼 글").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-    await until("조합이 아닌 Enter는 보냄", () => gots() > n);
+    // 여러 줄 붙여넣기 다음 Enter는 300ms 뒤 따로 온다(둘 다 와야 끝난다)
+    await until("조합이 아닌 Enter는 보냄", () => gots() >= n + 2 && got().trimEnd().endsWith('GOT:"\\r"\npaste>'));
     if ((await page.getByLabel("보낼 글").inputValue()) !== "") throw new Error("보낸 뒤 글이 남았다");
     // 휴대폰(터치): Enter는 줄바꿈, 보내기는 단추
     const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await mob.page.getByTestId("pane-pasteapp").click();
     const mbox = mob.page.getByLabel("보낼 글");
-    // 데스크톱 화면이 조작 중이라 가져온다
-    await mob.page.getByTestId("take").click();
-    await until("휴대폰 입력 가능", async () => !(await mbox.isDisabled()));
+    // 데스크톱 화면이 쓰는 중이어도 가져오기 없이 입력된다
+    if (await mbox.isDisabled()) throw new Error("휴대폰 입력 막대가 꺼져 있다");
     n = gots();
     await mbox.fill("휴대폰");
     await mbox.press("Enter");
     await sleep(500);
-    if (gots() !== n || (await mbox.inputValue()) !== "휴대폰\n") throw new Error(`휴대폰 Enter: ${JSON.stringify(await mbox.inputValue())}`);
+    if (gots() !== n || (await mbox.inputValue()) !== "휴대폰\n")
+      throw new Error(`휴대폰 Enter: ${JSON.stringify(await mbox.inputValue())} · 받은 것 ${got().split("GOT:").slice(n + 1).join(" | ")}`);
     await mob.page.getByRole("button", { name: "보내기" }).click();
     await until("휴대폰 보내기", () => got().includes("휴대폰"));
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
@@ -688,11 +707,8 @@ try {
       ]) {
         await p.getByTestId("pane-imeapp").click();
         await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
-        // 조작 권한을 이 화면으로(다른 화면이 가졌으면 가져온다)
-        const take = p.getByRole("button", { name: "가져오기" });
-        await sleep(500);
-        if (await take.count()) await take.click();
-        await until("조작 권한", async () => (await take.count()) === 0 && (await p.getByLabel("보낼 글").isEnabled()));
+        // 다른 화면이 쓰던 pane이어도 터미널을 누르고 바로 친다
+        await until("입력 막대", async () => p.getByLabel("보낼 글").isEnabled());
         await p.locator(".xterm-screen").click();
         const ways = [
           ["같은 task", (q) => imeType(q, false), "상태"],

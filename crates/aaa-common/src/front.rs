@@ -27,9 +27,12 @@ pub struct FrontClient {
     pub front: String,
 }
 
+/// 한 번 보내고 끝나는 CLI 연결의 이름. 대화형 front(TUI·웹)와 달리 「지금 쓰는 화면」이 되지 않는다.
+pub const CLI_CLIENT: &str = "cli";
+
 impl FrontClient {
     pub async fn connect(state_root: &Path) -> Result<FrontClient> {
-        Self::connect_as(state_root, "cli").await
+        Self::connect_as(state_root, CLI_CLIENT).await
     }
 
     pub async fn connect_as(state_root: &Path, client: &str) -> Result<FrontClient> {

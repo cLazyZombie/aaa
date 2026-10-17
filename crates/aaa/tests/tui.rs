@@ -257,8 +257,8 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
 
     let mut tui = Tui::start(&h);
     tui.wait_text("탭과 상태 줄", |s| s.contains("1:first") && s.contains("labA") && s.contains("실행"));
-    // 처음 포커스한 pane은 lease가 비어 있으니 칸 크기로 맞추고 조작을 갖는다
-    tui.wait_text("lease", |s| s.contains("조작 중"));
+    // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기로 맞추고 이 화면이 지금 쓰는 화면이 된다
+    tui.wait_text("lease", |s| s.contains("이 화면 크기"));
     let p = h.pane(&first);
     assert_eq!((p["cols"].as_u64(), p["rows"].as_u64()), (Some(COLS as u64), Some(ROWS as u64 - 2)), "{p}");
     assert_eq!(p["lease"]["label"].as_str().map(|l| l.starts_with("tui@")), Some(true), "{p}");
@@ -310,7 +310,8 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     }
 }
 
-/// 다른 front가 조작 중이면 입력이 거부되고, prefix t로 가져오면 입력된다.
+/// 다른 front가 쓰던 pane에도 바로 입력된다(가져오기 없이, §8.33). 입력하거나 터미널 focus를 다시 얻은 화면이
+/// 지금 쓰는 화면이 되어 칸 크기를 다시 건다. focus가 없는 동안은 크기를 걸지 않는다.
 #[test]
 fn lease_conflict_with_another_front() {
     let mut lab = Lab::new();
@@ -318,31 +319,63 @@ fn lease_conflict_with_another_front() {
     let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "shared", "--", "/bin/sh"]);
     let id = leaves(&w)[0].clone();
 
-    // 다른 front(같은 계약을 쓰는 연결)가 먼저 조작을 갖는다
+    // 다른 front(같은 계약을 쓰는 연결)가 먼저 쓰고 크기를 건다
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
     let mut other = rt.block_on(aaa_common::front::FrontClient::connect_as(&h.state, "other-front")).unwrap();
-    let r = rt
-        .block_on(other.call(aaa_proto::FrontRequest::PaneInput {
-            pane: id.clone(),
-            data: aaa_proto::B64(b"echo from-other\r".to_vec()),
-        }))
-        .unwrap();
-    assert!(r.is_ok(), "{r:?}");
+    let call = |other: &mut aaa_common::front::FrontClient, req| {
+        let r = rt.block_on(other.call(req)).unwrap();
+        assert!(r.is_ok(), "{r:?}");
+    };
+    let other_types = |other: &mut aaa_common::front::FrontClient, text: &str| {
+        call(other, aaa_proto::FrontRequest::PaneResize { pane: id.clone(), cols: 70, rows: 15 });
+        let data = aaa_proto::B64(format!("{text}\r").into_bytes());
+        call(other, aaa_proto::FrontRequest::PaneInput { pane: id.clone(), data });
+    };
+    other_types(&mut other, "echo from-other");
+    let held_by = |label: &str| {
+        let l = label.to_string();
+        let h = &h;
+        let id = &id;
+        move || h.pane(id)["lease"]["label"].as_str().is_some_and(|x| x.starts_with(&l)).then_some(())
+    };
 
     let mut tui = Tui::start(&h);
-    tui.wait_text("다른 front 표시", |s| s.contains("other-front 조작 중") && s.contains("from-other"));
-    tui.type_line("echo blocked");
-    tui.wait_text("거부 표시", |s| s.contains("입력 안 됨"));
-    std::thread::sleep(Duration::from_millis(300));
-    assert!(!h.screen(&id).contains("blocked"), "거부된 입력이 들어갔다");
+    tui.wait_text("다른 front 표시", |s| s.contains("other-front 크기") && s.contains("from-other"));
+    assert_eq!(h.pane(&id)["cols"].as_u64(), Some(70), "다른 화면이 쓰는 동안 크기를 바꿨다");
 
+    // 1) 그냥 입력하면 들어가고, 이 화면이 지금 쓰는 화면이 되어 칸 크기로 맞춘다
+    tui.type_line("echo direct-$((6*7))");
+    tui.wait_text("바로 입력", |s| s.contains("direct-42"));
+    wait_for("입력한 화면", T, held_by("tui@"));
+    wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
+    tui.wait_text("이 화면 표시", |s| s.contains("이 화면 크기"));
+
+    // 2) 다른 화면이 다시 쓰면 그 크기다. 이 터미널이 focus를 다시 얻으면(ESC [ I) 크기를 다시 건다
+    other_types(&mut other, "echo again");
+    wait_for("다른 화면", T, held_by("other-front"));
+    tui.wait_text("다른 front 표시", |s| s.contains("other-front 크기"));
+    tui.send(b"\x1b[I");
+    wait_for("focus 얻은 화면", T, held_by("tui@"));
+    wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
+
+    // 3) focus를 잃은 동안(ESC [ O)은 크기를 걸지 않는다: 다른 화면이 썼다 놓아도 그 크기 그대로다
+    tui.send(b"\x1b[O");
+    std::thread::sleep(Duration::from_millis(200));
+    other_types(&mut other, "echo third");
+    wait_for("다른 화면", T, held_by("other-front"));
+    call(&mut other, aaa_proto::FrontRequest::PaneRelease { pane: id.clone() });
+    wait_for("놓음", T, || h.pane(&id)["lease"].is_null().then_some(()));
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(h.pane(&id)["cols"].as_u64(), Some(70), "focus가 없는 화면이 크기를 걸었다");
+    assert!(h.pane(&id)["lease"].is_null());
+
+    // 4) prefix t(명시적 가져오기)도 그대로 된다
+    tui.send(b"\x1b[I");
+    wait_for("focus 얻은 화면", T, held_by("tui@"));
+    other_types(&mut other, "echo fourth");
+    wait_for("다른 화면", T, held_by("other-front"));
     tui.cmd("t");
-    wait_for("가져오기", T, || {
-        h.pane(&id)["lease"]["label"].as_str().is_some_and(|l| l.starts_with("tui@")).then_some(())
-    });
-    tui.type_line("echo taken-$((2*21))");
-    tui.wait_text("가져온 뒤 입력", |s| s.contains("taken-42"));
-    // 가져온 front는 칸 크기로 맞춘다
+    wait_for("가져오기", T, held_by("tui@"));
     wait_for("크기", T, || (h.pane(&id)["cols"].as_u64() == Some(COLS as u64)).then_some(()));
     drop(other);
 }
@@ -424,7 +457,7 @@ fn ctrl_v_pastes_clipboard_image() {
     let mut clip = native.then(|| arboard::Clipboard::new().expect("clipboard를 열지 못했다"));
 
     let mut tui = if native { Tui::start(&h) } else { Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_PNG", &fake_s)]) };
-    tui.wait_text("lease", |s| s.contains("조작 중"));
+    tui.wait_text("lease", |s| s.contains("이 화면 크기"));
 
     // 1) 그림이 없으면 Ctrl+V는 원래 키다(lnext를 끈 cat -v가 ^V를 보인다)
     if let Some(c) = clip.as_mut() {
@@ -463,19 +496,17 @@ fn ctrl_v_pastes_clipboard_image() {
     assert!(!h.screen(&id).contains("attachments"), "셸에 경로가 들어갔다");
     drop(clip);
 
-    // 3) 여러 조각(1.2MB)을 `aaa pane attach`로 올린다. TUI가 조작 중이라 먼저 거부된다.
+    // 3) 여러 조각(1.2MB)을 `aaa pane attach`로 올린다. TUI가 쓰는 중이어도 되고, 한 번 보내는 CLI라
+    //    지금 쓰는 화면은 TUI 그대로다.
     let big = lab.root.join("big.png");
     let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
     bytes.resize(1_200_000, 7);
     std::fs::write(&big, &bytes).unwrap();
-    let r: serde_json::Value =
-        serde_json::from_str(&h.json(&["pane", "attach", &id, big.to_str().unwrap()]).unwrap_err()).unwrap();
-    assert_eq!(r["error"]["code"], "lease_held", "{r}");
+    let r = h.ok(&["pane", "attach", &id, big.to_str().unwrap()]);
+    assert_eq!(h.pane(&id)["lease"]["label"].as_str().map(|l| l.starts_with("tui@")), Some(true));
     tui.cmd("d");
     assert!(tui.wait_exit());
     drop(tui);
-    wait_for("lease 해제", T, || h.pane(&id)["lease"].is_null().then_some(()));
-    let r = h.ok(&["pane", "attach", &id, big.to_str().unwrap()]);
     let path = r["path"].as_str().unwrap();
     assert_eq!(std::fs::read(path).unwrap(), bytes, "{r}");
     assert_eq!(r["inserted"], false, "{r}");

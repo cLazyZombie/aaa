@@ -267,17 +267,18 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
   - M1-2 구현: `aaa attach [-w workspace]`(설계 예시의 `aaa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
-  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 가져오기, `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다.
-  - 다른 front가 lease를 가진 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. lease가 빈 pane에 포커스하면 그 칸 크기로 맞추면서 lease를 갖는다.
+  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 이 화면 크기로(보통은 필요 없다, §8.33), `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다.
+  - 다른 front가 지금 쓰는 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. 입력하거나 터미널 focus를 다시 얻으면 그 칸 크기로 맞추면서 이 화면이 지금 쓰는 화면이 된다(§8.33). lease가 빈 pane에 포커스해도 같다.
 - **여러 front의 화면과 크기**
-  - front마다 viewport는 독립이지만, 실제 PTY 크기는 조작 lease 소유자가 정한다. lease는 host가 판정하고 입력 직전에 다시 확인한다.
-  - **lease 규칙(M1-2 구현).**
-    - lease는 대화형 front 연결 하나(TUI의 Front 연결, 웹 터미널 WebSocket 하나)에 묶인다. 연결이 끝나면 풀리고, host가 재시작해도 풀린다. 시간 만료는 없다.
-    - 대화형 입력은 lease가 비어 있으면 그 연결이 갖고, 다른 연결이 갖고 있으면 `lease_held`로 거부한다. 넘기려면 명시적으로 가져온다(`take`). 이전 보유자 화면에는 상태 변경으로 보인다.
-    - PTY 크기는 보유자만 바꾼다. 한 번 보내는 CLI `pane resize`는 아무도 갖지 않았을 때만 된다.
+  - front마다 viewport는 독립이지만, 실제 PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. lease는 host가 둔다.
+  - **lease 규칙(M1-2 구현, 10-17 herdr 모델로 바꿈 §8.33).**
+    - lease는 대화형 front 연결 하나(TUI의 Front 연결, 웹 터미널 WebSocket 하나)에 묶인다. 연결이 끝나거나 놓으면(`release`) 풀리고, host가 재시작해도 풀린다. 시간 만료는 없다.
+    - ~~다른 연결이 갖고 있으면 `lease_held`로 거부하고 명시적으로 가져온다~~ → 대화형 입력·크기·그림은 거부하지 않는다. 보낸 연결이 지금 쓰는 화면이 된다(마지막 입력이 이긴다). 이전 화면에는 상태 변경으로 보인다.
+    - 크기는 「쓰는 중인」 front만 건다: 지금 쓰는 화면이거나 아무도 쓰지 않을 때, focus를 다시 얻었을 때, 입력했을 때. 보이지 않거나 focus가 없는 front는 걸지 않는다.
+    - 한 번 보내는 CLI(`pane resize`·`pane attach`)는 지금 쓰는 화면이 되지 않는다. `pane resize`는 아무도 쓰지 않을 때만 된다.
     - **한 front 연결에서 pane을 바꾸는 요청(입력·전송·크기·가져오기·놓기·종료)은 받은 순서대로 처리한다.** TUI는 키마다 응답을 기다리지 않고 보낸다. 그래서 host가 동시에 처리하면 키 순서가 뒤바뀌었다(M1-2 CI에서 발견). 조회 요청은 동시에 처리한다.
     - **한 번 보내는 API 입력(`pane send`)은 lease 대상이 아니다.** coordinator·스크립트의 전송이 사람의 attach에 막히지 않게 하려는 것이다. 감사 기록에는 남는다. M1-3 메시지 API(§8.5)와 질문 응답(§8.4)은 이 위에서 자기 규칙(interrupt·queue, generation·lease 재확인)을 더한다.
-    - M1-1에서는 웹이 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize했다. M1-2부터는 그것도 lease 보유자만 한다. 10-17부터 웹도 TUI와 같이 자동으로 맞춘다(§8.30).
+    - M1-1에서는 웹이 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize했다. M1-2부터는 그것도 lease 보유자만 한다. 10-17부터 웹도 TUI와 같이 자동으로 맞추고(§8.30), 같은 날 명시적 가져오기를 없앴다(§8.33).
   - 보기(observe) front는 입력도 resize도 할 수 없다.
   - 느린 front는 bounded queue가 차면 snapshot으로 재동기화하며, 전체 agent를 무기한 backpressure하지 않는다.
   - TUI와 웹이 섞여도 같은 규칙이다.
@@ -1025,7 +1026,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - TUI E2E(`tui.rs`): 다음을 본다.
     - 그림이 없으면 Ctrl+V가 원래 키다(lnext를 끈 `cat -v`가 `^V`를 보인다).
     - 그림이 있으면 대상 세션 폴더에 PNG가 생기고, 풀어 본 pixel이 같다. 셸 pane에는 경로가 들어가지 않는다.
-    - `aaa pane attach`: TUI가 조작 중이면 lease로 거부한다. 1.2MB 여러 조각이 bytes 그대로 저장된다. 그림이 아니면 거부한다.
+    - `aaa pane attach`: 1.2MB 여러 조각이 bytes 그대로 저장된다. 그림이 아니면 거부한다. ~~TUI가 조작 중이면 lease로 거부한다~~ → 10-17부터 한 번 보내는 CLI는 지금 쓰는 화면을 바꾸지 않고 그대로 저장한다(§8.33).
   - **clipboard 바꿔치기.** 개발 Mac에서 사람의 clipboard를 덮어쓰지 않으려고, E2E는 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard 대신 읽는다. 실제 clipboard는 CI 단계 「clipboard(실제)」가 `AAA_CLIP_NATIVE=1`로 확인한다.
     - 세 OS 모두 arboard로 시스템 clipboard에 그림을 쓰고 읽는다. Linux는 Xvfb 위에서 한다.
     - macOS·Linux는 같은 TUI E2E를 실제 clipboard로 한 번 더 돈다.
@@ -1128,6 +1129,23 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 | Chromium 실제 IME 사건(CDP `Input.imeSetComposition`·`insertText`) | 상태 | 상태 |
 
   - 실제 macOS 입력기로 치는 자동 시험은 없다(OS 입력을 흉내 내려면 손쉬운 사용 권한이 필요하다). 사건 순서는 합성 사건으로 재현했고, 운영 화면에서 사용자가 확인한다.
+
+### 8.33 명시적 가져오기 없애기(10-17, 사용자 결정: herdr 모델)
+
+- **사용자 보고.** TUI에서 입력이 안 됐다. 웹이 lease를 갖고 있어 TUI는 보기만 했고 `Ctrl+B t`로 가져와야 했다. 사용자 결정: 「명시적으로 가져오는게 불편하다. herdr·herdr-web-ui처럼 한다.」
+- **herdr의 규칙(research 확인).**
+  - herdr 0.9.5: lease가 없다. 탭마다 「geometry controller」 client 하나의 크기를 쓴다. 터미널 focus를 얻을 때, 실제 입력 때, 탐색 때 controller를 가져간다. 처음 attach는 controller가 없을 때만 가진다. controller가 떠나면 그 탭을 보는 client가 이어받는다.
+  - herdr-web-ui: 조작 연결이면 언제나 입력된다. 보이고 focus가 있을 때(`inUse`)만 크기를 건다. focus·보임을 얻거나, 크기가 어긋난 채 클릭·입력하면 다시 맞춘다. 가려지면 1초 뒤 놓는다. observe 연결은 입력·크기 불가다.
+- **aaa 규칙.**
+  - host: 대화형 front의 입력·크기·그림은 거부하지 않고, 보낸 연결을 「지금 쓰는 화면」(lease)으로 둔다. 한 번 보내는 CLI(`cli` 연결)는 바꾸지 않는다. `lease_held`는 CLI `pane resize`(누가 쓰는 중)에만 남는다.
+  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다.
+  - 웹: 입력 막대·키 줄·그림을 막지 않는다. 보이고 focus가 있을 때만 크기를 건다. window focus·다시 보임·터미널 누름이면 크기를 다시 건다. 1초 넘게 가려지면 `release`한다. 「가져오기」 단추를 없애고 「<화면>이 크기를 정하는 중 · 입력하거나 터미널을 누르면 이 화면 크기로」만 보인다.
+  - 보기 권한(reader)은 그대로 입력·크기 불가다.
+  - 두 화면이 번갈아 입력하면 크기가 그때마다 바뀐다(herdr와 같다).
+- **시험.**
+  - m12 `lease_between_fronts`: 다른 front 입력이 바로 되고 lease가 옮겨 간다. CLI resize는 쓰는 중 거부, `release`는 자기 것만 놓는다, 연결이 끝나면 풀린다.
+  - TUI harness `lease_conflict_with_another_front`: 다른 front가 쓰던 pane에 바로 입력되고 칸 크기로 맞춘다. 다른 front가 다시 쓴 뒤 `ESC [ I`(focus 얻음)면 크기를 다시 건다. `ESC [ O` 동안은 lease가 비어도 크기를 걸지 않는다. `prefix t`도 된다.
+  - 웹 E2E 「두 controller」: 열기만 해서는 바꾸지 않는다. 입력하면 바로 들어가고 그 화면 크기가 된다. 번갈아 입력하면 크기가 바뀐다. window focus면 다시 건다. 가려진 화면은 1초 뒤 놓고 남은 화면이 맞춘다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
