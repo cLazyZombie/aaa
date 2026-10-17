@@ -1381,7 +1381,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 터미널에서 두 손가락을 벌리거나 오므리면 글자가 손가락을 따라 바로 바뀌고 크기(「20px」)를 띄운다. 손을 떼면 설정에 저장하고 PTY를 한 번 다시 건다. 취소(touchcancel)면 처음 크기로 돌아간다. Safari 확대(gesture)는 막는다.
   - `herdr/pinchFontSize.ts`는 import 경로만 바꿔 옮겼다.
 - **다른 곳: 핀치 중에는 grid를 이 화면에서만 다시 맞추지 않는다.** 참고는 핀치 중 xterm grid를 그 화면에서 맞춘다. aaa 터미널 grid는 늘 host가 알리는 PTY 크기를 따른다(이 화면에서만 맞추는 일이 없다). 핀치 중에 grid를 이 화면에서만 맞추면, 그 사이 온 출력이 PTY에 없는 grid에 그려진다. 그래서 글자만 손가락을 따르고, grid는 손을 뗄 때 PTY와 함께 한 번 바뀐다. 화면 키보드가 grid를 붙잡고 있으면 키보드가 내려갈 때 맞춘다(§8.39).
-- **아직.** 한 손가락 끌기를 휠 보고로 바꾸는 참고 동작은 스크롤 묶음(차이 목록 J, 결정 필요 줄)과 함께 옮긴다.
+- **뒤에 옮김.** 한 손가락 끌기를 휠로 바꾸는 참고 동작은 §8.55에서 옮겼다.
 - **시험.** 웹 E2E 「글자 크기」: 설정에서 16px이면 PTY 93→76열, 13px로 돌리면 93열, 기본값은 저장하지 않음. 휴대폰(CDP 실제 터치)에서 100→150px로 벌리면 20px와 「20px」 표시, 손을 떼기 전에는 PTY·저장 그대로, 뗀 뒤 저장 20과 PTY 45→29열.
 
 ### 8.48 그냥 끌어 고르기·제자리 클릭·보내기 전에 크기 되찾기(10-17, 차이 목록 2 H·J)
@@ -1431,6 +1431,63 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - **그림만 받는다(PNG·JPEG·GIF·WebP, 16MiB).** 참고는 아무 파일이나 이름을 다듬어 저장한다(32MiB). §9의 형식 규칙(signature로 확인)이라 결정 없이 넓히지 않았다. 다른 파일은 host가 「PNG·JPEG·GIF·WebP 그림만」으로 거절한다.
   - 경로는 참고처럼 브라우저가 묶음 끝에 한꺼번에 붙여 넣지 않고 host가 파일마다 넣는다(옮기는 길은 §9 그대로). 넣는 글은 같다(`'a' 'b' `).
 - **시험.** 웹 E2E 「그림 붙여 넣기·끌어 놓기」: 셸 줄에 `'경로'`(실행 안 됨), harness는 `ESC[200~'경로' ESC[201~`, 글과 그림이 같이 있으면 `mixed-text`만, 두 파일을 끌어 놓으면 놓은 순서의 두 경로(내용 대조), 글 놓기는 `dropped-text`. host 유닛 `quoted_like_the_reference`. `dropEffect`는 시험하지 못한다: 지어낸 `DataTransfer`는 끌기 중이 아니어서 Chromium이 대입을 버린다(따로 확인).
+
+### 8.52 남의 grid를 볼 때 커서 줄을 따라간다(10-17, 차이 목록 2 G)
+
+- **옮긴 것(herdr-web-ui PaneTerminal 699~727줄 `adopted`·`followCursor`).** 이 화면 것이 아닌 grid는 칸보다 클 수 있다. 다른 화면이 크기를 정하는 중이거나 보기 권한일 때가 그렇다. 그때 칸이 굴러가고, 새 출력마다 커서 줄이 보이게 옮긴다. 손가락이나 휠로 옮기면 그 뒤로는 따라가지 않는다. 다시 남의 grid가 되거나 맞추면 다시 따라간다. 전에는 화면 키보드가 grid를 붙잡을 때만 따라갔다(§8.39).
+- **시험.** 웹 E2E 「reader」: 390×420 보기 권한 화면으로 80×40 pane(줄 80개 뒤 커서는 맨 아래)을 열면 칸이 맨 아래까지 굴러 커서 바로 위 줄이 보인다. 키보드 때만 따라가던 판으로 돌리면 `scrollTop` 0, 그 줄은 칸 밖(819px)이라 실패한다(웹 번들을 다시 지은 판으로 확인).
+
+### 8.53 이모지·결합 문자 폭을 herdr와 같게(10-17, 차이 목록 2 「이모지·결합 문자 폭」)
+
+- **옮긴 것(herdr-web-ui `src/lib/terminalWidths.ts`, PaneTerminal 583줄).** `web/src/herdr/terminalWidths.ts`를 바꾸지 않고 옮기고 `@xterm/addon-unicode-graphemes` 0.4.0(MIT, xterm 묶음)을 넣었다. 터미널을 열 때 fit addon 다음에 `matchHerdrWidths(term)`로 폭 규칙을 갈아 끼운다(addon이 proposed API라 `allowProposedApi: true`). 이모지·새 이모지·ZWJ 묶음·⚠️(VS16)가 두 칸이다. xterm 기본(Unicode 6)에서는 이모지가 한 칸이고 ZWJ 묶음은 이모지마다 칸을 차지해서 뒤 글자가 밀렸다.
+- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. vt100 폭을 맞추는 일은 뒤로 미룬다.
+- **시험.** 웹 E2E 「글자 폭」: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️ 뒤에 쓴 글자의 칸 자리로 폭을 잰다. 기대값은 `[2,2,2,2]`다. `matchHerdrWidths`를 빼고 웹 번들을 다시 지은 판은 `[1,1,4,1]`로 실패한다.
+
+### 8.54 목록 바닥 줄(설정·사용량)은 늘 맨 아래(10-17, 사용자 요청 「aaa 왼쪽밑은 항상 왼쪽밑이어야해. 스크롤 안되어도」)
+
+- **까닭.** `.list` 전체가 굴러가고 바닥 줄은 `margin-top: auto`로 그 안 맨 끝에 있었다. 목록이 화면보다 짧으면 맨 아래였다. 길면 목록 끝을 따라 화면 밖으로 밀렸고, 굴려야 보였다.
+- **옮긴 것(herdr-web-ui `MachineSidebar.tsx` 34~48줄, `Sidebar.css` `.sidebar-shell`·`.sidebar-footer`, `Machines.css` `.machine-list`).** `.list`는 세로 flex이고 굴러가지 않는다. 머리(`.list-head`)와 바닥 줄(`.list-foot`)은 `flex: 0 0 auto`다. 그 사이 `.list-body`가 남은 높이를 다 갖고(`flex: 1 1 0; min-height: 0`) 혼자 굴러간다. `.app` grid 줄은 `minmax(0, 1fr)`라 목록이 길어도 화면 높이(`--app-height`, 화면 키보드가 올라오면 보이는 높이)를 넘지 않는다.
+- **다른 곳.** 참고는 목록 아래 끝을 흐리게(`.machine-list::after`) 하고 바닥 줄에 선이 없다. aaa는 바닥 줄 위 선을 그대로 둔다(테마 모양이라 동작과 상관없음).
+- **시험.** 웹 E2E 「목록 바닥 줄은 늘 맨 아래」: pane 24개로 목록을 화면보다 길게 하고 휴대폰 390×844(Chromium), 데스크톱 1100×760, iPad 820×1180(WebKit, 터치)에서 바닥 줄 아래 끝 = 목록 아래 끝 = 보이는 높이를 본다. 목록을 끝까지 굴려도 그 자리여야 한다. iPad는 터미널에 focus를 두고 화면 키보드를 올리면(보이는 높이 780) 바닥 줄이 780에 온다. 휴대폰은 목록이 보이는 동안 글 칸이 없어 키보드 경우가 없다. 예전 구조(`.list`가 굴러감)로 돌린 판은 키보드 경우에 바닥 줄이 1448에 있어 실패한다.
+
+### 8.55 터미널 스크롤을 herdr·herdr-web-ui대로(10-17, 사용자 요청 「aaa 웹에서 터미널 스크롤이 안되」·「herdr web ui는 잘되」, 결정 20 D7)
+
+- **줄 단위 비교(herdr-web-ui `PaneTerminal.tsx`·`PaneTerminal.css`·`lib/wheelSteps.ts`, herdr `server/pane_input.rs` 153~183줄·`pane/terminal.rs` 1979~2000줄).**
+  - herdr는 휠을 셋으로 나눈다. 프로그램이 mouse 보고를 켰으면 보고로 프로그램에 보낸다. alternate screen이고 1007(기본 켬)이면 화살표로 보낸다. 나머지는 herdr가 가진 scrollback을 굴린다. 키를 치면 맨 아래로 돌아온다(`scroll_reset`).
+  - xterm.js 5.5 기본도 같게 나눈다. 보고가 켜졌으면 보고, alternate buffer면 화살표, 아니면 자기 scrollback이다. 올려 둔 동안 출력이 와도 자리를 지키고(`isUserScrolling`), 키를 치면 맨 아래로 온다(`scrollOnUserInput`). 그래서 aaa는 나누는 일을 xterm 기본에 맡긴다.
+  - 참고 휠 처리기(665~694줄) 가운데 「이 화면 것이 아닌 grid면 휠은 브라우저 몫」과 「휠은 선택을 지운다」를 옮겼다. 「보고가 꺼지면 xterm을 막는다」는 herdr가 늘 보고를 켜서 있는 규칙이라 옮기지 않았다.
+- **원인 1: 붙을 때 기록이 비었다(기기와 상관없음).** 웹은 pane을 열 때, 다시 붙을 때, 출력이 밀렸을 때 `term.reset()` 뒤 host replay를 쓴다. 그 replay(`aaa-vt` `Vt::replay`)는 보이는 줄만 담았다. 그래서 열기 전에 나온 줄은 xterm에 없어 굴릴 것이 없었다. 고친 것: replay가 vt100 scrollback을 오래된 줄부터 먼저 쓰고 화면 위로 밀어 올린 뒤 화면을 그린다. 상한은 `REPLAY_HISTORY` 2000줄로, xterm `scrollback`과 같다. 색이 많은 120칸 5000줄이면 약 650KB가 되므로 붙을 때마다 다 보내지 않는다. bytes 상한도 둔다. snapshot은 JSON 한 frame(base64, `MAX_FRAME` 1MiB)으로 session host → agent → host를 지나므로, 기록은 384KiB와 「화면을 뺀 frame 몫」 가운데 작은 쪽 안의 최근 줄만 싣는다. 칸마다 truecolor인 250칸 줄 2000줄로 유닛 시험한다. 화면 밖 줄이라 줄 이음은 남기지 않는다.
+- **원인 2: alternate screen을 다시 그리지 않았다.** vt100 `state_formatted`는 alternate screen(1049)을 말하지 않는다. 그래서 늦게 붙은 xterm은 Claude Code·Codex 같은 alternate screen 프로그램을 normal buffer에 그렸다. 휠은 빈 기록을 굴릴 뿐 화살표가 되지 않았다. 고친 것: alternate screen이면 사본에서 1049를 나가 그 밑 normal screen(기록과 화면)을 먼저 그린다. 그 다음 `ESC[?1049h`로 들어가 프로그램 화면을 그린다. 프로그램이 나가면 그 밑 화면이 돌아온다.
+- **원인 3: 휴대폰·iPad 한 손가락(참고 1519~1687줄).** 끌기를 줄 단위 휠 사건으로 바꿔 손가락 자리에 보낸다(`herdr/wheelSteps.ts` 그대로). 이 화면 것이 아닌 grid는 칸을 손가락대로 옮긴다. 손을 뗄 때 반 걸음이 남으면 하나 더 보낸다. xterm 자기 터치 스크롤은 mouse 보고 중이나 alternate screen에서 아무것도 하지 않는다. 그래서 Claude Code·Codex 화면은 손가락으로 굴릴 수 없었다.
+  - **다른 곳 1, 걸음 크기.** 참고는 손가락 3줄마다 휠 하나다(herdr가 보고 하나에 3줄). aaa에서 보고가 꺼진 normal buffer는 xterm 자기 scrollback이 휠 하나에 한 줄씩 굴린다. 그래서 그때는 한 줄마다 보낸다. 글이 손가락을 따라가는 것은 같다. 보고·alternate screen은 참고처럼 3줄마다다.
+  - **다른 곳 2, 전파 멈춤.** 한 손가락 `touchmove`는 전파를 멈춘다. 참고는 xterm scrollback이 0이라 xterm 자기 터치 스크롤이 아무 일도 안 했다. aaa는 기록이 있어 두 번 굴러간다(멈추지 않으면 240px 끌기가 13줄이 아니라 26줄).
+  - **다른 곳 3, 남의 grid 휠.** 이 화면 것이 아닌 grid(보기 권한, 다른 화면이 크기를 정하는 중)에서 휠은 참고처럼 브라우저 몫이다. 다만 aaa xterm에는 기록이 있어 xterm 기록이 먼저 굴러가고, 끝에 닿으면 칸이 옮겨진다. 참고는 기록이 없어 바로 칸이 옮겨졌다.
+- **함께 고쳐진 것.** host가 agent를 다시 구독하면(`PaneEvent::Reset`) host mirror를 replay로 다시 만든다. 전에는 alternate screen 프로그램이어도 normal screen으로 만들어져, 다음에 프로그램이 화면을 다 다시 그릴 때까지 `aaa pane read`와 TUI 칸이 어긋났다. 이제 1049로 들어간 채 만들어진다.
+- **CSS(PaneTerminal.css 33~47·351~357줄).** `.term-scroll`은 `overflow: hidden; touch-action: none; overscroll-behavior: contain`이다. 이 화면 것이 아닌 grid(`data-adopted-grid`)만 `overflow: auto`다. 터치 화면에서는 `.xterm-rows`가 터치를 받지 않는다. xterm이 줄 요소를 다시 그려 바꾸면 첫 대상에 붙은 터치가 끊기기 때문이다. 이 때문에 조합 상자 색을 정할 칸은 `elementsFromPoint` 대신 자리로 찾는다(`compositionView.ts` `cellAt`, §8.37).
+- **옮기지 않은 것.** 끌어 고르는 중 휠(`dragWheel`)과 휠 속도 설정은 옮기지 않았다(차이 목록 J). 참고처럼 scrollback을 host만 갖고 host가 굴린 화면을 보내는 구조도 옮기지 않았다. aaa 웹은 pane의 PTY 출력을 그대로 받으므로, 그 구조로 가려면 그린 화면을 보내는 새 stream이 필요하다. 그래서 「기록은 session host vt가 갖고 붙을 때 xterm에 채운다」로 같은 동작을 낸다. 화면을 넘는 선택의 원문 복사도 그 구조와 함께 뒤로 미룬다.
+- **시험.** 웹 E2E 「터미널 스크롤」: `scroll.js`가 번호 줄 200개를 쓴 뒤 pane을 연다.
+  - 데스크톱 휠로 s-001까지 올라간다. 다른 곳에서 보낸 입력으로 출력이 와도 그 자리다. 키를 치면 맨 아래다.
+  - alternate screen은 휠이 `ESC[A`로, mouse 보고(1000·1006)는 `ESC[<64;…`로 프로그램에 간다.
+  - 휴대폰(Chromium CDP 터치)과 iPad(WebKit)에서 240px 끌면 한 칸 높이마다 한 줄이다. alternate screen·mouse 보고 프로그램에서도 끌기가 화살표·보고로 간다.
+  - 확인한 실패. 기록을 빼면 첫 줄 170·xterm 기록 0px로 실패한다. 전파를 멈추지 않으면 26줄로 실패한다. 한 손가락 처리를 빼면 alternate·mouse 끌기가 실패한다. 1049를 다시 그리지 않으면 alternate 휠이 화살표가 되지 않는다(고치기 전 실행).
+  - 줄이 터치를 받지 않는 CSS는 줄 요소를 바꿔도 터치를 이어 받는 iOS 동작이 headless에 없어 E2E로 보지 못한다.
+  - `aaa-vt` 유닛 시험: 기록·상한·alternate screen.
+
+### 8.56 agent 표시를 herdr-web-ui대로(10-17, 사용자 요청 「aaa에서 에이전트의 아이콘이 잘못 되어 있어. 레퍼런스 확인해.」)
+
+- **차이.** aaa 목록은 직접 그린 선 아이콘이었다. Claude는 여덟 갈래 빛, Codex는 육각형, 그 밖의 agent는 로봇, thread는 문서였고 터미널 머리에는 표시가 없었다. herdr-web-ui(aa624cb)는 Claude를 주황 타일의 별로, Codex를 매듭으로 그린다(`AgentMark`). 셸은 터미널 표시(lucide `Terminal`)다.
+- **옮긴 것.**
+  - `AgentMark.tsx` 213줄을 그대로 옮겼다(전에는 Claude·Codex·Fallback만). `agentSvgMarks.ts`는 droid·maki 두 줄을 뺐다. 두 favicon은 참고가 사용 허락을 적지 않아 공개 저장소에 싣지 않으며, 그 agent는 머리글자 표시가 된다.
+  - 쓰는 곳은 참고와 같다. 목록 줄 앞은 18px다(`Sidebar.tsx` `rowMark`·`AgentSidebar.tsx` `AgentRowBody`: 그 줄이 여는 pane의 agent, agent가 아니면 터미널 표시). thread 줄은 그 thread pane의 agent다. 터미널 머리 제목 앞도 18px다(`App.tsx` 1402줄 `context-title`). 구독 막대·설정 계정 줄은 §8.49 그대로다.
+  - 쓰지 않게 된 aaa 아이콘 넷(claude·codex·agent·thread)은 지웠다.
+- **agent 이름을 아는 법.** herdr는 pane의 프로세스를 보고 `pane.agent`(claude·codex…)를 정한다. aaa는 셋을 이 순서로 본다. hook이 알린 harness, thread profile, 명령 이름(경로를 뗀 것)이다. 표시가 있는 이름이면 그 이름이다. `claude`·`codex`가 든 이름(`claude-opus` profile, 경로 붙은 명령)이면 claude·codex다. 그 밖의 agent는 그 harness·profile 이름의 머리글자 표시다. agent가 아니면 셸이다.
+- **TUI.** herdr TUI 사이드바(`src/client/shell/agent_sidebar.rs`)에도 agent 표시가 없어 aaa TUI도 그대로 둔다.
+- **공개 저장소 검사.** `agentSvgMarks.ts`의 SVG path 좌표(점으로 이은 숫자 넷)가 IP 주소 패턴에 걸린다. 그래서 `scripts/check-public.sh` IP 검사에서만 이 파일을 뺀다(검사마다 뺄 파일 칸을 두었다). 다른 검사(token·이메일·홈 경로 등)는 이 파일도 본다.
+- **시험.** 웹 E2E 「agent 표시」(휴대폰 390×844):
+  - hook으로 claude·codex를 알린 pane 줄은 각각 `agent-mark claude is-brand`(타일 `#D77655`, 18px)와 `agent-mark codex`다. 셸 줄은 터미널 표시다.
+  - Claude pane 머리에는 같은 표시가 있고, 셸 머리에는 없다.
+  - thread 줄(fake profile)은 머리글자 표시 「F」다.
+  - 사용자 사진(herdr-web-ui)과 E2E 캡처를 나란히 놓은 비교는 보고서에 있다(실제 머신 이름이 있어 저장소에 넣지 않는다).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

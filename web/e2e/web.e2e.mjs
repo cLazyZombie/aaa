@@ -576,6 +576,25 @@ process.stdout.on("resize", () => process.stdout.write("SIZE:" + ++n + ":" + pro
 process.stdin.on("data", (d) => process.stdout.write("GOT:" + ++n + ":" + JSON.stringify(d.toString("utf8")) + "\\r\\n"));
 `,
 );
+// 글자 폭 시험: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️(VS16) 뒤에 글자 하나씩
+// 스크롤 시험 프로그램: 번호 붙은 줄 200개를 쓰고 기다린다. alt면 alternate screen에서, mouse면 거기에 mouse 보고(1000·SGR 1006)를 켠다.
+// "p"를 받으면 줄을 하나 더 쓰고, 다른 조각은 JSON으로 보인다(휠이 화살표·mouse 보고로 왔는지 본다).
+fs.writeFileSync(
+  `${root}/scroll.js`,
+  `const mode = process.argv[2] || "plain";
+process.stdin.setRawMode(true);
+if (mode !== "plain") process.stdout.write("\\x1b[?1049h\\x1b[H");
+if (mode === "mouse") process.stdout.write("\\x1b[?1000h\\x1b[?1006h");
+for (let i = 1; i <= 200; i++) process.stdout.write("s-" + String(i).padStart(3, "0") + "\\r\\n");
+let n = 0;
+process.stdin.on("data", (d) => {
+  const s = d.toString("latin1");
+  if (s === "p") process.stdout.write("more-" + ++n + "\\r\\n");
+  else process.stdout.write("GOT:" + JSON.stringify(s) + "\\r\\n");
+});
+`,
+);
+fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
 fs.writeFileSync(
@@ -725,6 +744,34 @@ try {
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
     console.log("     글꼴 측정(1280×800)", JSON.stringify(await fontOk(page, cols)));
     await shot(page, "desktop-hangul");
+  });
+
+  await step("글자 폭(herdr-web-ui terminalWidths): 이모지·새 이모지·ZWJ 묶음·⚠️는 두 칸", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "widths", "--", process.execPath, `${root}/widths.js`);
+    const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 })).page;
+    await wp.getByTestId("pane-widths").click();
+    await until("폭 화면", async () => (await screenText(wp)).includes("W"));
+    // 글자마다 화면 위치로 몇째 칸인지 잰다(DOM renderer의 span 묶음에 기대지 않는다)
+    const cols = await wp.evaluate((cols) => {
+      const screen = document.querySelector('[data-testid="terminal"] .xterm-screen').getBoundingClientRect();
+      const cell = screen.width / cols;
+      const at = (ch) => {
+        const walk = document.createTreeWalker(document.querySelector(".xterm-rows"), NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          const i = n.textContent.indexOf(ch);
+          if (i < 0) continue;
+          const r = document.createRange();
+          r.setStart(n, i);
+          r.setEnd(n, i + 1);
+          return Math.round((r.getBoundingClientRect().left - screen.left) / cell);
+        }
+        return null;
+      };
+      return ["X", "Y", "Z", "W"].map(at);
+    }, aaa("pane", "list").panes.find((x) => x.name === "widths").cols);
+    if (JSON.stringify(cols) !== "[2,2,2,2]") throw new Error(`글자 칸(기대 [2,2,2,2]) ${JSON.stringify(cols)}`);
+    await wp.context().close();
+    aaa("pane", "kill", "widths");
   });
 
   await step("controller: 입력 막대로 한글", async () => {
@@ -1017,6 +1064,113 @@ try {
     await dp.context().close();
   });
 
+  await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 타일 별, Codex는 매듭, 셸은 터미널 표시", async () => {
+    // hook으로 harness를 알린 pane(Claude·Codex)과 셸(t1)
+    for (const [name, agent] of [["markc", "claude"], ["markx", "codex"]])
+      aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sh", "-c", `"$0" hook --agent ${agent} '{"hook_event_name":"Stop"}'; exec cat`, AA);
+    const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    for (const name of ["markc", "markx"]) await until(`${name} harness`, async () => (await mp.getByTestId(`agent-${name}`).count()) === 1);
+    const markOf = (name) =>
+      mp.getByTestId(`pane-${name}`).locator(".mark").evaluate((m) => {
+        const a = m.querySelector(".agent-mark");
+        const svg = m.querySelector("svg");
+        return {
+          agent: m.dataset.agent,
+          cls: a?.className ?? null,
+          label: svg?.getAttribute("aria-label") ?? null,
+          size: svg?.getAttribute("width") ?? null,
+          tile: a?.querySelector(".agent-mark-tile")?.getAttribute("fill") ?? null,
+          shell: svg?.classList.contains("i") ?? false,
+        };
+      });
+    const bad = [];
+    const c = await markOf("markc");
+    if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.size !== "18" || c.tile !== "#D77655") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
+    const x = await markOf("markx");
+    if (x.cls !== "agent-mark codex" || x.label !== "codex" || x.size !== "18") bad.push(`Codex 줄 ${JSON.stringify(x)}`);
+    // 셸은 agent 표시가 아니라 터미널 표시(참고 lucide Terminal 자리)
+    const sh = await markOf("t1");
+    if (sh.agent !== "shell" || sh.cls !== null || !sh.shell) bad.push(`셸 줄 ${JSON.stringify(sh)}`);
+    await shot(mp, "phone-agent-marks");
+    // 터미널 머리: 제목 앞에 그 pane의 agent 표시(참고 App.tsx 1402줄, 18px)
+    await mp.getByTestId("pane-markc").click();
+    const head = mp.locator(".term-title .agent-mark");
+    await head.waitFor();
+    const hc = await head.evaluate((a) => `${a.className} ${a.querySelector("svg").getAttribute("width")}`);
+    if (hc !== "agent-mark claude is-brand 18") bad.push(`머리 표시 ${hc}`);
+    await shot(mp, "phone-agent-head");
+    await mp.getByRole("button", { name: "목록으로" }).click();
+    await mp.getByTestId("pane-t1").click();
+    await mp.getByTestId("terminal").waitFor();
+    if ((await mp.locator(".term-title .agent-mark").count()) !== 0) bad.push("셸 머리에 agent 표시가 있다");
+    await mp.context().close();
+    for (const name of ["markc", "markx"]) aaa("pane", "kill", name);
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("목록 바닥 줄은 늘 맨 아래(herdr-web-ui sidebar-footer, 사용자 요청 10-17): 목록이 길어도·굴려도 설정·사용량 줄은 화면 맨 아래, 휴대폰·iPad·데스크톱·화면 키보드", async () => {
+    // 목록이 화면보다 길어야 시험이 된다: 짧으면 예전 판(바닥 줄이 목록 끝을 따라감)도 맨 아래에 있다
+    const many = Array.from({ length: 24 }, (_, i) => `foot${i + 1}`);
+    for (const name of many) aaa("pane", "run", "--machine", "labA", "--name", name, "--", "/bin/sleep", "600");
+    const footer = (p) =>
+      p.evaluate(() => {
+        const r = (s) => document.querySelector(s).getBoundingClientRect();
+        const body = document.querySelector(".list-body");
+        return {
+          view: Math.round(window.visualViewport?.height ?? window.innerHeight),
+          app: Math.round(r(".app").bottom),
+          list: Math.round(r(".list").bottom),
+          foot: Math.round(r(".list-foot").bottom),
+          gear: Math.round(r('[data-testid="settings-open"]').bottom),
+          over: body.scrollHeight - body.clientHeight,
+          top: Math.round(body.scrollTop),
+        };
+      });
+    const bad = [];
+    // 바닥 줄이 보이는 높이의 맨 아래에 붙어 있고(목록 끝을 따라가지 않고), 목록을 끝까지 굴려도 그 자리다
+    const check = async (label, p) => {
+      await until(`${label} 목록에 foot24`, async () => (await p.getByTestId("pane-foot24").count()) === 1);
+      const at = await footer(p);
+      if (at.over <= 0) bad.push(`${label}: 목록이 화면보다 짧아 시험이 안 된다 ${JSON.stringify(at)}`);
+      if (at.top !== 0 || at.app !== at.view || at.list !== at.view || at.foot !== at.view || at.gear > at.view) bad.push(`${label}: 바닥 줄이 맨 아래가 아니다 ${JSON.stringify(at)}`);
+      await p.locator(".list-body").evaluate((el) => (el.scrollTop = el.scrollHeight));
+      const end = await footer(p);
+      if (end.top === 0 || end.foot !== at.foot || end.gear !== at.gear) bad.push(`${label}: 목록을 굴리니 바닥 줄이 움직였다 ${JSON.stringify({ at, end })}`);
+      await p.locator(".list-body").evaluate((el) => (el.scrollTop = 0));
+      return at;
+    };
+    const phone = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    const ph = await check("휴대폰 390×844", phone);
+    await phone.context().close();
+    const desk = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await check("데스크톱 1100×760", desk);
+    await desk.context().close();
+    const wk = await webkit.launch();
+    try {
+      const pad = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, init: fakeViewport })).page;
+      const up = await check("iPad 820×1180", pad);
+      if (up.view !== 1180) bad.push(`iPad 보이는 높이가 1180이 아니다(${up.view}): 키보드 시험이 안 된다`);
+      // pane을 열고 화면 키보드를 올리면(보이는 높이 780) 바닥 줄은 키보드 바로 위에 남는다
+      await pad.getByTestId("pane-t1").click();
+      await pad.getByTestId("terminal").waitFor();
+      // 키보드는 글 칸에 focus가 있을 때만 올라온다(herdr/viewport.ts)
+      await pad.locator(".xterm-helper-textarea").focus();
+      await softKeyboard(pad, 780);
+      await until("iPad 키보드 위 바닥 줄", async () => (await footer(pad)).foot === 780).catch(async (e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(await footer(pad))}`);
+      });
+      await check("iPad 화면 키보드(보이는 높이 780)", pad);
+      await softKeyboard(pad, 1180);
+      await until("iPad 키보드 내림", async () => (await footer(pad)).foot === 1180);
+      await pad.context().close();
+    } finally {
+      await wk.close();
+    }
+    for (const name of many) aaa("pane", "kill", name);
+    if (bad.length) throw new Error(bad.join("; "));
+    console.log(`     휴대폰 바닥 줄 아래 ${ph.foot}px(보이는 높이 ${ph.view}), 목록 넘침 ${ph.over}px`);
+  });
+
   await step("글자 크기(herdr-web-ui terminalFontSize·핀치): 설정에서 한 칸씩, 휴대폰은 두 손가락으로 글자가 따라오고 손을 떼면 저장하고 PTY를 한 번 다시 건다", async () => {
     const t1 = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
     const rowsFont = (pg) => pg.evaluate(() => getComputedStyle(document.querySelector('[data-testid="terminal"] .xterm-rows')).fontSize);
@@ -1081,6 +1235,134 @@ try {
     const pinched = await settled(mp, "핀치 뒤 PTY", (c) => c < phone * 0.8);
     console.log(`     핀치 ${phone}열(13px) → ${pinched}열(20px)`);
     await mp.context().close();
+  });
+
+  await step("터미널 스크롤(herdr-web-ui PaneTerminal 휠·터치, herdr pane_input 휠 나누기, 사용자 요청 10-17): 열기 전 기록도 굴러가고, 출력이 와도 올려 둔 자리, 키를 치면 맨 아래, alternate screen은 화살표·mouse 보고면 프로그램에, 휴대폰·iPad는 한 손가락으로 손가락만큼", async () => {
+    // 터치용 alt·mouse pane은 따로 둔다(휠로 받은 조각과 섞이지 않게)
+    const names = ["plain", "alt", "mouse", "touch-alt", "touch-mouse"];
+    for (const mode of names) aaa("pane", "run", "--machine", "labA", "--name", `scroll-${mode}`, "--", process.execPath, `${root}/scroll.js`, mode.replace("touch-", ""));
+    for (const mode of names) await until(`scroll-${mode} 200줄`, () => aaa("pane", "read", `scroll-${mode}`).lines.join("\n").includes("s-200"));
+    const got = (name) => aaa("pane", "read", name).lines.join("\n");
+    /** 보이는 첫 줄의 번호(s-NNN), 없으면 null */
+    const firstNo = (p) =>
+      p.evaluate(() => {
+        const m = /s-(\d{3})/.exec(document.querySelector(".xterm-rows")?.firstElementChild?.textContent ?? "");
+        return m ? Number(m[1]) : null;
+      });
+    const bad = [];
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
+    await dp.getByTestId("pane-scroll-plain").click();
+    await until("plain 화면", async () => (await screenText(dp)).includes("s-200"));
+    const box = await dp.getByTestId("terminal").boundingBox();
+    await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await until("휠로 맨 위 s-001", async () => {
+      await dp.mouse.wheel(0, -2000);
+      return (await firstNo(dp)) === 1;
+    }).catch(async (e) => {
+      throw new Error(`${e.message}: 첫 줄 ${await firstNo(dp)}, xterm 기록 ${await dp.locator(".xterm-viewport").evaluate((v) => v.scrollHeight - v.clientHeight)}px`);
+    });
+    // 올려 둔 동안 출력이 와도 그 자리(키 입력이 아니다: 다른 곳에서 보낸 입력)
+    for (let i = 0; i < 3; i++) aaa("pane", "send", "scroll-plain", "--text", "p");
+    await until("more-3 출력", () => got("scroll-plain").includes("more-3"));
+    await sleep(300);
+    if ((await firstNo(dp)) !== 1) bad.push(`출력이 오자 올려 둔 자리를 잃었다(첫 줄 ${await firstNo(dp)})`);
+    // 키를 치면 맨 아래로 돌아온다
+    await dp.keyboard.press("x");
+    // 맨 아래에는 올려 둔 동안 온 출력도 있다(그 출력이 이 화면에 왔는데도 자리를 지켰다는 뜻)
+    await until("키를 치면 맨 아래", async () => {
+      const text = await screenText(dp);
+      return text.includes('GOT:"x"') && text.includes("more-3");
+    });
+    if ((await firstNo(dp)) === 1) bad.push("키를 쳤는데 맨 아래로 오지 않았다");
+    // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
+    // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다
+    for (const [mode, want] of [["alt", 'GOT:"\\u001b[A'], ["mouse", 'GOT:"\\u001b[<64;']]) {
+      await dp.getByTestId(`pane-scroll-${mode}`).click();
+      await until(`${mode} 화면`, async () => (await screenText(dp)).includes("s-200"));
+      await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await dp.mouse.wheel(0, -100);
+      await until(`${mode} 휠 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) => bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`));
+    }
+    await dp.context().close();
+
+    // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)
+    const swipeCheck = async (label, p, swipe) => {
+      await p.getByTestId("pane-scroll-plain").click();
+      await until(`${label} 화면`, async () => (await screenText(p)).includes('GOT:"x"'));
+      const cell = await p.evaluate(() => {
+        const screen = document.querySelector(".xterm-screen").getBoundingClientRect();
+        return { h: screen.height / document.querySelectorAll(".xterm-rows > div").length, top: screen.top, x: screen.left + screen.width / 2 };
+      });
+      const before = await firstNo(p);
+      const travel = 240;
+      await swipe(cell, travel);
+      await sleep(200);
+      const after = await firstNo(p);
+      const want = Math.round(travel / cell.h);
+      if (before === null || after === null || Math.abs(before - after - want) > 1)
+        bad.push(`${label}: ${travel}px 끌어 첫 줄 ${before} → ${after}(기대 ${want}줄 위, 한 칸 ${cell.h.toFixed(1)}px)`);
+      // alternate screen·mouse 보고 프로그램(Claude Code·Codex 같은)에서는 xterm 터치 스크롤이 아무것도 하지 않는다:
+      // 끌기가 휠이 되어 화살표·mouse 보고로 프로그램에 가야 한다
+      for (const [mode, want] of [["touch-alt", 'GOT:"\\u001b[A'], ["touch-mouse", 'GOT:"\\u001b[<64;']]) {
+        if (label.startsWith("iPad") && mode === "touch-mouse") continue; // 한 기기에서 한 번이면 된다(iPad는 alt만)
+        // 휴대폰은 pane을 열면 목록이 가려진다
+        const back = p.getByRole("button", { name: "목록으로" });
+        if (await back.isVisible()) await back.click();
+        await p.getByTestId(`pane-scroll-${mode}`).click();
+        await until(`${label} ${mode} 화면`, async () => (await screenText(p)).includes("s-200"));
+        const c = await p.evaluate(() => {
+          const r = document.querySelector(".xterm-screen").getBoundingClientRect();
+          return { top: r.top, x: r.left + r.width / 2 };
+        });
+        await swipe({ ...cell, ...c }, travel);
+        await until(`${label} ${mode} 끌기 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) =>
+          bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`),
+        );
+      }
+      return { before, after, want };
+    };
+    const phone = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    const cdp = await phone.context().newCDPSession(phone);
+    const ph = await swipeCheck("휴대폰(Chromium 터치)", phone, async (cell, travel) => {
+      const y0 = cell.top + 40;
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cell.x, y: y0, id: 1 }] });
+      for (let i = 1; i <= 12; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cell.x, y: y0 + (travel * i) / 12, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    });
+    await phone.context().close();
+    const wk = await webkit.launch();
+    try {
+      const pad = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
+      await swipeCheck("iPad(WebKit 터치)", pad, (cell, travel) =>
+        pad.evaluate(
+          async ({ x, y0, travel }) => {
+            const target = document.querySelector(".xterm-screen");
+            // Playwright WebKit에는 Touch 생성자가 없다(Illegal constructor): 같은 이름의 사건에 손가락 목록을 붙인다
+            const ev = (type, y) => {
+              const t = { identifier: 7, target, clientX: x, clientY: y, pageX: x, pageY: y };
+              const on = type === "touchend" ? [] : [t];
+              const e = new Event(type, { bubbles: true, cancelable: true, composed: true });
+              for (const [key, value] of [["touches", on], ["targetTouches", on], ["changedTouches", [t]]]) Object.defineProperty(e, key, { value });
+              return e;
+            };
+            target.dispatchEvent(ev("touchstart", y0));
+            for (let i = 1; i <= 12; i++) {
+              target.dispatchEvent(ev("touchmove", y0 + (travel * i) / 12));
+              await new Promise((r) => requestAnimationFrame(r));
+            }
+            target.dispatchEvent(ev("touchend", y0 + travel));
+          },
+          { x: cell.x, y0: cell.top + 40, travel },
+        ),
+      );
+      await pad.context().close();
+    } finally {
+      await wk.close();
+    }
+    for (const mode of names) aaa("pane", "kill", `scroll-${mode}`);
+    if (bad.length) throw new Error(bad.join("; "));
+    console.log(`     휴대폰 240px 끌기: 첫 줄 s-${ph.before} → s-${ph.after}(${ph.want}줄)`);
   });
 
   await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
@@ -1309,7 +1591,7 @@ try {
     await shot(rp, "mobile-list");
     await rp.getByTestId("pane-t1").click();
     await until("reader 화면", async () => (await screenText(rp)).includes("한글-8"));
-    // 휴대폰 폭(11px)에서도 한글이 두 칸에 꼭 맞는다
+    // 휴대폰 폭(13px)에서도 한글이 두 칸에 꼭 맞는다
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
     console.log("     글꼴 측정(390×844)", JSON.stringify(await fontOk(rp, cols)));
     const banner = await rp.getByTestId("readonly-banner").innerText();
@@ -1323,6 +1605,36 @@ try {
     await shot(rp, "mobile-reader");
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+    // 낮은 화면의 보기 권한: 데스크톱 grid가 칸보다 높으면 칸이 굴러가고 커서 줄을 보이게 따라간다(herdr-web-ui followCursor)
+    // t1 화면은 뒤 단계가 본다: 따로 pane을 띄운다(80×40, 줄 80개 뒤 커서는 맨 아래)
+    aaa("pane", "run", "--machine", "labA", "--name", "follow", "--cols", "80", "--rows", "40", "--", "/bin/sh", "-c", "seq 1 80; echo follow-$((6*7)); exec cat");
+    const low = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 420 });
+    await low.page.getByTestId("pane-follow").click();
+    const followed = () =>
+      low.page.evaluate(() => {
+        const scroll = document.querySelector(".term-scroll");
+        const box = scroll.getBoundingClientRect();
+        // 보기만 하는 화면은 focus가 없어 커서 칸이 따로 없다: 커서 바로 위 줄(follow-42)을 본다
+        const row = [...document.querySelectorAll(".xterm-rows > div")].find((r) => r.textContent.includes("follow-42"));
+        const cursor = row?.getBoundingClientRect();
+        return {
+          text: row !== undefined,
+          scrollTop: scroll.scrollTop,
+          scrollHeight: scroll.scrollHeight,
+          clientHeight: scroll.clientHeight,
+          box: [Math.round(box.top), Math.round(box.bottom)],
+          cursor: cursor ? [Math.round(cursor.top), Math.round(cursor.bottom)] : null,
+        };
+      });
+    let last = null;
+    await until("커서 줄을 따라감", async () => {
+      last = await followed();
+      return last.text && last.cursor && last.scrollTop > 0 && last.cursor[0] >= last.box[0] && last.cursor[1] <= last.box[1] + 1;
+    }).catch((e) => {
+      throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+    });
+    await low.page.context().close();
+    aaa("pane", "kill", "follow");
   });
 
   await step("controller: 새 셸", async () => {
@@ -2026,7 +2338,14 @@ try {
             const st = getComputedStyle(view);
             const rows = document.querySelector(".xterm-rows");
             // 비교할 칸: 조합 상자 바로 왼쪽 칸(같은 줄의 「상태 」 뒤 빈칸)
-            const left = document.elementsFromPoint(r.left - 3, r.top + r.height / 2).find((e) => rows.contains(e) && e !== rows);
+            // 자리로 찾는다: 터치 화면은 줄이 터치를 받지 않아(pointer-events: none) elementsFromPoint가 건너뛴다
+            const [x, y] = [r.left - 3, r.top + r.height / 2];
+            const inside = (e) => {
+              const b = e.getBoundingClientRect();
+              return b.left <= x && x < b.right && b.top <= y && y < b.bottom;
+            };
+            const row = [...rows.children].find(inside);
+            const left = row && ([...row.children].find(inside) ?? row);
             let bg = "";
             for (let e = left ?? rows; e && e !== document.documentElement; e = e.parentElement) {
               const c = getComputedStyle(e).backgroundColor;
@@ -2457,6 +2776,9 @@ try {
     await until("보고 회수", () => aaa("thread", "show", "demo", t.id).report_hash);
     const item = page.getByTestId(`thread-demo-${t.id}`);
     await until("thread 목록에 검토 대기", async () => (await item.innerText()).includes("검토 대기"));
+    // thread 줄 표시는 그 thread pane의 agent(참고 Sidebar.tsx rowMark): 표시가 없는 profile(fake)은 머리글자 표시
+    const tm = await item.locator(".mark .agent-mark").evaluate((a) => `${a.className}|${a.textContent}`);
+    if (tm !== "agent-mark fake|F") throw new Error(`thread 줄 표시 ${tm}`);
     await item.click();
     const report = page.getByTestId("report");
     await until("보고 Markdown", async () => (await report.locator("strong").innerText()) === "확인");

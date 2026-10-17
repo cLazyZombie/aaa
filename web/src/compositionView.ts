@@ -10,6 +10,18 @@ import type { Terminal } from "@xterm/xterm";
 
 const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/;
 
+/** (x, y)에 그려진 칸 요소(줄 안 글자 묶음, 없으면 그 줄). 자리로 찾는다: 터치 화면에서는 줄이 터치를 받지 않아(style.css
+ *  `.xterm-rows { pointer-events: none }`, plan §8.55) elementsFromPoint가 줄을 건너뛴다. */
+function cellAt(rows: HTMLElement, x: number, y: number): HTMLElement | undefined {
+  const inside = (e: Element) => {
+    const b = e.getBoundingClientRect();
+    return b.left <= x && x < b.right && b.top <= y && y < b.bottom;
+  };
+  const row = [...rows.children].find(inside) as HTMLElement | undefined;
+  if (!row) return undefined;
+  return ([...row.children].find(inside) as HTMLElement | undefined) ?? row;
+}
+
 /** 조합 상자 아래 칸의 배경·글자색. 커서 칸은 커서 색이므로 옆 칸을 본다. 찾지 못하면 테마 색. */
 function cellColors(term: Terminal, view: HTMLElement): { bg: string; fg: string } {
   const theme = term.options.theme ?? {};
@@ -18,10 +30,7 @@ function cellColors(term: Terminal, view: HTMLElement): { bg: string; fg: string
   const rows = term.element?.querySelector<HTMLElement>(".xterm-rows");
   if (!rows) return { bg, fg };
   const r = view.getBoundingClientRect();
-  const under = document
-    .elementsFromPoint(r.left + 1, r.top + r.height / 2)
-    .find((e) => e !== view && rows.contains(e) && e !== rows) as HTMLElement | undefined;
-  let cell: HTMLElement | null | undefined = under;
+  let cell: HTMLElement | null | undefined = cellAt(rows, r.left + 1, r.top + r.height / 2);
   if (cell?.classList.contains("xterm-cursor")) {
     cell = (cell.previousElementSibling ?? cell.nextElementSibling) as HTMLElement | null;
   }
