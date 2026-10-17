@@ -67,6 +67,9 @@ pub struct Agent {
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
+    /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
+    /// 그가 보내는 정보의 이름은 여기서 덮는다.
+    labels: Mutex<HashMap<String, String>>,
 }
 
 impl Agent {
@@ -94,6 +97,7 @@ impl Agent {
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
+            labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
@@ -270,6 +274,9 @@ impl Agent {
                     continue;
                 }
             };
+            if let Some(label) = &spec.label {
+                self.labels.lock().unwrap().insert(id.clone(), label.clone());
+            }
             if let Ok(list) = util::read_json::<Vec<aaa_proto::HarnessEvent>>(&paths.harness()) {
                 self.harness_last
                     .lock()
@@ -302,7 +309,7 @@ impl Agent {
             None if spec.boot_id != self.boot_id => SessionState::Interrupted,
             None => SessionState::Lost,
         };
-        SessionInfo {
+        self.labeled(SessionInfo {
             id: spec.id.clone(),
             name: spec.spec.name.clone(),
             argv: spec.spec.argv.clone(),
@@ -314,7 +321,17 @@ impl Agent {
             rows: exit.as_ref().map(|x| x.rows).unwrap_or(spec.spec.rows),
             state,
             role: spec.spec.role,
+            label: None,
+        })
+    }
+
+    /// session host나 옛 spec이 준 정보에 사람이 붙인 이름을 덮는다
+    fn labeled(&self, mut info: SessionInfo) -> SessionInfo {
+        if let Some(label) = self.labels.lock().unwrap().get(&info.id) {
+            info.name = label.clone();
+            info.label = Some(label.clone());
         }
+        info
     }
 
     /// session host에 연결하고 pump를 띄운다.
@@ -327,7 +344,7 @@ impl Agent {
         let welcome: SessionMsg =
             tokio::time::timeout(Duration::from_secs(5), rx.control()).await.context("welcome 대기")??;
         let info = match welcome {
-            SessionMsg::Welcome { info, .. } => info,
+            SessionMsg::Welcome { info, .. } => self.labeled(info),
             SessionMsg::Reject(e) => bail!("session host가 거부했다: {e}"),
             other => bail!("예상하지 못한 응답: {other:?}"),
         };
@@ -389,6 +406,7 @@ impl Agent {
                             }
                         }
                         Ok(SessionMsg::Updated(info)) => {
+                            let info = self.labeled(info);
                             if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) { e.info = info.clone(); }
                             self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
                         }
@@ -446,8 +464,14 @@ impl Agent {
         // 세션 안의 `aaa hook`·`aaa report`가 이 agent에 사건을 보낼 곳
         spec.env.push((hooks::ENV_SOCK.into(), hooks::socket(&self.state).to_string_lossy().to_string()));
         spec.env.push((hooks::ENV_TOKEN.into(), hooks::hook_token(&token)));
-        let file =
-            SpecFile { id: id.clone(), token, boot_id: self.boot_id.clone(), created_at_ms: util::now_ms(), spec };
+        let file = SpecFile {
+            id: id.clone(),
+            token,
+            boot_id: self.boot_id.clone(),
+            created_at_ms: util::now_ms(),
+            spec,
+            label: None,
+        };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
         let mut cmd = std::process::Command::new(&self.exe);
@@ -516,6 +540,7 @@ impl Agent {
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
             AgentRequest::Forget { session } => self.forget(&session).await,
+            AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
                 chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
@@ -644,6 +669,47 @@ impl Agent {
     /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
     /// session host는 종료를 알린 뒤에도 2초 더 응답한다(바로 끝난 명령도 마지막 화면을 받게). 그동안은 pump가
     /// 붙어 있으니 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
+    /// 사람이 붙인 이름을 `spec.json`에 적고(지우면 뺀다) 바뀐 정보를 host에 알린다. 끝난 세션에도 붙인다(다시 열면 그 이름).
+    async fn rename(&self, session: &str, label: Option<String>) -> Result<AgentResponse, ErrorBody> {
+        if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
+        }
+        let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        if label
+            .as_ref()
+            .is_some_and(|l| l.chars().count() > aaa_proto::MAX_PANE_LABEL_CHARS || l.chars().any(char::is_control))
+        {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                format!("이름은 제어 문자 없이 {}자 안이어야 한다", aaa_proto::MAX_PANE_LABEL_CHARS),
+            ));
+        }
+        if !self.sessions.lock().unwrap().contains_key(session) {
+            return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}")));
+        }
+        let paths = SessionPaths::new(&self.state, session);
+        let mut spec: SpecFile = util::read_json(&paths.spec())
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("spec.json 읽기: {e:#}")))?;
+        spec.label = label.clone();
+        util::write_json(&paths.spec(), &spec)
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("spec.json 쓰기: {e:#}")))?;
+        match &label {
+            Some(l) => self.labels.lock().unwrap().insert(session.to_string(), l.clone()),
+            None => self.labels.lock().unwrap().remove(session),
+        };
+        let info = {
+            let mut map = self.sessions.lock().unwrap();
+            let Some(e) = map.get_mut(session) else {
+                return Err(ErrorBody::new(ErrorCode::NotFound, format!("세션이 없다: {session}")));
+            };
+            e.info.name = spec.name().to_string();
+            e.info.label = label;
+            e.info.clone()
+        };
+        self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info.clone()))).await;
+        Ok(AgentResponse::Session(info))
+    }
+
     async fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
@@ -670,6 +736,7 @@ impl Agent {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         self.harness_last.lock().unwrap().remove(session);
+        self.labels.lock().unwrap().remove(session);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");

@@ -1009,6 +1009,20 @@ export function TermView({
       if (outputStopped && stoppedHidden) reattach();
     };
     document.addEventListener("visibilitychange", onVisibility);
+    // 다시 보이거나 망이 돌아오면 backoff(최대 10초)를 기다리지 않고 바로 다시 붙는다(QA t-0337 Q5, herdr-web-ui ws.ts
+    // `onWake`·`wake()`: online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다.
+    // t3code client-runtime connection/supervisor.ts도 같다). 열린 연결·출력 정지(4008)는 그대로 둔다
+    const onWake = () => {
+      if (stopped || outputStopped || document.visibilityState !== "visible" || timer === undefined) return;
+      window.clearTimeout(timer);
+      timer = undefined;
+      delay = 500;
+      trace("wake");
+      connect();
+    };
+    window.addEventListener("online", onWake);
+    window.addEventListener("pageshow", onWake);
+    document.addEventListener("visibilitychange", onWake);
     // 앞 기록 받기(plan §8.67, 사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」). 붙을 때는 최근 기록만 오고
     // (`history_more`면 host에 더 있다), 위로 굴려 받은 기록 맨 위에서 한 화면 안에 들어오면 그 앞 덩어리를 받는다.
     // xterm은 버퍼 앞에 줄을 끼울 수 없으므로 「받은 덩어리 + 지금 버퍼(serialize)」로 다시 쓰고, 보던 줄 자리를 덩어리 줄 수만큼
@@ -1092,7 +1106,9 @@ export function TermView({
           const drawn = term.onRender(() => {
             const b = term.buffer.active;
             const at = Math.min(want, b.baseY);
-            if (b.viewportY !== at) {
+            // 보던 줄이 숫자가 아니면(xterm이 줄 높이를 재기 전 scroll로 NaN, patches/xterm-5.5.0-viewport.patch가 막는다)
+            // 다시 맞출 수 없다: 기다리지 않고 붙잡은 출력을 푼다(QA t-0337 Q1, plan §8.105)
+            if (Number.isFinite(b.viewportY) && b.viewportY !== at) {
               term.scrollToLine(at);
               return;
             }
@@ -1248,7 +1264,11 @@ export function TermView({
           if (stoppedHidden && document.visibilityState === "visible") queueMicrotask(reattach);
           return;
         }
-        if (!stopped) timer = window.setTimeout(connect, delay);
+        if (!stopped)
+          timer = window.setTimeout(() => {
+            timer = undefined;
+            connect();
+          }, delay);
         delay = Math.min(delay * 2, 10_000);
       };
     };
@@ -1258,6 +1278,9 @@ export function TermView({
       stopped = true;
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onWake);
+      window.removeEventListener("pageshow", onWake);
+      document.removeEventListener("visibilitychange", onWake);
       wsRef.current?.close();
       el.removeEventListener("paste", onPaste, true);
       viewport?.removeEventListener("scroll", onViewportScroll);
@@ -1717,7 +1740,8 @@ export function TermView({
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
         <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""} data-adopted-grid={adopted ? "" : undefined}>
-          <div className="term-box" ref={box} data-testid="terminal" />
+          {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
+          <div className="term-box" ref={box} data-testid="terminal" data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
         </div>
         <div className="terminal-banners">
           {link === "stopped" && (

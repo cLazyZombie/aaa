@@ -443,6 +443,203 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "histapp");
   });
 
+  await step("앞 기록 빠른 휠(QA t-0337 Q1: 데스크톱 Chromium 6/8에서 화면 전체가 빈 채로 굳음): 긴 출력 pane을 열자마자 휠을 연달아 굴려 앞 기록을 받는 동안에도, 붙인 뒤에도 줄이 그려지고, 키를 치면 맨 아래 새 출력이 보인다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "fastwheel", "--", process.execPath, `${root}/long.js`);
+    await waitOutput("fastwheel", "long-done");
+    // 붙을 때는 최근 기록(aaa_vt REPLAY_HISTORY 2000줄)만 오고 앞이 남는다: 굴리면 받는다
+    const looks = [];
+    for (let trial = 0; trial < 8; trial++) {
+      const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
+      await page.getByTestId("pane-fastwheel").click();
+      await until("fastwheel 화면", async () => (await screenText(page)).includes("long-done"));
+      const box = page.getByTestId("terminal");
+      const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
+      await until("앞 기록 있음", async () => (await attr("historyMore")) === "1");
+      // QA probe-scroll5.mjs처럼 누르지 않고 가운데에 올린다
+      await box.hover();
+      // QA probe-scroll5.mjs 그대로: -1200px를 40번 연달아(기다리지 않는다)
+      for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -1200);
+      const look = () =>
+        box.evaluate((el) => {
+          const rows = [...el.querySelectorAll(".xterm-screen:not(.term-history-cover) .xterm-rows > div")].map((d) => d.textContent);
+          return {
+            nonblank: rows.filter((t) => t.trim()).length,
+            first: rows.find((t) => t.trim())?.slice(0, 20) ?? null,
+            covers: el.querySelectorAll(".term-history-cover").length,
+            applied: el.dataset.historyApplied,
+            waiting: el.dataset.historyWaiting,
+            more: el.dataset.historyMore,
+            top: el.dataset.viewTop,
+            base: el.dataset.viewBase,
+          };
+        });
+      // 붙이기가 끝나고(덮개 없음) 그려진 줄이 있다. 고장이면 20초 기다림이 그때 모습으로 끝난다
+      let last = null;
+      try {
+        await until(`붙인 뒤 화면(${trial + 1})`, async () => {
+          last = await look();
+          return Number(last.applied) >= 1 && last.waiting !== "1" && last.covers === 0 && last.nonblank > 0;
+        });
+      } catch (e) {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      }
+      looks.push(last);
+      // 키를 치면 맨 아래로 가고 새 출력이 그려진다
+      await box.click();
+      await page.keyboard.press("p");
+      await until(`키 뒤 새 출력(${trial + 1})`, async () => (await screenText(page)).includes(`tick-${trial + 1}`));
+      await page.context().close();
+    }
+    if (looks.some((l) => l.first === null)) throw new Error(`빈 화면: ${JSON.stringify(looks)}`);
+    aaa("pane", "kill", "fastwheel");
+  });
+  await step("앞 기록 reset 직후 scroll(QA t-0337 Q1 원인, patches/xterm-5.5.0-viewport.patch, plan §8.105): 앞 기록을 붙이려고 xterm을 reset한 뒤 줄 높이를 다시 재기 전에 scrollTop 0의 scroll 사건이 와도 보던 줄이 숫자로 남고 그려지며, 붙잡은 출력이 풀린다", async () => {
+    // 짧은 줄 2600개: host가 처음부터 구독해 다 갖고(붙을 때 2000줄, 앞 기록 600줄), 덩어리와 화면을 한 번에 다 읽는다.
+    // 읽는 중에 온 scroll의 NaN은 남은 출력이 되살리므로, 다 읽은 뒤 줄 높이를 재기 전의 scroll이 결함이다(QA probe-stuck)
+    aaa("tab", "create", "--machine", "labA", "--label", "resetscroll", "--", process.execPath, `${root}/history.js`);
+    await waitOutput("resetscroll", "hist>");
+    aaa("pane", "send-text", "resetscroll", "q");
+    await waitOutput("resetscroll", "short-done");
+    const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
+    await page.getByTestId("pane-resetscroll").click();
+    await until("resetscroll 화면", async () => (await screenText(page)).includes("short-done"));
+    const box = page.getByTestId("terminal");
+    const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
+    await until("앞 기록 있음", async () => (await attr("historyMore")) === "1");
+    // 덮개는 reset 바로 앞에 붙고, 새 버퍼를 다 읽고 처음 그린 frame에 떨어진다(Term.tsx prependHistory). xterm은 reset 뒤
+    // rAF 두 번이 지나야 줄 높이를 다시 잰다(Viewport.reset → syncScrollArea → _refresh → _innerRefresh). 그래서 덮개가 떨어진
+    // 그때(MutationObserver, 다음 frame 전)가 다 읽은 뒤·재기 전이다: 거기서 맨 위로 굴린 scroll 사건을 보낸다(QA probe-stuck에서
+    // 휠 연타가 닿는 자리). 읽는 동안 온 scroll의 NaN은 남은 출력이 되살린다
+    await box.evaluate((el) => {
+      const vp = el.querySelector(".xterm-viewport");
+      window.__resetScroll = [];
+      let armed = false;
+      const mo = new MutationObserver(() => {
+        if (el.querySelector(".term-history-cover")) return void (armed = true);
+        if (!armed) return;
+        mo.disconnect();
+        vp.scrollTop = 0;
+        vp.dispatchEvent(new Event("scroll"));
+        window.__resetScroll.push("scrolled");
+      });
+      mo.observe(el, { childList: true, subtree: true });
+    });
+    await box.hover();
+    await until("위로 굴려 요청", async () => {
+      if ((await attr("historyWaiting")) === "1" || (await attr("historyApplied")) === "1") return true;
+      await page.mouse.wheel(0, -3000);
+      return false;
+    });
+    await until("덮개가 떨어진 때 scroll을 보냄", () => page.evaluate(() => window.__resetScroll.length === 1));
+    // 붙이기가 끝나고(덮개 없음) 보던 줄이 숫자이며 줄이 그려진다. 고장이면 view-top이 NaN이고 덮개가 남는다(20초는 고장 판정)
+    let last = null;
+    await until("붙인 뒤 화면", async () => {
+      last = await box.evaluate((el) => ({
+        applied: el.dataset.historyApplied,
+        top: el.dataset.viewTop,
+        covers: el.querySelectorAll(".term-history-cover").length,
+        nonblank: [...el.querySelectorAll(".xterm-screen:not(.term-history-cover) .xterm-rows > div")].filter((d) => d.textContent.trim()).length,
+      }));
+      return last.applied === "1" && last.covers === 0 && Number.isFinite(Number(last.top)) && last.top !== "NaN" && last.nonblank > 0;
+    }).catch((e) => {
+      throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+    });
+    // 키를 치면 맨 아래로 가고 새 출력이 그려진다(붙잡은 출력이 풀렸다)
+    await box.click();
+    await page.keyboard.press("p");
+    await until("키 뒤 새 출력", async () => (await screenText(page)).includes("tick-1"));
+    await page.context().close();
+    aaa("pane", "kill", "resetscroll");
+  });
+
+  await step("깨어나면 바로 다시 붙기(QA t-0337 Q5, herdr-web-ui ws.ts onWake·wake, t3code connection supervisor): pane 연결이 끊겨 backoff를 기다리는 동안 망이 돌아오거나(online) 화면이 다시 보이면(pageshow·visibilitychange) 기다리지 않고 그 자리에서 새로 붙는다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "wake", "--", process.execPath, `${root}/history.js`);
+    await waitOutput("wake", "hist>");
+    // 새 연결을 이만큼 바로 끊는다(망이 없는 동안). 그 뒤는 그대로 잇는다
+    let reject = 0;
+    let pipe = null;
+    const routed = [];
+    const route = (ws) => {
+      routed.push(reject);
+      if (reject > 0) {
+        reject -= 1;
+        return void ws.close({ code: 1011, reason: "test offline" });
+      }
+      const server = ws.connectToServer();
+      pipe = { ws, server };
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => ws.send(m));
+      server.onClose((code, reason) => ws.close({ code, reason }));
+      ws.onClose((code, reason) => server.close({ code, reason }));
+    };
+    const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
+    await page.getByTestId("pane-wake").click();
+    await until("wake 화면", async () => (await screenText(page)).includes("hist>"));
+    // 앱이 만드는 pane WebSocket을 센다. 진단 기록(__aaaTermLog)은 Playwright routeWebSocket이 서버에 이을 때 만드는 진짜
+    // 연결만 보아, 길에서 거절한 연결은 남지 않는다. 그래서 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싼다
+    await page.evaluate(() => {
+      const seen = (window.__appWs = { made: 0, closed: 0, onClose: null });
+      const WS = window.WebSocket;
+      window.WebSocket = class extends WS {
+        constructor(...a) {
+          super(...a);
+          if (!String(a[0]).includes("/panes/")) return;
+          seen.made += 1;
+          // 앱의 onclose(뒤에 단다)보다 먼저 돈다
+          this.addEventListener("close", () => {
+            seen.closed += 1;
+            seen.onClose?.();
+          });
+        }
+      };
+    });
+    const realOpens = () => page.evaluate(() => window.__aaaTermLog.filter((x) => x.e === "ws open").length);
+    for (const [round, kind] of ["online", "pageshow", "visibilitychange"].entries()) {
+      // 끊고, 다시 붙기 두 번을 거절한다: 두 번째 거절 뒤에는 다음 시도가 backoff(2초)를 기다린다.
+      // 듣개를 먼저 단 뒤에 끊는다(처음 연결은 감싸기 전에 만들어 그 닫힘은 세지 않는다). 20초는 고장 판정일 뿐이다
+      await page.evaluate((closes) => {
+        const seen = window.__appWs;
+        const want = seen.closed + closes;
+        window.__wakeClosed = new Promise((done, fail) => {
+          const stuck = setTimeout(() => fail(new Error(`닫힘 ${seen.closed}/${want}, 만든 연결 ${seen.made}`)), 20_000);
+          seen.onClose = () => {
+            if (seen.closed < want) return;
+            seen.onClose = null;
+            clearTimeout(stuck);
+            // 앱의 onclose가 다음 시도를 건 뒤
+            setTimeout(done, 0);
+          };
+        });
+      }, round === 0 ? 2 : 3);
+      reject = 2;
+      pipe.ws.close({ code: 1011, reason: "test offline" });
+      pipe.server.close({ code: 1000, reason: "test offline" });
+      await page.evaluate(() => window.__wakeClosed).catch((e) => {
+        throw new Error(`${kind}: ${e.message} 길 ${JSON.stringify(routed)}`);
+      });
+      if (reject !== 0) throw new Error(`${kind}: 거절이 남았다 ${reject}`);
+      const opened = await realOpens();
+      // 사건을 보낸 그 자리에서 새 연결이 열린다(타이머를 기다리지 않는다)
+      const now = await page.evaluate((kind) => {
+        const at = window.__appWs.made;
+        if (kind === "online") window.dispatchEvent(new Event("online"));
+        else if (kind === "pageshow") window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+        else document.dispatchEvent(new Event("visibilitychange"));
+        return window.__appWs.made - at;
+      }, kind);
+      if (now !== 1) throw new Error(`${kind}: 사건에 바로 붙지 않았다(새 연결 ${now}개)`);
+      // 그 연결이 snapshot을 받는다
+      await until(`${kind} 뒤 snapshot`, () =>
+        page.evaluate((opened) => {
+          const log = window.__aaaTermLog;
+          const i = log.findLastIndex((x) => x.e === "ws open");
+          return log.filter((x) => x.e === "ws open").length > opened && log.slice(i).some((x) => x.e?.startsWith("snapshot"));
+        }, opened),
+      );
+    }
+    await page.context().close();
+    aaa("pane", "kill", "wake");
+  });
   await step("출력이 밀릴 때(herdr-web-ui OutputWindow·pty-ack·4008 「Reconnect」, D7, plan §8.62): ACK를 못 하는 화면은 host가 4008로 닫고 다시 보내지 않으며 「다시 연결」로 새로 붙는다. 따라오는 화면은 그대로 받는다", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "flood", "--", process.execPath, `${root}/flood.js`);
     await waitOutput("flood", "flood>");
