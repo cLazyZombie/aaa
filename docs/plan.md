@@ -2336,6 +2336,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **고친 것.** 프로젝트 보기에서 연 보고의 「뒤로」 기억(§8.89)이 다른 길(앱 안 알림·브라우저 뒤로·직접 친 주소)로 다른 thread에 가도 남던 것: 그 thread를 연 주소 바꿈이 아니면 잊는다.
 - **시험.** 웹 E2E 「줄 메뉴」(`web/e2e/specs/12-threads-push.mjs`): 데스크톱 오른쪽 클릭 → 첫 항목 focus·차례·⋯ 단추 없음·Esc, 고정 → host 쓰기에 열쇠·고정 카드·핀, 휴대폰(다른 기기)에 고정이 오고 ⋯ sheet로 풀면 데스크톱도 풀림, pane 닫기(확인 창, 취소에 focus) → 줄 사라짐·host에도 없음, 끝난 pane 다시 열기 → 돎, 기록 지우기 → 사라짐, 프로젝트 머리 → `#project=demo`, 다른 길로 간 보고의 뒤로는 「목록으로」(`desktop-row-pinned`·`phone-row-menu`). 기다림은 요청의 답·MutationObserver·`focusin`·`hashchange`다. 파일마다 새 실험실이라 host가 고정을 나눈 적이 없다: 참고대로 그때는 고정만 바꿔서는 보내지 않고 첫 설정 변경에 실려 가므로(`preferencesChange`, 참고 `shared/preferences.ts` 「absent until a browser first shares its pins」), 단계는 빈 고정을 써 두고 다시 연 화면에서 시작한다.
 
+### 8.104 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
+
+- **왜.** iPhone에서만 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 앱 안 알림 없음)을 헤드리스가 못 잡았다. 단계마다 init script로 만든 가짜(「이 기기 알림」 FakeAudio)는 아무 때나 resume되고 가려져도 멈추지 않으며, 헤드리스 Chromium에는 어디에나 `Notification`이 있다. 참고 넷도 제품에 능력 주입 층이 없고 시험 쪽에서 바꾼다(herdr-web-ui `alert-sound-regression.ts`·`keyboard-viewport-regression.ts`), plan §13 「production에 시험용 bypass를 만들지 않는다」와도 맞다.
+- **`web/e2e/lib/devices.mjs`.** `pairDevice(browser, code, profile, opts)`가 기기 꼴(iphone·ipad·desktop)로 pairing하고 그 기기의 규칙을 건다(`pairPage`의 새 `setup(ctx)`). iOS 규칙: 누른 직후(1초, WebKit transient activation)에만 AudioContext가 running, 나가면 interrupted, 무음 스위치는 playback·play-and-record 범주만 지남, Safari 탭에는 Notification·PushManager 없음, 홈 화면 앱은 누른 직후에만 권한을 묻는다. 기록은 `exposeBinding`으로 Node에 오고 시험은 `device.next`로 사건을 기다린다. 소리 시계는 `device.skipAudio()`로 건너뛴다(자지 않는다). 쓰는 법은 [docs/testing.md 「실기와 headless」](testing.md#실기와-headless).
+- **`specs/15-ios-rules.mjs`.** 「iPhone 소리」(무음 스위치에서 미리 듣기가 묻힘 → 「무음 모드에서도」면 들림 → 다른 pane의 확인창마다 소리 → 나갔다 돌아오면 누르기 전에는 없음 → 알림을 닫는 누름 뒤 다시 소리), 「iPhone 알림 범위」(탭은 홈 화면 앱 안내·테스트 보내기 막힘·화면 오류 없음, 홈 화면 앱은 「알림」 항목을 누를 때만 권한).
+- **결함 심기.** `alertSound.ts`가 interrupted에서 다시 풀지 않게(`state === "suspended"`일 때만 resume) → 15는 「누른 뒤 다시 풀림이 오지 않았다」, 12 「이 기기 알림」은 통과. `PushTestControls.tsx`의 `Notification?.permission`에서 `?.`를 빼면 → 15는 「화면 오류 [TypeError: … reading 'permission']」, 12는 통과.
+- **찾은 것.** 확인창 질문이 그 pane의 상태보다 먼저 오면 앱 안 알림·탭 알림 제목이 pane id 앞 8자다(`App.tsx questionNews`, 15를 6번 돌려 18번 중 1번). 알림 영역 thread에 넘긴다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
