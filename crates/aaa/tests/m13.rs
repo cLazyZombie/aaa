@@ -10,7 +10,7 @@ mod lab;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lab::{Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag};
 use serde_json::Value;
@@ -368,8 +368,9 @@ fn worktree_thread_round_trip() {
     // 작업 폴더는 git 상태에 보이지 않는다(info/exclude)
     assert_eq!(git(&cwd, &["status", "--porcelain"]), "");
 
+    // 확인한 뒤 harness가 일하지 않으면 「쉼」이다(herdr-projects `group()` 7번 줄)
     let v = w.h.ok(&["thread", "ack", "demo", "t-0001"]);
-    assert_eq!(v["group"], "working");
+    assert_eq!(v["group"], "idle");
 
     let v = w.h.ok(&["thread", "resolve", "demo", "t-0001"]);
     assert_eq!(v["status"], "resolved");
@@ -423,6 +424,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
 fn remote_dir_thread_survives_host_restart() {
     let mut w = world();
     w.add_remote();
+    let connected_at = Instant::now();
     let v = w.start(&[
         "--title",
         "원격 일",
@@ -450,8 +452,15 @@ fn remote_dir_thread_survives_host_restart() {
 
     // host 재시작 중에 보고가 바뀌어도, 다시 붙은 agent가 지금 hash를 알려 사본을 다시 받는다
     // 원격 agent가 같은 주소로 다시 붙게 처음 받은 포트를 고정한다
+    // 끊김은 새 host가 처음 본 때부터 잰다(herdr-projects `Outage`): 연결된 지 기준(5초)보다 오래된 머신도
+    // 다시 붙는 동안 「오래 끊김」이 되지 않는다. 매초 검사해 붙기 전 검사가 반드시 있게 한다.
     let toml = std::fs::read_to_string(w.h.cfg.join("host.toml")).unwrap();
-    std::fs::write(w.h.cfg.join("host.toml"), toml.replace("127.0.0.1:0", &w.addr)).unwrap();
+    let toml = toml
+        .replace("127.0.0.1:0", &w.addr)
+        .replace("library_copy_mb = 1\n", "library_copy_mb = 1\noutage_secs = 5\ntick_secs = 1\n");
+    assert!(toml.contains("outage_secs = 5"), "{toml}");
+    std::fs::write(w.h.cfg.join("host.toml"), toml).unwrap();
+    std::thread::sleep(Duration::from_secs(7).saturating_sub(connected_at.elapsed()));
     w.lab.kill("host");
     // host가 없는 동안 agent 머신에서 보고가 바뀐다
     let work_dir = PathBuf::from(v["work_dir"].as_str().unwrap());
@@ -463,6 +472,29 @@ fn remote_dir_thread_survives_host_restart() {
     assert_eq!(v["group"], "waiting_on_you");
     assert_eq!(v["next"], serde_json::json!(["사용자 확인"]));
     assert_eq!(w.kinds(seen), ["report_ready"]);
+    std::thread::sleep(Duration::from_secs(2));
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+    assert!(!items.iter().any(|i| i["item_kind"] == "outage"), "host 재시작에 outage가 생겼다: {items:?}");
+
+    // 머신이 끊긴 채 host를 다시 띄워도 기준(5초) 전에는 알리지 않는다. 옛 코드는 마지막 연결 시각(7초 넘게 전)부터
+    // 재서 첫 검사에 바로 알렸다. 기준 뒤 한 번, 돌아오면 한 번 알린다.
+    w.lab.kill("agentB");
+    w.lab.kill("host2");
+    w.lab.spawn("host3", &w.h, &["host"]);
+    let started = Instant::now();
+    let outage = |event: &str| {
+        let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+        items.iter().filter(|i| i["item_kind"] == "outage" && i["event"] == event).count()
+    };
+    wait_for("host3 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(outage("down"), 0, "host가 끊김을 본 지 기준 전인데 outage가 생겼다");
+    assert!(started.elapsed() < Duration::from_secs(5), "기준 전 확인이 늦었다: {:?}", started.elapsed());
+    wait_for("outage down", T, || (outage("down") == 1).then_some(()));
+    let b = w.lab.node("b", None);
+    w.lab.spawn("agentB2", &b, &["agent", "--host", &w.addr, "--name", "labB"]);
+    wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
+    assert_eq!(outage("down"), 1);
 }
 
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)
@@ -667,10 +699,11 @@ fn decisions_and_restart() {
     // 실행 중이면 다시 시작하지 않는다
     let e = w.h.json(&["thread", "restart", "demo", &id]).expect_err("실행 중 restart");
     assert!(e.contains("실행 중"), "{e}");
-    // 새 보고는 「검토 대기」가 먼저다. 확인한 뒤 세션이 끝나면 「사람 차례」다.
+    // 보고를 쓴 뒤 닫힌 세션은 끝난 일이다: 사람 차례가 아니다(herdr-projects `group()` 3번 줄)
     w.h.ok(&["thread", "ack", "demo", &id]);
     w.h.ok(&["pane", "kill", &pane]);
-    w.wait_show("세션 끝남 → 사람 차례", &id, |v| v["group"] == "waiting_on_you");
+    wait_for("세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+    assert_eq!(w.show(&id)["group"], "idle");
 
     // 새로 시작: task·결정을 다시 읽어 brief를 새로 쓰고 안내한다
     let v = w.h.ok(&["thread", "restart", "demo", &id]);
@@ -679,7 +712,8 @@ fn decisions_and_restart() {
     let brief = std::fs::read_to_string(&brief_path).unwrap();
     assert!(brief.starts_with("> 이 thread는 다시 시작했다") && brief.contains("API는 v3로 바꾼다"), "{brief}");
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered" && v["decisions_rev"] == 2);
-    assert_eq!(v["group"], "working");
+    // hook이 없는 harness는 일하는지 알 수 없다: 안내를 보낸 뒤에는 「쉼」이다(herdr-projects `group()` 7번 줄)
+    assert_eq!(v["group"], "idle");
     let seen = w.h.ok(&["events", "--project", "demo"])["events"].as_array().unwrap().len() as u64;
 
     // resume: 같은 대화를 잇는다(custom harness는 같은 명령). brief 안내는 하지 않는다.

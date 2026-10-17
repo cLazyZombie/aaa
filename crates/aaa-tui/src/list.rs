@@ -85,6 +85,7 @@ pub fn group_label(g: ThreadGroup) -> &'static str {
         ThreadGroup::WaitingOnYou => "사람 차례",
         ThreadGroup::ReadyForReview => "검토 대기",
         ThreadGroup::Working => "작업 중",
+        ThreadGroup::Idle => "쉼",
         ThreadGroup::Resolved => "끝남",
     }
 }
@@ -94,7 +95,7 @@ fn group_color(g: ThreadGroup) -> Color {
         ThreadGroup::WaitingOnYou => WARN,
         ThreadGroup::ReadyForReview => ACCENT,
         ThreadGroup::Working => WORKING,
-        ThreadGroup::Resolved => DIM,
+        ThreadGroup::Idle | ThreadGroup::Resolved => DIM,
     }
 }
 

@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aaa_proto::{
-    AgentRequest, AgentResponse, BriefState, DecisionView, ErrorBody, ErrorCode, FlowEvent, FrontResponse, Launch,
-    ProjectView, Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, parse_decisions, parse_report,
-    render_decision, valid_project, valid_thread, waits_on_user,
+    AgentActivity, AgentRequest, AgentResponse, AgentStatus, BriefState, DecisionView, ErrorBody, ErrorCode, FlowEvent,
+    FrontResponse, Launch, ProjectView, Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView,
+    parse_decisions, parse_report, render_decision, valid_project, valid_thread, waits_on_user,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -133,6 +133,79 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
 /// 프로젝트의 지금 결정 번호(가장 큰 번호)
 fn decisions_rev(dir: &Path) -> Option<u32> {
     parse_decisions(&std::fs::read_to_string(dir.join("decisions.md")).ok()?).iter().map(|d| d.num).max()
+}
+
+/// `Starting`이 이보다 길면 사람 차례(herdr-projects `STARTING_TIMEOUT_SECS`)
+const STARTING_TIMEOUT_MS: u64 = 300_000;
+/// 확인창이 이보다 오래 떠 있으면 사람 차례. 금방 답한 확인창은 보이지 않는다(`BLOCKED_DEBOUNCE_SECS`).
+const BLOCKED_DEBOUNCE_MS: u64 = 30_000;
+/// brief를 아직 못 보냈는데 harness가 입력을 받을 상태가 아닌 채 이만큼 지나면 사람 차례(`NOT_READY_SECS`)
+const NOT_READY_MS: u64 = 60_000;
+/// 진행 보고가 「작업 중」을 정하는 시간(herdr-projects progress `ACTIVITY_TTL_MS`)
+const ACTIVITY_TTL_MS: u64 = 300_000;
+/// agent가 사람을 기다린다고 알리는 진행 보고 문구(`aaa report --activity 'Waiting for you'`, herdr-projects `WAITING`)
+pub(crate) const WAITING: &str = "Waiting for you";
+
+/// thread 묶음. 위에서부터 처음 맞는 줄이 이긴다. herdr-projects `thread::group()`(src/thread.rs)을 옮겼다.
+/// prompt_pending은 brief `Pending`, brief_stuck은 `Unknown`(aaa는 다시 보내지 않는다), harness 상태는 pane agent 활동,
+/// blocked는 `Question`이다. 다른 점: PR(Landing)은 없고(aaa는 merge 대기열), 보고 사본 실패와 보고의
+/// `[사용자 작업 필요]`·`[결정 필요]` 태그는 사람 차례로 둔다(aaa는 보고를 host로 복사하고 태그로 사람 일을 알린다, D9).
+pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
+    use AgentActivity as A;
+    let state = agent.map(|a| a.activity);
+    let state_ms = agent.map_or(0, |a| now_ms.saturating_sub(a.since_ms));
+    let has_report = r.report_hash.is_some();
+    let prompt_pending = r.brief != BriefState::Delivered;
+    // herdr-projects `Live::self_waiting`·`self_working`
+    let reported = agent.filter(|a| a.progress_at_ms.is_some());
+    let self_waiting = reported.is_some_and(|a| a.progress.as_deref() == Some(WAITING)) && state != Some(A::Working);
+    let self_working = reported.is_some_and(|a| {
+        a.percent != Some(100)
+            && a.progress.as_deref() != Some(WAITING)
+            && now_ms.saturating_sub(a.progress_at_ms.unwrap_or(0)) < ACTIVITY_TTL_MS
+    });
+    // 1
+    if r.status == ThreadStatus::Resolved {
+        return ThreadGroup::Resolved;
+    }
+    // 2
+    if r.status == ThreadStatus::Starting {
+        return if now_ms.saturating_sub(r.created_at_ms) < STARTING_TIMEOUT_MS {
+            ThreadGroup::Working
+        } else {
+            ThreadGroup::WaitingOnYou
+        };
+    }
+    // 3: 시작 실패, 닫힌 pane, 확인창에 걸린 시작. 보고를 쓴 뒤 닫힌 pane은 끝난 일이다.
+    let ready = matches!(state, Some(A::Started | A::Idle));
+    let stuck_launch =
+        prompt_pending && (r.brief == BriefState::Unknown || (state.is_some() && !ready && state_ms >= NOT_READY_MS));
+    if r.status == ThreadStatus::Failed
+        || (!pane_exists && !has_report)
+        || stuck_launch
+        || r.copy.as_deref() == Some("failed")
+    {
+        return ThreadGroup::WaitingOnYou;
+    }
+    // 4: 확인창이 떠 있거나, agent가 사람을 기다린다고 알렸다
+    if (state == Some(A::Question) && state_ms >= BLOCKED_DEBOUNCE_MS) || self_waiting {
+        return ThreadGroup::WaitingOnYou;
+    }
+    // 5: 새 보고. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는 결과가 아니다).
+    let new_report = has_report && r.report_hash != r.acked_hash;
+    if new_report && !prompt_pending && state != Some(A::Working) {
+        return if waits_on_user(r.report_state.as_deref()) {
+            ThreadGroup::WaitingOnYou
+        } else {
+            ThreadGroup::ReadyForReview
+        };
+    }
+    // 6: harness나 진행 보고로 작업 중
+    if matches!(state, Some(A::Working | A::Question)) || prompt_pending || self_working {
+        return ThreadGroup::Working;
+    }
+    // 7
+    ThreadGroup::Idle
 }
 
 /// 임시 파일에 쓴 뒤 rename으로 바꾼다
@@ -278,23 +351,12 @@ impl Host {
     }
 
     pub(crate) fn thread_view(&self, r: &ThreadRec) -> ThreadView {
-        let new_report = r.report_hash.is_some() && r.report_hash != r.acked_hash;
-        let group = match r.status {
-            ThreadStatus::Resolved => ThreadGroup::Resolved,
-            ThreadStatus::Failed => ThreadGroup::WaitingOnYou,
-            _ if new_report && waits_on_user(r.report_state.as_deref()) => ThreadGroup::WaitingOnYou,
-            _ if new_report => ThreadGroup::ReadyForReview,
-            _ if r.brief == BriefState::Unknown || r.copy.as_deref() == Some("failed") => ThreadGroup::WaitingOnYou,
-            // 열린 thread인데 세션이 끝났다(종료·재부팅): 다시 시작하거나 끝낼지 사람이 정한다
-            ThreadStatus::Open
-                if r.pane.as_deref().is_some_and(|p| {
-                    !self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
-                }) =>
-            {
-                ThreadGroup::WaitingOnYou
-            }
-            _ => ThreadGroup::Working,
-        };
+        let agent = r.pane.as_deref().and_then(|p| self.pane_agent(p));
+        let pane_exists = r
+            .pane
+            .as_deref()
+            .is_some_and(|p| self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running()));
+        let group = thread_group(r, pane_exists, agent.as_ref(), aaa_common::util::now_ms());
         ThreadView {
             project: r.project.clone(),
             id: r.id.clone(),
@@ -314,7 +376,7 @@ impl Host {
             acked_hash: r.acked_hash.clone(),
             report_state: r.report_state.clone(),
             next: r.next.clone(),
-            agent: r.pane.as_deref().and_then(|p| self.pane_agent(p)).map(Box::new),
+            agent: agent.map(Box::new),
             decisions_rev: r.decisions_rev,
             decisions_now: self.project_dir(&r.project).ok().and_then(|d| decisions_rev(&d)),
             copy: r.copy.clone(),
@@ -1063,5 +1125,178 @@ impl Host {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! herdr-projects src/thread.rs `group()` 시험을 옮겼다(Landing·PR 줄은 aaa에 없어 뺐다).
+    use super::*;
+
+    const NOW: u64 = 10_000_000;
+
+    fn open_thread() -> ThreadRec {
+        ThreadRec {
+            project: "p".into(),
+            id: "t-0001".into(),
+            title: "t".into(),
+            machine_id: "m".into(),
+            profile: "claude".into(),
+            role: Role::Worker,
+            kind: ThreadKind::default(),
+            repo: None,
+            base: None,
+            branch: None,
+            cwd: None,
+            work_dir: None,
+            pane: Some("pane".into()),
+            status: ThreadStatus::Open,
+            brief: BriefState::Delivered,
+            launch: None,
+            report_hash: None,
+            acked_hash: None,
+            report_state: None,
+            next: Vec::new(),
+            copy: None,
+            error: None,
+            decisions_rev: None,
+            eval_cursor: 0,
+            eval_batches: 0,
+            eval_last_batch_ms: None,
+            created_at_ms: NOW - 3_600_000,
+            updated_at_ms: NOW,
+        }
+    }
+
+    fn agent(activity: AgentActivity, secs: u64) -> AgentStatus {
+        AgentStatus {
+            activity,
+            since_ms: NOW - secs * 1000,
+            harness: "claude".into(),
+            message: None,
+            percent: None,
+            progress: None,
+            progress_at_ms: None,
+            harness_session: None,
+        }
+    }
+
+    fn g(r: &ThreadRec, a: Option<AgentStatus>) -> ThreadGroup {
+        thread_group(r, true, a.as_ref(), NOW)
+    }
+
+    fn with_report(r: ThreadRec) -> ThreadRec {
+        ThreadRec { report_hash: Some("h".into()), ..r }
+    }
+
+    use AgentActivity::*;
+
+    #[test]
+    fn row1_resolved_wins_over_everything() {
+        let t = ThreadRec { status: ThreadStatus::Resolved, brief: BriefState::Pending, ..open_thread() };
+        assert_eq!(g(&t, Some(agent(Question, 999))), ThreadGroup::Resolved);
+    }
+
+    #[test]
+    fn row2_starting_is_working_for_five_minutes() {
+        let young = ThreadRec { status: ThreadStatus::Starting, created_at_ms: NOW - 10_000, ..open_thread() };
+        assert_eq!(g(&young, None), ThreadGroup::Working);
+        let old = ThreadRec { status: ThreadStatus::Starting, created_at_ms: NOW - 301_000, ..open_thread() };
+        assert_eq!(g(&old, None), ThreadGroup::WaitingOnYou);
+    }
+
+    #[test]
+    fn row3_waiting_on_you() {
+        let failed = ThreadRec { status: ThreadStatus::Failed, ..open_thread() };
+        assert_eq!(g(&failed, Some(agent(Working, 0))), ThreadGroup::WaitingOnYou);
+
+        let pending = ThreadRec { brief: BriefState::Pending, ..open_thread() };
+        assert_eq!(g(&pending, Some(agent(Question, 60))), ThreadGroup::WaitingOnYou);
+        assert_eq!(g(&pending, Some(agent(Error, 60))), ThreadGroup::WaitingOnYou);
+        let stuck = ThreadRec { brief: BriefState::Unknown, ..open_thread() };
+        assert_eq!(g(&stuck, Some(agent(Idle, 0))), ThreadGroup::WaitingOnYou);
+
+        assert_eq!(thread_group(&open_thread(), false, None, NOW), ThreadGroup::WaitingOnYou);
+        assert_eq!(g(&open_thread(), Some(agent(Question, 30))), ThreadGroup::WaitingOnYou);
+
+        let copy = ThreadRec { copy: Some("failed".into()), ..open_thread() };
+        assert_eq!(g(&copy, Some(agent(Working, 0))), ThreadGroup::WaitingOnYou);
+    }
+
+    #[test]
+    fn row4_working_including_a_launch_in_progress() {
+        assert_eq!(g(&open_thread(), Some(agent(Working, 0))), ThreadGroup::Working);
+        // 금방 답한 확인창은 사람 차례로 보이지 않는다
+        assert_eq!(g(&open_thread(), Some(agent(Question, 29))), ThreadGroup::Working);
+        // 새 thread는 입력을 받을 상태가 아닌 채 60초가 지나기 전까지 작업 중이다
+        let pending = ThreadRec { brief: BriefState::Pending, ..open_thread() };
+        assert_eq!(g(&pending, None), ThreadGroup::Working);
+        assert_eq!(g(&pending, Some(agent(Error, 59))), ThreadGroup::Working);
+        assert_eq!(g(&pending, Some(agent(Idle, 500))), ThreadGroup::Working);
+        assert_eq!(g(&pending, Some(agent(Started, 500))), ThreadGroup::Working);
+    }
+
+    #[test]
+    fn ready_for_review_until_ack() {
+        let t = with_report(open_thread());
+        assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
+        let acked = ThreadRec { acked_hash: Some("h".into()), ..t.clone() };
+        assert_eq!(g(&acked, Some(agent(Idle, 0))), ThreadGroup::Idle);
+        // brief를 아직 못 보냈으면 보고가 있어도 작업 중
+        let pending = ThreadRec { brief: BriefState::Pending, ..t };
+        assert_eq!(g(&pending, Some(agent(Idle, 0))), ThreadGroup::Working);
+    }
+
+    #[test]
+    fn report_tags_that_need_the_user_wait_on_you() {
+        let t = ThreadRec { report_state: Some("결정 필요".into()), ..with_report(open_thread()) };
+        assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::WaitingOnYou);
+        // 일하는 중에 쓴 보고는 아직 결과가 아니다
+        assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Working);
+    }
+
+    #[test]
+    fn row7_idle_and_precedence() {
+        assert_eq!(g(&open_thread(), Some(agent(Idle, 0))), ThreadGroup::Idle);
+        // 작업 중이 새 보고를 이긴다
+        let t = with_report(open_thread());
+        assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Working);
+        // 오래 뜬 확인창이 새 보고를 이긴다
+        assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
+    }
+
+    #[test]
+    fn a_closed_pane_needs_you_only_without_a_report() {
+        let t = with_report(open_thread());
+        assert_eq!(thread_group(&t, false, None, NOW), ThreadGroup::ReadyForReview);
+        let acked = ThreadRec { acked_hash: Some("h".into()), ..t };
+        assert_eq!(thread_group(&acked, false, None, NOW), ThreadGroup::Idle);
+        assert_eq!(thread_group(&open_thread(), false, None, NOW), ThreadGroup::WaitingOnYou);
+    }
+
+    fn reported(activity: &str, percent: Option<u8>, age: u64, state: AgentActivity) -> Option<AgentStatus> {
+        Some(AgentStatus {
+            progress: Some(activity.into()),
+            percent,
+            progress_at_ms: Some(NOW - age * 1000),
+            ..agent(state, 0)
+        })
+    }
+
+    #[test]
+    fn self_reports_feed_the_group() {
+        // 사람을 기다린다고 알렸는데 harness는 쉰다: 사람 차례
+        assert_eq!(g(&open_thread(), reported(WAITING, Some(40), 5, Idle)), ThreadGroup::WaitingOnYou);
+        // 기다림이 새 보고를 이기지만, 다시 일하는 harness는 이기지 못한다
+        let t = with_report(open_thread());
+        assert_eq!(g(&t, reported(WAITING, None, 5, Idle)), ThreadGroup::WaitingOnYou);
+        assert_eq!(g(&t, reported(WAITING, None, 5, Working)), ThreadGroup::Working);
+        // 100% 아래이고 새것이면 도구 호출 사이에도 작업 중
+        assert_eq!(g(&open_thread(), reported("시험 중", Some(55), 30, Idle)), ThreadGroup::Working);
+        // 5분이 지나면 묵은 것이고, 100%는 끝난 것
+        assert_eq!(g(&open_thread(), reported("시험 중", Some(55), 400, Idle)), ThreadGroup::Idle);
+        assert_eq!(g(&open_thread(), reported("끝", Some(100), 5, Idle)), ThreadGroup::Idle);
+        // 새 보고가 진행 보고를 이긴다
+        assert_eq!(g(&t, reported("다듬는 중", Some(90), 5, Idle)), ThreadGroup::ReadyForReview);
     }
 }

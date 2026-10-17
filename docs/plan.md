@@ -647,7 +647,7 @@ host 프로젝트 폴더 구성:
   - agent가 다시 붙으면 host가 감시를 다시 걸고, agent는 곧바로 지금 hash를 보낸다. 그래서 host가 꺼진 동안 바뀐 보고도 받는다.
 - **보고 형식(0.2.35에 없던 규칙)**
   - 첫 줄 상태 태그(`[진행 중]`·`[사용자 작업 필요]`·`[결정 필요]`·`[완료]`)와 `## Next` 줄을 읽는다. 지금 운영 brief가 쓰는 형식이다.
-  - `[사용자 작업 필요]`·`[결정 필요]`면 목록 묶음이 「사람 차례」다.
+  - `[사용자 작업 필요]`·`[결정 필요]`면 목록 묶음이 「사람 차례」다(harness가 일하는 중이 아닐 때, §8.38).
 - **resolve**
   - 마지막 사본이 실패하면 거부한다. 그다음 세션을 끝내고 worktree를 force 없이 지운다. 고친 파일이 있으면 남긴다.
   - branch는 기준 ref에 병합(조상)됐을 때만 지운다.
@@ -712,7 +712,7 @@ host 프로젝트 폴더 구성:
   - thread는 시작·다시 시작 때 brief에 넣은 가장 큰 번호를 `decisions_rev`로 기록한다. `decisions_now`보다 작으면 CLI가 「결정 N번까지 보고 시작했다」를 보인다. 별도 DB revision 표는 두지 않았다(파일 번호가 revision이다).
 - **thread stop:** 0.2.35처럼 Esc 한 번이다. 세션·작업 폴더는 그대로다. 흐름 사건은 `thread_stopped`다.
 - **thread restart**
-  - 세션이 실행 중이면 거부한다(`aaa pane kill` 뒤에 한다). 열린 thread인데 세션이 끝났으면 목록 묶음이 「사람 차례」다(새 보고가 있으면 「검토 대기」가 먼저다).
+  - 세션이 실행 중이면 거부한다(`aaa pane kill` 뒤에 한다). 열린 thread인데 보고 없이 세션이 끝났으면 목록 묶음이 「사람 차례」다. 보고를 쓴 뒤 끝난 세션은 끝난 일이다(새 보고면 「검토 대기」, 확인했으면 「쉼」, §8.38).
   - 기본은 task(Follow-ups 포함)·지침·결정·memory를 다시 읽어 brief를 새로 쓴다. brief 맨 앞에는 「다시 시작했다, 이전 시도를 먼저 확인한다」를 붙이고, 새 대화로 띄운 뒤 안내한다. claude는 새 `--session-id`를 받는다(agent `ThreadRebrief`).
   - `--resume`은 저장된 launch의 resume argv로 같은 대화를 잇고, 안내하지 않는다. `{session}`이 필요한데 harness 세션 ID를 모르면 거부한다.
   - profile은 다시 해석하지 않는다(저장된 launch를 쓴다). profile 바꾸기는 하지 않았다.
@@ -726,7 +726,7 @@ host 프로젝트 폴더 구성:
 - **항목 출처**
   - 흐름 사건: `report_ready`(report), `question_shown`(question), `brief_unknown`·`message_unknown`(delivery), `thread_failed`·`copy_failed`(thread).
   - `session`: 열린 thread의 세션이 끝났다. **세션(pane)마다 한 번만** 만든다. 끝낸 뒤에도 같은 세션으로는 다시 만들지 않는다(E2E가 잡은 결함).
-  - `outage`: 그 머신에 열린 thread가 있는 프로젝트에, `outage_secs`(기본 600초) 넘게 끊기면 한 번, 돌아오면 한 번.
+  - `outage`: 그 머신에 열린 thread가 있는 프로젝트에, `outage_secs`(기본 600초) 넘게 끊기면 한 번, 돌아오면 한 번. 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 잰다(§8.38).
   - `config-error`: project.toml을 TOML로 읽지 못하면 파일 내용 hash당 한 번.
 - **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다).
 - **nudge:** 0.2.35를 이어받는다.
@@ -1210,6 +1210,22 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **시험(웹 E2E 「조합 상자」, WebKit 820×1180 2배, 어두운·밝은 테마 × 배경 없는 줄·배경 있는 입력줄).** 조합 상자 배경·글자색이 그 칸과 같고, 테두리가 없고, 폭이 두 칸이다. 고치기 전(`26f305f1`)은 네 경우 모두 검은 배경·흰 글자였다.
   - iPad 세로·가로(2배), iPhone 390×844(3배, 11px 글꼴) × 배경 없는 줄·배경 줄·화면 맨 아래 배경 줄(「› 가」)에서 상자 세로가 커서 줄과 같고, 캡처의 상자 둘레 3px에 커서색 픽셀이 없다. 고치기 전에는 iPhone 맨 아래 줄에서 상자가 0.45px 낮고 커서색 21 device px 줄이 보였다.
   - headless는 Meslotendard가 있어 한글이 정확히 두 칸이다. 그래서 크기 어긋남(글꼴이 없을 때)은 headless로 재현하지 못했다. iPad 실제 화면으로 확인한다.
+
+### 8.38 thread 묶음과 outage를 herdr-projects대로(10-17, 차이 목록 1)
+
+- **묶음(C2·F4).** herdr-projects `thread::group()`(src/thread.rs 565~606)을 `orch.rs` `thread_group`으로 옮겼다. 위 줄부터 처음 맞는 것이 이긴다.
+  1. 끝남.
+  2. 시작 중: 5분 안이면 작업 중, 넘으면 사람 차례.
+  3. 사람 차례: 시작 실패, 보고 없이 닫힌 pane, brief가 안 간 채 harness가 입력을 받을 상태가 아닌 것이 60초 넘음, brief 전달 불명.
+  4. 사람 차례: 확인창이 30초 넘게 떠 있음, 진행 보고 `Waiting for you`(harness가 일하는 중이 아닐 때).
+  5. 새 보고: harness가 일하는 중이 아니고 brief를 보냈으면 검토 대기. 일하는 중에 쓴 보고는 결과가 아니다.
+  6. 작업 중: harness 작업 중·확인창, brief 대기, 5분 안의 100% 아래 진행 보고.
+  7. 쉼(`idle`, 새 묶음).
+  - 대응: prompt_pending = brief `pending`, brief_stuck = `unknown`, blocked = `question`, 준비 상태 = `started`·`idle`. 진행 보고 시각(`progress_at_ms`)을 새로 기록한다. 새 harness 세션은 진행 보고를 지우고, 사용자 입력(turn_start)은 `Waiting for you`를 지운다(herdr-projects progress `respond`).
+  - 다르게 둔 것: PR Landing 묶음 없음(aaa는 merge 대기열, D11). 보고 사본 실패와 `[사용자 작업 필요]`·`[결정 필요]` 태그는 사람 차례(aaa는 보고를 host로 복사하고 태그로 사람 일을 알린다, D9).
+  - hook이 없는 harness나 지금의 Codex(턴 끝 notify만, D8)는 일하는지 몰라 진행 보고가 없으면 「쉼」으로 보인다.
+- **outage(F7).** herdr-projects steps.rs `Outage`를 옮겼다. 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 재고(저장하지 않음), 기준을 넘으면 한 번, 돌아오면 한 번 알린다. 옛 코드는 연결할 때만 바뀌는 `last_seen`으로 재서 host를 다시 띄우면 오래 붙어 있던 머신이 곧바로 「34분째 끊김」이었다(운영 11:22).
+- **시험.** host 단위 시험(묶음 9개는 herdr-projects 시험을 옮김, outage 1개). m13 재시작 시험: 머신이 끊긴 채 host를 다시 띄우면 기준(5초) 전에는 outage 없음 → 기준 뒤 down 한 번 → 다시 붙으면 recovered 한 번. 옛 코드로 돌리면 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

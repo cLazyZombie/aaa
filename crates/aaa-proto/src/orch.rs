@@ -207,6 +207,10 @@ pub struct AgentStatus {
     pub percent: Option<u8>,
     /// `aaa report --activity`
     pub progress: Option<String>,
+    /// 마지막 `aaa report` 시각. 5분이 지나면 진행 보고로 「작업 중」을 정하지 않는다(herdr-projects `ACTIVITY_TTL_MS`).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub progress_at_ms: Option<u64>,
     pub harness_session: Option<String>,
 }
 
@@ -342,11 +346,14 @@ impl BriefState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadGroup {
-    /// 사람이나 coordinator가 할 일이 있다(시작 실패, brief 전달 불명, `[사용자 작업 필요]`·`[결정 필요]` 보고)
+    /// 사람이나 coordinator가 할 일이 있다(시작 실패·5분 넘은 시작, 닫힌 pane, brief 전달 불명, 30초 넘은 확인창,
+    /// `Waiting for you` 진행 보고, `[사용자 작업 필요]`·`[결정 필요]` 보고)
     WaitingOnYou,
     /// 아직 확인(ack)하지 않은 새 보고
     ReadyForReview,
     Working,
+    /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
+    Idle,
     Resolved,
 }
 
