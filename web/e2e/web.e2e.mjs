@@ -1617,7 +1617,7 @@ try {
     const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
     for (const name of ["markc", "markx"]) await until(`${name} harness`, async () => (await mp.getByTestId(`agent-${name}`).count()) === 1);
     const markOf = (name) =>
-      mp.getByTestId(`pane-${name}`).locator(".mark").evaluate((m) => {
+      mp.getByTestId(`pane-${name}`).locator(".sidebar-mark").evaluate((m) => {
         const a = m.querySelector(".agent-mark");
         const svg = m.querySelector("svg");
         return {
@@ -1626,7 +1626,7 @@ try {
           label: svg?.getAttribute("aria-label") ?? null,
           size: svg?.getAttribute("width") ?? null,
           tile: a?.querySelector(".agent-mark-tile")?.getAttribute("fill") ?? null,
-          shell: svg?.classList.contains("i") ?? false,
+          shell: svg?.classList.contains("lucide-terminal") ?? false,
         };
       });
     const bad = [];
@@ -1634,7 +1634,7 @@ try {
     if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.size !== "18" || c.tile !== "#D77655") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
     const x = await markOf("markx");
     if (x.cls !== "agent-mark codex" || x.label !== "codex" || x.size !== "18") bad.push(`Codex 줄 ${JSON.stringify(x)}`);
-    // 셸은 agent 표시가 아니라 터미널 표시(참고 lucide Terminal 자리)
+    // 셸은 agent 표시가 아니라 터미널 표시(참고 Sidebar.tsx rowMark: lucide Terminal)
     const sh = await markOf("t1");
     if (sh.agent !== "shell" || sh.cls !== null || !sh.shell) bad.push(`셸 줄 ${JSON.stringify(sh)}`);
     await shot(mp, "phone-agent-marks");
@@ -2486,22 +2486,76 @@ try {
       '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}\'; ' +
       "stty -echo; exec cat > /dev/null";
     aaa("pane", "run", "--machine", "labA", "--name", "q1", "--", "/bin/sh", "-c", script, AA);
-    const card = page.getByTestId("questions").locator(".question");
-    await until("질문 카드", async () => (await card.count()) === 1);
+    // 목록에는 그 줄의 빨간 ?만(차이 목록 Q1·S2, 참고 Sidebar.tsx StatusBadge): 카드는 그 pane을 열면 터미널 아래에
+    const state = (pg) => pg.getByTestId("agent-q1");
+    await state(page).and(page.locator('[data-status="blocked"]')).waitFor();
+    if ((await state(page).locator(".sidebar-status-mark").innerText()) !== "?") throw new Error("질문 줄에 ? 표시가 없다");
+    if ((await state(page).getAttribute("aria-label")) !== "agent 답을 기다림") throw new Error(`상태 말: ${await state(page).getAttribute("aria-label")}`);
+    if ((await page.locator(".question").count()) !== 0) throw new Error("pane을 열기 전에 목록에 질문 카드가 있다");
+    await page.getByTestId("pane-q1").click();
+    const q = aaa("question", "list").questions.find((x) => x.text.includes("make test"));
+    const card = page.getByTestId(`dock-question-${q.id}`);
+    await card.waitFor();
     if (!(await card.innerText()).includes("make test")) throw new Error(`카드 본문: ${await card.innerText()}`);
-    await until("pane 질문 표시", async () => (await page.getByTestId("agent-q1").innerText()) === "질문");
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
-    await rd.page.getByTestId("questions").waitFor();
-    if ((await rd.page.getByRole("button", { name: "예" }).count()) !== 0) throw new Error("reader에게 답 버튼");
+    await state(rd.page).and(rd.page.locator('[data-status="blocked"]')).waitFor();
+    await rd.page.getByTestId("pane-q1").click();
+    const rcard = rd.page.getByTestId(`dock-question-${q.id}`);
+    await rcard.waitFor();
+    if ((await rcard.getByRole("button", { name: "예" }).count()) !== 0) throw new Error("reader에게 답 버튼");
+    if (!(await rcard.innerText()).includes("보기 권한이라 답할 수 없다")) throw new Error(`reader 카드: ${await rcard.innerText()}`);
     await shot(page, "desktop-question");
     await card.getByRole("button", { name: "예" }).click();
-    await until("카드 사라짐", async () => (await page.getByTestId("questions").count()) === 0);
-    await until("reader 카드도 사라짐", async () => (await rd.page.getByTestId("questions").count()) === 0);
+    await card.waitFor({ state: "detached" });
+    await rcard.waitFor({ state: "detached" });
     const all = aaa("question", "list", "--all").questions;
     if (all.length !== 1 || all[0].state !== "answered" || all[0].answer !== "yes") throw new Error(JSON.stringify(all));
-    await until("pane 작업 중", async () => (await page.getByTestId("agent-q1").innerText()) === "작업 중");
+    await state(page).and(page.locator('[data-status="working"]')).waitFor();
     if (rd.errors.length) throw new Error(rd.errors.join("; "));
     await rd.page.context().close();
+  });
+
+  await step("끝남(안 봄)(herdr PaneState::seen, 차이 목록 S1): 보는 화면 없이 턴이 끝나면 초록 점, 그 pane을 열면 사라지고, 보는 동안 끝난 턴은 남지 않으며, 가려진 동안 끝나면 다시 보일 때 사라진다", async () => {
+    // 줄 하나를 받을 때마다 턴을 열고(UserPromptSubmit) 다음 줄에 닫는다(Stop): 시험이 턴의 끝을 정한다
+    const script =
+      'while read a; do "$0" hook --agent claude \'{"hook_event_name":"UserPromptSubmit"}\'; ' +
+      'read b; "$0" hook --agent claude \'{"hook_event_name":"Stop"}\'; done';
+    aaa("pane", "run", "--machine", "labA", "--name", "seen1", "--", "/bin/sh", "-c", script, AA);
+    const inUse = (p, on) =>
+      p.evaluate((on) => {
+        if (on) delete document.hasFocus;
+        else document.hasFocus = () => false;
+        window.dispatchEvent(new Event(on ? "focus" : "blur"));
+      }, on);
+    const state = page.getByTestId("agent-seen1");
+    const is = (s) => state.and(page.locator(`[data-status="${s}"]`)).waitFor();
+    const using = async () => (await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.in_use));
+    const turn = async (end, inUseNow) => {
+      aaa("pane", "send", "seen1", "--text", "go", "--enter");
+      await is("working");
+      // presence는 턴을 열기 전에 보냈고 host를 한 바퀴 돈 working이 왔다: host가 이미 안다(기다리지 않고 확인만 한다)
+      const n = await using();
+      if ((n > 0) !== inUseNow) throw new Error(`host가 아는 쓰는 화면 수 ${n}(쓰는 중 ${inUseNow})`);
+      aaa("pane", "send", "seen1", "--text", "end", "--enter");
+      await is(end);
+    };
+    await inUse(page, true);
+    // 1) 다른 pane(q1)을 보는 동안 끝났다: 끝남(안 봄), 초록 점과 그 말
+    await turn("done", true);
+    if ((await state.locator(".sidebar-status-dot").count()) !== 1) throw new Error("끝남에 점이 없다");
+    if ((await state.getAttribute("aria-label")) !== "agent 끝남(안 봄)") throw new Error(`상태 말: ${await state.getAttribute("aria-label")}`);
+    await shot(page, "desktop-unseen-done");
+    // 2) 그 pane을 열면 봤다
+    await page.getByTestId("pane-seen1").click();
+    await is("idle");
+    // 3) 보는 동안 끝난 턴은 끝남으로 남지 않는다
+    await turn("idle", true);
+    // 4) 가려진(쓰는 화면이 아닌) 동안 끝났다: 열어 둔 pane이라도 끝남, 다시 쓰는 화면이 되면 봤다
+    await inUse(page, false);
+    await turn("done", false);
+    await inUse(page, true);
+    await is("idle");
+    aaa("pane", "kill", "seen1");
   });
 
   await step("입력 막대·pane send: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
@@ -3567,7 +3621,7 @@ try {
       'printf "Allow Bash(rm x)?\\n\\342\\235\\257 1. Yes\\n  2. No\\nEsc to cancel\\n"; ' +
         '"$0" hook --agent claude \'{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm x"}}\'; ' +
         'stty raw -echo; exec cat > "$1"', AA, recv2);
-    await until("h2 질문", async () => (await page.getByTestId("agent-h2").innerText()) === "질문");
+    await page.getByTestId("agent-h2").and(page.locator('[data-status="blocked"]')).waitFor();
     await page.getByTestId("pane-h2").click();
     await until("h2 터미널", async () => (await screenText(page)).includes("Esc to cancel"));
     await pasteFile(page, png, "image/png");
@@ -3901,9 +3955,11 @@ try {
     const item = page.getByTestId(`thread-demo-${t.id}`);
     await until("thread 목록에 검토 대기", async () => (await item.innerText()).includes("검토 대기"));
     // thread 줄 표시는 그 thread pane의 agent(참고 Sidebar.tsx rowMark): 표시가 없는 profile(fake)은 머리글자 표시
-    const tm = await item.locator(".mark .agent-mark").evaluate((a) => `${a.className}|${a.textContent}`);
+    const tm = await item.locator(".sidebar-mark .agent-mark").evaluate((a) => `${a.className}|${a.textContent}`);
     if (tm !== "agent-mark fake|F") throw new Error(`thread 줄 표시 ${tm}`);
+    // thread 줄은 그 agent pane을 열고(차이 목록 L4, herdr-projects: thread는 자기 agent 줄) 보고서는 터미널 머리 「보고」로
     await item.click();
+    await page.getByTestId("open-report").click();
     const report = page.getByTestId("report");
     await until("보고 Markdown", async () => (await report.locator("strong").innerText()) === "확인");
     if ((await report.locator("code").innerText()) !== "index.html") throw new Error(await report.innerHTML());
@@ -4227,7 +4283,11 @@ try {
     await until("끊김 배너", async () =>
       (await page.getByTestId("readonly-banner").innerText()).includes("agent와 연결이 끊겼다"),
     );
-    await page.getByText("실행·끊김(읽기 전용)").first().waitFor();
+    // 끊긴 머신은 이름 아래 「끊김」, 그 줄들은 흐리고 누를 수 없다(herdr-web-ui MachineSidebar machine-state·machine-offline·inert)
+    const labA = page.getByTestId("machine-labA");
+    await labA.locator(".machine-state-word", { hasText: "끊김" }).waitFor();
+    if (!(await labA.locator(".machine-offline[inert]").count())) throw new Error("끊긴 머신의 줄이 흐리게·누를 수 없게 되지 않았다");
+    if ((await labA.locator('.sidebar-status[data-status]:not([data-status="unknown"])').count()) !== 0) throw new Error("끊긴 머신 줄이 상태를 말한다");
     // 입력줄은 그대로 쓸 수 있고 보내기만 막힌다(herdr-web-ui TerminalInput: 끊겨도 쓰던 글은 두고 보내기만 거부)
     if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("끊겼는데 입력줄이 꺼졌다");
     if (!(await page.getByRole("button", { name: "보내기" }).isDisabled())) throw new Error("끊겼는데 보내기가 켜져 있다");

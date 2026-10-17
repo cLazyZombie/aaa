@@ -415,16 +415,16 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
 }
 
 async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {
-    let Some((_, role)) = device(&host, &headers) else { return unauthorized() };
-    ws.on_upgrade(move |socket| events_loop(host, role, socket))
+    let Some((dev, role)) = device(&host, &headers) else { return unauthorized() };
+    ws.on_upgrade(move |socket| events_loop(host, dev, role, socket))
 }
 
 /// 머신·pane 목록(바뀔 때마다 전체)과 확인창 질문·thread 사건. 질문·thread는 연결한 뒤 목록을 한 번 읽고 이 사건으로 따라간다.
-async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
+async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket: WebSocket) {
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
-    let mut presence = Presence { host: host.clone(), active: false };
+    let mut presence = Presence { host: host.clone(), dev, active: false };
     let mut send_state = true;
     loop {
         if send_state {
@@ -481,6 +481,8 @@ async fn events_loop(host: Arc<Host>, role: DeviceRole, mut socket: WebSocket) {
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
 struct Presence {
     host: Arc<Host>,
+    /// 이 연결의 기기(그 기기가 연 pane 터미널을 「보는 화면」으로 센다, seen.rs)
+    dev: String,
     active: bool,
 }
 
@@ -494,6 +496,7 @@ impl Presence {
             } else {
                 self.host.in_use.fetch_sub(1, SeqCst);
             }
+            self.host.view_presence(&self.dev, active);
         }
     }
 }
@@ -646,7 +649,10 @@ fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
 async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, acks: bool, socket: WebSocket) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
+    // 이 연결이 그 pane을 보는 동안(seen.rs). 가려지면 웹은 lease를 놓을 뿐 연결은 두므로 「보는 중」은 기기의 presence가 정한다
+    host.view_term(&front.id, &dev, Some(&id));
     pane_session(&host, &id, &dev, role, &front, acks, socket).await;
+    host.view_term(&front.id, &dev, None);
     host.front_gone(&front.id);
 }
 

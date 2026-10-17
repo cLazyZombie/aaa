@@ -10,6 +10,7 @@ import type { ProviderUsage } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
+import { AppearanceSettings } from "./AppearanceSettings";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "./herdr/installedFonts.ts";
 import { useInstallPrompt } from "./herdr/install.ts";
@@ -39,7 +40,7 @@ import {
 import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "./usage";
 
 /** 묶음: 제목 아래 카드 하나, 카드 안에 줄들 */
-function SettingsGroup({ title, note, className, children }: { title?: string; note?: string; className?: string; children: ReactNode }) {
+export function SettingsGroup({ title, note, className, children }: { title?: string; note?: string; className?: string; children: ReactNode }) {
   return (
     <section className={className ? `settings-section ${className}` : "settings-section"}>
       {title !== undefined && <h3>{title}</h3>}
@@ -50,7 +51,7 @@ function SettingsGroup({ title, note, className, children }: { title?: string; n
 }
 
 /** 설정 하나: 이름(과 설명)과 그 끝의 조작 하나. `wide`는 휴대폰에서 줄 전체가 필요한 조작이다 */
-function SettingsRow({ label, description, htmlFor, wide = false, children }: { label: string; description?: ReactNode; htmlFor?: string; wide?: boolean; children: ReactNode }) {
+export function SettingsRow({ label, description, htmlFor, wide = false, children }: { label: string; description?: ReactNode; htmlFor?: string; wide?: boolean; children: ReactNode }) {
   return (
     <div className={wide ? "settings-row is-wide" : "settings-row"}>
       <div className="settings-row-text">
@@ -92,7 +93,7 @@ function Stepper({ label, value, text, min, max, decreaseLabel, increaseLabel, o
 }
 
 /** 짧은 선택지 몇 개를 다 보이게 */
-function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly { value: T; label: string }[]; onChange: (value: T) => void }) {
+export function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly { value: T; label: string }[]; onChange: (value: T) => void }) {
   return (
     <div className="segmented" role="group" aria-label={label}>
       {options.map((option) => (
@@ -398,6 +399,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
         <div className="settings-body" hidden={keyBarOpen}>
+          <AppearanceSettings />
           <SettingsGroup title="터미널">
             <SettingsRow label="글자 크기" description="이 기기의 모든 터미널. 터미널을 두 손가락으로 벌리거나 오므려도 바뀐다.">
               <Stepper

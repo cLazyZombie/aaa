@@ -331,7 +331,12 @@ progress: string | null,
 /**
  * 마지막 `aaa report` 시각. 5분이 지나면 진행 보고로 「작업 중」을 정하지 않는다(herdr-projects `ACTIVITY_TTL_MS`).
  */
-progress_at_ms: number | null, harness_session: string | null, };
+progress_at_ms: number | null, harness_session: string | null, 
+/**
+ * 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
+ * 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
+ */
+seen: boolean, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

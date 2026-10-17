@@ -176,7 +176,7 @@ impl Host {
         self.inner.lock().unwrap().panes.get(pane).and_then(|p| p.agent.clone())
     }
 
-    fn thread_of_pane(&self, pane: &str) -> Option<ThreadRec> {
+    pub(crate) fn thread_of_pane(&self, pane: &str) -> Option<ThreadRec> {
         let rows = self.db.threads(None).ok()?;
         rows.iter()
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
@@ -209,6 +209,7 @@ impl Host {
                 progress: None,
                 progress_at_ms: None,
                 harness_session: None,
+                seen: true,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -244,6 +245,8 @@ impl Host {
                 if a != st.activity {
                     st.since_ms = ev.at_ms;
                 }
+                let sees = self.someone_sees(&ev.session, p.lease.as_ref());
+                st.seen = crate::seen::seen_after(prev.as_ref().map(|x| x.activity), a, st.seen, sees);
                 st.activity = a;
                 st.message = ev.message.clone();
             }
