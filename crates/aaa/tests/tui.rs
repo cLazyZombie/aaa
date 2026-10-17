@@ -103,6 +103,15 @@ impl Screen {
         self.side_row(SELECTION_BG)
     }
 
+    /// 사이드바 칸만 줄마다(구분선과 오른쪽 pane 글은 뺀다)
+    fn side_lines(&self) -> Vec<String> {
+        let w = (SIDE as usize - 1).min(self.cols);
+        self.cells
+            .iter()
+            .map(|l| l[..w].iter().filter(|c| **c != '\0').collect::<String>().trim_end().to_string())
+            .collect()
+    }
+
     /// 지금 pane 줄(herdr `active_row_bg`)
     fn current(&self) -> Option<String> {
         self.side_row(ACTIVE_BG).map(|(_, l)| l)
@@ -948,14 +957,16 @@ fn lease_conflict_with_another_front() {
     drop(other);
 }
 
-/// 고른 줄 바로 위가 「Thread n」 머리인가(목록 맨 위)
+/// 고른 줄 바로 위가 첫 머신 머리(` ▾ 이름`)인가(목록 맨 위, 첫 머신의 「+ 새 셸」)
 fn at_top(s: &Screen) -> bool {
     let text = s.text();
     let lines: Vec<&str> = text.lines().collect();
-    s.selected().is_some_and(|(i, _)| i > 0 && lines[i - 1].contains("Thread "))
+    s.selected().is_some_and(|(i, _)| {
+        i > 0 && lines[i - 1].contains(" ▾ ") && !lines[..i - 1].iter().any(|l| l.contains(" ▾ "))
+    })
 }
 
-/// 탐색 모드에서 목록 맨 위(첫 thread)로 올라간 뒤 `needle` 줄까지 내려간다(herdr 탐색은 ↑↓, 고른 줄은 selection_bg 바탕).
+/// 탐색 모드에서 목록 맨 위(첫 머신의 새 셸)로 올라간 뒤 `needle` 줄까지 내려간다(herdr 탐색은 ↑↓, 고른 줄은 selection_bg 바탕).
 /// 한 칸씩 고른 줄이 바뀐 것을 보고 다음 키를 누른다.
 fn pick(tui: &mut Tui, needle: &str) {
     tui.wait_screen("탐색 모드", |s| s.text().contains(" NAVIGATE ") && s.selected().is_some());
@@ -975,7 +986,8 @@ fn pick(tui: &mut Tui, needle: &str) {
     panic!("목록에 {needle}이 없다:\n{}", tui.text());
 }
 
-/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록처럼 Thread 묶음·머신별 pane·새 셸이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
+/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록(차이 목록 L1)처럼 머신 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
+/// (herdr-projects 「id · 제목」, 둘째 줄 상태 말), thread에 딸리지 않은 pane이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
 /// herdr처럼 폭과 관계없이 펼친 채(26칸) 시작한다. herdr 키: prefix b 펴기·접기(접으면 4칸 compact, 포커스는 그대로),
 /// prefix w 탐색 모드(↑↓ 고르기·Enter 열기·Esc 돌아가기, 접혀 있으면 펼친 목록을 pane 위에 띄워 보인다).
 #[test]
@@ -1023,27 +1035,44 @@ fn side_list_like_web() {
         ])
     };
     let th = start("alpha-job");
-    let th_pane = wait_for("thread pane", T, || {
-        h.ok(&["thread", "show", "demo", th["id"].as_str().unwrap()])["pane"].as_str().map(String::from)
-    });
+    let alpha = th["id"].as_str().unwrap().to_string();
+    let th_pane =
+        wait_for("thread pane", T, || h.ok(&["thread", "show", "demo", &alpha])["pane"].as_str().map(String::from));
 
-    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭
+    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭. 머신 머리·새 셸 아래 프로젝트 머리, 그 아래
+    //    thread 줄 「id · 제목」과 둘째 줄 상태 말(묶음 말로 시작), 그다음 thread에 딸리지 않은 pane
     let mut tui = Tui::start_cols(&h, &[], WIDE);
-    tui.wait_text("목록", |s| {
-        s.contains("Thread 1")
-            && s.contains("alpha-job")
-            && s.contains(" ▾ labA")
-            && s.contains(" + 새 셸")
-            && s.contains("first")
-            && s.contains("loose")
+    let alpha_row = format!("{alpha} · alpha-job");
+    let words = ["사람 차례", "검토 대기", "작업 중", "쉼"];
+    tui.wait_screen("목록", |s| {
+        let side = s.side_lines();
+        let at = |needle: &str| side.iter().position(|l| l.contains(needle));
+        let (Some(m), Some(shell), Some(demo), Some(row), Some(first), Some(loose)) =
+            (at(" ▾ labA"), at(" + 새 셸"), at(" demo"), at(&alpha_row), at(" first"), at(" loose"))
+        else {
+            return false;
+        };
+        let sub = side[row + 1].trim_start();
+        m + 1 == shell
+            && shell + 1 == demo
+            && demo + 1 == row
+            && words.iter().any(|w| sub.starts_with(w))
+            && row + 2 <= first.min(loose)
     });
+    // thread pane은 pane 줄로 다시 나오지 않는다
+    let side = tui.screen.0.lock().unwrap().side_lines();
+    assert_eq!(side.iter().filter(|l| l.contains("alpha-job")).count(), 1, "{}", side.join("\n"));
     hw.wait("목록 옆 크기", |w| (w.pane(&first)?.cols == WIDE - SIDE - GUTTER).then_some(()));
     tui.type_line("echo list-$((6*7))");
     tui.wait_text("pane 입력", |s| s.contains("list-42"));
 
-    // 2) 새 thread는 사건으로 따라온다
-    start("beta-job");
-    tui.wait_text("새 thread", |s| s.contains("Thread 2") && s.contains("beta-job"));
+    // 2) 새 thread는 사건으로 따라온다(같은 프로젝트 머리 아래)
+    let beta = start("beta-job")["id"].as_str().unwrap().to_string();
+    tui.wait_screen("새 thread", |s| {
+        let side = s.side_lines();
+        side.iter().filter(|l| l.trim() == "demo" || l.starts_with(" demo ")).count() == 1
+            && side.iter().any(|l| l.contains(&format!("{beta} · beta-job")))
+    });
     // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
         std::fs::write(path, tui.text()).unwrap();

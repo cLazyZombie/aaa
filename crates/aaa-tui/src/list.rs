@@ -1,11 +1,14 @@
-//! 왼쪽 목록(웹 목록과 같은 모양, §8.35): Thread 묶음과 머신별 pane, 상태 배지, 새 셸.
+//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·차이 목록 L1·U4~U6): 머신마다 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
+//! (herdr-projects `thread_display` 「id · 제목」, 둘째 줄 `state_line`), thread에 딸리지 않은 pane, 상태 점과 배지.
 //!
 //! host가 보낸 머신·pane 목록과 thread 사건으로만 만든다(TUI는 저장하지 않는다). 고르면 그 pane을 탭으로 연다.
 
 use std::collections::HashMap;
 
 use aaa_proto::layout::Rect;
-use aaa_proto::{AgentActivity, Connection, MachineView, PaneView, Role, SessionState, ThreadGroup, ThreadView};
+use aaa_proto::{
+    AgentActivity, Connection, MachineView, PaneView, Role, SessionState, ThreadGroup, ThreadStatus, ThreadView,
+};
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
 
@@ -17,7 +20,11 @@ pub enum Row {
     Header(String),
     /// thread 키(`project/id`)
     Thread(String),
+    /// thread 줄의 둘째 줄(상태 말, 고르지 않고 누르면 그 thread)
+    ThreadSub(String),
     Machine(String),
+    /// 그 머신의 프로젝트 묶음 머리(머신 ID, 프로젝트)
+    Project(String, String),
     /// 그 머신에 새 셸을 연다(머신 ID)
     NewShell(String),
     Pane(String),
@@ -28,34 +35,101 @@ impl Row {
     pub fn selectable(&self) -> bool {
         matches!(self, Row::Thread(_) | Row::NewShell(_) | Row::Pane(_))
     }
+
+    /// 누르면 고르는 줄: thread 둘째 줄은 그 thread
+    pub fn target(&self) -> Row {
+        match self {
+            Row::ThreadSub(k) => Row::Thread(k.clone()),
+            r => r.clone(),
+        }
+    }
 }
 
 pub fn thread_key(t: &ThreadView) -> String {
     format!("{}/{}", t.project, t.id)
 }
 
-/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순) → 머신마다 새 셸·pane(평가자 제외) →
-/// 사후 평가자 pane(예전 상태 줄에 보이던 것, 웹 목록에는 없다)
+/// herdr-projects `Group::rank`(웹 `groupRank`): 사람 차례 → 검토 대기 → (병합 중) → 작업 중 → 쉼 → 끝남
+pub fn group_rank(g: ThreadGroup) -> u8 {
+    match g {
+        ThreadGroup::WaitingOnYou => 1,
+        ThreadGroup::ReadyForReview => 2,
+        ThreadGroup::Working => 4,
+        ThreadGroup::Idle => 5,
+        ThreadGroup::Resolved => 6,
+    }
+}
+
+/// 그 머신의 thread인가(웹 `threadMachine`): pane이 있으면 pane의 머신, 없으면 thread의 머신 이름·ID
+fn on_machine(t: &ThreadView, m: &MachineView, pane: Option<&PaneView>) -> bool {
+    match pane {
+        Some(p) => p.machine_id == m.id,
+        None => t.machine == m.name || t.machine == m.id,
+    }
+}
+
+/// 목록에 thread 줄로 보이는가: 끝난 것·평가자는 뺀다(웹 `machineRoster`)
+fn listed(t: &ThreadView) -> bool {
+    t.group != ThreadGroup::Resolved && t.role != Role::Evaluator
+}
+
+/// herdr-projects `project_line`(웹 `projectLine`): 「사람 차례 2 · 작업 중 3」, 없으면 「쉼」
+pub fn project_line(groups: &[ThreadGroup]) -> String {
+    let need = groups.iter().filter(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview)).count();
+    let working = groups.iter().filter(|g| **g == ThreadGroup::Working).count();
+    let mut parts = vec![];
+    if need > 0 {
+        parts.push(format!("사람 차례 {need}"));
+    }
+    if working > 0 {
+        parts.push(format!("작업 중 {working}"));
+    }
+    if parts.is_empty() { "쉼".to_string() } else { parts.join(" · ") }
+}
+
+/// 웹 목록(`machineRoster`)과 같은 차례: 머신마다 머리·새 셸, 그 머신 thread를 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온
+/// 프로젝트 차례로 묶은 프로젝트 머리와 thread 두 줄, 그다음 thread에 딸리지 않은 pane(평가자 제외). 끝난·평가자 thread는 뺀다.
+/// 맨 아래는 사후 평가자 pane(웹 목록에는 없다).
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
     let mut out = vec![];
-    let mut shown: Vec<&ThreadView> =
-        threads.values().filter(|t| t.group != ThreadGroup::Resolved && t.role != Role::Evaluator).collect();
-    shown.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| thread_key(a).cmp(&thread_key(b))));
-    if !shown.is_empty() {
-        out.push(Row::Header(format!("Thread {}", shown.len())));
-        out.extend(shown.into_iter().map(|t| Row::Thread(thread_key(t))));
-    }
+    let mut live: Vec<&ThreadView> = threads.values().filter(|t| listed(t)).collect();
+    live.sort_by(|a, b| {
+        group_rank(a.group)
+            .cmp(&group_rank(b.group))
+            .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
+            .then_with(|| thread_key(a).cmp(&thread_key(b)))
+    });
     for m in machines {
         out.push(Row::Machine(m.id.clone()));
         if m.connection == Connection::Connected {
             out.push(Row::NewShell(m.id.clone()));
         }
-        let mine: Vec<&PaneView> =
-            panes.iter().filter(|p| p.machine_id == m.id && p.role != Some(Role::Evaluator)).collect();
-        if mine.is_empty() {
+        let pane_of = |t: &ThreadView| t.pane.as_deref().and_then(|id| panes.iter().find(|p| p.id == id));
+        let mine: Vec<&&ThreadView> = live.iter().filter(|t| on_machine(t, m, pane_of(t))).collect();
+        let mut projects: Vec<&str> = vec![];
+        for t in &mine {
+            if !projects.contains(&t.project.as_str()) {
+                projects.push(&t.project);
+            }
+        }
+        for project in &projects {
+            out.push(Row::Project(m.id.clone(), project.to_string()));
+            for t in mine.iter().filter(|t| t.project == *project) {
+                out.push(Row::Thread(thread_key(t)));
+                out.push(Row::ThreadSub(thread_key(t)));
+            }
+        }
+        let thread_panes: Vec<&str> = mine.iter().filter_map(|t| t.pane.as_deref()).collect();
+        let loose: Vec<&PaneView> = panes
+            .iter()
+            .filter(|p| {
+                p.machine_id == m.id && p.role != Some(Role::Evaluator) && !thread_panes.contains(&p.id.as_str())
+            })
+            .collect();
+        if mine.is_empty() && loose.is_empty() {
             out.push(Row::Empty);
         }
-        out.extend(mine.into_iter().map(|p| Row::Pane(p.id.clone())));
+        out.extend(loose.into_iter().map(|p| Row::Pane(p.id.clone())));
     }
     let mut evals: Vec<&PaneView> = panes.iter().filter(|p| p.role == Some(Role::Evaluator)).collect();
     evals.sort_by(|a, b| a.name.cmp(&b.name));
@@ -64,6 +138,37 @@ pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<Stri
         out.extend(evals.into_iter().map(|p| Row::Pane(p.id.clone())));
     }
     out
+}
+
+/// 5분 넘게 진행 보고가 없으면 작업 중 줄이 「n분 조용」(herdr-projects `QUIET_SECS`, 웹 `QUIET_MS`)
+pub const QUIET_MS: u64 = 300_000;
+
+/// thread 둘째 줄 상태 말: 묶음 말과 사실 하나(herdr-projects `state_line`, 웹 `stateLine`). 진행률은 100 미만만 「~n%」.
+pub fn state_line(t: &ThreadView, pane_open: bool, now_ms: u64) -> String {
+    let a = t.agent.as_deref();
+    let pct = a.and_then(|a| a.percent).filter(|n| *n < 100).map(|n| format!("~{n}%"));
+    let fact = match t.group {
+        ThreadGroup::WaitingOnYou if !pane_open => Some("pane 닫힘".to_string()),
+        ThreadGroup::WaitingOnYou if t.status == ThreadStatus::Failed => Some("실패".to_string()),
+        ThreadGroup::WaitingOnYou if a.is_some_and(|a| a.activity == AgentActivity::Question) => {
+            Some("확인창".to_string())
+        }
+        ThreadGroup::WaitingOnYou => pct,
+        ThreadGroup::ReadyForReview => Some("보고".to_string()),
+        ThreadGroup::Working => {
+            let reported = a.and_then(|a| a.progress_at_ms);
+            let fresh = reported.is_some_and(|at| now_ms.saturating_sub(at) < QUIET_MS);
+            let since = now_ms.saturating_sub(reported.unwrap_or(t.updated_at_ms));
+            match pct {
+                Some(p) if fresh => Some(p),
+                _ if since >= QUIET_MS => Some(format!("{}분 조용", since / 60_000)),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let word = group_label(t.group);
+    fact.map_or_else(|| word.to_string(), |f| format!("{word} · {f}"))
 }
 
 /// herdr `AgentStatus` 자리(상태 점의 모양과 색, `status_icon`·`status_color`)
@@ -207,6 +312,8 @@ pub struct View<'a> {
     /// 휠로 민 첫 줄(없으면 고른 줄이 보이게 내린다)
     pub top: Option<usize>,
     pub pal: &'a Palette,
+    /// 지금 시각(「n분 조용」)
+    pub now_ms: u64,
 }
 
 /// 줄들을 그리고 (줄 y, 줄 차례)들과 첫 보이는 줄을 준다(사이드바 바탕·구분선은 부르는 쪽).
@@ -217,15 +324,17 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
     let p = v.pal;
     let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
     let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
+    // 고른 thread 줄은 둘째 줄까지 보이게
+    let sel_end = if matches!(rows.get(v.sel + 1), Some(Row::ThreadSub(_))) { v.sel + 2 } else { v.sel + 1 };
     let skip = match v.top {
         Some(t) => t.min(rows.len().saturating_sub(r.h as usize)),
-        None => (v.sel + 1).saturating_sub(r.h as usize),
+        None => sel_end.saturating_sub(r.h as usize),
     };
     let mut placed = Vec::new();
     for (n, row) in rows.iter().enumerate().skip(skip).take(r.h as usize) {
         let y = r.y + (n - skip) as u16;
         placed.push((y, n));
-        let sel = n == v.sel && v.focused;
+        let sel = v.focused && rows.get(v.sel).is_some_and(|s| *s == row.target());
         let current = is_current(row, v);
         let bg = if sel {
             Some(selection)
@@ -268,7 +377,7 @@ fn is_current(row: &Row, v: &View) -> bool {
     let Some(cur) = v.current else { return false };
     match row {
         Row::Pane(p) => p == cur,
-        Row::Thread(k) => v.threads.get(k).and_then(|t| t.pane.as_deref()) == Some(cur),
+        Row::Thread(k) | Row::ThreadSub(k) => v.threads.get(k).and_then(|t| t.pane.as_deref()) == Some(cur),
         _ => false,
     }
 }
@@ -288,18 +397,42 @@ fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
     let dot = |d: Dot| (format!(" {} ", d.icon()), Style::default().fg(d.color(pal)));
     match row {
         Row::Header(t) => (vec![(format!(" {t}"), faint.add_modifier(Modifier::BOLD))], None),
+        // 프로젝트 머리(웹 project-group): 굵은 이름, 오른쪽은 그 머신 이 프로젝트 thread 셈(웹 둘째 줄 `projectLine`)
+        Row::Project(machine, project) => {
+            let groups: Vec<ThreadGroup> = match v.machines.iter().find(|m| m.id == *machine) {
+                Some(m) => v
+                    .threads
+                    .values()
+                    .filter(|t| t.project == *project && listed(t))
+                    .filter(|t| on_machine(t, m, t.pane.as_deref().and_then(|id| v.panes.get(id))))
+                    .map(|t| t.group)
+                    .collect(),
+                None => vec![],
+            };
+            let need = groups.iter().any(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview));
+            let color = if need { group_color(ThreadGroup::WaitingOnYou, pal) } else { pal.overlay0 };
+            (
+                vec![(format!(" {project}"), Style::default().fg(pal.text).add_modifier(Modifier::BOLD))],
+                Some((project_line(&groups), Style::default().fg(color))),
+            )
+        }
+        // thread 줄(herdr-projects `thread_display`): 상태 점과 「id · 제목」, 둘째 줄에 상태 말(묶음 색)
         Row::Thread(k) => match v.threads.get(k) {
+            Some(t) => (vec![("  ".into(), name), dot(thread_dot(t)), (format!("{} · {}", t.id, t.title), name)], None),
+            None => (vec![("  ".into(), name), dot(Dot::Unknown), (k.clone(), name)], None),
+        },
+        Row::ThreadSub(k) => match v.threads.get(k) {
             Some(t) => {
-                let pct = match (t.group, t.agent.as_ref().and_then(|a| a.percent)) {
-                    (ThreadGroup::Working, Some(n)) => format!(" {n}%"),
-                    _ => String::new(),
-                };
+                let open = t.pane.as_deref().and_then(|id| v.panes.get(id)).is_some_and(|p| p.state.is_running());
                 (
-                    vec![dot(thread_dot(t)), (t.title.clone(), name)],
-                    Some((format!("{}{pct}", group_label(t.group)), Style::default().fg(group_color(t.group, pal)))),
+                    vec![(
+                        format!("     {}", state_line(t, open, v.now_ms)),
+                        Style::default().fg(group_color(t.group, pal)),
+                    )],
+                    None,
                 )
             }
-            None => (vec![dot(Dot::Unknown), (k.clone(), name)], None),
+            None => (vec![], None),
         },
         Row::Machine(id) => {
             let m = v.machines.iter().find(|m| &m.id == id);
@@ -383,20 +516,266 @@ mod tests {
     #[test]
     fn step_skips_headers_and_stops_at_ends() {
         let r = rows_of(&[
-            Row::Header("Thread 1".into()),
-            Row::Thread("p/t-0001".into()),
             Row::Machine("m".into()),
+            Row::Project("m".into(), "p".into()),
+            Row::Thread("p/t-0001".into()),
+            Row::ThreadSub("p/t-0001".into()),
             Row::NewShell("m".into()),
             Row::Empty,
             Row::Machine("n".into()),
             Row::Pane("x".into()),
         ]);
-        assert_eq!(first(&r), 1);
-        assert_eq!(step(&r, 1, true), 3);
-        assert_eq!(step(&r, 3, true), 6);
-        assert_eq!(step(&r, 6, true), 6);
-        assert_eq!(step(&r, 6, false), 3);
-        assert_eq!(step(&r, 1, false), 1);
+        assert_eq!(first(&r), 2);
+        assert_eq!(step(&r, 2, true), 4);
+        assert_eq!(step(&r, 4, true), 7);
+        assert_eq!(step(&r, 7, true), 7);
+        assert_eq!(step(&r, 7, false), 4);
+        assert_eq!(step(&r, 4, false), 2);
+        assert_eq!(step(&r, 2, false), 2);
+    }
+
+    fn machine(id: &str, name: &str, connection: Connection) -> MachineView {
+        MachineView {
+            id: id.into(),
+            name: name.into(),
+            local: false,
+            connection,
+            os: None,
+            boot_id: None,
+            dev_mode: false,
+            last_seen_ms: None,
+            health: None,
+            clock_skew_ms: None,
+            problems: vec![],
+        }
+    }
+
+    fn pane(id: &str, machine_id: &str, role: Option<Role>) -> PaneView {
+        PaneView {
+            id: id.into(),
+            machine_id: machine_id.into(),
+            machine: machine_id.into(),
+            name: id.into(),
+            argv: vec![],
+            cwd: None,
+            state: SessionState::Running,
+            connection: Connection::Connected,
+            readonly: false,
+            cols: 80,
+            rows: 24,
+            lease: None,
+            role,
+            agent: None,
+            label: None,
+        }
+    }
+
+    fn thread(
+        project: &str,
+        id: &str,
+        group: ThreadGroup,
+        updated_at_ms: u64,
+        machine: &str,
+        pane: Option<&str>,
+    ) -> ThreadView {
+        ThreadView {
+            project: project.into(),
+            id: id.into(),
+            title: format!("{id}-job"),
+            machine: machine.into(),
+            profile: "claude".into(),
+            role: Role::Worker,
+            thread_kind: aaa_proto::ThreadKind::Worktree,
+            status: if group == ThreadGroup::Resolved { ThreadStatus::Resolved } else { ThreadStatus::Open },
+            group,
+            brief: aaa_proto::BriefState::Delivered,
+            pane: pane.map(Into::into),
+            cwd: None,
+            work_dir: None,
+            branch: None,
+            pr: None,
+            report_hash: None,
+            acked_hash: None,
+            next: vec![],
+            copy: None,
+            error: None,
+            agent: None,
+            created_at_ms: 0,
+            updated_at_ms,
+            warnings: vec![],
+        }
+    }
+
+    fn agent(
+        activity: AgentActivity,
+        percent: Option<u8>,
+        progress_at_ms: Option<u64>,
+    ) -> Option<Box<aaa_proto::AgentStatus>> {
+        Some(Box::new(aaa_proto::AgentStatus {
+            activity,
+            since_ms: 0,
+            harness: "claude".into(),
+            message: None,
+            percent,
+            progress: None,
+            progress_at_ms,
+            harness_session: None,
+            seen: true,
+        }))
+    }
+
+    /// 웹 `machineRoster`와 같은 차례(차이 목록 L1): 머신마다 머리·새 셸, 그 머신 thread를 rank(사람 차례 → 검토 대기 →
+    /// 작업 중 → 쉼)·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다. thread의 머신은 pane이 있으면 pane의 머신,
+    /// 없으면 thread 머신 이름·ID. thread pane은 pane 줄로 다시 나오지 않고, 끝난·평가자 thread는 빠진다.
+    #[test]
+    fn rows_group_threads_by_machine_and_project_like_web() {
+        let machines = [
+            machine("m1", "mac-a", Connection::Connected),
+            machine("m2", "mac-b", Connection::Connected),
+            machine("m3", "mac-c", Connection::Disconnected),
+        ];
+        let panes = [
+            pane("p1", "m1", Some(Role::Worker)),
+            pane("p2", "m1", None),
+            pane("p3", "m2", Some(Role::Worker)),
+            pane("pe", "m1", Some(Role::Evaluator)),
+        ];
+        let mut evaluator = thread("demo", "t-0006", ThreadGroup::WaitingOnYou, 900, "mac-a", Some("pe"));
+        evaluator.role = Role::Evaluator;
+        let threads: HashMap<String, ThreadView> = [
+            thread("demo", "t-0001", ThreadGroup::Working, 100, "mac-a", Some("p1")),
+            thread("demo", "t-0002", ThreadGroup::WaitingOnYou, 50, "mac-a", None),
+            // pane이 mac-b에 있으면 thread 머신 이름이 달라도 mac-b
+            thread("demo", "t-0003", ThreadGroup::ReadyForReview, 10, "mac-a", Some("p3")),
+            thread("other", "t-0004", ThreadGroup::Idle, 300, "m1", None),
+            thread("demo", "t-0007", ThreadGroup::Working, 200, "mac-a", None),
+            thread("demo", "t-0005", ThreadGroup::Resolved, 999, "mac-a", None),
+            evaluator,
+        ]
+        .into_iter()
+        .map(|t| (thread_key(&t), t))
+        .collect();
+        let t = |k: &str| Row::Thread(k.into());
+        let sub = |k: &str| Row::ThreadSub(k.into());
+        assert_eq!(
+            rows(&machines, &panes, &threads),
+            vec![
+                Row::Machine("m1".into()),
+                Row::NewShell("m1".into()),
+                Row::Project("m1".into(), "demo".into()),
+                t("demo/t-0002"),
+                sub("demo/t-0002"),
+                t("demo/t-0007"),
+                sub("demo/t-0007"),
+                t("demo/t-0001"),
+                sub("demo/t-0001"),
+                Row::Project("m1".into(), "other".into()),
+                t("other/t-0004"),
+                sub("other/t-0004"),
+                Row::Pane("p2".into()),
+                Row::Machine("m2".into()),
+                Row::NewShell("m2".into()),
+                Row::Project("m2".into(), "demo".into()),
+                t("demo/t-0003"),
+                sub("demo/t-0003"),
+                Row::Machine("m3".into()),
+                Row::Empty,
+                Row::Header("평가".into()),
+                Row::Pane("pe".into()),
+            ]
+        );
+    }
+
+    /// herdr-projects `state_line`(웹 `stateLine`): 묶음 말과 사실 하나
+    #[test]
+    fn state_line_like_herdr_projects() {
+        let now = 10 * 60_000;
+        let mut t = thread("demo", "t-0001", ThreadGroup::WaitingOnYou, now - 60_000, "mac-a", Some("p1"));
+        assert_eq!(state_line(&t, false, now), "사람 차례 · pane 닫힘");
+        t.agent = agent(AgentActivity::Question, Some(40), Some(now));
+        assert_eq!(state_line(&t, true, now), "사람 차례 · 확인창");
+        t.status = ThreadStatus::Failed;
+        assert_eq!(state_line(&t, true, now), "사람 차례 · 실패");
+        t.status = ThreadStatus::Open;
+        t.agent = agent(AgentActivity::Idle, Some(40), Some(now));
+        assert_eq!(state_line(&t, true, now), "사람 차례 · ~40%");
+        t.group = ThreadGroup::ReadyForReview;
+        assert_eq!(state_line(&t, true, now), "검토 대기 · 보고");
+        t.group = ThreadGroup::Working;
+        // 진행률은 5분 안에 보고했을 때만, 100은 쓰지 않는다
+        assert_eq!(state_line(&t, true, now), "작업 중 · ~40%");
+        t.agent = agent(AgentActivity::Working, Some(100), Some(now));
+        assert_eq!(state_line(&t, true, now), "작업 중");
+        t.agent = agent(AgentActivity::Working, Some(40), Some(now - 7 * 60_000));
+        assert_eq!(state_line(&t, true, now), "작업 중 · 7분 조용");
+        // 보고가 없으면 thread가 바뀐 때부터 센다
+        t.agent = None;
+        assert_eq!(state_line(&t, true, now), "작업 중");
+        t.updated_at_ms = now - QUIET_MS;
+        assert_eq!(state_line(&t, true, now), "작업 중 · 5분 조용");
+        t.group = ThreadGroup::Idle;
+        assert_eq!(state_line(&t, true, now), "쉼");
+    }
+
+    /// 프로젝트 머리 오른쪽은 그 머신 thread 셈(herdr-projects `project_line`), thread는 「id · 제목」과 둘째 줄 상태 말,
+    /// 고른 thread는 둘째 줄까지 칠한다
+    #[test]
+    fn thread_rows_render_two_lines_like_herdr_projects() {
+        let machines = [machine("m1", "mac-a", Connection::Connected)];
+        let panes: HashMap<String, PaneView> =
+            [pane("p1", "m1", Some(Role::Worker))].into_iter().map(|p| (p.id.clone(), p)).collect();
+        let mut working = thread("demo", "t-0001", ThreadGroup::Working, 0, "mac-a", Some("p1"));
+        working.agent = agent(AgentActivity::Working, Some(40), Some(1_000));
+        let threads: HashMap<String, ThreadView> =
+            [working, thread("demo", "t-0002", ThreadGroup::WaitingOnYou, 0, "mac-a", None)]
+                .into_iter()
+                .map(|t| (thread_key(&t), t))
+                .collect();
+        let list = rows(&machines, &panes.values().cloned().collect::<Vec<_>>(), &threads);
+        let pal = Palette::catppuccin();
+        let sel = list.iter().position(|r| *r == Row::Thread("demo/t-0001".into())).unwrap();
+        let v = View {
+            machines: &machines,
+            panes: &panes,
+            threads: &threads,
+            current: None,
+            sel,
+            focused: true,
+            top: None,
+            pal: &pal,
+            now_ms: 2_000,
+        };
+        let w = 36;
+        let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, list.len() as u16));
+        render(&mut buf, Rect { x: 0, y: 0, w, h: list.len() as u16 }, &list, &v);
+        let text = |y: u16| {
+            let (mut out, mut x) = (String::new(), 0);
+            while x < w {
+                let sym = buf[(x, y)].symbol().to_string();
+                x += (unicode_width(&sym) as u16).max(1);
+                out.push_str(&sym);
+            }
+            out.trim_end().to_string()
+        };
+        let shown: Vec<String> = (0..list.len() as u16).map(text).collect();
+        assert_eq!(
+            shown,
+            vec![
+                " ▾ mac-a                          ●",
+                " + 새 셸",
+                " demo       사람 차례 1 · 작업 중 1",
+                // pane이 없는 사람 차례는 웹처럼 「pane 닫힘」
+                "   ● t-0002 · t-0002-job",
+                "     사람 차례 · pane 닫힘",
+                "   ● t-0001 · t-0001-job",
+                "     작업 중 · ~40%",
+            ]
+        );
+        assert_eq!(buf[(5, 6)].fg, pal.yellow);
+        assert_eq!(buf[(5, 4)].fg, pal.red);
+        let selection = if pal.selection_bg == Color::Reset { pal.active_row_bg } else { pal.selection_bg };
+        assert_eq!((buf[(0, 5)].bg, buf[(0, 6)].bg), (selection, selection));
+        assert_ne!(buf[(0, 4)].bg, selection);
     }
 
     /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
@@ -426,6 +805,7 @@ mod tests {
             focused: false,
             top: None,
             pal: &pal,
+            now_ms: 0,
         };
         let line = |w: u16| {
             let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));

@@ -50,6 +50,8 @@ use aaa_proto::layout::{self, Rect};
 const ERROR_SHOWN: Duration = Duration::from_secs(5);
 /// 알림 카드가 보이는 시간
 const MESSAGE_SHOWN: Duration = Duration::from_secs(5);
+/// 목록을 저절로 다시 그리는 간격(「n분 조용」)
+const MINUTE: Duration = Duration::from_secs(60);
 /// 펼친 사이드바 폭의 범위(herdr `validated_sidebar_bounds` 기본 18~36)와 접힌 compact 폭(herdr 4)
 const SIDEBAR_MIN: u16 = 18;
 const SIDEBAR_MAX: u16 = 36;
@@ -453,6 +455,9 @@ impl App {
         self.pending.insert(id, Pending::Report("thread 목록"));
         let mut keys_in = EventStream::new();
         let mut dirty = true;
+        // 목록 thread 둘째 줄 「n분 조용」이 화면에서 늘어나게 1분마다 다시 그린다(웹 `useMinute`)
+        let mut minute = tokio::time::interval_at(tokio::time::Instant::now() + MINUTE, MINUTE);
+        minute.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             if dirty {
                 self.sync_capture();
@@ -509,6 +514,7 @@ impl App {
                     self.message = None;
                     dirty = true;
                 }
+                _ = minute.tick() => dirty = true,
                 // 끌어 고르다 가장자리에 닿아 있으면 30ms마다 한 줄씩(herdr selection autoscroll)
                 _ = tokio::time::sleep_until(self.autoscroll.as_ref().map_or_else(tokio::time::Instant::now, |a| a.at)), if self.autoscroll.is_some() => {
                     self.autoscroll_tick(&mut tx).await?;
@@ -697,14 +703,18 @@ impl App {
         list::rows(&self.machines, &panes, &self.threads)
     }
 
-    /// 고른 줄의 자리(없어졌으면 지금 pane 줄, 그것도 없으면 첫 줄)
+    /// 고른 줄의 자리(없어졌으면 지금 pane 줄이나 그 pane의 thread 줄, 그것도 없으면 첫 줄)
     fn list_index(&self, rows: &[list::Row]) -> usize {
         let at = |r: &list::Row| rows.iter().position(|x| x == r);
-        self.list_sel
-            .as_ref()
-            .and_then(at)
-            .or_else(|| self.focus.clone().and_then(|f| at(&list::Row::Pane(f))))
-            .unwrap_or_else(|| list::first(rows))
+        let current = || {
+            let f = self.focus.as_deref()?;
+            at(&list::Row::Pane(f.to_string())).or_else(|| {
+                rows.iter().position(|r| {
+                    matches!(r, list::Row::Thread(k) if self.threads.get(k).and_then(|t| t.pane.as_deref()) == Some(f))
+                })
+            })
+        };
+        self.list_sel.as_ref().and_then(at).or_else(current).unwrap_or_else(|| list::first(rows))
     }
 
     /// 목록 펴기·접기(herdr `ToggleSidebar`: 포커스는 그대로)
@@ -1580,6 +1590,9 @@ impl App {
             focused: self.mode == Mode::Navigate,
             top: self.list_top,
             pal: &self.palette,
+            now_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64),
         }
     }
 
@@ -1602,7 +1615,8 @@ impl App {
         hits.sidebar = Some(r);
         if body.h > 0 {
             let (placed, skip) = list::render(buf, body, &rows, &self.list_view(&rows));
-            hits.rows = placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..body }, rows[n].clone())).collect();
+            // thread 둘째 줄을 누르면 그 thread
+            hits.rows = placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..body }, rows[n].target())).collect();
             hits.list_skip = skip;
             hits.list_h = body.h;
         }

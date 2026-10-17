@@ -1182,7 +1182,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **요청.** TUI에서도 웹처럼 프로젝트 thread와 머신별 pane을 보고 연다. 웹 왼쪽 목록과 같은 모양, 접기·펴기, 목록과 pane 사이 포커스 이동, 좁은 터미널은 접힌 채 시작.
 - **구현(`aaa-tui::list`).**
-  - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지).
+  - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지). → §8.116에서 웹 L1대로 머신 아래 프로젝트 머리와 thread 두 줄(묶음 rank 순)로 바꿨다.
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
   - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다. → §8.92에서 herdr대로 26칸(구분선 포함)·늘 펼친 채 시작·접으면 4칸 compact로 바꿨다.
   - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
@@ -2154,7 +2154,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **배치.** 65칸 이상이면 왼쪽 사이드바가 온 높이(폭 26, 구분선 포함, 18~36으로 묶음), 그 오른쪽 맨 윗줄이 탭 막대, 나머지가 pane이다. 상태 줄은 없다. 64칸 이하면 사이드바·탭 막대 대신 두 줄 머리다. PTY 크기는 이 pane 칸으로 건다(90×30이면 64×29).
 - **팔레트.** herdr 테마 18개를 그대로 옮겼다. `[tui] theme`(기본 `catppuccin`, herdr 기본과 같음). 모르는 이름은 ERROR 막대로 알리고 기본을 쓴다. 256색 번호 상수(§8.27 무렵)는 없앴다.
 - **사이드바(펼침).** `sidebar_bg` 바탕, 오른쪽 `│`(`surface_dim`), 머리 ` <workspace>`(`overlay0` 굵게, herdr ` spaces` 자리), 빈 줄, 목록, 맨 아래 오른쪽 `«`.
-  - 줄: thread·pane은 ` <상태 점> <이름>`(herdr `state_icon` + 이름, 점은 working 노랑 `●`·blocked 빨강 `●`·done 청록 `●`·idle 초록 `○`·셸 등 `·`), 오른쪽에 상태 글. 머신은 ` ▾ <이름>`(`text` 굵게)과 붙은 원격 머신 초록 `●`·끊긴 머신 노랑 `◐ 끊김`(herdr `render_endpoint_row`).
+  - 줄: thread·pane은 ` <상태 점> <이름>`(→ §8.116에서 thread는 「id · 제목」 두 줄)(herdr `state_icon` + 이름, 점은 working 노랑 `●`·blocked 빨강 `●`·done 청록 `●`·idle 초록 `○`·셸 등 `·`), 오른쪽에 상태 글. 머신은 ` ▾ <이름>`(`text` 굵게)과 붙은 원격 머신 초록 `●`·끊긴 머신 노랑 `◐ 끊김`(herdr `render_endpoint_row`).
   - 이름은 `subtext0`, 지금 pane 줄은 `active_row_bg` 바탕에 `text` 굵게. 탐색 중 고른 줄은 `selection_bg` 바탕(없는 테마면 `active_row_bg`)이다. `▸` 표시는 뺐다(herdr는 바탕색만).
   - 사후 평가자 pane은 상태 줄 대신 목록 맨 아래 「평가」 묶음에 보인다.
 - **사이드바(접힘).** `[tui] sidebar_collapsed_mode = "compact"`(기본)면 4칸 열에 thread·pane마다 번호와 상태 점, 맨 아래 가운데 `»`. `"hidden"`이면 없다. `[tui] sidebar_start_collapsed`(기본 끔)로 접힌 채 시작한다. herdr처럼 터미널 폭으로는 접지 않는다.
@@ -2539,6 +2539,19 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **TUI.** 위 키와 막대·커서를 그대로 옮겼다(`copy.rs`). 커서·고르기는 기록 줄 번호(§8.114)로 두고, 화면 위치는 이 화면의 기록 위치(`PaneScroll { by: offset }`, §8.111)로 옮긴다. 보낸 위치는 frame을 기다리지 않고 셈하고, 올라가 있는 동안 host가 보던 줄을 지키려 위치를 올리면 같이 올린다(끌어 고르기의 보낸 위치도). 복사는 끌어 고르기와 같이 host가 기록까지 읽는다(`PaneSelectionRead`, §8.114). copy 모드에서는 붙여넣기를 pane에 보내지 않고, 끌어 고르기 뒤 ctrl+c 복사 키도 보지 않는다. 그 pane의 alt 화면이 바뀌면 고르기를 지운다. 단축키 창 「pane 이름 바꾸기」 뒤에 「copy 모드」.
 - **다른 점.** `$`·`^`는 herdr는 서버에 묻고(`PaneCopyMotion`), aaa는 보낸 위치를 따라온 화면 frame의 그 줄에서 찾는다(frame이 아직 따라오지 않았으면 아무것도 하지 않는다, 사람이 치는 빠르기에서는 늘 따라와 있다). 낱말 이동(`w`·`b`·`e`·`W`·`B`·`E`)·문단(`{`·`}`)·찾기(`/`·`?`·`n`·`N`)와 막대의 그 안내는 아직 없다(다음 묶음, host 요청이 든다). `prefix e`(기록을 편집기로)도 아직 없다.
 - **시험.** 유닛: `copy_mode_helpers_like_herdr`(쪽 줄 수, 명령 글자, 줄 첫·끝 칸, 줄 단위 범위), 키 `[`. TUI harness `copy_mode_like_herdr`: `seq 1 200` 뒤 `prefix [`·`kkk0v`·`jy`면 「198\n1」 복사하고 나감, `g`면 기록 맨 앞(명령 줄), `Vjj`·Enter면 세 줄 복사하고 맨 아래로 돌아옴, PageUp이면 27줄 위(맨 위 146), `q`면 맨 아래, 셸에는 아무것도 가지 않음. 나갈 때 되돌리기를 빼는 결함을 심으면 실패한다.
+
+### 8.116 TUI 사이드바 thread 줄을 웹 L1·herdr-projects대로(10-18, 사용자 지시 「tui도 ui 미려하게, 최소 herdr-projects 정도」, 차이 목록 2장 L1·U4~U6)
+
+- **참고.** 웹 목록(§8.71, `web/src/Sidebar.tsx` `MachineGroup`·`ProjectGroup`·`ThreadRow`, `web/src/sidebarModel.ts` `machineRoster`·`threadMachine`·`sortThreads`·`stateLine`·`projectLine`)과 herdr-projects 사이드바(`thread_display` 「id · 제목」, `state_line`, `project_line`, `Group::rank`).
+- **TUI(`aaa-tui::list`).**
+  - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」, 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「사람 차례 n · 작업 중 n」, 없으면 「쉼」, 사람 차례가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
+  - thread의 머신은 pane이 있으면 pane의 머신, 없으면 thread 머신 이름·ID(웹 `threadMachine`). thread pane은 pane 줄로 다시 나오지 않는다. 끝난·평가자 thread는 빠진다.
+  - 차례는 묶음 rank(사람 차례 → 검토 대기 → 작업 중 → 쉼) 다음 최근 바뀐 순(웹 `sortThreads`).
+  - 첫 줄 `   <상태 점> t-0001 · 제목`, 둘째 줄 `     <상태 말>`(묶음 색): 묶음 말과 사실 하나. 사람 차례는 pane 닫힘·실패·확인창·~n%, 검토 대기는 보고, 작업 중은 5분 안에 보고한 진행률 ~n%(100은 빼고) 아니면 보고·변경 뒤 5분이 지나면 「n분 조용」. 「n분 조용」이 늘어나게 1분마다 다시 그린다.
+  - 둘째 줄은 고르지 않는다. 탐색 ↑↓는 건너뛰고, 누르면 그 thread, 고른·지금 thread는 두 줄을 같이 칠하고, 고른 thread가 아래 끝이면 둘째 줄까지 보이게 내린다. 지금 pane이 thread pane이면 그 thread 줄을 고른 줄로 삼는다.
+  - 접힌 compact 열은 그대로(thread·pane마다 번호와 점, 차례는 위 목록 차례).
+- **다른 점.** 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴·agents 묶음은 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
+- **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
