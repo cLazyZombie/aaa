@@ -269,7 +269,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
   - M1-2 구현: `aaa attach [-w workspace]`(설계 예시의 `aaa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
-  - prefix 키는 설정 `[tui] prefix`(기본 `C-b`)다. 그 뒤 `c` 새 탭, `%`·`"` 나누기, 화살표·`o` 이동, `n`·`p`·숫자 탭, `t` 이 화면 크기로(보통은 필요 없다, §8.33), `r` 재개, `x` 닫기, `d` 나가기, prefix 두 번은 prefix 글자를 그대로 보낸다. 3초 안에 명령 키가 없으면 취소한다. 한글 입력기면 prefix 동안 영문 입력기로 바꾼다(§8.34).
+  - 키는 herdr 0.9.5 기본 키와 모드를 따른다(§8.73). prefix(`[tui] prefix`, 기본 `ctrl+b`) 뒤 명령 키 하나: `c` 새 탭, `v`·`-` 나누기, `h/j/k/l`·`Tab`·`Shift+Tab` 포커스, `n`·`p`·숫자 탭, `x` 닫기, `b` 목록, `w` 탐색 모드, `o` 질문 pane, `?` 단축키, `Shift+R` 설정 다시 읽기, `q` 나가기. prefix 두 번은 prefix 키를 그대로 보낸다. 시간 제한은 없고 Esc·모르는 키는 취소한다. 입력기 전환(§8.34)은 herdr처럼 기본 끔이다.
   - 다른 front가 지금 쓰는 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. 입력하거나 터미널 focus를 다시 얻으면 그 칸 크기로 맞추면서 이 화면이 지금 쓰는 화면이 된다(§8.33). lease가 빈 pane에 포커스해도 같다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. lease는 host가 둔다.
@@ -1143,7 +1143,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - herdr-web-ui: 조작 연결이면 언제나 입력된다. 보이고 focus가 있을 때(`inUse`)만 크기를 건다. focus·보임을 얻거나, 크기가 어긋난 채 클릭·입력하면 다시 맞춘다. 가려지면 1초 뒤 놓는다. observe 연결은 입력·크기 불가다.
 - **aaa 규칙.**
   - host: 대화형 front의 입력·크기·그림은 거부하지 않고, 보낸 연결을 「지금 쓰는 화면」(lease)으로 둔다. 한 번 보내는 CLI(`cli` 연결)는 바꾸지 않는다. `lease_held`는 CLI `pane resize`(누가 쓰는 중)에만 남는다.
-  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다.
+  - TUI: 입력은 그대로 보낸다. 터미널 focus 사건을 켜고, FocusGained면 보이는 pane 모두 크기를 다시 건다. FocusLost 동안은 크기를 걸지 않는다(focus 사건을 안 보내는 터미널은 늘 focus로 본다). 비정상 종료에도 focus 사건 보고를 끈다. 상태 줄은 「이 화면 크기」·「<화면> 크기」다. `prefix t`는 남겼다(→ §8.73에서 herdr처럼 없앴다).
   - 웹: 입력 막대·키 줄·그림을 막지 않는다. 보이고 focus가 있을 때만 크기를 건다. window focus·다시 보임·터미널 누름이면 크기를 다시 건다. 1초 넘게 가려지면 `release`한다. 「가져오기」 단추를 없애고 「<화면>이 크기를 정하는 중 · 입력하거나 터미널을 누르면 이 화면 크기로」만 보인다.
   - 보기 권한(reader)은 그대로 입력·크기 불가다.
   - 두 화면이 번갈아 입력하면 크기가 그때마다 바뀐다(herdr와 같다).
@@ -1160,7 +1160,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
     - 두벌식 같은 입력기도 macOS는 ASCII 가능으로 보고한다. 그래서 종류(자판 배치인지)까지 본다.
   - 명령 키를 처리한 뒤, 취소, 시간 초과(3초), TUI 종료·오류·panic에 원래 입력기로 되돌린다(값이 사라질 때 되돌리는 guard).
   - 지속 설정이 아니라 지금 입력기만 바꾼다. ssh 세션(`SSH_CONNECTION`·`SSH_CLIENT`·`SSH_TTY`)에서는 바꾸지 않는다(그 Mac의 입력기는 앞에 앉은 기기의 것이 아니다).
-  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다.
+  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다. → §8.73에서 herdr 이름 `switch_ascii_input_source_in_prefix`·기본 끔으로 바꿨다(예전 이름도 읽는다).
 - **보조: 자모 해석.** prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다(ㅊ=c, ㅅ=t, ㅌ=x, ㅇ=d, ㄱ=r, ㅜ=n, ㅔ=p, ㅐ=o, 쌍자음·ㅒ·ㅖ는 Shift 자리). 바꾸기 전에 들어온 키, ssh·다른 OS를 위한 것이다.
 - **시험.**
   - 유닛: 자모 → 키, ssh 판정.
@@ -1174,7 +1174,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지).
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
   - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다.
-  - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다.
+  - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
   - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
   - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널).
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
@@ -1760,6 +1760,34 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - TUI는 그 pane의 lease를 쥐었을 때다(TUI는 그 pane을 앞에 두고 입력·크기를 건다).
   - 다르게 둔 것: herdr-web-ui는 웹에서 pane을 열어도 herdr의 seen을 바꾸지 않는다(웹 터미널은 herdr TUI client가 아니어서 `outer_terminal_focus`가 없다. `focusPane`은 나눈 화면에서만 부른다). 웹으로만 보는 사람에게는 「끝남」이 지워지지 않으므로 aaa는 웹 화면도 보는 화면으로 센다.
 - **시험.** host 유닛 `seen`: 끝나는 전이와 보는 화면, 쓰는 기기의 연 pane만 본다. 웹 E2E 「끝남(안 봄)」: 다른 pane을 보는 동안 끝나면 초록 점과 말, 열면 사라짐, 보는 동안 끝난 턴은 남지 않음, 가려진 동안 끝나면 끝남이고 다시 쓰는 화면이 되면 사라짐. 턴의 시작·끝은 시험이 pane에 줄을 보내 정하고(hook), 기다림은 상태 칸의 `data-status`로 끝낸다.
+
+### 8.73 TUI 키와 모드를 herdr대로(10-18, 차이 목록 4장 B·C, D12 「참고대로」)
+
+- **참고(herdr 0.9.5).** 기본 키 `src/config/model.rs` `KeysConfig::default`, 모드 `src/client/shell/input.rs` `route_key`·`route_navigate_key`, 모드 막대 `src/client/shell/render.rs` `render_mode_bar`, 단축키 창 `src/client/shell/overlays.rs` `render_help_overlay`·`src/input/keybind_help.rs`, 키 이름 `src/config/keybinds.rs` `parse_key_combo`·`format_key_combo`, 방향 포커스 `src/layout.rs` `find_in_direction`, 입력기 `src/client/shell/input_source.rs`·`src/platform/windows.rs`.
+- **모드(`aaa-tui` `Mode`).**
+  - Terminal: 키는 포커스 pane으로 간다. prefix 키면 Prefix로.
+  - Prefix: 다음 키 하나가 명령이다. 시간 제한이 없다(예전 3초를 뺐다). Esc와 모르는 키는 아무것도 보내지 않고 취소한다. prefix를 한 번 더 누르면 그 키를 pane에 보낸다.
+  - Navigate(`prefix w`): `↑↓` 목록 고르기, `Enter` 열기, `1`~`9` 목록 n번째 열기, `h/j/k/l`·`←→`·`Tab`·`Shift+Tab` pane 포커스(탐색은 이어진다), 다른 prefix 명령은 하고 탐색을 끝낸다. Esc·prefix는 취소. 목록이 접혀 있으면 pane 위에 띄워 보인다(pane 크기는 그대로).
+  - 예전 「목록 포커스」(`prefix Tab` 목록 ↔ pane, 목록에서 `j/k`)는 탐색 모드로 바뀌었다.
+- **키(herdr 기본값).** `c` 새 탭, `v` 오른쪽에 나누기(split_vertical), `-` 아래에 나누기(split_horizontal), `x` pane 닫기, `h/j/k/l` 방향 포커스, `Tab`·`Shift+Tab` pane 차례로, `n`·`p`·`1`~`9` 탭, `b` 목록 펴기·접기(포커스는 그대로), `w` 탐색, `o` 질문이 열린 pane으로(여럿이면 차례로), `?` 단축키 창, `Shift+R` `[tui]` 설정 다시 읽기, `q` 나가기.
+  - 없앤 키: `d`(→ `q`), `%`·`|`(→ `v`), `"`(→ `-`), 화살표(→ `h/j/k/l`, 화살표는 탐색 모드), `o` 다음 pane(→ `Tab`), `s`(herdr는 설정 창 자리), `t` 이 화면 크기로(§8.33으로 이미 자동), `r` 재개.
+  - `r` 재개를 없앤 이유: herdr에는 재개 키가 없다(복원 때 자동). 자동 이어가기는 세션·CLI thread 몫이다(D12). 그때까지 중단 pane의 표시는 다시 띄우는 명령(`aaa pane resume <id 앞 8자>`)을 보인다. `r`은 herdr처럼 크기 모드 자리다(다음 묶음).
+  - `Shift+R`은 TUI가 `[tui]`를 다시 읽는 데까지다. herdr는 서버 설정도 다시 읽는다. host 쪽 `aaa config reload`는 CLI thread 몫이다.
+- **설정 `[tui]`(host.toml).**
+  - `prefix`: herdr 형식 `"ctrl+b"`, 여러 개면 배열. 예전 `C-b`도 읽는다. 읽지 못한 값은 빼고, 남는 것이 없으면 `ctrl+b`로 두고 ERROR 막대로 알린다(herdr `parse_prefix_keys`).
+  - `switch_ascii_input_source_in_prefix`(기본 끔, herdr 이름): Prefix·Navigate 모드와 단축키 창 동안 영문 입력기. 예전 이름 `prefix_ascii`가 적혀 있으면 그 값을 쓴다(그대로 둔 사용자는 계속 켜진다).
+  - `prefix_jamo_keys`(기본 끔): prefix 뒤 두벌식 자모를 같은 자리 영문 키로 읽는다.
+  - 두 기능은 사용자가 전에 요청한 것이라 남기고, 참고처럼 기본은 끈다(brief). 결정 20 표의 「기본 켬」과 어긋난다 — coordinator 확인 대기.
+  - 입력기 전환 범위와 미루기는 herdr `reconcile_input_source`대로다: 모드가 끝나면 되돌리고, 터미널 focus가 없는 동안은 바꾸지도 되돌리지도 않고 돌아온 뒤 맞춘다.
+  - Windows: 앞 창 자판이 한국어이고 IME가 한글이면 `VK_HANGUL`을 `SendInput`으로 눌러 영문으로 바꾸고, 같은 창이 앞에 있고 아직 영문이면 되돌린다(herdr와 같다. IME 상태 읽기는 `WM_IME_CONTROL`/`IMC_GETOPENSTATUS`, 200ms 한도). 다른 언어 IME는 건드리지 않는다.
+  - kitty keyboard `REPORT_ALTERNATE_KEYS`로 기본 배치 키를 읽는 일(herdr `src/input/parse.rs`)은 crossterm 0.29가 그 값을 `KeyEvent`에 싣지 않아 하지 못한다. herdr도 prefix 뒤 일반 키는 글자 그대로 읽으므로, 한글 입력기에서는 입력기 전환이나 자모 해석을 켠다.
+- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다.
+  - 단축키 창: 가운데 76×22 테두리 창, 묶음(전체·탐색·목록/탭·pane)마다 `prefix+키`와 설명, `/` 검색(키·설명), `j/k/↑↓/pgup/pgdn` 넘기기, Esc·Enter 닫기, 넘칠 때 scrollbar.
+- **시험.**
+  - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 끔·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
+  - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane, `o` 질문 pane, `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
+  - 다른 TUI 시험도 새 키로 바꿨다(`q` 나가기, `v` 나누기, `w` 탐색과 `↑↓`, `b` 접기, 재개는 CLI).
+  - harness의 기다림은 시간이 아니라 사건이다: 화면은 bytes가 올 때마다 깨우고(Condvar), host 상태는 Front 연결의 Workspace·State 사건을 받는다. `cmd`는 PREFIX 막대가 보인 뒤 명령 키를 보낸다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
