@@ -962,6 +962,7 @@ impl Host {
             FrontRequest::ProjectCreate { name } => self.project_create(&name, actor),
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
+            FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
                 let kind = kind.unwrap_or(if repo.is_some() {

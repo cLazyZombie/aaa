@@ -128,7 +128,7 @@ pub fn typescript_bindings() -> String {
     );
     for d in decls {
         out.push_str("export ");
-        out.push_str(&d);
+        out.push_str(&d.lines().map(str::trim_end).collect::<Vec<_>>().join("\n"));
         out.push_str("\n\n");
     }
     out

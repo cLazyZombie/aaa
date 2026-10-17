@@ -9,8 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aaa_proto::{
-    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext,
-    ThreadGroup, ThreadStatus,
+    ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext, ThreadGroup, ThreadStatus,
 };
 
 use crate::orch::StartArgs;
@@ -98,8 +97,8 @@ impl Host {
             let mut profiles = Vec::new();
             let connected = m.connection == aaa_proto::Connection::Connected;
             if connected
-                && let Some(conn) = self.conn_of(&m.id)
-                && let Ok(AgentResponse::Profiles { profiles: ps }) = conn.request(AgentRequest::Profiles).await
+                && self.machine_feature(&m.id, "host_profiles.v1")
+                && let Ok(FrontResponse::Profiles { profiles: ps, .. }) = self.profiles(Some(&m.name)).await
             {
                 profiles = ps.into_iter().map(|p| p.name).filter(|n| safety.profile_allowed(n)).collect();
                 if self.machine_feature(&m.id, "profiles.v2") {

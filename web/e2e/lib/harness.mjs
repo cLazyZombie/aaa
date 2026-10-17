@@ -747,8 +747,9 @@ done
 );
 fs.writeFileSync(
   `${root}/c/agent.toml`,
-  `schema = 1\n[agent]\nwork_root = "${root}/work"\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\n`,
 );
+fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.fake]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`);
 // Codex처럼 구는 입력창: 글과 Enter가 한 덩어리로 오면 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측한 Codex 동작).
 // Enter만 따로 오면 그때까지의 글을 제출한다.
 fs.writeFileSync(

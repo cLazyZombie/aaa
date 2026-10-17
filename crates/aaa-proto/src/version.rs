@@ -33,7 +33,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.16: `PaneView.restore_error`(plan §8.111),
 /// 1.17: 묶음 `landing`(PR 승인, plan §8.113)
 /// 1.18: ProfileView `args`·`builtin`(기본 profile claude·codex, plan §8.115)
-pub const FRONT_API: Version = Version { major: 1, minor: 18 };
+/// 1.19: `ProfileResolve`(host 정본에서 확인). host_profiles.v1은 AGENT_LINK 1.4의 선택 기능으로 1.3 연결을 유지한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 19 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

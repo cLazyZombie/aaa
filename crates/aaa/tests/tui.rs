@@ -981,13 +981,11 @@ fn side_list_like_web() {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
     let host = format!("{LOCAL_ONLY}[projects]\nroot = \"{}\"\nallow_profiles = [\"cat\"]\n", lab::path_str(&projects));
+    let host = format!("{host}\n[profiles.cat]\nagent = \"custom\"\ncommand = [\"/bin/cat\"]\n");
     let h = lab.node("h", Some(&host));
     std::fs::write(
         h.cfg.join("agent.toml"),
-        format!(
-            "schema = 1\n[agent]\nwork_root = \"{}\"\n[profiles.cat]\nharness = \"custom\"\ncommand = [\"/bin/cat\"]\n",
-            lab::path_str(&lab.root.join("work"))
-        ),
+        format!("schema = 1\n[agent]\nwork_root = \"{}\"\n", lab::path_str(&lab.root.join("work"))),
     )
     .unwrap();
     lab.spawn("host", &h, &["host"]);

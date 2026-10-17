@@ -81,6 +81,8 @@ pub struct HostConfig {
     pub projects: ProjectsSection,
     pub notify: NotifySection,
     pub session: SessionSection,
+    /// profile 정의의 정본(참고 herdr-projects config.toml).
+    pub profiles: std::collections::BTreeMap<String, Profile>,
     /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.115). host는 쓸
     /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
@@ -196,6 +198,7 @@ impl Default for HostConfig {
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
             session: SessionSection::default(),
+            profiles: Default::default(),
             safety: Default::default(),
             defaults: DefaultsSection::default(),
         }
@@ -437,9 +440,17 @@ pub struct AgentConfig {
     pub reconnect: ReconnectSection,
     pub selfcheck: SelfcheckSection,
     pub health: HealthSection,
-    /// thread를 띄우는 profile(§8.2). host.toml `[safety.*] thread_profiles`(옛 `[projects] allow_profiles`)가 허용한 것만
-    /// 쓴다. claude·codex는 없어도 기본 profile이다(plan §8.115).
+    /// 옛 agent 설정 호환용. 새 host는 쓰지 않으며 시작 때 host로 옮기라는 경고를 낸다.
     pub profiles: std::collections::BTreeMap<String, Profile>,
+    /// 머신별 실행 파일·환경만 덮어쓴다. model·effort·args는 host 정본을 따른다.
+    pub harnesses: std::collections::BTreeMap<String, HarnessOverride>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct HarnessOverride {
+    pub command: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for AgentConfig {
@@ -451,6 +462,7 @@ impl Default for AgentConfig {
             selfcheck: SelfcheckSection::default(),
             health: HealthSection::default(),
             profiles: Default::default(),
+            harnesses: Default::default(),
         }
     }
 }
@@ -460,6 +472,7 @@ impl Default for AgentConfig {
 #[serde(default)]
 pub struct Profile {
     /// claude·codex·shell·custom
+    #[serde(rename = "agent", alias = "harness")]
     pub harness: String,
     pub model: String,
     pub effort: String,
@@ -540,7 +553,17 @@ pub fn load_host(dir: &Path) -> Result<Loaded<HostConfig>, ConfigErrors> {
 }
 
 pub fn load_agent(dir: &Path) -> Result<Loaded<AgentConfig>, ConfigErrors> {
-    load(dir, "agent", validate_agent)
+    let mut loaded: Loaded<AgentConfig> = load(dir, "agent", validate_agent)?;
+    if !loaded.config.profiles.is_empty() {
+        loaded.warnings.push(diag(
+            Severity::Warning,
+            &dir.join("agent.toml"),
+            0,
+            0,
+            "옛 agent.toml [profiles]가 있다: host.toml [profiles]로 옮기라. 새 host는 이 정의를 쓰지 않는다".into(),
+        ));
+    }
+    Ok(loaded)
 }
 
 /// 검증 실패 한 건: 문제 key 경로와 이유
@@ -656,6 +679,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     {
         out.push(Invalid { path: key(&["defaults", "thread_profile"]), message: e });
     }
+    for (name, profile) in &c.profiles {
+        if let Err(message) = profile_edit::validate_profile(name, profile) {
+            out.push(Invalid { path: key(&["profiles", name]), message });
+        }
+    }
     out
 }
 
@@ -685,6 +713,16 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
         if argv.is_empty() || argv[0].is_empty() {
             out.push(Invalid {
                 path: key(&["health", "toolchain", name]), message: "실행할 argv가 비었다".into()
+            });
+        }
+    }
+    for (name, h) in &c.harnesses {
+        if !matches!(name.as_str(), "claude" | "codex" | "shell" | "custom") {
+            out.push(Invalid { path: key(&["harnesses", name]), message: "모르는 harness다".into() });
+        }
+        if h.command.first().is_some_and(|v| v.is_empty()) {
+            out.push(Invalid {
+                path: key(&["harnesses", name, "command"]), message: "실행 파일이 비었다".into()
             });
         }
     }

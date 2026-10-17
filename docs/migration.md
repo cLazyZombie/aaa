@@ -121,3 +121,27 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 5. **정리.** 시험 host PID를 확인해 끝내고, 시험 폴더를 절대 경로로 지운다.
 
 결과는 pilot thread의 보고(시간표)에 남긴다.
+
+## M4: profile 정의를 host 한 곳으로 옮기기(10-18 사용자 결정)
+
+프로젝트·thread import와 별개인 설정 전환이다. 운영 파일은 자동으로 고치지 않는다. 전환 담당자가 다음 순서로 한다.
+
+1. host Mac에서 현재 `~/.config/herdr-projects/config.toml`의 `[profiles.<이름>]`를 로컬로 확인한다.
+   사용자 모델 목록·설정 원문은 저장소·fixture·공개 보고에 넣지 않는다.
+2. 그 표의 `agent`·`model`·`effort`·`description`·`args`를 이름 그대로 aaa host.toml `[profiles.<이름>]`로 복사한다.
+   aaa가 지원하는 harness는 claude·codex다. 다른 종류가 있으면 임의로 대체하지 말고 전환을 중단해 결정한다.
+   같은 이름의 기본 profile도 사용자 표가 우선한다. 이름 규칙(40자, 영문·숫자·`.`·`_`·`-`, `-`·`.`로 시작 금지)과
+   model·effort 검증은 참고 `profiles.rs`대로다. 오류는 `aaa config check`로 확인한다.
+3. 각 Mac agent.toml에는 host 주소·work_root와 머신별 `[harnesses.<종류>] command/env`만 둔다(건강 점검 설정은 유지).
+   옛 `[profiles]`가 있으면 host 정의와 대조한 뒤 사람이 제거한다. 전환 중에도 읽어서 경고하며 새 host는 사용하지 않는다.
+4. `aaa profile list --machine mac-a`·`aaa profile resolve <이름>`으로 host 정본을 확인한다.
+   허용 목록은 `aaa profile allow threads …`, 기본값은 `aaa profile default threads …`로 host에서 옮긴다.
+   프로젝트별 thread_profile이 전역 기본보다 먼저인 규칙은 유지한다.
+5. 각 Mac의 짧은 pilot thread를 같은 profile로 시작하고 실제 argv·model·effort·args와 머신별 실행 경로를 확인한다.
+   host는 해석 결과를 기록하며 실행 파일이 없거나 실행 권한이 없으면 agent가 명시적으로 거부한다.
+   옛 agent도 AGENT_LINK 1.3/1.4 연결은 유지하지만 `host_profiles.v1`이 없으면 시작을 거부하므로 먼저 agent를 갱신한다.
+6. 새 대화 restart `--profile`이 최신 host 정의를 읽는지 확인한다. `--resume`은 저장된 launch로 같은 대화를 잇는다.
+   실행 중 model 변경은 harness `/model`이며 aaa가 막거나 덮어쓰지 않는다.
+
+기존 shell/custom profile의 command/env는 전환 호환용으로 읽는다. 새 claude/codex 정의는 위 다섯 키를 쓰고
+머신별 실행 경로·환경은 agent의 harness 덮어쓰기로 분리한다. 배포·운영 host 재시작은 binary 배포 담당자가 한다.

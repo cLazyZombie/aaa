@@ -89,6 +89,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "rename.v1".into(),
             "history.v1".into(),
             "profiles.v2".into(),
+            // host의 ResolvedProfile과 설치 harness 조회(Harnesses)를 받는다.
+            "host_profiles.v1".into(),
             "launch_safety.v1".into(),
         ],
         dev_mode: agent.dev_mode,

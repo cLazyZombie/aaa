@@ -114,3 +114,12 @@ thread_profile = ""
 # thread_agent_args = []       # 프로젝트 기본 profile과 같은 harness의 기본 profile에 붙이는 인자
 # routine_commands = false     # routine 명령 실행(명령마다 사람 승인도 필요하다)
 # thread_profiles = ["claude"] # thread가 쓸 수 있는 profile(없으면 모두)
+
+# 모든 머신이 쓰는 profile 정의(herdr-projects 0.2.x와 같은 키).
+# claude·codex는 정의 없이도 같은 이름의 기본 profile이다. 같은 이름을 쓰면 아래 정의가 대신한다.
+[profiles.review]
+agent = "codex"
+model = ""
+effort = "high"
+description = "검토할 일"
+args = []

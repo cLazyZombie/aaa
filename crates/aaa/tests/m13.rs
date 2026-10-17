@@ -306,20 +306,18 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     )
 }
 
-fn agent_toml(work_root: &Path, scripts: &Path) -> String {
+fn fixture_profiles(scripts: &Path) -> String {
     format!(
-        "schema = 1\n[agent]\nwork_root = \"{}\"\n\
-         [profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
-         [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
-         [profiles.claude]\nharness = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\" }}\n\
-         [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
-         [profiles.prog]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
-         [profiles.paste]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
-         [profiles.asker]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
-         [profiles.resumable]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
-         [profiles.evil]\nharness = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", EVIL_SID = \"--dangerously-skip-permissions\" }}\n\
-         [profiles.other]\nharness = \"custom\"\ncommand = [\"/bin/sh\"]\n",
-        path_str(work_root),
+        "[profiles.fake]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
+         [profiles.mute]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
+         [profiles.claude]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\" }}\n\
+         [profiles.sticky]\nagent = \"claude\"\ncommand = [\"{}\"]\n\
+         [profiles.prog]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
+         [profiles.paste]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
+         [profiles.asker]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
+         [profiles.resumable]\nagent = \"claude\"\ncommand = [\"{}\"]\n\
+         [profiles.evil]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", EVIL_SID = \"--dangerously-skip-permissions\" }}\n\
+         [profiles.other]\nagent = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(&scripts.join("fake.sh")),
         path_str(&scripts.join("mute.sh")),
         path_str(&scripts.join("mute.log")),
@@ -412,8 +410,12 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     std::fs::set_permissions(scripts.join("resumable.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755))
         .unwrap();
     let repo = make_repo(&lab.root);
-    let h = lab.node("h", Some(&host_toml(&projects, extra, web)));
-    std::fs::write(h.cfg.join("agent.toml"), agent_toml(&lab.root.join("workA"), &scripts)).unwrap();
+    let h = lab.node("h", Some(&format!("{}\n{}", host_toml(&projects, extra, web), fixture_profiles(&scripts))));
+    std::fs::write(
+        h.cfg.join("agent.toml"),
+        format!("schema = 1\n[agent]\nwork_root = {:?}\n", lab.root.join("workA")),
+    )
+    .unwrap();
     let mut w = World { lab, h, projects, repo, scripts, addr: String::new() };
     w.lab.spawn("host", &w.h, &["host"]);
     let st = wait_for("host 준비", T, || w.h.json(&["status"]).ok());
@@ -514,7 +516,11 @@ impl World {
     /// 원격(TLS) agent labB를 등록하고 띄운다
     fn add_remote(&mut self) {
         let b = self.lab.node("b", None);
-        std::fs::write(b.cfg.join("agent.toml"), agent_toml(&self.lab.root.join("workB"), &self.scripts)).unwrap();
+        std::fs::write(
+            b.cfg.join("agent.toml"),
+            format!("schema = 1\n[agent]\nwork_root = {:?}\n", self.lab.root.join("workB")),
+        )
+        .unwrap();
         self.h.ok(&["machine", "enroll", "--open", "5m"]);
         let (_, mut out) = self.lab.spawn_piped("enroll", &b, &["agent", "enroll", &self.addr, "--name", "labB"]);
         let line = read_line_containing(&mut out, "--code");
@@ -1435,7 +1441,7 @@ fn start_defaults_profile_kind_and_task() {
 }
 
 /// profile·safety를 사람이 바꾸고 thread가 쓴다(herdr-projects `profile`·`safety`, plan §8.115): 세션 안·터미널 아님은 거부,
-/// 사람이 y로 켠 yolo가 다음 thread 인자·context에 닿고(host를 다시 띄우지 않음), 이 머신 agent.toml에 더한 profile을
+/// 사람이 y로 켠 yolo가 다음 thread 인자·context에 닿고(host를 다시 띄우지 않음), host.toml에 더한 profile을
 /// agent를 다시 띄우지 않고 허용·사용한다.
 #[cfg(unix)]
 #[test]
@@ -1454,7 +1460,7 @@ fn safety_and_profiles_by_a_person() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
     let o = w.h.run(&["safety", "yolo", "demo", "on"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
-    let o = w.h.run(&["profile", "add", "sh1", "--harness", "shell"]);
+    let o = w.h.run(&["profile", "add", "sh1", "--agent", "shell"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     // 틀린 값은 사람인지 묻기 전에 알린다
     let o = w.h.run(&["safety", "set", "demo", "start_threads", "now"]);
@@ -1484,11 +1490,11 @@ fn safety_and_profiles_by_a_person() {
     let v = w.start(&["--title", "f", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("f.txt", "x")]);
     assert!(!w.h.pane(v["pane"].as_str().unwrap())["argv"].to_string().contains("dangerously"));
 
-    // 이 머신 agent.toml에 profile을 더하고, 허용하고, agent를 다시 띄우지 않고 쓴다
+    // host.toml에 profile을 더하고, 허용하고, agent를 다시 띄우지 않고 쓴다
     let o = w.h.in_terminal(&["profile", "allow", "threads", "fake", "sh1", "--project", "demo"], &[], T);
-    assert!(o.contains("연결된 어느 머신에도 profile `sh1`가 없다"), "{o}");
+    assert!(o.contains("host.toml에 profile `sh1`가 없다"), "{o}");
     let o = w.h.in_terminal(
-        &["profile", "add", "sh1", "--harness", "shell", "--description", "셸 하나", "--arg", "-i"],
+        &["profile", "add", "sh1", "--agent", "shell", "--description", "셸 하나", "--arg", "-i"],
         &[],
         T,
     );
@@ -1534,8 +1540,8 @@ fn safety_and_profiles_by_a_person() {
     assert!(e.expect_err("지운 profile").contains("profile `sh1`가 없다"));
 }
 
-/// thread restart --profile(herdr-projects threads.rs `restart`, 차이 목록 E8): 그 머신 agent.toml에서 다시 해석해 새 대화로
-/// 띄운다. 허용 목록에 없는 profile·`--resume`과 함께는 거부한다(agent.toml에 없는 profile은 agent 유닛 시험).
+/// thread restart --profile(herdr-projects threads.rs `restart`, 차이 목록 E8): host.toml에서 다시 해석해 새 대화로
+/// 띄운다. 허용 목록에 없는 profile·`--resume`과 함께는 거부한다(host.toml에 없는 profile은 중앙화 시험).
 #[test]
 fn restart_with_another_profile() {
     let w = world();
@@ -1549,6 +1555,12 @@ fn restart_with_another_profile() {
     let e = w.h.json(&["thread", "restart", "demo", &id, "--profile", "nope"]).expect_err("허용하지 않은 profile");
     assert!(e.contains("profile `nope`는 `demo`의 thread에 허용되지 않았다"), "{e}");
     assert_eq!(w.show(&id)["profile"], "fake", "거부한 restart는 기록을 바꾸지 않는다");
+    // host를 다시 띄우지 않아도 같은 이름의 최신 정의를 읽는다(옛 agent 설정은 없다).
+    let config = w.h.cfg.join("host.toml");
+    let text = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("[profiles.mute]", "[profiles.mute]\nargs = [\"host-reloaded\"]");
+    std::fs::write(config, text).unwrap();
     let v = w.h.ok(&["thread", "restart", "demo", &id, "--profile", "mute"]);
     assert_eq!(v["profile"], "mute", "{v}");
     let pane2 = v["pane"].as_str().unwrap().to_string();
@@ -1556,7 +1568,7 @@ fn restart_with_another_profile() {
     // 새 세션은 mute profile의 명령이다(옛 fake 명령이 아니다)
     wait_for("새 세션", T, || (w.h.pane(&pane2)["state"] == "running").then_some(()));
     let argv = w.h.pane(&pane2)["argv"].to_string();
-    assert!(argv.contains("mute.sh") && !argv.contains("fake.sh"), "{argv}");
+    assert!(argv.contains("mute.sh") && !argv.contains("fake.sh") && argv.contains("host-reloaded"), "{argv}");
     assert_eq!(w.kinds(0).iter().filter(|k| *k == "thread_restarted").count(), 1);
 }
 
@@ -2478,7 +2490,7 @@ fn machine_health() {
     let t = w.start(&["--title", "h", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("h.txt", "x")]);
     let id = t["id"].as_str().unwrap().to_string();
     w.wait_show("보고", &id, |v| v["report_hash"].is_string());
-    let base = agent_toml(&w.lab.root.join("workA"), &w.scripts);
+    let base = format!("schema = 1\n[agent]\nwork_root = {:?}\n", w.lab.root.join("workA"));
     let restart = |w: &mut World, health: &str| {
         w.lab.kill("agentA");
         std::fs::write(w.h.cfg.join("agent.toml"), format!("{base}{health}")).unwrap();
@@ -3220,4 +3232,136 @@ fn resolve_looks_up_the_pull_request_once_more() {
     let found: Vec<&Value> = items.iter().filter(|i| i["event"] == "PR found at resolve").collect();
     assert_eq!(found.len(), 1, "{items:?}");
     assert!(found[0]["summary"].as_str().unwrap().contains("상태 MERGED"), "{found:?}");
+}
+
+/// 정본은 host 하나다: 같은 정의로 두 머신을 띄우고 머신 경로·env만 다르게 적용한다.
+/// 옛 agent profile은 읽어서 경고하지만 새 host의 model·effort·args를 덮지 못한다.
+#[test]
+fn profiles_come_from_host_and_harness_overrides_are_local() {
+    let mut w = world();
+    w.add_remote();
+    let config = w.h.cfg.join("host.toml");
+    let base = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{base}\n[profiles.central]\nagent = \"codex\"\nmodel = \"host-model\"\neffort = \"high\"\nargs = [\"--search\"]\ndescription = \"중앙 정의\"\n[safety.demo]\nthread_profiles = [\"central\"]\n")).unwrap();
+    for (machine, cfg, root, marker) in [
+        ("labA", w.h.cfg.clone(), w.lab.root.join("workA"), "local-A"),
+        ("labB", w.lab.root.join("b/c"), w.lab.root.join("workB"), "local-B"),
+    ] {
+        let script = w.scripts.join(format!("{machine}-codex.sh"));
+        std::fs::write(&script, "#!/bin/sh\nprintf 'OVERRIDE:%s\\n' \"$PROFILE_MARK\"\nexec cat >/dev/null\n").unwrap();
+        std::fs::write(cfg.join("agent.toml"), format!("schema = 1\n[agent]\nwork_root = {:?}\n[harnesses.codex]\ncommand = [\"/bin/sh\", {:?}]\nenv = {{ PROFILE_MARK = {marker:?} }}\n[profiles.central]\nharness = \"claude\"\nmodel = \"agent-wrong-model\"\ncommand = [\"/does-not-exist\"]\n", root, script)).unwrap();
+        let list = w.h.ok(&["profile", "list", "--machine", machine]);
+        let p = list["profiles"].as_array().unwrap().iter().find(|p| p["name"] == "central").unwrap();
+        assert_eq!(
+            (p["harness"].as_str(), p["model"].as_str(), p["effort"].as_str()),
+            (Some("codex"), Some("host-model"), Some("high"))
+        );
+        let t = w.start(&[
+            "--title",
+            "central",
+            "--machine",
+            machine,
+            "--profile",
+            "central",
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task(&format!("{machine}.txt"), "x"),
+        ]);
+        let pane = t["pane"].as_str().unwrap();
+        w.h.wait_output(pane, &format!("OVERRIDE:{marker}"), T);
+        let argv = w.h.pane(pane)["argv"].clone();
+        let text = argv.to_string();
+        assert!(
+            text.contains("host-model")
+                && text.contains("model_reasoning_effort=high")
+                && text.contains("--search")
+                && text.contains(script.to_str().unwrap()),
+            "{argv}"
+        );
+        assert!(!text.contains("agent-wrong-model") && !text.contains("does-not-exist"), "{argv}");
+        assert_eq!(w.show(t["id"].as_str().unwrap())["profile"], "central");
+    }
+    let resolved = w.h.ok(&["profile", "resolve", "central"]);
+    assert_eq!(resolved["harness"], "codex");
+    assert!(resolved["args"].to_string().contains("host-model"));
+    // 없는 파일과 실행 권한 없는 파일을 각각 거절한다(다른 harness로 대체하지 않는다).
+    for missing in [true, false] {
+        let exe = w.scripts.join(if missing { "absent-codex" } else { "not-executable" });
+        if !missing {
+            std::fs::write(&exe, "#!/bin/sh\nexit 0\n").unwrap();
+        }
+        std::fs::write(w.h.cfg.join("agent.toml"), format!("schema = 1\n[harnesses.codex]\ncommand = [{exe:?}]\n"))
+            .unwrap();
+        let e =
+            w.h.json(&[
+                "thread",
+                "start",
+                "demo",
+                "--machine",
+                "labA",
+                "--title",
+                "refused",
+                "--profile",
+                "central",
+                "--kind",
+                "dir",
+                "--task-file",
+                &w.task("refused.txt", "x"),
+            ])
+            .expect_err("harness 없음");
+        assert!(e.contains("harness `codex`를 실행할 수 없다") && e.contains("실행 권한"), "{e}");
+    }
+}
+
+/// 1.3 agent는 계속 연결된다. 중앙 정의를 받을 기능이 없으면 시작만 이유와 함께 거부한다.
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
+    use aaa_common::conn::{FrameRx, spawn_writer};
+    use aaa_proto::{AgentHello, LinkMsg, MAX_FRAME, Version};
+    let w = world();
+    let stream = aaa_common::ipc::connect(&w.h.state.join("host/agent.sock")).await.unwrap();
+    let (r, writer) = tokio::io::split(stream);
+    let tx = spawn_writer(writer, MAX_FRAME);
+    let mut rx = FrameRx::new(r, MAX_FRAME);
+    tx.json(&LinkMsg::Hello(AgentHello {
+        proto: Version { major: 1, minor: 3 },
+        machine_id: "legacy-agent".into(),
+        machine_name: "legacy".into(),
+        boot_id: "legacy-boot".into(),
+        os: "macos".into(),
+        arch: "aarch64".into(),
+        software: "legacy-test".into(),
+        features: vec!["terminal.v1".into()],
+        dev_mode: false,
+        selfcheck: None,
+        sessions: vec![],
+        harness: vec![],
+    }))
+    .await
+    .unwrap();
+    let welcome: LinkMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
+    assert!(matches!(welcome, LinkMsg::Welcome(ref w) if w.proto.minor == 3), "{welcome:?}");
+    let e =
+        w.h.json(&[
+            "thread",
+            "start",
+            "demo",
+            "--machine",
+            "legacy",
+            "--title",
+            "legacy",
+            "--profile",
+            "fake",
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task("legacy.txt", "x"),
+        ])
+        .expect_err("기능 없는 agent");
+    assert!(e.contains("host_profiles.v1 없음") && e.contains("agent를 갱신"), "{e}");
+    // 거부가 연결을 끊지 않았다는 관찰 가능한 응답이다.
+    tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
+    let pong: LinkMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
+    assert!(matches!(pong, LinkMsg::Pong { seq: 42 }), "{pong:?}");
 }

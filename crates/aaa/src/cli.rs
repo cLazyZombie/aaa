@@ -1553,6 +1553,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
             work_root,
             exe: std::env::current_exe()?,
             profiles: cfg.profiles.clone(),
+            harnesses: cfg.harnesses.clone(),
             config_dir: Some(aaa_config::paths::config_dir()),
         });
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
@@ -2142,11 +2143,14 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Project(p) => {
             let _ = writeln!(s, "{}\t{}", p.name, p.path);
         }
+        FrontResponse::ProfileResolved { profile } => {
+            let _ = writeln!(s, "{}", serde_json::to_string(profile).unwrap());
+        }
         FrontResponse::Profiles { machine, profiles } => {
             if profiles.is_empty() {
                 let _ = writeln!(
                     s,
-                    "{machine}: agent.toml에 [profiles.<이름>]이 없고 설치·로그인한 기본 profile(claude·codex)도 없다"
+                    "{machine}: host.toml에 [profiles.<이름>]이 없고 설치·로그인한 기본 profile(claude·codex)도 없다"
                 );
             }
             for p in profiles {
