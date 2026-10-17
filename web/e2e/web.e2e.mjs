@@ -1253,7 +1253,23 @@ try {
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
     // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
     await dp.getByTestId("pane-scroll-plain").click();
-    await until("plain 화면", async () => (await screenText(dp)).includes("s-200"));
+    await until("plain 화면", async () => (await screenText(dp)).includes("s-200")).catch(async (e) => {
+      // CI(macos-15)에서만 실패한 적이 있다(10-17 69224fd): 그때 화면과 grid·기록 상태를 남긴다
+      const seen = await dp.evaluate(() => {
+        const rows = document.querySelector(".xterm-rows");
+        const vp = document.querySelector(".xterm-viewport");
+        return {
+          title: document.querySelector(".term-title")?.textContent,
+          rows: rows?.children.length,
+          first: rows?.firstElementChild?.textContent?.trim(),
+          last: [...(rows?.children ?? [])].map((r) => r.textContent.trim()).filter(Boolean).slice(-3),
+          history: vp ? vp.scrollHeight - vp.clientHeight : null,
+          top: vp?.scrollTop,
+          banners: document.querySelector(".terminal-banners")?.textContent,
+        };
+      });
+      throw new Error(`${e.message}: ${JSON.stringify(seen)} pane ${JSON.stringify(aaa("pane", "read", "scroll-plain").lines.filter(Boolean).slice(-3))}`);
+    });
     const box = await dp.getByTestId("terminal").boundingBox();
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await until("휠로 맨 위 s-001", async () => {
@@ -1284,6 +1300,25 @@ try {
       await dp.mouse.wheel(0, -100);
       await until(`${mode} 휠 → ${want}`, () => got(`scroll-${mode}`).includes(want)).catch((e) => bad.push(`${e.message}: ${got(`scroll-${mode}`).split("\n").filter((l) => l.startsWith("GOT")).join(" ")}`));
     }
+    // 휠 속도(herdr-web-ui terminalWheelSpeed): 3×면 휠 한 번에 보고 셋(xterm은 휠 사건마다 보고 하나)
+    const reports = () => got("scroll-mouse").split("<64;").length - 1;
+    await sleep(300);
+    const before = reports();
+    await dp.mouse.wheel(0, -100);
+    await until("1× 보고 하나", () => reports() === before + 1);
+    await dp.getByTestId("settings-open").click();
+    const dlg = dp.getByRole("dialog", { name: "설정" });
+    for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click();
+    if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
+    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");
+    await dp.keyboard.press("Escape");
+    await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await sleep(300);
+    const mid = reports();
+    await dp.mouse.wheel(0, -100);
+    await until("3× 보고 셋", () => reports() === mid + 3).catch((e) => bad.push(`${e.message}: ${reports() - mid}개`));
+    await sleep(300);
+    if (reports() !== mid + 3) bad.push(`3×에서 보고 ${reports() - mid}개`);
     await dp.context().close();
 
     // 한 손가락 끌기: 손가락이 한 칸 높이 내려갈 때마다 기록 한 줄(xterm 자기 터치 스크롤과 두 번 굴리지 않는다)

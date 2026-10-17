@@ -27,9 +27,10 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== FONT_KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY) return;
   mode = read();
   fontSize = readFontSize();
+  wheelSpeed = readWheelSpeed();
   listeners.forEach((f) => f());
 });
 
@@ -68,6 +69,46 @@ export function setTerminalFontSize(size: number) {
 
 export function useTerminalFontSize(): number {
   return useSyncExternalStore(subscribe, () => fontSize);
+}
+
+/** 휠 한 칸에 보내는 mouse 보고 수(herdr-web-ui settings.ts `terminalWheelSpeed`: 기기마다, 기본 1, 1~10) */
+export const TERMINAL_WHEEL_SPEED_MIN = 1;
+export const TERMINAL_WHEEL_SPEED_MAX = 10;
+const WHEEL_KEY = "aaa:terminal-wheel-speed";
+
+function clampWheel(speed: number): number {
+  return Math.min(TERMINAL_WHEEL_SPEED_MAX, Math.max(TERMINAL_WHEEL_SPEED_MIN, Math.round(speed)));
+}
+
+function readWheelSpeed(): number {
+  try {
+    const raw = localStorage.getItem(WHEEL_KEY);
+    const v = raw === null ? NaN : Number(raw);
+    return Number.isFinite(v) ? clampWheel(v) : TERMINAL_WHEEL_SPEED_MIN;
+  } catch {
+    return TERMINAL_WHEEL_SPEED_MIN;
+  }
+}
+
+let wheelSpeed = readWheelSpeed();
+
+export function getTerminalWheelSpeed(): number {
+  return wheelSpeed;
+}
+
+export function setTerminalWheelSpeed(speed: number) {
+  wheelSpeed = clampWheel(speed);
+  try {
+    if (wheelSpeed === TERMINAL_WHEEL_SPEED_MIN) localStorage.removeItem(WHEEL_KEY);
+    else localStorage.setItem(WHEEL_KEY, String(wheelSpeed));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function useTerminalWheelSpeed(): number {
+  return useSyncExternalStore(subscribe, () => wheelSpeed);
 }
 
 export function setTerminalInputMode(next: TerminalInputMode) {

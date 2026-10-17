@@ -32,7 +32,14 @@ import { DEFAULT_KEY_BAR_ITEMS, keyBarInputSequence, sanitizeKeyBarItems, type K
 import { chordSequence, IS_MAC } from "./keyChord";
 import { KeyBar } from "./KeyBar";
 import { TerminalInput } from "./TerminalInput";
-import { setTerminalFontSize, setTerminalInputMode, useMedia, useTerminalFontSize, useTerminalInputMode } from "./settings";
+import {
+  getTerminalWheelSpeed,
+  setTerminalFontSize,
+  setTerminalInputMode,
+  useMedia,
+  useTerminalFontSize,
+  useTerminalInputMode,
+} from "./settings";
 import { pinchFontSize } from "./herdr/pinchFontSize.ts";
 import { matchHerdrWidths } from "./herdr/terminalWidths.ts";
 import { AgentMark } from "./herdr/AgentMark.tsx";
@@ -377,10 +384,33 @@ export function TermView({
     // 휠(herdr-web-ui PaneTerminal 665~694줄): 이 화면 것이 아닌 grid는 휠이 브라우저 몫이라 칸을 옮긴다. 휠은 선택을 지운다.
     // 참고는 보고가 꺼졌을 때 xterm을 막는다(herdr가 늘 보고를 켜 그럴 일이 없다). aaa는 herdr 서버가 휠을 나누는 것
     // (server/pane_input.rs 153~183줄: 보고면 프로그램에, alternate screen이면 화살표, 아니면 scrollback)과 같은 xterm 기본에 맡긴다.
-    // 끌어 고르는 중 휠(dragWheel)과 휠 속도 설정은 옮기지 않았다(차이 목록 J).
-    term.attachCustomWheelEventHandler(() => {
+    // 끌어 고르는 중 휠(dragWheel)은 옮기지 않았다(차이 목록 J).
+    // xterm은 휠 사건 하나에 delta와 상관없이 mouse 보고를 하나 보낸다: 휠 속도가 1보다 크면 진짜 휠을 그만큼 다시 보낸다
+    // (참고 681~690줄). 다시 보낸 것과 터치에서 바꾼 휠은 isTrusted가 아니라 되풀이하지 않는다. 트랙패드 핀치(Ctrl 휠)도 한 번만.
+    // 참고는 보고가 켜졌을 때만 되풀이하지만 거기서는 휠이 늘 herdr로 가는 보고라, 속도가 herdr의 기록 굴리기·화살표에도 든다.
+    // aaa는 기록·화살표를 xterm이 맡으므로 보고가 아니어도 되풀이해 같은 결과를 낸다(plan §8.57).
+    term.attachCustomWheelEventHandler((event) => {
       if (adoptedRef.current) return false;
       if (term.hasSelection()) term.clearSelection();
+      if (event.isTrusted && event.target && !event.ctrlKey) {
+        for (let sent = 1; sent < getTerminalWheelSpeed(); sent += 1) {
+          event.target.dispatchEvent(
+            new WheelEvent("wheel", {
+              bubbles: true,
+              cancelable: true,
+              deltaX: event.deltaX,
+              deltaY: event.deltaY,
+              deltaMode: event.deltaMode,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              ctrlKey: event.ctrlKey,
+              altKey: event.altKey,
+              shiftKey: event.shiftKey,
+              metaKey: event.metaKey,
+            }),
+          );
+        }
+      }
       return true;
     });
     // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.

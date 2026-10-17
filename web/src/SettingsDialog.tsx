@@ -1,5 +1,5 @@
 // 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui MachineSidebar 바닥 줄 → SettingsDialog).
-// 참고 SettingsDialog(aa624cb)의 쪽 가운데 aaa가 뒷받침하는 묶음만 옮겼다: 터미널 「글자 크기」·「입력 방식」(Terminal 쪽 395~409줄)과
+// 참고 SettingsDialog(aa624cb)의 쪽 가운데 aaa가 뒷받침하는 묶음만 옮겼다: 터미널 「글자 크기」·「휠 스크롤 속도」·「입력 방식」(Terminal 쪽 395~409줄)과
 // 「구독 사용량」(Usage 쪽 UsagePage·UsageAccounts 570~631줄). 행·묶음·스위치·여럿 중 하나는 참고 SettingsControls.tsx와 같다.
 // 나머지 쪽(모양·chat·알림·기기·키 막대 편집 등)은 그 기능을 옮길 때 넣는다(plan §8.45).
 import { useEffect, useRef, type ReactNode } from "react";
@@ -10,11 +10,15 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import {
   setTerminalFontSize,
   setTerminalInputMode,
+  setTerminalWheelSpeed,
   TERMINAL_FONT_MAX,
   TERMINAL_FONT_MIN,
+  TERMINAL_WHEEL_SPEED_MAX,
+  TERMINAL_WHEEL_SPEED_MIN,
   updateUsageSettings,
   useTerminalFontSize,
   useTerminalInputMode,
+  useTerminalWheelSpeed,
   useUsageSettings,
 } from "./settings";
 import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "./usage";
@@ -191,6 +195,7 @@ function UsageGroups() {
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
+  const wheelSpeed = useTerminalWheelSpeed();
   const surface = useRef<HTMLElement>(null);
   useEffect(() => {
     surface.current?.focus();
@@ -227,6 +232,19 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 decreaseLabel="글자 작게"
                 increaseLabel="글자 크게"
                 onChange={setTerminalFontSize}
+              />
+            </SettingsRow>
+            {/* 참고 SettingsDialog 401~403줄(문구는 참고 i18n.ko.ts) */}
+            <SettingsRow label="휠 스크롤 속도" description="휠을 한 번 굴릴 때 터미널이 움직이는 정도">
+              <Stepper
+                label="휠 스크롤 속도"
+                value={wheelSpeed}
+                text={`${wheelSpeed}×`}
+                min={TERMINAL_WHEEL_SPEED_MIN}
+                max={TERMINAL_WHEEL_SPEED_MAX}
+                decreaseLabel="휠 스크롤 느리게"
+                increaseLabel="휠 스크롤 빠르게"
+                onChange={setTerminalWheelSpeed}
               />
             </SettingsRow>
             <SettingsRow label="입력 방식" htmlFor="terminal-input-mode">
