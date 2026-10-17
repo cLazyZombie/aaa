@@ -55,9 +55,11 @@ function waitOutput(pane, text, source = "visible", ms = 20_000) {
   );
 }
 
+// 첫 인자가 객체면 이 프로세스에만 더할 환경 변수다(예: 재부팅 흉내의 AAA_TEST_BOOT_ID)
 function start(tag, ...args) {
+  const extra = typeof args[0] === "object" ? args.shift() : {};
   const log = fs.openSync(`${root}/${tag}.log`, "w");
-  const p = spawn(AA, args, { env, stdio: ["ignore", log, log] });
+  const p = spawn(AA, args, { env: { ...env, ...extra }, stdio: ["ignore", log, log] });
   procs.set(tag, p);
   return p;
 }
