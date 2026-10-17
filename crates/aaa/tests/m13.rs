@@ -1898,9 +1898,10 @@ if ($mode eq 'orphan') {
     my $b = fork // die;
     if (!$b) {
         POSIX::setsid() or die "setsid: $!";
+        # 중간 프로세스 pid는 fork 전에 잡는다(자식이 getppid로 읽으면 이미 끝나 1일 수 있다)
+        my $bp = $$;
         my $x = fork // die;
         exit 0 if $x;
-        my $bp = getppid();
         detached_from($bp, $bp);
         run();
     }
