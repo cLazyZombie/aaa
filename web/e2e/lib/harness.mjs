@@ -494,7 +494,8 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   if (process.env.AAA_E2E_THROTTLE && browser.browserType().name() === "chromium")
     await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.AAA_E2E_THROTTLE) });
   const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  // 글과 stack 맨 위 두 자리(번들 안 file:줄:칸): 한 번만 난 화면 오류도 어디서 났는지 남긴다
+  page.on("pageerror", (e) => errors.push([String(e), ...String(e.stack ?? "").split("\n").slice(1, 3).map((l) => l.trim())].join(" ")));
   await page.goto(base);
   // 넣은 글꼴을 터미널을 열기 전에 받아 둔다(늘 쓰는 기기처럼 cache에 있는 상태). 늦게 받아지면 칸 높이·줄 수가 바뀌어
   // 그 단계가 재는 것(끌기 줄 수·크기)과 겹친다: CI 러너에는 깔린 글꼴이 없어 매번 늦게 받았다(41e81eb 휴대폰 끌기).
