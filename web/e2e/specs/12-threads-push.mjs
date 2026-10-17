@@ -967,6 +967,8 @@ export default async function ({ ctl, page }) {
     const bp = B.page;
     await bp.getByTestId("pane-who").click();
     await until("B 터미널", async () => (await bp.locator(".xterm-rows").count()) === 1);
+    // 새 연결의 snapshot 전에 친 글은 「붙잡은 입력」이 된다(Term.tsx deliver): 입력할 수 있게 된 뒤 친다
+    await until("B 입력 가능", async () => (await bp.getByTestId("readonly-banner").count()) === 0);
     if (!(await pushWho(page)).you) throw new Error("focus 없이 연 B가 쓰는 기기가 됐다");
     // (1) B에서 친다: B가 쓰는 기기(pane 입력, host가 본다). A는 여전히 보이고 focus
     await bp.locator(".xterm-helper-textarea").focus();
@@ -1015,6 +1017,9 @@ export default async function ({ ctl, page }) {
     done();
     // (3) A에서 다시 친다: A가 쓰는 기기, push 없음
     await page.getByTestId("pane-who").click();
+    // B가 친 화면(snapshot)이 온 뒤에 친다: 그 전에는 읽기 전용이라 글이 붙잡힌다(ci 실패: 「who에 a1이 나오지 않았다」)
+    await until("A who 화면", async () => (await screenText(page)).includes("b1"));
+    await until("A 입력 가능", async () => (await page.getByTestId("readonly-banner").count()) === 0);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type("a1");
     await waitOutput("who", "a1");
