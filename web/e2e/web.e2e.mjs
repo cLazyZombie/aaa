@@ -97,6 +97,7 @@ const screenText = (page) => page.locator(".xterm-rows").innerText();
 /**
  * CI에서만 터미널 글이 비어 보인 실패(10-17 dbacbfe·372e85d·69224fd·e784eac: snapshot은 왔는데 줄이 비었다)를 가리는 기록:
  * 그때 줄·칸 자리·가림을 남기고, 다시 그리기를 한 번 재촉한 뒤 글이 생기는지도 본다(생기면 그리기가 멈춰 있던 것이다).
+ * eeee514에서는 글이 맨 아래보다 다섯 줄 위에서 멈춰 보였다(기록 높이는 맞다): viewport 자리와 pane WebSocket 메시지 순서(log)를 더 남긴다.
  * 실패를 넘기지 않는다: 이 값은 오류 글에만 들어간다.
  */
 async function termDiag(page) {
@@ -105,6 +106,7 @@ async function termDiag(page) {
       const rows = document.querySelector(".xterm-rows");
       const screen = document.querySelector(".xterm-screen")?.getBoundingClientRect();
       const scroll = document.querySelector(".term-scroll");
+      const vp = document.querySelector(".xterm-viewport");
       return {
         text: rows?.innerText.replace(/\s+/g, " ").trim().slice(-200),
         rows: rows?.childElementCount,
@@ -112,6 +114,9 @@ async function termDiag(page) {
         screen: screen ? [screen.x, screen.y, screen.width, screen.height].map(Math.round) : null,
         win: [innerWidth, innerHeight],
         scroll: scroll ? [scroll.clientWidth, scroll.clientHeight, scroll.scrollTop, scroll.scrollHeight] : null,
+        viewport: vp ? [vp.scrollTop, vp.scrollHeight, vp.clientHeight] : null,
+        fontFamily: rows ? getComputedStyle(rows).fontFamily : null,
+        log: (window.__aaaTermLog ?? []).slice(-40).map((x) => (x.kind ? `${x.at} bin×${x.n} ${x.bytes}B` : `${x.at} ${x.e}`)),
         stackHidden: document.querySelector(".term-stack")?.hidden,
         vis: document.visibilityState,
         focus: document.hasFocus(),
@@ -348,6 +353,65 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
       try {
         localStorage.setItem("aaa:terminal-input-mode", "line");
       } catch {}
+    });
+  // 터미널 진단 기록(termDiag가 읽는다): pane WebSocket의 글 메시지 종류·크기·순서, 받은 출력 묶음, 닫힘,
+  // xterm viewport의 scroll 사건. CI에서만 난 실패의 순서를 보려고 둔다. 화면에는 손대지 않는다.
+  await ctx.addInitScript(() => {
+    const log = [];
+    Object.defineProperty(window, "__aaaTermLog", { value: log });
+    const t0 = performance.now();
+    const push = (e) => {
+      const at = Math.round(performance.now() - t0);
+      const last = log.at(-1);
+      if (e.startsWith("bin ") && last?.kind === "bin") {
+        last.n += 1;
+        last.bytes += Number(e.slice(4));
+        return;
+      }
+      log.push(e.startsWith("bin ") ? { kind: "bin", at, n: 1, bytes: Number(e.slice(4)) } : { at, e });
+      if (log.length > 300) log.splice(0, log.length - 300);
+    };
+    const WS = window.WebSocket;
+    window.WebSocket = class extends WS {
+      constructor(...a) {
+        super(...a);
+        if (!String(a[0]).includes("/panes/")) return;
+        push("ws open");
+        this.addEventListener("message", (m) => {
+          if (typeof m.data !== "string") return push(`bin ${m.data.byteLength ?? m.data.size}`);
+          const j = JSON.parse(m.data);
+          push(j.t === "snapshot" ? `snapshot ${j.cols}x${j.rows} ${j.replay.length}` : j.t === "state" ? `state ${j.pane.cols}x${j.pane.rows}` : `msg ${j.t}`);
+        });
+        this.addEventListener("close", (e) => push(`ws close ${e.code}`));
+      }
+      send(d) {
+        if (typeof d === "string") push(`send ${d.slice(0, 50)}`);
+        super.send(d);
+      }
+    };
+    document.addEventListener(
+      "scroll",
+      (e) => {
+        const t = e.target;
+        if (t instanceof Element && t.classList.contains("xterm-viewport")) push(`vp ${t.scrollTop}/${t.scrollHeight - t.clientHeight}`);
+      },
+      true,
+    );
+  });
+  // AAA_E2E_NO_LOCAL_FONT=1: 이 머신에 깔린 Meslotendard를 빼고 넣은 글꼴(WOFF2)만 쓴다(CI 러너처럼). 기본은 끔
+  if (process.env.AAA_E2E_NO_LOCAL_FONT)
+    await ctx.addInitScript(() =>
+      document.addEventListener("DOMContentLoaded", () => {
+        const st = document.createElement("style");
+        st.textContent = ':root{--font-term:"Meslotendard Web", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace !important}';
+        document.head.append(st);
+      }),
+    );
+  // AAA_E2E_FONT_DELAY=ms: 넣은 글꼴(WOFF2)을 늦게 준다(CI 러너처럼 글꼴이 터미널을 연 뒤에 받아질 때). 기본은 끔
+  if (process.env.AAA_E2E_FONT_DELAY)
+    await ctx.route("**/fonts/**", async (route) => {
+      await sleep(Number(process.env.AAA_E2E_FONT_DELAY));
+      await route.continue();
     });
   const page = await ctx.newPage();
   // AAA_E2E_THROTTLE=N: Chromium 화면을 N배 느리게(CI 러너처럼 느린 곳에서만 난 경합을 로컬에서 재현할 때). 기본은 끔
