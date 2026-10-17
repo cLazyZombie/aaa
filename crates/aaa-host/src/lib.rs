@@ -1163,7 +1163,10 @@ impl Host {
                     | LayoutChange::MoveToNewTab { pane, .. }
                     | LayoutChange::Zoom { pane, .. }
                     | LayoutChange::Swap { pane, .. } => self.workspace_of_pane(pane),
-                    LayoutChange::RenameTab { tab, .. } | LayoutChange::CloseTab { tab } => self.workspace_of_tab(tab),
+                    LayoutChange::RenameTab { tab, .. }
+                    | LayoutChange::CloseTab { tab }
+                    | LayoutChange::SplitRatio { tab, .. }
+                    | LayoutChange::MoveTab { tab, .. } => self.workspace_of_tab(tab),
                     LayoutChange::NewTab { .. } | LayoutChange::AddTab { .. } => None,
                 };
                 let name = workspace.or(found).unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
@@ -1572,6 +1575,29 @@ impl Host {
                         err(ErrorCode::BadRequest, format!("workspace {name}의 한 탭에 {pane}·{with}가 함께 없다"))
                     })?;
                 aaa_proto::layout::swap(&mut t.root, &a, &b);
+            }
+            LayoutChange::SplitRatio { tab, path, ratio } => {
+                let t = w
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                // herdr `handle_layout_set_split_ratio`: 그 자리에 나눔이 없으면 split_not_found
+                if !aaa_proto::layout::set_ratio_at(&mut t.root, &path, ratio) {
+                    return Err(err(ErrorCode::NotFound, format!("탭 {tab}에 그 나눔({path:?})이 없다")));
+                }
+            }
+            LayoutChange::MoveTab { tab, index } => {
+                let from = w
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == tab)
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("workspace {name}에 탭 {tab}이 없다")))?;
+                // herdr `handle_tab_move`: insert_index는 0..=탭 수
+                if usize::from(index) > w.tabs.len() {
+                    return Err(err(ErrorCode::BadRequest, format!("탭 자리 {index}가 0..={} 밖이다", w.tabs.len())));
+                }
+                aaa_proto::layout::move_tab(&mut w.tabs, from, usize::from(index));
             }
         }
         self.db.audit(actor, "layout", name);
