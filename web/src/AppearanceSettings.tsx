@@ -1,11 +1,11 @@
 // 설정 → 모양(herdr-web-ui SettingsDialog.tsx `AppearancePage`·`PaletteSelect` 235~290줄). 문구는 참고 i18n.ko.ts 그대로다.
 // 옮긴 줄: 테마·색상(시스템이면 라이트·다크 색상 따로)·사이드바 행·상태 표시. 밀도·언어·Agents 순서·로고 색은 그 기능을 옮길 때 넣는다.
-import { Segmented, SettingsGroup, SettingsRow } from "./SettingsDialog";
+import { Segmented, SettingsGroup, SettingsRow } from "./herdr/SettingsControls.tsx";
 import { updateAppearance, useAppearance, type Palette } from "./theme";
 
 function PaletteSelect({ id, value, onChange }: { id: string; value: Palette; onChange: (palette: Palette) => void }) {
   return (
-    <select id={id} className="settings-select" value={value} onChange={(event) => onChange(event.target.value as Palette)}>
+    <select id={id} className="select settings-select" value={value} onChange={(event) => onChange(event.target.value as Palette)}>
       <option value="amber">앰버</option>
       <option value="charcoal">차콜</option>
       <option value="catppuccin">Catppuccin</option>
@@ -16,7 +16,7 @@ function PaletteSelect({ id, value, onChange }: { id: string; value: Palette; on
 export function AppearanceSettings() {
   const { appearance: a } = useAppearance();
   return (
-    <SettingsGroup title="모양">
+    <SettingsGroup>
       <SettingsRow label="테마" wide>
         <Segmented
           label="테마"
