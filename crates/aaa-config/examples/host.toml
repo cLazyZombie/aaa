@@ -37,6 +37,10 @@ mobile_width_threshold = 64
 theme = "catppuccin"
 # pane 테두리: "auto"(pane이 둘 이상인 탭만 pane마다 상자), "always"(하나여도), "off"(테두리 없이 빈 칸 하나).
 pane_borders = "auto"
+# 마우스(탭·사이드바·pane 누르기, 휠, 끌어 고르기). 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고르고 복사한다.
+mouse_capture = true
+# 끌어 고른 글을 떼는 때 복사한다(끄면 고른 채 두고 ctrl+c·cmd+c로 복사).
+copy_on_select = true
 
 [terminal]
 # 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로

@@ -1,4 +1,4 @@
-//! front 기기 clipboard의 그림(§8.28, M3). `aaa attach`에서 Ctrl+V를 누르면 읽는다.
+//! front 기기 clipboard의 그림(§8.28, M3, `aaa attach`에서 Ctrl+V를 누르면 읽는다)과 고른 글 복사(묶음 3d-1).
 //!
 //! - macOS NSPasteboard, Windows clipboard(PNG·CF_DIBV5·CF_DIB), Linux X11을 arboard로 읽는다. 순수 Rust라 빌드에
 //!   X11·Wayland 개발 파일이 필요 없다. Linux는 `DISPLAY`가 있는 desktop에서만 된다(Wayland는 XWayland로).
@@ -6,6 +6,42 @@
 //! - 그림이 없거나 clipboard를 열지 못하면(ssh 셸·desktop 없음) `None`이다. 호출한 쪽이 원래 키(0x16)를 보낸다.
 //! - 시험용 `AAA_TEST_CLIPBOARD_PNG=<파일>`: 시스템 clipboard 대신 그 파일을 읽는다(없으면 그림 없음).
 //!   개발 Mac에서 사람의 clipboard를 덮어쓰지 않고 E2E를 돌리려고 둔다. 실제 clipboard 경로는 CI가 `AAA_CLIP_NATIVE=1`로 본다.
+
+/// 고른 글을 front 기기 clipboard에(herdr `copy_to_clipboard`, src/selection.rs). ssh·WSL·VS Code 터미널이면 OSC 52
+/// (`ESC ] 52 ; c ; <base64> BEL`, 그 터미널이 자기 기기 clipboard에 쓴다), 아니면 시스템 clipboard(못 열면 OSC 52).
+/// 시험용 `AAA_TEST_CLIPBOARD_TEXT=<파일>`: 사람의 clipboard 대신 그 파일에 쓴다.
+pub fn copy_text(text: &str) -> Result<(), String> {
+    if let Some(p) = std::env::var_os("AAA_TEST_CLIPBOARD_TEXT") {
+        return std::fs::write(p, text).map_err(|e| e.to_string());
+    }
+    let env = |k: &str| std::env::var_os(k).is_some();
+    let remote = env("SSH_CONNECTION")
+        || env("SSH_TTY")
+        || env("WSL_DISTRO_NAME")
+        || std::env::var("TERM_PROGRAM").is_ok_and(|t| t == "vscode");
+    if !remote && native_text(text).is_ok() {
+        return Ok(());
+    }
+    osc52(text)
+}
+
+/// 시스템 clipboard. Linux X11은 쓴 연결이 살아 있어야 다른 앱이 읽으므로 연결을 들고 있는다.
+fn native_text(text: &str) -> Result<(), String> {
+    static CLIP: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
+    let mut c = CLIP.lock().map_err(|e| e.to_string())?;
+    if c.is_none() {
+        *c = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+    }
+    c.as_mut().map_or(Err("clipboard 없음".into()), |c| c.set_text(text).map_err(|e| e.to_string()))
+}
+
+fn osc52(text: &str) -> Result<(), String> {
+    use base64::Engine;
+    use std::io::Write;
+    let seq = format!("\x1b]52;c;{}\x07", base64::engine::general_purpose::STANDARD.encode(text));
+    let mut out = std::io::stdout();
+    out.write_all(seq.as_bytes()).and_then(|()| out.flush()).map_err(|e| e.to_string())
+}
 
 /// clipboard 그림을 PNG bytes로. 오래 걸릴 수 있으니 blocking thread에서 부른다.
 pub fn image_png() -> Option<Vec<u8>> {

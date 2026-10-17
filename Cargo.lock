@@ -172,6 +172,7 @@ dependencies = [
  "aaa-proto",
  "anyhow",
  "arboard",
+ "base64 0.22.1",
  "crossterm",
  "futures-util",
  "png",

@@ -204,19 +204,27 @@ pub struct View<'a> {
     pub current: Option<&'a str>,
     pub sel: usize,
     pub focused: bool,
+    /// 휠로 민 첫 줄(없으면 고른 줄이 보이게 내린다)
+    pub top: Option<usize>,
     pub pal: &'a Palette,
 }
 
-/// 줄들을 그린다(사이드바 바탕·구분선은 부르는 쪽). 줄이 넘치면 고른 줄이 보이게 내린다.
+/// 줄들을 그리고 (줄 y, 줄 차례)들과 첫 보이는 줄을 준다(사이드바 바탕·구분선은 부르는 쪽).
+/// 줄이 넘치면 고른 줄이 보이게 내린다(휠로 민 자리가 있으면 그 자리).
 /// herdr 사이드바처럼 탐색 중 고른 줄은 `selection_bg`(없으면 `active_row_bg`), 지금 pane 줄은 `active_row_bg` 바탕이고
 /// 이름은 `text` 굵게(아니면 `subtext0`)다(`workspace_selection_background`·`workspace_active_background`·`render_workspace_rows`).
-pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) {
+pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, usize)>, usize) {
     let p = v.pal;
     let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
     let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
-    let skip = (v.sel + 1).saturating_sub(r.h as usize);
+    let skip = match v.top {
+        Some(t) => t.min(rows.len().saturating_sub(r.h as usize)),
+        None => (v.sel + 1).saturating_sub(r.h as usize),
+    };
+    let mut placed = Vec::new();
     for (n, row) in rows.iter().enumerate().skip(skip).take(r.h as usize) {
         let y = r.y + (n - skip) as u16;
+        placed.push((y, n));
         let sel = n == v.sel && v.focused;
         let current = is_current(row, v);
         let bg = if sel {
@@ -247,6 +255,7 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) {
             }
         }
     }
+    (placed, skip)
 }
 
 /// 이 줄이 지금 포커스 pane(또는 그 pane의 thread)인가
@@ -317,7 +326,7 @@ fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
 }
 
 /// 접힌 사이드바(herdr `render_collapsed_sidebar`): 고를 수 있는 thread·pane 줄마다 번호와 상태 점
-pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) {
+pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> Vec<(u16, usize)> {
     let p = v.pal;
     let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
     let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
@@ -325,8 +334,10 @@ pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) {
         rows.iter().enumerate().filter(|(_, r)| matches!(r, Row::Thread(_) | Row::Pane(_))).collect();
     let sel_at = items.iter().position(|(n, _)| *n == v.sel).unwrap_or(0);
     let skip = (sel_at + 1).saturating_sub(r.h as usize);
+    let mut placed = Vec::new();
     for (i, (n, row)) in items.iter().enumerate().skip(skip).take(r.h as usize) {
         let y = r.y + (i - skip) as u16;
+        placed.push((y, *n));
         let sel = *n == v.sel && v.focused;
         let current = is_current(row, v);
         let (bg, num) = if sel {
@@ -353,6 +364,7 @@ pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) {
             }
         }
     }
+    placed
 }
 
 #[cfg(test)]
