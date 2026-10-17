@@ -1259,6 +1259,12 @@ pub enum TermServerMsg {
         inserted: bool,
         note: Option<String>,
     },
+    /// `Submit`의 답(herdr-web-ui `submit-result`). `ok`면 글과 Enter가 pane에 들어갔다. 아니면 `message`가 이유다.
+    Submitted {
+        id: u32,
+        ok: bool,
+        message: Option<String>,
+    },
     Error(ErrorBody),
 }
 
@@ -1277,6 +1283,12 @@ pub enum TermClientMsg {
     Take,
     /// 이 화면을 쓰지 않는다(탭이 1초 넘게 가려짐): 다른 화면이 크기를 되찾게 놓는다
     Release,
+    /// 입력줄 한 줄(herdr-web-ui `submit`): host가 `data`를 쓰고 조금 뒤 Enter를 쓴 다음 `Submitted`로 답한다.
+    /// 브라우저는 그 답을 받고서야 보낸 앞부분을 입력줄에서 지운다(그 사이 친 글은 남는다).
+    Submit {
+        id: u32,
+        data: String,
+    },
     /// xterm이 이 구독(`Snapshot.stream`)의 출력을 `offset` 바이트까지 다 썼다(herdr-web-ui `pty-ack`).
     /// host는 이것으로 이 화면이 따라오는지 보고, 따라오지 못하면 4008로 닫는다(plan §8.62).
     Ack {

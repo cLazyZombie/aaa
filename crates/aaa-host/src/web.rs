@@ -341,6 +341,8 @@ async fn usage_report(
 }
 
 /// 입력 사건 기록 하나의 상한과 남기는 개수
+/// 입력줄 `Submit`의 글과 Enter 사이(harness 메시지 전달과 같다)
+const SUBMIT_ENTER_GAP: std::time::Duration = std::time::Duration::from_millis(300);
 const DIAG_MAX: usize = 1 << 20;
 const DIAG_KEEP: usize = 20;
 
@@ -678,6 +680,21 @@ async fn pane_session(
                         Ok(TermClientMsg::Input { data }) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(data.into_bytes()) }),
                         Ok(TermClientMsg::Resize { cols, rows }) if role.can_control() => {
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
+                        }
+                        Ok(TermClientMsg::Submit { id: sid, data }) => {
+                            // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
+                            // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
+                            let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
+                            let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
+                            if sent.is_ok() {
+                                tokio::time::sleep(SUBMIT_ENTER_GAP).await;
+                                sent = host.call_from(role, &actor, Some(front), typed(b"\r".to_vec())).await;
+                            }
+                            let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
+                            if !out.msg(&reply) {
+                                break;
+                            }
+                            None
                         }
                         Ok(TermClientMsg::Take) => Some(FrontRequest::PaneTake { pane: id.clone() }),
                         Ok(TermClientMsg::Release) => Some(FrontRequest::PaneRelease { pane: id.clone() }),

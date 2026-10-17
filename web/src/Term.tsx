@@ -67,8 +67,8 @@ function fontStack(base: string, chosen: string): string {
 /** 한 번에 보내는 조각(host 상한과 같다) */
 const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
-/** 글 뒤 Enter까지 기다리는 시간(host의 brief·메시지 전달과 같다) */
-const ENTER_GAP_MS = 300;
+/** 답이 오지 않는 입력줄 보내기를 그만 기다리는 때(herdr-web-ui ws.ts `SUBMIT_TIMEOUT_MS`): 글은 입력줄에 남는다 */
+const SUBMIT_TIMEOUT_MS = 90_000;
 /** 붙잡은 입력이 있는 동안 다른 입력을 거절하는 말(herdr-web-ui PaneTerminal 1375줄) */
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
@@ -232,6 +232,12 @@ export function TermView({
     trace("send", { data, readonly: readonlyRef.current });
     if (!readonlyRef.current) send({ t: "input", data });
   };
+  /**
+   * 답(submitted)을 기다리는 입력줄 보내기(herdr-web-ui ws.ts `submits`). 보낸 연결이 닫히면 확인 못 함으로 끝난다:
+   * 그 글은 들어갔을 수도 있으므로 입력줄에 두고 터미널을 보게 한다.
+   */
+  const submitsRef = useRef(new Map<number, { ws: WebSocket; done: (result: true | string | null) => void }>());
+  const submitIdRef = useRef(0);
   /** 올리는 중인 파일의 결과(attached·error·끊김)를 기다리는 것 */
   const attachWaitRef = useRef<(() => void) | null>(null);
   const attachDone = () => {
@@ -1008,6 +1014,12 @@ export function TermView({
             if (!inputLineRef.current) termRef.current?.focus();
             attachDone();
             break;
+          case "submitted": {
+            const waiting = submitsRef.current.get(msg.id);
+            submitsRef.current.delete(msg.id);
+            waiting?.done(msg.ok ? true : `보내지 못했다: ${msg.message ?? "pane이 받지 않았다"}`);
+            break;
+          }
           case "error":
             setError(msg.message);
             setAttach((a) => (a?.text.startsWith("그림 보내는 중") ? null : a));
@@ -1019,6 +1031,11 @@ export function TermView({
         if (wsRef.current === ws) wsRef.current = null;
         // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
         attachDone();
+        for (const [id, waiting] of submitsRef.current)
+          if (waiting.ws === ws) {
+            submitsRef.current.delete(id);
+            waiting.done(null);
+          }
         readonlyRef.current = true;
         setReadonly(true);
         setLink("closed");
@@ -1252,34 +1269,41 @@ export function TermView({
   };
 
   // 입력줄(herdr-web-ui PaneTerminal 2318~2373줄 `sendTerminalLine`·`pressEnter`·`toggleDirect`).
-  // 글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). Enter는 따로, 조금 뒤에 보낸다
-  // (참고는 server가 이 간격을 둔다). 여러 줄은 터미널 붙여넣기로 보낸다: 프로그램이 bracketed paste를 켰으면 감싸고,
-  // 줄바꿈은 CR로 바꾼다(xterm.js). 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다.
-  // 입력줄 글은 유지 키를 붙이지 않고 바로 간다.
+  // 한 줄을 `submit` 하나로 보내고 host 답을 기다린다(참고 `socket.submit` → `submit-result`). host가 글을 쓰고 조금 뒤 Enter를 쓴다:
+  // 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). 여러 줄은 터미널 붙여넣기 모양이다:
+  // 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다(xterm.js paste, 참고 `composerPayload`).
+  // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다. 입력줄 글은 유지 키를 붙이지 않는다.
   const sendTerminalLine = (value: string): false | Promise<true | string> => {
     const term = termRef.current;
-    if (!term || readonlyRef.current) return false;
+    const ws = wsRef.current;
+    if (!term || readonlyRef.current || !ws || ws.readyState !== WebSocket.OPEN) return false;
     // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     autoFit.current(true);
+    let data = value;
     if (value.includes("\n")) {
-      pastingRef.current = true;
-      try {
-        term.paste(value);
-      } finally {
-        pastingRef.current = false;
-      }
-    } else input(value);
+      data = value.replace(/\r?\n/g, "\r");
+      if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
+    }
+    const id = ++submitIdRef.current;
+    trace("submit", { id, data });
+    ws.send(JSON.stringify({ t: "submit", id, data } satisfies TermClientMsg));
     term.scrollToBottom();
-    // aaa 입력에는 host 확인 답이 없다(참고는 server의 submit 답을 기다린다). Enter까지 보낸 때를 「보냄」으로 친다:
-    // 그 사이 친 글은 줄에 남는다(terminalDraft가 보낸 앞부분만 지운다).
-    return new Promise((resolve) =>
-      window.setTimeout(() => {
-        if (readonlyRef.current) return resolve("Enter를 보내지 못했다: 터미널 연결이 끊겼다");
-        input("\r");
-        resolve(true);
-      }, ENTER_GAP_MS),
-    );
+    // 확인되면 입력줄이 보낸 앞부분만 지운다(그 사이 친 글은 남는다). 거절이면 이유, 끊기거나 답이 없으면 확인 못 함
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        submitsRef.current.delete(id);
+        reject(new Error("submit timeout"));
+      }, SUBMIT_TIMEOUT_MS);
+      submitsRef.current.set(id, {
+        ws,
+        done: (result) => {
+          window.clearTimeout(timer);
+          if (result === null) reject(new Error("closed"));
+          else resolve(result);
+        },
+      });
+    });
   };
   const pressEnter = (): boolean | string => {
     if (readonlyRef.current) return false;

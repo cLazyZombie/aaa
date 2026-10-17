@@ -2296,6 +2296,90 @@ try {
     await until("t1 터미널", async () => (await screenText(page)).includes("한글-8"));
   });
 
+  await step("보내는 동안 친 글 지키기(herdr-web-ui submit·submit-result, terminalDraft): 입력줄은 host 답을 받고서야 보낸 앞부분만 지운다. 그 사이 친 글은 남고, 거절·끊김이면 글을 두고 이유", async () => {
+    aaa("pane", "run", "--machine", "labA", "--name", "submitapp", "--", process.execPath, `${root}/paste.js`);
+    const got = () => aaa("pane", "read", "submitapp").lines.join("\n");
+    // host의 답(submitted)을 붙잡아 두는 화면: 답이 오기 전 상태를 본다
+    const held = [];
+    let pipe = null;
+    const holdReplies = (ws) => {
+      const server = ws.connectToServer();
+      pipe = { ws, server };
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => {
+        if (typeof m === "string" && m.startsWith('{"t":"submitted"')) held.push(m);
+        else ws.send(m);
+      });
+      server.onClose((code, reason) => ws.close({ code, reason }));
+      ws.onClose((code, reason) => server.close({ code, reason }));
+    };
+    const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { line: true, wsRoute: [/\/api\/v1\/panes\//, holdReplies] })).page;
+    await sp.getByTestId("pane-submitapp").click();
+    await until("submitapp 화면", async () => (await screenText(sp)).includes("paste>"));
+    const box = sp.getByLabel("보낼 글");
+    const sendBtn = sp.getByRole("button", { name: "터미널에 보내기" });
+    const note = () => sp.locator(".terminal-input-note").evaluateAll((els) => els[0]?.textContent ?? null);
+    const reply = async () => {
+      await until("host 답", () => held.length > 0);
+      return JSON.parse(held.shift());
+    };
+    // 1) host가 글과 Enter를 쓴 뒤 답한다. 답 전에는 글이 남고 보내기는 잠긴다. 그 사이 덧붙인 글은 답 뒤에도 남는다
+    await box.fill("첫 줄");
+    await box.press("Enter");
+    const first = await reply();
+    if (!first.ok || !got().includes('GOT:"첫 줄"') || !got().includes('GOT:"\\r"')) throw new Error(`답 전에 글·Enter가 pane에 없다: ${JSON.stringify(first)} ${got()}`);
+    if ((await box.inputValue()) !== "첫 줄" || !(await sendBtn.isDisabled())) throw new Error(`답 전 입력줄 ${JSON.stringify(await box.inputValue())} 잠김 ${await sendBtn.isDisabled()}`);
+    await box.press("End");
+    await box.pressSequentially(" 더");
+    pipe.ws.send(JSON.stringify(first));
+    await until("보낸 앞부분만 지움", async () => (await box.inputValue()) === " 더");
+    if ((await note()) !== null) throw new Error(`알림 ${await note()}`);
+    // 2) 그 사이 글을 바꿨으면(보낸 글로 시작하지 않으면) 지우지 않는다
+    await box.fill("둘");
+    await box.press("Enter");
+    const second = await reply();
+    await box.fill("다른 글");
+    pipe.ws.send(JSON.stringify(second));
+    await sleep(300);
+    if ((await box.inputValue()) !== "다른 글") throw new Error(`바꾼 글을 지웠다: ${JSON.stringify(await box.inputValue())}`);
+    // 3) host가 거절하면 글을 두고 이유를 보인다(답을 바꿔 보낸다. 실제 거절은 아래 끝난 pane)
+    await box.fill("셋");
+    await box.press("Enter");
+    const third = await reply();
+    pipe.ws.send(JSON.stringify({ ...third, ok: false, message: "시험 거절" }));
+    await until("거절 이유", async () => (await note()) === "보내지 못했다: 시험 거절");
+    if ((await box.inputValue()) !== "셋" || (await sendBtn.isDisabled())) throw new Error(`거절 뒤 입력줄 ${JSON.stringify(await box.inputValue())}`);
+    // 4) 답 전에 끊기면 들어갔는지 모른다: 글을 두고 터미널을 보게 한다
+    await box.fill("넷");
+    await box.press("Enter");
+    await reply();
+    pipe.ws.close({ code: 1011, reason: "test" });
+    await until("확인 못 함", async () => (await note()) === "확인하지 못했다. 다시 보내기 전에 터미널을 본다");
+    if ((await box.inputValue()) !== "넷") throw new Error(`끊긴 뒤 입력줄 ${JSON.stringify(await box.inputValue())}`);
+    // 5) 실제 host 거절: 끝난 pane에 보낸 submit은 ok:false와 이유로 답한다(답 없이 두지 않는다)
+    aaa("pane", "run", "--machine", "labA", "--name", "submitend", "--", process.execPath, "-e", "process.exit(0)");
+    await until("submitend 끝남", () => aaa("pane", "list").panes.find((x) => x.name === "submitend")?.state !== "running");
+    // 붙잡는 route가 없는 화면에서 연다
+    const refused = await page.evaluate(
+      (id) =>
+        new Promise((resolve) => {
+          const w = new WebSocket(`ws://${location.host}/api/v1/panes/${encodeURIComponent(id)}/ws?flow=ack`);
+          w.onmessage = (m) => {
+            if (typeof m.data !== "string") return;
+            const j = JSON.parse(m.data);
+            if (j.t === "snapshot") w.send(JSON.stringify({ t: "submit", id: 7, data: "late" }));
+            if (j.t === "submitted") resolve(j);
+          };
+          w.onclose = (e) => resolve({ closed: e.code });
+          setTimeout(() => resolve({ timeout: true }), 5000);
+        }),
+      aaa("pane", "list").panes.find((x) => x.name === "submitend").id,
+    );
+    if (refused.id !== 7 || refused.ok !== false || !refused.message) throw new Error(`끝난 pane submit 답 ${JSON.stringify(refused)}`);
+    await sp.context().close();
+    aaa("pane", "kill", "submitapp");
+  });
+
   await step("터미널 한글 IME(herdr-web-ui xterm 패치): 데스크톱 조합 사건·CDP 실제 IME, macOS Safari·iPad 기록 재생 → pane에는 완성된 글만", async () => {
     aaa("pane", "run", "--machine", "labA", "--name", "imeapp", "--", process.execPath, `${root}/paste.js`);
     aaa("pane", "run", "--machine", "labA", "--name", "imespin", "--", process.execPath, `${root}/spin.js`);
