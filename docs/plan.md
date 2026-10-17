@@ -2398,6 +2398,27 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: host `row5_landing_and_an_open_pull_request`·`a_merged_thread_resolves_once_its_agent_is_done`, common `report_refs`·
     `open_own_numbers`, 웹 `stateLine.test.mjs`.
 
+### 8.106 치는 동안 뜬 확인창을 Enter가 고르지 않는다(10-18, t-0340 보안 감사 넘김, §8.100 고침)
+
+- **결함(최우선).** 작업 중 바로 입력(§8.100)은 확인창을 치기 전에 한 번만 보고, 친 뒤 300ms에 화면을 보지 않고 Enter를 보냈다.
+  그 사이 뜬 권한 창은 Enter가 기본 선택(「Yes」)을 고른다. 일하는 중에 보낸 글은 Enter 뒤 상태가 확인창이어도 받은 것으로 쳤다.
+  coordinator 메시지만으로 사람이 보지 않은 권한 창이 넘어갈 수 있었다.
+- **고침(harness.rs `submit_checked`).**
+  - 치기 전: 선택 창(`modal_of`)과 harness 확인창(`Question`)이면 치지 않는다.
+  - Enter 바로 전: 친 뒤 화면의 선택 창과 harness 확인창을 다시 보고, 있으면 Enter를 보내지 않는다(`typed = true`: 메시지는
+    「받았는지 모른다」, 다시 보내지 않는다). 질문은 열린 채로 둔다.
+  - 일하는 중 받음 판정은 Enter 뒤 `Working`일 때만이다(확인창이면 그 Enter가 창에 갔을 수 있다).
+  - 화면 검사와 Enter 사이의 아주 짧은 틈은 남는다(참고 herdr `agent prompt`도 같다). 친 글자가 바로 선택지를 고르는 창(숫자
+    키)은 치기 전 검사만 막는다.
+- **낮음.**
+  - 옛 decisions.md: symlink·FIFO·1MiB 넘는 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다(FIFO를 열면 ticker가 멈췄다).
+  - host가 모르는 front 요청(1.12에서 없앤 `decision_add` 등을 1.11 front가 보냄)에 연결을 끊지 않고 그 요청 id로 오류를 답한다.
+  - 옛 판의 보내던 메시지 잊기를 front·web 입구를 열기 전으로 옮겼다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀔 수 있었다).
+  - `evaluation_decide` 설명의 낡은 「결정 기록」 문구.
+- **시험(결함 심기).** m13 `hooked_thread_questions_and_messages` 「race」: 가짜 Claude가 다음 입력의 첫 글자에서(Enter 전) 권한
+  창을 그린다. Enter 전 검사를 빼면 「race Yes」로 실패하고(확인), 고치면 메시지는 `unknown`, 질문은 열려 사람이 답한다.
+  `memory_and_restart`: symlink·FIFO decisions.md는 항목도 멈춤도 없다. host 유닛 `unknown_requests_get_an_error_answer`.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

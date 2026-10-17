@@ -2006,10 +2006,11 @@ impl Host {
 pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
+    // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.forget_queued_messages();
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
-    host.forget_queued_messages();
     host.start_ticker();
     host.start_notifier();
     if host.cfg.local_agent.mode == LocalAgentMode::Child {

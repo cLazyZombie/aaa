@@ -1330,7 +1330,7 @@ pub enum FrontRequest {
         project: String,
         id: String,
     },
-    /// 개선안 채택·보류(채택은 결정 기록에 남는다)
+    /// 개선안 채택·보류(평가 기록에 누가 언제 정했는지 남는다)
     EvaluationDecide {
         project: String,
         id: String,

@@ -125,6 +125,18 @@ while IFS= read -r line; do
       hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
       "$AA" report --percent 40 --activity '늦은 짝 뒤'
       echo "late $pick"; quiet=1 ;;
+    *race*)
+      # 치는 동안 뜨는 권한 창(t-0340 보안 감사): 턴을 끝낸 뒤 다음 입력의 첫 글자에서(Enter 전) 권한 창을 그리고 알린다
+      echo "race armed"
+      hook '{"hook_event_name":"Stop","session_id":"fake-1","last_assistant_message":"끝"}'
+      printf 'fake> '
+      key
+      q='Allow Bash(rm -rf build)?'
+      printf '\033[2J\033[H%s\n\342\235\257 Yes\n  No, and tell Claude what to do differently (esc)\nEnter to confirm \302\267 Esc to cancel\n' "$q"
+      hook '{"hook_event_name":"PermissionRequest","session_id":"fake-1","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}'
+      hook '{"hook_event_name":"Notification","session_id":"fake-1","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}'
+      menu "$q" 0 'Yes' 'No, and tell Claude what to do differently (esc)'
+      echo "race $pick"; quiet=1 ;;
     *ask*) perm ;;
     *slow*)
       echo "slow start"
@@ -790,6 +802,24 @@ fn hooked_thread_questions_and_messages() {
     assert_eq!(v["agent"]["activity"], "idle", "늦은 짝 hook이 질문을 다시 열었다: {v}");
     assert!(w.questions(false).is_empty(), "{:?}", w.questions(false));
 
+    // 치는 동안 뜬 확인창(t-0340 보안 감사): 글을 친 뒤 Enter 전에 권한 창이 뜨면 Enter를 보내지 않는다. 보내면 Enter가
+    // 사람이 보지 않은 권한 창의 기본 선택(Yes)을 고른다. 고치기 전에는 메시지가 받음 시한(10초)까지 기다린 뒤 돌아와,
+    // 그때는 화면에 「race Yes」가 있다.
+    assert_eq!(w.message(&id, "race", false)["state"], "accepted");
+    w.wait_screen(&pane, "race armed");
+    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+    let m = w.message(&id, "x", false);
+    assert_eq!(m["state"], "unknown", "{m}");
+    assert!(!w.h.screen(&pane).contains("race Yes"), "Enter가 권한 창을 골랐다: {}", w.h.screen(&pane));
+    let ev = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(ev["kind"], "message_unknown", "{ev}");
+    assert!(ev["detail"].as_str().unwrap().contains("Enter를 보내지 않았다"), "{ev}");
+    let q = w.wait_question(&id, "permission");
+    // 「no」는 Esc다(권한 창의 「No, … (esc)」)
+    w.h.ok(&["question", "answer", q["id"].as_str().unwrap(), "no"]);
+    w.wait_screen(&pane, "race cancel");
+    w.wait_show("idle", &id, |v| v["agent"]["activity"] == "idle");
+
     // 거절(Esc)
     let m3 = w.message(&id, "ask again", false);
     assert_eq!(m3["state"], "accepted", "{m3}");
@@ -833,14 +863,22 @@ fn hooked_thread_questions_and_messages() {
     let all = w.questions(true);
     let got: Vec<_> =
         all.iter().map(|q| (q["question_kind"].as_str().unwrap(), q["answer"].as_str().unwrap_or("-"))).collect();
-    assert_eq!(got, [("trust", "yes"), ("permission", "yes"), ("permission", "no"), ("permission", "no")]);
+    // 신뢰, brief 권한, 늦은 짝, 치는 동안 뜬 권한 창, 거절
+    assert_eq!(
+        got,
+        [("trust", "yes"), ("permission", "yes"), ("permission", "no"), ("permission", "no"), ("permission", "no")]
+    );
     // 질문마다 항목을 만들지 않는다: 30초 안에 답한 확인창은 사람 차례가 아니다(herdr-projects `BLOCKED_DEBOUNCE_SECS`,
     // plan §8.85). 진행을 40%로 알린 채 쓴 보고는 중간 보고다(검토 대기 아님)
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
     assert!(items.iter().all(|i| i["item_kind"] != "question" && i["event"] != "blocked on a prompt"), "{items:?}");
     assert!(!items.iter().any(|i| i["event"] == "new report"), "{items:?}");
     let kinds = w.kinds(0);
-    let msg: Vec<_> = kinds.iter().filter(|k| k.starts_with("message_") || k.starts_with("question_")).collect();
+    let mut msg: Vec<&str> =
+        kinds.iter().map(String::as_str).filter(|k| k.starts_with("message_") || k.starts_with("question_")).collect();
+    // 치는 동안 뜬 권한 창의 「모름」은 질문(가짜의 hook)과 따로 와 그 둘의 차례는 정해지지 않는다: 한 번인 것만 보고 뺀다
+    assert_eq!(msg.iter().filter(|k| **k == "message_unknown").count(), 1, "{msg:?}");
+    msg.retain(|k| *k != "message_unknown");
     assert_eq!(
         msg,
         [
@@ -854,6 +892,11 @@ fn hooked_thread_questions_and_messages() {
             "message_accepted",
             "message_queued",
             "message_accepted",
+            "question_shown",
+            "question_answered",
+            "message_queued",
+            "message_accepted",
+            "message_queued",
             "question_shown",
             "question_answered",
             "message_queued",
@@ -992,6 +1035,16 @@ fn memory_and_restart() {
     assert!(!w.h.screen(&pane3).contains("brief 받음"), "{}", w.h.screen(&pane3));
     assert_eq!(w.kinds(seen), ["thread_restarted"]);
 
+    // 프로젝트 폴더는 agent가 고칠 수 있다: symlink·FIFO인 decisions.md는 읽지 않는다(FIFO를 열면 ticker가 멈춘다,
+    // t-0340 보안 감사)
+    let outside = w.lab.root.join("decisions-outside.md");
+    std::fs::write(&outside, "# 결정 기록\n\n## 1 · 2026-10-16 12:00Z\n\n밖의 파일\n").unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("decisions.md")).unwrap();
+    w.h.ticks(2);
+    std::fs::remove_file(dir.join("decisions.md")).unwrap();
+    assert!(Command::new("mkfifo").arg(dir.join("decisions.md")).status().unwrap().success());
+    w.h.ticks(2);
+    std::fs::remove_file(dir.join("decisions.md")).unwrap();
     // 결정이 적힌 옛 decisions.md: brief에 넣지 않고, memory로 옮기라고 내용당 한 번 알린다(host는 memory를 쓰지 않는다)
     std::fs::write(dir.join("decisions.md"), "# 결정 기록\n\n## 1 · 2026-10-16 12:00Z\n\nAPI는 v1이다\n").unwrap();
     w.h.ticks(2);
