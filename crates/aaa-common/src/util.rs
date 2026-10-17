@@ -30,6 +30,65 @@ pub fn utc_text(ms: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}Z")
 }
 
+/// ISO 8601 UTC 시각(`2026-10-16T12:05:00.000Z`, JavaScript `toISOString`과 같은 꼴)
+pub fn utc_iso(ms: u64) -> String {
+    let (y, m, d, h, mi, s) = civil(ms);
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{:03}Z", ms % 1000)
+}
+
+/// ISO 8601 시각(`2026-10-16T12:05:00Z`, 소수 초·`+09:00` 같은 시간대, 날짜만도 된다) → epoch ms.
+/// 1970년 전이나 형식이 아니면 None.
+pub fn parse_iso(text: &str) -> Option<u64> {
+    let t = text.trim();
+    let num = |s: &str| -> Option<i64> {
+        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }
+    };
+    let (date, time) = match t.split_once(['T', 't', ' ']) {
+        Some((d, rest)) => (d, Some(rest)),
+        None => (t, None),
+    };
+    let mut parts = date.splitn(3, '-');
+    let (y, m, d) = (num(parts.next()?)?, num(parts.next()?)?, num(parts.next()?)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Howard Hinnant의 days_from_civil
+    let yy = if m <= 2 { y - 1 } else { y };
+    let era = yy.div_euclid(400);
+    let yoe = yy - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let mut ms = days * 86_400_000;
+    if let Some(time) = time {
+        // 시간대: Z, +HH:MM, -HH:MM, +HHMM
+        let (clock, offset) = if let Some(c) = time.strip_suffix(['Z', 'z']) {
+            (c, 0)
+        } else if let Some(i) = time.rfind(['+', '-']) {
+            let (c, o) = time.split_at(i);
+            let sign = if o.starts_with('-') { -1 } else { 1 };
+            let digits: String = o[1..].chars().filter(|c| *c != ':').collect();
+            if digits.len() != 4 {
+                return None;
+            }
+            (c, sign * (num(&digits[..2])? * 60 + num(&digits[2..])?) * 60_000)
+        } else {
+            (time, 0)
+        };
+        let (hms, frac) = clock.split_once('.').unwrap_or((clock, ""));
+        let mut hms = hms.split(':');
+        let h = num(hms.next()?)?;
+        let mi = num(hms.next()?)?;
+        let s = hms.next().map(num).unwrap_or(Some(0))?;
+        if h > 23 || mi > 59 || s > 60 {
+            return None;
+        }
+        let frac_ms = if frac.is_empty() { 0 } else { num(&format!("{frac:0<3}")[..3])? };
+        ms += ((h * 60 + mi) * 60 + s) * 1000 + frac_ms - offset;
+    }
+    u64::try_from(ms).ok()
+}
+
 /// 파일 이름에 쓰는 UTC 시각(`20261016T120500Z`)
 pub fn utc_compact(ms: u64) -> String {
     let (y, m, d, h, mi, s) = civil(ms);
@@ -187,6 +246,21 @@ pub fn pid_alive(pid: u32) -> bool {
 
 #[cfg(test)]
 mod time_tests {
+    use super::{parse_iso, utc_iso};
+
+    #[test]
+    fn iso_round_trip() {
+        for ms in [0u64, 1_792_211_449_034, 951_782_400_000, 4_102_444_800_999] {
+            assert_eq!(parse_iso(&utc_iso(ms)), Some(ms), "{}", utc_iso(ms));
+        }
+        assert_eq!(utc_iso(1_792_211_449_034), "2026-10-17T04:30:49.034Z");
+        assert_eq!(parse_iso("2026-10-17T12:30:49+09:00"), parse_iso("2026-10-17T03:30:49Z"));
+        assert_eq!(parse_iso("2026-10-17T03:30:49.123456+00:00"), Some(1_792_207_849_123));
+        assert_eq!(parse_iso("2026-10-17"), Some(1_792_195_200_000));
+        assert_eq!(parse_iso("not a date"), None);
+        assert_eq!(parse_iso("2026-13-01T00:00:00Z"), None);
+    }
+
     #[test]
     fn utc_text_dates() {
         assert_eq!(super::utc_text(0), "1970-01-01 00:00Z");

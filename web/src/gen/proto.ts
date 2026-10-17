@@ -563,3 +563,52 @@ evaluator: string, created_at_ms: number,
  */
 file: string, doc: EvaluationDoc, };
 
+export type UsageProviderId = "claude" | "codex" | "cursor" | "copilot" | "grok" | "antigravity" | "opencode";
+
+export type UsageWindowKind = "session" | "day" | "week" | "month";
+
+export type UsageWindow = { kind: UsageWindowKind, 
+/**
+ * plan이 따로 거는 모델·몫("Sonnet", "Premium"). plan 전체 한도면 None
+ */
+scope: string | null, 
+/**
+ * 0~100
+ */
+used_percent: number, 
+/**
+ * ISO 8601. 구독이 말하지 않으면 None
+ */
+resets_at: string | null, 
+/**
+ * 이 창이 세기 시작한 때(ISO 8601). 구독이 그것도 창 길이도 말하지 않으면 None
+ */
+starts_at: string | null, };
+
+export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked";
+
+export type ProviderUsage = { id: UsageProviderId, 
+/**
+ * 한 구독의 한 계정. 읽을 때마다 같다: 구독과 계정 id, 누구 것인지 말하지 않는 로그인이면 구독과 찾은 곳(hash).
+ * 한 머신이 한 구독의 두 계정에 로그인했으면 둘 다 나온다.
+ */
+key: string, 
+/**
+ * 주인이 아는 계정 이름(email, GitHub login). 모르면 None
+ */
+account: string | null, 
+/**
+ * 구독이 말하는 plan 이름("max", "pro")
+ */
+plan: string | null, 
+/**
+ * 마지막으로 읽은 숫자. 뒤에 실패해도 남고, 그때는 `problem`이 까닭을 말한다
+ */
+windows: Array<UsageWindow>, problem: UsageProblem | null, 
+/**
+ * `windows`를 읽은 때(ISO 8601). 한 번도 못 읽었으면 None
+ */
+checked_at: string | null, };
+
+export type UsageReport = { providers: Array<ProviderUsage>, };
+
