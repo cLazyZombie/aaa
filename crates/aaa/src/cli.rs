@@ -153,12 +153,17 @@ enum Cmd {
         agent: String,
         payload: Option<String>,
     },
-    /// 세션 안에서 진행을 보고한다(예: `aaa report --percent 40 --activity "시험 중"`)
+    /// 세션 안에서 진행을 보고한다(예: `aaa report --percent 40 --activity "시험 중"`, herdr-projects `report`와 같은 인자)
     Report {
-        #[arg(long)]
+        /// 어림한 진행(0~100). 100이면 활동은 `Done`이다
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100), required_unless_present = "unknown", conflicts_with = "unknown")]
         percent: Option<u8>,
+        /// 범위를 아직 모른다
         #[arg(long)]
-        activity: Option<String>,
+        unknown: bool,
+        /// 두~네 단어의 활동. 사용자를 기다리면 `Waiting for you`
+        #[arg(long)]
+        activity: String,
     },
     /// 확인창 질문(폴더 신뢰·권한 확인)을 보고 답한다
     Question {
@@ -1001,7 +1006,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::Report { percent, activity } => {
+        Cmd::Report { percent, unknown: _, activity } => {
+            // herdr-projects `progress::report`: 100은 「끝」이다
+            let activity = if percent == Some(100) { "Done".to_string() } else { activity };
+            if activity.trim().is_empty() {
+                anyhow::bail!("--activity가 비었다");
+            }
             let v = serde_json::json!({ "percent": percent, "activity": activity });
             runtime()?.block_on(aaa_agent::hooks::send("report", v))?;
             Ok(ExitCode::SUCCESS)
@@ -1734,14 +1744,13 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     };
     let _ = writeln!(
         s,
-        "{}/{}\t{}\t{}\t{}@{}\t[{}]\tbrief {}",
+        "{}/{}\t{}\t{}\t{}@{}\tbrief {}",
         t.project,
         t.id,
         group,
         t.title,
         t.profile,
         t.machine,
-        t.report_state.clone().unwrap_or("-".into()),
         t.brief.as_str()
     );
     if let Some(e) = &t.error {
@@ -2361,5 +2370,23 @@ fn config_cmd(cmd: ConfigCmd, json: bool) -> Result<ExitCode> {
             }
             Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(2) })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `aaa report`는 herdr-projects `report`와 같은 인자를 받는다(plan §8.78)
+    #[test]
+    fn report_takes_percent_or_unknown_and_an_activity() {
+        let ok = |a: &[&str]| Cli::try_parse_from([&["aaa", "report"][..], a].concat()).is_ok();
+        assert!(ok(&["--percent", "25", "--activity", "코드 읽기"]));
+        assert!(ok(&["--unknown", "--activity", "일 가늠"]));
+        // 백분율이나 --unknown 하나, 활동은 늘 있어야 한다
+        assert!(!ok(&["--activity", "코드 읽기"]));
+        assert!(!ok(&["--percent", "25", "--unknown", "--activity", "x"]));
+        assert!(!ok(&["--percent", "101", "--activity", "x"]));
+        assert!(!ok(&["--percent", "25"]));
     }
 }

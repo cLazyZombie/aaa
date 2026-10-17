@@ -128,6 +128,13 @@ pub(crate) fn answer_keys(lines: &[String], choice: &str) -> Result<Vec<u8>, Str
     Ok(keys)
 }
 
+/// 입력이 실패했다. `typed`면 글을 이미 쳤을 수 있다(다시 치기 전에 화면을 본다).
+#[derive(Debug)]
+pub(crate) struct SubmitErr {
+    pub typed: bool,
+    pub msg: String,
+}
+
 /// 새 입력을 바로 받을 수 있는 상태인가(상태를 모르면 받는다고 본다)
 fn ready(a: Option<AgentActivity>) -> bool {
     a.is_none_or(|a| matches!(a, AgentActivity::Idle | AgentActivity::Started))
@@ -454,7 +461,6 @@ impl Host {
         self.submit(mid, pane, None, None).await
     }
 
-    /// `on_accept`는 받았다고 알게 된 그 자리에서 한 번 돈다(Ok(true)일 때만): hook이면 그 hook 처리 안에서
     async fn submit(
         self: &Arc<Self>,
         mid: &str,
@@ -462,10 +468,24 @@ impl Host {
         text: Option<&str>,
         on_accept: Option<OnFire>,
     ) -> Result<bool, String> {
-        let conn = self.live_conn(mid).map_err(|e| e.message)?;
+        self.submit_checked(mid, pane, text, on_accept).await.map_err(|e| e.msg)
+    }
+
+    /// `on_accept`는 받았다고 알게 된 그 자리에서 한 번 돈다(Ok(true)일 때만): hook이면 그 hook 처리 안에서.
+    /// 실패는 입력하기 전인지(`typed = false`, herdr-projects `refused_before_typing`) 함께 알린다.
+    pub(crate) async fn submit_checked(
+        self: &Arc<Self>,
+        mid: &str,
+        pane: &str,
+        text: Option<&str>,
+        on_accept: Option<OnFire>,
+    ) -> Result<bool, SubmitErr> {
+        let before = |msg: String| SubmitErr { typed: false, msg };
+        let after = |msg: String| SubmitErr { typed: true, msg };
+        let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
         if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
-            return Err(format!("선택 창이 떠 있어 입력하지 않았다: {q}"));
+            return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
         }
         let hooked = self.pane_agent(pane).is_some_and(|a| a.harness != "report");
         let (hook_accept, mut screen_accept) = if hooked { (on_accept, None) } else { (None, on_accept) };
@@ -478,13 +498,13 @@ impl Host {
             };
             conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(body.into_bytes()) })
                 .await
-                .map_err(|e| e.message)?;
+                .map_err(|e| after(e.message))?;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
         let typed = self.screen_lines(mid, pane).await;
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(b"\r".to_vec()) })
             .await
-            .map_err(|e| e.message)?;
+            .map_err(|e| after(e.message))?;
         if hooked {
             return Ok(tokio::time::timeout(ACCEPT_WAIT, accepted).await.is_ok_and(|r| r.is_ok()));
         }
@@ -563,6 +583,27 @@ impl Host {
         if mode == MessageMode::Interrupt && self.pane_agent(&pid).map(|a| a.activity) == Some(AgentActivity::Question)
         {
             return Err(err(ErrorCode::BadRequest, "확인창이 열려 있다. `aaa question`으로 먼저 답한다"));
+        }
+        // herdr-projects threads.rs `prompt`: 신뢰 창은 Enter가 받아들이고, 사람이 입력창에 쓰던 글은 보낸 글과 섞여
+        // 보내진다. 둘 다 입력하지 않고 기록하기 전에 거부한다. 읽을 수 없는 입력창(모르는 harness)은 전처럼 보낸다.
+        let kind = self.load(project, id)?.launch.map(|l| l.harness).unwrap_or_default();
+        if let Some(screen) = self.screen(&mid, &pid).await {
+            if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
+                let by_user = self.trust_screens(project) == crate::trust_screen::USER;
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    crate::trust_screen::refusal(project, id, &pid, phrase, by_user),
+                ));
+            }
+            if crate::prompt_box::check(&kind, &screen.ansi) == crate::prompt_box::Draft::Typed {
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    format!(
+                        "draft_in_box: {id}의 입력창에 누가 쓰던 글이 있다({pid}). 그 글에 섞이지 않게 보내지 않는다. \
+                         입력창이 빈 뒤에 다시 보낸다(`aaa pane read {pid}`로 본다)"
+                    ),
+                ));
+            }
         }
         let mut m = MessageView {
             id: format!("m-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),

@@ -283,7 +283,7 @@ function Main({ role }: { role: DeviceRole }) {
       title: t.title || t.id,
       machine: null,
       agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
-      notice: { title: `${t.project} · ${t.title || t.id}`, body: t.report_state ?? "보고 준비", tag: `aaa-${t.project}/${t.id}` },
+      notice: { title: `${t.project} · ${t.title || t.id}`, body: "보고 준비", tag: `aaa-${t.project}/${t.id}` },
     });
   };
 

@@ -277,6 +277,61 @@ impl Drop for Lab {
     }
 }
 
+/// 흐름 사건을 따라 읽는다(`aaa events --follow --json`, cursor 0부터라 따라 읽기 전에 난 사건도 본다).
+/// 기다림은 사건이 오는 것으로 끝난다. 시간은 오지 않을 때 멈추는 안전 상한일 뿐이다(polling하지 않는다).
+pub struct Follow {
+    rx: std::sync::mpsc::Receiver<Value>,
+    /// 지금까지 읽은 사건(순서대로)
+    pub seen: Vec<Value>,
+}
+
+impl Follow {
+    /// `f`에 맞는 사건이 올 때까지 읽는다. 이미 읽은 사건은 다시 보지 않는다.
+    pub fn until(&mut self, what: &str, timeout: Duration, f: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.rx.recv_timeout(left) {
+                Ok(e) => {
+                    self.seen.push(e.clone());
+                    if f(&e) {
+                        return e;
+                    }
+                }
+                Err(_) => panic!("{timeout:?} 안에 사건 {what}이 오지 않았다\n읽은 사건: {:#?}", self.seen),
+            }
+        }
+    }
+
+    /// 종류(`kind`)와 thread로 기다린다
+    pub fn kind(&mut self, kind: &str, thread: &str, timeout: Duration) -> Value {
+        self.until(&format!("{kind} {thread}"), timeout, |e| e["kind"] == kind && e["thread"] == thread)
+    }
+
+    pub fn kinds(&self) -> Vec<String> {
+        self.seen.iter().map(|e| e["kind"].as_str().unwrap_or_default().to_string()).collect()
+    }
+}
+
+impl Lab {
+    /// 프로젝트의 흐름 사건을 따라 읽는 프로세스를 띄운다(끝나면 다른 프로세스처럼 이 실험실이 정리한다)
+    pub fn follow(&mut self, tag: &str, node: &Node, project: &str) -> Follow {
+        let (_, out) = self.spawn_piped(tag, node, &["events", "--follow", "--json", "--project", project]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in out.lines() {
+                let Ok(line) = line else { break };
+                if let Ok(v) = serde_json::from_str::<Value>(&line)
+                    && tx.send(v).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Follow { rx, seen: Vec::new() }
+    }
+}
+
 /// 조건이 참이 될 때까지 기다린다. 상태 전이를 관측하는 대기이지 실패한 동작의 재시도가 아니다.
 pub fn wait_for<T>(what: &str, timeout: Duration, f: impl FnMut() -> Option<T>) -> T {
     wait_for_diag(what, timeout, f, String::new)
