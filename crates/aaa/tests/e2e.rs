@@ -31,6 +31,15 @@ listen = ""
 mode = "none"
 "#;
 
+/// 쉬고 있는 가짜 Claude: SessionStart hook(대화 기록 위치)과 진행 보고를 내고 입력 상자를 그린 채 기다린다.
+/// `$1`은 aaa 실행 파일, `$2`는 hook JSON이다.
+const IDLE_CLAUDE: &str = r#"#!/bin/sh
+"$1" hook --agent claude "$2"
+"$1" report --percent 40 --activity 정리
+printf '────────────────\n\342\235\257 \n────────────────\n  ? for shortcuts'
+exec cat
+"#;
+
 fn connected(node: &Node, name: &str) -> bool {
     node.machine(name).is_some_and(|m| m["connection"] == "connected")
 }
@@ -57,7 +66,8 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     h.ok(&["pane", "send", &id, "--text", "echo mark-$((6*7))", "--enter"]);
     wait_for("첫 출력", T, || screen_has(&h, &id, "mark-42"));
 
-    // 쉬고 있는 Claude pane(Stop hook과 진행 보고 뒤 입력 없음): 다시 떠도 상태·진행·대화 보기가 남아야 한다
+    // 쉬고 있는 Claude pane(SessionStart hook과 진행 보고 뒤 입력 상자에서 기다린다): 다시 떠도 상태·진행·대화 보기가
+    // 남아야 한다. 상태는 화면(입력 상자, herdr claude.toml `live_prompt_box`)으로 안다.
     let dir = claude.join("projects").join("-lab");
     std::fs::create_dir_all(&dir).unwrap();
     let tr = dir.join("s1.jsonl");
@@ -71,24 +81,29 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         ),
     )
     .unwrap();
-    let hook = serde_json::json!({ "hook_event_name": "Stop", "session_id": "s1", "transcript_path": tr }).to_string();
-    let c = h.ok(&[
-        "pane",
-        "run",
-        "--machine",
-        "labA",
-        "--name",
-        "c1",
-        "--",
-        "/bin/sh",
-        "-c",
-        r#""$0" hook --agent claude "$1"; "$0" report --percent 40 --activity 정리; exec cat"#,
-        lab::BIN,
-        &hook,
-    ]);
+    let hook =
+        serde_json::json!({ "hook_event_name": "SessionStart", "session_id": "s1", "transcript_path": tr }).to_string();
+    // 실행 파일 이름이 claude라 agent가 Claude 화면 규칙으로 본다
+    let fake = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
+    std::fs::write(&fake, IDLE_CLAUDE).unwrap();
+    std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let mut ev = lab::Events::connect(&h);
+    let c = h.ok(&["pane", "run", "--machine", "labA", "--name", "c1", "--", fake.to_str().unwrap(), lab::BIN, &hook]);
     let cid = c["id"].as_str().unwrap().to_string();
     let chat_len = || h.json(&["pane", "chat", &cid]).ok().and_then(|v| v["messages"].as_array().map(|m| m.len()));
-    wait_for("hook 반영", T, || (chat_len() == Some(2) && h.pane(&cid)["agent"]["percent"] == 40).then_some(()));
+    ev.wait("쉬는 Claude 상태·진행", T, |e| {
+        match e {
+            aaa_proto::FrontEvent::State { panes, .. } => panes
+                .iter()
+                .find(|p| p.id == cid)
+                .and_then(|p| p.agent.as_ref())
+                .filter(|a| a.activity == aaa_proto::AgentActivity::Idle && a.percent == Some(40)),
+            _ => None,
+        }
+        .map(|_| ())
+    });
+    assert_eq!(chat_len(), Some(2));
     let before = h.pane(&cid)["agent"].clone();
     assert_eq!((before["harness"].as_str(), before["activity"].as_str()), (Some("claude"), Some("idle")), "{before}");
     let restored = |what: &str| {

@@ -866,6 +866,7 @@ impl Host {
                     cols: cols.unwrap_or(120),
                     rows: rows.unwrap_or(32),
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1137,6 +1138,7 @@ impl Host {
             cols: info.cols,
             rows: info.rows,
             role: info.role,
+            harness: info.harness.clone(),
         };
         let new_id = self.spawn_on(&mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
@@ -1216,6 +1218,7 @@ impl Host {
                     cols: 120,
                     rows: 32,
                     role: None,
+                    harness: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1231,7 +1234,16 @@ impl Host {
                     Some(m) => self.resolve_machine(Some(&m))?,
                     None => pane_machine(&target).unwrap_or(target_mid),
                 };
-                let spec = SpawnSpec { name: String::new(), argv, cwd, env: vec![], cols: 80, rows: 24, role: None };
+                let spec = SpawnSpec {
+                    name: String::new(),
+                    argv,
+                    cwd,
+                    env: vec![],
+                    cols: 80,
+                    rows: 24,
+                    role: None,
+                    harness: None,
+                };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
                 let done = w.tabs.iter_mut().any(|t| aaa_proto::layout::split(&mut t.root, &target, &id, dir));

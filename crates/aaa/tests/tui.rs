@@ -261,7 +261,12 @@ fn leaves(w: &serde_json::Value) -> Vec<String> {
 fn attach_draws_layout_and_detach_keeps_sessions() {
     let mut lab = Lab::new();
     let h = start(&mut lab);
-    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", "/bin/sh"]);
+    // 실행 파일 이름이 claude인 셸: agent가 이 pane 화면을 Claude 규칙(herdr claude.toml)으로 본다
+    let claude = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh\n").unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let w = h.ok(&["ws", "tab", "--machine", "labA", "--name", "first", "--", lab::path_str(&claude)]);
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
@@ -275,13 +280,14 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // harness 상태는 hook 사건으로만 바뀌고 상태 줄·badge에 보인다(세션 안 `aaa hook`)
-    tui.type_line(&format!(
-        "'{}' hook --agent claude '{{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}}'; clear",
-        lab::BIN
-    ));
+    // harness 상태는 화면으로 바뀌고 상태 줄·badge에 보인다: Claude 권한 확인창(`bash_permission_prompt`)은 질문,
+    // spinner 줄(`live_turn_working`)은 작업 중이다
+    tui.type_line(
+        "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
+         ' Esc to cancel · Tab to amend'",
+    );
     tui.wait_text("질문 상태", |s| s.contains("실행 · 질문") && s.contains("질문 — aaa question"));
-    tui.type_line(&format!("'{}' hook --agent claude '{{\"hook_event_name\":\"UserPromptSubmit\"}}'; clear", lab::BIN));
+    tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| s.contains("실행 · 작업 중") && !s.contains("질문 — aaa question"));
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));

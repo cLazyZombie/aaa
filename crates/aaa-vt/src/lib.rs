@@ -14,9 +14,47 @@ pub struct Vt {
 struct Modes {
     /// modifyOtherKeys 단계(`CSI > 4 ; n m`). Claude Code는 2를 요청하고 Ctrl+Enter를 `CSI 27;5;13~`로 받는다.
     modify_other_keys: u16,
+    /// harness 상태 감지에 쓰는 마지막 OSC 0/2 제목과 OSC 9 진행 payload(herdr `AgentOscStateTracker`, pane/osc.rs 494~565).
+    /// Claude·Codex는 제목 앞 spinner로 작업 중을 알린다. 빈 제목은 지운다.
+    osc_title: Option<String>,
+    osc_progress: Option<String>,
+}
+
+/// herdr `AGENT_OSC_MAX_CHARS`: 제목은 프로그램이 정한 글이라 길이를 묶는다
+const AGENT_OSC_MAX_CHARS: usize = 256;
+
+/// herdr `sanitize_agent_osc_string`: 제어 문자를 빼고 256자까지
+fn sanitize_osc(payload: &[u8]) -> String {
+    String::from_utf8_lossy(payload).chars().filter(|ch| !ch.is_control()).take(AGENT_OSC_MAX_CHARS).collect()
+}
+
+impl Modes {
+    fn title(&mut self, payload: &[u8]) {
+        let title = sanitize_osc(payload);
+        self.osc_title = (!title.is_empty()).then_some(title);
+    }
 }
 
 impl vt100::Callbacks for Modes {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.title(title);
+    }
+
+    /// vt100(vte)은 OSC 본문을 `;`마다 나눈다. herdr는 첫 `;`에서만 나누므로(`parse_agent_osc_body`) 나머지를 다시 잇는다:
+    /// `;`가 든 제목과 OSC 9 진행(`9;4;3;` → `4;3;`)이 여기로 온다.
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        let [command, rest @ ..] = params else { return };
+        if rest.is_empty() {
+            return;
+        }
+        let payload = rest.join(&b';');
+        match *command {
+            b"0" | b"2" => self.title(&payload),
+            b"9" => self.osc_progress = Some(sanitize_osc(&payload)),
+            _ => {}
+        }
+    }
+
     fn unhandled_csi(&mut self, _: &mut vt100::Screen, i1: Option<u8>, i2: Option<u8>, params: &[&[u16]], c: char) {
         if i1 != Some(b'>') || i2.is_some() || !matches!(c, 'm' | 'n') {
             return;
@@ -238,6 +276,58 @@ impl Vt {
         let (cr, cc) = screen.cursor_position();
         ScreenText { session: session.to_string(), cols, rows, lines, cursor_row: cr, cursor_col: cc }
     }
+
+    /// 마지막 OSC 0/2 제목(없거나 지웠으면 빈 글)
+    pub fn osc_title(&self) -> &str {
+        self.parser.callbacks().osc_title.as_deref().unwrap_or("")
+    }
+
+    /// 마지막 OSC 9 진행 payload(`9;` 다음, 예: `4;0;`). 없으면 빈 글.
+    pub fn osc_progress(&self) -> &str {
+        self.parser.callbacks().osc_progress.as_deref().unwrap_or("")
+    }
+
+    /// harness 상태 감지가 읽는 화면 끝 글. herdr `ghostty_detection_text_for_cache`(pane/terminal.rs 2849~3074)와 같다:
+    /// 화면 높이만큼의 줄이 마지막 내용 줄과 커서 줄 가운데 아래쪽에서 끝난다. 화면이 덜 찼으면 그 위는 기록(scrollback)
+    /// 줄이다. alternate screen이면 보이는 화면이다. 줄 끝 공백과 끝의 빈 줄은 빼고, 줄마다 `\n`으로 끝낸다.
+    pub fn detection_text(&mut self) -> String {
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        let viewport: Vec<String> = screen.rows(0, cols).map(|l| l.trim_end().to_string()).collect();
+        if screen.alternate_screen() {
+            return finish_recent(viewport);
+        }
+        let (cursor_row, _) = screen.cursor_position();
+        let Some(last) = viewport.iter().rposition(|l| !l.trim().is_empty()) else {
+            return String::new();
+        };
+        let end = last.max(usize::from(cursor_row)).min(viewport.len() - 1);
+        let mut out = Vec::with_capacity(usize::from(rows));
+        // 끝 줄이 화면 맨 아래보다 위면 그만큼 기록 줄을 앞에 둔다(있는 만큼만)
+        let want = usize::from(rows) - 1 - end;
+        if want > 0 {
+            let screen = self.parser.screen_mut();
+            screen.set_scrollback(want);
+            let got = screen.scrollback();
+            out.extend(screen.rows(0, cols).take(got).map(|l| l.trim_end().to_string()));
+            screen.set_scrollback(0);
+        }
+        out.extend(viewport.into_iter().take(end + 1));
+        finish_recent(out)
+    }
+}
+
+/// herdr `trim_trailing_blank_rows` + `recent_text_from_rows`
+fn finish_recent(mut rows: Vec<String>) -> String {
+    while rows.last().is_some_and(|row| row.trim().is_empty()) {
+        rows.pop();
+    }
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut text = rows.join("\n");
+    text.push('\n');
+    text
 }
 
 /// 화면 bytes가 `screen`일 때 기록에 쓸 수 있는 bytes: snapshot JSON(base64는 4/3배)이 한 frame에 들고 64KiB가 남게
@@ -613,5 +703,62 @@ mod tests {
         assert!(!v.replay().windows(4).any(|w| w == b"\x1b[>4"));
         v.feed(b"\x1b[>4;1m\x1b[>m");
         assert!(!v.replay().windows(4).any(|w| w == b"\x1b[>4"));
+    }
+
+    /// herdr pane/osc.rs `AgentOscStateTracker`: 마지막 OSC 0/2 제목·OSC 9 진행. `;`가 든 제목, 빈 제목(지움), 제어 문자,
+    /// 길이 상한, ST·BEL 끝, 나뉘어 온 bytes
+    #[test]
+    fn osc_title_and_progress_are_kept_for_detection() {
+        let mut v = Vt::new(5, 40);
+        assert_eq!((v.osc_title(), v.osc_progress()), ("", ""));
+        v.feed("\x1b]0;⠋ codex · demo\x07".as_bytes());
+        assert_eq!(v.osc_title(), "⠋ codex · demo");
+        v.feed(b"\x1b]2;a;b;c\x1b\\");
+        assert_eq!(v.osc_title(), "a;b;c");
+        v.feed("\x1b]0;✳ x\x1b".as_bytes());
+        v.feed(b"\\");
+        assert_eq!(v.osc_title(), "✳ x");
+        v.feed(b"\x1b]9;4;3;\x07");
+        assert_eq!(v.osc_progress(), "4;3;");
+        v.feed(b"\x1b]9;4;0;\x07\x1b]0;\x07");
+        assert_eq!((v.osc_title(), v.osc_progress()), ("", "4;0;"));
+        // 아이콘 이름(OSC 1)·다른 OSC는 제목이 아니다
+        v.feed(b"\x1b]1;icon\x07\x1b]7;file:///tmp\x07");
+        assert_eq!(v.osc_title(), "");
+        let long = format!("\x1b]0;{}\x07", "가".repeat(300));
+        v.feed(long.as_bytes());
+        assert_eq!(v.osc_title().chars().count(), AGENT_OSC_MAX_CHARS);
+        v.feed(b"\x1b]0;a\tb\x07");
+        assert_eq!(v.osc_title(), "ab");
+        // 화면 글에는 남지 않는다
+        assert!(v.text("s").lines.iter().all(|l| l.is_empty()));
+    }
+
+    /// herdr pane/terminal.rs `ghostty_recent_read_range`: 끝은 마지막 내용 줄과 커서 줄 가운데 아래쪽, 덜 찬 화면은 위를
+    /// 기록 줄로 채우고, 끝의 빈 줄은 뺀다. alternate screen은 보이는 화면만.
+    #[test]
+    fn detection_text_ends_at_content_or_cursor_and_reaches_into_scrollback() {
+        let mut v = Vt::new(4, 20);
+        assert_eq!(v.detection_text(), "");
+        for i in 1..=6 {
+            v.feed(format!("l{i}\r\n").as_bytes());
+        }
+        v.feed(b"tail   ");
+        // 화면: l4 l5 l6 tail, 기록: l1 l2 l3
+        assert_eq!(v.detection_text(), "l4\nl5\nl6\ntail\n");
+        // 화면을 지우고(지운 줄은 기록으로 가지 않는다) 위쪽 두 줄만 그리면 그 위는 기록 끝 두 줄이다(herdr는 rows줄을 읽는다)
+        v.feed(b"\x1b[2J\x1b[Ha\r\nb");
+        assert_eq!(v.detection_text(), "l2\nl3\na\nb\n");
+        // 커서가 내용보다 아래면 커서 줄까지(빈 줄은 끝에서 뺀다)
+        v.feed(b"\x1b[4;1H");
+        assert_eq!(v.detection_text(), "a\nb\n");
+        // 기록이 모자라면 있는 만큼만
+        let mut short = Vt::new(5, 20);
+        short.feed(b"x\r\ny");
+        assert_eq!(short.detection_text(), "x\ny\n");
+        // 읽은 뒤 화면은 그대로다(기록 위치를 되돌린다)
+        assert_eq!(v.text("s").lines, vec!["a", "b", "", ""]);
+        v.feed(b"\x1b[?1049h\x1b[Hfull\x1b[3;1Hlast");
+        assert_eq!(v.detection_text(), "full\n\nlast\n");
     }
 }
