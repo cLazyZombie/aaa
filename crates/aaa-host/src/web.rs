@@ -890,8 +890,9 @@ impl Outbox {
     }
 
     /// 출력을 따라오지 못했다: 4008로 닫는다. 다시 보내지 않는다(브라우저의 「다시 연결」이 새로 붙는다).
-    fn stop(&self, why: &str) {
-        tracing::info!(why, "웹 터미널 출력 정지(4008)");
+    /// 기록에는 어느 pane인지와 밀린 양(ACK 안 된 것·보내지 못한 것)을 남긴다: 무엇이 쏟아졌는지·누가 느렸는지를 가른다.
+    fn stop(&self, why: &str, pane: &str, pending: u64) {
+        tracing::info!(why, pane, pending, buffered = self.buffered(), "웹 터미널 출력 정지(4008)");
         let _ = self.stop.send(Some((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON)));
     }
 
@@ -1001,7 +1002,7 @@ async fn pane_session(
             check_unacked(out.buffered(), &mut queue_since, now())
         };
         if verdict == Verdict::Stop {
-            out.stop("ACK가 나아가지 않는다");
+            out.stop("ACK가 나아가지 않는다", &id, window.pending());
             break;
         }
         tokio::select! {
@@ -1032,7 +1033,7 @@ async fn pane_session(
                             next = end;
                             let n = part.len() as u64;
                             if (acks && window.pending() + n > OUTPUT_HARD_BYTES) || out.buffered() >= OUTPUT_HARD_BYTES {
-                                out.stop("밀린 출력이 상한을 넘었다");
+                                out.stop("밀린 출력이 상한을 넘었다", &id, window.pending() + n);
                                 break;
                             }
                             window.write(n, n);

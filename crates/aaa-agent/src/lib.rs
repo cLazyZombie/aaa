@@ -581,10 +581,31 @@ impl Agent {
         if spec.cwd.is_none() {
             spec.cwd = self.default_cwd.clone();
         }
+        // 웹 새 세션 창은 `~/…`도 받는다(herdr-web-ui 「absolute path or ~/…」): 이 머신 사용자의 집으로 푼다
+        if let Some(rest) = spec.cwd.as_deref().and_then(|c| c.strip_prefix('~'))
+            && (rest.is_empty() || rest.starts_with('/'))
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            spec.cwd = Some(format!("{}{rest}", home.to_string_lossy()));
+        }
         if let Some(cwd) = &spec.cwd
             && !Path::new(cwd).is_dir()
         {
             bail!("작업 폴더가 없다: {cwd}");
+        }
+        // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
+        // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
+        if let Some(name) = spec.profile.clone() {
+            let cfg = self.threads_cfg.lock().unwrap().clone();
+            let launch =
+                threads::with_hooks(&cfg, threads::resolve(&name, threads::find_profile(&cfg, &name)?)?, &paths.dir)?;
+            // thread처럼 profile harness의 화면으로 상태를 본다(host orch `harness: Some(launch.harness)`, plan §8.110)
+            spec.harness.get_or_insert(launch.harness);
+            spec.argv = launch.argv;
+            spec.env.extend(launch.env);
+            if spec.name.is_empty() {
+                spec.name = name;
+            }
         }
         if spec.name.is_empty() {
             spec.name = spec
@@ -694,15 +715,17 @@ impl Agent {
                 .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                 .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
-                chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
-            })
-            .await
-            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-            .and_then(|r| {
-                r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
-                    .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
-            }),
+            AgentRequest::Chat { harness, transcript, harness_session, thinking } => {
+                tokio::task::spawn_blocking(move || {
+                    chat::read(&harness, transcript.as_deref(), harness_session.as_deref(), thinking)
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| {
+                    r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
+                        .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
+                })
+            }
             AgentRequest::Profiles => {
                 Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
             }
@@ -1044,6 +1067,7 @@ mod tests {
             rows: 24,
             role: None,
             harness: harness.map(str::to_string),
+            profile: None,
         };
         let info = SessionInfo {
             id: "s".into(),

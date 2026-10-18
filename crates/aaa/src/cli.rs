@@ -604,8 +604,13 @@ enum PaneCmd {
         #[arg(long)]
         timeout: Option<u64>,
     },
-    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 생각·도구 결과 본문은 빼고). 출력은 글(--json이면 JSON)
-    Chat { pane: String },
+    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 도구 결과 본문은 빼고, 생각은 --thinking일 때만). 출력은 글(--json이면 JSON)
+    Chat {
+        pane: String,
+        /// 생각(Claude thinking, Codex reasoning 요약)도 싣는다
+        #[arg(long)]
+        thinking: bool,
+    },
     /// 그림 파일(PNG·JPEG·GIF·WebP)을 pane 머신의 세션 폴더에 올린다. harness 입력창이면 경로를 넣는다(Enter 없음).
     /// clipboard가 없는 raw ssh 셸에서 쓴다. TUI(`aaa attach`)에서는 Ctrl+V가 같은 일을 한다.
     Attach { pane: String, file: std::path::PathBuf },
@@ -1162,7 +1167,7 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
                 front_call(FrontRequest::PaneReadText { pane, source: read_source(&source), lines, format })?,
             );
         }
-        PaneCmd::Chat { pane } => return front(json, FrontRequest::PaneChat { pane }),
+        PaneCmd::Chat { pane, thinking } => return front(json, FrontRequest::PaneChat { pane, thinking }),
         PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
             let pane = match target {
                 Some(t) => t,
@@ -2052,6 +2057,7 @@ fn render_front(r: &FrontResponse) -> String {
                     aaa_proto::ChatRole::User => writeln!(s, "\n[사람] {}", m.text),
                     aaa_proto::ChatRole::Assistant => writeln!(s, "\n[{}] {}", c.harness, m.text),
                     aaa_proto::ChatRole::Tool => writeln!(s, "  · {}", m.text),
+                    aaa_proto::ChatRole::Thinking => writeln!(s, "  (생각) {}", m.text),
                 };
             }
         }

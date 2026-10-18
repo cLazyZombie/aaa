@@ -1,4 +1,4 @@
-// 웹 E2E 터미널 기본: 키보드·크기·글꼴·글자 폭·입력 막대·두 controller·reader·새 셸.
+// 웹 E2E 터미널 기본: 키보드·크기·글꼴·글자 폭·입력 막대·두 controller·reader·새 pane.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 02-terminal(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
@@ -291,7 +291,7 @@ process.stdin.resume();`;
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     const rp = rd.page;
-    if ((await rp.getByRole("button", { name: "새 셸" }).count()) !== 0) throw new Error("reader에게 새 셸 버튼");
+    if ((await rp.getByRole("button", { name: "새 pane" }).count()) !== 0) throw new Error("reader에게 새 pane 버튼");
     await shot(rp, "mobile-list");
     await rp.getByTestId("pane-t1").click();
     await until("reader 화면", async () => (await screenText(rp)).includes("한글-8"));
@@ -344,10 +344,55 @@ process.stdin.resume();`;
     aaa("pane", "kill", "follow");
   });
 
-  await step("controller: 새 셸", async () => {
-    const before = aaa("pane", "list").panes.length;
-    await page.getByTestId("machine-labA").getByRole("button", { name: "새 셸" }).click();
-    await until("새 pane", () => aaa("pane", "list").panes.length === before + 1);
+  await step("controller: 새 pane 창(herdr-web-ui NewSessionDialog): 없는 폴더는 창 안 오류, 셸·폴더(이름은 폴더 이름), profile agent·최근 폴더·이름, Mod+Shift+O", async () => {
+    const panes = () => aaa("pane", "list").panes;
+    const before = panes().length;
+    const dialog = page.getByRole("dialog", { name: "새 pane · labA" });
+    const start = () => dialog.getByRole("button", { name: "시작", exact: true }).click();
+    const hash = () => page.evaluate(() => decodeURIComponent(location.hash));
+    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await dialog.waitFor();
+    // 없는 폴더: agent가 거절한 글이 창 안에 보이고 창은 남는다(pane은 생기지 않는다)
+    await dialog.getByRole("textbox", { name: "폴더" }).fill(`${root}/no-such-dir`);
+    await start();
+    const alert = dialog.getByRole("alert");
+    await alert.waitFor();
+    if (!(await alert.innerText()).includes("no-such-dir")) throw new Error(`없는 폴더 오류: ${await alert.innerText()}`);
+    if (panes().length !== before) throw new Error("없는 폴더로 pane이 생겼다");
+    // 셸: 이름을 비우면 폴더 이름(참고 이름 칸 placeholder), 만든 pane을 연다. 폴더는 저장소다: 실험실(/tmp)은 참고 passingFolder가
+    // 임시 폴더로 보아 최근 폴더에 두지 않는다
+    await dialog.getByRole("textbox", { name: "폴더" }).fill(repo);
+    if ((await dialog.getByRole("textbox", { name: "이름" }).getAttribute("placeholder")) !== path.basename(repo)) throw new Error("이름 칸 placeholder가 폴더 이름이 아니다");
+    await start();
+    await dialog.waitFor({ state: "detached" });
+    let shell;
+    await until("셸 pane", () => (shell = panes().find((p) => p.name === path.basename(repo) && p.cwd === repo)) !== undefined);
+    await until("셸 pane을 연다", async () => (await hash()) === `#pane=${shell.id}`);
+    // profile agent: 이 머신 agent.toml의 fake, 최근 폴더 칩(방금 쓴 폴더), 이름
+    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await dialog.waitFor();
+    await dialog.getByRole("combobox").click();
+    await page.getByRole("option", { name: "fake" }).click();
+    await dialog.getByRole("button", { name: `${repo} 폴더 사용` }).click();
+    if ((await dialog.getByRole("textbox", { name: "폴더" }).inputValue()) !== repo) throw new Error("최근 폴더 칩이 폴더 칸을 채우지 않았다");
+    await dialog.getByRole("textbox", { name: "이름" }).fill("새-에이전트");
+    await shot(page, "desktop-new-pane");
+    await start();
+    await dialog.waitFor({ state: "detached" });
+    let agent;
+    await until("profile pane", () => (agent = panes().find((p) => p.name === "새-에이전트")) !== undefined);
+    if (!agent.argv.join(" ").includes("fake.sh") || agent.cwd !== repo) throw new Error(`profile pane: ${JSON.stringify(agent)}`);
+    await until("profile pane을 연다", async () => (await hash()) === `#pane=${agent.id}` && (await screenText(page)).includes("fake>"));
+    // 단축키(참고 new-session Mod+Shift+O): 고른 pane의 머신으로 열고, 마지막에 고른 agent를 기억한다. Esc로 닫는다
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("ControlOrMeta+Shift+O");
+    await dialog.waitFor();
+    // 기억한 agent는 이 머신 profile 목록이 온 뒤에 선다(없는 profile이면 셸로)
+    await until("마지막에 고른 agent(fake)를 기억", async () => (await dialog.getByRole("combobox").innerText()).trim() === "fake");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    aaa("pane", "kill", agent.id);
+    aaa("pane", "kill", shell.id);
     await page.getByTestId("pane-t1").click();
   });
 }

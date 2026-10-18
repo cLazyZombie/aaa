@@ -1,4 +1,4 @@
-// 웹 E2E 앱 틀: 안전 영역·화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄.
+// 웹 E2E 앱 틀: 안전 영역·화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·명령 팔레트.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 04-app-shell(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
@@ -316,5 +316,82 @@ export default async function ({ ctl, page }) {
     for (const name of many) aaa("pane", "kill", name);
     if (bad.length) throw new Error(bad.join("; "));
     console.log(`     휴대폰 바닥 줄 아래 ${ph.foot}px(보이는 높이 ${ph.view}), 목록 넘침 ${ph.over}px`);
+  });
+
+  await step("명령 팔레트(herdr-web-ui CommandPalette.tsx, 차이 목록 L12): 머리 돋보기·Mod+Shift+K로 열고, 이름으로 찾아 Enter면 그 pane, 다시 열면 「최근」이 앞, `>`는 pane 없이 동작(「테마 전환」), 찾으면 설정 쪽(「터미널」은 그 쪽으로), 휴대폰엔 돋보기가 없다", async () => {
+    for (const name of ["pala", "palb"]) aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/cat");
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    for (const name of ["pala", "palb"]) await dp.getByTestId(`pane-${name}`).waitFor();
+    const palette = dp.getByTestId("command-palette");
+    const search = palette.getByRole("searchbox", { name: "패널과 동작 검색" });
+    const bad = [];
+    const current = (name) => dp.getByTestId(`pane-${name}`).getAttribute("aria-current");
+    const headings = () => palette.locator(".palette-section-name").allTextContents();
+    const firstOption = () => palette.getByRole("option").first().innerText();
+
+    // 돋보기로 열면 검색 칸이 focus를 받고, 찾지 않은 목록은 머신의 pane 묶음과 동작이다
+    await dp.getByTestId("palette-open").click();
+    await search.waitFor();
+    if (!(await search.evaluate((e) => e === document.activeElement))) bad.push("열어도 검색 칸에 focus가 없다");
+    const opened = await headings();
+    if (!opened.includes("pane") || opened.at(-1) !== "동작") bad.push(`처음 묶음 ${JSON.stringify(opened)}`);
+    const all = await palette.locator('.palette-filter[data-status="all"] .palette-filter-count').innerText();
+    if (Number(all) !== (await palette.locator(".palette-pane").count())) bad.push(`「전체」 칩 수 ${all}가 줄 수와 다르다`);
+    await search.fill("pal");
+    // 이름에 바로 맞은 두 줄이 앞(경로에 p·a·l이 차례로 있는 줄도 글자 순서 찾기로 뒤에 걸린다)
+    const titles = () => palette.locator(".palette-pane .palette-row-title").allInnerTexts();
+    await until("pal로 찾은 두 줄이 앞", async () => (await titles()).slice(0, 2).sort().join() === "pala,palb");
+    await shot(dp, "desktop-palette");
+    // 이름으로 찾아 Enter: 그 pane이 열리고 팔레트는 닫힌다
+    await search.fill("palb");
+    await until("palb가 첫 줄", async () => (await firstOption()).includes("palb"));
+    await dp.keyboard.press("Enter");
+    await palette.waitFor({ state: "detached" });
+    await until("palb 열림", async () => (await current("palb")) === "true");
+    await dp.getByTestId("terminal").waitFor();
+    // Mod+Shift+K(터미널에 focus가 있어도 앱 몫): pala를 열고, 다시 열면 「최근」 맨 앞이 앞서 연 palb(지금 연 pala는 빠진다)
+    await dp.keyboard.press("ControlOrMeta+Shift+K");
+    await search.waitFor();
+    await search.fill("pala");
+    await until("pala가 첫 줄", async () => (await firstOption()).includes("pala"));
+    await dp.keyboard.press("Enter");
+    await until("pala 열림", async () => (await current("pala")) === "true");
+    await dp.keyboard.press("ControlOrMeta+Shift+K");
+    await search.waitFor();
+    const recent = await headings();
+    if (recent[0] !== "최근" || !(await firstOption()).includes("palb")) bad.push(`다시 연 목록 ${JSON.stringify(recent)} 첫 줄 ${await firstOption()}`);
+    // `>`는 동작만(칩도 숨는다): 「테마 전환」을 Enter면 테마가 바뀐다
+    const theme = () => dp.evaluate(() => document.documentElement.dataset.theme);
+    const before = await theme();
+    await search.fill(">테마");
+    // pane 줄은 빠지고 동작이 먼저(「테마」를 다른 말로 가진 설정 쪽 「모양」은 그 뒤에)
+    await until("동작만", async () => (await palette.locator(".palette-pane").count()) === 0 && (await headings())[0] === "동작");
+    if ((await palette.locator(".palette-filters").count()) !== 0) bad.push("`>`인데 상태 칩이 있다");
+    if (!(await firstOption()).includes("테마 전환")) bad.push(`>테마 첫 줄 ${await firstOption()}`);
+    await dp.keyboard.press("Enter");
+    await until("테마 바뀜", async () => (await theme()) !== before);
+    // 찾으면 설정 쪽이 나온다: 「터미널」을 누르면 설정 창이 그 쪽으로 열린다
+    await dp.keyboard.press("ControlOrMeta+Shift+K");
+    await search.fill("터미널");
+    const termPage = palette.locator('[data-section="settings-pages"]').getByRole("option", { name: "터미널" });
+    await termPage.click();
+    const dialog = dp.getByRole("dialog", { name: "설정" });
+    await dialog.getByRole("tabpanel", { name: "터미널" }).waitFor();
+    await dp.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    // 테마를 되돌린다(공유 설정이라 뒤 단계의 화면도 바꾼다)
+    await dp.keyboard.press("ControlOrMeta+Shift+K");
+    await search.fill(">테마");
+    await until("테마 전환 첫 줄", async () => (await firstOption()).includes("테마 전환"));
+    await dp.keyboard.press("Enter");
+    await until("테마 되돌림", async () => (await theme()) === before);
+    await dp.context().close();
+    // 휴대폰(터치·좁은 화면)에는 머리 돋보기가 없다(참고 styles.css `.palette-button`)
+    const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    await mp.getByTestId("pane-t1").waitFor();
+    if (await mp.getByTestId("palette-open").isVisible()) bad.push("휴대폰에 돋보기가 보인다");
+    await mp.context().close();
+    for (const name of ["pala", "palb"]) aaa("pane", "kill", name);
+    if (bad.length) throw new Error(bad.join("; "));
   });
 }
