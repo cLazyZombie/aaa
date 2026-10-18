@@ -550,6 +550,16 @@ export default async function ({ ctl, page }) {
     if (menu.left < 0 || menu.right > 390 || menu.bottom > 844 || !menu.mine) bad.push(`휴대폰 메뉴가 화면 밖이거나 덮였다 ${JSON.stringify(menu)}`);
     await shot(pp, "phone-head-more");
     await pp.keyboard.press("Escape");
+    // drawer가 열린 채(톱니로 연 설정을 닫은 뒤처럼)여도 메뉴는 drawer 위다(참고 RowMenu.css drawer + 1)
+    await pp.locator(".view [data-testid='drawer-toggle']").click();
+    await pp.locator("#workspace-drawer.is-open").waitFor();
+    await pp.getByTestId("more").click();
+    const over = await pp.getByTestId("alerts-item").evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return e.contains(document.elementFromPoint(r.left + 8, r.top + r.height / 2));
+    });
+    if (!over) bad.push("열린 drawer가 「더 보기」 메뉴를 덮는다");
+    await pp.keyboard.press("Escape");
     await pp.context().close();
     // 데스크톱: 첫 줄을 열되 키보드는 두고, 사용자가 그 줄을 고르면 터미널이 받는다(참고 PaneTerminal 2209~2216줄)
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { hash: "#pane=gone" })).page;

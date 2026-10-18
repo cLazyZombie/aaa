@@ -3257,12 +3257,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 §8.146의 아침 확인 둘을 참고 herdr-web-ui `aa624cb`대로 정했다.
 
 - **「더 보기」 자리(참고 App.tsx 1444~1459줄 `header-meta` 안 `header-more`).** 참고는 창 전체 머리 오른쪽 끝에 있어 휴대폰에서도 늘 보인다. aaa는 목록 머리에 있어 휴대폰은 drawer를 열어야 닿았다. 이제 각 화면 머리(터미널·보고·프로젝트·빈 화면) 맨 끝이다(`drawer.tsx` `HeadContext`·`HeadMore`). 빈 화면 머리도 모든 폭에서 보인다.
-  - 머리(`.term-head`)는 sticky라 쌓임 맥락을 새로 만든다. 그 안에서 열린 메뉴가 아래 터미널 칸의 띠·떠 있는 입력줄(z 9~11)에 덮였다(시험이 잡았다). 머리를 그 위(12, scrim 15·drawer 20보다 아래)에 둔다. 참고는 메뉴를 body로 portal해(RowMenu) 이 문제가 없다.
+  - 머리(`.term-head`)는 sticky라 쌓임 맥락을 새로 만든다. 그 안에서 열린 메뉴가 아래 터미널 칸의 띠·떠 있는 입력줄(z 9~11)에 덮였고, 톱니로 연 설정을 닫아 drawer가 열린 채면 drawer(20)에도 덮였다(둘 다 시험이 잡았다, 뒤의 것은 ci-local 15 「iPhone 알림 범위」). 참고 메뉴(RowMenu.css)처럼 drawer 위(drawer + 1)에 서게 머리를 거기 둔다. drawer·scrim은 머리 아래부터라 겹치지 않고 창(30)은 그 위다. 참고는 메뉴를 body로 portal한다.
   - 메뉴 모양은 aaa의 드롭다운 그대로다(참고는 RowMenu). 항목·키(첫 항목 focus·↑↓·Esc 뒤 ⋯로)는 같다.
 - **주소가 가리킨 pane이 없을 때(참고 `deepLink.ts` `resolveLink`, App.tsx 728~792줄).** 참고는 그 pane의 workspace가 남아 있으면 그 workspace의 pane을 열고, 없으면 평소 첫 pane(`fallback`)을 열며 머리에 8초 말한다(「그 링크의 워크스페이스는 닫혔습니다」). aaa 주소(`#pane=<id>`)에는 workspace가 없어 뒤 갈래만 있다: 첫 줄을 열고 머리 제목 자리에 「그 링크의 pane은 닫혔습니다」를 8초 띄운다(`HeadNote`).
   - 그렇게 App이 스스로 고른 pane은 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 `autoSelected`). 같은 줄을 다시 누르면 그때 터미널이 받는다(참고 PaneTerminal 2209~2216줄).
   - 끝난 pane은 목록에 남아(다시 열기) 「없음」이 아니다. 주소가 가리킨 thread가 없을 때는 참고에 없어 그대로다.
-- **시험.** 웹 E2E 04 「「더 보기」와 닫힌 pane 주소」: 휴대폰 `#pane=gone`으로 열면 첫 줄·머리 알림·키보드 없음, 「더 보기」가 drawer 밖 화면 머리 오른쪽 끝, 메뉴가 화면 안이고 덮이지 않음(메뉴 가운데의 요소가 메뉴), 데스크톱은 첫 줄·알림·키보드를 가져가지 않음, 그 줄을 고르면 터미널 focus(`phone-head-more`·`desktop-head-note`). 결함 심기 넷(머리 z-index 빼기·터미널 머리에서 「더 보기」 빼기·알림 빼기·autoSelected 무시)을 모두 잡는다.
+- **시험.** 웹 E2E 04 「「더 보기」와 닫힌 pane 주소」: 휴대폰 `#pane=gone`으로 열면 첫 줄·머리 알림·키보드 없음, 「더 보기」가 drawer 밖 화면 머리 오른쪽 끝, 메뉴가 화면 안이고 덮이지 않음(메뉴 가운데의 요소가 메뉴), 데스크톱은 첫 줄·알림·키보드를 가져가지 않음, 그 줄을 고르면 터미널 focus(`phone-head-more`·`desktop-head-note`). drawer가 열린 채 연 메뉴가 drawer 위. 결함 심기 다섯(머리 z-index 빼기·drawer 아래 값 12·터미널 머리에서 「더 보기」 빼기·알림 빼기·autoSelected 무시)을 모두 잡는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
