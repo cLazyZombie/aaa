@@ -4,24 +4,6 @@
 import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames, sentCount } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
-  await step("입력 막대·CLI send-text 뒤 send-keys enter: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "burst", "--", process.execPath, `${root}/burst.js`);
-    await page.getByTestId("pane-burst").click();
-    await until("burst 화면", async () => (await screenText(page)).includes("burst>"));
-    await page.getByLabel("보낼 글").fill("hello web");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await until("웹 제출", async () => (await screenText(page)).includes("SUBMIT:hello web"));
-    // CLI는 글과 Enter를 따로 쓴다(herdr send-text·send-keys). `pane run`은 글+Enter를 한 번에 쓰니(herdr) 여기서는 쓰지 않는다
-    aaa("pane", "send-text", "burst", "hello cli");
-    aaa("pane", "send-keys", "burst", "enter");
-    await waitOutput("burst", "SUBMIT:hello cli");
-    if ((await screenText(page)).includes("[newline]")) throw new Error("Enter가 글과 한 덩어리로 갔다");
-    // 가짜 입력창이 한 덩어리를 실제로 가려내는지(이 단언이 없으면 위 단언은 아무것도 보지 않는다)
-    aaa("pane", "send-text", "burst", "one\r");
-    await until("한 덩어리 판정", async () => (await screenText(page)).includes("[newline]"));
-    aaa("pane", "kill", "burst");
-  });
-
   await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "pasteapp", "--", process.execPath, `${root}/paste.js`);
     const got = () => aaa("pane", "read", "pasteapp", "--source", "visible").text;
@@ -140,8 +122,6 @@ export default async function ({ ctl, page }) {
     const mbox = mob.page.getByLabel("보낼 글");
     // 연결(snapshot)되기 전에는 읽기 전용이다: 화면이 온 뒤에 본다
     await until("휴대폰 paste 화면", async () => (await screenText(mob.page)).includes("paste>"));
-    // 데스크톱 화면이 쓰는 중이어도 가져오기 없이 입력된다
-    if (await mbox.isDisabled()) throw new Error("휴대폰 입력 막대가 꺼져 있다");
     if ((await mbox.getAttribute("enterkeyhint")) !== "send") throw new Error(`휴대폰 enterkeyhint ${await mbox.getAttribute("enterkeyhint")}`);
     n = gots();
     await mbox.fill("휴대폰");

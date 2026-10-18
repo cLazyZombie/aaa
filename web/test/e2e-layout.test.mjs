@@ -50,3 +50,11 @@ test("harness는 위에 둔 이름을 모두 내보내고, spec은 있는 이름
     assert.deepEqual(list(m[1]).filter((n) => !exported.includes(n)), [], `${f}: harness에 없는 이름`);
   }
 });
+
+test("durations.json은 있는 spec의 초만 적는다(입구가 긴 파일부터 worker에 넣는다)", () => {
+  const durations = JSON.parse(read("web/e2e/durations.json"));
+  const names = specs.map((f) => f.replace(/\.mjs$/, ""));
+  // 새 spec은 적지 않아도 맨 앞에 돈다. 이름을 바꾸거나 지운 spec의 기록은 남기지 않는다
+  assert.deepEqual(Object.keys(durations).filter((n) => !names.includes(n)), [], "없는 spec: node web/e2e/web.e2e.mjs --write-durations로 다시 적는다");
+  for (const [n, v] of Object.entries(durations)) assert.ok(Number.isInteger(v) && v > 0, `${n}: 초는 양의 정수`);
+});
