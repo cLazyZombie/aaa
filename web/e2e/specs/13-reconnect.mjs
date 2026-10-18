@@ -82,23 +82,61 @@ export default async function ({ ctl, page }) {
     await shot(page, "desktop-after-host-restart");
   });
 
-  // 참고 herdr-web-ui PaneTerminal 2727~2734줄: 되살리지 못한 pane(`restore_error`)은 터미널 대신 경고와 까닭을 보인다(plan §8.111)
-  await step("재부팅 뒤 되살리지 못한 pane → 터미널 대신 까닭", async () => {
+  // 참고 herdr-web-ui PaneTerminal 2727~2734줄: 되살리지 못한 pane(`restore_error`)은 터미널 대신 경고와 까닭을 보인다(plan §8.111).
+  // QA Q19: 보던 셸은 같은 자리의 새 pane으로 따라간다. QA Q22: 일부러 남긴 프로그램 pane도 까닭과 「다시 열기」를 보인다
+  await step("재부팅 뒤 → 보던 셸은 새 pane을 따라가고, 남긴 pane은 까닭과 다시 열기", async () => {
     fs.mkdirSync(`${root}/gone`, { recursive: true });
     aaa("tab", "create", "--machine", "labA", "--label", "gone", "--cwd", `${root}/gone`, "--", "/bin/sh");
+    aaa("tab", "create", "--machine", "labA", "--label", "배포", "--", "/bin/sh", "-c", "echo job-ran-$((3*3)); exec cat");
     await page.getByTestId("pane-gone").waitFor();
+    await page.getByTestId("pane-배포").waitFor();
     fs.rmSync(`${root}/gone`, { recursive: true });
-    // 재부팅 흉내: agent와 session host를 끝내고 다른 boot ID로 agent를 띄운다. 저장한 폴더가 없어 다시 띄우지 못한다
+    const viewing = await page.evaluate(() => location.hash);
+    if (!viewing.startsWith("#pane=")) throw new Error(`보던 pane 주소: ${viewing}`);
+    // 목록 차례는 처음 띄운 차례다: 되살리거나 다시 열어 새 ID가 되어도 옮겨 다니지 않는다
+    const order = () => page.getByTestId("machine-labA").locator("[data-pane] .workspace-name").allInnerTexts();
+    const before = (await order()).join(",");
+    // 재부팅 흉내: agent와 session host를 끝내고 다른 boot ID로 agent를 띄운다. 저장한 폴더가 없는 셸은 다시 띄우지 못하고,
+    // 프로그램 pane은 일부러 다시 실행하지 않는다
     await stop("agent2");
     killSessionHosts();
     start("agent3", { AAA_TEST_BOOT_ID: "boot-after" }, "agent", "--host", "local", "--name", "labA");
+    // 보던 셸(t1)은 새 ID로 되살아난다: 빈 화면이 아니라 그 pane을 따라가고 주소도 바뀐다
+    await until("보던 셸이 새 pane으로", async () => {
+      const h = await page.evaluate(() => location.hash);
+      return h.startsWith("#pane=") && h !== viewing;
+    }, 30_000);
+    await page.getByLabel("보낼 글").fill("echo after-$((5+5))");
+    await page.getByRole("button", { name: "보내기" }).click();
+    await until("따라간 pane에 입력", async () => (await screenText(page)).includes("after-10"));
+
     await page.getByTestId("pane-gone").click();
     const placeholder = page.getByTestId("restore-error");
     await placeholder.waitFor();
     const said = await placeholder.innerText();
-    if (!said.includes("이 pane을 되살리지 못했다") || !said.includes("작업 폴더가 없다")) throw new Error(`복원 실패 자리 표시: ${said}`);
+    if (!said.includes("이 pane은 다시 뜨지 않았다") || !said.includes("작업 폴더가 없다")) throw new Error(`복원 실패 자리 표시: ${said}`);
     // 같은 말을 하는 「세션이 끝났다」 띠와 키 막대는 없다
     if ((await page.getByTestId("readonly-banner").count()) !== 0) throw new Error("복원 실패 pane에 읽기 전용 띠가 떴다");
     await shot(page, "desktop-restore-error");
+
+    // 일부러 남긴 프로그램 pane: 목록 경고의 까닭이 맞고(전에는 「agent backend가 다시 떴을 때 이 세션이 없었다」), 열면 까닭과 다시 열기
+    const row = page.getByTestId("pane-배포");
+    await until("목록 까닭", async () => {
+      const label = await row.locator('[data-status="restore-error"]').getAttribute("aria-label").catch(() => null);
+      return (label ?? "").includes("재부팅 뒤 다시 실행하지 않았다");
+    });
+    await row.click();
+    await until("남긴 pane 자리 표시", async () => (await placeholder.innerText()).includes("재부팅 뒤 다시 실행하지 않았다"));
+    await shot(page, "desktop-restore-skipped");
+    const skipped = await page.evaluate(() => location.hash);
+    await page.getByTestId("pane-resume").click();
+    // 다시 열면 host가 새 pane으로 바꾼다: 화면이 그 pane을 따라가 같은 명령의 출력을 보인다
+    await until("다시 연 pane을 따라감", async () =>
+      (await page.evaluate(() => location.hash)) !== skipped && (await placeholder.count()) === 0,
+    );
+    await until("다시 연 명령의 출력", async () => (await screenText(page)).includes("job-ran-9"));
+    const after = (await order()).join(",");
+    if (after !== before) throw new Error(`목록 차례가 바뀌었다: ${before} → ${after}`);
+    await shot(page, "desktop-resumed");
   });
 }

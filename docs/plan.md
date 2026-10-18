@@ -2517,6 +2517,13 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **t3code와 비교.** t3code `apps/server/src/orchestration-v2/RestartContinuation.ts`는 재시작 때 턴 중이던 run에 「Continue where you left off.」를 보낸다(사람 답을 기다리던 run은 막고, 이어서 3번까지). herdr는 대화만 다시 연다. aaa는 herdr대로 했다(보고 「아침 확인」).
 - **계약.** FRONT_API 1.16(`PaneView.restore_error`, 선택 필드).
 - **시험.** m12 `reboot_restores_shells_and_resumes_agents`(가짜 claude를 PATH에: 셸 둘이 같은 대화 → 앞 것만 `--resume`, claude를 바로 띄운 pane은 원래 경로에 `--resume`으로, 프로그램 pane은 중단 뒤 `pane resume`이 같은 자리에, 폴더가 없어진 셸은 `restore_error`, 이름 붙인 셸·프로그램 pane은 이름을 잇고 지우면 `sh`), `reboot_without_agent_resume_restores_plain_shells`(설정 끔). 웹 E2E spec 13 「재부팅 뒤 되살리지 못한 pane」(폴더가 없어진 셸: 자리 표시의 까닭, 읽기 전용 띠 없음). m13 `reboot_resumes_threads`(claude harness thread는 `--resume <session-id>`로 새 pane, 붙인 이름을 잇는다, 메시지가 간다, custom harness thread는 `restore_failed`·inbox, 「sessions ended」 없음). TUI `interrupted_badge_and_resume`은 프로그램 pane으로 바꿨다(셸 pane은 저절로 되살아난다). 띄울 때마다 차례를 찍어(`run-1`·`run-2`) 새 pane이 그려진 것을 본 뒤 친다(t-0330 a409bce가 찾은 「badge가 포커스보다 먼저 사라진다」). 유닛: `resume_argv`(herdr `plan`·`validate_resume_argv`)·`resume_in_place`·`is_shell`(restore.rs), 웹 `paneProblem`의 복원 실패 까닭(web/test/roster.test.mjs). 기다림은 host 사건(layout·pane 상태, `lab::watch::HostWatch`)·흐름 사건·출력이다.
+- **QA 4회차 고침(10-18, t-0337 Q19·Q22).**
+  - Q22 일부러 남긴 pane의 까닭: 다시 띄우지 않은 프로그램 pane·이어가기를 끈 harness pane·thread pane도 `restore_error`에 까닭을 둔다(「재부팅 뒤 다시 실행하지 않았다(배포 같은 명령이 재부팅마다 다시 돌지 않게)」, 「이어가기를 꺼 두어」, 「이을 대화 ID를 몰라」). 전에는 비어 있어 목록이 「agent backend가 다시 떴을 때 이 세션이 없었다」로 보였다.
+  - Q22 다시 여는 길: 웹에서 중단된 pane을 열면 터미널 자리에 「이 pane은 다시 뜨지 않았다」·까닭·「다시 열기」(thread·역할 pane이 아니고 제어 권한일 때)를 보인다. 입력줄·키 막대·「세션이 끝났다」 띠는 없다. 데스크톱에서 줄 메뉴 ⋯ 단추를 숨기고 오른쪽 클릭으로 여는 것은 참고(herdr-web-ui `workspace-actions`, `pointer: fine`이면 `display: none`)대로 두었다. TUI는 중단 띠에 `aaa pane resume <id>`를 이미 보인다.
+  - Q19 보던 화면이 따라가기: 새 pane의 `PaneView.replaced`(대신한 옛 ID, 오래된 것부터 8개)를 host가 `replace_pane`에서 채운다. 웹은 보던 pane이 목록에서 사라지고 그 ID를 대신한 pane이 있으면 그 pane으로 넘어가고 주소(`#pane=`)를 바꾼다(뒤로 가기에 옛 주소를 남기지 않는다). TUI는 보던 leaf가 layout에서 사라지면 같은 탭·같은 leaf 수일 때 같은 차례의 leaf로 간다(전에는 첫 pane).
+  - 목록 차례: host는 pane 목록을 처음 ID(`replaced`의 첫 값) 차례로 준다. 되살리거나 다시 열어도 줄이 옮겨 다니지 않는다.
+  - 계약: FRONT_API 1.19(`PaneView.replaced`, 선택 필드).
+  - 시험(결함 심기로 확인): 웹 E2E spec 13 재부팅 단계(보던 셸 t1이 새 pane으로 넘어가 입력이 되고 주소가 바뀜, 남긴 프로그램 pane의 목록 까닭·자리 표시·「다시 열기」 뒤 그 pane을 따라가 같은 명령 출력, 목록 차례 그대로). 결함 다섯(웹 따라가기 끔·host `replaced` 뺌·프로그램 pane 까닭 뺌·「다시 열기」 뺌·목록을 ID 차례로)이 각각 그 단언에서 실패했다. m12 재부팅 시험 둘(되살린 셸·다시 연 pane의 `replaced`, 남긴 까닭), TUI 유닛 `focus_follows_replaced_pane`.
 
 ### 8.112 보안 감사 넘김(10-18, t-0340): hook 세션 ID는 UUID 꼴만, 탭 닫기 경쟁, 탭 이름 빈칸, PR 추적 panic
 

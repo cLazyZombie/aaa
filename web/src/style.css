@@ -404,6 +404,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .terminal-placeholder.is-restore-error { padding: 0 var(--space-4); text-align: center; }
 .terminal-placeholder.is-restore-error svg { color: var(--status-blocked); }
 .terminal-placeholder-detail { max-width: 36rem; font-size: var(--fs-sm); }
+.terminal-placeholder-detail.is-error { color: var(--status-blocked); }
+.terminal-placeholder .btn svg { width: var(--space-4); height: var(--space-4); color: inherit; }
 .terminal-banners {
   position: absolute;
   top: var(--space-2);

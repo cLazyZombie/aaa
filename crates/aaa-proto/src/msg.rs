@@ -796,6 +796,11 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane ID(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, 오래된 것부터). 옛 ID를 보던
+    /// 화면은 이것으로 새 pane을 따라간다(QA Q19).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub replaced: Vec<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────

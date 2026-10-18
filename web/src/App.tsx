@@ -373,6 +373,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
   };
+  // 보던 pane이 새 pane으로 바뀌었다(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, PaneView.replaced): 그 자리를
+  // 이은 pane을 따라가고 주소도 바꾼다(뒤로 가기에 옛 주소를 남기지 않는다, QA Q19)
+  useEffect(() => {
+    if (!sel?.startsWith("pane:")) return;
+    const id = sel.slice("pane:".length);
+    if (panes.some((p) => p.id === id)) return;
+    const next = panes.find((p) => p.replaced?.includes(id));
+    if (!next) return;
+    history.replaceState(history.state, "", `#pane=${encodeURIComponent(next.id)}`);
+    setSel(`pane:${next.id}`);
+  }, [panes, sel]);
   const chooseThread = (t: ThreadView, from: string | null = null) => {
     setBackTo(from);
     openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;

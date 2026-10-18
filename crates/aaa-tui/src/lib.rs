@@ -584,8 +584,10 @@ impl App {
     fn set_ws(&mut self, w: Workspace) {
         // 탭 차례가 바뀌어도(탭 옮기기) 보던 탭에 남는다(herdr `move_tab`은 지금 탭을 그 탭으로 둔다)
         let current = self.ws.tabs.get(self.tab).map(|t| t.id.clone());
+        let before = self.current_leaves();
         self.ws = w;
-        if let Some(i) = current.and_then(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
+        let same_tab = current.as_ref().and_then(|id| self.ws.tabs.iter().position(|t| &t.id == id));
+        if let Some(i) = same_tab {
             self.tab = i;
         }
         if self.tab >= self.ws.tabs.len() {
@@ -593,7 +595,12 @@ impl App {
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
-            self.focus = leaves.first().cloned();
+            // `pane resume`·재부팅 복원은 같은 자리의 leaf만 새 pane으로 바꾼다(모양 그대로): 그 자리의 새 pane을 따라간다(QA Q19)
+            let at = self.focus.as_ref().and_then(|f| before.iter().position(|p| p == f));
+            self.focus = match at {
+                Some(i) if same_tab.is_some() && leaves.len() == before.len() => leaves.get(i).cloned(),
+                _ => leaves.first().cloned(),
+            };
         }
     }
 
@@ -1922,6 +1929,24 @@ mod tests {
         assert_eq!(app.command_key(Combo::plain('ㅆ')), Combo::shift('t'));
     }
 
+    /// 보던 pane이 같은 자리의 새 pane으로 바뀌면(`pane resume`·재부팅 복원) 그 pane을 따라간다. 지워지면 첫 pane(QA Q19)
+    #[test]
+    fn focus_follows_replaced_pane() {
+        let mut app = app_with_tabs(&["a"]);
+        let root = &mut app.ws.tabs[0].root;
+        aaa_proto::layout::split(root, "p0", "p1", aaa_proto::SplitDir::Horizontal);
+        aaa_proto::layout::split(root, "p1", "p2", aaa_proto::SplitDir::Vertical);
+        app.focus = Some("p1".into());
+        let mut w = app.ws.clone();
+        aaa_proto::layout::ws_replace(&mut w, "p1", "p9");
+        app.set_ws(w);
+        assert_eq!(app.focus.as_deref(), Some("p9"));
+        let mut w = app.ws.clone();
+        aaa_proto::layout::ws_remove(&mut w, "p9");
+        app.set_ws(w);
+        assert_eq!(app.focus.as_deref(), Some("p0"));
+    }
+
     fn app_with_tabs(names: &[&str]) -> App {
         let mut app = App::new("main".into(), "me".into());
         app.width = 90;
@@ -1984,6 +2009,7 @@ mod tests {
             agent: None,
             label: None,
             restore_error: None,
+            replaced: Vec::new(),
         }
     }
 

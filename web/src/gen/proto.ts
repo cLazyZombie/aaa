@@ -185,7 +185,12 @@ label?: string,
 /**
  * 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
  */
-restore_error?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
+restore_error?: string, 
+/**
+ * 이 pane이 대신한 옛 pane ID(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, 오래된 것부터). 옛 ID를 보던
+ * 화면은 이것으로 새 pane을 따라간다(QA Q19).
+ */
+replaced?: Array<string>, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
 
 export type SplitDir = "horizontal" | "vertical";
 

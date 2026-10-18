@@ -168,7 +168,12 @@ struct PaneRt {
     transcript: Option<String>,
     /// 재부팅 뒤 다시 띄우지 못한 까닭(restore.rs)
     restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane(`replace_pane`, 오래된 것부터 [`REPLACED_KEEP`]개)
+    replaced: Vec<String>,
 }
+
+/// pane이 기억하는 대신한 옛 ID 수
+const REPLACED_KEEP: usize = 8;
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -534,6 +539,7 @@ impl Host {
                     transcript: None,
                     answered: false,
                     restore_error: None,
+                    replaced: Vec::new(),
                 });
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
@@ -675,6 +681,7 @@ impl Host {
                 transcript: None,
                 answered: false,
                 restore_error: None,
+                replaced: Vec::new(),
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -757,13 +764,16 @@ impl Host {
             agent: p.agent.clone().map(Box::new),
             label: p.info.label.clone(),
             restore_error: p.restore_error.clone(),
+            replaced: p.replaced.clone(),
         }
     }
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role)).collect();
-        v.sort_by(|a, b| a.machine.cmp(&b.machine).then(a.id.cmp(&b.id)));
+        // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
+        let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
+        v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
         v
     }
 
@@ -1478,6 +1488,16 @@ impl Host {
                 Ok(AgentResponse::Session(info)) => self.on_session(mid, info, false),
                 Ok(other) => tracing::warn!(pane = %new, "이름 잇기: 예상하지 못한 응답 {other:?}"),
                 Err(e) => tracing::warn!(pane = %new, "이름 잇기 실패: {}", e.message),
+            }
+        }
+        // 옛 ID를 보던 화면이 새 pane을 따라가게 남긴다(QA Q19): 옛 pane이 대신했던 것까지 잇는다
+        {
+            let mut i = self.inner.lock().unwrap();
+            let mut chain = i.panes.get(old).map(|p| p.replaced.clone()).unwrap_or_default();
+            chain.push(old.to_string());
+            let skip = chain.len().saturating_sub(REPLACED_KEEP);
+            if let Some(p) = i.panes.get_mut(new) {
+                p.replaced = chain.split_off(skip);
             }
         }
         {
