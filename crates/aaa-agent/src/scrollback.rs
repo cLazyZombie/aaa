@@ -1,4 +1,4 @@
-//! pane 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, `src/app/custom_commands.rs`·`src/platform/*.rs`, plan §8.175).
+//! pane 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, `src/app/custom_commands.rs`·`src/platform/*.rs`, plan §8.176).
 //!
 //! - host가 화면 사본의 기록을 조각으로 보내면 이 머신 임시 폴더에 `aaa-scrollback-<name>.txt`로 쓴다(herdr
 //!   `write_scrollback_temp_file`: 새 파일만, 0600). 이름은 host가 정한 hex 16자이고 다른 이름·경로는 받지 않는다.

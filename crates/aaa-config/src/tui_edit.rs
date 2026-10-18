@@ -1,5 +1,5 @@
 //! TUI 설정 창(`prefix s`)이 host.toml `[tui]` 값 하나를 바꿔 쓴다(herdr 0.9.5 `src/config/write.rs` `ConfigEdit`·`write_edit`:
-//! 설정 파일의 그 key만 고치고 다시 읽는다, plan §8.177).
+//! 설정 파일의 그 key만 고치고 다시 읽는다, plan §8.178).
 //!
 //! - 나머지 글(주석·차례·다른 표)은 그대로 둔다. 빈 파일이면 `schema = 1`부터 쓴다. 고친 글이 다시 읽히는지 본다.
 //! - 쓰기는 임시 파일 뒤 rename(`profile_edit::write_atomic`)이다. host.local.toml이 같은 key를 덮으면 고친 값이 보이지 않으니

@@ -1187,7 +1187,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
   - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다. → §8.92에서 herdr대로 26칸(구분선 포함)·늘 펼친 채 시작·접으면 4칸 compact로 바꿨다.
   - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
-  - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다. → §8.176에서 「+ 새 셸」 줄을 빼고 머신 머리를 골라 새 탭·workspace를 그 머신에 열게 했다.
+  - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다. → §8.177에서 「+ 새 셸」 줄을 빼고 머신 머리를 골라 새 탭·workspace를 그 머신에 열게 했다.
   - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널). → §8.92에서 herdr대로 `selection_bg` 바탕만 쓴다.
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
 
@@ -3352,7 +3352,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **참고(herdr 0.9.5).** `src/config/model.rs` `copy_mode`(`prefix+[`), `src/client/shell/copy_mode.rs`(`enter_copy_mode`: 커서는 pane 안에 보이는 터미널 커서, 없으면 맨 아래 줄 첫 칸, 끌어 고른 글은 지움. `route_copy_mode_key`: h/j/k/l·화살표 한 칸, PageUp·PageDown·ctrl+b/f 한 쪽(화면 줄 − 2, 2줄 이하면 1), ctrl+u/d 반 쪽, `g` 기록 맨 앞 줄·`G` 화면 끝 줄, `0`·Home 첫 칸, `$`·End 마지막 글자 칸, `^` 첫 빈칸 아닌 칸, `v`·space 글자 단위·`V` 줄 단위 고르기(다시 누르면 그 자리에서 다시 시작, 글자 단위는 움직여야 보임), `y`·Enter 복사하고 나가기, `q` 그냥 나가기, Esc는 고르기가 있으면 지우기만·없으면 나가기, prefix는 prefix 모드로 갔다가 copy 모드로 돌아옴. `reveal_copy_cursor`: 커서가 화면 밖이면 그 줄이 맨 위·맨 아래에 오게 넘김. `exit_copy_mode`: 들어올 때의 기록 위치로 되돌림), `src/client/shell/input.rs` `copy_or_terminal_mode`(copy 모드는 pane에 붙어 있어 포커스가 떠나면 Terminal, 돌아오면 Copy), `src/client/shell/render.rs` 막대(` COPY `·`h/j/k/l`·`v/space`·`y/enter`·`q/esc`, 고르는 중이면 `esc` 지우기·`q` 끝), 커서 칸은 accent 바탕 굵게(터미널 커서는 숨김), `src/client/shell/input_source.rs`(copy 모드도 ASCII 입력기 범위).
 - **TUI.** 위 키와 막대·커서를 그대로 옮겼다(`copy.rs`). 커서·고르기는 기록 줄 번호(§8.156)로 두고, 화면 위치는 이 화면의 기록 위치(`PaneScroll { by: offset }`, §8.153)로 옮긴다. 보낸 위치는 frame을 기다리지 않고 셈하고, 올라가 있는 동안 host가 보던 줄을 지키려 위치를 올리면 같이 올린다(끌어 고르기의 보낸 위치도). 복사는 끌어 고르기와 같이 host가 기록까지 읽는다(`PaneSelectionRead`, §8.156). copy 모드에서는 붙여넣기를 pane에 보내지 않고, 끌어 고르기 뒤 ctrl+c 복사 키도 보지 않는다. 그 pane의 alt 화면이 바뀌면 고르기를 지운다. 단축키 창 「pane 이름 바꾸기」 뒤에 「copy 모드」.
-- **다른 점.** `$`·`^`는 herdr는 서버에 묻고(`PaneCopyMotion`), aaa는 보낸 위치를 따라온 화면 frame의 그 줄에서 찾는다(frame이 아직 따라오지 않았으면 아무것도 하지 않는다, 사람이 치는 빠르기에서는 늘 따라와 있다). 일치를 지우는 때: herdr는 화면 내용 번호(content revision)가 바뀌면 지우고, aaa frame에는 그 번호가 없어 기록이 늘거나 alt 화면이나 pane 크기가 바뀐 때 지운다(기록이 늘지 않고 화면 안에서만 다시 그린 출력은 칠한 자리가 남을 수 있다). 크기는 처음에 빠뜨렸다가 뒤에 더했다: 크기가 바뀌면 줄이 잘리거나 다시 그려져 칠한 자리가 어긋난다(유닛 `search_matches_clear_when_the_pane_resizes`, 크기 조건을 빼는 결함을 심으면 실패). 찾기 답을 기다리는 동안 `y`·Enter를 미뤘다 복사하는 herdr `copy_after_search`는 따로 두지 않았다: 키를 모두 붙잡아 답 뒤에 처리하니 같다. `prefix e`(기록을 편집기로)는 §8.175.
+- **다른 점.** `$`·`^`는 herdr는 서버에 묻고(`PaneCopyMotion`), aaa는 보낸 위치를 따라온 화면 frame의 그 줄에서 찾는다(frame이 아직 따라오지 않았으면 아무것도 하지 않는다, 사람이 치는 빠르기에서는 늘 따라와 있다). 일치를 지우는 때: herdr는 화면 내용 번호(content revision)가 바뀌면 지우고, aaa frame에는 그 번호가 없어 기록이 늘거나 alt 화면이나 pane 크기가 바뀐 때 지운다(기록이 늘지 않고 화면 안에서만 다시 그린 출력은 칠한 자리가 남을 수 있다). 크기는 처음에 빠뜨렸다가 뒤에 더했다: 크기가 바뀌면 줄이 잘리거나 다시 그려져 칠한 자리가 어긋난다(유닛 `search_matches_clear_when_the_pane_resizes`, 크기 조건을 빼는 결함을 심으면 실패). 찾기 답을 기다리는 동안 `y`·Enter를 미뤘다 복사하는 herdr `copy_after_search`는 따로 두지 않았다: 키를 모두 붙잡아 답 뒤에 처리하니 같다. `prefix e`(기록을 편집기로)는 §8.176.
 - **낱말·문단 이동(5b-3, FRONT_API 1.27에 함께).** herdr처럼 host가 화면 사본의 기록까지 보고 정한다: `PaneCopyMotion { pane, cursor, motion }` → `CopyCursor`. herdr `src/copy_mode.rs`대로 칸마다 낱말 갈래(빈칸·문장 부호·글자, 큰 낱말은 빈칸과 나머지)를 두고, 줄 끝 강제 줄바꿈은 빈칸, 넘침 줄바꿈은 잇는다(문장 부호는 ASCII만). 찾는 범위는 커서 둘레 64줄에서 시작해 갈 곳이 없으면 두 배로 넓힌다. 문단(`{`·`}`)은 999줄 안의 첫 빈 줄로, 칸은 그대로. 갈 곳이 없으면 그대로 답한다. TUI는 `w b e W B E { }`로 묻고, 답이 올 때까지 키·붙여넣기·마우스를 붙잡아(새 pane 포커스와 같은 `held`) 다음 키가 옮긴 자리에서 잇는다. 막대는 `h/j/k/l w/b/e`. - **찾기(5b-3).** `PaneCopySearch { query, direction, cursor, previous }` → `CopySearch { matches, total, current, current_global }`(herdr: 글자 그대로, 큰 글자가 있으면 대소문자를 가림, 넘침 줄은 이어 찾음, 앞으로는 커서 뒤에서 시작하는 첫 일치·뒤로는 커서 앞에서 끝나는 마지막 일치, 끝에서 돌아감, 최대 1024개·query 4096바이트). TUI는 herdr `src/client/shell/copy_mode.rs`·`render.rs`·`composition.rs`대로: `/` 앞으로·`?` 뒤로 입력 줄(막대 자리에 ` COPY ` 다음 `/`·`?`, 입력 칸은 `text`·`panel_bg`, 커서 칸 뒤집기, 50칸 이상이면 「enter 찾기  esc 취소」, 입력 줄이 열린 동안은 prefix도 그 줄로, 붙여넣기도 그 줄로, 입력기는 영문으로 바꾸지 않음), Enter면 찾고 Esc면 닫는다. 답이 오면 현재 일치 시작으로 커서를 옮겨 막대 위까지 보이게 넘긴다. `n` 같은 방향·`N` 반대(커서가 현재 일치 시작이면 그 다음부터). 나머지 일치는 `surface1` 바탕, 고른 글을 칠한 뒤 현재 일치는 accent 바탕 굵게. 막대는 herdr처럼 `h/j/k/l w/b/e { }` 이동·`/ ?` 찾기·`n/N` 다시 ` n/m`(찾았으나 없으면 0/0)·고르기·복사·끝, 찾은 글이나 고르기가 있으면 Esc는 둘 다 지우기(커서는 둔다).
 - **시험.** 유닛: `copy_mode_helpers_like_herdr`(쪽 줄 수, 명령 글자, 줄 첫·끝 칸, 줄 단위 범위), 키 `[`. TUI harness `copy_mode_like_herdr`: `seq 1 200` 뒤 `prefix [`·`kkk0v`·`jy`면 「198\n1」 복사하고 나감, `g`면 기록 맨 앞(명령 줄), `Vjj`·Enter면 세 줄 복사하고 맨 아래로 돌아옴, PageUp이면 27줄 위(맨 위 146), `q`면 맨 아래, 셸에는 아무것도 가지 않음. 나갈 때 되돌리기를 빼는 결함을 심으면 실패한다. 5b-3: aaa-vt `word_motions_like_herdr`·`search_like_herdr`·`copy_motion_and_search_span_history`(기록에 걸친 이동·찾기), harness `printf 'one two-three four'` 줄에서 `k0vwwey`면 「one two-three」. 답을 기다리며 키를 붙잡지 않는 결함은 이 머신에서는 harness가 잡지 못한다(답이 키 사이에 먼저 온다). 찾기: 막대가 다 보이게 130칸에서 `?19` Enter면 「12/12」, 현재 일치(199)는 accent·나머지(198)는 surface1 바탕, `n` 「11/12」, `N` 「12/12」, Esc는 찾기만 지움, 이어 `?19\rnvey`면 「197」. 칠하기를 빼거나 찾은 자리로 커서를 옮기지 않는 결함을 심으면 실패한다.
 
@@ -3360,7 +3360,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **참고.** 웹 목록(§8.71, `web/src/Sidebar.tsx` `MachineGroup`·`ProjectGroup`·`ThreadRow`, `web/src/sidebarModel.ts` `machineRoster`·`threadMachine`·`sortThreads`·`stateLine`·`projectLine`)과 herdr-projects 사이드바(`thread_display` 「id · 제목」, `state_line`, `project_line`, `Group::rank`).
 - **TUI(`aaa-tui::list`).**
-  - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」(→ §8.176에서 뺐다), 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「사람 차례 n · 작업 중 n」, 없으면 「쉼」, 사람 차례가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
+  - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」(→ §8.177에서 뺐다), 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「사람 차례 n · 작업 중 n」, 없으면 「쉼」, 사람 차례가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
   - thread의 머신은 pane이 있으면 pane의 머신, 없으면 thread 머신 이름·ID(웹 `threadMachine`). thread pane은 pane 줄로 다시 나오지 않는다. 끝난·평가자 thread는 빠진다.
   - 차례는 묶음 rank(사람 차례 → 검토 대기 → 작업 중 → 쉼) 다음 최근 바뀐 순(웹 `sortThreads`).
   - 첫 줄 `   <상태 점> t-0001 · 제목`(점은 thread 묶음 점과 그 pane 상태 점 중 급한 쪽(herdr-web-ui `rollupStatus` 차례: 확인창 > 끝남 > 작업 > 쉼). herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`, 웹 thread 줄은 오른쪽 `PaneState`다. 그래서 확인창은 묶음이 사람 차례로 바뀌는 30초 전에도 빨강이고, 사람 차례 thread는 harness가 쉬어도 초록이 되지 않는다), 둘째 줄 `     <상태 말>`(묶음 색): 묶음 말과 사실 하나. 사람 차례는 pane 닫힘·실패·확인창·~n%, 검토 대기는 보고, 작업 중은 5분 안에 보고한 진행률 ~n%(100은 빼고) 아니면 보고·변경 뒤 5분이 지나면 「n분 조용」. 「n분 조용」이 늘어나게 1분마다 다시 그린다.
@@ -3372,7 +3372,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 아래 agents 구역: 구분선 `─`(`surface_dim`), ` agents`(overlay0 굵게)와 오른쪽 `projects`(herdr-projects 기본 보기 이름, accent 굵게), 빈 줄, 그 아래 위 목록(머신·프로젝트·thread·pane).
   - workspace 목록은 시작할 때 `Workspaces` 한 번과 그 layout(`Workspace`)을 읽고, 그 뒤 workspace 사건(host는 닫거나 이름을 바꾼 workspace를 탭 없는 사건으로 알린다)으로 맞춘다.
   - 탐색(`prefix w`)은 herdr처럼 지금 workspace 줄에서 시작한다. ↑↓는 workspace 줄 다음 agents 목록까지 이어 돌고(herdr는 workspace만, agents는 누르기만: aaa는 목록을 키로도 연다, §8.73), workspace 줄에서 Enter면 그 workspace로 바꾼다(포커스는 front마다라 그 workspace의 첫 pane). 숫자 1~9는 탐색 줄 차례라 workspace 줄이 먼저 온다(herdr `SwitchWorkspace`). workspace 줄을 누르면 바꾼다.
-  - 아직 없음: 구역 경계 끌기(`sidebar_section_split`), ` new` 줄(→ §8.176)·`menu`(설정 화면과 함께), workspace 끌어 옮기기·묶음 접기, spaces 구역 따로 휠. 접힌 compact 열은 그대로 agents 목록이다(herdr는 workspace 번호).
+  - 아직 없음: 구역 경계 끌기(`sidebar_section_split`), ` new` 줄(→ §8.177)·`menu`(설정 화면과 함께), workspace 끌어 옮기기·묶음 접기, spaces 구역 따로 휠. 접힌 compact 열은 그대로 agents 목록이다(herdr는 workspace 번호).
 - **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴는 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
 - **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래. U4: lib.rs `sidebar_like_herdr`(머리 ` spaces`, 셋째 줄 ` · main`, 16째 줄 구분선, ` agents`…`projects`, 19째 줄 머신), harness `side_list_like_web` 7b단계(두 구역, 탐색은 지금 workspace 줄에서, scratch 골라 Enter면 탭 loose 하나·포커스 loose, main으로 돌아옴). 전환해도 workspace 이름을 바꾸지 않는 결함을 심으면 실패한다.
 
@@ -3721,7 +3721,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     사건 `push_skipped`(쓰는 기기 … 보임·focus). 새 자리는 같은 조건에서 2/2.
   - 고친 판 `--spec 12,15 --repeat 3`: 짐 없이 3/3·3/3, CPU 6배 느림 3/3·3/3.
 
-### 8.175 TUI 기록을 편집기로(herdr `prefix e` `edit_scrollback`)(10-18, coordinator 결정 「(가) herdr대로 — agent가 그 pane 기록을 그 머신 임시 파일로 쓰고 같은 머신에 편집기 overlay pane을 띄운다(임시 파일은 끝나면 지움, 경로는 agent 허용 root 정책 안)」, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 편집기, FRONT_API 1.32)
+### 8.176 TUI 기록을 편집기로(herdr `prefix e` `edit_scrollback`)(10-18, coordinator 결정 「(가) herdr대로 — agent가 그 pane 기록을 그 머신 임시 파일로 쓰고 같은 머신에 편집기 overlay pane을 띄운다(임시 파일은 끝나면 지움, 경로는 agent 허용 root 정책 안)」, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 편집기, FRONT_API 1.32)
 
 - **참고(herdr 0.9.5).** `src/config/model.rs` `edit_scrollback`(`prefix+e`, 단축키 창 panes 묶음 rename pane 다음). `src/app/custom_commands.rs` `open_focused_scrollback_in_editor`: 포커스 pane 기록 전체(`recent_unwrapped_text_snapshot(usize::MAX)`)를 서버 머신 임시 폴더에 `herdr-scrollback-*.txt`(새 파일만, 0600)로 쓰고 `src/platform/*.rs` `scrollback_editor_argv`(unix `/bin/sh -c 'scrollback_file=…; eval "${EDITOR:-vi} \"$scrollback_file\""; status=$?; rm -f "$scrollback_file"; exit $status'`, Windows `VISUAL` → `EDITOR` → `notepad.exe` 뒤에 경로)로 `spawn_overlay_argv_command`: 포커스 pane을 좌우로 나눠 새 pane, 그 탭 zoom, 새 pane에 포커스, `OverlayPaneState { previous_focus, previous_zoomed, temp_files }`, 알림 「opened scrollback」. pane이 끝나면 `src/app/api.rs` `restore_overlay_after_exit`: 임시 파일을 지우고, overlay에 포커스가 있었으면 전 포커스와 `previous_zoomed`로, 아니면 끝날 때의 zoom 그대로.
 - **aaa.** pane은 agent 머신에 있으니 파일과 편집기도 그 머신이다.
@@ -3742,7 +3742,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - TUI harness `edit_scrollback_like_herdr`: agent `EDITOR`는 받은 경로를 적고 내용을 보인 뒤 Enter를 기다리는 스크립트, `TMPDIR`는 실험실. `seq 1 200` 뒤 `prefix e`면 편집기 pane·` Z`·알림, 파일은 실험실 임시 폴더의 `aaa-scrollback-*.txt`(0600)에 1~200. Enter면 닫히고 zoom이 풀리고 연 pane으로 돌아오고 파일이 없다. `prefix x`로 닫으면 host가 파일을 지운다. 나누기 전 zoom이면 다시 zoom, 사람이 풀었으면 그대로.
   - 처음에는 `pane read`와 같은 읽기를 써 최근 80줄만 갔다(harness가 잡아 `unwrapped_all`을 더했다). 결함 심기: 닫지 않기·host 지우기 빼기·zoom 되돌리기 빼기·끝날 때 zoom을 보지 않기는 각각 그 단계에서 실패한다. 포커스 되돌리기(`overlay_back`)는 빼도 이 시험이 잡지 못한다: 편집기 pane이 연 pane 바로 뒤에 들어가, 빠질 때의 대체 규칙(앞 pane)도 연 pane으로 간다.
 
-### 8.176 「+ 새 셸」 줄 대신 고른 머신에 새 workspace·탭(herdr endpoint 줄·spaces ` new`)(10-18, 차이 목록 2장 U8 #344, coordinator 「이어서 U8」)
+### 8.177 「+ 새 셸」 줄 대신 고른 머신에 새 workspace·탭(herdr endpoint 줄·spaces ` new`)(10-18, 차이 목록 2장 U8 #344, coordinator 「이어서 U8」)
 
 - **참고(herdr 0.9.5).**
   - `src/client/shell/sidebar.rs` `render_sidebar`: spaces 구역 맨 아랫줄에 마우스를 받을 때(`mouse_capture`)만 ` new`(`overlay0`, 누를 칸 5칸)와 오른쪽 `menu`. endpoint가 여럿이면 `endpoint_sidebar.rs` ` new · <활성 endpoint 이름>`(누를 칸은 글 폭).
@@ -3759,14 +3759,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이름 창(`prompt_new_workspace_name`)은 두지 않았다(herdr 기본 꺼짐).
   - 고른 머신 표시: herdr는 접힌 endpoint 줄만 활성 바탕이고 펼친 줄은 footer 이름으로만 보인다. aaa도 머신 줄에 바탕을 두지 않고 footer와 알림으로 보인다(마우스를 받지 않으면 알림만).
   - 활성 머신 줄을 다시 누르면 herdr는 접는다. aaa 머신 묶음은 아직 접지 않는다.
-  - 오른쪽 `menu`(전체 메뉴)는 설정 화면(4C)과 함께 둔다. → §8.177
+  - 오른쪽 `menu`(전체 메뉴)는 설정 화면(4C)과 함께 둔다. → §8.178
   - 탐색 숫자 1~9는 머신 머리도 센다(전에는 「+ 새 셸」 줄을 셌다). 접힌 compact 열 번호는 thread·pane만이라 숫자와 어긋난다(spaces 줄을 먼저 세는 §8.158부터 그랬다).
 - **시험.**
   - 유닛: `new_workspace_answer_enters_it`(답이 오면 그 workspace·새 pane, 실패면 「새 workspace를 만들지 못했다: …」), `new_workspace_machine_like_herdr_endpoint`(포커스 머신, 고르면 그 머신과 footer 이름·누를 칸 12칸, 포커스가 바뀌면 풀림, 끊긴 머신은 오류, 포커스가 없으면 로컬, 머신 하나면 ` new` 5칸, 마우스를 받지 않으면 없음), `sidebar_like_herdr` 15째 줄 ` new`, `step_skips_headers_and_stops_at_ends`(머신 머리도 고른다), 키 `shift+n`.
   - TUI harness `new_workspace_on_picked_machine_like_herdr`: 실험실 원격 agent labB를 pane 없이 등록한다. 「새 셸」 글이 없고 ` new · labA`다. labB 머리를 누르면 ` new · labB`, ` new`를 누르면 labB에 `workspace`가 생겨 그리로 가고 그 셸에 입력이 간다. 탐색 Enter로 labA를 고르고 `prefix shift+n`이면 `workspace-2`가 labA에 생긴다. labB를 고르고 `prefix c`면 새 탭이 labB에 생긴다. labA를 고른 뒤 탭 1을 거쳐 탭 2로 오면 다시 labB다. `side_list_like_web` 6단계는 「+ 새 셸」 대신 머신 머리 Enter 뒤 `prefix c`다.
   - 결함 심기: 고른 머신 무시(「labB를 고름」), 새 workspace만 포커스 머신(「새 workspace」), 포커스가 바뀌어도 고른 것 유지(「탭 2」)는 각각 그 단계에서 실패한다.
 
-### 8.177 TUI 설정 창과 전체 메뉴(herdr `prefix s`·spaces `menu`)(10-18, 차이 목록 4C 설정 화면 #542, coordinator 「이어서 U8 → 4C」)
+### 8.178 TUI 설정 창과 전체 메뉴(herdr `prefix s`·spaces `menu`)(10-18, 차이 목록 4C 설정 화면 #542, coordinator 「이어서 U8 → 4C」)
 
 - **참고(herdr 0.9.5).**
   - `src/config/model.rs` `settings`(`prefix+s`, 단축키 창 global 묶음 keybinds 다음). `src/client/shell/settings.rs`: 구역 theme·indicators·sound·toasts·integrations, 열면 지금 테마를 고른 채, 테마 구역 ↑↓는 바로 입혀 보기(`preview_selected_theme`), Esc는 연 때의 테마로 되돌리고 닫기, Tab·→·l·shift+Tab·←·h 구역(끝에서 돈다), Enter·space 적용(`apply_settings_choice`): 테마는 쓰고 닫고, 나머지는 쓰고 창을 둔다. 쓰기는 `src/config/write.rs` `write_edit`(설정 파일의 그 key만 고침) 뒤 client 설정 다시 읽기와 서버 `ServerReloadConfig`.
@@ -3778,7 +3778,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 저장은 host.toml `[tui]`(`theme`, 새 `status_indicators = "dots"|"symbols"`)다. TUI가 이미 읽는 그 파일이 herdr 설정 파일 자리다(TUI는 host와 같은 머신·설정 폴더에서 돈다). `aaa_config::tui_edit::set`이 그 key만 고치고(주석·차례·다른 표 그대로, 빈 파일이면 `schema = 1`부터, 고친 글이 다시 읽히는지 확인) 임시 파일 뒤 rename으로 쓴다. host는 `[tui]`를 읽지 않아 host 다시 읽기는 없다.
   - 쓴 뒤 host.toml·host.local.toml을 다시 읽어 입힌다. host.local.toml이 같은 key를 덮어 값이 그대로면 오류 막대 「host.local.toml의 [tui] <key>가 덮고 있어 바뀌지 않았다」. 쓰지 못하면 창을 둔 채 「설정을 저장하지 못했다: …」.
   - 상태 표시 `symbols`면 상태 점(사이드바 줄·spaces·접힌 열·좁은 화면 머리)이 확인 대기 `×`·작업 `◐`·끝남 `✓`·쉼 `○`·모름 `·`이다.
-  - spaces 맨 아랫줄 오른쪽 `menu`(§8.176 ` new`와 같은 줄, 마우스를 받을 때만): 전체 메뉴 설정·단축키·설정 다시 읽기·나가기(오른쪽 누름 메뉴와 같은 틀).
+  - spaces 맨 아랫줄 오른쪽 `menu`(§8.177 ` new`와 같은 줄, 마우스를 받을 때만): 전체 메뉴 설정·단축키·설정 다시 읽기·나가기(오른쪽 누름 메뉴와 같은 틀).
 - **다른 점.**
   - sound·toasts·integrations 구역은 뺐다: aaa TUI에는 배경 상태 소리, 알림 전달 방식(herdr 안·터미널·시스템), harness 연동 설치가 없다. 전체 메뉴의 what's new(새 판 알림)도 없다.
   - 다른 TUI(같은 host에 붙은 다른 `aaa attach`)는 바뀐 설정을 모른다(`prefix shift+r`로 읽는다). herdr는 서버 다시 읽기가 모든 client에 간다. 웹 테마(공유 설정 §8.79 `theme`·`palette`)와는 따로다.

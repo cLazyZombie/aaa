@@ -1,5 +1,5 @@
 //! pane 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`·`OverlayPaneState`, `src/app/custom_commands.rs`·`src/app/api.rs`,
-//! plan §8.175).
+//! plan §8.176).
 //!
 //! - 화면 사본의 기록 전체(`Vt::unwrapped_all`: 접힌 줄은 잇는다)를 그 pane 머신 agent에 조각으로 보내 임시 파일로 쓰게 한다.
 //!   기록은 host 화면 사본이 가진 만큼이다(상한 10,000줄, host를 다시 띄운 뒤에는 구독 snapshot의 최근 2000줄부터). herdr는 서버
