@@ -10,11 +10,12 @@ use std::time::Duration;
 
 use aaa_proto::{
     DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, GridFrame,
-    GridLine, MAX_FRAME, PaneModes, negotiate,
+    GridLine, GridRun, GridScroll, MAX_FRAME, PaneModes, ScrollBy, negotiate,
 };
 use anyhow::{Context, Result, bail};
 
 use super::{Host, PaneEvent};
+use crate::caller::Caller;
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 
 /// 화면 frame 사이 최소 간격(초당 약 30장)
@@ -23,9 +24,14 @@ const GRID_INTERVAL: Duration = Duration::from_millis(33);
 /// 응답 frame(JSON). frame 상한(`MAX_FRAME`)을 넘는 응답은 `too_large` 오류로 바꾼다. 그대로 보내면 쓰기 task가
 /// 연결을 닫아 front는 까닭 없이 끊긴다(t-0334 pilot 결함 2: 끝낸 inbox가 많을 때 `inbox list --all`).
 pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) -> Vec<u8> {
+    res_frame_within(id, result, MAX_FRAME)
+}
+
+/// frame 길이는 종류 byte까지 센다(`write_frame`: payload + 1 > max면 거부). payload가 `max`와 같으면 이미 넘는다(t-0340 감사 D2).
+fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: usize) -> Vec<u8> {
     let msg = FrontMsg::Res { id, result: result.into() };
     let bytes = serde_json::to_vec(&msg).expect("JSON 직렬화");
-    if bytes.len() <= MAX_FRAME {
+    if bytes.len() < max {
         return bytes;
     }
     let FrontMsg::Res { id, result } = msg else { unreachable!() };
@@ -40,10 +46,21 @@ pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) ->
         format!(
             "{kind} 응답이 {} KiB라 frame 상한 {} KiB를 넘는다. 범위를 좁혀 다시 묻는다",
             bytes.len() >> 10,
-            MAX_FRAME >> 10
+            max >> 10
         ),
     );
     serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
+}
+
+/// 보기 권한인 까닭(CLI 연결의 actor로 가린다, plan §8.164). 자기 스크립트가 왜 막혔는지 알게 한다.
+pub(crate) fn reader_reason(actor: &str) -> &'static str {
+    if actor.starts_with("detached:") {
+        ": 터미널도 aaa pane도 없는 떼어 낸 프로세스라 보기만 한다(사람 터미널에서 다시 실행한다)"
+    } else if actor.starts_with("worker:") || actor.starts_with("evaluator:") {
+        ": thread 세션 안의 CLI는 보기만 한다"
+    } else {
+        ""
+    }
 }
 
 /// aaa 세션(pane) 안에서 실행한 CLI인가(`local:<client>@<세션>`). coordinator가 여기에 든다.
@@ -56,10 +73,10 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
     let host = host.clone();
     tokio::spawn(async move {
-        while let Ok(s) = listener.accept().await {
+        while let Ok((s, pid)) = listener.accept_peer().await {
             let host = host.clone();
             tokio::spawn(async move {
-                if let Err(e) = serve(host, s).await {
+                if let Err(e) = serve(host, s, pid).await {
                     tracing::debug!("front 연결 끝: {e:#}");
                 }
             });
@@ -68,7 +85,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     Ok(())
 }
 
-async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
+async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32>) -> Result<()> {
     let (r, w) = tokio::io::split(s);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
@@ -83,14 +100,35 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     };
     let front = host.new_front(client.clone());
     // thread 세션 안의 CLI는 보기만 한다(§8.25): 일반 thread(worker)와 사후 평가자는 다른 thread·pane에 지시하지 않는다(§8.13).
-    // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 세션 ID는 CLI가 env에서 알린다.
-    let session_role = session.as_deref().and_then(|s| host.pane_view_of(s, DeviceRole::Local)).and_then(|p| p.role);
-    let scoped = matches!(session_role, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
+    // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 어느 pane 안인지는 host가 연결한 프로세스로 정한다(plan §8.164):
+    // CLI가 알린 세션(`AAA_SESSION_ID`)은 권한을 줄이는 쪽으로만 쓴다(변수를 지우면 권한이 늘던 구멍, t-0340 감사).
+    let caller = host.caller_of(pid);
+    let found = match &caller {
+        Caller::Pane(p) => Some(p.clone()),
+        _ => None,
+    };
+    if let (Some(f), Some(c)) = (&found, &session)
+        && f != c
+    {
+        tracing::warn!(found = %f, claimed = %c, "CLI가 알린 세션과 연결한 프로세스의 pane이 다르다: pane을 따른다");
+    }
+    let role_of = |s: &str| host.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role);
+    let scoped_role =
+        |r: Option<aaa_proto::Role>| matches!(r, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
+    let (found_role, claimed_role) = (found.as_deref().and_then(role_of), session.as_deref().and_then(role_of));
+    let scoped = scoped_role(found_role) || scoped_role(claimed_role) || caller == Caller::Detached;
     let role = if scoped { DeviceRole::Reader } else { DeviceRole::Local };
     tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
+    // 기록·판단에 쓸 세션: 좁은 쪽(thread)을 먼저, 그다음 판정한 pane, 그다음 알린 세션
+    let (sess, sess_role) = if scoped_role(found_role) || (found.is_some() && !scoped_role(claimed_role)) {
+        (found, found_role)
+    } else {
+        (session, claimed_role)
+    };
     // aaa 세션 안 CLI(coordinator·사람의 셸 pane)는 `@<세션>`을 붙인다: 사람만 하는 일(신뢰 창 답 등)을 가른다
-    let actor = match (&session, session_role) {
+    let actor = match (&sess, sess_role) {
         (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
+        _ if caller == Caller::Detached => format!("detached:{client}"),
         (Some(s), _) => format!("local:{client}@{s}"),
         _ => format!("local:{client}"),
     };
@@ -184,7 +222,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
             }
         })
     };
-    let mut watches: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut watches: HashMap<String, (tokio::task::JoinHandle<()>, Arc<ScrollCtl>)> = HashMap::new();
     let mut waits: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
@@ -201,10 +239,12 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                 FrontRequest::PaneWatch { pane } => {
                     let result = match host.pane_view_of(&pane, DeviceRole::Local) {
                         Some(_) => {
-                            if let Some(old) = watches.remove(&pane) {
+                            if let Some((old, _)) = watches.remove(&pane) {
                                 old.abort();
                             }
-                            watches.insert(pane.clone(), tokio::spawn(watch_grid(host.clone(), pane, tx.clone())));
+                            let ctl = Arc::new(ScrollCtl::default());
+                            let task = tokio::spawn(watch_grid(host.clone(), pane.clone(), tx.clone(), ctl.clone()));
+                            watches.insert(pane, (task, ctl));
                             Ok(FrontResponse::Done)
                         }
                         None => Err(ErrorBody::new(ErrorCode::NotFound, format!("pane이 없다: {pane}"))),
@@ -212,10 +252,24 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     tx.control(res_frame(id, result)).await?;
                 }
                 FrontRequest::PaneUnwatch { pane } => {
-                    if let Some(t) = watches.remove(&pane) {
+                    if let Some((t, _)) = watches.remove(&pane) {
                         t.abort();
                     }
                     tx.json(&FrontMsg::Res { id, result: Ok::<_, ErrorBody>(FrontResponse::Done).into() }).await?;
+                }
+                // 기록 위치는 이 연결의 구독마다 둔다(herdr는 pane마다 하나): 두 화면이 서로의 위치를 옮기지 않는다
+                FrontRequest::PaneScroll { pane, by } => {
+                    let result = match watches.get(&pane) {
+                        Some((_, ctl)) => {
+                            ctl.pending.lock().unwrap().push(by);
+                            ctl.wake.notify_one();
+                            Ok(FrontResponse::Done)
+                        }
+                        None => {
+                            Err(ErrorBody::new(ErrorCode::NotFound, format!("이 연결이 보는 pane이 아니다: {pane}")))
+                        }
+                    };
+                    tx.json(&FrontMsg::Res { id, result: result.into() }).await?;
                 }
                 // 출력 기다리기는 연결이 끝나면 멈춘다(herdr `should_stop_connection`)
                 body @ FrontRequest::PaneWaitOutput { .. } => {
@@ -227,6 +281,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
+                | FrontRequest::PanePaste { .. }
                 | FrontRequest::PaneSend { .. }
                 | FrontRequest::PaneSendText { .. }
                 | FrontRequest::PaneSendKeys { .. }
@@ -254,7 +309,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     state_task.abort();
     ordered_task.abort();
     flow_task.abort();
-    for (_, t) in watches {
+    for (_, (t, _)) in watches {
         t.abort();
     }
     for t in waits {
@@ -293,14 +348,50 @@ fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
     }
 }
 
+/// 한 구독(연결 × pane)의 기록 위치 옮기기: `PaneScroll`이 쌓고 구독을 깨운다
+#[derive(Default)]
+struct ScrollCtl {
+    pending: std::sync::Mutex<Vec<ScrollBy>>,
+    wake: tokio::sync::Notify,
+}
+
+/// 구독이 보는 기록 위치: 맨 아래에서 올라간 줄 수와 직전에 본 기록 줄 수
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GridView {
+    pub offset: usize,
+    pub max: usize,
+}
+
+impl GridView {
+    /// 새 기록 줄 수 `max`에 맞춘다: 올라가 있으면 늘어난 만큼 더 올려 보던 줄을 지키고(herdr·ghostty viewport 고정),
+    /// 옮기기를 차례로 한 뒤 기록 안으로 묶는다. 기록이 상한에서 앞을 버리면 지키지 못한다.
+    pub fn update(&mut self, max: usize, ops: &[ScrollBy]) {
+        if self.offset > 0 && max > self.max {
+            self.offset += max - self.max;
+        }
+        for op in ops {
+            self.offset = match *op {
+                ScrollBy::Up { lines } => self.offset.saturating_add(lines as usize).min(max),
+                ScrollBy::Down { lines } => self.offset.saturating_sub(lines as usize),
+                ScrollBy::Bottom => 0,
+                ScrollBy::Offset { lines } => lines as usize,
+            };
+        }
+        self.offset = self.offset.min(max);
+        self.max = max;
+    }
+}
+
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
-async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx) {
+async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollCtl>) {
     use tokio::sync::broadcast::error::{RecvError, TryRecvError};
     let Some(crate::Attach { mut rx, .. }) = host.attach_pane(&pane) else { return };
     let mut sent: Vec<u64> = Vec::new();
     let mut full = true;
+    let mut view = GridView::default();
     loop {
-        if let Some(frame) = host.grid_frame(&pane, &mut sent, full) {
+        let ops = std::mem::take(&mut *ctl.pending.lock().unwrap());
+        if let Some(frame) = host.grid_frame(&pane, &mut sent, full, &mut view, &ops) {
             full = false;
             if (!frame.lines.is_empty() || frame.full || frame.cursor_changed)
                 && tx.json(&FrontMsg::Event(FrontEvent::Grid(frame.into_frame()))).await.is_err()
@@ -308,11 +399,14 @@ async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx) {
                 return;
             }
         }
-        // 다음 변경을 기다리고, 짧은 시간 동안 들어온 변경은 한 장으로 묶는다
-        match rx.recv().await {
-            Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => full = true,
-            Ok(_) => {}
-            Err(RecvError::Closed) => return,
+        // 다음 변경이나 기록 옮기기를 기다리고, 짧은 시간 동안 들어온 변경은 한 장으로 묶는다
+        tokio::select! {
+            r = rx.recv() => match r {
+                Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => full = true,
+                Ok(_) => {}
+                Err(RecvError::Closed) => return,
+            },
+            _ = ctl.wake.notified() => {}
         }
         tokio::time::sleep(GRID_INTERVAL).await;
         loop {
@@ -339,50 +433,43 @@ impl GridDiff {
     }
 }
 
-/// 직전에 보낸 줄 hash와 커서. `sent[rows]`에 커서를 함께 넣는다.
+/// 직전에 보낸 줄 hash와 커서. `sent[rows]`에 커서·모드·기록 위치를, `sent[rows + 1]`에 크기를 함께 넣는다.
 impl Host {
-    pub fn grid_frame(&self, pane: &str, sent: &mut Vec<u64>, full: bool) -> Option<GridDiff> {
+    pub fn grid_frame(
+        &self,
+        pane: &str,
+        sent: &mut Vec<u64>,
+        full: bool,
+        view: &mut GridView,
+        ops: &[ScrollBy],
+    ) -> Option<GridDiff> {
         use std::hash::{Hash, Hasher};
-        let i = self.inner.lock().unwrap();
-        let p = i.panes.get(pane)?;
-        let (rows, cols, cursor, modes, src) = match &p.mirror {
+        let mut i = self.inner.lock().unwrap();
+        let p = i.panes.get_mut(pane)?;
+        let (rows, cols, cursor, modes, src) = match &mut p.mirror {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
-                let lines: Vec<_> = (0..rows).map(|r| m.vt.grid_row(r)).collect();
+                view.update(m.vt.history_rows(), ops);
+                let (lines, _) = m.vt.grid_rows_at(view.offset);
                 (rows, cols, m.vt.cursor(), m.vt.pane_modes(), lines)
             }
             None => {
+                view.update(0, ops);
                 (p.info.rows, p.info.cols, (0, 0, false), PaneModes::default(), vec![Vec::new(); p.info.rows as usize])
             }
         };
         drop(i);
-        let n = rows as usize;
-        let full = full || sent.len() != n + 1;
-        if full {
-            sent.clear();
-            sent.resize(n + 1, u64::MAX);
-        }
-        let mut lines = Vec::new();
-        for (r, runs) in src.into_iter().enumerate() {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            for run in &runs {
-                (&run.t, run.fg, run.bg, run.a).hash(&mut h);
-            }
-            let hash = h.finish();
-            if sent[r] != hash {
-                sent[r] = hash;
-                lines.push(GridLine { row: r as u16, runs });
-            }
-        }
         let (cursor_row, cursor_col, cursor_visible) = cursor;
-        // 모드만 바뀌어도(프로그램이 마우스 보고를 켬) 한 장 보내도록 커서 hash 위 비트에 접는다
-        let m = (modes.mouse as u64)
-            | (modes.mouse_encoding as u64) << 3
-            | u64::from(modes.alt_screen) << 5
-            | u64::from(modes.app_cursor) << 6;
-        let c = (m << 48) | (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
-        let cursor_changed = sent[n] != c;
-        sent[n] = c;
+        // 기록을 보는 동안은 커서를 숨긴다(그 자리는 지금 화면의 칸이다)
+        let cursor_visible = cursor_visible && view.offset == 0;
+        let scroll = GridScroll { offset: view.offset as u32, max: view.max as u32 };
+        // 모드나 기록 위치만 바뀌어도(프로그램이 마우스 보고를 켬, 보던 줄을 지키며 기록이 늚) 한 장 보낸다
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (cursor_row, cursor_col, cursor_visible).hash(&mut h);
+        (modes.mouse as u8, modes.mouse_encoding as u8, modes.alt_screen, modes.app_cursor).hash(&mut h);
+        (scroll.offset, scroll.max).hash(&mut h);
+        let c = h.finish();
+        let (lines, full, cursor_changed) = changed_rows(sent, (rows, cols), src, c, full);
         let frame = GridFrame {
             pane: pane.to_string(),
             cols,
@@ -393,14 +480,76 @@ impl Host {
             full,
             lines: vec![],
             modes,
+            scroll,
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
     }
 }
 
+/// 직전에 보낸 것(`sent`)과 견주어 보낼 줄을 고른다. 돌려주는 것은 (줄, 전체인지, 커서가 바뀌었는지).
+/// 크기가 바뀌면 줄 수만이 아니라 폭만 바뀌어도 전체를 보낸다: front는 크기가 바뀐 grid를 비우므로, 내용이 같아 다시 보내지
+/// 않은 줄이 빈칸으로 남았다(QA t-0337 Q23, herdr는 크기가 바뀐 pane을 통째로 그린다).
+fn changed_rows(
+    sent: &mut Vec<u64>,
+    (rows, cols): (u16, u16),
+    src: Vec<Vec<GridRun>>,
+    cursor: u64,
+    full: bool,
+) -> (Vec<GridLine>, bool, bool) {
+    use std::hash::{Hash, Hasher};
+    let n = rows as usize;
+    let size = (u64::from(rows) << 16) | u64::from(cols);
+    let full = full || sent.len() != n + 2 || sent[n + 1] != size;
+    if full {
+        sent.clear();
+        sent.resize(n + 2, u64::MAX);
+        sent[n + 1] = size;
+    }
+    let mut lines = Vec::new();
+    for (r, runs) in src.into_iter().enumerate() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for run in &runs {
+            (&run.t, run.fg, run.bg, run.a).hash(&mut h);
+        }
+        let hash = h.finish();
+        if sent[r] != hash {
+            sent[r] = hash;
+            lines.push(GridLine { row: r as u16, runs });
+        }
+    }
+    let cursor_changed = sent[n] != cursor;
+    sent[n] = cursor;
+    (lines, full, cursor_changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 바뀐 줄만 보내되, 크기가 바뀌면(폭만 바뀌어도) 모든 줄을 다시 보낸다(QA t-0337 Q23)
+    #[test]
+    fn size_changes_resend_every_row() {
+        let screen = |texts: &[&str]| -> Vec<Vec<GridRun>> {
+            texts.iter().map(|t| vec![GridRun { t: t.to_string(), fg: 0, bg: 0, a: 0 }]).collect()
+        };
+        let rows_of = |lines: &[GridLine]| lines.iter().map(|l| l.row).collect::<Vec<_>>();
+        let mut sent = Vec::new();
+        let (lines, full, _) = changed_rows(&mut sent, (3, 40), screen(&["a", "b", ""]), 7, true);
+        assert!(full);
+        assert_eq!(rows_of(&lines), [0, 1, 2]);
+        // 한 줄만 바뀜
+        let (lines, full, cursor) = changed_rows(&mut sent, (3, 40), screen(&["a", "b", "c"]), 7, false);
+        assert_eq!((rows_of(&lines), full, cursor), (vec![2], false, false));
+        // 폭만 바뀜: 내용이 같아도 모두
+        let (lines, full, _) = changed_rows(&mut sent, (3, 60), screen(&["a", "b", "c"]), 7, false);
+        assert_eq!((rows_of(&lines), full), (vec![0, 1, 2], true));
+        // 줄 수가 바뀜
+        let (lines, full, _) = changed_rows(&mut sent, (2, 60), screen(&["a", "b"]), 7, false);
+        assert_eq!((rows_of(&lines), full), (vec![0, 1], true));
+        // 그대로면 없음, 커서만 바뀌면 커서
+        let (lines, full, cursor) = changed_rows(&mut sent, (2, 60), screen(&["a", "b"]), 8, false);
+        assert_eq!((lines.len(), full, cursor), (0, false, true));
+    }
 
     /// 없앤 요청(1.12의 `decision_add`)·모르는 요청에는 그 id로 오류를 답하고, id도 없는 것만 끊는다(t-0340 보안 감사)
     #[test]
@@ -421,6 +570,33 @@ mod tests {
         }
         assert!(read_req(b"not json").is_err());
         assert!(read_req(br#"{"t":"req","body":{"op":"nope"}}"#).is_err());
+    }
+
+    /// 기록 위치(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`): 끝에서 멈추고,
+    /// 올라가 있으면 새 기록만큼 더 올라 보던 줄을 지키며, 맨 아래면 새 출력을 따라간다
+    #[test]
+    fn grid_view_keeps_the_lines_it_shows() {
+        let mut v = GridView::default();
+        v.update(10, &[ScrollBy::Up { lines: 3 }]);
+        assert_eq!(v, GridView { offset: 3, max: 10 });
+        v.update(14, &[]);
+        assert_eq!(v.offset, 7);
+        v.update(14, &[ScrollBy::Up { lines: 30 }]);
+        assert_eq!(v.offset, 14);
+        v.update(14, &[ScrollBy::Down { lines: 3 }, ScrollBy::Down { lines: 3 }]);
+        assert_eq!(v.offset, 8);
+        // clear 등으로 기록이 줄면 그 안으로
+        v.update(5, &[]);
+        assert_eq!(v.offset, 5);
+        v.update(5, &[ScrollBy::Offset { lines: 2 }]);
+        assert_eq!(v.offset, 2);
+        v.update(9, &[ScrollBy::Bottom]);
+        assert_eq!(v, GridView { offset: 0, max: 9 });
+        v.update(12, &[]);
+        assert_eq!(v.offset, 0);
+        // alt 화면은 기록이 없다
+        v.update(0, &[ScrollBy::Up { lines: 3 }]);
+        assert_eq!(v, GridView { offset: 0, max: 0 });
     }
 
     /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)
@@ -452,5 +628,23 @@ mod tests {
         let e = r.unwrap_err();
         assert_eq!((id.as_str(), e.code), ("8", ErrorCode::TooLarge));
         assert!(e.message.starts_with("inbox 응답이 1024 KiB라 frame 상한 1024 KiB를 넘는다"), "{}", e.message);
+    }
+
+    /// 경계: 종류 byte를 더해 상한과 같으면 보낼 수 있고, payload가 상한과 같으면 `write_frame`이 거부하니 오류로 바꾼다
+    #[test]
+    fn response_frame_limit_counts_the_kind_byte() {
+        let done = res_frame("9".into(), Ok(FrontResponse::Done));
+        let n = done.len();
+        assert_eq!(res_frame_within("9".into(), Ok(FrontResponse::Done), n + 1), done, "payload + 1 == max는 보낸다");
+        let over = res_frame_within("9".into(), Ok(FrontResponse::Done), n);
+        let FrontMsg::Res { result, .. } = serde_json::from_slice::<FrontMsg>(&over).unwrap() else { panic!() };
+        assert_eq!(result.into_result().unwrap_err().code, ErrorCode::TooLarge, "payload == max는 넘는다");
+        let mut buf = Vec::new();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let mut wrote = |max| {
+            rt.block_on(aaa_proto::frame::write_frame(&mut buf, aaa_proto::frame::FrameKind::Control, &done, max))
+                .is_ok()
+        };
+        assert!(wrote(n + 1) && !wrote(n), "write_frame과 같은 경계");
     }
 }

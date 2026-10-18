@@ -1,5 +1,5 @@
 //! profile 고치기와 검증(herdr-projects 0.2.35 `src/profiles.rs` `validate_name`·`effort_values`·`typed_args`·`Change`·
-//! `apply_in`·`detect`, plan §8.115).
+//! `apply_in`·`detect`, plan §8.163).
 //!
 //! - profile은 host 한 곳의 host.toml `[profiles.<이름>]`에 둔다(§8.2). `aaa profile add|edit|remove`는 host 머신의 host.toml을
 //!   사람이 터미널에서 고칠 때만 쓴다. host는 profile을 쓸 때마다 host.toml을 다시 읽는다.

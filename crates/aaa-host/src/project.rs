@@ -3,7 +3,7 @@
 //!
 //! - 값이 잘못된 key는 그 key만 기본값을 쓴다. 파일을 TOML로 읽지 못하면 모두 기본값이고, inbox `config-error`가 알린다.
 //! - 이 파일을 쓰는 CLI(`aaa project set` 등)는 아직 없다. coordinator·사람이 직접 고친다.
-//! - `start_threads`·`trust_screens`는 옛 자리다: host.toml `[safety.*]`(사람만 고친다, plan §8.115)에 없을 때만 쓰고,
+//! - `start_threads`·`trust_screens`는 옛 자리다: host.toml `[safety.*]`(사람만 고친다, plan §8.163)에 없을 때만 쓰고,
 //!   `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 보인다.
 
 use std::path::Path;
@@ -34,6 +34,9 @@ pub(crate) struct ProjectSettings {
     /// 이 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류·머신 이상만 남기고 끈다(herdr-projects `mute`, 차이 목록 N10).
     /// inbox 항목은 그대로 쌓이고 앱 안 알림도 그대로다.
     pub mute: bool,
+    /// 처음 보는 inbox 항목 묶음을 coordinator에 한 줄로 알린다(herdr-projects `nudge`, 기본 켬). 끄면 묶음을 본 것으로만
+    /// 적고 항목은 coordinator의 다음 턴 `context`가 보인다(사건마다 가는 알림은 그대로다).
+    pub nudge: bool,
 }
 
 impl Default for ProjectSettings {
@@ -47,6 +50,7 @@ impl Default for ProjectSettings {
             start_threads: None,
             trust_screens: None,
             mute: false,
+            nudge: true,
         }
     }
 }
@@ -92,6 +96,7 @@ impl ProjectSettings {
             start_threads,
             trust_screens,
             mute: t.get("mute").and_then(|v| v.as_bool()).unwrap_or(d.mute),
+            nudge: t.get("nudge").and_then(|v| v.as_bool()).unwrap_or(d.nudge),
         }
     }
 }
@@ -101,7 +106,7 @@ impl crate::Host {
         self.project_dir(project).map(|d| ProjectSettings::load(&d)).unwrap_or_default()
     }
 
-    /// safety 층(plan §8.115): host.toml `[safety.*]`와 옛 자리(host.toml `[projects]`, project.toml). host.toml은 쓸 때마다
+    /// safety 층(plan §8.163): host.toml `[safety.*]`와 옛 자리(host.toml `[projects]`, project.toml). host.toml은 쓸 때마다
     /// 다시 읽는다(사람이 `aaa safety`로 고치면 host를 다시 띄우지 않아도 닿는다). 설정 폴더를 모르면(유닛 시험) 시작 때 값.
     pub(crate) fn safety_layers(&self, project: Option<&str>) -> (aaa_config::safety::Layers, Vec<String>) {
         use aaa_config::safety;
@@ -149,6 +154,7 @@ mod tests {
             start_threads = "auto"
             trust_screens = "nobody"
             mute = "yes"
+            nudge = 0
             [[repos]]
             path = "/work/app"
             [[repos]]
@@ -170,6 +176,7 @@ mod tests {
         assert_eq!((s.auto_resolve_days, s.start_threads.as_deref()), (0, Some("auto")));
         assert!(!s.mute);
         assert!(ProjectSettings::from_table(&"mute = true".parse().unwrap()).mute);
+        assert!(s.nudge && !ProjectSettings::from_table(&"nudge = false".parse().unwrap()).nudge);
         assert_eq!(
             s.repos,
             vec![

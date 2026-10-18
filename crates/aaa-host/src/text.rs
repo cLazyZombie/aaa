@@ -11,12 +11,27 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aaa_proto::{
-    AgentRequest, B64, ErrorBody, ErrorCode, FrontResponse, OutputMatch, ReadFormat, ReadSource, ReadView,
-    ThreadPaneView,
+    AgentRequest, B64, CopyMotion, ErrorBody, ErrorCode, FrontResponse, OutputMatch, ReadFormat, ReadSource, ReadView,
+    SearchDirection, TextPoint, TextRange, ThreadPaneView,
 };
+use aaa_vt::copy;
 use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::{Host, err};
+
+/// 고른 글 상한: JSON 한 frame(`aaa_proto::MAX_FRAME` 1MiB)에 escape까지 들게 그 반
+pub(crate) const SELECTION_MAX_BYTES: usize = aaa_proto::MAX_FRAME / 2;
+/// copy 모드 찾기 글 상한과 돌려주는 일치 수(herdr `MAX_QUERY_BYTES`·`MAX_RETURNED_MATCHES`)
+const SEARCH_MAX_QUERY_BYTES: usize = 4096;
+const SEARCH_MAX_MATCHES: usize = 1024;
+
+fn point(p: TextPoint) -> copy::Point {
+    (p.row as usize, p.col)
+}
+
+fn text_point(p: copy::Point) -> TextPoint {
+    TextPoint { row: p.0 as u32, col: p.1 }
+}
 
 /// herdr `match_output`(src/api/subscriptions.rs): 맞은 첫 줄
 fn match_output(text: &str, matcher: &OutputMatch, regex: Option<&regex::Regex>) -> Option<String> {
@@ -39,6 +54,87 @@ impl Host {
         let m = i.panes.get_mut(id)?.mirror.as_mut()?;
         let r = m.vt.read(source, lines, format);
         Some(ReadView { pane: id.to_string(), source, format, text: r.text, truncated: r.truncated })
+    }
+
+    /// TUI 고른 글(herdr `PaneSelectionRead`): 화면 사본에서 기록까지 읽는다. 한 frame(`MAX_FRAME`)에 들게 앞쪽만 둔다.
+    pub(crate) fn pane_selection_read(
+        &self,
+        pane: &str,
+        from: TextPoint,
+        to: TextPoint,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, _) = self.resolve_pane(pane)?;
+        let mut i = self.inner.lock().unwrap();
+        let m = i
+            .panes
+            .get_mut(&id)
+            .and_then(|p| p.mirror.as_mut())
+            .ok_or_else(|| err(ErrorCode::NotFound, "화면 사본이 없다"))?;
+        let (text, truncated) = m.vt.selection_text(point(from), point(to), SELECTION_MAX_BYTES);
+        Ok(FrontResponse::Selection { pane: id, text, truncated })
+    }
+
+    /// TUI copy 모드 낱말·문단 이동(herdr `pane.copy_motion`): 화면 사본의 기록까지 본다
+    pub(crate) fn pane_copy_motion(
+        &self,
+        pane: &str,
+        cursor: TextPoint,
+        motion: CopyMotion,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, _) = self.resolve_pane(pane)?;
+        let mut i = self.inner.lock().unwrap();
+        let m = i
+            .panes
+            .get_mut(&id)
+            .and_then(|p| p.mirror.as_mut())
+            .ok_or_else(|| err(ErrorCode::NotFound, "화면 사본이 없다"))?;
+        let motion = match motion {
+            CopyMotion::NextWordStart => copy::Motion::NextWordStart,
+            CopyMotion::PreviousWordStart => copy::Motion::PreviousWordStart,
+            CopyMotion::NextWordEnd => copy::Motion::NextWordEnd,
+            CopyMotion::NextBigWordStart => copy::Motion::NextBigWordStart,
+            CopyMotion::PreviousBigWordStart => copy::Motion::PreviousBigWordStart,
+            CopyMotion::NextBigWordEnd => copy::Motion::NextBigWordEnd,
+            CopyMotion::PreviousParagraph => copy::Motion::PreviousParagraph,
+            CopyMotion::NextParagraph => copy::Motion::NextParagraph,
+        };
+        let cursor = text_point(m.vt.copy_motion(point(cursor), motion));
+        Ok(FrontResponse::CopyCursor { pane: id, cursor })
+    }
+
+    /// TUI copy 모드 찾기(herdr `pane.copy_search`): 화면 사본의 기록과 화면 전체에서 찾는다
+    pub(crate) fn pane_copy_search(
+        &self,
+        pane: &str,
+        query: &str,
+        direction: SearchDirection,
+        cursor: TextPoint,
+        previous: Option<TextRange>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        if query.len() > SEARCH_MAX_QUERY_BYTES {
+            return Err(err(ErrorCode::BadRequest, format!("찾을 글이 너무 길다({SEARCH_MAX_QUERY_BYTES}바이트까지)")));
+        }
+        let (id, _) = self.resolve_pane(pane)?;
+        let mut i = self.inner.lock().unwrap();
+        let m = i
+            .panes
+            .get_mut(&id)
+            .and_then(|p| p.mirror.as_mut())
+            .ok_or_else(|| err(ErrorCode::NotFound, "화면 사본이 없다"))?;
+        let forward = direction == SearchDirection::Forward;
+        let previous = previous.map(|r| (point(r.start), point(r.end)));
+        let f = m.vt.copy_search(query, forward, point(cursor), previous, SEARCH_MAX_MATCHES);
+        Ok(FrontResponse::CopySearch {
+            pane: id,
+            matches: f
+                .matches
+                .into_iter()
+                .map(|(a, b)| TextRange { start: text_point(a), end: text_point(b) })
+                .collect(),
+            total: f.total as u64,
+            current: f.current.map(|n| n as u32),
+            current_global: f.current_global.map(|n| n as u64),
+        })
     }
 
     /// `pane read`: 사본이 아직 없으면(붙자마자) 그 머신 agent가 보이는 화면을 준다
@@ -266,7 +362,7 @@ impl Host {
         let rx = self.pane_events(&id)?;
         if self.inner.lock().unwrap().panes.get(&id).is_some_and(|p| p.info.state.is_running()) {
             self.db.audit(actor, "pane_close", &id);
-            conn.request(AgentRequest::Kill { session: id.clone() }).await?;
+            self.kill_session(&conn, &id).await?;
             // 끝났다는 상태가 올 때까지(agent가 session host 종료를 알린다)
             self.wait_pane(&id, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다").await?;
         }

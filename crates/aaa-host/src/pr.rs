@@ -342,8 +342,15 @@ impl Host {
     fn gh_result(&self, project: &str, failed: Option<&str>) {
         let limit = self.cfg.projects.outage_secs * 1000;
         let now = aaa_common::util::now_ms();
+        // 다시 띄운 host는 앞 host가 연 「gh 실패」 항목을 이어받는다(inbox.rs `Outage::resumed`)
+        let known = self.pr.lock().unwrap().gh.contains_key(project);
+        let reported = !known && self.db.inbox_open_exists(project, "outage", "gh", "failing").unwrap_or(false);
         let event =
-            self.pr.lock().unwrap().gh.entry(project.to_string()).or_default().record(failed.is_none(), now, limit);
+            self.pr.lock().unwrap().gh.entry(project.to_string()).or_insert_with(|| Outage::resumed(reported)).record(
+                failed.is_none(),
+                now,
+                limit,
+            );
         match (event, failed) {
             (Some(OutageEvent::Down), Some(why)) => {
                 let why = sanitize(why);
@@ -480,6 +487,10 @@ impl Host {
                 let event = pr_event(&events, &summary);
                 self.inbox_add(project, "pr", &rec.id, event, &format!("{}: PR {change}", label(&rec)));
                 self.flow(&rec, "pr_changed", None, format!("{url} {event} [{}]: {change}", events.join(", ")));
+                // 평가자의 「착지」 사건(전에는 병합 대기열의 `merge_landed`)
+                if events.contains(&"merged") {
+                    self.flow(&rec, "pr_merged", None, url.clone());
+                }
                 self.fire_pr_routines(project, dir, &rec, &url, &events, &summary).await;
                 let _ = self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap());
             }

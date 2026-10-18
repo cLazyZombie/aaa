@@ -65,10 +65,13 @@ nudge_quiet_secs = 10
 outage_secs = 600
 # 열린 thread의 PR을 이만큼(초)마다 thread 머신의 `gh`로 본다. 보고가 새로 오면 바로 본다.
 pr_poll_secs = 120
-# brief 안내·메시지를 Enter한 뒤 harness가 받았다고 알리기를 기다리는 시간(밀리초). 넘으면 전달 불명(다시 보내지 않는다)
+# brief 안내·메시지를 친 때부터 harness가 받았다고 알리기까지 기다리는 시간(밀리초). 입력 상자를 그리는 harness는 이 안에서
+# 친 글이 보이기를 기다려 Enter한다. 넘으면 전달 불명(다시 보내지 않는다)
 accept_wait_ms = 10000
 # interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기를 기다리는 상한(밀리초). 넘으면 그대로 보낸다
 stop_wait_ms = 15000
+# brief를 보낸 뒤 새 보고가 오기 전까지 thread를 작업 중으로 치는 시간(초). 방금 일을 받은 agent는 아직 쉼으로 읽혀서다
+delivered_working_secs = 15
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
 # routine 명령을 실행해도 되는 프로젝트(옛 자리, "*"는 모두). [safety.*] routine_commands가 있으면 그것이 먼저다.

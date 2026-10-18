@@ -43,6 +43,8 @@ pub enum FrameError {
 }
 
 /// 다음 frame을 읽는다. 연결이 frame 경계에서 정상 종료하면 `Ok(None)`.
+/// 취소에 안전하지 않다: 읽던 frame 앞부분을 이 함수 안에만 두어, `select!`에서 다른 갈래가 이기면 그 바이트를 잃고 다음 읽기의
+/// 경계가 어긋난다. `select!` 안에서는 읽은 바이트를 연결 쪽에 두는 `take_frame`(aaa-common `FrameRx`)을 쓴다.
 pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R, max: usize) -> Result<Option<Frame>, FrameError> {
     let mut len_buf = [0u8; 4];
     let mut got = 0;
@@ -69,6 +71,31 @@ pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R, max: usize) -> Result<O
     };
     let mut payload = vec![0u8; len - 1];
     r.read_exact(&mut payload).await.map_err(eof_as_truncated)?;
+    Ok(Some(Frame { kind, payload }))
+}
+
+/// 모은 바이트 맨 앞에서 frame 하나를 꺼낸다(꺼낸 만큼 `buf`에서 지운다). 아직 덜 왔으면 `Ok(None)`이고 `buf`는 그대로다.
+/// `read_frame`과 같이 길이를 읽자마자 상한을 보고, 종류 byte가 오면 바로 본다(payload가 다 오기 전에).
+pub fn take_frame(buf: &mut Vec<u8>, max: usize) -> Result<Option<Frame>, FrameError> {
+    let Some(head) = buf.first_chunk::<4>() else { return Ok(None) };
+    let len = u32::from_be_bytes(*head) as usize;
+    if len == 0 {
+        return Err(FrameError::Empty);
+    }
+    if len > max {
+        return Err(FrameError::TooLarge { len, max });
+    }
+    let Some(&kind) = buf.get(4) else { return Ok(None) };
+    let kind = match kind {
+        1 => FrameKind::Control,
+        2 => FrameKind::Terminal,
+        k => return Err(FrameError::UnknownKind(k)),
+    };
+    if buf.len() < 4 + len {
+        return Ok(None);
+    }
+    let payload = buf[5..4 + len].to_vec();
+    buf.drain(..4 + len);
     Ok(Some(Frame { kind, payload }))
 }
 
@@ -144,6 +171,41 @@ mod tests {
         assert_eq!((a.kind, a.payload.as_slice()), (FrameKind::Control, &b"{}"[..]));
         assert_eq!((b.kind, b.payload.as_slice()), (FrameKind::Terminal, &b"xyz"[..]));
         assert!(read_frame(&mut r, MAX_FRAME).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn take_frame_waits_for_whole_frames_and_keeps_the_rest() {
+        let mut wire = Vec::new();
+        write_frame(&mut wire, FrameKind::Control, b"{}", MAX_FRAME).await.unwrap();
+        write_frame(&mut wire, FrameKind::Terminal, b"xyz", MAX_FRAME).await.unwrap();
+        // 한 바이트씩 모으면 frame이 다 온 때에만 나오고, 그 전에는 모은 것을 그대로 둔다
+        let mut buf = Vec::new();
+        let mut got = Vec::new();
+        for &b in &wire {
+            buf.push(b);
+            let before = buf.len();
+            match take_frame(&mut buf, MAX_FRAME).unwrap() {
+                Some(f) => got.push((f.kind, f.payload)),
+                None => assert_eq!(buf.len(), before),
+            }
+        }
+        assert_eq!(got, vec![(FrameKind::Control, b"{}".to_vec()), (FrameKind::Terminal, b"xyz".to_vec())]);
+        assert!(buf.is_empty());
+        // 두 frame이 한 번에 와도 차례로 하나씩
+        let mut both = wire.clone();
+        assert_eq!(take_frame(&mut both, MAX_FRAME).unwrap().unwrap().payload, b"{}");
+        assert_eq!(take_frame(&mut both, MAX_FRAME).unwrap().unwrap().payload, b"xyz");
+        assert!(take_frame(&mut both, MAX_FRAME).unwrap().is_none());
+    }
+
+    #[test]
+    fn take_frame_rejects_like_read_frame_before_the_payload() {
+        let mut big = u32::MAX.to_be_bytes().to_vec();
+        assert!(matches!(take_frame(&mut big, MAX_FRAME_PREAUTH), Err(FrameError::TooLarge { .. })));
+        let mut empty = 0u32.to_be_bytes().to_vec();
+        assert!(matches!(take_frame(&mut empty, MAX_FRAME), Err(FrameError::Empty)));
+        let mut bad_kind = vec![0, 0, 0, 3, 9];
+        assert!(matches!(take_frame(&mut bad_kind, MAX_FRAME), Err(FrameError::UnknownKind(9))));
     }
 
     #[tokio::test]

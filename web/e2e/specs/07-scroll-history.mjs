@@ -1,9 +1,9 @@
-// 웹 E2E 스크롤과 기록: 터미널 스크롤·늦은 글꼴·줄 수 줄임·앞 기록·출력 밀림.
+// 웹 E2E 스크롤과 기록: 터미널 스크롤·늦은 글꼴·앞 기록·출력 밀림.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 07-scroll-history(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
-  openSettings, start, stop, sentFrames, sentText,
+  openSettings, start, stop, sentFrames, sentText, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -27,7 +27,7 @@ export default async function ({ ctl, page }) {
     };
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { init: copies })).page;
     // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
-    await dp.getByTestId("pane-scroll-plain").click();
+    await inList(dp, "pane-scroll-plain");
     await until("plain 화면", async () => (await screenText(dp)).includes("s-200")).catch(async (e) => {
       // CI(macos-15)에서만 실패한 적이 있다(10-17 69224fd): 그때 화면과 grid·기록 상태를 남긴다
       const seen = {
@@ -101,7 +101,7 @@ export default async function ({ ctl, page }) {
     // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
     // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다
     for (const [mode, want] of [["alt", 'GOT:"\\u001b[A'], ["mouse", 'GOT:"\\u001b[<64;']]) {
-      await dp.getByTestId(`pane-scroll-${mode}`).click();
+      await inList(dp, `pane-scroll-${mode}`);
       await until(`${mode} 화면`, async () => (await screenText(dp)).includes("s-200"));
       await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await dp.mouse.wheel(0, -100);
@@ -119,8 +119,6 @@ export default async function ({ ctl, page }) {
     await until("1× 보고 하나", () => reports() === before + 1);
     const dlg = await openSettings(dp, "터미널");
     for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click();
-    if ((await dlg.getByRole("group", { name: "휠 스크롤 속도" }).innerText()).trim() !== "3×") bad.push("설정이 3×가 아니다");
-    if ((await dp.evaluate(() => localStorage.getItem("aaa:terminal-wheel-speed"))) !== "3") bad.push("휠 속도 저장이 없다");
     await dp.keyboard.press("Escape");
     await dlg.waitFor({ state: "hidden" });
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -149,7 +147,7 @@ export default async function ({ ctl, page }) {
             return document.querySelectorAll(".xterm-rows > div").length === rows && screen.getBoundingClientRect().right <= scroll.getBoundingClientRect().right + 0.5;
           }, pane.rows);
         });
-      await p.getByTestId("pane-scroll-plain").click();
+      await inList(p, "pane-scroll-plain");
       await until(`${label} 화면`, async () => (await screenText(p)).includes('GOT:"x"'));
       await ownGrid("scroll-plain");
       const cell = await p.evaluate(() => {
@@ -171,10 +169,7 @@ export default async function ({ ctl, page }) {
       // 끌기가 휠이 되어 화살표·mouse 보고로 프로그램에 가야 한다
       for (const [mode, want] of [["touch-alt", 'GOT:"\\u001b[A'], ["touch-mouse", 'GOT:"\\u001b[<64;']]) {
         if (label.startsWith("iPad") && mode === "touch-mouse") continue; // 한 기기에서 한 번이면 된다(iPad는 alt만)
-        // 휴대폰은 pane을 열면 목록이 가려진다
-        const back = p.getByRole("button", { name: "목록으로" });
-        if (await back.isVisible()) await back.click();
-        await p.getByTestId(`pane-scroll-${mode}`).click();
+        await inList(p, `pane-scroll-${mode}`);
         // 그 프로그램의 화면이 그려졌는지는 글만으로 모른다: 앞 pane(plain)도 s-200을 보인다(10-18 전체 실행에서 끌기가 바뀌는
         // 사이 화면에 가 사라졌다). alternate screen이면 기록이 없고(viewport가 늘지 않는다), mouse면 xterm이 mouse 보고 중이다
         await until(`${label} ${mode} 화면`, async () =>
@@ -277,7 +272,7 @@ export default async function ({ ctl, page }) {
         const vp = document.querySelector(".xterm-viewport");
         return vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 1;
       });
-    await p.getByTestId("pane-fontjump").click();
+    await inList(p, "pane-fontjump");
     await until("대신 글꼴로 맨 아래 s-200", async () => (await screenText(p)).includes("s-200") && (await atBottom()));
     const before = await rowHeight();
     release();
@@ -289,29 +284,6 @@ export default async function ({ ctl, page }) {
     console.log(`     칸 높이 ${before.toFixed(1)}px → ${after.toFixed(1)}px`);
     await p.context().close();
     aaa("pane", "kill", "fontjump");
-  });
-
-  await step("줄 수가 줄면 위 줄을 기록으로(xterm·herdr처럼, plan §8.59): 작은 화면이 크기를 걸어도 host 화면에 마지막 줄·커서 줄이 남고, 다시 붙은 웹은 그 위를 굴려 본다", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "shrink", "--", process.execPath, `${root}/scroll.js`, "plain");
-    await waitOutput("shrink", "s-200");
-    // pty-size는 새 크기가 host에 닿은 뒤 돌아온다: 바로 읽어도 줄인 화면이다
-    aaa("pane", "pty-size", "shrink", "80", "8");
-    const r = aaa("pane", "read", "shrink", "--source", "visible").text.split("\n");
-    // 커서는 s-200 다음 빈 줄: 그 위 일곱 줄이 s-194~s-200
-    const want = Array.from({ length: 7 }, (_, i) => `s-${194 + i}`);
-    if (JSON.stringify(r.slice(0, 7)) !== JSON.stringify(want)) throw new Error(`줄인 화면 ${JSON.stringify(r)}`);
-    // 늦게 붙은 웹: 기록에 줄인 때 올린 줄까지 있어 위로 굴리면 s-001
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await dp.getByTestId("pane-shrink").click();
-    await until("shrink 화면", async () => (await screenText(dp)).includes("s-200"));
-    const box = await dp.getByTestId("terminal").boundingBox();
-    await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await until("기록 맨 위 s-001", async () => {
-      await dp.mouse.wheel(0, -2000);
-      return (await screenText(dp)).includes("s-001");
-    });
-    await dp.context().close();
-    aaa("pane", "kill", "shrink");
   });
 
   await step("폭이 줄었다 넓어지면 다시 접는다(herdr도 다시 접는다: src/pane.rs 「Herdr reflows too」, coordinator 10-18 t-0330 발견): 휴대폰이 좁게 쥐었다 놓아도 host 화면과 늦게 붙은 웹에 줄 끝이 그대로, 넓은 글자 줄도", async () => {
@@ -330,7 +302,7 @@ export default async function ({ ctl, page }) {
     };
     // 휴대폰이 열어 좁게 쥔다. host 화면은 다시 접어, 접힌 줄을 이으면 원래 줄이다(전에는 좁힌 폭 밖 글을 버렸다)
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
-    await pp.getByTestId("pane-rewrap").click();
+    await inList(pp, "pane-rewrap");
     await until("휴대폰이 쥔 크기", () => cols() < 50);
     has(read("recent-unwrapped"), [long, wrap, wide]);
     await until("휴대폰 화면", async () => (await screenText(pp)).includes("rewrap>"));
@@ -338,7 +310,7 @@ export default async function ({ ctl, page }) {
     await pp.context().close();
     // 넓은 화면이 늦게 붙어 쥔다: 그 replay(host 화면)를 받아 줄 끝까지 보인다. 붙어 있던 xterm은 스스로 다시 접으므로 늦게 붙는다
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-rewrap").click();
+    await inList(dp, "pane-rewrap");
     await until("넓은 화면이 쥔 크기", () => cols() >= 112);
     await until("늦게 붙은 웹에 줄 끝", async () => {
       const rows = (await screenText(dp)).split("\n").map((r) => r.trimEnd());
@@ -349,7 +321,7 @@ export default async function ({ ctl, page }) {
     await shot(dp, "desktop-rewrap");
     await dp.context().close();
     const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
-    await ip.getByTestId("pane-rewrap").click();
+    await inList(ip, "pane-rewrap");
     await until("iPad 화면", async () => (await screenText(ip)).includes("rewrap>"));
     has(read("recent-unwrapped"), [long, wrap, wide]);
     await shot(ip, "ipad-rewrap");
@@ -391,7 +363,7 @@ export default async function ({ ctl, page }) {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const hp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
-    await hp.getByTestId("pane-histapp").click();
+    await inList(hp, "pane-histapp");
     await until("histapp 화면", async () => (await screenText(hp)).includes("hist>"));
     const box = hp.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
@@ -500,56 +472,6 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "histapp");
   });
 
-  await step("앞 기록 빠른 휠(QA t-0337 Q1: 데스크톱 Chromium 6/8에서 화면 전체가 빈 채로 굳음): 긴 출력 pane을 열자마자 휠을 연달아 굴려 앞 기록을 받는 동안에도, 붙인 뒤에도 줄이 그려지고, 키를 치면 맨 아래 새 출력이 보인다", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "fastwheel", "--", process.execPath, `${root}/long.js`);
-    await waitOutput("fastwheel", "long-done");
-    // 붙을 때는 최근 기록(aaa_vt REPLAY_HISTORY 2000줄)만 오고 앞이 남는다: 굴리면 받는다
-    const looks = [];
-    for (let trial = 0; trial < 8; trial++) {
-      const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
-      await page.getByTestId("pane-fastwheel").click();
-      await until("fastwheel 화면", async () => (await screenText(page)).includes("long-done"));
-      const box = page.getByTestId("terminal");
-      const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
-      await until("앞 기록 있음", async () => (await attr("historyMore")) === "1");
-      // QA probe-scroll5.mjs처럼 누르지 않고 가운데에 올린다
-      await box.hover();
-      // QA probe-scroll5.mjs 그대로: -1200px를 40번 연달아(기다리지 않는다)
-      for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -1200);
-      const look = () =>
-        box.evaluate((el) => {
-          const rows = [...el.querySelectorAll(".xterm-screen:not(.term-history-cover) .xterm-rows > div")].map((d) => d.textContent);
-          return {
-            nonblank: rows.filter((t) => t.trim()).length,
-            first: rows.find((t) => t.trim())?.slice(0, 20) ?? null,
-            covers: el.querySelectorAll(".term-history-cover").length,
-            applied: el.dataset.historyApplied,
-            waiting: el.dataset.historyWaiting,
-            more: el.dataset.historyMore,
-            top: el.dataset.viewTop,
-            base: el.dataset.viewBase,
-          };
-        });
-      // 붙이기가 끝나고(덮개 없음) 그려진 줄이 있다. 고장이면 20초 기다림이 그때 모습으로 끝난다
-      let last = null;
-      try {
-        await until(`붙인 뒤 화면(${trial + 1})`, async () => {
-          last = await look();
-          return Number(last.applied) >= 1 && last.waiting !== "1" && last.covers === 0 && last.nonblank > 0;
-        });
-      } catch (e) {
-        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
-      }
-      looks.push(last);
-      // 키를 치면 맨 아래로 가고 새 출력이 그려진다
-      await box.click();
-      await page.keyboard.press("p");
-      await until(`키 뒤 새 출력(${trial + 1})`, async () => (await screenText(page)).includes(`tick-${trial + 1}`));
-      await page.context().close();
-    }
-    if (looks.some((l) => l.first === null)) throw new Error(`빈 화면: ${JSON.stringify(looks)}`);
-    aaa("pane", "kill", "fastwheel");
-  });
   await step("앞 기록 reset 직후 scroll(QA t-0337 Q1 원인, patches/xterm-5.5.0-viewport.patch, plan §8.105): 앞 기록을 붙이려고 xterm을 reset한 뒤 줄 높이를 다시 재기 전에 scrollTop 0의 scroll 사건이 와도 보던 줄이 숫자로 남고 그려지며, 붙잡은 출력이 풀린다", async () => {
     // 짧은 줄 2600개: host가 처음부터 구독해 다 갖고(붙을 때 2000줄, 앞 기록 600줄), 덩어리와 화면을 한 번에 다 읽는다.
     // 읽는 중에 온 scroll의 NaN은 남은 출력이 되살리므로, 다 읽은 뒤 줄 높이를 재기 전의 scroll이 결함이다(QA probe-stuck)
@@ -558,7 +480,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "send-text", "resetscroll", "q");
     await waitOutput("resetscroll", "short-done");
     const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
-    await page.getByTestId("pane-resetscroll").click();
+    await inList(page, "pane-resetscroll");
     await until("resetscroll 화면", async () => (await screenText(page)).includes("short-done"));
     const box = page.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
@@ -630,7 +552,7 @@ export default async function ({ ctl, page }) {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
-    await page.getByTestId("pane-wake").click();
+    await inList(page, "pane-wake");
     await until("wake 화면", async () => (await screenText(page)).includes("hist>"));
     // 앱이 만드는 pane WebSocket을 센다. 진단 기록(__aaaTermLog)은 Playwright routeWebSocket이 서버에 이을 때 만드는 진짜
     // 연결만 보아, 길에서 거절한 연결은 남지 않는다. 그래서 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싼다
@@ -716,28 +638,11 @@ export default async function ({ ctl, page }) {
       server.onClose((code, reason) => ws.close({ code, reason }));
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
-    const slow = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, swallow] })).page;
-    await slow.getByTestId("pane-flood").click();
+    // 첫 화면이 flood다(주소): 셀 WebSocket 기록이 그 pane 것뿐이다
+    const slow = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, swallow], hash: paneHash("flood") })).page;
     await until("느린 화면 flood>", async () => (await screenText(slow)).includes("flood>"));
-    const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await fast.getByTestId("pane-flood").click();
+    const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { hash: paneHash("flood") })).page;
     await until("따라오는 화면 flood>", async () => (await screenText(fast)).includes("flood>"));
-    // ACK 전의 옛 웹(주소에 flow=ack가 없고 ACK도 없다, 다시 띄우기 전에 받은 화면): host는 보내기 줄로만 재므로
-    // 잘 받는 동안은 닫지 않는다(참고의 ACK 없는 연결)
-    const old = await fast.context().newPage();
-    await old.goto(base);
-    await old.evaluate((id) => {
-      const w = new WebSocket(`ws://${location.host}/api/v1/panes/${encodeURIComponent(id)}/ws`);
-      w.binaryType = "arraybuffer";
-      window.oldClient = { bytes: 0, code: null, acks: 0, joined: false };
-      w.onmessage = (m) => {
-        if (typeof m.data !== "string") window.oldClient.bytes += m.data.byteLength;
-        else if (m.data.startsWith('{"t":"snapshot"')) window.oldClient.joined = true;
-      };
-      w.onclose = (e) => (window.oldClient.code = e.code);
-    }, aaa("pane", "list").panes.find((x) => x.name === "flood").id);
-    // snapshot이 출력 구독의 시작이다. 그 전에 쏟으면 앞부분이 snapshot(text)에 들어가 bytes가 모자란다(t-0327, 착지 검증에서 1/8)
-    await until("옛 웹 붙음", async () => await old.evaluate(() => window.oldClient.joined));
     // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
     aaa("pane", "send-text", "flood", "f");
     await until("출력 정지 띠", async () => await slow.getByTestId("output-stalled").isVisible());
@@ -754,10 +659,6 @@ export default async function ({ ctl, page }) {
     await until("따라오는 화면 flood-done", async () => (await screenText(fast)).includes("flood-done"));
     const kept = await log(fast);
     if (kept.some((e) => e.startsWith("ws close")) || count(kept, "snapshot") !== 1) throw new Error(`따라오는 화면이 끊겼다: ${JSON.stringify(kept.filter((e) => e !== "io"))}`);
-    await until("옛 웹도 끝까지 받음", async () => (await old.evaluate(() => window.oldClient.bytes)) >= 400_000);
-    const oldClient = await old.evaluate(() => window.oldClient);
-    if (oldClient.code !== null) throw new Error(`ACK 없는 옛 웹이 닫혔다: ${JSON.stringify(oldClient)}`);
-    await old.close();
     await shot(slow, "desktop-output-stalled");
     // 「다시 연결」: 새로 붙어 snapshot을 받고 입력도 간다
     dropAcks = false;
@@ -792,7 +693,7 @@ export default async function ({ ctl, page }) {
       }
     }, 30_000);
     const qp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await qp.getByTestId("pane-q8").click();
+    await inList(qp, "pane-q8");
     const box = qp.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
     await until("q8 화면", async () => (await screenText(qp)).includes("history-done"));

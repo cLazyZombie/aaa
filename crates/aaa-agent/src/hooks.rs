@@ -3,8 +3,11 @@
 //! - 세션을 띄울 때 env에 `AAA_HOOK_SOCK`·`AAA_HOOK_TOKEN`을 넣는다. token은 세션 token에서 만든 값이라 따로 저장하지 않는다.
 //! - harness 상태(작업 중·idle·질문)는 hook으로 정하지 않는다: pump의 화면 감지(`detect`, plan §8.110)가 정한다.
 //!   hook은 herdr 0.9.5처럼 harness 세션 ID를 잇는 데(Claude SessionStart, Codex notify)와 herdr-projects 진행 보고
-//!   정리(UserPromptSubmit: 「Waiting for you」를 지운다)에만 쓴다.
-//! - `aaa hook`은 harness를 막지 않는다: 연결이 안 되면 조용히 끝나고, 아무것도 출력하지 않는다(결정을 내리지 않음).
+//!   정리(UserPromptSubmit: 「Waiting for you」를 지운다)에 쓴다.
+//! - Claude hook은 herdr-projects progress.rs `hook`처럼 진행 보고 안내를 넣는다(SessionStart 지침, UserPromptSubmit 안내,
+//!   PostToolUse 1분에 한 번 알림, `additionalContext`). 안내만 하고 상태는 바꾸지 않는다: PostToolUse는 host에 보내지 않는다.
+//! - `aaa hook`은 harness를 막지 않는다: 연결이 안 되면 조용히 끝나고 아무것도 출력하지 않는다(결정을 내리지 않음). 출력은
+//!   agent가 돌려준 안내 JSON 한 줄뿐이다.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -68,6 +71,8 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         percent: None,
         at_ms: now_ms,
         transcript: s(p, "transcript_path"),
+        plan: None,
+        background: None,
     };
     if harness == "report" {
         ev.kind = "progress".into();
@@ -97,6 +102,76 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
     Some(ev)
 }
 
+/// 진행 알림을 다시 넣는 가장 짧은 간격(herdr-projects progress.rs `REMIND_SECS`)
+pub const REMIND_MS: u64 = 60_000;
+
+/// 세션 하나의 진행 알림 기록(herdr-projects progress.rs `Record` 가운데 알림이 보는 칸). agent가 기억한다.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Progress {
+    /// 마지막 `aaa report`(ms). 세션이 시작한 뒤 없으면 0
+    pub reported_at: u64,
+    /// 마지막 보고의 백분율(`--unknown`이면 없다)
+    pub percent: Option<u8>,
+    /// 마지막으로 넣은 안내(ms)
+    pub reminded_at: u64,
+}
+
+/// 안내를 넣을 Claude 사건이면 그 이름(herdr-projects progress.rs `eligible`): 맨 위 agent의 SessionStart·UserPromptSubmit·
+/// PostToolUse. 하위 agent의 사건과 `aaa report` 자신의 PostToolUse는 아니다.
+pub fn guide_kind(p: &Value) -> Option<&'static str> {
+    if subagent(p) {
+        return None;
+    }
+    let kind = match s(p, "hook_event_name")?.as_str() {
+        "SessionStart" => "SessionStart",
+        "UserPromptSubmit" => "UserPromptSubmit",
+        "PostToolUse" => "PostToolUse",
+        _ => return None,
+    };
+    let input = p.get("tool_input").map(|t| t.to_string()).unwrap_or_default();
+    if kind == "PostToolUse" && input.contains("aaa") && input.contains(" report ") {
+        return None;
+    }
+    Some(kind)
+}
+
+/// 사건 하나에 넣을 안내(herdr-projects progress.rs `respond`, 글은 한국어로 옮김). 시계는 인자로 받는다.
+pub fn respond(rec: &mut Progress, kind: &str, prefix: &str, now_ms: u64) -> Option<String> {
+    match kind {
+        "SessionStart" => {
+            // 이 pane의 새 세션: 옛 보고는 더 이 세션을 말하지 않는다
+            *rec = Progress { reminded_at: now_ms, ..Progress::default() };
+            Some(format!("# 진행 보고(aaa)\n\n{}", aaa_proto::progress_guidance(prefix)))
+        }
+        "UserPromptSubmit" => {
+            rec.reminded_at = now_ms;
+            Some(format!(
+                "작업 도구를 쓰거나 막히는 질문을 하기 전에 이 요청이 새 일을 시작하는지 본다. 그렇다면 새 어림을 보고한다. \
+                 그리고 사용자를 기다리기 전에 보고한다. 예: `{prefix} report --unknown --activity 'Waiting for you'`."
+            ))
+        }
+        "PostToolUse" => {
+            let done = rec.percent == Some(100);
+            let since = |t: u64| now_ms.saturating_sub(t) >= REMIND_MS;
+            if since(rec.reminded_at) && !done && (rec.reported_at == 0 || since(rec.reported_at)) {
+                rec.reminded_at = now_ms;
+                Some(format!(
+                    "자연스러운 경계라면 진행을 보고할 때다: `{prefix} report --percent N --activity '...'`. 지금 일을 다시 \
+                     어림하고 진행을 지어내지 않는다. 사용자에게 묻기 전에는 `Waiting for you`로 보고한다."
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// hook의 답(Claude Code가 읽는 꼴, herdr-projects progress.rs `output`)
+pub fn output(native: &str, text: &str) -> String {
+    serde_json::json!({ "hookSpecificOutput": { "hookEventName": native, "additionalContext": text } }).to_string()
+}
+
 /// 하위 agent(subagent)가 낸 사건인가: 자기 ID나 `/subagents/` 아래 기록을 가진다(herdr-projects progress.rs `eligible`)
 fn subagent(p: &Value) -> bool {
     ["agent_id", "subagent_id", "agent_transcript_path"].iter().any(|k| p.get(k).is_some_and(|v| !v.is_null()))
@@ -110,6 +185,14 @@ pub fn foreign_session(started: Option<&str>, ev: &HarnessEvent) -> bool {
         (Some(a), Some(b)) => ev.kind != "session_start" && !a.is_empty() && a != b,
         _ => false,
     }
+}
+
+/// Codex 중첩 thread(하위 agent, 세션 안에서 다시 띄운 codex)의 사건인가: hook 프로세스가 물려받은 `CODEX_THREAD_ID`가
+/// 있고 사건의 세션 ID와 다르다(herdr `integration/assets/codex/herdr-agent-state.sh`, herdr-projects progress.rs `hook`).
+/// 세션 ID가 없는 사건도 다르다고 본다(herdr와 같다).
+pub fn nested_codex(inherited: Option<&str>, p: &Value) -> bool {
+    let id = s(p, "session_id").or_else(|| s(p, "thread-id"));
+    inherited.is_some_and(|t| !t.is_empty() && Some(t) != id.as_deref())
 }
 
 /// Codex에 실행마다 줄 notify 설정(`codex -c <이것>`). 사용자 ~/.codex 설정은 고치지 않는다.
@@ -130,13 +213,20 @@ pub fn claude_settings(exe: &Path) -> Value {
     serde_json::json!({
         "hooks": {
             "SessionStart": [{ "matcher": SESSION_START_MATCHER, "hooks": [hook.clone()] }],
-            "UserPromptSubmit": [{ "hooks": [hook] }],
+            "UserPromptSubmit": [{ "hooks": [hook.clone()] }],
+            // 진행 알림만(herdr-projects setup.rs): 상태는 화면 감지가 정한다
+            "PostToolUse": [{ "hooks": [hook] }],
         }
     })
 }
 
-/// 세션 안에서: hook 사건 하나를 agent에 보낸다. 실패해도 harness를 막지 않게 짧게 끝낸다.
-pub async fn send(harness: &str, payload: Value) -> Result<()> {
+/// 세션 안에서: hook 사건 하나를 agent에 보낸다. 실패해도 harness를 막지 않게 짧게 끝낸다. agent가 돌려준 출력(진행
+/// 안내 JSON 한 줄)이 있으면 준다. 옛 agent는 `ok`만 답하고, 옛 `aaa hook`은 `ok` 뒤를 읽지 않는다.
+pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
+    // Codex 중첩 thread의 사건은 보내지 않는다: 이 pane의 thread만 알린다
+    if harness == "codex" && nested_codex(std::env::var("CODEX_THREAD_ID").ok().as_deref(), &payload) {
+        return Ok(None);
+    }
     let sock = std::env::var(ENV_SOCK).context("AAA_HOOK_SOCK이 없다(aaa 세션 밖)")?;
     let token = std::env::var(ENV_TOKEN).context("AAA_HOOK_TOKEN이 없다")?;
     let session = std::env::var(ENV_SESSION).context("AAA_SESSION_ID가 없다")?;
@@ -152,7 +242,8 @@ pub async fn send(harness: &str, payload: Value) -> Result<()> {
         let mut reply = Vec::new();
         s.read_to_end(&mut reply).await?;
         anyhow::ensure!(reply.starts_with(b"ok"), "agent가 거부했다: {}", String::from_utf8_lossy(&reply));
-        Ok(())
+        let out = String::from_utf8_lossy(&reply[2..]).trim().to_string();
+        Ok((!out.is_empty()).then_some(out))
     })
     .await
     .context("agent 응답 시간 초과")?
@@ -241,6 +332,18 @@ mod tests {
         assert_eq!(r.message.as_deref(), Some("테스트 중이상한 줄"));
     }
 
+    /// herdr `tests/cli/hooks.rs`의 Codex 세션 시험과 같은 경우들
+    #[test]
+    fn codex_events_of_nested_threads_are_not_sent() {
+        let notify = |id: &str| json!({"type":"agent-turn-complete","thread-id":id});
+        assert!(!nested_codex(None, &notify("a")));
+        assert!(!nested_codex(Some(""), &notify("a")));
+        assert!(!nested_codex(Some("a"), &notify("a")));
+        assert!(nested_codex(Some("parent"), &notify("nested")));
+        assert!(!nested_codex(Some("s"), &json!({"hook_event_name":"SessionStart","session_id":"s"})));
+        assert!(nested_codex(Some("s"), &json!({"type":"agent-turn-complete"})));
+    }
+
     #[test]
     fn codex_notify_is_toml() {
         let v = codex_notify(Path::new("/A b/q\"x\\/aaa"));
@@ -248,13 +351,57 @@ mod tests {
     }
 
     #[test]
-    fn settings_quote_exe_and_register_only_session_hooks() {
+    fn settings_quote_exe_and_register_session_and_guidance_hooks() {
         let v = claude_settings(Path::new("/A b/it's/aaa"));
         let cmd = v["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap();
         assert_eq!(cmd, "'/A b/it'\\''s/aaa' hook --agent claude");
         assert_eq!(v["hooks"]["SessionStart"][0]["matcher"], "^(startup|resume|clear|compact|fork)$");
         let mut events: Vec<&str> = v["hooks"].as_object().unwrap().keys().map(String::as_str).collect();
         events.sort();
-        assert_eq!(events, ["SessionStart", "UserPromptSubmit"]);
+        // 상태 hook(Stop·PermissionRequest·Notification)은 없다. PostToolUse는 진행 알림만 한다(herdr-projects setup.rs)
+        assert_eq!(events, ["PostToolUse", "SessionStart", "UserPromptSubmit"]);
+    }
+
+    /// herdr-projects progress.rs `helpers_and_the_reporters_own_call_do_not_trigger`. PostToolUse는 안내만 하고 host 사건은
+    /// 아니다(상태는 화면 감지가 정한다).
+    #[test]
+    fn helpers_and_the_reporters_own_call_get_no_guidance() {
+        assert_eq!(guide_kind(&json!({"hook_event_name":"PostToolUse","agent_id":"child"})), None);
+        assert_eq!(
+            guide_kind(&json!({"hook_event_name":"PostToolUse","transcript_path":"/x/subagents/y.jsonl"})),
+            None
+        );
+        let own =
+            json!({"hook_event_name":"PostToolUse","tool_input":{"command":"/p/aaa report --percent 5 --activity x"}});
+        assert_eq!(guide_kind(&own), None);
+        let other = json!({"hook_event_name":"PostToolUse","tool_input":{"command":"/p/aaa thread list demo"}});
+        assert_eq!(guide_kind(&other), Some("PostToolUse"));
+        assert!(normalize("S", "claude", &other, 1).is_none(), "PostToolUse가 host 사건이 됐다");
+        assert_eq!(guide_kind(&json!({"hook_event_name":"SessionStart","source":"compact"})), Some("SessionStart"));
+        assert_eq!(guide_kind(&json!({"hook_event_name":"Stop"})), None);
+    }
+
+    /// herdr-projects progress.rs `session_start_injects_instructions_and_resets_the_record`·
+    /// `reminders_are_throttled_to_once_a_minute_and_stop_at_done`(초를 ms로)
+    #[test]
+    fn session_start_guides_and_reminders_are_throttled_to_once_a_minute() {
+        let mut rec = Progress { percent: Some(50), reported_at: 5, reminded_at: 0 };
+        let text = respond(&mut rec, "SessionStart", "/p/aaa", 1_000_000).unwrap();
+        assert!(text.contains("`/p/aaa report --percent 25"), "{text}");
+        assert_eq!(rec, Progress { reported_at: 0, percent: None, reminded_at: 1_000_000 });
+
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_030_000).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_061_000).is_some());
+        assert_eq!(rec.reminded_at, 1_061_000);
+        // 새 보고도 1분 동안 알림을 멈춘다
+        rec.reported_at = 1_100_000;
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_130_000).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_200_000).is_some());
+        rec.percent = Some(100);
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 9_000_000).is_none());
+        assert!(respond(&mut rec, "UserPromptSubmit", "aaa", 9_001_000).unwrap().contains("Waiting for you"));
+        assert!(respond(&mut rec, "Stop", "aaa", 9_002_000).is_none());
+        let out: Value = serde_json::from_str(&output("PostToolUse", "hi")).unwrap();
+        assert_eq!(out, json!({"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"hi"}}));
     }
 }

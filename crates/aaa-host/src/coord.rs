@@ -3,7 +3,7 @@
 //! - TASKS.md는 coordinator가 쓰고 aaa는 읽기만 한다. 완료는 줄을 지워 표시한다.
 //! - `start_threads`(safety, propose·auto)는 coordinator가 따르는 안내 값이다. aaa가 강제하지 않는다(0.2.35와 같다).
 //! - 권한을 건너뛰는 실행 인자는 사람만 바꾸는 host.toml `[safety.*]`(yolo·thread_agent_args)와 그 머신 agent.toml의 profile
-//!   `args`에 둔다(coordinator가 바꿀 수 없다, plan §8.115).
+//!   `args`에 둔다(coordinator가 바꿀 수 없다, plan §8.163).
 
 use std::path::Path;
 use std::sync::Arc;

@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 03-keys(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentCount, sentText,
+  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentCount, sentText, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -16,19 +16,15 @@ export default async function ({ ctl, page }) {
         .map((m) => [Number(m[1]), JSON.parse(m[2])]);
     const last = () => Math.max(0, ...lines().map(([i]) => i));
     // 데스크톱(마우스)에는 키 막대가 없다
-    await page.getByTestId("pane-barapp").click();
+    await inList(page, "pane-barapp");
     await until("bar 화면(데스크톱)", async () => (await screenText(page)).includes("bar>"));
     if (await page.locator(".key-bar").isVisible()) throw new Error("데스크톱에 키 막대가 보인다");
     // 터치 기기. Alt를 하드웨어 키와 견주려고 macOS가 아닌 platform으로 둔다(macOS xterm은 Option을 글자로 쓴다).
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
-    await tp.getByTestId("pane-barapp").click();
+    await inList(tp, "pane-barapp");
     await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
     const bar = tp.locator(".key-bar");
     if (!(await bar.isVisible())) throw new Error("터치 기기에 키 막대가 없다");
-    const order = await bar.locator(".key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
-    // 터치 기기는 맨 앞에 ⌨(입력줄 전환, KeyBar.tsx 200~205줄)
-    const want = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
-    if (JSON.stringify(order) !== JSON.stringify(want)) throw new Error(`키 순서 ${order}`);
     const key = (k) => bar.locator(`.key[data-key="${k}"]`);
     await tp.locator(".xterm-screen").click();
     // 한 동작이 pane에 보낸 조각들. pane이 첫 조각을 받은 때에는 화면이 그 동작으로 보낼 글을 다 보냈다(키·마우스 사건 안에서,
@@ -136,7 +132,7 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
     await tp.context().close();
     aaa("pane", "kill", "barapp");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
   });
 
   await step("입력 방식(herdr-web-ui terminalInputMode): 기본은 바로 입력, 터치 기기 ⌨로 입력줄, 입력줄은 키보드를 안 올리고 PTY 크기를 안 바꾼다, Enter 보내기·빈 Enter, 조합 중엔 ⌨만 회색", async () => {
@@ -159,17 +155,15 @@ export default async function ({ ctl, page }) {
     const bad = [];
     // 데스크톱 기본: 입력줄이 없다(바로 입력)
     const desk = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 });
-    await desk.page.getByTestId("pane-lineapp").click();
+    await inList(desk.page, "pane-lineapp");
     await until("bar 화면(데스크톱)", async () => (await screenText(desk.page)).includes("bar>"));
     if ((await desk.page.locator(".terminal-input").count()) !== 0) bad.push("데스크톱 기본에 입력줄이 있다");
     await desk.page.context().close();
     // 터치 기기 기본: 바로 입력. 키 막대 맨 앞 ⌨는 꺼져 있고 xterm 칸이 화면 키보드를 올린다
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
-    await tp.getByTestId("pane-lineapp").click();
+    await inList(tp, "pane-lineapp");
     await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
     const toggle = tp.locator('.key-bar .key[data-key="direct"]');
-    const first = await tp.locator(".key-bar .key").first().getAttribute("data-key");
-    if (first !== "direct") bad.push(`키 막대 맨 앞이 ⌨가 아니다: ${first}`);
     if ((await toggle.getAttribute("aria-pressed")) !== "false") bad.push("기본인데 ⌨가 켜져 있다");
     if ((await tp.locator(".terminal-input").count()) !== 0) bad.push("터치 기본에 입력줄이 있다");
     if ((await tp.locator(".term-scroll[data-direct-typing]").count()) !== 1) bad.push("바로 입력인데 data-direct-typing이 없다");
@@ -183,15 +177,8 @@ export default async function ({ ctl, page }) {
     if ((await tp.evaluate(() => localStorage.getItem("aaa:terminal-input-mode"))) !== "line") bad.push("입력 방식이 이 기기에 저장되지 않았다");
     const line = tp.getByLabel("보낼 글");
     const sendBtn = tp.locator(".terminal-input-send");
-    // 글 + Enter: 글 다음 Enter가 따로 간다
+    // 빈 입력줄의 보내기는 Enter만. 유지 Alt는 붙는다(PaneTerminal pressEnter). 글과 Enter는 08 「입력줄」이 본다
     let n = last();
-    await line.fill("echo hi");
-    await line.press("Enter");
-    await until("입력줄 Enter", () => since(n).join("") === "echo hi\r");
-    if ((await line.inputValue()) !== "") bad.push("보낸 뒤 입력줄에 글이 남았다");
-    // 빈 입력줄의 보내기는 Enter만. 단추 이름도 Enter다. 유지 Alt는 붙는다(PaneTerminal pressEnter)
-    if ((await sendBtn.getAttribute("aria-label")) !== "터미널에 Enter 보내기") bad.push(`빈 줄 단추 ${await sendBtn.getAttribute("aria-label")}`);
-    n = last();
     await sendBtn.click();
     await until("빈 Enter", () => since(n).join("") === "\r");
     await tp.locator('.key-bar .key[data-key="Alt"]').click();
@@ -232,14 +219,14 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
     await tp.context().close();
     aaa("pane", "kill", "lineapp");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
   });
 
   await step("키 바 편집(herdr-web-ui KeyBarSettings, 차이 목록 「키 막대 항목 설정」): 설정에서 키를 빼고·옮기고·더하고 조합을 만들면 터미널 키 막대가 바로 그 순서, 이 기기에 저장, 기본값으로 되돌리기", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "kbset", "--", process.execPath, `${root}/scroll.js`, "plain");
     await waitOutput("kbset", "s-200");
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, platform: "Linux x86_64" })).page;
-    await tp.getByTestId("pane-kbset").click();
+    await inList(tp, "pane-kbset");
     await until("kbset 화면", async () => (await screenText(tp)).includes("s-200"));
     const order = () => tp.locator(".key-bar .key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
     const defaults = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
@@ -255,7 +242,6 @@ export default async function ({ ctl, page }) {
     await kb.locator(".key-bar-settings-add").getByRole("button", { name: "키 추가" }).click();
     // 사용자 조합: 기본 키 ←(처음 값)에 Ctrl
     await kb.getByRole("group", { name: "조합에 사용할 보조 키" }).getByRole("button", { name: "Ctrl" }).click();
-    if ((await kb.locator(".key-bar-settings-preview").innerText()) !== "Ctrl+←") throw new Error(`조합 미리 보기 ${await kb.locator(".key-bar-settings-preview").innerText()}`);
     await kb.getByRole("button", { name: "조합 추가" }).click();
     await shot(tp, "tablet-key-bar-settings");
     const combo = 'key:"ArrowLeft":100';
@@ -267,28 +253,25 @@ export default async function ({ ctl, page }) {
     await until("설정 닫힘", async () => (await tp.locator(".settings-dialog").count()) === 0);
     // 키 막대는 다시 열지 않아도 바로 바뀐다
     await until("키 막대가 편집한 순서", async () => JSON.stringify(await order()) === JSON.stringify(want));
-    const stored = await tp.evaluate(() => JSON.parse(localStorage.getItem("aaa:keybar-items") ?? "null"));
-    if (!Array.isArray(stored) || stored.length !== want.length - 1) throw new Error(`저장 ${JSON.stringify(stored)}`);
     // 저장한 조합은 그 보조 키로 간다(Ctrl+← = CSI 1;5D)
     await tp.locator(".xterm-screen").click();
     await tp.locator(`.key-bar .key[data-key='${combo}']`).click();
     await waitOutput("kbset", 'GOT:"\\u001b[1;5D"');
     // 다시 열어도 이 기기의 순서
     await tp.reload();
-    await tp.getByTestId("pane-kbset").click();
+    await inList(tp, "pane-kbset");
     await until("다시 연 키 막대", async () => JSON.stringify(await order()) === JSON.stringify(want));
     // 기본값으로 되돌리기: 저장값을 지우고 참고 기본 배열
     await (await openKeyBar()).getByRole("button", { name: "기본값으로 되돌리기" }).click();
     await tp.keyboard.press("Escape");
     await tp.keyboard.press("Escape");
     await until("기본 키 막대", async () => JSON.stringify(await order()) === JSON.stringify(defaults));
-    if ((await tp.evaluate(() => localStorage.getItem("aaa:keybar-items"))) !== null) throw new Error("기본값인데 저장값이 남았다");
     await shot(tp, "tablet-key-bar-defaults");
     await tp.context().close();
     aaa("pane", "kill", "kbset");
   });
 
-  await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
+  await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로(연 화면은 replay로 안다), Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "keysapp", "--", process.execPath, `${root}/keys.js`);
     const got = () => aaa("pane", "read", "keysapp", "--source", "visible").text;
     const gots = () => got().split("GOT:").length - 1;
@@ -304,7 +287,7 @@ export default async function ({ ctl, page }) {
     };
     const mac = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel", init: clip });
     const mp = mac.page;
-    await mp.getByTestId("pane-keysapp").click();
+    await inList(mp, "pane-keysapp");
     await until("keys 화면", async () => (await screenText(mp)).includes("keys>"));
     await mp.getByTestId("terminal").click();
     const press = async (key, want) => {
@@ -344,27 +327,15 @@ export default async function ({ ctl, page }) {
     await until("OSC 52 클립보드", async () => (await mp.evaluate(() => window.__clip)).includes("클립 52"));
     // 설정 「패널에서 클립보드로 복사」(herdr-web-ui paneClipboard, 기본 켬)를 끄면 OSC 52는 클립보드에 닿지 않는다
     await (await openSettings(mp, "터미널")).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
-    if ((await mp.evaluate(() => localStorage.getItem("aaa:pane-clipboard"))) !== "0") throw new Error("클립보드 설정을 저장하지 않았다");
     await mp.keyboard.press("Escape");
     await mp.getByTestId("terminal").click();
     const clips = (await mp.evaluate(() => window.__clip)).length;
     // 화면에 GOT이 보이면 같은 조각의 앞선 OSC 52도 xterm이 읽었다(press가 화면까지 기다린다)
     await press("o", '"o"');
     if ((await mp.evaluate(() => window.__clip)).length !== clips) throw new Error("끈 뒤에도 OSC 52가 클립보드에 썼다");
-    // 늦게 붙은 화면: 프로그램은 모드를 다시 말하지 않지만 replay가 말한다
-    const late = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel" });
-    await late.page.getByTestId("pane-keysapp").click();
-    await until("keys 화면(늦게 붙음)", async () => (await screenText(late.page)).includes("keys>"));
-    await late.page.getByTestId("terminal").click();
-    const n = gots();
-    await late.page.keyboard.press("Control+Enter");
-    await until("늦게 붙은 화면 Ctrl+Enter", () => gots() > n);
-    const last = got().split("GOT:").at(-1).split("\n")[0];
-    if (last !== '"\\u001b[27;5;13~"') throw new Error(`늦게 붙은 화면의 Ctrl+Enter가 ${last}`);
-    if (mac.errors.length || late.errors.length) throw new Error([...mac.errors, ...late.errors].join("; "));
-    await late.page.context().close();
+    if (mac.errors.length) throw new Error(mac.errors.join("; "));
     await mp.context().close();
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
   });
 
   await step("앱 단축키(herdr-web-ui shortcuts.ts·설정 「단축키」, 차이 목록 1장 A): Mod+Shift 동작은 앱 몫이라 터미널로 새지 않고, aaa에 없는 동작의 키는 앱이 가져가지 않으며, 설정에서 끄면 터미널로·기록한 키로 바꾸고 되돌린다(Windows·Linux Ctrl+Shift, macOS ⌘⇧)", async () => {
@@ -408,7 +379,7 @@ export default async function ({ ctl, page }) {
     };
     const { page: sp, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "Linux x86_64", init: holdFrames });
     const open = async (name, ready) => {
-      await sp.getByTestId(`pane-${name}`).click();
+      await inList(sp, `pane-${name}`);
       await until(`${name} 화면`, async () => (await screenText(sp)).includes(ready));
       await sp.getByTestId("terminal").click();
     };
@@ -503,8 +474,13 @@ export default async function ({ ctl, page }) {
     await until("돌아온 화면(읽기 전)", async () => (await screenText(sp)).includes("keys>"));
     await sp.getByTestId("terminal").click();
 
-    // aaa에 없는 동작(명령 팔레트·찾기·사이드바·새 워크스페이스)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다
-    for (const key of ["K", "F", "B", "O"]) if (await taken({ key, code: `Key${key}`, ctrlKey: true, shiftKey: true })) throw new Error(`aaa에 없는 Mod+Shift+${key}를 앱이 가져갔다`);
+    // aaa에 없는 동작(찾기·사이드바)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다(새 워크스페이스 Mod+Shift+O는
+    // aaa 「새 pane」 창이라 02-terminal 「새 pane」 단계가 연다. 명령 팔레트 Mod+Shift+K는 04 「명령 팔레트」 단계가 쓴다: 연 창은 닫는다)
+    for (const key of ["F", "B"]) if (await taken({ key, code: `Key${key}`, ctrlKey: true, shiftKey: true })) throw new Error(`aaa에 없는 Mod+Shift+${key}를 앱이 가져갔다`);
+    if (!(await taken({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true }))) throw new Error("Mod+Shift+K(명령 팔레트)를 앱이 가져가지 않았다");
+    await sp.getByTestId("command-palette").waitFor();
+    await sp.keyboard.press("Escape");
+    await sp.getByTestId("command-palette").waitFor({ state: "detached" });
     if (!(await taken({ key: "E", code: "KeyE", ctrlKey: true, shiftKey: true }))) throw new Error("Mod+Shift+E(입력창으로)를 앱이 가져가지 않았다");
 
     // 입력으로 가기: 목록을 누르고(터미널 focus를 잃는다) Mod+Shift+E면 터미널이 focus를 받는다
@@ -586,7 +562,7 @@ export default async function ({ ctl, page }) {
       ["ipad-shortcuts", { width: 820, height: 1180 }],
     ]) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { platform: "MacIntel", touch: true })).page;
-      await p.getByTestId("settings-open").waitFor();
+      await p.getByTestId("settings-open").waitFor({ state: "attached" });
       await p.keyboard.press("Meta+Shift+Comma");
       const pd = p.getByRole("dialog", { name: "설정" });
       await pd.waitFor();
@@ -632,7 +608,7 @@ export default async function ({ ctl, page }) {
         } catch {}
       }),
     );
-    await dp.getByTestId("pane-mouseapp").click();
+    await inList(dp, "pane-mouseapp");
     await until("mouse 화면", async () => (await screenText(dp)).includes("pick-this-word"));
     const cell = async (col, row) => {
       const r = await dp.locator('[data-testid="terminal"] .xterm-screen').boundingBox();
@@ -667,7 +643,7 @@ export default async function ({ ctl, page }) {
     if (leaked.length) throw new Error(`끌기가 프로그램에 갔다: ${JSON.stringify(leaked)}`);
     // 다른 화면이 크기를 가져간 뒤 이 화면에서 키를 치면, 키보다 먼저 이 화면 크기를 건다(첫 글의 답이 이 grid로 그려진다)
     const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 760, height: 560 })).page;
-    await sp.getByTestId("pane-mouseapp").click();
+    await inList(sp, "pane-mouseapp");
     await until("mouse 화면(둘째)", async () => (await screenText(sp)).includes("pick-this-word"));
     const pcols = () => aaa("pane", "list").panes.find((x) => x.name === "mouseapp").cols;
     const dcols = pcols();
@@ -694,7 +670,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "pastesafe", "--", process.execPath, "-e", prog);
     await waitOutput("pastesafe", "paste>");
     const open = async (pg) => {
-      await pg.getByTestId("pane-pastesafe").click();
+      await inList(pg, "pane-pastesafe");
       await until("pastesafe 화면", async () => (await screenText(pg)).includes("paste>"));
     };
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 })).page;

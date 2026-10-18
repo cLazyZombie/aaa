@@ -3,7 +3,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// harness를 먼저 불러 실험실을 만든 뒤 spec을 부른다(spec도 같은 harness를 불러 쓴다)
+// harness를 먼저 불러 실험실을 만든 뒤 spec을 부른다(spec도 같은 harness를 불러 쓴다). spec의 labEnv는 그 파일만 실험실 환경에 더한다
 const { runSpec } = await import("./harness.mjs");
 const spec = await import(pathToFileURL(path.resolve(process.argv[2])).href);
-await runSpec(spec.default);
+await runSpec(spec.default, spec.labEnv);

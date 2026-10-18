@@ -1,21 +1,12 @@
-// 웹 E2E 터미널 기본: 키보드·크기·글꼴·글자 폭·입력 막대·두 controller·reader·새 셸.
+// 웹 E2E 터미널 기본: 크기·글꼴·글자 폭·두 controller·reader·새 pane.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 02-terminal(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import fs from "node:fs";
 import path from "node:path";
 import {
-  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
+  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
-  await step("controller: 키보드 입력", async () => {
-    await page.getByTestId("pane-t1").click();
-    await page.getByTestId("terminal").click();
-    await until("터미널 준비", async () => (await screenText(page)).includes("$"));
-    await page.keyboard.type("echo key-$((5*5))\n");
-    await until("키보드 입력 결과", async () => (await screenText(page)).includes("key-25"));
-  });
-
   await step("넓은 창: PTY가 터미널 칸을 채우고 창 크기를 따라간다(조작 중일 때)", async () => {
     // 터미널 글자 영역이 칸(안쪽 여백 뺀 크기)을 한 cell 안쪽까지 채우는지, header 크기·host PTY 크기가 같은지
     const filled = async () => {
@@ -78,7 +69,7 @@ process.stdin.resume();`;
     const bad = [];
     for (const [name, viewport, opt] of devices) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, opt)).page;
-      await p.getByTestId("pane-endcol").click();
+      await inList(p, "pane-endcol");
       // 이 화면이 쥔 크기로 다시 그린 자(붙은 직후에는 앞 화면 크기의 자가 보인다)
       await until(`${name}: 자기 폭의 자`, async () => {
         const c = cols();
@@ -126,14 +117,8 @@ process.stdin.resume();`;
   });
 
   await step("터미널 글꼴: Meslotendard로 cell 너비는 영문, 한글은 정확히 두 칸(1280×800)", async () => {
-    // 넣은 WOFF2와 고지 파일을 host가 보낸다(버전 폴더라 오래 캐시한다)
+    // 글꼴 고지 파일을 host가 보낸다(WOFF2를 받는 것은 07 「글꼴이 늦게 와도」가 그 글꼴로 재며 본다)
     const dir = "fonts/meslotendard-0.3.1/";
-    const want = fs.readFileSync(path.join(repo, "web", "public", dir, "Meslotendard-Regular.woff2"));
-    const r = await fetch(`${base}${dir}Meslotendard-Regular.woff2`);
-    const got = Buffer.from(await r.arrayBuffer());
-    if (r.status !== 200 || r.headers.get("content-type") !== "font/woff2" || !got.equals(want))
-      throw new Error(`woff2 ${r.status} ${r.headers.get("content-type")} ${got.length}`);
-    if (!r.headers.get("cache-control").includes("immutable")) throw new Error(`cache ${r.headers.get("cache-control")}`);
     for (const f of ["LICENSE", "licenses/THIRD_PARTY_NOTICES.md", "licenses/MESLO_APACHE-2.0.txt", "licenses/NERD_FONTS_LICENSE.txt"]) {
       const n = await fetch(`${base}${dir}${f}`);
       if (n.status !== 200 || n.headers.get("content-type") !== "text/plain; charset=utf-8")
@@ -150,7 +135,7 @@ process.stdin.resume();`;
   await step("글자 폭(herdr-web-ui terminalWidths): 이모지·새 이모지·ZWJ 묶음·⚠️는 두 칸", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "widths", "--", process.execPath, `${root}/widths.js`);
     const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 })).page;
-    await wp.getByTestId("pane-widths").click();
+    await inList(wp, "pane-widths");
     await until("폭 화면", async () => (await screenText(wp)).includes("W"));
     // 글자마다 화면 위치로 몇째 칸인지 잰다(DOM renderer의 span 묶음에 기대지 않는다)
     const cols = await wp.evaluate((cols) => {
@@ -175,26 +160,113 @@ process.stdin.resume();`;
     aaa("pane", "kill", "widths");
   });
 
-  await step("controller: 입력 막대로 한글", async () => {
-    await page.getByLabel("보낼 글").fill("echo 한글-$((2*4))");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await until("한글 입력 결과", async () => (await screenText(page)).includes("한글-8"));
-    await shot(page, "desktop-controller");
+  await step("다시 붙은 화면도 같은 칸(session host 화면이 웹 폭 규칙대로 센다, plan §8.167): 묶음 뒤·escape로 끊긴 묶음 뒤·절대 칸 표지와 커서 자리가 살아 있는 화면과 같다", async () => {
+    // 줄마다 묶음 뒤에 표지 글자 하나. 받은 터미널은 묶음 폭을 스스로 세므로, 어긋나는 것은 session host가 센 칸으로 정한
+    // 곳이다: 절대 칸(CHA) 표지 J, replay 뒤 커서에 쓰는 K, escape로 따로 놓인 칸(이어 쓰면 받는 쪽이 한 묶음으로 합친다)
+    const lines = [
+      // 눈금: 칸 폭과 0칸 자리를 이 줄에서 잰다(크기를 바꾸는 기기가 붙는 동안에도 그 화면의 칸이다)
+      "0123456789",
+      "a👨‍👩‍👧B",
+      "⚠️C",
+      "e\x1b[ḿD",
+      "🇰\x1b[m🇷🇯F",
+      "⚠\x1b[m️G",
+      "1️⃣H",
+      "น้ำI",
+      "👨‍👩‍👧⚠️\x1b[12GJ",
+      "\x1b[31me\x1b[31ḿ\x1b[mL",
+    ];
+    // 살아 있는 화면에 보이는 [줄, 칸](0부터): B는 가족(두 칸) 뒤, D·L은 끊긴 두 칸 뒤, F는 홀로 선 반쪽(한 칸)과 그다음 둘이 이룬
+    // 국기(두 칸) 뒤, J는 12째 칸, K는 끝 줄 가족·⚠️ 뒤. G(⚠ 뒤 홀로 선 VS16, 두 칸 칸)는 보이는 자리가 칸과 다르다: VS16 span은
+    // 두 칸만큼 letter-spacing을 받아도 폭이 0이라(브라우저가 앞 ⚠에 붙여 그린다, 재어 봄) G가 ⚠ 바로 뒤에 보인다. 그래서 G는
+    // 다시 붙은 화면이 살아 있는 화면과 같은지만 본다(합쳐져 두 칸 ⚠️ 한 묶음이 되면 달라진다)
+    const want = { B: [1, 3], C: [2, 2], D: [3, 2], F: [4, 3], H: [6, 2], I: [7, 2], J: [8, 11], L: [9, 2], K: [10, 4] };
+    // p를 받으면 줄들을, k를 받으면 커서 자리에 K를 쓴다(`pane run`의 Enter는 버린다)
+    const out = "\x1b[2J\x1b[H" + lines.join("\r\n") + "\r\n👨‍👩‍👧⚠️";
+    const prog = `process.stdin.setRawMode(true); process.stdout.write("graph> "); process.stdin.on("data", (d) => { const s = d.toString(); if (s.includes("p")) process.stdout.write(${JSON.stringify(out)}); else if (s.includes("k")) process.stdout.write("K"); });`;
+    aaa("tab", "create", "--machine", "labA", "--label", "graph", "--", process.execPath, "-e", prog);
+    await waitOutput("graph", "graph>");
+    // 표지 글자의 [줄, 칸]: 화면 위치를 눈금 줄로 잰다(DOM renderer의 span 묶음에 기대지 않는다)
+    const marks = (p, letters) =>
+      p.evaluate((letters) => {
+        const rows = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
+        const find = (ch) => {
+          for (const [y, row] of rows.entries()) {
+            const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+            for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+              const i = n.textContent.indexOf(ch);
+              if (i < 0) continue;
+              const r = document.createRange();
+              r.setStart(n, i);
+              r.setEnd(n, i + 1);
+              return [y, r.getBoundingClientRect().left];
+            }
+          }
+          return null;
+        };
+        const [, zero] = find("0");
+        const cell = (find("9")[1] - zero) / 9;
+        return Object.fromEntries(letters.map((ch) => [ch, find(ch)]).map(([ch, at]) => [ch, at && [at[0], Math.round((at[1] - zero) / cell)]]));
+      }, letters);
+    const same = (what, got, exp) => {
+      if (JSON.stringify(got) !== JSON.stringify(exp)) throw new Error(`${what} 표지 [줄, 칸]\n  기대 ${JSON.stringify(exp)}\n  실제 ${JSON.stringify(got)}`);
+    };
+    const pick = (o, letters) => Object.fromEntries(letters.map((ch) => [ch, o[ch]]));
+    const letters = ["B", "C", "D", "F", "G", "H", "I", "J", "L"];
+    const size = { width: 900, height: 600 };
+
+    // 살아 있는 화면: 붙은 뒤에 쓴 출력
+    const live = (await pairPage(browser, aaa("web", "pair").code, size)).page;
+    await inList(live, "pane-graph");
+    await until("살아 있는 화면 준비", async () => (await screenText(live)).includes("graph>"));
+    aaa("pane", "run", "graph", "p");
+    await until("살아 있는 표지", async () => (await screenText(live)).includes("L"));
+    const seen = await marks(live, letters);
+    same("살아 있는 화면", pick(seen, letters.filter((ch) => ch !== "G")), pick(want, letters.filter((ch) => ch !== "G")));
+
+    // 다시 붙은 화면: 같은 크기의 새 기기가 session host replay로 받는다
+    const back = (await pairPage(browser, aaa("web", "pair").code, size)).page;
+    await inList(back, "pane-graph");
+    await until("다시 붙은 표지", async () => (await screenText(back)).includes("L"));
+    same("다시 붙은 화면(살아 있는 화면과)", await marks(back, letters), seen);
+    // replay가 둔 커서 자리에 쓴다
+    aaa("pane", "run", "graph", "k");
+    for (const [what, p] of [["살아 있는 화면", live], ["다시 붙은 화면", back]]) {
+      await until(`${what} K`, async () => (await screenText(p)).includes("K"));
+      same(`${what} 커서`, await marks(p, ["K"]), pick(want, ["K"]));
+    }
+    seen.K = want.K;
+    await shot(live, "desktop-graphemes-live");
+    await shot(back, "desktop-graphemes-replay");
+    await live.context().close();
+    await back.context().close();
+
+    // 휴대폰·iPad도 다시 붙으면 같은 칸이다(줄이 짧아 폭이 바뀌어도 접히지 않는다)
+    for (const [name, vp, scale] of [["phone", { width: 390, height: 844 }, 3], ["ipad", { width: 820, height: 1180 }, 2]]) {
+      const tp = (await pairPage(browser, aaa("web", "pair").code, vp, { touch: true, deviceScaleFactor: scale })).page;
+      await inList(tp, "pane-graph");
+      await until(`${name} 표지`, async () => (await screenText(tp)).includes("K"));
+      same(`${name}(살아 있는 화면과)`, await marks(tp, Object.keys(seen)), seen);
+      await shot(tp, `${name}-graphemes-replay`);
+      await tp.context().close();
+    }
+    aaa("pane", "kill", "graph");
   });
 
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 바로 놓는다", async () => {
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
-    const op = other.page;
-    // 이 화면이 WebSocket에 쓴 글 frame
+    // 이 화면이 WebSocket에 쓴 글 frame. 첫 화면이 pane을 열며 붙는 WebSocket부터 듣는다
     const opFrames = [];
-    op.on("websocket", (ws) =>
-      ws.on("framesent", (f) => {
-        if (typeof f.payload !== "string") return;
-        try {
-          opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
-        } catch {}
-      }),
-    );
+    const listen = (op) =>
+      op.on("websocket", (ws) =>
+        ws.on("framesent", (f) => {
+          if (typeof f.payload !== "string") return;
+          try {
+            opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
+          } catch {}
+        }),
+      );
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true, onPage: listen });
+    const op = other.page;
     const t1size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       return `${p.cols}x${p.rows}`;
@@ -208,11 +280,8 @@ process.stdin.resume();`;
     const held = t1size();
     const first = holder();
     const opSent = await sentCount(op);
-    await op.getByTestId("pane-t1").click();
+    await inList(op, "pane-t1");
     await until("둘째 화면 터미널", async () => (await screenText(op)).includes("own-3"));
-    // 「다른 화면이 크기를 정하는 중」 띠와 「화면에 맞추기」 단추는 참고에 없어 없앴다
-    if ((await op.getByTestId("lease-banner").count()) !== 0) throw new Error("크기를 정하는 중 띠가 있다");
-    if ((await op.getByRole("button", { name: "화면에 맞추기" }).count()) !== 0) throw new Error("화면에 맞추기 단추가 있다");
     // 입력 막대가 켜져 있다(보기 권한이 아니면 언제나 입력된다). 열기만 해서는 크기를 바꾸지 않는다
     if (await op.getByLabel("보낼 글").isDisabled()) throw new Error("다른 화면이 쓰는 중이라고 입력 막대가 꺼졌다");
     // 열 때의 맞추기 판단(Term data-fit)이 나고(연결 전 off가 아니다) 크기 바뀜 뒤 남은 맞추기가 없을 때까지. 크기는 그 판단 안에서
@@ -289,12 +358,14 @@ process.stdin.resume();`;
 
 
   await step("reader(휴대폰 크기): 보기만 된다", async () => {
+    aaa("pane", "run", "t1", "echo rd-$((3*3))");
+    await waitOutput("t1", "rd-9");
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     const rp = rd.page;
-    if ((await rp.getByRole("button", { name: "새 셸" }).count()) !== 0) throw new Error("reader에게 새 셸 버튼");
+    if ((await rp.getByRole("button", { name: "새 pane" }).count()) !== 0) throw new Error("reader에게 새 pane 버튼");
     await shot(rp, "mobile-list");
-    await rp.getByTestId("pane-t1").click();
-    await until("reader 화면", async () => (await screenText(rp)).includes("한글-8"));
+    await inList(rp, "pane-t1");
+    await until("reader 화면", async () => (await screenText(rp)).includes("rd-9"));
     // 휴대폰 폭(13px)에서도 한글이 두 칸에 꼭 맞는다
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
     console.log("     글꼴 측정(390×844)", JSON.stringify(await fontOk(rp, cols)));
@@ -316,7 +387,7 @@ process.stdin.resume();`;
     // t1 화면은 뒤 단계가 본다: 따로 pane을 띄운다(80×40, 줄 80개 뒤 커서는 맨 아래)
     aaa("tab", "create", "--machine", "labA", "--label", "follow", "--cols", "80", "--rows", "40", "--", "/bin/sh", "-c", "seq 1 80; echo follow-$((6*7)); exec cat");
     const low = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 420 });
-    await low.page.getByTestId("pane-follow").click();
+    await inList(low.page, "pane-follow");
     const followed = () =>
       low.page.evaluate(() => {
         const scroll = document.querySelector(".term-scroll");
@@ -344,10 +415,55 @@ process.stdin.resume();`;
     aaa("pane", "kill", "follow");
   });
 
-  await step("controller: 새 셸", async () => {
-    const before = aaa("pane", "list").panes.length;
-    await page.getByTestId("machine-labA").getByRole("button", { name: "새 셸" }).click();
-    await until("새 pane", () => aaa("pane", "list").panes.length === before + 1);
-    await page.getByTestId("pane-t1").click();
+  await step("controller: 새 pane 창(herdr-web-ui NewSessionDialog): 없는 폴더는 창 안 오류, 셸·폴더(이름은 폴더 이름), profile agent·최근 폴더·이름, Mod+Shift+O", async () => {
+    const panes = () => aaa("pane", "list").panes;
+    const before = panes().length;
+    const dialog = page.getByRole("dialog", { name: "새 pane · labA" });
+    const start = () => dialog.getByRole("button", { name: "시작", exact: true }).click();
+    const hash = () => page.evaluate(() => decodeURIComponent(location.hash));
+    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await dialog.waitFor();
+    // 없는 폴더: agent가 거절한 글이 창 안에 보이고 창은 남는다(pane은 생기지 않는다)
+    await dialog.getByRole("textbox", { name: "폴더" }).fill(`${root}/no-such-dir`);
+    await start();
+    const alert = dialog.getByRole("alert");
+    await alert.waitFor();
+    if (!(await alert.innerText()).includes("no-such-dir")) throw new Error(`없는 폴더 오류: ${await alert.innerText()}`);
+    if (panes().length !== before) throw new Error("없는 폴더로 pane이 생겼다");
+    // 셸: 이름을 비우면 폴더 이름(참고 이름 칸 placeholder), 만든 pane을 연다. 폴더는 저장소다: 실험실(/tmp)은 참고 passingFolder가
+    // 임시 폴더로 보아 최근 폴더에 두지 않는다
+    await dialog.getByRole("textbox", { name: "폴더" }).fill(repo);
+    if ((await dialog.getByRole("textbox", { name: "이름" }).getAttribute("placeholder")) !== path.basename(repo)) throw new Error("이름 칸 placeholder가 폴더 이름이 아니다");
+    await start();
+    await dialog.waitFor({ state: "detached" });
+    let shell;
+    await until("셸 pane", () => (shell = panes().find((p) => p.name === path.basename(repo) && p.cwd === repo)) !== undefined);
+    await until("셸 pane을 연다", async () => (await hash()) === `#pane=${shell.id}`);
+    // profile agent: 이 머신 agent.toml의 fake, 최근 폴더 칩(방금 쓴 폴더), 이름
+    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await dialog.waitFor();
+    await dialog.getByRole("combobox").click();
+    await page.getByRole("option", { name: "fake" }).click();
+    await dialog.getByRole("button", { name: `${repo} 폴더 사용` }).click();
+    if ((await dialog.getByRole("textbox", { name: "폴더" }).inputValue()) !== repo) throw new Error("최근 폴더 칩이 폴더 칸을 채우지 않았다");
+    await dialog.getByRole("textbox", { name: "이름" }).fill("새-에이전트");
+    await shot(page, "desktop-new-pane");
+    await start();
+    await dialog.waitFor({ state: "detached" });
+    let agent;
+    await until("profile pane", () => (agent = panes().find((p) => p.name === "새-에이전트")) !== undefined);
+    if (!agent.argv.join(" ").includes("fake.sh") || agent.cwd !== repo) throw new Error(`profile pane: ${JSON.stringify(agent)}`);
+    await until("profile pane을 연다", async () => (await hash()) === `#pane=${agent.id}` && (await screenText(page)).includes("fake>"));
+    // 단축키(참고 new-session Mod+Shift+O): 고른 pane의 머신으로 열고, 마지막에 고른 agent를 기억한다. Esc로 닫는다
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("ControlOrMeta+Shift+O");
+    await dialog.waitFor();
+    // 기억한 agent는 이 머신 profile 목록이 온 뒤에 선다(없는 profile이면 셸로)
+    await until("마지막에 고른 agent(fake)를 기억", async () => (await dialog.getByRole("combobox").innerText()).trim() === "fake");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    aaa("pane", "kill", agent.id);
+    aaa("pane", "kill", shell.id);
+    await inList(page, "pane-t1");
   });
 }

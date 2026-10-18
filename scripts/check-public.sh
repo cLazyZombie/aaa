@@ -13,8 +13,9 @@
 #   1) 추적 파일 전체: 금지 확장자(p12·key·pem 등), 1MiB 넘는 파일
 #   2) 추적 파일 내용: 개인 키·인증서 블록, 알려진 token 형식(Telegram 봇 token 포함), Web Push 구독 주소,
 #      실제 *.ts.net 주소, IP 주소(Tailscale IPv6 fd7a:115c:a1e0: 포함), 사용자 홈·외장 볼륨 경로(/Volumes/<이름>),
-#      이메일, 대문자 hex 지문(40자 이상)
-#   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴
+#      이메일, 대문자 hex 지문(40자 이상, 전부 0인 run은 뺀다)
+#   3) 기준 ref 이후 커밋 메시지: 위 내용 패턴과 공동 작성자 줄(Co-authored-by, 누구의 줄이든 막는다.
+#      GitHub가 그 사람(Claude 등)을 contributor로 보인다. 사용자 결정 10-18)
 #   4) 저장소 밖 목록의 실제 이름(머신 hostname·tailnet·사람·회사 이름):
 #      `$(git rev-parse --git-common-dir)/info/private-words`에 한 줄에 하나씩 둔다(이 파일은 커밋되지 않는다).
 #      이 파일이 없는 clone(다른 머신·CI)에서는 4)를 건너뛴다. 그때의 「통과」는 1)~3)·5)만 본 결과다.
@@ -27,7 +28,8 @@
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
 #       noreply@anthropic.com·git@github.com·GitHub noreply(5)와 같다)·*@example.com과 그 하위 이름(token@GitHub.example.com),
 #       /Users/<이름>·/Users/me/·/Users/u/·/home/me/·/Volumes/<이름> 같은 자리표시자(me·u는 참고 프로젝트와 옛 시험의 예시),
-#       Tailscale 고정 주소 fd7a:115c:a1e0::53(MagicDNS)·fd7a:115c:a1e0::/48(대역).
+#       Tailscale 고정 주소 fd7a:115c:a1e0::53(MagicDNS)·fd7a:115c:a1e0::/48(대역),
+#       앞뒤가 hex가 아닌 0만의 run(git의 빈 sha 0×40. 0이 아닌 hex가 한 글자라도 붙으면 막는다).
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 HISTORY=0
@@ -90,7 +92,9 @@ add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\
 add 'Tailscale IPv6 주소' '[fF][dD]7[aA]:115[cC]:[aA]1[eE]0::?[0-9a-fA-F]{1,4}' '(fd7a:115c:a1e0::/48|fd7a:115c:a1e0::53([^0-9a-fA-F:]|$))'
 add '사용자 홈·볼륨 경로' '(/Users/|/home/|/Volumes/)[A-Za-z0-9._-]+' '(/Users/<|/home/<|/Volumes/<|/Users/me/|/Users/u/|/home/me/|/Users/Shared|/Users/runner|/home/runner)'
 add '이메일' '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '(noreply@anthropic\.com|git@github\.com|noreply@github\.com|[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|@([A-Za-z0-9-]+\.)*example\.(com|org|net))'
-add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' ''
+# 0만의 run은 정보가 없다(git의 빈 sha 0×40). 허용은 그 run과 앞뒤 경계 글자만 지우므로 0이 아닌 hex는 남는다.
+# 경계 글자 하나로만 떨어진 0 run 여럿(「<빈 sha> <빈 sha>」)도 한 번에 지운다
+add '인증서 지문(대문자 hex)' '[0-9A-F]{40,}' '(^|[^0-9A-F])0{40,}([^0-9A-F]0{40,})*([^0-9A-F]|$)'
 
 # 정규식 자체 검사: 깨진 패턴은 git grep·sed가 오류로 끝나 아무것도 막지 못한다(통과로 보인다)
 for i in "${!NAMES[@]}"; do
@@ -101,6 +105,15 @@ for i in "${!NAMES[@]}"; do
     sed -E "s~${re}~~g" </dev/null >/dev/null 2>"$ERR" || broke "${NAMES[$i]}: sed 정규식 오류"
   done
 done
+# 공동 작성자 줄: GitHub는 commit 메시지의 Co-authored-by 줄로 그 사람을 contributor로 보인다. 이 저장소는 누구의 줄도 넣지 않는다.
+# 대소문자·들여쓰기·콜론 앞 공백이 달라도, 제목·본문 중간이어도 막는다(%x01이 commit의 경계). 출력에는 commit과 email domain만 보인다
+coauthors() {
+  awk 'substr($0, 1, 1) == "\001" { h = substr($0, 2); next }
+    tolower($0) ~ /^[ \t]*co-authored-by[ \t]*:/ { d = $0; if (!sub(/^[^@]*@/, "", d)) d = "?"; sub(/>.*/, "", d); print h " …@" d }'
+}
+# awk 판(macOS BSD awk·CI mawk·gawk)이 escape·tolower를 다르게 읽으면 아무것도 찾지 못해 통과로 보인다: 같은 함수를 먼저 재 본다
+[ "$(printf '\001abc1234\n제목\n\tCO-AUTHORED-BY : x <a@b.c>\n\001def5678\nCo-Authored-By 줄 설명\n' | coauthors)" = "abc1234 …@b.c" ] ||
+  broke "공동 작성자 검사: awk가 심어 둔 줄을 찾지 못했다"
 [ "$fail" = 0 ] || { echo "공개 저장소 검사 실패: 검사 패턴을 고친다."; exit 2; }
 
 # $1=설명, $2..=검사할 rev(없으면 작업 트리의 추적 파일). 커밋 메시지는 COMMITS 변수로 검사한다.
@@ -137,20 +150,26 @@ scan() {
 }
 # shellcheck disable=SC2086
 scan files $REVS
-COMMITS=""
+COMMITS="" CO=""
 if [ "$HISTORY" = 1 ]; then
   COMMITS=$(git log --no-walk=unsorted --format='%H %B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
-  COMMITS=$(grep -v -E '^Co-Authored-By: ' <<<"$COMMITS")
+  CO=$(git log --no-walk=unsorted --format='%x01%h%n%B' $REVS 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   scan "커밋 메시지(이력)"
-elif git rev-parse -q --verify "$BASE" >/dev/null; then
+elif git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
   COMMITS=$(git log --format='%H %B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
-  COMMITS=$(grep -v -E '^Co-Authored-By: ' <<<"$COMMITS")
+  CO=$(git log --format='%x01%h%n%B' "$BASE..HEAD" 2>"$ERR") || broke "커밋 메시지를 읽지 못했다"
   [ -n "$COMMITS" ] && scan "커밋 메시지 $BASE..HEAD"
 elif [ -n "${CI:-}" ]; then
   # CI의 통과가 커밋 메시지·author를 본 결과이게 한다(얕은 checkout이면 기준이 없어 늘 건너뛰었다)
-  report "기준 ref ${BASE}가 없다: CI는 그 push·PR의 커밋을 볼 수 있게 이력을 받는다(ci.yml checkout fetch-depth)"
+  # 40자 sha도 객체가 없으면 여기로 온다(force push로 before가 어느 ref에서도 닿지 않으면 clone에 없다)
+  report "기준 ref ${BASE}가 없다(commit이 clone에 없음): CI는 그 push·PR의 커밋을 볼 수 있게 이력을 받는다(ci.yml checkout fetch-depth). force push면 --history로 본다"
 else
   echo "기준 ref ${BASE}가 없어 커밋 메시지는 건너뛴다"
+fi
+co=$(coauthors <<<"$CO")
+if [ -n "$co" ]; then
+  report "커밋 메시지에 공동 작성자(Co-authored-by) 줄이 있다: GitHub가 그 사람을 contributor로 보인다. 그 줄을 지운다"
+  head -10 <<<"$co" | sed 's/^/    /'
 fi
 
 # 5) 커밋 author·committer. 공개 이력은 메타데이터도 그대로 공개된다. 출력에는 email의 domain만 보인다(CI annotation도 공개다)
@@ -158,7 +177,7 @@ IDENTS=""
 if [ "$HISTORY" = 1 ]; then
   # shellcheck disable=SC2086
   IDENTS=$(git log --no-walk=unsorted --format='%h|%an|%ae|%cn|%ce' $REVS 2>"$ERR") || broke "author·committer를 읽지 못했다"
-elif git rev-parse -q --verify "$BASE" >/dev/null; then
+elif git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
   IDENTS=$(git log --format='%h|%an|%ae|%cn|%ce' "$BASE..HEAD" 2>"$ERR") || broke "author·committer를 읽지 못했다"
 fi
 noreply() { case "$1" in *@users.noreply.github.com | noreply@github.com) return 0 ;; esac; return 1; }

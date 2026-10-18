@@ -191,6 +191,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         Some(profile) => local_profile(cfg, profile)?,
         None => with_safety(cfg, find_profile(cfg, &p.profile)?, p.safety.as_ref()),
     };
+    let launch = resolve(&p.profile, &profile)?;
     let (cwd, branch, base) = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -218,6 +219,14 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
             } else {
                 format!("aaa/{}/{}-{s}", p.project, p.thread)
             };
+            // herdr-projects `restart_plan` (b): 기록된 worktree가 없는데 branch가 있으면 반쯤 만든 것이다
+            if git(&top, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T).await.is_ok() {
+                bail!(
+                    "{}: 기록된 worktree가 없는데 branch `{branch}`가 이미 있다. 반쯤 만든 worktree는 사람이 봐야 한다: \
+                     `aaa thread resolve` 뒤 새 thread를 시작한다",
+                    p.thread
+                );
+            }
             let name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "repo".into());
             let path = cfg.work_root.join(name).join(format!("{}-{}", p.project, p.thread));
             if path.exists() {
@@ -244,7 +253,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         work_dir.join("brief.md"),
         fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
     )?;
-    let launch = with_hooks(cfg, resolve(&p.profile, &profile)?, &work_dir, profile.command.len().max(1))?;
+    let launch = with_hooks(cfg, launch, &work_dir, profile.command.len().max(1))?;
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),
@@ -255,7 +264,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
 }
 
 /// host 정의에 머신 실행 경로·환경만 덮어쓴다. 없는 harness로 조용히 바꾸지 않는다.
-fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Result<Profile> {
+pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Result<Profile> {
     let mut p = Profile {
         harness: spec.harness.clone(),
         model: spec.model.clone(),
@@ -285,7 +294,7 @@ fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Resu
 }
 
 /// 이름의 profile과 기본 profile인지: agent.toml `[profiles.*]`, 없으면 같은 이름의 기본 profile(claude·codex, 참고 `get`)
-fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, bool)> {
+pub(crate) fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, bool)> {
     if let Some(p) = cfg.profiles.get(name) {
         return Ok((p.clone(), false));
     }
@@ -297,7 +306,7 @@ fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, bool)> {
     })
 }
 
-/// safety 인자를 profile 인자에 더한다(plan §8.115, 참고 `profiles::launch_args` 뒤 `Safety::launch_args`): 프로젝트 기본
+/// safety 인자를 profile 인자에 더한다(plan §8.163, 참고 `profiles::launch_args` 뒤 `Safety::launch_args`): 프로젝트 기본
 /// profile과 같은 harness의 기본 profile이면 `thread_agent_args`를 앞에, yolo면 harness의 권한 건너뛰기 인자를 뒤에.
 /// argv와 resume argv가 같은 인자를 쓴다.
 fn with_safety(cfg: &ThreadsConfig, (mut p, builtin): (Profile, bool), safety: Option<&LaunchSafety>) -> Profile {
@@ -317,7 +326,12 @@ fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path, safety: Option<&L
 }
 
 /// harness별 상태 hook을 launch에 붙인다
-fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path, command_len: usize) -> Result<Launch> {
+pub(crate) fn with_hooks(
+    cfg: &ThreadsConfig,
+    mut launch: Launch,
+    work_dir: &Path,
+    command_len: usize,
+) -> Result<Launch> {
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
@@ -491,13 +505,16 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
 }
 
 /// thread 정리(herdr-projects threads.rs `clean`). worktree는 force 없이 지운다. branch는 PR이 병합됐고(`merged_head`가
-/// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다.
+/// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
+/// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
+/// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
 pub async fn cleanup(
     repo: Option<&str>,
     cwd: &str,
     branch: Option<&str>,
     merged_head: Option<&str>,
     keep_worktree: bool,
+    uncopied: bool,
 ) -> Result<Cleanup> {
     let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
     let Some(repo) = repo else {
@@ -505,8 +522,15 @@ pub async fn cleanup(
         return Ok(c);
     };
     let repo = PathBuf::from(repo);
-    if keep_worktree {
+    if keep_worktree && !uncopied {
         c.notes.push("worktree를 남겼다(요청)".into());
+    } else if !Path::new(cwd).exists() {
+        // 이미 없는 폴더는 잃을 것이 없다(herdr-projects `worktree_gone`): 지운 것으로 치고 git 기록만 치운다
+        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
+        c.worktree_removed = true;
+        c.notes.push("worktree는 이미 없다".into());
+    } else if uncopied {
+        c.notes.push("worktree를 남겼다: 마지막 사본에 집에 오지 않은 것이 있다(`--discard-uncopied`면 지운다)".into());
     } else {
         match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
             Ok(_) => c.worktree_removed = true,
@@ -619,7 +643,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    /// safety 인자(plan §8.115, 참고 `profiles::launch_args`·`Safety::launch_args`): thread_agent_args는 프로젝트 기본
+    /// safety 인자(plan §8.163, 참고 `profiles::launch_args`·`Safety::launch_args`): thread_agent_args는 프로젝트 기본
     /// profile과 같은 harness의 기본 profile에만, yolo 인자는 harness마다(argv·resume argv 둘 다), 기본 profile은 이름으로 푼다.
     #[test]
     fn safety_args_reach_builtins_and_yolo_every_harness() {

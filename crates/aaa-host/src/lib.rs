@@ -6,6 +6,7 @@
 mod attach;
 mod brief;
 mod brief_text;
+mod caller;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -17,7 +18,6 @@ mod http;
 mod inbox;
 mod library;
 pub mod link;
-mod merge;
 pub mod migrate;
 mod notify;
 mod orch;
@@ -95,6 +95,20 @@ impl AgentConn {
             Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
+                // 무슨 요청이었는지 남긴다(op과 세션만: 입력 바이트 같은 내용은 남기지 않는다)
+                let what = match &msg {
+                    LinkMsg::Req { body, .. } => serde_json::to_value(body).ok(),
+                    _ => None,
+                };
+                let field =
+                    |k: &str| what.as_ref().and_then(|v| v.get(k)?.as_str().map(str::to_string)).unwrap_or_default();
+                tracing::warn!(
+                    id,
+                    op = field("op"),
+                    session = field("session"),
+                    wait_ms = wait.as_millis() as u64,
+                    "agent 응답 시간 초과"
+                );
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         }
@@ -121,6 +135,8 @@ struct MachineRt {
     health: Option<(aaa_proto::MachineHealth, i64)>,
     /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
     features: Vec<String>,
+    /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
+    agent_pid: Option<u32>,
 }
 
 struct Mirror {
@@ -176,7 +192,29 @@ struct PaneRt {
     transcript: Option<String>,
     /// 재부팅 뒤 다시 띄우지 못한 까닭(restore.rs)
     restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane(`replace_pane`, 오래된 것부터 [`REPLACED_KEEP`]개)
+    replaced: Vec<String>,
+    /// host가 이 세션에 끝내기를 보냈다(`kill_session`). 그렇게 끝난 pane은 스스로 끝난 것이 아니라 닫지 않는다.
+    kill_sent: bool,
 }
+
+/// 사람이 셸에서 `exit`했다(herdr 0.9.5 `handle_pane_died`: pane 프로세스가 끝나면 그 pane을 닫는다): 실행 중이던 셸 pane이
+/// 스스로 끝났다. 다음은 닫지 않는다.
+/// - 역할 pane(thread·평가자): 수명은 thread 명령이 정한다(`close_panes`와 같은 규칙).
+/// - 프로그램 pane(셸이 아닌 명령, aaa 확장): 끝난 화면과 종료 코드를 남긴다. herdr pane은 늘 셸이다.
+/// - host가 끝내기를 보낸 pane: `pane kill`은 다시 띄우려고 남긴다(aaa 확장). 닫기·탭 닫기는 스스로 지운다.
+/// - 재부팅(`Interrupted`)·session host 유실(`Lost`): 복원 대상이다(restore.rs). host가 실행 중을 본 적이 없는 세션(host를
+///   다시 띄운 뒤 처음 듣는 끝난 세션)도 닫지 않는다.
+fn exited_by_itself(old: &SessionInfo, new: &SessionInfo, kill_sent: bool) -> bool {
+    old.state.is_running()
+        && matches!(new.state, SessionState::Exited { .. })
+        && !kill_sent
+        && new.role.is_none()
+        && restore::is_shell(&new.argv)
+}
+
+/// pane이 기억하는 대신한 옛 ID 수
+const REPLACED_KEEP: usize = 8;
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -297,7 +335,7 @@ pub struct Host {
     front_seq: AtomicU64,
     /// 이 host 실행의 boot ID(흐름 사건에 같이 적는다)
     pub boot_id: String,
-    /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.115)
+    /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.163)
     pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다)
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
@@ -354,6 +392,8 @@ pub struct Host {
     pub(crate) in_use: std::sync::atomic::AtomicUsize,
     /// 지금 pane을 보는 웹 화면(「끝남(안 봄)」, seen.rs)
     viewing: Mutex<seen::Viewing>,
+    /// 기기마다 최근에 push로 보낸 항목(push.rs `PushedLog`)
+    pub(crate) pushed: Mutex<push::PushedLog>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
     eval_due: Mutex<HashMap<String, Instant>>,
     /// 사후 평가자 묶음은 한 번에 하나씩 만든다
@@ -440,6 +480,7 @@ impl Host {
                     last_seen_ms: m.last_seen_ms,
                     health: None,
                     features: vec![],
+                    agent_pid: None,
                 },
             );
         }
@@ -501,6 +542,7 @@ impl Host {
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
+            pushed: Mutex::new(push::PushedLog::default()),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
@@ -534,6 +576,8 @@ impl Host {
             self.restoring.lock().unwrap().insert(hello.machine_id.clone());
         }
         let subscribe: Vec<(String, Option<u64>)>;
+        // agent가 내려간 사이 스스로 끝난 셸 pane(host는 그 전에 실행 중을 봤다)
+        let mut exited = Vec::new();
         {
             let mut i = self.inner.lock().unwrap();
             if let Some(old) = i.machines.get(&hello.machine_id).and_then(|m| m.conn.clone()) {
@@ -549,6 +593,7 @@ impl Host {
                 last_seen_ms: None,
                 health: None,
                 features: vec![],
+                agent_pid: None,
             });
             m.os = Some(hello.os.clone());
             m.boot_id = Some(hello.boot_id.clone());
@@ -571,7 +616,12 @@ impl Host {
                     transcript: None,
                     answered: false,
                     restore_error: None,
+                    kill_sent: false,
+                    replaced: Vec::new(),
                 });
+                if exited_by_itself(&p.info, s, p.kill_sent) {
+                    exited.push(s.id.clone());
+                }
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
                     m.synced = false;
@@ -585,6 +635,9 @@ impl Host {
                 .collect();
         }
         self.bump();
+        for id in exited {
+            self.spawn_close_exited(id, hello.machine_id.clone());
+        }
         // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
         let open = self.questions(false);
         let gone: Vec<String> = {
@@ -700,7 +753,7 @@ impl Host {
     }
 
     pub fn on_session(self: &Arc<Self>, machine_id: &str, info: SessionInfo, started: bool) {
-        {
+        let closing = {
             let mut i = self.inner.lock().unwrap();
             let p = i.panes.entry(info.id.clone()).or_insert_with(|| PaneRt {
                 machine_id: machine_id.to_string(),
@@ -712,14 +765,21 @@ impl Host {
                 transcript: None,
                 answered: false,
                 restore_error: None,
+                kill_sent: false,
+                replaced: Vec::new(),
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
             {
                 m.vt.resize(info.rows, info.cols);
             }
+            let exited = exited_by_itself(&p.info, &info, p.kill_sent);
             p.info = info.clone();
             let _ = p.events.send(PaneEvent::State);
+            exited
+        };
+        if closing {
+            self.spawn_close_exited(info.id.clone(), machine_id.to_string());
         }
         self.bump();
         if !info.state.is_running() {
@@ -794,13 +854,16 @@ impl Host {
             agent: p.agent.clone().map(Box::new),
             label: p.info.label.clone(),
             restore_error: p.restore_error.clone(),
+            replaced: p.replaced.clone(),
         }
     }
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role)).collect();
-        v.sort_by(|a, b| a.machine.cmp(&b.machine).then(a.id.cmp(&b.id)));
+        // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
+        let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
+        v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
         v
     }
 
@@ -938,7 +1001,10 @@ impl Host {
             return Err(err(ErrorCode::Forbidden, "이 머신의 CLI에서만 할 수 있다"));
         }
         if req.needs_control() && !role.can_control() {
-            return Err(err(ErrorCode::Forbidden, "보기 권한으로는 조작할 수 없다"));
+            return Err(err(
+                ErrorCode::Forbidden,
+                format!("보기 권한으로는 조작할 수 없다{}", front::reader_reason(actor)),
+            ));
         }
         match req {
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
@@ -1028,8 +1094,21 @@ impl Host {
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
                 self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen: false } => self
-                .thread_resolve(&project, &thread, keep_worktree, orch::ResolveWhy::Manual, actor)
+            FrontRequest::ThreadResolve {
+                project,
+                thread,
+                keep_worktree,
+                reopen: false,
+                skip_copy,
+                discard_uncopied,
+            } => self
+                .thread_resolve(
+                    &project,
+                    &thread,
+                    orch::ResolveOpts { keep_worktree, skip_copy, discard_uncopied },
+                    orch::ResolveWhy::Manual,
+                    actor,
+                )
                 .await
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
@@ -1076,18 +1155,6 @@ impl Host {
                 })
             }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
-            FrontRequest::MergeEnqueue { project, thread } => {
-                self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeDrop { project, thread, landed } => {
-                self.merge_drop(&project, &thread, landed, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeLand { project, thread } => {
-                self.merge_land(&project, thread.as_deref(), actor).await.map(|v| FrontResponse::MergeLand(Box::new(v)))
-            }
-            FrontRequest::MergeList { project } => {
-                self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
-            }
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }
@@ -1120,8 +1187,10 @@ impl Host {
             FrontRequest::EvaluationDecide { project, id, proposals, adopt, note } => self
                 .evaluation_decide(&project, &id, &proposals, adopt, note, actor)
                 .map(|v| FrontResponse::Evaluation(Box::new(v))),
-            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
+            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
+                let resolved_profile =
+                    profile.as_deref().map(|name| self.resolved_profile(None, &mid, name)).transpose()?;
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -1131,6 +1200,8 @@ impl Host {
                     rows: rows.unwrap_or(32),
                     role: None,
                     harness: None,
+                    profile,
+                    resolved_profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1152,7 +1223,8 @@ impl Host {
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
             FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
-            FrontRequest::PaneChat { pane } => {
+            FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
+            FrontRequest::PaneChat { pane, thinking } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1172,7 +1244,9 @@ impl Host {
                     return Err(err(ErrorCode::NotFound, "대화 기록은 Claude·Codex pane만 볼 수 있다"));
                 }
                 let conn = self.live_conn(&mid)?;
-                match conn.request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session }).await?
+                match conn
+                    .request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session, thinking })
+                    .await?
                 {
                     AgentResponse::Chat { messages, truncated } => {
                         Ok(FrontResponse::Chat(aaa_proto::ChatView { pane: id, harness, messages, truncated }))
@@ -1182,6 +1256,11 @@ impl Host {
             }
             FrontRequest::PaneReadText { pane, source, lines, format } => {
                 self.pane_read_text(&pane, source, lines, format).await
+            }
+            FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
+            FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
+            FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
+                self.pane_copy_search(&pane, &query, direction, cursor, previous)
             }
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
@@ -1249,6 +1328,18 @@ impl Host {
                 self.lease_use(&id, f);
                 conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
             }
+            // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
+            FrontRequest::PanePaste { pane, text } => {
+                let f = front.ok_or_else(|| {
+                    err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다(한 번 보내기는 pane_send)")
+                })?;
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                let conn = self.live_conn(&mid)?;
+                self.lease_use(&id, f);
+                let data = aaa_proto::B64(self.key_modes(&id).paste(&text));
+                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+            }
             FrontRequest::PaneTake { pane } => {
                 let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
                 let (id, _) = self.resolve_pane(&pane)?;
@@ -1273,7 +1364,7 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
-            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
+            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
             // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다
@@ -1306,7 +1397,7 @@ impl Host {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 let conn = self.live_conn(&mid)?;
                 self.db.audit(actor, "pane_kill", &id);
-                conn.request(AgentRequest::Kill { session: id }).await.map(|_| FrontResponse::Done)
+                self.kill_session(&conn, &id).await.map(|_| FrontResponse::Done)
             }
             FrontRequest::EnrollOpen { minutes } => {
                 let minutes = minutes.clamp(1, 60);
@@ -1517,6 +1608,8 @@ impl Host {
             rows: info.rows,
             role: info.role,
             harness: info.harness.clone(),
+            profile: None,
+            resolved_profile: None,
         };
         let new_id = self.respawn(&id, &mid, spec, actor).await?;
         self.pane_view_of(&new_id, role)
@@ -1554,6 +1647,16 @@ impl Host {
                 Err(e) => tracing::warn!(pane = %new, "이름 잇기 실패: {}", e.message),
             }
         }
+        // 옛 ID를 보던 화면이 새 pane을 따라가게 남긴다(QA Q19): 옛 pane이 대신했던 것까지 잇는다
+        {
+            let mut i = self.inner.lock().unwrap();
+            let mut chain = i.panes.get(old).map(|p| p.replaced.clone()).unwrap_or_default();
+            chain.push(old.to_string());
+            let skip = chain.len().saturating_sub(REPLACED_KEEP);
+            if let Some(p) = i.panes.get_mut(new) {
+                p.replaced = chain.split_off(skip);
+            }
+        }
         {
             let mut ws = self.workspaces.lock().unwrap();
             let changed: Vec<Workspace> =
@@ -1566,6 +1669,46 @@ impl Host {
         if let Err(e) = self.forget(old, mid, actor).await {
             tracing::warn!(pane = %old, "재개 뒤 옛 기록 정리 실패: {}", e.message);
         }
+    }
+
+    /// 세션에 끝내기를 보낸다. host가 끝낸 pane은 스스로 끝난 셸이 아니다(`exited_by_itself`).
+    async fn kill_session(&self, conn: &AgentConn, id: &str) -> Result<AgentResponse, ErrorBody> {
+        if let Some(p) = self.inner.lock().unwrap().panes.get_mut(id) {
+            p.kill_sent = true;
+        }
+        conn.request(AgentRequest::Kill { session: id.to_string() }).await
+    }
+
+    /// 스스로 끝난 셸 pane을 닫는다(herdr 0.9.5 `handle_pane_died`·`Workspace::remove_pane`): 기록을 지우고 모든 layout에서
+    /// 뺀다(`forget`, 빈 탭은 없어진다). 그래서 탭이 하나도 남지 않은 workspace도 지운다(herdr는 마지막 pane이 끝난
+    /// workspace를 지운다).
+    fn spawn_close_exited(self: &Arc<Self>, id: String, mid: String) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let had: Vec<String> = {
+                let ws = me.workspaces.lock().unwrap();
+                ws.values().filter(|w| aaa_proto::layout::ws_contains(w, &id)).map(|w| w.name.clone()).collect()
+            };
+            if let Err(e) = me.forget(&id, &mid, "exit").await {
+                tracing::warn!(pane = %id, "끝난 셸 pane을 닫지 못했다: {}", e.message);
+                return;
+            }
+            for name in had {
+                let emptied = {
+                    let mut ws = me.workspaces.lock().unwrap();
+                    let empty = ws.get(&name).is_some_and(|w| w.tabs.is_empty());
+                    empty && ws.remove(&name).is_some()
+                };
+                if !emptied {
+                    continue;
+                }
+                if let Err(e) = me.db.delete_workspace(&name) {
+                    tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
+                }
+                me.db.audit("exit", "workspace_close", &name);
+                let _ = me.layout_events.send(Workspace { name, tabs: vec![] });
+            }
+        });
     }
 
     async fn forget(self: &Arc<Self>, id: &str, mid: &str, actor: &str) -> Result<(), ErrorBody> {
@@ -1627,6 +1770,8 @@ impl Host {
                     rows: rows.unwrap_or(32),
                     role: None,
                     harness: None,
+                    profile: None,
+                    resolved_profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1658,6 +1803,8 @@ impl Host {
                     rows: 24,
                     role: None,
                     harness: None,
+                    profile: None,
+                    resolved_profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
@@ -1694,7 +1841,7 @@ impl Host {
                 if kill && self.inner.lock().unwrap().panes.get(&id).is_some_and(|p| p.info.state.is_running()) {
                     let conn = self.live_conn(&mid)?;
                     self.db.audit(actor, "pane_kill", &id);
-                    conn.request(AgentRequest::Kill { session: id.clone() }).await?;
+                    self.kill_session(&conn, &id).await?;
                 }
                 if !aaa_proto::layout::ws_remove(&mut w, &id) {
                     return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
@@ -1838,7 +1985,7 @@ impl Host {
             if running {
                 let Ok(rx) = self.pane_events(id) else { continue };
                 self.db.audit(actor, "pane_kill", id);
-                if let Err(e) = conn.request(AgentRequest::Kill { session: id.clone() }).await {
+                if let Err(e) = self.kill_session(&conn, id).await {
                     tracing::warn!(pane = %id, "닫으며 끝내지 못했다: {}", e.message);
                     continue;
                 }
@@ -2057,6 +2204,7 @@ impl Host {
                 last_seen_ms: None,
                 health: None,
                 features: vec![],
+                agent_pid: None,
             },
         );
         if let Some(tx) = p.accept {
@@ -2610,5 +2758,61 @@ mod pairing_tests {
         }
         assert!(h.enroll.lock().unwrap().pending.is_empty());
         assert!(h.enroll_request("mac-b", "01M", "fp", "sas").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::*;
+
+    fn info(argv: &[&str], state: SessionState, role: Option<aaa_proto::Role>) -> SessionInfo {
+        SessionInfo {
+            id: "s".into(),
+            name: "s".into(),
+            argv: argv.iter().map(|a| a.to_string()).collect(),
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state,
+            role,
+            label: None,
+            harness: None,
+        }
+    }
+
+    /// 스스로 끝난 셸만 닫는다. 복원 대상(재부팅·유실)·host가 끝낸 것·역할·프로그램 pane·실행 중을 못 본 것은 남긴다.
+    #[test]
+    fn only_a_shell_that_exited_by_itself_closes() {
+        use SessionState::*;
+        let exited = || Exited { code: Some(0) };
+        let role = Some(aaa_proto::Role::Worker);
+        let cases = [
+            ("기본 셸 exit", info(&[], Running, None), info(&[], exited(), None), false, true),
+            (
+                "login 셸 exit 3",
+                info(&["/bin/zsh", "-l"], Running, None),
+                info(&["/bin/zsh", "-l"], Exited { code: Some(3) }, None),
+                false,
+                true,
+            ),
+            ("pane kill", info(&["sh"], Running, None), info(&["sh"], exited(), None), true, false),
+            ("역할 pane", info(&["sh"], Running, role), info(&["sh"], exited(), role), false, false),
+            (
+                "프로그램 pane",
+                info(&["sh", "-c", "exit 0"], Running, None),
+                info(&["sh", "-c", "exit 0"], exited(), None),
+                false,
+                false,
+            ),
+            ("재부팅", info(&["sh"], Running, None), info(&["sh"], Interrupted, None), false, false),
+            ("유실", info(&["sh"], Running, None), info(&["sh"], Lost, None), false, false),
+            ("이미 끝나 있던 것", info(&["sh"], Interrupted, None), info(&["sh"], exited(), None), false, false),
+        ];
+        for (what, old, new, kill_sent, want) in cases {
+            assert_eq!(exited_by_itself(&old, &new, kill_sent), want, "{what}");
+        }
     }
 }

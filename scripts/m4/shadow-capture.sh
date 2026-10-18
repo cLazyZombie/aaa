@@ -32,13 +32,14 @@ done
 case "$out" in /*) ;; *) echo "--out은 절대 경로" >&2; exit 2 ;; esac
 
 # 한 명령을 대상 머신에서 돌려 파일에 담는다. 실패도 기록한다(빈 파일과 구별).
+# pipefail: 파이프 앞쪽 명령이 실패해도 .rc에 남긴다(끝 명령 값만 남으면 화면 캡처 실패가 rc 0으로 보였다).
 on() { # on <대상> <파일> <명령…>
   local target="$1" file="$2"; shift 2
-  local rc
+  local rc cmd="set -o pipefail; $*"
   if [ "$target" = local ]; then
-    nice -n 15 bash -lc "$*" >"$file" 2>"$file.err"; rc=$?
+    nice -n 15 bash -lc "$cmd" >"$file" 2>"$file.err"; rc=$?
   else
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" "nice -n 15 bash -lc $(printf %q "$*")" >"$file" 2>"$file.err"; rc=$?
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$target" "nice -n 15 bash -lc $(printf %q "$cmd")" >"$file" 2>"$file.err"; rc=$?
   fi
   [ -s "$file.err" ] || rm -f "$file.err"
   echo "$rc" >"$file.rc"

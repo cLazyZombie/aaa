@@ -196,9 +196,14 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         harness_session: None,
         // herdr `done`은 「끝남(안 봄)」이다. 묶음 규칙은 이 값을 보지 않는다
         seen: f.agent_state.as_deref() != Some("done"),
+        plan: None,
+        background: None,
     });
     thread_group(&rec, f.pane_exists, agent.as_ref(), now_ms)
 }
+
+/// 까닭을 정하지 못한 차이. G4 「의도하지 않은 차이」는 이것만 센다
+pub const UNCLASSIFIED: &str = "분류 안 됨(규칙을 다시 본다)";
 
 /// 차이의 까닭(규칙을 읽고 정한 분류)
 pub fn reason(f: &Facts, hp: &str, _aaa: &str) -> String {
@@ -211,7 +216,7 @@ pub fn reason(f: &Facts, hp: &str, _aaa: &str) -> String {
     if hp == "ready-for-review" && f.pane_exists && f.self_age_secs.is_some() && f.self_percent != Some(100) {
         return "진행을 보고하는 agent의 중간 보고: aaa는 `Done`일 때만 검토 대기다(plan §8.85)".into();
     }
-    "분류 안 됨(규칙을 다시 본다)".into()
+    UNCLASSIFIED.into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -489,9 +494,11 @@ pub fn render_md(rows: &[Row], bad: &[(String, String)]) -> String {
     let herdr: Vec<&Row> = rows.iter().filter(|r| r.side == "herdr").collect();
     let judged: Vec<&Row> = herdr.iter().copied().filter(|r| r.agree.is_some()).collect();
     let agree = judged.iter().filter(|r| r.agree == Some(true)).count();
+    let unclassified =
+        judged.iter().filter(|r| r.agree == Some(false) && r.reason.as_deref() == Some(UNCLASSIFIED)).count();
     let mut s = String::from("# shadow 비교\n\n");
     s.push_str(&format!(
-        "- tick {}개({} ~ {}), 읽지 못한 tick {}개\n- 지금 운영 thread 줄 {}개: 판정 {}개 중 같음 {}개, 다름 {}개, 판정 안 함 {}개(입력 재현 안 됨 등)\n- aaa thread 줄 {}개\n\n",
+        "- tick {}개({} ~ {}), 읽지 못한 tick {}개\n- 지금 운영 thread 줄 {}개: 판정 {}개 중 같음 {}개, 다름 {}개(까닭 있는 차이 {} · 분류 안 됨 {}), 판정 안 함 {}개(입력 재현 안 됨 등)\n- 의도하지 않은 차이(분류 안 됨) {}개: 전환 gate G4는 이것이 0이어야 한다(docs/migration.md)\n- aaa thread 줄 {}개\n\n",
         ticks.len(),
         ticks.first().map(|t| hhmm(t)).unwrap_or_default(),
         ticks.last().map(|t| hhmm(t)).unwrap_or_default(),
@@ -500,7 +507,10 @@ pub fn render_md(rows: &[Row], bad: &[(String, String)]) -> String {
         judged.len(),
         agree,
         judged.len() - agree,
+        judged.len() - agree - unclassified,
+        unclassified,
         herdr.len() - judged.len(),
+        unclassified,
         rows.len() - herdr.len()
     ));
     // 시간대(1시간)별
@@ -683,6 +693,38 @@ mod tests {
         assert_eq!(both(&s), ("working", "working"));
         s.created_s = NOW - 301;
         assert_eq!(both(&s), ("waiting-on-you", "waiting-on-you"));
+    }
+
+    /// 요약은 다름을 까닭 있는 차이와 분류 안 됨(G4가 세는 것)으로 나눈다
+    #[test]
+    fn summary_splits_intended_and_unclassified() {
+        let row = |agree: Option<bool>, reason: Option<&str>| Row {
+            tick: "20261017T150320Z".into(),
+            at_s: NOW,
+            side: "herdr".into(),
+            thread: "t-0001".into(),
+            title: String::new(),
+            machine: "mac-a".into(),
+            hp_cli: Some("ready-for-review".into()),
+            hp_replay: None,
+            aaa: "working".into(),
+            aaa_live: None,
+            aaa_activity: None,
+            screen_tail: Vec::new(),
+            screen_hint: None,
+            facts: None,
+            agree,
+            reason: reason.map(String::from),
+        };
+        let rows = [
+            row(Some(true), None),
+            row(Some(false), Some("진행을 보고하는 agent의 중간 보고: aaa는 `Done`일 때만 검토 대기다(plan §8.85)")),
+            row(Some(false), Some(UNCLASSIFIED)),
+            row(None, Some("입력 재현 안 됨")),
+        ];
+        let md = render_md(&rows, &[]);
+        assert!(md.contains("판정 3개 중 같음 1개, 다름 2개(까닭 있는 차이 1 · 분류 안 됨 1), 판정 안 함 1개"), "{md}");
+        assert!(md.contains("의도하지 않은 차이(분류 안 됨) 1개"), "{md}");
     }
 
     #[test]

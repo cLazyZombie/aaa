@@ -13,11 +13,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
-    MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role,
-    RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
+    OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
+    ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
+use crate::orch::{EvaluationView, EvaluatorView};
 
 use crate::version::Version;
 
@@ -180,6 +180,15 @@ pub struct SpawnSpec {
     /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
     #[serde(default)]
     pub harness: Option<String>,
+    /// host 정본 profile로 harness를 띄운다(argv는 무시하고 profile이 정한다, 상태 hook도 붙는다).
+    /// agent가 `profile.v1` 기능을 알릴 때만 보낸다: 옛 agent는 이 칸을 버리고 셸을 띄운다(plan §8.126).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub profile: Option<String>,
+    /// host_profiles.v1: host가 푼 정의. agent는 머신별 경로·env·hook만 적용한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub resolved_profile: Option<crate::ResolvedProfile>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -235,6 +244,8 @@ pub enum ReadSource {
     Recent,
     /// Recent와 같되 화면 폭에서 접힌 줄을 한 줄로 잇는다
     RecentUnwrapped,
+    /// harness 상태 감지가 읽는 글(`Vt::detection_text`, 화면 높이만큼). `pane read`만 받는다(herdr와 같다)
+    Detection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -324,6 +335,8 @@ pub enum ChatRole {
     Assistant,
     /// 도구 호출 한 줄(예: `Bash: cargo test`). 도구 결과 본문은 싣지 않는다.
     Tool,
+    /// agent의 생각(Claude thinking 블록, Codex reasoning 요약). 「생각 표시」를 켠 화면이 청할 때만 싣는다(plan §8.129).
+    Thinking,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -358,6 +371,25 @@ pub struct FileInfo {
     pub modified_ms: u64,
     pub mime: String,
     pub kind: FileKind,
+}
+
+/// 폴더 보기의 폴더 한 단계(herdr-web-ui `DirectoryListing`). `path`는 agent 머신의 실제 경로다. `parent`는 허용 폴더 안일
+/// 때만 있다. 폴더·파일은 각각 처음 500개까지(`truncated`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DirListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub home: String,
+    pub directories: Vec<String>,
+    pub files: Vec<DirFile>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DirFile {
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
 }
 
 // ───────────────────────── Agent link ─────────────────────────
@@ -477,6 +509,14 @@ pub enum AgentRequest {
         session: String,
         path: String,
     },
+    /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
+    /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
+    DirList {
+        session: String,
+        path: String,
+        #[serde(default)]
+        hidden: bool,
+    },
     /// 파일 보기: `FileLocate`가 돌려준 실제 경로의 한 조각(`FileChunk`). 그 사이 바뀌었거나 허용 폴더 밖이면 거부한다.
     /// `page`면 HTML 파일을 페이지로 그린 bytes(제 폴더의 그림·style·script를 넣은 것)의 조각이다.
     FileView {
@@ -502,8 +542,11 @@ pub enum AgentRequest {
         transcript: Option<String>,
         /// Codex thread-id(기록 파일 이름에 들어 있다)
         harness_session: Option<String>,
+        /// 생각도 싣는다(plan §8.129). 옛 agent는 이 칸을 모르고 빼고 보낸다
+        #[serde(default)]
+        thinking: bool,
     },
-    /// agent.toml에 정의된 profile 목록
+    /// 옛 host 호환: agent.toml에 정의된 profile 목록
     Profiles,
     /// host_profiles.v1: 정의를 제외한 설치·로그인한 기본 harness만 묻는다.
     Harnesses,
@@ -539,7 +582,7 @@ pub enum AgentRequest {
         profile: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_profile: Option<crate::ResolvedProfile>,
-        /// profile을 다시 풀 때 더할 safety(plan §8.115, `launch_safety.v1`을 알린 agent에만)
+        /// profile을 다시 풀 때 더할 safety(plan §8.163, `launch_safety.v1`을 알린 agent에만)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         safety: Option<crate::LaunchSafety>,
     },
@@ -566,15 +609,6 @@ pub enum AgentRequest {
         path: String,
         data: B64,
     },
-    /// 병합 단계(§8.24). `repo`는 사용자 checkout, `cwd`는 thread worktree다. `remote`/`target`(예: origin/main)으로 push한다.
-    MergeLand {
-        repo: String,
-        cwd: String,
-        branch: String,
-        remote: String,
-        target: String,
-        message: String,
-    },
     /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
     /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.113).
     /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
@@ -586,6 +620,11 @@ pub enum AgentRequest {
         #[serde(default)]
         merged_head: Option<String>,
         keep_worktree: bool,
+        /// 마지막 사본에 집에 오지 않은 것이 있다(herdr-projects `clean` `copy_complete`, plan §8.135): 폴더가 남아 있으면
+        /// worktree를 남긴다. 이 칸을 모르는 옛 agent도 지우지 않게 host는 `keep_worktree`를 함께 켠다(둘 다 켜져 있으면
+        /// 사람의 「남기기」가 아니라 이것이다).
+        #[serde(default)]
+        uncopied: bool,
     },
     /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
     /// 않는다(결정 3). agent 기능 `pr.v1`이 있을 때만 보낸다.
@@ -649,7 +688,6 @@ pub enum AgentResponse {
         eof: bool,
     },
     Cleanup(Cleanup),
-    Landed(LandOutcome),
     Relaunch(Launch),
     CommandRan(CommandRan),
     /// 첨부를 다 썼다(절대 경로와 sha256)
@@ -661,6 +699,8 @@ pub enum AgentResponse {
     Cwd {
         cwd: Option<String>,
     },
+    /// 읽은 폴더 한 단계
+    DirListed(DirListing),
     /// 찾은 파일. 없으면 끝이 같은 파일 후보(실제 경로, 둘 이상)
     FileLocated {
         info: Option<FileInfo>,
@@ -878,6 +918,11 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane ID(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, 오래된 것부터). 옛 ID를 보던
+    /// 화면은 이것으로 새 pane을 따라간다(QA Q19).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub replaced: Vec<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -1003,7 +1048,8 @@ pub struct GridLine {
     pub runs: Vec<GridRun>,
 }
 
-/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다.
+/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다(없는 줄은 그대로).
+/// host는 크기(줄 수나 폭)가 바뀌면 `full`로 보낸다. 고치기 전 host는 폭만 바뀌면 바뀐 줄만 보냈다(QA t-0337 Q23).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct GridFrame {
     pub pane: String,
@@ -1017,6 +1063,70 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
+    #[serde(default)]
+    pub scroll: GridScroll,
+}
+
+/// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridScroll {
+    pub offset: u32,
+    pub max: u32,
+}
+
+/// 기록 위치 옮기기(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "to", rename_all = "snake_case")]
+pub enum ScrollBy {
+    Up {
+        lines: u32,
+    },
+    Down {
+        lines: u32,
+    },
+    /// 맨 아래(지금 화면)로
+    Bottom,
+    /// 맨 아래에서 `lines`줄 위로
+    Offset {
+        lines: u32,
+    },
+}
+
+/// pane 화면 사본의 글 자리(herdr `PaneTextPoint`). `row`는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는 줄 번호
+/// (alt 화면이면 화면 줄만), `col`은 칸. `GridScroll`로 보면 화면 맨 위 줄은 `max - offset`이다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+pub struct TextPoint {
+    pub row: u32,
+    pub col: u16,
+}
+
+/// 글 범위(시작, 끝 칸 포함. 넓은 글자 끝은 머리 칸 + 1)(herdr `PaneTextRange`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TextRange {
+    pub start: TextPoint,
+    pub end: TextPoint,
+}
+
+/// copy 모드 낱말·문단 이동(herdr `PaneCopyMotion`에서 줄 끝·첫 글자 빼고: TUI가 화면 frame에서 정한다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyMotion {
+    NextWordStart,
+    PreviousWordStart,
+    NextWordEnd,
+    NextBigWordStart,
+    PreviousBigWordStart,
+    NextBigWordEnd,
+    PreviousParagraph,
+    NextParagraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchDirection {
+    Forward,
+    Backward,
 }
 
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
@@ -1125,6 +1235,10 @@ pub enum FrontRequest {
         cwd: Option<String>,
         cols: Option<u16>,
         rows: Option<u16>,
+        /// host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        profile: Option<String>,
     },
     PaneRead {
         pane: String,
@@ -1132,12 +1246,23 @@ pub enum FrontRequest {
     /// harness(Claude·Codex) 대화 기록 보기(§8.27, 읽기 전용)
     PaneChat {
         pane: String,
+        /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
+        #[serde(default)]
+        thinking: bool,
     },
     /// 파일 보기(plan §8.125, 결정 20 D7): pane이 지금 있는 폴더 기준으로 경로를 찾고, 찾았으면 짧은 수명의
     /// 읽기 경로(`url`)를 준다. 조작 기기만(참고도 보기 전용 기기는 403).
     PaneFile {
         pane: String,
         path: String,
+    },
+    /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
+    /// 조작 기기만(`PaneFile`과 같다)
+    PaneDir {
+        pane: String,
+        path: String,
+        #[serde(default)]
+        hidden: bool,
     },
     PaneSend {
         pane: String,
@@ -1216,6 +1341,12 @@ pub enum FrontRequest {
         pane: String,
         data: B64,
     },
+    /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
+    /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
+    PanePaste {
+        pane: String,
+        text: String,
+    },
     /// 조작 lease를 이 연결로 가져온다(이전 보유자에게는 State로 알린다)
     PaneTake {
         pane: String,
@@ -1253,6 +1384,34 @@ pub enum FrontRequest {
     },
     PaneUnwatch {
         pane: String,
+    },
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.153). 프로그램에는 아무것도 가지 않는다.
+    PaneScroll {
+        pane: String,
+        by: ScrollBy,
+    },
+    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.27부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.156).
+    PaneSelectionRead {
+        pane: String,
+        from: TextPoint,
+        to: TextPoint,
+    },
+    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.27부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
+    /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
+    PaneCopyMotion {
+        pane: String,
+        cursor: TextPoint,
+        motion: CopyMotion,
+    },
+    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.27부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
+    /// 있으면 그 다음부터. `CopySearch`로 답한다.
+    PaneCopySearch {
+        pane: String,
+        query: String,
+        direction: SearchDirection,
+        cursor: TextPoint,
+        previous: Option<TextRange>,
     },
     Workspace {
         name: Option<String>,
@@ -1357,7 +1516,7 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
-    /// 끝낸다: 마지막 사본(실패면 거부) → 세션 종료 → worktree 정리(force 없음)
+    /// 끝낸다: 마지막 사본(실패면 거부) → 세션 종료 → worktree 정리(force 없음). 사본에 빠진 것이 있으면 worktree를 남긴다
     ThreadResolve {
         project: String,
         thread: String,
@@ -1366,6 +1525,12 @@ pub enum FrontRequest {
         /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
         #[serde(default)]
         reopen: bool,
+        /// 마지막 사본 없이 끝낸다(사본을 만들 수 없을 때, worktree는 남긴다. herdr-projects `--skip-copy`)
+        #[serde(default)]
+        skip_copy: bool,
+        /// 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
+        #[serde(default)]
+        discard_uncopied: bool,
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {
@@ -1450,28 +1615,6 @@ pub enum FrontRequest {
     /// ticker를 지금 한 번 돌리고, 이 요청 뒤에 시작한 tick이 끝나면 답한다(herdr-projects 시험의 `ticker::tick_project`,
     /// t3code worker `drain`과 같은 자리). host가 「봤는데 할 일이 없었다」를 시험이 기다릴 수 있다(docs/testing.md).
     TickerTick,
-    /// 병합 대기열 맨 뒤에 넣는다(이미 있으면 그 자리)
-    MergeEnqueue {
-        project: String,
-        thread: String,
-    },
-    /// 병합 대기열에서 뺀다. `landed`면 병합을 마친 것이고, 아니면 취소다.
-    MergeDrop {
-        project: String,
-        thread: String,
-        #[serde(default)]
-        landed: bool,
-    },
-    MergeList {
-        project: String,
-    },
-    /// 병합 대기열 맨 앞 thread를 병합한다(§8.24): 그 머신 agent가 원격 일치·병합·tree 같음 확인·push·사용자 checkout 맞춤·정리를 한다.
-    /// `thread`를 주면 그것이 맨 앞이어야 한다.
-    MergeLand {
-        project: String,
-        #[serde(default)]
-        thread: Option<String>,
-    },
     /// routine 목록(`projects/<p>/routines/*.md`)과 상태
     Routines {
         project: String,
@@ -1559,7 +1702,6 @@ impl FrontRequest {
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
-                | FrontRequest::MergeList { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
@@ -1570,6 +1712,10 @@ impl FrontRequest {
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
+                | FrontRequest::PaneScroll { .. }
+                | FrontRequest::PaneSelectionRead { .. }
+                | FrontRequest::PaneCopyMotion { .. }
+                | FrontRequest::PaneCopySearch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -1589,7 +1735,6 @@ impl FrontRequest {
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
                 | FrontRequest::RoutineApprove { .. }
-                | FrontRequest::MergeLand { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
                 | FrontRequest::TickerTick
@@ -1638,6 +1783,9 @@ pub enum FrontResponse {
         candidates: Vec<String>,
         url: Option<String>,
     },
+    PaneDir {
+        listing: DirListing,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -1653,6 +1801,25 @@ pub enum FrontResponse {
     },
     Workspace(Workspace),
     Done,
+    /// `PaneSelectionRead`: 고른 글. 한 frame에 들게 앞쪽만 두었으면 `truncated`
+    Selection {
+        pane: String,
+        text: String,
+        truncated: bool,
+    },
+    /// `PaneCopyMotion`: 옮긴 자리
+    CopyCursor {
+        pane: String,
+        cursor: TextPoint,
+    },
+    /// `PaneCopySearch`: 현재 일치 언저리(최대 1024개)와 전체 수, 그 안의 현재·전체에서의 현재(못 찾았으면 없음)
+    CopySearch {
+        pane: String,
+        matches: Vec<TextRange>,
+        total: u64,
+        current: Option<u32>,
+        current_global: Option<u64>,
+    },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {
         path: String,
@@ -1695,14 +1862,10 @@ pub enum FrontResponse {
         #[serde(default)]
         omitted_done: u32,
     },
-    Merge {
-        queue: Vec<MergeEntry>,
-    },
     /// `ticker_tick`: 이 host 실행에서 끝난 tick 수(방금 돈 것까지)
     Ticker {
         runs: u64,
     },
-    MergeLand(Box<MergeLandView>),
     Routines {
         routines: Vec<RoutineView>,
     },
@@ -1752,6 +1915,9 @@ pub enum FrontEvent {
     Preferences(SharedPreferences),
     /// 상태 사건 연결의 `ping`에 대한 답(herdr-web-ui ws.ts 「Liveness」: 그 ping의 답만 연결이 살아 있음을 말한다)
     Pong { id: u32 },
+    /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
+    /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.166)
+    Web { build: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1886,7 +2052,29 @@ pub enum TermClientMsg {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum EventsClientMsg {
     /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 연결이 끊기면 쓰지 않는 것이다.
-    Presence { active: bool },
+    /// 나머지는 판정 근거 기록에만 쓴다(10-18 실기, 옛 웹은 보내지 않는다).
+    Presence {
+        active: bool,
+        /// 무엇이 알리게 했나(focus·blur·visibilitychange·pagehide·pageshow·freeze·resume·open·heartbeat)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        why: Option<String>,
+        /// 그때 `document.visibilityState === "visible"`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        visible: Option<bool>,
+        /// 그때 `document.hasFocus()`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        focus: Option<bool>,
+        /// 이 웹 빌드(주 묶음 파일 이름). 배포 뒤에도 옛 페이지가 도는지 본다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        build: Option<String>,
+    },
+    /// 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거 기록, host는 흐름 사건으로 남긴다). `target`은 알림 자리
+    /// (`thread=…`·`pane=…`), `kind`는 `blocked`·`done`, `outcome`은 웹이 정한 한 줄(띄움·보는 중·가려짐·꺼짐 등)
+    Alert { project: Option<String>, target: String, kind: String, outcome: String },
     /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다(보이고 focus가 됐다·앱을 열었다). host는 마지막으로 이것을 보낸
     /// 기기(또는 pane에 입력한 기기)를 「쓰는 기기」로 두고, 그 기기가 지금 쓰는 화면일 때만 Web Push를 건너뛴다
     /// (사용자 결정 10-18, plan §8.105. 참고는 쓰는 화면이 하나라도 있으면 건너뛴다)
@@ -1969,9 +2157,11 @@ mod tests {
             !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
-        assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
+        assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(FrontRequest::PaneDir { pane: "p".into(), path: "src".into(), hidden: false }.needs_control());
+        assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(

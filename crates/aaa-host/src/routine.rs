@@ -351,6 +351,13 @@ impl Host {
         sha: &str,
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
+        // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.164)
+        if crate::front::in_session(actor) {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "routine 명령 승인은 사람이 aaa 세션 밖 터미널에서 한다(이 연결은 aaa pane 안에서 왔다)",
+            ));
+        }
         let dir = self.project_dir(project)?;
         let (ok, _) = load_all(&dir);
         let r = ok

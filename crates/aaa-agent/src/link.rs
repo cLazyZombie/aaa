@@ -81,7 +81,12 @@ pub fn hello(agent: &Agent) -> AgentHello {
         software: aaa_common::util::software(),
         // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`,
         // history.v1: `AgentRequest::History`(plan §8.118)
-        // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125)
+        // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125), profile.v1: `SpawnSpec.profile`(plan §8.126)
+        // ask_anew.v1: 막힘에 입력이 간 뒤 화면에 남은 확인창을 같은 글이어도 다시 알린다(`detect::Watch::input_sent`).
+        // host는 그 질문을 답한 질문의 늦은 사건으로 거르지 않는다
+        // dir.v1: 폴더 보기 `DirList`(plan §8.148)
+        // profiles.v2: 옛 host의 이름 기반 요청. host_profiles.v1이면 host 정본과 머신별 덮어쓰기만 쓴다(plan §8.168),
+        // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
@@ -94,6 +99,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "host_profiles.v1".into(),
             "launch_safety.v1".into(),
             "file.v1".into(),
+            "profile.v1".into(),
+            "ask_anew.v1".into(),
+            "dir.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

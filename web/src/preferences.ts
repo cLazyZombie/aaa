@@ -1,7 +1,7 @@
 // 이 host의 모든 웹 화면이 함께 쓰는 설정과 고정(plan §8.79). herdr-web-ui `src/lib/preferencesSync.ts`의
 // `preferencesChange`·`takePreferences`를 그대로 옮기고, 참고 `settings.ts` `sharedSettings`·`sanitizeSettings` 자리에
-// aaa가 가진 공유 설정(모양 theme·palette·sidebarRows, 사용량 막대 다섯)만 둔다. React·브라우저를 쓰지 않아 node 시험이 바로 부른다.
-// 참고 SHARED_SETTING_KEYS 가운데 aaa에 아직 없는 이름(language·agentOrder 등)은 host가 그대로 들고 있고 여기서는 읽지 않는다.
+// aaa가 가진 공유 설정(모양 theme·palette·sidebarRows·agentOrder, 사용량 막대 다섯, 대화 showThinking·autoSendQueued·quickReplies·showQuickReplies)만 둔다. React·브라우저를 쓰지 않아 node 시험이 바로 부른다.
+// 참고 SHARED_SETTING_KEYS 가운데 aaa에 아직 없는 이름(language·agentMarks 등)은 host가 그대로 들고 있고 여기서는 읽지 않는다.
 import { SHARED_SETTING_KEYS, type PreferencesChange, type SharedPreferences, type SharedSettingKey } from "./herdr/preferences.ts";
 import { sanitizeAppearance, type Appearance } from "./theme.ts";
 
@@ -37,15 +37,53 @@ export function sanitizeUsage(raw: unknown): UsageSettings {
   };
 }
 
-/** aaa가 가진 공유 설정. 나머지(다크·라이트 짝 팔레트·상태 표시 등)는 참고처럼 기기 것이다(SETTING_SCOPE "device") */
-export type SharedLocal = Pick<Appearance, "theme" | "palette" | "sidebarRows"> & UsageSettings;
+/** 대화 보기 공유 설정(참고 settings.ts `showThinking`·`autoSendQueued`·`quickReplies`·`showQuickReplies`: 모두 공유) */
+export interface ChatShared {
+  /** 대화에 agent의 생각(접힌 「생각」 줄)을 함께 보인다 */
+  showThinking: boolean;
+  /** 켬: 작업 중에 쓴 메시지도 곧 보낸다(harness가 다음 턴으로 줄 세운다, plan §8.100). 끔: 「지금 보내기」까지 이 기기에 붙잡는다 */
+  autoSendQueued: boolean;
+  /** 입력창 위 한 번 누름 답(차례대로, 빈 것은 쓰는 동안만 남고 보이지 않는다) */
+  quickReplies: string[];
+  showQuickReplies: boolean;
+}
+/** 참고 `QUICK_REPLIES_MAX`·`QUICK_REPLY_MAX_CHARS` */
+export const QUICK_REPLIES_MAX = 12;
+export const QUICK_REPLY_MAX_CHARS = 200;
+/** 참고 DEFAULT_SETTINGS와 같다 */
+export const DEFAULT_CHAT_SHARED: ChatShared = {
+  showThinking: false,
+  autoSendQueued: true,
+  quickReplies: ["continue", "yes", "no", "commit and push", "retry"],
+  showQuickReplies: false,
+};
 
-const LOCAL_KEYS = ["theme", "palette", "sidebarRows", "showUsage", "usageCount", "usageGlance", "usageOrder", "usageHidden"] as const satisfies readonly (SharedSettingKey & keyof SharedLocal)[];
+export function sanitizeChatShared(raw: unknown): ChatShared {
+  const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  return {
+    showThinking: typeof r.showThinking === "boolean" ? r.showThinking : DEFAULT_CHAT_SHARED.showThinking,
+    autoSendQueued: typeof r.autoSendQueued === "boolean" ? r.autoSendQueued : DEFAULT_CHAT_SHARED.autoSendQueued,
+    quickReplies: Array.isArray(r.quickReplies)
+      ? r.quickReplies.filter((reply): reply is string => typeof reply === "string").slice(0, QUICK_REPLIES_MAX).map((reply) => reply.slice(0, QUICK_REPLY_MAX_CHARS))
+      : [...DEFAULT_CHAT_SHARED.quickReplies],
+    showQuickReplies: typeof r.showQuickReplies === "boolean" ? r.showQuickReplies : DEFAULT_CHAT_SHARED.showQuickReplies,
+  };
+}
+
+/** 보일 빠른 답(참고 `quickReplyButtons`): 빈 것은 뺀다 */
+export function quickReplyButtons(settings: Pick<ChatShared, "quickReplies">): string[] {
+  return settings.quickReplies.filter((reply) => reply.trim() !== "");
+}
+
+/** aaa가 가진 공유 설정. 나머지(다크·라이트 짝 팔레트·상태 표시 등)는 참고처럼 기기 것이다(SETTING_SCOPE "device") */
+export type SharedLocal = Pick<Appearance, "theme" | "palette" | "sidebarRows" | "agentOrder"> & UsageSettings & ChatShared;
+
+const LOCAL_KEYS = ["theme", "palette", "sidebarRows", "agentOrder", "showUsage", "usageCount", "usageGlance", "usageOrder", "usageHidden", "showThinking", "autoSendQueued", "quickReplies", "showQuickReplies"] as const satisfies readonly (SharedSettingKey & keyof SharedLocal)[];
 
 /** 참고 `sanitizeSettings`: 읽을 수 있는 값만 남긴다. 모르는 이름은 결과에 없다 */
 export function sanitizeShared(raw: Record<string, unknown>): SharedLocal {
   const a = sanitizeAppearance(raw);
-  return { theme: a.theme, palette: a.palette, sidebarRows: a.sidebarRows, ...sanitizeUsage(raw) };
+  return { theme: a.theme, palette: a.palette, sidebarRows: a.sidebarRows, agentOrder: a.agentOrder, ...sanitizeUsage(raw), ...sanitizeChatShared(raw) };
 }
 
 /** 참고 `sharedSettings`: 공유 이름의 값만 */

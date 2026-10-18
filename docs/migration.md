@@ -73,7 +73,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 | G1 | **자료가 같다.** 마지막 inventory 뒤 import에서 실패 0, 「바뀜」은 0.2 ticker를 멈춘 뒤 0, 끝난 thread 수 = DB resolved 수, inbox 수 = 투영 파일 수 | `convert.md` 요약, `aaa thread list <p> --json` 개수 |
 | G2 | **열린 0.2 thread가 없다.** 남은 것은 사용자가 정한 idle 시점에 재개 정보(세션 ID·profile 인자, 인자 출처 `record`·`home-profile`)로 명시적으로 이어 간다 | `inventory.md` 「열린 thread와 재개 정보」 |
 | G3 | **0.2 inbox 끝내지 않은 항목 0** | `inventory.md` 「inbox」 |
-| G4 | **shadow: N시간 동안 의도하지 않은 차이 0**, 판정한 줄 비율 90% 이상(「입력 재현 안 됨」이 많으면 수집을 고친다) | `shadow.md` |
+| G4 | **shadow: N시간 동안 의도하지 않은 차이 0**, 판정한 줄 비율 90% 이상(「입력 재현 안 됨」이 많으면 수집을 고친다) | `shadow.md` 「의도하지 않은 차이(분류 안 됨)」 줄. 까닭이 붙은 다름(plan에 정한 차이)은 세지 않는다 |
 | G5 | **pilot: 잃은 보고 0, 잘못된 입력 0, 멈춘 감독자 0.** 시작·brief·진행 보고·inbox·사람 차례·착지·resolve를 aaa에서 끝까지 했다 | pilot 기록 |
 | G6 | **aaa 상태 = 화면.** shadow의 aaa thread 줄에서 harness 활동과 화면 단서가 어긋난 줄 0(D8 화면 감지가 들어간 binary 기준) | `shadow.md` 「aaa thread」 |
 | G7 | **설치가 맞다.** 세 Mac `aaa doctor lineage`가 `aaa-launcher` 책임, `aaa machine list` 모두 연결·이상 없음, 같은 `aaa --version` | install-runbook §3·§4 |

@@ -12,7 +12,7 @@ import type {
   ThreadView,
 } from "./gen/proto";
 import type { PreferencesChange } from "./herdr/preferences.ts";
-import { watchPageInUse } from "./herdr/presence";
+import { pageInUse } from "./herdr/presence";
 
 export class ApiError extends Error {
   constructor(public body: ErrorBody) {
@@ -104,9 +104,24 @@ export type PushInfo = {
   you: boolean;
   kinds: string[];
   alerts: AlertPrefs | null;
+  /** 이 기기에 최근 push로 보낸 항목(옛 host는 없다) */
+  pushed?: PushedItem[];
 };
+export type PushedItem = { project: string; subject: string; at_ms: number };
 export async function pushInfo(): Promise<PushInfo> {
   return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
+}
+/** host와 이 기기의 시계 차이를 덮는다 */
+const PUSHED_SKEW_MS = 5_000;
+let pushedAsk: { at: number; list: Promise<PushedItem[]> } | null = null;
+/**
+ * 이 기기에 `since`(이 기기 시계) 뒤 push로 보낸 항목. 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다
+ * (사용자 결정 10-18 「A」, plan §8.141)
+ */
+export function pushedSince(since: number): Promise<PushedItem[]> {
+  const now = Date.now();
+  if (!pushedAsk || now - pushedAsk.at > 1_000) pushedAsk = { at: now, list: pushInfo().then((i) => i.pushed ?? []) };
+  return pushedAsk.list.then((all) => all.filter((p) => p.at_ms >= since - PUSHED_SKEW_MS));
 }
 /** `alerts`: 이 기기가 받을 알림. host가 이 기기로 보내는 push에 적용한다(참고 registerPushSubscription). 없으면 전에 고른 것을 둔다 */
 export const pushSubscribe = (sub: PushSubscriptionJSON, alerts?: AlertPrefs) =>
@@ -145,6 +160,35 @@ const IDLE_CHECK_MS = 5_000;
  * 「application-active-reconnect」(10초)를 따랐다. herdr-web-ui ws.ts는 이때도 probe한다(plan §8.84).
  */
 const RECONNECT_AFTER_HIDDEN_MS = 10_000;
+/**
+ * 쓰는 동안 presence를 이만큼마다 다시 알린다. host는 그 연결에서 앱 글이 끊기면 lease가 끝나 쓰는 화면에서 뺀다.
+ * 멈춘 페이지(iOS가 잠재운 앱)는 timer가 돌지 않아 알리지 못한다. WebSocket pong은 브라우저 네트워크 층이 답하므로
+ * 살아 있다는 증거가 아니다(10-18 iPhone 실기, plan §8.133).
+ */
+const PRESENCE_EVERY_MS = 10_000;
+
+/** 이 웹 빌드: 주 묶음 파일 이름(예: `index-BsC_6E06`). host가 판정 근거에 남겨 기기가 어느 웹을 돌리는지 본다.
+ * host가 events 연결마다 알리는 빌드(`web` 사건)와 다르면 「앱 다시 열기」 줄을 띄운다(UpdateNotice.tsx, plan §8.166) */
+export const BUILD = (() => {
+  try {
+    return new URL(import.meta.url).pathname.split("/").pop()?.replace(/\.[jt]sx?$/, "") || "?";
+  } catch {
+    return "?";
+  }
+})();
+
+/** 지금 열린 상태 사건 연결(앱 안 알림 결과를 host에 알릴 때 쓴다) */
+let eventsSocket: WebSocket | null = null;
+
+/** 사건 하나를 앱 안 알림으로 어떻게 했는지 host에 알린다(host는 push 판정 근거로 흐름 사건에 남긴다) */
+export function tellAlert(m: Omit<Extract<EventsClientMsg, { t: "alert" }>, "t">) {
+  if (eventsSocket?.readyState !== WebSocket.OPEN) return;
+  try {
+    eventsSocket.send(JSON.stringify({ t: "alert", ...m } satisfies EventsClientMsg));
+  } catch {
+    /* 기록일 뿐이다 */
+  }
+}
 
 /** 기계·pane 목록과 확인창 질문·thread·공유 설정 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
 export function watchEvents(
@@ -153,16 +197,24 @@ export function watchEvents(
   onLink: (up: boolean) => void,
   onThread: (t: ThreadView) => void,
   onPreferences: (p: SharedPreferences) => void,
+  onWeb: (build: string) => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
   let delay = 500;
   let timer: number | undefined;
-  // 이 화면을 지금 쓰는지(herdr-web-ui presence, ws.ts): 바뀔 때와 다시 붙을 때 알린다. 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다
+  // 이 화면을 지금 쓰는지(herdr-web-ui presence, ws.ts): 바뀔 때와 다시 붙을 때, 쓰는 동안은 PRESENCE_EVERY_MS마다 알린다.
+  // 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다. 까닭(사건 이름)과 그때 화면 값은 host가 판정 근거로 남긴다
   let active: boolean | null = null;
-  const tell = () => {
-    if (active !== null && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "presence", active } satisfies EventsClientMsg));
+  let why = "open";
+  const tell = (cause = why) => {
+    if (active === null || ws?.readyState !== WebSocket.OPEN) return;
+    const visible = document.visibilityState === "visible";
+    ws.send(JSON.stringify({ t: "presence", active, why: cause, visible, focus: document.hasFocus(), build: BUILD } satisfies EventsClientMsg));
   };
+  const beat = window.setInterval(() => {
+    if (active) tell("heartbeat");
+  }, PRESENCE_EVERY_MS);
   // 쓰는 기기(사용자 결정 10-18, plan §8.105): 사람이 이 기기에서 누르거나 치거나 화면을 켜면(앱을 열거나 보이고 focus가
   // 되면) 알린다. host는 마지막으로 알린 기기가 쓰는 화면일 때만 push를 건너뛴다. 다시 붙을 때는 알리지 않는다(누른 것이
   // 아니다). 붙기 전·끊긴 동안 누른 것은 붙으면 보낸다
@@ -178,12 +230,28 @@ export function watchEvents(
   };
   window.addEventListener("pointerdown", touch, true);
   window.addEventListener("keydown", onKey, true);
-  const stopPresence = watchPageInUse((now) => {
+  // herdr-web-ui watchPageInUse와 같은 사건에 pageshow·Page Lifecycle resume을 더했다. freeze(Chrome·Android)는 쓰지 않는
+  // 것이다: 얼어 있는 페이지는 알림을 띄우지도, 가려졌다고 알리지도 못한다
+  const use = (now: boolean, cause: string) => {
     if (now === active) return;
     active = now;
+    why = cause;
     tell();
     if (now) touch();
-  });
+  };
+  const onUse = (event: Event) => use(pageInUse(), event.type);
+  const onFreeze = () => use(false, "freeze");
+  const useEvents: [EventTarget, string][] = [
+    [window, "focus"],
+    [window, "blur"],
+    [window, "pagehide"],
+    [window, "pageshow"],
+    [document, "visibilitychange"],
+    [document, "resume"],
+  ];
+  for (const [target, name] of useEvents) target.addEventListener(name, onUse);
+  document.addEventListener("freeze", onFreeze);
+  use(pageInUse(), "open");
   let heard = Date.now();
   let nextPing = 1;
   const probeIds = new Set<number>();
@@ -258,11 +326,12 @@ export function watchEvents(
   const open = () => {
     const socket = new WebSocket(wsUrl("/api/v1/events"));
     ws = socket;
+    eventsSocket = socket;
     heard = Date.now();
     socket.onopen = () => {
       delay = 500;
       heard = Date.now();
-      tell();
+      tell("open");
       if (touched) touch();
       onLink(true);
     };
@@ -279,7 +348,8 @@ export function watchEvents(
       } else if (ev.ev === "preferences") {
         const { ev: _tag, ...p } = ev;
         onPreferences(p);
-      } else if (ev.ev === "pong" && probeIds.has(ev.id)) {
+      } else if (ev.ev === "web") onWeb(ev.build);
+      else if (ev.ev === "pong" && probeIds.has(ev.id)) {
         probeDrops = 0;
         endProbe();
       }
@@ -316,7 +386,10 @@ export function watchEvents(
   open();
   return () => {
     stopped = true;
-    stopPresence();
+    for (const [target, name] of useEvents) target.removeEventListener(name, onUse);
+    document.removeEventListener("freeze", onFreeze);
+    window.clearInterval(beat);
+    if (eventsSocket === ws) eventsSocket = null;
     endProbe();
     window.clearTimeout(timer);
     window.clearInterval(idle);

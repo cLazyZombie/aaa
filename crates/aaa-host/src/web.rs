@@ -394,6 +394,8 @@ struct PushInfo {
     kinds: Vec<String>,
     /// 이 장치 구독이 고른 알림 종류(차이 목록 N3, 구독이 없으면 없음)
     alerts: Option<crate::db::Alerts>,
+    /// 이 장치에 최근 push로 보낸 항목(오래된 것부터). 깨어난 페이지는 이것으로 이미 받은 알림을 다시 띄우지 않는다(plan §8.141)
+    pushed: Vec<crate::push::PushedItem>,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
@@ -409,7 +411,8 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
         (v.user(), v.is_user(&id))
     };
     let kinds = host.cfg.notify.item_kinds();
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts }))
+    let pushed = host.pushed.lock().unwrap().of(&id);
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts, pushed }))
         .into_response()
 }
 
@@ -624,7 +627,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut threads = host.thread_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut revoked = host.device_revoked.subscribe();
-    let mut presence = Presence { host: host.clone(), dev: dev.clone(), active: false };
+    let mut presence = Presence { conn: host.conn_open(&dev), host: host.clone(), dev: dev.clone(), active: false };
+    let conn = presence.conn;
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
@@ -643,6 +647,19 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let (every, dead_after) = events_liveness();
     let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     let mut heard = tokio::time::Instant::now();
+    // 「쓰는 화면」 lease: 웹은 쓰는 동안 10초마다 presence를 다시 알린다. 이 연결에서 앱 글(Text)이 lease 넘게 없으면 페이지가
+    // 멈춘 것이라(iOS가 잠재운 앱) 쓰는 화면에서 뺀다. 연결은 두고, 다음 presence가 오면 다시 센다. WebSocket pong은
+    // 브라우저 네트워크 층이 답해 멈춘 페이지에서도 오므로 lease를 늘리지 않는다(10-18 iPhone 실기, plan §8.133)
+    let lease = presence_lease();
+    let mut app_heard = tokio::time::Instant::now();
+    // 이 host가 주는 웹 빌드: 연결마다 알린다. 다시 보이거나(10초 넘게 가려지면 다시 붙는다) host가 다시 뜨면 새 연결이라 웹이
+    // 제 빌드와 견준다(참고는 보이는 동안 상태를 묻는다, plan §8.166)
+    if let Some(build) = web_build() {
+        let text = serde_json::to_string(&FrontEvent::Web { build }).unwrap();
+        if socket.send(Message::Text(text.into())).await.is_err() {
+            return;
+        }
+    }
     loop {
         if send_preferences {
             send_preferences = false;
@@ -715,22 +732,39 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     break;
                 }
             }
+            _ = tokio::time::sleep_until(app_heard + lease), if presence.active => {
+                send_state = false;
+                tracing::info!("쓰는 화면 lease 끝: 앱 글이 {}초 동안 없다", lease.as_secs());
+                host.conn_presence(conn, format!("lease 끝(앱 글 {}초 없음)", lease.as_secs()), None);
+                presence.set(false);
+            }
             m = socket.recv() => {
                 send_state = false;
                 heard = tokio::time::Instant::now();
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
-                        Ok(EventsClientMsg::Presence { active }) => presence.set(active),
-                        Ok(EventsClientMsg::Touch) => host.touch_device(&dev),
-                        Ok(EventsClientMsg::Ping { id }) => {
-                            let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
-                            if socket.send(Message::Text(text.into())).await.is_err() {
-                                break;
+                    Some(Ok(Message::Pong(_))) => host.conn_pong(conn),
+                    Some(Ok(Message::Text(t))) => {
+                        app_heard = tokio::time::Instant::now();
+                        host.conn_text(conn);
+                        match serde_json::from_str::<EventsClientMsg>(&t) {
+                            Ok(EventsClientMsg::Presence { active, why, visible, focus, build }) => {
+                                host.conn_presence(conn, presence_why(active, why, visible, focus), build);
+                                presence.set(active)
                             }
+                            Ok(EventsClientMsg::Touch) => host.touch_device(&dev, "touch"),
+                            Ok(EventsClientMsg::Alert { project, target, kind, outcome }) => {
+                                host.alert_outcome(&dev, conn, project.as_deref(), &target, &kind, &outcome)
+                            }
+                            Ok(EventsClientMsg::Ping { id }) => {
+                                let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                                if socket.send(Message::Text(text.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -745,8 +779,50 @@ fn events_liveness() -> (std::time::Duration, std::time::Duration) {
     (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
+/// 「쓰는 화면」 lease(25초: 웹의 10초 presence를 두 번 놓치고도 남는다). `AAA_TEST_PRESENCE_LEASE_MS`는 시험에서만 줄인다
+/// 포함한 웹의 빌드 이름: index.html이 여는 주 묶음(`/assets/index-XXXX.js`)의 파일 이름. 웹 `api.ts` `BUILD`와 같은 꼴이다.
+/// 웹을 빌드하지 않았으면 없다. 시험은 `AAA_TEST_WEB_BUILD`로 다른 빌드를 알리게 한다(새 웹이 나온 host를 흉내 낸다)
+fn web_build() -> Option<String> {
+    if let Ok(v) = std::env::var("AAA_TEST_WEB_BUILD") {
+        return Some(v);
+    }
+    let (_, html) = assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html")?;
+    main_bundle(&String::from_utf8_lossy(html))
+}
+
+/// index.html의 `<script … src="/assets/NAME.js">`에서 NAME
+fn main_bundle(html: &str) -> Option<String> {
+    html.split("<script").skip(1).find_map(|tag| {
+        let tag = &tag[..tag.find('>')?];
+        let src = tag.split("src=\"").nth(1)?.split('"').next()?;
+        let name = src.strip_prefix("/assets/")?.strip_suffix(".js")?;
+        (!name.is_empty() && !name.contains('/')).then(|| name.to_string())
+    })
+}
+
+fn presence_lease() -> std::time::Duration {
+    let ms = std::env::var("AAA_TEST_PRESENCE_LEASE_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(25_000);
+    std::time::Duration::from_millis(ms)
+}
+
+/// presence 판정 근거 한 줄: 웹이 보낸 까닭과 화면 값(옛 웹은 없다)
+fn presence_why(active: bool, why: Option<String>, visible: Option<bool>, focus: Option<bool>) -> String {
+    let flag =
+        |v: Option<bool>, yes: &str, no: &str| v.map_or("?".to_string(), |b| if b { yes } else { no }.to_string());
+    let why: String =
+        why.unwrap_or_else(|| "?".into()).chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(24).collect();
+    format!(
+        "{} {why} {}·{}",
+        if active { "true" } else { "false" },
+        flag(visible, "보임", "가려짐"),
+        flag(focus, "focus", "focus 없음")
+    )
+}
+
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
 struct Presence {
+    /// 판정 근거의 연결 번호(seen.rs `conn_open`)
+    conn: u64,
     host: Arc<Host>,
     /// 이 연결의 기기(그 기기가 연 pane 터미널을 「보는 화면」으로 센다, seen.rs)
     dev: String,
@@ -763,7 +839,7 @@ impl Presence {
             } else {
                 self.host.in_use.fetch_sub(1, SeqCst);
             }
-            self.host.view_presence(&self.dev, active);
+            self.host.view_presence(self.conn, &self.dev, active);
         }
     }
 }
@@ -771,6 +847,7 @@ impl Presence {
 impl Drop for Presence {
     fn drop(&mut self) {
         self.set(false);
+        self.host.conn_close(self.conn);
     }
 }
 
@@ -890,8 +967,9 @@ impl Outbox {
     }
 
     /// 출력을 따라오지 못했다: 4008로 닫는다. 다시 보내지 않는다(브라우저의 「다시 연결」이 새로 붙는다).
-    fn stop(&self, why: &str) {
-        tracing::info!(why, "웹 터미널 출력 정지(4008)");
+    /// 기록에는 어느 pane인지와 밀린 양(ACK 안 된 것·보내지 못한 것)을 남긴다: 무엇이 쏟아졌는지·누가 느렸는지를 가른다.
+    fn stop(&self, why: &str, pane: &str, pending: u64) {
+        tracing::info!(why, pane, pending, buffered = self.buffered(), "웹 터미널 출력 정지(4008)");
         let _ = self.stop.send(Some((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON)));
     }
 
@@ -1001,7 +1079,7 @@ async fn pane_session(
             check_unacked(out.buffered(), &mut queue_since, now())
         };
         if verdict == Verdict::Stop {
-            out.stop("ACK가 나아가지 않는다");
+            out.stop("ACK가 나아가지 않는다", &id, window.pending());
             break;
         }
         tokio::select! {
@@ -1032,7 +1110,7 @@ async fn pane_session(
                             next = end;
                             let n = part.len() as u64;
                             if (acks && window.pending() + n > OUTPUT_HARD_BYTES) || out.buffered() >= OUTPUT_HARD_BYTES {
-                                out.stop("밀린 출력이 상한을 넘었다");
+                                out.stop("밀린 출력이 상한을 넘었다", &id, window.pending() + n);
                                 break;
                             }
                             window.write(n, n);
@@ -1080,7 +1158,7 @@ async fn pane_session(
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
                             // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
                             // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
-                            host.touch_device(dev);
+                            host.touch_device(dev, "입력");
                             let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
                             if sent.is_ok() {
@@ -1145,7 +1223,7 @@ async fn pane_session(
                 };
                 // pane에 친 기기가 쓰는 기기다(plan §8.105). 크기 걸기는 다시 붙을 때도 오므로 세지 않는다(누름은 웹이 touch로 알린다)
                 if matches!(req, Some(FrontRequest::PaneInput { .. }) | Some(FrontRequest::PaneTake { .. })) {
-                    host.touch_device(dev);
+                    host.touch_device(dev, "입력");
                 }
                 if let Some(req) = req
                     && let Err(e) = host.call_from(role, &actor, Some(front), req).await
@@ -1231,6 +1309,17 @@ async fn static_file(req: Request) -> Response {
 #[cfg(test)]
 mod content_type_tests {
     use super::content_type;
+
+    /// host가 알리는 웹 빌드는 웹 `BUILD`(주 묶음 파일 이름에서 확장자를 뺀 것)와 같은 꼴이다
+    #[test]
+    fn main_bundle_is_the_index_script_name() {
+        let html = r#"<!doctype html><head><link rel="manifest" href="/manifest.webmanifest">
+<script type="module" crossorigin src="/assets/index-Di-S2J_3.js"></script>
+<link rel="stylesheet" crossorigin href="/assets/index-C9x.css"></head>"#;
+        assert_eq!(super::main_bundle(html).as_deref(), Some("index-Di-S2J_3"));
+        assert_eq!(super::main_bundle("<script>let a = 1</script>"), None);
+        assert_eq!(super::main_bundle(r#"<script src="https://example.com/x.js"></script>"#), None);
+    }
 
     /// build.rs가 만든 자산 목록은 빌드한 worktree의 절대 경로를 갖지 않는다: build script 실행 결과를 캐시하는
     /// 도구가 다른 worktree에 이 파일을 되돌려도 그 worktree의 web/dist를 읽어야 한다(t-0327, kache build_script_run)

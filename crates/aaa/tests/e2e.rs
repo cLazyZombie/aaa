@@ -95,6 +95,10 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
         .map(|_| ())
     });
     assert_eq!(chat_len(), Some(2));
+    // thread가 아닌 pane의 Claude hook에는 진행 안내를 넣지 않는다(aaa가 hook 설정을 주는 세션만, herdr-projects
+    // `managed`). 이 가짜는 hook 출력을 화면에 낸다
+    let read = h.ok(&["pane", "read", &cid, "--lines", "1000"]);
+    assert!(!read["text"].as_str().unwrap().contains("additionalContext"), "{read}");
     let before = h.pane(&cid)["agent"].clone();
     assert_eq!((before["harness"].as_str(), before["activity"].as_str()), (Some("claude"), Some("idle")), "{before}");
     let restored = |what: &str| {
@@ -143,13 +147,10 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     h.ok(&["pane", "run", &id, "echo back-$((2+2))"]);
     h.wait_output(&id, "back-4", T);
 
-    // 세션이 끝나면 종료 상태와 마지막 화면이 남는다
+    // 셸이 스스로 끝나면 그 pane을 닫는다(plan §8.143): host를 다시 띄운 뒤 다시 붙어 실행 중을 본 셸도 그렇다.
+    // 프로그램 pane의 종료 코드·마지막 화면은 remote 시험이 본다
     h.ok(&["pane", "run", &id, "exit 3"]);
-    wait_for("종료 반영", T, || {
-        let p = h.pane(&id);
-        (p["state"] == "exited" && p["code"] == 3).then_some(())
-    });
-    assert!(h.screen(&id).contains("back-4"));
+    wait_for("닫힘", T, || (!h.ok(&["pane", "list"]).to_string().contains(&id)).then_some(()));
 }
 
 /// 운영 pane(shadow/t-0002)을 읽은 화면: 턴이 끝난 뒤 보내지 않은 글이 입력 상자에 남아 있다
@@ -214,6 +215,58 @@ fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
     // 바로잡은 상태를 기억한다: 다시 떠도 옛 「작업 중」이 돌아오지 않는다
     let kept = std::fs::read_to_string(&file).unwrap();
     assert!(kept.contains("\"idle\"") && !kept.contains("turn_start"), "{kept}");
+}
+
+/// pane 안 Codex가 낸 것처럼 notify 사건 셋을 보내고, 하나 보낼 때마다 진행 보고로 끝을 알린다. `$1`은 aaa 실행 파일이다.
+/// 둘째는 그 Codex 안에서 돈 중첩 thread다(물려받은 `CODEX_THREAD_ID`가 사건의 thread-id와 다르다).
+const NESTED_CODEX: &str = r#"#!/bin/sh
+A=0a0a0a0a-0000-4000-8000-00000000000a
+B=0b0b0b0b-0000-4000-8000-00000000000b
+C=0c0c0c0c-0000-4000-8000-00000000000c
+"$1" hook --agent codex "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$A\"}"
+"$1" report --percent 10 --activity 하나
+CODEX_THREAD_ID=$A "$1" hook --agent codex "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$B\"}"
+"$1" report --percent 20 --activity 둘
+CODEX_THREAD_ID=$C "$1" hook --agent codex "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$C\"}"
+"$1" report --percent 30 --activity 셋
+exec cat
+"#;
+
+/// Codex 중첩 thread의 사건은 pane의 harness 세션 ID를 바꾸지 않는다(herdr `herdr-agent-state.sh`, herdr-projects
+/// progress.rs `hook`: 물려받은 `CODEX_THREAD_ID`와 다른 세션의 사건은 버린다). 바깥 Codex 안에서 띄운 agent의
+/// `CODEX_THREAD_ID`는 세션에 넘기지 않는다(herdr `apply_pane_launch_env`). 넘기면 pane 안 Codex 사건이 모두 버려진다.
+#[test]
+fn nested_codex_events_do_not_replace_the_pane_session() {
+    let mut lab = Lab::new();
+    let h = lab.node("h", Some(LOCAL_ONLY));
+    lab.spawn("host", &h, &["host"]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    let outer = "0e0e0e0e-0000-4000-8000-00000000000e";
+    lab.spawn_env("agent", &h, &["agent", "--host", "local", "--name", "labA"], &[("CODEX_THREAD_ID", outer)]);
+    wait_for("labA 연결", T, || h.connected("labA").then_some(()));
+    let script = lab.root.join("nested-codex.sh");
+    std::fs::write(&script, NESTED_CODEX).unwrap();
+    let mut ev = lab::Events::connect(&h);
+    let id = h.new_pane(None, "labA", Some("x1"), &["/bin/sh", script.to_str().unwrap(), lab::BIN], None);
+    // hook은 agent가 host에 보낸 뒤에 답하므로 사건은 보낸 차례로 온다: 그 단계의 진행 보고가 실린 상태 사건의 세션 ID를 본다
+    let mut session_at = |step: &str| {
+        ev.wait(step, T, |e| match e {
+            aaa_proto::FrontEvent::State { panes, .. } => panes
+                .iter()
+                .find(|p| p.id == id)
+                .and_then(|p| p.agent.as_ref())
+                .filter(|a| a.progress.as_deref() == Some(step))
+                .map(|a| a.harness_session.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(session_at("하나").as_deref(), Some("0a0a0a0a-0000-4000-8000-00000000000a"), "바깥 표지를 물려받았다");
+    assert_eq!(
+        session_at("둘").as_deref(),
+        Some("0a0a0a0a-0000-4000-8000-00000000000a"),
+        "중첩 thread가 세션을 바꿨다"
+    );
+    assert_eq!(session_at("셋").as_deref(), Some("0c0c0c0c-0000-4000-8000-00000000000c"));
 }
 
 /// 원격 agent 등록(TLS 1.3 + 확인 코드)과 원격 pane. 틀린 코드는 거부되고 곧바로 끝나는 명령도 결과가 남는다.

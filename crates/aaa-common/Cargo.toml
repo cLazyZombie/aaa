@@ -25,4 +25,4 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem",
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = ["Win32_System_Pipes", "Win32_System_Diagnostics_ToolHelp"] }

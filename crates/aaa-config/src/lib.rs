@@ -83,7 +83,7 @@ pub struct HostConfig {
     pub session: SessionSection,
     /// profile 정의의 정본(참고 herdr-projects config.toml).
     pub profiles: std::collections::BTreeMap<String, Profile>,
-    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.115). host는 쓸
+    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.163). host는 쓸
     /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
@@ -229,12 +229,16 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
-    /// brief 안내·메시지를 입력하고 Enter한 뒤 harness가 받았다고 알리기(hook이 없으면 화면 변화)를 기다리는 시간(밀리초).
-    /// 넘으면 전달 불명(unknown)이고 다시 보내지 않는다.
+    /// brief 안내·메시지를 입력한 때부터 harness가 받았다고 알리기(hook이 없으면 Enter 뒤 화면 변화)까지 기다리는 시간
+    /// (밀리초). 입력 상자를 그리는 harness는 이 안에서 친 글이 화면에 보이기를 기다린 뒤 Enter한다. 넘으면 전달
+    /// 불명(unknown)이고 다시 보내지 않는다.
     pub accept_wait_ms: u64,
     /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
     /// 넘으면 그대로 보낸다.
     pub stop_wait_ms: u64,
+    /// brief를 보낸 뒤 새 보고가 오기 전까지 thread를 작업 중으로 치는 시간(초). 방금 일을 받은 agent는 아직 쉼으로 읽혀서다
+    /// (herdr-projects ticker는 안내를 보낸 tick을 작업 중으로 두고 다음 tick(`TICK` 15초)에 센다, plan §8.85). 시험에서 줄인다.
+    pub delivered_working_secs: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
     /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
@@ -260,6 +264,7 @@ impl Default for ProjectsSection {
             pr_poll_secs: 120,
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
+            delivered_working_secs: 15,
             auto_resolve_day_secs: 86_400,
             merge_grace_secs: 600,
             inbox_done_days: 30,
@@ -305,6 +310,11 @@ pub struct TuiSection {
     pub mouse_capture: bool,
     /// 끌어 고른 글을 떼는 때 복사한다(herdr `[ui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사한다.
     pub copy_on_select: bool,
+    /// 보통 화면 pane에서 휠 한 칸에 넘기는 기록 줄 수(herdr `[ui] mouse_scroll_lines`, 기본 3, 1 이상)
+    pub mouse_scroll_lines: u16,
+    /// 보통 화면 pane의 오른쪽 1칸에 기록 scrollbar(herdr `[ui] pane_scrollbars`, 기본 켬). 그 칸만큼 PTY가 좁고,
+    /// alt 화면(vim 등)에서는 칸을 돌려준다.
+    pub pane_scrollbars: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -348,6 +358,8 @@ impl Default for TuiSection {
             pane_borders: PaneBorders::Auto,
             mouse_capture: true,
             copy_on_select: true,
+            mouse_scroll_lines: 3,
+            pane_scrollbars: true,
         }
     }
 }
@@ -618,6 +630,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     if c.projects.auto_resolve_day_secs == 0 {
         out.push(Invalid {
             path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
+        });
+    }
+    if c.projects.delivered_working_secs == 0 {
+        out.push(Invalid {
+            path: key(&["projects", "delivered_working_secs"]), message: "1초 이상이어야 한다".into()
         });
     }
     for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {

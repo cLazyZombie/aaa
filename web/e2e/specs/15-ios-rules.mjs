@@ -3,7 +3,8 @@
 // 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 탭에 없는 Notification을 부름)을 못 잡는다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 15-ios-rules(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk } from "../lib/harness.mjs";
+import fs from "node:fs";
+import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk, claudeIdle, root, inList } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 export default async function () {
@@ -50,7 +51,7 @@ export default async function () {
     await still(dialog);
     await shot(ph, "iphone-home-sound-settings");
     await ph.keyboard.press("Escape");
-    await ph.getByTestId("pane-t1").click();
+    await inList(ph, "pane-t1");
     // 1) 다른 pane의 확인창: 앱 안 알림과 「입력 필요」 소리(660 → 880)
     await device.skipAudio();
     m = device.mark();
@@ -110,5 +111,48 @@ export default async function () {
     same(app.device.since(m).filter((e) => e.startsWith("permission")), ["permission granted"], "권한 물음");
     if (app.errors.length) throw new Error(`홈 화면 앱 화면 오류: ${app.errors.join("; ")}`);
     await app.page.context().close();
+  });
+
+  await step("iPhone 대화 보기 머리줄(사용자 실기 10-18 「위쪽 흐려지는건 어쩔수없는건가?」): 홈 화면 앱 맨 위의 머리줄은 배경 있는 sticky라 iOS 26 Liquid Glass 가장자리 흐림 대신 그 색을 쓰고(참고 herdr-web-ui CHANGELOG, 헤드리스는 그 띠를 그리지 못해 조건만 본다), 제목·위치 줄이 길어도 상태 표시와 겹치지 않고 말줄임된다 — 심은 결함(줄 폭을 풀기)은 이 검사가 잡는다", async () => {
+    // 사진과 같은 모양: 긴 제목, 긴 위치 줄(머신 › harness · 폴더 · 칸 수), 「입력 대기」
+    const cwd = `${root}/hdr/aaa-work/shadow/t-0001-이름-뜻-메모-폴더`;
+    fs.mkdirSync(cwd, { recursive: true });
+    aaa("tab", "create", "--machine", "labA", "--label", "shadow-이름-뜻-메모-머리줄", "--cwd", cwd, "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
+    const app = await pairDevice(browser, aaa("web", "pair").code, "iphone", { standalone: true });
+    const ph = app.page;
+    await inList(ph, "pane-shadow-이름-뜻-메모-머리줄");
+    await ph.getByTestId("chat").waitFor();
+    await ph.locator(".term-head .chip.agent.idle").waitFor();
+    // 머리줄의 문제를 모은다(빈 목록이면 통과). 겹침은 줄 오른쪽 끝이 상태 표시 왼쪽을 넘는 것이다
+    const problems = () => ph.locator(".term-head").evaluate((head) => {
+      const out = [];
+      const css = getComputedStyle(head);
+      if (css.position !== "sticky" && css.position !== "fixed") out.push(`position ${css.position}`);
+      const alpha = /^rgba\(.*,\s*([\d.]+)\)$/.exec(css.backgroundColor);
+      if (css.backgroundColor === "transparent" || (alpha && Number(alpha[1]) < 1)) out.push(`배경 ${css.backgroundColor}`);
+      if (head.getBoundingClientRect().top !== 0) out.push(`맨 위가 아니다 ${head.getBoundingClientRect().top}`);
+      const chip = head.querySelector(".chip.agent").getBoundingClientRect();
+      for (const sel of [".term-title-line", ".term-title .muted"]) {
+        const el = head.querySelector(sel);
+        const r = el.getBoundingClientRect();
+        if (r.right > chip.left + 0.5) out.push(`${sel} 오른쪽 ${r.right.toFixed(1)} > 상태 왼쪽 ${chip.left.toFixed(1)}`);
+      }
+      // 위치 줄이 실제로 넘쳐 말줄임됐다: 짧아서 그냥 통과한 것이 아니다
+      const muted = head.querySelector(".term-title .muted");
+      if (!(muted.scrollWidth > muted.clientWidth)) out.push(`위치 줄이 넘치지 않았다 ${muted.scrollWidth}/${muted.clientWidth}`);
+      return out;
+    });
+    // 결함 심기: 세로 배치의 줄 폭을 풀면(고치기 전 모양) 위치 줄이 상태 밑으로 칠해진다. 검사가 그것을 잡아야 한다
+    const seeded = await ph.addStyleTag({ content: ".term-title > * { max-width: none !important; }" });
+    const before = await problems();
+    if (!before.some((p) => p.startsWith(".term-title .muted 오른쪽"))) throw new Error(`심은 겹침을 잡지 못했다: ${JSON.stringify(before)}`);
+    await shot(ph, "iphone-chat-head-before");
+    await seeded.evaluate((el) => el.remove());
+    const after = await problems();
+    if (after.length) throw new Error(`머리줄: ${after.join("; ")}`);
+    await shot(ph, "iphone-chat-head-after");
+    if (app.errors.length) throw new Error(`화면 오류: ${app.errors.join("; ")}`);
+    await app.page.context().close();
+    aaa("pane", "kill", "shadow-이름-뜻-메모-머리줄");
   });
 }
