@@ -312,6 +312,33 @@ impl Agent {
         }
     }
 
+    /// 폴더 보기: 세션이 지금 있는 폴더(없으면 시작 폴더) 기준으로 폴더 한 단계를 읽는다(`file_locate`와 같은 기준)
+    async fn dir_list(&self, session: &str, path: String, hidden: bool) -> Result<AgentResponse, ErrorBody> {
+        let started = {
+            let s = self.sessions.lock().unwrap();
+            s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?.info.cwd.clone()
+        };
+        let cwd = match self.session_cwd(session).await {
+            Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
+            _ => started,
+        };
+        let roots = self.file_roots.lock().unwrap().clone();
+        let home = aaa_config::paths::home();
+        let listed = tokio::task::spawn_blocking(move || {
+            files::list_dir(&path, cwd.as_deref().map(Path::new), &home, &roots, hidden)
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        match listed {
+            files::Listed::Dir(d) => Ok(AgentResponse::DirListed(d)),
+            files::Listed::Missing => Err(ErrorBody::new(ErrorCode::NotFound, "이 경로에 읽을 수 있는 폴더가 없다")),
+            files::Listed::Outside => Err(ErrorBody::new(
+                ErrorCode::Forbidden,
+                "허용한 폴더 밖이라 열지 않는다(그 머신 agent.toml [agent] file_roots)",
+            )),
+        }
+    }
+
     /// report.md hash를 1초마다 보고 바뀌면 host에 알린다. 등록하면 지금 값을 한 번 보낸다.
     fn watch_report(self: &Arc<Self>, thread: String, work_dir: PathBuf) {
         let me = self.clone();
@@ -762,6 +789,7 @@ impl Agent {
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
+            AgentRequest::DirList { session, path, hidden } => self.dir_list(&session, path, hidden).await,
             AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();
                 let me = self.clone();
