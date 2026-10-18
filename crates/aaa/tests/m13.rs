@@ -2124,7 +2124,7 @@ fn thread_state_items_follow_groups() {
 }
 
 /// 끝난 세션을 지우는 resolve·`pane close`는 session host가 종료 뒤 더 응답하는 창(늦게 붙는 agent용, 2초)을 기다리지
-/// 않는다(t-0338 넘김: resolve 한 번 2.05초, plan §8.151). 창을 agent가 pump를 기다리는 한도(5초)보다 길게 두면, 창을 기다리는 agent는
+/// 않는다(t-0338 넘김: resolve 한 번 2.05초, plan §8.153). 창을 agent가 pump를 기다리는 한도(5초)보다 길게 두면, 창을 기다리는 agent는
 /// 「session host가 아직 닫히지 않았다」로 pane을 지우지 못한다
 #[test]
 fn closing_ended_sessions_does_not_wait_for_the_session_host_linger() {
@@ -2722,11 +2722,11 @@ fn coordinator_flow() {
         std::fs::read_to_string(pdir.join("TASKS.md")).unwrap().replace("(fake@labA)", &format!("(fake@labA) · {id}"));
     std::fs::write(pdir.join("TASKS.md"), md).unwrap();
 
-    // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다. 보내기는 brief 받음 뒤에만 된다: 가짜 agent는 brief를
-    // 읽자마자 보고를 써서 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있다(ci-local, f4f1085 뒤)
-    let report_next = w
-        .wait_show("보고·brief 받음", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered")["next"]
-        .clone();
+    // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다
+    // `--line`은 메시지라 brief를 받은 뒤에만 간다: host는 brief를 친 뒤 다음 화면 보기(250ms)에서야 delivered로 적는데,
+    // 가짜 agent는 brief 줄을 읽자마자 보고를 쓴다(부하에서 「아직 brief를 받지 않았다」, 다른 시험의 `ready`와 같은 기다림)
+    let report_next =
+        w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered")["next"].clone();
     let mut want: Vec<Value> = report_next.as_array().unwrap().clone();
     assert!(!want.is_empty(), "가짜 agent 보고에는 Next가 있다");
     assert_eq!(w.h.ok(&["thread", "next", "demo", &id])["lines"], report_next);

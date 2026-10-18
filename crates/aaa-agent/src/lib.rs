@@ -16,6 +16,7 @@ pub mod hooks;
 pub mod identity;
 pub mod link;
 mod page;
+mod plan;
 mod pr;
 pub mod threads;
 
@@ -75,6 +76,10 @@ pub struct Agent {
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
     /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
     harness_started: Mutex<HashMap<String, String>>,
+    /// 세션마다 계획·배경 작업 수 추적(plan.rs, 차이 목록 S5)
+    plans: Mutex<HashMap<String, plan::Track>>,
+    /// 세션마다 지금 harness 프로세스가 시작한 때(Claude SessionStart startup·resume, ms)
+    plan_since: Mutex<HashMap<String, u64>>,
     /// 세션마다 진행 알림 기록(Claude hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
     /// 한 번 일찍 갈 수 있을 뿐이다.
     progress: Mutex<HashMap<String, hooks::Progress>>,
@@ -116,6 +121,8 @@ impl Agent {
             harness_last: Mutex::new(HashMap::new()),
             labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
+            plans: Mutex::new(HashMap::new()),
+            plan_since: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
@@ -151,6 +158,12 @@ impl Agent {
         let spec: SpecFile = util::read_json(&SessionPaths::new(&self.state, &msg.session).spec())?;
         if hooks::hook_token(&spec.token) != msg.token {
             bail!("hook token이 맞지 않는다");
+        }
+        if msg.harness == "claude"
+            && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
+            && matches!(msg.payload.get("source").and_then(|v| v.as_str()), Some("startup" | "resume"))
+        {
+            self.harness_process_started(&msg.session, util::now_ms());
         }
         let now = util::now_ms();
         if let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, now) {
@@ -219,6 +232,8 @@ impl Agent {
             percent: None,
             at_ms: util::now_ms(),
             transcript: None,
+            plan: None,
+            background: None,
         })
         .await;
     }
@@ -978,7 +993,7 @@ impl Agent {
     /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
     /// pump가 붙어 있으면 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
     /// session host는 종료를 알린 뒤에도 2초 더 응답하므로(늦게 붙는 agent도 마지막 화면을 받게) 그 연결은 여기서 닫는다:
-    /// 종료는 이미 받았고 마지막 화면은 파일에 있다. 닫기를 기다리면 끝난 thread resolve·pane 닫기마다 2초가 걸렸다(t-0338, plan §8.151).
+    /// 종료는 이미 받았고 마지막 화면은 파일에 있다. 닫기를 기다리면 끝난 thread resolve·pane 닫기마다 2초가 걸렸다(t-0338, plan §8.153).
     async fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
@@ -1077,6 +1092,8 @@ enum Slot {
     Session,
     /// 상태(화면 감지, 끝남). 세션 ID 사건이 이것을 덮으면 다시 붙은 host가 상태를 잃는다.
     State,
+    /// 계획·배경 작업 수(plan.rs)
+    Plan,
 }
 
 impl Slot {
@@ -1085,6 +1102,7 @@ impl Slot {
         match e.kind.as_str() {
             _ if e.harness == "report" => Some(Slot::Report),
             "session_start" | "session" => Some(Slot::Session),
+            "plan" => Some(Slot::Plan),
             "prompt_submit" => None,
             _ => Some(Slot::State),
         }

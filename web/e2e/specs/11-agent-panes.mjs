@@ -379,6 +379,56 @@ export default async function ({ ctl, page }) {
     for (const n of ["o1", "o2", "o3"]) aaa("pane", "kill", n);
   });
 
+  await step("계획 n/m·배경 작업 수(herdr-web-ui AgentSidebar `PlanBadge`·`BackgroundBadge`, 차이 목록 S5): agent가 Claude 기록의 TaskCreate·TaskUpdate와 배경 명령·배경 하위 agent를 읽어 Agents 줄에 보이고, 끝남 알림이 오면 배경 수가 준다", async () => {
+    const dir = `${root}/claude/projects/-lab-plan`;
+    fs.mkdirSync(dir, { recursive: true });
+    const tr = `${dir}/p1.jsonl`;
+    fs.writeFileSync(tr, "");
+    aaa("tab", "create", "--machine", "labA", "--label", "plan1", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
+      JSON.stringify({ hook_event_name: "SessionStart", session_id: "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a", source: "startup", transcript_path: tr }));
+    // 배경 작업은 지금 Claude 프로세스(SessionStart startup) 뒤에 띄운 것만 센다: hook이 닿은 뒤에 기록을 쓴다
+    await until("plan1 harness", () => aaa("pane", "list").panes.find((p) => p.name === "plan1")?.agent?.harness === "claude");
+    const at = () => new Date().toISOString();
+    const L = (o) => JSON.stringify(o) + "\n";
+    const call = (id, name, input) => L({ type: "assistant", timestamp: at(), message: { content: [{ type: "tool_use", id, name, input }] } });
+    const answer = (id, text, result) => L({ type: "user", timestamp: at(), toolUseResult: result, message: { content: [{ type: "tool_result", tool_use_id: id, content: text }] } });
+    const created = (id, n, subject, activeForm) => call(id, "TaskCreate", { subject, activeForm }) + answer(id, `Task #${n} created successfully: ${subject}`, { task: { id: String(n) } });
+    const updated = (id, n, status) => call(id, "TaskUpdate", { taskId: String(n), status }) + answer(id, "Updated", { success: true });
+    const note = (task, tool) => `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>${tool}</tool-use-id>\n<status>completed</status>\n<summary>끝</summary>\n</task-notification>`;
+    fs.appendFileSync(
+      tr,
+      created("c1", 1, "읽기", "읽는 중") + created("c2", 2, "고치기", "고치는 중") + created("c3", 3, "시험", "시험하는 중") +
+        updated("u1", 1, "completed") + updated("u2", 2, "in_progress") +
+        call("b1", "Bash", { command: "cargo test", run_in_background: true }) + answer("b1", "Command running in background with ID: bg1", { backgroundTaskId: "bg1" }) +
+        call("a1", "Agent", { description: "찾기", run_in_background: true }) + answer("a1", "Async agent launched successfully.", { status: "async_launched", agentId: "ag1" }),
+    );
+    const row = page.getByTestId("agent-row-plan1");
+    const plan = row.getByTestId("plan-progress");
+    const bg = row.getByTestId("background-tasks");
+    const textIs = async (loc, what, want) => {
+      let last = null;
+      await until(what, async () => (last = (await loc.count()) ? await loc.innerText() : null) === want).catch((e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      });
+    };
+    await textIs(plan, "계획 1/3", "1/3");
+    await textIs(bg, "배경 둘", "2");
+    if ((await plan.getAttribute("title")) !== "계획 3단계 중 1단계 끝남 · 고치는 중") throw new Error(`계획 title: ${await plan.getAttribute("title")}`);
+    // CLI·TUI도 같은 값을 본다(PaneView.agent)
+    const a = aaa("pane", "list").panes.find((p) => p.name === "plan1").agent;
+    if (JSON.stringify([a.plan, a.background]) !== JSON.stringify([{ done: 1, total: 3, current: "고치는 중" }, 2])) throw new Error(JSON.stringify(a));
+    await shot(page, "desktop-agents-plan");
+    // 끝남 알림: 배경 명령은 queue-operation으로, 배경 하위 agent는 사람 쪽 글로 온다(같은 알림이 여러 자리에 실린다)
+    fs.appendFileSync(tr, L({ type: "queue-operation", operation: "enqueue", timestamp: at(), content: note("bg1", "b1") }));
+    await textIs(bg, "배경 하나", "1");
+    fs.appendFileSync(tr, L({ type: "user", timestamp: at(), message: { role: "user", content: note("ag1", "a1") } }));
+    await textIs(bg, "배경 없음", null);
+    fs.appendFileSync(tr, updated("u3", 2, "completed") + updated("u4", 3, "completed"));
+    await textIs(plan, "계획 3/3", "3/3");
+    if (!(await plan.getAttribute("class")).includes("is-done")) throw new Error("다 끝난 계획이 is-done이 아니다");
+    aaa("pane", "kill", "plan1");
+  });
+
   await step("처음 보기(herdr-web-ui settings `defaultView`·paneLens.ts, 차이 목록 C1): 자동이면 터치 화면의 agent pane은 대화, 데스크톱·셸은 터미널, pane에서 바꾼 보기는 그 pane에 남고, 설정 「패널 기본 화면」을 바꾸면 그것이 모두에게", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "lens1", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
     await page.getByTestId("agent-lens1").and(page.locator('[data-status="idle"]')).waitFor();
