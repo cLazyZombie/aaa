@@ -1371,13 +1371,13 @@ pub enum FrontRequest {
     PaneUnwatch {
         pane: String,
     },
-    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.150). 프로그램에는 아무것도 가지 않는다.
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.151). 프로그램에는 아무것도 가지 않는다.
     PaneScroll {
         pane: String,
         by: ScrollBy,
     },
     /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.26부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
-    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.153).
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.154).
     PaneSelectionRead {
         pane: String,
         from: TextPoint,
