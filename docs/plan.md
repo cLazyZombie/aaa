@@ -3937,6 +3937,27 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   (clipboard는 page 안에서 받아 사람의 것을 덮지 않음), 복사가 안 되면 알림 줄·다시 되면 지움, 30줄 사람 말은 접힘·펼침·다시 접힘, 짧은 말에는 단추 없음.
   결함 심기 다섯(접기 없음, 복사 늘 보임, 일반 텍스트가 Markdown 그대로, 복사 실패 안 알림, 기둥 폭 없음) 모두 실패.
 
+### 8.183 다시 올라온 웹의 머리줄: 위 안전 영역을 비킨다(10-18, coordinator 실기 13:57 383072b 배포 뒤 iPhone 홈 화면 앱)
+
+- **본 것.** 앱이 백그라운드에서 올라오며 새 웹(index-DNxTFuOB)을 읽은 뒤, 대화 보기 머리줄(≡·제목·보고·터미널·…)이 통째로 사라지고
+  내용이 상태 막대 밑까지 올라갔다. 굴리거나 끌어도 돌아오지 않았고, 앱을 완전히 닫고 새로 열면 정상이었다.
+- **원인(코드와 참고로 가름, 실기 원인 확인은 배포 뒤).** aaa 머리줄(`.term-head`·`.list-head`)은 높이 52px에 위 안전 영역을 두지 않는다.
+  참고 herdr-web-ui(aa624cb) `.app-header`는 `height: calc(var(--header-h) + env(safe-area-inset-top))`·`padding-top: env(safe-area-inset-top)`이다.
+  aaa도 drawer·scrim은 이미 `--head + 위 안전 영역` 아래에 세웠다. 상태 막대 문구를 두지 않은 홈 화면 앱은 보통 상태 막대 아래부터
+  그리지만(위 안전 영역 0), 다시 올라온 웹이 상태 막대 밑부터 그리면 위 안전 영역(iPhone 세로 약 59px)이 52px 머리줄을 통째로 덮는다.
+  보인 모습(머리줄 전체가 없고 내용이 상태 막대 밑부터, 굴려도 그대로)이 이것과 같다. 참고 docs/ios-home-screen-testing.md도 이 문구 없는
+  설치에서 iOS 26의 viewport 넘침(WebKit #316008)과 설치 때 정해지는 동작을 위험으로 적는다. 어느 길이 그리 만드는지는 헤드리스에서 가를 수 없다.
+- **고침.** 두 머리줄을 참고처럼 `--head + 위 안전 영역` 높이에 그만큼 위 여백을 둔다(휴대폰 `.term-head` 여백 규칙도). 좁은 창 drawer 안의
+  목록 머리는 이미 비킨 머리줄 아래라 더하지 않는다. 머리줄이 없는 프로젝트 화면(`.project-threads`)도 위 여백에 더한다.
+  위 안전 영역이 0인 지금의 처음 연 앱·데스크톱·Android는 그대로다.
+- **소리.** 같은 때 알림 결과 「소리 못 냄(소리 문맥 멈춤)」은 맞는 동작이다. 참고 `alertSound.ts`도 다시 올라온 뒤(iOS `interrupted`)나
+  새 웹(문맥 없음)은 누름 안에서만 `resume()`하고 그때까지 소리를 건너뛴다(늦게 울리지 않게). aaa `alerts.ts`도 같은 누름 풀기다.
+- **시험.** 웹 E2E 15 「iPhone 다시 올라온 웹의 머리줄」(iPhone 가짜 기기·홈 화면 앱): 처음 연 앱에서 머리줄이 맞는지 보고, CDP
+  `Emulation.setSafeAreaInsetsOverride`로 위 59px를 주어 상태 막대 밑부터 그린 웹을 흉내 낸다. visibilitychange·pageshow(persisted) 뒤와
+  새로 읽은 뒤 ≡·제목·상태가 59px 아래이고 머리줄 안이며 대화가 머리줄 아래인지, drawer가 머리줄 바로 아래(111px)이고 그 안 목록 머리가
+  52px인지, 프로젝트 화면 ≡가 59px 아래인지 본다. 고치기 전 실패(`.drawer-toggle 위 5.5 < 상태 막대 59` 등), 고친 뒤 통과. 결함 심기 셋
+  (휴대폰 머리줄 위 여백 없음 → ≡ 35 < 59, drawer 목록 머리가 더함 → 111 ≠ 52, 프로젝트 화면 위 여백 없음 → ≡ 16 < 59) 모두 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

@@ -4,7 +4,8 @@
   width: 100%;
   max-width: 880px;
   margin: 0 auto;
-  padding: var(--space-4) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom));
+  /* 위는 상태 막대 밑부터 그리는 홈 화면 앱의 안전 영역을 비킨다(머리줄과 같다, plan §8.183) */
+  padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom));
   overflow-y: auto;
   min-height: 0;
   height: 100%;
