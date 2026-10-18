@@ -155,4 +155,73 @@ export default async function () {
     await app.page.context().close();
     aaa("pane", "kill", "shadow-이름-뜻-메모-머리줄");
   });
+
+  await step("iPhone 다시 올라온 웹의 머리줄(coordinator 실기 10-18 13:57 「백그라운드에서 올라오며 새 웹이 실린 뒤 머리줄이 통째로 사라지고 내용이 상태 막대 밑까지」): 홈 화면 앱이 상태 막대 밑부터 그리면(위 안전 영역 59px, CDP로 흉내) 머리줄은 참고 .app-header처럼 그만큼 길어져 ≡·제목·상태가 상태 막대 아래에 남고, visibilitychange·pageshow(persisted)·새로 읽기 뒤에도 그렇다. drawer는 머리줄 바로 아래에 서고 그 안 목록 머리는 안전 영역을 더하지 않는다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "resume-head", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
+    const app = await pairDevice(browser, aaa("web", "pair").code, "iphone", { standalone: true });
+    const ph = app.page;
+    await inList(ph, "pane-resume-head");
+    await ph.getByTestId("chat").waitFor();
+    await ph.locator(".term-head .chip.agent.idle").waitFor();
+    // 머리줄의 문제를 모은다(빈 목록이면 통과). inset은 상태 막대가 가린 위쪽 높이다
+    const problems = (inset) =>
+      ph.evaluate((inset) => {
+        const out = [];
+        const head = document.querySelector(".term-head");
+        const box = head.getBoundingClientRect();
+        if (box.top !== 0) out.push(`머리줄 맨 위가 아니다 ${box.top}`);
+        for (const sel of [".drawer-toggle", ".term-title-line", ".chip.agent"]) {
+          const r = head.querySelector(sel).getBoundingClientRect();
+          if (r.top < inset - 0.5) out.push(`${sel} 위 ${r.top.toFixed(1)} < 상태 막대 ${inset}`);
+          if (r.bottom > box.bottom + 0.5) out.push(`${sel} 아래 ${r.bottom.toFixed(1)} > 머리줄 ${box.bottom.toFixed(1)}`);
+        }
+        const chat = document.querySelector('[data-testid="chat"]').getBoundingClientRect();
+        if (chat.top < box.bottom - 0.5) out.push(`대화 위 ${chat.top.toFixed(1)} < 머리줄 아래 ${box.bottom.toFixed(1)}`);
+        return out;
+      }, inset);
+    const fits = async (inset, what) => {
+      const got = await problems(inset);
+      if (got.length) throw new Error(`${what}: ${got.join("; ")}`);
+    };
+    await fits(0, "처음 연 앱");
+    // 다시 올라온 웹: 상태 막대 밑부터 그린다(위 안전 영역). override는 이 CDP 연결이 있는 동안 새로 읽기 뒤에도 남는다
+    const cdp = await ph.context().newCDPSession(ph);
+    await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 59, bottom: 34 } });
+    await until("안전 영역 흉내", () => ph.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:fixed;top:0;height:env(safe-area-inset-top,0px)";
+      document.body.append(probe);
+      const h = probe.getBoundingClientRect().height;
+      probe.remove();
+      return h === 59;
+    }));
+    await ph.evaluate(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    });
+    await fits(59, "다시 보인 화면(visibilitychange·pageshow)");
+    await shot(ph, "iphone-resume-head");
+    await ph.reload();
+    await ph.getByTestId("chat").waitFor();
+    await ph.locator(".term-head .chip.agent.idle").waitFor();
+    await fits(59, "새로 읽은 웹");
+    // drawer는 머리줄 바로 아래, 그 안 목록 머리는 상태 막대를 비키지 않는다(머리줄이 비켰다)
+    await ph.locator(".term-head .drawer-toggle").click();
+    await ph.locator(".list.is-open").waitFor();
+    const drawer = await ph.evaluate(() => ({
+      top: Math.round(document.querySelector(".list").getBoundingClientRect().top),
+      head: Math.round(document.querySelector(".term-head").getBoundingClientRect().bottom),
+      listHead: Math.round(document.querySelector(".list-head").getBoundingClientRect().height),
+    }));
+    same(drawer, { top: drawer.head, head: 52 + 59, listHead: 52 }, "drawer 자리");
+    // 머리줄이 없는 프로젝트 화면도 맨 위의 ≡를 상태 막대 아래에 둔다
+    await ph.evaluate(() => (location.hash = "#projects"));
+    await ph.getByTestId("projects").waitFor();
+    const projectsToggle = await ph.getByTestId("projects").locator(".drawer-toggle").evaluate((e) => Math.round(e.getBoundingClientRect().top));
+    if (projectsToggle < 59) throw new Error(`프로젝트 화면 ≡ 위 ${projectsToggle} < 상태 막대 59`);
+    await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: {} });
+    if (app.errors.length) throw new Error(`화면 오류: ${app.errors.join("; ")}`);
+    await app.page.context().close();
+    aaa("pane", "kill", "resume-head");
+  });
 }

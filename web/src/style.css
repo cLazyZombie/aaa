@@ -263,9 +263,11 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: var(--head);
-  min-height: var(--head);
-  padding: 0 var(--space-2) 0 var(--space-4);
+  /* 상태 막대 밑부터 그리는 홈 화면 앱은 위 안전 영역만큼 길어져 내용이 그 아래에 선다(참고 styles.css .app-header, plan §8.181).
+     좁은 창의 drawer 안에서는 화면 머리줄 아래라 더하지 않는다(아래 768px 규칙) */
+  height: calc(var(--head) + env(safe-area-inset-top, 0px));
+  min-height: calc(var(--head) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) var(--space-2) 0 var(--space-4);
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
@@ -359,9 +361,11 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: var(--head);
-  min-height: var(--head);
-  padding: 0 calc(var(--space-3) + var(--inset-r)) 0 calc(var(--space-4) + var(--inset-l));
+  /* 위 안전 영역(참고 .app-header): 홈 화면 앱이 상태 막대 밑부터 그리면 ≡·제목·상태가 그 아래에 남는다. iPhone 홈 화면 앱이
+     백그라운드에서 올라오며 새 웹을 읽은 뒤 상태 막대 밑부터 그려 52px 머리줄이 통째로 가려졌다(coordinator 실기 10-18, plan §8.181) */
+  height: calc(var(--head) + env(safe-area-inset-top, 0px));
+  min-height: calc(var(--head) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) calc(var(--space-3) + var(--inset-r)) 0 calc(var(--space-4) + var(--inset-l));
   border-bottom: 1px solid var(--border);
   /* iOS 26부터 홈 화면 앱은 위 가장자리를 배경 있는 fixed·sticky 상자가 덮지 않으면 거기에 Liquid Glass 가장자리 흐림을 얹는다
      (머리줄 윗줄이 번졌다, 사용자 실기 10-18). 참고 styles.css .app-header처럼 sticky와 불투명 배경을 두어 iOS가 이 색을 쓰게 한다
@@ -689,6 +693,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   /* 참고는 drawer(.sidebar) 안에 .sidebar-shell(height:100%)이 따로 있다. aaa는 한 요소라 그 높이가 top만큼 바닥 줄을
      화면 밖으로 민다: 높이는 top·bottom으로 */
   .list.sidebar-shell { height: auto; }
+  /* drawer는 화면 머리줄(이미 상태 막대를 비킨) 아래에 선다: 그 안 목록 머리는 위 안전 영역을 더하지 않는다 */
+  .list-head { height: var(--head); min-height: var(--head); padding-top: 0; }
   .list.is-open {
     transform: translateX(0);
     visibility: visible;
@@ -723,7 +729,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .sec { padding: var(--space-2) var(--space-3) var(--space-1); }
   .pane { min-height: 56px; font-size: var(--fs-chat); padding: var(--space-2) var(--space-3); gap: var(--space-3); }
   .row-sub { font-size: var(--fs-sm); }
-  .term-head { padding: 0 calc(var(--space-2) + var(--inset-r)) 0 calc(var(--space-2) + var(--inset-l)); gap: var(--space-2); }
+  .term-head { padding: env(safe-area-inset-top, 0px) calc(var(--space-2) + var(--inset-r)) 0 calc(var(--space-2) + var(--inset-l)); gap: var(--space-2); }
   .term-title { flex-direction: column; align-items: flex-start; gap: 0; line-height: 1.25; }
   /* 세로 배치에서 flex-start면 줄 폭이 내용 폭이라 말줄임이 걸리지 않고 둘째 줄이 상태 표시 밑까지 칠해졌다: 칸 폭에 묶는다 */
   .term-title > * { max-width: 100%; }
