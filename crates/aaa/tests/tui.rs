@@ -1657,17 +1657,21 @@ fn paste_and_image_drop_like_herdr() {
     let note = lab.root.join("note.txt");
     std::fs::write(&note, "hello").unwrap();
     let missing = lab.root.join("missing.png");
-    for p in [note.display().to_string(), "shot.png".to_string(), missing.display().to_string()] {
+    let pastes = [note.display().to_string(), "shot.png".to_string(), missing.display().to_string()];
+    for (i, p) in pastes.iter().enumerate() {
         tui.send(format!("\x1b[200~{p}\x1b[201~").as_bytes());
         tui.send(b"\r");
         mark(&mut tui, "end-b");
         assert_eq!(tui.text().matches(p.as_str()).count(), 2, "글로 붙인 {p}:\n{}", tui.text());
+        // ^C는 표지가 cat을 지나온 뒤에만 보낸다: 셸이 `clear`와 `cat` 사이일 때 닿으면 cat이 남아 다음 명령 줄을 읽는다
         tui.send(b"\x03");
-        tui.type_line("clear; cat -v");
-        tui.wait_text("화면 지움", |s| !s.contains("end-b"));
+        if i + 1 < pastes.len() {
+            // 다음 붙여넣기는 cat이 뜨기 전에 와도 입력으로 기다린다
+            tui.type_line("clear; cat -v");
+            tui.wait_text("화면 지움", |s| !s.contains("end-b"));
+        }
     }
     assert!(attachments(&h.state).is_empty(), "그림이 아닌 붙여넣기에 첨부가 생겼다");
-    tui.send(b"\x03");
 
     // 3) 프로그램이 2004를 켜면 host가 감싸고 글 안의 ESC는 뺀다(글 안의 `ESC[201~`가 붙여넣기를 일찍 끝내지 못한다).
     //    `ESC[201~` 자체는 바깥 터미널 붙여넣기의 끝이라 TUI까지 오지 않으므로 다른 CSI로 본다
