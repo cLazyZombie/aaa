@@ -4,7 +4,7 @@
 //! - host는 agent가 작업 폴더를 만들기 전에 brief를 짓는다. 그래서 작업 폴더와 aaa 실행 파일 경로는
 //!   `aaa_proto::BRIEF_WORK_DIR`·`BRIEF_EXE` 자리로 두고, brief.md를 쓰는 agent가 그 머신 값으로 채운다.
 
-use aaa_proto::{BRIEF_EXE, BRIEF_WORK_DIR};
+use aaa_proto::{BRIEF_EXE, BRIEF_WORK_DIR, progress_guidance};
 
 use crate::project::Repo;
 
@@ -61,19 +61,6 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - host는 report.md가 바뀔 때 보고와 library를 host로 복사한다. library 파일을 먼저 두고 report.md를 마지막에 쓴다. symlink는 복사되지 않는다.
 - 이 세션 안의 `aaa` CLI는 보기만 된다(다른 thread·pane에 지시하지 않는다).
 ";
-
-/// 진행 보고 안내(herdr-projects `progress::guidance`를 옮김). `prefix`는 그 머신 aaa 실행 파일이다.
-pub(crate) fn progress_guidance(prefix: &str) -> String {
-    format!(
-        "사용자의 지금 일 전체가 얼마나 됐는지 `{prefix} report`로 알린다. 이것은 타이머나 도구 수가 아니라 너의 어림이다. 보고가 실패해도 실제 일을 멈추지 않는다: 짧은 진단 한 줄만 남기고 다시 하지 않고 이어 간다.\n\n\
-         5 단위로 어림한 백분율과 두~네 단어의 활동을 보고한다. 활동은 `코드 읽기`, `변경 시험`, `Waiting for you`처럼 쓴다:\n\n\
-         `{prefix} report --percent 25 --activity '코드 읽기'`\n\
-         `{prefix} report --unknown --activity '일 가늠'`\n\n\
-         새 일을 시작할 때, 의미 있는 고비를 넘긴 뒤, 활동이 바뀔 때, 막혔을 때, 그리고 내용 있는 답을 하기 전마다 보고한다. 사용자에게 무언가 물으려고 멈출 때는 늘 `--activity 'Waiting for you'`로 보고한다(이 말 그대로). 일하는 동안에는 자연스러운 도구 경계에서 1분에 한 번쯤 보고한다. 알림을 채우려고 진행을 지어내지 않는다. 일이 더 있다는 걸 알게 되면 어림을 낮춘다. 범위가 분명하지 않은 동안은 `--unknown`을 쓴다.\n\n\
-         `--percent 100`은 요청받은 결과 전체와 그 확인이 다 끝났을 때만 쓴다. `Done`으로 보인다. 그 뒤 일을 더 받으면 새로 낮은 백분율을 보고한다.\n\n\
-         이 pane의 맨 위 agent만 보고한다. subagent와 도우미는 보고하지 않는다. report 명령은 끝날 때까지 기다리고 배경으로 돌리지 않는다."
-    )
-}
 
 /// 다시 시작한 thread의 안내(herdr-projects `compose_brief`의 restart 문단)
 const RESTART_NOTE: &str = "**이 일을 앞서 시도한 것이 이 작업 폴더(worktree면 branch)에 있다.** 먼저 아래 보고 경로의 보고를 읽고, 이미 있는 것을 본 뒤 거기서 이어 간다.\n\n";

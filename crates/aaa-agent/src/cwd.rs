@@ -31,7 +31,7 @@ pub fn follow_cwd(child_pid: u32) -> Option<PathBuf> {
 
 /// 제어 터미널의 앞 프로세스 그룹(macOS `proc_bsdinfo.e_tpgid`, Linux `/proc/<pid>/stat`의 tpgid)
 #[cfg(target_os = "macos")]
-fn foreground_process_group_id(pid: u32) -> Option<u32> {
+pub(crate) fn foreground_process_group_id(pid: u32) -> Option<u32> {
     if pid == 0 {
         return None;
     }
@@ -80,7 +80,7 @@ fn process_cwd(pid: u32) -> Option<PathBuf> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn foreground_process_group_id(pid: u32) -> Option<u32> {
+pub(crate) fn foreground_process_group_id(pid: u32) -> Option<u32> {
     // "pid (comm) state ppid pgrp session tty_nr tpgid ...": comm에 빈칸·괄호가 있을 수 있어 마지막 ')' 뒤부터 센다
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = stat.get(stat.rfind(')')? + 2..)?;

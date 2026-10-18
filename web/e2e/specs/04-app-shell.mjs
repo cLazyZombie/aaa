@@ -1,4 +1,4 @@
-// 웹 E2E 앱 틀: 화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·명령 팔레트.
+// 웹 E2E 앱 틀: 안전 영역·화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·명령 팔레트.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 04-app-shell(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
@@ -7,6 +7,43 @@ import {
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("안전 영역(herdr-web-ui styles.css safe-area-inset, 차이 목록 M3): 가로로 둔 휴대폰의 노치를 목록은 왼쪽, 터미널 칸은 오른쪽(좁으면 양쪽)으로 비킨다", async () => {
+    // 가로 휴대폰(844×390, 두 칸)과 좁은 가로(667×375, 한 칸). Chromium이 env(safe-area-inset-*)를 이 값으로 준다
+    const measure = (p) =>
+      p.evaluate(() => {
+        const pad = (sel) => {
+          const el = document.querySelector(sel);
+          if (!el || !el.getClientRects().length) return null;
+          const cs = getComputedStyle(el);
+          return [parseFloat(cs.paddingLeft), parseFloat(cs.paddingRight)];
+        };
+        return { list: pad(".list"), head: pad(".term-head"), scroll: pad(".term-scroll"), keys: pad(".key-bar"), input: pad(".terminal-input") };
+      });
+    const open = async (viewport, line) => {
+      const { page: p } = await pairPage(browser, aaa("web", "pair").code, viewport, { touch: true, line });
+      const cdp = await p.context().newCDPSession(p);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, left: 47, right: 47, bottom: 21 } });
+      await p.getByTestId("pane-t1").click();
+      await until("t1 화면", async () => (await screenText(p)).includes("$"));
+      return p;
+    };
+    const wide = await open({ width: 844, height: 390 });
+    const w = await measure(wide);
+    const want = { list: [47, 0], head: [16, 12 + 47], scroll: [16, 16 + 47], keys: [8, 8 + 47] };
+    for (const [k, v] of Object.entries(want)) if (JSON.stringify(w[k]) !== JSON.stringify(v)) throw new Error(`가로 두 칸 ${k} ${JSON.stringify(w[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(w)})`);
+    await shot(wide, "phone-landscape-safe-area");
+    await wide.context().close();
+    // 한 칸씩 보이는 좁은 가로: 터미널 칸이 양쪽을 비킨다(입력줄 화면)
+    const narrow = await open({ width: 667, height: 375 }, true);
+    const n = await measure(narrow);
+    const wantN = { head: [8 + 47, 8 + 47], scroll: [8 + 47, 8 + 47], keys: [8 + 47, 8 + 47], input: [8 + 47, 8 + 47] };
+    for (const [k, v] of Object.entries(wantN)) if (JSON.stringify(n[k]) !== JSON.stringify(v)) throw new Error(`좁은 가로 ${k} ${JSON.stringify(n[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(n)})`);
+    await narrow.getByRole("button", { name: "목록으로" }).click();
+    const l = await measure(narrow);
+    if (JSON.stringify(l.list) !== "[47,47]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
+    await narrow.context().close();
+  });
+
   await step("화면 켜짐 유지(herdr-web-ui keepScreenOn·wakeLock, 차이 목록 M6): 켜면 pane을 보는 동안 screen wake lock, 가려지면 놓고 다시 보이면 다시, 끄면 놓음, 이 기기에 저장", async () => {
     // wake lock은 headless에서 거절될 수 있다: 요청·놓기를 기록하는 것으로 바꾼다
     const init = () => {
