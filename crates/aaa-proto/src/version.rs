@@ -74,7 +74,6 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 ///   옛 host는 보내지 않아 TUI가 링크 없이 그린다).
 /// 1.37: Post·PostStatus·PostList·PostUnmute(§8.199). 1.36이 배포되어 다음 판으로 분리한다.
 /// 1.38: library publish·import·prune·rotate·전체 목록·앱 안 열기·용량(§8.200).
-
 /// 1.39: 임무 목록·승인·수명주기와 ThreadView.mission.
 pub const FRONT_API: Version = Version { major: 1, minor: 39 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
