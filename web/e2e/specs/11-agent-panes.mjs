@@ -217,7 +217,7 @@ export default async function ({ ctl, page }) {
           message: {
             content: [
               { type: "thinking", thinking: "속생각" },
-              { type: "text", text: "캐시를 넣었다" },
+              { type: "text", text: "캐시를 **넣었다**" },
               { type: "tool_use", name: "Bash", input: { command: "cargo test" } },
             ],
           },
@@ -236,6 +236,18 @@ export default async function ({ ctl, page }) {
     await until("대화 줄", async () => (await roles()).length === 3);
     const want = [["user", "결제 지연을 줄여 줘"], ["assistant", "캐시를 넣었다"], ["tool", "Bash: cargo test"]];
     if (JSON.stringify(await roles()) !== JSON.stringify(want)) throw new Error(JSON.stringify(await roles()));
+    // 사람·답 말은 Markdown(참고 ChatView, plan §8.175): 굵게는 strong이고 「**」가 남지 않는다. 사람 말은 카드, 답은 카드 없이
+    const look = await chat.evaluate((c) => {
+      const user = c.querySelector('[data-role="user"]');
+      const answer = c.querySelector('[data-role="assistant"]');
+      return {
+        strong: answer.querySelector(".markdown strong")?.textContent,
+        raw: answer.textContent.includes("**"),
+        userCard: getComputedStyle(user).borderTopStyle !== "none" && getComputedStyle(user).backgroundColor !== "rgba(0, 0, 0, 0)",
+        answerBare: getComputedStyle(answer).borderTopStyle === "none" && getComputedStyle(answer).backgroundColor === "rgba(0, 0, 0, 0)",
+      };
+    });
+    if (JSON.stringify(look) !== JSON.stringify({ strong: "넣었다", raw: false, userCard: true, answerBare: true })) throw new Error(`대화 Markdown ${JSON.stringify(look)}`);
     // 생각·도구 결과·끼운 글을 빼는 규칙은 agent chat.rs `claude_tail_filters`가 본다(위 세 줄이 그대로면 빠졌다)
     // 새 줄이 생기면 따라간다
     // 글 속 파일 경로는 그 pane의 파일 보기로 연다(plan §8.171, 참고 ChatView `OpenFileContext`)
@@ -259,7 +271,7 @@ export default async function ({ ctl, page }) {
     await thinkingSetting(false);
     await until("생각을 끄면 뺀다", async () => (await roles()).length === 4);
     // 설정 「채팅 글자 크기」(herdr-web-ui chatFontSize·--chat-scale, 차이 목록 T4): 한 칸 크게 하면 답 줄 글자가 커지고, 작게 하면 돌아온다
-    const answerPx = () => chat.locator('[data-role="assistant"]').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+    const answerPx = () => chat.locator('[data-role="assistant"] .markdown').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
     const before = await answerPx();
     const chatFont = async (button) => {
       const d = await openSettings(page, "채팅");
