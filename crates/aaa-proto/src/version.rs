@@ -37,8 +37,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.20: `pane_chat`의 `thinking`과 ChatRole `thinking`(plan §8.129),
 /// 1.21: 병합 대기열 요청(`merge_enqueue`·`merge_drop`·`merge_list`·`merge_land`)을 없앰(옛 front가 보내면 모르는 요청
 /// 오류다), resolve `skip_copy`·`discard_uncopied`(plan §8.135),
-/// 1.22: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.141),
-/// 1.23: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.144·§8.145)
+/// 1.22: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.142),
+/// 1.23: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.145·§8.146)
 pub const FRONT_API: Version = Version { major: 1, minor: 23 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
