@@ -3,7 +3,7 @@
 
 import {
   webkit, AA, sleep, aaa, until, screenText, shot, fakeViewport, softKeyboard, pairPage, step, browser,
-  openSettings,
+  openSettings, focusIs,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -286,10 +286,11 @@ export default async function ({ ctl, page }) {
     const headings = () => palette.locator(".palette-section-name").allTextContents();
     const firstOption = () => palette.getByRole("option").first().innerText();
 
-    // 돋보기로 열면 검색 칸이 focus를 받고, 찾지 않은 목록은 머신의 pane 묶음과 동작이다
+    // 돋보기로 열면 검색 칸이 focus를 받고, 찾지 않은 목록은 머신의 pane 묶음과 동작이다. focus는 연 다음 frame에 온다
+    // (useFocusTrap requestAnimationFrame): 보이자마자 보면 부하 아래 그 frame 앞이다(ci-local 10-18 09:2x)
     await dp.getByTestId("palette-open").click();
     await search.waitFor();
-    if (!(await search.evaluate((e) => e === document.activeElement))) bad.push("열어도 검색 칸에 focus가 없다");
+    await focusIs(dp, "열면 검색 칸", '[data-testid="command-palette"] input[type="search"]');
     const opened = await headings();
     if (!opened.includes("pane") || opened.at(-1) !== "동작") bad.push(`처음 묶음 ${JSON.stringify(opened)}`);
     const all = await palette.locator('.palette-filter[data-status="all"] .palette-filter-count').innerText();
