@@ -8,7 +8,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ApiError, call, me, onSignedOut, pushInfo, signOut, tellAlert, watchEvents } from "./api";
+import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
@@ -29,7 +29,7 @@ import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
-import { justWoke, raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
+import { raiseAlert, wokeSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
 import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
@@ -281,7 +281,22 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const linkedOnce = useRef({ questions: false, threads: false });
   const now = useRef({ sel, panes, threads, machines, role });
   now.current = { sel, panes, threads, machines, role };
-  const questionNews = (q: QuestionView, replay = false) => {
+  // 늦은 알림(멈췄다 깬 페이지가 받은 사건, 다시 붙어 읽은 놓친 사건): 이 기기에 그 뒤 이미 push로 보낸 항목이면 앱 안에서
+  // 다시 띄우지 않는다. push가 안 간 항목(push 꺼짐·다른 기기가 쓰는 중이라 건너뜀)만 띄운다(사용자 결정 10-18 「A」, plan §8.135).
+  // 목록의 안 읽음 표시는 그대로다. host에 묻지 못하면 띄운다(놓치지 않는 쪽)
+  const linkDownAt = useRef<number | null>(null);
+  // 늦은지는 사건을 받은 때 정한다(host에 묻는 동안 시간이 간다)
+  type Raise = (late: boolean) => string;
+  const alertLate = (replayFrom: number | null, project: string | null, subject: string | null, raise: Raise, told: (o: string) => void) => {
+    const since = replayFrom ?? wokeSince();
+    if (since === null || project === null || subject === null) return told(raise(since !== null));
+    void pushedSince(since)
+      .then((pushed) => pushed.some((p) => p.project === project && p.subject === subject))
+      .catch(() => false)
+      .then((got) => told(got ? "push로 받음 · 안 띄움" : raise(true)));
+  };
+  /** `replayFrom`: 다시 붙어 읽은 놓친 사건이면 끊긴 때 */
+  const questionNews = (q: QuestionView, replayFrom: number | null = null) => {
     if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
     seenQuestions.current.add(q.id);
     const target = `pane=${encodeURIComponent(q.pane)}`;
@@ -292,10 +307,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const pane = panes.find((p) => p.id === q.pane);
     const thread = q.project && q.thread ? threads.get(`${q.project}/${q.thread}`) : undefined;
     const name = thread?.title || (pane ? pane.name || pane.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8));
-    const outcome = raiseAlert({
+    const raise: Raise = (late) => raiseAlert({
       kind: "blocked",
       target,
-      late: replay || justWoke(),
+      late,
       showing: sel === `pane:${q.pane}`,
       title: name,
       machine: machines.length > 1 ? q.machine : null,
@@ -306,11 +321,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         tag: q.project && q.thread ? `aaa-${q.project}/${q.thread}` : `aaa-pane-${q.pane}`,
       },
     });
-    told(outcome);
+    alertLate(replayFrom, q.project ?? null, q.thread ?? null, raise, told);
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
   const reviewHash = (t: ThreadView) => (t.group === "ready_for_review" ? t.report_hash : null);
-  const reportNews = (t: ThreadView, replay = false) => {
+  const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
     const key = threadKey(t);
     const target = `thread=${encodeURIComponent(key)}`;
     const told = (outcome: string) => tellAlert({ project: t.project, target, kind: "done", outcome });
@@ -326,17 +341,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (t.role === "evaluator") return;
     if (!alertKinds.current?.has("thread-state")) return told(alertKinds.current ? "host 알림 종류에 없음" : "host 알림 종류 아직 모름");
     const { sel, panes } = now.current;
-    const outcome = raiseAlert({
+    const raise: Raise = (late) => raiseAlert({
       kind: "done",
       target,
-      late: replay || justWoke(),
+      late,
       showing: sel === `thread:${key}`,
       title: t.title || t.id,
       machine: null,
       agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
       notice: { title: `${t.project} · ${t.title || t.id}`, body: "보고 준비", tag: `aaa-${t.project}/${t.id}` },
     });
-    told(outcome);
+    alertLate(replayFrom, t.project, t.id, raise, told);
   };
 
   // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.79): 들어온 뒤에만 읽고, events 사건으로 따라간다
@@ -357,6 +372,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         },
         (on) => {
           setUp(on);
+          if (!on) linkDownAt.current ??= Date.now();
+          // 끊긴 때(놓친 사건을 다시 읽을 때 그 뒤 이 기기에 간 push를 본다)
+          const down = on ? (linkDownAt.current ?? Date.now()) : 0;
+          if (on) linkDownAt.current = null;
           if (on)
             pushInfo()
               .then((i) => (alertKinds.current = new Set(i.kinds)))
@@ -367,7 +386,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 if (r.kind !== "questions") return;
                 // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
                 // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
-                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q, true);
+                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q, down);
                 else for (const q of r.questions) seenQuestions.current.add(q.id);
                 linkedOnce.current.questions = true;
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
@@ -383,7 +402,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 if (linkedOnce.current.threads)
                   for (const t of r.threads) {
                     if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
-                    reportNews(t, true);
+                    reportNews(t, down);
                   }
                 else for (const t of r.threads) seenReports.current.set(threadKey(t), reviewHash(t));
                 linkedOnce.current.threads = true;

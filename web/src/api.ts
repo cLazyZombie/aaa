@@ -104,9 +104,24 @@ export type PushInfo = {
   you: boolean;
   kinds: string[];
   alerts: AlertPrefs | null;
+  /** 이 기기에 최근 push로 보낸 항목(옛 host는 없다) */
+  pushed?: PushedItem[];
 };
+export type PushedItem = { project: string; subject: string; at_ms: number };
 export async function pushInfo(): Promise<PushInfo> {
   return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
+}
+/** host와 이 기기의 시계 차이를 덮는다 */
+const PUSHED_SKEW_MS = 5_000;
+let pushedAsk: { at: number; list: Promise<PushedItem[]> } | null = null;
+/**
+ * 이 기기에 `since`(이 기기 시계) 뒤 push로 보낸 항목. 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다
+ * (사용자 결정 10-18 「A」, plan §8.135)
+ */
+export function pushedSince(since: number): Promise<PushedItem[]> {
+  const now = Date.now();
+  if (!pushedAsk || now - pushedAsk.at > 1_000) pushedAsk = { at: now, list: pushInfo().then((i) => i.pushed ?? []) };
+  return pushedAsk.list.then((all) => all.filter((p) => p.at_ms >= since - PUSHED_SKEW_MS));
 }
 /** `alerts`: 이 기기가 받을 알림. host가 이 기기로 보내는 push에 적용한다(참고 registerPushSubscription). 없으면 전에 고른 것을 둔다 */
 export const pushSubscribe = (sub: PushSubscriptionJSON, alerts?: AlertPrefs) =>

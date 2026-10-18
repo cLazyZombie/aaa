@@ -11,6 +11,7 @@
 //! - 알림 한 자리는 thread 하나다(새 것이 옛 것을 바꾼다, herdr-web-ui `paneNotificationTag`). 여러 thread·머신 항목이
 //!   섞이면 프로젝트 한 자리다.
 
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::time::Duration;
 
@@ -338,7 +339,10 @@ impl Host {
                 .map(|r| r.title);
             let body = payload(project, &mine, title.as_deref()).to_string();
             match self.push_one(s, body.as_bytes()).await {
-                Sent::Ok => ok += 1,
+                Sent::Ok => {
+                    ok += 1;
+                    self.pushed.lock().unwrap().record(&s.device, project, &mine, aaa_common::util::now_ms());
+                }
                 Sent::Gone => gone += 1,
                 Sent::Failed(e) => failed.push(e),
             }
@@ -369,6 +373,40 @@ impl Host {
     }
 }
 
+/// push로 보낸 항목 하나(그 기기의 `GET /api/v1/push` `pushed`)
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct PushedItem {
+    pub project: String,
+    /// inbox 항목의 대상(thread ID 등)
+    pub subject: String,
+    pub at_ms: u64,
+}
+
+/// 기기마다 최근에 push로 보낸 항목. 멈췄다 깨어난 페이지가 이미 push로 받은 알림을 앱 안 알림으로 다시 띄우지 않게
+/// 묻는다(사용자 결정 10-18 「A」, plan §8.135). host 메모리에만 둔다: 다시 띄우면 비고, 그러면 웹은 띄운다(놓치지 않는 쪽)
+#[derive(Default)]
+pub(crate) struct PushedLog(HashMap<String, VecDeque<PushedItem>>);
+
+/// 한 기기에 두는 수와 시간(페이지가 멈춰 있을 만한 동안)
+const PUSHED_KEEP: usize = 100;
+const PUSHED_KEEP_MS: u64 = 24 * 60 * 60 * 1000;
+
+impl PushedLog {
+    pub(crate) fn record(&mut self, device: &str, project: &str, items: &[InboxItem], now: u64) {
+        let log = self.0.entry(device.to_string()).or_default();
+        for i in items {
+            log.push_back(PushedItem { project: project.to_string(), subject: i.subject.clone(), at_ms: now });
+        }
+        while log.len() > PUSHED_KEEP || log.front().is_some_and(|p| now.saturating_sub(p.at_ms) > PUSHED_KEEP_MS) {
+            log.pop_front();
+        }
+    }
+
+    pub(crate) fn of(&self, device: &str) -> Vec<PushedItem> {
+        self.0.get(device).map(|l| l.iter().cloned().collect()).unwrap_or_default()
+    }
+}
+
 /// 기기가 고른 알림 종류(N3)에 드는 항목. thread 항목만 가른다: 새 보고는 「작업 완료」, 나머지(질문·확인창·기다림·시작 실패)는
 /// 「입력 필요」. PR·머신·routine 같은 다른 종류는 host 설정(`notify.kinds`)대로 모든 기기에 간다(참고에 없는 aaa 항목)
 pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
@@ -382,6 +420,38 @@ pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<Inbox
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pushed_log_keeps_recent_items_per_device() {
+        let it = |subject: &str| InboxItem {
+            id: subject.into(),
+            project: "demo".into(),
+            item_kind: "thread-state".into(),
+            subject: subject.into(),
+            event: "new report".into(),
+            summary: String::new(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let mut log = PushedLog::default();
+        log.record("phone", "demo", &[it("t-0001"), it("t-0002")], 1_000);
+        log.record("desk", "demo", &[it("t-0003")], 2_000);
+        let subjects = |l: &PushedLog, d: &str| l.of(d).into_iter().map(|p| p.subject).collect::<Vec<_>>();
+        assert_eq!(subjects(&log, "phone"), ["t-0001", "t-0002"]);
+        assert_eq!(log.of("desk")[0], PushedItem { project: "demo".into(), subject: "t-0003".into(), at_ms: 2_000 });
+        assert!(log.of("tablet").is_empty());
+        // 하루가 지난 것은 다음 기록 때 버린다, 기기마다 PUSHED_KEEP개까지
+        log.record("phone", "demo", &[it("t-0004")], 1_000 + PUSHED_KEEP_MS + 1);
+        assert_eq!(subjects(&log, "phone"), ["t-0004"]);
+        let many: Vec<InboxItem> = (0..PUSHED_KEEP + 5).map(|i| it(&format!("t-{i:04}"))).collect();
+        log.record("desk", "demo", &many, 3_000);
+        assert_eq!(log.of("desk").len(), PUSHED_KEEP);
+        // 앞 t-0003과 새 105개 중 오래된 여섯(t-0003, t-0000~t-0004)이 빠진다
+        assert_eq!(log.of("desk")[0].subject, "t-0005");
+    }
 
     #[test]
     fn device_alert_kinds() {
