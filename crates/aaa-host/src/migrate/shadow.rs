@@ -196,6 +196,8 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         harness_session: None,
         // herdr `done`은 「끝남(안 봄)」이다. 묶음 규칙은 이 값을 보지 않는다
         seen: f.agent_state.as_deref() != Some("done"),
+        plan: None,
+        background: None,
     });
     thread_group(&rec, f.pane_exists, agent.as_ref(), now_ms)
 }

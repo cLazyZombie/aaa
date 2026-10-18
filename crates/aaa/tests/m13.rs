@@ -2692,7 +2692,10 @@ fn coordinator_flow() {
     std::fs::write(pdir.join("TASKS.md"), md).unwrap();
 
     // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다
-    let report_next = w.wait_show("보고", &id, |v| v["report_hash"].is_string())["next"].clone();
+    // `--line`은 메시지라 brief를 받은 뒤에만 간다: host는 brief를 친 뒤 다음 화면 보기(250ms)에서야 delivered로 적는데,
+    // 가짜 agent는 brief 줄을 읽자마자 보고를 쓴다(부하에서 「아직 brief를 받지 않았다」, 다른 시험의 `ready`와 같은 기다림)
+    let report_next =
+        w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered")["next"].clone();
     let mut want: Vec<Value> = report_next.as_array().unwrap().clone();
     assert!(!want.is_empty(), "가짜 agent 보고에는 Next가 있다");
     assert_eq!(w.h.ok(&["thread", "next", "demo", &id])["lines"], report_next);

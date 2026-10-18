@@ -40,6 +40,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.22: `ReadSource::Detection`(`pane read --source detection`)(plan §8.110),
 /// 1.23: TUI 붙여넣기 `pane_paste`(plan §8.147),
 /// 1.24: 폴더 보기 `pane_dir`(plan §8.148),
+/// 1.25: `AgentStatus.plan`·`background`(계획 n/m·배경 작업 수, plan §8.151),
 /// 1.26: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.153),
 /// 1.27: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.156·§8.157)
 pub const FRONT_API: Version = Version { major: 1, minor: 27 };

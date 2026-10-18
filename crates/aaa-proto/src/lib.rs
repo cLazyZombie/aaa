@@ -100,6 +100,7 @@ pub fn typescript_bindings() -> String {
         ThreadPr::decl(&cfg),
         FlowEvent::decl(&cfg),
         AgentActivity::decl(&cfg),
+        PlanSummary::decl(&cfg),
         AgentStatus::decl(&cfg),
         QuestionState::decl(&cfg),
         QuestionView::decl(&cfg),

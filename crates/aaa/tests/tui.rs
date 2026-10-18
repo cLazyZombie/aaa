@@ -498,12 +498,12 @@ fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
     (h, hw)
 }
 
-/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(질문 수·다른 화면 크기) 앞.
+/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(사람 차례 수·다른 화면 크기) 앞.
 /// 시험의 탭 이름에는 빈칸을 쓰지 않는다.
 fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
-    let rest = rest.split(" ● 질문").next().unwrap_or(rest);
+    let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
     let mut chips: Vec<String> =
         rest.split_whitespace().filter(|c| !matches!(*c, "+" | "<" | ">" | "…")).map(str::to_string).collect();
@@ -568,14 +568,15 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // harness 상태는 화면으로 바뀌고 사이드바 줄·탭 막대 질문 수·pane badge에 보인다: Claude 권한 확인창
-    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다
+    // harness 상태는 화면으로 바뀌고 사이드바 줄·pane badge에 보인다: Claude 권한 확인창
+    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다. 탭 막대 오른쪽은 thread가 아닌
+    // pane의 질문을 세지 않는다(herdr-projects `projects: N need you`는 thread 수다, side_list_like_web)
     tui.type_line(
         "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
          ' Esc to cancel · Tab to amend'",
     );
     tui.wait_text("질문 상태", |s| {
-        s.lines().next().is_some_and(|l| l.contains(" ● 질문 1 ")) && s.contains("질문 — aaa question")
+        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 사람 차례"))
     });
     tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| {
@@ -1147,6 +1148,13 @@ fn side_list_like_web() {
         side.iter().filter(|l| l.trim() == "demo" || l.starts_with(" demo ")).count() == 1
             && side.iter().any(|l| l.contains(&format!("{beta} · beta-job")))
     });
+    // 탭 막대 오른쪽은 사람이 볼 thread 수다(herdr-projects 탭 줄 `projects: N need you`): 보고 없이 pane이 닫힌 thread는
+    // 사람 차례다. 그 전에는 없다
+    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 사람 차례"), "{}", tui.text());
+    let beta_pane =
+        wait_for("beta pane", T, || h.ok(&["thread", "show", "demo", &beta])["pane"].as_str().map(String::from));
+    h.ok(&["pane", "kill", &beta_pane]);
+    tui.wait_text("사람 차례 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 사람 차례 1 ")));
     // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
