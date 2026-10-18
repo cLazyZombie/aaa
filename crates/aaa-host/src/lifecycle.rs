@@ -1,5 +1,5 @@
 //! 프로젝트 멈추기·보관·삭제·이름 바꾸기·청소(herdr-projects 0.2.35 `lifecycle.rs`·`rename.rs`·`sweep.rs`, 차이 목록 4장 G #592,
-//! plan §8.173).
+//! plan §8.180).
 //!
 //! - 상태는 host DB(`project_status:<프로젝트>`)에 둔다. 참고는 프로젝트 폴더 `.state/project.json`이지만 aaa coordinator의 cwd가
 //!   그 폴더라 파일을 고쳐 멈춘 프로젝트를 되살릴 수 있다(§8.19와 같은 까닭으로 문을 폴더 밖에).

@@ -501,7 +501,7 @@ impl Host {
     }
 
     /// 프로젝트 폴더를 만든다(herdr-projects `new`). PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
-    /// goal·저장소·profile은 준 것만 project.toml에 적는다(안 준 profile은 쓸 때 기본 사슬로 푼다, plan §8.173).
+    /// goal·저장소·profile은 준 것만 project.toml에 적는다(안 준 profile은 쓸 때 기본 사슬로 푼다, plan §8.180).
     pub(crate) fn project_create(
         &self,
         name: &str,
@@ -868,7 +868,7 @@ impl Host {
         self.resolve_launch(mid, name, safety)
     }
 
-    /// coordinator(`project open`, plan §8.173): safety의 coordinator 몫(참고 `Safety::launch_args`의 Role::Coordinator) —
+    /// coordinator(`project open`, plan §8.180): safety의 coordinator 몫(참고 `Safety::launch_args`의 Role::Coordinator) —
     /// 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile에 `coordinator_agent_args`, yolo면 권한 건너뛰기
     pub(crate) fn resolved_coordinator_profile(
         &self,

@@ -1,4 +1,4 @@
-//! `aaa project open`(herdr-projects 0.2.35 `coordinator.rs` `open`, 차이 목록 4장 G 「coordinator 열기」, plan §8.173).
+//! `aaa project open`(herdr-projects 0.2.35 `coordinator.rs` `open`, 차이 목록 4장 G 「coordinator 열기」, plan §8.180).
 //!
 //! - 도는 coordinator가 있으면 아무것도 만들지 않고 가장 최근에 상태가 바뀐 것을 알린다(`--new`면 하나 더). coordinator는
 //!   aaa의 판정(host 머신에서 프로젝트 폴더를 작업 폴더로 도는 pane, [`Host::coordinator_panes`]) 중 agent가 있는 pane이다:

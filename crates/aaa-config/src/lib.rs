@@ -90,7 +90,7 @@ pub struct HostConfig {
     pub update: UpdateSection,
 }
 
-/// 실행 파일 바꾸기(`aaa update`, plan §11·§8.173). 그 Mac의 host.toml·agent.toml 어느 쪽에 둬도 되고 둘 다 적으면 둘 다
+/// 실행 파일 바꾸기(`aaa update`, plan §11·§8.180). 그 Mac의 host.toml·agent.toml 어느 쪽에 둬도 되고 둘 다 적으면 둘 다
 /// 지킨다(agent만 도는 Mac에는 host.toml이 없다). `aaa update`가 쓸 때 읽는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

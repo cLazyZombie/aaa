@@ -338,12 +338,12 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 
 - **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 host가 연결한 프로세스(peer pid의 조상·세션)로 어느 pane 안인지 판정하고 그 pane의 역할로 범위를 정한다. 일반 thread와 사후 평가자(§8.13)는 보기 권한이다. 처음 적은 「세션·역할 범위 token」은 두지 않았다(§8.25 세션 역할, §8.164 host 판정).
 - **다른 기기의 TUI(10-18 coordinator 답, 차이 목록 4장 A 「다른 머신에서 TUI 붙기」 지금 497줄):** 웹 길을 그대로 탄다. 새 listener·인증서·TCP+TLS front는 두지 않는다(처음 적은 「TCP+TLS로 붙는다」를 바꿨다).
-  - 주소: §6.3이 공개한 host 웹 HTTPS 주소(`aaa web publish`, 예: `https://mac-a.example.ts.net:8443`). TLS는 그 주소의 인증서(tailscale serve)가 맡고 TUI는 webpki 루트로 확인한다(처음 적은 OS 신뢰 저장소를 바꿨다, §8.174).
+  - 주소: §6.3이 공개한 host 웹 HTTPS 주소(`aaa web publish`, 예: `https://mac-a.example.ts.net:8443`). TLS는 그 주소의 인증서(tailscale serve)가 맡고 TUI는 webpki 루트로 확인한다(처음 적은 OS 신뢰 저장소를 바꿨다, §8.181).
   - 입장: 웹과 같은 장치 pairing. host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 코드를 내고, 그 기기 TUI가 처음 붙을 때 그 코드를 `POST /api/v1/pair`에 내 장치 token을 받는다. token은 그 기기 상태 폴더에 주소마다 0600으로 둔다(브라우저의 `__Host-aaa` cookie와 같은 값, 같은 기기 기록, 목록·취소는 `aaa web devices`·`aaa web revoke`). 역할(reader/controller)은 그 장치 기록이 정하고 host가 요청마다 판정한다(§6.4).
-  - 통신: 웹 listener의 WebSocket 하나 `GET /api/v1/front`에 같은 머신 socket의 Front API를 그대로 싣는다(글 메시지 하나가 제어 frame 하나, 화면은 cell grid 사건 `Grid`, §8.174). 웹 화면의 끝점 셋(`/api/v1/call`·`events`·`panes/{id}/ws`)을 쓰지 않는 까닭: pane WebSocket은 화면 bytes라 TUI가 VT를 돌려야 하는데 front는 `aaa-vt`에 의존하지 않는다(`cargo test -p aaa --test deps`). TUI는 비브라우저지만 웹 규칙을 그대로 지난다: Host·Origin을 그 공개 주소로 보내고(§8.116 허용 목록), cookie 헤더로 token을 보낸다(HTTPS면 `__Host-aaa`).
+  - 통신: 웹 listener의 WebSocket 하나 `GET /api/v1/front`에 같은 머신 socket의 Front API를 그대로 싣는다(글 메시지 하나가 제어 frame 하나, 화면은 cell grid 사건 `Grid`, §8.181). 웹 화면의 끝점 셋(`/api/v1/call`·`events`·`panes/{id}/ws`)을 쓰지 않는 까닭: pane WebSocket은 화면 bytes라 TUI가 VT를 돌려야 하는데 front는 `aaa-vt`에 의존하지 않는다(`cargo test -p aaa --test deps`). TUI는 비브라우저지만 웹 규칙을 그대로 지난다: Host·Origin을 그 공개 주소로 보내고(§8.116 허용 목록), cookie 헤더로 token을 보낸다(HTTPS면 `__Host-aaa`).
   - 명령: herdr `--remote <ssh-target>`의 aaa 꼴 `aaa attach --remote <웹 주소> [-w <workspace>]`. 키 설정은 그 기기 것이다(herdr `--remote-keybindings` 기본 `local`과 같음).
   - 참고와 다름: herdr는 SSH 너머 서버에 붙는다. aaa는 SSH를 쓰지 않는다(결정 6). 웹과 TUI가 한 입장·권한 모델을 쓴다.
-  - 지금: 있다(§8.174). TLS는 OS 신뢰 저장소 대신 webpki 루트로 확인한다(host의 다른 client와 같은 rustls·ring, tailscale serve 인증서는 Let's Encrypt라 든다). `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다.
+  - 지금: 있다(§8.181). TLS는 OS 신뢰 저장소 대신 webpki 루트로 확인한다(host의 다른 client와 같은 rustls·ring, tailscale serve 인증서는 Let's Encrypt라 든다). `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다.
 - **브라우저:** §6.3의 HTTPS 주소로 붙는다.
 
 ### 6.3 host 웹 HTTPS 공개 — aaa가 Tailscale을 아는 유일한 곳
@@ -3432,7 +3432,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
 - **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
-  - key: `yolo`·`start_threads`·`trust_screens`·`thread_agent_args`·`routine_commands`·`thread_profiles`. 참고의 `coordinator_agent_args`·`coordinator_profiles`·`profile allow|default coordinator`는 없다: aaa는 coordinator를 띄우지 않는다(§8.104, 사람이 연 세션). 그 이름을 주면 까닭을 말하고 거부한다. (→ §8.173 `aaa project open`이 coordinator를 띄우게 되어 `profile default coordinator`를 열었다.)
+  - key: `yolo`·`start_threads`·`trust_screens`·`thread_agent_args`·`routine_commands`·`thread_profiles`. 참고의 `coordinator_agent_args`·`coordinator_profiles`·`profile allow|default coordinator`는 없다: aaa는 coordinator를 띄우지 않는다(§8.104, 사람이 연 세션). 그 이름을 주면 까닭을 말하고 거부한다. (→ §8.180 `aaa project open`이 coordinator를 띄우게 되어 `profile default coordinator`를 열었다.)
   - 값마다 「프로젝트 표 → default 표 → 옛 자리 → 기본값」. 옛 자리는 host.toml `[projects] allow_profiles`(`"*"`는 모두)·`routine_commands`(프로젝트 목록)와 project.toml `start_threads`·`trust_screens`다. 이미 쓴 설정이 그대로 먹게 두었고, project.toml 값은 프로젝트 폴더 안이라 `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 드러낸다.
   - yolo면 `start_threads`는 auto, `trust_screens`가 없으면 coordinator(참고 `default_trust_screens`). `routine_commands`는 yolo와 따로다(켜도 명령마다 사람 승인, §8.19).
   - host는 쓸 때마다 host.toml을 다시 읽는다(`Host::safety`, `aaa_config::safety::read`): 사람이 바꾸면 host를 다시 띄우지 않아도 다음 thread start·신뢰 창 판단·routine·context가 쓴다. 이 읽기는 느슨하다: 다른 절이 깨졌거나 값 하나가 잘못돼도 그 값만 아래 층으로 가고 경고를 남긴다. 시작 때 읽기(`load_host`)는 전처럼 엄격하다(값 검사 포함).
@@ -3689,7 +3689,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   창의 거절과 새 카드, 직접 쓰기(한글), 여러 질문(하나 → 여러 개 체크와 제출 (2) → 검토 → 보내기). 결함 심기: 커서를 무시한 옮기기
   (유닛), 여러 개 끝 → 빠짐·직접 쓰기를 그 줄로 안 옮김(E2E가 각각 실패), 선택지 줄 고정 높이(겹침 단언 실패).
 
-### 8.173 프로젝트·서버 CLI를 참고대로(10-18, 차이 목록 4장 A #495·#497·#502, G #589~#592·#598, H #604)
+### 8.180 프로젝트·서버 CLI를 참고대로(10-18, 차이 목록 4장 A #495·#497·#502, G #589~#592·#598, H #604)
 
 - **routine 일정 형식(#604).** 참고(hp `routine.rs` `parse_schedule`)처럼 `every <N>m|h|d`·`daily HH:MM`만 받는다. 초 단위 `s`는 host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다(E2E가 분 단위로 기다리지 않게, §8.19). 운영 파일의 `every 30s`는 그 routine만 오류(`routine list`의 「초 단위는 받지 않는다 … 가장 짧은 주기는 `every 1m`」, inbox `config-error`)다. 시험 lab이 변수를 붙인다.
 - **프로젝트 만들기(#589).** `aaa project create <p> [--goal 글] [--repo PATH[@MACHINE]]… [--thread-profile 이름] [--coordinator-profile 이름]`(hp `new`). 준 값만 project.toml에 적는다. 값은 폴더를 만들기 전에 모두 맞춰 본다: 틀린 profile 이름이나 그 프로젝트 thread 허용 목록(§8.163, 새 프로젝트는 `[safety.default]`·옛 자리)에 없는 thread profile이면 폴더를 만들지 않는다. 머신 없는 저장소 경로는 CLI가 친 셸의 cwd 기준 절대 경로로 보내고 host가 정본 경로로 바꾼다(없는 경로는 그대로, 참고와 같다). `@MACHINE`의 경로는 그 머신 것 그대로다.
@@ -3735,7 +3735,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 참고와 다름: (1) 내려받기·채널(`herdr channel`)·sha256 manifest 검증이 없다(주어진 파일). (2) herdr는 도는 서버를 멈출지·`--handoff`로 넘길지 묻는다: aaa는 session host가 세션을 가져(결정 3) 다시 띄워도 이어져 묻지 않는다. (3) brew·mise·nix 설치 감지 없음(aaa는 고정 경로 하나). (4) herdr는 같거나 옛 version이면 「already up to date」다: aaa version은 아직 빌드마다 같아(0.1.0) sha256이 같을 때만 「이미 같다」고 하고, 바꿀 때 앞뒤 sha256 앞 12자리를 보인다(runbook 「같은 commit」 확인도 version 대신 sha256). (5) herdr에 없는 rollback·보관은 §11을 따랐다.
   - dev profile에서 sha2를 최적화한다(`[profile.dev.package.sha2] opt-level = 3`): 디버그 실행 파일(100MB 넘음) sha256이 한 번에 3초 걸려 시험이 68초였다(→ 6초).
   - 시험: e2e `update_replaces_keeps_and_rolls_back`(실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다, 「다른 빌드」는 시험 binary 뒤에 바이트를 덧붙인 사본): 터미널 아님·세션 안·`--from` 없음, self-check 실패 셋(돌지 않음·version을 말하지 않음·설정 거부)과 major·고정 거부는 실행 파일·보관·staging이 그대로, `--dry-run`·`no`, 바꾸면 보관이 원본, 같은 파일은 「이미 같다」, new2에서 rollback은 가장 새 보관 new1(원본이 아니다)·다시 하면 new2·보관 수(3) 넘으면 지움, `keep = 1`이면 하나만 남고 그 이름으로 되돌림. 심은 결함 둘(version 검사 빼기, rollback이 가장 옛 것을 고름)이 실패했다.
-- **다른 머신에서 TUI 붙기(#495, 지금 차이 목록 497줄).** coordinator 답: 웹 길(웹 HTTPS 주소·WebSocket·장치 pairing reader/controller), 새 listener·인증서 없음. §6.2를 그렇게 고쳐 적었다(옛 「TCP+TLS로 붙는다」). 구현은 §8.174.
+- **다른 머신에서 TUI 붙기(#495, 지금 차이 목록 497줄).** coordinator 답: 웹 길(웹 HTTPS 주소·WebSocket·장치 pairing reader/controller), 새 listener·인증서 없음. §6.2를 그렇게 고쳐 적었다(옛 「TCP+TLS로 붙는다」). 구현은 §8.181.
 - **계약.** FRONT_API 1.33 하나로 묶는다(main 383072b가 10-18 13:55에 배포돼 배포된 웹이 1.32다 — coordinator 착지 지시. 한 번에 착지해 minor 하나, 배포된 1.32 front가 그대로 붙는다): `project_create`의 선택 필드(goal·repos·thread_profile·coordinator_profile)와 `project_set`, ProjectView `status`·ThreadView `project_status`, `projects` `all`, `project_lifecycle`·`project_delete`·`project_rename`·`project_sweep`, `thread_adopt`와 ThreadKind `adopted`, `project_open`·`ProjectOpened`, ProjectView `coordinator_profile`·`coordinator_profiles`(선택 필드). 이 가지에서는 1.30~1.33 넷으로 나눴다가 main 뒤로 옮기며 1.33 하나로 묶었고, 1.32가 배포되기 전에는 잠깐 1.32에 더했었다. AGENT_LINK는 그대로(sweep은 있는 `ThreadCleanup`, adopt의 `ThreadAdopt`는 agent 기능 `adopt.v1`이 있을 때만 보낸다, coordinator는 main §8.170의 `SpawnSpec.resolved_profile`).
 - **시험(결함 심기로 확인).** m13 `routine_seconds_only_in_tests`(변수가 빈 host에서 `every 30s`는 오류·`every 1m`은 그대로, 변수 검사를 「있기만 하면」으로 되돌리면 실패), host 유닛 `schedules`·`routine_files`. m13 `project_create_options_and_set`(옵션이 project.toml에, 안 준 값은 없음, 프로젝트 기본 profile로 thread가 뜸, 틀린·허용 안 된 profile은 폴더 없음, set은 주석을 두고 값 하나, 상대 경로는 친 cwd 기준, 거부한 set은 파일 그대로), host 유닛 `set_keeps_the_rest_and_checks_values`. 심은 결함 넷(허용 검사 빼기, project.toml 안 쓰기, CLI가 상대 경로를 그대로, 0 허용)이 각각 실패했다.
   - m13 `project_lifecycle`: 멈추면 ticker가 깨진 project.toml을 알리지 않고 되살리면 알림, thread start 거부, thread에 `project_status`; 보관하면 thread pane이 닫히고 목록에서 빠짐(`--all`에는 보관), pause·resume 거부; rename은 열린 thread·coordinator pane으로 거부, dry-run은 그대로, 바꾸면 폴더·AGENTS.md·thread 기록·inbox가 새 이름; delete는 coordinator pane으로 거부, 휴지통에 `aaa-records.json`, 같은 이름으로 다시 만들면 thread·inbox 없음; sweep은 고친 worktree를 남기고, 사람이 지운 뒤에는 병합된 branch까지 치우고 다시 하면 「치울 것이 없다」. 심은 결함 일곱(ticker가 멈춘 것도 봄, 시작 검사 빼기, 보관이 pane을 안 닫음, rename이 DB를 안 옮김, delete가 기록을 안 지움, resolve가 leftover를 안 적음, agent가 없는 worktree를 지운 것으로 안 봄)이 각각 실패했다.
@@ -3748,7 +3748,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 웹 E2E spec 12 「coordinator 열기」: 허용 목록에 host 머신 profile이 없으면 메뉴 없이 그 말, 기본 profile이 첫 항목 「fake 기본」, 메뉴를 연 뒤 허용 목록을 바꾸면 host `forbidden` 글이 머리 아래에 서고 화면은 그대로, 고르면 그 pane 주소로 가 화면에 fake가 뜨고 host 기록은 역할 coordinator 하나, 뒤로 가서 다시 고르면 띄우지 않고 같은 pane, 휴대폰 폭은 표지 16px 단추·옆 밀림 없음·아래 sheet. 심은 결함 둘(허용 목록 거르기 빼기, 도는 coordinator면 pane으로 안 감)이 실패했다. 휴대폰 단추 표지가 8px로 눌린 것(뒤에 묶인 `.btn` padding)도 이 시험이 찾았다.
   - 웹 E2E 그림(`shot`)은 Playwright `animations: "disabled"`로 찍는다: 창 폭을 바꾼 바로 뒤 drawer가 미끄러지는 중을 찍던 휴대폰 그림(`phone-project-threads` 등)이 끝난 모습이 된다.
 
-### 8.174 다른 기기 TUI: 웹 WebSocket 위 Front API(10-18, 차이 목록 4장 A #495, 지금 497줄)
+### 8.181 다른 기기 TUI: 웹 WebSocket 위 Front API(10-18, 차이 목록 4장 A #495, 지금 497줄)
 
 - **명령.** `aaa attach --remote <웹 주소> [-w <workspace>]`(herdr `--remote <ssh-target>`의 aaa 꼴). 주소는 `aaa web publish`의 https 주소이고 scheme이 없으면 https다. `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다: 장치 token을 다른 기기로 평문으로 보내지 않는다(연결 전에 거부).
 - **입장.** 이 기기 상태 폴더 `remote/<scheme>-<이름>-<포트>.token`(0600, 폴더 0700)에 장치 token이 없거나 host가 받지 않으면(401) 사람에게 pairing 코드를 묻는다(`person::require`: aaa 세션 안·터미널 아님 거부). host 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 `POST /api/v1/pair`에 내고 `Set-Cookie`의 token을 둔다. 기기 이름은 「aaa TUI · <이 기기>」(host `aaa web devices`). 받지 않는 token은 지우고 다시 묻는다. 새로 받은 token도 거부되면 멈춘다.
@@ -3967,7 +3967,7 @@ flowchart LR
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
-- **지금(10-18, §8.173):** 주어진 실행 파일을 바꾸는 `aaa update --from`(staging·self-check·rename·보관 `[update] keep`)·`aaa update rollback`·`[update] version` 고정 검사만 있다. 내려받기·서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다(사용자 10-18: brew·배포·서명은 추후 계획).
+- **지금(10-18, §8.180):** 주어진 실행 파일을 바꾸는 `aaa update --from`(staging·self-check·rename·보관 `[update] keep`)·`aaa update rollback`·`[update] version` 고정 검사만 있다. 내려받기·서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다(사용자 10-18: brew·배포·서명은 추후 계획).
 
 ## 12. 기술 스택 추천
 
@@ -4182,7 +4182,7 @@ primary 근거:
 |---|---|---|
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
 | profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.170) | M1-3 |
-| thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12). adopt는 `aaa thread adopt`(§8.173, Claude·Codex pane만) | M1-3 |
+| thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12). adopt는 `aaa thread adopt`(§8.180, Claude·Codex pane만) | M1-3 |
 | `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`는 M1 마무리에서 했다(§8.21) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |
 | brief 전달(claim 60초·settle 3초·3회·`--wait --until working`) | 그대로 계승(§8.5) | M1-3 |
