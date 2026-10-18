@@ -1,8 +1,9 @@
 // harness 대화 기록 보기(§8.27). 기록은 읽기만 하고 보내는 길은 입력창 ChatComposer(plan §8.130)다. agent가 Claude·Codex 기록에서 골라 준 줄을 보인다.
 // 도구 결과 본문은 agent가 빼고 보낸다. 생각은 설정 「생각 표시」(공유)를 켰을 때만 청해 접힌 「생각」 줄로 보인다
-// (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.129). 다시 읽기(차이 목록 C3, 참고 conversationRefresh.ts·status.ts
-// `statusEdgeRead`): aaa는 기록 변경을 push하지 않으니 참고의 push 없는 판처럼 2초마다, 그리고 agent 상태가 작업 중에 들고 날 때
-// (턴 시작·끝)와 이 화면이 보낸 뒤(`readNow`)에는 기다리지 않고 바로 읽는다.
+// (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.129). 다시 읽기(차이 목록 C3, 참고 ChatView·conversationRefresh.ts·status.ts
+// `statusEdgeRead`, plan §8.187): host가 기록 변화를 알리면(`chat_changed`, 그 머신 agent가 기록 파일을 본다) 바로 읽고(2초에 한
+// 번까지) 놓친 것은 10초마다, host가 알릴 수 없는 pane(옛 agent)이나 연결이 끊긴 동안은 2초마다 읽는다. agent 상태가 작업 중에
+// 들고 날 때(턴 시작·끝)와 이 화면이 보낸 뒤(`readNow`)에는 기다리지 않고 바로 읽는다. 가려진 탭은 알림으로 읽지 않는다.
 // 글 속 파일 경로는 그 pane의 파일 보기로 연다(참고 ChatView는 pane마다 `OpenFileContext`, 찾는 곳은 그 pane이 지금 있는 폴더,
 // plan §8.171). 보기 권한 화면은 열 곳이 없어 글 그대로다. 사람·답 말은 참고처럼 Markdown으로 그린다(참고 `UserMessage`의
 // `chat-bubble-body`·`Turn`의 답, plan §8.179): 사람 말은 무채색 카드, 답은 카드 없이. 도구 줄은 글 그대로 경로만 잇는다(`linkFilePaths`).
@@ -11,7 +12,7 @@
 // 문구는 참고 i18n.ko.ts.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
-import { ApiError, call } from "./api";
+import { ApiError, call, watchChat } from "./api";
 import type { ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
 import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
@@ -20,9 +21,7 @@ import { Markdown } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { copyText } from "./herdr/clipboard.ts";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
-
-/** push 없는 대화의 읽기 간격(참고 conversationRefresh.ts `INVALIDATION_MS`) */
-const INVALIDATION_MS = 2000;
+import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
@@ -202,10 +201,11 @@ export function ChatPanel({
     seen.current = status;
   }, [status]);
 
+  const [refresh] = useState(() => new ConversationRefresh());
+  const [pushes, setPushes] = useState(false);
   useEffect(() => {
     let alive = true;
-    let timer: number | undefined;
-    const load = async () => {
+    refresh.setRead(async () => {
       try {
         const r = await call({ op: "pane_chat", pane, thinking: showThinking });
         if (!alive) return;
@@ -216,14 +216,25 @@ export function ChatPanel({
       } catch (e) {
         if (alive) setError(e instanceof ApiError ? e.message : String(e));
       }
-      if (alive) timer = window.setTimeout(load, INVALIDATION_MS);
-    };
-    void load();
+    });
+    const unwatch = watchChat(pane, (note) => {
+      if ("live" in note) {
+        refresh.setPushes(note.live);
+        setPushes(note.live);
+      } else if (document.visibilityState !== "hidden") refresh.invalidate();
+    });
     return () => {
       alive = false;
-      window.clearTimeout(timer);
+      unwatch();
+      refresh.stop();
+      refresh.setPushes(false);
+      setPushes(false);
     };
-  }, [pane, showThinking, pollKey, readNow]);
+  }, [pane, showThinking, refresh]);
+  // 처음·보낸 뒤·턴 시작과 끝은 읽기를 끊지 않고 바로 읽는다(읽는 곳은 위 effect가 먼저 둔다)
+  useEffect(() => {
+    refresh.refresh();
+  }, [pane, showThinking, pollKey, readNow, refresh]);
 
   // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다
   useEffect(() => {
@@ -237,6 +248,7 @@ export function ChatPanel({
         className="chat"
         ref={list}
         data-testid="chat"
+        data-pushes={pushes}
         onScroll={(e) => {
           const el = e.currentTarget;
           atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;

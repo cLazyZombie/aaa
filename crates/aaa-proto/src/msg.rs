@@ -641,6 +641,16 @@ pub enum AgentRequest {
     ThreadUnwatch {
         thread: String,
     },
+    /// 대화 기록 파일 감시(차이 목록 C3, herdr-web-ui `conversation-watch`): 켜면 `Chat`과 같은 파일을 250ms마다 보고 바뀌면
+    /// `ChatChanged`로 알린다. 켤 때 지금 값을 한 번 보낸다. `key`는 host가 정한 이름(pane ID)이고 같은 key를 다시 켜면 바꾼다.
+    /// agent 기능 `chat_watch.v1`이 있을 때만 보낸다
+    ChatWatch {
+        key: String,
+        harness: String,
+        transcript: Option<String>,
+        harness_session: Option<String>,
+        enabled: bool,
+    },
     /// report.md 본문과 library 목록. symlink는 따라가지 않고, 상한을 넘는 파일은 건너뛴다.
     ReportCollect {
         work_dir: String,
@@ -839,6 +849,11 @@ pub enum AgentEvent {
     },
     /// 머신 건강(주기 보고). host가 `health.v1`을 알렸을 때만 보낸다.
     Health(MachineHealth),
+    /// `ChatWatch`로 감시하는 기록 파일이 바뀌었다. `signature`는 그 파일 상태의 뜻 없는 이름이다(경로를 싣지 않는다)
+    ChatChanged {
+        key: String,
+        signature: String,
+    },
 }
 
 // ───────────────────────── Session IPC ─────────────────────────
@@ -2112,6 +2127,12 @@ pub enum FrontEvent {
     /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
     /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.166)
     Web { build: String },
+    /// `chat_watch`로 청한 pane의 대화 기록이 바뀌었다(herdr-web-ui `conversation-changed`). 웹은 대화를 다시 읽는다.
+    /// `signature`는 뜻 없는 이름이다(REST ETag가 아니다)
+    ChatChanged { pane: String, signature: String },
+    /// `chat_watch`로 청한 pane의 기록 변화를 지금 알릴 수 있는가(그 머신 agent가 `chat_watch.v1`이고 붙어 있다). 청하면 한 번,
+    /// 바뀌면 다시 온다. 아니면 웹은 2초마다 읽는다(참고 conversationRefresh.ts push 없는 판)
+    ChatWatching { pane: String, live: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2276,6 +2297,9 @@ pub enum EventsClientMsg {
     /// 연결이 살아 있는지 묻는다. host는 같은 `id`의 `pong`으로 답한다(herdr-web-ui ws.ts `probe`·server `ping`).
     /// 휴대폰이 잠들었다 깨거나 망이 바뀌면 열린 것처럼 보이는 죽은 연결이 몇 분씩 남는다.
     Ping { id: u32 },
+    /// 이 화면이 그 pane의 대화를 보고 있다(herdr-web-ui `conversation-watch`). 켜 둔 동안 host는 `chat_watching`과
+    /// `chat_changed`를 보낸다. 연결이 끊기면 끈 것이다
+    ChatWatch { pane: String, enabled: bool },
 }
 
 #[cfg(test)]

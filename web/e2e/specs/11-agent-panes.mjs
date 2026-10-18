@@ -383,6 +383,67 @@ export default async function ({ ctl, page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
+  await step("대화 기록 변화 push(herdr-web-ui conversation-watch·conversationRefresh.ts, 차이 목록 C3): 대화를 보는 화면에 agent가 기록 파일이 바뀐 것을 알려 바로 다시 읽고, 같은 pane을 보던 다른 화면이 그만둬도 계속 온다", async () => {
+    const dir = `${root}/claude/projects/-lab-push`;
+    fs.mkdirSync(dir, { recursive: true });
+    const tr = `${dir}/s3.jsonl`;
+    const L = (o) => JSON.stringify(o) + "\n";
+    fs.writeFileSync(tr, L({ type: "user", message: { role: "user", content: "첫 말" } }));
+    aaa("tab", "create", "--machine", "labA", "--label", "chat3", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
+      JSON.stringify({ hook_event_name: "SessionStart", session_id: "6e5d4c3b-2a1f-4e0d-9c8b-7a6f5e4d3c2b", source: "startup", transcript_path: tr }));
+    const pane = await until("chat3 harness", () => {
+      const p = aaa("pane", "list").panes.find((x) => x.name === "chat3");
+      return p?.agent?.harness === "claude" && p.id;
+    });
+    // 이 화면의 대화 읽기(pane_chat)와 그 pane의 chat_changed를 센다
+    const reads = { started: 0, done: 0 };
+    let changed = 0;
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      onPage: (p) => {
+        p.on("request", (r) => {
+          if (r.url().endsWith("/api/v1/call") && r.postData()?.includes('"op":"pane_chat"')) reads.started += 1;
+        });
+        p.on("requestfinished", (r) => {
+          if (r.url().endsWith("/api/v1/call") && r.postData()?.includes('"op":"pane_chat"')) reads.done += 1;
+        });
+        p.on("websocket", (ws) => ws.on("framereceived", (f) => {
+          if (typeof f.payload === "string" && f.payload.includes('"ev":"chat_changed"') && f.payload.includes(`"pane":"${pane}"`)) changed += 1;
+        }));
+      },
+    });
+    // 가짜 시계: 대화 보기의 2초 읽기·10초 backstop을 이 시계에 건다. 대화를 연 뒤 멈추면 그것들은 돌 수 없고, 읽기는 push(또는
+    // 아래에서 시계를 민 것)로만 일어난다. 멈춘 동안은 frame을 기다리는 도우미(inList)를 쓰지 않는다
+    await ph.page.clock.install();
+    const chat = ph.page.getByTestId("chat");
+    const roles = async () => chat.locator(".chat-msg").evaluateAll((els) => els.map((e) => [e.dataset.role, e.textContent]));
+    await inList(ph.page, "pane-chat3");
+    await ph.page.getByTestId("chat-toggle").click();
+    await until("첫 말", async () => (await roles()).length === 1);
+    await domIs(ph.page, "push가 된다", () => document.querySelector('[data-testid="chat"]')?.dataset.pushes === "true");
+    await ph.page.clock.pauseAt(Date.now() + 1000);
+    // 같은 pane을 다른 화면(앞 화면)도 열었다 닫는다: host는 청한 연결을 세므로 이 화면의 감시는 남는다
+    await inList(page, "pane-chat3");
+    await page.getByTestId("chat-toggle").click();
+    await page.getByTestId("chat").and(page.locator('[data-pushes="true"]')).waitFor();
+    await page.getByTestId("chat-toggle").click();
+    await page.getByTestId("chat").waitFor({ state: "detached" });
+    // 켤 때 agent가 지금 값을 한 번 알린다. 그 읽기는 처음 읽기와 2초 안이라 미뤄졌다: 시계를 밀어 끝내고, 2초 한도도 지나게 둔다
+    await until("켤 때 알림", () => changed >= 1);
+    for (let i = 0; i < 2; i++) {
+      await ph.page.clock.runFor(2500);
+      await until("읽기 끝", () => reads.done === reads.started);
+    }
+    const before = { reads: reads.started, changed };
+    fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: "push로 온 답" }] } }));
+    await until("push로 온 새 줄", async () => JSON.stringify((await roles()).at(-1)) === JSON.stringify(["assistant", "push로 온 답"]));
+    if (changed <= before.changed) throw new Error("chat_changed 없이 읽었다");
+    if (reads.started !== before.reads + 1) throw new Error(`push 한 번에 읽기 ${reads.started - before.reads}번`);
+    if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    await ph.page.context().close();
+    aaa("pane", "kill", "chat3");
+    await inList(page, "pane-t1");
+  });
+
   await step("그림 붙여 넣기·끌어 놓기(herdr-web-ui): 셸·harness 입력창에 따옴표 경로(Enter 없음), 글이 있으면 글, 여러 파일은 놓은 순서, 글 놓기, 확인창·형식·reader 거부", async () => {
     const png = fs.readFileSync(`${root}/pic.png`);
     const banner = page.getByTestId("attach-banner");

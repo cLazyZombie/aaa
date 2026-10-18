@@ -9,6 +9,7 @@ mod bgwait;
 mod brief;
 mod brief_text;
 mod caller;
+mod chatwatch;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -369,6 +370,11 @@ pub struct Host {
     tick_wake: tokio::sync::Notify,
     /// 배경 작업을 기다리는 쉼(차이 목록 S1). 잠금 차례는 `inner` 다음이다
     bgwait: Mutex<bgwait::BackgroundWait>,
+    /// 대화 기록 변화 push(차이 목록 C3): 청한 연결 수와 agent에 켜 둔 감시. 잠금 차례는 `inner` 다음이다
+    chats: Mutex<chatwatch::ChatWatch>,
+    chat_notes: broadcast::Sender<chatwatch::ChatNote>,
+    /// 감시 맞추기는 하나씩
+    chat_sync: tokio::sync::Mutex<()>,
     /// 시작한 tick 수와 끝난 tick 수(`ticker_tick`이 「이 요청 뒤에 시작한 tick」이 끝나기를 기다린다)
     tick_started: std::sync::atomic::AtomicU64,
     /// 이 host가 뜬 시각. auto-resolve는 이때부터도 잰다(herdr-projects ticker `started`: 오래 꺼져 있던 뒤 한꺼번에 끝내지 않는다)
@@ -539,6 +545,9 @@ impl Host {
             held: Mutex::new(HashMap::new()),
             tick_wake: tokio::sync::Notify::new(),
             bgwait: Mutex::new(Default::default()),
+            chats: Mutex::new(Default::default()),
+            chat_notes: broadcast::channel(256).0,
+            chat_sync: tokio::sync::Mutex::new(()),
             tick_started: std::sync::atomic::AtomicU64::new(0),
             started_ms: aaa_common::util::now_ms(),
             tick_done: watch::channel(0).0,
@@ -678,6 +687,7 @@ impl Host {
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
         }
         self.rewatch(hello.machine_id.clone());
+        self.sync_chat_watches_if_wanted();
         self.restore_after_reboot(&hello.machine_id, generation);
     }
 
@@ -698,6 +708,7 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         drop(i);
+        self.chat_machine_gone(machine_id);
         self.bump();
     }
 

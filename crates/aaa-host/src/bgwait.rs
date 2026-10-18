@@ -128,6 +128,36 @@ impl BackgroundWait {
     }
 }
 
+impl crate::Host {
+    /// 기다림이 저절로 끝날 수 있는 가장 이른 때(ticker가 그때 깬다)
+    pub(crate) fn background_wait_due(&self) -> Option<std::time::Instant> {
+        let due = self.bgwait.lock().unwrap().next_due()?;
+        let left = due.saturating_sub(aaa_common::util::now_ms());
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(left))
+    }
+
+    /// 유예·한도가 다 된 기다림을 풀고 그 pane 상태를 다시 낸다
+    pub(crate) fn settle_background_waits(&self) {
+        let ended = self.bgwait.lock().unwrap().tick(aaa_common::util::now_ms());
+        if ended.is_empty() {
+            return;
+        }
+        {
+            let mut i = self.inner.lock().unwrap();
+            let w = self.bgwait.lock().unwrap();
+            for id in &ended {
+                if let Some(p) = i.panes.get_mut(id) {
+                    if let Some(a) = p.agent.as_mut() {
+                        a.background_wait = w.waiting(id);
+                    }
+                    let _ = p.events.send(crate::PaneEvent::State);
+                }
+            }
+        }
+        self.bump();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,35 +245,5 @@ mod tests {
         w.forget("p");
         assert!(!w.waiting("p"));
         assert!(w.tick(3).is_empty());
-    }
-}
-
-impl crate::Host {
-    /// 기다림이 저절로 끝날 수 있는 가장 이른 때(ticker가 그때 깬다)
-    pub(crate) fn background_wait_due(&self) -> Option<std::time::Instant> {
-        let due = self.bgwait.lock().unwrap().next_due()?;
-        let left = due.saturating_sub(aaa_common::util::now_ms());
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(left))
-    }
-
-    /// 유예·한도가 다 된 기다림을 풀고 그 pane 상태를 다시 낸다
-    pub(crate) fn settle_background_waits(&self) {
-        let ended = self.bgwait.lock().unwrap().tick(aaa_common::util::now_ms());
-        if ended.is_empty() {
-            return;
-        }
-        {
-            let mut i = self.inner.lock().unwrap();
-            let w = self.bgwait.lock().unwrap();
-            for id in &ended {
-                if let Some(p) = i.panes.get_mut(id) {
-                    if let Some(a) = p.agent.as_mut() {
-                        a.background_wait = w.waiting(id);
-                    }
-                    let _ = p.events.send(crate::PaneEvent::State);
-                }
-            }
-        }
-        self.bump();
     }
 }

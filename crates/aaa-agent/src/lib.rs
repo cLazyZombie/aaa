@@ -37,6 +37,11 @@ use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use aaa_common::util;
 use aaa_session::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
 
+/// 대화 기록 감시 간격(참고 conversation-monitor.ts `STAT_INTERVAL_MS`·`RESOLVE_INTERVAL_MS`·`MISSING_RESOLVE_INTERVAL_MS`)
+const CHAT_STAT_EVERY: Duration = Duration::from_millis(250);
+const CHAT_RESOLVE_EVERY: Duration = Duration::from_secs(5);
+const CHAT_MISSING_RESOLVE_EVERY: Duration = Duration::from_secs(2);
+
 enum PumpCmd {
     /// host 요청을 session host로 보낸다. 응답은 pump가 host에 보낸다.
     Host { host_id: String, body: SessionRequest },
@@ -72,6 +77,10 @@ pub struct Agent {
     page_cache: Mutex<Option<DrawnPage>>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// 대화 기록 감시 task(host가 정한 key별, 차이 목록 C3). host 연결이 바뀌면 모두 끝낸다: 새 host가 청한 것만 다시 본다
+    chat_watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// 기록 상태를 `ChatChanged.signature`로 감추는 이 프로세스의 무작위 열쇠(참고 conversation-monitor.ts `salt`)
+    chat_salt: std::hash::RandomState,
     /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). 칸마다(`Slot`) 마지막 하나다.
     /// 세션 폴더 `harness.json`에도 적어 agent가 다시 떠도 남는다.
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
@@ -119,6 +128,8 @@ impl Agent {
             file_roots: Mutex::new(files::Roots::default()),
             page_cache: Mutex::new(None),
             watches: Mutex::new(HashMap::new()),
+            chat_watches: Mutex::new(HashMap::new()),
+            chat_salt: std::hash::RandomState::new(),
             harness_last: Mutex::new(HashMap::new()),
             labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
@@ -384,6 +395,60 @@ impl Agent {
         }
     }
 
+    /// 대화 기록 파일을 `CHAT_STAT_EVERY`마다 보고 바뀌면 host에 알린다(차이 목록 C3, herdr-web-ui `server/conversation-monitor.ts`
+    /// `ConversationMonitor`). 켜면 지금 값을 한 번 보낸다. 경로는 찾았으면 `CHAT_RESOLVE_EVERY`, 아직 없으면
+    /// `CHAT_MISSING_RESOLVE_EVERY`마다 다시 푼다(Codex 기록은 첫 턴 뒤에 생긴다). 파일이 사라지면 바로 다시 푼다
+    fn watch_chat(
+        self: &Arc<Self>,
+        key: String,
+        harness: String,
+        transcript: Option<String>,
+        harness_session: Option<String>,
+    ) {
+        let me = self.clone();
+        let k = key.clone();
+        let task = tokio::spawn(async move {
+            let mut observed: Option<String> = None;
+            let mut path: Option<Result<PathBuf, String>> = None;
+            let mut resolve_at = tokio::time::Instant::now();
+            loop {
+                let now = tokio::time::Instant::now();
+                let resolve = now >= resolve_at;
+                let (h, t, s, known) = (harness.clone(), transcript.clone(), harness_session.clone(), path.clone());
+                let (found, seen) = tokio::task::spawn_blocking(move || {
+                    let found = match known {
+                        Some(p) if !resolve => p,
+                        _ => chat::path(&h, t.as_deref(), s.as_deref()),
+                    };
+                    let seen = match &found {
+                        Ok(p) => format!("{}\0{}", p.display(), chat::identity(p)),
+                        Err(e) => format!("unavailable:{e}"),
+                    };
+                    (found, seen)
+                })
+                .await
+                .unwrap_or_else(|e| (Err(e.to_string()), "unavailable".into()));
+                if resolve {
+                    resolve_at = now + if found.is_ok() { CHAT_RESOLVE_EVERY } else { CHAT_MISSING_RESOLVE_EVERY };
+                }
+                let missing = found.is_ok() && seen.ends_with("\0missing");
+                path = Some(found);
+                if observed.as_ref() != Some(&seen) {
+                    if missing {
+                        resolve_at = now;
+                    }
+                    let signature = format!("{:016x}", std::hash::BuildHasher::hash_one(&me.chat_salt, (&k, &seen)));
+                    me.send_host(&LinkMsg::Event(AgentEvent::ChatChanged { key: k.clone(), signature })).await;
+                    observed = Some(seen);
+                }
+                tokio::time::sleep(CHAT_STAT_EVERY).await;
+            }
+        });
+        if let Some(old) = self.chat_watches.lock().unwrap().insert(key, task) {
+            old.abort();
+        }
+    }
+
     /// 실행 중인 세션이 지금 있는 폴더(새 탭·나누기 cwd follow). 끝났거나 읽지 못하면 None.
     async fn session_cwd(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         let pid = {
@@ -455,6 +520,9 @@ impl Agent {
             });
         }
         *self.host.lock().unwrap() = tx;
+        for (_, t) in self.chat_watches.lock().unwrap().drain() {
+            t.abort();
+        }
         if gone {
             let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
             for p in pumps {
@@ -914,6 +982,14 @@ impl Agent {
             }
             AgentRequest::ThreadUnwatch { thread } => {
                 if let Some(t) = self.watches.lock().unwrap().remove(&thread) {
+                    t.abort();
+                }
+                Ok(AgentResponse::Done)
+            }
+            AgentRequest::ChatWatch { key, harness, transcript, harness_session, enabled } => {
+                if enabled {
+                    self.watch_chat(key, harness, transcript, harness_session);
+                } else if let Some(t) = self.chat_watches.lock().unwrap().remove(&key) {
                     t.abort();
                 }
                 Ok(AgentResponse::Done)

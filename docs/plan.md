@@ -3988,6 +3988,32 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험.** TUI 유닛 `state_line_like_herdr_projects`에 PR 있는 검토 대기·병합 중과 번호로 끝나지 않는 주소. 결함 심기(늘 「보고」)는
   `검토 대기 · 보고 ≠ 검토 대기 · PR #42`로 실패.
 
+### 8.187 대화 기록 변화 push(10-18, 차이 목록 3장 C3 278줄, t-0345 recount (b), coordinator 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb): 대화 보기가 그 pane에 관심을 알리면(`conversation-watch`) 서버가 그 pane의 기록 파일만 250ms마다 stat하고
+  (`server/conversation-monitor.ts`: 장치·inode·크기·고친 시각, 경로는 5초·없으면 2초마다 다시 찾음) 바뀌면 그 연결에 `conversation-changed`를
+  보낸다. 웹은 `conversationRefresh.ts`로 다시 읽는다: push가 오면 바로(2초에 한 번까지), push가 되면 놓친 것을 10초마다, 안 되면 2초마다.
+- **aaa가 달랐던 것.** 대화 보기는 늘 2초마다 읽고 턴 시작·끝(`statusEdgeRead`)과 보낸 뒤에 바로 읽었다(§8.130 「host 기록 변경 사건은 하지 않았다」).
+  recount 줄은 「host가 턴 시작·끝 사건을 push」였지만 그것은 이미 상태 사건으로 온다. 참고는 기록이 바뀔 때마다 알리므로 그것을 옮겼다.
+- **고침.** 기록 파일은 그 머신에 있어 감시는 agent가 한다: `AgentRequest::ChatWatch`(기능 `chat_watch.v1`)를 받으면 `Chat`과 같은 파일을
+  참고 간격 그대로 보고 `AgentEvent::ChatChanged`(파일 상태를 이 프로세스의 무작위 열쇠로 감춘 이름, 경로는 싣지 않는다)를 보낸다. host는
+  상태 사건 연결의 `chat_watch`를 pane마다 세어(보기 범위는 `pane_chat`과 같다) 청한 연결이 있는 pane만 agent에 켜 두고, Claude 기록 위치·Codex
+  thread-id가 오면 다시 켜며, 바뀜은 청한 연결에만 `chat_changed`로 보낸다(`chatwatch.rs`). 되는지는 pane마다 `chat_watching`으로 알린다(그 머신
+  agent가 기능을 알리고 붙어 있고 pane이 Claude·Codex일 때). 웹은 `conversationRefresh.ts`를 옮겨(앞 쪽 읽기 `page()`만 뺐다) `chat_watching`으로
+  push 여부를, `chat_changed`로 다시 읽기를 정한다. events 연결이 끊기면 push가 안 되는 것으로 두고 다시 붙으면 다시 청한다. 턴 시작·끝·보낸 뒤
+  바로 읽기는 그대로다. FRONT_API는 S1과 한 판(1.34)이다.
+- **참고와 다른 곳.** 참고는 pane에 붙은(attach) 연결만 청하고 push 가능은 서버 기능 하나다. aaa는 상태 사건 연결이 청하고 가능은 pane마다다.
+  agent는 host 연결이 바뀌면 감시를 모두 끝낸다(새 host가 청한 것만 다시 켠다).
+- **시험.** host 유닛 `interest_counts_connections_and_the_watch_follows_the_transcript`(연결 수 세기, 기록 위치가 오면 같은 key로 다시 켬, 끄면
+  push 불가). 웹 E2E 11 「대화 기록 변화 push」: 대화를 연 화면의 Playwright 시계를 멈춰(2초 읽기·10초 backstop이 돌 수 없다) 기록에 줄을 더하면
+  `chat_changed`가 오고 읽기 한 번으로 새 줄이 보인다. 그 전에 같은 pane을 다른 화면이 열었다 닫아도 감시가 남는다. 결함 심기 넷(agent가 켤 때만 알림, host가
+  넘기지 않음, host가 연결을 세지 않음, 웹이 `chat_changed`를 무시) 모두 실패.
+- **시험 도구.** 처음 쓴 이 단계는 시계를 멈춘 뒤 `inList`를 불러 9분 넘게 멈췄다(coordinator 관찰, 멈춘 프로세스는 지시대로 두었다): `inList` 끝의
+  `drawerSettled`가 페이지의 `requestAnimationFrame`을 기다리는데 멈춘 시계에서는 frame이 오지 않고, `page.evaluate`에는 시한이 없다. `domIs`·
+  `hashIs`·`focusIs`도 시한을 페이지 안 `setTimeout`으로 재 같은 결함이었다. 그래서 페이지 안 대기에는 Node 쪽 시한(`inTime`, 같은 시한 + 1초)을,
+  단계에는 시한 `STEP_LIMIT_MS` 120초(가장 긴 spec 전체가 41초)를 두었다. 옛 순서로 다시 돌리면 20초 만에 「목록 서랍 움직임 끝(다음 frame)이
+  되지 않았다(페이지가 답하지 않음)」로 실패한다. 단계는 시계를 대화를 연 뒤에 멈춘다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
