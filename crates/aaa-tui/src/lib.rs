@@ -1762,7 +1762,7 @@ impl App {
                     }
                     return Ok(());
                 }
-                // 머신 머리 줄이 없어(프로젝트 먼저, §8.194) 새 탭·workspace를 열 머신은 `m`으로 돌려 고른다
+                // 머신 머리 줄이 없어(프로젝트 먼저, §8.195) 새 탭·workspace를 열 머신은 `m`으로 돌려 고른다
                 KeyCode::Char('m') => {
                     self.next_machine();
                     return Ok(());
@@ -3810,7 +3810,7 @@ mod tests {
 
     /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 고르면 그 머신(포커스가 그대로인
     /// 동안), 끊긴 머신은 고르지 않는다. 마우스를 받으면 spaces 맨 아랫줄 ` new`, 머신이 여럿이면 ` · 이름`(누를 칸 따로).
-    /// 머신 머리 줄이 없어(§8.194) 고르기는 다음 붙은 머신으로 돈다(탐색 `m`·` · 이름` 누르기, 끊긴 머신은 건너뛴다).
+    /// 머신 머리 줄이 없어(§8.195) 고르기는 다음 붙은 머신으로 돈다(탐색 `m`·` · 이름` 누르기, 끊긴 머신은 건너뛴다).
     #[test]
     fn new_workspace_machine_like_herdr_endpoint() {
         let mut app = app_with_tabs(&["", ""]);

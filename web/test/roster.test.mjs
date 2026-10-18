@@ -10,7 +10,7 @@ const pane = (id, machine_id = "m1", state = "running", role = "pane") => ({ id,
 const thread = (project, id, group, pane = null, updated_at_ms = 0, machine = "mac-a") => ({ project, id, group, pane, machine, updated_at_ms });
 
 describe("단축키 줄 차례", () => {
-  it("프로젝트를 먼저 묶는다(plan §8.194): 모든 머신의 thread를 처음 나온 프로젝트 차례로, 그다음 「기타」 pane을 머신 차례로", () => {
+  it("프로젝트를 먼저 묶는다(plan §8.195): 모든 머신의 thread를 처음 나온 프로젝트 차례로, 그다음 「기타」 pane을 머신 차례로", () => {
     const panes = [pane("p1"), pane("b1", "m2"), pane("p2"), pane("t1p"), pane("t4p", "m2"), pane("gone", "m9"), pane("eval", "m1", "running", "evaluator")];
     const threads = [
       thread("beta", "t-2", "working", null, 5),

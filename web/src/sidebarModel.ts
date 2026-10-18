@@ -156,9 +156,9 @@ export function machineOfThread(t: ThreadView, machines: readonly MachineView[],
 export const threadKey = (t: Pick<ThreadView, "project" | "id">) => `${t.project}/${t.id}`;
 
 /**
- * 목록 전체의 줄 차례(t-0352 시안 2안, plan §8.194): 프로젝트를 먼저 묶고 머신은 줄에 글자로만 적는다. 모든 머신의 thread를
+ * 목록 전체의 줄 차례(t-0352 시안 2안, plan §8.195): 프로젝트를 먼저 묶고 머신은 줄에 글자로만 적는다. 모든 머신의 thread를
  * 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다(아는 머신의 thread만). 그다음 thread에 딸리지 않은 pane의
- * 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.195)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
+ * 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.196)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
  * 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다. TUI `list::rows`와 같은 차례다(TUI는 `paneOrder`를 모른다).
  */
 export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []) {

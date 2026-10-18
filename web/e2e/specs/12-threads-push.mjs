@@ -719,7 +719,7 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.194): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
+  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.195): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
     // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
     const counts = await page.getByTestId("project-demo").locator(".project-place").innerText();
     if (!/^(쉼|(확인 필요|작업 중|병합 중) \d+( · (작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);

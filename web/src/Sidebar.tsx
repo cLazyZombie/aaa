@@ -1,5 +1,5 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 구성(t-0352 시안 2안, plan §8.194): 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄(둘째 줄 왼쪽 상태 말,
+// 구성(t-0352 시안 2안, plan §8.195): 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄(둘째 줄 왼쪽 상태 말,
 // 오른쪽 머신 이름) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름) → 머신 줄(이름·host·연결 점·+, 끊김·점검 글). 머신은 트리
 // 단계가 아니다. 그 아래 모든 머신의 「Agents」 구역, 맨 아래 바닥 줄(설정·사용량, App.tsx ListFoot).
 // aaa에는 herdr workspace가 없다: 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다.
@@ -328,7 +328,7 @@ function RowError({ rowKey }: { rowKey: string }) {
 }
 
 /**
- * 머신 줄들(plan §8.194): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
+ * 머신 줄들(plan §8.195): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
  * 끊김·점검 이상 글만 목록 아래에 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트·「기타」 묶음에 머신 글자로 있다.
  */
 function MachineStrip(props: SidebarProps) {
@@ -391,7 +391,7 @@ function MachineStrip(props: SidebarProps) {
 }
 
 /**
- * 목록 줄들(t-0352 시안 2안, plan §8.194): 프로젝트 묶음(모든 머신의 thread, 둘째 줄에 머신 이름) 다음 thread에 딸리지 않은 pane의
+ * 목록 줄들(t-0352 시안 2안, plan §8.195): 프로젝트 묶음(모든 머신의 thread, 둘째 줄에 머신 이름) 다음 thread에 딸리지 않은 pane의
  * 「기타」 묶음(줄마다 머신 이름). 차례는 단축키 「이전·다음 패널」과 같은 계산(sidebarModel `roster`, 사람이 옮긴 pane 차례 포함).
  * 끊긴 머신의 줄은 흐리고 누를 수 없다(참고 machine-offline·inert를 줄마다).
  */
@@ -406,7 +406,7 @@ function Roster(props: SidebarProps) {
   const [otherCollapsed, toggleOther] = useFold("aaa:other-collapsed");
   // 고정한 pane은 맨 앞 카드에 고정한 순서로(참고 Sidebar.tsx `splitPinnedGroups`·`sidebar-pinned`)
   const split = splitPinnedRows(panes, pins, (p) => sidebarPinKey(p.machine_id, p.id));
-  // 줄 옮기기(참고 Sidebar.tsx `reorderWorkspaces`·`moveVisible`·`dropOrder`·`watchTouchReorder`, plan §8.195): 마우스는 끌기,
+  // 줄 옮기기(참고 Sidebar.tsx `reorderWorkspaces`·`moveVisible`·`dropOrder`·`watchTouchReorder`, plan §8.196): 마우스는 끌기,
   // Alt+↑↓, 손가락은 길게 눌러 끌기. 「기타」의 고정하지 않은 pane 줄끼리 옮긴다(머신을 넘어서도, thread 줄은 묶음 차례를 따른다).
   // 참고의 순서는 herdr에 보내는 요청이라 조작 권한 기기만 옮긴다. 순서는 공유 설정 `paneOrder`로 이 host의 다른 화면에도 간다
   const movable = props.canControl;
@@ -594,7 +594,7 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
   const agent = props.agentOf(p);
   const title = p.name || p.argv.join(" ") || p.id.slice(0, 8);
   const ended = paneEnded(p);
-  // 머신은 트리 단계가 아니라 줄에 글자로(plan §8.194)
+  // 머신은 트리 단계가 아니라 줄에 글자로(plan §8.195)
   const machineName = machine?.name ?? p.machine;
   const where = [machineName, p.cwd ? shortPath(p.cwd) : null, ended].filter(Boolean).join(" · ");
   const tooltip = [p.id, title, p.cwd ? shortPath(p.cwd) : null, p.agent?.harness, ended].filter(Boolean).join("\n");
@@ -731,7 +731,7 @@ function ProjectGroup({
   twoLine,
   ...props
 }: SidebarProps & { project: string; pThreads: ThreadView[]; machineOf: (t: ThreadView) => MachineView | undefined; twoLine: boolean }) {
-  // 프로젝트 하나에 묶음 하나(머신마다 나뉘지 않는다, plan §8.194)
+  // 프로젝트 하나에 묶음 하나(머신마다 나뉘지 않는다, plan §8.195)
   const [collapsed, toggle] = useFold(`aaa:project-collapsed:${project}`);
   const online = (t: ThreadView) => machineOf(t)?.connection === "connected";
   const contentsId = `${useId()}-threads`;
@@ -833,7 +833,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   // herdr-projects thread_display: 「id · 제목」
   const title = `${t.id} · ${t.title}`;
   const line = stateLine(t, paneOpen, now);
-  // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.194), 끊겼으면 「이름 끊김」
+  // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.195), 끊겼으면 「이름 끊김」
   const machineName = machine?.name ?? t.machine;
   const tooltip = [`${t.project}/${t.id}`, t.title, line, `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
   // 줄은 그 thread의 agent pane을 연다(herdr-projects: thread는 자기 agent 줄). pane이 없으면 보고서
