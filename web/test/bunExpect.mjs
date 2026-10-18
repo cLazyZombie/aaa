@@ -16,6 +16,14 @@ export function expect(actual) {
       toBe: (expected) => assert.notStrictEqual(actual, expected),
       toBeNull: () => assert.notStrictEqual(actual, null),
     },
+    // bun `expect(promise).rejects.toThrow(글)`: 거절되고 그 message에 글이 있다
+    rejects: {
+      toThrow: (text) =>
+        assert.rejects(actual, (error) => {
+          assert.ok(String(error?.message).includes(text), `${error?.message} ⊅ ${text}`);
+          return true;
+        }),
+    },
   };
 }
 

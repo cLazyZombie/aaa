@@ -236,7 +236,7 @@ export default async function ({ ctl, page }) {
     await until("대화 줄", async () => (await roles()).length === 3);
     const want = [["user", "결제 지연을 줄여 줘"], ["assistant", "캐시를 넣었다"], ["tool", "Bash: cargo test"]];
     if (JSON.stringify(await roles()) !== JSON.stringify(want)) throw new Error(JSON.stringify(await roles()));
-    // 사람·답 말은 Markdown(참고 ChatView, plan §8.175): 굵게는 strong이고 「**」가 남지 않는다. 사람 말은 카드, 답은 카드 없이
+    // 사람·답 말은 Markdown(참고 ChatView, plan §8.176): 굵게는 strong이고 「**」가 남지 않는다. 사람 말은 카드, 답은 카드 없이
     const look = await chat.evaluate((c) => {
       const user = c.querySelector('[data-role="user"]');
       const answer = c.querySelector('[data-role="assistant"]');

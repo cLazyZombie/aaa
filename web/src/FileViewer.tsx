@@ -1,13 +1,13 @@
 // 파일 보기(결정 20 D7, herdr-web-ui `src/components/FileViewer.tsx`·`FileViewer.css` aa624cb). 웹 터미널의 파일 경로 링크로 연다.
 // 옮긴 것: 대화 상자(휴대폰은 화면 가득), 경로 찾기(같은 이름이 여럿이면 고르기), 그림·동영상·소리·PDF, HTML 페이지(sandbox
 // 안 페이지와 소스), 글(Markdown 미리보기와 소스, 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
-// 소스는 참고처럼 문법 강조한다(HighlightedCode, 긴 것은 worker).
-// 폴더 경로면 그 폴더 목록을 그린다(참고 DirectoryBrowser, plan §8.148).
-// 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource). 「파일 뷰어」 설정은 plan §8.149.
+// 소스는 참고처럼 문법 강조한다(HighlightedCode, 긴 것은 worker). 2,000줄 넘는 소스는 참고처럼 `@pierre/diffs`의 가상화한 줄
+// (herdr/VirtualSource.tsx, 제 worker가 5,000줄·256K자까지 칠함)로 그리고, 256KiB 넘는 소스는 8MiB까지 읽는다(plan §8.175).
+// 폴더 경로면 그 폴더 목록을 그린다(참고 DirectoryBrowser, plan §8.148). 「파일 뷰어」 설정은 plan §8.149.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 // thread 결과물도 이것으로 연다(차이 목록 R1): 결과물 목록의 보기 경로(`/v/`, opaque origin sandbox)로 읽고, 경로는 결과물
 // 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.168).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
 import { ApiError, call } from "./api.ts";
@@ -20,15 +20,18 @@ import { type MarkdownWidth, useMarkdownWidth, useTerminalToggle } from "./setti
 import { copyText } from "./herdr/clipboard.ts";
 import { fileLineTarget, OpenFileContext, pathParts } from "./herdr/filePaths.ts";
 import { resolveFromDocument } from "./herdr/fileReader.ts";
-import { languageForPath, normalizeCode } from "./herdr/highlight.ts";
+import { readFilePreviewText, SOURCE_PREVIEW_LINES, type FilePreviewText } from "./herdr/filePreviewText.ts";
+import { canHighlight, countLines, languageForPath, normalizeCode } from "./herdr/highlight.ts";
 import { markdownImagePreview } from "./herdr/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
+import { lineRequest, readBudget, shownSource, sourceLayout, virtualHighlightable } from "./herdr/sourcePreview.ts";
+import { useAppearance } from "./theme";
 import "./herdr/FileViewer.css";
 
-/** 글 파일은 앞부분만 받는다(참고 filePreviewText.ts TEXT_PREVIEW_BYTES·SOURCE_PREVIEW_LINES) */
-const TEXT_PREVIEW_BYTES = 256 * 1024;
-const SOURCE_PREVIEW_LINES = 200_000;
+// 가상화한 줄과 그 강조는 따로 받는 조각이다: 그것이 필요한 첫 소스와 함께 읽는다(참고 TextFileView)
+const VirtualSource = lazy(() => import("./herdr/VirtualSource.tsx"));
+
 /** 그림은 이 크기까지 바로 그린다(참고 markdownImages.ts) */
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 /** 저장한 너비는 설정 값이지 class 이름이 아니다: 한쪽 이름을 바꿔도 다른 쪽은 그대로다(참고 TextFileView MARKDOWN_CLASS) */
@@ -39,8 +42,6 @@ const MARKDOWN_CLASS: Record<MarkdownWidth, string> = {
   full: "file-viewer-markdown",
 };
 
-
-type Loaded = { text: string; truncated: boolean; lines: number };
 
 /** 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, 또는 thread 작업 폴더의 파일(보고서 안 링크, plan §8.171) */
 export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } };
@@ -60,22 +61,6 @@ const libraryInfo = (f: LibraryFile): FileInfo => ({
   kind: f.kind,
 });
 const notFound = (path: string) => new ApiError({ code: "not_found", message: `결과물에 없다: ${path}` });
-
-/** 받은 앞부분을 보이는 글로: 잘렸으면 마지막 온전한 줄까지, 줄 수 상한까지(참고 readFilePreviewText·shownSource) */
-export function previewText(bytes: Uint8Array, size: number): Loaded {
-  let text = new TextDecoder("utf-8").decode(bytes);
-  let truncated = bytes.length < size;
-  if (truncated) {
-    const cut = text.lastIndexOf("\n");
-    text = cut < 0 ? "" : text.slice(0, cut);
-  }
-  const lines = text.split("\n");
-  if (lines.length > SOURCE_PREVIEW_LINES) {
-    truncated = true;
-    lines.length = SOURCE_PREVIEW_LINES;
-  }
-  return { text: lines.join("\n"), truncated, lines: lines.length };
-}
 
 /** 열 수 없는 까닭. 그 밖의 오류(agent가 파일 보기를 모름·연결 끊김)는 host가 말한 까닭을 붙인다 */
 type Problem = { kind: "missing" } | { kind: "outside" } | { kind: "unreadable"; message: string | null };
@@ -133,13 +118,14 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   const target = useMemo(() => fileLineTarget(path), [path]);
   const wrapCode = useTerminalToggle("wrapCode");
   const markdownWidth = useMarkdownWidth();
+  const { resolvedTheme } = useAppearance();
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[] | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
   // 폴더 경로였으면 그 폴더(실제 경로): 파일 대신 폴더 목록을 그린다
   const [directory, setDirectory] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loaded, setLoaded] = useState<FilePreviewText | null>(null);
   // 줄 참조가 있으면 소스, 아니면 미리보기. 새 경로는 옛 선택을 쓰지 않는다
   const [chosen, setChosen] = useState<{ path: string; mode: "preview" | "code" } | null>(null);
   const mode = chosen?.path === path ? chosen.mode : target.line === null ? "preview" : "code";
@@ -153,6 +139,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   useEffect(() => {
     let cancelled = false;
     const abort = new AbortController();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     setInfo(null);
     setUrl(null);
     setCandidates(null);
@@ -170,15 +157,20 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
         setInfo(r.info);
         setUrl(r.url);
         if (r.info.kind !== "text" || r.url === null) return;
-        // 빈 파일은 범위가 없다(416): 읽지 않는다
-        if (r.info.size === 0) {
-          setLoaded(previewText(new Uint8Array(), 0));
-          return;
+        // 글은 정한 만큼만 오간다: 크기와 상관없는 Range와 줄 상한(readBudget: Markdown은 미리보기 예산, 더 큰 소스는 소스 예산).
+        // 시한은 요청에 걸고 읽기는 그 남은 시간을 쓴다. 느린 연결이면 그때까지 온 것을 잘린 앞부분으로 보인다(참고 FileViewer)
+        const budget = readBudget(languageForPath(r.info.path), r.info.size);
+        const started = Date.now();
+        deadline = setTimeout(() => abort.abort(), budget.timeoutMs);
+        try {
+          const res = await fetch(r.url, { signal: abort.signal, headers: { range: `bytes=0-${budget.bytes - 1}` } });
+          clearTimeout(deadline);
+          const timeoutMs = Math.max(1, budget.timeoutMs - (Date.now() - started));
+          const body = await readFilePreviewText(res, budget.bytes, { signal: abort.signal, maxLines: budget.lines, timeoutMs, partialOnTimeout: true });
+          if (!cancelled) setLoaded(body);
+        } finally {
+          clearTimeout(deadline);
         }
-        const res = await fetch(r.url, { signal: abort.signal, headers: { range: `bytes=0-${TEXT_PREVIEW_BYTES - 1}` } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = new Uint8Array(await res.arrayBuffer());
-        if (!cancelled) setLoaded(previewText(body.subarray(0, TEXT_PREVIEW_BYTES), r.info.size));
       } catch (e) {
         if (cancelled) return;
         // 폴더는 파일처럼 pane 폴더 기준으로 읽는다(참고 FileViewer: 404면 폴더 목록을 물어 본다). 폴더도 아니면 파일 오류 그대로.
@@ -208,6 +200,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
     })();
     return () => {
       cancelled = true;
+      clearTimeout(deadline);
       abort.abort();
     };
   }, [locate, pane, target.path]);
@@ -268,33 +261,49 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
     </div>
   );
   const view = markdown && mode === "preview" ? "markdown" : "code";
-  // 소스는 이름으로 고른 문법으로 칠한다(참고 FileViewer useHighlightedLines). 긴 것은 worker가 칠하고 그동안 글 그대로다
+  // 소스는 보이는 대로의 글(잘린 앞부분은 마지막 줄바꿈 뒤 줄 없이)이다. VIRTUAL_SOURCE_LINES를 넘으면 가상화한 줄로, 작으면
+  // 그 worker가 칠하고(virtualHighlightable) 아니면 글 그대로 알림과 함께. 그 아래는 CodeLines(참고 FileViewer)
   const codeShown = textFile && loaded !== null && view === "code" && (!htmlPage || source);
-  const sourceText = useMemo(() => (codeShown ? normalizeCode(loaded.text) : ""), [codeShown, loaded]);
-  const code = useHighlightedLines(sourceText, codeShown ? languageForPath(info.path) : null);
+  const language = languageForPath(info?.path ?? target.path);
+  const sourceText = useMemo(() => (codeShown ? shownSource(normalizeCode(loaded.text), loaded.truncated) : ""), [codeShown, loaded]);
+  const sourceLines = useMemo(() => countLines(sourceText), [sourceText]);
+  const layout = sourceLayout(sourceLines);
+  const colorable = canHighlight(language);
+  const virtual = useMemo(
+    () => (codeShown && layout === "virtual" ? { text: sourceText, colored: colorable && virtualHighlightable(sourceText.length, sourceLines) } : null),
+    [codeShown, layout, sourceText, colorable, sourceLines],
+  );
+  // CodeLines의 code는 제 길이 상한이 없다(layout이 묶는다): 포기한 worker만 글 그대로 둔다
+  const code = useHighlightedLines(codeShown && layout === "elements" ? sourceText : "", codeShown ? language : null);
   const sourceRef = useRef<HTMLPreElement>(null);
-  // 표시할 줄: 받은 앞부분 안이면 표시, 밖이면 알림(참고 lineRequest)
-  const notes: string[] = [];
-  let marked: number | null = null;
-  if (textFile && loaded !== null && view === "code" && (!htmlPage || source) && target.line !== null) {
-    if (target.line <= loaded.lines) marked = target.line;
-    else if (loaded.truncated) notes.push(`${target.line}번째 줄은 미리보기 범위를 벗어납니다. 나머지를 읽으려면 다운로드하세요.`);
-    else notes.push(`이 파일은 ${loaded.lines}줄이며 ${target.line}번째 줄은 없습니다.`);
-  }
-  // 잘린 것은 글을 볼 때만 말한다(페이지는 파일 전체를 그린다)
+  // 잘린 것은 글을 볼 때만 말한다(페이지는 파일 전체를 그린다). 바이트 예산에서 잘린 것은 크기로, 줄 상한은 줄로, 시한(느린
+  // 연결)은 일부만 보인다고만 말한다(그 크기는 예산이 아니다)
   const cutShort = textFile && (!htmlPage || source) && loaded?.truncated === true;
+  const budget = textFile ? readBudget(language, info.size) : null;
+  const cutBytes =
+    cutShort && budget !== null && loaded.truncatedBy !== "lines" && loaded.truncatedBy !== "time" && (loaded.total ?? info.size) > budget.bytes
+      ? { shown: budget.bytes, total: loaded.total ?? info.size }
+      : null;
+  // 표시할 줄: 잘린 앞부분의 줄은 읽은 쪽이 센 온전한 줄이다(상한 바로 뒤 줄은 보이지 않는다, 참고 lineRequest)
+  const request = useMemo(() => (codeShown ? lineRequest(target.line, sourceText, loaded.truncated, loaded.lines) : null), [codeShown, target.line, sourceText, loaded]);
+  const marked = request?.kind === "shown" ? request.line : null;
+  const notes: string[] = [];
+  if (request?.kind === "past-preview") notes.push(`${request.line}번째 줄은 미리보기 범위를 벗어납니다. 나머지를 읽으려면 다운로드하세요.`);
+  else if (request?.kind === "past-end") notes.push(`이 파일은 ${request.lines}줄이며 ${request.line}번째 줄은 없습니다.`);
   if (cutShort)
     notes.push(
-      loaded.lines >= SOURCE_PREVIEW_LINES
+      loaded.truncatedBy === "lines"
         ? `이 파일의 처음 ${SOURCE_PREVIEW_LINES.toLocaleString("ko")}줄만 보입니다. 나머지를 읽으려면 다운로드하세요.`
-        : `전체 ${formatBytes(info.size)} 중 처음 ${formatBytes(TEXT_PREVIEW_BYTES)}만 보입니다.`,
+        : cutBytes !== null
+          ? `전체 ${formatBytes(cutBytes.total)} 중 처음 ${formatBytes(cutBytes.shown)}만 보입니다.`
+          : "파일의 일부만 표시됩니다. 나머지는 다운로드해 확인하세요.",
     );
-  const cutBytes = cutShort && loaded.lines < SOURCE_PREVIEW_LINES;
-  if (codeShown && code.tooLong) notes.push("너무 길어 강조 표시를 생략했습니다");
-  // 표시한 줄을 가운데로. worker의 색은 자리를 바꾸지 않으니 줄·보기·글이 바뀔 때만 굴린다(참고 TextFileView)
+  if (codeShown && (code.tooLong || (virtual !== null && colorable && !virtual.colored))) notes.push("너무 길어 강조 표시를 생략했습니다");
+  // 표시한 줄을 가운데로. worker의 색은 자리를 바꾸지 않으니 줄·보기·글이 바뀔 때만 굴린다(참고 TextFileView). 가상화한 줄은
+  // VirtualSource가 제 줄에 맞춰 굴린다
   useLayoutEffect(() => {
-    if (marked !== null) sourceRef.current?.querySelector(".hl-line.is-marked")?.scrollIntoView({ block: "center", inline: "nearest" });
-  }, [path, view, source, marked, loaded]);
+    if (virtual === null && marked !== null) sourceRef.current?.querySelector(".hl-line.is-marked")?.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [path, view, source, virtual, marked, loaded]);
 
   const body = (() => {
     if (directory !== null && pane !== null) return <DirectoryBrowser key={directory} start={directory} pane={pane} onOpenFile={onOpen} />;
@@ -358,15 +367,22 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
         return (
           <>
             {htmlPage && modes}
-            <div className="file-viewer-content" data-testid={view === "markdown" ? "file-viewer-markdown" : "file-viewer-code"}>
+            <div
+              className={virtual !== null && view === "code" ? "file-viewer-content file-viewer-content-virtual" : "file-viewer-content"}
+              data-testid={view === "markdown" ? "file-viewer-markdown" : "file-viewer-code"}
+            >
               {view === "markdown" ? (
                 <OpenFileContext.Provider value={openLink}>
                   <MarkdownImageContext.Provider value={imagePreview}>
                     <Markdown className={MARKDOWN_CLASS[markdownWidth]}>{loaded.text}</Markdown>
                   </MarkdownImageContext.Provider>
                 </OpenFileContext.Provider>
-              ) : (
+              ) : virtual === null ? (
                 <CodeLines ref={sourceRef} className="file-viewer-text" lines={code.lines} open={null} lineNumbers wrap={wrapCode} markedLine={marked} />
+              ) : (
+                <Suspense fallback={<p className="file-viewer-note">여는 중…</p>}>
+                  <VirtualSource name={info.path} text={virtual.text} colored={virtual.colored} wrap={wrapCode} theme={resolvedTheme} markedLine={marked} />
+                </Suspense>
               )}
             </div>
           </>
@@ -380,9 +396,11 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
     }
   })();
 
+  // 가상화한 소스는 보기를 채운다: 그 줄은 굴려 보는 창이라, 몸은 글을 따라 자라지 않고 정한 높이를 scroll root에 준다
+  const virtualBody = virtual !== null && view === "code";
   return (
     <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal file-viewer" role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1} data-testid="file-viewer">
+      <section className={virtualBody ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1} data-testid="file-viewer">
         <header className="modal-header file-viewer-header file-viewer-header-stacked">
           <div className="file-viewer-title">
             <h2 className="modal-title">
@@ -394,7 +412,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
                 (notes.length > 0 ? (
                   <span className="file-viewer-notice" title={notes.join("\n")}>
                     <TriangleAlert aria-hidden="true" />
-                    <span>{cutBytes ? `${formatBytes(info.size)} 중 ${formatBytes(TEXT_PREVIEW_BYTES)}` : formatBytes(info.size)}</span>
+                    <span>{cutBytes !== null ? `${formatBytes(cutBytes.total)} 중 ${formatBytes(cutBytes.shown)}` : formatBytes(info.size)}</span>
                     <span className="visually-hidden">{notes.join(". ")}</span>
                   </span>
                 ) : (
@@ -452,7 +470,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
             <X aria-hidden="true" />
           </button>
         </header>
-        <div className="file-viewer-body">{body}</div>
+        <div className={virtualBody ? "file-viewer-body file-viewer-body-virtual" : "file-viewer-body"}>{body}</div>
       </section>
     </div>
   );

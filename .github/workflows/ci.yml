@@ -185,9 +185,13 @@ jobs:
           for d in $(cat test.log clipboard.log 2>/dev/null | grep -o '실험실 기록을 남겼다: .*'  | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
             [ -d "$d" ] || d=$(cygpath -u "$d" 2>/dev/null)
             [ -d "$d" ] || continue
-            # annotation은 공개다: 세션 spec.json의 token 값은 가린다(일회용 러너 세션이라도 비밀값 모양을 남기지 않는다)
+            # annotation은 공개다: 세션 spec.json의 token 값과 env의 …TOKEN·SECRET·PASSWORD·KEY 값은 가린다(일회용 러너 세션이라도
+            # 비밀값 모양을 남기지 않는다). env는 ["이름", "값"]이라 한 줄이면 sed가, 이름과 값이 줄을 나누면 awk가 다음 줄을 가린다
+            # (10-18 287c1d1 annotation에 AAA_HOOK_TOKEN 값이 그대로 나갔다)
             find "$d" -type f \( -name '*.log' -o -name '*.json' \) | while read -r f; do
               echo "## ${f#"$d"/}"; tail -c 1500 "$f"; echo
-            done | sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1<가림>"/g' | annotate "$(basename "$d")"
+            done | sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1<가림>"/g; s/("[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*"[[:space:]]*,[[:space:]]*")[^"]*"/\1<가림>"/g' \
+              | awk '{ if (m) sub(/"[^"]*"/, "\"<가림>\""); m = ($0 ~ /"[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*",[[:space:]]*$/); print }' \
+              | annotate "$(basename "$d")"
           done
           true
