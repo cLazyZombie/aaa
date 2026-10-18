@@ -3187,6 +3187,21 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     알림 뒤 배지 없음, 남은 단계를 끝내면 `3/3`·`is-done`. 결함 심기: agent가 알림을 무시하게 바꾸면 「20000ms 안에 배경 하나이 되지
     않았다: "2"」로 실패함을 확인했다.
 
+### 8.146 TUI 탭 막대는 사람이 볼 thread 수를 보인다(10-18, 차이 목록 4장 D 「사람 차례」 수 표시, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-projects는 탭 줄에 `projects: N need you`를 띄운다(`needs-you --line`, sidebar.rs `needs_you_line`). N은 활성
+  프로젝트의 열린 thread 가운데 묶음이 사람 차례(WaitingOnYou)나 검토(ReadyForReview)인 수(`needs_you`)다. 없으면 아무것도 없다.
+  고르는 곳은 `prefix+a` popup이다.
+- **aaa가 달랐던 것.** TUI 탭 막대 오른쪽(herdr `tab_bar_right` 자리)이 질문이 열린 pane 수 ` ● 질문 n `이었다(§8.92).
+- **고침.** 같은 자리·같은 모양(빨강 바탕 굵게)에 ` ● 사람 차례 n `: host가 보낸 ThreadView 묶음이 사람 차례·검토인 thread 수.
+  없으면 그리지 않는다. 참고의 popup 대신 탐색 목록(prefix w)을 쓴다: thread 줄이 이미 사람 차례부터 선다(§8.127·herdr-projects
+  `DISPLAY_ORDER`). thread가 아닌 pane의 질문은 이제 탭 막대에서 세지 않고 사이드바 줄 상태(질문)로만 보인다. 질문 pane으로
+  가는 키(`OpenNotificationTarget`)는 그대로다. 참고의 「ticker가 멈췄으면 그리지 않음」은 aaa host가 묶음을 늘 다시 세므로 없다.
+- **계약 변화 없음.**
+- **시험.** TUI `side_list_like_web`: thread를 시작한 뒤에는 수가 없고, 그 thread의 pane을 보고 없이 닫으면(사람 차례) 탭 막대에
+  ` ● 사람 차례 1 `. 결함 심기: 옛 규칙(질문 pane 수)으로 되돌리면 「20s 안에 사람 차례 수이 되지 않았다」로 실패했다.
+  `attach_draws_layout_and_detach_keeps_sessions`는 thread가 아닌 pane의 질문이 탭 막대에 수를 띄우지 않는지 본다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
