@@ -2757,21 +2757,24 @@ fn project_lifecycle() {
 /// 사람이 띄운 가짜 Claude(실행 파일 이름이 `claude`라 aaa가 화면으로 상태를 본다, hook settings 없음). 띄운 인자를 보이고
 /// SessionStart hook으로 대화 ID를 알린 뒤, Claude처럼 입력 상자를 그려 Enter마다 받은 줄을 남긴다. brief 안내를 받으면
 /// 그 pane 안에서 자기 thread에 Next 줄을 더해 보고(thread 범위 시험) 결과를 `probe.txt`에, 보고를 report.md에 쓴다.
-/// `@BIN@`은 aaa 실행 파일이다.
+/// 그 턴은 실제 Claude처럼 입력 상자 위에 「Working… esc to interrupt」를 다음 입력까지 그린다: hook이 없는 pane은 화면
+/// 감지의 작업 중이 받았다는 사건이다(없으면 host가 `accept_wait_ms`를 다 기다린다). `@BIN@`은 aaa 실행 파일이다.
 const ADOPT_AGENT: &str = r#"#!/bin/sh
 stty -icanon -echo min 1 time 0
 R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
 log="args: $*
 "
 "@BIN@" hook --agent claude '{"hook_event_name":"SessionStart","session_id":"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d","source":"startup"}'
-buf=''
-draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n' "$log" "$R" "$buf" "$R"; }
+buf=''; st=''
+draw() { printf '\033[2J\033[H%s%s%s\n\342\235\257 %s\n%s\n' "$log" "$st" "$R" "$buf" "$R"; }
 draw
 while :; do
   c=$(dd bs=4096 count=1 2>/dev/null)
   if [ -z "$c" ]; then
     case "$buf" in
       *brief.md*)
+        st=$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n_'); st=${st%_}
+        draw
         dir=$(dirname "$(printf '%s' "$buf" | sed 's/를 읽고.*//')")
         id=$(basename "$dir"); id=${id#demo-}
         "@BIN@" thread next demo "$id" --add probe > "$dir/probe.tmp" 2>&1; echo "rc=$?" >> "$dir/probe.tmp"
@@ -2783,7 +2786,7 @@ while :; do
 "
     buf=''
   else
-    buf="$buf$c"
+    buf="$buf$c"; st=''
   fi
   draw
 done
@@ -2874,6 +2877,40 @@ fn thread_adopt_existing_pane() {
     w.h.ok(&["pane", "send-text", &new, "still-here"]);
     w.h.ok(&["pane", "send-keys", &new, "enter"]);
     w.h.wait_output(&new, "got: still-here", T);
+}
+
+/// 셸 pane에서 친 Claude도 데려온다(참고는 herdr가 감지한 agent가 있는 pane이면 데려온다). 가짜 Claude는 hook을 부르지
+/// 않아 harness는 agent의 앞 프로세스 감지(§8.110 Q21)로만 온다. 셸만 앞이면 거부, Claude가 앞이면 데려와 brief가 Claude에
+/// 가고 보고가 온다. 기다림은 pane 기록·파일이다.
+#[test]
+fn thread_adopt_claude_started_in_a_shell() {
+    let mut w = world();
+    let bin_dir = w.lab.root.join("human");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let claude = bin_dir.join("claude");
+    let hook = ADOPT_AGENT.lines().find(|l| l.contains("hook --agent claude")).unwrap();
+    std::fs::write(&claude, ADOPT_AGENT.replace(hook, "").replace("@BIN@", lab::BIN)).unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let sh = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], Some(path_str(&w.repo)));
+    let e = w.h.json(&["thread", "adopt", "demo", "--pane", &sh, "--title", "셸"]).expect_err("셸만 앞이면 거부");
+    assert!(e.contains("Claude·Codex pane이 아니다"), "{e}");
+    w.h.ok(&["pane", "run", &sh, path_str(&claude)]);
+    wait_for_diag(
+        "셸 안 Claude 감지",
+        T,
+        || (w.h.pane(&sh)["agent"]["harness"] == "claude").then_some(()),
+        || format!("{}", w.h.pane(&sh)),
+    );
+    let v = w.h.ok(&["thread", "adopt", "demo", "--pane", &sh, "--title", "셸에서 친 일"]);
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!((v["thread_kind"].as_str(), v["profile"].as_str()), (Some("adopted"), Some("claude")), "{v}");
+    let repo = std::fs::canonicalize(&w.repo).unwrap();
+    assert_eq!(std::fs::canonicalize(v["cwd"].as_str().unwrap()).unwrap(), repo, "{v}");
+    w.wait_show("brief", &id, |v| v["brief"] == "delivered");
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    let probe = repo.join(".aaa").join(format!("demo-{id}")).join("probe.txt");
+    let got = wait_for("pane 안 CLI 결과", T, || std::fs::read_to_string(&probe).ok());
+    assert!(got.contains("thread 세션 안의 CLI는 보기만 한다") && got.ends_with("rc=1\n"), "{got}");
 }
 
 /// routine 일정의 초 단위(4장 H #604): 운영 host(`AAA_TEST_ROUTINE_SECONDS`가 `1`이 아님)는 참고처럼 분부터 받고, 초 단위
