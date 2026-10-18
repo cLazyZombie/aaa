@@ -223,7 +223,13 @@ impl Host {
             // 잃은 채 기다리므로 사람에게 넘긴다.
             let resume = rec.mission.is_none() && rec.brief == BriefState::Delivered;
             let resumable = rec.launch.as_ref().is_some_and(|l| l.resume_argv.iter().any(|a| a.contains("{session}")));
-            let restarted = if resume && !resumable {
+            let restarted = if rec.mission.is_some() {
+                match self.mission_restore(&rec).await {
+                    Ok(Some(view)) => Ok(view),
+                    Ok(None) => return false,
+                    Err(e) => Err(e),
+                }
+            } else if resume && !resumable {
                 Err(aaa_proto::ErrorBody::new(
                     aaa_proto::ErrorCode::BadRequest,
                     "이 harness는 대화를 이어 띄우지 못한다",

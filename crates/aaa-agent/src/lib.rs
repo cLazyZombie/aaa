@@ -325,7 +325,7 @@ impl Agent {
             && spec.spec.role == Some(aaa_proto::Role::Evaluator)
             && let Some((_, pointer)) = spec.spec.env.iter().find(|(k, _)| k == "AAA_MISSION_POINTER")
         {
-            text.push_str("\n");
+            text.push('\n');
             text.push_str(pointer);
         }
         Some(hooks::output(kind, &text))

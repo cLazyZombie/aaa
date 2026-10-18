@@ -1567,7 +1567,7 @@ impl Host {
                 m.idle_since_ms = None;
                 m.saw_working = false;
                 m.last_reset_ms = aaa_common::util::now_ms();
-                m.state = "시작 중".into();
+                m.state = if m.paused { "멈춤" } else { "시작 중" }.into();
             })?;
         }
         let detail = if resume { "resume".to_string() } else { format!("새 대화·brief 다시 씀{profile_note}") };

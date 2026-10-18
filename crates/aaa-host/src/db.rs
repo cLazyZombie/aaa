@@ -926,6 +926,31 @@ impl Db {
 }
 
 impl Db {
+    /// 임무 routine의 출력 확정과 입력 기록은 함께 commit한다. 어느 쪽만 남으면 같은 출력을 놓친다.
+    pub(crate) fn mission_routine_commit(
+        &self,
+        project: &str,
+        id: &str,
+        status: &str,
+        data: &str,
+        key: &str,
+        hash: &str,
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let saved = tx.execute(
+            "UPDATE threads SET status=?3,data=?4,updated_at=?5 WHERE project=?1 AND id=?2",
+            params![project, id, status, data, aaa_common::util::now_ms() as i64],
+        )?;
+        anyhow::ensure!(saved == 1, "routine 대상 임무가 없어졌다");
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [key, hash],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// routine·schedule 입력 번호. 같은 host의 여러 임무에서 겹치지 않는다.
     pub(crate) fn mission_next_input(&self, prefix: &str) -> Result<String> {
         let mut c = self.conn.lock().unwrap();

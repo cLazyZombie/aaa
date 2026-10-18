@@ -736,18 +736,18 @@ mod tests {
 pub fn mission_inbox_pending(work_dir: &str) -> Result<Vec<String>> {
     let dir = check_work_dir(work_dir)?;
     let processed = dir.join("processed.txt");
-    if let Ok(m) = processed.symlink_metadata() {
-        if !m.is_file() || m.len() > 1024 * 1024 {
-            bail!("processed.txt는 1MiB 이하 일반 파일이어야 한다");
-        }
+    if let Ok(m) = processed.symlink_metadata()
+        && (!m.is_file() || m.len() > 1024 * 1024)
+    {
+        bail!("processed.txt는 1MiB 이하 일반 파일이어야 한다");
     }
     let done = std::fs::read_to_string(processed).unwrap_or_default();
     let done: std::collections::HashSet<_> = done.lines().map(str::trim).collect();
     let inbox = dir.join("inbox");
-    if let Ok(m) = inbox.symlink_metadata() {
-        if !m.is_dir() {
-            bail!("inbox는 일반 폴더여야 한다");
-        }
+    if let Ok(m) = inbox.symlink_metadata()
+        && !m.is_dir()
+    {
+        bail!("inbox는 일반 폴더여야 한다");
     }
     let mut names = vec![];
     for e in std::fs::read_dir(inbox).into_iter().flatten() {
@@ -777,10 +777,10 @@ fn mission_state_path(work_dir: &str, rel: &str) -> Result<PathBuf> {
     let mut at = dir;
     for c in path.components() {
         at.push(c);
-        if let Ok(m) = at.symlink_metadata() {
-            if m.file_type().is_symlink() {
-                bail!("임무 상태에 symlink가 있다");
-            }
+        if let Ok(m) = at.symlink_metadata()
+            && m.file_type().is_symlink()
+        {
+            bail!("임무 상태에 symlink가 있다");
         }
     }
     Ok(at)
@@ -793,10 +793,10 @@ pub fn mission_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
     for sub in ["inbox", "history"] {
         let mut dirs = vec![dir.join(sub)];
         while let Some(at) = dirs.pop() {
-            if let Ok(m) = at.symlink_metadata() {
-                if !m.is_dir() {
-                    bail!("임무 상태 폴더가 일반 폴더가 아니다");
-                }
+            if let Ok(m) = at.symlink_metadata()
+                && !m.is_dir()
+            {
+                bail!("임무 상태 폴더가 일반 폴더가 아니다");
             }
             for e in std::fs::read_dir(&at).into_iter().flatten() {
                 let e = e?;

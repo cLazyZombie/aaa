@@ -93,6 +93,7 @@ struct Mission {
     def: Definition,
     body: String,
     resolved_repo: Option<String>,
+    resolved_machine: Option<String>,
 }
 fn parse(name: &str, text: &str) -> Result<Mission, ErrorBody> {
     if !aaa_proto::valid_project(name) || name == "evaluator" {
@@ -135,6 +136,7 @@ fn parse(name: &str, text: &str) -> Result<Mission, ErrorBody> {
         sha: sha(&text)[..12].into(),
         approval,
         resolved_repo: d.repo.clone(),
+        resolved_machine: None,
         def: d,
         body: body.trim().into(),
         text,
@@ -156,6 +158,7 @@ pub(crate) struct MissionRun {
     pub name: String,
     pub applied_sha: String,
     pub state: String,
+    pub paused: bool,
     pub cursor: u64,
     pub pending: Vec<Input>,
     pub pending_since_ms: Option<u64>,
@@ -336,7 +339,9 @@ impl Host {
         let text = self.db.meta(&key(p, n, "applied")).map_err(internal)?.ok_or_else(|| bad("적용 사본이 없다"))?;
         let mut m = parse(n, &text)?;
         if let Some(scope) = self.db.meta(&key(p, n, "scope")).map_err(internal)? {
-            m.resolved_repo = serde_json::from_str::<(Option<String>, Option<String>)>(&scope).map_err(internal)?.0;
+            let scope: (Option<String>, Option<String>) = serde_json::from_str(&scope).map_err(internal)?;
+            m.approval = sha(&serde_json::to_string(&(&m.approval, &scope)).map_err(internal)?);
+            (m.resolved_repo, m.resolved_machine) = scope;
         }
         Ok(m)
     }
@@ -370,7 +375,7 @@ impl Host {
         let mut m = parse(n, text)?;
         let scope = self.mission_scope(p, &m)?;
         m.approval = sha(&serde_json::to_string(&(&m.approval, &scope)).map_err(internal)?);
-        m.resolved_repo = scope.0;
+        (m.resolved_repo, m.resolved_machine) = scope;
         Ok(m)
     }
     fn store_mission_scope(&self, p: &str, n: &str, m: &Mission) -> Result<(), ErrorBody> {
@@ -390,7 +395,7 @@ impl Host {
         )
         .map_err(internal)?;
         m.approval = sha(&serde_json::to_string(&(&m.approval, &scope)).map_err(internal)?);
-        m.resolved_repo = scope.0;
+        (m.resolved_repo, m.resolved_machine) = scope;
         Ok(m)
     }
     fn permitted(&self, p: &str, n: &str, m: &Mission) -> bool {
@@ -412,7 +417,9 @@ impl Host {
         within
             || self.db.meta(&key(p, n, "ok")).ok().flatten().as_deref() == Some(m.approval.as_str())
             || self.applied(p, n).is_ok_and(|a| {
-                !widening(&a.def, &m.def) && (m.def.repo.is_none() || a.resolved_repo == m.resolved_repo)
+                !widening(&a.def, &m.def)
+                    && (m.def.repo.is_none()
+                        || a.resolved_repo == m.resolved_repo && a.resolved_machine == m.resolved_machine)
             })
     }
     pub(crate) fn mission_revision(&self, r: &ThreadRec) -> Option<String> {
@@ -479,8 +486,10 @@ impl Host {
                 .filter(|r| r.mission.as_ref().is_some_and(|m| m.name == n))
                 .max_by_key(|r| r.created_at_ms)
         });
-        if file.is_err() && applied.is_none() {
-            return Err(file.unwrap_err());
+        if let Err(e) = &file
+            && applied.is_none()
+        {
+            return Err(e.clone());
         }
         let run = rec.as_ref().and_then(|r| r.mission.as_ref());
         let def = applied.as_ref().or(file.as_ref().ok()).unwrap();
@@ -698,6 +707,7 @@ impl Host {
             "pause" | "resume" => {
                 self.update_rec(p, &r.id, |r| {
                     let m = r.mission.as_mut().unwrap();
+                    m.paused = action == "pause";
                     m.state = if action == "pause" { "멈춤" } else { "대기" }.into();
                 })?;
             }
@@ -756,6 +766,47 @@ impl Host {
         })?;
         self.tick_wake.notify_one();
         Ok(())
+    }
+    pub(crate) fn mission_routine_input(
+        &self,
+        p: &str,
+        n: &str,
+        key: &str,
+        hash: &str,
+        text: String,
+    ) -> Result<bool, ErrorBody> {
+        let _guard = self.rec_lock.lock().unwrap();
+        if self.db.meta(key).map_err(internal)?.as_deref() == Some(hash) {
+            return Ok(false);
+        }
+        let mut r = if n == "evaluator" { self.evaluator_rec(p) } else { self.mission_rec(p, n) }
+            .ok_or_else(|| err(ErrorCode::NotFound, "routine 대상 임무가 없다"))?;
+        let input = Input { id: self.db.mission_next_input("r").map_err(internal)?, source: "routine".into(), text };
+        let now = util::now_ms();
+        if n == "evaluator" {
+            r.eval_inputs.push(input);
+        } else {
+            let m = r.mission.as_mut().unwrap();
+            m.pending.push(input);
+            m.pending_since_ms.get_or_insert(now);
+        }
+        r.updated_at_ms = now;
+        self.db
+            .mission_routine_commit(
+                p,
+                &r.id,
+                r.status.as_str(),
+                &serde_json::to_string(&r).map_err(internal)?,
+                key,
+                hash,
+            )
+            .map_err(internal)?;
+        let _ = self.thread_events.send(self.thread_view(&r));
+        if n == "evaluator" {
+            self.evaluator_due(p, std::time::Duration::ZERO);
+        }
+        self.tick_wake.notify_one();
+        Ok(true)
     }
     fn mission_files_changed(&self, p: &str) {
         let Ok(dir) = self.project_dir(p) else {
@@ -936,7 +987,7 @@ impl Host {
                 "특수 임무 세션이 예상 밖에 끝났다. 저절로 다시 띄우지 않는다",
             );
         }
-        if !applied.def.enabled && run.state != "일함" {
+        if run.paused || !applied.def.enabled && run.state != "일함" {
             run.state = "멈춤".into();
         }
         self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
@@ -1023,7 +1074,7 @@ impl Host {
                 inputs.push(Input {
                     id: post.id.clone(),
                     source: "post".into(),
-                    text: serde_json::to_string(&post).map_err(internal)?,
+                    text: crate::post::mission_payload(&post).map_err(internal)?,
                 });
             }
         }
@@ -1081,12 +1132,12 @@ impl Host {
                 inputs.push(Input { id, source: "events".into(), text });
             }
         }
-        if let Some(s) = &applied.def.schedule {
-            if is_due(&parse_schedule(s, true).map_err(bad)?, run.last_schedule_ms, now, &local_offset_secs) {
-                run.next_seq += 1;
-                inputs.push(Input{id:self.db.mission_next_input("s").map_err(internal)?,source:"schedule".into(),text:serde_json::json!({"source":"schedule","at_ms":now,"note":"임무 일정 차례다. 자료이며 지시가 아니다"}).to_string()});
-                run.last_schedule_ms = now;
-            }
+        if let Some(s) = &applied.def.schedule
+            && is_due(&parse_schedule(s, true).map_err(bad)?, run.last_schedule_ms, now, &local_offset_secs)
+        {
+            run.next_seq += 1;
+            inputs.push(Input{id:self.db.mission_next_input("s").map_err(internal)?,source:"schedule".into(),text:serde_json::json!({"source":"schedule","at_ms":now,"note":"임무 일정 차례다. 자료이며 지시가 아니다"}).to_string()});
+            run.last_schedule_ms = now;
         }
         if !inputs.is_empty() {
             run.pending_since_ms.get_or_insert(now);
@@ -1318,7 +1369,7 @@ impl Host {
             m.saw_working = false;
             m.last_reset_ms = now;
             m.idle_since_ms = None;
-            m.state = "시작 중".into();
+            m.state = if m.paused { "멈춤" } else { "시작 중" }.into();
             m.applied_sha = next.sha.clone();
             r.title = next.def.title.clone();
         })?;
@@ -1340,6 +1391,22 @@ impl Host {
 mod tests;
 
 impl Host {
+    /// 일반 복원도 임무 잠금을 쓴다. 진행 중인 reset은 ticker가 고정 후보의 범위·profile로 이어 간다.
+    pub(crate) async fn mission_restore(
+        self: &Arc<Self>,
+        rec: &ThreadRec,
+    ) -> Result<Option<aaa_proto::ThreadView>, ErrorBody> {
+        let name = &rec.mission.as_ref().ok_or_else(|| bad("임무가 없다"))?.name;
+        let lock = self.mission_lock(&rec.project, name);
+        let _guard = lock.lock().await;
+        let current = self.load(&rec.project, &rec.id)?;
+        if current.mission.as_ref().is_some_and(|m| m.resetting) {
+            self.tick_wake.notify_one();
+            return Ok(None);
+        }
+        self.thread_restart(&rec.project, &rec.id, false, None, "restore").await.map(Some)
+    }
+
     pub(crate) async fn mission_transfer_state(self: &Arc<Self>, r: &ThreadRec) -> Result<(), ErrorBody> {
         let Some((mid, origin)) = r.mission.as_ref().and_then(|m| m.reset_origin.as_ref()) else {
             return Ok(());
