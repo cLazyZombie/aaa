@@ -1753,6 +1753,15 @@ fn copy_mode_like_herdr() {
     tui.wait_text("커서가 보이게 넘김", |s| top(s) == Some(172));
     tui.send(b"q");
     tui.wait_text("q로 나가 맨 아래", |s| top(s) == Some(173) && !s.contains(" COPY "));
+    // 5) 낱말 이동(herdr `PaneCopyMotion`, host가 정함): 바로 위 줄 첫 칸에서 고르기를 시작해 `w`(two)·`w`(-, 문장 부호는
+    //    따로 낱말)·`e`(three 끝)로 옮기고 `y`. 답을 기다리는 동안 붙잡은 키가 옮긴 자리에서 이어 「one two-three」가 된다
+    tui.type_line("printf 'one two-three four\\n'");
+    tui.wait_text("낱말 줄", |s| rows(s).iter().any(|l| l == "one two-three four"));
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("w/b/e"));
+    tui.send(b"k0vwwey");
+    wait_for("낱말 이동 복사", T, || (read_copied() == "one two-three").then_some(()));
+    tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
     // copy 모드 키는 셸에 가지 않았다
     assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
 

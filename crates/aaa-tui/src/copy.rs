@@ -1,17 +1,18 @@
 //! copy 모드(herdr 0.9.5 `src/client/shell/copy_mode.rs`·`src/copy_mode.rs`). `prefix [`로 포커스 pane에 들어가 키로 커서를
 //! 옮기며 이 화면의 기록을 넘기고(`PaneScroll`), 고른 글은 끌어 고르기처럼 host가 기록까지 읽어 복사한다(`PaneSelectionRead`).
 //! 커서·고르기는 기록 줄 번호(`mouse::Point`)로 둔다. 화면 위치는 frame을 기다리지 않고 보낸 값으로 셈한다(herdr와 같다).
-//! 낱말 이동(`w`·`b`·`e`·`{`·`}`)과 찾기(`/`·`?`·`n`·`N`)는 아직 없다.
+//! 낱말·문단 이동(`w b e W B E { }`)은 herdr처럼 host가 화면 사본의 기록까지 보고 정하고(`PaneCopyMotion`), 답이 올 때까지
+//! 다음 키를 붙잡아 그 자리에서 잇는다. 찾기(`/`·`?`·`n`·`N`)는 아직 없다.
 //!
 //! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 
-use aaa_proto::GridRun;
+use aaa_proto::{CopyMotion, FrontRequest, GridRun, TextPoint};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::keys::Combo;
 use crate::mouse::{self, Point, Selection};
-use crate::{App, FrontSender, Mode};
+use crate::{App, FrontSender, Mode, Pending};
 
 /// copy 모드 상태(herdr `ClientCopyModeState`). pane에 붙어 있어 포커스가 다른 pane으로 가면 Terminal 모드가 되고,
 /// 돌아오면 다시 copy 모드다.
@@ -197,6 +198,14 @@ impl App {
             Some('0') => self.copy_col(0),
             Some('$') => self.copy_line(true),
             Some('^') => self.copy_line(false),
+            Some('w') => self.copy_motion(tx, CopyMotion::NextWordStart).await?,
+            Some('b') => self.copy_motion(tx, CopyMotion::PreviousWordStart).await?,
+            Some('e') => self.copy_motion(tx, CopyMotion::NextWordEnd).await?,
+            Some('W') => self.copy_motion(tx, CopyMotion::NextBigWordStart).await?,
+            Some('B') => self.copy_motion(tx, CopyMotion::PreviousBigWordStart).await?,
+            Some('E') => self.copy_motion(tx, CopyMotion::NextBigWordEnd).await?,
+            Some('{') => self.copy_motion(tx, CopyMotion::PreviousParagraph).await?,
+            Some('}') => self.copy_motion(tx, CopyMotion::NextParagraph).await?,
             _ => {}
         }
         Ok(())
@@ -265,6 +274,29 @@ impl App {
             c.offset = offset;
             self.scroll_to(tx, pane, offset as usize).await?;
         }
+        Ok(())
+    }
+
+    /// 낱말·문단 이동(herdr `move_copy_word`·`move_copy_paragraph`): host에 묻고 답(`copy_apply`)이 올 때까지 키를 붙잡는다
+    async fn copy_motion(&mut self, tx: &mut FrontSender, motion: CopyMotion) -> Result<()> {
+        let Some(c) = self.copy.as_ref() else { return Ok(()) };
+        let (pane, cursor) = (c.pane.clone(), TextPoint { row: c.cursor.0, col: c.cursor.1 });
+        if !self.host_at_least(17) {
+            return Ok(());
+        }
+        let id = tx.send(FrontRequest::PaneCopyMotion { pane, cursor, motion }).await?;
+        self.pending.insert(id.clone(), Pending::CopyMotion);
+        self.copy_wait = Some(id);
+        Ok(())
+    }
+
+    /// host가 정한 자리로 커서를 옮기고 보이게 넘긴다. 그사이 copy 모드를 나갔거나 다른 pane이면 버린다.
+    pub(crate) async fn copy_apply(&mut self, tx: &mut FrontSender) -> Result<()> {
+        let Some((pane, cursor)) = self.copy_reply.take() else { return Ok(()) };
+        let Some(c) = self.copy.as_mut().filter(|c| c.pane == pane) else { return Ok(()) };
+        c.cursor = cursor;
+        self.copy_reveal(tx).await?;
+        self.copy_sync();
         Ok(())
     }
 

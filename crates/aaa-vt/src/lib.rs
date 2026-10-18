@@ -5,6 +5,8 @@
 
 use aaa_proto::{GridRun, MouseEncoding, MouseMode, PaneModes, ReadFormat, ReadSource, ScreenText};
 
+pub mod copy;
+
 pub struct Vt {
     parser: vt100::Parser<Modes>,
 }
@@ -310,6 +312,132 @@ impl Vt {
         }
         screen.set_scrollback(0);
         (out, truncated)
+    }
+
+    /// copy 모드 낱말·문단 이동(herdr `pane.copy_motion`). 갈 곳이 없으면 커서 그대로, 문단 이동은 칸을 지킨다.
+    pub fn copy_motion(&mut self, cursor: copy::Point, m: copy::Motion) -> copy::Point {
+        let total = self.total_rows();
+        if cursor.0 >= total {
+            return cursor;
+        }
+        match m {
+            copy::Motion::PreviousParagraph | copy::Motion::NextParagraph => {
+                // herdr `paragraph_motion_target`: 999줄 안의 바로 위·아래 빈 줄(이어진 빈 줄도 한 줄씩)
+                let reach = total.min(1000) - 1;
+                let up = m == copy::Motion::PreviousParagraph;
+                let (lo, hi) = if up {
+                    if cursor.0 == 0 {
+                        return cursor;
+                    }
+                    (cursor.0.saturating_sub(reach), cursor.0 - 1)
+                } else {
+                    if cursor.0 + 1 >= total {
+                        return cursor;
+                    }
+                    (cursor.0 + 1, (cursor.0 + reach).min(total - 1))
+                };
+                let rows = self.text_rows(lo, hi);
+                let at = if up { rows.iter().rposition(copy::is_blank) } else { rows.iter().position(copy::is_blank) };
+                at.map_or(cursor, |k| (lo + k, cursor.1))
+            }
+            _ => self.word_motion(cursor, m, total).unwrap_or(cursor),
+        }
+    }
+
+    /// herdr `word_motion_target`: 64줄 창에서 찾고, 못 찾았거나 낱말이 창 끝 너머로 이어질 수 있으면 창을 두 배로
+    fn word_motion(&mut self, cursor: copy::Point, m: copy::Motion, total: usize) -> Option<copy::Point> {
+        let mut window = 64usize;
+        loop {
+            let (start, end) = if m.backward() {
+                (cursor.0.saturating_sub(window - 1), cursor.0)
+            } else {
+                (cursor.0, (cursor.0 + window - 1).min(total - 1))
+            };
+            // 뒤로 갈 때는 창 바로 위 줄이 접혔는지(낱말이 위로 이어지는가)도 본다
+            let lead = m.backward() && start > 0;
+            let read = self.text_rows(if lead { start - 1 } else { start }, end);
+            let (above_wrapped, rows) = if lead { (read[0].wrapped, &read[1..]) } else { (false, &read[..]) };
+            let target = copy::word_target(rows, start, cursor, m);
+            let more = match target {
+                None => true,
+                Some(t) if m.backward() => t.0 == start && above_wrapped,
+                Some(t) if m.word_end() => {
+                    rows.last().is_some_and(|r| r.wrapped && r.cells.last().is_some_and(|c| (end, c.col) == t))
+                }
+                Some(_) => false,
+            };
+            let edge = if m.backward() { start == 0 } else { end + 1 >= total };
+            if !more || edge {
+                return target;
+            }
+            window *= 2;
+        }
+    }
+
+    /// copy 모드 찾기(herdr `pane.copy_search`): 기록과 화면 전체에서 `query`를 찾아 커서(`previous`가 있으면 그 범위) 다음
+    /// 일치와 그 언저리 `keep`개를 준다
+    pub fn copy_search(
+        &mut self,
+        query: &str,
+        forward: bool,
+        cursor: copy::Point,
+        previous: Option<copy::Range>,
+        keep: usize,
+    ) -> copy::Found {
+        let Some(m) = copy::Matcher::new(query) else { return copy::Found::default() };
+        let total = self.total_rows();
+        let (mut lines, mut all) = (copy::Lines::default(), Vec::new());
+        let mut i = 0;
+        while i < total {
+            let end = (i + 255).min(total - 1);
+            for (k, r) in self.text_rows(i, end).iter().enumerate() {
+                lines.push_row(i + k, r, &m, &mut all);
+            }
+            i = end + 1;
+        }
+        lines.finish(&m, &mut all);
+        copy::pick(all, forward, cursor, previous, keep)
+    }
+
+    /// 기록과 화면을 이은 줄 수(alt 화면이면 화면 줄 수)
+    fn total_rows(&mut self) -> usize {
+        let back = self.history_rows();
+        back + usize::from(self.parser.screen().size().0)
+    }
+
+    /// 절대 줄 `start..=end`의 칸(넓은 글자 뒤 칸은 뺀다)과 접힘. 화면 높이씩 기록을 올려 읽고 맨 아래로 되돌린다.
+    fn text_rows(&mut self, start: usize, end: usize) -> Vec<copy::Row> {
+        let back = self.history_rows();
+        let screen = self.parser.screen_mut();
+        let (rows, cols) = screen.size();
+        let total = back + usize::from(rows);
+        if start >= total || start > end {
+            return vec![];
+        }
+        let end = end.min(total - 1);
+        let mut out = Vec::with_capacity(end + 1 - start);
+        let mut i = start;
+        while i <= end {
+            let (offset, first) = if i < back { (back - i, 0) } else { (0, i - back) };
+            screen.set_scrollback(offset);
+            let take = (usize::from(rows) - first).min(end + 1 - i);
+            for k in 0..take {
+                let r = (first + k) as u16;
+                let mut cells = Vec::with_capacity(usize::from(cols));
+                for c in 0..cols {
+                    let Some(cell) = screen.cell(r, c) else { continue };
+                    if cell.is_wide_continuation() {
+                        continue;
+                    }
+                    let end_col = if cell.is_wide() { (c + 1).min(cols - 1) } else { c };
+                    cells.push(copy::Cell { col: c, end_col, text: cell.contents().to_string() });
+                }
+                out.push(copy::Row { cells, wrapped: screen.row_wrapped(r) });
+            }
+            i += take;
+        }
+        screen.set_scrollback(0);
+        out
     }
 
     /// normal screen 기록 줄 수(alt 화면이면 0)
@@ -1161,6 +1289,37 @@ mod tests {
         assert_eq!(v.selection_text((n - 3, 0), (n - 2, 9), usize::MAX).0, "abcdefghij  klm");
         v.feed(b"\x1b[?1049h\x1b[HA\r\nB");
         assert_eq!(v.selection_text((0, 0), (1, 9), usize::MAX).0, "A\nB");
+    }
+
+    /// copy 모드 이동·찾기는 기록까지 보고(줄 번호는 기록 맨 앞이 0), 읽은 뒤 화면은 맨 아래 그대로
+    #[test]
+    fn copy_motion_and_search_span_history() {
+        use copy::Motion::*;
+        let mut v = Vt::new(3, 10);
+        v.feed(b"alpha beta\r\n\r\ngamma\r\ndelta\r\n");
+        // 줄 0 alpha beta, 1 빈 줄(기록), 2 gamma, 3 delta, 4 빈 줄(화면)
+        assert_eq!(v.history_rows(), 2);
+        assert_eq!(v.copy_motion((2, 3), PreviousParagraph), (1, 3));
+        assert_eq!(v.copy_motion((0, 3), NextParagraph), (1, 3));
+        assert_eq!(v.copy_motion((0, 0), PreviousParagraph), (0, 0));
+        assert_eq!(v.copy_motion((0, 6), NextWordStart), (2, 0));
+        assert_eq!(v.copy_motion((2, 0), PreviousWordStart), (0, 6));
+        assert_eq!(v.copy_motion((3, 0), NextWordStart), (3, 0));
+        let f = v.copy_search("a", true, (0, 4), None, 1024);
+        assert_eq!((f.total, f.current_global, f.matches[2]), (6, Some(2), ((0, 9), (0, 9))));
+        assert_eq!(v.copy_search("A", true, (0, 0), None, 1024).total, 0);
+        assert_eq!(v.grid_row(0)[0].t, "gamma");
+
+        // 접혀 100줄을 넘는 낱말: 64줄 창으로 못 끝내면 넓혀 끝까지 간다
+        let mut v = Vt::new(5, 4);
+        let mut long = b"x ".to_vec();
+        long.extend(std::iter::repeat_n(b'a', 400));
+        long.extend(b" y\r\n");
+        v.feed(&long);
+        assert_eq!(v.copy_motion((0, 0), NextWordStart), (0, 2));
+        assert_eq!(v.copy_motion((0, 2), NextWordEnd), (100, 1));
+        assert_eq!(v.copy_motion((100, 1), PreviousWordStart), (0, 2));
+        assert_eq!(v.copy_motion((50, 0), NextBigWordStart), (100, 3));
     }
 
     #[test]

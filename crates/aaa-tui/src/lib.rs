@@ -166,6 +166,8 @@ enum Pending {
     Attach(u64),
     /// 고른 글 읽기: 응답이 오면 복사한다
     Copy,
+    /// copy 모드 낱말·문단 이동: 응답이 오면 커서를 그 자리로
+    CopyMotion,
 }
 
 /// herdr `ClientShellMode`(Copy·Resize는 다음 묶음)
@@ -267,6 +269,9 @@ struct App {
     /// 새 pane으로 포커스를 옮길 layout 요청(응답 전까지 키·붙여넣기를 `held`에 붙잡는다)
     focus_wait: Option<String>,
     held: Vec<Event>,
+    /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
+    copy_wait: Option<String>,
+    copy_reply: Option<(String, mouse::Point)>,
     quit: bool,
     /// 마우스(`[tui] mouse_capture`)와 터미널에 걸어 둔 값(다시 걸어야 하면 None)
     mouse_capture: bool,
@@ -339,6 +344,8 @@ impl App {
             ascii: None,
             focus_wait: None,
             held: vec![],
+            copy_wait: None,
+            copy_reply: None,
             quit: false,
             mouse_capture: true,
             capture_on: None,
@@ -484,7 +491,7 @@ impl App {
                     None => anyhow::bail!("host 연결이 끊겼다"),
                 },
                 e = keys_in.next() => match e {
-                    Some(Ok(e @ (Event::Key(_) | Event::Paste(_) | Event::Mouse(_)))) if self.focus_wait.is_some() => self.held.push(e),
+                    Some(Ok(e @ (Event::Key(_) | Event::Paste(_) | Event::Mouse(_)))) if self.waiting() => self.held.push(e),
                     Some(Ok(Event::Key(k))) if k.kind != KeyEventKind::Release => { self.on_key(k, &mut tx).await?; dirty = true; }
                     // 그림만 든 clipboard를 붙이면 빈 붙여넣기로 오는 터미널이 있다
                     Some(Ok(Event::Paste(s))) => { self.on_paste(s, &mut tx).await?; dirty = true; }
@@ -528,9 +535,10 @@ impl App {
             }
             // copy 모드 pane에 포커스가 오가거나 그 pane이 없어지면 모드를 맞춘다
             self.settle_copy();
+            self.copy_apply(&mut tx).await?;
             self.reconcile_ascii();
-            // 포커스를 옮긴 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
-            while self.focus_wait.is_none() && !self.held.is_empty() {
+            // 포커스를 옮기거나 copy 커서가 온 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
+            while !self.waiting() && !self.held.is_empty() {
                 match self.held.remove(0) {
                     Event::Key(k) if k.kind != KeyEventKind::Release => self.on_key(k, &mut tx).await?,
                     Event::Paste(s) => self.on_paste(s, &mut tx).await?,
@@ -584,6 +592,9 @@ impl App {
                 if self.focus_wait.as_ref() == Some(&id) {
                     self.focus_wait = None;
                 }
+                if self.copy_wait.as_ref() == Some(&id) {
+                    self.copy_wait = None;
+                }
                 let why = self.pending.remove(&id);
                 match (result, why) {
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::Focus(before))) => {
@@ -607,7 +618,13 @@ impl App {
                     (Outcome::Ok(aaa_proto::FrontResponse::Selection { text, truncated, .. }), Some(Pending::Copy)) => {
                         self.copied(&text, truncated)
                     }
+                    (Outcome::Ok(aaa_proto::FrontResponse::CopyCursor { pane, cursor }), Some(Pending::CopyMotion)) => {
+                        self.copy_reply = Some((pane, (cursor.row, cursor.col)))
+                    }
                     (Outcome::Ok(_), _) => {}
+                    (Outcome::Err(e), Some(Pending::CopyMotion)) => {
+                        self.set_error(format!("copy 이동 실패: {}", e.message))
+                    }
                     (Outcome::Err(e), Some(Pending::Copy)) => self.set_error(format!("복사하지 못했다: {}", e.message)),
                     (Outcome::Err(e), Some(Pending::Attach(n))) => {
                         if self.attach_failed != Some(n) {
@@ -625,6 +642,11 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// 응답을 기다리며 키·붙여넣기·마우스를 붙잡는 중인가(새 pane 포커스·copy 이동)
+    fn waiting(&self) -> bool {
+        self.focus_wait.is_some() || self.copy_wait.is_some()
     }
 
     fn all_panes(&self) -> HashSet<String> {
@@ -1808,13 +1830,13 @@ impl App {
                 s("esc", key),
                 s(" 끝", base),
             ]),
-            // herdr copy 모드 막대(낱말 이동·찾기는 아직 없다)
+            // herdr copy 모드 막대(찾기는 아직 없다)
             Mode::Copy => {
                 let selecting = self.copy.as_ref().is_some_and(|c| c.select.is_some());
                 let mut v = vec![
                     s(" COPY ", chip),
                     s(" ", base),
-                    s("h/j/k/l", key),
+                    s("h/j/k/l w/b/e", key),
                     s(" 이동  ", base),
                     s("v/space", key),
                     s(if selecting { " 고르는 중  " } else { " 고르기  " }, base),

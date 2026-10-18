@@ -962,6 +962,34 @@ pub struct TextPoint {
     pub col: u16,
 }
 
+/// 글 범위(시작, 끝 칸 포함. 넓은 글자 끝은 머리 칸 + 1)(herdr `PaneTextRange`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TextRange {
+    pub start: TextPoint,
+    pub end: TextPoint,
+}
+
+/// copy 모드 낱말·문단 이동(herdr `PaneCopyMotion`에서 줄 끝·첫 글자 빼고: TUI가 화면 frame에서 정한다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyMotion {
+    NextWordStart,
+    PreviousWordStart,
+    NextWordEnd,
+    NextBigWordStart,
+    PreviousBigWordStart,
+    NextBigWordEnd,
+    PreviousParagraph,
+    NextParagraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchDirection {
+    Forward,
+    Backward,
+}
+
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PaneModes {
@@ -1202,6 +1230,22 @@ pub enum FrontRequest {
         pane: String,
         from: TextPoint,
         to: TextPoint,
+    },
+    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.17부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
+    /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
+    PaneCopyMotion {
+        pane: String,
+        cursor: TextPoint,
+        motion: CopyMotion,
+    },
+    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.17부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
+    /// 있으면 그 다음부터. `CopySearch`로 답한다.
+    PaneCopySearch {
+        pane: String,
+        query: String,
+        direction: SearchDirection,
+        cursor: TextPoint,
+        previous: Option<TextRange>,
     },
     Workspace {
         name: Option<String>,
@@ -1516,6 +1560,8 @@ impl FrontRequest {
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::PaneScroll { .. }
                 | FrontRequest::PaneSelectionRead { .. }
+                | FrontRequest::PaneCopyMotion { .. }
+                | FrontRequest::PaneCopySearch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -1598,6 +1644,19 @@ pub enum FrontResponse {
         pane: String,
         text: String,
         truncated: bool,
+    },
+    /// `PaneCopyMotion`: 옮긴 자리
+    CopyCursor {
+        pane: String,
+        cursor: TextPoint,
+    },
+    /// `PaneCopySearch`: 현재 일치 언저리(최대 1024개)와 전체 수, 그 안의 현재·전체에서의 현재(못 찾았으면 없음)
+    CopySearch {
+        pane: String,
+        matches: Vec<TextRange>,
+        total: u64,
+        current: Option<u32>,
+        current_global: Option<u64>,
     },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {

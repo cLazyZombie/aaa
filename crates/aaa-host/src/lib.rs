@@ -1070,6 +1070,10 @@ impl Host {
                 self.pane_read_text(&pane, source, lines, format).await
             }
             FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
+            FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
+            FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
+                self.pane_copy_search(&pane, &query, direction, cursor, previous)
+            }
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
             FrontRequest::PaneSubmit { pane, text } => self.pane_submit(&pane, &text, actor).await,
