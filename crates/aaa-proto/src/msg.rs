@@ -180,6 +180,11 @@ pub struct SpawnSpec {
     /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
     #[serde(default)]
     pub harness: Option<String>,
+    /// 이 머신 agent.toml profile로 harness를 띄운다(argv는 무시하고 profile이 정한다, 상태 hook도 붙는다).
+    /// agent가 `profile.v1` 기능을 알릴 때만 보낸다: 옛 agent는 이 칸을 버리고 셸을 띄운다(plan §8.126).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub profile: Option<String>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -324,6 +329,8 @@ pub enum ChatRole {
     Assistant,
     /// 도구 호출 한 줄(예: `Bash: cargo test`). 도구 결과 본문은 싣지 않는다.
     Tool,
+    /// agent의 생각(Claude thinking 블록, Codex reasoning 요약). 「생각 표시」를 켠 화면이 청할 때만 싣는다(plan §8.129).
+    Thinking,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -333,6 +340,31 @@ pub struct ChatView {
     pub messages: Vec<ChatMessage>,
     /// 기록이 더 길어 끝부분만 실었다
     pub truncated: bool,
+}
+
+/// 파일 보기의 종류(herdr-web-ui `FileKind`, plan §8.125)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FileKind {
+    Image,
+    Video,
+    Audio,
+    Pdf,
+    Text,
+    Binary,
+}
+
+/// 파일 보기가 여는 파일(herdr-web-ui `FileInfo`). `path`는 agent 머신의 실제 경로(symlink를 따라간 것)다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct FileInfo {
+    pub path: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    #[ts(type = "number")]
+    pub modified_ms: u64,
+    pub mime: String,
+    pub kind: FileKind,
 }
 
 // ───────────────────────── Agent link ─────────────────────────
@@ -446,6 +478,21 @@ pub enum AgentRequest {
         anchor: Vec<String>,
         depth: u32,
     },
+    /// 파일 보기: 그 세션이 지금 있는 폴더 기준으로 경로를 찾는다(plan §8.125). 허용 폴더 밖이면 Forbidden,
+    /// 없으면 NotFound다. agent가 `file.v1` 기능을 알릴 때만 보낸다.
+    FileLocate {
+        session: String,
+        path: String,
+    },
+    /// 파일 보기: `FileLocate`가 돌려준 실제 경로의 한 조각(`FileChunk`). 그 사이 바뀌었거나 허용 폴더 밖이면 거부한다.
+    /// `page`면 HTML 파일을 페이지로 그린 bytes(제 폴더의 그림·style·script를 넣은 것)의 조각이다.
+    FileView {
+        path: String,
+        offset: u64,
+        len: u32,
+        #[serde(default)]
+        page: bool,
+    },
     /// 끝난(종료·중단·유실) 세션의 기록을 지운다. 실행 중이면 거부한다.
     Forget {
         session: String,
@@ -462,6 +509,9 @@ pub enum AgentRequest {
         transcript: Option<String>,
         /// Codex thread-id(기록 파일 이름에 들어 있다)
         harness_session: Option<String>,
+        /// 생각도 싣는다(plan §8.129). 옛 agent는 이 칸을 모르고 빼고 보낸다
+        #[serde(default)]
+        thinking: bool,
     },
     /// agent.toml에 정의된 profile 목록
     Profiles,
@@ -615,6 +665,11 @@ pub enum AgentResponse {
     /// 세션이 지금 있는 폴더(읽지 못하면 None)
     Cwd {
         cwd: Option<String>,
+    },
+    /// 찾은 파일. 없으면 끝이 같은 파일 후보(실제 경로, 둘 이상)
+    FileLocated {
+        info: Option<FileInfo>,
+        candidates: Vec<String>,
     },
     Pr(PrAnswer),
     History(HistoryChunk),
@@ -1075,6 +1130,10 @@ pub enum FrontRequest {
         cwd: Option<String>,
         cols: Option<u16>,
         rows: Option<u16>,
+        /// 이 머신 agent.toml profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        profile: Option<String>,
     },
     PaneRead {
         pane: String,
@@ -1082,6 +1141,15 @@ pub enum FrontRequest {
     /// harness(Claude·Codex) 대화 기록 보기(§8.27, 읽기 전용)
     PaneChat {
         pane: String,
+        /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
+        #[serde(default)]
+        thinking: bool,
+    },
+    /// 파일 보기(plan §8.125, 결정 20 D7): pane이 지금 있는 폴더 기준으로 경로를 찾고, 찾았으면 짧은 수명의
+    /// 읽기 경로(`url`)를 준다. 조작 기기만(참고도 보기 전용 기기는 403).
+    PaneFile {
+        pane: String,
+        path: String,
     },
     PaneSend {
         pane: String,
@@ -1571,6 +1639,12 @@ pub enum FrontResponse {
         workspaces: Vec<WorkspaceSummary>,
     },
     Chat(ChatView),
+    /// 찾은 파일과 읽기 경로(`/f/<cap>/<이름>`, 30분), 아니면 고를 후보
+    PaneFile {
+        info: Option<FileInfo>,
+        candidates: Vec<String>,
+        url: Option<String>,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -1816,7 +1890,25 @@ pub enum TermClientMsg {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum EventsClientMsg {
     /// 이 화면을 지금 쓰고 있다(보이고 focus가 있다, herdr-web-ui `presence`). 연결이 끊기면 쓰지 않는 것이다.
-    Presence { active: bool },
+    /// 나머지는 판정 근거 기록에만 쓴다(10-18 실기, 옛 웹은 보내지 않는다).
+    Presence {
+        active: bool,
+        /// 무엇이 알리게 했나(focus·blur·visibilitychange·pagehide·pageshow·freeze·resume·open·heartbeat)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        why: Option<String>,
+        /// 그때 `document.visibilityState === "visible"`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        visible: Option<bool>,
+        /// 그때 `document.hasFocus()`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        focus: Option<bool>,
+    },
+    /// 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거 기록, host는 흐름 사건으로 남긴다). `target`은 알림 자리
+    /// (`thread=…`·`pane=…`), `kind`는 `blocked`·`done`, `outcome`은 웹이 정한 한 줄(띄움·보는 중·가려짐·꺼짐 등)
+    Alert { project: Option<String>, target: String, kind: String, outcome: String },
     /// 사람이 이 기기에서 방금 눌렀거나 쳤거나 화면을 켰다(보이고 focus가 됐다·앱을 열었다). host는 마지막으로 이것을 보낸
     /// 기기(또는 pane에 입력한 기기)를 「쓰는 기기」로 두고, 그 기기가 지금 쓰는 화면일 때만 Web Push를 건너뛴다
     /// (사용자 결정 10-18, plan §8.105. 참고는 쓰는 화면이 하나라도 있으면 건너뛴다)
@@ -1899,7 +1991,9 @@ mod tests {
             !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
-        assert!(!FrontRequest::PaneChat { pane: "p".into() }.needs_control());
+        assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
+        // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
+        assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(

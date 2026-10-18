@@ -1,8 +1,9 @@
-// 웹 E2E 터미널 기본: 크기·글꼴·글자 폭·두 controller·reader·새 셸.
+// 웹 E2E 터미널 기본: 크기·글꼴·글자 폭·두 controller·reader·새 pane.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 02-terminal(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
+import path from "node:path";
 import {
-  root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
+  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -21,8 +22,8 @@ export default async function ({ ctl, page }) {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       const cw = m.sw / p.cols;
       const ch = m.sh / p.rows;
-      // 오른쪽에는 xterm 세로 scrollbar 자리(기본 14px)가 남는다
-      const ok = m.sw <= m.w + 1 && m.w - m.sw < cw + 15 && m.sh <= m.h + 1 && m.h - m.sh < ch + 1;
+      // 오른쪽에 xterm 세로 scrollbar 자리를 남기지 않는다(참고처럼, plan §8.124): 전에는 15px(두 칸쯤)이 늘 비었다
+      const ok = m.sw <= m.w + 1 && m.w - m.sw < cw + 1 && m.sh <= m.h + 1 && m.h - m.sh < ch + 1;
       return { ok: ok && m.crumb.includes(`${p.cols}×${p.rows}`), m, cols: p.cols, rows: p.rows };
     };
     let last = null;
@@ -42,6 +43,77 @@ export default async function ({ ctl, page }) {
       const f = await filled();
       return f.ok && f.cols === small.cols && f.rows === small.rows;
     });
+  });
+
+  await step("끝 칸까지 보인다(coordinator 10-18 t-0333 발견 「gh pr checks」가 「gh p」로, plan §8.124): 휴대폰·iPad·데스크톱에서 글자가 한 cell씩 나아가 끝 칸이 줄 안에, scrollbar 자리 없이 칸을 끝까지", async () => {
+    // 칸 수만큼의 자(끝 두 글자 @#)와, 끝 칸을 넘어 접히는 「gh pr checks」. 크기가 바뀌면 다시 그린다
+    const prog = `const draw = () => {
+  const c = process.stdout.columns;
+  let s = "";
+  for (let i = 1; i <= c; i++) s += String(i % 10);
+  process.stdout.write("\\x1b[H\\x1b[2J" + s.slice(0, -2) + "@#\\r\\n" + "x".repeat(c - 5) + "gh pr checks\\r\\nendcol " + c + "> ");
+};
+process.stdout.on("resize", draw);
+draw();
+process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "endcol", "--", process.execPath, "-e", prog);
+    const cols = () => aaa("pane", "list").panes.find((p) => p.name === "endcol").cols;
+    await waitOutput("endcol", "endcol ");
+    // 앞 화면이 쥔 크기(처음은 만들 때 크기). 기기마다 폭이 달라, 이 값이 바뀌면 그 화면이 쥔 것이다
+    let held = cols();
+    const devices = [
+      ["phone", { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 }],
+      ["ipad", { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 }],
+      ["desktop", { width: 1280, height: 800 }, { deviceScaleFactor: 2 }],
+    ];
+    const bad = [];
+    for (const [name, viewport, opt] of devices) {
+      const p = (await pairPage(browser, aaa("web", "pair").code, viewport, opt)).page;
+      await p.getByTestId("pane-endcol").click();
+      // 이 화면이 쥔 크기로 다시 그린 자(붙은 직후에는 앞 화면 크기의 자가 보인다)
+      await until(`${name}: 자기 폭의 자`, async () => {
+        const c = cols();
+        return c !== held && (await screenText(p)).includes(`endcol ${c}>`);
+      });
+      const c = (held = cols());
+      const m = await p.evaluate(() => {
+        const row = [...document.querySelectorAll(".xterm-rows > div")].find((r) => r.textContent.trimEnd().endsWith("@#"));
+        if (!row) return null;
+        const at = (i) => {
+          const w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+          for (let n = w.nextNode(), seen = 0; n; seen += n.data.length, n = w.nextNode())
+            if (i < seen + n.data.length) {
+              const r = document.createRange();
+              r.setStart(n, i - seen);
+              r.setEnd(n, i - seen + 1);
+              return r.getBoundingClientRect();
+            }
+          return null;
+        };
+        const text = row.textContent.trimEnd();
+        const first = at(0);
+        const last = at(text.length - 1);
+        const box = document.querySelector('[data-testid="terminal"]').getBoundingClientRect();
+        return { len: text.length, first: first.left, last: last.left, rowRight: row.getBoundingClientRect().right, screen: document.querySelector(".xterm-screen").getBoundingClientRect().width, box: box.width };
+      });
+      if (!m || m.len !== c) {
+        bad.push(`${name}: ${c}칸 자를 찾지 못했다 ${JSON.stringify(m)}`);
+      } else {
+        const cell = m.screen / c;
+        const advance = (m.last - m.first) / (c - 1);
+        // 글자 하나가 나아가는 폭이 cell이다. xterm 5.5 DOM renderer는 글자 폭을 32자 offsetWidth(정수)로 재고(1/64px까지 어긋남),
+        // 줄 자간을 그 차이로 둔다(배치 단위 1/64px 반올림까지). 그래서 정상은 글자마다 1/32px 안쪽이다. body 자간이 들던 때는 0.065px
+        if (Math.abs(advance - cell) > 0.04) bad.push(`${name}: 글자마다 ${advance.toFixed(4)}px 나아간다(cell ${cell.toFixed(4)}px)`);
+        // 끝 칸 글자가 반 넘게 줄(overflow hidden) 안에 있다
+        if (m.last + cell / 2 > m.rowRight) bad.push(`${name}: 끝 칸 글자가 ${m.last.toFixed(2)}에서 시작해 줄 끝 ${m.rowRight.toFixed(2)}에 잘린다`);
+        // 칸이 터미널 자리를 끝까지 쓴다(scrollbar 자리 15px을 남기지 않는다)
+        if (m.box - m.screen >= cell + 1) bad.push(`${name}: 오른쪽 ${(m.box - m.screen).toFixed(1)}px이 빈다(cell ${cell.toFixed(2)}px)`);
+      }
+      await shot(p, `${name}-endcol`);
+      await p.context().close();
+    }
+    aaa("pane", "kill", "endcol");
+    if (bad.length) throw new Error(bad.join(" / "));
   });
 
   await step("터미널 글꼴: Meslotendard로 cell 너비는 영문, 한글은 정확히 두 칸(1280×800)", async () => {
@@ -196,7 +268,7 @@ export default async function ({ ctl, page }) {
     await waitOutput("t1", "rd-9");
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
     const rp = rd.page;
-    if ((await rp.getByRole("button", { name: "새 셸" }).count()) !== 0) throw new Error("reader에게 새 셸 버튼");
+    if ((await rp.getByRole("button", { name: "새 pane" }).count()) !== 0) throw new Error("reader에게 새 pane 버튼");
     await shot(rp, "mobile-list");
     await rp.getByTestId("pane-t1").click();
     await until("reader 화면", async () => (await screenText(rp)).includes("rd-9"));
@@ -249,10 +321,55 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "follow");
   });
 
-  await step("controller: 새 셸", async () => {
-    const before = aaa("pane", "list").panes.length;
-    await page.getByTestId("machine-labA").getByRole("button", { name: "새 셸" }).click();
-    await until("새 pane", () => aaa("pane", "list").panes.length === before + 1);
+  await step("controller: 새 pane 창(herdr-web-ui NewSessionDialog): 없는 폴더는 창 안 오류, 셸·폴더(이름은 폴더 이름), profile agent·최근 폴더·이름, Mod+Shift+O", async () => {
+    const panes = () => aaa("pane", "list").panes;
+    const before = panes().length;
+    const dialog = page.getByRole("dialog", { name: "새 pane · labA" });
+    const start = () => dialog.getByRole("button", { name: "시작", exact: true }).click();
+    const hash = () => page.evaluate(() => decodeURIComponent(location.hash));
+    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await dialog.waitFor();
+    // 없는 폴더: agent가 거절한 글이 창 안에 보이고 창은 남는다(pane은 생기지 않는다)
+    await dialog.getByRole("textbox", { name: "폴더" }).fill(`${root}/no-such-dir`);
+    await start();
+    const alert = dialog.getByRole("alert");
+    await alert.waitFor();
+    if (!(await alert.innerText()).includes("no-such-dir")) throw new Error(`없는 폴더 오류: ${await alert.innerText()}`);
+    if (panes().length !== before) throw new Error("없는 폴더로 pane이 생겼다");
+    // 셸: 이름을 비우면 폴더 이름(참고 이름 칸 placeholder), 만든 pane을 연다. 폴더는 저장소다: 실험실(/tmp)은 참고 passingFolder가
+    // 임시 폴더로 보아 최근 폴더에 두지 않는다
+    await dialog.getByRole("textbox", { name: "폴더" }).fill(repo);
+    if ((await dialog.getByRole("textbox", { name: "이름" }).getAttribute("placeholder")) !== path.basename(repo)) throw new Error("이름 칸 placeholder가 폴더 이름이 아니다");
+    await start();
+    await dialog.waitFor({ state: "detached" });
+    let shell;
+    await until("셸 pane", () => (shell = panes().find((p) => p.name === path.basename(repo) && p.cwd === repo)) !== undefined);
+    await until("셸 pane을 연다", async () => (await hash()) === `#pane=${shell.id}`);
+    // profile agent: 이 머신 agent.toml의 fake, 최근 폴더 칩(방금 쓴 폴더), 이름
+    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await dialog.waitFor();
+    await dialog.getByRole("combobox").click();
+    await page.getByRole("option", { name: "fake" }).click();
+    await dialog.getByRole("button", { name: `${repo} 폴더 사용` }).click();
+    if ((await dialog.getByRole("textbox", { name: "폴더" }).inputValue()) !== repo) throw new Error("최근 폴더 칩이 폴더 칸을 채우지 않았다");
+    await dialog.getByRole("textbox", { name: "이름" }).fill("새-에이전트");
+    await shot(page, "desktop-new-pane");
+    await start();
+    await dialog.waitFor({ state: "detached" });
+    let agent;
+    await until("profile pane", () => (agent = panes().find((p) => p.name === "새-에이전트")) !== undefined);
+    if (!agent.argv.join(" ").includes("fake.sh") || agent.cwd !== repo) throw new Error(`profile pane: ${JSON.stringify(agent)}`);
+    await until("profile pane을 연다", async () => (await hash()) === `#pane=${agent.id}` && (await screenText(page)).includes("fake>"));
+    // 단축키(참고 new-session Mod+Shift+O): 고른 pane의 머신으로 열고, 마지막에 고른 agent를 기억한다. Esc로 닫는다
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("ControlOrMeta+Shift+O");
+    await dialog.waitFor();
+    // 기억한 agent는 이 머신 profile 목록이 온 뒤에 선다(없는 profile이면 셸로)
+    await until("마지막에 고른 agent(fake)를 기억", async () => (await dialog.getByRole("combobox").innerText()).trim() === "fake");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    aaa("pane", "kill", agent.id);
+    aaa("pane", "kill", shell.id);
     await page.getByTestId("pane-t1").click();
   });
 }

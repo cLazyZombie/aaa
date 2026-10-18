@@ -722,6 +722,11 @@ fn remote_dir_thread_survives_host_restart() {
         "host가 끊김을 본 지 기준(5초) 전에 outage가 생겼다: 띄운 뒤 {}ms {down}",
         at as i64 - spawned_ms as i64
     );
+    // 알린 끊김이 이어지는 동안 host를 다시 띄워도 그 끊김은 이어진다(plan §8.134): 다시 「down」을 쓰지 않고, 돌아오면
+    // 「recovered」를 한 번 쓴다. 옛 host는 새로 띄우면 알린 것을 잊어 회복을 영영 쓰지 않았다.
+    w.lab.kill("host3");
+    w.lab.spawn("host4", &w.h, &["host"]);
+    wait_for("host4 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
     let b = w.lab.node("b", None);
     w.lab.spawn("agentB2", &b, &["agent", "--host", &w.addr, "--name", "labB"]);
     wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
@@ -2945,6 +2950,50 @@ fn pr_followup() {
     );
     assert!(calls.contains(&format!("pr view --json state,reviewDecision,statusCheckRollup,comments,reviews,headRefName,headRefOid,headRepository,headRepositoryOwner -- {url}\n")), "{calls}");
     assert!(calls.contains("api user --jq .login\n"), "{calls}");
+}
+
+/// 웹 새 세션 창의 agent 고르기(herdr-web-ui NewSessionDialog, plan §8.126): `pane_run`에 profile을 주면 그 머신 agent.toml
+/// profile로 harness를 띄우고 thread처럼 상태 hook을 붙인다(hook 설정은 세션 폴더에). 없는 profile·폴더는 거부, `~/…`는 집으로 푼다.
+#[test]
+fn pane_run_with_profile_starts_harness_with_hooks() {
+    use aaa_common::front::FrontClient;
+    use aaa_proto::{FrontRequest, FrontResponse};
+    let w = world();
+    let run = |profile: Option<&str>, cwd: Option<String>| FrontRequest::PaneRun {
+        machine: Some("labA".into()),
+        name: None,
+        argv: vec![],
+        cwd,
+        cols: None,
+        rows: None,
+        profile: profile.map(String::from),
+    };
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut c = FrontClient::connect_as(&w.h.state, "web-new").await.unwrap();
+        let p = match c.call(run(Some("sticky"), Some(path_str(&w.repo).to_string()))).await.unwrap() {
+            Ok(FrontResponse::Pane(p)) => p,
+            other => panic!("profile로 띄우기: {other:?}"),
+        };
+        assert_eq!(p.name, "sticky", "이름을 비우면 profile 이름");
+        assert_eq!(p.argv[0], path_str(&w.scripts.join("sticky.sh")));
+        let settings =
+            p.argv.iter().position(|a| a == "--settings").map(|i| p.argv[i + 1].clone()).expect("claude hook 설정");
+        assert!(settings.ends_with(&format!("/sessions/{}/claude-settings.json", p.id)), "{settings}");
+        assert!(Path::new(&settings).is_file());
+        assert!(p.argv.iter().any(|a| a == "--session-id"), "{:?}", p.argv);
+        // thread처럼 profile harness의 화면으로 상태를 본다(sticky.sh는 이름으로 harness를 알 수 없다)
+        let spec: Value = serde_json::from_str(
+            &std::fs::read_to_string(Path::new(&settings).with_file_name("spec.json")).expect("세션 spec.json"),
+        )
+        .unwrap();
+        assert_eq!(spec["spec"]["harness"], "claude", "{spec}");
+        let e = c.call(run(Some("nope"), None)).await.unwrap().expect_err("없는 profile");
+        assert!(e.message.contains("profile `nope`"), "{}", e.message);
+        let e = c.call(run(None, Some("~/aaa-no-such-dir".into()))).await.unwrap().expect_err("없는 폴더");
+        let home = std::env::var("HOME").unwrap();
+        assert!(e.message.contains(&format!("{home}/aaa-no-such-dir")), "~를 집으로 푼다: {}", e.message);
+    });
 }
 
 /// thread-state 항목(사건, 요약) 중 이 thread 것

@@ -12,6 +12,8 @@ import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } fr
 import { b64decode, b64encode, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
+import { ChatComposer } from "./ChatComposer";
+import { paneAgentStatus } from "./sidebarModel";
 import { onThemeChange, token } from "./theme";
 import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
@@ -40,6 +42,7 @@ import {
   shortcutOverrides,
   terminalToggle,
   useKeyBarItems,
+  useDefaultView,
   useMedia,
   useTerminalFontFamily,
   useTerminalFontSize,
@@ -52,10 +55,12 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSteps.ts";
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
-import { isWebLink } from "./herdr/terminalFileLinks.ts";
+import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } from "./herdr/terminalFileLinks.ts";
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
+import { pasteText } from "./pasteText.ts";
 import type { PaneControls } from "./actions";
+import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
 
@@ -129,6 +134,7 @@ export function TermView({
   status,
   dock,
   controls,
+  onOpenFile,
 }: {
   pane: PaneView;
   role: DeviceRole;
@@ -143,8 +149,12 @@ export function TermView({
   dock?: ReactNode;
   /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
   controls?: MutableRefObject<PaneControls | null>;
+  /** 파일 경로 링크를 눌렀다: 파일 보기를 연다(결정 20 D7, plan §8.125). 없으면(보기 권한) 링크로 그리지 않는다 */
+  onOpenFile?: (path: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const openFileRef = useRef(onOpenFile);
+  openFileRef.current = onOpenFile;
   const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -164,7 +174,22 @@ export function TermView({
   const [attach, setAttach] = useState<{ text: string; ok: boolean } | null>(null);
   // Claude·Codex pane은 터미널 대신 대화 기록으로도 본다(읽기 전용)
   const chatable = pane.agent?.harness === "claude" || pane.agent?.harness === "codex";
-  const [chatView, setChatView] = useState(false);
+  // 처음 보기(herdr-web-ui App.tsx `storedView`, paneLens.ts): 손으로 고른 보기, 없으면 설정 「패널 기본 화면」. agent인지 모르는 동안
+  // (agent 이름은 있으나 harness 상태가 아직 오지 않음)은 agent로 센다
+  const coarse = useMedia("(pointer: coarse)");
+  const defaultView = useDefaultView();
+  const lensKey = `${pane.machine_id}:${pane.id}`;
+  const [picked, setPicked] = useState(() => pickedLens(lensKey));
+  // 설정 기본이 바뀌면 고른 보기는 잊혔다(SettingsDialog `forgetPaneViews`)
+  useEffect(() => setPicked(pickedLens(lensKey)), [defaultView, lensKey]);
+  const chatView = (picked ?? lensesFor(defaultView).of(lensKey, chatable ? true : agent ? null : false, coarse)) === "chat";
+  // 대화 입력창이 보낸 수: 대화를 바로 다시 읽는다(Chat `readNow`)
+  const [chatSent, setChatSent] = useState(0);
+  const setChatView = (chat: boolean) => {
+    const lens = chat ? "chat" : "terminal";
+    rememberLens(lensKey, lens);
+    setPicked(lens);
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   const canControl = role !== "reader";
   // 다른 front가 지금 쓰는 화면이다(이 연결의 ID를 받기 전에는 판단하지 않는다). 입력은 막지 않는다.
@@ -174,7 +199,6 @@ export function TermView({
   const inputLine = !directTyping && !(chatView && chatable) && canControl;
   const inputLineRef = useRef(inputLine);
   inputLineRef.current = inputLine;
-  const coarse = useMedia("(pointer: coarse)");
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
   const terminalFontSize = useTerminalFontSize();
   const baseFontRef = useRef(terminalFontSize);
@@ -425,7 +449,19 @@ export function TermView({
       macOptionClickForcesSelection: true,
       // term.unicode(아래 글자 폭)는 proposed API다
       allowProposedApi: true,
+      // OSC 8 링크(herdr-web-ui PaneTerminal 552~560줄): file URI는 파일 보기로, http(s)는 새 탭으로. 누름과 놓음이 다 링크 위면
+      // xterm이 연다: 일부를 끌어 고르는 끌기·오른쪽 누름은 「열기」가 아니다(linkPressed)
+      linkHandler: {
+        activate: (event, uri) => {
+          if (!linkPressed(event)) return;
+          const path = fileUriPath(uri);
+          if (path !== null) openFileRef.current?.(path);
+          else if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+        },
+        allowNonHttpProtocols: true,
+      },
     });
+    const linkPressed = (event: MouseEvent): boolean => event.button === 0 && !term.hasSelection();
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
     });
@@ -439,6 +475,12 @@ export function TermView({
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
     matchHerdrWidths(term);
     term.open(box.current!);
+    // FitAddon은 scrollback이 있으면 세로 scrollbar 자리를 빼고 칸을 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라
+    // 기본값 15px을 빼서 오른쪽 두 칸쯤이 늘 비었다. 참고는 scrollback 0이라 빼지 않는다(PaneTerminal 542~546줄). aaa xterm은
+    // 기록을 가지므로(plan §8.67) scrollback을 두고, 그 자리를 0으로 둔다(scrollbar는 그리지 않는다: style.css, plan §8.124).
+    // FitAddon이 읽는 내부 값이고 Viewport가 만들 때 한 번만 정한다. xterm이 바뀌어 없어지면 웹 E2E 「넓은 창」이 실패한다
+    const viewportOf = (term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } })._core?.viewport;
+    if (viewportOf) viewportOf.scrollBarWidth = 0;
     const el = box.current!;
     // 칸 높이가 바뀌는 사이(넣은 글꼴이 연 뒤에 받아질 때·글자 크기를 바꿀 때) xterm 5.5 Viewport는 화면이 먼저 커져
     // 브라우저가 줄인 scrollTop을 옛 칸 높이로 읽고, 몇 줄 위로 굴린 것(사용자 스크롤)으로 친다. 그러면 맨 아래를 보던
@@ -539,6 +581,16 @@ export function TermView({
     term.loadAddon(new WebLinksAddon((_event, uri) => {
       if (isWebLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
     }));
+    // 글 속 파일 경로(herdr-web-ui PaneTerminal 586줄, terminalFileLinks.ts 그대로): 보기 권한 화면은 열 수 없어 그리지 않는다
+    const fileLinkProvider = terminalFileLinkProvider(
+      () => term.buffer.active,
+      (path, event) => {
+        if (linkPressed(event)) openFileRef.current?.(path);
+      },
+    );
+    const fileLinks = term.registerLinkProvider({
+      provideLinks: (line, callback) => (openFileRef.current ? fileLinkProvider.provideLinks(line, callback) : callback(undefined)),
+    });
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
     let disposed = false;
     const copySelection = () => {
@@ -701,6 +753,14 @@ export function TermView({
     // OSC 52: pane 프로그램(vim·tmux·Claude Code)의 클립보드 쓰기. 질의는 답하지 않는다.
     // 설정 「패널에서 클립보드로 복사」(기본 켬, PaneTerminal 1050~1063줄)를 끄면 받기만 하고 버린다: pane 안 아무 프로세스나
     // (agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있다.
+    // OSC 8: 이 앱이 열 수 없는 링크(OmO `omo-panel:` 줄)는 링크로 그리지 않는다(herdr-web-ui PaneTerminal 1066줄, #739).
+    // 열린 링크 상태는 RIS(replay 맨 앞 `ESC c`, 프로그램의 RIS)와 함께 끝난다(참고는 term.reset()과 함께 reset)
+    const hyperlinks = hyperlinkFilter();
+    const osc8 = term.parser.registerOscHandler(8, (payload) => hyperlinks.handler(payload));
+    const ris = term.parser.registerEscHandler({ final: "c" }, () => {
+      hyperlinks.reset();
+      return false;
+    });
     const osc52 = term.parser.registerOscHandler(52, (payload) => {
       const text = terminalToggle("paneClipboard") ? parseOsc52(payload) : null;
       if (text !== null)
@@ -773,7 +833,15 @@ export function TermView({
         pastingRef.current = false;
       });
       const files = pastedFiles(e.clipboardData);
-      if (files.length === 0) return;
+      if (files.length === 0) {
+        // 글에 ESC가 있으면 뺀 글로 xterm 대신 붙인다(pasteText.ts)
+        const text = e.clipboardData?.getData("text/plain") ?? "";
+        if (text === pasteText(text)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        term.paste(pasteText(text));
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       uploadRef.current(files);
@@ -794,7 +862,7 @@ export function TermView({
       if (!text) return;
       pastingRef.current = true;
       try {
-        term.paste(text);
+        term.paste(pasteText(text));
       } finally {
         pastingRef.current = false;
       }
@@ -1328,6 +1396,9 @@ export function TermView({
       stopTrace();
       keySub.dispose();
       osc52.dispose();
+      osc8.dispose();
+      ris.dispose();
+      fileLinks.dispose();
       otherKeysSet.dispose();
       otherKeysOff.dispose();
       binSub.dispose();
@@ -1578,9 +1649,10 @@ export function TermView({
     // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     autoFit.current(true);
-    let data = value;
-    if (value.includes("\n")) {
-      data = value.replace(/\r?\n/g, "\r");
+    // 붙여 넣은 글처럼 ESC를 뺀다(pasteText.ts)
+    let data = pasteText(value);
+    if (data.includes("\n")) {
+      data = data.replace(/\r?\n/g, "\r");
       if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
     }
     const id = ++submitIdRef.current;
@@ -1697,8 +1769,9 @@ export function TermView({
         input(direction < 0 ? "\x1b[5~" : "\x1b[6~");
       },
       toggleView: () => {
-        if (chatable) setChatView((v) => !v);
+        if (chatable) setChatView(!chatViewRef.current);
       },
+      view: () => (chatable ? (chatViewRef.current ? "chat" : "terminal") : null),
     };
     controls.current = current;
     return () => {
@@ -1753,7 +1826,7 @@ export function TermView({
             className="ghost chat-btn"
             aria-pressed={chatView}
             data-testid="chat-toggle"
-            onClick={() => setChatView((v) => !v)}
+            onClick={() => setChatView(!chatView)}
             title={chatView ? "터미널로 본다" : "대화 기록으로 본다(읽기 전용)"}
           >
             <Icon name={chatView ? "shell" : "chat"} />
@@ -1762,7 +1835,7 @@ export function TermView({
         )}
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} />}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
@@ -1862,7 +1935,19 @@ export function TermView({
           }}
         />
       )}
-      {canControl && (
+      {/* 대화 보기의 입력창(차이 목록 C2): 터미널 입력줄과 같은 길로 보낸다. 키 막대는 터미널 보기 것이다 */}
+      {chatView && chatable && canControl && (
+        <ChatComposer
+          key={pane.id}
+          owner={`${pane.machine_id}:${pane.id}`}
+          agentLabel={pane.agent?.harness === "codex" ? "Codex" : "Claude"}
+          connected={!locked}
+          working={paneAgentStatus(pane) === "working"}
+          onSend={sendTerminalLine}
+          onSent={() => setChatSent((n) => n + 1)}
+        />
+      )}
+      {canControl && !(chatView && chatable) && (
         <KeyBar
           items={barItems}
           modifiers={modifiers}

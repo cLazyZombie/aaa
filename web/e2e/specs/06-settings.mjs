@@ -243,8 +243,8 @@ export default async function ({ ctl, page }) {
     await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
     await until("고른 줄에 focus", async () => (await focused(dp)) === "tab:모양").catch(async (e) => bad.push(`${e.message}: ${await focused(dp)}`));
     await dp.keyboard.press("ArrowDown");
-    await dlg.getByRole("tabpanel", { name: "터미널" }).waitFor();
-    if ((await dlg.getByRole("tab", { name: "터미널" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
+    await dlg.getByRole("tabpanel", { name: "채팅" }).waitFor();
+    if ((await dlg.getByRole("tab", { name: "채팅" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
     await dp.keyboard.press("End");
     await dlg.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
     await dp.keyboard.press("Home");

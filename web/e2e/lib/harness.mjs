@@ -770,9 +770,11 @@ while IFS= read -r line; do
 done
 `,
 );
+// 파일 보기(16-file-viewer)가 여는 폴더: 이 밖은 열지 않는다(agent가 시작할 때 있는 폴더만 허용한다)
+fs.mkdirSync(`${root}/files`, { recursive: true });
 fs.writeFileSync(
   `${root}/c/agent.toml`,
-  `schema = 1\n[agent]\nwork_root = "${root}/work"\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files"]\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
 );
 // bracketed paste를 켜는 입력창: 받은 조각을 JSON으로 그대로 보인다(composer 여러 줄·Enter 시험)
 fs.writeFileSync(

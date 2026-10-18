@@ -289,6 +289,49 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "fontjump");
   });
 
+  await step("폭이 줄었다 넓어지면 다시 접는다(herdr도 다시 접는다: src/pane.rs 「Herdr reflows too」, coordinator 10-18 t-0330 발견): 휴대폰이 좁게 쥐었다 놓아도 host 화면과 늦게 붙은 웹에 줄 끝이 그대로, 넓은 글자 줄도", async () => {
+    // 118칸(1280px 화면)에 드는 줄 둘과 접히는 줄 하나. 휴대폰 폭(홀수 칸)에서는 넓은 글자가 끝 칸에 들지 않아 다음 줄로 내려간다
+    const long = `LONG-${"0".repeat(100)}-END`;
+    const wrap = `WRAP-${"1".repeat(150)}-END`;
+    const wide = "가나다라마바사아자차카타파하".repeat(4);
+    const prog = `process.stdout.write(${JSON.stringify([long, wrap, wide, "rewrap> "].join("\n"))}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "rewrap", "--", process.execPath, "-e", prog);
+    await waitOutput("rewrap", "rewrap>");
+    const read = (source) => aaa("pane", "read", "rewrap", "--source", source).text.split("\n");
+    const cols = () => aaa("pane", "list").panes.find((p) => p.name === "rewrap").cols;
+    const has = (lines, what) => {
+      for (const want of [long, wrap, wide].filter((w) => what.includes(w)))
+        if (!lines.includes(want)) throw new Error(`${want.slice(0, 12)}… 줄이 없다: ${JSON.stringify(lines)}`);
+    };
+    // 휴대폰이 열어 좁게 쥔다. host 화면은 다시 접어, 접힌 줄을 이으면 원래 줄이다(전에는 좁힌 폭 밖 글을 버렸다)
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
+    await pp.getByTestId("pane-rewrap").click();
+    await until("휴대폰이 쥔 크기", () => cols() < 50);
+    has(read("recent-unwrapped"), [long, wrap, wide]);
+    await until("휴대폰 화면", async () => (await screenText(pp)).includes("rewrap>"));
+    await shot(pp, "phone-rewrap");
+    await pp.context().close();
+    // 넓은 화면이 늦게 붙어 쥔다: 그 replay(host 화면)를 받아 줄 끝까지 보인다. 붙어 있던 xterm은 스스로 다시 접으므로 늦게 붙는다
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-rewrap").click();
+    await until("넓은 화면이 쥔 크기", () => cols() >= 112);
+    await until("늦게 붙은 웹에 줄 끝", async () => {
+      const rows = (await screenText(dp)).split("\n").map((r) => r.trimEnd());
+      return rows.includes(long) && rows.includes(wide);
+    });
+    has(read("visible"), [long, wide]);
+    has(read("recent-unwrapped"), [long, wrap, wide]);
+    await shot(dp, "desktop-rewrap");
+    await dp.context().close();
+    const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
+    await ip.getByTestId("pane-rewrap").click();
+    await until("iPad 화면", async () => (await screenText(ip)).includes("rewrap>"));
+    has(read("recent-unwrapped"), [long, wrap, wide]);
+    await shot(ip, "ipad-rewrap");
+    await ip.context().close();
+    aaa("pane", "kill", "rewrap");
+  });
+
   await step("앞 기록(사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」, plan §8.67): 끊긴 동안 쏟아진 출력을 다시 붙은 뒤 위로 굴리며 차례로 받아 보고, 붙일 때 보던 자리가 튀지 않는다", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "histapp", "--", process.execPath, `${root}/history.js`);
     await waitOutput("histapp", "hist>");

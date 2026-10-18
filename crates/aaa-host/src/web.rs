@@ -14,7 +14,7 @@ use aaa_proto::{
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -74,6 +74,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/usage", get(usage_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/v/{cap}/{*path}", get(view_file))
+        .route("/f/{cap}/{*name}", get(pane_file_view))
         .fallback(get(static_file))
         .layer(middleware::from_fn_with_state(host.clone(), guard))
         .with_state(host)
@@ -121,6 +122,122 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     hs.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     hs.entry(header::X_FRAME_OPTIONS).or_insert(HeaderValue::from_static("DENY"));
     res
+}
+
+/// 파일 보기 응답(herdr-web-ui `fileResponse`): 이 origin에서 연 HTML·SVG가 앱 권한으로 script를 돌리지 못하게 sandbox.
+/// PDF는 브라우저 자체 viewer가 sandbox 문서를 거부하므로 뺀다(그 script는 viewer 안에 머문다)
+const FILE_CSP: &str = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
+const PDF_CSP: &str = "frame-ancestors 'self'";
+/// 페이지로 그린 HTML(참고 `PAGE_POLICY`): 제 script는 돌지만 origin 없는 sandbox라 이 앱의 cookie·저장소가 없고,
+/// `connect-src`가 없어 이 서버에도 웹에도 묻지 못한다. 제 폴더 파일은 agent가 미리 넣었다(data:). 이 앱만 frame에 넣는다.
+const PAGE_CSP: &str = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data:; \
+                        style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; \
+                        base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
+#[derive(serde::Deserialize)]
+struct FileQuery {
+    download: Option<String>,
+    /// HTML 파일을 페이지로(`PAGE_CSP`). 다른 파일은 본다
+    render: Option<String>,
+}
+
+/// `/f/<cap>/<이름>`: 파일 보기 읽기 경로(plan §8.125). 그 파일 하나만 30분 읽고, 짝지은 조작 기기여야 한다. Range를 받는다.
+async fn pane_file_view(
+    State(host): State<Arc<Host>>,
+    Path((cap, _name)): Path<(String, String)>,
+    Query(q): Query<FileQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let text = |code: StatusCode, msg: String| {
+        (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], msg).into_response()
+    };
+    // 다른 site의 페이지가 그림·script·fetch로 이 파일을 읽으려는 것(참고 `crossSiteFileRead`). 새 탭·내려받기(navigate)는 된다
+    let fetch = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    if fetch("sec-fetch-site").is_some_and(|s| s != "same-origin" && s != "none")
+        && fetch("sec-fetch-mode") != Some("navigate")
+    {
+        return text(StatusCode::FORBIDDEN, "다른 site에서 읽을 수 없다".into());
+    }
+    // 읽기 경로만으로는 열지 않는다: 그 주소가 새어도 짝지은 조작 기기가 아니면 못 읽는다(참고도 기기 인증 뒤다)
+    match device(&host, &headers) {
+        None => return text(StatusCode::UNAUTHORIZED, "pairing이 필요하다".into()),
+        Some((_, DeviceRole::Reader)) => {
+            return text(StatusCode::FORBIDDEN, "보기 권한 기기는 파일을 열 수 없다".into());
+        }
+        Some(_) => {}
+    }
+    let (conn, info) = match host.file_cap(&cap) {
+        Ok(x) => x,
+        Err(e) => {
+            let code =
+                if e.code == ErrorCode::Unauthorized { StatusCode::UNAUTHORIZED } else { StatusCode::BAD_GATEWAY };
+            return text(code, e.message);
+        }
+    };
+    let disposition = if q.download.is_some() { "attachment" } else { "inline" };
+    let name = format!("{disposition}; filename*=UTF-8''{}", crate::files::pct(&info.name));
+    let path: Arc<str> = Arc::from(info.path.as_str());
+    // HTML 페이지: 그린 bytes는 길이를 미리 모르고 Range도 받지 않는다
+    if q.render.is_some() && q.download.is_none() && info.kind == aaa_proto::FileKind::Text && info.mime == "text/html"
+    {
+        let first = match crate::files::read_at(&conn, &info.path, 0, u64::MAX, true).await {
+            Ok(b) => b,
+            Err(e) => return text(StatusCode::NOT_FOUND, format!("파일을 읽지 못했다: {}", e.message)),
+        };
+        return Response::builder()
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CONTENT_DISPOSITION, name)
+            .header(header::CACHE_CONTROL, "private, no-store")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, PAGE_CSP)
+            .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
+            .body(Body::from_stream(crate::files::file_stream(conn, path, 0, u64::MAX, first, true)))
+            .unwrap();
+    }
+    let size = info.size;
+    let range = match crate::files::parse_range(fetch("range"), size) {
+        Ok(r) => r,
+        Err(()) => {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                .body(Body::empty())
+                .unwrap();
+        }
+    };
+    let (start, len) = range.map(|(a, b)| (a, b - a + 1)).unwrap_or((0, size));
+    // 응답 전에 첫 조각을 읽어, 그 사이 지워졌거나 바뀐 파일은 오류로 끝낸다
+    let first = if len == 0 {
+        (Vec::new(), true)
+    } else {
+        match crate::files::read_at(&conn, &info.path, start, len, false).await {
+            Ok(b) => b,
+            Err(e) => return text(StatusCode::NOT_FOUND, format!("파일을 읽지 못했다: {}", e.message)),
+        }
+    };
+    // 글은 확장자가 무엇으로 돈다고 하든 글로 보낸다
+    let kind = if info.kind == aaa_proto::FileKind::Text && info.mime != "image/svg+xml" {
+        "text/plain; charset=utf-8".to_string()
+    } else {
+        info.mime.clone()
+    };
+    let mut res = Response::builder()
+        .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
+        .header(header::CONTENT_TYPE, kind)
+        .header(header::CONTENT_LENGTH, len)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_DISPOSITION, name)
+        .header(header::CACHE_CONTROL, "private, no-store")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::X_FRAME_OPTIONS, "SAMEORIGIN");
+    if let Some((a, b)) = range {
+        res = res.header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{size}"));
+    }
+    // PDF는 브라우저의 PDF 보기가 그리는데, 그것은 sandbox 문서를 거부한다(참고와 같다). 그 script는 그 보기 안에 머문다.
+    // 비워 두면 앱 기본 CSP(`frame-ancestors 'none'`)가 붙어 파일 보기 iframe에 들지 못하므로 이 앱만 frame에 넣게 한다
+    let csp = if info.kind == aaa_proto::FileKind::Pdf { PDF_CSP } else { FILE_CSP };
+    res = res.header(header::CONTENT_SECURITY_POLICY, csp);
+    res.body(Body::from_stream(crate::files::file_stream(conn, path, start, len, first, false))).unwrap()
 }
 
 /// 결과물: opaque origin(sandbox)으로 보여 제어 UI의 cookie·API에 닿지 못하게 한다. 같은 host의 웹 화면 안 iframe에만 넣을 수 있다.
@@ -507,7 +624,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut threads = host.thread_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut revoked = host.device_revoked.subscribe();
-    let mut presence = Presence { host: host.clone(), dev: dev.clone(), active: false };
+    let mut presence = Presence { conn: host.conn_open(&dev), host: host.clone(), dev: dev.clone(), active: false };
+    let conn = presence.conn;
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
@@ -526,6 +644,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let (every, dead_after) = events_liveness();
     let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     let mut heard = tokio::time::Instant::now();
+    // 「쓰는 화면」 lease: 웹은 쓰는 동안 10초마다 presence를 다시 알린다. 이 연결에서 앱 글(Text)이 lease 넘게 없으면 페이지가
+    // 멈춘 것이라(iOS가 잠재운 앱) 쓰는 화면에서 뺀다. 연결은 두고, 다음 presence가 오면 다시 센다. WebSocket pong은
+    // 브라우저 네트워크 층이 답해 멈춘 페이지에서도 오므로 lease를 늘리지 않는다(10-18 iPhone 실기, plan §8.133)
+    let lease = presence_lease();
+    let mut app_heard = tokio::time::Instant::now();
     loop {
         if send_preferences {
             send_preferences = false;
@@ -598,22 +721,39 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     break;
                 }
             }
+            _ = tokio::time::sleep_until(app_heard + lease), if presence.active => {
+                send_state = false;
+                tracing::info!("쓰는 화면 lease 끝: 앱 글이 {}초 동안 없다", lease.as_secs());
+                host.conn_presence(conn, format!("lease 끝(앱 글 {}초 없음)", lease.as_secs()));
+                presence.set(false);
+            }
             m = socket.recv() => {
                 send_state = false;
                 heard = tokio::time::Instant::now();
                 match m {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(Message::Text(t))) => match serde_json::from_str::<EventsClientMsg>(&t) {
-                        Ok(EventsClientMsg::Presence { active }) => presence.set(active),
-                        Ok(EventsClientMsg::Touch) => host.touch_device(&dev),
-                        Ok(EventsClientMsg::Ping { id }) => {
-                            let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
-                            if socket.send(Message::Text(text.into())).await.is_err() {
-                                break;
+                    Some(Ok(Message::Pong(_))) => host.conn_pong(conn),
+                    Some(Ok(Message::Text(t))) => {
+                        app_heard = tokio::time::Instant::now();
+                        host.conn_text(conn);
+                        match serde_json::from_str::<EventsClientMsg>(&t) {
+                            Ok(EventsClientMsg::Presence { active, why, visible, focus }) => {
+                                host.conn_presence(conn, presence_why(active, why, visible, focus));
+                                presence.set(active)
                             }
+                            Ok(EventsClientMsg::Touch) => host.touch_device(&dev, "touch"),
+                            Ok(EventsClientMsg::Alert { project, target, kind, outcome }) => {
+                                host.alert_outcome(&dev, project.as_deref(), &target, &kind, &outcome)
+                            }
+                            Ok(EventsClientMsg::Ping { id }) => {
+                                let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                                if socket.send(Message::Text(text.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -628,8 +768,30 @@ fn events_liveness() -> (std::time::Duration, std::time::Duration) {
     (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
+/// 「쓰는 화면」 lease(25초: 웹의 10초 presence를 두 번 놓치고도 남는다). `AAA_TEST_PRESENCE_LEASE_MS`는 시험에서만 줄인다
+fn presence_lease() -> std::time::Duration {
+    let ms = std::env::var("AAA_TEST_PRESENCE_LEASE_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(25_000);
+    std::time::Duration::from_millis(ms)
+}
+
+/// presence 판정 근거 한 줄: 웹이 보낸 까닭과 화면 값(옛 웹은 없다)
+fn presence_why(active: bool, why: Option<String>, visible: Option<bool>, focus: Option<bool>) -> String {
+    let flag =
+        |v: Option<bool>, yes: &str, no: &str| v.map_or("?".to_string(), |b| if b { yes } else { no }.to_string());
+    let why: String =
+        why.unwrap_or_else(|| "?".into()).chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(24).collect();
+    format!(
+        "{} {why} {}·{}",
+        if active { "true" } else { "false" },
+        flag(visible, "보임", "가려짐"),
+        flag(focus, "focus", "focus 없음")
+    )
+}
+
 /// 한 events 연결이 「쓰는 화면」인지. 바뀔 때만 host 수를 고치고, 연결이 어떻게 끝나든 drop에서 뺀다.
 struct Presence {
+    /// 판정 근거의 연결 번호(seen.rs `conn_open`)
+    conn: u64,
     host: Arc<Host>,
     /// 이 연결의 기기(그 기기가 연 pane 터미널을 「보는 화면」으로 센다, seen.rs)
     dev: String,
@@ -646,7 +808,7 @@ impl Presence {
             } else {
                 self.host.in_use.fetch_sub(1, SeqCst);
             }
-            self.host.view_presence(&self.dev, active);
+            self.host.view_presence(self.conn, &self.dev, active);
         }
     }
 }
@@ -654,6 +816,7 @@ impl Presence {
 impl Drop for Presence {
     fn drop(&mut self) {
         self.set(false);
+        self.host.conn_close(self.conn);
     }
 }
 
@@ -773,8 +936,9 @@ impl Outbox {
     }
 
     /// 출력을 따라오지 못했다: 4008로 닫는다. 다시 보내지 않는다(브라우저의 「다시 연결」이 새로 붙는다).
-    fn stop(&self, why: &str) {
-        tracing::info!(why, "웹 터미널 출력 정지(4008)");
+    /// 기록에는 어느 pane인지와 밀린 양(ACK 안 된 것·보내지 못한 것)을 남긴다: 무엇이 쏟아졌는지·누가 느렸는지를 가른다.
+    fn stop(&self, why: &str, pane: &str, pending: u64) {
+        tracing::info!(why, pane, pending, buffered = self.buffered(), "웹 터미널 출력 정지(4008)");
         let _ = self.stop.send(Some((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON)));
     }
 
@@ -884,7 +1048,7 @@ async fn pane_session(
             check_unacked(out.buffered(), &mut queue_since, now())
         };
         if verdict == Verdict::Stop {
-            out.stop("ACK가 나아가지 않는다");
+            out.stop("ACK가 나아가지 않는다", &id, window.pending());
             break;
         }
         tokio::select! {
@@ -915,7 +1079,7 @@ async fn pane_session(
                             next = end;
                             let n = part.len() as u64;
                             if (acks && window.pending() + n > OUTPUT_HARD_BYTES) || out.buffered() >= OUTPUT_HARD_BYTES {
-                                out.stop("밀린 출력이 상한을 넘었다");
+                                out.stop("밀린 출력이 상한을 넘었다", &id, window.pending() + n);
                                 break;
                             }
                             window.write(n, n);
@@ -963,7 +1127,7 @@ async fn pane_session(
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
                             // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
                             // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
-                            host.touch_device(dev);
+                            host.touch_device(dev, "입력");
                             let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
                             if sent.is_ok() {
@@ -1028,7 +1192,7 @@ async fn pane_session(
                 };
                 // pane에 친 기기가 쓰는 기기다(plan §8.105). 크기 걸기는 다시 붙을 때도 오므로 세지 않는다(누름은 웹이 touch로 알린다)
                 if matches!(req, Some(FrontRequest::PaneInput { .. }) | Some(FrontRequest::PaneTake { .. })) {
-                    host.touch_device(dev);
+                    host.touch_device(dev, "입력");
                 }
                 if let Some(req) = req
                     && let Err(e) = host.call_from(role, &actor, Some(front), req).await

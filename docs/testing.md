@@ -58,7 +58,7 @@ web/e2e/web.e2e.mjs        입구: spec 파일마다 lib/child.mjs 프로세스�
 web/e2e/durations.json     파일마다 기록한 초. 함께 돌 때 긴 파일부터 넣는다
 web/e2e/lib/harness.mjs    실험실(host·agent·가짜 push·구독 서버·시험 프로그램)·Chromium·step·기다림·화면·IME·push 도우미, runSpec
 web/e2e/lib/devices.mjs    기기 꼴과 그 기기 규칙의 가짜(iOS 소리·알림), 기록을 사건으로 기다림(아래 「실기와 headless」)
-web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 15-ios-rules). export default async function ({ ctl, page }) { … }
+web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 16-file-viewer). export default async function ({ ctl, page }) { … }
 ```
 
 - **파일마다 새 실험실.** host·agent·Chromium을 파일마다 새로 띄운다(`/tmp/aaw-<pid>`, 준비 약 1.5초, 웹 port는 host가 고른다). 앞 파일이 만든 pane·질문·구독·설정에 기대지 않으므로 파일 하나를 혼자, 여러 번, 다른 파일과 함께 돌릴 수 있다. 한 파일 안 단계는 차례로 돌고 앞 단계가 만든 상태를 쓸 수 있다(그래서 `--grep`으로 뒤 단계만 고르면 앞 단계가 만든 것이 없을 수 있다: 그때는 `--spec`으로 파일을 돈다).
