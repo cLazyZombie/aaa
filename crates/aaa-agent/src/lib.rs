@@ -649,7 +649,12 @@ impl Agent {
                         Ok(other) => tracing::debug!(%id, "무시한 session 메시지: {other:?}"),
                         Err(e) => { tracing::warn!(%id, "session 메시지 해석 실패: {e}"); break; }
                     },
-                    Ok(None) | Err(_) => break,
+                    Ok(None) => break,
+                    // frame 오류는 session host가 끝난 것이 아니다: 까닭을 남긴다(그 뒤 세션은 Lost로 보인다)
+                    Err(e) => {
+                        tracing::warn!(%id, "session host frame을 읽지 못해 연결을 놓는다: {e}");
+                        break;
+                    }
                 },
             }
         }
