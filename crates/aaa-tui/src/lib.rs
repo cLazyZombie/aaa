@@ -791,6 +791,9 @@ impl App {
                     (Outcome::Err(e), Some(Pending::EditScrollback { .. })) => {
                         self.set_error(format!("기록을 편집기로 열지 못했다: {}", e.message))
                     }
+                    (Outcome::Err(e), Some(Pending::NewSpace)) => {
+                        self.set_error(format!("새 workspace를 만들지 못했다: {}", e.message))
+                    }
                     (Outcome::Err(e), Some(Pending::Attach(n))) => {
                         if self.attach_failed != Some(n) {
                             self.attach_failed = Some(n);
@@ -3013,6 +3016,30 @@ mod tests {
         app.mouse_capture = false;
         assert!(!footer(&app).contains("new"), "{}", footer(&app));
         assert_eq!(app.hits.borrow().new_workspace, None);
+    }
+
+    /// 새 workspace 답: 그 workspace로 가서 새 pane에 포커스(키 붙잡기도 풀림), 실패면 무엇이 실패했는지 알린다
+    #[test]
+    fn new_workspace_answer_enters_it() {
+        let mut app = app_with_tabs(&[""]);
+        app.focus = Some("p0".into());
+        app.pending.insert("r1".into(), Pending::NewSpace);
+        app.focus_wait = Some("r1".into());
+        let tab = aaa_proto::Tab {
+            id: "t9".into(),
+            name: String::new(),
+            root: aaa_proto::LayoutNode::Pane { pane: "p9".into() },
+            zoomed: false,
+        };
+        let w = Workspace { name: "workspace".into(), tabs: vec![tab] };
+        let ok = Outcome::Ok(aaa_proto::FrontResponse::Workspace(w));
+        app.on_msg(FrontMsg::Res { id: "r1".into(), result: ok });
+        assert_eq!((app.ws_name.as_str(), app.focus.as_deref()), ("workspace", Some("p9")));
+        assert!(app.focus_wait.is_none() && app.spaces.contains_key("workspace"));
+        app.pending.insert("r2".into(), Pending::NewSpace);
+        let e = aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::NotFound, "머신이 없다: mac-b");
+        app.on_msg(FrontMsg::Res { id: "r2".into(), result: Outcome::Err(e) });
+        assert_eq!(app.error.as_ref().map(|e| e.0.as_str()), Some("새 workspace를 만들지 못했다: 머신이 없다: mac-b"));
     }
 
     /// 모드 막대는 평소에 없고(pane 맨 아랫줄은 pane 것), 오류는 ERROR 막대, 알림은 오른쪽 위 카드(herdr)

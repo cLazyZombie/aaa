@@ -3580,8 +3580,9 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 고른 머신 표시: herdr는 접힌 endpoint 줄만 활성 바탕이고 펼친 줄은 footer 이름으로만 보인다. aaa도 머신 줄에 바탕을 두지 않고 footer와 알림으로 보인다(마우스를 받지 않으면 알림만).
   - 활성 머신 줄을 다시 누르면 herdr는 접는다. aaa 머신 묶음은 아직 접지 않는다.
   - 오른쪽 `menu`(전체 메뉴)는 설정 화면(4C)과 함께 둔다.
+  - 탐색 숫자 1~9는 머신 머리도 센다(전에는 「+ 새 셸」 줄을 셌다). 접힌 compact 열 번호는 thread·pane만이라 숫자와 어긋난다(spaces 줄을 먼저 세는 §8.158부터 그랬다).
 - **시험.**
-  - 유닛: `new_workspace_machine_like_herdr_endpoint`(포커스 머신, 고르면 그 머신과 footer 이름·누를 칸 12칸, 포커스가 바뀌면 풀림, 끊긴 머신은 오류, 포커스가 없으면 로컬, 머신 하나면 ` new` 5칸, 마우스를 받지 않으면 없음), `sidebar_like_herdr` 15째 줄 ` new`, `step_skips_headers_and_stops_at_ends`(머신 머리도 고른다), 키 `shift+n`.
+  - 유닛: `new_workspace_answer_enters_it`(답이 오면 그 workspace·새 pane, 실패면 「새 workspace를 만들지 못했다: …」), `new_workspace_machine_like_herdr_endpoint`(포커스 머신, 고르면 그 머신과 footer 이름·누를 칸 12칸, 포커스가 바뀌면 풀림, 끊긴 머신은 오류, 포커스가 없으면 로컬, 머신 하나면 ` new` 5칸, 마우스를 받지 않으면 없음), `sidebar_like_herdr` 15째 줄 ` new`, `step_skips_headers_and_stops_at_ends`(머신 머리도 고른다), 키 `shift+n`.
   - TUI harness `new_workspace_on_picked_machine_like_herdr`: 실험실 원격 agent labB를 pane 없이 등록한다. 「새 셸」 글이 없고 ` new · labA`다. labB 머리를 누르면 ` new · labB`, ` new`를 누르면 labB에 `workspace`가 생겨 그리로 가고 그 셸에 입력이 간다. 탐색 Enter로 labA를 고르고 `prefix shift+n`이면 `workspace-2`가 labA에 생긴다. labB를 고르고 `prefix c`면 새 탭이 labB에 생긴다. labA를 고른 뒤 탭 1을 거쳐 탭 2로 오면 다시 labB다. `side_list_like_web` 6단계는 「+ 새 셸」 대신 머신 머리 Enter 뒤 `prefix c`다.
   - 결함 심기: 고른 머신 무시(「labB를 고름」), 새 workspace만 포커스 머신(「새 workspace」), 포커스가 바뀌어도 고른 것 유지(「탭 2」)는 각각 그 단계에서 실패한다.
 
