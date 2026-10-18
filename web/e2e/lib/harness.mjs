@@ -705,6 +705,10 @@ const claudeAsk = (cmd) =>
   `${clearScreen}; printf '%s\\n' ' Bash command' '' '   ${cmd}' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel · Tab to amend'`;
 const claudeWorking = `${clearScreen}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'`;
 const claudeIdle = `${clearScreen}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'`;
+// 가짜 Claude 질문 창(lib/fake-claude-ask.mjs): 이름이 claude라 화면 감지가 Claude 규칙으로 본다. `askClaude one|tabs`
+const askClaude = `${root}/askbin/claude`;
+fs.mkdirSync(`${root}/askbin`, { recursive: true });
+fs.writeFileSync(askClaude, `#!${process.execPath}\n${fs.readFileSync(new URL("./fake-claude-ask.mjs", import.meta.url), "utf8")}`, { mode: 0o755 });
 // 웹 port는 host가 고른다(listen 0, 「host·agent 시작」이 status로 받는다): 같이 도는 실험실끼리 겹치지 않는다
 let webPort = 0;
 
@@ -1054,5 +1058,5 @@ export {
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
   usageHits, usageRoutes, usageServer, browser, setPushKey, setInUse, pushInUse, pushWho, pushLab, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, askClaude,
 };
