@@ -622,11 +622,11 @@ let failed = false;
 const steps = [];
 /** 열려 있는 화면(pairPage). 단계가 실패하면 화면마다 termDiag를 남긴다(CI에서만 난 실패가 여러 단계에 걸쳐 났다) */
 const openPages = new Set();
-// AAA_E2E_ONLY=<정규식>: 이름이 맞는 단계만 돈다(한 단계를 여러 번·부하 아래 되풀이해 볼 때). 준비 단계(host·agent 시작)와
-// 단계 밖의 준비(첫 화면 연결)는 그대로 한다
+// AAA_E2E_ONLY=<정규식>: 이름이 맞는 단계만 돈다(한 단계를 여러 번·부하 아래 되풀이해 볼 때). 준비 단계(`always`: host·agent 시작,
+// push 판정 준비)와 단계 밖의 준비(첫 화면 연결)는 그대로 한다
 const only = process.env.AAA_E2E_ONLY ? new RegExp(process.env.AAA_E2E_ONLY) : null;
-async function step(name, fn) {
-  if (only && !only.test(name) && name !== "host·agent 시작") return;
+async function step(name, fn, { always = false } = {}) {
+  if (only && !always && !only.test(name)) return;
   const t0 = Date.now();
   try {
     await fn();
@@ -905,18 +905,57 @@ process.stdin.on("data", (d) => {
 );
 const browser = await chromium.launch();
 
-/** push 서명 키(「Web Push: 구독 검사」 단계가 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
+/** push 서명 키(「Web Push: 구독 검사」 단계·pushLab이 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
 const setPushKey = (key) => {
   pushKey = key;
 };
 
+// 쓰는 화면이 있으면 host는 Web Push를 보내지 않는다(herdr-web-ui presence, plan §8.69). headless 화면은 늘 focus가 있으므로,
+// 보고 알림이 기기에 가는 것을 볼 동안 그 화면은 쓰지 않는 것으로 둔다(focus만 없앤다)
+const setInUse = (p, on) =>
+  p.evaluate((on) => {
+    if (on) delete document.hasFocus;
+    else document.hasFocus = () => false;
+    window.dispatchEvent(new Event(on ? "focus" : "blur"));
+  }, on);
+/** host가 세는 쓰는 화면 수(그 화면으로 묻는다) */
+const pushInUse = (p) => p.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.in_use);
+/** 그 화면 기기가 본 쓰는 기기(plan §8.105): `user`(앞 7자)·`you` */
+const pushWho = (p) => p.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok);
+
+/**
+ * push 판정 단계의 준비(17-push-in-use·18-push-stalled): 서명 키, 첫 화면 기기의 구독 하나(push/dev1), demo 프로젝트.
+ * 쓰는 화면이 없을 때 보낸 push가 이 구독으로 가므로 「push 0건」·「push 보냄」 단언이 빈말이 아니다. 12에서는 앞 단계(구독 검사·
+ * 보고서)가 남기던 것이라, 단계를 하나만 골라(--grep) 돌아도 늘 한다
+ */
+async function pushLab(page) {
+  await step(
+    "push 판정 준비",
+    async () => {
+      const info = await pushWho(page);
+      if (!info.enabled) throw new Error(`push가 꺼져 있다: ${JSON.stringify(info)}`);
+      setPushKey(info.key);
+      const dev = pushDevice("push/dev1");
+      const status = await page.evaluate(
+        async (body) => (await fetch("/api/v1/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status,
+        dev.json,
+      );
+      if (status !== 200) throw new Error(`구독 ${status}`);
+      aaa("project", "create", "demo");
+    },
+    { always: true },
+  );
+}
+
 /**
  * spec 하나를 돈다: host·agent와 셸 탭 t1을 띄우고, 첫 화면(1280×800, 입력줄)을 t1에 연 뒤 spec의 단계를 차례로,
  * 끝나면 띄운 것을 모두 내리고 단계 결과를 찍는다. t1에는 표지 `t1-42`를 찍는다: 단계는 t1로 돌아온 것을 이 글로 본다.
+ * `labEnv`는 그 spec 파일만 실험실(host·agent·CLI)에 더하는 환경이다(spec의 `export const labEnv`, 예: 18의 짧은 lease).
  */
-async function runSpec(spec) {
+async function runSpec(spec, labEnv = {}) {
   try {
     await step("host·agent 시작", async () => {
+      Object.assign(env, labEnv);
       start("host", "host");
       webPort = Number((await until("host 준비", () => aaa("status").web_listen)).split(":").pop());
       base = `http://127.0.0.1:${webPort}/`;
@@ -926,7 +965,7 @@ async function runSpec(spec) {
       start("agent", "agent", "--host", "local", "--name", "labA");
       await until("labA 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
       aaa("tab", "create", "--machine", "labA", "--label", "t1", "--", "/bin/sh");
-    });
+    }, { always: true });
     // 입력줄을 쓰는 단계가 많아 이 화면은 입력줄로 둔다. 기본(바로 입력)은 「입력 방식」 단계가 본다.
     const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { line: true });
     const page = ctl.page;
@@ -961,6 +1000,6 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, setInUse, pushInUse, pushWho, pushLab, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle,
 };
