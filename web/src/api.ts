@@ -168,7 +168,7 @@ const RECONNECT_AFTER_HIDDEN_MS = 10_000;
 const PRESENCE_EVERY_MS = 10_000;
 
 /** 이 웹 빌드: 주 묶음 파일 이름(예: `index-BsC_6E06`). host가 판정 근거에 남겨 기기가 어느 웹을 돌리는지 본다.
- * host가 events 연결마다 알리는 빌드(`web` 사건)와 다르면 「앱 다시 열기」 줄을 띄운다(UpdateNotice.tsx, plan §8.153) */
+ * host가 events 연결마다 알리는 빌드(`web` 사건)와 다르면 「앱 다시 열기」 줄을 띄운다(UpdateNotice.tsx, plan §8.162) */
 export const BUILD = (() => {
   try {
     return new URL(import.meta.url).pathname.split("/").pop()?.replace(/\.[jt]sx?$/, "") || "?";

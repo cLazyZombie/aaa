@@ -1247,6 +1247,11 @@ impl Host {
             FrontRequest::PaneReadText { pane, source, lines, format } => {
                 self.pane_read_text(&pane, source, lines, format).await
             }
+            FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
+            FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
+            FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
+                self.pane_copy_search(&pane, &query, direction, cursor, previous)
+            }
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
             FrontRequest::PaneSubmit { pane, text } => self.pane_submit(&pane, &text, actor).await,
@@ -1349,7 +1354,7 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
-            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
+            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
             // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다

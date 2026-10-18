@@ -268,7 +268,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [machines, setMachines] = useState<MachineView[]>([]);
   const [panes, setPanes] = useState<PaneView[]>([]);
   const [up, setUp] = useState(false);
-  // host가 주는 웹 빌드(events 연결마다 온다): 이 페이지와 다르면 다시 열기 줄(plan §8.153)
+  // host가 주는 웹 빌드(events 연결마다 온다): 이 페이지와 다르면 다시 열기 줄(plan §8.162)
   const [hostWeb, setHostWeb] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());

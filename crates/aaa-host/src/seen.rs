@@ -16,7 +16,7 @@ use aaa_proto::AgentActivity;
 use crate::{FrontRef, Host, PaneEvent};
 
 /// 흐름 사건·판정 근거에 적는 기기 이름. 기기 ID는 ULID(앞 10자 시각 + 뒤 16자 무작위)라 앞 7자는 33초쯤 안에 짝지은
-/// 기기끼리 같다(10-18 실기: 휴대폰과 PC가 한 이름). 무작위 끝 7자를 쓴다(harness `short_id`도 무작위 쪽, plan §8.153).
+/// 기기끼리 같다(10-18 실기: 휴대폰과 PC가 한 이름). 무작위 끝 7자를 쓴다(harness `short_id`도 무작위 쪽, plan §8.162).
 /// ULID가 아닌 ID(옛 기록·시험)는 앞 7자
 pub(crate) fn device_short(id: &str) -> String {
     if id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric()) {

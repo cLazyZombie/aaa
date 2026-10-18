@@ -9,6 +9,9 @@ import {
   pushInUse, pushWho, pushLab,
 } from "../lib/harness.mjs";
 
+// 알림 묶음 100ms(실험실 설정 1초, notify.rs debounce): push 판정마다 1초를 기다렸다. 설정 1초 길은 12가 돈다
+export const labEnv = { AAA_TEST_NOTIFY_DEBOUNCE_MS: "100" };
+
 export default async function ({ page }) {
   await pushLab(page);
 
@@ -358,7 +361,7 @@ export default async function ({ page }) {
     const s3 = await until("A 때문에 건너뜀", () => skips().slice(k)[0]);
     const aId = (await pushWho(page)).user;
     // 기기 이름은 기기 ID(ULID)의 뒤 무작위 7자다: 앞 7자(시각)는 약 33초 안에 짝지은 두 기기가 같았다(t-0338 report
-    // 「찾은 결함」, 10-18 실기, plan §8.153). 쓰는 기기가 B에서 A로 바뀐 것은 근거에 적힌 그 기기의 연결 번호로도 본다
+    // 「찾은 결함」, 10-18 실기, plan §8.162). 쓰는 기기가 B에서 A로 바뀐 것은 근거에 적힌 그 기기의 연결 번호로도 본다
     const devOf = async (p) => (await p.evaluate(() => fetch("/api/v1/me").then((r) => r.json()))).ok.device;
     const [aDev, bDev] = [await devOf(page), await devOf(bp)];
     if (aId !== aDev.slice(19) || bId !== bDev.slice(19) || aId === bId)

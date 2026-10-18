@@ -71,7 +71,7 @@ export default async function ({ ctl, page }) {
     await shot(page, "desktop-after-host-restart");
   });
 
-  await step("host가 새 웹을 준다(배포 뒤, herdr-web-ui UpdateNotice reload 「updated」, plan §8.153): 다시 붙은 페이지가 「앱 다시 열기」 줄을 보이고, 눌러 다시 열어도 입력줄 초안이 남으며, 같은 웹을 주는 host면 줄이 없다", async () => {
+  await step("host가 새 웹을 준다(배포 뒤, herdr-web-ui UpdateNotice reload 「updated」, plan §8.162): 다시 붙은 페이지가 「앱 다시 열기」 줄을 보이고, 눌러 다시 열어도 입력줄 초안이 남으며, 같은 웹을 주는 host면 줄이 없다", async () => {
     const line = page.getByTestId("web-update");
     const banner = page.getByTestId("readonly-banner");
     // 다시 붙을 때마다 host가 웹 빌드를 알린다(state보다 먼저): 띠가 사라졌으면 이미 받았다

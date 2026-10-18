@@ -653,7 +653,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let lease = presence_lease();
     let mut app_heard = tokio::time::Instant::now();
     // 이 host가 주는 웹 빌드: 연결마다 알린다. 다시 보이거나(10초 넘게 가려지면 다시 붙는다) host가 다시 뜨면 새 연결이라 웹이
-    // 제 빌드와 견준다(참고는 보이는 동안 상태를 묻는다, plan §8.153)
+    // 제 빌드와 견준다(참고는 보이는 동안 상태를 묻는다, plan §8.162)
     if let Some(build) = web_build() {
         let text = serde_json::to_string(&FrontEvent::Web { build }).unwrap();
         if socket.send(Message::Text(text.into())).await.is_err() {

@@ -23,6 +23,15 @@ const STABLE_VISIBLE_SIGNAL_REFRESH: Duration = Duration::from_millis(800);
 /// harness가 시작한 뒤 화면을 보지 않는 시간(`AGENT_STARTUP_GRACE_WINDOW`)
 pub const STARTUP_GRACE: Duration = Duration::from_secs(3);
 
+/// 시작 유예. `AAA_TEST_DETECT_GRACE_MS`는 시험에서만 줄인다(가짜 harness 화면은 뜨자마자 그대로다: 웹 E2E 11은 상태마다
+/// 3초를 기다렸다. 15는 기본값으로 돈다)
+fn startup_grace() -> Duration {
+    std::env::var("AAA_TEST_DETECT_GRACE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(STARTUP_GRACE, Duration::from_millis)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PublishState {
     state: State,
@@ -108,7 +117,7 @@ pub struct Detector {
 }
 
 impl Detector {
-    /// `started_at`: harness를 띄운 때. 3초 안이면 남은 시간 동안 보지 않는다.
+    /// `started_at`: harness를 띄운 때. 시작 유예(3초) 안이면 남은 시간 동안 보지 않는다.
     pub fn new(harness: Harness, started_at: Instant) -> Detector {
         Detector {
             harness,
@@ -120,7 +129,7 @@ impl Detector {
             },
             last_visible_signal_refresh: None,
             pending_idle: PendingIdle::default(),
-            grace_until: Some(started_at + STARTUP_GRACE),
+            grace_until: Some(started_at + startup_grace()),
             last_scan_seq: None,
         }
     }
