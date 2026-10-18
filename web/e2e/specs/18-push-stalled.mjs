@@ -86,7 +86,9 @@ export default async function ({ page }) {
     const basis1 = new RegExp(`근거: 쓰는 기기 ${bId}\\(touch \\d+초 전\\) · 연결#\\d+ 쓰는 중\\(presence \\d+초 전 true (open|focus|heartbeat) 보임·focus, 앱 글 \\d+초 전`);
     if (!basis1.test(s1.detail)) throw new Error(`push_skipped 근거 ${s1.detail}`);
     // B의 앱 안 알림 결과. 흐름 사건의 기기 이름은 앞 7자(ULID 시각, 약 33초 폭)라 몇 초 안에 짝지은 첫 화면도 같은 이름이다
-    // (t-0338 report 「찾은 결함」). 첫 화면은 focus가 없고 멈추지 않아(위 setInUse) 그 결과에는 늘 「focus 없음」이 있다: 그것을 뺀 것이 B의 것이다
+    // (t-0338 report 「찾은 결함」). 첫 화면은 focus가 없고 멈추지 않아(위 setInUse) 그 결과에는 늘 「focus 없음」이 있다: 그것을 뺀 것이 B의 것이다.
+    // 첫 화면의 상태 사건 연결이 이 단계 안에서 다시 붙지 않는다는 전제다(다시 붙으면 놓친 사건을 늦은 알림으로 읽어, 구독 dev1을 가진
+    // 그 기기도 「push로 받음 · 안 띄움」을 남길 수 있다)
     const outcomeOfB = (from, at) =>
       until(`B의 앱 안 알림 결과(thread=${at})`, () =>
         events("alert_outcome").slice(from).find((e) => e.detail.startsWith(`기기 ${bId} · done · thread=${at}`) && !e.detail.includes(" · focus 없음 · ")),

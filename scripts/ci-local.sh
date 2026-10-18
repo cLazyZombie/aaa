@@ -137,6 +137,7 @@ failed=""
 # 단계 하나를 돌고 결과 줄을 $LOGS/.<단계>.result에 남긴다(함께 띄운 단계는 부모 셸의 RESULTS를 바꿀 수 없다)
 run_step() {
   local s=$1 log="$LOGS/$1.log" now end t0 t1 code r
+  rm -f "$LOGS/.$s.result"
   now=$(date +%H:%M:%S)
   echo "── $s 시작 $now(로그 $log)"
   t0=$(date +%s)
@@ -157,9 +158,16 @@ run_step() {
 # 끝난 단계의 결과를 RESULTS에 더한다. 실패면 로그 끝을 보이고 GitHub Actions에서는 annotation을 남긴다
 collect() {
   local s=$1 log="$LOGS/$1.log"
-  RESULTS="$RESULTS$(cat "$LOGS/.$s.result")
+  if [ -f "$LOGS/.$s.result" ]; then
+    RESULTS="$RESULTS$(cat "$LOGS/.$s.result")
 "
-  rm -f "$LOGS/.$s.result"
+    rm -f "$LOGS/.$s.result"
+  else
+    # 결과를 남기기 전에 끝났다(함께 띄운 셸이 죽는 등): 요약에서 빠진 채 통과로 치지 않는다
+    echo "── $s: 결과를 남기지 못하고 끝났다"
+    RESULTS="$RESULTS$s|FAIL|-|$(date +%H:%M:%S)|0|$log
+"
+  fi
   [ "$(result_of "$s")" = FAIL ] || return 0
   failed="$failed $s"
   if [ -z "$TEE" ]; then
