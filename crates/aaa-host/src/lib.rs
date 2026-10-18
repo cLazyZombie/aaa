@@ -6,6 +6,7 @@
 mod attach;
 mod brief;
 mod brief_text;
+mod caller;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -134,6 +135,8 @@ struct MachineRt {
     health: Option<(aaa_proto::MachineHealth, i64)>,
     /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
     features: Vec<String>,
+    /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
+    agent_pid: Option<u32>,
 }
 
 struct Mirror {
@@ -189,6 +192,8 @@ struct PaneRt {
     transcript: Option<String>,
     /// 재부팅 뒤 다시 띄우지 못한 까닭(restore.rs)
     restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane(`replace_pane`, 오래된 것부터 [`REPLACED_KEEP`]개)
+    replaced: Vec<String>,
     /// host가 이 세션에 끝내기를 보냈다(`kill_session`). 그렇게 끝난 pane은 스스로 끝난 것이 아니라 닫지 않는다.
     kill_sent: bool,
 }
@@ -207,6 +212,9 @@ fn exited_by_itself(old: &SessionInfo, new: &SessionInfo, kill_sent: bool) -> bo
         && new.role.is_none()
         && restore::is_shell(&new.argv)
 }
+
+/// pane이 기억하는 대신한 옛 ID 수
+const REPLACED_KEEP: usize = 8;
 
 /// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,6 +335,8 @@ pub struct Host {
     front_seq: AtomicU64,
     /// 이 host 실행의 boot ID(흐름 사건에 같이 적는다)
     pub boot_id: String,
+    /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.163)
+    pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다)
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
     /// thread 기록이 바뀌었다
@@ -470,6 +480,7 @@ impl Host {
                     last_seen_ms: m.last_seen_ms,
                     health: None,
                     features: vec![],
+                    agent_pid: None,
                 },
             );
         }
@@ -502,6 +513,7 @@ impl Host {
             layout_events: broadcast::channel(64).0,
             front_seq: AtomicU64::new(0),
             boot_id: util::boot_id(),
+            config_dir: std::sync::OnceLock::new(),
             flow_events: broadcast::channel(256).0,
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
@@ -581,6 +593,7 @@ impl Host {
                 last_seen_ms: None,
                 health: None,
                 features: vec![],
+                agent_pid: None,
             });
             m.os = Some(hello.os.clone());
             m.boot_id = Some(hello.boot_id.clone());
@@ -604,6 +617,7 @@ impl Host {
                     answered: false,
                     restore_error: None,
                     kill_sent: false,
+                    replaced: Vec::new(),
                 });
                 if exited_by_itself(&p.info, s, p.kill_sent) {
                     exited.push(s.id.clone());
@@ -752,6 +766,7 @@ impl Host {
                 answered: false,
                 restore_error: None,
                 kill_sent: false,
+                replaced: Vec::new(),
             });
             if let Some(m) = p.mirror.as_mut()
                 && (p.info.cols, p.info.rows) != (info.cols, info.rows)
@@ -839,13 +854,16 @@ impl Host {
             agent: p.agent.clone().map(Box::new),
             label: p.info.label.clone(),
             restore_error: p.restore_error.clone(),
+            replaced: p.replaced.clone(),
         }
     }
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role)).collect();
-        v.sort_by(|a, b| a.machine.cmp(&b.machine).then(a.id.cmp(&b.id)));
+        // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
+        let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
+        v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
         v
     }
 
@@ -983,7 +1001,10 @@ impl Host {
             return Err(err(ErrorCode::Forbidden, "이 머신의 CLI에서만 할 수 있다"));
         }
         if req.needs_control() && !role.can_control() {
-            return Err(err(ErrorCode::Forbidden, "보기 권한으로는 조작할 수 없다"));
+            return Err(err(
+                ErrorCode::Forbidden,
+                format!("보기 권한으로는 조작할 수 없다{}", front::reader_reason(actor)),
+            ));
         }
         match req {
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
@@ -1050,7 +1071,7 @@ impl Host {
             FrontRequest::Context { project, peek } => self.context(&project, peek).await.map(FrontResponse::Context),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
-                let owners = self.assignable().await;
+                let owners = self.assignable(&project).await;
                 let valid = match check {
                     Some(c) => Some(self.check_owner(&owners, &c)?),
                     None => None,
@@ -1247,6 +1268,11 @@ impl Host {
             FrontRequest::PaneReadText { pane, source, lines, format } => {
                 self.pane_read_text(&pane, source, lines, format).await
             }
+            FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
+            FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
+            FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
+                self.pane_copy_search(&pane, &query, direction, cursor, previous)
+            }
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
             FrontRequest::PaneSubmit { pane, text } => self.pane_submit(&pane, &text, actor).await,
@@ -1349,7 +1375,7 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
-            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
+            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
             // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다
@@ -1629,6 +1655,16 @@ impl Host {
                 Ok(AgentResponse::Session(info)) => self.on_session(mid, info, false),
                 Ok(other) => tracing::warn!(pane = %new, "이름 잇기: 예상하지 못한 응답 {other:?}"),
                 Err(e) => tracing::warn!(pane = %new, "이름 잇기 실패: {}", e.message),
+            }
+        }
+        // 옛 ID를 보던 화면이 새 pane을 따라가게 남긴다(QA Q19): 옛 pane이 대신했던 것까지 잇는다
+        {
+            let mut i = self.inner.lock().unwrap();
+            let mut chain = i.panes.get(old).map(|p| p.replaced.clone()).unwrap_or_default();
+            chain.push(old.to_string());
+            let skip = chain.len().saturating_sub(REPLACED_KEEP);
+            if let Some(p) = i.panes.get_mut(new) {
+                p.replaced = chain.split_off(skip);
             }
         }
         {
@@ -2176,6 +2212,7 @@ impl Host {
                 last_seen_ms: None,
                 health: None,
                 features: vec![],
+                agent_pid: None,
             },
         );
         if let Some(tx) = p.accept {
@@ -2395,6 +2432,7 @@ impl Host {
 /// `aaa host` 실행
 pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
+    let _ = host.config_dir.set(aaa_config::paths::config_dir());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
     host.forget_queued_messages();

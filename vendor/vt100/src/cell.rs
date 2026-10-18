@@ -40,7 +40,7 @@ impl Cell {
         usize::from(self.len & LEN_BITS)
     }
 
-    // aaa(plan §8.150): 넓은지는 놓는 쪽(Screen::text)이 웹과 같은 규칙으로 정해 넘긴다
+    // aaa(plan §8.167): 넓은지는 놓는 쪽(Screen::text)이 웹과 같은 규칙으로 정해 넘긴다
     pub(crate) fn set(
         &mut self,
         c: char,

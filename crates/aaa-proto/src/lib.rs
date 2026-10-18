@@ -7,7 +7,9 @@ pub mod orch;
 pub mod usage;
 pub mod version;
 
-pub use frame::{Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, write_frame};
+pub use frame::{
+    Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, take_frame, write_frame,
+};
 pub use msg::*;
 pub use orch::*;
 pub use usage::*;
@@ -69,6 +71,12 @@ pub fn typescript_bindings() -> String {
         PaneModes::decl(&cfg),
         MouseMode::decl(&cfg),
         MouseEncoding::decl(&cfg),
+        GridScroll::decl(&cfg),
+        ScrollBy::decl(&cfg),
+        TextPoint::decl(&cfg),
+        TextRange::decl(&cfg),
+        CopyMotion::decl(&cfg),
+        SearchDirection::decl(&cfg),
         PendingEnroll::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),
@@ -94,6 +102,7 @@ pub fn typescript_bindings() -> String {
         ThreadPr::decl(&cfg),
         FlowEvent::decl(&cfg),
         AgentActivity::decl(&cfg),
+        PlanSummary::decl(&cfg),
         AgentStatus::decl(&cfg),
         QuestionState::decl(&cfg),
         QuestionView::decl(&cfg),

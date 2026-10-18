@@ -133,10 +133,15 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RoutineCmd,
     },
-    /// 머신의 agent.toml profile 목록
+    /// thread profile: 머신마다 agent.toml과 기본 profile(claude·codex). 바꾸기·허용 목록은 사람만(herdr-projects `profile`)
     Profile {
         #[command(subcommand)]
-        cmd: ProfileCmd,
+        cmd: crate::settings::ProfileCmd,
+    },
+    /// yolo와 사람만 바꾸는 safety 설정(host.toml [safety.*], herdr-projects `safety`)
+    Safety {
+        #[command(subcommand)]
+        cmd: crate::settings::SafetyCmd,
     },
     /// thread 시작·목록·확인(ack)·끝내기(resolve)
     Thread {
@@ -262,14 +267,6 @@ enum RoutineCmd {
     Approve {
         project: String,
         name: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ProfileCmd {
-    List {
-        #[arg(long)]
-        machine: Option<String>,
     },
 }
 
@@ -967,7 +964,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::RoutineToggle { project, name, on })
         }
         Cmd::Routine { cmd: RoutineCmd::Approve { project, name } } => routine_approve(json, project, name),
-        Cmd::Profile { cmd: ProfileCmd::List { machine } } => front(json, FrontRequest::Profiles { machine }),
+        Cmd::Profile { cmd } => crate::settings::profile_cmd(json, cmd),
+        Cmd::Safety { cmd } => crate::settings::safety_cmd(json, cmd),
         Cmd::Thread { cmd } => front(
             json,
             match cmd {
@@ -1560,10 +1558,12 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
             work_root,
             exe: std::env::current_exe()?,
             profiles: cfg.profiles.clone(),
+            config_dir: Some(aaa_config::paths::config_dir()),
         });
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
         agent.start_hooks()?;
+        agent.start_plans();
         aaa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
@@ -1579,13 +1579,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
 /// routine 명령 승인: agent가 대신 승인하지 못하게, aaa 세션 안이거나 터미널이 아니면 거부하고 사람에게 이름을 치게 한다.
 /// 남는 한계: 사람의 터미널을 흉내 내는 다른 수단(aaa 밖의 PTY)까지 막지는 못한다(plan §8.19).
 fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode> {
-    use std::io::{BufRead as _, IsTerminal as _, Write as _};
-    if std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some() {
-        anyhow::bail!("aaa 세션 안에서는 routine 명령을 승인할 수 없다. 사람이 host 머신의 일반 터미널에서 한다");
-    }
-    if !std::io::stdin().is_terminal() {
-        anyhow::bail!("`aaa routine approve`는 사람이 터미널에서 실행해야 한다(표준 입력이 터미널이 아니다)");
-    }
+    crate::person::require("`aaa routine approve`(routine 명령 승인)")?;
     let rt = runtime()?;
     let list = rt.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
@@ -1611,14 +1605,10 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
     println!("    {}\n", r.command);
     if !r.commands_allowed {
         println!(
-            "지금은 host.toml [projects] routine_commands가 이 프로젝트를 허용하지 않아, 승인해도 그것을 켜기 전에는 돌지 않는다.\n"
+            "지금은 safety routine_commands가 꺼져 있어, 승인해도 켜기 전에는 돌지 않는다(`aaa safety set {project} routine_commands on`).\n"
         );
     }
-    print!("승인하려면 routine 이름을 친다: ");
-    std::io::stdout().flush()?;
-    let mut typed = String::new();
-    std::io::stdin().lock().read_line(&mut typed)?;
-    if typed.trim() != name {
+    if crate::person::ask("승인하려면 routine 이름을 친다: ")? != name {
         anyhow::bail!("이름이 다르다. 승인하지 않았다");
     }
     front(json, FrontRequest::RoutineApprove { project, name, command_sha256: r.command_sha256 })
@@ -1657,7 +1647,7 @@ fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
 }
 
-fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
+pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
     runtime()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
         c.call(req).await
@@ -1665,7 +1655,7 @@ fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::Erro
 }
 
 /// 응답 출력(herdr `print_response`): JSON은 한 줄. 오류는 표준 오류로 가고 종료 코드 1이다(JSON이면 `{"error":…}` 한 줄).
-fn front_print(json: bool, res: Result<FrontResponse, aaa_proto::ErrorBody>) -> Result<ExitCode> {
+pub(crate) fn front_print(json: bool, res: Result<FrontResponse, aaa_proto::ErrorBody>) -> Result<ExitCode> {
     match res {
         Ok(r) => {
             if json {
@@ -2145,6 +2135,13 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Read(v) => s.push_str(&v.text),
+        FrontResponse::Selection { text, .. } => s.push_str(text),
+        FrontResponse::CopyCursor { cursor, .. } => {
+            let _ = write!(s, "{}:{}", cursor.row, cursor.col);
+        }
+        FrontResponse::CopySearch { total, current_global, .. } => {
+            let _ = write!(s, "{}/{total}", current_global.map_or(0, |n| n + 1));
+        }
         FrontResponse::ThreadPane(v) => render_thread_pane(&mut s, v),
         FrontResponse::OutputMatched { matched_line, .. } => {
             let _ = writeln!(s, "{matched_line}");
@@ -2176,11 +2173,13 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Profiles { machine, profiles } => {
             if profiles.is_empty() {
-                let _ = writeln!(s, "{machine}: agent.toml에 [profiles.<이름>]이 없다");
-            }
-            for p in profiles {
                 let _ = writeln!(
                     s,
+                    "{machine}: agent.toml에 [profiles.<이름>]이 없고 설치·로그인한 기본 profile(claude·codex)도 없다"
+                );
+            }
+            for p in profiles {
+                let mut line = format!(
                     "{machine}\t{}\t{}\t{}\t{}\t{}",
                     p.name,
                     p.harness,
@@ -2188,6 +2187,13 @@ fn render_front(r: &FrontResponse) -> String {
                     p.effort.clone().unwrap_or("-".into()),
                     p.description
                 );
+                if !p.args.is_empty() {
+                    line.push_str(&format!("\targs: {}", p.args.join(" ")));
+                }
+                if p.builtin {
+                    line.push_str("\t(기본)");
+                }
+                let _ = writeln!(s, "{line}");
             }
         }
         FrontResponse::Threads { threads } => {

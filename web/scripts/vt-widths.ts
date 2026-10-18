@@ -1,5 +1,5 @@
 // session host 화면(들여온 vt100)이 웹 터미널과 같은 칸을 쓰도록, 웹의 폭 규칙(herdr-web-ui terminalWidths.ts
-// `herdrWidthProvider`: xterm grapheme addon 0.4.0 + herdr 보정 셋)을 code point 표로 옮긴다(plan §8.150).
+// `herdrWidthProvider`: xterm grapheme addon 0.4.0 + herdr 보정 셋)을 code point 표로 옮긴다(plan §8.167).
 // 쓰기: node web/scripts/vt-widths.ts → vendor/vt100/src/widths_table.rs, crates/aaa-vt/src/width_cases.rs
 // 표는 code point마다 grapheme 부류·폭·묶기 방식이고, 앞 글자와 묶을지는 vt100 `widths.rs`가 addon과 같은 규칙으로 정한다.
 // 만들 때 모든 code point × 여러 앞 상태에서 「표 + 그 규칙」이 provider와 같은지 대조하고, 다르면 멈춘다.
@@ -174,7 +174,7 @@ export async function generate({ verify = true } = {}): Promise<{ table: string;
   });
   const rows: string[] = [];
   for (let i = 0; i < ranges.length; i += 6) rows.push("    " + ranges.slice(i, i + 6).map(([cp, v]) => `(0x${cp.toString(16)}, 0x${v.toString(16)})`).join(", ") + ",");
-  const table = `// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider에서, plan §8.150). 손으로 고치지 않는다.
+  const table = `// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider에서, plan §8.167). 손으로 고치지 않는다.
 //! code point 범위의 글자 폭 표. 값의 아래 4비트는 grapheme 부류, 0x10은 두 칸, 0x60은 묶기 방식(0 보통, 0x20 묶지 않음, 0x40 보이지 않음)
 
 /// (범위 시작 code point, 값). 다음 시작 앞까지 같은 값이다
@@ -183,7 +183,7 @@ pub(crate) static RANGES: [(u32, u8); ${ranges.length}] = [
 ${rows.join("\n")}
 ];
 `;
-  const cases = `// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider로 한 줄에 쓴 칸, plan §8.150). 손으로 고치지 않는다.
+  const cases = `// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider로 한 줄에 쓴 칸, plan §8.167). 손으로 고치지 않는다.
 //! 웹이 놓는 칸: (쓴 글, [(시작 칸, 폭, 그 칸의 글)])
 
 /// 묶음 칸: (시작 칸, 폭, 그 칸의 글)

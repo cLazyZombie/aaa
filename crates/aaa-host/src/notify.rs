@@ -23,6 +23,15 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// 텔레그램 메시지 한도(4096자) 안에 들게 줄인다
 const TEXT_CAP: usize = 3500;
 
+/// 알림을 모으는 시간(설정 `debounce_secs`). `AAA_TEST_NOTIFY_DEBOUNCE_MS`는 시험에서만 줄인다(웹 E2E 17·18: push 판정마다
+/// 1초를 기다렸다. 12는 설정 1초로 돈다)
+fn debounce(secs: u64) -> Duration {
+    std::env::var("AAA_TEST_NOTIFY_DEBOUNCE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(Duration::from_secs(secs), Duration::from_millis)
+}
+
 /// 알림 글: 프로젝트 한 줄과 항목마다 한 줄
 pub(crate) fn notify_text(project: &str, items: &[InboxItem]) -> String {
     let mut s = format!("[aaa] {project}");
@@ -212,7 +221,7 @@ impl Host {
         *self.notify_tx.lock().unwrap() = Some(tx);
         let me = self.clone();
         tokio::spawn(async move {
-            let window = Duration::from_secs(me.cfg.notify.debounce_secs);
+            let window = debounce(me.cfg.notify.debounce_secs);
             let mut failing = false;
             while let Some(first) = rx.recv().await {
                 // 첫 항목부터 window 동안 모은다

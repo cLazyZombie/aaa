@@ -143,7 +143,7 @@ impl Row {
         wrapping: bool,
         prev_pos: Option<crate::grid::Pos>,
         prev_attrs: Option<crate::attrs::Attrs>,
-        // aaa(plan §8.150): 마지막에 쓴 칸 글의 끝(contents 길이)과 그 묶음 상태. 그 뒤에 escape를 썼으면 길이가 다르다
+        // aaa(plan §8.167): 마지막에 쓴 칸 글의 끝(contents 길이)과 그 묶음 상태. 그 뒤에 escape를 썼으면 길이가 다르다
         joined: &mut Option<(usize, crate::widths::Join)>,
     ) -> (crate::grid::Pos, crate::attrs::Attrs) {
         let mut prev_was_wide = false;
@@ -245,7 +245,7 @@ impl Row {
 
                     prev_pos.col += if cell.is_wide() { 2 } else { 1 };
                     let cell_contents = cell.contents();
-                    // aaa(plan §8.150): 따로 놓인 칸인데 escape 없이 이어 쓰면 받는 터미널이 앞 칸에 붙이는 글이면
+                    // aaa(plan §8.167): 따로 놓인 칸인데 escape 없이 이어 쓰면 받는 터미널이 앞 칸에 붙이는 글이면
                     // (사이의 escape로 끊겼던 묶음) 모양을 다시 써서 끊는다
                     let prev = joined
                         .filter(|(end, _)| *end == contents.len())

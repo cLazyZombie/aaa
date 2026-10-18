@@ -25,10 +25,15 @@ const WIDE: u16 = 130;
 const ROWS: u16 = 30;
 /// 펼친 사이드바 폭(구분선 포함, herdr `sidebar_width` 26)과 접힌 compact 폭(4)
 const SIDE: u16 = 26;
+/// 보통 화면 pane 오른쪽 scrollbar 칸(`[tui] pane_scrollbars` 기본 켬, herdr `stable_scrollbar_gutter`): PTY가 그만큼 좁다
+const GUTTER: u16 = 1;
 const COMPACT: u16 = 4;
 /// herdr catppuccin 팔레트의 탐색 커서 줄 바탕(`selection_bg`)과 지금 pane 줄 바탕(`active_row_bg`)
 const SELECTION_BG: u32 = 0x0200_0000 | (49 << 16) | (50 << 8) | 68;
 const ACTIVE_BG: u32 = 0x0200_0000 | (30 << 16) | (30 << 8) | 46;
+/// copy 모드 찾기: 현재 일치(accent)와 나머지 일치(`surface1`) 바탕
+const ACCENT_BG: u32 = 0x0200_0000 | (137 << 16) | (180 << 8) | 250;
+const SURFACE1_BG: u32 = 0x0200_0000 | (69 << 16) | (71 << 8) | 90;
 
 /// 시험 설정: 사용자 입력기는 건드리지 않고(입력기 전환은 기본 켬이라 끈다), prefix 뒤 자모 해석은 켠다(기본값)
 const LOCAL_ONLY: &str = r#"schema = 1
@@ -88,12 +93,21 @@ impl Screen {
         }
     }
 
-    /// 사이드바 칸(왼쪽 SIDE칸) 중 바탕이 `bg`인 첫 줄: (줄 번호, 그 줄의 사이드바 글)
-    fn side_row(&self, bg: u32) -> Option<(usize, String)> {
+    /// 사이드바 칸(왼쪽 SIDE칸) 중 `from` 줄부터 바탕이 `bg`인 첫 줄: (줄 번호, 그 줄의 사이드바 글)
+    fn side_row_from(&self, from: usize, bg: u32) -> Option<(usize, String)> {
         let w = (SIDE as usize).min(self.cols);
-        (0..self.cells.len())
+        (from..self.cells.len())
             .find(|r| self.bgs[*r][..w - 1].contains(&bg))
             .map(|r| (r, self.cells[r][..w].iter().filter(|c| **c != '\0').collect()))
+    }
+
+    fn side_row(&self, bg: u32) -> Option<(usize, String)> {
+        self.side_row_from(0, bg)
+    }
+
+    /// 사이드바 ` agents` 머리 줄(herdr 아래 구역, 없으면 맨 위부터 본다)
+    fn agents_top(&self) -> usize {
+        self.side_lines().iter().position(|l| l.starts_with(" agents")).map_or(0, |i| i + 1)
     }
 
     /// 탐색 모드에서 고른 줄(herdr `selection_bg`)
@@ -101,9 +115,23 @@ impl Screen {
         self.side_row(SELECTION_BG)
     }
 
-    /// 지금 pane 줄(herdr `active_row_bg`)
+    /// 사이드바 칸만 줄마다(구분선과 오른쪽 pane 글은 뺀다)
+    fn side_lines(&self) -> Vec<String> {
+        let w = (SIDE as usize - 1).min(self.cols);
+        self.cells
+            .iter()
+            .map(|l| l[..w].iter().filter(|c| **c != '\0').collect::<String>().trim_end().to_string())
+            .collect()
+    }
+
+    /// agents 구역의 지금 pane 줄(herdr `active_row_bg`)
     fn current(&self) -> Option<String> {
-        self.side_row(ACTIVE_BG).map(|(_, l)| l)
+        self.side_row_from(self.agents_top(), ACTIVE_BG).map(|(_, l)| l)
+    }
+
+    /// spaces 구역의 지금 workspace 줄(같은 `active_row_bg`, agents 머리 위)
+    fn current_space(&self) -> Option<String> {
+        self.side_row(ACTIVE_BG).filter(|(r, _)| *r < self.agents_top()).map(|(_, l)| l)
     }
 
     /// 글이 처음 보이는 칸(줄, 열). 넓은 글자는 두 칸으로 센다(마우스로 누를 자리).
@@ -470,12 +498,12 @@ fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
     (h, hw)
 }
 
-/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(질문 수·다른 화면 크기) 앞.
+/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(사람 차례 수·다른 화면 크기) 앞.
 /// 시험의 탭 이름에는 빈칸을 쓰지 않는다.
 fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
-    let rest = rest.split(" ● 질문").next().unwrap_or(rest);
+    let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
     let mut chips: Vec<String> =
         rest.split_whitespace().filter(|c| !matches!(*c, "+" | "<" | ">" | "…")).map(str::to_string).collect();
@@ -534,20 +562,21 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     // 이 화면이 지금 쓰는 화면이 된다. 상태 줄은 없다(herdr).
     hw.wait("칸 크기와 lease", |w| {
         let p = w.pane(&first)?;
-        ((p.cols, p.rows) == (COLS - SIDE, ROWS - 1) && w.held_by(&first, "tui@")).then_some(())
+        ((p.cols, p.rows) == (COLS - SIDE - GUTTER, ROWS - 1) && w.held_by(&first, "tui@")).then_some(())
     });
 
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // harness 상태는 화면으로 바뀌고 사이드바 줄·탭 막대 질문 수·pane badge에 보인다: Claude 권한 확인창
-    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다
+    // harness 상태는 화면으로 바뀌고 사이드바 줄·pane badge에 보인다: Claude 권한 확인창
+    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다. 탭 막대 오른쪽은 thread가 아닌
+    // pane의 질문을 세지 않는다(herdr-projects `projects: N need you`는 thread 수다, side_list_like_web)
     tui.type_line(
         "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
          ' Esc to cancel · Tab to amend'",
     );
     tui.wait_text("질문 상태", |s| {
-        s.lines().next().is_some_and(|l| l.contains(" ● 질문 1 ")) && s.contains("질문 — aaa question")
+        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 사람 차례"))
     });
     tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| {
@@ -762,11 +791,9 @@ fn tabs_like_herdr() {
     let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
     // TUI는 host 화면(grid)을 그리므로, 보였으면 host 화면에도 있다
     tui.wait_text("새 pane 출력", |s| s.contains("held-4"));
-    assert!(
-        h.screen(&right).contains("held-4") && h.screen(&right).contains("작업 폴더"),
-        "새 pane이 옮긴 폴더에서 뜨지 않았다:\n{}",
-        h.screen(&right)
-    );
+    assert!(h.screen(&right).contains("held-4"), "나누기 뒤 키가 새 pane으로 가지 않았다:\n{}", h.screen(&right));
+    // pwd 줄은 pane 폭에서 접힌다(macOS `/private/tmp/…`). 예전에는 기계 prompt의 `\W`(폴더 이름)가 대신 맞았다
+    h.wait_output_unwrapped(&right, "/작업 폴더", T);
     assert!(!h.screen(&first).contains("held-4"), "나누기 뒤 키가 옛 pane으로 갔다");
     let cwd_of = |hw: &HostWatch, id: &str| hw.pane(id).and_then(|p| p.cwd.clone()).map(std::path::PathBuf::from);
     hw.wait("나눈 pane의 폴더", |w| cwd_of(w, &right).map(|c| c.canonicalize().ok() == Some(want.clone())));
@@ -850,6 +877,14 @@ fn pane_modes_like_herdr() {
     tui.cmd("v");
     let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
     assert_eq!(hw.wait("비율", split_ratio), 500);
+    // 나눈 pane은 명령 없는 기본 셸(login sh)이다. prompt는 실험실이 정한 `$`다: 기계 rc의 hostname prompt면 runner의 긴
+    // hostname이 좁은 pane에서 접혀, 크기를 바꿀 때마다 셸이 다시 그리는 화면이 기계마다 달랐다
+    lab::wait_for_diag(
+        "나눈 pane prompt `$`",
+        T,
+        || (h.screen(&right).trim() == "$").then_some(()),
+        || h.screen(&right),
+    );
 
     // 1) r 크기 모드: RESIZE 막대. 포커스(오른쪽 pane)는 오른쪽 가장자리 나눔이 없어 왼쪽 가장자리를 옮긴다
     //    (herdr `resize_focused`): l이면 나눔이 오른쪽으로 5%씩
@@ -927,7 +962,7 @@ fn lease_conflict_with_another_front() {
     tui.type_line("echo direct-$((6*7))");
     tui.wait_text("바로 입력", |s| s.contains("direct-42"));
     hw.wait("입력한 화면의 크기", |w| {
-        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(())
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
     });
     tui.wait_text("다른 화면 표시가 사라짐", |s| !s.contains("other-front 크기"));
 
@@ -937,7 +972,7 @@ fn lease_conflict_with_another_front() {
     tui.wait_text("다른 front 표시", |s| s.contains("other-front 크기"));
     tui.send(b"\x1b[I");
     hw.wait("focus 얻은 화면의 크기", |w| {
-        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(())
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
     });
 
     // 3) focus를 잃은 동안(ESC [ O)은 크기를 걸지 않는다: 다른 화면이 썼다 놓아도 그 크기 그대로다
@@ -964,7 +999,9 @@ fn narrow_claim_then_release_keeps_line_ends() {
     let id = leaves(&w)[0].clone();
     let mut tui = Tui::start(&h);
     tui.wait_text("첫 화면", |s| tab_chips(s) == ["reflow"]);
-    hw.wait("이 화면의 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("이 화면의 크기", |w| {
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
+    });
     // pane 폭(COLS-SIDE) 안에 드는 49자 줄. 입력한 명령 줄에는 이 글이 그대로 나오지 않는다
     let long = format!("LONG-{}-END", "0".repeat(40));
     tui.type_line("echo LONG-$(printf %040d 0)-END; echo \"reflow: ${fish_handle_reflow-none}\"");
@@ -987,7 +1024,9 @@ fn narrow_claim_then_release_keeps_line_ends() {
     call(aaa_proto::FrontRequest::PaneRelease { pane: id.clone() });
     hw.wait("놓음", |w| w.pane(&id).is_some_and(|p| p.lease.is_none()).then_some(()));
     tui.send(b"\x1b[I");
-    hw.wait("되찾은 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("되찾은 크기", |w| {
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
+    });
     tui.wait_text("줄 끝이 돌아옴", |s| s.contains(&long) && !s.contains("phone-front 크기"));
     // 세션 쪽 화면(`pane read`)도 다시 접었다
     let read = h.ok(&["pane", "read", &id]);
@@ -995,14 +1034,14 @@ fn narrow_claim_then_release_keeps_line_ends() {
     drop(tui);
 }
 
-/// 고른 줄 바로 위가 「Thread n」 머리인가(목록 맨 위)
+/// 고른 줄이 spaces 구역 첫 workspace 줄(` spaces` 머리와 빈 줄 바로 아래)인가(탐색 줄 맨 위)
 fn at_top(s: &Screen) -> bool {
-    let text = s.text();
-    let lines: Vec<&str> = text.lines().collect();
-    s.selected().is_some_and(|(i, _)| i > 0 && lines[i - 1].contains("Thread "))
+    let side = s.side_lines();
+    s.selected().is_some_and(|(i, _)| i >= 2 && side[i - 2].starts_with(" spaces"))
 }
 
-/// 탐색 모드에서 목록 맨 위(첫 thread)로 올라간 뒤 `needle` 줄까지 내려간다(herdr 탐색은 ↑↓, 고른 줄은 selection_bg 바탕).
+/// 탐색 모드에서 맨 위(spaces 구역 첫 workspace)로 올라간 뒤 `needle` 줄까지 내려간다(spaces 다음 agents 목록,
+/// 고른 줄은 selection_bg 바탕).
 /// 한 칸씩 고른 줄이 바뀐 것을 보고 다음 키를 누른다.
 fn pick(tui: &mut Tui, needle: &str) {
     tui.wait_screen("탐색 모드", |s| s.text().contains(" NAVIGATE ") && s.selected().is_some());
@@ -1022,7 +1061,8 @@ fn pick(tui: &mut Tui, needle: &str) {
     panic!("목록에 {needle}이 없다:\n{}", tui.text());
 }
 
-/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록처럼 Thread 묶음·머신별 pane·새 셸이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
+/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록(차이 목록 L1)처럼 머신 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
+/// (herdr-projects 「id · 제목」, 둘째 줄 상태 말), thread에 딸리지 않은 pane이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
 /// herdr처럼 폭과 관계없이 펼친 채(26칸) 시작한다. herdr 키: prefix b 펴기·접기(접으면 4칸 compact, 포커스는 그대로),
 /// prefix w 탐색 모드(↑↓ 고르기·Enter 열기·Esc 돌아가기, 접혀 있으면 펼친 목록을 pane 위에 띄워 보인다).
 #[test]
@@ -1070,27 +1110,51 @@ fn side_list_like_web() {
         ])
     };
     let th = start("alpha-job");
-    let th_pane = wait_for("thread pane", T, || {
-        h.ok(&["thread", "show", "demo", th["id"].as_str().unwrap()])["pane"].as_str().map(String::from)
-    });
+    let alpha = th["id"].as_str().unwrap().to_string();
+    let th_pane =
+        wait_for("thread pane", T, || h.ok(&["thread", "show", "demo", &alpha])["pane"].as_str().map(String::from));
 
-    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭
+    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭. 머신 머리·새 셸 아래 프로젝트 머리, 그 아래
+    //    thread 줄 「id · 제목」과 둘째 줄 상태 말(묶음 말로 시작), 그다음 thread에 딸리지 않은 pane
     let mut tui = Tui::start_cols(&h, &[], WIDE);
-    tui.wait_text("목록", |s| {
-        s.contains("Thread 1")
-            && s.contains("alpha-job")
-            && s.contains(" ▾ labA")
-            && s.contains(" + 새 셸")
-            && s.contains("first")
-            && s.contains("loose")
+    let alpha_row = format!("{alpha} · alpha-job");
+    let words = ["사람 차례", "검토 대기", "작업 중", "쉼"];
+    tui.wait_screen("목록", |s| {
+        let side = s.side_lines();
+        let at = |needle: &str| side.iter().position(|l| l.contains(needle));
+        let (Some(m), Some(shell), Some(demo), Some(row), Some(first), Some(loose)) =
+            (at(" ▾ labA"), at(" + 새 셸"), at(" demo"), at(&alpha_row), at(" first"), at(" loose"))
+        else {
+            return false;
+        };
+        let sub = side[row + 1].trim_start();
+        m + 1 == shell
+            && shell + 1 == demo
+            && demo + 1 == row
+            && words.iter().any(|w| sub.starts_with(w))
+            && row + 2 <= first.min(loose)
     });
-    hw.wait("목록 옆 크기", |w| (w.pane(&first)?.cols == WIDE - SIDE).then_some(()));
+    // thread pane은 pane 줄로 다시 나오지 않는다
+    let side = tui.screen.0.lock().unwrap().side_lines();
+    assert_eq!(side.iter().filter(|l| l.contains("alpha-job")).count(), 1, "{}", side.join("\n"));
+    hw.wait("목록 옆 크기", |w| (w.pane(&first)?.cols == WIDE - SIDE - GUTTER).then_some(()));
     tui.type_line("echo list-$((6*7))");
     tui.wait_text("pane 입력", |s| s.contains("list-42"));
 
-    // 2) 새 thread는 사건으로 따라온다
-    start("beta-job");
-    tui.wait_text("새 thread", |s| s.contains("Thread 2") && s.contains("beta-job"));
+    // 2) 새 thread는 사건으로 따라온다(같은 프로젝트 머리 아래)
+    let beta = start("beta-job")["id"].as_str().unwrap().to_string();
+    tui.wait_screen("새 thread", |s| {
+        let side = s.side_lines();
+        side.iter().filter(|l| l.trim() == "demo" || l.starts_with(" demo ")).count() == 1
+            && side.iter().any(|l| l.contains(&format!("{beta} · beta-job")))
+    });
+    // 탭 막대 오른쪽은 사람이 볼 thread 수다(herdr-projects 탭 줄 `projects: N need you`): 보고 없이 pane이 닫힌 thread는
+    // 사람 차례다. 그 전에는 없다
+    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 사람 차례"), "{}", tui.text());
+    let beta_pane =
+        wait_for("beta pane", T, || h.ok(&["thread", "show", "demo", &beta])["pane"].as_str().map(String::from));
+    h.ok(&["pane", "kill", &beta_pane]);
+    tui.wait_text("사람 차례 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 사람 차례 1 ")));
     // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
@@ -1130,12 +1194,45 @@ fn side_list_like_web() {
     tui.send(b"\x1b");
     tui.wait_text("Esc", |s| !s.contains(" NAVIGATE "));
 
+    // 7b) 위 spaces 구역(herdr `render_sidebar`): 기본 workspace 먼저 workspace 줄, 지금 workspace는 active_row_bg, 아래 구분선과
+    //     ` agents` 머리. 탐색은 지금 workspace 줄에서 시작하고, scratch를 골라 Enter면 그 workspace로 바뀌어 탭이 loose
+    //     하나·포커스는 loose다(herdr `switch_workspace`, 포커스는 front마다). main을 다시 고르면 돌아온다
+    tui.wait_screen("두 구역", |s| {
+        let side = s.side_lines();
+        let at = |needle: &str| side.iter().position(|l| l.contains(needle));
+        let (Some(head), Some(main), Some(scratch), Some(agents)) =
+            (at(" spaces"), at(" main"), at(" scratch"), at(" agents"))
+        else {
+            return false;
+        };
+        head + 2 == main
+            && main + 1 == scratch
+            && side[agents - 1].starts_with('─')
+            && side[agents].ends_with("projects")
+            && s.current_space().is_some_and(|l| l.contains("main"))
+    });
+    tui.cmd("w");
+    tui.wait_screen("지금 workspace에서 시작", |s| s.selected().is_some_and(|(_, l)| l.contains("main")));
+    pick(&mut tui, "scratch");
+    tui.send(b"\r");
+    tui.wait_screen("scratch로", |s| {
+        tab_chips(&s.text()) == ["loose"]
+            && s.current_space().is_some_and(|l| l.contains("scratch"))
+            && s.current().is_some_and(|l| l.contains("loose"))
+    });
+    tui.cmd("w");
+    pick(&mut tui, "main");
+    tui.send(b"\r");
+    tui.wait_screen("main으로", |s| {
+        s.current_space().is_some_and(|l| l.contains("main")) && tab_chips(&s.text()).len() == 4
+    });
+
     // 8) prefix b로 접으면 4칸 compact 열(번호·상태 점, herdr `render_collapsed_sidebar`)만 남는다
     tui.cmd("1");
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
     tui.cmd("b");
     tui.wait_text("접힘", |s| !s.contains(" ▾ labA") && s.lines().next().is_some_and(|l| l.starts_with("1 ")));
-    hw.wait("compact 옆 폭", |w| (w.pane(&first)?.cols == WIDE - COMPACT).then_some(()));
+    hw.wait("compact 옆 폭", |w| (w.pane(&first)?.cols == WIDE - COMPACT - GUTTER).then_some(()));
     tui.cmd("q");
     assert!(tui.wait_exit());
     drop(tui);
@@ -1148,7 +1245,7 @@ fn side_list_like_web() {
     tui.wait_text("펼친 채 시작", |s| {
         s.contains("list-42") && s.contains(" ▾ labA") && tab_chips(s).first().is_some_and(|c| c == "first")
     });
-    hw.wait("사이드바 옆 폭", |w| (w.pane(&first)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("사이드바 옆 폭", |w| (w.pane(&first)?.cols == COLS - SIDE - GUTTER).then_some(()));
     tui.cmd("v");
     let right = hw.wait("나눔", |w| w.tab_of(&first).filter(|l| l.len() == 2).map(|l| l[1].clone()));
     tui.type_line("echo right-side-$((4*4))");
@@ -1166,7 +1263,9 @@ fn side_list_like_web() {
     tui.cmd("b");
     tui.wait_text("접힘", |s| !s.contains(" ▾ labA"));
     // 나눈 탭은 pane마다 테두리 상자라(herdr `pane_borders = "auto"`) 두 pane 폭 합은 칸 폭에서 4칸 작다
-    hw.wait("compact 옆 폭", |w| (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 == COLS - COMPACT).then_some(()));
+    hw.wait("compact 옆 폭", |w| {
+        (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 + 2 * GUTTER == COLS - COMPACT).then_some(())
+    });
     let cols = hw.pane(&first).unwrap().cols;
     tui.cmd("w");
     tui.wait_screen("띄운 목록", |s| {
@@ -1179,7 +1278,7 @@ fn side_list_like_web() {
     tui.cmd("b");
     tui.wait_text("펼침", |s| s.contains(" ▾ labA") && !s.contains(" NAVIGATE "));
     hw.wait("사이드바 옆 크기", |w| {
-        (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 == COLS - SIDE).then_some(())
+        (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 + 2 * GUTTER == COLS - SIDE).then_some(())
     });
     tui.type_line("echo still-$((3*3))");
     tui.wait_text("포커스 그대로", |s| s.contains("still-9"));
@@ -1281,7 +1380,7 @@ fn mouse_like_herdr() {
 
     // 1) 마우스 보고를 켠다(crossterm EnableMouseCapture: 1000·1002·1003·1006)
     tui.wait_screen("마우스 보고", |s| [1000, 1002, 1003, 1006].iter().all(|m| s.modes.contains(m)));
-    hw.wait("첫 탭 크기", |w| (w.pane(&one)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("첫 탭 크기", |w| (w.pane(&one)?.cols == COLS - SIDE - GUTTER).then_some(()));
     tui.type_line("echo one-$((1))");
     tui.wait_text("첫 탭 글", |s| s.contains("one-1"));
 
@@ -1322,10 +1421,10 @@ fn mouse_like_herdr() {
     // 6) `«`는 접기(compact 4칸), `»`는 펴기
     let fold = tui.wait_find("«");
     tui.click(fold);
-    hw.wait("compact 폭", |w| (w.pane(&two)?.cols == COLS - COMPACT).then_some(()));
+    hw.wait("compact 폭", |w| (w.pane(&two)?.cols == COLS - COMPACT - GUTTER).then_some(()));
     let unfold = tui.wait_find("»");
     tui.click(unfold);
-    hw.wait("펼친 폭", |w| (w.pane(&two)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("펼친 폭", |w| (w.pane(&two)?.cols == COLS - SIDE - GUTTER).then_some(()));
 
     // 7) 경계(사이드바 마지막 열)를 끌면 폭 = 열 + 1, 18~36으로 묶는다(herdr)
     let drag = |tui: &mut Tui, from: usize, to: usize| {
@@ -1334,11 +1433,11 @@ fn mouse_like_herdr() {
         tui.mouse(0, (10, to), true);
     };
     drag(&mut tui, SIDE as usize - 1, 31);
-    hw.wait("32칸 사이드바", |w| (w.pane(&two)?.cols == COLS - 32).then_some(()));
+    hw.wait("32칸 사이드바", |w| (w.pane(&two)?.cols == COLS - 32 - GUTTER).then_some(()));
     drag(&mut tui, 31, 60);
-    hw.wait("36칸에서 멈춤", |w| (w.pane(&two)?.cols == COLS - 36).then_some(()));
+    hw.wait("36칸에서 멈춤", |w| (w.pane(&two)?.cols == COLS - 36 - GUTTER).then_some(()));
     drag(&mut tui, 35, SIDE as usize - 1);
-    hw.wait("26칸으로", |w| (w.pane(&two)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("26칸으로", |w| (w.pane(&two)?.cols == COLS - SIDE - GUTTER).then_some(()));
 
     // 8) 나눈 탭에서 pane을 누르면 그 pane에 포커스
     tui.cmd("v");
@@ -1383,7 +1482,7 @@ fn mouse_reaches_programs_like_herdr() {
     h.ok(&["tab", "create", "--machine", "labA", "--label", "c", "--", "/bin/sh"]);
     let mut tui = Tui::start(&h);
     tui.wait_text("세 탭", |s| tab_chips(s) == ["prog", "b", "c"]);
-    hw.wait("이 화면 크기", |w| (w.pane(&prog)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("이 화면 크기", |w| (w.pane(&prog)?.cols == COLS - SIDE - GUTTER).then_some(()));
     // pane 하나인 탭은 테두리가 없어 안쪽이 (1, SIDE)부터다. 보고 좌표는 안쪽 0부터 + 1
     let at = (6, SIDE as usize + 4);
     let (x, y) = (at.1 - SIDE as usize + 1, at.0);
@@ -1416,15 +1515,15 @@ fn mouse_reaches_programs_like_herdr() {
     tui.type_line("printf '\\033[?1l\\033[?1049l'; clear");
     tui.wait_text("alt 화면 나감", |s| !s.contains("app-3"));
 
-    // 3) 나눔 경계(맞닿은 두 테두리 `┐┌`)를 끌면 그 나눔 비율: 64칸 반(32)에서 10칸 오른쪽 → 42칸, 왼쪽 안쪽 40칸
+    // 3) 나눔 경계(맞닿은 두 테두리 `┐┌`)를 끌면 그 나눔 비율: 64칸 반(32)에서 10칸 오른쪽 → 42칸, 왼쪽 안쪽 40칸(PTY는 scrollbar 칸을 뺀 39)
     tui.cmd("v");
     let right = hw.wait("좌우 나눔", |w| w.tab_of(&prog).filter(|l| l.len() == 2).map(|l| l[1].clone()));
-    hw.wait("나눈 폭", |w| (w.pane(&prog)?.cols == 30).then_some(()));
+    hw.wait("나눈 폭", |w| (w.pane(&prog)?.cols == 30 - GUTTER).then_some(()));
     let border = tui.wait_find("┐┌");
     tui.mouse(0, (10, border.1), false);
     tui.mouse(32, (10, border.1 + 10), false);
     tui.mouse(0, (10, border.1 + 10), true);
-    hw.wait("끈 만큼 넓어짐", |w| (w.pane(&prog)?.cols == 40).then_some(()));
+    hw.wait("끈 만큼 넓어짐", |w| (w.pane(&prog)?.cols == 40 - GUTTER).then_some(()));
 
     // 4) 이름표를 끌면 넣을 자리에 accent `│`, 떼면 그 자리로(이름표 26·35·44, 마지막 오른쪽 끝 52 = 맨 끝)
     let chip = tui.wait_find("prog");
@@ -1515,6 +1614,326 @@ fn context_menu_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// pane 이름(herdr `prefix+shift+p`·pane 메뉴 「Rename pane」·「Clear pane name」, host `pane_rename` plan §8.109):
+/// 이름 창에서 붙이면 host·사이드바에 그 이름, 메뉴의 「pane 이름 지우기」는 붙인 이름이 있을 때만 있고 누르면 띄울 때 이름으로
+#[test]
+fn pane_rename_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "one", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    let right = |tui: &mut Tui, at: (usize, usize)| {
+        tui.mouse(2, at, false);
+        tui.mouse(2, at, true);
+    };
+
+    // 1) prefix shift+p: 붙인 이름이 없으니 빈 창, 치고 Enter면 host 이름과 사이드바 줄
+    tui.cmd("P");
+    tui.wait_text("pane 이름 창", |s| s.contains("pane 이름 바꾸기") && s.contains("↵ 저장"));
+    tui.send(b"api-log\r");
+    hw.wait("붙인 이름", |w| (w.pane(&id)?.label.as_deref() == Some("api-log")).then_some(()));
+    tui.wait_text("사이드바 이름", |s| s.contains("api-log") && !s.contains("↵ 저장"));
+
+    // 2) pane 메뉴: 붙인 이름이 있으면 「pane 이름 지우기」, 누르면 띄울 때 이름으로
+    let at = (10, SIDE as usize + 20);
+    right(&mut tui, at);
+    let clear = tui.wait_find("pane 이름 지우기");
+    tui.click(clear);
+    hw.wait("이름 지움", |w| w.pane(&id)?.label.is_none().then_some(()));
+    tui.wait_text("사이드바 처음 이름", |s| !s.contains("api-log"));
+
+    // 3) 지운 뒤 메뉴에는 지우기가 없고, 「pane 이름 바꾸기」는 이름 창을 연다
+    right(&mut tui, at);
+    let rename = tui.wait_find("pane 이름 바꾸기");
+    assert!(!tui.text().contains("pane 이름 지우기"), "붙인 이름이 없는데 지우기가 있다");
+    tui.click(rename);
+    tui.wait_text("이름 창", |s| s.contains("↵ 저장"));
+    tui.send(b"db\r");
+    hw.wait("다시 붙인 이름", |w| (w.pane(&id)?.label.as_deref() == Some("db")).then_some(()));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 묶음 5a-1(herdr `apply_scroll`·`scroll_reset`): 보통 화면 pane의 휠은 이 화면의 기록을 3줄씩 넘기고(프로그램에는 안 감),
+/// 올라가 있는 동안 새 출력이 와도 보던 줄을 지키며, 글자를 치면 맨 아래로 돌아온다(host `PaneScroll`, FRONT_API 1.26).
+#[test]
+fn wheel_scrolls_history_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    // pane은 탭 막대 아래 29줄: 맨 아래 장면은 173..200과 prompt(그 위 기록은 명령 줄과 1..172)
+    // 줄 끝 scrollbar 칸(`▕`·`▐`)은 뺀다
+    let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
+    let shows = |s: &str, n: &str| s.lines().any(|l| text(l) == n);
+    let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
+    tui.type_line("seq 1 200");
+    tui.wait_text("seq 끝", |s| {
+        rows(s).first().is_some_and(|l| l == "173") && rows(s).last().is_some_and(|l| l.ends_with('$'))
+    });
+    let at = (10, SIDE as usize + 20);
+
+    // 1) 휠 위 한 칸: 3줄 위(170..198)
+    tui.mouse(64, at, false);
+    tui.wait_text("3줄 위", |s| {
+        rows(s).first().is_some_and(|l| l == "170") && rows(s).last().is_some_and(|l| l == "198")
+    });
+
+    // 2) 올라가 있는 동안 다른 연결(CLI)의 출력(명령 줄·201..205·prompt 6줄)이 와도 보던 줄을 지킨다:
+    //    한 칸 더 올리면 167..195. 지키지 않으면 맨 아래에서 6줄 위(173..201)가 된다.
+    h.ok(&["pane", "run", &id, "seq 201 205"]);
+    wait_for("host 화면에 205", T, || h.screen(&id).contains("205").then_some(()));
+    tui.mouse(64, at, false);
+    tui.wait_text("보던 줄에서 3줄 더 위", |s| {
+        rows(s).first().is_some_and(|l| l == "167") && rows(s).last().is_some_and(|l| l == "195")
+    });
+    // 휠은 셸에 아무것도 보내지 않았다(보냈으면 prompt 줄에 글이 있다)
+    assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
+
+    // 3) 휠 아래 네 칸(12줄)이면 다시 맨 아래(205와 prompt)
+    for _ in 0..4 {
+        tui.mouse(65, at, false);
+    }
+    tui.wait_text("맨 아래", |s| shows(s, "205") && rows(s).last().is_some_and(|l| l.ends_with('$')));
+
+    // 4) 올라간 채 글자를 치면 맨 아래로 돌아와 친 글이 보인다(herdr `scroll_reset`)
+    tui.mouse(64, at, false);
+    tui.wait_text("다시 위", |s| !shows(s, "205"));
+    tui.send(b"echo back-$((1+1))");
+    tui.wait_text("맨 아래로", |s| rows(s).last().is_some_and(|l| l.ends_with("echo back-$((1+1))")));
+    tui.send(b"\r");
+    tui.wait_text("친 명령", |s| shows(s, "back-2"));
+
+    // 5) 붙여넣기(bracketed paste 한 덩이, host `PanePaste`)도 친 글처럼 먼저 맨 아래로
+    tui.mouse(64, at, false);
+    tui.wait_text("또 위", |s| !shows(s, "back-2"));
+    tui.send(b"\x1b[200~echo pasted-$((2+3))\x1b[201~");
+    tui.wait_text("붙여 넣고 맨 아래로", |s| {
+        rows(s).last().is_some_and(|l| l.ends_with("echo pasted-$((2+3))"))
+    });
+    tui.send(b"\r");
+    tui.wait_text("붙여 넣은 명령", |s| shows(s, "pasted-5"));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 묶음 5a-2(herdr `pane_scrollbars`·`ui/scrollbar.rs`·`mouse.rs` scrollbar): 보통 화면 pane은 오른쪽 1칸이 scrollbar 칸이라
+/// PTY가 그만큼 좁고, 기록이 생기면 트랙 `▕`과 thumb `▐`(포커스)가 보인다. 트랙 맨 위를 누르면 맨 위로 뛰고, thumb를 잡아 끝까지
+/// 끌면 맨 아래. alt 화면(vim 등)에서는 칸을 돌려줘 PTY가 넓어지고, 나오면 다시 좁아진다.
+#[test]
+fn pane_scrollbar_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("scrollbar 칸을 뺀 크기", |w| {
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
+    });
+    let bar = COLS as usize - 1;
+    let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
+    let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
+    let ends = |s: &str, row: usize| s.lines().nth(row).and_then(|l| l.chars().last());
+
+    // 1) 기록이 생기면 트랙과 thumb(맨 아래면 트랙 끝)
+    tui.type_line("seq 1 200");
+    tui.wait_text("scrollbar", |s| {
+        rows(s).last().is_some_and(|l| l.ends_with('$'))
+            && ends(s, 1) == Some('▕')
+            && ends(s, ROWS as usize - 1) == Some('▐')
+    });
+
+    // 2) 트랙 맨 위를 누르면 맨 위(명령 줄과 1부터), thumb도 위로
+    tui.click((1, bar));
+    tui.wait_text("맨 위", |s| rows(s).get(1).is_some_and(|l| l == "1") && ends(s, 1) == Some('▐'));
+
+    // 3) thumb를 잡아 아래 끝까지 끌고 떼면 맨 아래
+    tui.mouse(0, (2, bar), false);
+    tui.mouse(32, (15, bar), false);
+    tui.mouse(32, (ROWS as usize - 1, bar), false);
+    tui.mouse(0, (ROWS as usize - 1, bar), true);
+    tui.wait_text("맨 아래", |s| {
+        rows(s).last().is_some_and(|l| l.ends_with('$')) && rows(s).iter().any(|l| l == "200")
+    });
+
+    // 4) alt 화면에서는 칸을 돌려준다(PTY가 넓어짐), 나오면 다시 좁아진다
+    tui.type_line("printf '\\033[?1049h'; echo alt-$((4)); read x");
+    tui.wait_text("alt 화면", |s| s.contains("alt-4"));
+    hw.wait("alt 화면은 칸 전체", |w| (w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    tui.send(b"\r");
+    tui.type_line("printf '\\033[?1049l'; echo normal-$((5))");
+    tui.wait_text("보통 화면", |s| s.contains("normal-5"));
+    hw.wait("다시 scrollbar 칸", |w| (w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(()));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 묶음 5b-1(herdr `selection.rs`·`mouse.rs` selection autoscroll·`PaneSelectionRead`): 끌어 고르다 pane 위 밖으로 나가면
+/// 그 거리만큼 넘기고 30ms마다 한 줄씩 더 넘기며 고르고, 떼면 host가 화면 사본의 기록까지 읽어 복사한다. 고르는 중 휠은
+/// 기록을 넘기며 고른 끝을 다시 잡는다(host `PaneSelectionRead`, FRONT_API 1.27).
+#[test]
+fn drag_select_scrolls_history_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let copied = lab.root.join("copied.txt");
+    let copied_s = lab::path_str(&copied);
+    let read_copied = || std::fs::read_to_string(&copied).unwrap_or_default();
+    let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)]);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
+    let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
+    let top = |s: &str| rows(s).first().and_then(|l| l.parse::<u32>().ok());
+    tui.type_line("seq 1 200");
+    tui.wait_text("seq 끝", |s| top(s) == Some(173) && rows(s).last().is_some_and(|l| l.ends_with('$')));
+    let col = SIDE as usize;
+
+    // 1) 「182」 줄(화면 10째 줄) 첫 칸을 누르고 탭 막대(pane 위 밖 1줄)로 끌어 잡고 있으면 3줄 바로, 그 뒤 30ms마다 한 줄씩 올라간다
+    tui.mouse(0, (10, col), false);
+    tui.mouse(32, (0, col + 2), false);
+    tui.wait_text("끌어 고르며 기록 넘기기", |s| top(s).is_some_and(|n| n <= 150));
+    tui.mouse(0, (0, col + 2), true);
+    // 고른 끝은 뗄 때의 맨 위 줄 셋째 칸, 처음은 「182」의 첫 칸: 누를 때 화면에 없던 기록 줄까지 이어진 숫자로 복사된다
+    let got = wait_for("기록까지 복사", T, || {
+        let c = read_copied();
+        c.ends_with("\n181\n1").then_some(c)
+    });
+    let nums: Vec<u32> = got.lines().skip(1).map(|l| l.parse().unwrap()).collect();
+    assert!(nums.first().is_some_and(|n| *n <= 152) && nums.contains(&160), "{got}");
+    assert!(nums.windows(2).all(|w| w[1] == w[0] + 1 || w[1] == 1), "{got}");
+    tui.wait_text("복사 알림", |s| s.contains("클립보드에 복사했다"));
+
+    // 2) 치면 맨 아래로 돌아온다. 「w-6」 첫 칸을 누르고 두 칸 끈 채 휠 위 한 칸이면 3줄 위가 고른 끝이 된다(셸에는 안 감)
+    tui.type_line("echo w-$((6))");
+    let at = tui.wait_find("w-6");
+    tui.mouse(0, at, false);
+    tui.mouse(32, (at.0, at.1 + 2), false);
+    tui.mouse(64, (at.0, at.1 + 2), false);
+    // 「w-6」이 있던 줄에 세 줄 위의 「199」가 보인다(사이는 명령 줄과 200)
+    tui.wait_text("고르며 휠", |s| s.lines().nth(at.0).map(text).as_deref() == Some("199"));
+    tui.mouse(0, (at.0, at.1 + 2), true);
+    let got = wait_for("휠로 넓힌 고르기 복사", T, || {
+        let c = read_copied();
+        c.ends_with("\nw").then_some(c)
+    });
+    assert!(got.starts_with("9\n200\n") && got.lines().count() == 4, "{got}");
+    assert!(h.screen(&id).trim_end().ends_with('$'), "휠이 셸에 가지 않았다: {}", h.screen(&id));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 묶음 5b-2(herdr `copy_mode.rs`): `prefix [`로 copy 모드에 들어가 커서는 터미널 커서 자리, `k`·`0`·`v`·`j`·`y`로 두 줄에 걸쳐
+/// 골라 복사하고 나간다. `g`는 기록 맨 앞(명령 줄), `V`·`j`로 줄 단위로 고르고 Enter. PageUp은 화면 줄 − 2만큼 넘기고,
+/// `q`·Esc로 나가면 들어올 때의 자리(맨 아래)로 돌아온다.
+#[test]
+fn copy_mode_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "seq", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let copied = lab.root.join("copied.txt");
+    let copied_s = lab::path_str(&copied);
+    let read_copied = || std::fs::read_to_string(&copied).unwrap_or_default();
+    // 넓게: copy 모드 막대(herdr처럼 넘치면 자른다)가 끝까지 보인다
+    let mut tui = Tui::start_cols(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)], WIDE);
+    hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
+    let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
+    let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
+    // 복사 알림 카드가 오른쪽 위 세 줄을 가리므로 줄의 첫 낱말만 본다
+    let first = |l: &str| l.split_whitespace().next().unwrap_or_default().to_string();
+    let top = |s: &str| rows(s).first().and_then(|l| first(l).parse::<u32>().ok());
+    tui.type_line("seq 1 200");
+    tui.wait_text("seq 끝", |s| top(s) == Some(173) && rows(s).last().is_some_and(|l| l.ends_with('$')));
+
+    // 1) 커서는 prompt 줄에서: 세 줄 위(198) 첫 칸에서 글자 단위로 한 줄 내려 고르고 y면 복사하고 나간다
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("v/space 고르기"));
+    tui.send(b"kkk0v");
+    tui.wait_text("고르는 중", |s| s.contains("고르는 중"));
+    tui.send(b"jy");
+    wait_for("글자 단위 복사", T, || (read_copied() == "198\n1").then_some(()));
+    tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
+
+    // 2) g는 기록 맨 앞(명령 줄이 맨 위), V·j·j는 세 줄을 통째로, Enter면 복사하고 들어올 때의 자리(맨 아래)로 돌아온다
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY "));
+    tui.send(b"g");
+    tui.wait_text("기록 맨 앞", |s| {
+        rows(s).first().is_some_and(|l| l.contains("seq 1 200")) && rows(s).get(1).is_some_and(|l| first(l) == "1")
+    });
+    tui.send(b"Vjj\r");
+    wait_for("줄 단위 복사", T, || read_copied().ends_with("seq 1 200\n1\n2").then_some(()));
+    tui.wait_text("맨 아래로 돌아옴", |s| top(s) == Some(173) && !s.contains(" COPY "));
+
+    // 3) PageUp은 29줄 화면에서 27줄 넘기고, q면 넘기기 전 자리로
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY "));
+    tui.send(b"\x1b[5~");
+    tui.wait_text("한 쪽 위", |s| top(s) == Some(146));
+    tui.send(b"q");
+    tui.wait_text("q로 나가 맨 아래", |s| top(s) == Some(173) && !s.contains(" COPY "));
+
+    // 4) copy 모드에서 휠로 3줄 올리면(맨 위 170) 커서(prompt 줄)는 화면 아래 밖이다. `k`면 커서가 화면 맨 아래 줄에 오게
+    //    2줄만 내려와 맨 위 172(휠로 옮긴 자리에서 셈한다. 휠 전 자리로 셈하면 넘기지 않아 170에 남는다)
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY "));
+    tui.mouse(64, (10, SIDE as usize + 20), false);
+    tui.wait_text("copy 모드에서 휠", |s| top(s) == Some(170));
+    tui.send(b"k");
+    tui.wait_text("커서가 보이게 넘김", |s| top(s) == Some(172));
+    tui.send(b"q");
+    tui.wait_text("q로 나가 맨 아래", |s| top(s) == Some(173) && !s.contains(" COPY "));
+    // 5) 낱말 이동(herdr `PaneCopyMotion`, host가 정함): 바로 위 줄 첫 칸에서 고르기를 시작해 `w`(two)·`w`(-, 문장 부호는
+    //    따로 낱말)·`e`(three 끝)로 옮기고 `y`. 답을 기다리는 동안 붙잡은 키가 옮긴 자리에서 이어 「one two-three」가 된다
+    tui.type_line("printf 'one two-three four\\n'");
+    tui.wait_text("낱말 줄", |s| rows(s).iter().any(|l| l == "one two-three four"));
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("w/b/e"));
+    tui.send(b"k0vwwey");
+    wait_for("낱말 이동 복사", T, || (read_copied() == "one two-three").then_some(()));
+    tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
+
+    // 6) 찾기(herdr `PaneCopySearch`): `?19` Enter는 뒤로 찾아 199(19·119·190~199 열두 개 중 마지막)로, 막대에 12/12.
+    //    `n`은 같은 방향 다음(198, 11/12), `N`은 반대(199), Esc는 찾기만 지우고 커서(199 첫 칸)는 둔다(herdr). 거기서 다시
+    //    `?19` Enter는 커서 앞에서 끝나는 마지막 일치(198), `n`은 197, `ve`·`y`면 「197」(답을 기다리는 동안 붙잡은 키로 잇는다).
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("/ ? 찾기"));
+    tui.send(b"?19");
+    tui.wait_text("찾기 입력 줄", |s| s.contains(" COPY  ?19") && s.contains("enter 찾기"));
+    tui.send(b"\r");
+    // 현재 일치(199의 「19」)는 accent, 나머지(198)는 surface1 바탕. 커서 칸(accent)은 일치 첫 칸이라 둘째 칸으로 본다
+    let bg_at = |s: &Screen, needle: &str, dx: usize| s.find(needle).map(|(r, c)| s.bgs[r][c + dx]);
+    tui.wait_screen("뒤로 찾음", |s| {
+        s.text().contains("n/N 다시 12/12")
+            && bg_at(s, "199", 1) == Some(ACCENT_BG)
+            && bg_at(s, "198", 1) == Some(SURFACE1_BG)
+            && bg_at(s, "198", 2) != Some(SURFACE1_BG)
+    });
+    tui.send(b"n");
+    tui.wait_text("같은 방향 다음", |s| s.contains("n/N 다시 11/12"));
+    tui.send(b"N");
+    tui.wait_text("반대 방향", |s| s.contains("n/N 다시 12/12"));
+    tui.send(b"\x1b");
+    tui.wait_text("찾기 지움", |s| s.contains(" COPY ") && !s.contains("12/12") && s.contains("q/esc 끝"));
+    tui.send(b"?19\rnvey");
+    wait_for("찾은 자리에서 복사", T, || (read_copied() == "197").then_some(()));
+    tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
+    // copy 모드 키는 셸에 가지 않았다
+    assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// pane 폭만 바뀌어도 그 pane을 전부 다시 그린다(QA t-0337 Q23, herdr는 크기가 바뀐 pane을 통째로 그린다).
 /// 사이드바를 접고 펴면 줄 수는 그대로이고 폭만 바뀐다. 전에는 host가 바뀐 줄만 보내고 TUI는 폭이 바뀐 grid를 비워서,
 /// 내용이 같은 줄(앞 출력)이 빈칸으로 남았다. 바뀐 뒤 친 표지 줄이 보인 다음(그 뒤 장면까지 왔다) 앞 출력을 본다.
@@ -1531,7 +1950,7 @@ fn width_only_change_redraws_the_pane() {
 
     let fold = tui.wait_find("«");
     tui.click(fold);
-    hw.wait("compact 폭", |w| (w.pane(&id)?.cols == COLS - COMPACT).then_some(()));
+    hw.wait("compact 폭", |w| (w.pane(&id)?.cols == COLS - COMPACT - GUTTER).then_some(()));
     tui.type_line("echo folded-$((3))");
     tui.wait_text("접은 뒤 표지", |s| s.contains("folded-3"));
     let text = tui.text();
@@ -1539,7 +1958,7 @@ fn width_only_change_redraws_the_pane() {
 
     let unfold = tui.wait_find("»");
     tui.click(unfold);
-    hw.wait("펼친 폭", |w| (w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    hw.wait("펼친 폭", |w| (w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(()));
     tui.type_line("echo unfolded-$((4))");
     tui.wait_text("편 뒤 표지", |s| s.contains("unfolded-4"));
     let text = tui.text();

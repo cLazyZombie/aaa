@@ -159,6 +159,9 @@ const WAKE_TICK_MS = 1_000;
 let wokeAt = 0;
 /** 마지막으로 멈춘 때(멈추기 전 마지막 timer) */
 let sleptAt = 0;
+/** 가려진 때(보이는 동안 null), 마지막으로 가려졌다 다시 보인 동안의 시작과 다시 보인 때 */
+let hiddenAt: number | null = null;
+let reshown: { from: number; at: number } | null = null;
 let checkWake = () => {};
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   let stalled = false;
@@ -173,6 +176,14 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
     wokeAt = tick;
   };
   checkWake = shown;
+  // 가려진 동안: 알림을 띄우지 못한 때의 시작(다시 붙어 놓친 사건을 읽을 때 그 뒤 이 기기에 간 push를 본다)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") hiddenAt ??= Date.now();
+    else if (hiddenAt !== null) {
+      reshown = { from: hiddenAt, at: Date.now() };
+      hiddenAt = null;
+    }
+  });
   document.addEventListener("visibilitychange", shown);
   window.addEventListener("pageshow", shown);
   document.addEventListener("resume", () => {
@@ -186,9 +197,18 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
   }, WAKE_TICK_MS);
 }
 
-/** 방금 깨어났으면 멈춘 때(그 뒤 이 기기에 간 push는 이미 받은 알림이다), 아니면 null */
-export function wokeSince(): number | null {
-  return justWoke() ? sleptAt : null;
+/**
+ * 이 페이지가 알림을 띄우지 못한 동안의 시작: 지금 가려져 있으면 가려진 때, 방금 다시 보였으면 가려졌던 때, 방금 멈췄다
+ * 깼으면 멈춘 때(둘 다면 이른 쪽). 그 뒤 이 기기에 간 push는 이미 받은 알림이다. 그런 동안이 아니면 null.
+ * 다시 붙어 놓친 사건을 읽을 때도 끊긴 때가 아니라 이때부터 본다: 10초 넘게 가려졌다 보이면 웹은 다시 보인 순간에 끊고
+ * 새로 붙으므로, 끊긴 때부터 보면 가려진 동안 간 push를 놓친다(실기 10-18 10:22 iPhone, plan §8.150)
+ */
+export function unableSince(now = Date.now()): number | null {
+  const from: number[] = [];
+  if (hiddenAt !== null) from.push(hiddenAt);
+  else if (reshown !== null && now - reshown.at < WAKE_LATE_MS) from.push(reshown.from);
+  if (justWoke(now)) from.push(sleptAt);
+  return from.length ? Math.min(...from) : null;
 }
 
 /** 방금 깨어났다: 지금 받은 사건은 그 일이 일어난 때 알리지 못한 늦은 알림이다 */

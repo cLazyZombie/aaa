@@ -69,6 +69,12 @@ pub struct ProfileView {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub description: String,
+    /// profile이 붙이는 인자(옛 agent는 보내지 않는다)
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// agent.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 /// host → agent: thread 자리를 만든다(worktree 또는 작업 폴더)와 brief.md 쓰기, profile 해석
@@ -84,6 +90,21 @@ pub struct ThreadPrepare {
     pub base: Option<String>,
     pub profile: String,
     pub brief: String,
+    /// thread를 띄울 때 safety(plan §8.163). `launch_safety.v1`을 알린 agent에만 보낸다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety: Option<LaunchSafety>,
+}
+
+/// host → agent: thread 인자에 더할 safety(herdr-projects `profiles::launch_args`·`Safety::launch_args`). host는 profile의
+/// harness를 모르므로 agent가 profile을 풀고 붙인다.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LaunchSafety {
+    /// harness의 권한 건너뛰기 인자(claude `--dangerously-skip-permissions`, codex `--dangerously-bypass-approvals-and-sandbox`)
+    pub yolo: bool,
+    /// 프로젝트 기본 profile과 같은 harness의 기본 profile에만 붙인다(사람이 정의한 profile은 제 인자를 쓴다)
+    pub thread_agent_args: Vec<String>,
+    /// 프로젝트 기본 profile 이름: 그 harness가 `thread_agent_args`의 harness다(못 풀면 claude)
+    pub default_profile: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +215,20 @@ pub struct HarnessEvent {
     /// Claude hook이 알린 대화 기록 파일(§8.27). host는 pane에만 기억하고 웹·로그에 내보내지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
+    /// `kind = "plan"`일 때만: agent가 대화 기록에서 읽은 계획(None이면 지금 계획이 없다, 차이 목록 S5)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanSummary>,
+    /// `kind = "plan"`일 때만: 아직 도는 배경 작업(하위 agent·배경 명령) 수. 0이면 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<u32>,
+}
+
+/// pane 계획의 요약(herdr-web-ui `PlanSummary`): 끝난 단계 수·모든 단계 수·지금 하는 단계
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PlanSummary {
+    pub done: u32,
+    pub total: u32,
+    pub current: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -216,6 +251,12 @@ pub struct AgentStatus {
     /// 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
     #[serde(default = "seen_default")]
     pub seen: bool,
+    /// harness가 기록에 남긴 계획(Claude TaskCreate·TaskUpdate, Codex update_plan). 없으면 null(차이 목록 S5)
+    #[serde(default)]
+    pub plan: Option<PlanSummary>,
+    /// 아직 도는 배경 작업 수(Claude 하위 agent·배경 명령). 없으면 null
+    #[serde(default)]
+    pub background: Option<u32>,
 }
 
 fn seen_default() -> bool {

@@ -2,7 +2,7 @@
 
 [vt100](https://github.com/doy/vt100-rust) 0.16.2(MIT, `LICENSE` 그대로)를 들여왔다. session host 화면(aaa-vt)이 웹
 터미널(xterm 5.5 + `@xterm/addon-unicode-graphemes` 0.4.0 + herdr-web-ui 보정)과 같은 칸에 글자를 놓게 하려는 것이다
-(plan §8.150). upstream은 code point마다 `unicode-width`로 폭을 세어, 이모지 묶음(⚠️·ZWJ 가족·국기·피부색)과 한글
+(plan §8.167). upstream은 code point마다 `unicode-width`로 폭을 세어, 이모지 묶음(⚠️·ZWJ 가족·국기·피부색)과 한글
 자모·태국 모음 같은 묶음에서 다시 붙은 웹(replay)의 칸이 살아 있는 웹과 어긋났다.
 
 workspace의 `[patch.crates-io]`가 이 판을 쓴다. workspace 밖(`exclude`)이라 시험·clippy는 aaa-vt에서 돈다.

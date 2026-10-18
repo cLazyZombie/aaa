@@ -37,6 +37,8 @@ impl Node {
             .env("AAA_CONFIG_DIR", &self.cfg)
             .env("AAA_STATE_DIR", &self.state)
             .env("RUST_LOG", "aaa=info")
+            // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게(보는 시험만 채운다)
+            .env("AAA_TEST_BUILTINS", "")
             .env_remove("NO_COLOR")
             // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
             .env_remove("fish_handle_reflow")
@@ -44,6 +46,11 @@ impl Node {
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
         #[cfg(unix)]
         c.env("SHELL", "/bin/sh");
+        // 그 셸은 login으로 떠(portable-pty `new_default_prog`) 기계 rc를 읽는다: macOS `/etc/profile` → `/etc/bashrc`가 prompt를
+        // `\h:\W \u\$ `로 정해, runner의 긴 hostname이 좁은 pane에서 접혔다(GitHub macOS `pane_modes_like_herdr`). sh는 rc 뒤에
+        // `$ENV` 파일을 읽으므로 거기서 `$ `로 정한다(`Lab::node`가 쓴다). `/etc/bashrc_$TERM_PROGRAM`도 돌지 않게 뺀다
+        #[cfg(unix)]
+        c.env("ENV", self.cfg.join("shrc")).env_remove("TERM_PROGRAM");
         c
     }
 
@@ -71,6 +78,51 @@ impl Node {
 
     pub fn ok(&self, args: &[&str]) -> Value {
         self.json(args).unwrap_or_else(|e| panic!("aaa {} 실패: {e}", args.join(" ")))
+    }
+
+    /// 사람이 터미널(aaa 세션 밖)에서 친 것처럼 실행한다(사람만 하는 명령의 시험, `crates/aaa/src/person.rs`): `script`로
+    /// PTY를 만들고, `answers`의 물음(`(보일 글, 칠 줄)`)이 보이면 차례로 친다. 표준 출력과 오류를 이어 돌려준다.
+    #[cfg(unix)]
+    pub fn in_terminal(&self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
+        let mut c = Command::new("script");
+        if cfg!(target_os = "macos") {
+            c.args(["-q", "/dev/null", BIN]).args(args);
+        } else {
+            let line = std::iter::once(BIN).chain(args.iter().copied()).map(shell_word).collect::<Vec<_>>().join(" ");
+            c.args(["-qec", &line, "/dev/null"]);
+        }
+        c.env("AAA_CONFIG_DIR", &self.cfg)
+            .env("AAA_STATE_DIR", &self.state)
+            .env("AAA_TEST_BUILTINS", "")
+            .env_remove("AAA_SESSION_ID")
+            .env_remove("AAA_HOOK_SOCK")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = c.spawn().expect("script 실행");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let mut out = child.stdout.take().unwrap();
+        let s2 = seen.clone();
+        let reader = std::thread::spawn(move || {
+            let mut b = [0u8; 256];
+            while let Ok(n) = std::io::Read::read(&mut out, &mut b) {
+                if n == 0 {
+                    break;
+                }
+                s2.lock().unwrap().extend_from_slice(&b[..n]);
+            }
+        });
+        let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
+        let mut stdin = child.stdin.take().unwrap();
+        // 물음이 보인 뒤에 친다(script는 입력이 끝나면 바로 EOF를 넣는다)
+        for (prompt, typed) in answers {
+            wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
+            std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
+        }
+        let o = child.wait_with_output().unwrap();
+        drop(stdin);
+        reader.join().unwrap();
+        format!("{}{}", text(), String::from_utf8_lossy(&o.stderr))
     }
 
     /// 보이는 화면 글(`pane read --source visible`)
@@ -188,6 +240,9 @@ impl Lab {
         let node = Node { cfg: dir.join("c"), state: dir.join("s") };
         std::fs::create_dir_all(&node.cfg).unwrap();
         std::fs::create_dir_all(&node.state).unwrap();
+        // 시험 셸 prompt(`Node::cmd`의 `ENV`): 기계 hostname·rc와 상관없이 같다
+        #[cfg(unix)]
+        std::fs::write(node.cfg.join("shrc"), "PS1='$ '\n").unwrap();
         if let Some(t) = host_toml {
             std::fs::write(node.cfg.join("host.toml"), t).unwrap();
         }
@@ -436,6 +491,11 @@ impl Events {
             }
         }
     }
+}
+
+/// 셸 낱말 하나로 감싼다(Linux `script -c` 명령줄)
+pub fn shell_word(w: &str) -> String {
+    format!("'{}'", w.replace('\'', "'\\''"))
 }
 
 /// 지금 시각(ms). 사건 조건에 「이 뒤에 생긴」을 넣을 때 쓴다(agent·host가 같은 시계로 적는다).

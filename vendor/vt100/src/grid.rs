@@ -224,7 +224,7 @@ impl Grid {
         let mut prev_attrs = crate::attrs::Attrs::default();
         let mut prev_pos = Pos::default();
         let mut wrapping = false;
-        // aaa(plan §8.150): 이은 줄은 escape 없이 이어 쓰므로 묶음 상태도 줄을 넘어 잇는다
+        // aaa(plan §8.167): 이은 줄은 escape 없이 이어 쓰므로 묶음 상태도 줄을 넘어 잇는다
         let mut joined = None;
         for (i, row) in self.visible_rows().enumerate() {
             // we limit the number of cols to a u16 (see Size), so

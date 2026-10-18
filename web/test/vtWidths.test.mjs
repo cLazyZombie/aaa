@@ -1,5 +1,5 @@
 // session host 화면(들여온 vt100)의 폭 표와 aaa-vt 시험 사례가 웹 폭 규칙(src/herdr/terminalWidths.ts)에서 만든 그대로인가
-// (plan §8.150). 웹 규칙이나 생성기가 바뀌었는데 표를 다시 만들지 않으면 실패한다: node web/scripts/vt-widths.ts로 다시 만든다
+// (plan §8.167). 웹 규칙이나 생성기가 바뀌었는데 표를 다시 만들지 않으면 실패한다: node web/scripts/vt-widths.ts로 다시 만든다
 // (그때 모든 code point에서 표가 웹과 같은지 대조한다).
 import { readFileSync } from "node:fs";
 import { it } from "node:test";

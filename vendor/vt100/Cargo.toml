@@ -1,4 +1,4 @@
-# vt100 0.16.2(https://github.com/doy/vt100-rust, MIT, LICENSE 그대로)를 들여와 글자 폭만 고친 판(plan §8.150).
+# vt100 0.16.2(https://github.com/doy/vt100-rust, MIT, LICENSE 그대로)를 들여와 글자 폭만 고친 판(plan §8.167).
 # 고친 곳은 README.md에 적는다. 저장소 규칙대로 원래 Cargo.toml의 작성자 줄(email)은 옮기지 않았다.
 [package]
 name = "vt100"

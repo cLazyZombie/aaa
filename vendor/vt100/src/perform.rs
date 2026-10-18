@@ -198,7 +198,7 @@ impl<CB: crate::callbacks::Callbacks> vte::Perform for WrappedScreen<CB> {
         }
     }
 
-    // aaa(plan §8.150): DCS가 끝나도 앞 글자와 묶지 않는다(xterm)
+    // aaa(plan §8.167): DCS가 끝나도 앞 글자와 묶지 않는다(xterm)
     fn unhook(&mut self) {
         self.screen.break_join();
     }

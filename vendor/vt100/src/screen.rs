@@ -63,7 +63,7 @@ pub struct Screen {
     mouse_protocol_mode: MouseProtocolMode,
     mouse_protocol_encoding: MouseProtocolEncoding,
 
-    // aaa(plan §8.150): 바로 앞에 놓은 글자의 묶음 상태. 제어·escape가 지나가면 없앤다(xterm `precedingJoinState`)
+    // aaa(plan §8.167): 바로 앞에 놓은 글자의 묶음 상태. 제어·escape가 지나가면 없앤다(xterm `precedingJoinState`)
     join: Option<crate::widths::Join>,
 }
 
@@ -709,12 +709,12 @@ impl Screen {
 }
 
 impl Screen {
-    /// aaa(plan §8.150): 제어·escape가 지나가면 앞 글자와 묶지 않는다
+    /// aaa(plan §8.167): 제어·escape가 지나가면 앞 글자와 묶지 않는다
     pub(crate) fn break_join(&mut self) {
         self.join = None;
     }
 
-    // aaa(plan §8.150): 폭과 묶음은 code point마다 세지 않고 웹 터미널(xterm + grapheme addon + herdr 보정)과
+    // aaa(plan §8.167): 폭과 묶음은 code point마다 세지 않고 웹 터미널(xterm + grapheme addon + herdr 보정)과
     // 같게 센다(widths.rs). 앞 칸의 묶음에 붙는 글자는 그 칸에 더하고, 붙어서 한 칸 묶음이 두 칸이 되면(⚠ 뒤 VS16 등)
     // 그 묶음을 두 칸으로 다시 놓는다.
     pub(crate) fn text(&mut self, c: char) {
@@ -736,7 +736,7 @@ impl Screen {
         }
     }
 
-    // aaa(plan §8.150): 바로 앞 칸의 한 칸 묶음을 두 칸으로. xterm처럼 그 자리에서 넓히고, 줄 끝이라 자리가 없으면
+    // aaa(plan §8.167): 바로 앞 칸의 한 칸 묶음을 두 칸으로. xterm처럼 그 자리에서 넓히고, 줄 끝이라 자리가 없으면
     // 다음 줄 처음으로 옮긴다. 묶음은 제 글자 모양 그대로 옮기고 비운 칸은 지금 모양이다.
     fn widen(&mut self, c: char) {
         let pos = self.grid().pos();

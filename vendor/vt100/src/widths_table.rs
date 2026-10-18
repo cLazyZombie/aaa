@@ -1,4 +1,4 @@
-// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider에서, plan §8.150). 손으로 고치지 않는다.
+// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider에서, plan §8.167). 손으로 고치지 않는다.
 //! code point 범위의 글자 폭 표. 값의 아래 4비트는 grapheme 부류, 0x10은 두 칸, 0x60은 묶기 방식(0 보통, 0x20 묶지 않음, 0x40 보이지 않음)
 
 /// (범위 시작 code point, 값). 다음 시작 앞까지 같은 값이다

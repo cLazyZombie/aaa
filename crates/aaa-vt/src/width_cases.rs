@@ -1,4 +1,4 @@
-// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider로 한 줄에 쓴 칸, plan §8.150). 손으로 고치지 않는다.
+// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider로 한 줄에 쓴 칸, plan §8.167). 손으로 고치지 않는다.
 //! 웹이 놓는 칸: (쓴 글, [(시작 칸, 폭, 그 칸의 글)])
 
 /// 묶음 칸: (시작 칸, 폭, 그 칸의 글)

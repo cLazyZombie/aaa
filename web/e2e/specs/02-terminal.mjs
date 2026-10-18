@@ -160,7 +160,7 @@ process.stdin.resume();`;
     aaa("pane", "kill", "widths");
   });
 
-  await step("다시 붙은 화면도 같은 칸(session host 화면이 웹 폭 규칙대로 센다, plan §8.150): 묶음 뒤·escape로 끊긴 묶음 뒤·절대 칸 표지와 커서 자리가 살아 있는 화면과 같다", async () => {
+  await step("다시 붙은 화면도 같은 칸(session host 화면이 웹 폭 규칙대로 센다, plan §8.167): 묶음 뒤·escape로 끊긴 묶음 뒤·절대 칸 표지와 커서 자리가 살아 있는 화면과 같다", async () => {
     // 줄마다 묶음 뒤에 표지 글자 하나. 받은 터미널은 묶음 폭을 스스로 세므로, 어긋나는 것은 session host가 센 칸으로 정한
     // 곳이다: 절대 칸(CHA) 표지 J, replay 뒤 커서에 쓰는 K, escape로 따로 놓인 칸(이어 쓰면 받는 쪽이 한 묶음으로 합친다)
     const lines = [

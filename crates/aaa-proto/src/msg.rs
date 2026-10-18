@@ -576,6 +576,9 @@ pub enum AgentRequest {
         launch: Launch,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        /// profile을 다시 풀 때 더할 safety(plan §8.163, `launch_safety.v1`을 알린 agent에만)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        safety: Option<crate::LaunchSafety>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -909,6 +912,11 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane ID(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, 오래된 것부터). 옛 ID를 보던
+    /// 화면은 이것으로 새 pane을 따라간다(QA Q19).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub replaced: Vec<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────
@@ -1049,6 +1057,70 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
+    #[serde(default)]
+    pub scroll: GridScroll,
+}
+
+/// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridScroll {
+    pub offset: u32,
+    pub max: u32,
+}
+
+/// 기록 위치 옮기기(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "to", rename_all = "snake_case")]
+pub enum ScrollBy {
+    Up {
+        lines: u32,
+    },
+    Down {
+        lines: u32,
+    },
+    /// 맨 아래(지금 화면)로
+    Bottom,
+    /// 맨 아래에서 `lines`줄 위로
+    Offset {
+        lines: u32,
+    },
+}
+
+/// pane 화면 사본의 글 자리(herdr `PaneTextPoint`). `row`는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는 줄 번호
+/// (alt 화면이면 화면 줄만), `col`은 칸. `GridScroll`로 보면 화면 맨 위 줄은 `max - offset`이다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+pub struct TextPoint {
+    pub row: u32,
+    pub col: u16,
+}
+
+/// 글 범위(시작, 끝 칸 포함. 넓은 글자 끝은 머리 칸 + 1)(herdr `PaneTextRange`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TextRange {
+    pub start: TextPoint,
+    pub end: TextPoint,
+}
+
+/// copy 모드 낱말·문단 이동(herdr `PaneCopyMotion`에서 줄 끝·첫 글자 빼고: TUI가 화면 frame에서 정한다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyMotion {
+    NextWordStart,
+    PreviousWordStart,
+    NextWordEnd,
+    NextBigWordStart,
+    PreviousBigWordStart,
+    NextBigWordEnd,
+    PreviousParagraph,
+    NextParagraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchDirection {
+    Forward,
+    Backward,
 }
 
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
@@ -1306,6 +1378,34 @@ pub enum FrontRequest {
     },
     PaneUnwatch {
         pane: String,
+    },
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.153). 프로그램에는 아무것도 가지 않는다.
+    PaneScroll {
+        pane: String,
+        by: ScrollBy,
+    },
+    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.27부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.156).
+    PaneSelectionRead {
+        pane: String,
+        from: TextPoint,
+        to: TextPoint,
+    },
+    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.27부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
+    /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
+    PaneCopyMotion {
+        pane: String,
+        cursor: TextPoint,
+        motion: CopyMotion,
+    },
+    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.27부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
+    /// 있으면 그 다음부터. `CopySearch`로 답한다.
+    PaneCopySearch {
+        pane: String,
+        query: String,
+        direction: SearchDirection,
+        cursor: TextPoint,
+        previous: Option<TextRange>,
     },
     Workspace {
         name: Option<String>,
@@ -1601,6 +1701,10 @@ impl FrontRequest {
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
+                | FrontRequest::PaneScroll { .. }
+                | FrontRequest::PaneSelectionRead { .. }
+                | FrontRequest::PaneCopyMotion { .. }
+                | FrontRequest::PaneCopySearch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -1686,6 +1790,25 @@ pub enum FrontResponse {
     },
     Workspace(Workspace),
     Done,
+    /// `PaneSelectionRead`: 고른 글. 한 frame에 들게 앞쪽만 두었으면 `truncated`
+    Selection {
+        pane: String,
+        text: String,
+        truncated: bool,
+    },
+    /// `PaneCopyMotion`: 옮긴 자리
+    CopyCursor {
+        pane: String,
+        cursor: TextPoint,
+    },
+    /// `PaneCopySearch`: 현재 일치 언저리(최대 1024개)와 전체 수, 그 안의 현재·전체에서의 현재(못 찾았으면 없음)
+    CopySearch {
+        pane: String,
+        matches: Vec<TextRange>,
+        total: u64,
+        current: Option<u32>,
+        current_global: Option<u64>,
+    },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {
         path: String,
@@ -1778,6 +1901,9 @@ pub enum FrontEvent {
     Preferences(SharedPreferences),
     /// 상태 사건 연결의 `ping`에 대한 답(herdr-web-ui ws.ts 「Liveness」: 그 ping의 답만 연결이 살아 있음을 말한다)
     Pong { id: u32 },
+    /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
+    /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.166)
+    Web { build: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1927,6 +2053,10 @@ pub enum EventsClientMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         focus: Option<bool>,
+        /// 이 웹 빌드(주 묶음 파일 이름). 배포 뒤에도 옛 페이지가 도는지 본다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        build: Option<String>,
     },
     /// 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거 기록, host는 흐름 사건으로 남긴다). `target`은 알림 자리
     /// (`thread=…`·`pane=…`), `kind`는 `blocked`·`done`, `outcome`은 웹이 정한 한 줄(띄움·보는 중·가려짐·꺼짐 등)

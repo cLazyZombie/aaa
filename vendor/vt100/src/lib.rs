@@ -64,5 +64,5 @@ pub use callbacks::Callbacks;
 pub use cell::Cell;
 pub use parser::Parser;
 pub use screen::{MouseProtocolEncoding, MouseProtocolMode, Screen};
-// aaa(plan §8.150): 다시 쓰는 쪽(aaa-vt)이 따로 놓인 칸이 합쳐지지 않게 본다
+// aaa(plan §8.167): 다시 쓰는 쪽(aaa-vt)이 따로 놓인 칸이 합쳐지지 않게 본다
 pub use widths::joins_after;

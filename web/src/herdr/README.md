@@ -23,7 +23,7 @@
 | `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
 | `draft.ts` | 끊긴 동안 친 글(붙잡은 입력): 글·붙여넣기를 모으고 Enter·줄바꿈은 빼서 알리며, 1024자 상한, 저장 기록은 24시간(`restoreDraft`) |
 | `terminalDraft.ts` | 입력줄 초안: 머신·pane마다 localStorage(32,768자 상한, 막히면 메모리). 보내는 동안 친 글은 두고 보낸 앞부분만 지운다 |
-| `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53). session host vt100의 폭 표도 이것에서 만든다: 바꾸면 `node web/scripts/vt-widths.ts`로 다시 만든다(plan §8.150) |
+| `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53). session host vt100의 폭 표도 이것에서 만든다: 바꾸면 `node web/scripts/vt-widths.ts`로 다시 만든다(plan §8.167) |
 | `wheelSteps.ts` | 한 손가락 끌기를 휠 걸음으로(`wheelSteps`·`finalStep`, plan §8.55) |
 | `status.ts` | agent 상태 말·herdr TUI 글자(`indicatorGlyph`)·여러 pane 대표 상태(`rollupStatus`). `src/lib/status.ts`에서 `AgentStatus` import 한 줄만 그 타입 선언으로 바꿨다(plan §8.71) |
 | `preferences.ts` | 화면들이 함께 쓰는 설정 이름(`SHARED_SETTING_KEYS`)·문서 형·한도. `src/lib/`가 아니라 `shared/preferences.ts`를 바꾸지 않고 옮겼다. host 쪽은 `crates/aaa-host/src/prefs.rs`가 Rust로 옮겼다(plan §8.79) |
@@ -38,6 +38,8 @@
 | `modal.css` | `src/styles.css` 1269~1451줄 그대로: `.modal-scrim`·`.modal`·머리·몸·바닥, 휴대폰 sheet 움직임, 키보드가 있을 때, `.input`·`.select` |
 | `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
 | `edgeSwipe.ts` | 768px 이하 목록 drawer를 손가락으로: 왼쪽 가장자리 24px 안에서 오른쪽으로 쓸면 열고, 열린 동안 왼쪽으로 쓸면 닫는다. 쓰는 동안 drawer가 손가락을 따라오고 놓은 자리·빠르기로 열림을 정한다. 대체로 세로인 쓸기·두 손가락·창(`aria-modal`) 위는 건드리지 않는다(`watchDrawerSwipe`). 맨 위 설명 한 줄만 더했다. plan §8.146 |
+| `composerDraft.ts` | 대화 입력창 초안: pane마다 localStorage(막히면 메모리), 다른 탭 보내기 lease. `src/lib/composerDraft.ts` 그대로. aaa `ChatComposer`는 `read`·`set`만 쓴다(plan §8.166) |
+| `UpdateNotice.css` | 「앱 다시 열기」 줄 모양. `src/components/UpdateControls.css` 1~51줄에서 `.update-notice` 규칙만(설정 화면 규칙은 뺐다). 마크업은 `web/src/UpdateNotice.tsx`(plan §8.166) |
 | `SettingsControls.tsx`·`SettingsControls.css`·`SettingsDialog.css` | 설정 창의 묶음·줄·스위치·여럿 중 하나·한 칸씩(`src/components/SettingsControls.*` 그대로)과 창 배치(쪽 목록·쪽, 휴대폰은 목록 → 쪽, `src/components/SettingsDialog.css` 그대로). 마크업은 `web/src/SettingsDialog.tsx`. plan §8.97 |
 | `settingsHistory.ts` | 설정 창의 한 걸음(창·쪽·키 바 편집)마다 history 한 칸: 시스템 「뒤로」가 한 칸씩 나온다(`src/lib/settingsHistory.ts`, history 열쇠 이름만 `aaa:`) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. `fileUriPath`는 보고 Markdown의 `file://` 링크를 파일 이름으로 읽을 때와 터미널 OSC 8 file URI에 쓴다. 터미널 글 속 파일 경로 링크(`terminalFileLinkProvider`)와 열 수 없는 OSC 8 링크 거르기(`hyperlinkFilter`)는 `web/src/Term.tsx`가 건다(plan §8.125) |

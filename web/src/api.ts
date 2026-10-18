@@ -167,6 +167,16 @@ const RECONNECT_AFTER_HIDDEN_MS = 10_000;
  */
 const PRESENCE_EVERY_MS = 10_000;
 
+/** 이 웹 빌드: 주 묶음 파일 이름(예: `index-BsC_6E06`). host가 판정 근거에 남겨 기기가 어느 웹을 돌리는지 본다.
+ * host가 events 연결마다 알리는 빌드(`web` 사건)와 다르면 「앱 다시 열기」 줄을 띄운다(UpdateNotice.tsx, plan §8.166) */
+export const BUILD = (() => {
+  try {
+    return new URL(import.meta.url).pathname.split("/").pop()?.replace(/\.[jt]sx?$/, "") || "?";
+  } catch {
+    return "?";
+  }
+})();
+
 /** 지금 열린 상태 사건 연결(앱 안 알림 결과를 host에 알릴 때 쓴다) */
 let eventsSocket: WebSocket | null = null;
 
@@ -187,6 +197,7 @@ export function watchEvents(
   onLink: (up: boolean) => void,
   onThread: (t: ThreadView) => void,
   onPreferences: (p: SharedPreferences) => void,
+  onWeb: (build: string) => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -199,7 +210,7 @@ export function watchEvents(
   const tell = (cause = why) => {
     if (active === null || ws?.readyState !== WebSocket.OPEN) return;
     const visible = document.visibilityState === "visible";
-    ws.send(JSON.stringify({ t: "presence", active, why: cause, visible, focus: document.hasFocus() } satisfies EventsClientMsg));
+    ws.send(JSON.stringify({ t: "presence", active, why: cause, visible, focus: document.hasFocus(), build: BUILD } satisfies EventsClientMsg));
   };
   const beat = window.setInterval(() => {
     if (active) tell("heartbeat");
@@ -337,7 +348,8 @@ export function watchEvents(
       } else if (ev.ev === "preferences") {
         const { ev: _tag, ...p } = ev;
         onPreferences(p);
-      } else if (ev.ev === "pong" && probeIds.has(ev.id)) {
+      } else if (ev.ev === "web") onWeb(ev.build);
+      else if (ev.ev === "pong" && probeIds.has(ev.id)) {
         probeDrops = 0;
         endProbe();
       }

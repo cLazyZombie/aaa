@@ -1,4 +1,4 @@
-//! aaa가 더한 것(plan §8.150): 글자 폭과 묶음을 웹 터미널(xterm + grapheme addon + herdr 보정)과 같게 센다.
+//! aaa가 더한 것(plan §8.167): 글자 폭과 묶음을 웹 터미널(xterm + grapheme addon + herdr 보정)과 같게 센다.
 //! 표(`widths_table.rs`)는 웹 provider에서 만들고, 앞 글자와 묶을지는 addon `shouldJoin`·`charProperties`와 같은 규칙이다.
 //! 만든 쪽(web/scripts/vt-widths.ts)이 모든 code point에서 「표 + 이 규칙」이 웹과 같은지 대조한다.
 
