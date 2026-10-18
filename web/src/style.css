@@ -103,6 +103,10 @@
 /* ── 바탕 ───────────────────────────────────────────── */
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* 문서는 끌어도 움직이지 않는다(herdr-web-ui styles.css 506~515줄 html·body `overscroll-behavior-y: contain`: 당겨 새로 읽기가 초안과
+   터미널 연결을 버린다. Chrome 144 전은 굴러갈 것 없는 칸의 끌기를 문서로 넘기고, html만으로는 여전히 새로 읽는다). aaa는 none이다:
+   contain은 문서 자신의 고무줄을 남겨 iPad에서 대화 입력창 둘레를 끌면 화면이 통째로 올라갔다(사용자 10-18, ChatComposer pageHold.ts도 막는다) */
+html, body { overscroll-behavior-y: none; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -486,7 +490,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 @media (pointer: coarse) {
   .terminal-jump-bottom { width: var(--touch-target); height: var(--touch-target); }
 }
-.chat { flex: 1; min-height: 0; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg); }
+/* 끝에 닿은 끌기는 문서로 넘기지 않는다(참고 ChatView.css `.chat-view` overscroll-behavior: contain) */
+.chat { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg); }
 .chat-note { margin: 0 0 var(--space-2); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); color: var(--text-dim); }
 /* 대화 글자는 설정 「채팅 글자 크기」를 따른다(참고 ChatView.css: 산문은 --fs-chat, 작은 글은 --fs-xs, 모두 × --chat-scale) */
 .chat-msg { max-width: min(760px, 92%); padding: var(--space-2) var(--space-3); border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: calc(var(--fs-chat) * var(--chat-scale, 1)); }
@@ -546,6 +551,9 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .chat-btn[aria-pressed="true"] { color: var(--accent); }
 /* 붙잡은 메시지는 입력창 기둥에(herdr/Composer.css `.terminal-stack.is-chat .composer-queue`: aaa의 pane 칸은 .term) */
 .term .composer-queue { width: min(calc(100% - 2 * var(--space-4)), var(--chat-w)); margin: 0 auto; }
+/* 대화 보기는 한 바탕이다(참고 ChatView.css `.terminal-stack.is-chat .composer`: 기록과 입력창 둘레 띠가 모두 --bg이고 카드는 입력 상자뿐).
+   herdr/Composer.css의 .composer는 --bg-panel이라 aaa의 칸(.term, 바탕은 .view의 --bg)에서는 띠만 다른 색이었다(사용자 10-18) */
+.term .composer { background: transparent; }
 /* 생각 줄(herdr-web-ui ChatView.css `.work-row-head`·`.work-row-thinking .work-row-name`·`.work-thinking-text`): 접힌 「생각」 머리,
    누르면 글. 말풍선이 아니라 도구 줄처럼 왼쪽에 흐리게 */
 .chat-msg.thinking { align-self: flex-start; max-width: min(760px, 100%); padding: 0; background: transparent; white-space: normal; }

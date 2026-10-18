@@ -5051,3 +5051,23 @@ primary 근거:
   결함 심기 및 최종 검증 결과는 thread report/library에 남긴다.
 - **전환 gate.** 별도 서버는 사용자 결정대로 **전환 직후 즉시 끈다**. 필요한 작은 보고서를 import/publish하고, 큰 묶음의 건너뜀을 검토하며,
   저장소 실시간 폴더를 등록하고 휴대폰에서 링크를 확인한 뒤 전환한다. 상세 명령은 [보고서 운영](library.md), 전환 점검표는 [이전](migration.md).
+
+### 8.201 대화 보기 한 바탕·iPad 입력창 끌기(10-18, 사용자 「색이 달라」·「입력창 왼쪽을 잡고 올리면 창이 통째로 올라간다」)
+
+- **색.** 기록(`.chat`)은 `--bg`, 입력창 둘레 띠(`.composer`)는 참고 사본 `herdr/Composer.css`의 `--bg-panel`이었다. 참고는 대화 보기를 한 바탕으로 두고
+  (ChatView.css `.terminal-stack.is-chat .composer { background: transparent }`) 카드는 입력 상자뿐이다. aaa의 칸은 `.terminal-stack.is-chat`이 아니라
+  `.term`이라 그 규칙이 맞지 않았다. `style.css` `.term .composer { background: transparent }`로 띠가 칸 바탕(`.view`의 `--bg`)을 보인다.
+  경계선·그림자는 참고처럼 두지 않는다. 입력 상자(`.composer-surface`)는 그대로다. 테마·색상마다 토큰이라 모두 같다.
+- **끌기.** 문서는 굴러갈 것이 없지만(scrollHeight = clientHeight) iOS는 문서 자체를 고무줄로 끌고, 화면 키보드가 올라온 동안은 문서를 굴린다.
+  html·body·`.chat`의 overscroll-behavior가 모두 auto였다. 셋을 고친다.
+  1. `html, body { overscroll-behavior-y: none }`. 참고는 `contain`(당겨 새로 읽기 막기)인데 contain은 문서 자신의 고무줄을 남긴다.
+  2. `.chat { overscroll-behavior: contain }`(참고 `.chat-view`): 기록 끝에 닿은 끌기를 문서로 넘기지 않는다.
+  3. `web/src/pageHold.ts`: 입력창·붙잡은 메시지 칸에서 시작한 한 손가락 끌기가 그 방향으로 굴러갈 것(넘치는 글 칸, 가로로 넘치는 빠른 답장)을
+     지나지 않으면 `touchmove`를 막는다(passive: false). 두 손가락·글 고르는 중·굴러갈 것 위의 끌기는 막지 않는다. 참고에는 없는 막음이다:
+     iOS가 1을 늘 따르는지 headless로 볼 수 없어 손으로도 막는다.
+- **시험.** 웹 E2E 22 `chat-surface`. 휴대폰·iPad(WebKit)·데스크톱(Chromium), 어둡게·밝게 × 색상 셋에서 기록과 띠의 칠해진 색(위로 올라가며 처음 만나는
+  불투명 배경)이 같고 입력 상자는 다르다. iPad WebKit(Safari 탭·홈 화면 앱, 화면 키보드 흉내)에서 계산된 overscroll과, 띠·짧은 글 칸 끌기의
+  touchmove가 막히고 넘치는 글 칸 올리기·대화 끌기는 막히지 않는다. Chromium iPad 크기의 CDP 진짜 터치로 대화와 넘치는 글 칸이 굴러가고,
+  띠 끌기는 막히며 문서 자리는 0이다. 고치기 전 빌드에서 두 단계 모두 실패했다(색 18조합, 끌기 15곳).
+- **실기 확인 필요.** iPad Safari 탭·홈 화면 앱 × 화면 키보드 내림·올림에서 입력창 왼쪽 띠·입력 상자·넘치는 글을 위아래로 끌어 화면이 따라가지 않고
+  대화·입력칸 글은 굴러가는지. 글 칸을 길게 눌러 커서 옮기기·고르기가 그대로인지. FRONT_API는 그대로다.
