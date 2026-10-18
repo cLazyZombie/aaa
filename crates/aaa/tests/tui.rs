@@ -1941,7 +1941,7 @@ fn copy_mode_like_herdr() {
     assert!(tui.wait_exit());
 }
 
-/// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.167): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,
+/// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.168): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,
 /// host가 그 pane을 나눠 편집기 pane을 띄워 탭을 zoom한다. 편집기 pane이 끝나면(끝남·닫기) 그 pane을 닫고 파일을 지우고, 끝날
 /// 때도 zoom이면 나누기 전 zoom으로 돌리고, 연 pane으로 포커스를 돌린다. 편집기는 agent `EDITOR`(받은 경로를 적고 내용을 보인
 /// 뒤 Enter를 기다리는 스크립트), 임시 폴더는 agent `TMPDIR`로 실험실 안에 둔다.

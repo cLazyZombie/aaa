@@ -972,7 +972,7 @@ impl Agent {
             .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
     }
 
-    /// pane 기록 한 조각을 이 머신 임시 폴더에 쓴다(plan §8.167). 임시 폴더가 허용 폴더 밖이면 쓰지 않는다.
+    /// pane 기록 한 조각을 이 머신 임시 폴더에 쓴다(plan §8.168). 임시 폴더가 허용 폴더 밖이면 쓰지 않는다.
     async fn scrollback_write(
         &self,
         name: String,
@@ -1317,7 +1317,7 @@ mod tests {
         assert!(watch_of(&spec, &info, v(1)).is_none(), "끝난 세션은 보지 않는다");
     }
 
-    /// 기록 파일(plan §8.167): 임시 폴더가 허용 폴더 밖이면 쓰지 않고, 안이면 다 쓴 뒤 경로와 편집기 명령을 준다
+    /// 기록 파일(plan §8.168): 임시 폴더가 허용 폴더 밖이면 쓰지 않고, 안이면 다 쓴 뒤 경로와 편집기 명령을 준다
     #[tokio::test]
     async fn scrollback_stays_inside_file_roots() {
         let state = std::env::temp_dir().join(format!("aaa-agent-scrollback-{}", std::process::id()));
