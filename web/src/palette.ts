@@ -76,11 +76,11 @@ export interface PaletteTarget {
 const paneTitle = (p: PaneView) => p.name || p.argv.join(" ") || p.id.slice(0, 8);
 
 /** 붙은 머신의 목록 줄을 목록 차례로(참고 `rankMachinePanes`의 입력: 끊긴 머신의 남은 줄은 갈 곳이 아니다) */
-export function paletteTargets(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[]): PaletteTarget[] {
+export function paletteTargets(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []): PaletteTarget[] {
   const targets: PaletteTarget[] = [];
   for (const m of machines) {
     if (m.connection !== "connected") continue;
-    const roster = machineRoster(m, panes, threads);
+    const roster = machineRoster(m, panes, threads, paneOrder);
     for (const project of roster.projects)
       for (const t of roster.threads.filter((x) => x.project === project)) {
         const pane = t.pane ? panes.find((p) => p.id === t.pane) : undefined;

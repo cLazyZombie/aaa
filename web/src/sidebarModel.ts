@@ -2,6 +2,7 @@
 // 참고: herdr-projects `thread.rs` Group::rank·`sidebar.rs` word·state_line·project_line(1f05c00),
 // herdr-web-ui `lib/status.ts`(aa624cb, herdr/status.ts에 그대로 있다)·`components/Sidebar.tsx`·`AgentSidebar.tsx`.
 import type { MachineView, PaneView, ThreadGroup, ThreadView } from "./gen/proto";
+import { sidebarPinKey } from "./herdr/sidebarPins.ts";
 import type { AgentStatus } from "./herdr/status.ts";
 
 /** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
@@ -154,12 +155,21 @@ export function threadMachine(t: ThreadView, m: MachineView, paneOf: (id: string
 
 export const threadKey = (t: Pick<ThreadView, "project" | "id">) => `${t.project}/${t.id}`;
 
-/** 머신 묶음의 줄 차례: 프로젝트(처음 나온 차례) 묶음의 thread, 그다음 thread에 딸리지 않은 pane. 목록(Sidebar)과 단축키가 같이 쓴다 */
-export function machineRoster(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[]) {
+/**
+ * 머신 묶음의 줄 차례: 프로젝트(처음 나온 차례) 묶음의 thread, 그다음 thread에 딸리지 않은 pane. 목록(Sidebar)과 단축키가 같이 쓴다.
+ * pane은 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.186)를 먼저, 옮긴 적 없는 pane은 host 차례로 그 뒤에 둔다
+ */
+export function machineRoster(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []) {
   const paneOf = (id: string) => panes.find((p) => p.id === id);
   const mThreads = sortThreads(threads.filter((t) => threadMachine(t, m, paneOf)));
   const threadPanes = new Set(mThreads.flatMap((t) => (t.pane ? [t.pane] : [])));
-  const mPanes = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id));
+  const rank = new Map(paneOrder.map((key, index) => [key, index]));
+  const last = Number.MAX_SAFE_INTEGER;
+  const mPanes = panes
+    .filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id))
+    .map((p, index) => ({ p, index, rank: rank.get(sidebarPinKey(m.id, p.id)) ?? last }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.p);
   // 프로젝트 묶음은 처음 나온 순서(가장 앞 rank의 thread가 있는 프로젝트가 먼저)
   const projects: string[] = [];
   for (const t of mThreads) if (!projects.includes(t.project)) projects.push(t.project);
@@ -176,8 +186,8 @@ export interface RosterRow {
  * 「이전·다음 패널」 단축키가 밟는 줄(herdr-web-ui App.tsx `selectAdjacentPane`·`rosterPanes`): 목록에 보이는 차례 그대로,
  * 접힌 묶음 안의 줄도 센다. thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고서를 연다(ThreadRow와 같다).
  */
-export function machineRows(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[]): RosterRow[] {
-  const roster = machineRoster(m, panes, threads);
+export function machineRows(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []): RosterRow[] {
+  const roster = machineRoster(m, panes, threads, paneOrder);
   const rows: RosterRow[] = [];
   for (const project of roster.projects)
     for (const t of roster.threads.filter((x) => x.project === project)) {

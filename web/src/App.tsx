@@ -32,7 +32,7 @@ import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
-import { useKeepScreenOn } from "./settings";
+import { currentSidebarShared, useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
@@ -619,7 +619,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         // 고른 줄의 머신 안에서, 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
         const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
-        const groups = machines.filter((m) => m.connection === "connected").map((m) => machineRows(m, panes, shown));
+        const groups = machines.filter((m) => m.connection === "connected").map((m) => machineRows(m, panes, shown, currentSidebarShared().paneOrder));
         const rows = sel === null ? groups.find((g) => g.length > 0) : groups.find((g) => g.some((r) => r.keys.includes(sel)));
         if (!rows || rows.length === 0) return;
         const index = rows.findIndex((r) => sel !== null && r.keys.includes(sel));
@@ -684,7 +684,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const pickFirst = (auto: boolean) => {
       const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
       for (const m of machines.filter((x) => x.connection === "connected")) {
-        const first = machineRows(m, panes, shown)[0];
+        const first = machineRows(m, panes, shown, currentSidebarShared().paneOrder)[0];
         if (!first) continue;
         if ("pane" in first.open) choose(first.open.pane, auto);
         else chooseThread(first.open.thread);

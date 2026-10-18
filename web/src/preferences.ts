@@ -70,20 +70,36 @@ export function sanitizeChatShared(raw: unknown): ChatShared {
   };
 }
 
+/**
+ * 목록 pane 줄 순서(차이 목록 L9, plan §8.186): 사람이 옮긴 차례의 `machine:pane` 열쇠(고정 열쇠와 같은 꼴). 참고는 herdr workspace
+ * 순서라 서버에 있고 모든 화면이 같이 본다: aaa는 그 자리를 host 공유 설정에 둔다. 열쇠가 없는 줄은 host 차례로 그 뒤에 선다
+ */
+export interface SidebarShared {
+  paneOrder: string[];
+}
+export const PANE_ORDER_MAX = 500;
+const PANE_KEY_MAX = 300;
+
+export function sanitizeSidebarShared(raw: unknown): SidebarShared {
+  const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const keys = [...new Set(strings(r.paneOrder).filter((key) => key.length > 0 && key.length <= PANE_KEY_MAX))];
+  return { paneOrder: keys.slice(-PANE_ORDER_MAX) };
+}
+
 /** 보일 빠른 답(참고 `quickReplyButtons`): 빈 것은 뺀다 */
 export function quickReplyButtons(settings: Pick<ChatShared, "quickReplies">): string[] {
   return settings.quickReplies.filter((reply) => reply.trim() !== "");
 }
 
 /** aaa가 가진 공유 설정. 나머지(다크·라이트 짝 팔레트·상태 표시 등)는 참고처럼 기기 것이다(SETTING_SCOPE "device") */
-export type SharedLocal = Pick<Appearance, "theme" | "palette" | "sidebarRows" | "agentOrder"> & UsageSettings & ChatShared;
+export type SharedLocal = Pick<Appearance, "theme" | "palette" | "sidebarRows" | "agentOrder"> & UsageSettings & ChatShared & SidebarShared;
 
-const LOCAL_KEYS = ["theme", "palette", "sidebarRows", "agentOrder", "showUsage", "usageCount", "usageGlance", "usageOrder", "usageHidden", "showThinking", "autoSendQueued", "quickReplies", "showQuickReplies"] as const satisfies readonly (SharedSettingKey & keyof SharedLocal)[];
+const LOCAL_KEYS = ["theme", "palette", "sidebarRows", "agentOrder", "showUsage", "usageCount", "usageGlance", "usageOrder", "usageHidden", "showThinking", "autoSendQueued", "quickReplies", "showQuickReplies", "paneOrder"] as const satisfies readonly (SharedSettingKey & keyof SharedLocal)[];
 
 /** 참고 `sanitizeSettings`: 읽을 수 있는 값만 남긴다. 모르는 이름은 결과에 없다 */
 export function sanitizeShared(raw: Record<string, unknown>): SharedLocal {
   const a = sanitizeAppearance(raw);
-  return { theme: a.theme, palette: a.palette, sidebarRows: a.sidebarRows, agentOrder: a.agentOrder, ...sanitizeUsage(raw), ...sanitizeChatShared(raw) };
+  return { theme: a.theme, palette: a.palette, sidebarRows: a.sidebarRows, agentOrder: a.agentOrder, ...sanitizeUsage(raw), ...sanitizeChatShared(raw), ...sanitizeSidebarShared(raw) };
 }
 
 /** 참고 `sharedSettings`: 공유 이름의 값만 */

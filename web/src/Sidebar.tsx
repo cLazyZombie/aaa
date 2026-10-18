@@ -14,6 +14,7 @@ import {
   useState,
   useSyncExternalStore,
   type AnimationEvent,
+  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -28,6 +29,9 @@ import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, sub
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
+import { updateSidebarShared, useMedia, useSidebarShared } from "./settings";
+import { watchTouchReorder } from "./herdr/touchReorder.ts";
+import { placeBlock } from "./herdr/workspaceOrder.ts";
 import { activityOrder, GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
@@ -327,8 +331,9 @@ function RowError({ rowKey }: { rowKey: string }) {
 function MachineGroup({ machine: m, ...props }: SidebarProps & { machine: MachineView }) {
   const [collapsed, toggle] = useFold(`aaa:pc-collapsed:${m.id}`);
   const online = m.connection === "connected";
-  // 줄 차례는 단축키 「이전·다음 패널」과 같은 계산(sidebarModel machineRoster)
-  const { threads, projects, panes } = machineRoster(m, props.panes, props.threads);
+  // 줄 차례는 단축키 「이전·다음 패널」과 같은 계산(sidebarModel machineRoster, 사람이 옮긴 pane 차례 포함)
+  const { paneOrder } = useSidebarShared();
+  const { threads, projects, panes } = machineRoster(m, props.panes, props.threads, paneOrder);
   const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
   return (
     <section className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
@@ -407,6 +412,94 @@ function PaneRoster({
   const twoLine = appearance.sidebarRows === "two";
   // 고정한 pane은 맨 앞 카드에 고정한 순서로(참고 Sidebar.tsx `splitPinnedGroups`·`sidebar-pinned`)
   const split = splitPinnedRows(panes, pins, (p) => sidebarPinKey(m.id, p.id));
+  // 줄 옮기기(참고 Sidebar.tsx `reorderWorkspaces`·`moveVisible`·`dropOrder`·`watchTouchReorder`, plan §8.186): 마우스는 끌기,
+  // Alt+↑↓, 손가락은 길게 눌러 끌기. 고정하지 않은 pane 줄끼리만 옮긴다(thread 줄은 묶음 차례를 따른다). 참고의 순서는 herdr에
+  // 보내는 요청이라 조작 권한 기기만 옮긴다. 순서는 공유 설정 `paneOrder`로 이 host의 다른 화면에도 간다
+  const movable = props.canControl;
+  // 줄이 하나도 없으면 목록(ul)이 없다: 줄이 생기면 손가락 감시를 다시 붙인다
+  const empty = threads.length === 0 && panes.length === 0;
+  const coarsePointer = useMedia("(pointer: coarse)");
+  const { paneOrder } = useSidebarShared();
+  const restKeys = split.rest.map((p) => sidebarPinKey(m.id, p.id));
+  const reorder = (next: string[]) => {
+    if (next.length === restKeys.length && next.every((key, index) => key === restKeys[index])) return;
+    updateSidebarShared({ paneOrder: [...paneOrder.filter((key) => !next.includes(key)), ...next] });
+  };
+  /** 놓은 줄이 만드는 차례: 아래로 옮기면 놓은 줄 뒤, 위로 옮기면 앞 */
+  const dropOrder = (source: string, target: string): string[] | null => {
+    const from = restKeys.indexOf(source);
+    const to = restKeys.indexOf(target);
+    if (from < 0 || to < 0 || from === to) return null;
+    return placeBlock(restKeys, [source], [target], from < to ? "after" : "before");
+  };
+  const moveVisible = (key: string, direction: -1 | 1) => {
+    const index = restKeys.indexOf(key);
+    const target = restKeys[index + direction];
+    if (index < 0 || target === undefined) return;
+    reorder(placeBlock(restKeys, [key], [target], direction === 1 ? "after" : "before"));
+  };
+  const list = useRef<HTMLUListElement>(null);
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [touchDrag, setTouchDrag] = useState<{ source: string; over: string | null } | null>(null);
+  const touchHandlers = useRef<Parameters<typeof watchTouchReorder>[1] | null>(null);
+  touchHandlers.current = {
+    canLift: () => movable,
+    onLift: (id) => setTouchDrag({ source: id, over: id }),
+    onOver: (id) => setTouchDrag((current) => current && { ...current, over: id }),
+    onDrop: (id, target) => {
+      setTouchDrag(null);
+      const next = target === null || target === id ? null : dropOrder(id, target);
+      if (next !== null) reorder(next);
+    },
+    onCancel: () => setTouchDrag(null),
+  };
+  useEffect(() => {
+    const root = list.current;
+    if (!root) return;
+    return watchTouchReorder(root, {
+      canLift: (id) => touchHandlers.current?.canLift(id) ?? false,
+      onLift: (id) => touchHandlers.current?.onLift(id),
+      onOver: (id) => touchHandlers.current?.onOver(id),
+      onDrop: (id, target) => touchHandlers.current?.onDrop(id, target),
+      onCancel: () => touchHandlers.current?.onCancel(),
+    });
+  }, [empty]);
+  /** 들어 올린 줄이 놓일 자리(줄 앞이나 뒤의 선) */
+  const dropMark = ((): { id: string; side: "before" | "after" } | null => {
+    if (!touchDrag?.over || touchDrag.over === touchDrag.source || dropOrder(touchDrag.source, touchDrag.over) === null) return null;
+    return { id: touchDrag.over, side: restKeys.indexOf(touchDrag.source) < restKeys.indexOf(touchDrag.over) ? "after" : "before" };
+  })();
+  const moveOf = (p: PaneView): RowMove | undefined => {
+    if (!movable) return undefined;
+    const key = sidebarPinKey(m.id, p.id);
+    return {
+      key,
+      draggable: !coarsePointer,
+      dragging: dragKey === key,
+      lifted: touchDrag?.source === key,
+      drop: dropMark?.id === key ? dropMark.side : undefined,
+      onDragStart: (event) => {
+        setDragKey(key);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(PANE_ROW_DRAG, JSON.stringify({ machine: m.id, key }));
+      },
+      onDragEnd: () => setDragKey(null),
+      onDrop: (event) => {
+        event.preventDefault();
+        let payload: { machine?: string; key?: string };
+        try {
+          payload = JSON.parse(event.dataTransfer.getData(PANE_ROW_DRAG));
+        } catch {
+          return;
+        }
+        setDragKey(null);
+        if (payload.machine !== m.id || typeof payload.key !== "string") return;
+        const next = dropOrder(payload.key, key);
+        if (next !== null) reorder(next);
+      },
+      onMove: (direction) => moveVisible(key, direction),
+    };
+  };
   if (threads.length === 0 && panes.length === 0) {
     return (
       <div className="machine-workspaces">
@@ -435,17 +528,33 @@ function PaneRoster({
             ))}
           </ul>
         )}
-        <ul className="workspace-list">
+        <ul className="workspace-list" ref={list}>
           {projects.map((project) => (
             <ProjectGroup key={project} {...props} machine={m} online={online} project={project} pThreads={threads.filter((t) => t.project === project)} twoLine={twoLine} />
           ))}
           {split.rest.map((p) => (
-            <PaneRow key={p.id} {...props} online={online} pane={p} twoLine={twoLine} />
+            <PaneRow key={p.id} {...props} online={online} pane={p} twoLine={twoLine} move={moveOf(p)} />
           ))}
         </ul>
       </nav>
     </div>
   );
+}
+
+/** 끌어 옮기는 pane 줄의 끌기 자료 형식(같은 머신 목록 안에서만 받는다) */
+const PANE_ROW_DRAG = "application/x-aaa-pane-row";
+
+/** 옮길 수 있는 줄이 받는 것(PaneRoster가 만든다) */
+interface RowMove {
+  key: string;
+  draggable: boolean;
+  dragging: boolean;
+  lifted: boolean;
+  drop: "before" | "after" | undefined;
+  onDragStart: (event: DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+  onDrop: (event: DragEvent<HTMLElement>) => void;
+  onMove: (direction: -1 | 1) => void;
 }
 
 /** 상태 칸: 경고 하나(중단·유실·harness 오류)가 상태보다 먼저(참고: restore_error면 RestoreErrorBadge) */
@@ -458,7 +567,7 @@ function PaneState({ pane, online, testid }: { pane: PaneView | undefined; onlin
   );
 }
 
-function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: PaneView; online: boolean; twoLine: boolean }) {
+function PaneRow({ pane: p, online, twoLine, move, ...props }: SidebarProps & { pane: PaneView; online: boolean; twoLine: boolean; move?: RowMove }) {
   const selected = props.selected === `pane:${p.id}`;
   const agent = props.agentOf(p);
   const title = p.name || p.argv.join(" ") || p.id.slice(0, 8);
@@ -526,7 +635,22 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
     rows.toggleMenu({ key: menuKey, anchor, point, previousFocus, title, place: where || p.machine, items });
   };
   return (
-    <li className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}`} data-pane={p.id} data-pin-key={pinKey}>
+    <li
+      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}${move?.dragging ? " is-dragging" : ""}${move?.lifted ? " is-lifted" : ""}`}
+      data-pane={p.id}
+      data-pin-key={pinKey}
+      data-workspace={move?.key}
+      data-drop={move?.drop}
+      onDragOver={
+        move &&
+        ((event) => {
+          if (!event.dataTransfer.types.includes(PANE_ROW_DRAG)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        })
+      }
+      onDrop={move?.onDrop}
+    >
       <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
         <div
           className="pane-select workspace-select"
@@ -535,8 +659,19 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
           aria-current={selected ? "true" : undefined}
           title={tooltip}
           data-testid={`pane-${p.name || p.id}`}
+          draggable={move?.draggable}
+          onDragStart={move?.onDragStart}
+          onDragEnd={move?.onDragEnd}
           onClick={open}
-          onKeyDown={(e) => onRowKey(e, open)}
+          onKeyDown={(e) => {
+            // 참고 `onRowKeyDown`: Alt+↑↓는 보이는 이웃 줄 너머로 옮긴다
+            if (move && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+              e.preventDefault();
+              move.onMove(e.key === "ArrowUp" ? -1 : 1);
+              return;
+            }
+            onRowKey(e, open);
+          }}
         >
           <RowMark agent={agent} />
           {twoLine ? (

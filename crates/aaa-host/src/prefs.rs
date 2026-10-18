@@ -26,6 +26,8 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     "usageGlance",
     "usageOrder",
     "usageHidden",
+    // aaa: 웹 목록 pane 줄 순서(참고는 herdr workspace 순서라 herdr 서버에 있다, plan §8.186)
+    "paneOrder",
 ];
 pub(crate) const MAX_PINS: usize = 500;
 const MAX_PIN_LENGTH: usize = 300;

@@ -6,7 +6,7 @@ import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarIt
 import { sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { CUSTOM_SHORTCUT_IDS, sanitizeShortcutOverrides, type ShortcutOverrides } from "./herdr/shortcutBindings.ts";
 import type { ShortcutId } from "./herdr/shortcuts.ts";
-import { sanitizeChatShared, sanitizeUsage, type ChatShared, type UsageSettings } from "./preferences.ts";
+import { sanitizeChatShared, sanitizeSidebarShared, sanitizeUsage, type ChatShared, type SidebarShared, type UsageSettings } from "./preferences.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
 export type TerminalInputMode = "auto" | "line" | "direct";
@@ -590,5 +590,50 @@ export function useChatShared(): ChatShared {
       return () => chatSharedListeners.delete(f);
     },
     () => chatShared,
+  );
+}
+
+/** 목록의 공유 설정(preferences.ts `SidebarShared`, pane 줄 순서). 대화 공유 설정처럼 이 기기 사본을 두고 공유 값이 오면 preferencesSync가 놓는다 */
+const SIDEBAR_SHARED_KEY = "aaa:sidebar-shared";
+const sidebarSharedListeners = new Set<() => void>();
+
+function readSidebarShared(): SidebarShared {
+  try {
+    return sanitizeSidebarShared(JSON.parse(localStorage.getItem(SIDEBAR_SHARED_KEY) ?? "{}"));
+  } catch {
+    return sanitizeSidebarShared({});
+  }
+}
+
+let sidebarShared = readSidebarShared();
+
+window.addEventListener("storage", (e) => {
+  if (e.key !== SIDEBAR_SHARED_KEY) return;
+  sidebarShared = readSidebarShared();
+  sidebarSharedListeners.forEach((f) => f());
+});
+
+export function updateSidebarShared(patch: Partial<SidebarShared>) {
+  sidebarShared = sanitizeSidebarShared({ ...sidebarShared, ...patch });
+  try {
+    localStorage.setItem(SIDEBAR_SHARED_KEY, JSON.stringify(sidebarShared));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  sidebarSharedListeners.forEach((f) => f());
+}
+
+/** 지금 값(훅 밖, 단축키처럼 누를 때 읽는 곳) */
+export function currentSidebarShared(): SidebarShared {
+  return sidebarShared;
+}
+
+export function useSidebarShared(): SidebarShared {
+  return useSyncExternalStore(
+    (f) => {
+      sidebarSharedListeners.add(f);
+      return () => sidebarSharedListeners.delete(f);
+    },
+    () => sidebarShared,
   );
 }

@@ -4213,6 +4213,28 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   단계에는 시한 `STEP_LIMIT_MS` 120초(가장 긴 spec 전체가 41초)를 두었다. 옛 순서로 다시 돌리면 20초 만에 「목록 서랍 움직임 끝(다음 frame)이
   되지 않았다(페이지가 답하지 않음)」로 실패한다. 단계는 시계를 대화를 연 뒤에 멈춘다.
 
+### 8.186 목록 줄 옮기기(10-18, 차이 목록 2장 L9 247줄 나머지, t-0345 recount (b), coordinator 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb) `Sidebar.tsx`: workspace 줄을 마우스는 끌어 놓기(`dropOrder`: 아래로 옮기면 놓은 줄 뒤, 위로면 앞), 키보드는
+  Alt+↑↓(`onRowKeyDown`·`moveVisible`: 보이는 이웃 너머로), 손가락은 길게 눌러 들고 끌어 놓기(`lib/touchReorder.ts`, 터치 화면은 브라우저 끌기를
+  끈다)로 옮긴다. 고정한 줄은 옮기지 않는다. 순서는 herdr 서버의 workspace 순서라(`moveWorkspace`) 모든 화면이 같이 본다.
+- **aaa가 달랐던 것.** 고정(§8.103)만 있고 옮기기는 없었다.
+- **고침.** aaa 목록은 참고의 workspace 줄 자리에 pane 줄을 둔다(Sidebar.tsx 머리 주석). 그래서 머신 묶음의 고정하지 않은 pane 줄끼리 옮긴다
+  (thread 줄은 묶음 차례를 따른다, L2). 끌기·Alt+↑↓·길게 누르기는 참고 쓰임 그대로이고 `touchReorder.ts`는 그대로, `placeBlock`만 옮겼다.
+  CSS(`is-dragging`·`is-lifted`·`data-drop`)는 이미 옮긴 Sidebar.css다.
+- **순서를 둘 곳.** aaa에는 herdr 서버 순서가 없다. 모든 웹 화면이 같이 보는 자리는 host 공유 설정 문서(§8.79)라 거기에 공유 이름 `paneOrder`
+  (고정과 같은 `machine:pane` 열쇠, 사람이 옮긴 차례)를 더했다. 설정마다 마지막 쓰기가 이기는 동기화를 그대로 탄다. 옮긴 적 없는 pane은
+  host 차례로 그 뒤에 선다. `machineRoster`가 차례를 적용해 목록·「이전·다음 패널」 단축키·명령 팔레트가 같은 차례를 본다. host는 공유 이름 목록에
+  하나를 더했을 뿐 값의 뜻은 모른다(계약·FRONT_API 그대로). 참고의 순서는 herdr에 보내는 요청이라 조작 권한 기기만 옮긴다.
+- **참고와 다른 곳.** 순서는 웹 목록의 것이다. TUI 탭 막대·`aaa pane list`의 차례는 바꾸지 않는다(herdr는 서버 순서라 TUI도 같다).
+- **시험.** 웹 E2E 12 「줄 옮기기」: 세 셸 pane을 Alt+↑·Alt+↓(focus가 옮긴 줄에 남음)와 끌기로 옮기면 그 차례가 host로 가고(`preferences_set`의
+  `paneOrder`), 휴대폰(다른 기기)도 같은 차례이며 터치 화면 줄은 브라우저 끌기가 꺼져 있다. 휴대폰에서 길게 눌러 들린 줄(`is-lifted`)을 위 줄에
+  가져가면 그 앞 표시(`data-drop`), 놓으면 그 차례가 host로 가 데스크톱도 따라온다. 결함 심기 여섯(Alt 없음, 놓은 자리 반대, host가 이름을 버림,
+  터치 화면도 브라우저 끌기, 목록이 차례를 무시, 길게 누르기 없음) 모두 실패. 옮긴 줄의 focus 되돌리기는 넣었다가 뺐다: Chromium은 React가 옮긴
+  줄의 focus를 지키고(심어도 잡히지 않음) 참고도 옮기기에는 되돌리기가 없다(고정처럼 줄을 새로 그릴 때만).
+- **시험 도구.** 단계가 실패해 화면이 닫히면 걸어 둔 `waitForResponse`가 처리되지 않은 거부로 프로세스를 끝내 실패 글을 잃었다(결함 심기가
+  「통과」로 보였다). 그 기다림에 빈 catch를 달았다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
