@@ -1588,7 +1588,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **안전 영역(M3, 참고 styles.css 579~581·606·645줄).** 전에는 위·아래 inset만 비켰다. 가로로 둔 휴대폰·iPad에서는 노치와 둥근 모서리가 목록 글과 터미널 글을 가렸다.
   - 목록은 왼쪽을 비킨다. 오른쪽 칸(머리·터미널·입력줄·키 막대·thread 화면)은 오른쪽을 비킨다.
-  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비킨다. 목록은 768px 이하에서 왼쪽 끝에 붙은 drawer라 왼쪽만 비킨다(§8.140, 전에는 목록이 화면 전체라 오른쪽도 비켰다).
+  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비킨다. 목록은 768px 이하에서 왼쪽 끝에 붙은 drawer라 왼쪽만 비킨다(§8.141, 전에는 목록이 화면 전체라 오른쪽도 비켰다).
   - 칸마다 자기 바탕색 안에서 비킨다(터미널 옆은 터미널 색). `--inset-l`·`--inset-r` 두 변수로 기존 여백에 더한다.
 - **manifest·meta(M4 일부, 참고 manifest·index.html).**
   - manifest에 `id: "/"`를 둔다. 아이콘은 일반(`any`)·maskable을 192·512 모두 둔다. maskable 192는 `icon.svg`를 바탕까지 채워 렌더했다. 512와 같은 방법이다.
@@ -1597,7 +1597,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **화면 켜짐 유지(M6, 참고 `wakeLock.ts`·`visibility.ts` 그대로, App.tsx 842줄, 설정 「휴대폰」).** 설정을 켜면 pane이나 thread를 보는 동안 screen wake lock을 건다. 가려지면 놓고, 다시 보이면 다시 건다. 기기마다 두며 기본은 꺼짐이다. HTTPS나 localhost에서만 된다. 참고 문구를 그대로 쓴다.
 - **시험.**
   - 웹 E2E 「안전 영역」: Chromium `Emulation.setSafeAreaInsetsOverride`로 좌우 47px를 준다. 가로 두 칸(844×390)과 좁은 가로 한 칸(667×375)에서 각 칸의 여백을 잰다.
-  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 끄면 놓는다. 목록 drawer를 열어도 pane은 골라진 채라 놓지 않는다(참고 `selectedPane !== null`, §8.140. 전에는 휴대폰이 목록 화면으로 가면 놓았다).
+  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 끄면 놓는다. 목록 drawer를 열어도 pane은 골라진 채라 놓지 않는다(참고 `selectedPane !== null`, §8.141. 전에는 휴대폰이 목록 화면으로 가면 놓았다).
   - PWA 단계: manifest `id`, 아이콘 종류 넷, 각 PNG 실제 크기가 적은 크기와 같은지, status-bar meta가 없는지 본다.
 
 ### 8.67 앞 기록: 위로 굴려 받은 기록 끝에 닿으면 그 앞 덩어리를 받아 붙인다(10-17, 사용자 결정·요청)
@@ -3023,7 +3023,37 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
   - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
 
-### 8.140 휴대폰·좁은 창 목록은 drawer, 첫 화면은 마지막 pane(10-18, 차이 목록 2장 M1·D2)
+### 8.140 대화 보기 머리줄: iPhone 홈 화면 앱 위 가장자리 흐림과 둘째 줄 겹침(10-18, 사용자 실기 09:17 「위쪽 흐려지는건 어쩔수없는건가?」)
+
+- **본 것.** iPhone 홈 화면 앱, 대화 보기(main f86ba7b). 머리줄 윗줄(뒤로·agent 표시·제목·「입력 대기」·「보고」)은 번지고, 아랫줄
+  (머신 › 위치 · 칸 수)은 또렷했다. 「입력 대기」가 「68×42」 위에 겹쳤다.
+- **흐림의 원인.** aaa CSS는 `.term-head`를 흐리게 하지 않는다(backdrop-filter는 목록 머리 `.list-head`와 입력 카드 glass뿐이고,
+  pane을 보는 동안 목록은 `display: none`이다. mask·filter·transform·opacity도 없다). 위 가장자리에서 일정 높이까지만 번지는 띠는
+  iOS 26부터 홈 화면 앱 위에 얹는 Liquid Glass 가장자리 흐림이다. 참고 herdr-web-ui(aa624cb) CHANGELOG: 「iOS lays its Liquid Glass
+  edge blur over the top of an installed web app unless a fixed or sticky box with a background covers that edge; the header is
+  now sticky, so iOS takes its color there」. 참고 `.app-header`는 `position: sticky; top: 0; background: var(--bg-panel)`이고,
+  `apple-mobile-web-app-status-bar-style`을 두지 않는 것은 aaa index.html이 이미 같다. 즉 참고와의 차이는 sticky와 배경뿐이었다.
+- **겹침의 원인.** 휴대폰에서 `.term-title`은 세로 배치에 `align-items: flex-start`라 각 줄의 폭이 내용 폭이다. 위치 줄의
+  `nowrap`·`overflow: hidden`·말줄임이 한 번도 걸리지 않고, 줄이 칸을 넘어 상태 표시 밑까지 칠해졌다(`.term-title`의
+  `min-width: 0`은 자식 폭을 묶지 않는다).
+- **고침.**
+  - `.term-head`에 `position: sticky; top: 0; background: var(--bg)`(데스크톱·iPad 홈 화면 앱도 같은 칸이라 기본 규칙에 둔다).
+    굴리지 않는 칸이라 배치는 그대로다. 배경은 참고의 `--bg-panel` 대신 지금 보이는 `--bg`로 두어 데스크톱 색을 바꾸지 않았다.
+    ThreadPanel 머리줄도 같은 class라 함께 받는다.
+  - 휴대폰 `.term-title > * { max-width: 100% }`: 제목·위치 줄이 칸 폭에서 말줄임된다. 상태 표시는 그 자리에 남는다(머리줄 높이는
+    52px 그대로). 좁으면 위치 줄 끝(칸 수)이 말줄임으로 가려진다.
+  - 계약 변화 없음.
+- **확인 못 한 것.** 헤드리스 브라우저는 iOS의 가장자리 띠를 그리지 못한다. 참고 docs/ios-home-screen-testing.md도 iOS 27.0
+  세로에서 fixed-shell 처방이 흐림을 없애지 못한 기록이 있다. 그래서 흐림이 사라졌는지는 실기(홈 화면 앱·세로·대화 보기)에서
+  확인해야 한다. 목록 화면 머리(`.list-head`, glass·sticky 아님)는 이 일 밖이라 그대로 두었다.
+- **시험.** 웹 E2E 15 「iPhone 대화 보기 머리줄」(iPhone 가짜 기기 390×844·dpr 3·홈 화면 앱): 긴 제목·긴 cwd의 가짜 Claude pane을
+  대화 보기로 열고 다음을 본다. 머리줄이 맨 위의 sticky(또는 fixed)이고 배경이 불투명한지(iOS 띠 대신 쓰일 조건). 제목 줄과 위치
+  줄의 오른쪽 끝이 상태 표시 왼쪽을 넘지 않는지. 위치 줄이 실제로 넘쳐 말줄임됐는지(짧아서 그냥 통과하지 않게).
+  - 결함 심기는 단계 안에 있다. 줄 폭을 푸는 style을 넣으면 겹침이 잡혀야 하고(`before` 캡처), 빼면 통과한다(`after` 캡처).
+  - 고치기 전 style.css로 다시 빌드해 돌리면 `position static; 배경 rgba(0, 0, 0, 0); .term-title .muted 오른쪽 508.4 > 상태 왼쪽
+    249.6; 위치 줄이 넘치지 않았다`로 실패함을 확인했다.
+
+### 8.141 휴대폰·좁은 창 목록은 drawer, 첫 화면은 마지막 pane(10-18, 차이 목록 2장 M1·D2)
 
 전에는 700px 이하에서 목록과 pane이 화면을 번갈아 차지했다(pane을 고르면 목록이 사라지고 머리의 「목록으로」로 돌아간다). 처음 열면 빈 화면(「왼쪽에서 하나를 고른다」)이었다. 참고 herdr-web-ui `aa624cb`대로 바꿨다.
 
