@@ -510,7 +510,7 @@ impl App {
 
     /// host가 올라가 있는 화면의 보던 줄을 지키려 기록이 는 만큼 위치를 올린다(§8.153). 보낸 위치(copy 모드·끌어 고르기)도
     /// 같이 올린다. 그 pane의 alt 화면이 바뀌면 줄 번호가 달라지므로 copy 모드의 고르기를 지운다(herdr).
-    pub(crate) fn follow_grid(&mut self, pane: &str, before: aaa_proto::GridScroll, alt_changed: bool) {
+    pub(crate) fn follow_grid(&mut self, pane: &str, before: aaa_proto::GridScroll, alt_changed: bool, resized: bool) {
         let Some(after) = self.grids.get(pane).map(|g| g.scroll) else { return };
         let grew = after.max.saturating_sub(before.max);
         if let Some(c) = self.copy.as_mut().filter(|c| c.pane == pane) {
@@ -523,8 +523,8 @@ impl App {
                 self.selection = None;
             }
             // herdr는 화면 내용이 바뀌면(content revision) 일치를 지운다. aaa frame에는 그 번호가 없어 기록이 늘거나
-            // alt 화면이 바뀐 때 지운다
-            if grew > 0 || alt_changed {
+            // alt 화면이나 pane 크기가 바뀐 때 지운다(크기가 바뀌면 줄이 잘리거나 다시 그려져 칠한 자리가 어긋난다)
+            if grew > 0 || alt_changed || resized {
                 c.search.clear_matches();
             }
         }

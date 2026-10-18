@@ -680,10 +680,11 @@ impl App {
             FrontMsg::Event(FrontEvent::Grid(f)) => {
                 let pane = f.pane.clone();
                 let g = self.grids.entry(pane.clone()).or_default();
-                let (before, alt) = (g.scroll, g.modes.alt_screen);
+                let (before, alt, size) = (g.scroll, g.modes.alt_screen, (g.cols, g.rows));
                 g.apply(f);
                 let alt_changed = alt != g.modes.alt_screen;
-                self.follow_grid(&pane, before, alt_changed);
+                let resized = size != (g.cols, g.rows);
+                self.follow_grid(&pane, before, alt_changed, resized);
             }
             FrontMsg::Res { id, result } => {
                 if self.focus_wait.as_ref() == Some(&id) {
@@ -2580,6 +2581,50 @@ mod tests {
         app.host_minor = 9;
         assert!(app.host_at_least(4) && !app.host_at_least(10));
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
+    }
+
+    /// copy 모드 찾기 일치는 pane 크기가 바뀌면 지운다(찾은 글·방향은 남아 `n`으로 다시 찾는다). 같은 크기 장면은 그대로
+    #[test]
+    fn search_matches_clear_when_the_pane_resizes() {
+        use aaa_proto::{SearchDirection, TextPoint, TextRange};
+        let mut app = app_with_tabs(&["a"]);
+        let frame = |cols: u16, rows: u16| GridFrame {
+            pane: "p0".into(),
+            cols,
+            rows,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            full: true,
+            lines: vec![],
+            modes: PaneModes::default(),
+            scroll: GridScroll::default(),
+        };
+        app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(40, 10))));
+        let at = |row, col| TextPoint { row, col };
+        let found = copy::Search {
+            query: "ab".into(),
+            direction: Some(SearchDirection::Forward),
+            matches: vec![TextRange { start: at(3, 1), end: at(3, 2) }],
+            total: 1,
+            current: Some(0),
+            current_global: Some(0),
+        };
+        app.copy = Some(copy::CopyMode {
+            pane: "p0".into(),
+            cursor: (3, 1),
+            offset: 0,
+            entry: 0,
+            select: None,
+            prompt: None,
+            search: found.clone(),
+        });
+        app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(40, 10))));
+        assert_eq!(app.copy.as_ref().unwrap().search, found, "같은 크기면 그대로");
+        app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(60, 10))));
+        let s = &app.copy.as_ref().unwrap().search;
+        assert!(s.matches.is_empty() && s.current_global.is_none() && s.total == 0, "{s:?}");
+        assert_eq!((s.query.as_str(), s.direction), ("ab", Some(SearchDirection::Forward)));
     }
 
     /// 폭만 바뀐 장면이 바뀐 줄만 가져와도(고치기 전 host) 나머지 줄은 남는다. 전체 장면은 모두 바꾼다(QA t-0337 Q23)
