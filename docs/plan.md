@@ -4133,6 +4133,24 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   2부는 host(웹 포함)·agent·session host가 함께 바뀐다(SESSION_IPC 1.2, agent 기능 `term_colors.v1`, FRONT_API 1.34(배포 전, 웹 색 알림)). 옛 session
   host에는 색을 보내지 않으므로 그 세션의 색 질의는 그대로 화면이 답한다.
 
+### 8.188 흐름 사건을 seq 차례로 빈칸 없이, TLS 시험 서버(10-18, t-0329 착지 ci-local 15:34 실패 둘, coordinator 지시)
+
+- **본 것.** 착지 ci-local에서 m13 `merged_pr_resolves_the_thread`가 「30초 안에 thread_resolved가 오지 않았다」로 떨어졌다(따로 돌리면 통과).
+  남은 실험실 db에는 seq 21 `thread_resolved`(06:33:45.173)가 있었는데 `aaa events --follow`는 seq 22(.174)만 받았다.
+- **까닭.** host `flow_event`는 db에 넣어 seq를 정한 뒤 inbox·사후 평가자 처리를 하고 broadcast한다. 두 요청이 동시에 사건을 남기면 나중
+  seq가 먼저 나갈 수 있다. CLI 따라 읽기는 본 것보다 작은 seq를 버려 그 사건을 영영 잃는다(shadow·coordinator가 기대는 길). host가 broadcast를
+  놓친(`Lagged`) 때도 아무 말 없이 건너뛰어 같은 빈칸이 생긴다.
+- **고침.** host: 저장(seq)부터 broadcast까지를 한 잠금(`flow_order`) 안에서 해 나가는 차례가 seq 차례다. 잠금을 기다리는 동안은
+  `block_in_place`로 runtime에 알린다(막힌 worker에 줄 선 작업을 다른 worker가 맡는다). 그 안에서 다시 흐름 사건을 남기는 길은 없다(inbox는
+  알림 대기열에 넣기만 한다). CLI: 프로젝트마다 마지막으로 보인 seq 다음이 아니면 cursor부터 다시 읽어 seq 차례로 채운다(`follow_step`).
+- **시험.** m13 `flow_events_go_out_in_seq_order`: 시험 env `AAA_TEST_FLOW_HOLD`로 한 사건을 저장한 뒤 알리기 전에 붙잡고, 같은 프로젝트에
+  다른 사건을 넣는다(그 사건이 끝났거나 잠금을 기다린다는 표지가 생길 때까지 기다림, 시간에 기대지 않음). raw front 연결이 받은 차례가 seq
+  차례다. 결함 심기(저장 전에 잠금을 놓음)는 `[2, 1]`로 실패. cli 유닛 `follow_fills_a_gap_instead_of_dropping_it`, 결함 심기(빈칸을 그대로
+  보임) 실패. 처음 쓴 붙잡기는 tokio worker를 막아 그 사이 다른 요청까지 멈췄다(같은 판의 `events`가 10초 시한) — 위 `block_in_place`의 까닭.
+- **TLS 시험 서버.** aaa-common `tls_checks_the_certificate`도 짐 아래서 떨어졌다: client(`pair_with`)는 머리·본문을 따로 써 TLS record 둘로
+  올 수 있는데 시험 서버가 read 한 번이었다. 머리 끝과 `Content-Length`까지 읽는 `read_request`, 조각마다 읽히는 stream 유닛, 결함
+  심기(한 번만 읽음) 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
