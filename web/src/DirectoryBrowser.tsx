@@ -1,4 +1,4 @@
-// 폴더 보기(herdr-web-ui `src/components/DirectoryBrowser.tsx` aa624cb, plan §8.142). 파일 보기가 폴더 경로를 받으면
+// 폴더 보기(herdr-web-ui `src/components/DirectoryBrowser.tsx` aa624cb, plan §8.148). 파일 보기가 폴더 경로를 받으면
 // 이 목록을 그린다: 한 번에 폴더 한 단계, 위 폴더·집, 숨김 항목 표시, 파일을 누르면 연다. 문구는 참고 i18n.ko.ts다.
 // 참고와 다른 것: 그 pane이 도는 머신의 agent가 읽는다(`pane_dir`, 허용 폴더 안만). 참고의 폴더 고르기(`onPick`)·새 폴더·
 // 걸러 보기·명령 팔레트가 고른 폴더(`paletteFolders`)는 새 세션 대화 상자와 Files 창 것이라 aaa에 쓰는 곳이 없어 옮기지 않았다.

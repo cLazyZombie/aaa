@@ -8,7 +8,7 @@
 //! - Ctrl+V(또는 빈 붙여넣기)에서 이 기기 clipboard에 그림이 있으면 pane 머신으로 올린다(`clip`, §8.28).
 //!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
 //! - 바깥 터미널의 bracketed paste를 켜서 붙여넣기를 한 덩이로 받는다. 글은 host가 pane 프로그램 모드대로 감싸고
-//!   (`PanePaste`), 그림 파일 하나의 경로면(터미널에 끌어 놓은 파일) 그 그림을 올린다(`clip::dropped_image`, §8.141).
+//!   (`PanePaste`), 그림 파일 하나의 경로면(터미널에 끌어 놓은 파일) 그 그림을 올린다(`clip::dropped_image`, §8.147).
 //! - 키는 herdr 0.9.5 모드를 따른다(`src/client/shell/input.rs` `route_key`): Terminal(pane에 바로) → prefix 키로
 //!   Prefix(명령 키 하나, 시간 제한 없음, Esc·모르는 키는 취소) → `w`로 Navigate(목록 고르기·pane 포커스).
 //! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
@@ -116,11 +116,11 @@ impl Drop for FocusReport {
     }
 }
 
-/// 붙여 넣은 글을 보내는 요청. host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC를 뺀다(Front API 1.22 `pane_paste`,
+/// 붙여 넣은 글을 보내는 요청. host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC를 뺀다(Front API 1.23 `pane_paste`,
 /// herdr 서버가 client 붙여넣기를 다시 감싸는 것과 같다). 그 전 host에는 전처럼 친 글(`pane_input`)이다: 모르는 요청은 연결을
 /// 끊으므로 지금 도는 host를 끊지 않는다.
 fn paste_request(host_minor: u16, pane: String, text: String) -> FrontRequest {
-    if host_minor < 22 {
+    if host_minor < 23 {
         FrontRequest::PaneInput { pane, data: B64(text.into_bytes()) }
     } else {
         FrontRequest::PanePaste { pane, text }
@@ -654,16 +654,25 @@ impl App {
     fn set_ws(&mut self, w: Workspace) {
         // 탭 차례가 바뀌어도(탭 옮기기) 보던 탭에 남는다(herdr `move_tab`은 지금 탭을 그 탭으로 둔다)
         let current = self.ws.tabs.get(self.tab).map(|t| t.id.clone());
+        let before = self.current_leaves();
         self.ws = w;
-        if let Some(i) = current.and_then(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
-            self.tab = i;
+        match current.map(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
+            Some(Some(i)) => self.tab = i,
+            // 보던 탭이 없어졌다(닫기·마지막 pane이 끝남): 그 앞 탭(herdr `Workspace::close_tab`·`remove_pane`)
+            Some(None) => self.tab = self.tab.saturating_sub(1),
+            None => {}
         }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
-            self.focus = leaves.first().cloned();
+            // 보던 pane이 빠졌다: 차례상 다음 pane, 없으면 앞 pane(herdr `TileLayout::close_focused`)
+            let at = self.focus.as_ref().and_then(|f| before.iter().position(|p| p == f));
+            let near = at.and_then(|i| {
+                before[i + 1..].iter().chain(before[..i].iter().rev()).find(|p| leaves.contains(p)).cloned()
+            });
+            self.focus = near.or_else(|| leaves.first().cloned());
         }
     }
 
@@ -2017,6 +2026,36 @@ mod tests {
         app
     }
 
+    /// 보던 탭·pane이 없어지면(닫기, 셸 exit) 앞 탭, 차례상 다음 pane(끝이면 앞 pane)으로 간다(herdr `Workspace::close_tab`·
+    /// `remove_pane`·`TileLayout::close_focused`)
+    #[test]
+    fn a_removed_tab_or_pane_moves_like_herdr() {
+        let mut app = app_with_tabs(&["a", "b", "c"]);
+        let ws = |tabs: &[aaa_proto::Tab]| Workspace { name: "main".into(), tabs: tabs.to_vec() };
+        let all = app.ws.tabs.clone();
+        app.tab = 1;
+        app.set_ws(ws(&[all[0].clone(), all[2].clone()]));
+        assert_eq!(app.ws.tabs[app.tab].id, "t0", "가운데 탭이 빠지면 앞 탭");
+        app.tab = 0;
+        app.set_ws(ws(&[all[2].clone()]));
+        assert_eq!(app.ws.tabs[app.tab].id, "t2", "맨 앞 탭이 빠지면 새 맨 앞 탭");
+
+        let leaf = |p: &str| aaa_proto::LayoutNode::Pane { pane: p.into() };
+        let split = |a, b| aaa_proto::LayoutNode::Split {
+            dir: aaa_proto::SplitDir::Horizontal,
+            ratio: 500,
+            a: Box::new(a),
+            b: Box::new(b),
+        };
+        let tab = |root| aaa_proto::Tab { id: "t".into(), name: String::new(), root, zoomed: false };
+        app.set_ws(ws(&[tab(split(leaf("a"), split(leaf("b"), leaf("c"))))]));
+        app.focus = Some("b".into());
+        app.set_ws(ws(&[tab(split(leaf("a"), leaf("c")))]));
+        assert_eq!(app.focus.as_deref(), Some("c"), "다음 pane");
+        app.set_ws(ws(&[tab(leaf("a"))]));
+        assert_eq!(app.focus.as_deref(), Some("a"), "끝 pane이 빠지면 앞 pane");
+    }
+
     /// 줄의 `x`칸에 있는 글자(넓은 글자는 두 칸)
     fn at_col(line: &str, x: usize) -> Option<char> {
         let mut col = 0;
@@ -2171,15 +2210,15 @@ mod tests {
         assert_eq!(cursor, None);
     }
 
-    /// 붙여넣기는 1.22 host에 맡겨 감싸게 하고(ESC도 거기서 뺀다), 그 전 host에는 전처럼 친 글이다
+    /// 붙여넣기는 1.23 host에 맡겨 감싸게 하고(ESC도 거기서 뺀다), 그 전 host에는 전처럼 친 글이다
     #[test]
     fn pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text() {
         assert_eq!(
-            paste_request(22, "p".into(), "a\nb".into()),
+            paste_request(23, "p".into(), "a\nb".into()),
             FrontRequest::PanePaste { pane: "p".into(), text: "a\nb".into() }
         );
         assert_eq!(
-            paste_request(21, "p".into(), "a\nb".into()),
+            paste_request(22, "p".into(), "a\nb".into()),
             FrontRequest::PaneInput { pane: "p".into(), data: B64(b"a\nb".to_vec()) }
         );
     }

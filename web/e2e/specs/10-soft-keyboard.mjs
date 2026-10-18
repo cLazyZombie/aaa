@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  webkit, shots, root, sleep, aaa, until, screenText, fakeViewport, softKeyboard, pairPage, step, sentFrames, sentCount,
+  webkit, shots, root, sleep, aaa, until, screenText, fakeViewport, softKeyboard, pairPage, step, sentFrames, sentCount, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -32,7 +32,7 @@ export default async function ({ ctl, page }) {
         // 커서는 herdr-web-ui처럼 깜빡인다(cursorBlink). 꺼진 순간에 재면 커서색이 투명이라 샘을 볼 수 없다:
         // 깜빡임만 멈춰 커서가 그려진 상태에서 잰다
         await p.addStyleTag({ content: ".xterm .xterm-cursor-blink, .xterm .xterm-cursor-blink * { animation: none !important; }" });
-        await p.getByTestId(`pane-${name}`).click();
+        await inList(p, `pane-${name}`);
         await until("조합 화면", async () => (await screenText(p)).includes("plain 상태"));
         await p.locator(".xterm-screen").click();
         for (const [line, ch] of [["plain", "ㅅ"], ["bg", "ㅅ"], ["bottom", "가"]]) {
@@ -193,7 +193,7 @@ export default async function ({ ctl, page }) {
             const r = pty();
             throw new Error(`${e.message}: ${JSON.stringify(await fit())} PTY ${r.cols}x${r.rows}`);
           });
-        await p.getByTestId(`pane-${name}`).click();
+        await inList(p, `pane-${name}`);
         await until("키보드 화면", async () => (await screenText(p)).includes("kb-line-199"));
         await agreed("연 화면의 크기");
         let before = pty();

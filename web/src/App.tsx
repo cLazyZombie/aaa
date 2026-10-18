@@ -8,7 +8,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ApiError, call, me, onSignedOut, pushInfo, signOut, tellAlert, watchEvents } from "./api";
+import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
@@ -29,7 +29,7 @@ import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
-import { justWoke, raiseAlert, useAlerts, useAlertSoundUnlock } from "./alerts";
+import { raiseAlert, wokeSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
 import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
@@ -37,6 +37,9 @@ import { NewSessionDialog } from "./NewSessionDialog";
 import { CommandPalette, type PaletteActions } from "./CommandPalette";
 import { updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
+import { useMediaQuery } from "./herdr/useMediaQuery.ts";
+import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
+import { DrawerContext, DrawerToggle } from "./drawer";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -210,6 +213,32 @@ function QuestionCard({
   );
 }
 
+/** 마지막으로 연 pane·thread(herdr-web-ui App.tsx 97~120줄 `SELECTION_KEY`): 이 창 것(sessionStorage, 새로 고쳐도 남는다),
+ * 없으면 아무 창이나 마지막으로 연 것(localStorage, 새로 연 창) */
+const SELECTION_KEY = "aaa:selection";
+
+function storedSelection(): string | null {
+  for (const storage of ["sessionStorage", "localStorage"] as const) {
+    try {
+      const value = window[storage].getItem(SELECTION_KEY);
+      if (value !== null && /^(pane|thread):./.test(value)) return value;
+    } catch {
+      /* 사생활 보호 창 */
+    }
+  }
+  return null;
+}
+
+function storeSelection(sel: string): void {
+  for (const storage of ["sessionStorage", "localStorage"] as const) {
+    try {
+      window[storage].setItem(SELECTION_KEY, sel);
+    } catch {
+      /* 사생활 보호 창 */
+    }
+  }
+}
+
 /** 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects` */
 function selectedFromHash(): string | null {
   if (location.hash === "#projects") return "projects:";
@@ -241,6 +270,35 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   const [msg, setMsg] = useState<string | null>(null);
+  // 768px 이하에서 목록은 pane 위의 drawer다(herdr-web-ui App.tsx 290~316줄, drawer.tsx). 769px부터는 늘 옆 칸이라
+  // 좁은 창이 열어 둔 drawer가 다음에 좁아질 때 다시 나오지 않게 닫는다
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerOpenRef = useRef(drawerOpen);
+  drawerOpenRef.current = drawerOpen;
+  const wideScreen = useMediaQuery("(min-width: 769px)");
+  useEffect(() => {
+    if (wideScreen) setDrawerOpen(false);
+  }, [wideScreen]);
+  // 왼쪽 가장자리에서 쓸면 열고 왼쪽으로 쓸면 닫는다(herdr/edgeSwipe.ts)
+  useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
+  // Esc는 열린 drawer를 닫고 더 가지 않는다: capture 단계라 focus를 쥔 터미널은 받지 않는다. 위에 뜬 창(설정·확인창·
+  // sheet)과 IME 조합은 제 Esc를 쓴다. 참고는 `[role="dialog"]`만 보지만 aaa 확인창은 alertdialog라 aria-modal로 본다.
+  // aaa는 「더 보기」 메뉴가 drawer 안(목록 머리)에 있어 열린 메뉴도 제 Esc를 쓴다: 한 번은 메뉴, 다음은 drawer
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || !drawerOpenRef.current || event.isComposing || event.keyCode === 229) return;
+      if (document.querySelector("[aria-modal='true'], dialog[open], [role='menu']")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      // drawer 안에 있던 focus는 숨는 drawer와 함께 사라지므로 연 단추로 돌린다
+      const inside = document.getElementById("workspace-drawer")?.contains(document.activeElement) === true;
+      setDrawerOpen(false);
+      if (inside) document.querySelector<HTMLElement>(".view .drawer-toggle")?.focus({ preventScroll: true });
+    };
+    window.addEventListener("keydown", onEscape, true);
+    return () => window.removeEventListener("keydown", onEscape, true);
+  }, []);
+  const drawer = useMemo(() => ({ open: drawerOpen, toggle: () => setDrawerOpen((open) => !open) }), [drawerOpen]);
   // 열린 질문(id → 질문). 연결할 때마다 목록을 새로 읽고, 이후는 질문 사건으로 따라간다.
   const [questions, setQuestions] = useState<Map<string, QuestionView>>(new Map());
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
@@ -281,7 +339,22 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const linkedOnce = useRef({ questions: false, threads: false });
   const now = useRef({ sel, panes, threads, machines, role });
   now.current = { sel, panes, threads, machines, role };
-  const questionNews = (q: QuestionView, replay = false) => {
+  // 늦은 알림(멈췄다 깬 페이지가 받은 사건, 다시 붙어 읽은 놓친 사건): 이 기기에 그 뒤 이미 push로 보낸 항목이면 앱 안에서
+  // 다시 띄우지 않는다. push가 안 간 항목(push 꺼짐·다른 기기가 쓰는 중이라 건너뜀)만 띄운다(사용자 결정 10-18 「A」, plan §8.141).
+  // 목록의 안 읽음 표시는 그대로다. host에 묻지 못하면 띄운다(놓치지 않는 쪽)
+  const linkDownAt = useRef<number | null>(null);
+  // 늦은지는 사건을 받은 때 정한다(host에 묻는 동안 시간이 간다)
+  type Raise = (late: boolean) => string;
+  const alertLate = (replayFrom: number | null, project: string | null, subject: string | null, raise: Raise, told: (o: string) => void) => {
+    const since = replayFrom ?? wokeSince();
+    if (since === null || project === null || subject === null) return told(raise(since !== null));
+    void pushedSince(since)
+      .then((pushed) => pushed.some((p) => p.project === project && p.subject === subject))
+      .catch(() => false)
+      .then((got) => told(got ? "push로 받음 · 안 띄움" : raise(true)));
+  };
+  /** `replayFrom`: 다시 붙어 읽은 놓친 사건이면 끊긴 때 */
+  const questionNews = (q: QuestionView, replayFrom: number | null = null) => {
     if (q.state !== "open" || seenQuestions.current.has(q.id)) return;
     seenQuestions.current.add(q.id);
     const target = `pane=${encodeURIComponent(q.pane)}`;
@@ -292,10 +365,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const pane = panes.find((p) => p.id === q.pane);
     const thread = q.project && q.thread ? threads.get(`${q.project}/${q.thread}`) : undefined;
     const name = thread?.title || (pane ? pane.name || pane.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8));
-    const outcome = raiseAlert({
+    const raise: Raise = (late) => raiseAlert({
       kind: "blocked",
       target,
-      late: replay || justWoke(),
+      late,
       showing: sel === `pane:${q.pane}`,
       title: name,
       machine: machines.length > 1 ? q.machine : null,
@@ -306,11 +379,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         tag: q.project && q.thread ? `aaa-${q.project}/${q.thread}` : `aaa-pane-${q.pane}`,
       },
     });
-    told(outcome);
+    alertLate(replayFrom, q.project ?? null, q.thread ?? null, raise, told);
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
   const reviewHash = (t: ThreadView) => (t.group === "ready_for_review" ? t.report_hash : null);
-  const reportNews = (t: ThreadView, replay = false) => {
+  const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
     const key = threadKey(t);
     const target = `thread=${encodeURIComponent(key)}`;
     const told = (outcome: string) => tellAlert({ project: t.project, target, kind: "done", outcome });
@@ -326,17 +399,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (t.role === "evaluator") return;
     if (!alertKinds.current?.has("thread-state")) return told(alertKinds.current ? "host 알림 종류에 없음" : "host 알림 종류 아직 모름");
     const { sel, panes } = now.current;
-    const outcome = raiseAlert({
+    const raise: Raise = (late) => raiseAlert({
       kind: "done",
       target,
-      late: replay || justWoke(),
+      late,
       showing: sel === `thread:${key}`,
       title: t.title || t.id,
       machine: null,
       agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
       notice: { title: `${t.project} · ${t.title || t.id}`, body: "보고 준비", tag: `aaa-${t.project}/${t.id}` },
     });
-    told(outcome);
+    alertLate(replayFrom, t.project, t.id, raise, told);
   };
 
   // 공유 설정과 고정(herdr-web-ui App.tsx usePreferencesSync, plan §8.79): 들어온 뒤에만 읽고, events 사건으로 따라간다
@@ -357,6 +430,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         },
         (on) => {
           setUp(on);
+          if (!on) linkDownAt.current ??= Date.now();
+          // 끊긴 때(놓친 사건을 다시 읽을 때 그 뒤 이 기기에 간 push를 본다)
+          const down = on ? (linkDownAt.current ?? Date.now()) : 0;
+          if (on) linkDownAt.current = null;
           if (on)
             pushInfo()
               .then((i) => (alertKinds.current = new Set(i.kinds)))
@@ -367,7 +444,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 if (r.kind !== "questions") return;
                 // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
                 // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
-                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q, true);
+                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q, down);
                 else for (const q of r.questions) seenQuestions.current.add(q.id);
                 linkedOnce.current.questions = true;
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
@@ -383,7 +460,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 if (linkedOnce.current.threads)
                   for (const t of r.threads) {
                     if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
-                    reportNews(t, true);
+                    reportNews(t, down);
                   }
                 else for (const t of r.threads) seenReports.current.set(threadKey(t), reviewHash(t));
                 linkedOnce.current.threads = true;
@@ -420,17 +497,21 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return () => window.removeEventListener("hashchange", on);
   }, []);
 
+  // 고르면 drawer를 닫는다(참고 selectTarget·selectPane의 setDrawerOpen(false))
   const choose = (id: string | null) => {
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
+    setDrawerOpen(false);
   };
   const chooseThread = (t: ThreadView, from: string | null = null) => {
+    setDrawerOpen(false);
     setBackTo(from);
     openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;
     location.hash = openedHash.current;
     setSel(`thread:${threadKey(t)}`);
   };
   const chooseProject = (name: string | null) => {
+    setDrawerOpen(false);
     location.hash = name === null ? "projects" : `project=${encodeURIComponent(name)}`;
     setSel(name === null ? "projects:" : `project:${name}`);
   };
@@ -443,6 +524,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const { resolvedTheme } = useAppearance();
   const newShell = (m: MachineView) => {
     setMsg(null);
+    // 참고 MachineSidebar onNew: 창이 drawer 위에 남지 않게 닫는다
+    setDrawerOpen(false);
     setNewPaneOn(m);
   };
   // 새 pane의 최근 폴더는 머신의 pane이 있는 곳도 안다(참고 App.tsx 185~197줄): 시작한 폴더 뒤에 둔다. thread·평가자 pane은
@@ -483,10 +566,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       toggleView: () => paneControls.current?.toggleView(),
       focusInput: () => paneControls.current?.focusInput(),
       scrollPage: (direction) => paneControls.current?.scrollPage(direction),
-      openSettings: () => setSettingsOpen(true),
+      openSettings: () => {
+        setDrawerOpen(false);
+        setSettingsOpen(true);
+      },
       openPalette: () => setPaletteOpen(true),
       openFind: none,
-      toggleSidebar: none,
+      // 좁은 창에서는 drawer를 여닫는다(참고 1247줄). 넓은 창의 목록 접기는 aaa에 없다
+      toggleSidebar: () => {
+        if (window.matchMedia("(max-width: 768px)").matches) setDrawerOpen((open) => !open);
+      },
       openNewSession: () => {
         // 참고는 고른 PC로 연다: 고른 pane·thread의 머신, 없으면 붙은 첫 머신. 보기 권한 기기는 띄울 수 없다
         const { sel, panes, threads, machines, role } = now.current;
@@ -496,7 +585,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         const onId = pane?.machine_id ?? (thread?.pane ? panes.find((p) => p.id === thread.pane)?.machine_id : undefined);
         const connected = machines.filter((m) => m.connection === "connected");
         const m = connected.find((x) => x.id === onId) ?? connected[0];
-        if (m) setNewPaneOn(m);
+        if (m) {
+          setDrawerOpen(false);
+          setNewPaneOn(m);
+        }
       },
       openNewTab: none,
       splitPane: null,
@@ -505,6 +597,32 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useShortcuts(actions, true);
+
+  // 첫 화면은 마지막으로 연 pane·thread를 바로 연다(herdr-web-ui: 고른 것이 없으면 기억한 것, 없거나 닫혔으면 PC의 첫 pane
+  // `fallback`). 주소가 무엇을 가리키면 그것이다. 목록(pane·thread)을 다 받은 뒤 한 번만 고른다
+  const firstPick = useRef(sel !== null || location.hash !== "");
+  useEffect(() => {
+    if (firstPick.current || !loaded || !linkedOnce.current.threads) return;
+    firstPick.current = true;
+    const stored = storedSelection();
+    if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5));
+    const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
+    if (storedThread && storedThread.group !== "resolved") return chooseThread(storedThread);
+    // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
+    const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+    for (const m of machines.filter((x) => x.connection === "connected")) {
+      const first = machineRows(m, panes, shown)[0];
+      if (!first) continue;
+      if ("pane" in first.open) choose(first.open.pane);
+      else chooseThread(first.open.thread);
+      return;
+    }
+    // choose·chooseThread는 주소와 setSel만 쓴다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, panes, threads, machines]);
+  useEffect(() => {
+    if (sel?.startsWith("pane:") || sel?.startsWith("thread:")) storeSelection(sel);
+  }, [sel]);
 
   const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
@@ -555,8 +673,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   return (
-    <div className={`app ${current || currentThread || viewProject !== undefined ? "has-sel" : ""}`}>
-      <aside className="list sidebar-shell">
+    <DrawerContext.Provider value={drawer}>
+    <div className="app">
+      <aside id="workspace-drawer" className={`list sidebar-shell${drawerOpen ? " is-open" : ""}`}>
         <header className="list-head">
           <span className="brand">
             <img className="logo" src="/icon.svg" alt="aaa" />
@@ -602,6 +721,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         />
         <ListFoot role={role} device={device} onSignedOut={signedOut} settingsOpen={settingsOpen} onSettings={setSettingsOpen} />
       </aside>
+      {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
+      <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
         {currentThread ? (
           <ThreadPanel
@@ -653,9 +774,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 </div>
               ) : null
             }
-            onBack={() => choose(null)}
           />
         ) : (
+          <>
+          {/* 좁은 창에서 아무것도 고르지 않았을 때도 목록을 열 머리 */}
+          <header className="term-head empty-head">
+            <DrawerToggle />
+          </header>
           <div className="empty-view">
             <img className="logo big" src="/icon.svg" alt="" />
             <h2>{open.length > 0 ? `답을 기다리는 질문 ${open.length}개` : "왼쪽에서 하나를 고른다"}</h2>
@@ -663,6 +788,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               pane이나 thread를 고르면 터미널을 본다. 질문은 목록에 빨간 ?로 보이고, 그 pane을 열면 답할 수 있다.
             </p>
           </div>
+          </>
         )}
       </main>
       {fileViewing?.pane && <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} pane={fileViewing.pane} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />}
@@ -694,6 +820,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         }}
       />
     </div>
+    </DrawerContext.Provider>
   );
 }
 

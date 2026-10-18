@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, openSettings } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, inList, openSettings } from "../lib/harness.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -87,7 +87,7 @@ export default async function ({ ctl, page }) {
 
     // 데스크톱: 상대 경로 → Markdown 미리보기
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-files").click();
+    await inList(dp, "pane-files");
     await screenHas(dp, "파일 줄들", "files>");
     await clickLink(dp, "notes/readme.md");
     await domIs(dp, "Markdown 미리보기", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "읽어보기");
@@ -198,7 +198,7 @@ export default async function ({ ctl, page }) {
 
     // 휴대폰: 손가락으로 누른다. 화면을 다 덮는다
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
-    await pp.getByTestId("pane-files").click();
+    await inList(pp, "pane-files");
     await screenHas(pp, "휴대폰 파일 줄들", "files>");
     const at = await textPoint(pp, "notes/readme.md");
     await pp.touchscreen.tap(at.x, at.y);
@@ -216,7 +216,7 @@ export default async function ({ ctl, page }) {
 
     // iPad: 손가락 기기라 역시 화면 가득, 줄 참조
     const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 })).page;
-    await ip.getByTestId("pane-files").click();
+    await inList(ip, "pane-files");
     await screenHas(ip, "iPad 파일 줄들", "files>");
     const ipAt = await textPoint(ip, "src/app.ts:20:5");
     await ip.touchscreen.tap(ipAt.x, ipAt.y);
@@ -229,7 +229,7 @@ export default async function ({ ctl, page }) {
 
     // 보기 권한 기기: 파일 경로를 눌러도 열리지 않는다(뒤에 누른 웹 주소가 새 탭으로 열린 뒤에 본다). host도 거부한다
     const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 })).page;
-    await rp.getByTestId("pane-files").click();
+    await inList(rp, "pane-files");
     await screenHas(rp, "reader 파일 줄들", "files>");
     const fileAt = await textPoint(rp, "notes/readme.md");
     await rp.mouse.move(fileAt.x, fileAt.y);
@@ -306,7 +306,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "media", "--cwd", proj, "--", process.execPath, "-e", prog);
     await waitOutput("media", "media>");
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-media").click();
+    await inList(dp, "pane-media");
     await screenHas(dp, "media 줄들", "media>");
 
     // HTML 페이지
@@ -375,7 +375,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "media");
   });
 
-  await step("폴더 보기(herdr-web-ui DirectoryBrowser·directories.ts listDirectories, plan §8.142): 파일 보기가 폴더 경로(OSC 8 file 링크·Markdown의 폴더 링크)를 받으면 그 폴더 한 단계를 보인다. 폴더를 열고 위 폴더로 가고, 숨김 항목을 고를 수 있고, 파일을 누르면 연다. 허용 폴더 밖은 읽지 않고, 보기 권한 기기는 host가 거부한다", async () => {
+  await step("폴더 보기(herdr-web-ui DirectoryBrowser·directories.ts listDirectories, plan §8.148): 파일 보기가 폴더 경로(OSC 8 file 링크·Markdown의 폴더 링크)를 받으면 그 폴더 한 단계를 보인다. 폴더를 열고 위 폴더로 가고, 숨김 항목을 고를 수 있고, 파일을 누르면 연다. 허용 폴더 밖은 읽지 않고, 보기 권한 기기는 host가 거부한다", async () => {
     const proj = `${root}/files/tree`;
     for (const d of ["docs/v2", "docs/v10", "docs/.cache"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
     fs.mkdirSync(`${root}/outside`, { recursive: true });
@@ -390,7 +390,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "tree", "--cwd", proj, "--", process.execPath, "-e", prog);
     await waitOutput("tree", "tree>");
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-tree").click();
+    await inList(dp, "pane-tree");
     await screenHas(dp, "tree 줄", "tree>");
     aaa("pane", "run", "tree", "p");
     await screenHas(dp, "폴더 링크 줄", "dirs1>");
@@ -447,7 +447,7 @@ export default async function ({ ctl, page }) {
     // 휴대폰·iPad: 화면 가득
     for (const [name, size, scale, n] of [["phone", { width: 390, height: 844 }, 3, 2], ["ipad", { width: 820, height: 1180 }, 2, 3]]) {
       const tp = (await pairPage(browser, aaa("web", "pair").code, size, { touch: true, deviceScaleFactor: scale })).page;
-      await tp.getByTestId("pane-tree").click();
+      await inList(tp, "pane-tree");
       await screenHas(tp, `${name} 화면`, "dirs");
       aaa("pane", "run", "tree", "p");
       await screenHas(tp, `${name} 폴더 링크 줄`, `dirs${n}>`);
@@ -486,7 +486,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "code", "--cwd", proj, "--", process.execPath, "-e", prog);
     await waitOutput("code", "code>");
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-code").click();
+    await inList(dp, "pane-code");
     await screenHas(dp, "code 줄들", "code>");
 
     await clickLink(dp, "src/long.ts");
@@ -511,7 +511,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "code");
   });
 
-  await step("「파일 뷰어」 설정(herdr-web-ui SettingsDialog ChatPage 「File viewer」·TextFileView, plan §8.143): 「긴 줄 바꿈」을 켜면 소스의 긴 줄을 옆으로 굴리지 않고 접고, 「Markdown 너비」가 「전체 너비」면 Markdown이 대화 열 너비에 묶이지 않고 파일 보기를 채운다. 기본은 꺼짐·기본값이고 이 기기에만 남는다", async () => {
+  await step("「파일 뷰어」 설정(herdr-web-ui SettingsDialog ChatPage 「File viewer」·TextFileView, plan §8.149): 「긴 줄 바꿈」을 켜면 소스의 긴 줄을 옆으로 굴리지 않고 접고, 「Markdown 너비」가 「전체 너비」면 Markdown이 대화 열 너비에 묶이지 않고 파일 보기를 채운다. 기본은 꺼짐·기본값이고 이 기기에만 남는다", async () => {
     // 글 속 경로는 폴더가 있어야 링크다(참고 terminalFileLinks)
     const proj = `${root}/files/viewer`;
     for (const d of ["src", "docs"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
@@ -565,7 +565,7 @@ export default async function ({ ctl, page }) {
     };
 
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-viewer").click();
+    await inList(dp, "pane-viewer");
     await screenHas(dp, "viewer 줄들", "view>");
     // 기본: 긴 줄은 한 줄로 옆으로 굴리고, Markdown은 대화 열 너비(그보다 넓은 파일 보기 가운데)
     await openSource(dp, "기본 소스");
@@ -597,7 +597,7 @@ export default async function ({ ctl, page }) {
 
     // 이 기기에 남는다: 다시 읽어도 그대로, 다른 기기는 기본값
     await dp.reload();
-    await dp.getByTestId("pane-viewer").click();
+    await inList(dp, "pane-viewer");
     await screenHas(dp, "다시 읽은 viewer", "view>");
     await settingsShown(dp, "다시 읽은 뒤", true, "전체 너비");
     await closeSettings(dp);
@@ -605,14 +605,14 @@ export default async function ({ ctl, page }) {
     if ((await codeShape(dp)).sideways > 0) throw new Error("다시 읽은 뒤 긴 줄 바꿈이 풀렸다");
     await closeViewer(dp, "다시 읽은 뒤 Escape");
 
-    // 휴대폰·iPad: 설정 단추는 pane에 들어가기 전 목록에 있다
+    // 휴대폰·iPad: 설정을 바꾼 뒤 pane에 들어간다(휴대폰 설정 단추는 목록 drawer 바닥 줄, openSettings)
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
     const phoneGroup = await settingsShown(pp, "휴대폰", false, "기본값");
     await phoneGroup.getByRole("switch", { name: "긴 줄 바꿈" }).tap();
     await settled(pp.getByRole("dialog", { name: "설정" }));
     await shot(pp, "phone-settings-file-viewer");
     await closeSettings(pp);
-    await pp.getByTestId("pane-viewer").click();
+    await inList(pp, "pane-viewer");
     await screenHas(pp, "휴대폰 viewer 줄들", "view>");
     const at = await textPoint(pp, "src/wide.ts");
     await pp.touchscreen.tap(at.x, at.y);
@@ -627,7 +627,7 @@ export default async function ({ ctl, page }) {
     const ipGroup = await settingsShown(ip, "iPad", false, "기본값");
     await ipGroup.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).tap();
     await closeSettings(ip);
-    await ip.getByTestId("pane-viewer").click();
+    await inList(ip, "pane-viewer");
     await screenHas(ip, "iPad viewer 줄들", "view>");
     const ipAt = await textPoint(ip, "docs/wide.md");
     await ip.touchscreen.tap(ipAt.x, ipAt.y);

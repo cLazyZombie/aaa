@@ -14,7 +14,7 @@ use std::sync::Arc;
 use aaa_proto::{AgentActivity, AgentStatus, Connection, Role, ThreadGroup, ThreadStatus};
 
 use crate::Host;
-use crate::orch::{ResolveWhy, ThreadRec, WAITING, thread_group};
+use crate::orch::{ResolveWhy, ThreadRec, WAITING, thread_group_with};
 
 /// 이 수 이상 기록된 pane이 한 머신에서 모두 사라지면 세션 한 건으로 알린다(herdr-projects `session_lost`)
 const SESSION_LOST_PANES: usize = 2;
@@ -160,6 +160,7 @@ impl Host {
     /// (같은 때 resolve·ack가 쓴 필드를 옛 값으로 덮지 않고, 끝낸 thread를 닫힌 pane으로 보지 않게).
     pub(crate) fn thread_pass(&self, project: &str) {
         let now = aaa_common::util::now_ms();
+        let delivered_ms = self.cfg.projects.delivered_working_secs * 1000;
         let machines = self.machine_views();
         let connected: HashSet<&str> =
             machines.iter().filter(|m| m.connection == Connection::Connected).map(|m| m.id.as_str()).collect();
@@ -196,7 +197,7 @@ impl Host {
                 continue;
             }
             let (pane_exists, agent) = self.thread_live(&r);
-            let group = thread_group(&r, pane_exists, agent.as_ref(), now);
+            let group = thread_group_with(&r, pane_exists, agent.as_ref(), now, delivered_ms);
             let mut change = None;
             if r.last_group != Some(group) {
                 match r.last_group {

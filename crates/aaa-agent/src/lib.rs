@@ -73,6 +73,9 @@ pub struct Agent {
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
     /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
     harness_started: Mutex<HashMap<String, String>>,
+    /// 세션마다 진행 알림 기록(Claude hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
+    /// 한 번 일찍 갈 수 있을 뿐이다.
+    progress: Mutex<HashMap<String, hooks::Progress>>,
     /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
@@ -111,6 +114,7 @@ impl Agent {
             harness_last: Mutex::new(HashMap::new()),
             labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
+            progress: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -125,7 +129,7 @@ impl Agent {
                 let me = me.clone();
                 tokio::spawn(async move {
                     let reply = match me.on_hook(&mut s).await {
-                        Ok(()) => "ok\n".to_string(),
+                        Ok(out) => format!("ok\n{}", out.unwrap_or_default()),
                         Err(e) => format!("error: {e:#}\n"),
                     };
                     let _ = tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await;
@@ -136,7 +140,8 @@ impl Agent {
         Ok(())
     }
 
-    async fn on_hook(self: &Arc<Self>, s: &mut aaa_common::ipc::LocalStream) -> Result<()> {
+    /// hook 사건 하나. 돌려준 것은 `aaa hook`이 harness에 출력할 진행 안내다(Claude만).
+    async fn on_hook(self: &Arc<Self>, s: &mut aaa_common::ipc::LocalStream) -> Result<Option<String>> {
         let msg = hooks::read_msg(s).await?;
         if msg.session.is_empty() || !msg.session.chars().all(|c| c.is_ascii_alphanumeric()) {
             bail!("세션 ID 형식이 아니다");
@@ -145,11 +150,35 @@ impl Agent {
         if hooks::hook_token(&spec.token) != msg.token {
             bail!("hook token이 맞지 않는다");
         }
-        let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
-            return Ok(());
-        };
-        self.harness_event(ev).await;
-        Ok(())
+        let now = util::now_ms();
+        if let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, now) {
+            if msg.harness == "report" {
+                let mut map = self.progress.lock().unwrap();
+                let rec = map.entry(msg.session.clone()).or_default();
+                (rec.reported_at, rec.percent) = (now, ev.percent);
+            }
+            self.harness_event(ev).await;
+        }
+        // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
+        let managed = spec.spec.role.is_some();
+        Ok(if managed && msg.harness == "claude" { self.guide(&msg.session, &msg.payload, now) } else { None })
+    }
+
+    /// Claude hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
+    /// 넣지 않는다(`foreign_session`). 실행 파일 경로는 brief와 같은 꼴이다(`fill_brief`).
+    fn guide(&self, session: &str, p: &serde_json::Value, now: u64) -> Option<String> {
+        let kind = hooks::guide_kind(p)?;
+        let id = p.get("session_id").and_then(|v| v.as_str());
+        if kind != "SessionStart"
+            && let (Some(started), Some(id)) = (self.harness_started.lock().unwrap().get(session), id)
+            && started != id
+        {
+            return None;
+        }
+        let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
+        let mut map = self.progress.lock().unwrap();
+        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+        Some(hooks::output(kind, &text))
     }
 
     /// harness 사건을 기억하고(다시 알릴 것이면) host에 보낸다
@@ -486,13 +515,19 @@ impl Agent {
             SessionMsg::Reject(e) => bail!("session host가 거부했다: {e}"),
             other => bail!("예상하지 못한 응답: {other:?}"),
         };
-        let watch = watch_of(spec, &info, proto);
+        let detect_ipc = detect_ipc(proto);
+        let watch = watch_of(spec, &info, detect_ipc);
+        // 띄울 때 harness를 모르는 pane(셸)은 herdr처럼 앞 프로세스 이름으로 agent를 찾는다(plan §8.110)
+        let front = info
+            .pid
+            .filter(|_| cfg!(unix) && watch.is_none() && info.state.is_running())
+            .map(|pid| (pid, detect::foreground::Presence::new(std::time::Instant::now())));
         let (ptx, prx) = mpsc::channel(256);
         self.sessions.lock().unwrap().insert(info.id.clone(), Entry { info: info.clone(), pump: Some(ptx) });
         let me = self.clone();
         let paths = paths.clone();
         let spec = spec.clone();
-        tokio::spawn(async move { me.pump(paths, spec, tx, rx, prx, watch).await });
+        tokio::spawn(async move { me.pump(paths, spec, tx, rx, prx, Detecting { watch, front, detect_ipc }).await });
         Ok(info)
     }
 
@@ -503,17 +538,41 @@ impl Agent {
         tx: FrameTx,
         mut rx: FrameRx<tokio::io::ReadHalf<aaa_common::ipc::LocalStream>>,
         mut cmds: mpsc::Receiver<PumpCmd>,
-        mut watch: Option<detect::Watch>,
+        detecting: Detecting,
     ) {
         let id = spec.id.clone();
+        let Detecting { mut watch, mut front, detect_ipc } = detecting;
         let mut pending: HashMap<String, (String, bool)> = HashMap::new();
         let mut forwarding = false;
         let mut seq = 0u64;
         loop {
-            let detect_at = watch.as_ref().and_then(detect::Watch::next_at);
+            let watch_at = watch.as_ref().and_then(detect::Watch::next_at);
+            let detect_at = watch_at.into_iter().chain(front.as_ref().map(|(_, p)| p.next_at())).min();
             tokio::select! {
                 _ = sleep_until(detect_at) => {
-                    if let Some((sid, body)) = watch.as_mut().and_then(|w| w.due(std::time::Instant::now()))
+                    let now = std::time::Instant::now();
+                    if let Some((pid, p)) = front.as_mut()
+                        && p.next_at() <= now
+                    {
+                        match foreground_tick(p, *pid, now) {
+                            Some(detect::foreground::Change::Acquired(h)) => {
+                                watch = Some(detect::Watch::new(h, now, detect_ipc, now));
+                            }
+                            Some(detect::foreground::Change::Exited(h)) => {
+                                watch = None;
+                                let r = detect::Report { kind: "idle", message: None, question_kind: None, rule: None };
+                                self.detected(&id, h, r).await;
+                            }
+                            Some(detect::foreground::Change::Released(h)) => {
+                                watch = None;
+                                let r = detect::Report { kind: "released", message: None, question_kind: None, rule: None };
+                                self.detected(&id, h, r).await;
+                            }
+                            None => {}
+                        }
+                    }
+                    let due = watch.as_ref().and_then(detect::Watch::next_at).is_some_and(|t| t <= now);
+                    if let Some((sid, body)) = watch.as_mut().filter(|_| due).and_then(|w| w.due(now))
                         && tx.json(&SessionMsg::Req { id: sid, body }).await.is_err()
                     {
                         break;
@@ -521,6 +580,9 @@ impl Agent {
                 }
                 cmd = cmds.recv() => match cmd {
                     Some(PumpCmd::Host { host_id, body }) => {
+                        if matches!(body, SessionRequest::Input { .. }) && let Some(w) = watch.as_mut() {
+                            w.input_sent(std::time::Instant::now());
+                        }
                         seq += 1;
                         let sid = format!("h{seq}");
                         let is_sub = matches!(body, SessionRequest::Subscribe { .. });
@@ -941,6 +1003,7 @@ impl Agent {
         }
         self.harness_last.lock().unwrap().remove(session);
         self.labels.lock().unwrap().remove(session);
+        self.progress.lock().unwrap().remove(session);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");
@@ -1021,9 +1084,38 @@ impl Slot {
     }
 }
 
-/// 화면으로 상태를 볼 세션이면 감지 차례. session host가 SESSION_IPC 1.1 이상일 때만 `Detect`를 보낸다
-/// (그 전 session host는 모르는 요청을 받으면 연결을 끊는다).
-fn watch_of(spec: &SpecFile, info: &SessionInfo, proto: aaa_proto::Version) -> Option<detect::Watch> {
+/// pump의 화면 감지: 띄울 때 정한 harness의 감지 차례(`watch`), 또는 셸 pane 앞 agent 찾기(`front`, 셸 pid와 상태).
+/// 앞에서 agent를 잡으면 그 harness로 `watch`를 만든다. `detect_ipc`: session host가 `Detect`를 받는다.
+struct Detecting {
+    watch: Option<detect::Watch>,
+    front: Option<(u32, detect::foreground::Presence)>,
+    detect_ipc: bool,
+}
+
+/// 셸 pane 앞의 agent를 한 차례 본다. herdr의 Windows 프로세스 트리 조사는 옮기지 않았다(unix만, plan §8.110).
+fn foreground_tick(
+    p: &mut detect::foreground::Presence,
+    shell_pid: u32,
+    now: std::time::Instant,
+) -> Option<detect::foreground::Change> {
+    #[cfg(unix)]
+    {
+        p.tick(now, cwd::foreground_process_group_id(shell_pid), |g| detect::foreground::probe(shell_pid, g))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (p, shell_pid, now);
+        None
+    }
+}
+
+/// session host가 SESSION_IPC 1.1 이상일 때만 `Detect`를 보낸다(그 전 session host는 모르는 요청을 받으면 연결을 끊는다)
+fn detect_ipc(proto: aaa_proto::Version) -> bool {
+    proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_DETECT
+}
+
+/// 화면으로 상태를 볼 세션이면 감지 차례
+fn watch_of(spec: &SpecFile, info: &SessionInfo, detect_ipc: bool) -> Option<detect::Watch> {
     if !info.state.is_running() {
         return None;
     }
@@ -1032,7 +1124,6 @@ fn watch_of(spec: &SpecFile, info: &SessionInfo, proto: aaa_proto::Version) -> O
     // 띄운 지 오래된 세션(agent가 다시 떠 붙었다)은 시작 유예가 이미 끝났다
     let age = Duration::from_millis(util::now_ms().saturating_sub(info.started_at_ms));
     let started = now.checked_sub(age).unwrap_or(now);
-    let detect_ipc = proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_DETECT;
     Some(detect::Watch::new(harness, started, detect_ipc, now))
 }
 
@@ -1125,7 +1216,7 @@ mod tests {
 
     #[test]
     fn detection_asks_old_session_hosts_only_for_the_screen() {
-        let v = |minor| aaa_proto::Version { major: SESSION_IPC.major, minor };
+        let v = |minor| detect_ipc(aaa_proto::Version { major: SESSION_IPC.major, minor });
         let running = SessionState::Running;
         let (spec, info) = session(Some("codex"), &["/opt/bin/codex", "-c", "x"], running.clone());
         // SESSION_IPC 1.0 session host는 `Detect`를 모르고 연결을 끊는다: 보이는 화면만 묻는다

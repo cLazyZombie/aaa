@@ -725,6 +725,7 @@ host 프로젝트 폴더 구성:
   - 기본은 task(Follow-ups 포함)·지침·결정·memory를 다시 읽어 brief를 새로 쓴다. brief 맨 앞에는 「다시 시작했다, 이전 시도를 먼저 확인한다」를 붙이고, 새 대화로 띄운 뒤 안내한다. claude는 새 `--session-id`를 받는다(agent `ThreadRebrief`).
   - `--resume`은 저장된 launch의 resume argv로 같은 대화를 잇고, 안내하지 않는다. `{session}`이 필요한데 harness 세션 ID를 모르면 거부한다.
   - profile은 다시 해석하지 않는다(저장된 launch를 쓴다). profile 바꾸기는 하지 않았다.
+  - (10-18) 시작이 실패한 thread도 받는다(§8.142).
 - **아직:** `thread next`, TASKS.md 소유, `start_threads` 정책은 하지 않았다.
 
 ### 8.17 M1-3c 구현 결정(10-16): inbox·ticker·nudge
@@ -1588,7 +1589,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **안전 영역(M3, 참고 styles.css 579~581·606·645줄).** 전에는 위·아래 inset만 비켰다. 가로로 둔 휴대폰·iPad에서는 노치와 둥근 모서리가 목록 글과 터미널 글을 가렸다.
   - 목록은 왼쪽을 비킨다. 오른쪽 칸(머리·터미널·입력줄·키 막대·thread 화면)은 오른쪽을 비킨다.
-  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비키고, 목록이 오른쪽도 비킨다.
+  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비킨다. 목록은 768px 이하에서 왼쪽 끝에 붙은 drawer라 왼쪽만 비킨다(§8.146, 전에는 목록이 화면 전체라 오른쪽도 비켰다).
   - 칸마다 자기 바탕색 안에서 비킨다(터미널 옆은 터미널 색). `--inset-l`·`--inset-r` 두 변수로 기존 여백에 더한다.
 - **manifest·meta(M4 일부, 참고 manifest·index.html).**
   - manifest에 `id: "/"`를 둔다. 아이콘은 일반(`any`)·maskable을 192·512 모두 둔다. maskable 192는 `icon.svg`를 바탕까지 채워 렌더했다. 512와 같은 방법이다.
@@ -1597,7 +1598,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **화면 켜짐 유지(M6, 참고 `wakeLock.ts`·`visibility.ts` 그대로, App.tsx 842줄, 설정 「휴대폰」).** 설정을 켜면 pane이나 thread를 보는 동안 screen wake lock을 건다. 가려지면 놓고, 다시 보이면 다시 건다. 기기마다 두며 기본은 꺼짐이다. HTTPS나 localhost에서만 된다. 참고 문구를 그대로 쓴다.
 - **시험.**
   - 웹 E2E 「안전 영역」: Chromium `Emulation.setSafeAreaInsetsOverride`로 좌우 47px를 준다. 가로 두 칸(844×390)과 좁은 가로 한 칸(667×375)에서 각 칸의 여백을 잰다.
-  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 목록으로 가거나 끄면 놓는다.
+  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 끄면 놓는다. 목록 drawer를 열어도 pane은 골라진 채라 놓지 않는다(참고 `selectedPane !== null`, §8.146. 전에는 휴대폰이 목록 화면으로 가면 놓았다).
   - PWA 단계: manifest `id`, 아이콘 종류 넷, 각 PNG 실제 크기가 적은 크기와 같은지, status-bar meta가 없는지 본다.
 
 ### 8.67 앞 기록: 위로 굴려 받은 기록 끝에 닿으면 그 앞 덩어리를 받아 붙인다(10-17, 사용자 결정·요청)
@@ -1814,7 +1815,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **이름(herdr `src/cli/pane.rs`·`tab.rs`·`workspace.rs`·`completion.rs`).** 옛 이름(`pane send`·`ws show|tab|split|add|close`·`pane run --machine`)은 남기지 않는다(herdr에 별칭이 없다). 저장소 안에서 쓰던 곳(cargo 시험·웹 E2E·showcase·README·runbook·평가자 안내)을 모두 바꿨다.
   - `pane run <pane> <글…>`: 이미 있는 pane에 글 + Enter(herdr `pane_run` → `PaneSendInput{keys:["Enter"]}`). 새 pane은 `tab create`·`pane split`·`workspace create`로 띄운다.
   - `pane send-text <pane> <글…>`(그대로), `pane send-keys <pane> <키…>`(키 이름은 herdr `parse_api_key`·`parse_key_combo`, src/config/keybinds.rs). 여러 인자는 빈칸으로 잇는다(herdr와 같다: 뒤 인자를 모두 글로 받으므로 `--json`은 명령 앞에 쓴다).
-  - `pane read --source visible|recent|recent-unwrapped --lines N --format text|ansi`: recent 범위는 herdr `ghostty_recent_read_range`(src/pane/terminal.rs) — 마지막 글 줄과 커서 줄 중 아래쪽까지, 기본 80줄·최대 1000줄. 출력은 글 그대로(`--json`이면 JSON).
+  - `pane read --source visible|recent|recent-unwrapped|detection --lines N --format text|ansi [--ansi] [--raw]`(detection은 §8.110): recent 범위는 herdr `ghostty_recent_read_range`(src/pane/terminal.rs) — 마지막 글 줄과 커서 줄 중 아래쪽까지, 기본 80줄·최대 1000줄. 출력은 글 그대로(`--json`이면 JSON).
   - `pane wait-output --match|--regex --source --lines --timeout`(herdr src/api/wait.rs, `match_output` src/api/subscriptions.rs): 맞은 첫 줄과 읽은 글을 준다. 시한이 지나면 `timeout` 오류.
   - `pane get`·`pane current [--pane|--current]`(`AAA_SESSION_ID`, herdr `HERDR_PANE_ID`)·`pane split [--pane|--current] --direction right|down --ratio`·`pane resize --direction --amount`(herdr `resize_focused` src/layout.rs: 그쪽 가장자리 나눔, 없으면 반대쪽, 기본 0.05·최대 0.5, 비율 0.1~0.9)·`pane move --new-tab`·`pane close`.
   - `tab list|create|get|rename|close`, `workspace list|create|get|rename|close`, `completion bash|zsh|fish|elvish|powershell`(clap 정의에서 만든다. zsh는 herdr `space_separated_zsh_long_options`처럼 `--opt 값` 꼴로 고친다).
@@ -1831,7 +1832,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - `pane close`는 끝내기를 보내고, 끝났다는 상태 사건이 온 뒤 기록을 지운다. agent가 끊겨 있으면 끝낼 수 없어 거부한다.
   - PTY 크기 바꾸기(시험·진단)는 숨은 `pane pty-size <pane> <cols> <rows>`로 옮겼다(`pane resize`는 herdr 뜻인 layout 비율). 이 CLI는 새 크기가 host에 닿은 뒤(상태 사건) 돌아온다. 보통은 붙은 화면이 크기를 정한다(§8.33).
   - 사본이 아직 없으면(붙자마자) `pane read`는 agent의 보이는 화면을 주고 `source: visible`이라고 밝힌다.
-  - aaa에만 있는 `pane kill|resume|forget|attach|chat`은 그대로 둔다. `pane read --source detection`은 화면 감지(D8)가 들어올 때 함께 둔다.
+  - aaa에만 있는 `pane kill|resume|forget|attach|chat`은 그대로 둔다. `pane read --source detection`은 화면 감지(D8) 뒤에 뒀다(§8.110).
 - **pilot(t-0334) 뒤 맞춘 것.** `thread list [<프로젝트>]`는 herdr-projects `thread list <slug>`(src/cli.rs `ThreadCommand::List`)처럼 위치 인자다. 옛 `-p/--project`는 없앴다. 같은 꼴이던 `events`도 위치 인자로 바꿔 프로젝트를 받는 명령은 모두 위치 인자다. 생략하면 모든 프로젝트를 보인다(aaa 확장). 끝난 thread도 늘 보이고 group은 「끝남」이다(hp `threads::rows`가 resolved도 낸다). 그래서 hp처럼 `--all`은 두지 않는다. `inbox done`은 끝낸 수를 말한다(hp src/cli.rs:703 `{moved} item(s) moved to inbox/done`). 응답 `inbox`에 `done`(끝낸 수)이 붙고 `items`는 남은 항목이다(Front API 1.4 안의 선택 필드라 옛 client는 무시한다).
 - **계약.** Front API 1.4(새 요청 `pane_read_text`·`pane_send_text`·`pane_send_keys`·`pane_submit`·`pane_wait_output`·`pane_get`·`pane_close`·`workspaces`·`workspace_close`·`workspace_rename`, layout 변경 `resize`·`rename_tab`·`close_tab`·`move_to_new_tab`, `split.ratio`, `new_tab.cols/rows`). 옛 요청(`pane_run` 띄우기·`pane_send` bytes·`pane_resize` PTY)은 웹·TUI가 그대로 쓴다. 새 CLI가 옛 host에 보내면 모르는 요청 오류로 끝난다(이름이 같은 요청이 뜻을 바꾸지 않는다).
 - **시험.** m12 `herdr_pane_input_read_and_wait`: 받은 bytes를 16진수로 보이는 고정 프로그램으로 `pane run` 감싸기, `send-text` 그대로, `send-keys` DECCKM·모르는 키면 아무것도 안 보냄, `read` 글·JSON·recent 범위, `wait-output` 정규식·시한(설정 값), stderr 오류 JSON·종료 1·사용법 종료 2. m12 `herdr_tab_workspace_and_layout`: split 비율, resize 가장자리·한계, move --new-tab, tab list·get·rename·close(기록 지움), workspace list·rename(겹치는 이름 거부)·get·close, completion zsh·bash. VT 유닛: recent 범위·unwrapped·키 인코딩·모드. 기다림은 모두 출력·상태 사건으로 끝난다.
@@ -2054,7 +2055,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
 - **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
   - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
-  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(`DELIVERED_WORKING_MS`). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
+  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(host.toml `[projects] delivered_working_secs`, 기본 15. 시험에서 줄인다). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
   - 연결되지 않은 머신의 thread는 세지 않는다(참고 `remote_pass`: 닿지 않으면 상태도 묶음도 항목도 바꾸지 않는다).
 - **전이 항목(F2·F3, hp `src/steps.rs` `write_thread_items`·`transition_event`).** 사람 차례나 쉼으로 바뀔 때만 `thread-state` 항목 하나를 낸다.
   - 사건 말은 참고 그대로다: `blocked on a prompt`·`pane closed`·`agent gone`·`waiting on you`·`idle`.
@@ -2459,7 +2460,9 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 질문 본문은 화면 끝 24줄에서 물음표가 있는 마지막 줄(없으면 마지막 줄, 300자)이다(host `modal_of`와 같은 규칙). 종류는 신뢰 창이면 `trust`, Claude bash·일반 권한 창과 Codex 승인 창 규칙이면 `permission`, 나머지는 `confirm`이다.
   - herdr의 800ms refresh는 aaa host에 상태만 있어 다시 보내지 않는다. 본문이 달라졌을 때만 보낸다(답한 뒤 창이 잠깐 남아도 질문을 새로 열지 않고, 다른 창이 바로 이어 뜨면 연다).
   - agent가 기억하는 사건은 칸 셋(진행 보고·세션 ID·상태)이다. 세션 ID 사건(compact·clear 뒤 SessionStart)이 상태를 덮지 않는다. agent가 다시 떠 같은 상태를 다시 감지하면 그 상태가 된 때를 그대로 보낸다.
-- **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 건다. Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
+- **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 host에 알린다. PostToolUse는 진행 안내만 하고 host에 보내지 않는다(§8.144). Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
+- **Codex 중첩 thread 거르기(10-18, 차이 목록 3장 B7).** `aaa hook --agent codex`는 물려받은 `CODEX_THREAD_ID`가 있고 사건의 세션 ID(`session_id`·`thread-id`)와 다르면 보내지 않는다(`hooks.rs` `nested_codex`, herdr `integration/assets/codex/herdr-agent-state.sh`·herdr-projects `progress.rs` `hook`). 세션 ID가 없는 사건도 다르다고 본다(herdr와 같다). Claude는 SessionStart의 세션 ID로 거른다(`foreign_session`).
+  - session host는 바깥 agent 표지 `CODEX_THREAD_ID`·`OMPCODE`도 세션에 넘기지 않는다(herdr `src/pane.rs` `apply_pane_launch_env`). Codex 안에서 띄운 agent가 그 ID를 넘기면 세션 안 Codex의 사건이 모두 중첩으로 보여 버려진다.
 - **host.**
   - `session_start`·`session`은 상태를 바꾸지 않는다(처음 보는 pane만 「시작」). 옛 agent의 `turn_start`·`turn_end` 등은 그대로 받는다.
   - 입력 수신은 `working`·`question`(옛 agent는 `turn_start`)이 오면 `accepted`다.
@@ -2467,11 +2470,26 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 지금 상태가 된 때보다 오래된 사건은 상태를 바꾸지 않는다(`next_activity`). agent가 다시 붙을 때 보내는 기억(agent `set_host`, 따로 도는 task)이 그 사이 화면 감지가 낸 새 상태보다 늦게 도착할 수 있다. 사건 때는 모두 그 pane agent의 시계라 비교할 수 있다. host가 처음 듣는 pane(host 재시작)은 기억으로 정한다.
   - 질문은 그 pane 세션이 끝나거나 pane이 없어지면 닫는다(Gone, QA t-0337 Q4: 닫은 pane의 질문이 「답을 기다리는 질문」에 남고 답하면 「pane이 없다」). 세션 상태가 끝남으로 바뀔 때(`on_session`)와, agent가 다시 붙어 세션을 모두 알릴 때 이 머신에서 살아 있지 않은 pane의 질문(host·agent가 내려간 사이 끝난 세션)이다. 화면 감지로 working·idle·끝남이 와도 그 pane의 열린 질문을 모두 닫는다. 참고 herdr-web-ui는 질문을 기록하지 않고 살아 있는 blocked pane 화면에서 읽어(`server/prompt.ts`), pane_exited·pane_closed면 pane과 함께 질문도 사라진다(`server/collector.ts` `parseStructureFrame`).
   - 답한 확인창 뒤에 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16: 부하에서 PermissionRequest → 답 → 1.3초 뒤 Claude Notification `permission_prompt`가 와 답한 질문이 다시 열리고 입력 대기로 돌아오지 않았다). 참고 herdr 0.9.5는 상태 hook을 쓰지 않는다: 옛 설치의 hook script도 `session` 말고는 exit 0(`integration/assets/claude/herdr-agent-state.sh`), 설치 때 PermissionRequest·Stop 등 상태 hook을 지운다(`claude_settings.rs` `HOOK_REMOVALS`). 옛 herdr도 Notification을 상태로 쓰지 않았다. 그래서 새 agent는 옛 agent가 띄운 세션의 Notification·PermissionRequest를 버린다. host는 아직 받는 옛 agent의 hook `question`에 화면 감지와 같은 규칙을 둔다: 상태가 질문에서 넘어가지 않은 같은 막힘에서 이미 답했으면 질문을 열지 않는다(화면 감지는 막힘에 들어설 때만 알려 한 막힘에 질문이 하나다). 답한 표지는 상태가 질문에서 넘어가면 지운다.
+  - **답하자마자 같은 물음이 다시 뜨면 둘째도 질문이다(10-18, QA t-0337 Q18).** Claude는 병렬 도구 호출마다 확인창을 잇달아 띄운다. 두 창 사이에 빈 화면이 없으면 화면 감지는 막힘이 이어진 것만 본다. 같은 글이면 「보낸 것과 같다」로 알리지도 않아, 둘째 창은 질문이 되지 못했다.
+    - 참고 herdr-web-ui는 답을 보내면 그 pane의 물음을 끝내고, 그 뒤 화면에 있는 확인창은 같은 글이어도 새 카드다(`server/prompt.ts` `askingEnded`: 「the same prompt on its screen after this is asked anew」). 일을 다시 하면 끝내는 것(`promptWaitEnded`)은 aaa에서 작업 중 → 질문 닫기다.
+    - agent: 세션에 입력이 가면 보낸 상태 기억을 지운다(`detect::Watch::input_sent`). 상태가 막힘 그대로면 다음 「보이는 막힘」 갱신에 질문을 다시 알린다. 그 갱신은 입력에서 800ms 뒤로 미룬다. 방금 답한 창이 아직 그려져 있을 수 있기 때문이다(참고 `closeQueue`: 답한 질문이 600ms 뒤에도 있으면 그 쌍둥이다).
+    - host: 이 agent(hello feature `ask_anew.v1`)의 질문 사건은 답한 질문 뒤라도 새 질문이다. 옛 agent의 hook 질문만 위의 「같은 막힘에서 답했으면 열지 않는다」를 쓴다. 사람이 터미널에서 친 입력 뒤의 다시 알림은 열린 질문에 합쳐진다(`ask`).
+    - 시험: m12 `the_same_prompt_asked_again_right_after_its_answer_is_a_new_question`(가짜 claude `--ask2`: 답하면 지우고 같은 창을 한 번에 다시 그린다 → 둘째 질문 사건 → 답 → 끝 표지, 질문 둘 다 answered). agent 단위 `a_prompt_still_there_after_an_input_is_asked_anew_at_the_next_refresh`(입력 직후 그대로인 창은 알리지 않고 800ms 뒤 한 번 알린다). 결함 심기 셋(agent 입력 표시·host 거르기·refresh 미루기)을 잡았다.
   - t-0331 고침(§8.99)과 합침: 같은 결함을 t-0331이 먼저 hook 이름 짝짓기(`late_pair`)로 고쳤다. 같은 기능을 두 벌 두지 않으려고 참고에 가까운 이쪽 하나만 남기고 `late_pair`·`HarnessEvent.hook`·pane의 hook 기억을 없앴다. 참고는 host에서 hook을 짝짓지 않고 상태 hook을 아예 버린다. 새 agent는 짝 hook 둘 다 보내지 않고 옛 agent는 hook 이름을 싣지 않으므로, `late_pair`가 쓰일 길도 없었다. 옛 agent는 도구마다 PreToolUse·PostToolUse(`working`)를 내므로 같은 턴의 다음 확인창은 새 막힘이다(답한 표지가 다음 확인창을 삼키지 않는다).
   - 답 키: Codex 0.163 승인 창의 맨 아래 줄 「Press enter to confirm or esc to cancel」을 선택 창 표지에 더했다(실측). 참고 herdr-projects는 사람이 고른 키(`thread keys`)를 보내고 선택지를 읽지 않는다. aaa `question answer`는 aaa 기능이라 표지를 실제 화면으로 맞춘다.
+  - 질문·메시지 ID는 ULID의 무작위 부분 10자다(`harness.rs` `short_id`). 전에는 앞 10자(ms 시각)라 같은 ms에 만든 둘이 같은 ID가 되어 둘째가 첫째 기록을 덮었다(저장이 `ON CONFLICT(id) DO UPDATE`). 위 늦은 질문 단위 시험이 빠르게 돌 때 다음 확인창의 질문이 답한 질문과 같은 ID로 나와 드러났다(10-18 ci). 시험 `ids_made_in_the_same_millisecond_differ`(옛 ID로 되돌리면 실패한다).
+- **셸 pane 안의 Claude·Codex도 감지한다(10-18, QA t-0337 Q21, 결정 D8 「참고대로」: 사용자는 셸에서 claude를 띄워 쓰고 재부팅 복원도 셸에 `--resume`을 친다).** 전에는 띄울 때 harness를 아는 pane(profile harness·argv 첫 낱말)만 화면을 봤고, 셸에서 띄운 agent는 늘 「입력 대기」였다.
+  - 참고 herdr 0.9.5 `src/pane.rs` `spawn_basic_detection_task`: pane 셸의 제어 터미널 앞 프로세스 그룹(`tpgid`)을 300ms마다 읽고, 그룹이 바뀌거나 정한 간격이 되면 그룹 프로세스를 조사해 이름으로 agent를 정한다(`identify_agent_process_in_job`·`normalized_process_name`: `argv[0]`·`process.title`, 셸·node·python이면 그것이 돌리는 스크립트 이름, symlink 끝 이름).
+  - aaa agent `detect::foreground`가 그것을 Claude·Codex만 옮겼다. 앞 그룹은 cwd follow(§8.76)가 쓰는 `foreground_process_group_id`(macOS `e_tpgid`, Linux `/proc/<pid>/stat`)다. 그룹 프로세스는 macOS `proc_listpids(PROC_PGRP_ONLY)`·`KERN_PROCARGS2`, Linux `/proc` 자손 훑기다. session IPC는 그대로다(agent가 셸 pid로 본다).
+  - 잡기: 앞 agent를 찾으면 그 harness로 화면 감지를 새로 시작한다(시작 유예 3초, herdr `AGENT_STARTUP_GRACE_WINDOW`). 다시 보는 간격은 herdr 값이다: agent가 있으면 그룹이 바뀌거나 5초(`PROCESS_RECHECK_IDENTIFIED`), 없으면 그룹이 바뀔 때. 바뀐 그룹 이름을 모르면 1.5초까지 0.5초, 8초까지 2초마다 다시 본다(`PROCESS_ACQUISITION_*`).
+  - 놓기: 셸이 다시 앞에 오면 앞 agent의 끝을 idle로 알린 다음 차례에 놓는다(herdr `ReportProcessExit` → `ClearAgent`). 셸이 아닌 것이 앞인데 agent로 보이지 않으면 6번 연달아 놓친 뒤 놓는다(`AGENT_MISS_CONFIRMATION_ATTEMPTS`).
+  - 놓기는 harness 사건 `released`(kind 글만 더함, AGENT_LINK·FRONT_API 그대로)다. host는 그 pane의 agent 상태를 지우고 질문을 닫는다. 옛 host는 모르는 kind로 버린다. 놓은 셸은 재부팅 복원에서 대화를 잇지 않는다(herdr도 놓은 agent를 세션에 남기지 않는다). `harness.json`의 마지막 상태가 `released`라 다시 붙어도 그대로다.
+  - 띄울 때 harness를 아는 pane(argv가 claude·codex, profile harness)은 전처럼 그 harness로만 보고 앞 프로세스는 보지 않는다.
+  - **참고와 다른 것(이유).** 백그라운드로 보낸 agent 붙잡기(`AgentJobTracker`, Ctrl-Z 뒤 셸이 앞이어도 agent를 남김)·lifecycle hook 권한(pi 등, aaa harness 아님)·Herdr 환경 표지(`process_agent_hint`)는 옮기지 않았다. 그래서 Ctrl-Z로 멈춘 claude는 놓는다. Windows는 셸 안 agent를 감지하지 않는다(아래 「herdr와 다르게 둔 것」).
+  - 시험: m12 `a_claude_started_in_a_shell_is_detected_and_released_when_it_exits`(셸에서 친 가짜 claude의 확인창 → 질문 → 답 → 셸로 돌아와 agent 없음 → 재부팅 복원은 빈 셸, 뒤에 친 표지만 화면에 있다). agent 단위: 이름 판정 표(herdr 시험의 Claude·Codex 몫), 잡기·끝·놓기·다시 뜸·놓침 6번·바뀐 그룹 다시 보기, 이 Mac의 실제 프로세스(스크립트 `claude`를 제 그룹 leader로 띄워 조사). 가짜 claude는 `exec cat` 대신 줄 되돌려 쓰기로 바꿨다(exec하면 앞 프로세스가 cat이 된다). 결함 심기 다섯(조사 없음·host 무시·놓기 안 알림·셸 앞이어도 남김·스크립트 인자 무시)을 잡았다.
 - **herdr와 다르게 둔 것.**
-  - 프로세스 판별(foreground 프로세스 이름으로 agent 찾기·바뀜·끝남, herdr `src/detect/mod.rs` 186~290줄)은 없다. aaa 세션은 harness 하나를 띄우고 끝나면 세션도 끝난다. 셸에서 사람이 띄운 claude·codex는 감지하지 않는다(차이 목록에 줄이 없고 3 OS 프로세스 코드가 필요하다).
   - 규칙 원격 갱신·local override·explain 명령은 없다(§8.3 「감지 규칙 고정」).
+  - Windows 감지(Toolhelp 트리) 미이식(10-18 coordinator 결정: aaa를 쓰는 기기는 지금 macOS뿐이다). herdr `src/platform/windows.rs`는 셸 앞 agent를 프로세스 그룹 대신 Toolhelp 프로세스 트리로 찾는다. aaa agent는 Windows에서 셸 pane 안의 Claude·Codex를 찾지 않고(`foreground_tick`은 unix만), 띄울 때 harness를 아는 pane만 화면으로 감지한다. 셸 안 감지 시험(m12·실제 프로세스 단위 시험)도 unix에서만 돈다.
   - Codex 세션 ID는 SessionStart hook 대신 notify(`thread-id`)로 받는다. herdr는 `~/.codex/hooks.json`을 고치지만 aaa는 사용자 설정을 고치지 않는다(§8.15).
 - **운영 pane 확인(t-0334 결함 1, shadow/t-0002, 10-18 01:1x, 읽기만).**
   - 증상: 운영 host가 10시간 넘게 「작업 중」(harness working)이라 했는데 화면은 턴이 끝난(「done 10:21 AM」) 뒤 입력 대기였다.
@@ -2499,7 +2517,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
       - agent가 Notification을 질문으로 넘기면 ①이 「답한 질문이 다시 열렸다」로 실패한다. ②는 같은 막힘이라 host 규칙이 받아 3번 모두 통과했다.
       - 여기에 host 규칙까지 끄면 ②가 「늦은 짝 hook이 질문을 다시 열었다」로 2번 모두 실패한다.
       - host 규칙만 끄면 단위 시험이 실패한다. 표지를 지우지 않으면 다음 질문 단언이 실패한다.
+  - Codex 중첩 thread: e2e `nested_codex_events_do_not_replace_the_pane_session`(agent를 바깥 `CODEX_THREAD_ID`와 띄우고, shell pane이 notify 셋을 낸다: 물려받지 않은 첫 사건은 받고, 물려받은 ID와 다른 둘째는 버리고, 같은 셋째는 받는다. 단계마다 진행 보고가 실린 상태 사건의 세션 ID를 본다), 단위 `codex_events_of_nested_threads_are_not_sent`(herdr 시험의 경우들). 결함 심기: hook 쪽 거르기를 끄면 둘째에서, 표지 지우기를 빼면 첫째에서, 같은 ID도 버리면 셋째와 단위 시험에서 실패한다(되돌림 확인).
   - 실제 harness: `cargo test -p aaa --test real -- --ignored --test-threads 1`(구독 사용, CI 제외). Claude는 신뢰 창 → brief 수신 → 작업 중 → 권한 질문 → idle(15초), Codex는 brief 수신(작업 중) → 승인 질문 둘 → idle(16초)을 10-18에 확인했다.
+- **`pane read --source detection`(10-18, 차이 목록 4장 F #579, §8.75에서 미룬 것).** herdr `read_terminal_snapshot`(src/app/api_helpers.rs)대로 감지 글(`Vt::detection_text`)을 그대로 준다. host가 가진 화면 사본에서 읽는다.
+  - `--lines`가 없으면 자르지 않고, 있으면 마지막 줄들이다(최대 1000줄).
+  - `--format ansi`여도 모양 없는 글이다(herdr도 두 형식 모두 `detection_text`). `--raw`는 herdr pane read처럼 `--format ansi`와 같다.
+  - `wait-output`은 detection을 받지 않는다(herdr `read_source_option(false)`).
+  - 계약: FRONT_API 1.22(`ReadSource::Detection`). 옛 host는 detection이 든 요청을 읽지 못해 그 연결을 닫고(`front.rs` 요청 해석), 새 CLI는 오류로 끝난다.
+  - 시험: VT 유닛 `read_detection_is_the_detection_text`(보이는 화면도 기록 전부도 아닌 감지 범위, `lines`, ansi여도 모양 없음), m12 `herdr_pane_input_read_and_wait`(`--source detection --raw`의 source·format과 글). 결함 심기(되돌렸다): detection을 recent로 읽으면 둘 다, `lines`를 무시하면 유닛, CLI가 detection을 recent로 바꾸거나 `--raw`를 무시하면 m12가 실패한다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
 ### 8.111 재부팅 뒤 복원: 셸 pane·대화 이어가기(10-18, 차이 목록 4장 A, 결정 20 D12)
 
@@ -2513,6 +2538,9 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **설정(herdr `[session]` 이름·기본값 그대로).** host.toml `[session] resume_agents_on_restore = true`, `startup_per_agent_delay_ms = 100`(이어가기 사이 간격, herdr `start_pending_agent_resumes`). 끄면 셸은 되살리고 대화는 잇지 않는다(셸 안의 agent는 빈 셸로, harness pane과 thread는 중단으로).
 - **결정 8-5와 다름.** 결정 8-5(정할 것 5)는 「자동 이어가기 꺼짐 + opt-in」이었다. 결정 20 D12가 「재부팅 뒤 대화 자동 이어가기」를 참고대로 하기로 바꿔 기본 켬이다. §8.3·§8.5의 턴 끝 자동 이어가기(문구 보내기)는 다른 것이라 그대로 없다.
 - **harness 세션 ID를 연결 즉시 안다.** agent가 세션별 마지막 harness 사건(`harness.json`)을 hello(`AgentHello.harness`)에 싣는다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다(옛 host에는 전처럼 보낸다). AGENT_LINK는 그대로(필드는 serde 기본값), session IPC도 그대로다.
+- **끊긴 pane에는 질문을 다시 열지 않는다(10-18, QA t-0337 Q20).** hello의 마지막 사건이 확인창(질문)이면, host는 살아 있지 않은 pane의 질문을 닫은 뒤 그 사건을 적용하며 옛 pane ID로 질문을 다시 열었다. 그 질문은 복원 뒤에도 남았다.
+  - 이제 host는 끝난 세션(`Interrupted`·`Exited`·`Lost`)의 harness 사건으로는 질문을 열지 않는다(상태와 harness 세션 ID는 그대로 적는다). 참고 herdr-web-ui도 살아 있는 blocked pane 화면에서만 질문을 읽는다.
+  - 시험 m12 `reboot_does_not_reopen_the_question_of_an_interrupted_pane`(가짜 claude `--ask`가 확인창을 띄운 채 재부팅 → 복원한 pane이 `--resume`을 받은 뒤 옛 pane 질문이 없다). 검사를 빼면 「끊긴 pane의 질문이 다시 열렸다」로 실패한다.
 - **복원 중 묶음 셈.** 복원하는 동안 ticker는 그 머신 thread의 묶음 전이·「세션이 모두 끝났다」를 세지 않는다(사라졌다가 돌아온 것으로 보지 않게). 끝나면 ticker를 깨운다.
 - **t3code와 비교.** t3code `apps/server/src/orchestration-v2/RestartContinuation.ts`는 재시작 때 턴 중이던 run에 「Continue where you left off.」를 보낸다(사람 답을 기다리던 run은 막고, 이어서 3번까지). herdr는 대화만 다시 연다. aaa는 herdr대로 했다(보고 「아침 확인」).
 - **계약.** FRONT_API 1.16(`PaneView.restore_error`, 선택 필드).
@@ -2674,7 +2702,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 아무것도 남지 않은 기기에는 보내지 않고 흐름 사건 `push_unwanted`(「기기 N개가 고른 알림 종류가 아니다 · 항목 K개」)를 남긴다.
   - **가르는 기준.** thread 항목 중 「new report」는 작업 완료이고, 나머지 사람 차례(확인창·기다림·pane 닫힘·agent 사라짐·시작 실패)는 입력 필요다. PR·머신·routine·세션처럼 참고에 없는 aaa 항목은 host `notify.kinds`대로 모든 기기에 간다.
   - **참고와 다른 것(아침 확인).** 참고의 「작업 완료」는 끄기·긴 작업(1분 이상)·매번이다. aaa의 작업 완료는 pane 차례가 아니라 thread가 낸 새 보고(일 한 단위)다. 그래서 「빨리 끝난 답」을 거를 차례 길이가 없어 켜기·끄기만 둔다. pane 차례마다 알리는 참고의 길(pane 상태 push)을 따로 넣을지는 사용자 결정이다(넣으면 thread 알림과 겹친다).
-  - 시험: 웹 E2E 12 「기기별 알림 종류」(작업 완료를 끄면 다시 등록 → 보는 동안 앱 안 알림 없음 → 가려진 동안 push 없음과 `push_unwanted` → 다시 켜면 push). host 단위 시험 `device_alert_kinds`, 구독 갱신 시험 `another_device_takes_a_push_endpoint_only_with_its_keys` 끝부분.
+  - 시험: 웹 E2E 17 「기기별 알림 종류」(작업 완료를 끄면 다시 등록 → 보는 동안 앱 안 알림 없음 → 가려진 동안 push 없음과 `push_unwanted` → 다시 켜면 push). host 단위 시험 `device_alert_kinds`, 구독 갱신 시험 `another_device_takes_a_push_endpoint_only_with_its_keys` 끝부분.
   - 결함 심기 둘: host가 기기마다 거르지 않으면 「고르지 않은 종류 기록이 되지 않았다」, 웹이 거르지 않으면 「앱 안 알림이 내려왔다」로 실패한다.
 - **N10 프로젝트 mute.** herdr-projects처럼 `project.toml` `mute = true`면 그 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류만 남기고 끈다.
   - 남는 것: `outage`(`gh` 실패 등)·`config-error`·`health`(머신 이상). herdr-projects가 error로 보내는 「gh keeps failing」·「file is not usable」과 차이 목록의 「오류·머신 이상은 보냄」을 따랐다.
@@ -2793,7 +2821,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 2만 줄이 넘으면 줄마다 요소를 만들지 않고 한 글로 그린다(참고 `CodeLines`). 참고는 2천 줄부터 가상화한다. aaa는 가상화 전이라 2만 줄 넘는 소스에는 줄 번호·줄 표시가 없다. 글은 256KiB까지만 읽으므로 줄이 아주 짧을 때만 생긴다.
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
-  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.142, 「파일 뷰어」 설정은 §8.143.
+  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
   - 대화 보기·보고서 안 파일 링크.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
@@ -2887,14 +2915,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - host는 그 연결에서 앱 글이 25초(`presence_lease`, 시험만 `AAA_TEST_PRESENCE_LEASE_MS`) 넘게 없으면 쓰는 화면에서 뺀다. 연결은 두고 다음 presence가 오면 다시 센다. pong은 lease를 늘리지 않는다.
   - Page Lifecycle `freeze`(Chrome·Android)는 쓰지 않는 것으로 알린다. `resume`·`pageshow`는 다시 본다. herdr-web-ui `watchPageInUse`(바꾸지 않고 옮긴 `herdr/presence.ts`)에 없는 사건이라 `api.ts`가 직접 듣는다.
   - **배포 뒤 잠깐 겹칠 수 있다.** service worker가 새 웹을 받기 전의 옛 페이지는 heartbeat를 보내지 않는다. 그 페이지는 25초 뒤 쓰는 화면이 아니게 되어 push가 앱 안 알림과 겹친다(push가 가는 쪽으로 틀린다). 페이지를 다시 열면 끝난다.
-  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」(멈춘 쓰는 기기 → lease 뒤 쓰는 화면 0 → push와 근거 「lease 끝」 → 깨면 다시 쓰는 화면). headless Chromium은 CDP `Page.setWebLifecycleState frozen`으로 보이는 페이지를 멈추지 않아(timer가 계속 돈다, 최소화해도 가려지지 않는다) 페이지 안에서 멈춘다: timer 일을 세우고, 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. WebSocket pong은 브라우저가 계속 한다. lease를 끈 결함 심기(`AAA_TEST_PRESENCE_LEASE_MS=600000`)는 「lease 끝」에서 실패한다. host 단위 시험 `basis_names_the_user_device_connections`.
+  - 시험: 웹 E2E 18 「멈춘 쓰는 화면」(멈춘 쓰는 기기 → lease 뒤 쓰는 화면 0 → push와 근거 「lease 끝」 → 깨면 다시 쓰는 화면). headless Chromium은 CDP `Page.setWebLifecycleState frozen`으로 보이는 페이지를 멈추지 않아(timer가 계속 돈다, 최소화해도 가려지지 않는다) 페이지 안에서 멈춘다: timer 일을 세우고, 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. WebSocket pong은 브라우저가 계속 한다. lease를 끈 결함 심기(`AAA_TEST_PRESENCE_LEASE_MS=600000`)는 「lease 끝」에서 실패한다. host 단위 시험 `basis_names_the_user_device_connections`.
 - **늦은 소리는 버린다(실기 07:45: 무음 모드 iPhone, 알림 때는 소리가 없고 앱으로 돌아올 때 울림).** coordinator 결정 「알림 순간에 못 내면 버린다」.
   - 까닭(유력): iOS는 뒤로 간 홈 화면 앱의 JavaScript와 소리를 멈춘다. 그동안 온 사건은 앱이 다시 앞으로 올 때 한꺼번에 오고, 그때 소리를 냈다. 가려진 채 잠깐 돈 페이지가 예약한 소리도 앱이 돌아올 때 난다.
   - 웹은 멈췄던 페이지가 깨어난 바로 뒤(2초) 받은 사건과 다시 붙어 읽은 놓친 사건을 늦은 알림으로 본다. 앱 안 알림은 띄우고 소리는 내지 않는다. 멈춤은 1초 timer가 3초 넘게 돌지 않은 것으로 안다. 잠깐 가렸다 다시 보인 것은 깨어남이 아니다.
   - host 시각(thread `updated_at_ms`)으로 가르지 않는다: 보고가 검토 대기가 되는 때는 agent가 쉴 때라 저장 시각보다 늦을 수 있다.
   - 가려진 휴대폰(`pointer: coarse`) 페이지는 소리를 내지 않는다. 그 기기에는 host push가 간다(쓰는 화면이 아니다). 데스크톱 탭은 가려져도 소리를 낸다(참고대로).
   - Web Push 알림의 소리는 iOS 무음 스위치를 따른다(알림 소리는 무음 모드에서 나지 않고 진동만 한다). 무음을 넘는 「중요 알림」(Critical Alerts)은 Apple 승인 entitlement가 있는 앱만 쓰며 Web Push에는 없다. 그래서 07:43의 push가 조용했던 것은 iOS 규칙이고 aaa가 바꿀 수 없다.
-  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
+  - 시험: 웹 E2E 18 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
 
 ### 8.134 host를 다시 띄워도 알린 끊김(gh·머신)을 이어받는다(10-18, coordinator 실기 확인 중 발견)
 - **결함.** `gh` 실패·머신 끊김은 기준 시간(`outage_secs`)을 넘으면 inbox 항목을 한 번 쓰고, 돌아오면 「다시 된다」를 한 번 쓴다. 이 상태는 host 메모리에만 있어, 알린 뒤 host를 다시 띄우면 새 host는 알린 것을 모른다. 그 뒤 돌아와도 회복 항목이 오지 않아 열린 실패 항목이 그대로 남았다(07:53 재시작, 20:21 shadow 「gh 실패」).
@@ -3007,7 +3035,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **왜.** 로컬 ci-local e2e 단계가 파일을 하나씩 돌아 282~377초였다. 파일마다 준비·정리는 6%뿐이고 나머지는 단계 본문이었다. 가장 긴 `12-threads-push`(129초)가 3분의 1이었다.
 - **함께 돌기.** 입구가 파일을 worker 여러 개로 돈다(core 4개마다 하나, 많아야 4, `--workers`·`AAA_E2E_WORKERS`). 파일마다 이미 자기 실험실(`/tmp/aaw-<pid>`, host·agent·Chromium)이라 나눌 것이 없었다. 웹 port만 harness가 골라 닫은 뒤 host가 다시 여는 틈이 있어, host가 port 0으로 열고 `status.web_listen`으로 알린 port를 host.toml에 다시 써 재시작(07·13)이 같은 port로 뜨게 했다. 긴 파일부터 넣고(기록한 초 `web/e2e/durations.json`, t3code `shardWeights.json`처럼), 적지 않은 새 spec은 맨 앞이다. 재시도는 없다(herdr-web-ui `ci-browser-parallel.ts`의 한 번 다시 돌리기는 받지 않는다). GitHub macos-15(3 core)는 1이 되어 그대로다.
-- **안쪽 기다림.** 기다림마다 시간을 재 보니 thread 하나마다 보고 회수가 늘 4.1초였다: brief를 치기 전 화면이 3초 그대로이기를 기다리는 `SETTLE`(실제 harness가 막 뜬 화면에 치지 않게)이다. 가짜 agent 화면은 뜨자마자 멈추므로 시험에서만 `AAA_TEST_BRIEF_SETTLE_MS`(웹 E2E 300)로 줄인다(`AAA_TEST_EVENTS_PING_MS`와 같은 꼴. Rust 시험(m13 등)은 기본 3초 그대로 돈다). 12가 129초에서 약 81초가 됐다. 남은 큰 기다림은 제품 시간이다: 알림 묶음 `debounce_secs` 1초, 웹 상태 연결 pong 두 번(6초), 앱 안 알림 접힘(약 3초).
+- **안쪽 기다림.** 기다림마다 시간을 재 보니 thread 하나마다 보고 회수가 늘 4.1초였다: brief를 치기 전 화면이 3초 그대로이기를 기다리는 `SETTLE`(실제 harness가 막 뜬 화면에 치지 않게)이다. 가짜 agent 화면은 뜨자마자 멈추므로 시험에서만 `AAA_TEST_BRIEF_SETTLE_MS`(웹 E2E 300)로 줄인다(`AAA_TEST_EVENTS_PING_MS`와 같은 꼴. m13도 같은 값이다, 아래 「m13」). 12가 129초에서 약 81초가 됐다. 남은 큰 기다림은 제품 시간이다: 알림 묶음 `debounce_secs` 1초, 웹 상태 연결 pong 두 번(6초), 앱 안 알림 접힘(약 3초).
+- **m13(t-0327).** m13 host도 300으로 띄운다(`spawn_host`, 다시 띄운 host도 같다). 다만 확인 뒤 바로 쉼을 보는 두 시험(`worktree_thread_round_trip`·`memory_and_restart`)은 기본 3초로 둔다. 가짜 agent는 brief를 읽자마자 보고를 쓴다. 멈춤을 줄이면 agent가 1초마다 보는 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있고, 그러면 `delivered_report`가 그 보고가 되어 확인 뒤에도 창(`delivered_working_secs`) 동안 작업 중이다(제품 모서리, coordinator에 알림). 보고만 기다리고 brief 받음을 단언하던 세 곳은 둘 다 기다리게 고쳤다(기본값에서도 보고 감시 위상에 기대던 경쟁). 가장 긴 시험은 25.5초에서 20.1초, m13은 약 50초에서 42초다. 멈춤을 0으로 심어도 옛 m13·새 m13 모두 통과한다: 멈춤 자체를 보는 시험은 전부터 없다.
 - **지운 것.** 15파일 71단계를 단계마다 무엇을 보나·중복(다른 단계·Rust·웹 유닛)·결함 이력·기능이 남았나로 훑어 단계 여섯을 지우고 스물아홉 곳에서 단언 일부를 뺐다. 기준: 없어진·바뀐 기능, 같은 동작을 다른 시험이 이미 봄, 결과가 아니라 구현 세부(문구·class·저장 꼴), 잡을 길이 없음. 보안·사용자 결정 규칙(쓰는 기기·알림·입력기·iOS)·과거 결함 재발 막기·휴대폰에서 보이는 결과는 남겼다. 표(파일·단계·이유·대신 보는 곳)는 t-0338 report 「지운 단계 표」.
 - **시험.** 지운 판을 worker 4로 세 번(73초씩), 3으로 두 번(88초씩), 전체 묶음 둘을 동시에 worker 4씩 두 번(실험실 여덟, 73~74초) 돌려 모두 통과했고, 파일마다 시간은 차례로 돌 때와 같았다(함께 돌아도 느려지지 않음). 4보다 늘려도 벽시계는 가장 긴 12에 걸린다. 일부러 실패하는 spec을 함께 돌리면 입구가 종료 코드 1·FAIL 줄·실험실을 남긴다. 숫자와 부하는 t-0338 report.
 
@@ -3053,7 +3082,106 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 고치기 전 style.css로 다시 빌드해 돌리면 `position static; 배경 rgba(0, 0, 0, 0); .term-title .muted 오른쪽 508.4 > 상태 왼쪽
     249.6; 위치 줄이 넘치지 않았다`로 실패함을 확인했다.
 
-### 8.141 TUI 붙여넣기와 그림 파일 끌어놓기(10-18, 차이 목록 E 「그림 파일 끌어놓기」, FRONT_API 1.22)
+### 8.141 깨어난 페이지는 이 기기에 이미 push로 간 알림을 앱 안에서 다시 띄우지 않는다(10-18, 사용자 결정 「A」)
+- **실기(09:12~09:15 iPhone).** 앱을 내린 동안 push를 받고, 앱을 다시 올리면 멈춘 동안 쌓인 사건이 와 같은 보고가 앱 안 알림으로 다시 떴다(소리는 §8.133대로 버림).
+- **결정 「A」.** 앱을 다시 올릴 때 놓친 사건은 앱 안 알림으로 다시 띄우되, 그 기기에 이미 push를 보낸 항목은 띄우지 않는다. push가 안 간 항목(push 꺼짐·다른 기기가 쓰는 중이라 건너뜀·이 기기가 고르지 않은 종류)만 띄운다. 목록의 안 읽음 표시는 그대로다.
+- **host.** push를 보낸 기기마다 최근 항목(프로젝트·대상·보낸 때, 기기마다 100개·하루)을 메모리에 두고(`push::PushedLog`), `GET /api/v1/push`의 `pushed`로 그 기기 것만 준다. 다시 띄우면 비고, 그러면 웹은 띄운다(놓치지 않는 쪽).
+- **웹.** 늦은 알림(멈췄다 깬 직후 받은 사건은 멈춘 때부터, 다시 붙어 읽은 놓친 사건은 끊긴 때부터)이면 host에 묻고, 그 뒤(기기 시계 차이 5초를 덮는다) 이 기기에 같은 프로젝트·thread로 간 push가 있으면 띄우지 않는다. 결과는 `alert_outcome` 「push로 받음 · 안 띄움」. 묻지 못하면 띄운다. 늦은지는 사건을 받은 때 정한다(묻는 동안 시간이 가도 소리를 내지 않는다). 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다.
+- **thread에 묶이지 않은 pane 확인창**은 push 항목이 없어(thread-state 항목만 push) 늘 띄운다.
+- 시험: 웹 E2E 18 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
+
+### 8.142 시작이 실패한 thread도 `thread restart`로 다시 띄운다(10-18, 차이 목록 3장 E8)
+
+- **무엇.** 전에는 `thread_restart`가 열린 thread만 받아, 시작이 실패한(failed) thread는 다시 띄울 길이 없었다. coordinator 안내(`COORDINATOR_GUIDE`)는 「시작이 실패한 thread는 `aaa thread restart`로 다시 띄운다」고 했다. 참고 herdr-projects 0.2.35 `src/threads.rs` `restart_plan`대로 고쳤다.
+- **할 일 고르기(host `orch.rs` `restart_plan`, 참고 `RestartPlan`).**
+  - 열린 thread와 시작이 실패한 thread를 받는다. 시작 중이면 거부한다. aaa에는 시작 시한이 없으므로 참고의 「5분 넘은 시작은 다시 만든다」도 없다(§8.40, 차이 목록 A12는 다르게 둔다). 끝낸 thread는 `thread resolve --reopen`이 먼저다. 세션이 실행 중이면 거부한다(참고 (d)).
+  - (a) 자리를 만들지 못했다(launch 기록이 없다): 자리 만들기부터 다시 한다. 시작과 같은 `place_and_launch`(agent `ThreadPrepare` → 기록 → 세션)이고 brief는 다시 시작 안내를 넣는다. 이을 대화가 없으니 `--resume`은 거부한다. `--profile`이면 그 profile로 자리를 만든다.
+  - (e) 자리가 있다: 전처럼 brief를 새로 쓰고 새 대화로 띄우거나 `--resume`으로 잇는다. 세션을 띄우다 실패한 thread도 이 길이다.
+  - 참고 (c)(셸에 있는 pane 다시 쓰기)는 없다. aaa thread pane은 harness 프로세스 자체라 세션이 끝나면 pane도 끝난다(§8.86).
+  - (b) 기록된 worktree가 없는데 branch가 있으면 반쯤 만든 것이라 거부한다(「`aaa thread resolve` 뒤 새 thread」). host는 repo를 보지 않으므로 그 머신 agent의 자리 만들기(`threads.rs` `prepare`)가 `worktree add` 전에 본다. 처음 시작에서 branch가 겹쳐도 같은 말로 거부한다(참고도 그때 만들지 못한다).
+- **시작 실패.** 정리하지 않고 failed로 둔다(참고와 같다). 오류는 「thread <id>를 시작하지 못했다. `aaa thread restart <p> <id>`로 다시 한다: <까닭>」이고 기록의 `error`는 까닭이다(참고 `start`의 context). agent는 실패할 수 있는 profile 해석을 자리를 만들기 전에 해서, 그 실패는 아무것도 남기지 않는다.
+- **다시 띄우면.** 열린 thread가 되고 `error`를 지운다(참고 `finish_placement`). 다시 띄우다 실패하면 기록은 그대로다(참고도 restart 실패를 적지 않는다).
+- **시험.** host 유닛 `restart_plan_follows_herdr_projects`(참고 `restart_case_*`: (a)·(e)·(d)·시작 중·끝냄·이을 대화 없음). m13 `failed_threads_restart_from_the_place`: git이 아닌 repo로 시작이 실패하면 오류가 ID와 다시 하는 법을 말하고 failed·사람 차례다. `--resume`은 거부, branch만 있는 것은 거부(b), repo를 고친 뒤 restart는 자리부터 만들고 앞선 시도 안내 brief를 전하며 `error`는 비고, 끝낸 thread는 `--reopen`을 안내한다. 결함 심기(되돌렸다): failed를 거부하면 둘 다, `--resume` 거부를 빼면 둘 다, error를 지우지 않거나 시작 오류에 안내가 없거나 agent의 branch 검사를 빼거나 다시 시작 안내 없는 brief면 m13이 실패한다.
+- **세션을 띄우다 실패한 길은 E2E가 없다.** 그 길을 만들려면 공용 시험 설정(허용 profile 목록)에 없는 실행 파일 profile을 더해야 하고 다른 시험의 단언이 바뀐다. 그 길은 열린 thread의 다시 시작과 같은 코드라(m13 `restart_with_another_profile`) 판단만 유닛으로 본다.
+
+### 8.143 셸에서 `exit`하면 pane·탭·workspace를 닫는다(10-18, 사용자 요청 「다 사용한 탭은 exit로 하면 자동으로 닫히면 좋겠어」)
+- **참고.** herdr 0.9.5는 pane 프로세스가 끝나면(`AppEvent::PaneDied` → `handle_pane_died`) 그 pane을 layout에서 뺀다(`Workspace::remove_pane`).
+  - 탭의 마지막 pane이면 탭을, workspace의 마지막 탭이면 workspace를 지운다. workspace가 하나도 남지 않으면 Navigate 모드로 간다.
+  - 끝난 pane을 남겨 두는 설정(remain-on-exit)은 없다.
+- **aaa.** host가 셸 pane이 실행 중에서 `Exited`로 바뀌는 것을 보면 그 pane을 닫는다. 보는 길은 agent 사건(`on_session`)과 agent가 다시 붙을 때의 `hello.sessions` 둘이다.
+  - 기록을 지우고(`forget`, 감사 actor `exit`) 모든 layout에서 뺀다. 빈 탭은 없어진다.
+  - 그래서 탭이 남지 않은 workspace도 지운다(`workspace_close`와 같은 감사·빈 Workspace 사건). main은 지워도 목록에 늘 보인다(빈 main, TUI 「탭이 없다」).
+- **닫지 않는 것.**
+  - 재부팅으로 끊긴 pane(`Interrupted`)·session host 유실(`Lost`): 복원 대상이다(§8.111). 끝남(`Exited`)이 아니라 닫히지 않는다.
+  - host가 실행 중을 본 적이 없는 세션: host를 다시 띄운 뒤 처음 듣는 끝난 세션이다(host는 pane 기록을 메모리에만 둔다). 다시 붙어 실행 중을 본 뒤 끝나면 닫는다.
+  - host가 끝내기를 보낸 pane(`pane kill`): 다시 열려고 남긴다(aaa 확장, 웹 줄 메뉴 「다시 열기」). 탭·pane 닫기는 스스로 기록을 지운다.
+  - 역할 pane(thread·평가자): 수명은 thread 명령이 정한다(`close_panes`와 같은 규칙).
+  - 프로그램 pane(셸이 아닌 명령, `sh -c …`): 끝난 화면과 종료 코드를 남긴다. herdr pane은 늘 셸이라 이 경우가 없다(aaa 확장).
+- **초점(TUI).** 보던 pane이 빠지면 차례상 다음 pane, 끝이면 앞 pane이다(herdr `TileLayout::close_focused`). 보던 탭이 없어지면 앞 탭이다(herdr `Workspace::close_tab`·`remove_pane`).
+  - 다른 front의 탭 닫기에도 같다. herdr의 「초점이 왔던 pane」 기억(`prev_focus`)은 aaa TUI에 없어 차례만 본다.
+- **웹.** 목록이 host 상태 사건으로 바뀌어 닫힌 pane 줄이 사라진다. 고른 pane이 닫히면 선택을 놓는다.
+  - herdr-web-ui는 그 PC의 herdr 초점 pane을 고른다. aaa 웹은 layout을 받지 않아 고를 초점이 없다.
+- **herdr와 다른 것.** herdr는 신호로 끝난 pane(`ChildExitReason::Interrupted`)도 닫되, 그 전에 세션을 저장해 다음 시작에 되살린다(`checkpoint_session_before_pane_exit`).
+  - aaa session host는 종료 코드만 적는다(portable-pty `exit_code`, 신호는 1). 그래서 사람의 `exit 1`과 신호를 가르지 못하고, 다른 프로세스가 신호로 끝낸 셸도 닫힌다.
+  - 재부팅은 boot ID로 가린다(`Interrupted`).
+- **시험.** `m12 shell_exit_closes_its_pane_tab_and_workspace`:
+  - 나눈 pane의 exit → 그 자리에서 빠진다. 탭의 마지막 pane `exit 3` → 탭이 없어진다. 다른 workspace의 마지막 탭 → workspace가 없어진다.
+  - agent를 내린 사이 fifo로 끝낸 셸 → 다시 붙을 때 닫힌다.
+  - `pane kill`한 셸과 프로그램 pane(`exit 4`)은 남는다. 둘은 뒤에 닫힌 pane보다 먼저 끝났다.
+  - `e2e host_restart_keeps_sessions_and_disconnect_is_readonly`: host를 다시 띄운 뒤의 셸 `exit 3`도 닫힌다.
+  - host 단위 `only_a_shell_that_exited_by_itself_closes`(복원 대상·kill·역할·프로그램·이미 끝난 것), TUI 단위 `a_removed_tab_or_pane_moves_like_herdr`.
+  - 기다림은 host 사건·출력·종료 기록 파일뿐이다.
+  - 결함 심기 아홉(다시 붙는 길·kill 표시·빈 workspace·live 길·셸·역할·실행 중 검사·앞 탭·다음 pane)을 모두 잡았다.
+
+### 8.144 Claude hook으로 진행 보고 안내를 넣는다(10-18, 차이 목록 3장 B5)
+
+- **무엇.** herdr-projects 0.2.35 `src/progress.rs` `hook`·`respond`·`eligible`·`output`대로, aaa가 띄운 thread 세션의 Claude hook이 `additionalContext`로 진행 보고 안내를 넣는다. 안내만 한다. 상태는 화면 감지 그대로다(§8.110, 결정 20 D8 「hook은 세션 ID만」은 상태 쪽 결정이라 부딪히지 않는다).
+  - SessionStart: 지침(`# 진행 보고(aaa)` + brief와 같은 진행 안내 글). 이 세션의 알림 기록을 새로 한다.
+  - UserPromptSubmit: 「새 일이면 새 어림을 보고하고, 사용자를 기다리기 전에 보고한다」.
+  - PostToolUse: 마지막 안내와 마지막 보고에서 1분이 지났고 100%(Done)가 아니면 알림 한 줄(참고 `REMIND_SECS`).
+- **거르기(참고 `eligible`·`foreign_session`·`managed`).** 하위 agent의 사건, `aaa report` 자신의 PostToolUse, 이 세션이 시작한 harness 세션과 다른 세션의 사건에는 넣지 않는다. aaa가 hook 설정(`--settings`)을 주는 thread 세션(세션 역할이 있다)만 넣는다. aaa coordinator는 사람이 띄운 pane이라 hook 설정이 없다.
+- **자리.**
+  - 진행 안내 글은 `aaa-proto` `progress_guidance` 하나다. brief(host)와 hook(agent)이 함께 쓴다(참고도 brief와 hook이 `progress::guidance` 하나다).
+  - agent가 세션마다 알림 기록(마지막 보고 때·백분율, 마지막 안내 때)을 기억하고 `hooks::respond`로 안내를 정한다(시계는 인자). 기록은 기억만 한다: agent가 다시 뜨면 알림이 한 번 일찍 갈 수 있을 뿐이다.
+  - agent는 hook 답 `ok` 뒤에 Claude가 읽는 JSON 한 줄(`hookSpecificOutput.hookEventName`·`additionalContext`)을 붙이고, `aaa hook`은 그것만 표준 출력에 쓴다. 옛 agent는 `ok`만 답해 아무것도 쓰지 않고, 옛 `aaa hook`은 `ok` 뒤를 읽지 않는다. agent link·session IPC는 그대로다.
+  - `claude --settings`에 PostToolUse hook을 더했다(matcher 없음, 참고 setup.rs). 상태 hook(Stop·PermissionRequest·Notification)은 여전히 없다.
+- **Codex는 다르게 둔다(이유).** 참고는 `~/.codex/hooks.json`에 hook을 깐다. aaa는 사용자 설정을 고치지 않고 실행마다 `-c notify`만 준다(§8.15). notify는 턴 끝 알림이라 안내를 넣을 수 없다. Codex thread는 brief의 진행 안내만 받는다.
+- **시험.** agent 유닛: 참고 `helpers_and_the_reporters_own_call_do_not_trigger`·`session_start_injects_instructions_and_resets_the_record`·`reminders_are_throttled_to_once_a_minute_and_stop_at_done`를 옮겼다(1분 간격은 유닛에서만 본다, E2E는 기다리지 않는다). PostToolUse는 host 사건이 아니다. m13 `claude_thread_states_questions_and_messages`: 가짜 Claude가 실제 Claude처럼 hook 출력을 받아 적고(`HOOK_LOG`), SessionStart 지침(실행 파일 경로가 든 `report --percent 25`)과 UserPromptSubmit 안내를 받았다. e2e `host_restart_keeps_sessions_and_disconnect_is_readonly`: thread가 아닌 Claude pane의 hook은 아무것도 쓰지 않는다. 결함 심기(되돌렸다): 안내를 빼면 m13, 관리 세션 검사를 빼면 e2e, 알림 간격·report 자신 거르기를 빼거나 PostToolUse를 host에 보내면 유닛, 지침 글을 빼면 유닛·m13이 실패한다.
+
+### 8.145 ci-local: build 뒤 test·e2e·clippy를 함께, 12를 준비 도우미로 나눔(10-18, 사용자 「ci local시간이 병목일때가 많으니깐 이건 더 줄여봐」, t-0338)
+
+- **왜.** ci-local 238초(main `f86ba7b` 위)는 단계를 차례로 돌았다. 단계마다 CPU를 재 보니 test(110~117초)는 ci-local이 평균 8%만 쓰고(시험이 대부분 사건·시한을 기다린다), e2e는 12(103초)가 혼자 끝을 끌었다. 서로 기대지 않는 단계가 놀고 있었다.
+- **함께 돌기.** web·fmt·build를 차례로 돈 뒤 test·e2e·clippy를 한꺼번에 띄운다(test가 가장 긴 길이라 먼저). e2e는 같은 실행에서 build가 통과했으면 cargo를 부르지 않고 그 binary를 쓴다(test·clippy와 cargo 잠금을 다투지 않는다). `--tee`(CI는 단계마다 한 번씩 부른다)거나 셋 중 하나만 돌면 예전처럼 차례로. 요약은 단계 순서대로, 「모두」는 벽시계다.
+- **12 나누기.** 12의 단계가 앞 단계의 구독·demo·thread에 기대 있었다. 쓰는 화면·쓰는 기기 판정 넷(보는 동안·두 기기·쓰는 기기·기기별 알림 종류)은 `17-push-in-use`, 멈춘 쓰는 화면은 `18-push-stalled`로 옮겼다. 둘은 harness 준비 도우미 `pushLab`(서명 키·구독 하나·demo)으로 시작하고, 준비는 `step(…, { always: true })`라 단계 하나만 골라도 돈다. 구독이 있어야 「push 0건」 단언이 빈말이 아니라 준비에 넣었다.
+- **멈춘 쓰는 화면의 기다림.** lease 25초를 기다리던 단계를 그 파일만 `labEnv`로 `AAA_TEST_PRESENCE_LEASE_MS=4000`(t-0304가 둔 시험 설정)으로 줄이고, 쓰는 동안 남아야 하는 그 화면만 presence를 1초마다 알린다(10초 setInterval 하나를 당기고, 당긴 수를 단언한다).
+- **기기 이름이 같은 두 기기.** 나누자 첫 화면과 B를 몇 초 사이에 짝짓게 되어 18이 실패했다: 흐름 사건과 `/api/v1/push` `user`의 기기 이름(ID 앞 7자)은 ULID 시각이라 약 33초 안에 짝지은 두 기기가 같다. 시험은 가를 수 있는 것으로 본다: 18은 「focus 없음」이 아닌 결과(첫 화면은 focus가 없고 멈추지 않는다), 17 「쓰는 기기」는 근거에 적힌 그 기기의 연결 번호(`연결#N`)가 B 때와 겹치지 않는지. 기기 이름을 바꿀지는 §8.105·§8.133 쪽에서 정한다(t-0338 report).
+- **시험.** 같은 tree·기계에서 차례로 213초, 함께 다섯 번 130·122·121·123·123초(모두 통과, 다시 돌림 없음). 겹쳐도 test 116~117초(혼자 117)·e2e 88~89초(혼자 89)·m13 94.8~95.0초로 같았다. `cargo test`는 시험을 도는 동안 build 잠금을 쥐지 않는다(m13 중 부른 clippy 0.4초, 「Blocking」 없음). 끝을 정하는 길은 test 단계이고 그 안(binary 차례, m13)은 t-0327 몫이다. ci-local 순서는 가짜 단계로 실패(로그 끝·종료 1)·build 실패 뒤 건너뜀·`--tee` 차례를 봤다. 18에서 `labEnv`를 빼면 「lease 끝」 20초로 실패한다. 17 「쓰는 기기」를 혼자(두 기기 이름이 같다) 4번, 18을 4번 통과했다.
+
+### 8.146 휴대폰·좁은 창 목록은 drawer, 첫 화면은 마지막 pane(10-18, 차이 목록 2장 M1·D2)
+
+전에는 700px 이하에서 목록과 pane이 화면을 번갈아 차지했다(pane을 고르면 목록이 사라지고 머리의 「목록으로」로 돌아간다). 처음 열면 빈 화면(「왼쪽에서 하나를 고른다」)이었다. 참고 herdr-web-ui `aa624cb`대로 바꿨다.
+
+- **drawer(참고 App.tsx 290~316·1368~1378·1479~1490줄, styles.css 1560~1614줄).** 768px 이하에서 목록은 pane 위에 겹치는 drawer다. 너비는 `min(88vw, 목록 너비)`이고 머리 아래부터 화면 끝까지다. 닫히면 `translateX(-100%)`·`visibility: hidden`이다. 769px부터는 늘 옆 칸이고, 넓어지면 열려 있던 drawer를 닫는다(다시 좁아져도 scrim과 함께 나오지 않게, 참고 `wideScreen`).
+  - 연다: 화면 머리 맨 앞 단추(「목록 열기」, `aria-expanded`·`aria-controls`), 왼쪽 가장자리 24px 안에서 오른쪽으로 쓸기(`web/src/herdr/edgeSwipe.ts`, 참고 `src/lib/edgeSwipe.ts` 그대로).
+  - 닫는다: 같은 단추(「목록 닫기」), 바깥(scrim) 누름, 왼쪽으로 쓸기, Esc(capture 단계라 focus를 쥔 터미널은 받지 않는다), 줄 고르기(pane·thread·프로젝트).
+  - Esc는 위에 뜬 창(`aria-modal`·`<dialog open>`)과 열린 메뉴(`role=menu`)가 먼저 쓴다. 한 번은 메뉴, 다음은 drawer다.
+- **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다.
+  - 휴대폰(터치)은 키보드를 올리지 않는다. 데스크톱은 터미널이 바로 키보드를 받는다(참고 PaneTerminal 2072줄: 고른 것이 없던 첫 화면은 `autoSelected`가 아니다).
+  - 주소가 가리킨 pane이 없으면 빈 화면이다. 참고는 그때 첫 pane으로 가고 말을 띄우는데, 그것은 이 묶음에 넣지 않았다.
+- **다르게 둔 것.**
+  - 참고는 단추가 창 전체 머리(app-header)에 있다. aaa는 화면마다 머리가 있어(터미널·보고·프로젝트, 빈 화면은 좁은 창에서만 보이는 머리) 그 머리 맨 앞에 같은 단추를 둔다(`web/src/drawer.tsx`). drawer는 그 머리(`--head`) 아래에 선다. 데스크톱 배치는 그대로다.
+  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 「더 보기」 메뉴는 aaa에서 목록 머리(drawer 안)에 있어 메뉴도 거른다.
+  - Esc로 닫으면 drawer 안에 있던 focus를 단추로 돌린다(숨는 drawer와 함께 focus가 사라지지 않게).
+  - 설정 톱니는 drawer 바닥 줄에 있다. 설정을 열어도 drawer를 닫지 않아, 닫으면 focus가 보이는 톱니로 돌아온다(QA Q10). 참고는 설정을 머리·명령에서 열어 drawer를 닫는다.
+  - 참고는 drawer(`.sidebar`) 안에 목록(`.sidebar-shell`, `height:100%`)이 따로 있다. aaa는 한 요소라 drawer일 때 `height:auto`로 둔다. 그러지 않으면 높이가 화면 전체라 바닥 줄(톱니·사용량)이 머리 높이만큼 화면 밖으로 밀린다(시험이 잡았다).
+- **시험.**
+  - `web/test/edgeSwipe.test.mjs`: 참고 `edgeSwipe.test.ts`를 node:test로 옮겼다(22개).
+  - 웹 E2E `04-app-shell.mjs` 「목록 drawer」: 처음엔 닫힘, 단추로 열고 닫기(이름·`aria-expanded`), 너비 88vw 이하, 바닥 줄까지 화면 안, scrim 누름, Esc 뒤 focus는 단추, CDP 터치로 가장자리 쓸기 열기·왼쪽 쓸기 닫기·가장자리 밖 쓸기는 무시, 줄 고르면 닫힘, 1024로 넓히면 옆 칸이고 닫힘, 다시 390이어도 닫힘, iPad 세로 768 drawer·가로 1024 옆 칸(`phone-drawer-open`·`ipad-drawer-open`·`ipad-landscape-sidebar`).
+  - 「첫 화면」: 휴대폰 첫 줄·키보드 없음·drawer 닫힘, 다른 pane을 열면 같은 기기 새 탭은 그 pane, 그 pane이 끝나면 첫 줄, 데스크톱 첫 줄·터미널 focus(`phone-first-screen`).
+  - 결함 심기: 첫 화면 끄기·기억 끄기·drawer `height:auto` 빼기를 하나씩 넣으면 그 단계가 실패한다.
+  - 다른 시험은 목록 안의 것을 `inList`(harness: 닫힌 drawer면 열고 누름, 닫히는 중이면 움직임이 끝난 뒤 봄)로 누른다. 특정 pane을 첫 화면으로 여는 시험은 주소(`pairPage({hash: paneHash(name)})`)로 연다. 첫 화면이 열자마자 붙는 WebSocket을 듣는 시험은 `onPage`로 먼저 듣는다.
+
+### 8.147 TUI 붙여넣기와 그림 파일 끌어놓기(10-18, 차이 목록 E 「그림 파일 끌어놓기」, FRONT_API 1.23)
 
 - **참고.** herdr client는 바깥 터미널의 bracketed paste(2004)를 켠다(`client/terminal_setup.rs` `EnableBracketedPaste`).
   - 터미널에 파일을 끌어 놓으면 터미널은 그 경로를 붙여 넣는다. 그 글이 그림 파일 하나의 경로면 herdr는 파일을 그림으로 서버에 보낸다(`client/mod.rs` 866~875줄, `clipboard_images.rs` `image_path_from_terminal_drop`).
@@ -3066,7 +3194,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **옮긴 것.**
   - TUI는 시작할 때 2004를 켜고 끝날 때(오류·panic 포함) 끈다.
   - 붙여 넣은 글은 새 요청 `pane_paste {pane, text}`로 보낸다. host가 그 pane 모드대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). 차례·lease는 키 입력(`pane_input`)과 같다.
-  - 1.22 전 host에는 전처럼 친 글(`pane_input`)로 보낸다. 모르는 요청은 연결을 끊기 때문이다.
+  - 1.23 전 host에는 전처럼 친 글(`pane_input`)로 보낸다. 모르는 요청은 연결을 끊기 때문이다.
   - 끌어놓기 판정은 herdr 규칙 그대로다(`clip::dropped_image`). 그림이면 Ctrl+V 그림과 같은 길로 올리고 셸 줄에 따옴표 경로를 넣는다(§8.28·§8.51).
   - 붙여넣기가 가는 곳은 herdr `handle_raw_events`·`insert_overlay_text`대로다. 이름 창은 이름에, 검색 중인 단축키 창은 검색어에 넣는다(줄바꿈은 빈칸). 다른 창이 떴거나 Terminal 모드가 아니면(prefix·탐색·크기) 버린다. pane과 그림은 그 밖에서만이다. 전에는 창이 없으면 prefix 모드에서도 pane에 갔고, 단축키 검색 붙여넣기는 버렸다(2004를 안 켜 낱 키로 올 때는 검색어에 들어갔다).
 - **참고와 다른 것.**
@@ -3075,7 +3203,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - **Windows(3 OS).** herdr는 Windows 콘솔에서 VT 입력을 켜고 제 해석기(`client/input/windows_vti.rs`, 4,471줄)로 붙여넣기를 받는다. aaa TUI는 crossterm 입력을 쓴다. crossterm은 Windows에서 붙여넣기 사건을 주지 않고, 2004를 켜면 표지가 낱 키로 pane에 들어간다. 그래서 Windows에서는 2004를 켜지 않는다. 붙여넣기는 전처럼 낱 키이고 끌어놓기는 없다. VT 입력 해석기를 옮기는 일은 따로 남긴다.
 - **시험.**
   - 유닛 `clip::` 넷(herdr `remote_image_file_drop_bridge_*`): 절대 경로, 따옴표와 끝 줄바꿈, `\ ` escape, 그림이 아닌 것(상대 경로·그림 아닌 확장자·여러 줄·빈 글·bmp·폴더·빈 파일·상한 넘음과 상한 딱).
-  - 유닛 `pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text`: 1.22 host에는 `pane_paste`, 1.21 host에는 `pane_input`.
+  - 유닛 `pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text`: 1.23 host에는 `pane_paste`, 1.22 host에는 `pane_input`.
   - TUI E2E `paste_and_image_drop_like_herdr`(약 1초):
     - 바깥 터미널 2004를 켜고, 나가면 끈다.
     - 2004를 안 켠 프로그램(`cat -v`)에는 감싸지 않고 ESC를 뺀다. 그림 아닌 절대 경로·상대 그림 경로·없는 그림 경로는 글 그대로다.
@@ -3084,9 +3212,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - prefix 모드의 붙여넣기는 pane에 가지 않는다. 검색 중인 단축키 창에 붙이면 거르고, 새 탭 이름 창에 붙인 `붙인\n탭`은 `붙인 탭`이 된다.
   - 변형 확인: 열다섯 모두 실패한다. 끌어놓기 판정 끔, bmp 허용, txt 허용, 상대 경로 허용, escape 안 풂, host가 안 감쌈, host가 늘 감쌈, ESC 안 뺌, 옛 host 대체 없음, 2004 안 켬, 2004 안 끔, 크기 상한 없음, 단축키 검색 붙여넣기 버림, prefix 모드도 pane에, 이름 창 붙여넣기 버림.
   - 시험 경합 고침(10-18 미리 병합 ci-local): 둘째 단계 마지막에 cat을 다시 띄우고 화면 지움만 기다린 뒤 ^C를 보냈다. ^C가 셸의 `clear`와 `cat` 사이에 닿으면 cat이 남아 셋째 단계 명령 줄을 읽었다. 이제 ^C는 표지가 cat을 지나온 뒤에만 보내고 마지막에는 cat을 다시 띄우지 않는다. `clear`와 `cat` 사이에 ^C를 무시하는 1초를 넣으면 옛 구조는 같은 꼴로 실패하고 새 구조는 통과한다.
+  - 둘째 경합(10-18 착지 창 미리 병합 ci-local): 붙여 넣은 줄을 cat이 되돌리기 전에 표지 줄을 쳐서, 그 tty 메아리(TUI가 「e」·「nd-a」로 나눠 보냄) 사이에 cat 출력이 끼어 표지가 한 번만 보였다. 표지 줄을 없애고, 붙여 넣은 줄이 두 번(메아리와 cat 출력) 보인 뒤에 단언하고 다음 글을 친다. 기다리는 조각(`two`·경로·`31my`)은 감싸기·ESC 빼기가 틀려도 나오므로 틀리면 기다림이 아니라 단언이 실패한다. 옛 구조에 표지를 둘로 나눠 치고 cat을 0.3초 늦추면 같은 문구로 실패하고, 새 구조는 cat을 늦춰도 통과한다.
 ||||||| d6bb95c
 
-### 8.142 파일 보기의 폴더 보기(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205, FRONT_API 1.23)
+### 8.148 파일 보기의 폴더 보기(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205, FRONT_API 1.24)
 
 - **참고.** herdr-web-ui 파일 보기는 받은 경로가 파일이 아니면(404) 같은 경로를 폴더로 읽어 본다. 폴더면 폴더 목록(`DirectoryBrowser`)을 그린다(`FileViewer.tsx` 186~197·281줄). 서버는 `server/directories.ts` `listDirectories`다.
   - 폴더 한 단계의 폴더와 파일(크기)을 보인다. 폴더 먼저, 각각 이름순(`localeCompare` base·numeric), 500개까지. 숨은 이름(`.`)은 「숨김 항목 표시」를 고를 때만이다. symlink는 가리키는 것으로 본다.
@@ -3105,7 +3234,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 변형 확인: 여덟 모두 실패한다. 허용 폴더 안 봄·위 폴더 안 거름·숨은 이름 늘 넣음·폴더 순서 글자순(agent 유닛과 E2E), 보기 기기도 폴더(proto 유닛과 E2E), 폴더 목록을 그리지 않음·허용 밖 폴더 까닭 없음·파일 눌러도 안 엶(E2E).
   - aaa 모양: 참고 CSS를 그대로 두면 aaa `style.css`의 전역 `button`(가운데 맞춤·고정 높이)이 목록 줄에 새어 이름이 가운데로 갔다. `DirectoryBrowser.css` 끝에서 되돌린다.
 
-### 8.143 「파일 뷰어」 설정: 긴 줄 바꿈·Markdown 너비(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205)
+### 8.149 「파일 뷰어」 설정: 긴 줄 바꿈·Markdown 너비(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205)
 
 - **참고.** herdr-web-ui 설정 「채팅」 page 끝 무리 「파일 뷰어」(`SettingsDialog.tsx` 374~385줄)에 둘이 있다. 둘 다 이 기기 설정이다(`settings.ts` `wrapCode`·`markdownWidth`, `device` 범위).
   - 「긴 줄 바꿈」(기본 꺼짐): 파일 보기 소스의 긴 줄을 옆으로 굴리지 않고 접는다(`TextFileView` `CodeLines wrap`).

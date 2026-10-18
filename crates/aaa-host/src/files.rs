@@ -5,7 +5,7 @@
 //! - 그 경로는 새 탭·내려받기·그림이 그대로 쓴다. 경로만으로는 열리지 않고 짝지은 조작 기기의 cookie도 있어야 한다
 //!   (참고 `/api/fs/file`도 기기 인증 뒤다). 경로를 받는 것도 조작 기기만이다(`needs_control`, 참고도 보기 전용 기기는 403).
 //! - host에 모으지 않고 agent에서 조각으로 스트리밍한다. Range를 받는다(글은 앞부분만 읽는다).
-//! - 폴더 경로면 웹이 `PaneDir`로 그 폴더 한 단계를 읽는다(참고 `DirectoryBrowser`, plan §8.142). 조건은 `PaneFile`과 같다.
+//! - 폴더 경로면 웹이 `PaneDir`로 그 폴더 한 단계를 읽는다(참고 `DirectoryBrowser`, plan §8.148). 조건은 `PaneFile`과 같다.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
