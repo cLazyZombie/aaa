@@ -28,6 +28,7 @@ mod output;
 mod pr;
 mod prefs;
 mod project;
+mod prompt;
 mod prompt_box;
 mod push;
 mod restore;
@@ -348,6 +349,8 @@ pub struct Host {
     collect_lock: tokio::sync::Mutex<()>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
+    /// 질문 저장과 화면 선택 창 붙이기(읽고 쓰기)를 차례로: 답한 질문을 선택 창 붙이기가 다시 열지 않는다
+    question_lock: std::sync::Mutex<()>,
     /// 웹 화면들이 함께 쓰는 설정과 고정(prefs.rs). events 연결마다 구독한다
     pub(crate) preferences: prefs::Store,
     /// 취소한 기기 id. 그 기기의 열린 WebSocket(events·pane)이 이것을 듣고 바로 닫는다(§6.4)
@@ -521,6 +524,7 @@ impl Host {
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
+            question_lock: std::sync::Mutex::new(()),
             preferences,
             device_revoked: broadcast::channel(64).0,
             revoked_devices: Mutex::new(Default::default()),
@@ -1052,6 +1056,7 @@ impl Host {
                 self.project_open(&project, profile, new, actor).await
             }
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
+            FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
                 let kind = kind.unwrap_or(if repo.is_some() {
@@ -1147,9 +1152,11 @@ impl Host {
                 self.thread_keys(&project, &thread, &keys, text, actor).await
             }
             FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
-            FrontRequest::QuestionAnswer { id, choice } => {
-                self.answer(&id, &choice, actor).await.map(FrontResponse::Question)
+            FrontRequest::QuestionAnswer { id, choice, menu, pick } => match (menu, pick) {
+                (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
+                _ => self.answer(&id, &choice, actor).await,
             }
+            .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
@@ -1211,21 +1218,8 @@ impl Host {
                 .map(|v| FrontResponse::Evaluation(Box::new(v))),
             FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
-                // 옛 agent는 모르는 `profile` 칸을 버리고 셸을 띄운다: 보내기 전에 거른다
-                if profile.is_some()
-                    && !self
-                        .inner
-                        .lock()
-                        .unwrap()
-                        .machines
-                        .get(&mid)
-                        .is_some_and(|m| m.features.iter().any(|f| f == "profile.v1"))
-                {
-                    return Err(err(
-                        ErrorCode::BadRequest,
-                        "이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)",
-                    ));
-                }
+                let resolved_profile =
+                    profile.as_deref().map(|name| self.resolved_profile(None, &mid, name)).transpose()?;
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -1236,7 +1230,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile,
-                    safety: None,
+                    resolved_profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1258,6 +1252,9 @@ impl Host {
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
             FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
+            FrontRequest::ThreadFile { project, thread, path } => {
+                self.thread_file(actor, &project, &thread, &path).await
+            }
             FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
             FrontRequest::PaneChat { pane, thinking } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
@@ -1644,7 +1641,7 @@ impl Host {
             role: info.role,
             harness: info.harness.clone(),
             profile: None,
-            safety: None,
+            resolved_profile: None,
         };
         let new_id = self.respawn(&id, &mid, spec, actor).await?;
         self.pane_view_of(&new_id, role)
@@ -1810,7 +1807,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile: None,
-                    safety: None,
+                    resolved_profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1843,7 +1840,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile: None,
-                    safety: None,
+                    resolved_profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);

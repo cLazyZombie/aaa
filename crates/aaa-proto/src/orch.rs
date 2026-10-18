@@ -51,7 +51,7 @@ pub enum ThreadKind {
     Adopted,
 }
 
-/// agent.toml profile을 그 머신에서 해석한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
+/// host profile에 그 머신 실행 경로·환경·hook을 적용한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Launch {
     pub profile: String,
@@ -75,7 +75,7 @@ pub struct ProfileView {
     /// profile이 붙이는 인자(옛 agent는 보내지 않는다)
     #[serde(default)]
     pub args: Vec<String>,
-    /// agent.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
+    /// host.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
     #[serde(default)]
     pub builtin: bool,
 }
@@ -83,6 +83,9 @@ pub struct ProfileView {
 /// host → agent: thread 자리를 만든다(worktree 또는 작업 폴더)와 brief.md 쓰기, profile 해석
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadPrepare {
+    /// host가 푼 profile. host_profiles.v1 기능이 있는 agent에만 보낸다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_profile: Option<ResolvedProfile>,
     pub project: String,
     pub thread: String,
     pub title: String,
@@ -96,6 +99,17 @@ pub struct ThreadPrepare {
     /// thread를 띄울 때 safety(plan §8.163). `launch_safety.v1`을 알린 agent에만 보낸다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<LaunchSafety>,
+}
+
+/// host에서 해석한 실행 설정. command·env는 옛 shell/custom profile의 호환 필드이며 머신 덮어쓰기가 우선이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedProfile {
+    pub harness: String,
+    pub model: String,
+    pub effort: String,
+    pub args: Vec<String>,
+    pub command: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// host → agent: thread 인자에 더할 safety(herdr-projects `profiles::launch_args`·`Safety::launch_args`). host는 profile의
@@ -171,6 +185,11 @@ pub struct LibraryFile {
     pub size: u64,
     /// host에 사본이 없다: 볼 때 agent에서 스트리밍한다(작업 폴더가 남아 있을 때만)
     pub on_agent: bool,
+    /// 파일 보기가 고를 MIME·종류(파일 보기 `FileInfo`와 같은 표). 옛 목록 파일에는 없어 host가 줄 때 채운다
+    #[serde(default)]
+    pub mime: String,
+    #[serde(default)]
+    pub kind: crate::msg::FileKind,
 }
 
 /// 웹에서 보는 보고서·결과물. `base`는 짧은 수명의 읽기 전용 경로(`/v/<cap>/`)이고 그 아래에 `path`를 붙인다.
@@ -297,6 +316,38 @@ pub enum QuestionState {
     Gone,
 }
 
+/// 화면에서 읽은 선택 창(herdr-web-ui `InteractivePrompt`, plan §8.172). `id`는 내용(커서·체크 상태 빼고)의 hash라,
+/// 답할 때 화면을 다시 읽어 다르면 거절한다(그 사이 바뀐 질문에 잘못 답하지 않는다).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct QuestionMenu {
+    pub id: String,
+    /// question(AskUserQuestion)·approval(도구 승인)·plan(계획 승인)·menu(여러 질문의 검토)
+    pub kind: String,
+    pub title: String,
+    pub question: String,
+    /// 참고 글(명령·계획·검토할 답)
+    pub body: Option<String>,
+    pub options: Vec<MenuOption>,
+    pub multi_select: bool,
+    /// 「직접 쓰기」 자리. `options.len()`이면 그 줄은 `options`에 없다(Claude 질문의 「Type something.」)
+    pub custom_option_index: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MenuOption {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+/// 선택 창 답(참고 `PromptAnswer`): 하나 고르기·여러 개 고르기·직접 쓰기 가운데 하나
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum MenuPick {
+    Option { index: u32 },
+    Options { indices: Vec<u32> },
+    Custom { text: String },
+}
+
 /// 확인창 질문(§8.4). 답은 host가 세션·상태를 다시 확인한 뒤 adapter 키 입력으로 보낸다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuestionView {
@@ -314,6 +365,9 @@ pub struct QuestionView {
     pub answer: Option<String>,
     #[ts(type = "number")]
     pub created_at_ms: u64,
+    /// 화면에서 읽은 선택 창(못 읽었으면 None: 그때는 `options`의 예·아니오로 답한다)
+    #[serde(default)]
+    pub menu: Option<QuestionMenu>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
@@ -759,6 +813,7 @@ mod tests {
             state: QuestionState::Open,
             answer: None,
             created_at_ms: 1,
+            menu: None,
         };
         let m = MessageView {
             id: "m-1".into(),

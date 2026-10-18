@@ -300,7 +300,7 @@ impl Host {
             harness: info.harness.clone(),
             // argv는 처음 띄울 때 profile을 풀어 hook까지 붙인 그 명령이다: 다시 풀지 않는다
             profile: None,
-            safety: None,
+            resolved_profile: None,
         };
         let new = match self.respawn(id, mid, spec, ACTOR).await {
             Ok(new) => new,

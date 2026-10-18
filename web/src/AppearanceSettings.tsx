@@ -1,6 +1,6 @@
 // 설정 → 모양(herdr-web-ui SettingsDialog.tsx `AppearancePage`·`PaletteSelect` 235~290줄). 문구는 참고 i18n.ko.ts 그대로다.
 // 옮긴 줄: 테마·색상(시스템이면 라이트·다크 색상 따로)·밀도·사이드바 행·상태 표시, 「타이포그래피」의 인터페이스 글자 크기(차이 목록 T4).
-// 언어·Agents 순서·로고 색은 그 기능을 옮길 때 넣는다. 밀도·글자 크기는 참고처럼 이 기기 설정이다(SETTING_SCOPE "device").
+// Agents 순서·로고 색은 그 기능을 옮길 때 넣는다. 언어는 두지 않는다(한국어 고정, 사용자 결정, plan §8.169). 밀도·글자 크기는 참고처럼 이 기기 설정이다(SETTING_SCOPE "device").
 import { Segmented, SettingsGroup, SettingsRow, Stepper } from "./herdr/SettingsControls.tsx";
 import { UI_FONT_MAX, UI_FONT_MIN } from "./herdr/typography.ts";
 import { uiFontSize, updateAppearance, useAppearance, type Palette } from "./theme";

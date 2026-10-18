@@ -6,6 +6,8 @@
 //!   (참고 `/api/fs/file`도 기기 인증 뒤다). 경로를 받는 것도 조작 기기만이다(`needs_control`, 참고도 보기 전용 기기는 403).
 //! - host에 모으지 않고 agent에서 조각으로 스트리밍한다. Range를 받는다(글은 앞부분만 읽는다).
 //! - 폴더 경로면 웹이 `PaneDir`로 그 폴더 한 단계를 읽는다(참고 `DirectoryBrowser`, plan §8.148). 조건은 `PaneFile`과 같다.
+//! - 보고서 안 파일 링크는 `ThreadFile`이다(plan §8.171). pane 대신 그 thread의 머신에서 thread 작업 폴더(worktree)
+//!   기준으로 찾는다. 끝난 thread여도 worktree가 남아 있으면 열린다. 읽기 경로와 조건은 `PaneFile`과 같다.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -92,6 +94,44 @@ impl Host {
             ));
         }
         let res = conn.request(AgentRequest::FileLocate { session: id.clone(), path: path.to_string() }).await?;
+        self.file_found(res, mid, actor, "pane_file", &id)
+    }
+
+    /// 보고서 안 파일 링크: thread의 머신에서 thread 작업 폴더 기준으로 찾는다(plan §8.171). 그 머신 agent가 `file_in.v1`을
+    /// 모르면 binary를 바꾸라고 알린다.
+    pub(crate) async fn thread_file(
+        &self,
+        actor: &str,
+        project: &str,
+        thread: &str,
+        path: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let rec = self.load(project, thread)?;
+        // agent가 시작한 폴더(worktree 또는 작업 폴더)다. `work_dir`(그 안 `.aaa/…`, brief·보고·결과물)가 아니다
+        let dir = rec.cwd.clone().ok_or_else(|| err(ErrorCode::NotFound, "thread 작업 폴더(worktree) 기록이 없다"))?;
+        let mid = rec.machine_id.clone();
+        let conn = self.live_conn(&mid)?;
+        let knows =
+            self.inner.lock().unwrap().machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "file_in.v1"));
+        if !knows {
+            return Err(err(
+                ErrorCode::Unavailable,
+                "그 머신 agent가 보고서 안 파일 열기를 아직 모른다(agent binary를 바꿔야 한다)",
+            ));
+        }
+        let res = conn.request(AgentRequest::FileLocateIn { dir, path: path.to_string() }).await?;
+        self.file_found(res, mid, actor, "thread_file", &format!("{project}/{thread}"))
+    }
+
+    /// 찾은 파일 하나에 읽기 경로를 준다. 못 정했으면 후보만
+    fn file_found(
+        &self,
+        res: AgentResponse,
+        mid: String,
+        actor: &str,
+        action: &str,
+        what: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
         let AgentResponse::FileLocated { info, candidates } = res else {
             return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
         };
@@ -104,7 +144,7 @@ impl Host {
             caps.retain(|_, c| c.until > Instant::now());
             caps.insert(cap.clone(), FileCap { machine: mid, info: info.clone(), until: Instant::now() + FILE_TTL });
         }
-        self.db.audit(actor, "pane_file", &format!("{id} {} {} bytes", info.path, info.size));
+        self.db.audit(actor, action, &format!("{what} {} {} bytes", info.path, info.size));
         let url = format!("/f/{cap}/{}", pct(&info.name));
         Ok(FrontResponse::PaneFile { info: Some(info), candidates: Vec::new(), url: Some(url) })
     }

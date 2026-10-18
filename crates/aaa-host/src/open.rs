@@ -3,8 +3,9 @@
 //! - 도는 coordinator가 있으면 아무것도 만들지 않고 가장 최근에 상태가 바뀐 것을 알린다(`--new`면 하나 더). coordinator는
 //!   aaa의 판정(host 머신에서 프로젝트 폴더를 작업 폴더로 도는 pane, [`Host::coordinator_panes`]) 중 agent가 있는 pane이다:
 //!   참고도 agent 목록에서 그 폴더의 agent만 센다. 사람 셸이 그 폴더에 있어도 coordinator가 도는 것은 아니다.
-//! - 띄우기: host 머신 agent가 profile을 그 머신 agent.toml로 풀어(§8.126 `SpawnSpec.profile`: hook 설정·`--session-id`) 프로젝트
-//!   폴더에서 띄우고, 프로젝트 이름 workspace(없으면 만든다)의 새 탭 「coordinator」에 둔다(참고 `tab_create`·`workspace_create`).
+//! - 띄우기: host가 profile을 host.toml 정본으로 풀어(§8.170 `SpawnSpec.resolved_profile`) host 머신 agent가 머신 경로·hook
+//!   설정·`--session-id`(§8.126)만 더해 프로젝트 폴더에서 띄우고, 프로젝트 이름 workspace(없으면 만든다)의 새 탭
+//!   「coordinator」에 둔다(참고 `tab_create`·`workspace_create`).
 //! - 참고와 다름: 셸 pane에서 치면 그 pane에서 띄우는 길(`run_here`)은 없다. aaa pane은 처음부터 그 명령으로 띄우고 셸 뒤에
 //!   agent를 붙이지 않는다(§8.126이 참고의 「agent가 못 떴을 때 열기」를 뺀 것과 같은 까닭). 그래서 `--tab`이 없다. host가
 //!   하나라 `--rebind`도 없다. 도는 coordinator에 focus를 옮기지 않는다(focus는 화면마다다): pane ID를 돌려준다.
@@ -13,13 +14,12 @@
 //! - 대화 잇기는 open이 하지 않는다: profile로 띄운 pane은 SessionStart hook으로 대화 ID를 알고 재부팅 복원(§8.111)이 잇는다.
 //! - safety(참고 `check_allowed`·`launch_args`·`Safety::launch_args`): profile은 `coordinator_profiles`에 있어야 하고(돌아도
 //!   거부), 띄울 때 yolo면 harness의 권한 건너뛰기 인자를, 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile이면
-//!   `coordinator_agent_args`를 붙인다. agent가 profile을 풀므로 `SpawnSpec.safety`로 보낸다(`spawn_safety.v1`).
+//!   `coordinator_agent_args`를 붙인다. host가 profile을 풀 때 붙인다([`Host::resolved_coordinator_profile`]).
 
 use std::sync::Arc;
 
 use aaa_proto::{
-    ErrorBody, ErrorCode, FrontResponse, LaunchSafety, LayoutNode, PaneView, ProjectOpened, ProjectStatus, Role,
-    SpawnSpec, Tab,
+    ErrorBody, ErrorCode, FrontResponse, LayoutNode, PaneView, ProjectOpened, ProjectStatus, Role, SpawnSpec, Tab,
 };
 
 use crate::{Host, err, util};
@@ -73,17 +73,13 @@ impl Host {
         let mid = self.machine_views().into_iter().find(|m| m.local).map(|m| m.id).ok_or_else(|| {
             err(ErrorCode::NotFound, "host 머신에 agent가 없다: coordinator는 프로젝트 폴더가 있는 host 머신에서 돈다")
         })?;
-        // 참고처럼 profile부터 푼다: 없는 profile은 coordinator가 돌아도 거부한다(agent가 띄울 때 쓰는 규칙과 같다:
-        // 그 머신 agent.toml, 없으면 기본 profile claude·codex)
-        let known = match self.profiles(Some(&mid)).await? {
-            FrontResponse::Profiles { profiles, .. } => profiles.into_iter().map(|p| p.name).collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
+        // 참고처럼 profile부터 푼다: 없는 profile은 coordinator가 돌아도 거부한다(띄울 때 푸는 규칙과 같다: host.toml
+        // 정본, 없으면 기본 profile claude·codex, §8.170)
+        let known: Vec<String> = self.profile_config()?.profiles.into_keys().collect();
         if !known.contains(&profile) && aaa_config::profile_edit::builtin(&profile).is_none() {
             let from = if asked { "--profile" } else { "coordinator 기본 profile" };
             return Err(bad(format!(
-                "{from} `{profile}`가 host 머신({}) agent.toml에 없다(있는 것: {}, 기본 profile: claude, codex). 사람이 `aaa profile add`로 더한다",
-                self.machine_name(&mid),
+                "{from} `{profile}`가 host.toml에 없다(있는 것: {}, 기본 profile: claude, codex). 사람이 `aaa profile add`로 더한다",
                 if known.is_empty() { "없음".to_string() } else { known.join(", ") }
             )));
         }
@@ -138,21 +134,8 @@ impl Host {
                 notes,
             })));
         }
-        if !self.machine_feature(&mid, "profile.v1") {
-            return Err(bad("이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)"));
-        }
-        // 사람이 켠 yolo·coordinator_agent_args가 빠진 채 뜨지 않게: 모르는 agent면 조용히 빼지 않고 거부한다
-        let launch_safety = (safety.yolo || !safety.coordinator_agent_args.is_empty()).then(|| LaunchSafety {
-            yolo: safety.yolo,
-            thread_agent_args: safety.coordinator_agent_args.clone(),
-            default_profile: self.default_coordinator_profile(project),
-        });
-        if launch_safety.is_some() && !self.machine_feature(&mid, "spawn_safety.v1") {
-            return Err(bad(format!(
-                "host 머신({}) agent가 오래돼 safety yolo·coordinator_agent_args를 coordinator에 붙이지 못한다(agent binary 반영 필요). 사람이 `aaa safety yolo {project} off`·`aaa safety set {project} coordinator_agent_args default`로 끌 수도 있다",
-                self.machine_name(&mid)
-            )));
-        }
+        // host가 safety(coordinator 몫)까지 푼다. host_profiles.v1을 모르는 agent면 정의를 잃은 채 이름만 보내지 않고 거부한다
+        let resolved = self.resolved_coordinator_profile(project, &mid, &profile)?;
         let name = match running.len() {
             0 => format!("{project} coordinator"),
             n => format!("{project} coordinator {}", n + 1),
@@ -168,7 +151,7 @@ impl Host {
             role: Some(Role::Coordinator),
             harness: None,
             profile: Some(profile.clone()),
-            safety: launch_safety,
+            resolved_profile: Some(resolved),
         };
         let id = self.spawn_on(&mid, spec, actor).await?;
         // spawn 사이에 다른 layout 변경이 있었을 수 있다: 최신을 읽어 붙인다

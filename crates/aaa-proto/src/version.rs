@@ -20,8 +20,7 @@ impl std::fmt::Display for Version {
 /// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다), `MergeLand`·`Landed`를 없앰(새 host는 보내지 않는다, §8.135),
 /// `ThreadCleanup.uncopied`(옛 agent는 버리지만 host가 `keep_worktree`도 켜서 worktree는 남는다, §8.135),
 /// `ThreadPrepare.safety`·`ThreadRebrief.safety`(agent 기능 `launch_safety.v1`이 있을 때만 보낸다, §8.163),
-/// `AgentRequest::ThreadAdopt`(agent 기능 `adopt.v1`이 있을 때만 보낸다, §8.173),
-/// `SpawnSpec.safety`(agent 기능 `spawn_safety.v1`이 있을 때만 보낸다, §8.173).
+/// `AgentRequest::ThreadAdopt`(agent 기능 `adopt.v1`이 있을 때만 보낸다, §8.173).
 /// host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
@@ -48,6 +47,11 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.27: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.156·§8.157),
 /// 1.28: ProfileView `args`·`builtin`(기본 profile claude·codex, plan §8.163),
 /// 1.29: PaneView `replaced`(새 pane이 대신한 옛 ID, 보던 화면이 따라간다, plan §8.111 QA 고침),
+/// 1.30: 사건 `web`(host가 주는 웹 빌드, plan §8.166),
+/// 1.31: 결과물 목록의 `LibraryFile.mime`·`kind`(앱 안 파일 보기, plan §8.168)
+/// 같은 1.31 배포에 host 정본 `ProfileResolve`를 더한다(§8.170). host_profiles.v1은 AGENT_LINK 1.4의 선택 기능이다.
+/// 1.32: 보고서 안 파일 링크 `thread_file`(thread worktree 기준, plan §8.171)과 질문의 화면 선택 창 `QuestionView.menu`·그 답
+/// `question_answer`의 `menu`·`pick`(plan §8.172). 한 번에 착지해 minor 하나로 묶는다(1.31 front가 그대로 붙는다),
 /// 1.33: `project_create` 옵션(goal·repos·profile)·`project_set`, ProjectView `status`·`projects` `all`·`project_lifecycle`·
 /// `project_delete`·`project_rename`·`project_sweep`, `thread_adopt`·ThreadKind `adopted`, `project_open`·`ProjectOpened`·ProjectView
 /// `coordinator_profile`·`coordinator_profiles`(4장 G·A, plan §8.173). 한 번에 착지해 minor 하나로 묶는다(1.32 front가 그대로 붙는다)

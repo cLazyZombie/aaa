@@ -6,7 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   AA, root, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList, askClaude,
 } from "../lib/harness.mjs";
 
 // 화면 감지 시작 유예 0(기본 3초, aaa-agent detect/state.rs startup_grace): 가짜 harness 화면은 뜨자마자 그대로다.
@@ -75,6 +75,91 @@ export default async function ({ ctl, page }) {
     if (ph.errors.length) throw new Error(ph.errors.join("; "));
     await ph.page.context().close();
     aaa("pane", "kill", "q2");
+  });
+
+  await step("화면 선택 창 카드(herdr-web-ui PromptCard, 차이 목록 Q2): 선택지 설명·추천·번호, 터미널에서 옮긴 커서에서 세어 고름, 그 사이 바뀐 창은 거절하고 새 창으로, 직접 쓰기, 여러 질문(하나 → 여러 개 체크 → 검토)", async () => {
+    const opened = async (pane, not = []) => {
+      const q = await until("열린 선택 창 질문", () => aaa("question", "list").questions.find((x) => x.pane === pane && x.menu && !not.includes(x.menu.id)));
+      const card = page.getByTestId(`dock-question-${q.id}`).and(page.locator(`[data-menu="${q.menu.id}"]`));
+      await card.waitFor();
+      return { q, card };
+    };
+    const said = (pane, text) => until(`화면에 「${text}」`, () => aaa("pane", "read", pane, "--source", "recent").text.includes(text));
+    const p1 = aaa("tab", "create", "--machine", "labA", "--label", "ask1", "--", askClaude, "one").tabs.at(-1).root.pane;
+    await inList(page, "pane-ask1");
+    let { q, card } = await opened(p1);
+    const shown = await card.evaluate((c) => ({
+      title: c.querySelector("h2")?.textContent,
+      question: c.querySelector(".prompt-card-question")?.textContent,
+      options: [...c.querySelectorAll(".prompt-card-option")].map((o) => [
+        o.querySelector(".prompt-card-number [aria-hidden]")?.textContent,
+        o.querySelector(".prompt-card-option-label")?.textContent,
+        o.querySelector(".prompt-card-option-description")?.textContent ?? null,
+      ]),
+      custom: c.querySelector(".prompt-card-custom input")?.getAttribute("placeholder"),
+    }));
+    const want = {
+      title: "저장소",
+      question: "결과를 어디에 둘까요?",
+      options: [["1", "SQLite 추천", "한 파일, 설치 없음"], ["2", "Postgres", "서버가 필요하다"], ["3", "파일 몇 개", null]],
+      custom: "답을 입력",
+    };
+    if (JSON.stringify(shown) !== JSON.stringify(want)) throw new Error(`선택 창 카드 ${JSON.stringify(shown)}`);
+    // 설명이 붙은 줄은 그만큼 자라고 다음 줄과 겹치지 않는다(앱 button 기본의 고정 높이·한 줄을 쓰지 않는다)
+    const overlap = await card.evaluate((c) => {
+      const rows = [...c.querySelectorAll(".prompt-card-option")].map((o) => [o.getBoundingClientRect(), o.querySelector(".prompt-card-option-description")?.getBoundingClientRect()]);
+      return rows.flatMap(([r, d], i) => [
+        ...(d && d.bottom > r.bottom + 0.5 ? [`${i + 1} 설명이 줄 밖`] : []),
+        ...(i + 1 < rows.length && r.bottom > rows[i + 1][0].top + 0.5 ? [`${i + 1}·${i + 2} 겹침`] : []),
+      ]);
+    });
+    if (overlap.length) throw new Error(`선택지 줄: ${overlap.join(", ")}`);
+    await shot(page, "desktop-prompt-card");
+    // 터미널에서 커서를 둘째로 옮겨도 같은 창이다: 카드의 셋째는 거기서 한 칸 아래다
+    aaa("pane", "send-keys", "ask1", "down");
+    await until("커서가 둘째 줄", () => aaa("pane", "read", "ask1", "--source", "recent").text.includes("❯ 2. Postgres"));
+    // 그 사이 터미널에서 창이 바뀌었다(선택지 이름): 낡은 카드의 답은 거절되고 카드는 새 창으로 다시 그린다. 키는 가지 않는다
+    aaa("pane", "send-text", "ask1", "r");
+    await until("바뀐 선택지", () => aaa("pane", "read", "ask1", "--source", "recent").text.includes("2. MySQL"));
+    const refused = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "question_answer");
+    await card.getByRole("button", { name: /Postgres/ }).click();
+    const res = await (await refused).json();
+    if (!JSON.stringify(res).includes("화면의 질문이 바뀌었다")) throw new Error(`낡은 카드 답: ${JSON.stringify(res)}`);
+    ({ q, card } = await opened(p1, [q.menu.id]));
+    if (!(await card.innerText()).includes("MySQL")) throw new Error(`새 창 카드: ${await card.innerText()}`);
+    await card.getByRole("button", { name: /파일 몇 개/ }).click();
+    await said("ask1", "answer: 파일 몇 개");
+    // 다음 질문: 직접 쓰기(한글, 글자를 그 줄에 친 뒤 Enter)
+    ({ q, card } = await opened(p1, [q.menu.id]));
+    if ((await card.locator("h2").textContent()) !== "이름") throw new Error(`둘째 질문 ${await card.innerText()}`);
+    await card.locator(".prompt-card-custom input").fill("한글 이름");
+    await card.locator(".prompt-card-custom input").press("Enter");
+    await said("ask1", "answer: custom 한글 이름");
+    const done = aaa("question", "list", "--all").questions.filter((x) => x.pane === p1 && x.state === "answered").map((x) => x.answer);
+    if (JSON.stringify(done) !== JSON.stringify(["3. 파일 몇 개", "직접: 한글 이름"])) throw new Error(`답한 질문 ${JSON.stringify(done)}`);
+
+    // 여러 질문: 첫째 하나 고르기 → 둘째 여러 개 체크(제출 (n)) → 검토 → 보내기
+    const p2 = aaa("tab", "create", "--machine", "labA", "--label", "ask2", "--", askClaude, "tabs").tabs.at(-1).root.pane;
+    await inList(page, "pane-ask2");
+    ({ q, card } = await opened(p2));
+    if ((await card.locator("h2").textContent()) !== "범위 · 1/2") throw new Error(`첫 탭 ${await card.innerText()}`);
+    await card.getByRole("button", { name: /웹/ }).click();
+    ({ q, card } = await opened(p2, [q.menu.id]));
+    if ((await card.locator("h2").textContent()) !== "대상 · 2/2" || (await card.locator("input[type=checkbox]").count()) !== 3) {
+      throw new Error(`둘째 탭 ${await card.innerText()}`);
+    }
+    await card.getByText("TUI").click();
+    await card.getByText("CLI").click();
+    // 「제출」은 고르면 주 단추로 바뀐다(색·투명도 전환): 그 전환이 끝난 모습을 찍는다
+    await card.locator(".prompt-card-submit").evaluate((b) => Promise.all(b.getAnimations().map((a) => a.finished)));
+    await shot(page, "desktop-prompt-card-multi");
+    await card.getByRole("button", { name: "제출 (2)" }).click();
+    ({ q, card } = await opened(p2, [q.menu.id]));
+    if ((await card.locator("h2").textContent()) !== "답 검토") throw new Error(`검토 ${await card.innerText()}`);
+    await card.getByRole("button", { name: /Submit answers/ }).click();
+    await said("ask2", "answers: 범위=웹; 대상=TUI, CLI");
+    aaa("pane", "kill", "ask1");
+    aaa("pane", "kill", "ask2");
   });
 
   await step("끝남(안 봄)(herdr PaneState::seen, 차이 목록 S1): 보는 화면 없이 턴이 끝나면 초록 점, 그 pane을 열면 사라지고, 보는 동안 끝난 턴은 남지 않으며, 가려진 동안 끝나면 다시 보일 때 사라진다", async () => {
@@ -153,7 +238,9 @@ export default async function ({ ctl, page }) {
     if (JSON.stringify(await roles()) !== JSON.stringify(want)) throw new Error(JSON.stringify(await roles()));
     // 생각·도구 결과·끼운 글을 빼는 규칙은 agent chat.rs `claude_tail_filters`가 본다(위 세 줄이 그대로면 빠졌다)
     // 새 줄이 생기면 따라간다
-    fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: "시험도 통과했다" }] } }));
+    // 글 속 파일 경로는 그 pane의 파일 보기로 연다(plan §8.171, 참고 ChatView `OpenFileContext`)
+    fs.writeFileSync(`${root}/files/chat-note.md`, "# 대화 메모\n");
+    fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: `시험도 통과했다. 기록은 ${root}/files/chat-note.md 에 남겼다` }] } }));
     await until("새 줄", async () => (await roles()).length === 4);
     await shot(page, "desktop-chat");
     // 설정 「생각 표시」(herdr-web-ui showThinking, 차이 목록 C4): 켜면 생각이 제자리에 접힌 「생각」 줄로, 누르면 글
@@ -185,6 +272,13 @@ export default async function ({ ctl, page }) {
     if (!(bigger > before)) throw new Error(`채팅 글자 크게: ${before} → ${bigger}`);
     await chatFont("채팅 글자 작게");
     if ((await answerPx()) !== before) throw new Error(`채팅 글자 작게로 돌아오지 않음: ${await answerPx()} ≠ ${before}`);
+    // 글 속 파일 경로: 그 줄만 단추이고 누르면 앱 안 파일 보기, 뒤로 한 번이면 대화로 돌아온다
+    const chatLinks = await chat.locator(".markdown-file").evaluateAll((els) => els.map((e) => [e.closest(".chat-msg")?.dataset.role, e.textContent]));
+    if (JSON.stringify(chatLinks) !== JSON.stringify([["assistant", `${root}/files/chat-note.md`]])) throw new Error(`대화 파일 링크 ${JSON.stringify(chatLinks)}`);
+    await chat.locator(".markdown-file").click();
+    await until("대화에서 연 파일", async () => (await page.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "대화 메모");
+    await page.goBack();
+    await domIs(page, "대화 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="chat"]'));
     // 터미널로 돌아간다
     await page.getByTestId("chat-toggle").click();
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");
@@ -523,6 +617,12 @@ export default async function ({ ctl, page }) {
     await composer.getByRole("group", { name: "빠른 답장" }).getByRole("button", { name: "yes", exact: true }).click();
     await until("빠른 답장이 간다", async () => lines().includes("yes"));
     await chatSettings((d) => d.getByRole("switch", { name: "입력창 위에 표시" }).click());
+    // 보내지 않은 글은 pane마다 이 기기에 남는다(참고 composerDraft.ts): 다시 열어도(새 웹으로 다시 열기, plan §8.166) 그대로다
+    await box.fill("남길 초안 c2");
+    await page.reload();
+    await until("다시 연 뒤 대화 입력창", () => box.isVisible());
+    if ((await box.inputValue()) !== "남길 초안 c2") throw new Error(`다시 연 뒤 대화 초안: ${JSON.stringify(await box.inputValue())}`);
+    await box.fill("");
     await page.getByTestId("chat-toggle").click();
     aaa("pane", "kill", "cmp1");
   });

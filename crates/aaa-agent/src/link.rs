@@ -84,11 +84,10 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125), profile.v1: `SpawnSpec.profile`(plan §8.126)
         // ask_anew.v1: 막힘에 입력이 간 뒤 화면에 남은 확인창을 같은 글이어도 다시 알린다(`detect::Watch::input_sent`).
         // host는 그 질문을 답한 질문의 늦은 사건으로 거르지 않는다
-        // dir.v1: 폴더 보기 `DirList`(plan §8.148)
-        // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.163),
+        // dir.v1: 폴더 보기 `DirList`(plan §8.148), file_in.v1: 정한 폴더 기준 찾기 `FileLocateIn`(보고서 안 파일 링크, plan §8.171)
+        // profiles.v2: 옛 host의 이름 기반 요청. host_profiles.v1이면 host 정본과 머신별 덮어쓰기만 쓴다(plan §8.170),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
-        // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.173),
-        // spawn_safety.v1: `SpawnSpec.safety`를 profile 인자에 더한다(`project open`의 coordinator, plan §8.173)
+        // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.173)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
@@ -96,14 +95,16 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "pr.v2".into(),
             "rename.v1".into(),
             "history.v1".into(),
+            "profiles.v2".into(),
+            // host의 ResolvedProfile과 설치 harness 조회(Harnesses)를 받는다.
+            "host_profiles.v1".into(),
+            "launch_safety.v1".into(),
             "file.v1".into(),
             "profile.v1".into(),
             "ask_anew.v1".into(),
             "dir.v1".into(),
-            "profiles.v2".into(),
-            "launch_safety.v1".into(),
+            "file_in.v1".into(),
             "adopt.v1".into(),
-            "spawn_safety.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

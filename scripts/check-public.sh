@@ -24,6 +24,9 @@
 #   6) 실제 세션 id(로컬 전용): 추적 파일·커밋 메시지의 UUID가 이 머신의 Claude Code·Codex 세션 기록 이름
 #      (~/.claude/projects·~/.codex/sessions, CHECK_PUBLIC_SESSION_DIRS로 바꾼다. `:`로 잇는다)과 같으면 막는다.
 #      기록 폴더가 없는 clone(CI)에서는 건너뛴다. 찾은 id는 앞 8자만 보인다.
+#   7) 충돌 표지 줄(작업 트리의 추적 파일만): 병합 충돌을 풀고 남긴 표지 줄(줄 머리의 「<」·「>」·「|」 일곱 개 뒤 빈칸이나
+#      줄 끝, 「=」 일곱 개만 있는 줄)을 막는다. 공개 검사는 아니지만 착지마다 push 직전에 도는 검사라 여기 둔다(10-18
+#      main에 두 번 남음: 4474e43·97f13d1). 옛 이력에 이미 있으므로 --history에서는 보지 않는다.
 #
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
 #       noreply@anthropic.com·git@github.com·GitHub noreply(5)와 같다)·*@example.com과 그 하위 이름(token@GitHub.example.com),
@@ -256,6 +259,20 @@ if [ -n "$SEEN_DIRS" ]; then
   fi
 else
   echo "참고: 세션 기록 폴더(${SESSION_DIRS})가 없어 실제 세션 id 검사는 건너뛴다"
+fi
+
+# 7) 충돌 표지 줄. 정규식을 이 파일에 줄 머리로 쓰지 않아 이 파일은 걸리지 않는다
+if [ "$HISTORY" = 0 ]; then
+  MARKER_RE='^(<{7}|>{7}|[|]{7})( |$)|^={7}$'
+  hits=$(git grep -I -n -E -e "$MARKER_RE" -- . 2>"$ERR")
+  case $? in
+    0)
+      report "충돌 표지 줄이 남았다: 병합 충돌을 다 풀지 않았다"
+      printf '%s\n' "$hits" | head -10 | cut -c1-200 | sed 's/^/    /'
+      ;;
+    1) ;;
+    *) broke "충돌 표지 검사" ;;
+  esac
 fi
 
 [ "$KNOWN_SKIPPED" -eq 0 ] || echo "참고: 이미 공개된 이력 항목 ${KNOWN_SKIPPED}건은 ${KNOWN_FILE}에 있어 넘겼다"

@@ -1,7 +1,7 @@
 //! `aaa profile`·`aaa safety`(herdr-projects 0.2.35 `profile`·`safety` 명령, plan §8.163).
 //!
 //! - 읽기(`profile list`·`profile resolve`·`safety show`)는 누구나 한다.
-//! - 바꾸기는 사람이 aaa 세션 밖 터미널에서만 한다([`crate::person::require`]). profile은 이 머신 agent.toml, 허용 목록·
+//! - 바꾸기는 사람이 aaa 세션 밖 터미널에서만 한다([`crate::person::require`]). profile은 host 머신의 host.toml, 허용 목록·
 //!   기본값·safety는 host.toml을 toml_edit로 그 key만 고친다(주석·차례는 그대로). host·agent는 쓸 때마다 다시 읽는다.
 //! - coordinator 쪽(`profile default|allow coordinator`, `coordinator_agent_args`)은 `aaa project open`이 쓴다(§8.173).
 
@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use aaa_config::safety::{self, Layers, SafetyLayer};
 use aaa_config::{Profile, profile_edit};
-use aaa_proto::{Connection, FrontRequest, FrontResponse};
+use aaa_proto::{FrontRequest, FrontResponse};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 
@@ -32,7 +32,7 @@ pub struct ProfileFields {
 
 #[derive(Subcommand)]
 pub enum ProfileCmd {
-    /// 머신의 profile(agent.toml과 설치·로그인한 기본 profile claude·codex). --project면 그 프로젝트 기본값·허용 목록도
+    /// host의 profile(host.toml과 설치·로그인한 기본 profile claude·codex). --project면 그 프로젝트 기본값·허용 목록도
     List {
         #[arg(long)]
         machine: Option<String>,
@@ -42,21 +42,21 @@ pub enum ProfileCmd {
         #[arg(long, conflicts_with = "project")]
         names: bool,
     },
-    /// 이 머신에서 profile이 띄우는 설정을 JSON으로(이름이 없으면 host.toml [defaults] thread_profile, 없으면 claude)
+    /// host에서 profile이 띄우는 설정을 JSON으로(이름이 없으면 host.toml [defaults] thread_profile, 없으면 claude)
     Resolve { name: Option<String> },
-    /// 이 머신 agent.toml에 profile을 더한다(사람이 aaa 세션 밖 터미널에서만)
+    /// host 머신의 host.toml에 profile을 더한다(사람이 aaa 세션 밖 터미널에서만)
     Add {
         name: String,
         /// claude·codex·shell·custom
-        #[arg(long, value_name = "KIND")]
+        #[arg(long = "agent", alias = "harness", value_name = "KIND")]
         harness: String,
         #[command(flatten)]
         fields: ProfileFields,
     },
-    /// 이 머신 agent.toml profile을 고친다. --arg는 인자를 모두 바꾼다(사람이 터미널에서만)
+    /// host 머신의 host.toml profile을 고친다. --arg는 인자를 모두 바꾼다(사람이 터미널에서만)
     Edit {
         name: String,
-        #[arg(long, value_name = "KIND")]
+        #[arg(long = "agent", alias = "harness", value_name = "KIND")]
         harness: Option<String>,
         #[command(flatten)]
         fields: ProfileFields,
@@ -64,7 +64,7 @@ pub enum ProfileCmd {
         #[arg(long, conflicts_with = "args")]
         clear_args: bool,
     },
-    /// 이 머신 agent.toml profile을 지운다(사람이 터미널에서만)
+    /// host 머신의 host.toml profile을 지운다(사람이 터미널에서만)
     Remove { name: String },
     /// thread·coordinator가 쓸 수 있는 profile: 한 프로젝트 또는 모든 프로젝트 기본(host.toml [safety.*]
     /// thread_profiles·coordinator_profiles, 사람만)
@@ -359,7 +359,7 @@ pub fn profile_cmd(json: bool, cmd: ProfileCmd) -> Result<ExitCode> {
     match cmd {
         ProfileCmd::List { machine, project, names } => list(json, machine, project, names),
         ProfileCmd::Resolve { name } => resolve(name),
-        ProfileCmd::Add { name, harness, fields } => edit_agent(
+        ProfileCmd::Add { name, harness, fields } => edit_profiles(
             json,
             profile_edit::ProfileChange::Add {
                 name,
@@ -373,7 +373,7 @@ pub fn profile_cmd(json: bool, cmd: ProfileCmd) -> Result<ExitCode> {
                 },
             },
         ),
-        ProfileCmd::Edit { name, harness, fields, clear_args } => edit_agent(
+        ProfileCmd::Edit { name, harness, fields, clear_args } => edit_profiles(
             json,
             profile_edit::ProfileChange::Edit {
                 name,
@@ -384,7 +384,7 @@ pub fn profile_cmd(json: bool, cmd: ProfileCmd) -> Result<ExitCode> {
                 args: if clear_args { Some(Vec::new()) } else { (!fields.args.is_empty()).then_some(fields.args) },
             },
         ),
-        ProfileCmd::Remove { name } => edit_agent(json, profile_edit::ProfileChange::Remove { name }),
+        ProfileCmd::Remove { name } => edit_profiles(json, profile_edit::ProfileChange::Remove { name }),
         ProfileCmd::Allow { role, names, project, all } => allow(json, &role, names, project, all),
         ProfileCmd::Default { role, name } => default(json, &role, &name),
     }
@@ -434,48 +434,36 @@ fn list(json: bool, machine: Option<String>, project: Option<String>, names: boo
     Ok(code)
 }
 
-/// `profile resolve`: 이 머신 agent.toml(없으면 기본 profile)이 띄우는 harness와 인자(참고 `resolve_json`, env는 뺀다)
+/// `profile resolve`: host 머신의 host.toml(없으면 기본 profile)이 띄우는 harness와 인자(참고 `resolve_json`, env는 뺀다)
 fn resolve(name: Option<String>) -> Result<ExitCode> {
-    let name = name.unwrap_or_else(|| {
-        let d = safety::default_thread_profile(&config_dir());
-        if d.is_empty() { "claude".into() } else { d }
-    });
-    let cfg = aaa_config::load_agent(&config_dir())
-        .map_err(|e| anyhow::anyhow!("agent.toml을 읽지 못했다:\n{}", e.render()))?
-        .config;
-    let (p, builtin) = match cfg.profiles.get(&name) {
-        Some(p) => (p.clone(), false),
-        None => (
-            profile_edit::builtin(&name)
-                .with_context(|| format!("이 머신에 profile `{name}`가 없다: `aaa profile list`로 본다"))?,
-            true,
-        ),
-    };
-    println!(
-        "{}",
-        serde_json::json!({
-            "name": name,
-            "harness": p.harness,
-            "args": profile_edit::launch_flags(&p),
-            "builtin": builtin,
-        })
-    );
-    Ok(ExitCode::SUCCESS)
+    let res = crate::cli::front_call(FrontRequest::ProfileResolve { name })?;
+    match res {
+        Ok(FrontResponse::ProfileResolved { profile }) => {
+            println!("{}", serde_json::to_string(&profile)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        other => crate::cli::front_print(true, other),
+    }
 }
 
-fn edit_agent(json: bool, change: profile_edit::ProfileChange) -> Result<ExitCode> {
+fn edit_profiles(json: bool, change: profile_edit::ProfileChange) -> Result<ExitCode> {
     let what = match &change {
         profile_edit::ProfileChange::Add { name, .. } => format!("`aaa profile add {name}`"),
         profile_edit::ProfileChange::Edit { name, .. } => format!("`aaa profile edit {name}`"),
         profile_edit::ProfileChange::Remove { name } => format!("`aaa profile remove {name}`"),
     };
     // 값이 틀렸으면 사람인지 묻기 전에 알린다
-    let file = config_dir().join("agent.toml");
+    let file = config_dir().join("host.toml");
+    if !file.is_file() && !aaa_config::paths::state_dir().join("host/host.db").is_file() {
+        bail!(
+            "profile 바꾸기는 host 머신 터미널에서 한다(host.toml 없음). 확인은 `aaa profile list`·`aaa profile resolve`로 한다"
+        );
+    }
     profile_edit::apply_in(&std::fs::read_to_string(&file).unwrap_or_default(), &change)
         .map_err(|e| anyhow::anyhow!(e))?;
     crate::person::require(&format!("{what}(profile 바꾸기)"))?;
     let message = profile_edit::apply(&config_dir(), &change).map_err(|e| anyhow::anyhow!(e))?;
-    let note = "이 머신 agent가 다음에 profile을 쓸 때 읽는다(다시 띄우지 않아도 된다). 이미 도는 thread는 다시 띄울 때까지 옛 설정이다";
+    let note = "host가 다음에 profile을 쓸 때 읽는다(다시 띄우지 않아도 된다). 이미 도는 thread는 다시 띄울 때까지 옛 설정이다";
     if json {
         println!("{}", serde_json::json!({ "message": message, "file": file.display().to_string() }));
     } else {
@@ -484,49 +472,17 @@ fn edit_agent(json: bool, change: profile_edit::ProfileChange) -> Result<ExitCod
     Ok(ExitCode::SUCCESS)
 }
 
-/// 연결된 머신들의 profile 이름. host에 닿지 않으면 `None`, 연결된 머신이 없으면 빈 목록과 false.
-fn known_profiles() -> Option<(Vec<String>, bool)> {
-    let Ok(Ok(FrontResponse::Machines { machines })) = crate::cli::front_call(FrontRequest::Machines) else {
-        return None;
-    };
-    let mut names = Vec::new();
-    let mut any = false;
-    for m in machines.iter().filter(|m| m.connection == Connection::Connected) {
-        if let Ok(Ok(FrontResponse::Profiles { profiles, .. })) =
-            crate::cli::front_call(FrontRequest::Profiles { machine: Some(m.name.clone()) })
-        {
-            any = true;
-            names.extend(profiles.into_iter().map(|p| p.name));
-        }
-    }
-    Some((names, any))
-}
-
-/// 허용 목록·기본값에 적을 이름이 어느 머신엔가 있는가(참고 `apply_in`의 `there is no profile`). 기본 profile은 늘 있다.
-/// 연결된 머신이 없거나 host에 닿지 않으면 경고만 한다(그 머신이 돌아오면 쓴다).
+/// 허용 목록과 기본값은 host 정본에 있는 이름만 참조한다(기본 profile은 설치와 무관하게 존재한다).
 fn check_names(names: &[String]) -> Result<Option<String>> {
-    for n in names {
-        profile_edit::validate_name(n).map_err(|e| anyhow::anyhow!(e))?;
-    }
-    let unknown: Vec<&String> = names.iter().filter(|n| profile_edit::builtin(n).is_none()).collect();
-    if unknown.is_empty() {
-        return Ok(None);
-    }
-    match known_profiles() {
-        None => Ok(Some("host에 닿지 않아 이름이 머신에 있는지 확인하지 못했다".into())),
-        Some((_, false)) => Ok(Some("연결된 머신이 없어 이름이 머신에 있는지 확인하지 못했다".into())),
-        Some((known, true)) => {
-            let missing: Vec<&str> = unknown.iter().filter(|n| !known.contains(n)).map(|n| n.as_str()).collect();
-            if missing.is_empty() {
-                return Ok(None);
-            }
-            bail!(
-                "연결된 어느 머신에도 profile {}가 없다(있는 것: {}, 기본 profile: claude, codex). 그 머신에서 `aaa profile add`로 먼저 더한다",
-                missing.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", "),
-                if known.is_empty() { "없음".to_string() } else { known.join(", ") }
-            )
+    for name in names {
+        profile_edit::validate_name(name).map_err(|e| anyhow::anyhow!(e))?;
+        match crate::cli::front_call(FrontRequest::ProfileResolve { name: Some(name.clone()) })? {
+            Ok(FrontResponse::ProfileResolved { .. }) => {}
+            Ok(other) => bail!("예상하지 못한 응답: {other:?}"),
+            Err(e) => bail!("{}", e.message),
         }
     }
+    Ok(None)
 }
 
 fn allow(json: bool, role: &str, names: Vec<String>, project: Option<String>, all: bool) -> Result<ExitCode> {

@@ -13,6 +13,8 @@ members = [
     "crates/aaa-tui",
     "crates/aaa",
 ]
+# 들여온 vt100(글자 폭을 웹과 같게 고친 판, vendor/vt100/README.md). workspace 시험·lint 대상이 아니다
+exclude = ["vendor/vt100"]
 default-members = [
     "crates/aaa-proto",
     "crates/aaa-config",
@@ -75,3 +77,7 @@ opt-level = 3
 
 [profile.release]
 debug = "line-tables-only"
+
+# session host 화면이 웹과 같은 칸을 쓰도록 글자 폭을 고친 vt100(plan §8.167)
+[patch.crates-io]
+vt100 = { path = "vendor/vt100" }

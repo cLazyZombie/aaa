@@ -118,6 +118,7 @@ fn profiles_are_checked() {
     );
     let l = load_agent(&d.0).unwrap();
     assert_eq!(l.config.profiles["c"].model, "opus");
+    assert!(l.warnings.iter().any(|w| w.message.contains("host.toml [profiles]로 옮기라")));
     assert_eq!(l.config.profiles["fake"].command, ["/bin/sh", "x.sh"]);
     d.write("agent.toml", "schema = 1\n[profiles.bad]\nharness = \"custom\"\n");
     let e = load_agent(&d.0).unwrap_err();
@@ -203,5 +204,32 @@ fn new_tab_prompt_and_new_cwd_like_herdr() {
         d.write("host.toml", &format!("schema = 1\n[terminal]\nnew_cwd = \"{bad}\"\n"));
         let e = load_host(&d.0).unwrap_err().render();
         assert!(e.contains("terminal.new_cwd") && e.contains("절대 경로"), "{e}");
+    }
+}
+
+/// host의 profile schema는 참고 이름·model·effort 검증을 쓰고 local 파일도 같은 정본이다.
+#[test]
+fn host_profiles_and_machine_overrides() {
+    let d = Dir::new("host-profiles");
+    d.write("host.toml", "schema = 1\n[profiles.\"review.fast\"]\nagent = \"codex\"\nmodel = \"example-model\"\neffort = \"high\"\nargs = [\"--search\"]\ndescription = \"검토\"\n");
+    d.write("host.local.toml", "schema = 1\n[profiles.\"review.fast\"]\neffort = \"low\"\n");
+    let h = load_host(&d.0).unwrap();
+    assert!(h.warnings.is_empty());
+    let p = &h.config.profiles["review.fast"];
+    assert_eq!((&*p.harness, &*p.model, &*p.effort), ("codex", "example-model", "low"));
+    d.write(
+        "agent.toml",
+        "schema = 1\n[harnesses.codex]\ncommand = [\"/opt/tools/codex\"]\nenv = { EXAMPLE = \"local\" }\n",
+    );
+    let a = load_agent(&d.0).unwrap();
+    assert!(a.warnings.is_empty() && a.config.profiles.is_empty());
+    assert_eq!(a.config.harnesses["codex"].command, ["/opt/tools/codex"]);
+    for bad in [
+        "[profiles.\"-bad\"]\nagent = \"codex\"",
+        "[profiles.bad]\nagent = \"codex\"\nmodel = \"--flag\"",
+        "[profiles.bad]\nagent = \"claude\"\neffort = \"ultra\"",
+    ] {
+        d.write("host.toml", &format!("schema = 1\n{bad}\n"));
+        assert!(load_host(&d.0).is_err(), "{bad}");
     }
 }
