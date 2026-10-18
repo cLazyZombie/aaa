@@ -2793,7 +2793,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 2만 줄이 넘으면 줄마다 요소를 만들지 않고 한 글로 그린다(참고 `CodeLines`). 참고는 2천 줄부터 가상화한다. aaa는 가상화 전이라 2만 줄 넘는 소스에는 줄 번호·줄 표시가 없다. 글은 256KiB까지만 읽으므로 줄이 아주 짧을 때만 생긴다.
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
-  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`), 폴더 보기, 「파일 뷰어」 설정(줄 바꿈·Markdown 폭).
+  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`), 「파일 뷰어」 설정(줄 바꿈·Markdown 폭). 폴더 보기는 §8.128.
   - 대화 보기·보고서 안 파일 링크.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
@@ -2867,6 +2867,25 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - TUI E2E `width_only_change_redraws_the_pane`(약 0.5초): 셸 출력 두 줄 뒤 사이드바를 접고(폭 64→86) 펴서(86→64) 앞 출력이 남는지 본다. 바뀐 뒤 친 표지 줄이 보인 다음에 본다(그 뒤 장면까지 왔다).
   - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
   - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
+
+### 8.128 파일 보기의 폴더 보기(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205, FRONT_API 1.20)
+
+- **참고.** herdr-web-ui 파일 보기는 받은 경로가 파일이 아니면(404) 같은 경로를 폴더로 읽어 본다. 폴더면 폴더 목록(`DirectoryBrowser`)을 그린다(`FileViewer.tsx` 186~197·281줄). 서버는 `server/directories.ts` `listDirectories`다.
+  - 폴더 한 단계의 폴더와 파일(크기)을 보인다. 폴더 먼저, 각각 이름순(`localeCompare` base·numeric), 500개까지. 숨은 이름(`.`)은 「숨김 항목 표시」를 고를 때만이다. symlink는 가리키는 것으로 본다.
+  - 위 폴더·홈 폴더 단추가 있다. 막대는 연 폴더 기준이다(`workspacePath.ts`, 「docs/v2」). 파일을 누르면 연다(파일 보기의 `onOpen`: 같은 기록 칸).
+  - 터미널 글 속 경로는 확장자가 있어야 링크다. 그래서 폴더는 OSC 8 file 링크(`ls --hyperlink` 등)와 Markdown 안 폴더 링크(`[이 폴더](./)`)로 열린다.
+- **aaa의 길.** 웹 → host `pane_dir {pane, path, hidden}`(조작 기기만, `pane_file`과 같은 보기 범위) → 그 머신 agent `DirList`(agent 기능 `dir.v1`).
+  - agent는 세션이 지금 있는 폴더 기준으로 읽는다(`FileLocate`와 같다). 빈 경로·`~`는 집이다.
+  - agent가 `dir.v1`을 모르면 「그 머신 agent가 폴더 보기를 아직 모른다」를 보인다.
+- **옮긴 것.** `fileIcons.ts`·`workspacePath.ts`·`DirectoryBrowser.css`는 그대로, `FileGlyph.tsx`는 import 경로만 바꿨다. `DirectoryBrowser.tsx`는 읽기를 `pane_dir`로 바꾸고 문구를 참고 ko로 옮겼다.
+- **참고와 다른 것.**
+  - **허용 폴더(§6.5, 보안).** 실제 경로가 `[agent] file_roots` 안인 폴더만 읽는다. 위 폴더도 허용 폴더 안일 때만 준다. 그래서 허용 폴더의 맨 위에서는 위 폴더 단추가 꺼진다. 집이 허용 폴더 밖이면 홈 폴더 단추는 까닭을 말한다. 허용 밖 폴더를 가리키는 symlink는 이름은 보이지만 열면 「허용한 폴더 밖」이다.
+  - 폴더 고르기(`onPick`)·새 폴더·걸러 보기·명령 팔레트가 고른 폴더는 옮기지 않았다. 참고의 새 세션 대화 상자와 Files 창 것이라 aaa에 쓰는 곳이 없다.
+- **시험.**
+  - 유닛: agent `lists_folders_like_the_reference`(순서·숨김·크기·집·`~`·상대·위 폴더·허용 밖), `lists_links_by_their_target_and_cuts_long_folders`(symlink·끊어진 것·500개). proto `control_classification`.
+  - 웹 E2E `16-file-viewer` 넷째 단계(약 2.2초): OSC 8 폴더 링크 → 목록, 숨김 항목, 폴더 열기·위 폴더, 허용 폴더 맨 위에서 위 폴더 없음, 홈 폴더는 허용 밖 알림, 파일을 누르면 Markdown, 그 안의 폴더 링크, 뒤로 한 번이면 pane, 허용 밖 폴더 알림, 휴대폰·iPad 캡처, 보기 권한 기기는 host가 거부(같은 요청이 조작 기기에는 된다).
+  - 변형 확인: 여덟 모두 실패한다. 허용 폴더 안 봄·위 폴더 안 거름·숨은 이름 늘 넣음·폴더 순서 글자순(agent 유닛과 E2E), 보기 기기도 폴더(proto 유닛과 E2E), 폴더 목록을 그리지 않음·허용 밖 폴더 까닭 없음·파일 눌러도 안 엶(E2E).
+  - aaa 모양: 참고 CSS를 그대로 두면 aaa `style.css`의 전역 `button`(가운데 맞춤·고정 높이)이 목록 줄에 새어 이름이 가운데로 갔다. `DirectoryBrowser.css` 끝에서 되돌린다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

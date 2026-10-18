@@ -43,6 +43,7 @@
 | `filePaths.ts` | 경로 조각(`pathParts`)·줄 참조 떼기(`fileLineTarget`, `a.ts:20:5`·`a.ts#L20`)·글 속 경로 찾기(`splitFilePaths`·`codeIsFilePath`): `src/lib/filePaths.ts` 그대로. 파일 보기가 쓴다(plan §8.125) |
 | `useFileViewer.ts` | 파일 보기를 방문 기록 한 칸으로(시스템 「뒤로」·Escape·닫기가 같은 길, 열린 채로 다른 파일을 고르면 칸을 늘리지 않음). `src/lib/useFileViewer.ts`에서 머신 ID 대신 pane만 두고 history 열쇠 이름을 `aaa:`로 바꿨다 |
 | `FileViewer.css` | 파일 보기 모양: `src/components/FileViewer.css` 그대로(줄 번호·색은 `HighlightedCode.css`). 마크업은 `web/src/FileViewer.tsx`(참고 `FileViewer.tsx`·`TextFileView.tsx`에서 옮긴 것, 남은 것은 plan §8.125) |
+| `DirectoryBrowser.css`·`FileGlyph.tsx`·`fileIcons.ts`·`workspacePath.ts` | 파일 보기 안 폴더 보기: `src/components/DirectoryBrowser.css`(끝에 aaa 전역 `button` 규칙을 되돌리는 한 덩이)·`FileGlyph.tsx`(import 경로만), `src/lib/fileIcons.ts`·`workspacePath.ts` 그대로. 마크업은 `web/src/DirectoryBrowser.tsx`(읽기를 `pane_dir`로, 폴더 고르기·새 폴더는 뺌, plan §8.128) |
 | `imageBox.ts` | Markdown 그림이 읽히기 전 자리(`imageSlotStyle`·`standaloneImage`): `src/lib/imageBox.ts` 그대로. 파일 보기 안 Markdown이 쓴다(plan §8.125) |
 | `markdownImages.ts` | Markdown 그림의 경로를 문서 폴더 기준으로 읽고(`markdownImagePreview`) 20MiB를 넘으면 내려받기로: `src/lib/markdownImages.ts`에서 `FileInfo` import 경로만 `../gen/proto.ts`로 |
 | `fileReader.ts` | 문서 폴더 기준 링크(`resolveFromDocument`)와 따로 여는 읽기 쪽 주소(`readerHref`, 아직 안 씀): `src/lib/fileReader.ts` 그대로 |

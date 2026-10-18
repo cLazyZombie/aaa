@@ -1148,6 +1148,7 @@ impl Host {
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
             FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
+            FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
             FrontRequest::PaneChat { pane } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다

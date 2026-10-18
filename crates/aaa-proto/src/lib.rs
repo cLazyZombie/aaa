@@ -110,6 +110,8 @@ pub fn typescript_bindings() -> String {
         LibraryView::decl(&cfg),
         FileKind::decl(&cfg),
         FileInfo::decl(&cfg),
+        DirListing::decl(&cfg),
+        DirFile::decl(&cfg),
         EvaluatorView::decl(&cfg),
         EvaluationDoc::decl(&cfg),
         EvalStage::decl(&cfg),

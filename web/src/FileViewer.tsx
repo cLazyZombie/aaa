@@ -2,12 +2,14 @@
 // 옮긴 것: 대화 상자(휴대폰은 화면 가득), 경로 찾기(같은 이름이 여럿이면 고르기), 그림·동영상·소리·PDF, HTML 페이지(sandbox
 // 안 페이지와 소스), 글(Markdown 미리보기와 소스, 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
 // 소스는 참고처럼 문법 강조한다(HighlightedCode, 긴 것은 worker).
-// 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource), 폴더 보기, 「파일 뷰어」 설정.
+// 폴더 경로면 그 폴더 목록을 그린다(참고 DirectoryBrowser, plan §8.128).
+// 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource), 「파일 뷰어」 설정.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
 import { ApiError, call } from "./api.ts";
+import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 import type { FileInfo } from "./gen/proto.ts";
 import { Markdown, MarkdownImageContext } from "./Markdown.tsx";
 import { formatBytes } from "./formatBytes.ts";
@@ -72,6 +74,8 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
   const [url, setUrl] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[] | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
+  // 폴더 경로였으면 그 폴더(실제 경로): 파일 대신 폴더 목록을 그린다
+  const [directory, setDirectory] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   // 줄 참조가 있으면 소스, 아니면 미리보기. 새 경로는 옛 선택을 쓰지 않는다
   const [chosen, setChosen] = useState<{ path: string; mode: "preview" | "code" } | null>(null);
@@ -91,6 +95,7 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
     setCandidates(null);
     setProblem(null);
     setLoaded(null);
+    setDirectory(null);
     void (async () => {
       try {
         const r = await call({ op: "pane_file", pane, path: target.path });
@@ -108,6 +113,25 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
         if (!cancelled) setLoaded(previewText(body.subarray(0, TEXT_PREVIEW_BYTES), r.info.size));
       } catch (e) {
         if (cancelled) return;
+        // 폴더는 파일처럼 pane 폴더 기준으로 읽는다(참고 FileViewer: 404면 폴더 목록을 물어 본다). 폴더도 아니면 파일 오류 그대로
+        if (e instanceof ApiError && e.body.code === "not_found") {
+          try {
+            const r = await call({ op: "pane_dir", pane, path: target.path, hidden: false });
+            if (cancelled) return;
+            if (r.kind === "pane_dir") {
+              setDirectory(r.listing.path);
+              return;
+            }
+          } catch (dirError) {
+            // 허용 폴더 밖 폴더는 그 까닭을 말한다. 읽을 수 있는 폴더가 아니면 파일 오류를 둔다
+            if (cancelled) return;
+            if (dirError instanceof ApiError && dirError.body.code === "forbidden") {
+              setProblem({ kind: "outside" });
+              return;
+            }
+          }
+          if (cancelled) return;
+        }
         if (e instanceof ApiError && e.body.code === "not_found") setProblem({ kind: "missing" });
         else if (e instanceof ApiError && e.body.code === "forbidden") setProblem({ kind: "outside" });
         else setProblem({ kind: "unreadable", message: e instanceof ApiError ? e.message : null });
@@ -203,6 +227,7 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
   }, [path, view, source, marked, loaded]);
 
   const body = (() => {
+    if (directory !== null) return <DirectoryBrowser key={directory} start={directory} pane={pane} onOpenFile={onOpen} />;
     if (problem !== null)
       return (
         <p className="file-viewer-note" role="alert">
