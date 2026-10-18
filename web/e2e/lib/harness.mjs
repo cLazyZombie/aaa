@@ -406,7 +406,7 @@ const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["i
 // serviceWorkers: "block"이면 service worker 없이 연다(그 worker가 맡은 요청은 ctx.route를 거치지 않는다, plan §8.115)
 // wsRoute·route: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로채고, 글꼴은 연결 화면에서 이미 받는다)
 /**
- * 목록 안의 것(pane·thread 줄, 바닥 줄의 설정·사용량)을 누른다. 768px 이하에서 목록은 pane 위의 drawer라(plan §8.141,
+ * 목록 안의 것(pane·thread 줄, 바닥 줄의 설정·사용량)을 누른다. 768px 이하에서 목록은 pane 위의 drawer라(plan §8.142,
  * web/src/drawer.tsx) 닫혀 있으면 화면 머리의 「목록 열기」로 연 뒤 누른다. 넓은 창은 그대로 누른다.
  */
 async function inList(p, target) {

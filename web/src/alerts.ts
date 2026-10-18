@@ -157,6 +157,8 @@ function player() {
 const WAKE_LATE_MS = 2_000;
 const WAKE_TICK_MS = 1_000;
 let wokeAt = 0;
+/** 마지막으로 멈춘 때(멈추기 전 마지막 timer) */
+let sleptAt = 0;
 let checkWake = () => {};
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   let stalled = false;
@@ -166,6 +168,7 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
   const shown = () => {
     if (document.visibilityState !== "visible" || !stalledNow()) return;
     stalled = false;
+    sleptAt = tick;
     tick = Date.now();
     wokeAt = tick;
   };
@@ -181,6 +184,11 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
     shown();
     tick = Date.now();
   }, WAKE_TICK_MS);
+}
+
+/** 방금 깨어났으면 멈춘 때(그 뒤 이 기기에 간 push는 이미 받은 알림이다), 아니면 null */
+export function wokeSince(): number | null {
+  return justWoke() ? sleptAt : null;
 }
 
 /** 방금 깨어났다: 지금 받은 사건은 그 일이 일어난 때 알리지 못한 늦은 알림이다 */
