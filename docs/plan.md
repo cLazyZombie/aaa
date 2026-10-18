@@ -5258,3 +5258,15 @@ primary 근거:
 - **교체.** 받은 파일은 기존 `--from`의 self-check·version 고정·hard link 보관·rename·keep·rollback 순서로 간다. `--dry-run`도 실제 내려받기와 검사를 하며 교체하지 않는다. 보관 이름에 밀리초·순번을 더해 같은 시각의 서로 다른 판도 생성 순서대로 되돌린다. 옛 보관 이름은 계속 읽는다. Windows는 정적 CRT exe 하나를 기존 고정 경로에 두는 계약을 유지한다. herdr의 zip·junction 설치를 새로 도입하지 않는다. 도는 host·agent·TUI는 이전 이미지로 계속 돌며 사람이 다시 띄운다.
 - **키체인 결정 A.** 기존 Mac 빌드의 ad-hoc 교체 때도 cdhash는 매번 바뀌었다. GitHub release도 같으며 고정 서명은 하지 않는다. 기본 `keychain_service`는 비어 있어 잠금 상태만 본다. doctor의 선택적 직접 항목 조회에서 새 승인이 필요하거나 UI 억제로 읽기 실패가 날 수 있음을 문서화한다. 실제 키체인·ACL·시스템 설정은 건드리지 않는다.
 - **계약·검증.** Front API 1.39·Agent link 1.5를 유지한다. 새 wire는 없다. 가짜 HTTP 서버로 선택·checksum·없는 OS/arch·중단·같은 판 무동작·다운로드 뒤 보관/rollback을 보고, 각 결함 변형이 실패하는지 확인한다. 새 시험은 신호나 고정 sleep을 쓰지 않는다. release 도구 시험은 distribution workflow에서 돌고 release workflow 자체는 이 thread에서 실행하지 않는다.
+
+### 8.211 휴대폰 목록 줄 ⋯을 오른쪽 끝으로(10-18, 사용자 iPhone 21:3x 「... 과 창 최고 오른쪽까지 너무 거리가 멀어」)
+
+- **원인.** ⋯ 오른쪽 빈 칸은 상태 칸이다. 줄 오른쪽 끝에 늘 잡아 두는 `--side-box` 34px(`.sidebar-pane-meta`·`.agent-row-state`, 줄 `padding-right`)이고,
+  그 밖에 목록 여백 `--side-gutter` 12px와 경계선이 있다. 휴대폰 390px drawer에서 ⋯ 단추 끝과 drawer 끝 사이가 47px이었다.
+  참고 herdr-web-ui도 같은 구조다(`herdr/Sidebar.css`·`AgentSidebar.css`는 참고 그대로). 참고 줄은 대개 agent pane이라 그 칸에 점·?가 차지만,
+  aaa thread 줄은 상태를 둘째 줄 글로도 말하고 쉼·모름은 칸에 그리지 않아, 칸이 자주 비어 ⋯이 끝에서 멀어 보였다.
+- **고침(참고와 다름).** `web/src/Sidebar.css`의 `@media (pointer: coarse), (max-width: 768px)`(⋯을 그리는 터치·좁은 창)에서 줄의
+  `padding-right`를 없애 ⋯을 목록 여백 안 끝에 두고, 상태 칸은 고르는 단추 안 오른쪽(⋯ 왼쪽)에 붙인다. 칸은 그릴 것(점·?·herdr 기호·경고)이
+  있을 때만 자리를 잡는다(`:has()`): 비면 이름이 34px 덜 잘린다. ⋯ 누르는 영역은 `--touch-target` 그대로다. 마우스 넓은 창은 ⋯이 없어 참고 그대로다.
+- **시험.** 웹 E2E 12 「줄 메뉴」의 휴대폰 부분: 보이는 줄마다 줄 끝(⋯, 없으면 상태 칸)과 목록 끝의 거리가 `--side-gutter` 안(고정 카드 안 줄은
+  카드 안쪽 여백만큼 더)이고 ⋯ 폭이 40px 이상. 데스크톱 1280은 상태 칸이 그 자리. 고치기 전 빌드에서 휴대폰 gap 46(고정 카드 51)으로 실패했다.
