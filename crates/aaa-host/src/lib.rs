@@ -3,6 +3,7 @@
 //! - host는 자식 프로세스를 만들지 않는다. 예외: tailscale CLI, 개발 모드의 로컬 agent 기동(§4.2).
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
+mod adopt;
 mod attach;
 mod brief;
 mod brief_text;
@@ -952,6 +953,9 @@ impl Host {
                     FrontResponse::Thread(v)
                 })
             }
+            FrontRequest::ThreadAdopt { project, pane, title, task } => {
+                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)
+            }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
             }
@@ -1514,6 +1518,10 @@ impl Host {
             if let Some(p) = i.panes.get_mut(new) {
                 p.replaced = chain.split_off(skip);
             }
+        }
+        // 데려온 thread는 그 pane이 정본이다(다시 띄울 launch가 없다): 새 pane이 대신하면 thread도 따라간다
+        if let Some(r) = self.thread_of_pane(old).filter(|r| r.kind == aaa_proto::ThreadKind::Adopted) {
+            let _ = self.update_rec(&r.project, &r.id, |x| x.pane = Some(new.to_string()));
         }
         {
             let mut ws = self.workspaces.lock().unwrap();

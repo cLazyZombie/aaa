@@ -437,6 +437,19 @@ enum ThreadCmd {
         #[arg(long)]
         from_task: Option<String>,
     },
+    /// 이미 띄운 Claude·Codex pane을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects `thread adopt`).
+    /// pane은 그대로 두고 그 폴더에 작업 폴더를 만든다. 다시 시작(restart)은 하지 않고, resolve도 pane을 끝내지 않는다.
+    Adopt {
+        project: String,
+        /// 데려올 pane(ID·앞 4자 이상·이름)
+        #[arg(long)]
+        pane: String,
+        #[arg(long)]
+        title: String,
+        /// 할 일 파일(`-`면 표준 입력). 없으면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
+        #[arg(long)]
+        task_file: Option<String>,
+    },
     /// thread의 Next 목록(보고서 `## Next` + 더한 줄). --line N은 그 줄을 thread에 메시지로 보낸다.
     Next {
         project: String,
@@ -1039,15 +1052,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     if from_task.is_none() && (title.is_none() || task_file.is_none()) {
                         anyhow::bail!("--title·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
                     }
-                    let task = match task_file.as_deref() {
-                        None => String::new(),
-                        Some("-") => {
-                            let mut t = String::new();
-                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
-                            t
-                        }
-                        Some(f) => std::fs::read_to_string(f).with_context(|| format!("할 일 파일: {f}"))?,
-                    };
+                    let task = task_text(task_file.as_deref())?;
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     FrontRequest::ThreadStart {
                         project,
@@ -1060,6 +1065,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         task,
                         from_task,
                     }
+                }
+                ThreadCmd::Adopt { project, pane, title, task_file } => {
+                    FrontRequest::ThreadAdopt { project, pane, title, task: task_text(task_file.as_deref())? }
                 }
                 ThreadCmd::Next { project, thread, line, add } => {
                     FrontRequest::ThreadNext { project, thread, line, add }
@@ -1917,15 +1925,29 @@ fn render_thread_pane(s: &mut String, v: &aaa_proto::ThreadPaneView) {
     );
 }
 
+/// 할 일 파일(`-`면 표준 입력, 없으면 빈 글)
+fn task_text(file: Option<&str>) -> Result<String> {
+    Ok(match file {
+        None => String::new(),
+        Some("-") => {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+            t
+        }
+        Some(f) => std::fs::read_to_string(f).with_context(|| format!("할 일 파일: {f}"))?,
+    })
+}
+
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     use std::fmt::Write as _;
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");
     }
     let group = t.group.label();
+    let adopted = if t.thread_kind == ThreadKind::Adopted { "(데려옴)" } else { "" };
     let _ = writeln!(
         s,
-        "{}/{}\t{}\t{}\t{}@{}\tbrief {}",
+        "{}/{}\t{}\t{}\t{}{adopted}@{}\tbrief {}",
         t.project,
         t.id,
         group,

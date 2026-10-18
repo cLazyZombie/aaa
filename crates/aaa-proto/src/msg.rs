@@ -15,7 +15,7 @@ use ts_rs::TS;
 use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
     MessageView, OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectView, QuestionView,
-    ReportSnapshot, Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
 
@@ -445,6 +445,9 @@ pub enum AgentRequest {
     Profiles,
     /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
     ThreadPrepare(ThreadPrepare),
+    /// 사람이 띄운 agent 세션을 thread로 데려온다: 그 세션의 지금 폴더에 작업 폴더·brief.md를 만든다(`thread adopt`).
+    /// agent 기능 `adopt.v1`이 있을 때만 보낸다(옛 agent는 모르는 요청에 연결을 끊는다)
+    ThreadAdopt(ThreadAdopt),
     /// report.md 변화를 `ReportChanged`로 알린다. 등록 즉시 지금 hash를 한 번 보낸다. `thread`는 `<project>/<thread>`다.
     ThreadWatch {
         thread: String,
@@ -572,6 +575,7 @@ pub enum AgentResponse {
         profiles: Vec<ProfileView>,
     },
     ThreadReady(ThreadReady),
+    ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
     FileChunk {
         data: B64,
@@ -1278,6 +1282,16 @@ pub enum FrontRequest {
         /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
+    },
+    /// 사람이 이미 띄운 agent pane(Claude·Codex)을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects
+    /// `thread adopt`). pane은 그대로 두고 그 폴더에 작업 폴더를 만든다
+    ThreadAdopt {
+        project: String,
+        pane: String,
+        title: String,
+        /// 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
+        #[serde(default)]
+        task: String,
     },
     /// thread의 Next 목록을 보이거나(`line`·`add` 없음), N번째 줄을 thread에 메시지로 보내거나, 줄을 더한다
     ThreadNext {

@@ -307,7 +307,11 @@ task: string,
 /**
  * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
-from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, 
+from_task: string | null, } | { "op": "thread_adopt", project: string, pane: string, title: string, 
+/**
+ * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
+ */
+task: string, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean, 
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
@@ -375,7 +379,7 @@ export type EventsClientMsg = { "t": "presence", active: boolean, } | { "t": "to
 
 export type Role = "coordinator" | "worker" | "evaluator";
 
-export type ThreadKind = "worktree" | "dir";
+export type ThreadKind = "worktree" | "dir" | "adopted";
 
 export type Launch = { profile: string, 
 /**

@@ -112,7 +112,10 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     {
         tracing::warn!(found = %f, claimed = %c, "CLI가 알린 세션과 연결한 프로세스의 pane이 다르다: pane을 따른다");
     }
-    let role_of = |s: &str| host.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role);
+    // 데려온 pane(`thread adopt`)은 띄울 때 역할이 없다: 끝나지 않은 thread면 그 역할이다
+    let role_of = |s: &str| {
+        host.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role).or_else(|| host.thread_of_pane(s).map(|r| r.role))
+    };
     let scoped_role =
         |r: Option<aaa_proto::Role>| matches!(r, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
     let (found_role, claimed_role) = (found.as_deref().and_then(role_of), session.as_deref().and_then(role_of));

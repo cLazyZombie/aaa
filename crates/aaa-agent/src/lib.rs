@@ -255,6 +255,30 @@ impl Agent {
         Ok(AgentResponse::Cwd { cwd: cwd.map(|p| p.to_string_lossy().into_owned()) })
     }
 
+    /// 사람이 띄운 세션을 thread로 데려온다: 세션이 지금 있는 폴더(앞 프로그램 기준, 못 읽으면 띄운 폴더)에 작업 폴더를 만든다
+    async fn thread_adopt(&self, a: aaa_proto::ThreadAdopt) -> Result<AgentResponse, ErrorBody> {
+        let (pid, spawned) = {
+            let s = self.sessions.lock().unwrap();
+            let e = s.get(&a.session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?;
+            if !e.info.state.is_running() {
+                return Err(ErrorBody::new(ErrorCode::BadRequest, "실행 중인 세션만 데려온다"));
+            }
+            (e.info.pid, e.info.cwd.clone())
+        };
+        let live = match pid {
+            Some(pid) => tokio::task::spawn_blocking(move || cwd::follow_cwd(pid)).await.ok().flatten(),
+            None => None,
+        };
+        let Some(dir) = live.or_else(|| spawned.map(PathBuf::from)) else {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 폴더를 모른다"));
+        };
+        let exe = self.threads_cfg.lock().unwrap().exe.clone();
+        threads::adopt(&exe, a, &dir)
+            .await
+            .map(AgentResponse::ThreadAdopted)
+            .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+    }
+
     pub fn sessions(&self) -> Vec<SessionInfo> {
         let mut v: Vec<_> = self.sessions.lock().unwrap().values().map(|e| e.info.clone()).collect();
         v.sort_by(|a, b| a.started_at_ms.cmp(&b.started_at_ms).then(a.id.cmp(&b.id)));
@@ -633,6 +657,7 @@ impl Agent {
                 .map(AgentResponse::ThreadReady)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
+            AgentRequest::ThreadAdopt(a) => self.thread_adopt(a).await,
             AgentRequest::ThreadWatch { thread, work_dir } => {
                 // 감시 key는 `<project>/<thread>`다(thread 번호는 프로젝트마다 다시 센다)
                 let ok = thread

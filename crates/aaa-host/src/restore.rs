@@ -8,7 +8,8 @@
 //!   `start_pending_agent_resume`: `claude --resume <id>`·`codex resume <id>` + Enter). harness를 바로 띄운 pane(argv 첫
 //!   낱말이 claude·codex)은 원래 argv에서 대화 인자만 바꿔 띄운다(`resume_in_place`). aaa pane은 셸 아래가 아닐 수 있다.
 //! - **thread pane**: `aaa thread restart --resume`과 같은 길(저장한 대화를 잇고 brief 안내는 없다). 못 하면 흐름 사건
-//!   `restore_failed`와 inbox `session` 항목을 남긴다.
+//!   `restore_failed`와 inbox `session` 항목을 남긴다. 데려온 thread(`thread adopt`)는 다시 띄울 launch가 없어 사람이
+//!   띄운 pane과 같은 길로 잇고, thread가 새 pane을 따라간다(`replace_pane`).
 //! - **그 밖의 프로그램 pane**은 그대로 둔다(`aaa pane resume`으로 다시 띄운다, 까닭은 `restore_error`에 남겨 목록·열린 화면이 「다시 열기」와 함께 보인다, QA Q22). 명령을 다시 실행하지 않는다: 배포 같은
 //!   명령이 재부팅마다 다시 돌면 안 된다. herdr pane은 늘 셸이라 이 경우가 없다.
 //! - `[session] resume_agents_on_restore`(기본 켬, herdr와 같다. 결정 8-5 「꺼짐」을 결정 20 D12가 바꿨다)가 꺼지면
@@ -21,7 +22,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aaa_proto::{AgentRequest, B64, BriefState, SessionState, SpawnSpec, ThreadStatus};
+use aaa_proto::{AgentRequest, B64, BriefState, SessionState, SpawnSpec, ThreadKind, ThreadStatus};
 
 use crate::Host;
 
@@ -203,7 +204,10 @@ impl Host {
             .filter(|_| resume_agents)
             .and_then(|a| Some((a.harness.clone(), a.harness_session.clone()?)))
             .filter(|k| !resumed.contains(k));
-        if let Some(rec) = self.thread_of_pane(id).filter(|r| r.status == ThreadStatus::Open) {
+        // 데려온 thread(`thread adopt`)는 다시 띄울 수 없다: 그 pane은 사람이 띄운 pane처럼 잇고, thread가 새 pane을 따라간다
+        if let Some(rec) =
+            self.thread_of_pane(id).filter(|r| r.status == ThreadStatus::Open && r.kind != ThreadKind::Adopted)
+        {
             if !resume_agents {
                 self.leave_stopped(
                     id,

@@ -99,6 +99,61 @@ pub(crate) struct ThreadRec {
     pub updated_at_ms: u64,
 }
 
+impl ThreadRec {
+    /// 막 기록하는 thread(시작 중). 번호는 DB가 붙인다
+    pub(crate) fn starting(
+        project: &str,
+        title: &str,
+        machine_id: &str,
+        profile: &str,
+        role: Role,
+        kind: ThreadKind,
+        now: u64,
+    ) -> ThreadRec {
+        ThreadRec {
+            project: project.to_string(),
+            id: String::new(),
+            title: title.to_string(),
+            machine_id: machine_id.to_string(),
+            profile: profile.to_string(),
+            role,
+            kind,
+            repo: None,
+            base: None,
+            branch: None,
+            pr: None,
+            pr_state: None,
+            pr_review: None,
+            cwd: None,
+            work_dir: None,
+            pane: None,
+            status: ThreadStatus::Starting,
+            brief: BriefState::Pending,
+            brief_attempts: 0,
+            delivered_at_ms: None,
+            delivered_report: None,
+            launch: None,
+            report_hash: None,
+            acked_hash: None,
+            next: vec![],
+            copy: None,
+            copy_notes: vec![],
+            // 시작 중은 작업 중이다(`thread_group` 2번 줄). 처음 셈을 기다리지 않고 적어, 첫 셈 전에 온 보고도 새 보고다.
+            last_group: Some(ThreadGroup::Working),
+            review_item_hash: None,
+            group_changed_ms: Some(now),
+            report_changed_ms: None,
+            error: None,
+            eval_cursor: 0,
+            eval_batches: 0,
+            eval_last_batch_ms: None,
+            leftover: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        }
+    }
+}
+
 /// thread 시작 인자
 /// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,7 +767,7 @@ impl Host {
 
     /// brief.md(herdr-projects `brief_for`): 프로젝트 설정·지침·memory를 읽어 `compose_brief`로 짓는다.
     /// memory 파일은 `memory/*.md`(이름순, symlink·숨은 파일 제외)다.
-    fn brief(&self, dir: &Path, r: &ThreadRec, task: &str, restart: bool) -> String {
+    pub(crate) fn brief(&self, dir: &Path, r: &ThreadRec, task: &str, restart: bool) -> String {
         use crate::brief_text::{BriefInput, THREAD_GUIDE, compose_brief};
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
         let settings = crate::project::ProjectSettings::load(dir);
@@ -771,6 +826,9 @@ impl Host {
             a.profile = self.default_thread_profile(&a.project);
         }
         self.check_profile_allowed(&a.project, &a.profile)?;
+        if a.kind == ThreadKind::Adopted {
+            return Err(bad("데려온 thread는 `aaa thread adopt`로 만든다"));
+        }
         if a.kind == ThreadKind::Worktree && a.repo.is_none() {
             return Err(bad("worktree thread에는 --repo(그 머신의 repo 경로)가 필요하다. repo 없이 하려면 --kind dir"));
         }
@@ -781,45 +839,9 @@ impl Host {
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
-            project: a.project.clone(),
-            id: String::new(),
-            title: a.title.trim().to_string(),
-            machine_id: mid.clone(),
-            profile: a.profile.clone(),
-            role: a.role,
-            kind: a.kind,
             repo: a.repo.clone(),
             base: a.base.clone(),
-            branch: None,
-            pr: None,
-            pr_state: None,
-            pr_review: None,
-            cwd: None,
-            work_dir: None,
-            pane: None,
-            status: ThreadStatus::Starting,
-            brief: BriefState::Pending,
-            brief_attempts: 0,
-            delivered_at_ms: None,
-            delivered_report: None,
-            launch: None,
-            report_hash: None,
-            acked_hash: None,
-            next: vec![],
-            copy: None,
-            copy_notes: vec![],
-            // 시작 중은 작업 중이다(`thread_group` 2번 줄). 처음 셈을 기다리지 않고 적어, 첫 셈 전에 온 보고도 새 보고다.
-            last_group: Some(ThreadGroup::Working),
-            review_item_hash: None,
-            group_changed_ms: Some(now),
-            report_changed_ms: None,
-            error: None,
-            eval_cursor: 0,
-            eval_batches: 0,
-            eval_last_batch_ms: None,
-            leftover: None,
-            created_at_ms: now,
-            updated_at_ms: now,
+            ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         let id = self
             .db
@@ -971,6 +993,10 @@ impl Host {
         let mut rec = self.load(project, id)?;
         if rec.status != ThreadStatus::Open {
             return Err(bad(format!("열린 thread만 다시 시작한다(지금 {})", rec.status.as_str())));
+        }
+        // 참고 threads.rs `restart`: 데려온 pane은 사람이 띄운 것이라 같은 것을 다시 띄울 방법을 모른다
+        if rec.kind == ThreadKind::Adopted {
+            return Err(bad("데려온 thread는 다시 띄우지 않는다. 새 pane을 띄워 `aaa thread adopt`로 데려온다"));
         }
         if let Some(p) = &profile {
             if resume {
@@ -1296,14 +1322,19 @@ impl Host {
             r.last_group = Some(ThreadGroup::Resolved);
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
-        if let Some(pane) = &rec.pane
+        // 데려온 pane은 사람 것이다(참고 threads.rs `cleanup`의 `Kind::Adopted`): 끝내지 않고, 그 폴더도 정리하지 않는다
+        let adopted = rec.kind == ThreadKind::Adopted;
+        if let Some(pane) = rec.pane.as_ref().filter(|_| !adopted)
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
             let _ = conn.request(AgentRequest::Kill { session: pane.clone() }).await;
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
-        if let Some(cwd) = &rec.cwd {
+        if adopted {
+            notes.push("pane은 그대로 둔다(데려온 pane은 사람 것)".to_string());
+        }
+        if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
             match conn
                 .request(AgentRequest::ThreadCleanup {

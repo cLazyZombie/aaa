@@ -2439,6 +2439,128 @@ fn project_lifecycle() {
     assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
 }
 
+/// 사람이 띄운 가짜 Claude(실행 파일 이름이 `claude`라 aaa가 화면으로 상태를 본다, hook settings 없음). 띄운 인자를 보이고
+/// SessionStart hook으로 대화 ID를 알린 뒤, Claude처럼 입력 상자를 그려 Enter마다 받은 줄을 남긴다. brief 안내를 받으면
+/// 그 pane 안에서 자기 thread에 Next 줄을 더해 보고(thread 범위 시험) 결과를 `probe.txt`에, 보고를 report.md에 쓴다.
+/// `@BIN@`은 aaa 실행 파일이다.
+const ADOPT_AGENT: &str = r#"#!/bin/sh
+stty -icanon -echo min 1 time 0
+R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
+log="args: $*
+"
+"@BIN@" hook --agent claude '{"hook_event_name":"SessionStart","session_id":"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d","source":"startup"}'
+buf=''
+draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n' "$log" "$R" "$buf" "$R"; }
+draw
+while :; do
+  c=$(dd bs=4096 count=1 2>/dev/null)
+  if [ -z "$c" ]; then
+    case "$buf" in
+      *brief.md*)
+        dir=$(dirname "$(printf '%s' "$buf" | sed 's/를 읽고.*//')")
+        id=$(basename "$dir"); id=${id#demo-}
+        "@BIN@" thread next demo "$id" --add probe > "$dir/probe.tmp" 2>&1; echo "rc=$?" >> "$dir/probe.tmp"
+        mv "$dir/probe.tmp" "$dir/probe.txt"
+        printf '## Report\n데려온 pane이 보고했다\n\n## Next\n- 확인\n' > "$dir/report.md.tmp"
+        mv "$dir/report.md.tmp" "$dir/report.md" ;;
+    esac
+    log="$log$(printf 'got: %s' "$buf")
+"
+    buf=''
+  else
+    buf="$buf$c"
+  fi
+  draw
+done
+"#;
+
+/// 이미 띄운 agent pane을 thread로 데려온다(herdr-projects `thread adopt`, 4장 G #598): Claude·Codex가 아닌 pane·coordinator
+/// pane·빈 제목은 거부, 데려오면 pane의 폴더·repo·branch를 적고 brief를 안내해 보고를 받는다. 그 pane 안 CLI는 thread
+/// 범위(보기만)다. 같은 pane은 두 번 데려오지 않고, 다시 시작하지 않는다. 재부팅 뒤에는 사람이 띄운 pane처럼 대화를 이어
+/// 띄우고 thread가 새 pane을 따라간다. resolve는 pane을 끝내지 않는다. 기다림은 기록·출력·파일이다.
+#[test]
+fn thread_adopt_existing_pane() {
+    let mut w = world();
+    let bin_dir = w.lab.root.join("human");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let claude = bin_dir.join("claude");
+    std::fs::write(&claude, ADOPT_AGENT.replace("@BIN@", lab::BIN)).unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    git(&w.repo, &["checkout", "-q", "-b", "feature-x"]);
+    let pane = w.h.new_pane(None, "labA", Some("내 claude"), &[path_str(&claude)], Some(path_str(&w.repo)));
+    let sid = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    wait_for_diag(
+        "대화 ID(SessionStart hook)",
+        T,
+        || (w.h.pane(&pane)["agent"]["harness_session"] == sid).then_some(()),
+        || format!("{}", w.h.pane(&pane)),
+    );
+    let refused = |args: &[&str]| {
+        let mut a = vec!["thread", "adopt", "demo"];
+        a.extend_from_slice(args);
+        w.h.json(&a).expect_err("거부돼야 한다")
+    };
+    let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
+    let e = refused(&["--pane", &shell, "--title", "셸"]);
+    assert!(e.contains("Claude·Codex pane이 아니다"), "{e}");
+    let coord = w.h.new_pane(None, "labA", None, &[path_str(&claude)], Some(path_str(&w.projects.join("demo"))));
+    let e = refused(&["--pane", &coord, "--title", "coordinator"]);
+    assert!(e.contains("`demo`의 coordinator다"), "{e}");
+    let e = refused(&["--pane", &pane, "--title", " "]);
+    assert!(e.contains("--title이 비었다"), "{e}");
+    w.h.ok(&["pane", "kill", &shell]);
+    w.h.ok(&["pane", "kill", &coord]);
+
+    let v = w.h.ok(&["thread", "adopt", "demo", "--pane", &pane, "--title", "데려온 일"]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let real = |p: &Value| std::fs::canonicalize(p.as_str().unwrap_or_else(|| panic!("경로가 없다: {v}"))).unwrap();
+    let repo = std::fs::canonicalize(&w.repo).unwrap();
+    assert_eq!((v["thread_kind"].as_str(), v["status"].as_str()), (Some("adopted"), Some("open")), "{v}");
+    assert_eq!((v["pane"].as_str(), v["profile"].as_str()), (Some(pane.as_str()), Some("claude")), "{v}");
+    // repo는 보기에 없다: branch가 그 repo에서 읽은 것이다
+    assert_eq!((real(&v["cwd"]), v["branch"].as_str()), (repo.clone(), Some("feature-x")), "{v}");
+    w.wait_show("brief", &id, |v| v["brief"] == "delivered");
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    // pane 안 CLI는 thread 범위다(띄울 때 역할이 없는 pane이라도 thread면 보기만)
+    let probe = repo.join(".aaa").join(format!("demo-{id}")).join("probe.txt");
+    let got = wait_for("pane 안 CLI 결과", T, || std::fs::read_to_string(&probe).ok());
+    assert!(
+        got.contains("보기 권한으로는 조작할 수 없다: thread 세션 안의 CLI는 보기만 한다") && got.ends_with("rc=1\n"),
+        "{got}"
+    );
+    assert!(!w.h.ok(&["thread", "next", "demo", &id])["lines"].to_string().contains("probe"));
+    // 작업 폴더는 git 상태에 보이지 않는다
+    assert_eq!(git(&w.repo, &["status", "--porcelain"]), "");
+    let e = refused(&["--pane", &pane, "--title", "또"]);
+    assert!(e.contains(&format!("이미 `demo`의 thread {id}다")), "{e}");
+    let e = w.h.json(&["thread", "restart", "demo", &id]).expect_err("다시 띄우지 않는다");
+    assert!(e.contains("데려온 thread는 다시 띄우지 않는다"), "{e}");
+
+    // 재부팅: 사람이 띄운 Claude pane처럼 대화를 이어 띄우고(`--resume <ID>`) thread가 새 pane을 따라간다
+    w.lab.kill("agentA");
+    assert!(w.lab.kill_session_hosts() >= 1);
+    w.lab.spawn_env(
+        "agentA2",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1"), ("AAA_TEST_BOOT_ID", "boot-after")],
+    );
+    let v = w.wait_show("새 pane", &id, |v| v["pane"].as_str().is_some_and(|p| p != pane));
+    let new = v["pane"].as_str().unwrap().to_string();
+    w.h.wait_output(&new, &format!("args: --resume {sid}"), T);
+    assert!(!w.kinds(0).contains(&"restore_failed".to_string()), "{:?}", w.kinds(0));
+    // resolve는 pane을 끝내지 않는다
+    let v = w.h.ok(&["thread", "resolve", "demo", &id]);
+    assert_eq!(v["status"], "resolved", "{v}");
+    let events = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().clone();
+    let last = events.iter().rev().find(|e| e["kind"] == "thread_resolved").unwrap();
+    assert!(last["detail"].as_str().unwrap().contains("pane은 그대로 둔다"), "{last}");
+    // resolve 뒤에도 pane은 입력을 받는다(끝냈으면 상태가 늦게 와도 입력이 거부되거나 답이 없다)
+    w.h.ok(&["pane", "send-text", &new, "still-here"]);
+    w.h.ok(&["pane", "send-keys", &new, "enter"]);
+    w.h.wait_output(&new, "got: still-here", T);
+}
+
 /// routine 일정의 초 단위(4장 H #604): 운영 host(`AAA_TEST_ROUTINE_SECONDS`가 `1`이 아님)는 참고처럼 분부터 받고, 초 단위
 /// 파일은 그 routine만 오류로 둔다.
 #[test]

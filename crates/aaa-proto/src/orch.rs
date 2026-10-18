@@ -46,6 +46,9 @@ pub enum ThreadKind {
     Worktree,
     /// repo 없는 작업 폴더(agent 작업 root 아래)
     Dir,
+    /// 사람이 이미 띄운 agent pane을 thread로 기록했다(`thread adopt`, herdr-projects `Kind::Adopted`). 자리를 만들지 않고
+    /// 그 pane이 있는 폴더에서 일한다. pane은 사람 것이라 다시 띄우지도 끝내지도 않는다
+    Adopted,
 }
 
 /// agent.toml profile을 그 머신에서 해석한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
@@ -117,6 +120,28 @@ pub struct ThreadReady {
     /// 기준 commit
     pub base: Option<String>,
     pub launch: Launch,
+}
+
+/// 사람이 띄운 agent pane을 thread로 데려온다(`thread adopt`): 그 세션이 지금 있는 폴더에 작업 폴더를 만들고 brief.md를 쓴다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadAdopt {
+    pub project: String,
+    pub thread: String,
+    /// 데려올 세션(pane) ID
+    pub session: String,
+    pub brief: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadAdopted {
+    /// 세션이 지금 있는 폴더
+    pub cwd: String,
+    /// `<cwd>/.aaa/<project>-<thread>/`(brief.md·report.md·library/)
+    pub work_dir: String,
+    /// cwd가 git repo 안이면 그 top
+    pub repo: Option<String>,
+    /// 지금 branch(떼어 낸 HEAD면 None)
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

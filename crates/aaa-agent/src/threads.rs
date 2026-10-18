@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use aaa_config::Profile;
 use aaa_proto::{
-    Cleanup, Launch, LaunchSafety, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadKind, ThreadPrepare,
-    ThreadReady, fill_brief, slug, valid_project, valid_thread,
+    Cleanup, Launch, LaunchSafety, LibFile, ProfileView, ReportSnapshot, Skipped, ThreadAdopt, ThreadAdopted,
+    ThreadKind, ThreadPrepare, ThreadReady, fill_brief, slug, valid_project, valid_thread,
 };
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -222,6 +222,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
             std::fs::create_dir_all(&path)?;
             (path, None, None)
         }
+        ThreadKind::Adopted => bail!("데려온 thread는 자리를 만들지 않는다(`thread adopt`)"),
     };
     let work_dir = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
     std::fs::create_dir_all(work_dir.join("library"))?;
@@ -236,6 +237,43 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         branch,
         base,
         launch,
+    })
+}
+
+/// 사람이 띄운 agent 세션을 thread로 데려온다(herdr-projects `adopt`): 세션이 있는 폴더 `cwd`에 작업 폴더를 만들고
+/// brief.md를 쓴다. git repo 안이면 `.aaa/`를 exclude에 넣고 repo top과 지금 branch를 알린다. 같은 폴더의 두 thread도
+/// 작업 폴더는 따로다.
+pub async fn adopt(exe: &Path, p: ThreadAdopt, cwd: &Path) -> Result<ThreadAdopted> {
+    if !valid_project(&p.project) || !valid_thread(&p.thread) {
+        bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
+    }
+    if !cwd.is_absolute() || !cwd.is_dir() {
+        bail!("세션 폴더가 없다: {}", cwd.display());
+    }
+    let work_dir = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
+    if work_dir.exists() {
+        bail!("작업 폴더가 이미 있다: {}", work_dir.display());
+    }
+    let repo = git(cwd, &["rev-parse", "--show-toplevel"], GIT_T).await.ok().filter(|s| !s.is_empty());
+    let branch = match &repo {
+        Some(_) => {
+            git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_T).await.ok().filter(|b| !b.is_empty() && b != "HEAD")
+        }
+        None => None,
+    };
+    if let Some(top) = &repo {
+        exclude_work_dirs(Path::new(top)).await?;
+    }
+    std::fs::create_dir_all(work_dir.join("library"))?;
+    std::fs::write(
+        work_dir.join("brief.md"),
+        fill_brief(&p.brief, &work_dir.to_string_lossy(), &exe.to_string_lossy()),
+    )?;
+    Ok(ThreadAdopted {
+        cwd: cwd.to_string_lossy().to_string(),
+        work_dir: work_dir.to_string_lossy().to_string(),
+        repo,
+        branch,
     })
 }
 
