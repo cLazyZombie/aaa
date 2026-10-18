@@ -556,8 +556,9 @@ export default async function ({ ctl, page }) {
       if (got.wrap !== String(wrap) || got.width !== width) throw new Error(`${what} 설정 ${JSON.stringify(got)}`);
       return group;
     };
-    // 스위치·고르기 단추는 transition으로, 휴대폰·iPad 파일 보기는 아래에서 올라온다: 끝난 모양을 찍는다
-    const settled = (p) => p.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)));
+    // 스위치·고르기 단추는 transition으로, 휴대폰·iPad 파일 보기는 아래에서 올라온다: 끝난 모양을 찍는다.
+    // 그 창 안의 것만 기다린다(터미널 커서 깜박임 같은 끝없는 animation은 끝나지 않는다)
+    const settled = (box) => box.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
     const closeSettings = async (p) => {
       await p.keyboard.press("Escape");
       await p.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
@@ -580,7 +581,7 @@ export default async function ({ ctl, page }) {
     const group = await settingsShown(dp, "처음", false, "기본값");
     await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
     await group.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).click();
-    await settled(dp);
+    await settled(dp.getByRole("dialog", { name: "설정" }));
     await shot(dp, "desktop-settings-file-viewer");
     await closeSettings(dp);
     await openSource(dp, "접은 소스");
@@ -608,7 +609,7 @@ export default async function ({ ctl, page }) {
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
     const phoneGroup = await settingsShown(pp, "휴대폰", false, "기본값");
     await phoneGroup.getByRole("switch", { name: "긴 줄 바꿈" }).tap();
-    await settled(pp);
+    await settled(pp.getByRole("dialog", { name: "설정" }));
     await shot(pp, "phone-settings-file-viewer");
     await closeSettings(pp);
     await pp.getByTestId("pane-viewer").click();
@@ -618,7 +619,7 @@ export default async function ({ ctl, page }) {
     await codeIs(pp, "휴대폰 접은 소스", source);
     const phone = await codeShape(pp);
     if (phone.rows < 3 || phone.sideways > 0) throw new Error(`휴대폰 긴 줄 바꿈 ${JSON.stringify(phone)}`);
-    await settled(pp);
+    await settled(viewer(pp));
     await shot(pp, "phone-file-wrap");
     await pp.context().close();
 
@@ -633,7 +634,7 @@ export default async function ({ ctl, page }) {
     await domIs(ip, "iPad 전체 너비 Markdown", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "너비");
     const ipWide = await markdownShape(ip);
     if (Math.abs(ipWide.width - ipWide.room) > 1) throw new Error(`iPad 전체 너비 Markdown ${JSON.stringify(ipWide)}`);
-    await settled(ip);
+    await settled(viewer(ip));
     await shot(ip, "ipad-file-markdown-full");
     await ip.context().close();
     await dp.context().close();

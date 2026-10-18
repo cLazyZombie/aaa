@@ -287,6 +287,12 @@ function readMarkdownWidth(): MarkdownWidth {
 
 let markdownWidth = readMarkdownWidth();
 
+window.addEventListener("storage", (e) => {
+  if (e.key !== MARKDOWN_WIDTH_KEY) return;
+  markdownWidth = readMarkdownWidth();
+  listeners.forEach((f) => f());
+});
+
 export function setMarkdownWidth(width: MarkdownWidth) {
   markdownWidth = width;
   try {
