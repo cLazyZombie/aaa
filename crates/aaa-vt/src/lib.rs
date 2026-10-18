@@ -558,6 +558,12 @@ impl Vt {
         }
     }
 
+    /// 기록 전체와 화면(접힌 줄은 잇는다, 모양 없는 글, 줄 상한 없음). herdr `recent_unwrapped_text_snapshot(usize::MAX)`, 기록
+    /// 편집기(`prefix e`)가 쓴다
+    pub fn unwrapped_all(&mut self) -> String {
+        self.recent(usize::MAX, true, false).text
+    }
+
     fn recent(&mut self, lines: usize, unwrap: bool, ansi: bool) -> ReadText {
         let (rows, cols) = self.parser.screen().size();
         let (rows, cols) = (usize::from(rows), cols);
@@ -1940,6 +1946,20 @@ mod tests {
         let mut w = Vt::new(2, 5);
         w.feed(b"0123456789AB\r\nz");
         assert_eq!(read(&mut w, ReadSource::RecentUnwrapped, None).text, "0123456789AB\nz\n");
+    }
+
+    /// 기록 편집기: 읽기 상한(`READ_MAX_LINES`)과 상관없이 기록 처음부터, 접힌 줄은 잇는다
+    #[test]
+    fn unwrapped_all_reads_the_whole_history() {
+        let mut v = Vt::new(5, 10);
+        for i in 1..=READ_MAX_LINES + 500 {
+            v.feed(format!("l{i}\r\n").as_bytes());
+        }
+        v.feed(b"0123456789AB\r\n$ ");
+        let text = v.unwrapped_all();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), READ_MAX_LINES + 502);
+        assert_eq!((lines[0], lines[lines.len() - 2], lines[lines.len() - 1]), ("l1", "0123456789AB", "$"));
     }
 
     /// 넓은 글자가 끝 칸 하나에 들지 않아 내려간 줄도 이어 읽는다(ghostty는 그 칸을 spacer로 두고 잇는다)

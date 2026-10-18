@@ -594,6 +594,19 @@ pub enum AgentRequest {
         data: B64,
         eof: bool,
     },
+    /// pane 기록 한 조각을 이 머신 임시 폴더의 `aaa-scrollback-<name>.txt`에 쓴다(herdr `prefix e`, plan §8.162). `name`은 host가
+    /// 정한 hex 16자다. `offset`은 지금까지 쓴 길이와 같아야 하고, `eof`면 경로와 그 파일을 여는 편집기 명령을 돌려준다.
+    /// agent 기능 `scrollback.v1`이 있을 때만 보낸다.
+    ScrollbackWrite {
+        name: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+    },
+    /// `ScrollbackWrite`로 쓴 파일을 지운다(편집기 pane이 끝났다). 이미 없으면 그대로 끝난다.
+    ScrollbackRemove {
+        name: String,
+    },
     /// 사후 평가자 사건 묶음을 작업 폴더의 `inbox/` 아래에 쓴다(§8.13). `path`는 `inbox/<이름>.json`만 받는다.
     WorkFileWrite {
         work_dir: String,
@@ -685,6 +698,11 @@ pub enum AgentResponse {
     Attached {
         path: String,
         sha256: String,
+    },
+    /// 기록 파일을 다 썼다(그 머신 절대 경로와 그 파일을 여는 편집기 명령)
+    Scrollback {
+        path: String,
+        argv: Vec<String>,
     },
     /// 세션이 지금 있는 폴더(읽지 못하면 None)
     Cwd {
@@ -1389,6 +1407,13 @@ pub enum FrontRequest {
         pane: String,
         cursor: TextPoint,
         motion: CopyMotion,
+    },
+    /// pane 기록을 그 머신 편집기로 연다(herdr `prefix e` `edit_scrollback`, 1.28부터, plan §8.162): 그 머신 agent가 화면 사본의
+    /// 기록을 임시 파일로 쓰고, host가 그 pane을 나눠 편집기 pane을 띄운 뒤 탭을 zoom한다. 편집기 pane이 끝나면 host가 그
+    /// pane을 닫고 파일을 지우고 zoom을 되돌린다. `Workspace`로 답한다.
+    PaneEditScrollback {
+        workspace: Option<String>,
+        pane: String,
     },
     /// copy 모드 찾기(herdr `PaneCopySearch`, 1.27부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
     /// 있으면 그 다음부터. `CopySearch`로 답한다.

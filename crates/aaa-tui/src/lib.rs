@@ -200,6 +200,8 @@ enum Pending {
     Input,
     /// 새로 만든 pane에 포커스를 옮긴다(보낼 때 있던 pane들: 같은 layout 사건이 응답보다 먼저 와도 새 pane을 찾는다)
     Focus(HashSet<String>),
+    /// 기록 편집기 pane을 열었다(`Focus`처럼 새 pane으로, 그 pane이 닫히면 `from`으로 돌아간다)
+    EditScrollback { before: HashSet<String>, from: String },
     /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
     Attach(u64),
     /// 고른 글 읽기: 응답이 오면 복사한다
@@ -316,6 +318,8 @@ struct App {
     /// 새 pane으로 포커스를 옮길 layout 요청(응답 전까지 키·붙여넣기를 `held`에 붙잡는다)
     focus_wait: Option<String>,
     held: Vec<Event>,
+    /// 연 기록 편집기 pane과 연 pane(herdr `OverlayPaneState.previous_focus`): 편집기 pane이 닫히면 연 pane으로 돌아간다
+    overlay_back: Option<(String, String)>,
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
     copy_reply: Option<copy::CopyReply>,
@@ -392,6 +396,7 @@ impl App {
             ascii_on: false,
             ascii: None,
             focus_wait: None,
+            overlay_back: None,
             held: vec![],
             copy_wait: None,
             copy_reply: None,
@@ -702,6 +707,17 @@ impl App {
                             self.select_pane(&new);
                         }
                     }
+                    (
+                        Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)),
+                        Some(Pending::EditScrollback { before, from }),
+                    ) => {
+                        self.set_ws(w);
+                        if let Some(new) = self.all_panes().difference(&before).next().cloned() {
+                            self.select_pane(&new);
+                            self.overlay_back = Some((new, from));
+                            self.set_message("기록을 편집기로 열었다");
+                        }
+                    }
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::SpaceLayout)) => {
                         self.note_space(&w)
                     }
@@ -759,6 +775,9 @@ impl App {
                         self.set_error(format!("copy 이동 실패: {}", e.message))
                     }
                     (Outcome::Err(e), Some(Pending::Copy)) => self.set_error(format!("복사하지 못했다: {}", e.message)),
+                    (Outcome::Err(e), Some(Pending::EditScrollback { .. })) => {
+                        self.set_error(format!("기록을 편집기로 열지 못했다: {}", e.message))
+                    }
                     (Outcome::Err(e), Some(Pending::Attach(n))) => {
                         if self.attach_failed != Some(n) {
                             self.attach_failed = Some(n);
@@ -856,6 +875,16 @@ impl App {
         }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
+        }
+        // 기록 편집기 pane이 닫혔다: 그 pane을 보고 있었으면 연 pane으로 돌아간다(herdr `restore_overlay_after_exit`)
+        if let Some((overlay, from)) = self.overlay_back.clone() {
+            let panes = self.all_panes();
+            if !panes.contains(&overlay) {
+                self.overlay_back = None;
+                if self.focus.as_ref() == Some(&overlay) && panes.contains(&from) {
+                    self.select_pane(&from);
+                }
+            }
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
@@ -1518,6 +1547,17 @@ impl App {
                 }
             }
             Action::CopyMode => self.enter_copy(tx).await?,
+            // herdr `edit_scrollback`: 기록을 그 pane 머신 편집기로 연다(host가 나눠 띄우고 zoom한다). 응답까지 키를 붙잡는다
+            Action::EditScrollback => {
+                let Some(pane) = focus else { return Ok(()) };
+                if self.host_at_least(28) {
+                    let req =
+                        FrontRequest::PaneEditScrollback { workspace: Some(self.ws_name.clone()), pane: pane.clone() };
+                    let id = tx.send(req).await?;
+                    self.pending.insert(id.clone(), Pending::EditScrollback { before: self.all_panes(), from: pane });
+                    self.focus_wait = Some(id);
+                }
+            }
             Action::RenamePane => {
                 if let Some(pane) = self.focus.clone() {
                     self.open_rename_pane(pane);

@@ -18,6 +18,7 @@ pub mod link;
 mod page;
 mod plan;
 mod pr;
+mod scrollback;
 pub mod threads;
 
 use std::collections::HashMap;
@@ -898,6 +899,17 @@ impl Agent {
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
             }
+            AgentRequest::ScrollbackWrite { name, offset, data, eof } => {
+                self.scrollback_write(name, offset, data.0, eof).await
+            }
+            AgentRequest::ScrollbackRemove { name } => {
+                let dir = std::env::temp_dir();
+                tokio::task::spawn_blocking(move || scrollback::remove(&dir, &name))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))))
+                    .map(|()| AgentResponse::Done)
+            }
             AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree, uncopied } => {
                 threads::cleanup(
                     repo.as_deref(),
@@ -943,6 +955,36 @@ impl Agent {
                 Some((path, sha256)) => AgentResponse::Attached { path, sha256 },
                 None => AgentResponse::Done,
             })
+            .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+    }
+
+    /// pane 기록 한 조각을 이 머신 임시 폴더에 쓴다(plan §8.162). 임시 폴더가 허용 폴더 밖이면 쓰지 않는다.
+    async fn scrollback_write(
+        &self,
+        name: String,
+        offset: u64,
+        data: Vec<u8>,
+        eof: bool,
+    ) -> Result<AgentResponse, ErrorBody> {
+        // 허용 폴더는 실제 경로다(macOS `/var/folders` → `/private/var/folders`)
+        let dir = std::env::temp_dir()
+            .canonicalize()
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("임시 폴더를 찾지 못했다: {e}")))?;
+        if !self.file_roots.lock().unwrap().allows(&dir) {
+            return Err(ErrorBody::new(
+                ErrorCode::Forbidden,
+                "임시 폴더가 허용한 폴더 밖이라 기록을 쓰지 않는다(그 머신 agent.toml [agent] file_roots)",
+            ));
+        }
+        let path = tokio::task::spawn_blocking(move || scrollback::write(&dir, &name, offset, &data, eof))
+            .await
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?
+            .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))?;
+        let Some(path) = path else { return Ok(AgentResponse::Done) };
+        // herdr Windows: `VISUAL` → `EDITOR`(unix는 pane 안 셸이 `EDITOR`를 푼다)
+        let editor = ["VISUAL", "EDITOR"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()));
+        scrollback::editor_argv(cfg!(windows), editor.as_deref(), &path)
+            .map(|argv| AgentResponse::Scrollback { path, argv })
             .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
     }
 
@@ -1257,5 +1299,28 @@ mod tests {
         assert!(watch_of(&spec, &info, v(1)).is_none());
         let (spec, info) = session(Some("claude"), &["claude"], SessionState::Exited { code: Some(0) });
         assert!(watch_of(&spec, &info, v(1)).is_none(), "끝난 세션은 보지 않는다");
+    }
+
+    /// 기록 파일(plan §8.162): 임시 폴더가 허용 폴더 밖이면 쓰지 않고, 안이면 다 쓴 뒤 경로와 편집기 명령을 준다
+    #[tokio::test]
+    async fn scrollback_stays_inside_file_roots() {
+        let state = std::env::temp_dir().join(format!("aaa-agent-scrollback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state);
+        let agent = Agent::new(state.clone(), "m".into(), "m".into(), false, None).unwrap();
+        let name = hex::encode(rand::random::<[u8; 8]>());
+        let outside = agent.scrollback_write(name.clone(), 0, b"x".to_vec(), true).await.unwrap_err();
+        assert_eq!(outside.code, ErrorCode::Forbidden);
+        agent.configure_file_roots(vec![std::env::temp_dir()]);
+        assert_eq!(agent.scrollback_write(name.clone(), 0, b"seq ".to_vec(), false).await, Ok(AgentResponse::Done));
+        let Ok(AgentResponse::Scrollback { path, argv }) =
+            agent.scrollback_write(name.clone(), 4, b"200".to_vec(), true).await
+        else {
+            panic!("경로를 돌려주지 않았다")
+        };
+        assert_eq!(std::fs::read(&path).unwrap(), b"seq 200");
+        assert!(argv.last().is_some_and(|a| a.contains(&format!("aaa-scrollback-{name}.txt"))), "{argv:?}");
+        scrollback::remove(&std::env::temp_dir(), &name).unwrap();
+        assert!(!Path::new(&path).exists());
+        std::fs::remove_dir_all(&state).unwrap();
     }
 }

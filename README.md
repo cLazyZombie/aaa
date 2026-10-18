@@ -66,6 +66,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `n` · `p` · `1`~`9` | 탭 이동 |
 | `x` | pane 닫기(세션도 끝냄) |
 | `Shift+P` | pane 이름 바꾸기(비우고 Enter면 띄울 때 이름으로) |
+| `e` | 기록을 편집기로: 그 pane 머신의 `$EDITOR`(없으면 `vi`, Windows는 `VISUAL`·`EDITOR`·메모장)로 기록 전체를 연 pane을 나눠 크게 띄움, 편집기를 끝내면 닫히고 임시 파일은 지워짐 |
 | `[` | copy 모드: `h/j/k/l`·`w/b/e`·`W/B/E`·`{`/`}`·`PageUp`/`PageDown`·`ctrl+u/d`·`g`/`G`·`0`/`$`/`^`로 커서(기록까지 넘김), `/`·`?` 찾기·`n`/`N` 다시, `v`·`V`로 고르고 `y`·`Enter` 복사, `q`·`Esc` 끝(보던 자리로) |
 | `z` | 포커스 pane 크게 보기(다시 누르면 원래대로) |
 | `r` | 크기 모드: `h/j/k/l`로 가장자리 옮기기, `Esc` 끝 |

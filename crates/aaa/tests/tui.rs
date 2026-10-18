@@ -489,11 +489,16 @@ fn start(lab: &mut Lab) -> (Node, HostWatch) {
 }
 
 fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
+    start_agent_env(lab, host_toml, &[])
+}
+
+/// `start_with`에 agent 환경 변수를 더한다(agent가 띄우는 pane이 물려받는다)
+fn start_agent_env(lab: &mut Lab, host_toml: &str, env: &[(&str, &str)]) -> (Node, HostWatch) {
     let h = lab.node("h", Some(host_toml));
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     let mut hw = HostWatch::new(&h);
-    lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
+    lab.spawn_env("agent", &h, &["agent", "--host", "local", "--name", "labA"], env);
     hw.wait("labA 연결", |w| w.connected("labA").then_some(()));
     (h, hw)
 }
@@ -504,6 +509,8 @@ fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
     let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
+    // 알림 카드(`render_notice`: 오른쪽 위 3줄)가 덮은 오른쪽도 이름표가 아니다
+    let rest = rest.split('┌').next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
     let mut chips: Vec<String> =
         rest.split_whitespace().filter(|c| !matches!(*c, "+" | "<" | ">" | "…")).map(str::to_string).collect();
@@ -1929,6 +1936,93 @@ fn copy_mode_like_herdr() {
     tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
     // copy 모드 키는 셸에 가지 않았다
     assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.162): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,
+/// host가 그 pane을 나눠 편집기 pane을 띄워 탭을 zoom한다. 편집기 pane이 끝나면(끝남·닫기) 그 pane을 닫고 파일을 지우고, 끝날
+/// 때도 zoom이면 나누기 전 zoom으로 돌리고, 연 pane으로 포커스를 돌린다. 편집기는 agent `EDITOR`(받은 경로를 적고 내용을 보인
+/// 뒤 Enter를 기다리는 스크립트), 임시 폴더는 agent `TMPDIR`로 실험실 안에 둔다.
+#[test]
+fn edit_scrollback_like_herdr() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut lab = Lab::new();
+    let tmp = lab.root.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let seen = lab.root.join("editor-path.txt");
+    let editor = lab.root.join("editor.sh");
+    let script = format!("#!/bin/sh\necho \"$1\" > '{}'\ncat \"$1\"\necho editor-ready\nread x\n", seen.display());
+    std::fs::write(&editor, script).unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let env = [("EDITOR", editor.to_str().unwrap()), ("TMPDIR", tmp.to_str().unwrap())];
+    let (h, mut hw) = start_agent_env(&mut lab, LOCAL_ONLY, &env);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["1"]);
+    hw.wait("이 화면 크기", |w| w.held_by(&first, "tui@").then_some(()));
+    tui.type_line("seq 1 200; echo seq-$((1+1))");
+    tui.wait_text("seq 끝", |s| s.contains("seq-2"));
+    let zoomed = |w: &HostWatch| w.ws.as_ref().is_some_and(|ws| ws.tabs[0].zoomed);
+    // 편집기를 열고 그 pane과 편집기가 받은 경로를 돌려준다
+    let open = |tui: &mut Tui, hw: &mut HostWatch, n: usize| {
+        let _ = std::fs::remove_file(&seen);
+        tui.cmd("e");
+        let ed = hw.wait("편집기 pane", |w| (w.leaves().len() == n + 1 && zoomed(w)).then(|| w.leaves()[n].clone()));
+        tui.wait_text("편집기 화면", |s| {
+            tab_chips(s) == ["1", "Z"] && s.contains("기록을 편집기로 열었다") && s.contains("editor-ready")
+        });
+        let path = wait_for("편집기가 받은 경로", T, || {
+            std::fs::read_to_string(&seen).ok().filter(|p| p.ends_with('\n')).map(|p| p.trim().to_string())
+        });
+        (ed, std::path::PathBuf::from(path))
+    };
+
+    // 1) prefix e: 나눠 편집기 pane, 탭 zoom(` Z`), 포커스는 편집기. 파일은 실험실 임시 폴더의 `aaa-scrollback-*.txt`(0600)이고
+    //    기록 처음(1)부터 끝(200)까지 들었다. Enter로 편집기가 끝나면 그 pane을 닫고(나누기 전처럼 zoom 아님) 연 pane으로 돌아간다
+    let (_, path) = open(&mut tui, &mut hw, 1);
+    let name = path.file_name().unwrap().to_string_lossy().to_string();
+    assert!(path.starts_with(tmp.canonicalize().unwrap()) && name.starts_with("aaa-scrollback-"), "{}", path.display());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.lines().any(|l| l == "1") && text.lines().any(|l| l == "200"), "기록 전체가 아니다:\n{text}");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    tui.send(b"\r");
+    hw.wait("편집기 pane 닫힘", |w| (w.leaves() == [first.clone()] && !zoomed(w)).then_some(()));
+    tui.wait_text("돌아옴", |s| tab_chips(s) == ["1"] && s.contains("seq-2"));
+    wait_for("임시 파일 지움", T, || (!path.exists()).then_some(()));
+    tui.type_line("echo back-$((2+3))");
+    tui.wait_text("연 pane 출력", |s| s.contains("back-5"));
+    assert!(h.screen(&first).contains("back-5"), "포커스가 연 pane으로 돌아오지 않았다");
+
+    // 2) 편집기 pane을 닫으면(prefix x, 세션을 끝낸다) 셸이 지우지 못한 파일을 host가 지운다
+    let (_, path) = open(&mut tui, &mut hw, 1);
+    tui.cmd("x");
+    hw.wait("닫은 편집기 pane", |w| (w.leaves() == [first.clone()] && !zoomed(w)).then_some(()));
+    wait_for("닫은 편집기의 임시 파일 지움", T, || (!path.exists()).then_some(()));
+
+    // 3) 나누기 전 탭이 zoom이었으면 끝날 때 다시 zoom, 포커스는 연 pane(나눈 오른쪽)
+    tui.cmd("v");
+    let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
+    tui.cmd("z");
+    hw.wait("zoom", |w| zoomed(w).then_some(()));
+    let (ed, _) = open(&mut tui, &mut hw, 2);
+    tui.send(b"\r");
+    hw.wait("편집기 pane 닫힘, 다시 zoom", |w| {
+        (!w.leaves().contains(&ed) && w.leaves().len() == 2 && zoomed(w)).then_some(())
+    });
+    tui.type_line("echo right-$((4+5))");
+    tui.wait_text("오른쪽 zoom 출력", |s| tab_chips(s) == ["1", "Z"] && s.contains("right-9"));
+    assert!(h.screen(&right).contains("right-9"), "포커스가 연 pane으로 돌아오지 않았다");
+
+    // 4) 편집기를 보는 사이 사람이 zoom을 풀었으면 그대로 둔다(host는 빼기와 zoom을 한 사건으로 저장한다: 빠진 사건이 끝 상태)
+    let (ed, _) = open(&mut tui, &mut hw, 2);
+    tui.cmd("z");
+    hw.wait("zoom 풀림", |w| (!zoomed(w)).then_some(()));
+    tui.send(b"\r");
+    hw.wait("편집기 pane 닫힘", |w| (!w.leaves().contains(&ed) && w.leaves().len() == 2).then_some(()));
+    assert!(!zoomed(&hw), "사람이 푼 zoom을 다시 켰다");
 
     tui.cmd("q");
     assert!(tui.wait_exit());
