@@ -3176,10 +3176,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - Esc는 위에 뜬 창(`aria-modal`·`<dialog open>`)과 열린 메뉴(`role=menu`)가 먼저 쓴다. 한 번은 메뉴, 다음은 drawer다.
 - **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다.
   - 휴대폰(터치)은 키보드를 올리지 않는다. 데스크톱은 터미널이 바로 키보드를 받는다(참고 PaneTerminal 2072줄: 고른 것이 없던 첫 화면은 `autoSelected`가 아니다).
-  - 주소가 가리킨 pane이 없으면 빈 화면이다. 참고는 그때 첫 pane으로 가고 말을 띄우는데, 그것은 이 묶음에 넣지 않았다.
+  - 주소가 가리킨 pane이 없으면 첫 줄을 열고 머리에 말한다(§8.165, 전에는 빈 화면).
 - **다르게 둔 것.**
   - 참고는 단추가 창 전체 머리(app-header)에 있다. aaa는 화면마다 머리가 있어(터미널·보고·프로젝트, 빈 화면은 좁은 창에서만 보이는 머리) 그 머리 맨 앞에 같은 단추를 둔다(`web/src/drawer.tsx`). drawer는 그 머리(`--head`) 아래에 선다. 데스크톱 배치는 그대로다.
-  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 「더 보기」 메뉴는 aaa에서 목록 머리(drawer 안)에 있어 메뉴도 거른다.
+  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 열린 메뉴(`role=menu`, 목록 줄 메뉴 등)도 거른다. 「더 보기」는 §8.165부터 화면 머리 맨 끝이다.
   - Esc로 닫으면 drawer 안에 있던 focus를 단추로 돌린다(숨는 drawer와 함께 focus가 사라지지 않게).
   - 설정 톱니는 drawer 바닥 줄에 있다. 설정을 열어도 drawer를 닫지 않아, 닫으면 focus가 보이는 톱니로 돌아온다(QA Q10). 참고는 설정을 머리·명령에서 열어 drawer를 닫는다.
   - 참고는 drawer(`.sidebar`) 안에 목록(`.sidebar-shell`, `height:100%`)이 따로 있다. aaa는 한 요소라 drawer일 때 `height:auto`로 둔다. 그러지 않으면 높이가 화면 전체라 바닥 줄(톱니·사용량)이 머리 높이만큼 화면 밖으로 밀린다(시험이 잡았다).
@@ -3484,6 +3484,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `routines`: aaa 셸 pane에서 변수를 지우고 이름까지 쳐도 host가 거부하고 승인되지 않는다(host 검사를 끄면 실패).
   - 기존 `worker_session_cli_is_read_only`(env로 알린 세션은 줄이는 쪽)·`evaluator_flow`는 그대로 통과한다.
   - 유닛: `process`(자기·자식의 부모·세션·터미널), `caller`(터미널 없는 init 자식 leader는 보기만, host·agent 세션이면 밖, 조상에 pane child면 그 pane).
+
+### 8.165 「더 보기」는 화면 머리 맨 끝, 주소가 가리킨 pane이 없으면 첫 줄과 머리 알림(10-18, coordinator 「아침 확인 둘은 참고대로」)
+
+§8.146의 아침 확인 둘을 참고 herdr-web-ui `aa624cb`대로 정했다.
+
+- **「더 보기」 자리(참고 App.tsx 1444~1459줄 `header-meta` 안 `header-more`).** 참고는 창 전체 머리 오른쪽 끝에 있어 휴대폰에서도 늘 보인다. aaa는 목록 머리에 있어 휴대폰은 drawer를 열어야 닿았다. 이제 각 화면 머리(터미널·보고·프로젝트·빈 화면) 맨 끝이다(`drawer.tsx` `HeadContext`·`HeadMore`). 빈 화면 머리도 모든 폭에서 보인다.
+  - 머리(`.term-head`)는 sticky라 쌓임 맥락을 새로 만든다. 그 안에서 열린 메뉴가 아래 터미널 칸의 띠·떠 있는 입력줄(z 9~11)에 덮였고, 톱니로 연 설정을 닫아 drawer가 열린 채면 drawer(20)에도 덮였다(둘 다 시험이 잡았다, 뒤의 것은 ci-local 15 「iPhone 알림 범위」). 참고 메뉴(RowMenu.css)처럼 drawer 위(drawer + 1)에 서게 머리를 거기 둔다. drawer·scrim은 머리 아래부터라 겹치지 않고 창(30)은 그 위다. 참고는 메뉴를 body로 portal한다.
+  - 메뉴 모양은 aaa의 드롭다운 그대로다(참고는 RowMenu). 항목·키(첫 항목 focus·↑↓·Esc 뒤 ⋯로)는 같다.
+- **주소가 가리킨 pane이 없을 때(참고 `deepLink.ts` `resolveLink`, App.tsx 728~792줄).** 참고는 그 pane의 workspace가 남아 있으면 그 workspace의 pane을 열고, 없으면 평소 첫 pane(`fallback`)을 열며 머리에 8초 말한다(「그 링크의 워크스페이스는 닫혔습니다」). aaa 주소(`#pane=<id>`)에는 workspace가 없어 뒤 갈래만 있다: 첫 줄을 열고 머리 제목 자리에 「그 링크의 pane은 닫혔습니다」를 8초 띄운다(`HeadNote`).
+  - 그렇게 App이 스스로 고른 pane은 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 `autoSelected`). 같은 줄을 다시 누르면 그때 터미널이 받는다(참고 PaneTerminal 2209~2216줄).
+  - 끝난 pane은 목록에 남아(다시 열기) 「없음」이 아니다. 주소가 가리킨 thread가 없을 때는 참고에 없어 그대로다.
+- **시험.** 웹 E2E 04 「「더 보기」와 닫힌 pane 주소」: 휴대폰 `#pane=gone`으로 열면 첫 줄·머리 알림·키보드 없음, 「더 보기」가 drawer 밖 화면 머리 오른쪽 끝, 메뉴가 화면 안이고 덮이지 않음(메뉴 가운데의 요소가 메뉴), 데스크톱은 첫 줄·알림·키보드를 가져가지 않음, 그 줄을 고르면 터미널 focus(`phone-head-more`·`desktop-head-note`). drawer가 열린 채 연 메뉴가 drawer 위. 결함 심기 다섯(머리 z-index 빼기·drawer 아래 값 12·터미널 머리에서 「더 보기」 빼기·알림 빼기·autoSelected 무시)을 모두 잡는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
