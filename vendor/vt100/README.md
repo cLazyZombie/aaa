@@ -16,7 +16,9 @@ workspace의 `[patch.crates-io]`가 이 판을 쓴다. workspace 밖(`exclude`)�
     상태 스물에서 「표 + 규칙」이 provider와 같은지 대조하고 다르면 멈춘다.
   - `Cell::set`은 넓은지를 받는다(놓는 쪽이 정한다).
 - **묶음 끊기(`src/perform.rs`, `Screen::set_size`).** 제어 문자·CSI·ESC·OSC·DCS 끝 뒤에는 앞 글자와 묶지 않는다(xterm
-  parser의 `precedingJoinState = 0`). 받은 덩이 경계에서는 끊지 않는다.
+  parser의 `precedingJoinState = 0`). 받은 덩이 경계에서는 끊지 않는다. 크기를 바꿀 때도 끊는다(xterm은 끊지 않는다).
+  aaa-vt가 폭을 바꿔 다시 접을 때는 화면을 새 parser에 다시 쓰므로 어차피 이어지지 않는다. 다른 것은 다시 접지 않는
+  크기 바뀜이 한 묶음의 글자 사이에 끼는 경우뿐이다.
 - **다시 쓸 때 끊기(`Row::write_contents_formatted`, `Grid::write_contents_formatted`).** escape로 따로 놓인 칸을 escape
   없이 이어 쓰면 받는 터미널이 한 묶음으로 합친다. 그런 자리에는 모양(SGR)을 다시 써서 끊는다. 이은 줄을 넘어서도 본다.
 - **공개 함수 `joins_after`.** aaa-vt가 제 replay·reflow 쓰기에서 같은 끊기를 하려고 쓴다.
