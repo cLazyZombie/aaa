@@ -840,6 +840,7 @@ mod tests {
             seen: true,
             plan: None,
             background: None,
+            background_wait: false,
         }))
     }
 
@@ -1133,6 +1134,7 @@ mod tests {
                 seen: true,
                 plan: Some(aaa_proto::PlanSummary { done: 1, total: 3, current: None }),
                 background: Some(2),
+                background_wait: false,
             })),
             label: None,
             restore_error: None,

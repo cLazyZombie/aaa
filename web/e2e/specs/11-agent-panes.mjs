@@ -606,6 +606,55 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "plan1");
   });
 
+  await step("배경 작업을 기다리는 쉼(herdr-web-ui server/background-wait.ts·status.ts `paneStatus`, 차이 목록 S1): 사람 입력 뒤 턴이 배경 명령을 남긴 채 끝나면 끝남 대신 BG(배경 작업 대기), 그 일이 끝나도 Claude가 이어 갈 동안(유예)은 BG, 다음 턴이 끝나면 BG가 아니다", async () => {
+    const dir = `${root}/claude/projects/-lab-bgwait`;
+    fs.mkdirSync(dir, { recursive: true });
+    const tr = `${dir}/w1.jsonl`;
+    fs.writeFileSync(tr, "");
+    const sid = "6e5d4c3b-2a1f-4e0d-9c8b-7a6f5e4d3c2b";
+    const hook = (o) => JSON.stringify({ session_id: sid, transcript_path: tr, ...o });
+    // 기록 위치는 SessionStart hook으로, 턴은 화면(일하는 화면·입력 상자)으로, 사람 입력은 UserPromptSubmit hook으로 알린다. 줄 하나에 턴을 열고 다음 줄에 닫는다
+    const script = `"$0" hook --agent claude "$1"; stty -echo; ${claudeIdle}; while read a; do "$0" hook --agent claude "$2"; ${claudeWorking}; read b; ${claudeIdle}; done`;
+    aaa("tab", "create", "--machine", "labA", "--label", "bgw1", "--", claudeSh, "-c", script, AA,
+      hook({ hook_event_name: "SessionStart", source: "startup" }), hook({ hook_event_name: "UserPromptSubmit", prompt: "시험 돌려 줘" }));
+    const state = page.getByTestId("agent-bgw1");
+    const is = async (s, what) => {
+      let last = null;
+      await until(what, async () => (last = await state.getAttribute("data-status").catch(() => null)) === s).catch((e) => {
+        throw new Error(`${e.message}: ${last}`);
+      });
+    };
+    const agent = () => aaa("pane", "list").panes.find((p) => p.name === "bgw1")?.agent;
+    await until("bgw1 harness", () => agent()?.harness === "claude");
+    await is("idle", "처음은 쉼");
+    const at = () => new Date().toISOString();
+    const L = (o) => JSON.stringify(o) + "\n";
+    // 1) 사람 입력 → 턴이 배경 명령을 띄우고 끝난다: 끝남 대신 BG(CLI도 같은 값)
+    aaa("pane", "run", "bgw1", "go");
+    await is("working", "턴");
+    fs.appendFileSync(tr, L({ type: "assistant", timestamp: at(), message: { content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "cargo test", run_in_background: true } }] } }) +
+      L({ type: "user", timestamp: at(), toolUseResult: { backgroundTaskId: "bg1" }, message: { content: [{ type: "tool_result", tool_use_id: "b1", content: "Command running in background with ID: bg1" }] } }));
+    await until("배경 하나", () => agent()?.background === 1);
+    aaa("pane", "run", "bgw1", "end");
+    await is("waiting", "배경을 기다리는 쉼");
+    const said = [(await state.innerText()).trim(), await state.getAttribute("title")];
+    if (JSON.stringify(said) !== JSON.stringify(["배경 작업 대기", "agent가 배경 작업을 기다린다"])) throw new Error(`상태 말: ${JSON.stringify(said)}`);
+    if (agent()?.background_wait !== true) throw new Error(`CLI background_wait: ${JSON.stringify(agent())}`);
+    await shot(page, "desktop-agents-bg");
+    // 2) 그 일이 끝났다(알림): Claude가 이어 갈 동안(유예)은 그대로 BG
+    fs.appendFileSync(tr, L({ type: "queue-operation", operation: "enqueue", timestamp: at(), content: "<task-notification>\n<task-id>bg1</task-id>\n<tool-use-id>b1</tool-use-id>\n<status>completed</status>\n<summary>끝</summary>\n</task-notification>" }));
+    await until("배경 없음", () => agent()?.background == null);
+    await page.getByTestId("agent-row-bgw1").getByTestId("background-tasks").waitFor({ state: "detached" });
+    await is("waiting", "일이 끝나도 유예 동안 BG");
+    // 3) 다음 턴(작업 중)이 끝나면 BG가 아니다(이 화면이 그 pane을 보는지에 따라 끝남·쉼)
+    aaa("pane", "run", "bgw1", "go");
+    await is("working", "다음 턴");
+    aaa("pane", "run", "bgw1", "end");
+    await until("다음 턴이 끝나면 BG가 아니다", async () => ["done", "idle"].includes(await state.getAttribute("data-status")));
+    if (agent()?.background_wait) throw new Error(`끝난 뒤 background_wait: ${JSON.stringify(agent())}`);
+    aaa("pane", "kill", "bgw1");
+  });
+
   await step("처음 보기(herdr-web-ui settings `defaultView`·paneLens.ts, 차이 목록 C1): 자동이면 터치 화면의 agent pane은 대화, 데스크톱·셸은 터미널, pane에서 바꾼 보기는 그 pane에 남고, 설정 「패널 기본 화면」을 바꾸면 그것이 모두에게", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "lens1", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
     await page.getByTestId("agent-lens1").and(page.locator('[data-status="idle"]')).waitFor();

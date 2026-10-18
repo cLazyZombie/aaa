@@ -595,7 +595,12 @@ plan: PlanSummary | null,
 /**
  * 아직 도는 배경 작업 수(Claude 하위 agent·배경 명령). 없으면 null
  */
-background: number | null, };
+background: number | null,
+/**
+ * 쉬지만 그 턴이 띄운 배경 작업을 기다린다(herdr-web-ui `background_wait`, host `bgwait.rs`, 차이 목록 S1): 목록은 끝남·쉼
+ * 대신 BG다. 옛 host는 보내지 않는다(없으면 false)
+ */
+background_wait: boolean, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

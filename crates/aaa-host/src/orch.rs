@@ -1831,6 +1831,7 @@ mod tests {
             seen: true,
             plan: None,
             background: None,
+            background_wait: false,
         }
     }
 

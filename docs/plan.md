@@ -3958,6 +3958,27 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   52px인지, 프로젝트 화면 ≡가 59px 아래인지 본다. 고치기 전 실패(`.drawer-toggle 위 5.5 < 상태 막대 59` 등), 고친 뒤 통과. 결함 심기 셋
   (휴대폰 머리줄 위 여백 없음 → ≡ 35 < 59, drawer 목록 머리가 더함 → 111 ≠ 52, 프로젝트 화면 위 여백 없음 → ≡ 16 < 59) 모두 실패.
 
+### 8.184 배경 작업을 기다리는 쉼(BG)(10-18, 차이 목록 2장 S1 257줄, t-0345 recount (b), coordinator 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb) `server/background-wait.ts` `BackgroundWait`: Claude 턴이 하위 agent·배경 명령을 남긴 채 끝나면 그 pane은
+  쉼(안 봤으면 끝남)이지만 그 일의 알림이 사람 입력 없이 다음 턴을 연다. 그래서 쉬는 pane의 턴이 띄운 일이 아직 돌거나 끝난 지 60초가
+  안 됐으면 `background_wait`이고, 목록은 끝남·쉼 대신 BG(`status.ts` `paneStatus` → `waiting`)라고 한다. 한도 30분은 사람 입력 뒤 첫 쉼부터
+  센다(서버만 띄운 턴은 그 뒤 끝남). 턴보다 먼저 끝난 일·처음부터 쉬던 pane은 붙잡지 않는다. 참고는 서버가 정하고 알림도 미룬다(`alertStatus`).
+- **aaa가 달랐던 것.** 배경 수(§8.151)는 배지만 했고 상태는 늘 쉼·끝남이었다(팔레트 「배경 작업 대기」 필터가 늘 0).
+- **고침.** host `bgwait.rs`에 `BackgroundWait`를 옮겼다(유예·한도·쉼 목록·사람 입력 때 같은 규칙). `on_harness`가 상태 바뀜·배경 수(`plan`
+  사건)·사람 입력(`prompt_submit`)마다 알리고 그 판정을 `AgentStatus.background_wait`로 낸다. 시간은 host 시계로 잰다(agent 시계와 어긋나도
+  맞게). 유예·한도가 다 되는 때는 ticker가 그때 깨어(`background_wait_due`) 풀고 그 pane 상태를 다시 낸다. harness가 끝나거나 놓이면 버린다.
+  웹 `paneAgentStatus`는 쉼(봄·안 봄)·시작 위에 `waiting`을 겹친다(참고 `paneStatus`). 배지·팔레트 필터·접힌 머리 합치기(`rollupStatus`)는
+  이미 `waiting`을 안다.
+- **참고와 다른 곳.** 배경 수는 agent `plan.rs`가 센 「지금 Claude 프로세스가 띄워 아직 도는 것」이다(참고는 그 턴이 띄운 것만, 앞 턴의 일도
+  센다). aaa에는 pane 턴 끝 알림이 없어(N3, 사용자 결정 대기) 알림 미루기는 없다. TUI 상태 표시는 그대로다(herdr TUI에 BG가 없다).
+- **계약.** FRONT_API 1.34: `AgentStatus.background_wait`(없으면 false, 옛 host는 보내지 않는다). 같은 1.34에 L9·C3를 더해 한 번에 착지한다.
+- **시험.** host 유닛 `bgwait::tests`(참고 background-wait.test.ts의 Claude 경우들 — 턴 끝에 일이 돌면 기다리고 끝나도 유예까지, 다음 턴이 풂,
+  턴 안에서 끝난 일·처음 쉼은 붙잡지 않음, 한도는 사람 입력 뒤 첫 쉼부터·새 입력이 새 한도, forget). 웹 E2E 11 「배경 작업을 기다리는 쉼」:
+  가짜 Claude pane(SessionStart hook으로 기록 위치, 화면으로 턴, UserPromptSubmit hook으로 사람 입력)에서 턴이 배경 명령을 띄우고 끝나면
+  Agents 줄이 「배경 작업 대기」(CLI `background_wait` true), 그 일의 알림 뒤 배경 수가 없어져도 BG(유예), 다음 턴이 끝나면 BG가 아님.
+  결함 심기 셋(웹이 무시, host가 내지 않음, 유예 없음) 모두 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
