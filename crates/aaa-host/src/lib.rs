@@ -1032,6 +1032,7 @@ impl Host {
             FrontRequest::ProjectCreate { name } => self.project_create(&name, actor),
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
+            FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
                 let kind = kind.unwrap_or(if repo.is_some() {
@@ -1188,21 +1189,8 @@ impl Host {
                 .map(|v| FrontResponse::Evaluation(Box::new(v))),
             FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
-                // 옛 agent는 모르는 `profile` 칸을 버리고 셸을 띄운다: 보내기 전에 거른다
-                if profile.is_some()
-                    && !self
-                        .inner
-                        .lock()
-                        .unwrap()
-                        .machines
-                        .get(&mid)
-                        .is_some_and(|m| m.features.iter().any(|f| f == "profile.v1"))
-                {
-                    return Err(err(
-                        ErrorCode::BadRequest,
-                        "이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)",
-                    ));
-                }
+                let resolved_profile =
+                    profile.as_deref().map(|name| self.resolved_profile(None, &mid, name)).transpose()?;
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -1213,6 +1201,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile,
+                    resolved_profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1620,6 +1609,7 @@ impl Host {
             role: info.role,
             harness: info.harness.clone(),
             profile: None,
+            resolved_profile: None,
         };
         let new_id = self.respawn(&id, &mid, spec, actor).await?;
         self.pane_view_of(&new_id, role)
@@ -1781,6 +1771,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile: None,
+                    resolved_profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1813,6 +1804,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile: None,
+                    resolved_profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);

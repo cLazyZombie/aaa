@@ -154,9 +154,11 @@ exec cat > /dev/null
   { mode: 0o755 },
 );
 const agentToml = (work) =>
-  `schema = 1\n[agent]\nwork_root = "${work}"\n[profiles.claude-opus]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\ndescription = "견본"\n[profiles.claude-opus.env]\nAA = "${AA}"\n`;
+  `schema = 1\n[agent]\nwork_root = "${work}"\n`;
 fs.writeFileSync(`${root}/c/agent.toml`, agentToml(`${root}/work`));
 fs.writeFileSync(`${root}/cb/agent.toml`, agentToml(`${root}/workb`));
+
+fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.claude-opus]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\ndescription = "견본"\n[profiles.claude-opus.env]\nAA = "${AA}"\n`);
 
 const base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();

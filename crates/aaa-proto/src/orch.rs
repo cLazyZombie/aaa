@@ -48,7 +48,7 @@ pub enum ThreadKind {
     Dir,
 }
 
-/// agent.toml profile을 그 머신에서 해석한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
+/// host profile에 그 머신 실행 경로·환경·hook을 적용한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Launch {
     pub profile: String,
@@ -72,7 +72,7 @@ pub struct ProfileView {
     /// profile이 붙이는 인자(옛 agent는 보내지 않는다)
     #[serde(default)]
     pub args: Vec<String>,
-    /// agent.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
+    /// host.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
     #[serde(default)]
     pub builtin: bool,
 }
@@ -80,6 +80,9 @@ pub struct ProfileView {
 /// host → agent: thread 자리를 만든다(worktree 또는 작업 폴더)와 brief.md 쓰기, profile 해석
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadPrepare {
+    /// host가 푼 profile. host_profiles.v1 기능이 있는 agent에만 보낸다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_profile: Option<ResolvedProfile>,
     pub project: String,
     pub thread: String,
     pub title: String,
@@ -93,6 +96,17 @@ pub struct ThreadPrepare {
     /// thread를 띄울 때 safety(plan §8.163). `launch_safety.v1`을 알린 agent에만 보낸다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<LaunchSafety>,
+}
+
+/// host에서 해석한 실행 설정. command·env는 옛 shell/custom profile의 호환 필드이며 머신 덮어쓰기가 우선이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedProfile {
+    pub harness: String,
+    pub model: String,
+    pub effort: String,
+    pub args: Vec<String>,
+    pub command: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// host → agent: thread 인자에 더할 safety(herdr-projects `profiles::launch_args`·`Safety::launch_args`). host는 profile의
