@@ -49,7 +49,7 @@
 | routine | routine 머리 `schedule = "every 2s"` |
 | 알림 묶음 | `[notify] debounce_secs` |
 | 웹 상태 사건 ping | `AAA_TEST_EVENTS_PING_MS`(시험에서만) |
-| thread brief를 치기 전 화면 멈춤(3초) | `AAA_TEST_BRIEF_SETTLE_MS`(시험에서만, 웹 E2E 300) |
+| thread brief를 치기 전 화면 멈춤(3초) | `AAA_TEST_BRIEF_SETTLE_MS`(시험에서만, 웹 E2E·m13 300. m13은 `spawn_host`로 띄운다) |
 
 ## 웹 E2E
 
