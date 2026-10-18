@@ -4,7 +4,7 @@
 //
 // 실행(저장소 루트): cargo build -p aaa && (cd web && npm run build) && cargo build -p aaa
 //   NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs [스크린샷 폴더]   모든 파일을
-//     --workers 1                    함께 도는 파일 수(기본: core 4개마다 하나, 많아야 MAX_WORKERS. AAA_E2E_WORKERS와 같다).
+//     --workers 1                    함께 도는 파일 수(기본: core 8개마다 셋, 많아야 MAX_WORKERS. AAA_E2E_WORKERS와 같다).
 //                                    1이면 차례로 돌며 출력을 바로 보이고, 2 이상이면 파일이 끝날 때 그 파일 출력을 한 덩어리로 찍는다
 //     --spec 07-scroll-history,09    고른 파일만(이름이나 앞 번호)
 //     --grep '앞 기록'               이름이 맞는 단계만(AAA_E2E_ONLY와 같다). 그 단계가 든 파일만 띄운다
@@ -24,8 +24,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const specDir = path.join(here, "specs");
 const STEP = /^ {2}await step\("((?:[^"\\]|\\.)*)"/;
 const durationsFile = path.join(here, "durations.json");
-// 기본 worker 상한: 16 core에서 전체 묶음을 여러 번 재 이보다 많으면 간헐 실패가 늘었다(docs/testing.md 「웹 E2E」)
-const MAX_WORKERS = 4;
+// 기본 worker 상한: 16 core에서 4·5·6을 ci-local(test·clippy와 함께)과 웹 E2E만으로 재 6까지 실패 0이었고, 파일 합계는
+// 늘지 않았다(10-18 load 23~90, docs/testing.md 「웹 E2E」). 6이면 가장 긴 파일(17)에 가깝다
+const MAX_WORKERS = 6;
 
 const args = process.argv.slice(2);
 const opt = { spec: null, grep: null, repeat: 1, list: false, shots: null, workers: null, writeDurations: false };
@@ -47,7 +48,7 @@ for (let i = 0; i < args.length; i++) {
 if (!Number.isInteger(opt.repeat) || opt.repeat < 1) throw new Error("--repeat은 1 이상의 정수다");
 const workers =
   opt.workers ??
-  (process.env.AAA_E2E_WORKERS ? Number(process.env.AAA_E2E_WORKERS) : Math.min(MAX_WORKERS, Math.max(1, Math.floor(os.availableParallelism() / 4))));
+  (process.env.AAA_E2E_WORKERS ? Number(process.env.AAA_E2E_WORKERS) : Math.min(MAX_WORKERS, Math.max(1, Math.floor((os.availableParallelism() * 3) / 8))));
 if (!Number.isInteger(workers) || workers < 1) throw new Error("--workers(AAA_E2E_WORKERS)는 1 이상의 정수다");
 const grep = opt.grep ?? process.env.AAA_E2E_ONLY ?? null;
 if (grep && opt.writeDurations) throw new Error("--write-durations는 파일 전체 시간을 적는다: --grep과 함께 쓰지 않는다");
