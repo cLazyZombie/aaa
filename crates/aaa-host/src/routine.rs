@@ -8,7 +8,8 @@
 //! - 처음 본 때를 지난 실행으로 친다(파일이 생기자마자 돌지 않는다). coordinator가 없으면 돌지 않고 건너뛴 횟수만 센다.
 //! - 명령이 없는 routine은 inbox에 「due」 항목을 남긴다. 처리하지 않은 항목이 있으면 새로 만들지 않고 건너뛴 횟수를 센다.
 //! - **명령은 대상 머신의 agent가 실행한다.** host는 실행하지 않는다. 실행하려면 둘 다 필요하다:
-//!   host.toml `[projects] routine_commands`가 그 프로젝트를 허용하고, 사람이 그 명령(머신 포함)을 `aaa routine approve`로 승인했다.
+//!   safety `routine_commands`(host.toml `[safety.*]`, 옛 `[projects] routine_commands`)가 켜져 있고, 사람이 그 명령(머신
+//!   포함)을 `aaa routine approve`로 승인했다.
 //!   둘 다 프로젝트 폴더 밖(host 설정·DB)에 있다. 프로젝트 폴더는 agent가 고칠 수 있기 때문이다.
 //! - 명령 출력은 바뀌었을 때만 inbox 항목이 된다. 출력은 지시가 아니라 자료로 표시한다.
 
@@ -286,8 +287,9 @@ impl Host {
         let _ = self.db.set_meta(&format!("routine:{project}:{name}"), &serde_json::to_string(s).unwrap());
     }
 
+    /// safety `routine_commands`(host.toml `[safety.*]`, 옛 `[projects] routine_commands`). 쓸 때마다 다시 읽는다.
     fn routine_commands_allowed(&self, project: &str) -> bool {
-        self.cfg.projects.routine_commands.iter().any(|p| p == "*" || p == project)
+        self.safety(project).routine_commands
     }
 
     fn routine_approved(&self, project: &str, r: &Routine) -> bool {
@@ -349,6 +351,13 @@ impl Host {
         sha: &str,
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
+        // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.164)
+        if crate::front::in_session(actor) {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "routine 명령 승인은 사람이 aaa 세션 밖 터미널에서 한다(이 연결은 aaa pane 안에서 왔다)",
+            ));
+        }
         let dir = self.project_dir(project)?;
         let (ok, _) = load_all(&dir);
         let r = ok
@@ -464,9 +473,11 @@ impl Host {
                 if st.approval_item_for != sha {
                     st.approval_item_for = sha;
                     let why = if self.routine_commands_allowed(project) {
-                        "명령이 승인되지 않았다(승인 뒤 고쳐졌을 수 있다)"
+                        "명령이 승인되지 않았다(승인 뒤 고쳐졌을 수 있다)".to_string()
                     } else {
-                        "host.toml [projects] routine_commands가 이 프로젝트를 허용하지 않는다"
+                        format!(
+                            "safety routine_commands가 꺼져 있다(사람이 `aaa safety set {project} routine_commands on`)"
+                        )
                     };
                     self.inbox_add(
                         project,

@@ -185,7 +185,12 @@ label?: string,
 /**
  * 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
  */
-restore_error?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
+restore_error?: string, 
+/**
+ * 이 pane이 대신한 옛 pane ID(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, 오래된 것부터). 옛 ID를 보던
+ * 화면은 이것으로 새 pane을 따라간다(QA Q19).
+ */
+replaced?: Array<string>, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
 
 export type SplitDir = "horizontal" | "vertical";
 
@@ -380,7 +385,7 @@ omitted_open: number,
  */
 omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, };
 
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, stream: number, 
 /**
@@ -426,7 +431,15 @@ resume_argv: Array<string>,
  */
 session_key: string | null, };
 
-export type ProfileView = { name: string, harness: string, model: string | null, effort: string | null, description: string, };
+export type ProfileView = { name: string, harness: string, model: string | null, effort: string | null, description: string, 
+/**
+ * profile이 붙이는 인자(옛 agent는 보내지 않는다)
+ */
+args: Array<string>, 
+/**
+ * agent.toml에 없는 기본 profile(claude·codex): 그 머신에 설치·로그인한 것만 온다
+ */
+builtin: boolean, };
 
 export type LibFile = { path: string, size: number, sha256: string, };
 

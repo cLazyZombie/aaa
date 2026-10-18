@@ -317,12 +317,21 @@ fn reboot_restores_shells_and_resumes_agents() {
         "{:?}",
         hw.panes.iter().map(|p| &p.id).collect::<Vec<_>>()
     );
-    // 프로그램 pane은 사람이 다시 띄운다: 같은 spec, 같은 layout 자리
+    // 되살린 pane은 대신한 옛 ID를 알린다: 옛 ID를 보던 화면이 따라간다(QA Q19)
+    let replaced =
+        hw.wait("대신한 옛 ID", |w| w.pane(&l[0]).filter(|p| !p.replaced.is_empty()).map(|p| p.replaced.clone()));
+    assert_eq!(replaced, std::slice::from_ref(&a));
+    // 프로그램 pane은 일부러 남긴 까닭을 보인다(QA Q22: 전에는 까닭이 없어 「agent backend가 다시 떴을 때 이 세션이 없었다」로 보였다)
+    let why = hw.wait("프로그램 pane 까닭", |w| w.pane(&d).and_then(|p| p.restore_error.clone()));
+    assert!(why.starts_with("재부팅 뒤 다시 실행하지 않았다"), "{why}");
+    // 사람이 다시 띄운다: 같은 spec, 같은 layout 자리, 대신한 옛 ID
     let p = h.ok(&["pane", "resume", &d]);
     assert_eq!((p["name"].as_str(), p["label"].as_str()), (Some("작업"), Some("작업")));
     let nd = p["id"].as_str().unwrap().to_string();
     h.wait_output(&nd, "job-ran-9", T);
     hw.wait("재개 자리", |w| (w.leaves().get(3) == Some(&nd)).then_some(()));
+    let p = hw.wait("대신한 옛 ID", |w| w.pane(&nd).filter(|p| !p.replaced.is_empty()).cloned());
+    assert_eq!(p.replaced, std::slice::from_ref(&d));
 }
 
 /// QA t-0337 Q20: 확인창을 띄운 채 재부팅으로 끊긴 Claude pane. 다시 붙은 agent가 그 세션의 마지막 상태(질문)를
@@ -490,7 +499,9 @@ fn reboot_without_agent_resume_restores_plain_shells() {
     h.ok(&["pane", "run", &l[0], "echo plain-$((2+2))"]);
     h.wait_output(&l[0], "plain-4", T);
     assert!(!h.screen(&l[0]).contains("fake-claude"), "{}", h.screen(&l[0]));
-    assert!(hw.pane(&c).unwrap().restore_error.is_none());
+    // 일부러 남긴 까닭(QA Q22)
+    let why = hw.wait("남긴 까닭", |w| w.pane(&c).and_then(|p| p.restore_error.clone()));
+    assert!(why.starts_with("재부팅 뒤 이어가기를 꺼 두어 다시 띄우지 않았다"), "{why}");
 }
 
 /// pane 이름 바꾸기(herdr `pane rename <pane> <label>|--clear`, plan §8.109). 이름의 정본은 agent `spec.json`의 label이다:

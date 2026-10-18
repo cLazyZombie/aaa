@@ -666,6 +666,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     // 브라우저 네트워크 층이 답해 멈춘 페이지에서도 오므로 lease를 늘리지 않는다(10-18 iPhone 실기, plan §8.133)
     let lease = presence_lease();
     let mut app_heard = tokio::time::Instant::now();
+    // 이 host가 주는 웹 빌드: 연결마다 알린다. 다시 보이거나(10초 넘게 가려지면 다시 붙는다) host가 다시 뜨면 새 연결이라 웹이
+    // 제 빌드와 견준다(참고는 보이는 동안 상태를 묻는다, plan §8.166)
+    if let Some(build) = web_build() {
+        let text = serde_json::to_string(&FrontEvent::Web { build }).unwrap();
+        if socket.send(Message::Text(text.into())).await.is_err() {
+            return;
+        }
+    }
     loop {
         if send_preferences {
             send_preferences = false;
@@ -786,6 +794,26 @@ fn events_liveness() -> (std::time::Duration, std::time::Duration) {
 }
 
 /// 「쓰는 화면」 lease(25초: 웹의 10초 presence를 두 번 놓치고도 남는다). `AAA_TEST_PRESENCE_LEASE_MS`는 시험에서만 줄인다
+/// 포함한 웹의 빌드 이름: index.html이 여는 주 묶음(`/assets/index-XXXX.js`)의 파일 이름. 웹 `api.ts` `BUILD`와 같은 꼴이다.
+/// 웹을 빌드하지 않았으면 없다. 시험은 `AAA_TEST_WEB_BUILD`로 다른 빌드를 알리게 한다(새 웹이 나온 host를 흉내 낸다)
+fn web_build() -> Option<String> {
+    if let Ok(v) = std::env::var("AAA_TEST_WEB_BUILD") {
+        return Some(v);
+    }
+    let (_, html) = assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html")?;
+    main_bundle(&String::from_utf8_lossy(html))
+}
+
+/// index.html의 `<script … src="/assets/NAME.js">`에서 NAME
+fn main_bundle(html: &str) -> Option<String> {
+    html.split("<script").skip(1).find_map(|tag| {
+        let tag = &tag[..tag.find('>')?];
+        let src = tag.split("src=\"").nth(1)?.split('"').next()?;
+        let name = src.strip_prefix("/assets/")?.strip_suffix(".js")?;
+        (!name.is_empty() && !name.contains('/')).then(|| name.to_string())
+    })
+}
+
 fn presence_lease() -> std::time::Duration {
     let ms = std::env::var("AAA_TEST_PRESENCE_LEASE_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(25_000);
     std::time::Duration::from_millis(ms)
@@ -1295,6 +1323,17 @@ async fn static_file(req: Request) -> Response {
 #[cfg(test)]
 mod content_type_tests {
     use super::content_type;
+
+    /// host가 알리는 웹 빌드는 웹 `BUILD`(주 묶음 파일 이름에서 확장자를 뺀 것)와 같은 꼴이다
+    #[test]
+    fn main_bundle_is_the_index_script_name() {
+        let html = r#"<!doctype html><head><link rel="manifest" href="/manifest.webmanifest">
+<script type="module" crossorigin src="/assets/index-Di-S2J_3.js"></script>
+<link rel="stylesheet" crossorigin href="/assets/index-C9x.css"></head>"#;
+        assert_eq!(super::main_bundle(html).as_deref(), Some("index-Di-S2J_3"));
+        assert_eq!(super::main_bundle("<script>let a = 1</script>"), None);
+        assert_eq!(super::main_bundle(r#"<script src="https://example.com/x.js"></script>"#), None);
+    }
 
     /// build.rs가 만든 자산 목록은 빌드한 worktree의 절대 경로를 갖지 않는다: build script 실행 결과를 캐시하는
     /// 도구가 다른 worktree에 이 파일을 되돌려도 그 worktree의 web/dist를 읽어야 한다(t-0327, kache build_script_run)
