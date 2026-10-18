@@ -3168,10 +3168,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - Esc는 위에 뜬 창(`aria-modal`·`<dialog open>`)과 열린 메뉴(`role=menu`)가 먼저 쓴다. 한 번은 메뉴, 다음은 drawer다.
 - **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다.
   - 휴대폰(터치)은 키보드를 올리지 않는다. 데스크톱은 터미널이 바로 키보드를 받는다(참고 PaneTerminal 2072줄: 고른 것이 없던 첫 화면은 `autoSelected`가 아니다).
-  - 주소가 가리킨 pane이 없으면 첫 줄을 열고 머리에 말한다(§8.162, 전에는 빈 화면).
+  - 주소가 가리킨 pane이 없으면 첫 줄을 열고 머리에 말한다(§8.163, 전에는 빈 화면).
 - **다르게 둔 것.**
   - 참고는 단추가 창 전체 머리(app-header)에 있다. aaa는 화면마다 머리가 있어(터미널·보고·프로젝트, 빈 화면은 좁은 창에서만 보이는 머리) 그 머리 맨 앞에 같은 단추를 둔다(`web/src/drawer.tsx`). drawer는 그 머리(`--head`) 아래에 선다. 데스크톱 배치는 그대로다.
-  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 열린 메뉴(`role=menu`, 목록 줄 메뉴 등)도 거른다. 「더 보기」는 §8.162부터 화면 머리 맨 끝이다.
+  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 열린 메뉴(`role=menu`, 목록 줄 메뉴 등)도 거른다. 「더 보기」는 §8.163부터 화면 머리 맨 끝이다.
   - Esc로 닫으면 drawer 안에 있던 focus를 단추로 돌린다(숨는 drawer와 함께 focus가 사라지지 않게).
   - 설정 톱니는 drawer 바닥 줄에 있다. 설정을 열어도 drawer를 닫지 않아, 닫으면 focus가 보이는 톱니로 돌아온다(QA Q10). 참고는 설정을 머리·명령에서 열어 drawer를 닫는다.
   - 참고는 drawer(`.sidebar`) 안에 목록(`.sidebar-shell`, `height:100%`)이 따로 있다. aaa는 한 요소라 drawer일 때 `height:auto`로 둔다. 그러지 않으면 높이가 화면 전체라 바닥 줄(톱니·사용량)이 머리 높이만큼 화면 밖으로 밀린다(시험이 잡았다).
@@ -3402,7 +3402,15 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **줄이지 않은 것.** 웹 pong 기한(3초 × 2)과 앱 안 알림이 저절로 접히는 시간은 시험 전체에 한 번씩(17 「다시 붙음」, 12 「앞 알림 접힘」)이라, 기본값 단계를 남기면 줄일 몫이 없다.
 - **시험.** 11 54 → 27초, 17 68.7 → 59.8초, 18 22.6 → 19.9초(12·15는 그대로). 두 값 모두 없으면 동작이 그대로다(운영 host·agent에 영향 없음).
 
-### 8.162 「더 보기」는 화면 머리 맨 끝, 주소가 가리킨 pane이 없으면 첫 줄과 머리 알림(10-18, coordinator 「아침 확인 둘은 참고대로」)
+### 8.162 agent pump가 frame 중간에서 끊긴 읽기로 살아 있는 세션을 놓았다(10-18, t-0338 07 「host를 다시 띄운 뒤 앞 기록」 실패, t-0333 ci-local도 같은 곳에서 멈춤)
+
+- **증상.** 07 「host를 다시 띄운 뒤 앞 기록」에서 6000줄을 내보낸 직후 host를 다시 띄우면, 가끔 그 pane이 빈 화면(120x32, 0B)과 「세션이 끝났다」가 되었다(부하가 클 때). session host는 살아 있었다(`exit.json` 없음, socket 그대로).
+- **원인.** agent pump(`aaa-agent` `pump`)는 `select!` 하나로 감지 timer·host 명령·session host frame(`FrameRx::next`)을 기다린다. `next`가 부르던 `read_frame`은 길이·종류·payload를 함수 안 변수에 모으고 `read_exact`로 읽어 취소에 안전하지 않았다. frame이 반쯤 온 동안 다른 갈래가 이기면(host 요청·`HostGone`·감지 timer) 읽은 바이트를 버리고, 다음 읽기는 터미널 글을 길이로 읽어 `TooLarge`로 끝났다. pump는 log 없이 끝나고, `exit.json`이 없어 세션은 `Lost`, 요청은 `offline_request`의 빈 replay·「세션이 끝났다」를 받았다. pump를 다시 붙이는 길은 agent 시작(`recover`)과 새 세션뿐이라 agent를 다시 띄울 때까지 그대로였다. host 재시작이 없어도 출력이 많은 동안 웹 요청 하나로 날 수 있다.
+- **고침.** `FrameRx`가 읽은 바이트를 struct 안 buffer에 두고 `read_buf`(취소되면 읽은 것이 없다)로만 기다린다. frame은 `take_frame`(aaa-proto: 길이를 읽자마자 상한, 종류 byte가 오면 종류를 본다)으로 다 모인 때에만 꺼낸다. `FrameRx`를 쓰는 모든 연결(agent↔host·agent↔session host·front)이 같이 고쳐진다. `read_frame`에는 취소에 안전하지 않다고 적었다. pump가 frame 오류로 끝나면 까닭을 warn으로 남긴다.
+- **남긴 것.** pump가 다른 까닭으로 끝났는데 session host가 살아 있으면 다시 붙지 않는 것은 그대로다(다시 붙기는 따로 정한다).
+- **시험.** aaa-common `next_keeps_a_frame_cut_by_another_select_branch`: 터미널 frame과 제어 frame을 모든 바이트 자리에서 끊고, 그 자리에서 `select!`의 다른 갈래가 이기게 한 뒤 나머지를 보낸다. 옛 읽기는 1바이트에서 끊은 경우부터 「연결이 frame 중간에 끊겼다」로 실패하고, 고친 판은 모든 자리에서 두 frame을 그대로 받는다. aaa-proto `take_frame_*` 둘(한 바이트씩 모을 때·두 frame이 한 번에 올 때·상한·빈 frame·모르는 종류).
+
+### 8.163 「더 보기」는 화면 머리 맨 끝, 주소가 가리킨 pane이 없으면 첫 줄과 머리 알림(10-18, coordinator 「아침 확인 둘은 참고대로」)
 
 §8.146의 아침 확인 둘을 참고 herdr-web-ui `aa624cb`대로 정했다.
 
