@@ -1508,6 +1508,39 @@ fn context_menu_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// pane 폭만 바뀌어도 그 pane을 전부 다시 그린다(QA t-0337 Q23, herdr는 크기가 바뀐 pane을 통째로 그린다).
+/// 사이드바를 접고 펴면 줄 수는 그대로이고 폭만 바뀐다. 전에는 host가 바뀐 줄만 보내고 TUI는 폭이 바뀐 grid를 비워서,
+/// 내용이 같은 줄(앞 출력)이 빈칸으로 남았다. 바뀐 뒤 친 표지 줄이 보인 다음(그 뒤 장면까지 왔다) 앞 출력을 본다.
+#[test]
+fn width_only_change_redraws_the_pane() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "wide", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("lease", |w| w.held_by(&id, "tui@").then_some(()));
+    tui.type_line("echo before-$((1)); echo again-$((2))");
+    tui.wait_text("앞 출력", |s| s.contains("again-2"));
+
+    let fold = tui.wait_find("«");
+    tui.click(fold);
+    hw.wait("compact 폭", |w| (w.pane(&id)?.cols == COLS - COMPACT).then_some(()));
+    tui.type_line("echo folded-$((3))");
+    tui.wait_text("접은 뒤 표지", |s| s.contains("folded-3"));
+    let text = tui.text();
+    assert!(text.contains("before-1") && text.contains("again-2"), "폭이 넓어진 pane의 앞 출력이 비었다:\n{text}");
+
+    let unfold = tui.wait_find("»");
+    tui.click(unfold);
+    hw.wait("펼친 폭", |w| (w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    tui.type_line("echo unfolded-$((4))");
+    tui.wait_text("편 뒤 표지", |s| s.contains("unfolded-4"));
+    let text = tui.text();
+    assert!(text.contains("before-1") && text.contains("folded-3"), "폭이 좁아진 pane의 앞 출력이 비었다:\n{text}");
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).
