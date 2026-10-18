@@ -3251,7 +3251,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **울타리.** `pane_modes_like_herdr`는 나눈 직후 오른쪽 pane 화면이 `$`인지 본다.
   - 결함 심기(48자 hostname prompt + `ENV` 없음): 「나눈 pane prompt `$`」에서 실패하고 접힌 hostname prompt를 보인다.
   - 고친 뒤 같은 결함: 세 번 모두 통과했다.
-- **드러난 것.** `tabs_like_herdr`의 「새 pane이 옮긴 폴더에서 뜸」 확인은 `pwd` 줄이 아니라 기계 prompt의 `\W`(폴더 이름 「작업 폴더」)로 맞고 있었다. macOS `pwd` 줄(`/private/tmp/…`)은 pane 폭에서 접혀 「작|업 폴더」로 갈린다. 접힌 줄을 이어 보는 `wait_output_unwrapped`로 바꿨다(기대는 같고, 이제 `pwd` 출력을 본다).
+- **드러난 것.** `tabs_like_herdr`의 「새 pane이 옮긴 폴더에서 뜸」 확인은 `pwd` 줄이 아니라 기계 prompt의 `\W`(폴더 이름 「작업 폴더」)로 맞고 있었다. macOS `pwd` 줄(`/private/tmp/…`)은 pane 폭에서 접혀 「작|업 폴더」로 갈린다. 접힌 줄을 이어 보는 `wait_output_unwrapped`로 바꿨다(기대는 같고, 이제 `pwd` 출력을 본다). `pwd`를 `echo x`로 바꾸는 결함을 심으면 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
