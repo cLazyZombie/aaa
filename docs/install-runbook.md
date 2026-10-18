@@ -195,7 +195,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 ## 11. Windows에서 접속만(agent 없는 PC)
 
-agent·host·감독자 없이 `aaa attach --remote`로 붙기만 하는 Windows PC(x86_64, Tailscale 설치됨)다. 그 PC에는 aaa 서비스·예약 작업을 두지 않는다. 실행 파일 자리는 Mac의 `~/.local/bin/aaa`와 같은 `%USERPROFILE%\.local\bin\aaa.exe`이고, 명령은 그 전체 경로로 친다(PATH에 넣는 것은 사람이 사용자 환경 변수에서 직접, 선택). 설계는 기획서 §8.181·§8.186.
+agent·host·감독자 없이 `aaa attach --remote`로 붙기만 하는 Windows PC(x86_64, Tailscale 설치됨)다. 그 PC에는 aaa 서비스·예약 작업을 두지 않는다. 실행 파일 자리는 Mac의 `~/.local/bin/aaa`와 같은 `%USERPROFILE%\.local\bin\aaa.exe`이고, 명령은 그 전체 경로로 친다(PATH에 넣는 것은 사람이 사용자 환경 변수에서 직접, 선택). 설계는 기획서 §8.181·§8.188.
 
 ### 11.1 빌드(Mac에서)
 

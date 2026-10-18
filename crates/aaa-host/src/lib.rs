@@ -8,6 +8,7 @@ mod attach;
 mod brief;
 mod brief_text;
 mod caller;
+mod colors;
 mod coord;
 pub mod db;
 mod evaluator;
@@ -143,6 +144,8 @@ struct MachineRt {
     features: Vec<String>,
     /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
     agent_pid: Option<u32>,
+    /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
+    colors: Option<tokio::sync::mpsc::UnboundedSender<colors::ColorPush>>,
 }
 
 struct Mirror {
@@ -244,6 +247,8 @@ struct Inner {
     machines: HashMap<String, MachineRt>,
     panes: HashMap<String, PaneRt>,
     generation: u64,
+    /// 화면들이 알려 준 터미널 색(colors.rs)
+    colors: colors::ColorFronts,
 }
 
 struct PendingRt {
@@ -497,6 +502,7 @@ impl Host {
                     health: None,
                     features: vec![],
                     agent_pid: None,
+                    colors: None,
                 },
             );
         }
@@ -519,7 +525,7 @@ impl Host {
             identity,
             dev_mode,
             web_port: std::sync::atomic::AtomicU16::new(web_port),
-            inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0 }),
+            inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0, colors: Default::default() }),
             changed: watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
@@ -603,6 +609,13 @@ impl Host {
             if let Some(old) = i.machines.get(&hello.machine_id).and_then(|m| m.conn.clone()) {
                 old.fail_all();
             }
+            // 지금 화면 색부터 차례로 보낸다(inner lock 안이라 바뀐 색이 이 앞에 끼지 않는다)
+            let current = i.colors.current;
+            let pushes = hello
+                .features
+                .iter()
+                .any(|f| f == "term_colors.v1")
+                .then(|| colors::spawn_pushes(conn.clone(), current));
             let m = i.machines.entry(hello.machine_id.clone()).or_insert(MachineRt {
                 name: hello.machine_name.clone(),
                 local,
@@ -614,7 +627,9 @@ impl Host {
                 health: None,
                 features: vec![],
                 agent_pid: None,
+                colors: None,
             });
+            m.colors = pushes;
             m.os = Some(hello.os.clone());
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
@@ -696,6 +711,7 @@ impl Host {
         if let Some(c) = m.conn.take() {
             c.fail_all();
         }
+        m.colors = None;
         m.last_seen_ms = Some(util::now_ms());
         for p in i.panes.values_mut().filter(|p| p.machine_id == machine_id) {
             if let Some(mm) = p.mirror.as_mut() {
@@ -1583,6 +1599,11 @@ impl Host {
     /// 바뀌면 pane 상태 사건이 나가고, 각 front는 자기 규칙으로 크기를 다시 건다.
     pub(crate) fn lease_use(&self, id: &str, f: &FrontRef) {
         self.lease_set(id, Some(f.clone()));
+        // 그 화면이 썼다: 그 화면이 알린 색이 지금 색이다(herdr `promote_client_to_foreground`, plan §8.187)
+        let i = &mut *self.inner.lock().unwrap();
+        if i.colors.touch(&f.id, None) {
+            colors::push_all(i);
+        }
     }
 
     fn lease_free(&self, id: &str) -> Result<(), ErrorBody> {
@@ -1595,7 +1616,10 @@ impl Host {
     /// front 연결이 끝났다: 그 연결의 lease를 모두 푼다.
     pub fn front_gone(&self, front_id: &str) {
         let freed: Vec<String> = {
-            let i = self.inner.lock().unwrap();
+            let mut i = self.inner.lock().unwrap();
+            if i.colors.gone(front_id) {
+                colors::push_all(&i);
+            }
             i.panes
                 .iter()
                 .filter(|(_, p)| p.lease.as_ref().is_some_and(|l| l.id == front_id))
@@ -2270,6 +2294,7 @@ impl Host {
                 health: None,
                 features: vec![],
                 agent_pid: None,
+                colors: None,
             },
         );
         if let Some(tx) = p.accept {

@@ -66,6 +66,9 @@ pub struct SpecFile {
     /// 사람이 붙인 이름(`pane rename`). 있으면 `spec.name` 대신 보인다. 지우면 `spec.name`으로 돌아간다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// 띄울 때 agent가 아는 화면 색(plan §8.187): 프로그램이 시작하자마자 묻는 색 질의에도 답한다. 뒤의 바뀜은 `SessionRequest::Colors`로
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<aaa_proto::TermColors>,
 }
 
 impl SpecFile {

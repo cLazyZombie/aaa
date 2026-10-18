@@ -89,6 +89,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
         // scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.176)
         // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.180)
+        // term_colors.v1: `AgentRequest::TermColors`(색 질의에 답할 화면 색, plan §8.187)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
@@ -107,6 +108,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "file_in.v1".into(),
             "scrollback.v1".into(),
             "adopt.v1".into(),
+            "term_colors.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

@@ -2342,9 +2342,17 @@ fn turn_end_notices_follow_reports() {
     // 시작하기 전 시각이다)
     let t3 = lab::now_ms();
     assert_eq!(w.message(&id, "plain", false)["state"], "accepted");
+    // 이 턴(쉼 → 작업 → 쉼)의 시작과 끝: host가 그 상태로 바꾼 harness 사건 시각(`since_ms`)이다
+    let started = agent_became(&mut ev, &id, AgentActivity::Working, t3).agent.unwrap().since_ms;
     finish_turn(&w, &pane);
+    let ended = agent_became(&mut ev, &id, AgentActivity::Idle, t3).agent.unwrap().since_ms;
     let (_, n3) = notice(&mut ev, i2 + 1, "보고 없는 턴의 끝남");
     assert!(n3.kind == NoticeKind::Finished && n3.at_ms >= t3, "2)의 끝남이 새 보고 뒤에 왔다: {n3:?}");
+    // 턴 길이는 그 두 사건 시각의 차다(herdr-web-ui trackTurn: 쉼에서 작업으로 들어선 때부터 쉼으로 돌아온 때까지). host가 그
+    // 사건들의 시각으로 잰 값이라 허용 오차 없이 같다. 알림 시각(host가 보낸 때)은 쉼 뒤라 그 차 이상이다(같은 머신 시계)
+    assert_eq!(n3.turn_ms, Some(ended - started), "턴 {started}..{ended}: {n3:?}");
+    assert!(n3.at_ms >= ended, "알림이 턴 끝보다 앞이다: {n3:?}");
+    assert_eq!(n3.long, ended - started >= 60_000, "긴 턴 판정은 그 길이로(기준 60초): {n3:?}");
     w.h.ticks(1);
     assert_eq!(items(&w), before, "끝남 알림이 inbox 항목을 만들었다");
 }
