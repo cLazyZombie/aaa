@@ -98,6 +98,7 @@ pub fn typescript_bindings() -> String {
         ProjectStatus::decl(&cfg),
         ProjectAction::decl(&cfg),
         ProjectChange::decl(&cfg),
+        ProjectOpened::decl(&cfg),
         ThreadStatus::decl(&cfg),
         BriefState::decl(&cfg),
         ThreadGroup::decl(&cfg),

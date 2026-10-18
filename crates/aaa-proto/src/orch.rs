@@ -360,6 +360,11 @@ pub struct ProjectView {
     #[serde(default)]
     #[ts(optional, as = "Option<ProjectStatus>")]
     pub status: ProjectStatus,
+    /// `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
+    /// FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[ts(optional, as = "Option<String>")]
+    pub coordinator_profile: String,
 }
 
 /// 프로젝트 상태(herdr-projects `project::Status`). paused·archived는 ticker가 건너뛰고 `thread start`를 거부한다.
@@ -393,6 +398,23 @@ pub enum ProjectAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectChange {
     pub project: ProjectView,
+    pub notes: Vec<String>,
+}
+
+/// `project open`의 결과(herdr-projects `open`, FRONT_API 1.33)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectOpened {
+    pub project: ProjectView,
+    /// 띄운 coordinator, 또는 이미 돌던 것 중 가장 최근에 상태가 바뀐 것
+    pub pane: crate::PaneView,
+    /// 새로 띄웠다(false면 돌던 coordinator)
+    pub started: bool,
+    /// `pane` 말고도 도는 coordinator 수
+    pub others: u32,
+    /// coordinator를 띄운 profile(돌던 것이면 그 pane의 harness)
+    pub profile: String,
+    /// 그 pane이 든 workspace(layout에 없으면 빈 글)
+    pub workspace: String,
     pub notes: Vec<String>,
 }
 

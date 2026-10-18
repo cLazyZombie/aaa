@@ -93,6 +93,9 @@ pub struct HostConfig {
 pub struct DefaultsSection {
     /// thread start에 profile이 없고 project.toml `thread_profile`도 없을 때 쓰는 profile(`aaa profile default threads`)
     pub thread_profile: String,
+    /// `aaa project open`에 profile이 없고 project.toml `coordinator_profile`도 없을 때 쓰는 profile
+    /// (`aaa profile default coordinator`)
+    pub coordinator_profile: String,
 }
 
 /// 새 pane(새 탭·나누기). 이름과 값은 herdr 0.9.5 `[terminal] new_cwd`를 따른다(plan §8.76).
@@ -670,11 +673,14 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
             }
         }
     }
-    let d = &c.defaults.thread_profile;
-    if !d.is_empty()
-        && let Err(e) = profile_edit::validate_name(d)
+    for (name, d) in
+        [("thread_profile", &c.defaults.thread_profile), ("coordinator_profile", &c.defaults.coordinator_profile)]
     {
-        out.push(Invalid { path: key(&["defaults", "thread_profile"]), message: e });
+        if !d.is_empty()
+            && let Err(e) = profile_edit::validate_name(d)
+        {
+            out.push(Invalid { path: key(&["defaults", name]), message: e });
+        }
     }
     out
 }

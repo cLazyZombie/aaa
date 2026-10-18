@@ -232,9 +232,20 @@ enum ProjectCmd {
         /// 이 프로젝트 thread의 기본 profile(안 주면 host.toml `[defaults] thread_profile`, 그다음 claude)
         #[arg(long, value_name = "NAME")]
         thread_profile: Option<String>,
-        /// `aaa project open`이 coordinator를 띄우는 profile(안 주면 claude)
+        /// `aaa project open`이 coordinator를 띄우는 profile(안 주면 host.toml `[defaults] coordinator_profile`, 그다음 claude)
         #[arg(long, value_name = "NAME")]
         coordinator_profile: Option<String>,
+    },
+    /// coordinator를 연다(herdr-projects `open`): 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더를 작업
+    /// 폴더로 띄워 프로젝트 이름 workspace의 새 탭 「coordinator」에 둔다
+    Open {
+        project: String,
+        /// coordinator profile(안 주면 project.toml coordinator_profile → host.toml [defaults] → claude). `aaa profile list`
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+        /// coordinator가 돌아도 하나 더 띄운다
+        #[arg(long)]
+        new: bool,
     },
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
     /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
@@ -1725,6 +1736,7 @@ fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
         ProjectCmd::Rename { project, new_name, dry_run } => {
             front(json, FrontRequest::ProjectRename { project, to: new_name, dry_run })
         }
+        ProjectCmd::Open { project, profile, new } => front(json, FrontRequest::ProjectOpen { project, profile, new }),
         ProjectCmd::Sweep { project, dry_run, yes } => {
             if dry_run || yes {
                 return front(json, FrontRequest::ProjectSweep { project, dry_run });
@@ -2333,6 +2345,11 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::ProjectChange(c) => {
             for n in &c.notes {
+                let _ = writeln!(s, "{n}");
+            }
+        }
+        FrontResponse::ProjectOpened(o) => {
+            for n in &o.notes {
                 let _ = writeln!(s, "{n}");
             }
         }

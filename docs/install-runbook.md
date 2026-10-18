@@ -121,7 +121,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 - aaa 프로젝트는 aaa projects root에 새로 만든다(`aaa project create <p>`). herdr-projects 폴더를 가리키지 않는다.
 - 기존 herdr thread는 aaa로 제어하지 않는다. 같은 성격의 새 low-impact 일을 aaa thread로 하나 맡기고 상태·보고를 비교한다.
-- coordinator: aaa 프로젝트 폴더를 cwd로 Claude를 띄운다(`aaa tab create --cwd <프로젝트 폴더> -- claude`). AGENTS.md 안내대로 매 턴 `aaa context <p>`를 본다.
+- coordinator: `aaa project open <p>`가 host 머신에서 프로젝트 폴더를 cwd로 띄운다(profile은 `--profile`, 없으면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude). 이미 돌면 그 pane을 알린다. AGENTS.md 안내대로 매 턴 `aaa context <p>`를 본다.
 
 | 비교 | 기준 |
 |---|---|

@@ -494,6 +494,7 @@ impl Host {
             path: dir.to_string_lossy().to_string(),
             threads,
             status: self.project_status(name),
+            coordinator_profile: self.default_coordinator_profile(name),
         }
     }
 
@@ -836,6 +837,20 @@ impl Host {
         let global = match self.config_dir.get() {
             Some(dir) => aaa_config::safety::default_thread_profile(dir),
             None => self.cfg.defaults.thread_profile.clone(),
+        };
+        if global.is_empty() { "claude".into() } else { global }
+    }
+
+    /// `project open`에 profile이 없을 때(참고 `resolve`의 Role::Coordinator): project.toml `coordinator_profile` → host.toml
+    /// `[defaults] coordinator_profile` → 기본 profile `claude`
+    pub(crate) fn default_coordinator_profile(&self, project: &str) -> String {
+        let own = self.settings(project).coordinator_profile;
+        if !own.is_empty() {
+            return own;
+        }
+        let global = match self.config_dir.get() {
+            Some(dir) => aaa_config::safety::default_profile(dir, "coordinator_profile"),
+            None => self.cfg.defaults.coordinator_profile.clone(),
         };
         if global.is_empty() { "claude".into() } else { global }
     }

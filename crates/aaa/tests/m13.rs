@@ -1646,7 +1646,7 @@ fn safety_and_profiles_by_a_person() {
     let o = w.h.run(&["safety", "set", "demo", "start_threads", "now"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("propose·auto"), "{o:?}");
     let o = w.h.run(&["profile", "allow", "coordinator", "fake"]);
-    assert!(String::from_utf8_lossy(&o.stderr).contains("coordinator를 띄우지 않는다"), "{o:?}");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("coordinator 허용 목록"), "{o:?}");
     // 사람이 y가 아니면 바꾸지 않는다
     let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "n")], T);
     assert!(out.contains("권한 건너뛰기") && out.contains("바꾸지 않았다"), "{out}");
@@ -2884,7 +2884,7 @@ fn thread_adopt_existing_pane() {
 /// 가고 보고가 온다. 기다림은 pane 기록·파일이다.
 #[test]
 fn thread_adopt_claude_started_in_a_shell() {
-    let mut w = world();
+    let w = world();
     let bin_dir = w.lab.root.join("human");
     std::fs::create_dir_all(&bin_dir).unwrap();
     let claude = bin_dir.join("claude");
@@ -2911,6 +2911,100 @@ fn thread_adopt_claude_started_in_a_shell() {
     let probe = repo.join(".aaa").join(format!("demo-{id}")).join("probe.txt");
     let got = wait_for("pane 안 CLI 결과", T, || std::fs::read_to_string(&probe).ok());
     assert!(got.contains("thread 세션 안의 CLI는 보기만 한다") && got.ends_with("rc=1\n"), "{got}");
+}
+
+/// coordinator 열기(herdr-projects `open`, 4장 G): 도는 coordinator가 없으면 host 머신에서 프로젝트 폴더를 작업 폴더로
+/// profile을 띄워 프로젝트 이름 workspace의 탭 「coordinator」에 두고, 돌면 그 pane을 알린다(`--new`면 하나 더). 사람 셸이 그
+/// 폴더에 있어도 coordinator가 도는 것은 아니다. profile은 `--profile` → project.toml → host.toml `[defaults]` → claude.
+/// 없는 profile·보관한 프로젝트는 아무것도 만들지 않는다. 기다림은 pane 기록이다.
+#[test]
+fn project_open_starts_or_shows_the_coordinator() {
+    let w = world();
+    let dir = std::fs::canonicalize(w.projects.join("demo")).unwrap();
+    let tabs =
+        |ws: &str| -> Vec<Value> { w.h.ok(&["workspace", "get", ws])["tabs"].as_array().cloned().unwrap_or_default() };
+    w.h.new_pane(None, "labA", Some("사람 셸"), &["/bin/sh"], Some(path_str(&dir)));
+    let e = w.h.json(&["project", "open", "demo", "--profile", "nope"]).expect_err("없는 profile");
+    assert!(e.contains("profile `nope`"), "{e}");
+    assert!(tabs("demo").is_empty(), "없는 profile이면 workspace를 만들지 않는다");
+
+    // 아무것도 정하지 않았으면 claude(이 머신 agent.toml의 claude profile, hook으로 상태를 알린다)
+    let v = w.h.ok(&["project", "open", "demo"]);
+    assert_eq!(
+        (v["started"].as_bool(), v["profile"].as_str(), v["workspace"].as_str()),
+        (Some(true), Some("claude"), Some("demo")),
+        "{v}"
+    );
+    let pane = v["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(std::fs::canonicalize(v["pane"]["cwd"].as_str().unwrap()).unwrap(), dir, "{v}");
+    assert_eq!(
+        (v["pane"]["role"].as_str(), v["pane"]["name"].as_str()),
+        (Some("coordinator"), Some("demo coordinator")),
+        "{v}"
+    );
+    let argv: Vec<String> = serde_json::from_value(v["pane"]["argv"].clone()).unwrap();
+    assert!(argv[0].ends_with("claude.sh") && argv.contains(&"--settings".to_string()), "{argv:?}");
+    let t = tabs("demo");
+    assert!(t.len() == 1 && t[0]["name"] == "coordinator" && t[0]["root"].to_string().contains(&pane), "{t:?}");
+    wait_for("coordinator 상태(hook)", T, || (w.h.pane(&pane)["agent"]["harness"] == "claude").then_some(()));
+
+    // 돌고 있으면 그것을 알리고 아무것도 만들지 않는다. 없는 profile은 돌아도 거부한다(참고는 profile부터 푼다)
+    let e = w.h.json(&["project", "open", "demo", "--profile", "nope"]).expect_err("돌아도 없는 profile은 거부");
+    assert!(e.contains("profile `nope`"), "{e}");
+    let same = |v: &Value, id: &str, others: u64| {
+        assert_eq!(
+            (v["started"].as_bool(), v["pane"]["id"].as_str(), v["others"].as_u64()),
+            (Some(false), Some(id), Some(others)),
+            "{v}"
+        );
+    };
+    let v = w.h.ok(&["project", "open", "demo"]);
+    same(&v, &pane, 0);
+    assert!(v["notes"].to_string().contains("--new"), "{v}");
+    // --profile은 그 profile로 띄운 coordinator만 다시 쓴다: 다른 profile이면 옆에 하나 더(참고 popup에서 다른 profile)
+    same(&w.h.ok(&["project", "open", "demo", "--profile", "claude"]), &pane, 0);
+    let v = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    assert_eq!(
+        (v["started"].as_bool(), v["others"].as_u64(), v["profile"].as_str()),
+        (Some(true), Some(1), Some("fake")),
+        "{v}"
+    );
+    assert_eq!(v["pane"]["name"], "demo coordinator 2", "{v}");
+    let second = v["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(tabs("demo").len(), 2);
+    // custom profile(상태를 모르는 harness)도 open이 띄운 것은 coordinator로 센다
+    same(&w.h.ok(&["project", "open", "demo", "--profile", "fake"]), &second, 1);
+    let v = w.h.ok(&["project", "open", "demo"]);
+    assert!([pane.as_str(), second.as_str()].contains(&v["pane"]["id"].as_str().unwrap()), "{v}");
+    assert_eq!((v["started"].as_bool(), v["others"].as_u64()), (Some(false), Some(1)), "{v}");
+    // --new는 돌아도 하나 더
+    let v = w.h.ok(&["project", "open", "demo", "--new"]);
+    assert_eq!(
+        (v["started"].as_bool(), v["others"].as_u64(), v["profile"].as_str()),
+        (Some(true), Some(2), Some("claude")),
+        "{v}"
+    );
+    assert_eq!(tabs("demo").len(), 3);
+
+    // project.toml coordinator_profile, 그다음 host.toml [defaults](사람이 터미널에서 `aaa profile default coordinator`)
+    w.h.ok(&["project", "create", "p2", "--coordinator-profile", "fake"]);
+    assert_eq!(w.h.ok(&["project", "open", "p2"])["profile"], "fake");
+    let list = w.h.ok(&["project", "list"]);
+    let of = |n: &str| {
+        list["projects"].as_array().unwrap().iter().find(|p| p["name"] == n).unwrap()["coordinator_profile"].clone()
+    };
+    assert_eq!((of("demo"), of("p2")), (Value::from("claude"), Value::from("fake")), "{list}");
+    let o = w.h.cmd(&["profile", "default", "coordinator", "resumable"]).env("AAA_SESSION_ID", "x").output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
+    let out = w.h.in_terminal(&["profile", "default", "coordinator", "resumable"], &[], T);
+    assert!(out.contains("`resumable`을 쓴다"), "{out}");
+    w.h.ok(&["project", "create", "p3"]);
+    assert_eq!(w.h.ok(&["project", "open", "p3"])["profile"], "resumable");
+
+    // 보관한 프로젝트는 열지 않는다
+    w.h.ok(&["project", "archive", "p3"]);
+    let e = w.h.json(&["project", "open", "p3"]).expect_err("보관");
+    assert!(e.contains("unarchive"), "{e}");
 }
 
 /// routine 일정의 초 단위(4장 H #604): 운영 host(`AAA_TEST_ROUTINE_SECONDS`가 `1`이 아님)는 참고처럼 분부터 받고, 초 단위

@@ -14,8 +14,8 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
-    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectView, QuestionView, ReportSnapshot,
-    Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectOpened, ProjectView, QuestionView,
+    ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView};
 
@@ -1498,6 +1498,19 @@ pub enum FrontRequest {
         #[serde(default)]
         dry_run: bool,
     },
+    /// coordinator를 연다(herdr-projects `open`): 도는 coordinator가 있으면 그것을 알려 주고, 없으면(또는 `new`) host 머신에서
+    /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.33)
+    ProjectOpen {
+        project: String,
+        /// 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        profile: Option<String>,
+        /// coordinator가 돌아도 하나 더 띄운다
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        new: bool,
+    },
     /// 머신의 agent.toml profile 목록
     Profiles {
         machine: Option<String>,
@@ -1883,6 +1896,7 @@ pub enum FrontResponse {
     },
     Project(ProjectView),
     ProjectChange(ProjectChange),
+    ProjectOpened(Box<ProjectOpened>),
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,

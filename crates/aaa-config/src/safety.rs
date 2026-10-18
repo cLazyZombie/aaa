@@ -268,8 +268,13 @@ pub fn legacy_project_layer(project_toml: &str) -> SafetyLayer {
 
 /// project.toml의 `thread_profile`(없으면 빈 값)
 pub fn project_thread_profile(project_toml: &str) -> String {
+    project_profile(project_toml, "thread_profile")
+}
+
+/// project.toml의 `thread_profile`·`coordinator_profile`(없으면 빈 값)
+pub fn project_profile(project_toml: &str, key: &str) -> String {
     let doc = project_toml.parse::<DocumentMut>().unwrap_or_default();
-    doc.get("thread_profile").and_then(Item::as_str).unwrap_or_default().to_string()
+    doc.get(key).and_then(Item::as_str).unwrap_or_default().to_string()
 }
 
 /// 글(host.local.toml)에 `[safety.<table>] key`가 있는가: 있으면 host.toml을 고쳐도 닿지 않는다
@@ -457,24 +462,28 @@ pub fn set_profiles_in(text: &str, table: &str, names: Option<&[String]>) -> Res
 
 /// `[defaults] thread_profile`(참고 `Change::Default`): `thread start`에 profile이 정해지지 않으면 쓰고, `project create`가
 /// project.toml에 적는다
-pub fn set_default_profile_in(text: &str, name: &str) -> Result<String, String> {
+pub fn set_default_profile_in(text: &str, key: &str, name: &str) -> Result<String, String> {
     let mut doc = text.parse::<DocumentMut>().map_err(|e| format!("host.toml을 읽지 못했다: {e}"))?;
     if !doc.contains_key("defaults") {
         doc["defaults"] = Item::Table(Table::new());
     }
-    doc["defaults"].as_table_mut().ok_or("host.toml의 `defaults`가 표가 아니다")?["thread_profile"] =
-        toml_edit::value(name);
+    doc["defaults"].as_table_mut().ok_or("host.toml의 `defaults`가 표가 아니다")?[key] = toml_edit::value(name);
     Ok(doc.to_string())
 }
 
-/// host.toml(local 말고)의 `[defaults] thread_profile`(없으면 빈 값). host는 쓸 때마다 읽는다.
+/// host.toml(local이 덮는다)의 `[defaults] thread_profile`(없으면 빈 값). host는 쓸 때마다 읽는다.
 pub fn default_thread_profile(config_dir: &Path) -> String {
+    default_profile(config_dir, "thread_profile")
+}
+
+/// host.toml(local이 덮는다)의 `[defaults]` `thread_profile`·`coordinator_profile`(없으면 빈 값)
+pub fn default_profile(config_dir: &Path, key: &str) -> String {
     let mut out = String::new();
     for f in ["host.toml", "host.local.toml"] {
-        if let Some(v) =
-            std::fs::read_to_string(config_dir.join(f)).ok().and_then(|t| t.parse::<DocumentMut>().ok()).and_then(|d| {
-                d.get("defaults").and_then(|x| x.get("thread_profile")).and_then(|v| v.as_str().map(str::to_string))
-            })
+        if let Some(v) = std::fs::read_to_string(config_dir.join(f))
+            .ok()
+            .and_then(|t| t.parse::<DocumentMut>().ok())
+            .and_then(|d| d.get("defaults").and_then(|x| x.get(key)).and_then(|v| v.as_str().map(str::to_string)))
         {
             out = v;
         }
@@ -567,8 +576,10 @@ mod tests {
         let (_, o, _, w) = read_texts(std::slice::from_ref(&t), Some("new"));
         assert!(w.is_empty());
         assert_eq!(o.thread_agent_args, Some(s(&["--a", "b", "--c"])));
-        let t = set_default_profile_in(&t, "opus").unwrap();
+        let t = set_default_profile_in(&t, "thread_profile", "opus").unwrap();
         assert!(t.contains("[defaults]\nthread_profile = \"opus\"\n"), "{t}");
+        let t = set_default_profile_in(&t, "coordinator_profile", "luna").unwrap();
+        assert!(t.contains("[defaults]\nthread_profile = \"opus\"\ncoordinator_profile = \"luna\"\n"), "{t}");
         for (key, words, why) in [
             ("yolo", s(&["maybe"]), "on·off"),
             ("start_threads", s(&["now"]), "propose·auto"),

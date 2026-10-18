@@ -22,6 +22,7 @@ mod lifecycle;
 pub mod link;
 pub mod migrate;
 mod notify;
+mod open;
 mod orch;
 mod output;
 mod pr;
@@ -1047,6 +1048,9 @@ impl Host {
                 self.project_rename(&project, &to, dry_run, actor).await
             }
             FrontRequest::ProjectSweep { project, dry_run } => self.project_sweep(&project, dry_run, actor).await,
+            FrontRequest::ProjectOpen { project, profile, new } => {
+                self.project_open(&project, profile, new, actor).await
+            }
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더

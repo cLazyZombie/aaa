@@ -49,8 +49,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.29: PaneView `replaced`(새 pane이 대신한 옛 ID, 보던 화면이 따라간다, plan §8.111 QA 고침),
 /// 1.30: `project_create` 옵션(goal·repos·profile)과 `project_set`(4장 G, plan §8.166),
 /// 1.31: ProjectView `status`, `projects` `all`, `project_lifecycle`·`project_delete`·`project_rename`·`project_sweep`(plan §8.166),
-/// 1.32: `thread_adopt`와 ThreadKind `adopted`(plan §8.166)
-pub const FRONT_API: Version = Version { major: 1, minor: 32 };
+/// 1.32: `thread_adopt`와 ThreadKind `adopted`(plan §8.166),
+/// 1.33: `project_open`과 `ProjectOpened`, ProjectView `coordinator_profile`(plan §8.166)
+pub const FRONT_API: Version = Version { major: 1, minor: 33 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

@@ -315,7 +315,15 @@ repos: Array<string>, thread_profile: string | null, coordinator_profile: string
 /**
  * 살아 있는 pane이 있어도
  */
-force: boolean, } | { "op": "project_rename", project: string, to: string, dry_run: boolean, } | { "op": "project_sweep", project: string, dry_run: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null, 
+force: boolean, } | { "op": "project_rename", project: string, to: string, dry_run: boolean, } | { "op": "project_sweep", project: string, dry_run: boolean, } | { "op": "project_open", project: string, 
+/**
+ * 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude
+ */
+profile?: string, 
+/**
+ * coordinator가 돌아도 하나 더 띄운다
+ */
+new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null, 
 /**
  * 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
  */
@@ -383,7 +391,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -465,13 +473,40 @@ export type ProjectView = { name: string, path: string, threads: number,
 /**
  * FRONT_API 1.31. 옛 host는 보내지 않는다(active)
  */
-status?: ProjectStatus, };
+status?: ProjectStatus, 
+/**
+ * `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
+ * FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
+ */
+coordinator_profile?: string, };
 
 export type ProjectStatus = "active" | "paused" | "archived";
 
 export type ProjectAction = "pause" | "resume" | "archive" | "unarchive";
 
 export type ProjectChange = { project: ProjectView, notes: Array<string>, };
+
+export type ProjectOpened = { project: ProjectView, 
+/**
+ * 띄운 coordinator, 또는 이미 돌던 것 중 가장 최근에 상태가 바뀐 것
+ */
+pane: PaneView, 
+/**
+ * 새로 띄웠다(false면 돌던 coordinator)
+ */
+started: boolean, 
+/**
+ * `pane` 말고도 도는 coordinator 수
+ */
+others: number, 
+/**
+ * coordinator를 띄운 profile(돌던 것이면 그 pane의 harness)
+ */
+profile: string, 
+/**
+ * 그 pane이 든 workspace(layout에 없으면 빈 글)
+ */
+workspace: string, notes: Array<string>, };
 
 export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 

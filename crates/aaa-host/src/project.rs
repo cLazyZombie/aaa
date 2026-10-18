@@ -24,7 +24,8 @@ pub(crate) struct ProjectSettings {
     /// `thread start`에 `--profile`이 없을 때 쓰는 profile(herdr-projects `thread_profile`).
     /// herdr-projects는 기본이 `claude`(내장 profile)지만 aaa profile은 머신 agent.toml에만 있어 기본은 비어 있다.
     pub thread_profile: String,
-    /// `aaa project open`이 coordinator를 띄우는 profile(herdr-projects `coordinator_profile`). 비면 `claude`
+    /// `aaa project open`이 coordinator를 띄우는 profile(herdr-projects `coordinator_profile`). 비면 host.toml
+    /// `[defaults] coordinator_profile`, 그다음 `claude`
     pub coordinator_profile: String,
     /// 열린 thread가 이만큼이면 `thread start`가 경고한다. 거부하지 않는다(coordinator가 지키는 규칙).
     pub max_parallel_threads: u32,

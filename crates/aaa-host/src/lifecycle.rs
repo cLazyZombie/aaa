@@ -245,6 +245,7 @@ impl Host {
                 path: target.to_string_lossy().into_owned(),
                 threads: recs.len() as u32,
                 status: ProjectStatus::Archived,
+                coordinator_profile: String::new(),
             },
             notes,
         }))

@@ -3,7 +3,8 @@
 //! - 읽기(`profile list`·`profile resolve`·`safety show`)는 누구나 한다.
 //! - 바꾸기는 사람이 aaa 세션 밖 터미널에서만 한다([`crate::person::require`]). profile은 이 머신 agent.toml, 허용 목록·
 //!   기본값·safety는 host.toml을 toml_edit로 그 key만 고친다(주석·차례는 그대로). host·agent는 쓸 때마다 다시 읽는다.
-//! - coordinator 쪽(`profile allow coordinator`, `coordinator_agent_args` 등)은 없다: aaa는 coordinator를 띄우지 않는다(§8.104).
+//! - coordinator 기본 profile(`profile default coordinator`)은 `aaa project open`이 쓴다(§8.166). coordinator 허용 목록·인자
+//!   (`profile allow coordinator`, `coordinator_agent_args`)는 아직 없다.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -79,7 +80,8 @@ pub enum ProfileCmd {
         #[arg(long, conflicts_with = "names")]
         all: bool,
     },
-    /// thread start에 profile이 없고 project.toml thread_profile도 없을 때 쓸 profile(host.toml [defaults], 사람만)
+    /// thread start(threads)·`project open`(coordinator)에 profile이 없고 project.toml 값도 없을 때 쓸 profile
+    /// (host.toml [defaults], 사람만)
     Default {
         #[arg(value_parser = ["threads", "coordinator"])]
         role: String,
@@ -115,7 +117,7 @@ pub enum SafetyCmd {
     },
 }
 
-const NO_COORDINATOR: &str = "aaa는 coordinator를 띄우지 않는다(plan §8.104): coordinator는 사람이 연 세션이라 그 profile·인자는 사람이 그 세션에서 정한다";
+const NO_COORDINATOR: &str = "coordinator 허용 목록(coordinator_profiles)은 아직 없다: `aaa project open --profile`은 그 머신 agent.toml의 어떤 profile이든 받는다(plan §8.166)";
 
 fn config_dir() -> PathBuf {
     aaa_config::paths::config_dir()
@@ -213,14 +215,19 @@ fn layers(target: &Target) -> (Layers, Vec<String>) {
 
 /// 프로젝트의 thread 기본 profile(host `default_thread_profile`과 같다): project.toml → host.toml [defaults] → claude
 fn default_thread_profile(target: &Target) -> String {
+    default_profile(target, "thread_profile")
+}
+
+/// 프로젝트의 `thread_profile`·`coordinator_profile` 기본값(host `default_thread_profile`·`default_coordinator_profile`과 같다)
+fn default_profile(target: &Target, key: &str) -> String {
     let own = match target {
-        Target::Project { dir, .. } => safety::project_thread_profile(&project_toml(dir)),
+        Target::Project { dir, .. } => safety::project_profile(&project_toml(dir), key),
         Target::Global => String::new(),
     };
     if !own.is_empty() {
         return own;
     }
-    let global = safety::default_thread_profile(&config_dir());
+    let global = safety::default_profile(&config_dir(), key);
     if global.is_empty() { "claude".into() } else { global }
 }
 
@@ -399,13 +406,19 @@ fn list(json: bool, machine: Option<String>, project: Option<String>, names: boo
     let target = Target::parse(&project)?;
     let eff = layers(&target).0.resolve();
     let default = default_thread_profile(&target);
+    let coordinator = default_profile(&target, "coordinator_profile");
     if json {
         println!(
             "{}",
             serde_json::json!({
                 "machine": machine,
                 "profiles": profiles,
-                "project": { "name": project, "thread_profile": default, "thread_profiles": eff.thread_profiles },
+                "project": {
+                    "name": project,
+                    "thread_profile": default,
+                    "thread_profiles": eff.thread_profiles,
+                    "coordinator_profile": coordinator,
+                },
             })
         );
         return Ok(ExitCode::SUCCESS);
@@ -416,7 +429,9 @@ fn list(json: bool, machine: Option<String>, project: Option<String>, names: boo
         Some(l) if l.is_empty() => "없음".to_string(),
         Some(l) => l.join(", "),
     };
-    println!("\n`{project}`:\n  thread_profile    {default}\n  thread_profiles   {allowed}");
+    println!(
+        "\n`{project}`:\n  thread_profile        {default}\n  thread_profiles       {allowed}\n  coordinator_profile   {coordinator}"
+    );
     Ok(code)
 }
 
@@ -555,16 +570,25 @@ fn allow(json: bool, role: &str, names: Vec<String>, project: Option<String>, al
 }
 
 fn default(json: bool, role: &str, name: &str) -> Result<ExitCode> {
-    if role == "coordinator" {
-        bail!("{NO_COORDINATOR}");
-    }
     let warning = check_names(&[name.to_string()])?;
-    crate::person::require("`aaa profile default`(thread 기본 profile 바꾸기)")?;
+    let (key, what, message) = if role == "coordinator" {
+        (
+            "coordinator_profile",
+            "coordinator",
+            format!("`aaa project open`에 --profile이 없고 project.toml coordinator_profile도 없으면 `{name}`을 쓴다"),
+        )
+    } else {
+        (
+            "thread_profile",
+            "thread",
+            format!("thread start에 profile이 없고 project.toml thread_profile도 없으면 `{name}`을 쓴다"),
+        )
+    };
+    crate::person::require(&format!("`aaa profile default`({what} 기본 profile 바꾸기)"))?;
     let (path, text) = host_text();
-    let edited = safety::set_default_profile_in(&text, name).map_err(|e| anyhow::anyhow!(e))?;
+    let edited = safety::set_default_profile_in(&text, key, name).map_err(|e| anyhow::anyhow!(e))?;
     profile_edit::write_atomic(&path, edited.as_bytes())
         .with_context(|| format!("{}에 쓰지 못했다", path.display()))?;
-    let message = format!("thread start에 profile이 없고 project.toml thread_profile도 없으면 `{name}`을 쓴다");
     if json {
         println!("{}", serde_json::json!({ "message": message, "warning": warning }));
     } else {
