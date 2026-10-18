@@ -223,6 +223,19 @@ impl Host {
             if p.machine_id != mid {
                 return;
             }
+            // 셸 pane 앞의 agent가 끝나 셸로 돌아왔다(agent의 앞 프로세스 찾기, herdr `ClearAgent`): 다시 agent 없는 셸이다.
+            // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
+            if ev.kind == "released" {
+                p.agent = None;
+                p.answered = false;
+                p.transcript = None;
+                let _ = p.events.send(crate::PaneEvent::State);
+                drop(i);
+                self.bump();
+                self.close_questions_of(&ev.session);
+                self.tick_wake.notify_one();
+                return;
+            }
             if ev.transcript.is_some() {
                 p.transcript = ev.transcript.clone();
             }

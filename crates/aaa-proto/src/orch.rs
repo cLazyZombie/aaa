@@ -181,7 +181,7 @@ pub struct HarnessEvent {
     pub session: String,
     /// claude·codex·report(`aaa report`)
     pub harness: String,
-    /// session_start·turn_start·turn_end·question·idle·error·exited·progress
+    /// session_start·turn_start·turn_end·question·idle·error·exited·progress·released(셸 앞 agent를 놓음)
     pub kind: String,
     /// harness 자기 세션 ID(resume에 쓴다)
     pub harness_session: Option<String>,

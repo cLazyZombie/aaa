@@ -9,7 +9,9 @@ mod lab;
 use std::time::Duration;
 
 use aaa_common::front::FrontClient;
-use aaa_proto::{B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse, QuestionState, SessionState};
+use aaa_proto::{
+    AgentActivity, B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse, QuestionState, SessionState,
+};
 use lab::watch::HostWatch;
 use lab::{Lab, Node, wait_for};
 
@@ -194,14 +196,15 @@ echo "fake-claude $*"
 sid=$FAKE_SID
 case "$1" in --resume|--session-id) sid=$2 ;; esac
 [ -n "$sid" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$sid\",\"source\":\"startup\"}"
-# `--ask`: 확인창을 띄운 채 기다린다(화면 감지가 질문으로 본다). `--ask2`: 답하면 같은 확인창을 곧바로 다시 그린다
-# (지우고 그리기를 한 번에 써 감지가 빈 화면을 보지 않는다)
+# `--ask`: 확인창을 띄우고(화면 감지가 질문으로 본다) 답을 받으면 끝낸다. `--ask2`: 답하면 같은 확인창을 곧바로 다시
+# 그린다(지우고 그리기를 한 번에 써 감지가 빈 화면을 보지 않는다)
 ask=' Bash command\n\n   make test\n\n Do you want to proceed?\n \342\235\257 1. Yes\n   2. No\n\n Esc to cancel\n'
-case "$3" in
-  --ask) printf "$ask" ;;
-  --ask2) printf "$ask"; read -r x; printf "\033[2J\033[H$ask"; read -r x; echo "answered-twice" ;;
+case " $* " in
+  *" --ask2 "*) printf "$ask"; read -r x; printf "\033[2J\033[H$ask"; read -r x; echo "answered-twice" ;;
+  *" --ask "*) printf "$ask"; read -r x; echo "answered"; exit 0 ;;
 esac
-exec cat
+# 받은 줄을 되돌려 쓴다(cat처럼). exec하지 않아 앞 프로세스가 이 claude로 남는다(셸 pane은 앞 프로세스로 agent를 찾는다)
+while IFS= read -r l; do printf '%s\n' "$l"; done
 "#;
 
 /// 시험 대화 ID(harness 세션 ID는 UUID 꼴만 받는다, `aaa_common::util::harness_session_ok`)
@@ -373,6 +376,35 @@ fn the_same_prompt_asked_again_right_after_its_answer_is_a_new_question() {
     let states: Vec<_> =
         v["questions"].as_array().unwrap().iter().map(|q| q["state"].as_str().unwrap().to_string()).collect();
     assert_eq!(states, ["answered", "answered"], "{v}");
+}
+
+/// QA t-0337 Q21: 셸 pane에서 띄운 Claude도 상태를 본다(herdr 0.9.5: pane 셸의 앞 프로세스 이름으로 agent를 찾는다,
+/// agent `detect::foreground`). 셸이 다시 앞에 오면 끝을 알린 뒤 pane은 agent 없는 셸이다. 놓은 셸은 재부팅 복원에서
+/// 대화 이어가기를 치지 않는다(SessionStart hook이 harness 세션 ID를 알렸어도). 기다림은 host 사건과 출력이다.
+#[test]
+fn a_claude_started_in_a_shell_is_detected_and_released_when_it_exits() {
+    let mut lab = Lab::new();
+    let (_, env) = fake_claude_env(&lab);
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], None);
+    h.ok(&["pane", "run", &a, &format!("FAKE_SID={SID_A} claude --ask")]);
+    hw.wait("셸 안 Claude의 확인창", |w| {
+        let s = w.pane(&a)?.agent.as_ref()?;
+        (s.activity == AgentActivity::Question && s.harness == "claude").then_some(())
+    });
+    let v = h.ok(&["question", "list"]);
+    let q = v["questions"].as_array().unwrap().iter().find(|q| q["pane"] == a.as_str()).expect("질문");
+    h.ok(&["question", "answer", q["id"].as_str().unwrap(), "yes"]);
+    h.wait_output(&a, "answered", T);
+    hw.wait("셸로 돌아와 놓음", |w| w.pane(&a)?.agent.is_none().then_some(()));
+    reboot(&mut lab, &h, &env, 1);
+    let n = hw.wait("셸 복원", |w| {
+        let l = w.leaves();
+        (l.len() == 1 && l[0] != a && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then(|| l[0].clone())
+    });
+    h.ok(&["pane", "run", &n, "echo plain-$((2+2))"]);
+    h.wait_output(&n, "plain-4", T);
+    assert!(!h.screen(&n).contains("fake-claude"), "놓은 셸에 대화 이어가기를 쳤다:\n{}", h.screen(&n));
 }
 
 /// 보안 감사 t-0340: hook이 알린 harness 세션 ID는 UUID 꼴만 받는다(`aaa_common::util::harness_session_ok`). 셸 pane의
