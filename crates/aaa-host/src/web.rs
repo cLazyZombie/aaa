@@ -245,48 +245,62 @@ const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escap
                         default-src 'self' 'unsafe-inline' data: blob:; frame-ancestors 'self'";
 
 /// `/v/<cap>/<path>`: 보기 경로가 곧 권한이다(그 thread 결과물 읽기만, 2시간). host 사본이 없으면 agent에서 스트리밍한다.
-async fn view_file(State(host): State<Arc<Host>>, Path((cap, path)): Path<(String, String)>) -> Response {
+/// 파일 보기(차이 목록 R1)가 같은 경로로 읽는다: Range(글 앞부분·동영상 넘기기)와 `?download=1`(내려받기)을 받는다.
+async fn view_file(
+    State(host): State<Arc<Host>>,
+    Path((cap, path)): Path<(String, String)>,
+    Query(q): Query<FileQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let fail = |e: ErrorBody| {
+        let code = match e.code {
+            ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+            ErrorCode::NotFound => StatusCode::NOT_FOUND,
+            ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
+            _ => StatusCode::BAD_GATEWAY,
+        };
+        (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], e.message).into_response()
+    };
     let src = match host.view_source(&cap, &path).await {
         Ok(s) => s,
-        Err(e) => {
-            let code = match e.code {
-                ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
-                ErrorCode::NotFound => StatusCode::NOT_FOUND,
-                ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
-                _ => StatusCode::BAD_GATEWAY,
-            };
-            return (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], e.message).into_response();
-        }
+        Err(e) => return fail(e),
     };
     let size = src.size();
-    let body = match src {
-        crate::library::ViewSource::Local(p, _) => match tokio::fs::File::open(&p).await {
-            Ok(f) => Body::from_stream(futures_util::stream::unfold(f, |mut f| async move {
-                use tokio::io::AsyncReadExt;
-                let mut buf = vec![0u8; 256 * 1024];
-                match f.read(&mut buf).await {
-                    Ok(0) => None,
-                    Ok(n) => {
-                        buf.truncate(n);
-                        Some((Ok::<_, std::io::Error>(buf), f))
-                    }
-                    Err(e) => Some((Err(e), f)),
-                }
-            })),
-            Err(e) => return (StatusCode::NOT_FOUND, format!("host 사본을 열지 못했다: {e}")).into_response(),
-        },
-        crate::library::ViewSource::Agent { conn, work_dir, path: p, first, eof, .. } => {
-            Body::from_stream(crate::library::agent_stream(conn, work_dir, p, first, eof))
+    let range = match crate::files::parse_range(headers.get(header::RANGE).and_then(|v| v.to_str().ok()), size) {
+        Ok(r) => r,
+        Err(()) => {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                .body(Body::empty())
+                .unwrap();
         }
     };
-    Response::builder()
-        .header(header::CONTENT_TYPE, crate::library::content_type(&path))
-        .header(header::CONTENT_LENGTH, size)
+    let (start, len) = range.map(|(a, b)| (a, b - a + 1)).unwrap_or((0, size));
+    let body = match src.open(start, len).await {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
+    let kind = crate::library::content_type(&path);
+    // PDF는 브라우저의 PDF 보기가 그리는데 그것은 sandbox 문서를 거부한다(`/f/`의 `PDF_CSP`와 같은 까닭)
+    let csp = if kind == "application/pdf" { PDF_CSP } else { VIEW_CSP };
+    let mut res = Response::builder()
+        .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
+        .header(header::CONTENT_TYPE, kind)
+        .header(header::CONTENT_LENGTH, len)
+        .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "private, no-store")
-        .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
-        .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
-        .body(body)
-        .unwrap()
+        .header(header::CONTENT_SECURITY_POLICY, csp)
+        .header(header::X_FRAME_OPTIONS, "SAMEORIGIN");
+    if let Some((a, b)) = range {
+        res = res.header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{size}"));
+    }
+    if q.download.is_some() {
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        res = res
+            .header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{}", crate::files::pct(name)));
+    }
+    res.body(Body::from_stream(body)).unwrap()
 }
 
 /// 장치 cookie. HTTPS에서는 `__Host-aaa`만 본다: prefix 없는 `aaa`는 같은 이름의 다른 서비스(다른 포트)나

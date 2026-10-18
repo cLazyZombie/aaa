@@ -54,6 +54,10 @@ fn world() -> World {
     let work = lab.root.join("work");
     let h = lab.node("h", Some(&host_toml(&projects)));
     std::fs::write(h.cfg.join("agent.toml"), agent_toml(&work)).unwrap();
+    let fixture = agent_toml(&work);
+    let at = fixture.find("[profiles.").unwrap();
+    std::fs::write(h.cfg.join("host.toml"), format!("{}\n{}", host_toml(&projects), &fixture[at..])).unwrap();
+    std::fs::write(h.cfg.join("agent.toml"), &fixture[..at]).unwrap();
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", Duration::from_secs(30), || h.json(&["status"]).ok());
     // 이 시험을 Claude Code 세션 안에서 돌려도 그 세션 표지는 aaa 세션에 넘기지 않는다(agent가 지운다)
