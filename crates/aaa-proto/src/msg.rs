@@ -924,7 +924,7 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
-    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.16부터, 옛 host는 맨 아래)
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.22부터, 옛 host는 맨 아래)
     #[serde(default)]
     pub scroll: GridScroll,
 }
@@ -1219,26 +1219,26 @@ pub enum FrontRequest {
     PaneUnwatch {
         pane: String,
     },
-    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.111). 프로그램에는 아무것도 가지 않는다.
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.138). 프로그램에는 아무것도 가지 않는다.
     PaneScroll {
         pane: String,
         by: ScrollBy,
     },
-    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.17부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
-    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.114).
+    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.23부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.141).
     PaneSelectionRead {
         pane: String,
         from: TextPoint,
         to: TextPoint,
     },
-    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.17부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
+    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.23부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
     /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
     PaneCopyMotion {
         pane: String,
         cursor: TextPoint,
         motion: CopyMotion,
     },
-    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.17부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
+    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.23부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
     /// 있으면 그 다음부터. `CopySearch`로 답한다.
     PaneCopySearch {
         pane: String,
