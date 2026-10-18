@@ -32,7 +32,10 @@ const LOOK_EVERY: Duration = Duration::from_millis(250);
 /// ticker가 치기 전에 화면이 그대로여야 하는 시간. `AAA_TEST_BRIEF_SETTLE_MS`는 시험에서만 줄인다(가짜 agent 화면은 뜨자마자
 /// 멈춘다: 웹 E2E는 thread마다 3초를 기다렸다)
 fn settle() -> Duration {
-    std::env::var("AAA_TEST_BRIEF_SETTLE_MS").ok().and_then(|v| v.parse::<u64>().ok()).map_or(SETTLE, Duration::from_millis)
+    std::env::var("AAA_TEST_BRIEF_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(SETTLE, Duration::from_millis)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
