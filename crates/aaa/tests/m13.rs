@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use aaa_proto::{AgentActivity, FlowEvent, FrontEvent, QuestionState, QuestionView, ThreadView};
+use aaa_proto::{AgentActivity, FlowEvent, FrontEvent, NoticeKind, NoticeView, QuestionState, QuestionView, ThreadView};
 use lab::watch::HostWatch;
 use lab::{Events, Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag};
 use serde_json::Value;
@@ -199,6 +199,10 @@ while :; do
  Do you want to proceed?" 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain' "$(printf '\033[1A\r\033[J')"
       echo "race $pick" ;;
     *ask*) spin; perm 'make test' ;;
+    # 일하는 동안(키 하나를 받은 뒤: 시험이 작업 중을 본 뒤 보낸다) 끝낸 보고를 쓰고 `Done`을 알린 턴(턴은 시험이 끝낸다).
+    # 그 턴이 끝나면 검토 대기의 새 보고다
+    *finale*)
+      spin; key; printf '## Report\nfinale\n\n## Next\n- 병합\n' > "$dir/report.md"; "$AA" report --percent 100 --activity Done ;;
     *) printf 'got: %s\n' "$line"; spin ;;
   esac
   if [ "$pick" = cancel ]; then interrupted; else turn; fi
@@ -2276,6 +2280,70 @@ fn thread_state_items_follow_groups() {
     // 알림: 사람이 할 일만 나간다(쉼·resolved는 inbox에만). 알림은 차례대로 오므로, 중간 보고에 항목이 생겼다면 끝낸 보고
     // 알림보다 먼저(또는 함께) 받았다. 마지막 알림 뒤에 생긴 항목(쉼·resolved)은 알릴 것이 아니다.
     assert_eq!(pushed, [(a.clone(), "new report".to_string()), (b.clone(), "pane closed".to_string())]);
+}
+
+/// 앱 안 알림(plan §8.184): 보는 화면 없이 끝난 턴은 host가 front에 「끝남」을 알린다(herdr `Finished`). thread pane의 끝남은
+/// 그 턴의 보고를 본 뒤에 정한다: 같은 턴에 검토 대기의 새 보고가 왔으면 「새 보고」 하나만, 아니면 「끝남」이다. 알림은
+/// inbox 항목이 아니라 휴대폰 push로 가지 않는다(push 쪽은 웹 E2E 11). 알림은 연결 하나로 차례대로 온다
+#[test]
+fn turn_end_notices_follow_reports() {
+    let w = world();
+    let mut ev = Events::connect(&w.h);
+    let v =
+        w.start(&["--title", "알림", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("n.txt", "x")]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let pane = v["pane"].as_str().unwrap().to_string();
+    // 그 pane의 `from`번째 뒤 첫 알림(번호, 알림)
+    let notice = |ev: &mut Events, from: usize, what: &str| {
+        ev.wait_from(from, what, T, |e| match e {
+            FrontEvent::Notice(n) if n.pane.as_deref() == Some(pane.as_str()) => Some(n.clone()),
+            _ => None,
+        })
+    };
+    let q = open_question(&mut ev, &id, "trust", &[]);
+    w.h.ok(&["question", "answer", &q.id, "yes"]);
+    let p1 = open_question(&mut ev, &id, "permission", &[]);
+    let t = lab::now_ms();
+    w.h.ok(&["question", "answer", &p1.id, "yes"]);
+    agent_became(&mut ev, &id, AgentActivity::Working, t);
+    // 1) brief 턴(작업 → 질문 → 작업 → 쉼): 진행 40%의 보고는 검토 대기가 아니라 끝남이다. 턴은 처음 일한 때부터 잰다
+    let t1 = lab::now_ms();
+    finish_turn(&w, &pane);
+    let (i1, n1): (usize, NoticeView) = notice(&mut ev, 0, "brief 턴의 끝남");
+    assert_eq!(n1.kind, NoticeKind::Finished, "{n1:?}");
+    assert_eq!((n1.project.as_deref(), n1.thread.as_deref(), n1.title.as_str()), (Some("demo"), Some(id.as_str()), "알림"));
+    assert_eq!(n1.agent.as_deref(), Some("claude"));
+    let turn = n1.turn_ms.expect("host가 본 턴");
+    assert!(turn > 0 && turn <= n1.at_ms.saturating_sub(t) + 1_000, "턴 {turn}ms: {n1:?}");
+    // 1분이 안 된 턴: 웹 앱 안 알림은 띄우지 않는다(herdr-web-ui LONG_TURN_MS)
+    assert!(!n1.long && n1.at_ms >= t1, "{n1:?}");
+
+    // 2) 끝낸 보고를 쓴 턴: 새 보고 알림 하나(같은 턴의 끝남은 보내지 않는다)
+    let t2 = lab::now_ms();
+    assert_eq!(w.message(&id, "finale", false)["state"], "accepted");
+    agent_became(&mut ev, &id, AgentActivity::Working, t2);
+    w.h.ok(&["pane", "send-text", &pane, "r"]);
+    progress_seen(&mut ev, &id, "Done");
+    finish_turn(&w, &pane);
+    let (i2, n2) = notice(&mut ev, i1 + 1, "새 보고");
+    assert_eq!(n2.kind, NoticeKind::Report, "같은 턴의 끝남이 새 보고보다 먼저 왔다: {n2:?}");
+    assert_eq!((n2.thread.as_deref(), n2.title.as_str()), (Some(id.as_str()), "알림"));
+    let shown = w.show(&id);
+    assert_eq!(shown["group"], "ready_for_review", "{shown}");
+
+    // 알림은 inbox 항목을 만들지 않는다(push·webhook은 inbox 항목에서만 나간다, notify.rs): 3)의 끝남 앞뒤로 항목이 같다
+    let items = |w: &World| w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].clone();
+    w.h.ticks(1);
+    let before = items(&w);
+    // 3) 보고 없는 다음 턴은 다시 끝남이다. 그 앞에 2)의 끝남이 끼지 않았다(알림은 차례대로 오고, 2)의 끝남이었다면 3)을
+    // 시작하기 전 시각이다)
+    let t3 = lab::now_ms();
+    assert_eq!(w.message(&id, "plain", false)["state"], "accepted");
+    finish_turn(&w, &pane);
+    let (_, n3) = notice(&mut ev, i2 + 1, "보고 없는 턴의 끝남");
+    assert!(n3.kind == NoticeKind::Finished && n3.at_ms >= t3, "2)의 끝남이 새 보고 뒤에 왔다: {n3:?}");
+    w.h.ticks(1);
+    assert_eq!(items(&w), before, "끝남 알림이 inbox 항목을 만들었다");
 }
 
 /// 끝난 세션을 지우는 resolve·`pane close`는 session host가 종료 뒤 더 응답하는 창(늦게 붙는 agent용, 2초)을 기다리지

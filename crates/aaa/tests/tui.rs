@@ -431,6 +431,8 @@ struct HostWatch {
     ws: Option<Workspace>,
     panes: Vec<PaneView>,
     machines: Vec<aaa_proto::MachineView>,
+    /// 받은 앱 안 알림(차례대로)
+    notices: Vec<aaa_proto::NoticeView>,
 }
 
 impl HostWatch {
@@ -447,7 +449,7 @@ impl HostWatch {
             });
             rx
         });
-        HostWatch { rt, rx, ws: None, panes: vec![], machines: vec![] }
+        HostWatch { rt, rx, ws: None, panes: vec![], machines: vec![], notices: vec![] }
     }
 
     fn apply(&mut self, m: FrontMsg) {
@@ -457,6 +459,7 @@ impl HostWatch {
                 self.machines = machines;
                 self.panes = panes;
             }
+            FrontMsg::Event(FrontEvent::Notice(n)) => self.notices.push(n),
             FrontMsg::Res { result, .. } => {
                 if let Ok(FrontResponse::Workspace(w)) = result.into_result() {
                     self.ws = Some(w);
@@ -790,12 +793,7 @@ fn remote_attach_rides_the_web() {
 fn herdr_keys_and_modes() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    // 첫 pane은 실행 파일 이름이 claude인 셸이다: 4)에서 Claude 확인창을 그려 질문을 연다(나눈 pane은 harness가 없다)
-    let claude = lab.root.join("bin").join("claude");
-    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
-    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh\n").unwrap();
-    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "keys", "--", lab::path_str(&claude)]);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "keys"]);
     let first = leaves(&w)[0].clone();
     let mut tui = Tui::start(&h);
     tui.wait_text("첫 화면", |s| tab_chips(s) == ["keys"]);
@@ -853,20 +851,8 @@ fn herdr_keys_and_modes() {
     tui.cmd("\x1b[Z");
     typed_in(&mut tui, "back", &right);
 
-    // 4) o: 질문이 열린 pane으로 간다. 질문은 첫 pane 화면의 Claude 권한 확인창(`bash_permission_prompt`)이다.
-    h.ok(&[
-        "pane",
-        "run",
-        &first,
-        "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
-         ' Esc to cancel · Tab to amend'",
-    ]);
-    hw.wait("질문", |w| {
-        w.pane(&first)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
-    });
-    // o는 TUI가 아는 질문으로 간다: host가 바뀐 것만으로는 TUI가 아직 모를 수 있어 표시가 뜬 것을 본다
-    tui.wait_text("질문 표시", |s| s.contains("질문 — aaa question"));
-    tui.cmd("o");
+    // 4) 첫 pane으로 돌아간다(`o`는 알림 카드의 pane으로 간다: agent_cards_like_herdr)
+    tui.cmd("\t");
     typed_in(&mut tui, "asked", &first);
 
     // 5) x: 포커스 pane을 닫는다
@@ -911,6 +897,104 @@ fn herdr_keys_and_modes() {
     tui.wait_text("기본 prefix", |s| s.contains(" PREFIX ") && s.contains("ctrl+b prefix 보내기"));
     tui.send(b"q");
     assert!(tui.wait_exit());
+}
+
+/// agent 알림 카드(herdr 0.9.5 `notification_policy.rs`·`render_notification_card`, plan §8.184): 보는 화면 없이 다른 agent의
+/// 턴이 끝나거나 질문이 열리면 오른쪽 아래 카드가 1초 뒤 뜬다. 지금 탭의 pane은 띄우지 않고(herdr는 pane이 아니라 탭으로
+/// 거른다), `prefix o`·카드 누름은 그 pane으로 간다. host는 보는 pane(lease)의 끝남은 알리지 않는다
+#[test]
+fn agent_cards_like_herdr() {
+    let mut lab = Lab::new();
+    // 화면 감지 시작 유예(3초)를 뺀다: 시작 화면이 바로 쉼이다
+    let (h, mut hw) = start_agent_env(&mut lab, LOCAL_ONLY, &[("AAA_TEST_DETECT_GRACE_MS", "0")]);
+    // 실행 파일 이름이 claude인 셸: 줄 하나마다 Claude 화면을 그린다(go 일하는 줄, end 입력 상자, ask 권한 확인창)
+    let claude = lab.root.join("cbin").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh \"$@\"\n").unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let clear = "printf '\\033[2J\\033[H'";
+    let idle = format!("{clear}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'");
+    let work = format!("{clear}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'");
+    let ask = format!(
+        "{clear}; printf '%s\\n' ' Bash command' '' '   make test' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
+         ' Esc to cancel · Tab to amend'"
+    );
+    let script = format!("stty -echo; {idle}; while read a; do case $a in go) {work};; end) {idle};; ask) {ask};; esac; done");
+    // 탭 here: 셸(TUI가 처음 여는 pane)과 그 옆 agent(side), 탭 work: agent 하나
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "here"]);
+    let shell = leaves(&w)[0].clone();
+    let w = h.ok(&["pane", "split", &shell, "--direction", "right", "--", lab::path_str(&claude), "-c", &script]);
+    let side = leaves(&w)[1].clone();
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "work", "--", lab::path_str(&claude), "-c", &script]);
+    let busy = leaves(&w)[2].clone();
+    let activity = |w: &HostWatch, p: &str| w.pane(p).and_then(|v| v.agent.as_ref()).map(|a| a.activity);
+    hw.wait("두 agent 쉼", |w| {
+        (activity(w, &side) == Some(aaa_proto::AgentActivity::Idle)
+            && activity(w, &busy) == Some(aaa_proto::AgentActivity::Idle))
+        .then_some(())
+    });
+    let mut tui = Tui::start(&h);
+    tui.wait_text("두 탭", |s| tab_chips(s) == ["here", "work"]);
+    hw.wait("셸 lease", |w| w.held_by(&shell, "tui@").then_some(()));
+    // 턴 하나: 작업 중을 본 뒤 쉼으로 끝낸다. 끝난 뒤 host 알림 수
+    let turn = |hw: &mut HostWatch, pane: &str| {
+        h.ok(&["pane", "run", pane, "go"]);
+        hw.wait("작업 중", |w| (activity(w, pane) == Some(aaa_proto::AgentActivity::Working)).then_some(()));
+        h.ok(&["pane", "run", pane, "end"]);
+        hw.wait("쉼", |w| (activity(w, pane) == Some(aaa_proto::AgentActivity::Idle)).then_some(()));
+    };
+    let notices_of = |hw: &HostWatch, pane: &str| hw.notices.iter().filter(|n| n.pane.as_deref() == Some(pane)).count();
+    // 카드: 오른쪽 아래 네 줄(테두리·`● 제목`·본문·테두리), 마지막 칸이 테두리다
+    let card = |s: &Screen, title: &str, body: &str| {
+        let lines: Vec<String> = s.text().lines().map(str::to_string).collect();
+        let n = lines.len();
+        n >= 4
+            && lines[n - 3].contains(&format!("● {title}"))
+            && lines[n - 2].contains(body)
+            && lines[n - 3].trim_end().ends_with('│')
+            && lines[n - 1].trim_end().ends_with('┘')
+    };
+
+    // 1) 지금 탭(here)의 agent가 끝났다: host는 알리지만(그 pane을 보는 화면은 없다) 카드는 지금 탭이라 뜨지 않는다.
+    // 2) 다른 탭(work)의 agent가 끝났다: 카드가 뜬다. 카드는 한 번에 하나이고 1)이 먼저 왔으므로, 1)이 떴다면 2)보다 앞에 보였다
+    turn(&mut hw, &side);
+    hw.wait("side 끝남 알림", |w| (notices_of(w, &side) == 1).then_some(()));
+    turn(&mut hw, &busy);
+    let side_shown = std::cell::Cell::new(false);
+    tui.wait_screen("work 끝남 카드", |s| {
+        if card(s, "claude 끝남", "main · here") {
+            side_shown.set(true);
+        }
+        card(s, "claude 끝남", "main · work")
+    });
+    assert!(!side_shown.get(), "지금 탭의 끝남 카드가 떴다");
+    if let Ok(path) = std::env::var("AAA_TUI_CARD_DUMP") {
+        std::fs::write(path, tui.text()).unwrap();
+    }
+    // prefix o: 카드를 거두고 그 pane(work 탭)으로 간다(이 화면이 그 pane을 쓴다)
+    tui.cmd("o");
+    tui.wait_text("카드 거둠", |s| !s.contains("claude 끝남"));
+    hw.wait("work lease", |w| w.held_by(&busy, "tui@").then_some(()));
+
+    // 3) 보는 pane(이 TUI가 쓰는 work)의 끝남은 host가 알리지 않는다. 울타리: 그 뒤 side의 끝남 알림이 같은 연결로 온다
+    turn(&mut hw, &busy);
+    turn(&mut hw, &side);
+    hw.wait("side 둘째 끝남 알림", |w| (notices_of(w, &side) == 2).then_some(()));
+    assert_eq!(notices_of(&hw, &busy), 1, "보는 pane의 끝남을 알렸다: {:?}", hw.notices);
+    tui.wait_screen("side 끝남 카드", |s| card(s, "claude 끝남", "main · here"));
+
+    // 4) 입력 필요(질문이 열림): 같은 pane의 끝남 카드를 바꾼다. 카드를 누르면 그 pane(here 탭의 side)으로 간다
+    h.ok(&["pane", "run", &side, "ask"]);
+    tui.wait_screen("입력 필요 카드", |s| card(s, "claude 입력 필요", "main · here") && !s.text().contains("claude 끝남"));
+    let at = tui.wait_find("● claude 입력 필요");
+    tui.click(at);
+    hw.wait("side lease", |w| w.held_by(&side, "tui@").then_some(()));
+    tui.wait_text("카드 거둠", |s| !s.contains("claude 입력 필요"));
+    // 카드가 없으면 o는 아무것도 하지 않는다(herdr): 포커스는 side 그대로
+    tui.cmd("o");
+    tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
+    tui.type_line("x");
+    assert!(hw.held_by(&side, "tui@"));
 }
 
 /// 탭(herdr 0.9.5 `open_new_tab_overlay`·`save_rename_overlay`·`request_tab_close`, `[terminal] new_cwd = "follow"`):

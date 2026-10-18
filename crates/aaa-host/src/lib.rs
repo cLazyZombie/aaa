@@ -21,6 +21,7 @@ mod library;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
+mod notice;
 mod notify;
 mod open;
 mod orch;
@@ -190,6 +191,8 @@ struct PaneRt {
     lease: Option<FrontRef>,
     /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 지금 턴이 시작된 때(작업·질문으로 들어선 harness 시각, notice.rs `turn_from`). 턴 밖이거나 시작을 못 봤으면 None
+    turn_from: Option<u64>,
     /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
     /// 다시 열지 않게 한다(harness.rs `on_harness`)
     answered: bool,
@@ -350,6 +353,10 @@ pub struct Host {
     collect_lock: tokio::sync::Mutex<()>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
+    /// 앱 안 알림(턴 끝남·새 보고, notice.rs). 기록하지 않는다
+    pub notice_events: broadcast::Sender<aaa_proto::NoticeView>,
+    /// ticker 묶음 셈까지 미룬 thread pane의 끝남(pane → 알림, notice.rs `turn_finished`)
+    turn_ends: Mutex<HashMap<String, aaa_proto::NoticeView>>,
     /// 질문 저장과 화면 선택 창 붙이기(읽고 쓰기)를 차례로: 답한 질문을 선택 창 붙이기가 다시 열지 않는다
     question_lock: std::sync::Mutex<()>,
     /// 웹 화면들이 함께 쓰는 설정과 고정(prefs.rs). events 연결마다 구독한다
@@ -527,6 +534,8 @@ impl Host {
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
+            notice_events: broadcast::channel(64).0,
+            turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
             preferences,
             device_revoked: broadcast::channel(64).0,
@@ -624,6 +633,7 @@ impl Host {
                     events: broadcast::channel(1024).0,
                     lease: None,
                     agent: None,
+                    turn_from: None,
                     transcript: None,
                     answered: false,
                     restore_error: None,
@@ -776,6 +786,7 @@ impl Host {
                 events: broadcast::channel(1024).0,
                 lease: None,
                 agent: None,
+                turn_from: None,
                 transcript: None,
                 answered: false,
                 restore_error: None,

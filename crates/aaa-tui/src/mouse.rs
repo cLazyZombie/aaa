@@ -97,6 +97,8 @@ pub struct Hits {
     pub panes: Vec<PaneBox>,
     /// 끌 수 있는 나눔 경계(바깥 나눔이 앞)
     pub splits: Vec<SplitHit>,
+    /// 보이는 agent 알림 카드(누르면 그 pane, herdr `notification_toast`)
+    pub card: Option<Rect>,
     /// 단축키 창
     pub popup: Option<Rect>,
     /// 이름·닫기 확인 창의 단추
@@ -687,6 +689,13 @@ impl App {
     /// 왼쪽 누름(herdr 맞히기 순서: 사이드바 접기 → 경계 → 전체 메뉴 → 새 workspace → 새 탭 → `<` `>` → 탭 → 목록 줄 →
     /// 나눔 경계 → pane)
     async fn press(&mut self, x: u16, y: u16, mods: KeyModifiers, hits: &Hits, tx: &mut FrontSender) -> Result<()> {
+        // herdr mouse.rs: 터미널 모드에서 pane이 있는 알림 카드를 누르면 그 pane으로(카드를 거둔다)
+        if self.mode == Mode::Terminal
+            && hits.on(hits.card, x, y)
+            && self.cards.visible().is_some_and(|c| c.pane.is_some())
+        {
+            return self.open_card(tx).await;
+        }
         self.selection = None;
         if self.mode == Mode::Prefix {
             self.mode = Mode::Terminal;

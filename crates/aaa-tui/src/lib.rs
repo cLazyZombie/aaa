@@ -17,6 +17,7 @@
 //! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
 
 pub mod bind;
+mod cards;
 mod chrome;
 pub mod clip;
 mod copy;
@@ -348,6 +349,10 @@ struct App {
     message: Option<(String, tokio::time::Instant)>,
     /// 오류(ERROR 막대, ERROR_SHOWN 뒤 사라진다)
     error: Option<(String, tokio::time::Instant)>,
+    /// agent 알림 카드(herdr 알림, 오른쪽 아래, cards.rs)
+    cards: cards::Cards,
+    /// 카드를 낸 질문(같은 질문의 다음 사건은 새 소식이 아니다)
+    asked: HashSet<String>,
     pending: HashMap<String, Pending>,
     /// 마지막으로 보낸 크기(같은 크기를 거듭 보내지 않는다)
     sized: HashMap<String, (u16, u16)>,
@@ -447,6 +452,8 @@ impl App {
             overlay: None,
             message: None,
             error: None,
+            cards: cards::Cards::default(),
+            asked: HashSet::new(),
             pending: HashMap::new(),
             sized: HashMap::new(),
             attach_seq: 0,
@@ -650,6 +657,8 @@ impl App {
                     self.message = None;
                     dirty = true;
                 }
+                // agent 알림 카드: 보이는 카드가 사라지거나 받은 알림을 다시 볼 때(아래 tick_cards)
+                _ = tokio::time::sleep_until(self.cards.next_deadline().unwrap_or_else(tokio::time::Instant::now)), if self.cards.next_deadline().is_some() => {}
                 _ = minute.tick() => dirty = true,
                 // 끌어 고르다 가장자리에 닿아 있으면 30ms마다 한 줄씩(herdr selection autoscroll)
                 _ = tokio::time::sleep_until(self.autoscroll.as_ref().map_or_else(tokio::time::Instant::now, |a| a.at)), if self.autoscroll.is_some() => {
@@ -660,6 +669,9 @@ impl App {
             // 쌓인 메시지를 마저 처리해 한 번만 그린다
             while let Ok(m) = rx.try_recv() {
                 self.on_msg(m);
+                dirty = true;
+            }
+            if self.tick_cards() {
                 dirty = true;
             }
             // copy 모드 pane에 포커스가 오가거나 그 pane이 없어지면 모드를 맞춘다
@@ -759,6 +771,17 @@ impl App {
             }
             FrontMsg::Event(FrontEvent::Thread(t)) => {
                 self.threads.insert(list::thread_key(&t), t);
+            }
+            // 알림 카드(plan §8.184): 끝남·새 보고는 host가 알리고, 입력 필요는 새로 열린 질문이다(herdr `NeedsAttention`)
+            FrontMsg::Event(FrontEvent::Notice(n)) => {
+                let card = self.notice_card(&n);
+                self.cards.receive(card, tokio::time::Instant::now());
+            }
+            FrontMsg::Event(FrontEvent::Question(q)) => {
+                if q.state == aaa_proto::QuestionState::Open && self.asked.insert(q.id.clone()) {
+                    let card = self.question_card(&q);
+                    self.cards.receive(card, tokio::time::Instant::now());
+                }
             }
             FrontMsg::Event(FrontEvent::Grid(f)) => {
                 let pane = f.pane.clone();
@@ -1120,6 +1143,107 @@ impl App {
             _ => return Ok(()),
         };
         self.open_pane(tx, pane).await
+    }
+
+    /// 카드 둘째 줄(herdr `notification_context`: workspace와, 탭이 여럿이면 탭). aaa는 무엇이 끝났는지 먼저 적는다:
+    /// thread면 프로젝트·thread, 아니면 pane 이름과 그 pane이 든 workspace·탭
+    fn card_place(&self, pane: &str, project: Option<&str>, thread: Option<&str>) -> String {
+        if let (Some(p), Some(t)) = (project, thread) {
+            let title = self.threads.get(&format!("{p}/{t}")).map(|t| t.title.as_str()).unwrap_or_default();
+            return if title.is_empty() { format!("{p} · {t}") } else { format!("{p} · {t} · {title}") };
+        }
+        let name = match self.panes.get(pane) {
+            Some(v) => list::pane_title(v, &self.threads),
+            None => pane.chars().take(8).collect(),
+        };
+        let spaces = std::iter::once(&self.ws).chain(self.spaces.values().filter(|w| w.name != self.ws_name));
+        for w in spaces {
+            if let Some(i) = w.tabs.iter().position(|t| layout::leaves(&t.root).iter().any(|p| p == pane)) {
+                if w.tabs.len() < 2 {
+                    return format!("{name} · {}", w.name);
+                }
+                let tab = w.tabs[i].name.clone();
+                let tab = if tab.is_empty() { (i + 1).to_string() } else { tab };
+                return format!("{name} · {} · {tab}", w.name);
+            }
+        }
+        match self.panes.get(pane) {
+            Some(v) if !v.machine.is_empty() => format!("{name} · {}", v.machine),
+            _ => name,
+        }
+    }
+
+    /// agent 이름(herdr `agent_label`): host가 알린 harness, 없으면 그 pane 상태의 harness
+    fn agent_label(&self, pane: &str, agent: Option<&str>) -> String {
+        agent
+            .map(str::to_string)
+            .or_else(|| self.panes.get(pane).and_then(|v| v.agent.as_ref()).map(|a| a.harness.clone()))
+            .filter(|a| !a.is_empty())
+            .unwrap_or_else(|| "agent".into())
+    }
+
+    /// host 알림 → 카드. 끝남은 herdr 「{agent} finished」, 새 보고는 herdr-projects 「{프로젝트} · {thread}」·
+    /// 「review · new report: {제목}」
+    fn notice_card(&self, n: &aaa_proto::NoticeView) -> cards::Card {
+        let pane = n.pane.clone().unwrap_or_default();
+        match n.kind {
+            aaa_proto::NoticeKind::Finished => cards::Card {
+                kind: cards::Kind::Finished,
+                title: format!("{} 끝남", self.agent_label(&pane, n.agent.as_deref())),
+                body: self.card_place(&pane, n.project.as_deref(), n.thread.as_deref()),
+                pane: n.pane.clone(),
+            },
+            aaa_proto::NoticeKind::Report => cards::Card {
+                kind: cards::Kind::Report,
+                title: format!("{} · {}", n.project.as_deref().unwrap_or_default(), n.thread.as_deref().unwrap_or_default()),
+                body: format!("검토 · 새 보고: {}", n.title),
+                pane: n.pane.clone(),
+            },
+        }
+    }
+
+    /// 새로 열린 질문 → 입력 필요 카드(herdr 「{agent} needs attention」)
+    fn question_card(&self, q: &aaa_proto::QuestionView) -> cards::Card {
+        cards::Card {
+            kind: cards::Kind::NeedsInput,
+            title: format!("{} 입력 필요", self.agent_label(&q.pane, None)),
+            body: self.card_place(&q.pane, q.project.as_deref(), q.thread.as_deref()),
+            pane: Some(q.pane.clone()),
+        }
+    }
+
+    /// 카드 때가 됐으면 다시 본다(herdr `notification_validation`·`notification_target_is_active`). 다시 그려야 하면 true
+    fn tick_cards(&mut self) -> bool {
+        let current: HashSet<String> = self.current_leaves().into_iter().collect();
+        let panes = &self.panes;
+        let check = |c: &cards::Card| {
+            let Some(view) = c.pane.as_deref().and_then(|p| panes.get(p)) else { return cards::Check::Awaiting };
+            let agent = view.agent.as_deref();
+            match c.kind {
+                cards::Kind::NeedsInput if is_asking(view) => cards::Check::Current,
+                cards::Kind::Finished
+                    if agent.is_some_and(|a| a.activity == aaa_proto::AgentActivity::Idle && !a.seen) =>
+                {
+                    cards::Check::Current
+                }
+                cards::Kind::Finished if agent.is_some_and(|a| a.activity == aaa_proto::AgentActivity::Working) => {
+                    cards::Check::Awaiting
+                }
+                cards::Kind::Report => cards::Check::Current,
+                _ => cards::Check::Stale,
+            }
+        };
+        let active = |c: &cards::Card| c.pane.as_ref().is_some_and(|p| current.contains(p));
+        self.cards.tick(tokio::time::Instant::now(), check, active)
+    }
+
+    /// 보이는 카드를 거두고 그 pane을 연다(`prefix o`·카드 누름, herdr `focus_visible_notification`)
+    async fn open_card(&mut self, tx: &mut FrontSender) -> Result<()> {
+        let Some(card) = self.cards.take(tokio::time::Instant::now()) else { return Ok(()) };
+        match card.pane {
+            Some(p) if self.panes.contains_key(&p) => self.open_pane(tx, p).await,
+            _ => Ok(()),
+        }
     }
 
     /// pane을 연다: 탭에 있으면 그 탭·pane으로, 없으면 새 탭으로 넣는다
@@ -1756,19 +1880,8 @@ impl App {
                     self.set_message("설정을 다시 읽었다");
                 }
             }
-            Action::OpenNotificationTarget => {
-                // 질문이 열린 pane(host 순서). 지금 pane이 질문 중이면 다음 것으로.
-                let asking: Vec<String> =
-                    self.pane_order.iter().filter(|id| self.panes.get(*id).is_some_and(is_asking)).cloned().collect();
-                let at = focus.as_ref().and_then(|f| asking.iter().position(|p| p == f));
-                let next = match at {
-                    Some(i) => asking.get((i + 1) % asking.len()).cloned(),
-                    None => asking.first().cloned(),
-                };
-                if let Some(p) = next {
-                    self.open_pane(tx, p).await?;
-                }
-            }
+            // herdr `focus_visible_notification`: 보이는 카드를 거두고 그 pane으로. 카드가 없으면 아무것도 하지 않는다
+            Action::OpenNotificationTarget => self.open_card(tx).await?,
             // herdr `open_navigate`: 지금 workspace 줄에서 시작한다
             Action::WorkspacePicker => {
                 self.mode = Mode::Navigate;
@@ -1983,6 +2096,10 @@ impl App {
         if let Some((m, _)) = &self.message {
             render_notice(buf, area, m, p);
         }
+        // agent 알림 카드(herdr composition.rs: 넓으면 오른쪽 아래 카드, 좁으면 맨 아래 한 줄)
+        self.hits.borrow_mut().card = self.cards.visible().and_then(|c| {
+            if sh.header.h > 0 { render_card_banner(buf, area, c, p) } else { render_card(buf, area, c, p) }
+        });
         let mut hits = self.hits.borrow_mut();
         match &self.overlay {
             Some(Overlay::Menu(m)) => {
@@ -2525,6 +2642,73 @@ fn render_notice(buf: &mut Buffer, area: Rect, title: &str, p: &theme::Palette) 
         (i.x + i.w).saturating_sub(x) as usize,
         Style::default().fg(p.text).bg(p.panel_bg).add_modifier(Modifier::BOLD),
     );
+}
+
+/// 알림 카드 점 색(herdr `render_visible_notification`: 입력 필요 빨강, 끝남 파랑, 그 밖 accent)
+fn card_dot(c: &cards::Card, p: &theme::Palette) -> Color {
+    match c.kind {
+        cards::Kind::NeedsInput => p.red,
+        cards::Kind::Finished => p.blue,
+        cards::Kind::Report => p.accent,
+    }
+}
+
+/// 알림 카드(herdr `render_notification_card`, 기본 자리 오른쪽 아래): `overlay0` 테두리, `panel_bg` 바탕, 폭은 제목·본문 중
+/// 넓은 것 + 6, 높이는 본문이 있으면 4. 첫 줄 `●`(종류 색)과 굵은 제목, 둘째 줄은 두 칸 들여 `overlay0` 본문
+fn render_card(buf: &mut Buffer, area: Rect, c: &cards::Card, p: &theme::Palette) -> Option<Rect> {
+    let w = (unicode_width(&c.title).max(unicode_width(&c.body)) + 6).min(usize::from(area.w)) as u16;
+    let h = if c.body.is_empty() { 3 } else { 4 }.min(area.h);
+    if w < 3 || h < 3 {
+        return None;
+    }
+    let r = Rect { x: area.x + area.w - w, y: area.y + area.h - h, w, h };
+    let i = help::panel(buf, r, p.overlay0, p.panel_bg);
+    let end = usize::from(i.x + i.w);
+    let x = buf.set_stringn(i.x, i.y, "●", end - usize::from(i.x), Style::default().fg(card_dot(c, p)).bg(p.panel_bg)).0;
+    let x = buf.set_stringn(x, i.y, " ", end.saturating_sub(usize::from(x)), Style::default().bg(p.panel_bg)).0;
+    buf.set_stringn(
+        x,
+        i.y,
+        &c.title,
+        end.saturating_sub(usize::from(x)),
+        Style::default().fg(p.text).bg(p.panel_bg).add_modifier(Modifier::BOLD),
+    );
+    if !c.body.is_empty() && i.h > 1 {
+        let x = i.x + 2.min(i.w);
+        buf.set_stringn(x, i.y + 1, &c.body, end.saturating_sub(usize::from(x)), Style::default().fg(p.overlay0).bg(p.panel_bg));
+    }
+    Some(r)
+}
+
+/// 좁은 화면의 알림(herdr `render_mobile_notification_banner`): 맨 아래 한 줄 ` ● 제목 · 본문`, `surface0` 바탕.
+/// 제목은 짧게(「claude 끝남」·「claude 대기」)
+fn render_card_banner(buf: &mut Buffer, area: Rect, c: &cards::Card, p: &theme::Palette) -> Option<Rect> {
+    if area.w == 0 || area.h == 0 {
+        return None;
+    }
+    let r = Rect { x: area.x, y: area.y + area.h - 1, w: area.w, h: 1 };
+    let bg = p.surface0;
+    fill(buf, r, Style::default().bg(bg));
+    let title = match c.kind {
+        cards::Kind::NeedsInput => c.title.strip_suffix(" 입력 필요").map(|a| format!("{a} 대기")).unwrap_or(c.title.clone()),
+        _ => c.title.clone(),
+    };
+    let end = usize::from(r.x + r.w);
+    let mut x = r.x;
+    for (text, st) in [
+        (" ", Style::default().bg(bg)),
+        ("●", Style::default().fg(card_dot(c, p)).bg(bg)),
+        (" ", Style::default().bg(bg)),
+        (title.as_str(), Style::default().fg(p.text).bg(bg).add_modifier(Modifier::BOLD)),
+    ] {
+        x = buf.set_stringn(x, r.y, text, end.saturating_sub(usize::from(x)), st).0;
+    }
+    if !c.body.is_empty() {
+        let st = Style::default().fg(p.overlay0).bg(bg);
+        x = buf.set_stringn(x, r.y, " · ", end.saturating_sub(usize::from(x)), st).0;
+        buf.set_stringn(x, r.y, &c.body, end.saturating_sub(usize::from(x)), st);
+    }
+    Some(r)
 }
 
 fn is_asking(p: &PaneView) -> bool {
