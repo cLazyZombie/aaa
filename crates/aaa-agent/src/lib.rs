@@ -966,11 +966,13 @@ impl Agent {
         data: Vec<u8>,
         eof: bool,
     ) -> Result<AgentResponse, ErrorBody> {
-        // 허용 폴더는 실제 경로다(macOS `/var/folders` → `/private/var/folders`)
-        let dir = std::env::temp_dir()
+        // 허용 폴더는 실제 경로다(macOS `/var/folders` → `/private/var/folders`). 실제 경로는 검사에만 쓰고 파일은 임시 폴더 그대로에
+        // 쓴다: Windows 실제 경로는 `\\?\` 접두가 붙어 편집기 명령에 그대로 가면 안 된다(herdr도 `temp_dir()` 그대로)
+        let dir = std::env::temp_dir();
+        let real = dir
             .canonicalize()
             .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("임시 폴더를 찾지 못했다: {e}")))?;
-        if !self.file_roots.lock().unwrap().allows(&dir) {
+        if !self.file_roots.lock().unwrap().allows(&real) {
             return Err(ErrorBody::new(
                 ErrorCode::Forbidden,
                 "임시 폴더가 허용한 폴더 밖이라 기록을 쓰지 않는다(그 머신 agent.toml [agent] file_roots)",

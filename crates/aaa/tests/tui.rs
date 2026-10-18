@@ -1984,7 +1984,7 @@ fn edit_scrollback_like_herdr() {
     //    기록 처음(1)부터 끝(200)까지 들었다. Enter로 편집기가 끝나면 그 pane을 닫고(나누기 전처럼 zoom 아님) 연 pane으로 돌아간다
     let (_, path) = open(&mut tui, &mut hw, 1);
     let name = path.file_name().unwrap().to_string_lossy().to_string();
-    assert!(path.starts_with(tmp.canonicalize().unwrap()) && name.starts_with("aaa-scrollback-"), "{}", path.display());
+    assert!(path.starts_with(&tmp) && name.starts_with("aaa-scrollback-"), "{}", path.display());
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.lines().any(|l| l == "1") && text.lines().any(|l| l == "200"), "기록 전체가 아니다:\n{text}");
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
@@ -2001,6 +2001,8 @@ fn edit_scrollback_like_herdr() {
     tui.cmd("x");
     hw.wait("닫은 편집기 pane", |w| (w.leaves() == [first.clone()] && !zoomed(w)).then_some(()));
     wait_for("닫은 편집기의 임시 파일 지움", T, || (!path.exists()).then_some(()));
+    // 다음 키는 TUI가 닫힘을 받은 뒤에(host 사건은 이 관측기에 먼저 올 수 있다: 그 전 키는 닫히는 편집기 pane으로 간다)
+    tui.wait_text("닫은 뒤 화면", |s| tab_chips(s) == ["1"] && !s.contains("editor-ready"));
 
     // 3) 나누기 전 탭이 zoom이었으면 끝날 때 다시 zoom, 포커스는 연 pane(나눈 오른쪽)
     tui.cmd("v");
@@ -2012,6 +2014,7 @@ fn edit_scrollback_like_herdr() {
     hw.wait("편집기 pane 닫힘, 다시 zoom", |w| {
         (!w.leaves().contains(&ed) && w.leaves().len() == 2 && zoomed(w)).then_some(())
     });
+    tui.wait_text("닫은 뒤 화면", |s| tab_chips(s) == ["1", "Z"] && !s.contains("editor-ready"));
     tui.type_line("echo right-$((4+5))");
     tui.wait_text("오른쪽 zoom 출력", |s| tab_chips(s) == ["1", "Z"] && s.contains("right-9"));
     assert!(h.screen(&right).contains("right-9"), "포커스가 연 pane으로 돌아오지 않았다");
