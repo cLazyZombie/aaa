@@ -51,8 +51,9 @@ prefix_jamo_keys = true
 sidebar_width = 26
 "#;
 
-/// 화면 관측기: 출력·커서 이동·지우기와 바탕색(SGR 40~49·100~107·48;5·48;2)만 다룬다.
-/// 바탕색은 herdr처럼 색으로만 보이는 사이드바의 고른 줄·지금 줄을 찾는 데 쓴다.
+/// 화면 관측기: 출력·커서 이동·지우기와 바탕색(SGR 40~49·100~107·48;5·48;2), OSC 8 링크 칸, 커서 저장·되돌리기만 다룬다.
+/// 바탕색은 herdr처럼 색으로만 보이는 사이드바의 고른 줄·지금 줄을 찾는 데 쓴다. 링크 칸은 실제 터미널처럼 OSC 8이 열린
+/// 동안 찍은 칸이 그 uri를 갖고, 열리지 않은 채 찍거나 지운 칸은 잃는다.
 struct Screen {
     /// 켜 둔 DEC 개인 모드(`CSI ? n h`): 마우스 보고(1000·1002·1003·1006) 등
     modes: std::collections::BTreeSet<u16>,
@@ -60,6 +61,10 @@ struct Screen {
     /// 칸마다 바탕색(0 기본, 0x01_000000|n 256색, 0x02_rrggbb RGB)
     bgs: Vec<Vec<u32>>,
     bg: u32,
+    /// 칸마다 OSC 8 uri와 지금 열린 uri, `ESC 7`로 저장한 커서
+    links: Vec<Vec<Option<String>>>,
+    link: Option<String>,
+    saved: Option<(usize, usize)>,
     row: usize,
     col: usize,
     cols: usize,
@@ -72,6 +77,7 @@ struct Screen {
 struct Saved {
     cells: Vec<Vec<char>>,
     bgs: Vec<Vec<u32>>,
+    links: Vec<Vec<Option<String>>>,
     row: usize,
     col: usize,
 }
@@ -83,6 +89,9 @@ impl Screen {
             cells: vec![vec![' '; cols as usize]; ROWS as usize],
             bgs: vec![vec![0; cols as usize]; ROWS as usize],
             bg: 0,
+            links: vec![vec![None; cols as usize]; ROWS as usize],
+            link: None,
+            saved: None,
             row: 0,
             col: 0,
             cols: cols as usize,
@@ -106,6 +115,34 @@ impl Screen {
                 *c = bg;
             }
         }
+        if let Some(l) = self.links.get_mut(row) {
+            for c in l.iter_mut().take(to).skip(from) {
+                *c = None;
+            }
+        }
+    }
+
+    /// 링크 칸을 줄마다 이어 (줄, 첫 칸, 글, uri)로
+    fn link_runs(&self) -> Vec<(usize, usize, String, String)> {
+        let mut out = Vec::new();
+        for (r, line) in self.links.iter().enumerate() {
+            let mut c = 0;
+            while c < line.len() {
+                let Some(u) = &line[c] else {
+                    c += 1;
+                    continue;
+                };
+                let (start, mut text) = (c, String::new());
+                while c < line.len() && line[c].as_ref() == Some(u) {
+                    if self.cells[r][c] != '\0' {
+                        text.push(self.cells[r][c]);
+                    }
+                    c += 1;
+                }
+                out.push((r, start, text, u.clone()));
+            }
+        }
+        out
     }
 
     /// 사이드바 칸(왼쪽 SIDE칸) 중 `from` 줄부터 바탕이 `bg`인 첫 줄: (줄 번호, 그 줄의 사이드바 글)
@@ -205,12 +242,33 @@ impl vte::Perform for Screen {
         }
         line[col] = c;
         self.bgs[r][col] = self.bg;
+        self.links[r][col] = self.link.clone();
         if w == 2 && col + 1 < self.cols {
             // 넓은 글자의 둘째 칸은 text()에서 뺀다
             self.cells[r][col + 1] = '\0';
             self.bgs[r][col + 1] = self.bg;
+            self.links[r][col + 1] = self.link.clone();
         }
         self.col += w;
+    }
+
+    fn osc_dispatch(&mut self, params: &[&[u8]], _bell: bool) {
+        if let [b"8", _, uri @ ..] = params {
+            let uri = String::from_utf8_lossy(&uri.join(&b';')).into_owned();
+            self.link = (!uri.is_empty()).then_some(uri);
+        }
+    }
+
+    fn esc_dispatch(&mut self, inter: &[u8], _ignore: bool, b: u8) {
+        match (inter, b) {
+            ([], b'7') => self.saved = Some((self.row, self.col)),
+            ([], b'8') => {
+                if let Some((r, c)) = self.saved {
+                    (self.row, self.col) = (r, c);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn execute(&mut self, b: u8) {
@@ -234,12 +292,13 @@ impl vte::Perform for Screen {
                     let blank = (vec![vec![' '; self.cols]; ROWS as usize], vec![vec![0; self.cols]; ROWS as usize]);
                     let cells = std::mem::replace(&mut self.cells, blank.0);
                     let bgs = std::mem::replace(&mut self.bgs, blank.1);
-                    self.main = Some(Saved { cells, bgs, row: self.row, col: self.col });
+                    let links = std::mem::replace(&mut self.links, vec![vec![None; self.cols]; ROWS as usize]);
+                    self.main = Some(Saved { cells, bgs, links, row: self.row, col: self.col });
                 } else if m == 1049
                     && action == 'l'
-                    && let Some(Saved { cells, bgs, row, col }) = self.main.take()
+                    && let Some(Saved { cells, bgs, links, row, col }) = self.main.take()
                 {
-                    (self.cells, self.bgs, self.row, self.col) = (cells, bgs, row, col);
+                    (self.cells, self.bgs, self.links, self.row, self.col) = (cells, bgs, links, row, col);
                 }
             }
             return;
@@ -1906,6 +1965,43 @@ fn link_click_like_herdr() {
     let sent = format!("^[[<16;{x};{y}M^[[<16;{x};{y}m^[[<8;{x};{y}M^[[<8;{x};{y}m");
     tui.wait_text("cat이 읽은 ctrl·alt 보고", |s| s.matches(&sent).count() >= 2);
     tui.send(b"\x03");
+}
+
+/// OSC 8 링크를 바깥 터미널로 다시 내보내기(herdr 0.9.5 `render_ansi.rs` 616–699, 서버 `visible_hyperlinks`, plan §8.195): pane의
+/// OSC 8 링크 칸만 바깥 터미널에서도 그 uri의 링크이고(글 속 URL은 herdr처럼 내보내지 않는다), 기록으로 올라가 안 보이면 없고,
+/// 휠로 올려 보면 그 화면 자리에 다시 있다. 커서를 되돌려 셸 입력이 그대로 이어진다.
+#[test]
+fn osc8_links_reach_the_outer_terminal_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let one = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--label", "one", "--", "/bin/sh"]))[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("탭", |s| tab_chips(s) == ["one"]);
+    hw.wait("이 화면 크기", |w| (w.pane(&one)?.cols == COLS - SIDE - GUTTER).then_some(()));
+    let osc = "https://example.com/osc".to_string();
+
+    // 1) OSC 8 칸만 링크
+    tui.type_line(
+        "printf '\\033]8;;%s://example.com/osc\\007DOCS\\033]8;;\\007 tail %s://example.com/plain\\n' https https",
+    );
+    let docs = tui.wait_find("DOCS tail");
+    tui.wait_screen("바깥 터미널 링크", |s| {
+        s.link_runs() == [(docs.0, docs.1, "DOCS".to_string(), osc.clone())]
+    });
+    // 링크를 쓴 뒤 바깥 커서는 셸 프롬프트 줄(DOCS 아래)로 돌아와 있다(DECSC·DECRC)
+    tui.wait_screen("커서 되돌림", |s| s.row == docs.0 + 1 && s.col > docs.1);
+
+    // 2) 입력이 이어진다, 기록으로 올라가면 없다
+    tui.type_line("seq 1 40; echo after-$((1))");
+    tui.wait_text("올라감", |s| s.contains("after-1") && !s.contains("DOCS"));
+    tui.wait_screen("링크 없음", |s| s.link_runs().is_empty());
+
+    // 3) 휠로 올려 보면 그 자리에 다시 있다
+    for _ in 0..8 {
+        tui.mouse(64, (10, SIDE as usize + 4), false);
+    }
+    let docs = tui.wait_find("DOCS tail");
+    tui.wait_screen("올려 본 링크", |s| s.link_runs() == [(docs.0, docs.1, "DOCS".to_string(), osc.clone())]);
 }
 
 /// 사이드바 폭(사용자 10-18 「herdr만큼 크게, 더 크게도, 테마를 바꿔도 리셋되지 않게」, plan §8.193): 기본 36칸(herdr 기본은

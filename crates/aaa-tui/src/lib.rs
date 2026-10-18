@@ -23,6 +23,7 @@ pub mod clip;
 mod copy;
 mod editor;
 mod help;
+mod hyperlink;
 pub mod input_source;
 pub mod keys;
 pub mod list;
@@ -206,6 +207,8 @@ struct Grid {
     modes: PaneModes,
     /// 이 화면이 보는 기록 위치(휠 기록 넘기기)
     scroll: GridScroll,
+    /// 보이는 화면의 OSC 8 링크 칸(바깥 터미널에 다시 내보낸다, `hyperlink.rs`)
+    links: Vec<aaa_proto::GridLink>,
 }
 
 impl Grid {
@@ -227,6 +230,7 @@ impl Grid {
         self.cursor = (f.cursor_row, f.cursor_col, f.cursor_visible);
         self.modes = f.modes;
         self.scroll = f.scroll;
+        self.links = f.links;
     }
 }
 
@@ -415,6 +419,9 @@ struct App {
     theme_name: String,
     /// 마지막으로 그린 자리(마우스가 맞힌다)
     hits: std::cell::RefCell<mouse::Hits>,
+    /// 이번에 그린 pane 링크 칸과, 앞에서 바깥 터미널에 링크로 내보낸 칸(`hyperlink.rs`)
+    painted: std::cell::RefCell<Vec<hyperlink::Painted>>,
+    emitted: Vec<(u16, u16)>,
     drag: Option<mouse::Drag>,
     /// 고른 글(pane 화면 칸)
     selection: Option<mouse::Selection>,
@@ -505,6 +512,8 @@ impl App {
             indicators: aaa_config::StatusIndicators::Dots,
             theme_name: "catppuccin".into(),
             hits: Default::default(),
+            painted: Default::default(),
+            emitted: vec![],
             drag: None,
             selection: None,
             autoscroll: None,
@@ -648,14 +657,22 @@ impl App {
                 self.width = size.width;
                 self.height = size.height;
                 self.sync(&mut tx, Rect { x: 0, y: 0, w: size.width, h: size.height }).await?;
-                terminal.draw(|f| {
+                let mut shown = false;
+                let done = terminal.draw(|f| {
                     let area = f.area();
                     let cursor =
                         self.render(f.buffer_mut(), Rect { x: area.x, y: area.y, w: area.width, h: area.height });
                     if let Some((x, y)) = cursor {
                         f.set_cursor_position((x, y));
+                        shown = true;
                     }
                 })?;
+                // pane 링크 칸을 바깥 터미널에 OSC 8로 다시 쓴다(herdr render_ansi.rs). VT를 못 쓰는 옛 Windows 콘솔은 건너뛴다
+                let (links, now) = hyperlink::collect(done.buffer, &self.painted.borrow(), &self.emitted);
+                self.emitted = now;
+                if outer_vt() {
+                    hyperlink::emit(terminal.backend_mut(), &links, shown)?;
+                }
                 dirty = false;
             }
             if self.quit {
@@ -2301,6 +2318,7 @@ impl App {
         let p = &self.palette;
         let sh = self.shell(area);
         *self.hits.borrow_mut() = mouse::Hits::default();
+        self.painted.borrow_mut().clear();
         if sh.header.h > 0 {
             self.render_header(buf, sh.header);
         }
@@ -2829,6 +2847,7 @@ impl App {
                     x = buf.set_stringn(x, y, &run.t, room, run_style(run)).0;
                 }
             }
+            hyperlink::note(buf, r, &g.links, &mut self.painted.borrow_mut());
             // 찾은 일치(herdr: 나머지 일치, 고른 글, 현재 일치 차례로 칠한다)
             let copying = self.copy.as_ref().filter(|c| c.pane == pane);
             let top = mouse::view_top(g.scroll);
@@ -2870,6 +2889,14 @@ impl App {
         badge(buf, view, r, focused, &self.palette);
         None
     }
+}
+
+/// 바깥 터미널이 escape sequence를 받는가(Windows 옛 콘솔은 VT가 없으면 글자로 찍는다)
+fn outer_vt() -> bool {
+    #[cfg(windows)]
+    return crossterm::ansi_support::supports_ansi();
+    #[cfg(not(windows))]
+    true
 }
 
 /// pane 테두리 제목: 붙인 이름만(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름
@@ -3565,6 +3592,7 @@ mod tests {
             lines: vec![],
             modes: PaneModes::default(),
             scroll: GridScroll::default(),
+            links: vec![],
         };
         app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(40, 10))));
         let at = |row, col| TextPoint { row, col };
@@ -3609,6 +3637,7 @@ mod tests {
             lines,
             modes: PaneModes::default(),
             scroll: GridScroll::default(),
+            links: vec![],
         };
         let texts =
             |g: &Grid| g.lines.iter().map(|l| l.iter().map(|r| r.t.as_str()).collect()).collect::<Vec<String>>();

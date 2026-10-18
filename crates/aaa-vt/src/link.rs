@@ -33,12 +33,6 @@ pub(crate) struct Span {
     pub text: String,
 }
 
-impl Span {
-    pub fn contains(&self, at: (usize, u16)) -> bool {
-        self.start <= at && at < self.end
-    }
-}
-
 /// 열린 OSC 8과 남긴 구간들
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Links {
@@ -71,6 +65,12 @@ impl Links {
     pub fn clear(&mut self) {
         self.open = None;
         self.spans.clear();
+    }
+
+    /// normal 화면 구간만 버린다(버린 줄 수를 모를 때)
+    pub fn clear_normal(&mut self) {
+        self.open = self.open.take().filter(|o| o.1);
+        self.spans.retain(|s| s.alt);
     }
 }
 
@@ -170,7 +170,6 @@ mod tests {
             l.spans[0],
             Span { uri: "https://a".into(), alt: false, start: (3, 2), end: (3, 9), text: "(3, 2)".into() }
         );
-        assert!(l.spans[0].contains((3, 8)) && !l.spans[0].contains((3, 9)) && !l.spans[0].contains((3, 1)));
         // 화면이 바뀐(alt) 뒤 닫으면 남기지 않는다
         l.osc("https://b", false, (4, 0), |_| None);
         l.osc("", true, (4, 5), |_| Some("x".into()));

@@ -231,7 +231,11 @@ modes: PaneModes,
 /**
  * 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
  */
-scroll: GridScroll, };
+scroll: GridScroll,
+/**
+ * 보이는 화면의 OSC 8 링크 칸 전부(1.36부터, 바뀐 줄만 보내는 frame에도 늘 전부). 옛 host는 없음
+ */
+links?: Array<GridLink>, };
 
 export type PaneModes = { mouse: MouseMode, mouse_encoding: MouseEncoding,
 /**

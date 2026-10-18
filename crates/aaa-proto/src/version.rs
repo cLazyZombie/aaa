@@ -66,7 +66,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 ///   상태 사건 연결의 `chat_watch`·`chat_changed`·`chat_watching`(대화 기록 변화 push, 차이 목록 C3, plan §8.191)을 더한다
 /// 1.35: TUI 링크 열기(`PaneLink`→`Link`, plan §8.194). 1.34가 배포돼 새 요청은 올린다(1.34 front가 그대로 붙고, TUI는 1.35
 ///   이상 host에만 묻는다. 옛 host에서는 ctrl+누름이 보통 누름이다).
-pub const FRONT_API: Version = Version { major: 1, minor: 35 };
+/// 1.36: grid frame의 보이는 OSC 8 링크 칸(`GridFrame.links`, plan §8.195). 1.35가 배포돼 올린다(옛 front는 모르는 칸을 버리고,
+///   옛 host는 보내지 않아 TUI가 링크 없이 그린다).
+pub const FRONT_API: Version = Version { major: 1, minor: 36 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

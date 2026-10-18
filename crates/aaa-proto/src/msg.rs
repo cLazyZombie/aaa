@@ -1188,6 +1188,16 @@ pub struct GridRun {
     pub a: u8,
 }
 
+/// 보이는 화면의 OSC 8 링크 칸(1.36부터): 줄, 시작 칸, 끝 칸(넣지 않음), uri. front가 바깥 터미널에 OSC 8로 다시
+/// 내보낸다(herdr `visible_hyperlinks`·`render_ansi.rs` `write_hyperlink_if_changed`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridLink {
+    pub row: u16,
+    pub col: u16,
+    pub end: u16,
+    pub uri: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct GridLine {
     pub row: u16,
@@ -1212,6 +1222,9 @@ pub struct GridFrame {
     /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
     #[serde(default)]
     pub scroll: GridScroll,
+    /// 보이는 화면의 OSC 8 링크 칸 전부(1.36부터, 바뀐 줄만 보내는 frame에도 늘 전부). 옛 host는 없음
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<GridLink>,
 }
 
 /// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
