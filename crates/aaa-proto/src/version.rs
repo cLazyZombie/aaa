@@ -57,9 +57,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 올리지 않는다, 그 요청을 모르는 1.32 host는 오류로 답한다).
 /// 1.33: `project_create` 옵션(goal·repos·profile)·`project_set`, ProjectView `status`·`projects` `all`·`project_lifecycle`·
 /// `project_delete`·`project_rename`·`project_sweep`, `thread_adopt`·ThreadKind `adopted`, `project_open`·`ProjectOpened`·ProjectView
-/// `coordinator_profile`·`coordinator_profiles`(4장 G·A, plan §8.180), `project_files`(`doctor files`, plan §8.184).
-/// 한 번에 착지해 minor 하나로 묶는다(1.32 front가 그대로 붙는다)
-pub const FRONT_API: Version = Version { major: 1, minor: 33 };
+/// `coordinator_profile`·`coordinator_profiles`(4장 G·A, plan §8.180). 한 번에 착지해 minor 하나로 묶는다(1.32 front가 그대로 붙는다)
+/// 1.34: `project_files`(`doctor files [--fix]`, plan §8.184). 1.33(bdbd3f0)이 10-18 14:19에 배포돼 올린다(1.33 front가 그대로 붙는다)
+pub const FRONT_API: Version = Version { major: 1, minor: 34 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

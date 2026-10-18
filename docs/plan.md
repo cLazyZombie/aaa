@@ -3991,7 +3991,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     (`write_skeleton`, 옮기기 포함)도 링크를 만든다.
   - **운영 영향.** 지금까지 aaa가 만든 프로젝트의 AGENTS.md에는 표지가 없다. 첫 `--fix`가 그것을 `AGENTS.md.before-aaa`로 옮기고 새 안내를
     쓴다(사람이 고친 줄이 있으면 거기서 옮겨 온다). 도는 coordinator는 다음 세션부터 새 안내를 읽는다.
-- **계약.** FRONT_API 1.33(배포되지 않은 판)에 더했다: 배포된 웹·host는 1.32다(§8.180과 같은 묶음, 1.32 front는 N-1로 그대로 붙는다).
+- **계약.** FRONT_API 1.34. 처음에는 배포되지 않은 1.33에 더했으나 1.33(bdbd3f0)이 10-18 14:19에 배포돼 02a116b 선례대로 올렸다(coordinator 착지 지시). 배포된 1.33 front는 N-1로 그대로 붙고, 그 요청을 모르는 1.33 host는 오류로 답한다.
   보기만(`fix: false`)은 보기 권한으로도 된다.
 - **시험.** m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`: 새 프로젝트 안내에 옮긴 절 12개 글이 모두 있고 CLAUDE.md가
   링크다. 있는 프로젝트 셋(표지 있는 옛 안내, 표지 없는 옛 aaa 안내 + 사람이 쓴 CLAUDE.md, 옮겨 둔 자리가 찬 것)에서 보기만은 바꾸지 않고

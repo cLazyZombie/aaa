@@ -460,7 +460,7 @@ pub struct ProjectChange {
     pub notes: Vec<String>,
 }
 
-/// `doctor files`의 프로젝트 한 줄(herdr-projects `doctor`의 `files <slug>`, FRONT_API 1.33)
+/// `doctor files`의 프로젝트 한 줄(herdr-projects `doctor`의 `files <slug>`, FRONT_API 1.34)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectFilesCheck {
     pub project: String,
