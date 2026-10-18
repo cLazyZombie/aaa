@@ -460,6 +460,18 @@ pub struct ProjectChange {
     pub notes: Vec<String>,
 }
 
+/// `doctor files`의 프로젝트 한 줄(herdr-projects `doctor`의 `files <slug>`, FRONT_API 1.33)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectFilesCheck {
+    pub project: String,
+    /// 본 때 고칠 것(AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md). 비면 맞다
+    pub problems: Vec<String>,
+    /// `fix`로 고쳤다
+    pub fixed: bool,
+    /// 고치지 못한 까닭
+    pub error: Option<String>,
+}
+
 /// `project open`의 결과(herdr-projects `open`, FRONT_API 1.33)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectOpened {

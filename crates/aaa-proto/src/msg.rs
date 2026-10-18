@@ -14,8 +14,9 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
-    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectOpened, ProjectView, QuestionView,
-    ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened,
+    ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind,
+    ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick};
 
@@ -1614,6 +1615,13 @@ pub enum FrontRequest {
         #[serde(default)]
         dry_run: bool,
     },
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md)을 본다.
+    /// `fix`면 고친다: 표지 있는 AGENTS.md는 지금 안내로 다시 쓰고, 표지 없는 것은 `.before-aaa`로 옮겨 둔다
+    /// (herdr-projects `doctor [--fix]`, FRONT_API 1.33)
+    ProjectFiles {
+        #[serde(default)]
+        fix: bool,
+    },
     /// coordinator를 연다(herdr-projects `open`): 도는 coordinator가 있으면 그것을 알려 주고, 없으면(또는 `new`) host 머신에서
     /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.33)
     ProjectOpen {
@@ -1883,6 +1891,7 @@ impl FrontRequest {
                 | FrontRequest::Projects { .. }
                 | FrontRequest::ProjectRename { dry_run: true, .. }
                 | FrontRequest::ProjectSweep { dry_run: true, .. }
+                | FrontRequest::ProjectFiles { fix: false }
                 | FrontRequest::Profiles { .. }
                 | FrontRequest::ProfileResolve { .. }
                 | FrontRequest::Threads { .. }
@@ -2024,6 +2033,9 @@ pub enum FrontResponse {
     Project(ProjectView),
     ProjectChange(ProjectChange),
     ProjectOpened(Box<ProjectOpened>),
+    ProjectFiles {
+        checks: Vec<ProjectFilesCheck>,
+    },
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,

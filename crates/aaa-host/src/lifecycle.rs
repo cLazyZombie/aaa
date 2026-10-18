@@ -8,16 +8,18 @@
 //! - 삭제는 폴더를 `<projects root>/.trash/<이름>-<UTC>`로 옮기고 host 기록을 그 안 `aaa-records.json`으로 뺀 뒤 지운다(같은 이름으로
 //!   다시 만든 프로젝트가 옛 thread를 물려받지 않게). worktree·branch·PR은 건드리지 않는다.
 //! - 이름 바꾸기는 끝나지 않은 thread가 있거나 coordinator가 돌면 거부한다(참고는 coordinator가 쉴 때 ticker가 닫고 바꾼 뒤 다시
-//!   연다). DB의 project 열·thread 기록·meta와 폴더, 뼈대 그대로인 AGENTS.md를 바꾼다.
+//!   연다). DB의 project 열·thread 기록·meta와 폴더, aaa 표지가 있는 AGENTS.md를 바꾼다.
 //! - 청소는 끝난 worktree thread가 resolve 때 남긴 worktree·branch(`ThreadRec.leftover`)를 그 머신 agent에 다시 정리하게 한다
 //!   (force 없음, 병합된 branch만). 참고는 저장소의 `hp/<slug>/` worktree를 직접 훑지만 aaa worktree는 thread 머신에 있다.
+//! - 파일 점검(`aaa doctor files [--fix]`, 참고 `doctor`의 `files <slug>`)은 모든 프로젝트의 AGENTS.md(coordinator 안내)·CLAUDE.md
+//!   링크·uploads/·routines/pr-followup.md를 보고, `--fix`면 고친다(`orch::write_files`). 있는 프로젝트에 새 안내가 닿는 길이다.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use aaa_proto::{
-    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FrontResponse, ProjectAction, ProjectChange, ProjectStatus,
-    ThreadKind, ThreadStatus, valid_project,
+    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FrontResponse, ProjectAction, ProjectChange, ProjectFilesCheck,
+    ProjectStatus, ThreadKind, ThreadStatus, valid_project,
 };
 
 use crate::orch::{ThreadRec, internal};
@@ -289,7 +291,8 @@ impl Host {
             ));
         }
         let guide = dir.join("AGENTS.md");
-        let stock = std::fs::read_to_string(&guide).ok().is_some_and(|t| t == crate::orch::coordinator_guide(project));
+        // aaa가 쓴 안내(표지 줄)면 새 이름으로 다시 쓴다. 옛 판 aaa의 안내도 표지가 있으면 지금 안내가 된다
+        let stock = std::fs::read_to_string(&guide).ok().is_some_and(|t| t.contains(crate::orch::GUIDE_MARK));
         let mut notes = vec![
             format!("폴더 {} → {}", dir.display(), new_dir.display()),
             "host 기록(thread·inbox·routine·평가)을 새 이름으로 옮긴다".into(),
@@ -297,7 +300,7 @@ impl Host {
         notes.push(if stock {
             "AGENTS.md(coordinator 안내)를 새 이름으로 다시 쓴다".into()
         } else {
-            "AGENTS.md는 고친 흔적이 있어 그대로 둔다: 안의 프로젝트 이름은 직접 고친다".into()
+            "AGENTS.md에 aaa 표지가 없어(옛 aaa나 사람이 쓴 것) 그대로 둔다: `aaa doctor files --fix`가 옆에 옮겨 두고 새로 쓴다".into()
         });
         notes.push("끝난 thread의 branch(`aaa/<옛 이름>/…`)는 그 이름 그대로다".into());
         notes.extend(self.safety_table_note(project, "옛"));
@@ -338,6 +341,31 @@ impl Host {
         }
         self.tick_wake.notify_one();
         Ok(self.change(to, &new_dir, notes))
+    }
+
+    /// 모든 프로젝트(보관 포함)의 aaa 파일을 본다. `fix`면 고칠 것이 있는 프로젝트만 고친다(참고 `doctor [--fix]`)
+    pub(crate) fn project_files(&self, fix: bool, actor: &str) -> FrontResponse {
+        let checks: Vec<ProjectFilesCheck> = self
+            .projects_all()
+            .into_iter()
+            .map(|p| {
+                let dir = Path::new(&p.path);
+                let problems = crate::orch::files_problems(dir, &p.name);
+                let (fixed, error) = match fix && !problems.is_empty() {
+                    false => (false, None),
+                    true => match crate::orch::write_files(dir, &p.name) {
+                        Ok(()) => (true, None),
+                        Err(e) => (false, Some(e.to_string())),
+                    },
+                };
+                ProjectFilesCheck { project: p.name, problems, fixed, error }
+            })
+            .collect();
+        if fix {
+            let fixed: Vec<&str> = checks.iter().filter(|c| c.fixed).map(|c| c.project.as_str()).collect();
+            self.db.audit(actor, "project_files_fix", &fixed.join(" "));
+        }
+        FrontResponse::ProjectFiles { checks }
     }
 
     /// 끝난 thread가 resolve 때 남긴 worktree·branch를 다시 정리한다(참고 `sweep`)

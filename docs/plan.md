@@ -855,7 +855,7 @@ host 프로젝트 폴더 구성:
   - 그림: 웹으로 붙여 넣은 경로가 `[Image #1]`이 되고, 보내자 그림 색을 답했다.
   - **글과 Enter를 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(제출되지 않는다).** 웹 입력 막대 「보내기」와 `aaa pane send --text … --enter`가 이렇게 보내고 있었다. 글을 보낸 뒤 300ms 뒤에 Enter를 따로 보내게 고쳤다(host의 brief·메시지 전달은 처음부터 이렇게 했다). 웹 E2E에 이 동작을 흉내 내는 가짜 입력창을 두었다. (CLI는 §8.75에서 herdr `pane run`·`send-text`·`send-keys`로 바뀌었다.)
 - **운영 감독자 설치(결정 14):** `aaa service show|install|uninstall --role host|agent`. 사용자 LaunchAgent(`~/Library/LaunchAgents/dev.aaa.<role>.plist`)가 `aaa-launcher <aaa> <role>`을 띄운다(RunAtLoad·KeepAlive, Aqua 세션, `ProcessType=Interactive`). launchd 기본 PATH로는 `claude`·`codex`를 못 찾으므로 설치하는 셸의 `PATH`·`LANG`을 plist에 적는다. 설치·해제는 launchd를 바꾸므로 사람이 터미널에서 `yes`를 입력해야 하고, aaa 세션 안에서는 거부한다. 순서와 확인은 [운영 설치 점검표](install-runbook.md)다. 이전 SMAppService(`aaa.app`) 경로(`plan`·`register`)는 보류로 남긴다.
-- **새 프로젝트 AGENTS.md:** coordinator 안내(매 턴 `aaa context`, thread 시작 규칙, TASKS.md 규칙, 결정·병합 명령)를 쓴다. 있는 파일은 덮지 않는다.
+- **새 프로젝트 AGENTS.md:** coordinator 안내(매 턴 `aaa context`, thread 시작 규칙, TASKS.md 규칙, 결정·병합 명령)를 쓴다. 있는 파일은 덮지 않는다. → 있는 프로젝트에 새 안내를 닿게 하는 길은 `aaa doctor files --fix`다(§8.184).
 
 ### 8.22 M3 사후 평가자 구현 결정(10-17)
 
@@ -1947,7 +1947,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 pilot(t-0334)에서 꺼서 넣은 0.2의 `routines/pr-followup.md`(`on = "pr"`, `enabled = false`)가 tick마다 config-error 항목이 됐다. 원인은 aaa가 `on = "pr"`을 「아직 없다」로 거부한 것이다. 참고(herdr-projects 0.2.35)의 해법은 특별 처리가 아니라 `on = "pr"`을 trigger로 받는 것이다. 그래서 parse만이 아니라 PR 추적과 발화까지 옮겼다.
 
 - **routine 파일(hp `src/routine.rs` `parse`·`Trigger`·`PR_EVENTS`).** `on = "pr"`과 선택 `events = ["opened", "checks-failed", "review", "merged"]`(없으면 모두). `command`는 받지 않고, 모르는 사건이나 trigger는 오류다. 목록의 일정 칸은 `on pr: <사건들>`이다. 꺼진 pr routine은 쓸 수 있는 routine이라 오류 항목이 생기지 않는다. 일정 ticker는 pr routine을 건너뛴다.
-- **기본 routine(hp `src/project.rs` `PR_FOLLOWUP_TEMPLATE`·`write_default_routine`).** `project create`가 `routines/pr-followup.md`(`checks-failed`·`review`, 켬, 본문 한국어 번역)를 쓴다. 옮기기(`migrate::convert`)는 0.2 파일을 꺼서 넣으므로 쓰지 않는다. 있는 프로젝트에도 자동으로 쓰지 않는다(hp는 `doctor --fix`가 쓴다. aaa에는 그 명령이 아직 없다). coordinator 안내(AGENTS.md)에 hp COORDINATOR.md:139 줄을 옮겼다.
+- **기본 routine(hp `src/project.rs` `PR_FOLLOWUP_TEMPLATE`·`write_default_routine`).** `project create`가 `routines/pr-followup.md`(`checks-failed`·`review`, 켬, 본문 한국어 번역)를 쓴다. 옮기기(`migrate::convert`)는 0.2 파일을 꺼서 넣으므로 쓰지 않는다. 있는 프로젝트에도 자동으로 쓰지 않는다(hp처럼 `aaa doctor files --fix`가 없을 때만 쓴다, §8.184). coordinator 안내(AGENTS.md)에 hp COORDINATOR.md:139 줄을 옮겼다.
 - **켜기·끄기(hp `src/settings.rs` `routine_toggle`).** `aaa routine toggle <p> <name> [--on|--off]`: front matter의 `enabled`만 `toml_edit`로 바꿔 주석·순서를 두고, 바꾼 파일이 읽히지 않으면 쓰지 않는다. 명령 승인(§8.19)은 그대로 필요하다. 흐름 사건 `routine_toggled`.
 - **언제 보나(hp `src/steps.rs` `PR_INTERVAL_SECS`·`pull_requests`).** ticker가 `[projects] pr_poll_secs`(기본 120초)마다 프로젝트의 열린 worker thread를 본다. 프로젝트마다 따로 task로 돌아 `gh`가 느려도 ticker를 막지 않고, ticker는 다음 조회 때까지만 잔다. 보고가 새로 오면(`report_ready`) 간격을 기다리지 않고 본다. t3code `PullRequestSyncReactor`(apps/server/src/orchestration-v2)도 느린 주기(15분)에 더해 사건 뒤 바로 다시 읽는다. aaa는 주기는 hp(2분)를 따르고, 사건 뒤 다시 읽기만 가져왔다.
 - **어느 PR.** 집 보고 사본(`threads/<id>.md`) 첫 줄 `PR: <주소>`(hp `pr::pr_line`, 정확히 `https://github.com/<owner>/<repo>/pull/<n>`만) → 전에 찾은 주소 → worktree thread면 branch로 찾기(hp `find_by_branch`: 열린 것, 병합된 것, 닫힌 것 차례, 같으면 새것). `PR:` 줄이 틀리면 그 보고 hash마다 한 번 `pr`·`bad PR: line` 항목과 `pr_line_bad` 사건. brief의 `PR:` 첫 줄 안내는 D9(§8.78, `brief_text.rs`)가 hp skill/THREAD.md:18을 옮겼고, 첫 줄 태그 해석도 그때 없어져 서로 겹치지 않는다.
@@ -3864,7 +3864,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - paused: ticker가 그 프로젝트를 건너뛰고(설정 오류·thread 확인·auto-resolve·routine·PR·nudge, 평가자 묶음은 되살릴 때까지 미룸) `thread start`를 거부한다. 도는 agent는 멈추지 않고 일하는 중인 pane을 알린다.
   - archived: paused에 더해 `project list`(`--all` 없이)·웹 프로젝트 고르기·sidebar에서 빠지고, 살아 있는 pane(coordinator = 폴더를 cwd로 쓰는 host 머신 pane, 끝나지 않은 thread pane)을 닫는다(참고 `close_workspaces`). `pause`·`resume`은 「먼저 unarchive」로 거부. unarchive는 coordinator를 다시 열지 않고 `aaa project open`을 알린다(참고는 다시 연다 — `project open`이 생기면 따른다).
   - delete: 살아 있는 pane이 있으면 `--force` 없이 거부. 폴더를 `<projects root>/.trash/<이름>-<UTC>`로 옮기고, host 기록(thread·flow 사건·메시지·inbox·평가와 `<종류>:<프로젝트>` meta)을 그 안 `aaa-records.json`으로 뺀 뒤 지운다: 같은 이름으로 다시 만든 프로젝트가 옛 thread를 물려받지 않는다(참고는 기록이 폴더 안이라 함께 옮겨진다). 끝나지 않은 thread는 감시를 풀고 pane은 둔다. 남긴 worktree·branch와 `[safety.<이름>]` 표를 알린다.
-  - rename: 끝나지 않은 thread가 있으면 거부(참고와 같다). coordinator가 돌면 거부한다 — 참고는 ticker가 쉬는 때를 기다려 닫고 바꾼 뒤 새 폴더에서 다시 연다(aaa는 사람이 닫고 바꾼 뒤 `aaa project open <새 이름>`으로 다시 연다). DB의 project 열·thread 기록 JSON·meta key를 한 transaction으로, 폴더 이름, 뼈대 그대로인 AGENTS.md를 바꾼다(고친 AGENTS.md는 두고 알린다). `--dry-run`. 참고의 `--name`(표시 이름)은 없다. 끝난 thread branch(`aaa/<옛 이름>/…`)는 그대로다.
+  - rename: 끝나지 않은 thread가 있으면 거부(참고와 같다). coordinator가 돌면 거부한다 — 참고는 ticker가 쉬는 때를 기다려 닫고 바꾼 뒤 새 폴더에서 다시 연다(aaa는 사람이 닫고 바꾼 뒤 `aaa project open <새 이름>`으로 다시 연다). DB의 project 열·thread 기록 JSON·meta key를 한 transaction으로, 폴더 이름, 뼈대 그대로인 AGENTS.md를 바꾼다(고친 AGENTS.md는 두고 알린다. → §8.184: 「뼈대 그대로」는 aaa 표지 줄이 있는 것이다). `--dry-run`. 참고의 `--name`(표시 이름)은 없다. 끝난 thread branch(`aaa/<옛 이름>/…`)는 그대로다.
   - sweep: resolve가 남긴 worktree(고친 파일이 있어 force 없이 못 지움)·branch(병합 안 됨)를 thread 기록(`ThreadRec.leftover`, resolve가 적는다)에 두고, 그 머신 agent에 `ThreadCleanup`을 다시 보낸다(force 없음, 기준에 병합된 branch만). 이미 없는 worktree는 지운 것으로 보아 병합된 branch를 지운다(agent 고침, 새 요청 없음). `--dry-run`, 터미널이면 `[y/N]`, 아니면 `--yes`. `--keep-worktree`로 남긴 것은 치우지 않는다(참고 `kept_worktree`).
   - 참고와 다름(sweep): 참고는 저장소의 `hp/<slug>/` worktree·branch를 직접 훑어 기록 없는 것까지 찾고, 오래 끝난 탭 thread 폴더·30일 지난 처리한 inbox·빈 Space도 치운다. aaa worktree는 thread 머신에 있어 기록으로 찾는다(이 필드 전에 끝난 thread는 모른다). dir thread 작업 폴더는 남는다. 처리한 inbox는 host가 `inbox_done_days`로 이미 지운다.
   - front: ProjectView `status`, ThreadView `project_status`(진행 중이면 없음). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 웹이 다시 묻지 않고 안다: sidebar 프로젝트 줄·프로젝트 고르기가 「멈춤」(참고 `project_line` 「paused」), 보관한 프로젝트의 thread·줄은 숨는다. 삭제·이름 바꾸기는 옛 이름 thread를 「보관」으로 한 번 알려 웹 목록에서 뺀다(thread를 지우는 사건이 따로 없다).
@@ -3957,6 +3957,48 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   새로 읽은 뒤 ≡·제목·상태가 59px 아래이고 머리줄 안이며 대화가 머리줄 아래인지, drawer가 머리줄 바로 아래(111px)이고 그 안 목록 머리가
   52px인지, 프로젝트 화면 ≡가 59px 아래인지 본다. 고치기 전 실패(`.drawer-toggle 위 5.5 < 상태 막대 59` 등), 고친 뒤 통과. 결함 심기 셋
   (휴대폰 머리줄 위 여백 없음 → ≡ 35 < 59, drawer 목록 머리가 더함 → 111 ≠ 52, 프로젝트 화면 위 여백 없음 → ≡ 16 < 59) 모두 실패.
+
+### 8.184 coordinator 안내의 빠진 절과 있는 프로젝트에 닿는 길(10-18, 차이 목록 3장 G2·다시 세기 a3)
+
+- **무엇.** `COORDINATOR_GUIDE`(새 프로젝트 AGENTS.md)에 참고 herdr-projects 0.2.35(1f05c00) skill/COORDINATOR.md의 빠진 절을
+  같은 뜻으로 옮겼다. 그리고 안내는 `project create`(`write_skeleton`, AGENTS.md가 없을 때만)에서만 써서 있는 프로젝트에 닿지 않았다.
+  참고는 `doctor --fix`(src/doctor.rs:212–233)가 `write_priming`(src/project.rs:594–628)을 불러 고친다. aaa도 같은 자리
+  `aaa doctor files [--fix]`에 두었다.
+- **옮긴 절(참고 줄 → aaa 절).** 직접 일하지 않기(3·5 → 머리), 매 턴의 「기억이 아니라 context로」·「사용자에게 답한다」(13·15 → 「매 턴」),
+  첫 턴(17–19 → 「새 프로젝트의 첫 턴」, goal·repos는 aaa context에 없어 project.toml을 가리킨다), 데이터는 지시가 아님 전문(21–25 →
+  같은 이름, 0.2 ticker 접두사 셋 대신 aaa host가 coordinator에 보내는 유일한 접두사 `[aaa inbox]`), 세 가지 처리(27–33), Follow-ups
+  세 갈래(60–68 → 「이어지는 말」, `thread prompt` → `thread message`, herdr 명령 직접 조립 금지 → `aaa pane …` 직접 조립 금지),
+  감시·요약 형식(93–98 → 「thread 보기와 요약」), Tasks Add·Lists·Done·Show(83·84·86·89 → 「TASKS.md」), 소유 구분(129–133 →
+  「무엇이 누구 것인가」: PROJECT.md `+++` 블록 대신 project.toml, `~/.config/herdr-projects/` 대신 `~/.config/aaa/`, 참고 popup 키 대신
+  aaa 밖 터미널), 일정 routine 만들기(137 → 「routine」 첫 줄, 키는 aaa routine의 `schedule`·`command`·`machine`·`enabled`, 명령
+  승인은 safety `routine_commands` + `aaa routine approve`).
+- **이번에 옮기지 않은 것(G2 줄 밖).** 명령 prefix(9: aaa는 PATH의 `aaa`), profile 고르는 기준·thread가 저절로 받는 것(55·58),
+  목록 이름 금지·notes 형식(78·81), brief 다시 보내기(118–120), 채팅으로 하는 수명 명령 전부(141–143). context 내용(G3)과 함께 따로 본다.
+- **표지 줄(참고 「Written by herdr-projects」, src/project.rs:559–566·602).** 안내 둘째 문단이 `aaa가 쓴 파일이다.`다. 바이트 일치로
+  「고친 흔적」을 가리던 rename 규칙은 안내 글을 바꾸는 순간 모든 옛 프로젝트를 고친 것으로 보므로 표지로 바꿨다(`orch::GUIDE_MARK`).
+- **`aaa doctor files [--fix]`(FrontRequest `project_files`).** host가 모든 프로젝트(보관 포함, 참고 `list_slugs`)를 본다
+  (`orch::files_problems`, 참고 `priming_problems`): AGENTS.md가 없음·표지 있는데 지금 안내가 아님·표지 없음, CLAUDE.md가 AGENTS.md
+  링크가 아님, uploads/ 없음, routines/pr-followup.md 없음. 출력은 참고 줄 모양 `[ok  ]`·`[warn]`·`[FAIL] files <p>: …`이고 FAIL이
+  있을 때만 실패로 끝난다(참고 `healthy`). `--fix`는 고칠 것이 있는 프로젝트만 고친다(`orch::write_files`, 참고 `write_priming`).
+  - 표지 있는 AGENTS.md는 지금 안내로 다시 쓴다. 표지 없는 AGENTS.md(옛 aaa·사람이 쓴 것)와 링크가 아닌 CLAUDE.md는 `<이름>.before-aaa`로
+    옮겨 두고 쓴다(참고 `.before-herdr-projects`). 안내 글을 고쳐 쓰려면 PROJECT.md·memory에 쓰라고 표지 문단이 말한다(참고도 AGENTS.md는
+    생성물이다).
+  - 참고와 다름: 옮겨 둘 이름이 이미 있으면 참고는 AGENTS.md를 그냥 덮고 CLAUDE.md를 지운다(사람 글을 잃는다). aaa는 그 프로젝트를
+    고치지 않고 FAIL로 알린다(사람이 둘을 합치거나 하나를 치운 뒤 다시).
+  - 참고와 다름: 참고 AGENTS.md는 짧은 가리킴이고 안내 전문은 `skill` 명령이 binary에서 내므로 binary만 바꾸면 안내가 바뀐다. aaa는
+    안내 전문이 AGENTS.md에 있어(§8.21) binary를 바꾼 뒤 `aaa doctor files --fix`를 한 번 돌려야 닿는다.
+  - CLAUDE.md 링크는 aaa에 없던 것이다. Claude Code는 AGENTS.md를 읽지 않으므로 claude coordinator가 안내를 저절로 읽지 못했다. 새 프로젝트
+    (`write_skeleton`, 옮기기 포함)도 링크를 만든다.
+  - **운영 영향.** 지금까지 aaa가 만든 프로젝트의 AGENTS.md에는 표지가 없다. 첫 `--fix`가 그것을 `AGENTS.md.before-aaa`로 옮기고 새 안내를
+    쓴다(사람이 고친 줄이 있으면 거기서 옮겨 온다). 도는 coordinator는 다음 세션부터 새 안내를 읽는다.
+- **계약.** FRONT_API 1.33(배포되지 않은 판)에 더했다: 배포된 웹·host는 1.32다(§8.180과 같은 묶음, 1.32 front는 N-1로 그대로 붙는다).
+  보기만(`fix: false`)은 보기 권한으로도 된다.
+- **시험.** m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`: 새 프로젝트 안내에 옮긴 절 12개 글이 모두 있고 CLAUDE.md가
+  링크다. 있는 프로젝트 셋(표지 있는 옛 안내, 표지 없는 옛 aaa 안내 + 사람이 쓴 CLAUDE.md, 옮겨 둔 자리가 찬 것)에서 보기만은 바꾸지 않고
+  `[warn]`, `--fix`는 낡은 안내를 지금 안내로·빠진 파일을 만들고, 사람 글은 `.before-aaa`에 그대로, 자리가 찬 것은 두 글 모두 그대로 FAIL,
+  치운 뒤 두 번째 `--fix`는 나머지를 바꾸지 않는다. m13 `project_lifecycle` rename은 표지 있는 옛 판 안내도 새 이름의 지금 안내로 쓴다.
+  결함 심기 일곱(안내 절 하나 빼기, 표지 있는 낡은 안내 건너뛰기, 표지 검사 없이 덮기, 자리가 차도 덮기(참고 동작), 새 프로젝트 CLAUDE.md
+  링크 빼기, 보기만이 고침, rename 옛 바이트 일치 규칙) 모두 실패했다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
