@@ -140,9 +140,11 @@ fn image_extension(ext: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// 시험이 끝나면 지우는 임시 파일(이름 조각을 넣을 수 있다)
+    /// 시험이 끝나면 지우는 임시 파일(이름 조각을 넣을 수 있다). 쓰는 시험이 모두 unix 것이다
+    #[cfg(unix)]
     struct TempImage(PathBuf);
 
+    #[cfg(unix)]
     impl TempImage {
         fn new(fragment: &str, ext: &str, bytes: &[u8]) -> TempImage {
             static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -156,6 +158,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     impl Drop for TempImage {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
