@@ -3,7 +3,7 @@
 // 안 페이지와 소스), 글(Markdown 미리보기와 소스, 줄 번호, 줄 참조 표시), 새 탭·내려받기·파일 복사·닫기, 문구(참고 i18n.ko.ts).
 // 소스는 참고처럼 문법 강조한다(HighlightedCode, 긴 것은 worker).
 // 폴더 경로면 그 폴더 목록을 그린다(참고 DirectoryBrowser, plan §8.140).
-// 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource), 「파일 뷰어」 설정.
+// 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource). 「파일 뷰어」 설정은 plan §8.141.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
@@ -14,6 +14,7 @@ import type { FileInfo } from "./gen/proto.ts";
 import { Markdown, MarkdownImageContext } from "./Markdown.tsx";
 import { formatBytes } from "./formatBytes.ts";
 import { CodeLines, useHighlightedLines } from "./HighlightedCode.tsx";
+import { type MarkdownWidth, useMarkdownWidth, useTerminalToggle } from "./settings";
 import { copyText } from "./herdr/clipboard.ts";
 import { fileLineTarget, OpenFileContext, pathParts } from "./herdr/filePaths.ts";
 import { resolveFromDocument } from "./herdr/fileReader.ts";
@@ -28,6 +29,11 @@ const TEXT_PREVIEW_BYTES = 256 * 1024;
 const SOURCE_PREVIEW_LINES = 200_000;
 /** 그림은 이 크기까지 바로 그린다(참고 markdownImages.ts) */
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
+/** 저장한 너비는 설정 값이지 class 이름이 아니다: 한쪽 이름을 바꿔도 다른 쪽은 그대로다(참고 TextFileView MARKDOWN_CLASS) */
+const MARKDOWN_CLASS: Record<MarkdownWidth, string> = {
+  readable: "file-viewer-markdown file-viewer-markdown-readable",
+  full: "file-viewer-markdown",
+};
 
 
 type Loaded = { text: string; truncated: boolean; lines: number };
@@ -70,6 +76,8 @@ function CopyFileButton({ text }: { text: string }) {
 export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: string; pane: string; onClose: () => void; onOpen: (path: string) => void }) {
   const [path, setPath] = useState(asked);
   const target = useMemo(() => fileLineTarget(path), [path]);
+  const wrapCode = useTerminalToggle("wrapCode");
+  const markdownWidth = useMarkdownWidth();
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[] | null>(null);
@@ -277,7 +285,7 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
             </>
           );
         if (loaded === null) return <p className="file-viewer-note">여는 중…</p>;
-        // 참고 TextFileView: Markdown은 읽기 폭(「파일 뷰어」 설정 기본 readable) 열에 왼쪽 맞춤
+        // 참고 TextFileView: Markdown 너비와 긴 줄 바꿈은 「파일 뷰어」 설정(이 기기)
         return (
           <>
             {htmlPage && modes}
@@ -285,11 +293,11 @@ export function FileViewer({ path: asked, pane, onClose, onOpen }: { path: strin
               {view === "markdown" ? (
                 <OpenFileContext.Provider value={openLink}>
                   <MarkdownImageContext.Provider value={imagePreview}>
-                    <Markdown className="file-viewer-markdown file-viewer-markdown-readable">{loaded.text}</Markdown>
+                    <Markdown className={MARKDOWN_CLASS[markdownWidth]}>{loaded.text}</Markdown>
                   </MarkdownImageContext.Provider>
                 </OpenFileContext.Provider>
               ) : (
-                <CodeLines ref={sourceRef} className="file-viewer-text" lines={code.lines} open={null} lineNumbers markedLine={marked} />
+                <CodeLines ref={sourceRef} className="file-viewer-text" lines={code.lines} open={null} lineNumbers wrap={wrapCode} markedLine={marked} />
               )}
             </div>
           </>

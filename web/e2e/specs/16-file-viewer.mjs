@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, openSettings } from "../lib/harness.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -509,5 +509,134 @@ export default async function ({ ctl, page }) {
     await closed(dp, "대시 소스 Escape");
     await dp.context().close();
     aaa("pane", "kill", "code");
+  });
+
+  await step("「파일 뷰어」 설정(herdr-web-ui SettingsDialog ChatPage 「File viewer」·TextFileView, plan §8.141): 「긴 줄 바꿈」을 켜면 소스의 긴 줄을 옆으로 굴리지 않고 접고, 「Markdown 너비」가 「전체 너비」면 Markdown이 대화 열 너비에 묶이지 않고 파일 보기를 채운다. 기본은 꺼짐·기본값이고 이 기기에만 남는다", async () => {
+    // 글 속 경로는 폴더가 있어야 링크다(참고 terminalFileLinks)
+    const proj = `${root}/files/viewer`;
+    for (const d of ["src", "docs"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
+    const source = `const wide = "${"가나다 abc ".repeat(60)}";\nconst next = 2;\n`;
+    fs.writeFileSync(`${proj}/src/wide.ts`, source);
+    fs.writeFileSync(`${proj}/docs/wide.md`, `# 너비\n\n${"넓은 화면에서 이 문단이 얼마나 넓게 퍼지는지 본다. ".repeat(30)}\n`);
+    const prog = `process.stdout.write(${JSON.stringify("S src/wide.ts\r\nM docs/wide.md\r\nview> ")}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "viewer", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("viewer", "view>");
+    // 소스: 접혔는지(첫 줄이 여러 줄 높이)와 옆으로 굴릴 것이 남았는지
+    const codeShape = (p) =>
+      p.evaluate(() => {
+        const pre = document.querySelector('[data-testid="file-viewer-code"] pre');
+        const height = (n) => pre.querySelector(`.hl-line[data-line="${n}"]`).getBoundingClientRect().height;
+        return { rows: Math.round(height(1) / height(2)), sideways: pre.scrollWidth - pre.clientWidth };
+      });
+    // Markdown: 그 열의 너비와 둘레(파일 보기 안 자리) 너비
+    const markdownShape = (p) =>
+      p.evaluate(() => {
+        const md = document.querySelector('[data-testid="file-viewer-markdown"] .file-viewer-markdown');
+        return { width: md.getBoundingClientRect().width, room: md.parentElement.getBoundingClientRect().width };
+      });
+    const openSource = async (p, what) => {
+      await clickLink(p, "src/wide.ts");
+      await codeIs(p, what, source);
+    };
+    const openMarkdown = async (p, what) => {
+      await clickLink(p, "docs/wide.md");
+      await domIs(p, what, () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "너비");
+    };
+    const closeViewer = async (p, what) => {
+      await p.keyboard.press("Escape");
+      await closed(p, what);
+    };
+    const fileViewerGroup = async (p) => (await openSettings(p, "채팅")).locator(".settings-section", { has: p.getByRole("heading", { name: "파일 뷰어" }) });
+    const settingsShown = async (p, what, wrap, width) => {
+      const group = await fileViewerGroup(p);
+      const got = {
+        wrap: await group.getByRole("switch", { name: "긴 줄 바꿈" }).getAttribute("aria-checked"),
+        width: await group.getByRole("group", { name: "Markdown 너비" }).locator('[aria-pressed="true"]').textContent(),
+      };
+      if (got.wrap !== String(wrap) || got.width !== width) throw new Error(`${what} 설정 ${JSON.stringify(got)}`);
+      return group;
+    };
+    // 스위치·고르기 단추는 transition으로, 휴대폰·iPad 파일 보기는 아래에서 올라온다: 끝난 모양을 찍는다
+    const settled = (p) => p.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)));
+    const closeSettings = async (p) => {
+      await p.keyboard.press("Escape");
+      await p.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
+    };
+
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-viewer").click();
+    await screenHas(dp, "viewer 줄들", "view>");
+    // 기본: 긴 줄은 한 줄로 옆으로 굴리고, Markdown은 대화 열 너비(그보다 넓은 파일 보기 가운데)
+    await openSource(dp, "기본 소스");
+    const off = await codeShape(dp);
+    if (off.rows !== 1 || off.sideways <= 0) throw new Error(`기본 소스가 접혔다 ${JSON.stringify(off)}`);
+    await closeViewer(dp, "기본 소스 Escape");
+    await openMarkdown(dp, "기본 Markdown");
+    const lane = await markdownShape(dp);
+    if (lane.width > lane.room - 100) throw new Error(`기본 Markdown이 대화 열이 아니다 ${JSON.stringify(lane)}`);
+    await closeViewer(dp, "기본 Markdown Escape");
+
+    // 채팅 설정 「파일 뷰어」에서 켠다(참고 순서: 빠른 답장 다음 무리)
+    const group = await settingsShown(dp, "처음", false, "기본값");
+    await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
+    await group.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).click();
+    await settled(dp);
+    await shot(dp, "desktop-settings-file-viewer");
+    await closeSettings(dp);
+    await openSource(dp, "접은 소스");
+    const on = await codeShape(dp);
+    if (on.rows < 3 || on.sideways > 0) throw new Error(`긴 줄 바꿈을 켠 소스 ${JSON.stringify(on)}`);
+    await shot(dp, "desktop-file-wrap");
+    await closeViewer(dp, "접은 소스 Escape");
+    await openMarkdown(dp, "전체 너비 Markdown");
+    const wide = await markdownShape(dp);
+    if (Math.abs(wide.width - wide.room) > 1) throw new Error(`전체 너비 Markdown ${JSON.stringify(wide)}`);
+    await shot(dp, "desktop-file-markdown-full");
+    await closeViewer(dp, "전체 너비 Markdown Escape");
+
+    // 이 기기에 남는다: 다시 읽어도 그대로, 다른 기기는 기본값
+    await dp.reload();
+    await dp.getByTestId("pane-viewer").click();
+    await screenHas(dp, "다시 읽은 viewer", "view>");
+    await settingsShown(dp, "다시 읽은 뒤", true, "전체 너비");
+    await closeSettings(dp);
+    await openSource(dp, "다시 읽은 뒤 소스");
+    if ((await codeShape(dp)).sideways > 0) throw new Error("다시 읽은 뒤 긴 줄 바꿈이 풀렸다");
+    await closeViewer(dp, "다시 읽은 뒤 Escape");
+
+    // 휴대폰·iPad: 설정 단추는 pane에 들어가기 전 목록에 있다
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
+    const phoneGroup = await settingsShown(pp, "휴대폰", false, "기본값");
+    await phoneGroup.getByRole("switch", { name: "긴 줄 바꿈" }).tap();
+    await settled(pp);
+    await shot(pp, "phone-settings-file-viewer");
+    await closeSettings(pp);
+    await pp.getByTestId("pane-viewer").click();
+    await screenHas(pp, "휴대폰 viewer 줄들", "view>");
+    const at = await textPoint(pp, "src/wide.ts");
+    await pp.touchscreen.tap(at.x, at.y);
+    await codeIs(pp, "휴대폰 접은 소스", source);
+    const phone = await codeShape(pp);
+    if (phone.rows < 3 || phone.sideways > 0) throw new Error(`휴대폰 긴 줄 바꿈 ${JSON.stringify(phone)}`);
+    await settled(pp);
+    await shot(pp, "phone-file-wrap");
+    await pp.context().close();
+
+    const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 })).page;
+    const ipGroup = await settingsShown(ip, "iPad", false, "기본값");
+    await ipGroup.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).tap();
+    await closeSettings(ip);
+    await ip.getByTestId("pane-viewer").click();
+    await screenHas(ip, "iPad viewer 줄들", "view>");
+    const ipAt = await textPoint(ip, "docs/wide.md");
+    await ip.touchscreen.tap(ipAt.x, ipAt.y);
+    await domIs(ip, "iPad 전체 너비 Markdown", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "너비");
+    const ipWide = await markdownShape(ip);
+    if (Math.abs(ipWide.width - ipWide.room) > 1) throw new Error(`iPad 전체 너비 Markdown ${JSON.stringify(ipWide)}`);
+    await settled(ip);
+    await shot(ip, "ipad-file-markdown-full");
+    await ip.context().close();
+    await dp.context().close();
+    aaa("pane", "kill", "viewer");
   });
 }
