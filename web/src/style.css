@@ -361,6 +361,10 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   position: sticky;
   top: 0;
   background: var(--bg);
+  /* sticky는 쌓임 맥락을 새로 만든다: 머리 맨 끝 「더 보기」 메뉴가 그 안에 갇힌다. 참고 메뉴(RowMenu.css)처럼 열린 drawer
+     위(drawer + 1)에 서게 머리를 거기 둔다. 아래 터미널 칸의 띠·입력줄(z 9~11)도 덮지 않는다. drawer·scrim은 머리 아래부터라
+     겹치지 않고, 창(30)은 그 위다. 참고는 메뉴를 body로 portal한다 */
+  z-index: calc(var(--z-drawer) + 1);
 }
 .term-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
 /* 제목 앞 agent 표시(herdr-web-ui App.tsx context-title: 표시와 제목이 한 줄) */
@@ -634,8 +638,17 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .files .size { margin-left: auto; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .library-frame { width: 100%; height: 56vh; border: 1px solid var(--border); border-radius: var(--r-md); background: #fff; }
 
-/* 빈 화면 머리: 좁은 창에서만(목록 drawer 단추를 둔다) */
-.empty-head { display: none; border-bottom: 0; }
+/* 빈 화면 머리: 좁은 창의 목록 drawer 단추, 머리 알림, 「더 보기」 */
+.empty-head { border-bottom: 0; }
+/* 「더 보기」는 화면 머리 맨 끝(참고 header-meta 안 header-more): 휴대폰에서도 drawer를 열지 않고 닿는다 */
+.view header > .more { margin-left: auto; }
+/* 머리 알림(참고 .pill·header-note): 있는 동안 제목 자리에 선다 */
+.head-note {
+  display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; height: var(--chip-h); padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border); border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.head-note ~ .term-title { display: none; }
 .scrim { display: none; }
 
 /* ── 좁은 창: 목록은 pane 위의 drawer(herdr-web-ui styles.css 1560~1614줄) ─────────
@@ -644,7 +657,6 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   /* primitives.css의 `.drawer-toggle{display:none}`이 이 파일 뒤에 묶여서 화면 머리 안으로 좁혀 이긴다 */
   .view .drawer-toggle { display: inline-flex; }
   .app { grid-template-columns: minmax(0, 1fr); }
-  .empty-head { display: flex; }
   .list {
     position: fixed;
     top: calc(var(--head) + env(safe-area-inset-top, 0px));

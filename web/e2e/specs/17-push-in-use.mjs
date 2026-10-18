@@ -9,6 +9,9 @@ import {
   pushInUse, pushWho, pushLab,
 } from "../lib/harness.mjs";
 
+// 알림 묶음 100ms(실험실 설정 1초, notify.rs debounce): push 판정마다 1초를 기다렸다. 설정 1초 길은 12가 돈다
+export const labEnv = { AAA_TEST_NOTIFY_DEBOUNCE_MS: "100" };
+
 export default async function ({ page }) {
   await pushLab(page);
 

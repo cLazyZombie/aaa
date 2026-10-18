@@ -9,6 +9,10 @@ import {
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList,
 } from "../lib/harness.mjs";
 
+// 화면 감지 시작 유예 0(기본 3초, aaa-agent detect/state.rs startup_grace): 가짜 harness 화면은 뜨자마자 그대로다.
+// 기본값 길은 15-ios-rules가 돈다
+export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0" };
+
 export default async function ({ ctl, page }) {
   await step("확인창 질문: 카드·상태 표시 → reader는 못 답함 → 예", async () => {
     // 세션 안에서 Claude 권한 확인창을 그린다(화면 감지가 질문을 연다). 답(Enter)을 받으면 일하는 화면으로 바뀐다.

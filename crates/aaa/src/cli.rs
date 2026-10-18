@@ -2295,6 +2295,13 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Read(v) => s.push_str(&v.text),
+        FrontResponse::Selection { text, .. } => s.push_str(text),
+        FrontResponse::CopyCursor { cursor, .. } => {
+            let _ = write!(s, "{}:{}", cursor.row, cursor.col);
+        }
+        FrontResponse::CopySearch { total, current_global, .. } => {
+            let _ = write!(s, "{}/{total}", current_global.map_or(0, |n| n + 1));
+        }
         FrontResponse::ThreadPane(v) => render_thread_pane(&mut s, v),
         FrontResponse::OutputMatched { matched_line, .. } => {
             let _ = writeln!(s, "{matched_line}");

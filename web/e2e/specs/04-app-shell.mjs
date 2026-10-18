@@ -516,4 +516,61 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     if (bad.length) throw new Error(bad.join("; "));
   });
+
+  await step("「더 보기」와 닫힌 pane 주소(herdr-web-ui App.tsx header-more·resolveLink·headerNote·autoSelected): 「더 보기」는 화면 머리 맨 끝이라 휴대폰도 drawer 없이 닿고, 주소가 가리킨 pane이 없으면 첫 줄을 열며 머리에 말하고, 키보드는 사용자가 고를 때까지 둔다", async () => {
+    const bad = [];
+    const typing = (p) => p.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") === true);
+    const firstRow = (p) => p.evaluate(() => document.querySelector(".machine-list [data-testid^='pane-']")?.dataset.testid.slice(5));
+    const landed = async (p, what) => {
+      await p.locator(".machine-list [data-testid^='pane-']").first().waitFor({ state: "attached" });
+      const first = await firstRow(p);
+      await until(`${what} 첫 줄`, async () => (await p.evaluate(() => location.hash)) === paneHash(first) && (await screenText(p)).includes("$"));
+      const note = p.getByTestId("head-note");
+      await note.waitFor();
+      if ((await note.innerText()) !== "그 링크의 pane은 닫혔습니다") bad.push(`${what} 머리 알림 ${await note.innerText()}`);
+      return first;
+    };
+    const moreAt = (p) =>
+      p.getByTestId("more").evaluate((e) => ({ head: e.closest(".view header") !== null, drawer: e.closest("#workspace-drawer") !== null, right: Math.round(e.getBoundingClientRect().right) }));
+    // 휴대폰: 닫힌 pane 주소로 연다
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, hash: "#pane=gone" })).page;
+    await landed(pp, "휴대폰");
+    if (await typing(pp)) bad.push("휴대폰이 키보드를 올렸다");
+    await pp.getByTestId("more").waitFor();
+    const pm = await moreAt(pp);
+    if (!pm.head || pm.drawer || pm.right < 390 - 48) bad.push(`휴대폰 「더 보기」 자리 ${JSON.stringify(pm)}`);
+    if ((await pp.locator("#workspace-drawer").getAttribute("class")).includes("is-open")) bad.push("drawer가 열렸다");
+    await pp.getByTestId("more").click();
+    // 화면 안이고, 아래 칸에 덮이지 않았다(메뉴 가운데를 누르면 메뉴가 받는다)
+    const menu = await pp.getByRole("menu", { name: "더 보기" }).evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { ...r.toJSON(), mine: e.contains(hit), hit: hit?.className ?? null };
+    });
+    if (menu.left < 0 || menu.right > 390 || menu.bottom > 844 || !menu.mine) bad.push(`휴대폰 메뉴가 화면 밖이거나 덮였다 ${JSON.stringify(menu)}`);
+    await shot(pp, "phone-head-more");
+    await pp.keyboard.press("Escape");
+    // drawer가 열린 채(톱니로 연 설정을 닫은 뒤처럼)여도 메뉴는 drawer 위다(참고 RowMenu.css drawer + 1)
+    await pp.locator(".view [data-testid='drawer-toggle']").click();
+    await pp.locator("#workspace-drawer.is-open").waitFor();
+    await pp.getByTestId("more").click();
+    const over = await pp.getByTestId("alerts-item").evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return e.contains(document.elementFromPoint(r.left + 8, r.top + r.height / 2));
+    });
+    if (!over) bad.push("열린 drawer가 「더 보기」 메뉴를 덮는다");
+    await pp.keyboard.press("Escape");
+    await pp.context().close();
+    // 데스크톱: 첫 줄을 열되 키보드는 두고, 사용자가 그 줄을 고르면 터미널이 받는다(참고 PaneTerminal 2209~2216줄)
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { hash: "#pane=gone" })).page;
+    const first = await landed(dp, "데스크톱");
+    if (await typing(dp)) bad.push("스스로 고른 pane이 키보드를 가져갔다");
+    const dm = await moreAt(dp);
+    if (!dm.head || dm.drawer) bad.push(`데스크톱 「더 보기」 자리 ${JSON.stringify(dm)}`);
+    await shot(dp, "desktop-head-note");
+    await inList(dp, `pane-${first}`);
+    await until("고르면 터미널 focus", () => typing(dp)).catch((e) => bad.push(e.message));
+    await dp.context().close();
+    if (bad.length) throw new Error(bad.join("; "));
+  });
 }

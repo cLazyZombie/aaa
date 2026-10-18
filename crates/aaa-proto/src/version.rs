@@ -43,6 +43,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.23: TUI 붙여넣기 `pane_paste`(plan §8.147),
 /// 1.24: 폴더 보기 `pane_dir`(plan §8.148),
 /// 1.25: `AgentStatus.plan`·`background`(계획 n/m·배경 작업 수, plan §8.151),
+/// 1.26: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.153),
+/// 1.27: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.156·§8.157),
 /// 1.28: ProfileView `args`·`builtin`(기본 profile claude·codex, plan §8.163),
 /// 1.29: PaneView `replaced`(새 pane이 대신한 옛 ID, 보던 화면이 따라간다, plan §8.111 QA 고침),
 /// 1.30: `project_create` 옵션(goal·repos·profile)과 `project_set`(4장 G, plan §8.166),
