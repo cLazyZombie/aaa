@@ -18,8 +18,8 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
-import type { FrontRequest, MachineView, PaneView, ThreadView } from "./gen/proto";
+import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PaneRename } from "./PaneRename";
@@ -57,6 +57,33 @@ function alignBreath(event: AnimationEvent<HTMLSpanElement>) {
  * 초록 점, 작업 중이면 숨쉬는 점, 배경 작업을 기다리면 멈춘 고리. 입력 대기·모름은 칸만 두고 말은 aria-label·title로.
  * 설정 「상태 표시」가 점·기호면 herdr TUI 글자를 herdr 색으로.
  */
+/**
+ * 그 agent가 띄워 아직 도는 배경 작업(하위 agent·배경 명령) 수(herdr-web-ui Sidebar.tsx `BackgroundBadge`): 상태 옆의 조용한 수다.
+ * 상태가 아니다: agent가 답했으면 「끝남」은 그대로다.
+ */
+export function BackgroundBadge({ count }: { count?: number | null }) {
+  if (!count || count <= 0) return null;
+  const label = `배경 작업 ${count}개 실행 중`;
+  return (
+    <span className="background-count" title={label} aria-label={label} data-testid="background-tasks">
+      <Layers aria-hidden="true" />
+      {count}
+    </span>
+  );
+}
+
+/** pane 계획이 어디까지 왔나(herdr-web-ui `PlanBadge`): 상태 옆의 n/m, 모든 단계가 끝나면 조용해진다. */
+export function PlanBadge({ plan }: { plan?: PlanSummary | null }) {
+  if (!plan || plan.total <= 0) return null;
+  const label = `계획 ${plan.total}단계 중 ${plan.done}단계 끝남`;
+  return (
+    <span className={`plan-count${plan.done === plan.total ? " is-done" : ""}`} title={plan.current ? `${label} · ${plan.current}` : label} aria-label={label} data-testid="plan-progress">
+      <ListChecks aria-hidden="true" />
+      {plan.done}/{plan.total}
+    </span>
+  );
+}
+
 export function StatusBadge({ status, compact = false, testid }: { status?: AgentStatus; compact?: boolean; testid?: string }) {
   const { appearance } = useAppearance();
   const value = knownStatus(status);
@@ -781,6 +808,12 @@ function AgentSection(props: SidebarProps) {
             </span>
             {context && <span className="agent-context">{context}</span>}
           </span>
+          {online && (
+            <span className="agent-row-status">
+              <BackgroundBadge count={p.agent?.background} />
+              <PlanBadge plan={p.agent?.plan} />
+            </span>
+          )}
           <span className="agent-row-state">
             {online && paneProblem(p) ? <ProblemBadge reason={paneProblem(p)!} /> : <StatusBadge compact status={online ? paneAgentStatus(p) : undefined} />}
           </span>

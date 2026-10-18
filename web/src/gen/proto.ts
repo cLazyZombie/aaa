@@ -468,6 +468,8 @@ detail: string, };
 
 export type AgentActivity = "started" | "working" | "idle" | "question" | "error" | "exited";
 
+export type PlanSummary = { done: number, total: number, current: string | null, };
+
 export type AgentStatus = { activity: AgentActivity, since_ms: number, harness: string, message: string | null, 
 /**
  * `aaa report --percent`
@@ -485,7 +487,15 @@ progress_at_ms: number | null, harness_session: string | null,
  * 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
  * 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
  */
-seen: boolean, };
+seen: boolean, 
+/**
+ * harness가 기록에 남긴 계획(Claude TaskCreate·TaskUpdate, Codex update_plan). 없으면 null(차이 목록 S5)
+ */
+plan: PlanSummary | null, 
+/**
+ * 아직 도는 배경 작업 수(Claude 하위 agent·배경 명령). 없으면 null
+ */
+background: number | null, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

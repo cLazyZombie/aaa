@@ -1555,6 +1555,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
         agent.start_hooks()?;
+        agent.start_plans();
         aaa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);

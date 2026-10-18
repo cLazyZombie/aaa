@@ -194,6 +194,20 @@ pub struct HarnessEvent {
     /// Claude hook이 알린 대화 기록 파일(§8.27). host는 pane에만 기억하고 웹·로그에 내보내지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
+    /// `kind = "plan"`일 때만: agent가 대화 기록에서 읽은 계획(None이면 지금 계획이 없다, 차이 목록 S5)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanSummary>,
+    /// `kind = "plan"`일 때만: 아직 도는 배경 작업(하위 agent·배경 명령) 수. 0이면 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<u32>,
+}
+
+/// pane 계획의 요약(herdr-web-ui `PlanSummary`): 끝난 단계 수·모든 단계 수·지금 하는 단계
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PlanSummary {
+    pub done: u32,
+    pub total: u32,
+    pub current: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -216,6 +230,12 @@ pub struct AgentStatus {
     /// 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
     #[serde(default = "seen_default")]
     pub seen: bool,
+    /// harness가 기록에 남긴 계획(Claude TaskCreate·TaskUpdate, Codex update_plan). 없으면 null(차이 목록 S5)
+    #[serde(default)]
+    pub plan: Option<PlanSummary>,
+    /// 아직 도는 배경 작업 수(Claude 하위 agent·배경 명령). 없으면 null
+    #[serde(default)]
+    pub background: Option<u32>,
 }
 
 fn seen_default() -> bool {

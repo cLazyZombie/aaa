@@ -174,7 +174,14 @@ pub fn pane_badge(p: &PaneView, pal: &Palette) -> Option<(String, Color)> {
     }
     match &p.state {
         SessionState::Running => p.agent.as_ref().map(|a| {
-            let pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
+            let mut pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
+            // 계획 n/m·배경 작업 수(웹 Agents 보기 배지와 같은 값, 차이 목록 S5). 폭이 애매한 기호 대신 글로 쓴다
+            if let Some(plan) = a.plan.as_ref().filter(|p| p.total > 0) {
+                pct.push_str(&format!(" {}/{}", plan.done, plan.total));
+            }
+            if let Some(n) = a.background.filter(|n| *n > 0) {
+                pct.push_str(&format!(" 배경{n}"));
+            }
             let color = match a.activity {
                 AgentActivity::Working => pal.yellow,
                 AgentActivity::Question | AgentActivity::Error => pal.red,
@@ -505,5 +512,45 @@ mod tests {
         assert_eq!(line(20), " ▾ studio-v… ◐ 끊김 ");
         // 넉넉하면 그대로
         assert_eq!(line(40), format!(" ▾ studio-very-long-machine{}◐ 끊김 ", " ".repeat(6)));
+    }
+
+    #[test]
+    fn pane_badge_carries_plan_and_background_counts() {
+        let pal = Palette::catppuccin();
+        let mut p = PaneView {
+            id: "p".into(),
+            machine_id: "m".into(),
+            machine: "m".into(),
+            name: "p".into(),
+            argv: vec![],
+            cwd: None,
+            state: SessionState::Running,
+            connection: Connection::Connected,
+            readonly: false,
+            cols: 80,
+            rows: 24,
+            lease: None,
+            role: None,
+            agent: Some(Box::new(aaa_proto::AgentStatus {
+                activity: AgentActivity::Working,
+                since_ms: 1,
+                harness: "claude".into(),
+                message: None,
+                percent: Some(40),
+                progress: None,
+                progress_at_ms: None,
+                harness_session: None,
+                seen: true,
+                plan: Some(aaa_proto::PlanSummary { done: 1, total: 3, current: None }),
+                background: Some(2),
+            })),
+            label: None,
+            restore_error: None,
+        };
+        assert_eq!(pane_badge(&p, &pal).unwrap().0, "작업 중 40% 1/3 배경2");
+        // 계획·배경 작업이 없으면 예전 그대로
+        let a = p.agent.as_mut().unwrap();
+        (a.plan, a.background, a.percent) = (None, None, None);
+        assert_eq!(pane_badge(&p, &pal).unwrap().0, "작업 중");
     }
 }

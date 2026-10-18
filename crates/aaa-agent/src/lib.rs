@@ -16,6 +16,7 @@ pub mod hooks;
 pub mod identity;
 pub mod link;
 mod page;
+mod plan;
 mod pr;
 pub mod threads;
 
@@ -73,6 +74,10 @@ pub struct Agent {
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
     /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
     harness_started: Mutex<HashMap<String, String>>,
+    /// 세션마다 계획·배경 작업 수 추적(plan.rs, 차이 목록 S5)
+    plans: Mutex<HashMap<String, plan::Track>>,
+    /// 세션마다 지금 harness 프로세스가 시작한 때(Claude SessionStart startup·resume, ms)
+    plan_since: Mutex<HashMap<String, u64>>,
     /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
@@ -111,6 +116,8 @@ impl Agent {
             harness_last: Mutex::new(HashMap::new()),
             labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
+            plans: Mutex::new(HashMap::new()),
+            plan_since: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
         }))
@@ -144,6 +151,12 @@ impl Agent {
         let spec: SpecFile = util::read_json(&SessionPaths::new(&self.state, &msg.session).spec())?;
         if hooks::hook_token(&spec.token) != msg.token {
             bail!("hook token이 맞지 않는다");
+        }
+        if msg.harness == "claude"
+            && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
+            && matches!(msg.payload.get("source").and_then(|v| v.as_str()), Some("startup" | "resume"))
+        {
+            self.harness_process_started(&msg.session, util::now_ms());
         }
         let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, util::now_ms()) else {
             return Ok(());
@@ -188,6 +201,8 @@ impl Agent {
             percent: None,
             at_ms: util::now_ms(),
             transcript: None,
+            plan: None,
+            background: None,
         })
         .await;
     }
@@ -979,6 +994,8 @@ enum Slot {
     Session,
     /// 상태(화면 감지, 끝남). 세션 ID 사건이 이것을 덮으면 다시 붙은 host가 상태를 잃는다.
     State,
+    /// 계획·배경 작업 수(plan.rs)
+    Plan,
 }
 
 impl Slot {
@@ -987,6 +1004,7 @@ impl Slot {
         match e.kind.as_str() {
             _ if e.harness == "report" => Some(Slot::Report),
             "session_start" | "session" => Some(Slot::Session),
+            "plan" => Some(Slot::Plan),
             "prompt_submit" => None,
             _ => Some(Slot::State),
         }
