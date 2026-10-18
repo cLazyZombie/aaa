@@ -291,7 +291,17 @@ last_seen_ms: number | null, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
-export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type PostType = "notice" | "data" | "request";
+
+export type PostInput = { post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
+
+export type PostResult = { "state": "accepted", id: string, } | { "state": "refused", reason: string, existing: string | null, } | { "state": "queued", post_id: string, };
+
+export type PostSender = { thread: string | null, role: Role, mission: string | null, machine: string, session: string | null, verified: string, };
+
+export type PostEnvelope = { id: string, project: string, from: PostSender, input: PostInput, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, };
+
+export type FrontRequest = { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -383,7 +393,7 @@ settings: Record<string, unknown>,
  */
 pins?: Array<string>, };
 
-export type FrontResponse = { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type FrontResponse = { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */

@@ -204,7 +204,7 @@ async fn serve(
         proto: agreed,
         host_id: host.host_id.clone(),
         // harness_hello.v1: hello의 harness 사건을 읽는다(agent는 연결 뒤 다시 보내지 않는다, 재부팅 복원)
-        features: vec!["terminal.v1".into(), "health.v1".into(), "harness_hello.v1".into()],
+        features: vec!["terminal.v1".into(), "health.v1".into(), "harness_hello.v1".into(), "post.v1".into()],
     }))
     .await?;
     let generation = host.next_gen();
@@ -262,6 +262,17 @@ async fn serve(
                     LinkMsg::Event(AgentEvent::ChatChanged { key, signature }) => {
                         host.on_chat_changed(&mid, key, signature)
                     }
+                    LinkMsg::Event(AgentEvent::PostRejected { session, post_id, bytes, sha256, reason }) => {
+                        if hello.features.iter().any(|f| f == "post.v1") {
+                            host.db.audit(&format!("post:unverified@{}", host.machine_name(&mid)), "post_refuse", &serde_json::json!({"session":session,"post_id":post_id,"bytes":bytes,"sha256":sha256,"reason":reason}).to_string());
+                        }
+                    }
+                    LinkMsg::Event(AgentEvent::Post { session, input }) => {
+                        if hello.features.iter().any(|f| f == "post.v1") {
+                            let result = host.receive_post(&mid, &session, input.clone());
+                            tx.json(&LinkMsg::Req { id: format!("post-{}", input.post_id), deadline_ms: None, body: aaa_proto::AgentRequest::PostAck { post_id: input.post_id, result } }).await?;
+                        }
+                    }
                     LinkMsg::Event(AgentEvent::Health(h)) => host.on_health(&mid, h),
                     LinkMsg::Ping { seq } => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;
@@ -293,4 +304,67 @@ async fn register_local(host: &Host, hello: &AgentHello, tx: &FrameTx) -> Result
     }
     host.db.upsert_machine(&hello.machine_id, &hello.machine_name, None, true)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod post_tests {
+    use super::*;
+    use aaa_proto::{PostInput, PostType};
+    #[tokio::test]
+    async fn post_ack_is_never_sent_to_agent_without_feature() {
+        let path = std::env::temp_dir().join(format!("aap-host-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = path.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let host = Host::open(cfg, path.clone()).unwrap();
+        let (stream, peer) = tokio::io::duplex(1 << 20);
+        let running = tokio::spawn(serve(host, Box::new(stream), None, None));
+        let (r, w) = tokio::io::split(peer);
+        let tx = spawn_writer(w, MAX_FRAME);
+        let mut rx = FrameRx::new(r, MAX_FRAME);
+        tx.json(&LinkMsg::Hello(AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "old-agent".into(),
+            machine_name: "mac-a".into(),
+            boot_id: "boot".into(),
+            os: "test".into(),
+            arch: "test".into(),
+            software: "old".into(),
+            features: vec!["terminal.v1".into()],
+            dev_mode: true,
+            selfcheck: None,
+            sessions: vec![],
+            harness: vec![],
+        }))
+        .await
+        .unwrap();
+        assert!(
+            matches!(rx.control::<LinkMsg>().await.unwrap(),LinkMsg::Welcome(w) if w.features.iter().any(|f|f=="post.v1"))
+        );
+        tx.json(&LinkMsg::Event(AgentEvent::Post {
+            session: "s".into(),
+            input: PostInput {
+                post_id: format!("{:032x}", 1),
+                to: "coordinator".into(),
+                post_type: PostType::Data,
+                topic: "test".into(),
+                title: "기록".into(),
+                body: "본문".into(),
+                needs_user: false,
+                refs: vec![],
+            },
+        }))
+        .await
+        .unwrap();
+        tx.json(&LinkMsg::Ping { seq: 43 }).await.unwrap();
+        // 같은 연결의 Pong은 앞 사건 처리가 끝났다는 울타리다. Ack를 먼저 보내면 여기서 실패한다.
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), rx.control::<LinkMsg>()).await.unwrap().unwrap(),
+            LinkMsg::Pong { seq: 43 }
+        );
+        drop(tx);
+        drop(rx);
+        running.await.unwrap().unwrap();
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }

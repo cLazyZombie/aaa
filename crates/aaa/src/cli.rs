@@ -30,6 +30,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 자료·알림·요청을 inbox에 남긴다. 기밀성 없음: 비밀값을 넣지 않는다
+    Post(PostArgs),
     /// host backend 실행(보통 OS 감독자가 띄운다)
     Host,
     /// agent backend 실행, 또는 host에 등록(enroll)
@@ -406,6 +408,34 @@ enum EvaluationCmd {
         #[arg(long)]
         note: Option<String>,
     },
+}
+
+#[derive(Args)]
+struct PostArgs {
+    /// 목적지(coordinator·mission:<이름>) 또는 status·list·unmute. 세션 밖에서는 앞에 프로젝트를 준다
+    first: String,
+    second: Option<String>,
+    third: Option<String>,
+    #[arg(long, conflicts_with_all = ["data", "notice"])]
+    request: bool,
+    #[arg(long, conflicts_with_all = ["request", "notice"])]
+    data: bool,
+    #[arg(long, conflicts_with_all = ["request", "data"])]
+    notice: bool,
+    #[arg(long)]
+    needs_user: bool,
+    #[arg(long)]
+    topic: Option<String>,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long)]
+    body_file: Option<String>,
+    /// library의 큰 자료 경로(내용은 post에 넣지 않는다)
+    #[arg(long = "ref")]
+    refs: Vec<String>,
+    /// 재전송할 때 같은 ID를 쓴다(32자리 16진수). 생략하면 새 ID
+    #[arg(long)]
+    post_id: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -1144,6 +1174,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
+        Cmd::Post(args) => post_cmd(json, args),
         Cmd::Events { project, after, follow } => events_cmd(json, project, after, follow),
         Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),
         Cmd::Hook { agent, payload } => {
@@ -2032,6 +2063,119 @@ fn render_question(s: &mut String, q: &aaa_proto::QuestionView) {
 }
 
 /// `--text` 또는 `--text-file`(`-`면 표준 입력)
+fn post_front_call(
+    rt: &tokio::runtime::Runtime,
+    control: &mut Option<aaa_common::front::FrontClient>,
+    req: FrontRequest,
+) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
+    rt.block_on(async {
+        match control {
+            Some(c) => c.call(req).await,
+            None => {
+                let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+                c.call(req).await
+            }
+        }
+    })
+}
+
+fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
+    use aaa_proto::{PostInput, PostResult, PostType};
+    let session = std::env::var_os(aaa_agent::hooks::ENV_SESSION).is_some();
+    if matches!(a.first.as_str(), "list" | "unmute") {
+        let project = a.second.context("프로젝트가 필요하다")?;
+        return front(
+            json,
+            if a.first == "list" {
+                FrontRequest::PostList { project }
+            } else {
+                FrontRequest::PostUnmute { project, thread: a.third.context("thread가 필요하다")? }
+            },
+        );
+    }
+    let rt = runtime()?;
+    let explicit_project = if a.first == "status" { a.third.is_some() } else { a.second.is_some() };
+    let mut control = if session && explicit_project {
+        rt.block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()))
+            .ok()
+            .filter(|c| c.role.can_control())
+    } else {
+        None
+    };
+    let use_hook = session && control.is_none();
+    let result = if a.first == "status" {
+        if use_hook {
+            let id = a.third.or(a.second).context("post ID가 필요하다")?;
+            rt.block_on(aaa_agent::post::send(serde_json::json!({"status":id})))?
+        } else {
+            let project = a.second.context("프로젝트가 필요하다")?;
+            match post_front_call(
+                &rt,
+                &mut control,
+                FrontRequest::PostStatus { project, post_id: a.third.context("post ID가 필요하다")? },
+            )? {
+                Ok(FrontResponse::Post { result }) => result,
+                Ok(_) => anyhow::bail!("post 응답이 아니다"),
+                Err(e) => anyhow::bail!("{}", e.message),
+            }
+        }
+    } else {
+        anyhow::ensure!(a.request || a.data || a.notice, "--request·--data·--notice 중 하나가 필요하다");
+        let (project, to) = match a.second {
+            Some(to) => (Some(a.first), to),
+            None => (None, a.first),
+        };
+        anyhow::ensure!(a.third.is_none(), "post 인자가 너무 많다");
+        use sha2::Digest;
+        let id = a
+            .post_id
+            .unwrap_or_else(|| hex::encode(&sha2::Sha256::digest(aaa_common::util::new_id().as_bytes())[..16]));
+        let input = PostInput {
+            post_id: id,
+            to,
+            post_type: if a.request {
+                PostType::Request
+            } else if a.data {
+                PostType::Data
+            } else {
+                PostType::Notice
+            },
+            topic: a.topic.context("--topic이 필요하다")?,
+            title: a.title.context("--title이 필요하다")?,
+            body: task_text(a.body_file.as_deref())?,
+            needs_user: a.needs_user,
+            refs: a.refs,
+        };
+        if use_hook {
+            rt.block_on(aaa_agent::post::send(serde_json::to_value(input)?))?
+        } else {
+            let project = project.context("세션 밖 post는 프로젝트가 필요하다")?;
+            match post_front_call(&rt, &mut control, FrontRequest::Post { project, input })? {
+                Ok(FrontResponse::Post { result }) => result,
+                Ok(_) => anyhow::bail!("post 응답이 아니다"),
+                Err(e) => anyhow::bail!("{}", e.message),
+            }
+        }
+    };
+    let code = match &result {
+        PostResult::Accepted { .. } => 0,
+        PostResult::Refused { .. } => 1,
+        PostResult::Queued { .. } => 2,
+    };
+    if json {
+        println!("{}", serde_json::to_string(&result)?);
+    } else {
+        match result {
+            PostResult::Accepted { id } => println!("ok {id}"),
+            PostResult::Refused { reason, existing } => {
+                eprintln!("err {reason}{}", existing.map(|s| format!(" (기존 {s})")).unwrap_or_default())
+            }
+            PostResult::Queued { post_id } => println!("queued {post_id}"),
+        }
+    }
+    Ok(ExitCode::from(code))
+}
+
 fn text_arg(text: Option<String>, file: Option<String>) -> Result<String> {
     Ok(match (text, file) {
         (Some(t), _) => t,
@@ -2646,6 +2790,14 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Evaluation(v) => render_evaluation(&mut s, v),
+        FrontResponse::Post { result } => {
+            let _ = writeln!(s, "{}", serde_json::to_string(result).unwrap());
+        }
+        FrontResponse::Posts { posts } => {
+            for p in posts {
+                let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
+            }
+        }
         // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
         FrontResponse::Preferences(p) => {
             let _ = writeln!(s, "{}", serde_json::to_string_pretty(p).unwrap_or_default());

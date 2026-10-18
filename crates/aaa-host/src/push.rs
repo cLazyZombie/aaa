@@ -204,7 +204,7 @@ pub(crate) fn payload(project: &str, items: &[InboxItem], title: Option<&str>) -
     };
     let mut body = String::new();
     for i in items {
-        let summary: String = i.summary.chars().take(120).collect();
+        let summary: String = crate::notify::safe_summary(i).chars().take(120).collect();
         let line = format!("{} {}: {summary}", crate::inbox::who(i), i.event);
         if body.len() + line.len() + 1 > BODY_CAP {
             body.push('…');
@@ -412,7 +412,17 @@ impl PushedLog {
 pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
     items
         .iter()
-        .filter(|i| i.item_kind != "thread-state" || if i.event == "new report" { a.done } else { a.input })
+        .filter(|i| match i.item_kind.as_str() {
+            "post" => a.input,
+            "thread-state" => {
+                if i.event == "new report" {
+                    a.done
+                } else {
+                    a.input
+                }
+            }
+            _ => true,
+        })
         .cloned()
         .collect()
 }

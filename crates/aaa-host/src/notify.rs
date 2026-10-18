@@ -32,11 +32,16 @@ fn debounce(secs: u64) -> Duration {
         .map_or(Duration::from_secs(secs), Duration::from_millis)
 }
 
+/// post 글은 알림에 넣지 않는다(웹 push·webhook 공통).
+pub(crate) fn safe_summary(i: &InboxItem) -> &str {
+    if i.item_kind == "post" { "사용자 결정 요청" } else { &i.summary }
+}
+
 /// 알림 글: 프로젝트 한 줄과 항목마다 한 줄
 pub(crate) fn notify_text(project: &str, items: &[InboxItem]) -> String {
     let mut s = format!("[aaa] {project}");
     for i in items {
-        let summary: String = i.summary.chars().take(200).collect();
+        let summary: String = safe_summary(i).chars().take(200).collect();
         s.push_str(&format!("\n- {} {}: {summary}", crate::inbox::who(i), i.event));
     }
     if s.chars().count() > TEXT_CAP {
@@ -53,7 +58,7 @@ pub(crate) fn notify_body(format: &str, chat_id: &str, project: &str, items: &[I
             "project": project,
             "text": text,
             "items": items.iter().map(|i| serde_json::json!({
-                "id": i.id, "kind": i.item_kind, "subject": i.subject, "event": i.event, "summary": i.summary,
+                "id": i.id, "kind": i.item_kind, "subject": i.subject, "event": i.event, "summary": safe_summary(i),
             })).collect::<Vec<_>>(),
         }),
     }
@@ -148,6 +153,7 @@ async fn read_head<S: tokio::io::AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>
 pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
     kinds.iter().any(|k| k == &i.item_kind)
         && match i.item_kind.as_str() {
+            "post" => i.event == "post request for user",
             "thread-state" => crate::transitions::PUSH_EVENTS.contains(&i.event.as_str()),
             "pr" => matches!(i.event.as_str(), "PR merged" | "PR checks failing" | "PR review activity"),
             _ => true,

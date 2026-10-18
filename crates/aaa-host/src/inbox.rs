@@ -194,10 +194,14 @@ impl Host {
             tracing::error!("inbox 저장 실패: {e:#}");
             return;
         }
-        self.notify(&item);
-        let dir = self.inbox_dir(project);
+        self.inbox_publish(&item);
+    }
+
+    pub(crate) fn inbox_publish(&self, item: &InboxItem) {
+        self.notify(item);
+        let dir = self.inbox_dir(&item.project);
         if let Err(e) = std::fs::create_dir_all(&dir)
-            .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(&item)))
+            .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(item)))
         {
             tracing::warn!("inbox 파일 쓰기 실패: {e}");
         }

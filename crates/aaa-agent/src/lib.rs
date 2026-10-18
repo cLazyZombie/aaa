@@ -17,6 +17,7 @@ pub mod identity;
 pub mod link;
 mod page;
 mod plan;
+pub mod post;
 mod pr;
 mod scrollback;
 pub mod threads;
@@ -173,6 +174,9 @@ pub struct Agent {
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
+    host_post: Mutex<Option<bool>>,
+    post_gate: Mutex<()>,
+    post_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::PostResult>>>,
     /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
     /// 그가 보내는 정보의 이름은 여기서 덮는다.
     labels: Mutex<HashMap<String, String>>,
@@ -217,6 +221,9 @@ impl Agent {
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
+            host_post: Mutex::new(None),
+            post_gate: Mutex::new(()),
+            post_waiters: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -225,10 +232,10 @@ impl Agent {
         let listener = aaa_common::ipc::LocalListener::bind(&hooks::socket(&self.state)).context("hook socket")?;
         let me = self.clone();
         tokio::spawn(async move {
-            while let Ok(mut s) = listener.accept().await {
+            while let Ok((mut s, pid)) = listener.accept_peer().await {
                 let me = me.clone();
                 tokio::spawn(async move {
-                    let reply = match me.on_hook(&mut s).await {
+                    let reply = match me.on_hook(&mut s, pid).await {
                         Ok(out) => format!("ok\n{}", out.unwrap_or_default()),
                         Err(e) => format!("error: {e:#}\n"),
                     };
@@ -241,14 +248,40 @@ impl Agent {
     }
 
     /// hook 사건 하나. 돌려준 것은 `aaa hook`이 harness에 출력할 진행 안내다(Claude만).
-    async fn on_hook(self: &Arc<Self>, s: &mut aaa_common::ipc::LocalStream) -> Result<Option<String>> {
+    async fn on_hook(
+        self: &Arc<Self>,
+        s: &mut aaa_common::ipc::LocalStream,
+        pid: Option<u32>,
+    ) -> Result<Option<String>> {
         let msg = hooks::read_msg(s).await?;
         if msg.session.is_empty() || !msg.session.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if msg.harness == "post" {
+                self.reject_post(&msg, "세션 ID 형식이 아니다").await;
+            }
             bail!("세션 ID 형식이 아니다");
         }
-        let spec: SpecFile = util::read_json(&SessionPaths::new(&self.state, &msg.session).spec())?;
+        let spec: SpecFile = match util::read_json(&SessionPaths::new(&self.state, &msg.session).spec()) {
+            Ok(spec) => spec,
+            Err(e) => {
+                if msg.harness == "post" {
+                    self.reject_post(&msg, "세션 기록이 없다").await;
+                    bail!("세션 기록이 없다");
+                }
+                return Err(e);
+            }
+        };
         if hooks::hook_token(&spec.token) != msg.token {
+            if msg.harness == "post" {
+                self.reject_post(&msg, "hook token이 맞지 않는다").await;
+            }
             bail!("hook token이 맞지 않는다");
+        }
+        if msg.harness == "post" {
+            let result = self.on_post(msg.clone(), pid).await;
+            if let Err(e) = &result {
+                self.reject_post(&msg, &e.to_string()).await;
+            }
+            return result.map(Some);
         }
         if msg.harness == "claude"
             && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
@@ -1070,6 +1103,10 @@ impl Agent {
     /// host 요청 하나. 세션 요청은 pump로 넘기고(응답은 pump가 보낸다), 나머지는 여기서 답한다.
     pub async fn handle(self: Arc<Self>, id: String, body: AgentRequest) {
         let direct: Result<AgentResponse, ErrorBody> = match body {
+            AgentRequest::PostAck { post_id, result } => {
+                self.post_ack(&post_id, result);
+                return;
+            }
             AgentRequest::Spawn(spec) => self
                 .spawn_session(spec)
                 .await

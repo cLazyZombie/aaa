@@ -93,6 +93,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
         features: vec![
             "terminal.v1".into(),
+            "post.v1".into(),
             "cwd.v1".into(),
             "pr.v1".into(),
             "pr.v2".into(),
@@ -129,6 +130,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     let (health, replay) = match first {
         LinkMsg::Welcome(w) => {
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
+            *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
             // harness_hello.v1: host가 hello의 harness 사건을 읽었다. 옛 host에는 연결 뒤 다시 보낸다
             (w.features.iter().any(|f| f == "health.v1"), !w.features.iter().any(|f| f == "harness_hello.v1"))
         }
@@ -137,6 +139,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     };
     agent.host_health.store(health, std::sync::atomic::Ordering::Relaxed);
     agent.set_host(Some(tx.clone()), replay);
+    agent.replay_posts().await;
     let cached = agent.health.lock().unwrap().clone();
     if let Some(h) = cached {
         agent.send_health(h).await;
@@ -230,5 +233,61 @@ pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name:
             LinkMsg::Reject(e) => bail!("등록 거부: {e}"),
             other => bail!("예상하지 못한 응답: {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod post_tests {
+    use super::*;
+    use aaa_common::util;
+    use aaa_proto::{HostWelcome, PostInput, PostType};
+    #[tokio::test]
+    async fn post_feature_is_negotiated_and_old_host_receives_no_post() {
+        let path = std::env::temp_dir().join(format!("aap-link-{}", util::new_id()));
+        let agent = Agent::new(path.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        util::ensure_private_dir(&path.join("post/out")).unwrap();
+        let input = PostInput {
+            post_id: format!("{:032x}", 1),
+            to: "coordinator".into(),
+            post_type: PostType::Data,
+            topic: "ci-red".into(),
+            title: "기록".into(),
+            body: "본문".into(),
+            needs_user: false,
+            refs: vec![],
+        };
+        util::write_json(
+            &path.join("post/out").join(format!("{}.json", input.post_id)),
+            &crate::post::Pending { session: "s".into(), input },
+        )
+        .unwrap();
+        let (stream, peer) = tokio::io::duplex(1 << 20);
+        let running = tokio::spawn({
+            let a = agent.clone();
+            async move { session(&a, Box::new(stream)).await }
+        });
+        let (r, w) = tokio::io::split(peer);
+        let tx = spawn_writer(w, MAX_FRAME);
+        let mut rx = FrameRx::new(r, MAX_FRAME);
+        let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("hello가 없다") };
+        assert!(h.features.iter().any(|f| f == "post.v1"));
+        tx.json(&LinkMsg::Welcome(HostWelcome {
+            proto: AGENT_LINK,
+            host_id: "old".into(),
+            features: vec!["terminal.v1".into()],
+        }))
+        .await
+        .unwrap();
+        // Welcome 뒤 Post replay를 먼저 하고 Ping을 읽는다. Pong 앞에 모르는 post가 없어야 한다.
+        tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), rx.control::<LinkMsg>()).await.unwrap().unwrap(),
+            LinkMsg::Pong { seq: 42 }
+        );
+        assert_eq!(*agent.host_post.lock().unwrap(), Some(false));
+        drop(tx);
+        drop(rx);
+        running.await.unwrap().unwrap();
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

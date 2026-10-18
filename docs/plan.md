@@ -208,7 +208,7 @@ flowchart LR
    - 요청 방법: macOS는 `launchctl kickstart`(`gui/<uid>`), Windows는 예약 작업 실행, Linux는 `systemctl --user start`다.
    - 운영 모드에서는 host가 직접 fork하지 않는다. 자식으로 띄우면 host가 재시작될 때 책임 프로세스가 사라져 pane이 느려지기 때문이다(§10.3).
    - MVP 개발 모드에서는 결정 3에 따라 자식으로 띄울 수 있다. 다만 doctor가 그 상태를 「개발 모드」로 표시하고, 운영 모드에서는 시작을 거부한다.
-5. **agent backend는 외부에 아무것도 listen하지 않는다.** 로컬 IPC(UDS/Named Pipe)는 `aaa hook`과 session host 전용이며 front 명령을 받지 않는다.
+5. **agent backend는 외부에 아무것도 listen하지 않는다.** 로컬 IPC(UDS/Named Pipe)는 `aaa hook`·`aaa report`·`aaa post`와 session host 전용이다. post는 peer pid+token으로 출처를 판정하는 자료 송신이며 조작 권한 Front 명령을 받지 않는다.
 6. **이미지·파일은 front → host → agent로만 간다**(§9).
 7. **aaa는 tailnet을 모른다.** 예외는 §6.3의 웹 HTTPS 공개다.
 
@@ -608,7 +608,7 @@ host 프로젝트 폴더 구성:
 
 **지정.**
 - `aaa evaluator assign --project P --machine M --profile P`로 지정하고, `project.toml`의 `[evaluator]`에 기록한다. 프로젝트당 기본 하나이며 profile과 머신은 고른다.
-- host가 평가자 세션을 일반 thread처럼 agent backend에 시작한다. 실행 사실·resume·재부팅 처리는 일반 세션과 같다. 동시 thread 한도에는 포함하고 우선순위는 낮게(nice) 둔다.
+- host가 평가자 세션을 일반 thread처럼 agent backend에 시작한다. 실행 사실·resume·재부팅 처리는 일반 세션과 같다. 동시 일반 thread 한도에서 빠진다. 낮은 우선순위는 머신 설정 command의 `nice`로 정한다.
 - 평가자 작업 폴더는 `projects/<p>/evaluator/`(host)와 대상 머신의 `.aaa/<project>-evaluator/`다.
 
 **UI.**
@@ -619,10 +619,10 @@ host 프로젝트 폴더 구성:
 **입력: host가 사건을 자동으로 넘긴다.**
 - 대상 사건: 착지(`merge_step` landed), 완료(`thread_resolved`), 실패(`thread_failed`), 재시도(`thread_restarted`), 그 밖에 §8.3 흐름 사건 중 project.toml에서 고른 것.
 - 넘기는 내용: 사건 묶음(thread의 단계별 시작·끝 시간표, 재시도 횟수, 질문 대기 시간), 로그·보고서·검토 기록 경로. coordinator가 손으로 감시 기록을 적지 않아도 된다.
-- 전달 방식: host가 평가자 cursor 뒤의 사건을 `evaluator/inbox/<seq>.json`에 쓰고, 메시지 API의 `--queue`로 「새 사건 n건」 알림만 보낸다. 사건이 몰리면 묶어서(debounce, 기본 예: 5분 또는 착지 1건마다) 보낸다. 알림이 `delivery_unknown`이어도 다시 보내지 않고, 평가자는 cursor부터 다시 읽는다(§8.5 a).
+- 전달 방식: host가 평가자 cursor 뒤의 사건을 평가자 작업 폴더 `inbox/<첫 seq>-<끝 seq>.json`에 쓰고, 메시지 API의 `--queue`로 「새 사건 n건」 알림만 보낸다. 사건이 몰리면 묶어서(debounce, 기본 예: 5분 또는 착지 1건마다) 보낸다. 알림이 `delivery_unknown`이어도 다시 보내지 않고, 평가자는 cursor부터 다시 읽는다(§8.5 a).
 
 **출력: 정해진 평가 기록.**
-- 평가자는 `aaa evaluation submit --file F`로 기록을 낸다. host가 `projects/<p>/evaluations/<id>.md`(사람이 읽는 본문)와 DB 구조화 기록을 저장한다.
+- 평가자는 `library/evaluations/<이름>.json`(선택 `.md`)을 쓰고 report.md를 다시 쓴다. host가 Agent link로 받아 DB와 `projects/<p>/evaluations/<id>.md`에 둔다.
 - 구조화 기록 항목: 대상 사건·thread, 단계별 시간, 재작업(횟수·원인), 막힌 곳, 도구 문제, 결함을 누가 어느 단계에서 잡았나, 개선안 목록(id·내용·예상 효과·대상 도구).
 - coordinator나 사용자가 `aaa evaluation adopt|hold <id>`로 개선안마다 채택·보류를 정한다. inbox에 `evaluation` item으로 뜬다. 채택한 것을 뒤 thread가 알아야 하면 coordinator가 memory에 적는다(§8.101).
 - 채택된 개선의 구현은 coordinator가 정한다. 평가자 자신의 worktree에서 고쳐 일반 착지 절차를 밟게 할 수도 있고(t-0250 방식), 별도 thread를 시작할 수도 있다.
@@ -863,8 +863,8 @@ host 프로젝트 폴더 구성:
 
 - **평가자 = 역할이 `evaluator`인 thread.** `aaa evaluator assign <p> --profile P [--machine M] [--repo R] [--note …]`가 일반 thread와 같은 방식으로 시작한다(작업 폴더·resume·보고 회수·세션 끝남 알림·resolve가 같다). 프로젝트당 하나다.
   - thread ID는 일반 순번(`t-NNNN`)이고 작업 폴더는 `.aaa/<p>-<t>/`다. §8.13의 `.aaa/<project>-evaluator/` 대신이다.
-  - 지정 기록은 thread 기록(역할)이 정본이다. host는 project.toml을 쓰지 않는다. `[evaluator]`에는 사용자가 쓰는 설정만 둔다: `events`(대상 사건, 기본 `merge_landed`·`thread_resolved`·`thread_failed`·`thread_restarted`), `batch_s`(기본 300초).
-  - 끝내기는 `aaa evaluator unassign <p>`(평가자 thread resolve)다. 동시 thread 한도에 들어간다. 낮은 우선순위는 그 머신 agent.toml harness 덮어쓰기의 command에 `nice`를 넣어 정한다(aaa가 따로 두지 않는다).
+  - 지정 기록은 thread 기록(역할)이 정본이다. host는 project.toml을 쓰지 않는다. `[evaluator]`에는 사용자가 쓰는 설정만 둔다: `events`(대상 사건, 기본 `pr_merged`·`thread_resolved`·`thread_failed`·`thread_restarted`), `batch_s`(기본 300초).
+  - 끝내기는 `aaa evaluator unassign <p>`(평가자 thread resolve)다. 동시 일반 thread 한도에서 빠진다. 낮은 우선순위는 그 머신 agent.toml harness 덮어쓰기의 command에 `nice`를 넣어 정한다(aaa가 따로 두지 않는다).
 - **목록에 섞지 않는다.** `aaa thread list`·`aaa context`의 thread·`aaa pane list`·웹 thread·머신 목록은 기본으로 평가자를 뺀다. `--role evaluator`로만 보인다. `aaa context`에는 따로 `evaluator` 요약이 있다.
 - **입력.** 대상 사건이 생기면 착지는 바로, 나머지는 `batch_s` 뒤에 host가 cursor 뒤 사건 묶음을 만든다.
   - 묶음은 Agent link(`WorkFileWrite`)로 평가자 작업 폴더 `inbox/<첫 seq>-<끝 seq>.json`에 쓴다. agent는 이 이름 형식 말고는 쓰지 않는다.
@@ -4827,3 +4827,47 @@ primary 근거:
 | 결정 6 | tailnet 모름, 설정 주소 TCP | 반영 | §6.1 | |
 | 결정 6 예외 | Tailscale HTTPS 공개, MVP 첫 단계 | 반영 | §6.3, §14 | |
 | 결정 7 | 사후 평가자 역할(배경 실행·별도 표시·attach·사건 자동 입력·평가 기록·직접 지시 금지) | 반영 | §3, §6.2, §6.4, §8.3, §8.13, §13, §14 | 기능은 M3, 역할 필드·흐름 사건은 M1-3 |
+
+
+### 8.195 agent에서 coordinator inbox로 자료 보내기: aaa post 1단계(10-18)
+
+기획의 사용자 결정 2·12·13·14를 적용한다. worker·평가자는 post를 보낼 수 있고, 채팅 지시 권한은 얻지 않는다.
+
+- **명령.** `aaa post [<p>] coordinator --request|--data|--notice --topic <이름> --title <제목> --body-file <파일>`.
+  세션 안 프로젝트는 host ThreadRec으로 정한다(인자 자기 신고는 무시). `--needs-user`는 request에만 쓴다.
+  `--ref`로 library 자료를 가리킨다. 기밀성은 없으니 비밀값을 넣지 않는다.
+  `--post-id <32자리 16진수>`는 재전송 ID이며 생략하면 새 ID다. 결과는 `ok <id>`(0), `err <이유>`(1),
+  `queued <post_id>`(2). `aaa post status [<p>] <post_id>`로 나중에 본다.
+- **통로.** CLI → 그 머신 hook socket → AgentEvent::Post → host → AgentRequest::PostAck.
+  agent는 accept_peer의 PID·세션 token을 모두 검사한다. host caller의 조상·세션 leader 판정을 aaa-common으로 옮겨 같이 쓴다.
+  agent는 역할을 검사하지 않는다(adopted pane spec에는 역할이 없다). host는 연결 머신과 pane의 열린 ThreadRec,
+  pane 역할(없으면 ThreadRec 역할)로 출처를 확정한다. ThreadRec 없는 셸·coordinator의 hook post는 거부한다.
+  원격도 같은 통로이며 Front socket을 쓰지 않는다.
+- **지시와 자료.** post 종류는 notice·data·request뿐이다. 봉투·출처·본문 sha·시각은 host가 쓰고,
+  본문·제목·참조는 가장 긴 backtick보다 긴 fence 안에 둔다. 제목의 ANSI·제어 문자는 저장 전에 제거한다.
+  coordinator nudge는 subject·event로 만든 기존 고정 문구다. needs_user만 push 대상이고 push·webhook에는
+  「사용자 결정 요청」만 넣는다. THREAD_GUIDE·COORDINATOR_GUIDE·EVALUATOR_GUIDE에 자료 규칙과 비밀값 금지를 넣는다.
+  post request는 사용자 승인으로 쓰지 않는다. 일반 thread 간 송신은 없다.
+- **내구성.** agent는 `state/post/out/<post_id>.json`을 원자 저장한다(세션당 20건·1MiB).
+  끊기거나 Ack가 2.5초 안에 오지 않으면 queued이며, 연결이 회복되면 다시 보낸다. Ack 결과와 입력 hash를 세션별 영수증으로
+  저장한 뒤 outbox를 지운다. host는 post ID·출처·내용을 다시 확인하여 같은 결과를 돌려주고 inbox를 두 번 만들지 않는다.
+  접수 원장·inbox·감사는 SQLite transaction 하나다. 투영 파일은 DB 다음에 쓴다. SCHEMA_VERSION은 올리지 않는다.
+  inbox done 보존 기간이 지나 정리할 때 posts 본문도 지우고 ID·결과·내용 hash는 남긴다.
+- **한도.** host.toml `[post]`: burst=3, burst_secs=60, hourly=6, daily=30, pair_hourly=10, mute_after=3.
+  시간 창은 최근 60초·1시간·24시간이다. now를 인자로 받는 owner가 판정한다. 같은 출처의
+  (목적지·종류·topic·정리한 제목·본문 sha)가 24시간 안 같으면 기존 ID와 함께 거부한다.
+  한 시간에 rate 거부 3번이면 muted로 저장하고 inbox 항목 한 번을 만든다. `aaa post unmute <p> <thread>`는 조작 권한이다.
+- **Front.** Post·PostList·PostUnmute는 조작 권한, PostStatus는 Reader 자기 세션만이다.
+  세션 밖 송신에는 프로젝트가 필수다. `mission:<name>` 계약은 열되 임무 전달은 2단계다(사용자 재확인).
+  아직 없는 임무는 명확히 거부하고, pair_hourly는 2단계에서 coordinator→임무 전달에 적용한다.
+  이번 단계는 임무 정의·깨움·철수·사용량 미룸을 만들지 않는다. 다음 단계의 「철수 기준 없음」과 리셋 뒤 재개를 제한하지 않는다.
+- **호환.** AGENT_LINK 1.4를 유지한다(올리면 운영 1.3 agent가 N-1 밖이다).
+  host Welcome·agent Hello 양쪽의 `post.v1`이 있을 때만 Post·PostRejected·PostAck를 보낸다.
+  표지 없는 host에는 명확한 오류이며 새 메시지를 보내지 않는다. 옛 agent의 `ok`만인 hook 답을 성공으로 보지 않는다.
+  Front는 배포 전 1.35에 더한다(현재 배포된 1.34와 N-1). 착지 전 배포 상태가 바뀌었으면 다시 확인한다.
+- **감사.** 접수·거부(이유)·mute·unmute·재전송을 기록한다. hook 인증 거부도 표지 있는 link로 hash·크기·이유만 알린다.
+  감사와 흐름 사건에는 본문·제목을 넣지 않는다. 같은 OS 사용자를 적대적인 보안 경계로 가정하지 않는다.
+- **시험.** host owner에서 now 경계·중복·영구 ID·mute·재시작·fence·push·행렬·자기 상태만 보기를 검사한다.
+  agent의 실제 hook socket·frame에서 token·다른 PID·outbox 한도·디스크 재전송·Ack·feature 없는 상대의 무송신을 검사한다.
+  m13은 같은 CLI를 로컬·원격 TLS thread에서 실행하고 inbox 봉투와 nudge 고정 문구를 확인한다.
+  source 위조·peer 판정 제거·rate 제거·nudge/push에 summary 삽입·fence 제거·feature 검사 제거를 심어 시험이 실패하는지 본다.

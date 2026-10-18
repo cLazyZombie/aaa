@@ -81,6 +81,7 @@ pub struct HostConfig {
     pub terminal: TerminalSection,
     pub projects: ProjectsSection,
     pub notify: NotifySection,
+    pub post: PostSection,
     pub session: SessionSection,
     /// profile 정의의 정본(참고 herdr-projects config.toml).
     pub profiles: std::collections::BTreeMap<String, Profile>,
@@ -89,6 +90,23 @@ pub struct HostConfig {
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
     pub update: UpdateSection,
+}
+
+/// post 한도(시간 판정은 host 시각, agent outbox 상한은 별도 고정값).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PostSection {
+    pub burst: u32,
+    pub burst_secs: u64,
+    pub hourly: u32,
+    pub daily: u32,
+    pub pair_hourly: u32,
+    pub mute_after: u32,
+}
+impl Default for PostSection {
+    fn default() -> Self {
+        Self { burst: 3, burst_secs: 60, hourly: 6, daily: 30, pair_hourly: 10, mute_after: 3 }
+    }
 }
 
 /// 실행 파일 바꾸기(`aaa update`, plan §11·§8.180). 그 Mac의 host.toml·agent.toml 어느 쪽에 둬도 되고 둘 다 적으면 둘 다
@@ -218,7 +236,9 @@ impl Default for NotifySection {
             webhook: String::new(),
             format: "json".into(),
             telegram_chat_id: String::new(),
-            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "pr"].map(String::from).to_vec(),
+            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "pr", "post"]
+                .map(String::from)
+                .to_vec(),
             debounce_secs: 15,
             web_push: true,
             push_hosts: ["fcm.googleapis.com", "push.apple.com", "push.services.mozilla.com", "notify.windows.com"]
@@ -240,6 +260,7 @@ impl Default for HostConfig {
             terminal: TerminalSection::default(),
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
+            post: PostSection::default(),
             session: SessionSection::default(),
             profiles: Default::default(),
             safety: Default::default(),
@@ -677,6 +698,18 @@ fn key(parts: &[&str]) -> Vec<String> {
 
 fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    for (k, v) in [
+        ("burst", u64::from(c.post.burst)),
+        ("burst_secs", c.post.burst_secs),
+        ("hourly", u64::from(c.post.hourly)),
+        ("daily", u64::from(c.post.daily)),
+        ("pair_hourly", u64::from(c.post.pair_hourly)),
+        ("mute_after", u64::from(c.post.mute_after)),
+    ] {
+        if v == 0 {
+            out.push(Invalid { path: key(&["post", k]), message: "1 이상이어야 한다".into() });
+        }
+    }
     let cwd = &c.terminal.new_cwd;
     if !matches!(cwd.as_str(), "follow" | "home") && !is_absolute_anywhere(cwd) {
         out.push(Invalid {

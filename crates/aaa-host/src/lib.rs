@@ -29,6 +29,7 @@ mod notify;
 mod open;
 mod orch;
 mod output;
+mod post;
 mod pr;
 mod prefs;
 mod project;
@@ -355,6 +356,7 @@ pub struct Host {
     /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.163)
     pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
+    pub(crate) post_gate: std::sync::Mutex<()>,
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
     /// 흐름 사건 하나를 저장(seq를 정함)부터 broadcast까지 한 번에 하나씩 한다(`orch.rs` `flow_event`)
     flow_order: Mutex<()>,
@@ -554,6 +556,7 @@ impl Host {
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
+            post_gate: std::sync::Mutex::new(()),
             notice_events: broadcast::channel(64).0,
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
@@ -1071,6 +1074,18 @@ impl Host {
             ));
         }
         match req {
+            FrontRequest::Post { project, input } => {
+                self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result })
+            }
+            FrontRequest::PostStatus { project, post_id } => {
+                self.post_status(&project, &post_id, actor).map(|result| FrontResponse::Post { result })
+            }
+            FrontRequest::PostList { project } => self
+                .db
+                .post_list(&project)
+                .map(|posts| FrontResponse::Posts { posts })
+                .map_err(|e| err(ErrorCode::Internal, e.to_string())),
+            FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
                 software: util::software(),

@@ -540,6 +540,11 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// post.v1을 양쪽이 알렸을 때만 보낸다.
+    PostAck {
+        post_id: String,
+        result: crate::PostResult,
+    },
     Spawn(SpawnSpec),
     List,
     /// 출력 구독. `from`이 보존 범위 안이면 그 위치부터 bytes만, 아니면 snapshot을 먼저 보낸다.
@@ -838,6 +843,19 @@ pub struct CommandRan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// post.v1: hook 판정에서 거부한 글의 메타데이터(본문·token 없음).
+    PostRejected {
+        session: String,
+        post_id: String,
+        bytes: u64,
+        sha256: String,
+        reason: String,
+    },
+    /// peer+token을 agent가 판정했다. 역할·프로젝트는 host가 정한다.
+    Post {
+        session: String,
+        input: crate::PostInput,
+    },
     /// harness hook·notify·`aaa report`에서 온 상태 사건(adapter가 정규화)
     Harness(HarnessEvent),
     /// 감시 중인 thread의 report.md hash(없으면 None)가 바뀌었다
@@ -1367,6 +1385,21 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    Post {
+        project: String,
+        input: crate::PostInput,
+    },
+    PostStatus {
+        project: String,
+        post_id: String,
+    },
+    PostList {
+        project: String,
+    },
+    PostUnmute {
+        project: String,
+        thread: String,
+    },
     Status,
     Machines,
     /// pane 목록. 기본은 평가자 세션을 빼고, `role`을 주면 그 역할만 보인다(§8.13).
@@ -1937,6 +1970,7 @@ impl FrontRequest {
         !matches!(
             self,
             FrontRequest::Status
+                | FrontRequest::PostStatus { .. }
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
@@ -1998,6 +2032,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    Post {
+        result: crate::PostResult,
+    },
+    Posts {
+        posts: Vec<crate::PostEnvelope>,
+    },
     Status(HostStatus),
     Machines {
         machines: Vec<MachineView>,

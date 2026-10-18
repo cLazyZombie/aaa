@@ -95,6 +95,11 @@ impl Db {
              CREATE TABLE IF NOT EXISTS inbox(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, event TEXT NOT NULL,
                done INTEGER NOT NULL DEFAULT 0, done_at INTEGER, created_at INTEGER NOT NULL, data TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS posts(
+               seq INTEGER PRIMARY KEY AUTOINCREMENT, post_id TEXT NOT NULL UNIQUE, project TEXT NOT NULL,
+               sender TEXT NOT NULL, session TEXT, machine TEXT NOT NULL, content_sha TEXT NOT NULL,
+               created_ms INTEGER NOT NULL, result TEXT NOT NULL, data TEXT);
+             CREATE INDEX IF NOT EXISTS posts_sender_time ON posts(project,sender,created_ms);
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
@@ -614,6 +619,14 @@ impl Db {
         let gone = st
             .query_map([done_before_ms as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+        for (project, id) in &gone {
+            if let Some((_, post)) = id.rsplit_once("-post-") {
+                c.execute(
+                    "UPDATE posts SET data=NULL WHERE project=?1 AND json_extract(data,'$.id')=?2",
+                    params![project, post],
+                )?;
+            }
+        }
         c.execute("DELETE FROM inbox WHERE done=1 AND done_at < ?1", [done_before_ms as i64])?;
         Ok(gone)
     }
@@ -685,6 +698,7 @@ impl Db {
         for t in PROJECT_TABLES {
             tx.execute(&format!("UPDATE {t} SET project=?2 WHERE project=?1"), [from, to])?;
         }
+        tx.execute("UPDATE posts SET data=json_set(data,'$.project',?1) WHERE project=?1 AND data IS NOT NULL", [to])?;
         for (k, v) in project_meta(&tx, from)? {
             let (kind, rest) = k.split_once(':').unwrap_or((&k, ""));
             let tail = rest.strip_prefix(from).unwrap_or_default();
@@ -700,7 +714,7 @@ impl Db {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 5] = ["threads", "flow_events", "messages", "inbox", "evaluations"];
+const PROJECT_TABLES: [&str; 6] = ["threads", "flow_events", "messages", "inbox", "evaluations", "posts"];
 
 /// 그 프로젝트의 meta: key가 `<종류>:<프로젝트>` 또는 `<종류>:<프로젝트>:…`(routine·PR·nudge·설정 오류·상태 등)
 fn project_meta(c: &Connection, project: &str) -> Result<Vec<(String, String)>> {
@@ -710,4 +724,102 @@ fn project_meta(c: &Connection, project: &str) -> Result<Vec<(String, String)>> 
         .collect::<rusqlite::Result<Vec<_>>>()?;
     // LIKE의 `_`·`%`는 글자 그대로가 아니다: 둘째 마디가 정확히 그 이름인 것만
     Ok(rows.into_iter().filter(|(k, _)| k.split(':').nth(1) == Some(project) && !k.starts_with(':')).collect())
+}
+
+/// post 원장은 거부도 ID별로 남긴다. 거부 본문은 저장하지 않는다.
+#[derive(Debug)]
+pub(crate) struct PostRow {
+    pub project: String,
+    pub sender: String,
+    pub session: Option<String>,
+    pub machine: String,
+    pub content_sha: String,
+    pub created_ms: u64,
+    pub result: aaa_proto::PostResult,
+}
+impl Db {
+    pub(crate) fn post_row(&self, id: &str) -> Result<Option<PostRow>> {
+        let c = self.conn.lock().unwrap();
+        let row = c
+            .query_row(
+                "SELECT project,sender,session,machine,content_sha,created_ms,result FROM posts WHERE post_id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get::<_, String>(6)?)),
+            )
+            .optional()?;
+        row.map(|(project, sender, session, machine, content_sha, created_ms, result)| {
+            Ok(PostRow {
+                project,
+                sender,
+                session,
+                machine,
+                content_sha,
+                created_ms,
+                result: serde_json::from_str(&result)?,
+            })
+        })
+        .transpose()
+    }
+    pub(crate) fn post_recent(
+        &self,
+        project: &str,
+        sender: &str,
+        after: u64,
+    ) -> Result<Vec<(String, u64, String, aaa_proto::PostResult)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT post_id,created_ms,content_sha,result FROM posts WHERE project=?1 AND sender=?2 AND created_ms>=?3 ORDER BY seq")?;
+        let rows = st
+            .query_map(params![project, sender, after], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, String>(3)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter().map(|(id, at, sha, result)| Ok((id, at, sha, serde_json::from_str(&result)?))).collect()
+    }
+    pub(crate) fn post_next_id(&self) -> Result<String> {
+        let c = self.conn.lock().unwrap();
+        let n: u64 = c.query_row("SELECT COALESCE(MAX(seq),0)+1 FROM posts", [], |r| r.get(0))?;
+        Ok(format!("p-{n:08}"))
+    }
+    /// 봉투·결과·inbox·감사를 한 transaction으로 확정한다(투영 파일·알림은 그 뒤).
+    pub(crate) fn post_record(
+        &self,
+        post_id: &str,
+        row: &PostRow,
+        env: Option<&aaa_proto::PostEnvelope>,
+        inbox: Option<&aaa_proto::InboxItem>,
+        actor: &str,
+        detail: &str,
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        tx.execute("INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![post_id,row.project,row.sender,row.session,row.machine,row.content_sha,row.created_ms,serde_json::to_string(&row.result)?,env.map(serde_json::to_string).transpose()?])?;
+        if let Some(i) = inbox {
+            tx.execute(
+                "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
+                params![i.id, i.project, i.item_kind, i.subject, i.event, i.created_at_ms, serde_json::to_string(i)?],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO audit(ts,actor,action,detail) VALUES(?1,?2,?3,?4)",
+            params![row.created_ms, actor, if env.is_some() { "post_accept" } else { "post_refuse" }, detail],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub(crate) fn post_list(&self, project: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
+        let c = self.conn.lock().unwrap();
+        let mut st =
+            c.prepare("SELECT data FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT 100")?;
+        let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut bytes = 0;
+        let mut posts = Vec::new();
+        for s in rows {
+            if bytes + s.len() > 512 * 1024 {
+                break;
+            }
+            bytes += s.len();
+            posts.push(serde_json::from_str(&s)?);
+        }
+        Ok(posts)
+    }
 }
