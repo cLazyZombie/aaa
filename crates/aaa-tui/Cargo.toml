@@ -11,6 +11,7 @@ aaa-proto.workspace = true
 aaa-config.workspace = true
 aaa-common.workspace = true
 anyhow.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 futures-util.workspace = true
 ratatui = "0.30"

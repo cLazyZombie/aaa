@@ -59,10 +59,13 @@ const ERROR_SHOWN: Duration = Duration::from_secs(5);
 const MESSAGE_SHOWN: Duration = Duration::from_secs(5);
 /// 목록을 저절로 다시 그리는 간격(「n분 조용」)
 const MINUTE: Duration = Duration::from_secs(60);
-/// 펼친 사이드바 폭의 범위(herdr `validated_sidebar_bounds` 기본 18~36)와 접힌 compact 폭(herdr 4)
-const SIDEBAR_MIN: u16 = 18;
-const SIDEBAR_MAX: u16 = 36;
+/// 접힌 compact 폭(herdr 4). 펼친 폭의 한도는 `[tui] sidebar_min_width`·`sidebar_max_width`다
 const COMPACT_WIDTH: u16 = 4;
+/// 사이드바 경계 두 번 누르기 간격(herdr `mouse.rs` 경계 두 번 누르기 350ms)
+const DIVIDER_DOUBLE_CLICK: Duration = Duration::from_millis(350);
+/// host 공유 설정(`preferences`·`preferences_set`)을 아는 Front API minor. 그 요청은 1.5 판 중에 더해졌다(모르는 요청은 연결을
+/// 끊으므로 그 뒤 판에만 보낸다)
+const PREFERENCES_MINOR: u16 = 6;
 /// 좁은 화면 머리의 오른쪽 단추 폭(herdr `MOBILE_BUTTON_WIDTH`)
 const MOBILE_BUTTON_WIDTH: u16 = 10;
 /// 탭 막대 오른쪽 조각을 두려면 이름표 자리가 이만큼 남아야 한다(herdr `MIN_TAB_STRIP_WIDTH` = 8 + 3 + 3×2)
@@ -270,6 +273,8 @@ enum Pending {
     Spaces,
     /// 다른 workspace의 layout(상태 점에 쓴다): 응답이 와도 지금 workspace로 바꾸지 않는다
     SpaceLayout,
+    /// host 공유 설정: 기억한 사이드바 배치를 쓴다
+    Chrome,
 }
 
 /// herdr `ClientShellMode`(Copy·Resize는 다음 묶음)
@@ -322,8 +327,19 @@ struct App {
     threads: HashMap<String, ThreadView>,
     /// 왼쪽 목록을 접었나(설정을 읽기 전에는 None, `[tui] sidebar_start_collapsed`로 시작)
     sidebar_collapsed: Option<bool>,
-    /// 펼친 목록 폭(구분선 포함, `[tui] sidebar_width`)
+    /// 펼친 목록 폭(구분선 포함, `[tui] sidebar_width`, 끌어 바꾸면 그 값). 그릴 때 `sidebar_bounds`로 묶는다
     sidebar_width: u16,
+    /// 사용자가 끌어 바꾼 폭인가(herdr `sidebar_width_manual`): 그러면 설정을 다시 읽어도(테마 바꾸기 포함) 폭을 두고 host에 남긴다
+    sidebar_width_manual: bool,
+    /// 사용자가 펴거나 접었나(herdr `sidebar_collapsed_manual`): host에 남긴다
+    sidebar_collapsed_manual: bool,
+    /// `[tui] sidebar_width`(경계 두 번 누르기로 돌아갈 값)와 폭 한도(`[tui] sidebar_min_width`·`sidebar_max_width`)
+    config_sidebar_width: u16,
+    sidebar_bounds: (u16, u16),
+    /// host 공유 설정에 아직 보내지 않은 사이드바 배치(바뀐 이름만, null은 설정값으로 되돌림)
+    chrome_unsaved: std::collections::BTreeMap<String, serde_json::Value>,
+    /// 사이드바 경계를 마지막으로 누른 때(두 번 누르기)
+    divider_click: Option<tokio::time::Instant>,
     collapsed_mode: aaa_config::SidebarCollapsedMode,
     /// 이 폭 이하면 두 줄 머리(`[tui] mobile_width_threshold`)
     mobile_width: u16,
@@ -434,7 +450,13 @@ impl App {
             machines: vec![],
             threads: HashMap::new(),
             sidebar_collapsed: None,
-            sidebar_width: 26,
+            sidebar_width: aaa_config::SIDEBAR_WIDTH,
+            sidebar_width_manual: false,
+            sidebar_collapsed_manual: false,
+            config_sidebar_width: aaa_config::SIDEBAR_WIDTH,
+            sidebar_bounds: aaa_config::SIDEBAR_BOUNDS,
+            chrome_unsaved: Default::default(),
+            divider_click: None,
             collapsed_mode: aaa_config::SidebarCollapsedMode::Compact,
             mobile_width: 64,
             palette: theme::Palette::catppuccin(),
@@ -502,8 +524,14 @@ impl App {
         self.jamo_keys = cfg.prefix_jamo_keys;
         self.prompt_new_tab = cfg.prompt_new_tab_name;
         self.confirm_close = cfg.confirm_close;
-        // herdr: 폭은 설정을 따르고, 펴고 접은 상태는 처음에만 설정에서 정한다(다시 읽어도 사용자가 바꾼 대로)
-        self.sidebar_width = cfg.sidebar_width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        // herdr `reload_client_config`: 폭은 사용자가 끌어 바꾸지 않았을 때만 설정을 따르고, 펴고 접은 상태는 처음에만 설정에서
+        // 정한다. 테마를 바꾸는 설정 창도 이 길로 다시 읽으므로 사용자가 키운 폭이 남는다
+        self.config_sidebar_width = cfg.sidebar_width;
+        if !self.sidebar_width_manual {
+            self.sidebar_width = cfg.sidebar_width;
+        }
+        let bounds = cfg.sidebar_bounds();
+        self.sidebar_bounds = bounds.unwrap_or(aaa_config::SIDEBAR_BOUNDS);
         self.collapsed_mode = cfg.sidebar_collapsed_mode;
         self.mobile_width = cfg.mobile_width_threshold;
         self.pane_borders = cfg.pane_borders;
@@ -525,6 +553,13 @@ impl App {
         }
         if !bad.is_empty() {
             self.set_error(format!("[tui] prefix 값을 읽지 못했다: {} (예: \"ctrl+b\")", bad.join(", ")));
+        }
+        if bounds.is_none() {
+            let (min, max) = aaa_config::SIDEBAR_BOUNDS;
+            self.set_error(format!(
+                "[tui] sidebar_min_width({})가 sidebar_max_width({})보다 크다: {min}~{max}를 쓴다",
+                cfg.sidebar_min_width, cfg.sidebar_max_width
+            ));
         }
         self.reconcile_ascii();
     }
@@ -596,6 +631,10 @@ impl App {
         self.pending.insert(id, Pending::Spaces);
         let id = tx.send(FrontRequest::Threads { project: None, role: None }).await?;
         self.pending.insert(id, Pending::Report("thread 목록"));
+        if self.host_minor >= PREFERENCES_MINOR {
+            let id = tx.send(FrontRequest::Preferences).await?;
+            self.pending.insert(id, Pending::Chrome);
+        }
         let mut keys_in = EventStream::new();
         let mut dirty = true;
         // 목록 thread 둘째 줄 「n분 조용」이 화면에서 늘어나게 1분마다 다시 그린다(웹 `useMinute`)
@@ -603,6 +642,7 @@ impl App {
         minute.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             if dirty {
+                self.save_chrome(&mut tx).await?;
                 self.sync_capture();
                 let size = terminal.size()?;
                 self.width = size.width;
@@ -832,6 +872,9 @@ impl App {
                         if w.name == self.ws_name {
                             self.set_ws(w);
                         }
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Preferences(doc)), Some(Pending::Chrome)) => {
+                        self.apply_chrome(&doc)
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspaces { workspaces }), Some(Pending::Spaces)) => {
                         for w in workspaces {
@@ -1072,7 +1115,7 @@ impl App {
             };
         }
         let side = match (self.collapsed(), self.collapsed_mode) {
-            (false, _) => self.sidebar_width,
+            (false, _) => self.side_width(),
             (true, aaa_config::SidebarCollapsedMode::Compact) => COMPACT_WIDTH,
             (true, aaa_config::SidebarCollapsedMode::Hidden) => 0,
         }
@@ -1119,9 +1162,80 @@ impl App {
         Some(self.list_index(rows))
     }
 
-    /// 목록 펴기·접기(herdr `ToggleSidebar`: 포커스는 그대로)
+    /// 펼친 목록 폭(herdr `layout`: 한도로 묶는다, 화면 폭은 `shell`이 묶는다)
+    fn side_width(&self) -> u16 {
+        self.sidebar_width.clamp(self.sidebar_bounds.0, self.sidebar_bounds.1)
+    }
+
+    /// 목록 펴기·접기(herdr `ToggleSidebar`: 포커스는 그대로, 사용자가 정한 것으로 남긴다)
     fn toggle_list(&mut self) {
-        self.sidebar_collapsed = Some(!self.collapsed());
+        let collapsed = !self.collapsed();
+        self.sidebar_collapsed = Some(collapsed);
+        self.sidebar_collapsed_manual = true;
+        self.remember_chrome("tuiSidebarCollapsed", collapsed.into());
+    }
+
+    /// 끌어 바꾼 폭(herdr `set_sidebar_width_from_column`: 열 + 1을 한도로 묶는다). 남기기는 뗄 때 한다.
+    /// 폭을 바꾼 누름은 두 번 누르기의 첫 번이 아니다(herdr는 끈 뒤 350ms 안에 다시 잡아도 두 번 누르기로 읽는다)
+    fn drag_sidebar_to(&mut self, x: u16, left: u16) {
+        let (min, max) = self.sidebar_bounds;
+        let width = (x + 1).saturating_sub(left).clamp(min, max);
+        if width != self.side_width() {
+            self.divider_click = None;
+        }
+        self.sidebar_width = width;
+        self.sidebar_width_manual = true;
+    }
+
+    /// 끌기를 마쳤다: 바뀐 폭을 host에 남긴다(herdr `persist_chrome_preferences`)
+    fn sidebar_drag_done(&mut self) {
+        if self.sidebar_width_manual {
+            self.remember_chrome("tuiSidebarWidth", self.sidebar_width.into());
+        }
+    }
+
+    /// 경계를 두 번 눌렀다: 설정 폭으로 되돌리고 남긴 폭을 지운다(herdr 경계 두 번 누르기)
+    fn reset_sidebar_width(&mut self) {
+        self.sidebar_width = self.config_sidebar_width;
+        self.sidebar_width_manual = false;
+        self.remember_chrome("tuiSidebarWidth", serde_json::Value::Null);
+    }
+
+    /// 사이드바 배치 하나를 host 공유 설정에 남길 것으로 둔다(다음 그리기 전에 보낸다). 보기 권한 기기는 남기지 않는다
+    fn remember_chrome(&mut self, key: &str, value: serde_json::Value) {
+        if !self.reader {
+            self.chrome_unsaved.insert(key.to_string(), value);
+        }
+    }
+
+    /// 남길 사이드바 배치를 보낸다(바뀐 이름만: 다른 TUI가 남긴 다른 값을 덮지 않는다)
+    async fn save_chrome(&mut self, tx: &mut FrontSender) -> Result<()> {
+        if self.chrome_unsaved.is_empty() {
+            return Ok(());
+        }
+        let settings = std::mem::take(&mut self.chrome_unsaved);
+        if self.host_minor >= PREFERENCES_MINOR {
+            let id = tx.send(FrontRequest::PreferencesSet { settings, pins: None }).await?;
+            self.pending.insert(id, Pending::Report("사이드바 배치 저장"));
+        }
+        Ok(())
+    }
+
+    /// host가 기억한 사이드바 배치(herdr `ClientShellState::new`가 읽는 client 설정): 그동안 사용자가 바꾸지 않은 것만 쓴다
+    fn apply_chrome(&mut self, doc: &aaa_proto::SharedPreferences) {
+        let get = |k: &str| doc.settings.get(k);
+        if !self.sidebar_width_manual
+            && let Some(w) = get("tuiSidebarWidth").and_then(|v| v.as_u64()).and_then(|w| u16::try_from(w).ok())
+        {
+            self.sidebar_width = w;
+            self.sidebar_width_manual = true;
+        }
+        if !self.sidebar_collapsed_manual
+            && let Some(c) = get("tuiSidebarCollapsed").and_then(|v| v.as_bool())
+        {
+            self.sidebar_collapsed = Some(c);
+            self.sidebar_collapsed_manual = true;
+        }
     }
 
     /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 머신 머리면 그 머신을 고른다
@@ -2088,7 +2202,7 @@ impl App {
         // herdr는 접힌 칸의 번호만 강조한다: 이름을 보며 고를 수 있게 aaa는 띄운다(plan §8.73).
         if self.mode == Mode::Navigate && (self.collapsed() || sh.sidebar.w == 0) {
             // pane 칸 위에만(접힌 칸·탭 막대·머리는 그대로), 모드 막대(pane 맨 아랫줄) 위까지
-            let w = if sh.header.h > 0 { body.w } else { self.sidebar_width.min(body.w) };
+            let w = if sh.header.h > 0 { body.w } else { self.side_width().min(body.w) };
             self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body });
             self.hits.borrow_mut().divider = None;
         }
@@ -2935,6 +3049,8 @@ mod tests {
 
     fn app_with_tabs(names: &[&str]) -> App {
         let mut app = App::new("main".into(), "me".into());
+        // 그리기 시험은 herdr 기본 폭 26칸 배치로 그린다(aaa 기본 36은 `shell_layout_like_herdr`가 본다)
+        app.sidebar_width = 26;
         app.width = 90;
         app.height = 30;
         app.ws.tabs = names
@@ -3297,20 +3413,21 @@ mod tests {
         assert_eq!(at_col(lines.last().unwrap(), 25), Some('│'), "사이드바는 막대 밑에 그대로");
     }
 
-    /// 화면 배치(herdr `ClientShellConfig::layout`): 펼친 사이드바 26칸 온 높이, 그 오른쪽 위 탭 막대 한 줄, 나머지 pane.
-    /// 접으면 compact 4칸 또는 없음, 64칸 이하는 두 줄 머리, 폭은 18~36으로 묶는다.
+    /// 화면 배치(herdr `ClientShellConfig::layout`): 펼친 사이드바(aaa 기본 36칸) 온 높이, 그 오른쪽 위 탭 막대 한 줄, 나머지
+    /// pane. 접으면 compact 4칸 또는 없음, 64칸 이하는 두 줄 머리, 폭은 `[tui] sidebar_min_width`~`sidebar_max_width`(기본
+    /// 18~72)로 묶는다.
     #[test]
     fn shell_layout_like_herdr() {
         let mut app = App::new("main".into(), "me".into());
-        let area = r(0, 0, 90, 30);
+        let area = r(0, 0, 120, 30);
         let none = |a: Rect| Rect { w: 0, h: 0, ..a };
         assert_eq!(
             app.shell(area),
-            Shell { sidebar: r(0, 0, 26, 30), tab_bar: r(26, 0, 64, 1), header: none(area), panes: r(26, 1, 64, 29) }
+            Shell { sidebar: r(0, 0, 36, 30), tab_bar: r(36, 0, 84, 1), header: none(area), panes: r(36, 1, 84, 29) }
         );
         app.toggle_list();
         assert_eq!(app.shell(area).sidebar, r(0, 0, 4, 30));
-        assert_eq!(app.shell(area).panes, r(4, 1, 86, 29));
+        assert_eq!(app.shell(area).panes, r(4, 1, 116, 29));
         let mut cfg = aaa_config::TuiSection {
             sidebar_collapsed_mode: aaa_config::SidebarCollapsedMode::Hidden,
             ..Default::default()
@@ -3318,14 +3435,24 @@ mod tests {
         app.apply_config(&cfg);
         assert!(app.collapsed(), "다시 읽어도 사용자가 접은 그대로");
         assert_eq!(app.shell(area).sidebar.w, 0);
-        assert_eq!(app.shell(area).panes, r(0, 1, 90, 29));
+        assert_eq!(app.shell(area).panes, r(0, 1, 120, 29));
         app.toggle_list();
-        cfg.sidebar_width = 50;
+        cfg.sidebar_width = 90;
         app.apply_config(&cfg);
-        assert_eq!(app.shell(area).sidebar.w, 36);
+        assert_eq!(app.shell(area).sidebar.w, 72);
         cfg.sidebar_width = 5;
         app.apply_config(&cfg);
         assert_eq!(app.shell(area).sidebar.w, 18);
+        // herdr처럼 한도는 설정으로 바꾼다. 거꾸로면 알리고 기본 한도
+        cfg.sidebar_width = 100;
+        cfg.sidebar_max_width = 100;
+        app.apply_config(&cfg);
+        assert_eq!(app.shell(area).sidebar.w, 100);
+        assert_eq!(app.shell(r(0, 0, 90, 30)).sidebar.w, 89, "pane 칸 한 칸은 남긴다(herdr cols − 1)");
+        cfg.sidebar_min_width = 120;
+        app.apply_config(&cfg);
+        assert_eq!(app.shell(area).sidebar.w, 72);
+        assert!(app.error.as_ref().is_some_and(|e| e.0.contains("sidebar_min_width")), "{:?}", app.error);
         // 64칸 이하: 머리 두 줄, 사이드바·탭 막대 없음
         let narrow = r(0, 0, 64, 20);
         assert_eq!(app.shell(narrow).header, r(0, 0, 64, 2));
@@ -3335,6 +3462,58 @@ mod tests {
         let mut fresh = App::new("main".into(), "me".into());
         fresh.apply_config(&aaa_config::TuiSection { sidebar_start_collapsed: true, ..Default::default() });
         assert_eq!(fresh.shell(area).sidebar.w, 4);
+    }
+
+    /// 사용자가 끌어 바꾼 폭은 설정을 다시 읽어도(설정 창의 테마 바꾸기도 이 길) 그대로다(herdr `reload_client_config`
+    /// `sidebar_width_manual`). 끌기를 마치면 host 공유 설정에 남기고, 경계를 두 번 누르면 설정 폭으로 돌아가 남긴 것을 지운다.
+    /// 다시 붙으면 host가 기억한 배치로 시작한다.
+    #[test]
+    fn dragged_sidebar_width_survives_a_theme_change_and_is_remembered() {
+        let mut app = App::new("main".into(), "me".into());
+        let area = r(0, 0, 160, 30);
+        app.apply_config(&aaa_config::TuiSection::default());
+        app.drag_sidebar_to(59, 0);
+        assert_eq!(app.shell(area).sidebar.w, 60);
+        assert!(app.chrome_unsaved.is_empty(), "끄는 동안은 남기지 않는다");
+        app.sidebar_drag_done();
+        assert_eq!(app.chrome_unsaved.get("tuiSidebarWidth"), Some(&serde_json::json!(60)));
+        // 설정 창에서 테마를 바꾸면 host.toml [tui] theme만 쓰고 다시 읽는다
+        app.apply_config(&aaa_config::TuiSection { theme: "nord".into(), ..Default::default() });
+        assert_eq!((app.shell(area).sidebar.w, app.theme_name.as_str()), (60, "nord"));
+        // 설정 폭을 바꿔도 끌어 둔 폭이 앞선다(herdr)
+        app.apply_config(&aaa_config::TuiSection { sidebar_width: 30, ..Default::default() });
+        assert_eq!(app.shell(area).sidebar.w, 60);
+        app.reset_sidebar_width();
+        assert_eq!(app.shell(area).sidebar.w, 30);
+        assert_eq!(app.chrome_unsaved.get("tuiSidebarWidth"), Some(&serde_json::Value::Null));
+        // 접기도 남긴다
+        app.toggle_list();
+        assert_eq!(app.chrome_unsaved.get("tuiSidebarCollapsed"), Some(&serde_json::json!(true)));
+
+        // 다시 붙음: 설정을 읽고 host가 기억한 배치를 쓴다
+        let mut again = App::new("main".into(), "me".into());
+        again.apply_config(&aaa_config::TuiSection::default());
+        let doc = |v: serde_json::Value| aaa_proto::SharedPreferences {
+            revision: 3,
+            settings: serde_json::from_value(v).unwrap(),
+            pins: None,
+        };
+        again.apply_chrome(&doc(
+            serde_json::json!({ "theme": "dark", "tuiSidebarWidth": 60, "tuiSidebarCollapsed": false }),
+        ));
+        assert_eq!(again.shell(area).sidebar.w, 60);
+        again.apply_config(&aaa_config::TuiSection { theme: "nord".into(), ..Default::default() });
+        assert_eq!(again.shell(area).sidebar.w, 60, "기억한 폭도 테마 바꾸기에 남는다");
+        // 되돌린 폭(null)은 설정 폭
+        let mut reset = App::new("main".into(), "me".into());
+        reset.apply_config(&aaa_config::TuiSection::default());
+        reset.apply_chrome(&doc(serde_json::json!({ "tuiSidebarWidth": null })));
+        assert_eq!(reset.shell(area).sidebar.w, 36);
+        // 보기 권한 기기는 남기지 않는다(host가 거부한다)
+        reset.reader = true;
+        reset.drag_sidebar_to(49, 0);
+        reset.sidebar_drag_done();
+        assert!(reset.chrome_unsaved.is_empty());
     }
 
     /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 위 ` spaces` 구역(빈 줄 뒤 workspace 줄), 30줄이면
@@ -3496,7 +3675,9 @@ mod tests {
         let (lines, _) = draw(&app);
         assert!(right_of_sidebar(lines.last().unwrap()).starts_with(" PREFIX  esc 취소  ctrl+b prefix 보내기"));
         app.mode = Mode::Terminal;
-        app.apply_config(&aaa_config::TuiSection { theme: "없는색".into(), ..Default::default() });
+        app.apply_config(&aaa_config::TuiSection {
+            theme: "없는색".into(), sidebar_width: 26, ..Default::default()
+        });
         assert_eq!(app.palette, theme::Palette::catppuccin());
         let (lines, _) = draw(&app);
         assert!(
@@ -3504,7 +3685,7 @@ mod tests {
             "{:?}",
             lines.last()
         );
-        app.apply_config(&aaa_config::TuiSection { theme: "terminal".into(), ..Default::default() });
+        app.apply_config(&aaa_config::TuiSection { theme: "terminal".into(), sidebar_width: 26, ..Default::default() });
         assert_eq!(app.palette, theme::Palette::terminal());
         app.set_message("탭을 닫았다");
         let (lines, _) = draw(&app);

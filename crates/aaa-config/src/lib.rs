@@ -336,8 +336,13 @@ pub struct TuiSection {
     pub prompt_new_tab_name: bool,
     /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
     pub confirm_close: bool,
-    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width` 26, 18~36으로 묶는다)
+    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width`). 기본은 36: herdr 기본은 26이지만 사용자가 herdr에서 끌어 쓰는
+    /// 폭(36)을 기본으로 해 달라고 했다(10-18). 사용자가 끌어 바꾼 폭은 host 공유 설정에 남아 이 값보다 앞선다.
     pub sidebar_width: u16,
+    /// 끌어 바꿀 수 있는 폭의 아래·위 한도(herdr `[ui] sidebar_min_width`·`sidebar_max_width`). 위 한도 기본은 72로 herdr
+    /// 기본 36보다 넓다(사용자 「더 크게도」). 아래가 위보다 크면 TUI가 알리고 기본 한도를 쓴다(herdr `validated_sidebar_bounds`)
+    pub sidebar_min_width: u16,
+    pub sidebar_max_width: u16,
     /// 접힌 채 시작(herdr `[ui] sidebar_start_collapsed`, 기본 펼침)
     pub sidebar_start_collapsed: bool,
     /// 접으면: `compact`는 번호와 상태 점만 든 4칸 열, `hidden`은 없앤다(herdr `[ui] sidebar_collapsed_mode`)
@@ -398,7 +403,17 @@ pub enum SidebarCollapsedMode {
     Hidden,
 }
 
+/// `[tui] sidebar_width` 기본(위 `TuiSection::sidebar_width`)
+pub const SIDEBAR_WIDTH: u16 = 36;
+/// `[tui] sidebar_min_width`·`sidebar_max_width` 기본. 설정이 거꾸로면 이것을 쓴다
+pub const SIDEBAR_BOUNDS: (u16, u16) = (18, 72);
+
 impl TuiSection {
+    /// 펼친 목록 폭의 한도(herdr `validated_sidebar_bounds`): 아래가 위보다 크면 None
+    pub fn sidebar_bounds(&self) -> Option<(u16, u16)> {
+        (self.sidebar_min_width <= self.sidebar_max_width).then_some((self.sidebar_min_width, self.sidebar_max_width))
+    }
+
     /// prefix 동안 영문 입력기로 바꾸나(예전 이름 `prefix_ascii`가 있으면 그 값)
     pub fn switch_ascii(&self) -> bool {
         self.prefix_ascii.unwrap_or(self.switch_ascii_input_source_in_prefix)
@@ -414,7 +429,9 @@ impl Default for TuiSection {
             prefix_jamo_keys: true,
             prompt_new_tab_name: true,
             confirm_close: true,
-            sidebar_width: 26,
+            sidebar_width: SIDEBAR_WIDTH,
+            sidebar_min_width: SIDEBAR_BOUNDS.0,
+            sidebar_max_width: SIDEBAR_BOUNDS.1,
             sidebar_start_collapsed: false,
             sidebar_collapsed_mode: SidebarCollapsedMode::Compact,
             mobile_width_threshold: 64,

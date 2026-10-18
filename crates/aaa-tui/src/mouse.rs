@@ -4,7 +4,7 @@
 //!
 //! - 탭 막대: 누르고 그 자리에서 떼면 그 탭, 한 칸 넘게 끌면 옮길 자리에 accent `│`를 두고 떼면 옮긴다(`MoveTab`),
 //!   휠은 앞·뒤 탭, ` + ` 새 탭, ` < ` ` > ` 넘기기.
-//! - 사이드바: 줄을 누르고 떼면 연다, `«`·`»` 접기·펴기, 마지막 열(경계)을 끌면 폭(18~36), 휠은 한 줄씩.
+//! - 사이드바: 줄을 누르고 떼면 연다, `«`·`»` 접기·펴기, 마지막 열(경계)을 끌면 폭(`[tui] sidebar_min_width`~`sidebar_max_width`, 기본 18~72)·두 번 누르면 설정 폭, 휠은 한 줄씩.
 //! - 나눔 경계: 끌면 그 나눔의 비율(`SplitRatio`, 0.1~0.9, 33ms마다·뗄 때).
 //! - pane: 누르면 포커스, 안쪽을 끌면 보이는 화면 글을 고르고 떼면 복사(`copy_on_select`), 두 번 누르면 낱말.
 //!   프로그램이 마우스 보고를 켰으면(`GridFrame.modes`) 누름·끌기·뗌·움직임·휠을 그 모드의 인코딩으로 넘긴다.
@@ -34,7 +34,7 @@ use crate::chrome::{PaneBox, SplitHit};
 use crate::list::Row;
 use crate::theme::Palette;
 use crate::{
-    App, FrontSender, Mode, Overlay, Pending, SIDEBAR_MAX, SIDEBAR_MIN, clip, help, keys, scrollbar, unicode_width,
+    App, DIVIDER_DOUBLE_CLICK, FrontSender, Mode, Overlay, Pending, clip, help, keys, scrollbar, unicode_width,
 };
 
 /// 두 번 누름으로 보는 사이(herdr `DOUBLE_CLICK_WINDOW`)
@@ -704,8 +704,16 @@ impl App {
             self.toggle_list();
             return Ok(());
         }
+        // herdr: 경계를 두 번 누르면 설정 폭으로, 아니면 누른 열부터 끈다
         if hits.on(hits.divider, x, y) {
-            self.drag = Some(Drag::Sidebar);
+            let now = Instant::now();
+            if self.divider_click.take().is_some_and(|t| now.duration_since(t) <= DIVIDER_DOUBLE_CLICK) {
+                self.reset_sidebar_width();
+            } else {
+                self.drag = Some(Drag::Sidebar);
+                self.drag_sidebar_to(x, hits.sidebar.map_or(0, |s| s.x));
+                self.divider_click = Some(now);
+            }
             return Ok(());
         }
         if hits.on(hits.header_button, x, y) {
@@ -969,11 +977,8 @@ impl App {
                 }
             }
             _ if button != MouseButton::Left => {}
-            // herdr: 폭 = 열 + 1, 18~36
-            Some(Drag::Sidebar) => {
-                let left = hits.sidebar.map_or(0, |s| s.x);
-                self.sidebar_width = (x + 1).saturating_sub(left).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-            }
+            // herdr: 폭 = 열 + 1, `[tui] sidebar_min_width`~`sidebar_max_width`
+            Some(Drag::Sidebar) => self.drag_sidebar_to(x, hits.sidebar.map_or(0, |s| s.x)),
             // herdr: 33ms마다 바뀐 위치만 보낸다
             Some(Drag::Scrollbar { pane, grab, sent, at }) => {
                 let Some((pane, m, track)) = self.scroll_track(hits, &pane) else { return Ok(()) };
@@ -1078,6 +1083,8 @@ impl App {
                     self.layout(tx, LayoutChange::MoveTab { tab, index: insert as u16 }, false).await?;
                 }
             }
+            // herdr: 사이드바 폭 끌기를 마치면 남긴다
+            Some(Drag::Sidebar) => self.sidebar_drag_done(),
             // herdr: 누른 이름표에서 떼면 그 탭(`TabFocus`)
             Some(Drag::Tab { index, .. }) if hits.tab_at(x, y) == Some(index) => self.tab = index,
             // 누른 줄에서 떼면 연다(탐색 중이면 탐색도 끝낸다)

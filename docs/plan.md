@@ -2181,7 +2181,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 나누기는 herdr `split_rect`: 나눔 칸 없이 첫 쪽이 `round(길이 × 비율)`. 상자끼리 붙는다(`┐┌`). PTY 크기는 테두리 안쪽(90×30에서 반반이면 30×27 둘). 방향 포커스·자리 바꾸기는 바깥 상자로 찾는다.
   - 포커스 pane 자기 테두리 칸은 accent, 나머지 `overlay0`. 위 테두리 x+1에 제목 ` <이름> `(폭−4로 `…` 자름, 포커스면 accent 굵게, 아니면 `overlay0`). 제목은 붙인 pane 이름이다(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다. herdr는 agent 제목·사람이 붙인 이름을 쓰고 agent 이름은 설정(`show_agent_labels_on_pane_borders`, 기본 끔)으로만 보인다.
   - 모드 막대는 pane 칸 맨 아랫줄(나눈 탭이면 아래 테두리)에 겹친다.
-- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다.
+- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다. → §8.186에서 기본 폭 36·한도 18~72·기억(host 공유 설정 `tuiSidebar*`).
 - **시험.**
   - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
   - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
@@ -4044,6 +4044,37 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   m13 `turn_end_notices_follow_reports`(brief 턴 끝남·같은 턴 새 보고는 새 보고 하나·다음 턴 끝남·inbox 그대로), TUI `agent_cards_like_herdr`
   (지금 탭 거름·다른 탭 카드·`o`·보는 pane은 host가 안 보냄·입력 필요가 같은 pane 카드를 바꿈·누름·쓰던 pane이라도 다른 탭이면 알림), 웹 E2E 19(짧은 턴 안 띄움·긴 턴
   「작업 완료」·누르면 pane·보고 있는 pane 안 띄움). 결함 심기 열(host 넷·TUI 셋·웹 셋, 옛 「lease면 봤음」 규칙 포함)이 모두 실패했다.
+
+### 8.186 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로(10-18, 사용자 사진 둘, 다시 세기 341 U3)
+
+- **요청(사용자 10-18 15:21).** 「왼쪽 창이 기본값이 작다. herdr만큼 크게, 더 크게도 가능하게. 지금 테마를 바꾸면 키운 왼쪽 창이 리셋된다.
+  테마는 테마만.」
+- **herdr 근거.** herdr 0.9.5 기본은 aaa와 같다: `sidebar_width = 26`, `sidebar_min_width = 18`, `sidebar_max_width = 36`(`src/config/model.rs`
+  1201–1203, 한도는 설정으로 바꾸고 거꾸로면 거부 `validated_sidebar_bounds` 303). 사용자의 herdr가 넓은 것은 경계를 끌어 둔 폭(36, 한도
+  끝)을 client가 기억해서다(`src/client/shell/preferences.rs` `ClientChromePreferences.sidebar_width`, 상태 폴더 `client-shell/local-<socket
+  해시>.json`). 끌기는 열 + 1을 한도로 묶고 사용자 값으로 표시한다(`mouse.rs` 8–22 `set_sidebar_width_from_column`), 끌기를 마치면 남기고
+  (`mouse.rs` 2036–2037), 경계를 350ms 안에 두 번 누르면 설정 폭으로 돌아가 남긴 값을 지운다(1952–1965). 설정을 다시 읽어도 사용자가 끈
+  폭이면 두고(`config.rs` 86–88 `reload_client_config`), 시작할 때 기억한 폭이 설정보다 앞선다(`state.rs` 1010–1049). 접기도 같다
+  (`actions.rs` 13–20 `ToggleSidebar` → `sidebar_collapsed_manual`).
+- **원인(aaa).** TUI `apply_config`가 다시 읽을 때마다 폭을 `[tui] sidebar_width`로 덮었다. 설정 창은 고른 테마를 host.toml `[tui] theme`
+  하나만 고쳐 쓰고(`tui_edit::set_in`, toml_edit라 다른 key·주석은 남는다) 이 함수로 다시 읽으므로 끌어 키운 폭이 기본으로 돌아갔다. 쓰기가 다른
+  key를 지운 것은 아니다. 끈 폭은 어디에도 남지 않아 다시 붙으면 늘 26이었다.
+- **고침.**
+  - 기본 폭 36, 한도 18~72(`[tui] sidebar_min_width`·`sidebar_max_width`, herdr 이름). **herdr 기본(26·36)과 다르다**: 사용자가 herdr에서
+    쓰는 폭을 기본으로, 그보다 넓게도 끌 수 있게 했다. 한도가 거꾸로면 오류 막대로 알리고 기본 한도를 쓴다. 화면 폭 − 1을 넘지 않는다(herdr).
+  - 사용자가 끈 폭·접기는 「사용자 값」이다(herdr `*_manual`). 다시 읽기(테마 바꾸기·`prefix shift+r`)는 사용자 값을 두고 설정 폭은 경계 두 번
+    누르기로 돌아갈 값으로만 쓴다. 폭을 바꾼 누름은 두 번 누르기의 첫 번이 아니다(herdr는 끈 뒤 350ms 안에 다시 잡으면 되돌린다).
+  - 기억은 host 공유 설정 문서(§8.79)에 둔다: `tuiSidebarWidth`·`tuiSidebarCollapsed`(값이 null이면 되돌림). front는 상태를 갖지 않는다는
+    원칙이라 herdr의 client 기기 파일 대신이다. TUI는 붙을 때 `preferences`를 읽어 그동안 사용자가 바꾸지 않은 값을 쓰고, 바뀐 이름만
+    `preferences_set`으로 보낸다(다른 TUI가 남긴 다른 값을 덮지 않는다). 같은 host의 TUI들이 한 값을 나눈다(herdr는 같은 endpoint의 client가
+    한 파일을 나눈다). 보기 권한 기기는 남기지 않는다. 웹은 이 이름을 읽지 않는다.
+  - Front API는 그대로다(요청·응답이 이미 있다). host가 받는 공유 이름에 `TUI_SETTING_KEYS`를 더했다: 옛 host는 이 이름을 버리므로 기억만 되지
+    않는다. 공유 설정 요청은 FRONT_API 1.5 판 중에 생겨 TUI는 host minor 6 이상에만 보낸다.
+- **시험.** 유닛: 배치(기본 36·한도 72·설정 한도·거꾸로면 알림·화면 폭 − 1), 끈 폭이 테마 바꾸기·설정 폭 바꾸기에 남음·두 번 누르기·접기 남김·
+  다시 붙어 기억한 값·null·보기 권한(`dragged_sidebar_width_survives_a_theme_change_and_is_remembered`), host 공유 이름. TUI E2E
+  `sidebar_width_like_herdr`(160칸: 기본 36, 끌어 60·72에서 멈춤, 설정 창 테마 바꾼 화면에서 60·host.toml에 폭 없음, 나갔다 붙어도 60,
+  두 번 누르면 36·남긴 값 null), `side_list_like_web` 8b(접기 기억). 다른 TUI 시험은 시험 설정 `sidebar_width = 26`(herdr 기본)으로 그린다.
+  결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

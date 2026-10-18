@@ -23,7 +23,8 @@ const T: Duration = Duration::from_secs(20);
 const COLS: u16 = 90;
 const WIDE: u16 = 130;
 const ROWS: u16 = 30;
-/// 펼친 사이드바 폭(구분선 포함, herdr `sidebar_width` 26)과 접힌 compact 폭(4)
+/// 펼친 사이드바 폭(구분선 포함, 시험 설정 `sidebar_width = 26`: herdr 기본. aaa 기본 36은 `sidebar_width_like_herdr`)과
+/// 접힌 compact 폭(4)
 const SIDE: u16 = 26;
 /// 보통 화면 pane 오른쪽 scrollbar 칸(`[tui] pane_scrollbars` 기본 켬, herdr `stable_scrollbar_gutter`): PTY가 그만큼 좁다
 const GUTTER: u16 = 1;
@@ -35,7 +36,8 @@ const ACTIVE_BG: u32 = 0x0200_0000 | (30 << 16) | (30 << 8) | 46;
 const ACCENT_BG: u32 = 0x0200_0000 | (137 << 16) | (180 << 8) | 250;
 const SURFACE1_BG: u32 = 0x0200_0000 | (69 << 16) | (71 << 8) | 90;
 
-/// 시험 설정: 사용자 입력기는 건드리지 않고(입력기 전환은 기본 켬이라 끈다), prefix 뒤 자모 해석은 켠다(기본값)
+/// 시험 설정: 사용자 입력기는 건드리지 않고(입력기 전환은 기본 켬이라 끈다), prefix 뒤 자모 해석은 켠다(기본값).
+/// 사이드바는 herdr 기본 폭 26칸으로 그린다(시험 화면 배치가 그 폭을 기준으로 한다)
 const LOCAL_ONLY: &str = r#"schema = 1
 [host]
 agent_listen = ""
@@ -46,6 +48,7 @@ mode = "none"
 [tui]
 switch_ascii_input_source_in_prefix = false
 prefix_jamo_keys = true
+sidebar_width = 26
 "#;
 
 /// 화면 관측기: 출력·커서 이동·지우기와 바탕색(SGR 40~49·100~107·48;5·48;2)만 다룬다.
@@ -691,8 +694,9 @@ fn remote_attach_rides_the_web() {
     let url = format!("http://{web}");
     let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "far", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
-    // 다른 기기: 제 설정·상태 폴더(기기 token은 여기 둔다)
+    // 다른 기기: 제 설정·상태 폴더(기기 token은 여기 둔다). 설정이 없어 사이드바는 기본 폭(36)이다
     let dev = lab.node("dev", None);
+    let side = aaa_config::SIDEBAR_WIDTH;
     // 보고서용 화면 텍스트(`AAA_TUI_DUMP_REMOTE=폴더`)
     let dump = |name: &str, tui: &Tui| {
         if let Ok(dir) = std::env::var("AAA_TUI_DUMP_REMOTE") {
@@ -714,7 +718,7 @@ fn remote_attach_rides_the_web() {
     tui.wait_text("탭과 사이드바", |s| tab_chips(s) == ["far"] && s.contains(" ▾ labA"));
     hw.wait("원격 화면의 lease와 칸 크기", |w| {
         let p = w.pane(&first)?;
-        (w.held_by(&first, "tui@") && (p.cols, p.rows) == (COLS - SIDE - GUTTER, ROWS - 1)).then_some(())
+        (w.held_by(&first, "tui@") && (p.cols, p.rows) == (COLS - side - GUTTER, ROWS - 1)).then_some(())
     });
     tui.type_line("echo far-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("far-42"));
@@ -762,7 +766,7 @@ fn remote_attach_rides_the_web() {
     assert!(!ro.text().contains("ERROR"), "보기 기기가 host가 거부할 요청을 보냈다:\n{}", ro.text());
     hw.wait("조작 기기의 lease와 크기", |w| {
         let p = w.pane(&first)?;
-        (w.held_by(&first, "tui@") && (p.cols, p.rows) == (COLS - SIDE - GUTTER, ROWS - 1)).then_some(())
+        (w.held_by(&first, "tui@") && (p.cols, p.rows) == (COLS - side - GUTTER, ROWS - 1)).then_some(())
     });
     ro.type_line("echo ro-$((2*3))");
     ro.wait_text("입력 거부", |s| s.contains("보기 권한 화면이라 pane에 입력하지 않는다"));
@@ -1475,11 +1479,30 @@ fn side_list_like_web() {
     tui.cmd("b");
     tui.wait_text("접힘", |s| !s.contains(" ▾ labA") && s.lines().next().is_some_and(|l| l.starts_with("1 ")));
     hw.wait("compact 옆 폭", |w| (w.pane(&first)?.cols == WIDE - COMPACT - GUTTER).then_some(()));
+    let collapsed_kept = |want: bool| {
+        let want = serde_json::json!(want);
+        wait_for("host가 남긴 접기", T, || {
+            (host_prefs(&h).settings.get("tuiSidebarCollapsed") == Some(&want)).then_some(())
+        })
+    };
+    collapsed_kept(true);
     tui.cmd("q");
     assert!(tui.wait_exit());
     drop(tui);
 
-    // 9) 새로 붙은 TUI는 좁아도(90칸) 펼친 채 시작한다(herdr는 폭으로 접지 않는다, `sidebar_start_collapsed`로 정한다).
+    // 8b) 접은 것은 host가 기억한다(herdr `sidebar_collapsed`, plan §8.186): 다시 붙으면 접힌 채, prefix b로 펴면 그것을 기억한다
+    let mut tui = Tui::start_cols(&h, &[], WIDE);
+    tui.wait_text("접힌 채 다시 붙음", |s| {
+        s.contains("list-42") && s.lines().next().is_some_and(|l| l.starts_with("1 "))
+    });
+    tui.cmd("b");
+    tui.wait_text("폄", |s| s.contains(" ▾ labA"));
+    collapsed_kept(false);
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    drop(tui);
+
+    // 9) 새로 붙은 TUI는 좁아도(90칸) 펼친 채 시작한다(herdr는 폭으로 접지 않는다, `sidebar_start_collapsed`와 기억한 값으로 정한다).
     //    좌우로 나눠 두 pane에 글을 둔 채 탐색 모드를 켜도 두 pane 글이 그대로 보인다(coordinator 실측 「w 탐색 때
     //    오른쪽 pane이 비어 보였다」 재현 시도). 접고 탐색하면 펼친 목록을 pane 위에 띄우고(pane 크기는 그대로),
     //    prefix b로 펴면 사이드바 옆 크기가 된다(포커스는 pane 그대로: 바로 입력된다)
@@ -1700,7 +1723,7 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
 }
 
 /// 마우스(herdr `mouse.rs`, 묶음 3d-1): 마우스 보고를 켜고, 탭 이름표·탭 막대 휠·` + `, 이름 창·단축키 창 밖 누르기,
-/// 사이드바 줄·`«`/`»`·경계 끌기(18~36), pane 누르기 포커스, 끌어 고르기·두 번 누름 낱말 복사, 나가면 보고를 끈다.
+/// 사이드바 줄·`«`/`»`·경계 끌기(열 + 1), pane 누르기 포커스, 끌어 고르기·두 번 누름 낱말 복사, 나가면 보고를 끈다.
 /// 복사는 사람의 clipboard 대신 `AAA_TEST_CLIPBOARD_TEXT` 파일로 본다.
 #[test]
 fn mouse_like_herdr() {
@@ -1762,7 +1785,7 @@ fn mouse_like_herdr() {
     tui.click(unfold);
     hw.wait("펼친 폭", |w| (w.pane(&two)?.cols == COLS - SIDE - GUTTER).then_some(()));
 
-    // 7) 경계(사이드바 마지막 열)를 끌면 폭 = 열 + 1, 18~36으로 묶는다(herdr)
+    // 7) 경계(사이드바 마지막 열)를 끌면 폭 = 열 + 1(herdr, 한도는 `sidebar_width_like_herdr`)
     let drag = |tui: &mut Tui, from: usize, to: usize| {
         tui.mouse(0, (10, from), false);
         tui.mouse(32, (10, to), false);
@@ -1770,9 +1793,9 @@ fn mouse_like_herdr() {
     };
     drag(&mut tui, SIDE as usize - 1, 31);
     hw.wait("32칸 사이드바", |w| (w.pane(&two)?.cols == COLS - 32 - GUTTER).then_some(()));
-    drag(&mut tui, 31, 60);
-    hw.wait("36칸에서 멈춤", |w| (w.pane(&two)?.cols == COLS - 36 - GUTTER).then_some(()));
-    drag(&mut tui, 35, SIDE as usize - 1);
+    drag(&mut tui, 31, 40);
+    hw.wait("41칸 사이드바", |w| (w.pane(&two)?.cols == COLS - 41 - GUTTER).then_some(()));
+    drag(&mut tui, 40, SIDE as usize - 1);
     hw.wait("26칸으로", |w| (w.pane(&two)?.cols == COLS - SIDE - GUTTER).then_some(()));
 
     // 8) 나눈 탭에서 pane을 누르면 그 pane에 포커스
@@ -1805,6 +1828,101 @@ fn mouse_like_herdr() {
     tui.cmd("q");
     assert!(tui.wait_exit());
     tui.wait_screen("마우스 보고 끔", |s| ![1000, 1002, 1003, 1006].iter().any(|m| s.modes.contains(m)));
+}
+
+/// 펼친 사이드바의 경계 열(`│`)로 잰 폭: 모든 줄에서 처음 나오는 `│`가 같은 열일 때(다 그린 화면)만
+fn side_width(s: &Screen) -> Option<usize> {
+    let mut cols = s.cells.iter().map(|l| l.iter().position(|c| *c == '│'));
+    let first = cols.next()??;
+    cols.all(|c| c == Some(first)).then_some(first + 1)
+}
+
+/// host 공유 설정 문서(TUI 사이드바 배치가 남는 곳, plan §8.186)
+fn host_prefs(node: &Node) -> aaa_proto::SharedPreferences {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut c = aaa_common::front::FrontClient::connect_as(&node.state, "test-prefs").await.unwrap();
+        match c.call(FrontRequest::Preferences).await.unwrap() {
+            Ok(FrontResponse::Preferences(p)) => p,
+            other => panic!("공유 설정 응답이 아니다: {other:?}"),
+        }
+    })
+}
+
+/// 사이드바 폭(사용자 10-18 「herdr만큼 크게, 더 크게도, 테마를 바꿔도 리셋되지 않게」, plan §8.186): 기본 36칸(herdr 기본은
+/// 26, 사용자가 herdr에서 쓰는 폭), 경계를 끌면 72칸까지(`[tui] sidebar_max_width` 기본). 끌어 둔 폭은 설정 창에서 테마를
+/// 바꿔도(host.toml `[tui] theme`만 쓰고 다시 읽는다) 그대로이고, host 공유 설정 `tuiSidebarWidth`에 남아 다시 붙어도 그
+/// 폭으로 시작한다(herdr는 client 기기 파일 `client-shell/*.json`). 경계를 두 번 누르면 설정 폭으로 돌아가고 남긴 값을 지운다.
+#[test]
+fn sidebar_width_like_herdr() {
+    const W: u16 = 160;
+    let mut lab = Lab::new();
+    let (h, mut hw) = start_with(&mut lab, &LOCAL_ONLY.replace("sidebar_width = 26\n", ""));
+    let one = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--label", "one", "--", "/bin/sh"]))[0].clone();
+    let host_toml = || std::fs::read_to_string(h.cfg.join("host.toml")).unwrap();
+    let tab_bg = |s: &Screen| s.bgs[0][W as usize - 1];
+    let width_kept = |want: serde_json::Value| {
+        wait_for("host가 남긴 폭", T, || {
+            (host_prefs(&h).settings.get("tuiSidebarWidth") == Some(&want)).then_some(())
+        })
+    };
+    // 보고서용 화면 텍스트(`AAA_TUI_DUMP=폴더`)
+    let dump = |name: &str, tui: &Tui| {
+        if let Ok(dir) = std::env::var("AAA_TUI_DUMP") {
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();
+        }
+    };
+    let mut tui = Tui::start_cols(&h, &[], W);
+    tui.wait_text("셸", |s| s.contains('$'));
+
+    // 1) 기본 36칸
+    tui.wait_screen("기본 36칸", |s| side_width(s) == Some(36) && s.text().contains(" ▾ labA"));
+    dump("1-default", &tui);
+    hw.wait("pane 폭", |w| (w.pane(&one)?.cols == W - 36 - GUTTER).then_some(()));
+
+    // 2) 경계를 끌어 키운다: 열 + 1, 72칸에서 멈춘다
+    let drag = |tui: &mut Tui, from: usize, to: usize| {
+        tui.mouse(0, (10, from), false);
+        tui.mouse(32, (10, to), false);
+        tui.mouse(0, (10, to), true);
+    };
+    drag(&mut tui, 35, 59);
+    tui.wait_screen("60칸", |s| side_width(s) == Some(60));
+    dump("2-dragged", &tui);
+    drag(&mut tui, 59, 150);
+    tui.wait_screen("72칸에서 멈춤", |s| side_width(s) == Some(72));
+    dump("2b-max", &tui);
+    hw.wait("pane 폭 72", |w| (w.pane(&one)?.cols == W - 72 - GUTTER).then_some(()));
+    drag(&mut tui, 71, 59);
+    tui.wait_screen("60칸으로", |s| side_width(s) == Some(60));
+    width_kept(serde_json::json!(60));
+
+    // 3) 설정 창에서 테마를 바꿔도(쓰고 다시 읽기) 폭은 그대로다. 테마를 입힌 그 화면에서 본다
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ catppuccin ✓"));
+    tui.send(b"jj\r");
+    tui.wait_screen("terminal 테마", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == 0);
+    let shown = tui.screen.0.lock().unwrap().text();
+    assert_eq!(side_width(&tui.screen.0.lock().unwrap()), Some(60), "테마를 바꿔도 끌어 둔 폭: {shown}");
+    dump("3-after-theme", &tui);
+    let saved = host_toml();
+    assert!(saved.contains("theme = \"terminal\"") && !saved.contains("sidebar_width"), "{saved}");
+
+    // 4) 나갔다 다시 붙으면 host가 기억한 폭으로
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    let mut tui = Tui::start_cols(&h, &[], W);
+    tui.wait_screen("다시 붙어도 60칸", |s| side_width(s) == Some(60));
+    dump("4-reattached", &tui);
+    hw.wait("pane 폭 60", |w| (w.pane(&one)?.cols == W - 60 - GUTTER).then_some(()));
+
+    // 5) 경계를 두 번 누르면 설정 폭(기본 36)으로, 남긴 폭은 지운다(null)
+    tui.click((10, 59));
+    tui.click((10, 59));
+    tui.wait_screen("설정 폭으로", |s| side_width(s) == Some(36));
+    width_kept(serde_json::Value::Null);
+    tui.cmd("q");
+    assert!(tui.wait_exit());
 }
 
 /// 묶음 3d-2(herdr): 마우스 보고를 켠 프로그램에는 누름·뗌·휠을 넘기고, 보고를 끈 alt 화면은 휠을 화살표로(DECCKM이면 `ESC O`),

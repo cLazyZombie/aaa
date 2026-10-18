@@ -186,6 +186,7 @@ dependencies = [
  "futures-util",
  "png",
  "ratatui",
+ "serde_json",
  "tokio",
  "unicode-segmentation",
  "unicode-width",
