@@ -2460,6 +2460,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - herdr의 800ms refresh는 aaa host에 상태만 있어 다시 보내지 않는다. 본문이 달라졌을 때만 보낸다(답한 뒤 창이 잠깐 남아도 질문을 새로 열지 않고, 다른 창이 바로 이어 뜨면 연다).
   - agent가 기억하는 사건은 칸 셋(진행 보고·세션 ID·상태)이다. 세션 ID 사건(compact·clear 뒤 SessionStart)이 상태를 덮지 않는다. agent가 다시 떠 같은 상태를 다시 감지하면 그 상태가 된 때를 그대로 보낸다.
 - **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 건다. Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
+- **Codex 중첩 thread 거르기(10-18, 차이 목록 3장 B7).** `aaa hook --agent codex`는 물려받은 `CODEX_THREAD_ID`가 있고 사건의 세션 ID(`session_id`·`thread-id`)와 다르면 보내지 않는다(`hooks.rs` `nested_codex`, herdr `integration/assets/codex/herdr-agent-state.sh`·herdr-projects `progress.rs` `hook`). 세션 ID가 없는 사건도 다르다고 본다(herdr와 같다). Claude는 SessionStart의 세션 ID로 거른다(`foreign_session`).
+  - session host는 바깥 agent 표지 `CODEX_THREAD_ID`·`OMPCODE`도 세션에 넘기지 않는다(herdr `src/pane.rs` `apply_pane_launch_env`). Codex 안에서 띄운 agent가 그 ID를 넘기면 세션 안 Codex의 사건이 모두 중첩으로 보여 버려진다.
 - **host.**
   - `session_start`·`session`은 상태를 바꾸지 않는다(처음 보는 pane만 「시작」). 옛 agent의 `turn_start`·`turn_end` 등은 그대로 받는다.
   - 입력 수신은 `working`·`question`(옛 agent는 `turn_start`)이 오면 `accepted`다.
@@ -2499,6 +2501,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
       - agent가 Notification을 질문으로 넘기면 ①이 「답한 질문이 다시 열렸다」로 실패한다. ②는 같은 막힘이라 host 규칙이 받아 3번 모두 통과했다.
       - 여기에 host 규칙까지 끄면 ②가 「늦은 짝 hook이 질문을 다시 열었다」로 2번 모두 실패한다.
       - host 규칙만 끄면 단위 시험이 실패한다. 표지를 지우지 않으면 다음 질문 단언이 실패한다.
+  - Codex 중첩 thread: e2e `nested_codex_events_do_not_replace_the_pane_session`(agent를 바깥 `CODEX_THREAD_ID`와 띄우고, shell pane이 notify 셋을 낸다: 물려받지 않은 첫 사건은 받고, 물려받은 ID와 다른 둘째는 버리고, 같은 셋째는 받는다. 단계마다 진행 보고가 실린 상태 사건의 세션 ID를 본다), 단위 `codex_events_of_nested_threads_are_not_sent`(herdr 시험의 경우들). 결함 심기: hook 쪽 거르기를 끄면 둘째에서, 표지 지우기를 빼면 첫째에서, 같은 ID도 버리면 셋째와 단위 시험에서 실패한다(되돌림 확인).
   - 실제 harness: `cargo test -p aaa --test real -- --ignored --test-threads 1`(구독 사용, CI 제외). Claude는 신뢰 창 → brief 수신 → 작업 중 → 권한 질문 → idle(15초), Codex는 brief 수신(작업 중) → 승인 질문 둘 → idle(16초)을 10-18에 확인했다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
 ### 8.111 재부팅 뒤 복원: 셸 pane·대화 이어가기(10-18, 차이 목록 4장 A, 결정 20 D12)
