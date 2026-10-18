@@ -25,8 +25,11 @@ use crate::unicode_width;
 pub struct PaneBox {
     pub pane: String,
     pub rect: Rect,
+    /// PTY 칸(테두리·scrollbar 칸 안쪽)
     pub inner: Rect,
     pub bordered: bool,
+    /// scrollbar 칸(herdr `stable_scrollbar_gutter`: 보통 화면 pane의 오른쪽 1칸)
+    pub gutter: Option<Rect>,
 }
 
 /// 탭 layout을 `area`에 놓는다(herdr `apply_pane_chrome`). `zoomed`면 그 pane 하나가 칸 전체다(`zoomed_pane_borders`).
@@ -71,7 +74,7 @@ fn pane_box(pane: String, rect: Rect, bordered: bool) -> PaneBox {
     } else {
         rect
     };
-    PaneBox { pane, rect, inner, bordered: bordered && rect.w >= 2 && rect.h >= 2 }
+    PaneBox { pane, rect, inner, bordered: bordered && rect.w >= 2 && rect.h >= 2, gutter: None }
 }
 
 /// herdr `split_rect`: 나눔 칸 없이 첫 쪽은 `round(길이 × 비율)`. 나눌 수 없으면(1칸) None(첫 쪽만 그린다).
@@ -309,7 +312,13 @@ mod tests {
         let b = layout(&one, r(26, 1, 64, 29), PaneBorders::Auto, None);
         assert_eq!(
             b,
-            vec![PaneBox { pane: "a".into(), rect: r(26, 1, 64, 29), inner: r(26, 1, 64, 29), bordered: false }]
+            vec![PaneBox {
+                pane: "a".into(),
+                rect: r(26, 1, 64, 29),
+                inner: r(26, 1, 64, 29),
+                bordered: false,
+                gutter: None
+            }]
         );
         let two = split(SplitDir::Horizontal, 500, pane("a"), pane("b"));
         let b = layout(&two, r(26, 1, 64, 29), PaneBorders::Auto, None);
@@ -323,7 +332,13 @@ mod tests {
         let b = layout(&two, r(26, 1, 64, 29), PaneBorders::Auto, Some("b"));
         assert_eq!(
             b,
-            vec![PaneBox { pane: "b".into(), rect: r(26, 1, 64, 29), inner: r(27, 2, 62, 27), bordered: true }]
+            vec![PaneBox {
+                pane: "b".into(),
+                rect: r(26, 1, 64, 29),
+                inner: r(27, 2, 62, 27),
+                bordered: true,
+                gutter: None
+            }]
         );
         // always는 하나여도, off는 이웃 쪽으로 빈 칸 하나(선 없음)
         assert!(layout(&one, r(0, 0, 10, 5), PaneBorders::Always, None)[0].bordered);

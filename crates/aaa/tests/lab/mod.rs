@@ -44,6 +44,11 @@ impl Node {
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
         #[cfg(unix)]
         c.env("SHELL", "/bin/sh");
+        // 그 셸은 login으로 떠(portable-pty `new_default_prog`) 기계 rc를 읽는다: macOS `/etc/profile` → `/etc/bashrc`가 prompt를
+        // `\h:\W \u\$ `로 정해, runner의 긴 hostname이 좁은 pane에서 접혔다(GitHub macOS `pane_modes_like_herdr`). sh는 rc 뒤에
+        // `$ENV` 파일을 읽으므로 거기서 `$ `로 정한다(`Lab::node`가 쓴다). `/etc/bashrc_$TERM_PROGRAM`도 돌지 않게 뺀다
+        #[cfg(unix)]
+        c.env("ENV", self.cfg.join("shrc")).env_remove("TERM_PROGRAM");
         c
     }
 
@@ -188,6 +193,9 @@ impl Lab {
         let node = Node { cfg: dir.join("c"), state: dir.join("s") };
         std::fs::create_dir_all(&node.cfg).unwrap();
         std::fs::create_dir_all(&node.state).unwrap();
+        // 시험 셸 prompt(`Node::cmd`의 `ENV`): 기계 hostname·rc와 상관없이 같다
+        #[cfg(unix)]
+        std::fs::write(node.cfg.join("shrc"), "PS1='$ '\n").unwrap();
         if let Some(t) = host_toml {
             std::fs::write(node.cfg.join("host.toml"), t).unwrap();
         }
