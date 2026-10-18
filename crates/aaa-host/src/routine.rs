@@ -360,7 +360,7 @@ impl Host {
         sha: &str,
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
-        // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.116)
+        // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.154)
         if crate::front::in_session(actor) {
             return Err(err(
                 ErrorCode::Forbidden,

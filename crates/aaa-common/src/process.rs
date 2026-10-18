@@ -1,5 +1,5 @@
 //! 같은 머신의 다른 프로세스: 부모·세션·제어 터미널. front 연결이 어느 aaa pane 안에서 왔는지 host가 env 자기 신고 대신
-//! 판정할 때 쓴다(plan §8.116).
+//! 판정할 때 쓴다(plan §8.154).
 //!
 //! - macOS `proc_pidinfo(PROC_PIDTBSDINFO)`의 `pbi_ppid`·`e_tdev`, Linux `/proc/<pid>/stat`의 ppid·tty_nr, Windows Toolhelp
 //!   snapshot의 부모(세션·제어 터미널은 없다). herdr 0.9.5 `src/platform/{macos,linux,windows}.rs`가 agent 감지에 읽는 것과

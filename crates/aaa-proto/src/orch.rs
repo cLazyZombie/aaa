@@ -93,7 +93,7 @@ pub struct ThreadPrepare {
     pub base: Option<String>,
     pub profile: String,
     pub brief: String,
-    /// thread를 띄울 때 safety(plan §8.115). `launch_safety.v1`을 알린 agent에만 보낸다
+    /// thread를 띄울 때 safety(plan §8.153). `launch_safety.v1`을 알린 agent에만 보낸다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<LaunchSafety>,
 }
@@ -336,7 +336,7 @@ pub struct ProjectView {
     pub name: String,
     pub path: String,
     pub threads: u32,
-    /// FRONT_API 1.21. 옛 host는 보내지 않는다(active)
+    /// FRONT_API 1.29. 옛 host는 보내지 않는다(active)
     #[serde(default)]
     #[ts(optional, as = "Option<ProjectStatus>")]
     pub status: ProjectStatus,
@@ -499,7 +499,7 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<String>>", optional)]
     pub warnings: Vec<String>,
-    /// 그 프로젝트의 상태(FRONT_API 1.21, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+    /// 그 프로젝트의 상태(FRONT_API 1.29, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
     /// 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
     #[serde(default, skip_serializing_if = "ProjectStatus::is_active")]
     #[ts(as = "Option<ProjectStatus>", optional)]

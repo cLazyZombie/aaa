@@ -424,7 +424,7 @@ impl Host {
     }
 
     /// 프로젝트 폴더를 만든다(herdr-projects `new`). PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
-    /// goal·저장소·profile은 준 것만 project.toml에 적는다(안 준 profile은 쓸 때 기본 사슬로 푼다, plan §8.117).
+    /// goal·저장소·profile은 준 것만 project.toml에 적는다(안 준 profile은 쓸 때 기본 사슬로 푼다, plan §8.155).
     pub(crate) fn project_create(
         &self,
         name: &str,
@@ -435,7 +435,7 @@ impl Host {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
         }
         if name == aaa_config::safety::DEFAULT_TABLE {
-            // host.toml `[safety.default]`는 모든 프로젝트 표다(plan §8.115)
+            // host.toml `[safety.default]`는 모든 프로젝트 표다(plan §8.153)
             return Err(bad("`default`는 safety의 모든 프로젝트 표 이름이라 프로젝트 이름으로 쓰지 않는다"));
         }
         let dir = self.projects_root().join(name);
@@ -731,7 +731,7 @@ impl Host {
         ))
     }
 
-    /// thread를 띄울 때 agent에 보낼 safety(plan §8.115). 그 머신 agent가 `launch_safety.v1`을 모르면 보내지 않는데, yolo나
+    /// thread를 띄울 때 agent에 보낼 safety(plan §8.153). 그 머신 agent가 `launch_safety.v1`을 모르면 보내지 않는데, yolo나
     /// `thread_agent_args`가 있으면 조용히 빼지 않고 거부한다(사람이 켠 것이 빠진 채 뜨지 않게).
     pub(crate) fn launch_safety(&self, project: &str, mid: &str) -> Result<Option<aaa_proto::LaunchSafety>, ErrorBody> {
         let s = self.safety(project);
