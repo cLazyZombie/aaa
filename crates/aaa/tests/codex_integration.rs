@@ -226,8 +226,8 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         util,
     };
     use aaa_proto::{
-        AgentResponse, FrontEvent, FrontMsg, FrontRequest, MAX_FRAME, Outcome, Role, SessionInfo, SessionMsg,
-        SessionRequest, SessionState, SpawnSpec, Version,
+        AgentActivity, AgentResponse, FrontEvent, FrontMsg, FrontRequest, MAX_FRAME, Outcome, Role, SessionInfo,
+        SessionMsg, SessionRequest, SessionState, SpawnSpec, Version,
     };
     use aaa_session::files::{SessionPaths, SpecFile};
     use std::time::Duration;
@@ -270,7 +270,8 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             argv: vec!["codex".into()],
             cwd: None,
             pid: Some(pid),
-            started_at_ms: util::now_ms(),
+            // 화면 감지가 이미 시작할 수 있는 세션이다. 실제 감지 사건을 기다려 순서를 고정한다.
+            started_at_ms: util::now_ms().saturating_sub(aaa_agent::detect::STARTUP_GRACE.as_millis() as u64),
             boot_id: util::boot_id(),
             cols: 80,
             rows: 24,
@@ -322,22 +323,51 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         Duration::from_secs(1),
     ));
     let mut front = FrontClient::connect_as(&h.0, "hook-test").await.unwrap();
-    async fn state(front: &mut FrontClient, test: impl Fn(&aaa_proto::PaneView) -> bool) -> aaa_proto::PaneView {
+    async fn state(
+        front: &mut FrontClient,
+        sid: &str,
+        test: impl Fn(&aaa_proto::PaneView) -> bool,
+    ) -> aaa_proto::PaneView {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let Some(FrontMsg::Event(FrontEvent::State { panes, .. })) = front.next().await.unwrap()
-                    && let Some(p) = panes.into_iter().find(|p| p.id == "s1" && test(p))
-                {
+                let response = front.call(FrontRequest::Panes { role: None }).await.unwrap().unwrap();
+                let aaa_proto::FrontResponse::Panes { panes } = response else { panic!("pane 목록") };
+                if let Some(p) = panes.into_iter().find(|p| p.id == sid && test(p)) {
                     return p;
+                }
+                // 모아 둔 옛 State로 통과하지 않는다. 사건이 오면 현재 상태를 다시 읽는다.
+                loop {
+                    let msg = front.next().await.unwrap().expect("host가 사건 연결을 닫았다");
+                    if matches!(msg, FrontMsg::Event(FrontEvent::State { .. })) {
+                        break;
+                    }
                 }
             }
         })
         .await
         .expect("host 상태 사건")
     }
-    state(&mut front, |_| true).await;
-    // 실제 agent 요청·답의 울타리: link Welcome을 처리하고 hook을 보낼 준비가 됐다.
-    assert!(front.call(FrontRequest::PaneRead { pane: "s1".into() }).await.unwrap().is_ok());
+    async fn after_hook(front: &mut FrontClient) -> Vec<aaa_proto::PaneView> {
+        // hook이 보낸 사건 뒤에 같은 agent link로 답을 받는다. 거부의 무변화도 이 울타리 뒤에 검사한다.
+        assert!(front.call(FrontRequest::PaneRead { pane: "s1".into() }).await.unwrap().is_ok());
+        let response = front.call(FrontRequest::Panes { role: None }).await.unwrap().unwrap();
+        let aaa_proto::FrontResponse::Panes { panes } = response else { panic!("pane 목록") };
+        panes
+    }
+    state(&mut front, "s1", |_| true).await;
+    // hook을 보내기 전에 실제 화면 감지의 Idle을 확인한다. Windows shell 시작 시간과 무관하다.
+    for sid in ["s1", "s2"] {
+        let p = state(&mut front, sid, |p| p.agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Idle)).await;
+        assert!(p.agent.as_ref().unwrap().harness_session.is_none());
+    }
+    let before_rejections = after_hook(&mut front).await;
+    let unchanged = |panes: &[aaa_proto::PaneView]| {
+        for sid in ["s1", "s2"] {
+            let before = before_rejections.iter().find(|p| p.id == sid).unwrap();
+            let after = panes.iter().find(|p| p.id == sid).unwrap();
+            assert_eq!(after.agent, before.agent, "{sid}: 거부한 hook이 상태를 바꿨다");
+        }
+    };
     let invoke = |sid: &str, token: &str, inherited: Option<&str>, args: Vec<String>| {
         let payload = if args.first().is_some_and(|a| a == "hook") { Some(args[3].clone()) } else { None };
         let mut c = if payload.is_some() {
@@ -384,10 +414,24 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     let silent = |o: Output| {
         assert!(o.status.success() && o.stdout.is_empty() && o.stderr.is_empty(), "{o:?}");
     };
-    for (sid, key, inherited) in
-        [("s1", "forged", None), ("s2", token.as_str(), None), ("s1", token.as_str(), Some("parent-thread"))]
-    {
-        silent(invoke(sid, key, inherited, event("SessionStart", "startup")).await);
+    let notify = || {
+        vec![
+            "hook".into(),
+            "--agent".into(),
+            "codex".into(),
+            json!({"type":"agent-turn-complete","thread-id":id}).to_string(),
+        ]
+    };
+    // notify는 안내 출력이 원래 없다. guard가 사라져 조용히 host만 바꾸는 결함도 잡는다.
+    for (sid, key, inherited, payload) in [
+        ("s1", "forged", None, notify()),
+        ("s2", token.as_str(), None, notify()),
+        ("s1", "forged", None, event("SessionStart", "startup")),
+        ("s2", token.as_str(), None, event("SessionStart", "startup")),
+        ("s1", token.as_str(), Some("parent-thread"), event("SessionStart", "startup")),
+    ] {
+        silent(invoke(sid, key, inherited, payload).await);
+        unchanged(&after_hook(&mut front).await);
     }
     let spec_path = SessionPaths::new(&a.state, "s1").spec();
     let saved: SpecFile = util::read_json(&spec_path).unwrap();
@@ -395,6 +439,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     other_harness.spec.harness = Some("claude".into());
     util::write_json(&spec_path, &other_harness).unwrap();
     silent(invoke("s1", &token, Some(id), event("SessionStart", "startup")).await);
+    unchanged(&after_hook(&mut front).await);
     // 배포 전 notify 명령은 harness를 선언하지 않은 aaa 셸에서도 실행됐다. 호환 사건은 token·peer 뒤 받는다.
     let legacy_id = "0a0a0a0a-0000-4000-8000-00000000000a";
     let legacy = vec![
@@ -404,7 +449,9 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         json!({"type":"agent-turn-complete","thread-id":legacy_id}).to_string(),
     ];
     silent(invoke("s1", &token, None, legacy).await);
-    state(&mut front, |p| p.agent.as_ref().is_some_and(|s| s.harness_session.as_deref() == Some(legacy_id))).await;
+    state(&mut front, "s1", |p| p.agent.as_ref().is_some_and(|s| s.harness_session.as_deref() == Some(legacy_id)))
+        .await;
+    let before_subagent = after_hook(&mut front).await;
     util::write_json(&spec_path, &saved).unwrap();
     let subagent = vec![
         "hook".into(),
@@ -414,17 +461,32 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             .to_string(),
     ];
     silent(invoke("s1", &token, Some(id), subagent).await);
+    let after_subagent = after_hook(&mut front).await;
+    for sid in ["s1", "s2"] {
+        assert_eq!(
+            after_subagent.iter().find(|p| p.id == sid).unwrap().agent,
+            before_subagent.iter().find(|p| p.id == sid).unwrap().agent,
+            "{sid}: 하위 agent 사건이 상태를 바꿨다"
+        );
+    }
+    let guidance = |o: Output, name: &str| {
+        assert!(o.status.success() && o.stderr.is_empty(), "{o:?}");
+        let v: Value = serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{name}: {e}; {o:?}"));
+        assert_eq!(v["hookSpecificOutput"]["hookEventName"], name, "{v}");
+        v["hookSpecificOutput"]["additionalContext"].as_str().unwrap().to_string()
+    };
     let start = invoke("s1", &token, Some(id), event("SessionStart", "startup")).await;
-    assert!(start.status.success() && start.stderr.is_empty(), "{start:?}");
-    let v: Value = serde_json::from_slice(&start.stdout).unwrap();
-    let guidance = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
-    assert!(guidance.contains("report --percent 25") && guidance.contains("진행 보고"), "{v}");
-    let p = state(&mut front, |p| p.agent.as_ref().is_some_and(|s| s.harness_session.as_deref() == Some(id))).await;
+    let text = guidance(start, "SessionStart");
+    assert!(text.contains("report --percent 25") && text.contains("진행 보고"), "{text}");
+    let p =
+        state(&mut front, "s1", |p| p.agent.as_ref().is_some_and(|s| s.harness_session.as_deref() == Some(id))).await;
     assert_eq!(p.agent.unwrap().harness, "codex");
-    // 인증 거부 사건은 뒤따르는 정상 SessionStart보다 먼저 같은 link에 있어야 한다. s2는 상태가 생기지 않는다.
-    let panes = front.call(FrontRequest::Panes { role: None }).await.unwrap().unwrap();
-    let aaa_proto::FrontResponse::Panes { panes } = panes else { panic!("pane 목록") };
-    assert!(panes.iter().find(|p| p.id == "s2").unwrap().agent.is_none());
+    // 정상 s1 hook도 s2의 기존 감지 상태를 바꾸지 않는다.
+    let panes = after_hook(&mut front).await;
+    assert_eq!(
+        panes.iter().find(|p| p.id == "s2").unwrap().agent,
+        before_rejections.iter().find(|p| p.id == "s2").unwrap().agent
+    );
     silent(
         invoke(
             "s1",
@@ -434,13 +496,16 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         )
         .await,
     );
-    state(&mut front, |p| p.agent.as_ref().is_some_and(|s| s.progress.as_deref() == Some("Waiting for you"))).await;
+    state(&mut front, "s1", |p| p.agent.as_ref().is_some_and(|s| s.progress.as_deref() == Some("Waiting for you")))
+        .await;
     let prompt = invoke("s1", &token, Some(id), event("UserPromptSubmit", "")).await;
-    assert!(String::from_utf8_lossy(&prompt.stdout).contains("Waiting for you"), "{prompt:?}");
-    state(&mut front, |p| p.agent.as_ref().is_some_and(|s| s.progress.is_none())).await;
+    let text = guidance(prompt, "UserPromptSubmit");
+    assert!(text.contains("Waiting for you") && text.contains("새 일을"), "{text}");
+    state(&mut front, "s1", |p| p.agent.as_ref().is_some_and(|s| s.progress.is_none())).await;
     // 압축도 참고의 SessionStart로만 처리한다. 새 진행 안내를 돌려준다.
     let compact = invoke("s1", &token, Some(id), event("SessionStart", "compact")).await;
-    assert!(String::from_utf8_lossy(&compact.stdout).contains("report --percent 25"), "{compact:?}");
+    let text = guidance(compact, "SessionStart");
+    assert!(text.contains("report --percent 25") && text.contains("진행 보고"), "{text}");
     silent(invoke("s1", &token, Some(id), event("PostToolUse", "")).await);
     silent(invoke("s1", &token, Some(id), event("Stop", "")).await);
     silent(
@@ -452,7 +517,10 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         )
         .await,
     );
-    state(&mut front, |p| p.agent.as_ref().is_some_and(|s| s.percent == Some(65))).await;
+    state(&mut front, "s1", |p| {
+        p.agent.as_ref().is_some_and(|s| s.percent == Some(65) && s.progress.as_deref() == Some("검증 완료"))
+    })
+    .await;
     link.abort();
     for fake in fakes {
         fake.abort();
