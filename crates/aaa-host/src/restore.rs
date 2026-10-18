@@ -9,7 +9,7 @@
 //!   낱말이 claude·codex)은 원래 argv에서 대화 인자만 바꿔 띄운다(`resume_in_place`). aaa pane은 셸 아래가 아닐 수 있다.
 //! - **thread pane**: `aaa thread restart --resume`과 같은 길(저장한 대화를 잇고 brief 안내는 없다). 못 하면 흐름 사건
 //!   `restore_failed`와 inbox `session` 항목을 남긴다.
-//! - **그 밖의 프로그램 pane**은 그대로 둔다(`aaa pane resume`으로 다시 띄운다). 명령을 다시 실행하지 않는다: 배포 같은
+//! - **그 밖의 프로그램 pane**은 그대로 둔다(`aaa pane resume`으로 다시 띄운다, 까닭은 `restore_error`에 남겨 목록·열린 화면이 「다시 열기」와 함께 보인다, QA Q22). 명령을 다시 실행하지 않는다: 배포 같은
 //!   명령이 재부팅마다 다시 돌면 안 된다. herdr pane은 늘 셸이라 이 경우가 없다.
 //! - `[session] resume_agents_on_restore`(기본 켬, herdr와 같다. 결정 8-5 「꺼짐」을 결정 20 D12가 바꿨다)가 꺼지면
 //!   이어가기만 하지 않는다: 셸은 되살리고 그 안의 agent는 잇지 않으며, harness pane과 thread는 중단으로 둔다.
@@ -205,6 +205,13 @@ impl Host {
             .filter(|k| !resumed.contains(k));
         if let Some(rec) = self.thread_of_pane(id).filter(|r| r.status == ThreadStatus::Open) {
             if !resume_agents {
+                self.leave_stopped(
+                    id,
+                    &format!(
+                        "재부팅 뒤 이어가기를 꺼 두어 다시 띄우지 않았다(host.toml [session] resume_agents_on_restore). `aaa thread restart {} {}`가 띄운다",
+                        rec.project, rec.id
+                    ),
+                );
                 return false;
             }
             // brief를 받기 전이었으면 이을 대화가 없다: 새로 띄우고 brief를 다시 보낸다(`thread restart`와 같다).
@@ -264,7 +271,19 @@ impl Host {
         let (argv, typed) = match (&plan, shell) {
             (_, true) => (info.argv.clone(), plan.clone()),
             (Some(p), false) => (p.clone(), None),
-            (None, false) => return false,
+            (None, false) => {
+                // 일부러 남긴 pane도 까닭을 보인다(QA Q22): 목록·열린 화면이 「다시 열기」와 함께 보인다
+                let harness = agent.is_some() || matches!(program(&info.argv).as_deref(), Some("claude" | "codex"));
+                let why = if harness && !resume_agents {
+                    "재부팅 뒤 이어가기를 꺼 두어 다시 띄우지 않았다(host.toml [session] resume_agents_on_restore). 다시 열면 같은 명령으로 띄운다"
+                } else if harness {
+                    "이을 대화 ID를 몰라 다시 띄우지 않았다. 다시 열면 같은 명령으로 새 대화를 띄운다"
+                } else {
+                    "재부팅 뒤 다시 실행하지 않았다(배포 같은 명령이 재부팅마다 다시 돌지 않게). 다시 열면 같은 명령으로 띄운다"
+                };
+                self.leave_stopped(id, why);
+                return false;
+            }
         };
         let spec = SpawnSpec {
             name: crate::respawn_name(&info),
@@ -303,12 +322,22 @@ impl Host {
     }
 
     fn set_restore_error(&self, id: &str, why: &str) {
+        self.note_restore(id, why);
+        tracing::warn!(pane = %id, "{why}");
+    }
+
+    /// 일부러 다시 띄우지 않은 pane(실패가 아니다): 까닭은 같은 자리(`restore_error`)에 둔다
+    fn leave_stopped(&self, id: &str, why: &str) {
+        self.note_restore(id, why);
+        tracing::info!(pane = %id, "{why}");
+    }
+
+    fn note_restore(&self, id: &str, why: &str) {
         if let Some(p) = self.inner.lock().unwrap().panes.get_mut(id) {
             p.restore_error = Some(why.to_string());
             let _ = p.events.send(crate::PaneEvent::State);
         }
         self.bump();
-        tracing::warn!(pane = %id, "{why}");
     }
 }
 

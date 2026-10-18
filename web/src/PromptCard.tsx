@@ -1,4 +1,4 @@
-// 화면 선택 창 카드(차이 목록 2장 Q2, plan §8.164). herdr-web-ui `src/components/PromptCard.tsx`(aa624cb)의 그리기를 옮겼다:
+// 화면 선택 창 카드(차이 목록 2장 Q2, plan §8.169). herdr-web-ui `src/components/PromptCard.tsx`(aa624cb)의 그리기를 옮겼다:
 // 선택지 번호 keycap(보이기만, 키는 터미널 그대로), 선택지 설명, 「(Recommended)」는 떼고 「추천」 표시, 여러 개 고르기는 체크와
 // 「보내기 (n)」, 직접 쓰기 칸(IME의 Enter는 조합 확정). 문구는 참고 i18n.ko.ts.
 // aaa가 다른 곳: 답은 host가 화면을 다시 읽어 같은 창일 때만 보낸다(참고와 같다). 바뀌었으면 host가 질문의 창을 새로 붙이고

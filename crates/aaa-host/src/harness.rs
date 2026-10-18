@@ -485,6 +485,7 @@ impl Host {
             self.save_question(&q);
             return Err(e);
         }
+        self.refuse_trust_screen(&q, &mid, &pid, actor).await?;
         // hook 사건이 화면보다 먼저 올 수 있다: 선택 창이 그려지기를 잠깐 기다린다
         let until = Instant::now() + MENU_WAIT;
         let keys = loop {
@@ -510,7 +511,28 @@ impl Host {
         Ok(q)
     }
 
-    /// 열린 질문에 화면 선택 창을 붙인다(plan §8.164). hook 사건이 화면보다 먼저 올 수 있어 `MENU_WAIT`까지 다시 본다.
+    /// `trust_screens = user`: aaa 세션 안 CLI(coordinator)는 thread pane의 신뢰 창에 답하지 않는다(`thread keys`와 같다).
+    /// 사람은 터미널·웹에서 답한다. 예·아니오 답과 화면 선택 창 답이 같은 문을 지난다
+    async fn refuse_trust_screen(&self, q: &QuestionView, mid: &str, pid: &str, actor: &str) -> Result<(), ErrorBody> {
+        if crate::front::in_session(actor)
+            && let Some(r) = self.thread_of_pane(&q.pane)
+            && self.trust_screens(&r.project) == crate::trust_screen::USER
+        {
+            let kind = r.launch.as_ref().map(|l| l.harness.clone()).unwrap_or_default();
+            let screen = self.screen(mid, pid).await.ok_or_else(|| {
+                err(ErrorCode::Unavailable, format!("{}의 pane 화면을 읽지 못해 답하지 않는다", r.id))
+            })?;
+            if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    crate::trust_screen::refusal(&r.project, &r.id, pid, phrase, true),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 열린 질문에 화면 선택 창을 붙인다(plan §8.169). hook 사건이 화면보다 먼저 올 수 있어 `MENU_WAIT`까지 다시 본다.
     /// 못 읽으면(모르는 창) 그대로 두고 예·아니오로 답한다
     fn read_menu(self: &Arc<Self>, id: String, pane: String) {
         let h = self.clone();
@@ -567,6 +589,7 @@ impl Host {
             self.save_question(&q);
             return Err(e);
         }
+        self.refuse_trust_screen(&q, &mid, &pid, actor).await?;
         let changed = || err(ErrorCode::BadRequest, "화면의 질문이 바뀌었다. 새 질문을 보고 다시 고른다");
         let shown = crate::prompt::parse(&self.screen_lines(&mid, &pid).await.unwrap_or_default());
         let Some(p) = shown.filter(|p| p.menu.id == menu_id) else {

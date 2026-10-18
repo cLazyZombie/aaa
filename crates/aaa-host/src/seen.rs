@@ -15,6 +15,17 @@ use aaa_proto::AgentActivity;
 
 use crate::{FrontRef, Host, PaneEvent};
 
+/// 흐름 사건·판정 근거에 적는 기기 이름. 기기 ID는 ULID(앞 10자 시각 + 뒤 16자 무작위)라 앞 7자는 33초쯤 안에 짝지은
+/// 기기끼리 같다(10-18 실기: 휴대폰과 PC가 한 이름). 무작위 끝 7자를 쓴다(harness `short_id`도 무작위 쪽, plan §8.166).
+/// ULID가 아닌 ID(옛 기록·시험)는 앞 7자
+pub(crate) fn device_short(id: &str) -> String {
+    if id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        id[19..].to_string()
+    } else {
+        id.chars().take(7).collect()
+    }
+}
+
 /// 웹 화면들: 기기마다 쓰는 events 연결 수, 열린 pane 터미널 연결(front → 기기·pane), 쓰는 기기
 #[derive(Default)]
 pub(crate) struct Viewing {
@@ -49,9 +60,9 @@ pub(crate) struct ConnRec {
 }
 
 impl Viewing {
-    /// 쓰는 기기(앞 7자)
+    /// 쓰는 기기(짧은 이름, `device_short`)
     pub(crate) fn user(&self) -> Option<String> {
-        self.user.as_ref().map(|d| d.chars().take(7).collect())
+        self.user.as_deref().map(device_short)
     }
 
     /// 쓰는 기기가 지금 쓰는 화면(보이고 focus)이다: 그때만 Web Push를 건너뛴다
@@ -63,10 +74,9 @@ impl Viewing {
         self.user.as_deref() == Some(dev)
     }
 
-    /// 지금 쓰는 화면이 있는 기기(앞 7자, 정렬). push를 보내지 않은 까닭을 흐름 사건에 남길 때 쓴다
+    /// 지금 쓰는 화면이 있는 기기(짧은 이름, 정렬). push를 보내지 않은 까닭을 흐름 사건에 남길 때 쓴다
     pub(crate) fn devices_in_use(&self) -> Vec<String> {
-        let mut v: Vec<String> =
-            self.active.iter().filter(|(_, n)| **n > 0).map(|(d, _)| d.chars().take(7).collect()).collect();
+        let mut v: Vec<String> = self.active.iter().filter(|(_, n)| **n > 0).map(|(d, _)| device_short(d)).collect();
         v.sort();
         v
     }
@@ -76,7 +86,6 @@ impl Viewing {
     pub(crate) fn basis(&self, now: u64) -> String {
         let ago =
             |at: u64| if at == 0 { "없음".to_string() } else { format!("{}초 전", now.saturating_sub(at) / 1000) };
-        let short = |d: &str| d.chars().take(7).collect::<String>();
         let Some(user) = self.user.as_deref() else {
             return format!(
                 "쓰는 기기 없음 · 연결 {}개(쓰는 중 {})",
@@ -86,7 +95,7 @@ impl Viewing {
         };
         let mut mine: Vec<(&u64, &ConnRec)> = self.conns.iter().filter(|(_, c)| c.dev == user).collect();
         mine.sort_by_key(|(id, _)| **id);
-        let mut out = format!("쓰는 기기 {}({} {})", short(user), self.user_at.1, ago(self.user_at.0));
+        let mut out = format!("쓰는 기기 {}({} {})", device_short(user), self.user_at.1, ago(self.user_at.0));
         if mine.is_empty() {
             out.push_str(" · 그 기기 연결 없음");
         }
@@ -103,7 +112,7 @@ impl Viewing {
             ));
         }
         let others: Vec<&ConnRec> = self.conns.values().filter(|c| c.dev != user).collect();
-        let mut busy: Vec<String> = others.iter().filter(|c| c.active).map(|c| short(&c.dev)).collect();
+        let mut busy: Vec<String> = others.iter().filter(|c| c.active).map(|c| device_short(&c.dev)).collect();
         busy.sort();
         busy.dedup();
         out.push_str(&format!(
@@ -216,7 +225,7 @@ impl Host {
         let build = self.viewing.lock().unwrap().conns.get(&conn).and_then(|c| c.build.clone());
         let detail = format!(
             "기기 {} · {} · {} · {} · 웹 {}",
-            dev.chars().take(7).collect::<String>(),
+            device_short(dev),
             clip(kind, 16),
             clip(target, 120),
             clip(outcome, 120),
@@ -327,6 +336,14 @@ mod tests {
         v.active.remove("phone");
         assert!(!v.user_in_use());
         assert_eq!(v.user().as_deref(), Some("phone"));
+    }
+
+    /// 같은 33초 안에 짝지은 두 기기도 이름이 다르다: 앞 시각이 아니라 뒤 무작위 7자
+    #[test]
+    fn device_short_is_the_random_tail() {
+        assert_eq!(device_short("01KPX3V9ZQ8M2C4D6F7GHJK0NP"), "GHJK0NP");
+        assert_ne!(device_short("01KPX3V9ZQAAAAAAAAAAAAAAAA"), device_short("01KPX3V9ZQBBBBBBBBBBBBBBBB"));
+        assert_eq!(device_short("phone-1234"), "phone-1");
     }
 
     #[test]

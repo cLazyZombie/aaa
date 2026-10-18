@@ -7,7 +7,9 @@ pub mod orch;
 pub mod usage;
 pub mod version;
 
-pub use frame::{Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, write_frame};
+pub use frame::{
+    Frame, FrameError, FrameKind, MAX_FRAME, MAX_FRAME_PREAUTH, TerminalChunk, read_frame, take_frame, write_frame,
+};
 pub use msg::*;
 pub use orch::*;
 pub use usage::*;

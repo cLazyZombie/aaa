@@ -188,14 +188,19 @@ pub fn run(json: bool, cmd: MigrateCmd) -> Result<ExitCode> {
             shadow::write(&out, &rows, &bad)?;
             let judged = rows.iter().filter(|r| r.agree.is_some()).count();
             let differ = rows.iter().filter(|r| r.agree == Some(false)).count();
+            // G4가 세는 것: 까닭을 정하지 못한 차이
+            let unclassified = rows
+                .iter()
+                .filter(|r| r.agree == Some(false) && r.reason.as_deref() == Some(shadow::UNCLASSIFIED))
+                .count();
             if json {
                 println!(
                     "{}",
-                    serde_json::json!({ "rows": rows.len(), "judged": judged, "differ": differ, "bad_ticks": bad.len() })
+                    serde_json::json!({ "rows": rows.len(), "judged": judged, "differ": differ, "unclassified": unclassified, "bad_ticks": bad.len() })
                 );
             } else {
                 println!(
-                    "shadow: 줄 {}개 · 판정 {judged} · 다름 {differ} · 읽지 못한 tick {} → {}",
+                    "shadow: 줄 {}개 · 판정 {judged} · 다름 {differ}(분류 안 됨 {unclassified}) · 읽지 못한 tick {} → {}",
                     rows.len(),
                     bad.len(),
                     out.join("shadow.md").display()

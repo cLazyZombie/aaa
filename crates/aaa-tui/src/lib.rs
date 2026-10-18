@@ -847,23 +847,29 @@ impl App {
         let current = self.ws.tabs.get(self.tab).map(|t| t.id.clone());
         let before = self.current_leaves();
         self.ws = w;
-        match current.map(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
-            Some(Some(i)) => self.tab = i,
+        let same_tab = current.as_ref().and_then(|id| self.ws.tabs.iter().position(|t| &t.id == id));
+        match (current.is_some(), same_tab) {
+            (_, Some(i)) => self.tab = i,
             // 보던 탭이 없어졌다(닫기·마지막 pane이 끝남): 그 앞 탭(herdr `Workspace::close_tab`·`remove_pane`)
-            Some(None) => self.tab = self.tab.saturating_sub(1),
-            None => {}
+            (true, None) => self.tab = self.tab.saturating_sub(1),
+            (false, None) => {}
         }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
-            // 보던 pane이 빠졌다: 차례상 다음 pane, 없으면 앞 pane(herdr `TileLayout::close_focused`)
             let at = self.focus.as_ref().and_then(|f| before.iter().position(|p| p == f));
-            let near = at.and_then(|i| {
-                before[i + 1..].iter().chain(before[..i].iter().rev()).find(|p| leaves.contains(p)).cloned()
-            });
-            self.focus = near.or_else(|| leaves.first().cloned());
+            // `pane resume`·재부팅 복원은 같은 자리의 leaf만 새 pane으로 바꾼다(모양 그대로): 그 자리의 새 pane을 따라간다(QA Q19)
+            let same_place =
+                at.filter(|_| same_tab.is_some() && leaves.len() == before.len()).and_then(|i| leaves.get(i).cloned());
+            // 보던 pane이 빠졌다: 차례상 다음 pane, 없으면 앞 pane(herdr `TileLayout::close_focused`)
+            let near = || {
+                at.and_then(|i| {
+                    before[i + 1..].iter().chain(before[..i].iter().rev()).find(|p| leaves.contains(p)).cloned()
+                })
+            };
+            self.focus = same_place.or_else(near).or_else(|| leaves.first().cloned());
         }
     }
 
@@ -2249,13 +2255,30 @@ fn badge(
         }
         (SessionState::Running, _) => return None,
         // herdr에는 재개 키가 없다(복원 때 자동). 자동으로 되살리지 않는 pane(프로그램 pane·복원 실패)은 CLI로 다시 띄운다.
-        // 복원 실패 까닭은 herdr-web-ui `RestoreErrorBadge`처럼 함께 보인다
-        (SessionState::Interrupted, _) | (SessionState::Lost, _) => format!(
-            " {}{} — aaa pane resume {} ",
-            if p.state == SessionState::Lost { "유실" } else { "중단(재부팅)" },
-            p.restore_error.as_deref().map(|e| format!(": {e}")).unwrap_or_default(),
-            p.id.chars().take(8).collect::<String>()
-        ),
+        // 복원 실패 까닭은 herdr-web-ui `RestoreErrorBadge`처럼 함께 보인다. 할 일(명령)을 앞에 두고, 긴 까닭은 pane 폭의
+        // 2/3까지만 써서 줄인다(첫 줄 글을 덮지 않고, 잘려도 명령은 보이게)
+        (SessionState::Interrupted, _) | (SessionState::Lost, _) => {
+            let head = format!(
+                " {} — aaa pane resume {} ",
+                if p.state == SessionState::Lost { "유실" } else { "중단(재부팅)" },
+                p.id.chars().take(8).collect::<String>()
+            );
+            match p.restore_error.as_deref() {
+                None => head,
+                Some(why) => {
+                    let room = (r.w as usize * 2 / 3).saturating_sub(unicode_width(&head) + 2);
+                    let mut short = String::new();
+                    for c in why.chars() {
+                        if unicode_width(&short) + unicode_width(&c.to_string()) + 1 > room {
+                            short.push('…');
+                            break;
+                        }
+                        short.push(c);
+                    }
+                    if room == 0 { head } else { format!("{head}· {short} ") }
+                }
+            }
+        }
         (SessionState::Exited { code }, _) => format!(" 종료({}) ", code.map(|c| c.to_string()).unwrap_or("?".into())),
     };
     let w = unicode_width(&text).min(r.w as usize) as u16;
@@ -2358,6 +2381,55 @@ mod tests {
         assert_eq!(app.command_key(Combo::plain('ㅆ')), Combo::shift('t'));
     }
 
+    /// 중단 표시: 다시 띄우는 명령이 앞이고, 긴 복원 까닭은 pane 폭 2/3 안에서 줄인다(첫 줄 글을 덮지 않는다)
+    #[test]
+    fn interrupted_badge_keeps_the_command_and_the_first_line() {
+        let mut p = pane_view("abcdef1234", "m1", "job");
+        p.state = SessionState::Interrupted;
+        p.restore_error = Some("재부팅 뒤 다시 실행하지 않았다(배포 같은 명령이 재부팅마다 다시 돌지 않게). 다시 열면 같은 명령으로 띄운다".into());
+        let row = |p: &PaneView, w: u16| {
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
+            badge(&mut buf, Some(p), r(0, 0, w, 1), true, &theme::Palette::catppuccin());
+            let (mut line, mut x) = (String::new(), 0);
+            while x < w {
+                let sym = buf[(x, 0)].symbol();
+                line.push_str(sym);
+                x += (unicode_width(sym) as u16).max(1);
+            }
+            line
+        };
+        let wide = row(&p, 120);
+        assert!(wide.contains("중단(재부팅) — aaa pane resume abcdef12 · 재부팅 뒤") && wide.contains('…'), "{wide:?}");
+        assert!(wide.starts_with(&" ".repeat(40)), "왼쪽 1/3은 비운다: {wide:?}");
+        // 좁으면 까닭을 빼고 명령만
+        let narrow = row(&p, 50);
+        assert!(
+            narrow.trim_start().starts_with("중단(재부팅) — aaa pane resume abcdef12") && !narrow.contains("재부팅 뒤"),
+            "{narrow:?}"
+        );
+        p.restore_error = None;
+        assert!(row(&p, 120).trim_end().ends_with("aaa pane resume abcdef12"));
+    }
+
+    /// 보던 pane이 같은 자리의 새 pane으로 바뀌면(`pane resume`·재부팅 복원) 그 pane을 따라간다. 지워지면 첫 pane(QA Q19)
+    #[test]
+    fn focus_follows_replaced_pane() {
+        let mut app = app_with_tabs(&["a"]);
+        let root = &mut app.ws.tabs[0].root;
+        aaa_proto::layout::split(root, "p0", "p1", aaa_proto::SplitDir::Horizontal);
+        aaa_proto::layout::split(root, "p1", "p2", aaa_proto::SplitDir::Vertical);
+        app.focus = Some("p1".into());
+        let mut w = app.ws.clone();
+        aaa_proto::layout::ws_replace(&mut w, "p1", "p9");
+        app.set_ws(w);
+        assert_eq!(app.focus.as_deref(), Some("p9"));
+        let mut w = app.ws.clone();
+        aaa_proto::layout::ws_remove(&mut w, "p9");
+        app.set_ws(w);
+        // 빠지면(모양이 바뀜) 차례상 다음 pane(herdr `TileLayout::close_focused`, `a_removed_tab_or_pane_moves_like_herdr`)
+        assert_eq!(app.focus.as_deref(), Some("p2"));
+    }
+
     fn app_with_tabs(names: &[&str]) -> App {
         let mut app = App::new("main".into(), "me".into());
         app.width = 90;
@@ -2450,6 +2522,7 @@ mod tests {
             agent: None,
             label: None,
             restore_error: None,
+            replaced: Vec::new(),
         }
     }
 

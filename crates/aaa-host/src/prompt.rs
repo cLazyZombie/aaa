@@ -1,11 +1,11 @@
-//! 화면에서 읽는 선택 창(plan §8.164, 차이 목록 2장 Q2).
+//! 화면에서 읽는 선택 창(plan §8.169, 차이 목록 2장 Q2).
 //!
 //! herdr-web-ui `server/prompt.ts`(aa624cb, MIT)의 읽기와 답 키(`answerKeys`)를 옮겼다: Claude Code 질문(AskUserQuestion,
 //! 하나·여러 개·직접 쓰기)·여러 질문의 검토·도구 승인·계획 승인, Codex 승인. 참고처럼 hook 내용이 아니라 화면 글에서 읽고,
 //! 메뉴의 안내 줄이 화면 끝에 있을 때만 살아 있는 창으로 본다(`tail_active`). `id`는 내용의 hash(커서·체크 상태 빼고)라
 //! 터미널에서 커서를 옮겨도 같은 질문이다.
 //!
-//! 뺀 것(plan §8.164): Codex 질문(질문 대기열·rollout 읽기), omp·omo·hermes·pi, 미리보기 상자가 있는 질문, 초안이 든
+//! 뺀 것(plan §8.169): Codex 질문(질문 대기열·rollout 읽기), omp·omo·hermes·pi, 미리보기 상자가 있는 질문, 초안이 든
 //! 직접 쓰기 줄, 모델·effort 목록, 번호 없는 메뉴(폴더 신뢰 등은 지금처럼 예·아니오로 답한다).
 
 use std::sync::LazyLock;

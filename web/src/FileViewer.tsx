@@ -6,7 +6,7 @@
 // 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource). 「파일 뷰어」 설정은 plan §8.149.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 // thread 결과물도 이것으로 연다(차이 목록 R1): 결과물 목록의 보기 경로(`/v/`, opaque origin sandbox)로 읽고, 경로는 결과물
-// 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.162).
+// 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.167).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 

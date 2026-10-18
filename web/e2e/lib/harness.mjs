@@ -30,6 +30,8 @@ const env = {
   AAA_TEST_EVENTS_PING_MS: "1000",
   // thread brief: 가짜 agent 화면이 이만큼 그대로면 친다(기본 3초. 12-threads-push는 thread를 단계마다 연다)
   AAA_TEST_BRIEF_SETTLE_MS: "300",
+  // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게
+  AAA_TEST_BUILTINS: "",
 };
 const procs = new Map();
 
@@ -57,9 +59,11 @@ function waitOutput(pane, text, source = "visible", ms = 20_000) {
   );
 }
 
+// 첫 인자가 객체면 이 프로세스에만 더할 환경 변수다(예: 재부팅 흉내의 AAA_TEST_BOOT_ID)
 function start(tag, ...args) {
+  const extra = typeof args[0] === "object" ? args.shift() : {};
   const log = fs.openSync(`${root}/${tag}.log`, "w");
-  const p = spawn(AA, args, { env, stdio: ["ignore", log, log] });
+  const p = spawn(AA, args, { env: { ...env, ...extra }, stdio: ["ignore", log, log] });
   procs.set(tag, p);
   return p;
 }
