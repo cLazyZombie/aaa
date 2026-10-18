@@ -39,7 +39,7 @@ import { updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
-import { DrawerContext, DrawerToggle } from "./drawer";
+import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -498,12 +498,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, []);
 
   // 고르면 drawer를 닫는다(참고 selectTarget·selectPane의 setDrawerOpen(false))
-  const choose = (id: string | null) => {
+  // App이 스스로 고른 pane(주소의 pane이 닫혀 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected)
+  const [autoSelected, setAutoSelected] = useState(false);
+  const choose = (id: string | null, auto = false) => {
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
+    setAutoSelected(auto);
     setDrawerOpen(false);
   };
   const chooseThread = (t: ThreadView, from: string | null = null) => {
+    setAutoSelected(false);
     setDrawerOpen(false);
     setBackTo(from);
     openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;
@@ -598,25 +602,43 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, []);
   useShortcuts(actions, true);
 
+  // 머리 알림(참고 headerNote): 8초 뒤 거둔다(참고 App.tsx 281~284줄)
+  const [headNote, setHeadNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (headNote === null) return;
+    const timer = window.setTimeout(() => setHeadNote(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [headNote]);
   // 첫 화면은 마지막으로 연 pane·thread를 바로 연다(herdr-web-ui: 고른 것이 없으면 기억한 것, 없거나 닫혔으면 PC의 첫 pane
   // `fallback`). 주소가 무엇을 가리키면 그것이다. 목록(pane·thread)을 다 받은 뒤 한 번만 고른다
-  const firstPick = useRef(sel !== null || location.hash !== "");
+  const firstPick = useRef(sel?.startsWith("pane:") ? false : sel !== null || location.hash !== "");
   useEffect(() => {
     if (firstPick.current || !loaded || !linkedOnce.current.threads) return;
     firstPick.current = true;
+    // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
+    const pickFirst = (auto: boolean) => {
+      const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+      for (const m of machines.filter((x) => x.connection === "connected")) {
+        const first = machineRows(m, panes, shown)[0];
+        if (!first) continue;
+        if ("pane" in first.open) choose(first.open.pane, auto);
+        else chooseThread(first.open.thread);
+        return;
+      }
+    };
+    // 주소가 가리킨 pane이 없다(닫혔다): 첫 줄을 열고 머리에 말한다. 키보드는 사용자가 고를 때까지 둔다(참고 resolveLink
+    // 「workspace-closed」·fallback·autoSelected. aaa 주소에는 workspace가 없어 그 workspace의 pane을 여는 갈래는 없다)
+    const linked = sel?.startsWith("pane:") ? sel.slice(5) : null;
+    if (linked !== null) {
+      if (panes.some((p) => p.id === linked)) return;
+      setHeadNote("그 링크의 pane은 닫혔습니다");
+      return pickFirst(true);
+    }
     const stored = storedSelection();
     if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5));
     const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
     if (storedThread && storedThread.group !== "resolved") return chooseThread(storedThread);
-    // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
-    const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
-    for (const m of machines.filter((x) => x.connection === "connected")) {
-      const first = machineRows(m, panes, shown)[0];
-      if (!first) continue;
-      if ("pane" in first.open) choose(first.open.pane);
-      else chooseThread(first.open.thread);
-      return;
-    }
+    pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, panes, threads, machines]);
@@ -674,6 +696,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   return (
     <DrawerContext.Provider value={drawer}>
+    <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
     <div className="app">
       <aside id="workspace-drawer" className={`list sidebar-shell${drawerOpen ? " is-open" : ""}`}>
         <header className="list-head">
@@ -697,7 +720,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           >
             <Icon name="search" />
           </button>
-          <MoreMenu onProjects={() => chooseProject(null)} />
         </header>
         {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
         <Sidebar
@@ -749,6 +771,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             controls={paneControls}
             pane={current}
             role={role}
+            autoSelected={autoSelected}
             onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: current.id }) : undefined}
             title={paneTitle(current)}
             agent={agentOf(current, threadOfPane.get(current.id))}
@@ -777,9 +800,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         ) : (
           <>
-          {/* 좁은 창에서 아무것도 고르지 않았을 때도 목록을 열 머리 */}
+          {/* 보일 것이 없을 때의 머리: 좁은 창의 목록 단추·머리 알림·「더 보기」 */}
           <header className="term-head empty-head">
             <DrawerToggle />
+            <HeadNote />
+            <HeadMore />
           </header>
           <div className="empty-view">
             <img className="logo big" src="/icon.svg" alt="" />
@@ -820,6 +845,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         }}
       />
     </div>
+    </HeadContext.Provider>
     </DrawerContext.Provider>
   );
 }

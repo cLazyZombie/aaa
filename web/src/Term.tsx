@@ -63,7 +63,7 @@ import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
-import { DrawerToggle } from "./drawer";
+import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -135,6 +135,7 @@ export function TermView({
   dock,
   controls,
   onOpenFile,
+  autoSelected = false,
 }: {
   pane: PaneView;
   role: DeviceRole;
@@ -150,6 +151,8 @@ export function TermView({
   controls?: MutableRefObject<PaneControls | null>;
   /** 파일 경로 링크를 눌렀다: 파일 보기를 연다(결정 20 D7, plan §8.125). 없으면(보기 권한) 링크로 그리지 않는다 */
   onOpenFile?: (path: string) => void;
+  /** App이 스스로 고른 pane(주소의 pane이 없어 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected) */
+  autoSelected?: boolean;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const openFileRef = useRef(onOpenFile);
@@ -197,6 +200,13 @@ export function TermView({
   const directTyping = useTerminalInputMode() !== "line";
   const inputLine = !directTyping && !(chatView && chatable) && canControl;
   const inputLineRef = useRef(inputLine);
+  // 사용자가 App이 스스로 고른 pane을 골랐다(같은 줄을 다시 눌러 pane은 그대로): 이제 터미널이 키보드를 받는다(PaneTerminal 2209~2216줄)
+  const autoSelectedRef = useRef(autoSelected);
+  useEffect(() => {
+    const wasAuto = autoSelectedRef.current;
+    autoSelectedRef.current = autoSelected;
+    if (wasAuto && !autoSelected && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) termRef.current?.focus();
+  }, [autoSelected]);
   inputLineRef.current = inputLine;
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
   const terminalFontSize = useTerminalFontSize();
@@ -536,7 +546,8 @@ export function TermView({
       return true;
     });
     // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.
-    if (!window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
+    // App이 스스로 고른 pane도 사용자가 고를 때까지 두고(참고 autoSelected) 아래 effect가 받는다
+    if (!autoSelectedRef.current && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
     // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
     // 그 확정은 글로 두고(유지 키 없음), 새 조합이 시작되면 이 표시는 지운다.
     let compositionEndTimer: number | null = null;
@@ -1809,6 +1820,7 @@ export function TermView({
       <header className="term-head">
         {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
         <DrawerToggle />
+        <HeadNote />
         <div className="term-title">
           <span className="term-title-line">
             {agent && <AgentMark agent={agent} size={18} />}
@@ -1831,6 +1843,7 @@ export function TermView({
             {chatView ? "터미널" : "대화"}
           </button>
         )}
+        <HeadMore />
       </header>
       {flowNotices && notices}
       {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} />}

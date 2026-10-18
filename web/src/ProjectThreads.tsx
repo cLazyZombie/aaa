@@ -8,7 +8,7 @@ import { call } from "./api";
 import type { ProjectView, ThreadView } from "./gen/proto";
 import { GROUP_WORD, groupRank, projectLine, stateLine, threadKey } from "./sidebarModel";
 import "./ProjectThreads.css";
-import { DrawerToggle } from "./drawer";
+import { DrawerToggle, HeadMore } from "./drawer";
 
 /** popup `Group::DISPLAY_ORDER` */
 const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
@@ -80,6 +80,7 @@ export function ProjectThreads({
             <ArrowLeft aria-hidden="true" />
           </button>
           <h2 className="project-threads-title">프로젝트</h2>
+          <HeadMore />
         </header>
         <Filter value={filter} onChange={setFilter} label="프로젝트 거르기" />
         <ul className="project-threads-list">
@@ -163,6 +164,7 @@ function ProjectBody({
           <h2 className="project-threads-title">{project}</h2>
           <span className="project-threads-facts">{line}</span>
         </span>
+        <HeadMore />
       </header>
       {filter}
       {empty && (
