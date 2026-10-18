@@ -4058,9 +4058,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   `D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)`, token 파일은 `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349)처럼
   `D:P(A;;GA;;;SY)(A;;GA;;;<계정 SID>)`로 `CreateFileW`(CREATE_NEW)에서 처음부터 만든다(만든 뒤 바꾸지 않는다, Unix와 같은 원칙). 폴더는
   이미 있으면 `SetFileSecurityW`로 그렇게 바꾼다(Unix가 늘 0700을 거는 것과 같다).
-- **`aaa update` Windows.** 전에는 「아직 macOS·Linux만」으로 거부했다. Windows는 도는 exe를 덮거나 지우지 못하고 이름만 바꿀 수 있어,
-  보관을 hard link 대신 지금 것을 `.aaa-old/aaa-<UTC>-<version>`으로 옮기는 것으로 하고 새것을 그 자리로 옮긴다(둘째가 실패하면 첫째를
-  되돌린다). 그 사이 잠깐 자리가 빈다. herdr Windows 갱신은 release 폴더마다 풀고 junction·사용자 PATH를 바꾸는 `distribution/install.ps1`이다:
+- **`aaa update` Windows.** 전에는 「아직 macOS·Linux만」으로 거부했다. 거부를 빼고 Mac과 같은 순서(같은 폴더 staging → self-check →
+  hard link 보관 → rename)를 쓴다. 처음에는 「도는 exe는 덮지 못한다」고 보고 지금 것을 옮긴 뒤 바꾸는 Windows 길을 따로 넣었으나, Windows
+  CI에서 도는 exe 자리에 바로 rename하는 길(결함으로 심은 것)도 시험이 통과해 그 가정이 틀렸음을 보았다(std rename이 POSIX 방식으로 바꾼다).
+  따로 길을 두지 않고 시험만 남겼다. herdr Windows 갱신은 release 폴더마다 풀고 junction·사용자 PATH를 바꾸는 `distribution/install.ps1`이다:
   aaa는 고정 경로 하나라 따르지 않았다(참고와 다름).
 - **키(Windows 콘솔).** crossterm 0.29 Windows 입력(`event/sys/windows/parse.rs`)은 콘솔 레코드를 읽는다: 왼쪽·오른쪽 수정키를 합치고, Ctrl
   글자는 `ToUnicodeEx`로 기본 배치 글자를 찾아 CONTROL과 주며(prefix `ctrl+b`가 맞는다), AltGr는 Ctrl+Alt로 온다. 그대로면 독일 배치 AltGr+Q
@@ -4077,7 +4078,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험.** 유닛 `remote::admit_pairs_keeps_and_forgets_tokens`(모든 OS, 가짜 host 웹 http 127.0.0.1: 처음엔 묻고 pairing·token 두기·Host·
   Origin·cookie, 다음엔 묻지 않음, 401이면 지우고 다시 묻기, 새 token도 거부되면 지운 채 멈춤, 틀린 코드 401, 4401 취소), `keys::
   windows_console_keys_table`(crossterm Windows 꼴 → bytes 표, prefix), Windows만 `remote::token_file_is_private`(파일·폴더 DACL을 SDDL로
-  읽어 `D:P`·SYSTEM과 계정/소유자만), `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다). 결함 심기는 아래 보고서.
+  읽어 `D:P`·SYSTEM과 계정/소유자만, 계정은 SDDL 별칭 꼴로 견준다 — CI runner는 내장 Administrator라 `LA`로 나온다),
+  `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다). 결함 심기: 로컬 넷(AltGr 정규화 빼기, 거부 token 안 지움, token 안 둠
+  — 시험의 묻기 한도로 끝없는 고리 대신 실패, Origin 안 보냄) 모두 실패. Windows CI(심은 branch): token을 상속 DACL로 만들면 `D:P`가 없어 실패.
+- **실기(10-18).** 그 PC(Windows 11 x64, 기본 셸 cmd)에 ssh로 `aaa.exe`를 두고 `--version`·`attach --help`·`update --dry-run`·`update list`,
+  ssh pty로 보기 전용 pairing → TUI 「보기 전용」 → 창 크기 바꿈(ConPTY `CSI 8;50;140t` 뒤 다시 그림) → prefix q → 다시 붙을 때 묻지 않음을
+  보았다. `icacls`로 폴더 SYSTEM·OWNER RIGHTS, 파일 SYSTEM·그 계정만(상속 없음). 사람 자판·IME·마우스 점검은 사용자 몫으로 남겼다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

@@ -594,7 +594,7 @@ mod tests {
         save_token(&file, "secret-1").unwrap();
         save_token(&file, "secret-2").unwrap();
         assert_eq!(load_token(&file).as_deref(), Some("secret-2"));
-        let sid = win::user_sid().unwrap();
+        let sid = acl::sddl_sid(&win::user_sid().unwrap());
         let (flags, mut who) = acl::dacl(&file);
         who.sort();
         let mut want = vec![("A".to_string(), sid.clone()), ("A".to_string(), "SY".to_string())];
@@ -619,9 +619,13 @@ mod tests {
 
         use windows_sys::Win32::Foundation::LocalFree;
         use windows_sys::Win32::Security::Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1,
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+            SDDL_REVISION_1,
         };
-        use windows_sys::Win32::Security::{DACL_SECURITY_INFORMATION, GetFileSecurityW};
+        use windows_sys::Win32::Security::{
+            DACL_SECURITY_INFORMATION, GetFileSecurityW, OBJECT_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PSECURITY_DESCRIPTOR,
+        };
 
         /// (DACL 깃발, [(ACE 종류, 대상)]). 예: `D:P(A;;FA;;;SY)` → ("P", [("A", "SY")])
         pub fn dacl(path: &Path) -> (String, Vec<(String, String)>) {
@@ -636,25 +640,7 @@ mod tests {
                 GetFileSecurityW(p.as_ptr(), DACL_SECURITY_INFORMATION, sd.as_mut_ptr().cast(), needed, &mut needed)
             };
             assert!(ok != 0, "{}", std::io::Error::last_os_error());
-            let mut text = null_mut();
-            // SAFETY: sd는 GetFileSecurityW가 채운 설명자다. text는 LocalAlloc된 글을 받는다
-            let ok = unsafe {
-                ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                    sd.as_mut_ptr().cast(),
-                    SDDL_REVISION_1,
-                    DACL_SECURITY_INFORMATION,
-                    &mut text,
-                    null_mut(),
-                )
-            };
-            assert!(ok != 0, "{}", std::io::Error::last_os_error());
-            // SAFETY: NUL로 끝나는 UTF-16, 읽은 뒤 놓는다
-            let sddl = unsafe {
-                let len = (0..).take_while(|&i| *text.add(i) != 0).count();
-                let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
-                LocalFree(text.cast());
-                s
-            };
+            let sddl = to_sddl(sd.as_mut_ptr().cast(), DACL_SECURITY_INFORMATION);
             let body = sddl.strip_prefix("D:").unwrap_or_else(|| panic!("DACL이 아니다: {sddl}"));
             let (flags, aces) = body.split_once('(').unwrap_or((body, ""));
             let aces = aces
@@ -665,6 +651,42 @@ mod tests {
                 })
                 .collect();
             (flags.to_string(), aces)
+        }
+
+        /// SID를 SDDL이 쓰는 꼴로(내장 Administrator 계정 `S-1-5-21-…-500`은 `LA`처럼 별칭이 된다: CI runner 계정이 그렇다)
+        pub fn sddl_sid(sid: &str) -> String {
+            let text = super::win::wide(std::ffi::OsStr::new(&format!("O:{sid}")));
+            let mut sd = null_mut();
+            // SAFETY: text는 NUL로 끝나는 UTF-16, sd는 LocalAlloc된 설명자를 받는다
+            let ok = unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    text.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut sd,
+                    null_mut(),
+                )
+            };
+            assert!(ok != 0, "{sid}: {}", std::io::Error::last_os_error());
+            let owner = to_sddl(sd, OWNER_SECURITY_INFORMATION);
+            // SAFETY: 위에서 받은 설명자다
+            unsafe { LocalFree(sd) };
+            owner.strip_prefix("O:").unwrap_or_else(|| panic!("소유자가 아니다: {owner}")).to_string()
+        }
+
+        fn to_sddl(sd: PSECURITY_DESCRIPTOR, info: OBJECT_SECURITY_INFORMATION) -> String {
+            let mut text = null_mut();
+            // SAFETY: sd는 살아 있는 설명자다. text는 LocalAlloc된 글을 받는다
+            let ok = unsafe {
+                ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, info, &mut text, null_mut())
+            };
+            assert!(ok != 0, "{}", std::io::Error::last_os_error());
+            // SAFETY: NUL로 끝나는 UTF-16, 읽은 뒤 놓는다
+            unsafe {
+                let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+                let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+                LocalFree(text.cast());
+                s
+            }
         }
     }
 

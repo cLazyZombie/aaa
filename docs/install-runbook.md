@@ -218,7 +218,7 @@ shasum -a 256 target/x86_64-pc-windows-msvc/release/aaa.exe
 ### 11.2 그 PC로 보내기
 
 - ssh가 열린 PC: `scp target/x86_64-pc-windows-msvc/release/aaa.exe <pc>:Downloads/aaa.exe`
-- Taildrop(같은 tailnet): Mac에서 `tailscale file cp target/x86_64-pc-windows-msvc/release/aaa.exe <pc 이름>:` → Windows에서 `tailscale file get "%USERPROFILE%\Downloads"`(또는 알림 영역의 Tailscale이 받은 파일을 「다운로드」에 둔다). 아직 실기로 해 보지 않은 길이다.
+- Taildrop(같은 tailnet, 같은 사용자의 기기): Mac에서 `tailscale file cp target/x86_64-pc-windows-msvc/release/aaa.exe <pc 이름>:` → Windows에서 `"C:\Program Files\Tailscale\tailscale.exe" file get --wait "%USERPROFILE%\Downloads"`(받은 파일함에서 꺼낸다. 같은 이름이 있으면 `--conflict=overwrite`). 명령 꼴은 두 쪽 `--help`로 맞췄고, 실제로 보내 보지는 않았다.
 - 받은 뒤 같은 파일인지 본다: `certutil -hashfile "%USERPROFILE%\Downloads\aaa.exe" SHA256`이 Mac의 `shasum -a 256`과 같다.
 
 ### 11.3 처음 두기와 붙기
@@ -249,5 +249,5 @@ move "%USERPROFILE%\Downloads\aaa.exe" "%USERPROFILE%\.local\bin\aaa.exe"
 "%USERPROFILE%\.local\bin\aaa.exe" update list
 ```
 
-- self-check(`--version`·`config check`)를 한 뒤 `yes`를 받고 바꾼다. Windows는 도는 exe를 덮지 못해 지금 것을 `%USERPROFILE%\.local\bin\.aaa-old\`로 옮긴 뒤 새것을 그 자리로 옮긴다(옛것은 거기 `[update] keep`개, 기본 3). 열린 TUI가 있어도 바꿀 수 있고, 그 TUI는 끝날 때까지 옛것으로 돈다.
+- self-check(`--version`·`config check`)를 한 뒤 `yes`를 받고 바꾼다. Mac과 같은 순서다: 지금 것을 `%USERPROFILE%\.local\bin\.aaa-old\`에 hard link로 보관하고(`[update] keep`개, 기본 3) 새것을 그 자리로 rename한다. 열린 TUI가 있어도 바꿀 수 있고(Windows CI 시험이 도는 exe를 바꿔 본다), 그 TUI는 끝날 때까지 옛것으로 돈다.
 - 되돌리기는 `update rollback`이다. 이 PC에는 host·agent가 없으니 `aaa service restart`는 하지 않는다.
