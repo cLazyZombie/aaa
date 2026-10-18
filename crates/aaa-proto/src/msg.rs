@@ -576,6 +576,9 @@ pub enum AgentRequest {
         launch: Launch,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        /// profile을 다시 풀 때 더할 safety(plan §8.163, `launch_safety.v1`을 알린 agent에만)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        safety: Option<crate::LaunchSafety>,
     },
     /// routine 명령을 `sh -c`로 한 번 실행한다(자기 process group, 시간 초과면 그 group을 끝낸다).
     /// `cwd`가 없으면 `<work_root>/<project>/routines`에서 실행한다.
@@ -909,6 +912,11 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub restore_error: Option<String>,
+    /// 이 pane이 대신한 옛 pane ID(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, 오래된 것부터). 옛 ID를 보던
+    /// 화면은 이것으로 새 pane을 따라간다(QA Q19).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub replaced: Vec<String>,
 }
 
 // ───────────────────────── layout(host 정본, §4.4) ─────────────────────────

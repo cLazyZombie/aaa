@@ -746,6 +746,7 @@ mod tests {
             agent: None,
             label: None,
             restore_error: None,
+            replaced: Vec::new(),
         }
     }
 
@@ -1099,6 +1100,7 @@ mod tests {
             })),
             label: None,
             restore_error: None,
+            replaced: Vec::new(),
         };
         assert_eq!(pane_badge(&p, &pal, 40).unwrap().0, "작업 중 40% 1/3 배경2");
         // 좁으면 계획·배경 수가 제목보다 먼저 빠진다(들어가는 것만)

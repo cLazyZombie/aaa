@@ -9,7 +9,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
-import { b64decode, b64encode, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
+import { b64decode, b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { ChatComposer } from "./ChatComposer";
@@ -62,7 +62,7 @@ import { pasteText } from "./pasteText.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, RotateCcw, TriangleAlert } from "lucide-react";
 import { DrawerToggle } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
@@ -195,7 +195,8 @@ export function TermView({
   const heldByOther = me !== null && lease !== null && lease.front !== me;
   // 입력 방식(herdr-web-ui PaneTerminal 358~361줄): 기본은 바로 입력, 입력줄은 이 기기의 선택이다.
   const directTyping = useTerminalInputMode() !== "line";
-  const inputLine = !directTyping && !(chatView && chatable) && canControl;
+  // 중단된 pane(아래 `stopped`)은 입력줄 대신 자리 표시의 「다시 열기」다
+  const inputLine = !directTyping && !(chatView && chatable) && canControl && pane.state !== "interrupted";
   const inputLineRef = useRef(inputLine);
   inputLineRef.current = inputLine;
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
@@ -254,6 +255,21 @@ export function TermView({
   /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
   const [inputError, setInputError] = useState<string | null>(null);
   const ended = pane.state !== "running";
+  // 중단된 pane: 자리 표시가 까닭과 「다시 열기」를 보인다. 다시 열면 host가 새 pane으로 바꾸고 화면은 그 pane을 따라간다(App, QA Q19)
+  const stopped = pane.state === "interrupted";
+  const [resuming, setResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const resume = async () => {
+    setResuming(true);
+    setResumeError(null);
+    try {
+      await call({ op: "pane_resume", pane: pane.id });
+    } catch (e) {
+      setResumeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResuming(false);
+    }
+  };
   // 다른 창을 쓰는 동안 보기만 한다(설정 「터미널의 aaa와 같이 쓰기」, herdr-web-ui PaneTerminal 288~297·1725~1918줄 `released`).
   // 크기를 놓고 이 화면은 PTY 크기 그대로 그린다. 이 탭을 누르거나 focus가 돌아오면 다시 입력하고 크기를 건다.
   const releasedRef = useRef(false);
@@ -1722,8 +1738,9 @@ export function TermView({
   }, [inputSlot]);
 
   let banner: string | null = null;
-  // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다
-  if (link === "stopped") banner = null;
+  // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다. 중단된 pane(재부팅 뒤 다시 뜨지 않음)은 터미널 칸의 자리 표시가 까닭과
+  // 「다시 열기」를 말한다(아래 `restore-error`, 참고는 그 pane에 붙지 않아 연결 띠도 없다)
+  if (link === "stopped" || stopped) banner = null;
   else if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중";
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
   // 끊긴 동안 붙잡은 글은 끊김 띠에 보이고, 다시 붙으면 따로 띠가 되어 보내기·버리기를 고른다(PaneTerminal 2777~2800줄)
@@ -1841,6 +1858,25 @@ export function TermView({
           {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
           <div className="term-box" ref={box} data-testid="terminal" data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
         </div>
+        {/* 중단된 pane(재부팅 뒤 다시 띄우지 못했거나 일부러 두었다): 옛 화면 대신 까닭을 보인다(참고 PaneTerminal 2727~2734줄
+            `is-restore-error`, plan §8.111). 다시 여는 길도 여기 둔다(QA Q22: 데스크톱은 줄 메뉴가 오른쪽 클릭에만 있다).
+            thread pane은 `thread restart`가 띄운다(까닭 글에 명령이 있다) */}
+        {stopped && (
+          <div className="terminal-placeholder is-restore-error" role="status" data-testid="restore-error">
+            <div className="terminal-placeholder-inner">
+              <TriangleAlert aria-hidden="true" />
+              <span>이 pane은 다시 뜨지 않았다</span>
+              <span className="terminal-placeholder-detail">{pane.restore_error ?? "agent backend가 다시 떴을 때 이 세션이 없었다"}</span>
+              {canControl && !pane.role && (
+                <button type="button" className="btn btn-primary" data-testid="pane-resume" disabled={resuming} onClick={() => void resume()}>
+                  <RotateCcw aria-hidden="true" />
+                  다시 열기
+                </button>
+              )}
+              {resumeError && <span className="terminal-placeholder-detail is-error">{resumeError}</span>}
+            </div>
+          </div>
+        )}
         <div className="terminal-banners">
           {link === "stopped" && (
             <div className="banner warn" role="status" data-testid="output-stalled">
@@ -1934,7 +1970,7 @@ export function TermView({
         />
       )}
       {/* 대화 보기의 입력창(차이 목록 C2): 터미널 입력줄과 같은 길로 보낸다. 키 막대는 터미널 보기 것이다 */}
-      {chatView && chatable && canControl && (
+      {chatView && chatable && canControl && !stopped && (
         <ChatComposer
           key={pane.id}
           owner={`${pane.machine_id}:${pane.id}`}
@@ -1945,7 +1981,7 @@ export function TermView({
           onSent={() => setChatSent((n) => n + 1)}
         />
       )}
-      {canControl && !(chatView && chatable) && (
+      {canControl && !stopped && !(chatView && chatable) && (
         <KeyBar
           items={barItems}
           modifiers={modifiers}

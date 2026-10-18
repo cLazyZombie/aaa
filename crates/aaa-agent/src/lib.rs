@@ -707,9 +707,10 @@ impl Agent {
         // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
         // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
         if let Some(name) = spec.profile.clone() {
-            let cfg = self.threads_cfg.lock().unwrap().clone();
-            let launch =
-                threads::with_hooks(&cfg, threads::resolve(&name, threads::find_profile(&cfg, &name)?)?, &paths.dir)?;
+            // 기본 profile(claude·codex)도 받고 agent.toml을 다시 읽는다(thread와 같다, plan §8.163)
+            let cfg = self.threads_cfg.lock().unwrap().clone().fresh()?;
+            let (profile, _) = threads::find_profile(&cfg, &name)?;
+            let launch = threads::with_hooks(&cfg, threads::resolve(&name, &profile)?, &paths.dir)?;
             // thread처럼 profile harness의 화면으로 상태를 본다(host orch `harness: Some(launch.harness)`, plan §8.110)
             spec.harness.get_or_insert(launch.harness);
             spec.argv = launch.argv;
@@ -839,14 +840,19 @@ impl Agent {
                 })
             }
             AgentRequest::Profiles => {
-                Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                cfg.fresh()
+                    .map(|c| AgentResponse::Profiles { profiles: threads::profile_views(&c) })
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::ThreadPrepare(p) => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
-                threads::prepare(&cfg, p)
-                    .await
-                    .map(AgentResponse::ThreadReady)
-                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                match cfg.fresh() {
+                    Ok(cfg) => threads::prepare(&cfg, p).await,
+                    Err(e) => Err(e),
+                }
+                .map(AgentResponse::ThreadReady)
+                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::ThreadWatch { thread, work_dir } => {
                 // 감시 key는 `<project>/<thread>`다(thread 번호는 프로젝트마다 다시 센다)
@@ -880,9 +886,12 @@ impl Agent {
                     .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                     .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile } => {
+            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile, safety } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
-                threads::rebrief(&cfg, &work_dir, &brief, launch, profile.as_deref())
+                cfg.fresh()
+                    .and_then(|cfg| {
+                        threads::rebrief(&cfg, &work_dir, &brief, launch, profile.as_deref(), safety.as_ref())
+                    })
                     .map(AgentResponse::Relaunch)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
