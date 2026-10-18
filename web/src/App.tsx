@@ -641,6 +641,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (firstPick.current || !loaded || !linkedOnce.current.threads) return;
     firstPick.current = true;
+    // 주소는 지금 것을 읽는다: 연 뒤에 주소가 thread·프로젝트를 가리키게 됐는데(알림·링크·주소 바꿈) 그 hashchange를 앱이 아직
+    // 처리하지 않았을 수 있다(짐 아래, t-0335 찾음). 그때 첫 고르기가 그 주소를 덮지 않는다(주소가 이긴다)
+    const asked = selectedFromHash();
+    if (asked !== null && !asked.startsWith("pane:")) return;
     // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
     const pickFirst = (auto: boolean) => {
       const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
@@ -654,7 +658,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     };
     // 주소가 가리킨 pane이 없다(닫혔다): 첫 줄을 열고 머리에 말한다. 키보드는 사용자가 고를 때까지 둔다(참고 resolveLink
     // 「workspace-closed」·fallback·autoSelected. aaa 주소에는 workspace가 없어 그 workspace의 pane을 여는 갈래는 없다)
-    const linked = sel?.startsWith("pane:") ? sel.slice(5) : null;
+    const linked = asked?.startsWith("pane:") ? asked.slice(5) : null;
     if (linked !== null) {
       if (panes.some((p) => p.id === linked)) return;
       setHeadNote("그 링크의 pane은 닫혔습니다");
