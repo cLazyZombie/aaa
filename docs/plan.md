@@ -3214,7 +3214,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 변형 확인: 열다섯 모두 실패한다. 끌어놓기 판정 끔, bmp 허용, txt 허용, 상대 경로 허용, escape 안 풂, host가 안 감쌈, host가 늘 감쌈, ESC 안 뺌, 옛 host 대체 없음, 2004 안 켬, 2004 안 끔, 크기 상한 없음, 단축키 검색 붙여넣기 버림, prefix 모드도 pane에, 이름 창 붙여넣기 버림.
   - 시험 경합 고침(10-18 미리 병합 ci-local): 둘째 단계 마지막에 cat을 다시 띄우고 화면 지움만 기다린 뒤 ^C를 보냈다. ^C가 셸의 `clear`와 `cat` 사이에 닿으면 cat이 남아 셋째 단계 명령 줄을 읽었다. 이제 ^C는 표지가 cat을 지나온 뒤에만 보내고 마지막에는 cat을 다시 띄우지 않는다. `clear`와 `cat` 사이에 ^C를 무시하는 1초를 넣으면 옛 구조는 같은 꼴로 실패하고 새 구조는 통과한다.
   - 둘째 경합(10-18 착지 창 미리 병합 ci-local): 붙여 넣은 줄을 cat이 되돌리기 전에 표지 줄을 쳐서, 그 tty 메아리(TUI가 「e」·「nd-a」로 나눠 보냄) 사이에 cat 출력이 끼어 표지가 한 번만 보였다. 표지 줄을 없애고, 붙여 넣은 줄이 두 번(메아리와 cat 출력) 보인 뒤에 단언하고 다음 글을 친다. 기다리는 조각(`two`·경로·`31my`)은 감싸기·ESC 빼기가 틀려도 나오므로 틀리면 기다림이 아니라 단언이 실패한다. 옛 구조에 표지를 둘로 나눠 치고 cat을 0.3초 늦추면 같은 문구로 실패하고, 새 구조는 cat을 늦춰도 통과한다.
-||||||| d6bb95c
 
 ### 8.148 파일 보기의 폴더 보기(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205, FRONT_API 1.24)
 
@@ -3379,6 +3378,29 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 결함 심기(48자 hostname prompt + `ENV` 없음): 「나눈 pane prompt `$`」에서 실패하고 접힌 hostname prompt를 보인다.
   - 고친 뒤 같은 결함: 세 번 모두 통과했다.
 - **드러난 것.** `tabs_like_herdr`의 「새 pane이 옮긴 폴더에서 뜸」 확인은 `pwd` 줄이 아니라 기계 prompt의 `\W`(폴더 이름 「작업 폴더」)로 맞고 있었다. macOS `pwd` 줄(`/private/tmp/…`)은 pane 폭에서 접혀 「작|업 폴더」로 갈린다. 접힌 줄을 이어 보는 `wait_output_unwrapped`로 바꿨다(기대는 같고, 이제 `pwd` 출력을 본다). `pwd`를 `echo x`로 바꾸는 결함을 심으면 실패한다.
+
+### 8.160 끝난 세션 지우기는 session host의 늦게 붙기 창을 기다리지 않는다(10-18, t-0338 넘김 「resolve 2초」)
+
+- **증상.** `aaa thread resolve` 한 번이 2.05초였다(cdef86c부터, t-0338이 웹 E2E 17에서 잼: resolve 12번이 67초 중 약 24초). 끝낸 pane을 지우는 `pane close`와 셸 `exit` 닫기(§8.143)도 같은 2초가 붙는다.
+- **원인.** resolve(§8.135)는 끝낸 thread의 pane을 지우려 agent `forget`을 부른다. forget은 session host 연결(pump)이 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 지운 pane을 되살리기 때문이다(2d0a12c).
+  - session host는 종료를 알린 뒤 늘 2초 더 응답하고 닫는다(`aaa-session` host.rs, 아직 붙지 않은 agent도 종료 상태·마지막 화면을 받게).
+  - m13 실험에서 세션은 끝내기 뒤 18~26ms에 끝났고(`exit.json`), resolve는 2043~2045ms였다. 나머지가 이 창이다.
+- **고침.** forget이 끝남을 이미 받은 세션의 pump에 닫기(`PumpCmd::Close`)를 보낸다. 그러면 연결을 agent가 닫고, forget은 pump가 끝나기를 기다린다. pump가 끝나며 종료 알림을 보내는 순서는 그대로다. resolve는 72~75ms다.
+- **운영 동작이 바뀐다.** 지우는 pane의 session host는 agent 연결 없이 2초를 채우고 끝난다.
+  - 근거: 이 창은 아직 붙지 않은 agent를 위한 것이다. 지우는 agent는 종료를 이미 받았고, 마지막 화면·replay는 파일에 있어 파일로 답한다(`offline_request`). 기록을 지운 뒤라 그 2초 동안 그 session host에 붙을 것은 없다.
+  - session host 쪽에서 창을 줄이지 않았다. 연결마다 쓰기가 따로 도는 task라(`spawn_writer`) 알리자마자 끝내면 마지막 `Updated`가 쓰이기 전에 runtime이 닫힐 수 있고, 쓰기가 끝났는지 알려면 공용 conn을 고쳐야 한다.
+- **남긴 틈(2d0a12c부터, 고치지 않음).** pump는 끝날 때 기록에서 pump를 뗀 뒤 종료 알림을 보낸다. forget(50ms마다 본다)이 그 사이를 보면, forget의 응답이 알림보다 먼저 가 host가 지운 pane을 알림으로 되살릴 수 있다. 이번 고침은 그 사이를 넓히지 않았다.
+- **시험.** m13 `closing_ended_sessions_does_not_wait_for_the_session_host_linger`는 시험 고리 `AAA_TEST_SESSION_LINGER_MS=8000`으로 창을 forget 한도(5초)보다 길게 두고 resolve와 `pane close`를 한다. 그러니 창을 기다리는 agent는 시간과 상관없이 실패한다.
+  - 옛 동작을 심으면(닫기를 보내지 않음) 「pane을 닫지 못했다: session host가 아직 닫히지 않았다」로 실패하고, 고친 판은 통과한다.
+  - 시간 경계는 두지 않았다.
+
+### 8.161 웹 E2E의 제품 시간 기다림 둘을 시험 값으로: 화면 감지 시작 유예·알림 묶음(10-18, coordinator 결정 「시험 환경 변수, 없으면 운영 그대로, 기다림마다 기본값 단계 하나」, t-0338)
+
+- **왜.** t-0327이 test 단계를 59초로 줄인 뒤 ci-local의 끝은 웹 E2E(91~96초)다. 그 벽시계는 파일 합계(379초) ÷ worker 4다. 기다림마다 시간을 재 보니 제품 시간이 컸다: 11의 agent 상태 표시 12번이 번마다 3.3~4.6초(35초/54초), 17·18의 push 판정이 번마다 알림 묶음 1초.
+- **화면 감지 시작 유예.** agent는 harness가 막 시작하면 3초 동안 화면을 읽지 않는다(herdr `AGENT_STARTUP_GRACE_WINDOW`: 시작 화면을 상태로 읽지 않으려고). 가짜 harness 화면은 뜨자마자 그대로라 시험에서는 `AAA_TEST_DETECT_GRACE_MS`(agent `detect/state.rs startup_grace`)로 줄인다. 11만 0이고, 기본값 3초 길은 15-ios-rules(확인창 알림·소리)가 돈다.
+- **알림 묶음.** `[notify] debounce_secs`는 초 단위다(실험실 1초, 제품 기본 15초). 1초 밑은 `AAA_TEST_NOTIFY_DEBOUNCE_MS`(host `notify.rs debounce`)로 둔다. 17·18만 100ms이고, 설정 1초 길은 12(보고 알림·이 기기 알림)가 돈다.
+- **줄이지 않은 것.** 웹 pong 기한(3초 × 2)과 앱 안 알림이 저절로 접히는 시간은 시험 전체에 한 번씩(17 「다시 붙음」, 12 「앞 알림 접힘」)이라, 기본값 단계를 남기면 줄일 몫이 없다.
+- **시험.** 11 54 → 27초, 17 68.7 → 59.8초, 18 22.6 → 19.9초(12·15는 그대로). 두 값 모두 없으면 동작이 그대로다(운영 host·agent에 영향 없음).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
