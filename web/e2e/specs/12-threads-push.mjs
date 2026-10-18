@@ -7,7 +7,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   chromium, root, aaa, start, stop, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin,
-  b64u, pushDevice, nextPush, pushKey, base, step, browser, setPushKey, openSettings, focusIs, waitOutput,
+  b64u, pushDevice, nextPush, pushKey, base, step, browser, setPushKey, openSettings, focusIs, waitOutput, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -66,9 +66,9 @@ export default async function ({ ctl, page }) {
       const ctx = mob.page.context();
       await ctx.grantPermissions(["notifications"], { origin: base.slice(0, -1) });
       await mob.page.reload();
-      await mob.page.getByTestId("machine-labA").waitFor();
+      await mob.page.getByTestId("machine-labA").waitFor({ state: "attached" });
       // 알림 켜기는 머리 「더 보기」 메뉴의 「알림」이다(참고 App.tsx moreItems). 보기 권한 기기도 알림은 받는다. 꺼져 있으면 메뉴 단추에 점
-      await mob.page.getByTestId("more").click();
+      await inList(mob.page, "more");
       await until("알림 항목", async () => (await mob.page.getByTestId("alerts-item").innerText()).includes("이 기기에서 꺼짐"));
       if ((await mob.page.getByTestId("more").getAttribute("aria-label")) !== "더 보기 · 알림 꺼짐") throw new Error("꺼진 알림 표시가 없다");
       await mob.page.keyboard.press("Escape");
@@ -115,7 +115,7 @@ export default async function ({ ctl, page }) {
     } finally {
       await full.close();
     }
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -233,7 +233,7 @@ export default async function ({ ctl, page }) {
       throw new Error("ack가 기록되지 않았다");
     }
     // 다음 단계는 t1 터미널을 본다
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -422,7 +422,7 @@ export default async function ({ ctl, page }) {
     const dropsSince = (i) => ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("drop")).length, i);
     const evMark = () => ap.evaluate(() => window.__evLog.length);
     // 그 thread를 보고 있으면 띄우지 않는다: 다른 곳을 본다
-    await ap.getByTestId("pane-t1").click();
+    await inList(ap, "pane-t1");
     // 소리: 켜는 누름이 미리 듣기(작업 완료 음 880→660), 그 뒤 알림마다
     const dialog = await openSettings(ap, "알림");
     await dialog.getByRole("switch", { name: "소리" }).click();
@@ -511,14 +511,15 @@ export default async function ({ ctl, page }) {
     const pd = pp.locator(".droplet");
     await until("휴대폰 앱 안 알림", async () => (await pd.count()) === 1);
     await landed(pd);
-    const head = await rect(pp.locator(".list-head"));
+    // 휴대폰 머리는 보는 화면(첫 화면은 pane)의 머리다. 목록 머리는 닫힌 drawer 안에 있다
+    const head = await rect(pp.locator(".view header").first());
     const card = await rect(pd.locator(".droplet-card"));
     inside(card, "앱 안 알림");
     if (card.top < head.bottom) throw new Error(`앱 안 알림이 머리를 가린다 ${card.top} < ${head.bottom}`);
     await shot(pp, "phone-droplet");
     await pd.locator(".droplet-close").click();
     await until("휴대폰 알림 닫힘", async () => (await pd.count()) === 0);
-    await pp.getByTestId("more").click();
+    await inList(pp, "more");
     inside(await rect(pp.locator(".more-menu")), "더 보기 메뉴");
     const it = await rect(pp.getByTestId("alerts-item"));
     const menu = await rect(pp.locator(".more-menu"));
@@ -586,7 +587,7 @@ export default async function ({ ctl, page }) {
     const pp = phone.page;
     const subscribed = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed);
     const bellPush = async () => {
-      await pp.getByTestId("more").click();
+      await inList(pp, "more");
       const ok = (await pp.getByTestId("alerts-item").innerText()).includes("켜짐, 이 기기로 푸시");
       await pp.keyboard.press("Escape");
       return ok;
@@ -594,7 +595,7 @@ export default async function ({ ctl, page }) {
     // (1) 열면 권한·구독이 있는 기기는 조용히 다시 등록한다(참고 App.tsx 「re-registers on every load」). 다시 열어도 같다
     await until("열 때 다시 등록", async () => (await subscribed()) === 1 && (await bellPush()));
     await pp.reload();
-    await pp.getByTestId("machine-labA").waitFor();
+    await pp.getByTestId("machine-labA").waitFor({ state: "attached" });
     await until("다시 열 때 다시 등록", () => bellPush());
     if ((await pp.evaluate(() => window.__pushLog.join(","))) !== "") throw new Error(`다시 등록이 구독을 바꿨다: ${await pp.evaluate(() => window.__pushLog.join(","))}`);
     await until("휴대폰을 봄", async () => (await pushInUse()) === 1);
@@ -777,7 +778,7 @@ export default async function ({ ctl, page }) {
     if (gone > 6000) throw new Error(`끊기까지 ${gone}ms(ping 1초·3초 기한)`);
     // ⋯ 메뉴(사용자 화면 10-18: 미러링 키보드 Esc로 닫히지 않음): 키보드 사건이 메뉴로 오도록 첫 항목에 focus
     const focused = () => bp.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? document.activeElement?.textContent?.trim());
-    await bp.getByTestId("more").click();
+    await inList(bp, "more");
     await until("열면 첫 항목에 focus", async () => (await focused()) === "링크 복사");
     await bp.keyboard.press("ArrowDown");
     if ((await focused()) !== "alerts-item") throw new Error(`아래 화살표 뒤 focus ${await focused()}`);
@@ -858,7 +859,7 @@ export default async function ({ ctl, page }) {
     await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
     await closed;
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -895,7 +896,7 @@ export default async function ({ ctl, page }) {
     // 2. 휴대폰(다른 기기): 고정이 와 있고, ⋯ sheet에서 푼다 → 데스크톱에서도 풀린다
     const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await domIs(ph.page, "다른 기기의 고정 카드", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) !== null, key);
-    await ph.page.locator(`.machine-list .sidebar-pinned [data-pin-key="${key}"] .row-menu-toggle`).click();
+    await inList(ph.page, ph.page.locator(`.machine-list .sidebar-pinned [data-pin-key="${key}"] .row-menu-toggle`));
     const sheet = ph.page.getByRole("dialog", { name: "t1" });
     await sheet.waitFor();
     // 아래에서 올라오는 움직임이 끝난 뒤 찍는다(움직임의 finished, 시간 기다림 없음)
@@ -982,7 +983,7 @@ export default async function ({ ctl, page }) {
     await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${other}`);
     await toOther;
     await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -1007,7 +1008,7 @@ export default async function ({ ctl, page }) {
     // B(휴대폰): 열 때는 focus가 없다(앱을 켠 것이 아니다)
     const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: () => (document.hasFocus = () => false) });
     const bp = B.page;
-    await bp.getByTestId("pane-who").click();
+    await inList(bp, "pane-who");
     // 터미널이 입력을 받기 전에 친 글은 붙잡힌다(herdr-web-ui draft): who pane이 붙어 입력을 받을 때까지
     const writable = (p) => until("who 터미널 입력 받음", async () => (await p.locator('[data-testid="terminal"][data-pane-name="who"][data-readonly="false"]').count()) === 1);
     await writable(bp);
@@ -1058,7 +1059,7 @@ export default async function ({ ctl, page }) {
     await until("가려진 뒤 기기 push", () => devicePushes(from).length >= 1);
     done();
     // (3) A에서 다시 친다: A가 쓰는 기기, push 없음
-    await page.getByTestId("pane-who").click();
+    await inList(page, "pane-who");
     await writable(page);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type("a1");
@@ -1296,7 +1297,7 @@ export default async function ({ ctl, page }) {
     await shot(page, "desktop-evaluator");
     aaa("evaluator", "unassign", "demo");
     await until("끝낸 평가자 badge 사라짐", async () => (await badge.count()) === 0);
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 }

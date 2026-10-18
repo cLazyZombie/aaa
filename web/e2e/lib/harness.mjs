@@ -403,9 +403,42 @@ const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["i
 // line: 이 기기의 입력 방식을 입력줄로 둔다(기본은 바로 입력, herdr-web-ui terminalInputMode)
 // serviceWorkers: "block"이면 service worker 없이 연다(그 worker가 맡은 요청은 ctx.route를 거치지 않는다, plan §8.115)
 // wsRoute·route: [주소, 처리]를 열기 전에 건다(Playwright routeWebSocket은 그 뒤에 만든 WebSocket만 가로채고, 글꼴은 연결 화면에서 이미 받는다)
+/**
+ * 목록 안의 것(pane·thread 줄, 바닥 줄의 설정·사용량)을 누른다. 768px 이하에서 목록은 pane 위의 drawer라(plan §8.135,
+ * web/src/drawer.tsx) 닫혀 있으면 화면 머리의 「목록 열기」로 연 뒤 누른다. 넓은 창은 그대로 누른다.
+ */
+async function inList(p, target) {
+  const item = typeof target === "string" ? p.getByTestId(target) : target;
+  await item.waitFor({ state: "attached" });
+  // 닫히는 중인 drawer의 항목은 움직임이 끝날 때까지 보인다: 끝난 뒤에 본다(transition의 finished)
+  await p.evaluate(() => Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null))));
+  const toggle = p.locator(".view [data-testid='drawer-toggle']");
+  if (!(await item.isVisible()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+    await p.locator("#workspace-drawer.is-open").waitFor();
+  }
+  if (!(await item.isVisible())) {
+    // 기다려도 보이지 않을 자리다: 그때 화면을 말하고 끝낸다
+    const at = await p.evaluate(() => ({
+      view: document.querySelector(".view")?.className ?? null,
+      heads: [...document.querySelectorAll(".view header")].map((h) => h.className),
+      toggles: [...document.querySelectorAll("[data-testid='drawer-toggle']")].map((t) => `${t.closest("header")?.className}:${getComputedStyle(t).display}`),
+      drawer: document.getElementById("workspace-drawer")?.className ?? null,
+      hash: location.hash,
+    }));
+    throw new Error(`목록 항목이 보이지 않는다(${p.viewportSize()?.width}px): ${JSON.stringify(at)}`);
+  }
+  await item.click();
+}
+
+/** 그 이름의 pane을 가리키는 주소(pairPage `hash`) */
+function paneHash(name) {
+  return `#pane=${encodeURIComponent(aaa("pane", "list").panes.find((x) => x.name === name).id)}`;
+}
+
 /** 설정 창을 열고 그 쪽으로 간다(herdr-web-ui SettingsDialog: 넓은 창은 왼쪽 목록 옆에 쪽, 휴대폰은 목록에서 쪽으로) */
 async function openSettings(p, pageName) {
-  await p.getByTestId("settings-open").click();
+  await inList(p, "settings-open");
   const dialog = p.getByRole("dialog", { name: "설정" });
   await dialog.waitFor();
   await dialog.getByRole("tab", { name: pageName }).click();
@@ -414,7 +447,9 @@ async function openSettings(p, pageName) {
 }
 
 // setup(ctx): 화면을 열기 전에 context에 건다(lib/devices.mjs가 기기 기록 binding과 그 기기의 규칙을 건다)
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup } = {}) {
+// hash: 처음 여는 주소(`#pane=<id>`: 첫 화면이 그 pane이다, `paneHash`). 없으면 첫 화면은 기억한 것·첫 pane(App.tsx firstPick).
+// onPage(page): 주소를 열기 전에(첫 화면이 여는 WebSocket까지 듣게)
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup, hash, onPage } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -531,14 +566,16 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   const errors = [];
   // 글과 stack 맨 위 두 자리(번들 안 file:줄:칸): 한 번만 난 화면 오류도 어디서 났는지 남긴다
   page.on("pageerror", (e) => errors.push([String(e), ...String(e.stack ?? "").split("\n").slice(1, 3).map((l) => l.trim())].join(" ")));
-  await page.goto(base);
+  if (onPage) onPage(page);
+  await page.goto(`${base}${hash ?? ""}`);
   // 넣은 글꼴을 터미널을 열기 전에 받아 둔다(늘 쓰는 기기처럼 cache에 있는 상태). 늦게 받아지면 칸 높이·줄 수가 바뀌어
   // 그 단계가 재는 것(끌기 줄 수·크기)과 겹친다: CI 러너에는 깔린 글꼴이 없어 매번 늦게 받았다(41e81eb 휴대폰 끌기).
   // 늦게 받는 경우는 「글꼴이 늦게 와도 맨 아래」 단계가 따로 본다(route로 글꼴을 붙잡으므로 그때는 기다리지 않는다).
   if (!route) await page.evaluate(() => Promise.all([400, 700].map((w) => document.fonts.load(`${w} 13px "Meslotendard Web"`))));
   await page.getByLabel("페어링 코드").fill(code);
   await page.getByRole("button", { name: "이 기기 페어링" }).click();
-  await page.getByTestId("machine-labA").waitFor();
+  // 붙어서 목록을 받았다(좁은 창은 목록이 닫힌 drawer 안이라 보이지 않는다)
+  await page.getByTestId("machine-labA").waitFor({ state: "attached" });
   return { page, errors };
 }
 
@@ -977,6 +1014,8 @@ async function runSpec(spec) {
 }
 
 export {
+  inList,
+  paneHash,
   require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, waitOutput, start, stop, until, domIs,
   hashIs, freePort, killSessionHosts, screenText, termDiag, pasteFile, bannerPath, shot, termFont, fontOk, imeType,
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,

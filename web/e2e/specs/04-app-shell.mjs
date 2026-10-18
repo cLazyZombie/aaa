@@ -3,7 +3,7 @@
 
 import {
   webkit, AA, sleep, aaa, until, screenText, shot, fakeViewport, softKeyboard, pairPage, step, browser,
-  openSettings,
+  openSettings, inList, paneHash, base,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -23,7 +23,7 @@ export default async function ({ ctl, page }) {
       const { page: p } = await pairPage(browser, aaa("web", "pair").code, viewport, { touch: true, line });
       const cdp = await p.context().newCDPSession(p);
       await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, left: 47, right: 47, bottom: 21 } });
-      await p.getByTestId("pane-t1").click();
+      await inList(p, "pane-t1");
       await until("t1 화면", async () => (await screenText(p)).includes("$"));
       return p;
     };
@@ -38,9 +38,11 @@ export default async function ({ ctl, page }) {
     const n = await measure(narrow);
     const wantN = { head: [8 + 47, 8 + 47], scroll: [8 + 47, 8 + 47], keys: [8 + 47, 8 + 47], input: [8 + 47, 8 + 47] };
     for (const [k, v] of Object.entries(wantN)) if (JSON.stringify(n[k]) !== JSON.stringify(v)) throw new Error(`좁은 가로 ${k} ${JSON.stringify(n[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(n)})`);
-    await narrow.getByRole("button", { name: "목록으로" }).click();
+    // 목록은 pane 위의 drawer다(참고 styles.css .sidebar): 왼쪽 끝에 붙어 왼쪽 노치만 비킨다(오른쪽 끝에 닿지 않는다)
+    await narrow.locator(".view [data-testid='drawer-toggle']").click();
+    await narrow.locator("#workspace-drawer.is-open").waitFor();
     const l = await measure(narrow);
-    if (JSON.stringify(l.list) !== "[47,47]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
+    if (JSON.stringify(l.list) !== "[47,0]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
     await narrow.context().close();
   });
 
@@ -69,7 +71,7 @@ export default async function ({ ctl, page }) {
     // 「요청하지 않았다」는 App이 wake lock effect를 그 상태로 돌린 뒤 다는 표지(data-wake-lock: 설정 걸지 보는 것) 뒤에 본다
     const t1 = `pane:${aaa("pane", "list").panes.find((p) => p.name === "t1").id}`;
     const decided = (want) => until(`wake lock 판정 ${want}`, async () => (await wp.evaluate(() => document.documentElement.dataset.wakeLock)) === want);
-    await wp.getByTestId("pane-t1").click();
+    await inList(wp, "pane-t1");
     // 앞 단계가 남긴 글에 기대지 않는다: 셸 프롬프트가 보이면 연결된 것이다
     await until("t1 화면", async () => (await screenText(wp)).includes("$"));
     await decided(`off free ${t1}`);
@@ -79,30 +81,27 @@ export default async function ({ ctl, page }) {
       await (await openSettings(wp, "폰 및 기기")).getByRole("switch", { name: "화면 켜짐 유지" }).click();
       await wp.keyboard.press("Escape");
     };
-    // 휴대폰은 pane을 보는 동안 목록 바닥 톱니가 가려진다: 목록으로 돌아가 켜고 다시 고른다
-    const back = wp.getByRole("button", { name: "목록으로" });
-    if (await back.isVisible()) await back.click();
+    // 보는 pane이 있으니(참고 App.tsx 842줄 `selectedPane !== null`) 켜면 바로 요청한다
     await toggle();
     if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== "1") throw new Error("켠 설정이 저장되지 않았다");
-    await decided("on free -");
-    if ((await log()) !== "") throw new Error(`pane을 보지 않는데 ${await log()}`);
-    await wp.getByTestId("pane-t1").click();
+    await decided(`on hold ${t1}`);
     await until("wake lock 요청", async () => (await log()) === "request screen");
+    // 목록 drawer가 열려 있어도(설정은 drawer 바닥 톱니에서 열었고 닫으면 그 drawer로 돌아온다) pane은 골라진 채다: 놓지 않는다
+    await wp.locator("#workspace-drawer.is-open").waitFor();
+    await decided(`on hold ${t1}`);
+    if ((await log()) !== "request screen") throw new Error(`drawer를 열었는데 ${await log()}`);
+    await wp.keyboard.press("Escape");
     await hide(true);
     await until("가려지면 놓음", async () => (await log()) === "request screen,release");
     await hide(false);
     await until("다시 보이면 다시 요청", async () => (await log()) === "request screen,release,request screen");
-    // 다시 열어도 이 기기 설정
+    // 다시 열어도 이 기기 설정. 주소(#pane=)가 그 pane을 다시 연다
     await wp.reload();
-    // 주소(#pane=)가 그 pane을 다시 고른다. 목록이 보이면 고른다
-    await until("다시 연 화면", async () => (await wp.getByTestId("pane-t1").isVisible()) || (await log()) !== "");
-    if (await wp.getByTestId("pane-t1").isVisible()) await wp.getByTestId("pane-t1").click();
     await until("다시 연 화면도 요청", async () => (await log()) === "request screen");
-    if (await back.isVisible()) await back.click();
-    await until("목록으로 가면 놓음", async () => (await log()) === "request screen,release");
     await toggle();
+    await until("끄면 놓음", async () => (await log()) === "request screen,release");
     if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== null) throw new Error("끈 설정이 남았다");
-    await wp.getByTestId("pane-t1").click();
+    await inList(wp, "pane-t1");
     await decided(`off free ${t1}`);
     if ((await log()) !== "request screen,release") throw new Error(`끈 뒤 ${await log()}`);
     await wp.context().close();
@@ -190,8 +189,8 @@ export default async function ({ ctl, page }) {
       ["데스크톱 Firefox", { width: 1280, height: 800 }, FIREFOX, false, "데스크톱 Firefox는 웹 앱을 설치할 수 없습니다. Chrome이나 Edge로 여세요.", init],
     ]) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { userAgent, touch, init: script })).page;
-      await until(`${name} 설치 단추`, () => p.getByTestId("install-app").isVisible());
-      await p.getByTestId("install-app").click();
+      // 설치 단추는 목록에 있다(휴대폰은 drawer 안)
+      await inList(p, "install-app");
       const got = await p.getByTestId("install-help").innerText();
       if (got !== want) throw new Error(`${name} 안내: ${got}`);
       await p.context().close();
@@ -203,7 +202,7 @@ export default async function ({ ctl, page }) {
         init: () => Object.defineProperty(navigator, "standalone", { get: () => true }),
       })
     ).page;
-    await until("홈 화면 앱 목록", () => sp.getByTestId("settings-open").isVisible());
+    await sp.getByTestId("settings-open").waitFor({ state: "attached" });
     if (await sp.getByTestId("install-app").count()) throw new Error("설치된 앱에 설치 단추");
     row = await dialogRow(sp);
     if (!row.text.includes("설치됨")) throw new Error(`홈 화면 앱 설정 줄 ${JSON.stringify(row)}`);
@@ -238,16 +237,19 @@ export default async function ({ ctl, page }) {
     // 셸은 agent 표시가 아니라 터미널 표시(참고 Sidebar.tsx rowMark: lucide Terminal)
     const sh = await markOf("t1");
     if (sh.agent !== "shell" || sh.cls !== null || !sh.shell) bad.push(`셸 줄 ${JSON.stringify(sh)}`);
+    // 목록은 drawer다: 열어 자리에 선 뒤 찍는다
+    await mp.locator(".view [data-testid='drawer-toggle']").click();
+    await mp.locator("#workspace-drawer.is-open").waitFor();
+    await until("drawer 자리", () => mp.evaluate(() => document.getElementById("workspace-drawer").getAnimations().length === 0));
     await shot(mp, "phone-agent-marks");
     // 터미널 머리: 제목 앞에 그 pane의 agent 표시(참고 App.tsx 1402줄, 18px)
-    await mp.getByTestId("pane-markc").click();
+    await inList(mp, "pane-markc");
     const head = mp.locator(".term-title .agent-mark");
     await head.waitFor();
     const hc = await head.evaluate((a) => `${a.className} ${a.querySelector("svg").getAttribute("width")}`);
     if (hc !== "agent-mark claude is-brand 18") bad.push(`머리 표시 ${hc}`);
     await shot(mp, "phone-agent-head");
-    await mp.getByRole("button", { name: "목록으로" }).click();
-    await mp.getByTestId("pane-t1").click();
+    await inList(mp, "pane-t1");
     await mp.getByTestId("terminal").waitFor();
     if ((await mp.locator(".term-title .agent-mark").count()) !== 0) bad.push("셸 머리에 agent 표시가 있다");
     await mp.context().close();
@@ -298,7 +300,7 @@ export default async function ({ ctl, page }) {
       const up = await check("iPad 820×1180", pad);
       if (up.view !== 1180) bad.push(`iPad 보이는 높이가 1180이 아니다(${up.view}): 키보드 시험이 안 된다`);
       // pane을 열고 화면 키보드를 올리면(보이는 높이 780) 바닥 줄은 키보드 바로 위에 남는다
-      await pad.getByTestId("pane-t1").click();
+      await inList(pad, "pane-t1");
       await pad.getByTestId("terminal").waitFor();
       // 키보드는 글 칸에 focus가 있을 때만 올라온다(herdr/viewport.ts)
       await pad.locator(".xterm-helper-textarea").focus();
@@ -388,10 +390,135 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     // 휴대폰(터치·좁은 화면)에는 머리 돋보기가 없다(참고 styles.css `.palette-button`)
     const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    await mp.getByTestId("pane-t1").waitFor();
+    await mp.getByTestId("pane-t1").waitFor({ state: "attached" });
     if (await mp.getByTestId("palette-open").isVisible()) bad.push("휴대폰에 돋보기가 보인다");
     await mp.context().close();
     for (const name of ["pala", "palb"]) aaa("pane", "kill", name);
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("목록 drawer(herdr-web-ui App.tsx drawerOpen·edgeSwipe.ts·styles.css 768px, 차이 목록 M1·D2): 768px 이하는 목록이 pane 위 drawer, 머리 단추·왼쪽 가장자리 쓸기로 열고 바깥 누름·왼쪽 쓸기·Esc로 닫으며, 줄을 고르면 닫히고, 넓어지면 옆 칸", async () => {
+    const bad = [];
+    const P = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const pp = P.page;
+    const toggle = pp.locator(".view [data-testid='drawer-toggle']");
+    const drawer = pp.locator("#workspace-drawer");
+    // 열림: 단추가 말하고(aria-expanded), drawer가 보이고(visibility), 자리에 섰다(transform 끝)
+    const shown = () =>
+      pp.evaluate(() => {
+        const d = document.getElementById("workspace-drawer");
+        const r = d.getBoundingClientRect();
+        return { open: d.classList.contains("is-open"), visible: getComputedStyle(d).visibility === "visible", left: Math.round(r.left), width: Math.round(r.width) };
+      });
+    const settled = (want, why = "") =>
+      until(`${want ? "drawer 열림" : "drawer 닫힘"}${why}`, async () => {
+        const s = await shown();
+        const animating = await pp.evaluate(() => document.getElementById("workspace-drawer").getAnimations().length > 0);
+        return !animating && s.open === want && (want ? s.visible && s.left === 0 : !s.visible);
+      });
+    await toggle.waitFor();
+    if ((await toggle.getAttribute("aria-expanded")) !== "false") bad.push("처음부터 drawer가 열렸다");
+    await settled(false, " #1");
+    // 단추로 열고 닫기
+    await toggle.click();
+    await settled(true, " #2");
+    if ((await toggle.getAttribute("aria-label")) !== "목록 닫기") bad.push(`연 단추 이름 ${await toggle.getAttribute("aria-label")}`);
+    const w = (await shown()).width;
+    if (w > Math.round(390 * 0.88) + 1) bad.push(`drawer 너비 ${w}(88vw 넘음)`);
+    // 바닥 줄(설정 톱니)까지 화면 안: drawer 높이는 머리 아래부터 화면 끝까지다(.sidebar-shell height:100%가 밀어내지 않게)
+    const foot = await pp.evaluate(() => [document.getElementById("workspace-drawer"), document.querySelector("[data-testid='settings-open']")].map((e) => Math.round(e.getBoundingClientRect().bottom)));
+    if (foot.some((b) => b > 844)) bad.push(`drawer·톱니 아래 끝 ${foot} > 844`);
+    await shot(pp, "phone-drawer-open");
+    // 바깥(scrim) 누름
+    await pp.locator(".scrim.is-open").click({ position: { x: 380, y: 600 } });
+    await settled(false, " #3");
+    // Esc: drawer 안 focus는 단추로 돌아온다
+    await toggle.click();
+    await settled(true, " #4");
+    await pp.getByTestId("pane-t1").focus();
+    await pp.keyboard.press("Escape");
+    await settled(false, " #5");
+    if (!(await pp.evaluate(() => document.activeElement?.dataset?.testid === "drawer-toggle"))) bad.push("Esc로 닫은 뒤 focus가 단추가 아니다");
+    // 왼쪽 가장자리에서 쓸어 열고, 왼쪽으로 쓸어 닫는다(참고 EDGE_PX 24·SWIPE_PX 56)
+    const cdp = await pp.context().newCDPSession(pp);
+    const swipe = async (x0, x1) => {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x0, y: 500, id: 1 }] });
+      for (let i = 1; i <= 10; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x0 + ((x1 - x0) * i) / 10, y: 500, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    };
+    await swipe(4, 300);
+    await settled(true, " #6").catch((e) => bad.push(`가장자리 쓸기로 열리지 않았다: ${e.message}`));
+    await swipe(300, 20);
+    await settled(false, " #7").catch((e) => bad.push(`왼쪽 쓸기로 닫히지 않았다: ${e.message}`));
+    // 가장자리가 아닌 곳의 옆 쓸기는 drawer 것이 아니다
+    await swipe(120, 360);
+    if ((await shown()).open) bad.push("가장자리가 아닌 쓸기로 열렸다");
+    // 줄을 고르면 그 pane을 열고 닫힌다
+    await toggle.click();
+    await settled(true, " #8");
+    await pp.getByTestId("pane-t1").click();
+    await settled(false, " #9");
+    await until("t1 화면", async () => (await screenText(pp)).includes("t1-42"));
+    // 넓어지면 drawer가 아니라 옆 칸, 다시 좁아져도 닫힌 채(참고 wideScreen)
+    await toggle.click();
+    await settled(true, " #10");
+    await pp.setViewportSize({ width: 1024, height: 768 });
+    // 옆 칸은 CSS가 곧 보이지만 drawer를 닫는 것은 앱이 media query 사건을 받은 뒤다: 그것까지 기다리고 좁힌다
+    await until("넓은 창 옆 칸", async () => !(await toggle.isVisible()) && (await pp.getByTestId("pane-t1").isVisible()) && !(await drawer.evaluate((d) => d.classList.contains("is-open"))));
+    await pp.setViewportSize({ width: 390, height: 844 });
+    await settled(false, " #11");
+    await P.page.context().close();
+    // iPad 세로(768)는 drawer, 가로(1024)는 옆 칸
+    const I = await pairPage(browser, aaa("web", "pair").code, { width: 768, height: 1024 }, { touch: true });
+    const ip = I.page;
+    await inList(ip, "pane-t1");
+    await until("iPad t1", async () => (await screenText(ip)).includes("t1-42"));
+    await ip.locator(".view [data-testid='drawer-toggle']").click();
+    await ip.locator("#workspace-drawer.is-open").waitFor();
+    await until("iPad drawer 자리", () => ip.evaluate(() => document.getElementById("workspace-drawer").getAnimations().length === 0));
+    await shot(ip, "ipad-drawer-open");
+    await ip.setViewportSize({ width: 1024, height: 768 });
+    await until("iPad 가로 옆 칸", async () => !(await ip.locator(".view [data-testid='drawer-toggle']").isVisible()) && (await ip.getByTestId("pane-t1").isVisible()));
+    await shot(ip, "ipad-landscape-sidebar");
+    await I.page.context().close();
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("첫 화면(herdr-web-ui App.tsx SELECTION_KEY·fallback, 차이 목록 M1): 주소 없이 열면 이 기기가 마지막으로 연 pane, 없거나 닫혔으면 붙은 머신의 첫 줄을 연다. 휴대폰은 키보드를 올리지 않고 데스크톱은 터미널이 키보드를 받는다", async () => {
+    const bad = [];
+    const typing = (p) => p.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") === true);
+    const firstRow = (p) => p.evaluate(() => document.querySelector(".machine-list [data-testid^='pane-']")?.dataset.testid.slice(5));
+    const opened = (p, name) => until(`첫 화면 ${name}`, async () => (await p.evaluate(() => location.hash)) === paneHash(name) && (await p.locator('[data-testid="terminal"]').getAttribute("data-pane-name")) === name);
+    // 휴대폰: 기억한 것이 없으면 첫 줄
+    const P = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true });
+    const pp = P.page;
+    await pp.locator(".machine-list [data-testid^='pane-']").first().waitFor({ state: "attached" });
+    const first = await firstRow(pp);
+    await opened(pp, first);
+    if ((await pp.locator("#workspace-drawer").getAttribute("class")).includes("is-open")) bad.push("첫 화면에 drawer가 열렸다");
+    if (await typing(pp)) bad.push("휴대폰 첫 화면이 키보드를 올렸다");
+    await shot(pp, "phone-first-screen");
+    // 다른 pane을 열면 이 기기가 기억한다: 같은 기기의 새 탭(주소 없음)은 그 pane
+    aaa("tab", "create", "--machine", "labA", "--label", "firstpick", "--", "/bin/sh");
+    await inList(pp, "pane-firstpick");
+    await opened(pp, "firstpick");
+    const tab = await pp.context().newPage();
+    await tab.goto(base);
+    await opened(tab, "firstpick");
+    if (await typing(tab)) bad.push("기억한 pane을 연 휴대폰이 키보드를 올렸다");
+    await tab.close();
+    // 그 pane이 끝났으면(목록에는 끝난 줄로 남는다) 첫 줄
+    aaa("pane", "kill", "firstpick");
+    await until("firstpick 끝남", () => aaa("pane", "list").panes.find((x) => x.name === "firstpick")?.state !== "running");
+    const again = await pp.context().newPage();
+    await again.goto(base);
+    await opened(again, first);
+    await P.page.context().close();
+    // 데스크톱: 첫 줄을 열고 바로 친다(참고 PaneTerminal 2072줄, 고른 것이 없던 첫 화면은 autoSelected가 아니다)
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    await opened(dp, first);
+    await until("데스크톱 첫 화면 터미널 focus", () => typing(dp)).catch((e) => bad.push(e.message));
+    await dp.context().close();
     if (bad.length) throw new Error(bad.join("; "));
   });
 }

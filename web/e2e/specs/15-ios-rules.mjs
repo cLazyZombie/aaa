@@ -3,7 +3,7 @@
 // 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 탭에 없는 Notification을 부름)을 못 잡는다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 15-ios-rules(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk } from "../lib/harness.mjs";
+import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk, inList } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 export default async function () {
@@ -50,7 +50,7 @@ export default async function () {
     await still(dialog);
     await shot(ph, "iphone-home-sound-settings");
     await ph.keyboard.press("Escape");
-    await ph.getByTestId("pane-t1").click();
+    await inList(ph, "pane-t1");
     // 1) 다른 pane의 확인창: 앱 안 알림과 「입력 필요」 소리(660 → 880)
     await device.skipAudio();
     m = device.mark();

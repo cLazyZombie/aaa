@@ -161,8 +161,8 @@ export default async function ({ ctl, page }) {
     } finally {
       await wk.close();
     }
-    // 머리(목록 왼쪽 위)와 아무것도 고르지 않은 빈 화면
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
+    // 머리(목록 왼쪽 위)와 보일 pane이 없는 빈 화면(주소가 가리킨 pane이 없다. 그 밖에는 첫 화면이 pane을 연다)
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { hash: "#pane=gone" })).page;
     await until("머리·빈 화면 아이콘", async () => (await logos(dp)).join("|") === "IMG /icon.svg true 22 |IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(dp)}`));
     if ((await dp.locator(".list-head .logo").getAttribute("alt")) !== "aaa") bad.push("머리 아이콘에 이름(alt)이 없다");
     await shot(dp, "desktop-head-icon");

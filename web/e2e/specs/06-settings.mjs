@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit, sentFrames, sentCount,
+  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit, sentFrames, sentCount, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -28,7 +28,7 @@ export default async function ({ ctl, page }) {
       await sleep(800);
       await r.continue();
     });
-    await fp.getByTestId("pane-fontset").click();
+    await inList(fp, "pane-fontset");
     await until("fontset 화면", async () => (await screenText(fp)).includes("s-200"));
     // cell 너비 = 글자 영역 너비 / 열 수(머리의 cols×rows), 그리고 host PTY 열 수
     const cell = async () => {
@@ -77,7 +77,7 @@ export default async function ({ ctl, page }) {
     if ((await stored()) !== '"E2E Wide", Menlo') throw new Error(`거른 값 ${await stored()}`);
     // 다시 열어도 이 기기의 글꼴: 연 뒤 face를 받고 나서 잰다
     await fp.reload();
-    await fp.getByTestId("pane-fontset").click();
+    await inList(fp, "pane-fontset");
     await settle("다시 연 화면도 넓은 글꼴", (c) => Math.abs(c.w / first.w - 1.5) < 0.05);
     if (wideFetches !== 2) throw new Error(`다시 열고 E2E Wide를 ${wideFetches}번째로 받지 않았다`);
     // 비우면(Enter) 기본 글꼴, 저장값도 지운다
@@ -140,7 +140,7 @@ export default async function ({ ctl, page }) {
     await dlg.getByLabel("입력 방식").selectOption("line");
     await dp.keyboard.press("Escape");
     await until("설정 닫힘", async () => (await dp.getByRole("dialog", { name: "설정" }).count()) === 0);
-    await dp.getByTestId("pane-t1").click();
+    await inList(dp, "pane-t1");
     await until("입력줄", async () => (await dp.locator(".terminal-input").count()) === 1);
     // 다시 열어도 이 기기에 남는다. 끄면 막대도 사라진다
     await dp.reload();
@@ -181,8 +181,8 @@ export default async function ({ ctl, page }) {
         // 오른쪽에는 xterm 세로 scrollbar 자리(기본 14px)가 남는다
         return sw <= w + 1 && w - sw < sw / cols + 15;
       }, cols);
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await dp.getByTestId("pane-t1").click();
+    // 주소가 t1을 가리켜 첫 화면이 t1이다(이미 고른 줄을 다시 누르면 focus가 그 줄로 간다, 참고 selectTarget)
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { hash: paneHash("t1") })).page;
     await until("13px로 연다", async () => (await rowsFont(dp)) === "13px");
     // 데스크톱(바로 입력)은 pane을 열면 터미널이 키보드를 받는다(herdr-web-ui PaneTerminal 2072줄). 입력줄이면 참고처럼 놓는다.
     await until("열면 터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")));
@@ -209,7 +209,7 @@ export default async function ({ ctl, page }) {
 
     // 휴대폰: 두 손가락을 벌리면 글자가 바로 커지고 크기를 띄운다. 손을 떼면 저장하고 PTY를 다시 건다.
     const mp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    await mp.getByTestId("pane-t1").click();
+    await inList(mp, "pane-t1");
     await until("휴대폰 13px", async () => (await rowsFont(mp)) === "13px");
     await mp.getByTestId("terminal").click();
     const phone = await settled(mp, "휴대폰 크기", (c) => c < wide);
@@ -254,7 +254,7 @@ export default async function ({ ctl, page }) {
     const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
     // 넓은 창: 목록과 첫 쪽(모양)이 나란히, 고른 줄에 focus, 화살표·End가 목록을 걷고 쪽도 넘긴다
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("settings-open").click();
+    await inList(dp, "settings-open");
     const dlg = dp.getByRole("dialog", { name: "설정" });
     await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
     if (JSON.stringify(await tabs(dlg)) !== JSON.stringify(NAMES)) bad.push(`넓은 창 목록 ${await tabs(dlg)}`);
@@ -295,7 +295,7 @@ export default async function ({ ctl, page }) {
 
     // 휴대폰: 목록으로 열고(쪽 없음), 고르면 쪽만, ←·시스템 뒤로는 목록으로, 그 줄에 focus
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
-    await pp.getByTestId("settings-open").click();
+    await inList(pp, "settings-open");
     const pd = pp.getByRole("dialog", { name: "설정" });
     await pd.getByRole("tab", { name: "모양" }).waitFor();
     if ((await pd.getByRole("tabpanel").count()) !== 0) bad.push("휴대폰이 목록과 쪽을 함께 보인다");
@@ -376,7 +376,7 @@ export default async function ({ ctl, page }) {
         };
       });
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-t1").click();
+    await inList(dp, "pane-t1");
     await until("13px 터미널", async () => (await look(dp)).term === "13px");
     const start = await look(dp);
     if (start.density !== "comfortable" || start.scale !== "1" || start.body !== "14px") bad.push(`처음 모양 ${JSON.stringify(start)}`);
@@ -420,7 +420,10 @@ export default async function ({ ctl, page }) {
     if ((await look(pp)).density !== "comfortable") bad.push("다른 기기 밀도가 바뀌었다");
     await pp.evaluate(() => localStorage.setItem("aaa:appearance", JSON.stringify({ ...JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"), uiFontSize: 20 })));
     await pp.reload();
-    await pp.getByTestId("machine-labA").waitFor();
+    // 목록은 drawer다: 열고 잰다
+    await pp.locator(".view [data-testid='drawer-toggle']").click();
+    await pp.locator("#workspace-drawer.is-open").waitFor();
+    await until("drawer 자리", () => pp.evaluate(() => document.getElementById("workspace-drawer").getAnimations().length === 0));
     const wide = () => pp.evaluate(() => document.documentElement.scrollWidth);
     if ((await wide()) > 390) bad.push(`휴대폰 20px 목록 넘침 ${await wide()}`);
     await shot(pp, "phone-ui-font-20-list");
@@ -437,7 +440,7 @@ export default async function ({ ctl, page }) {
     const bad = [];
     const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
-    await pp.getByTestId("machine-labA").waitFor();
+    await pp.getByTestId("machine-labA").waitFor({ state: "attached" });
     const home = pp.url();
     // 뒤로 두 번: 쪽 → 목록 → 닫힘. 앱은 그 자리(주소·목록)에 남고, focus는 톱니로
     await openSettings(pp, "터미널");
@@ -450,7 +453,7 @@ export default async function ({ ctl, page }) {
     // 조작 크기(390×844 터치): 쪽 줄은 --keybar-h, 머리·한 칸씩의 아이콘 단추는 --touch-target, 글 단추는 그 높이, 스위치는 48×40
     const sizes = (p, sel) =>
       p.locator(".settings-dialog").evaluate((d, sel) => [...d.querySelectorAll(sel)].filter((e) => e.getClientRects().length).map((e) => [Math.round(e.getBoundingClientRect().width), Math.round(e.getBoundingClientRect().height)]), sel);
-    await pp.getByTestId("settings-open").click();
+    await inList(pp, "settings-open");
     const dlg = pp.getByRole("dialog", { name: "설정" });
     await dlg.getByRole("tab", { name: "터미널" }).waitFor();
     const tabs = await sizes(pp, ".settings-tab");
@@ -481,7 +484,7 @@ export default async function ({ ctl, page }) {
     await pp.context().close();
     // 데스크톱: 터미널에서 단축키로 연 설정을 Esc로 닫으면 focus는 터미널로 돌아가 친 글이 pane에 닿는다(Mod = Ctrl인 platform)
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { platform: "Linux x86_64" })).page;
-    await dp.getByTestId("pane-t1").click();
+    await inList(dp, "pane-t1");
     await dp.getByTestId("terminal").click();
     await until("터미널에 focus", () => dp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea")));
     await dp.keyboard.press("Control+Shift+Comma");
