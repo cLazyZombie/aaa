@@ -1471,32 +1471,91 @@ fn color(c: vt100::Color) -> u32 {
     }
 }
 
-/// 출력에서 커서 위치 질의(DSR 6, `ESC [ 6 n`)가 끝나는 위치를 찾는다. chunk 경계에 걸쳐도 찾는다.
-///
-/// session host가 터미널 역할이라 이 질의에 답해야 한다. Windows ConPTY(INHERIT_CURSOR)는 시작할 때
-/// 이 질의를 보내고 답이 올 때까지 자식의 출력과 종료를 막는다.
-#[derive(Default)]
-pub struct DsrScanner {
-    matched: usize,
+/// 프로그램이 터미널에 묻는 것 중 session host가 답하는 것(답은 herdr 0.9.5의 ghostty와 같다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Query {
+    /// DA1 `CSI c`·`CSI 0 c`
+    PrimaryAttributes,
+    /// DA2 `CSI > c`·`CSI > 0 c`
+    SecondaryAttributes,
+    /// DSR 6 `CSI 6 n`(커서 위치)
+    CursorPosition,
 }
 
-const DSR: &[u8] = b"\x1b[6n";
+impl Query {
+    /// 커서와 상관없는 답. 커서 위치는 질의 시점의 화면으로 답한다(`Vt::cursor_report`).
+    /// DA1은 ghostty `device_attributes.zig` `Primary` 기본값(VT220·ANSI 색), DA2는 `Secondary` 기본값(VT220·판 0)이다.
+    pub fn fixed_reply(self) -> Option<&'static [u8]> {
+        match self {
+            Query::PrimaryAttributes => Some(b"\x1b[?62;22c"),
+            Query::SecondaryAttributes => Some(b"\x1b[>1;0;0c"),
+            Query::CursorPosition => None,
+        }
+    }
+}
 
-impl DsrScanner {
-    pub fn scan(&mut self, data: &[u8]) -> Vec<usize> {
-        let mut ends = Vec::new();
-        for (i, &b) in data.iter().enumerate() {
-            if b == DSR[self.matched] {
-                self.matched += 1;
-                if self.matched == DSR.len() {
-                    ends.push(i + 1);
-                    self.matched = 0;
-                }
+const QUERIES: &[(&[u8], Query)] = &[
+    (b"\x1b[c", Query::PrimaryAttributes),
+    (b"\x1b[0c", Query::PrimaryAttributes),
+    (b"\x1b[>c", Query::SecondaryAttributes),
+    (b"\x1b[>0c", Query::SecondaryAttributes),
+    (b"\x1b[6n", Query::CursorPosition),
+];
+
+/// 질의를 뺀 출력과, 그 출력의 어느 자리에 어떤 질의가 있었는가
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Scanned {
+    pub out: Vec<u8>,
+    /// (`out`에서 질의가 있던 자리, 질의). 커서 위치는 `out[..자리]`를 먹인 화면으로 답한다
+    pub queries: Vec<(usize, Query)>,
+}
+
+/// 출력에서 session host가 답할 질의를 빼낸다(chunk 경계에 걸쳐도). 터미널은 session host이므로 질의는 front(xterm)에 가지
+/// 않는다: 붙은 front 수와 상관없이 답은 한 번이다(herdr는 서버의 ghostty가 답하고 front에는 그린 화면만 보낸다,
+/// `src/pane/terminal.rs` `terminal_responses`). 질의일 수 있는 끝은 다음 출력까지 붙든다(끝나지 않은 escape라 어느 터미널도
+/// 아직 그리지 않는다, herdr-web-ui `server/attach-output.ts` `AttachStartupProbes`). Windows ConPTY(INHERIT_CURSOR)는 시작할 때
+/// 커서 위치를 묻고 답이 올 때까지 자식의 출력과 종료를 막는다.
+#[derive(Default)]
+pub struct QueryScanner {
+    held: Vec<u8>,
+}
+
+impl QueryScanner {
+    pub fn scan(&mut self, data: &[u8]) -> Scanned {
+        let input = if self.held.is_empty() {
+            std::borrow::Cow::Borrowed(data)
+        } else {
+            let mut v = std::mem::take(&mut self.held);
+            v.extend_from_slice(data);
+            std::borrow::Cow::Owned(v)
+        };
+        let mut s = Scanned { out: Vec::with_capacity(input.len()), queries: Vec::new() };
+        let mut i = 0;
+        while i < input.len() {
+            let Some(esc) = input[i..].iter().position(|&b| b == 0x1b) else {
+                s.out.extend_from_slice(&input[i..]);
+                break;
+            };
+            s.out.extend_from_slice(&input[i..i + esc]);
+            i += esc;
+            let rest = &input[i..];
+            if let Some((q, kind)) = QUERIES.iter().find(|(q, _)| rest.starts_with(q)) {
+                s.queries.push((s.out.len(), *kind));
+                i += q.len();
+            } else if QUERIES.iter().any(|(q, _)| q.starts_with(rest)) {
+                self.held = rest.to_vec();
+                break;
             } else {
-                self.matched = usize::from(b == DSR[0]);
+                s.out.push(0x1b);
+                i += 1;
             }
         }
-        ends
+        s
+    }
+
+    /// 붙들고 있는 끝(세션이 끝날 때 마저 내보낸다)
+    pub fn take_held(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.held)
     }
 }
 
@@ -1530,16 +1589,30 @@ mod tests {
         assert_eq!(strip_sgr(&a), "❯ Try \"fix\"\nx ─\n");
     }
 
+    /// 질의는 출력에서 빠지고 자리와 함께 나온다. chunk 경계에 걸친 질의는 다음 chunk까지 붙들고, 질의가 아닌 escape는 그대로 둔다
     #[test]
-    fn dsr_found_across_chunks_and_answered_with_cursor() {
-        let mut s = DsrScanner::default();
-        assert_eq!(s.scan(b"ab\x1b[6ncd"), vec![6]);
-        assert_eq!(s.scan(b"x\x1b["), Vec::<usize>::new());
-        assert_eq!(s.scan(b"6n\x1b\x1b[6n"), vec![2, 7]);
-        assert_eq!(s.scan(b"\x1b[61n\x1b[5n"), Vec::<usize>::new());
+    fn queries_are_taken_out_of_the_output_across_chunks() {
+        use Query::*;
+        let mut s = QueryScanner::default();
+        let got = s.scan(b"ab\x1b[6ncd\x1b[c\x1b[0c\x1b[>c\x1b[>0cef");
+        assert_eq!(got.out, b"abcdef");
+        let at4 = [PrimaryAttributes, PrimaryAttributes, SecondaryAttributes, SecondaryAttributes].map(|q| (4, q));
+        assert_eq!(got.queries, [vec![(2, CursorPosition)], at4.to_vec()].concat());
+        // 끝의 앞부분은 붙들었다가 이어 본다
+        assert_eq!(s.scan(b"x\x1b["), Scanned { out: b"x".to_vec(), queries: vec![] });
+        assert_eq!(s.scan(b">"), Scanned::default());
+        assert_eq!(s.scan(b"0cy\x1b"), Scanned { out: b"y".to_vec(), queries: vec![(0, SecondaryAttributes)] });
+        assert_eq!(s.take_held(), b"\x1b");
+        // 질의가 아닌 것: 다른 인자의 DA·DECXCPR·DSR 5·DA3·kitty 키보드 질의(aaa는 그 키 방식을 쓰지 않는다)·색·글자 모양
+        let other: &[u8] = b"\x1b[1c\x1b[>1c\x1b[?6n\x1b[5n\x1b[=c\x1b[?u\x1b]11;?\x07\x1b[61n\x1b[31m\x1b\x1b[6";
+        let got = s.scan(other);
+        assert_eq!(got.out, &other[..other.len() - 3]);
+        assert!(got.queries.is_empty());
+        assert_eq!(s.scan(b"n"), Scanned { out: vec![], queries: vec![(0, CursorPosition)] });
         let mut v = Vt::new(5, 20);
         v.feed(b"hi\r\nthere");
         assert_eq!(v.cursor_report(), b"\x1b[2;6R");
+        assert_eq!(PrimaryAttributes.fixed_reply(), Some(&b"\x1b[?62;22c"[..]));
     }
 
     #[test]

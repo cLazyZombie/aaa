@@ -2196,7 +2196,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **끌어 고르는 중 휠(PaneTerminal 883~893줄 `dragWheel`).** 전에는 휠이 선택을 지웠다. 그래서 끌며 위로 굴려 화면 밖까지 고를 수 없었다. 이제 고르는 끌기 중 휠은 선택을 두고 xterm 기록을 줄 단위로 굴린 뒤 마지막 마우스 자리로 끌기를 한 번 더 알린다(선택 끝이 굴린 줄까지 따라온다). 마우스 보고 중에도 프로그램에 휠을 보내지 않는다.
   - 차이 목록 J 「선택을 놓으면 복사(화면 밖 포함)」는 이것으로 같음이다. 참고가 herdr 원문 API를 쓰는 까닭은 xterm 기록이 0이어서다. aaa xterm은 기록 10,000줄을 가져 고른 글이 곧 원문이다.
 - **「패널에서 클립보드로 복사」(설정, 기본 켬, 참고 `paneClipboard`, PaneTerminal 1050~1063줄).** 끄면 OSC 52를 받기만 하고 버린다. pane 안 아무 프로세스나(agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있어서다. 문구는 참고 그대로다. 차이 목록에는 「같음」이었지만 설정이 빠져 있었다.
-- **커서 위치 보고(차이 목록 A 「확인 못 함」 → 같음).** herdr는 서버의 ghostty가 프로그램 질의에 답하고(`terminal_responses`, src/pane/terminal.rs 1402~1547줄) 웹에는 그린 화면을 보내므로 xterm이 답할 일이 없다. aaa는 session host가 DSR 6에 답하고(aaa-vt `DsrScanner`) 웹은 xterm의 같은 답을 버린다. 다만 다른 질의(DA1·DA2·kitty 키보드 질의 `CSI ? u`·색 질의 OSC 10/11)는 session host가 답하지 않아, 붙은 xterm 수만큼(0~N번) 답이 간다. herdr는 늘 한 번이다. 이것은 세션 쪽 일이라 「확인할 것」으로 남긴다(보고서).
+- **커서 위치 보고(차이 목록 A 「확인 못 함」 → 같음).** herdr는 서버의 ghostty가 프로그램 질의에 답하고(`terminal_responses`, src/pane/terminal.rs 1402~1547줄) 웹에는 그린 화면을 보내므로 xterm이 답할 일이 없다. aaa는 session host가 DSR 6에 답하고(aaa-vt `DsrScanner`) 웹은 xterm의 같은 답을 버린다. 다만 다른 질의(DA1·DA2·kitty 키보드 질의 `CSI ? u`·색 질의 OSC 10/11)는 session host가 답하지 않아, 붙은 xterm 수만큼(0~N번) 답이 간다. herdr는 늘 한 번이다. 이것은 세션 쪽 일이라 「확인할 것」으로 남긴다(보고서). → §8.185에서 session host가 답한다.
 - **시험(웹 E2E, 고치기 전 판에서 실패함을 확인).**
   - 「그림 붙여 넣기」: 그림 띠·오류 띠가 떠도 `.term-scroll` 칸 크기가 그대로다.
   - 「터미널 스크롤」: 맨 아래에는 단추가 없고, 위로 굴리면 grid 오른쪽 아래(안쪽)에 뜨며, 누르면 맨 아래·터미널 focus 그대로. 휴대폰·iPad 한 손가락으로 올려도 뜬다. 끌기 중 휠로 12줄 굴리면 첫 줄이 12줄 위이고, 놓으면 화면 밖 줄(`s-NNN`)부터 `more-3`까지 복사한다.
@@ -3990,6 +3990,35 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   결함 심기 다섯(다시 붙지 않음 → 넷 실패, 다시 붙는 중 「세션이 끝났다」 → 하나, `Resync` 없음 → 셋, 사라진 session host에도 다시 붙음 →
   하나, 감지 요청을 비우지 않음 → 하나) 모두 실패.
 - **반영.** agent binary를 바꾸고 agent를 다시 띄워야 한다. session host·host·웹은 바뀌지 않는다.
+
+### 8.185 터미널 질의에 session host가 한 번 답한다(10-18, t-0345 다시 세기 a2, 전환 gate G8, §8.93 「확인할 것」)
+
+- **증상.** session host는 DSR 6에만 답했다. DA1·DA2·색 질의(OSC 10/11)는 붙은 웹 화면의 xterm.js 5.5가 화면마다 답해(DA1 `ESC[?1;2c`,
+  DA2 `ESC[>0;276;0c`, OSC는 그 화면 테마 색) 0~N번 pane 입력으로 갔다. 답이 없으면 답을 기다리는 프로그램이 멈추고(감독 멈춤), 두 번이면
+  남는 답이 입력으로 읽힌다. kitty 키보드 질의 `CSI ? u`는 xterm.js 5.5가 답하지 않아(`u`는 앞 글자 없는 restoreCursor만 받는다,
+  `src/common/InputHandler.ts:264`) 화면 수와 상관없이 늘 0번이었다(t-0345의 「0~N」은 이 질의에는 맞지 않는다).
+- **참고(herdr 0.9.5).** 서버의 ghostty가 답하고 쓰기와 순서를 지킨다(`src/pane/terminal.rs:1402-1421, 1491-1569` `terminal_responses`).
+  client에는 그린 화면을 보내 client 터미널은 pane의 질의를 보지 않는다. ghostty 기본 답: DA1 `ESC[?62;22c`·DA2 `ESC[>1;0;0c`
+  (`vendor/libghostty-vt/src/terminal/device_attributes.zig` `Primary`·`Secondary` 기본값과 `primary default` 시험, herdr는 이 callback을
+  걸지 않는다), DSR 6 커서 위치(`stream_terminal.zig:1337-1358`), kitty `ESC[?<flags>u`(`stream_terminal.zig:1538-1545`).
+- **고침(DA1·DA2·DSR 6).** aaa-vt `QueryScanner`가 출력에서 DA1(`CSI c`·`CSI 0 c`)·DA2(`CSI > c`·`CSI > 0 c`)·DSR 6을 빼내고, session host가
+  질의 자리까지 먹인 화면으로 ghostty와 같은 바이트를 답한다. chunk 끝의 질의일 수 있는 앞부분은 다음 출력까지 붙든다(끝나지 않은 escape라
+  어느 터미널도 아직 그리지 않는다, herdr-web-ui `server/attach-output.ts:21-59` `AttachStartupProbes`도 같다). 질의는 ring·VT·front로 가지
+  않으므로 화면(xterm)은 답할 것이 없고, 늦게 붙은 화면이 옛 질의에 다시 답할 일도 없다. 붙들던 끝은 세션이 끝날 때 마저 남긴다. 다른 인자의
+  DA(`CSI 1 c`)·DECXCPR(`CSI ? 6 n`)는 질의가 아니라 그대로 둔다. 웹의 DSR 답 버리기(`Term.tsx`)는 옛 session host를 위해 둔다.
+- **kitty 키보드 질의에는 답하지 않는다(참고와 다름).** 답하면(`ESC[?0u`) 프로그램은 kitty 키보드 방식이 있다고 보고 그 꼴의 키를 기다리지만
+  aaa 화면(xterm.js 5.5·TUI)은 그 꼴로 보내지 않는다. 답이 없으면 프로그램은 뒤따르는 DA1 답으로 「없음」을 안다(이제 DA1은 늘 한 번 답한다).
+  kitty 키보드를 쓰려면 화면의 키 인코딩이 먼저다(후속).
+- **같은 종류로 남긴 것(확인할 것).** xterm.js가 화면마다 답하는 DSR 5(`ESC[0n`)·DECXCPR(`ESC[?r;cR`)·DECRQM(`$y`)·OSC 4·12와 ghostty만 답하는
+  DA3(`CSI = c`)·XTVERSION. 같은 scanner에 줄을 더하면 된다.
+- **시험.** aaa-vt `queries_are_taken_out_of_the_output_across_chunks`(질의 빼기·자리·chunk 경계 붙들기·질의 아닌 escape 그대로). 웹 E2E 19
+  「터미널 질의 답」: 질의 프로그램(`#x`면 질의와 표지 `Q<n>.`, `#z`면 그 뒤 받은 것)을 붙은 화면 0·1·2개에서 돌린다. 화면마다 표지까지 읽은
+  뒤 `sentFrames`가 비었는지(화면이 답하지 않았다), 그 뒤 CLI로 보낸 `#z`로 pane이 받은 답이 정확히 하나인지 본다(session host 답은 질의를
+  화면에 보내기 전에 pane 입력으로 가 `#z`보다 먼저 닿는다). 고치기 전 실패: 화면 0개 DA1·DA2 답 없음, 1개 xterm 답 하나(`ESC[?1;2c`·
+  `ESC[>0;276;0c`), 2개 같은 답 두 번. 고친 뒤 통과. 결함 심기 다섯이 모두 실패한다: 끝의 앞부분을 붙들지 않음·DA2를 질의로 보지 않음(유닛),
+  받은 출력을 그대로 화면에 보냄(xterm도 답해 두세 번)·답을 pane에 쓰지 않음·DA2에 xterm.js 답(E2E 19).
+- **색 질의(OSC 10/11)는 아직 화면이 답한다.** session host가 답하려면 화면 테마 색을 알아야 한다(herdr는 client가 알려 준 host 색으로 답한다).
+- **반영.** session host binary가 바뀐다. 이미 떠 있는 session host(이어지는 세션)는 그 세션이 끝날 때까지 옛 동작이다(새로 띄운 세션부터).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

@@ -430,7 +430,7 @@ mod tests {
         };
         // 표지(ready)가 보이면 cd가 끝났다. Windows ConPTY(portable-pty는 INHERIT_CURSOR로 연다)는 시작할 때 커서 위치를
         // 묻고(DSR 6, `ESC [ 6 n`) 답이 올 때까지 자식의 출력과 종료를 막는다: session host처럼 한 번 답한다
-        // (aaa-vt `DsrScanner`). Unix 셸은 묻지 않는다.
+        // (aaa-vt `QueryScanner`). Unix 셸은 묻지 않는다.
         let mut seen = Vec::new();
         let mut answered = false;
         let until = std::time::Instant::now() + limit;

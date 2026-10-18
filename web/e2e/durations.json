@@ -16,5 +16,6 @@
   "15-ios-rules": 28,
   "16-file-viewer": 18,
   "17-push-in-use": 35,
-  "18-push-stalled": 15
+  "18-push-stalled": 15,
+  "19-terminal-queries": 3
 }
