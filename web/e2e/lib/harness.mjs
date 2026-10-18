@@ -1025,6 +1025,7 @@ async function runSpec(spec) {
 
 export {
   inList,
+  drawerSettled,
   paneHash,
   require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, waitOutput, start, stop, until, domIs,
   hashIs, freePort, killSessionHosts, screenText, termDiag, pasteFile, bannerPath, shot, termFont, fontOk, imeType,
