@@ -23,7 +23,7 @@
 | `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
 | `draft.ts` | 끊긴 동안 친 글(붙잡은 입력): 글·붙여넣기를 모으고 Enter·줄바꿈은 빼서 알리며, 1024자 상한, 저장 기록은 24시간(`restoreDraft`) |
 | `terminalDraft.ts` | 입력줄 초안: 머신·pane마다 localStorage(32,768자 상한, 막히면 메모리). 보내는 동안 친 글은 두고 보낸 앞부분만 지운다 |
-| `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53) |
+| `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53). session host vt100의 폭 표도 이것에서 만든다: 바꾸면 `node web/scripts/vt-widths.ts`로 다시 만든다(plan §8.167) |
 | `wheelSteps.ts` | 한 손가락 끌기를 휠 걸음으로(`wheelSteps`·`finalStep`, plan §8.55) |
 | `status.ts` | agent 상태 말·herdr TUI 글자(`indicatorGlyph`)·여러 pane 대표 상태(`rollupStatus`). `src/lib/status.ts`에서 `AgentStatus` import 한 줄만 그 타입 선언으로 바꿨다(plan §8.71) |
 | `preferences.ts` | 화면들이 함께 쓰는 설정 이름(`SHARED_SETTING_KEYS`)·문서 형·한도. `src/lib/`가 아니라 `shared/preferences.ts`를 바꾸지 않고 옮겼다. host 쪽은 `crates/aaa-host/src/prefs.rs`가 Rust로 옮겼다(plan §8.79) |

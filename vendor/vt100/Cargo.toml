@@ -1,0 +1,18 @@
+# vt100 0.16.2(https://github.com/doy/vt100-rust, MIT, LICENSE 그대로)를 들여와 글자 폭만 고친 판(plan §8.167).
+# 고친 곳은 README.md에 적는다. 저장소 규칙대로 원래 Cargo.toml의 작성자 줄(email)은 옮기지 않았다.
+[package]
+name = "vt100"
+version = "0.16.2"
+edition = "2021"
+rust-version = "1.70"
+license = "MIT"
+description = "Library for parsing terminal data(aaa가 글자 폭을 고친 판)"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+itoa = "1.0.15"
+unicode-width = "0.2.1"
+vte = "0.15.0"
