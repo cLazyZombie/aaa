@@ -312,7 +312,7 @@ impl Host {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
                 // 사후 평가자 묶음·PR 조회 때가 더 이르면 그때까지만 잔다
-                let sleep = [me.evaluator_next_due(), me.pr_next_due()]
+                let sleep = [me.evaluator_next_due(), me.pr_next_due(), me.background_wait_due()]
                     .into_iter()
                     .flatten()
                     .map(|d| d.saturating_duration_since(std::time::Instant::now()))
@@ -341,6 +341,7 @@ impl Host {
     }
 
     async fn tick(self: &Arc<Self>) {
+        self.settle_background_waits();
         // 멈추거나 보관한 프로젝트는 건너뛴다(herdr-projects ticker, plan §8.180)
         let projects = self.active_projects();
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();

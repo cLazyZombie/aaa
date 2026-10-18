@@ -93,16 +93,29 @@ async function until(what, fn, ms = 20_000) {
 
 // 사건으로 끝내는 기다림(새 시험): DOM은 MutationObserver, 주소는 hashchange. ms는 실패 한도다(통과용 기다림이 아니다).
 // `fn(arg)`은 page에서 돈다(Playwright가 함수를 글로 옮기듯 글로 넘긴다).
+/**
+ * 페이지 안 대기에 Node 쪽 시한을 건다. 페이지 시계(setTimeout·requestAnimationFrame)는 멈추거나(Playwright `clock`) 얼 수 있고
+ * `evaluate`에는 시한이 없다: 페이지 안 시한만 믿으면 끝나지 않는다(10-18 spec 11이 시계를 멈춘 뒤 9분 넘게 멈춤). 페이지 쪽
+ * 오류 글이 먼저 오도록 1초 뒤에 끊는다
+ */
+function inTime(promise, ms, what) {
+  let timer;
+  const late = new Promise((_, fail) => {
+    timer = setTimeout(() => fail(new Error(`${ms}ms 안에 ${what}이 되지 않았다(페이지가 답하지 않음)`)), ms + 1000);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 const domIs = (p, what, fn, arg, ms = 20_000) =>
-  p.evaluate(`new Promise((done, fail) => {
+  inTime(p.evaluate(`new Promise((done, fail) => {
     const ok = () => { try { return Boolean((${fn})(${JSON.stringify(arg)})); } catch { return false; } };
     if (ok()) return done();
     const mo = new MutationObserver(() => { if (ok()) { clearTimeout(stuck); mo.disconnect(); done(); } });
     const stuck = setTimeout(() => { mo.disconnect(); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}이 되지 않았다`)})); }, ${ms});
     mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-  })`);
+  })`), ms, what);
 const hashIs = (p, hash, ms = 20_000) =>
-  p.evaluate(
+  inTime(p.evaluate(
     ([hash, ms]) =>
       new Promise((done, fail) => {
         if (location.hash === hash) return done();
@@ -119,17 +132,17 @@ const hashIs = (p, hash, ms = 20_000) =>
         addEventListener("hashchange", on);
       }),
     [hash, ms],
-  );
+  ), ms, `주소 ${hash}`);
 
 // focus 기다림: focusin 사건으로 끝낸다(focus는 DOM을 바꾸지 않아 MutationObserver로는 못 본다)
 const focusIs = (p, what, sel, ms = 20_000) =>
-  p.evaluate(`new Promise((done, fail) => {
+  inTime(p.evaluate(`new Promise((done, fail) => {
     const ok = () => document.activeElement?.matches(${JSON.stringify(sel)}) === true;
     if (ok()) return done();
     const on = () => { if (ok()) { clearTimeout(stuck); removeEventListener("focusin", on, true); done(); } };
     const stuck = setTimeout(() => { removeEventListener("focusin", on, true); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}에 focus가 오지 않았다`)} + ": " + (document.activeElement?.outerHTML ?? "").slice(0, 160))); }, ${ms});
     addEventListener("focusin", on, true);
-  })`);
+  })`), ms, `${what} focus`);
 
 function freePort() {
   return new Promise((resolve) => {
@@ -442,10 +455,11 @@ async function inList(p, target) {
 
 /** 목록 drawer의 움직임(transform·visibility transition)이 끝났다. nextFrame이면 방금 누른 것이 시작한 움직임까지 본다 */
 function drawerSettled(p, nextFrame = false) {
-  return p.evaluate(async (nextFrame) => {
+  const settled = p.evaluate(async (nextFrame) => {
     if (nextFrame) await new Promise((r) => requestAnimationFrame(() => r()));
     await Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null)));
   }, nextFrame);
+  return inTime(settled, 20_000, "목록 서랍 움직임 끝(다음 frame)");
 }
 
 /** 그 이름의 pane을 가리키는 주소(pairPage `hash`) */
@@ -677,11 +691,21 @@ const openPages = new Set();
 // AAA_E2E_ONLY=<정규식>: 이름이 맞는 단계만 돈다(한 단계를 여러 번·부하 아래 되풀이해 볼 때). 준비 단계(`always`: host·agent 시작,
 // push 판정 준비)와 단계 밖의 준비(첫 화면 연결)는 그대로 한다
 const only = process.env.AAA_E2E_ONLY ? new RegExp(process.env.AAA_E2E_ONLY) : null;
+/** 단계 하나의 시한. spec 하나를 다 돌아도 41초(durations.json 가장 긴 것)다. 단계 안 어느 대기가 시한 없이 남아도 이것으로
+ * 실패하고, runSpec이 화면·host·agent를 내린다 */
+const STEP_LIMIT_MS = 120_000;
+
 async function step(name, fn, { always = false } = {}) {
   if (only && !always && !only.test(name)) return;
   const t0 = Date.now();
+  let limit;
   try {
-    await fn();
+    await Promise.race([
+      fn(),
+      new Promise((_, fail) => {
+        limit = setTimeout(() => fail(new Error(`${STEP_LIMIT_MS}ms 안에 단계가 끝나지 않았다`)), STEP_LIMIT_MS);
+      }),
+    ]).finally(() => clearTimeout(limit));
     steps.push(`ok   ${name} (${Date.now() - t0}ms)`);
   } catch (e) {
     const diags = [];
@@ -1066,6 +1090,8 @@ async function runSpec(spec, labEnv = {}) {
 export {
   inList,
   drawerSettled,
+  inTime,
+  STEP_LIMIT_MS,
   paneHash,
   require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, waitOutput, start, stop, until, domIs,
   hashIs, freePort, killSessionHosts, screenText, termDiag, pasteFile, bannerPath, shot, termFont, fontOk, imeType,

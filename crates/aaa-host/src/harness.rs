@@ -235,6 +235,7 @@ impl Host {
             // 셸 pane 앞의 agent가 끝나 셸로 돌아왔다(agent의 앞 프로세스 찾기, herdr `ClearAgent`): 다시 agent 없는 셸이다.
             // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
             if ev.kind == "released" {
+                self.bgwait.lock().unwrap().forget(&ev.session);
                 p.agent = None;
                 p.turn_from = None;
                 p.answered = false;
@@ -262,6 +263,7 @@ impl Host {
                 seen: true,
                 plan: None,
                 background: None,
+                background_wait: false,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -333,6 +335,26 @@ impl Host {
                 long: crate::notice::is_long(turn_ms, crate::notice::long_turn_ms()),
                 at_ms: aaa_common::util::now_ms(),
             });
+            // 배경 작업을 기다리는 쉼(bgwait.rs, 참고 server/index.ts가 상태·배경 수·사람 입력마다 BackgroundWait에 알림).
+            // host 시계로 잰다: agent 시계가 어긋나도 유예·한도는 이 host에서 맞다
+            {
+                let now = aaa_common::util::now_ms();
+                let mut w = self.bgwait.lock().unwrap();
+                if ev.kind == "prompt_submit" {
+                    w.prompt(&ev.session, now, now);
+                }
+                if ev.kind == "plan" || next == Some(AgentActivity::Exited) {
+                    w.running(&ev.session, st.background.unwrap_or(0), now);
+                }
+                match next {
+                    Some(AgentActivity::Exited | AgentActivity::Error) => w.forget(&ev.session),
+                    Some(a) => {
+                        w.status(&ev.session, a, now);
+                    }
+                    None => {}
+                }
+                st.background_wait = w.waiting(&ev.session);
+            }
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
             (next, answered_block, p.info.state.is_running(), finished)
@@ -1136,6 +1158,7 @@ mod tests {
             seen: true,
             plan: None,
             background: None,
+            background_wait: false,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));

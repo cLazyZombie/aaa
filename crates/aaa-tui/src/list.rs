@@ -136,7 +136,14 @@ pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<Stri
 /// 5분 넘게 진행 보고가 없으면 작업 중 줄이 「n분 조용」(herdr-projects `QUIET_SECS`, 웹 `QUIET_MS`)
 pub const QUIET_MS: u64 = 300_000;
 
+/// PR 주소 끝의 번호(herdr-projects `pr_number`, 웹 `prNumber`)
+fn pr_number(url: &str) -> Option<&str> {
+    let n = url.rsplit('/').next().unwrap_or("");
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(n)
+}
+
 /// thread 둘째 줄 상태 말: 묶음 말과 사실 하나(herdr-projects `state_line`, 웹 `stateLine`). 진행률은 100 미만만 「~n%」.
+/// 검토·병합 중의 사실은 따라가는 PR이 있으면 「PR #n」, 없으면 「보고」다(웹과 같게, 차이 목록 L3 241줄 TUI 몫, plan §8.190).
 pub fn state_line(t: &ThreadView, pane_open: bool, now_ms: u64) -> String {
     let a = t.agent.as_deref();
     let pct = a.and_then(|a| a.percent).filter(|n| *n < 100).map(|n| format!("~{n}%"));
@@ -147,7 +154,11 @@ pub fn state_line(t: &ThreadView, pane_open: bool, now_ms: u64) -> String {
             Some("확인창".to_string())
         }
         ThreadGroup::WaitingOnYou => pct,
-        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Some("보고".to_string()),
+        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Some(
+            t.pr.as_deref()
+                .and_then(|pr| pr_number(&pr.url))
+                .map_or_else(|| "보고".to_string(), |n| format!("PR #{n}")),
+        ),
         ThreadGroup::Working => {
             let reported = a.and_then(|a| a.progress_at_ms);
             let fresh = reported.is_some_and(|at| now_ms.saturating_sub(at) < QUIET_MS);
@@ -840,6 +851,7 @@ mod tests {
             seen: true,
             plan: None,
             background: None,
+            background_wait: false,
         }))
     }
 
@@ -918,6 +930,19 @@ mod tests {
         assert_eq!(state_line(&t, true, now), "사람 차례 · ~40%");
         t.group = ThreadGroup::ReadyForReview;
         assert_eq!(state_line(&t, true, now), "검토 대기 · 보고");
+        // 따라가는 PR이 있으면 그 번호(웹 `stateLine`과 같다). 번호로 끝나지 않는 주소는 「보고」
+        t.pr = Some(Box::new(aaa_proto::ThreadPr {
+            url: "https://github.com/o/r/pull/42".into(),
+            state: Some("OPEN".into()),
+            review: None,
+        }));
+        assert_eq!(state_line(&t, true, now), "검토 대기 · PR #42");
+        t.group = ThreadGroup::Landing;
+        assert_eq!(state_line(&t, true, now), "병합 중 · PR #42");
+        t.pr.as_mut().unwrap().url = "https://github.com/o/r/pulls".into();
+        assert_eq!(state_line(&t, true, now), "병합 중 · 보고");
+        t.pr = None;
+        t.group = ThreadGroup::ReadyForReview;
         t.group = ThreadGroup::Working;
         // 진행률은 5분 안에 보고했을 때만, 100은 쓰지 않는다
         assert_eq!(state_line(&t, true, now), "작업 중 · ~40%");
@@ -1133,6 +1158,7 @@ mod tests {
                 seen: true,
                 plan: Some(aaa_proto::PlanSummary { done: 1, total: 3, current: None }),
                 background: Some(2),
+                background_wait: false,
             })),
             label: None,
             restore_error: None,

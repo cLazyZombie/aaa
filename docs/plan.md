@@ -4150,6 +4150,61 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **TLS 시험 서버.** aaa-common `tls_checks_the_certificate`도 짐 아래서 떨어졌다: client(`pair_with`)는 머리·본문을 따로 써 TLS record 둘로
   올 수 있는데 시험 서버가 read 한 번이었다. 머리 끝과 `Content-Length`까지 읽는 `read_request`, 조각마다 읽히는 stream 유닛, 결함
   심기(한 번만 읽음) 실패.
+### 8.189 배경 작업을 기다리는 쉼(BG)(10-18, 차이 목록 2장 S1 257줄, t-0345 recount (b), coordinator 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb) `server/background-wait.ts` `BackgroundWait`: Claude 턴이 하위 agent·배경 명령을 남긴 채 끝나면 그 pane은
+  쉼(안 봤으면 끝남)이지만 그 일의 알림이 사람 입력 없이 다음 턴을 연다. 그래서 쉬는 pane의 턴이 띄운 일이 아직 돌거나 끝난 지 60초가
+  안 됐으면 `background_wait`이고, 목록은 끝남·쉼 대신 BG(`status.ts` `paneStatus` → `waiting`)라고 한다. 한도 30분은 사람 입력 뒤 첫 쉼부터
+  센다(서버만 띄운 턴은 그 뒤 끝남). 턴보다 먼저 끝난 일·처음부터 쉬던 pane은 붙잡지 않는다. 참고는 서버가 정하고 알림도 미룬다(`alertStatus`).
+- **aaa가 달랐던 것.** 배경 수(§8.151)는 배지만 했고 상태는 늘 쉼·끝남이었다(팔레트 「배경 작업 대기」 필터가 늘 0).
+- **고침.** host `bgwait.rs`에 `BackgroundWait`를 옮겼다(유예·한도·쉼 목록·사람 입력 때 같은 규칙). `on_harness`가 상태 바뀜·배경 수(`plan`
+  사건)·사람 입력(`prompt_submit`)마다 알리고 그 판정을 `AgentStatus.background_wait`로 낸다. 시간은 host 시계로 잰다(agent 시계와 어긋나도
+  맞게). 유예·한도가 다 되는 때는 ticker가 그때 깨어(`background_wait_due`) 풀고 그 pane 상태를 다시 낸다. harness가 끝나거나 놓이면 버린다.
+  웹 `paneAgentStatus`는 쉼(봄·안 봄)·시작 위에 `waiting`을 겹친다(참고 `paneStatus`). 배지·팔레트 필터·접힌 머리 합치기(`rollupStatus`)는
+  이미 `waiting`을 안다.
+- **참고와 다른 곳.** 배경 수는 agent `plan.rs`가 센 「지금 Claude 프로세스가 띄워 아직 도는 것」이다(참고는 그 턴이 띄운 것만, 앞 턴의 일도
+  센다). aaa에는 pane 턴 끝 알림이 없어(N3, 사용자 결정 대기) 알림 미루기는 없다. TUI 상태 표시는 그대로다(herdr TUI에 BG가 없다).
+- **계약.** FRONT_API 1.34: `AgentStatus.background_wait`(없으면 false, 옛 host는 보내지 않는다). 같은 1.34(배포 전, §8.184·§8.185·§8.187과 함께)에 C3를 더해 한 번에 착지한다. L9(줄 옮기기)는 웹 목록 구조를 맡은 thread가 하므로 이 착지에서 뺐다.
+- **시험.** host 유닛 `bgwait::tests`(참고 background-wait.test.ts의 Claude 경우들 — 턴 끝에 일이 돌면 기다리고 끝나도 유예까지, 다음 턴이 풂,
+  턴 안에서 끝난 일·처음 쉼은 붙잡지 않음, 한도는 사람 입력 뒤 첫 쉼부터·새 입력이 새 한도, forget). 웹 E2E 11 「배경 작업을 기다리는 쉼」:
+  가짜 Claude pane(SessionStart hook으로 기록 위치, 화면으로 턴, UserPromptSubmit hook으로 사람 입력)에서 턴이 배경 명령을 띄우고 끝나면
+  Agents 줄이 「배경 작업 대기」(CLI `background_wait` true), 그 일의 알림 뒤 배경 수가 없어져도 BG(유예), 다음 턴이 끝나면 BG가 아님.
+  결함 심기 셋(웹이 무시, host가 내지 않음, 유예 없음) 모두 실패.
+
+### 8.190 TUI thread 상태 말의 PR 번호(10-18, 차이 목록 2장 L3 241줄 TUI 몫, t-0345 recount (b))
+
+- **참고.** herdr-projects `state_line`: 검토 대기·병합 중 thread의 사실은 따라가는 PR이 있으면 「PR #n」(`pr_number`, 주소 끝 숫자), 없으면 보고.
+  웹 `stateLine`은 이미 같다(e27de52·25ef559).
+- **aaa가 달랐던 것.** TUI `list.rs` `state_line`은 검토·병합 중이면 늘 「보고」였다.
+- **고침.** `pr_number`(웹 `prNumber`와 같은 규칙: 마지막 `/` 뒤가 숫자만일 때)로 「PR #n」, 아니면 「보고」.
+- **시험.** TUI 유닛 `state_line_like_herdr_projects`에 PR 있는 검토 대기·병합 중과 번호로 끝나지 않는 주소. 결함 심기(늘 「보고」)는
+  `검토 대기 · 보고 ≠ 검토 대기 · PR #42`로 실패.
+
+### 8.191 대화 기록 변화 push(10-18, 차이 목록 3장 C3 278줄, t-0345 recount (b), coordinator 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb): 대화 보기가 그 pane에 관심을 알리면(`conversation-watch`) 서버가 그 pane의 기록 파일만 250ms마다 stat하고
+  (`server/conversation-monitor.ts`: 장치·inode·크기·고친 시각, 경로는 5초·없으면 2초마다 다시 찾음) 바뀌면 그 연결에 `conversation-changed`를
+  보낸다. 웹은 `conversationRefresh.ts`로 다시 읽는다: push가 오면 바로(2초에 한 번까지), push가 되면 놓친 것을 10초마다, 안 되면 2초마다.
+- **aaa가 달랐던 것.** 대화 보기는 늘 2초마다 읽고 턴 시작·끝(`statusEdgeRead`)과 보낸 뒤에 바로 읽었다(§8.130 「host 기록 변경 사건은 하지 않았다」).
+  recount 줄은 「host가 턴 시작·끝 사건을 push」였지만 그것은 이미 상태 사건으로 온다. 참고는 기록이 바뀔 때마다 알리므로 그것을 옮겼다.
+- **고침.** 기록 파일은 그 머신에 있어 감시는 agent가 한다: `AgentRequest::ChatWatch`(기능 `chat_watch.v1`)를 받으면 `Chat`과 같은 파일을
+  참고 간격 그대로 보고 `AgentEvent::ChatChanged`(파일 상태를 이 프로세스의 무작위 열쇠로 감춘 이름, 경로는 싣지 않는다)를 보낸다. host는
+  상태 사건 연결의 `chat_watch`를 pane마다 세어(보기 범위는 `pane_chat`과 같다) 청한 연결이 있는 pane만 agent에 켜 두고, Claude 기록 위치·Codex
+  thread-id가 오면 다시 켜며, 바뀜은 청한 연결에만 `chat_changed`로 보낸다(`chatwatch.rs`). 되는지는 pane마다 `chat_watching`으로 알린다(그 머신
+  agent가 기능을 알리고 붙어 있고 pane이 Claude·Codex일 때). 웹은 `conversationRefresh.ts`를 옮겨(앞 쪽 읽기 `page()`만 뺐다) `chat_watching`으로
+  push 여부를, `chat_changed`로 다시 읽기를 정한다. events 연결이 끊기면 push가 안 되는 것으로 두고 다시 붙으면 다시 청한다. 턴 시작·끝·보낸 뒤
+  바로 읽기는 그대로다. FRONT_API는 S1과 한 판(1.34)이다.
+- **참고와 다른 곳.** 참고는 pane에 붙은(attach) 연결만 청하고 push 가능은 서버 기능 하나다. aaa는 상태 사건 연결이 청하고 가능은 pane마다다.
+  agent는 host 연결이 바뀌면 감시를 모두 끝낸다(새 host가 청한 것만 다시 켠다).
+- **시험.** host 유닛 `interest_counts_connections_and_the_watch_follows_the_transcript`(연결 수 세기, 기록 위치가 오면 같은 key로 다시 켬, 끄면
+  push 불가). 웹 E2E 11 「대화 기록 변화 push」: 대화를 연 화면의 Playwright 시계를 멈춰(2초 읽기·10초 backstop이 돌 수 없다) 기록에 줄을 더하면
+  `chat_changed`가 오고 읽기 한 번으로 새 줄이 보인다. 그 전에 같은 pane을 다른 화면이 열었다 닫아도 감시가 남는다. 결함 심기 넷(agent가 켤 때만 알림, host가
+  넘기지 않음, host가 연결을 세지 않음, 웹이 `chat_changed`를 무시) 모두 실패.
+- **시험 도구.** 처음 쓴 이 단계는 시계를 멈춘 뒤 `inList`를 불러 9분 넘게 멈췄다(coordinator 관찰, 멈춘 프로세스는 지시대로 두었다): `inList` 끝의
+  `drawerSettled`가 페이지의 `requestAnimationFrame`을 기다리는데 멈춘 시계에서는 frame이 오지 않고, `page.evaluate`에는 시한이 없다. `domIs`·
+  `hashIs`·`focusIs`도 시한을 페이지 안 `setTimeout`으로 재 같은 결함이었다. 그래서 페이지 안 대기에는 Node 쪽 시한(`inTime`, 같은 시한 + 1초)을,
+  단계에는 시한 `STEP_LIMIT_MS` 120초(가장 긴 spec 전체가 41초)를 두었다. 옛 순서로 다시 돌리면 20초 만에 「목록 서랍 움직임 끝(다음 frame)이
+  되지 않았다(페이지가 답하지 않음)」로 실패한다. 단계는 시계를 대화를 연 뒤에 멈춘다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
