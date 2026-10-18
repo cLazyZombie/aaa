@@ -380,6 +380,19 @@ impl ThreadGroup {
             ThreadGroup::Resolved => "끝남",
         }
     }
+
+    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6.
+    /// 목록(TUI·웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
+    pub fn rank(self) -> u8 {
+        match self {
+            ThreadGroup::WaitingOnYou => 1,
+            ThreadGroup::ReadyForReview => 2,
+            ThreadGroup::Landing => 3,
+            ThreadGroup::Working => 4,
+            ThreadGroup::Idle => 5,
+            ThreadGroup::Resolved => 6,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -545,53 +558,6 @@ pub struct RoutineView {
     pub no_coordinator: u32,
     /// 파일을 읽지 못했다
     pub error: Option<String>,
-}
-
-/// 병합 대기열 한 칸(§8.8). M1-3은 순번과 사건만 두고 단계 실행은 M3에서 한다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct MergeEntry {
-    pub project: String,
-    pub thread: String,
-    /// 1부터. 1이 맨 앞(지금 병합할 차례)이다.
-    pub position: u32,
-    pub title: String,
-    pub machine: String,
-    pub branch: Option<String>,
-    #[ts(type = "number")]
-    pub enqueued_at_ms: u64,
-}
-
-/// 병합 단계 하나의 결과(§8.24). 단계 이름은 `확인`·`fetch`·`원격 일치`·`병합`·`tree 같음`·`push`·`사용자 checkout`·`정리`다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct MergeStep {
-    pub name: String,
-    pub ok: bool,
-    /// 사람이 읽는 설명(실패면 까닭)
-    pub note: String,
-    #[ts(type = "number")]
-    pub ms: u64,
-}
-
-/// agent가 병합 단계를 돌린 결과. `commit`은 push한 병합 commit이다(push까지 갔을 때만).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct LandOutcome {
-    pub ok: bool,
-    pub steps: Vec<MergeStep>,
-    pub commit: Option<String>,
-}
-
-/// `aaa merge land` 결과
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct MergeLandView {
-    pub project: String,
-    pub thread: String,
-    pub ok: bool,
-    pub steps: Vec<MergeStep>,
-    pub commit: Option<String>,
-    /// 「main 이동」을 대기열 메시지로 알린 thread
-    pub notified: Vec<String>,
-    /// 병합 뒤 대기열
-    pub queue: Vec<MergeEntry>,
 }
 
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)

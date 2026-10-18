@@ -742,7 +742,7 @@ host 프로젝트 폴더 구성:
 - **ticker:** host 안의 task다. `tick_secs`(기본 15초)마다 돌고, inbox 항목이 생기거나 harness가 입력 대기(idle)가 되면 바로 돈다. 원격 polling은 없다(상태는 사건으로 온다). 묶음 전이를 세는 때는 §8.85.
 - **nudge:** 0.2.35를 이어받는다.
   - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aaa inbox] <대상> <사건>, …; …(aaa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
-  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. **coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).
+  - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. ~~**coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).~~ → (10-18 §8.136) 참고대로 hash만 남기고 넘어간다. project.toml `nudge = false`도 같다.
   - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 60초, herdr-projects `NUDGE_IDLE_SECS`) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 이번 검사와 `nudge_quiet_secs`(기본 10초) 전 검사에서 모두 비어 보일 때만 보낸다(herdr-projects `box_quiet`, 사람이 치는 글과 섞이지 않게). 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
   - 안 본 항목이 남아 있으면 새 항목이 올 때 다시 나열된다(herdr-projects와 같다). 「봤다」는 `aaa inbox list`(`--peek` 아님)와 `aaa context`(`--peek` 아님)가 보인 항목에 단다(10-17, 차이 목록 G3·F8).
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
@@ -2536,7 +2536,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 ### 8.113 병합을 herdr-projects대로(1): PR 승인은 「병합 중」, 병합되면 ticker가 끝낸다(10-18, D11, 차이 목록 3장 C8·E12·4장 I)
 
 - **결정.** D11(10-17 「d12까지 네 추천대로」): 병합은 thread가 PR을 병합하고 ticker가 merged를 보면 끝낸다. aaa는 병합하지 않는다.
-  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 D11b(병합 2, 다음 착지)다.
+  gh·git은 사용자 환경의 것을 thread 머신 agent가 부른다(§8.80, 결정 3). 대기열·`merge land` 지우기와 coordinator 안내는 §8.135이다.
 - **묶음(C8, hp `src/thread.rs` `group` 5번 줄).** 따라가는 PR이 열려 있고 승인됐으면 「병합 중」(`landing`)이다. 작업 중보다 먼저다.
   보고가 있고 PR이 열려 있으면 확인한 보고라도 검토 대기다(쉼으로 가지 않으니 auto-resolve도 하지 않는다). 진행을 보고하는 agent의
   중간 보고 규칙(§8.85)은 그대로 둔다.
@@ -2591,6 +2591,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     잡혀, Enter를 보내지 않은 글을 「받았다」로도 적었다(t-0332 화면 감지와 합친 뒤 m13이 잡았다).
   - 화면 검사와 Enter 사이의 아주 짧은 틈은 남는다(참고 herdr `agent prompt`도 같다). 친 글자가 바로 선택지를 고르는 창(숫자
     키)은 치기 전 검사만 막는다.
+  - 검사 때를 고정 300ms에서 「친 글에 화면이 반응한 뒤」로 옮겼다(§8.137, 부하 아래 아직 친 글 앞 상태를 보았다).
 - **낮음.**
   - 옛 decisions.md: symlink·FIFO·1MiB 넘는 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다(FIFO를 열면 ticker가 멈췄다).
   - host가 모르는 front 요청(1.12에서 없앤 `decision_add` 등을 1.11 front가 보냄)에 연결을 끊지 않고 그 요청 id로 오류를 답한다.
@@ -2874,6 +2875,133 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **동작.** 새 pane(보기 권한 기기는 없음), 채팅으로·터미널로 전환(고른 pane이 대화를 볼 수 있을 때), 테마 전환, 설정, 프로젝트 thread 보기(aaa 「더 보기 → 프로젝트」). 설정 쪽은 찾을 때만 나오고(이름과 참고의 다른 말), 고르면 설정 창이 그 쪽으로 열린다(`requestSettingsPage`).
 - **뺀 것.** 참고의 새 탭·나누기·확대·사이드바 접기·PC 추가·알림 켜기·새로 고침·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없다. 셸 줄 표시(`AgentMark` 「s」)와 상태 없는 줄의 「—」 칸은 참고 그대로다.
 - **시험.** `web/test/palette.test.mjs`(참고 paletteSearch·paletteSettings·machinePalette 시험을 aaa 줄로). 웹 E2E 「명령 팔레트」(`specs/04-app-shell.mjs`): 돋보기로 열면 검색 칸 focus, 이름으로 찾아 Enter면 그 pane, Mod+Shift+K로 다시 열면 「최근」 맨 앞이 앞서 연 줄, `>테마`는 pane 없이 「테마 전환」이 먼저이고 Enter면 테마가 바뀜, 「터미널」로 찾은 설정 쪽은 그 쪽으로 열림, 휴대폰엔 돋보기 없음. 「앱 단축키」(`specs/03-keys.mjs`)는 Mod+Shift+K를 앱 몫으로 본다.
+
+### 8.133 push 판정 근거 기록과 「쓰는 화면」 lease(10-18, 실기 07:39 「쓰는 화면」으로 push 생략·앱 안 알림 없음, 07:43 push와 앱 안 알림 둘 다)
+- **결함.** 07:39 host는 iPhone을 보이고 focus인 쓰는 기기로 보고 push를 건너뛰었는데(`push_skipped` 「쓰는 화면 2개」), 그 화면에는 앱 안 알림이 오지 않았다. 07:43에는 앱이 열려 있는데 push가 가서 앱 안 알림과 겹쳤다. host는 무엇을 보고 그렇게 정했는지 남기지 않아 어느 쪽인지 가를 수 없었다.
+- **판정 근거 기록(먼저).** host는 events 연결마다 알린 것을 시각과 함께 둔다(`seen.rs` `ConnRec`): 연 때, presence(쓰는 중인지, 웹이 보낸 까닭 `focus`·`blur`·`visibilitychange`·`pagehide`·`pageshow`·`freeze`·`resume`·`open`·`heartbeat`와 그때 `visibilityState`·`hasFocus()`), 마지막 앱 글(Text frame), 마지막 WebSocket pong. 쓰는 기기는 알린 길(`touch`·`입력`)과 때를 둔다.
+  - `push_skipped`·`push_sent` 세부 뒤에 「근거: 쓰는 기기 X(touch N초 전) · 연결#n 쓰는 중(presence N초 전 true focus 보임·focus, 앱 글 N초 전, pong N초 전, 연결 N초 전) · 그 밖 연결 K개(쓰는 기기 …)」를 붙인다. 쓰는 기기의 연결만 자세히 쓰고 나머지는 수만 쓴다.
+  - 웹은 사건 하나를 앱 안 알림으로 어떻게 했는지 events 연결로 알린다(`EventsClientMsg::Alert`). host는 아는 프로젝트면 흐름 사건 `alert_outcome`(「기기 X · done · thread=… · 띄움 · focus · 소리」)으로 남긴다. 알리지 않은 까닭(알림 꺼짐·종류 꺼짐·가려짐·보는 중·host 알림 종류 아직 모름·처음 본 thread)도 남긴다.
+  - 07:43 겹침의 유력한 까닭: 웹의 앱 안 알림은 `visibilityState`만 보고, host의 쓰는 화면은 보이고 `hasFocus()`다(herdr-web-ui와 같다). iOS 홈 화면 앱이 보이는데 `hasFocus()`가 false면 둘이 갈린다. 이제 presence 근거와 `alert_outcome`의 `focus 없음`으로 확인한다. 확인되기 전에는 규칙을 바꾸지 않는다.
+- **「쓰는 화면」 lease.** 브라우저는 WebSocket ping에 네트워크 층이 저절로 pong하므로, 페이지가 멈춰도(iOS가 잠재운 앱) host의 살아 있음 검사(§8.105 뒤 「두 기기·죽은 연결」)를 통과한다. 그러면 멈추기 전에 알린 presence true가 시한 없이 남아 어느 기기에도 push가 가지 않는다. 참고 herdr-web-ui도 presence에 시한이 없다(`server/index.ts` `present`). t3code에는 보이는 상태 heartbeat가 없다.
+  - 웹은 쓰는 동안 10초마다 presence를 다시 알린다(`PRESENCE_EVERY_MS`). 멈춘 페이지는 timer가 돌지 않아 알리지 못한다.
+  - host는 그 연결에서 앱 글이 25초(`presence_lease`, 시험만 `AAA_TEST_PRESENCE_LEASE_MS`) 넘게 없으면 쓰는 화면에서 뺀다. 연결은 두고 다음 presence가 오면 다시 센다. pong은 lease를 늘리지 않는다.
+  - Page Lifecycle `freeze`(Chrome·Android)는 쓰지 않는 것으로 알린다. `resume`·`pageshow`는 다시 본다. herdr-web-ui `watchPageInUse`(바꾸지 않고 옮긴 `herdr/presence.ts`)에 없는 사건이라 `api.ts`가 직접 듣는다.
+  - **배포 뒤 잠깐 겹칠 수 있다.** service worker가 새 웹을 받기 전의 옛 페이지는 heartbeat를 보내지 않는다. 그 페이지는 25초 뒤 쓰는 화면이 아니게 되어 push가 앱 안 알림과 겹친다(push가 가는 쪽으로 틀린다). 페이지를 다시 열면 끝난다.
+  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」(멈춘 쓰는 기기 → lease 뒤 쓰는 화면 0 → push와 근거 「lease 끝」 → 깨면 다시 쓰는 화면). headless Chromium은 CDP `Page.setWebLifecycleState frozen`으로 보이는 페이지를 멈추지 않아(timer가 계속 돈다, 최소화해도 가려지지 않는다) 페이지 안에서 멈춘다: timer 일을 세우고, 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. WebSocket pong은 브라우저가 계속 한다. lease를 끈 결함 심기(`AAA_TEST_PRESENCE_LEASE_MS=600000`)는 「lease 끝」에서 실패한다. host 단위 시험 `basis_names_the_user_device_connections`.
+- **늦은 소리는 버린다(실기 07:45: 무음 모드 iPhone, 알림 때는 소리가 없고 앱으로 돌아올 때 울림).** coordinator 결정 「알림 순간에 못 내면 버린다」.
+  - 까닭(유력): iOS는 뒤로 간 홈 화면 앱의 JavaScript와 소리를 멈춘다. 그동안 온 사건은 앱이 다시 앞으로 올 때 한꺼번에 오고, 그때 소리를 냈다. 가려진 채 잠깐 돈 페이지가 예약한 소리도 앱이 돌아올 때 난다.
+  - 웹은 멈췄던 페이지가 깨어난 바로 뒤(2초) 받은 사건과 다시 붙어 읽은 놓친 사건을 늦은 알림으로 본다. 앱 안 알림은 띄우고 소리는 내지 않는다. 멈춤은 1초 timer가 3초 넘게 돌지 않은 것으로 안다. 잠깐 가렸다 다시 보인 것은 깨어남이 아니다.
+  - host 시각(thread `updated_at_ms`)으로 가르지 않는다: 보고가 검토 대기가 되는 때는 agent가 쉴 때라 저장 시각보다 늦을 수 있다.
+  - 가려진 휴대폰(`pointer: coarse`) 페이지는 소리를 내지 않는다. 그 기기에는 host push가 간다(쓰는 화면이 아니다). 데스크톱 탭은 가려져도 소리를 낸다(참고대로).
+  - Web Push 알림의 소리는 iOS 무음 스위치를 따른다(알림 소리는 무음 모드에서 나지 않고 진동만 한다). 무음을 넘는 「중요 알림」(Critical Alerts)은 Apple 승인 entitlement가 있는 앱만 쓰며 Web Push에는 없다. 그래서 07:43의 push가 조용했던 것은 iOS 규칙이고 aaa가 바꿀 수 없다.
+  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
+
+### 8.134 host를 다시 띄워도 알린 끊김(gh·머신)을 이어받는다(10-18, coordinator 실기 확인 중 발견)
+- **결함.** `gh` 실패·머신 끊김은 기준 시간(`outage_secs`)을 넘으면 inbox 항목을 한 번 쓰고, 돌아오면 「다시 된다」를 한 번 쓴다. 이 상태는 host 메모리에만 있어, 알린 뒤 host를 다시 띄우면 새 host는 알린 것을 모른다. 그 뒤 돌아와도 회복 항목이 오지 않아 열린 실패 항목이 그대로 남았다(07:53 재시작, 20:21 shadow 「gh 실패」).
+- **참고와 다르게 둔 것.** herdr-projects `Memory`도 저장하지 않는다(steps.rs 「not persisted」). 같은 결함이 있다.
+- **고침.** host가 그 프로젝트(gh)·머신을 처음 볼 때, 앞 host가 연 실패 항목(`outage`/`gh`/`failing`, `outage`/<머신>/`down`)이 아직 열려 있으면 알린 것으로 시작한다(`Outage::resumed`). 그러면 돌아오면 회복을 한 번 쓰고, 이어 끊겨도 실패를 다시 쓰지 않는다. 시작 시각은 여전히 새 host가 처음 본 때다(다시 띄운 직후 아직 붙지 않은 머신을 끊김으로 세지 않는다).
+- 시험: `m13` `remote_dir_thread_survives_host_restart` 끝(알린 끊김 중 host를 다시 띄우고 머신이 돌아오면 recovered 1, down 1). 이어받지 않는 결함 심기는 「outage recovered」 기다림에서 실패한다. 단위 시험 `short_outages_write_nothing_and_long_ones_write_one_item_each_way` 끝.
+
+### 8.135 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」, 집에 다 오지 않은 worktree는 남김, TUI 목록 차례(10-18, D11, 차이 목록 4장 I·D #556, 3장 C1·E10 일부·E12)
+
+- **없앤 것(4장 I 「누가 병합하나」「병합 대기열 순번」, hp README 121줄·COORDINATOR.md 72·147줄).** 참고 플러그인은 병합·push를
+  하지 않고 대기열도 없다. aaa도 `aaa merge enqueue|list|done|drop|land`(§8.8·§8.24), host `merge.rs`, agent 병합 단계(`merge.rs`),
+  FrontRequest `merge_*`, AgentRequest `MergeLand`, 흐름 사건 `merge_enqueued`·`merge_head`·`merge_dropped`·`merge_step`·`merge_landed`를
+  없앴다. `aaa merge`는 숨긴 안내만 남겨 무엇으로 바뀌었는지 알린다(`aaa decision`과 같은 방식).
+  - 옛 db의 `merge_queue` 표는 지우지 않는다(읽지 않는다, 옛 aaa는 스스로 만든다). 새 db는 만들지 않는다.
+- **coordinator 안내(hp COORDINATOR.md).**
+  - 「병합」: aaa는 병합하지 않는다. 사용자가 채팅에서 병합하라고 하면 그 thread의 Next 줄을 `thread next --line N`으로 보내 thread가
+    자기 도구로 병합한다. aaa는 PR을 따라가 병합 중·병합 뒤 끝내기를 한다(§8.113).
+  - 「다음 지시」: thread가 자기 도구로 한다. Next 줄을 coordinator가 직접 하지 않는다(72줄).
+  - TASKS.md 「thread가 끝나면」(merged면 task를 지우고 알림, 아니면 한 번 묻기)·「빈 자리」(끝난 턴에 기다리는 task를 한 번 말함)와
+    「사용자만 정한다」의 merged 예외(87·88줄, 83줄).
+  - 「사용자가 채팅에서 요청하지 않으면 하지 않는 것」: 병합, force push, branch 지우기, worktree 지우기, thread 끝내기(147줄).
+    참고의 프로젝트 지우기·보관은 aaa에 그 명령이 없어 뺐다.
+- **끝낸 thread의 pane 닫기(hp threads.rs `clean`·`remove_worktree`).** 참고는 worktree를 지우며 그 workspace를, tab 종류는
+  tab을 닫는다. aaa는 세션만 끝내 끝난 pane 줄이 목록에 남았다(D11a 화면 견본에서 찾음). 이제 작업 폴더 thread는 늘, worktree
+  thread는 worktree를 지웠을 때 pane을 닫는다(`pane close`와 같다: 끝나기를 기다려 layout과 기록에서 지운다). worktree를 남기면
+  pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 §8.14대로 세션은 끝낸다). 이미 없는 worktree는 지운 것으로 친다
+  (참고 `worktree_gone`, `git worktree prune`).
+- **평가자(aaa에만 있다, §8.13).** 「착지는 바로 묶음」 사건은 `merge_landed` 대신 PR 병합 `pr_merged`(PR 추적이 `merged`를 보면 낸다)다.
+  기본 `[evaluator] events`도 바꿨다. 옛 기록의 `merge_landed`는 시간 요약(`landed_ms`)에서 그대로 읽는다. project.toml에
+  `merge_landed`를 적은 프로젝트는 그 사건이 더 오지 않으니 `pr_merged`로 바꾼다.
+- **집에 다 오지 않은 worktree는 남긴다(4장 I 「병합 뒤 정리」 #617·3장 E12·E11, hp threads.rs `clean` `copy_complete`·steps.rs
+  `resolve_after_copy`).** 참고는 마지막 사본이 Partial(symlink·한도를 넘은 파일)이면 worktree를 남긴다(이미 없는 폴더는 예외).
+  aaa는 사본 결과와 상관없이 지웠다. 작업 폴더 `.aaa/`는 git exclude라 force 없는 `git worktree remove`도 그 안을 지우므로(직접
+  확인했다), 집에 오지 않은 library 파일이 사라졌다. 쉼 끝내기(E11)·병합 뒤 끝내기(E12)는 사람 없이 이 길을 탄다.
+  - host: 사본이 `partial`이거나 사본 없이 끝내면 `ThreadCleanup.uncopied`를 켜고 `keep_worktree`도 켠다(이 칸을 모르는 옛 agent도
+    지우지 않는다). 항목에 집에 오지 않은 것을 적는다.
+  - agent: 참고 차례대로 남김 요청 → 이미 없는 폴더(지운 것으로 침) → `uncopied`면 남김 → 지움. 남긴 worktree의 branch·pane 줄은
+    남는다.
+  - `thread resolve --skip-copy`(사본을 만들 수 없을 때, worktree는 남긴다)·`--discard-uncopied`(그래도 지운다), `--reopen`과 함께
+    못 쓴다(3장 E10의 이 둘만. 사본 실패 오류가 `--skip-copy`를 안내한다).
+- **TUI 목록 차례(3장 C1·4장 D #556).** thread 줄을 herdr-projects `Group::rank`·`DISPLAY_ORDER`(사람 차례 → 검토 → 병합 중 →
+  작업 → 쉼)로, 같은 묶음 안은 최근 바뀐 순으로 세운다. 참고 사이드바는 pane 표지 `hp_rank`로 세우고 popup·overview도 같은 차례다.
+  웹 목록(`sidebarModel.ts` `RANK`)은 이미 그랬고 TUI만 최근 바뀐 순이었다. proto `ThreadGroup::rank`. 참고 사이드바 줄은
+  `thread_display`(id·제목)만 보이고 「landing · PR #4」(`state_line`)는 popup 몫이라 TUI 줄의 사실은 두지 않았다.
+- **넘겨받은 줄(t-0332 조사, coordinator 10-18).** E12·#617(병합 뒤 끝내기·정리)·C8(병합 중)은 §8.113(280f8f2 착지)과 위
+  「집에 다 오지 않은」, #615·#616(누가 병합·대기열)은 위 「없앤 것」, C1·#556은 위 「TUI 목록 차례」다. E8은 t-0332 몫이다.
+- **계약.** FRONT_API 1.18: `merge_*` 요청을 없앴고(옛 front가 보내면 모르는 요청 오류) resolve `skip_copy`·`discard_uncopied`를
+  더했다. main의 1.17은 묶음 `landing`만 실었다(§8.113이 먼저 착지했다). AGENT_LINK는 올리지 않았다(새 host는 `MergeLand`를 보내지
+  않는다. `ThreadCleanup.uncopied`는 옛 agent가 버려도 `keep_worktree`로 남긴다, §8.113의 까닭).
+- **시험.** m13 `merge_land_steps`를 지우고 `merge_queue_and_capacity`는 한도 경고만 남겨 `parallel_threads_only_warn`으로,
+  `worker_session_cli_is_read_only`의 쓰기 예는 `thread ack`, `evaluator_flow`는 `thread resolve`로 묶음을 만든다.
+  - m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`: symlink를 둔 worktree는 남기고(항목에 집에 오지 않은 것, pane 줄 남음),
+    `--discard-uncopied`면 지우고 pane을 닫고, `--skip-copy`는 남긴다(`--reopen`과 함께면 거부). host의 남김을 빼면 「worktree
+    삭제」로, agent가 `uncopied`를 모르면(옛 agent) worktree는 남고 「(요청)」 문구로 실패함을 확인했다.
+  - `worktree_thread_round_trip`: symlink를 치운 뒤 끝내면 마지막 사본이 complete가 되어 지운다. 가짜 agent의 symlink는 할 일에
+    「link」가 있을 때만 만든다(다른 시험은 사본이 complete다).
+  - TUI 유닛 `threads_follow_the_display_order`: rank를 빼면 실패한다.
+
+
+### 8.136 coordinator가 없거나 `nudge = false`면 묶음만 적는다(10-18, 차이 목록 3장 G6, coordinator 지시 「참고대로」)
+
+- **참고(hp steps.rs `nudge` 329~347줄, project.rs `Settings.nudge`).** 처음 보는 inbox 항목 묶음(hash)마다, coordinator가 살아 있고
+  `nudge`가 켜져 있으면(기본 켬) idle 60초·입력창 10초 조용을 기다려 한 줄을 친다. coordinator가 없거나 `nudge = false`면 그
+  묶음 hash만 남긴다. 사람에게는 사건마다 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다.
+- **aaa가 달랐던 것(§8.17 구현 결정).** coordinator가 없으면 hash를 남기지 않고 기다렸다가 생기면 그 묶음을 알렸다. `nudge` 설정은
+  없었다(0.2 옮기기가 「옮길 예정」으로 남김).
+- **고침.**
+  - inbox.rs `nudge`: coordinator(host 머신에서 프로젝트 폴더를 cwd로 쓰는 실행 중 pane)가 없거나 project.toml `nudge = false`면
+    `nudged:<p>` hash를 적고 끝낸다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않고, 새 항목으로 묶음이 바뀌면 그때 아직 보지
+    않은 항목 모두를 알린다(참고와 같다).
+  - project.toml `nudge`(bool, 기본 true, 잘못된 값은 기본값). 0.2 `PROJECT.md`의 `nudge`는 같은 이름·같은 뜻으로 project.toml에
+    옮긴다(옮기지 못한 설정 목록에서 뺐다).
+  - 계약 변화 없음(host 안 동작과 project.toml 키).
+- **시험.**
+  - m13 `nudge_only_marks_the_set_without_a_coordinator_or_when_off`: coordinator 없이 생긴 묶음은 coordinator가 생긴 뒤 nudge 창이
+    지나도 알리지 않고, 새 항목이 생기면 앞 항목과 함께 알린다. `nudge = false`면 coordinator가 입력을 기다려도 알리지 않고, 다시
+    켜도 적은 묶음은 알리지 않는다(항목은 `context`에 있다). 옛 동작(hash를 남기지 않음)으로 되돌리면 coordinator가 생긴 뒤
+    `nudge_sent`로, 설정을 무시하면 4단계의 두 번째 알림으로 실패함을 확인했다.
+  - 유닛: project `keys_fall_back_one_by_one`(`nudge = 0`은 기본값, `nudge = false`), migrate `inventory_then_convert`(`nudge = false`가
+    project.toml로 간다).
+
+### 8.137 Enter 전 검사는 프로그램이 친 글에 반응한 뒤에 한다·m13 부하 경쟁 넷(10-18, coordinator 최우선)
+
+- **실패(main 699383a·branch 40aae94의 ci-local, load 60 넘음).**
+  - (1) `claude_thread_states_questions_and_messages` race: 「Enter가 권한 창을 골랐다」(t-0338)와, 같은 원인으로 race 글을
+    「받았다」로 적음.
+  - (2) `merged_resolve_waits_for_the_routine_prompt`: `report_ready` 바로 뒤 메시지가 「아직 brief를 받지 않았다」(t-0338).
+  - (3) 같은 시험의 「second」 뒤 Idle이 오지 않음, (4) `reboot_resumes_threads` 「got: after reboot」 없음(ci35).
+- **판정(결함 심기로 확인).**
+  - (1)은 제품 쪽이다. Enter 전 검사(§8.114)는 친 뒤 고정 300ms(참고 herdr `AGENT_PROMPT_SUBMIT_DELAY`)에 화면을 봤다. 부하
+    아래 프로그램이 300ms 안에 친 글을 읽지 못하면 검사는 친 글 앞 상태를 보고, 그 뒤 그린 확인창이 Enter를 받는다. 가짜가
+    첫 글자를 읽고 1초 뒤 창을 그리게 하면 같은 실패가 난다.
+  - (2)·(3)·(4)는 시험 쪽이다. (2) 가짜는 안내 줄을 받자마자 보고해 host의 전달 확인이 보고보다 늦을 수 있다(제품의 거절은
+    참고 threads.rs `prompt`와 같다). (3) 가짜 Claude가 키 사이마다 echo를 켜, 그 틈에 온 글이 tty echo로 찍혀 상대 커서로
+    지우는 spinner가 화면에 남았다. (4) 이어 띄운 가짜는 한 번에 읽은 「글+줄 끝」의 줄 끝을 Enter로 보지 않았다.
+  - 지연을 심어(보고 2초 늦게, 키 사이 0.3초, 읽기 1초 늦게) 각 실패를 다시 냈고, 고친 뒤에는 심은 채로 통과한다.
+- **고침.**
+  - harness.rs `submit_checked`: 입력 상자에 친 글을 보이는 harness(hook·화면 감지가 있는 Claude 등)는 300ms 뒤 화면이
+    치기 전과 달라질 때까지(100ms마다) 기다린 뒤 선택 창·확인창을 보고 Enter한다. 화면이 바뀌지 않으면 받음 시한까지
+    기다려 보낸다. 받음 시한(`accept_wait_ms`)은 친 때부터 센다(Enter 뒤 기다림은 남은 시간). custom·보고만 하는
+    프로그램은 Enter 전에 글을 보이지 않을 수 있어(PASTE 가짜) 참고처럼 300ms 뒤에 본다.
+  - 남는 틈: 친 글에 반응한 뒤 그리는 창, 반응을 여러 번 나눠 그리는 중(먼저 그린 조각이 「반응」이다)에 뜬 창은 여전히 Enter를
+    받는다. 가짜가 상자를 먼저 지우고 1초 뒤 창을 그리면 실패한다(확인). 바깥에서 막을 수 없는 틈이라 가짜는 창을 한 번에 그린다.
+  - 가짜 Claude: 키는 echo 없이 읽고 입력 대기(`prompt`)에서만 켠다. 일하는 동안 친 글은 Claude처럼 입력 상자에 보인다.
+    선택 창 하나는 한 번의 write다(dd가 here-doc을 한 블록으로 쓴다. printf는 줄마다 나눠 쓴다).
+  - 이어 띄운 가짜: 한 번에 읽은 글 안의 줄 끝도 Enter다. routine 시험: 보고 뒤 brief 전달(`brief = delivered`)을 보고 메시지를 보낸다.
+- **시험.** 결함 심기: 반응 기다림을 빼면 늦게 그린 창으로 race 글이 「accepted」가 되어 실패하고, 넣으면 통과한다. m13 31개 통과.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
