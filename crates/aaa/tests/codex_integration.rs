@@ -7,6 +7,130 @@ use std::process::{Command, Output};
 fn bin() -> PathBuf {
     std::env::var_os("AAA_TEST_BIN").map(PathBuf::from).unwrap_or_else(|| env!("CARGO_BIN_EXE_aaa").into())
 }
+
+/// 화면 감지 → Agent link → host 질문 → 공통 Front 답변 → 실제 전송 바이트.
+/// CLI·웹·휴대폰은 같은 QuestionAnswer 요청을 쓰며 시험은 프로세스 신호 없이 끝난다.
+#[tokio::test]
+async fn codex_trust_detection_question_and_answer_share_the_front_path() {
+    use aaa_agent::detect::{self, DetectionInput, Harness, State};
+    use aaa_common::{
+        conn::{FrameRx, spawn_writer},
+        ipc, util,
+    };
+    use aaa_proto::*;
+    for (choice, selected_quit, expected) in
+        [("yes", false, b"\r".as_slice()), ("yes", true, b"\x1b[A\r".as_slice()), ("no", false, b"\x1b[B\r".as_slice())]
+    {
+        let home = Home::new();
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.host.agent_listen.clear();
+        cfg.projects.root = home.0.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let host = aaa_host::Host::open(cfg, home.0.join("host")).unwrap();
+        aaa_host::link::start(&host).await.unwrap();
+        let sample = include_str!("../../aaa-agent/src/detect/fixtures/codex-trust.txt");
+        let screen =
+            if selected_quit { sample.replace("› 1.", "  1.").replace("  2.", "› 2.") } else { sample.to_string() };
+        let detected =
+            detect::detect(Harness::Codex, DetectionInput { screen: &screen, osc_title: "", osc_progress: "" });
+        assert_eq!(detected.state, State::Blocked);
+        let (kind, text) = detect::question_of(detected.rule.as_deref(), &screen);
+        let event = HarnessEvent {
+            session: "s".into(),
+            harness: "codex".into(),
+            kind: "question".into(),
+            message: Some(text),
+            question_kind: Some(kind.into()),
+            at_ms: util::now_ms(),
+            harness_session: None,
+            percent: None,
+            transcript: None,
+            plan: None,
+            background: None,
+        };
+        let mut questions = host.question_events.subscribe();
+        let stream = ipc::connect(&aaa_host::link::local_socket(&host)).await.unwrap();
+        let (reader, writer) = tokio::io::split(stream);
+        let tx = spawn_writer(writer, MAX_FRAME);
+        let mut rx = FrameRx::new(reader, MAX_FRAME);
+        tx.json(&LinkMsg::Hello(AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "lab-agent".into(),
+            machine_name: "mac-a".into(),
+            boot_id: util::boot_id(),
+            os: std::env::consts::OS.into(),
+            arch: "test".into(),
+            software: "test".into(),
+            features: vec!["terminal.v1".into()],
+            dev_mode: true,
+            selfcheck: None,
+            harness: vec![event],
+            sessions: vec![SessionInfo {
+                id: "s".into(),
+                name: "codex".into(),
+                argv: vec!["codex".into()],
+                cwd: None,
+                pid: None,
+                started_at_ms: util::now_ms(),
+                boot_id: util::boot_id(),
+                cols: 80,
+                rows: 24,
+                state: SessionState::Running,
+                role: Some(Role::Worker),
+                label: None,
+                harness: Some("codex".into()),
+            }],
+        }))
+        .await
+        .unwrap();
+        assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Welcome(_)));
+        let (inputs, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let fake = tokio::spawn(async move {
+            while let Ok(msg) = rx.control::<LinkMsg>().await {
+                match msg {
+                    LinkMsg::Req { id, body, .. } => {
+                        let reply = match body {
+                            AgentRequest::Screen { .. } => AgentResponse::Screen(ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: screen.lines().map(str::to_string).collect(),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: screen.clone(),
+                            }),
+                            AgentRequest::Input { data, .. } => {
+                                inputs.send(data.0).unwrap();
+                                AgentResponse::Done
+                            }
+                            _ => AgentResponse::Done,
+                        };
+                        tx.json(&LinkMsg::Res { id, result: Outcome::Ok(reply) }).await.unwrap();
+                    }
+                    LinkMsg::Ping { seq } => {
+                        tx.json(&LinkMsg::Pong { seq }).await.unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        });
+        let q = tokio::time::timeout(std::time::Duration::from_secs(5), questions.recv()).await.unwrap().unwrap();
+        assert_eq!(q.question_kind, "trust");
+        assert_eq!(q.options, ["yes", "no"]);
+        let response = host
+            .call(
+                DeviceRole::Local,
+                "test",
+                FrontRequest::QuestionAnswer { id: q.id, choice: choice.into(), menu: None, pick: None },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, FrontResponse::Question(q) if q.state == QuestionState::Answered));
+        assert_eq!(received.recv().await.unwrap(), expected);
+        fake.abort();
+    }
+}
+
 struct Home(PathBuf);
 impl Home {
     fn new() -> Self {

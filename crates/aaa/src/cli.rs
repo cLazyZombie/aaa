@@ -454,6 +454,7 @@ struct PostArgs {
     notice: bool,
     #[arg(long)]
     needs_user: bool,
+    /// 전송할 때 필수인 주제(--request·--data·--notice). list·status·unmute에서는 생략한다
     #[arg(long)]
     topic: Option<String>,
     #[arg(long)]
@@ -609,9 +610,10 @@ enum ThreadCmd {
         #[arg(long)]
         interrupt: bool,
         /// 보낼 글 파일(`-`면 표준 입력)
-        #[arg(long, conflicts_with = "text")]
+        #[arg(long, conflicts_with = "text", required_unless_present = "text")]
         text_file: Option<String>,
-        #[arg(long)]
+        /// 보낼 글(--text-file과 둘 중 하나 필수)
+        #[arg(long, required_unless_present = "text_file")]
         text: Option<String>,
     },
 }
@@ -3295,6 +3297,26 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn message_requires_text_or_file() {
+        for tail in [vec![], vec!["--text", "x", "--text-file", "task.md"]] {
+            let args = [&["aaa", "thread", "message", "demo", "t-0001"][..], &tail].concat();
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        for tail in [["--text", "x"], ["--text-file", "task.md"], ["--text-file", "-"]] {
+            let args = [&["aaa", "thread", "message", "demo", "t-0001"][..], &tail].concat();
+            assert!(Cli::try_parse_from(args).is_ok());
+        }
+    }
+
+    #[test]
+    fn post_help_explains_required_topic_without_changing_lookup_commands() {
+        let help = Cli::try_parse_from(["aaa", "post", "--help"]).err().unwrap().to_string();
+        assert!(help.contains("--topic") && help.contains("필수"), "{help}");
+        // 조회 명령에는 전송 인자를 요구하지 않는다.
+        assert!(Cli::try_parse_from(["aaa", "post", "list", "demo"]).is_ok());
+    }
 
     /// `aaa report`는 herdr-projects `report`와 같은 인자를 받는다(plan §8.78)
     #[test]

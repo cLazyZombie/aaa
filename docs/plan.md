@@ -5167,3 +5167,21 @@ primary 근거:
 - **다시 시작.** 임무별 잠금 아래 idle 30초·working 뒤 idle·빈 입력창·보는 사람 없음일 때 resetting을 먼저 저장하고 Kill을 보낸다. DB 확정 실패는 호출자에게 돌려주며 Kill·깨움 입력을 전송하지 않는다. 응답만으로 새 대화를 시작하지 않고 세션 끝남 사건을 기다린다. 새 세션 연결까지 기록한 뒤 host가 종료되어도 실제 띄운 사본으로 적용을 확정한다. Claude compact/clear/resume의 SessionStart에는 brief/state 재독 포인터 한 줄만 준다. Codex는 reset_after_wakes=1만 허용한다. 재부팅 복원도 새 대화이며 사람이 멈춘 상태를 유지한다. reset 도중 재부팅은 일반 thread 복원을 건너뛰고 임무 잠금 아래 고정된 repo·머신·profile로 이어 간다. 임무 재시작은 mission 명령을 사용한다. repo·머신 변경에는 state.md·processed.txt·inbox/·history/를 양쪽 agent 사이에서 조각으로 옮긴 뒤 띄운다(8MiB·1000개, 파일 hash 확인, symlink 거부, 원본 보존). 넘으면 막힘으로 남기며 부분 상태로 실행하지 않는다.
 - **철수와 사용량.** `withdrawal="none"`은 기간 제한 없는 임무다. `criteria`(기본)는 `retire_no_posts_days=7` 동안 처리한 post가 없거나 `retire_cap_days=3`일 연속 상한이면 coordinator에 철수 제안만 한다. `usage_session_below`, `usage_week_below`는 남은 양 % 문턱이다. 값이 있으면 해당 harness/모델의 창이 리셋될 때까지 「사용량 대기」, 입력·cursor 보존, 리셋 뒤 재개다. 값이 없으면 미루지 않는다. 이번 단계는 이미 읽은 host의 사용량만 쓰며 외부 주기 조회·원격 다른 계정의 판단은 하지 않는다. 내장 평가자 흡수·비용/context 실측·nightly 이전은 3단계다.
 - **계약과 시험.** 배포된 계약에 덧붙이지 않고 FRONT_API 1.39, AGENT_LINK 1.5로 올린다. 새 임무 link 요청/응답은 양쪽의 `mission.v1`에서만 쓴다. 1.4 agent와 연결은 유지하되 임무는 시작하지 않는다. DB schema 변경은 없다. 신호 시험 금지에 따라 새 수명주기 시험은 실제 host DB·frame와 가짜 agent로 Kill→끝남 사건→새 Spawn 순서를 검사한다. 실제 CLI/화면은 기존 공식 실험실 gate에서 검사한다.
+
+### 8.206 Codex 신뢰 답·메시지 뒤 기다림·CLI 필수 입력(10-18, t-0367)
+
+- **신뢰 답(N1).** herdr-projects `trust_screen`의 Codex 표지와 herdr의 커서 키 전송,
+  herdr-web-ui `prompt.ts`의 현재 선택지에서 목적지까지 이동한 뒤 Enter 규칙을 따른다.
+  의미 답 yes/no를 Codex 0.163의 `Trust and continue`/`Quit`에 연결한다. Quit도 실제 선택지로 이동해 Enter로
+  확정한다. Claude 신뢰·명령 승인의 No는 기존 Esc를 유지한다. 선택 창 끝 안내가 없는 일반 화면에는 긍정 답을 보내지 않는다.
+- **메시지 받음(N2).** herdr-projects `progress::respond(UserPromptSubmit)`의 규칙대로 이미 답한
+  `Waiting for you`를 지운다. 전역 hook이 없는 대화도 host의 입력 받음(working·question·화면 변화) 확인 자리에서
+  전송 직전의 기다림만 지운다. 거부·unknown 전송은 지우지 않고, 그 사이 새로 온 보고는 보고 시각으로 구별해 지킨다.
+  Next도 `thread_message`를 쓰므로 같은 규칙이다. 시한·debounce·wire는 바꾸지 않는다.
+- **도움말(O3).** `thread message`는 `--text`/`--text-file` 중 하나를 clap에서 요구한다.
+  `post --help`는 전송의 `--topic` 필수를 명시하고 list·status·unmute 호출은 유지한다.
+- **검증.** 실제 Codex 화면 표본 → 감지 → Agent link → 질문 → 공통 Front 답 → 전송 키를 검사한다.
+  hook 없는 메시지·Next의 받음 → 중간 idle → working과 새 기다림·실제 질문을 host owner에서 검사하며,
+  설치한 UserPromptSubmit의 실제 agent·host 전달은 기존 codex_integration 경계에서 확인한다.
+  웹 E2E 11은 데스크톱·390px 카드의 Codex 답과 기존 Claude 예 답을 본다. 착지 gate에서는 기존 공식 전체 시험도 실행한다.
+  main의 FRONT_API 1.39·AGENT_LINK 1.5를 유지하며 추가 wire 변경은 없다. 임무의 상태 집계·Follow-ups 제외 규칙도 유지한다.

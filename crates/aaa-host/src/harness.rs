@@ -54,6 +54,8 @@ const MODAL_MARKS: &[&str] = &[
     "trust this folder",
     "Allow Codex to work in this folder",
     "Yes, proceed",
+    "enter continue · esc back",
+    "Press enter to continue",
 ];
 
 /// 선택 창 표지는 화면 맨 아래 몇 줄(빈 줄 제외) 안에 있어야 한다. 위쪽 출력(예: 소스를 cat한 결과)에 같은 글이
@@ -100,7 +102,7 @@ fn menu(lines: &[String]) -> Vec<(bool, String)> {
             Some((n, r)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => r,
             _ => rest,
         };
-        if !(rest.starts_with("Yes") || rest.starts_with("No")) {
+        if menu_choice(rest).is_none() {
             continue;
         }
         if prev != Some(i.wrapping_sub(1)) {
@@ -112,17 +114,31 @@ fn menu(lines: &[String]) -> Vec<(bool, String)> {
     groups.into_iter().rev().find(|g| g.iter().any(|(s, _)| *s)).unwrap_or_default()
 }
 
-/// 질문 답 → harness 키(adapter). 「아니오」는 취소(Esc)다. 「예」는 화면 선택 창에서 Yes로 시작하는 첫 선택지까지
+/// 의미 답과 화면 글의 대응. Codex 신뢰 창은 Yes/No 대신 Trust and continue/Quit를 쓴다.
+fn menu_choice(text: &str) -> Option<&'static str> {
+    match text.trim() {
+        "Trust and continue" => Some("yes"),
+        "Quit" => Some("no"),
+        t if t.starts_with("Yes") => Some("yes"),
+        t if t.starts_with("No") => Some("no"),
+        _ => None,
+    }
+}
+
+/// 질문 답 → harness 키(adapter). 「아니오」는 취소(Esc), Codex 신뢰 창은 Quit 선택이다.
+/// 「예」는 화면 선택 창에서 긍정 선택지까지
 /// 화살표로 옮긴 뒤 Enter다(Claude Code 폴더 신뢰 창은 기본 선택이 「No, exit」라 Enter만 보내면 안 된다).
 pub(crate) fn answer_keys(lines: &[String], choice: &str) -> Result<Vec<u8>, String> {
     match choice {
-        "no" => return Ok(b"\x1b".to_vec()),
-        "yes" => {}
+        "yes" | "no" => {}
         other => return Err(format!("모르는 답: {other}")),
     }
     let m = dialog(lines).map(menu).unwrap_or_default();
+    if choice == "no" && !m.iter().any(|(_, t)| t == "Trust and continue") {
+        return Ok(b"\x1b".to_vec());
+    }
     let cur = m.iter().position(|(s, _)| *s).ok_or("화면에서 선택 창을 찾지 못했다")?;
-    let want = m.iter().position(|(_, t)| t.starts_with("Yes")).ok_or("화면 선택 창에 Yes 선택지가 없다")?;
+    let want = m.iter().position(|(_, t)| menu_choice(t) == Some(choice)).ok_or("화면 선택 창에 답 선택지가 없다")?;
     let step: &[u8] = if want > cur { b"\x1b[B" } else { b"\x1b[A" };
     let mut keys = step.repeat(want.abs_diff(cur));
     keys.push(b'\r');
@@ -781,6 +797,24 @@ impl Host {
         // 일하는 중인 harness는 받은 글을 다음 턴으로 줄 세운다(Claude Code 대기 메시지). herdr `agent prompt --wait`도
         // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
+        // herdr-projects progress::respond(UserPromptSubmit)와 같은 정리다. 전역 hook이 없는 Codex도
+        // 입력 받음(working·question·화면 변화)을 확인한 바로 그 자리에서 직전 기다림을 끝낸다.
+        // 전송 전에 거부되거나 받음이 unknown이면 지우지 않으며, 그 사이 새로 온 보고도 지키도록 시각을 묶는다.
+        let waiting_at = agent
+            .as_ref()
+            .filter(|a| a.progress.as_deref() == Some(crate::orch::WAITING))
+            .and_then(|a| a.progress_at_ms);
+        // unknown으로 끝난 대기자가 남아도 host 자체를 붙잡지 않는다.
+        let me = Arc::downgrade(self);
+        let target = pane.to_string();
+        let on_accept: Option<OnFire> = Some(Box::new(move || {
+            if let Some(me) = me.upgrade() {
+                me.input_accepted(&target, waiting_at);
+            }
+            if let Some(f) = on_accept {
+                f();
+            }
+        }));
         let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
         // 프로그램이 bracketed paste를 켰을 때만 감싸고 Enter도 그 터미널 모드대로 쓴다(herdr `encode_api_submission_parts`,
         // src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
@@ -843,6 +877,31 @@ impl Host {
             }
         }
         Ok(false)
+    }
+
+    fn input_accepted(&self, pane: &str, waiting_at: Option<u64>) {
+        let changed = {
+            let mut i = self.inner.lock().unwrap();
+            let st = i.panes.get_mut(pane).and_then(|p| p.agent.as_mut());
+            if let Some(st) = st
+                && waiting_at.is_some()
+                && st.progress_at_ms == waiting_at
+                && st.progress.as_deref() == Some(crate::orch::WAITING)
+            {
+                st.progress = None;
+                st.progress_at_ms = None;
+                true
+            } else {
+                false
+            }
+        };
+        if changed {
+            self.bump();
+            self.tick_wake.notify_one();
+            if let Some(r) = self.thread_of_pane(pane) {
+                let _ = self.thread_events.send(self.thread_view(&r));
+            }
+        }
     }
 
     /// `threads/<id>.task.md`의 `## Follow-ups` 아래에 시각과 함께 덧붙인다(herdr-projects `append_follow_up`)
@@ -1075,6 +1134,21 @@ mod tests {
         assert_eq!(answer_keys(&l, "no").unwrap(), b"\x1b");
     }
 
+    /// Codex 0.163.0 폴더 신뢰 창. 의미 답은 현재 커서에서 실제 선택지로 옮겨야 한다.
+    #[test]
+    fn codex_trust_screen() {
+        let screen = include_str!("../../aaa-agent/src/detect/fixtures/codex-trust.txt");
+        for (screen, yes, no) in [
+            (screen.to_string(), b"\r".as_slice(), b"\x1b[B\r".as_slice()),
+            (screen.replace("› 1.", "  1.").replace("  2.", "› 2."), b"\x1b[A\r".as_slice(), b"\r".as_slice()),
+        ] {
+            let l = lines(&screen);
+            assert_eq!(modal_of(&l).unwrap().0, "trust");
+            assert_eq!(answer_keys(&l, "yes").unwrap(), yes);
+            assert_eq!(answer_keys(&l, "no").unwrap(), no);
+        }
+    }
+
     /// Claude Code 2.1의 실제 권한 창(기본 선택 Yes, 번호 붙음, 「Esc to cancel」만 있다)
     #[test]
     fn claude_permission_screen() {
@@ -1208,6 +1282,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aaa-harness-test-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
         cfg.notify.web_push = false;
+        cfg.projects.root = dir.join("projects").display().to_string();
         let h = Host::open(cfg, dir.clone()).unwrap();
         let info = aaa_proto::SessionInfo {
             id: "s".into(),
@@ -1226,6 +1301,140 @@ mod tests {
         };
         h.on_session("m", info, false);
         (h, Tmp(dir))
+    }
+
+    fn codex_event(kind: &str, at_ms: u64) -> HarnessEvent {
+        HarnessEvent {
+            session: "s".into(),
+            harness: "codex".into(),
+            kind: kind.into(),
+            at_ms,
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            transcript: None,
+            plan: None,
+            background: None,
+        }
+    }
+
+    /// 실제 메시지·Next 전송 owner를 통과한다. 가짜 Codex는 입력 받음 뒤 잠깐 idle 화면을 낸다.
+    /// hook이 없어도 이미 답한 기다림이 되살아나지 않으며, 새 기다림·실제 질문은 숨기지 않는다.
+    #[tokio::test]
+    async fn codex_message_and_next_do_not_revive_previous_waiting_report() {
+        use aaa_common::conn::{FrameRx, spawn_writer};
+        use aaa_proto::{AgentResponse, LinkMsg, Role, ThreadGroup, ThreadKind};
+        for hooked in [false, true] {
+            for next in [false, true] {
+                let (h, _tmp) = host_with_pane();
+                h.project_create("demo", Default::default(), "test").unwrap();
+                let mut r = ThreadRec::starting("demo", "시험", "m", "codex", Role::Worker, ThreadKind::Dir, 1);
+                r.id = "t-0001".into();
+                r.pane = Some("s".into());
+                r.status = ThreadStatus::Open;
+                r.brief = BriefState::Delivered;
+                r.next = vec!["다음 작업".into()];
+                h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+                h.on_harness("m", codex_event("idle", 1));
+                let mut waiting = codex_event("progress", 2);
+                waiting.message = Some(crate::orch::WAITING.into());
+                h.on_harness("m", waiting.clone());
+                assert_eq!(h.thread_view(&r).group, ThreadGroup::WaitingOnYou);
+
+                let (writer, reader) = tokio::io::duplex(65536);
+                let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 1);
+                h.inner.lock().unwrap().machines.insert(
+                    "m".into(),
+                    crate::MachineRt {
+                        name: "mac-a".into(),
+                        local: true,
+                        os: None,
+                        boot_id: None,
+                        dev_mode: true,
+                        conn: Some(conn.clone()),
+                        last_seen_ms: None,
+                        health: None,
+                        features: vec![],
+                        agent_pid: None,
+                        colors: None,
+                    },
+                );
+                let fake_host = h.clone();
+                let fake = tokio::spawn(async move {
+                    let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
+                    let mut screen = "› Ask Codex to do anything\n? for shortcuts".to_string();
+                    while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+                        let reply = match body {
+                            AgentRequest::Screen { .. } => AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(&screen),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: screen.clone(),
+                            }),
+                            AgentRequest::Input { data, .. } => {
+                                if data.0 == b"\r" {
+                                    if hooked {
+                                        fake_host.on_harness("m", codex_event("prompt_submit", 3));
+                                        assert!(
+                                            fake_host.pane_agent("s").unwrap().progress.is_none(),
+                                            "hook이 옛 기다림을 지운다"
+                                        );
+                                    }
+                                    // 감지의 working이 받음 신호다. 곧바로 idle로 돌아온 중간 화면도 처리한다.
+                                    fake_host.on_harness("m", codex_event("working", 4));
+                                    fake_host.on_harness("m", codex_event("idle", 5));
+                                } else {
+                                    screen = format!("› {}\n? for shortcuts", String::from_utf8_lossy(&data.0));
+                                }
+                                AgentResponse::Done
+                            }
+                            _ => AgentResponse::Done,
+                        };
+                        if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                            tx.send(aaa_proto::Outcome::Ok(reply)).unwrap();
+                        }
+                    }
+                });
+                if next {
+                    let response = h.thread_next("demo", &r.id, Some(1), None, "test").await.unwrap();
+                    assert!(
+                        matches!(response, aaa_proto::FrontResponse::Next { message: Some(m), .. } if m.state == DeliveryState::Accepted)
+                    );
+                } else {
+                    let message =
+                        h.thread_message("demo", &r.id, "계속".into(), MessageMode::Queue, "test").await.unwrap();
+                    assert_eq!(message.state, DeliveryState::Accepted);
+                }
+                assert_ne!(h.thread_view(&r).group, ThreadGroup::WaitingOnYou, "hook={hooked}, Next={next}: 중간 idle");
+                // 보고 확인 task가 끝나야 thread_pass가 이 thread를 셈한다. 완료 알림을 기다린다.
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while h.report_refresh.lock().unwrap().contains_key("demo/t-0001") {
+                        h.tick_wake.notified().await;
+                    }
+                })
+                .await
+                .expect("보고 확인 완료");
+                h.thread_pass("demo");
+                assert_eq!(h.load("demo", &r.id).unwrap().last_group, Some(ThreadGroup::Idle));
+                assert!(
+                    !h.db.inbox_list(Some("demo"), false).unwrap().iter().any(|i| i.summary.contains("waiting on you"))
+                );
+                h.on_harness("m", codex_event("working", 6));
+                assert_eq!(h.thread_view(&r).group, ThreadGroup::Working);
+                // 새 턴의 새 기다림은 다시 보인다.
+                waiting.at_ms = 7;
+                h.on_harness("m", waiting);
+                h.on_harness("m", codex_event("idle", 8));
+                assert_eq!(h.thread_view(&r).group, ThreadGroup::WaitingOnYou);
+                h.on_harness("m", codex_event("question", 9));
+                assert!(h.open_question_of("s").is_some());
+                fake.abort();
+            }
+        }
     }
 
     /// 계획 사건(agent plan.rs, 차이 목록 S5)은 계획·배경 수만 바꾸고 상태는 그대로 둔다. harness가 끝나면 배경 수는 지운다

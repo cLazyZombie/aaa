@@ -5,7 +5,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import {
-  AA, root, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
+  AA, root, repo, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList, askClaude,
 } from "../lib/harness.mjs";
 
@@ -834,4 +834,34 @@ export default async function ({ ctl, page }) {
     await page.getByTestId("chat-toggle").click();
     aaa("pane", "kill", "cmp1");
   });
+  await step("Codex 폴더 신뢰: 데스크톱·휴대폰 카드가 실제 선택지에 답한다", async () => {
+    const codexSh = `${root}/bin/codex`;
+    fs.copyFileSync(claudeSh, codexSh);
+    const fixture = `${repo}/crates/aaa-agent/src/detect/fixtures`;
+    for (const phone of [false, true]) {
+      const label = phone ? "codex-trust-phone" : "codex-trust-desktop";
+      const script = `stty -echo; ${clearScreen}; cat '${fixture}/codex-trust.txt'; read a; ${clearScreen}; printf '%s\\n' 'codex-trust-accepted'; cat '${fixture}/codex-idle.txt'; exec cat > /dev/null`;
+      const pane = aaa("tab", "create", "--machine", "labA", "--label", label, "--", codexSh, "-c", script).tabs.at(-1).root.pane;
+      const device = phone ? await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }) : null;
+      const pg = device?.page ?? page;
+      await pg.getByTestId(`agent-${label}`).and(pg.locator('[data-status="blocked"]')).waitFor({ state: "attached" });
+      await inList(pg, `pane-${label}`);
+      const q = aaa("question", "list").questions.find((q) => q.pane === pane);
+      if (q?.question_kind !== "trust") throw new Error(`신뢰 질문이 아니다: ${JSON.stringify(q)}`);
+      const card = pg.getByTestId(`dock-question-${q.id}`);
+      await card.waitFor();
+      await shot(pg, label);
+      // 읽은 화면 메뉴가 있으면 그 선택지, 예·아니오 카드면 같은 의미 답을 보낸다.
+      await card.getByRole("button", { name: /^(예|.*Trust and continue.*)$/ }).click();
+      await waitOutput(pane, "codex-trust-accepted", "recent");
+      await card.waitFor({ state: "detached" });
+      const answered = aaa("question", "list", "--all").questions.find((item) => item.id === q.id);
+      if (answered?.state !== "answered") throw new Error(`답하지 못했다: ${JSON.stringify(answered)}`);
+      if (device) {
+        if (device.errors.length) throw new Error(device.errors.join("; "));
+        await device.page.context().close();
+      }
+    }
+  });
+
 }
