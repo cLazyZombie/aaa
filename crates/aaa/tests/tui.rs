@@ -999,6 +999,15 @@ fn agent_cards_like_herdr() {
     tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
     tui.type_line("x");
     assert!(hw.held_by(&side, "tui@"));
+
+    // 5) 쓰던 pane이라도 다른 탭으로 가면 보는 것이 아니다: TUI는 lease를 놓지 않지만 그 pane을 그리지 않는다(herdr: 보이는
+    // 탭이 아니면 안 봄). 거기서 끝난 턴은 host가 알리고 카드가 뜬다
+    tui.cmd("2");
+    tui.wait_text("work 탭", |s| s.contains("? for shortcuts") && !s.contains("Do you want to proceed?"));
+    assert!(hw.held_by(&side, "tui@"), "탭을 옮겨도 lease는 그대로다(이 단계의 전제)");
+    turn(&mut hw, &side);
+    hw.wait("side 셋째 끝남 알림", |w| (notices_of(w, &side) == 3).then_some(()));
+    tui.wait_screen("다른 탭에서 쓰던 pane의 끝남 카드", |s| card(s, "claude 끝남", "main · here"));
 }
 
 /// 탭(herdr 0.9.5 `open_new_tab_overlay`·`save_rename_overlay`·`request_tab_close`, `[terminal] new_cwd = "follow"`):

@@ -4017,6 +4017,11 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     (`thread_pass`)까지 미룬다. 그 셈에서 새 보고를 알렸으면 끝남은 보내지 않고, 아니면 그 pane이 아직 끝남(안 봄)일 때 보낸다(herdr
     `validate_state`). 참고 herdr에서는 herdr의 끝남 카드와 herdr-projects의 「new report」 카드(`herdr notification show`, `Custom`)가
     따로 뜬다. 멈춘 프로젝트(ticker가 셈하지 않는다)와 thread가 아닌 pane은 바로 보낸다. 사후 평가자 pane은 알리지 않는다(§8.13).
+- **TUI의 「보는 화면」을 그리는 pane으로(§8.72 고침, `seen.rs`).** TUI는 lease를 놓지 않아(다른 탭으로 가도 `PaneRelease`를 보내지
+  않는다) 「lease를 쥔 TUI」를 보는 화면으로 치면 일을 시켜 두고 다른 탭으로 간 사이 끝난 턴이 「봤음」이 되어 알림도 「끝남(안 봄)」도
+  없었다. 이제 lease를 쥐고 그 pane을 그리는 동안(화면 구독 `PaneWatch`, 지금 탭의 pane)만 본다. 다시 그리기 시작하면 봤다(herdr
+  `mark_active_tab_seen`). herdr는 보이는 탭의 pane을 모두 봤다고 치고 바깥 터미널 focus도 보지만, aaa host는 TUI focus를 모르고 lease 없는
+  옆 pane은 보지 않은 것으로 둔다(그 카드는 TUI가 지금 탭이라 거른다).
 - **TUI 카드(`aaa-tui/src/cards.rs`, herdr `notification_policy.rs`·`src/client/shell/notifications.rs` 107–178).**
   - 받으면 같은 pane의 기다리는·줄 선·보이는 카드를 지우고, 1초(`[ui.toast] delay_seconds` 기본) 뒤 다시 본다: 입력 필요는 아직 질문 중,
     끝남은 아직 끝남(안 봄)일 때만. 지금 탭의 pane이면 띄우지 않는다(herdr는 pane이 아니라 탭으로 거른다, `notification_target_is_active`).
@@ -4037,8 +4042,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   하나다(차이 목록 306 N3의 선택 부분).
 - **시험.** `aaa-host` `notice` 유닛(턴 시작·끝남 판정·긴 턴 경계), `aaa-tui` `cards` 유닛(지연·다시 보기·탭 거르기·줄 8·같은 pane·거두기),
   m13 `turn_end_notices_follow_reports`(brief 턴 끝남·같은 턴 새 보고는 새 보고 하나·다음 턴 끝남·inbox 그대로), TUI `agent_cards_like_herdr`
-  (지금 탭 거름·다른 탭 카드·`o`·보는 pane은 host가 안 보냄·입력 필요가 같은 pane 카드를 바꿈·누름), 웹 E2E 19(짧은 턴 안 띄움·긴 턴
-  「작업 완료」·누르면 pane·보고 있는 pane 안 띄움). 결함 심기 아홉(host 셋·TUI 셋·웹 셋)이 모두 실패했다.
+  (지금 탭 거름·다른 탭 카드·`o`·보는 pane은 host가 안 보냄·입력 필요가 같은 pane 카드를 바꿈·누름·쓰던 pane이라도 다른 탭이면 알림), 웹 E2E 19(짧은 턴 안 띄움·긴 턴
+  「작업 완료」·누르면 pane·보고 있는 pane 안 띄움). 결함 심기 열(host 넷·TUI 셋·웹 셋, 옛 「lease면 봤음」 규칙 포함)이 모두 실패했다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

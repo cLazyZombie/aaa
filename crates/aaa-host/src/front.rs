@@ -347,6 +347,8 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                             }
                             let ctl = Arc::new(ScrollCtl::default());
                             let task = tokio::spawn(watch_grid(host.clone(), pane.clone(), tx.clone(), ctl.clone()));
+                            // 이 화면이 그 pane을 그린다(「보는 화면」, seen.rs)
+                            host.view_draw(&front.id, &pane, true);
                             watches.insert(pane, (task, ctl));
                             Ok(FrontResponse::Done)
                         }
@@ -358,6 +360,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     if let Some((t, _)) = watches.remove(&pane) {
                         t.abort();
                     }
+                    host.view_draw(&front.id, &pane, false);
                     tx.json(&FrontMsg::Res { id, result: Ok::<_, ErrorBody>(FrontResponse::Done).into() }).await?;
                 }
                 // 기록 위치는 이 연결의 구독마다 둔다(herdr는 pane마다 하나): 두 화면이 서로의 위치를 옮기지 않는다
@@ -417,6 +420,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
     for t in waits {
         t.abort();
     }
+    host.view_draws_end(&front.id);
     host.front_gone(&front.id);
     result
 }
