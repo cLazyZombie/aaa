@@ -196,7 +196,7 @@ impl Host {
             }
             let Some(pane) = rec.pane.clone() else { return };
             if !self.pane_view_of(&pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running()) {
-                // 세션이 끝났다: 묶음이 사람 차례로 보이고, `thread restart`가 다시 띄운다
+                // 세션이 끝났다: 묶음이 확인 필요로 보이고, `thread restart`가 다시 띄운다
                 return;
             }
             match self.brief_step(project, id, Sender::Ticker, &mut seen, &mut asked).await {

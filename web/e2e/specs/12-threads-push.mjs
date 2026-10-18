@@ -801,7 +801,7 @@ export default async function ({ page }) {
     await forgot;
     await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
     // 5. 프로젝트 머리: 프로젝트 thread 보기(끝난 것까지, plan §8.89)
-    await page.getByTestId("project-labA-demo").locator(".workspace-header").click({ button: "right" });
+    await page.getByTestId("project-demo").locator(".workspace-header").click({ button: "right" });
     if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["프로젝트 thread 보기", "접기"])) throw new Error(`프로젝트 메뉴 ${await menuItems(page)}`);
     const toDemo = hashIs(page, "#project=demo");
     await page.getByRole("menuitem", { name: "프로젝트 thread 보기" }).click();
@@ -818,6 +818,100 @@ export default async function ({ page }) {
     await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
+  });
+
+  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.195): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
+    // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
+    const counts = await page.getByTestId("project-demo").locator(".project-place").innerText();
+    if (!/^(쉼|(확인 필요|작업 중|병합 중) \d+( · (작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);
+    // thread 둘째 줄: 왼쪽 상태 말, 오른쪽 머신 이름. 머신 칸에는 줄이 없다
+    const machines = await page.locator('[data-testid^="thread-machine-demo-"]').allInnerTexts();
+    if (machines.length === 0 || machines.some((m) => m !== "labA")) throw new Error(`thread 줄 머신: ${machines}`);
+    const states = await page.locator('[data-testid^="thread-state-demo-"]').allInnerTexts();
+    if (states.length !== machines.length || states.some((w) => !/^(확인 필요|검토 대기|병합 중|작업 중|쉼)/.test(w))) throw new Error(`thread 줄 상태 말: ${states}`);
+    if (await page.locator(".machine-strip [data-thread], .machine-strip [data-pane]").count()) throw new Error("머신 칸 안에 줄이 있다");
+    // 「기타」: thread pane이 아닌 셸 줄, 줄마다 머신 이름
+    const other = page.getByTestId("other-group");
+    const loose = ".machine-list .worktree-children li[data-pane]";
+    const places = await page.locator(`${loose} .workspace-place`).allInnerTexts();
+    if (places.length === 0 || places.some((w) => !w.startsWith("labA"))) throw new Error(`「기타」 줄 머신: ${places}`);
+    const n = places.length;
+    await other.locator(".project-select").click();
+    await domIs(page, "「기타」 접힘", (q) => document.querySelectorAll(q).length === 0, loose);
+    if ((await other.locator(".workspace-fold-count").innerText()) !== `+${n}`) throw new Error("접힌 「기타」의 줄 수");
+    await other.locator(".project-select").click();
+    await domIs(page, "「기타」 펼침", ([q, n]) => document.querySelectorAll(q).length === n, [loose, n]);
+  });
+
+  await step("줄 옮기기(herdr-web-ui Sidebar `reorderWorkspaces`·`moveVisible`·`dropOrder`·touchReorder.ts, 차이 목록 2장 L9): 데스크톱은 Alt+↑↓(focus가 따라감)와 끌기, 그 차례가 host 공유 설정 paneOrder로 가 다른 기기도 같은 차례, 휴대폰은 길게 눌러 끌어 옮기고 데스크톱도 따라온다", async () => {
+    for (const n of ["ord1", "ord2", "ord3"]) aaa("tab", "create", "--machine", "labA", "--label", n, "--", "/bin/sh");
+    // 머신 목록의 옮길 수 있는 줄(고정하지 않은 pane) 가운데 이 단계의 셋, 보이는 차례대로
+    const order = (p) =>
+      p.locator(".machine-list .workspace-list > li[data-workspace]").evaluateAll((els) =>
+        els.map((e) => e.querySelector("[data-testid^='pane-']").dataset.testid.slice(5)).filter((n) => n.startsWith("ord")),
+      );
+    const orderIs = async (p, want, what) => {
+      let last = null;
+      await until(what, async () => JSON.stringify((last = await order(p))) === JSON.stringify(want)).catch((e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      });
+    };
+    const keyOf = Object.fromEntries(aaa("pane", "list").panes.filter((p) => p.name.startsWith("ord")).map((p) => [`${p.machine_id}:${p.id}`, p.name]));
+    // host 공유 설정에 간 차례(이 단계의 셋만). 단계가 먼저 실패해 화면이 닫히면 이 기다림은 거부된다: 처리되지 않은 거부로
+    // 프로세스가 끝나 실패 글을 잃지 않게 빈 catch를 달아 둔다(await하는 곳은 그대로 거부를 받는다)
+    const sentOrder = (p) => {
+      const sent = p
+        .waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set" && r.request().postDataJSON().settings?.paneOrder !== undefined)
+        .then((r) => r.request().postDataJSON().settings.paneOrder.map((k) => keyOf[k]).filter(Boolean));
+      sent.catch(() => {});
+      return sent;
+    };
+    await orderIs(page, ["ord1", "ord2", "ord3"], "처음은 host 차례");
+    // 1. Alt+↑·Alt+↓: 이웃 줄 너머로, focus는 옮긴 줄에 남는다(↓는 그 줄 자신이 DOM에서 옮겨져 focus를 잃기 쉽다)
+    const altMove = async (key, want) => {
+      const sent = sentOrder(page);
+      await page.keyboard.press(key);
+      await orderIs(page, want, key);
+      await focusIs(page, `${key} 뒤 옮긴 줄에 focus`, '[data-testid="pane-ord3"]');
+      if (JSON.stringify(await sent) !== JSON.stringify(want)) throw new Error(`${key} 뒤 host로 간 차례: ${JSON.stringify(await sent)}`);
+    };
+    await page.getByTestId("pane-ord3").focus();
+    await altMove("Alt+ArrowUp", ["ord1", "ord3", "ord2"]);
+    await altMove("Alt+ArrowDown", ["ord1", "ord2", "ord3"]);
+    // 2. 끌기: ord1을 ord2에 놓으면(아래로) ord2 뒤
+    let sent = sentOrder(page);
+    await page.getByTestId("pane-ord1").dragTo(page.getByTestId("pane-ord2"));
+    await orderIs(page, ["ord2", "ord1", "ord3"], "끌어 놓기");
+    if (JSON.stringify(await sent) !== JSON.stringify(["ord2", "ord1", "ord3"])) throw new Error(`host로 간 차례: ${JSON.stringify(await sent)}`);
+    await shot(page, "desktop-row-reorder");
+    // 3. 휴대폰(다른 기기): 같은 차례가 와 있다. 길게 눌러 들어 올린 ord1을 ord2 위에 놓으면(위로) ord2 앞
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const pp = ph.page;
+    await pp.locator(".view [data-testid='drawer-toggle']").click();
+    await pp.locator("#workspace-drawer.is-open").waitFor();
+    await pp.evaluate(() => Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null))));
+    await orderIs(pp, ["ord2", "ord1", "ord3"], "다른 기기도 같은 차례");
+    if (await pp.getByTestId("pane-ord1").getAttribute("draggable") === "true") throw new Error("터치 화면 줄이 브라우저 끌기를 켰다(참고는 길게 누르기)");
+    const center = async (name) => {
+      const b = await pp.getByTestId(`pane-${name}`).boundingBox();
+      return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+    };
+    const from = await center("ord1");
+    const to = await center("ord2");
+    const cdp = await pp.context().newCDPSession(pp);
+    sent = sentOrder(pp);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [from] });
+    // 누름이 붙잡으면(참고 HOLD_MS) 줄이 들린다: 그 표시를 기다린다
+    await pp.locator(".machine-list li.is-lifted", { has: pp.getByTestId("pane-ord1") }).waitFor();
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: from.x, y: to.y }] });
+    await pp.locator(".machine-list li[data-drop='before']", { has: pp.getByTestId("pane-ord2") }).waitFor();
+    await shot(pp, "phone-row-lifted");
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await orderIs(pp, ["ord1", "ord2", "ord3"], "길게 눌러 끌기");
+    if (JSON.stringify(await sent) !== JSON.stringify(["ord1", "ord2", "ord3"])) throw new Error(`휴대폰이 host로 보낸 차례: ${JSON.stringify(await sent)}`);
+    await orderIs(page, ["ord1", "ord2", "ord3"], "데스크톱도 따라온다");
+    await pp.context().close();
+    for (const n of ["ord1", "ord2", "ord3"]) aaa("pane", "kill", n);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
@@ -846,7 +940,7 @@ export default async function ({ page }) {
     aaa("project", "create", "side");
     fs.writeFileSync(`${root}/side-task.txt`, "noreport\n");
     const t = aaa("thread", "start", "side", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/side-task.txt`);
-    const head = `${$("project-labA-side")} .project-select`;
+    const head = `${$("project-side")} .project-select`;
     await domIs(page, "side 프로젝트 줄", (q) => document.querySelector(q) !== null, head);
     aaa("project", "pause", "side");
     await domIs(page, "멈춤 줄", (q) => document.querySelector(q)?.getAttribute("title") === "side · 멈춤", head);
@@ -860,7 +954,7 @@ export default async function ({ page }) {
     aaa("project", "resume", "side");
     await domIs(page, "되살린 줄", (q) => document.querySelector(q) && !document.querySelector(q).getAttribute("title").includes("멈춤"), head);
     aaa("project", "archive", "side");
-    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-labA-side"), $(`thread-side-${t.id}`)]);
+    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-side"), $(`thread-side-${t.id}`)]);
     await page.getByTestId("more").click();
     const toProjects2 = hashIs(page, "#projects");
     await page.getByTestId("projects-item").click();

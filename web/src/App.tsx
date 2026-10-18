@@ -25,14 +25,14 @@ import { Folder } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
-import { machineRows, shortPath, threadKey } from "./sidebarModel";
+import { rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
-import { useKeepScreenOn } from "./settings";
+import { currentSidebarShared, useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
@@ -621,12 +621,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const none = () => {};
     return {
       selectAdjacentPane: (direction) => {
-        // 고른 줄의 머신 안에서, 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 끊긴 머신의 줄은 열 수 없다
+        // 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 목록이 프로젝트 먼저라(plan §8.195) 머신을 넘어
+        // 목록 전체를 돈다. 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
         const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
-        const groups = machines.filter((m) => m.connection === "connected").map((m) => machineRows(m, panes, shown));
-        const rows = sel === null ? groups.find((g) => g.length > 0) : groups.find((g) => g.some((r) => r.keys.includes(sel)));
-        if (!rows || rows.length === 0) return;
+        const rows = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder);
+        if (rows.length === 0) return;
         const index = rows.findIndex((r) => sel !== null && r.keys.includes(sel));
         const next = rows[(index + direction + rows.length) % rows.length];
         if (!next) return;
@@ -688,13 +688,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
     const pickFirst = (auto: boolean) => {
       const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
-      for (const m of machines.filter((x) => x.connection === "connected")) {
-        const first = machineRows(m, panes, shown)[0];
-        if (!first) continue;
-        if ("pane" in first.open) choose(first.open.pane, auto);
-        else chooseThread(first.open.thread);
-        return;
-      }
+      const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder)[0];
+      if (!first) return;
+      if ("pane" in first.open) choose(first.open.pane, auto);
+      else chooseThread(first.open.thread);
     };
     // 주소가 가리킨 pane이 없다(닫혔다): 첫 줄을 열고 머리에 말한다. 키보드는 사용자가 고를 때까지 둔다(참고 resolveLink
     // 「workspace-closed」·fallback·autoSelected. aaa 주소에는 workspace가 없어 그 workspace의 pane을 여는 갈래는 없다)

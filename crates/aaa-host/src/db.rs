@@ -63,7 +63,7 @@ pub struct PushSub {
 /// 「작업 완료」는 thread 새 보고(일 한 단위)라 길이로 거르지 않고 켜기·끄기만 둔다(plan §8.119).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Alerts {
-    /// 사람 차례(질문·확인창·thread가 기다림·시작 실패)
+    /// 확인 필요(질문·확인창·thread가 기다림·시작 실패)
     pub input: bool,
     /// 새 보고(검토 대기)
     pub done: bool,

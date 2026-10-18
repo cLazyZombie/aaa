@@ -10,11 +10,13 @@ export default async function ({ ctl, page }) {
     await until("끊김 배너", async () =>
       (await page.getByTestId("readonly-banner").innerText()).includes("agent와 연결이 끊겼다"),
     );
-    // 끊긴 머신은 이름 아래 「끊김」, 그 줄들은 흐리고 누를 수 없다(herdr-web-ui MachineSidebar machine-state·machine-offline·inert)
-    const labA = page.getByTestId("machine-labA");
-    await labA.locator(".machine-state-word", { hasText: "끊김" }).waitFor();
-    if (!(await labA.locator(".machine-offline[inert]").count())) throw new Error("끊긴 머신의 줄이 흐리게·누를 수 없게 되지 않았다");
-    if ((await labA.locator('.sidebar-status[data-status]:not([data-status="unknown"])').count()) !== 0) throw new Error("끊긴 머신 줄이 상태를 말한다");
+    // 끊긴 머신은 머신 칸 이름 아래 「끊김」, 목록의 그 머신 줄들은 흐리고 누를 수 없다(herdr-web-ui MachineSidebar
+    // machine-state·machine-offline·inert를 줄마다, plan §8.195: 목록은 머신으로 묶지 않는다)
+    await page.getByTestId("machine-labA").locator(".machine-state-word", { hasText: "끊김" }).waitFor();
+    const offline = page.locator(".machine-list li.is-offline[inert]");
+    if (!(await offline.count())) throw new Error("끊긴 머신의 줄이 흐리게·누를 수 없게 되지 않았다");
+    if ((await page.locator(".machine-list li:not(.is-offline)[data-pane]").count()) !== 0) throw new Error("끊긴 머신의 pane 줄이 흐려지지 않았다");
+    if ((await offline.locator('.sidebar-status[data-status]:not([data-status="unknown"])').count()) !== 0) throw new Error("끊긴 머신 줄이 상태를 말한다");
     // 입력줄은 그대로 쓸 수 있고 보내기만 막힌다(herdr-web-ui TerminalInput: 끊겨도 쓰던 글은 두고 보내기만 거부)
     if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("끊겼는데 입력줄이 꺼졌다");
     if (!(await page.getByRole("button", { name: "보내기" }).isDisabled())) throw new Error("끊겼는데 보내기가 켜져 있다");
@@ -84,7 +86,7 @@ export default async function ({ ctl, page }) {
     const viewing = await page.evaluate(() => location.hash);
     if (!viewing.startsWith("#pane=")) throw new Error(`보던 pane 주소: ${viewing}`);
     // 목록 차례는 처음 띄운 차례다: 되살리거나 다시 열어 새 ID가 되어도 옮겨 다니지 않는다
-    const order = () => page.getByTestId("machine-labA").locator("[data-pane] .workspace-name").allInnerTexts();
+    const order = () => page.locator(".machine-list [data-pane] .workspace-name").allInnerTexts();
     const before = (await order()).join(",");
     // 재부팅 흉내: agent와 session host를 끝내고 다른 boot ID로 agent를 띄운다. 저장한 폴더가 없는 셸은 다시 띄우지 못하고,
     // 프로그램 pane은 일부러 다시 실행하지 않는다

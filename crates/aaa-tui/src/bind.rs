@@ -123,8 +123,9 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 ("up / down".into(), "목록"),
                 ("h / j / k / l / left / right".into(), "포커스 옮기기"),
                 ("tab / shift+tab".into(), "pane 차례로"),
-                ("enter".into(), "고른 줄 열기"),
-                ("1..9".into(), "목록 n번째 열기"),
+                ("enter".into(), "고른 줄 열기(묶음 머리는 접기·펴기)"),
+                ("1..9".into(), "목록 n번째 열기(묶음 머리는 빼고 센다)"),
+                ("m".into(), "새 탭·workspace를 열 머신 바꾸기"),
             ],
         ),
         (

@@ -1,6 +1,7 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 구성(차이 목록 L1): 머신 묶음마다 머리(이름·host·연결 점·접기·+) → 프로젝트 머리(접기, 묶음 대표 상태) 아래 그 머신의 thread 줄 →
-// thread가 아닌 pane 줄. 그 아래 모든 머신의 「Agents」 구역, 맨 아래 바닥 줄(설정·사용량, App.tsx ListFoot).
+// 구성(t-0352 시안 2안, plan §8.195): 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄(둘째 줄 왼쪽 상태 말,
+// 오른쪽 머신 이름) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름) → 머신 줄(이름·host·연결 점·+, 끊김·점검 글). 머신은 트리
+// 단계가 아니다. 그 아래 모든 머신의 「Agents」 구역, 맨 아래 바닥 줄(설정·사용량, App.tsx ListFoot).
 // aaa에는 herdr workspace가 없다: 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다.
 // thread는 자기 줄 하나로만 보인다(L4, herdr-projects sidebar.rs: thread는 자기 agent 줄이고 이름이 「id · 제목」).
 import {
@@ -14,6 +15,7 @@ import {
   useState,
   useSyncExternalStore,
   type AnimationEvent,
+  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -28,7 +30,10 @@ import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, sub
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
-import { activityOrder, GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
+import { updateSidebarShared, useMedia, useSidebarShared } from "./settings";
+import { watchTouchReorder } from "./herdr/touchReorder.ts";
+import { placeBlock } from "./herdr/workspaceOrder.ts";
+import { activityOrder, GROUP_WORD, needsYou, paneAgentStatus, paneEnded, paneProblem, projectLine, roster, shortPath, stateLine, threadKey } from "./sidebarModel";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
@@ -245,7 +250,6 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { machines } = props;
   // 고정은 이 기기 사본(localStorage)이고 host 공유 문서로 나간다(preferencesSync, plan §8.79)
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -285,9 +289,8 @@ export function Sidebar(props: SidebarProps) {
     <RowsContext.Provider value={rows}>
       <div className="list-body machine-list" aria-label="머신과 pane">
         {props.banners}
-        {machines.map((m) => (
-          <MachineGroup key={m.id} {...props} machine={m} />
-        ))}
+        <Roster {...props} />
+        <MachineStrip {...props} />
       </div>
       <AgentSection {...props} />
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} items={menu.items()} onClose={closeMenu} />}
@@ -324,128 +327,256 @@ function RowError({ rowKey }: { rowKey: string }) {
   ) : null;
 }
 
-function MachineGroup({ machine: m, ...props }: SidebarProps & { machine: MachineView }) {
-  const [collapsed, toggle] = useFold(`aaa:pc-collapsed:${m.id}`);
-  const online = m.connection === "connected";
-  // 줄 차례는 단축키 「이전·다음 패널」과 같은 계산(sidebarModel machineRoster)
-  const { threads, projects, panes } = machineRoster(m, props.panes, props.threads);
-  const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
+/**
+ * 머신 줄들(plan §8.195): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
+ * 끊김·점검 이상 글만 목록 아래에 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트·「기타」 묶음에 머신 글자로 있다.
+ */
+function MachineStrip(props: SidebarProps) {
   return (
-    <section className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
-      <header className="machine-header">
-        <div className="machine-title">
-          <span className="sidebar-mark" aria-hidden="true">
-            <Monitor />
-          </span>
-          <span className="machine-name">{m.name}</span>
-          {m.local && (
-            <span className="machine-kind" title="host가 도는 머신">
-              host
-            </span>
-          )}
-          <span className={`machine-dot is-${online ? (problems ? "error" : "connected") : "disconnected"}`} title={online ? (problems ? "점검 이상" : "연결됨") : "끊김"} aria-hidden="true" />
-        </div>
-        <button
-          type="button"
-          className="sidebar-row-action machine-toggle"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? `${m.name} 펼치기` : `${m.name} 접기`}
-          title={collapsed ? `${m.name} 펼치기` : `${m.name} 접기`}
-          onClick={toggle}
-        >
-          {collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-        </button>
-        {props.canControl && (
-          <button
-            type="button"
-            className="sidebar-row-action machine-new"
-            disabled={!online}
-            aria-label={`${m.name}에 새 pane`}
-            title="새 pane"
-            data-testid={`new-shell-${m.name}`}
-            onClick={() => props.onNewShell(m)}
-          >
-            <Plus aria-hidden="true" />
-          </button>
-        )}
-      </header>
-      {/* 연결됨은 평소라 말하지 않는다. 그 밖의 상태와 점검 이상은 이름 아래 글로(참고 machine-state) */}
-      {!online ? (
-        <p className="machine-state is-disconnected" role="status">
-          <span className="machine-state-word">끊김</span>
-          <span className="machine-state-detail">pane은 agent에서 계속 돈다. 다시 붙으면 이어 본다.</span>
-        </p>
-      ) : problems ? (
-        <p className="machine-state is-error" role="status" title={problems} data-testid={`health-${m.name}`}>
-          <span className="machine-state-word">점검 이상: 새 세션을 시작하지 않는다</span>
-          <span className="machine-state-detail">{problems}</span>
-        </p>
-      ) : (
-        <p className="machine-state is-connected visually-hidden" role="status">
-          <span className="machine-state-word">연결됨</span>
-        </p>
-      )}
-      {!collapsed && (
-        <div className={online ? "" : "machine-offline"} inert={!online}>
-          <PaneRoster {...props} machine={m} online={online} mThreads={threads} projects={projects} mPanes={panes} />
-        </div>
-      )}
+    <section className="machine-strip" aria-label="머신">
+      <p className="sidebar-section-label machine-strip-label">머신</p>
+      {props.machines.map((m) => {
+        const online = m.connection === "connected";
+        const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
+        return (
+          <section key={m.id} className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
+            <header className="machine-header">
+              <div className="machine-title">
+                <span className="sidebar-mark" aria-hidden="true">
+                  <Monitor />
+                </span>
+                <span className="machine-name">{m.name}</span>
+                {m.local && (
+                  <span className="machine-kind" title="host가 도는 머신">
+                    host
+                  </span>
+                )}
+                <span className={`machine-dot is-${online ? (problems ? "error" : "connected") : "disconnected"}`} title={online ? (problems ? "점검 이상" : "연결됨") : "끊김"} aria-hidden="true" />
+              </div>
+              {props.canControl && (
+                <button
+                  type="button"
+                  className="sidebar-row-action machine-new"
+                  disabled={!online}
+                  aria-label={`${m.name}에 새 pane`}
+                  title="새 pane"
+                  data-testid={`new-shell-${m.name}`}
+                  onClick={() => props.onNewShell(m)}
+                >
+                  <Plus aria-hidden="true" />
+                </button>
+              )}
+            </header>
+            {/* 연결됨은 평소라 말하지 않는다. 그 밖의 상태와 점검 이상은 이름 아래 글로(참고 machine-state) */}
+            {!online ? (
+              <p className="machine-state is-disconnected" role="status">
+                <span className="machine-state-word">끊김</span>
+                <span className="machine-state-detail">pane은 agent에서 계속 돈다. 다시 붙으면 이어 본다.</span>
+              </p>
+            ) : problems ? (
+              <p className="machine-state is-error" role="status" title={problems} data-testid={`health-${m.name}`}>
+                <span className="machine-state-word">점검 이상: 새 세션을 시작하지 않는다</span>
+                <span className="machine-state-detail">{problems}</span>
+              </p>
+            ) : (
+              <p className="machine-state is-connected visually-hidden" role="status">
+                <span className="machine-state-word">연결됨</span>
+              </p>
+            )}
+          </section>
+        );
+      })}
     </section>
   );
 }
 
-function PaneRoster({
-  machine: m,
-  online,
-  mThreads: threads,
-  projects,
-  mPanes: panes,
-  ...props
-}: SidebarProps & { machine: MachineView; online: boolean; projects: string[]; mThreads: ThreadView[]; mPanes: PaneView[] }) {
+/**
+ * 목록 줄들(t-0352 시안 2안, plan §8.195): 프로젝트 묶음(모든 머신의 thread, 둘째 줄에 머신 이름) 다음 thread에 딸리지 않은 pane의
+ * 「기타」 묶음(줄마다 머신 이름). 차례는 단축키 「이전·다음 패널」과 같은 계산(sidebarModel `roster`, 사람이 옮긴 pane 차례 포함).
+ * 끊긴 머신의 줄은 흐리고 누를 수 없다(참고 machine-offline·inert를 줄마다).
+ */
+function Roster(props: SidebarProps) {
   const { appearance } = useAppearance();
   const { pins } = useRows();
   const twoLine = appearance.sidebarRows === "two";
+  const { paneOrder } = useSidebarShared();
+  const { threads, projects, panes, machineOf } = roster(props.machines, props.panes, props.threads, paneOrder);
+  const machineById = (id: string) => props.machines.find((m) => m.id === id);
+  const online = (m: MachineView | undefined) => m?.connection === "connected";
+  const [otherCollapsed, toggleOther] = useFold("aaa:other-collapsed");
   // 고정한 pane은 맨 앞 카드에 고정한 순서로(참고 Sidebar.tsx `splitPinnedGroups`·`sidebar-pinned`)
-  const split = splitPinnedRows(panes, pins, (p) => sidebarPinKey(m.id, p.id));
+  const split = splitPinnedRows(panes, pins, (p) => sidebarPinKey(p.machine_id, p.id));
+  // 줄 옮기기(참고 Sidebar.tsx `reorderWorkspaces`·`moveVisible`·`dropOrder`·`watchTouchReorder`, plan §8.196): 마우스는 끌기,
+  // Alt+↑↓, 손가락은 길게 눌러 끌기. 「기타」의 고정하지 않은 pane 줄끼리 옮긴다(머신을 넘어서도, thread 줄은 묶음 차례를 따른다).
+  // 참고의 순서는 herdr에 보내는 요청이라 조작 권한 기기만 옮긴다. 순서는 공유 설정 `paneOrder`로 이 host의 다른 화면에도 간다
+  const movable = props.canControl;
+  const coarsePointer = useMedia("(pointer: coarse)");
+  const restKeys = split.rest.map((p) => sidebarPinKey(p.machine_id, p.id));
+  const reorder = (next: string[]) => {
+    if (next.length === restKeys.length && next.every((key, index) => key === restKeys[index])) return;
+    updateSidebarShared({ paneOrder: [...paneOrder.filter((key) => !next.includes(key)), ...next] });
+  };
+  /** 놓은 줄이 만드는 차례: 아래로 옮기면 놓은 줄 뒤, 위로 옮기면 앞 */
+  const dropOrder = (source: string, target: string): string[] | null => {
+    const from = restKeys.indexOf(source);
+    const to = restKeys.indexOf(target);
+    if (from < 0 || to < 0 || from === to) return null;
+    return placeBlock(restKeys, [source], [target], from < to ? "after" : "before");
+  };
+  const moveVisible = (key: string, direction: -1 | 1) => {
+    const index = restKeys.indexOf(key);
+    const target = restKeys[index + direction];
+    if (index < 0 || target === undefined) return;
+    reorder(placeBlock(restKeys, [key], [target], direction === 1 ? "after" : "before"));
+  };
+  const list = useRef<HTMLUListElement>(null);
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [touchDrag, setTouchDrag] = useState<{ source: string; over: string | null } | null>(null);
+  const touchHandlers = useRef<Parameters<typeof watchTouchReorder>[1] | null>(null);
+  touchHandlers.current = {
+    canLift: () => movable,
+    onLift: (id) => setTouchDrag({ source: id, over: id }),
+    onOver: (id) => setTouchDrag((current) => current && { ...current, over: id }),
+    onDrop: (id, target) => {
+      setTouchDrag(null);
+      const next = target === null || target === id ? null : dropOrder(id, target);
+      if (next !== null) reorder(next);
+    },
+    onCancel: () => setTouchDrag(null),
+  };
+  // 「기타」 줄 목록(ul)은 줄이 있고 펼쳤을 때만 있다: 그때마다 손가락 감시를 다시 붙인다
+  const shown = split.rest.length > 0 && !otherCollapsed;
+  useEffect(() => {
+    const root = list.current;
+    if (!root) return;
+    return watchTouchReorder(root, {
+      canLift: (id) => touchHandlers.current?.canLift(id) ?? false,
+      onLift: (id) => touchHandlers.current?.onLift(id),
+      onOver: (id) => touchHandlers.current?.onOver(id),
+      onDrop: (id, target) => touchHandlers.current?.onDrop(id, target),
+      onCancel: () => touchHandlers.current?.onCancel(),
+    });
+  }, [shown]);
+  /** 들어 올린 줄이 놓일 자리(줄 앞이나 뒤의 선) */
+  const dropMark = ((): { id: string; side: "before" | "after" } | null => {
+    if (!touchDrag?.over || touchDrag.over === touchDrag.source || dropOrder(touchDrag.source, touchDrag.over) === null) return null;
+    return { id: touchDrag.over, side: restKeys.indexOf(touchDrag.source) < restKeys.indexOf(touchDrag.over) ? "after" : "before" };
+  })();
+  const moveOf = (p: PaneView): RowMove | undefined => {
+    if (!movable) return undefined;
+    const key = sidebarPinKey(p.machine_id, p.id);
+    return {
+      key,
+      draggable: !coarsePointer,
+      dragging: dragKey === key,
+      lifted: touchDrag?.source === key,
+      drop: dropMark?.id === key ? dropMark.side : undefined,
+      onDragStart: (event) => {
+        setDragKey(key);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(PANE_ROW_DRAG, JSON.stringify({ key }));
+      },
+      onDragEnd: () => setDragKey(null),
+      onDrop: (event) => {
+        event.preventDefault();
+        let payload: { key?: string };
+        try {
+          payload = JSON.parse(event.dataTransfer.getData(PANE_ROW_DRAG));
+        } catch {
+          return;
+        }
+        setDragKey(null);
+        if (typeof payload.key !== "string") return;
+        const next = dropOrder(payload.key, key);
+        if (next !== null) reorder(next);
+      },
+      onMove: (direction) => moveVisible(key, direction),
+    };
+  };
+  const paneRow = (p: PaneView, move?: RowMove) => {
+    const m = machineById(p.machine_id);
+    return <PaneRow key={p.id} {...props} online={online(m)} machine={m} pane={p} twoLine={twoLine} move={move} />;
+  };
   if (threads.length === 0 && panes.length === 0) {
     return (
       <div className="machine-workspaces">
-      <nav className="sidebar-list" aria-label={`${m.name} pane`}>
-        <div className="tree-state-empty">
-          <p className="tree-state" role="status">
-            {online ? "pane 없음" : "저장된 pane 없음"}
-          </p>
-          {props.canControl && online && (
-            <button type="button" className="btn" onClick={() => props.onNewShell(m)}>
-              <Plus aria-hidden="true" />새 pane
-            </button>
-          )}
-        </div>
-      </nav>
+        <nav className="sidebar-list" aria-label="목록">
+          <div className="tree-state-empty">
+            <p className="tree-state" role="status">
+              pane 없음
+            </p>
+          </div>
+        </nav>
       </div>
     );
   }
+  const otherLabel = otherCollapsed ? "기타 pane 펼치기" : "기타 pane 접기";
   return (
     <div className={`machine-workspaces${twoLine ? " is-two-line" : ""}`}>
-      <nav className="sidebar-list" aria-label={`${m.name} pane`}>
+      <nav className="sidebar-list" aria-label="목록">
         {split.pinned.length > 0 && (
           <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label="고정됨">
-            {split.pinned.map((p) => (
-              <PaneRow key={p.id} {...props} online={online} pane={p} twoLine={twoLine} />
-            ))}
+            {split.pinned.map((p) => paneRow(p))}
           </ul>
         )}
         <ul className="workspace-list">
           {projects.map((project) => (
-            <ProjectGroup key={project} {...props} machine={m} online={online} project={project} pThreads={threads.filter((t) => t.project === project)} twoLine={twoLine} />
+            <ProjectGroup key={project} {...props} project={project} pThreads={threads.filter((t) => t.project === project)} machineOf={machineOf} twoLine={twoLine} />
           ))}
-          {split.rest.map((p) => (
-            <PaneRow key={p.id} {...props} online={online} pane={p} twoLine={twoLine} />
-          ))}
+          {split.rest.length > 0 && (
+            <>
+              <li className={`workspace workspace-group pane-item project-group other-group${otherCollapsed ? " is-collapsed" : ""}`} data-testid="other-group">
+                <div className="workspace-header">
+                  <button type="button" className="sidebar-row-action workspace-toggle" aria-label={otherLabel} title={otherLabel} aria-expanded={!otherCollapsed} onClick={toggleOther}>
+                    {otherCollapsed ? <Folder aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
+                  </button>
+                  <div className="pane-select workspace-select project-select" role="button" tabIndex={0} title={otherLabel} onClick={toggleOther} onKeyDown={(e) => onRowKey(e, toggleOther)}>
+                    <span className={`workspace-copy${twoLine ? " is-two-line" : ""}`}>
+                      <span className="workspace-line">
+                        <span className="workspace-name project-name">기타</span>
+                        {otherCollapsed && (
+                          <span className="workspace-fold-count" aria-hidden="true">
+                            +{split.rest.length}
+                          </span>
+                        )}
+                      </span>
+                      {twoLine && <span className="workspace-place">pane {split.rest.length}</span>}
+                    </span>
+                    <span className="sidebar-pane-meta">
+                      <StatusBadge compact status={undefined} />
+                    </span>
+                  </div>
+                </div>
+              </li>
+              {shown && (
+                <li className="worktree-children">
+                  <ul className="workspace-list" ref={list}>
+                    {split.rest.map((p) => paneRow(p, moveOf(p)))}
+                  </ul>
+                </li>
+              )}
+            </>
+          )}
         </ul>
       </nav>
     </div>
   );
+}
+
+/** 끌어 옮기는 pane 줄의 끌기 자료 형식(「기타」 목록 안에서만 받는다) */
+const PANE_ROW_DRAG = "application/x-aaa-pane-row";
+
+/** 옮길 수 있는 줄이 받는 것(Roster가 만든다) */
+interface RowMove {
+  key: string;
+  draggable: boolean;
+  dragging: boolean;
+  lifted: boolean;
+  drop: "before" | "after" | undefined;
+  onDragStart: (event: DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+  onDrop: (event: DragEvent<HTMLElement>) => void;
+  onMove: (direction: -1 | 1) => void;
 }
 
 /** 상태 칸: 경고 하나(중단·유실·harness 오류)가 상태보다 먼저(참고: restore_error면 RestoreErrorBadge) */
@@ -458,12 +589,14 @@ function PaneState({ pane, online, testid }: { pane: PaneView | undefined; onlin
   );
 }
 
-function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: PaneView; online: boolean; twoLine: boolean }) {
+function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarProps & { pane: PaneView; online: boolean; machine: MachineView | undefined; twoLine: boolean; move?: RowMove }) {
   const selected = props.selected === `pane:${p.id}`;
   const agent = props.agentOf(p);
   const title = p.name || p.argv.join(" ") || p.id.slice(0, 8);
   const ended = paneEnded(p);
-  const where = [p.cwd ? shortPath(p.cwd) : null, ended].filter(Boolean).join(" · ");
+  // 머신은 트리 단계가 아니라 줄에 글자로(plan §8.195)
+  const machineName = machine?.name ?? p.machine;
+  const where = [machineName, p.cwd ? shortPath(p.cwd) : null, ended].filter(Boolean).join(" · ");
   const tooltip = [p.id, title, p.cwd ? shortPath(p.cwd) : null, p.agent?.harness, ended].filter(Boolean).join("\n");
   const open = () => props.onPane(p.id);
   const rows = useRows();
@@ -526,7 +659,23 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
     rows.toggleMenu({ key: menuKey, anchor, point, previousFocus, title, place: where || p.machine, items });
   };
   return (
-    <li className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}`} data-pane={p.id} data-pin-key={pinKey}>
+    <li
+      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}${online ? "" : " is-offline"}${move?.dragging ? " is-dragging" : ""}${move?.lifted ? " is-lifted" : ""}`}
+      inert={!online}
+      data-pane={p.id}
+      data-pin-key={pinKey}
+      data-workspace={move?.key}
+      data-drop={move?.drop}
+      onDragOver={
+        move &&
+        ((event) => {
+          if (!event.dataTransfer.types.includes(PANE_ROW_DRAG)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        })
+      }
+      onDrop={move?.onDrop}
+    >
       <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
         <div
           className="pane-select workspace-select"
@@ -535,8 +684,19 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
           aria-current={selected ? "true" : undefined}
           title={tooltip}
           data-testid={`pane-${p.name || p.id}`}
+          draggable={move?.draggable}
+          onDragStart={move?.onDragStart}
+          onDragEnd={move?.onDragEnd}
           onClick={open}
-          onKeyDown={(e) => onRowKey(e, open)}
+          onKeyDown={(e) => {
+            // 참고 `onRowKeyDown`: Alt+↑↓는 보이는 이웃 줄 너머로 옮긴다
+            if (move && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+              e.preventDefault();
+              move.onMove(e.key === "ArrowUp" ? -1 : 1);
+              return;
+            }
+            onRowKey(e, open);
+          }}
         >
           <RowMark agent={agent} />
           {twoLine ? (
@@ -551,7 +711,7 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
             <span className="workspace-copy">
               <span className="workspace-name">{title}</span>
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
-              {ended && <span className="worktree-workspace-label">{ended}</span>}
+              <span className="worktree-workspace-label">{[machineName, ended].filter(Boolean).join(" · ")}</span>
             </span>
           )}
           <span className="visually-hidden">{agent ?? "셸"}</span>
@@ -565,14 +725,15 @@ function PaneRow({ pane: p, online, twoLine, ...props }: SidebarProps & { pane: 
 }
 
 function ProjectGroup({
-  machine: m,
-  online,
   project,
   pThreads: threads,
+  machineOf,
   twoLine,
   ...props
-}: SidebarProps & { machine: MachineView; online: boolean; project: string; pThreads: ThreadView[]; twoLine: boolean }) {
-  const [collapsed, toggle] = useFold(`aaa:project-collapsed:${m.id}:${project}`);
+}: SidebarProps & { project: string; pThreads: ThreadView[]; machineOf: (t: ThreadView) => MachineView | undefined; twoLine: boolean }) {
+  // 프로젝트 하나에 묶음 하나(머신마다 나뉘지 않는다, plan §8.195)
+  const [collapsed, toggle] = useFold(`aaa:project-collapsed:${project}`);
+  const online = (t: ThreadView) => machineOf(t)?.connection === "connected";
   const contentsId = `${useId()}-threads`;
   const paneOf = (id: string) => props.panes.find((p) => p.id === id);
   // 접힌 묶음도 고른 thread는 보인다(참고: 접힌 묶음은 열린 checkout을 보이고, 셈은 치운 것만)
@@ -580,14 +741,15 @@ function ProjectGroup({
   const shown = collapsed ? threads.filter(isSel) : threads;
   const foldedCount = threads.length - shown.length;
   // 접힌 머리는 자식 상태까지 대표한다(참고 rollupStatus: blocked > done > working > waiting > idle)
-  const status = rollupStatus(threads.map((t) => (online && t.pane ? (paneOf(t.pane) ? paneAgentStatus(paneOf(t.pane)!) : undefined) : undefined)));
+  const status = rollupStatus(threads.map((t) => (online(t) && t.pane ? (paneOf(t.pane) ? paneAgentStatus(paneOf(t.pane)!) : undefined) : undefined)));
+  const need = threads.some((t) => needsYou(t.group));
   const line = projectLine(
     threads.map((t) => t.group),
     threads.some((t) => t.project_status === "paused"),
   );
   const label = collapsed ? `${project} thread 펼치기` : `${project} thread 접기`;
   const rows = useRows();
-  const menuKey = `project:${m.id}:${project}`;
+  const menuKey = `project:${project}`;
   // 참고 worktree 묶음 메뉴의 접기·펼치기, 그리고 끝난 것까지 보는 프로젝트 화면(herdr-projects popup, plan §8.89)
   const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) =>
     rows.toggleMenu({
@@ -604,7 +766,7 @@ function ProjectGroup({
     });
   return (
     <>
-      <li className={`workspace workspace-group pane-item project-group${collapsed ? " is-collapsed" : ""}`} data-project={project} data-testid={`project-${m.name}-${project}`}>
+      <li className={`workspace workspace-group pane-item project-group${collapsed ? " is-collapsed" : ""}`} data-project={project} data-testid={`project-${project}`}>
         <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
           <button type="button" className="sidebar-row-action workspace-toggle" aria-label={label} title={label} aria-expanded={!collapsed} aria-controls={contentsId} onClick={toggle}>
             {collapsed ? <Folder aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
@@ -620,7 +782,7 @@ function ProjectGroup({
                     </span>
                   )}
                 </span>
-                <span className="workspace-place">{line}</span>
+                <span className={`workspace-place project-place${need ? " is-need" : ""}`}>{line}</span>
               </span>
             ) : (
               <span className="workspace-copy">
@@ -643,7 +805,7 @@ function ProjectGroup({
         <li className="worktree-children" id={contentsId}>
           <ul className="workspace-list">
             {shown.map((t) => (
-              <ThreadRow key={threadKey(t)} {...props} online={online} t={t} twoLine={twoLine} />
+              <ThreadRow key={threadKey(t)} {...props} online={online(t)} machine={machineOf(t)} t={t} twoLine={twoLine} />
             ))}
           </ul>
         </li>
@@ -662,7 +824,7 @@ function useMinute(): number {
   return now;
 }
 
-function ThreadRow({ t, online, twoLine, ...props }: SidebarProps & { t: ThreadView; online: boolean; twoLine: boolean }) {
+function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t: ThreadView; online: boolean; machine: MachineView | undefined; twoLine: boolean }) {
   const now = useMinute();
   const pane = t.pane ? props.panes.find((p) => p.id === t.pane) : undefined;
   const paneOpen = pane?.state === "running";
@@ -671,7 +833,9 @@ function ThreadRow({ t, online, twoLine, ...props }: SidebarProps & { t: ThreadV
   // herdr-projects thread_display: 「id · 제목」
   const title = `${t.id} · ${t.title}`;
   const line = stateLine(t, paneOpen, now);
-  const tooltip = [`${t.project}/${t.id}`, t.title, line, `${t.profile}@${t.machine}`, t.branch].filter(Boolean).join("\n");
+  // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.195), 끊겼으면 「이름 끊김」
+  const machineName = machine?.name ?? t.machine;
+  const tooltip = [`${t.project}/${t.id}`, t.title, line, `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
   // 줄은 그 thread의 agent pane을 연다(herdr-projects: thread는 자기 agent 줄). pane이 없으면 보고서
   const open = () => (paneOpen && pane ? props.onPane(pane.id) : props.onThread(t));
   const rows = useRows();
@@ -691,7 +855,7 @@ function ThreadRow({ t, online, twoLine, ...props }: SidebarProps & { t: ThreadV
       ],
     });
   return (
-    <li className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}`} data-thread={threadKey(t)} data-group={t.group}>
+    <li className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`} inert={!online} data-thread={threadKey(t)} data-group={t.group}>
       <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
         <div
           className="pane-select workspace-select"
@@ -709,8 +873,13 @@ function ThreadRow({ t, online, twoLine, ...props }: SidebarProps & { t: ThreadV
               <span className="workspace-line">
                 <span className="workspace-name">{title}</span>
               </span>
-              <span className={`workspace-place thread-state is-${t.group}`} data-testid={`thread-state-${t.project}-${t.id}`}>
-                {line}
+              <span className="workspace-place thread-place">
+                <span className={`thread-state is-${t.group}`} data-testid={`thread-state-${t.project}-${t.id}`}>
+                  {line}
+                </span>
+                <span className={`thread-machine${online ? "" : " is-offline"}`} data-testid={`thread-machine-${t.project}-${t.id}`}>
+                  {online ? machineName : `${machineName} 끊김`}
+                </span>
               </span>
             </span>
           ) : (

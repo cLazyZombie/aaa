@@ -29,6 +29,8 @@
 | `preferences.ts` | 화면들이 함께 쓰는 설정 이름(`SHARED_SETTING_KEYS`)·문서 형·한도. `src/lib/`가 아니라 `shared/preferences.ts`를 바꾸지 않고 옮겼다. host 쪽은 `crates/aaa-host/src/prefs.rs`가 Rust로 옮겼다(plan §8.79) |
 | `sidebarPins.ts` | 목록 고정 열쇠(`machine:pane`)·순서·나누기 대상(이 기기 사본은 localStorage). 바꾸지 않았다(plan §8.79) |
 | `conversationRefresh.ts` | 대화 다시 읽기 한 줄: push(`invalidate`)가 오면 바로 읽되 2초에 한 번까지, push가 되면 놓친 것을 10초마다(`BACKSTOP_MS`), 안 되면 2초마다(`setPushes`). 앞 쪽 읽기 `page()`만 뺐다(차이 목록 C3, plan §8.191) |
+| `touchReorder.ts` | 손가락으로 목록 줄 옮기기(길게 눌러 들어 끌어 놓기, 가장자리에서 목록이 굴러감): `src/lib/touchReorder.ts` 그대로. aaa pane 줄이 같은 class·`data-workspace`를 단다(plan §8.196) |
+| `workspaceOrder.ts` | `placeBlock`(줄을 이웃 앞·뒤에 놓은 차례)만: `src/lib/workspaceOrder.ts`에서. herdr로 보내는 `workspaceMoves`는 없다(순서는 host 공유 설정 `paneOrder`, plan §8.196) |
 | `tokens.css` | 디자인 token: 색(기본 amber, 밝음, charcoal·catppuccin 팔레트)·글자·크기·움직임·밀도. `src/styles.css` 18~494줄 그대로(plan §8.71) |
 | `primitives.css` | 공용 조각 `visually-hidden`·`icon-button`·`btn`·`badge`. `src/styles.css` 549~561·981~1116·1149~1205줄 그대로 |
 | `Sidebar.css`·`AgentSidebar.css`·`Machines.css` | 왼쪽 목록(머신 묶음·줄·상태 칸·Agents 구역·바닥 줄). `src/components/` 것 그대로. aaa 마크업은 `web/src/Sidebar.tsx` |

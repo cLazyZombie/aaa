@@ -61,7 +61,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 | 경우 | 0.2 | aaa | 근거 |
 |---|---|---|---|
 | herdr `unknown`(셸) | agent 있음 | agent 없음 | aaa는 harness 활동이 있어야 agent다 |
-| agent 상태 없이 진행 보고만 있다 | 진행 보고대로(작업 중·사람 차례) | 진행 보고를 담지 않는다 | aaa 진행 보고는 harness 활동(`AgentStatus`)에 붙는다 |
+| agent 상태 없이 진행 보고만 있다 | 진행 보고대로(작업 중·확인 필요) | 진행 보고를 담지 않는다 | aaa 진행 보고는 harness 활동(`AgentStatus`)에 붙는다 |
 | 진행을 보고하는 agent의 중간 보고(`Done` 아님) | 검토 대기 | 검토 대기 아님 | plan §8.85, aaa `orch.rs` thread_group 5 |
 
 - 위 세 줄이 `aaa migrate shadow`가 까닭을 붙이는 차이 전부다(`migrate/shadow.rs` `reason`). 그 밖의 다름은 「분류 안 됨」으로 G4에서 센다.
@@ -77,7 +77,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 | G2 | **열린 0.2 thread가 없다.** 남은 것은 사용자가 정한 idle 시점에 재개 정보(세션 ID·profile 인자, 인자 출처 `record`·`home-profile`)로 명시적으로 이어 간다 | `inventory.md` 「열린 thread와 재개 정보」 |
 | G3 | **0.2 inbox 끝내지 않은 항목 0** | `inventory.md` 「inbox」 |
 | G4 | **shadow: N시간 동안 의도하지 않은 차이 0**, 판정한 줄 비율 90% 이상(「입력 재현 안 됨」이 많으면 수집을 고친다) | `shadow.md` 「의도하지 않은 차이(분류 안 됨)」 줄. 까닭이 붙은 다름(plan에 정한 차이)은 세지 않는다 |
-| G5 | **pilot: 잃은 보고 0, 잘못된 입력 0, 멈춘 감독자 0.** 시작·brief·진행 보고·inbox·사람 차례·착지·resolve를 aaa에서 끝까지 했다 | pilot 기록 |
+| G5 | **pilot: 잃은 보고 0, 잘못된 입력 0, 멈춘 감독자 0.** 시작·brief·진행 보고·inbox·확인 필요·착지·resolve를 aaa에서 끝까지 했다 | pilot 기록 |
 | G6 | **aaa 상태 = 화면.** shadow의 aaa thread 줄에서 harness 활동과 화면 단서가 어긋난 줄 0(D8 화면 감지가 들어간 binary 기준) | `shadow.md` 「aaa thread」 |
 | G7 | **설치가 맞다.** 세 Mac `aaa doctor lineage`가 `aaa-launcher` 책임, `aaa machine list` 모두 연결·이상 없음, 같은 `aaa --version` | install-runbook §3·§4 |
 | G8 | **열린 결함.** pilot·shadow에서 기록한 결함이 고쳐졌거나 사용자가 받아들였다 | 차이 목록 |

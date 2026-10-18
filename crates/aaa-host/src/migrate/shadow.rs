@@ -632,7 +632,7 @@ mod tests {
         assert_eq!(both(&f), ("ready-for-review", "ready-for-review"));
         f.agent_state = Some("working".into());
         assert_eq!(both(&f), ("working", "working"));
-        // 확인창이 30초 넘게: 둘 다 사람 차례. 금방 뜬 것은 작업 중
+        // 확인창이 30초 넘게: 둘 다 확인 필요. 금방 뜬 것은 작업 중
         f.agent_state = Some("blocked".into());
         f.state_secs = 31;
         assert_eq!(both(&f), ("waiting-on-you", "waiting-on-you"));
@@ -661,7 +661,7 @@ mod tests {
     #[test]
     fn launch_and_self_report_rules_match() {
         let both = |f: &Facts| (hp_group(f, NOW), token(aaa_group(f, NOW)));
-        // brief를 아직 못 넣었고 agent가 준비 안 된 채 60초: 둘 다 사람 차례
+        // brief를 아직 못 넣었고 agent가 준비 안 된 채 60초: 둘 다 확인 필요
         let mut f = open();
         f.prompt_pending = true;
         f.agent_state = Some("working".into());
@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(both(&w), ("working", "working"));
         w.self_age_secs = Some(301);
         assert_eq!(both(&w), ("idle", "idle"));
-        // 시작 중: 5분까지 작업 중, 넘으면 사람 차례
+        // 시작 중: 5분까지 작업 중, 넘으면 확인 필요
         let mut s = open();
         s.status = "starting".into();
         s.created_s = NOW - 10;
