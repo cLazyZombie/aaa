@@ -505,12 +505,15 @@ impl Vt {
         self.text_url_at(at, back + rows)
     }
 
-    /// `at`을 덮는 OSC 8 구간(새것부터). 기록이 가득하면(맨 앞 줄을 버리며 올린다) 절대 줄이 그대로인 채 글이 위로 밀리므로,
-    /// 남긴 줄보다 위에서 같은 칸·같은 글을 찾는다. 그 자리 글이 남긴 글과 다르면(덮어썼으면) 링크가 아니다.
+    /// `at`을 덮는 OSC 8 구간(새것부터). 그 자리 글이 남긴 글과 다르면(덮어썼으면) 링크가 아니다.
+    /// 기록이 가득하면(맨 앞 줄을 버리며 올린다) 절대 줄이 그대로인 채 글이 위로 밀리고 밀린 폭은 구간마다 다르므로, 남긴 줄보다 위에서
+    /// 같은 칸·같은 글을 찾되 맞는 구간의 uri가 하나일 때만 돌려준다(같은 글·다른 uri 링크가 둘이면 어느 것인지 모른다: 틀린 주소를
+    /// 여는 대신 못 찾는다).
     fn osc8_at(&mut self, at: (usize, u16), alt: bool, back: usize) -> Option<String> {
         let full = !alt && back >= SCROLLBACK;
         let spans = self.parser.callbacks().links.spans.clone();
         let screen = self.parser.screen_mut();
+        let mut found: Option<&str> = None;
         for span in spans.iter().rev().filter(|s| s.alt == alt) {
             let height = span.end.0 - span.start.0;
             let starts =
@@ -518,11 +521,18 @@ impl Vt {
             for s in starts {
                 let moved = link::Span { start: (s, span.start.1), end: (s + height, span.end.1), ..span.clone() };
                 if moved.contains(at) && span_text(screen, back, moved.start, moved.end) == span.text {
-                    return Some(span.uri.clone());
+                    if !full {
+                        return Some(span.uri.clone());
+                    }
+                    match found {
+                        Some(uri) if uri != span.uri => return None,
+                        _ => found = Some(&span.uri),
+                    }
+                    break;
                 }
             }
         }
-        None
+        found.map(str::to_string)
     }
 
     /// `at`을 포함한 접힌 줄 묶음에서 그 칸을 덮는 http(s) URL
@@ -2355,6 +2365,18 @@ mod tests {
         assert_eq!(v.history_rows(), SCROLLBACK);
         assert_eq!(v.link_at((row - 7, 1)).as_deref(), Some("https://f.example"));
         assert_eq!(v.link_at((row, 1)), None);
+        // 같은 칸·같은 글에 uri가 다른 링크 둘: 밀린 폭을 가릴 수 없어 어느 줄도 다른 링크의 주소를 열지 않는다
+        v.feed(b"\x1b]8;;https://g1.example\x1b\\same\x1b]8;;\x1b\\\r\n");
+        v.feed(b"\x1b]8;;https://g2.example\x1b\\same\x1b]8;;\x1b\\\r\n");
+        for _ in 0..3 {
+            v.feed(b"y\r\n");
+        }
+        // 닫은 뒤 줄바꿈으로 g1은 0줄·g2는 1줄에 있다가 세 줄 더 밀렸다(f는 g1·g2·y 셋으로 다섯 줄 더)
+        let g1 = SCROLLBACK - 3;
+        assert_eq!(v.selection_text((g1, 0), (g1 + 1, 3), 64).0, "same\nsame");
+        assert_eq!(v.link_at((g1, 1)), None);
+        assert_eq!(v.link_at((g1 + 1, 1)), None);
+        assert_eq!(v.link_at((row - 12, 1)).as_deref(), Some("https://f.example"), "글이 다른 링크는 그대로");
     }
 
     /// 고른 글: 기록과 화면에 걸친 범위, 끝 칸 포함, 거꾸로 고른 범위, 접힌 줄 잇기, 끝을 넘으면 마지막 줄까지, 크기 상한,
