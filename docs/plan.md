@@ -5093,6 +5093,8 @@ primary 근거:
   `-NonInteractive -OutputFormat Text`를 지정하고 첫 문장에서 `$ProgressPreference = 'SilentlyContinue'`로 둔다.
   EncodedCommand의 기본 stderr CLIXML과 모듈 첫 검색의 진행 출력이 무반응 hook에 섞이지 않게 한다.
   env gate를 stdin보다 먼저 두고 UTF-8 입력·출력·native pipeline 인코딩을 지정해 JSON·한글 안내를 전달한다.
+  비-aaa 세션은 바깥 `cmd`의 `if defined`에서 세 env를 먼저 검사해 PowerShell 기동도 생략한다.
+  내부 PowerShell guard도 유지한다. 설치 명령이 달라지므로 배포 뒤 `integration install codex`로 갱신한다.
   Windows 전용 명령 생성 계약을 native 테스트에서 복호화해 검사하고 Windows 전체 target check·clippy로 cfg 경로를 검사한다.
   CLI 통합 시험은 Codex 기본 Windows runner와 같은 COMSPEC/cmd.exe `/C`에서 설치 명령을 실행한다.
   한글·공백·작은따옴표·$가 든 실행 파일에서 설치해 인증된 시작의 한글 안내와 무반응 사건을 함께 검사한다.

@@ -36,7 +36,8 @@ fn command(exe: &Path) -> String {
 fn windows_command(exe: &Path) -> String {
     use base64::Engine;
     // EncodedCommand는 stderr를 CLIXML로 내보낸다. 모듈 첫 검색의 진행 출력도 hook 출력이 되므로 억제한다.
-    // 기본 code page와 native stdin 전달 차이를 피한다. 비-aaa 세션은 stdin보다 먼저 끝낸다.
+    // 기본 code page와 native stdin 전달 차이를 피한다.
+    // 비-aaa 세션은 cmd에서 거른다. PowerShell 안의 guard만으로는 그 host의 기동 비용을 피하지 못한다.
     let script = format!(
         "$ProgressPreference = 'SilentlyContinue'; \
          if (-not $env:AAA_SESSION_ID -or -not $env:AAA_HOOK_SOCK -or -not $env:AAA_HOOK_TOKEN) {{ exit 0 }}; \
@@ -48,7 +49,8 @@ fn windows_command(exe: &Path) -> String {
     );
     let bytes: Vec<_> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     format!(
-        "powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {}",
+        "if defined AAA_SESSION_ID if defined AAA_HOOK_SOCK if defined AAA_HOOK_TOKEN \
+         powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     )
 }
@@ -276,8 +278,12 @@ mod tests {
     fn windows_command_preserves_special_path_and_utf8_stdin_stdout() {
         use base64::Engine;
         let cmd = super::windows_command(std::path::Path::new(r"C:\A b\한글 ' $ &\aaa.exe"));
-        let encoded =
-            cmd.strip_prefix("powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ").unwrap();
+        let encoded = cmd
+            .strip_prefix(concat!(
+                "if defined AAA_SESSION_ID if defined AAA_HOOK_SOCK if defined AAA_HOOK_TOKEN ",
+                "powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand "
+            ))
+            .unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let utf16: Vec<_> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
         let script = String::from_utf16(&utf16).unwrap();

@@ -1851,6 +1851,9 @@ fn auto_resolve_and_reopen() {
     w.wait_show("쉼", &id, |v| v["group"] == "idle");
     let v = w.wait_show("자동 resolve", &id, |v| v["status"] == "resolved");
     assert_eq!(v["group"], "resolved");
+    // 상태는 pane 정리보다 먼저 저장한다. resolved를 봐도 inbox 추가는 아직일 수 있으므로,
+    // auto_resolve_pass를 포함한 ticker의 완료 응답까지 기다린다(고정 지연으로 맞추지 않는다).
+    w.h.ticks(1);
     let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
     let done: Vec<&Value> = items.iter().filter(|i| i["subject"] == id.as_str() && i["event"] == "resolved").collect();
     assert_eq!(done.len(), 1, "{items:?}");

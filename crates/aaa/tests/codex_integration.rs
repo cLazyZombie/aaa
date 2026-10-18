@@ -719,9 +719,14 @@ fn foreign_hook_exits_before_stdin_eof() {
     let out = match result {
         Ok(o) => o,
         Err(_) => {
-            let _ = rx.recv().unwrap();
+            let draining = std::time::Instant::now();
+            let out = rx.recv().unwrap();
             reader.join().unwrap();
-            panic!("aaa 밖 hook이 stdin EOF를 기다렸다");
+            panic!(
+                "aaa 밖 hook이 열린 stdin에서 3초 안에 끝나지 않았다(기동 지연 또는 EOF 대기). \
+                 stdin을 닫은 뒤 {:?}: {out:?}",
+                draining.elapsed()
+            );
         }
     };
     reader.join().unwrap();
