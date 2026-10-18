@@ -15,7 +15,6 @@ mod health;
 pub mod hooks;
 pub mod identity;
 pub mod link;
-mod merge;
 mod page;
 mod pr;
 pub mod threads;
@@ -792,17 +791,18 @@ impl Agent {
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
             }
-            AgentRequest::MergeLand { repo, cwd, branch, remote, target, message } => {
-                merge::land(&repo, &cwd, &branch, &remote, &target, &message)
-                    .await
-                    .map(AgentResponse::Landed)
-                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
-            }
-            AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree } => {
-                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), merged_head.as_deref(), keep_worktree)
-                    .await
-                    .map(AgentResponse::Cleanup)
-                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
+            AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree, uncopied } => {
+                threads::cleanup(
+                    repo.as_deref(),
+                    &cwd,
+                    branch.as_deref(),
+                    merged_head.as_deref(),
+                    keep_worktree,
+                    uncopied,
+                )
+                .await
+                .map(AgentResponse::Cleanup)
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
             }
             AgentRequest::PrQuery { cwd, query } => pr::query(&cwd, &query)
                 .await

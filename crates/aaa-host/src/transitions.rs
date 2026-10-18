@@ -263,7 +263,8 @@ impl Host {
             if !merged_may_resolve(&r, agent.as_ref(), seen, now, grace) || self.other_pr_open(project, &r).await {
                 continue;
             }
-            if let Err(e) = self.thread_resolve(project, &r.id, false, ResolveWhy::Merged, "ticker").await {
+            if let Err(e) = self.thread_resolve(project, &r.id, Default::default(), ResolveWhy::Merged, "ticker").await
+            {
                 tracing::warn!(project, thread = %r.id, "병합 뒤 resolve를 다음 셈으로 미룬다: {}", e.message);
             }
         }
@@ -290,7 +291,9 @@ impl Host {
             .map(|r| r.id)
             .collect();
         for id in due {
-            if let Err(e) = self.thread_resolve(project, &id, false, ResolveWhy::Auto { days }, "ticker").await {
+            if let Err(e) =
+                self.thread_resolve(project, &id, Default::default(), ResolveWhy::Auto { days }, "ticker").await
+            {
                 tracing::warn!(project, thread = %id, "자동 resolve를 다음 셈으로 미룬다: {}", e.message);
             }
         }
