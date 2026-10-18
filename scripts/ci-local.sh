@@ -14,8 +14,8 @@
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
 #   build      cargo build --workspace --all-targets --locked
-#   clippy     cargo clippy --workspace --all-targets --locked -- -D warnings
-#   test       cargo test --workspace --locked
+#   clippy     cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
+#   test       cargo test --workspace --locked --no-fail-fast
 #   clipboard  실제 시스템 clipboard 시험(§8.28). 사람의 clipboard를 덮어쓰므로 AAA_CLIP_NATIVE=1(CI)이나
 #              --native-clipboard일 때만 돈다. 아니면 「건너뜀」으로 요약에 남긴다. Linux는 xvfb-run 위에서.
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
@@ -80,7 +80,9 @@ wanted() {
 step_web() { (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
 step_fmt() { cargo fmt --all --check; }
 step_build() { cargo build --workspace --all-targets --locked; }
-step_clippy() { cargo clippy --workspace --all-targets --locked -- -D warnings; }
+# 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
+# unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
+step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary(예: tests/tui.rs) 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() { cargo test --workspace --locked --no-fail-fast; }
 step_clipboard() {

@@ -219,14 +219,17 @@ fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
 
 /// pane 안 Codex가 낸 것처럼 notify 사건 셋을 보내고, 하나 보낼 때마다 진행 보고로 끝을 알린다. `$1`은 aaa 실행 파일이다.
 /// 둘째는 그 Codex 안에서 돈 중첩 thread다(물려받은 `CODEX_THREAD_ID`가 사건의 thread-id와 다르다).
+/// 진행 보고 뒤에는 Enter를 기다린다: 시험이 그 단계를 본 뒤에 다음 사건을 보낸다.
 const NESTED_CODEX: &str = r#"#!/bin/sh
 A=0a0a0a0a-0000-4000-8000-00000000000a
 B=0b0b0b0b-0000-4000-8000-00000000000b
 C=0c0c0c0c-0000-4000-8000-00000000000c
 "$1" hook --agent codex "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$A\"}"
 "$1" report --percent 10 --activity 하나
+read _
 CODEX_THREAD_ID=$A "$1" hook --agent codex "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$B\"}"
 "$1" report --percent 20 --activity 둘
+read _
 CODEX_THREAD_ID=$C "$1" hook --agent codex "{\"type\":\"agent-turn-complete\",\"thread-id\":\"$C\"}"
 "$1" report --percent 30 --activity 셋
 exec cat
@@ -248,7 +251,10 @@ fn nested_codex_events_do_not_replace_the_pane_session() {
     std::fs::write(&script, NESTED_CODEX).unwrap();
     let mut ev = lab::Events::connect(&h);
     let id = h.new_pane(None, "labA", Some("x1"), &["/bin/sh", script.to_str().unwrap(), lab::BIN], None);
-    // hook은 agent가 host에 보낸 뒤에 답하므로 사건은 보낸 차례로 온다: 그 단계의 진행 보고가 실린 상태 사건의 세션 ID를 본다
+    // hook은 agent가 host에 보낸 뒤에 답하므로 사건은 보낸 차례로 온다: 그 단계의 진행 보고가 실린 상태 사건의 세션 ID를 본다.
+    // host는 상태 사건을 그때의 최신 하나로 합쳐 보낸다(front.rs `state_task`, watch). 스크립트가 쉬지 않고 셋을 보내면
+    // 빠른 머신에서는 한 단계의 상태 사건이 오지 않거나 다음 단계의 세션이 실린다(GitHub CI ubuntu 287c1d1은 세션 시작부터
+    // 셋째 보고까지 35ms). 그래서 단계를 본 뒤에 Enter로 다음 단계를 보낸다
     let mut session_at = |step: &str| {
         ev.wait(step, T, |e| match e {
             aaa_proto::FrontEvent::State { panes, .. } => panes
@@ -261,11 +267,13 @@ fn nested_codex_events_do_not_replace_the_pane_session() {
         })
     };
     assert_eq!(session_at("하나").as_deref(), Some("0a0a0a0a-0000-4000-8000-00000000000a"), "바깥 표지를 물려받았다");
+    h.ok(&["pane", "send-keys", &id, "enter"]);
     assert_eq!(
         session_at("둘").as_deref(),
         Some("0a0a0a0a-0000-4000-8000-00000000000a"),
         "중첩 thread가 세션을 바꿨다"
     );
+    h.ok(&["pane", "send-keys", &id, "enter"]);
     assert_eq!(session_at("셋").as_deref(), Some("0c0c0c0c-0000-4000-8000-00000000000c"));
 }
 

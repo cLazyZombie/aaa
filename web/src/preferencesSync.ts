@@ -116,12 +116,15 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
   useEffect(() => {
     if (!enabled || !loaded || readOnly.current || pending === null || inFlight.current !== null) return;
     let retry: number | undefined;
-    const send = (keepalive: boolean) => {
+    // 보내기는 미룬 것이든 떠날 때든 늘 keepalive다: 미룬 보통 요청이 가는 중에 화면이 사라지면 그 요청은 문서와 함께 끊기고,
+    // 떠날 때 보내기는 「가는 중」이라 다시 보내지 않아 값을 잃는다(spec 14 판정, plan §8.173). 몸은 공유 설정 몇 칸이라 keepalive 한도
+    // (64KiB) 안이다
+    const send = () => {
       window.clearTimeout(timer);
       if (inFlight.current !== null) return;
       const body = JSON.parse(pending) as PreferencesChange;
       inFlight.current = body;
-      savePreferences(body, keepalive).then(
+      savePreferences(body, true).then(
         (saved) => {
           // 답은 이 변경이 남긴 문서 전체다: 앞서 다른 곳에서 온 것은 함께 오고, 뒤에 온 것은 붙잡아 두었다가 이제 읽는다
           absorb(saved);
@@ -137,12 +140,12 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
         },
       );
     };
-    const timer = window.setTimeout(() => send(false), SEND_AFTER_MS);
+    const timer = window.setTimeout(send, SEND_AFTER_MS);
     // 바꾸고 곧 탭·앱을 닫거나 다른 앱으로 가면 기다림을 건너뛰고 지금 보낸다(QA t-0337 Q11). 참고는 여기서 잃고,
     // t3code는 떠날 때 미룬 저장을 마저 쓴다(uiStateStore.ts `beforeunload → flush()`). iOS는 beforeunload를 믿을 수 없어
     // pagehide와 가려짐을 듣고, keepalive로 화면이 사라져도 요청이 끝까지 가게 한다.
-    const leave = () => send(true);
-    const hidden = () => document.visibilityState === "hidden" && send(true);
+    const leave = () => send();
+    const hidden = () => document.visibilityState === "hidden" && send();
     window.addEventListener("pagehide", leave);
     document.addEventListener("visibilitychange", hidden);
     return () => {

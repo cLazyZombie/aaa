@@ -123,24 +123,6 @@ export default async function ({ page }) {
     await domIs(page, "없는 파일 알림", () => document.querySelector('[data-testid="file-viewer"] [role="alert"]')?.textContent === "이 경로에 읽을 수 있는 파일이 없습니다.");
     await page.goBack();
     await domIs(page, "없는 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
-    // 보기 권한 기기: 보고서의 경로는 단추가 아니고(이름 뒤 경로), host도 거부한다. 같은 요청이 조작 기기에는 열린다
-    const threadFile = (p, path) =>
-      p.evaluate(
-        async ([project, thread, path]) =>
-          (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_file", project, thread, path }) })).json(),
-        ["demo", t.id, path],
-      );
-    const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 })).page;
-    await rp.evaluate((h) => (location.hash = h), `#thread=demo%2F${t.id}`);
-    const readerReport = rp.getByTestId("report");
-    await until("reader 보고", async () => (await readerReport.locator("strong").first().textContent().catch(() => null)) === "확인");
-    const readerFiles = await readerReport.evaluate((r) => ({ buttons: r.querySelectorAll(".markdown-file").length, shown: r.textContent.includes("작업 메모 (notes/plan.md)") }));
-    if (readerFiles.buttons !== 0 || !readerFiles.shown) throw new Error(`보기 권한 화면의 보고서 파일 링크: ${JSON.stringify(readerFiles)}`);
-    const denied = await threadFile(rp, "notes/plan.md");
-    if (denied.err?.code !== "forbidden") throw new Error(`reader thread_file: ${JSON.stringify(denied)}`);
-    await rp.context().close();
-    const allowed = await threadFile(page, "notes/plan.md");
-    if (allowed.ok?.kind !== "pane_file" || allowed.ok.info?.name !== "plan.md") throw new Error(`조작 기기 thread_file: ${JSON.stringify(allowed)}`);
     const frameEl = await page.getByTestId("library-frame").elementHandle();
     const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
     const probe = await until("결과물 HTML 실행", async () => {
@@ -224,6 +206,55 @@ export default async function ({ page }) {
     await page.setViewportSize({ width: 1280, height: 800 });
     // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다
     await until("보고 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
+    // 보기 권한 기기 확인은 보고 알림이 나간 뒤에 한다: 짝짓기에서 누르고 친 그 화면이 쓰는 기기(보임·focus)가 되어, 그 사이 나갈 알림을
+    // host가 건너뛴다(알림 A, plan §8.105 — 맞는 동작). 앞에 두면 짐 아래에서 「보고 알림 보냄」이 실패했다(t-0335 찾음)
+    // 보기 권한 기기: 보고서의 경로는 단추가 아니고(이름 뒤 경로), host도 거부한다. 같은 요청이 조작 기기에는 열린다
+    const threadFile = (p, path) =>
+      p.evaluate(
+        async ([project, thread, path]) =>
+          (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_file", project, thread, path }) })).json(),
+        ["demo", t.id, path],
+      );
+    // 짝지은 뒤 주소로 thread를 연다. 목록(threads)이 그 주소를 앱이 읽기 전(hashchange 처리 전)에 와도 첫 고르기(마지막 pane·첫 줄)가
+    // 주소를 덮지 않는다(주소가 이긴다). 짐 아래에서 나던 차례(t-0335 찾음)를 늘 만든다: threads 답을 주소를 넣을 때까지 붙잡고,
+    // 앱의 hashchange 처리는 목록이 그려지고 그 뒤 effect가 돈 다음에 푼다
+    let hashSet;
+    const hashed = new Promise((done) => (hashSet = done));
+    const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 }, {
+      route: ["**/api/v1/call", async (rt) => {
+        if (rt.request().postDataJSON()?.op === "threads") await hashed;
+        await rt.continue().catch(() => {});
+      }],
+      init: () => {
+        const add = window.addEventListener.bind(window);
+        const queue = [];
+        window.__holdHash = false;
+        window.__releaseHash = () => {
+          window.__holdHash = false;
+          for (const run of queue.splice(0)) run();
+        };
+        window.addEventListener = (type, fn, opts) =>
+          add(type, type !== "hashchange" ? fn : (e) => (window.__holdHash ? queue.push(() => fn(e)) : fn(e)), opts);
+      },
+    })).page;
+    await rp.evaluate((h) => {
+      window.__holdHash = true;
+      location.hash = h;
+    }, `#thread=demo%2F${t.id}`);
+    hashSet();
+    await rp.getByTestId(`thread-demo-${t.id}`).waitFor({ state: "attached" });
+    await rp.evaluate(() => new Promise((done) => requestAnimationFrame(() => setTimeout(done, 0))));
+    await rp.evaluate(() => window.__releaseHash());
+    const readerReport = rp.getByTestId("report");
+    await domIs(rp, "주소로 연 thread 보기", () => !!document.querySelector('[data-testid="thread-view"]'));
+    await until("reader 보고", async () => (await readerReport.locator("strong").first().textContent().catch(() => null)) === "확인");
+    const readerFiles = await readerReport.evaluate((r) => ({ buttons: r.querySelectorAll(".markdown-file").length, shown: r.textContent.includes("작업 메모 (notes/plan.md)") }));
+    if (readerFiles.buttons !== 0 || !readerFiles.shown) throw new Error(`보기 권한 화면의 보고서 파일 링크: ${JSON.stringify(readerFiles)}`);
+    const denied = await threadFile(rp, "notes/plan.md");
+    if (denied.err?.code !== "forbidden") throw new Error(`reader thread_file: ${JSON.stringify(denied)}`);
+    await rp.context().close();
+    const allowed = await threadFile(page, "notes/plan.md");
+    if (allowed.ok?.kind !== "pane_file" || allowed.ok.info?.name !== "plan.md") throw new Error(`조작 기기 thread_file: ${JSON.stringify(allowed)}`);
     await page.getByRole("button", { name: "확인(ack)" }).click();
     await until("ack 뒤 검토 대기 아님", async () => !(await item.innerText()).includes("검토 대기"));
     if (aaa("thread", "show", "demo", t.id).acked_hash !== aaa("thread", "show", "demo", t.id).report_hash) {
