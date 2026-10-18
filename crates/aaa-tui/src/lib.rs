@@ -23,6 +23,7 @@ pub mod clip;
 mod copy;
 mod editor;
 mod help;
+mod hyperlink;
 pub mod input_source;
 pub mod keys;
 pub mod list;
@@ -206,6 +207,8 @@ struct Grid {
     modes: PaneModes,
     /// 이 화면이 보는 기록 위치(휠 기록 넘기기)
     scroll: GridScroll,
+    /// 보이는 화면의 OSC 8 링크 칸(바깥 터미널에 다시 내보낸다, `hyperlink.rs`)
+    links: Vec<aaa_proto::GridLink>,
 }
 
 impl Grid {
@@ -227,6 +230,7 @@ impl Grid {
         self.cursor = (f.cursor_row, f.cursor_col, f.cursor_visible);
         self.modes = f.modes;
         self.scroll = f.scroll;
+        self.links = f.links;
     }
 }
 
@@ -417,6 +421,9 @@ struct App {
     theme_name: String,
     /// 마지막으로 그린 자리(마우스가 맞힌다)
     hits: std::cell::RefCell<mouse::Hits>,
+    /// 이번에 그린 pane 링크 칸과, 앞에서 바깥 터미널에 링크로 내보낸 칸(`hyperlink.rs`)
+    painted: std::cell::RefCell<Vec<hyperlink::Painted>>,
+    emitted: Vec<(u16, u16)>,
     drag: Option<mouse::Drag>,
     /// 고른 글(pane 화면 칸)
     selection: Option<mouse::Selection>,
@@ -508,6 +515,8 @@ impl App {
             indicators: aaa_config::StatusIndicators::Dots,
             theme_name: "catppuccin".into(),
             hits: Default::default(),
+            painted: Default::default(),
+            emitted: vec![],
             drag: None,
             selection: None,
             autoscroll: None,
@@ -651,14 +660,22 @@ impl App {
                 self.width = size.width;
                 self.height = size.height;
                 self.sync(&mut tx, Rect { x: 0, y: 0, w: size.width, h: size.height }).await?;
-                terminal.draw(|f| {
+                let mut shown = false;
+                let done = terminal.draw(|f| {
                     let area = f.area();
                     let cursor =
                         self.render(f.buffer_mut(), Rect { x: area.x, y: area.y, w: area.width, h: area.height });
                     if let Some((x, y)) = cursor {
                         f.set_cursor_position((x, y));
+                        shown = true;
                     }
                 })?;
+                // pane 링크 칸을 바깥 터미널에 OSC 8로 다시 쓴다(herdr render_ansi.rs). VT를 못 쓰는 옛 Windows 콘솔은 건너뛴다
+                let (links, now) = hyperlink::collect(done.buffer, &self.painted.borrow(), &self.emitted);
+                self.emitted = now;
+                if outer_vt() {
+                    hyperlink::emit(terminal.backend_mut(), &links, shown)?;
+                }
                 dirty = false;
             }
             if self.quit {
@@ -725,8 +742,8 @@ impl App {
             }
             self.copy_apply(&mut tx).await?;
             for name in std::mem::take(&mut self.space_fetch) {
-                let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
-                self.pending.insert(id, Pending::SpaceLayout);
+                let id = tx.send(FrontRequest::Workspace { name: Some(name.clone()) }).await?;
+                self.await_layout(&name, id, Pending::SpaceLayout);
             }
             self.reconcile_ascii();
             // 링크가 아닌 ctrl+누름은 보통 누름으로 다시 넣는다(herdr `ReplayMouse`)
@@ -1028,16 +1045,26 @@ impl App {
     }
 
     /// 다른 workspace로(herdr `switch_workspace`): 아는 layout으로 바로 그리고 host에 다시 읽는다. 포커스는 front마다라
-    /// 그 workspace의 첫 pane으로 간다.
+    /// 그 workspace의 첫 pane으로 간다. layout을 아직 받지 못해 포커스 pane이 없으면 답이 올 때까지 키·붙여넣기·마우스를
+    /// 붙잡는다: 아니면 그 사이 친 글자가 버려졌다(CI 10-18, `workspace_keys_and_section_split_like_herdr`의 `$ ho side-…`).
     async fn switch_space(&mut self, tx: &mut FrontSender, name: String) -> Result<()> {
         if name == self.ws_name {
             return Ok(());
         }
         let known = self.spaces.get(&name).cloned().unwrap_or_else(|| Workspace { name: name.clone(), tabs: vec![] });
         self.enter_space(known);
-        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
-        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        let id = tx.send(FrontRequest::Workspace { name: Some(name.clone()) }).await?;
+        self.await_layout(&name, id, Pending::Report("workspace 읽기"));
         Ok(())
+    }
+
+    /// workspace `name`의 layout 읽기(`id`)를 기다린다. 지금 workspace인데 아는 layout이 없어 포커스 pane이 없으면(들어가기·
+    /// 닫은 뒤 남은 workspace로 가기) 답이 올 때까지 키를 붙잡는다.
+    fn await_layout(&mut self, name: &str, id: String, why: Pending) {
+        if name == self.ws_name && self.focus.is_none() {
+            self.focus_wait = Some(id.clone());
+        }
+        self.pending.insert(id, why);
     }
 
     /// workspace 이름·닫기의 대상(herdr `workspace_action_id`): 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace
@@ -2335,6 +2362,7 @@ impl App {
         let p = &self.palette;
         let sh = self.shell(area);
         *self.hits.borrow_mut() = mouse::Hits::default();
+        self.painted.borrow_mut().clear();
         if sh.header.h > 0 {
             self.render_header(buf, sh.header);
         }
@@ -2867,6 +2895,7 @@ impl App {
                     x = buf.set_stringn(x, y, &run.t, room, run_style(run)).0;
                 }
             }
+            hyperlink::note(buf, r, &g.links, &mut self.painted.borrow_mut());
             // 찾은 일치(herdr: 나머지 일치, 고른 글, 현재 일치 차례로 칠한다)
             let copying = self.copy.as_ref().filter(|c| c.pane == pane);
             let top = mouse::view_top(g.scroll);
@@ -2908,6 +2937,14 @@ impl App {
         badge(buf, view, r, focused, &self.palette);
         None
     }
+}
+
+/// 바깥 터미널이 escape sequence를 받는가(Windows 옛 콘솔은 VT가 없으면 글자로 찍는다)
+fn outer_vt() -> bool {
+    #[cfg(windows)]
+    return crossterm::ansi_support::supports_ansi();
+    #[cfg(not(windows))]
+    true
 }
 
 /// pane 테두리 제목: 붙인 이름만(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름
@@ -3603,6 +3640,7 @@ mod tests {
             lines: vec![],
             modes: PaneModes::default(),
             scroll: GridScroll::default(),
+            links: vec![],
         };
         app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(40, 10))));
         let at = |row, col| TextPoint { row, col };
@@ -3647,6 +3685,7 @@ mod tests {
             lines,
             modes: PaneModes::default(),
             scroll: GridScroll::default(),
+            links: vec![],
         };
         let texts =
             |g: &Grid| g.lines.iter().map(|l| l.iter().map(|r| r.t.as_str()).collect()).collect::<Vec<String>>();
@@ -3968,6 +4007,51 @@ mod tests {
         app.settings_cancel();
         assert!(app.overlay.is_none());
         assert_eq!((app.theme_name.as_str(), &app.palette), ("catppuccin", &theme::Palette::catppuccin()));
+    }
+
+    /// layout을 아직 받지 못한 workspace로 가면(목록 답이 넣은 빈 자리표시) 포커스 pane이 없다: 그 layout 답이 올 때까지 키를
+    /// 붙잡고, 답이 오면 그 첫 pane에 포커스를 두고 푼다. 아는 layout이면 바로 포커스라 붙잡지 않는다(CI 10-18 `$ ho side-…`).
+    /// 지금 workspace를 닫아 남은 workspace로 갈 때도 같다.
+    #[test]
+    fn switching_to_an_unread_workspace_holds_keys_until_its_layout() {
+        let mut app = app_with_tabs(&[""]);
+        let placeholder = Workspace { name: "side".into(), tabs: vec![] };
+        app.spaces.insert("side".into(), placeholder.clone());
+        app.enter_space(placeholder);
+        app.await_layout("side", "r5".into(), Pending::Report("workspace 읽기"));
+        assert!(app.focus.is_none() && app.waiting(), "포커스 pane이 없는 동안 친 키는 붙잡는다");
+        let tab = aaa_proto::Tab {
+            id: "t7".into(),
+            name: String::new(),
+            root: aaa_proto::LayoutNode::Pane { pane: "p7".into() },
+            zoomed: false,
+        };
+        let side = Workspace { name: "side".into(), tabs: vec![tab] };
+        let ok = Outcome::Ok(aaa_proto::FrontResponse::Workspace(side.clone()));
+        app.on_msg(FrontMsg::Res { id: "r5".into(), result: ok });
+        assert_eq!(app.focus.as_deref(), Some("p7"));
+        assert!(!app.waiting());
+        // 아는 layout으로 들어가면 바로 포커스, 붙잡지 않는다
+        let mut app = app_with_tabs(&[""]);
+        app.enter_space(side.clone());
+        app.await_layout("side", "r6".into(), Pending::Report("workspace 읽기"));
+        assert_eq!(app.focus.as_deref(), Some("p7"));
+        assert!(!app.waiting());
+        // 다른 workspace 미리 읽기는 붙잡지 않는다
+        app.await_layout("main", "r7".into(), Pending::SpaceLayout);
+        assert!(!app.waiting());
+        // 지금 workspace를 닫아 layout을 모르는 남은 workspace로 가면, 그 읽기 답까지 붙잡는다
+        app.spaces.remove("main");
+        let left = [aaa_proto::WorkspaceSummary { name: "main".into(), tabs: 1, panes: 1 }];
+        app.closed_space("side", &left);
+        assert_eq!((app.ws_name.as_str(), app.focus.as_deref()), ("main", None));
+        let name = app.space_fetch.pop().unwrap();
+        app.await_layout(&name, "r8".into(), Pending::SpaceLayout);
+        assert!(app.waiting());
+        let main = Workspace { name: "main".into(), tabs: side.tabs };
+        app.on_msg(FrontMsg::Res { id: "r8".into(), result: Outcome::Ok(aaa_proto::FrontResponse::Workspace(main)) });
+        assert_eq!(app.focus.as_deref(), Some("p7"));
+        assert!(!app.waiting());
     }
 
     /// 새 workspace 답: 그 workspace로 가서 새 pane에 포커스(키 붙잡기도 풀림), 실패면 무엇이 실패했는지 알린다

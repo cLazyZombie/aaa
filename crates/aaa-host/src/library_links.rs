@@ -259,7 +259,7 @@ mod tests {
     #[tokio::test]
     async fn signed_report_http_boundary() {
         let lab = Lab::new();
-        let root = lab.report(
+        lab.report(
             "t-0001",
             &[
                 ("index.html", b"<p>report</p>", false),
@@ -306,6 +306,7 @@ mod tests {
         assert!(String::from_utf8(body).unwrap().contains("앱의 보고서 화면"));
         #[cfg(unix)]
         {
+            let root = lab.h.project_dir("demo").unwrap().join("library/t-0001");
             std::fs::remove_file(root.join("sub/a.txt")).unwrap();
             std::os::unix::fs::symlink(root.join("index.html"), root.join("sub/a.txt")).unwrap();
             assert_eq!(get(&lab.h, &format!("{}sub/a.txt", link.base), None).await.0, StatusCode::NOT_FOUND);
@@ -429,14 +430,23 @@ mod tests {
         let lab = Lab::new();
         lab.report(
             "t-0001",
-            &[("<script>.txt", b"safe", false), (".env", b"hidden", false), ("big.bin", b"large", true)],
+            &[
+                // 다른 OS의 agent에서 온 이름은 manifest에 남을 수 있다. Windows에는 이 이름의 파일을 만들 수 없다.
+                ("<script>.txt", b"safe", true),
+                ("a&'b.txt", b"local", false),
+                (".env", b"hidden", false),
+                ("big.bin", b"large", true),
+            ],
         );
         let l = lab.issue("t-0001");
         let (st, _, body) = get(&lab.h, &l.base, None).await;
         assert_eq!(st, StatusCode::OK);
         let page = String::from_utf8(body).unwrap();
         assert!(page.contains("&lt;script&gt;.txt") && page.contains("./%3Cscript%3E.txt"));
+        assert!(page.contains("a&amp;&#39;b.txt") && page.contains("./a%26%27b.txt"));
         assert!(!page.contains("<script>") && !page.contains(".env"));
+        let (st, _, body) = get(&lab.h, &format!("{}a%26%27b.txt", l.base), None).await;
+        assert_eq!((st, body), (StatusCode::OK, b"local".to_vec()));
         assert_eq!(get(&lab.h, "/v/", None).await.0, StatusCode::NOT_FOUND);
         lab.h.inbox_add("demo", "thread-state", "t-0001", "new report", "보고 준비");
         let mut items = lab.h.db.inbox_list(Some("demo"), false).unwrap();

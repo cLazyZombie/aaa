@@ -552,16 +552,18 @@ impl Host {
         use std::hash::{Hash, Hasher};
         let mut i = self.inner.lock().unwrap();
         let p = i.panes.get_mut(pane)?;
-        let (rows, cols, cursor, modes, src) = match &mut p.mirror {
+        let (rows, cols, cursor, modes, src, links) = match &mut p.mirror {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 view.update(m.vt.history_rows(), ops);
                 let (lines, _) = m.vt.grid_rows_at(view.offset);
-                (rows, cols, m.vt.cursor(), m.vt.pane_modes(), lines)
+                let links = m.vt.visible_links(view.offset);
+                (rows, cols, m.vt.cursor(), m.vt.pane_modes(), lines, links)
             }
             None => {
                 view.update(0, ops);
-                (p.info.rows, p.info.cols, (0, 0, false), PaneModes::default(), vec![Vec::new(); p.info.rows as usize])
+                let blank = vec![Vec::new(); p.info.rows as usize];
+                (p.info.rows, p.info.cols, (0, 0, false), PaneModes::default(), blank, vec![])
             }
         };
         drop(i);
@@ -569,11 +571,15 @@ impl Host {
         // 기록을 보는 동안은 커서를 숨긴다(그 자리는 지금 화면의 칸이다)
         let cursor_visible = cursor_visible && view.offset == 0;
         let scroll = GridScroll { offset: view.offset as u32, max: view.max as u32 };
-        // 모드나 기록 위치만 바뀌어도(프로그램이 마우스 보고를 켬, 보던 줄을 지키며 기록이 늚) 한 장 보낸다
+        // 모드나 기록 위치·링크 칸만 바뀌어도(프로그램이 마우스 보고를 켬, 보던 줄을 지키며 기록이 늚, 같은 글에 링크가 생김)
+        // 한 장 보낸다
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (cursor_row, cursor_col, cursor_visible).hash(&mut h);
         (modes.mouse as u8, modes.mouse_encoding as u8, modes.alt_screen, modes.app_cursor).hash(&mut h);
         (scroll.offset, scroll.max).hash(&mut h);
+        for l in &links {
+            (l.row, l.col, l.end, &l.uri).hash(&mut h);
+        }
         let c = h.finish();
         let (lines, full, cursor_changed) = changed_rows(sent, (rows, cols), src, c, full);
         let frame = GridFrame {
@@ -587,6 +593,7 @@ impl Host {
             lines: vec![],
             modes,
             scroll,
+            links,
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
     }

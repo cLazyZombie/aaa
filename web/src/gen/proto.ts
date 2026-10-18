@@ -223,6 +223,8 @@ a: number, };
 
 export type GridLine = { row: number, runs: Array<GridRun>, };
 
+export type GridLink = { row: number, col: number, end: number, uri: string, };
+
 export type GridFrame = { pane: string, cols: number, rows: number, cursor_row: number, cursor_col: number, cursor_visible: boolean, full: boolean, lines: Array<GridLine>,
 /**
  * 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
@@ -231,7 +233,11 @@ modes: PaneModes,
 /**
  * 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
  */
-scroll: GridScroll, };
+scroll: GridScroll,
+/**
+ * 보이는 화면의 OSC 8 링크 칸 전부(1.36부터, 바뀐 줄만 보내는 frame에도 늘 전부). 옛 host는 없음
+ */
+links?: Array<GridLink>, };
 
 export type PaneModes = { mouse: MouseMode, mouse_encoding: MouseEncoding,
 /**

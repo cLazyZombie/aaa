@@ -4291,6 +4291,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   `<이름> — pane n개`). host `workspace_rename`·`workspace_close`(이미 있는 요청, Front API 그대로). 지금 workspace의 이름을 바꾸면 host가 옛
   이름의 빈 layout을 먼저 보내므로 보던 탭을 id로 되찾고, 닫으면 남은 첫 workspace(기본 workspace 먼저)로 간다. 같은 workspace를 보던 다른
   TUI는 이름이 바뀌면 빈 옛 이름에 남는다(host가 새 이름의 layout 사건을 보내지 않는다, 이번에 고치지 않음).
+- **CI 고침(10-18, macos-15 7f89baac에서 `workspace_keys_and_section_split_like_herdr`가 `$ ho side-$((7*6))`로 실패).** spaces 줄을
+  누르면 `switch_space`가 아는 layout으로 바로 들어가는데, 목록 답이 넣은 빈 자리표시뿐이고 그 workspace layout 미리 읽기 답이 아직이면 포커스
+  pane이 없다. 사이드바는 이미 그 workspace를 지금 줄로 그려, 그 사이 친 글자(`e`·`c`)가 버려지고 layout 답 뒤 글자만 들어갔다(사람도 누르자마자
+  치면 잃는다). 그래서 지금 workspace인데 포커스 pane이 없으면 그 layout 읽기 답이 올 때까지 키·붙여넣기·마우스를 붙잡는다(새 pane 포커스와 같은
+  `focus_wait`). 지금 workspace를 닫아 layout을 모르는 남은 workspace로 갈 때도 같다. 재현: host가 side 답을 400ms 늦추게 심으면 고치기 전은
+  실패, 고친 뒤는 통과(심은 늦춤은 되돌림). 유닛 `switching_to_an_unread_workspace_holds_keys_until_its_layout`.
 - **시험.** 유닛: 배치(기본 36·한도 72·설정 한도·거꾸로면 알림·화면 폭 − 1), 끈 폭이 테마 바꾸기·설정 폭 바꾸기에 남음·두 번 누르기·접기 남김·
   다시 붙어 기억한 값·null·보기 권한(`dragged_sidebar_width_survives_a_theme_change_and_is_remembered`), host 공유 이름. TUI E2E
   `sidebar_width_like_herdr`(160칸: 기본 36, 끌어 60·72에서 멈춤, 설정 창 테마 바꾼 화면에서 60·host.toml에 폭 없음, 나갔다 붙어도 60,
@@ -4317,13 +4323,13 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   TUI는 1.35 이상 host에만 묻는다(옛 host에는 ctrl+누름이 지금처럼 보통 누름이다). 보기 권한 기기도 물을 수 있다(읽기만 한다).
 - **OSC 8을 담는 법.** vt100은 칸에 링크를 담지 않는다(ghostty는 칸마다 담는다). 그래서 OSC 8을 열고 닫을 때 커서의 절대 자리와 그 사이 글을
   남기고(최근 512개, 64줄 넘게 걸치면 버림, uri 4096자), 찾을 때 그 자리의 지금 글이 남긴 글과 같을 때만 링크로 친다(덮어쓴 칸은 링크가
-  아니다). 기록이 가득하면(10,000줄) 맨 앞 줄을 버리며 절대 줄이 그대로인 채 글이 위로 밀리므로 남긴 줄보다 위에서 같은 칸·같은 글을 찾되,
-  밀린 폭이 구간마다 달라 맞는 구간의 uri가 하나일 때만 연다(같은 칸·같은 글에 uri가 다른 링크가 둘이면 틀린 주소 대신 못 찾음).
+  아니다). 기록이 가득하면(10,000줄) 맨 앞 줄을 버리며 절대 줄이 그대로인 채 글이 위로 밀린다: 처음에는 남긴 줄보다 위에서 같은 칸·같은
+  글을 찾았고, §8.198에서 버린 줄을 정확히 세는 것으로 바꿨다.
   크기가 바뀌면(다시 접기) 남긴 자리를 버린다. http(s)가 아닌 OSC 8 uri는 열지 않고 글 속 URL로 돌아가지도 않는다(herdr).
 - **한계.** OSC 8 구간은 512개까지라 Ink처럼 frame마다 OSC 8을 다시 내는 프로그램이면 기록 속 OSC 8 링크가 빨리 밀려난다(글 속 URL은
   그대로 찾는다). 한 번에 한 링크만 묻는다: 답 전의 두 번째 ctrl+누름은 보통 누름이다(herdr는 여럿을 묻는다).
-- **하지 않은 것(herdr에는 있다).** 바깥 터미널로 OSC 8 다시 내보내기(`render_ansi.rs` 616–699, 서버가 `visible_hyperlinks`를 frame
-  칸에 싣는다)는 사용자가 먼저 써 보게 다음 commit으로 미뤘다(coordinator 10-18). ctrl+움직임 밑줄(`link_hover.rs`), 누른 뒤
+- **하지 않은 것(herdr에는 있다).** 바깥 터미널로 OSC 8 다시 내보내기는 사용자가 먼저 써 보게 다음 commit으로 미뤘다(→ §8.198).
+  ctrl+움직임 밑줄(`link_hover.rs`), 누른 뒤
   화면이 바뀌었으면 거절하는 `content_revision`. host가 다시 떠 화면 사본을 replay로 다시 만들면 그 전 OSC 8 링크는 없다(글 속 URL은 찾는다).
   웹은 이미 xterm `WebLinksAddon`으로 연다.
 - **시험.** 유닛: herdr URL 경우(괄호 짝·끝 점·`[docs](…)`·`file://`·끝에서 뺀 칸), 접힌 줄 어느 줄을 눌러도 같은 URL, OSC 8(그 칸만·기록으로
@@ -4442,6 +4448,33 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   프로젝트 이름 변경은 링크 대상도 같은 transaction으로 옮기고, 삭제는 링크 행도 지워 이름 재사용 때 새 보고서를 읽지 못하게 한다.
 - **남은 범위.** publish·import·prune·rotate·웹 전체 목록·별도 port·판 보존은 2단계 이후다.
   실제 iOS 텔레그램 안 브라우저에서 링크 하나로 여는 확인은 기기에서 따로 한다.
+### 8.198 TUI: OSC 8 링크를 바깥 터미널로 다시 내보내기(10-18, coordinator 「render_ansi.rs 616-699대로」)
+
+- **까닭.** 사용자 터미널이 pane의 OSC 8 링크를 링크로 알아야 그 터미널 방식(밑줄·누르기)으로 열 수 있다. herdr는 그렇게 한다:
+  서버가 보이는 칸의 OSC 8 링크(`src/pane/terminal.rs` 2782 `ghostty_visible_hyperlinks`, `src/server/headless/render.rs` 789)를 frame
+  칸(`CellData.hyperlink` → `FrameData.hyperlinks`)에 싣고, client가 바깥 터미널에 쓸 때 칸마다 바뀌면 `ESC ] 8 ; ; uri ST`를 열고 닫는다
+  (`src/protocol/render_ansi.rs` 616–699·905–990 `write_hyperlink_if_changed`·`close_hyperlink`, 매 frame 처음에 닫고 시작, uri의 제어
+  문자는 뺀다). 글 속 URL은 내보내지 않는다(OSC 8 칸만).
+- **host.** grid frame에 보이는 화면(그 구독의 기록 위치)의 링크 칸 `GridFrame.links`(줄·시작 칸·끝 칸·uri, 겹치면 새 링크)를 늘 전부
+  싣는다(바뀐 줄만 보내는 frame에도). 링크 칸만 바뀌어도 한 장 보낸다(커서·모드 hash에 넣는다). FRONT_API **1.36**(1.35는 배포됨): 옛 front는
+  모르는 칸을 버리고, 옛 host는 싣지 않아 TUI가 링크 없이 그린다.
+- **TUI.** ratatui는 OSC 8을 모르고 바뀐 칸만 쓴다. 그래서 pane을 그리며 링크 칸과 그 글자를 적고, 다 그린 뒤 글자가 그대로인 칸(창·메뉴·
+  알림이 덮지 않은 칸)만 uri마다 `OSC 8` 열기 → 칸 다시 쓰기(그 칸 모양 그대로) → 닫기로 덧쓴다(`hyperlink.rs`). 동기 출력(`?2026`) 안에서
+  커서를 숨기고 `ESC 7`·`ESC 8`로 커서·모양을 되돌린다. 앞에서 링크로 쓴 칸이 이제 링크가 아니면 링크 없이 다시 써 바깥 터미널에 남은 링크를
+  지운다(글자가 같아 ratatui가 다시 쓰지 않는 경우). 넓은 글자 뒤 칸은 쓰지 않는다. VT를 못 쓰는 옛 Windows 콘솔에서는 건너뛴다.
+- **버린 줄 세기(§8.194 고침).** vt100은 기록 위치가 0보다 크면 줄을 기록에 넣을 때마다 위치를 1 올린다(기록 길이까지). 그래서 feed 동안
+  위치를 1에 두면 「넣은 줄 − 늘어난 기록 = 버린 줄」을 정확히 센다. normal 화면 OSC 8 구간은 「버린 줄 + 절대 줄」인 전역 줄로 남겨, 가득 찬
+  기록에서도 같은 글·다른 uri 링크가 제 자리를 지킨다(전에는 위에서 찾고 둘이면 포기). vt100은 alt 화면에 들어갈 때 normal 기록 위치를 0으로
+  돌리므로(`enter_alternate_grid`) feed를 alt 화면 전환(`CSI ? 47·1047·1049 h·l`)에서 나눠 넣는다(들어가기는 앞, 나오기는 뒤). 한 feed가
+  기록을 넘게 밀었거나 빈 기록에서 한 번에 다 채웠으면 버린 줄을 몰라 normal 구간을 버린다. 콜백 안 읽기는 그 위치를 되돌린다.
+- **한계.** 링크 칸은 남긴 글로 확인하므로, 같은 글을 OSC 8 없이 그 자리에 다시 쓰면 여전히 링크로 본다(vt100이 칸에 링크를 담지 않는다).
+  링크 칸이 많은 화면은 그릴 때마다 그 칸을 다시 쓴다(동기 출력 안이라 깜빡이지 않는다). ctrl+움직임 밑줄은 아직 없다.
+- **시험.** vt 유닛 `visible_links_for_the_view`(줄마다 나눔·겹치면 새 링크·기록 위치·덮어쓰기·alt 화면), `link_at_survives_a_full_history`
+  (가득 찬 기록에서 같은 글·다른 uri 둘이 제 주소, 한 feed에서 연 뒤 밀리고 닫힘, alt 화면을 오가는 feed, 기록을 넘게 민 feed는 버림, alt 화면
+  동안 replay), `splits_feeds_at_alt_screen_switches`. TUI 유닛 `hyperlink::collects_uncovered_link_cells`·`emits_osc8_around_link_cells`.
+  TUI E2E `osc8_links_reach_the_outer_terminal_like_herdr`(시험 터미널이 OSC 8 칸을 기록한다): OSC 8 칸만 바깥 링크(글 속 URL은 아님), 커서가
+  프롬프트로 돌아옴, 기록으로 올라가면 없음, 휠로 올려 보면 그 자리. 결함 심기: TUI가 내보내지 않음·host가 싣지 않음·기록 위치 무시(E2E),
+  커서 안 되돌림(유닛·E2E), 덮인 칸도 씀·앞 링크 칸 안 지움(유닛), 버린 줄 안 셈·alt 전환에서 안 나눔(유닛)이 모두 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
@@ -4939,7 +4972,7 @@ primary 근거:
 | 결정 7 | 사후 평가자 역할(배경 실행·별도 표시·attach·사건 자동 입력·평가 기록·직접 지시 금지) | 반영 | §3, §6.2, §6.4, §8.3, §8.13, §13, §14 | 기능은 M3, 역할 필드·흐름 사건은 M1-3 |
 
 
-### 8.198 agent에서 coordinator inbox로 자료 보내기: aaa post 1단계(10-18)
+### 8.199 agent에서 coordinator inbox로 자료 보내기: aaa post 1단계(10-18)
 
 기획의 사용자 결정 2·12·13·14를 적용한다. worker·평가자는 post를 보낼 수 있고, 채팅 지시 권한은 얻지 않는다.
 
@@ -4974,7 +5007,7 @@ primary 근거:
 - **호환.** AGENT_LINK 1.4를 유지한다(올리면 운영 1.3 agent가 N-1 밖이다).
   host Welcome·agent Hello 양쪽의 `post.v1`이 있을 때만 Post·PostRejected·PostAck를 보낸다.
   표지 없는 host에는 명확한 오류이며 새 메시지를 보내지 않는다. 옛 agent의 `ok`만인 hook 답을 성공으로 보지 않는다.
-  Front는 배포 전 1.36에 더한다(현재 배포된 1.35와 N-1). 착지 전 배포 상태가 바뀌었으면 다시 확인한다.
+  Front는 1.37로 올린다(1.36이 배포됐으므로 다음 판, N-1로 1.36 front를 지원). 착지 전 배포 상태가 바뀌었으면 다시 확인한다.
 - **감사.** 접수·거부(이유)·mute·unmute·재전송을 기록한다. hook 인증 거부도 표지 있는 link로 hash·크기·이유만 알린다.
   감사와 흐름 사건에는 본문·제목을 넣지 않는다. 같은 OS 사용자를 적대적인 보안 경계로 가정하지 않는다.
 - **시험.** host owner에서 now 경계·중복·영구 ID·mute·재시작·fence·push·행렬·자기 상태만 보기를 검사한다.
