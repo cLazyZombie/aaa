@@ -17,6 +17,8 @@ pub enum RenameTarget {
     NewTab { default: String },
     /// 탭 이름(자동 이름을 그대로 두면 바꾸지 않는다)
     Tab { id: String, auto: bool, original: String },
+    /// pane에 사람이 붙이는 이름(비우면 지운다, host `pane_rename`)
+    Pane { id: String },
 }
 
 #[derive(Debug, Clone)]

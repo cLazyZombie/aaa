@@ -1121,6 +1121,70 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
+    #[serde(default)]
+    pub scroll: GridScroll,
+}
+
+/// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridScroll {
+    pub offset: u32,
+    pub max: u32,
+}
+
+/// 기록 위치 옮기기(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "to", rename_all = "snake_case")]
+pub enum ScrollBy {
+    Up {
+        lines: u32,
+    },
+    Down {
+        lines: u32,
+    },
+    /// 맨 아래(지금 화면)로
+    Bottom,
+    /// 맨 아래에서 `lines`줄 위로
+    Offset {
+        lines: u32,
+    },
+}
+
+/// pane 화면 사본의 글 자리(herdr `PaneTextPoint`). `row`는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는 줄 번호
+/// (alt 화면이면 화면 줄만), `col`은 칸. `GridScroll`로 보면 화면 맨 위 줄은 `max - offset`이다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+pub struct TextPoint {
+    pub row: u32,
+    pub col: u16,
+}
+
+/// 글 범위(시작, 끝 칸 포함. 넓은 글자 끝은 머리 칸 + 1)(herdr `PaneTextRange`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TextRange {
+    pub start: TextPoint,
+    pub end: TextPoint,
+}
+
+/// copy 모드 낱말·문단 이동(herdr `PaneCopyMotion`에서 줄 끝·첫 글자 빼고: TUI가 화면 frame에서 정한다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyMotion {
+    NextWordStart,
+    PreviousWordStart,
+    NextWordEnd,
+    NextBigWordStart,
+    PreviousBigWordStart,
+    NextBigWordEnd,
+    PreviousParagraph,
+    NextParagraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchDirection {
+    Forward,
+    Backward,
 }
 
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
@@ -1378,6 +1442,34 @@ pub enum FrontRequest {
     },
     PaneUnwatch {
         pane: String,
+    },
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.153). 프로그램에는 아무것도 가지 않는다.
+    PaneScroll {
+        pane: String,
+        by: ScrollBy,
+    },
+    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.27부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.156).
+    PaneSelectionRead {
+        pane: String,
+        from: TextPoint,
+        to: TextPoint,
+    },
+    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.27부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
+    /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
+    PaneCopyMotion {
+        pane: String,
+        cursor: TextPoint,
+        motion: CopyMotion,
+    },
+    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.27부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
+    /// 있으면 그 다음부터. `CopySearch`로 답한다.
+    PaneCopySearch {
+        pane: String,
+        query: String,
+        direction: SearchDirection,
+        cursor: TextPoint,
+        previous: Option<TextRange>,
     },
     Workspace {
         name: Option<String>,
@@ -1673,6 +1765,10 @@ impl FrontRequest {
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
+                | FrontRequest::PaneScroll { .. }
+                | FrontRequest::PaneSelectionRead { .. }
+                | FrontRequest::PaneCopyMotion { .. }
+                | FrontRequest::PaneCopySearch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -1758,6 +1854,25 @@ pub enum FrontResponse {
     },
     Workspace(Workspace),
     Done,
+    /// `PaneSelectionRead`: 고른 글. 한 frame에 들게 앞쪽만 두었으면 `truncated`
+    Selection {
+        pane: String,
+        text: String,
+        truncated: bool,
+    },
+    /// `PaneCopyMotion`: 옮긴 자리
+    CopyCursor {
+        pane: String,
+        cursor: TextPoint,
+    },
+    /// `PaneCopySearch`: 현재 일치 언저리(최대 1024개)와 전체 수, 그 안의 현재·전체에서의 현재(못 찾았으면 없음)
+    CopySearch {
+        pane: String,
+        matches: Vec<TextRange>,
+        total: u64,
+        current: Option<u32>,
+        current_global: Option<u64>,
+    },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {
         path: String,
