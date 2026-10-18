@@ -2828,10 +2828,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **문법 강조(5b-3).**
   - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
   - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
-  - 2만 줄이 넘으면 줄마다 요소를 만들지 않고 한 글로 그린다(참고 `CodeLines`). 참고는 2천 줄부터 가상화한다. aaa는 가상화 전이라 2만 줄 넘는 소스에는 줄 번호·줄 표시가 없다. 글은 256KiB까지만 읽으므로 줄이 아주 짧을 때만 생긴다.
+  - 2천 줄이 넘는 소스는 가상화한 줄로 그린다(참고 `VirtualSource`, §8.171). `CodeLines`의 「2만 줄 넘으면 한 글」은 대화 안 code block에만 남는다.
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
-  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
+  - 긴 소스 가상화는 §8.171, 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
   - 대화 보기·보고서 안 파일 링크.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
@@ -3251,7 +3251,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 「Markdown 너비」(기본값 readable·전체 너비 full): 기본값은 Markdown을 대화 열 너비(`--chat-w`)로 묶어 가운데에 두고, 전체 너비는 파일 보기를 채운다(`MARKDOWN_CLASS`).
 - **aaa.** 채팅 page의 「빠른 답장」 다음에 같은 무리를 두었다. 문구는 참고 `i18n.ko.ts`다(「파일 뷰어」·「긴 줄 바꿈」·「Markdown 너비」·「기본값」·「전체 너비」).
   - 저장은 aaa 설정 꼴대로 열쇠마다 localStorage다: `aaa:wrap-code`(켜고 끄는 기기 설정 표에 더함), `aaa:markdown-width`. 기본값이면 지운다. 기기 사이에 맞추지 않는다(참고 `device`).
-- **참고와 다른 것.** 같은 무리의 「비교 보기 방식」(`diffStyle`)은 뺐다. 그 설정을 쓰는 저장소 비교 보기(`RepoDiffViewer`)가 aaa에 없다. 가상화한 긴 소스(`VirtualSource wrap`)도 아직 없어(§8.125 남은 것) 줄 바꿈은 `CodeLines`에만 간다.
+- **참고와 다른 것.** 같은 무리의 「비교 보기 방식」(`diffStyle`)은 뺐다. 그 설정을 쓰는 저장소 비교 보기(`RepoDiffViewer`)가 aaa에 없다. 가상화한 긴 소스(`VirtualSource wrap`)도 같은 설정을 따른다(§8.171).
 - **시험.** 웹 E2E `16-file-viewer` 다섯째 단계: 기본은 긴 줄 한 줄·옆으로 굴림·Markdown이 파일 보기보다 좁음, 켜면 긴 줄이 여러 줄로 접히고 옆으로 굴릴 것이 없음·Markdown이 파일 보기 너비, 다시 읽어도 그대로, 다른 기기(휴대폰·iPad)는 기본값에서 시작해 제 설정만 바뀜. 결과(높이·너비·옆 굴림)만 보고 class·저장 꼴은 보지 않는다(t-0338 웹 E2E 기준).
   - 변형 확인: 여섯 모두 실패한다. 소스에 줄 바꿈을 넘기지 않음, 전체 너비도 대화 열, 기본 줄 바꿈 켬, 기본 너비 전체, 저장한 줄 바꿈을 읽지 않음, 너비를 저장하지 않음.
 
@@ -3540,6 +3540,46 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - aaa-vt 열셋: 끊기 셋(aaa-vt 쓰기·vt100 줄 쓰기·줄 넘는 상태), 끝 칸 이음 표시, 넓히지 않음, CSI·OSC 뒤 끊지 않음, 국기 폭 1, 셋째 지역 표시도 묶음, 보이지 않는 글자 보정 없음, spacing mark도 묶음, `joins_after` 늘 거짓, ASCII 빠른 길이 Prepend를 안 봄.
     - web 신선도 하나.
     - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
+
+### 8.171 긴 소스 가상화: 참고 `VirtualSource`(`@pierre/diffs` 1.5.2)를 그대로(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, coordinator 결정 「참고가 쓰는 @pierre/diffs를 그대로」)
+
+- **참고.** herdr-web-ui 파일 보기는 2,000줄(`VIRTUAL_SOURCE_LINES`) 넘는 소스를 줄마다 요소로 그리지 않는다. `@pierre/diffs`의 virtualizer(`Virtualizer`·`File`, shadow root 안)가 보이는 둘레의 줄만 그린다(`VirtualSource.tsx`).
+  - 칠하기는 그 패키지의 worker pool(두 개, Shiki JavaScript 엔진)이 한다. 5,000줄·256K자(`VIRTUAL_HIGHLIGHT_*`)까지만 칠하고, 그보다 길면 글 그대로에 「너무 길어 강조 표시를 생략했습니다」를 단다.
+  - 색은 앱 token을 CSS 변수 theme(`herdr-source`, `--herdr-code-*`)으로 shadow root에 넘긴다(`sourceTheme.ts`). 그래서 밝음·어두움을 바꿔도 worker를 다시 만들지 않는다.
+  - pool은 마지막 보기가 닫힌 뒤 30초 남는다(`idleLease.ts`).
+  - 줄 참조는 그 줄을 가운데로 데려온다(마운트 전 줄은 추정 자리, 여섯 번까지 다시 맞춤). 「긴 줄 바꿈」을 따르고, 바꾸거나 너비가 바뀌면 표시한 줄이나 맨 위 줄을 제자리에 둔다.
+  - 읽기는 흘려 받으며 바이트·줄 상한과 시한을 둔다(`readFilePreviewText`·`readBudget`). Markdown이나 256KiB 이하는 256KiB·5초, 그보다 큰 소스는 8MiB·30초, 줄은 20만 줄이다. 느린 연결은 시한까지 온 것을 잘린 앞부분으로 보인다.
+- **aaa.** 참고 파일 여섯을 `web/src/herdr/`에 그대로 옮겼다: `VirtualSource.tsx`·`.css`, `DiffWorkerPool.tsx`, `sourceTheme.ts`, `idleLease.ts`, `sourcePreview.ts`, `filePreviewText.ts`. import 경로만 바꿨다. `sourcePreview.ts`는 옮기지 않은 `textPreview.ts`의 `hasPreview` 한 줄을 안에 둔다.
+  - `FileViewer.tsx`는 참고 `FileViewer`·`TextFileView`대로 읽기 예산, 보이는 글(`shownSource`), 줄 참조(`lineRequest`), 잘림 알림 셋(크기·줄·시한)을 쓴다. 가상화한 소스는 따로 받는 조각(`lazy`)이다.
+  - host는 그대로다. `/f/`·`/v/`는 이미 Range를 받아 agent에서 조각으로 흘려 보낸다. 8MiB는 웹 예산만 바꾼 것이다.
+  - CSP도 그대로다. worker는 같은 origin 파일(`script-src 'self'`)이고, Shiki는 JavaScript 엔진이라 WebAssembly가 필요 없다(참고 `HIGHLIGHTER_OPTIONS`와 같은 까닭).
+- **의존성(coordinator 조건).**
+  - `web/package.json`에 `"@pierre/diffs": "1.5.2"`를 정확한 판으로 고정했다. 설치는 `npm install --save-exact --ignore-scripts`다.
+  - lockfile에 51개 패키지가 더해졌다. 판과 integrity(sha512)가 참고 `bun.lock`과 모두 같다.
+  - 라이선스: `@pierre/diffs`·`@pierre/theme`·`@pierre/theming`은 Apache-2.0이다(`@pierre/theme`은 NOTICE에 GitHub VS Code theme의 MIT 고지). `diff`는 BSD-3-Clause, `@ungap/structured-clone`은 ISC, 나머지는 MIT다.
+  - 설치 script(`preinstall`·`install`·`postinstall`)는 없다. `regex-utilities`의 `prepare: npm test`는 registry 설치에서 돌지 않고, 설치도 script를 끄고 했다.
+- **라이선스 고지.** 웹 빌드가 함께 넣은 패키지의 LICENSE·NOTICE를 빌드가 `dist/licenses/THIRD_PARTY_NOTICES.txt`로 모은다(`web/scripts/license-notices.ts`, 주 빌드와 worker 빌드의 그린 module에서). host는 `/licenses/THIRD_PARTY_NOTICES.txt`로 보낸다.
+  - 고지 글에는 저자 email이 있어 저장소에 두지 않는다(`scripts/check-public.sh`가 막는다).
+  - 패치한 xterm 소스(`node_modules/.cache/aaa-xterm`)는 `@xterm/xterm`으로 센다. 글을 싣지 않은 `lru_map`은 package.json의 license·author를 적는다.
+  - 지금 42개다. 이 묶음이 더한 32개와 전부터 들어 있던 react·xterm·lucide 등 10개다(전에는 고지가 없었다).
+- **크기.** 웹 빌드가 6.5MB(파일 3개 + 글꼴·아이콘) → 18.5MB(assets 324개)다. 실행 파일도 그만큼 커진다(`build.rs`가 dist를 넣는다).
+  - 늘어난 것은 거의 따로 받는 조각이다: Shiki 문법·theme(참고처럼 모두), worker 817KB, `VirtualSource` 466KB, 쓰지 않는 oniguruma wasm 조각 622KB.
+  - 첫 화면 묶음은 970 → 976KB다. service worker는 셸이 여는 파일만 미리 받으므로 기기가 18MB를 받지 않는다. 조각은 쓸 때 받는다.
+- **참고와 다른 것.** 클립보드가 막혔을 때 가상화한 소스를 한 글 상자로 바꿔 손으로 고르게 하는 것(`selectable`)은 옮기지 않았다. aaa 「파일 복사」에는 그 길이 없다(`CodeLines`도 같다).
+- **시험.**
+  - web 유닛 넷이다.
+    - `sourcePreview.test.mjs`·`idleLease.test.mjs`·`filePreviewText.test.mjs`: 참고 시험을 node:test로 옮겼다. 시한 셋은 참고가 진짜 10ms timer와 겨루던 것을 흉내 timer로 바꿨다. 몸이 멈춘 것(읽는 쪽이 다음 조각을 물음)을 본 뒤에 test가 시한을 돌린다(docs/testing.md).
+    - `license-notices.test.mjs`: 패키지 폴더 찾기.
+  - 웹 E2E `16-file-viewer` 「긴 소스 가상화」(약 4초)다. 결과(그려 둔 줄 수·색·자리·높이·알림)만 보고 class·저장 꼴은 보지 않는다.
+    - 3,000줄 TS: 그려 둔 줄이 600 이하이고, 줄 요소가 없다. 2500번째 줄의 `export`가 앱 keyword 색이고 글자색과 다르다. 그 줄이 가운데(줄 높이 안)다. 긴 줄은 꺼짐이면 한 줄 높이로 옆으로 굴리고, 켜면 세 줄 넘게 접혀 옆 굴림이 없다.
+    - 약 450KB·12,000줄: 잘림·범위 밖 알림 없이 「파일 복사」가 있다(다 읽음). 칠하지 않고(token 0) 「너무 길어」를 단다. 11000번째 줄이 가운데다.
+    - 빈 파일을 연다. host가 보내는 라이선스 고지에 Apache 글·`@pierre/theme` NOTICE·`diff` BSD·worker 빌드의 Shiki 문법·패치한 xterm·`lru_map` 대체 글이 있다.
+    - 휴대폰·iPad에서 가운데 줄·칠한 줄을 보고 찍는다.
+  - shadow root 안은 문서의 MutationObserver가 보지 못한다. 그래서 그 기다림은 frame마다 본다(Playwright `waitForFunction` raf, 시한은 안전 상한).
+  - 변형 확인: 여덟 모두 실패한다(바이트 그대로 되돌림).
+    - E2E 일곱: 가상화 문턱 2백만, 칠하지 않음, 소스 예산 없음(256KiB에서 잘려 11000번째 줄이 없음), 가운데로 굴리지 않음, 줄 바꿈을 넘기지 않음, 「너무 길어」 알림 없음, 빈 파일의 416을 오류로.
+    - 유닛 하나: 시한에 받은 것을 버림.
+  - 고지 모으기에서 worker 빌드 쪽을 빼도 시험은 통과한다. 재어 보니 지금 worker 빌드가 그린 패키지는 모두 주 빌드에도 있다(Shiki 문법은 주 빌드의 따로 받는 조각이다). worker 묶음도 따로 실려 나가므로 worker만 쓰는 패키지가 생길 때를 위해 둔다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
