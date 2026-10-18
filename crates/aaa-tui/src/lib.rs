@@ -105,31 +105,10 @@ pub fn run_remote(
     target: &aaa_common::remote::Target,
     ask_code: impl Fn(&str) -> Result<String>,
 ) -> Result<ExitCode> {
-    use aaa_common::remote;
     let rt = runtime()?;
-    let file = target.token_file(&aaa_config::paths::state_dir());
-    let mut fresh = false;
-    let client = loop {
-        let why = match remote::load_token(&file) {
-            Some(token) => match rt.block_on(FrontClient::connect_remote(target, &token, &label())) {
-                Ok(c) => break c,
-                Err(e) if e.downcast_ref::<remote::Unauthorized>().is_some() => {
-                    remote::forget_token(&file)?;
-                    if fresh {
-                        anyhow::bail!("{}: pairing으로 받은 token도 host가 받지 않았다", target.origin());
-                    }
-                    "저장한 기기 token을 host가 받지 않는다(기기를 취소했거나 다른 host다)"
-                }
-                Err(e) => return Err(e),
-            },
-            None => "이 기기는 아직 그 host와 pairing하지 않았다",
-        };
-        let code = ask_code(why)?;
-        let name = format!("aaa TUI · {}", aaa_common::util::hostname());
-        let token = rt.block_on(remote::pair(target, &code, &name))?;
-        remote::save_token(&file, &token)?;
-        fresh = true;
-    };
+    let device = format!("aaa TUI · {}", aaa_common::util::hostname());
+    let state = aaa_config::paths::state_dir();
+    let client = rt.block_on(aaa_common::remote::admit(target, &state, &label(), &device, ask_code))?;
     attach(&rt, workspace, client)
 }
 
@@ -1270,6 +1249,7 @@ impl App {
 
     /// 키 하나. herdr `route_key`처럼 창 → 모드 순으로 고른다. 끝나면 입력기를 모드에 맞춘다.
     async fn on_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
+        let k = keys::altgr_text(k, cfg!(windows));
         let ch = if let KeyCode::Char(c) = k.code { Some(c) } else { None };
         // copy 모드 pane에서는 고르기가 copy 모드 것이다(herdr `copy_or_terminal_mode`)
         let in_copy = self.copy.as_ref().is_some_and(|c| self.focus.as_deref() == Some(c.pane.as_str()));

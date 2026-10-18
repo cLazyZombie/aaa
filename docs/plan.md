@@ -3958,6 +3958,40 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   52px인지, 프로젝트 화면 ≡가 59px 아래인지 본다. 고치기 전 실패(`.drawer-toggle 위 5.5 < 상태 막대 59` 등), 고친 뒤 통과. 결함 심기 셋
   (휴대폰 머리줄 위 여백 없음 → ≡ 35 < 59, drawer 목록 머리가 더함 → 111 ≠ 52, 프로젝트 화면 위 여백 없음 → ≡ 16 < 59) 모두 실패.
 
+### 8.184 Windows에서 접속만 하는 TUI(10-18, 사용자 「1번 진행해」, §8.181의 Windows 쪽)
+
+- **범위.** agent가 없는 Windows PC(x86_64, Tailscale)에서 `aaa.exe attach --remote <host 웹 주소>`로 붙기만 한다. 실행 파일은
+  `%USERPROFILE%\.local\bin\aaa.exe`(Mac `~/.local/bin/aaa`와 같은 자리), 바꾸기는 `aaa update --from <파일>`(§8.180). Windows agent·host·
+  감지(Q21)는 범위 밖이다. 절차는 install-runbook 11번.
+- **빌드.** Mac에서 `cargo xwin build --release -p aaa --target x86_64-pc-windows-msvc`(rustup target·cargo-xwin, 사용자 수준 도구).
+  CI windows runner와 같은 msvc target이다. C 런타임은 정적으로 넣는다(`.cargo/config.toml` `crt-static`, herdr 0.9.5
+  `.cargo/config.toml`과 같다): 처음 빌드는 `VCRUNTIME140.dll`·`api-ms-win-crt-*`를 들여 VC++ 재배포 패키지가 없는 PC에서 돌지 않을 수 있었다.
+- **token 파일 권한(Windows ACL).** 전에는 Unix에만 0700·0600을 걸고 Windows는 `%LOCALAPPDATA%`가 물려주는 DACL(상속, Administrators
+  포함) 그대로였다. herdr 0.9.5 `src/platform/windows.rs`의 SDDL을 그대로 쓴다: `remote/` 폴더는 `create_remote_private_dir`(:745-766)의
+  `D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)`, token 파일은 `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349)처럼
+  `D:P(A;;GA;;;SY)(A;;GA;;;<계정 SID>)`로 `CreateFileW`(CREATE_NEW)에서 처음부터 만든다(만든 뒤 바꾸지 않는다, Unix와 같은 원칙). 폴더는
+  이미 있으면 `SetFileSecurityW`로 그렇게 바꾼다(Unix가 늘 0700을 거는 것과 같다).
+- **`aaa update` Windows.** 전에는 「아직 macOS·Linux만」으로 거부했다. Windows는 도는 exe를 덮거나 지우지 못하고 이름만 바꿀 수 있어,
+  보관을 hard link 대신 지금 것을 `.aaa-old/aaa-<UTC>-<version>`으로 옮기는 것으로 하고 새것을 그 자리로 옮긴다(둘째가 실패하면 첫째를
+  되돌린다). 그 사이 잠깐 자리가 빈다. herdr Windows 갱신은 release 폴더마다 풀고 junction·사용자 PATH를 바꾸는 `distribution/install.ps1`이다:
+  aaa는 고정 경로 하나라 따르지 않았다(참고와 다름).
+- **키(Windows 콘솔).** crossterm 0.29 Windows 입력(`event/sys/windows/parse.rs`)은 콘솔 레코드를 읽는다: 왼쪽·오른쪽 수정키를 합치고, Ctrl
+  글자는 `ToUnicodeEx`로 기본 배치 글자를 찾아 CONTROL과 주며(prefix `ctrl+b`가 맞는다), AltGr는 Ctrl+Alt로 온다. 그대로면 독일 배치 AltGr+Q
+  `@`가 NUL에 ESC를 붙여 갔다. herdr `windows_vti.rs` `windows_record_modifiers`(:1576-1590, 「글자 키의 AltGr는 글자 shift」)처럼
+  Ctrl+Alt의 기호·숫자·비영문 글자는 글자로 둔다(`keys::altgr_text`). crossterm이 왼쪽·오른쪽을 가르지 않아 진짜 Ctrl+Alt는 영문 글자와 Space만
+  남는다. 놓기(Release)는 이미 거른다. 한글은 터미널 IME가 조합하고 확정된 음절이 글자 하나로 온다. prefix 뒤 한/영 바꾸기는 §8.73대로다.
+- **참고와 다름(남김).** herdr는 Windows 클라이언트 입력을 `ENABLE_VIRTUAL_TERMINAL_INPUT`으로 켜고 VT 바이트를 직접 푼다
+  (`src/client/terminal_setup.rs`·`src/client/input/windows_vti.rs`, 4천 줄 넘음): bracketed paste·마우스 VT 보고가 그 길에서 온다. aaa는
+  crossterm 콘솔 입력 그대로라 Windows에서 붙여넣기는 낱 키로 가고(여러 줄은 줄마다 Enter, README 붙여넣기 줄), 마우스는 콘솔 레코드다.
+  VT 입력 길은 따로 일로 남긴다.
+- **그대로인 것(코드로 확인).** 상태·설정 폴더는 `%LOCALAPPDATA%\aaa\state`·`\config`(roaming `%APPDATA%` 아님, `aaa-config/src/paths.rs`),
+  HOME은 `USERPROFILE`. TLS는 webpki 루트·SNI(그 PC의 신뢰 저장소를 보지 않는다, §8.181). 크기 바뀜은 ratatui가 창 크기를 다시 읽는다
+  (crossterm `Resize`는 다시 그리기만). focus 사건은 콘솔이 늘 준다. 터미널 색 물음(OSC 10/11)은 보내지 않는다.
+- **시험.** 유닛 `remote::admit_pairs_keeps_and_forgets_tokens`(모든 OS, 가짜 host 웹 http 127.0.0.1: 처음엔 묻고 pairing·token 두기·Host·
+  Origin·cookie, 다음엔 묻지 않음, 401이면 지우고 다시 묻기, 새 token도 거부되면 지운 채 멈춤, 틀린 코드 401, 4401 취소), `keys::
+  windows_console_keys_table`(crossterm Windows 꼴 → bytes 표, prefix), Windows만 `remote::token_file_is_private`(파일·폴더 DACL을 SDDL로
+  읽어 `D:P`·SYSTEM과 계정/소유자만), `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다). 결함 심기는 아래 보고서.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

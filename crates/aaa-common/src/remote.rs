@@ -113,6 +113,7 @@ pub fn load_token(file: &Path) -> Option<String> {
 }
 
 /// 장치 token을 0600 파일로 둔다(폴더는 0700). 만든 뒤 권한을 바꾸지 않고 처음부터 그 권한으로 만든다.
+/// Windows는 같은 뜻의 DACL이다(본인과 SYSTEM만, `win`).
 pub fn save_token(file: &Path, token: &str) -> Result<()> {
     use std::io::Write as _;
     let dir = file.parent().context("token 폴더가 없다")?;
@@ -122,16 +123,23 @@ pub fn save_token(file: &Path, token: &str) -> Result<()> {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
+    #[cfg(windows)]
+    win::private_dir(dir).with_context(|| format!("{}를 본인만 열게 하기", dir.display()))?;
     let tmp = file.with_extension("token.tmp");
     let _ = std::fs::remove_file(&tmp);
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        o.mode(0o600);
-    }
-    let mut f = o.open(&tmp).with_context(|| format!("{} 쓰기", tmp.display()))?;
+    #[cfg(windows)]
+    let mut f = win::create_private(&tmp).with_context(|| format!("{} 쓰기", tmp.display()))?;
+    #[cfg(not(windows))]
+    let mut f = {
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            o.mode(0o600);
+        }
+        o.open(&tmp).with_context(|| format!("{} 쓰기", tmp.display()))?
+    };
     f.write_all(token.as_bytes())?;
     f.sync_all()?;
     std::fs::rename(&tmp, file).with_context(|| format!("{} 두기", file.display()))?;
@@ -145,6 +153,183 @@ pub fn forget_token(file: &Path) -> Result<()> {
             Err(e).with_context(|| format!("{} 지우기", file.display()))
         }
         _ => Ok(()),
+    }
+}
+
+/// 이 기기의 장치 token으로 붙는다(`aaa attach --remote`의 입장, plan §8.181). token이 없거나 host가 받지 않으면(401)
+/// `ask_code`에 까닭을 주고 받은 pairing 코드로 새 token을 받아 둔다(받지 않은 token은 지운다). 새로 받은 token도 거부되면
+/// 멈춘다. `state_root`는 이 기기 상태 폴더, `client`는 front 이름(lease), `device`는 host 기기 목록의 이름이다.
+pub async fn admit(
+    target: &Target,
+    state_root: &Path,
+    client: &str,
+    device: &str,
+    mut ask_code: impl FnMut(&str) -> Result<String>,
+) -> Result<crate::front::FrontClient> {
+    let file = target.token_file(state_root);
+    let mut fresh = false;
+    loop {
+        let why = match load_token(&file) {
+            Some(token) => match crate::front::FrontClient::connect_remote(target, &token, client).await {
+                Ok(c) => return Ok(c),
+                Err(e) if e.downcast_ref::<Unauthorized>().is_some() => {
+                    forget_token(&file)?;
+                    if fresh {
+                        bail!("{}: pairing으로 받은 token도 host가 받지 않았다", target.origin());
+                    }
+                    "저장한 기기 token을 host가 받지 않는다(기기를 취소했거나 다른 host다)"
+                }
+                Err(e) => return Err(e),
+            },
+            None => "이 기기는 아직 그 host와 pairing하지 않았다",
+        };
+        let code = ask_code(why)?;
+        let token = pair(target, &code, device).await?;
+        save_token(&file, &token)?;
+        fresh = true;
+    }
+}
+
+/// Windows에서 본인만 여는 token 폴더·파일. herdr 0.9.5 `src/platform/windows.rs`와 같은 SDDL이다: 폴더는
+/// `create_remote_private_dir`(:745-766, SYSTEM과 소유자), 파일은 `create_config_temporary`·`user_security_descriptor`
+/// (:82-131·:307-349, SYSTEM과 이 계정 SID — 관리자 권한 토큰의 소유자 Administrators가 아니라 계정이다).
+/// 상속을 끊은(`D:P`) DACL이라 %LOCALAPPDATA%가 물려주는 Administrators 같은 다른 항목이 빠진다.
+#[cfg(windows)]
+mod win {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
+    use std::path::Path;
+    use std::ptr::null_mut;
+
+    use windows_sys::Win32::Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetTokenInformation, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        SECURITY_ATTRIBUTES, SetFileSecurityW, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// 폴더: SYSTEM과 소유자(OW), 안에 만드는 것에도 물려준다
+    pub(super) const DIR_SDDL: &str = "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)";
+
+    pub(super) fn wide(s: &OsStr) -> Vec<u16> {
+        s.encode_wide().chain(Some(0)).collect()
+    }
+
+    /// SDDL로 만든 보안 설명자. 사라질 때 LocalFree한다
+    struct Sd(PSECURITY_DESCRIPTOR);
+
+    impl Sd {
+        fn new(sddl: &str) -> io::Result<Sd> {
+            let text = wide(OsStr::new(sddl));
+            let mut sd = null_mut();
+            // SAFETY: text는 NUL로 끝나는 UTF-16, sd는 결과 자리다
+            let ok = unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    text.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut sd,
+                    null_mut(),
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Sd(sd))
+        }
+    }
+
+    impl Drop for Sd {
+        fn drop(&mut self) {
+            // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW가 LocalAlloc으로 준 것이다
+            unsafe { LocalFree(self.0) };
+        }
+    }
+
+    /// 이 프로세스 계정의 SID 글(`S-1-5-21-…`)
+    pub(super) fn user_sid() -> io::Result<String> {
+        let mut token = null_mut();
+        // SAFETY: 지금 프로세스의 토큰을 읽기로 연다. 받은 handle은 OwnedHandle이 닫는다
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut needed = 0u32;
+        // SAFETY: 크기만 묻는다(버퍼 없음)
+        unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, null_mut(), 0, &mut needed) };
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // usize 버퍼라 TOKEN_USER 정렬이 맞고 뒤에 붙는 SID도 그 안에 산다
+        let mut buf = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
+        // SAFETY: buf는 needed bytes 이상이다
+        let ok = unsafe {
+            GetTokenInformation(token.as_raw_handle(), TokenUser, buf.as_mut_ptr().cast(), needed, &mut needed)
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: GetTokenInformation이 채운 TOKEN_USER다
+        let user = unsafe { &*buf.as_ptr().cast::<TOKEN_USER>() };
+        let mut text = null_mut();
+        // SAFETY: user.User.Sid는 buf 안의 SID, text는 LocalAlloc된 글을 받는다
+        if unsafe { ConvertSidToStringSidW(user.User.Sid, &mut text) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: text는 NUL로 끝나는 UTF-16이고 다 읽은 뒤 놓는다
+        let sid = unsafe {
+            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+            LocalFree(text.cast());
+            s
+        };
+        Ok(sid)
+    }
+
+    /// 폴더를 본인(소유자)과 SYSTEM만 열게 한다(Unix의 0700). 이미 있던 폴더도 그렇게 바꾼다
+    pub(super) fn private_dir(dir: &Path) -> io::Result<()> {
+        let sd = Sd::new(DIR_SDDL)?;
+        let path = wide(dir.as_os_str());
+        // SAFETY: path는 NUL로 끝나는 UTF-16, sd는 살아 있는 보안 설명자다
+        let ok = unsafe {
+            SetFileSecurityW(path.as_ptr(), DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, sd.0)
+        };
+        if ok == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+    }
+
+    /// 본인과 SYSTEM만 여는 새 파일(Unix의 0600). 처음부터 그 DACL로 만든다(없던 파일만)
+    pub(super) fn create_private(path: &Path) -> io::Result<std::fs::File> {
+        let sd = Sd::new(&format!("D:P(A;;GA;;;SY)(A;;GA;;;{})", user_sid()?))?;
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: 0,
+        };
+        let path = wide(path.as_os_str());
+        // SAFETY: path는 NUL로 끝나는 UTF-16, sa와 그 설명자는 호출 동안 산다
+        let h = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                &sa,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                null_mut(),
+            )
+        };
+        if h == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: CreateFileW가 준 handle을 File이 한 번 닫는다
+        Ok(unsafe { std::fs::File::from_raw_handle(h) })
     }
 }
 
@@ -397,6 +582,279 @@ mod tests {
         forget_token(&file).unwrap();
         assert_eq!(load_token(&file), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Windows: token 파일은 상속을 끊은 DACL에 SYSTEM과 이 계정만, 폴더는 SYSTEM과 소유자만(herdr와 같은 SDDL).
+    /// %LOCALAPPDATA% 아래 기본 DACL(상속, Administrators 포함)이면 실패한다
+    #[cfg(windows)]
+    #[test]
+    fn token_file_is_private() {
+        let dir = std::env::temp_dir().join(format!("aaa-remote-token-{}", std::process::id()));
+        let file = dir.join("remote").join("x.token");
+        save_token(&file, "secret-1").unwrap();
+        save_token(&file, "secret-2").unwrap();
+        assert_eq!(load_token(&file).as_deref(), Some("secret-2"));
+        let sid = win::user_sid().unwrap();
+        let (flags, mut who) = acl::dacl(&file);
+        who.sort();
+        let mut want = vec![("A".to_string(), sid.clone()), ("A".to_string(), "SY".to_string())];
+        want.sort();
+        assert!(flags.contains('P'), "상속을 끊는다: {flags}");
+        assert_eq!(who, want, "파일은 SYSTEM과 이 계정만");
+        let (flags, mut who) = acl::dacl(file.parent().unwrap());
+        who.sort();
+        assert!(flags.contains('P'), "상속을 끊는다: {flags}");
+        assert_eq!(who, vec![("A".to_string(), "OW".to_string()), ("A".to_string(), "SY".to_string())], "폴더");
+        forget_token(&file).unwrap();
+        forget_token(&file).unwrap();
+        assert_eq!(load_token(&file), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 시험이 DACL을 읽는다(herdr `config_security_descriptor`·`config_security_sddl`처럼 SDDL로)
+    #[cfg(windows)]
+    mod acl {
+        use std::path::Path;
+        use std::ptr::null_mut;
+
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1,
+        };
+        use windows_sys::Win32::Security::{DACL_SECURITY_INFORMATION, GetFileSecurityW};
+
+        /// (DACL 깃발, [(ACE 종류, 대상)]). 예: `D:P(A;;FA;;;SY)` → ("P", [("A", "SY")])
+        pub fn dacl(path: &Path) -> (String, Vec<(String, String)>) {
+            let p = super::win::wide(path.as_os_str());
+            let mut needed = 0u32;
+            // SAFETY: 크기만 묻는다
+            unsafe { GetFileSecurityW(p.as_ptr(), DACL_SECURITY_INFORMATION, null_mut(), 0, &mut needed) };
+            assert!(needed > 0, "{}: {}", path.display(), std::io::Error::last_os_error());
+            let mut sd = vec![0u8; needed as usize];
+            // SAFETY: sd는 needed bytes다
+            let ok = unsafe {
+                GetFileSecurityW(p.as_ptr(), DACL_SECURITY_INFORMATION, sd.as_mut_ptr().cast(), needed, &mut needed)
+            };
+            assert!(ok != 0, "{}", std::io::Error::last_os_error());
+            let mut text = null_mut();
+            // SAFETY: sd는 GetFileSecurityW가 채운 설명자다. text는 LocalAlloc된 글을 받는다
+            let ok = unsafe {
+                ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    sd.as_mut_ptr().cast(),
+                    SDDL_REVISION_1,
+                    DACL_SECURITY_INFORMATION,
+                    &mut text,
+                    null_mut(),
+                )
+            };
+            assert!(ok != 0, "{}", std::io::Error::last_os_error());
+            // SAFETY: NUL로 끝나는 UTF-16, 읽은 뒤 놓는다
+            let sddl = unsafe {
+                let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+                let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+                LocalFree(text.cast());
+                s
+            };
+            let body = sddl.strip_prefix("D:").unwrap_or_else(|| panic!("DACL이 아니다: {sddl}"));
+            let (flags, aces) = body.split_once('(').unwrap_or((body, ""));
+            let aces = aces
+                .split('(')
+                .map(|a| {
+                    let f: Vec<&str> = a.trim_end_matches(')').split(';').collect();
+                    (f[0].to_string(), f[5].to_string())
+                })
+                .collect();
+            (flags.to_string(), aces)
+        }
+    }
+
+    /// 가짜 host 웹(http 127.0.0.1, host `web.rs`의 pairing·`/api/v1/front` 규칙만): pairing은 코드 `good`에만 새 token을
+    /// cookie(`aaa`)로 주고(틀리면 host처럼 401), WebSocket은 받아 둔 token만 들인다(아니면 401). 들인 연결의 Hello에
+    /// Welcome으로 답한다.
+    /// `revoke`면 Welcome 뒤 기기 취소처럼 4401로 닫는다. `reject_new`면 새로 준 token도 받지 않는다.
+    #[derive(Default)]
+    struct Fake {
+        accepted: Vec<String>,
+        issued: u32,
+        /// pairing 요청(머리와 본문)
+        pairs: Vec<String>,
+        /// front 연결 요청 `경로|Host|Origin|Cookie`
+        fronts: Vec<String>,
+        revoke: bool,
+        reject_new: bool,
+    }
+
+    async fn fake_host() -> (Target, Arc<std::sync::Mutex<Fake>>) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let st = Arc::new(std::sync::Mutex::new(Fake::default()));
+        let s = st.clone();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = l.accept().await {
+                tokio::spawn(fake_conn(tcp, s.clone()));
+            }
+        });
+        (Target::parse(&format!("http://127.0.0.1:{port}")).unwrap(), st)
+    }
+
+    // handshake 거부 답(ErrorResponse)의 꼴은 tungstenite가 정한다
+    #[allow(clippy::result_large_err)]
+    async fn fake_conn(mut tcp: tokio::net::TcpStream, st: Arc<std::sync::Mutex<Fake>>) {
+        use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+        let mut head = [0u8; 5];
+        if tcp.peek(&mut head).await.unwrap_or(0) < 5 {
+            return;
+        }
+        if &head[..5] == b"POST " {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let (split, len) = loop {
+                let n = tcp.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "pairing 요청이 끊겼다");
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let h = String::from_utf8_lossy(&buf[..i]).to_ascii_lowercase();
+                    let len = h
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if buf.len() >= i + 4 + len {
+                        break (i, len);
+                    }
+                }
+            };
+            let body = &buf[split + 4..split + 4 + len];
+            let code = serde_json::from_slice::<serde_json::Value>(body).unwrap()["code"].as_str().unwrap().to_string();
+            let res = {
+                let mut s = st.lock().unwrap();
+                s.pairs.push(String::from_utf8_lossy(&buf).to_string());
+                if code == "good" {
+                    s.issued += 1;
+                    let tok = format!("tok-{}", s.issued);
+                    if !s.reject_new {
+                        s.accepted.push(tok.clone());
+                    }
+                    format!(
+                        "HTTP/1.1 200 OK\r\nset-cookie: aaa={tok}; Path=/; HttpOnly; SameSite=Strict\r\ncontent-length: 2\r\n\r\n{{}}"
+                    )
+                } else {
+                    let b = r#"{"err":{"message":"코드가 틀렸다"}}"#;
+                    format!("HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\n\r\n{b}", b.len())
+                }
+            };
+            tcp.write_all(res.as_bytes()).await.unwrap();
+            let _ = tcp.shutdown().await;
+            return;
+        }
+        let s2 = st.clone();
+        let check = move |req: &Request, res: Response| -> std::result::Result<Response, ErrorResponse> {
+            let h = |k: &str| req.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let mut s = s2.lock().unwrap();
+            s.fronts.push(format!("{}|{}|{}|{}", req.uri().path(), h("host"), h("origin"), h("cookie")));
+            let tok = h("cookie").strip_prefix("aaa=").unwrap_or("").to_string();
+            if s.accepted.contains(&tok) {
+                Ok(res)
+            } else {
+                let mut e = ErrorResponse::new(None);
+                *e.status_mut() = tungstenite::http::StatusCode::UNAUTHORIZED;
+                Err(e)
+            }
+        };
+        let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(tcp, check).await else { return };
+        let Some(Ok(Message::Text(t))) = ws.next().await else { return };
+        let hello: aaa_proto::FrontMsg = serde_json::from_str(&t).unwrap();
+        assert!(matches!(hello, aaa_proto::FrontMsg::Hello { .. }), "{hello:?}");
+        let welcome = aaa_proto::FrontMsg::Welcome {
+            proto: aaa_proto::FRONT_API,
+            host_id: "h-1".into(),
+            role: aaa_proto::DeviceRole::Controller,
+            front: "f-1".into(),
+        };
+        ws.send(Message::Text(serde_json::to_string(&welcome).unwrap().into())).await.unwrap();
+        if st.lock().unwrap().revoke {
+            let frame = tungstenite::protocol::CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE.into(), reason: "".into() };
+            let _ = ws.close(Some(frame)).await;
+            return;
+        }
+        while let Some(Ok(_)) = ws.next().await {}
+    }
+
+    /// 입장(`admit`): 처음에는 코드를 물어 pairing하고 token을 둔 뒤 붙는다. 다음에는 묻지 않는다. host가 token을 받지
+    /// 않으면(401) 지우고 다시 묻고, 새로 받은 token도 거부되면 지운 채 멈춘다. 틀린 코드는 host 까닭과 함께 멈춘다.
+    /// 연결은 Host·Origin을 그 주소로, token을 cookie로 보낸다. 기기를 취소하면(4401) 까닭과 함께 끝난다.
+    #[tokio::test]
+    async fn admit_pairs_keeps_and_forgets_tokens() {
+        let (t, st) = fake_host().await;
+        let root = std::env::temp_dir().join(format!("aaa-remote-admit-{}", std::process::id()));
+        let file = t.token_file(&root);
+        let asked = std::cell::RefCell::new(Vec::<String>::new());
+        // 한 번 붙는 동안 많아야 한 번 묻는다: 또 물으면(token을 두지 않은 고리) 그 입장은 실패로 끝난다
+        let ask = |code: &'static str| {
+            let asked = &asked;
+            let mut once = false;
+            move |why: &str| -> Result<String> {
+                asked.borrow_mut().push(why.to_string());
+                if std::mem::replace(&mut once, true) {
+                    bail!("한 번 붙는 동안 또 물었다: {why}");
+                }
+                Ok(code.to_string())
+            }
+        };
+
+        // 처음: 묻고 pairing → token을 둔다 → 붙는다(Welcome의 역할)
+        let c = admit(&t, &root, "tui@x", "aaa TUI · x", ask("good")).await.unwrap();
+        assert_eq!((c.front.as_str(), c.role), ("f-1", aaa_proto::DeviceRole::Controller));
+        assert_eq!(asked.borrow().len(), 1);
+        assert!(asked.borrow()[0].contains("아직 그 host와 pairing하지 않았다"), "{:?}", asked.borrow());
+        assert_eq!(load_token(&file).as_deref(), Some("tok-1"));
+        {
+            let s = st.lock().unwrap();
+            let auth = t.authority();
+            assert!(s.pairs[0].starts_with("POST /api/v1/pair HTTP/1.1\r\n"), "{}", s.pairs[0]);
+            assert!(s.pairs[0].contains(&format!("Host: {auth}\r\n")), "{}", s.pairs[0]);
+            assert!(s.pairs[0].contains(&format!("Origin: http://{auth}\r\n")), "{}", s.pairs[0]);
+            assert!(s.pairs[0].ends_with(r#"{"code":"good","label":"aaa TUI · x"}"#), "{}", s.pairs[0]);
+            assert_eq!(s.fronts, vec![format!("/api/v1/front|{auth}|http://{auth}|aaa=tok-1")]);
+        }
+        drop(c);
+
+        // 다음: 둔 token으로 묻지 않고 붙는다
+        admit(&t, &root, "tui@x", "aaa TUI · x", ask("good")).await.unwrap();
+        assert_eq!(asked.borrow().len(), 1, "둔 token이 있으면 묻지 않는다");
+
+        // host가 받지 않는 token(기기 취소·다른 host): 지우고 다시 묻는다 → 새 token
+        st.lock().unwrap().accepted.clear();
+        admit(&t, &root, "tui@x", "aaa TUI · x", ask("good")).await.unwrap();
+        assert!(asked.borrow()[1].contains("저장한 기기 token을 host가 받지 않는다"), "{:?}", asked.borrow());
+        assert_eq!(load_token(&file).as_deref(), Some("tok-2"));
+
+        // 새로 받은 token도 거부: 멈추고 token을 남기지 않는다
+        {
+            let mut s = st.lock().unwrap();
+            s.accepted.clear();
+            s.reject_new = true;
+        }
+        let e = admit(&t, &root, "tui@x", "aaa TUI · x", ask("good")).await.err().unwrap();
+        assert!(format!("{e:#}").contains("pairing으로 받은 token도 host가 받지 않았다"), "{e:#}");
+        assert_eq!(load_token(&file), None, "거부된 token은 지운다");
+        assert!(!file.exists());
+
+        // 틀린 코드: host 까닭으로 멈추고 token은 없다
+        let e = admit(&t, &root, "tui@x", "aaa TUI · x", ask("bad")).await.err().unwrap();
+        assert!(format!("{e:#}").contains("pairing을 거부했다(HTTP 401): 코드가 틀렸다"), "{e:#}");
+        assert!(!file.exists());
+
+        // 기기 취소(4401): 붙은 뒤 까닭과 함께 끝난다
+        {
+            let mut s = st.lock().unwrap();
+            s.reject_new = false;
+            s.revoke = true;
+        }
+        let mut c = admit(&t, &root, "tui@x", "aaa TUI · x", ask("good")).await.unwrap();
+        let e = c.next().await.err().unwrap();
+        assert!(format!("{e:#}").contains("이 기기가 host에서 취소됐다"), "{e:#}");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// 인증서 확인: 그 이름의 인증서를 믿는 루트로는 pairing이 되고(SNI·Host·Origin·cookie 이름 `__Host-aaa`),
