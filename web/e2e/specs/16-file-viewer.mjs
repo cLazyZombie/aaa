@@ -640,4 +640,168 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     aaa("pane", "kill", "viewer");
   });
+  await step("긴 소스 가상화(herdr-web-ui VirtualSource·sourcePreview·filePreviewText, @pierre/diffs 1.5.2, plan §8.175): 2,000줄 넘는 소스는 줄마다 요소를 두지 않고 보이는 둘레의 줄만 그리며, 5,000줄·256K자까지는 패키지 worker가 앱 색으로 칠하고 그보다 길면 글 그대로에 「너무 길어 강조 표시를 생략했습니다」를 단다. 줄 참조는 그 줄을 가운데로 데려오고, 「긴 줄 바꿈」을 따르며, 256KiB 넘는 소스는 8MiB까지 다 읽는다. 빈 파일도 연다. 함께 넣은 패키지의 라이선스 고지를 보낸다", async () => {
+    const proj = `${root}/files/big`;
+    fs.mkdirSync(`${proj}/src`, { recursive: true });
+    // 3,000줄(가상화하고 칠한다). 2501번째 줄은 접히는 긴 줄
+    const bigLines = Array.from({ length: 3000 }, (_, i) => `export const v${i} = "s"; // c${i}`);
+    bigLines[2500] = `export const wide = "${"가나다 abc ".repeat(60)}";`;
+    const big = bigLines.join("\n") + "\n";
+    fs.writeFileSync(`${proj}/src/big.ts`, big);
+    // 12,000줄·약 450KB: 256KiB(미리보기 예산)를 넘어 소스 예산으로 다 읽고, 5,000줄을 넘어 칠하지 않는다
+    const huge = Array.from({ length: 12_000 }, (_, i) => `export const value${String(i).padStart(5, "0")} = "${"x".repeat(8)}";`).join("\n") + "\n";
+    fs.writeFileSync(`${proj}/src/huge.ts`, huge);
+    if (huge.length <= 256 * 1024) throw new Error(`huge.ts가 256KiB 이하 ${huge.length}`);
+    fs.writeFileSync(`${proj}/src/empty.ts`, "");
+    const prog = `process.stdout.write(${JSON.stringify(["B src/big.ts:2500", "H src/huge.ts:11000", "E src/empty.ts", "big> "].join("\r\n"))}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "big", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("big", "big>");
+
+    // 가상화한 줄은 패키지의 shadow root 안이다: 문서의 MutationObserver(domIs)가 보지 못해 frame마다 본다
+    const virtualIs = (p, what, fn, arg) =>
+      p.waitForFunction(fn, arg, { polling: "raf", timeout: 20_000 }).catch((e) => {
+        throw new Error(`20000ms 안에 ${what}이 되지 않았다: ${e.message.split("\n")[0]}`);
+      });
+    // 그 줄이 보기 가운데(줄 높이 안)에 있다
+    const centered = (p, what, line) =>
+      virtualIs(
+        p,
+        what,
+        (line) => {
+          const row = document.querySelector(".virtual-source-file")?.shadowRoot?.querySelector(`[data-line="${line}"]`);
+          const view = document.querySelector(".virtual-source-scroll")?.getBoundingClientRect();
+          if (!row || !view) return false;
+          const r = row.getBoundingClientRect();
+          return row.hasAttribute("data-selected-line") && Math.abs(r.top + r.height / 2 - (view.top + view.height / 2)) <= r.height;
+        },
+        line,
+      );
+    // 그려 둔 줄 수(요소로 그린 소스는 0), 그 줄의 높이와 첫 조각, 앱 글자색·keyword 색, 옆으로 굴릴 것
+    const shape = (p, line) =>
+      p.evaluate((line) => {
+        const sr = document.querySelector(".virtual-source-file")?.shadowRoot;
+        const root = document.querySelector(".virtual-source-scroll");
+        const row = sr?.querySelector(`[data-line="${line}"]`);
+        const probe = document.createElement("span");
+        probe.style.color = "var(--syntax-keyword)";
+        document.body.append(probe);
+        const keyword = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          rows: sr?.querySelectorAll("[data-line]").length ?? 0,
+          lineElements: document.querySelectorAll('[data-testid="file-viewer-code"] .hl-line').length,
+          virtualContent: document.querySelector('[data-testid="file-viewer-code"]')?.classList.contains("file-viewer-content-virtual") ?? false,
+          colored: document.querySelector(".virtual-source")?.hasAttribute("data-colored") ?? false,
+          height: row?.getBoundingClientRect().height ?? 0,
+          first: row?.querySelector("span") ? { text: row.querySelector("span").textContent, color: getComputedStyle(row.querySelector("span")).color } : null,
+          tokens: sr?.querySelectorAll('span[style*="--herdr-code-token-"]').length ?? 0,
+          text: root ? getComputedStyle(root).color : null,
+          keyword,
+          // 긴 줄은 shadow 안 code 칸이 옆으로 굴린다
+          sideways: sr?.querySelector("[data-code]") ? sr.querySelector("[data-code]").scrollWidth - sr.querySelector("[data-code]").clientWidth : 0,
+          notice: document.querySelector(".file-viewer-notice")?.textContent ?? "",
+          meta: document.querySelector(".file-viewer-meta")?.textContent ?? "",
+          copy: document.querySelector('[aria-label="파일 복사"]') !== null,
+        };
+      }, line);
+    const TOO_LONG = "너무 길어 강조 표시를 생략했습니다";
+    const paintedIs = (p, what) =>
+      virtualIs(p, what, () => {
+        const span = document.querySelector(".virtual-source-file")?.shadowRoot?.querySelector('[data-line="2500"] span');
+        return span?.textContent === "export" && span.style.color === "var(--herdr-code-token-keyword)";
+      });
+    const openAt = async (p, link, what, line) => {
+      await clickLink(p, link);
+      await centered(p, what, line);
+    };
+    const closeViewer = async (p, what) => {
+      await p.keyboard.press("Escape");
+      await closed(p, what);
+    };
+
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await inList(dp, "pane-big");
+    await screenHas(dp, "big 줄들", "big>");
+
+    // 3,000줄: 보이는 둘레만 그리고, worker가 앱 token 색으로 칠하며, 줄 참조를 가운데로
+    await openAt(dp, "src/big.ts:2500", "big.ts 2500번째 줄 가운데", 2500);
+    await paintedIs(dp, "worker가 칠한 2500번째 줄");
+    const colored = await shape(dp, 2500);
+    if (!colored.virtualContent || colored.lineElements !== 0 || colored.rows === 0 || colored.rows > 600)
+      throw new Error(`3,000줄 소스를 가상화하지 않았다 ${JSON.stringify(colored)}`);
+    if (!colored.colored || colored.first?.color !== colored.keyword || colored.keyword === colored.text)
+      throw new Error(`2500번째 줄 export가 앱 keyword 색이 아니다 ${JSON.stringify(colored)}`);
+    if (colored.notice.includes(TOO_LONG) || !colored.copy) throw new Error(`3,000줄 소스 머리 ${JSON.stringify(colored)}`);
+    // 긴 줄 바꿈 꺼짐(기본): 2501번째 긴 줄은 한 줄 높이로 옆으로 굴린다
+    if (Math.round((await shape(dp, 2501)).height) !== Math.round(colored.height) || colored.sideways <= 0)
+      throw new Error(`긴 줄 바꿈을 끈 가상화 소스 ${JSON.stringify(await shape(dp, 2501))}`);
+    await shot(dp, "desktop-file-virtual");
+    await closeViewer(dp, "big.ts Escape");
+
+    // 약 450KB·12,000줄: 다 읽고(잘림 알림·줄 범위 밖 알림 없음, 「파일 복사」 있음) 글 그대로에 너무 길어 알림, 11000번째 줄 가운데
+    await openAt(dp, "src/huge.ts:11000", "huge.ts 11000번째 줄 가운데", 11_000);
+    const plain = await shape(dp, 11_000);
+    if (!plain.virtualContent || plain.rows === 0 || plain.rows > 600) throw new Error(`12,000줄 소스를 가상화하지 않았다 ${JSON.stringify(plain)}`);
+    if (plain.colored || plain.tokens !== 0 || !plain.notice.includes(TOO_LONG)) throw new Error(`5,000줄 넘는 소스를 칠했거나 알리지 않았다 ${JSON.stringify(plain)}`);
+    if (!plain.copy || /중|벗어납니다|일부만/.test(plain.notice) || plain.first?.text !== `export const value10999 = "${"x".repeat(8)}";`)
+      throw new Error(`256KiB 넘는 소스를 다 읽지 않았다 ${JSON.stringify(plain)}`);
+    await shot(dp, "desktop-file-virtual-plain");
+    await closeViewer(dp, "huge.ts Escape");
+
+    // 빈 파일: host는 Range에 416(bytes */0)으로 답하고, 빈 소스로 연다
+    await clickLink(dp, "src/empty.ts");
+    await codeIs(dp, "빈 파일", "");
+    if (await dp.evaluate(() => document.querySelector('[data-testid="file-viewer"] [role="alert"]') !== null)) throw new Error("빈 파일을 열지 못했다");
+    await closeViewer(dp, "빈 파일 Escape");
+
+    // 「긴 줄 바꿈」을 켜면 가상화한 긴 줄도 접는다(이 기기 설정, 위 단계와 같은 곳)
+    const group = (await openSettings(dp, "채팅")).locator(".settings-section", { has: dp.getByRole("heading", { name: "파일 뷰어" }) });
+    await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
+    await dp.keyboard.press("Escape");
+    await dp.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
+    await openAt(dp, "src/big.ts:2500", "접은 big.ts 2500번째 줄 가운데", 2500);
+    const wrapped = await shape(dp, 2501);
+    if (wrapped.height < 3 * colored.height || wrapped.sideways > 0) throw new Error(`긴 줄 바꿈을 켠 가상화 소스 ${JSON.stringify(wrapped)}`);
+    await shot(dp, "desktop-file-virtual-wrap");
+    await closeViewer(dp, "접은 big.ts Escape");
+
+    // 함께 넣은 패키지의 라이선스 고지를 host가 보낸다(빌드가 모은 것: 따로 받는 조각의 Shiki 문법, Apache NOTICE, 패치한
+    // xterm, 글을 싣지 않은 패키지)
+    const notices = await dp.evaluate(async () => {
+      const r = await fetch("/licenses/THIRD_PARTY_NOTICES.txt");
+      return { status: r.status, type: r.headers.get("content-type"), text: await r.text() };
+    });
+    const missing = [
+      /^@pierre\/diffs@1\.5\.2 \(apache-2\.0\)\n--- LICENSE\.md\n {33}Apache License$/m,
+      /^@pierre\/theme@[\d.]+ \(apache-2\.0\)\n--- LICENSE\n[^]*?--- NOTICE\.md\n[^]*?primer\/github-vscode-theme/m,
+      /^diff@[\d.]+ \(BSD-3-Clause\)\n--- LICENSE\n/m,
+      /^@shikijs\/langs@[\d.]+ \(MIT\)\n--- LICENSE\n/m,
+      /^@xterm\/xterm@[\d.]+ \(MIT\)\n--- LICENSE\n/m,
+      /^lru_map@[\d.]+ \(MIT\)\n\(이 패키지는 라이선스 글을 싣지 않았다\. package\.json: license MIT, author /m,
+    ].filter((want) => !want.test(notices.text));
+    if (notices.status !== 200 || !notices.type?.startsWith("text/plain") || missing.length > 0)
+      throw new Error(`라이선스 고지 ${notices.status} ${notices.type} 빠짐 ${missing.join(" ")}`);
+    await dp.context().close();
+
+    // 휴대폰·iPad: 같은 소스를 화면 가득·아래에서 올라온 창에서
+    const settled = (box) => box.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+    for (const [name, size, opts, link, line] of [
+      ["phone", { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 }, "src/big.ts:2500", 2500],
+      ["ipad", { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 }, "src/huge.ts:11000", 11_000],
+    ]) {
+      const tp = (await pairPage(browser, aaa("web", "pair").code, size, opts)).page;
+      await inList(tp, "pane-big");
+      await screenHas(tp, `${name} big 줄들`, "big>");
+      const at = await textPoint(tp, link);
+      await tp.touchscreen.tap(at.x, at.y);
+      await settled(viewer(tp));
+      await centered(tp, `${name} ${line}번째 줄 가운데`, line);
+      if (line === 2500) await paintedIs(tp, `${name} worker가 칠한 줄`);
+      const got = await shape(tp, line);
+      if (!got.virtualContent || got.rows === 0 || got.rows > 600) throw new Error(`${name} 가상화 ${JSON.stringify(got)}`);
+      await shot(tp, `${name}-file-virtual`);
+      await tp.context().close();
+    }
+    aaa("pane", "kill", "big");
+  });
 }
