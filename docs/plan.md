@@ -3979,6 +3979,15 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   Agents 줄이 「배경 작업 대기」(CLI `background_wait` true), 그 일의 알림 뒤 배경 수가 없어져도 BG(유예), 다음 턴이 끝나면 BG가 아님.
   결함 심기 셋(웹이 무시, host가 내지 않음, 유예 없음) 모두 실패.
 
+### 8.185 TUI thread 상태 말의 PR 번호(10-18, 차이 목록 2장 L3 241줄 TUI 몫, t-0345 recount (b))
+
+- **참고.** herdr-projects `state_line`: 검토 대기·병합 중 thread의 사실은 따라가는 PR이 있으면 「PR #n」(`pr_number`, 주소 끝 숫자), 없으면 보고.
+  웹 `stateLine`은 이미 같다(e27de52·25ef559).
+- **aaa가 달랐던 것.** TUI `list.rs` `state_line`은 검토·병합 중이면 늘 「보고」였다.
+- **고침.** `pr_number`(웹 `prNumber`와 같은 규칙: 마지막 `/` 뒤가 숫자만일 때)로 「PR #n」, 아니면 「보고」.
+- **시험.** TUI 유닛 `state_line_like_herdr_projects`에 PR 있는 검토 대기·병합 중과 번호로 끝나지 않는 주소. 결함 심기(늘 「보고」)는
+  `검토 대기 · 보고 ≠ 검토 대기 · PR #42`로 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
