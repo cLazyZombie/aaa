@@ -949,9 +949,12 @@ impl Drop for Presence {
 }
 
 /// pane WebSocket 주소의 선택. `flow=ack`면 출력 ACK를 보내는 화면이다(herdr-web-ui attach `flow_control: "ack"`).
+/// `fg`·`bg`(`rrggbb`)는 그 화면의 터미널 기본 색이다(plan §8.185).
 #[derive(Deserialize)]
 struct PaneWsQuery {
     flow: Option<String>,
+    fg: Option<String>,
+    bg: Option<String>,
 }
 
 async fn pane_ws(
@@ -968,7 +971,8 @@ async fn pane_ws(
     // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
     // ACK를 하지 않는 화면(다시 띄우기 전에 받은 옛 웹)은 보내기 줄로만 잰다
     let acks = q.flow.as_deref() == Some("ack");
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, acks, socket))
+    let colors = q.fg.zip(q.bg).and_then(|(fg, bg)| aaa_proto::TermColors::from_hex(&fg, &bg));
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, acks, colors, socket))
 }
 
 /// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
@@ -1119,9 +1123,22 @@ fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
 }
 
 /// WebSocket 하나가 대화형 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고 끝나면 풀린다.
-async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, acks: bool, socket: WebSocket) {
+async fn pane_loop(
+    host: Arc<Host>,
+    id: String,
+    dev: String,
+    role: DeviceRole,
+    acks: bool,
+    colors: Option<aaa_proto::TermColors>,
+    socket: WebSocket,
+) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
+    // 그 pane의 agent가 이 화면의 색을 받은 뒤에 화면을 연다: 화면이 본 뒤 프로그램이 묻는 색에는 이 색으로 답한다(plan §8.185).
+    // agent가 늦으면 여는 것도 늦다(요청 시한까지). 끊긴 agent는 기다리지 않는다
+    if let Some(wait) = colors.and_then(|c| host.front_colors(&front.id, &id, c)) {
+        let _ = wait.await;
+    }
     // 이 연결이 그 pane을 보는 동안(seen.rs). 가려지면 웹은 lease를 놓을 뿐 연결은 두므로 「보는 중」은 기기의 presence가 정한다
     host.view_term(&front.id, &dev, Some(&id));
     pane_session(&host, &id, &dev, role, &front, acks, socket).await;
@@ -1292,6 +1309,14 @@ async fn pane_session(
                                         out.msg(&history_reply(hid, o));
                                     });
                                 }
+                            }
+                            None
+                        }
+                        // 테마를 바꿨다: 연 때처럼 agent가 받은 뒤 이 화면의 다음 메시지를 본다
+                        Ok(TermClientMsg::Colors { fg, bg }) => {
+                            let wait = aaa_proto::TermColors::from_hex(&fg, &bg).and_then(|c| host.front_colors(&front.id, &id, c));
+                            if let Some(wait) = wait {
+                                let _ = wait.await;
                             }
                             None
                         }

@@ -3,7 +3,7 @@
 //! 기획서는 ghostty-vt를 1순위로 두었지만 빌드에 Zig 0.16이 필요해 M1-1은 순수 Rust `vt100`을 쓴다.
 //! 이 adapter 뒤에서 엔진을 바꿀 수 있게 front·host 쪽은 replay bytes와 글자 화면만 본다.
 
-use aaa_proto::{GridRun, MouseEncoding, MouseMode, PaneModes, ReadFormat, ReadSource, ScreenText};
+use aaa_proto::{GridRun, MouseEncoding, MouseMode, PaneModes, ReadFormat, ReadSource, ScreenText, TermColors};
 
 pub mod copy;
 
@@ -1480,18 +1480,45 @@ pub enum Query {
     SecondaryAttributes,
     /// DSR 6 `CSI 6 n`(커서 위치)
     CursorPosition,
+    /// OSC 10/11 `?`(기본 글자·바탕 색). 답은 `DefaultColors::reply`
+    DefaultColor(DefaultColor, Terminator),
 }
 
 impl Query {
-    /// 커서와 상관없는 답. 커서 위치는 질의 시점의 화면으로 답한다(`Vt::cursor_report`).
+    /// 커서·색과 상관없는 답. 커서 위치는 질의 시점의 화면으로(`Vt::cursor_report`), 색은 `DefaultColors`로 답한다.
     /// DA1은 ghostty `device_attributes.zig` `Primary` 기본값(VT220·ANSI 색), DA2는 `Secondary` 기본값(VT220·판 0)이다.
     pub fn fixed_reply(self) -> Option<&'static [u8]> {
         match self {
             Query::PrimaryAttributes => Some(b"\x1b[?62;22c"),
             Query::SecondaryAttributes => Some(b"\x1b[>1;0;0c"),
-            Query::CursorPosition => None,
+            Query::CursorPosition | Query::DefaultColor(..) => None,
         }
     }
+}
+
+/// OSC 10(기본 글자 색)·11(기본 바탕 색)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultColor {
+    Foreground,
+    Background,
+}
+
+/// OSC의 끝: BEL이나 ST(`ESC \`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Terminator {
+    Bel,
+    St,
+}
+
+/// 출력에서 찾은 것
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Found {
+    /// 답할 질의. 출력에서 뺐다
+    Query(Query),
+    /// 프로그램이 기본 색을 정했다(OSC 10/11 색). 출력에 남긴다(화면도 그 색으로 그린다)
+    Set(DefaultColor, [u8; 3]),
+    /// 프로그램이 기본 색을 되돌렸다(OSC 110/111, `ESC c`). 출력에 남긴다
+    Reset(DefaultColor),
 }
 
 const QUERIES: &[(&[u8], Query)] = &[
@@ -1502,19 +1529,25 @@ const QUERIES: &[(&[u8], Query)] = &[
     (b"\x1b[6n", Query::CursorPosition),
 ];
 
-/// 질의를 뺀 출력과, 그 출력의 어느 자리에 어떤 질의가 있었는가
+/// 기본 색 OSC의 앞. 끝(BEL·ST)까지 붙들어 본다
+const COLOR_OSC: &[&[u8]] = &[b"\x1b]10;", b"\x1b]11;", b"\x1b]110", b"\x1b]111"];
+/// 이보다 길도록 끝나지 않는 OSC는 기본 색 OSC로 보지 않고 그대로 보낸다
+const COLOR_OSC_MAX: usize = 256;
+
+/// 질의를 뺀 출력과, 그 출력의 어느 자리에서 무엇을 찾았는가
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Scanned {
     pub out: Vec<u8>,
-    /// (`out`에서 질의가 있던 자리, 질의). 커서 위치는 `out[..자리]`를 먹인 화면으로 답한다
-    pub queries: Vec<(usize, Query)>,
+    /// (`out`에서의 자리, 찾은 것). 질의는 빠진 자리, 색 지정은 그 OSC 바로 뒤다. 커서 위치는 `out[..자리]`를 먹인 화면으로 답한다
+    pub found: Vec<(usize, Found)>,
 }
 
 /// 출력에서 session host가 답할 질의를 빼낸다(chunk 경계에 걸쳐도). 터미널은 session host이므로 질의는 front(xterm)에 가지
 /// 않는다: 붙은 front 수와 상관없이 답은 한 번이다(herdr는 서버의 ghostty가 답하고 front에는 그린 화면만 보낸다,
 /// `src/pane/terminal.rs` `terminal_responses`). 질의일 수 있는 끝은 다음 출력까지 붙든다(끝나지 않은 escape라 어느 터미널도
 /// 아직 그리지 않는다, herdr-web-ui `server/attach-output.ts` `AttachStartupProbes`). Windows ConPTY(INHERIT_CURSOR)는 시작할 때
-/// 커서 위치를 묻고 답이 올 때까지 자식의 출력과 종료를 막는다.
+/// 커서 위치를 묻고 답이 올 때까지 자식의 출력과 종료를 막는다. 색 질의에 답하려면 프로그램이 정한 기본 색도 알아야 해서
+/// OSC 10/11 지정·110/111·`ESC c`도 찾는다(herdr `DefaultColorOscTracker`).
 #[derive(Default)]
 pub struct QueryScanner {
     held: Vec<u8>,
@@ -1529,7 +1562,7 @@ impl QueryScanner {
             v.extend_from_slice(data);
             std::borrow::Cow::Owned(v)
         };
-        let mut s = Scanned { out: Vec::with_capacity(input.len()), queries: Vec::new() };
+        let mut s = Scanned { out: Vec::with_capacity(input.len()), found: Vec::new() };
         let mut i = 0;
         while i < input.len() {
             let Some(esc) = input[i..].iter().position(|&b| b == 0x1b) else {
@@ -1540,15 +1573,46 @@ impl QueryScanner {
             i += esc;
             let rest = &input[i..];
             if let Some((q, kind)) = QUERIES.iter().find(|(q, _)| rest.starts_with(q)) {
-                s.queries.push((s.out.len(), *kind));
+                s.found.push((s.out.len(), Found::Query(*kind)));
                 i += q.len();
-            } else if QUERIES.iter().any(|(q, _)| q.starts_with(rest)) {
+                continue;
+            }
+            if rest.starts_with(b"\x1bc") {
+                s.out.extend_from_slice(b"\x1bc");
+                s.found.push((s.out.len(), Found::Reset(DefaultColor::Foreground)));
+                s.found.push((s.out.len(), Found::Reset(DefaultColor::Background)));
+                i += 2;
+                continue;
+            }
+            if COLOR_OSC.iter().any(|p| rest.starts_with(p)) {
+                match osc_end(rest) {
+                    OscEnd::Done { body, len, term } => {
+                        match color_osc(&rest[2..body], term) {
+                            Some(ColorOsc::Queries(qs)) => {
+                                s.found.extend(qs.into_iter().map(|q| (s.out.len(), Found::Query(q))));
+                            }
+                            Some(ColorOsc::Keep(found)) => {
+                                s.out.extend_from_slice(&rest[..len]);
+                                s.found.extend(found.into_iter().map(|f| (s.out.len(), f)));
+                            }
+                            None => s.out.extend_from_slice(&rest[..len]),
+                        }
+                        i += len;
+                        continue;
+                    }
+                    OscEnd::Open if rest.len() < COLOR_OSC_MAX => {
+                        self.held = rest.to_vec();
+                        break;
+                    }
+                    OscEnd::Open | OscEnd::Broken => {}
+                }
+            } else if QUERIES.iter().any(|(q, _)| q.starts_with(rest)) || COLOR_OSC.iter().any(|p| p.starts_with(rest))
+            {
                 self.held = rest.to_vec();
                 break;
-            } else {
-                s.out.push(0x1b);
-                i += 1;
             }
+            s.out.push(0x1b);
+            i += 1;
         }
         s
     }
@@ -1556,6 +1620,129 @@ impl QueryScanner {
     /// 붙들고 있는 끝(세션이 끝날 때 마저 내보낸다)
     pub fn take_held(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.held)
+    }
+}
+
+enum OscEnd {
+    /// `body`까지가 내용(`ESC ]` 뒤부터), `len`은 끝까지 길이
+    Done { body: usize, len: usize, term: Terminator },
+    /// 아직 끝나지 않았다
+    Open,
+    /// ST가 아닌 escape가 끼었다(OSC가 아니게 됐다)
+    Broken,
+}
+
+fn osc_end(rest: &[u8]) -> OscEnd {
+    for (j, &b) in rest.iter().enumerate().skip(2) {
+        match b {
+            0x07 => return OscEnd::Done { body: j, len: j + 1, term: Terminator::Bel },
+            0x1b => {
+                return match rest.get(j + 1) {
+                    Some(b'\\') => OscEnd::Done { body: j, len: j + 2, term: Terminator::St },
+                    Some(_) => OscEnd::Broken,
+                    None => OscEnd::Open,
+                };
+            }
+            _ => {}
+        }
+    }
+    OscEnd::Open
+}
+
+enum ColorOsc {
+    /// 모두 질의다(`10;?`, `10;?;?`처럼 이어진 것도). 출력에서 뺀다
+    Queries(Vec<Query>),
+    /// 색 지정·되돌리기. 출력에 남긴다(알아보지 못한 색은 사건 없이)
+    Keep(Vec<Found>),
+}
+
+/// `10;…`·`11;…`·`110`·`111`. xterm처럼 `10;a;b`는 10에 a, 11에 b다(12부터는 다른 색이라 보지 않는다).
+/// 질의와 지정이 섞였거나 12 이상에 닿는 질의는 None(화면이 받는다)
+fn color_osc(body: &[u8], term: Terminator) -> Option<ColorOsc> {
+    let which = |n: usize| match n {
+        10 => Some(DefaultColor::Foreground),
+        11 => Some(DefaultColor::Background),
+        _ => None,
+    };
+    let text = std::str::from_utf8(body).ok()?;
+    let (num, args) = text.split_once(';').unwrap_or((text, ""));
+    match num {
+        "110" => return Some(ColorOsc::Keep(vec![Found::Reset(DefaultColor::Foreground)])),
+        "111" => return Some(ColorOsc::Keep(vec![Found::Reset(DefaultColor::Background)])),
+        _ => {}
+    }
+    let first: usize = num.parse().ok()?;
+    let items: Vec<(usize, &str)> = args.split(';').enumerate().map(|(k, a)| (first + k, a)).collect();
+    if items.iter().all(|(_, a)| *a == "?") {
+        let qs =
+            items.iter().map(|(n, _)| which(*n).map(|c| Query::DefaultColor(c, term))).collect::<Option<Vec<_>>>()?;
+        return Some(ColorOsc::Queries(qs));
+    }
+    if items.iter().any(|(_, a)| *a == "?") {
+        return None;
+    }
+    let found = items.iter().filter_map(|(n, a)| Some(Found::Set(which(*n)?, parse_color(a)?))).collect();
+    Some(ColorOsc::Keep(found))
+}
+
+/// xterm 색 지정 중 `#`(3·6·9·12자리)·hex 3·6자리·`rgb:r/g/b`(1~4자리)를 읽는다(ghostty `color.zig` `RGB.parse`, X11 이름과
+/// `rgbi:`는 읽지 않는다)
+fn parse_color(spec: &str) -> Option<[u8; 3]> {
+    let hex = |v: &str| -> Option<u8> {
+        if v.is_empty() || v.len() > 4 {
+            return None;
+        }
+        let n = u32::from_str_radix(v, 16).ok()?;
+        Some((n * 255 / ((1u32 << (4 * v.len())) - 1)) as u8)
+    };
+    let spec = spec.trim_matches([' ', '\t']);
+    let digits = spec
+        .strip_prefix('#')
+        .filter(|d| matches!(d.len(), 3 | 6 | 9 | 12))
+        .or(Some(spec).filter(|d| matches!(d.len(), 3 | 6)));
+    if let Some(d) = digits.filter(|d| d.is_ascii()) {
+        let w = d.len() / 3;
+        return Some([hex(&d[..w])?, hex(&d[w..2 * w])?, hex(&d[2 * w..])?]);
+    }
+    let mut parts = spec.strip_prefix("rgb:")?.split('/');
+    let rgb = [hex(parts.next()?)?, hex(parts.next()?)?, hex(parts.next()?)?];
+    parts.next().is_none().then_some(rgb)
+}
+
+/// 기본 색 질의의 답: 프로그램이 정한 색이 먼저, 아니면 화면이 알려 준 색(herdr `default_color_query_response`). 둘 다 없으면
+/// 답하지 않는다(herdr도 host theme을 모르면 ghostty 기본 색이 비어 답이 없다)
+#[derive(Debug, Default, Clone)]
+pub struct DefaultColors {
+    /// 화면이 알려 준 색
+    pub host: Option<TermColors>,
+    child: [Option<[u8; 3]>; 2],
+}
+
+impl DefaultColors {
+    pub fn new(host: Option<TermColors>) -> DefaultColors {
+        DefaultColors { host, child: [None; 2] }
+    }
+
+    /// 출력에서 찾은 색 지정·되돌리기를 적는다
+    pub fn note(&mut self, f: Found) {
+        match f {
+            Found::Set(c, rgb) => self.child[c as usize] = Some(rgb),
+            Found::Reset(c) => self.child[c as usize] = None,
+            Found::Query(_) => {}
+        }
+    }
+
+    /// 프로그램이 정한 색은 질의의 끝으로(ghostty 기본 답), 화면 색은 늘 ST로(herdr `osc_rgb_response`) 답한다
+    pub fn reply(&self, c: DefaultColor, term: Terminator) -> Option<Vec<u8>> {
+        let host = self.host.map(|h| if c == DefaultColor::Foreground { h.fg } else { h.bg });
+        let (rgb, term) = match self.child[c as usize] {
+            Some(rgb) => (rgb, term),
+            None => (host?, Terminator::St),
+        };
+        let n = if c == DefaultColor::Foreground { 10 } else { 11 };
+        let [r, g, b] = rgb.map(|v| u16::from(v) * 257);
+        let end: &str = if term == Terminator::Bel { "\x07" } else { "\x1b\\" };
+        Some(format!("\x1b]{n};rgb:{r:04x}/{g:04x}/{b:04x}{end}").into_bytes())
     }
 }
 
@@ -1593,26 +1780,101 @@ mod tests {
     #[test]
     fn queries_are_taken_out_of_the_output_across_chunks() {
         use Query::*;
+        let q = |at: usize, q: Query| (at, Found::Query(q));
         let mut s = QueryScanner::default();
         let got = s.scan(b"ab\x1b[6ncd\x1b[c\x1b[0c\x1b[>c\x1b[>0cef");
         assert_eq!(got.out, b"abcdef");
-        let at4 = [PrimaryAttributes, PrimaryAttributes, SecondaryAttributes, SecondaryAttributes].map(|q| (4, q));
-        assert_eq!(got.queries, [vec![(2, CursorPosition)], at4.to_vec()].concat());
+        let at4 = [PrimaryAttributes, PrimaryAttributes, SecondaryAttributes, SecondaryAttributes].map(|k| q(4, k));
+        assert_eq!(got.found, [vec![q(2, CursorPosition)], at4.to_vec()].concat());
         // 끝의 앞부분은 붙들었다가 이어 본다
-        assert_eq!(s.scan(b"x\x1b["), Scanned { out: b"x".to_vec(), queries: vec![] });
+        assert_eq!(s.scan(b"x\x1b["), Scanned { out: b"x".to_vec(), found: vec![] });
         assert_eq!(s.scan(b">"), Scanned::default());
-        assert_eq!(s.scan(b"0cy\x1b"), Scanned { out: b"y".to_vec(), queries: vec![(0, SecondaryAttributes)] });
+        assert_eq!(s.scan(b"0cy\x1b"), Scanned { out: b"y".to_vec(), found: vec![q(0, SecondaryAttributes)] });
         assert_eq!(s.take_held(), b"\x1b");
-        // 질의가 아닌 것: 다른 인자의 DA·DECXCPR·DSR 5·DA3·kitty 키보드 질의(aaa는 그 키 방식을 쓰지 않는다)·색·글자 모양
-        let other: &[u8] = b"\x1b[1c\x1b[>1c\x1b[?6n\x1b[5n\x1b[=c\x1b[?u\x1b]11;?\x07\x1b[61n\x1b[31m\x1b\x1b[6";
+        // 질의가 아닌 것: 다른 인자의 DA·DECXCPR·DSR 5·DA3·kitty 키보드 질의(aaa는 그 키 방식을 쓰지 않는다)·커서 색·팔레트·글자 모양
+        let other: &[u8] =
+            b"\x1b[1c\x1b[>1c\x1b[?6n\x1b[5n\x1b[=c\x1b[?u\x1b]12;?\x07\x1b]4;1;?\x07\x1b[61n\x1b[31m\x1b\x1b[6";
         let got = s.scan(other);
         assert_eq!(got.out, &other[..other.len() - 3]);
-        assert!(got.queries.is_empty());
-        assert_eq!(s.scan(b"n"), Scanned { out: vec![], queries: vec![(0, CursorPosition)] });
+        assert!(got.found.is_empty());
+        assert_eq!(s.scan(b"n"), Scanned { out: vec![], found: vec![q(0, CursorPosition)] });
         let mut v = Vt::new(5, 20);
         v.feed(b"hi\r\nthere");
         assert_eq!(v.cursor_report(), b"\x1b[2;6R");
         assert_eq!(PrimaryAttributes.fixed_reply(), Some(&b"\x1b[?62;22c"[..]));
+    }
+
+    /// 기본 색 질의(OSC 10/11 `?`)는 빼고 그 끝을 적는다. 색 지정·되돌리기(110/111·`ESC c`)는 출력에 남기고 그 뒤 자리에 적는다
+    #[test]
+    fn color_osc_is_found_across_chunks() {
+        use DefaultColor::*;
+        use Terminator::*;
+        let color = |c, t| Found::Query(Query::DefaultColor(c, t));
+        let mut s = QueryScanner::default();
+        let kept: &[u8] = b"\x1b]11;#102030\x07d\x1b]10;rgb:ffff/8000/0\x1b\\e\x1b]111\x07\x1bc";
+        let got = s.scan(&[b"a\x1b]10;?\x1b\\b\x1b]11;?\x07c".as_slice(), kept].concat());
+        assert_eq!(got.out, [b"abc".as_slice(), kept].concat());
+        let after = |needle: &[u8]| got.out.windows(needle.len()).position(|w| w == needle).unwrap() + needle.len();
+        assert_eq!(
+            got.found,
+            vec![
+                (1, color(Foreground, St)),
+                (2, color(Background, Bel)),
+                (after(b"#102030\x07"), Found::Set(Background, [0x10, 0x20, 0x30])),
+                // 0x8000 * 255 / 0xffff = 127(ghostty도 나머지를 버린다)
+                (after(b"/0\x1b\\"), Found::Set(Foreground, [0xff, 0x7f, 0])),
+                (after(b"111\x07"), Found::Reset(Background)),
+                (got.out.len(), Found::Reset(Foreground)),
+                (got.out.len(), Found::Reset(Background)),
+            ]
+        );
+        // 끝나지 않은 OSC는 끝(ST의 ESC 하나까지)이 올 때까지 붙든다
+        assert_eq!(s.scan(b"x\x1b]1"), Scanned { out: b"x".to_vec(), found: vec![] });
+        assert_eq!(s.scan(b"0;"), Scanned::default());
+        assert_eq!(s.scan(b"?\x1b"), Scanned::default());
+        assert_eq!(s.scan(b"\\y"), Scanned { out: b"y".to_vec(), found: vec![(0, color(Foreground, St))] });
+        // 이어진 질의는 차례로 답한다(xterm `10;?;?`는 10과 11)
+        assert_eq!(s.scan(b"\x1b]10;?;?\x07").found, vec![(0, color(Foreground, Bel)), (0, color(Background, Bel))]);
+        // 화면이 받는 것: 질의와 지정이 섞임, 12에 닿는 질의, 끝 전에 다른 escape, 읽지 못한 색(사건 없이), 너무 긴 OSC
+        let long = [b"\x1b]10;".as_slice(), &[b'x'; COLOR_OSC_MAX], b"\x07"].concat();
+        for pass in
+            [b"\x1b]10;?;#000\x07".as_slice(), b"\x1b]11;?;?\x07", b"\x1b]10;?\x1b[31m", b"\x1b]10;red\x07", &long]
+        {
+            let got = s.scan(pass);
+            assert_eq!((got.out.as_slice(), got.found.as_slice()), (pass, &[][..]), "{pass:?}");
+        }
+        assert!(s.take_held().is_empty());
+    }
+
+    /// 색 질의의 답은 프로그램이 정한 색(질의의 끝으로), 아니면 화면 색(늘 ST)이다. 둘 다 모르면 답하지 않는다
+    #[test]
+    fn default_color_replies_prefer_the_program_then_the_screen() {
+        use DefaultColor::*;
+        use Terminator::*;
+        let mut c = DefaultColors::default();
+        assert_eq!(c.reply(Foreground, Bel), None);
+        c.host = Some(TermColors { fg: [0xd8, 0xd0, 0xc3], bg: [0x18, 0x16, 0x13] });
+        assert_eq!(c.reply(Background, Bel).unwrap(), b"\x1b]11;rgb:1818/1616/1313\x1b\\");
+        c.note(Found::Set(Background, [0xff, 0, 0x80]));
+        assert_eq!(c.reply(Background, Bel).unwrap(), b"\x1b]11;rgb:ffff/0000/8080\x07");
+        assert_eq!(c.reply(Background, St).unwrap(), b"\x1b]11;rgb:ffff/0000/8080\x1b\\");
+        assert_eq!(c.reply(Foreground, Bel).unwrap(), b"\x1b]10;rgb:d8d8/d0d0/c3c3\x1b\\");
+        c.note(Found::Reset(Background));
+        assert_eq!(c.reply(Background, Bel).unwrap(), b"\x1b]11;rgb:1818/1616/1313\x1b\\");
+        // 색 지정 꼴(ghostty `RGB.parse`의 hex 규칙: 자리 수의 최댓값을 255로)
+        for (spec, rgb) in [
+            ("#fff", Some([255, 255, 255])),
+            ("#123456789abc", Some([0x12, 0x56, 0x9a])),
+            ("abc", Some([0xaa, 0xbb, 0xcc])),
+            (" #102030\t", Some([0x10, 0x20, 0x30])),
+            ("rgb:f/80/000", Some([255, 128, 0])),
+            ("rgb:1/2", None),
+            ("rgb:1/2/3/4", None),
+            ("red", None),
+            ("#12345", None),
+        ] {
+            assert_eq!(parse_color(spec), rgb, "{spec}");
+        }
     }
 
     #[test]

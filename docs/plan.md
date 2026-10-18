@@ -3991,7 +3991,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   하나, 감지 요청을 비우지 않음 → 하나) 모두 실패.
 - **반영.** agent binary를 바꾸고 agent를 다시 띄워야 한다. session host·host·웹은 바뀌지 않는다.
 
-### 8.185 터미널 질의에 session host가 한 번 답한다(10-18, t-0345 다시 세기 a2, 전환 gate G8, §8.93 「확인할 것」)
+### 8.185 터미널 질의에 session host가 한 번 답한다(10-18, t-0345 다시 세기 a2, 전환 gate G8, §8.93 「확인할 것」, t-0346)
 
 - **증상.** session host는 DSR 6에만 답했다. DA1·DA2·색 질의(OSC 10/11)는 붙은 웹 화면의 xterm.js 5.5가 화면마다 답해(DA1 `ESC[?1;2c`,
   DA2 `ESC[>0;276;0c`, OSC는 그 화면 테마 색) 0~N번 pane 입력으로 갔다. 답이 없으면 답을 기다리는 프로그램이 멈추고(감독 멈춤), 두 번이면
@@ -4009,16 +4009,42 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **kitty 키보드 질의에는 답하지 않는다(참고와 다름).** 답하면(`ESC[?0u`) 프로그램은 kitty 키보드 방식이 있다고 보고 그 꼴의 키를 기다리지만
   aaa 화면(xterm.js 5.5·TUI)은 그 꼴로 보내지 않는다. 답이 없으면 프로그램은 뒤따르는 DA1 답으로 「없음」을 안다(이제 DA1은 늘 한 번 답한다).
   kitty 키보드를 쓰려면 화면의 키 인코딩이 먼저다(후속).
-- **같은 종류로 남긴 것(확인할 것).** xterm.js가 화면마다 답하는 DSR 5(`ESC[0n`)·DECXCPR(`ESC[?r;cR`)·DECRQM(`$y`)·OSC 4·12와 ghostty만 답하는
-  DA3(`CSI = c`)·XTVERSION. 같은 scanner에 줄을 더하면 된다.
-- **시험.** aaa-vt `queries_are_taken_out_of_the_output_across_chunks`(질의 빼기·자리·chunk 경계 붙들기·질의 아닌 escape 그대로). 웹 E2E 19
-  「터미널 질의 답」: 질의 프로그램(`#x`면 질의와 표지 `Q<n>.`, `#z`면 그 뒤 받은 것)을 붙은 화면 0·1·2개에서 돌린다. 화면마다 표지까지 읽은
-  뒤 `sentFrames`가 비었는지(화면이 답하지 않았다), 그 뒤 CLI로 보낸 `#z`로 pane이 받은 답이 정확히 하나인지 본다(session host 답은 질의를
-  화면에 보내기 전에 pane 입력으로 가 `#z`보다 먼저 닿는다). 고치기 전 실패: 화면 0개 DA1·DA2 답 없음, 1개 xterm 답 하나(`ESC[?1;2c`·
-  `ESC[>0;276;0c`), 2개 같은 답 두 번. 고친 뒤 통과. 결함 심기 다섯이 모두 실패한다: 끝의 앞부분을 붙들지 않음·DA2를 질의로 보지 않음(유닛),
-  받은 출력을 그대로 화면에 보냄(xterm도 답해 두세 번)·답을 pane에 쓰지 않음·DA2에 xterm.js 답(E2E 19).
-- **색 질의(OSC 10/11)는 아직 화면이 답한다.** session host가 답하려면 화면 테마 색을 알아야 한다(herdr는 client가 알려 준 host 색으로 답한다).
-- **반영.** session host binary가 바뀐다. 이미 떠 있는 session host(이어지는 세션)는 그 세션이 끝날 때까지 옛 동작이다(새로 띄운 세션부터).
+- **색 질의(OSC 10/11)는 화면이 알려 준 색으로(herdr host terminal theme).** herdr client는 바깥 터미널 색을 서버에 알리고
+  (`src/server/clients.rs:377-424` `update_host_theme`), 서버는 foreground client(가장 최근에 붙거나 입력한 client, `src/server/headless.rs`
+  `promote_client_to_foreground`·`ClientShellHostTheme`)의 색으로 답한다(`src/pane/terminal.rs:3424-3488` `default_color_query_response`·
+  `osc_rgb_response`: `rgb:rrrr/gggg/bbbb`, 끝은 늘 ST). 프로그램이 OSC 10/11로 정한 색이 있으면 그 색을 질의의 끝으로 답하고(ghostty
+  `stream_terminal.zig:1717-1731`), 색을 모르면 답하지 않는다(pane 터미널은 기본 색이 비어 `Terminal.zig:174-193` `colorForXterm`이 없다).
+  foreground client가 없어도 theme은 그대로 둔다(`sync_foreground_client_state`).
+- **고침(OSC 10/11).** 웹은 pane WebSocket 주소에 `fg`·`bg`(token `--term-fg`·`--term-bg`), 테마를 바꾸면 `TermClientMsg::Colors`로 알린다.
+  host(colors.rs)는 화면마다 색과 마지막으로 쓴(알림·입력 `lease_use`) 차례를 두고 가장 최근 화면의 색을 지금 색으로 삼는다. 지금 색이 바뀌면
+  agent 연결마다 차례 있는 줄로 `AgentRequest::TermColors`(agent 기능 `term_colors.v1`)를 보낸다(앞 색이 뒤 색을 덮지 않는다). agent는 색을
+  두고 모든 pump에 넘긴 뒤 답하며, pump는 SESSION_IPC 1.2 session host에 `SessionRequest::Colors`를 보내고 새 연결(다시 붙음)마다 처음에 다시
+  보낸다. 새 세션은 spec에 실어 프로그램이 시작하자마자 묻는 색(vim·Claude Code)에도 답한다. aaa-vt `QueryScanner`가 OSC 10/11 `?`(이어진
+  `10;?;?`도)를 빼고 지정·110/111·`ESC c`는 출력에 남긴 채 적으며(`#`·hex·`rgb:`만 읽는다), `DefaultColors`가 프로그램 색 → 화면 색 → 없음
+  순으로 답한다.
+- **화면을 열기 전에 색이 닿는다.** pane WebSocket은 그 pane의 agent가 이 화면의 색을 받았다고 답한 뒤에(지금 색이 같아도 다시 보낸다)
+  snapshot을 보낸다. agent는 pump에 넘긴 뒤 답하므로 화면이 본 뒤의 입력·질의는 pump에서 색 뒤에 선다. 테마를 바꾼 `colors`도 같게 기다린 뒤
+  그 화면의 다음 메시지를 본다. 값: agent가 늦으면 화면 여는 것도 늦다(요청 시한 15초까지, 끊긴 agent는 기다리지 않는다).
+- **참고와 다른 것.** TUI는 바깥 터미널 색을 알리지 않는다(TUI는 grid로 그려 바깥 터미널이 질의를 본 적이 없어 늘 0번이었다, 후속).
+  색을 알린 화면이 없는 동안(host를 띄우고 웹이 붙기 전)은 답하지 않는다(참고도 host theme을 모르면 답하지 않는다). 옛 웹(주소에 색이 없다)만
+  붙은 동안도 같다.
+- **같은 종류로 남긴 것(확인할 것).** xterm.js가 화면마다 답하는 DSR 5(`ESC[0n`)·DECXCPR(`ESC[?r;cR`)·DECRQM(`$y`)·OSC 4·12, 질의와 지정이 섞인
+  OSC 10/11과 ghostty만 답하는 DA3(`CSI = c`)·XTVERSION. 같은 scanner에 줄을 더하면 된다. X11 색 이름·`rgbi:` 지정은 읽지 않는다.
+- **시험.** aaa-vt `queries_are_taken_out_of_the_output_across_chunks`(질의 빼기·자리·chunk 경계 붙들기·질의 아닌 escape 그대로),
+  `color_osc_is_found_across_chunks`(OSC 10/11 질의는 빼고 끝을 적음, 지정·되돌리기는 남김, 화면이 받는 꼴), `default_color_replies_prefer_the_program_then_the_screen`
+  (프로그램 색·화면 색·없음, 색 지정 꼴), aaa-host `current_colors_follow_the_last_front_used`, aaa-agent
+  `colors_reach_the_session_host_after_and_while_attached`(다시 붙은 session host에 받아 둔 색이 먼저, 붙은 동안 받은 색은 바로). 웹 E2E 19
+  「터미널 질의 답」: 질의 프로그램(시작하자마자 바탕 색을 묻고, `#x`면 질의와 표지 `Q<n>.`, `#z`면 그 뒤 받은 것)을 붙은 화면 0·1·2개에서
+  돌린다. 화면마다 표지까지 읽은 뒤 `sentFrames`가 비었는지(화면이 답하지 않았다), 그 뒤 CLI로 보낸 `#z`로 pane이 받은 답이 정확히 하나인지
+  본다(session host 답은 질의를 화면에 보내기 전에 pane 입력으로 가 `#z`보다 먼저 닿는다). 색 답은 마지막으로 연 화면의 token을 ST 꼴로
+  바꾼 것이다(OSC 10은 ST, 11은 BEL로 묻는다). 고치기 전 실패: 화면 0개 DA1·DA2·OSC 답 없음, 1개 xterm이 답함(`ESC[?1;2c`·`ESC[>0;276;0c`·
+  테마 색), 2개 같은 답 두 번. 고친 뒤 통과. 결함 심기 열셋이 모두 실패한다. DA·DSR(1부): 끝의 앞부분을 붙들지 않음·DA2를 질의로 보지 않음
+  (유닛), 받은 출력을 그대로 화면에 보냄(xterm도 답해 두세 번)·답을 pane에 쓰지 않음·DA2에 xterm.js 답(E2E 19). 색(2부): 색 질의를 화면에도
+  보냄·프로그램 색을 적지 않음·가장 먼저 쓴 화면의 색·새 연결에 색을 보내지 않음·붙은 동안 색을 넘기지 않음(유닛), spec 색을 쓰지 않음(시작할
+  때 질의 답 없음)·화면 색 답을 BEL로 맺음·웹이 색을 알리지 않음(E2E 19).
+- **반영.** 1부는 session host binary다. 이미 떠 있는 session host(이어지는 세션)는 그 세션이 끝날 때까지 옛 동작이다(새로 띄운 세션부터).
+  2부는 host(웹 포함)·agent·session host가 함께 바뀐다(SESSION_IPC 1.2, agent 기능 `term_colors.v1`, FRONT_API는 1.33 그대로). 옛 session
+  host에는 색을 보내지 않으므로 그 세션의 색 질의는 그대로 화면이 답한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

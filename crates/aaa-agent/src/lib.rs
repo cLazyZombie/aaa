@@ -44,6 +44,8 @@ enum PumpCmd {
     HostGone,
     /// 끝난 세션을 지운다(forget): session host가 더 응답하는 동안을 기다리지 않고 연결을 닫는다.
     Close,
+    /// 화면 색이 바뀌었다: session host에 알린다(응답은 버린다)
+    Colors(aaa_proto::TermColors),
 }
 
 struct Entry {
@@ -165,6 +167,8 @@ pub struct Agent {
     /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
     /// 그가 보내는 정보의 이름은 여기서 덮는다.
     labels: Mutex<HashMap<String, String>>,
+    /// host가 알려 준 화면 색(plan §8.185). 새 세션의 spec에 싣고, 다시 붙은 session host에도 보낸다
+    term_colors: Mutex<Option<aaa_proto::TermColors>>,
 }
 
 impl Agent {
@@ -201,6 +205,7 @@ impl Agent {
             progress: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
+            term_colors: Mutex::new(None),
         }))
     }
 
@@ -587,6 +592,16 @@ impl Agent {
         Ok(())
     }
 
+    /// 화면 색을 받았다: 새 세션에 실을 것으로 두고 모든 pump에 넘긴 뒤 답한다. host는 이 답을 받고서야 그 화면에 pane을
+    /// 보이므로 그 화면이 본 뒤의 요청은 pump에서 색 뒤에 선다(plan §8.185)
+    async fn set_term_colors(&self, c: aaa_proto::TermColors) {
+        *self.term_colors.lock().unwrap() = Some(c);
+        let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
+        for p in pumps {
+            let _ = p.send(PumpCmd::Colors(c)).await;
+        }
+    }
+
     /// session host가 없는 세션의 정보(파일에서)
     fn offline_info(&self, paths: &SessionPaths, spec: &SpecFile) -> SessionInfo {
         let meta: Option<MetaFile> = util::read_json(&paths.meta()).ok();
@@ -628,6 +643,7 @@ impl Agent {
             connect_session(paths, spec).await.map_err(ConnectError::into_error)?;
         let info = self.labeled(info);
         let detect_ipc = detect_ipc(proto);
+        let colors_ipc = colors_ipc(proto);
         let watch = watch_of(spec, &info, detect_ipc);
         // 띄울 때 harness를 모르는 pane(셸)은 herdr처럼 앞 프로세스 이름으로 agent를 찾는다(plan §8.110)
         let front = info
@@ -639,7 +655,9 @@ impl Agent {
         let me = self.clone();
         let paths = paths.clone();
         let spec = spec.clone();
-        tokio::spawn(async move { me.pump(paths, spec, tx, rx, prx, Detecting { watch, front, detect_ipc }).await });
+        tokio::spawn(async move {
+            me.pump(paths, spec, tx, rx, prx, Detecting { watch, front, detect_ipc, colors_ipc }).await
+        });
         Ok(info)
     }
 
@@ -654,11 +672,18 @@ impl Agent {
         detecting: Detecting,
     ) {
         let id = spec.id.clone();
-        let Detecting { mut watch, mut front, detect_ipc } = detecting;
+        let Detecting { mut watch, mut front, detect_ipc, colors_ipc } = detecting;
         let mut seq = 0u64;
         let pending = loop {
             let mut pending: HashMap<String, (String, bool)> = HashMap::new();
             let mut forwarding = false;
+            // 이 연결의 session host에 지금 화면 색을 알린다(다시 붙은 session host, agent보다 오래 산 session host). 쓰지 못했으면
+            // 아래 읽기가 끊김을 본다
+            let colors = *self.term_colors.lock().unwrap();
+            if let Some(c) = colors.filter(|_| colors_ipc) {
+                seq += 1;
+                let _ = tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await;
+            }
             let dropped = loop {
                 let watch_at = watch.as_ref().and_then(detect::Watch::next_at);
                 let detect_at = watch_at.into_iter().chain(front.as_ref().map(|(_, p)| p.next_at())).min();
@@ -714,6 +739,15 @@ impl Agent {
                             }
                         }
                         Some(PumpCmd::Close) | None => break Dropped::Closed,
+                        // 답(`c…`)은 pending에 없어 버린다
+                        Some(PumpCmd::Colors(c)) => {
+                            seq += 1;
+                            if colors_ipc
+                                && tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await.is_err()
+                            {
+                                break Dropped::Lost("session host에 쓰지 못했다".into());
+                            }
+                        }
                     },
                     incoming = rx.next() => match incoming {
                         Ok(Some(Incoming::Terminal(chunk))) => {
@@ -832,7 +866,8 @@ impl Agent {
                             let err = ErrorBody::new(ErrorCode::Unavailable, "세션에 다시 붙는 중이다");
                             self.send_host(&LinkMsg::Res { id: host_id, result: Outcome::Err(err) }).await;
                         }
-                        Some(PumpCmd::HostGone) => {}
+                        // 다시 붙으면 그때의 색을 보낸다
+                        Some(PumpCmd::HostGone) | Some(PumpCmd::Colors(_)) => {}
                         Some(PumpCmd::Close) | None => return None,
                     },
                 }
@@ -918,6 +953,7 @@ impl Agent {
             created_at_ms: util::now_ms(),
             spec,
             label: None,
+            colors: *self.term_colors.lock().unwrap(),
         };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
@@ -1111,6 +1147,10 @@ impl Agent {
             }
             AgentRequest::ScrollbackWrite { name, offset, data, eof } => {
                 self.scrollback_write(name, offset, data.0, eof).await
+            }
+            AgentRequest::TermColors(c) => {
+                self.set_term_colors(c).await;
+                Ok(AgentResponse::Done)
             }
             AgentRequest::ScrollbackRemove { name } => {
                 let dir = std::env::temp_dir();
@@ -1365,10 +1405,12 @@ impl Slot {
 
 /// pump의 화면 감지: 띄울 때 정한 harness의 감지 차례(`watch`), 또는 셸 pane 앞 agent 찾기(`front`, 셸 pid와 상태).
 /// 앞에서 agent를 잡으면 그 harness로 `watch`를 만든다. `detect_ipc`: session host가 `Detect`를 받는다.
+/// `colors_ipc`: session host가 `Colors`를 받는다(감지는 아니지만 같은 session host 판으로 정한다).
 struct Detecting {
     watch: Option<detect::Watch>,
     front: Option<(u32, detect::foreground::Presence)>,
     detect_ipc: bool,
+    colors_ipc: bool,
 }
 
 /// 셸 pane 앞의 agent를 한 차례 본다. herdr의 Windows 프로세스 트리 조사는 옮기지 않았다(unix만, plan §8.110).
@@ -1391,6 +1433,10 @@ fn foreground_tick(
 /// session host가 SESSION_IPC 1.1 이상일 때만 `Detect`를 보낸다(그 전 session host는 모르는 요청을 받으면 연결을 끊는다)
 fn detect_ipc(proto: aaa_proto::Version) -> bool {
     proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_DETECT
+}
+
+fn colors_ipc(proto: aaa_proto::Version) -> bool {
+    proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_COLORS
 }
 
 /// 화면으로 상태를 볼 세션이면 감지 차례
@@ -1484,7 +1530,18 @@ mod tests {
             label: None,
             harness: spec.harness.clone(),
         };
-        (SpecFile { id: "s".into(), token: "t".into(), boot_id: "b".into(), created_at_ms: 1, spec, label: None }, info)
+        (
+            SpecFile {
+                id: "s".into(),
+                token: "t".into(),
+                boot_id: "b".into(),
+                created_at_ms: 1,
+                spec,
+                label: None,
+                colors: None,
+            },
+            info,
+        )
     }
 
     /// 감지 요청: 유예가 끝난 차례 다음의 첫 요청
@@ -1712,6 +1769,21 @@ mod tests {
             self.agent.clone().handle(id.into(), body).await;
         }
 
+        /// 가짜 session host가 받은 다음 요청(연결 번호·요청). 인사는 건너뛴다
+        async fn next_req(&mut self) -> (u32, SessionRequest) {
+            // 안전 상한(오지 않을 때 멈춘다). 다시 붙기 간격은 길어야 몇 초다
+            let next = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    match self.seen.recv().await {
+                        Some(Seen::Hello(n)) => self.hello = n,
+                        Some(Seen::Req(n, body)) => return (n, body),
+                        None => panic!("가짜 session host가 끝났다"),
+                    }
+                }
+            });
+            next.await.expect("session host가 요청을 받지 않았다")
+        }
+
         /// 다시 붙었다: 세션은 실행 중이고, host는 다시 구독하라는 알림을 받고(aaa-host `on_resync`가 마지막 offset부터 다시
         /// 구독한다), 입력은 새 연결로 session host에 간다
         async fn works_again(mut self) {
@@ -1787,6 +1859,24 @@ mod tests {
             }
         });
         assert!(again.await.is_ok(), "다시 붙은 뒤 화면 감지를 다시 묻지 않는다");
+        std::fs::remove_dir_all(&rig.state).unwrap();
+    }
+
+    /// 화면 색(plan §8.185): 다시 붙는 동안 받은 색은 붙자마자 그 session host에 가고, 붙어 있는 동안 받은 색은 바로 간다.
+    /// 둘 다 agent가 답하기 전에 pump에 넘겼다
+    #[tokio::test]
+    async fn colors_reach_the_session_host_after_and_while_attached() {
+        let dark = aaa_proto::TermColors { fg: [0xd8, 0xd0, 0xc3], bg: [0x18, 0x16, 0x13] };
+        let light = aaa_proto::TermColors { fg: [0x2a, 0x25, 0x1f], bg: [0xfa, 0xf8, 0xf3] };
+        let (mut rig, gate, outcome) = Rig::after_first_connection_ends(FirstEnd::Unknown, false).await;
+        assert_eq!(outcome, Ok(()), "살아 있는 session host에 다시 붙지 않고 놓았다");
+        rig.agent.clone().handle("c1".into(), AgentRequest::TermColors(dark)).await;
+        assert_eq!(rig.next_res().await, ("c1".into(), Outcome::Ok(AgentResponse::Done)));
+        gate.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (n, body) = rig.next_req().await;
+        assert_eq!(body, SessionRequest::Colors(dark), "다시 붙은 session host에 받아 둔 색을 먼저 보내지 않았다");
+        rig.agent.clone().handle("c2".into(), AgentRequest::TermColors(light)).await;
+        assert_eq!(rig.next_req().await, (n, SessionRequest::Colors(light)));
         std::fs::remove_dir_all(&rig.state).unwrap();
     }
 

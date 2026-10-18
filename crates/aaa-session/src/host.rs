@@ -20,7 +20,7 @@ use super::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
 use crate::ring::Ring;
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use aaa_common::util;
-use aaa_vt::{QueryScanner, Scanned, Vt};
+use aaa_vt::{DefaultColors, Found, Query, QueryScanner, Scanned, Vt};
 
 /// 출력 보존 상한(재접속 때 이 범위 안이면 bytes만 이어 보낸다)
 pub const RING_BYTES: usize = 2 << 20;
@@ -102,6 +102,8 @@ struct State {
     /// 화면 변화 순번(출력·크기 변경). agent의 상태 감지가 그대로인 화면을 다시 읽지 않게 한다(herdr `detection_content_seq`).
     screen_seq: u64,
     queries: QueryScanner,
+    /// 색 질의(OSC 10/11)의 답: 화면이 알려 준 색과 프로그램이 정한 색
+    colors: DefaultColors,
     ring: Ring,
     conns: HashMap<u64, FrameTx>,
     subs: HashSet<u64>,
@@ -140,16 +142,26 @@ impl State {
         Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(replay), history_more }
     }
 
-    /// PTY 출력. 프로그램의 질의(DA1·DA2·커서 위치)는 session host가 질의 시점의 화면으로 답하고 출력에서 뺀다:
+    /// PTY 출력. 프로그램의 질의(DA1·DA2·커서 위치·기본 색)는 session host가 질의 시점의 화면으로 답하고 출력에서 뺀다:
     /// front가 아니라 session host가 터미널이다(붙은 front가 몇이든 답은 한 번, aaa-vt `QueryScanner`)
     fn output(&mut self, data: &[u8]) {
-        let Scanned { out, queries } = self.queries.scan(data);
+        let Scanned { out, found } = self.queries.scan(data);
         let mut start = 0;
-        for (at, q) in queries {
+        for (at, f) in found {
             self.vt.feed(&out[start..at]);
-            let reply = q.fixed_reply().map_or_else(|| self.vt.cursor_report(), <[u8]>::to_vec);
-            let _ = self.input.send(reply);
             start = at;
+            let reply = match f {
+                Found::Query(Query::CursorPosition) => Some(self.vt.cursor_report()),
+                Found::Query(Query::DefaultColor(c, term)) => self.colors.reply(c, term),
+                Found::Query(q) => q.fixed_reply().map(<[u8]>::to_vec),
+                _ => {
+                    self.colors.note(f);
+                    None
+                }
+            };
+            if let Some(reply) = reply {
+                let _ = self.input.send(reply);
+            }
         }
         self.vt.feed(&out[start..]);
         self.emit(&out);
@@ -271,6 +283,10 @@ impl State {
                     None => HistoryChunk { data: B64(Vec::new()), lines: 0, more: false, found: false },
                 };
                 Ok(AgentResponse::History(chunk))
+            }
+            SessionRequest::Colors(c) => {
+                self.colors.host = Some(c);
+                Ok(AgentResponse::Done)
             }
         };
         let _ = tx.json(&SessionMsg::Res { id, result: result.into() }).await;
@@ -410,6 +426,7 @@ async fn run(dir: PathBuf) -> Result<()> {
         vt: Vt::new(rows, cols),
         screen_seq: 0,
         queries: QueryScanner::default(),
+        colors: DefaultColors::new(spec.colors),
         ring: Ring::new(RING_BYTES),
         conns: HashMap::new(),
         subs: HashSet::new(),
