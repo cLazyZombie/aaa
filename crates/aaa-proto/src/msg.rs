@@ -367,6 +367,25 @@ pub struct FileInfo {
     pub kind: FileKind,
 }
 
+/// 폴더 보기의 폴더 한 단계(herdr-web-ui `DirectoryListing`). `path`는 agent 머신의 실제 경로다. `parent`는 허용 폴더 안일
+/// 때만 있다. 폴더·파일은 각각 처음 500개까지(`truncated`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DirListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub home: String,
+    pub directories: Vec<String>,
+    pub files: Vec<DirFile>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DirFile {
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+}
+
 // ───────────────────────── Agent link ─────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -483,6 +502,14 @@ pub enum AgentRequest {
     FileLocate {
         session: String,
         path: String,
+    },
+    /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
+    /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
+    DirList {
+        session: String,
+        path: String,
+        #[serde(default)]
+        hidden: bool,
     },
     /// 파일 보기: `FileLocate`가 돌려준 실제 경로의 한 조각(`FileChunk`). 그 사이 바뀌었거나 허용 폴더 밖이면 거부한다.
     /// `page`면 HTML 파일을 페이지로 그린 bytes(제 폴더의 그림·style·script를 넣은 것)의 조각이다.
@@ -661,6 +688,8 @@ pub enum AgentResponse {
     Cwd {
         cwd: Option<String>,
     },
+    /// 읽은 폴더 한 단계
+    DirListed(DirListing),
     /// 찾은 파일. 없으면 끝이 같은 파일 후보(실제 경로, 둘 이상)
     FileLocated {
         info: Option<FileInfo>,
@@ -1003,7 +1032,8 @@ pub struct GridLine {
     pub runs: Vec<GridRun>,
 }
 
-/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다.
+/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다(없는 줄은 그대로).
+/// host는 크기(줄 수나 폭)가 바뀌면 `full`로 보낸다. 고치기 전 host는 폭만 바뀌면 바뀐 줄만 보냈다(QA t-0337 Q23).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct GridFrame {
     pub pane: String,
@@ -1146,6 +1176,14 @@ pub enum FrontRequest {
         pane: String,
         path: String,
     },
+    /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
+    /// 조작 기기만(`PaneFile`과 같다)
+    PaneDir {
+        pane: String,
+        path: String,
+        #[serde(default)]
+        hidden: bool,
+    },
     PaneSend {
         pane: String,
         data: B64,
@@ -1222,6 +1260,12 @@ pub enum FrontRequest {
     PaneInput {
         pane: String,
         data: B64,
+    },
+    /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
+    /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
+    PanePaste {
+        pane: String,
+        text: String,
     },
     /// 조작 lease를 이 연결로 가져온다(이전 보유자에게는 State로 알린다)
     PaneTake {
@@ -1622,6 +1666,9 @@ pub enum FrontResponse {
         candidates: Vec<String>,
         url: Option<String>,
     },
+    PaneDir {
+        listing: DirListing,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -1967,6 +2014,8 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(FrontRequest::PaneDir { pane: "p".into(), path: "src".into(), hidden: false }.needs_control());
+        assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(
