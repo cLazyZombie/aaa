@@ -2350,10 +2350,15 @@ fn routines() {
 
 /// HTTP/1.1 GET 한 번(Connection: close). (상태, 머리글 소문자, 본문)
 fn http_get(addr: &str, path: &str) -> (u16, String, Vec<u8>) {
+    http_get_with(addr, path, "")
+}
+
+/// 머리글 줄(`이름: 값\r\n`)을 더한 GET
+fn http_get_with(addr: &str, path: &str, extra: &str) -> (u16, String, Vec<u8>) {
     use std::io::{Read, Write};
     let mut c = std::net::TcpStream::connect(addr).unwrap();
     c.set_read_timeout(Some(T)).unwrap();
-    write!(c, "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").unwrap();
+    write!(c, "GET {path} HTTP/1.1\r\nHost: {addr}\r\n{extra}Connection: close\r\n\r\n").unwrap();
     let mut raw = Vec::new();
     c.read_to_end(&mut raw).unwrap();
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("머리글 끝");
@@ -2409,7 +2414,44 @@ fn library_view() {
     let (st, head, body) = http_get(&web, &format!("{base}big.bin"));
     assert_eq!(st, 200, "{head}");
     assert!(head.contains("content-length: 2097152"), "{head}");
-    assert!(body == std::fs::read(agent_lib.join("big.bin")).unwrap(), "본문 {}바이트가 원본과 다르다", body.len());
+    let original = std::fs::read(agent_lib.join("big.bin")).unwrap();
+    assert!(body == original, "본문 {}바이트가 원본과 다르다", body.len());
+
+    // 파일 보기(차이 목록 R1)도 이 경로로 읽는다: 목록이 종류·MIME을 주고, Range·내려받기를 받는다
+    let typed: Vec<(String, String, String)> = lib["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (f["path"].as_str().unwrap().into(), f["mime"].as_str().unwrap().into(), f["kind"].as_str().unwrap().into())
+        })
+        .collect();
+    for want in [
+        ("index.html", "text/html", "text"),
+        ("out.txt", "text/plain", "text"),
+        ("big.bin", "application/octet-stream", "binary"),
+    ] {
+        assert!(typed.contains(&(want.0.into(), want.1.into(), want.2.into())), "{want:?} {typed:?}");
+    }
+    // host 사본의 가운데 조각(「결과물\n」의 「과물」)
+    let (st, head, body) = http_get_with(&web, &format!("{base}out.txt"), "Range: bytes=3-8\r\n");
+    assert_eq!((st, String::from_utf8_lossy(&body).into_owned()), (206, "과물".to_string()), "{head}");
+    assert!(head.contains("content-range: bytes 3-8/10") && head.contains("content-length: 6"), "{head}");
+    // agent 파일: 조각(512KiB)을 넘는 범위는 여러 번 읽어 그 길이에서 끊고, 끝에서 n바이트도 된다
+    let (st, head, body) = http_get_with(&web, &format!("{base}big.bin"), "Range: bytes=100-700099\r\n");
+    assert_eq!(st, 206, "{head}");
+    assert!(head.contains("content-range: bytes 100-700099/2097152"), "{head}");
+    assert!(body == original[100..700_100], "범위 본문 {}바이트가 원본과 다르다", body.len());
+    let (st, _, body) = http_get_with(&web, &format!("{base}big.bin"), "Range: bytes=-5\r\n");
+    assert_eq!((st, body.as_slice()), (206, &original[original.len() - 5..]));
+    let (st, head, _) = http_get_with(&web, &format!("{base}out.txt"), "Range: bytes=10-\r\n");
+    assert_eq!(st, 416, "{head}");
+    assert!(head.contains("content-range: bytes */10"), "{head}");
+    let (st, head, body) = http_get(&web, &format!("{base}sub/d.txt?download=1"));
+    assert_eq!((st, body.as_slice()), (200, b"deep\n".as_slice()), "{head}");
+    assert!(head.contains("content-disposition: attachment; filename*=utf-8''d.txt"), "{head}");
+    // 질의 없는 요청은 전과 같다(index.html이 형제 파일을 상대 경로로 읽는다): 내려받기로 바꾸지 않는다
+    assert!(!http_get(&web, &format!("{base}sub/d.txt")).1.contains("content-disposition"));
 
     // 경로 밖·목록 밖·틀린 권한
     let (st, _, _) = http_get(&web, &format!("{base}..%2F..%2Fbrief.md"));

@@ -42,7 +42,7 @@
 | `settingsHistory.ts` | 설정 창의 한 걸음(창·쪽·키 바 편집)마다 history 한 칸: 시스템 「뒤로」가 한 칸씩 나온다(`src/lib/settingsHistory.ts`, history 열쇠 이름만 `aaa:`) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. `fileUriPath`는 보고 Markdown의 `file://` 링크를 파일 이름으로 읽을 때와 터미널 OSC 8 file URI에 쓴다. 터미널 글 속 파일 경로 링크(`terminalFileLinkProvider`)와 열 수 없는 OSC 8 링크 거르기(`hyperlinkFilter`)는 `web/src/Term.tsx`가 건다(plan §8.125) |
 | `filePaths.ts` | 경로 조각(`pathParts`)·줄 참조 떼기(`fileLineTarget`, `a.ts:20:5`·`a.ts#L20`)·글 속 경로 찾기(`splitFilePaths`·`codeIsFilePath`): `src/lib/filePaths.ts` 그대로. 파일 보기가 쓴다(plan §8.125) |
-| `useFileViewer.ts` | 파일 보기를 방문 기록 한 칸으로(시스템 「뒤로」·Escape·닫기가 같은 길, 열린 채로 다른 파일을 고르면 칸을 늘리지 않음). `src/lib/useFileViewer.ts`에서 머신 ID 대신 pane만 두고 history 열쇠 이름을 `aaa:`로 바꿨다 |
+| `useFileViewer.ts` | 파일 보기를 방문 기록 한 칸으로(시스템 「뒤로」·Escape·닫기가 같은 길, 열린 채로 다른 파일을 고르면 칸을 늘리지 않음). `src/lib/useFileViewer.ts`에서 머신 ID 대신 pane만 두고(thread 결과물은 그 thread, 차이 목록 R1) history 열쇠 이름을 `aaa:`로 바꿨다 |
 | `FileViewer.css` | 파일 보기 모양: `src/components/FileViewer.css` 그대로(줄 번호·색은 `HighlightedCode.css`). 마크업은 `web/src/FileViewer.tsx`(참고 `FileViewer.tsx`·`TextFileView.tsx`에서 옮긴 것, 남은 것은 plan §8.125) |
 | `DirectoryBrowser.css`·`FileGlyph.tsx`·`fileIcons.ts`·`workspacePath.ts` | 파일 보기 안 폴더 보기: `src/components/DirectoryBrowser.css`(끝에 aaa 전역 `button` 규칙을 되돌리는 한 덩이)·`FileGlyph.tsx`(import 경로만), `src/lib/fileIcons.ts`·`workspacePath.ts` 그대로. 마크업은 `web/src/DirectoryBrowser.tsx`(읽기를 `pane_dir`로, 폴더 고르기·새 폴더는 뺌, plan §8.148) |
 | `imageBox.ts` | Markdown 그림이 읽히기 전 자리(`imageSlotStyle`·`standaloneImage`): `src/lib/imageBox.ts` 그대로. 파일 보기 안 Markdown이 쓴다(plan §8.125) |

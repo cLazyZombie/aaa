@@ -119,6 +119,45 @@ export default async function ({ page }) {
     const big = page.getByTestId("files").locator("li", { hasText: "big.bin" });
     if (!(await big.innerText()).includes("agent에서 읽음")) throw new Error(await big.innerText());
     await shot(page, "desktop-thread-library");
+    // 결과물 파일은 새 탭 대신 앱 안 파일 보기로 연다(차이 목록 R1): 같은 보기 경로(/v/)로 읽고, 문서 안 그림·링크는 결과물 안에서 푼다
+    const viewer = page.getByTestId("file-viewer");
+    await page.getByTestId("files").getByTestId("library-file").filter({ hasText: "docs/notes.md" }).click();
+    await until("결과물 Markdown 보기", async () => (await viewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "결과 메모");
+    const pic = await until("Markdown 안 그림(../pic.png)", async () => {
+      const w = await viewer.locator(".file-viewer-markdown img.markdown-image").evaluate((i) => (i.complete ? i.naturalWidth : 0)).catch(() => 0);
+      return w > 0 ? w : null;
+    });
+    const head = await viewer.evaluate((v) => ({ path: v.querySelector(".file-viewer-path")?.textContent, newTab: v.querySelector('a[aria-label="새 탭에서 열기"]')?.getAttribute("href") }));
+    if (pic !== 1 || head.path !== "·docs" || !/^\/v\/[0-9a-f]+\/docs\/notes\.md$/.test(head.newTab ?? "")) throw new Error(`결과물 Markdown ${JSON.stringify({ pic, ...head })}`);
+    await shot(page, "desktop-library-viewer-markdown");
+    // 문서의 링크(../index.html)는 같은 칸에서 그 결과물 페이지로: 보기 경로의 sandbox 그대로 opaque origin이다
+    await viewer.locator(".markdown-file", { hasText: "결과 페이지" }).click();
+    const pageEl = await until("결과물 페이지 frame", async () => (await viewer.locator("iframe.file-viewer-page").count()) === 1 && viewer.locator("iframe.file-viewer-page"));
+    const inner = await until("결과물 페이지 실행", async () => {
+      const f = await (await pageEl.elementHandle())?.contentFrame();
+      const d = f && (await f.evaluate(() => ({ title: document.getElementById("t")?.textContent, pic: document.getElementById("pic")?.naturalWidth, ...document.body.dataset })).catch(() => null));
+      return d?.api ? d : null;
+    });
+    if (inner.title !== "결과 보고" || inner.pic !== 1 || inner.parent !== "blocked" || inner.cookie === "visible" || inner.api === "200") {
+      throw new Error(`결과물 페이지 ${JSON.stringify(inner)}`);
+    }
+    await viewer.getByRole("button", { name: "소스" }).click();
+    await until("결과물 페이지 소스", async () => (await viewer.getByTestId("file-viewer-code").textContent().catch(() => "")).includes('id=t>결과 보고'));
+    // 내려받기는 attachment로 온다
+    const dl = await viewer.locator('a[aria-label="내려받기"]').getAttribute("href");
+    const got = await page.evaluate(async (u) => {
+      const r = await fetch(u);
+      return [r.status, r.headers.get("content-disposition")];
+    }, dl);
+    if (!dl.endsWith("/index.html?download=1") || got[0] !== 200 || got[1] !== "attachment; filename*=UTF-8''index.html") throw new Error(`내려받기 ${dl} ${JSON.stringify(got)}`);
+    // 다른 파일을 골라도 기록 칸은 하나다: 뒤로 한 번에 닫히고 thread 보기로 돌아온다
+    await page.goBack();
+    await domIs(page, "결과물 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="thread-view"]'));
+    // agent에 남은 큰 binary: 내려받으라고 한다
+    await page.getByTestId("files").getByTestId("library-file").filter({ hasText: "big.bin" }).click();
+    await until("binary 안내", async () => (await viewer.locator(".file-viewer-note").textContent().catch(() => "")).includes("내려받아 여세요"));
+    await viewer.getByRole("button", { name: "파일 닫기" }).click();
+    await domIs(page, "binary 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
     // 휴대폰 폭: 넓은 표는 그 안에서만 옆으로 밀리고 화면은 밀리지 않는다(참고 .markdown-table-wrap)
     await page.setViewportSize({ width: 390, height: 844 });
     await report.locator(".markdown-table-wrap").scrollIntoViewIfNeeded();

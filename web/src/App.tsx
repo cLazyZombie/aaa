@@ -737,6 +737,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onOpenPane={
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
+            onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
           />
         ) : viewProject !== undefined ? (
           <ProjectThreads
@@ -794,7 +795,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </>
         )}
       </main>
-      {fileViewing?.pane && <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} pane={fileViewing.pane} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />}
+      {fileViewing?.pane && (
+        <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
+      )}
+      {/* thread 결과물(차이 목록 R1): 고른 다른 파일도 그 결과물 안이다 */}
+      {fileViewing && fileViewing.pane === null && fileViewing.library && (
+        <FileViewer
+          key={`${fileViewing.library.project}/${fileViewing.library.thread} ${fileViewing.path}`}
+          path={fileViewing.path}
+          source={fileViewing.library}
+          onClose={closeFile}
+          onOpen={(path) => openFile({ path, pane: null, library: fileViewing.library })}
+        />
+      )}
       {newPaneOn && (
         <NewSessionDialog
           machine={newPaneOn}

@@ -125,6 +125,11 @@ pub struct LibraryFile {
     pub size: u64,
     /// host에 사본이 없다: 볼 때 agent에서 스트리밍한다(작업 폴더가 남아 있을 때만)
     pub on_agent: bool,
+    /// 파일 보기가 고를 MIME·종류(파일 보기 `FileInfo`와 같은 표). 옛 목록 파일에는 없어 host가 줄 때 채운다
+    #[serde(default)]
+    pub mime: String,
+    #[serde(default)]
+    pub kind: crate::msg::FileKind,
 }
 
 /// 웹에서 보는 보고서·결과물. `base`는 짧은 수명의 읽기 전용 경로(`/v/<cap>/`)이고 그 아래에 `path`를 붙인다.
