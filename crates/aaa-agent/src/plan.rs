@@ -7,7 +7,7 @@
 //!   동기면 답까지, 배경이면 「Async agent launched」 뒤 알림까지)과 배경 명령(답의 `backgroundTaskId`)을 센다. 끝남은
 //!   `<task-notification>`(사람 쪽 글·queue-operation·attachment 세 자리)의 task-id·tool-use-id나 `TaskStop`·`KillShell`의 답이다.
 //!   참고와 달리 하위 agent 폴더(`<session>/subagents/`)는 읽지 않는다: 하위 agent의 기록으로 보는 팀 동료의 끝남 추정·
-//!   다시 깨운 agent·하위 agent가 띄운 배경 명령·토큰은 뺐다(plan §8.145).
+//!   다시 깨운 agent·하위 agent가 띄운 배경 명령·토큰은 뺐다(plan §8.146).
 //! - 배경 작업은 그것을 띄운 Claude 프로세스 안에서 돈다: 지금 프로세스가 시작하기 전에 띄운 것은 세지 않는다(`since_ms`:
 //!   Claude SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
 //! - 기록은 처음부터 읽되 한 번에 `budget`만큼만, 그 뒤로는 늘어난 만큼만 읽는다. 처음 읽기가 끝에 닿기 전에는 계획을 말하지 않는다.

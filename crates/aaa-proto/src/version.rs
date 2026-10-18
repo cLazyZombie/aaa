@@ -38,7 +38,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.21: 병합 대기열 요청(`merge_enqueue`·`merge_drop`·`merge_list`·`merge_land`)을 없앰(옛 front가 보내면 모르는 요청
 /// 오류다), resolve `skip_copy`·`discard_uncopied`(plan §8.135),
 /// 1.22: `ReadSource::Detection`(`pane read --source detection`)(plan §8.110),
-/// 1.23: `AgentStatus.plan`·`background`(계획 n/m·배경 작업 수, plan §8.145)
+/// 1.23: `AgentStatus.plan`·`background`(계획 n/m·배경 작업 수, plan §8.146)
 pub const FRONT_API: Version = Version { major: 1, minor: 23 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
