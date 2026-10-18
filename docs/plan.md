@@ -269,7 +269,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
 - **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
   - M1-2 구현: `aaa attach [-w workspace]`(설계 예시의 `aaa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
-  - 키는 herdr 0.9.5 기본 키와 모드를 따른다(§8.73). prefix(`[tui] prefix`, 기본 `ctrl+b`) 뒤 명령 키 하나: `c` 새 탭, `v`·`-` 나누기, `h/j/k/l`·`Tab`·`Shift+Tab` 포커스, `n`·`p`·숫자 탭, `x` 닫기, `b` 목록, `w` 탐색 모드, `o` 질문 pane, `?` 단축키, `Shift+R` 설정 다시 읽기, `q` 나가기. prefix 두 번은 prefix 키를 그대로 보낸다. 시간 제한은 없고 Esc·모르는 키는 취소한다. 입력기 전환(§8.34)은 herdr처럼 기본 끔이다.
+  - 키는 herdr 0.9.5 기본 키와 모드를 따른다(§8.73). prefix(`[tui] prefix`, 기본 `ctrl+b`) 뒤 명령 키 하나: `c` 새 탭, `v`·`-` 나누기, `h/j/k/l`·`Tab`·`Shift+Tab` 포커스, `n`·`p`·숫자 탭, `x` 닫기, `b` 목록, `w` 탐색 모드, `o` 알림 카드의 pane(§8.185), `?` 단축키, `Shift+R` 설정 다시 읽기, `q` 나가기. prefix 두 번은 prefix 키를 그대로 보낸다. 시간 제한은 없고 Esc·모르는 키는 취소한다. 입력기 전환(§8.34)은 herdr처럼 기본 끔이다.
   - 다른 front가 지금 쓰는 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. 입력하거나 터미널 focus를 다시 얻으면 그 칸 크기로 맞추면서 이 화면이 지금 쓰는 화면이 된다(§8.33). lease가 빈 pane에 포커스해도 같다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. lease는 host가 둔다.
@@ -1797,7 +1797,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - Prefix: 다음 키 하나가 명령이다. 시간 제한이 없다(예전 3초를 뺐다). Esc와 모르는 키는 아무것도 보내지 않고 취소한다. prefix를 한 번 더 누르면 그 키를 pane에 보낸다.
   - Navigate(`prefix w`): `↑↓` 목록 고르기, `Enter` 열기, `1`~`9` 목록 n번째 열기, `h/j/k/l`·`←→`·`Tab`·`Shift+Tab` pane 포커스(탐색은 이어진다), 다른 prefix 명령은 하고 탐색을 끝낸다. Esc·prefix는 취소. 목록이 접혀 있으면 pane 위에 띄워 보인다(pane 크기는 그대로).
   - 예전 「목록 포커스」(`prefix Tab` 목록 ↔ pane, 목록에서 `j/k`)는 탐색 모드로 바뀌었다.
-- **키(herdr 기본값).** `c` 새 탭, `v` 오른쪽에 나누기(split_vertical), `-` 아래에 나누기(split_horizontal), `x` pane 닫기, `h/j/k/l` 방향 포커스, `Tab`·`Shift+Tab` pane 차례로, `n`·`p`·`1`~`9` 탭, `b` 목록 펴기·접기(포커스는 그대로), `w` 탐색, `o` 질문이 열린 pane으로(여럿이면 차례로), `?` 단축키 창, `Shift+R` `[tui]` 설정 다시 읽기, `q` 나가기.
+- **키(herdr 기본값).** `c` 새 탭, `v` 오른쪽에 나누기(split_vertical), `-` 아래에 나누기(split_horizontal), `x` pane 닫기, `h/j/k/l` 방향 포커스, `Tab`·`Shift+Tab` pane 차례로, `n`·`p`·`1`~`9` 탭, `b` 목록 펴기·접기(포커스는 그대로), `w` 탐색, `o` 알림 카드의 pane으로(§8.185, 옛 「질문이 열린 pane을 차례로」를 바꿈), `?` 단축키 창, `Shift+R` `[tui]` 설정 다시 읽기, `q` 나가기.
   - 없앤 키: `d`(→ `q`), `%`·`|`(→ `v`), `"`(→ `-`), 화살표(→ `h/j/k/l`, 화살표는 탐색 모드), `o` 다음 pane(→ `Tab`), `s`(herdr는 설정 창 자리), `t` 이 화면 크기로(§8.33으로 이미 자동), `r` 재개.
   - `r` 재개를 없앤 이유: herdr에는 재개 키가 없다(복원 때 자동). 자동 이어가기는 세션·CLI thread 몫이다(D12). 그때까지 중단 pane의 표시는 다시 띄우는 명령(`aaa pane resume <id 앞 8자>`)을 보인다. `r`은 herdr처럼 크기 모드 자리다(다음 묶음).
   - `Shift+R`은 TUI가 `[tui]`를 다시 읽는 데까지다. herdr는 서버 설정도 다시 읽는다. host 쪽 `aaa config reload`는 CLI thread 몫이다.
@@ -1813,7 +1813,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 단축키 창: 가운데 76×22 테두리 창, 묶음(전체·탐색·목록/탭·pane)마다 `prefix+키`와 설명, `/` 검색(키·설명), `j/k/↑↓/pgup/pgdn` 넘기기, Esc·Enter 닫기, 넘칠 때 scrollbar.
 - **시험.**
   - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 켬·끄기·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
-  - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane, `o` 질문 pane, `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
+  - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane(`o`는 §8.185 `agent_cards_like_herdr`), `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
   - 다른 TUI 시험도 새 키로 바꿨다(`q` 나가기, `v` 나누기, `w` 탐색과 `↑↓`, `b` 접기, 재개는 CLI).
   - harness의 기다림은 시간이 아니라 사건이다: 화면은 bytes가 올 때마다 깨우고(Condvar), host 상태는 Front 연결의 Workspace·State 사건을 받는다. `cmd`는 PREFIX 막대가 보인 뒤 명령 키를 보낸다.
 ### 8.75 CLI 이름·출력을 herdr 0.9.5에 맞춘다: pane·tab·workspace·completion(10-18, 차이 목록 4장 F)
@@ -3999,6 +3999,46 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   치운 뒤 두 번째 `--fix`는 나머지를 바꾸지 않는다. m13 `project_lifecycle` rename은 표지 있는 옛 판 안내도 새 이름의 지금 안내로 쓴다.
   결함 심기 일곱(안내 절 하나 빼기, 표지 있는 낡은 안내 건너뛰기, 표지 검사 없이 덮기, 자리가 차도 덮기(참고 동작), 새 프로젝트 CLAUDE.md
   링크 빼기, 보기만이 고침, rename 옛 바이트 일치 규칙) 모두 실패했다.
+
+### 8.185 다른 agent 작업 끝남을 TUI·웹 앱 안 알림으로(10-18, 차이 목록 306 N3·545 `o`)
+
+- **결정(사용자 10-18 14:2x).** 다른 agent 작업이 끝나면 TUI 앱 안 알림과 웹 앱 안 알림으로 알린다. 휴대폰 push는 지금처럼 「입력 필요」·
+  thread 「작업 완료(새 보고)」뿐이다. TUI는 herdr식 agent 알림 카드를 두고 `prefix o`는 그 카드의 pane으로 간다.
+- **host 사건 `notice`(FRONT_API 1.34, `aaa-host/src/notice.rs`).** 기록하지 않는 사건이라 놓친 것은 다시 오지 않는다. inbox 항목이 아니므로
+  push·webhook(`notify.rs`, inbox 항목에서만 나간다)으로 가지 않는다.
+  - 끝남(`finished`): 작업·질문에서 쉼으로 바뀌었고(herdr `src/app/actions.rs` 22–25·77–93 `is_background_completion_transition`) 그때
+    그 pane을 보는 화면이 없었다(`seen.rs` 「봤음」 false). herdr 화면은 `Finished`를 그 pane이 아직 끝남(안 봄)일 때만 띄운다
+    (`src/client/shell/notification_policy.rs` 319–370, `src/app/api_helpers.rs` 100–102). 시작 뒤 첫 쉼은 끝남이 아니다.
+  - 턴 길이 `turn_ms`는 작업·질문으로 들어선 때부터 잰다(herdr-web-ui `src/lib/droplet.ts` 82–92 `trackTurn`, 질문 동안도 턴이다).
+    host가 시작을 못 봤으면 null. `long`은 60초 이상이거나 길이를 모름이다(같은 파일 33 `LONG_TURN_MS`, 42–47 `dropletAllows`).
+  - 새 보고(`report`): host 「new report」 항목과 같은 때(`transitions.rs` `new_report_item`, herdr-projects `src/steps.rs` 244 「review ·
+    new report」). 입력 필요는 따로 만들지 않는다: front가 `question` 사건(질문이 열림)으로 띄운다.
+  - **같은 턴의 끝남과 새 보고(brief 지시, 참고와 다름).** thread pane의 끝남은 그 턴이 건 보고 확인(`refresh_report`)과 ticker 묶음 셈
+    (`thread_pass`)까지 미룬다. 그 셈에서 새 보고를 알렸으면 끝남은 보내지 않고, 아니면 그 pane이 아직 끝남(안 봄)일 때 보낸다(herdr
+    `validate_state`). 참고 herdr에서는 herdr의 끝남 카드와 herdr-projects의 「new report」 카드(`herdr notification show`, `Custom`)가
+    따로 뜬다. 멈춘 프로젝트(ticker가 셈하지 않는다)와 thread가 아닌 pane은 바로 보낸다. 사후 평가자 pane은 알리지 않는다(§8.13).
+- **TUI 카드(`aaa-tui/src/cards.rs`, herdr `notification_policy.rs`·`src/client/shell/notifications.rs` 107–178).**
+  - 받으면 같은 pane의 기다리는·줄 선·보이는 카드를 지우고, 1초(`[ui.toast] delay_seconds` 기본) 뒤 다시 본다: 입력 필요는 아직 질문 중,
+    끝남은 아직 끝남(안 봄)일 때만. 지금 탭의 pane이면 띄우지 않는다(herdr는 pane이 아니라 탭으로 거른다, `notification_target_is_active`).
+  - 한 번에 하나, 줄은 8개(넘치면 가장 오래된 것을 버린다), 보이는 시간은 입력 필요 8초·끝남 5초·새 보고 5초.
+  - 오른쪽 아래, 폭은 제목·본문 중 넓은 것 + 6, `overlay0` 테두리·`panel_bg` 바탕, `●`(입력 필요 빨강·끝남 파랑·새 보고 accent)와 굵은
+    제목, 둘째 줄은 두 칸 들여 `overlay0` 본문. 좁은 화면은 맨 아래 한 줄 ` ● 제목 · 본문`(`surface0`). 창(overlay)이 카드 위에 그려진다.
+  - 글: 끝남 「{agent} 끝남」, 입력 필요 「{agent} 입력 필요」(herdr `{agent} finished`·`needs attention`), 새 보고 「{프로젝트} · {thread}」·
+    「검토 · 새 보고: {제목}」(herdr-projects). 본문은 thread면 「프로젝트 · thread · 제목」, 아니면 「pane 이름 · workspace[ · 탭]」
+    (herdr `notification_context`는 workspace와 탭만).
+  - `prefix o`·카드 누름(터미널 모드, pane이 있는 카드): 카드를 거두고 다음을 올린 뒤 그 pane을 연다(`focus_visible_notification`). 카드가
+    없으면 아무것도 하지 않는다(옛 aaa의 「질문 pane 차례로」는 없앴다, 참고대로).
+  - 참고와 다름: 새 보고 카드는 thread pane이 있어 `o`가 그리로 간다(herdr `Custom`은 pane이 없어 닫기만 한다). 같은 pane 바꾸기·지금 탭
+    거르기·지연은 `Custom`처럼 하지 않는다. herdr `[ui.toast] delivery` 기본은 `off`지만 aaa는 켜 둔다(사용자 결정). 소리·`[ui.toast]` 설정·
+    자리 고르기는 옮기지 않았다.
+- **웹(`App.tsx` `noticeNews`).** 끝남만 받아 긴 턴(`long`)이면 기존 앱 안 알림 길(`raiseAlert`, Droplet 「작업 완료」·소리·탭 알림, §8.70)로
+  그 pane(`pane=…`)에 띄운다. 그 pane(또는 그 thread)을 고른 화면이면 띄우지 않는다(참고 `dropIn`). 새 보고는 thread 길(`reportNews`),
+  입력 필요는 질문 길(`questionNews`)이 맡는다. 남은 것: 참고의 기기별 「끝남」 선택(`done: off·long·always`)은 아직 「작업 완료」 켜고 끄기
+  하나다(차이 목록 306 N3의 선택 부분).
+- **시험.** `aaa-host` `notice` 유닛(턴 시작·끝남 판정·긴 턴 경계), `aaa-tui` `cards` 유닛(지연·다시 보기·탭 거르기·줄 8·같은 pane·거두기),
+  m13 `turn_end_notices_follow_reports`(brief 턴 끝남·같은 턴 새 보고는 새 보고 하나·다음 턴 끝남·inbox 그대로), TUI `agent_cards_like_herdr`
+  (지금 탭 거름·다른 탭 카드·`o`·보는 pane은 host가 안 보냄·입력 필요가 같은 pane 카드를 바꿈·누름), 웹 E2E 19(짧은 턴 안 띄움·긴 턴
+  「작업 완료」·누르면 pane·보고 있는 pane 안 띄움). 결함 심기 아홉(host 셋·TUI 셋·웹 셋)이 모두 실패했다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

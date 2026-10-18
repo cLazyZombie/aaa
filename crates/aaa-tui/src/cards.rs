@@ -233,7 +233,12 @@ mod tests {
         assert!(c.next_deadline().is_none(), "기다림 한도(1초)가 지연과 같아 다시 보지 않고 버린다(herdr 그대로)");
         // 지연이 없는 새 보고 옆의 끝남은 한도 안에서 다시 본다
         let mut c = Cards::default();
-        c.pending.push(Pending { card: card(Kind::Finished, "p"), deadline: t0, expires_at: t0 + GRACE, validate: true });
+        c.pending.push(Pending {
+            card: card(Kind::Finished, "p"),
+            deadline: t0,
+            expires_at: t0 + GRACE,
+            validate: true,
+        });
         c.tick(t0, awaiting, NOT_ACTIVE);
         assert_eq!(c.next_deadline(), Some(t0 + RECHECK));
         c.tick(t0 + RECHECK, OK, NOT_ACTIVE);

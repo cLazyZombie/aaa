@@ -919,13 +919,15 @@ fn agent_cards_like_herdr() {
         "{clear}; printf '%s\\n' ' Bash command' '' '   make test' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
          ' Esc to cancel · Tab to amend'"
     );
-    let script = format!("stty -echo; {idle}; while read a; do case $a in go) {work};; end) {idle};; ask) {ask};; esac; done");
+    let script =
+        format!("stty -echo; {idle}; while read a; do case $a in go) {work};; end) {idle};; ask) {ask};; esac; done");
     // 탭 here: 셸(TUI가 처음 여는 pane)과 그 옆 agent(side), 탭 work: agent 하나
     let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "here"]);
     let shell = leaves(&w)[0].clone();
     let w = h.ok(&["pane", "split", &shell, "--direction", "right", "--", lab::path_str(&claude), "-c", &script]);
     let side = leaves(&w)[1].clone();
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "work", "--", lab::path_str(&claude), "-c", &script]);
+    let w =
+        h.ok(&["tab", "create", "--machine", "labA", "--label", "work", "--", lab::path_str(&claude), "-c", &script]);
     let busy = leaves(&w)[2].clone();
     let activity = |w: &HostWatch, p: &str| w.pane(p).and_then(|v| v.agent.as_ref()).map(|a| a.activity);
     hw.wait("두 agent 쉼", |w| {
@@ -985,7 +987,9 @@ fn agent_cards_like_herdr() {
 
     // 4) 입력 필요(질문이 열림): 같은 pane의 끝남 카드를 바꾼다. 카드를 누르면 그 pane(here 탭의 side)으로 간다
     h.ok(&["pane", "run", &side, "ask"]);
-    tui.wait_screen("입력 필요 카드", |s| card(s, "claude 입력 필요", "main · here") && !s.text().contains("claude 끝남"));
+    tui.wait_screen("입력 필요 카드", |s| {
+        card(s, "claude 입력 필요", "main · here") && !s.text().contains("claude 끝남")
+    });
     let at = tui.wait_find("● claude 입력 필요");
     tui.click(at);
     hw.wait("side lease", |w| w.held_by(&side, "tui@").then_some(()));

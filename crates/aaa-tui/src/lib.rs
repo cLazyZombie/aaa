@@ -1195,7 +1195,11 @@ impl App {
             },
             aaa_proto::NoticeKind::Report => cards::Card {
                 kind: cards::Kind::Report,
-                title: format!("{} · {}", n.project.as_deref().unwrap_or_default(), n.thread.as_deref().unwrap_or_default()),
+                title: format!(
+                    "{} · {}",
+                    n.project.as_deref().unwrap_or_default(),
+                    n.thread.as_deref().unwrap_or_default()
+                ),
                 body: format!("검토 · 새 보고: {}", n.title),
                 pane: n.pane.clone(),
             },
@@ -2664,7 +2668,8 @@ fn render_card(buf: &mut Buffer, area: Rect, c: &cards::Card, p: &theme::Palette
     let r = Rect { x: area.x + area.w - w, y: area.y + area.h - h, w, h };
     let i = help::panel(buf, r, p.overlay0, p.panel_bg);
     let end = usize::from(i.x + i.w);
-    let x = buf.set_stringn(i.x, i.y, "●", end - usize::from(i.x), Style::default().fg(card_dot(c, p)).bg(p.panel_bg)).0;
+    let x =
+        buf.set_stringn(i.x, i.y, "●", end - usize::from(i.x), Style::default().fg(card_dot(c, p)).bg(p.panel_bg)).0;
     let x = buf.set_stringn(x, i.y, " ", end.saturating_sub(usize::from(x)), Style::default().bg(p.panel_bg)).0;
     buf.set_stringn(
         x,
@@ -2675,7 +2680,13 @@ fn render_card(buf: &mut Buffer, area: Rect, c: &cards::Card, p: &theme::Palette
     );
     if !c.body.is_empty() && i.h > 1 {
         let x = i.x + 2.min(i.w);
-        buf.set_stringn(x, i.y + 1, &c.body, end.saturating_sub(usize::from(x)), Style::default().fg(p.overlay0).bg(p.panel_bg));
+        buf.set_stringn(
+            x,
+            i.y + 1,
+            &c.body,
+            end.saturating_sub(usize::from(x)),
+            Style::default().fg(p.overlay0).bg(p.panel_bg),
+        );
     }
     Some(r)
 }
@@ -2690,7 +2701,9 @@ fn render_card_banner(buf: &mut Buffer, area: Rect, c: &cards::Card, p: &theme::
     let bg = p.surface0;
     fill(buf, r, Style::default().bg(bg));
     let title = match c.kind {
-        cards::Kind::NeedsInput => c.title.strip_suffix(" 입력 필요").map(|a| format!("{a} 대기")).unwrap_or(c.title.clone()),
+        cards::Kind::NeedsInput => {
+            c.title.strip_suffix(" 입력 필요").map(|a| format!("{a} 대기")).unwrap_or(c.title.clone())
+        }
         _ => c.title.clone(),
     };
     let end = usize::from(r.x + r.w);

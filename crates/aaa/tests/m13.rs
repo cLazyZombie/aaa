@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use aaa_proto::{AgentActivity, FlowEvent, FrontEvent, NoticeKind, NoticeView, QuestionState, QuestionView, ThreadView};
+use aaa_proto::{
+    AgentActivity, FlowEvent, FrontEvent, NoticeKind, NoticeView, QuestionState, QuestionView, ThreadView,
+};
 use lab::watch::HostWatch;
 use lab::{Events, Lab, Node, path_str, read_line_containing, wait_for, wait_for_diag};
 use serde_json::Value;
@@ -2289,8 +2291,7 @@ fn thread_state_items_follow_groups() {
 fn turn_end_notices_follow_reports() {
     let w = world();
     let mut ev = Events::connect(&w.h);
-    let v =
-        w.start(&["--title", "알림", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("n.txt", "x")]);
+    let v = w.start(&["--title", "알림", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("n.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
     let pane = v["pane"].as_str().unwrap().to_string();
     // 그 pane의 `from`번째 뒤 첫 알림(번호, 알림)
@@ -2311,7 +2312,10 @@ fn turn_end_notices_follow_reports() {
     finish_turn(&w, &pane);
     let (i1, n1): (usize, NoticeView) = notice(&mut ev, 0, "brief 턴의 끝남");
     assert_eq!(n1.kind, NoticeKind::Finished, "{n1:?}");
-    assert_eq!((n1.project.as_deref(), n1.thread.as_deref(), n1.title.as_str()), (Some("demo"), Some(id.as_str()), "알림"));
+    assert_eq!(
+        (n1.project.as_deref(), n1.thread.as_deref(), n1.title.as_str()),
+        (Some("demo"), Some(id.as_str()), "알림")
+    );
     assert_eq!(n1.agent.as_deref(), Some("claude"));
     let turn = n1.turn_ms.expect("host가 본 턴");
     assert!(turn > 0 && turn <= n1.at_ms.saturating_sub(t) + 1_000, "턴 {turn}ms: {n1:?}");
