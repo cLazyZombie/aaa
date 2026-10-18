@@ -1562,6 +1562,64 @@ fn restart_with_another_profile() {
     assert_eq!(w.kinds(0).iter().filter(|k| *k == "thread_restarted").count(), 1);
 }
 
+/// 시작이 실패한 thread도 `thread restart`로 다시 띄운다(herdr-projects threads.rs `restart_plan`, COORDINATOR_GUIDE,
+/// 차이 목록 E8). repo가 아직 git이 아니라 자리를 만들지 못했다(a): 시작 오류는 thread ID와 다시 하는 법을 말하고
+/// thread는 failed다. repo를 고친 뒤 restart는 자리부터 다시 만들고 앞선 시도 안내를 넣은 brief를 준다. 실패 글은 지운다.
+/// 기록된 worktree 없이 branch만 있으면 반쯤 만든 것이라 거부한다(b). 끝낸 thread는 `--reopen`이 먼저다.
+#[test]
+fn failed_threads_restart_from_the_place() {
+    let w = world();
+    let raw = w.lab.root.join("raw");
+    std::fs::create_dir_all(&raw).unwrap();
+    std::fs::write(raw.join("README.md"), "hi\n").unwrap();
+    let task = w.task("e8.txt", "repo가 준비되면 한다");
+    for title in ["later", "half"] {
+        let e =
+            w.h.json(&[
+                "thread",
+                "start",
+                "demo",
+                "--title",
+                title,
+                "--profile",
+                "fake",
+                "--repo",
+                path_str(&raw),
+                "--task-file",
+                &task,
+            ])
+            .expect_err("git이 아닌 repo");
+        let id = if title == "later" { "t-0001" } else { "t-0002" };
+        assert!(e.contains(&format!("`aaa thread restart demo {id}`로 다시 한다")), "{e}");
+    }
+    let v = w.show("t-0001");
+    assert_eq!((v["status"].as_str(), v["group"].as_str()), (Some("failed"), Some("waiting_on_you")), "{v}");
+    assert!(v["error"].as_str().is_some_and(|m| m.contains("rev-parse")), "{v}");
+    let e = w.h.json(&["thread", "restart", "demo", "t-0001", "--resume"]).expect_err("이을 대화 없음");
+    assert!(e.contains("이을 대화가 없다"), "{e}");
+
+    git(&raw, &["init", "-q", "-b", "main"]);
+    git(&raw, &["add", "."]);
+    git(&raw, &["commit", "-qm", "init"]);
+    // (b) 반쯤 만든 worktree: 기록에는 자리가 없는데 branch가 있다
+    git(&raw, &["branch", "aaa/demo/t-0002-half"]);
+    let e = w.h.json(&["thread", "restart", "demo", "t-0002"]).expect_err("반쯤 만든 worktree");
+    assert!(e.contains("aaa/demo/t-0002-half") && e.contains("aaa thread resolve"), "{e}");
+    assert_eq!(w.show("t-0002")["status"], "failed");
+
+    // (a) 자리부터 다시
+    let v = w.h.ok(&["thread", "restart", "demo", "t-0001"]);
+    assert_eq!((v["status"].as_str(), v["error"].as_str()), (Some("open"), None), "{v}");
+    assert_eq!(v["branch"], "aaa/demo/t-0001-later", "{v}");
+    let brief = std::fs::read_to_string(PathBuf::from(v["work_dir"].as_str().unwrap()).join("brief.md")).unwrap();
+    assert!(brief.contains("**이 일을 앞서 시도한 것이") && brief.contains("repo가 준비되면 한다"), "{brief}");
+    w.wait_show("brief 받음", "t-0001", |v| v["brief"] == "delivered");
+
+    w.h.ok(&["thread", "resolve", "demo", "t-0002"]);
+    let e = w.h.json(&["thread", "restart", "demo", "t-0002"]).expect_err("끝낸 thread");
+    assert!(e.contains("--reopen"), "{e}");
+}
+
 /// auto-resolve(herdr-projects steps.rs `auto_resolve`, 차이 목록 E11): 쉼으로 `auto_resolve_days`가 지나면 마지막 사본 뒤
 /// 끝내고, 항목이 `--reopen`을 안내한다. `--reopen`은 기록만 되돌리고 아무것도 띄우지 않는다. 하루는 시험에서 1초다.
 #[test]

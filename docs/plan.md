@@ -725,6 +725,7 @@ host 프로젝트 폴더 구성:
   - 기본은 task(Follow-ups 포함)·지침·결정·memory를 다시 읽어 brief를 새로 쓴다. brief 맨 앞에는 「다시 시작했다, 이전 시도를 먼저 확인한다」를 붙이고, 새 대화로 띄운 뒤 안내한다. claude는 새 `--session-id`를 받는다(agent `ThreadRebrief`).
   - `--resume`은 저장된 launch의 resume argv로 같은 대화를 잇고, 안내하지 않는다. `{session}`이 필요한데 harness 세션 ID를 모르면 거부한다.
   - profile은 다시 해석하지 않는다(저장된 launch를 쓴다). profile 바꾸기는 하지 않았다.
+  - (10-18) 시작이 실패한 thread도 받는다(§8.142).
 - **아직:** `thread next`, TASKS.md 소유, `start_threads` 정책은 하지 않았다.
 
 ### 8.17 M1-3c 구현 결정(10-16): inbox·ticker·nudge
@@ -2508,7 +2509,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - `--lines`가 없으면 자르지 않고, 있으면 마지막 줄들이다(최대 1000줄).
   - `--format ansi`여도 모양 없는 글이다(herdr도 두 형식 모두 `detection_text`). `--raw`는 herdr pane read처럼 `--format ansi`와 같다.
   - `wait-output`은 detection을 받지 않는다(herdr `read_source_option(false)`).
-  - 계약: FRONT_API 1.17(`ReadSource::Detection`). 옛 host는 detection이 든 요청을 읽지 못해 그 연결을 닫고(`front.rs` 요청 해석), 새 CLI는 오류로 끝난다.
+  - 계약: FRONT_API 1.22(`ReadSource::Detection`). 옛 host는 detection이 든 요청을 읽지 못해 그 연결을 닫고(`front.rs` 요청 해석), 새 CLI는 오류로 끝난다.
   - 시험: VT 유닛 `read_detection_is_the_detection_text`(보이는 화면도 기록 전부도 아닌 감지 범위, `lines`, ansi여도 모양 없음), m12 `herdr_pane_input_read_and_wait`(`--source detection --raw`의 source·format과 글). 결함 심기(되돌렸다): detection을 recent로 읽으면 둘 다, `lines`를 무시하면 유닛, CLI가 detection을 recent로 바꾸거나 `--raw`를 무시하면 m12가 실패한다.
 - **호환.** SESSION_IPC 1.1(`Detect`). 1.0 session host에는 화면만 묻는다. 옛 agent의 hook 상태 사건도 host가 받는다. 실제 운영에 쓰려면 agent·host binary를 바꿔야 하고, OSC·감지 글까지 쓰려면 세션을 새로 띄워야 한다(session host는 세션마다 따로 돈다).
 ### 8.111 재부팅 뒤 복원: 셸 pane·대화 이어가기(10-18, 차이 목록 4장 A, 결정 20 D12)
@@ -3070,6 +3071,20 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **웹.** 늦은 알림(멈췄다 깬 직후 받은 사건은 멈춘 때부터, 다시 붙어 읽은 놓친 사건은 끊긴 때부터)이면 host에 묻고, 그 뒤(기기 시계 차이 5초를 덮는다) 이 기기에 같은 프로젝트·thread로 간 push가 있으면 띄우지 않는다. 결과는 `alert_outcome` 「push로 받음 · 안 띄움」. 묻지 못하면 띄운다. 늦은지는 사건을 받은 때 정한다(묻는 동안 시간이 가도 소리를 내지 않는다). 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다.
 - **thread에 묶이지 않은 pane 확인창**은 push 항목이 없어(thread-state 항목만 push) 늘 띄운다.
 - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
+
+### 8.142 시작이 실패한 thread도 `thread restart`로 다시 띄운다(10-18, 차이 목록 3장 E8)
+
+- **무엇.** 전에는 `thread_restart`가 열린 thread만 받아, 시작이 실패한(failed) thread는 다시 띄울 길이 없었다. coordinator 안내(`COORDINATOR_GUIDE`)는 「시작이 실패한 thread는 `aaa thread restart`로 다시 띄운다」고 했다. 참고 herdr-projects 0.2.35 `src/threads.rs` `restart_plan`대로 고쳤다.
+- **할 일 고르기(host `orch.rs` `restart_plan`, 참고 `RestartPlan`).**
+  - 열린 thread와 시작이 실패한 thread를 받는다. 시작 중이면 거부한다. aaa에는 시작 시한이 없으므로 참고의 「5분 넘은 시작은 다시 만든다」도 없다(§8.40, 차이 목록 A12는 다르게 둔다). 끝낸 thread는 `thread resolve --reopen`이 먼저다. 세션이 실행 중이면 거부한다(참고 (d)).
+  - (a) 자리를 만들지 못했다(launch 기록이 없다): 자리 만들기부터 다시 한다. 시작과 같은 `place_and_launch`(agent `ThreadPrepare` → 기록 → 세션)이고 brief는 다시 시작 안내를 넣는다. 이을 대화가 없으니 `--resume`은 거부한다. `--profile`이면 그 profile로 자리를 만든다.
+  - (e) 자리가 있다: 전처럼 brief를 새로 쓰고 새 대화로 띄우거나 `--resume`으로 잇는다. 세션을 띄우다 실패한 thread도 이 길이다.
+  - 참고 (c)(셸에 있는 pane 다시 쓰기)는 없다. aaa thread pane은 harness 프로세스 자체라 세션이 끝나면 pane도 끝난다(§8.86).
+  - (b) 기록된 worktree가 없는데 branch가 있으면 반쯤 만든 것이라 거부한다(「`aaa thread resolve` 뒤 새 thread」). host는 repo를 보지 않으므로 그 머신 agent의 자리 만들기(`threads.rs` `prepare`)가 `worktree add` 전에 본다. 처음 시작에서 branch가 겹쳐도 같은 말로 거부한다(참고도 그때 만들지 못한다).
+- **시작 실패.** 정리하지 않고 failed로 둔다(참고와 같다). 오류는 「thread <id>를 시작하지 못했다. `aaa thread restart <p> <id>`로 다시 한다: <까닭>」이고 기록의 `error`는 까닭이다(참고 `start`의 context). agent는 실패할 수 있는 profile 해석을 자리를 만들기 전에 해서, 그 실패는 아무것도 남기지 않는다.
+- **다시 띄우면.** 열린 thread가 되고 `error`를 지운다(참고 `finish_placement`). 다시 띄우다 실패하면 기록은 그대로다(참고도 restart 실패를 적지 않는다).
+- **시험.** host 유닛 `restart_plan_follows_herdr_projects`(참고 `restart_case_*`: (a)·(e)·(d)·시작 중·끝냄·이을 대화 없음). m13 `failed_threads_restart_from_the_place`: git이 아닌 repo로 시작이 실패하면 오류가 ID와 다시 하는 법을 말하고 failed·사람 차례다. `--resume`은 거부, branch만 있는 것은 거부(b), repo를 고친 뒤 restart는 자리부터 만들고 앞선 시도 안내 brief를 전하며 `error`는 비고, 끝낸 thread는 `--reopen`을 안내한다. 결함 심기(되돌렸다): failed를 거부하면 둘 다, `--resume` 거부를 빼면 둘 다, error를 지우지 않거나 시작 오류에 안내가 없거나 agent의 branch 검사를 빼거나 다시 시작 안내 없는 brief면 m13이 실패한다.
+- **세션을 띄우다 실패한 길은 E2E가 없다.** 그 길을 만들려면 공용 시험 설정(허용 profile 목록)에 없는 실행 파일 profile을 더해야 하고 다른 시험의 단언이 바뀐다. 그 길은 열린 thread의 다시 시작과 같은 코드라(m13 `restart_with_another_profile`) 판단만 유닛으로 본다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
