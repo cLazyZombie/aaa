@@ -28,6 +28,8 @@ const env = {
   RUST_LOG: "aaa=info",
   // 상태 사건 연결의 WebSocket ping 1초, 3초 동안 아무것도 받지 못하면 host가 끊는다(기본 15초·45초, 「두 기기·죽은 연결」 단계)
   AAA_TEST_EVENTS_PING_MS: "1000",
+  // thread brief: 가짜 agent 화면이 이만큼 그대로면 친다(기본 3초. 12-threads-push는 thread를 단계마다 연다)
+  AAA_TEST_BRIEF_SETTLE_MS: "300",
 };
 const procs = new Map();
 
@@ -656,7 +658,8 @@ const claudeAsk = (cmd) =>
   `${clearScreen}; printf '%s\\n' ' Bash command' '' '   ${cmd}' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel · Tab to amend'`;
 const claudeWorking = `${clearScreen}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'`;
 const claudeIdle = `${clearScreen}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'`;
-const webPort = await freePort();
+// 웹 port는 host가 고른다(listen 0, 「host·agent 시작」이 status로 받는다): 같이 도는 실험실끼리 겹치지 않는다
+let webPort = 0;
 
 // 구독 사용량(host usage.rs): 실험실 집과 가짜 구독 서버. host는 이 집만 읽고 keychain·gh·실제 구독 주소에 닿지 않는다
 // (AAA_USAGE_HOME·AAA_USAGE_ORIGIN 시험 고리). 계정·token은 지어낸 값이다.
@@ -704,7 +707,7 @@ env.AAA_USAGE_HOME = usageHome;
 env.AAA_USAGE_ORIGIN = `http://127.0.0.1:${usageServer.address().port}`;
 fs.writeFileSync(
   `${root}/c/host.toml`,
-  `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:${webPort}"\n[local_agent]\nmode = "none"\n` +
+  `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:0"\n[local_agent]\nmode = "none"\n` +
     `[projects]\nroot = "${root}/projects"\nallow_profiles = ["fake"]\nlibrary_copy_mb = 1\n` +
     `[notify]\ndebounce_secs = 1\nkinds = ["report"]\npush_hosts = ["127.0.0.1"]\n`,
 );
@@ -772,22 +775,6 @@ fs.mkdirSync(`${root}/files`, { recursive: true });
 fs.writeFileSync(
   `${root}/c/agent.toml`,
   `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files"]\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
-);
-// Codex처럼 구는 입력창: 글과 Enter가 한 덩어리로 오면 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측한 Codex 동작).
-// Enter만 따로 오면 그때까지의 글을 제출한다.
-fs.writeFileSync(
-  `${root}/burst.js`,
-  `process.stdin.setRawMode(true);
-let buf = "";
-process.stdout.write("burst> ");
-process.stdin.on("data", (d) => {
-  const s = d.toString("utf8");
-  if (s === "\\r") { process.stdout.write("\\r\\nSUBMIT:" + buf + "\\r\\nburst> "); buf = ""; return; }
-  if (s.length > 1 && s.endsWith("\\r")) { buf += s.slice(0, -1) + "\\n"; process.stdout.write("[newline]"); return; }
-  buf += s;
-  process.stdout.write(s);
-});
-`,
 );
 // bracketed paste를 켜는 입력창: 받은 조각을 JSON으로 그대로 보인다(composer 여러 줄·Enter 시험)
 fs.writeFileSync(
@@ -900,17 +887,6 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
-// 긴 출력 시험 프로그램(QA t-0337 lab long.sh와 같은 줄): 3000줄(한글·이모지·전각)을 쓰고 셸처럼 기다린다
-fs.writeFileSync(
-  `${root}/long.js`,
-  `let out = "";
-for (let i = 1; i <= 3000; i++) out += String(i).padStart(4, "0") + " 한글 출력 줄 — 이모지 🚀 전각 ＡＢＣ 끝 " + i + "\\r\\n";
-process.stdout.write(out + "long-done\\r\\n$ ");
-process.stdin.setRawMode(true);
-process.stdin.on("data", (d) => process.stdout.write(d.toString("latin1") === "p" ? "\\r\\ntick-" + ++globalThis.ticks + "\\r\\n$ " : ""));
-globalThis.ticks = 0;
-`,
-);
 fs.writeFileSync(`${root}/widths.js`, 'process.stdout.write("\\x1b[2J\\x1b[H😀X\\r\\n🫠Y\\r\\n👨‍👩‍👧Z\\r\\n⚠️W\\r\\n"); setInterval(() => {}, 1e9);\n');
 // 키 처리 시험 프로그램: 시작할 때 modifyOtherKeys 2를 요청하고(Claude Code처럼), 받은 조각을 JSON으로 보인다.
 // "n"을 받으면 modifyOtherKeys를 끄고, "m"이면 다시 켜고, "o"면 OSC 52로 클립보드에 쓴다.
@@ -927,7 +903,6 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
-base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();
 
 /** push 서명 키(「Web Push: 구독 검사」 단계가 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
@@ -943,7 +918,11 @@ async function runSpec(spec) {
   try {
     await step("host·agent 시작", async () => {
       start("host", "host");
-      await until("host 준비", () => aaa("status").web_listen);
+      webPort = Number((await until("host 준비", () => aaa("status").web_listen)).split(":").pop());
+      base = `http://127.0.0.1:${webPort}/`;
+      // 다시 띄우는 host(07 「host를 다시 띄운 뒤」·13 「host 재시작」)는 같은 port로 뜬다: 열린 화면이 그 주소로 다시 붙는다
+      const toml = `${root}/c/host.toml`;
+      fs.writeFileSync(toml, fs.readFileSync(toml, "utf8").replace('listen = "127.0.0.1:0"', `listen = "127.0.0.1:${webPort}"`));
       start("agent", "agent", "--host", "local", "--name", "labA");
       await until("labA 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
       aaa("tab", "create", "--machine", "labA", "--label", "t1", "--", "/bin/sh");
