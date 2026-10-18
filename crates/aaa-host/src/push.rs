@@ -11,6 +11,7 @@
 //! - 알림 한 자리는 thread 하나다(새 것이 옛 것을 바꾼다, herdr-web-ui `paneNotificationTag`). 여러 thread·머신 항목이
 //!   섞이면 프로젝트 한 자리다.
 
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::time::Duration;
 
@@ -238,16 +239,18 @@ pub(crate) enum Sent {
     Failed(String),
 }
 
+/// VAPID `sub` 기본값(설정 `notify.push_subject`가 비었을 때)
+const DEFAULT_PUSH_SUBJECT: &str = "https://github.com/cLazyZombie/aaa";
+
 impl Host {
     fn push_subject(&self) -> String {
         let s = &self.cfg.notify.push_subject;
         if !s.is_empty() {
             return s.clone();
         }
-        match self.db.meta("publish_dns").ok().flatten() {
-            Some(dns) => format!("https://{dns}"),
-            None => "mailto:aaa@example.com".into(),
-        }
+        // 공개 주소(tailnet 이름)는 push 사업자에게 보내지 않는다(보안 감사 t-0340 B11). 참고 herdr-web-ui server/push.ts
+        // `DEFAULT_SUBJECT`처럼 프로젝트 저장소 주소를 쓴다
+        DEFAULT_PUSH_SUBJECT.into()
     }
 
     /// 구독 하나에 보낸다
@@ -290,10 +293,13 @@ impl Host {
         // 쓰는 기기(마지막으로 누르거나 치거나 화면을 켠 기기)가 지금 보이고 focus면 그 화면이 이미 바뀐 것을 보인다:
         // 어느 기기에도 보내지 않는다. 다른 기기 창이 떠 있는 것은 까닭이 아니다(사용자 결정 10-18, plan §8.105.
         // 참고 herdr-web-ui server/index.ts 1117줄 `inUse: () => present.size > 0`는 쓰는 화면이 하나라도 있으면 건너뛴다).
-        // 모으는 기다림(debounce) 뒤 보내기 직전에 본다
-        let skip = {
+        // 모으는 기다림(debounce) 뒤 보내기 직전에 본다. 보내든 말든 그때 host가 알던 것(근거)을 흐름 사건에 남긴다(10-18 실기)
+        let (skip, basis) = {
             let v = self.viewing.lock().unwrap();
-            v.user_in_use().then(|| (v.user().unwrap_or_default(), v.devices_in_use()))
+            (
+                v.user_in_use().then(|| (v.user().unwrap_or_default(), v.devices_in_use())),
+                v.basis(aaa_common::util::now_ms()),
+            )
         };
         if let Some((user, devices)) = skip {
             let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
@@ -302,7 +308,7 @@ impl Host {
                 "push_skipped",
                 None,
                 format!(
-                    "쓰는 기기 {user} · 쓰는 화면 {watching}개(기기 {}) · 항목 {}개",
+                    "쓰는 기기 {user} · 쓰는 화면 {watching}개(기기 {}) · 항목 {}개 · 근거: {basis}",
                     devices.join(", "),
                     items.len()
                 ),
@@ -317,23 +323,45 @@ impl Host {
                 return;
             }
         };
-        // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
-        let title = items
-            .first()
-            .filter(|f| items.iter().all(|i| i.subject == f.subject))
-            .and_then(|f| self.load(project, &f.subject).ok())
-            .map(|r| r.title);
-        let body = payload(project, items, title.as_deref()).to_string();
-        let (mut ok, mut gone, mut failed) = (0, 0, Vec::new());
+        let (mut ok, mut gone, mut failed, mut chose_not) = (0, 0, Vec::new(), 0);
         for s in &subs {
+            // 이 기기가 고른 종류만(차이 목록 N3, 참고 notify-policy.ts `alertsAllow`)
+            let mine = for_device(s.alerts.unwrap_or_default(), items);
+            if mine.is_empty() {
+                chose_not += 1;
+                continue;
+            }
+            // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
+            let title = mine
+                .first()
+                .filter(|f| mine.iter().all(|i| i.subject == f.subject))
+                .and_then(|f| self.load(project, &f.subject).ok())
+                .map(|r| r.title);
+            let body = payload(project, &mine, title.as_deref()).to_string();
             match self.push_one(s, body.as_bytes()).await {
-                Sent::Ok => ok += 1,
+                Sent::Ok => {
+                    ok += 1;
+                    self.pushed.lock().unwrap().record(&s.device, project, &mine, aaa_common::util::now_ms());
+                }
                 Sent::Gone => gone += 1,
                 Sent::Failed(e) => failed.push(e),
             }
         }
         if ok > 0 {
-            self.flow_project(project, "push_sent", None, format!("기기 {ok}개 · 항목 {}개", items.len()));
+            self.flow_project(
+                project,
+                "push_sent",
+                None,
+                format!("기기 {ok}개 · 항목 {}개 · 근거: {basis}", items.len()),
+            );
+        }
+        if chose_not > 0 {
+            self.flow_project(
+                project,
+                "push_unwanted",
+                None,
+                format!("기기 {chose_not}개가 고른 알림 종류가 아니다 · 항목 {}개", items.len()),
+            );
         }
         if gone > 0 {
             self.flow_project(project, "push_gone", None, format!("버려진 구독 {gone}개를 지웠다"));
@@ -345,9 +373,110 @@ impl Host {
     }
 }
 
+/// push로 보낸 항목 하나(그 기기의 `GET /api/v1/push` `pushed`)
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct PushedItem {
+    pub project: String,
+    /// inbox 항목의 대상(thread ID 등)
+    pub subject: String,
+    pub at_ms: u64,
+}
+
+/// 기기마다 최근에 push로 보낸 항목. 멈췄다 깨어난 페이지가 이미 push로 받은 알림을 앱 안 알림으로 다시 띄우지 않게
+/// 묻는다(사용자 결정 10-18 「A」, plan §8.141). host 메모리에만 둔다: 다시 띄우면 비고, 그러면 웹은 띄운다(놓치지 않는 쪽)
+#[derive(Default)]
+pub(crate) struct PushedLog(HashMap<String, VecDeque<PushedItem>>);
+
+/// 한 기기에 두는 수와 시간(페이지가 멈춰 있을 만한 동안)
+const PUSHED_KEEP: usize = 100;
+const PUSHED_KEEP_MS: u64 = 24 * 60 * 60 * 1000;
+
+impl PushedLog {
+    pub(crate) fn record(&mut self, device: &str, project: &str, items: &[InboxItem], now: u64) {
+        let log = self.0.entry(device.to_string()).or_default();
+        for i in items {
+            log.push_back(PushedItem { project: project.to_string(), subject: i.subject.clone(), at_ms: now });
+        }
+        while log.len() > PUSHED_KEEP || log.front().is_some_and(|p| now.saturating_sub(p.at_ms) > PUSHED_KEEP_MS) {
+            log.pop_front();
+        }
+    }
+
+    pub(crate) fn of(&self, device: &str) -> Vec<PushedItem> {
+        self.0.get(device).map(|l| l.iter().cloned().collect()).unwrap_or_default()
+    }
+}
+
+/// 기기가 고른 알림 종류(N3)에 드는 항목. thread 항목만 가른다: 새 보고는 「작업 완료」, 나머지(질문·확인창·기다림·시작 실패)는
+/// 「입력 필요」. PR·머신·routine 같은 다른 종류는 host 설정(`notify.kinds`)대로 모든 기기에 간다(참고에 없는 aaa 항목)
+pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
+    items
+        .iter()
+        .filter(|i| i.item_kind != "thread-state" || if i.event == "new report" { a.done } else { a.input })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pushed_log_keeps_recent_items_per_device() {
+        let it = |subject: &str| InboxItem {
+            id: subject.into(),
+            project: "demo".into(),
+            item_kind: "thread-state".into(),
+            subject: subject.into(),
+            event: "new report".into(),
+            summary: String::new(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let mut log = PushedLog::default();
+        log.record("phone", "demo", &[it("t-0001"), it("t-0002")], 1_000);
+        log.record("desk", "demo", &[it("t-0003")], 2_000);
+        let subjects = |l: &PushedLog, d: &str| l.of(d).into_iter().map(|p| p.subject).collect::<Vec<_>>();
+        assert_eq!(subjects(&log, "phone"), ["t-0001", "t-0002"]);
+        assert_eq!(log.of("desk")[0], PushedItem { project: "demo".into(), subject: "t-0003".into(), at_ms: 2_000 });
+        assert!(log.of("tablet").is_empty());
+        // 하루가 지난 것은 다음 기록 때 버린다, 기기마다 PUSHED_KEEP개까지
+        log.record("phone", "demo", &[it("t-0004")], 1_000 + PUSHED_KEEP_MS + 1);
+        assert_eq!(subjects(&log, "phone"), ["t-0004"]);
+        let many: Vec<InboxItem> = (0..PUSHED_KEEP + 5).map(|i| it(&format!("t-{i:04}"))).collect();
+        log.record("desk", "demo", &many, 3_000);
+        assert_eq!(log.of("desk").len(), PUSHED_KEEP);
+        // 앞 t-0003과 새 105개 중 오래된 여섯(t-0003, t-0000~t-0004)이 빠진다
+        assert_eq!(log.of("desk")[0].subject, "t-0005");
+    }
+
+    #[test]
+    fn device_alert_kinds() {
+        let it = |kind: &str, event: &str| InboxItem {
+            id: event.into(),
+            project: "demo".into(),
+            item_kind: kind.into(),
+            subject: "t-0001".into(),
+            event: event.into(),
+            summary: String::new(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: 0,
+            done_at_ms: None,
+        };
+        let items =
+            [it("thread-state", "new report"), it("thread-state", "blocked on a prompt"), it("pr", "PR merged")];
+        let ids = |a| for_device(a, &items).into_iter().map(|i| i.id).collect::<Vec<_>>();
+        use crate::db::Alerts;
+        assert_eq!(ids(Alerts::default()).len(), 3);
+        assert_eq!(ids(Alerts { input: false, done: true }), ["new report", "PR merged"]);
+        assert_eq!(ids(Alerts { input: true, done: false }), ["blocked on a prompt", "PR merged"]);
+        assert_eq!(ids(Alerts { input: false, done: false }), ["PR merged"]);
+    }
 
     fn hosts() -> Vec<String> {
         aaa_config::NotifySection::default().push_hosts

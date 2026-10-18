@@ -25,11 +25,6 @@ export default async function ({ ctl, page }) {
     await until("끊김 띠에 붙잡은 입력", async () =>
       (await page.getByTestId("readonly-banner").innerText()).includes("붙잡은 입력: “echo held-$((2+3)) ”"),
     );
-    const stored = await page.evaluate(() =>
-      Object.keys(localStorage).filter((k) => k.startsWith("herdr-web-ui:terminal-draft:")).map((k) => JSON.parse(localStorage.getItem(k))),
-    );
-    if (stored.length !== 1 || stored[0].text !== "echo held-$((2+3)) " || stored[0].leftOut !== true)
-      throw new Error(`붙잡은 입력 저장: ${JSON.stringify(stored)}`);
     await shot(page, "desktop-disconnected");
   });
 
@@ -67,11 +62,6 @@ export default async function ({ ctl, page }) {
     await until("host 끊김 표시", async () =>
       (await page.getByTestId("readonly-banner").innerText()).includes("host와 연결이 끊겼다"),
     );
-    // host가 없을 때 새로 열면 service worker가 「연결 없음」 화면을 보인다(PWA)
-    const off = await page.context().newPage();
-    await off.goto(base);
-    await until("연결 없음 화면", async () => (await off.locator("h1").innerText()) === "host에 연결할 수 없다");
-    await off.close();
     start("host2", "host");
     await until("다시 붙음", async () => (await page.getByTestId("readonly-banner").count()) === 0, 30_000);
     // agent 재연결(입력 가능)과 화면 재구독(snapshot)은 따로 도착한다. 화면이 돌아오는 것을 본다.

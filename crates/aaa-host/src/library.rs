@@ -23,6 +23,8 @@ pub(crate) struct ViewCap {
     pub project: String,
     pub thread: String,
     pub until: Instant,
+    /// 이 경로를 받은 웹 기기. 그 기기를 폐기하면 경로도 끝난다(CLI·TUI가 받은 것은 None)
+    pub device: Option<String>,
 }
 
 pub(crate) fn manifest_path(dir: &Path, id: &str) -> PathBuf {
@@ -90,7 +92,12 @@ impl Host {
         std::fs::read(manifest_path(dir, id)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
-    pub(crate) fn thread_library(&self, project: &str, id: &str) -> Result<LibraryView, ErrorBody> {
+    pub(crate) fn thread_library(
+        &self,
+        project: &str,
+        id: &str,
+        device: Option<&str>,
+    ) -> Result<LibraryView, ErrorBody> {
         let dir = self.project_dir(project)?;
         let rec = self.load(project, id)?;
         let report = rec
@@ -103,7 +110,15 @@ impl Host {
         {
             let mut caps = self.view_caps.lock().unwrap();
             caps.retain(|_, c| c.until > Instant::now());
-            caps.insert(cap.clone(), ViewCap { project: project.to_string(), thread: id.to_string(), until });
+            caps.insert(
+                cap.clone(),
+                ViewCap {
+                    project: project.to_string(),
+                    thread: id.to_string(),
+                    until,
+                    device: device.map(str::to_string),
+                },
+            );
         }
         Ok(LibraryView {
             project: project.to_string(),
@@ -120,7 +135,10 @@ impl Host {
         let (project, id) = {
             let caps = self.view_caps.lock().unwrap();
             match caps.get(cap) {
-                Some(c) if c.until > Instant::now() => (c.project.clone(), c.thread.clone()),
+                // 경로는 이 host가 돈 뒤에 만든 것이라 그 뒤의 폐기는 `is_revoked`가 다 안다
+                Some(c) if c.until > Instant::now() && !c.device.as_deref().is_some_and(|d| self.is_revoked(d)) => {
+                    (c.project.clone(), c.thread.clone())
+                }
                 _ => return Err(err(ErrorCode::Unauthorized, "보기 경로가 없거나 만료됐다. 목록에서 다시 연다")),
             }
         };

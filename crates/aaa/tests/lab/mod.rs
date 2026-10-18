@@ -42,6 +42,8 @@ impl Node {
             // routine `every <N>s`: host가 시험에서만 받는다
             .env("AAA_TEST_ROUTINE_SECONDS", "1")
             .env_remove("NO_COLOR")
+            // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
+            .env_remove("fish_handle_reflow")
             .stdin(Stdio::null());
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
         #[cfg(unix)]
@@ -226,6 +228,17 @@ impl Node {
     /// 시간 규칙(idle·quiet·schedule·outage_secs)이 막는 일은 tick만으로 일어나지 않는다: 그 규칙은 시간이 지났음을 먼저 보인다.
     pub fn ticks(&self, n: usize) -> u64 {
         (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
+    }
+
+    /// 이 agent 노드에서 세션의 session host PID(세션 폴더 meta.json)
+    pub fn session_host_pid(&self, session: &str) -> Option<u32> {
+        let text = std::fs::read_to_string(self.state.join("agent/sessions").join(session).join("meta.json")).ok()?;
+        serde_json::from_str::<Value>(&text).ok()?["host_pid"].as_u64().map(|p| p as u32)
+    }
+
+    /// 그 session host가 끝났다(PID가 없거나 다른 프로세스가 됐다). 세션 폴더를 지운 뒤에도 명령줄로 가린다
+    pub fn session_host_gone(&self, pid: u32, session: &str) -> bool {
+        command_of(pid).is_none_or(|c| !(cfg!(windows) || c.contains(session)))
     }
 }
 

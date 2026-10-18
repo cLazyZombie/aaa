@@ -22,7 +22,7 @@ use crate::orch::{StartArgs, ThreadRec, write_atomic};
 use crate::{Host, err};
 
 /// project.toml `[evaluator] events`의 기본값
-const DEFAULT_EVENTS: [&str; 4] = ["merge_landed", "thread_resolved", "thread_failed", "thread_restarted"];
+const DEFAULT_EVENTS: [&str; 4] = ["pr_merged", "thread_resolved", "thread_failed", "thread_restarted"];
 /// 묶음에 넣는 보고 본문 상한
 const REPORT_CAP: usize = 64 * 1024;
 /// 묶음 하나의 사건 수 상한(더 있으면 바로 다음 묶음으로 잇는다)
@@ -48,7 +48,7 @@ pub(crate) const EVALUATOR_GUIDE: &str = "\
   처리한 파일 이름은 `{work}/processed.txt`에 한 줄씩 적는다. 알림을 놓쳐도 파일은 남아 있다.
 - 묶음(JSON): `events`(이번 사건), `threads`(관련 thread마다 전체 사건 이력, 시간 요약, 마지막 보고 본문).
   사건 `kind`: thread_started·brief_delivered·report_ready·review_acked·message_queued·question_shown·
-  thread_restarted·thread_failed·merge_enqueued·merge_landed·thread_resolved 등. `at_ms`는 host 시각(ms)이다.
+  thread_restarted·thread_failed·pr_changed·pr_merged·thread_resolved 등. `at_ms`는 host 시각(ms)이다.
 
 ## 출력
 - 평가할 만한 묶음(착지·완료·실패·재시도)을 읽었으면 평가 기록 하나를 `{work}/library/evaluations/<이름>.json`에 쓴다.
@@ -183,7 +183,8 @@ fn times(events: &[FlowEvent]) -> ThreadTimes {
                 t.last_report_ms = Some(e.at_ms);
                 t.reports += 1;
             }
-            "merge_landed" => t.landed_ms = Some(e.at_ms),
+            // `merge_landed`는 병합 대기열이 있던 때의 기록이다(plan §8.135)
+            "pr_merged" | "merge_landed" => t.landed_ms = Some(e.at_ms),
             "thread_resolved" => t.resolved_ms = Some(e.at_ms),
             "thread_restarted" => t.restarts += 1,
             "thread_failed" | "copy_failed" => t.failures += 1,
@@ -302,7 +303,7 @@ impl Host {
         if !cfg.events.iter().any(|k| k == &e.kind) || self.evaluator_rec(&e.project).is_none() {
             return;
         }
-        let delay = if e.kind == "merge_landed" { Duration::ZERO } else { cfg.batch };
+        let delay = if e.kind == "pr_merged" { Duration::ZERO } else { cfg.batch };
         self.evaluator_due(&e.project, delay);
     }
 
@@ -695,7 +696,7 @@ impl Host {
         actor: &str,
     ) -> Result<EvaluatorView, ErrorBody> {
         let rec = self.evaluator_rec(project).ok_or_else(|| err(ErrorCode::NotFound, "사후 평가자가 없다"))?;
-        self.thread_resolve(project, &rec.id, false, crate::orch::ResolveWhy::Manual, actor).await?;
+        self.thread_resolve(project, &rec.id, Default::default(), crate::orch::ResolveWhy::Manual, actor).await?;
         self.eval_due.lock().unwrap().remove(project);
         Ok(self.evaluator_view(&self.load(project, &rec.id)?))
     }
@@ -769,7 +770,7 @@ mod tests {
             from_seq: 1,
             to_seq: 2,
             created_at_ms: 0,
-            triggers: vec!["merge_landed".into()],
+            triggers: vec!["pr_merged".into()],
             events: (0..BATCH_EVENTS as u64).map(ev).collect(),
             threads: (0..12).map(|i| thread(&format!("t-{i:04}"))).collect(),
             threads_omitted: 0,
@@ -809,7 +810,7 @@ mod tests {
             ev(2, "report_ready"),
             ev(3, "thread_restarted"),
             ev(4, "report_ready"),
-            ev(5, "merge_landed"),
+            ev(5, "pr_merged"),
             ev(6, "thread_resolved"),
         ]);
         assert_eq!((t.started_at_ms, t.first_report_ms, t.last_report_ms), (Some(1000), Some(2000), Some(4000)));

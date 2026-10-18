@@ -145,7 +145,7 @@ pub struct NotifySection {
     pub web_push: bool,
     /// Web Push 구독 주소로 받는 push 서비스 호스트(그 이름이거나 그 아래 이름). https만. 시험용 loopback(127.0.0.1 등)은 적었을 때만 http도 받는다
     pub push_hosts: Vec<String>,
-    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 공개 주소(https://<이름>.ts.net), 없으면 `mailto:aaa@example.com`
+    /// VAPID `sub`(push 서비스가 문제 때 연락할 곳). 비우면 프로젝트 저장소 주소(herdr-web-ui와 같다). 공개 주소는 보내지 않는다
     pub push_subject: String,
 }
 
@@ -226,14 +226,20 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
-    /// brief 안내·메시지를 입력하고 Enter한 뒤 harness가 받았다고 알리기(hook이 없으면 화면 변화)를 기다리는 시간(밀리초).
-    /// 넘으면 전달 불명(unknown)이고 다시 보내지 않는다.
+    /// brief 안내·메시지를 입력한 때부터 harness가 받았다고 알리기(hook이 없으면 Enter 뒤 화면 변화)까지 기다리는 시간
+    /// (밀리초). 입력 상자를 그리는 harness는 이 안에서 친 글이 화면에 보이기를 기다린 뒤 Enter한다. 넘으면 전달
+    /// 불명(unknown)이고 다시 보내지 않는다.
     pub accept_wait_ms: u64,
     /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
     /// 넘으면 그대로 보낸다.
     pub stop_wait_ms: u64,
+    /// brief를 보낸 뒤 새 보고가 오기 전까지 thread를 작업 중으로 치는 시간(초). 방금 일을 받은 agent는 아직 쉼으로 읽혀서다
+    /// (herdr-projects ticker는 안내를 보낸 tick을 작업 중으로 두고 다음 tick(`TICK` 15초)에 센다, plan §8.85). 시험에서 줄인다.
+    pub delivered_working_secs: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
+    /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
+    pub merge_grace_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
@@ -255,7 +261,9 @@ impl Default for ProjectsSection {
             pr_poll_secs: 120,
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
+            delivered_working_secs: 15,
             auto_resolve_day_secs: 86_400,
+            merge_grace_secs: 600,
             inbox_done_days: 30,
             routine_commands: Vec::new(),
         }
@@ -480,6 +488,9 @@ pub struct AgentSection {
     pub default_cwd: String,
     /// thread worktree·작업 폴더를 만드는 root(기본: `~/aaa-work`)
     pub work_root: String,
+    /// 웹 파일 보기(터미널의 파일 경로 링크)가 열 수 있는 폴더(§6.5 허용 폴더). 비우면 집·`work_root`·`default_cwd`·
+    /// 임시 폴더다. 그 아래도 symlink를 따라간 실제 경로로 본다(plan §8.125)
+    pub file_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -589,6 +600,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     if c.projects.auto_resolve_day_secs == 0 {
         out.push(Invalid {
             path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
+        });
+    }
+    if c.projects.delivered_working_secs == 0 {
+        out.push(Invalid {
+            path: key(&["projects", "delivered_working_secs"]), message: "1초 이상이어야 한다".into()
         });
     }
     for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {

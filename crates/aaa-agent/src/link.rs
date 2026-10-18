@@ -79,7 +79,12 @@ pub fn hello(agent: &Agent) -> AgentHello {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         software: aaa_common::util::software(),
-        // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`
+        // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`,
+        // history.v1: `AgentRequest::History`(plan §8.118)
+        // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125), profile.v1: `SpawnSpec.profile`(plan §8.126)
+        // ask_anew.v1: 막힘에 입력이 간 뒤 화면에 남은 확인창을 같은 글이어도 다시 알린다(`detect::Watch::input_sent`).
+        // host는 그 질문을 답한 질문의 늦은 사건으로 거르지 않는다
+        // dir.v1: 폴더 보기 `DirList`(plan §8.148)
         // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.153),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
         // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.155)
@@ -87,7 +92,13 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "terminal.v1".into(),
             "cwd.v1".into(),
             "pr.v1".into(),
+            "pr.v2".into(),
             "rename.v1".into(),
+            "history.v1".into(),
+            "file.v1".into(),
+            "profile.v1".into(),
+            "ask_anew.v1".into(),
+            "dir.v1".into(),
             "profiles.v2".into(),
             "launch_safety.v1".into(),
             "adopt.v1".into(),

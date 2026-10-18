@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use aaa_proto::{
-    AgentResponse, B64, DetectScreen, ErrorBody, ErrorCode, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo, SessionMsg,
-    SessionRequest, SessionState, Snapshot, TerminalChunk, negotiate,
+    AgentResponse, B64, DetectScreen, ErrorBody, ErrorCode, HistoryChunk, MAX_FRAME, Outcome, SESSION_IPC, SessionInfo,
+    SessionMsg, SessionRequest, SessionState, Snapshot, TerminalChunk, negotiate,
 };
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
@@ -136,7 +136,8 @@ impl State {
 
     fn snapshot(&self) -> Snapshot {
         let (rows, cols) = self.vt.size();
-        Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(self.vt.replay()) }
+        let (replay, history_more) = self.vt.replay_more();
+        Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(replay), history_more }
     }
 
     fn output(&mut self, data: &[u8]) {
@@ -255,6 +256,13 @@ impl State {
                 osc_title: self.vt.osc_title().to_string(),
                 osc_progress: self.vt.osc_progress().to_string(),
             })),
+            SessionRequest::History { anchor, depth } => {
+                let chunk = match self.vt.older(&anchor, depth as usize, aaa_vt::REPLAY_HISTORY) {
+                    Some(o) => HistoryChunk { data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
+                    None => HistoryChunk { data: B64(Vec::new()), lines: 0, more: false, found: false },
+                };
+                Ok(AgentResponse::History(chunk))
+            }
         };
         let _ = tx.json(&SessionMsg::Res { id, result: result.into() }).await;
     }
@@ -276,8 +284,10 @@ pub fn main(dir: PathBuf) -> Result<()> {
     rt.block_on(run(dir))
 }
 
-/// 세션에 넘기지 않는, 부모 harness 세션의 표지 env
+/// 세션에 넘기지 않는, 부모 harness 세션의 표지 env. Codex·omp 표지는 herdr `apply_pane_launch_env`(src/pane.rs)와 같다
 const INHERITED_SESSION_MARKERS: &[&str] = &[
+    "CODEX_THREAD_ID",
+    "OMPCODE",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SESSION_ID",
@@ -310,12 +320,20 @@ async fn run(dir: PathBuf) -> Result<()> {
         cmd.cwd(cwd);
     }
     // agent를 Claude Code 세션 안에서 띄웠으면 그 세션 표지가 이어진다. 남기면 세션 안 Claude가 자기를 자식 세션으로 보고
-    // 기록 저장(resume)을 끄고, 메시징 token도 새어 나간다. 사용자가 준 설정 env(CLAUDE_CODE_USE_BEDROCK 등)는 남긴다.
+    // 기록 저장(resume)을 끄고, 메시징 token도 새어 나간다. Codex 안에서 띄웠으면 `CODEX_THREAD_ID`가 이어져 세션 안 Codex의
+    // hook 사건이 모두 중첩 thread로 보여 버려진다(`aaa_agent::hooks::nested_codex`). 사용자가 준 설정 env
+    // (CLAUDE_CODE_USE_BEDROCK 등)는 남긴다.
     for k in INHERITED_SESSION_MARKERS {
         cmd.env_remove(k);
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // fish는 다시 접는(reflow) 터미널이면 크기가 바뀔 때 스스로 다시 그리지 않는다. aaa-vt도 다시 접어 겹쳐 그리면 프롬프트가
+    // 겹친다(herdr src/pane.rs `apply_pane_terminal_env`). 물려받은 값이 있으면 두고, spec env가 이긴다. 이름은 소문자 그대로만
+    // 본다(MSYS·Cygwin fish는 소문자만 읽는다).
+    if !cmd.iter_full_env_as_str().any(|(k, _)| k == "fish_handle_reflow") {
+        cmd.env("fish_handle_reflow", "0");
+    }
     cmd.env("AAA_SESSION_ID", &spec.id);
     for (k, v) in &s.env {
         cmd.env(k, v);

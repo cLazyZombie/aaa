@@ -153,6 +153,12 @@ fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentA
     }
 }
 
+/// 질문·메시지 ID(`q-…`·`m-…`, 10자). ULID의 무작위 부분에서 뽑는다: 앞 10자는 ms 시각이라 같은 ms에 만든 둘이 같은
+/// ID가 되어 둘째가 첫째 기록을 덮었다(저장은 `ON CONFLICT(id) DO UPDATE`). 차례는 기록의 `created_at`이 정한다.
+fn short_id(prefix: &str) -> String {
+    format!("{prefix}-{}", aaa_common::util::new_id()[16..].to_ascii_lowercase())
+}
+
 impl Host {
     /// 이 pane의 다음 사건 중 `kinds`에 드는 것을 기다린다
     fn wait_kind(&self, pane: &str, kinds: &'static [&'static str]) -> oneshot::Receiver<String> {
@@ -210,8 +216,10 @@ impl Host {
             tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
             ev.harness_session = None;
         }
-        let (activity, answered_block) = {
+        let (activity, answered_block, running) = {
             let mut i = self.inner.lock().unwrap();
+            // 이 agent는 답한 뒤 화면에 남은 확인창을 새로 묻는 것으로만 다시 알린다(`ask_anew.v1`)
+            let anew = i.machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == "ask_anew.v1"));
             let Some(p) = i.panes.get_mut(&ev.session) else {
                 // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
                 drop(i);
@@ -219,6 +227,19 @@ impl Host {
                 return;
             };
             if p.machine_id != mid {
+                return;
+            }
+            // 셸 pane 앞의 agent가 끝나 셸로 돌아왔다(agent의 앞 프로세스 찾기, herdr `ClearAgent`): 다시 agent 없는 셸이다.
+            // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
+            if ev.kind == "released" {
+                p.agent = None;
+                p.answered = false;
+                p.transcript = None;
+                let _ = p.events.send(crate::PaneEvent::State);
+                drop(i);
+                self.bump();
+                self.close_questions_of(&ev.session);
+                self.tick_wake.notify_one();
                 return;
             }
             if ev.transcript.is_some() {
@@ -235,6 +256,8 @@ impl Host {
                 progress_at_ms: None,
                 harness_session: None,
                 seen: true,
+                plan: None,
+                background: None,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -247,6 +270,15 @@ impl Host {
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
                 st.progress_at_ms = Some(ev.at_ms);
+            }
+            // agent가 대화 기록에서 읽은 계획·배경 작업 수(차이 목록 S5): 상태는 바꾸지 않는다(참고 `pane-status` plan·background_tasks)
+            if ev.kind == "plan" {
+                st.plan = ev.plan.clone();
+                st.background = ev.background;
+            }
+            // harness가 끝나면 그 안에서 돌던 배경 작업도 끝났다
+            if next == Some(AgentActivity::Exited) {
+                st.background = None;
             }
             // 새 harness 세션: 옛 진행 보고는 이 세션을 말하지 않는다(herdr-projects progress `respond` SessionStart)
             if ev.kind == "session_start" {
@@ -262,7 +294,8 @@ impl Host {
                 st.progress_at_ms = None;
             }
             // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
-            let answered_block = next == Some(AgentActivity::Question)
+            let answered_block = !anew
+                && next == Some(AgentActivity::Question)
                 && prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question)
                 && p.answered;
             if next.is_some_and(|a| a != AgentActivity::Question) {
@@ -279,7 +312,7 @@ impl Host {
             }
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
-            (next, answered_block)
+            (next, answered_block, p.info.state.is_running())
         };
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
@@ -315,10 +348,14 @@ impl Host {
         // 질문: 열리거나, harness가 넘어가면 닫힌다. 답한 확인창 뒤에 늦게 온 질문 사건(옛 agent의 Claude
         // Notification `permission_prompt`가 답보다 늦게 도착)은 그 질문을 다시 열지 않는다. 참고 herdr 0.9.5는 상태 hook을
         // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
-        // 때만 알리므로, 한 막힘에 질문은 하나다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음
-        // 확인창은 새 막힘이다(t-0333 m13 사건 16, plan §8.99·§8.110)
+        // 때만 알린다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음 확인창은 새 막힘이다(t-0333 m13
+        // 사건 16, plan §8.99·§8.110). `ask_anew.v1` agent는 화면 감지만 질문을 내고, 막힘에 입력이 간 뒤 남은 확인창을
+        // 새 물음으로 다시 알린다(herdr-web-ui `askingEnded`, QA t-0337 Q18): 답한 질문 뒤의 질문 사건은 새 질문이다
+        // 끝난 세션(재부팅으로 끊김·종료)에는 질문을 열지 않는다: 다시 붙은 agent가 알리는 세션별 마지막 상태
+        // (`hello.harness`, 재부팅 복원이 harness 세션 ID를 알려고)가 확인창이면 그 pane 질문을 닫은 뒤 다시 열었다
+        // (QA t-0337 Q20). 참고 herdr-web-ui는 살아 있는 blocked pane 화면에서만 질문을 읽는다(`server/prompt.ts`).
         match activity {
-            Some(AgentActivity::Question) if answered_block => {}
+            Some(AgentActivity::Question) if answered_block || !running => {}
             Some(AgentActivity::Question) => {
                 let kind = ev.question_kind.clone().unwrap_or_else(|| "permission".into());
                 self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
@@ -384,7 +421,7 @@ impl Host {
         let _ = mid;
         let rec = self.thread_of_pane(pane);
         let q = QuestionView {
-            id: format!("q-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),
+            id: short_id("q"),
             pane: pane.to_string(),
             machine,
             project: rec.as_ref().map(|r| r.project.clone()),
@@ -512,51 +549,75 @@ impl Host {
         let before = |msg: String| SubmitErr { typed: false, msg };
         let after = |msg: String| SubmitErr { typed: true, msg };
         let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
-        // Enter 뒤 harness가 입력을 받았다고 알리기를 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
+        // 친 글에 프로그램이 반응하고 Enter 뒤 harness가 받았다고 알리기까지 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
         let accept_wait = Duration::from_millis(self.cfg.projects.accept_wait_ms);
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
-        if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
+        let shown = self.screen_lines(mid, pane).await;
+        if let Some((_, q)) = shown.as_deref().and_then(modal_of) {
             return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
         }
         let agent = self.pane_agent(pane);
+        // 확인창(권한·질문)이 떠 있으면 친 글과 Enter를 그 창이 받는다
+        if agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
+            return Err(before("확인창이 떠 있어 입력하지 않았다".into()));
+        }
         let hooked = agent.as_ref().is_some_and(|a| a.harness != "report");
         // 일하는 중인 harness는 받은 글을 다음 턴으로 줄 세운다(Claude Code 대기 메시지). herdr `agent prompt --wait`도
         // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
         let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
-        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         // 프로그램이 bracketed paste를 켰을 때만 감싸고 Enter도 그 터미널 모드대로 쓴다(herdr `encode_api_submission_parts`,
         // src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
         let modes = self.key_modes(pane);
+        let deadline = Instant::now() + accept_wait;
         if let Some(text) = text {
             conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) })
                 .await
                 .map_err(|e| after(e.message))?;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
-        let typed = self.screen_lines(mid, pane).await;
+        // 치는 동안 뜬 확인창(t-0340 보안 감사): Enter가 사람이 보지 않은 선택지(권한 창의 기본은 「Yes」)를 고른다.
+        // Enter 바로 전에 화면과 harness 상태를 다시 본다. 친 글은 남으니 받았는지 모르는 것으로 둔다(다시 보내지 않는다).
+        // 입력 상자에 친 글을 보이는 harness(hook·화면 감지가 있는 Claude 등)는 그 검사를 프로그램이 친 글을 읽은 뒤(화면이
+        // 바뀐 뒤)에 한다: 부하 아래 300ms(참고 herdr) 안에 글을 읽지 못한 프로그램은 아직 친 글 앞 상태라, 검사 뒤에 그린
+        // 확인창이 Enter를 받았다(ci-local m13 race). 바뀌지 않으면 받음 시한까지 기다려 보낸다(시한은 친 때부터 센다).
+        // 그 밖의 프로그램(custom·보고만)은 Enter 전에 글을 보이지 않을 수 있어 참고처럼 300ms 뒤에 본다
+        let typed = loop {
+            let now = self.screen_lines(mid, pane).await;
+            if let Some((_, q)) = now.as_deref().and_then(modal_of) {
+                return Err(after(format!("치는 동안 선택 창이 떠 Enter를 보내지 않았다: {q}")));
+            }
+            if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
+                return Err(after("치는 동안 확인창이 떠 Enter를 보내지 않았다".into()));
+            }
+            if text.is_none() || !hooked || now != shown || Instant::now() >= deadline {
+                break now;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let left = || deadline.saturating_duration_since(Instant::now());
+        // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
+        // 그 전부터 기다리면 Enter를 보내지 않은 글을 받았다고 적는다
+        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         let enter = modes.key("enter").unwrap_or_else(|| b"\r".to_vec());
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(enter) })
             .await
             .map_err(|e| after(e.message))?;
         if busy {
-            let still = matches!(
-                self.pane_agent(pane).map(|a| a.activity),
-                Some(AgentActivity::Working | AgentActivity::Question)
-            );
+            // Enter 뒤 확인창이면 그 Enter가 창에 갔을 수 있다: 받은 것으로 치지 않는다(t-0340 보안 감사)
+            let still = self.pane_agent(pane).map(|a| a.activity) == Some(AgentActivity::Working);
             // 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다
-            let ok = still || tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok());
+            let ok = still || tokio::time::timeout(left(), accepted).await.is_ok_and(|r| r.is_ok());
             if ok && let Some(f) = screen_accept.take() {
                 f();
             }
             return Ok(ok);
         }
         if hooked {
-            return Ok(tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok()));
+            return Ok(tokio::time::timeout(left(), accepted).await.is_ok_and(|r| r.is_ok()));
         }
         // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
-        let until = Instant::now() + accept_wait;
-        while Instant::now() < until {
+        while Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(250)).await;
             if self.screen_lines(mid, pane).await != typed {
                 if let Some(f) = screen_accept.take() {
@@ -659,7 +720,7 @@ impl Host {
             }
         }
         let mut m = MessageView {
-            id: format!("m-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),
+            id: short_id("m"),
             project: project.to_string(),
             thread: id.to_string(),
             mode,
@@ -892,6 +953,8 @@ mod tests {
             percent: None,
             at_ms,
             transcript: None,
+            plan: None,
+            background: None,
         };
         let idle = AgentStatus {
             activity: AgentActivity::Idle,
@@ -903,6 +966,8 @@ mod tests {
             progress_at_ms: None,
             harness_session: None,
             seen: true,
+            plan: None,
+            background: None,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
@@ -944,6 +1009,43 @@ mod tests {
         (h, Tmp(dir))
     }
 
+    /// 계획 사건(agent plan.rs, 차이 목록 S5)은 계획·배경 수만 바꾸고 상태는 그대로 둔다. harness가 끝나면 배경 수는 지운다
+    #[tokio::test]
+    async fn plan_events_set_counts_without_changing_the_activity() {
+        let (h, _t) = host_with_pane();
+        let ev = |kind: &str, at_ms, plan: Option<aaa_proto::PlanSummary>, background| HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: kind.into(),
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            at_ms,
+            transcript: None,
+            plan,
+            background,
+        };
+        h.on_harness("m", ev("working", 1_000, None, None));
+        let plan = aaa_proto::PlanSummary { done: 1, total: 3, current: Some("고치는 중".into()) };
+        h.on_harness("m", ev("plan", 2_000, Some(plan.clone()), Some(2)));
+        let a = h.pane_agent("s").unwrap();
+        assert_eq!(
+            (a.activity, a.since_ms, a.plan, a.background),
+            (AgentActivity::Working, 1_000, Some(plan.clone()), Some(2))
+        );
+        // 다른 상태 사건은 계획을 지우지 않는다
+        h.on_harness("m", ev("idle", 3_000, None, None));
+        let a = h.pane_agent("s").unwrap();
+        assert_eq!((a.activity, a.plan.as_ref(), a.background), (AgentActivity::Idle, Some(&plan), Some(2)));
+        h.on_harness("m", ev("exited", 4_000, None, None));
+        let a = h.pane_agent("s").unwrap();
+        assert_eq!((a.plan.as_ref(), a.background), (Some(&plan), None));
+        // 계획이 없어졌다는 사건
+        h.on_harness("m", ev("plan", 5_000, None, None));
+        assert_eq!(h.pane_agent("s").unwrap().plan, None);
+    }
+
     /// 답한 확인창 뒤 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16·plan §8.99: 부하에서
     /// PermissionRequest → 답 → 1.3초 뒤 Notification `permission_prompt`). 막힘이 끝난 뒤(작업 중: 화면 감지나 옛 agent의
     /// PostToolUse·PreToolUse)의 질문 사건은 다음 확인창의 새 질문이다.
@@ -960,6 +1062,8 @@ mod tests {
             percent: None,
             at_ms,
             transcript: None,
+            plan: None,
+            background: None,
         };
         h.on_harness("m", ev("question", 1_000));
         let mut q = h.open_question_of("s").expect("질문");
@@ -974,5 +1078,12 @@ mod tests {
         h.on_harness("m", ev("question", 4_000));
         let again = h.open_question_of("s").expect("다음 확인창의 질문");
         assert_ne!(again.id, q.id);
+    }
+
+    /// 같은 ms에 잇달아 만든 ID도 다르다(전에는 ULID 시각 부분이라 같아져 둘째 질문·메시지가 첫째 기록을 덮었다)
+    #[test]
+    fn ids_made_in_the_same_millisecond_differ() {
+        let ids: std::collections::HashSet<String> = (0..1000).map(|_| short_id("q")).collect();
+        assert_eq!(ids.len(), 1000);
     }
 }

@@ -69,6 +69,18 @@ export function AppearanceSettings() {
             ]}
           />
         </SettingsRow>
+        {/* 참고 SettingsDialog 「Agents order」(문구 i18n.ko.ts): aaa는 머신 목록 차례가 herdr workspace 차례 자리다 */}
+        <SettingsRow label="에이전트 정렬" description="활동순은 응답을 기다리는 에이전트를 맨 위에 두고, 그다음 가장 최근에 바뀐 순서로 놓습니다. 머신 목록의 순서는 바뀌지 않습니다" wide>
+          <Segmented
+            label="에이전트 정렬"
+            value={a.agentOrder}
+            onChange={(agentOrder) => updateAppearance({ agentOrder })}
+            options={[
+              { value: "workspace", label: "워크스페이스순" },
+              { value: "activity", label: "활동순" },
+            ]}
+          />
+        </SettingsRow>
         <SettingsRow label="상태 표시" description="기본은 확인이 필요한 상태만 표시합니다. 점과 기호는 herdr TUI처럼 모든 상태를 표시합니다" wide>
           <Segmented
             label="상태 표시"

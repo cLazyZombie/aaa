@@ -31,7 +31,7 @@ pub fn follow_cwd(child_pid: u32) -> Option<PathBuf> {
 
 /// 제어 터미널의 앞 프로세스 그룹(macOS `proc_bsdinfo.e_tpgid`, Linux `/proc/<pid>/stat`의 tpgid)
 #[cfg(target_os = "macos")]
-fn foreground_process_group_id(pid: u32) -> Option<u32> {
+pub(crate) fn foreground_process_group_id(pid: u32) -> Option<u32> {
     if pid == 0 {
         return None;
     }
@@ -80,7 +80,7 @@ fn process_cwd(pid: u32) -> Option<PathBuf> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn foreground_process_group_id(pid: u32) -> Option<u32> {
+pub(crate) fn foreground_process_group_id(pid: u32) -> Option<u32> {
     // "pid (comm) state ppid pgrp session tty_nr tpgid ...": comm에 빈칸·괄호가 있을 수 있어 마지막 ')' 뒤부터 센다
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = stat.get(stat.rfind(')')? + 2..)?;
@@ -383,15 +383,19 @@ mod tests {
         };
         #[cfg(windows)]
         let cmd = {
-            // cmd가 cd한 뒤 표지를 쓰고 줄을 기다린다
+            // cmd가 cd한 뒤 표지를 쓰고 줄을 기다린다. 경로는 환경 변수로 넘기고 따옴표를 쓰지 않는다: portable-pty는
+            // 공백·따옴표가 든 인자를 `"…"`로 감싸며 안의 `"`를 `\"`로 바꾸는데(CommandLineToArgvW 규칙), cmd.exe는 `\"`를
+            // 모른다(CI ccbabcb: 「The filename, directory name, or volume label syntax is incorrect.」). cmd의 cd는 공백을
+            // 구분자로 보지 않는다. `&&` 앞에 공백을 두지 않아 경로 끝에 공백이 붙지 않게 한다.
             let mut c = portable_pty::CommandBuilder::new("cmd");
-            c.args(["/d", "/q", "/c"]);
-            c.arg(format!("cd /d \"{}\" && echo ready&& set /p _=", deep.display()));
+            c.args(["/d", "/q", "/c", "cd /d %AAA_CWD_TEST%&& echo ready&& set /p _="]);
+            c.env("AAA_CWD_TEST", &deep);
             c
         };
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
-        // 출력은 끝까지 읽는다(session host처럼): 아무도 안 읽으면 남은 출력 때문에 셸이 끝나지 못한다(macOS)
+        // 출력은 끝까지 읽는다(session host처럼): 아무도 안 읽으면 남은 출력 때문에 셸이 끝나지 못한다(macOS).
+        // 닫을 때도 EOF까지 받는다: ConPTY는 닫기(ClosePseudoConsole) 중에도 출력을 쓰므로 받는 쪽이 먼저 멈추면 안 된다.
         let mut out = pair.master.try_clone_reader().unwrap();
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let reader = std::thread::spawn(move || {
@@ -403,15 +407,42 @@ mod tests {
             }
         });
         let mut writer = pair.master.take_writer().unwrap();
+        // 단계마다 안전 상한(30초)을 둔다. 기다림의 끝은 사건(표지·종료·EOF)이고, 상한은 멈췄을 때 어느 단계에서 무엇을
+        // 받았는지 남기고 실패하려는 것이다(windows CI는 이 시험에서 끝없이 기다려 job 한도로 취소됐다).
+        let limit = std::time::Duration::from_secs(30);
+        let shown = |b: &[u8]| {
+            let s = String::from_utf8_lossy(b).escape_debug().to_string();
+            s.chars().rev().take(1500).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+        };
+        let within = |what: &str, f: Box<dyn FnOnce() + Send>| {
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                f();
+                let _ = done_tx.send(());
+            });
+            match done_rx.recv_timeout(limit) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("{what}: {}초 안에 끝나지 않았다", limit.as_secs())
+                }
+                Err(_) => panic!("{what}: 도중에 실패했다(위 panic)"),
+            }
+        };
         // 표지(ready)가 보이면 cd가 끝났다. Windows ConPTY(portable-pty는 INHERIT_CURSOR로 연다)는 시작할 때 커서 위치를
         // 묻고(DSR 6, `ESC [ 6 n`) 답이 올 때까지 자식의 출력과 종료를 막는다: session host처럼 한 번 답한다
         // (aaa-vt `DsrScanner`). Unix 셸은 묻지 않는다.
         let mut seen = Vec::new();
         let mut answered = false;
+        let until = std::time::Instant::now() + limit;
         while !String::from_utf8_lossy(&seen).contains("ready") {
-            let chunk =
-                rx.recv().unwrap_or_else(|_| panic!("셸이 표지 전에 끝났다: {}", String::from_utf8_lossy(&seen)));
-            seen.extend_from_slice(&chunk);
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(chunk) => seen.extend_from_slice(&chunk),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("표지(ready)가 {}초 안에 오지 않았다(DSR 답 {answered}): {}", limit.as_secs(), shown(&seen))
+                }
+                Err(_) => panic!("셸이 표지 전에 끝났다: {}", shown(&seen)),
+            }
             if !answered && seen.windows(4).any(|w| w == b"\x1b[6n") {
                 std::io::Write::write_all(&mut writer, b"\x1b[1;1R").unwrap();
                 answered = true;
@@ -420,11 +451,11 @@ mod tests {
         let pid = child.process_id().unwrap();
         let got = follow_cwd(pid);
         std::io::Write::write_all(&mut writer, b"\r\n").unwrap();
-        child.wait().unwrap();
-        drop(rx);
+        within("입력 줄을 받은 셸의 종료", Box::new(move || drop(child.wait().unwrap())));
         drop(writer);
-        drop(pair.master);
-        reader.join().unwrap();
+        within("PTY 닫기", Box::new(move || drop(pair.master)));
+        within("출력 EOF", Box::new(move || reader.join().unwrap()));
+        drop(rx);
         let want = deep.canonicalize().unwrap();
         assert_eq!(got.map(|p| p.canonicalize().unwrap()), Some(want));
         std::fs::remove_dir_all(&dir).unwrap();

@@ -157,6 +157,11 @@ impl Detector {
         Tick::Read { unchanged_since: if skippable { self.last_scan_seq } else { None } }
     }
 
+    /// 「보이는 막힘」을 다시 알리는 차례(`STABLE_VISIBLE_SIGNAL_REFRESH`)를 `now`부터 다시 센다
+    pub fn hold_refresh(&mut self, now: Instant) {
+        self.last_visible_signal_refresh = Some(now);
+    }
+
     /// 읽은 화면을 평가한다. 알릴 것이 있으면 돌려준다(herdr `decide_screen_detection_publish`).
     /// `seq`는 그 화면의 변화 순번이다(모르면 None: 그러면 다음에도 늘 읽는다).
     pub fn observe(&mut self, now: Instant, seq: Option<u64>, input: DetectionInput<'_>) -> Option<Published> {

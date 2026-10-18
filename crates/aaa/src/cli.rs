@@ -124,10 +124,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TickerCmd,
     },
-    /// 병합 대기열(순번과 사건만, 병합 단계는 coordinator가 한다)
+    /// 없어졌다: 병합은 thread가 PR로 한다(안내만 하고 끝난다)
+    #[command(hide = true)]
     Merge {
-        #[command(subcommand)]
-        cmd: MergeCmd,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _rest: Vec<String>,
     },
     /// routine(projects/<p>/routines/*.md) 목록과 명령 승인
     Routine {
@@ -236,7 +237,7 @@ enum ProjectCmd {
         coordinator_profile: Option<String>,
     },
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
     Set { project: String, key: String, value: String },
     /// 멈춘다: ticker가 건너뛰고 `thread start`를 거부한다. 도는 agent는 멈추지 않는다
     Pause { project: String },
@@ -299,35 +300,6 @@ enum InboxCmd {
         /// 끝내지 않은 항목 모두
         #[arg(long, conflicts_with = "ids")]
         all: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum MergeCmd {
-    /// 맨 뒤에 넣는다(이미 있으면 그 자리)
-    Enqueue {
-        project: String,
-        thread: String,
-    },
-    List {
-        project: String,
-    },
-    /// 병합을 마쳤다: 대기열에서 빼고 다음 차례로 넘긴다
-    Done {
-        project: String,
-        thread: String,
-    },
-    /// 병합하지 않고 뺀다
-    Drop {
-        project: String,
-        thread: String,
-    },
-    /// 맨 앞 thread를 병합한다: 그 머신 agent가 원격 일치 확인 → 임시 worktree에서 merge --no-ff → tree 같음 확인 → push(force 없음)
-    /// → 사용자 checkout이 깨끗한 main이면 ff-only → 정리. 되면 대기열에서 빼고 같은 기준의 다른 thread에 알린다.
-    Land {
-        project: String,
-        /// 주면 그것이 맨 앞이어야 한다
-        thread: Option<String>,
     },
 }
 
@@ -486,11 +458,18 @@ enum ThreadCmd {
     Resolve {
         project: String,
         thread: String,
+        /// worktree와 branch를 남긴다
         #[arg(long)]
         keep_worktree: bool,
         /// 끝낸 thread를 다시 연다(아무것도 띄우지 않는다. 띄우려면 restart)
-        #[arg(long, conflicts_with = "keep_worktree")]
+        #[arg(long, conflicts_with_all = ["keep_worktree", "skip_copy", "discard_uncopied"])]
         reopen: bool,
+        /// 마지막 사본을 만들 수 없어도 끝낸다(worktree는 남긴다)
+        #[arg(long)]
+        skip_copy: bool,
+        /// 집에 다 오지 않았어도 worktree를 지운다
+        #[arg(long)]
+        discard_uncopied: bool,
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
@@ -592,10 +571,11 @@ enum PaneCmd {
         #[arg(long)]
         current: bool,
     },
-    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). 출력은 글 그대로(--json이면 JSON)
+    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). detection은 상태 감지가 읽는 글이다.
+    /// 출력은 글 그대로(--json이면 JSON)
     Read {
         pane: String,
-        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped"], default_value = "recent")]
+        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped", "detection"], default_value = "recent")]
         source: String,
         /// 줄 수(최대 1000)
         #[arg(long)]
@@ -605,6 +585,9 @@ enum PaneCmd {
         /// --format ansi와 같다
         #[arg(long)]
         ansi: bool,
+        /// --format ansi와 같다(herdr `--raw`)
+        #[arg(long)]
+        raw: bool,
     },
     /// pane 자리를 나눠 새 pane을 띄운다(명령이 없으면 그 머신 사용자의 기본 셸)
     Split {
@@ -689,8 +672,13 @@ enum PaneCmd {
         #[arg(long)]
         timeout: Option<u64>,
     },
-    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 생각·도구 결과 본문은 빼고). 출력은 글(--json이면 JSON)
-    Chat { pane: String },
+    /// Claude·Codex 대화 기록의 끝부분(읽기 전용, 도구 결과 본문은 빼고, 생각은 --thinking일 때만). 출력은 글(--json이면 JSON)
+    Chat {
+        pane: String,
+        /// 생각(Claude thinking, Codex reasoning 요약)도 싣는다
+        #[arg(long)]
+        thinking: bool,
+    },
     /// 그림 파일(PNG·JPEG·GIF·WebP)을 pane 머신의 세션 폴더에 올린다. harness 입력창이면 경로를 넣는다(Enter 없음).
     /// clipboard가 없는 raw ssh 셸에서 쓴다. TUI(`aaa attach`)에서는 Ctrl+V가 같은 일을 한다.
     Attach { pane: String, file: std::path::PathBuf },
@@ -1036,15 +1024,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             },
         ),
         Cmd::Ticker { cmd: TickerCmd::Tick } => front(json, FrontRequest::TickerTick),
-        Cmd::Merge { cmd } => front(
-            json,
-            match cmd {
-                MergeCmd::Enqueue { project, thread } => FrontRequest::MergeEnqueue { project, thread },
-                MergeCmd::List { project } => FrontRequest::MergeList { project },
-                MergeCmd::Done { project, thread } => FrontRequest::MergeDrop { project, thread, landed: true },
-                MergeCmd::Drop { project, thread } => FrontRequest::MergeDrop { project, thread, landed: false },
-                MergeCmd::Land { project, thread } => FrontRequest::MergeLand { project, thread },
-            },
+        Cmd::Merge { .. } => anyhow::bail!(
+            "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
+             `aaa thread next <p> <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
         Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
         Cmd::Routine { cmd: RoutineCmd::Toggle { project, name, on, off } } => {
@@ -1093,8 +1075,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
                 ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
-                ThreadCmd::Resolve { project, thread, keep_worktree, reopen } => {
-                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen }
+                ThreadCmd::Resolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied }
                 }
                 ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
                 ThreadCmd::Read { project, thread, lines } => FrontRequest::ThreadRead { project, thread, lines },
@@ -1117,19 +1099,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),
         Cmd::Hook { agent, payload } => {
             // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 출력 없음
+            // 표준 출력은 agent가 돌려준 진행 안내 JSON 한 줄만이다(Claude Code는 JSON이 아니면 버린다)
             let body = match payload {
                 Some(p) => p,
                 None => {
                     let mut t = String::new();
-                    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut t);
+                    let _ = std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 1 << 20), &mut t);
                     t
                 }
             };
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body)
                 && let Ok(rt) = runtime()
-                && let Err(e) = rt.block_on(aaa_agent::hooks::send(&agent, v))
             {
-                eprintln!("aaa hook: {e:#}");
+                match rt.block_on(aaa_agent::hooks::send(&agent, v)) {
+                    Ok(Some(out)) => println!("{out}"),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("aaa hook: {e:#}"),
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -1214,6 +1200,7 @@ fn read_source(s: &str) -> aaa_proto::ReadSource {
     match s {
         "visible" => aaa_proto::ReadSource::Visible,
         "recent-unwrapped" => aaa_proto::ReadSource::RecentUnwrapped,
+        "detection" => aaa_proto::ReadSource::Detection,
         _ => aaa_proto::ReadSource::Recent,
     }
 }
@@ -1250,15 +1237,15 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
         }
         PaneCmd::Get { pane } => FrontRequest::PaneGet { pane },
         PaneCmd::Current { pane, current: _ } => FrontRequest::PaneGet { pane: current_pane(pane)? },
-        PaneCmd::Read { pane, source, lines, format, ansi } => {
+        PaneCmd::Read { pane, source, lines, format, ansi, raw } => {
             let format =
-                if ansi || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
+                if ansi || raw || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
             return front_print(
                 json,
                 front_call(FrontRequest::PaneReadText { pane, source: read_source(&source), lines, format })?,
             );
         }
-        PaneCmd::Chat { pane } => return front(json, FrontRequest::PaneChat { pane }),
+        PaneCmd::Chat { pane, thinking } => return front(json, FrontRequest::PaneChat { pane, thinking }),
         PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
             let pane = match target {
                 Some(t) => t,
@@ -1589,7 +1576,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .clone()
         .filter(|n| !n.is_empty())
         .or_else(|| Some(cfg.agent.name.clone()).filter(|n| !n.is_empty()))
-        .unwrap_or_else(aaa_common::util::hostname);
+        .unwrap_or_else(|| aaa_common::util::machine_name_from(&aaa_common::util::hostname()));
     let rt = runtime()?;
     if let Some(AgentCmd::Enroll { host, name: n }) = a.cmd {
         let name = n.unwrap_or(name);
@@ -1620,6 +1607,24 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         } else {
             PathBuf::from(&cfg.agent.work_root)
         };
+        let file_roots: Vec<PathBuf> = if cfg.agent.file_roots.is_empty() {
+            let mut v = vec![aaa_config::paths::home(), work_root.clone(), std::env::temp_dir()];
+            v.extend(agent.default_cwd.as_ref().map(PathBuf::from));
+            if cfg!(unix) {
+                v.push(PathBuf::from("/tmp"));
+            }
+            v
+        } else {
+            // `~`·`~/…`는 집 기준
+            let home = aaa_config::paths::home();
+            let at_home = |r: &str| match r.strip_prefix("~") {
+                Some("") => home.clone(),
+                Some(rest) if rest.starts_with('/') => home.join(&rest[1..]),
+                _ => PathBuf::from(r),
+            };
+            cfg.agent.file_roots.iter().map(|r| at_home(r)).collect()
+        };
+        agent.configure_file_roots(file_roots);
         agent.configure_threads(aaa_agent::threads::ThreadsConfig {
             work_root,
             exe: std::env::current_exe()?,
@@ -1629,6 +1634,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
         agent.start_hooks()?;
+        agent.start_plans();
         aaa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
@@ -1794,10 +1800,6 @@ pub(crate) fn front_print(json: bool, res: Result<FrontResponse, aaa_proto::Erro
                 println!("{}", serde_json::to_string(&r)?);
             } else {
                 print!("{}", render_front(&r));
-            }
-            // 병합 단계가 멈췄으면 응답은 왔어도 실패로 끝난다
-            if matches!(&r, FrontResponse::MergeLand(v) if !v.ok) {
-                return Ok(ExitCode::from(1));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2214,7 +2216,27 @@ fn render_front(r: &FrontResponse) -> String {
                     aaa_proto::ChatRole::User => writeln!(s, "\n[사람] {}", m.text),
                     aaa_proto::ChatRole::Assistant => writeln!(s, "\n[{}] {}", c.harness, m.text),
                     aaa_proto::ChatRole::Tool => writeln!(s, "  · {}", m.text),
+                    aaa_proto::ChatRole::Thinking => writeln!(s, "  (생각) {}", m.text),
                 };
+            }
+        }
+        FrontResponse::PaneFile { info, candidates, url } => match info {
+            Some(i) => {
+                let _ = writeln!(s, "{}\t{}바이트\t{}\t{}", i.path, i.size, i.mime, url.as_deref().unwrap_or(""));
+            }
+            None => {
+                for c in candidates {
+                    let _ = writeln!(s, "{c}");
+                }
+            }
+        },
+        FrontResponse::PaneDir { listing } => {
+            let _ = writeln!(s, "{}", listing.path);
+            for d in &listing.directories {
+                let _ = writeln!(s, "{d}/");
+            }
+            for f in &listing.files {
+                let _ = writeln!(s, "{}\t{}바이트", f.name, f.size);
             }
         }
         FrontResponse::Screen(t) => {
@@ -2357,40 +2379,6 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Question(q) => render_question(&mut s, q),
         FrontResponse::Message(m) => {
             let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
-        }
-        FrontResponse::Merge { queue } => {
-            if queue.is_empty() {
-                s.push_str("병합 대기열이 비었다\n");
-            }
-            for e in queue {
-                let branch = e.branch.as_deref().unwrap_or("-");
-                let _ =
-                    writeln!(s, "{}\t{}/{}\t{}\t{}@{}", e.position, e.project, e.thread, e.title, branch, e.machine);
-            }
-        }
-        FrontResponse::MergeLand(v) => {
-            let _ = writeln!(
-                s,
-                "{}/{} {}",
-                v.project,
-                v.thread,
-                if v.ok { "병합했다" } else { "병합하지 못했다(대기열에 그대로 있다)" }
-            );
-            for st in &v.steps {
-                let mut lines = st.note.lines();
-                let first = lines.next().unwrap_or("");
-                let _ = writeln!(s, "  {} {}\t{}\t{}ms", if st.ok { "✓" } else { "✗" }, st.name, first, st.ms);
-                for l in lines {
-                    let _ = writeln!(s, "      {l}");
-                }
-            }
-            if let Some(c) = &v.commit {
-                let _ = writeln!(s, "병합 commit: {c}");
-            }
-            if !v.notified.is_empty() {
-                let _ = writeln!(s, "「main 이동」을 알린 thread: {}", v.notified.join(", "));
-            }
-            let _ = writeln!(s, "남은 대기열: {}", v.queue.len());
         }
         FrontResponse::Routines { routines } => {
             if routines.is_empty() {

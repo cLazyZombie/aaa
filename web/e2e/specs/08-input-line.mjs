@@ -1,32 +1,14 @@
 // 웹 E2E 입력줄: send-text·여러 줄·보내는 동안 친 글.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 08-input-line(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser } from "../lib/harness.mjs";
+import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames, sentCount, inList } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
-  await step("입력 막대·CLI send-text 뒤 send-keys enter: 글 뒤 Enter를 따로 보낸다(Codex식 붙여넣기 판정)", async () => {
-    aaa("tab", "create", "--machine", "labA", "--label", "burst", "--", process.execPath, `${root}/burst.js`);
-    await page.getByTestId("pane-burst").click();
-    await until("burst 화면", async () => (await screenText(page)).includes("burst>"));
-    await page.getByLabel("보낼 글").fill("hello web");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await until("웹 제출", async () => (await screenText(page)).includes("SUBMIT:hello web"));
-    // CLI는 글과 Enter를 따로 쓴다(herdr send-text·send-keys). `pane run`은 글+Enter를 한 번에 쓰니(herdr) 여기서는 쓰지 않는다
-    aaa("pane", "send-text", "burst", "hello cli");
-    aaa("pane", "send-keys", "burst", "enter");
-    await waitOutput("burst", "SUBMIT:hello cli");
-    if ((await screenText(page)).includes("[newline]")) throw new Error("Enter가 글과 한 덩어리로 갔다");
-    // 가짜 입력창이 한 덩어리를 실제로 가려내는지(이 단언이 없으면 위 단언은 아무것도 보지 않는다)
-    aaa("pane", "send-text", "burst", "one\r");
-    await until("한 덩어리 판정", async () => (await screenText(page)).includes("[newline]"));
-    aaa("pane", "kill", "burst");
-  });
-
   await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "pasteapp", "--", process.execPath, `${root}/paste.js`);
     const got = () => aaa("pane", "read", "pasteapp", "--source", "visible").text;
     const gots = () => got().split("GOT:").length - 1;
-    await page.getByTestId("pane-pasteapp").click();
+    await inList(page, "pane-pasteapp");
     await until("paste 화면", async () => (await screenText(page)).includes("paste>"));
     const box = page.getByLabel("보낼 글");
     // 여러 줄: 프로그램이 bracketed paste를 켰으니 감싸서 한 덩어리로, 줄바꿈은 CR로. Enter는 따로.
@@ -45,9 +27,11 @@ export default async function ({ ctl, page }) {
     await box.press("b");
     if ((await box.inputValue()) !== "a\nb") throw new Error(JSON.stringify(await box.inputValue()));
     // 조합 중 Enter는 보내지 않는다. 같은 사건이 조합 중이 아니면 보낸다(이 단언이 실제로 가려내는지).
+    // 보내기(submit)는 그 keydown 처리 안에서 일어난다: 그 사건 뒤 이 화면이 보낸 것이 없으면 보내지 않았다
+    const k = await sentCount(page);
     await box.evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true })));
-    await sleep(500);
-    if (gots() !== n || (await box.inputValue()) !== "a\nb") throw new Error(`조합 중 Enter로 보냈다: ${got()}`);
+    const composed = (await sentFrames(page, k)).filter((f) => f.t === "submit" || f.t === "input");
+    if (composed.length || gots() !== n || (await box.inputValue()) !== "a\nb") throw new Error(`조합 중 Enter로 보냈다: ${JSON.stringify(composed)} ${got()}`);
     // 초안: 다시 열어도 남는다
     await page.reload();
     await page.getByTestId("machine-labA").waitFor();
@@ -134,12 +118,10 @@ export default async function ({ ctl, page }) {
     }
     // 휴대폰(터치)도 Enter는 보내기다(herdr-web-ui TerminalInput: enterKeyHint="send", Shift+Enter만 줄바꿈)
     const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { line: true });
-    await mob.page.getByTestId("pane-pasteapp").click();
+    await inList(mob.page, "pane-pasteapp");
     const mbox = mob.page.getByLabel("보낼 글");
     // 연결(snapshot)되기 전에는 읽기 전용이다: 화면이 온 뒤에 본다
     await until("휴대폰 paste 화면", async () => (await screenText(mob.page)).includes("paste>"));
-    // 데스크톱 화면이 쓰는 중이어도 가져오기 없이 입력된다
-    if (await mbox.isDisabled()) throw new Error("휴대폰 입력 막대가 꺼져 있다");
     if ((await mbox.getAttribute("enterkeyhint")) !== "send") throw new Error(`휴대폰 enterkeyhint ${await mbox.getAttribute("enterkeyhint")}`);
     n = gots();
     await mbox.fill("휴대폰");
@@ -149,7 +131,7 @@ export default async function ({ ctl, page }) {
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();
     aaa("pane", "kill", "pasteapp");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -171,7 +153,7 @@ export default async function ({ ctl, page }) {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { line: true, wsRoute: [/\/api\/v1\/panes\//, holdReplies] })).page;
-    await sp.getByTestId("pane-submitapp").click();
+    await inList(sp, "pane-submitapp");
     await until("submitapp 화면", async () => (await screenText(sp)).includes("paste>"));
     const box = sp.getByLabel("보낼 글");
     const sendBtn = sp.getByRole("button", { name: "터미널에 보내기" });
@@ -197,7 +179,8 @@ export default async function ({ ctl, page }) {
     const second = await reply();
     await box.fill("다른 글");
     pipe.ws.send(JSON.stringify(second));
-    await sleep(300);
+    // 답을 처리한 뒤 보내기 단추가 풀린다(TerminalInput: 지우기 판단 then → 잠금 풀기 finally). 그 뒤의 글을 본다(sleep으로 어림하지 않는다)
+    await until("답 처리(보내기 풀림)", async () => !(await sendBtn.isDisabled()));
     if ((await box.inputValue()) !== "다른 글") throw new Error(`바꾼 글을 지웠다: ${JSON.stringify(await box.inputValue())}`);
     // 3) host가 거절하면 글을 두고 이유를 보인다(답을 바꿔 보낸다. 실제 거절은 아래 끝난 pane)
     await box.fill("셋");

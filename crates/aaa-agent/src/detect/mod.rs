@@ -4,6 +4,7 @@
 //!   `LICENSE-herdr.txt`)을 그대로 옮겼다. 상태 전이(언제 알리나)는 herdr `src/pane/agent_detection.rs`(`state.rs`)다.
 //! - hook은 herdr처럼 harness 세션 ID(SessionStart)를 잇는 데만 쓴다. 상태는 이 모듈만 낸다.
 
+pub mod foreground;
 mod manifest;
 mod state;
 mod watch;
@@ -44,7 +45,7 @@ impl Harness {
     }
 
     /// 세션의 harness: 띄운 쪽이 알려 준 것(profile harness)이 먼저, 그것으로 모르면(shell·custom) 실행 파일 이름.
-    /// herdr는 foreground 프로세스 이름으로 찾지만(`identify_agent_in_job`), aaa는 세션을 띄울 때 안다(plan §8.110).
+    /// 이것으로 모르는 pane(셸)은 herdr처럼 앞 프로세스 이름으로 찾는다(`foreground`, plan §8.110).
     pub fn of_session(declared: Option<&str>, argv: &[String]) -> Option<Harness> {
         declared.and_then(Harness::from_label).or_else(|| argv.first().and_then(|a| Harness::from_label(a)))
     }

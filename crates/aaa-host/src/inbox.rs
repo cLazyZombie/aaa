@@ -7,7 +7,8 @@
 //!   (`session` 한 머신의 세션이 모두 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
 //! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs` 이상
 //!   머물고 입력창이 비었을 때, 처음 보는 항목 묶음을 한 줄로 알린다. 같은 묶음(hash)은 한 번만 보낸다.
-//!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없으면 보내지 않고 기다린다.
+//!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없거나 project.toml `nudge = false`면 그 묶음을
+//!   본 것으로만 적는다: 항목은 coordinator의 다음 턴 `context`가 보인다(herdr-projects steps.rs `nudge`, plan §8.136).
 //! - **ticker:** host 안의 task다. `tick_secs`마다, 그리고 사건이 오면 바로 돈다.
 
 use std::collections::HashMap;
@@ -151,6 +152,9 @@ fn same_dir(a: &str, b: &Path) -> bool {
         _ => false,
     }
 }
+
+/// 옛 decisions.md를 읽는 상한(이보다 크면 결정 기록이 아니다)
+const OLD_DECISIONS_CAP: u64 = 1 << 20;
 
 impl Host {
     fn inbox_dir(&self, project: &str) -> std::path::PathBuf {
@@ -347,6 +351,7 @@ impl Host {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
             self.thread_pass(&p.name);
+            self.resolve_merged_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
@@ -379,7 +384,16 @@ impl Host {
         let limit = self.cfg.projects.outage_secs * 1000;
         for m in self.machine_views() {
             let ok = m.connection != aaa_proto::Connection::Disconnected;
-            let event = self.outages.lock().unwrap().entry(m.id.clone()).or_default().record(ok, now, limit);
+            let known = self.outages.lock().unwrap().contains_key(&m.id);
+            let reported = !known
+                && projects.iter().any(|p| self.db.inbox_open_exists(p, "outage", &m.name, "down").unwrap_or(false));
+            let event = self
+                .outages
+                .lock()
+                .unwrap()
+                .entry(m.id.clone())
+                .or_insert_with(|| Outage::resumed(reported))
+                .record(ok, now, limit);
             let Some(event) = event else { continue };
             for p in projects {
                 if !self.open_threads(p).iter().any(|r| r.machine_id == m.id) {
@@ -427,8 +441,20 @@ impl Host {
 
     /// 옛 aaa의 결정 기록(decisions.md)은 brief에 더 넣지 않는다(결정은 memory에 적는다, D10 G9). 결정이 적혀 있으면
     /// 내용 hash당 한 번 coordinator에게 memory로 옮기라고 알린다. host는 memory를 쓰지 않는다(coordinator 몫).
+    /// 프로젝트 폴더는 agent가 고칠 수 있다: symlink·FIFO·큰 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다.
     fn check_old_decisions(&self, project: &str, dir: &Path) {
-        let Ok(text) = std::fs::read_to_string(dir.join("decisions.md")) else { return };
+        let path = dir.join("decisions.md");
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { return };
+        if !meta.is_file() || meta.len() > OLD_DECISIONS_CAP {
+            return;
+        }
+        let stamp = format!("{}:{:?}", meta.len(), meta.modified().ok());
+        let seen = format!("old_decisions_stamp:{project}");
+        if self.db.meta(&seen).ok().flatten().as_deref() == Some(stamp.as_str()) {
+            return;
+        }
+        let _ = self.db.set_meta(&seen, &stamp);
+        let Ok(text) = std::fs::read_to_string(&path) else { return };
         let n = text
             .lines()
             .filter_map(|l| l.strip_prefix("## "))
@@ -493,8 +519,11 @@ impl Host {
             forget_box();
             return;
         }
-        // coordinator가 없으면 기다린다(생기면 그때 알린다)
-        let Some(coord) = self.coordinator_pane(dir) else {
+        // coordinator가 없거나 nudge를 껐으면 묶음 hash만 남긴다(herdr-projects steps.rs `nudge`): 사람에게는 사건마다
+        // 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않는다
+        let coord = if self.settings(project).nudge { self.coordinator_pane(dir) } else { None };
+        let Some(coord) = coord else {
+            let _ = self.db.set_meta(&key, &hash);
             forget_box();
             return;
         };
@@ -558,6 +587,15 @@ pub(crate) struct Outage {
     reported: bool,
 }
 
+impl Outage {
+    /// host를 다시 띄운 뒤 처음 본다. 앞 host가 알린 끊김이 아직 열린 inbox 항목으로 남았으면(`reported`) 알린 것으로
+    /// 시작한다: 돌아오면 「다시 된다」를 한 번 쓰고, 이어 끊겨도 다시 알리지 않는다. herdr-projects `Memory`는 이 상태를
+    /// 저장하지 않아 다시 띄우면 그 항목에 회복이 영영 오지 않는다(참고와 다르게 둔 것, plan §8.134)
+    pub(crate) fn resumed(reported: bool) -> Outage {
+        Outage { failing_since: None, reported }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutageEvent {
     Down,
@@ -599,6 +637,12 @@ mod tests {
         assert_eq!(outage.record(false, 90 * min, 10 * min), None);
         assert_eq!(outage.record(true, 91 * min, 10 * min), Some(OutageEvent::Recovered));
         assert_eq!(outage.record(true, 92 * min, 10 * min), None);
+        // 다시 띄운 host: 앞 host가 알린 끊김이 열려 있으면 이어 끊겨도 다시 알리지 않고 돌아오면 한 번 알린다
+        let mut outage = Outage::resumed(true);
+        assert_eq!(outage.record(false, 0, 10 * min), None);
+        assert_eq!(outage.record(false, 30 * min, 10 * min), None);
+        assert_eq!(outage.record(true, 31 * min, 10 * min), Some(OutageEvent::Recovered));
+        assert_eq!(Outage::resumed(false).record(true, 0, 10 * min), None);
     }
 
     fn item(kind: &str, subject: &str, event: &str) -> InboxItem {

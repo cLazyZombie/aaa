@@ -39,12 +39,13 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 
 ### 웹
 
-- **목록**: 왼쪽에 Thread와 머신별 pane이 보입니다. 상태(작업 중·입력 대기·질문·검토 대기·사람 차례·쉼)와 질문 카드가 위에 뜹니다.
+- **목록**: 왼쪽에 Thread와 머신별 pane이 보입니다. 상태(작업 중·입력 대기·질문·검토 대기·사람 차례·쉼)와 질문 카드가 위에 뜹니다. 아래 「Agents」는 설정 → 모양 「에이전트 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
+- **새 pane**: 머신 이름 옆 `+`나 `⌘⇧O`(Windows·Linux `Ctrl+Shift+O`)로 창을 엽니다. 셸이나 그 머신 `agent.toml`의 profile, 폴더(절대 경로나 `~/…`, 최근 폴더), 이름을 고르고 「시작」합니다.
 - **터미널**: pane을 누르면 터미널이 열립니다. 직접 쳐도 되고, 아래 **입력 막대(composer)** 를 써도 됩니다.
   - Enter는 보내기, Shift+Enter는 줄바꿈입니다. 휴대폰에서는 Enter가 줄바꿈이고 보내기는 단추입니다.
   - 키 줄은 Esc·Tab·Ctrl·Alt·방향키 등입니다. 그림은 붙여 넣거나 끌어 놓습니다.
 - **크기와 입력(가져오기 없음)**: 보기 권한이 아니면 언제나 입력됩니다. PTY 크기는 「지금 쓰는 화면」이 정합니다. 입력하거나 터미널을 누르거나 창 focus를 얻은 화면이 자기 크기로 다시 겁니다. 탭이 1초 넘게 가려지면 놓습니다. 「화면에 맞추기」로 직접 맞출 수도 있습니다.
-- **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다.
+- **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다. 휴대폰은 agent pane을 처음부터 대화로 엽니다(설정 → 채팅 「패널 기본 화면」). 「생각 표시」를 켜면 agent의 생각도 접힌 줄로 보입니다. 대화 아래 입력창에서 바로 보내고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 「지금 보내기」까지 붙잡아 둡니다. 빠른 답장 칩도 켤 수 있습니다.
 - **알림 켜기**: 목록 아래 단추입니다. 질문·보고가 기기 알림(Web Push)으로 옵니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
 
 ### TUI(`aaa attach`)
@@ -77,6 +78,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 
 - **마우스(herdr와 같음)**: 탭 이름표를 누르면 그 탭, 탭 막대 휠은 앞·뒤 탭, ` + `는 새 탭, 넘치면 ` < ` ` > `로 넘깁니다. 사이드바 줄을 누르면 엽니다. `«`·`»`는 접기·펴기, 사이드바 오른쪽 경계를 끌면 폭(18~36)이 바뀝니다. pane을 누르면 포커스, 끌면 글을 골라 떼는 때 이 기기 clipboard에 복사합니다(두 번 누르면 낱말, ssh 셸이면 OSC 52). vim·htop처럼 마우스를 켠 프로그램에는 누르기·끌기·휠이 그대로 가고, less처럼 alt 화면을 쓰는 프로그램에는 휠이 위·아래 화살표로 갑니다. 나눈 pane 사이 테두리를 끌면 크기가, 탭 이름표를 끌어 놓으면 탭 차례가 바뀝니다. 오른쪽 누름은 탭 이름표에서 탭 메뉴(새 탭·이름 바꾸기·닫기), pane에서 pane 메뉴(포커스 pane과 자리 바꾸기·나누기·크게 보기·닫기)를 엽니다. 마우스를 켠 프로그램에 오른쪽 누름을 보내려면 pane 메뉴의 「오른쪽 누름을 pane에 보내기」를 켭니다. 창과 메뉴는 밖을 누르면 닫힙니다. 터미널 자체의 끌어 고르기는 `[tui] mouse_capture = false`로 돌아옵니다(켠 채로도 WezTerm은 shift, iTerm2는 option을 누른 채 끌면 터미널이 고릅니다).
 - `Ctrl+V`(prefix 없이): 이 기기 clipboard에 그림이 있으면 pane 머신에 올리고, 입력창이면 경로를 넣습니다. 그림이 없으면 원래 `Ctrl+V`입니다.
+- 붙여넣기는 한 덩이로 갑니다(바깥 터미널의 bracketed paste를 켭니다). pane 프로그램이 bracketed paste를 켰으면 그대로 감싸 보내고, 글 안의 ESC는 뺍니다. 그림 파일(PNG·JPEG·GIF·WebP)을 터미널에 끌어 놓으면 그 그림을 pane 머신에 올리고 경로를 넣습니다(Enter 없음). Windows 콘솔에서는 아직 붙여넣기가 낱 키로 가고 끌어놓기는 없습니다.
 - 재부팅 뒤 agent가 다시 붙으면 셸 pane은 저장한 폴더에서 되살아나고, Claude·Codex 대화와 thread는 이어 뜹니다(herdr처럼, `[session] resume_agents_on_restore`로 끔). 다른 프로그램 pane은 다시 실행하지 않고 중단으로 남아 다시 띄우는 명령(`aaa pane resume <id>`)이 보입니다.
 - 설정(`host.toml`):
 
@@ -137,6 +139,7 @@ bash scripts/ci-local.sh --native-clipboard  # clipboard 단계를 이 머신의
 ```
 
 - 끝에 단계마다 시작·끝 시각, 걸린 시간, 결과를 요약한다. 실패한 단계는 로그 위치를 보인다(기본 `target/ci-local/<시각>/<단계>.log`). 하나라도 실패하면 1로 끝난다. 실패를 다시 돌려 통과시키지 않는다.
+- web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 `test`·`e2e`·`clippy`는 함께 돈다(test가 가장 긴 길이다). `--tee`이거나 그중 하나만 고르면 차례로 돈다.
 - `clipboard`는 사람의 clipboard를 덮어쓰므로 기본으로 건너뛴다(CI는 `AAA_CLIP_NATIVE=1`로 켠다).
 - `e2e`는 웹 E2E(Playwright Chromium·WebKit, 한글 IME 기록 재생 포함)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit`.
 - `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. CI에서는 돌지 않는다(push 전 로컬 검사).

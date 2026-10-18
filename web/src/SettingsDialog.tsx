@@ -7,7 +7,7 @@
 // 「키 바」 줄의 「키 바 편집」은 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Keyboard, Palette, Search, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Keyboard, MessageSquare, Palette, Plus, Search, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
@@ -31,6 +31,13 @@ import { PushTestControls } from "./PushTestControls";
 import { beforeAlertSound, canPlayInSilentMode } from "./silentMode";
 import { onTraceChange, sendTrace, setTrace, traceCount, traceOn } from "./inputTrace";
 import {
+  setDefaultView,
+  updateChatShared,
+  useChatShared,
+  useDefaultView,
+  MARKDOWN_WIDTHS,
+  setMarkdownWidth,
+  useMarkdownWidth,
   setKeepScreenOn,
   setTerminalFontFamily,
   setTerminalFontSize,
@@ -50,6 +57,7 @@ import {
   useTerminalFontSize,
   useTerminalInputMode,
   useTerminalToggle,
+  useMedia,
   useTerminalWheelSpeed,
   useUsageSettings,
   AAA_SHORTCUTS,
@@ -57,6 +65,10 @@ import {
   useShortcutOverrides,
   type AaaShortcutId,
 } from "./settings";
+import { forgetPaneViews } from "./paneLens";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, updateAppearance, useAppearance } from "./theme";
+import { DEFAULT_CHAT_SHARED, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS } from "./preferences";
+import { requestedSettingsPage, requestSettingsPage } from "./palette";
 import { bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutConflict, shortcutDisplayKeys, shortcutKeys } from "./herdr/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "./herdr/shortcutRecorder.ts";
 import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "./herdr/shortcutBindings.ts";
@@ -353,6 +365,119 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
   );
 }
 
+/**
+ * 참고 ChatPage(300~370줄) 가운데 aaa에 있는 것: 「패널 기본 화면」(이 기기, 바꾸면 pane마다 고른 보기를 잊는다, 참고 그대로),
+ * 「생각 표시」(공유), 「입력창」(Enter로 보내기: 이 기기, 터치 화면은 「Return으로 줄바꿈」으로 뒤집어 묻는다. 대기 메시지 자동
+ * 전송: 공유), 「빠른 답장」(공유), 「파일 뷰어」(긴 줄 바꿈·Markdown 너비: 이 기기). 「비교 보기 방식」은 aaa에 저장소 비교 보기
+ * (참고 RepoDiffViewer)가 없어 뺐다. 채팅 글꼴·폭·제안 칩은 그 기능을 옮길 때 더한다.
+ */
+function ChatPage() {
+  const view = useDefaultView();
+  const { showThinking, autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
+  const enterSends = useTerminalToggle("enterSends");
+  const wrapCode = useTerminalToggle("wrapCode");
+  const markdownWidth = useMarkdownWidth();
+  const touch = useMedia("(pointer: coarse)");
+  const { appearance } = useAppearance();
+  return (
+    <>
+      <SettingsGroup>
+        <SettingsRow
+          label="패널 기본 화면"
+          description="이 기기의 모든 패널에 적용됩니다. 패널에서 화면을 바꾸면 이 설정을 다시 바꿀 때까지 그 화면으로 열립니다. 자동: 터치 화면의 에이전트는 채팅, 그 밖에는 터미널."
+          wide
+        >
+          <Segmented
+            label="패널 기본 화면"
+            value={view}
+            options={[
+              { value: "auto", label: "자동" },
+              { value: "chat", label: "채팅" },
+              { value: "terminal", label: "터미널" },
+            ]}
+            onChange={(next) => {
+              if (next === view) return;
+              // 모든 pane에 한 선택: pane마다 기억한 보기는 이것에 자리를 내준다
+              forgetPaneViews();
+              setDefaultView(next);
+            }}
+          />
+        </SettingsRow>
+        <SettingsRow label="생각 표시" description="에이전트의 추론 블록을 함께 보여줍니다">
+          <Toggle label="생각 표시" checked={showThinking} onChange={(on) => updateChatShared({ showThinking: on })} />
+        </SettingsRow>
+        {/* 참고 「Chat font size」(이 기기, 차이 목록 T4): 고르지 않으면 인터페이스 크기를 따른다 */}
+        <SettingsRow label="채팅 글자 크기" description="채팅 화면의 메시지, 코드, 프롬프트 카드, 입력창">
+          <Stepper
+            label="채팅 글자 크기"
+            value={chatFontSize(appearance)}
+            text={`${chatFontSize(appearance)}px`}
+            min={CHAT_FONT_MIN}
+            max={CHAT_FONT_MAX}
+            decreaseLabel="채팅 글자 작게"
+            increaseLabel="채팅 글자 크게"
+            onChange={(size) => updateAppearance({ chatFontSize: size })}
+          />
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup title="입력창">
+        <SettingsRow label={touch ? "Return으로 줄바꿈" : "Enter로 보내기"} description={touch ? "켜면 전송 버튼이나 하드웨어 키보드의 Mod+Enter로 전송합니다." : "끄면 Mod+Enter로 보냅니다"}>
+          <Toggle label={touch ? "Return으로 줄바꿈" : "Enter로 보내기"} checked={touch ? !enterSends : enterSends} onChange={(checked) => setTerminalToggle("enterSends", touch ? !checked : checked)} />
+        </SettingsRow>
+        <SettingsRow label="대기 메시지 자동 전송" description="에이전트가 작업 중일 때 보낸 메시지는 턴이 끝나면 저절로 전송됩니다. 끄면 지금 보내기를 누를 때까지 기다립니다.">
+          <Toggle label="대기 메시지 자동 전송" checked={autoSendQueued} onChange={(on) => updateChatShared({ autoSendQueued: on })} />
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup title="빠른 답장">
+        <SettingsRow label="입력창 위에 표시" description="메시지 입력창 위에 놓이는 한 번 탭 메시지로, 이 기기에 적용됩니다. 직접 입력한 것처럼 보내므로 에이전트가 작업 중이면 대기열에 들어가고, 질문이 열려 있으면 답으로 쓰입니다.">
+          <Toggle label="입력창 위에 표시" checked={showQuickReplies} onChange={(on) => updateChatShared({ showQuickReplies: on })} />
+        </SettingsRow>
+        <div className="settings-item">
+          <ol className="quick-replies-list">
+            {quickReplies.map((reply, index) => (
+              <li key={index}>
+                <input
+                  className="input"
+                  value={reply}
+                  maxLength={QUICK_REPLY_MAX_CHARS}
+                  aria-label={`빠른 답장 ${index + 1}`}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  onChange={(event) => updateChatShared({ quickReplies: quickReplies.map((current, at) => (at === index ? event.target.value : current)) })}
+                />
+                <button type="button" className="icon-button" aria-label={`빠른 답장 ${index + 1} 삭제`} onClick={() => updateChatShared({ quickReplies: quickReplies.filter((_, at) => at !== index) })}>
+                  <X aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ol>
+          <div className="settings-actions">
+            <button type="button" className="btn" disabled={quickReplies.length >= QUICK_REPLIES_MAX} onClick={() => updateChatShared({ quickReplies: [...quickReplies, ""] })}>
+              <Plus aria-hidden="true" />
+              답장 추가
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => updateChatShared({ quickReplies: [...DEFAULT_CHAT_SHARED.quickReplies] })}>
+              기본값으로 되돌리기
+            </button>
+          </div>
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup title="파일 뷰어">
+        <SettingsRow label="긴 줄 바꿈">
+          <Toggle label="긴 줄 바꿈" checked={wrapCode} onChange={(on) => setTerminalToggle("wrapCode", on)} />
+        </SettingsRow>
+        <SettingsRow label="Markdown 너비">
+          <Segmented label="Markdown 너비" value={markdownWidth} onChange={setMarkdownWidth} options={MARKDOWN_WIDTHS.map((width) => ({ value: width, label: width === "full" ? "전체 너비" : "기본값" }))} />
+        </SettingsRow>
+      </SettingsGroup>
+    </>
+  );
+}
+
 /** 참고 TerminalPage(390~421줄). 참고의 「pane에서 클립보드」·「herdr 창과 함께 쓰기」는 aaa에 그 기능이 없어 뺐다 */
 /** 실기 입력 사건 기록(inputTrace.ts): 켜기·끄기, 모은 수, host에 보내기 */
 function useInputTrace() {
@@ -481,8 +606,10 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   );
 }
 
-/** 참고 AlertsPage(423~450줄, 문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기별 종류(차이 목록 N3)와 함께 */
+/** 참고 AlertsPage(423~450줄, 문구는 참고 i18n.ko.ts). 무엇을 알릴지(입력 필요·작업 완료)는 기기마다(차이 목록 N3) */
 function AlertsPage() {
+  const alertInput = useAlertSetting("alertInput");
+  const alertDone = useAlertSetting("alertDone");
   const alertInApp = useAlertSetting("alertInApp");
   const alertSound = useAlertSetting("alertSound");
   const alertSilent = useAlertSetting("alertSilent");
@@ -491,6 +618,13 @@ function AlertsPage() {
   return (
     <SettingsGroup note="이 기기에 적용됩니다. 알림은 잠시 모았다가 보내며, 그사이 질문에 답하거나 보고를 확인하면 보내지 않습니다.">
       <PushTestControls onEnable={enableAlerts} />
+      <SettingsRow label="입력 필요" description="에이전트가 답이나 권한을 기다릴 때">
+        <Toggle label="입력 필요" checked={alertInput} onChange={(on) => setAlertSetting("alertInput", on)} />
+      </SettingsRow>
+      {/* 참고는 끄기·긴 작업·매번이다. aaa의 작업 완료는 thread가 낸 새 보고(일 한 단위)라 길이로 거르지 않는다(plan §8.119) */}
+      <SettingsRow label="작업 완료" description="thread가 새 보고를 내고 검토를 기다릴 때">
+        <Toggle label="작업 완료" checked={alertDone} onChange={(on) => setAlertSetting("alertDone", on)} />
+      </SettingsRow>
       <SettingsRow label="앱 안에서" description="앱을 열어 둔 동안에는 화면 위에서 바로 내려옵니다. 누르면 그 패널을 엽니다.">
         <Toggle label="앱 안에서" checked={alertInApp} onChange={(on) => setAlertSetting("alertInApp", on)} />
       </SettingsRow>
@@ -539,6 +673,9 @@ function AlertsPage() {
 
 /** 단축키 이름(참고 SHORTCUTS label의 i18n.ko.ts 문구) */
 const SHORTCUT_LABEL: Record<AaaShortcutId, string> = {
+  palette: "명령 팔레트",
+  // 참고 「새 워크스페이스」: aaa에서 그 자리는 pane이다(새 pane 창)
+  "new-session": "새 pane",
   "toggle-view": "채팅 / 터미널 전환",
   "focus-input": "패널 입력창으로 이동",
   "scroll-up": "패널 위로 스크롤",
@@ -743,11 +880,12 @@ function ShortcutsPage() {
   );
 }
 
-type SettingsPage = "appearance" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
+type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
 
 /** 목록에 보이는 차례(참고 PAGES 198~210줄 가운데 aaa에 있는 쪽) */
 export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string }[] = [
   { id: "appearance", icon: Palette, label: "모양" },
+  { id: "chat", icon: MessageSquare, label: "채팅" },
   { id: "terminal", icon: SquareTerminal, label: "터미널" },
   { id: "alerts", icon: Bell, label: "알림" },
   { id: "usage", icon: Gauge, label: "구독 사용량" },
@@ -784,7 +922,12 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
   // 앞으로 가기로 열렸으면 그 칸이 보이던 것을 보인다
   const [restored] = useState(() => shownBy(settingsEntry(window.history.state)));
   // 휴대폰은 쪽 목록으로 열고, 넓은 창은 목록 옆에 첫 쪽을 보인다
-  const [chosen, setChosen] = useState<SettingsPage | null>(restored ? restored.page : null);
+  // 명령 팔레트가 고른 쪽(참고 paletteSettings `requestedSettingsPage`: 열릴 때 한 번 읽고 지운다)
+  const [chosen, setChosen] = useState<SettingsPage | null>(() => {
+    const requested = requestedSettingsPage();
+    requestSettingsPage(null);
+    return restored ? restored.page : requested;
+  });
   const page = chosen ?? (narrow ? null : PAGES[0]!.id);
   const [keyBarOpen, setKeyBarOpen] = useState(restored?.keyBar ?? false);
   // 한 걸음 들어갈 때마다 history 한 칸: 시스템 「뒤로」가 한 걸음 나온다(herdr/settingsHistory.ts). ←·X·Esc도 같은 칸을 지운다
@@ -868,6 +1011,8 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
     switch (page) {
       case "appearance":
         return <AppearanceSettings />;
+      case "chat":
+        return <ChatPage />;
       case "terminal":
         return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
       case "alerts":

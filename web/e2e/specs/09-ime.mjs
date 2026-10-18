@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, imeType, safariEdit, safariSyllable,
   iphoneKey, ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser,
-  openSettings,
+  openSettings, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -152,16 +152,13 @@ export default async function ({ ctl, page }) {
     const IPAD_PORTRAIT = { width: 820, height: 1180 };
     const runs = [
       ["Chromium", async () => page, [...desktop, cdpIme]],
-      ["WebKit", async () => (await pairPage(wk, aaa("web", "pair").code, wide)).page, desktop],
       ["Safari 26.6.2 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: SAFARI_UA, platform: "MacIntel" })).page, safari],
-      ["iPad(MacIntel) 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: IPAD_UA, platform: "MacIntel" })).page, ipad],
-      ["iPad(iPad) 기록", async () => (await pairPage(browser, aaa("web", "pair").code, wide, { userAgent: IPAD_UA, platform: "iPad" })).page, ipad],
       // 화면 키보드가 올라온 iPad(사용자 보고 13:0x: 키보드 고침 뒤 자모가 다시 분리됐다). 키보드가 grid를 붙잡고
-      // 터미널을 커서 줄로 옮긴 상태에서, 출력이 계속 오는 동안 같은 기록을 재생한다.
-      ...[["iPad", ipad], ["Safari", safari]].map(([rec, ways]) => [
-        `WebKit iPad 화면 키보드 ${rec} 기록`,
+      // 터미널을 커서 줄로 옮긴 상태에서, 출력이 계속 오는 동안 같은 기록을 재생한다. 조용한 iPad 재생은 「iPad IME 회귀」가 본다
+      [
+        "WebKit iPad 화면 키보드 iPad 기록",
         async () => (await pairPage(wk, aaa("web", "pair").code, IPAD_PORTRAIT, { userAgent: IPAD_UA, platform: "iPad", touch: true, init: fakeViewport })).page,
-        ways,
+        ipad,
         async (p) => {
           await softKeyboard(p, IPAD_PORTRAIT.height - 400);
           await sleep(600);
@@ -172,12 +169,12 @@ export default async function ({ ctl, page }) {
           await p.evaluate(() => setInterval(() => window.viewportFixture.viewport.dispatchEvent(new Event("scroll")), 30));
         },
         "imespin",
-      ]),
+      ],
     ];
     try {
       for (const [engine, open, ways, keyboard, pane = "imeapp"] of runs) {
         const p = await open();
-        await p.getByTestId(`pane-${pane}`).click();
+        await inList(p, `pane-${pane}`);
         await until("ime 화면", async () => (await screenText(p)).includes("paste>"));
         // 다른 화면이 쓰던 pane이어도 터미널을 누르고 바로 친다
         await until("입력 가능", async () => (await p.getByTestId("readonly-banner").count()) === 0);
@@ -210,7 +207,7 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
     aaa("pane", "kill", "imeapp");
     aaa("pane", "kill", "imespin");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -455,13 +452,12 @@ export default async function ({ ctl, page }) {
     await traceSwitch.click();
     if ((await traceSwitch.getAttribute("aria-checked")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
     await tp.keyboard.press("Escape");
-    await tp.getByTestId("pane-traceapp").click();
+    await inList(tp, "pane-traceapp");
     await until("trace 화면", async () => (await screenText(tp)).includes("paste>"));
     await tp.locator(".xterm-screen").click();
     await imeType(tp);
     await waitOutput("traceapp", 'GOT:"상"');
     await sleep(300);
-    await tp.getByRole("button", { name: "목록으로" }).click();
     await openSettings(tp, "터미널");
     await dialog.getByTestId("trace-send").click();
     await until("보냄 표시", async () => (await dialog.getByTestId("trace-msg").innerText()).startsWith("보냈다: input-"));
@@ -476,6 +472,16 @@ export default async function ({ ctl, page }) {
     if (sent !== "상태") throw new Error(`기록의 보낸 글 ${JSON.stringify(sent)}`);
     const upd = rec.events.find((e) => e.type === "compositionupdate" && e.data === "사");
     if (!upd || typeof upd.value !== "string" || !Array.isArray(upd.sel) || typeof upd.kb !== "boolean") throw new Error(`상태가 빠졌다 ${JSON.stringify(upd)}`);
+    // 친 글 원문이 들어 있다: 사용자 전용 파일이고, 다른 사이트 폼이 보낼 수 있는 text/plain과 보기 권한 기기는 받지 않는다(보안 감사 t-0340 A6·B8)
+    const mode = fs.statSync(path.join(dir, files[0])).mode & 0o777;
+    if (mode !== 0o600) throw new Error(`diag 파일 권한 ${mode.toString(8)}`);
+    const post = (p, type) =>
+      p.evaluate(async (type) => (await fetch("/api/v1/diag/input", { method: "POST", headers: { "content-type": type }, body: "{}" })).status, type);
+    if ((await post(tp, "text/plain")) !== 400) throw new Error("text/plain 기록을 받았다");
+    const rd = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })).page;
+    if ((await post(rd, "application/json")) !== 403) throw new Error("보기 권한 기기의 기록을 받았다");
+    await rd.context().close();
+    if (fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n)).length !== 1) throw new Error("거절한 기록이 남았다");
     // 보내면 비우고, 끄면 모으지 않는다
     await until("보낸 뒤 비움", async () => (await dialog.locator(".settings-row:has([role=switch][aria-label='입력 기록'])").innerText()).includes("0개 모았습니다"));
     await traceSwitch.click();

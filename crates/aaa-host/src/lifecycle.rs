@@ -290,7 +290,7 @@ impl Host {
         let stock = std::fs::read_to_string(&guide).ok().is_some_and(|t| t == crate::orch::coordinator_guide(project));
         let mut notes = vec![
             format!("폴더 {} → {}", dir.display(), new_dir.display()),
-            "host 기록(thread·inbox·routine·병합 대기열·평가)을 새 이름으로 옮긴다".into(),
+            "host 기록(thread·inbox·routine·평가)을 새 이름으로 옮긴다".into(),
         ];
         notes.push(if stock {
             "AGENTS.md(coordinator 안내)를 새 이름으로 다시 쓴다".into()
@@ -382,8 +382,10 @@ impl Host {
                         repo: r.repo.clone(),
                         cwd: r.cwd.clone().unwrap_or_default(),
                         branch: r.branch.clone(),
-                        base: r.base.clone(),
+                        // branch는 PR이 병합됐고 로컬 끝이 병합된 head일 때만 지운다(참고 sweep `Orphan::Branch`, resolve와 같다)
+                        merged_head: if r.repo.is_some() { self.merged_head(project, r, &conn).await } else { None },
                         keep_worktree: false,
+                        uncopied: false,
                     })
                     .await
                     .and_then(|res| match res {
