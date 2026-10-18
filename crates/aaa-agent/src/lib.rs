@@ -167,7 +167,7 @@ pub struct Agent {
     /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
     /// 그가 보내는 정보의 이름은 여기서 덮는다.
     labels: Mutex<HashMap<String, String>>,
-    /// host가 알려 준 화면 색(plan §8.185). 새 세션의 spec에 싣고, 다시 붙은 session host에도 보낸다
+    /// host가 알려 준 화면 색(plan §8.187). 새 세션의 spec에 싣고, 다시 붙은 session host에도 보낸다
     term_colors: Mutex<Option<aaa_proto::TermColors>>,
 }
 
@@ -593,7 +593,7 @@ impl Agent {
     }
 
     /// 화면 색을 받았다: 새 세션에 실을 것으로 두고 모든 pump에 넘긴 뒤 답한다. host는 이 답을 받고서야 그 화면에 pane을
-    /// 보이므로 그 화면이 본 뒤의 요청은 pump에서 색 뒤에 선다(plan §8.185)
+    /// 보이므로 그 화면이 본 뒤의 요청은 pump에서 색 뒤에 선다(plan §8.187)
     async fn set_term_colors(&self, c: aaa_proto::TermColors) {
         *self.term_colors.lock().unwrap() = Some(c);
         let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
@@ -1810,7 +1810,7 @@ mod tests {
         }
     }
 
-    /// pump가 frame 오류 밖의 까닭으로 끝나도 session host가 살아 있으면 다시 붙는다(herdr Local endpoint 재연결, plan §8.184).
+    /// pump가 frame 오류 밖의 까닭으로 끝나도 session host가 살아 있으면 다시 붙는다(herdr Local endpoint 재연결, plan §8.186).
     /// session host가 연결만 닫았다(옛 session host가 모르는 요청을 받았을 때, `detect_ipc` 주석)
     #[tokio::test]
     async fn pump_reattaches_after_the_session_host_closes_the_connection() {
@@ -1862,7 +1862,7 @@ mod tests {
         std::fs::remove_dir_all(&rig.state).unwrap();
     }
 
-    /// 화면 색(plan §8.185): 다시 붙는 동안 받은 색은 붙자마자 그 session host에 가고, 붙어 있는 동안 받은 색은 바로 간다.
+    /// 화면 색(plan §8.187): 다시 붙는 동안 받은 색은 붙자마자 그 session host에 가고, 붙어 있는 동안 받은 색은 바로 간다.
     /// 둘 다 agent가 답하기 전에 pump에 넘겼다
     #[tokio::test]
     async fn colors_reach_the_session_host_after_and_while_attached() {

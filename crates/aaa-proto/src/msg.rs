@@ -697,7 +697,7 @@ pub enum AgentRequest {
     ScrollbackRemove {
         name: String,
     },
-    /// 화면의 터미널 기본 색이 바뀌었다(plan §8.185). agent는 모든 session host에 알리고 새 세션에 실은 뒤 답한다.
+    /// 화면의 터미널 기본 색이 바뀌었다(plan §8.187). agent는 모든 session host에 알리고 새 세션에 실은 뒤 답한다.
     /// agent 기능 `term_colors.v1`이 있을 때만 보낸다.
     TermColors(TermColors),
     /// 사후 평가자 사건 묶음을 작업 폴더의 `inbox/` 아래에 쓴다(§8.13). `path`는 `inbox/<이름>.json`만 받는다.
@@ -897,12 +897,12 @@ pub enum SessionRequest {
         anchor: Vec<String>,
         depth: u32,
     },
-    /// 프로그램의 색 질의(OSC 10/11)에 답할 화면 색(SESSION_IPC 1.2부터, plan §8.185)
+    /// 프로그램의 색 질의(OSC 10/11)에 답할 화면 색(SESSION_IPC 1.2부터, plan §8.187)
     Colors(TermColors),
 }
 
 /// 화면(front)의 터미널 기본 색. 프로그램의 색 질의(OSC 10/11)에 session host가 이 색으로 답한다(herdr 0.9.5 host terminal theme,
-/// plan §8.185)
+/// plan §8.187)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TermColors {
     /// 기본 글자 색 RGB
@@ -2269,7 +2269,7 @@ pub enum TermClientMsg {
         sha256: String,
         data: B64,
     },
-    /// 이 화면의 터미널 기본 색이 바뀌었다(테마를 바꿈). 처음 색은 pane WebSocket 주소의 `fg`·`bg`로 보낸다(plan §8.185).
+    /// 이 화면의 터미널 기본 색이 바뀌었다(테마를 바꿈). 처음 색은 pane WebSocket 주소의 `fg`·`bg`로 보낸다(plan §8.187).
     /// `rrggbb`이고 앞의 `#`은 있어도 된다
     Colors {
         fg: String,

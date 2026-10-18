@@ -125,7 +125,7 @@ function termTheme(): ITheme {
   return t;
 }
 
-/** 이 화면의 터미널 기본 색(`rrggbb`). session host가 프로그램의 색 질의(OSC 10/11)에 이 색으로 답한다(plan §8.185) */
+/** 이 화면의 터미널 기본 색(`rrggbb`). session host가 프로그램의 색 질의(OSC 10/11)에 이 색으로 답한다(plan §8.187) */
 function termColors(): { fg: string; bg: string } {
   return { fg: token("--term-fg").replace(/^#/, ""), bg: token("--term-bg").replace(/^#/, "") };
 }

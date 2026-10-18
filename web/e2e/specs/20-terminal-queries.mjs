@@ -1,6 +1,6 @@
-// 웹 E2E 터미널 질의 답: 프로그램이 터미널에 묻는 것에 붙은 화면 수와 상관없이 답이 한 번 간다(session host가 터미널이다, plan §8.185).
+// 웹 E2E 터미널 질의 답: 프로그램이 터미널에 묻는 것에 붙은 화면 수와 상관없이 답이 한 번 간다(session host가 터미널이다, plan §8.187).
 // 색 질의(OSC 10/11)의 답은 마지막으로 연 화면이 알린 테마 색이다(화면을 열기 전에 그 pane의 agent가 받는다).
-// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 19-terminal-queries(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
+// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 20-terminal-queries(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
 import { root, aaa, waitOutput, until, screenText, pairPage, step, browser, inList, sentFrames, sentCount, sentText } from "../lib/harness.mjs";

@@ -949,7 +949,7 @@ impl Drop for Presence {
 }
 
 /// pane WebSocket 주소의 선택. `flow=ack`면 출력 ACK를 보내는 화면이다(herdr-web-ui attach `flow_control: "ack"`).
-/// `fg`·`bg`(`rrggbb`)는 그 화면의 터미널 기본 색이다(plan §8.185).
+/// `fg`·`bg`(`rrggbb`)는 그 화면의 터미널 기본 색이다(plan §8.187).
 #[derive(Deserialize)]
 struct PaneWsQuery {
     flow: Option<String>,
@@ -1134,7 +1134,7 @@ async fn pane_loop(
 ) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
-    // 그 pane의 agent가 이 화면의 색을 받은 뒤에 화면을 연다: 화면이 본 뒤 프로그램이 묻는 색에는 이 색으로 답한다(plan §8.185).
+    // 그 pane의 agent가 이 화면의 색을 받은 뒤에 화면을 연다: 화면이 본 뒤 프로그램이 묻는 색에는 이 색으로 답한다(plan §8.187).
     // agent가 늦으면 여는 것도 늦다(요청 시한까지). 끊긴 agent는 기다리지 않는다
     if let Some(wait) = colors.and_then(|c| host.front_colors(&front.id, &id, c)) {
         let _ = wait.await;

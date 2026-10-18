@@ -1587,7 +1587,7 @@ impl Host {
     /// 바뀌면 pane 상태 사건이 나가고, 각 front는 자기 규칙으로 크기를 다시 건다.
     pub(crate) fn lease_use(&self, id: &str, f: &FrontRef) {
         self.lease_set(id, Some(f.clone()));
-        // 그 화면이 썼다: 그 화면이 알린 색이 지금 색이다(herdr `promote_client_to_foreground`, plan §8.185)
+        // 그 화면이 썼다: 그 화면이 알린 색이 지금 색이다(herdr `promote_client_to_foreground`, plan §8.187)
         let i = &mut *self.inner.lock().unwrap();
         if i.colors.touch(&f.id, None) {
             colors::push_all(i);

@@ -58,12 +58,12 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.33: `project_create` 옵션(goal·repos·profile)·`project_set`, ProjectView `status`·`projects` `all`·`project_lifecycle`·
 /// `project_delete`·`project_rename`·`project_sweep`, `thread_adopt`·ThreadKind `adopted`, `project_open`·`ProjectOpened`·ProjectView
 /// `coordinator_profile`·`coordinator_profiles`(4장 G·A, plan §8.180). 한 번에 착지해 minor 하나로 묶는다(1.32 front가 그대로 붙는다)
-/// 같은 1.33 배포에 웹 화면 색(`TermClientMsg::Colors`, pane WebSocket 주소의 `fg`·`bg`, plan §8.185)을 더한다(옛 host는 모르는
+/// 같은 1.33 배포에 웹 화면 색(`TermClientMsg::Colors`, pane WebSocket 주소의 `fg`·`bg`, plan §8.187)을 더한다(옛 host는 모르는
 /// 메시지·주소 칸을 버리고 옛 웹은 보내지 않는다).
 pub const FRONT_API: Version = Version { major: 1, minor: 33 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
-/// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.185). agent는 1.1 이하 session host에 보내지 않는다.
+/// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 2 };
 /// `SessionRequest::Detect`를 받는 첫 SESSION_IPC minor
 pub const SESSION_IPC_DETECT: u16 = 1;

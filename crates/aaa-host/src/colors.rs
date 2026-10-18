@@ -1,4 +1,4 @@
-//! 화면 색(plan §8.185). 프로그램의 색 질의(OSC 10/11)에 session host가 화면 테마 색으로 답하도록 화면이 알려 준 색을 agent에
+//! 화면 색(plan §8.187). 프로그램의 색 질의(OSC 10/11)에 session host가 화면 테마 색으로 답하도록 화면이 알려 준 색을 agent에
 //! 보낸다. 지금 색은 가장 최근에 쓴(색을 알림·입력) 화면의 것이다(herdr 0.9.5 foreground client의 host theme,
 //! `src/server/headless.rs` `ClientShellHostTheme`·`promote_client_to_foreground`).
 
