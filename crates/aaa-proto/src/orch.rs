@@ -203,12 +203,12 @@ pub struct LibraryView {
     pub base: String,
     #[ts(type = "number")]
     pub expires_at_ms: u64,
-    /// 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
+    /// FRONT_API 1.36. 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
     #[serde(default)]
     pub link: Option<LinkView>,
 }
 
-/// 보고서 하나의 host 사본만 읽는 서명 링크(§8.195).
+/// FRONT_API 1.36. 보고서 하나의 host 사본만 읽는 서명 링크(§8.195).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LinkView {
     pub id: String,

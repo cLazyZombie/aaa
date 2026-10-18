@@ -1754,17 +1754,18 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
-    /// 보고서별 링크 발급(유효한 링크는 재사용). 기본 30일, 조작 권한만.
+    /// FRONT_API 1.36. 보고서별 링크 발급(유효한 링크는 재사용). 기본 30일, 조작 권한만.
     LibraryLink {
         project: String,
         thread: String,
         #[serde(default)]
         days: Option<u32>,
     },
-    /// 서명 경로를 담으므로 목록도 조작 권한만.
+    /// FRONT_API 1.36. 서명 경로를 담으므로 목록도 조작 권한만.
     LibraryLinks {
         project: Option<String>,
     },
+    /// FRONT_API 1.36. 보고서 링크 폐기.
     LibraryLinkRevoke {
         id: String,
     },

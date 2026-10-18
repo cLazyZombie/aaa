@@ -764,7 +764,7 @@ export type LibraryView = { project: string, thread: string,
  */
 report: string | null, files: Array<LibraryFile>, base: string, expires_at_ms: number,
 /**
- * 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
+ * FRONT_API 1.36. 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
  */
 link: LinkView | null, };
 

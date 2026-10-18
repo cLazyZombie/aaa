@@ -4358,7 +4358,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   만료·폐기됐으면 새 id를 만든다. 공개 HTTPS origin이 있을 때만 밖 알림에 `보기: <URL>` 한 줄을 붙인다. loopback은 보내지 않는다.
   텔레그램 미리보기는 계속 끈다. Web Push는 기존 앱 자리(`#thread=`)를 연다. 조작 권한 inbox·context는 응답 때 링크를 붙이고,
   앱 안 새 보고 알림도 LibraryView를 읽어 링크 한 줄을 표시한다. 보기 기기에는 공유 링크가 없다.
-- **계약·UI.** FRONT_API **1.35**: `library_link`·`library_links`·`library_link_revoke`, `LibraryView.link`·`LinkView`.
+- **계약·UI.** FRONT_API **1.36**: `library_link`·`library_links`·`library_link_revoke`, `LibraryView.link`·`LinkView`.
+  1.35는 TUI 링크 열기(§8.194)로 이미 배포됐으므로 새 요청을 1.35에 더하지 않는다. 새 host는 N-1인 1.35 front까지 받는다.
   agent 1.4는 그대로다. 세 요청(비밀 경로가 있는 목록 포함)은 모두 조작 권한이다. CLI는
   `aaa library link <project> <thread> [--days N]`(새 링크만 1~3650일), `list [--project P]`, `revoke <id>`.
   웹 결과물 머리에 링크·복사·QR·만료·폐기·새로 만들기를 둔다. reader는 앱 안에서만 연다. 배포 때 host와 웹을 함께 새로 빌드한다.
