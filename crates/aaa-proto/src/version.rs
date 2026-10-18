@@ -40,9 +40,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.22: `ReadSource::Detection`(`pane read --source detection`)(plan §8.110),
 /// 1.23: TUI 붙여넣기 `pane_paste`(plan §8.147),
 /// 1.24: 폴더 보기 `pane_dir`(plan §8.148),
-/// 1.25: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.151),
-/// 1.26: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.154·§8.155)
-pub const FRONT_API: Version = Version { major: 1, minor: 26 };
+/// 1.26: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.153),
+/// 1.27: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.156·§8.157)
+pub const FRONT_API: Version = Version { major: 1, minor: 27 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
