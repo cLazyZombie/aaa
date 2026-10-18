@@ -1922,6 +1922,10 @@ fn link_click_like_herdr() {
     let (x, y) = (at.1 - SIDE as usize + 1, at.0);
     tui.mouse(16, at, false);
     tui.mouse(16, at, true);
+    // ctrl의 비동기 링크 조회가 끝나야 보고가 pane에 간다. herdr처럼 다른 사건은 먼저 갈 수 있으므로,
+    // modifier 전달을 보는 이 시험은 ctrl 보고의 echo를 기다린 뒤 alt와 Enter를 보낸다.
+    let ctrl = format!("^[[<16;{x};{y}M^[[<16;{x};{y}m");
+    tui.wait_text("ctrl 보고가 pane에 도착", |s| s.contains(&ctrl));
     tui.mouse(8, at, false);
     tui.mouse(8, at, true);
     tui.send(b"\r");
