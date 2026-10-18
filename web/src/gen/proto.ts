@@ -24,7 +24,7 @@ lines: Array<string>, cursor_row: number, cursor_col: number,
  */
 ansi: string, };
 
-export type ReadSource = "visible" | "recent" | "recent-unwrapped";
+export type ReadSource = "visible" | "recent" | "recent-unwrapped" | "detection";
 
 export type ReadFormat = "text" | "ansi";
 
@@ -224,7 +224,7 @@ export type GridFrame = { pane: string, cols: number, rows: number, cursor_row: 
  */
 modes: PaneModes, 
 /**
- * 이 구독이 보는 기록 위치(`PaneScroll`, 1.22부터, 옛 host는 맨 아래)
+ * 이 구독이 보는 기록 위치(`PaneScroll`, 1.23부터, 옛 host는 맨 아래)
  */
 scroll: GridScroll, };
 

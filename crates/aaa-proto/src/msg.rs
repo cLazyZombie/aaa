@@ -240,6 +240,8 @@ pub enum ReadSource {
     Recent,
     /// Recent와 같되 화면 폭에서 접힌 줄을 한 줄로 잇는다
     RecentUnwrapped,
+    /// harness 상태 감지가 읽는 글(`Vt::detection_text`, 화면 높이만큼). `pane read`만 받는다(herdr와 같다)
+    Detection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]

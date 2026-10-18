@@ -137,6 +137,7 @@ bash scripts/ci-local.sh --native-clipboard  # clipboard 단계를 이 머신의
 ```
 
 - 끝에 단계마다 시작·끝 시각, 걸린 시간, 결과를 요약한다. 실패한 단계는 로그 위치를 보인다(기본 `target/ci-local/<시각>/<단계>.log`). 하나라도 실패하면 1로 끝난다. 실패를 다시 돌려 통과시키지 않는다.
+- web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 `test`·`e2e`·`clippy`는 함께 돈다(test가 가장 긴 길이다). `--tee`이거나 그중 하나만 고르면 차례로 돈다.
 - `clipboard`는 사람의 clipboard를 덮어쓰므로 기본으로 건너뛴다(CI는 `AAA_CLIP_NATIVE=1`로 켠다).
 - `e2e`는 웹 E2E(Playwright Chromium·WebKit, 한글 IME 기록 재생 포함)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit`.
 - `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. CI에서는 돌지 않는다(push 전 로컬 검사).

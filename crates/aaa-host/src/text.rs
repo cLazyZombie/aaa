@@ -362,7 +362,7 @@ impl Host {
         let rx = self.pane_events(&id)?;
         if self.inner.lock().unwrap().panes.get(&id).is_some_and(|p| p.info.state.is_running()) {
             self.db.audit(actor, "pane_close", &id);
-            conn.request(AgentRequest::Kill { session: id.clone() }).await?;
+            self.kill_session(&conn, &id).await?;
             // 끝났다는 상태가 올 때까지(agent가 session host 종료를 알린다)
             self.wait_pane(&id, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다").await?;
         }

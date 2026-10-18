@@ -1966,7 +1966,10 @@ fn ctrl_v_pastes_clipboard_image() {
     tui.wait_text("stty 끝", |s| s.contains("lnext-0"));
     tui.send(b"\x16");
     tui.send(b"\r");
-    tui.wait_text("원래 Ctrl+V", |s| s.contains("^V"));
+    // ^V는 tty echo(ECHOCTL)와 cat -v 출력 둘이다. cat이 줄을 읽어 낸 둘째를 본 뒤 ^C를 보낸다: 그때 cat이 앞 그룹이다
+    // (뒤 그룹이 tty를 읽으면 멈춘다). echo만 보고 보내면 셸이 cat을 앞으로 올리기 전의 ^C가 셸로 가고 읽지 않은 줄을
+    // 버려, 살아남은 cat이 다음 줄을 먹었다(ci-local 부하 아래 「화면 지움」 실패)
+    tui.wait_text("원래 Ctrl+V", |s| s.matches("^V").count() >= 2);
     tui.send(b"\x03");
     assert!(attachments(&h.state).is_empty(), "그림이 없는데 첨부가 생겼다");
 

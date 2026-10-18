@@ -534,6 +534,7 @@ impl Vt {
     /// - Recent: 기록과 화면을 이어 「마지막 글 줄과 커서 줄 가운데 아래쪽」까지의 마지막 `lines`줄(기본 80). alternate
     ///   screen이면 그 화면의 마지막 줄들. 앞에 줄이 더 있으면 `truncated`.
     /// - RecentUnwrapped: Recent와 같되 화면 폭에서 접힌 줄을 잇는다.
+    /// - Detection: 상태 감지가 읽는 글(`detection_text`). `lines`면 그 마지막 줄들(기본 없음). ansi여도 모양 없는 글이다.
     ///
     /// 기록을 보려고 scrollback 위치를 잠깐 옮겼다가 되돌린다(사본을 만들지 않는다: 기록이 가득하면 수십 MB다).
     pub fn read(&mut self, source: ReadSource, lines: Option<u32>, format: ReadFormat) -> ReadText {
@@ -553,6 +554,7 @@ impl Vt {
             ReadSource::Recent | ReadSource::RecentUnwrapped => {
                 self.recent(limit.unwrap_or(READ_RECENT_LINES), source == ReadSource::RecentUnwrapped, ansi)
             }
+            ReadSource::Detection => limit_lines(self.detection_text(), limit),
         }
     }
 
@@ -1961,6 +1963,21 @@ mod tests {
         let a = v.read(ReadSource::Visible, None, ReadFormat::Ansi).text;
         assert!(a.contains("\x1b[31mred") && a.contains("top"), "{a:?}");
         assert!(a.lines().all(|l| l.ends_with("\x1b[m")), "{a:?}");
+    }
+
+    /// herdr `read_terminal_snapshot` Detection: 감지 글 그대로(보이는 화면도 기록 전부도 아니다), `lines`면 마지막 줄들,
+    /// ansi여도 모양 없는 글
+    #[test]
+    fn read_detection_is_the_detection_text() {
+        let mut v = Vt::new(4, 20);
+        for i in 1..=6 {
+            v.feed(format!("l{i}\r\n").as_bytes());
+        }
+        v.feed(b"\x1b[2J\x1b[H\x1b[31ma\x1b[m\r\nb");
+        let all = ReadText { text: "l2\nl3\na\nb\n".into(), truncated: false };
+        assert_eq!(read(&mut v, ReadSource::Detection, None), all);
+        assert_eq!(read(&mut v, ReadSource::Detection, Some(1)), ReadText { text: "b\n".into(), truncated: true });
+        assert_eq!(v.read(ReadSource::Detection, None, ReadFormat::Ansi), all);
     }
 
     #[test]

@@ -157,7 +157,9 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
     }
-    let profile = find_profile(cfg, &p.profile)?;
+    // 실패할 수 있는 것은 자리를 만들기 전에 본다: 아무것도 만들지 않고 실패한 thread는 `thread restart`가 처음부터 다시
+    // 한다(herdr-projects threads.rs `restart_plan` (a))
+    let launch = resolve(&p.profile, find_profile(cfg, &p.profile)?)?;
     let (cwd, branch, base) = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -185,6 +187,14 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
             } else {
                 format!("aaa/{}/{}-{s}", p.project, p.thread)
             };
+            // herdr-projects `restart_plan` (b): 기록된 worktree가 없는데 branch가 있으면 반쯤 만든 것이다
+            if git(&top, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T).await.is_ok() {
+                bail!(
+                    "{}: 기록된 worktree가 없는데 branch `{branch}`가 이미 있다. 반쯤 만든 worktree는 사람이 봐야 한다: \
+                     `aaa thread resolve` 뒤 새 thread를 시작한다",
+                    p.thread
+                );
+            }
             let name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "repo".into());
             let path = cfg.work_root.join(name).join(format!("{}-{}", p.project, p.thread));
             if path.exists() {
@@ -211,7 +221,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         work_dir.join("brief.md"),
         fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
     )?;
-    let launch = with_hooks(cfg, resolve(&p.profile, profile)?, &work_dir)?;
+    let launch = with_hooks(cfg, launch, &work_dir)?;
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),
