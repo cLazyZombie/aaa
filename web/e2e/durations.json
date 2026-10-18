@@ -13,8 +13,8 @@
   "12-threads-push": 36,
   "13-reconnect": 3,
   "14-shared-preferences": 6,
-  "15-ios-rules": 19,
+  "15-ios-rules": 23,
   "16-file-viewer": 7,
   "17-push-in-use": 67,
-  "18-push-stalled": 14
+  "18-push-stalled": 23
 }
