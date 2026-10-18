@@ -132,10 +132,14 @@ struct Grid {
 }
 
 impl Grid {
+    /// `full`이면 모든 줄을 바꾼다. 아니면 온 줄만 바꾸고 나머지는 둔다: 크기가 바뀌었어도 보내지 않은 줄은 host가 보기에
+    /// 그대로다. 크기가 바뀐 grid를 비우면 폭만 바뀐 pane이 비었다(QA t-0337 Q23). 지금 host는 크기가 바뀌면 전체를 보내고,
+    /// 고치기 전 host는 폭만 바뀌면 바뀐 줄만 보낸다.
     fn apply(&mut self, f: GridFrame) {
-        if f.full || self.rows != f.rows || self.cols != f.cols {
-            self.lines = vec![Vec::new(); f.rows as usize];
+        if f.full {
+            self.lines.clear();
         }
+        self.lines.resize(f.rows as usize, Vec::new());
         self.cols = f.cols;
         self.rows = f.rows;
         for l in f.lines {
@@ -2101,6 +2105,33 @@ mod tests {
         app.host_minor = 9;
         assert!(app.host_at_least(4) && !app.host_at_least(10));
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
+    }
+
+    /// 폭만 바뀐 장면이 바뀐 줄만 가져와도(고치기 전 host) 나머지 줄은 남는다. 전체 장면은 모두 바꾼다(QA t-0337 Q23)
+    #[test]
+    fn width_only_frames_keep_unsent_rows() {
+        let line =
+            |row: u16, t: &str| aaa_proto::GridLine { row, runs: vec![GridRun { t: t.into(), fg: 0, bg: 0, a: 0 }] };
+        let frame = |cols: u16, rows: u16, full: bool, lines: Vec<aaa_proto::GridLine>| GridFrame {
+            pane: "p".into(),
+            cols,
+            rows,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            full,
+            lines,
+            modes: PaneModes::default(),
+        };
+        let texts =
+            |g: &Grid| g.lines.iter().map(|l| l.iter().map(|r| r.t.as_str()).collect()).collect::<Vec<String>>();
+        let mut g = Grid::default();
+        g.apply(frame(40, 3, true, vec![line(0, "a"), line(1, "b"), line(2, "c")]));
+        g.apply(frame(60, 3, false, vec![line(2, "C")]));
+        assert_eq!(texts(&g), ["a", "b", "C"]);
+        assert_eq!((g.cols, g.rows), (60, 3));
+        g.apply(frame(60, 2, true, vec![line(0, "x")]));
+        assert_eq!(texts(&g), ["x", ""]);
     }
 
     /// zoom(herdr `render_panes`·`tab_label`): 포커스 pane 하나가 칸 전체(상자 하나), 탭 이름표에 ` Z`.

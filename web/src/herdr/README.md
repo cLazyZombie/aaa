@@ -37,7 +37,7 @@
 | `AccessGate.css`·`DevicesPanel.css`·`PhonePanel.css`·`ConfirmDialog.css` | `src/components/` 것 그대로. 마크업은 `web/src/AccessGate.tsx`·`DevicesPanel.tsx`·`PhonePanel.tsx`·`ConfirmDialog.tsx` |
 | `modal.css` | `src/styles.css` 1269~1451줄 그대로: `.modal-scrim`·`.modal`·머리·몸·바닥, 휴대폰 sheet 움직임, 키보드가 있을 때, `.input`·`.select` |
 | `useFocusTrap.ts`·`sheets.ts`·`sheetHistory.ts`·`useMediaQuery.ts` | 창 안에 Tab 가두기·여는 곳으로 focus 돌려주기, 휴대폰 sheet 아래로 밀어 닫기(`watchSheetExits`는 main.tsx), 시스템 「뒤로」로 닫기. `sheetHistory.ts`는 history 열쇠 이름만 `aaa:sheet`로 바꿨다 |
-| `edgeSwipe.ts` | 768px 이하 목록 drawer를 손가락으로: 왼쪽 가장자리 24px 안에서 오른쪽으로 쓸면 열고, 열린 동안 왼쪽으로 쓸면 닫는다. 쓰는 동안 drawer가 손가락을 따라오고 놓은 자리·빠르기로 열림을 정한다. 대체로 세로인 쓸기·두 손가락·창(`aria-modal`) 위는 건드리지 않는다(`watchDrawerSwipe`). 맨 위 설명 한 줄만 더했다. plan §8.139 |
+| `edgeSwipe.ts` | 768px 이하 목록 drawer를 손가락으로: 왼쪽 가장자리 24px 안에서 오른쪽으로 쓸면 열고, 열린 동안 왼쪽으로 쓸면 닫는다. 쓰는 동안 drawer가 손가락을 따라오고 놓은 자리·빠르기로 열림을 정한다. 대체로 세로인 쓸기·두 손가락·창(`aria-modal`) 위는 건드리지 않는다(`watchDrawerSwipe`). 맨 위 설명 한 줄만 더했다. plan §8.140 |
 | `SettingsControls.tsx`·`SettingsControls.css`·`SettingsDialog.css` | 설정 창의 묶음·줄·스위치·여럿 중 하나·한 칸씩(`src/components/SettingsControls.*` 그대로)과 창 배치(쪽 목록·쪽, 휴대폰은 목록 → 쪽, `src/components/SettingsDialog.css` 그대로). 마크업은 `web/src/SettingsDialog.tsx`. plan §8.97 |
 | `settingsHistory.ts` | 설정 창의 한 걸음(창·쪽·키 바 편집)마다 history 한 칸: 시스템 「뒤로」가 한 칸씩 나온다(`src/lib/settingsHistory.ts`, history 열쇠 이름만 `aaa:`) |
 | `terminalFileLinks.ts` | `isWebLink`: 웹 링크는 http(s)만 연다. `fileUriPath`는 보고 Markdown의 `file://` 링크를 파일 이름으로 읽을 때와 터미널 OSC 8 file URI에 쓴다. 터미널 글 속 파일 경로 링크(`terminalFileLinkProvider`)와 열 수 없는 OSC 8 링크 거르기(`hyperlinkFilter`)는 `web/src/Term.tsx`가 건다(plan §8.125) |
