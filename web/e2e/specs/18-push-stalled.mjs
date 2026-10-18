@@ -6,8 +6,9 @@ import {
   root, aaa, until, pairPage, pushes, pushDevice, step, browser, setInUse, pushInUse, pushWho, pushLab,
 } from "../lib/harness.mjs";
 
-// 「쓰는 화면」 lease 4초(기본 25초, web.rs presence_lease). 쓰는 동안 남아야 하는 화면은 presence를 lease보다 자주 알린다(아래 stallInit)
-export const labEnv = { AAA_TEST_PRESENCE_LEASE_MS: "4000" };
+// 「쓰는 화면」 lease 4초(기본 25초, web.rs presence_lease). 쓰는 동안 남아야 하는 화면은 presence를 lease보다 자주 알린다(아래 stallInit).
+// 알림 묶음 100ms(실험실 설정 1초, notify.rs debounce): 설정 1초 길은 12가 돈다
+export const labEnv = { AAA_TEST_PRESENCE_LEASE_MS: "4000", AAA_TEST_NOTIFY_DEBOUNCE_MS: "100" };
 
 export default async function ({ page }) {
   await pushLab(page);
