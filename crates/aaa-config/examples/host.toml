@@ -53,6 +53,10 @@ root = ""
 allow_profiles = ["*"]
 # 보고와 함께 host로 복사할 library 상한(MB). 넘는 파일은 agent에 남는다.
 library_copy_mb = 200
+# host 보고서 사본의 최대 기한(일)·합계 상한(MiB). 각각 0 또는 ""이면 끈다. 생략하면 기본값.
+# 진행 중 thread는 보호하며 실시간 등록 폴더는 합계·정리 대상에서 제외한다.
+library_max_days = 30
+library_max_mb = 20480 # 20GiB
 # brief에 넣을 memory 글자 수 상한
 brief_memory_chars = 32000
 # ticker 주기(초). inbox 항목이 생기거나 harness가 입력 대기가 되면 주기를 기다리지 않고 돈다.

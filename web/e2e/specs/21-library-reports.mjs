@@ -25,6 +25,9 @@ export default async function ({ page }) {
     if (aaa("library", "prune", "--older-than", "30").removed.length !== 0) throw new Error("최근 보고서를 정리했다");
     const doctor = aaa("doctor").library;
     if (doctor?.reports !== 3 || doctor?.live !== 1 || doctor?.size !== Buffer.byteLength(fs.readFileSync(`${input}/index.html`)) + Buffer.byteLength("추가 보고서")) throw new Error("doctor의 host 사본 크기·실시간 수");
+    if (doctor.max_days !== 30 || doctor.max_size !== 20 * 1024 ** 3 || doctor.protected_size !== 0) throw new Error("doctor의 보관 한도·보호 용량");
+    const preview = aaa("library", "prune", "--dry-run");
+    if (preview.kind !== "library_prune_preview" || preview.candidates.length !== 0 || preview.max_days !== 30 || preview.max_size !== 20 * 1024 ** 3) throw new Error("자동 규칙의 CLI 미리 보기");
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>최신 보고서</h1></html>");
     aaa("library", "publish", input, "--project", "demo", "--name", "page");
     if (!(await (await fetch(new URL(live.base, base))).text()).includes("최신 보고서")) throw new Error("등록 폴더 변경을 반영하지 않았다");
@@ -32,6 +35,8 @@ export default async function ({ page }) {
     const panel = page.getByTestId("reports-panel");
     await panel.waitFor();
     await domIs(page, "보고서 전체 목록 준비", () => document.querySelector('[data-testid="reports-panel"]')?.dataset.status === "ready");
+    const usageText = await panel.getByTestId("reports-usage").innerText();
+    if (!usageText.includes(" / 20 GB, 기한 30일")) throw new Error(`웹 보관 한도 표시: ${usageText}`);
     const row = page.getByTestId("report-demo-page");
     if (!(await row.innerText()).includes(`${Buffer.byteLength(fs.readFileSync(`${input}/index.html`))} B`) || !(await row.innerText()).includes("만료")) throw new Error("이름·크기·만료가 없다");
     if (!(await page.getByTestId("report-other-design").innerText()).includes("실시간")) throw new Error("실시간 표시");

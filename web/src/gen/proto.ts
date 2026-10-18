@@ -365,7 +365,7 @@ task: string, } | { "op": "thread_next", project: string, thread: string, line: 
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
-prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_rotate" } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project: string, name: string, } | { "op": "library_usage" } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean,
+prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project: string, name: string, } | { "op": "library_usage" } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean,
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
@@ -425,7 +425,7 @@ omitted_open: number,
 /**
  * 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
  */
-omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
@@ -805,6 +805,14 @@ export type LibraryReport = { project: string, name: string, size: number, updat
  * 읽기 실패·상한 초과도 목록에서 감추지 않는다.
  */
 problem: string | null, link: LinkView | null, };
+
+export type LibraryPrunePlan = { size: number, remaining_size: number, protected_size: number, max_size: number, max_days: number, candidates: Array<LibraryPruneEntry>, };
+
+export type LibraryPruneEntry = { project: string, name: string, size: number,
+/**
+ * 「기한」 또는 「용량」. 기한 정리 뒤 용량을 판정한다.
+ */
+reason: string, };
 
 export type LibrarySkip = { name: string, reason: string, };
 

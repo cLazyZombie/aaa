@@ -378,6 +378,9 @@ impl Host {
 
     async fn tick(self: &Arc<Self>) {
         self.settle_background_waits();
+        if let Err(e) = self.library_retention_pass_at(aaa_common::util::now_ms()) {
+            tracing::warn!("보고서 자동 정리 실패: {}", e.message);
+        }
         // 멈추거나 보관한 프로젝트는 건너뛴다(herdr-projects ticker, plan §8.180)
         let projects = self.active_projects();
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();

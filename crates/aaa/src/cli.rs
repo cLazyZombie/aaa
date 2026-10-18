@@ -912,10 +912,13 @@ enum LibraryCmd {
     },
     /// 오래된 사본을 지운다. 진행 중 thread와 실시간 폴더는 남긴다.
     Prune {
-        #[arg(long)]
-        older_than: u32,
+        #[arg(long, required_unless_present = "dry_run")]
+        older_than: Option<u32>,
         #[arg(long)]
         project: Option<String>,
+        /// 자동 정리의 기한·합계 상한으로 지울 목록만 본다. 쓰기·삭제·알림을 하지 않는다.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// 보고서 서명 키를 교체한다. 옛 공유 링크가 모두 끝난다(pairing은 그대로).
     Rotate,
@@ -1411,8 +1414,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 LibraryCmd::Import { source, project, prefix } => {
                     FrontRequest::LibraryImport { source: absolute_source(&source)?, project, prefix }
                 }
-                LibraryCmd::Prune { older_than, project } => {
-                    FrontRequest::LibraryPrune { project, older_than_days: older_than }
+                LibraryCmd::Prune { older_than, project, dry_run } => {
+                    if dry_run {
+                        FrontRequest::LibraryPrunePreview { project, older_than_days: older_than }
+                    } else {
+                        FrontRequest::LibraryPrune {
+                            project,
+                            older_than_days: older_than.context("--older-than이 필요하다")?,
+                        }
+                    }
                 }
                 LibraryCmd::Rotate => FrontRequest::LibraryRotate,
                 LibraryCmd::Revoke { id } => FrontRequest::LibraryLinkRevoke { id },
@@ -2989,11 +2999,35 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "정리 {name}");
             }
         }
+        FrontResponse::LibraryPrunePreview(plan) => {
+            let _ = writeln!(
+                s,
+                "미리 보기: 합계 {}B / {}, 기한 {} · 정리 뒤 {}B",
+                plan.size,
+                if plan.max_size == 0 { "꺼짐".into() } else { format!("{}B", plan.max_size) },
+                if plan.max_days == 0 { "꺼짐".into() } else { format!("{}일", plan.max_days) },
+                plan.remaining_size
+            );
+            for r in &plan.candidates {
+                let _ = writeln!(s, "정리 예정 {}/{} · {}B · {}", r.project, r.name, r.size, r.reason);
+            }
+            if plan.max_size > 0 && plan.protected_size > plan.max_size {
+                let _ = writeln!(s, "경고: 보호 사본 {}B만으로 상한을 넘었다. 삭제하지 않는다", plan.protected_size);
+            }
+        }
         FrontResponse::LibraryRotated => {
             s.push_str("보고서 키를 교체했다. 옛 공유 링크는 모두 끝났다. pairing은 그대로다.\n")
         }
-        FrontResponse::LibraryUsage { size, reports, live, problems } => {
-            let _ = writeln!(s, "보고서 {reports}개 · 사본 {size}B · 실시간 {live}개 · 확인 문제 {problems}개");
+        FrontResponse::LibraryUsage { size, reports, live, problems, max_size, max_days, protected_size } => {
+            let _ = writeln!(
+                s,
+                "보고서 {reports}개 · 합계 {size}B / {}, 기한 {} · 실시간 {live}개 · 확인 문제 {problems}개",
+                if *max_size == 0 { "꺼짐".into() } else { format!("{max_size}B") },
+                if *max_days == 0 { "꺼짐".into() } else { format!("{max_days}일") }
+            );
+            if *max_size > 0 && protected_size > max_size {
+                let _ = writeln!(s, "경고: 보호 사본 {protected_size}B만으로 상한을 넘었다. 자동 삭제하지 않는다");
+            }
         }
         FrontResponse::LibraryLink(l) => {
             let _ = writeln!(

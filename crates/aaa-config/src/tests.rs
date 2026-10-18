@@ -240,3 +240,25 @@ fn host_profiles_and_machine_overrides() {
         assert!(load_host(&d.0).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn library_retention_config_defaults_disable_and_reject_bad_values() {
+    let d = Dir::new("library-retention");
+    let defaults = load_host(&d.0).unwrap().config.projects;
+    assert_eq!((defaults.library_max_days, defaults.library_max_mb), (30, 20480));
+    for value in ["0", "\"\""] {
+        d.write(
+            "host.toml",
+            &format!("schema = 1\n[projects]\nlibrary_max_days = {value}\nlibrary_max_mb = {value}\n"),
+        );
+        let c = load_host(&d.0).unwrap().config.projects;
+        assert_eq!((c.library_max_days, c.library_max_mb), (0, 0));
+    }
+    for key in ["library_max_days", "library_max_mb"] {
+        for value in ["-1", "1.5", "true", "\"soon\"", "9223372036854775807"] {
+            d.write("host.toml", &format!("schema = 1\n[projects]\n{key} = {value}\n"));
+            let error = load_host(&d.0).unwrap_err();
+            assert!(error.0.iter().any(|d| d.line == 3 && d.severity == Severity::Error), "{}", error.render());
+        }
+    }
+}

@@ -286,6 +286,21 @@ impl Default for HostConfig {
     }
 }
 
+/// TOML에는 null이 없으므로 빈 문자열을 명시적인 꺼짐으로 받는다. key 생략은 기본값이다.
+fn retention_limit<'de, D: serde::Deserializer<'de>>(de: D) -> Result<u64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Limit {
+        Number(u64),
+        Empty(String),
+    }
+    match Limit::deserialize(de)? {
+        Limit::Number(n) => Ok(n),
+        Limit::Empty(s) if s.is_empty() => Ok(0),
+        _ => Err(serde::de::Error::custom("0 이상의 정수 또는 빈 문자열이어야 한다")),
+    }
+}
+
 /// 프로젝트 폴더(§7.1)와 thread 정책(§8)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -297,6 +312,12 @@ pub struct ProjectsSection {
     pub allow_profiles: Vec<String>,
     /// thread 보고와 함께 host로 복사할 library 상한(MB). 넘는 파일은 agent에 남긴다.
     pub library_copy_mb: u64,
+    /// host 사본의 최대 보관 일수. 0 또는 빈 문자열이면 기한 정리를 끈다.
+    #[serde(deserialize_with = "retention_limit")]
+    pub library_max_days: u64,
+    /// host 사본의 합계 상한(MiB). 실시간 원본 제외. 0 또는 빈 문자열이면 용량 정리를 끈다.
+    #[serde(deserialize_with = "retention_limit")]
+    pub library_max_mb: u64,
     /// brief에 넣을 memory(MEMORY.md + memory/*.md) 글자 수 상한
     pub brief_memory_chars: usize,
     /// host ticker 주기(초). 사건이 오면 주기를 기다리지 않고 바로 돈다.
@@ -337,6 +358,8 @@ impl Default for ProjectsSection {
             root: String::new(),
             allow_profiles: vec!["*".into()],
             library_copy_mb: 200,
+            library_max_days: 30,
+            library_max_mb: 20 * 1024,
             brief_memory_chars: 32_000,
             tick_secs: 15,
             nudge_idle_secs: 60,
@@ -756,6 +779,16 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
         out.push(Invalid {
             path: key(&["web", "publish_ports"]), message: "1~65535 포트를 하나 이상 적는다".into()
         });
+    }
+    for (name, value, unit) in [
+        ("library_max_days", c.projects.library_max_days, 86_400_000u64),
+        ("library_max_mb", c.projects.library_max_mb, 1024 * 1024u64),
+    ] {
+        if value.checked_mul(unit).is_none() {
+            out.push(Invalid {
+                path: key(&["projects", name]), message: "바이트·밀리초로 바꾸기에 너무 크다".into()
+            });
+        }
     }
     if c.projects.tick_secs == 0 {
         out.push(Invalid { path: key(&["projects", "tick_secs"]), message: "1초 이상이어야 한다".into() });

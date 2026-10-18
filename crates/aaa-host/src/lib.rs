@@ -23,6 +23,7 @@ mod inbox;
 mod library;
 mod library_links;
 mod library_publish;
+mod library_retention;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
@@ -1214,6 +1215,9 @@ impl Host {
             FrontRequest::LibraryPrune { project, older_than_days } => {
                 self.library_prune_at(project.as_deref(), older_than_days, util::now_ms(), actor)
             }
+            FrontRequest::LibraryPrunePreview { project, older_than_days } => self
+                .library_prune_preview(project.as_deref(), older_than_days, util::now_ms())
+                .map(FrontResponse::LibraryPrunePreview),
             FrontRequest::LibraryRotate => self.library_rotate(actor),
             FrontRequest::LibraryReports { project } => self
                 .library_reports(project.as_deref(), role.can_control())

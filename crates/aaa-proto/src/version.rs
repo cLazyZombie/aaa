@@ -75,7 +75,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 /// 1.37: Post·PostStatus·PostList·PostUnmute(§8.199). 1.36이 배포되어 다음 판으로 분리한다.
 /// 1.38: library publish·import·prune·rotate·전체 목록·앱 안 열기·용량(§8.200).
 /// 1.39: 임무 목록·승인·수명주기와 ThreadView.mission.
-pub const FRONT_API: Version = Version { major: 1, minor: 39 };
+/// 1.40: 보고서 사본 보관 한도·보호 용량과 정리 dry-run.
+pub const FRONT_API: Version = Version { major: 1, minor: 40 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

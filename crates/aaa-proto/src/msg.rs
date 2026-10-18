@@ -13,10 +13,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryReport, LibrarySkip, LibraryView,
-    LinkView, MessageMode, MessageView, OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext,
-    ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt,
-    ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryPrunePlan, LibraryReport, LibrarySkip,
+    LibraryView, LinkView, MessageMode, MessageView, OwnerChoice, ProfileView, ProjectAction, ProjectChange,
+    ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView,
+    ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView};
 
@@ -1863,6 +1863,11 @@ pub enum FrontRequest {
         project: Option<String>,
         older_than_days: u32,
     },
+    /// FRONT_API 1.40. 별도 요청이라 옛 host가 dry-run을 삭제 명령으로 해석할 수 없다.
+    LibraryPrunePreview {
+        project: Option<String>,
+        older_than_days: Option<u32>,
+    },
     LibraryRotate,
     /// 링크는 조작 권한에만 싣는다. 앱 안 열기는 읽기 권한도 된다.
     LibraryReports {
@@ -2117,6 +2122,7 @@ impl FrontRequest {
                 | FrontRequest::LibraryReports { .. }
                 | FrontRequest::LibraryOpen { .. }
                 | FrontRequest::LibraryUsage
+                | FrontRequest::LibraryPrunePreview { .. }
                 | FrontRequest::ThreadNext { line: None, add: None, .. }
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
@@ -2331,6 +2337,7 @@ pub enum FrontResponse {
     LibraryPruned {
         removed: Vec<String>,
     },
+    LibraryPrunePreview(LibraryPrunePlan),
     LibraryRotated,
     LibraryUsage {
         #[ts(type = "number")]
@@ -2338,6 +2345,15 @@ pub enum FrontResponse {
         reports: u32,
         live: u32,
         problems: u32,
+        #[serde(default)]
+        #[ts(type = "number")]
+        max_size: u64,
+        #[serde(default)]
+        #[ts(type = "number")]
+        max_days: u64,
+        #[serde(default)]
+        #[ts(type = "number")]
+        protected_size: u64,
     },
     LibraryLinks {
         links: Vec<LinkView>,

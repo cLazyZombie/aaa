@@ -217,9 +217,15 @@ mod tests {
 
     impl Lab {
         fn new() -> Self {
+            Self::with_retention(30, 20 * 1024)
+        }
+
+        fn with_retention(days: u64, mb: u64) -> Self {
             let state = std::env::temp_dir().join(format!("aaa-library-links-{}", aaa_common::util::new_id()));
             let mut cfg = aaa_config::HostConfig::default();
             cfg.notify.web_push = false;
+            cfg.projects.library_max_days = days;
+            cfg.projects.library_max_mb = mb;
             cfg.projects.root = state.join("projects").display().to_string();
             let h = Host::open(cfg.clone(), state.clone()).unwrap();
             h.web_port.store(7000, std::sync::atomic::Ordering::Relaxed);
@@ -474,6 +480,129 @@ mod tests {
         assert!(lab.h.library_prune_at(None, 0, u64::MAX, "test").is_err());
     }
 
+    // 실제 사본·DB 상태·서명 HTTP 경계로 정리 계약을 본다. 시각과 상한만 주입한다.
+    fn retention_report(lab: &Lab, name: &str, size: usize, updated: u64, active: bool) -> PathBuf {
+        let root = lab.report(name, &[("index.html", &vec![b'x'; size], false)]);
+        lab.h
+            .db
+            .library_report_put(&crate::db::LibraryReportRow {
+                project: "demo".into(),
+                name: name.into(),
+                live: None,
+                updated,
+            })
+            .unwrap();
+        if active {
+            let mut t = lab.h.load("demo", name).unwrap();
+            t.status = aaa_proto::ThreadStatus::Open;
+            lab.h.db.thread_save("demo", name, "open", &serde_json::to_string(&t).unwrap()).unwrap();
+        }
+        root
+    }
+
+    const RETENTION_NOW: u64 = 40 * 86_400_000;
+
+    #[tokio::test]
+    async fn retention_expires_copies_and_ends_links() {
+        let lab = Lab::with_retention(1, 0);
+        let old = retention_report(&lab, "t-0001", 4, RETENTION_NOW - 2 * 86_400_000, false);
+        let recent = retention_report(&lab, "t-0002", 4, RETENTION_NOW - 86_400_000, false);
+        let link = lab.issue("t-0001");
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        assert!(!old.exists(), "최대 기한을 넘은 사본을 지운다");
+        assert!(recent.exists(), "기한 경계는 남긴다");
+        assert_eq!(get(&lab.h, &link.base, None).await.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn retention_capacity_removes_oldest_first() {
+        let lab = Lab::with_retention(0, 1);
+        let oldest = retention_report(&lab, "t-0003", 400_000, 1, false);
+        let middle = retention_report(&lab, "t-0001", 400_000, 2, false);
+        let newest = retention_report(&lab, "t-0002", 700_000, 3, false);
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        assert!(!oldest.exists() && !middle.exists());
+        assert!(newest.exists(), "갱신 시각 순으로 상한 아래에 이를 때까지만 지운다");
+        let later = retention_report(&lab, "t-0003", 400_000, 4, false);
+        lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000 - 1).unwrap();
+        assert!(newest.exists() && later.exists(), "6시간 전 tick은 다시 정리하지 않는다");
+        lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
+        assert!(!newest.exists() && later.exists(), "다음 회차에도 갱신 순으로 정리한다");
+    }
+
+    #[tokio::test]
+    async fn retention_protects_active_and_live_and_excludes_live_bytes() {
+        let lab = Lab::with_retention(0, 1);
+        let active = retention_report(&lab, "t-0001", 700_000, 1, true);
+        let gone = retention_report(&lab, "t-0002", 400_000, 2, false);
+        let newest = retention_report(&lab, "t-0003", 200_000, 3, false);
+        let live = lab.state.join("live-source");
+        std::fs::create_dir(&live).unwrap();
+        std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
+        lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, "test").unwrap();
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        assert!(!gone.exists());
+        assert!(active.exists() && newest.exists() && live.join("index.html").exists());
+        assert!(lab.h.db.library_report("demo", "live").unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn retention_protected_overflow_only_notifies_once() {
+        let lab = Lab::with_retention(1, 1);
+        let active = retention_report(&lab, "t-0001", 1_100_000, 1, true);
+        let other = retention_report(&lab, "t-0002", 4, 1, false);
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
+        assert!(active.exists() && other.exists(), "보호분만으로 상한을 넘으면 삭제 없이 알린다");
+        let notices = lab.h.db.inbox_list(None, true).unwrap();
+        assert_eq!(notices.iter().filter(|i| i.item_kind == "library-retention").count(), 1);
+        // 재시작에도 같은 초과를 다시 알리지 않는다.
+        let reopened = Host::open(lab.cfg.clone(), lab.state.clone()).unwrap();
+        reopened.library_retention_pass_at(RETENTION_NOW + 12 * 3_600_000).unwrap();
+        assert_eq!(
+            reopened.db.inbox_list(None, true).unwrap().iter().filter(|i| i.item_kind == "library-retention").count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn retention_preview_lists_age_then_capacity_without_writes() {
+        let lab = Lab::with_retention(1, 1);
+        let old = retention_report(&lab, "t-0003", 4, 1, false);
+        let middle = retention_report(&lab, "t-0001", 700_000, RETENTION_NOW - 1, false);
+        let newest = retention_report(&lab, "t-0002", 700_000, RETENTION_NOW, false);
+        let before = lab.h.db.project_export("demo").unwrap();
+        let plan = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
+        assert_eq!(
+            plan.candidates.iter().map(|r| (r.name.as_str(), r.reason.as_str())).collect::<Vec<_>>(),
+            vec![("t-0003", "기한"), ("t-0001", "용량")]
+        );
+        assert_eq!((plan.size, plan.remaining_size, plan.max_size, plan.max_days), (1_400_004, 700_000, 1_048_576, 1));
+        assert!(old.exists() && middle.exists() && newest.exists());
+        assert_eq!(lab.h.db.project_export("demo").unwrap(), before);
+        assert!(lab.h.db.meta("library_retention_last_pass").unwrap().is_none());
+        let response = lab
+            .h
+            .call(
+                DeviceRole::Reader,
+                "device:test",
+                FrontRequest::LibraryPrunePreview { project: Some("demo".into()), older_than_days: Some(0) },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, FrontResponse::LibraryPrunePreview(_)));
+        assert_eq!(lab.h.db.project_export("demo").unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn retention_zero_disables_both_limits() {
+        let lab = Lab::with_retention(0, 0);
+        let old = retention_report(&lab, "t-0001", 1_100_000, 1, false);
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        assert!(old.exists());
+        assert!(lab.h.db.inbox_list(None, true).unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn rotate_command_ends_old_links_but_keeps_pairing_and_app_views() {
         let mut lab = Lab::new();
@@ -565,7 +694,7 @@ mod tests {
             ErrorCode::BadRequest
         );
         let usage = lab.h.library_usage().unwrap();
-        assert!(matches!(usage, FrontResponse::LibraryUsage { size: 7, reports: 1, live: 0, problems: 0 }));
+        assert!(matches!(usage, FrontResponse::LibraryUsage { size: 7, reports: 1, live: 0, problems: 0, .. }));
         let live = lab.state.join("usage-live");
         std::fs::create_dir(&live).unwrap();
         std::fs::write(live.join("index.html"), b"live").unwrap();
@@ -573,7 +702,7 @@ mod tests {
         assert!(
             matches!(
                 lab.h.library_usage().unwrap(),
-                FrontResponse::LibraryUsage { size: 7, reports: 2, live: 1, problems: 0 }
+                FrontResponse::LibraryUsage { size: 7, reports: 2, live: 1, problems: 0, .. }
             ),
             "실시간 원본은 host 사본 용량에 더하지 않는다"
         );

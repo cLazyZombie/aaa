@@ -8,8 +8,6 @@ use crate::db::LibraryReportRow;
 use crate::library::{manifest_path, safe_rel};
 use crate::{Host, err};
 
-const DAY_MS: u64 = 86_400_000;
-
 fn name_ok(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 100
@@ -446,54 +444,6 @@ impl Host {
             b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| (&a.project, &a.name).cmp(&(&b.project, &b.name)))
         });
         Ok(reports)
-    }
-
-    pub(crate) fn library_usage(&self) -> Result<FrontResponse, ErrorBody> {
-        let reports = self.library_reports(None, false)?;
-        Ok(FrontResponse::LibraryUsage {
-            size: reports.iter().filter(|r| !r.live).map(|r| r.size).sum(),
-            reports: reports.len() as u32,
-            live: reports.iter().filter(|r| r.live).count() as u32,
-            problems: reports.iter().filter(|r| r.problem.is_some()).count() as u32,
-        })
-    }
-
-    pub(crate) fn library_prune_at(
-        &self,
-        project: Option<&str>,
-        days: u32,
-        now: u64,
-        actor: &str,
-    ) -> Result<FrontResponse, ErrorBody> {
-        if days == 0 {
-            return Err(err(ErrorCode::BadRequest, "정리 기준은 1일 이상이다"));
-        }
-        let _lock = self.library_ops.lock().unwrap();
-        let cutoff = now.saturating_sub(days as u64 * DAY_MS);
-        let mut removed = Vec::new();
-        for r in self.library_reports(project, false)? {
-            // 실시간 원본과 진행 중 thread 사본은 정리하지 않는다.
-            if r.live || r.updated_at_ms >= cutoff {
-                continue;
-            }
-            if let Ok(t) = self.load(&r.project, &r.name)
-                && t.status != aaa_proto::ThreadStatus::Resolved
-            {
-                continue;
-            }
-            let dir = self.project_dir(&r.project)?;
-            let dest = dir.join("library").join(&r.name);
-            if dest.exists() {
-                std::fs::remove_dir_all(dest).map_err(io_error)?;
-            }
-            std::fs::remove_file(manifest_path(&dir, &r.name)).map_err(io_error)?;
-            self.db.library_report_remove(&r.project, &r.name).map_err(super::orch::internal)?;
-            self.view_caps.lock().unwrap().retain(|_, c| c.project != r.project || c.thread != r.name);
-            let name = format!("{}/{}", r.project, r.name);
-            self.db.audit(actor, "library_prune", &name);
-            removed.push(name);
-        }
-        Ok(FrontResponse::LibraryPruned { removed })
     }
 }
 

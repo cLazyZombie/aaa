@@ -44,11 +44,27 @@ aaa library import "<이전 보고서 루트>" --project P --prefix archive-
 Reader는 공유 링크를 받지 않고 앱 안 보기만 한다. `aaa doctor`의 사본 바이트 합계에는 실시간 원본을 넣지 않는다.
 
 ```sh
+aaa library prune --dry-run
+aaa library prune --dry-run --project P
 aaa library prune --older-than 90 --project P
 aaa library rotate
 ```
 
 prune은 최근 게시/회수가 90일보다 오래된 사본을 삭제한다. 진행 중 thread·실시간 원본·report.md·thread 기록은 남긴다.
-자동 삭제는 없고, 삭제된 보고서의 공유 링크와 앱 안 보기 경로는 끝난다.
+삭제된 보고서의 공유 링크(401)와 앱 안 보기 경로는 끝난다.
+
+host ticker는 시작 뒤 첫 tick에서, 그 뒤 **6시간마다** 사본을 자동 정리한다. host.toml `[projects]` 설정은
+`library_max_days = 30`, `library_max_mb = 20480`(20GiB)이며 생략하면 이 기본값을 쓴다.
+각각 `0` 또는 `""`이면 해당 제한을 끈다. 둘 다 끄면 자동 정리를 하지 않는다.
+기한을 넘은 사본을 먼저 지우고, 남은 합계가 상한을 넘으면 최근 게시·회수가 가장 오래된 순으로 지운다.
+진행 중 thread는 항상 보호한다. 실시간 원본은 합계에도 세지 않으며 만료 정리도 하지 않는다.
+보호 사본만으로 상한을 넘으면 그 회차에는 삭제하지 않고 doctor와 관련 프로젝트 inbox에 알린다.
+같은 초과 상태에서는 재시작·inbox 완료 처리 뒤에도 다시 알리지 않는다. 정상으로 돌아온 뒤 새 초과가 생기면 다시 알린다.
+
+`--dry-run`은 이 자동 규칙의 전체 후보·바이트·기한/용량 사유를 쓰기 없이 보여 준다.
+`--project`는 후보만 제한하며 합계·상한은 host 전체다. `--older-than N`을 함께 주면 미리 볼 기한만 N일로 바꾼다.
+실제 수동 prune은 기존대로 필수 `--older-than N`의 기한만 적용한다.
+doctor와 웹 보고서 목록의 합계·상한·기한 역시 host 전체 값이다.
+배포 전 새 binary로 dry-run을 확인한다. 이 요청은 FRONT_API 1.40부터이며 옛 host는 삭제하지 않고 거부한다.
 rotate는 보고서 서명 키를 교체해 **기존 공유 링크를 모두 끝낸다**. pairing·TLS 키·보고서는 남으며 앱 안 보기도 된다.
 필요한 공유 링크는 `aaa library link P NAME` 또는 웹 「새 링크 만들기」로 다시 발급한다.

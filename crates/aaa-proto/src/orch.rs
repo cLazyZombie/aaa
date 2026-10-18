@@ -1138,3 +1138,29 @@ pub struct EvaluationView {
 pub fn valid_evaluation_id(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
+
+/// FRONT_API 1.40. 자동 정리와 dry-run이 공유하는 판정 결과(크기는 실시간 원본 제외).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryPrunePlan {
+    #[ts(type = "number")]
+    pub size: u64,
+    #[ts(type = "number")]
+    pub remaining_size: u64,
+    #[ts(type = "number")]
+    pub protected_size: u64,
+    #[ts(type = "number")]
+    pub max_size: u64,
+    #[ts(type = "number")]
+    pub max_days: u64,
+    pub candidates: Vec<LibraryPruneEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryPruneEntry {
+    pub project: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    /// 「기한」 또는 「용량」. 기한 정리 뒤 용량을 판정한다.
+    pub reason: String,
+}
