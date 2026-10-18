@@ -1452,7 +1452,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 ### 8.53 이모지·결합 문자 폭을 herdr와 같게(10-17, 차이 목록 2 「이모지·결합 문자 폭」)
 
 - **옮긴 것(herdr-web-ui `src/lib/terminalWidths.ts`, PaneTerminal 583줄).** `web/src/herdr/terminalWidths.ts`를 바꾸지 않고 옮기고 `@xterm/addon-unicode-graphemes` 0.4.0(MIT, xterm 묶음)을 넣었다. 터미널을 열 때 fit addon 다음에 `matchHerdrWidths(term)`로 폭 규칙을 갈아 끼운다(addon이 proposed API라 `allowProposedApi: true`). 이모지·새 이모지·ZWJ 묶음·⚠️(VS16)가 두 칸이다. xterm 기본(Unicode 6)에서는 이모지가 한 칸이고 ZWJ 묶음은 이모지마다 칸을 차지해서 뒤 글자가 밀렸다.
-- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. vt100 폭을 맞추는 일은 뒤로 미룬다.
+- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. → §8.167에서 vt100 폭을 웹 규칙대로 맞췄다.
 - **시험.** 웹 E2E 「글자 폭」: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️ 뒤에 쓴 글자의 칸 자리로 폭을 잰다. 기대값은 `[2,2,2,2]`다. `matchHerdrWidths`를 빼고 웹 번들을 다시 지은 판은 `[1,1,4,1]`로 실패한다.
 
 ### 8.54 목록 바닥 줄(설정·사용량)은 늘 맨 아래(10-17, 사용자 요청 「aaa 왼쪽밑은 항상 왼쪽밑이어야해. 스크롤 안되어도」)
@@ -1853,6 +1853,8 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **shadow는 규칙을 같은 입력에 다시 돌린다.** aaa host는 herdr pane을 보지 못한다. 그래서 같은 tick의 입력을 0.2 `thread::group()`(`thread.rs:565`, 옮긴 것)과 aaa `orch::thread_group`(실제 코드)에 넣는다. 0.2 재현이 0.2 CLI 출력과 다른 줄은 입력이 모자란 것이라 판정하지 않는다. 원격 thread는 0.2 CLI처럼 ticker 기록 상태를 쓰고(`threads.rs` row: 「the CLI makes no ssh call」), 그 머신 지금 상태를 넣은 결과를 따로 둔다.
 - **화면 단서.** aaa thread의 상태가 화면과 맞는지 볼 때 herdr `src/detect/manifests/claude.toml`의 표지 일부(`esc to interrupt`, `Do you want to proceed?`)만 쓴다. 판정 엔진은 D8(상태 감지 thread)이 옮긴다.
 - **수집은 해석하지 않는다.** 수집 스크립트는 운영 읽기 명령의 출력을 그대로 tick 폴더에 둔다. 분석기 결함이 몇 시간치 수집을 버리지 않게 한다. `aaa inbox list`는 `--peek`로만 부른다(아니면 「봤다」를 찍는다).
+- **수집은 실패를 숨기지 않는다.** 원격·로컬 명령을 `set -o pipefail`로 돌린다. 10-18 shadow에서 운영 binary가 바뀌어 `thread list -p`가 없어졌는데, 화면 캡처는 파이프 끝 명령 값만 남아 `.rc` 0이었다(5 tick 화면이 빔).
+- **G4는 분류 안 된 차이만 센다.** 다른 줄마다 까닭을 붙이고(`shadow::reason`), plan에 정한 차이(예: §8.85 진행 보고 agent의 중간 보고)는 「까닭 있는 차이」다. 요약과 CLI는 다름을 「까닭 있는 차이 · 분류 안 됨」으로 나눠 적는다. 10-18 최종(7시간 46분, 판정 720줄): 다름 53은 모두 §8.85, 분류 안 됨 0.
 
 ### 8.76 TUI 탭: 새 탭 이름·cwd 따라가기·탭 닫기·이름을 herdr대로(10-18, 차이 목록 4장 C)
 
@@ -3508,6 +3510,36 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **초안.** 입력줄 초안은 이미 localStorage였다(`herdr/terminalDraft.ts`). 대화 입력창(`ChatComposer`)은 메모리(`useState`)라 다시 열면 잃었다: 참고 `lib/composerDraft.ts`를 바꾸지 않고 `web/src/herdr/`로 옮기고 참고 `Composer.tsx`처럼 `herdr-web-ui:composer-draft:<machine:pane>` 열쇠로 읽고 쓴다. 보내기 흐름(보낸 그 글일 때만 비움)은 그대로이고 참고의 다른 탭 보내기 lease(`begin`·`end`·`settle`)는 아직 쓰지 않는다.
 - **기기 이름.** 흐름 사건·판정 근거의 기기 이름이 기기 ID(ULID) 앞 7자(시각)라 약 33초 안에 짝지은 두 기기가 같았다(§8.145 시험이 연결 번호로 돌아갔던 까닭). host `seen.rs` `device_short`: 26자 ULID면 뒤 무작위 7자(35비트), 아니면 앞 7자. 너비를 그대로 두어 기록 모양은 같다.
 - **시험.** 웹 E2E 13 「host가 새 웹을 준다」: 같은 웹이면 줄 없음 → 입력줄에 초안 → `AAA_TEST_WEB_BUILD`로 다른 빌드를 알리는 host로 다시 띄움 → 줄(role=status) → 「앱 다시 열기」를 눌러 다시 열림 → 입력줄 초안 그대로(줄은 가짜 빌드라 다시 뜬다) → 같은 웹을 주는 host로 돌아오면 줄이 사라짐. 11 「대화 입력창」: 쓴 글이 다시 연 뒤에도 남는다. 17 「쓰는 기기」: 두 기기 이름이 `/api/v1/me` ID의 뒤 7자이고 서로 다르다. host 단위 시험 `main_bundle_is_the_index_script_name`·`device_short_is_the_random_tail`. 결함 심기: 웹이 견주지 않음 → 13 줄 기다림 시간 초과, 늘 띄움 → 13 「같은 웹을 주는 host인데 다시 열기 줄이 있다」, host 빌드 이름 꼴이 다름(`.js` 붙임) → 같은 글, 대화 초안을 메모리로 되돌림 → 11 「다시 연 뒤 대화 초안: ""」, 기기 이름 앞 7자로 되돌림 → 17 「기기 이름 A 01M56DD … B 01M56DE」.
+
+### 8.167 이모지·결합 문자 폭: session host 화면을 웹 폭 규칙대로(10-18, 차이 목록 1장 G 「이모지·결합 문자 폭」)
+
+- **문제.** 웹 터미널은 xterm 5.5 + `@xterm/addon-unicode-graphemes` 0.4.0 + herdr-web-ui 보정(`terminalWidths.ts` `herdrWidthProvider`)으로 묶음(⚠️·ZWJ 가족·국기·피부색·keycap, 한글 자모, 태국 모음)을 한 칸이나 두 칸에 놓는다. session host 화면(aaa-vt의 vt100 0.16.2)은 code point마다 `unicode-width`로 세고 폭 0 글자는 늘 앞 칸에 붙였다.
+  - replay는 글로 다시 쓰니 받는 xterm이 묶음 폭을 다시 센다. 그래서 대개 맞지만, session host가 센 칸으로 정하는 곳이 어긋났다: 절대 칸(CHA·CUP) 뒤 글, replay 뒤 커서 자리(이어 쓰는 출력), 줄 접힘(가족 ZWJ가 vt100에서 여섯 칸), alternate screen의 칸 위치.
+  - escape로 따로 놓인 칸(`e` `ESC[m` `◌́`, ⚠ `ESC[m` VS16)은 vt100이 앞 칸에 붙여, 다시 붙은 화면에서 한 묶음이 됐다.
+- **고침.** vt100을 `vendor/vt100`에 들여와(MIT, workspace `[patch.crates-io]`, 바꾼 것은 그 README) `Screen::text`를 웹 규칙대로 고쳤다.
+  - 폭 표: `web/scripts/vt-widths.ts`가 웹 provider에서 만든다. code point마다 grapheme 부류·폭·묶기 방식을 담는다. 묶기 방식은 보통, 묶지 않음(herdr: spacing mark는 제 칸), 보이지 않음(herdr: 앞 칸에 붙는 0칸, 줄 처음은 addon대로) 셋이다.
+  - 앞 글자와 묶을지는 addon `shouldJoin`과 같은 규칙이다(GB6~GB13 줄인 판). 묶이면 넓은 쪽 폭이고, 지역 표시 둘은 두 칸이며 셋째는 새로 시작한다.
+  - 표를 만들 때 모든 code point × 앞 상태 스물에서 「표 + 규칙」이 provider와 같은지 대조하고, 다르면 멈춘다.
+  - 묶음이 한 칸에서 두 칸이 되면(⚠ 뒤 VS16) 그 자리에서 넓힌다. 끝 칸이면 xterm처럼 이은 줄로 다음 줄 처음에 옮긴다.
+  - 제어 문자·CSI·ESC·OSC·DCS 뒤에는 묶지 않는다(xterm parser `precedingJoinState = 0`). 받은 덩이 경계에서는 끊지 않는다.
+  - 다시 쓰는 곳(replay 화면·기록·앞 기록, reflow, alternate screen의 vt100 `contents_formatted`)은 escape로 따로 놓였던 칸을 escape 없이 이어 쓰면 받는 쪽이 합친다. 그래서 그 자리에 모양(SGR)을 다시 써서 끊는다. 이은 줄을 넘어서도 본다(vt100 `joins_after`).
+- **한계.**
+  - 칸 하나의 글은 22바이트다(vt100 그대로). 피부색 넷인 가족 같은 긴 묶음은 뒤 글자가 잘린다. 칸 폭은 맞다.
+  - TUI(`aaa attach`)는 이 칸을 바깥 터미널에 그린다. 바깥 터미널이 묶음을 다르게 세면(grapheme 묶음을 모르는 터미널) 그 줄이 어긋난다.
+  - ⚠ 뒤 escape 뒤 홀로 선 VS16은 두 칸 칸이지만 그 뒤 글자가 ⚠ 바로 뒤에 보인다. 재어 보니 xterm DOM renderer가 그 span에 두 칸만큼 letter-spacing(15.66px)을 주어도 span 폭이 0이었다(브라우저가 VS16을 앞 ⚠에 붙여 그린다). 살아 있는 화면도 같다.
+- **비용(release, 12,000줄).** 받기 ASCII 1.2MB 8.3 → 10.6ms(ASCII는 표를 찾지 않는다), 한글·이모지 섞인 2MB 15.5 → 27.4ms. replay 6.6 → 7.1ms, 폭 120 → 60 reflow 30.9 → 34.2ms(ASCII), 24.3 → 38.3ms(섞인 줄).
+- **시험.**
+  - aaa-vt 유닛 넷이다.
+    - `widths_follow_the_web_terminal`: 생성기가 웹 provider로 만든 사례 스물(`width_cases.rs`: 묶음, escape·OSC로 끊긴 묶음, Prepend 뒤 ASCII)의 칸과 커서를 본다. 한 byte씩 받아도 같다.
+    - `widened_cluster_at_the_last_column_moves_to_the_next_row`.
+    - `replay_keeps_clusters_as_they_were_placed`: 기록·화면·alternate screen, 끝 칸 뒤 escape로 끊겨 접힌 결합 문자.
+    - `reflow_keeps_clusters_as_they_were_placed`.
+  - web 유닛 `vtWidths.test.mjs`: 표와 사례가 생성기 출력 그대로인지 본다. 웹 규칙이 바뀌었는데 다시 만들지 않으면 실패한다.
+  - 웹 E2E `02-terminal` 「다시 붙은 화면도 같은 칸」(약 2초): 살아 있는 화면과 새로 붙은 데스크톱·휴대폰·iPad에서 표지 글자의 줄·칸이 같다. 표지는 묶음 뒤, escape로 끊긴 묶음 뒤, 절대 칸, replay 뒤 커서 자리에 둔다. 칸 폭은 화면의 눈금 줄로 잰다.
+  - 변형 확인: 모두 실패한다.
+    - aaa-vt 열셋: 끊기 셋(aaa-vt 쓰기·vt100 줄 쓰기·줄 넘는 상태), 끝 칸 이음 표시, 넓히지 않음, CSI·OSC 뒤 끊지 않음, 국기 폭 1, 셋째 지역 표시도 묶음, 보이지 않는 글자 보정 없음, spacing mark도 묶음, `joins_after` 늘 거짓, ASCII 빠른 길이 Prepend를 안 봄.
+    - web 신선도 하나.
+    - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
 
 ### 8.168 TUI 기록을 편집기로(herdr `prefix e` `edit_scrollback`)(10-18, coordinator 결정 「(가) herdr대로 — agent가 그 pane 기록을 그 머신 임시 파일로 쓰고 같은 머신에 편집기 overlay pane을 띄운다(임시 파일은 끝나면 지움, 경로는 agent 허용 root 정책 안)」, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 편집기, FRONT_API 1.31)
 

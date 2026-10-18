@@ -160,6 +160,99 @@ process.stdin.resume();`;
     aaa("pane", "kill", "widths");
   });
 
+  await step("다시 붙은 화면도 같은 칸(session host 화면이 웹 폭 규칙대로 센다, plan §8.167): 묶음 뒤·escape로 끊긴 묶음 뒤·절대 칸 표지와 커서 자리가 살아 있는 화면과 같다", async () => {
+    // 줄마다 묶음 뒤에 표지 글자 하나. 받은 터미널은 묶음 폭을 스스로 세므로, 어긋나는 것은 session host가 센 칸으로 정한
+    // 곳이다: 절대 칸(CHA) 표지 J, replay 뒤 커서에 쓰는 K, escape로 따로 놓인 칸(이어 쓰면 받는 쪽이 한 묶음으로 합친다)
+    const lines = [
+      // 눈금: 칸 폭과 0칸 자리를 이 줄에서 잰다(크기를 바꾸는 기기가 붙는 동안에도 그 화면의 칸이다)
+      "0123456789",
+      "a👨‍👩‍👧B",
+      "⚠️C",
+      "e\x1b[ḿD",
+      "🇰\x1b[m🇷🇯F",
+      "⚠\x1b[m️G",
+      "1️⃣H",
+      "น้ำI",
+      "👨‍👩‍👧⚠️\x1b[12GJ",
+      "\x1b[31me\x1b[31ḿ\x1b[mL",
+    ];
+    // 살아 있는 화면에 보이는 [줄, 칸](0부터): B는 가족(두 칸) 뒤, D·L은 끊긴 두 칸 뒤, F는 홀로 선 반쪽(한 칸)과 그다음 둘이 이룬
+    // 국기(두 칸) 뒤, J는 12째 칸, K는 끝 줄 가족·⚠️ 뒤. G(⚠ 뒤 홀로 선 VS16, 두 칸 칸)는 보이는 자리가 칸과 다르다: VS16 span은
+    // 두 칸만큼 letter-spacing을 받아도 폭이 0이라(브라우저가 앞 ⚠에 붙여 그린다, 재어 봄) G가 ⚠ 바로 뒤에 보인다. 그래서 G는
+    // 다시 붙은 화면이 살아 있는 화면과 같은지만 본다(합쳐져 두 칸 ⚠️ 한 묶음이 되면 달라진다)
+    const want = { B: [1, 3], C: [2, 2], D: [3, 2], F: [4, 3], H: [6, 2], I: [7, 2], J: [8, 11], L: [9, 2], K: [10, 4] };
+    // p를 받으면 줄들을, k를 받으면 커서 자리에 K를 쓴다(`pane run`의 Enter는 버린다)
+    const out = "\x1b[2J\x1b[H" + lines.join("\r\n") + "\r\n👨‍👩‍👧⚠️";
+    const prog = `process.stdin.setRawMode(true); process.stdout.write("graph> "); process.stdin.on("data", (d) => { const s = d.toString(); if (s.includes("p")) process.stdout.write(${JSON.stringify(out)}); else if (s.includes("k")) process.stdout.write("K"); });`;
+    aaa("tab", "create", "--machine", "labA", "--label", "graph", "--", process.execPath, "-e", prog);
+    await waitOutput("graph", "graph>");
+    // 표지 글자의 [줄, 칸]: 화면 위치를 눈금 줄로 잰다(DOM renderer의 span 묶음에 기대지 않는다)
+    const marks = (p, letters) =>
+      p.evaluate((letters) => {
+        const rows = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
+        const find = (ch) => {
+          for (const [y, row] of rows.entries()) {
+            const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+            for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+              const i = n.textContent.indexOf(ch);
+              if (i < 0) continue;
+              const r = document.createRange();
+              r.setStart(n, i);
+              r.setEnd(n, i + 1);
+              return [y, r.getBoundingClientRect().left];
+            }
+          }
+          return null;
+        };
+        const [, zero] = find("0");
+        const cell = (find("9")[1] - zero) / 9;
+        return Object.fromEntries(letters.map((ch) => [ch, find(ch)]).map(([ch, at]) => [ch, at && [at[0], Math.round((at[1] - zero) / cell)]]));
+      }, letters);
+    const same = (what, got, exp) => {
+      if (JSON.stringify(got) !== JSON.stringify(exp)) throw new Error(`${what} 표지 [줄, 칸]\n  기대 ${JSON.stringify(exp)}\n  실제 ${JSON.stringify(got)}`);
+    };
+    const pick = (o, letters) => Object.fromEntries(letters.map((ch) => [ch, o[ch]]));
+    const letters = ["B", "C", "D", "F", "G", "H", "I", "J", "L"];
+    const size = { width: 900, height: 600 };
+
+    // 살아 있는 화면: 붙은 뒤에 쓴 출력
+    const live = (await pairPage(browser, aaa("web", "pair").code, size)).page;
+    await inList(live, "pane-graph");
+    await until("살아 있는 화면 준비", async () => (await screenText(live)).includes("graph>"));
+    aaa("pane", "run", "graph", "p");
+    await until("살아 있는 표지", async () => (await screenText(live)).includes("L"));
+    const seen = await marks(live, letters);
+    same("살아 있는 화면", pick(seen, letters.filter((ch) => ch !== "G")), pick(want, letters.filter((ch) => ch !== "G")));
+
+    // 다시 붙은 화면: 같은 크기의 새 기기가 session host replay로 받는다
+    const back = (await pairPage(browser, aaa("web", "pair").code, size)).page;
+    await inList(back, "pane-graph");
+    await until("다시 붙은 표지", async () => (await screenText(back)).includes("L"));
+    same("다시 붙은 화면(살아 있는 화면과)", await marks(back, letters), seen);
+    // replay가 둔 커서 자리에 쓴다
+    aaa("pane", "run", "graph", "k");
+    for (const [what, p] of [["살아 있는 화면", live], ["다시 붙은 화면", back]]) {
+      await until(`${what} K`, async () => (await screenText(p)).includes("K"));
+      same(`${what} 커서`, await marks(p, ["K"]), pick(want, ["K"]));
+    }
+    seen.K = want.K;
+    await shot(live, "desktop-graphemes-live");
+    await shot(back, "desktop-graphemes-replay");
+    await live.context().close();
+    await back.context().close();
+
+    // 휴대폰·iPad도 다시 붙으면 같은 칸이다(줄이 짧아 폭이 바뀌어도 접히지 않는다)
+    for (const [name, vp, scale] of [["phone", { width: 390, height: 844 }, 3], ["ipad", { width: 820, height: 1180 }, 2]]) {
+      const tp = (await pairPage(browser, aaa("web", "pair").code, vp, { touch: true, deviceScaleFactor: scale })).page;
+      await inList(tp, "pane-graph");
+      await until(`${name} 표지`, async () => (await screenText(tp)).includes("K"));
+      same(`${name}(살아 있는 화면과)`, await marks(tp, Object.keys(seen)), seen);
+      await shot(tp, `${name}-graphemes-replay`);
+      await tp.context().close();
+    }
+    aaa("pane", "kill", "graph");
+  });
+
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 바로 놓는다", async () => {
     // 이 화면이 WebSocket에 쓴 글 frame. 첫 화면이 pane을 열며 붙는 WebSocket부터 듣는다
     const opFrames = [];
