@@ -112,6 +112,8 @@ pub fn typescript_bindings() -> String {
         QuestionState::decl(&cfg),
         QuestionView::decl(&cfg),
         QuestionMenu::decl(&cfg),
+        NoticeKind::decl(&cfg),
+        NoticeView::decl(&cfg),
         MenuOption::decl(&cfg),
         MenuPick::decl(&cfg),
         MessageMode::decl(&cfg),

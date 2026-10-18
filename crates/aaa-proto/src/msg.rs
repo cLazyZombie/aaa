@@ -18,7 +18,7 @@ use crate::orch::{
     ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind,
     ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, MenuPick};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView};
 
 use crate::version::Version;
 
@@ -2124,6 +2124,9 @@ pub enum FrontEvent {
     /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
     /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.166)
     Web { build: String },
+    /// 앱 안 알림(TUI 카드·웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
+    /// 옛 front는 모르는 사건을 버린다)
+    Notice(NoticeView),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -405,7 +405,7 @@ omitted_open: number,
  */
 omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "notice" } & NoticeView;
 
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, stream: number,
 /**
@@ -640,6 +640,30 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  * 「직접 쓰기」 자리. `options.len()`이면 그 줄은 `options`에 없다(Claude 질문의 「Type something.」)
  */
 custom_option_index: number | null, };
+
+export type NoticeKind = "finished" | "report";
+
+export type NoticeView = { kind: NoticeKind,
+/**
+ * 갈 pane(새 보고는 그 thread의 pane, 없으면 null)
+ */
+pane: string | null, machine: string, project: string | null, thread: string | null,
+/**
+ * thread 제목 또는 pane 이름
+ */
+title: string,
+/**
+ * harness 이름(claude·codex, 끝남만)
+ */
+agent: string | null,
+/**
+ * 끝난 턴의 길이(작업·질문으로 들어선 때부터). host가 그 턴의 시작을 못 봤으면 null
+ */
+turn_ms: number | null,
+/**
+ * 긴 턴(herdr-web-ui `LONG_TURN_MS` 60초 이상이거나 길이를 모름): 웹 앱 안 알림은 이것만 띄운다
+ */
+long: boolean, at_ms: number, };
 
 export type MenuOption = { label: string, description: string | null, };
 

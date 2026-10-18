@@ -219,7 +219,7 @@ impl Host {
             tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
             ev.harness_session = None;
         }
-        let (activity, answered_block, running) = {
+        let (activity, answered_block, running, finished) = {
             let mut i = self.inner.lock().unwrap();
             // 이 agent는 답한 뒤 화면에 남은 확인창을 새로 묻는 것으로만 다시 알린다(`ask_anew.v1`)
             let anew = i.machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == "ask_anew.v1"));
@@ -236,6 +236,7 @@ impl Host {
             // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
             if ev.kind == "released" {
                 p.agent = None;
+                p.turn_from = None;
                 p.answered = false;
                 p.transcript = None;
                 let _ = p.events.send(crate::PaneEvent::State);
@@ -304,26 +305,56 @@ impl Host {
             if next.is_some_and(|a| a != AgentActivity::Question) {
                 p.answered = false;
             }
+            // 보는 화면 없이 끝난 턴(notice.rs): 그 턴의 길이와 함께 잠금을 놓은 뒤 알린다
+            let mut finished = None;
             if let Some(a) = next {
                 if a != st.activity {
                     st.since_ms = ev.at_ms;
                 }
+                let was = prev.as_ref().map(|x| x.activity);
                 let sees = self.someone_sees(&ev.session, p.lease.as_ref());
-                st.seen = crate::seen::seen_after(prev.as_ref().map(|x| x.activity), a, st.seen, sees);
+                st.seen = crate::seen::seen_after(was, a, st.seen, sees);
+                if crate::notice::finished(was, a, st.seen) {
+                    finished = Some(p.turn_from.map(|from| ev.at_ms.saturating_sub(from)));
+                }
+                p.turn_from = crate::notice::turn_from(was, a, p.turn_from, ev.at_ms);
                 st.activity = a;
                 st.message = ev.message.clone();
             }
+            let finished = finished.map(|turn_ms| aaa_proto::NoticeView {
+                kind: aaa_proto::NoticeKind::Finished,
+                pane: Some(ev.session.clone()),
+                machine: p.machine_id.clone(),
+                project: None,
+                thread: None,
+                title: p.info.name.clone(),
+                agent: Some(st.harness.clone()),
+                turn_ms,
+                long: crate::notice::is_long(turn_ms, crate::notice::long_turn_ms()),
+                at_ms: aaa_common::util::now_ms(),
+            });
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
-            (next, answered_block, p.info.state.is_running())
+            (next, answered_block, p.info.state.is_running(), finished)
         };
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
         // aaa는 사건마다 다시 세어, 짧은 턴도 전이로 남는다. thread는 보고를 먼저 다시 본다(orch.rs `refresh_report`).
+        // 끝남은 보고 확인을 건 뒤에 미룬다(notice.rs `turn_finished`): ticker는 확인 중인 thread를 셈하지 않는다
         if activity.is_some() || ev.kind == "progress" {
-            match self.thread_of_pane(&ev.session) {
+            let thread = self.thread_of_pane(&ev.session);
+            match &thread {
                 Some(r) if r.status == ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
                 _ => self.tick_wake.notify_one(),
+            }
+            if let Some(mut n) = finished {
+                let open = thread.filter(|r| r.status == ThreadStatus::Open);
+                if let Some(r) = &open {
+                    n.project = Some(r.project.clone());
+                    n.thread = Some(r.id.clone());
+                    n.title = r.title.clone();
+                }
+                self.turn_finished(n, open.as_ref());
             }
         }
         // 기다리던 사건. 할 일(on_fire)은 잠금을 놓고 돌린 뒤 깨운다(기다리던 쪽이 그 기록을 본 뒤에 이어 가게)
