@@ -1751,14 +1751,8 @@ fn thread_state_items_follow_groups() {
     let v = w.h.ok(&["thread", "resolve", "demo", &a]);
     assert_eq!(v["status"], "resolved");
     assert!(has(&w, &a, "resolved"), "{:?}", items(&w));
-    // B: 다시 시작하면 다시 쉰다
+    // B: 다시 시작하면 다시 쉰다. D는 B와 따로 돌아 함께 띄운다(보고 없는 thread의 쉼은 brief 뒤 15초를 기다린다)
     w.h.ok(&["thread", "restart", "demo", &b]);
-    wait_for_diag(
-        "B 두 번째 idle",
-        T,
-        || (items(&w).iter().filter(|i| i["subject"] == b.as_str() && i["event"] == "idle").count() == 2).then_some(()),
-        || format!("{:?}", items(&w)),
-    );
     // D: 보고 없이 쉬는 worktree thread를 끝낸다(세션 종료 뒤 worktree 정리가 이어진다, t-0334가 본 0.4초 창).
     // 상태를 먼저 써서 닫힌 pane을 사람 차례로 보지 않는다: resolved뿐이다
     let v = w.start(&[
@@ -1774,13 +1768,18 @@ fn thread_state_items_follow_groups() {
         &w.task("d.txt", "noreport"),
     ]);
     let (d, d_pane) = (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string());
+    wait_for_diag(
+        "B 두 번째 idle",
+        T,
+        || (items(&w).iter().filter(|i| i["subject"] == b.as_str() && i["event"] == "idle").count() == 2).then_some(()),
+        || format!("{:?}", items(&w)),
+    );
     wait_item(&w, &d, "idle");
     let v = w.h.ok(&["thread", "resolve", "demo", &d]);
     assert_eq!(v["status"], "resolved");
     wait_for("D 세션 끝남", T, || (w.h.pane(&d_pane)["state"] != "running").then_some(()));
-    // 그 뒤에도 묶음 셈이 돌았다는 표지: 새 thread C가 쉼 항목을 낸다
-    let (c, _) = start("labA", "fake", "noreport-c");
-    wait_item(&w, &c, "idle");
+    // 울타리: host가 D의 끝난 세션을 본 뒤 묶음 셈을 두 번 더 돌았다(「pane closed」·「sessions ended」가 나올 차례가 지났다)
+    w.h.ticks(2);
 
     let got: Vec<(String, String, String)> = items(&w)
         .iter()
@@ -1807,7 +1806,6 @@ fn thread_state_items_follow_groups() {
     assert_eq!(pushed, [(a.clone(), "new report".to_string()), (b.clone(), "pane closed".to_string())]);
 }
 
-/// 병합 대기열 순번·사건(§8.8)과 머신별 동시 thread 한도(§8.10)
 /// thread 범위(§8.25): 일반 thread 세션 안의 CLI는 보기만 되고, thread가 아닌 pane(사람의 셸) 안의 CLI는 그대로 조작한다
 #[test]
 fn worker_session_cli_is_read_only() {
@@ -1951,6 +1949,7 @@ fn merge_land_steps() {
     assert_eq!(last_step(&v)["name"], "원격 일치", "{v}");
 }
 
+/// 병합 대기열 순번·사건(§8.8)과 동시 thread 한도(넘어도 막지 않고 경고만, D10 A13)
 #[test]
 fn merge_queue_and_capacity() {
     let w = world();
@@ -2276,7 +2275,6 @@ fn library_view() {
     assert_eq!(kinds.iter().filter(|k| *k == "library_copied").count(), 1, "{kinds:?}");
 }
 
-/// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.
 /// 알림 webhook을 받는 loopback 서버: 요청 줄과 본문을 넘긴다. `ok_first_only`면 두 번째 요청부터 실패(500)를 돌려준다.
 fn webhook_server(ok_first_only: bool) -> (u16, std::sync::mpsc::Receiver<(String, String)>) {
     use std::io::{BufRead, BufReader, Read, Write};
@@ -2312,6 +2310,7 @@ fn webhook_server(ok_first_only: bool) -> (u16, std::sync::mpsc::Receiver<(Strin
     (port, rx)
 }
 
+/// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.
 #[test]
 fn notify_webhook() {
     // 두 번째 요청부터는 실패를 돌려준다
