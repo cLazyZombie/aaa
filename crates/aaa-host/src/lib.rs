@@ -5,9 +5,11 @@
 
 mod adopt;
 mod attach;
+mod bgwait;
 mod brief;
 mod brief_text;
 mod caller;
+mod chatwatch;
 mod colors;
 mod coord;
 pub mod db;
@@ -196,6 +198,8 @@ struct PaneRt {
     agent: Option<aaa_proto::AgentStatus>,
     /// 지금 턴이 시작된 때(작업·질문으로 들어선 harness 시각, notice.rs `turn_from`). 턴 밖이거나 시작을 못 봤으면 None
     turn_from: Option<u64>,
+    /// 알림이 마지막으로 본 상태(notice.rs `alert_activity`: BG로 기다리는 쉼은 작업 중). 턴의 시작·끝은 이것이 바뀔 때다
+    alert: Option<aaa_proto::AgentActivity>,
     /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
     /// 다시 열지 않게 한다(harness.rs `on_harness`)
     answered: bool,
@@ -350,8 +354,10 @@ pub struct Host {
     pub boot_id: String,
     /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.163)
     pub config_dir: std::sync::OnceLock<PathBuf>,
-    /// 새 흐름 사건(연결된 front에 알린다)
+    /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
+    /// 흐름 사건 하나를 저장(seq를 정함)부터 broadcast까지 한 번에 하나씩 한다(`orch.rs` `flow_event`)
+    flow_order: Mutex<()>,
     /// thread 기록이 바뀌었다
     pub thread_events: broadcast::Sender<aaa_proto::ThreadView>,
     /// 보고 사본은 한 번에 하나씩 한다
@@ -378,6 +384,13 @@ pub struct Host {
     held: Mutex<harness::Held>,
     /// ticker를 바로 깨운다(흐름 사건·harness 사건)
     tick_wake: tokio::sync::Notify,
+    /// 배경 작업을 기다리는 쉼(차이 목록 S1). 잠금 차례는 `inner` 다음이다
+    bgwait: Mutex<bgwait::BackgroundWait>,
+    /// 대화 기록 변화 push(차이 목록 C3): 청한 연결 수와 agent에 켜 둔 감시. 잠금 차례는 `inner` 다음이다
+    chats: Mutex<chatwatch::ChatWatch>,
+    chat_notes: broadcast::Sender<chatwatch::ChatNote>,
+    /// 감시 맞추기는 하나씩
+    chat_sync: tokio::sync::Mutex<()>,
     /// 시작한 tick 수와 끝난 tick 수(`ticker_tick`이 「이 요청 뒤에 시작한 tick」이 끝나기를 기다린다)
     tick_started: std::sync::atomic::AtomicU64,
     /// 이 host가 뜬 시각. auto-resolve는 이때부터도 잰다(herdr-projects ticker `started`: 오래 꺼져 있던 뒤 한꺼번에 끝내지 않는다)
@@ -537,6 +550,7 @@ impl Host {
             boot_id: util::boot_id(),
             config_dir: std::sync::OnceLock::new(),
             flow_events: broadcast::channel(256).0,
+            flow_order: Mutex::new(()),
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
@@ -550,6 +564,10 @@ impl Host {
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
             tick_wake: tokio::sync::Notify::new(),
+            bgwait: Mutex::new(Default::default()),
+            chats: Mutex::new(Default::default()),
+            chat_notes: broadcast::channel(256).0,
+            chat_sync: tokio::sync::Mutex::new(()),
             tick_started: std::sync::atomic::AtomicU64::new(0),
             started_ms: aaa_common::util::now_ms(),
             tick_done: watch::channel(0).0,
@@ -649,6 +667,7 @@ impl Host {
                     lease: None,
                     agent: None,
                     turn_from: None,
+                    alert: None,
                     transcript: None,
                     answered: false,
                     restore_error: None,
@@ -699,6 +718,7 @@ impl Host {
             self.spawn_subscribe(hello.machine_id.clone(), sid, from);
         }
         self.rewatch(hello.machine_id.clone());
+        self.sync_chat_watches_if_wanted();
         self.restore_after_reboot(&hello.machine_id, generation);
     }
 
@@ -720,6 +740,7 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         drop(i);
+        self.chat_machine_gone(machine_id);
         self.bump();
     }
 
@@ -803,6 +824,7 @@ impl Host {
                 lease: None,
                 agent: None,
                 turn_from: None,
+                alert: None,
                 transcript: None,
                 answered: false,
                 restore_error: None,

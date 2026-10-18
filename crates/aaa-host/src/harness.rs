@@ -219,7 +219,7 @@ impl Host {
             tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
             ev.harness_session = None;
         }
-        let (activity, answered_block, running, finished) = {
+        let (activity, answered_block, running, mut finished) = {
             let mut i = self.inner.lock().unwrap();
             // 이 agent는 답한 뒤 화면에 남은 확인창을 새로 묻는 것으로만 다시 알린다(`ask_anew.v1`)
             let anew = i.machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == "ask_anew.v1"));
@@ -235,8 +235,10 @@ impl Host {
             // 셸 pane 앞의 agent가 끝나 셸로 돌아왔다(agent의 앞 프로세스 찾기, herdr `ClearAgent`): 다시 agent 없는 셸이다.
             // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
             if ev.kind == "released" {
+                self.bgwait.lock().unwrap().forget(&ev.session);
                 p.agent = None;
                 p.turn_from = None;
+                p.alert = None;
                 p.answered = false;
                 p.transcript = None;
                 let _ = p.events.send(crate::PaneEvent::State);
@@ -262,6 +264,7 @@ impl Host {
                 seen: true,
                 plan: None,
                 background: None,
+                background_wait: false,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -305,8 +308,9 @@ impl Host {
             if next.is_some_and(|a| a != AgentActivity::Question) {
                 p.answered = false;
             }
-            // 보는 화면 없이 끝난 턴(notice.rs): 그 턴의 길이와 함께 잠금을 놓은 뒤 알린다
-            let mut finished = None;
+            // 알림이 본 앞 상태(BG로 기다리는 쉼은 작업 중, notice.rs `alert_activity`)
+            let was_alert =
+                p.alert.or_else(|| prev.as_ref().map(|x| crate::notice::alert_activity(x.activity, x.background_wait)));
             if let Some(a) = next {
                 if a != st.activity {
                     st.since_ms = ev.at_ms;
@@ -314,25 +318,48 @@ impl Host {
                 let was = prev.as_ref().map(|x| x.activity);
                 let sees = self.someone_sees(&ev.session, p.lease.as_ref());
                 st.seen = crate::seen::seen_after(was, a, st.seen, sees);
-                if crate::notice::finished(was, a, st.seen) {
-                    finished = Some(p.turn_from.map(|from| ev.at_ms.saturating_sub(from)));
-                }
-                p.turn_from = crate::notice::turn_from(was, a, p.turn_from, ev.at_ms);
                 st.activity = a;
                 st.message = ev.message.clone();
             }
-            let finished = finished.map(|turn_ms| aaa_proto::NoticeView {
-                kind: aaa_proto::NoticeKind::Finished,
-                pane: Some(ev.session.clone()),
-                machine: p.machine_id.clone(),
-                project: None,
-                thread: None,
-                title: p.info.name.clone(),
-                agent: Some(st.harness.clone()),
-                turn_ms,
-                long: crate::notice::is_long(turn_ms, crate::notice::long_turn_ms()),
-                at_ms: aaa_common::util::now_ms(),
-            });
+            // 배경 작업을 기다리는 쉼(bgwait.rs, 참고 server/index.ts가 상태·배경 수·사람 입력마다 BackgroundWait에 알림).
+            // host 시계로 잰다: agent 시계가 어긋나도 유예·한도는 이 host에서 맞다
+            {
+                let now = aaa_common::util::now_ms();
+                let mut w = self.bgwait.lock().unwrap();
+                if ev.kind == "prompt_submit" {
+                    w.prompt(&ev.session, now, now);
+                }
+                if ev.kind == "plan" || next == Some(AgentActivity::Exited) {
+                    w.running(&ev.session, st.background.unwrap_or(0), now);
+                }
+                match next {
+                    Some(AgentActivity::Exited | AgentActivity::Error) => w.forget(&ev.session),
+                    Some(a) => {
+                        w.status(&ev.session, a, now);
+                    }
+                    None => {}
+                }
+                st.background_wait = w.waiting(&ev.session);
+            }
+            // 보는 화면 없이 끝난 턴(notice.rs): 알림은 BG로 기다리는 쉼을 작업 중으로 보아 그 기다림이 끝날 때 한 번 알린다
+            // (참고 alertStatus). 그 턴의 길이와 함께 잠금을 놓은 뒤 알린다
+            let now_alert = crate::notice::alert_activity(st.activity, st.background_wait);
+            let mut finished = None;
+            // 턴 안에서 온 사람 입력은 턴을 끝내지 않는다: 그 입력이 연 일은 곧 화면에 작업 중으로 보인다(참고 herdr는
+            // UserPromptSubmit에 작업 중이다). 그 입력이 배경 기다림을 지워도 BG에서 다음 턴으로 이어진다
+            let now_alert = if ev.kind == "prompt_submit" && crate::notice::in_turn(was_alert) {
+                was_alert.unwrap_or(now_alert)
+            } else {
+                now_alert
+            };
+            if was_alert != Some(now_alert) {
+                if crate::notice::finished(was_alert, now_alert, st.seen) {
+                    let turn_ms = p.turn_from.map(|from| ev.at_ms.saturating_sub(from));
+                    finished = Some(crate::notice::finish_notice(&ev.session, p, &st, turn_ms));
+                }
+                p.turn_from = crate::notice::turn_from(was_alert, now_alert, p.turn_from, ev.at_ms);
+            }
+            p.alert = Some(now_alert);
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
             (next, answered_block, p.info.state.is_running(), finished)
@@ -347,7 +374,7 @@ impl Host {
                 Some(r) if r.status == ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
                 _ => self.tick_wake.notify_one(),
             }
-            if let Some(mut n) = finished {
+            if let Some(mut n) = finished.take() {
                 let open = thread.filter(|r| r.status == ThreadStatus::Open);
                 if let Some(r) = &open {
                     n.project = Some(r.project.clone());
@@ -356,6 +383,10 @@ impl Host {
                 }
                 self.turn_finished(n, open.as_ref());
             }
+        }
+        // 상태는 그대로인데 배경 기다림만 바뀐 사건(계획·배경 수)의 끝남
+        if let Some(n) = finished {
+            self.announce_finish(n);
         }
         // 기다리던 사건. 할 일(on_fire)은 잠금을 놓고 돌린 뒤 깨운다(기다리던 쪽이 그 기록을 본 뒤에 이어 가게)
         let mut fired = Vec::new();
@@ -1136,6 +1167,7 @@ mod tests {
             seen: true,
             plan: None,
             background: None,
+            background_wait: false,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));

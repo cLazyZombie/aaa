@@ -199,6 +199,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         seen: f.agent_state.as_deref() != Some("done"),
         plan: None,
         background: None,
+        background_wait: false,
     });
     thread_group(&rec, f.pane_exists, agent.as_ref(), now_ms)
 }

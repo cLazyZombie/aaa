@@ -191,6 +191,41 @@ export function tellAlert(m: Omit<Extract<EventsClientMsg, { t: "alert" }>, "t">
   }
 }
 
+/** 대화 보기가 청한 pane의 알림: 기록이 바뀌었다(`changed`), 또는 host가 그 pane의 바뀜을 지금 알릴 수 있는가(`live`) */
+export type ChatNote = { changed: true } | { live: boolean };
+/** pane마다 대화를 보는 화면의 받는 곳(차이 목록 C3, herdr-web-ui ws.ts `conversationWanted`). 연결이 열리면 모두 다시 청한다 */
+const chatWanted = new Map<string, Set<(note: ChatNote) => void>>();
+
+function sendChatWatch(socket: WebSocket | null, pane: string, enabled: boolean) {
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  try {
+    socket.send(JSON.stringify({ t: "chat_watch", pane, enabled } satisfies EventsClientMsg));
+  } catch {
+    /* 연결이 끊기면 다시 붙으며 청한다 */
+  }
+}
+
+function tellChat(pane: string, note: ChatNote) {
+  for (const listener of chatWanted.get(pane) ?? []) listener(note);
+}
+
+/** 그 pane의 대화 기록 변화를 받는다. 처음에는 push가 안 되는 것으로 두고, host의 `chat_watching`이 알려 준다 */
+export function watchChat(pane: string, onNote: (note: ChatNote) => void): () => void {
+  let listeners = chatWanted.get(pane);
+  if (listeners === undefined) {
+    listeners = new Set();
+    chatWanted.set(pane, listeners);
+    sendChatWatch(eventsSocket, pane, true);
+  }
+  listeners.add(onNote);
+  return () => {
+    const current = chatWanted.get(pane);
+    if (current === undefined || !current.delete(onNote) || current.size > 0) return;
+    chatWanted.delete(pane);
+    sendChatWatch(eventsSocket, pane, false);
+  };
+}
+
 /** 기계·pane 목록과 확인창 질문·thread·공유 설정 사건만 받는다(layout·grid 사건은 TUI용이라 무시한다). */
 export function watchEvents(
   onState: (ev: StateEvent) => void,
@@ -298,6 +333,7 @@ export function watchEvents(
     socket.onmessage = null;
     socket.close();
     onLink(false);
+    for (const pane of chatWanted.keys()) tellChat(pane, { live: false });
     window.clearTimeout(timer);
     delay = 500;
     open();
@@ -335,6 +371,7 @@ export function watchEvents(
       heard = Date.now();
       tell("open");
       if (touched) touch();
+      for (const pane of chatWanted.keys()) sendChatWatch(socket, pane, true);
       onLink(true);
     };
     socket.onmessage = (m) => {
@@ -355,6 +392,8 @@ export function watchEvents(
         const { ev: _tag, ...n } = ev;
         onNotice(n);
       }
+      else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });
+      else if (ev.ev === "chat_watching") tellChat(ev.pane, { live: ev.live });
       else if (ev.ev === "pong" && probeIds.has(ev.id)) {
         probeDrops = 0;
         endProbe();
@@ -364,6 +403,7 @@ export function watchEvents(
       if (ws !== socket) return;
       endProbe();
       onLink(false);
+      for (const pane of chatWanted.keys()) tellChat(pane, { live: false });
       // 기기가 취소됐다: 다시 붙지 않는다
       if (event.code === REVOKED_CLOSE_CODE) {
         stopped = true;

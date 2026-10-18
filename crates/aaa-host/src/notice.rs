@@ -21,7 +21,7 @@ pub(crate) fn long_turn_ms() -> u64 {
     std::env::var("AAA_TEST_LONG_TURN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(60_000)
 }
 
-fn in_turn(a: Option<AgentActivity>) -> bool {
+pub(crate) fn in_turn(a: Option<AgentActivity>) -> bool {
     matches!(a, Some(AgentActivity::Working | AgentActivity::Question))
 }
 
@@ -39,12 +39,54 @@ pub(crate) fn finished(prev: Option<AgentActivity>, next: AgentActivity, seen: b
     next == AgentActivity::Idle && in_turn(prev) && !seen
 }
 
+/// 알림이 보는 상태(herdr-web-ui shared/notify-policy.ts `alertStatus`): 턴이 띄운 배경 작업을 기다리는 쉼(`background_wait`,
+/// bgwait.rs)은 작업 중이다. 그 일의 알림이 다음 턴을 저절로 열고, 끝남은 그 기다림이 끝날 때 한 번 알린다
+pub(crate) fn alert_activity(activity: AgentActivity, background_wait: bool) -> AgentActivity {
+    if background_wait && !in_turn(Some(activity)) { AgentActivity::Working } else { activity }
+}
+
+/// 끝남 알림 한 장(thread 칸은 부르는 쪽이 채운다)
+pub(crate) fn finish_notice(
+    pane: &str,
+    p: &crate::PaneRt,
+    st: &aaa_proto::AgentStatus,
+    turn_ms: Option<u64>,
+) -> NoticeView {
+    NoticeView {
+        kind: NoticeKind::Finished,
+        pane: Some(pane.to_string()),
+        machine: p.machine_id.clone(),
+        project: None,
+        thread: None,
+        title: p.info.name.clone(),
+        agent: Some(st.harness.clone()),
+        turn_ms,
+        long: is_long(turn_ms, long_turn_ms()),
+        at_ms: aaa_common::util::now_ms(),
+    }
+}
+
 /// 끝난 턴이 긴가: 길이를 모르면 긴 것으로 친다(herdr-web-ui `dropletAllows`: 「a turn of unknown length is announced」)
 pub(crate) fn is_long(turn_ms: Option<u64>, long_ms: u64) -> bool {
     turn_ms.is_none_or(|t| t >= long_ms)
 }
 
 impl Host {
+    /// 보는 화면 없이 끝난 턴을 알린다: thread pane이면 그 thread를 채워 묶음 셈까지 미룬다(`turn_finished`)
+    pub(crate) fn announce_finish(&self, mut n: NoticeView) {
+        let thread = n
+            .pane
+            .as_deref()
+            .and_then(|p| self.thread_of_pane(p))
+            .filter(|r| r.status == aaa_proto::ThreadStatus::Open);
+        if let Some(r) = &thread {
+            n.project = Some(r.project.clone());
+            n.thread = Some(r.id.clone());
+            n.title = r.title.clone();
+        }
+        self.turn_finished(n, thread.as_ref());
+    }
+
     pub(crate) fn send_notice(&self, n: NoticeView) {
         tracing::debug!(kind = ?n.kind, pane = ?n.pane, "앱 안 알림");
         let _ = self.notice_events.send(n);
@@ -133,6 +175,19 @@ mod tests {
         // 쉼이 아닌 곳으로 간 것은 끝남이 아니다
         assert!(!finished(Some(Working), Exited, false));
         assert!(!finished(Some(Working), Question, false));
+    }
+
+    #[test]
+    fn a_rest_that_waits_on_background_work_is_still_the_turn() {
+        // 참고 alertStatus: BG로 기다리는 쉼은 작업 중이라 끝남이 아니고, 턴도 이어진다
+        assert_eq!(alert_activity(Idle, true), Working);
+        assert_eq!(alert_activity(Question, true), Question);
+        assert_eq!(alert_activity(Idle, false), Idle);
+        let rest = alert_activity(Idle, true);
+        assert!(!finished(Some(Working), rest, false), "배경을 기다리는 쉼은 끝남이 아니다");
+        assert_eq!(turn_from(Some(Working), rest, Some(10), 40), Some(10), "턴은 이어진다");
+        // 기다림이 끝나 쉼이 되면 그때 한 번 끝남이고, 턴은 처음 일한 때부터다
+        assert!(finished(Some(rest), alert_activity(Idle, false), false));
     }
 
     #[test]

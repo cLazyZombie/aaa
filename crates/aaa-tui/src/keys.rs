@@ -225,6 +225,23 @@ pub fn jamo_key(c: char) -> Option<char> {
     MAP.iter().find(|(j, _)| *j == c).map(|(_, k)| *k)
 }
 
+/// Windows 콘솔 키의 AltGr 글자를 글자로 둔다(herdr 0.9.5 `src/client/input/windows_vti.rs` `windows_record_modifiers`
+/// :1576-1590 「글자 키의 AltGr는 글자 shift다」). Windows는 AltGr를 Ctrl+Alt로 알려 crossterm은 독일 배치 AltGr+Q를
+/// `@` + CONTROL|ALT로 준다: 그대로 두면 `encode`가 Ctrl 글자(NUL)에 Alt ESC를 붙인다. crossterm은 왼쪽·오른쪽 Alt·Ctrl을
+/// 가르지 않으므로 진짜 Ctrl+Alt로 남기는 것은 영문 글자(crossterm이 기본 배치로 푼 `ctrl+alt+b` 등)와 Space다
+/// (herdr도 Space의 AltGr는 Ctrl+Alt다). `windows`가 아니면 그대로 둔다.
+pub fn altgr_text(k: KeyEvent, windows: bool) -> KeyEvent {
+    let ctrl_alt = KeyModifiers::CONTROL | KeyModifiers::ALT;
+    match k.code {
+        KeyCode::Char(c)
+            if windows && k.modifiers.contains(ctrl_alt) && !c.is_ascii_alphabetic() && !c.is_control() && c != ' ' =>
+        {
+            KeyEvent { modifiers: k.modifiers - ctrl_alt, ..k }
+        }
+        _ => k,
+    }
+}
+
 fn ctrl_byte(c: char) -> Option<u8> {
     match c {
         'a'..='z' => Some(c as u8 - b'a' + 1),
@@ -351,6 +368,65 @@ mod tests {
         // prefix 두 번은 그 키 bytes
         assert_eq!(combo_bytes(DEFAULT_PREFIX), [2]);
         assert_eq!(combo_bytes(parse_combo("alt+x").unwrap()), b"\x1bx");
+    }
+
+    /// Windows 콘솔에서 crossterm이 주는 꼴(`event/sys/windows/parse.rs`: 왼쪽·오른쪽 수정키를 합치고, 제어 글자는 그 키의
+    /// 기본 배치 글자로, AltGr는 CONTROL|ALT로) → pane에 가는 bytes 표. prefix(`ctrl+b`) 맞추기도 본다
+    #[test]
+    fn windows_console_keys_table() {
+        let (none, ctrl, alt, shift) =
+            (KeyModifiers::NONE, KeyModifiers::CONTROL, KeyModifiers::ALT, KeyModifiers::SHIFT);
+        let win = |code, m| encode(&altgr_text(k(code, m), true));
+        let table: &[(KeyCode, KeyModifiers, &[u8])] = &[
+            // 글자·한글(IME가 확정한 음절은 글자 하나로 온다)
+            (KeyCode::Char('a'), none, b"a"),
+            (KeyCode::Char('A'), shift, b"A"),
+            (KeyCode::Char('한'), none, "한".as_bytes()),
+            (KeyCode::Char('ㅎ'), none, "ㅎ".as_bytes()),
+            // Ctrl 글자: crossterm이 ToUnicodeEx로 푼 기본 글자 + CONTROL
+            (KeyCode::Char('b'), ctrl, &[2]),
+            (KeyCode::Char('c'), ctrl, &[3]),
+            (KeyCode::Char('B'), ctrl | shift, &[2]),
+            (KeyCode::Char(' '), ctrl, &[0]),
+            (KeyCode::Char('['), ctrl, &[0x1b]),
+            // Alt 글자: ESC + 글자, 진짜 Ctrl+Alt 영문 글자: ESC + Ctrl 글자
+            (KeyCode::Char('x'), alt, b"\x1bx"),
+            (KeyCode::Char('X'), alt | shift, b"\x1bX"),
+            (KeyCode::Char('b'), ctrl | alt, b"\x1b\x02"),
+            (KeyCode::Char(' '), ctrl | alt, b"\x1b\x00"),
+            // AltGr 글자(독일 배치 AltGr+Q `@`, AltGr+7 `{`, AltGr+ß `\`, AltGr+E `€`, Shift 함께도): 글자 그대로
+            (KeyCode::Char('@'), ctrl | alt, b"@"),
+            (KeyCode::Char('{'), ctrl | alt, b"{"),
+            (KeyCode::Char('\\'), ctrl | alt, b"\\"),
+            (KeyCode::Char('€'), ctrl | alt, "€".as_bytes()),
+            (KeyCode::Char('|'), ctrl | alt | shift, b"|"),
+            // 화살표·편집 키(VK 코드로 온다)와 수정키
+            (KeyCode::Up, none, b"\x1b[A"),
+            (KeyCode::Left, ctrl, b"\x1b[1;5D"),
+            (KeyCode::Right, alt, b"\x1b[1;3C"),
+            (KeyCode::Down, shift, b"\x1b[1;2B"),
+            (KeyCode::Home, none, b"\x1b[H"),
+            (KeyCode::End, none, b"\x1b[F"),
+            (KeyCode::PageUp, none, b"\x1b[5~"),
+            (KeyCode::Delete, none, b"\x1b[3~"),
+            (KeyCode::Enter, none, b"\r"),
+            (KeyCode::Tab, none, b"\t"),
+            // Windows는 Shift+Tab을 BackTab + SHIFT로 준다
+            (KeyCode::BackTab, shift, b"\x1b[Z"),
+            (KeyCode::Backspace, none, &[0x7f]),
+            (KeyCode::Backspace, alt, b"\x1b\x7f"),
+            (KeyCode::Esc, none, &[0x1b]),
+            (KeyCode::F(1), none, b"\x1bOP"),
+            (KeyCode::F(12), none, b"\x1b[24~"),
+        ];
+        for (code, m, want) in table {
+            assert_eq!(win(*code, *m), *want, "{code:?} {m:?}");
+        }
+        // prefix는 Windows에서도 ctrl+b, AltGr 글자는 prefix가 아니다
+        assert_eq!(of(&altgr_text(k(KeyCode::Char('b'), ctrl), true)), DEFAULT_PREFIX);
+        assert_eq!(of(&altgr_text(k(KeyCode::Char('@'), ctrl | alt), true)), Combo::plain('@'));
+        // Windows가 아니면(macOS·Linux 터미널) 그대로다
+        assert_eq!(encode(&altgr_text(k(KeyCode::Char('@'), ctrl | alt), false)), b"\x1b\x00");
     }
 
     #[test]

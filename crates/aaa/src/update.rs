@@ -8,6 +8,9 @@
 //! - 순서(plan §11 「교체」): 같은 폴더에 staging(`.aaa-update-<pid>.tmp`, herdr와 같은 자리라 rename이 원자적) →
 //!   self-check(주어진 파일을 실행해 `--version`이 `aaa x.y.z`, `config check`가 이 Mac 설정을 받는지) → version 고정 검사 →
 //!   지금 것을 `.aaa-old/`에 보관(hard link, 실행 파일 자리는 비지 않는다) → rename. 제자리 쓰기는 없다.
+//! - Windows(접속만 하는 PC의 `%USERPROFILE%\.local\bin\aaa.exe`, install-runbook 11번)도 같은 순서다. 도는 exe 자리에 rename이
+//!   된다(std rename의 POSIX 방식, Windows CI 시험 `replaces_a_running_exe`). herdr Windows는 release 폴더마다 풀고 junction·PATH를
+//!   바꾸는 설치 스크립트(`distribution/install.ps1`)를 쓴다: aaa는 고정 경로 하나라 따르지 않았다.
 //! - 도는 host·agent는 옛 이미지로 계속 돈다. 다시 띄우기는 사람이 `aaa service restart`로 한다(자동 재시작 없음, plan §11).
 //! - 참고와 다름: herdr는 도는 서버를 멈출지·넘길지(`--handoff`) 묻는다. aaa는 session host가 세션을 가져 agent·host를 다시
 //!   띄워도 이어진다(결정 3): 바꾼 뒤 다시 띄우기를 알린다. brew·mise·nix 설치 감지는 없다(aaa는 고정 경로 하나).
@@ -197,6 +200,8 @@ impl Staged {
                 .with_context(|| format!("지금 실행 파일을 {}에 보관하지 못했다", kept.display()))?;
         }
         let path = self.0.take().unwrap();
+        // Windows도 도는 exe 자리에 그대로 rename한다: std rename이 POSIX 방식(FILE_RENAME_FLAG_POSIX_SEMANTICS)으로 바꾼다
+        // (Windows 시험 `replaces_a_running_exe`)
         if let Err(e) = std::fs::rename(&path, &place.exe) {
             let _ = std::fs::remove_file(&path);
             bail!("{}를 바꾸지 못했다: {e}", place.exe.display());
@@ -304,9 +309,6 @@ pub fn update(json: bool, from: Option<PathBuf>, dry_run: bool) -> Result<ExitCo
             "새 실행 파일을 `--from <파일>`로 준다(같은 OS·CPU로 빌드한 aaa, 예: `aaa update --from target/release/aaa`). 내려받기·서명 release는 아직 없다"
         );
     };
-    if !cfg!(unix) {
-        bail!("`aaa update`는 아직 macOS·Linux만 한다(Windows는 도는 exe를 rename한 뒤 바꾼다, plan §11)");
-    }
     if !dry_run {
         crate::person::require("실행 파일 바꾸기")?;
     }
@@ -324,9 +326,6 @@ pub fn update(json: bool, from: Option<PathBuf>, dry_run: bool) -> Result<ExitCo
 
 /// `aaa update rollback [<이름>] [--dry-run]`: 보관한 옛 실행 파일로 되돌린다. 이름이 없으면 지금과 다른 가장 새 것
 pub fn rollback(json: bool, name: Option<String>, dry_run: bool) -> Result<ExitCode> {
-    if !cfg!(unix) {
-        bail!("`aaa update`는 아직 macOS·Linux만 한다");
-    }
     if !dry_run {
         crate::person::require("실행 파일 되돌리기")?;
     }
@@ -404,6 +403,73 @@ mod tests {
         assert!(e.contains("고정돼 있다") && e.contains("host.toml"), "{e}");
         let both = [("host.toml".to_string(), cur.to_string()), ("agent.toml".to_string(), next_major.clone())];
         assert!(pin_check(cur, &both).unwrap_err().to_string().contains("agent.toml"), "둘 다 지킨다");
+    }
+
+    /// Windows: 도는 실행 파일 자리를 바꾼다. 시험 binary 사본을 `aaa.exe`로 띄워 둔 채 바꾸면 그 자리는 새것, 보관은 바꾸기 전
+    /// 것이고 staging은 남지 않는다
+    #[cfg(windows)]
+    #[test]
+    fn replaces_a_running_exe() {
+        use std::io::BufRead as _;
+        let dir = std::env::temp_dir().join(format!("aaa-update-win-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("aaa.exe");
+        let original = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        std::fs::write(&exe, &original).unwrap();
+        let mut child = Command::new(&exe)
+            .args(["--ignored", "--exact", "update::tests::hold_until_stdin_closes", "--nocapture"])
+            .env("AAA_TEST_HOLD", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // 사본이 돌기 시작했다(이미지가 올라왔다)는 말을 기다린다
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        while !line.contains("holding") {
+            line.clear();
+            assert!(out.read_line(&mut line).unwrap() > 0, "사본이 돌지 않았다");
+        }
+        let place = Place { exe: exe.clone(), dir: dir.clone() };
+        let new = dir.join("new-build");
+        std::fs::write(&new, b"new build").unwrap();
+        let kept = Staged::copy_from(&new, &place).unwrap().install(&place, "0.1.0").unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new build");
+        assert_eq!(std::fs::read(&kept).unwrap(), original, "보관한 것은 바꾸기 전(도는) 실행 파일");
+        assert!(kept.starts_with(place.old()), "{}", kept.display());
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".aaa-update-"))
+            .collect();
+        assert!(left.is_empty(), "staging이 남았다: {left:?}");
+        drop(child.stdin.take());
+        assert!(child.wait().unwrap().success());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `replaces_a_running_exe`가 띄운 사본: 표준 입력이 닫힐 때까지 돈다(그 변수 없이는 바로 끝난다)
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "replaces_a_running_exe가 사본으로 띄운다"]
+    fn hold_until_stdin_closes() {
+        if std::env::var_os("AAA_TEST_HOLD").is_none() {
+            return;
+        }
+        println!("holding");
+        let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut Vec::new());
+    }
+
+    /// 모든 OS가 바꾸기·되돌리기를 받는다(Windows도 거부하지 않는다: 접속만 하는 PC의 `aaa.exe`, plan §8.192). 없는 파일이나
+    /// 보관에 없는 이름은 그 까닭으로 멈춘다(검사만이라 실행 파일은 건드리지 않는다)
+    #[test]
+    fn every_os_takes_update_and_rollback() {
+        let none = std::env::temp_dir().join(format!("aaa-update-none-{}", std::process::id()));
+        let e = update(false, Some(none.clone()), true).unwrap_err().to_string();
+        assert!(e.contains(&format!("{}가 파일이 아니다", none.display())), "{e}");
+        let e = rollback(false, Some("aaa-none".into()), true).unwrap_err().to_string();
+        assert!(e.contains("보관한 것 가운데 `aaa-none`가 없다"), "{e}");
     }
 
     #[test]

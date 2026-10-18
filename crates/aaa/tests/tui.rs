@@ -1490,7 +1490,7 @@ fn side_list_like_web() {
     assert!(tui.wait_exit());
     drop(tui);
 
-    // 8b) 접은 것은 host가 기억한다(herdr `sidebar_collapsed`, plan §8.188): 다시 붙으면 접힌 채, prefix b로 펴면 그것을 기억한다
+    // 8b) 접은 것은 host가 기억한다(herdr `sidebar_collapsed`, plan §8.193): 다시 붙으면 접힌 채, prefix b로 펴면 그것을 기억한다
     let mut tui = Tui::start_cols(&h, &[], WIDE);
     tui.wait_text("접힌 채 다시 붙음", |s| {
         s.contains("list-42") && s.lines().next().is_some_and(|l| l.starts_with("1 "))
@@ -1837,7 +1837,7 @@ fn side_width(s: &Screen) -> Option<usize> {
     cols.all(|c| c == Some(first)).then_some(first + 1)
 }
 
-/// host 공유 설정 문서(TUI 사이드바 배치가 남는 곳, plan §8.188)
+/// host 공유 설정 문서(TUI 사이드바 배치가 남는 곳, plan §8.193)
 fn host_prefs(node: &Node) -> aaa_proto::SharedPreferences {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     rt.block_on(async {
@@ -1849,7 +1849,7 @@ fn host_prefs(node: &Node) -> aaa_proto::SharedPreferences {
     })
 }
 
-/// 사이드바 폭(사용자 10-18 「herdr만큼 크게, 더 크게도, 테마를 바꿔도 리셋되지 않게」, plan §8.188): 기본 36칸(herdr 기본은
+/// 사이드바 폭(사용자 10-18 「herdr만큼 크게, 더 크게도, 테마를 바꿔도 리셋되지 않게」, plan §8.193): 기본 36칸(herdr 기본은
 /// 26, 사용자가 herdr에서 쓰는 폭), 경계를 끌면 72칸까지(`[tui] sidebar_max_width` 기본). 끌어 둔 폭은 설정 창에서 테마를
 /// 바꿔도(host.toml `[tui] theme`만 쓰고 다시 읽는다) 그대로이고, host 공유 설정 `tuiSidebarWidth`에 남아 다시 붙어도 그
 /// 폭으로 시작한다(herdr는 client 기기 파일 `client-shell/*.json`). 경계를 두 번 누르면 설정 폭으로 돌아가고 남긴 값을 지운다.
@@ -1926,7 +1926,7 @@ fn sidebar_width_like_herdr() {
 }
 
 /// workspace 이름·닫기(herdr `prefix shift+w`·`prefix shift+d`, 다시 세기 546)와 사이드바 구역 비율(herdr `sidebar_section_split`,
-/// 다시 세기 341, plan §8.188): spaces 줄을 눌러 간 workspace의 이름을 바꾸면 그 workspace에 그대로 있고(보던 pane 글이 보인다),
+/// 다시 세기 341, plan §8.193): spaces 줄을 눌러 간 workspace의 이름을 바꾸면 그 workspace에 그대로 있고(보던 pane 글이 보인다),
 /// 닫기는 확인 창(`confirm_close`) 뒤 host가 그 pane을 끝내고 TUI는 남은 workspace(main)로 간다. spaces·agents 구역 경계 줄을
 /// 끌면 비율이 바뀌고 host 공유 설정 `tuiSidebarSplit`에 남아 다시 붙어도 그 비율이다.
 #[test]
