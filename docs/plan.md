@@ -2823,7 +2823,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 파일 보기 안 Markdown은 그 문서의 폴더를 기준으로 잇는다(참고 `resolveFromDocument`). 문서 링크(`[코드](../src/app.ts)`), code 안 경로, 언어 없는 fence(로그·명령 출력) 안 경로를 누르면 같은 pane 기준으로 연다. 언어가 있는 code 안은 글 그대로다(참고 `PLAIN_FENCE`).
   - 열린 파일 보기 안에서 다른 파일을 열면 기록 칸을 바꾼다(참고와 같다). 뒤로 한 번이면 pane으로 돌아간다.
   - 그림(`![점](../shots/dot.png)`)은 그 pane의 `pane_file`로 찾아 읽기 경로로 그린다(참고 `markdownImages`). 크기를 먼저 읽어 자리를 잡고(참고 `imageBox`), 못 읽으면 「이미지를 표시할 수 없음」, 크면 내려받기를 권한다. 문구는 참고 ko 그대로다.
-  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음).
+  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음). → 보고서 파일 단추는 §8.171(thread worktree 기준), 그림은 아직 없음.
 - **문법 강조(5b-3).**
   - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
   - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
@@ -2831,7 +2831,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
   - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
-  - 대화 보기·보고서 안 파일 링크.
+  - 대화 보기·보고서 안 파일 링크 → §8.171.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
   - 유닛:
@@ -3541,7 +3541,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - aaa-vt 열셋: 끊기 셋(aaa-vt 쓰기·vt100 줄 쓰기·줄 넘는 상태), 끝 칸 이음 표시, 넓히지 않음, CSI·OSC 뒤 끊지 않음, 국기 폭 1, 셋째 지역 표시도 묶음, 보이지 않는 글자 보정 없음, spacing mark도 묶음, `joins_after` 늘 거짓, ASCII 빠른 길이 Prepend를 안 봄.
     - web 신선도 하나.
     - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
-||||||| 05b0633
+
 ### 8.168 결과물 파일을 앱 안 파일 보기로(10-18, 차이 목록 2장 R1 나머지, coordinator 지시 「참고대로」)
 
 - **참고.** herdr-projects popup은 보고 글 아래 파일 줄을 ↵로 연다(`src/popup.rs`). herdr-web-ui는 파일을 앱 안 `FileViewer`로
@@ -3613,6 +3613,75 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   관찰 가능한 출력·응답으로 끝내며 고정 sleep은 추가하지 않는다. 결함 심기·전수 gate 결과는 thread 보고에 남긴다.
 - **M4.** docs/migration.md에 운영 0.2 설정을 host로 한 번 옮기고 각 Mac pilot로 확인하는 절차만 추가한다.
   운영 설정·프로세스는 건드리지 않는다. 사용자 모델 이름 목록은 저장소·fixture에 넣지 않는다.
+
+### 8.171 대화·보고서 안 파일 링크(10-18, 차이 목록 1장 J 「파일 경로 누르면 파일 보기」 나머지, t-0335 넘김, coordinator 「그 thread의 머신·worktree 기준, 참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb)는 pane마다 `OpenFileContext`를 준다(App.tsx 1583줄). 대화(`ChatView.tsx`)의 말·도구 줄과 그 안
+  Markdown의 경로·파일 링크·code 경로가 그 pane의 파일 보기로 열리고, 서버는 pane이 지금 있는 폴더 기준으로 찾는다(§8.125). 보고서는
+  herdr-projects의 것이라 herdr-web-ui에는 없다.
+- **대화.** 그 pane 기준이다(참고 규칙 그대로, pane은 thread worktree에서 시작한다). 이미 있는 `pane_file`을 쓴다. 보기 권한 화면은 터미널과
+  같이 열 곳이 없어 글 그대로다(`onOpenFile`이 없다).
+  - aaa 대화는 아직 말을 Markdown으로 그리지 않고 글 그대로다(§8.27). 그래서 참고가 Markdown 아닌 글(도구 출력)에 쓰는 `linkFilePaths`로
+    경로만 단추로 잇는다. 말을 Markdown으로 그리는 것(참고 `chat-bubble-body`)은 남은 일이다.
+- **보고서.** pane이 없을 수 있다(끝난 thread). 그 thread의 머신에서 **agent가 시작한 폴더(`cwd`: worktree 또는 작업 폴더)** 기준으로
+  찾는다. 보고·결과물이 있는 `work_dir`(`<cwd>/.aaa/<project>-<thread>/`)가 아니다: agent는 보고에 저장소 안 경로(`src/app.ts:3`)를 쓴다.
+  - 웹 → host `thread_file {project, thread, path}`(FRONT_API 1.32, 조작 기기만). host → 그 머신 agent `FileLocateIn {dir, path}`. 찾는
+    규칙·허용 폴더(§6.5 `file_roots`)·후보는 `FileLocate`와 같은 함수(`files::locate`)다. 찾으면 `pane_file`과 같은 30분 읽기 경로
+    `/f/<cap>/<이름>`과 같은 답(`pane_file`)이다. 그 뒤 읽기·조건(기기 cookie·Range·CSP)은 §8.125 그대로다.
+  - agent가 `file_in.v1`을 알릴 때만 보낸다. 옛 agent면 「그 머신 agent가 보고서 안 파일 열기를 아직 모른다(agent binary를 바꿔야 한다)」.
+  - 웹: 보고 Markdown을 `OpenFileContext`로 감싼다(조작 기기만). 파일 보기의 소스는 pane·결과물 말고 셋째 `worktree`이고, 방문 기록 칸
+    (`useFileViewer`)에도 적는다. 보기 안에서 고른 다른 파일도 같은 thread 기준이다. 결과물 목록 파일(R1, §8.168)은 그대로 결과물 보기다.
+  - worktree를 지운 끝난 thread는 열리지 않는다(「이 경로에 읽을 수 있는 파일이 없습니다」 또는 허용 폴더 밖).
+- **옮기지 않은 것.** 보고서 안 그림(`![](…)`)은 대체 글 그대로다(파일 보기 안 Markdown만 그림을 읽는다). 대화의 도구 줄 파일
+  단추(`ToolFile`)·patch 보기·도구 그림은 aaa 대화에 도구 입력·출력이 없어 해당이 없다.
+- **시험.**
+  - 웹 E2E 12 「thread 보고서·결과물」: 보고의 문서 링크 `[작업 메모](notes/plan.md)`가 worktree 파일을 `/f/` 경로로 연다, 글 속
+    `src/app.ts:3`은 소스로 3번째 줄 표시, 표 안 code `prefs.rs`는 파일 단추이고 worktree에 없으면 「없습니다」, 뒤로 한 번에 닫힘,
+    보기 권한 기기는 단추 없이 「이름 (경로)」이고 host `thread_file`도 forbidden(같은 요청이 조작 기기에는 열린다). 가짜 agent가 worktree에
+    `notes/plan.md`·`src/app.ts`를 쓴다. 실험실 `file_roots`에 `work`를 더하고 미리 만든다(시작할 때 없는 폴더는 허용 폴더가 되지 않는다).
+  - 웹 E2E 11 「대화 기록」: 답 줄의 절대 경로만 단추이고 누르면 그 파일 보기, 뒤로 한 번이면 대화.
+  - 결함 심기 다섯이 모두 실패했다: 보고서 경로를 결과물 소스로 보냄, agent가 정한 폴더를 버림, host가 `work_dir` 기준, 보기 권한
+    기기에도 링크, 대화에 링크 문맥 없음. 옛 agent(`file_in.v1` 없음) 거절과 보기 권한 대화 화면은 시험하지 않았다(앞은 `dir.v1`과 같은
+    꼴, 뒤는 터미널과 같은 `onOpenFile` 한 값).
+### 8.172 질문 카드가 화면 선택 창을 그대로 보인다(10-18, 차이 목록 2장 Q2, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-web-ui는 질문을 hook 내용이 아니라 pane 화면 글에서 읽는다(`server/prompt.ts`): Claude Code 질문(AskUserQuestion:
+  하나·여러 개·직접 쓰기, 선택지 설명, 여러 질문의 탭과 검토), 도구 승인, 계획 승인, Codex 승인 등. 카드(`PromptCard.tsx`)는 번호
+  keycap, 설명, 「(Recommended)」를 뗀 「추천」 표시, 여러 개는 체크와 「제출 (n)」, 직접 쓰기 칸을 그린다. 답 키는 커서가 있는 줄에서
+  상대로 옮기고 Enter, 여러 개는 바뀌는 줄마다 Enter를 친 뒤 →(Submit을 누르지 않음), 직접 쓰기는 그 줄로 옮겨 글과 Enter(계획은
+  shift+tab), Codex 거절 줄은 Esc 하나다. 화면을 다시 읽어 카드가 본 창(내용 hash id, 커서·체크 상태 빼고)이 아니면 거절하고, 처음
+  저지르는 키는 옮긴 커서가 화면에 보인 뒤에 보낸다(`SETTLE_MS` 1.5초).
+- **aaa가 달랐던 것.** 질문은 늘 예·아니오였다(host `ask`, 답은 화면의 Yes 줄로 옮기고 Enter, 아니오는 Esc).
+- **구조.**
+  - host `prompt.rs`: 참고의 읽기(Claude 질문·검토·승인·계획, Codex 승인)와 `answerKeys`를 옮겼다(MIT). 안내 줄이 화면 끝(할 일
+    목록·세션 구분선은 떼고)에 있을 때만 살아 있는 창이다. 화면 읽기는 host만 하므로 aaa-proto가 아니라 host에 둔다.
+  - 질문이 열리면(`on_harness` → `ask`) task 하나가 화면을 읽어 그 질문에 `menu`를 붙인다(hook이 화면보다 먼저 와도 `MENU_WAIT`
+    3초까지 다시 본다). 못 읽으면(번호 없는 폴더 신뢰 창 등) 지금처럼 예·아니오다. 붙이기는 질문 저장과 같은 잠금 안에서 읽고 써서,
+    그 사이 답한 질문을 다시 열지 않는다.
+  - `question_answer`의 `menu`(카드가 본 id)·`pick`(하나·여러 개·직접 쓰기): host가 화면을 다시 읽어 id가 다르면 「화면의 질문이
+    바뀌었다」로 거절하고 질문의 `menu`를 지금 창으로 바꾼다(카드는 새 창으로 다시 그린다). 키는 걸음마다 raw 입력이다(30ms 틈).
+    직접 쓰기 글은 한 줄만 받는다(줄바꿈·Esc 같은 조종 글자는 그 창의 키가 되므로 거절). 기록의 답은 「3. 파일 몇 개」·「직접: …」.
+  - 여러 질문 form은 host가 탭을 돌지 않는다: 답이 간 뒤 남은 창(다음 탭·검토)은 agent 화면 감지가 새 질문으로 알리고(`ask_anew.v1`,
+    plan §8.110) 그 질문에 새 `menu`가 붙는다.
+  - 웹 `PromptCard.tsx`(참고 그리기, 문구는 i18n.ko)·`herdr/PromptCard.css`(그대로). 카드는 지금 자리(pane 아래 dock, Q1)에 둔다.
+    앱 `button` 기본(고정 높이·한 줄)은 선택지 줄에서 되돌린다. `menu`가 없는 질문은 예·아니오 카드 그대로다. CLI·TUI는 예·아니오
+    그대로다(`aaa question answer <id> yes|no`).
+- **계약.** FRONT_API 1.33: `QuestionView.menu`(`QuestionMenu`·`MenuOption`), `question_answer`의 `menu`·`pick`(`MenuPick`). 옛 front의
+  예·아니오 답과 옛 host의 질문(menu 없음)은 그대로 읽는다. 새 오류 코드는 두지 않았다(바뀐 창은 BadRequest와 까닭, 옛 CLI가 모르는
+  코드를 읽지 못하므로).
+- **보안(§6.4).** 새 표면은 없다: 답은 전처럼 조작 기기만(`needs_control`), 직접 쓰기 글은 메시지 보내기와 같은 pane 입력이고 조종
+  글자는 받지 않는다. 「세션 안 CLI는 thread pane의 신뢰 창에 답하지 않는다」(§8.163 `trust_screens = user`)도 같은 함수
+  (`refuse_trust_screen`)로 선택 창 답에 건다(Codex 신뢰 창은 번호가 있어 선택 창으로 읽힌다). CLI는 선택 창 답을 보내지 않아 그 길의
+  시험은 예·아니오 답의 m13 거절 시험이 덮는 같은 함수다.
+- **참고와 다르게 둔 것(옮기지 않음).** 입력창에 번호·이름을 쳐서 답하기(`answerFromText`)와 그 확인 줄, Codex 질문(질문 대기열
+  alt+↑↓·rollout 읽기), omp·omo·hermes·pi 창, 미리보기 상자가 있는 질문, 초안이 든 직접 쓰기 줄(ctrl+k ctrl+u), 계획 파일을 파일
+  보기로, 붙잡힌 메시지·모델·effort 창, 읽는 창이 없는 막힘의 마지막 카드(`fallback`). 카드 제목의 「Question」·「Multiple choice」·
+  「Review your answers」·「k of n」은 한국어 고정(§8.169)이라 「질문」·「여러 개 고르기」·「답 검토」·「k/n」이다.
+- **시험.** host 유닛 `prompt::tests`(합성 화면: 질문 하나·여러 개와 탭·검토·Claude 승인·Codex 승인·계획·모르는 창, 커서에서 세는
+  옮기기, 조종 글자 거절, id가 커서와 상관없음). 웹 E2E 11 「화면 선택 창 카드」: 가짜 Claude 질문 창(`web/e2e/lib/fake-claude-ask.mjs`,
+  이름이 claude라 화면 감지가 Claude 규칙)으로 카드 모양(설명·추천·번호·직접 쓰기, 줄 겹침 없음), 터미널에서 옮긴 커서, 그 사이 바뀐
+  창의 거절과 새 카드, 직접 쓰기(한글), 여러 질문(하나 → 여러 개 체크와 제출 (2) → 검토 → 보내기). 결함 심기: 커서를 무시한 옮기기
+  (유닛), 여러 개 끝 → 빠짐·직접 쓰기를 그 줄로 안 옮김(E2E가 각각 실패), 선택지 줄 고정 높이(겹침 단언 실패).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

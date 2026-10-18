@@ -299,7 +299,7 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
 /**
  * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
  */
-thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -339,7 +339,7 @@ discard_uncopied: boolean, } | { "op": "thread_stop", project: string, thread: s
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
+profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -540,7 +540,29 @@ question_kind: string, text: string,
 /**
  * 고를 수 있는 답(예: yes·no)
  */
-options: Array<string>, state: QuestionState, answer: string | null, created_at_ms: number, };
+options: Array<string>, state: QuestionState, answer: string | null, created_at_ms: number,
+/**
+ * 화면에서 읽은 선택 창(못 읽었으면 None: 그때는 `options`의 예·아니오로 답한다)
+ */
+menu: QuestionMenu | null, };
+
+export type QuestionMenu = { id: string,
+/**
+ * question(AskUserQuestion)·approval(도구 승인)·plan(계획 승인)·menu(여러 질문의 검토)
+ */
+kind: string, title: string, question: string,
+/**
+ * 참고 글(명령·계획·검토할 답)
+ */
+body: string | null, options: Array<MenuOption>, multi_select: boolean,
+/**
+ * 「직접 쓰기」 자리. `options.len()`이면 그 줄은 `options`에 없다(Claude 질문의 「Type something.」)
+ */
+custom_option_index: number | null, };
+
+export type MenuOption = { label: string, description: string | null, };
+
+export type MenuPick = { "by": "option", index: number, } | { "by": "options", indices: Array<number>, } | { "by": "custom", text: string, };
 
 export type MessageMode = "interrupt" | "queue";
 

@@ -312,6 +312,11 @@ impl Agent {
             Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
             _ => started,
         };
+        self.locate_in(cwd, path).await
+    }
+
+    /// 정한 폴더 기준으로 찾는다(보고서 안 파일 링크: thread worktree, plan §8.171). 규칙·허용 폴더는 `file_locate`와 같다
+    async fn locate_in(&self, cwd: Option<String>, path: String) -> Result<AgentResponse, ErrorBody> {
         let roots = self.file_roots.lock().unwrap().clone();
         let home = aaa_config::paths::home();
         let found =
@@ -820,6 +825,7 @@ impl Agent {
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
+            AgentRequest::FileLocateIn { dir, path } => self.locate_in(Some(dir), path).await,
             AgentRequest::DirList { session, path, hidden } => self.dir_list(&session, path, hidden).await,
             AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();

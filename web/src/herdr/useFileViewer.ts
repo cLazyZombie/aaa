@@ -3,11 +3,20 @@ import { outsideSettings } from "./settingsHistory.ts";
 
 // herdr-web-ui src/lib/useFileViewer.ts(aa624cb). aaa: pane ID가 host 전체에서 하나라 머신 ID 대신 pane만 둔다.
 // thread 결과물(차이 목록 R1)은 pane 대신 그 thread(`library`)를 둔다: 경로는 결과물 안 상대 경로다.
+// 보고서 안 파일 링크(plan §8.171)는 그 thread(`worktree`)를 둔다: 경로는 thread 작업 폴더 기준이다.
 
+type ThreadRef = { project: string; thread: string };
 interface FilePreview {
   path: string;
   pane: string | null;
-  library?: { project: string; thread: string };
+  library?: ThreadRef;
+  worktree?: ThreadRef;
+}
+
+function threadRef(value: unknown): ThreadRef | null {
+  if (value === null || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  return typeof v.project === "string" && typeof v.thread === "string" ? { project: v.project, thread: v.thread } : null;
 }
 const HISTORY_KEY = "aaa:file-preview";
 
@@ -17,11 +26,14 @@ function previewFromState(state: unknown): FilePreview | null {
   if (preview === null || typeof preview !== "object") return null;
   const value = preview as Record<string, unknown>;
   if (typeof value.path !== "string" || (value.pane !== null && typeof value.pane !== "string")) return null;
-  const library = value.library as Record<string, unknown> | null | undefined;
-  if (library === undefined) return { path: value.path, pane: value.pane };
-  return library !== null && typeof library === "object" && typeof library.project === "string" && typeof library.thread === "string"
-    ? { path: value.path, pane: value.pane, library: { project: library.project, thread: library.thread } }
-    : null;
+  const shown: FilePreview = { path: value.path, pane: value.pane };
+  for (const key of ["library", "worktree"] as const) {
+    if (value[key] === undefined) continue;
+    const ref = threadRef(value[key]);
+    if (ref === null) return null;
+    shown[key] = ref;
+  }
+  return shown;
 }
 
 /** Android Back traverses history: a preview must be an entry above the chat, not just a modal. */

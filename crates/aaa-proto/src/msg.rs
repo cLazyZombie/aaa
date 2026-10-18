@@ -17,7 +17,7 @@ use crate::orch::{
     OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
     ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick};
 
 use crate::version::Version;
 
@@ -579,6 +579,12 @@ pub enum AgentRequest {
     /// 없으면 NotFound다. agent가 `file.v1` 기능을 알릴 때만 보낸다.
     FileLocate {
         session: String,
+        path: String,
+    },
+    /// 파일 보기: 세션 없이 정한 폴더(thread worktree) 기준으로 찾는다(보고서 안 파일 링크, plan §8.171). 찾는 규칙과 허용
+    /// 폴더는 `FileLocate`와 같다. agent가 `file_in.v1` 기능을 알릴 때만 보낸다.
+    FileLocateIn {
+        dir: String,
         path: String,
     },
     /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
@@ -1328,6 +1334,13 @@ pub enum FrontRequest {
         pane: String,
         path: String,
     },
+    /// 보고서 안 파일 링크(plan §8.171): 그 thread의 머신에서 thread 작업 폴더(worktree) 기준으로 찾는다. 답은 `PaneFile`과
+    /// 같다. 조작 기기만(`PaneFile`과 같다)
+    ThreadFile {
+        project: String,
+        thread: String,
+        path: String,
+    },
     /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
     /// 조작 기기만(`PaneFile`과 같다)
     PaneDir {
@@ -1646,10 +1659,16 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
-    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다.
+    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다. `choice`(예·아니오) 대신 `pick`이면 화면 선택 창
+    /// `menu`(그 id)에 답한다(plan §8.172)
     QuestionAnswer {
         id: String,
+        #[serde(default)]
         choice: String,
+        #[serde(default)]
+        menu: Option<String>,
+        #[serde(default)]
+        pick: Option<MenuPick>,
     },
     /// thread agent에 메시지를 보낸다(전달을 모르면 다시 보내지 않는다)
     ThreadMessage {
@@ -2232,6 +2251,10 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(
+            FrontRequest::ThreadFile { project: "p".into(), thread: "t-0001".into(), path: "a.txt".into() }
+                .needs_control()
+        );
         assert!(FrontRequest::PaneDir { pane: "p".into(), path: "src".into(), hidden: false }.needs_control());
         assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
@@ -2279,7 +2302,19 @@ mod tests {
         );
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
-        assert!(FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into() }.needs_control());
+        assert!(
+            FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
+                .needs_control()
+        );
+        assert!(
+            FrontRequest::QuestionAnswer {
+                id: "q".into(),
+                choice: String::new(),
+                menu: Some("m".into()),
+                pick: Some(MenuPick::Custom { text: "x".into() })
+            }
+            .needs_control()
+        );
     }
 
     #[test]
@@ -2309,6 +2344,19 @@ mod tests {
         assert!(matches!(
             serde_json::from_value::<FrontRequest>(v).unwrap(),
             FrontRequest::ThreadMessage { mode: MessageMode::Queue, .. }
+        ));
+        // 1.28 front의 예·아니오 답(선택 창 답 없음)과 1.28 host의 질문(선택 창 없음)
+        assert_eq!(
+            serde_json::from_value::<FrontRequest>(json!({"op":"question_answer","id":"q","choice":"yes"})).unwrap(),
+            FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
+        );
+        let v = json!({"id":"q","pane":"p","machine":"mac-a","project":null,"thread":null,"question_kind":"permission",
+            "text":"t","options":["yes","no"],"state":"open","answer":null,"created_at_ms":1});
+        assert_eq!(serde_json::from_value::<QuestionView>(v).unwrap().menu, None);
+        let v = json!({"op":"question_answer","id":"q","menu":"m","pick":{"by":"options","indices":[0,2]}});
+        assert!(matches!(
+            serde_json::from_value::<FrontRequest>(v).unwrap(),
+            FrontRequest::QuestionAnswer { pick: Some(MenuPick::Options { .. }), .. }
         ));
     }
 }

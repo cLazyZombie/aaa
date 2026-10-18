@@ -4,7 +4,9 @@ import type {
   DeviceRole,
   EvaluatorView,
   MachineView,
+  MenuPick,
   PaneView,
+  QuestionMenu,
   QuestionView,
   ThreadView,
 } from "./gen/proto";
@@ -16,6 +18,7 @@ import { takePairCode } from "./herdr/phone";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { ThreadPanel } from "./ThreadPanel";
+import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
 import { Folder } from "lucide-react";
 import { Icon } from "./icons";
@@ -487,7 +490,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   // 실패는 그 카드가 보인다(QuestionCard): 목록 머리 띠는 휴대폰에서 pane을 보는 동안 숨는다
   const answer = async (q: QuestionView, choice: string) => {
-    const r = await call({ op: "question_answer", id: q.id, choice });
+    const r = await call({ op: "question_answer", id: q.id, choice, menu: null, pick: null });
+    if (r.kind === "question") putQuestion(r);
+  };
+  // 화면 선택 창 답(plan §8.172): 카드가 본 창(id)에. host가 화면을 다시 읽어 다르면 거절하고 질문의 창을 새로 붙인다
+  const answerMenu = async (q: QuestionView, menu: QuestionMenu, pick: MenuPick) => {
+    const r = await call({ op: "question_answer", id: q.id, choice: "", menu: menu.id, pick });
     if (r.kind === "question") putQuestion(r);
   };
   // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로).
@@ -776,6 +784,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
+            onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
           />
         ) : viewProject !== undefined ? (
           <ProjectThreads
@@ -811,9 +820,21 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             dock={
               currentQ.length > 0 ? (
                 <div className="dock">
-                  {currentQ.map((q) => (
-                    <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} docked />
-                  ))}
+                  {currentQ.map((q) =>
+                    q.menu ? (
+                      // 창이 바뀌면 고른 것·쓴 글을 새 창에 넘기지 않는다(참고: 질문마다 새 카드)
+                      <PromptCard
+                        key={`${q.id} ${q.menu.id}`}
+                        menu={q.menu}
+                        where={`${whereOf(q)} · ${q.machine}`}
+                        canControl={canControl}
+                        onAnswer={(pick) => answerMenu(q, q.menu!, pick)}
+                        testid={`dock-question-${q.id}`}
+                      />
+                    ) : (
+                      <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} docked />
+                    ),
+                  )}
                 </div>
               ) : null
             }
@@ -847,6 +868,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           source={fileViewing.library}
           onClose={closeFile}
           onOpen={(path) => openFile({ path, pane: null, library: fileViewing.library })}
+        />
+      )}
+      {/* 보고서 안 파일 링크(plan §8.171): thread의 머신·작업 폴더 기준. 고른 다른 파일도 같은 곳이다 */}
+      {fileViewing && fileViewing.pane === null && fileViewing.worktree && (
+        <FileViewer
+          key={`${fileViewing.worktree.project}/${fileViewing.worktree.thread} worktree ${fileViewing.path}`}
+          path={fileViewing.path}
+          source={{ worktree: fileViewing.worktree }}
+          onClose={closeFile}
+          onOpen={(path) => openFile({ path, pane: null, worktree: fileViewing.worktree })}
         />
       )}
       {newPaneOn && (
