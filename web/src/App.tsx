@@ -8,6 +8,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
+import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
@@ -267,6 +268,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [machines, setMachines] = useState<MachineView[]>([]);
   const [panes, setPanes] = useState<PaneView[]>([]);
   const [up, setUp] = useState(false);
+  // host가 주는 웹 빌드(events 연결마다 온다): 이 페이지와 다르면 다시 열기 줄(plan §8.153)
+  const [hostWeb, setHostWeb] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   const [msg, setMsg] = useState<string | null>(null);
@@ -476,6 +479,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           putThread(t);
         },
         (p) => receivePreferences.current(p),
+        setHostWeb,
       ),
     [],
   );
@@ -727,6 +731,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
+        <UpdateNotice hostBuild={hostWeb} />
         {currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}

@@ -519,6 +519,12 @@ export default async function ({ ctl, page }) {
     await composer.getByRole("group", { name: "빠른 답장" }).getByRole("button", { name: "yes", exact: true }).click();
     await until("빠른 답장이 간다", async () => lines().includes("yes"));
     await chatSettings((d) => d.getByRole("switch", { name: "입력창 위에 표시" }).click());
+    // 보내지 않은 글은 pane마다 이 기기에 남는다(참고 composerDraft.ts): 다시 열어도(새 웹으로 다시 열기, plan §8.153) 그대로다
+    await box.fill("남길 초안 c2");
+    await page.reload();
+    await until("다시 연 뒤 대화 입력창", () => box.isVisible());
+    if ((await box.inputValue()) !== "남길 초안 c2") throw new Error(`다시 연 뒤 대화 초안: ${JSON.stringify(await box.inputValue())}`);
+    await box.fill("");
     await page.getByTestId("chat-toggle").click();
     aaa("pane", "kill", "cmp1");
   });

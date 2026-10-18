@@ -1778,6 +1778,9 @@ pub enum FrontEvent {
     Preferences(SharedPreferences),
     /// 상태 사건 연결의 `ping`에 대한 답(herdr-web-ui ws.ts 「Liveness」: 그 ping의 답만 연결이 살아 있음을 말한다)
     Pong { id: u32 },
+    /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
+    /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.153)
+    Web { build: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

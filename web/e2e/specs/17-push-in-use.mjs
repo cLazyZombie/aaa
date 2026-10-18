@@ -357,8 +357,12 @@ export default async function ({ page }) {
     work("쓰는 기기 A");
     const s3 = await until("A 때문에 건너뜀", () => skips().slice(k)[0]);
     const aId = (await pushWho(page)).user;
-    // 쓰는 기기가 B에서 A로 바뀐 것은 근거에 적힌 그 기기의 연결 번호로 본다: 기기 이름(앞 7자, ULID 시각)은 약 33초 안에 짝지은
-    // 두 기기가 같다(t-0338 report 「찾은 결함」, 12에서 나눠 B를 일찍 짝짓게 되어 드러났다)
+    // 기기 이름은 기기 ID(ULID)의 뒤 무작위 7자다: 앞 7자(시각)는 약 33초 안에 짝지은 두 기기가 같았다(t-0338 report
+    // 「찾은 결함」, 10-18 실기, plan §8.153). 쓰는 기기가 B에서 A로 바뀐 것은 근거에 적힌 그 기기의 연결 번호로도 본다
+    const devOf = async (p) => (await p.evaluate(() => fetch("/api/v1/me").then((r) => r.json()))).ok.device;
+    const [aDev, bDev] = [await devOf(page), await devOf(bp)];
+    if (aId !== aDev.slice(19) || bId !== bDev.slice(19) || aId === bId)
+      throw new Error(`기기 이름 A ${aId}(ID ${aDev.length}자 …${aDev.slice(19)}) · B ${bId}(…${bDev.slice(19)})`);
     const conns = (s) => [...s.detail.matchAll(/연결#(\d+)/g)].map((x) => x[1]);
     if (!s3.detail.startsWith(`쓰는 기기 ${aId} ·`) || !conns(s3).length || conns(s3).some((c) => conns(s2).includes(c))) {
       throw new Error(`push_skipped ${s3.detail}(A ${aId}, B ${bId}; B가 쓸 때 ${s2.detail})`);

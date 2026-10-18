@@ -1,7 +1,7 @@
 // 웹 E2E 다시 붙기: agent 끊김·복귀·host 재시작(host를 내리므로 따로 된 실험실).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 13-reconnect(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { start, stop, until, screenText, shot, base, step } from "../lib/harness.mjs";
+import { start, stop, until, screenText, shot, base, step, env } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("agent 끊김 → 읽기 전용 표시", async () => {
@@ -69,5 +69,38 @@ export default async function ({ ctl, page }) {
     await page.getByRole("button", { name: "보내기" }).click();
     await until("재시작 뒤 입력", async () => (await screenText(page)).split("host-back").length >= 3);
     await shot(page, "desktop-after-host-restart");
+  });
+
+  await step("host가 새 웹을 준다(배포 뒤, herdr-web-ui UpdateNotice reload 「updated」, plan §8.153): 다시 붙은 페이지가 「앱 다시 열기」 줄을 보이고, 눌러 다시 열어도 입력줄 초안이 남으며, 같은 웹을 주는 host면 줄이 없다", async () => {
+    const line = page.getByTestId("web-update");
+    const banner = page.getByTestId("readonly-banner");
+    // 다시 붙을 때마다 host가 웹 빌드를 알린다(state보다 먼저): 띠가 사라졌으면 이미 받았다
+    if ((await line.count()) !== 0) throw new Error("같은 웹을 주는 host인데 다시 열기 줄이 있다");
+    await page.getByLabel("보낼 글").fill("echo keep-draft");
+    // 새 웹을 넣은 host로 다시 띄운다(시험은 포함한 웹을 바꾸는 대신 알리는 빌드 이름만 바꾼다)
+    await stop("host2");
+    await until("host 끊김 표시", async () => (await banner.innerText()).includes("host와 연결이 끊겼다"));
+    env.AAA_TEST_WEB_BUILD = "index-newer000";
+    try {
+      start("host3", "host");
+    } finally {
+      delete env.AAA_TEST_WEB_BUILD;
+    }
+    await line.waitFor({ timeout: 30_000 });
+    if ((await line.getAttribute("role")) !== "status" || !(await line.innerText()).includes("앱이 업데이트됐다"))
+      throw new Error(`다시 열기 줄: ${await line.innerText()}`);
+    await shot(page, "desktop-web-update");
+    await Promise.all([page.waitForEvent("load"), line.getByRole("button", { name: "앱 다시 열기" }).click()]);
+    // 다시 연 페이지는 지금 웹(dist 그대로)이라 이 host가 알리는 가짜 빌드와 여전히 다르다: 줄이 다시 뜬다
+    await line.waitFor();
+    if ((await page.getByLabel("보낼 글").inputValue()) !== "echo keep-draft")
+      throw new Error(`다시 연 뒤 입력줄 초안: ${JSON.stringify(await page.getByLabel("보낼 글").inputValue())}`);
+    // 이 페이지와 같은 웹을 주는 host로 돌아오면 줄이 사라진다
+    await stop("host3");
+    await until("host 끊김 표시", async () => (await banner.innerText()).includes("host와 연결이 끊겼다"));
+    start("host4", "host");
+    await until("다시 붙음", async () => (await banner.count()) === 0, 30_000);
+    await until("다시 열기 줄 사라짐", async () => (await line.count()) === 0);
+    await page.getByLabel("보낼 글").fill("");
   });
 }

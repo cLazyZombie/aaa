@@ -5,6 +5,7 @@
 // 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 메시지는 이 기기에 붙잡혀(참고 messageQueue.ts) 「지금 보내기」를 누를 때 간다.
 // 다른 곳: 참고의 슬래시 명령·파일 멘션·그림 첨부·받아쓰기·제안 칩·크기 손잡이·멈춤 단추·상태 줄은 옮기지 않았다.
 import {
+  useCallback,
   useRef,
   useState,
   useSyncExternalStore,
@@ -12,6 +13,7 @@ import {
 } from "react";
 import { ArrowUp, Clock, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import "./herdr/Composer.css";
+import { composerDrafts } from "./herdr/composerDraft.ts";
 import { messageQueues } from "./herdr/messageQueue.ts";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
@@ -43,7 +45,15 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
-  const [text, setText] = useState("");
+  // 초안은 pane마다 localStorage에 둔다(참고 Composer.tsx `draftKey`): 다른 pane을 보거나 앱을 다시 열어도(새 웹) 남는다
+  const draftKey = `herdr-web-ui:composer-draft:${owner}`;
+  const { text } = useSyncExternalStore(composerDrafts.subscribe, () =>
+    composerDrafts.read(draftKey),
+  );
+  const setText = useCallback(
+    (value: string) => composerDrafts.set(draftKey, value),
+    [draftKey],
+  );
   const textRef = useRef(text);
   textRef.current = text;
   const [sending, setSending] = useState(false);
