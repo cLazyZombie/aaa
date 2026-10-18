@@ -1030,19 +1030,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),
         Cmd::Hook { agent, payload } => {
             // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 출력 없음
+            // 표준 출력은 agent가 돌려준 진행 안내 JSON 한 줄만이다(Claude Code는 JSON이 아니면 버린다)
             let body = match payload {
                 Some(p) => p,
                 None => {
                     let mut t = String::new();
-                    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut t);
+                    let _ = std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 1 << 20), &mut t);
                     t
                 }
             };
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body)
                 && let Ok(rt) = runtime()
-                && let Err(e) = rt.block_on(aaa_agent::hooks::send(&agent, v))
             {
-                eprintln!("aaa hook: {e:#}");
+                match rt.block_on(aaa_agent::hooks::send(&agent, v)) {
+                    Ok(Some(out)) => println!("{out}"),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("aaa hook: {e:#}"),
+                }
             }
             Ok(ExitCode::SUCCESS)
         }

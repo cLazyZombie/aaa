@@ -2460,7 +2460,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 질문 본문은 화면 끝 24줄에서 물음표가 있는 마지막 줄(없으면 마지막 줄, 300자)이다(host `modal_of`와 같은 규칙). 종류는 신뢰 창이면 `trust`, Claude bash·일반 권한 창과 Codex 승인 창 규칙이면 `permission`, 나머지는 `confirm`이다.
   - herdr의 800ms refresh는 aaa host에 상태만 있어 다시 보내지 않는다. 본문이 달라졌을 때만 보낸다(답한 뒤 창이 잠깐 남아도 질문을 새로 열지 않고, 다른 창이 바로 이어 뜨면 연다).
   - agent가 기억하는 사건은 칸 셋(진행 보고·세션 ID·상태)이다. 세션 ID 사건(compact·clear 뒤 SessionStart)이 상태를 덮지 않는다. agent가 다시 떠 같은 상태를 다시 감지하면 그 상태가 된 때를 그대로 보낸다.
-- **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 건다. Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
+- **hook.** Claude는 SessionStart → `session_start`(세션 ID·기록 위치), UserPromptSubmit → `prompt_submit`(「Waiting for you」만 지운다)만 host에 알린다. PostToolUse는 진행 안내만 하고 host에 보내지 않는다(§8.144). Codex notify는 thread-id만 쓰는 `session`이다. 옛 agent가 띄운 세션의 상태 hook(Stop·PermissionRequest 등)은 버린다.
 - **Codex 중첩 thread 거르기(10-18, 차이 목록 3장 B7).** `aaa hook --agent codex`는 물려받은 `CODEX_THREAD_ID`가 있고 사건의 세션 ID(`session_id`·`thread-id`)와 다르면 보내지 않는다(`hooks.rs` `nested_codex`, herdr `integration/assets/codex/herdr-agent-state.sh`·herdr-projects `progress.rs` `hook`). 세션 ID가 없는 사건도 다르다고 본다(herdr와 같다). Claude는 SessionStart의 세션 ID로 거른다(`foreign_session`).
   - session host는 바깥 agent 표지 `CODEX_THREAD_ID`·`OMPCODE`도 세션에 넘기지 않는다(herdr `src/pane.rs` `apply_pane_launch_env`). Codex 안에서 띄운 agent가 그 ID를 넘기면 세션 안 Codex의 사건이 모두 중첩으로 보여 버려진다.
 - **host.**
@@ -3131,6 +3131,21 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - host 단위 `only_a_shell_that_exited_by_itself_closes`(복원 대상·kill·역할·프로그램·이미 끝난 것), TUI 단위 `a_removed_tab_or_pane_moves_like_herdr`.
   - 기다림은 host 사건·출력·종료 기록 파일뿐이다.
   - 결함 심기 아홉(다시 붙는 길·kill 표시·빈 workspace·live 길·셸·역할·실행 중 검사·앞 탭·다음 pane)을 모두 잡았다.
+
+### 8.144 Claude hook으로 진행 보고 안내를 넣는다(10-18, 차이 목록 3장 B5)
+
+- **무엇.** herdr-projects 0.2.35 `src/progress.rs` `hook`·`respond`·`eligible`·`output`대로, aaa가 띄운 thread 세션의 Claude hook이 `additionalContext`로 진행 보고 안내를 넣는다. 안내만 한다. 상태는 화면 감지 그대로다(§8.110, 결정 20 D8 「hook은 세션 ID만」은 상태 쪽 결정이라 부딪히지 않는다).
+  - SessionStart: 지침(`# 진행 보고(aaa)` + brief와 같은 진행 안내 글). 이 세션의 알림 기록을 새로 한다.
+  - UserPromptSubmit: 「새 일이면 새 어림을 보고하고, 사용자를 기다리기 전에 보고한다」.
+  - PostToolUse: 마지막 안내와 마지막 보고에서 1분이 지났고 100%(Done)가 아니면 알림 한 줄(참고 `REMIND_SECS`).
+- **거르기(참고 `eligible`·`foreign_session`·`managed`).** 하위 agent의 사건, `aaa report` 자신의 PostToolUse, 이 세션이 시작한 harness 세션과 다른 세션의 사건에는 넣지 않는다. aaa가 hook 설정(`--settings`)을 주는 thread 세션(세션 역할이 있다)만 넣는다. aaa coordinator는 사람이 띄운 pane이라 hook 설정이 없다.
+- **자리.**
+  - 진행 안내 글은 `aaa-proto` `progress_guidance` 하나다. brief(host)와 hook(agent)이 함께 쓴다(참고도 brief와 hook이 `progress::guidance` 하나다).
+  - agent가 세션마다 알림 기록(마지막 보고 때·백분율, 마지막 안내 때)을 기억하고 `hooks::respond`로 안내를 정한다(시계는 인자). 기록은 기억만 한다: agent가 다시 뜨면 알림이 한 번 일찍 갈 수 있을 뿐이다.
+  - agent는 hook 답 `ok` 뒤에 Claude가 읽는 JSON 한 줄(`hookSpecificOutput.hookEventName`·`additionalContext`)을 붙이고, `aaa hook`은 그것만 표준 출력에 쓴다. 옛 agent는 `ok`만 답해 아무것도 쓰지 않고, 옛 `aaa hook`은 `ok` 뒤를 읽지 않는다. agent link·session IPC는 그대로다.
+  - `claude --settings`에 PostToolUse hook을 더했다(matcher 없음, 참고 setup.rs). 상태 hook(Stop·PermissionRequest·Notification)은 여전히 없다.
+- **Codex는 다르게 둔다(이유).** 참고는 `~/.codex/hooks.json`에 hook을 깐다. aaa는 사용자 설정을 고치지 않고 실행마다 `-c notify`만 준다(§8.15). notify는 턴 끝 알림이라 안내를 넣을 수 없다. Codex thread는 brief의 진행 안내만 받는다.
+- **시험.** agent 유닛: 참고 `helpers_and_the_reporters_own_call_do_not_trigger`·`session_start_injects_instructions_and_resets_the_record`·`reminders_are_throttled_to_once_a_minute_and_stop_at_done`를 옮겼다(1분 간격은 유닛에서만 본다, E2E는 기다리지 않는다). PostToolUse는 host 사건이 아니다. m13 `claude_thread_states_questions_and_messages`: 가짜 Claude가 실제 Claude처럼 hook 출력을 받아 적고(`HOOK_LOG`), SessionStart 지침(실행 파일 경로가 든 `report --percent 25`)과 UserPromptSubmit 안내를 받았다. e2e `host_restart_keeps_sessions_and_disconnect_is_readonly`: thread가 아닌 Claude pane의 hook은 아무것도 쓰지 않는다. 결함 심기(되돌렸다): 안내를 빼면 m13, 관리 세션 검사를 빼면 e2e, 알림 간격·report 자신 거르기를 빼거나 PostToolUse를 host에 보내면 유닛, 지침 글을 빼면 유닛·m13이 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

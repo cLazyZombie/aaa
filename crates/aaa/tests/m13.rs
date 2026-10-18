@@ -89,7 +89,8 @@ const CLAUDE_AGENT: &str = r#"#!/bin/sh
 ESC=$(printf '\033'); BEL=$(printf '\007'); LATE=$(printf '\016'); NL='
 '; typed=; queued=
 RULE='────────────────────────────────────────'
-hook() { "$AA" hook --agent claude "$1"; }
+# 실제 Claude처럼 hook 출력(진행 안내 JSON)은 화면에 내지 않고 받는다. `HOOK_LOG`가 있으면 거기 한 줄씩 적는다
+hook() { out=$("$AA" hook --agent claude "$1"); [ -z "$out" ] || [ -z "$HOOK_LOG" ] || printf '%s\n' "$out" >> "$HOOK_LOG"; }
 key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon; }
 keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); stty icanon; }
 box() { printf '%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE"; }
@@ -304,7 +305,7 @@ while :; do
         log="$log$(printf 'got: %s' "$buf")
 "
         buf=''
-        [ -n "$EVIL_SID" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$EVIL_SID\"}" ;;
+        [ -n "$EVIL_SID" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$EVIL_SID\"}" >/dev/null ;;
       *) buf="$buf$c"; break ;;
     esac
   done
@@ -330,7 +331,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         "schema = 1\n[agent]\nwork_root = \"{}\"\n\
          [profiles.fake]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
-         [profiles.claude]\nharness = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\" }}\n\
+         [profiles.claude]\nharness = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", HOOK_LOG = \"{}\" }}\n\
          [profiles.sticky]\nharness = \"claude\"\ncommand = [\"{}\"]\n\
          [profiles.prog]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.paste]\nharness = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
@@ -344,6 +345,7 @@ fn agent_toml(work_root: &Path, scripts: &Path) -> String {
         path_str(&scripts.join("mute.log")),
         path_str(&scripts.join("claude.sh")),
         lab::BIN,
+        path_str(&scripts.join("hook.log")),
         path_str(&scripts.join("sticky.sh")),
         path_str(&scripts.join("prog.sh")),
         lab::BIN,
@@ -1173,6 +1175,20 @@ fn claude_thread_states_questions_and_messages() {
     flow_event(&mut ev, "brief_delivered", "안내 줄을 보냈다");
     let p1 = open_question(&mut ev, &id, "permission", &[]);
     assert_eq!(p1.text, "Do you want to proceed?");
+    // Claude hook은 진행 보고 안내를 받는다(herdr-projects progress.rs `hook`): SessionStart에 지침, UserPromptSubmit에 안내
+    let guided: Vec<Value> = std::fs::read_to_string(w.scripts.join("hook.log"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let said = |i: usize| {
+        let o = &guided[i]["hookSpecificOutput"];
+        (o["hookEventName"].as_str().unwrap().to_string(), o["additionalContext"].as_str().unwrap().to_string())
+    };
+    assert_eq!(guided.len(), 2, "{guided:?}");
+    let (start, prompt) = (said(0), said(1));
+    assert!(start.0 == "SessionStart" && start.1.contains(&format!("`{} report --percent 25", lab::BIN)), "{start:?}");
+    assert!(prompt.0 == "UserPromptSubmit" && prompt.1.contains("Waiting for you"), "{prompt:?}");
     let v = w.show(&id);
     let ag = &v["agent"];
     assert_eq!((ag["activity"].as_str(), ag["harness"].as_str()), (Some("question"), Some("claude")), "{v}");
