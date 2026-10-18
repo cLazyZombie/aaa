@@ -471,17 +471,17 @@ lazy_size: number | null, };
 
 export type ProjectView = { name: string, path: string, threads: number,
 /**
- * FRONT_API 1.33. 옛 host는 보내지 않는다(active)
+ * FRONT_API 1.32. 옛 host는 보내지 않는다(active)
  */
 status?: ProjectStatus,
 /**
  * `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
- * FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
+ * FRONT_API 1.32. 옛 host는 보내지 않는다(빈 글)
  */
 coordinator_profile?: string,
 /**
  * coordinator가 쓸 수 있는 profile(safety `coordinator_profiles`, 사람만 바꾼다). 없으면 모두다. 웹 「coordinator 열기」가
- * 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.33
+ * 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.32
  */
 coordinator_profiles?: Array<string>, };
 
@@ -545,7 +545,7 @@ agent: AgentStatus | null, created_at_ms: number, updated_at_ms: number,
  */
 warnings?: Array<string>,
 /**
- * 그 프로젝트의 상태(FRONT_API 1.33, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+ * 그 프로젝트의 상태(FRONT_API 1.32, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
  * 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
  */
 project_status?: ProjectStatus, };

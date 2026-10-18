@@ -51,11 +51,12 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.31: 결과물 목록의 `LibraryFile.mime`·`kind`(앱 안 파일 보기, plan §8.168)
 /// 같은 1.31 배포에 host 정본 `ProfileResolve`를 더한다(§8.170). host_profiles.v1은 AGENT_LINK 1.4의 선택 기능이다.
 /// 1.32: 보고서 안 파일 링크 `thread_file`(thread worktree 기준, plan §8.171)과 질문의 화면 선택 창 `QuestionView.menu`·그 답
-/// `question_answer`의 `menu`·`pick`(plan §8.172). 한 번에 착지해 minor 하나로 묶는다(1.31 front가 그대로 붙는다),
-/// 1.33: `project_create` 옵션(goal·repos·profile)·`project_set`, ProjectView `status`·`projects` `all`·`project_lifecycle`·
-/// `project_delete`·`project_rename`·`project_sweep`, `thread_adopt`·ThreadKind `adopted`, `project_open`·`ProjectOpened`·ProjectView
-/// `coordinator_profile`·`coordinator_profiles`(4장 G·A, plan §8.173). 한 번에 착지해 minor 하나로 묶는다(1.32 front가 그대로 붙는다)
-pub const FRONT_API: Version = Version { major: 1, minor: 33 };
+/// `question_answer`의 `menu`·`pick`(plan §8.172). 한 번에 착지해 minor 하나로 묶는다(1.31 front가 그대로 붙는다).
+/// 같은 1.32 배포에 `project_create` 옵션(goal·repos·profile)·`project_set`, ProjectView `status`·`projects` `all`·
+/// `project_lifecycle`·`project_delete`·`project_rename`·`project_sweep`, `thread_adopt`·ThreadKind `adopted`, `project_open`·
+/// `ProjectOpened`·ProjectView `coordinator_profile`·`coordinator_profiles`를 더한다(4장 G·A, plan §8.173). 1.32는 아직
+/// 배포되지 않아 minor를 더 올리지 않는다(배포된 1.31 front가 그대로 붙는다)
+pub const FRONT_API: Version = Version { major: 1, minor: 32 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
