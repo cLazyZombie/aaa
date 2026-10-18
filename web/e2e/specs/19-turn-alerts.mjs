@@ -1,4 +1,4 @@
-// 웹 E2E 다른 agent의 턴 끝남 앱 안 알림(plan §8.184): host `notice` 사건을 「작업 완료」 Droplet으로.
+// 웹 E2E 다른 agent의 턴 끝남 앱 안 알림(plan §8.185): host `notice` 사건을 「작업 완료」 Droplet으로.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 19-turn-alerts(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import { aaa, until, shot, step, claudeSh, claudeWorking, claudeIdle } from "../lib/harness.mjs";

@@ -370,7 +370,7 @@ pub struct QuestionView {
     pub menu: Option<QuestionMenu>,
 }
 
-/// 앱 안 알림의 종류(plan §8.184). 휴대폰 push는 아니다
+/// 앱 안 알림의 종류(plan §8.185). 휴대폰 push는 아니다
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeKind {
@@ -381,7 +381,7 @@ pub enum NoticeKind {
 }
 
 /// 앱 안 알림 하나(host가 front마다 보낸다, `FrontEvent::Notice`). 입력 필요는 따로 없고 `Question` 사건이 맡는다.
-/// 같은 턴의 끝남과 새 보고는 새 보고 하나다(plan §8.184).
+/// 같은 턴의 끝남과 새 보고는 새 보고 하나다(plan §8.185).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct NoticeView {
     pub kind: NoticeKind,
@@ -491,6 +491,18 @@ pub enum ProjectAction {
 pub struct ProjectChange {
     pub project: ProjectView,
     pub notes: Vec<String>,
+}
+
+/// `doctor files`의 프로젝트 한 줄(herdr-projects `doctor`의 `files <slug>`, FRONT_API 1.34)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectFilesCheck {
+    pub project: String,
+    /// 본 때 고칠 것(AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md). 비면 맞다
+    pub problems: Vec<String>,
+    /// `fix`로 고쳤다
+    pub fixed: bool,
+    /// 고치지 못한 까닭
+    pub error: Option<String>,
 }
 
 /// `project open`의 결과(herdr-projects `open`, FRONT_API 1.33)

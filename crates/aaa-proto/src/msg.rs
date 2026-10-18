@@ -14,8 +14,9 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
-    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectOpened, ProjectView, QuestionView,
-    ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened,
+    ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind,
+    ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView};
 
@@ -1614,6 +1615,13 @@ pub enum FrontRequest {
         #[serde(default)]
         dry_run: bool,
     },
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md)을 본다.
+    /// `fix`면 고친다: 표지 있는 AGENTS.md는 지금 안내로 다시 쓰고, 표지 없는 것은 `.before-aaa`로 옮겨 둔다
+    /// (herdr-projects `doctor [--fix]`, FRONT_API 1.34)
+    ProjectFiles {
+        #[serde(default)]
+        fix: bool,
+    },
     /// coordinator를 연다(herdr-projects `open`): 도는 coordinator가 있으면 그것을 알려 주고, 없으면(또는 `new`) host 머신에서
     /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.33)
     ProjectOpen {
@@ -1883,6 +1891,7 @@ impl FrontRequest {
                 | FrontRequest::Projects { .. }
                 | FrontRequest::ProjectRename { dry_run: true, .. }
                 | FrontRequest::ProjectSweep { dry_run: true, .. }
+                | FrontRequest::ProjectFiles { fix: false }
                 | FrontRequest::Profiles { .. }
                 | FrontRequest::ProfileResolve { .. }
                 | FrontRequest::Threads { .. }
@@ -2024,6 +2033,9 @@ pub enum FrontResponse {
     Project(ProjectView),
     ProjectChange(ProjectChange),
     ProjectOpened(Box<ProjectOpened>),
+    ProjectFiles {
+        checks: Vec<ProjectFilesCheck>,
+    },
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,
@@ -2112,7 +2124,7 @@ pub enum FrontEvent {
     /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
     /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.166)
     Web { build: String },
-    /// 앱 안 알림(TUI 카드·웹 Droplet, plan §8.184). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
+    /// 앱 안 알림(TUI 카드·웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
     /// 옛 front는 모르는 사건을 버린다)
     Notice(NoticeView),
 }

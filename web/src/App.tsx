@@ -422,7 +422,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     alertLate(replayFrom, t.project, t.id, raise, told);
   };
 
-  // 다른 agent의 턴 끝남(host `notice` 사건, plan §8.184): 「작업 완료」로 그 pane에. host는 보는 화면이 없던 턴만, 같은 턴의
+  // 다른 agent의 턴 끝남(host `notice` 사건, plan §8.185): 「작업 완료」로 그 pane에. host는 보는 화면이 없던 턴만, 같은 턴의
   // thread 새 보고는 새 보고로만 알린다. 웹은 긴 턴(herdr-web-ui `dropletAllows` 기본 `done: "long"`, 60초 이상이거나 길이를
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)

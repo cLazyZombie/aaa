@@ -772,7 +772,7 @@ impl App {
             FrontMsg::Event(FrontEvent::Thread(t)) => {
                 self.threads.insert(list::thread_key(&t), t);
             }
-            // 알림 카드(plan §8.184): 끝남·새 보고는 host가 알리고, 입력 필요는 새로 열린 질문이다(herdr `NeedsAttention`)
+            // 알림 카드(plan §8.185): 끝남·새 보고는 host가 알리고, 입력 필요는 새로 열린 질문이다(herdr `NeedsAttention`)
             FrontMsg::Event(FrontEvent::Notice(n)) => {
                 let card = self.notice_card(&n);
                 self.cards.receive(card, tokio::time::Instant::now());

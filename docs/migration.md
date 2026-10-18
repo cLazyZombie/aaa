@@ -60,9 +60,12 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 
 | 경우 | 0.2 | aaa | 근거 |
 |---|---|---|---|
-| 보고 첫 줄이 `[결정 필요]`·`[사용자 작업 필요]` | 검토 대기 | 사람 차례 | aaa `orch.rs` thread_group 5(D9) |
-| PR 승인(Landing) | Landing | 다른 묶음 | aaa에 Landing 없음(차이 목록 4장 I, D11 옮기는 중) |
 | herdr `unknown`(셸) | agent 있음 | agent 없음 | aaa는 harness 활동이 있어야 agent다 |
+| agent 상태 없이 진행 보고만 있다 | 진행 보고대로(작업 중·사람 차례) | 진행 보고를 담지 않는다 | aaa 진행 보고는 harness 활동(`AgentStatus`)에 붙는다 |
+| 진행을 보고하는 agent의 중간 보고(`Done` 아님) | 검토 대기 | 검토 대기 아님 | plan §8.85, aaa `orch.rs` thread_group 5 |
+
+- 위 세 줄이 `aaa migrate shadow`가 까닭을 붙이는 차이 전부다(`migrate/shadow.rs` `reason`). 그 밖의 다름은 「분류 안 됨」으로 G4에서 센다.
+- 보고 첫 줄 태그(`[결정 필요]`·`[사용자 작업 필요]`)와 PR 승인(Landing)은 이제 0.2와 같다: 태그로 묶음을 정하지 않고(D9, plan §8.78) 열린 PR이 승인되면 둘 다 Landing이다(D11, plan §8.113, 0.2 `src/thread.rs:596`과 같은 조건). 다르면 G4가 센다(`shadow.rs` `rules_agree_and_differ_where_intended`).
 
 ## 2. 전환 gate: 무엇이 같아야 하는가
 

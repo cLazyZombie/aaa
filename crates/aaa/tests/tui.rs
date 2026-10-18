@@ -899,7 +899,7 @@ fn herdr_keys_and_modes() {
     assert!(tui.wait_exit());
 }
 
-/// agent 알림 카드(herdr 0.9.5 `notification_policy.rs`·`render_notification_card`, plan §8.184): 보는 화면 없이 다른 agent의
+/// agent 알림 카드(herdr 0.9.5 `notification_policy.rs`·`render_notification_card`, plan §8.185): 보는 화면 없이 다른 agent의
 /// 턴이 끝나거나 질문이 열리면 오른쪽 아래 카드가 1초 뒤 뜬다. 지금 탭의 pane은 띄우지 않고(herdr는 pane이 아니라 탭으로
 /// 거른다), `prefix o`·카드 누름은 그 pane으로 간다. host는 보는 pane(lease)의 끝남은 알리지 않는다
 #[test]

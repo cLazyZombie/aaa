@@ -1,4 +1,4 @@
-//! 앱 안 알림(plan §8.184): 다른 agent의 턴이 끝났다·thread에 새 보고가 왔다를 front(TUI 카드·웹 Droplet)에 알린다.
+//! 앱 안 알림(plan §8.185): 다른 agent의 턴이 끝났다·thread에 새 보고가 왔다를 front(TUI 카드·웹 Droplet)에 알린다.
 //! 휴대폰 push는 아니다: inbox 항목을 만들지 않으므로 notify.rs·push.rs가 보지 않는다.
 //!
 //! - 끝남(herdr 0.9.5 `src/app/actions.rs` 77~93 `is_background_completion_transition`: 작업·질문에서 쉼으로)은 그때 그 pane을

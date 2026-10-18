@@ -1,4 +1,4 @@
-//! agent 알림 카드(herdr 0.9.5 `src/client/shell/notification_policy.rs`, plan §8.184). 한 번에 하나만 보이고 나머지는
+//! agent 알림 카드(herdr 0.9.5 `src/client/shell/notification_policy.rs`, plan §8.185). 한 번에 하나만 보이고 나머지는
 //! 차례를 기다린다. 받은 알림은 잠깐(`DELAY`) 뒤 다시 본다: 그 pane이 아직 그 상태이고 지금 탭이 아니면 띄운다.
 //!
 //! - 받기(`receive_notification`): 같은 pane의 기다리는·줄 선·보이는 카드를 지운다. 새 보고(herdr-projects 알림, herdr
