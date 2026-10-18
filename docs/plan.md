@@ -3181,6 +3181,21 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 결함 심기: 첫 화면 끄기·기억 끄기·drawer `height:auto` 빼기를 하나씩 넣으면 그 단계가 실패한다.
   - 다른 시험은 목록 안의 것을 `inList`(harness: 닫힌 drawer면 열고 누름, 닫히는 중이면 움직임이 끝난 뒤 봄)로 누른다. 특정 pane을 첫 화면으로 여는 시험은 주소(`pairPage({hash: paneHash(name)})`)로 연다. 첫 화면이 열자마자 붙는 WebSocket을 듣는 시험은 `onPage`로 먼저 듣는다.
 
+### 8.147 끝난 세션 지우기는 session host의 늦게 붙기 창을 기다리지 않는다(10-18, t-0338 넘김 「resolve 2초」)
+
+- **증상.** `aaa thread resolve` 한 번이 2.05초였다(cdef86c부터, t-0338이 웹 E2E 17에서 잼: resolve 12번이 67초 중 약 24초). 끝낸 pane을 지우는 `pane close`와 셸 `exit` 닫기(§8.143)도 같은 2초가 붙는다.
+- **원인.** resolve(§8.135)는 끝낸 thread의 pane을 지우려 agent `forget`을 부른다. forget은 session host 연결(pump)이 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 지운 pane을 되살리기 때문이다(2d0a12c).
+  - session host는 종료를 알린 뒤 늘 2초 더 응답하고 닫는다(`aaa-session` host.rs, 아직 붙지 않은 agent도 종료 상태·마지막 화면을 받게).
+  - m13 실험에서 세션은 끝내기 뒤 18~26ms에 끝났고(`exit.json`), resolve는 2043~2045ms였다. 나머지가 이 창이다.
+- **고침.** forget이 끝남을 이미 받은 세션의 pump에 닫기(`PumpCmd::Close`)를 보낸다. 그러면 연결을 agent가 닫고, forget은 pump가 끝나기를 기다린다. pump가 끝나며 종료 알림을 보내는 순서는 그대로다. resolve는 72~75ms다.
+- **운영 동작이 바뀐다.** 지우는 pane의 session host는 agent 연결 없이 2초를 채우고 끝난다.
+  - 근거: 이 창은 아직 붙지 않은 agent를 위한 것이다. 지우는 agent는 종료를 이미 받았고, 마지막 화면·replay는 파일에 있어 파일로 답한다(`offline_request`). 기록을 지운 뒤라 그 2초 동안 그 session host에 붙을 것은 없다.
+  - session host 쪽에서 창을 줄이지 않았다. 연결마다 쓰기가 따로 도는 task라(`spawn_writer`) 알리자마자 끝내면 마지막 `Updated`가 쓰이기 전에 runtime이 닫힐 수 있고, 쓰기가 끝났는지 알려면 공용 conn을 고쳐야 한다.
+- **남긴 틈(2d0a12c부터, 고치지 않음).** pump는 끝날 때 기록에서 pump를 뗀 뒤 종료 알림을 보낸다. forget(50ms마다 본다)이 그 사이를 보면, forget의 응답이 알림보다 먼저 가 host가 지운 pane을 알림으로 되살릴 수 있다. 이번 고침은 그 사이를 넓히지 않았다.
+- **시험.** m13 `closing_ended_sessions_does_not_wait_for_the_session_host_linger`는 시험 고리 `AAA_TEST_SESSION_LINGER_MS=8000`으로 창을 forget 한도(5초)보다 길게 두고 resolve와 `pane close`를 한다. 그러니 창을 기다리는 agent는 시간과 상관없이 실패한다.
+  - 옛 동작을 심으면(닫기를 보내지 않음) 「pane을 닫지 못했다: session host가 아직 닫히지 않았다」로 실패하고, 고친 판은 통과한다.
+  - 시간 경계는 두지 않았다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
