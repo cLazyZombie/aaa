@@ -2084,6 +2084,37 @@ fn thread_state_items_follow_groups() {
     assert_eq!(pushed, [(a.clone(), "new report".to_string()), (b.clone(), "pane closed".to_string())]);
 }
 
+/// 끝난 세션을 지우는 resolve·`pane close`는 session host가 종료 뒤 더 응답하는 창(늦게 붙는 agent용, 2초)을 기다리지
+/// 않는다(t-0338 넘김: resolve 한 번 2.05초). 창을 agent가 pump를 기다리는 한도(5초)보다 길게 두면, 창을 기다리는 agent는
+/// 「session host가 아직 닫히지 않았다」로 pane을 지우지 못한다
+#[test]
+fn closing_ended_sessions_does_not_wait_for_the_session_host_linger() {
+    let w = world_setup("", false, |_| vec![("AAA_TEST_SESSION_LINGER_MS".into(), "8000".into())]);
+    let v = w.start(&[
+        "--title",
+        "linger",
+        "--machine",
+        "labA",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("linger.txt", "noreport"),
+    ]);
+    let (id, pane) = (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string());
+    w.wait_screen(&pane, "done");
+    assert_eq!(w.h.ok(&["thread", "resolve", "demo", &id])["status"], "resolved");
+    let ev = w.h.ok(&["events", "demo"]);
+    let resolved = ev["events"].as_array().unwrap().iter().find(|e| e["kind"] == "thread_resolved").unwrap();
+    assert!(resolved["detail"].as_str().unwrap().contains("pane을 닫았다"), "{resolved}");
+    let shell = w.h.new_pane(None, "labA", Some("lg"), &["/bin/cat"], None);
+    w.h.ok(&["pane", "close", &shell]);
+    let panes = w.h.ok(&["pane", "list"]);
+    let ids: Vec<&str> = panes["panes"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert!(!ids.contains(&pane.as_str()) && !ids.contains(&shell.as_str()), "끝낸 pane이 남았다: {panes}");
+}
+
 /// thread 범위(§8.25): 일반 thread 세션 안의 CLI는 보기만 되고, thread가 아닌 pane(사람의 셸) 안의 CLI는 그대로 조작한다
 #[test]
 fn worker_session_cli_is_read_only() {
