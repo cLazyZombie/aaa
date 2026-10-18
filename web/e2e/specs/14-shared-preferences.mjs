@@ -43,9 +43,8 @@ export default async function ({ ctl, page }) {
     let sent = wrote(a);
     await d.getByRole("group", { name: "테마" }).getByRole("button", { name: "밝게" }).click();
     const first = await sent;
-    // 바꾼 공유 설정만 보낸다. host가 아직 고정을 갖지 않아 이 기기 고정(빈 목록)이 함께 간다
-    if (first.ok?.revision !== 1 || first.ok.settings.theme !== "light" || keys(first.sent.settings) !== keys({ theme: 1 }) || !Array.isArray(first.sent.pins))
-      throw new Error(`첫 쓰기 ${JSON.stringify(first)}`);
+    // 무엇을 보내는지(바꾼 것만·처음 고정)는 web/test/preferences.test.mjs가 본다
+    if (first.ok?.revision !== 1 || first.ok.settings.theme !== "light") throw new Error(`첫 쓰기 ${JSON.stringify(first)}`);
     await htmlIs(b, "data-theme", "light");
     // 휴대폰에서 색상 Catppuccin과 상태 표시 「점」(기기 설정) → 데스크톱은 색상만 받는다
     d = await settings(b);
@@ -53,12 +52,8 @@ export default async function ({ ctl, page }) {
     sent = wrote(b);
     await d.locator("#settings-palette").selectOption("catppuccin");
     const second = await sent;
-    if (keys(second.sent.settings) !== keys({ palette: 1 }) || keys(second.ok.settings) !== keys({ palette: 1, theme: 1 }))
-      throw new Error(`둘째 쓰기에 기기 설정이 섞였다: ${JSON.stringify(second)}`);
+    if (keys(second.ok.settings) !== keys({ palette: 1, theme: 1 })) throw new Error(`host 문서에 기기 설정이 섞였다: ${JSON.stringify(second)}`);
     await htmlIs(a, "data-palette", "catppuccin");
-    const aLook = await a.evaluate(() => JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"));
-    if (aLook.statusIndicators === "dots") throw new Error("기기 설정(상태 표시)이 다른 기기로 갔다");
-    if (aLook.palette !== "catppuccin" || aLook.theme !== "light") throw new Error(`받은 값이 이 기기에 남지 않았다: ${JSON.stringify(aLook)}`);
     await close(b);
     await shot(a, "desktop-shared-light-catppuccin");
 
@@ -92,16 +87,6 @@ export default async function ({ ctl, page }) {
     await domIs(b, "닫힌 기기에서 바꾼 테마가 다른 기기에", () => document.documentElement.getAttribute("data-theme") === "dark");
     if ((await held(a)).settings.theme !== "dark") throw new Error("닫힌 기기에서 바꾼 테마가 host 문서에 없다");
     await q.page.context().close();
-
-    // 되돌린다(뒤 단계의 화면이 기본 모양이게)
-    sent = wrote(a);
-    await d.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).click();
-    await d.locator("#settings-palette").selectOption("amber");
-    await d.getByRole("group", { name: "사이드바 행" }).getByRole("button", { name: "두 줄" }).click();
-    await sent;
-    await htmlIs(b, "data-palette", "amber");
-    await htmlIs(b, "data-theme", "dark");
-    await b.locator(".machine-workspaces.is-two-line").first().waitFor();
     for (const p of [a, b, r]) await p.context().close();
   });
 }

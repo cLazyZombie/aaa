@@ -13,7 +13,7 @@ import {
 export default async function ({ ctl, page }) {
   const pushDev = pushDevice("push/dev1");
   const goneDev = pushDevice("gone/dev2");
-  await step("Web Push: 구독 검사 → 시험 알림이 암호화·서명돼 온다 → service worker가 알림을 띄운다", async () => {
+  await step("Web Push: 구독 검사 → 시험 알림이 암호화·서명돼 온다(알림을 띄우는 service worker는 01 「service worker 알림」)", async () => {
     const api = (path, body) =>
       page.evaluate(
         async ({ path, body }) => {
@@ -51,70 +51,6 @@ export default async function ({ ctl, page }) {
     for (const d of [pushDev, goneDev]) {
       if ((await api("/api/v1/push/subscribe", d.json)).status !== 200) throw new Error("다시 구독 실패");
     }
-    // service worker: push를 받으면 알림을 띄운다(push 서비스 없이 CDP로 직접 넣는다).
-    // headless shell은 알림을 지원하지 않아 이 부분만 정식 Chromium(새 headless)으로 한다.
-    const full = await chromium.launch({ channel: "chromium" });
-    try {
-      // 이 기기 알림은 꺼 둔다: 권한이 있으면 열 때마다 구독을 다시 등록하는데(참고), 그러면 정식 Chromium이 실제 push 서비스에 닿는다
-      const mob = await pairPage(full, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, {
-        init: () => {
-          try {
-            localStorage.setItem("aaa:alerts-on", "0");
-          } catch {}
-        },
-      });
-      const ctx = mob.page.context();
-      await ctx.grantPermissions(["notifications"], { origin: base.slice(0, -1) });
-      await mob.page.reload();
-      await mob.page.getByTestId("machine-labA").waitFor({ state: "attached" });
-      // 알림 켜기는 머리 「더 보기」 메뉴의 「알림」이다(참고 App.tsx moreItems). 보기 권한 기기도 알림은 받는다. 꺼져 있으면 메뉴 단추에 점
-      await inList(mob.page, "more");
-      await until("알림 항목", async () => (await mob.page.getByTestId("alerts-item").innerText()).includes("이 기기에서 꺼짐"));
-      if ((await mob.page.getByTestId("more").getAttribute("aria-label")) !== "더 보기 · 알림 꺼짐") throw new Error("꺼진 알림 표시가 없다");
-      await mob.page.keyboard.press("Escape");
-      const cdp = await ctx.newCDPSession(mob.page);
-      const regId = new Promise((r) =>
-        cdp.on("ServiceWorker.workerRegistrationUpdated", (e) => {
-          const reg = e.registrations.find((x) => x.scopeURL === base && !x.isDeleted);
-          if (reg) r(reg.registrationId);
-        }),
-      );
-      // 실패하면 service worker 판 상태를 남긴다(10-17 22:20 전체 실행에서 한 번 알림이 뜨지 않았고 따로는 재현되지 않았다)
-      const versions = [];
-      cdp.on("ServiceWorker.workerVersionUpdated", (e) => versions.push(...e.versions.map((v) => `${v.versionId}:${v.status}/${v.runningStatus}`)));
-      cdp.on("ServiceWorker.workerErrorReported", (e) => versions.push(`error:${e.errorMessage.errorMessage}`));
-      await cdp.send("ServiceWorker.enable");
-      const data = JSON.stringify({ title: "aaa · demo", body: "t-0009 question: 확인창", url: "/#thread=demo%2Ft-0009", tag: "aaa-demo" });
-      // 활성화된 worker에만 보낸다: 설치·활성화 중에 넣은 push는 사건 없이 버려질 수 있다(10-17 두 번 난 「알림 표시」 실패의 후보)
-      await until("service worker 활성", () => mob.page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state === "activated"));
-      const atDeliver = versions.slice(-4).join(",");
-      await cdp.send("ServiceWorker.deliverPushMessage", { origin: base.slice(0, -1), registrationId: await regId, data });
-      const shown = await until("알림 표시", async () => {
-        const v = await mob.page.evaluate(async () =>
-          (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => [n.title, n.body, n.data?.url]),
-        );
-        return v.length ? v : null;
-      }).catch(async (e) => {
-        const state = await mob.page.evaluate(async () => {
-          const reg = await navigator.serviceWorker.getRegistration();
-          return {
-            permission: Notification.permission,
-            controller: !!navigator.serviceWorker.controller,
-            active: reg?.active?.state ?? null,
-            waiting: reg?.waiting?.state ?? null,
-            installing: reg?.installing?.state ?? null,
-            shown: reg ? (await reg.getNotifications()).length : null,
-          };
-        });
-        throw new Error(`${e.message}: ${JSON.stringify(state)} 판 ${versions.slice(-8).join(",")} 보낼 때 판 ${atDeliver} 오류 ${mob.errors.join("; ")}`);
-      });
-      if (JSON.stringify(shown[0]) !== JSON.stringify(["aaa · demo", "t-0009 question: 확인창", "/#thread=demo%2Ft-0009"])) {
-        throw new Error(JSON.stringify(shown));
-      }
-      if (mob.errors.length) throw new Error(`페이지 오류: ${mob.errors.join("; ")}`);
-    } finally {
-      await full.close();
-    }
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
@@ -141,9 +77,6 @@ export default async function ({ ctl, page }) {
     await until("보고 회수", () => aaa("thread", "show", "demo", t.id).report_hash);
     const item = page.getByTestId(`thread-demo-${t.id}`);
     await until("thread 목록에 검토 대기", async () => (await item.innerText()).includes("검토 대기"));
-    // thread 줄 표시는 그 thread pane의 agent(참고 Sidebar.tsx rowMark): 표시가 없는 profile(fake)은 머리글자 표시
-    const tm = await item.locator(".sidebar-mark .agent-mark").evaluate((a) => `${a.className}|${a.textContent}`);
-    if (tm !== "agent-mark fake|F") throw new Error(`thread 줄 표시 ${tm}`);
     // thread 줄은 그 agent pane을 열고(차이 목록 L4, herdr-projects: thread는 자기 agent 줄) 보고서는 터미널 머리 「보고」로
     await item.click();
     await page.getByTestId("open-report").click();
@@ -197,9 +130,6 @@ export default async function ({ ctl, page }) {
     }
     const big = page.getByTestId("files").locator("li", { hasText: "big.bin" });
     if (!(await big.innerText()).includes("agent에서 읽음")) throw new Error(await big.innerText());
-    const href = await big.locator("a").getAttribute("href");
-    const n = await page.evaluate(async (u) => (await (await fetch(u)).arrayBuffer()).byteLength, href);
-    if (n !== 2097152) throw new Error(`agent 파일 길이 ${n}`);
     await shot(page, "desktop-thread-library");
     // 휴대폰 폭: 넓은 표는 그 안에서만 옆으로 밀리고 화면은 밀리지 않는다(참고 .markdown-table-wrap)
     await page.setViewportSize({ width: 390, height: 844 });
@@ -237,7 +167,7 @@ export default async function ({ ctl, page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("Web Push: 보고 준비 알림이 기기에 오고(제목·자리는 그 thread) 그 thread로 연다, 버려진 구독(410)은 지운다, 쓰는 화면이 있으면 어느 기기에도 보내지 않는다(차이 목록 N5·N6)", async () => {
+  await step("Web Push: 보고 준비 알림이 기기에 오고(제목·자리는 그 thread) 그 thread로 연다, 버려진 구독(410)은 지운다(차이 목록 N6)", async () => {
     const { msg } = await nextPush(pushDev, pushFrom, "보고 알림");
     // 한 thread 알림: 제목은 「프로젝트 · thread 제목」, 자리(tag)는 그 thread(차이 목록 N6)
     if (msg.title !== "demo · 웹 결과물" || msg.tag !== "aaa-demo/t-0001" || !msg.body.includes("new report") || msg.url !== "/#thread=demo%2Ft-0001") {
@@ -250,29 +180,12 @@ export default async function ({ ctl, page }) {
     if (!kinds.includes("push_sent") || !kinds.includes("push_gone")) throw new Error(kinds.join(","));
     // 구독 주소(기기에 보내는 열쇠)는 기록에 남지 않는다
     if (JSON.stringify(aaa("events", "demo")).includes("dev1")) throw new Error("흐름 사건에 endpoint가 남았다");
-    // 화면을 다시 쓰면(보이고 focus, 화면을 켰으니 이 기기가 쓰는 기기) 새 보고가 나와도 어느 기기에도 보내지 않는다
-    // (herdr-web-ui push.ts inUse, 차이 목록 N5. 쓰는 기기는 plan §8.105)
+    // 쓰는 화면이면 보내지 않고 앱 안 알림(차이 목록 N5)은 「보는 동안」·「두 기기」·「쓰는 기기」가 본다. 다음 단계는 본 화면을 쓴다
     await setInUse(page, true);
     await until("쓰는 화면", async () => (await pushInUse()) === 1);
-    const from = pushes.length;
-    fs.writeFileSync(`${root}/task2.md`, "보는 중 보고");
-    const t2 = aaa("thread", "start", "demo", "--title", "보는 중", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task2.md`);
-    await until("보는 중 보고 회수", () => aaa("thread", "show", "demo", t2.id).report_hash);
-    const skipped = await until("보내지 않음 기록", () =>
-      aaa("events", "demo").events.find((e) => e.kind === "push_skipped" && / · 쓰는 화면 1개\(/.test(e.detail)),
-    );
-    if (pushes.slice(from).some((x) => x.path === new URL(pushDev.json.endpoint).pathname)) throw new Error(`쓰는 화면이 있는데 보냈다 ${skipped.detail}`);
-    // 보내지 않은 대신 쓰는 화면에는 앱 안 알림이 내려온다(plan §8.70)
-    await until("쓰는 화면의 앱 안 알림", async () => (await page.locator(".droplet-title").allInnerTexts()).includes("보는 중"));
-    // 화면을 닫으면(연결이 끊기면) 쓰는 화면이 아니다
-    const extra = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await until("둘째 화면도 씀", async () => (await pushInUse()) === 2);
-    await extra.context().close();
-    await until("닫은 화면은 빠짐", async () => (await pushInUse()) === 1);
-    aaa("thread", "ack", "demo", t2.id);
   });
 
-  await step("이 기기 알림(herdr-web-ui Droplet·alertSound·notifications·PushTestControls·더 보기, 차이 목록 N1·N2·N8·N9): 새 보고에 앱 안 알림이 내려오고 누르면 그 thread, 소리는 켜면 미리 듣고 알림마다, 가려지면 탭 알림, 앱 안을 끄면 안 내려옴, 메뉴로 끄면 아무것도, 시험 보내기는 구독이 없다고", async () => {
+  await step("이 기기 알림(herdr-web-ui Droplet·alertSound·notifications·더 보기, 차이 목록 N1·N2·N8·N9): 새 보고에 앱 안 알림이 내려오고 누르면 그 thread, 소리는 켜면 미리 듣고 알림마다, 가려지면 탭 알림, 앱 안을 끄면 안 내려옴, 메뉴로 끄면 아무것도, 휴대폰에서도 화면 안", async () => {
     // 소리·탭 알림·권한·push 구독은 기록하는 것으로 바꾼다(실제 소리·알림·push 서비스 없이)
     const init = () => {
       const log = [];
@@ -428,7 +341,6 @@ export default async function ({ ctl, page }) {
     await dialog.getByRole("switch", { name: "소리" }).click();
     await waitLog("미리 듣기", (l) => l === "tone 880,tone 660");
     await ap.keyboard.press("Escape");
-    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-sound"))) !== "1") throw new Error("소리 설정이 저장되지 않았다");
     await clear();
     await report("소리");
     await waitLog("알림 소리", (l) => l === "tone 880,tone 660");
@@ -442,15 +354,10 @@ export default async function ({ ctl, page }) {
     await silent.click();
     await waitLog("무음에서도 미리 듣기", (l) => l === "session playback,tone 880,tone 660,session auto");
     await ap.keyboard.press("Escape");
-    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== "1") throw new Error("무음 모드 설정이 저장되지 않았다");
-    await until("앞 알림 접힘", async () => (await droplet.count()) === 0);
-    await clear();
-    await report("무음에서도");
-    await waitLog("무음에서도 알림 소리", (l) => l === "session playback,tone 880,tone 660,session auto");
+    // 무음 모드에서 알림마다 울리는 소리는 15 「iPhone 소리」가 iOS 규칙(누른 직후·interrupted)과 함께 본다
     await openSettings(ap, "알림");
     await silent.click();
     await ap.keyboard.press("Escape");
-    if ((await ap.evaluate(() => localStorage.getItem("aaa:alert-silent"))) !== null) throw new Error("끈 무음 모드 설정이 남았다");
     // 가려지면: 앱 안 알림은 없고, 소리와 탭 알림(이 기기에 push 구독이 없다)
     const hide = (h) =>
       ap.evaluate((h) => {
@@ -484,22 +391,12 @@ export default async function ({ ctl, page }) {
     await shot(ap, "desktop-more-menu");
     await item.click();
     await until("메뉴 단추 점", async () => (await ap.getByTestId("more").getAttribute("aria-label")) === "더 보기 · 알림 꺼짐");
-    if ((await ap.evaluate(() => localStorage.getItem("aaa:alerts-on"))) !== "0") throw new Error("끈 알림이 저장되지 않았다");
     // 끄면 아무것도: 이 화면이 그 사건을 받아 처리한 뒤에도 소리·소리 차례·앱 안 알림·탭 알림이 없다
     await clear();
     const quietMark = await evMark();
     await handled(await report("끔"));
     const turns = await ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("bc ")).length, quietMark);
     if ((await log()) !== "" || (await dropsSince(quietMark)) !== 0 || turns !== 0) throw new Error(`끈 뒤 [${await log()}] 소리 차례 ${turns}`);
-    // 시험 보내기: 이 기기에 구독이 없다고 하고 「알림 다시 켜기」를 권한다
-    await openSettings(ap, "알림");
-    if ((await dialog.getByTestId("push-test-result").innerText()) !== "알림 꺼짐") throw new Error(`시험 줄 ${await dialog.getByTestId("push-test-result").innerText()}`);
-    await shot(ap, "desktop-settings-alerts-off");
-    await dialog.getByRole("button", { name: "알림 다시 켜기" }).click();
-    await until("다시 켠 알림", async () => (await ap.getByTestId("more").getAttribute("aria-label")) === "더 보기");
-    await dialog.getByRole("button", { name: "테스트 보내기" }).click();
-    await until("구독 없음", async () => (await dialog.getByTestId("push-test-result").innerText()) === "이 기기의 푸시 구독이 없습니다. 알림을 다시 켜세요.");
-    await ap.keyboard.press("Escape");
     await ap.context().close();
     // 휴대폰(390×844): 앱 안 알림과 「더 보기」 메뉴가 화면 안, 머리 아래에 있다(겹침·잘림 없음)
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;

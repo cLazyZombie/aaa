@@ -19,6 +19,7 @@
 #              --native-clipboard일 때만 돈다. 아니면 「건너뜀」으로 요약에 남긴다. Linux는 xvfb-run 위에서.
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
+#              spec 파일은 worker 여러 개가 함께 돈다(core 4개마다 하나, 많아야 4). AAA_E2E_WORKERS=1이면 차례로.
 #              target/debug/aaa는 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
 #   public     scripts/check-public.sh(공개 저장소 검사). AAA_PUBLIC_BASE가 있으면 그 ref 이후 커밋의 메시지·author를 본다
 #              (없으면 origin/main. CI는 push의 before나 PR base를 준다)

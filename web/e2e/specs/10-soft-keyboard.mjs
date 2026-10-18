@@ -20,10 +20,9 @@ export default async function ({ ctl, page }) {
     const wk = await webkit.launch();
     const bad = [];
     try {
+      // 밝은 iPad(2배)와 어두운 iPhone(3배): 색은 테마마다 그 칸을 따르고, 커서가 새던 결함(사용자 캡처 12:05)은 3배에서 났다
       const devices = [
-        ["dark", "ipad", { width: 820, height: 1180 }, 2],
         ["light", "ipad", { width: 820, height: 1180 }, 2],
-        ["dark", "ipad-land", { width: 1180, height: 820 }, 2],
         ["dark", "iphone", { width: 390, height: 844 }, 3],
       ];
       for (const [scheme, dev, viewport, deviceScaleFactor] of devices) {

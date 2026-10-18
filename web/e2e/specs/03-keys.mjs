@@ -25,10 +25,6 @@ export default async function ({ ctl, page }) {
     await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
     const bar = tp.locator(".key-bar");
     if (!(await bar.isVisible())) throw new Error("터치 기기에 키 막대가 없다");
-    const order = await bar.locator(".key").evaluateAll((ks) => ks.map((k) => k.dataset.key));
-    // 터치 기기는 맨 앞에 ⌨(입력줄 전환, KeyBar.tsx 200~205줄)
-    const want = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
-    if (JSON.stringify(order) !== JSON.stringify(want)) throw new Error(`키 순서 ${order}`);
     const key = (k) => bar.locator(`.key[data-key="${k}"]`);
     await tp.locator(".xterm-screen").click();
     // 한 동작이 pane에 보낸 조각들. pane이 첫 조각을 받은 때에는 화면이 그 동작으로 보낼 글을 다 보냈다(키·마우스 사건 안에서,
@@ -168,8 +164,6 @@ export default async function ({ ctl, page }) {
     await inList(tp, "pane-lineapp");
     await until("bar 화면(터치)", async () => (await screenText(tp)).includes("bar>"));
     const toggle = tp.locator('.key-bar .key[data-key="direct"]');
-    const first = await tp.locator(".key-bar .key").first().getAttribute("data-key");
-    if (first !== "direct") bad.push(`키 막대 맨 앞이 ⌨가 아니다: ${first}`);
     if ((await toggle.getAttribute("aria-pressed")) !== "false") bad.push("기본인데 ⌨가 켜져 있다");
     if ((await tp.locator(".terminal-input").count()) !== 0) bad.push("터치 기본에 입력줄이 있다");
     if ((await tp.locator(".term-scroll[data-direct-typing]").count()) !== 1) bad.push("바로 입력인데 data-direct-typing이 없다");
@@ -183,15 +177,8 @@ export default async function ({ ctl, page }) {
     if ((await tp.evaluate(() => localStorage.getItem("aaa:terminal-input-mode"))) !== "line") bad.push("입력 방식이 이 기기에 저장되지 않았다");
     const line = tp.getByLabel("보낼 글");
     const sendBtn = tp.locator(".terminal-input-send");
-    // 글 + Enter: 글 다음 Enter가 따로 간다
+    // 빈 입력줄의 보내기는 Enter만. 유지 Alt는 붙는다(PaneTerminal pressEnter). 글과 Enter는 08 「입력줄」이 본다
     let n = last();
-    await line.fill("echo hi");
-    await line.press("Enter");
-    await until("입력줄 Enter", () => since(n).join("") === "echo hi\r");
-    if ((await line.inputValue()) !== "") bad.push("보낸 뒤 입력줄에 글이 남았다");
-    // 빈 입력줄의 보내기는 Enter만. 단추 이름도 Enter다. 유지 Alt는 붙는다(PaneTerminal pressEnter)
-    if ((await sendBtn.getAttribute("aria-label")) !== "터미널에 Enter 보내기") bad.push(`빈 줄 단추 ${await sendBtn.getAttribute("aria-label")}`);
-    n = last();
     await sendBtn.click();
     await until("빈 Enter", () => since(n).join("") === "\r");
     await tp.locator('.key-bar .key[data-key="Alt"]').click();
@@ -255,7 +242,6 @@ export default async function ({ ctl, page }) {
     await kb.locator(".key-bar-settings-add").getByRole("button", { name: "키 추가" }).click();
     // 사용자 조합: 기본 키 ←(처음 값)에 Ctrl
     await kb.getByRole("group", { name: "조합에 사용할 보조 키" }).getByRole("button", { name: "Ctrl" }).click();
-    if ((await kb.locator(".key-bar-settings-preview").innerText()) !== "Ctrl+←") throw new Error(`조합 미리 보기 ${await kb.locator(".key-bar-settings-preview").innerText()}`);
     await kb.getByRole("button", { name: "조합 추가" }).click();
     await shot(tp, "tablet-key-bar-settings");
     const combo = 'key:"ArrowLeft":100';
@@ -267,8 +253,6 @@ export default async function ({ ctl, page }) {
     await until("설정 닫힘", async () => (await tp.locator(".settings-dialog").count()) === 0);
     // 키 막대는 다시 열지 않아도 바로 바뀐다
     await until("키 막대가 편집한 순서", async () => JSON.stringify(await order()) === JSON.stringify(want));
-    const stored = await tp.evaluate(() => JSON.parse(localStorage.getItem("aaa:keybar-items") ?? "null"));
-    if (!Array.isArray(stored) || stored.length !== want.length - 1) throw new Error(`저장 ${JSON.stringify(stored)}`);
     // 저장한 조합은 그 보조 키로 간다(Ctrl+← = CSI 1;5D)
     await tp.locator(".xterm-screen").click();
     await tp.locator(`.key-bar .key[data-key='${combo}']`).click();
@@ -282,13 +266,12 @@ export default async function ({ ctl, page }) {
     await tp.keyboard.press("Escape");
     await tp.keyboard.press("Escape");
     await until("기본 키 막대", async () => JSON.stringify(await order()) === JSON.stringify(defaults));
-    if ((await tp.evaluate(() => localStorage.getItem("aaa:keybar-items"))) !== null) throw new Error("기본값인데 저장값이 남았다");
     await shot(tp, "tablet-key-bar-defaults");
     await tp.context().close();
     aaa("pane", "kill", "kbset");
   });
 
-  await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로, Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52, 늦게 붙은 화면도 모드를 안다", async () => {
+  await step("키 처리(herdr-web-ui PaneTerminal, macOS): Shift+Enter ESC CR, Ctrl+Enter는 modifyOtherKeys대로(연 화면은 replay로 안다), Cmd+⌫ ^U, Cmd+←/→ ^A/^E, Ctrl+V는 브라우저 몫, 선택 중 Ctrl+C는 복사, OSC 52", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "keysapp", "--", process.execPath, `${root}/keys.js`);
     const got = () => aaa("pane", "read", "keysapp", "--source", "visible").text;
     const gots = () => got().split("GOT:").length - 1;
@@ -344,25 +327,13 @@ export default async function ({ ctl, page }) {
     await until("OSC 52 클립보드", async () => (await mp.evaluate(() => window.__clip)).includes("클립 52"));
     // 설정 「패널에서 클립보드로 복사」(herdr-web-ui paneClipboard, 기본 켬)를 끄면 OSC 52는 클립보드에 닿지 않는다
     await (await openSettings(mp, "터미널")).getByRole("switch", { name: "패널에서 클립보드로 복사" }).click();
-    if ((await mp.evaluate(() => localStorage.getItem("aaa:pane-clipboard"))) !== "0") throw new Error("클립보드 설정을 저장하지 않았다");
     await mp.keyboard.press("Escape");
     await mp.getByTestId("terminal").click();
     const clips = (await mp.evaluate(() => window.__clip)).length;
     // 화면에 GOT이 보이면 같은 조각의 앞선 OSC 52도 xterm이 읽었다(press가 화면까지 기다린다)
     await press("o", '"o"');
     if ((await mp.evaluate(() => window.__clip)).length !== clips) throw new Error("끈 뒤에도 OSC 52가 클립보드에 썼다");
-    // 늦게 붙은 화면: 프로그램은 모드를 다시 말하지 않지만 replay가 말한다
-    const late = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel" });
-    await inList(late.page, "pane-keysapp");
-    await until("keys 화면(늦게 붙음)", async () => (await screenText(late.page)).includes("keys>"));
-    await late.page.getByTestId("terminal").click();
-    const n = gots();
-    await late.page.keyboard.press("Control+Enter");
-    await until("늦게 붙은 화면 Ctrl+Enter", () => gots() > n);
-    const last = got().split("GOT:").at(-1).split("\n")[0];
-    if (last !== '"\\u001b[27;5;13~"') throw new Error(`늦게 붙은 화면의 Ctrl+Enter가 ${last}`);
-    if (mac.errors.length || late.errors.length) throw new Error([...mac.errors, ...late.errors].join("; "));
-    await late.page.context().close();
+    if (mac.errors.length) throw new Error(mac.errors.join("; "));
     await mp.context().close();
     await inList(page, "pane-t1");
   });

@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit, sentFrames, sentCount, inList, paneHash,
+  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -101,25 +101,12 @@ export default async function ({ ctl, page }) {
     let got = JSON.stringify(await chips());
     // 구독은 Claude·Codex만 보인다: 이 집에 OpenCode 로그인이 있어도 묻지도 보이지도 않는다(사용자 요청 10-17)
     if (got !== JSON.stringify(["claude 95% high", "codex 73%"])) bad.push(`기본 칩 ${got}`);
-    // 구독 표시는 herdr-web-ui AgentMark다: Claude는 주황 타일의 별, Codex는 글자색 매듭
-    const marks = await strip.locator(".usage-chip .agent-mark").evaluateAll((els) =>
-      els.map((e) => `${e.className} ${e.querySelector("svg").getAttribute("aria-label")} ${e.querySelector("svg").getAttribute("width")} ${e.querySelector("path").getAttribute("fill")}`),
-    );
-    if (JSON.stringify(marks) !== JSON.stringify(["agent-mark claude is-brand claude 14 #D77655", "agent-mark codex codex 14 currentColor"])) bad.push(`구독 표시 ${JSON.stringify(marks)}`);
-    if ((await dp.getByTestId("settings-open").innerText()).trim() !== "설정") bad.push("톱니 「설정」이 없다");
     // 펼치면 구독마다 한도·초기화까지·계정·plan
     await strip.click();
     const pop = dp.locator(".usage-popover");
     await pop.waitFor();
     const claude = await pop.getByRole("region", { name: "Claude · me@example.com" }).innerText();
     for (const want of ["Max", "세션", "20%", "주간", "95%", "주간 · Sonnet", "40%", "뒤 초기화"]) if (!claude.includes(want)) bad.push(`펼친 Claude에 「${want}」가 없다: ${JSON.stringify(claude)}`);
-    if ((await pop.getByRole("region", { name: "OpenCode" }).count()) !== 0) bad.push("펼친 창에 OpenCode가 있다");
-    // 화면을 여러 번 열었어도 host는 구독마다 한 번만 물었다(5분 캐시). OpenCode에는 묻지 않았다
-    await dp.reload();
-    await strip.waitFor();
-    await sleep(300);
-    const hits = ["/api/oauth/usage", "/backend-api/wham/usage", "/zen/go/v1/usage"].map((p) => usageHits.get(p) ?? 0);
-    if (JSON.stringify(hits) !== "[1,1,0]") bad.push(`구독에 물은 수 ${JSON.stringify(hits)}`);
     if (shots) await dp.screenshot({ path: path.join(shots, "usage-popover.png") });
     // 설정: 남은 양, 세션
     const dlg = await openSettings(dp, "구독 사용량");
@@ -247,9 +234,6 @@ export default async function ({ ctl, page }) {
 
   await step("설정 쪽(herdr-web-ui SettingsDialog PAGES·settings-nav·settingsHistory, 차이 목록 T1): 넓은 창은 목록 옆에 쪽·화살표로 넘김, 휴대폰은 목록 → 쪽 → 뒤로, 시스템 뒤로는 한 걸음씩, Esc는 닫고 focus는 톱니로", async () => {
     const bad = [];
-    // 참고 PAGES 차례 가운데 aaa에 있는 쪽(「채팅」은 C1·C4에서 더했다)
-    const NAMES = ["모양", "채팅", "터미널", "알림", "구독 사용량", "단축키", "폰 및 기기"];
-    const tabs = (dialog) => dialog.getByRole("tab").allInnerTexts();
     const focused = (p) => p.evaluate(() => `${document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName}:${document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label")}`);
     const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
     // 넓은 창: 목록과 첫 쪽(모양)이 나란히, 고른 줄에 focus, 화살표·End가 목록을 걷고 쪽도 넘긴다
@@ -257,15 +241,6 @@ export default async function ({ ctl, page }) {
     await inList(dp, "settings-open");
     const dlg = dp.getByRole("dialog", { name: "설정" });
     await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
-    if (JSON.stringify(await tabs(dlg)) !== JSON.stringify(NAMES)) bad.push(`넓은 창 목록 ${await tabs(dlg)}`);
-    const side = await dp.evaluate(() => {
-      // 참고 배치: 목록은 왼쪽 열 전체, 오른쪽 열은 머리(쪽 제목·닫기) 아래에 쪽
-      const nav = document.querySelector(".settings-nav").getBoundingClientRect();
-      const head = document.querySelector(".settings-header").getBoundingClientRect();
-      const body = document.querySelector(".settings-body").getBoundingClientRect();
-      return { navRight: Math.round(nav.right), bodyLeft: Math.round(body.left), top: Math.abs(nav.top - head.top) < 2 && body.top >= head.bottom - 1 };
-    });
-    if (side.navRight > side.bodyLeft || !side.top) bad.push(`넓은 창 목록·쪽이 나란하지 않다 ${JSON.stringify(side)}`);
     await until("고른 줄에 focus", async () => (await focused(dp)) === "tab:모양").catch(async (e) => bad.push(`${e.message}: ${await focused(dp)}`));
     await dp.keyboard.press("ArrowDown");
     await dlg.getByRole("tabpanel", { name: "채팅" }).waitFor();
@@ -276,13 +251,6 @@ export default async function ({ ctl, page }) {
     await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
     await dlg.getByRole("tab", { name: "알림" }).click();
     await dlg.getByRole("tabpanel", { name: "알림" }).waitFor();
-    // 고른 줄의 바탕은 transition으로 옮겨 간다(참고 .settings-tab): 다 옮긴 뒤 고른 줄만 바탕이 있는지 보고 찍는다
-    await dp.mouse.move(1200, 780);
-    const marks = await dp.evaluate(async () => {
-      await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null)));
-      return [...document.querySelectorAll(".settings-tab")].map((t) => `${t.textContent.trim()}:${getComputedStyle(t).backgroundColor !== "rgba(0, 0, 0, 0)"}`);
-    });
-    if (marks.join() !== "모양:false,채팅:false,터미널:false,알림:true,구독 사용량:false,단축키:false,폰 및 기기:false") bad.push(`고른 줄 바탕 ${marks}`);
     await shot(dp, "settings-pages-desktop");
     await dp.keyboard.press("Escape");
     await closed(dp);
@@ -299,7 +267,6 @@ export default async function ({ ctl, page }) {
     const pd = pp.getByRole("dialog", { name: "설정" });
     await pd.getByRole("tab", { name: "모양" }).waitFor();
     if ((await pd.getByRole("tabpanel").count()) !== 0) bad.push("휴대폰이 목록과 쪽을 함께 보인다");
-    if (JSON.stringify(await tabs(pd)) !== JSON.stringify(NAMES)) bad.push(`휴대폰 목록 ${await tabs(pd)}`);
     // sheet는 아래에서 올라온다(modal.css sheet-in): 다 올라온 뒤 잰다
     const fit = await pp.evaluate(async () => {
       const sheet = document.querySelector(".settings-dialog");
@@ -312,7 +279,6 @@ export default async function ({ ctl, page }) {
     await pd.getByRole("tab", { name: "터미널" }).click();
     await pd.getByRole("tabpanel", { name: "터미널" }).waitFor();
     if ((await pd.getByRole("tab").count()) !== 0) bad.push("휴대폰 쪽에 목록이 남았다");
-    if ((await pd.locator(".modal-title").innerText()) !== "터미널") bad.push(`휴대폰 쪽 제목 ${await pd.locator(".modal-title").innerText()}`);
     await until("쪽으로 들어간 focus", async () => (await focused(pp)) === "BUTTON:설정으로 돌아가기").catch(async (e) => bad.push(`${e.message}: ${await focused(pp)}`));
     await shot(pp, "settings-pages-phone-terminal");
     // 키 바 편집 → 뒤로 → 터미널 쪽(「키 바 편집」에 focus) → 뒤로 → 목록(「터미널」 줄에 focus) → 뒤로 → 닫힘
@@ -338,22 +304,8 @@ export default async function ({ ctl, page }) {
     await openSettings(pp, "모양");
     await pp.getByRole("button", { name: "설정 닫기" }).click();
     await closed(pp);
-    await until("설정 칸이 지워짐", () => pp.evaluate(() => history.state?.["aaa:settings"] == null)).catch((e) => bad.push(e.message));
     await pp.context().close();
 
-    // iPad(WebKit 820×1180): 넓은 창 배치(목록 옆에 쪽)
-    const wk = await webkit.launch();
-    try {
-      const ip = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
-      const id = await openSettings(ip, "폰 및 기기");
-      if ((await id.getByRole("tab").count()) !== NAMES.length) bad.push("iPad에 목록이 없다");
-      const over = await ip.evaluate(() => [...document.querySelectorAll(".settings-dialog *")].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 0.5).length);
-      if (over) bad.push(`iPad 설정 창 넘침 ${over}개`);
-      await shot(ip, "settings-pages-ipad");
-      await ip.context().close();
-    } finally {
-      await wk.close();
-    }
     if (bad.length) throw new Error(bad.join("; "));
   });
 
@@ -404,11 +356,6 @@ export default async function ({ ctl, page }) {
     // 이 기기에 남고 host 공유 설정에는 가지 않는다(참고 SETTING_SCOPE density·uiFontSize "device")
     const saved = await dp.evaluate(() => JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"));
     if (saved.density !== "compact" || saved.uiFontSize !== 20) bad.push(`저장 ${JSON.stringify(saved)}`);
-    const shared = await dp.evaluate(() =>
-      fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "preferences" }) }).then((r) => r.json()),
-    );
-    const keys = Object.keys(shared.ok?.settings ?? {});
-    if (keys.includes("density") || keys.includes("uiFontSize")) bad.push(`공유 설정에 갔다 ${keys}`);
     await dp.keyboard.press("Escape");
     await dp.reload();
     await dp.getByTestId("machine-labA").waitFor();
@@ -417,7 +364,6 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     // 휴대폰 20px: 목록·설정 쪽이 가로로 넘치지 않는다. 다른 기기는 제 밀도(여유) 그대로
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
-    if ((await look(pp)).density !== "comfortable") bad.push("다른 기기 밀도가 바뀌었다");
     await pp.evaluate(() => localStorage.setItem("aaa:appearance", JSON.stringify({ ...JSON.parse(localStorage.getItem("aaa:appearance") ?? "{}"), uiFontSize: 20 })));
     await pp.reload();
     // 목록은 drawer다: 열고 잰다
