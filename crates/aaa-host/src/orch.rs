@@ -53,7 +53,7 @@ pub(crate) struct ThreadRec {
     /// 다시 보내기 전에 화면을 본다(brief.rs).
     #[serde(default)]
     pub brief_attempts: u32,
-    /// brief를 보냈다고 확인한 때와 그때의 보고 hash. 그 뒤 잠시(`DELIVERED_WORKING_MS`) 새 보고가 오기 전까지 작업 중이다
+    /// brief를 보냈다고 확인한 때와 그때의 보고 hash. 그 뒤 잠시(host.toml `[projects] delivered_working_secs`) 새 보고가 오기 전까지 작업 중이다
     #[serde(default)]
     pub delivered_at_ms: Option<u64>,
     #[serde(default)]
@@ -228,10 +228,9 @@ const BLOCKED_DEBOUNCE_MS: u64 = 30_000;
 const NOT_READY_MS: u64 = 60_000;
 /// 진행 보고가 「작업 중」을 정하는 시간(herdr-projects progress `ACTIVITY_TTL_MS`)
 const ACTIVITY_TTL_MS: u64 = 300_000;
-/// brief를 보낸 뒤 작업 중으로 치는 시간. herdr-projects ticker는 「안내를 보낸 tick은 작업 중」(`delivered`)이고 다음
-/// tick(`TICK` 15초)에야 묶음을 센다: 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 그 tick을
-/// 시간으로 옮겼다. 그 사이 새 보고가 오면 더 기다리지 않는다.
-const DELIVERED_WORKING_MS: u64 = 15_000;
+// brief를 보낸 뒤 작업 중으로 치는 시간은 host.toml `[projects] delivered_working_secs`(기본 15초)다. herdr-projects ticker는
+// 「안내를 보낸 tick은 작업 중」(`delivered`)이고 다음 tick(`TICK` 15초)에야 묶음을 센다: 방금 일을 받은 agent는 아직 쉼으로
+// 읽히기 때문이다. aaa는 사건마다 세므로 그 tick을 시간으로 옮겼다. 그 사이 새 보고가 오면 더 기다리지 않는다.
 /// agent가 사람을 기다린다고 알리는 진행 보고 문구(`aaa report --activity 'Waiting for you'`, herdr-projects `WAITING`)
 pub(crate) const WAITING: &str = "Waiting for you";
 
@@ -241,6 +240,18 @@ pub(crate) const WAITING: &str = "Waiting for you";
 /// 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
 /// 진행을 보고하는 agent의 새 보고는 `Done`일 때만 검토 대기다(5번 줄, plan §8.85).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
+    let delivered_ms = aaa_config::ProjectsSection::default().delivered_working_secs * 1000;
+    thread_group_with(r, pane_exists, agent, now_ms, delivered_ms)
+}
+
+/// `thread_group`과 같고, brief 뒤 작업 중으로 치는 시간(밀리초)을 설정에서 받는다(`thread_view`)
+pub(crate) fn thread_group_with(
+    r: &ThreadRec,
+    pane_exists: bool,
+    agent: Option<&AgentStatus>,
+    now_ms: u64,
+    delivered_ms: u64,
+) -> ThreadGroup {
     use AgentActivity as A;
     let state = agent.map(|a| a.activity);
     let state_ms = agent.map_or(0, |a| now_ms.saturating_sub(a.since_ms));
@@ -294,8 +305,8 @@ pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&Agen
     if (new_report || (has_report && pr_open)) && !prompt_pending && state != Some(A::Working) && !unfinished {
         return ThreadGroup::ReadyForReview;
     }
-    // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`DELIVERED_WORKING_MS`)
-    let just_delivered = r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < DELIVERED_WORKING_MS)
+    // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`delivered_ms`)
+    let just_delivered = r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < delivered_ms)
         && r.report_hash == r.delivered_report;
     if matches!(state, Some(A::Working | A::Question)) || prompt_pending || self_working || just_delivered {
         return ThreadGroup::Working;
@@ -486,7 +497,8 @@ impl Host {
 
     pub(crate) fn thread_view(&self, r: &ThreadRec) -> ThreadView {
         let (pane_exists, agent) = self.thread_live(r);
-        let group = thread_group(r, pane_exists, agent.as_ref(), aaa_common::util::now_ms());
+        let delivered_ms = self.cfg.projects.delivered_working_secs * 1000;
+        let group = thread_group_with(r, pane_exists, agent.as_ref(), aaa_common::util::now_ms(), delivered_ms);
         ThreadView {
             project: r.project.clone(),
             id: r.id.clone(),
@@ -1615,6 +1627,8 @@ mod tests {
         assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::Working);
         let later = ThreadRec { delivered_at_ms: Some(NOW - 16_000), ..open_thread() };
         assert_eq!(g(&later, None), ThreadGroup::Idle);
+        // 창 길이는 설정을 따른다(host.toml `[projects] delivered_working_secs`)
+        assert_eq!(thread_group_with(&t, true, None, NOW, 4_000), ThreadGroup::Idle);
         // 새 보고가 오면 기다리지 않는다: 검토 대기, 확인하면 쉼
         let reported = with_report(t);
         assert_eq!(g(&reported, None), ThreadGroup::ReadyForReview);
