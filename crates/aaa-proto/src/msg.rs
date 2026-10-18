@@ -17,7 +17,7 @@ use crate::orch::{
     OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
     ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick};
 
 use crate::version::Version;
 
@@ -1628,10 +1628,16 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
-    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다.
+    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다. `choice`(예·아니오) 대신 `pick`이면 화면 선택 창
+    /// `menu`(그 id)에 답한다(plan §8.164)
     QuestionAnswer {
         id: String,
+        #[serde(default)]
         choice: String,
+        #[serde(default)]
+        menu: Option<String>,
+        #[serde(default)]
+        pick: Option<MenuPick>,
     },
     /// thread agent에 메시지를 보낸다(전달을 모르면 다시 보내지 않는다)
     ThreadMessage {
@@ -2254,7 +2260,19 @@ mod tests {
         );
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
-        assert!(FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into() }.needs_control());
+        assert!(
+            FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
+                .needs_control()
+        );
+        assert!(
+            FrontRequest::QuestionAnswer {
+                id: "q".into(),
+                choice: String::new(),
+                menu: Some("m".into()),
+                pick: Some(MenuPick::Custom { text: "x".into() })
+            }
+            .needs_control()
+        );
     }
 
     #[test]
@@ -2284,6 +2302,19 @@ mod tests {
         assert!(matches!(
             serde_json::from_value::<FrontRequest>(v).unwrap(),
             FrontRequest::ThreadMessage { mode: MessageMode::Queue, .. }
+        ));
+        // 1.28 front의 예·아니오 답(선택 창 답 없음)과 1.28 host의 질문(선택 창 없음)
+        assert_eq!(
+            serde_json::from_value::<FrontRequest>(json!({"op":"question_answer","id":"q","choice":"yes"})).unwrap(),
+            FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
+        );
+        let v = json!({"id":"q","pane":"p","machine":"mac-a","project":null,"thread":null,"question_kind":"permission",
+            "text":"t","options":["yes","no"],"state":"open","answer":null,"created_at_ms":1});
+        assert_eq!(serde_json::from_value::<QuestionView>(v).unwrap().menu, None);
+        let v = json!({"op":"question_answer","id":"q","menu":"m","pick":{"by":"options","indices":[0,2]}});
+        assert!(matches!(
+            serde_json::from_value::<FrontRequest>(v).unwrap(),
+            FrontRequest::QuestionAnswer { pick: Some(MenuPick::Options { .. }), .. }
         ));
     }
 }

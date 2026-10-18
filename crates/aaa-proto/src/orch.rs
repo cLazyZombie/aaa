@@ -256,6 +256,38 @@ pub enum QuestionState {
     Gone,
 }
 
+/// 화면에서 읽은 선택 창(herdr-web-ui `InteractivePrompt`, plan §8.164). `id`는 내용(커서·체크 상태 빼고)의 hash라,
+/// 답할 때 화면을 다시 읽어 다르면 거절한다(그 사이 바뀐 질문에 잘못 답하지 않는다).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct QuestionMenu {
+    pub id: String,
+    /// question(AskUserQuestion)·approval(도구 승인)·plan(계획 승인)·menu(여러 질문의 검토)
+    pub kind: String,
+    pub title: String,
+    pub question: String,
+    /// 참고 글(명령·계획·검토할 답)
+    pub body: Option<String>,
+    pub options: Vec<MenuOption>,
+    pub multi_select: bool,
+    /// 「직접 쓰기」 자리. `options.len()`이면 그 줄은 `options`에 없다(Claude 질문의 「Type something.」)
+    pub custom_option_index: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MenuOption {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+/// 선택 창 답(참고 `PromptAnswer`): 하나 고르기·여러 개 고르기·직접 쓰기 가운데 하나
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum MenuPick {
+    Option { index: u32 },
+    Options { indices: Vec<u32> },
+    Custom { text: String },
+}
+
 /// 확인창 질문(§8.4). 답은 host가 세션·상태를 다시 확인한 뒤 adapter 키 입력으로 보낸다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuestionView {
@@ -273,6 +305,9 @@ pub struct QuestionView {
     pub answer: Option<String>,
     #[ts(type = "number")]
     pub created_at_ms: u64,
+    /// 화면에서 읽은 선택 창(못 읽었으면 None: 그때는 `options`의 예·아니오로 답한다)
+    #[serde(default)]
+    pub menu: Option<QuestionMenu>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
@@ -648,6 +683,7 @@ mod tests {
             state: QuestionState::Open,
             answer: None,
             created_at_ms: 1,
+            menu: None,
         };
         let m = MessageView {
             id: "m-1".into(),

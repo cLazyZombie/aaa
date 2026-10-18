@@ -1064,7 +1064,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 QuestionCmd::List { all } => FrontRequest::Questions { all },
-                QuestionCmd::Answer { id, choice } => FrontRequest::QuestionAnswer { id, choice },
+                QuestionCmd::Answer { id, choice } => {
+                    FrontRequest::QuestionAnswer { id, choice, menu: None, pick: None }
+                }
             },
         ),
         Cmd::Attach { workspace } => {

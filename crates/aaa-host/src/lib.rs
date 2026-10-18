@@ -24,6 +24,7 @@ mod output;
 mod pr;
 mod prefs;
 mod project;
+mod prompt;
 mod prompt_box;
 mod push;
 mod restore;
@@ -335,6 +336,8 @@ pub struct Host {
     collect_lock: tokio::sync::Mutex<()>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
+    /// 질문 저장과 화면 선택 창 붙이기(읽고 쓰기)를 차례로: 답한 질문을 선택 창 붙이기가 다시 열지 않는다
+    question_lock: std::sync::Mutex<()>,
     /// 웹 화면들이 함께 쓰는 설정과 고정(prefs.rs). events 연결마다 구독한다
     pub(crate) preferences: prefs::Store,
     /// 취소한 기기 id. 그 기기의 열린 WebSocket(events·pane)이 이것을 듣고 바로 닫는다(§6.4)
@@ -506,6 +509,7 @@ impl Host {
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
+            question_lock: std::sync::Mutex::new(()),
             preferences,
             device_revoked: broadcast::channel(64).0,
             revoked_devices: Mutex::new(Default::default()),
@@ -1103,9 +1107,11 @@ impl Host {
                 self.thread_keys(&project, &thread, &keys, text, actor).await
             }
             FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
-            FrontRequest::QuestionAnswer { id, choice } => {
-                self.answer(&id, &choice, actor).await.map(FrontResponse::Question)
+            FrontRequest::QuestionAnswer { id, choice, menu, pick } => match (menu, pick) {
+                (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
+                _ => self.answer(&id, &choice, actor).await,
             }
+            .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }

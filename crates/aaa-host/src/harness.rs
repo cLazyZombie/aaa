@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use aaa_proto::{
     AgentActivity, AgentRequest, AgentStatus, B64, BriefState, DeliveryState, ErrorBody, ErrorCode, HarnessEvent,
-    MessageMode, MessageView, QuestionState, QuestionView, ThreadStatus,
+    MenuPick, MessageMode, MessageView, QuestionMenu, QuestionState, QuestionView, ThreadStatus,
 };
 use tokio::sync::oneshot;
 
@@ -24,6 +24,9 @@ use crate::{Host, err};
 
 /// 질문에 답할 때 선택 창이 화면에 그려지기를 기다리는 시간
 const MENU_WAIT: Duration = Duration::from_secs(3);
+/// 선택 창 답: 옮긴 커서가 화면에 보이기를 기다리는 상한(참고 herdr-web-ui `SETTLE_MS`)과 키 사이 틈(참고 30ms)
+const SETTLE: Duration = Duration::from_millis(1500);
+const STEP_GAP: Duration = Duration::from_millis(30);
 /// 입력을 받았다는 사건: 화면 감지의 작업 중·질문(herdr-projects `--until working --until blocked`), 옛 agent의 turn_start
 const ACCEPTED: &[&str] = &["working", "question", "turn_start"];
 
@@ -358,7 +361,10 @@ impl Host {
             Some(AgentActivity::Question) if answered_block || !running => {}
             Some(AgentActivity::Question) => {
                 let kind = ev.question_kind.clone().unwrap_or_else(|| "permission".into());
-                self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
+                let q = self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
+                if q.menu.is_none() {
+                    self.read_menu(q.id, ev.session.clone());
+                }
             }
             Some(AgentActivity::Working) | Some(AgentActivity::Idle) | Some(AgentActivity::Exited) => {
                 self.close_questions_of(&ev.session);
@@ -388,6 +394,11 @@ impl Host {
     }
 
     pub(crate) fn save_question(&self, q: &QuestionView) {
+        let _order = self.question_lock.lock().unwrap();
+        self.save_question_locked(q);
+    }
+
+    fn save_question_locked(&self, q: &QuestionView) {
         if q.state == QuestionState::Answered
             && let Some(p) = self.inner.lock().unwrap().panes.get_mut(&q.pane)
         {
@@ -432,6 +443,7 @@ impl Host {
             state: QuestionState::Open,
             answer: None,
             created_at_ms: aaa_common::util::now_ms(),
+            menu: None,
         };
         self.save_question(&q);
         if let Some(r) = &rec {
@@ -496,6 +508,125 @@ impl Host {
             self.flow(&r, "question_answered", None, format!("{} → {choice}", q.id));
         }
         Ok(q)
+    }
+
+    /// 열린 질문에 화면 선택 창을 붙인다(plan §8.164). hook 사건이 화면보다 먼저 올 수 있어 `MENU_WAIT`까지 다시 본다.
+    /// 못 읽으면(모르는 창) 그대로 두고 예·아니오로 답한다
+    fn read_menu(self: &Arc<Self>, id: String, pane: String) {
+        let h = self.clone();
+        tokio::spawn(async move {
+            let Ok((pid, mid)) = h.resolve_pane(&pane) else { return };
+            let until = Instant::now() + MENU_WAIT;
+            loop {
+                let lines = h.screen_lines(&mid, &pid).await.unwrap_or_default();
+                if let Some(p) = crate::prompt::parse(&lines) {
+                    h.set_menu(&id, Some(p.menu));
+                    return;
+                }
+                if Instant::now() >= until {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        });
+    }
+
+    /// 아직 열린 질문의 선택 창을 바꾼다(그 사이 답했거나 닫혔으면 그대로)
+    fn set_menu(&self, id: &str, menu: Option<QuestionMenu>) {
+        let _order = self.question_lock.lock().unwrap();
+        if let Some(mut q) = self.questions(false).into_iter().find(|q| q.id == id)
+            && q.menu != menu
+        {
+            q.menu = menu;
+            self.save_question_locked(&q);
+        }
+    }
+
+    /// 화면 선택 창에 답한다(참고 herdr-web-ui `handlePromptRequest`). 화면을 다시 읽어 카드가 본 그 창(같은 id)일 때만
+    /// 키를 보낸다. 옮기기는 되돌릴 수 있지만 처음 저지르는 키(Enter·글·체크)는 화면이 그 창과 옮긴 줄의 커서를 다시
+    /// 보인 뒤에 보낸다: 그 사이 터미널에서 답해 다른 창이 떴으면 그 창이 이 Enter를 받는다. 그 뒤 키는 창이 바뀌는
+    /// 중이라 보지 않고 보낸다
+    pub(crate) async fn answer_menu(
+        self: &Arc<Self>,
+        id: &str,
+        menu_id: &str,
+        pick: MenuPick,
+        actor: &str,
+    ) -> Result<QuestionView, ErrorBody> {
+        let mut q = self
+            .questions(true)
+            .into_iter()
+            .find(|q| q.id == id)
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("질문이 없다: {id}")))?;
+        if q.state != QuestionState::Open {
+            return Err(err(ErrorCode::BadRequest, format!("이미 닫힌 질문이다({:?})", q.state)));
+        }
+        let (pid, mid) = self.resolve_pane(&q.pane)?;
+        if let Err(e) = self.check_running(&pid) {
+            q.state = QuestionState::Gone;
+            self.save_question(&q);
+            return Err(e);
+        }
+        let changed = || err(ErrorCode::BadRequest, "화면의 질문이 바뀌었다. 새 질문을 보고 다시 고른다");
+        let shown = crate::prompt::parse(&self.screen_lines(&mid, &pid).await.unwrap_or_default());
+        let Some(p) = shown.filter(|p| p.menu.id == menu_id) else {
+            // 카드가 낡았다: 지금 화면의 창(없으면 예·아니오)으로 바꿔 둔다
+            let now = crate::prompt::parse(&self.screen_lines(&mid, &pid).await.unwrap_or_default());
+            self.set_menu(id, now.map(|p| p.menu));
+            return Err(changed());
+        };
+        let steps = crate::prompt::answer_steps(&p, &pick).map_err(|e| err(ErrorCode::BadRequest, e))?;
+        let conn = self.live_conn(&mid)?;
+        let (mut cursor, mut moved, mut committed) = (p.selected as isize, false, false);
+        for (n, step) in steps.iter().enumerate() {
+            let walk = match step {
+                crate::prompt::Step::Down => Some(1),
+                crate::prompt::Step::Up => Some(-1),
+                _ => None,
+            };
+            if walk.is_none() && !committed && moved && !self.on_row(&mid, &pid, menu_id, cursor).await {
+                return Err(changed());
+            }
+            conn.request(AgentRequest::Input { session: pid.clone(), data: B64(step.bytes()) }).await?;
+            match walk {
+                Some(d) => {
+                    moved = true;
+                    cursor = (cursor + d).max(0);
+                }
+                None => committed = true,
+            }
+            if n + 1 < steps.len() {
+                tokio::time::sleep(STEP_GAP).await;
+            }
+        }
+        let said = crate::prompt::describe(&p.menu, &pick);
+        {
+            let _order = self.question_lock.lock().unwrap();
+            q.state = QuestionState::Answered;
+            q.answer = Some(said.clone());
+            q.menu = Some(p.menu);
+            self.save_question_locked(&q);
+        }
+        self.db.audit(actor, "question_answer", &format!("{} {said}", q.id));
+        if let Some(r) = self.thread_of_pane(&q.pane) {
+            self.flow(&r, "question_answered", None, format!("{} → {said}", q.id));
+        }
+        Ok(q)
+    }
+
+    /// 화면이 그 창(같은 id)을 커서가 `row`에 있는 채로 보일 때까지 기다린다(`SETTLE`까지)
+    async fn on_row(&self, mid: &str, pid: &str, menu_id: &str, row: isize) -> bool {
+        let until = Instant::now() + SETTLE;
+        loop {
+            let lines = self.screen_lines(mid, pid).await.unwrap_or_default();
+            if crate::prompt::parse(&lines).is_some_and(|p| p.menu.id == menu_id && p.selected as isize == row) {
+                return true;
+            }
+            if Instant::now() >= until {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     // ───────────── 입력(brief 안내·메시지) ─────────────
