@@ -1,4 +1,4 @@
-//! 사람만 하는 일의 문(plan §8.19·§8.162): routine 명령 승인, 감독자 설치, profile·safety 바꾸기.
+//! 사람만 하는 일의 문(plan §8.19·§8.163): routine 명령 승인, 감독자 설치, profile·safety 바꾸기.
 //!
 //! - aaa 세션 안(`AAA_SESSION_ID`·`AAA_HOOK_SOCK`)이면 거부한다: coordinator·thread와 그 도구가 대신하지 못하게.
 //! - 표준 입력이 터미널이 아니면 거부한다: agent의 셸 도구는 터미널 없이 명령을 돌린다(herdr-projects `require_person`).

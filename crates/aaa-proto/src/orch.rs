@@ -90,7 +90,7 @@ pub struct ThreadPrepare {
     pub base: Option<String>,
     pub profile: String,
     pub brief: String,
-    /// thread를 띄울 때 safety(plan §8.162). `launch_safety.v1`을 알린 agent에만 보낸다
+    /// thread를 띄울 때 safety(plan §8.163). `launch_safety.v1`을 알린 agent에만 보낸다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<LaunchSafety>,
 }

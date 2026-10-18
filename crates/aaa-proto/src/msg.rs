@@ -576,7 +576,7 @@ pub enum AgentRequest {
         launch: Launch,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
-        /// profile을 다시 풀 때 더할 safety(plan §8.162, `launch_safety.v1`을 알린 agent에만)
+        /// profile을 다시 풀 때 더할 safety(plan §8.163, `launch_safety.v1`을 알린 agent에만)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         safety: Option<crate::LaunchSafety>,
     },

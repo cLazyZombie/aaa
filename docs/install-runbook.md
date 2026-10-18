@@ -44,7 +44,7 @@ mode = "launchd"                   # 운영: host가 agent를 띄우지 않는�
 root = ""                          # 기본 ~/.aaa/projects. herdr-projects 폴더와 다른 곳
 ```
 
-- thread가 쓸 profile·yolo·신뢰 창·routine 명령은 사람만 바꾸는 safety 설정이다. 파일을 고치지 말고 aaa 밖 터미널에서 명령으로 바꾼다(herdr-projects와 같다, plan §8.162):
+- thread가 쓸 profile·yolo·신뢰 창·routine 명령은 사람만 바꾸는 safety 설정이다. 파일을 고치지 말고 aaa 밖 터미널에서 명령으로 바꾼다(herdr-projects와 같다, plan §8.163):
   - `aaa safety show --global`·`aaa safety show <프로젝트>`: 지금 값과 출처
   - `aaa profile allow threads claude codex [--project <프로젝트>]`: thread가 쓸 수 있는 profile(없으면 모두)
   - `aaa profile default threads claude`: `thread start`에 profile이 없을 때(프로젝트 `thread_profile`이 먼저)

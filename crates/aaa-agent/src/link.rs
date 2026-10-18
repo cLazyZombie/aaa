@@ -85,7 +85,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // ask_anew.v1: 막힘에 입력이 간 뒤 화면에 남은 확인창을 같은 글이어도 다시 알린다(`detect::Watch::input_sent`).
         // host는 그 질문을 답한 질문의 늦은 사건으로 거르지 않는다
         // dir.v1: 폴더 보기 `DirList`(plan §8.148)
-        // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.162),
+        // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.163),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
         features: vec![
             "terminal.v1".into(),

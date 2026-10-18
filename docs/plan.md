@@ -216,7 +216,7 @@ flowchart LR
 
 | 경계 | 계약 | transport | 인증 | 재연결 | 버전 |
 |---|---|---|---|---|---|
-| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TCP+TLS, 브라우저 HTTPS(serve) → `127.0.0.1` HTTP·WS | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.163) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
+| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TCP+TLS, 브라우저 HTTPS(serve) → `127.0.0.1` HTTP·WS | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
 | host ↔ agent | Agent link | 로컬은 UDS, 원격은 TCP+TLS 1.3. 연결은 agent가 연다 | 상호 고정 키(자체 서명 인증서 fingerprint pinning) | backoff+jitter, outbox 재전송, command ID로 결과 조회 | major.minor, host가 agent N-1 minor 지원 |
 | agent ↔ session host | Session IPC(내부) | 세션별 UDS/Named Pipe | peer UID/SID + 세션 token | agent 재시작 뒤 registry로 재접속 | 내부 버전. 이전 session host와 호환 |
 | agent pane ↔ agent | Hook IPC | UDS/Named Pipe | 세션·boot ID에 한정한 token | 없음(bounded JSON 한 건) | hook 버전 |
@@ -336,7 +336,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 
 ### 6.2 Front 연결
 
-- **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 host가 연결한 프로세스(peer pid의 조상·세션)로 어느 pane 안인지 판정하고 그 pane의 역할로 범위를 정한다. 일반 thread와 사후 평가자(§8.13)는 보기 권한이다. 처음 적은 「세션·역할 범위 token」은 두지 않았다(§8.25 세션 역할, §8.163 host 판정).
+- **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 host가 연결한 프로세스(peer pid의 조상·세션)로 어느 pane 안인지 판정하고 그 pane의 역할로 범위를 정한다. 일반 thread와 사후 평가자(§8.13)는 보기 권한이다. 처음 적은 「세션·역할 범위 token」은 두지 않았다(§8.25 세션 역할, §8.164 host 판정).
 - **다른 기기의 TUI:** TCP+TLS로 붙는다. 웹과 같은 장치 모델을 쓴다(장치 키 pairing, reader/controller 역할).
 - **브라우저:** §6.3의 HTTPS 주소로 붙는다.
 
@@ -622,7 +622,7 @@ host 프로젝트 폴더 구성:
 - 채택된 개선의 구현은 coordinator가 정한다. 평가자 자신의 worktree에서 고쳐 일반 착지 절차를 밟게 할 수도 있고(t-0250 방식), 별도 thread를 시작할 수도 있다.
 
 **금지.**
-- 평가자는 다른 agent에 직접 지시하지 않는다. 평가자 세션 안의 CLI는 다른 thread에 대한 `thread message`·`thread start`·`question answer`·`pane run`·`pane send-text`·`pane send-keys`가 거부된다(host가 연결한 프로세스로 pane을 판정하고 그 role로 정한다, §8.163).
+- 평가자는 다른 agent에 직접 지시하지 않는다. 평가자 세션 안의 CLI는 다른 thread에 대한 `thread message`·`thread start`·`question answer`·`pane run`·`pane send-text`·`pane send-keys`가 거부된다(host가 연결한 프로세스로 pane을 판정하고 그 role로 정한다, §8.164).
 - 평가자는 사건·보고·로그를 읽고, 자기 작업 폴더와 평가 기록만 쓴다.
 
 **단계.** MVP 필수는 아니다. 그래도 막히지 않게 아래는 M1-3에 넣는다.
@@ -841,7 +841,7 @@ host 프로젝트 폴더 구성:
 - `aaa assignable <p> [--check <owner>]`: 머신마다 host 허용 목록 ∩ 그 머신 agent.toml profile. 끊긴 머신은 「모름」이다. 맨 profile은 host 로컬 머신을 본다(`thread start`의 기본 머신과 같다). 0.2.35의 ssh 조회·1시간 캐시 대신 연결된 agent에 바로 묻는다.
 - `aaa thread next <p> <id> [--line N | --add "…"]`: Next 목록은 보고서 `## Next` 줄 + `threads/<id>.next.md`. `--line N`은 그 줄을 메시지 API(대기열, 턴이 끝나면 전달)로 보낸다. 0.2.35는 바로 입력했다.
 - **`start_threads`(project.toml, propose·auto, 기본 propose):** coordinator가 따르는 안내 값이다. aaa는 강제하지 않는다(0.2.35와 같다). 동시 실행 상한은 aaa가 강제한다(`max_threads_per_machine`).
-- **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다. → 결정 20 D12(참고대로)가 바꿨다: host.toml `[safety.*]` yolo 스위치(§8.162).
+- **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다. → 결정 20 D12(참고대로)가 바꿨다: host.toml `[safety.*]` yolo 스위치(§8.163).
 - **Codex 실측(codex-cli 0.163, macOS, 10-16)**
   - 실행마다 `-c notify=…`를 주면 턴이 끝날 때 `turn_end`(마지막 답)와 `thread-id`가 온다. pane 상태가 입력 대기가 되고, `thread-id`를 harness 세션으로 써서 `thread restart --resume`이 `codex … resume <id>`로 이전 대화를 이었다.
   - `-c notify=…`는 aaa가 띄운 세션에서만 사용자 `~/.codex/config.toml`의 `notify`를 덮는다. 그래서 그 세션에서는 herdr-projects 쪽 notify가 불리지 않는다(의도한 분리다). 다른 Codex 실행은 그대로다.
@@ -872,8 +872,8 @@ host 프로젝트 폴더 구성:
   - 형식이 틀리거나 이미 받은 이름의 내용이 바뀌었으면 받지 않는다. 같은 내용당 한 번 `evaluation`·`invalid` 항목으로 알린다.
   - 평가자의 보고 자체는 `report` 항목으로 알리지 않는다.
 - **채택·보류.** `aaa evaluation adopt|hold <p> <id> <개선안…> [--note]`. 채택은 평가 기록에만 남는다(10-18 결정 기록을 없앴다, §8.101). 보류한 것은 나중에 채택할 수 있고, 채택한 것은 바꾸지 않는다. 모두 정하면 inbox 항목이 끝난다.
-- **금지(thread 범위).** 연결한 CLI가 평가자 pane 안이면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다. 처음에는 CLI가 Hello에 담은 `AAA_SESSION_ID`로 정했고, 10-18부터 host가 연결한 프로세스로 판정한다(env는 줄이는 쪽만, §8.163).
-  - 남는 한계: 같은 사용자 권한이라 OS 경계는 아니다(§8.163). 원격 머신의 평가자는 Front API에 닿지 않는다.
+- **금지(thread 범위).** 연결한 CLI가 평가자 pane 안이면 host가 그 연결을 **보기 권한(Reader)**으로 다룬다. 그래서 다른 thread에 대한 메시지·시작·질문 응답·pane 입력·채택이 거부된다. 처음에는 CLI가 Hello에 담은 `AAA_SESSION_ID`로 정했고, 10-18부터 host가 연결한 프로세스로 판정한다(env는 줄이는 쪽만, §8.164).
+  - 남는 한계: 같은 사용자 권한이라 OS 경계는 아니다(§8.164). 원격 머신의 평가자는 Front API에 닿지 않는다.
 - **표시.** 웹 header의 「평가 ● n」 badge(n = 정하지 않은 개선안, 점 색 = 평가 중·대기·세션 끝남)를 누르면 평가자 pane이 열린다. TUI 상태 줄에는 `평가 ● <p> <상태>`가 보인다(→ §8.92에서 사이드바 맨 아래 「평가」 묶음으로). `aaa evaluator open <p>`는 평가자 pane을 workspace `eval-<p>`에 두고 TUI로 연다. 나가도 평가자는 배경에서 계속 돈다. `aaa evaluator status`는 세션이 끝난 평가자를 「세션 끝남」과 다시 띄우는 명령으로 보인다.
 - **시험.** m13 `evaluator_flow`: 가짜 평가자가 착지·완료 묶음을 받아 평가 기록(정상 1, 잘못된 1)을 낸다. 확인하는 것은 다음과 같다.
   - 목록·context·pane 목록에 섞이지 않는다.
@@ -964,13 +964,13 @@ host 프로젝트 폴더 구성:
 
 §6의 「agent pane 안의 CLI 범위 token」을 세션 역할로 정했다(token은 두지 않았다).
 
-- CLI는 aaa 세션 안이면 `AAA_SESSION_ID`를 Hello에 담는다. host는 그 세션 pane의 역할을 본다. → 10-18: 어느 pane 안인지는 host가 연결한 프로세스로 판정하고, 알린 세션은 권한을 줄이는 쪽으로만 쓴다(§8.163).
+- CLI는 aaa 세션 안이면 `AAA_SESSION_ID`를 Hello에 담는다. host는 그 세션 pane의 역할을 본다. → 10-18: 어느 pane 안인지는 host가 연결한 프로세스로 판정하고, 알린 세션은 권한을 줄이는 쪽으로만 쓴다(§8.164).
   - **일반 thread(worker)와 사후 평가자:** 그 연결을 **보기 권한(Reader)**으로 다룬다. 보기(`thread show`·`context`·`events` 등)는 되고, 메시지·시작·결정·병합·pane 입력·질문 응답은 거부된다. host 머신 전용 요청(`merge land`·`routine approve`·`web pair` 등)도 거부된다.
   - **coordinator와 thread가 아닌 pane(사람의 셸):** 그대로 조작한다.
   - 감사 기록의 actor는 `worker:<세션>`·`evaluator:<세션>`이다.
 - thread는 진행률을 Front API가 아닌 hook(`aaa report`)으로 알리므로 이 제한에 걸리지 않는다. thread 규칙(brief)에 「이 세션 안의 `aaa` CLI는 보기만 된다」를 적었다.
-- **남는 한계(§8.22와 같다):** env를 지운 프로세스는 사람의 CLI와 구별되지 않는다. 같은 사용자 권한으로 도는 agent를 완전히 막는 것은 OS 사용자 분리가 필요하다. 지금은 실수로 다른 thread에 지시하는 일을 막는 수준이다. → 10-18: env를 지우거나 nohup·setsid·double fork로 떼어 내도 host가 가린다(§8.163). OS 경계가 아니라는 한계는 남는다.
-- **시험:** m13 `worker_session_cli_is_read_only`. worker 세션의 결정·메시지·pane 입력·병합 대기열은 거부되고 보기는 된다. 사람의 셸 pane 안에서는 결정이 된다. 우회 시험은 §8.163 `thread_scope_survives_env_and_detach_bypass`.
+- **남는 한계(§8.22와 같다):** env를 지운 프로세스는 사람의 CLI와 구별되지 않는다. 같은 사용자 권한으로 도는 agent를 완전히 막는 것은 OS 사용자 분리가 필요하다. 지금은 실수로 다른 thread에 지시하는 일을 막는 수준이다. → 10-18: env를 지우거나 nohup·setsid·double fork로 떼어 내도 host가 가린다(§8.164). OS 경계가 아니라는 한계는 남는다.
+- **시험:** m13 `worker_session_cli_is_read_only`. worker 세션의 결정·메시지·pane 입력·병합 대기열은 거부되고 보기는 된다. 사람의 셸 pane 안에서는 결정이 된다. 우회 시험은 §8.164 `thread_scope_survives_env_and_detach_bypass`.
 
 ### 8.26 M3 Web Push와 PWA 동작(10-17)
 
@@ -3402,7 +3402,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 옛 동작을 심으면(닫기를 보내지 않음) 「pane을 닫지 못했다: session host가 아직 닫히지 않았다」로 실패하고, 고친 판은 통과한다.
   - 시간 경계는 두지 않았다.
 
-### 8.162 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
+### 8.163 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
 
 - **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
 - **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
@@ -3432,7 +3432,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - m13 `routines`: 사람 문을 `person.rs`로 모은 뒤에도 세션 안·터미널 아님 거부와 PTY 승인.
   - 유닛: safety 층(옛 자리 포함)·local 파일이 덮기·잘못된 값은 그 값만 버림·출처 줄·toml_edit 고치기가 나머지를 둠(aaa-config `safety`), profile 이름·model·effort 검증과 add·edit·remove·기본 profile 감지(`profile_edit`), agent `safety_args_reach_builtins_and_yolo_every_harness`(옛 인자는 기본 harness의 기본 profile에만, yolo는 harness마다, argv·resume 둘 다).
 
-### 8.163 thread 범위를 host가 판정(10-18, 사용자 결정, t-0340 감사)
+### 8.164 thread 범위를 host가 판정(10-18, 사용자 결정, t-0340 감사)
 
 - **문제.** §8.25는 CLI가 env `AAA_SESSION_ID`로 알린 세션의 역할로 보기 권한을 정했다. 그래서 thread 안에서 변수만 지우면(`env -u AAA_SESSION_ID aaa …`) 사람의 CLI(Local)가 됐다(t-0340 감사, `front.rs` `serve`). §6·§8.22가 말한 「token으로 강제」와 달리 token은 없었다(그 문구를 고쳤다).
 - **참고 조사.**
@@ -3448,10 +3448,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - pid를 못 읽거나 이미 끝난 프로세스면 닫힌 쪽(보기만)이다.
   - CLI가 알린 `AAA_SESSION_ID`는 권한을 줄이는 쪽으로만 쓴다(그 세션이 thread면 보기만). 알린 세션과 판정한 pane이 다르면 경고하고 판정을 따른다. 사람 셸 pane의 세션을 대도 thread pane 안이면 보기만이다.
   - 거부 말에 까닭을 붙인다: 「…: thread 세션 안의 CLI는 보기만 한다」, 「…: 터미널도 aaa pane도 없는 떼어 낸 프로세스라 보기만 한다(사람 터미널에서 다시 실행한다)」.
-  - 판정한 pane은 actor에도 쓴다. coordinator가 변수를 지워도 actor가 `local:<client>@<pane>`이라, 사람만 하는 일(신뢰 창 답 §8.162, routine 명령 승인)을 host가 거부한다. routine 승인에는 CLI 사람 문(`person.rs`)만 있었는데 host 검사를 더했다.
+  - 판정한 pane은 actor에도 쓴다. coordinator가 변수를 지워도 actor가 `local:<client>@<pane>`이라, 사람만 하는 일(신뢰 창 답 §8.163, routine 명령 승인)을 host가 거부한다. routine 승인에는 CLI 사람 문(`person.rs`)만 있었는데 host 검사를 더했다.
 - **결정과 다름.** 사용자 결정은 「thread 세션이면 Reader」까지다. 어느 pane에서 왔는지 모르는 떼어 낸 프로세스를 보기만으로 둔 것은 더한 정책이다. 그래서 사람의 launchd 작업(셸로 감싸도)이나 `setsid -f aaa …`처럼 터미널 없이 init 밑에서 도는 aaa CLI도 보기만 된다. 사람 터미널·ssh(원격에서 명령만 보내도)·tmux pane에서는 그대로다.
 - **남는 한계.**
-  - 같은 사용자 권한이라 OS 경계는 아니다. pane 밖 데몬에 띄워 달라고 하면 사람의 터미널과 가를 수 없다. 새 터미널을 여는 tmux·`ssh localhost`·herdr·WezTerm CLI, 이미 떠 있는 tmux 서버의 `run-shell`이 그렇다. 설정 파일을 셸로 직접 고치는 것도 같다(§8.162). 실수와 손쉬운 우회(변수 지우기·nohup·setsid·double fork)를 막는 수준이다.
+  - 같은 사용자 권한이라 OS 경계는 아니다. pane 밖 데몬에 띄워 달라고 하면 사람의 터미널과 가를 수 없다. 새 터미널을 여는 tmux·`ssh localhost`·herdr·WezTerm CLI, 이미 떠 있는 tmux 서버의 `run-shell`이 그렇다. 설정 파일을 셸로 직접 고치는 것도 같다(§8.163). 실수와 손쉬운 우회(변수 지우기·nohup·setsid·double fork)를 막는 수준이다.
   - Linux에서 고아가 init 대신 subreaper(systemd --user 등)에 붙으면 「leader가 init의 자식」을 놓친다. leader가 끝난 double fork는 잡는다.
   - Windows는 세션·제어 터미널이 없어 조상만 본다. 부모가 끝나 사슬이 끊긴 프로세스는 밖(Local)이다.
   - pid 재사용: 판정하는 순간 다른 프로세스가 같은 pid를 쓰면 틀릴 수 있다. leader는 「그 pid가 여전히 자기 세션의 leader인가」로 본다.
@@ -3797,7 +3797,7 @@ primary 근거:
 | M1-4. 이미지·결과물·알림 | 4~7일 | 웹 이미지 paste(macOS 대상), 결과물 HTTPS 보기·지연 스트리밍, webhook. TUI paste는 M1 마무리, Web Push는 M3(§8.20) | 이미지 E2E(macOS), 200MB 넘는 library 보기, 질문·보고 알림 |
 | → **M1 완료 = macOS 운영 대체 가능** | 합계 28~44일 | | P0 합격 + M1 기준 + shadow 비교 |
 | M2. Windows·Linux agent 기능 합격 | 10~16일 | 감독자, ConPTY, 경로·ACL, linger, 이미지 대상, 세 OS lab | 세 OS thread·보고·이미지·단절·업데이트 E2E |
-| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only(§8.27, **10-17 구현**), PWA·Web Push(§8.23·§8.26, **10-17 구현**), TUI Ctrl+V·세 OS front clipboard(§8.28, **10-17 구현**), thread 범위(§8.25, **10-17 세션 역할로 구현**, 10-18 host 판정 §8.163) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
+| M3. 확장 | 11~19일 | 사후 평가자 기능(§8.13·§8.22, **10-17 구현**), 병합 단계 자동 실행(§8.24, **10-17 구현**), 모바일 composer·IME(§8.23, **10-17 구현**), chat read-only(§8.27, **10-17 구현**), PWA·Web Push(§8.23·§8.26, **10-17 구현**), TUI Ctrl+V·세 OS front clipboard(§8.28, **10-17 구현**), thread 범위(§8.25, **10-17 세션 역할로 구현**, 10-18 host 판정 §8.164) | 웹 headless + native, 병합 E2E. 평가자: 가짜 LLM 평가자가 착지 사건 묶음을 받아 평가 기록을 내고, 목록에 섞이지 않으며, 다른 thread 지시가 거부됨 |
 | M4. 이전·전환 | 4~7일 + 운영 대기 | inventory, shadow, pilot, 전환 gate, rollback rehearsal(**10-18 도구·pilot·rehearsal**, §8.74, [migration.md](migration.md)) | §15, 기존 작업 보존. 실제 전환·coordinator 이동은 사용자 승인 |
 
 - **합계:** P0 3~6일 + M1 28~44일 + M2~M4 25~42일 = **약 56~92 작업일**에 승인·환경 대기가 더해진다.
@@ -3903,7 +3903,7 @@ primary 근거:
 | progress 보고(`report --percent`), hook 5개 harness | 상태 사건 `progress` + adapter(Claude·Codex 먼저, 나머지 후속) | M1-3 / M3 |
 | sidebar·overview·focus·needs-you·popup | TUI·웹 표시 | M1-2 / M3 |
 | TASKS.md `(profile@machine)` 소유, `assignable`, `context` | 그대로 + `--from-task` 중복 방지(§8.21) | M1 마무리(완료) |
-| safety·yolo `launch_args`, `start_threads` propose/auto | host.toml `[safety.*]`(yolo·start_threads·trust_screens·thread_agent_args·routine_commands·thread_profiles, §8.162). 옛 자리(project.toml·`[projects]`)는 아래 층 | 10-18 참고대로(§8.162) |
+| safety·yolo `launch_args`, `start_threads` propose/auto | host.toml `[safety.*]`(yolo·start_threads·trust_screens·thread_agent_args·routine_commands·thread_profiles, §8.163). 옛 자리(project.toml·`[projects]`)는 아래 층 | 10-18 참고대로(§8.163) |
 | `threads/<id>.task.md` Follow-ups, `<id>.next.md` | thread 기록에 포함, restart 때 다시 읽기 | M1-3 |
 | `owned.json` configure journal | integration journal(§8.11) | M1-3 |
 | `launch_attempts` 3회, starting 5분 timeout | launch_state 전이 | M1-3 |
@@ -3941,7 +3941,7 @@ primary 근거:
 | 19 | 참고 소스 재사용(Windows native, manifest pin, web-ui 기능) | 반영 | §2, §5, §8.3 | |
 | 20 | 소스 분석 사실 오류 | 반영 | source-analysis.md | |
 | 21 | 라이선스 세부 | 반영 | §2, source-analysis.md | web-ui npm 의존성(node_modules 없음)은 구현 때 lockfile로 확인 |
-| 22 | 보안 세부(감사 로그·시도 제한·CSP·thread token·16MiB 동작) | 반영 | §6.4, §9, §8.25, §8.163 | thread 범위는 세션 역할로(10-17), token 없이 host가 연결한 프로세스로 판정(10-18) |
+| 22 | 보안 세부(감사 로그·시도 제한·CSP·thread token·16MiB 동작) | 반영 | §6.4, §9, §8.25, §8.164 | thread 범위는 세션 역할로(10-17), token 없이 host가 연결한 프로세스로 판정(10-18) |
 | 23 | AGENTS.md에 구조 원칙 추가 여부 | 반영 | AGENTS.md | 결정 8(정할 것 6 추천안)으로 추가 |
 | 24 | 이전 경로 공존 충돌 | 반영 | §15 | |
 | 운영-1 | 상태·알림 사건화, 자동 이어가기 | 반영 | §8.3, §8.5 | 이어가기 기본값은 정할 것 5 |
