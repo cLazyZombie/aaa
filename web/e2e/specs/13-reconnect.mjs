@@ -11,7 +11,7 @@ export default async function ({ ctl, page }) {
       (await page.getByTestId("readonly-banner").innerText()).includes("agent와 연결이 끊겼다"),
     );
     // 끊긴 머신은 머신 칸 이름 아래 「끊김」, 목록의 그 머신 줄들은 흐리고 누를 수 없다(herdr-web-ui MachineSidebar
-    // machine-state·machine-offline·inert를 줄마다, plan §8.192: 목록은 머신으로 묶지 않는다)
+    // machine-state·machine-offline·inert를 줄마다, plan §8.194: 목록은 머신으로 묶지 않는다)
     await page.getByTestId("machine-labA").locator(".machine-state-word", { hasText: "끊김" }).waitFor();
     const offline = page.locator(".machine-list li.is-offline[inert]");
     if (!(await offline.count())) throw new Error("끊긴 머신의 줄이 흐리게·누를 수 없게 되지 않았다");

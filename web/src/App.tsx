@@ -616,7 +616,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const none = () => {};
     return {
       selectAdjacentPane: (direction) => {
-        // 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 목록이 프로젝트 먼저라(plan §8.192) 머신을 넘어
+        // 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 목록이 프로젝트 먼저라(plan §8.194) 머신을 넘어
         // 목록 전체를 돈다. 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
         const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");

@@ -1305,7 +1305,7 @@ fn pick(tui: &mut Tui, needle: &str) {
     panic!("목록에 {needle}이 없다:\n{}", tui.text());
 }
 
-/// 왼쪽 사이드바(§8.35·§8.192, herdr 배치): 웹 목록처럼 프로젝트를 먼저 묶어 프로젝트 머리와 thread 두 줄(첫 줄 「id 제목」, 둘째 줄
+/// 왼쪽 사이드바(§8.35·§8.194, herdr 배치): 웹 목록처럼 프로젝트를 먼저 묶어 프로젝트 머리와 thread 두 줄(첫 줄 「id 제목」, 둘째 줄
 /// 왼쪽 상태 말·오른쪽 머신 이름), thread에 딸리지 않은 pane의 「기타」 묶음(줄에 머신 이름)이 보이고, 새 thread를 따라가며, 고르면
 /// 탭으로 열고 묶음 머리를 고르면 접는다.
 /// herdr처럼 폭과 관계없이 펼친 채(26칸) 시작한다. herdr 키: prefix b 펴기·접기(접으면 4칸 compact, 포커스는 그대로),
@@ -1554,7 +1554,7 @@ fn side_list_like_web() {
     assert!(h.screen(&right).contains("still-9"), "포커스는 나눈 오른쪽 pane 그대로");
 }
 
-/// agents 구역의 지금 pane 줄에 적힌 머신(「기타」 pane 줄은 제목 뒤에 머신 이름, §8.192)
+/// agents 구역의 지금 pane 줄에 적힌 머신(「기타」 pane 줄은 제목 뒤에 머신 이름, §8.194)
 fn current_machine(s: &Screen) -> Option<String> {
     let line = s.current()?;
     ["labA", "labB"].into_iter().find(|m| line.contains(&format!(" {m}"))).map(String::from)
@@ -1562,7 +1562,7 @@ fn current_machine(s: &Screen) -> Option<String> {
 
 /// 차이 목록 U8(herdr endpoint 줄 `handle_endpoint_machine_click`·spaces footer ` new`·`NewWorkspace`): 「+ 새 셸」 줄은
 /// 없다. 고른 머신에 새 workspace(spaces 맨 아랫줄 ` new · 머신`, `prefix shift+n`, 이름 `workspace`·`workspace-2`)와 새 탭
-/// (`prefix c`)을 연다. 목록이 프로젝트 먼저라(§8.192) 머신 머리 줄은 없고, 머신은 ` · 머신`을 누르거나 탐색 `m`으로 다음 붙은
+/// (`prefix c`)을 연다. 목록이 프로젝트 먼저라(§8.194) 머신 머리 줄은 없고, 머신은 ` · 머신`을 누르거나 탐색 `m`으로 다음 붙은
 /// 머신으로 돌려 고른다. 고른 머신은 포커스가 바뀌면 풀린다(포커스 pane의 머신). pane이 하나도 없는 원격 머신에 셸을 여는 길이다.
 #[test]
 fn new_workspace_on_picked_machine_like_herdr() {

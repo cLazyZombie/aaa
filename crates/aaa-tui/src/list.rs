@@ -1,4 +1,4 @@
-//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·§8.192·차이 목록 L1·U4~U8). herdr 사이드바처럼 위는 workspace(` spaces`, 맨 아랫줄
+//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·§8.194·차이 목록 L1·U4~U8). herdr 사이드바처럼 위는 workspace(` spaces`, 맨 아랫줄
 //! ` new`), 아래는 ` agents` 구역이다. agents는 프로젝트(사용자 말의 workspace)를 먼저 묶는다(t-0352 시안 2안): 프로젝트 머리
 //! (접기, 셈), 그 아래 thread 두 줄(첫 줄 상태 점·번호·제목, 둘째 줄 왼쪽 `state_line`·오른쪽 머신 이름), thread에 딸리지 않은
 //! pane은 맨 아래 「기타」 묶음(pane 줄에 머신 이름), 맨 아래 사후 평가자. 머신은 트리 단계가 아니라 글자로만 적는다.
@@ -714,7 +714,7 @@ pub fn render_spaces(
     placed
 }
 
-/// spaces 구역 맨 아랫줄의 누를 칸: 새 workspace ` new`, 머신이 여럿이면 그 뒤 ` · 머신`(누르면 다음 붙은 머신, §8.192),
+/// spaces 구역 맨 아랫줄의 누를 칸: 새 workspace ` new`, 머신이 여럿이면 그 뒤 ` · 머신`(누르면 다음 붙은 머신, §8.194),
 /// 전체 메뉴 `menu`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Footer {
