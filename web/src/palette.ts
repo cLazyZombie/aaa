@@ -1,10 +1,11 @@
 // 명령 팔레트의 검색·묶음(herdr-web-ui aa624cb src/lib/paletteSearch.ts·machinePalette.ts·paletteSettings.ts를 aaa 목록에 맞춰 옮김).
 // 참고는 PC마다 workspace 묶음에 pane 줄을 둔다. aaa의 workspace 자리는 머신 안 프로젝트(thread 줄)와 thread에 딸리지 않은
-// pane 묶음이고, 줄 하나는 목록 줄 하나다(sidebarModel `machineRows`: thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고를 연다).
+// pane 묶음이고, 줄 하나는 목록 줄 하나다(sidebarModel `rosterRows`: thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고를 연다).
+// 목록은 프로젝트 먼저지만(plan §8.192) 팔레트는 참고대로 PC마다 묶고, PC 안의 차례는 목록 차례(`roster`)를 따른다.
 // 찾는 점수(`fuzzyScore`)·`>` 동작만·상태 칩과 그 글자 키·동작 이름 찾기(`rankByTitle`)·최근 줄은 참고 그대로다. plan §8.132.
 import type { MachineView, PaneView, ThreadView } from "./gen/proto";
 import { knownStatus, type KnownStatus } from "./herdr/status.ts";
-import { machineRoster, paneAgentStatus, shortPath, threadKey } from "./sidebarModel.ts";
+import { paneAgentStatus, roster, shortPath, threadKey } from "./sidebarModel.ts";
 
 export type PaletteStatusFilter = "all" | Exclude<KnownStatus, "unknown">;
 
@@ -78,11 +79,11 @@ const paneTitle = (p: PaneView) => p.name || p.argv.join(" ") || p.id.slice(0, 8
 /** 붙은 머신의 목록 줄을 목록 차례로(참고 `rankMachinePanes`의 입력: 끊긴 머신의 남은 줄은 갈 곳이 아니다) */
 export function paletteTargets(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []): PaletteTarget[] {
   const targets: PaletteTarget[] = [];
+  const all = roster(machines, panes, threads, paneOrder);
   for (const m of machines) {
     if (m.connection !== "connected") continue;
-    const roster = machineRoster(m, panes, threads, paneOrder);
-    for (const project of roster.projects)
-      for (const t of roster.threads.filter((x) => x.project === project)) {
+    for (const project of all.projects)
+      for (const t of all.threads.filter((x) => x.project === project && all.machineOf(x)?.id === m.id)) {
         const pane = t.pane ? panes.find((p) => p.id === t.pane) : undefined;
         const running = pane?.state === "running";
         const path = pane?.cwd ? shortPath(pane.cwd) : "";
@@ -102,7 +103,7 @@ export function paletteTargets(machines: readonly MachineView[], panes: readonly
           search: [t.id, t.title, t.project, t.profile, t.branch ?? "", pane ? paneTitle(pane) : "", pane?.cwd ?? "", pane?.agent?.harness ?? "", m.name],
         });
       }
-    for (const p of roster.panes) {
+    for (const p of all.panes.filter((x) => x.machine_id === m.id)) {
       const path = p.cwd ? shortPath(p.cwd) : "";
       targets.push({
         key: `pane:${p.id}`,

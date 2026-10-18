@@ -71,7 +71,7 @@ export function sanitizeChatShared(raw: unknown): ChatShared {
 }
 
 /**
- * 목록 pane 줄 순서(차이 목록 L9, plan §8.186): 사람이 옮긴 차례의 `machine:pane` 열쇠(고정 열쇠와 같은 꼴). 참고는 herdr workspace
+ * 목록 pane 줄 순서(차이 목록 L9, plan §8.193): 사람이 옮긴 차례의 `machine:pane` 열쇠(고정 열쇠와 같은 꼴). 참고는 herdr workspace
  * 순서라 서버에 있고 모든 화면이 같이 본다: aaa는 그 자리를 host 공유 설정에 둔다. 열쇠가 없는 줄은 host 차례로 그 뒤에 선다
  */
 export interface SidebarShared {

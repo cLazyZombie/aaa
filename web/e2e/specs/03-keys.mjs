@@ -398,7 +398,7 @@ export default async function ({ ctl, page }) {
     const before = gots("shortkeys").length;
     // 다음 줄은 목록에서 shortkeys 바로 아래 pane 줄이다(뒤에 만든 shortplain·shortalt가 있어 끝이 아니다)
     const below = await sp.evaluate(() => {
-      const rows = [...document.querySelectorAll('[data-testid="machine-labA"] [role="button"][data-testid^="pane-"]')].map((b) => b.dataset.testid.slice(5));
+      const rows = [...document.querySelectorAll('.machine-list [role="button"][data-testid^="pane-"]')].map((b) => b.dataset.testid.slice(5));
       const at = rows.indexOf("shortkeys");
       return at < 0 ? null : (rows[at + 1] ?? null);
     });

@@ -4213,18 +4213,59 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   단계에는 시한 `STEP_LIMIT_MS` 120초(가장 긴 spec 전체가 41초)를 두었다. 옛 순서로 다시 돌리면 20초 만에 「목록 서랍 움직임 끝(다음 frame)이
   되지 않았다(페이지가 답하지 않음)」로 실패한다. 단계는 시계를 대화를 연 뒤에 멈춘다.
 
-### 8.186 목록 줄 옮기기(10-18, 차이 목록 2장 L9 247줄 나머지, t-0345 recount (b), coordinator 「참고대로」)
+### 8.192 목록을 프로젝트 먼저로, 「사람 차례」 → 「확인 필요」(10-18, t-0352, 사용자 결정 2안)
+
+- **요청.** TUI 왼쪽 agents 구역과 웹 목록이 머신 → 프로젝트 → thread로 묶여 같은 프로젝트가 머신마다 흩어졌다. 프로젝트(사용자 말로
+  workspace)로 먼저 묶고 머신은 글자로만 둔다. 시안 세 안(`.herdr-project/projects-t-0352/library/`) 가운데 사용자가 **2안**을 골랐다:
+  thread 첫 줄은 번호·제목(넓게), 둘째 줄 왼쪽 상태 말·오른쪽 머신 이름, thread에 딸리지 않은 pane은 「기타」 한 묶음에 줄마다 머신 이름.
+- **말 바꾸기.** 「사람 차례」를 모든 곳(TUI·웹 프로젝트 머리 셈, thread 상태 말, 탭 막대·thread 화면 칩, host 알림·inbox 문구, 설정 설명,
+  README·문서, 시험 기대 글)에서 「확인 필요」로 바꿨다(예: 머리 `shadow   확인 필요 2`, 둘째 줄 `확인 필요 · 확인창   mac-a`). 묶음 이름
+  (`waiting_on_you`·`WaitingOnYou`)과 testid는 그대로다.
+- **TUI(`aaa-tui::list`).**
+  - `rows`: 모든 머신의 끝나지 않은 thread(평가자 빼고)를 rank(확인 필요 → 검토 대기 → 병합 중 → 작업 중 → 쉼)·최근 바뀐 순으로 늘어놓고
+    처음 나온 프로젝트 차례로 묶는다(가장 급한 thread의 프로젝트가 먼저, 이름순이 아니다). 그 아래 「기타」(`Row::Other`)에 thread pane이
+    아닌 pane을 머신 차례로(머신 안은 받은 차례), 맨 아래 「평가」는 그대로. 모르는 머신의 thread는 뺀다. 끝난 pane을 머신 맨 아래로 내리던
+    규칙은 웹과 같게 뺐다.
+  - 줄: 프로젝트 머리 ` ▾ 이름` + 오른쪽 셈(` · ` 단위로 덜어 냄), thread 첫 줄 `● t-0001 제목`(번호 흐리게, ` · ` 없음, 넘치면 끝에서
+    「…」), 둘째 줄 `   상태 말 · 사실` + 오른쪽 머신(상태 말이 먼저: 머신은 남는 칸에 「…」로 줄고 네 칸도 안 남으면 빠진다, 끊긴 머신은
+    `이름 끊김` 노랑), 「기타」 pane 줄 `· 제목 머신 배지`(제목이 먼저 줄어든다).
+  - 접기: 프로젝트 머리와 「기타」를 고를 수 있고 Enter·누르기로 접고 편다(접힌 묶음도 지금 pane의 thread·pane은 남는다, 웹과 같다).
+    접힘은 TUI 프로세스 안에만 둔다. t-0351 「접기 기억」 저장소와 잇는 것은 뒤 작업이다.
+  - 머신 머리 줄이 없어져 새 탭·workspace를 열 머신 고르기(§8.177)를 옮겼다: 탐색 `m`과 맨 아랫줄 ` new · 머신`의 머신 이름 누르기가 다음
+    붙은 머신으로 돈다(끊긴 머신은 건너뛰고, 붙은 것이 없으면 「붙은 머신이 없다」). 탐색 숫자 1~9는 묶음 머리를 빼고 센다.
+  - TUI는 웹 「기타」의 사람이 옮긴 차례(`paneOrder`, §8.193)를 받지 않는다(host 차례 그대로).
+- **웹.** `sidebarModel.roster`가 같은 규칙으로 thread·프로젝트·「기타」 pane을 내고(사람이 옮긴 `paneOrder`가 머신을 넘어 먼저), 목록
+  (`Sidebar` `Roster`)·「이전·다음 패널」 단축키(`rosterRows`, 끊긴 머신 줄은 뺀다)·명령 팔레트가 같은 차례를 본다. 목록은 맨 앞 고정 카드,
+  프로젝트 묶음(`project-<이름>`, 둘째 줄 셈, 확인 필요가 있으면 빨강), 「기타」 묶음(`other-group`, 접힘 `aaa:other-collapsed`) 차례다.
+  thread 둘째 줄은 `thread-state`와 `thread-machine`(끊기면 「이름 끊김」), pane 줄 둘째 줄은 `머신 · 폴더`다. 끊긴 머신의 줄은 줄마다 흐리고
+  `inert`다. 머신 머리(이름·host·연결 점·`+` 새 pane·끊김·점검 이상)는 목록 아래 머신 칸(`machine-strip`)으로 옮겼고 그 안에 줄은 없다.
+  한 줄 보기(설정 「목록 줄」 한 줄)의 thread 줄은 상태 말만이다(머신은 두 줄 보기에서).
+- **FRONT_API.** 바꾸지 않았다(host가 이미 보내는 머신·pane·thread로 묶는다).
+- **시험.** TUI 유닛 `rows_group_threads_by_project_across_machines`(다른 머신 pane의 thread가 같은 묶음, 프로젝트 차례가 이름순이 아님,
+  「기타」 머신 차례, 끝난·평가자 빼기, 접기와 지금 pane 남기기), `thread_rows_render_two_lines_project_first`(줄 글·색, 둘째 줄 머신이
+  먼저 줄고 빠짐, 끊김 노랑, 25칸 머리 셈), `pane_row_cuts_the_title_before_the_machine`, `new_workspace_machine_like_herdr_endpoint`(바닥
+  ` new · 머신` 누를 칸, 도는 고르기가 끊긴 머신을 건너뜀), `sidebar_like_herdr`. TUI harness `side_list_like_web`(` ▾ demo`·` ▾ 기타`, 둘째 줄 끝
+  머신 이름, 머리 접기, 탐색 `m` 뒤 `prefix c`), `new_workspace_on_picked_machine_like_herdr`(바닥 머신 이름 누르기·탐색 `m`). 웹 유닛
+  `roster.test.mjs`, 웹 E2E 12 「목록은 프로젝트 먼저」(머리 셈, thread 둘째 줄 상태 말·머신, 머신 칸에 줄 없음, 「기타」 줄 머신·접기·펴기),
+  13 「agent 끊김」(목록의 끊긴 머신 줄이 줄마다 흐리고 inert)·「재부팅」(목록 차례), 03·12의 testid를 2안에 맞췄다.
+- **결함 심기.** TUI 열하나 모두 실패: 접기 무시, 접혀도 지금 thread를 남기지 않음, 둘째 줄이 머신을 지키고 상태 말을 자름, pane 제목 먼저
+  줄이기 없음, 도는 고르기가 끊긴 머신도 고름, 「기타」가 머신 차례를 무시, thread pane이 「기타」에도, 프로젝트 이름순(이 셋은 처음엔 살아남아
+  시험을 고쳤다: 셋째 머신, 급한 프로젝트가 이름순으로 뒤인 차림), 머리 고르기가 접지 않음·탐색 `m` 없음·바닥 머신 누르기 없음(harness).
+  thread 첫 줄 제목 「먼저 줄이기」는 오른쪽 글이 없어 끝자르기와 같은 결과라(심어도 살아남음) 갈래를 지웠다. 웹 유닛 다섯 모두 실패: 머신
+  먼저 묶기, 끊긴 머신 pane도 단축키에, 옮긴 차례 무시, thread pane도 「기타」에, 「기타」가 받은 차례. 웹 E2E는 아래 줄에 적는다.
+
+### 8.193 목록 줄 옮기기(10-18, 차이 목록 2장 L9 247줄 나머지, t-0345 recount (b), coordinator 「참고대로」)
 
 - **참고.** herdr-web-ui(aa624cb) `Sidebar.tsx`: workspace 줄을 마우스는 끌어 놓기(`dropOrder`: 아래로 옮기면 놓은 줄 뒤, 위로면 앞), 키보드는
   Alt+↑↓(`onRowKeyDown`·`moveVisible`: 보이는 이웃 너머로), 손가락은 길게 눌러 들고 끌어 놓기(`lib/touchReorder.ts`, 터치 화면은 브라우저 끌기를
   끈다)로 옮긴다. 고정한 줄은 옮기지 않는다. 순서는 herdr 서버의 workspace 순서라(`moveWorkspace`) 모든 화면이 같이 본다.
 - **aaa가 달랐던 것.** 고정(§8.103)만 있고 옮기기는 없었다.
-- **고침.** aaa 목록은 참고의 workspace 줄 자리에 pane 줄을 둔다(Sidebar.tsx 머리 주석). 그래서 머신 묶음의 고정하지 않은 pane 줄끼리 옮긴다
-  (thread 줄은 묶음 차례를 따른다, L2). 끌기·Alt+↑↓·길게 누르기는 참고 쓰임 그대로이고 `touchReorder.ts`는 그대로, `placeBlock`만 옮겼다.
+- **고침.** aaa 목록은 참고의 workspace 줄 자리에 pane 줄을 둔다(Sidebar.tsx 머리 주석). 그래서 「기타」 묶음(§8.192)의 고정하지 않은 pane
+  줄끼리 머신을 넘어 옮긴다(thread 줄은 묶음 차례를 따른다, L2). 끌기·Alt+↑↓·길게 누르기는 참고 쓰임 그대로이고 `touchReorder.ts`는 그대로, `placeBlock`만 옮겼다.
   CSS(`is-dragging`·`is-lifted`·`data-drop`)는 이미 옮긴 Sidebar.css다.
 - **순서를 둘 곳.** aaa에는 herdr 서버 순서가 없다. 모든 웹 화면이 같이 보는 자리는 host 공유 설정 문서(§8.79)라 거기에 공유 이름 `paneOrder`
   (고정과 같은 `machine:pane` 열쇠, 사람이 옮긴 차례)를 더했다. 설정마다 마지막 쓰기가 이기는 동기화를 그대로 탄다. 옮긴 적 없는 pane은
-  host 차례로 그 뒤에 선다. `machineRoster`가 차례를 적용해 목록·「이전·다음 패널」 단축키·명령 팔레트가 같은 차례를 본다. host는 공유 이름 목록에
+  host 차례로 그 뒤에 선다. `roster`(§8.192)가 차례를 적용해 목록·「이전·다음 패널」 단축키·명령 팔레트가 같은 차례를 본다. host는 공유 이름 목록에
   하나를 더했을 뿐 값의 뜻은 모른다(계약·FRONT_API 그대로). 참고의 순서는 herdr에 보내는 요청이라 조작 권한 기기만 옮긴다.
 - **참고와 다른 곳.** 순서는 웹 목록의 것이다. TUI 탭 막대·`aaa pane list`의 차례는 바꾸지 않는다(herdr는 서버 순서라 TUI도 같다).
 - **시험.** 웹 E2E 12 「줄 옮기기」: 세 셸 pane을 Alt+↑·Alt+↓(focus가 옮긴 줄에 남음)와 끌기로 옮기면 그 차례가 host로 가고(`preferences_set`의

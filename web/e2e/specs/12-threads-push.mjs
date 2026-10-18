@@ -700,7 +700,7 @@ export default async function ({ page }) {
     await forgot;
     await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
     // 5. 프로젝트 머리: 프로젝트 thread 보기(끝난 것까지, plan §8.89)
-    await page.getByTestId("project-labA-demo").locator(".workspace-header").click({ button: "right" });
+    await page.getByTestId("project-demo").locator(".workspace-header").click({ button: "right" });
     if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["프로젝트 thread 보기", "접기"])) throw new Error(`프로젝트 메뉴 ${await menuItems(page)}`);
     const toDemo = hashIs(page, "#project=demo");
     await page.getByRole("menuitem", { name: "프로젝트 thread 보기" }).click();
@@ -717,6 +717,29 @@ export default async function ({ page }) {
     await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
+  });
+
+  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.192): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
+    // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
+    const counts = await page.getByTestId("project-demo").locator(".project-place").innerText();
+    if (!/^(쉼|(확인 필요|작업 중|병합 중) \d+( · (작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);
+    // thread 둘째 줄: 왼쪽 상태 말, 오른쪽 머신 이름. 머신 칸에는 줄이 없다
+    const machines = await page.locator('[data-testid^="thread-machine-demo-"]').allInnerTexts();
+    if (machines.length === 0 || machines.some((m) => m !== "labA")) throw new Error(`thread 줄 머신: ${machines}`);
+    const states = await page.locator('[data-testid^="thread-state-demo-"]').allInnerTexts();
+    if (states.length !== machines.length || states.some((w) => !/^(확인 필요|검토 대기|병합 중|작업 중|쉼)/.test(w))) throw new Error(`thread 줄 상태 말: ${states}`);
+    if (await page.locator(".machine-strip [data-thread], .machine-strip [data-pane]").count()) throw new Error("머신 칸 안에 줄이 있다");
+    // 「기타」: thread pane이 아닌 셸 줄, 줄마다 머신 이름
+    const other = page.getByTestId("other-group");
+    const loose = ".machine-list .worktree-children li[data-pane]";
+    const places = await page.locator(`${loose} .workspace-place`).allInnerTexts();
+    if (places.length === 0 || places.some((w) => !w.startsWith("labA"))) throw new Error(`「기타」 줄 머신: ${places}`);
+    const n = places.length;
+    await other.locator(".project-select").click();
+    await domIs(page, "「기타」 접힘", (q) => document.querySelectorAll(q).length === 0, loose);
+    if ((await other.locator(".workspace-fold-count").innerText()) !== `+${n}`) throw new Error("접힌 「기타」의 줄 수");
+    await other.locator(".project-select").click();
+    await domIs(page, "「기타」 펼침", ([q, n]) => document.querySelectorAll(q).length === n, [loose, n]);
   });
 
   await step("줄 옮기기(herdr-web-ui Sidebar `reorderWorkspaces`·`moveVisible`·`dropOrder`·touchReorder.ts, 차이 목록 2장 L9): 데스크톱은 Alt+↑↓(focus가 따라감)와 끌기, 그 차례가 host 공유 설정 paneOrder로 가 다른 기기도 같은 차례, 휴대폰은 길게 눌러 끌어 옮기고 데스크톱도 따라온다", async () => {
@@ -816,7 +839,7 @@ export default async function ({ page }) {
     aaa("project", "create", "side");
     fs.writeFileSync(`${root}/side-task.txt`, "noreport\n");
     const t = aaa("thread", "start", "side", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/side-task.txt`);
-    const head = `${$("project-labA-side")} .project-select`;
+    const head = `${$("project-side")} .project-select`;
     await domIs(page, "side 프로젝트 줄", (q) => document.querySelector(q) !== null, head);
     aaa("project", "pause", "side");
     await domIs(page, "멈춤 줄", (q) => document.querySelector(q)?.getAttribute("title") === "side · 멈춤", head);
@@ -830,7 +853,7 @@ export default async function ({ page }) {
     aaa("project", "resume", "side");
     await domIs(page, "되살린 줄", (q) => document.querySelector(q) && !document.querySelector(q).getAttribute("title").includes("멈춤"), head);
     aaa("project", "archive", "side");
-    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-labA-side"), $(`thread-side-${t.id}`)]);
+    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-side"), $(`thread-side-${t.id}`)]);
     await page.getByTestId("more").click();
     const toProjects2 = hashIs(page, "#projects");
     await page.getByTestId("projects-item").click();

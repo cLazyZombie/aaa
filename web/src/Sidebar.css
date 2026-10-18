@@ -15,3 +15,21 @@
 
 /* 끝난 pane: 이름을 흐리게(참고의 오래된 줄처럼 상태는 말하지 않는다) */
 .workspace.is-ended .workspace-name { color: var(--text-dim); }
+
+/* 프로젝트 먼저(t-0352 시안 2안, plan §8.192): thread 둘째 줄은 왼쪽 상태 말(묶음 색, 늘 보인다)·오른쪽 머신 이름(좁으면 먼저 줄어든다).
+   색은 TUI 둘째 줄과 같은 뜻(확인 필요 빨강, 검토·병합 초록, 작업 파랑, 쉼 흐림) */
+.thread-place { display: flex; gap: var(--space-2); }
+.thread-place .thread-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-place .thread-machine { flex: 0 1 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.thread-place .thread-machine.is-offline { color: var(--notice); }
+.thread-state.is-waiting_on_you { color: var(--status-blocked); }
+.thread-state.is-ready_for_review,
+.thread-state.is-landing { color: var(--status-done); }
+.thread-state.is-working { color: var(--status-working); }
+.project-place.is-need { color: var(--status-blocked); }
+/* 끊긴 머신의 줄: 흐리고 누를 수 없다(참고 machine-offline을 줄마다) */
+.workspace.is-offline { opacity: 0.5; }
+/* 머신 줄들은 목록 아래 조용한 머리 밑에 */
+.machine-strip { margin-top: var(--space-4); }
+.machine-strip-label { padding: 0 var(--side-gutter); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+.machine-strip .machine-group + .machine-group { margin-top: 0; }
