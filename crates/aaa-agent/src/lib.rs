@@ -314,6 +314,33 @@ impl Agent {
         }
     }
 
+    /// 폴더 보기: 세션이 지금 있는 폴더(없으면 시작 폴더) 기준으로 폴더 한 단계를 읽는다(`file_locate`와 같은 기준)
+    async fn dir_list(&self, session: &str, path: String, hidden: bool) -> Result<AgentResponse, ErrorBody> {
+        let started = {
+            let s = self.sessions.lock().unwrap();
+            s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?.info.cwd.clone()
+        };
+        let cwd = match self.session_cwd(session).await {
+            Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
+            _ => started,
+        };
+        let roots = self.file_roots.lock().unwrap().clone();
+        let home = aaa_config::paths::home();
+        let listed = tokio::task::spawn_blocking(move || {
+            files::list_dir(&path, cwd.as_deref().map(Path::new), &home, &roots, hidden)
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        match listed {
+            files::Listed::Dir(d) => Ok(AgentResponse::DirListed(d)),
+            files::Listed::Missing => Err(ErrorBody::new(ErrorCode::NotFound, "이 경로에 읽을 수 있는 폴더가 없다")),
+            files::Listed::Outside => Err(ErrorBody::new(
+                ErrorCode::Forbidden,
+                "허용한 폴더 밖이라 열지 않는다(그 머신 agent.toml [agent] file_roots)",
+            )),
+        }
+    }
+
     /// report.md hash를 1초마다 보고 바뀌면 host에 알린다. 등록하면 지금 값을 한 번 보낸다.
     fn watch_report(self: &Arc<Self>, thread: String, work_dir: PathBuf) {
         let me = self.clone();
@@ -764,6 +791,7 @@ impl Agent {
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
+            AgentRequest::DirList { session, path, hidden } => self.dir_list(&session, path, hidden).await,
             AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();
                 let me = self.clone();
@@ -950,7 +978,7 @@ impl Agent {
     /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
     /// pump가 붙어 있으면 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
     /// session host는 종료를 알린 뒤에도 2초 더 응답하므로(늦게 붙는 agent도 마지막 화면을 받게) 그 연결은 여기서 닫는다:
-    /// 종료는 이미 받았고 마지막 화면은 파일에 있다. 닫기를 기다리면 끝난 thread resolve·pane 닫기마다 2초가 걸렸다(t-0338, plan §8.147).
+    /// 종료는 이미 받았고 마지막 화면은 파일에 있다. 닫기를 기다리면 끝난 thread resolve·pane 닫기마다 2초가 걸렸다(t-0338, plan §8.150).
     async fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));

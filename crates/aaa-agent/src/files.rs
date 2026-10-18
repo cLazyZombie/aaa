@@ -6,12 +6,13 @@
 //! - 참고는 서버 사용자가 읽을 수 있는 것을 다 연다. aaa는 §6.5대로 허용 폴더(`[agent] file_roots`) 안만 연다.
 //!   기본은 집·작업 root·기본 cwd·임시 폴더다. symlink는 따라간 실제 경로로 본다.
 //! - 일반 파일만 연다. 종류는 확장자로 정하고, 모르는 확장자는 앞 8KiB에 NUL이 있으면 binary다.
+//! - 폴더 보기(참고 `server/directories.ts` `listDirectories`): 폴더 한 단계의 폴더와 파일. 허용 폴더 안만 읽는다.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 
-use aaa_proto::{FileInfo, FileKind};
+use aaa_proto::{DirFile, DirListing, FileInfo, FileKind};
 
 /// 찾는 동안 내려가는 깊이·보는 항목 수·돌려주는 후보 수(참고 files.ts)
 const WALK_DEPTH: usize = 6;
@@ -22,6 +23,8 @@ const SKIP_DIRS: [&str; 5] = [".git", "node_modules", "dist", "target", ".venv"]
 const SNIFF_BYTES: usize = 8192;
 /// 한 번에 읽는 조각 상한
 pub const MAX_CHUNK: u32 = 512 * 1024;
+/// 폴더 보기가 보이는 폴더·파일 수(참고 `MAX_DIRECTORY_ENTRIES`)
+pub const MAX_DIR_ENTRIES: usize = 500;
 
 /// 열어도 되는 폴더들(실제 경로)
 #[derive(Debug, Clone, Default)]
@@ -101,6 +104,96 @@ pub fn locate(input: &str, cwd: Option<&Path>, home: &Path, roots: &Roots) -> Lo
         }
     }
     if outside { Located::Outside } else { Located::Missing }
+}
+
+/// 폴더 한 단계를 읽은 결과
+#[derive(Debug, PartialEq)]
+pub enum Listed {
+    Dir(DirListing),
+    /// 읽을 수 있는 폴더가 없다
+    Missing,
+    /// 있지만 허용 폴더 밖이다
+    Outside,
+}
+
+/// 폴더 한 단계(참고 `listDirectories`). 빈 경로와 `~`는 집, 그 밖은 `resolve`대로 읽는다. 숨은 이름(`.`로 시작)은
+/// `hidden`일 때만 넣는다. symlink는 가리키는 것으로 본다(끊어졌거나 도는 것은 빼다). 이름순(대소문자 무시, 숫자는 값으로).
+/// 참고와 다른 것: 실제 경로로 허용 폴더 안만 읽고, 위 폴더(`parent`)도 허용 폴더 안일 때만 준다.
+pub fn list_dir(input: &str, cwd: Option<&Path>, home: &Path, roots: &Roots, hidden: bool) -> Listed {
+    let target = if input.trim().is_empty() { Some(home.to_path_buf()) } else { resolve(input, cwd, home) };
+    let Some(real) = target.and_then(|p| p.canonicalize().ok()) else { return Listed::Missing };
+    if !real.is_dir() {
+        return Listed::Missing;
+    }
+    if !roots.allows(&real) {
+        return Listed::Outside;
+    }
+    let Ok(entries) = std::fs::read_dir(&real) else { return Listed::Missing };
+    let (mut directories, mut files) = (Vec::new(), Vec::new());
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !hidden && name.starts_with('.') {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(entry.path()) else { continue };
+        if meta.is_dir() {
+            directories.push(name);
+        } else if meta.is_file() && files.len() <= MAX_DIR_ENTRIES {
+            files.push(DirFile { name, size: meta.len() });
+        }
+    }
+    directories.sort_by(|a, b| natural_cmp(a, b));
+    files.sort_by(|a, b| natural_cmp(&a.name, &b.name));
+    let truncated = directories.len() > MAX_DIR_ENTRIES || files.len() > MAX_DIR_ENTRIES;
+    directories.truncate(MAX_DIR_ENTRIES);
+    files.truncate(MAX_DIR_ENTRIES);
+    let text = |p: &Path| p.to_string_lossy().into_owned();
+    Listed::Dir(DirListing {
+        path: text(&real),
+        parent: real.parent().filter(|p| roots.allows(p)).map(text),
+        home: text(&home.canonicalize().unwrap_or_else(|_| home.to_path_buf())),
+        directories,
+        files,
+        truncated,
+    })
+}
+
+/// 참고 `localeCompare(…, { sensitivity: "base", numeric: true })`에 가까운 순서: 대소문자를 무시하고 숫자 덩이는 값으로
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return a.cmp(b),
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let run = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut s = String::new();
+                    while let Some(c) = it.next_if(|c| c.is_ascii_digit()) {
+                        s.push(c);
+                    }
+                    s
+                };
+                let (m, n) = (run(&mut x), run(&mut y));
+                let (m, n) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
+                match m.len().cmp(&n.len()).then_with(|| m.cmp(n)) {
+                    Ordering::Equal => {}
+                    o => return o,
+                }
+            }
+            (Some(c), Some(d)) => {
+                let (c, d) = (c.to_lowercase().next().unwrap_or(c), d.to_lowercase().next().unwrap_or(d));
+                match c.cmp(&d) {
+                    Ordering::Equal => {
+                        x.next();
+                        y.next();
+                    }
+                    o => return o,
+                }
+            }
+        }
+    }
 }
 
 /// 있는 일반 파일이면 허용 폴더 안인지까지 본다. 없으면 None, 밖이면 Err.
@@ -398,6 +491,74 @@ mod tests {
         std::fs::remove_file(proj.join("README.md")).unwrap();
         std::os::unix::fs::symlink(outside.join("secret.txt"), proj.join("README.md")).unwrap();
         assert!(read(&readme, 0, 10, &roots).is_err());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn listed(l: Listed) -> DirListing {
+        match l {
+            Listed::Dir(d) => d,
+            other => panic!("폴더를 읽지 못했다: {other:?}"),
+        }
+    }
+
+    /// 참고 `listDirectories`: 폴더와 파일(크기), 숨은 이름은 고를 때만, 이름순(숫자는 값으로), 집·`~`·상대 경로.
+    /// 허용 폴더 밖은 읽지 않고, 위 폴더도 허용 폴더 안일 때만 준다
+    #[test]
+    fn lists_folders_like_the_reference() {
+        let (base, home, outside) = lab("dir");
+        let roots = Roots::new([home.clone()]);
+        let proj = home.join("proj");
+        let real = |p: &Path| p.canonicalize().unwrap().to_string_lossy().into_owned();
+        std::fs::create_dir_all(proj.join(".hidden")).unwrap();
+        std::fs::create_dir_all(proj.join("v10")).unwrap();
+        std::fs::create_dir_all(proj.join("V9")).unwrap();
+        std::fs::write(proj.join(".env"), "A=1\n").unwrap();
+        let d = listed(list_dir("proj", Some(&home), &home, &roots, false));
+        assert_eq!(d.path, real(&proj));
+        assert_eq!(d.parent.as_deref(), Some(real(&home).as_str()));
+        assert_eq!(d.home, real(&home));
+        assert_eq!(d.directories, ["docs", "node_modules", "src", "V9", "v10"]);
+        let names: Vec<(&str, u64)> = d.files.iter().map(|f| (f.name.as_str(), f.size)).collect();
+        assert_eq!(names, [("blob.dat", 3), ("README.md", 9)]);
+        assert!(!d.truncated);
+        let d = listed(list_dir("~/proj", None, &home, &roots, true));
+        assert_eq!(d.directories[0], ".hidden");
+        assert_eq!(d.files[0].name, ".env");
+        // 빈 경로·~는 집. 집이 허용 폴더의 맨 위라 위 폴더는 없다
+        let h = listed(list_dir("", None, &home, &roots, false));
+        assert_eq!((h.path.as_str(), h.parent), (real(&home).as_str(), None));
+        assert_eq!(listed(list_dir("~", None, &home, &roots, false)).path, h.path);
+        // 파일·없는 것·상대인데 폴더를 모름은 없다. 허용 밖은 밖이다
+        assert_eq!(list_dir("proj/README.md", Some(&home), &home, &roots, false), Listed::Missing);
+        assert_eq!(list_dir("nope", Some(&home), &home, &roots, false), Listed::Missing);
+        assert_eq!(list_dir("proj", None, &home, &roots, false), Listed::Missing);
+        assert_eq!(list_dir(&outside.to_string_lossy(), None, &home, &roots, false), Listed::Outside);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// symlink는 가리키는 것으로 보고(밖을 가리키는 폴더는 이름만 보이고 열면 밖이다), 끊어진 것은 뺀다. 500개가 넘으면 자른다
+    #[cfg(unix)]
+    #[test]
+    fn lists_links_by_their_target_and_cuts_long_folders() {
+        let (base, home, outside) = lab("dirlink");
+        let roots = Roots::new([home.clone()]);
+        let proj = home.join("proj");
+        std::os::unix::fs::symlink(&outside, proj.join("out")).unwrap();
+        std::os::unix::fs::symlink(proj.join("README.md"), proj.join("readme-link.md")).unwrap();
+        std::os::unix::fs::symlink(proj.join("gone"), proj.join("dangling")).unwrap();
+        let d = listed(list_dir(&proj.to_string_lossy(), None, &home, &roots, false));
+        assert!(d.directories.iter().any(|n| n == "out"), "{:?}", d.directories);
+        assert!(d.files.iter().any(|f| f.name == "readme-link.md" && f.size == 9), "{:?}", d.files);
+        assert!(!d.directories.iter().chain(d.files.iter().map(|f| &f.name)).any(|n| n == "dangling"));
+        assert_eq!(list_dir("out", Some(&proj), &home, &roots, false), Listed::Outside);
+        let many = proj.join("many");
+        std::fs::create_dir_all(&many).unwrap();
+        for i in 0..=MAX_DIR_ENTRIES {
+            std::fs::write(many.join(format!("f{i}.txt")), "").unwrap();
+        }
+        let d = listed(list_dir("many", Some(&proj), &home, &roots, false));
+        assert_eq!((d.files.len(), d.truncated), (MAX_DIR_ENTRIES, true));
+        assert_eq!((d.files[0].name.as_str(), d.files[2].name.as_str()), ("f0.txt", "f2.txt"));
         let _ = std::fs::remove_dir_all(base);
     }
 
