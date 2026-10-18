@@ -3090,38 +3090,6 @@ fn config_cmd(cmd: ConfigCmd, json: bool) -> Result<ExitCode> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn follow_fills_a_gap_instead_of_dropping_it() {
-        use super::{FollowStep, follow_step};
-        assert_eq!(follow_step(20, 21), FollowStep::Show);
-        assert_eq!(follow_step(20, 20), FollowStep::Skip);
-        // 22가 21보다 먼저 왔다(host가 21을 늦게 보냈거나 놓쳤다): 21을 버리지 않고 20부터 다시 읽는다
-        assert_eq!(follow_step(20, 22), FollowStep::Refill { after: 20 });
-        // 다시 읽어 22까지 보인 뒤 늦게 온 21은 이미 본 것이다
-        assert_eq!(follow_step(22, 21), FollowStep::Skip);
-        // 처음 읽기에 없던 프로젝트: cursor 0이면 첫 사건은 seq 1이다
-        assert_eq!(follow_step(0, 1), FollowStep::Show);
-        assert_eq!(follow_step(0, 3), FollowStep::Refill { after: 0 });
-    }
-
-    use super::*;
-
-    /// `aaa report`는 herdr-projects `report`와 같은 인자를 받는다(plan §8.78)
-    #[test]
-    fn report_takes_percent_or_unknown_and_an_activity() {
-        let ok = |a: &[&str]| Cli::try_parse_from([&["aaa", "report"][..], a].concat()).is_ok();
-        assert!(ok(&["--percent", "25", "--activity", "코드 읽기"]));
-        assert!(ok(&["--unknown", "--activity", "일 가늠"]));
-        // 백분율이나 --unknown 하나, 활동은 늘 있어야 한다
-        assert!(!ok(&["--activity", "코드 읽기"]));
-        assert!(!ok(&["--percent", "25", "--unknown", "--activity", "x"]));
-        assert!(!ok(&["--percent", "101", "--activity", "x"]));
-        assert!(!ok(&["--percent", "25"]));
-    }
-}
-
 fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
     let req = match cmd {
         MissionCmd::List { project } => FrontRequest::MissionList { project },
@@ -3156,4 +3124,36 @@ fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
         }
     };
     front(json, req)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn follow_fills_a_gap_instead_of_dropping_it() {
+        use super::{FollowStep, follow_step};
+        assert_eq!(follow_step(20, 21), FollowStep::Show);
+        assert_eq!(follow_step(20, 20), FollowStep::Skip);
+        // 22가 21보다 먼저 왔다(host가 21을 늦게 보냈거나 놓쳤다): 21을 버리지 않고 20부터 다시 읽는다
+        assert_eq!(follow_step(20, 22), FollowStep::Refill { after: 20 });
+        // 다시 읽어 22까지 보인 뒤 늦게 온 21은 이미 본 것이다
+        assert_eq!(follow_step(22, 21), FollowStep::Skip);
+        // 처음 읽기에 없던 프로젝트: cursor 0이면 첫 사건은 seq 1이다
+        assert_eq!(follow_step(0, 1), FollowStep::Show);
+        assert_eq!(follow_step(0, 3), FollowStep::Refill { after: 0 });
+    }
+
+    use super::*;
+
+    /// `aaa report`는 herdr-projects `report`와 같은 인자를 받는다(plan §8.78)
+    #[test]
+    fn report_takes_percent_or_unknown_and_an_activity() {
+        let ok = |a: &[&str]| Cli::try_parse_from([&["aaa", "report"][..], a].concat()).is_ok();
+        assert!(ok(&["--percent", "25", "--activity", "코드 읽기"]));
+        assert!(ok(&["--unknown", "--activity", "일 가늠"]));
+        // 백분율이나 --unknown 하나, 활동은 늘 있어야 한다
+        assert!(!ok(&["--activity", "코드 읽기"]));
+        assert!(!ok(&["--percent", "25", "--unknown", "--activity", "x"]));
+        assert!(!ok(&["--percent", "101", "--activity", "x"]));
+        assert!(!ok(&["--percent", "25"]));
+    }
 }

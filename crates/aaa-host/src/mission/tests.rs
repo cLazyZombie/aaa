@@ -200,6 +200,24 @@ impl Lab {
         );
         Fake { requests, inbox_names, _screen: screen, handle }
     }
+    // 시험의 시작 상태만 만든다. 실제 routine 전달은 routine_pass 경계 시험이 소유한다.
+    fn queue(&self, p: &str, n: &str, id: String, source: &str, text: String) -> Result<(), ErrorBody> {
+        let r = if n == "evaluator" { self.h.evaluator_rec(p) } else { self.h.mission_rec(p, n) }.unwrap();
+        self.h.update_rec(p, &r.id, |r| {
+            let input = Input { id, source: source.into(), text };
+            if n == "evaluator" {
+                r.eval_inputs.push(input);
+            } else {
+                let m = r.mission.as_mut().unwrap();
+                m.pending.push(input);
+                m.pending_since_ms.get_or_insert(util::now_ms());
+            }
+        })?;
+        if n == "evaluator" {
+            self.h.evaluator_due(p, std::time::Duration::ZERO);
+        }
+        Ok(())
+    }
     fn pane(&self, activity: AgentActivity) {
         self.h.on_session("m", info("s1"), false);
         self.h.inner.lock().unwrap().panes.get_mut("s1").unwrap().agent=Some(serde_json::from_value(serde_json::json!({"activity":activity,"since_ms":0,"harness":"claude","message":null,"percent":null,"progress":null,"harness_session":"old"})).unwrap());
@@ -369,7 +387,7 @@ async fn mission_debounce_budget_scoping_and_background_exclusion() {
     l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
     assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().wakes_today, 1);
     l.pane(AgentActivity::Idle);
-    l.h.mission_input("demo", "watch", "r-1".into(), "routine", "자료".into()).unwrap();
+    l.queue("demo", "watch", "r-1".into(), "routine", "자료".into()).unwrap();
     l.h.mission_tick("demo", "watch", now + 60001).await.unwrap();
     let run = l.h.mission_rec("demo", "watch").unwrap().mission.unwrap();
     assert_eq!(run.state, "예산 대기");
@@ -535,14 +553,14 @@ async fn usage_wait_preserves_cursor_and_inputs_then_resumes_at_reset() {
     l.applied(&text("withdrawal=\"none\"\nusage_session_below=2\nevents=[\"thread_failed\"]"));
     let _f = l.fake(vec!["mission.v1".into()]).await;
     l.pane(AgentActivity::Idle);
-    l.h.mission_input("demo", "watch", "r-1".into(), "routine", "첫 자료".into()).unwrap();
+    l.queue("demo", "watch", "r-1".into(), "routine", "첫 자료".into()).unwrap();
     l.h.flow_project("demo", "thread_failed", None, "새 사건");
     l.h.mission_tick("demo", "watch", now).await.unwrap();
     let before = l.h.mission_rec("demo", "watch").unwrap().mission.unwrap();
     assert_eq!(before.state, "사용량 대기");
     assert_eq!(before.cursor, 0);
     assert_eq!(before.pending.len(), 1);
-    l.h.mission_input("demo", "watch", "r-2".into(), "routine", "나중 자료".into()).unwrap();
+    l.queue("demo", "watch", "r-2".into(), "routine", "나중 자료".into()).unwrap();
     l.h.mission_tick("demo", "watch", now + 59999).await.unwrap();
     let waiting = l.h.mission_rec("demo", "watch").unwrap().mission.unwrap();
     assert_eq!(waiting.cursor, 0);
@@ -662,7 +680,7 @@ async fn builtin_evaluator_accepts_routine_and_post_but_host_text_is_not_a_follo
     l.pane(AgentActivity::Idle);
     let task = l.h.project_dir("demo").unwrap().join("threads/t-0001.task.md");
     std::fs::write(&task, "원본 임무").unwrap();
-    l.h.mission_input("demo", "evaluator", "r-000000000001".into(), "routine", "main-moved 자료".into()).unwrap();
+    l.queue("demo", "evaluator", "r-000000000001".into(), "routine", "main-moved 자료".into()).unwrap();
     let mut post = input(88);
     post.to = "mission:evaluator".into();
     assert!(matches!(l.h.front_post("demo", post, "web:human").unwrap(), PostResult::Accepted { .. }));
@@ -853,8 +871,8 @@ async fn partial_file_delivery_does_not_double_count_backlog() {
     l.applied(&text(""));
     let f = l.fake(vec!["mission.v1".into()]).await;
     l.pane(AgentActivity::Idle);
-    l.h.mission_input("demo", "watch", "r-1".into(), "routine", "첫 입력".into()).unwrap();
-    l.h.mission_input("demo", "watch", "r-2".into(), "routine", "둘째 입력".into()).unwrap();
+    l.queue("demo", "watch", "r-1".into(), "routine", "첫 입력".into()).unwrap();
+    l.queue("demo", "watch", "r-2".into(), "routine", "둘째 입력".into()).unwrap();
     f.inbox_names.lock().unwrap().push("r-1.json".into());
     l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap();
     assert_eq!(
@@ -917,7 +935,7 @@ async fn review_regression_paused_mission_stays_paused_after_reboot() {
     let f = l.fake(vec!["mission.v1".into()]).await;
     l.pane(AgentActivity::Idle);
     l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
-    l.h.mission_input("demo", "watch", "r-000000000001".into(), "routine", "보존할 자료".into()).unwrap();
+    l.queue("demo", "watch", "r-000000000001".into(), "routine", "보존할 자료".into()).unwrap();
     l.h.inner.lock().unwrap().panes.get_mut("s1").unwrap().info.state = SessionState::Interrupted;
     let mut changed = l.h.changed.subscribe();
     l.h.restore_after_reboot("m", 1);
@@ -1040,4 +1058,45 @@ async fn review_regression_routine_hash_and_input_commit_together() {
     assert_eq!(run.pending.len(), 1);
     assert_eq!(run.pending[0].source, "routine");
     assert!(run.pending[0].text.contains("같은 결과"));
+}
+
+async fn failed_durable_transition(reset: bool) {
+    let l = Lab::new();
+    let r = l.applied(&text("reset_after_wakes=1"));
+    let f = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Idle);
+    let now = util::now_ms();
+    if reset {
+        l.h.update_rec("demo", &r.id, |r| {
+            let m = r.mission.as_mut().unwrap();
+            m.conversation_wakes = 1;
+            m.saw_working = true;
+            m.idle_since_ms = Some(now - 31000);
+        })
+        .unwrap();
+    } else {
+        l.queue("demo", "watch", "r-1".into(), "routine", "보존할 입력".into()).unwrap();
+    }
+    let c = rusqlite::Connection::open(l.h.state.join("host.db")).unwrap();
+    c.execute_batch("CREATE TRIGGER fail_durable_transition BEFORE UPDATE ON threads WHEN json_extract(NEW.data,'$.mission.resetting')=1 OR json_extract(NEW.data,'$.mission.wake_inflight')=1 BEGIN SELECT RAISE(FAIL,'내구 표지 저장 실패'); END;").unwrap();
+    let result = l.h.mission_tick("demo", "watch", now).await;
+    assert!(result.is_err(), "DB 확정 실패를 호출자에게 돌려준다");
+    assert!(
+        !f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Kill { .. } | AgentRequest::Input { .. })),
+        "리셋·깨움 확정 실패 뒤 외부 동작을 보내지 않는다"
+    );
+    let stored = l.h.load("demo", &r.id).unwrap().mission.unwrap();
+    assert!(!stored.resetting && !stored.wake_inflight);
+    assert_eq!(stored.wakes_today, 0);
+    if !reset {
+        assert_eq!(stored.pending.len(), 1);
+    }
+}
+#[tokio::test]
+async fn durable_reset_write_failure_never_sends_kill() {
+    failed_durable_transition(true).await;
+}
+#[tokio::test]
+async fn durable_wake_write_failure_never_sends_input() {
+    failed_durable_transition(false).await;
 }

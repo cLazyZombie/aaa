@@ -825,7 +825,11 @@ impl Host {
         let _guard = self.rec_lock.lock().unwrap();
         let mut r = self.load(project, id)?;
         f(&mut r);
-        self.save(&mut r);
+        // 이 성공 뒤 Kill·깨움을 보내는 호출자는 실제 DB 확정을 필요로 한다.
+        r.updated_at_ms = aaa_common::util::now_ms();
+        let json = serde_json::to_string(&r).map_err(internal)?;
+        self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)?;
+        let _ = self.thread_events.send(self.thread_view(&r));
         Ok(r)
     }
 

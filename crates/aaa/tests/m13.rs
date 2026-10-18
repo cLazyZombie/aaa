@@ -4562,18 +4562,19 @@ fn profiles_come_from_host_and_harness_overrides_are_local() {
     }
 }
 
-/// 1.3 agent는 계속 연결된다. 중앙 정의를 받을 기능이 없으면 시작만 이유와 함께 거부한다.
+/// N-1 agent는 계속 연결된다. 중앙 정의를 받을 기능이 없으면 시작만 이유와 함께 거부한다.
 #[tokio::test(flavor = "multi_thread")]
 async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
     use aaa_common::conn::{FrameRx, spawn_writer};
     use aaa_proto::{AgentHello, LinkMsg, MAX_FRAME, Version};
+    let legacy_link = Version { major: aaa_proto::AGENT_LINK.major, minor: aaa_proto::AGENT_LINK.minor - 1 };
     let w = world();
     let stream = aaa_common::ipc::connect(&w.h.state.join("host/agent.sock")).await.unwrap();
     let (r, writer) = tokio::io::split(stream);
     let tx = spawn_writer(writer, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
     tx.json(&LinkMsg::Hello(AgentHello {
-        proto: Version { major: 1, minor: 3 },
+        proto: legacy_link,
         machine_id: "legacy-agent".into(),
         machine_name: "legacy".into(),
         boot_id: "legacy-boot".into(),
@@ -4589,7 +4590,7 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
     .await
     .unwrap();
     let welcome: LinkMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
-    assert!(matches!(welcome, LinkMsg::Welcome(ref w) if w.proto.minor == 3), "{welcome:?}");
+    assert!(matches!(welcome, LinkMsg::Welcome(ref w) if w.proto == legacy_link), "{welcome:?}");
     let e =
         w.h.json(&[
             "thread",

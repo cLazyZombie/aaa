@@ -738,35 +738,6 @@ impl Host {
         self.tick_wake.notify_one();
         Ok(FrontResponse::Mission { mission: Box::new(self.mission_show(p, n)?) })
     }
-    pub(crate) fn mission_input(
-        &self,
-        p: &str,
-        n: &str,
-        id: String,
-        source: &str,
-        text: String,
-    ) -> Result<(), ErrorBody> {
-        if n == "evaluator" {
-            let r = self.evaluator_rec(p).ok_or_else(|| err(ErrorCode::NotFound, "사후 평가자가 없다"))?;
-            self.update_rec(p, &r.id, |r| {
-                if !r.eval_inputs.iter().any(|i| i.id == id) {
-                    r.eval_inputs.push(Input { id, source: source.into(), text });
-                }
-            })?;
-            self.evaluator_due(p, std::time::Duration::ZERO);
-            return Ok(());
-        }
-        let r = self.mission_rec(p, n).ok_or_else(|| err(ErrorCode::NotFound, "열린 임무가 없다"))?;
-        self.update_rec(p, &r.id, |r| {
-            let m = r.mission.as_mut().unwrap();
-            if !m.pending.iter().any(|i| i.id == id) {
-                m.pending.push(Input { id, source: source.into(), text });
-                m.pending_since_ms.get_or_insert(util::now_ms());
-            }
-        })?;
-        self.tick_wake.notify_one();
-        Ok(())
-    }
     pub(crate) fn mission_routine_input(
         &self,
         p: &str,
