@@ -7,7 +7,8 @@
 //!   (`session` 한 머신의 세션이 모두 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
 //! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs` 이상
 //!   머물고 입력창이 비었을 때, 처음 보는 항목 묶음을 한 줄로 알린다. 같은 묶음(hash)은 한 번만 보낸다.
-//!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없으면 보내지 않고 기다린다.
+//!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없거나 project.toml `nudge = false`면 그 묶음을
+//!   본 것으로만 적는다: 항목은 coordinator의 다음 턴 `context`가 보인다(herdr-projects steps.rs `nudge`, plan §8.136).
 //! - **ticker:** host 안의 task다. `tick_secs`마다, 그리고 사건이 오면 바로 돈다.
 
 use std::collections::HashMap;
@@ -508,8 +509,11 @@ impl Host {
             forget_box();
             return;
         }
-        // coordinator가 없으면 기다린다(생기면 그때 알린다)
-        let Some(coord) = self.coordinator_pane(dir) else {
+        // coordinator가 없거나 nudge를 껐으면 묶음 hash만 남긴다(herdr-projects steps.rs `nudge`): 사람에게는 사건마다
+        // 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않는다
+        let coord = if self.settings(project).nudge { self.coordinator_pane(dir) } else { None };
+        let Some(coord) = coord else {
+            let _ = self.db.set_meta(&key, &hash);
             forget_box();
             return;
         };

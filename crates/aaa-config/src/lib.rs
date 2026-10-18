@@ -208,8 +208,9 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
-    /// brief 안내·메시지를 입력하고 Enter한 뒤 harness가 받았다고 알리기(hook이 없으면 화면 변화)를 기다리는 시간(밀리초).
-    /// 넘으면 전달 불명(unknown)이고 다시 보내지 않는다.
+    /// brief 안내·메시지를 입력한 때부터 harness가 받았다고 알리기(hook이 없으면 Enter 뒤 화면 변화)까지 기다리는 시간
+    /// (밀리초). 입력 상자를 그리는 harness는 이 안에서 친 글이 화면에 보이기를 기다린 뒤 Enter한다. 넘으면 전달
+    /// 불명(unknown)이고 다시 보내지 않는다.
     pub accept_wait_ms: u64,
     /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
     /// 넘으면 그대로 보낸다.
