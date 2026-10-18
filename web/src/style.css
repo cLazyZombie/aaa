@@ -693,6 +693,11 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--space-4) var(--space-5); }
 .card > h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: calc(var(--fs-xs) * 12.5 / 12); font-weight: 600; color: var(--text-dim); }
 .files ul { list-style: none; margin: var(--space-3) 0 0; padding: 0; border-top: 1px solid var(--border); }
+.library-link { display: flex; flex-direction: column; gap: var(--space-2); padding-block: var(--space-3); min-width: 0; }
+.library-link-row { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.library-link-row strong { flex: 0 0 auto; white-space: nowrap; }
+.library-link-row a { min-width: 0; overflow-wrap: anywhere; }
+.library-link-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .files li { display: flex; align-items: center; gap: var(--space-2); min-height: 38px; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
 .files li svg.i { color: var(--text-dim); }
 .files a { color: var(--text-strong); text-decoration: none; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: calc(var(--fs-xs) * 12.5 / 12); }

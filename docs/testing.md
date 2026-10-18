@@ -108,7 +108,7 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
   - 새 기기 규칙(안전 영역·화면 키보드·wake lock)도 여기에 더한다. 단계 안에서 init script로 새 가짜를 만들지 않는다.
 
 
-## post 검증(§8.195)
+## post 검증(§8.198)
 
 - host의 `post_*` 시험은 `now`로 rate 창 경계를 보고, durable ID·mute·inbox·fence·push를 검사한다.
 - agent의 `post_*` 시험은 실제 hook socket과 메모리 Agent link를 쓴다. 무송신은 같은 writer의 뒤따르는 Pong으로 확인한다.

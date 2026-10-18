@@ -85,7 +85,7 @@ webhook = ""
 # json(항목 목록과 글) 또는 telegram
 format = "json"
 telegram_chat_id = ""
-# 알릴 inbox 항목 종류. thread-state는 사람 차례·새 보고·시작 실패만, pr은 병합·check 실패·리뷰 활동만 보낸다
+# 알릴 inbox 항목 종류. thread-state는 확인 필요·새 보고·시작 실패만, pr은 병합·check 실패·리뷰 활동만 보낸다
 # (옛 이름 report·question·delivery·thread도 thread-state로 읽는다)
 kinds = ["thread-state", "session", "outage", "health", "routine-approval", "pr"]
 # 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다

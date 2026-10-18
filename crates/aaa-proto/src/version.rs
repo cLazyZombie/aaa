@@ -22,7 +22,7 @@ impl std::fmt::Display for Version {
 /// `ThreadPrepare.safety`·`ThreadRebrief.safety`(agent 기능 `launch_safety.v1`이 있을 때만 보낸다, §8.163),
 /// `ScrollbackWrite`·`ScrollbackRemove`(agent 기능 `scrollback.v1`이 있을 때만 보낸다, §8.176),
 /// `AgentRequest::ThreadAdopt`(agent 기능 `adopt.v1`이 있을 때만 보낸다, §8.180).
-/// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.195).
+/// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.198).
 /// host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
@@ -67,8 +67,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 ///   상태 사건 연결의 `chat_watch`·`chat_changed`·`chat_watching`(대화 기록 변화 push, 차이 목록 C3, plan §8.191)을 더한다
 /// 1.35: TUI 링크 열기(`PaneLink`→`Link`, plan §8.194). 1.34가 배포돼 새 요청은 올린다(1.34 front가 그대로 붙고, TUI는 1.35
 ///   이상 host에만 묻는다. 옛 host에서는 ctrl+누름이 보통 누름이다).
-/// 같은 1.35(배포 전)에 Post·PostStatus·PostList·PostUnmute를 더한다(§8.195).
-pub const FRONT_API: Version = Version { major: 1, minor: 35 };
+/// 1.36: 보고서별 링크(`library_link`·`library_links`·`library_link_revoke`, `LinkView`·`LibraryView.link`, plan §8.197).
+///   1.35는 TUI 링크 열기로 이미 배포됐다. 새 host는 N-1인 1.35 front까지 받는다.
+/// 같은 1.36(배포 전)에 Post·PostStatus·PostList·PostUnmute를 더한다(§8.198).
+pub const FRONT_API: Version = Version { major: 1, minor: 36 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

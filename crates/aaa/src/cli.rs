@@ -84,6 +84,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: WebCmd,
     },
+    /// 보고서별 공유 링크(host 사본 읽기만)
+    Library {
+        #[command(subcommand)]
+        cmd: LibraryCmd,
+    },
     /// 자가 점검(계보·키체인·첫 실행 지연)
     Doctor(DoctorArgs),
     /// macOS 감독자: 운영은 show·install·uninstall·restart·stop·start(LaunchAgent → aaa-launcher → aaa, 결정 14). plan·register 등은 보류한 SMAppService 경로
@@ -851,6 +856,25 @@ enum MachineCmd {
 }
 
 #[derive(Subcommand)]
+enum LibraryCmd {
+    /// 유효한 링크를 받는다. 없거나 만료·폐기됐으면 새로 만든다.
+    Link {
+        project: String,
+        thread: String,
+        /// 새 링크 수명(기본 30일, 1~3650일). 기존 링크 수명은 바꾸지 않는다.
+        #[arg(long)]
+        days: Option<u32>,
+    },
+    /// 링크·만료·마지막 열람·사본 크기
+    List {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// 서명 링크를 즉시 폐기한다(앱 안 보기는 계속 된다)
+    Revoke { id: String },
+}
+
+#[derive(Subcommand)]
 enum WebCmd {
     /// 웹 pairing 코드(10분, 1회용). 아직 쓰지 않은 앞 코드는 버린다(웹 설정 → 기기의 코드도)
     Pair {
@@ -1273,6 +1297,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 MachineCmd::Pending => FrontRequest::EnrollPending,
                 MachineCmd::Approve { name, code } => FrontRequest::EnrollApprove { name, code },
                 MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
+            },
+        ),
+        Cmd::Library { cmd } => front(
+            json,
+            match cmd {
+                LibraryCmd::Link { project, thread, days } => FrontRequest::LibraryLink { project, thread, days },
+                LibraryCmd::List { project } => FrontRequest::LibraryLinks { project },
+                LibraryCmd::Revoke { id } => FrontRequest::LibraryLinkRevoke { id },
             },
         ),
         Cmd::Web { cmd } => front(
@@ -2733,6 +2765,25 @@ fn render_front(r: &FrontResponse) -> String {
                     r.skipped,
                     r.no_coordinator
                 );
+            }
+        }
+        FrontResponse::LibraryLink(l) => {
+            let _ = writeln!(
+                s,
+                "{}\t{}/{}\t{}\t만료 {}\t마지막 열람 {}\t{}B{}",
+                l.id,
+                l.project,
+                l.thread,
+                l.url.as_deref().unwrap_or(&l.base),
+                l.expires_at_ms,
+                l.last_opened_at_ms.map(|n| n.to_string()).unwrap_or_else(|| "없음".into()),
+                l.size,
+                if l.revoked { " · 폐기됨" } else { "" }
+            );
+        }
+        FrontResponse::LibraryLinks { links } => {
+            for l in links {
+                s.push_str(&render_front(&FrontResponse::LibraryLink(l.clone())));
             }
         }
         FrontResponse::Library(l) => {

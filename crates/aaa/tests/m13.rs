@@ -867,7 +867,7 @@ fn remote_dir_thread_survives_host_restart() {
     w.spawn_host("host2");
     wait_for("labB 재연결", Duration::from_secs(60), || w.h.connected("labB").then_some(()));
     let v = w.wait_show("갱신된 보고", &id, |v| v["next"] == serde_json::json!(["사용자 확인"]));
-    // 보고 첫 줄 태그로 사람 차례를 정하지 않는다(D9): 새 보고는 검토 대기
+    // 보고 첫 줄 태그로 확인 필요를 정하지 않는다(D9): 새 보고는 검토 대기
     assert_eq!(v["group"], "ready_for_review");
     assert_eq!(w.kinds(seen), ["report_ready"]);
     // host2가 다시 붙기 전에 낸 outage가 있으면 여기와 아래 항목 시각 확인이 잡는다
@@ -1386,7 +1386,7 @@ fn claude_thread_states_questions_and_messages() {
         got,
         [("trust", "yes"), ("permission", "yes"), ("permission", "no"), ("permission", "no"), ("permission", "no")]
     );
-    // 질문마다 항목을 만들지 않는다: 30초 안에 답한 확인창은 사람 차례가 아니다(herdr-projects `BLOCKED_DEBOUNCE_SECS`,
+    // 질문마다 항목을 만들지 않는다: 30초 안에 답한 확인창은 확인 필요가 아니다(herdr-projects `BLOCKED_DEBOUNCE_SECS`,
     // plan §8.85). 진행을 40%로 알린 채 쓴 보고는 중간 보고다(검토 대기 아님)
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
     assert!(items.iter().all(|i| i["item_kind"] != "question" && i["event"] != "blocked on a prompt"), "{items:?}");
@@ -1533,7 +1533,7 @@ fn memory_and_restart() {
     // 실행 중이면 다시 시작하지 않는다
     let e = w.h.json(&["thread", "restart", "demo", &id]).expect_err("실행 중 restart");
     assert!(e.contains("실행 중"), "{e}");
-    // 보고를 쓴 뒤 닫힌 세션은 끝난 일이다: 사람 차례가 아니다(herdr-projects `group()` 3번 줄)
+    // 보고를 쓴 뒤 닫힌 세션은 끝난 일이다: 확인 필요가 아니다(herdr-projects `group()` 3번 줄)
     w.h.ok(&["thread", "ack", "demo", &id]);
     w.h.ok(&["pane", "kill", &pane]);
     wait_for("세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
@@ -2216,7 +2216,7 @@ fn thread_state_items_follow_groups() {
     let done = v["report_hash"].as_str().unwrap().to_string();
     wait_item(&w, &a, "new report");
     wait_push(&a, "new report", &mut pushed);
-    // B: pane이 닫히면 사람 차례
+    // B: pane이 닫히면 확인 필요
     w.h.ok(&["pane", "kill", &b_pane]);
     wait_item(&w, &b, "pane closed");
     wait_push(&b, "pane closed", &mut pushed);
@@ -2229,7 +2229,7 @@ fn thread_state_items_follow_groups() {
     // B: 다시 시작하면 다시 쉰다. D는 B와 따로 돌아 함께 띄운다(보고 없는 thread의 쉼은 brief 뒤 작업 중 창을 기다린다)
     w.h.ok(&["thread", "restart", "demo", &b]);
     // D: 보고 없이 쉬는 worktree thread를 끝낸다(세션 종료 뒤 worktree 정리가 이어진다, t-0334가 본 0.4초 창).
-    // 상태를 먼저 써서 닫힌 pane을 사람 차례로 보지 않는다: resolved뿐이다
+    // 상태를 먼저 써서 닫힌 pane을 확인 필요로 보지 않는다: resolved뿐이다
     let v = w.start(&[
         "--title",
         "worktree",
@@ -2276,7 +2276,7 @@ fn thread_state_items_follow_groups() {
     assert!(report.2.contains(&format!("(보고 {})", &done[..12])) && !report.2.contains(&interim[..12]), "{report:?}");
     let closed = got.iter().find(|g| g.0 == b && g.1 == "pane closed").unwrap();
     assert!(
-        closed.2.starts_with(&format!("{b} \"noreport\": 사람 차례(pane closed)"))
+        closed.2.starts_with(&format!("{b} \"noreport\": 확인 필요(pane closed)"))
             && closed.2.contains(&format!("aaa thread restart demo {b}")),
         "{closed:?}"
     );
@@ -3356,6 +3356,15 @@ fn library_view() {
     assert!(!files.iter().any(|f| f.0 == "link"), "{files:?}");
     let base = lib["base"].as_str().unwrap().to_string();
 
+    // 회수 때 자동 발급한다. CLI 발급이 뒤늦게 링크를 만든 것을 자동 발급으로 착각하지 않는다.
+    let shared = &lib["link"];
+    assert!(shared["id"].is_string(), "자동 발급 링크가 없다: {lib}");
+    let link = w.h.ok(&["library", "link", "demo", &id]);
+    assert_eq!(link["id"], shared["id"]);
+    let (st, _, body) = http_get(&web, shared["base"].as_str().unwrap());
+    assert_eq!(st, 200);
+    assert!(String::from_utf8_lossy(&body).contains("<p>보고</p>"));
+
     // host 사본: sandbox CSP, 같은 host 웹 화면 안 frame만
     let (st, head, body) = http_get(&web, &format!("{base}index.html"));
     assert_eq!(st, 200, "{head}");
@@ -3521,7 +3530,7 @@ fn notify_webhook() {
     assert!(text.starts_with(&format!("[aaa] demo\n- {first} new report")), "{body}");
     assert!(text.contains("\n- t-0001 new report") && text.contains("\n- t-0002 new report"), "{body}");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
-    // 보고 없이 쉬던 thread의 세션이 끝나면 사람 차례(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
+    // 보고 없이 쉬던 thread의 세션이 끝나면 확인 필요(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
     // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
     let n3 =
         w.start(&["--title", "n3", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("n3.txt", "noreport")]);
@@ -3532,7 +3541,7 @@ fn notify_webhook() {
     let v: Value = serde_json::from_str(&body).unwrap();
     let got: Vec<_> = v["items"].as_array().unwrap().iter().map(|i| i["event"].as_str().unwrap()).collect();
     assert_eq!(got, ["pane closed"], "{body}");
-    assert!(body.contains(&format!("- {n3} pane closed: {n3} \\\"n3\\\": 사람 차례(pane closed)")), "{body}");
+    assert!(body.contains(&format!("- {n3} pane closed: {n3} \\\"n3\\\": 확인 필요(pane closed)")), "{body}");
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
     // 실패한 알림을 다시 보내지 않는다: 다음 알림(n4 pane closed)을 일으키면 받은 다음 요청에 그 항목만 있다. 다시 보냈다면
     // 실패한 항목이 그보다 먼저(따로 또는 같은 묶음으로) 온다(알림은 한 줄로 차례대로 보낸다, notify.rs `start_notifier`)

@@ -21,6 +21,7 @@ mod health;
 mod http;
 mod inbox;
 mod library;
+mod library_links;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
@@ -414,6 +415,7 @@ pub struct Host {
     pr: Mutex<pr::PrMemory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
+    library_signing: library_links::SigningKey,
     /// 파일 보기 읽기 경로(`/f/<cap>/`, plan §8.125)
     file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
@@ -480,6 +482,7 @@ impl Host {
     pub fn open(cfg: HostConfig, state: PathBuf) -> Result<Arc<Host>> {
         util::ensure_private_dir(&state)?;
         let db = db::Db::open(&state.join("host.db")).context("host DB")?;
+        let library_signing = library_links::SigningKey::open(&state)?;
         let host_id = match db.meta("host_id")? {
             Some(v) => v,
             None => {
@@ -582,6 +585,7 @@ impl Host {
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),
+            library_signing,
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
@@ -1169,7 +1173,12 @@ impl Host {
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
             }
-            FrontRequest::Context { project, peek } => self.context(&project, peek).await.map(FrontResponse::Context),
+            FrontRequest::Context { project, peek } => self.context(&project, peek).await.map(|mut c| {
+                if role.can_control() {
+                    self.library_notice_links(&mut c.inbox);
+                }
+                FrontResponse::Context(c)
+            }),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;
@@ -1185,8 +1194,17 @@ impl Host {
             FrontRequest::ThreadShow { project, thread } => {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadLibrary { project, thread } => {
-                self.thread_library(&project, &thread, actor.strip_prefix("device:")).map(FrontResponse::Library)
+            FrontRequest::ThreadLibrary { project, thread } => self
+                .thread_library(&project, &thread, actor.strip_prefix("device:"), role.can_control())
+                .map(FrontResponse::Library),
+            FrontRequest::LibraryLink { project, thread, days } => {
+                self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)
+            }
+            FrontRequest::LibraryLinks { project } => {
+                self.library_links(project.as_deref()).map(|links| FrontResponse::LibraryLinks { links })
+            }
+            FrontRequest::LibraryLinkRevoke { id } => {
+                self.library_link_revoke(&id, actor).map(FrontResponse::LibraryLink)
             }
             FrontRequest::ThreadAck { project, thread } => {
                 self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
@@ -1240,14 +1258,17 @@ impl Host {
                 self.db.audit(actor, "preferences_set", &doc.revision.to_string());
                 Ok(FrontResponse::Preferences(doc))
             }
-            FrontRequest::Inbox { project, all, peek } => {
-                self.inbox(&project, all, peek).map(|p| FrontResponse::Inbox {
+            FrontRequest::Inbox { project, all, peek } => self.inbox(&project, all, peek).map(|mut p| {
+                if role.can_control() {
+                    self.library_notice_links(&mut p.items);
+                }
+                FrontResponse::Inbox {
                     items: p.items,
                     done: None,
                     omitted_open: p.omitted_open,
                     omitted_done: p.omitted_done,
-                })
-            }
+                }
+            }),
             FrontRequest::InboxDone { project, ids, all } => {
                 self.inbox_done(&project, &ids, all, actor).map(|(done, p)| FrontResponse::Inbox {
                     items: p.items,

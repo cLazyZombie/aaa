@@ -1,10 +1,10 @@
-//! 알림 webhook(§8.7, M1-4)과 Web Push(§8.26, `push.rs`). inbox 항목 가운데 사람이 봐야 할 것(사람 차례·새 보고·시작 실패·
+//! 알림 webhook(§8.7, M1-4)과 Web Push(§8.26, `push.rs`). inbox 항목 가운데 사람이 봐야 할 것(확인 필요·새 보고·시작 실패·
 //! 세션 끝남·머신 단절)을 밖으로 보낸다. thread 항목은 herdr-projects가 notifier를 부르는 사건만 보낸다(transitions.rs
 //! `PUSH_EVENTS`): 쉼·resolved·전달 모름은 inbox에만 둔다.
 //!
 //! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다. 여러 thread가 잇달아 바뀌어도 한 통이다.
 //! - 보내기 직전에 다시 본다(herdr-web-ui push.ts 「기다리는 동안 바뀌면 보내지 않는다」): 그 사이 끝낸 항목, 이미 확인(ack)한
-//!   보고, 사람 차례가 끝난 thread(확인창에 답함)의 항목은 뺀다. 남은 것이 없으면 보내지 않는다.
+//!   보고, 확인 필요가 끝난 thread(확인창에 답함)의 항목은 뺀다. 남은 것이 없으면 보내지 않는다.
 //! - 실패하면 다시 보내지 않는다(알림 폭주를 막는다). 실패가 이어지는 동안 경고는 한 번만 남긴다.
 //! - 주소에는 봇 token 같은 비밀값이 들어갈 수 있다. 로그·흐름 사건·오류에는 주소를 넣지 않는다.
 //! - https는 webpki 루트 인증서로 검증한다. http는 설정 검증에서 loopback만 허용한다(시험용).
@@ -43,6 +43,10 @@ pub(crate) fn notify_text(project: &str, items: &[InboxItem]) -> String {
     for i in items {
         let summary: String = safe_summary(i).chars().take(200).collect();
         s.push_str(&format!("\n- {} {}: {summary}", crate::inbox::who(i), i.event));
+        for line in i.body.lines().filter(|line| line.starts_with("보기: https://")) {
+            s.push('\n');
+            s.push_str(line);
+        }
     }
     if s.chars().count() > TEXT_CAP {
         s = s.chars().take(TEXT_CAP).collect::<String>() + "\n…";
@@ -169,7 +173,7 @@ pub(crate) fn muted(mute: bool, i: &InboxItem) -> bool {
     mute && !MUTE_PASSES.contains(&i.item_kind.as_str())
 }
 
-/// 아직 알릴 만한 항목만 남긴다: 끝내지 않았고(`open`), 지난 일(`stale`: 확인한 보고, 사람 차례가 끝난 thread)이 아니다.
+/// 아직 알릴 만한 항목만 남긴다: 끝내지 않았고(`open`), 지난 일(`stale`: 확인한 보고, 확인 필요가 끝난 thread)이 아니다.
 /// 돌려주는 수는 뺀 항목 수다.
 pub(crate) fn news(
     items: Vec<InboxItem>,
@@ -247,6 +251,8 @@ impl Host {
                     if n.webhook.is_empty() {
                         continue;
                     }
+                    let mut items = items;
+                    me.library_notice_links(&mut items);
                     let body = notify_body(&n.format, &n.telegram_chat_id, &project, &items);
                     let sent = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
                     let res = match sent {

@@ -96,6 +96,8 @@ pub struct Hits {
     pub new_tab: Option<Rect>,
     /// spaces 구역 맨 아랫줄 ` new`와 오른쪽 `menu`
     pub new_workspace: Option<Rect>,
+    /// 바닥 줄 ` · 머신`: 새 탭·workspace를 열 머신을 다음 붙은 머신으로
+    pub pick_machine: Option<Rect>,
     pub global_menu: Option<Rect>,
     /// 설정 창의 구역 이름표·고르는 줄·단추
     pub settings: Option<crate::settings::Hits>,
@@ -836,6 +838,10 @@ impl App {
         }
         if hits.on(hits.new_workspace, x, y) {
             return self.act(Action::NewWorkspace, tx).await;
+        }
+        if hits.on(hits.pick_machine, x, y) {
+            self.next_machine();
+            return Ok(());
         }
         if hits.on(hits.new_tab, x, y) {
             return self.act(Action::NewTab, tx).await;

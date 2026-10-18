@@ -195,7 +195,7 @@ export function Droplet({ onOpen }: { onOpen: (target: string) => void }) {
         <span className="droplet-mark">{current.agent ? <AgentMark agent={current.agent} size={22} /> : <span className="droplet-mark-blank" />}</span>
         <span className="droplet-text">
           <span className="droplet-title">{current.title}</span>
-          <span className="droplet-detail">{detail}</span>
+          <span className="droplet-detail" title={current.libraryUrl ?? undefined}>{current.libraryUrl ? `보기: ${current.libraryUrl}` : detail}</span>
         </span>
         <span className="droplet-dot" aria-hidden="true" />
       </button>

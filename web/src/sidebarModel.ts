@@ -2,15 +2,16 @@
 // 참고: herdr-projects `thread.rs` Group::rank·`sidebar.rs` word·state_line·project_line(1f05c00),
 // herdr-web-ui `lib/status.ts`(aa624cb, herdr/status.ts에 그대로 있다)·`components/Sidebar.tsx`·`AgentSidebar.tsx`.
 import type { MachineView, PaneView, ThreadGroup, ThreadView } from "./gen/proto";
+import { sidebarPinKey } from "./herdr/sidebarPins.ts";
 import type { AgentStatus } from "./herdr/status.ts";
 
-/** herdr-projects `Group::rank`: 사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
+/** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
 const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, landing: 3, working: 4, idle: 5, resolved: 6 };
 export const groupRank = (g: ThreadGroup | string): number => RANK[g] ?? 4.5;
 
 /** herdr-projects `sidebar::word`(목록·탭 줄의 짧은 말) */
 export const GROUP_WORD: Record<string, string> = {
-  waiting_on_you: "사람 차례",
+  waiting_on_you: "확인 필요",
   ready_for_review: "검토 대기",
   landing: "병합 중",
   working: "작업 중",
@@ -66,13 +67,13 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
   return fact ? `${word} · ${fact}` : word;
 }
 
-/** herdr-projects `project_line`(「2 need you · 3 working」): 「사람 차례 2 · 작업 중 3」, 없으면 「쉼」 */
+/** herdr-projects `project_line`(「2 need you · 3 working」): 「확인 필요 2 · 작업 중 3」, 없으면 「쉼」 */
 export function projectLine(groups: readonly string[], paused = false): string {
   // 멈춘 프로젝트는 묶음 대신 「멈춤」(herdr-projects sidebar.rs `project_line` 「paused」)
   if (paused) return "멈춤";
   const need = groups.filter(needsYou).length;
   const parts: string[] = [];
-  if (need > 0) parts.push(`사람 차례 ${need}`);
+  if (need > 0) parts.push(`확인 필요 ${need}`);
   for (const [g, label] of [
     ["working", "작업 중"],
     ["landing", "병합 중"],
@@ -146,24 +147,36 @@ export function paneEnded(p: PaneView): string | null {
 /** 홈 폴더를 ~로 줄인다(화면에 사용자 이름을 늘어놓지 않는다) */
 export const shortPath = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, "~");
 
-/** 그 머신(이름이나 id)의 thread인가. pane이 있으면 pane의 머신을 믿는다 */
-export function threadMachine(t: ThreadView, m: MachineView, paneOf: (id: string) => PaneView | undefined): boolean {
+/** thread가 도는 머신. pane이 있으면 pane의 머신을 믿고, 없으면 thread의 머신 이름이나 id로 찾는다 */
+export function machineOfThread(t: ThreadView, machines: readonly MachineView[], paneOf: (id: string) => PaneView | undefined): MachineView | undefined {
   const p = t.pane ? paneOf(t.pane) : undefined;
-  return p ? p.machine_id === m.id : t.machine === m.name || t.machine === m.id;
+  return p ? machines.find((m) => m.id === p.machine_id) : machines.find((m) => t.machine === m.name || t.machine === m.id);
 }
 
 export const threadKey = (t: Pick<ThreadView, "project" | "id">) => `${t.project}/${t.id}`;
 
-/** 머신 묶음의 줄 차례: 프로젝트(처음 나온 차례) 묶음의 thread, 그다음 thread에 딸리지 않은 pane. 목록(Sidebar)과 단축키가 같이 쓴다 */
-export function machineRoster(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[]) {
+/**
+ * 목록 전체의 줄 차례(t-0352 시안 2안, plan §8.195): 프로젝트를 먼저 묶고 머신은 줄에 글자로만 적는다. 모든 머신의 thread를
+ * 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다(아는 머신의 thread만). 그다음 thread에 딸리지 않은 pane의
+ * 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.196)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
+ * 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다. TUI `list::rows`와 같은 차례다(TUI는 `paneOrder`를 모른다).
+ */
+export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []) {
   const paneOf = (id: string) => panes.find((p) => p.id === id);
-  const mThreads = sortThreads(threads.filter((t) => threadMachine(t, m, paneOf)));
-  const threadPanes = new Set(mThreads.flatMap((t) => (t.pane ? [t.pane] : [])));
-  const mPanes = panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id));
+  const machineOf = (t: ThreadView) => machineOfThread(t, machines, paneOf);
+  const shown = sortThreads(threads.filter((t) => machineOf(t) !== undefined));
+  const threadPanes = new Set(shown.flatMap((t) => (t.pane ? [t.pane] : [])));
+  const rank = new Map(paneOrder.map((key, index) => [key, index]));
+  const last = Number.MAX_SAFE_INTEGER;
+  const loose = machines
+    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id)))
+    .map((p, index) => ({ p, index, rank: rank.get(sidebarPinKey(p.machine_id, p.id)) ?? last }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.p);
   // 프로젝트 묶음은 처음 나온 순서(가장 앞 rank의 thread가 있는 프로젝트가 먼저)
   const projects: string[] = [];
-  for (const t of mThreads) if (!projects.includes(t.project)) projects.push(t.project);
-  return { threads: mThreads, projects, panes: mPanes };
+  for (const t of shown) if (!projects.includes(t.project)) projects.push(t.project);
+  return { threads: shown, projects, panes: loose, machineOf };
 }
 
 /** 목록 줄 하나: 누르면 여는 것과, 그 줄이 골랐다고 보는 선택 값들(thread 줄은 그 thread와 그 pane) */
@@ -174,16 +187,19 @@ export interface RosterRow {
 
 /**
  * 「이전·다음 패널」 단축키가 밟는 줄(herdr-web-ui App.tsx `selectAdjacentPane`·`rosterPanes`): 목록에 보이는 차례 그대로,
- * 접힌 묶음 안의 줄도 센다. thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고서를 연다(ThreadRow와 같다).
+ * 접힌 묶음 안의 줄도 센다. 끊긴 머신의 줄은 열 수 없어 뺀다. thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고서를 연다
+ * (ThreadRow와 같다).
  */
-export function machineRows(m: MachineView, panes: readonly PaneView[], threads: readonly ThreadView[]): RosterRow[] {
-  const roster = machineRoster(m, panes, threads);
+export function rosterRows(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []): RosterRow[] {
+  const r = roster(machines, panes, threads, paneOrder);
+  const online = (id: string | undefined) => machines.some((m) => m.id === id && m.connection === "connected");
   const rows: RosterRow[] = [];
-  for (const project of roster.projects)
-    for (const t of roster.threads.filter((x) => x.project === project)) {
+  for (const project of r.projects)
+    for (const t of r.threads.filter((x) => x.project === project)) {
+      if (!online(r.machineOf(t)?.id)) continue;
       const pane = t.pane ? panes.find((p) => p.id === t.pane) : undefined;
       rows.push({ open: pane?.state === "running" ? { pane: pane.id } : { thread: t }, keys: [`thread:${threadKey(t)}`, ...(pane ? [`pane:${pane.id}`] : [])] });
     }
-  for (const p of roster.panes) rows.push({ open: { pane: p.id }, keys: [`pane:${p.id}`] });
+  for (const p of r.panes) if (online(p.machine_id)) rows.push({ open: { pane: p.id }, keys: [`pane:${p.id}`] });
   return rows;
 }

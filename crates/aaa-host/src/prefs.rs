@@ -26,6 +26,8 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     "usageGlance",
     "usageOrder",
     "usageHidden",
+    // aaa: 웹 목록 pane 줄 순서(참고는 herdr workspace 순서라 herdr 서버에 있다, plan §8.196)
+    "paneOrder",
 ];
 /// TUI 사이드바 배치(plan §8.193): 사용자가 끌거나 접은 값만 있다. herdr는 client 기기 파일(`client-shell/*.json`
 /// `sidebar_width`·`sidebar_section_split`·`sidebar_collapsed`)에 두지만 aaa front는 상태를 갖지 않아 host에 둔다(plan §8.92

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList,
+  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
@@ -206,6 +206,106 @@ export default async function ({ page }) {
     await page.setViewportSize({ width: 1280, height: 800 });
     // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다
     await until("보고 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
+    // 보고서 공유 링크: CLI·웹은 같은 자동 발급 링크를 보고, 실제 clipboard 대신 기록하는 가짜를 쓴다.
+    const shared = aaa("library", "link", "demo", t.id);
+    if (aaa("library", "list", "--project", "demo").links[0].id !== shared.id) throw new Error("링크 목록과 발급이 다르다");
+    const linkRow = page.getByTestId("library-link");
+    const sharedUrl = new URL(shared.base, base).href;
+    if (await linkRow.getByRole("link", { name: "보고서 공유 링크" }).getAttribute("href") !== sharedUrl) throw new Error("웹 링크가 자동 발급 링크와 다르다");
+    await page.evaluate(() => {
+      window.__libraryCopies = [];
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => window.__libraryCopies.push(text) } });
+    });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+      const copiesBefore = await page.evaluate(() => window.__libraryCopies.length);
+      await linkRow.getByRole("button", { name: "링크 복사" }).click();
+      await until("이번 공유 링크 복사 기록", () => page.evaluate((n) => window.__libraryCopies.length === n + 1, copiesBefore));
+      await until("공유 링크 복사", async () => (await linkRow.getByRole("status").textContent()) === "링크를 복사했다");
+      if ((await page.evaluate(() => window.__libraryCopies.at(-1))) !== sharedUrl) throw new Error("다른 링크를 복사했다");
+      await linkRow.getByRole("button", { name: "QR 코드", exact: true }).click();
+      await linkRow.getByRole("img", { name: "보고서 공유 링크 QR 코드" }).waitFor();
+      if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)) throw new Error("공유 링크가 휴대폰 폭을 넘는다");
+      await shot(page, width === 390 ? "phone-library-link" : "desktop-library-link");
+      await linkRow.getByRole("button", { name: "QR 코드", exact: true }).click();
+    }
+    // pairing한 cookie가 이미 있는 문맥에서도 보고서 JS의 fetch는 CSP·opaque origin에 막힌다.
+    const pairedReport = await page.context().newPage();
+    try {
+      await pairedReport.goto(sharedUrl);
+      const api = await until("공유 보고서 JS의 API 접근 판정", () => pairedReport.evaluate(() => document.body.dataset.api));
+      if (api !== "blocked") throw new Error(`보고서 JS가 앱 API를 읽었다: ${api}`);
+    } finally { await pairedReport.close(); }
+    // 텔레그램처럼 cookie 없는 새 context에서 top-level로 연다. SW가 있는 앱 자리에서도 보고서가 그대로 열린다.
+    const outside = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const p = await outside.newPage();
+      await p.goto(base);
+      await until("공유 링크 시험 SW 준비", () => p.evaluate(() => !!navigator.serviceWorker.controller));
+      const response = await p.goto(sharedUrl);
+      const sharedHeaders = await response.allHeaders();
+      if (sharedHeaders["set-cookie"]) throw new Error("보고서 링크 응답이 Set-Cookie로 세션을 만들었다");
+      if (response.status() !== 200 || !sharedHeaders["content-security-policy"].includes("sandbox")) throw new Error("공유 보고서가 sandbox로 열리지 않았다");
+      await until("공유 보고서 형제 그림", () => p.locator("#pic").evaluate((img) => img.naturalWidth === 1));
+      const isolation = await p.evaluate(async () => {
+        const result = {};
+        for (const [name, read] of [["cookie", () => document.cookie], ["storage", () => localStorage.getItem("aaa")]]) {
+          try { read(); result[name] = "open"; } catch { result[name] = "blocked"; }
+        }
+        try { await navigator.serviceWorker.register("/sw.js"); result.sw = "open"; } catch { result.sw = "blocked"; }
+        return { ...result, title: document.getElementById("t")?.textContent, api: document.body.dataset.api };
+      });
+      if (isolation.title !== "결과 보고" || isolation.cookie !== "blocked" || isolation.storage !== "blocked" || isolation.sw !== "blocked" || isolation.api === "200") throw new Error(`공유 페이지 격리 ${JSON.stringify(isolation)}`);
+      // 서명을 query·Authorization에 내도 장치 token으로 받아서는 안 된다.
+      const signature = shared.base.split("/")[2];
+      await outside.setExtraHTTPHeaders({ authorization: `Bearer ${signature}` });
+      if ((await outside.request.get(`${base}api/v1/me?token=${signature}`)).status() !== 401) throw new Error("공유 링크가 장치 권한을 얻었다");
+      if ((await outside.request.post(`${base}api/v1/call`, { headers: { origin: "null" }, data: { op: "panes" } })).status() !== 403) throw new Error("opaque origin의 API 변경을 허용했다");
+      if ((await outside.request.post(`${base}api/v1/call`, { headers: { origin: base.slice(0, -1) }, data: { op: "panes" } })).status() !== 401) throw new Error("링크 문맥의 Front API가 pairing 없이 열렸다");
+      for (const path of ["api/v1/events", "api/v1/front", `api/v1/panes/${t.pane}/ws`]) {
+        const ws = await outside.request.get(`${base}${path}?token=${signature}`, { headers: {
+          origin: base.slice(0, -1), connection: "Upgrade", upgrade: "websocket",
+          "sec-websocket-version": "13", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        } });
+        if (ws.status() !== 401) throw new Error(`링크 문맥 WebSocket이 ${ws.status()}: ${path}`);
+      }
+      if ((await outside.request.get(`${base}f/unknown/a.txt`)).status() !== 401) throw new Error("공유 페이지가 pane 파일을 읽었다");
+      await shot(p, "phone-library-shared");
+      await p.goto(`${base}?token=${signature}`);
+      await p.getByTestId("token-gate").waitFor();
+      if ((await outside.cookies()).length) throw new Error("보고서 링크가 브라우저에 cookie를 남겼다");
+      // 장치 인증의 실제 입력(cookie)에 도장을 넣어도 장치 권한으로 바뀌지 않는다.
+      await outside.addCookies([{ name: "aaa", value: signature, url: base }]);
+      if ((await outside.request.get(`${base}api/v1/me`)).status() !== 401) throw new Error("서명 도장을 장치 cookie로 받았다");
+      if ((await outside.request.post(`${base}api/v1/call`, { headers: { origin: base.slice(0, -1) }, data: { op: "panes" } })).status() !== 401) throw new Error("서명 cookie로 Front API가 열렸다");
+      for (const path of ["api/v1/events", "api/v1/front", `api/v1/panes/${t.pane}/ws`]) {
+        const ws = await outside.request.get(`${base}${path}`, { headers: {
+          origin: base.slice(0, -1), connection: "Upgrade", upgrade: "websocket",
+          "sec-websocket-version": "13", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        } });
+        if (ws.status() !== 401) throw new Error(`서명 cookie로 WebSocket이 열렸다: ${path}`);
+      }
+      await outside.clearCookies();
+      // /v/ SW 제외를 빼면 offline navigation이 앱 셸을 돌려줘 여기서 실패한다.
+      await p.goto(base);
+      await until("offline 공유 링크 시험 SW 준비", () => p.evaluate(() => !!navigator.serviceWorker.controller));
+      await outside.setOffline(true);
+      let intercepted = false;
+      try { await p.goto(sharedUrl); intercepted = true; } catch { /* 네트워크로만 읽는 보고서는 offline에서 열리지 않는다 */ }
+      if (intercepted) throw new Error("SW가 공유 링크를 앱 셸로 바꿨다");
+      await outside.setOffline(false);
+    } finally { await outside.close(); }
+    // 휴대폰 폭의 폐기와 재발급. 앱 안 보기 경로는 그대로 열려 있다.
+    await linkRow.getByRole("button", { name: "링크 폐기" }).click();
+    await domIs(page, "공유 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
+    if ((await fetch(sharedUrl)).status !== 401) throw new Error("폐기한 공유 링크가 열린다");
+    const inApp = aaa("thread", "library", "demo", t.id);
+    if ((await fetch(new URL(`${inApp.base}index.html`, base))).status !== 200) throw new Error("폐기로 앱 안 보기도 끝났다");
+    await shot(page, "phone-library-link-revoked");
+    await linkRow.getByRole("button", { name: "새 링크 만들기" }).click();
+    await domIs(page, "공유 링크 재발급", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "active");
+    if (aaa("library", "link", "demo", t.id).id === shared.id) throw new Error("폐기한 id를 다시 썼다");
+    await page.setViewportSize({ width: 1280, height: 800 });
     // 보기 권한 기기 확인은 보고 알림이 나간 뒤에 한다: 짝짓기에서 누르고 친 그 화면이 쓰는 기기(보임·focus)가 되어, 그 사이 나갈 알림을
     // host가 건너뛴다(알림 A, plan §8.105 — 맞는 동작). 앞에 두면 짐 아래에서 「보고 알림 보냄」이 실패했다(t-0335 찾음)
     // 보기 권한 기기: 보고서의 경로는 단추가 아니고(이름 뒤 경로), host도 거부한다. 같은 요청이 조작 기기에는 열린다
@@ -249,6 +349,7 @@ export default async function ({ page }) {
     await domIs(rp, "주소로 연 thread 보기", () => !!document.querySelector('[data-testid="thread-view"]'));
     await until("reader 보고", async () => (await readerReport.locator("strong").first().textContent().catch(() => null)) === "확인");
     const readerFiles = await readerReport.evaluate((r) => ({ buttons: r.querySelectorAll(".markdown-file").length, shown: r.textContent.includes("작업 메모 (notes/plan.md)") }));
+    if (await rp.getByTestId("library-link").count()) throw new Error("보기 권한 기기에 공유 링크 조작이 보인다");
     if (readerFiles.buttons !== 0 || !readerFiles.shown) throw new Error(`보기 권한 화면의 보고서 파일 링크: ${JSON.stringify(readerFiles)}`);
     const denied = await threadFile(rp, "notes/plan.md");
     if (denied.err?.code !== "forbidden") throw new Error(`reader thread_file: ${JSON.stringify(denied)}`);
@@ -700,7 +801,7 @@ export default async function ({ page }) {
     await forgot;
     await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
     // 5. 프로젝트 머리: 프로젝트 thread 보기(끝난 것까지, plan §8.89)
-    await page.getByTestId("project-labA-demo").locator(".workspace-header").click({ button: "right" });
+    await page.getByTestId("project-demo").locator(".workspace-header").click({ button: "right" });
     if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["프로젝트 thread 보기", "접기"])) throw new Error(`프로젝트 메뉴 ${await menuItems(page)}`);
     const toDemo = hashIs(page, "#project=demo");
     await page.getByRole("menuitem", { name: "프로젝트 thread 보기" }).click();
@@ -717,6 +818,100 @@ export default async function ({ page }) {
     await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
+  });
+
+  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.195): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
+    // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
+    const counts = await page.getByTestId("project-demo").locator(".project-place").innerText();
+    if (!/^(쉼|(확인 필요|작업 중|병합 중) \d+( · (작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);
+    // thread 둘째 줄: 왼쪽 상태 말, 오른쪽 머신 이름. 머신 칸에는 줄이 없다
+    const machines = await page.locator('[data-testid^="thread-machine-demo-"]').allInnerTexts();
+    if (machines.length === 0 || machines.some((m) => m !== "labA")) throw new Error(`thread 줄 머신: ${machines}`);
+    const states = await page.locator('[data-testid^="thread-state-demo-"]').allInnerTexts();
+    if (states.length !== machines.length || states.some((w) => !/^(확인 필요|검토 대기|병합 중|작업 중|쉼)/.test(w))) throw new Error(`thread 줄 상태 말: ${states}`);
+    if (await page.locator(".machine-strip [data-thread], .machine-strip [data-pane]").count()) throw new Error("머신 칸 안에 줄이 있다");
+    // 「기타」: thread pane이 아닌 셸 줄, 줄마다 머신 이름
+    const other = page.getByTestId("other-group");
+    const loose = ".machine-list .worktree-children li[data-pane]";
+    const places = await page.locator(`${loose} .workspace-place`).allInnerTexts();
+    if (places.length === 0 || places.some((w) => !w.startsWith("labA"))) throw new Error(`「기타」 줄 머신: ${places}`);
+    const n = places.length;
+    await other.locator(".project-select").click();
+    await domIs(page, "「기타」 접힘", (q) => document.querySelectorAll(q).length === 0, loose);
+    if ((await other.locator(".workspace-fold-count").innerText()) !== `+${n}`) throw new Error("접힌 「기타」의 줄 수");
+    await other.locator(".project-select").click();
+    await domIs(page, "「기타」 펼침", ([q, n]) => document.querySelectorAll(q).length === n, [loose, n]);
+  });
+
+  await step("줄 옮기기(herdr-web-ui Sidebar `reorderWorkspaces`·`moveVisible`·`dropOrder`·touchReorder.ts, 차이 목록 2장 L9): 데스크톱은 Alt+↑↓(focus가 따라감)와 끌기, 그 차례가 host 공유 설정 paneOrder로 가 다른 기기도 같은 차례, 휴대폰은 길게 눌러 끌어 옮기고 데스크톱도 따라온다", async () => {
+    for (const n of ["ord1", "ord2", "ord3"]) aaa("tab", "create", "--machine", "labA", "--label", n, "--", "/bin/sh");
+    // 머신 목록의 옮길 수 있는 줄(고정하지 않은 pane) 가운데 이 단계의 셋, 보이는 차례대로
+    const order = (p) =>
+      p.locator(".machine-list .workspace-list > li[data-workspace]").evaluateAll((els) =>
+        els.map((e) => e.querySelector("[data-testid^='pane-']").dataset.testid.slice(5)).filter((n) => n.startsWith("ord")),
+      );
+    const orderIs = async (p, want, what) => {
+      let last = null;
+      await until(what, async () => JSON.stringify((last = await order(p))) === JSON.stringify(want)).catch((e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      });
+    };
+    const keyOf = Object.fromEntries(aaa("pane", "list").panes.filter((p) => p.name.startsWith("ord")).map((p) => [`${p.machine_id}:${p.id}`, p.name]));
+    // host 공유 설정에 간 차례(이 단계의 셋만). 단계가 먼저 실패해 화면이 닫히면 이 기다림은 거부된다: 처리되지 않은 거부로
+    // 프로세스가 끝나 실패 글을 잃지 않게 빈 catch를 달아 둔다(await하는 곳은 그대로 거부를 받는다)
+    const sentOrder = (p) => {
+      const sent = p
+        .waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set" && r.request().postDataJSON().settings?.paneOrder !== undefined)
+        .then((r) => r.request().postDataJSON().settings.paneOrder.map((k) => keyOf[k]).filter(Boolean));
+      sent.catch(() => {});
+      return sent;
+    };
+    await orderIs(page, ["ord1", "ord2", "ord3"], "처음은 host 차례");
+    // 1. Alt+↑·Alt+↓: 이웃 줄 너머로, focus는 옮긴 줄에 남는다(↓는 그 줄 자신이 DOM에서 옮겨져 focus를 잃기 쉽다)
+    const altMove = async (key, want) => {
+      const sent = sentOrder(page);
+      await page.keyboard.press(key);
+      await orderIs(page, want, key);
+      await focusIs(page, `${key} 뒤 옮긴 줄에 focus`, '[data-testid="pane-ord3"]');
+      if (JSON.stringify(await sent) !== JSON.stringify(want)) throw new Error(`${key} 뒤 host로 간 차례: ${JSON.stringify(await sent)}`);
+    };
+    await page.getByTestId("pane-ord3").focus();
+    await altMove("Alt+ArrowUp", ["ord1", "ord3", "ord2"]);
+    await altMove("Alt+ArrowDown", ["ord1", "ord2", "ord3"]);
+    // 2. 끌기: ord1을 ord2에 놓으면(아래로) ord2 뒤
+    let sent = sentOrder(page);
+    await page.getByTestId("pane-ord1").dragTo(page.getByTestId("pane-ord2"));
+    await orderIs(page, ["ord2", "ord1", "ord3"], "끌어 놓기");
+    if (JSON.stringify(await sent) !== JSON.stringify(["ord2", "ord1", "ord3"])) throw new Error(`host로 간 차례: ${JSON.stringify(await sent)}`);
+    await shot(page, "desktop-row-reorder");
+    // 3. 휴대폰(다른 기기): 같은 차례가 와 있다. 길게 눌러 들어 올린 ord1을 ord2 위에 놓으면(위로) ord2 앞
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const pp = ph.page;
+    await pp.locator(".view [data-testid='drawer-toggle']").click();
+    await pp.locator("#workspace-drawer.is-open").waitFor();
+    await pp.evaluate(() => Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null))));
+    await orderIs(pp, ["ord2", "ord1", "ord3"], "다른 기기도 같은 차례");
+    if (await pp.getByTestId("pane-ord1").getAttribute("draggable") === "true") throw new Error("터치 화면 줄이 브라우저 끌기를 켰다(참고는 길게 누르기)");
+    const center = async (name) => {
+      const b = await pp.getByTestId(`pane-${name}`).boundingBox();
+      return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+    };
+    const from = await center("ord1");
+    const to = await center("ord2");
+    const cdp = await pp.context().newCDPSession(pp);
+    sent = sentOrder(pp);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [from] });
+    // 누름이 붙잡으면(참고 HOLD_MS) 줄이 들린다: 그 표시를 기다린다
+    await pp.locator(".machine-list li.is-lifted", { has: pp.getByTestId("pane-ord1") }).waitFor();
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: from.x, y: to.y }] });
+    await pp.locator(".machine-list li[data-drop='before']", { has: pp.getByTestId("pane-ord2") }).waitFor();
+    await shot(pp, "phone-row-lifted");
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await orderIs(pp, ["ord1", "ord2", "ord3"], "길게 눌러 끌기");
+    if (JSON.stringify(await sent) !== JSON.stringify(["ord1", "ord2", "ord3"])) throw new Error(`휴대폰이 host로 보낸 차례: ${JSON.stringify(await sent)}`);
+    await orderIs(page, ["ord1", "ord2", "ord3"], "데스크톱도 따라온다");
+    await pp.context().close();
+    for (const n of ["ord1", "ord2", "ord3"]) aaa("pane", "kill", n);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
@@ -745,7 +940,7 @@ export default async function ({ page }) {
     aaa("project", "create", "side");
     fs.writeFileSync(`${root}/side-task.txt`, "noreport\n");
     const t = aaa("thread", "start", "side", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/side-task.txt`);
-    const head = `${$("project-labA-side")} .project-select`;
+    const head = `${$("project-side")} .project-select`;
     await domIs(page, "side 프로젝트 줄", (q) => document.querySelector(q) !== null, head);
     aaa("project", "pause", "side");
     await domIs(page, "멈춤 줄", (q) => document.querySelector(q)?.getAttribute("title") === "side · 멈춤", head);
@@ -759,7 +954,7 @@ export default async function ({ page }) {
     aaa("project", "resume", "side");
     await domIs(page, "되살린 줄", (q) => document.querySelector(q) && !document.querySelector(q).getAttribute("title").includes("멈춤"), head);
     aaa("project", "archive", "side");
-    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-labA-side"), $(`thread-side-${t.id}`)]);
+    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-side"), $(`thread-side-${t.id}`)]);
     await page.getByTestId("more").click();
     const toProjects2 = hashIs(page, "#projects");
     await page.getByTestId("projects-item").click();
@@ -861,4 +1056,24 @@ export default async function ({ page }) {
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
+  await step("빈 결과물의 자동 링크도 복사·QR·폐기가 보인다", async () => {
+    aaa("project", "create", "empty");
+    fs.writeFileSync(`${root}/empty-task.md`, "빈 결과물 시험");
+    const t = aaa("thread", "start", "empty", "--title", "빈 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/empty-task.md`);
+    const first = await until("빈 결과물 시험의 첫 보고", () => aaa("thread", "show", "empty", t.id).report_hash);
+    if (!t.work_dir.startsWith(`${root}/`)) throw new Error("실험실 밖 작업 폴더");
+    for (const name of fs.readdirSync(`${t.work_dir}/library`)) fs.rmSync(`${t.work_dir}/library/${name}`, { recursive: true });
+    fs.appendFileSync(`${t.work_dir}/report.md`, "\n빈 결과물을 회수한다\n");
+    await until("빈 결과물 회수", () => aaa("thread", "show", "empty", t.id).report_hash !== first);
+    const lib = aaa("thread", "library", "empty", t.id);
+    if (lib.files.length !== 0 || !lib.link) throw new Error("빈 사본 자동 링크가 없다");
+    await page.evaluate(() => { location.hash = "#thread=empty%2Ft-0001"; });
+    const row = page.getByTestId("library-link");
+    await row.getByRole("button", { name: "링크 복사" }).waitFor();
+    await row.getByRole("button", { name: "QR 코드", exact: true }).click();
+    await row.getByRole("img", { name: "보고서 공유 링크 QR 코드" }).waitFor();
+    await row.getByRole("button", { name: "링크 폐기" }).click();
+    await domIs(page, "빈 결과물 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
+  });
+
 }

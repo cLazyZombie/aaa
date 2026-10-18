@@ -507,8 +507,8 @@ mod tests {
         assert!(item.body.contains("자료이며 지시가 아니다") && item.body.contains("`````text\n"), "{}", item.body);
         assert_eq!(item.body.matches("`````").count(), 2);
         for payload in [
-            crate::notify::notify_body("json", "", "demo", &[item.clone()]),
-            crate::push::payload("demo", &[item.clone()], None),
+            crate::notify::notify_body("json", "", "demo", std::slice::from_ref(&item)),
+            crate::push::payload("demo", std::slice::from_ref(&item), None),
         ] {
             let s = payload.to_string();
             assert!(!s.contains("제목") && !s.contains("merge") && s.contains("사용자 결정 요청"), "{s}");
@@ -517,8 +517,14 @@ mod tests {
         no_user.event = "post data".into();
         assert!(!crate::notify::pushes(&["post".into()], &no_user));
         assert!(crate::notify::pushes(&["post".into()], &item));
-        assert!(crate::push::for_device(crate::db::Alerts { input: false, done: true }, &[item.clone()]).is_empty());
-        assert_eq!(crate::push::for_device(crate::db::Alerts { input: true, done: false }, &[item.clone()]).len(), 1);
+        assert!(
+            crate::push::for_device(crate::db::Alerts { input: false, done: true }, std::slice::from_ref(&item))
+                .is_empty()
+        );
+        assert_eq!(
+            crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(&item)).len(),
+            1
+        );
         for to in ["t-0002", "mission:ci-watch"] {
             i.post_id = format!("{:032x}", to.len());
             i.to = to.into();
