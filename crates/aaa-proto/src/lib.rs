@@ -2,9 +2,11 @@
 
 pub mod frame;
 pub mod layout;
+pub mod mission;
 pub mod msg;
 pub mod orch;
 pub mod post;
+pub use mission::*;
 pub use post::*;
 pub mod usage;
 pub mod version;
@@ -85,6 +87,7 @@ pub fn typescript_bindings() -> String {
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),
         HostStatus::decl(&cfg),
+        MissionView::decl(&cfg),
         PostType::decl(&cfg),
         PostInput::decl(&cfg),
         PostResult::decl(&cfg),

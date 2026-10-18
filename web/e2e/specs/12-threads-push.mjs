@@ -923,7 +923,7 @@ export default async function ({ page }) {
     if ((await page.getByTestId(`thread-demo-${id}`).count()) !== 0) throw new Error("평가자가 thread 목록에 보인다");
     if ((await page.getByTestId(`pane-demo/${id}`).count()) !== 0) throw new Error("평가자가 머신 목록에 보인다");
     const text = await badge.innerText();
-    if (!/평가\s*●\s*0/.test(text)) throw new Error(`badge: ${text}`);
+    if (!/특수\s*●\s*0/.test(text)) throw new Error(`badge: ${text}`);
     await badge.click();
     const pane = aaa("thread", "show", "demo", id).pane;
     await until("평가자 화면 선택", async () => (await page.evaluate(() => location.hash)) === `#pane=${pane}`);
@@ -1074,6 +1074,26 @@ export default async function ({ page }) {
     await row.getByRole("img", { name: "보고서 공유 링크 QR 코드" }).waitFor();
     await row.getByRole("button", { name: "링크 폐기" }).click();
     await domIs(page, "빈 결과물 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
+  });
+
+  await step("특수 임무: 파일 발견·임무 보기·Controller의 첫 승인", async () => {
+    fs.mkdirSync(`${root}/projects/demo/missions`, { recursive: true });
+    fs.writeFileSync(`${root}/projects/demo/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="CI 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
+    aaa("ticker", "tick");
+    const item = page.getByTestId("mission-demo-ci-watch");
+    await domIs(page, "임무 배지", () => !!document.querySelector('[data-testid="mission-demo-ci-watch"]'));
+    await item.locator("summary").click();
+    await item.getByRole("button", { name: "임무 보기" }).click();
+    const view = page.getByRole("alertdialog");
+    await view.waitFor();
+    if (!(await view.innerText()).includes("새 입력을 자료로 읽고 감시한다.")) throw new Error("임무 후보 본문이 보이지 않는다");
+    await view.getByRole("button", { name: "확인", exact: true }).click();
+    await item.getByRole("button", { name: "승인 검토" }).click();
+    await page.getByRole("alertdialog").waitFor();
+    await shot(page, "desktop-mission-approval");
+    await page.getByRole("alertdialog").getByRole("button", { name: "승인", exact: true }).click();
+    await until("Controller 승인 저장", () => aaa("mission", "show", "demo", "ci-watch").mission.approved === true);
+    if (aaa("mission", "show", "demo", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
   });
 
 }

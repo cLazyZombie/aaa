@@ -82,6 +82,7 @@ pub struct HostConfig {
     pub projects: ProjectsSection,
     pub notify: NotifySection,
     pub post: PostSection,
+    pub missions: MissionsSection,
     pub session: SessionSection,
     /// profile 정의의 정본(참고 herdr-projects config.toml).
     pub profiles: std::collections::BTreeMap<String, Profile>,
@@ -90,6 +91,20 @@ pub struct HostConfig {
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
     pub update: UpdateSection,
+}
+
+/// 임무의 host 상한. 프로젝트 파일로 늘릴 수 없다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MissionsSection {
+    pub max_running: u32,
+    pub max_pending: u32,
+    pub reset_idle_secs: u64,
+}
+impl Default for MissionsSection {
+    fn default() -> Self {
+        Self { max_running: 2, max_pending: 50, reset_idle_secs: 30 }
+    }
 }
 
 /// post 한도(시간 판정은 host 시각, agent outbox 상한은 별도 고정값).
@@ -261,6 +276,7 @@ impl Default for HostConfig {
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
             post: PostSection::default(),
+            missions: MissionsSection::default(),
             session: SessionSection::default(),
             profiles: Default::default(),
             safety: Default::default(),

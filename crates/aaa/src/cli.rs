@@ -159,6 +159,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RoutineCmd,
     },
+    /// 특수 임무 정의·승인·깨움 상태
+    Mission {
+        #[command(subcommand)]
+        cmd: MissionCmd,
+    },
     /// thread profile: 머신마다 agent.toml과 기본 profile(claude·codex). 바꾸기·허용 목록은 사람만(herdr-projects `profile`)
     Profile {
         #[command(subcommand)]
@@ -339,6 +344,21 @@ enum InboxCmd {
 }
 
 #[derive(Subcommand)]
+enum MissionCmd {
+    List { project: Option<String> },
+    Show { project: String, name: String },
+    Approve { project: String, name: String },
+    Reject { project: String, name: String },
+    Start { project: String, name: String },
+    Stop { project: String, name: String },
+    Pause { project: String, name: String },
+    Resume { project: String, name: String },
+    Reload { project: String, name: String },
+    Restart { project: String, name: String },
+    Open { project: String, name: String },
+}
+
+#[derive(Subcommand)]
 enum RoutineCmd {
     List {
         project: String,
@@ -502,6 +522,9 @@ enum ThreadCmd {
         /// 이 역할만(기본은 사후 평가자를 뺀 목록)
         #[arg(long, value_parser = ["coordinator", "worker", "evaluator"])]
         role: Option<String>,
+        /// 특수 임무만. 이름을 생략하면 모든 임무
+        #[arg(long, num_args=0..=1, default_missing_value="")]
+        mission: Option<String>,
     },
     /// 보고서와 결과물 목록, 웹에서 볼 읽기 전용 경로(2시간)
     Library {
@@ -1143,6 +1166,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::RoutineToggle { project, name, on })
         }
         Cmd::Routine { cmd: RoutineCmd::Approve { project, name } } => routine_approve(json, project, name),
+        Cmd::Mission { cmd } => mission_cmd(json, cmd),
         Cmd::Profile { cmd } => crate::settings::profile_cmd(json, cmd),
         Cmd::Safety { cmd } => crate::settings::safety_cmd(json, cmd),
         Cmd::Thread { cmd } => front(
@@ -1172,7 +1196,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Next { project, thread, line, add } => {
                     FrontRequest::ThreadNext { project, thread, line, add }
                 }
-                ThreadCmd::List { project, role } => {
+                ThreadCmd::List { project, role, mission } => {
+                    if let Some(name) = mission {
+                        let res =
+                            front_call(FrontRequest::Threads { project, role: Some(aaa_proto::Role::Evaluator) })?.map(
+                                |r| match r {
+                                    FrontResponse::Threads { threads } => FrontResponse::Threads {
+                                        threads: threads
+                                            .into_iter()
+                                            .filter(|t| {
+                                                t.mission.as_ref().is_some_and(|n| name.is_empty() || n == &name)
+                                            })
+                                            .collect(),
+                                    },
+                                    r => r,
+                                },
+                            );
+                        return front_print(json, res);
+                    }
                     FrontRequest::Threads { project, role: role.as_deref().and_then(aaa_proto::Role::parse) }
                 }
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
@@ -2385,6 +2426,13 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     if omitted > 0 {
         let _ = writeln!(s, "  … 항목 {omitted}개는 더 싣지 못했다. 위 항목을 끝내면 다음 것이 보인다");
     }
+    for m in &c.missions {
+        let _ = writeln!(
+            s,
+            "특수 {}: {} · 깨움 {}/{} · 입력 {} · post 처리 {}/{}",
+            m.name, m.state, m.wakes_today, m.max_wakes, m.pending, m.handled_posts, m.posts
+        );
+    }
     if let Some(v) = &c.evaluator {
         let _ = writeln!(
             s,
@@ -2729,6 +2777,27 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Message(m) => {
             let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
         }
+        FrontResponse::Missions { missions } => {
+            for m in missions {
+                s.push_str(&format!(
+                    "{}/{} · {} · {} · 깨움 {}/{} · 일한 분 {} · post {}/{} · 입력 {}\n",
+                    m.project,
+                    m.name,
+                    m.title,
+                    m.state,
+                    m.wakes_today,
+                    m.max_wakes,
+                    m.work_minutes,
+                    m.handled_posts,
+                    m.posts,
+                    m.pending
+                ));
+            }
+        }
+        FrontResponse::Mission { mission: m } => {
+            s.push_str(&format!("차이:\n{}\n", m.diff));
+            s.push_str(&format!("{}/{} · {}\n적용 판: {} · 파일 판: {} · 승인: {}\n오늘 깨움 {}/{} · 일한 분 {} · 묶음 {}바이트 · post 처리 {}/{} · 입력 {}\n다음 reset {:?} · 사용량 대기 {:?}\n\n적용 사본:\n{}\n후보 파일:\n{}",m.project,m.name,m.state,m.applied_sha.as_deref().unwrap_or("없음"),m.file_sha.as_deref().unwrap_or("없음"),m.approved,m.wakes_today,m.max_wakes,m.work_minutes,m.input_bytes,m.handled_posts,m.posts,m.pending,m.next_reset_ms,m.usage_wait_until_ms,m.applied_text,m.file_text));
+        }
         FrontResponse::Routines { routines } => {
             if routines.is_empty() {
                 s.push_str("routine이 없다\n");
@@ -3051,4 +3120,40 @@ mod tests {
         assert!(!ok(&["--percent", "101", "--activity", "x"]));
         assert!(!ok(&["--percent", "25"]));
     }
+}
+
+fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
+    let req = match cmd {
+        MissionCmd::List { project } => FrontRequest::MissionList { project },
+        MissionCmd::Show { project, name } => FrontRequest::MissionShow { project, name },
+        MissionCmd::Reject { project, name } => FrontRequest::MissionReject { project, name },
+        MissionCmd::Start { project, name } => FrontRequest::MissionStart { project, name },
+        MissionCmd::Stop { project, name } => FrontRequest::MissionStop { project, name },
+        MissionCmd::Pause { project, name } => FrontRequest::MissionPause { project, name },
+        MissionCmd::Resume { project, name } => FrontRequest::MissionResume { project, name },
+        MissionCmd::Reload { project, name } => FrontRequest::MissionReload { project, name },
+        MissionCmd::Restart { project, name } => FrontRequest::MissionRestart { project, name },
+        MissionCmd::Open { project, name } => {
+            let res = front_call(FrontRequest::MissionOpen { project: project.clone(), name: name.clone() })?;
+            if res.is_err() || json {
+                return front_print(json, res);
+            }
+            init_log("warn");
+            return aaa_tui::run(Some(format!("mission-{project}-{name}")));
+        }
+        MissionCmd::Approve { project, name } => {
+            crate::person::require("aaa mission approve")?;
+            let res = front_call(FrontRequest::MissionShow { project: project.clone(), name: name.clone() })?;
+            let m = match res {
+                Ok(FrontResponse::Mission { mission }) => mission,
+                other => return front_print(json, other),
+            };
+            println!("{}\n첫 시작·repo·예산 올림 승인 대상 hash {}", m.file_text, m.approval_sha256);
+            if crate::person::ask("승인하려면 임무 이름을 친다: ")? != name {
+                anyhow::bail!("임무 이름이 다르다");
+            }
+            FrontRequest::MissionApprove { project, name, approval_sha256: m.approval_sha256 }
+        }
+    };
+    front(json, req)
 }

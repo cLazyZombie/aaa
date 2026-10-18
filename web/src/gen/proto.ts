@@ -151,7 +151,7 @@ inbox: Array<InboxItem>,
 /**
  * 사후 평가자(지정했을 때만)
  */
-evaluator: EvaluatorView | null, };
+evaluator: EvaluatorView | null, missions: Array<MissionView>, };
 
 export type ToolCheck = { name: string, ok: boolean,
 /**
@@ -297,6 +297,8 @@ last_seen_ms: number | null, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
+export type MissionView = { project: string, name: string, title: string, thread: ThreadView | null, state: string, applied_sha: string | null, file_sha: string | null, approval_sha256: string, approved: boolean, stale: boolean, file_text: string, applied_text: string, diff: string, error: string | null, wakes_today: number, max_wakes: number, work_minutes: bigint, input_bytes: bigint, posts: number, handled_posts: number, pending: number, next_reset_ms: number | null, usage_wait_until_ms: number | null, };
+
 export type PostType = "notice" | "data" | "request";
 
 export type PostInput = { post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
@@ -375,7 +377,7 @@ discard_uncopied: boolean, } | { "op": "thread_stop", project: string, thread: s
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
+profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project: string, name: string, } | { "op": "mission_approve", project: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project: string, name: string, } | { "op": "mission_start", project: string, name: string, } | { "op": "mission_stop", project: string, name: string, } | { "op": "mission_pause", project: string, name: string, } | { "op": "mission_resume", project: string, name: string, } | { "op": "mission_reload", project: string, name: string, } | { "op": "mission_restart", project: string, name: string, } | { "op": "mission_open", project: string, name: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -399,7 +401,7 @@ settings: Record<string, unknown>,
  */
 pins?: Array<string>, };
 
-export type FrontResponse = { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type FrontResponse = { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -553,7 +555,7 @@ export type ThreadView = { project: string, id: string, title: string, machine: 
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
-thread_kind: ThreadKind, status: ThreadStatus, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null,
+thread_kind: ThreadKind, mission?: string, status: ThreadStatus, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null,
 /**
  * 추적하는 PR(§8.80)
  */

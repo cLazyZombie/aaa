@@ -94,6 +94,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         features: vec![
             "terminal.v1".into(),
             "post.v1".into(),
+            "mission.v1".into(),
             "cwd.v1".into(),
             "pr.v1".into(),
             "pr.v2".into(),
@@ -131,6 +132,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
         LinkMsg::Welcome(w) => {
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
+            *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
             // harness_hello.v1: host가 hello의 harness 사건을 읽었다. 옛 host에는 연결 뒤 다시 보낸다
             (w.features.iter().any(|f| f == "health.v1"), !w.features.iter().any(|f| f == "harness_hello.v1"))
         }

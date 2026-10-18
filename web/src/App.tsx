@@ -3,6 +3,7 @@ import type {
   AgentActivity,
   DeviceRole,
   EvaluatorView,
+  MissionView,
   MachineView,
   MenuPick,
   NoticeView,
@@ -11,6 +12,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
+import { Missions } from "./Missions";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -311,6 +313,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   // 사후 평가자: 목록에 섞지 않고 header badge로만 보인다(§8.13)
+  const [missions, setMissions] = useState<MissionView[]>([]);
+  const missionLoading = useRef(false);
+  const missionReload = useRef(false);
+  const loadMissions = () => {
+    if (missionLoading.current) { missionReload.current = true; return; }
+    missionLoading.current = true;
+    call({ op: "mission_list", project: null }).then((r) => { if (r.kind === "missions") setMissions(r.missions); }).catch(() => {}).finally(() => {
+      missionLoading.current = false;
+      if (missionReload.current) { missionReload.current = false; loadMissions(); }
+    });
+  };
   const [evaluators, setEvaluators] = useState<EvaluatorView[]>([]);
   const loadEvaluators = () =>
     call({ op: "evaluator_status", project: null })
@@ -319,7 +332,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       })
       .catch(() => {});
   const putThread = (t: ThreadView) => {
-    if (t.role === "evaluator") loadEvaluators();
+    if (t.role === "evaluator") { loadEvaluators(); loadMissions(); }
     setThreads((old) => {
       const next = new Map(old);
       next.set(threadKey(t), t);
@@ -468,6 +481,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     () =>
       watchEvents(
         (ev) => {
+          loadMissions();
           setMachines(ev.machines);
           setPanes(ev.panes);
           setLoaded(true);
@@ -498,7 +512,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 setQuestions(new Map(r.questions.map((q) => [q.id, q])));
               })
               .catch(() => {});
-          if (on) loadEvaluators();
+          if (on) { loadEvaluators(); loadMissions(); }
           if (on)
             call({ op: "threads", project: null, role: null })
               .then((r) => {
@@ -776,6 +790,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             {role === "reader" ? "보기 권한" : "제어 권한"}
           </span>
           <span className="spacer" />
+          <Missions missions={missions} role={role} onOpen={choose} onReload={loadMissions} />
           {evaluators.map((v) => (
             <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
           ))}
@@ -1172,8 +1187,8 @@ function ListFoot({
 function EvaluatorBadge({ v, pane, onOpen }: { v: EvaluatorView; pane?: PaneView; onOpen: (id: string | null) => void }) {
   const running = v.running && pane !== undefined;
   const act = pane?.agent?.activity;
-  const state = !running ? "ended" : act === "working" ? "working" : "idle";
-  const label = state === "ended" ? "세션 끝남" : state === "working" ? "평가 중" : "대기";
+  const state = !running ? "ended" : act === "question" ? "blocked" : act === "working" ? "working" : "idle";
+  const label = state === "ended" ? "세션 끝남" : state === "blocked" ? "막힘" : state === "working" ? "평가 중" : "대기";
   return (
     <button
       className={`eval-badge ${state}`}
@@ -1182,7 +1197,7 @@ function EvaluatorBadge({ v, pane, onOpen }: { v: EvaluatorView; pane?: PaneView
       disabled={!v.thread.pane}
       onClick={() => v.thread.pane && onOpen(v.thread.pane)}
     >
-      평가 <span className="eval-dot">●</span> {v.undecided}
+      특수 <span className="eval-dot">●</span> {v.undecided}
     </button>
   );
 }

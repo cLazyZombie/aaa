@@ -731,3 +731,207 @@ mod tests {
         assert!(check_work_dir("/etc").is_err());
     }
 }
+
+/// 임무 입력의 처리 여부는 agent가 작업 폴더에서 읽는다. symlink는 따라가지 않는다.
+pub fn mission_inbox_pending(work_dir: &str) -> Result<Vec<String>> {
+    let dir = check_work_dir(work_dir)?;
+    let processed = dir.join("processed.txt");
+    if let Ok(m) = processed.symlink_metadata() {
+        if !m.is_file() || m.len() > 1024 * 1024 {
+            bail!("processed.txt는 1MiB 이하 일반 파일이어야 한다");
+        }
+    }
+    let done = std::fs::read_to_string(processed).unwrap_or_default();
+    let done: std::collections::HashSet<_> = done.lines().map(str::trim).collect();
+    let inbox = dir.join("inbox");
+    if let Ok(m) = inbox.symlink_metadata() {
+        if !m.is_dir() {
+            bail!("inbox는 일반 폴더여야 한다");
+        }
+    }
+    let mut names = vec![];
+    for e in std::fs::read_dir(inbox).into_iter().flatten() {
+        let e = e?;
+        let name = e.file_name().to_string_lossy().into_owned();
+        if e.file_type()?.is_file() && name.ends_with(".json") && !done.contains(name.as_str()) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn mission_state_path(work_dir: &str, rel: &str) -> Result<PathBuf> {
+    use std::path::Component;
+    let dir = check_work_dir(work_dir)?;
+    let path = Path::new(rel);
+    if !path.components().all(|c| matches!(c, Component::Normal(_))) {
+        bail!("임무 상태의 상대 경로가 아니다");
+    }
+    let allowed = matches!(rel, "state.md" | "processed.txt")
+        || rel.starts_with("inbox/") && rel.ends_with(".json")
+        || rel.starts_with("history/");
+    if !allowed || rel.len() > 1024 {
+        bail!("임무 상태 파일이 아니다");
+    }
+    let mut at = dir;
+    for c in path.components() {
+        at.push(c);
+        if let Ok(m) = at.symlink_metadata() {
+            if m.file_type().is_symlink() {
+                bail!("임무 상태에 symlink가 있다");
+            }
+        }
+    }
+    Ok(at)
+}
+/// 새 작업 폴더에 넘길 상태. source는 세션이 끝난 뒤 읽으며 원본을 지우지 않는다.
+pub fn mission_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
+    use sha2::Digest;
+    let dir = check_work_dir(work_dir)?;
+    let mut paths = vec!["state.md".to_string(), "processed.txt".into()];
+    for sub in ["inbox", "history"] {
+        let mut dirs = vec![dir.join(sub)];
+        while let Some(at) = dirs.pop() {
+            if let Ok(m) = at.symlink_metadata() {
+                if !m.is_dir() {
+                    bail!("임무 상태 폴더가 일반 폴더가 아니다");
+                }
+            }
+            for e in std::fs::read_dir(&at).into_iter().flatten() {
+                let e = e?;
+                let t = e.file_type()?;
+                if t.is_symlink() {
+                    bail!("임무 상태에 symlink가 있다");
+                }
+                if t.is_dir() {
+                    dirs.push(e.path());
+                } else if t.is_file() {
+                    paths.push(
+                        e.path()
+                            .strip_prefix(&dir)?
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/"),
+                    );
+                }
+            }
+        }
+    }
+    paths.sort();
+    let mut files = vec![];
+    let mut size = 0;
+    for rel in paths {
+        let path = mission_state_path(work_dir, &rel)?;
+        if !path.exists() {
+            continue;
+        }
+        let b = std::fs::read(path)?;
+        size += b.len();
+        if size > 8 * 1024 * 1024 || files.len() >= 1000 {
+            bail!("옮길 임무 상태가 8MiB 또는 1000개를 넘는다. 원본을 보존했다");
+        }
+        files.push(aaa_proto::LibFile {
+            path: rel,
+            size: b.len() as u64,
+            sha256: hex::encode(sha2::Sha256::digest(&b)),
+        });
+    }
+    Ok(files)
+}
+pub fn mission_state_read(work_dir: &str, rel: &str, offset: u64) -> Result<(Vec<u8>, bool)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(mission_state_path(work_dir, rel)?)?;
+    let size = f.metadata()?.len();
+    if offset > size {
+        bail!("임무 상태 읽기 offset이 범위를 넘었다");
+    }
+    f.seek(SeekFrom::Start(offset))?;
+    let mut b = vec![];
+    f.take(384 * 1024).read_to_end(&mut b)?;
+    let eof = offset + b.len() as u64 == size;
+    Ok((b, eof))
+}
+pub fn mission_state_write(work_dir: &str, rel: &str, offset: u64, data: &[u8], eof: bool, sha: &str) -> Result<()> {
+    use sha2::Digest;
+    use std::io::Write;
+    if data.len() > 384 * 1024 || offset.saturating_add(data.len() as u64) > 8 * 1024 * 1024 {
+        bail!("임무 상태 조각 상한이다");
+    }
+    let path = mission_state_path(work_dir, rel)?;
+    let parent = path.parent().context("임무 상태 부모가 없다")?;
+    std::fs::create_dir_all(parent)?;
+    let tmp = parent.join(format!(".mission-{}.tmp", path.file_name().unwrap().to_string_lossy()));
+    if tmp.symlink_metadata().is_ok_and(|m| !m.is_file()) {
+        bail!("임무 상태 임시 파일이 일반 파일이 아니다");
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true);
+    let mut f = if offset == 0 {
+        opts.truncate(true).open(&tmp)?
+    } else {
+        let f = opts.append(true).open(&tmp)?;
+        if f.metadata()?.len() != offset {
+            bail!("임무 상태 조각 offset이 다르다");
+        }
+        f
+    };
+    f.write_all(data)?;
+    drop(f);
+    if eof {
+        let actual = hex::encode(sha2::Sha256::digest(std::fs::read(&tmp)?));
+        if actual != sha {
+            bail!("임무 상태 hash가 다르다. 원본을 보존했다");
+        }
+        std::fs::rename(tmp, path)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod mission_tests {
+    use super::*;
+    use sha2::Digest;
+    #[test]
+    fn mission_inbox_counts_processed_and_state_transfer_is_exact() {
+        let root = std::env::temp_dir().join(format!("aaa-mission-files-{}", aaa_common::util::new_id()));
+        let from = root.join("from/.aaa/demo-t-0001");
+        let to = root.join("to/.aaa/demo-t-0001");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        let from = from.to_str().unwrap();
+        let to = to.to_str().unwrap();
+        write_inbox(from, "inbox/p-00000001.json", "첫 입력".as_bytes()).unwrap();
+        write_inbox(from, "inbox/r-00000002.json", "둘째 입력".as_bytes()).unwrap();
+        std::fs::write(Path::new(from).join("processed.txt"), "p-00000001.json\n").unwrap();
+        std::fs::write(Path::new(from).join("state.md"), "이어 갈 판단").unwrap();
+        assert_eq!(mission_inbox_pending(from).unwrap().len(), 1);
+        let files = mission_state_list(from).unwrap();
+        assert_eq!(files.len(), 4);
+        for f in &files {
+            let (data, eof) = mission_state_read(from, &f.path, 0).unwrap();
+            assert!(eof);
+            mission_state_write(to, &f.path, 0, &data, eof, &f.sha256).unwrap();
+            assert_eq!(
+                std::fs::read(Path::new(from).join(&f.path)).unwrap(),
+                std::fs::read(Path::new(to).join(&f.path)).unwrap()
+            );
+        }
+        assert_eq!(mission_inbox_pending(to).unwrap().len(), 1);
+        assert!(mission_state_write(to, "../escape", 0, b"x", true, "bad").is_err());
+        assert!(
+            mission_state_write(
+                to,
+                "state.md",
+                0,
+                "오염".as_bytes(),
+                true,
+                &hex::encode(sha2::Sha256::digest("다른 내용".as_bytes()))
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(Path::new(to).join("state.md")).unwrap(), "이어 갈 판단");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

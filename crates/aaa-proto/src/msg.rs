@@ -717,6 +717,27 @@ pub enum AgentRequest {
     /// agent 기능 `term_colors.v1`이 있을 때만 보낸다.
     TermColors(TermColors),
     /// 사후 평가자 사건 묶음을 작업 폴더의 `inbox/` 아래에 쓴다(§8.13). `path`는 `inbox/<이름>.json`만 받는다.
+    /// mission.v1을 양쪽이 알린 연결에서만 임무 입력의 처리 여부를 읽는다.
+    MissionInboxStatus {
+        work_dir: String,
+    },
+    /// mission.v1: repo·machine 변경 때 상태 파일만 옮긴다. 본문은 모두 자료다.
+    MissionStateList {
+        work_dir: String,
+    },
+    MissionStateRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+    },
+    MissionStateWrite {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+        sha256: String,
+    },
     WorkFileWrite {
         work_dir: String,
         path: String,
@@ -773,6 +794,13 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    MissionInbox {
+        pending: u32,
+        names: Vec<String>,
+    },
+    MissionFiles {
+        files: Vec<crate::LibFile>,
+    },
     Session(SessionInfo),
     Sessions {
         sessions: Vec<SessionInfo>,
@@ -1926,6 +1954,52 @@ pub enum FrontRequest {
     /// ticker를 지금 한 번 돌리고, 이 요청 뒤에 시작한 tick이 끝나면 답한다(herdr-projects 시험의 `ticker::tick_project`,
     /// t3code worker `drain`과 같은 자리). host가 「봤는데 할 일이 없었다」를 시험이 기다릴 수 있다(docs/testing.md).
     TickerTick,
+    /// 특수 임무 목록과 적용 판. Reader도 볼 수 있다.
+    MissionList {
+        project: Option<String>,
+    },
+    MissionShow {
+        project: String,
+        name: String,
+    },
+    /// 사람만 승인한다. Controller 웹 기기에서도 가능하며 세션 안 연결은 거부한다.
+    MissionApprove {
+        project: String,
+        name: String,
+        approval_sha256: String,
+    },
+    MissionReject {
+        project: String,
+        name: String,
+    },
+    MissionStart {
+        project: String,
+        name: String,
+    },
+    MissionStop {
+        project: String,
+        name: String,
+    },
+    MissionPause {
+        project: String,
+        name: String,
+    },
+    MissionResume {
+        project: String,
+        name: String,
+    },
+    MissionReload {
+        project: String,
+        name: String,
+    },
+    MissionRestart {
+        project: String,
+        name: String,
+    },
+    MissionOpen {
+        project: String,
+        name: String,
+    },
     /// routine 목록(`projects/<p>/routines/*.md`)과 상태
     Routines {
         project: String,
@@ -2017,6 +2091,8 @@ impl FrontRequest {
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
+                | FrontRequest::MissionList { .. }
+                | FrontRequest::MissionShow { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
@@ -2061,6 +2137,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    Missions {
+        missions: Vec<crate::MissionView>,
+    },
+    Mission {
+        mission: Box<crate::MissionView>,
+    },
     Post {
         result: crate::PostResult,
     },

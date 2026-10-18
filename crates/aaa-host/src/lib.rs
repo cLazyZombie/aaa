@@ -25,6 +25,7 @@ mod library_links;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
+mod mission;
 mod notice;
 mod notify;
 mod open;
@@ -358,6 +359,8 @@ pub struct Host {
     pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
     pub(crate) post_gate: std::sync::Mutex<()>,
+    mission_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    mission_start_lock: tokio::sync::Mutex<()>,
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
     /// 흐름 사건 하나를 저장(seq를 정함)부터 broadcast까지 한 번에 하나씩 한다(`orch.rs` `flow_event`)
     flow_order: Mutex<()>,
@@ -431,7 +434,7 @@ pub struct Host {
     /// 기기마다 최근에 push로 보낸 항목(push.rs `PushedLog`)
     pub(crate) pushed: Mutex<push::PushedLog>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
-    eval_due: Mutex<HashMap<String, Instant>>,
+    eval_due: Mutex<HashMap<(String, String), Instant>>,
     /// 사후 평가자 묶음은 한 번에 하나씩 만든다
     eval_lock: tokio::sync::Mutex<()>,
     /// 평가 기록 채택·보류는 한 번에 하나씩
@@ -560,6 +563,8 @@ impl Host {
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
+            mission_locks: Mutex::new(HashMap::new()),
+            mission_start_lock: tokio::sync::Mutex::new(()),
             notice_events: broadcast::channel(64).0,
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
@@ -1278,6 +1283,34 @@ impl Host {
                 })
             }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
+            FrontRequest::MissionList { project } => {
+                self.mission_list(project.as_deref()).map(|missions| FrontResponse::Missions { missions })
+            }
+            FrontRequest::MissionShow { project, name } => {
+                self.mission_show(&project, &name).map(|m| FrontResponse::Mission { mission: Box::new(m) })
+            }
+            FrontRequest::MissionApprove { project, name, approval_sha256 } => self
+                .mission_approve(&project, &name, &approval_sha256, actor)
+                .map(|m| FrontResponse::Mission { mission: Box::new(m) }),
+            FrontRequest::MissionReject { project, name } => {
+                self.mission_reject(&project, &name, actor).map(|m| FrontResponse::Mission { mission: Box::new(m) })
+            }
+            FrontRequest::MissionStart { project, name } => self
+                .mission_start(&project, &name, actor)
+                .await
+                .map(|m| FrontResponse::Mission { mission: Box::new(m) }),
+            FrontRequest::MissionStop { project, name } => self.mission_control(&project, &name, "stop", actor).await,
+            FrontRequest::MissionPause { project, name } => self.mission_control(&project, &name, "pause", actor).await,
+            FrontRequest::MissionResume { project, name } => {
+                self.mission_control(&project, &name, "resume", actor).await
+            }
+            FrontRequest::MissionReload { project, name } => {
+                self.mission_control(&project, &name, "reload", actor).await
+            }
+            FrontRequest::MissionRestart { project, name } => {
+                self.mission_control(&project, &name, "restart", actor).await
+            }
+            FrontRequest::MissionOpen { project, name } => self.mission_control(&project, &name, "open", actor).await,
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }

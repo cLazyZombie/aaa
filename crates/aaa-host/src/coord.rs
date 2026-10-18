@@ -204,6 +204,7 @@ impl Host {
         }
         let page = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
+            missions: self.mission_list(Some(project))?,
             project: project.to_string(),
             path: dir.display().to_string(),
             start_threads: self.safety(project).start_threads,

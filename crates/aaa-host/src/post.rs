@@ -116,7 +116,7 @@ impl Host {
         let sender = PostSender {
             thread: Some(rec.id.clone()),
             role: role.unwrap(),
-            mission: None,
+            mission: rec.mission.as_ref().map(|m| m.name.clone()),
             machine: self.machine_name(mid),
             session: Some(session.into()),
             verified: "peer+token".into(),
@@ -183,12 +183,18 @@ impl Host {
             self.db.audit(actor, "post_refuse", &format!("{detail} reason=이미 다른 글에 쓴 post ID"));
             return refused("이미 다른 글에 쓴 post ID다");
         }
-        if input.to != "coordinator" || sender.role == Role::Coordinator {
-            result = Some(refused(if input.to.starts_with("mission:") {
-                "임무 전달은 2단계다. 아직 없는 임무에는 보낼 수 없다"
-            } else {
-                "이 역할은 이 목적지로 post할 수 없다"
-            }));
+        let to_mission = input.to.strip_prefix("mission:").map(str::to_string);
+        let allowed = match &to_mission {
+            Some(n) => {
+                sender.role == Role::Coordinator
+                    && matches!(input.post_type, PostType::Data | PostType::Notice)
+                    && !input.needs_user
+                    && self.mission_target_exists(project, n)
+            }
+            None => input.to == "coordinator" && sender.role != Role::Coordinator,
+        };
+        if !allowed {
+            result = Some(refused("이 역할은 이 목적지로 post할 수 없거나 열린 임무가 없다"));
         } else if input.needs_user && input.post_type != PostType::Request {
             result = Some(refused("needs_user는 request에만 쓴다"));
         } else if input.body.len() > 65536
@@ -223,7 +229,14 @@ impl Host {
             }
         }
         let cfg = &self.cfg.post;
-        if result.is_none() {
+        if result.is_none()
+            && to_mission.is_some()
+            && self.db.post_pair_count(project, &who, &input.to, now.saturating_sub(3600000)).unwrap_or(u32::MAX)
+                >= cfg.pair_hourly
+        {
+            result = Some(refused("pair rate: 임무별 시간당 상한이다"));
+        }
+        if result.is_none() && to_mission.is_none() {
             let accepted: Vec<_> =
                 recent.iter().filter(|(_, _, _, r)| matches!(r, PostResult::Accepted { .. })).collect();
             if accepted.len() >= cfg.daily as usize
@@ -276,9 +289,9 @@ impl Host {
             input,
             caused_by: vec![],
             created_ms: now,
-            state: "delivered".into(),
+            state: if to_mission.is_some() { "pending" } else { "delivered" }.into(),
         };
-        let item = accepted.then(|| InboxItem {
+        let item = (accepted && to_mission.is_none()).then(|| InboxItem {
             id: format!("{}-post-{id}", util::utc_compact(now)),
             project: project.into(),
             item_kind: "post".into(),
@@ -319,9 +332,15 @@ impl Host {
             self.inbox_publish(&i);
         }
         if let Some(rec) = rec {
+            if accepted && rec.mission.is_some() {
+                let _ = self.update_rec(project, &rec.id, |r| r.mission.as_mut().unwrap().posts += 1);
+            }
             self.flow(rec, if accepted { "post_accepted" } else { "post_refused" }, None, audit);
         } else {
             self.flow_project(project, if accepted { "post_accepted" } else { "post_refused" }, None, audit);
+        }
+        if accepted && env.input.to == "mission:evaluator" {
+            self.evaluator_due(project, std::time::Duration::ZERO);
         }
         result
     }

@@ -221,10 +221,23 @@ impl Host {
     pub(crate) fn inbox_from_flow(&self, e: &FlowEvent) {
         let Some(thread) = &e.thread else { return };
         // 사후 평가자의 알림은 평가 기록(`evaluation`)으로 따로 알린다. 실패는 그대로 알린다.
+
+        let p = &e.project;
         if e.role == Some(aaa_proto::Role::Evaluator) && e.kind == "message_unknown" {
+            self.inbox_once(
+                p,
+                "thread-state",
+                thread,
+                "message not delivered",
+                "특수 thread의 입력을 전달했는지 모른다. 파일을 보존하고 다시 보내지 않는다",
+            );
+            let _ = self.update_rec(p, thread, |r| {
+                if let Some(m) = r.mission.as_mut() {
+                    m.state = "막힘".into();
+                }
+            });
             return;
         }
-        let p = &e.project;
         let (event, summary) = match e.kind.as_str() {
             "brief_unknown" => (
                 "brief not delivered",
@@ -302,6 +315,16 @@ impl Host {
             i.done = true;
             i.done_at_ms = Some(now);
             self.db.inbox_put(&i)?;
+            if i.item_kind == "post"
+                && let Ok(r) = self.load(project, &i.subject)
+                && r.mission.is_some()
+            {
+                let _ = self.update_rec(project, &r.id, |r| {
+                    let m = r.mission.as_mut().unwrap();
+                    m.handled_posts += 1;
+                    m.last_handled_ms = Some(now);
+                });
+            }
             let _ = std::fs::create_dir_all(dir.join("done"));
             let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
         }
@@ -356,6 +379,8 @@ impl Host {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
             self.thread_pass(&p.name);
+            self.builtin_evaluator_state(&p.name);
+            self.mission_pass(&p.name).await;
             self.resolve_merged_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             let dir = Path::new(&p.path);

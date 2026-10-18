@@ -155,7 +155,7 @@ pub fn rows(
     let mut evals: Vec<&PaneView> = panes.iter().filter(|p| p.role == Some(Role::Evaluator)).collect();
     evals.sort_by(|a, b| a.name.cmp(&b.name));
     if !evals.is_empty() {
-        out.push(Row::Header("평가".into()));
+        out.push(Row::Header("특수".into()));
         out.extend(evals.into_iter().map(|p| Row::Pane(p.id.clone())));
     }
     out
@@ -918,6 +918,7 @@ mod tests {
         pane: Option<&str>,
     ) -> ThreadView {
         ThreadView {
+            mission: None,
             project: project.into(),
             id: id.into(),
             title: format!("{id}-job"),
@@ -1014,7 +1015,7 @@ mod tests {
             vec![Row::Project("alpha".into())],
             t("alpha/t-0004").to_vec(),
             vec![Row::Other, Row::Pane("p2".into()), Row::Pane("p4".into()), Row::Pane("p5".into())],
-            vec![Row::Header("평가".into()), Row::Pane("pe".into())],
+            vec![Row::Header("특수".into()), Row::Pane("pe".into())],
         ]
         .concat();
         assert_eq!(rows(&machines, &panes, &threads, &open, None), want);
@@ -1026,7 +1027,7 @@ mod tests {
             vec![Row::Project("alpha".into())],
             t("alpha/t-0004").to_vec(),
             vec![Row::Other],
-            vec![Row::Header("평가".into()), Row::Pane("pe".into())],
+            vec![Row::Header("특수".into()), Row::Pane("pe".into())],
         ]
         .concat();
         assert_eq!(rows(&machines, &panes, &threads, &folded, Some("p1")), want);

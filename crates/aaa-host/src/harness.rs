@@ -370,6 +370,23 @@ impl Host {
         // 끝남은 보고 확인을 건 뒤에 미룬다(notice.rs `turn_finished`): ticker는 확인 중인 thread를 셈하지 않는다
         if activity.is_some() || ev.kind == "progress" {
             let thread = self.thread_of_pane(&ev.session);
+            if let Some(r) = thread.as_ref().filter(|r| r.mission.is_some()) {
+                let now = aaa_common::util::now_ms();
+                let _ = self.update_rec(&r.project, &r.id, |r| {
+                    let m = r.mission.as_mut().unwrap();
+                    if activity == Some(AgentActivity::Working) {
+                        m.saw_working = true;
+                        m.working_since_ms.get_or_insert(now);
+                        m.idle_since_ms = None;
+                    }
+                    if activity == Some(AgentActivity::Idle) {
+                        if let Some(at) = m.working_since_ms.take() {
+                            m.work_ms += now.saturating_sub(at);
+                        }
+                        m.idle_since_ms.get_or_insert(now);
+                    }
+                });
+            }
             match &thread {
                 Some(r) if r.status == ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
                 _ => self.tick_wake.notify_one(),
@@ -980,6 +997,8 @@ impl Host {
         // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
         // thread.rs `append_follow_up`). 입력 전에 거부됐으면(Err) 남기지 않는다.
         if r.is_ok()
+            && !m.text.starts_with("[aaa ")
+            && !self.load(&m.project, &m.thread).is_ok_and(|r| r.mission.is_some())
             && let Err(e) = self.append_follow_up(&m.project, &m.thread, &m.text)
         {
             tracing::warn!(project = %m.project, thread = %m.thread, "Follow-ups를 쓰지 못했다: {e}");

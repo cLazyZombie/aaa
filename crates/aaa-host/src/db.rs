@@ -906,3 +906,39 @@ impl Db {
         Ok(posts)
     }
 }
+
+impl Db {
+    pub(crate) fn post_pair_count(&self, p: &str, sender: &str, to: &str, since: u64) -> Result<u32> {
+        Ok(self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM posts WHERE project=?1 AND sender=?2 AND created_ms>=?3 AND json_extract(data,'$.to')=?4",params![p,sender,since,to],|r|r.get(0))?)
+    }
+    pub(crate) fn mission_posts(&self, project: &str, name: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
+        let c = self.conn.lock().unwrap();
+        let mut st=c.prepare("SELECT data FROM posts WHERE project=?1 AND json_extract(data,'$.to')=?2 AND json_extract(data,'$.state')='pending' ORDER BY seq")?;
+        let rows = st
+            .query_map(params![project, format!("mission:{name}")], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.iter().map(|s| serde_json::from_str(s).map_err(Into::into)).collect()
+    }
+    pub(crate) fn mission_post_delivered(&self, project: &str, id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute("UPDATE posts SET data=json_set(data,'$.state','delivered') WHERE project=?1 AND json_extract(data,'$.id')=?2",params![project,id])?;
+        Ok(())
+    }
+}
+
+impl Db {
+    /// routine·schedule 입력 번호. 같은 host의 여러 임무에서 겹치지 않는다.
+    pub(crate) fn mission_next_input(&self, prefix: &str) -> Result<String> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let last: Option<String> =
+            tx.query_row("SELECT value FROM meta WHERE key='mission_input_seq'", [], |r| r.get(0)).optional()?;
+        let seq = last
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("임무 입력 번호가 찼다"))?;
+        tx.execute("INSERT INTO meta(key,value) VALUES('mission_input_seq',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[seq.to_string()])?;
+        tx.commit()?;
+        Ok(format!("{prefix}-{seq:012}"))
+    }
+}

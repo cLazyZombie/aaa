@@ -898,3 +898,9 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .droplet-mark .agent-mark { --bg-elevated: var(--droplet-mark-bg); --border: var(--droplet-ring); }
 /* 기기 → 코드의 「또는 이 링크를…」(herdr/DevicesPanel.css .devices-link는 줄 전체가 고정폭): 고정폭 한글은 글자 사이가 벌어져 보여 말은 UI 글꼴로 둔다 */
 .devices-link .settings-description { font-family: var(--font-ui); }
+
+.mission-menu { position: relative; }
+.mission-menu summary { cursor: pointer; list-style: none; }
+.mission-menu summary[data-state="막힘"], .mission-menu summary[data-state="멈춤"], .eval-badge.blocked { color: var(--warning, #c58b32); }
+.mission-actions { position: absolute; z-index: 40; right: 0; top: 100%; width: min(360px, 90vw); padding: 12px; background: var(--bg, #222); border: 1px solid var(--border, #555); border-radius: 8px; }
+.mission-actions button { margin: 4px; }

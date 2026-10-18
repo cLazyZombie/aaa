@@ -713,6 +713,18 @@ impl UsageService {
         UsageService { ctx, state: Default::default() }
     }
 
+    /// 이미 읽은 숫자만 쓴다. 임무 ticker는 인증 파일이나 외부 서비스를 읽지 않는다.
+    pub(crate) async fn cached(&self) -> UsageReport {
+        let st = self.state.lock().await;
+        let mut by_key = std::collections::BTreeMap::new();
+        for u in st.entries.values().filter_map(|e| e.usage.clone()) {
+            if !by_key.contains_key(&u.key) || u.problem.is_none() {
+                by_key.insert(u.key.clone(), u);
+            }
+        }
+        UsageReport { providers: by_key.into_values().collect() }
+    }
+
     /// `refresh`는 FRESH_MS보다 일찍 다시 묻는다(MIN_REFRESH_MS에 한 번까지).
     pub async fn report(&self, refresh: bool) -> UsageReport {
         let mut st = self.state.lock().await;

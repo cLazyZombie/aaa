@@ -221,7 +221,7 @@ impl Host {
             // brief를 받기 전이었으면 이을 대화가 없다: 새로 띄우고 brief를 다시 보낸다(`thread restart`와 같다).
             // 받은 뒤라면 대화를 잇는다. 대화 ID로 잇지 못하는 harness(custom 등)는 같은 명령을 다시 돌리면 일하던 것을
             // 잃은 채 기다리므로 사람에게 넘긴다.
-            let resume = rec.brief == BriefState::Delivered;
+            let resume = rec.mission.is_none() && rec.brief == BriefState::Delivered;
             let resumable = rec.launch.as_ref().is_some_and(|l| l.resume_argv.iter().any(|a| a.contains("{session}")));
             let restarted = if resume && !resumable {
                 Err(aaa_proto::ErrorBody::new(

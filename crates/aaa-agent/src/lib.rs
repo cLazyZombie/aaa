@@ -175,6 +175,7 @@ pub struct Agent {
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
+    host_mission: Mutex<bool>,
     post_gate: Mutex<()>,
     post_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::PostResult>>>,
     /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
@@ -222,6 +223,7 @@ impl Agent {
             host_health: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
+            host_mission: Mutex::new(false),
             post_gate: Mutex::new(()),
             post_waiters: Mutex::new(HashMap::new()),
         }))
@@ -316,7 +318,16 @@ impl Agent {
         }
         let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
         let mut map = self.progress.lock().unwrap();
-        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+        let mut text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+        if kind == "SessionStart"
+            && matches!(p.get("source").and_then(|v| v.as_str()), Some("compact" | "clear" | "resume"))
+            && let Ok(spec) = util::read_json::<SpecFile>(&SessionPaths::new(&self.state, session).spec())
+            && spec.spec.role == Some(aaa_proto::Role::Evaluator)
+            && let Some((_, pointer)) = spec.spec.env.iter().find(|(k, _)| k == "AAA_MISSION_POINTER")
+        {
+            text.push_str("\n");
+            text.push_str(pointer);
+        }
         Some(hooks::output(kind, &text))
     }
 
@@ -1248,6 +1259,42 @@ impl Agent {
                     .map(AgentResponse::CommandRan)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
+            AgentRequest::MissionStateList { work_dir } => {
+                if !*self.host_mission.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "mission.v1 미협상"))
+                } else {
+                    threads::mission_state_list(&work_dir)
+                        .map(|files| AgentResponse::MissionFiles { files })
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
+            AgentRequest::MissionStateRead { work_dir, path, offset } => {
+                if !*self.host_mission.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "mission.v1 미협상"))
+                } else {
+                    threads::mission_state_read(&work_dir, &path, offset)
+                        .map(|(data, eof)| AgentResponse::FileChunk { data: aaa_proto::B64(data), eof })
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
+            AgentRequest::MissionStateWrite { work_dir, path, offset, data, eof, sha256 } => {
+                if !*self.host_mission.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "mission.v1 미협상"))
+                } else {
+                    threads::mission_state_write(&work_dir, &path, offset, &data.0, eof, &sha256)
+                        .map(|_| AgentResponse::Done)
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
+            AgentRequest::MissionInboxStatus { work_dir } => {
+                if !*self.host_mission.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "host가 mission.v1을 알리지 않았다"))
+                } else {
+                    threads::mission_inbox_pending(&work_dir)
+                        .map(|names| AgentResponse::MissionInbox { pending: names.len() as u32, names })
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
             AgentRequest::WorkFileWrite { work_dir, path, data } => {
                 tokio::task::spawn_blocking(move || threads::write_inbox(&work_dir, &path, &data.0))
                     .await
@@ -2001,5 +2048,86 @@ mod tests {
         assert!(rig.agent.sessions().iter().all(|s| s.state == SessionState::Lost), "{:?}", rig.agent.sessions());
         assert!(rig.seen.try_recv().is_err(), "사라진 session host에 또 붙었다");
         std::fs::remove_dir_all(&rig.state).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod mission_tests {
+    use super::*;
+    #[test]
+    fn claude_session_start_reloads_only_the_mission_pointer() {
+        let state = std::env::temp_dir().join(format!("aaa-mission-hook-{}", util::new_id()));
+        let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let mut spec = SpecFile {
+            id: "s1".into(),
+            token: "test-only".into(),
+            boot_id: "b".into(),
+            created_at_ms: 0,
+            label: None,
+            colors: None,
+            spec: SpawnSpec {
+                name: "감시".into(),
+                argv: vec![],
+                cwd: None,
+                env: vec![("AAA_MISSION_POINTER".into(), "임무 판 abc: brief.md와 state.md를 다시 읽는다".into())],
+                cols: 80,
+                rows: 24,
+                role: Some(aaa_proto::Role::Evaluator),
+                harness: Some("claude".into()),
+                profile: None,
+                resolved_profile: None,
+            },
+        };
+        let path = SessionPaths::new(&state, "s1").spec();
+        util::ensure_private_dir(path.parent().unwrap()).unwrap();
+        util::write_json(&path, &spec).unwrap();
+        for source in ["compact", "clear", "resume"] {
+            let out =
+                a.guide("s1", &serde_json::json!({"hook_event_name":"SessionStart","source":source}), 1000).unwrap();
+            assert_eq!(out.matches("임무 판 abc").count(), 1);
+            assert!(out.contains("additionalContext"));
+        }
+        let out =
+            a.guide("s1", &serde_json::json!({"hook_event_name":"SessionStart","source":"startup"}), 1000).unwrap();
+        assert!(!out.contains("임무 판 abc"));
+        spec.spec.role = Some(aaa_proto::Role::Worker);
+        util::write_json(&path, &spec).unwrap();
+        assert!(
+            !a.guide("s1", &serde_json::json!({"hook_event_name":"SessionStart","source":"compact"}), 1000)
+                .unwrap()
+                .contains("임무 판 abc")
+        );
+        std::fs::remove_dir_all(state).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod mission_feature_tests {
+    use super::*;
+    use aaa_common::conn::{FrameRx, spawn_writer};
+    #[tokio::test]
+    async fn old_host_cannot_receive_new_mission_responses() {
+        let state = std::env::temp_dir().join(format!("aaa-mission-feature-{}", util::new_id()));
+        let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let work = state.join("work/.aaa/demo-t-0001");
+        std::fs::create_dir_all(&work).unwrap();
+        let (s, peer) = tokio::io::duplex(1 << 20);
+        let (_, w) = tokio::io::split(s);
+        *a.host.lock().unwrap() = Some(spawn_writer(w, aaa_proto::MAX_FRAME));
+        let mut rx = FrameRx::new(peer, aaa_proto::MAX_FRAME);
+        a.clone()
+            .handle("old".into(), AgentRequest::MissionStateList { work_dir: work.to_string_lossy().into() })
+            .await;
+        assert!(
+            matches!(rx.control::<LinkMsg>().await.unwrap(),LinkMsg::Res{id,result:aaa_proto::Outcome::Err(e)} if id=="old" && e.code==ErrorCode::Forbidden)
+        );
+        *a.host_mission.lock().unwrap() = true;
+        a.clone()
+            .handle("new".into(), AgentRequest::MissionStateList { work_dir: work.to_string_lossy().into() })
+            .await;
+        assert!(
+            matches!(rx.control::<LinkMsg>().await.unwrap(),LinkMsg::Res{id,result:aaa_proto::Outcome::Ok(AgentResponse::MissionFiles{files})} if id=="new" && files.is_empty())
+        );
+        std::fs::remove_dir_all(state).unwrap();
     }
 }

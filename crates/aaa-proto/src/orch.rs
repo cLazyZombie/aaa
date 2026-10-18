@@ -663,6 +663,9 @@ pub struct ThreadView {
     pub role: Role,
     /// (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
     pub thread_kind: ThreadKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mission: Option<String>,
     pub status: ThreadStatus,
     pub group: ThreadGroup,
     pub brief: BriefState,
@@ -981,6 +984,8 @@ pub struct ProjectContext {
     /// 사후 평가자(지정했을 때만)
     #[serde(default)]
     pub evaluator: Option<Box<EvaluatorView>>,
+    #[serde(default)]
+    pub missions: Vec<crate::MissionView>,
 }
 
 // ───────────────────────── 사후 평가자(M3, §8.13) ─────────────────────────

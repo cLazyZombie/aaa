@@ -148,3 +148,10 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 
 기존 shell/custom profile의 command/env는 전환 호환용으로 읽는다. 새 claude/codex 정의는 위 다섯 키를 쓰고
 머신별 실행 경로·환경은 agent의 harness 덮어쓰기로 분리한다. 배포·운영 host 재시작은 binary 배포 담당자가 한다.
+
+## 임무가 있는 host의 갱신과 되돌리기
+
+- 임무를 쓰려면 host·CLI·해당 agent를 함께 갱신한다(FRONT_API 1.38, AGENT_LINK 1.5, 양쪽 mission.v1). 1.4 agent는 연결할 수 있으나 임무 메시지는 보내지 않는다. 1.3 agent는 먼저 1.4 이상으로 올린다.
+- 임무를 모르는 host로 되돌리기 전 모든 임무를 `aaa mission stop <p> <name>`으로 끝낸다. 목적지가 있는 routine도 `enabled=false`로 둔다. 옛 host는 ThreadRec을 다시 저장할 때 mission 칸을 잃고 임무를 사후 평가자로 오인할 수 있다.
+- repo·머신 변경 때 원래 작업 폴더는 자동 삭제하지 않는다. 상태 이동이 성공했음을 확인한 뒤 사람이 남긴 worktree·branch를 정리한다. 상태 이동 상한을 넘으면 적용 사본과 원본을 보존하고 막힘으로 알린다.
+- 2단계의 사용량 미룸은 host가 이미 읽은 값만 사용한다. 원격 agent가 다른 로그인으로 도는 계정은 판단하지 않는다. ticker의 주기 조회와 계정 연결은 3단계다.

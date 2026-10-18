@@ -204,7 +204,13 @@ async fn serve(
         proto: agreed,
         host_id: host.host_id.clone(),
         // harness_hello.v1: hello의 harness 사건을 읽는다(agent는 연결 뒤 다시 보내지 않는다, 재부팅 복원)
-        features: vec!["terminal.v1".into(), "health.v1".into(), "harness_hello.v1".into(), "post.v1".into()],
+        features: vec![
+            "terminal.v1".into(),
+            "health.v1".into(),
+            "harness_hello.v1".into(),
+            "post.v1".into(),
+            "mission.v1".into(),
+        ],
     }))
     .await?;
     let generation = host.next_gen();
