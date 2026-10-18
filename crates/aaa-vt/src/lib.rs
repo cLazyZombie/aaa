@@ -589,7 +589,14 @@ impl Vt {
     fn live_spans(&mut self, alt: bool, back: usize, lo: usize, hi: usize) -> Vec<LiveSpan> {
         let m = self.parser.callbacks();
         let base = if alt { 0 } else { m.dropped };
-        let spans: Vec<link::Span> = m.links.spans.iter().filter(|s| s.alt == alt).cloned().collect();
+        // host 전역 lock 안에서 frame마다 부르므로 줄 범위로 먼저 거른 뒤 복제한다
+        let spans: Vec<link::Span> = m
+            .links
+            .spans
+            .iter()
+            .filter(|s| s.alt == alt && s.end.0 >= base + lo && s.start.0 <= base + hi)
+            .cloned()
+            .collect();
         let screen = self.parser.screen_mut();
         let mut out = Vec::new();
         for span in spans {
