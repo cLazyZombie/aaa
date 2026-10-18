@@ -10,6 +10,8 @@ export const SHARED_SETTING_KEYS = [
   "theme", "palette", "language", "sidebarRows", "agentOrder", "agentMarks", "autoSendQueued",
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
   "usageGlance", "usageOrder", "usageHidden",
+  // aaa: 목록 pane 줄 순서(참고는 herdr workspace 순서라 서버에 있다, plan §8.196)
+  "paneOrder",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];
 

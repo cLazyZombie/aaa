@@ -52,7 +52,27 @@ pub(crate) fn write_manifest(dir: &Path, id: &str, snap: &ReportSnapshot) -> std
 
 /// library 안 상대 경로인가(`..`·절대 경로·빈 경로 거부)
 pub(crate) fn safe_rel(p: &str) -> bool {
-    !p.is_empty() && Path::new(p).components().all(|c| matches!(c, Component::Normal(_)))
+    !p.is_empty()
+        && !p.contains('\\')
+        && p.split('/').all(|c| !c.is_empty() && !c.starts_with('.'))
+        && Path::new(p).components().all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// 최종 파일뿐 아니라 library 아래의 모든 폴더도 symlink를 거부한다.
+fn local_file(dir: &Path, id: &str, path: &str) -> Result<(PathBuf, u64), ErrorBody> {
+    let mut local = dir.to_path_buf();
+    for part in std::iter::once("library").chain(std::iter::once(id)).chain(path.split('/')) {
+        local.push(part);
+        let m = std::fs::symlink_metadata(&local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
+        if m.file_type().is_symlink() {
+            return Err(err(ErrorCode::NotFound, "symlink는 열지 않는다"));
+        }
+    }
+    let m = std::fs::symlink_metadata(&local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
+    if !m.is_file() {
+        return Err(err(ErrorCode::NotFound, "일반 파일이 아니다"));
+    }
+    Ok((local, m.len()))
 }
 
 /// 파일 보기가 고를 MIME·종류(agent 파일 보기 `info`와 같다): 이름으로 정하고, 모르는 이름은 host 사본의 앞부분에
@@ -100,6 +120,7 @@ pub(crate) fn content_type(path: &str) -> &'static str {
 /// 보낼 파일: host 사본이거나 agent에서 읽을 것
 pub(crate) enum ViewSource {
     Local(PathBuf, u64),
+    Page(Vec<u8>),
     Agent { conn: crate::AgentConn, work_dir: String, path: String, size: u64 },
 }
 
@@ -109,6 +130,7 @@ impl ViewSource {
     pub fn size(&self) -> u64 {
         match self {
             ViewSource::Local(_, n) => *n,
+            ViewSource::Page(b) => b.len() as u64,
             ViewSource::Agent { size, .. } => *size,
         }
     }
@@ -117,6 +139,10 @@ impl ViewSource {
     pub async fn open(self, start: u64, len: u64) -> Result<ByteStream, ErrorBody> {
         use futures_util::StreamExt;
         match self {
+            ViewSource::Page(b) => {
+                Ok(futures_util::stream::once(async move { Ok(b[start as usize..(start + len) as usize].to_vec()) })
+                    .boxed())
+            }
             ViewSource::Local(p, _) => {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 let mut f = tokio::fs::File::open(&p)
@@ -166,7 +192,7 @@ impl ViewSource {
 }
 
 impl Host {
-    fn manifest(&self, dir: &Path, id: &str) -> Vec<LibraryFile> {
+    pub(crate) fn manifest(&self, dir: &Path, id: &str) -> Vec<LibraryFile> {
         std::fs::read(manifest_path(dir, id)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
@@ -175,6 +201,7 @@ impl Host {
         project: &str,
         id: &str,
         device: Option<&str>,
+        reveal_link: bool,
     ) -> Result<LibraryView, ErrorBody> {
         let dir = self.project_dir(project)?;
         let rec = self.load(project, id)?;
@@ -199,6 +226,7 @@ impl Host {
             );
         }
         let mut files = self.manifest(&dir, id);
+        files.retain(|f| safe_rel(&f.path));
         for f in &mut files {
             let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(id).join(&f.path));
             (f.mime, f.kind) = file_type(&f.path, local.as_deref());
@@ -210,44 +238,76 @@ impl Host {
             files,
             base: format!("/v/{cap}/"),
             expires_at_ms: aaa_common::util::now_ms() + VIEW_TTL.as_millis() as u64,
+            link: reveal_link.then(|| self.latest_library_link(project, id)).flatten(),
         })
     }
 
     /// 보기 경로의 파일을 찾는다. 읽기는 `ViewSource::open`이다.
     pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewSource, ErrorBody> {
-        let (project, id) = {
+        let memory = {
             let caps = self.view_caps.lock().unwrap();
             match caps.get(cap) {
                 // 경로는 이 host가 돈 뒤에 만든 것이라 그 뒤의 폐기는 `is_revoked`가 다 안다
                 Some(c) if c.until > Instant::now() && !c.device.as_deref().is_some_and(|d| self.is_revoked(d)) => {
-                    (c.project.clone(), c.thread.clone())
+                    Some((c.project.clone(), c.thread.clone()))
                 }
-                _ => return Err(err(ErrorCode::Unauthorized, "보기 경로가 없거나 만료됐다. 목록에서 다시 연다")),
+                _ => None,
             }
         };
-        if !safe_rel(path) {
+        let signed = memory.is_none();
+        let (project, id) = match memory {
+            Some(target) => target,
+            None => self.signed_library_at(cap, aaa_common::util::now_ms())?,
+        };
+        if path.split('/').any(|c| c.starts_with('.') && c != "." && c != "..") {
+            return Err(err(ErrorCode::NotFound, "숨은 결과물은 열지 않는다"));
+        }
+        if !path.is_empty() && !safe_rel(path) {
             return Err(err(ErrorCode::BadRequest, "library 상대 경로가 아니다"));
         }
         let dir = self.project_dir(&project)?;
+        let manifest = self.manifest(&dir, &id);
+        if path.is_empty() && !manifest.iter().any(|f| f.path == "index.html" && !f.on_agent) {
+            return Ok(ViewSource::Page(library_listing(&manifest)));
+        }
+        let path = if path.is_empty() { "index.html" } else { path };
         let entry = self
             .manifest(&dir, &id)
             .into_iter()
             .find(|f| f.path == path)
             .ok_or_else(|| err(ErrorCode::NotFound, format!("결과물에 없다: {path}")))?;
         if !entry.on_agent {
-            let local = dir.join("library").join(&id).join(path);
-            let meta = std::fs::symlink_metadata(&local)
-                .map_err(|e| err(ErrorCode::NotFound, format!("host 사본이 없다: {path} ({e})")))?;
-            if !meta.is_file() {
-                return Err(err(ErrorCode::NotFound, format!("일반 파일이 아니다: {path}")));
-            }
-            return Ok(ViewSource::Local(local, meta.len()));
+            let (local, size) = local_file(&dir, &id, path)?;
+            return Ok(ViewSource::Local(local, size));
+        }
+        if signed {
+            return Ok(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec()));
         }
         let rec = self.load(&project, &id)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::NotFound, "thread 작업 폴더 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
         Ok(ViewSource::Agent { conn, work_dir, path: path.to_string(), size: entry.size })
     }
+}
+
+fn library_listing(files: &[LibraryFile]) -> Vec<u8> {
+    let mut s = "<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content=\"width=device-width, initial-scale=1\"><title>보고서 결과물</title><h1>보고서 결과물</h1><ul>".to_string();
+    for f in files.iter().filter(|f| safe_rel(&f.path)) {
+        let name = f
+            .path
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;");
+        let path = f.path.split('/').map(crate::files::pct).collect::<Vec<_>>().join("/");
+        s.push_str(&format!(
+            "<li><a href=\"./{path}\">{name}</a>{}</li>",
+            if f.on_agent { " · 앱에서 열기" } else { "" }
+        ));
+    }
+    s.push_str("</ul></html>");
+    s.into_bytes()
 }
 
 /// agent 조각을 이어 읽는 stream(`start`부터 `len`바이트까지). 중간에 끊기면 stream 오류로 끝난다(받은 쪽은 길이가 모자라

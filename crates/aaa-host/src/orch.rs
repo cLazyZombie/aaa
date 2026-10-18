@@ -377,11 +377,11 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 
-/// `Starting`이 이보다 길면 사람 차례(herdr-projects `STARTING_TIMEOUT_SECS`)
+/// `Starting`이 이보다 길면 확인 필요(herdr-projects `STARTING_TIMEOUT_SECS`)
 const STARTING_TIMEOUT_MS: u64 = 300_000;
-/// 확인창이 이보다 오래 떠 있으면 사람 차례. 금방 답한 확인창은 보이지 않는다(`BLOCKED_DEBOUNCE_SECS`).
+/// 확인창이 이보다 오래 떠 있으면 확인 필요. 금방 답한 확인창은 보이지 않는다(`BLOCKED_DEBOUNCE_SECS`).
 const BLOCKED_DEBOUNCE_MS: u64 = 30_000;
-/// brief를 아직 못 보냈는데 harness가 입력을 받을 상태가 아닌 채 이만큼 지나면 사람 차례(`NOT_READY_SECS`)
+/// brief를 아직 못 보냈는데 harness가 입력을 받을 상태가 아닌 채 이만큼 지나면 확인 필요(`NOT_READY_SECS`)
 const NOT_READY_MS: u64 = 60_000;
 /// 진행 보고가 「작업 중」을 정하는 시간(herdr-projects progress `ACTIVITY_TTL_MS`)
 const ACTIVITY_TTL_MS: u64 = 300_000;
@@ -393,7 +393,7 @@ pub(crate) const WAITING: &str = "Waiting for you";
 
 /// thread 묶음. 위에서부터 처음 맞는 줄이 이긴다. herdr-projects `thread::group()`(src/thread.rs)을 옮겼다.
 /// prompt_pending은 brief `Pending`, brief_stuck은 `Unknown`(aaa는 다시 보내지 않는다), harness 상태는 pane agent 활동,
-/// blocked는 `Question`이다. 다른 점: 보고 사본 실패는 사람 차례로 둔다(aaa는 보고를 host로 복사한다).
+/// blocked는 `Question`이다. 다른 점: 보고 사본 실패는 확인 필요로 둔다(aaa는 보고를 host로 복사한다).
 /// 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
 /// 진행을 보고하는 agent의 새 보고는 `Done`일 때만 검토 대기다(5번 줄, plan §8.85).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
@@ -1639,6 +1639,8 @@ impl Host {
         match result {
             Ok(None) => Ok(()),
             Ok(Some((hash, skipped, copy, report, changed))) => {
+                // 새 보고 알림보다 먼저 만든다. 같은 보고서의 유효한 링크는 재사용한다.
+                self.library_link(project, id, None, "host")?;
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
                 if rec.report_hash.as_ref() == Some(&hash) && rec.copy.as_deref() != Some("failed") {
@@ -1704,7 +1706,7 @@ impl Host {
 
     /// 끝낸다: 마지막 사본(실패면 거부) → 상태를 끝남으로 → 세션 종료 → 감시 해제 → worktree 정리(force 없음, 병합된 branch만
     /// 삭제) → 「resolved」 항목(herdr-projects threads.rs `resolve`). 상태를 세션보다 먼저 써서, 그 사이 ticker가 닫힌 pane을
-    /// 사람 차례로 보지 않는다.
+    /// 확인 필요로 보지 않는다.
     pub(crate) async fn thread_resolve(
         self: &Arc<Self>,
         project: &str,
@@ -2108,7 +2110,7 @@ mod tests {
     #[test]
     fn row4_working_including_a_launch_in_progress() {
         assert_eq!(g(&open_thread(), Some(agent(Working, 0))), ThreadGroup::Working);
-        // 금방 답한 확인창은 사람 차례로 보이지 않는다
+        // 금방 답한 확인창은 확인 필요로 보이지 않는다
         assert_eq!(g(&open_thread(), Some(agent(Question, 29))), ThreadGroup::Working);
         // 새 thread는 입력을 받을 상태가 아닌 채 60초가 지나기 전까지 작업 중이다
         let pending = ThreadRec { brief: BriefState::Pending, ..open_thread() };
@@ -2159,7 +2161,7 @@ mod tests {
         assert_eq!(g(&pr(acked.clone(), "MERGED", "APPROVED"), Some(agent(Idle, 0))), ThreadGroup::Idle);
         // 보고 없는 열린 PR은 검토할 것이 없다
         assert_eq!(g(&pr(open_thread(), "OPEN", ""), Some(agent(Idle, 0))), ThreadGroup::Idle);
-        // 사람 차례(4번 줄)는 병합 중보다 먼저다
+        // 확인 필요(4번 줄)는 병합 중보다 먼저다
         assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
     }
 
@@ -2199,7 +2201,7 @@ mod tests {
 
     #[test]
     fn self_reports_feed_the_group() {
-        // 사람을 기다린다고 알렸는데 harness는 쉰다: 사람 차례
+        // 사람을 기다린다고 알렸는데 harness는 쉰다: 확인 필요
         assert_eq!(g(&open_thread(), reported(WAITING, Some(40), 5, Idle)), ThreadGroup::WaitingOnYou);
         // 기다림이 새 보고를 이기지만, 다시 일하는 harness는 이기지 못한다
         let t = with_report(open_thread());

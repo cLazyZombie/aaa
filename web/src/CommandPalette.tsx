@@ -37,7 +37,7 @@ import {
 } from "./palette";
 import { PAGES } from "./SettingsDialog";
 import { StatusBadge } from "./Sidebar";
-import { useShortcutOverrides } from "./settings";
+import { useShortcutOverrides, useSidebarShared } from "./settings";
 
 const RECENT_SHOWN = 3;
 
@@ -164,7 +164,8 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
     setRecentKeys(readRecent());
   }, [open]);
 
-  const targets = useMemo(() => paletteTargets(machines, panes, threads), [machines, panes, threads]);
+  const { paneOrder } = useSidebarShared();
+  const targets = useMemo(() => paletteTargets(machines, panes, threads, paneOrder), [machines, panes, threads, paneOrder]);
   // 목록에서 연 줄도 최근이다(참고: 고른 pane이 바뀌면 기억한다)
   const selectedTarget = selected === null ? undefined : targets.find((target) => target.keys.includes(selected));
   const selectedKey = selectedTarget?.key ?? null;

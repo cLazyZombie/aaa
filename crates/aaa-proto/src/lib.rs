@@ -125,6 +125,7 @@ pub fn typescript_bindings() -> String {
         RoutineView::decl(&cfg),
         LibraryFile::decl(&cfg),
         LibraryView::decl(&cfg),
+        LinkView::decl(&cfg),
         FileKind::decl(&cfg),
         FileInfo::decl(&cfg),
         DirListing::decl(&cfg),

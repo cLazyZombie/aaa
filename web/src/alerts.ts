@@ -225,6 +225,8 @@ function touchDevice(): boolean {
 
 /** 알림 하나 */
 export interface Alert {
+  /** 새 보고의 공개 링크. host의 LibraryView에서 조작 기기에만 준다. */
+  libraryUrl?: string | null;
   kind: Exclude<DropletKind, "ended">;
   /** 누르면 갈 주소 hash(`pane=…`·`thread=…`) */
   target: string;
@@ -254,7 +256,7 @@ export function raiseAlert(a: Alert): string {
   else if (!visible) did.push("가려짐");
   else if (a.showing) did.push("보는 중");
   else {
-    showDroplet({ target: a.target, agent: a.agent, title: a.title, machine: a.machine, kind: a.kind });
+    showDroplet({ target: a.target, agent: a.agent, title: a.title, machine: a.machine, kind: a.kind, libraryUrl: a.libraryUrl });
     did.push("띄움");
   }
   did.push(document.hasFocus() ? "focus" : "focus 없음");

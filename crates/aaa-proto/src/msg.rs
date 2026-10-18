@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, LinkView, MessageMode, MessageView,
     OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened,
     ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind,
     ThreadPrepare, ThreadReady, ThreadView,
@@ -1767,6 +1767,21 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
+    /// FRONT_API 1.36. 보고서별 링크 발급(유효한 링크는 재사용). 기본 30일, 조작 권한만.
+    LibraryLink {
+        project: String,
+        thread: String,
+        #[serde(default)]
+        days: Option<u32>,
+    },
+    /// FRONT_API 1.36. 서명 경로를 담으므로 목록도 조작 권한만.
+    LibraryLinks {
+        project: Option<String>,
+    },
+    /// FRONT_API 1.36. 보고서 링크 폐기.
+    LibraryLinkRevoke {
+        id: String,
+    },
     /// 지금 보고를 확인했다
     ThreadAck {
         project: String,
@@ -2146,6 +2161,10 @@ pub enum FrontResponse {
         routines: Vec<RoutineView>,
     },
     Library(LibraryView),
+    LibraryLink(LinkView),
+    LibraryLinks {
+        links: Vec<LinkView>,
+    },
     Evaluators {
         evaluators: Vec<EvaluatorView>,
     },
@@ -2443,6 +2462,13 @@ mod tests {
 
     #[test]
     fn control_classification() {
+        for req in [
+            FrontRequest::LibraryLink { project: "p".into(), thread: "t-0001".into(), days: None },
+            FrontRequest::LibraryLinks { project: None },
+            FrontRequest::LibraryLinkRevoke { id: "id".into() },
+        ] {
+            assert!(req.needs_control());
+        }
         // reader가 보낼 수 있는 요청은 읽기뿐이어야 한다.
         assert!(!FrontRequest::PaneRead { pane: "p".into() }.needs_control());
         // thread pane 읽기는 보기, 키로 답하기는 조작이다(세션 안 CLI는 보기만, §8.25)

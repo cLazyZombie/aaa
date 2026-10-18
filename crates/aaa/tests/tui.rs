@@ -599,12 +599,12 @@ fn start_agent_env(lab: &mut Lab, host_toml: &str, env: &[(&str, &str)]) -> (Nod
     (h, hw)
 }
 
-/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(사람 차례 수·다른 화면 크기) 앞.
+/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(확인 필요 수·다른 화면 크기) 앞.
 /// 시험의 탭 이름에는 빈칸을 쓰지 않는다.
 fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
-    let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
+    let rest = rest.split(" ● 확인 필요").next().unwrap_or(rest);
     // 알림 카드(`render_notice`: 오른쪽 위 3줄)가 덮은 오른쪽도 이름표가 아니다
     let rest = rest.split('┌').next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
@@ -651,15 +651,15 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
-    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄이 있고 지금 pane 줄은 active_row_bg
+    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 「기타」 묶음과 pane 줄(머신 이름)이 있고 지금 pane 줄은 active_row_bg
     // 바탕이다(herdr 사이드바). 이 pane은 실행 파일 이름이 claude라 agent가 띄운 지 3초(`STARTUP_GRACE`) 뒤 화면을 보고
     // 쉼을 알린다(`○`·「입력 대기」). 상태 없는 `·`은 그 3초 동안만 보여 TUI가 3초 넘게 늦게 뜨면 볼 수 없다.
     // 시작 시각에 기대지 않게 감지가 알린 쉼을 기다린다.
     tui.wait_screen("탭과 사이드바", |s| {
         let t = s.text();
         tab_chips(&t) == ["first"]
-            && t.contains(" ▾ labA")
-            && s.current().is_some_and(|l| l.contains(" ○ first") && l.contains("입력 대기"))
+            && t.contains(" ▾ 기타")
+            && s.current().is_some_and(|l| l.contains(" ○ first labA") && l.contains("입력 대기"))
     });
     // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기(사이드바 26칸과 탭 막대 한 줄을 뺀 칸)로 맞추고
     // 이 화면이 지금 쓰는 화면이 된다. 상태 줄은 없다(herdr).
@@ -679,7 +679,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
          ' Esc to cancel · Tab to amend'",
     );
     tui.wait_text("질문 상태", |s| {
-        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 사람 차례"))
+        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 확인 필요"))
     });
     tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| {
@@ -774,7 +774,7 @@ fn remote_attach_rides_the_web() {
     tui.wait_text("pairing 물음", |s| s.contains("아직 그 host와 pairing하지 않았다") && s.contains("pairing 코드:"));
     dump("pair", &tui);
     tui.type_line(&code);
-    tui.wait_text("탭과 사이드바", |s| tab_chips(s) == ["far"] && s.contains(" ▾ labA"));
+    tui.wait_text("탭과 사이드바", |s| tab_chips(s) == ["far"] && s.contains(" ▾ 기타"));
     hw.wait("원격 화면의 lease와 칸 크기", |w| {
         let p = w.pane(&first)?;
         (w.held_by(&first, "tui@") && (p.cols, p.rows) == (COLS - side - GUTTER, ROWS - 1)).then_some(())
@@ -1368,8 +1368,9 @@ fn pick(tui: &mut Tui, needle: &str) {
     panic!("목록에 {needle}이 없다:\n{}", tui.text());
 }
 
-/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록(차이 목록 L1)처럼 머신 머리, 그 머신의 프로젝트 머리와 thread 두 줄
-/// (herdr-projects 「id · 제목」, 둘째 줄 상태 말), thread에 딸리지 않은 pane이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
+/// 왼쪽 사이드바(§8.35·§8.195, herdr 배치): 웹 목록처럼 프로젝트를 먼저 묶어 프로젝트 머리와 thread 두 줄(첫 줄 「id 제목」, 둘째 줄
+/// 왼쪽 상태 말·오른쪽 머신 이름), thread에 딸리지 않은 pane의 「기타」 묶음(줄에 머신 이름)이 보이고, 새 thread를 따라가며, 고르면
+/// 탭으로 열고 묶음 머리를 고르면 접는다.
 /// herdr처럼 폭과 관계없이 펼친 채(26칸) 시작한다. herdr 키: prefix b 펴기·접기(접으면 4칸 compact, 포커스는 그대로),
 /// prefix w 탐색 모드(↑↓ 고르기·Enter 열기·Esc 돌아가기, 접혀 있으면 펼친 목록을 pane 위에 띄워 보인다).
 #[test]
@@ -1419,21 +1420,25 @@ fn side_list_like_web() {
     let th_pane =
         wait_for("thread pane", T, || h.ok(&["thread", "show", "demo", &alpha])["pane"].as_str().map(String::from));
 
-    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭. 머신 머리 아래 프로젝트 머리, 그 아래
-    //    thread 줄 「id · 제목」과 둘째 줄 상태 말(묶음 말로 시작), 그다음 thread에 딸리지 않은 pane
+    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭. 프로젝트 머리 아래 thread 줄 「id 제목」과 둘째 줄
+    //    왼쪽 상태 말(묶음 말로 시작)·오른쪽 머신 이름, 그다음 「기타」 머리와 thread에 딸리지 않은 pane(머신 이름)
     let mut tui = Tui::start_cols(&h, &[], WIDE);
-    let alpha_row = format!("{alpha} · alpha-job");
-    let words = ["사람 차례", "검토 대기", "작업 중", "쉼"];
+    let alpha_row = format!("{alpha} alpha-job");
+    let words = ["확인 필요", "검토 대기", "작업 중", "쉼"];
     tui.wait_screen("목록", |s| {
         let side = s.side_lines();
         let at = |needle: &str| side.iter().position(|l| l.contains(needle));
-        let (Some(m), Some(demo), Some(row), Some(first), Some(loose)) =
-            (at(" ▾ labA"), at(" demo"), at(&alpha_row), at(" first"), at(" loose"))
+        let (Some(demo), Some(row), Some(other), Some(first), Some(loose)) =
+            (at(" ▾ demo"), at(&alpha_row), at(" ▾ 기타"), at(" first labA"), at(" loose labA"))
         else {
             return false;
         };
         let sub = side[row + 1].trim_start();
-        m + 1 == demo && demo + 1 == row && words.iter().any(|w| sub.starts_with(w)) && row + 2 <= first.min(loose)
+        demo + 1 == row
+            && words.iter().any(|w| sub.starts_with(w))
+            && sub.ends_with("labA")
+            && row + 2 <= other
+            && other < first.min(loose)
     });
     // thread pane은 pane 줄로 다시 나오지 않는다
     let side = tui.screen.0.lock().unwrap().side_lines();
@@ -1446,16 +1451,16 @@ fn side_list_like_web() {
     let beta = start("beta-job")["id"].as_str().unwrap().to_string();
     tui.wait_screen("새 thread", |s| {
         let side = s.side_lines();
-        side.iter().filter(|l| l.trim() == "demo" || l.starts_with(" demo ")).count() == 1
-            && side.iter().any(|l| l.contains(&format!("{beta} · beta-job")))
+        side.iter().filter(|l| l.starts_with(" ▾ demo")).count() == 1
+            && side.iter().any(|l| l.contains(&format!("{beta} beta-job")))
     });
     // 탭 막대 오른쪽은 사람이 볼 thread 수다(herdr-projects 탭 줄 `projects: N need you`): 보고 없이 pane이 닫힌 thread는
-    // 사람 차례다. 그 전에는 없다
-    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 사람 차례"), "{}", tui.text());
+    // 확인 필요다. 그 전에는 없다
+    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 확인 필요"), "{}", tui.text());
     let beta_pane =
         wait_for("beta pane", T, || h.ok(&["thread", "show", "demo", &beta])["pane"].as_str().map(String::from));
     h.ok(&["pane", "kill", &beta_pane]);
-    tui.wait_text("사람 차례 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 사람 차례 1 ")));
+    tui.wait_text("확인 필요 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 확인 필요 1 ")));
     // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
@@ -1483,11 +1488,33 @@ fn side_list_like_web() {
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
     assert_eq!(hw.leaves().len(), 3);
 
-    // 6) 머신 머리를 Enter로 고르면 새 탭을 그 머신에 연다(U8, `new_workspace_on_picked_machine_like_herdr`)
+    // 6) 프로젝트 머리를 Enter로 고르면 접는다: 머리는 `▸`, 셈은 남고 thread 줄은 숨는다(지금 pane은 thread가 아니다). 다시
+    //    고르면 편다
     tui.cmd("w");
-    pick(&mut tui, "▾ labA");
+    pick(&mut tui, "▾ demo");
     tui.send(b"\r");
+    tui.wait_screen("접은 프로젝트", |s| {
+        let side = s.side_lines();
+        side.iter().any(|l| l.starts_with(" ▸ demo"))
+            && !side.iter().any(|l| l.contains("alpha-job"))
+            && !s.text().contains(" NAVIGATE ")
+    });
+    tui.cmd("w");
+    pick(&mut tui, "▸ demo");
+    tui.send(b"\r");
+    tui.wait_screen("편 프로젝트", |s| {
+        let side = s.side_lines();
+        side.iter().any(|l| l.starts_with(" ▾ demo")) && side.iter().any(|l| l.contains("alpha-job"))
+    });
+
+    // 6b) 머신 머리 줄이 없어 탐색 `m`이 새 탭을 열 머신을 고른다(붙은 머신이 labA뿐이라 labA, U8,
+    //     `new_workspace_on_picked_machine_like_herdr`)
+    tui.cmd("w");
+    tui.wait_text("탐색 모드", |s| s.contains(" NAVIGATE "));
+    tui.send(b"m");
     tui.wait_text("머신을 고름", |s| s.contains("새 탭·workspace는 labA에"));
+    tui.send(b"\x1b");
+    tui.wait_text("탐색 끝", |s| !s.contains(" NAVIGATE "));
     tui.cmd("c");
     tui.wait_text("새 탭 이름 창", |s| s.contains("↵ 저장"));
     tui.send(b"\r");
@@ -1536,7 +1563,7 @@ fn side_list_like_web() {
     tui.cmd("1");
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
     tui.cmd("b");
-    tui.wait_text("접힘", |s| !s.contains(" ▾ labA") && s.lines().next().is_some_and(|l| l.starts_with("1 ")));
+    tui.wait_text("접힘", |s| !s.contains(" ▾ demo") && s.lines().next().is_some_and(|l| l.starts_with("1 ")));
     hw.wait("compact 옆 폭", |w| (w.pane(&first)?.cols == WIDE - COMPACT - GUTTER).then_some(()));
     let collapsed_kept = |want: bool| {
         let want = serde_json::json!(want);
@@ -1555,7 +1582,7 @@ fn side_list_like_web() {
         s.contains("list-42") && s.lines().next().is_some_and(|l| l.starts_with("1 "))
     });
     tui.cmd("b");
-    tui.wait_text("폄", |s| s.contains(" ▾ labA"));
+    tui.wait_text("폄", |s| s.contains(" ▾ demo"));
     collapsed_kept(false);
     tui.cmd("q");
     assert!(tui.wait_exit());
@@ -1567,7 +1594,7 @@ fn side_list_like_web() {
     //    prefix b로 펴면 사이드바 옆 크기가 된다(포커스는 pane 그대로: 바로 입력된다)
     let mut tui = Tui::start(&h);
     tui.wait_text("펼친 채 시작", |s| {
-        s.contains("list-42") && s.contains(" ▾ labA") && tab_chips(s).first().is_some_and(|c| c == "first")
+        s.contains("list-42") && s.contains(" ▾ demo") && tab_chips(s).first().is_some_and(|c| c == "first")
     });
     hw.wait("사이드바 옆 폭", |w| (w.pane(&first)?.cols == COLS - SIDE - GUTTER).then_some(()));
     tui.cmd("v");
@@ -1585,7 +1612,7 @@ fn side_list_like_web() {
     tui.send(b"\x1b");
     tui.wait_text("탐색 끝", |s| !s.contains(" NAVIGATE ") && both(s));
     tui.cmd("b");
-    tui.wait_text("접힘", |s| !s.contains(" ▾ labA"));
+    tui.wait_text("접힘", |s| !s.contains(" ▾ demo"));
     // 나눈 탭은 pane마다 테두리 상자라(herdr `pane_borders = "auto"`) 두 pane 폭 합은 칸 폭에서 4칸 작다
     hw.wait("compact 옆 폭", |w| {
         (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 + 2 * GUTTER == COLS - COMPACT).then_some(())
@@ -1594,13 +1621,13 @@ fn side_list_like_web() {
     tui.cmd("w");
     tui.wait_screen("띄운 목록", |s| {
         let t = s.text();
-        t.contains(" NAVIGATE ") && t.contains(" ▾ labA") && s.selected().is_some() && t.contains("right-side-16")
+        t.contains(" NAVIGATE ") && t.contains(" ▾ demo") && s.selected().is_some() && t.contains("right-side-16")
     });
     tui.send(b"\x1b");
-    tui.wait_text("목록 닫힘", |s| !s.contains(" ▾ labA"));
+    tui.wait_text("목록 닫힘", |s| !s.contains(" ▾ demo"));
     assert_eq!(hw.pane(&first).unwrap().cols, cols, "탐색 모드가 pane 크기를 바꿨다");
     tui.cmd("b");
-    tui.wait_text("펼침", |s| s.contains(" ▾ labA") && !s.contains(" NAVIGATE "));
+    tui.wait_text("펼침", |s| s.contains(" ▾ demo") && !s.contains(" NAVIGATE "));
     hw.wait("사이드바 옆 크기", |w| {
         (w.pane(&right)?.cols + w.pane(&first)?.cols + 4 + 2 * GUTTER == COLS - SIDE).then_some(())
     });
@@ -1609,23 +1636,16 @@ fn side_list_like_web() {
     assert!(h.screen(&right).contains("still-9"), "포커스는 나눈 오른쪽 pane 그대로");
 }
 
-/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 셸 pane은 저절로 되살아나고(m12
-/// `reboot_restores_shells_and_resumes_agents`), 다시 실행하지 않는 프로그램 pane은 badge가 알려 주는 CLI로 띄운다.
-/// agents 구역의 지금 pane 줄이 든 머신(그 줄 위 가장 가까운 머신 머리 ` ▾ 이름`)
+/// agents 구역의 지금 pane 줄에 적힌 머신(「기타」 pane 줄은 제목 뒤에 머신 이름, §8.195)
 fn current_machine(s: &Screen) -> Option<String> {
-    let (row, _) = s.side_row_from(s.agents_top(), ACTIVE_BG)?;
-    let side = s.side_lines();
-    side[..row]
-        .iter()
-        .rev()
-        .find_map(|l| l.strip_prefix(" ▾ "))
-        .map(|l| l.split_whitespace().next().unwrap_or("").into())
+    let line = s.current()?;
+    ["labA", "labB"].into_iter().find(|m| line.contains(&format!(" {m}"))).map(String::from)
 }
 
 /// 차이 목록 U8(herdr endpoint 줄 `handle_endpoint_machine_click`·spaces footer ` new`·`NewWorkspace`): 「+ 새 셸」 줄은
-/// 없다. 머신 머리 줄을 누르거나 탐색 Enter로 고른 머신에 새 workspace(spaces 맨 아랫줄 ` new · 머신`, `prefix shift+n`,
-/// 이름 `workspace`·`workspace-2`)와 새 탭(`prefix c`)을 연다. 고른 머신은 포커스가 바뀌면 풀린다(포커스 pane의 머신).
-/// pane이 하나도 없는 원격 머신에 셸을 여는 길이다.
+/// 없다. 고른 머신에 새 workspace(spaces 맨 아랫줄 ` new · 머신`, `prefix shift+n`, 이름 `workspace`·`workspace-2`)와 새 탭
+/// (`prefix c`)을 연다. 목록이 프로젝트 먼저라(§8.195) 머신 머리 줄은 없고, 머신은 ` · 머신`을 누르거나 탐색 `m`으로 다음 붙은
+/// 머신으로 돌려 고른다. 고른 머신은 포커스가 바뀌면 풀린다(포커스 pane의 머신). pane이 하나도 없는 원격 머신에 셸을 여는 길이다.
 #[test]
 fn new_workspace_on_picked_machine_like_herdr() {
     let mut lab = Lab::new();
@@ -1650,16 +1670,25 @@ fn new_workspace_on_picked_machine_like_herdr() {
     let footer = |m: &'static str| {
         move |s: &Screen| s.side_lines().iter().any(|l| l.trim_end_matches("menu").trim_end() == format!(" new · {m}"))
     };
+    // 탐색 `m`으로 다음 붙은 머신을 고르고 탐색을 끝낸다(Esc는 포커스를 바꾸지 않는다)
+    let pick_next = |tui: &mut Tui, want: &'static str| {
+        tui.cmd("w");
+        tui.wait_text("탐색 모드", |s| s.contains(" NAVIGATE "));
+        tui.send(b"m");
+        tui.wait_screen("머신을 고름", footer(want));
+        tui.send(b"\x1b");
+        tui.wait_text("탐색 끝", |s| !s.contains(" NAVIGATE "));
+    };
 
-    // 1) 「+ 새 셸」 줄이 없고 spaces 맨 아랫줄은 ` new · labA`(포커스 pane의 머신)
+    // 1) 「+ 새 셸」 줄도 머신 머리 줄도 없고 spaces 맨 아랫줄은 ` new · labA`(포커스 pane의 머신). pane 줄에 머신 이름
     let mut tui = Tui::start_cols(&h, &[], WIDE);
-    tui.wait_screen("머신 둘", |s| footer("labA")(s) && s.side_lines().iter().any(|l| l.starts_with(" ▾ labB")));
-    assert!(!tui.text().contains("새 셸"), "{}", tui.text());
+    tui.wait_screen("머신 둘", |s| footer("labA")(s) && current_machine(s).as_deref() == Some("labA"));
+    assert!(!tui.text().contains("새 셸") && !tui.text().contains(" ▾ labB"), "{}", tui.text());
 
-    // 2) pane이 없는 labB 머리를 누르면 ` new · labB`. ` new`를 누르면 labB에 새 workspace `workspace`가 생겨 그리로 가고
-    //    포커스는 그 셸이다
-    let at = tui.wait_find(" ▾ labB");
-    tui.click(at);
+    // 2) ` · labA`를 누르면 다음 붙은 머신 labB(` new · labB`). ` new`를 누르면 labB에 새 workspace `workspace`가 생겨 그리로
+    //    가고 포커스는 그 셸이다
+    let at = tui.wait_find(" new · labA");
+    tui.click((at.0, at.1 + 5));
     tui.wait_screen("labB를 고름", footer("labB"));
     let at = tui.wait_find(" new · labB");
     tui.click((at.0, at.1 + 1));
@@ -1671,11 +1700,8 @@ fn new_workspace_on_picked_machine_like_herdr() {
     tui.type_line("echo on-b-$((5*5))");
     tui.wait_text("labB 셸에 입력", |s| s.contains("on-b-25"));
 
-    // 3) 탐색 Enter로 labA를 고르고 prefix shift+n: 없는 이름 `workspace-2`가 labA에
-    tui.cmd("w");
-    pick(&mut tui, "▾ labA");
-    tui.send(b"\r");
-    tui.wait_screen("labA를 고름", footer("labA"));
+    // 3) 탐색 `m`으로 labA를 고르고 prefix shift+n: 없는 이름 `workspace-2`가 labA에
+    pick_next(&mut tui, "labA");
     tui.cmd("N");
     tui.wait_screen("둘째 새 workspace", |s| {
         s.current_space().is_some_and(|l| l.contains("workspace-2")) && current_machine(s).as_deref() == Some("labA")
@@ -1683,10 +1709,7 @@ fn new_workspace_on_picked_machine_like_herdr() {
     assert_eq!(machine_of("workspace-2"), ["labA"]);
 
     // 4) labB를 고르고 prefix c: 새 탭이 labB에 생기고 포커스가 그리로
-    tui.cmd("w");
-    pick(&mut tui, "▾ labB");
-    tui.send(b"\r");
-    tui.wait_screen("labB를 고름", footer("labB"));
+    pick_next(&mut tui, "labB");
     tui.cmd("c");
     tui.wait_text("새 탭 이름 창", |s| s.contains("↵ 저장"));
     tui.send(b"\r");
@@ -1694,10 +1717,7 @@ fn new_workspace_on_picked_machine_like_herdr() {
     assert_eq!(machine_of("workspace-2"), ["labA", "labB"]);
 
     // 5) 고른 머신은 포커스가 바뀌면 풀린다: labB pane에서 labA를 고른 뒤 탭 1(labA)을 거쳐 탭 2로 돌아오면 labB
-    tui.cmd("w");
-    pick(&mut tui, "▾ labA");
-    tui.send(b"\r");
-    tui.wait_screen("labA를 고름", footer("labA"));
+    pick_next(&mut tui, "labA");
     tui.cmd("1");
     tui.wait_screen("탭 1", |s| current_machine(s).as_deref() == Some("labA"));
     tui.cmd("2");
@@ -1705,6 +1725,8 @@ fn new_workspace_on_picked_machine_like_herdr() {
     drop(tui);
 }
 
+/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 셸 pane은 저절로 되살아나고(m12
+/// `reboot_restores_shells_and_resumes_agents`), 다시 실행하지 않는 프로그램 pane은 badge가 알려 주는 CLI로 띄운다.
 #[test]
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
@@ -1959,6 +1981,10 @@ fn link_click_like_herdr() {
     let (x, y) = (at.1 - SIDE as usize + 1, at.0);
     tui.mouse(16, at, false);
     tui.mouse(16, at, true);
+    // ctrl의 비동기 링크 조회가 끝나야 보고가 pane에 간다. herdr처럼 다른 사건은 먼저 갈 수 있으므로,
+    // modifier 전달을 보는 이 시험은 ctrl 보고의 echo를 기다린 뒤 alt와 Enter를 보낸다.
+    let ctrl = format!("^[[<16;{x};{y}M^[[<16;{x};{y}m");
+    tui.wait_text("ctrl 보고가 pane에 도착", |s| s.contains(&ctrl));
     tui.mouse(8, at, false);
     tui.mouse(8, at, true);
     tui.send(b"\r");
@@ -1967,7 +1993,7 @@ fn link_click_like_herdr() {
     tui.send(b"\x03");
 }
 
-/// OSC 8 링크를 바깥 터미널로 다시 내보내기(herdr 0.9.5 `render_ansi.rs` 616–699, 서버 `visible_hyperlinks`, plan §8.195): pane의
+/// OSC 8 링크를 바깥 터미널로 다시 내보내기(herdr 0.9.5 `render_ansi.rs` 616–699, 서버 `visible_hyperlinks`, plan §8.198): pane의
 /// OSC 8 링크 칸만 바깥 터미널에서도 그 uri의 링크이고(글 속 URL은 herdr처럼 내보내지 않는다), 기록으로 올라가 안 보이면 없고,
 /// 휠로 올려 보면 그 화면 자리에 다시 있다. 커서를 되돌려 셸 입력이 그대로 이어진다.
 #[test]
@@ -2031,7 +2057,7 @@ fn sidebar_width_like_herdr() {
     tui.wait_text("셸", |s| s.contains('$'));
 
     // 1) 기본 36칸
-    tui.wait_screen("기본 36칸", |s| side_width(s) == Some(36) && s.text().contains(" ▾ labA"));
+    tui.wait_screen("기본 36칸", |s| side_width(s) == Some(36) && s.text().contains(" ▾ 기타"));
     dump("1-default", &tui);
     hw.wait("pane 폭", |w| (w.pane(&one)?.cols == W - 36 - GUTTER).then_some(()));
 

@@ -40,8 +40,8 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 
 ### 웹
 
-- **목록**: 왼쪽에 Thread와 머신별 pane이 보입니다. 상태(작업 중·입력 대기·질문·검토 대기·사람 차례·쉼)와 질문 카드가 위에 뜹니다. 아래 「Agents」는 설정 → 모양 「에이전트 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
-- **새 pane**: 머신 이름 옆 `+`나 `⌘⇧O`(Windows·Linux `Ctrl+Shift+O`)로 창을 엽니다. 셸이나 그 머신 `agent.toml`의 profile, 폴더(절대 경로나 `~/…`, 최근 폴더), 이름을 고르고 「시작」합니다.
+- **목록**: 왼쪽에 프로젝트별 thread(모든 머신의 thread를 한 묶음에, 둘째 줄에 상태 말과 머신 이름)와 thread에 딸리지 않은 pane의 「기타」 묶음(줄마다 머신 이름), 그 아래 머신 칸(연결·끊김·새 pane)이 보입니다. 상태(작업 중·입력 대기·질문·검토 대기·확인 필요·쉼)와 질문 카드가 위에 뜹니다. 아래 「Agents」는 설정 → 모양 「에이전트 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
+- **새 pane**: 머신 칸의 머신 이름 옆 `+`나 `⌘⇧O`(Windows·Linux `Ctrl+Shift+O`)로 창을 엽니다. 셸이나 그 머신 `agent.toml`의 profile, 폴더(절대 경로나 `~/…`, 최근 폴더), 이름을 고르고 「시작」합니다.
 - **터미널**: pane을 누르면 터미널이 열립니다. 직접 쳐도 되고, 아래 **입력 막대(composer)** 를 써도 됩니다.
   - Enter는 보내기, Shift+Enter는 줄바꿈입니다. 휴대폰에서는 Enter가 줄바꿈이고 보내기는 단추입니다.
   - 키 줄은 Esc·Tab·Ctrl·Alt·방향키 등입니다. 그림은 붙여 넣거나 끌어 놓습니다.
@@ -55,14 +55,14 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 
 다른 기기(노트북 등)에서는 `aaa attach --remote https://mac-a.example.ts.net:8443`처럼 웹 주소(`aaa web publish`)로 붙습니다. 처음에는 host에서 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 묻고, 받은 기기 token을 그 기기에 둡니다(다음부터는 묻지 않음). 권한·취소는 웹 기기와 같습니다(`aaa web devices`·`aaa web revoke`). 보기 기기는 탭 막대에 「보기 전용」이 보이고 입력하지 않습니다.
 
-- **왼쪽 목록**: herdr처럼 위는 workspace(` spaces`, 고르면 그 workspace로), 아래 ` agents`에 웹처럼 머신마다 머리(누르거나 탐색 `Enter`로 고르면 새 탭·workspace를 그 머신에 엽니다. pane이 없는 머신에 셸을 여는 길입니다), 프로젝트별 thread(「t-0001 · 제목」과 둘째 줄 상태 말, 사람 차례 → 검토 대기 → 작업 중 → 쉼 차례), thread에 딸리지 않은 pane이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
+- **왼쪽 목록**: herdr처럼 위는 workspace(` spaces`, 고르면 그 workspace로), 아래 ` agents`에 웹처럼 프로젝트 묶음(모든 머신의 thread를 한 묶음에, 머리 오른쪽에 「확인 필요 2 · 작업 중 1」 같은 셈, 확인 필요 → 검토 대기 → 작업 중 → 쉼 차례)과 thread 두 줄(「t-0001 제목」, 둘째 줄 왼쪽 상태 말·오른쪽 머신 이름), 맨 아래 thread에 딸리지 않은 pane의 「기타」 묶음(줄마다 머신 이름)이 보입니다. 묶음 머리를 고르고 Enter(또는 누르기)면 접고 폅니다. 새 탭·workspace를 열 머신은 탐색 `m`이나 맨 아랫줄 ` new · 머신`의 머신 이름을 눌러 다음 붙은 머신으로 돌립니다(pane이 없는 머신에 셸을 여는 길입니다). `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
 - 명령으로도 됩니다: 새 pane을 새 탭으로 `aaa tab create --machine mac-b -- <명령>`, 있는 pane을 다른 workspace의 새 탭으로 `aaa pane move <pane> --new-tab -w <이름>`, 나누기 `aaa pane split <pane> --direction right`.
 - 입력은 포커스 pane으로 바로 갑니다. 다른 화면(웹 등)이 쓰던 pane도 입력하면 이 화면 크기가 되고, 터미널 focus를 다시 얻어도 크기를 다시 겁니다.
 - **키는 herdr와 같습니다.** prefix(기본 `ctrl+b`) 다음 키 하나(시간 제한 없음, `Esc`나 모르는 키는 취소). `prefix ?`로 단축키 창(`/`로 검색)이 뜹니다.
 
 | 키 | 하는 일 |
 |---|---|
-| `c` | 새 탭: 이름 창(Enter면 번호 탭), 포커스 pane 머신(목록에서 머신 머리를 골랐으면 그 머신)의 기본 셸을 그 pane의 지금 폴더에서 |
+| `c` | 새 탭: 이름 창(Enter면 번호 탭), 포커스 pane 머신(탐색 `m`이나 ` new · 머신`으로 골랐으면 그 머신)의 기본 셸을 그 pane의 지금 폴더에서 |
 | `Shift+N` | 새 workspace(`workspace`·`workspace-2`…, 첫 탭은 `c`와 같은 머신의 셸). 마우스를 받으면 목록 spaces 맨 아랫줄 ` new`(머신이 여럿이면 ` new · 머신`)도 같다 |
 | `Shift+W` · `Shift+D` | workspace 이름 바꾸기 · 닫기(확인 창, 그 안 pane의 세션이 끝난다). 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace |
 | `Shift+T` · `Shift+X` | 탭 이름 바꾸기 · 탭 닫기(세션도 끝냄, 마지막 탭은 확인) |

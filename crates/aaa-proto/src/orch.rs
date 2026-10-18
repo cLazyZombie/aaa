@@ -203,6 +203,30 @@ pub struct LibraryView {
     pub base: String,
     #[ts(type = "number")]
     pub expires_at_ms: u64,
+    /// FRONT_API 1.36. 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
+    #[serde(default)]
+    pub link: Option<LinkView>,
+}
+
+/// FRONT_API 1.36. 보고서 하나의 host 사본만 읽는 서명 링크(§8.197).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LinkView {
+    pub id: String,
+    pub project: String,
+    pub thread: String,
+    pub base: String,
+    /// 공개했을 때만 있는 절대 HTTPS 주소. loopback은 밖 알림에 싣지 않는다.
+    pub url: Option<String>,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+    #[ts(type = "number")]
+    pub expires_at_ms: u64,
+    #[ts(type = "number | null")]
+    pub last_opened_at_ms: Option<u64>,
+    pub revoked: bool,
+    /// host에 회수한 일반 파일의 합계 바이트
+    #[ts(type = "number")]
+    pub size: u64,
 }
 
 /// report.md 본문과 library 목록(파일 본문은 `FileRead`로 나눠 받는다)
@@ -606,7 +630,7 @@ impl ThreadGroup {
     /// 사람이 읽는 이름(CLI·TUI·웹과 같은 말)
     pub fn label(self) -> &'static str {
         match self {
-            ThreadGroup::WaitingOnYou => "사람 차례",
+            ThreadGroup::WaitingOnYou => "확인 필요",
             ThreadGroup::ReadyForReview => "검토 대기",
             ThreadGroup::Landing => "병합 중",
             ThreadGroup::Working => "작업 중",
@@ -615,7 +639,7 @@ impl ThreadGroup {
         }
     }
 
-    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6.
+    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6.
     /// 목록(TUI·웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
     pub fn rank(self) -> u8 {
         match self {
