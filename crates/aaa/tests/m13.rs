@@ -3857,17 +3857,17 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
     tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
     let pong: LinkMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
     assert!(matches!(pong, LinkMsg::Pong { seq: 42 }), "{pong:?}");
-    // 착지 main 1.31의 N-1 front(1.30)도 계속 붙는다. profile 때문에 minor를 더 올리지 않는다.
+    // 지금 FRONT_API의 N-1 front도 계속 붙는다(1.31일 때 1.30으로 적었던 것을 판이 올라도 N-1로 본다). profile 때문에 minor를
+    // 더 올리지 않는다.
+    let legacy = Version { major: aaa_proto::FRONT_API.major, minor: aaa_proto::FRONT_API.minor - 1 };
     use aaa_proto::{FrontMsg, FrontRequest, FrontResponse, Outcome};
     let stream = aaa_common::ipc::connect(&w.h.state.join("host/front.sock")).await.unwrap();
     let (r, writer) = tokio::io::split(stream);
     let tx = spawn_writer(writer, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
-    tx.json(&FrontMsg::Hello { proto: Version { major: 1, minor: 30 }, client: "legacy-front".into(), session: None })
-        .await
-        .unwrap();
+    tx.json(&FrontMsg::Hello { proto: legacy, client: "legacy-front".into(), session: None }).await.unwrap();
     let welcome: FrontMsg = tokio::time::timeout(T, rx.control()).await.unwrap().unwrap();
-    assert!(matches!(welcome, FrontMsg::Welcome { proto: Version { major: 1, minor: 30 }, .. }), "{welcome:?}");
+    assert!(matches!(welcome, FrontMsg::Welcome { proto, .. } if proto == legacy), "{welcome:?}");
     tx.json(&FrontMsg::Req { id: "status".into(), body: FrontRequest::Status }).await.unwrap();
     tokio::time::timeout(T, async {
         loop {

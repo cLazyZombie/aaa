@@ -49,9 +49,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.30: 사건 `web`(host가 주는 웹 빌드, plan §8.166),
 /// 1.31: 결과물 목록의 `LibraryFile.mime`·`kind`(앱 안 파일 보기, plan §8.168)
 /// 같은 1.31 배포에 host 정본 `ProfileResolve`를 더한다(§8.170). host_profiles.v1은 AGENT_LINK 1.4의 선택 기능이다.
-/// 1.32: 보고서 안 파일 링크 `thread_file`(thread worktree 기준, plan §8.171),
-/// 1.33: 질문의 화면 선택 창 `QuestionView.menu`와 그 답 `question_answer`의 `menu`·`pick`(plan §8.172)
-pub const FRONT_API: Version = Version { major: 1, minor: 33 };
+/// 1.32: 보고서 안 파일 링크 `thread_file`(thread worktree 기준, plan §8.171)과 질문의 화면 선택 창 `QuestionView.menu`·그 답
+/// `question_answer`의 `menu`·`pick`(plan §8.172). 한 번에 착지해 minor 하나로 묶는다(1.31 front가 그대로 붙는다)
+pub const FRONT_API: Version = Version { major: 1, minor: 32 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
