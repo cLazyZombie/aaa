@@ -65,6 +65,20 @@ fn joins(before: u8, after: u8) -> bool {
 
 /// 앞 상태(`None`은 줄 처음이나 제어·escape 뒤)에서 `c`를 놓는 법
 pub(crate) fn step(prev: Option<Join>, c: char) -> Step {
+    // 흔한 경우: 보이는 ASCII는 한 칸 Other이고 Prepend 뒤에만 묶인다(표를 찾지 않는다)
+    if (' '..='~').contains(&c)
+        && !matches!(prev, Some(p) if p.code == PREPEND)
+    {
+        let next = Join {
+            code: OTHER,
+            width: 1,
+        };
+        return Step {
+            join: false,
+            width: 1,
+            next,
+        };
+    }
     let v = lookup(c);
     let code = v & 0x0f;
     let width = if v & 0x10 == 0 { 1 } else { 2 };

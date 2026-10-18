@@ -107,6 +107,7 @@ const CASES = [
   "e\x1b[m\u{301}x",
   "\u{1F1F0}\x1b[m\u{1F1F7}x",
   "⚠\x1b]0;t\x07️x",
+  "\u{600}ax",
 ];
 
 function layout(p: IUnicodeVersionProvider, text: string): [number, number, string][] {
@@ -185,8 +186,11 @@ ${rows.join("\n")}
   const cases = `// 생성: node web/scripts/vt-widths.ts(웹 폭 규칙 herdrWidthProvider로 한 줄에 쓴 칸, plan §8.150). 손으로 고치지 않는다.
 //! 웹이 놓는 칸: (쓴 글, [(시작 칸, 폭, 그 칸의 글)])
 
+/// 묶음 칸: (시작 칸, 폭, 그 칸의 글)
+pub(crate) type Cell = (u16, u16, &'static str);
+
 #[rustfmt::skip]
-pub(crate) const CASES: &[(&str, &[(u16, u16, &str)])] = &[
+pub(crate) const CASES: &[(&str, &[Cell])] = &[
 ${CASES.map((text) => `    (${rustStr(text)}, &[${layout(p, text).map(([c, w, s]) => `(${c}, ${w}, ${rustStr(s)})`).join(", ")}]),`).join("\n")}
 ];
 `;

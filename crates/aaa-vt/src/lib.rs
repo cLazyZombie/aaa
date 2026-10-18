@@ -2089,8 +2089,11 @@ mod tests {
         want.iter().map(|&(c, w, s)| (c, w, s.to_string())).collect()
     }
 
+    /// 줄 하나의 묶음 칸과 이음 표시
+    type Clustered = (Vec<(u16, u16, String)>, bool);
+
     /// 기록과 화면의 줄마다(오래된 줄부터) 묶음 칸과 이음 표시
-    fn all_clusters(v: &Vt) -> Vec<(Vec<(u16, u16, String)>, bool)> {
+    fn all_clusters(v: &Vt) -> Vec<Clustered> {
         let mut s = v.parser.screen().clone();
         let mut out = Vec::new();
         each_row(&mut s, |s, r| {

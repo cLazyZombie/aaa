@@ -1452,7 +1452,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 ### 8.53 이모지·결합 문자 폭을 herdr와 같게(10-17, 차이 목록 2 「이모지·결합 문자 폭」)
 
 - **옮긴 것(herdr-web-ui `src/lib/terminalWidths.ts`, PaneTerminal 583줄).** `web/src/herdr/terminalWidths.ts`를 바꾸지 않고 옮기고 `@xterm/addon-unicode-graphemes` 0.4.0(MIT, xterm 묶음)을 넣었다. 터미널을 열 때 fit addon 다음에 `matchHerdrWidths(term)`로 폭 규칙을 갈아 끼운다(addon이 proposed API라 `allowProposedApi: true`). 이모지·새 이모지·ZWJ 묶음·⚠️(VS16)가 두 칸이다. xterm 기본(Unicode 6)에서는 이모지가 한 칸이고 ZWJ 묶음은 이모지마다 칸을 차지해서 뒤 글자가 밀렸다.
-- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. vt100 폭을 맞추는 일은 뒤로 미룬다.
+- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. → §8.150에서 vt100 폭을 웹 규칙대로 맞췄다.
 - **시험.** 웹 E2E 「글자 폭」: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️ 뒤에 쓴 글자의 칸 자리로 폭을 잰다. 기대값은 `[2,2,2,2]`다. `matchHerdrWidths`를 빼고 웹 번들을 다시 지은 판은 `[1,1,4,1]`로 실패한다.
 
 ### 8.54 목록 바닥 줄(설정·사용량)은 늘 맨 아래(10-17, 사용자 요청 「aaa 왼쪽밑은 항상 왼쪽밑이어야해. 스크롤 안되어도」)
@@ -3244,6 +3244,36 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고와 다른 것.** 같은 무리의 「비교 보기 방식」(`diffStyle`)은 뺐다. 그 설정을 쓰는 저장소 비교 보기(`RepoDiffViewer`)가 aaa에 없다. 가상화한 긴 소스(`VirtualSource wrap`)도 아직 없어(§8.125 남은 것) 줄 바꿈은 `CodeLines`에만 간다.
 - **시험.** 웹 E2E `16-file-viewer` 다섯째 단계: 기본은 긴 줄 한 줄·옆으로 굴림·Markdown이 파일 보기보다 좁음, 켜면 긴 줄이 여러 줄로 접히고 옆으로 굴릴 것이 없음·Markdown이 파일 보기 너비, 다시 읽어도 그대로, 다른 기기(휴대폰·iPad)는 기본값에서 시작해 제 설정만 바뀜. 결과(높이·너비·옆 굴림)만 보고 class·저장 꼴은 보지 않는다(t-0338 웹 E2E 기준).
   - 변형 확인: 여섯 모두 실패한다. 소스에 줄 바꿈을 넘기지 않음, 전체 너비도 대화 열, 기본 줄 바꿈 켬, 기본 너비 전체, 저장한 줄 바꿈을 읽지 않음, 너비를 저장하지 않음.
+
+### 8.150 이모지·결합 문자 폭: session host 화면을 웹 폭 규칙대로(10-18, 차이 목록 1장 G 「이모지·결합 문자 폭」)
+
+- **문제.** 웹 터미널은 xterm 5.5 + `@xterm/addon-unicode-graphemes` 0.4.0 + herdr-web-ui 보정(`terminalWidths.ts` `herdrWidthProvider`)으로 묶음(⚠️·ZWJ 가족·국기·피부색·keycap, 한글 자모, 태국 모음)을 한 칸이나 두 칸에 놓는다. session host 화면(aaa-vt의 vt100 0.16.2)은 code point마다 `unicode-width`로 세고 폭 0 글자는 늘 앞 칸에 붙였다.
+  - replay는 글로 다시 쓰니 받는 xterm이 묶음 폭을 다시 센다. 그래서 대개 맞지만, session host가 센 칸으로 정하는 곳이 어긋났다: 절대 칸(CHA·CUP) 뒤 글, replay 뒤 커서 자리(이어 쓰는 출력), 줄 접힘(가족 ZWJ가 vt100에서 여섯 칸), alternate screen의 칸 위치.
+  - escape로 따로 놓인 칸(`e` `ESC[m` `◌́`, ⚠ `ESC[m` VS16)은 vt100이 앞 칸에 붙여, 다시 붙은 화면에서 한 묶음이 됐다.
+- **고침.** vt100을 `vendor/vt100`에 들여와(MIT, workspace `[patch.crates-io]`, 바꾼 것은 그 README) `Screen::text`를 웹 규칙대로 고쳤다.
+  - 폭 표: `web/scripts/vt-widths.ts`가 웹 provider에서 만든다. code point마다 grapheme 부류·폭·묶기 방식을 담는다. 묶기 방식은 보통, 묶지 않음(herdr: spacing mark는 제 칸), 보이지 않음(herdr: 앞 칸에 붙는 0칸, 줄 처음은 addon대로) 셋이다.
+  - 앞 글자와 묶을지는 addon `shouldJoin`과 같은 규칙이다(GB6~GB13 줄인 판). 묶이면 넓은 쪽 폭이고, 지역 표시 둘은 두 칸이며 셋째는 새로 시작한다.
+  - 표를 만들 때 모든 code point × 앞 상태 스물에서 「표 + 규칙」이 provider와 같은지 대조하고, 다르면 멈춘다.
+  - 묶음이 한 칸에서 두 칸이 되면(⚠ 뒤 VS16) 그 자리에서 넓힌다. 끝 칸이면 xterm처럼 이은 줄로 다음 줄 처음에 옮긴다.
+  - 제어 문자·CSI·ESC·OSC·DCS 뒤에는 묶지 않는다(xterm parser `precedingJoinState = 0`). 받은 덩이 경계에서는 끊지 않는다.
+  - 다시 쓰는 곳(replay 화면·기록·앞 기록, reflow, alternate screen의 vt100 `contents_formatted`)은 escape로 따로 놓였던 칸을 escape 없이 이어 쓰면 받는 쪽이 합친다. 그래서 그 자리에 모양(SGR)을 다시 써서 끊는다. 이은 줄을 넘어서도 본다(vt100 `joins_after`).
+- **한계.**
+  - 칸 하나의 글은 22바이트다(vt100 그대로). 피부색 넷인 가족 같은 긴 묶음은 뒤 글자가 잘린다. 칸 폭은 맞다.
+  - TUI(`aaa attach`)는 이 칸을 바깥 터미널에 그린다. 바깥 터미널이 묶음을 다르게 세면(grapheme 묶음을 모르는 터미널) 그 줄이 어긋난다.
+  - 브라우저는 ⚠ 뒤 홀로 선 VS16(두 칸 칸)을 span을 넘어 한 글자로 그린다. 그래서 그 뒤 글자가 칸보다 앞에 보인다. xterm DOM renderer 것이고 살아 있는 화면도 같다.
+- **비용(release, 12,000줄).** 받기 ASCII 1.2MB 8.3 → 10.6ms(ASCII는 표를 찾지 않는다), 한글·이모지 섞인 2MB 15.5 → 27.4ms. replay 6.6 → 7.1ms, 폭 120 → 60 reflow 30.9 → 34.2ms(ASCII), 24.3 → 38.3ms(섞인 줄).
+- **시험.**
+  - aaa-vt 유닛 넷이다.
+    - `widths_follow_the_web_terminal`: 생성기가 웹 provider로 만든 사례 스물(`width_cases.rs`: 묶음, escape·OSC로 끊긴 묶음, Prepend 뒤 ASCII)의 칸과 커서를 본다. 한 byte씩 받아도 같다.
+    - `widened_cluster_at_the_last_column_moves_to_the_next_row`.
+    - `replay_keeps_clusters_as_they_were_placed`: 기록·화면·alternate screen, 끝 칸 뒤 escape로 끊겨 접힌 결합 문자.
+    - `reflow_keeps_clusters_as_they_were_placed`.
+  - web 유닛 `vtWidths.test.mjs`: 표와 사례가 생성기 출력 그대로인지 본다. 웹 규칙이 바뀌었는데 다시 만들지 않으면 실패한다.
+  - 웹 E2E `02-terminal` 「다시 붙은 화면도 같은 칸」(약 2초): 살아 있는 화면과 새로 붙은 데스크톱·휴대폰·iPad에서 표지 글자의 줄·칸이 같다. 표지는 묶음 뒤, escape로 끊긴 묶음 뒤, 절대 칸, replay 뒤 커서 자리에 둔다. 칸 폭은 화면의 눈금 줄로 잰다.
+  - 변형 확인: 모두 실패한다.
+    - aaa-vt 열셋: 끊기 셋(aaa-vt 쓰기·vt100 줄 쓰기·줄 넘는 상태), 끝 칸 이음 표시, 넓히지 않음, CSI·OSC 뒤 끊지 않음, 국기 폭 1, 셋째 지역 표시도 묶음, 보이지 않는 글자 보정 없음, spacing mark도 묶음, `joins_after` 늘 거짓, ASCII 빠른 길이 Prepend를 안 봄.
+    - web 신선도 하나.
+    - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
