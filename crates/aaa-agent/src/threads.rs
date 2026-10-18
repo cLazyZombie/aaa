@@ -459,6 +459,10 @@ pub async fn cleanup(
     let repo = PathBuf::from(repo);
     if keep_worktree {
         c.notes.push("worktree를 남겼다(요청)".into());
+    } else if !Path::new(cwd).exists() {
+        // 이미 없다(사람이 지웠거나 앞 정리): 병합된 branch는 지울 수 있다(`project sweep`이 다시 부른다)
+        c.worktree_removed = true;
+        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
     } else {
         match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
             Ok(_) => c.worktree_removed = true,

@@ -92,6 +92,9 @@ pub(crate) struct ThreadRec {
     pub eval_batches: u32,
     #[serde(default)]
     pub eval_last_batch_ms: Option<u64>,
+    /// resolve 때 남긴 worktree·branch(`project sweep`이 다시 정리한다). None은 모른다(이 필드 전에 끝난 thread)
+    #[serde(default)]
+    pub leftover: Option<crate::lifecycle::Leftover>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -129,6 +132,11 @@ pub(crate) struct ProjectOptions {
 /// project.toml 읽고 고쳐 쓰기를 한 번에 하나씩(두 `project set`이 서로의 값을 지우지 않게)
 static PROJECT_TOML: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// 새 프로젝트의 AGENTS.md(coordinator 안내)
+pub(crate) fn coordinator_guide(project: &str) -> String {
+    COORDINATOR_GUIDE.replace("{p}", project)
+}
+
 /// 새 프로젝트의 AGENTS.md(coordinator 안내). `{p}`는 프로젝트 이름이다.
 const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 
@@ -162,6 +170,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 ## 프로젝트 설정
 - 사용자가 바꾸라고 하면 `aaa project set {p} <key> <값>`으로 바꾼다: `goal`, `thread_profile`, `coordinator_profile`,
   `max_parallel_threads`, `auto_resolve_days`, `repos.add`·`repos.remove`(`PATH` 또는 `PATH@MACHINE`). project.toml을 직접 고쳐도 된다.
+- 사용자가 요청할 때만: `aaa project pause|resume {p}`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep {p}`
+  (끝난 thread가 남긴 worktree·병합된 branch를 치운다, `--dry-run`으로 먼저 보인다). 보관·삭제·이름 바꾸기는 사용자가 한다.
 
 ## safety(사용자만 바꾼다)
 `start_threads`·`trust_screens`·yolo·`thread_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의 safety 설정이다.
@@ -216,7 +226,7 @@ fn bad(msg: impl Into<String>) -> ErrorBody {
     err(ErrorCode::BadRequest, msg)
 }
 
-fn internal(e: impl std::fmt::Display) -> ErrorBody {
+pub(crate) fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 
@@ -315,7 +325,7 @@ pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::i
     put("MEMORY.md", "# Memory\n")?;
     put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
     put("project.toml", "schema = 1\n")?;
-    put("AGENTS.md", &COORDINATOR_GUIDE.replace("{p}", name))?;
+    put("AGENTS.md", &coordinator_guide(name))?;
     put("PROJECT.md", project_md)
 }
 
@@ -348,9 +358,14 @@ impl Host {
         Ok(dir)
     }
 
-    fn project_view(&self, name: &str, dir: &Path) -> ProjectView {
+    pub(crate) fn project_view(&self, name: &str, dir: &Path) -> ProjectView {
         let threads = self.db.threads(Some(name)).map(|v| v.len() as u32).unwrap_or(0);
-        ProjectView { name: name.to_string(), path: dir.to_string_lossy().to_string(), threads }
+        ProjectView {
+            name: name.to_string(),
+            path: dir.to_string_lossy().to_string(),
+            threads,
+            status: self.project_status(name),
+        }
     }
 
     /// 프로젝트 폴더를 만든다(herdr-projects `new`). PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
@@ -437,7 +452,17 @@ impl Host {
         }
     }
 
+    /// 보관하지 않은 프로젝트(herdr-projects `list`)
     pub(crate) fn projects(&self) -> Vec<ProjectView> {
+        self.projects_all().into_iter().filter(|p| p.status != aaa_proto::ProjectStatus::Archived).collect()
+    }
+
+    /// 지금 도는 프로젝트(ticker가 보는 것): 멈추거나 보관한 것은 뺀다
+    pub(crate) fn active_projects(&self) -> Vec<ProjectView> {
+        self.projects_all().into_iter().filter(|p| p.status == aaa_proto::ProjectStatus::Active).collect()
+    }
+
+    pub(crate) fn projects_all(&self) -> Vec<ProjectView> {
         let root = self.projects_root();
         let mut out: Vec<ProjectView> = std::fs::read_dir(&root)
             .into_iter()
@@ -540,6 +565,7 @@ impl Host {
             created_at_ms: r.created_at_ms,
             updated_at_ms: r.updated_at_ms,
             warnings: Vec::new(),
+            project_status: self.project_status(&r.project),
         }
     }
 
@@ -734,6 +760,7 @@ impl Host {
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
     pub(crate) async fn thread_start(self: &Arc<Self>, mut a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
+        self.check_active(&a.project)?;
         if a.title.trim().is_empty() {
             return Err(bad("제목이 비었다"));
         }
@@ -790,6 +817,7 @@ impl Host {
             eval_cursor: 0,
             eval_batches: 0,
             eval_last_batch_ms: None,
+            leftover: None,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -1288,6 +1316,12 @@ impl Host {
                 .await
             {
                 Ok(AgentResponse::Cleanup(c)) => {
+                    // 사람이 남기라고 한 worktree(--keep-worktree)와 그 branch는 청소하지 않는다(참고 sweep `kept_worktree`)
+                    let left = crate::lifecycle::Leftover {
+                        worktree: rec.kind == ThreadKind::Worktree && !keep_worktree && !c.worktree_removed,
+                        branch: rec.branch.is_some() && !keep_worktree && !c.branch_deleted,
+                    };
+                    let _ = self.update_rec(project, id, |r| r.leftover = Some(left));
                     notes.push(format!(
                         "worktree {}, branch {}",
                         if c.worktree_removed { "삭제" } else { "유지" },
@@ -1443,6 +1477,7 @@ mod tests {
             eval_cursor: 0,
             eval_batches: 0,
             eval_last_batch_ms: None,
+            leftover: None,
             created_at_ms: NOW - 3_600_000,
             updated_at_ms: NOW,
         }

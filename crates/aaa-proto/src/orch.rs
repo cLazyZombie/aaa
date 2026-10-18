@@ -311,6 +311,44 @@ pub struct ProjectView {
     pub name: String,
     pub path: String,
     pub threads: u32,
+    /// FRONT_API 1.21. 옛 host는 보내지 않는다(active)
+    #[serde(default)]
+    #[ts(optional, as = "Option<ProjectStatus>")]
+    pub status: ProjectStatus,
+}
+
+/// 프로젝트 상태(herdr-projects `project::Status`). paused·archived는 ticker가 건너뛰고 `thread start`를 거부한다.
+/// archived는 목록에서 숨고 `project open`을 거부한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectStatus {
+    #[default]
+    Active,
+    Paused,
+    Archived,
+}
+
+impl ProjectStatus {
+    pub fn is_active(&self) -> bool {
+        *self == ProjectStatus::Active
+    }
+}
+
+/// `project pause|resume|archive|unarchive`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectAction {
+    Pause,
+    Resume,
+    Archive,
+    Unarchive,
+}
+
+/// 프로젝트 관리 명령(상태·삭제·이름·청소)의 결과: 바뀐 뒤 프로젝트와 사람이 읽을 줄
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectChange {
+    pub project: ProjectView,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -436,6 +474,11 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<String>>", optional)]
     pub warnings: Vec<String>,
+    /// 그 프로젝트의 상태(FRONT_API 1.21, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+    /// 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
+    #[serde(default, skip_serializing_if = "ProjectStatus::is_active")]
+    #[ts(as = "Option<ProjectStatus>", optional)]
+    pub project_status: ProjectStatus,
 }
 
 /// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)

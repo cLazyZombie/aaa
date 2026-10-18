@@ -161,6 +161,7 @@ pub(crate) fn thread_rec(
         eval_cursor: 0,
         eval_batches: 0,
         eval_last_batch_ms: None,
+        leftover: None,
         created_at_ms: created,
         updated_at_ms: aaa_common::util::parse_iso(&t.updated).unwrap_or(created),
     }

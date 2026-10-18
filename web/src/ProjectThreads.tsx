@@ -52,7 +52,8 @@ export function ProjectThreads({
   useEffect(() => setFilter(""), [project]);
   useEffect(() => {
     let live = true;
-    call({ op: "projects" }).then(
+    // 보관한 프로젝트도 받아 thread 기록에서 나온 이름까지 숨긴다(참고 popup은 보관한 것을 빼고 보인다)
+    call({ op: "projects", all: true }).then(
       (r) => {
         if (live && r.kind === "projects") setProjects(r.projects);
       },
@@ -69,7 +70,9 @@ export function ProjectThreads({
 
   if (project === null) {
     // 프로젝트 이름: host가 아는 프로젝트와 thread가 있는 프로젝트(옮겨 온 기록만 있는 것도)
-    const names = [...new Set([...(projects ?? []).map((p) => p.name), ...threads.map((t) => t.project)])].sort();
+    const archived = new Set((projects ?? []).filter((p) => p.status === "archived").map((p) => p.name));
+    const paused = new Set([...(projects ?? []).filter((p) => p.status === "paused").map((p) => p.name), ...threads.filter((t) => t.project_status === "paused").map((t) => t.project)]);
+    const names = [...new Set([...(projects ?? []).map((p) => p.name), ...threads.map((t) => t.project)])].filter((n) => !archived.has(n)).sort();
     const shown = names.filter((n) => matches(needle, n));
     return (
       <section className="project-threads" aria-label="프로젝트" data-testid="projects">
@@ -91,7 +94,7 @@ export function ProjectThreads({
                   <Folder className="project-threads-mark" aria-hidden="true" />
                   <span className="project-threads-copy">
                     <span className="project-threads-name">{name}</span>
-                    <span className="project-threads-facts">{[projectLine(open.map((t) => t.group)), done > 0 ? `끝남 ${done}` : null].filter(Boolean).join(" · ")}</span>
+                    <span className="project-threads-facts">{[projectLine(open.map((t) => t.group), paused.has(name)), done > 0 ? `끝남 ${done}` : null].filter(Boolean).join(" · ")}</span>
                   </span>
                   <ChevronRight className="project-threads-go" aria-hidden="true" />
                 </button>
@@ -120,7 +123,10 @@ export function ProjectThreads({
   return (
     <ProjectBody
       project={project}
-      line={projectLine(all.filter((t) => t.group !== "resolved").map((t) => t.group))}
+      line={projectLine(
+        all.filter((t) => t.group !== "resolved").map((t) => t.group),
+        all.some((t) => t.project_status === "paused") || (projects ?? []).some((p) => p.name === project && p.status === "paused"),
+      )}
       groups={other.length > 0 ? [...groups, { g: "other", rows: other }] : groups}
       empty={all.length === 0 ? "thread 없음" : mine.length === 0 ? "맞는 thread 없음" : null}
       filter={<Filter value={filter} onChange={setFilter} label={`${project} thread 거르기`} />}

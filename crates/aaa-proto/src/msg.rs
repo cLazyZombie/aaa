@@ -14,8 +14,8 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MergeEntry, MessageMode,
-    MessageView, OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role,
-    RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    MessageView, OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectView, QuestionView,
+    ReportSnapshot, Role, RoutineView, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, LandOutcome, MergeLandView};
 
@@ -1226,7 +1226,38 @@ pub enum FrontRequest {
         key: String,
         value: String,
     },
-    Projects,
+    /// 프로젝트 목록. archived는 `all`일 때만(herdr-projects `list --all`, FRONT_API 1.21)
+    Projects {
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        all: bool,
+    },
+    /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.21)
+    ProjectLifecycle {
+        project: String,
+        action: ProjectAction,
+    },
+    /// 프로젝트 폴더를 휴지통(`<projects root>/.trash`)으로 옮기고 host 기록을 그 안 `aaa-records.json`으로 뺀다.
+    /// worktree·branch·PR은 건드리지 않는다(herdr-projects `delete`)
+    ProjectDelete {
+        project: String,
+        /// 살아 있는 pane이 있어도
+        #[serde(default)]
+        force: bool,
+    },
+    /// 프로젝트 이름(폴더 이름)을 바꾼다(herdr-projects `rename`). 끝나지 않은 thread나 도는 coordinator가 있으면 거부한다
+    ProjectRename {
+        project: String,
+        to: String,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    /// 끝난 thread가 남긴 worktree·branch를 그 머신 agent가 다시 정리한다(herdr-projects `sweep`)
+    ProjectSweep {
+        project: String,
+        #[serde(default)]
+        dry_run: bool,
+    },
     /// 머신의 agent.toml profile 목록
     Profiles {
         machine: Option<String>,
@@ -1476,7 +1507,9 @@ impl FrontRequest {
             FrontRequest::Status
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
-                | FrontRequest::Projects
+                | FrontRequest::Projects { .. }
+                | FrontRequest::ProjectRename { dry_run: true, .. }
+                | FrontRequest::ProjectSweep { dry_run: true, .. }
                 | FrontRequest::Profiles { .. }
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
@@ -1585,6 +1618,7 @@ pub enum FrontResponse {
         projects: Vec<ProjectView>,
     },
     Project(ProjectView),
+    ProjectChange(ProjectChange),
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,

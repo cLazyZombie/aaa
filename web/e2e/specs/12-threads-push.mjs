@@ -1095,4 +1095,36 @@ export default async function ({ ctl, page }) {
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
+
+  await step("프로젝트 멈춤·보관(herdr-projects sidebar.rs project_line 「paused」·archive, 차이 목록 4장 G #592): 멈추면 sidebar 프로젝트 줄과 프로젝트 고르기가 다시 불러오지 않고 「멈춤」, 되살리면 묶음 줄로, 보관하면 그 프로젝트의 thread 줄과 프로젝트가 사라진다", async () => {
+    const $ = (id) => `[data-testid="${id}"]`;
+    aaa("project", "create", "side");
+    fs.writeFileSync(`${root}/side-task.txt`, "noreport\n");
+    const t = aaa("thread", "start", "side", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/side-task.txt`);
+    const head = `${$("project-labA-side")} .project-select`;
+    await domIs(page, "side 프로젝트 줄", (q) => document.querySelector(q) !== null, head);
+    aaa("project", "pause", "side");
+    await domIs(page, "멈춤 줄", (q) => document.querySelector(q)?.getAttribute("title") === "side · 멈춤", head);
+    await shot(page, "desktop-project-paused");
+    await page.getByTestId("more").click();
+    const toProjects = hashIs(page, "#projects");
+    await page.getByTestId("projects-item").click();
+    await toProjects;
+    await domIs(page, "프로젝트 고르기의 멈춤", (q) => document.querySelector(q)?.textContent.includes("멈춤"), $("project-open-side"));
+    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    aaa("project", "resume", "side");
+    await domIs(page, "되살린 줄", (q) => document.querySelector(q) && !document.querySelector(q).getAttribute("title").includes("멈춤"), head);
+    aaa("project", "archive", "side");
+    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-labA-side"), $(`thread-side-${t.id}`)]);
+    await page.getByTestId("more").click();
+    const toProjects2 = hashIs(page, "#projects");
+    await page.getByTestId("projects-item").click();
+    await toProjects2;
+    // 목록을 받은 뒤(줄이 있거나 「프로젝트 없음」) side가 없다
+    await domIs(page, "프로젝트 고르기에 side가 없다", ([list, side]) => document.querySelector(`${list} [data-testid^="project-open-"], ${list} [role=status]`) !== null && !document.querySelector(side), [$("projects"), $("project-open-side")]);
+    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    aaa("project", "delete", "side", "--force");
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
+  });
 }

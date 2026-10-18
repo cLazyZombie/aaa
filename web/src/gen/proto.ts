@@ -287,7 +287,11 @@ timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pa
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
-repos: Array<string>, thread_profile: string | null, coordinator_profile: string | null, } | { "op": "project_set", project: string, key: string, value: string, } | { "op": "projects" } | { "op": "profiles", machine: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null, 
+repos: Array<string>, thread_profile: string | null, coordinator_profile: string | null, } | { "op": "project_set", project: string, key: string, value: string, } | { "op": "projects", all?: boolean, } | { "op": "project_lifecycle", project: string, action: ProjectAction, } | { "op": "project_delete", project: string, 
+/**
+ * 살아 있는 pane이 있어도
+ */
+force: boolean, } | { "op": "project_rename", project: string, to: string, dry_run: boolean, } | { "op": "project_sweep", project: string, dry_run: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null, 
 /**
  * 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
  */
@@ -343,7 +347,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -405,7 +409,17 @@ export type Skipped = { path: string, reason: string,
  */
 lazy_size: number | null, };
 
-export type ProjectView = { name: string, path: string, threads: number, };
+export type ProjectView = { name: string, path: string, threads: number, 
+/**
+ * FRONT_API 1.21. 옛 host는 보내지 않는다(active)
+ */
+status?: ProjectStatus, };
+
+export type ProjectStatus = "active" | "paused" | "archived";
+
+export type ProjectAction = "pause" | "resume" | "archive" | "unarchive";
+
+export type ProjectChange = { project: ProjectView, notes: Array<string>, };
 
 export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
@@ -437,7 +451,12 @@ agent: AgentStatus | null, created_at_ms: number, updated_at_ms: number,
 /**
  * `thread start`가 알리는 경고(시작은 했다, 예: 동시 thread 한도). 다른 응답에는 없다.
  */
-warnings?: Array<string>, };
+warnings?: Array<string>, 
+/**
+ * 그 프로젝트의 상태(FRONT_API 1.21, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+ * 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
+ */
+project_status?: ProjectStatus, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 

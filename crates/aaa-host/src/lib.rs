@@ -16,6 +16,7 @@ mod health;
 mod http;
 mod inbox;
 mod library;
+mod lifecycle;
 pub mod link;
 mod merge;
 pub mod migrate;
@@ -908,7 +909,15 @@ impl Host {
                     actor,
                 ),
             FrontRequest::ProjectSet { project, key, value } => self.project_set(&project, &key, &value, actor),
-            FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
+            FrontRequest::Projects { all } => {
+                Ok(FrontResponse::Projects { projects: if all { self.projects_all() } else { self.projects() } })
+            }
+            FrontRequest::ProjectLifecycle { project, action } => self.project_lifecycle(&project, action, actor).await,
+            FrontRequest::ProjectDelete { project, force } => self.project_delete(&project, force, actor).await,
+            FrontRequest::ProjectRename { project, to, dry_run } => {
+                self.project_rename(&project, &to, dry_run, actor).await
+            }
+            FrontRequest::ProjectSweep { project, dry_run } => self.project_sweep(&project, dry_run, actor).await,
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
