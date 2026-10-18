@@ -1926,22 +1926,72 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
             }
             return Ok(ExitCode::SUCCESS);
         }
+        // 프로젝트마다 마지막으로 보인 seq. 처음 읽기에 없던 프로젝트는 cursor(`after`)부터다
         let mut seen: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
         for e in &events {
             show(e)?;
             seen.insert(e.project.clone(), e.seq);
         }
         while let Some(m) = c.next().await? {
-            if let aaa_proto::FrontMsg::Event(aaa_proto::FrontEvent::Flow(e)) = m
-                && project.as_ref().is_none_or(|p| *p == e.project)
-                && seen.get(&e.project).is_none_or(|s| e.seq > *s)
-            {
-                show(&e)?;
-                seen.insert(e.project.clone(), e.seq);
+            let aaa_proto::FrontMsg::Event(aaa_proto::FrontEvent::Flow(e)) = m else { continue };
+            if project.as_ref().is_some_and(|p| *p != e.project) {
+                continue;
+            }
+            let last = seen.get(&e.project).copied().unwrap_or(after);
+            match follow_step(last, e.seq) {
+                FollowStep::Skip => {}
+                FollowStep::Show => {
+                    show(&e)?;
+                    seen.insert(e.project.clone(), e.seq);
+                }
+                // 사이가 비었다(host가 놓친 사건을 보내지 못했다): 그 프로젝트를 cursor부터 다시 읽어 차례대로 보인다
+                FollowStep::Refill { after: from } => {
+                    let mut last = from;
+                    while last < e.seq {
+                        let req = FrontRequest::Events { project: Some(e.project.clone()), after: last, limit: None };
+                        let Ok(FrontResponse::Events { events: mut got }) = c.call(req).await? else { break };
+                        got.sort_by_key(|g| g.seq);
+                        let before = last;
+                        for g in &got {
+                            if g.seq > last {
+                                show(g)?;
+                                last = g.seq;
+                            }
+                        }
+                        if last == before {
+                            break;
+                        }
+                    }
+                    // 다시 읽어도 그 사건에 닿지 못했다(읽기 실패): 받은 것은 보인다
+                    if last < e.seq {
+                        show(&e)?;
+                        last = e.seq;
+                    }
+                    seen.insert(e.project.clone(), last);
+                }
             }
         }
         Ok(ExitCode::SUCCESS)
     })
+}
+
+/// 따라 읽기에서 받은 사건(그 프로젝트에서 마지막으로 보인 seq가 `last`)을 어떻게 하나. seq는 프로젝트마다 1부터 빈칸
+/// 없이 오른다: 바로 다음이면 보이고, 이미 본 것은 버리고, 사이가 비면 `last`부터 다시 읽는다(빈칸을 버리지 않는다)
+#[derive(Debug, PartialEq)]
+enum FollowStep {
+    Show,
+    Skip,
+    Refill { after: u64 },
+}
+
+fn follow_step(last: u64, seq: u64) -> FollowStep {
+    if seq <= last {
+        FollowStep::Skip
+    } else if seq == last + 1 {
+        FollowStep::Show
+    } else {
+        FollowStep::Refill { after: last }
+    }
 }
 
 fn render_event(e: &aaa_proto::FlowEvent) -> String {
@@ -2769,6 +2819,20 @@ fn config_cmd(cmd: ConfigCmd, json: bool) -> Result<ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn follow_fills_a_gap_instead_of_dropping_it() {
+        use super::{FollowStep, follow_step};
+        assert_eq!(follow_step(20, 21), FollowStep::Show);
+        assert_eq!(follow_step(20, 20), FollowStep::Skip);
+        // 22가 21보다 먼저 왔다(host가 21을 늦게 보냈거나 놓쳤다): 21을 버리지 않고 20부터 다시 읽는다
+        assert_eq!(follow_step(20, 22), FollowStep::Refill { after: 20 });
+        // 다시 읽어 22까지 보인 뒤 늦게 온 21은 이미 본 것이다
+        assert_eq!(follow_step(22, 21), FollowStep::Skip);
+        // 처음 읽기에 없던 프로젝트: cursor 0이면 첫 사건은 seq 1이다
+        assert_eq!(follow_step(0, 1), FollowStep::Show);
+        assert_eq!(follow_step(0, 3), FollowStep::Refill { after: 0 });
+    }
+
     use super::*;
 
     /// `aaa report`는 herdr-projects `report`와 같은 인자를 받는다(plan §8.78)

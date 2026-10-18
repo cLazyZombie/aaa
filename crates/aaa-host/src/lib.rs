@@ -350,8 +350,10 @@ pub struct Host {
     pub boot_id: String,
     /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.163)
     pub config_dir: std::sync::OnceLock<PathBuf>,
-    /// 새 흐름 사건(연결된 front에 알린다)
+    /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
+    /// 흐름 사건 하나를 저장(seq를 정함)부터 broadcast까지 한 번에 하나씩 한다(`orch.rs` `flow_event`)
+    flow_order: Mutex<()>,
     /// thread 기록이 바뀌었다
     pub thread_events: broadcast::Sender<aaa_proto::ThreadView>,
     /// 보고 사본은 한 번에 하나씩 한다
@@ -537,6 +539,7 @@ impl Host {
             boot_id: util::boot_id(),
             config_dir: std::sync::OnceLock::new(),
             flow_events: broadcast::channel(256).0,
+            flow_order: Mutex::new(()),
             thread_events: broadcast::channel(256).0,
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
