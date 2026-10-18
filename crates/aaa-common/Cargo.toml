@@ -1,6 +1,6 @@
 [package]
 name = "aaa-common"
-description = "aaa 역할들이 함께 쓰는 바탕: 로컬 IPC·frame 연결·TLS 신원·OS 유틸·Front API 클라이언트·PR 주소 해석. 역할 crate에 의존하지 않는다"
+description = "aaa 역할들이 함께 쓰는 바탕: 로컬 IPC·frame 연결·TLS 신원·OS 유틸·Front API 클라이언트(같은 머신·원격 웹)·PR 주소 해석. 역할 crate에 의존하지 않는다"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -19,6 +19,9 @@ hex.workspace = true
 tracing.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
+webpki-roots.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
 
 [target.'cfg(unix)'.dependencies]

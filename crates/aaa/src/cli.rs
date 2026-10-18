@@ -62,11 +62,15 @@ enum Cmd {
         #[arg(value_parser = ["bash", "elvish", "fish", "powershell", "zsh"])]
         shell: String,
     },
-    /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신)
+    /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신, 또는 --remote로 다른 기기에서)
     Attach {
         /// workspace 이름(기본 main)
         #[arg(long, short)]
         workspace: Option<String>,
+        /// 다른 기기에서 host 웹 주소로 붙는다(`aaa web publish`의 https 주소). 처음에는 host에서 사람이 `aaa web pair`로
+        /// 낸 코드를 묻고, 받은 기기 token을 이 기기에 둔다
+        #[arg(long, value_name = "웹 주소")]
+        remote: Option<String>,
     },
     /// 머신 등록·목록·폐기(host에서)
     Machine {
@@ -1176,9 +1180,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
-        Cmd::Attach { workspace } => {
+        Cmd::Attach { workspace, remote: None } => {
             init_log("warn");
             aaa_tui::run(workspace)
+        }
+        Cmd::Attach { workspace, remote: Some(url) } => {
+            let target = aaa_common::remote::Target::parse(&url)?;
+            init_log("warn");
+            aaa_tui::run_remote(workspace, &target, |why| {
+                // 기기 pairing은 사람이 한다: 코드는 host 사람이 낸다
+                crate::person::require("원격 TUI pairing")?;
+                println!("{why}.");
+                println!(
+                    "host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 넣는다({}).",
+                    target.origin()
+                );
+                let code = crate::person::ask("pairing 코드: ")?;
+                if code.is_empty() {
+                    anyhow::bail!("pairing 코드가 비었다");
+                }
+                Ok(code)
+            })
         }
         Cmd::Evaluator { cmd: EvaluatorCmd::Open { project } } => evaluator_open(&project),
         Cmd::Evaluator { cmd } => front(

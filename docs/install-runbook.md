@@ -128,6 +128,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 - 홈 화면 앱(PWA): Android Chrome은 목록 아래 「홈 화면에 설치」, iPhone은 Safari 공유 → 「홈 화면에 추가」. iPhone 홈 화면 앱은 Safari와 cookie가 따로라 처음 열 때 다시 pairing한다.
 - 알림(Web Push): 목록 아래 「알림 켜기」를 누르면 시험 알림이 온다. iPhone은 홈 화면 앱에서만 켤 수 있다(iOS 16.4 이상).
+- 다른 기기 TUI: 그 기기(aaa를 둔 노트북 등)에서 `aaa attach --remote <위 publish 주소>` → host에서 `aaa web pair`로 낸 코드 입력. 확인: 같은 탭·pane이 보이고 입력되며, host `aaa web devices`에 「aaa TUI · …」가 있다. 그 기기를 `aaa web revoke`하면 열린 TUI가 「취소됐다」로 끝난다.
 
 ## 6. shadow(§15 2)
 
