@@ -44,6 +44,8 @@ pub(crate) struct ConnRec {
     text_at: u64,
     /// 마지막 WebSocket pong. 브라우저 네트워크 층이 답하므로 페이지가 멈춰도 올 수 있다
     pong_at: u64,
+    /// 그 페이지의 웹 빌드(presence `build`, 옛 웹은 없다)
+    build: Option<String>,
 }
 
 impl Viewing {
@@ -90,13 +92,14 @@ impl Viewing {
         }
         for (id, c) in &mine {
             out.push_str(&format!(
-                " · 연결#{id} {}(presence {} {}, 앱 글 {}, pong {}, 연결 {})",
+                " · 연결#{id} {}(presence {} {}, 앱 글 {}, pong {}, 연결 {}, 웹 {})",
                 if c.active { "쓰는 중" } else { "안 씀" },
                 ago(c.presence_at),
                 if c.presence_why.is_empty() { "-" } else { &c.presence_why },
                 ago(c.text_at),
                 ago(c.pong_at),
                 ago(c.opened),
+                c.build.as_deref().unwrap_or("?"),
             ));
         }
         let others: Vec<&ConnRec> = self.conns.values().filter(|c| c.dev != user).collect();
@@ -199,14 +202,25 @@ impl Host {
 
     /// 웹이 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거). 아는 프로젝트면 흐름 사건 `alert_outcome`, 아니면 log만.
     /// 웹이 보낸 글이므로 길이와 글자를 줄인다
-    pub(crate) fn alert_outcome(&self, dev: &str, project: Option<&str>, target: &str, kind: &str, outcome: &str) {
+    /// `conn`의 웹 빌드를 끝에 붙인다(옛 웹은 「웹 ?」)
+    pub(crate) fn alert_outcome(
+        &self,
+        dev: &str,
+        conn: u64,
+        project: Option<&str>,
+        target: &str,
+        kind: &str,
+        outcome: &str,
+    ) {
         let clip = |s: &str, n: usize| s.chars().filter(|c| !c.is_control()).take(n).collect::<String>();
+        let build = self.viewing.lock().unwrap().conns.get(&conn).and_then(|c| c.build.clone());
         let detail = format!(
-            "기기 {} · {} · {} · {}",
+            "기기 {} · {} · {} · {} · 웹 {}",
             dev.chars().take(7).collect::<String>(),
             clip(kind, 16),
             clip(target, 120),
-            clip(outcome, 120)
+            clip(outcome, 120),
+            build.as_deref().unwrap_or("?")
         );
         match project.filter(|p| self.project_dir(p).is_ok()) {
             Some(p) => self.flow_project(p, "alert_outcome", None, detail),
@@ -242,10 +256,15 @@ impl Host {
     }
 
     /// 그 연결이 presence를 알렸다(`why`는 웹이 보낸 까닭·화면 값). 쓰는 화면인지는 `view_presence`가 정한다
-    pub(crate) fn conn_presence(&self, id: u64, why: String) {
+    pub(crate) fn conn_presence(&self, id: u64, why: String, build: Option<String>) {
         if let Some(c) = self.viewing.lock().unwrap().conns.get_mut(&id) {
             c.presence_at = aaa_common::util::now_ms();
             c.presence_why = why;
+            if let Some(b) = build {
+                c.build = Some(
+                    b.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).take(40).collect(),
+                );
+            }
         }
     }
 
@@ -322,6 +341,7 @@ mod tests {
             presence_why: "true focus 보임·focus".into(),
             text_at: 9_000,
             pong_at: 0,
+            build: Some("index-abc".into()),
         };
         v.conns.insert(2, rec("phone-1234", true));
         v.conns.insert(1, rec("desk-5678", true));
@@ -331,7 +351,7 @@ mod tests {
         assert_eq!(
             v.basis(10_000),
             "쓰는 기기 phone-1(touch 6초 전) · 연결#2 쓰는 중(presence 8초 전 true focus 보임·focus, 앱 글 1초 전, \
-             pong 없음, 연결 9초 전) · 그 밖 연결 2개(쓰는 기기 desk-56)"
+             pong 없음, 연결 9초 전, 웹 index-abc) · 그 밖 연결 2개(쓰는 기기 desk-56)"
         );
         // 쓰는 기기의 연결이 없다(닫혔다)
         v.conns.remove(&2);
