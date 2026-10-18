@@ -486,14 +486,58 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .chat-note { margin: 0 0 var(--space-2); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); color: var(--text-dim); }
 /* 대화 글자는 설정 「채팅 글자 크기」를 따른다(참고 ChatView.css: 산문은 --fs-chat, 작은 글은 --fs-xs, 모두 × --chat-scale) */
 .chat-msg { max-width: min(760px, 92%); padding: var(--space-2) var(--space-3); border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: calc(var(--fs-chat) * var(--chat-scale, 1)); }
-/* 사람·답 말은 Markdown(참고 ChatView.css `.chat-bubble`·`.chat-turn-agent`, plan §8.179): 사람 말은 무채색 카드(주황은 선택·보내기에
-   남긴다), 답은 카드 없이 화면에 바로. Markdown 글자도 「채팅 글자 크기」를 따른다 */
-.chat-msg.user, .chat-msg.assistant { white-space: normal; }
+/* 사람·답 말과 그 둘레(herdr-web-ui ChatView.css, plan §8.179·§8.182): 대화 기둥, 사람 말은 무채색 카드(주황은 선택·보내기에 남긴다)와
+   긴 말 접기, 답은 카드 없이, 말마다 복사(마우스면 올렸을 때만 보인다). Markdown 글자도 「채팅 글자 크기」를 따른다 */
+.chat-transcript { width: min(100%, var(--chat-w)); margin-inline: auto; display: flex; flex-direction: column; gap: var(--space-3); }
+.chat-turn { width: 100%; }
+.chat-msg.user, .chat-msg.assistant { white-space: normal; --chat-fs-body: calc(var(--fs-chat) * var(--chat-scale, 1)); }
 .chat-msg .markdown { --chat-fs-body: calc(var(--fs-chat) * var(--chat-scale, 1)); }
-.chat-msg.user { align-self: flex-end; max-width: min(760px, 80%); padding: var(--space-3) var(--space-4); background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-strong); }
+.chat-turn-user { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+.chat-turn-agent + .chat-turn-user { margin-top: var(--space-5); }
+.chat-user-row { align-self: stretch; display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+.chat-msg.user { max-width: 80%; padding: var(--space-3) var(--space-4); border: var(--hairline) solid var(--bubble-border); border-radius: var(--radius-lg); background: var(--bg-elevated); color: var(--text-strong); line-height: var(--lh-prose); }
+.chat-msg.user.is-capped .chat-bubble-body { max-height: calc(var(--chat-fold-lines) * var(--chat-fs-body) * var(--lh-prose)); overflow: hidden; }
+.chat-msg.user.is-folded .chat-bubble-body { mask-image: linear-gradient(currentColor calc(100% - var(--chat-fs-body) * var(--lh-prose)), transparent); }
+.chat-bubble-foot { display: flex; justify-content: flex-end; margin-top: var(--space-1); }
+.chat-bubble-fold { min-height: var(--chip-h); margin-right: calc(-1 * var(--space-1)); padding: 0 var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer; }
+.chat-bubble-fold:hover { background: var(--bg-hover); color: var(--text-strong); }
 .chat-msg.user .markdown :not(pre) > code { background: var(--bg-hover); }
 .chat-msg.user .markdown pre, .chat-msg.user .markdown-code { background: var(--bg-panel); }
-.chat-msg.assistant { align-self: stretch; max-width: min(760px, 100%); padding: 0; background: transparent; color: var(--text); }
+.chat-turn-agent { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); color: var(--text); }
+.chat-msg.assistant { align-self: stretch; max-width: none; padding: 0; border-radius: 0; background: transparent; color: var(--text); }
+.chat-turn-meta { min-height: var(--chip-h); display: flex; align-items: center; gap: var(--space-1); color: var(--text-dim); font-size: var(--fs-2xs); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-turn:hover .chat-turn-meta, .chat-turn:focus-within .chat-turn-meta { opacity: 1; pointer-events: auto; }
+.chat-copy-error { margin: 0; color: var(--danger-text); font-size: var(--fs-xs); }
+.chat-copy { width: var(--chip-h); height: var(--chip-h); min-width: var(--chip-h); }
+.chat-copy svg, .chat-meta-btn svg { width: var(--fs-sm); height: var(--fs-sm); }
+.chat-agent-meta { gap: var(--space-2); }
+.chat-meta-btn { display: inline-flex; align-items: center; gap: var(--space-1); height: var(--chip-h); padding: 0 var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); font-size: var(--fs-2xs); font-weight: var(--fw-semibold); letter-spacing: var(--tracking-caps); cursor: pointer; }
+.chat-meta-btn:hover { background: var(--bg-hover); color: var(--text-strong); }
+.chat-meta-word { display: none; }
+/* 마우스(곁에 터치 화면 없음)면 사람 말의 복사는 카드 옆, 답은 복사 그림 하나(마크다운)와 「일반 텍스트」 글. 터치는 이름 붙은 두 단추(참고) */
+@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  .chat-meta-btn .chat-meta-fmt, .chat-meta-plain:not(.is-copied) svg { display: none; }
+  .chat-meta-plain { font-size: var(--fs-xs); font-weight: var(--fw-regular); letter-spacing: normal; }
+  .chat-meta-word { display: inline; }
+}
+@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) and (min-width: 481px) {
+  .chat-user-row { flex-direction: row-reverse; justify-content: flex-start; gap: var(--space-2); }
+  .chat-user-row > .chat-turn-meta { flex: none; }
+  .chat-user-row > .chat-msg.user { min-width: 0; }
+}
+@media (pointer: coarse) {
+  .chat-copy, .chat-bubble-fold { min-height: var(--touch-target); }
+  .chat-copy { width: var(--touch-target); }
+  .chat-turn-meta { opacity: 1; pointer-events: auto; }
+  .chat-user-row > .chat-turn-meta { height: var(--chip-h); }
+  .chat-user-row .chat-copy, .chat-agent-meta .chat-meta-btn { margin-block: calc((var(--chip-h) - var(--touch-target)) / 2); }
+}
+@media (pointer: fine) and (any-pointer: coarse) {
+  .chat-turn-meta { opacity: 1; pointer-events: auto; }
+}
+@media (max-width: 480px) {
+  .chat-msg.user { max-width: 92%; }
+}
 .chat-msg.tool { align-self: flex-start; padding: 2px var(--space-3); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); color: var(--text-dim); background: transparent; }
 .chat-btn[aria-pressed="true"] { color: var(--accent); }
 /* 붙잡은 메시지는 입력창 기둥에(herdr/Composer.css `.terminal-stack.is-chat .composer-queue`: aaa의 pane 칸은 .term) */

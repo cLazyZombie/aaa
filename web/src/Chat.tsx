@@ -6,8 +6,11 @@
 // 글 속 파일 경로는 그 pane의 파일 보기로 연다(참고 ChatView는 pane마다 `OpenFileContext`, 찾는 곳은 그 pane이 지금 있는 폴더,
 // plan §8.171). 보기 권한 화면은 열 곳이 없어 글 그대로다. 사람·답 말은 참고처럼 Markdown으로 그린다(참고 `UserMessage`의
 // `chat-bubble-body`·`Turn`의 답, plan §8.179): 사람 말은 무채색 카드, 답은 카드 없이. 도구 줄은 글 그대로 경로만 잇는다(`linkFilePaths`).
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+// 말 둘레도 참고대로다(plan §8.182): 대화 기둥 폭(`.chat-transcript`), 긴 사람 말 접기(`UserMessage`, userMessageFold.ts), 사람 말 복사·답의
+// 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
+// 문구는 참고 i18n.ko.ts.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { ApiError, call } from "./api";
 import type { ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
@@ -15,6 +18,8 @@ import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
 import { linkFilePaths } from "./FilePathLink";
 import { Markdown } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths.ts";
+import { copyText } from "./herdr/clipboard.ts";
+import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 
 /** push 없는 대화의 읽기 간격(참고 conversationRefresh.ts `INVALIDATION_MS`) */
 const INVALIDATION_MS = 2000;
@@ -32,6 +37,143 @@ function ThinkingRow({ text }: { text: string }) {
       </button>
       {open && <div className="work-thinking-text">{text}</div>}
     </div>
+  );
+}
+
+/** 참고 `plainText`: 답을 일반 텍스트로 복사할 때 Markdown 표시를 뗀다 */
+function plainText(markdown: string): string {
+  return markdown
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, "$1")
+    .replace(/\[([^\]]+)\]\((?:https?:\/\/|mailto:)[^)]+\)/gi, "$1")
+    .replace(/(?:\*\*|__|~~|`)(.*?)(?:\*\*|__|~~|`)/g, "$1")
+    .replace(/^#{1,3}\s+/gm, "")
+    .replace(/^>\s?/gm, "");
+}
+
+/** 참고 `CopyButton`: 복사하고 잠깐 「복사됨」 */
+function CopyButton({
+  text,
+  label,
+  className = "icon-button chat-copy",
+  children,
+  onResult,
+}: {
+  text: string;
+  label: string;
+  className?: string;
+  children?: ReactNode;
+  onResult: (ok: boolean) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const ok = await copyText(text);
+    setCopied(ok);
+    onResult(ok);
+    if (ok) window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button type="button" className={copied ? `${className} is-copied` : className} onClick={() => void copy()} aria-label={copied ? "복사됨" : label} title={copied ? "복사됨" : label}>
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      {children}
+    </button>
+  );
+}
+
+/** 복사가 안 됐을 때 그 말 아래에 한 줄(참고 `copyError`) */
+function useCopyResult() {
+  const [failed, setFailed] = useState(false);
+  const note = failed && (
+    <p className="chat-copy-error" role="alert">
+      복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.
+    </p>
+  );
+  return { note, onResult: (ok: boolean) => setFailed(!ok) };
+}
+
+/** 참고 `UserMessage`: 긴 말은 몇 줄만 보이고 「전체 메시지 보기」로 펼친다. 잘린 곳은 흐리게 */
+function UserMessage({ text }: { text: string }) {
+  const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
+  const [open, setOpen] = useState(false);
+  const capped = canFold && !open;
+  const body = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const node = body.current;
+    if (!capped || node === null) {
+      setClipped(false);
+      return;
+    }
+    const measure = () => setClipped(node.scrollHeight > node.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [capped]);
+  const card = useRef<HTMLDivElement>(null);
+  const folding = useRef(false);
+  const toggle = () => {
+    folding.current = open;
+    setOpen(!open);
+  };
+  // 「접기」는 긴 말 아래에 있다: 접은 뒤 카드 머리가 화면 위로 나갔으면 다시 보이게 한다(참고)
+  useLayoutEffect(() => {
+    if (!folding.current) return;
+    folding.current = false;
+    const node = card.current;
+    const view = node?.closest(".chat");
+    if (node && view && node.getBoundingClientRect().top < view.getBoundingClientRect().top) node.scrollIntoView({ block: "start" });
+  }, [open]);
+  return (
+    <div ref={card} className={`chat-msg user chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}`} data-role="user">
+      <div ref={body} className="chat-bubble-body">
+        <Markdown>{text}</Markdown>
+      </div>
+      {(open || clipped) && (
+        <div className="chat-bubble-foot">
+          <button type="button" className="chat-bubble-fold" aria-expanded={open} onClick={toggle}>
+            {open ? "접기" : "전체 메시지 보기"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
+function UserTurn({ text }: { text: string }) {
+  const { note, onResult } = useCopyResult();
+  return (
+    <article className="chat-turn chat-turn-user">
+      <div className="chat-user-row">
+        <UserMessage text={text} />
+        <div className="chat-turn-meta">
+          <CopyButton text={text} label="메시지 복사" onResult={onResult} />
+        </div>
+      </div>
+      {note}
+    </article>
+  );
+}
+
+/** 답: 카드 없이 Markdown, 그 아래 마크다운·일반 텍스트 복사(참고 `chat-agent-meta`) */
+function AgentTurn({ text }: { text: string }) {
+  const { note, onResult } = useCopyResult();
+  return (
+    <article className="chat-turn chat-turn-agent">
+      <div className="chat-msg assistant" data-role="assistant">
+        <Markdown>{text}</Markdown>
+      </div>
+      <div className="chat-turn-meta chat-agent-meta">
+        <CopyButton className="chat-meta-btn" text={text} label="마크다운으로 복사" onResult={onResult}>
+          <span className="chat-meta-fmt">MD</span>
+        </CopyButton>
+        <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(text)} label="일반 텍스트로 복사" onResult={onResult}>
+          <span className="chat-meta-fmt">TXT</span>
+          <span className="chat-meta-word">일반 텍스트</span>
+        </CopyButton>
+      </div>
+      {note}
+    </article>
   );
 }
 
@@ -100,21 +242,27 @@ export function ChatPanel({
           atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
       >
-        <p className="chat-note">
-          {chat?.harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
-          {chat?.truncated && " 앞부분은 생략했다."}
-        </p>
-        {error && <div className="banner warn">{error}</div>}
-        {chat?.messages.map((m, i) =>
-          m.role === "thinking" ? (
-            <ThinkingRow key={i} text={m.text} />
-          ) : (
-            <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
-              {m.role === "tool" ? linkFilePaths(m.text, onOpenFile ?? null) : <Markdown>{m.text}</Markdown>}
-            </div>
-          ),
-        )}
-        {chat && chat.messages.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
+        <div className="chat-transcript">
+          <p className="chat-note">
+            {chat?.harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
+            {chat?.truncated && " 앞부분은 생략했다."}
+          </p>
+          {error && <div className="banner warn">{error}</div>}
+          {chat?.messages.map((m, i) =>
+            m.role === "thinking" ? (
+              <ThinkingRow key={i} text={m.text} />
+            ) : m.role === "user" ? (
+              <UserTurn key={i} text={m.text} />
+            ) : m.role === "assistant" ? (
+              <AgentTurn key={i} text={m.text} />
+            ) : (
+              <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
+                {linkFilePaths(m.text, onOpenFile ?? null)}
+              </div>
+            ),
+          )}
+          {chat && chat.messages.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
+        </div>
       </div>
     </OpenFileContext.Provider>
   );
