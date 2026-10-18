@@ -76,6 +76,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `w` | 목록 탐색(`↑↓` 고르기, `Enter` 열기, `1`~`9` n번째 열기, `h/j/k/l`·`Tab` pane, `Esc` 끝) |
 | `o` | 질문이 열린 pane으로 |
 | `?` | 단축키 창 |
+| `s` | 설정 창: 테마(↑↓로 바로 입혀 보고 `Enter`면 저장, `Esc`면 되돌림)·상태 표시(색 점·기호), `Tab`으로 구역. host.toml `[tui]`에 쓴다. 마우스를 받으면 목록 spaces 맨 아랫줄 오른쪽 `menu`(설정·단축키·설정 다시 읽기·나가기)로도 연다 |
 | `Shift+R` | `[tui]` 설정 다시 읽기 |
 | `q` | 나가기(세션은 그대로) |
 | prefix 한 번 더 | prefix 키를 pane에 보냄 |
@@ -103,6 +104,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   copy_on_select = true                         # 끌어 고른 글을 떼는 때 복사(끄면 ctrl+c·cmd+c)
   mouse_scroll_lines = 3                        # 보통 화면 휠 한 칸에 넘기는 기록 줄 수
   pane_scrollbars = true                        # 보통 화면 pane 오른쪽 1칸에 기록 scrollbar(그만큼 PTY가 좁다)
+  status_indicators = "dots"                    # 상태 표시: dots(색 점 ● ○ ·) · symbols(× ◐ ✓ ○ ·)
 
   [terminal]
   new_cwd = "follow"                            # 새 탭·나누기의 폴더: follow(포커스 pane의 지금 폴더) · home · 절대 경로

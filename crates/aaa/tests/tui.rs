@@ -1329,7 +1329,10 @@ fn new_workspace_on_picked_machine_like_herdr() {
     let machine_of = |ws: &str| -> Vec<String> {
         leaves(&h.ok(&["workspace", "get", ws])).iter().map(|p| h.pane(p)["machine"].as_str().unwrap().into()).collect()
     };
-    let footer = |m: &'static str| move |s: &Screen| s.side_lines().iter().any(|l| *l == format!(" new · {m}"));
+    // spaces 맨 아랫줄(오른쪽 `menu`는 뺀다)
+    let footer = |m: &'static str| {
+        move |s: &Screen| s.side_lines().iter().any(|l| l.trim_end_matches("menu").trim_end() == format!(" new · {m}"))
+    };
 
     // 1) 「+ 새 셸」 줄이 없고 spaces 맨 아랫줄은 ` new · labA`(포커스 pane의 머신)
     let mut tui = Tui::start_cols(&h, &[], WIDE);
@@ -2030,6 +2033,92 @@ fn copy_mode_like_herdr() {
 
     tui.cmd("q");
     assert!(tui.wait_exit());
+}
+
+/// 4C 설정 창(herdr `prefix s` `render_settings_overlay`·`apply_settings_choice`, plan §8.170): 테마 구역에서 ↓면 바로 입혀
+/// 보고(탭 막대 `panel_bg`), Esc면 되돌리고 아무것도 쓰지 않는다. Enter면 실험실 host.toml `[tui] theme`에 쓰고(다른 줄은
+/// 그대로) 닫는다. 상태 표시 구역에서 기호를 고르면 창을 둔 채 `status_indicators`를 쓰고 확인 대기 pane 점이 `×`가 된다.
+/// spaces 맨 아랫줄 `menu`(전체 메뉴)를 누르고 Enter면 설정 창이 열린다. host.local.toml이 같은 key를 덮으면 알린다.
+#[test]
+fn settings_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    // 실행 파일 이름이 claude인 셸(`herdr_keys_and_modes`처럼): 화면에 Claude 확인창을 그려 질문(확인 대기 점)을 연다
+    let claude = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh\n").unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let first = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--", lab::path_str(&claude)]))[0].clone();
+    let host_toml = || std::fs::read_to_string(h.cfg.join("host.toml")).unwrap();
+    // 탭 막대 오른쪽 끝 칸 바탕(테마 `panel_bg`): catppuccin은 RGB(24,24,37), terminal은 터미널 기본
+    const CATPPUCCIN: u32 = 0x0200_0000 | (24 << 16) | (24 << 8) | 37;
+    let tab_bg = |s: &Screen| s.bgs[0][COLS as usize - 1];
+    let asking_dot = |s: &Screen, dot: &str| {
+        let side = s.side_lines();
+        let top = s.agents_top();
+        side[top..].iter().any(|l| l.starts_with(&format!(" {dot} ")))
+    };
+    let mut tui = Tui::start(&h);
+    tui.wait_text("셸", |s| s.contains('$'));
+    h.ok(&[
+        "pane",
+        "run",
+        &first,
+        "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
+         ' Esc to cancel · Tab to amend'",
+    ]);
+    hw.wait("질문", |w| {
+        w.pane(&first)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
+    });
+    tui.wait_screen("확인 대기 점", |s| asking_dot(s, "●") && tab_bg(s) == CATPPUCCIN);
+
+    // 1) 열면 지금 테마에 ✓, ↓↓면 terminal을 입혀 보고, Esc면 되돌리고 쓰지 않는다
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains(" 설정") && s.contains("▸ catppuccin ✓") && s.contains(" 상태 표시 "));
+    tui.send(b"jj");
+    tui.wait_screen("미리 보기", |s| s.text().contains("▸ terminal") && tab_bg(s) == 0);
+    tui.send(b"\x1b");
+    tui.wait_screen("되돌림", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == CATPPUCCIN);
+    assert!(!host_toml().contains("theme"), "{}", host_toml());
+
+    // 2) Enter면 host.toml `[tui] theme`에 쓰고 닫는다(실험실 설정의 다른 줄은 그대로)
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ catppuccin ✓"));
+    tui.send(b"jj");
+    tui.wait_text("terminal 고름", |s| s.contains("▸ terminal"));
+    tui.send(b"\r");
+    tui.wait_screen("적용", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == 0);
+    let saved = host_toml();
+    assert!(saved.contains("theme = \"terminal\"") && saved.contains("prefix_jamo_keys = true"), "{saved}");
+
+    // 3) 상태 표시 구역: 기호를 고르면 쓰고 창은 그대로, 확인 대기 pane 점이 `×`
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ terminal ✓"));
+    tui.send(b"\t");
+    tui.wait_text("상태 표시 구역", |s| s.contains("▸ 색 점"));
+    tui.send(b"j\r");
+    tui.wait_screen("기호", |s| s.text().contains("▸ 기호") && asking_dot(s, "×"));
+    assert!(host_toml().contains("status_indicators = \"symbols\""), "{}", host_toml());
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains(" ↑↓ 고르기"));
+
+    // 4) spaces 맨 아랫줄 `menu`: 전체 메뉴(설정·단축키·설정 다시 읽기·나가기), 첫 항목 Enter면 설정 창
+    let at = tui.wait_find("menu");
+    tui.click(at);
+    tui.wait_text("전체 메뉴", |s| s.contains("설정 다시 읽기") && s.contains("나가기"));
+    tui.send(b"\r");
+    tui.wait_text("메뉴에서 설정 창", |s| s.contains(" ↑↓ 고르기") && !s.contains("설정 다시 읽기"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains(" ↑↓ 고르기"));
+
+    // 5) host.local.toml이 theme를 덮으면 써도 바뀌지 않았다고 알린다
+    std::fs::write(h.cfg.join("host.local.toml"), "schema = 1\n[tui]\ntheme = \"nord\"\n").unwrap();
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ terminal ✓"));
+    tui.send(b"j\r");
+    tui.wait_text("덮음 알림", |s| s.contains("host.local.toml의 [tui] theme가 덮고 있어"));
+    assert!(host_toml().contains("theme = \"tokyo-night\""), "{}", host_toml());
+    drop(tui);
 }
 
 /// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.168): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,

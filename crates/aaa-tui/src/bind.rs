@@ -8,6 +8,7 @@ use crate::keys::{self, Combo};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Help,
+    Settings,
     Detach,
     ReloadConfig,
     OpenNotificationTarget,
@@ -53,6 +54,7 @@ pub fn prefix_action(c: Combo) -> Option<Action> {
 
 const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('?'), Action::Help),
+    (Combo::plain('s'), Action::Settings),
     (Combo::plain('q'), Action::Detach),
     (Combo::shift('r'), Action::ReloadConfig),
     (Combo::plain('o'), Action::OpenNotificationTarget),
@@ -104,6 +106,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
             vec![
                 (prefixes.to_string(), "prefix 모드"),
                 (p(Help), "단축키"),
+                (p(Settings), "설정"),
                 (p(Detach), "나가기(세션은 그대로)"),
                 (p(ReloadConfig), "설정 다시 읽기"),
                 (p(OpenNotificationTarget), "질문·알림 pane으로"),
@@ -189,6 +192,7 @@ mod tests {
         use Action::*;
         let k = |s: &str| prefix_action(keys::parse_combo(s).unwrap());
         assert_eq!(k("q"), Some(Detach));
+        assert_eq!(k("s"), Some(Settings));
         assert_eq!(k("v"), Some(SplitVertical));
         assert_eq!(k("minus"), Some(SplitHorizontal));
         assert_eq!(k("b"), Some(ToggleSidebar));
@@ -209,7 +213,7 @@ mod tests {
         assert_eq!(k("shift+h"), Some(SwapLeft));
         assert_eq!(k("shift+l"), Some(SwapRight));
         // tmux식 예전 키는 없다
-        for old in ["d", "t", "s", "%", "\"", "|"] {
+        for old in ["d", "t", "%", "\"", "|"] {
             assert_eq!(k(old), None, "{old}");
         }
         assert_eq!(rhs(WorkspacePicker), "w");

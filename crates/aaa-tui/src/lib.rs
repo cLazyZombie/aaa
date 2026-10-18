@@ -25,6 +25,7 @@ pub mod list;
 mod mouse;
 mod prompt;
 mod scrollbar;
+mod settings;
 mod tabs;
 mod theme;
 
@@ -240,8 +241,10 @@ enum Overlay {
     Rename(prompt::Rename),
     /// 닫기 확인(마지막 탭·마지막 pane)
     Confirm(prompt::Confirm),
-    /// 오른쪽 누름 메뉴(herdr `ContextMenu`)
+    /// 오른쪽 누름 메뉴(herdr `ContextMenu`)와 전체 메뉴(herdr `GlobalMenu`)
     Menu(mouse::Menu),
+    /// 설정 창(herdr `Settings`)
+    Settings(settings::Settings),
 }
 
 /// 단축키 창(herdr `ClientHelpOverlay`)
@@ -337,6 +340,10 @@ struct App {
     scroll_lines: u16,
     /// 보통 화면 pane 오른쪽 1칸 scrollbar(`[tui] pane_scrollbars`)
     pane_scrollbars: bool,
+    /// 상태 점 모양(`[tui] status_indicators`)
+    indicators: aaa_config::StatusIndicators,
+    /// 지금 테마 이름(`[tui] theme`, 설정 창이 미리 보는 동안은 그 테마)
+    theme_name: String,
     /// 마지막으로 그린 자리(마우스가 맞힌다)
     hits: std::cell::RefCell<mouse::Hits>,
     drag: Option<mouse::Drag>,
@@ -411,6 +418,8 @@ impl App {
             copy_on_select: true,
             scroll_lines: 3,
             pane_scrollbars: true,
+            indicators: aaa_config::StatusIndicators::Dots,
+            theme_name: "catppuccin".into(),
             hits: Default::default(),
             drag: None,
             selection: None,
@@ -440,6 +449,8 @@ impl App {
         self.copy_on_select = cfg.copy_on_select;
         self.scroll_lines = cfg.mouse_scroll_lines.max(1);
         self.pane_scrollbars = cfg.pane_scrollbars;
+        self.indicators = cfg.status_indicators;
+        self.theme_name = theme::canonical_theme_name(&cfg.theme).unwrap_or("catppuccin").to_string();
         self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
         // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
         self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
@@ -1361,6 +1372,30 @@ impl App {
                 KeyCode::Esc => self.overlay = None,
                 _ => {}
             },
+            // herdr `route_settings_key`: Esc 되돌리고 닫기, Tab·→·l 다음 구역, shift+Tab·←·h 앞 구역, ↑↓·k/j 고르기(테마는
+            // 미리 보기), Enter·space 적용. 다른 키는 버린다
+            Some(Overlay::Settings(s)) => {
+                let plain = k.modifiers.is_empty();
+                match k.code {
+                    KeyCode::Esc => self.settings_cancel(),
+                    KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if plain => {
+                        let next = s.next_section(true);
+                        self.settings_section(next);
+                    }
+                    KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h')
+                        if k.modifiers.difference(KeyModifiers::SHIFT).is_empty() =>
+                    {
+                        let next = s.next_section(false);
+                        self.settings_section(next);
+                    }
+                    KeyCode::Up | KeyCode::Down | KeyCode::Char('k') | KeyCode::Char('j') if plain => {
+                        s.step(matches!(k.code, KeyCode::Down | KeyCode::Char('j')));
+                        self.settings_preview();
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') if plain => self.settings_apply(),
+                    _ => {}
+                }
+            }
             // herdr: Esc 닫기, 위·아래 고르기(끝에서 멈춤), Enter 하기. 다른 키는 버린다
             Some(Overlay::Menu(m)) => match k.code {
                 KeyCode::Esc => self.overlay = None,
@@ -1376,6 +1411,75 @@ impl App {
             None => {}
         }
         Ok(())
+    }
+
+    /// 설정 창 구역을 바꾼다(herdr `select_settings_section`: 그 구역의 지금 값을 고른 채로)
+    fn settings_section(&mut self, section: settings::Section) {
+        let selected = match section {
+            settings::Section::Theme => settings::theme_index(&self.theme_name),
+            settings::Section::Indicators => usize::from(self.indicators == aaa_config::StatusIndicators::Symbols),
+        };
+        if let Some(Overlay::Settings(s)) = self.overlay.as_mut() {
+            s.section = section;
+            s.selected = selected;
+        }
+    }
+
+    /// 테마 구역에서 고른 테마를 바로 입혀 본다(herdr `preview_selected_theme`)
+    fn settings_preview(&mut self) {
+        let Some(Overlay::Settings(s)) = self.overlay.as_ref() else { return };
+        if s.section != settings::Section::Theme {
+            return;
+        }
+        if let Some(name) = theme::THEME_NAMES.get(s.selected) {
+            self.theme_name = name.to_string();
+            self.palette = theme::Palette::from_name(name).unwrap_or_else(theme::Palette::catppuccin);
+        }
+    }
+
+    /// 설정 창을 닫고 미리 본 테마를 되돌린다(herdr `cancel_settings_overlay`)
+    fn settings_cancel(&mut self) {
+        let Some(Overlay::Settings(s)) = self.overlay.take() else { return };
+        self.palette = theme::Palette::from_name(&s.original_theme).unwrap_or_else(theme::Palette::catppuccin);
+        self.theme_name = s.original_theme;
+    }
+
+    /// 고른 값을 host.toml `[tui]`에 쓰고 다시 읽는다(herdr `apply_settings_choice`·`save_settings_edit`). 테마는 창을 닫고
+    /// 상태 표시는 창을 둔다. 쓰지 못하면 창을 둔 채 알리고, host.local.toml이 그 key를 덮어 값이 그대로면 그렇다고 알린다.
+    fn settings_apply(&mut self) {
+        let Some(Overlay::Settings(s)) = self.overlay.as_ref() else { return };
+        let (key, value) = match s.section {
+            settings::Section::Theme => ("theme", theme::THEME_NAMES.get(s.selected).copied().unwrap_or("catppuccin")),
+            settings::Section::Indicators => (
+                "status_indicators",
+                [aaa_config::StatusIndicators::Dots, aaa_config::StatusIndicators::Symbols]
+                    .get(s.selected)
+                    .map_or("dots", |i| i.as_str()),
+            ),
+        };
+        let close = s.section == settings::Section::Theme;
+        let dir = aaa_config::paths::config_dir();
+        if let Err(e) = aaa_config::tui_edit::set(&dir, key, value.into()) {
+            self.set_error(format!("설정을 저장하지 못했다: {e}"));
+            return;
+        }
+        let cfg = match aaa_config::load_host(&dir) {
+            Ok(l) => l.config.tui,
+            Err(_) => {
+                self.set_error("설정을 저장했지만 host.toml을 다시 읽지 못했다");
+                return;
+            }
+        };
+        self.apply_config(&cfg);
+        let now = if close { self.theme_name.as_str() } else { self.indicators.as_str() };
+        if now != value {
+            self.set_error(format!("host.local.toml의 [tui] {key}가 덮고 있어 바뀌지 않았다"));
+        }
+        if close {
+            self.overlay = None;
+        } else if let Some(Overlay::Settings(s)) = self.overlay.as_mut() {
+            s.original_theme = self.theme_name.clone();
+        }
     }
 
     /// 닫기 확인 창에서 닫기
@@ -1564,6 +1668,13 @@ impl App {
         let focus = self.focus.clone();
         match a {
             Action::Help => self.overlay = Some(Overlay::Help(Help::default())),
+            Action::Settings => {
+                self.overlay = Some(Overlay::Settings(settings::Settings {
+                    section: settings::Section::Theme,
+                    selected: settings::theme_index(&self.theme_name),
+                    original_theme: self.theme_name.clone(),
+                }))
+            }
             Action::Detach => self.quit = true,
             Action::ReloadConfig => {
                 let cfg = tui_config();
@@ -1816,6 +1927,12 @@ impl App {
                 hits.buttons = prompt::rename_buttons(area).into_iter().zip(bs).collect();
                 return prompt::render_rename(buf, area, r, p);
             }
+            Some(Overlay::Settings(s)) => {
+                let h = settings::render(buf, area, s, p);
+                hits.popup = h.as_ref().map(|h| h.popup);
+                hits.settings = h;
+                return None;
+            }
             Some(Overlay::Confirm(c)) => {
                 hits.buttons = prompt::confirm_buttons(area)
                     .into_iter()
@@ -1942,6 +2059,7 @@ impl App {
             focused: self.mode == Mode::Navigate,
             top: self.list_top,
             pal: &self.palette,
+            style: self.indicators,
             now_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64),
@@ -1964,18 +2082,19 @@ impl App {
         };
         let navigating = self.mode == Mode::Navigate;
         let spaces = self.space_list();
-        let placed_spaces = list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p);
-        // herdr: 마우스를 받을 때만 ` new`, 머신이 여럿이면 새 workspace를 열 머신 이름을 붙인다(없으면 로컬 agent)
-        let new_workspace = self.mouse_capture.then(|| {
+        let placed_spaces =
+            list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p, self.indicators);
+        // herdr: 마우스를 받을 때만 ` new`와 `menu`, 머신이 여럿이면 새 workspace를 열 머신 이름을 붙인다(없으면 로컬 agent)
+        let footer = self.mouse_capture.then(|| {
             let id = self.target_machine().or_else(|| self.machines.iter().find(|m| m.local).map(|m| m.id.clone()));
             let name = id.and_then(|id| self.machines.iter().find(|m| m.id == id)).map(|m| m.name.as_str());
-            list::render_new_workspace(buf, spaces_area, name.filter(|_| self.machines.len() > 1), p)
+            list::render_spaces_footer(buf, spaces_area, name.filter(|_| self.machines.len() > 1), p)
         });
         let body = list::render_agents_header(buf, agents_area, p);
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
-        hits.new_workspace = new_workspace.flatten();
+        (hits.new_workspace, hits.global_menu) = footer.flatten().unzip();
         hits.rows =
             placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
         if body.h > 0 {
@@ -2039,7 +2158,7 @@ impl App {
             buf.set_string(
                 button.x + button.w - 1,
                 button.y,
-                list::Dot::Blocked.icon(),
+                list::Dot::Blocked.icon(self.indicators),
                 Style::default().fg(p.red).bg(p.surface0),
             );
         }
@@ -2058,7 +2177,7 @@ impl App {
         buf.set_stringn(
             status.x,
             status.y,
-            format!(" {} ", worst.icon()),
+            format!(" {} ", worst.icon(self.indicators)),
             name_w.min(3) as usize,
             Style::default().fg(worst.color(p)).bg(p.panel_bg),
         );
@@ -2998,7 +3117,9 @@ mod tests {
         app.pick_machine("n".into());
         assert_eq!(app.target_machine().as_deref(), Some("n"));
         assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
+        assert!(footer(&app).contains("         menu│"), "{}", footer(&app));
         assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 12, h: 1 }));
+        assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 14, w: 6, h: 1 }));
         // 포커스가 바뀌면 포커스 pane의 머신
         app.focus = Some("p1".into());
         assert_eq!(app.target_machine().as_deref(), Some("m"));
@@ -3015,7 +3136,52 @@ mod tests {
         assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
         app.mouse_capture = false;
         assert!(!footer(&app).contains("new"), "{}", footer(&app));
-        assert_eq!(app.hits.borrow().new_workspace, None);
+        assert_eq!((app.hits.borrow().new_workspace, app.hits.borrow().global_menu), (None, None));
+    }
+
+    /// 설정 창(herdr `render_settings_overlay`·`route_settings_key`): 머리 ` 설정`, 구역 이름표, 지금 테마 `✓`, 고른 줄 `▸`,
+    /// 안내와 적용·닫기 단추. 테마 구역에서 고르면 바로 입혀 보고, 구역을 바꾸면 그 구역 지금 값, 닫으면 연 때의 테마로.
+    /// (적용은 host.toml에 써서 harness `settings_like_herdr`가 실험실 설정 폴더로 본다)
+    #[test]
+    fn settings_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        app.overlay = Some(Overlay::Settings(settings::Settings {
+            section: settings::Section::Theme,
+            selected: 0,
+            original_theme: "catppuccin".into(),
+        }));
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        for want in [
+            " 설정",
+            " 테마   상태 표시 ",
+            " ▸ catppuccin ✓",
+            "   terminal",
+            " ↑↓ 고르기  tab 구역",
+            " ↵ 적용 ",
+            " esc 닫기 ",
+        ] {
+            assert!(shown.contains(want), "{want:?}: {shown}");
+        }
+        assert_eq!(app.hits.borrow().settings.as_ref().map(|h| h.tabs.len()), Some(2));
+        if let Some(Overlay::Settings(s)) = app.overlay.as_mut() {
+            s.step(true);
+            s.step(true);
+        }
+        app.settings_preview();
+        assert_eq!((app.theme_name.as_str(), &app.palette), ("terminal", &theme::Palette::terminal()));
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(shown.contains(" ▸ terminal") && shown.contains("   catppuccin ✓"), "{shown}");
+        app.settings_section(settings::Section::Indicators);
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(shown.contains(" ▸ 색 점  ● ● ● ○ ·") && shown.contains("   기호  × ◐ ✓ ○ ·"), "{shown}");
+        // 미리 본 테마는 구역을 바꿔도 그대로, 닫으면 되돌린다
+        assert_eq!(app.palette, theme::Palette::terminal());
+        app.settings_cancel();
+        assert!(app.overlay.is_none());
+        assert_eq!((app.theme_name.as_str(), &app.palette), ("catppuccin", &theme::Palette::catppuccin()));
     }
 
     /// 새 workspace 답: 그 workspace로 가서 새 pane에 포커스(키 붙잡기도 풀림), 실패면 무엇이 실패했는지 알린다

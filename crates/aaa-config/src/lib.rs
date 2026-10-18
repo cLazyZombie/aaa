@@ -9,6 +9,7 @@
 pub mod paths;
 pub mod profile_edit;
 pub mod safety;
+pub mod tui_edit;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -312,6 +313,8 @@ pub struct TuiSection {
     /// 보통 화면 pane의 오른쪽 1칸에 기록 scrollbar(herdr `[ui] pane_scrollbars`, 기본 켬). 그 칸만큼 PTY가 좁고,
     /// alt 화면(vim 등)에서는 칸을 돌려준다.
     pub pane_scrollbars: bool,
+    /// 상태 표시(herdr `[ui] status_indicators`): `dots`(기본)는 색 점 `● ○ ·`, `symbols`는 상태마다 다른 기호 `× ◐ ✓ ○ ·`
+    pub status_indicators: StatusIndicators,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -321,6 +324,24 @@ pub enum PaneBorders {
     Auto,
     Always,
     Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusIndicators {
+    #[default]
+    Dots,
+    Symbols,
+}
+
+impl StatusIndicators {
+    /// 설정 글(`[tui] status_indicators` 값)
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StatusIndicators::Dots => "dots",
+            StatusIndicators::Symbols => "symbols",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -357,6 +378,7 @@ impl Default for TuiSection {
             copy_on_select: true,
             mouse_scroll_lines: 3,
             pane_scrollbars: true,
+            status_indicators: StatusIndicators::Dots,
         }
     }
 }

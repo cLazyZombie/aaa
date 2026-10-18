@@ -44,7 +44,7 @@ pub enum CloseTarget {
 }
 
 /// 가운데 맞춘 단추 칸들(herdr `row`: 너비들, 사이 칸, 창 안 위에서 몇째 줄)
-fn row(i: Rect, ws: &[u16], gap: u16, off: u16) -> Vec<Rect> {
+pub(crate) fn row(i: Rect, ws: &[u16], gap: u16, off: u16) -> Vec<Rect> {
     let total = ws.iter().sum::<u16>() + gap * (ws.len().saturating_sub(1) as u16);
     let mut x = i.x + i.w.saturating_sub(total) / 2;
     ws.iter()
@@ -57,7 +57,7 @@ fn row(i: Rect, ws: &[u16], gap: u16, off: u16) -> Vec<Rect> {
 }
 
 /// 바탕을 칠하고 글을 가운데에(herdr `button`)
-fn button(buf: &mut Buffer, r: Rect, t: &str, s: Style) {
+pub(crate) fn button(buf: &mut Buffer, r: Rect, t: &str, s: Style) {
     for x in r.x..r.x + r.w {
         buf.set_string(x, r.y, " ", s);
     }
@@ -65,7 +65,7 @@ fn button(buf: &mut Buffer, r: Rect, t: &str, s: Style) {
     buf.set_stringn(r.x + (r.w - w) / 2, r.y, t, w as usize, s);
 }
 
-fn label_widths(labels: &[&str]) -> Vec<u16> {
+pub(crate) fn label_widths(labels: &[&str]) -> Vec<u16> {
     labels.iter().map(|l| unicode_width(l) as u16).collect()
 }
 

@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use aaa_config::StatusIndicators;
 use aaa_proto::layout::Rect;
 use aaa_proto::{
     AgentActivity, Connection, MachineView, PaneView, Role, SessionState, ThreadGroup, ThreadStatus, ThreadView,
@@ -174,12 +175,15 @@ pub enum Dot {
 }
 
 impl Dot {
-    /// herdr `status_icon`(Dots)
-    pub fn icon(self) -> &'static str {
-        match self {
-            Dot::Working | Dot::Blocked | Dot::Done => "●",
-            Dot::Idle => "○",
-            Dot::Unknown => "·",
+    /// herdr `status_icon`: 색 점(`dots`) 또는 상태마다 다른 기호(`symbols`, `[tui] status_indicators`)
+    pub fn icon(self, style: StatusIndicators) -> &'static str {
+        match (style, self) {
+            (StatusIndicators::Dots, Dot::Working | Dot::Blocked | Dot::Done) => "●",
+            (StatusIndicators::Symbols, Dot::Blocked) => "×",
+            (StatusIndicators::Symbols, Dot::Working) => "◐",
+            (StatusIndicators::Symbols, Dot::Done) => "✓",
+            (_, Dot::Idle) => "○",
+            (_, Dot::Unknown) => "·",
         }
     }
 
@@ -344,6 +348,8 @@ pub struct View<'a> {
     /// 휠로 민 첫 줄(없으면 고른 줄이 보이게 내린다)
     pub top: Option<usize>,
     pub pal: &'a Palette,
+    /// 상태 점 모양(`[tui] status_indicators`)
+    pub style: StatusIndicators,
     /// 지금 시각(「n분 조용」)
     pub now_ms: u64,
 }
@@ -442,7 +448,7 @@ fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> (Vec<Span>, Opti
         Style::default().fg(pal.subtext0)
     };
     let faint = Style::default().fg(pal.overlay0);
-    let dot = |d: Dot| (format!(" {} ", d.icon()), Style::default().fg(d.color(pal)));
+    let dot = |d: Dot| (format!(" {} ", d.icon(v.style)), Style::default().fg(d.color(pal)));
     match row {
         Row::Header(t) => (vec![(format!(" {t}"), faint.add_modifier(Modifier::BOLD))], None),
         // 프로젝트 머리(웹 project-group): 굵은 이름, 오른쪽은 그 머신 이 프로젝트 thread 셈(웹 둘째 줄 `projectLine`)
@@ -541,8 +547,9 @@ pub fn section_heights(total: u16, split: f32) -> (u16, u16) {
 }
 
 /// spaces 구역(herdr `render_sidebar` 위 구역·`render_workspace_rows`): ` spaces` 머리와 빈 줄, workspace마다
-/// ` <점> 이름`, 맨 아랫줄은 비운다(` new` 자리, `render_new_workspace`). 지금 workspace는 `active_row_bg`·이름 `text` 굵게(아니면
+/// ` <점> 이름`, 맨 아랫줄은 비운다(` new`·`menu` 자리, `render_spaces_footer`). 지금 workspace는 `active_row_bg`·이름 `text` 굵게(아니면
 /// `subtext0`), 탐색 중 고른 줄은 `selection_bg`. 넘치면 고른 줄(없으면 지금 줄)이 보이게 내린다. (줄 y, 이름)들을 준다.
+#[allow(clippy::too_many_arguments)]
 pub fn render_spaces(
     buf: &mut Buffer,
     r: Rect,
@@ -551,6 +558,7 @@ pub fn render_spaces(
     sel: Option<&str>,
     navigating: bool,
     p: &Palette,
+    style: StatusIndicators,
 ) -> Vec<(u16, String)> {
     if r.h == 0 || r.w == 0 {
         return vec![];
@@ -581,7 +589,7 @@ pub fn render_spaces(
             .set_stringn(
                 r.x + 1,
                 y,
-                sp.dot.icon(),
+                sp.dot.icon(style),
                 end.saturating_sub(r.x + 1) as usize,
                 Style::default().fg(sp.dot.color(p)),
             )
@@ -607,10 +615,10 @@ pub fn render_spaces(
     placed
 }
 
-/// spaces 구역 맨 아랫줄 새 workspace(herdr `render_sidebar`·`render_endpoint_workspaces` footer, 마우스를 받을 때만):
-/// ` new`, 머신이 여럿이면 ` new · 머신`(`overlay0`). 누를 칸을 준다(herdr: ` new`는 5칸, 머신이 붙으면 글 폭).
-/// 오른쪽 `menu`(전체 메뉴)는 설정 화면과 함께 둔다.
-pub fn render_new_workspace(buf: &mut Buffer, r: Rect, machine: Option<&str>, p: &Palette) -> Option<Rect> {
+/// spaces 구역 맨 아랫줄(herdr `render_sidebar`·`render_endpoint_workspaces` footer, 마우스를 받을 때만): 왼쪽 새 workspace
+/// ` new`(머신이 여럿이면 ` new · 머신`), 오른쪽 전체 메뉴 `menu`(`overlay0`). 누를 칸 둘을 준다(herdr: ` new`는 5칸, 머신이
+/// 붙으면 글 폭, `menu`는 오른쪽 6칸).
+pub fn render_spaces_footer(buf: &mut Buffer, r: Rect, machine: Option<&str>, p: &Palette) -> Option<(Rect, Rect)> {
     if r.h == 0 || r.w == 0 {
         return None;
     }
@@ -623,8 +631,12 @@ pub fn render_new_workspace(buf: &mut Buffer, r: Rect, machine: Option<&str>, p:
         None => (" new".to_string(), 5),
     };
     let y = r.y + r.h - 1;
-    buf.set_stringn(r.x, y, &label, r.w as usize, Style::default().fg(p.overlay0));
-    Some(Rect { x: r.x, y, w: w.min(r.w), h: 1 })
+    let faint = Style::default().fg(p.overlay0);
+    buf.set_stringn(r.x, y, &label, r.w as usize, faint);
+    let text = 4.min(r.w);
+    buf.set_stringn(r.x + r.w - text, y, "menu", text as usize, faint);
+    let menu = 6.min(r.w);
+    Some((Rect { x: r.x, y, w: w.min(r.w), h: 1 }, Rect { x: r.x + r.w - menu, y, w: menu, h: 1 }))
 }
 
 /// agents 구역 머리(herdr `render_agent_panel_header`): 구분선 `─`(`surface_dim`), ` agents`(`overlay0` 굵게)와 오른쪽에
@@ -685,7 +697,7 @@ pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> Vec<
         };
         buf.set_stringn(r.x, y, format!("{:<2}", i + 1), r.w.min(2) as usize, num);
         if r.w > 2 {
-            buf.set_stringn(r.x + 2, y, d.icon(), (r.w - 2) as usize, Style::default().fg(d.color(p)));
+            buf.set_stringn(r.x + 2, y, d.icon(v.style), (r.w - 2) as usize, Style::default().fg(d.color(p)));
         }
         if let Some(c) = bg {
             for dx in 0..r.w {
@@ -704,6 +716,15 @@ mod tests {
 
     fn rows_of(kinds: &[Row]) -> Vec<Row> {
         kinds.to_vec()
+    }
+
+    /// herdr `status_icon`: 색 점은 `● ● ● ○ ·`, 기호는 `× ◐ ✓ ○ ·`(확인 대기·작업·끝남·쉼·모름)
+    #[test]
+    fn indicators_like_herdr() {
+        let all = [Dot::Blocked, Dot::Working, Dot::Done, Dot::Idle, Dot::Unknown];
+        let icons = |s| all.map(|d| d.icon(s)).join(" ");
+        assert_eq!(icons(StatusIndicators::Dots), "● ● ● ○ ·");
+        assert_eq!(icons(StatusIndicators::Symbols), "× ◐ ✓ ○ ·");
     }
 
     #[test]
@@ -940,6 +961,7 @@ mod tests {
             focused: true,
             top: None,
             pal: &pal,
+            style: StatusIndicators::Dots,
             now_ms: 2_000,
         };
         let w = 36;
@@ -1061,6 +1083,7 @@ mod tests {
             focused: false,
             top: None,
             pal: &pal,
+            style: StatusIndicators::Dots,
             now_ms: 0,
         };
         let line = |w: u16| {

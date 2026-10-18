@@ -3579,12 +3579,35 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이름 창(`prompt_new_workspace_name`)은 두지 않았다(herdr 기본 꺼짐).
   - 고른 머신 표시: herdr는 접힌 endpoint 줄만 활성 바탕이고 펼친 줄은 footer 이름으로만 보인다. aaa도 머신 줄에 바탕을 두지 않고 footer와 알림으로 보인다(마우스를 받지 않으면 알림만).
   - 활성 머신 줄을 다시 누르면 herdr는 접는다. aaa 머신 묶음은 아직 접지 않는다.
-  - 오른쪽 `menu`(전체 메뉴)는 설정 화면(4C)과 함께 둔다.
+  - 오른쪽 `menu`(전체 메뉴)는 설정 화면(4C)과 함께 둔다. → §8.170
   - 탐색 숫자 1~9는 머신 머리도 센다(전에는 「+ 새 셸」 줄을 셌다). 접힌 compact 열 번호는 thread·pane만이라 숫자와 어긋난다(spaces 줄을 먼저 세는 §8.158부터 그랬다).
 - **시험.**
   - 유닛: `new_workspace_answer_enters_it`(답이 오면 그 workspace·새 pane, 실패면 「새 workspace를 만들지 못했다: …」), `new_workspace_machine_like_herdr_endpoint`(포커스 머신, 고르면 그 머신과 footer 이름·누를 칸 12칸, 포커스가 바뀌면 풀림, 끊긴 머신은 오류, 포커스가 없으면 로컬, 머신 하나면 ` new` 5칸, 마우스를 받지 않으면 없음), `sidebar_like_herdr` 15째 줄 ` new`, `step_skips_headers_and_stops_at_ends`(머신 머리도 고른다), 키 `shift+n`.
   - TUI harness `new_workspace_on_picked_machine_like_herdr`: 실험실 원격 agent labB를 pane 없이 등록한다. 「새 셸」 글이 없고 ` new · labA`다. labB 머리를 누르면 ` new · labB`, ` new`를 누르면 labB에 `workspace`가 생겨 그리로 가고 그 셸에 입력이 간다. 탐색 Enter로 labA를 고르고 `prefix shift+n`이면 `workspace-2`가 labA에 생긴다. labB를 고르고 `prefix c`면 새 탭이 labB에 생긴다. labA를 고른 뒤 탭 1을 거쳐 탭 2로 오면 다시 labB다. `side_list_like_web` 6단계는 「+ 새 셸」 대신 머신 머리 Enter 뒤 `prefix c`다.
   - 결함 심기: 고른 머신 무시(「labB를 고름」), 새 workspace만 포커스 머신(「새 workspace」), 포커스가 바뀌어도 고른 것 유지(「탭 2」)는 각각 그 단계에서 실패한다.
+
+### 8.170 TUI 설정 창과 전체 메뉴(herdr `prefix s`·spaces `menu`)(10-18, 차이 목록 4C 설정 화면 #542, coordinator 「이어서 U8 → 4C」)
+
+- **참고(herdr 0.9.5).**
+  - `src/config/model.rs` `settings`(`prefix+s`, 단축키 창 global 묶음 keybinds 다음). `src/client/shell/settings.rs`: 구역 theme·indicators·sound·toasts·integrations, 열면 지금 테마를 고른 채, 테마 구역 ↑↓는 바로 입혀 보기(`preview_selected_theme`), Esc는 연 때의 테마로 되돌리고 닫기, Tab·→·l·shift+Tab·←·h 구역(끝에서 돈다), Enter·space 적용(`apply_settings_choice`): 테마는 쓰고 닫고, 나머지는 쓰고 창을 둔다. 쓰기는 `src/config/write.rs` `write_edit`(설정 파일의 그 key만 고침) 뒤 client 설정 다시 읽기와 서버 `ServerReloadConfig`.
+  - `settings_overlay.rs` `render_settings_overlay`: 가운데 76×22, ` settings` 굵게, 구역 이름표(지금 구역 accent 바탕 굵게, 나머지 overlay1), `─` 구분선, 고르는 줄(고른 줄 accent 바탕 굵게 `▸`, 지금 테마 ` ✓`), 아래 ` ↑↓ select  tab section`, ` ↵ apply `·` esc close ` 단추. indicators 줄은 「color dots  ● ● ● ○ ·」·「distinct symbols  × ◐ ✓ ○ ·」(`src/client/shell.rs` `status_icon`).
+  - 마우스(`mouse.rs`): 구역 이름표는 그 구역, 줄은 고르기(테마는 미리 보기, 나머지는 바로 적용), apply 단추, close 단추·창 밖은 되돌리고 닫기.
+  - 전체 메뉴(`global_menu.rs`·`overlays.rs` `render_global_menu`): spaces 맨 아랫줄 오른쪽 `menu`(마우스를 받을 때, 누를 칸 6칸), 항목 settings·keybinds·reload config·(새 판이 있으면 what's new)·detach, `menu` 오른쪽 끝에 맞춰 그 위에, 폭은 가장 긴 항목 + 4, 움직이면 고르고 누르면 하기, 밖을 누르면 닫기, ↑↓·Enter·Esc.
+- **aaa(TUI만, proto는 그대로).**
+  - `prefix s` 설정 창(단축키 창 「전체」 묶음 「단축키」 다음 「설정」). 구역은 테마·상태 표시 둘. 글은 이름 창과 같이 한국어(` 설정`, ` ↑↓ 고르기  tab 구역`, ` ↵ 적용 `·` esc 닫기 `). 키·마우스는 herdr대로.
+  - 저장은 host.toml `[tui]`(`theme`, 새 `status_indicators = "dots"|"symbols"`)다. TUI가 이미 읽는 그 파일이 herdr 설정 파일 자리다(TUI는 host와 같은 머신·설정 폴더에서 돈다). `aaa_config::tui_edit::set`이 그 key만 고치고(주석·차례·다른 표 그대로, 빈 파일이면 `schema = 1`부터, 고친 글이 다시 읽히는지 확인) 임시 파일 뒤 rename으로 쓴다. host는 `[tui]`를 읽지 않아 host 다시 읽기는 없다.
+  - 쓴 뒤 host.toml·host.local.toml을 다시 읽어 입힌다. host.local.toml이 같은 key를 덮어 값이 그대로면 오류 막대 「host.local.toml의 [tui] <key>가 덮고 있어 바뀌지 않았다」. 쓰지 못하면 창을 둔 채 「설정을 저장하지 못했다: …」.
+  - 상태 표시 `symbols`면 상태 점(사이드바 줄·spaces·접힌 열·좁은 화면 머리)이 확인 대기 `×`·작업 `◐`·끝남 `✓`·쉼 `○`·모름 `·`이다.
+  - spaces 맨 아랫줄 오른쪽 `menu`(§8.169 ` new`와 같은 줄, 마우스를 받을 때만): 전체 메뉴 설정·단축키·설정 다시 읽기·나가기(오른쪽 누름 메뉴와 같은 틀).
+- **다른 점.**
+  - sound·toasts·integrations 구역은 뺐다: aaa TUI에는 배경 상태 소리, 알림 전달 방식(herdr 안·터미널·시스템), harness 연동 설치가 없다. 전체 메뉴의 what's new(새 판 알림)도 없다.
+  - 다른 TUI(같은 host에 붙은 다른 `aaa attach`)는 바뀐 설정을 모른다(`prefix shift+r`로 읽는다). herdr는 서버 다시 읽기가 모든 client에 간다. 웹 테마(공유 설정 §8.79 `theme`·`palette`)와는 따로다.
+  - host.toml을 사람이 편집기로 연 채 저장하면 그 편집기의 사본이 TUI가 쓴 값을 덮을 수 있다(herdr 설정 파일도 같다).
+  - 좁은 화면 두 줄 머리와 접힌 compact 열에는 `menu`가 없다(herdr도 펼친 spaces 구역에만).
+- **시험.**
+  - 유닛: aaa-config `tui_edit` `keeps_the_rest_and_starts_an_empty_file_with_schema`(주석·다른 key 그대로, 빈 파일 `schema = 1`, 쓴 뒤 읽힘, 받지 않는 값 거절), 설정 `status_indicators`, list `indicators_like_herdr`(두 모양 다섯 상태), lib `settings_like_herdr`(창 글·구역 이름표·`▸`·`✓`·미리 보기·구역 바꾸기·되돌리기), `new_workspace_machine_like_herdr_endpoint`에 `menu` 칸, mouse `menu_like_herdr`에 전체 메뉴 항목·자리, 키 `s`.
+  - TUI harness `settings_like_herdr`: 이름이 claude인 셸에 Claude 확인창을 그려 확인 대기 pane을 만든다. `prefix s` → `▸ catppuccin ✓`, `jj`면 탭 막대 바탕이 terminal(터미널 기본)로, Esc면 catppuccin으로 돌아오고 host.toml에 theme가 없다. 다시 `jj` Enter면 닫히고 host.toml에 `theme = "terminal"`(실험실 다른 줄 그대로). 상태 표시 구역에서 기호를 고르면 창은 그대로·`status_indicators = "symbols"`·확인 대기 점 `×`. `menu`를 누르고 Enter면 설정 창. host.local.toml에 theme를 두고 적용하면 덮음 알림. `new_workspace_on_picked_machine_like_herdr`는 footer 비교에서 `menu`를 뺀다.
+  - 결함 심기: 되돌리기 빼기(「되돌림」), 쓰기 빼기(「적용」), 덮음 확인 빼기(「덮음 알림」), 상태 점에 설정 모양을 넘기지 않기(「기호」)는 각각 그 단계에서 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
