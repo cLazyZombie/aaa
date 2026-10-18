@@ -1639,7 +1639,7 @@ fn pane_rename_like_herdr() {
 }
 
 /// 묶음 5a-1(herdr `apply_scroll`·`scroll_reset`): 보통 화면 pane의 휠은 이 화면의 기록을 3줄씩 넘기고(프로그램에는 안 감),
-/// 올라가 있는 동안 새 출력이 와도 보던 줄을 지키며, 글자를 치면 맨 아래로 돌아온다(host `PaneScroll`, FRONT_API 1.23).
+/// 올라가 있는 동안 새 출력이 와도 보던 줄을 지키며, 글자를 치면 맨 아래로 돌아온다(host `PaneScroll`, FRONT_API 1.25).
 #[test]
 fn wheel_scrolls_history_like_herdr() {
     let mut lab = Lab::new();
@@ -1748,7 +1748,7 @@ fn pane_scrollbar_like_herdr() {
 
 /// 묶음 5b-1(herdr `selection.rs`·`mouse.rs` selection autoscroll·`PaneSelectionRead`): 끌어 고르다 pane 위 밖으로 나가면
 /// 그 거리만큼 넘기고 30ms마다 한 줄씩 더 넘기며 고르고, 떼면 host가 화면 사본의 기록까지 읽어 복사한다. 고르는 중 휠은
-/// 기록을 넘기며 고른 끝을 다시 잡는다(host `PaneSelectionRead`, FRONT_API 1.24).
+/// 기록을 넘기며 고른 끝을 다시 잡는다(host `PaneSelectionRead`, FRONT_API 1.26).
 #[test]
 fn drag_select_scrolls_history_like_herdr() {
     let mut lab = Lab::new();
