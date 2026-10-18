@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, openSettings } from "../lib/harness.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -48,6 +48,8 @@ const callFile = (page, path) =>
       (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "pane_file", pane: "files", path }) })).json(),
     path,
   );
+/** 폴더 보기 목록의 이름들(크기 칸은 뺀다)이 `names`가 될 때까지 */
+const dirIs = (page, what, names) => domIs(page, what, (names) => JSON.stringify([...document.querySelectorAll(".dir-browser-item")].map((b) => b.querySelector("span").textContent)) === JSON.stringify(names), names);
 
 export default async function ({ ctl, page }) {
   await step("파일 보기(결정 20 D7, herdr-web-ui FileViewer·terminalFileLinks, plan §8.125): 터미널의 상대 경로·줄 참조·OSC 8 file 링크를 누르면 앱 안에서 Markdown·소스·그림을 보고, 같은 이름이 여럿이면 고르고, 허용 폴더 밖은 열지 않으며, 보기 권한 기기에는 파일 링크가 없다", async () => {
@@ -373,6 +375,103 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "media");
   });
 
+  await step("폴더 보기(herdr-web-ui DirectoryBrowser·directories.ts listDirectories, plan §8.142): 파일 보기가 폴더 경로(OSC 8 file 링크·Markdown의 폴더 링크)를 받으면 그 폴더 한 단계를 보인다. 폴더를 열고 위 폴더로 가고, 숨김 항목을 고를 수 있고, 파일을 누르면 연다. 허용 폴더 밖은 읽지 않고, 보기 권한 기기는 host가 거부한다", async () => {
+    const proj = `${root}/files/tree`;
+    for (const d of ["docs/v2", "docs/v10", "docs/.cache"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
+    fs.mkdirSync(`${root}/outside`, { recursive: true });
+    fs.writeFileSync(`${proj}/docs/guide.md`, "# 안내\n\n[이 폴더](./)\n");
+    fs.writeFileSync(`${proj}/docs/v2/a.txt`, "a\n");
+    fs.writeFileSync(`${proj}/docs/.env`, "A=1\n");
+    // 폴더 링크는 OSC 8 file URI로(`ls --hyperlink`처럼). 글 속 경로는 확장자가 있어야 링크다(참고 FILE_PATH)
+    const osc8 = (path, text) => `\x1b]8;;file://${path}\x1b\\${text}\x1b]8;;\x1b\\`;
+    // OSC 8은 붙어 있을 때 온 출력만 링크다(aaa-vt replay에는 없다, plan §8.125): 기기가 붙은 뒤 한 줄 보내면 화면을 지우고 번호를 붙여 다시 쓴다
+    const links = `\x1b[2J\x1b[HD ${osc8(`${proj}/docs`, "문서폴더")}\r\nX ${osc8(`${root}/outside`, "밖폴더")}\r\ndirs`;
+    const prog = `let n = 0; process.stdout.write("tree> "); process.stdin.on("data", () => process.stdout.write(${JSON.stringify(links)} + ++n + "> "));`;
+    aaa("tab", "create", "--machine", "labA", "--label", "tree", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("tree", "tree>");
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-tree").click();
+    await screenHas(dp, "tree 줄", "tree>");
+    aaa("pane", "run", "tree", "p");
+    await screenHas(dp, "폴더 링크 줄", "dirs1>");
+
+    // 폴더 한 단계: 폴더 먼저, 이름순(숫자는 값으로), 숨은 이름은 빼고. 막대는 연 폴더 기준
+    await clickLink(dp, "문서폴더");
+    await dirIs(dp, "문서 폴더 목록", ["v2", "v10", "guide.md"]);
+    const bar = () => viewer(dp).locator(".dir-browser-path").textContent();
+    if ((await bar()) !== "docs") throw new Error(`막대 ${await bar()}`);
+    if ((await viewer(dp).locator(".modal-title").textContent()) !== "docs") throw new Error("파일 보기 제목");
+    await shot(dp, "desktop-folder");
+    // 숨김 항목 표시
+    await viewer(dp).getByLabel("숨김 항목 표시").check();
+    await dirIs(dp, "숨김 항목", [".cache", "v2", "v10", ".env", "guide.md"]);
+    // 폴더를 열고 위 폴더로
+    await viewer(dp).getByRole("button", { name: "v2", exact: true }).click();
+    await dirIs(dp, "v2 목록", ["a.txt"]);
+    if ((await bar()) !== "docs/v2") throw new Error(`v2 막대 ${await bar()}`);
+    await viewer(dp).getByRole("button", { name: "상위 폴더" }).click();
+    await dirIs(dp, "위 폴더", [".cache", "v2", "v10", ".env", "guide.md"]);
+    // 허용 폴더(<실험실>/files)의 맨 위에서는 위 폴더가 없다
+    await viewer(dp).getByRole("button", { name: "상위 폴더" }).click();
+    await dirIs(dp, "tree 폴더", ["docs"]);
+    await viewer(dp).getByRole("button", { name: "상위 폴더" }).click();
+    // 앞 단계들이 만든 것도 있다: 폴더 먼저, 각각 참고 순서(localeCompare base·numeric)
+    const top = fs.readdirSync(`${root}/files`).filter((n) => !n.startsWith("."));
+    const order = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+    const isDir = (n) => fs.statSync(`${root}/files/${n}`).isDirectory();
+    await dirIs(dp, "files 폴더", [...top.filter(isDir).sort(order), ...top.filter((n) => !isDir(n)).sort(order)]);
+    await domIs(dp, "맨 위에서 위 폴더 없음", () => document.querySelector('[aria-label="상위 폴더"]')?.disabled === true);
+    // 집은 허용 폴더 밖이다(이 실험실 file_roots): 까닭을 말한다
+    await viewer(dp).getByRole("button", { name: "홈 폴더" }).click();
+    await domIs(dp, "집은 허용 밖", () => document.querySelector(".dir-browser-error")?.textContent.includes("허용한 폴더 밖"));
+    await dp.keyboard.press("Escape");
+    await closed(dp, "폴더 보기 Escape");
+
+    // 파일을 누르면 연다. 그 Markdown의 폴더 링크(`./`)는 문서 폴더 기준으로 폴더 보기를 연다
+    await clickLink(dp, "문서폴더");
+    await dirIs(dp, "다시 문서 폴더", ["v2", "v10", "guide.md"]);
+    await viewer(dp).getByRole("button", { name: /^guide\.md/ }).click();
+    await domIs(dp, "폴더에서 연 Markdown", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "안내");
+    await viewer(dp).getByRole("button", { name: "이 폴더" }).click();
+    await dirIs(dp, "Markdown의 폴더 링크", ["v2", "v10", "guide.md"]);
+    // 열린 파일 보기 안에서 연 것은 기록 칸을 바꾼다: 뒤로 한 번이면 pane이다
+    await dp.goBack();
+    await closed(dp, "뒤로 한 번");
+
+    // 허용 폴더 밖 폴더는 읽지 않고 까닭을 말한다
+    await clickLink(dp, "밖폴더");
+    await domIs(dp, "밖 폴더 알림", () => document.querySelector('[data-testid="file-viewer"] [role="alert"]')?.textContent.includes("허용한 폴더 밖"));
+    await dp.keyboard.press("Escape");
+    await closed(dp, "밖 폴더 Escape");
+
+    // 휴대폰·iPad: 화면 가득
+    for (const [name, size, scale, n] of [["phone", { width: 390, height: 844 }, 3, 2], ["ipad", { width: 820, height: 1180 }, 2, 3]]) {
+      const tp = (await pairPage(browser, aaa("web", "pair").code, size, { touch: true, deviceScaleFactor: scale })).page;
+      await tp.getByTestId("pane-tree").click();
+      await screenHas(tp, `${name} 화면`, "dirs");
+      aaa("pane", "run", "tree", "p");
+      await screenHas(tp, `${name} 폴더 링크 줄`, `dirs${n}>`);
+      const at = await textPoint(tp, "문서폴더");
+      await tp.touchscreen.tap(at.x, at.y);
+      await dirIs(tp, `${name} 폴더 목록`, ["v2", "v10", "guide.md"]);
+      await viewer(tp).evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+      await shot(tp, `${name}-folder`);
+      await tp.context().close();
+    }
+
+    // 보기 권한 기기: host가 폴더 읽기를 거부한다. 같은 요청이 조작 기기에는 된다
+    const callDir = (page) =>
+      page.evaluate(async (path) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "pane_dir", pane: "tree", path }) })).json(), "docs");
+    const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 })).page;
+    const denied = await callDir(rp);
+    if (denied.err?.code !== "forbidden") throw new Error(`reader 폴더 보기: ${JSON.stringify(denied)}`);
+    const allowed = await callDir(dp);
+    if (allowed.ok?.kind !== "pane_dir" || JSON.stringify(allowed.ok.listing.directories) !== "[\"v2\",\"v10\"]") throw new Error(`조작 기기 폴더 보기: ${JSON.stringify(allowed)}`);
+    await rp.context().close();
+    await dp.context().close();
+    aaa("pane", "kill", "tree");
+  });
+
   await step("파일 보기 문법 강조(herdr-web-ui HighlightedCode·highlight.ts·highlightOffThread, plan §8.125): 긴 소스는 worker가 칠하고 그동안 글 그대로이며, worker가 예산(2초) 안에 못 칠하는 소스는 글 그대로에 「너무 길어 강조 표시를 생략했습니다」를 단다", async () => {
     const proj = `${root}/files/code`;
     for (const d of ["src", "data"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
@@ -410,5 +509,134 @@ export default async function ({ ctl, page }) {
     await closed(dp, "대시 소스 Escape");
     await dp.context().close();
     aaa("pane", "kill", "code");
+  });
+
+  await step("「파일 뷰어」 설정(herdr-web-ui SettingsDialog ChatPage 「File viewer」·TextFileView, plan §8.143): 「긴 줄 바꿈」을 켜면 소스의 긴 줄을 옆으로 굴리지 않고 접고, 「Markdown 너비」가 「전체 너비」면 Markdown이 대화 열 너비에 묶이지 않고 파일 보기를 채운다. 기본은 꺼짐·기본값이고 이 기기에만 남는다", async () => {
+    // 글 속 경로는 폴더가 있어야 링크다(참고 terminalFileLinks)
+    const proj = `${root}/files/viewer`;
+    for (const d of ["src", "docs"]) fs.mkdirSync(`${proj}/${d}`, { recursive: true });
+    const source = `const wide = "${"가나다 abc ".repeat(60)}";\nconst next = 2;\n`;
+    fs.writeFileSync(`${proj}/src/wide.ts`, source);
+    fs.writeFileSync(`${proj}/docs/wide.md`, `# 너비\n\n${"넓은 화면에서 이 문단이 얼마나 넓게 퍼지는지 본다. ".repeat(30)}\n`);
+    const prog = `process.stdout.write(${JSON.stringify("S src/wide.ts\r\nM docs/wide.md\r\nview> ")}); process.stdin.resume();`;
+    aaa("tab", "create", "--machine", "labA", "--label", "viewer", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("viewer", "view>");
+    // 소스: 접혔는지(첫 줄이 여러 줄 높이)와 옆으로 굴릴 것이 남았는지
+    const codeShape = (p) =>
+      p.evaluate(() => {
+        const pre = document.querySelector('[data-testid="file-viewer-code"] pre');
+        const height = (n) => pre.querySelector(`.hl-line[data-line="${n}"]`).getBoundingClientRect().height;
+        return { rows: Math.round(height(1) / height(2)), sideways: pre.scrollWidth - pre.clientWidth };
+      });
+    // Markdown: 그 열의 너비와 둘레(파일 보기 안 자리) 너비
+    const markdownShape = (p) =>
+      p.evaluate(() => {
+        const md = document.querySelector('[data-testid="file-viewer-markdown"] .file-viewer-markdown');
+        return { width: md.getBoundingClientRect().width, room: md.parentElement.getBoundingClientRect().width };
+      });
+    const openSource = async (p, what) => {
+      await clickLink(p, "src/wide.ts");
+      await codeIs(p, what, source);
+    };
+    const openMarkdown = async (p, what) => {
+      await clickLink(p, "docs/wide.md");
+      await domIs(p, what, () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "너비");
+    };
+    const closeViewer = async (p, what) => {
+      await p.keyboard.press("Escape");
+      await closed(p, what);
+    };
+    const fileViewerGroup = async (p) => (await openSettings(p, "채팅")).locator(".settings-section", { has: p.getByRole("heading", { name: "파일 뷰어" }) });
+    const settingsShown = async (p, what, wrap, width) => {
+      const group = await fileViewerGroup(p);
+      const got = {
+        wrap: await group.getByRole("switch", { name: "긴 줄 바꿈" }).getAttribute("aria-checked"),
+        width: await group.getByRole("group", { name: "Markdown 너비" }).locator('[aria-pressed="true"]').textContent(),
+      };
+      if (got.wrap !== String(wrap) || got.width !== width) throw new Error(`${what} 설정 ${JSON.stringify(got)}`);
+      return group;
+    };
+    // 스위치·고르기 단추는 transition으로, 휴대폰·iPad 파일 보기는 아래에서 올라온다: 끝난 모양을 찍는다
+    const settled = (p) => p.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)));
+    const closeSettings = async (p) => {
+      await p.keyboard.press("Escape");
+      await p.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
+    };
+
+    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await dp.getByTestId("pane-viewer").click();
+    await screenHas(dp, "viewer 줄들", "view>");
+    // 기본: 긴 줄은 한 줄로 옆으로 굴리고, Markdown은 대화 열 너비(그보다 넓은 파일 보기 가운데)
+    await openSource(dp, "기본 소스");
+    const off = await codeShape(dp);
+    if (off.rows !== 1 || off.sideways <= 0) throw new Error(`기본 소스가 접혔다 ${JSON.stringify(off)}`);
+    await closeViewer(dp, "기본 소스 Escape");
+    await openMarkdown(dp, "기본 Markdown");
+    const lane = await markdownShape(dp);
+    if (lane.width > lane.room - 100) throw new Error(`기본 Markdown이 대화 열이 아니다 ${JSON.stringify(lane)}`);
+    await closeViewer(dp, "기본 Markdown Escape");
+
+    // 채팅 설정 「파일 뷰어」에서 켠다(참고 순서: 빠른 답장 다음 무리)
+    const group = await settingsShown(dp, "처음", false, "기본값");
+    await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
+    await group.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).click();
+    await settled(dp);
+    await shot(dp, "desktop-settings-file-viewer");
+    await closeSettings(dp);
+    await openSource(dp, "접은 소스");
+    const on = await codeShape(dp);
+    if (on.rows < 3 || on.sideways > 0) throw new Error(`긴 줄 바꿈을 켠 소스 ${JSON.stringify(on)}`);
+    await shot(dp, "desktop-file-wrap");
+    await closeViewer(dp, "접은 소스 Escape");
+    await openMarkdown(dp, "전체 너비 Markdown");
+    const wide = await markdownShape(dp);
+    if (Math.abs(wide.width - wide.room) > 1) throw new Error(`전체 너비 Markdown ${JSON.stringify(wide)}`);
+    await shot(dp, "desktop-file-markdown-full");
+    await closeViewer(dp, "전체 너비 Markdown Escape");
+
+    // 이 기기에 남는다: 다시 읽어도 그대로, 다른 기기는 기본값
+    await dp.reload();
+    await dp.getByTestId("pane-viewer").click();
+    await screenHas(dp, "다시 읽은 viewer", "view>");
+    await settingsShown(dp, "다시 읽은 뒤", true, "전체 너비");
+    await closeSettings(dp);
+    await openSource(dp, "다시 읽은 뒤 소스");
+    if ((await codeShape(dp)).sideways > 0) throw new Error("다시 읽은 뒤 긴 줄 바꿈이 풀렸다");
+    await closeViewer(dp, "다시 읽은 뒤 Escape");
+
+    // 휴대폰·iPad: 설정 단추는 pane에 들어가기 전 목록에 있다
+    const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
+    const phoneGroup = await settingsShown(pp, "휴대폰", false, "기본값");
+    await phoneGroup.getByRole("switch", { name: "긴 줄 바꿈" }).tap();
+    await settled(pp);
+    await shot(pp, "phone-settings-file-viewer");
+    await closeSettings(pp);
+    await pp.getByTestId("pane-viewer").click();
+    await screenHas(pp, "휴대폰 viewer 줄들", "view>");
+    const at = await textPoint(pp, "src/wide.ts");
+    await pp.touchscreen.tap(at.x, at.y);
+    await codeIs(pp, "휴대폰 접은 소스", source);
+    const phone = await codeShape(pp);
+    if (phone.rows < 3 || phone.sideways > 0) throw new Error(`휴대폰 긴 줄 바꿈 ${JSON.stringify(phone)}`);
+    await settled(pp);
+    await shot(pp, "phone-file-wrap");
+    await pp.context().close();
+
+    const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 })).page;
+    const ipGroup = await settingsShown(ip, "iPad", false, "기본값");
+    await ipGroup.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).tap();
+    await closeSettings(ip);
+    await ip.getByTestId("pane-viewer").click();
+    await screenHas(ip, "iPad viewer 줄들", "view>");
+    const ipAt = await textPoint(ip, "docs/wide.md");
+    await ip.touchscreen.tap(ipAt.x, ipAt.y);
+    await domIs(ip, "iPad 전체 너비 Markdown", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "너비");
+    const ipWide = await markdownShape(ip);
+    if (Math.abs(ipWide.width - ipWide.room) > 1) throw new Error(`iPad 전체 너비 Markdown ${JSON.stringify(ipWide)}`);
+    await settled(ip);
+    await shot(ip, "ipad-file-markdown-full");
+    await ip.context().close();
+    await dp.context().close();
+    aaa("pane", "kill", "viewer");
   });
 }

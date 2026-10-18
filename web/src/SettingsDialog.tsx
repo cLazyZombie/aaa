@@ -35,6 +35,9 @@ import {
   updateChatShared,
   useChatShared,
   useDefaultView,
+  MARKDOWN_WIDTHS,
+  setMarkdownWidth,
+  useMarkdownWidth,
   setKeepScreenOn,
   setTerminalFontFamily,
   setTerminalFontSize,
@@ -365,12 +368,15 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
 /**
  * 참고 ChatPage(300~370줄) 가운데 aaa에 있는 것: 「패널 기본 화면」(이 기기, 바꾸면 pane마다 고른 보기를 잊는다, 참고 그대로),
  * 「생각 표시」(공유), 「입력창」(Enter로 보내기: 이 기기, 터치 화면은 「Return으로 줄바꿈」으로 뒤집어 묻는다. 대기 메시지 자동
- * 전송: 공유), 「빠른 답장」(공유). 채팅 글꼴·폭·제안 칩·파일 보기는 그 기능을 옮길 때 더한다.
+ * 전송: 공유), 「빠른 답장」(공유), 「파일 뷰어」(긴 줄 바꿈·Markdown 너비: 이 기기). 「비교 보기 방식」은 aaa에 저장소 비교 보기
+ * (참고 RepoDiffViewer)가 없어 뺐다. 채팅 글꼴·폭·제안 칩은 그 기능을 옮길 때 더한다.
  */
 function ChatPage() {
   const view = useDefaultView();
   const { showThinking, autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
+  const wrapCode = useTerminalToggle("wrapCode");
+  const markdownWidth = useMarkdownWidth();
   const touch = useMedia("(pointer: coarse)");
   const { appearance } = useAppearance();
   return (
@@ -458,6 +464,15 @@ function ChatPage() {
             </button>
           </div>
         </div>
+      </SettingsGroup>
+
+      <SettingsGroup title="파일 뷰어">
+        <SettingsRow label="긴 줄 바꿈">
+          <Toggle label="긴 줄 바꿈" checked={wrapCode} onChange={(on) => setTerminalToggle("wrapCode", on)} />
+        </SettingsRow>
+        <SettingsRow label="Markdown 너비">
+          <Segmented label="Markdown 너비" value={markdownWidth} onChange={setMarkdownWidth} options={MARKDOWN_WIDTHS.map((width) => ({ value: width, label: width === "full" ? "전체 너비" : "기본값" }))} />
+        </SettingsRow>
       </SettingsGroup>
     </>
   );

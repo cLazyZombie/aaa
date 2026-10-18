@@ -5,6 +5,7 @@
 //! - 그 경로는 새 탭·내려받기·그림이 그대로 쓴다. 경로만으로는 열리지 않고 짝지은 조작 기기의 cookie도 있어야 한다
 //!   (참고 `/api/fs/file`도 기기 인증 뒤다). 경로를 받는 것도 조작 기기만이다(`needs_control`, 참고도 보기 전용 기기는 403).
 //! - host에 모으지 않고 agent에서 조각으로 스트리밍한다. Range를 받는다(글은 앞부분만 읽는다).
+//! - 폴더 경로면 웹이 `PaneDir`로 그 폴더 한 단계를 읽는다(참고 `DirectoryBrowser`, plan §8.142). 조건은 `PaneFile`과 같다.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -106,6 +107,36 @@ impl Host {
         self.db.audit(actor, "pane_file", &format!("{id} {} {} bytes", info.path, info.size));
         let url = format!("/f/{cap}/{}", pct(&info.name));
         Ok(FrontResponse::PaneFile { info: Some(info), candidates: Vec::new(), url: Some(url) })
+    }
+
+    /// 폴더 한 단계(파일 보기 안 폴더 보기). 보기 범위·agent 기능 확인은 `pane_file`과 같다(`dir.v1`).
+    pub(crate) async fn pane_dir(
+        &self,
+        role: DeviceRole,
+        actor: &str,
+        pane: &str,
+        path: &str,
+        hidden: bool,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        if self.pane_view_of(&id, role).is_none() {
+            return Err(err(ErrorCode::NotFound, format!("pane이 없다: {pane}")));
+        }
+        let conn = self.live_conn(&mid)?;
+        let knows =
+            self.inner.lock().unwrap().machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "dir.v1"));
+        if !knows {
+            return Err(err(
+                ErrorCode::Unavailable,
+                "그 머신 agent가 폴더 보기를 아직 모른다(agent binary를 바꿔야 한다)",
+            ));
+        }
+        let res = conn.request(AgentRequest::DirList { session: id.clone(), path: path.to_string(), hidden }).await?;
+        let AgentResponse::DirListed(listing) = res else {
+            return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
+        };
+        self.db.audit(actor, "pane_dir", &format!("{id} {}", listing.path));
+        Ok(FrontResponse::PaneDir { listing })
     }
 
     /// 읽기 경로의 파일과 그 머신 연결
