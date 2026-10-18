@@ -3061,6 +3061,45 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **thread에 묶이지 않은 pane 확인창**은 push 항목이 없어(thread-state 항목만 push) 늘 띄운다.
 - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
 
+### 8.142 계획 n/m·배경 작업 수(10-18, 차이 목록 2장 S5, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-web-ui는 서버가 2초마다 Claude·Codex 기록을 읽어 pane마다 계획 요약(`PlanSummary` done·total·current)과
+  아직 도는 배경 작업 수를 낸다(`server/session-plan.ts`, `server/claude-subagents.ts`, `pane-status` 틀의 `plan`·`background_tasks`).
+  Agents 보기 줄의 상태 앞에 `BackgroundBadge`(Layers와 수)·`PlanBadge`(ListChecks와 n/m, 다 끝나면 `is-done`)로 그린다
+  (`AgentSidebar.tsx` `agent-row-status`). herdr-projects는 진행률 `~n%`만 있다.
+- **aaa가 달랐던 것.** 진행 보고(`aaa report --percent`)의 n%만 있었다.
+- **구조.** 기록 파일은 agent 머신에 있으므로 읽기는 agent, 저장은 host다(참고의 서버 자리를 agent가 맡는다).
+  - agent `plan.rs`: 세션마다 Session 칸 사건(SessionStart의 `transcript_path`, Codex notify의 thread-id)으로 기록을 찾는다.
+    chat.rs와 같이 기록 폴더 안의 일반 `.jsonl`만 읽는다(hook은 세션 안 누구나 보낸다). 2초마다 늘어난 만큼만 읽고(한 번에 모두 32MiB,
+    파일 하나 8MiB, 그보다 긴 한 줄은 건너뜀), 처음 읽기가 끝에 닿기 전에는 말하지 않는다. 바뀐 세션만 harness 사건
+    `kind = "plan"`(`plan`·`background`)으로 보낸다. 이 사건은 새 칸 `Slot::Plan`에 남아 host가 다시 붙으면 다시 간다.
+  - 계획: 참고 그대로. Claude `TaskCreate`·`TaskUpdate`는 오류 없이 답을 받은 호출만, 모든 단계가 끝난 뒤 처음 만든 단계는 새 계획,
+    `deleted`는 뺀다. Codex는 마지막 `update_plan`이 계획이다.
+  - 배경 작업: 부모 기록만 본다. 하위 agent 호출(`Agent`·`Task`: 동기면 답까지, 배경이면 「Async agent launched」 답의 agentId로
+    알림까지)과 배경 명령(답의 `backgroundTaskId`)을 세고, `<task-notification>`(사람 쪽 글·queue-operation·attachment 세 자리, 도구
+    답이 인용한 것은 아님)의 task-id·tool-use-id나 `TaskStop`·`KillShell` 답으로 끝낸다. 지금 Claude 프로세스보다 먼저 띄운 것은
+    세지 않는다(SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
+  - host `on_harness`: `plan` 사건은 `AgentStatus.plan`·`background`만 바꾸고 상태(activity·since)는 그대로 둔다. harness가 끝나면
+    배경 수를 지운다.
+  - 웹: Agents 보기 줄에 참고 `BackgroundBadge`·`PlanBadge`(말은 「배경 작업 N개 실행 중」·「계획 M단계 중 N단계 끝남 · 지금 단계」,
+    CSS는 이미 옮긴 Sidebar.css 그대로). 머신 목록 줄·머리줄은 참고처럼 그리지 않는다. TUI pane 배지는 `작업 중 40% 1/3 배경2`
+    (폭이 애매한 기호 대신 글).
+- **계약.** FRONT_API 1.22: `AgentStatus.plan`(`PlanSummary`)·`background`(선택). agent→host `HarnessEvent.plan`·`background`(선택).
+  옛 host는 모르는 `kind = "plan"`을 상태로 읽지 않으므로(`next_activity` None) 무시한다. agent 기능 이름은 더하지 않았다(host가
+  agent에 청하는 것이 없다).
+- **참고와 다르게 둔 것.** 하위 agent 폴더(`<session>/subagents/`)를 읽지 않는다. 그래서 팀 동료(알림이 없음)의 끝남 추정,
+  다시 깨운 하위 agent, 하위 agent가 띄운 배경 명령, 토큰 수는 없다. 팀 동료가 끝나도 알림이 없으면 수가 남을 수 있다(그 Claude
+  프로세스가 끝나면 지워진다). 참고 `BackgroundWait`(배경 작업이 남은 턴 끝을 「끝남」 대신 「배경」 상태로 보기, 차이 목록 S1
+  `waiting`)는 이 수를 근거로 쓸 수 있지만 S5는 배지만 한다.
+- **시험.**
+  - agent 유닛 `plan::tests`: 답 받은 호출만·실패한 갱신·지운 단계·다 끝난 뒤 새 계획, Codex 마지막 update_plan(exec 인용은 무시),
+    배경 명령·배경/동기 하위 agent·세 자리 알림·인용은 무시·TaskStop·프로세스 경계, 첫 읽기가 끝나기 전 침묵·8MiB 넘는 줄,
+    UTC 시각 변환. host `plan_events_set_counts_without_changing_the_activity`, TUI `pane_badge_carries_plan_and_background_counts`.
+  - 웹 E2E 11 「계획 n/m·배경 작업 수」: SessionStart hook으로 실험실 기록을 알린 pane에 단계 셋(하나 끝, 하나 진행)·배경 명령·배경
+    하위 agent를 쓰면 Agents 줄이 `1/3`(title에 지금 단계)과 배경 `2`, CLI `pane list`도 같은 값. queue-operation 알림 뒤 `1`, 사람 쪽 글
+    알림 뒤 배지 없음, 남은 단계를 끝내면 `3/3`·`is-done`. 결함 심기: agent가 알림을 무시하게 바꾸면 「20000ms 안에 배경 하나이 되지
+    않았다: "2"」로 실패함을 확인했다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
