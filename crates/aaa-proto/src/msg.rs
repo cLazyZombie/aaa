@@ -1927,6 +1927,10 @@ pub enum EventsClientMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         focus: Option<bool>,
+        /// 이 웹 빌드(주 묶음 파일 이름). 배포 뒤에도 옛 페이지가 도는지 본다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        build: Option<String>,
     },
     /// 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거 기록, host는 흐름 사건으로 남긴다). `target`은 알림 자리
     /// (`thread=…`·`pane=…`), `kind`는 `blocked`·`done`, `outcome`은 웹이 정한 한 줄(띄움·보는 중·가려짐·꺼짐 등)

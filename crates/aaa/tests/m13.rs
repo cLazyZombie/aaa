@@ -2124,7 +2124,7 @@ fn thread_state_items_follow_groups() {
 }
 
 /// 끝난 세션을 지우는 resolve·`pane close`는 session host가 종료 뒤 더 응답하는 창(늦게 붙는 agent용, 2초)을 기다리지
-/// 않는다(t-0338 넘김: resolve 한 번 2.05초, plan §8.150). 창을 agent가 pump를 기다리는 한도(5초)보다 길게 두면, 창을 기다리는 agent는
+/// 않는다(t-0338 넘김: resolve 한 번 2.05초, plan §8.151). 창을 agent가 pump를 기다리는 한도(5초)보다 길게 두면, 창을 기다리는 agent는
 /// 「session host가 아직 닫히지 않았다」로 pane을 지우지 못한다
 #[test]
 fn closing_ended_sessions_does_not_wait_for_the_session_host_linger() {

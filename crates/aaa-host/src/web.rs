@@ -727,7 +727,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             _ = tokio::time::sleep_until(app_heard + lease), if presence.active => {
                 send_state = false;
                 tracing::info!("쓰는 화면 lease 끝: 앱 글이 {}초 동안 없다", lease.as_secs());
-                host.conn_presence(conn, format!("lease 끝(앱 글 {}초 없음)", lease.as_secs()));
+                host.conn_presence(conn, format!("lease 끝(앱 글 {}초 없음)", lease.as_secs()), None);
                 presence.set(false);
             }
             m = socket.recv() => {
@@ -740,13 +740,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                         app_heard = tokio::time::Instant::now();
                         host.conn_text(conn);
                         match serde_json::from_str::<EventsClientMsg>(&t) {
-                            Ok(EventsClientMsg::Presence { active, why, visible, focus }) => {
-                                host.conn_presence(conn, presence_why(active, why, visible, focus));
+                            Ok(EventsClientMsg::Presence { active, why, visible, focus, build }) => {
+                                host.conn_presence(conn, presence_why(active, why, visible, focus), build);
                                 presence.set(active)
                             }
                             Ok(EventsClientMsg::Touch) => host.touch_device(&dev, "touch"),
                             Ok(EventsClientMsg::Alert { project, target, kind, outcome }) => {
-                                host.alert_outcome(&dev, project.as_deref(), &target, &kind, &outcome)
+                                host.alert_outcome(&dev, conn, project.as_deref(), &target, &kind, &outcome)
                             }
                             Ok(EventsClientMsg::Ping { id }) => {
                                 let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
