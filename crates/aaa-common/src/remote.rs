@@ -190,9 +190,11 @@ pub async fn admit(
     }
 }
 
-/// Windows에서 본인만 여는 token 폴더·파일. herdr 0.9.5 `src/platform/windows.rs`와 같은 SDDL이다: 폴더는
-/// `create_remote_private_dir`(:745-766, SYSTEM과 소유자), 파일은 `create_config_temporary`·`user_security_descriptor`
-/// (:82-131·:307-349, SYSTEM과 이 계정 SID — 관리자 권한 토큰의 소유자 Administrators가 아니라 계정이다).
+/// Windows에서 본인만 여는 token 폴더·파일. herdr 0.9.5 `src/platform/windows.rs`의 SDDL을 따른다: 파일은
+/// `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349, SYSTEM과 이 계정 SID — 관리자 권한 토큰의 소유자
+/// Administrators가 아니라 계정이다). 폴더는 `create_remote_private_dir`(:745-766)처럼 SYSTEM과 하나지만 소유자(OW) 대신 같은
+/// 계정 SID다: herdr는 새 폴더만 만들지만 aaa는 있던 폴더를 다시 쓰므로, 관리자 권한 터미널에서 처음 만든 폴더(소유자
+/// Administrators)를 나중에 일반 권한으로 다시 pairing할 때도 그 계정이 DACL을 바꿀 수 있어야 한다.
 /// 상속을 끊은(`D:P`) DACL이라 %LOCALAPPDATA%가 물려주는 Administrators 같은 다른 항목이 빠진다.
 #[cfg(windows)]
 mod win {
@@ -216,8 +218,10 @@ mod win {
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-    /// 폴더: SYSTEM과 소유자(OW), 안에 만드는 것에도 물려준다
-    pub(super) const DIR_SDDL: &str = "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)";
+    /// 폴더: SYSTEM과 이 계정, 안에 만드는 것에도 물려준다
+    fn dir_sddl(sid: &str) -> String {
+        format!("D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;{sid})")
+    }
 
     pub(super) fn wide(s: &OsStr) -> Vec<u16> {
         s.encode_wide().chain(Some(0)).collect()
@@ -293,9 +297,9 @@ mod win {
         Ok(sid)
     }
 
-    /// 폴더를 본인(소유자)과 SYSTEM만 열게 한다(Unix의 0700). 이미 있던 폴더도 그렇게 바꾼다
+    /// 폴더를 본인과 SYSTEM만 열게 한다(Unix의 0700). 이미 있던 폴더도 그렇게 바꾼다
     pub(super) fn private_dir(dir: &Path) -> io::Result<()> {
-        let sd = Sd::new(DIR_SDDL)?;
+        let sd = Sd::new(&dir_sddl(&user_sid()?))?;
         let path = wide(dir.as_os_str());
         // SAFETY: path는 NUL로 끝나는 UTF-16, sd는 살아 있는 보안 설명자다
         let ok = unsafe {
@@ -584,7 +588,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Windows: token 파일은 상속을 끊은 DACL에 SYSTEM과 이 계정만, 폴더는 SYSTEM과 소유자만(herdr와 같은 SDDL).
+    /// Windows: token 파일과 폴더는 상속을 끊은 DACL에 SYSTEM과 이 계정만(herdr SDDL, 폴더도 계정 SID — `win` 설명).
     /// %LOCALAPPDATA% 아래 기본 DACL(상속, Administrators 포함)이면 실패한다
     #[cfg(windows)]
     #[test]
@@ -604,7 +608,7 @@ mod tests {
         let (flags, mut who) = acl::dacl(file.parent().unwrap());
         who.sort();
         assert!(flags.contains('P'), "상속을 끊는다: {flags}");
-        assert_eq!(who, vec![("A".to_string(), "OW".to_string()), ("A".to_string(), "SY".to_string())], "폴더");
+        assert_eq!(who, want, "폴더도 SYSTEM과 이 계정만");
         forget_token(&file).unwrap();
         forget_token(&file).unwrap();
         assert_eq!(load_token(&file), None);

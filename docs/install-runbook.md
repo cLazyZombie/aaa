@@ -218,7 +218,7 @@ shasum -a 256 target/x86_64-pc-windows-msvc/release/aaa.exe
 ### 11.2 그 PC로 보내기
 
 - ssh가 열린 PC: `scp target/x86_64-pc-windows-msvc/release/aaa.exe <pc>:Downloads/aaa.exe`
-- Taildrop(같은 tailnet, 같은 사용자의 기기): Mac에서 `tailscale file cp target/x86_64-pc-windows-msvc/release/aaa.exe <pc 이름>:` → Windows에서 `"C:\Program Files\Tailscale\tailscale.exe" file get --wait "%USERPROFILE%\Downloads"`(받은 파일함에서 꺼낸다. 같은 이름이 있으면 `--conflict=overwrite`). 명령 꼴은 두 쪽 `--help`로 맞췄고, 실제로 보내 보지는 않았다.
+- Taildrop(같은 tailnet, 같은 사용자의 기기): Mac에서 `tailscale file cp target/x86_64-pc-windows-msvc/release/aaa.exe <pc 이름>:` → Windows에서 `"C:\Program Files\Tailscale\tailscale.exe" file get "%USERPROFILE%\Downloads"`(받은 파일함에서 꺼낸다. 같은 이름이 있으면 `--conflict=overwrite`). Tailscale 앱이 이미 받은 파일을 「다운로드」에 두었으면 꺼낼 것이 없다(`--wait`를 붙이면 다음 파일까지 기다리니 붙이지 않는다). 명령 꼴은 두 쪽 `--help`로 맞췄고, 실제로 보내 보지는 않았다.
 - 받은 뒤 같은 파일인지 본다: `certutil -hashfile "%USERPROFILE%\Downloads\aaa.exe" SHA256`이 Mac의 `shasum -a 256`과 같다.
 
 ### 11.3 처음 두기와 붙기
@@ -231,7 +231,7 @@ move "%USERPROFILE%\Downloads\aaa.exe" "%USERPROFILE%\.local\bin\aaa.exe"
 ```
 
 - 처음 붙으면 pairing 코드를 묻는다. host Mac에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 넣는다. host `aaa web devices`에 「aaa TUI · <그 PC 이름>」이 생긴다.
-- 장치 token은 `%LOCALAPPDATA%\aaa\state\remote\https-<이름>-<포트>.token`이다. 폴더와 파일은 상속을 끊은 DACL에 그 계정(폴더는 소유자)과 SYSTEM만 있다(Unix의 0700·0600): `icacls "%LOCALAPPDATA%\aaa\state\remote"`로 본다.
+- 장치 token은 `%LOCALAPPDATA%\aaa\state\remote\https-<이름>-<포트>.token`이다. 폴더와 파일은 상속을 끊은 DACL에 그 계정과 SYSTEM만 있다(Unix의 0700·0600): `icacls "%LOCALAPPDATA%\aaa\state\remote"`로 본다.
 - 키 설정(`[tui]`)은 그 PC의 `%LOCALAPPDATA%\aaa\config\host.toml`이다. 없으면 기본값이다(prefix `ctrl+b`).
 - 터미널은 Windows Terminal을 권한다(conhost도 된다). 그 PC 터미널에서 다른 점:
   - 붙여넣기(Windows Terminal의 Ctrl+V·오른쪽 클릭)는 낱 키로 간다(Windows 콘솔 입력에는 bracketed paste가 없다): 여러 줄은 줄마다 Enter가 된다. 그림 붙여넣기(Ctrl+V)는 Windows Terminal이 Ctrl+V를 먼저 가져가 되지 않는다.

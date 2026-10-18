@@ -461,6 +461,17 @@ mod tests {
         let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut Vec::new());
     }
 
+    /// 모든 OS가 바꾸기·되돌리기를 받는다(Windows도 거부하지 않는다: 접속만 하는 PC의 `aaa.exe`, plan §8.188). 없는 파일이나
+    /// 보관에 없는 이름은 그 까닭으로 멈춘다(검사만이라 실행 파일은 건드리지 않는다)
+    #[test]
+    fn every_os_takes_update_and_rollback() {
+        let none = std::env::temp_dir().join(format!("aaa-update-none-{}", std::process::id()));
+        let e = update(false, Some(none.clone()), true).unwrap_err().to_string();
+        assert!(e.contains(&format!("{}가 파일이 아니다", none.display())), "{e}");
+        let e = rollback(false, Some("aaa-none".into()), true).unwrap_err().to_string();
+        assert!(e.contains("보관한 것 가운데 `aaa-none`가 없다"), "{e}");
+    }
+
     #[test]
     fn kept_names_carry_the_version() {
         assert_eq!(kept_version(Path::new("/x/.aaa-old/aaa-20261018T120500Z-0.1.0")), "0.1.0");

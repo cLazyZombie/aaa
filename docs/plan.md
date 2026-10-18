@@ -4142,8 +4142,9 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   CI windows runner와 같은 msvc target이다. C 런타임은 정적으로 넣는다(`.cargo/config.toml` `crt-static`, herdr 0.9.5
   `.cargo/config.toml`과 같다): 처음 빌드는 `VCRUNTIME140.dll`·`api-ms-win-crt-*`를 들여 VC++ 재배포 패키지가 없는 PC에서 돌지 않을 수 있었다.
 - **token 파일 권한(Windows ACL).** 전에는 Unix에만 0700·0600을 걸고 Windows는 `%LOCALAPPDATA%`가 물려주는 DACL(상속, Administrators
-  포함) 그대로였다. herdr 0.9.5 `src/platform/windows.rs`의 SDDL을 그대로 쓴다: `remote/` 폴더는 `create_remote_private_dir`(:745-766)의
-  `D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)`, token 파일은 `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349)처럼
+  포함) 그대로였다. herdr 0.9.5 `src/platform/windows.rs`의 SDDL을 따른다: `remote/` 폴더는 `create_remote_private_dir`(:745-766)의
+  `D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)`에서 OW만 계정 SID로 바꾼 것(herdr는 새 폴더만 만들지만 aaa는 있던 폴더를 다시 쓴다: 관리자 권한
+  터미널에서 처음 만든 폴더는 소유자가 Administrators라 OW면 나중의 일반 권한 실행이 DACL을 다시 걸지 못한다, finish 리뷰), token 파일은 `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349)처럼
   `D:P(A;;GA;;;SY)(A;;GA;;;<계정 SID>)`로 `CreateFileW`(CREATE_NEW)에서 처음부터 만든다(만든 뒤 바꾸지 않는다, Unix와 같은 원칙). 폴더는
   이미 있으면 `SetFileSecurityW`로 그렇게 바꾼다(Unix가 늘 0700을 거는 것과 같다).
 - **`aaa update` Windows.** 전에는 「아직 macOS·Linux만」으로 거부했다. 거부를 빼고 Mac과 같은 순서(같은 폴더 staging → self-check →
@@ -4166,12 +4167,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험.** 유닛 `remote::admit_pairs_keeps_and_forgets_tokens`(모든 OS, 가짜 host 웹 http 127.0.0.1: 처음엔 묻고 pairing·token 두기·Host·
   Origin·cookie, 다음엔 묻지 않음, 401이면 지우고 다시 묻기, 새 token도 거부되면 지운 채 멈춤, 틀린 코드 401, 4401 취소), `keys::
   windows_console_keys_table`(crossterm Windows 꼴 → bytes 표, prefix), Windows만 `remote::token_file_is_private`(파일·폴더 DACL을 SDDL로
-  읽어 `D:P`·SYSTEM과 계정/소유자만, 계정은 SDDL 별칭 꼴로 견준다 — CI runner는 내장 Administrator라 `LA`로 나온다),
-  `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다). 결함 심기: 로컬 넷(AltGr 정규화 빼기, 거부 token 안 지움, token 안 둠
+  읽어 `D:P`·SYSTEM과 계정만, 계정은 SDDL 별칭 꼴로 견준다 — CI runner는 내장 Administrator라 `LA`로 나온다),
+  `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다), 모든 OS `update::every_os_takes_update_and_rollback`(Windows 거부가 돌아오면 실패). 결함 심기: 로컬 넷(AltGr 정규화 빼기, 거부 token 안 지움, token 안 둠
   — 시험의 묻기 한도로 끝없는 고리 대신 실패, Origin 안 보냄) 모두 실패. Windows CI(심은 branch): token을 상속 DACL로 만들면 `D:P`가 없어 실패.
 - **실기(10-18).** 그 PC(Windows 11 x64, 기본 셸 cmd)에 ssh로 `aaa.exe`를 두고 `--version`·`attach --help`·`update --dry-run`·`update list`,
   ssh pty로 보기 전용 pairing → TUI 「보기 전용」 → 창 크기 바꿈(ConPTY `CSI 8;50;140t` 뒤 다시 그림) → prefix q → 다시 붙을 때 묻지 않음을
-  보았다. `icacls`로 폴더 SYSTEM·OWNER RIGHTS, 파일 SYSTEM·그 계정만(상속 없음). 사람 자판·IME·마우스 점검은 사용자 몫으로 남겼다.
+  보았다. `icacls`로 폴더 SYSTEM·OWNER RIGHTS(그때 판, 지금은 계정 SID), 파일 SYSTEM·그 계정만(상속 없음). 사람 자판·IME·마우스 점검은 사용자 몫으로 남겼다.
 
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
