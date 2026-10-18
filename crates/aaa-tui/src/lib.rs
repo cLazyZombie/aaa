@@ -742,8 +742,8 @@ impl App {
             }
             self.copy_apply(&mut tx).await?;
             for name in std::mem::take(&mut self.space_fetch) {
-                let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
-                self.pending.insert(id, Pending::SpaceLayout);
+                let id = tx.send(FrontRequest::Workspace { name: Some(name.clone()) }).await?;
+                self.await_layout(&name, id, Pending::SpaceLayout);
             }
             self.reconcile_ascii();
             // 링크가 아닌 ctrl+누름은 보통 누름으로 다시 넣는다(herdr `ReplayMouse`)
@@ -1045,16 +1045,26 @@ impl App {
     }
 
     /// 다른 workspace로(herdr `switch_workspace`): 아는 layout으로 바로 그리고 host에 다시 읽는다. 포커스는 front마다라
-    /// 그 workspace의 첫 pane으로 간다.
+    /// 그 workspace의 첫 pane으로 간다. layout을 아직 받지 못해 포커스 pane이 없으면 답이 올 때까지 키·붙여넣기·마우스를
+    /// 붙잡는다: 아니면 그 사이 친 글자가 버려졌다(CI 10-18, `workspace_keys_and_section_split_like_herdr`의 `$ ho side-…`).
     async fn switch_space(&mut self, tx: &mut FrontSender, name: String) -> Result<()> {
         if name == self.ws_name {
             return Ok(());
         }
         let known = self.spaces.get(&name).cloned().unwrap_or_else(|| Workspace { name: name.clone(), tabs: vec![] });
         self.enter_space(known);
-        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
-        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        let id = tx.send(FrontRequest::Workspace { name: Some(name.clone()) }).await?;
+        self.await_layout(&name, id, Pending::Report("workspace 읽기"));
         Ok(())
+    }
+
+    /// workspace `name`의 layout 읽기(`id`)를 기다린다. 지금 workspace인데 아는 layout이 없어 포커스 pane이 없으면(들어가기·
+    /// 닫은 뒤 남은 workspace로 가기) 답이 올 때까지 키를 붙잡는다.
+    fn await_layout(&mut self, name: &str, id: String, why: Pending) {
+        if name == self.ws_name && self.focus.is_none() {
+            self.focus_wait = Some(id.clone());
+        }
+        self.pending.insert(id, why);
     }
 
     /// workspace 이름·닫기의 대상(herdr `workspace_action_id`): 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace
@@ -3997,6 +4007,51 @@ mod tests {
         app.settings_cancel();
         assert!(app.overlay.is_none());
         assert_eq!((app.theme_name.as_str(), &app.palette), ("catppuccin", &theme::Palette::catppuccin()));
+    }
+
+    /// layout을 아직 받지 못한 workspace로 가면(목록 답이 넣은 빈 자리표시) 포커스 pane이 없다: 그 layout 답이 올 때까지 키를
+    /// 붙잡고, 답이 오면 그 첫 pane에 포커스를 두고 푼다. 아는 layout이면 바로 포커스라 붙잡지 않는다(CI 10-18 `$ ho side-…`).
+    /// 지금 workspace를 닫아 남은 workspace로 갈 때도 같다.
+    #[test]
+    fn switching_to_an_unread_workspace_holds_keys_until_its_layout() {
+        let mut app = app_with_tabs(&[""]);
+        let placeholder = Workspace { name: "side".into(), tabs: vec![] };
+        app.spaces.insert("side".into(), placeholder.clone());
+        app.enter_space(placeholder);
+        app.await_layout("side", "r5".into(), Pending::Report("workspace 읽기"));
+        assert!(app.focus.is_none() && app.waiting(), "포커스 pane이 없는 동안 친 키는 붙잡는다");
+        let tab = aaa_proto::Tab {
+            id: "t7".into(),
+            name: String::new(),
+            root: aaa_proto::LayoutNode::Pane { pane: "p7".into() },
+            zoomed: false,
+        };
+        let side = Workspace { name: "side".into(), tabs: vec![tab] };
+        let ok = Outcome::Ok(aaa_proto::FrontResponse::Workspace(side.clone()));
+        app.on_msg(FrontMsg::Res { id: "r5".into(), result: ok });
+        assert_eq!(app.focus.as_deref(), Some("p7"));
+        assert!(!app.waiting());
+        // 아는 layout으로 들어가면 바로 포커스, 붙잡지 않는다
+        let mut app = app_with_tabs(&[""]);
+        app.enter_space(side.clone());
+        app.await_layout("side", "r6".into(), Pending::Report("workspace 읽기"));
+        assert_eq!(app.focus.as_deref(), Some("p7"));
+        assert!(!app.waiting());
+        // 다른 workspace 미리 읽기는 붙잡지 않는다
+        app.await_layout("main", "r7".into(), Pending::SpaceLayout);
+        assert!(!app.waiting());
+        // 지금 workspace를 닫아 layout을 모르는 남은 workspace로 가면, 그 읽기 답까지 붙잡는다
+        app.spaces.remove("main");
+        let left = [aaa_proto::WorkspaceSummary { name: "main".into(), tabs: 1, panes: 1 }];
+        app.closed_space("side", &left);
+        assert_eq!((app.ws_name.as_str(), app.focus.as_deref()), ("main", None));
+        let name = app.space_fetch.pop().unwrap();
+        app.await_layout(&name, "r8".into(), Pending::SpaceLayout);
+        assert!(app.waiting());
+        let main = Workspace { name: "main".into(), tabs: side.tabs };
+        app.on_msg(FrontMsg::Res { id: "r8".into(), result: Outcome::Ok(aaa_proto::FrontResponse::Workspace(main)) });
+        assert_eq!(app.focus.as_deref(), Some("p7"));
+        assert!(!app.waiting());
     }
 
     /// 새 workspace 답: 그 workspace로 가서 새 pane에 포커스(키 붙잡기도 풀림), 실패면 무엇이 실패했는지 알린다

@@ -4291,6 +4291,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   `<이름> — pane n개`). host `workspace_rename`·`workspace_close`(이미 있는 요청, Front API 그대로). 지금 workspace의 이름을 바꾸면 host가 옛
   이름의 빈 layout을 먼저 보내므로 보던 탭을 id로 되찾고, 닫으면 남은 첫 workspace(기본 workspace 먼저)로 간다. 같은 workspace를 보던 다른
   TUI는 이름이 바뀌면 빈 옛 이름에 남는다(host가 새 이름의 layout 사건을 보내지 않는다, 이번에 고치지 않음).
+- **CI 고침(10-18, macos-15 7f89baac에서 `workspace_keys_and_section_split_like_herdr`가 `$ ho side-$((7*6))`로 실패).** spaces 줄을
+  누르면 `switch_space`가 아는 layout으로 바로 들어가는데, 목록 답이 넣은 빈 자리표시뿐이고 그 workspace layout 미리 읽기 답이 아직이면 포커스
+  pane이 없다. 사이드바는 이미 그 workspace를 지금 줄로 그려, 그 사이 친 글자(`e`·`c`)가 버려지고 layout 답 뒤 글자만 들어갔다(사람도 누르자마자
+  치면 잃는다). 그래서 지금 workspace인데 포커스 pane이 없으면 그 layout 읽기 답이 올 때까지 키·붙여넣기·마우스를 붙잡는다(새 pane 포커스와 같은
+  `focus_wait`). 지금 workspace를 닫아 layout을 모르는 남은 workspace로 갈 때도 같다. 재현: host가 side 답을 400ms 늦추게 심으면 고치기 전은
+  실패, 고친 뒤는 통과(심은 늦춤은 되돌림). 유닛 `switching_to_an_unread_workspace_holds_keys_until_its_layout`.
 - **시험.** 유닛: 배치(기본 36·한도 72·설정 한도·거꾸로면 알림·화면 폭 − 1), 끈 폭이 테마 바꾸기·설정 폭 바꾸기에 남음·두 번 누르기·접기 남김·
   다시 붙어 기억한 값·null·보기 권한(`dragged_sidebar_width_survives_a_theme_change_and_is_remembered`), host 공유 이름. TUI E2E
   `sidebar_width_like_herdr`(160칸: 기본 36, 끌어 60·72에서 멈춤, 설정 창 테마 바꾼 화면에서 60·host.toml에 폭 없음, 나갔다 붙어도 60,
