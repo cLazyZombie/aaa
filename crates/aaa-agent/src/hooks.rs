@@ -2,9 +2,9 @@
 //!
 //! - 세션을 띄울 때 env에 `AAA_HOOK_SOCK`·`AAA_HOOK_TOKEN`을 넣는다. token은 세션 token에서 만든 값이라 따로 저장하지 않는다.
 //! - harness 상태(작업 중·idle·질문)는 hook으로 정하지 않는다: pump의 화면 감지(`detect`, plan §8.110)가 정한다.
-//!   hook은 herdr 0.9.5처럼 harness 세션 ID를 잇는 데(Claude SessionStart, Codex notify)와 herdr-projects 진행 보고
+//!   hook은 herdr 0.9.5처럼 harness 세션 ID를 잇는 데(Claude·Codex SessionStart)와 herdr-projects 진행 보고
 //!   정리(UserPromptSubmit: 「Waiting for you」를 지운다)에 쓴다.
-//! - Claude hook은 herdr-projects progress.rs `hook`처럼 진행 보고 안내를 넣는다(SessionStart 지침, UserPromptSubmit 안내,
+//! - Claude·Codex hook은 herdr-projects progress.rs `hook`처럼 진행 보고 안내를 넣는다(SessionStart 지침, UserPromptSubmit 안내,
 //!   PostToolUse 1분에 한 번 알림, `additionalContext`). 안내만 하고 상태는 바꾸지 않는다: PostToolUse는 host에 보내지 않는다.
 //! - `aaa hook`은 harness를 막지 않는다: 연결이 안 되면 조용히 끝나고 아무것도 출력하지 않는다(결정을 내리지 않음). 출력은
 //!   agent가 돌려준 안내 JSON 한 줄뿐이다.
@@ -23,6 +23,11 @@ pub const ENV_SOCK: &str = "AAA_HOOK_SOCK";
 pub const ENV_TOKEN: &str = "AAA_HOOK_TOKEN";
 pub const ENV_SESSION: &str = "AAA_SESSION_ID";
 const MAX_MSG: usize = 256 * 1024;
+
+/// 빠른 전역 hook gate. 최종 판정은 agent의 token·peer PID 검사다.
+pub fn in_session() -> bool {
+    [ENV_SESSION, ENV_SOCK, ENV_TOKEN].iter().all(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
+}
 
 pub fn socket(state: &Path) -> PathBuf {
     state.join("run").join("hook.sock")
@@ -80,8 +85,7 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         ev.message = s(p, "activity").map(|a| clip(&a, 40));
         return Some(ev);
     }
-    // Codex notify(`agent-turn-complete`): 세션 ID(`thread-id`)만 쓴다. herdr는 Codex SessionStart hook을
-    // `~/.codex/hooks.json`에 깔지만 aaa는 사용자 설정을 고치지 않고 실행마다 `-c notify`만 준다.
+    // 이전 aaa가 띄운 Codex notify도 받는다. 새 실행은 전역 SessionStart를 쓰고 사용자 notify를 보존한다.
     if s(p, "type").as_deref() == Some("agent-turn-complete") {
         ev.kind = "session".into();
         return Some(ev);
@@ -116,7 +120,7 @@ pub struct Progress {
     pub reminded_at: u64,
 }
 
-/// 안내를 넣을 Claude 사건이면 그 이름(herdr-projects progress.rs `eligible`): 맨 위 agent의 SessionStart·UserPromptSubmit·
+/// 안내를 넣을 Claude·Codex 사건이면 그 이름(herdr-projects progress.rs `eligible`): 맨 위 agent의 SessionStart·UserPromptSubmit·
 /// PostToolUse. 하위 agent의 사건과 `aaa report` 자신의 PostToolUse는 아니다.
 pub fn guide_kind(p: &Value) -> Option<&'static str> {
     if subagent(p) {
@@ -167,7 +171,7 @@ pub fn respond(rec: &mut Progress, kind: &str, prefix: &str, now_ms: u64) -> Opt
     }
 }
 
-/// hook의 답(Claude Code가 읽는 꼴, herdr-projects progress.rs `output`)
+/// hook의 답(Claude Code·Codex가 읽는 꼴, herdr-projects progress.rs `output`)
 pub fn output(native: &str, text: &str) -> String {
     serde_json::json!({ "hookSpecificOutput": { "hookEventName": native, "additionalContext": text } }).to_string()
 }
@@ -175,7 +179,7 @@ pub fn output(native: &str, text: &str) -> String {
 /// 하위 agent(subagent)가 낸 사건인가: 자기 ID나 `/subagents/` 아래 기록을 가진다(herdr-projects progress.rs `eligible`)
 fn subagent(p: &Value) -> bool {
     ["agent_id", "subagent_id", "agent_transcript_path"].iter().any(|k| p.get(k).is_some_and(|v| !v.is_null()))
-        || s(p, "transcript_path").is_some_and(|t| t.contains("/subagents/"))
+        || s(p, "transcript_path").is_some_and(|t| t.replace('\\', "/").contains("/subagents/"))
 }
 
 /// 이 세션이 시작한 harness 세션과 다른 세션의 사건인가(herdr-projects progress.rs `foreign_session`).
@@ -193,13 +197,6 @@ pub fn foreign_session(started: Option<&str>, ev: &HarnessEvent) -> bool {
 pub fn nested_codex(inherited: Option<&str>, p: &Value) -> bool {
     let id = s(p, "session_id").or_else(|| s(p, "thread-id"));
     inherited.is_some_and(|t| !t.is_empty() && Some(t) != id.as_deref())
-}
-
-/// Codex에 실행마다 줄 notify 설정(`codex -c <이것>`). 사용자 ~/.codex 설정은 고치지 않는다.
-/// Codex는 턴이 끝날 때 JSON을 마지막 인자로 붙여 이 명령을 실행한다(`agent-turn-complete`, `thread-id`).
-pub fn codex_notify(exe: &Path) -> String {
-    let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
-    format!("notify=[{},\"hook\",\"--agent\",\"codex\"]", q(&exe.to_string_lossy()))
 }
 
 /// herdr `claude_settings.rs` `SESSION_START_MATCHER`: Claude가 문서로 정한 SessionStart 출처
@@ -237,16 +234,27 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     }
     tokio::time::timeout(Duration::from_secs(3), async {
         let mut s = aaa_common::ipc::connect(Path::new(&sock)).await?;
-        s.write_all(&body).await?;
-        s.shutdown().await?;
-        let mut reply = Vec::new();
-        s.read_to_end(&mut reply).await?;
-        anyhow::ensure!(reply.starts_with(b"ok"), "agent가 거부했다: {}", String::from_utf8_lossy(&reply));
-        let out = String::from_utf8_lossy(&reply[2..]).trim().to_string();
-        Ok((!out.is_empty()).then_some(out))
+        exchange(&mut s, &body).await
     })
     .await
     .context("agent 응답 시간 초과")?
+}
+
+/// hook 요청·응답. 쓰기 반쪽 닫기는 EOF를 기다리는 옛 agent와도 통신하기 위해 남긴다.
+async fn exchange(s: &mut aaa_common::ipc::LocalStream, body: &[u8]) -> Result<Option<String>> {
+    s.write_all(body).await?;
+    // JSON 완성만 보고 응답한 상대가 먼저 닫으면 macOS shutdown은 ENOTCONN이다.
+    // 이미 도착한 응답은 여전히 읽을 수 있으므로 아래의 ok 검증으로 성공 여부를 정한다.
+    if let Err(e) = s.shutdown().await
+        && e.kind() != std::io::ErrorKind::NotConnected
+    {
+        return Err(e.into());
+    }
+    let mut reply = Vec::new();
+    s.read_to_end(&mut reply).await?;
+    anyhow::ensure!(reply.starts_with(b"ok"), "agent가 거부했다: {}", String::from_utf8_lossy(&reply));
+    let out = String::from_utf8_lossy(&reply[2..]).trim().to_string();
+    Ok((!out.is_empty()).then_some(out))
 }
 
 /// agent 쪽: 연결 하나에서 완성된 JSON 사건 하나를 읽는다.
@@ -276,6 +284,81 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// JSON을 읽은 agent가 응답·종료한 뒤 클라이언트가 쓰기 반쪽을 닫는 실제 IPC 차례.
+    /// macOS는 이 shutdown을 ENOTCONN으로 거부하지만 읽지 않은 응답은 그대로 남긴다.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn closed_peer_reply_survives_write_shutdown() {
+        use std::{
+            pin::Pin,
+            task::{Context, Poll},
+        };
+        use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+        struct AfterPeerClosed {
+            stream: tokio::net::UnixStream,
+            closed: tokio::sync::oneshot::Receiver<()>,
+            ready: bool,
+        }
+        impl AsyncRead for AfterPeerClosed {
+            fn poll_read(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                buf: &mut ReadBuf<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Pin::new(&mut self.stream).poll_read(cx, buf)
+            }
+        }
+        impl AsyncWrite for AfterPeerClosed {
+            fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+                Pin::new(&mut self.stream).poll_write(cx, buf)
+            }
+            fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Pin::new(&mut self.stream).poll_flush(cx)
+            }
+            fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                if !self.ready {
+                    match Pin::new(&mut self.closed).poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(r) => {
+                            r.expect("agent 응답 task");
+                            self.ready = true;
+                        }
+                    }
+                }
+                Pin::new(&mut self.stream).poll_shutdown(cx)
+            }
+        }
+        let msg = HookMsg {
+            session: "s1".into(),
+            token: "test-hook-secret".into(),
+            harness: "claude".into(),
+            payload: json!({"hook_event_name":"UserPromptSubmit"}),
+        };
+        let guidance = output("UserPromptSubmit", "Waiting for you");
+        for reply in [format!("ok\n{guidance}"), "error: 거부\n".into(), String::new()] {
+            let (client, server) = tokio::net::UnixStream::pair().unwrap();
+            let (closed, wait) = tokio::sync::oneshot::channel();
+            let response = reply.clone();
+            let peer = tokio::spawn(async move {
+                let mut server: aaa_common::ipc::LocalStream = Box::new(server);
+                assert_eq!(read_msg(&mut server).await.unwrap().session, "s1");
+                server.write_all(response.as_bytes()).await.unwrap();
+                drop(server);
+                closed.send(()).unwrap();
+            });
+            let mut client: aaa_common::ipc::LocalStream =
+                Box::new(AfterPeerClosed { stream: client, closed: wait, ready: false });
+            let result = exchange(&mut client, &serde_json::to_vec(&msg).unwrap()).await;
+            peer.await.unwrap();
+            if reply.starts_with("ok") {
+                assert_eq!(result.unwrap(), Some(guidance.clone()));
+            } else {
+                assert!(result.is_err(), "빈 응답·거부는 성공이 아니다");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn hook_json_completion_and_errors_do_not_need_eof() {
@@ -393,12 +476,6 @@ mod tests {
         assert!(nested_codex(Some("parent"), &notify("nested")));
         assert!(!nested_codex(Some("s"), &json!({"hook_event_name":"SessionStart","session_id":"s"})));
         assert!(nested_codex(Some("s"), &json!({"type":"agent-turn-complete"})));
-    }
-
-    #[test]
-    fn codex_notify_is_toml() {
-        let v = codex_notify(Path::new("/A b/q\"x\\/aaa"));
-        assert_eq!(v, r#"notify=["/A b/q\"x\\/aaa","hook","--agent","codex"]"#);
     }
 
     #[test]

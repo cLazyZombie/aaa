@@ -380,14 +380,7 @@ pub(crate) fn with_hooks(
             argv.insert(command_len, "--settings".into());
         }
     }
-    if launch.harness == "codex" {
-        // 턴이 끝날 때마다 notify로 상태와 thread ID(resume에 쓴다)를 받는다
-        let n = crate::hooks::codex_notify(&cfg.exe);
-        for argv in [&mut launch.argv, &mut launch.resume_argv] {
-            argv.insert(command_len, n.clone());
-            argv.insert(command_len, "-c".into());
-        }
-    }
+    // Codex는 전역 hook을 쓴다. notify를 주입하면 사용자·workspace·profile 설정을 덮으므로 그대로 둔다.
     Ok(launch)
 }
 
@@ -631,7 +624,71 @@ mod tests {
         }
     }
 
-    /// resume은 launch와 같은 model·effort·args(daemon 금지 인자 포함)·env를 쓴다(§8.2). 운영에서 빠졌던 문제를 막는다.
+    /// 전역·명시적 사용자 notify를 aaa 주입으로 덮어쓰지 않는다.
+    #[test]
+    fn codex_launch_and_resume_preserve_user_notify() {
+        let cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
+        for notify in [None, Some(r#"notify=["user-notify","fixed arg"]"#)] {
+            let mut p = profile("codex");
+            if let Some(n) = notify {
+                p.args.extend(["-c".into(), n.into()]);
+            }
+            let launch = with_hooks(&cfg, resolve("p", &p).unwrap(), Path::new("unused"), 1).unwrap();
+            for argv in [&launch.argv, &launch.resume_argv] {
+                let values: Vec<_> = argv.iter().filter(|s| s.starts_with("notify=")).map(String::as_str).collect();
+                assert_eq!(values, notify.into_iter().collect::<Vec<_>>(), "{argv:?}");
+            }
+        }
+    }
+
+    /// Codex의 문서화된 notify 계약(설정 배열 + 마지막 JSON 인자)을 실행하는 최소 harness.
+    /// 제품 argv로 사용자 알림이 실제 불리는지 본다. 실제 Codex 계정·모델 호출은 쓰지 않는다.
+    #[cfg(unix)]
+    #[test]
+    fn codex_user_notify_is_invoked_for_launch_and_resume() {
+        let dir = std::env::temp_dir().join(format!("aaa-notify-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex.py");
+        std::fs::write(
+            &script,
+            r#"
+import json, os, pathlib, subprocess, sys, tomllib
+config = tomllib.loads((pathlib.Path(os.environ['CODEX_HOME']) / 'config.toml').read_text())
+for i, arg in enumerate(sys.argv[1:], 1):
+    if arg == '-c' and i + 1 < len(sys.argv):
+        config.update(tomllib.loads(sys.argv[i + 1]))
+payload = json.dumps({'type': 'agent-turn-complete', 'thread-id': 'test-thread'})
+subprocess.run(config['notify'] + [payload], check=True)
+"#,
+        )
+        .unwrap();
+        let marker = dir.join("notified.json");
+        let notify = serde_json::json!([
+            "python3",
+            "-c",
+            "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(sys.argv[2])",
+            marker.to_str().unwrap()
+        ]);
+        std::fs::write(dir.join("config.toml"), format!("notify = {notify}\n")).unwrap();
+        let mut p = profile("codex");
+        p.command = vec!["python3".into(), script.to_str().unwrap().into()];
+        p.args.clear();
+        p.model.clear();
+        p.effort.clear();
+        let cfg = ThreadsConfig { exe: std::env::current_exe().unwrap(), ..Default::default() };
+        let l = with_hooks(&cfg, resolve("p", &p).unwrap(), &dir, 2).unwrap();
+        for argv in [&l.argv, &l.resume_argv] {
+            let o = std::process::Command::new(&argv[0]).args(&argv[1..]).env("CODEX_HOME", &dir).output().unwrap();
+            assert!(o.status.success(), "{o:?}");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&marker).expect("사용자 notify가 불리지 않았다")).unwrap();
+            assert_eq!(payload, serde_json::json!({"type":"agent-turn-complete","thread-id":"test-thread"}));
+            std::fs::remove_file(&marker).unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// resume은 launch와 같은 model·effort·args(daemon 금지 인자 포함)·env를 쓴다(§8.2).
     #[test]
     fn resume_keeps_launch_spec() {
         for h in ["claude", "codex"] {
@@ -676,7 +733,7 @@ mod tests {
         cfg.profiles.insert("x".into(), profile("codex"));
         let other = rebrief(&cfg, wd.to_str().unwrap(), &brief, old.clone(), Some("x"), None, None).unwrap();
         assert_eq!((other.profile.as_str(), other.harness.as_str()), ("x", "codex"));
-        assert_eq!(other.argv[1], "-c", "{:?}", other.argv);
+        assert_eq!(other.argv[0], "codex", "새 profile의 실행 파일을 쓴다: {:?}", other.argv);
         let e = rebrief(&cfg, wd.to_str().unwrap(), &brief, old, Some("nope"), None, None).unwrap_err();
         assert!(format!("{e:#}").contains("profile `nope`가 없다"), "{e:#}");
         std::fs::remove_dir_all(&root).unwrap();

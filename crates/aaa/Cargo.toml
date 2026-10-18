@@ -21,6 +21,8 @@ aaa-host.workspace = true
 aaa-tui.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true
+base64.workspace = true
 # `aaa update`: 바꾸기 전후 실행 파일 비교
 sha2.workspace = true
 hex.workspace = true

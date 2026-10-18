@@ -5052,6 +5052,61 @@ primary 근거:
 - **전환 gate.** 별도 서버는 사용자 결정대로 **전환 직후 즉시 끈다**. 필요한 작은 보고서를 import/publish하고, 큰 묶음의 건너뜀을 검토하며,
   저장소 실시간 폴더를 등록하고 휴대폰에서 링크를 확인한 뒤 전환한다. 상세 명령은 [보고서 운영](library.md), 전환 점검표는 [이전](migration.md).
 
+### 8.201 Codex 전역 hook·사용자 notify 보존(10-18, 전환 G5)
+
+- **참고.** herdr v0.9.5 `src/integration/targets.rs` install_codex·uninstall_codex,
+  `assets/codex/herdr-agent-state.sh`, herdr-projects v0.2.35 `setup.rs`·`progress.rs`를 따랐다.
+  SessionStart·UserPromptSubmit·PostToolUse만 설치한다. 상태는 계속 화면 감지가 정한다.
+  [OpenAI 공식 hook 문서](https://learn.chatgpt.com/docs/hooks)는 `SessionStart`의 startup·resume·clear·compact·fork와
+  `hookSpecificOutput.additionalContext`를 명시한다. 압축 뒤에도 같은 SessionStart 안내를 받는다.
+- **명령·설치 시점.** `aaa integration install codex`·`aaa integration uninstall codex`.
+  `CODEX_HOME`(없으면 Unix HOME 또는 Windows USERPROFILE 아래 `.codex`)의 hooks.json에 추가한다.
+  새 머신 설치 절차에 넣으며 새 workspace마다 설치하지 않는다. agent 기동은 사용자 설정을 자동 수정하지 않는다.
+  `aaa doctor`는 누락·낡은 실행 경로·꺼진 features.hooks를 경고하고 `aaa doctor --fix`가 설치한다.
+  doctor는 파일 상태만 확인한다. Codex의 비관리 hook 신뢰 여부를 추정하거나 자동 승인하지 않는다.
+- **소유·보존.** hooks.json 기존 사건·그룹·사용자 handler는 보존한다. aaa 명령만 완전 일치로 더하거나 제거한다.
+  실행 경로가 옮겨도 지울 수 있게 `aaa-codex-integration.json`에 설치한 명령 목록을 보관한다.
+  같은 그룹에 나중에 더한 사용자 handler도 제거에서 남긴다. 반복 설치·제거는 추가 쓰기·백업을 만들지 않는다.
+  config.toml은 toml_edit로 features.hooks만 true로 바꾼다. 이미 true면 바이트 그대로 둔다.
+  제거는 공용 hooks 기능과 소유 기록을 남긴다. 제거에는 config.toml의 정상 문법이 필요하지 않다.
+- **쓰기.** 모든 문법·변경 대상의 snapshot·쓰기 권한을 먼저 확인한다. symlink·Unix hard link는 거부한다.
+  기존 파일은 같은 폴더 `<파일>.before-aaa-<시각ms>-<PID>-<순번>`에 0600으로 백업한 뒤,
+  create_new 임시 파일·sync·snapshot 재확인·rename으로 교체한다(Windows는 사용자 ACL 상속).
+  원자성은 파일마다 보장한다. 여러 파일 전체가 한 transaction은 아니므로 중간 I/O 실패는 백업으로 되돌린다.
+  소유 기록을 먼저 써서 중간 실패 뒤에도 이전·새 명령을 정확히 제거할 수 있다.
+- **aaa 판정.** CLI는 AAA_SESSION_ID·AAA_HOOK_SOCK·AAA_HOOK_TOKEN 셋이 모두 비어 있지 않은지
+  stdin을 읽기 전에 본다. 없으면 출력·오류 없이 0이다. agent는 세션 spec에서 파생 token을 검증하고,
+  실제 IPC peer PID의 조상·세션 leader가 그 실행 중 pane에 속하는지 판정한다(post와 같은 caller::judge).
+  새 전역 hook은 spec의 harness 또는 argv가 Codex인 세션만 받는다.
+  옛 agent-turn-complete notify는 harness 선언 없는 aaa 셸에서도 왔으므로 token·peer 판정 뒤 호환 수신한다. env만 복사한 세션 밖 호출은 인정하지 않는다.
+  CODEX_THREAD_ID가 사건 ID와 다르거나 하위 agent 사건이면 버린다. 역할 있는 thread만 진행 안내를 받는다.
+  시작 hook이 pane 등록보다 먼저 오면 attach의 등록 사건으로 깨운다(2초는 실패 안전 상한, sleep·재시도 없음).
+  이 대기와 실제 attach의 알림을 제거하는 결함을 각각 재현한다.
+- **사건.** SessionStart는 harness 세션 ID·기록 경로를 기존 session_start로 host에 보내고 시작 안내를 돌려준다.
+  UserPromptSubmit은 기존 prompt_submit로 host의 Waiting for you를 지우고 응답 안내를 돌려준다.
+  PostToolUse는 host 상태 사건을 만들지 않으며 기존 60초 간격 안내만 넣는다. 보고 명령 자신과 하위 agent는 제외한다.
+- **notify.** 실행·resume의 aaa `-c notify` 주입을 제거한다. herdr 전역 SessionStart처럼 ID를 받으므로
+  notify를 가로채거나 중계할 필요가 없다. Codex가 전역·workspace·profile·명시적 CLI 우선순위대로
+  사용자 notify를 원래 경로에서 실행한다. config.toml의 notify도 수정하지 않는다.
+  이미 실행 중인 옛 대화는 기존 override가 남으므로 배포 뒤 새 시작·재개부터 적용된다. 옛 notify 사건도 계속 받는다.
+- **Windows.** sh 대신 herdr의 PowerShell UTF-16LE EncodedCommand를 쓴다. 경로는 PowerShell 작은따옴표로 인용한다.
+  `-NonInteractive -OutputFormat Text`를 지정하고 첫 문장에서 `$ProgressPreference = 'SilentlyContinue'`로 둔다.
+  EncodedCommand의 기본 stderr CLIXML과 모듈 첫 검색의 진행 출력이 무반응 hook에 섞이지 않게 한다.
+  env gate를 stdin보다 먼저 두고 UTF-8 입력·출력·native pipeline 인코딩을 지정해 JSON·한글 안내를 전달한다.
+  Windows 전용 명령 생성 계약을 native 테스트에서 복호화해 검사하고 Windows 전체 target check·clippy로 cfg 경로를 검사한다.
+  CLI 통합 시험은 Codex 기본 Windows runner와 같은 COMSPEC/cmd.exe `/C`에서 설치 명령을 실행한다.
+  한글·공백·작은따옴표·$가 든 실행 파일에서 설치해 인증된 시작의 한글 안내와 무반응 사건을 함께 검사한다.
+  Windows 실행기에서 같은 CLI 통합 시험도 실행해야 한다. macOS cross check를 Windows 실행 결과라고 부르지 않는다.
+- **시험·결함 심기.** 임시 HOME/CODEX_HOME에서 추가·이동·제거·반복·기존 항목·백업·read-only·손상 설정을 검사한다.
+  설치한 명령의 stdin 사건을 실제 agent와 host로 보내 Front 상태의 세션 ID와 기다림 정리를 확인한다.
+  session host만 가짜이며 OS 프로세스 신호를 쓰지 않는다. 사용자 notify는 launch·resume의 실제 argv와
+  설정 배열+마지막 JSON 인자를 실행하는 최소 harness로 확인한다(Python 3.11+ 표준 tomllib, Unix).
+  기존 항목 삭제·중복 설치·그룹 전체 제거·feature 미활성·백업 생략·외부 출력·token/peer/중첩 검사 제거·
+  Codex 안내 제거·notify 덮어쓰기·Windows 인코딩 제거를 심어 owner 시험이 실패하고 복구 뒤 통과하는지 기록한다.
+- **호환·G5.** 기존 HarnessEvent의 session_start·prompt_submit만 쓰므로 AGENT_LINK 1.4·FRONT_API 1.38을 유지한다.
+  배포 뒤 세 Mac에서 설치·Codex 신뢰를 마치고 새 Codex pilot의 시작 ID·진행 안내·기다림 정리·사용자 notify를
+  확인해야 G5를 통과한다. 이 구현 thread는 운영 HOME이나 운영 서비스를 변경하지 않는다.
+
 ### 8.202 대화 보기 한 바탕·iPad 입력창 끌기(10-18, 사용자 「색이 달라」·「입력창 왼쪽을 잡고 올리면 창이 통째로 올라간다」)
 
 - **색.** 기록(`.chat`)은 `--bg`, 입력창 둘레 띠(`.composer`)는 참고 사본 `herdr/Composer.css`의 `--bg-panel`이었다. 참고는 대화 보기를 한 바탕으로 두고

@@ -167,9 +167,11 @@ pub struct Agent {
     plans: Mutex<HashMap<String, plan::Track>>,
     /// 세션마다 지금 harness 프로세스가 시작한 때(Claude SessionStart startup·resume, ms)
     plan_since: Mutex<HashMap<String, u64>>,
-    /// 세션마다 진행 알림 기록(Claude hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
+    /// 세션마다 진행 알림 기록(Claude·Codex hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
     /// 한 번 일찍 갈 수 있을 뿐이다.
     progress: Mutex<HashMap<String, hooks::Progress>>,
+    /// pane 등록보다 먼저 온 Codex hook을 등록 사건으로 깨운다.
+    session_ready: tokio::sync::Notify,
     /// 마지막 머신 건강(host가 다시 붙으면 다시 보낸다)
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
@@ -218,6 +220,7 @@ impl Agent {
             plans: Mutex::new(HashMap::new()),
             plan_since: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
+            session_ready: tokio::sync::Notify::new(),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
@@ -247,7 +250,7 @@ impl Agent {
         Ok(())
     }
 
-    /// hook 사건 하나. 돌려준 것은 `aaa hook`이 harness에 출력할 진행 안내다(Claude만).
+    /// hook 사건 하나. 돌려준 것은 `aaa hook`이 Claude·Codex에 출력할 진행 안내다.
     async fn on_hook(
         self: &Arc<Self>,
         s: &mut aaa_common::ipc::LocalStream,
@@ -283,6 +286,42 @@ impl Agent {
             }
             return result.map(Some);
         }
+        if msg.harness == "codex" {
+            // 옛 notify는 harness를 선언하지 않은 aaa 셸에서도 왔다. token·peer 검사는 계속 적용한다.
+            if msg.payload.get("type").and_then(|v| v.as_str()) != Some("agent-turn-complete") {
+                anyhow::ensure!(
+                    detect::Harness::of_session(spec.spec.harness.as_deref(), &spec.spec.argv)
+                        == Some(detect::Harness::Codex),
+                    "Codex로 띄운 aaa 세션이 아니다"
+                );
+            }
+            // SessionStart는 attach의 pane 등록보다 먼저 올 수 있다. 재시도·sleep 대신 등록 사건을 기다린다.
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let ready = self.session_ready.notified();
+                    tokio::pin!(ready);
+                    ready.as_mut().enable();
+                    if self.sessions.lock().unwrap().contains_key(&msg.session) {
+                        break;
+                    }
+                    ready.await;
+                }
+            })
+            .await
+            .context("hook 세션 등록 대기 시간 초과")?;
+            // env·token을 복사한 세션 밖 프로세스는 전역 hook을 가장할 수 없다(post와 같은 peer 판정).
+            let panes: Vec<_> = self
+                .sessions()
+                .into_iter()
+                .filter(|s| s.state.is_running())
+                .filter_map(|s| s.pid.map(|p| (s.id, p)))
+                .collect();
+            anyhow::ensure!(
+                pid.is_some_and(|p| aaa_common::caller::judge(p, &panes, &[])
+                    == aaa_common::caller::Caller::Pane(msg.session.clone())),
+                "hook peer가 이 세션 안에 없다"
+            );
+        }
         if msg.harness == "claude"
             && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
             && matches!(msg.payload.get("source").and_then(|v| v.as_str()), Some("startup" | "resume"))
@@ -300,10 +339,14 @@ impl Agent {
         }
         // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
         let managed = spec.spec.role.is_some();
-        Ok(if managed && msg.harness == "claude" { self.guide(&msg.session, &msg.payload, now) } else { None })
+        Ok(if managed && matches!(msg.harness.as_str(), "claude" | "codex") {
+            self.guide(&msg.session, &msg.payload, now)
+        } else {
+            None
+        })
     }
 
-    /// Claude hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
+    /// Claude·Codex hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
     /// 넣지 않는다(`foreign_session`). 실행 파일 경로는 brief와 같은 꼴이다(`fill_brief`).
     fn guide(&self, session: &str, p: &serde_json::Value, now: u64) -> Option<String> {
         let kind = hooks::guide_kind(p)?;
@@ -753,6 +796,7 @@ impl Agent {
             .map(|pid| (pid, detect::foreground::Presence::new(std::time::Instant::now())));
         let (ptx, prx) = mpsc::channel(256);
         self.sessions.lock().unwrap().insert(info.id.clone(), Entry { info: info.clone(), pump: Some(ptx) });
+        self.session_ready.notify_waiters();
         let me = self.clone();
         let paths = paths.clone();
         let spec = spec.clone();
@@ -1613,6 +1657,58 @@ pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn codex_start_before_pane_registration_waits_for_registration() {
+        use std::task::Poll;
+        use tokio::io::AsyncWriteExt;
+        let base = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
+        let state = base.join(format!("aach-{}", util::new_id()));
+        let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let (mut spec, mut info) = session(Some("codex"), &["codex"], SessionState::Running);
+        spec.spec.role = Some(aaa_proto::Role::Worker);
+        info.pid = Some(std::process::id());
+        let paths = SessionPaths::new(&state, "s");
+        util::ensure_private_dir(&paths.dir).unwrap();
+        util::write_json(&paths.spec(), &spec).unwrap();
+        let (tx, mut out) = aaa_common::conn::frame_channel();
+        a.set_host(Some(tx), false);
+        let msg = hooks::HookMsg {
+            session: "s".into(),
+            token: hooks::hook_token(&spec.token),
+            harness: "codex".into(),
+            payload: serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":"019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0"}),
+        };
+        let (mut writer, reader) = tokio::io::duplex(8192);
+        writer.write_all(&serde_json::to_vec(&msg).unwrap()).await.unwrap();
+        let mut reader: aaa_common::ipc::LocalStream = Box::new(reader);
+        let mut pending = std::pin::pin!(a.on_hook(&mut reader, Some(std::process::id())));
+        // 입력은 이미 완성됐다. 등록 전 poll에서 거부하면 실제 시작 race다.
+        std::future::poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending(), "등록 전에 정상 hook을 거부했다");
+            Poll::Ready(())
+        })
+        .await;
+        // 실제 attach가 pane을 등록하고 깨운다. 시험이 등록 완료 신호를 대신 공급하지 않는다.
+        let listener = aaa_common::ipc::LocalListener::bind(&paths.sock).unwrap();
+        let fake = tokio::spawn(async move {
+            let (r, w) = tokio::io::split(listener.accept_peer().await.unwrap().0);
+            let tx = spawn_writer(w, MAX_FRAME);
+            let mut rx = FrameRx::new(r, MAX_FRAME);
+            assert!(matches!(rx.control::<SessionMsg>().await.unwrap(), SessionMsg::Hello { .. }));
+            tx.json(&SessionMsg::Welcome { proto: SESSION_IPC, info }).await.unwrap();
+            std::future::pending::<()>().await;
+            drop((tx, rx, listener));
+        });
+        a.attach(&paths, &spec).await.unwrap();
+        let reply = pending.await.unwrap().unwrap();
+        assert!(reply.contains("report --percent 25"), "{reply}");
+        let (_, bytes) = out.recv().await.unwrap();
+        let event: LinkMsg = serde_json::from_slice(&bytes).unwrap();
+        assert!(matches!(event, LinkMsg::Event(AgentEvent::Harness(ev)) if ev.kind == "session_start"));
+        fake.abort();
+        std::fs::remove_dir_all(state).unwrap();
+    }
 
     fn session(harness: Option<&str>, argv: &[&str], state: SessionState) -> (SpecFile, SessionInfo) {
         let spec = SpawnSpec {
