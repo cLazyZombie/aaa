@@ -1,5 +1,6 @@
-// 웹 E2E 대화 보기의 바탕과 끌기(사용자 10-18): 기록과 입력창 둘레 띠는 한 색이고(참고 herdr-web-ui ChatView.css 「chat mode is ONE
-// surface」), iPad에서 입력창을 끌어도 문서가 따라가지 않는다(style.css html·body overscroll, pageHold.ts). 대화와 입력칸 글은 그대로 굴러간다.
+// 웹 E2E 대화 보기의 바탕·끌기·폭(사용자 10-18): 기록과 입력창 둘레 띠는 한 색이고(참고 herdr-web-ui ChatView.css 「chat mode is ONE
+// surface」), iPad에서 입력창을 끌어도 문서가 따라가지 않으며(style.css html·body overscroll, pageHold.ts) 대화와 입력칸 글은 그대로 굴러간다.
+// 긴 경로·inline code·URL은 줄을 바꿔 대화 칸이 가로로 굴러가지 않고, code block만 제 상자 안에서 가로로 굴러간다.
 // iOS 문서 고무줄 자체는 headless가 그리지 않는다: 그 조건(계산된 overscroll-behavior)과 막는 손(touchmove preventDefault)을 본다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 22-chat-surface(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
@@ -201,6 +202,91 @@ export default async function () {
     await box.fill("");
     await p.context().close();
     aaa("pane", "kill", "surf2");
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("대화 칸 가로 넘침 0(사용자 iPhone 10-18 19:48 「대화 보기가 좌우로 스크롤된다」): 휴대폰·iPad·데스크톱에서 도구 줄의 긴 경로, 답의 긴 경로 inline code·긴 inline code·긴 URL은 줄을 바꿔 문서와 대화 칸이 가로로 굴러가지 않고 기둥이 칸 안에 서며, code block은 제 상자 안에서만 가로로 굴러간다(참고 HighlightedCode.css `.hl-code` overflow-x auto)", async () => {
+    const dir = `${root}/claude/projects/-lab-wide`;
+    fs.mkdirSync(dir, { recursive: true });
+    const tr = `${dir}/s1.jsonl`;
+    const L = (o) => JSON.stringify(o) + "\n";
+    const deep = `/srv/aaa-work/shadow/t-0002/.aaa/shadow-t-0002/library/${"deeply-nested-folder/".repeat(4)}check.md`;
+    const answer = [
+      "brief의 할 일을 끝냈습니다.",
+      "",
+      `- \`.aaa/shadow-t-0002/library/${"long-segment-".repeat(4)}check.md\` 에 한 문장을 썼습니다.`,
+      `- \`${"aaa_report_percent_".repeat(6)}done\` 같은 긴 inline code도 있다.`,
+      `- 링크 https://example.com/${"very-long-path-segment/".repeat(6)}index.html 를 본다.`,
+      "",
+      "```rust",
+      `fn main() { println!("${"wide ".repeat(40)}"); }`,
+      "```",
+      "",
+      "```",
+      deep,
+      "```",
+    ].join("\n");
+    fs.writeFileSync(
+      tr,
+      L({ type: "user", message: { role: "user", content: `이 경로를 봐 ${deep}` } }) +
+        L({ type: "assistant", message: { content: [{ type: "tool_use", name: "Write", input: { file_path: deep, content: "x" } }] } }) +
+        L({ type: "assistant", message: { content: [{ type: "text", text: answer }] } }),
+    );
+    aaa("tab", "create", "--machine", "labA", "--label", "wide1", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
+      JSON.stringify({ hook_event_name: "SessionStart", session_id: "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9d", source: "startup", transcript_path: tr }));
+    const wk = await webkit.launch();
+    const bad = [];
+    try {
+      const devices = [
+        ["desktop", (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page],
+        ["ipad", (await pairDevice(wk, aaa("web", "pair").code, "ipad")).page],
+        ["phone", (await pairDevice(wk, aaa("web", "pair").code, "iphone")).page],
+      ];
+      for (const [name, p] of devices) {
+        await inList(p, "pane-wide1");
+        if ((await p.getByTestId("chat").count()) === 0) {
+          await until("대화 단추", async () => (await p.getByTestId("chat-toggle").count()) === 1);
+          await p.getByTestId("chat-toggle").click();
+        }
+        await until("대화 기록", async () => (await p.locator('[data-testid="chat"] .chat-msg').count()) === 3);
+        // 글 속 경로는 누르면 여는 단추다(조작 기기): 넘침을 보는 자리가 실제로 그려졌다
+        await p.locator('[data-testid="chat"] .markdown-file').first().waitFor();
+        await p.locator('[data-testid="chat"] .markdown-code').first().waitFor();
+        const got = await p.evaluate(() => {
+          const chat = document.querySelector('[data-testid="chat"]');
+          const box = chat.getBoundingClientRect();
+          const se = document.scrollingElement;
+          const out = [];
+          if (se.scrollWidth > se.clientWidth) out.push(`문서 ${se.scrollWidth}>${se.clientWidth}`);
+          if (chat.scrollWidth > chat.clientWidth) out.push(`대화 칸 ${chat.scrollWidth}>${chat.clientWidth}`);
+          const col = chat.querySelector(".chat-transcript").getBoundingClientRect();
+          if (col.left < box.left - 0.5 || col.right > box.right + 0.5) out.push(`기둥 ${Math.round(col.left)}~${Math.round(col.right)} 칸 ${Math.round(box.left)}~${Math.round(box.right)}`);
+          // 기둥 밖으로 나간 글 조각 가운데 가장 안쪽 것들(코드 상자 안은 그 상자가 굴린다). 자리는 요소 경로와 white-space로 말한다
+          const over = [...chat.querySelectorAll(".chat-msg, .chat-msg *")].filter((el) => {
+            const r = el.getBoundingClientRect();
+            return !el.closest(".hl-code") && r.width > 0 && r.right > col.right + 0.5;
+          });
+          const innermost = over.filter((el) => !over.some((o) => o !== el && el.contains(o)));
+          const seen = new Set();
+          for (const el of innermost) {
+            const path = [];
+            for (let at = el; at && at !== chat; at = at.parentElement) path.push(`${at.tagName.toLowerCase()}${at.className ? `.${String(at.className).split(" ")[0]}` : ""}(${getComputedStyle(at).whiteSpace})`);
+            const key = path.slice(0, 3).join(" < ");
+            if (!seen.has(key)) seen.add(key) && out.push(`넘친 ${key} 오른쪽 ${Math.round(el.getBoundingClientRect().right)} > ${Math.round(col.right)}`);
+          }
+          const codes = [...chat.querySelectorAll(".markdown-code .hl-code")];
+          const wide = codes.filter((c) => c.scrollWidth > c.clientWidth && /(auto|scroll)/.test(getComputedStyle(c).overflowX));
+          if (wide.length === 0) out.push(`code block이 제 상자에서 굴러가지 않는다 ${codes.map((c) => `${c.scrollWidth}/${c.clientWidth} ${getComputedStyle(c).overflowX}`)}`);
+          return out;
+        });
+        for (const g of got) bad.push(`${name}: ${g}`);
+        await shot(p, `chat-wide-${name}`);
+      }
+      for (const [, p] of devices) await p.context().close();
+    } finally {
+      await wk.close();
+    }
+    aaa("pane", "kill", "wide1");
     if (bad.length) throw new Error(bad.join("; "));
   });
 }

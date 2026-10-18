@@ -161,6 +161,10 @@ code { font-family: var(--font-mono); }
 /* 보고 표 칸은 낱말 사이에서만 끊는다(QA t-0337 Q9). 참고 Markdown.css의 뜻(「칸은 가장 긴 낱말보다 좁아지지 않고, 자리가
    없으면 표가 그 칸 안에서 굴러간다」)은 영어에서만 서고, 한글은 음절마다 끊을 수 있어 휴대폰에서 「경/우」처럼 갈렸다. */
 .markdown th, .markdown td { word-break: keep-all; }
+/* 글 속 파일 경로 단추(herdr/Markdown.css `.markdown-file`, FilePathLink)는 둘레 글처럼 줄을 바꾼다. 참고 전역 button은 font·color만
+   정해 단추가 둘레의 white-space를 따른다. aaa 전역 button은 nowrap이라 긴 경로·경로 inline code가 한 줄로 남아 대화 칸을 가로로
+   밀었다(사용자 iPhone 10-18 19:48, 대화 안 파일 링크 plan §8.170부터). code block 안(pre)에서는 pre를 따라 그 상자 안에서 굴러간다 */
+.markdown-file { white-space: inherit; }
 svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .muted { color: var(--text-dim); }
 .err { color: var(--blocked); }

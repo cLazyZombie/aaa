@@ -5086,3 +5086,18 @@ primary 근거:
   thread를 만들고, 보고를 쓴 검토 대기 thread와 함께 데스크톱·iPad·휴대폰 폭에서 머리 글·빨강·넘침 없음을 본다.
   기존 기대를 바꾼 곳: TUI `threads_follow_the_display_order`의 「확인 필요 2 · 작업 중 2 · 병합 중 1」(검토 하나를 확인 필요로 셌다) →
   「확인 필요 1 · 검토 대기 1 · …」, 웹 E2E 12 「목록은 프로젝트 먼저」의 머리 셈 정규식에 「검토 대기」를 더함.
+
+### 8.203 대화 칸 가로 넘침: 글 속 경로 단추의 nowrap(10-18, 사용자 iPhone 19:48 「대화 보기가 좌우로 스크롤된다」)
+
+- **원인.** 글 속 파일 경로는 누르면 여는 `<button class="markdown-file">`(FilePathLink, plan §8.170)이다. 참고 전역 `button`은 font·color만 정해
+  단추가 둘레 글의 white-space를 따르는데, aaa 전역 `button`(style.css, M1-1부터)은 `white-space: nowrap`이다. `herdr/Markdown.css`의
+  `.markdown-file`(참고 ChatView.css 그대로)은 white-space를 정하지 않아 그것을 받았다. 그래서 도구 줄의 긴 경로(`Write: /…`)와 답의
+  경로 inline code가 한 줄로 남아 `.chat` 폭을 넘기고(휴대폰 390px에서 scrollWidth 1213), 그 뒤 글은 넓어진 줄에 밀려 함께 잘렸다.
+  긴 URL·경로 아닌 inline code·code block은 원래 맞았다. 대화에 이 단추가 들어온 것은 339566f2(10-18 12:37, 대화·보고서 안 파일 링크)부터다.
+  파일 보기의 Markdown 미리보기에도 59aa2c68(10-18 07:22)부터 같은 단추가 있었다.
+- **고침.** `style.css` `.markdown-file { white-space: inherit; }`. 둘레 글(일반·pre-wrap)이면 `overflow-wrap: anywhere`로 줄을 바꾸고,
+  code block(pre) 안이면 pre를 따라 그 상자(`.hl-code` overflow-x auto) 안에서 가로로 굴러간다.
+  참고와 같게 `<button>`은 inline-block처럼 그려지므로, 여러 줄로 바뀐 경로 칩 옆의 목록 점은 칩 마지막 줄에 선다(참고도 같다).
+- **시험.** 웹 E2E 22 「대화 칸 가로 넘침 0」. 데스크톱(Chromium)·iPad·휴대폰(WebKit)에서 긴 경로(사람 말·도구 줄·답 inline code·언어 없는
+  fence), 긴 inline code, 긴 URL, 긴 rust code block이 든 대화를 열고 문서·대화 칸 scrollWidth = clientWidth, 기둥이 칸 안, 기둥 밖 글 조각
+  없음(코드 상자 안 제외), code block은 제 상자에서 가로로 굴러감을 본다. 고치기 전 빌드에서 세 기기 모두 실패했다.
