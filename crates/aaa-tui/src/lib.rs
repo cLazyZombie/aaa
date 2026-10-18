@@ -7,6 +7,8 @@
 //! - 터미널 focus를 얻으면(FocusGained) 보이는 pane의 크기를 다시 건다. focus가 없을 때는 크기를 걸지 않는다.
 //! - Ctrl+V(또는 빈 붙여넣기)에서 이 기기 clipboard에 그림이 있으면 pane 머신으로 올린다(`clip`, §8.28).
 //!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
+//! - 바깥 터미널의 bracketed paste를 켜서 붙여넣기를 한 덩이로 받는다. 글은 host가 pane 프로그램 모드대로 감싸고
+//!   (`PanePaste`), 그림 파일 하나의 경로면(터미널에 끌어 놓은 파일) 그 그림을 올린다(`clip::dropped_image`, §8.147).
 //! - 키는 herdr 0.9.5 모드를 따른다(`src/client/shell/input.rs` `route_key`): Terminal(pane에 바로) → prefix 키로
 //!   Prefix(명령 키 하나, 시간 제한 없음, Esc·모르는 키는 취소) → `w`로 Navigate(목록 고르기·pane 포커스).
 //! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
@@ -87,6 +89,8 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         let mut terminal = ratatui::init();
         // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
         let _focus = FocusReport::on();
+        // 붙여넣기를 한 덩이로 받는다(herdr client `EnableBracketedPaste`): 끌어 놓은 파일 경로와 여러 줄 글을 낱 키와 가른다
+        let _paste = BracketedPaste::on();
         // 마우스 보고는 App이 설정대로 켠다. 끝날 때(panic도) 끈다.
         let _mouse = MouseOff;
         let mut app =
@@ -113,6 +117,36 @@ impl FocusReport {
 impl Drop for FocusReport {
     fn drop(&mut self) {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableFocusChange);
+    }
+}
+
+/// 붙여 넣은 글을 보내는 요청. host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC를 뺀다(Front API 1.23 `pane_paste`,
+/// herdr 서버가 client 붙여넣기를 다시 감싸는 것과 같다). 그 전 host에는 전처럼 친 글(`pane_input`)이다: 모르는 요청은 연결을
+/// 끊으므로 지금 도는 host를 끊지 않는다.
+fn paste_request(host_minor: u16, pane: String, text: String) -> FrontRequest {
+    if host_minor < 23 {
+        FrontRequest::PaneInput { pane, data: B64(text.into_bytes()) }
+    } else {
+        FrontRequest::PanePaste { pane, text }
+    }
+}
+
+/// 바깥 터미널의 bracketed paste(`CSI ? 2004 h`)를 켜고, 이 값이 사라질 때(정상·오류·panic 종료) 끈다.
+/// Windows 콘솔은 crossterm이 붙여넣기를 사건으로 주지 않는다(표지가 낱 키로 와 pane에 들어간다): 켜지 않는다.
+struct BracketedPaste;
+
+impl BracketedPaste {
+    fn on() -> BracketedPaste {
+        #[cfg(not(windows))]
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+        BracketedPaste
+    }
+}
+
+impl Drop for BracketedPaste {
+    fn drop(&mut self) {
+        #[cfg(not(windows))]
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
     }
 }
 
@@ -574,22 +608,56 @@ impl App {
     }
 
     /// 붙여넣기: 이름 창이 열려 있으면 그 칸으로(herdr `insert_overlay_text`), 다른 창이면 버린다.
-    /// 그림만 든 clipboard는 빈 붙여넣기로 오는 터미널이 있다.
+    /// 터미널에 끌어 놓은 그림 파일(그 경로 하나)은 그림으로 올린다(herdr client `read_image_file_from_terminal_drop`).
+    /// 그림만 든 clipboard는 빈 붙여넣기로 오는 터미널이 있다. 그 밖은 글이다.
     async fn on_paste(&mut self, s: String, tx: &mut FrontSender) -> Result<()> {
+        // herdr `handle_raw_events`·`insert_overlay_text`: 이름 창과 검색 중인 단축키 창은 그 입력에 넣는다. 다른 창이 떴거나
+        // Terminal 모드가 아니면(prefix·탐색·크기) 버린다. pane과 그림(`clipboard_image_target`)은 그 밖에서만이다.
         match self.overlay.as_mut() {
             Some(Overlay::Rename(r)) => {
                 r.input.insert(&s);
+            }
+            Some(Overlay::Help(h)) if h.search => {
+                let text = editor::single_line(&s);
+                if !text.is_empty() {
+                    h.query.push_str(&text);
+                    h.scroll = 0;
+                }
             }
             Some(_) => {}
             // copy 모드에서는 pane에 보내지 않는다(찾기 입력 줄이 열려 있으면 그 줄로, herdr)
             None if self.mode == Mode::Copy => {
                 self.prompt_paste(&s);
             }
+            None if self.mode != Mode::Terminal => {}
             None if s.is_empty() => {
                 self.paste_image(tx).await?;
             }
-            None => self.input(tx, s.into_bytes()).await?,
+            None => {
+                if let Some(path) = clip::dropped_image(&s)
+                    && let Some(bytes) =
+                        tokio::task::spawn_blocking(move || clip::read_dropped_image(&path)).await.ok().flatten()
+                    && self.send_image(tx, bytes).await?
+                {
+                    return Ok(());
+                }
+                self.paste_text(tx, s).await?;
+            }
         }
+        Ok(())
+    }
+
+    /// 붙여 넣은 글을 포커스 pane에(`paste_request`)
+    async fn paste_text(&mut self, tx: &mut FrontSender, text: String) -> Result<()> {
+        let Some(pane) = self.focus.clone() else { return Ok(()) };
+        if text.is_empty() {
+            return Ok(());
+        }
+        // 기록을 보고 있었으면 먼저 맨 아래로(친 글과 같다, herdr `scroll_reset`)
+        self.scroll_bottom(tx, &pane).await?;
+        self.message = None;
+        let id = tx.send(paste_request(self.host_minor, pane, text)).await?;
+        self.pending.insert(id, Pending::Input);
         Ok(())
     }
 
@@ -985,12 +1053,20 @@ impl App {
 
     /// clipboard에 그림이 있으면 포커스 pane으로 올리고 true. 없으면 아무것도 보내지 않고 false.
     async fn paste_image(&mut self, tx: &mut FrontSender) -> Result<bool> {
-        let Some(pane) = self.focus.clone() else { return Ok(false) };
+        if self.focus.is_none() {
+            return Ok(false);
+        }
         let Some(png) = tokio::task::spawn_blocking(clip::image_png).await.ok().flatten() else { return Ok(false) };
+        self.send_image(tx, png).await
+    }
+
+    /// 그림 bytes를 포커스 pane으로 올린다(형식은 host가 내용의 signature로 본다). 포커스 pane이 없으면 false.
+    async fn send_image(&mut self, tx: &mut FrontSender, bytes: Vec<u8>) -> Result<bool> {
+        let Some(pane) = self.focus.clone() else { return Ok(false) };
         self.scroll_bottom(tx, &pane).await?;
         self.attach_seq += 1;
-        self.set_message(format!("그림 보내는 중({}KB)…", png.len().div_ceil(1024)));
-        for req in aaa_common::front::attach_requests(&pane, &png) {
+        self.set_message(format!("그림 보내는 중({}KB)…", bytes.len().div_ceil(1024)));
+        for req in aaa_common::front::attach_requests(&pane, &bytes) {
             let id = tx.send(req).await?;
             self.pending.insert(id, Pending::Attach(self.attach_seq));
         }
@@ -2473,6 +2549,19 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("main — pane 1개")), "{shown}");
         assert!(lines.iter().any(|l| l.contains("↵ 닫기") && l.contains("esc 취소")), "{shown}");
         assert_eq!(cursor, None);
+    }
+
+    /// 붙여넣기는 1.23 host에 맡겨 감싸게 하고(ESC도 거기서 뺀다), 그 전 host에는 전처럼 친 글이다
+    #[test]
+    fn pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text() {
+        assert_eq!(
+            paste_request(23, "p".into(), "a\nb".into()),
+            FrontRequest::PanePaste { pane: "p".into(), text: "a\nb".into() }
+        );
+        assert_eq!(
+            paste_request(22, "p".into(), "a\nb".into()),
+            FrontRequest::PaneInput { pane: "p".into(), data: B64(b"a\nb".to_vec()) }
+        );
     }
 
     /// 탭 닫기·이름은 Front API 1.4부터: 옛 host에는 보내지 않고 알린다(모르는 요청은 연결을 끊는다)

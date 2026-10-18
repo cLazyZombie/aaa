@@ -11,6 +11,26 @@ use unicode_width::UnicodeWidthStr;
 
 use aaa_proto::layout::Rect;
 
+/// 한 줄 입력에 넣을 글: 줄바꿈·탭은 빈칸, 다른 제어 문자는 뺀다
+pub fn single_line(text: &str) -> String {
+    let mut normalized = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                normalized.push(' ');
+            }
+            '\n' | '\t' => normalized.push(' '),
+            ch if !ch.is_control() => normalized.push(ch),
+            _ => {}
+        }
+    }
+    normalized
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Editor {
     text: String,
@@ -48,23 +68,9 @@ impl Editor {
             self.text.grapheme_indices(true).map(|(i, _)| i).find(|i| *i >= self.cursor).unwrap_or(self.text.len());
     }
 
-    /// 글 넣기(붙여넣기도). 줄바꿈·탭은 빈칸, 다른 제어 문자는 뺀다. 바뀌었으면 true.
+    /// 글 넣기(붙여넣기도, `single_line`). 바뀌었으면 true.
     pub fn insert(&mut self, text: &str) -> bool {
-        let mut normalized = String::new();
-        let mut chars = text.chars().peekable();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '\r' => {
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                    }
-                    normalized.push(' ');
-                }
-                '\n' | '\t' => normalized.push(' '),
-                ch if !ch.is_control() => normalized.push(ch),
-                _ => {}
-            }
-        }
+        let normalized = single_line(text);
         if normalized.is_empty() {
             return false;
         }

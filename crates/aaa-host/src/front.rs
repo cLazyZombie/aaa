@@ -236,6 +236,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
+                | FrontRequest::PanePaste { .. }
                 | FrontRequest::PaneSend { .. }
                 | FrontRequest::PaneSendText { .. }
                 | FrontRequest::PaneSendKeys { .. }

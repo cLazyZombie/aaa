@@ -38,6 +38,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.21: 병합 대기열 요청(`merge_enqueue`·`merge_drop`·`merge_list`·`merge_land`)을 없앰(옛 front가 보내면 모르는 요청
 /// 오류다), resolve `skip_copy`·`discard_uncopied`(plan §8.135),
 /// 1.22: `ReadSource::Detection`(`pane read --source detection`)(plan §8.110),
+/// 1.23: TUI 붙여넣기 `pane_paste`(plan §8.147),
+/// 1.24: 폴더 보기 `pane_dir`(plan §8.148),
 /// 1.25: TUI 휠 기록 넘기기(`PaneScroll`, `GridFrame.scroll`)(plan §8.150),
 /// 1.26: TUI 고른 글을 기록까지 읽기(`PaneSelectionRead`, `TextPoint`)·copy 모드 이동·찾기(`PaneCopyMotion`·`PaneCopySearch`)(plan §8.153·§8.154)
 pub const FRONT_API: Version = Version { major: 1, minor: 26 };

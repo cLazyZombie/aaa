@@ -2821,7 +2821,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 2만 줄이 넘으면 줄마다 요소를 만들지 않고 한 글로 그린다(참고 `CodeLines`). 참고는 2천 줄부터 가상화한다. aaa는 가상화 전이라 2만 줄 넘는 소스에는 줄 번호·줄 표시가 없다. 글은 256KiB까지만 읽으므로 줄이 아주 짧을 때만 생긴다.
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
-  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`), 폴더 보기, 「파일 뷰어」 설정(줄 바꿈·Markdown 폭).
+  - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
   - 대화 보기·보고서 안 파일 링크.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
@@ -3181,15 +3181,79 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 결함 심기: 첫 화면 끄기·기억 끄기·drawer `height:auto` 빼기를 하나씩 넣으면 그 단계가 실패한다.
   - 다른 시험은 목록 안의 것을 `inList`(harness: 닫힌 drawer면 열고 누름, 닫히는 중이면 움직임이 끝난 뒤 봄)로 누른다. 특정 pane을 첫 화면으로 여는 시험은 주소(`pairPage({hash: paneHash(name)})`)로 연다. 첫 화면이 열자마자 붙는 WebSocket을 듣는 시험은 `onPage`로 먼저 듣는다.
 
+### 8.147 TUI 붙여넣기와 그림 파일 끌어놓기(10-18, 차이 목록 E 「그림 파일 끌어놓기」, FRONT_API 1.23)
+
+- **참고.** herdr client는 바깥 터미널의 bracketed paste(2004)를 켠다(`client/terminal_setup.rs` `EnableBracketedPaste`).
+  - 터미널에 파일을 끌어 놓으면 터미널은 그 경로를 붙여 넣는다. 그 글이 그림 파일 하나의 경로면 herdr는 파일을 그림으로 서버에 보낸다(`client/mod.rs` 866~875줄, `clipboard_images.rs` `image_path_from_terminal_drop`).
+  - 판정: 한 줄(끝 줄바꿈은 뺀다), 같은 따옴표로 감쌌으면 벗기고, unix는 `\ ` 같은 escape를 푼다. 절대 경로·그림 확장자·보통 파일·비지 않음·16MiB 안이어야 한다. 아니면 글로 붙인다.
+  - 서버는 붙여 넣은 글을 그 pane 프로그램이 켠 2004대로 다시 감싼다.
+- **aaa에 없던 것.** aaa TUI는 바깥 터미널의 2004를 켜지 않았다(main도).
+  - 붙여넣기가 낱 키로 왔다. 여러 줄 글의 줄바꿈은 Enter가 되어 셸·harness가 줄마다 실행했다.
+  - pane 프로그램이 켠 2004로 감싸지 않았고, 글 안의 ESC도 그대로 갔다. 웹은 `pasteText.ts`가 뺀다(t-0340 보안 감사).
+  - §8.28의 「빈 붙여넣기도 그림으로 받는다」도 실제로는 오지 않았다. 이제 온다.
+- **옮긴 것.**
+  - TUI는 시작할 때 2004를 켜고 끝날 때(오류·panic 포함) 끈다.
+  - 붙여 넣은 글은 새 요청 `pane_paste {pane, text}`로 보낸다. host가 그 pane 모드대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). 차례·lease는 키 입력(`pane_input`)과 같다.
+  - 1.23 전 host에는 전처럼 친 글(`pane_input`)로 보낸다. 모르는 요청은 연결을 끊기 때문이다.
+  - 끌어놓기 판정은 herdr 규칙 그대로다(`clip::dropped_image`). 그림이면 Ctrl+V 그림과 같은 길로 올리고 셸 줄에 따옴표 경로를 넣는다(§8.28·§8.51).
+  - 붙여넣기가 가는 곳은 herdr `handle_raw_events`·`insert_overlay_text`대로다. 이름 창은 이름에, 검색 중인 단축키 창은 검색어에 넣는다(줄바꿈은 빈칸). 다른 창이 떴거나 Terminal 모드가 아니면(prefix·탐색·크기) 버린다. pane과 그림은 그 밖에서만이다. 전에는 창이 없으면 prefix 모드에서도 pane에 갔고, 단축키 검색 붙여넣기는 버렸다(2004를 안 켜 낱 키로 올 때는 검색어에 들어갔다).
+- **참고와 다른 것.**
+  - herdr는 원격 client(`--remote`)일 때만 끌어놓기를 본다. aaa TUI는 늘 agent 머신과 떨어진 front라 늘 본다. Ctrl+V 그림과 같은 판단이다(차이 목록 E 「Ctrl+V 그림」).
+  - bmp는 그림으로 보지 않고 글로 붙인다. aaa host는 PNG·JPEG·GIF·WebP만 받는다(§9 형식 규칙).
+  - **Windows(3 OS).** herdr는 Windows 콘솔에서 VT 입력을 켜고 제 해석기(`client/input/windows_vti.rs`, 4,471줄)로 붙여넣기를 받는다. aaa TUI는 crossterm 입력을 쓴다. crossterm은 Windows에서 붙여넣기 사건을 주지 않고, 2004를 켜면 표지가 낱 키로 pane에 들어간다. 그래서 Windows에서는 2004를 켜지 않는다. 붙여넣기는 전처럼 낱 키이고 끌어놓기는 없다. VT 입력 해석기를 옮기는 일은 따로 남긴다.
+- **시험.**
+  - 유닛 `clip::` 넷(herdr `remote_image_file_drop_bridge_*`): 절대 경로, 따옴표와 끝 줄바꿈, `\ ` escape, 그림이 아닌 것(상대 경로·그림 아닌 확장자·여러 줄·빈 글·bmp·폴더·빈 파일·상한 넘음과 상한 딱).
+  - 유닛 `pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text`: 1.23 host에는 `pane_paste`, 1.22 host에는 `pane_input`.
+  - TUI E2E `paste_and_image_drop_like_herdr`(약 1초):
+    - 바깥 터미널 2004를 켜고, 나가면 끈다.
+    - 2004를 안 켠 프로그램(`cat -v`)에는 감싸지 않고 ESC를 뺀다. 그림 아닌 절대 경로·상대 그림 경로·없는 그림 경로는 글 그대로다.
+    - 2004를 켠 프로그램에는 `^[[200~…^[[201~`로 감싸고 안의 ESC는 뺀다.
+    - 빈칸을 `\ `로 escape한 그림 경로를 붙이면 첨부 하나가 생긴다. pixel이 같고, 셸 줄에 따옴표 경로가 들어가며 실행하지 않는다.
+    - prefix 모드의 붙여넣기는 pane에 가지 않는다. 검색 중인 단축키 창에 붙이면 거르고, 새 탭 이름 창에 붙인 `붙인\n탭`은 `붙인 탭`이 된다.
+  - 변형 확인: 열다섯 모두 실패한다. 끌어놓기 판정 끔, bmp 허용, txt 허용, 상대 경로 허용, escape 안 풂, host가 안 감쌈, host가 늘 감쌈, ESC 안 뺌, 옛 host 대체 없음, 2004 안 켬, 2004 안 끔, 크기 상한 없음, 단축키 검색 붙여넣기 버림, prefix 모드도 pane에, 이름 창 붙여넣기 버림.
+  - 시험 경합 고침(10-18 미리 병합 ci-local): 둘째 단계 마지막에 cat을 다시 띄우고 화면 지움만 기다린 뒤 ^C를 보냈다. ^C가 셸의 `clear`와 `cat` 사이에 닿으면 cat이 남아 셋째 단계 명령 줄을 읽었다. 이제 ^C는 표지가 cat을 지나온 뒤에만 보내고 마지막에는 cat을 다시 띄우지 않는다. `clear`와 `cat` 사이에 ^C를 무시하는 1초를 넣으면 옛 구조는 같은 꼴로 실패하고 새 구조는 통과한다.
+  - 둘째 경합(10-18 착지 창 미리 병합 ci-local): 붙여 넣은 줄을 cat이 되돌리기 전에 표지 줄을 쳐서, 그 tty 메아리(TUI가 「e」·「nd-a」로 나눠 보냄) 사이에 cat 출력이 끼어 표지가 한 번만 보였다. 표지 줄을 없애고, 붙여 넣은 줄이 두 번(메아리와 cat 출력) 보인 뒤에 단언하고 다음 글을 친다. 기다리는 조각(`two`·경로·`31my`)은 감싸기·ESC 빼기가 틀려도 나오므로 틀리면 기다림이 아니라 단언이 실패한다. 옛 구조에 표지를 둘로 나눠 치고 cat을 0.3초 늦추면 같은 문구로 실패하고, 새 구조는 cat을 늦춰도 통과한다.
+||||||| d6bb95c
+
+### 8.148 파일 보기의 폴더 보기(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205, FRONT_API 1.24)
+
+- **참고.** herdr-web-ui 파일 보기는 받은 경로가 파일이 아니면(404) 같은 경로를 폴더로 읽어 본다. 폴더면 폴더 목록(`DirectoryBrowser`)을 그린다(`FileViewer.tsx` 186~197·281줄). 서버는 `server/directories.ts` `listDirectories`다.
+  - 폴더 한 단계의 폴더와 파일(크기)을 보인다. 폴더 먼저, 각각 이름순(`localeCompare` base·numeric), 500개까지. 숨은 이름(`.`)은 「숨김 항목 표시」를 고를 때만이다. symlink는 가리키는 것으로 본다.
+  - 위 폴더·홈 폴더 단추가 있다. 막대는 연 폴더 기준이다(`workspacePath.ts`, 「docs/v2」). 파일을 누르면 연다(파일 보기의 `onOpen`: 같은 기록 칸).
+  - 터미널 글 속 경로는 확장자가 있어야 링크다. 그래서 폴더는 OSC 8 file 링크(`ls --hyperlink` 등)와 Markdown 안 폴더 링크(`[이 폴더](./)`)로 열린다.
+- **aaa의 길.** 웹 → host `pane_dir {pane, path, hidden}`(조작 기기만, `pane_file`과 같은 보기 범위) → 그 머신 agent `DirList`(agent 기능 `dir.v1`).
+  - agent는 세션이 지금 있는 폴더 기준으로 읽는다(`FileLocate`와 같다). 빈 경로·`~`는 집이다.
+  - agent가 `dir.v1`을 모르면 「그 머신 agent가 폴더 보기를 아직 모른다」를 보인다.
+- **옮긴 것.** `fileIcons.ts`·`workspacePath.ts`·`DirectoryBrowser.css`는 그대로, `FileGlyph.tsx`는 import 경로만 바꿨다. `DirectoryBrowser.tsx`는 읽기를 `pane_dir`로 바꾸고 문구를 참고 ko로 옮겼다.
+- **참고와 다른 것.**
+  - **허용 폴더(§6.5, 보안).** 실제 경로가 `[agent] file_roots` 안인 폴더만 읽는다. 위 폴더도 허용 폴더 안일 때만 준다. 그래서 허용 폴더의 맨 위에서는 위 폴더 단추가 꺼진다. 집이 허용 폴더 밖이면 홈 폴더 단추는 까닭을 말한다. 허용 밖 폴더를 가리키는 symlink는 이름은 보이지만 열면 「허용한 폴더 밖」이다.
+  - 폴더 고르기(`onPick`)·새 폴더·걸러 보기·명령 팔레트가 고른 폴더는 옮기지 않았다. 참고의 새 세션 대화 상자와 Files 창 것이라 aaa에 쓰는 곳이 없다.
+- **시험.**
+  - 유닛: agent `lists_folders_like_the_reference`(순서·숨김·크기·집·`~`·상대·위 폴더·허용 밖), `lists_links_by_their_target_and_cuts_long_folders`(symlink·끊어진 것·500개). proto `control_classification`.
+  - 웹 E2E `16-file-viewer` 넷째 단계(약 2.2초): OSC 8 폴더 링크 → 목록, 숨김 항목, 폴더 열기·위 폴더, 허용 폴더 맨 위에서 위 폴더 없음, 홈 폴더는 허용 밖 알림, 파일을 누르면 Markdown, 그 안의 폴더 링크, 뒤로 한 번이면 pane, 허용 밖 폴더 알림, 휴대폰·iPad 캡처, 보기 권한 기기는 host가 거부(같은 요청이 조작 기기에는 된다).
+  - 변형 확인: 여덟 모두 실패한다. 허용 폴더 안 봄·위 폴더 안 거름·숨은 이름 늘 넣음·폴더 순서 글자순(agent 유닛과 E2E), 보기 기기도 폴더(proto 유닛과 E2E), 폴더 목록을 그리지 않음·허용 밖 폴더 까닭 없음·파일 눌러도 안 엶(E2E).
+  - aaa 모양: 참고 CSS를 그대로 두면 aaa `style.css`의 전역 `button`(가운데 맞춤·고정 높이)이 목록 줄에 새어 이름이 가운데로 갔다. `DirectoryBrowser.css` 끝에서 되돌린다.
+
+### 8.149 「파일 뷰어」 설정: 긴 줄 바꿈·Markdown 너비(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205)
+
+- **참고.** herdr-web-ui 설정 「채팅」 page 끝 무리 「파일 뷰어」(`SettingsDialog.tsx` 374~385줄)에 둘이 있다. 둘 다 이 기기 설정이다(`settings.ts` `wrapCode`·`markdownWidth`, `device` 범위).
+  - 「긴 줄 바꿈」(기본 꺼짐): 파일 보기 소스의 긴 줄을 옆으로 굴리지 않고 접는다(`TextFileView` `CodeLines wrap`).
+  - 「Markdown 너비」(기본값 readable·전체 너비 full): 기본값은 Markdown을 대화 열 너비(`--chat-w`)로 묶어 가운데에 두고, 전체 너비는 파일 보기를 채운다(`MARKDOWN_CLASS`).
+- **aaa.** 채팅 page의 「빠른 답장」 다음에 같은 무리를 두었다. 문구는 참고 `i18n.ko.ts`다(「파일 뷰어」·「긴 줄 바꿈」·「Markdown 너비」·「기본값」·「전체 너비」).
+  - 저장은 aaa 설정 꼴대로 열쇠마다 localStorage다: `aaa:wrap-code`(켜고 끄는 기기 설정 표에 더함), `aaa:markdown-width`. 기본값이면 지운다. 기기 사이에 맞추지 않는다(참고 `device`).
+- **참고와 다른 것.** 같은 무리의 「비교 보기 방식」(`diffStyle`)은 뺐다. 그 설정을 쓰는 저장소 비교 보기(`RepoDiffViewer`)가 aaa에 없다. 가상화한 긴 소스(`VirtualSource wrap`)도 아직 없어(§8.125 남은 것) 줄 바꿈은 `CodeLines`에만 간다.
+- **시험.** 웹 E2E `16-file-viewer` 다섯째 단계: 기본은 긴 줄 한 줄·옆으로 굴림·Markdown이 파일 보기보다 좁음, 켜면 긴 줄이 여러 줄로 접히고 옆으로 굴릴 것이 없음·Markdown이 파일 보기 너비, 다시 읽어도 그대로, 다른 기기(휴대폰·iPad)는 기본값에서 시작해 제 설정만 바뀜. 결과(높이·너비·옆 굴림)만 보고 class·저장 꼴은 보지 않는다(t-0338 웹 E2E 기준).
+  - 변형 확인: 여섯 모두 실패한다. 소스에 줄 바꿈을 넘기지 않음, 전체 너비도 대화 열, 기본 줄 바꿈 켬, 기본 너비 전체, 저장한 줄 바꿈을 읽지 않음, 너비를 저장하지 않음.
+
 ### 8.150 TUI 휠 기록 넘기기(herdr `apply_scroll`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「휠로 scrollback」, FRONT_API 1.25)
 
 - **참고(herdr 0.9.5).** `src/server/pane_input.rs` `apply_scroll`(보고 pane → 휠 보고, alt 화면 → 화살표, 아니면 `scroll_up`·`scroll_down`을 `mouse_scroll_lines`줄)과 키·글·붙여넣기·마우스 보고 전 `scroll_reset`(누르지 않은 움직임 보고는 그대로), `src/pane/terminal.rs` `ScrollMetrics`, `[ui] mouse_scroll_lines`(기본 3). 기본 TUI 화면은 PageUp·PageDown을 프로그램에 보낸다(`apply_client_terminal_input_events`의 `host_page_keys`가 false, host 기록 넘기기는 `herdr attach`만).
 - **proto(FRONT_API 1.25).** `FrontRequest::PaneScroll { pane, by }`(`ScrollBy`: `up`·`down`(lines)·`bottom`·`offset`(맨 아래에서 lines)): 이 연결의 `PaneWatch` 구독이 보는 기록 위치만 옮긴다. 프로그램에는 아무것도 가지 않고, 구독이 없으면 NotFound. `GridFrame.scroll`(`GridScroll { offset, max }`, 옛 host는 0).
 - **host.** 구독마다 기록 위치를 두고, 장면을 만들 때 pane 화면 사본(aaa-vt `grid_rows_at`)에서 그 위치의 줄을 읽고 같은 잠금 안에서 되돌린다(다른 읽기·웹 snapshot은 늘 지금 화면을 본다). 올라가 있는 동안 기록이 늘면 그만큼 더 올라 보던 줄을 지킨다(ghostty viewport 고정과 같음, 기록 상한에서 앞을 버리면 지키지 못한다). 기록보다 크면 묶고, alt 화면은 기록 0. 올라가 있는 동안 커서를 숨긴다. 모드나 기록 위치만 바뀌어도 한 장 보낸다(커서·모드·위치 hash).
-- **TUI.** 보통 화면(마우스 보고 끔·alt 화면 아님) pane의 휠은 `[tui] mouse_scroll_lines`(기본 3)줄씩 위·아래. 그 pane에 키·글·붙여넣기·그림·마우스 보고를 보내기 전에 올라가 있었으면 맨 아래로 돌린다(누르지 않은 움직임 보고는 그대로). 옛 host(1.15 이하)에서는 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
+- **TUI.** 보통 화면(마우스 보고 끔·alt 화면 아님) pane의 휠은 `[tui] mouse_scroll_lines`(기본 3)줄씩 위·아래. 그 pane에 키·글·붙여넣기·그림·마우스 보고를 보내기 전에 올라가 있었으면 맨 아래로 돌린다(누르지 않은 움직임 보고는 그대로). 옛 host(1.24 이하)에서는 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
 - **다른 점.** 기록 위치는 화면(front 연결)마다 둔다. herdr는 pane마다 서버에 하나라 모든 client가 같이 움직인다. aaa는 여러 기기가 한 pane을 보므로 한 화면이 넘겨도 다른 화면은 그대로이고, 맨 아래로 돌리기도 그 화면이 입력을 보낼 때만이다(다른 화면·CLI 입력은 위치를 그대로 둔다).
 - **다음 묶음(5a-2).** pane scrollbar(herdr `pane_scrollbars`: 보통 화면에서 오른쪽 1칸 gutter, PTY가 1칸 좁아짐, 누르기·끌기). 그전에는 올라가 있다는 표시가 숨은 커서뿐이다. → §8.152
-- **시험.** 유닛: aaa-vt `grid_rows_at_scrollback_offset`(위치·끝에서 멈춤·되돌림·alt 화면), host `grid_view_keeps_the_lines_it_shows`(끝에서 멈춤·보던 줄 고정·묶기·맨 아래 따라감), 설정 `mouse_scroll_lines`. TUI harness `wheel_scrolls_history_like_herdr`: `seq 1 200` 뒤 휠 위 한 칸이면 170..198, 올라간 동안 CLI `pane run`의 출력 6줄이 와도 보던 줄을 지켜 한 칸 더 올리면 167..195, 휠 아래 네 칸이면 맨 아래, 올라간 채 치면 맨 아래로 돌아와 친 글이 보임.
+- **시험.** 유닛: aaa-vt `grid_rows_at_scrollback_offset`(위치·끝에서 멈춤·되돌림·alt 화면), host `grid_view_keeps_the_lines_it_shows`(끝에서 멈춤·보던 줄 고정·묶기·맨 아래 따라감), 설정 `mouse_scroll_lines`. TUI harness `wheel_scrolls_history_like_herdr`: `seq 1 200` 뒤 휠 위 한 칸이면 170..198, 올라간 동안 CLI `pane run`의 출력 6줄이 와도 보던 줄을 지켜 한 칸 더 올리면 167..195, 휠 아래 네 칸이면 맨 아래, 올라간 채 치면 맨 아래로 돌아와 친 글이 보임, 올라간 채 붙여 넣어도(bracketed paste, §8.147 `PanePaste`) 맨 아래로(main 4474e43 병합 때 더함, `paste_text`의 맨 아래로를 빼는 결함을 심으면 실패).
 
 ### 8.151 TUI pane 이름 바꾸기(herdr `rename_pane`)(10-18, 차이 목록 4장 C, §8.109가 남긴 TUI 몫)
 
@@ -3200,7 +3264,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 ### 8.152 TUI pane scrollbar(herdr `pane_scrollbars`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「scrollbar」)
 
 - **참고(herdr 0.9.5).** `src/ui/panes.rs` `terminal_inner_rect_for`(`pane_scrollbars`이고 alt 화면이 아니고 폭이 4보다 크면 오른쪽 1칸을 scrollbar 칸으로 빼고 PTY도 그만큼 좁다, `stable_scrollbar_gutter`: 기록이 없어도 칸은 비워 둔다), `src/ui/scrollbar.rs`(`ScrollMetrics`, thumb 길이 = 화면 줄 × 트랙 / (기록 + 화면 줄) 반올림·1 이상, 트랙 `▕`, thumb 포커스 `▐`(overlay1)·아니면 `▕`(overlay0), 트랙 색 포커스 overlay0·아니면 surface_dim), `src/client/shell/mouse.rs`(맞히기 차례 scrollbar → 나눔 경계 → pane, 누르면 그 pane에 포커스, thumb 위면 잡은 줄을 지키며 끌기, 아니면 thumb 가운데가 그 줄로 뛰기, 끄는 동안 33ms마다 바뀐 위치만), `[ui] pane_scrollbars`(기본 켬).
-- **TUI.** herdr대로 보통 화면 pane의 오른쪽 1칸을 scrollbar 칸으로 빼고(PTY가 1칸 좁다), alt 화면(vim 등)에 들어가면 칸을 돌려줘 PTY가 넓어졌다가 나오면 다시 좁아진다. 기록이 있을 때만 그 칸에 트랙과 thumb를 그린다(위치는 §8.150 `GridFrame.scroll`). 누르기·끌기는 `PaneScroll { by: offset }`(§8.150, 이 화면만)으로 보내고, 끄는 동안은 나눔 경계 끌기와 같이 33ms마다 바뀐 위치만, 뗄 때 마지막 위치를 보낸다. `[tui] pane_scrollbars = false`면 칸을 빼지 않는다(그때는 PTY가 칸 전체). 기록 위치를 모르는 옛 host(1.15 이하)에서는 기록이 0이라 트랙을 그리지 않는다(칸은 비워 둔다).
+- **TUI.** herdr대로 보통 화면 pane의 오른쪽 1칸을 scrollbar 칸으로 빼고(PTY가 1칸 좁다), alt 화면(vim 등)에 들어가면 칸을 돌려줘 PTY가 넓어졌다가 나오면 다시 좁아진다. 기록이 있을 때만 그 칸에 트랙과 thumb를 그린다(위치는 §8.150 `GridFrame.scroll`). 누르기·끌기는 `PaneScroll { by: offset }`(§8.150, 이 화면만)으로 보내고, 끄는 동안은 나눔 경계 끌기와 같이 33ms마다 바뀐 위치만, 뗄 때 마지막 위치를 보낸다. `[tui] pane_scrollbars = false`면 칸을 빼지 않는다(그때는 PTY가 칸 전체). 기록 위치를 모르는 옛 host(1.24 이하)에서는 기록이 0이라 트랙을 그리지 않는다(칸은 비워 둔다).
 - **다른 점.** 없음(herdr 기본값과 같이 켬). PTY가 1칸 좁아지는 것은 herdr와 같은 값이고, 바꾸려면 `pane_scrollbars = false`.
 - **시험.** 유닛: `scrollbar` `thumb_and_offsets_like_herdr`(thumb 길이·위치, 맨 위·맨 아래 누르기, 잡기·끌기, 그리기 색), 설정 `pane_scrollbars`. TUI harness `pane_scrollbar_like_herdr`: PTY 폭이 칸 − 1, `seq 1 200` 뒤 트랙 `▕`과 맨 아래 thumb `▐`, 트랙 맨 위 누르기면 맨 위(명령 줄 다음 `1`), thumb를 잡아 아래 끝까지 끌고 떼면 맨 아래, alt 화면이면 PTY가 칸 전체로 넓어졌다가 나오면 다시 좁아짐. 다른 harness 시험의 PTY 폭 기대값도 1칸 좁혔다(`GUTTER`).
 
@@ -3209,7 +3273,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고(herdr 0.9.5).** `src/selection.rs`(고른 범위는 기록 맨 앞 줄이 0인 절대 줄 번호, 화면 맨 위 줄 = 기록 줄 수 − 맨 아래에서 올라간 줄 수), `src/client/shell/mouse.rs`(끌기가 pane 위·아래 밖이면 그 거리 × 3줄(3~15)을 바로 넘기고, 가장자리 줄 포함 그쪽에 있는 동안 `SELECTION_AUTOSCROLL_INTERVAL` 30ms마다 한 줄씩 더, 더 넘길 수 없거나 끌기가 끝나거나 pane 칸이 바뀌면 멈춤, 고른 끝은 화면 frame을 기다리지 않고 보낸 위치로 잡음. 끄는 중 휠은 `mouse_scroll_lines`줄 넘기며 고른 끝을 다시 잡고 pane에 넘기지 않음 `scroll_in_progress_selection`), `src/app/api/panes.rs` `PaneSelectionRead`(고른 글은 서버가 화면 사본에서 기록까지 읽는다, client는 기록 글을 갖지 않는다).
 - **proto(FRONT_API 1.26).** `TextPoint { row, col }`(row는 기록 맨 앞 줄이 0, alt 화면은 화면 줄만), `FrontRequest::PaneSelectionRead { pane, from, to }`(읽기 전용, 차례 상관없음, 끝 칸 포함) → `FrontResponse::Selection { pane, text, truncated }`.
 - **host·vt.** aaa-vt `selection_text`: 기록 위치를 잠깐 옮겨 줄마다 칸 범위의 글을 읽고 되돌린다(`grid_rows_at`과 같은 잠금 안). 화면 폭에서 접힌 줄은 줄바꿈 없이 잇고, 접히지 않은 줄은 끝 공백을 뺀다. 응답이 front frame(`MAX_FRAME` 1MiB)에 들게 512KiB에서 앞쪽만 두고 `truncated`.
-- **TUI.** 고른 범위(`Selection`)를 기록 줄 번호로 두어 휠로 넘겨도 고른 글을 따라 칠한다. 끌기·가장자리 자동 넘기기·끄는 중 휠은 herdr 값 그대로(`PaneScroll { by: offset }`, §8.150). 떼면(또는 `copy_on_select`를 끈 채 ctrl+c·cmd+c, 두 번 누름 낱말) host에 `PaneSelectionRead`를 보내고 응답 글을 복사한다(너무 길면 「앞쪽만」 알림). 옛 host(1.16 이하)면 이 화면에 보이는 줄만 바로 복사한다.
+- **TUI.** 고른 범위(`Selection`)를 기록 줄 번호로 두어 휠로 넘겨도 고른 글을 따라 칠한다. 끌기·가장자리 자동 넘기기·끄는 중 휠은 herdr 값 그대로(`PaneScroll { by: offset }`, §8.150). 떼면(또는 `copy_on_select`를 끈 채 ctrl+c·cmd+c, 두 번 누름 낱말) host에 `PaneSelectionRead`를 보내고 응답 글을 복사한다(너무 길면 「앞쪽만」 알림). 옛 host(1.25 이하)면 이 화면에 보이는 줄만 바로 복사한다.
 - **다른 점.** 기록이 상한(`SCROLLBACK` 10,000줄)에 차서 앞 줄을 버리기 시작하면 줄 번호가 밀려, 그 사이 고른 글이 몇 줄 어긋날 수 있다(herdr도 고른 글 읽기는 `content_revision`을 보지 않는다). 512KiB 상한은 aaa만(front frame 한도). 고르는 동안 새 출력으로 host가 보던 줄을 지키려 위치를 올리면, 다음 끌기가 보낸 위치로 되돌린다(herdr도 고르는 동안 자기 위치를 쓴다).
 - **시험.** 유닛: aaa-vt `selection_text_spans_history`(기록·화면 걸침, 끝 칸, 거꾸로, 접힌 줄, 끝 넘김, 상한, 읽은 뒤 그대로, alt 화면), TUI `selection_text_by_columns`(기록 줄 번호로 칠하기·`view_top`·`edge_lines`). TUI harness `drag_select_scrolls_history_like_herdr`: `seq 1 200` 뒤 「182」를 누르고 탭 막대로 끌어 잡고 있으면 맨 위 줄이 150 이하까지 올라가고, 떼면 누를 때 화면에 없던 줄(160 등)부터 181과 「1」까지 이어진 숫자로 복사, 「w-6」을 누르고 끈 채 휠 위 한 칸이면 고른 끝이 세 줄 위 「199」로 가 네 줄 복사·셸에는 아무것도 가지 않음.
 
