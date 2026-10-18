@@ -2722,8 +2722,11 @@ fn coordinator_flow() {
         std::fs::read_to_string(pdir.join("TASKS.md")).unwrap().replace("(fake@labA)", &format!("(fake@labA) · {id}"));
     std::fs::write(pdir.join("TASKS.md"), md).unwrap();
 
-    // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다
-    let report_next = w.wait_show("보고", &id, |v| v["report_hash"].is_string())["next"].clone();
+    // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다. 보내기는 brief 받음 뒤에만 된다: 가짜 agent는 brief를
+    // 읽자마자 보고를 써서 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있다(ci-local, f4f1085 뒤)
+    let report_next = w
+        .wait_show("보고·brief 받음", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered")["next"]
+        .clone();
     let mut want: Vec<Value> = report_next.as_array().unwrap().clone();
     assert!(!want.is_empty(), "가짜 agent 보고에는 Next가 있다");
     assert_eq!(w.h.ok(&["thread", "next", "demo", &id])["lines"], report_next);
