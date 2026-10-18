@@ -84,7 +84,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125), profile.v1: `SpawnSpec.profile`(plan §8.126)
         // ask_anew.v1: 막힘에 입력이 간 뒤 화면에 남은 확인창을 같은 글이어도 다시 알린다(`detect::Watch::input_sent`).
         // host는 그 질문을 답한 질문의 늦은 사건으로 거르지 않는다
-        // dir.v1: 폴더 보기 `DirList`(plan §8.148), scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.162)
+        // dir.v1: 폴더 보기 `DirList`(plan §8.148), scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.167)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),

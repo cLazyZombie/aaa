@@ -1550,7 +1550,7 @@ impl App {
             // herdr `edit_scrollback`: 기록을 그 pane 머신 편집기로 연다(host가 나눠 띄우고 zoom한다). 응답까지 키를 붙잡는다
             Action::EditScrollback => {
                 let Some(pane) = focus else { return Ok(()) };
-                if self.host_at_least(28) {
+                if self.host_at_least(31) {
                     let req =
                         FrontRequest::PaneEditScrollback { workspace: Some(self.ws_name.clone()), pane: pane.clone() };
                     let id = tx.send(req).await?;
