@@ -6,6 +6,7 @@
 use aaa_proto::{GridRun, MouseEncoding, MouseMode, PaneModes, ReadFormat, ReadSource, ScreenText, TermColors};
 
 pub mod copy;
+mod link;
 
 pub struct Vt {
     parser: vt100::Parser<Modes>,
@@ -20,6 +21,8 @@ struct Modes {
     /// Claude·Codex는 제목 앞 spinner로 작업 중을 알린다. 빈 제목은 지운다.
     osc_title: Option<String>,
     osc_progress: Option<String>,
+    /// OSC 8 링크 구간(vt100은 칸에 링크를 담지 않는다, [`link`])
+    links: link::Links,
 }
 
 /// herdr `AGENT_OSC_MAX_CHARS`: 제목은 프로그램이 정한 글이라 길이를 묶는다
@@ -35,6 +38,17 @@ impl Modes {
         let title = sanitize_osc(payload);
         self.osc_title = (!title.is_empty()).then_some(title);
     }
+
+    /// OSC 8을 열거나(빈 uri면) 닫는다. 자리는 지금 커서의 절대 자리다.
+    fn hyperlink(&mut self, screen: &mut vt100::Screen, uri: &[u8]) {
+        let uri: String =
+            String::from_utf8_lossy(uri).chars().filter(|c| !c.is_control()).take(link::MAX_URI_CHARS).collect();
+        let alt = screen.alternate_screen();
+        let back = screen_back(screen);
+        let (r, c) = screen.cursor_position();
+        let at = (back + usize::from(r), c);
+        self.links.osc(&uri, alt, at, |start| Some(span_text(screen, back, start, at)));
+    }
 }
 
 impl vt100::Callbacks for Modes {
@@ -44,9 +58,18 @@ impl vt100::Callbacks for Modes {
 
     /// vt100(vte)은 OSC 본문을 `;`마다 나눈다. herdr는 첫 `;`에서만 나누므로(`parse_agent_osc_body`) 나머지를 다시 잇는다:
     /// `;`가 든 제목과 OSC 9 진행(`9;4;3;` → `4;3;`)이 여기로 온다.
-    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
         let [command, rest @ ..] = params else { return };
         if rest.is_empty() {
+            return;
+        }
+        // `OSC 8 ; params ; uri`: uri의 `;`도 나뉘어 온다
+        if *command == b"8" {
+            if let [_, uri @ ..] = rest
+                && !uri.is_empty()
+            {
+                self.hyperlink(screen, &uri.join(&b';'));
+            }
             return;
         }
         let payload = rest.join(&b';');
@@ -113,6 +136,8 @@ impl Vt {
         if (rows, cols) == (old_rows, old_cols) {
             return;
         }
+        // 다시 접거나 줄을 올리면 남긴 링크 자리가 맞지 않는다
+        self.parser.callbacks_mut().links.clear();
         let screen = self.parser.screen_mut();
         let alt = screen.alternate_screen();
         let rewrap = if cols != old_cols {
@@ -459,39 +484,81 @@ impl Vt {
         back + usize::from(self.parser.screen().size().0)
     }
 
-    /// 절대 줄 `start..=end`의 칸(넓은 글자 뒤 칸은 뺀다)과 접힘. 화면 높이씩 기록을 올려 읽고 맨 아래로 되돌린다.
+    /// 절대 줄 `start..=end`의 칸(넓은 글자 뒤 칸은 뺀다)과 접힘
     fn text_rows(&mut self, start: usize, end: usize) -> Vec<copy::Row> {
         let back = self.history_rows();
+        text_cells(self.parser.screen_mut(), back, start, end)
+    }
+
+    /// 절대 자리 `at`(기록 맨 앞이 0)을 누르면 열 링크(herdr `pane.link.activate`): 그 칸을 덮는 OSC 8 링크의 uri, 없으면
+    /// 그 칸을 포함한 공백 사이 낱말(접힌 줄을 잇는다) 안의 http(s) URL. 여는 것은 http·https만이다([`link`]).
+    pub fn link_at(&mut self, at: (usize, u16)) -> Option<String> {
+        let alt = self.parser.screen().alternate_screen();
+        let back = self.history_rows();
+        let rows = usize::from(self.parser.screen().size().0);
+        if at.0 >= back + rows {
+            return None;
+        }
+        if let Some(uri) = self.osc8_at(at, alt, back) {
+            return link::safe_web_url(&uri).then_some(uri);
+        }
+        self.text_url_at(at, back + rows)
+    }
+
+    /// `at`을 덮는 OSC 8 구간(새것부터). 기록이 가득하면(맨 앞 줄을 버리며 올린다) 절대 줄이 그대로인 채 글이 위로 밀리므로,
+    /// 남긴 줄보다 위에서 같은 칸·같은 글을 찾는다. 그 자리 글이 남긴 글과 다르면(덮어썼으면) 링크가 아니다.
+    fn osc8_at(&mut self, at: (usize, u16), alt: bool, back: usize) -> Option<String> {
+        let full = !alt && back >= SCROLLBACK;
+        let spans = self.parser.callbacks().links.spans.clone();
         let screen = self.parser.screen_mut();
-        let (rows, cols) = screen.size();
-        let total = back + usize::from(rows);
-        if start >= total || start > end {
-            return vec![];
-        }
-        let end = end.min(total - 1);
-        let mut out = Vec::with_capacity(end + 1 - start);
-        let mut i = start;
-        while i <= end {
-            let (offset, first) = if i < back { (back - i, 0) } else { (0, i - back) };
-            screen.set_scrollback(offset);
-            let take = (usize::from(rows) - first).min(end + 1 - i);
-            for k in 0..take {
-                let r = (first + k) as u16;
-                let mut cells = Vec::with_capacity(usize::from(cols));
-                for c in 0..cols {
-                    let Some(cell) = screen.cell(r, c) else { continue };
-                    if cell.is_wide_continuation() {
-                        continue;
-                    }
-                    let end_col = if cell.is_wide() { (c + 1).min(cols - 1) } else { c };
-                    cells.push(copy::Cell { col: c, end_col, text: cell.contents().to_string() });
+        for span in spans.iter().rev().filter(|s| s.alt == alt) {
+            let height = span.end.0 - span.start.0;
+            let starts =
+                if full { at.0.saturating_sub(height)..=at.0.min(span.start.0) } else { span.start.0..=span.start.0 };
+            for s in starts {
+                let moved = link::Span { start: (s, span.start.1), end: (s + height, span.end.1), ..span.clone() };
+                if moved.contains(at) && span_text(screen, back, moved.start, moved.end) == span.text {
+                    return Some(span.uri.clone());
                 }
-                out.push(copy::Row { cells, wrapped: screen.row_wrapped(r) });
             }
-            i += take;
         }
-        screen.set_scrollback(0);
-        out
+        None
+    }
+
+    /// `at`을 포함한 접힌 줄 묶음에서 그 칸을 덮는 http(s) URL
+    fn text_url_at(&mut self, at: (usize, u16), total: usize) -> Option<String> {
+        let cols = usize::from(self.parser.screen().size().1);
+        let reach = link::MAX_TOKEN_CELLS / cols.max(1) + 1;
+        let lo = at.0.saturating_sub(reach);
+        let hi = (at.0 + reach).min(total - 1);
+        let rows = self.text_rows(lo, hi);
+        // 누른 줄이 든 접힌 묶음: 앞 줄이 접혔으면 위로, 이 줄이 접혔으면 아래로 잇는다
+        let k = at.0 - lo;
+        let mut first = k;
+        while first > 0 && rows[first - 1].wrapped {
+            first -= 1;
+        }
+        let mut last = k;
+        while last + 1 < rows.len() && rows[last].wrapped {
+            last += 1;
+        }
+        let mut cells = Vec::new();
+        let mut clicked = None;
+        for (i, row) in rows[first..=last].iter().enumerate() {
+            let n = row.cells.len();
+            for (j, c) in row.cells.iter().enumerate() {
+                // 넓은 글자가 다음 줄로 넘어가며 남긴 접힌 줄 끝 빈 칸(copy `Row::spacer`)은 낱말을 끊지 않는다
+                if row.wrapped && j + 1 == n && c.text.is_empty() {
+                    continue;
+                }
+                if first + i == k && (c.col..=c.end_col).contains(&at.1) {
+                    clicked = Some(cells.len());
+                }
+                let ch = c.text.chars().next().unwrap_or(' ');
+                cells.push(link::TextCell { ch, text: if c.text.is_empty() { " ".into() } else { c.text.clone() } });
+            }
+        }
+        link::url_at(&cells, clicked?)
     }
 
     /// normal screen 기록 줄 수(alt 화면이면 0)
@@ -954,6 +1021,67 @@ fn encode_key(key: Key, m: Mods, modes: &KeyModes) -> Vec<u8> {
 /// 화면 bytes가 `screen`일 때 기록에 쓸 수 있는 bytes: snapshot JSON(base64는 4/3배)이 한 frame에 들고 64KiB가 남게
 /// 다시 쓰지 않고 크기만 바꾼다(지킬 이음 표시가 없을 때·alternate screen). 줄이 줄어 커서 줄이 새 높이 밖으로 나가면, 먼저 그만큼
 /// 위 줄을 기록으로 올린다(plan §8.59).
+/// 절대 줄 `start..=end`의 칸(넓은 글자 뒤 칸은 뺀다)과 접힘. `back`은 기록 줄 수(alt 화면이면 0). 화면 높이씩 기록을 올려
+/// 읽고 맨 아래로 되돌린다.
+fn text_cells(screen: &mut vt100::Screen, back: usize, start: usize, end: usize) -> Vec<copy::Row> {
+    let (rows, cols) = screen.size();
+    let total = back + usize::from(rows);
+    if start >= total || start > end {
+        return vec![];
+    }
+    let end = end.min(total - 1);
+    let mut out = Vec::with_capacity(end + 1 - start);
+    let mut i = start;
+    while i <= end {
+        let (offset, first) = if i < back { (back - i, 0) } else { (0, i - back) };
+        screen.set_scrollback(offset);
+        let take = (usize::from(rows) - first).min(end + 1 - i);
+        for k in 0..take {
+            let r = (first + k) as u16;
+            let mut cells = Vec::with_capacity(usize::from(cols));
+            for c in 0..cols {
+                let Some(cell) = screen.cell(r, c) else { continue };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                let end_col = if cell.is_wide() { (c + 1).min(cols - 1) } else { c };
+                cells.push(copy::Cell { col: c, end_col, text: cell.contents().to_string() });
+            }
+            out.push(copy::Row { cells, wrapped: screen.row_wrapped(r) });
+        }
+        i += take;
+    }
+    screen.set_scrollback(0);
+    out
+}
+
+/// 기록 줄 수(alt 화면이면 0). 콜백 안에서도 읽게 화면만 받는다.
+fn screen_back(screen: &mut vt100::Screen) -> usize {
+    if screen.alternate_screen() {
+        return 0;
+    }
+    let was = screen.scrollback();
+    screen.set_scrollback(usize::MAX);
+    let n = screen.scrollback();
+    screen.set_scrollback(was);
+    n
+}
+
+/// 절대 자리 `start`부터 `end` 앞까지의 글(빈 칸은 공백). OSC 8 구간을 남길 때와 찾을 때 같은 글인지 견준다.
+fn span_text(screen: &mut vt100::Screen, back: usize, start: (usize, u16), end: (usize, u16)) -> String {
+    let mut out = String::new();
+    for (k, row) in text_cells(screen, back, start.0, end.0).iter().enumerate() {
+        let r = start.0 + k;
+        for c in &row.cells {
+            if (r == start.0 && c.col < start.1) || (r == end.0 && c.col >= end.1) {
+                continue;
+            }
+            out.push_str(if c.text.is_empty() { " " } else { &c.text });
+        }
+    }
+    out
+}
+
 fn resize_grid<C: vt100::Callbacks>(parser: &mut vt100::Parser<C>, rows: u16, cols: u16) {
     let (old_rows, _) = parser.screen().size();
     let (cursor_row, cursor_col) = parser.screen().cursor_position();
@@ -2150,6 +2278,83 @@ mod tests {
         v.feed(b"\x1b[?1049hA");
         let (alt, max) = v.grid_rows_at(5);
         assert_eq!((text(alt)[0].as_str(), max), ("A", 0));
+    }
+
+    /// 누른 칸의 링크(herdr `pane.link.activate`): 글 속 http(s) URL은 끝 문장 부호와 짝 없는 괄호를 빼고, 접힌 줄은 이어
+    /// 어느 줄을 눌러도 같은 URL, URL 밖·http(s)가 아닌 주소는 없다
+    #[test]
+    fn link_at_finds_text_urls_like_herdr() {
+        let mut v = Vt::new(4, 40);
+        v.feed(b"see https://example.com/a(b)c. [d](http://x.example/y),\r\n");
+        assert_eq!(v.link_at((0, 10)).as_deref(), Some("https://example.com/a(b)c"));
+        assert_eq!(v.link_at((0, 29)), None, "뺀 끝 점");
+        assert_eq!(v.link_at((0, 1)), None);
+        assert_eq!(v.link_at((0, 40 - 3)).as_deref(), Some("http://x.example/y"));
+        let mut v = Vt::new(4, 20);
+        v.feed(b"go https://example.com/long/path ok\r\nfile:///tmp/x");
+        // 0줄 "go https://example.c", 1줄 "om/long/path ok"
+        assert_eq!(v.link_at((1, 2)).as_deref(), Some("https://example.com/long/path"));
+        assert_eq!(v.link_at((0, 5)).as_deref(), Some("https://example.com/long/path"));
+        assert_eq!(v.link_at((1, 14)), None);
+        assert_eq!(v.link_at((2, 3)), None);
+        assert_eq!(v.link_at((9, 0)), None, "화면 밖");
+    }
+
+    /// OSC 8 링크: 그 칸들만 uri, 기록으로 올라가도 그대로, 덮어쓰면 링크가 아니다, http(s)가 아닌 uri는 열지 않는다(글
+    /// URL로 돌아가지도 않는다), 크기가 바뀌면 버린다, alt 화면의 링크는 alt 화면에서만
+    #[test]
+    fn link_at_follows_osc8_hyperlinks() {
+        let mut v = Vt::new(3, 20);
+        v.feed(b"ab\x1b]8;;https://a.example/x;y\x1b\\docs\x1b]8;;\x1b\\ t\r\n");
+        assert_eq!(v.link_at((0, 2)).as_deref(), Some("https://a.example/x;y"));
+        assert_eq!(v.link_at((0, 5)).as_deref(), Some("https://a.example/x;y"));
+        assert_eq!(v.link_at((0, 6)), None);
+        assert_eq!(v.link_at((0, 1)), None);
+        v.feed(b"\x1b]8;id=1;file:///etc/https://b.example\x07https://b.example\x1b]8;;\x07\r\n");
+        assert_eq!(v.link_at((1, 3)), None, "file:// uri");
+        for _ in 0..5 {
+            v.feed(b"x\r\n");
+        }
+        assert_eq!(v.history_rows(), 5);
+        assert_eq!(v.link_at((0, 3)).as_deref(), Some("https://a.example/x;y"), "기록으로 올라간 링크");
+        // 접혀 두 줄에 걸친 링크
+        v.feed(b"0123456789012345\x1b]8;;https://c.example\x1b\\abcdefgh\x1b]8;;\x1b\\\r\n");
+        let row = v.history_rows() + 3 - 3;
+        assert_eq!(v.link_at((row, 18)).as_deref(), Some("https://c.example"));
+        assert_eq!(v.link_at((row + 1, 3)).as_deref(), Some("https://c.example"));
+        assert_eq!(v.link_at((row + 1, 4)), None);
+        // 덮어쓴 칸
+        v.feed(b"\x1b]8;;https://d.example\x1b\\here\x1b]8;;\x1b\\\rHERE");
+        let row = v.history_rows() + 2;
+        assert_eq!(v.link_at((row, 1)), None);
+        v.feed(b"\r\x1b]8;;https://d.example\x1b\\here\x1b]8;;\x1b\\");
+        assert_eq!(v.link_at((row, 1)).as_deref(), Some("https://d.example"));
+        let mut alt = Vt::new(3, 20);
+        alt.feed(b"\x1b[?1049h\x1b]8;;https://e.example\x1b\\alt\x1b]8;;\x1b\\");
+        assert_eq!(alt.link_at((0, 1)).as_deref(), Some("https://e.example"));
+        alt.feed(b"\x1b[?1049lalt");
+        assert_eq!(alt.link_at((0, 1)), None, "normal 화면의 같은 글");
+        v.resize(3, 30);
+        assert_eq!(v.link_at((row, 1)), None, "크기가 바뀌면 버린다");
+    }
+
+    /// 기록이 가득하면 맨 앞 줄을 버리며 올려 절대 줄이 그대로인 채 글이 위로 밀린다: 그래도 링크를 찾는다
+    #[test]
+    fn link_at_survives_a_full_history() {
+        let mut v = Vt::new(3, 20);
+        for i in 0..SCROLLBACK + 5 {
+            v.feed(format!("{i}\r\n").as_bytes());
+        }
+        assert_eq!(v.history_rows(), SCROLLBACK);
+        v.feed(b"\x1b]8;;https://f.example\x1b\\link\x1b]8;;\x1b\\\r\n");
+        let row = SCROLLBACK + 1;
+        assert_eq!(v.link_at((row, 1)).as_deref(), Some("https://f.example"));
+        for _ in 0..7 {
+            v.feed(b"y\r\n");
+        }
+        assert_eq!(v.history_rows(), SCROLLBACK);
+        assert_eq!(v.link_at((row - 7, 1)).as_deref(), Some("https://f.example"));
+        assert_eq!(v.link_at((row, 1)), None);
     }
 
     /// 고른 글: 기록과 화면에 걸친 범위, 끝 칸 포함, 거꾸로 고른 범위, 접힌 줄 잇기, 끝을 넘으면 마지막 줄까지, 크기 상한,

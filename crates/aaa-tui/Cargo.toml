@@ -25,6 +25,6 @@ base64.workspace = true
 unicode-segmentation = "1"
 unicode-width = "0.2"
 
-# prefix 동안 한국어 IME를 영문으로(herdr Windows 방식, input_source::win)
+# prefix 동안 한국어 IME를 영문으로(herdr Windows 방식, input_source::win), pane 링크 열기(ShellExecuteW, open.rs)
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
