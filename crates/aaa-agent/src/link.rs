@@ -87,7 +87,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // dir.v1: 폴더 보기 `DirList`(plan §8.148)
         // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.163),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
-        // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.166)
+        // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.166),
+        // spawn_safety.v1: `SpawnSpec.safety`를 profile 인자에 더한다(`project open`의 coordinator, plan §8.166)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
@@ -102,6 +103,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "profiles.v2".into(),
             "launch_safety.v1".into(),
             "adopt.v1".into(),
+            "spawn_safety.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

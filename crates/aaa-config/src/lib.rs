@@ -667,9 +667,12 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
         if let Some(v) = l.trust_screens.as_deref().filter(|v| !matches!(*v, "coordinator" | "user")) {
             bad("trust_screens", format!("\"coordinator\" 또는 \"user\"여야 한다: {v:?}"));
         }
-        for name in l.thread_profiles.iter().flatten() {
-            if let Err(e) = profile_edit::validate_name(name) {
-                bad("thread_profiles", e);
+        for (key, list) in [("thread_profiles", &l.thread_profiles), ("coordinator_profiles", &l.coordinator_profiles)]
+        {
+            for name in list.iter().flatten() {
+                if let Err(e) = profile_edit::validate_name(name) {
+                    bad(key, e);
+                }
             }
         }
     }

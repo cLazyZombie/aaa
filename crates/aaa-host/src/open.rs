@@ -11,11 +11,15 @@
 //! - `--profile`을 주면 그 profile로 띄운 coordinator만 다시 쓰고, 아니면 옆에 하나 더 띄운다(참고: 기록한 coordinator가 그
 //!   profile일 때만). 기록은 host DB meta `coordinator:<프로젝트>`(마지막에 띄운·알린 pane과 profile, 참고 `Coordinator` 기록)다.
 //! - 대화 잇기는 open이 하지 않는다: profile로 띄운 pane은 SessionStart hook으로 대화 ID를 알고 재부팅 복원(§8.111)이 잇는다.
+//! - safety(참고 `check_allowed`·`launch_args`·`Safety::launch_args`): profile은 `coordinator_profiles`에 있어야 하고(돌아도
+//!   거부), 띄울 때 yolo면 harness의 권한 건너뛰기 인자를, 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile이면
+//!   `coordinator_agent_args`를 붙인다. agent가 profile을 풀므로 `SpawnSpec.safety`로 보낸다(`spawn_safety.v1`).
 
 use std::sync::Arc;
 
 use aaa_proto::{
-    ErrorBody, ErrorCode, FrontResponse, LayoutNode, PaneView, ProjectOpened, ProjectStatus, Role, SpawnSpec, Tab,
+    ErrorBody, ErrorCode, FrontResponse, LaunchSafety, LayoutNode, PaneView, ProjectOpened, ProjectStatus, Role,
+    SpawnSpec, Tab,
 };
 
 use crate::{Host, err, util};
@@ -83,6 +87,17 @@ impl Host {
                 if known.is_empty() { "없음".to_string() } else { known.join(", ") }
             )));
         }
+        let safety = self.safety(project);
+        if !safety.coordinator_profile_allowed(&profile) {
+            let list = safety.coordinator_profiles.clone().unwrap_or_default();
+            return Err(err(
+                ErrorCode::Forbidden,
+                format!(
+                    "profile `{profile}`는 `{project}`의 coordinator에 허용되지 않았다. 허용: {}. 이 목록은 사람만 바꾼다(`aaa profile allow coordinator … --project {project}`)",
+                    if list.is_empty() { "없음".to_string() } else { list.join(", ") }
+                ),
+            ));
+        }
         let canonical = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
         let mut running = self.running_coordinators(&canonical);
         // 참고 `max_by_key(state_change_seq)`: 가장 최근에 상태가 바뀐 것
@@ -126,6 +141,18 @@ impl Host {
         if !self.machine_feature(&mid, "profile.v1") {
             return Err(bad("이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)"));
         }
+        // 사람이 켠 yolo·coordinator_agent_args가 빠진 채 뜨지 않게: 모르는 agent면 조용히 빼지 않고 거부한다
+        let launch_safety = (safety.yolo || !safety.coordinator_agent_args.is_empty()).then(|| LaunchSafety {
+            yolo: safety.yolo,
+            thread_agent_args: safety.coordinator_agent_args.clone(),
+            default_profile: self.default_coordinator_profile(project),
+        });
+        if launch_safety.is_some() && !self.machine_feature(&mid, "spawn_safety.v1") {
+            return Err(bad(format!(
+                "host 머신({}) agent가 오래돼 safety yolo·coordinator_agent_args를 coordinator에 붙이지 못한다(agent binary 반영 필요). 사람이 `aaa safety yolo {project} off`·`aaa safety set {project} coordinator_agent_args default`로 끌 수도 있다",
+                self.machine_name(&mid)
+            )));
+        }
         let name = match running.len() {
             0 => format!("{project} coordinator"),
             n => format!("{project} coordinator {}", n + 1),
@@ -141,6 +168,7 @@ impl Host {
             role: Some(Role::Coordinator),
             harness: None,
             profile: Some(profile.clone()),
+            safety: launch_safety,
         };
         let id = self.spawn_on(&mid, spec, actor).await?;
         // spawn 사이에 다른 layout 변경이 있었을 수 있다: 최신을 읽어 붙인다

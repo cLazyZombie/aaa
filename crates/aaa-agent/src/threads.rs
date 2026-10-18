@@ -303,7 +303,11 @@ pub(crate) fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, 
 /// safety 인자를 profile 인자에 더한다(plan §8.163, 참고 `profiles::launch_args` 뒤 `Safety::launch_args`): 프로젝트 기본
 /// profile과 같은 harness의 기본 profile이면 `thread_agent_args`를 앞에, yolo면 harness의 권한 건너뛰기 인자를 뒤에.
 /// argv와 resume argv가 같은 인자를 쓴다.
-fn with_safety(cfg: &ThreadsConfig, (mut p, builtin): (Profile, bool), safety: Option<&LaunchSafety>) -> Profile {
+pub(crate) fn with_safety(
+    cfg: &ThreadsConfig,
+    (mut p, builtin): (Profile, bool),
+    safety: Option<&LaunchSafety>,
+) -> Profile {
     let Some(s) = safety else { return p };
     let legacy_harness =
         find_profile(cfg, &s.default_profile).map(|(d, _)| d.harness).unwrap_or_else(|_| "claude".into());

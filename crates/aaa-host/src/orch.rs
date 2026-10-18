@@ -245,7 +245,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   (끝난 thread가 남긴 worktree·병합된 branch를 치운다, `--dry-run`으로 먼저 보인다). 보관·삭제·이름 바꾸기는 사용자가 한다.
 
 ## safety(사용자만 바꾼다)
-`start_threads`·`trust_screens`·yolo·`thread_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의 safety 설정이다.
+`start_threads`·`trust_screens`·yolo·`thread_agent_args`·`coordinator_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의
+safety 설정이다.
 `aaa safety show {p}`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
 터미널에서만 한다: 필요하면 사용자에게 그 명령을 알린다. project.toml의 `start_threads`·`trust_screens`는 옛 자리라
 safety 표에 값이 있으면 먹지 않는다.
@@ -1058,6 +1059,7 @@ impl Host {
             // agent가 이 harness(claude·codex)의 화면으로 상태를 본다(plan §8.110)
             harness: Some(launch.harness.clone()),
             profile: None,
+            safety: None,
         };
         let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
         *rec = self.update_rec(&rec.project, &rec.id, |r| {

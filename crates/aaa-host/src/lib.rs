@@ -1236,6 +1236,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile,
+                    safety: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1643,6 +1644,7 @@ impl Host {
             role: info.role,
             harness: info.harness.clone(),
             profile: None,
+            safety: None,
         };
         let new_id = self.respawn(&id, &mid, spec, actor).await?;
         self.pane_view_of(&new_id, role)
@@ -1808,6 +1810,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile: None,
+                    safety: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1840,6 +1843,7 @@ impl Host {
                     role: None,
                     harness: None,
                     profile: None,
+                    safety: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);

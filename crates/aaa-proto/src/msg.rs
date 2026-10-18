@@ -185,6 +185,11 @@ pub struct SpawnSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub profile: Option<String>,
+    /// `profile`을 풀 때 더할 safety. coordinator(`project open`)는 `thread_agent_args` 칸에 `coordinator_agent_args`를,
+    /// `default_profile`에 프로젝트 기본 coordinator profile을 싣는다. agent가 `spawn_safety.v1`을 알릴 때만 보낸다(plan §8.166)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub safety: Option<crate::LaunchSafety>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.

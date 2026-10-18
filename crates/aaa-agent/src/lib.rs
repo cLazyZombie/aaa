@@ -733,7 +733,8 @@ impl Agent {
         if let Some(name) = spec.profile.clone() {
             // 기본 profile(claude·codex)도 받고 agent.toml을 다시 읽는다(thread와 같다, plan §8.163)
             let cfg = self.threads_cfg.lock().unwrap().clone().fresh()?;
-            let (profile, _) = threads::find_profile(&cfg, &name)?;
+            // coordinator(`project open`)의 yolo·coordinator_agent_args도 thread처럼 profile 인자에 더한다(`spawn_safety.v1`)
+            let profile = threads::with_safety(&cfg, threads::find_profile(&cfg, &name)?, spec.safety.as_ref());
             let launch = threads::with_hooks(&cfg, threads::resolve(&name, &profile)?, &paths.dir)?;
             // thread처럼 profile harness의 화면으로 상태를 본다(host orch `harness: Some(launch.harness)`, plan §8.110)
             spec.harness.get_or_insert(launch.harness);
@@ -1251,6 +1252,7 @@ mod tests {
             role: None,
             harness: harness.map(str::to_string),
             profile: None,
+            safety: None,
         };
         let info = SessionInfo {
             id: "s".into(),

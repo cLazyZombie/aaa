@@ -20,7 +20,8 @@ impl std::fmt::Display for Version {
 /// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다), `MergeLand`·`Landed`를 없앰(새 host는 보내지 않는다, §8.135),
 /// `ThreadCleanup.uncopied`(옛 agent는 버리지만 host가 `keep_worktree`도 켜서 worktree는 남는다, §8.135),
 /// `ThreadPrepare.safety`·`ThreadRebrief.safety`(agent 기능 `launch_safety.v1`이 있을 때만 보낸다, §8.163),
-/// `AgentRequest::ThreadAdopt`(agent 기능 `adopt.v1`이 있을 때만 보낸다, §8.166).
+/// `AgentRequest::ThreadAdopt`(agent 기능 `adopt.v1`이 있을 때만 보낸다, §8.166),
+/// `SpawnSpec.safety`(agent 기능 `spawn_safety.v1`이 있을 때만 보낸다, §8.166).
 /// host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),

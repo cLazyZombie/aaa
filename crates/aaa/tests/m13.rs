@@ -1645,8 +1645,8 @@ fn safety_and_profiles_by_a_person() {
     // 틀린 값은 사람인지 묻기 전에 알린다
     let o = w.h.run(&["safety", "set", "demo", "start_threads", "now"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("propose·auto"), "{o:?}");
-    let o = w.h.run(&["profile", "allow", "coordinator", "fake"]);
-    assert!(String::from_utf8_lossy(&o.stderr).contains("coordinator 허용 목록"), "{o:?}");
+    let o = w.h.run(&["profile", "allow", "coordinator", "nope"]);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("연결된 어느 머신에도 profile `nope`가 없다"), "{o:?}");
     // 사람이 y가 아니면 바꾸지 않는다
     let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "n")], T);
     assert!(out.contains("권한 건너뛰기") && out.contains("바꾸지 않았다"), "{out}");
@@ -2752,6 +2752,35 @@ fn project_lifecycle() {
     assert!(!cwd.exists());
     assert_eq!(git(&w.repo, &["branch", "--list", "aaa/demo/*"]), "", "병합된 head와 같은 branch는 지운다");
     assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
+}
+
+/// coordinator safety(herdr-projects `check_allowed`·`Safety::launch_args`의 coordinator 몫): 사람이 터미널에서
+/// `profile allow coordinator`로 정한 목록에 없는 profile은 기본값이어도 거부하고, yolo면 coordinator를 harness의 권한 건너뛰기
+/// 인자로 띄운다(agent가 profile을 풀며 `SpawnSpec.safety`를 더한다). safety가 없는 프로젝트는 그대로다.
+#[test]
+fn project_open_follows_coordinator_safety() {
+    let w = world();
+    let host_toml = w.h.cfg.join("host.toml");
+    let mut text = std::fs::read_to_string(&host_toml).unwrap();
+    text.push_str("\n[safety.demo]\nyolo = true\n");
+    std::fs::write(&host_toml, text).unwrap();
+    let o = w.h.cmd(&["profile", "allow", "coordinator", "resumable", "--project", "demo"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
+    let out = w.h.in_terminal(&["profile", "allow", "coordinator", "resumable", "--project", "demo"], &[], T);
+    assert!(out.contains("coordinator는 `demo`에서 resumable를 쓸 수 있다"), "{out}");
+    let show = w.h.ok(&["safety", "show", "demo"]);
+    let row = show["rows"].as_array().unwrap().iter().find(|r| r["key"] == "coordinator_profiles").unwrap().clone();
+    assert_eq!((row["value"].as_str(), row["source"].as_str()), (Some("resumable"), Some("프로젝트")), "{show}");
+    // 목록에 없으면 기본값(claude)이어도 아무것도 띄우지 않는다
+    let e = w.h.json(&["project", "open", "demo"]).expect_err("허용되지 않은 profile");
+    assert!(e.contains("coordinator에 허용되지 않았다") && e.contains("허용: resumable"), "{e}");
+    let v = w.h.ok(&["project", "open", "demo", "--profile", "resumable"]);
+    let argv = v["pane"]["argv"].to_string();
+    assert!(argv.contains("--dangerously-skip-permissions"), "yolo는 coordinator에도 닿는다: {argv}");
+    // safety가 없는 프로젝트는 인자가 없다
+    w.h.ok(&["project", "create", "p2"]);
+    let v = w.h.ok(&["project", "open", "p2", "--profile", "resumable"]);
+    assert!(!v["pane"]["argv"].to_string().contains("dangerously"), "{v}");
 }
 
 /// 사람이 띄운 가짜 Claude(실행 파일 이름이 `claude`라 aaa가 화면으로 상태를 본다, hook settings 없음). 띄운 인자를 보이고
