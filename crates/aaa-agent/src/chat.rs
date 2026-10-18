@@ -25,16 +25,16 @@ fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-fn claude_root() -> PathBuf {
+pub(crate) fn claude_root() -> PathBuf {
     env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| aaa_config::paths::home().join(".claude")).join("projects")
 }
 
-fn codex_root() -> PathBuf {
+pub(crate) fn codex_root() -> PathBuf {
     env_dir("CODEX_HOME").unwrap_or_else(|| aaa_config::paths::home().join(".codex")).join("sessions")
 }
 
 /// root 안의 일반 `.jsonl` 파일인지 실제 위치로 확인한다
-fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let deny = || "기록 폴더 밖의 파일은 읽지 않는다".to_string();
     if !path.is_absolute() || path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return Err(deny());
@@ -51,7 +51,7 @@ fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
 }
 
 /// Codex 기록: `sessions/YYYY/MM/DD/rollout-…-<thread-id>.jsonl`
-fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
     if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());
     }

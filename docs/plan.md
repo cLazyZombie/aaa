@@ -3072,9 +3072,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 휴대폰 `.term-title > * { max-width: 100% }`: 제목·위치 줄이 칸 폭에서 말줄임된다. 상태 표시는 그 자리에 남는다(머리줄 높이는
     52px 그대로). 좁으면 위치 줄 끝(칸 수)이 말줄임으로 가려진다.
   - 계약 변화 없음.
-- **확인 못 한 것.** 헤드리스 브라우저는 iOS의 가장자리 띠를 그리지 못한다. 참고 docs/ios-home-screen-testing.md도 iOS 27.0
-  세로에서 fixed-shell 처방이 흐림을 없애지 못한 기록이 있다. 그래서 흐림이 사라졌는지는 실기(홈 화면 앱·세로·대화 보기)에서
-  확인해야 한다. 목록 화면 머리(`.list-head`, glass·sticky 아님)는 이 일 밖이라 그대로 두었다.
+- **실기 확인.** 헤드리스 브라우저는 iOS의 가장자리 띠를 그리지 못한다(참고 docs/ios-home-screen-testing.md에는 iOS 27.0 세로에서
+  fixed-shell 처방이 흐림을 없애지 못한 기록도 있다). 그래서 실기로 확인했다: 10-18 10:21 iPhone 홈 화면 앱(미러링), main 1944224
+  배포 뒤 대화 보기에서 머리줄이 또렷하고 「입력 대기」와 겹치지 않으며, 대화를 올려도 머리줄이 불투명하게 남았다(coordinator).
+  목록 화면 머리(`.list-head`, glass·sticky 아님)는 이 일 밖이라 그대로 두었다.
 - **시험.** 웹 E2E 15 「iPhone 대화 보기 머리줄」(iPhone 가짜 기기 390×844·dpr 3·홈 화면 앱): 긴 제목·긴 cwd의 가짜 Claude pane을
   대화 보기로 열고 다음을 본다. 머리줄이 맨 위의 sticky(또는 fixed)이고 배경이 불투명한지(iOS 띠 대신 쓰일 조건). 제목 줄과 위치
   줄의 오른쪽 끝이 상태 표시 왼쪽을 넘지 않는지. 위치 줄이 실제로 넘쳐 말줄임됐는지(짧아서 그냥 통과하지 않게).
@@ -3167,10 +3168,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - Esc는 위에 뜬 창(`aria-modal`·`<dialog open>`)과 열린 메뉴(`role=menu`)가 먼저 쓴다. 한 번은 메뉴, 다음은 drawer다.
 - **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다.
   - 휴대폰(터치)은 키보드를 올리지 않는다. 데스크톱은 터미널이 바로 키보드를 받는다(참고 PaneTerminal 2072줄: 고른 것이 없던 첫 화면은 `autoSelected`가 아니다).
-  - 주소가 가리킨 pane이 없으면 첫 줄을 열고 머리에 말한다(§8.151, 전에는 빈 화면).
+  - 주소가 가리킨 pane이 없으면 첫 줄을 열고 머리에 말한다(§8.153, 전에는 빈 화면).
 - **다르게 둔 것.**
   - 참고는 단추가 창 전체 머리(app-header)에 있다. aaa는 화면마다 머리가 있어(터미널·보고·프로젝트, 빈 화면은 좁은 창에서만 보이는 머리) 그 머리 맨 앞에 같은 단추를 둔다(`web/src/drawer.tsx`). drawer는 그 머리(`--head`) 아래에 선다. 데스크톱 배치는 그대로다.
-  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 열린 메뉴(`role=menu`, 목록 줄 메뉴 등)도 거른다. 「더 보기」는 §8.151부터 화면 머리 맨 끝이다.
+  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 열린 메뉴(`role=menu`, 목록 줄 메뉴 등)도 거른다. 「더 보기」는 §8.153부터 화면 머리 맨 끝이다.
   - Esc로 닫으면 drawer 안에 있던 focus를 단추로 돌린다(숨는 drawer와 함께 focus가 사라지지 않게).
   - 설정 톱니는 drawer 바닥 줄에 있다. 설정을 열어도 drawer를 닫지 않아, 닫으면 focus가 보이는 톱니로 돌아온다(QA Q10). 참고는 설정을 머리·명령에서 열어 drawer를 닫는다.
   - 참고는 drawer(`.sidebar`) 안에 목록(`.sidebar-shell`, `height:100%`)이 따로 있다. aaa는 한 요소라 drawer일 때 `height:auto`로 둔다. 그러지 않으면 높이가 화면 전체라 바닥 줄(톱니·사용량)이 머리 높이만큼 화면 밖으로 밀린다(시험이 잡았다).
@@ -3252,7 +3253,62 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **웹 빌드를 알린다.** presence에 `build`(주 묶음 파일 이름, 예 `index-BsC_6E06`)를 실어 host가 연결마다 둔다. `push_skipped`·`push_sent` 근거의 연결과 `alert_outcome` 끝에 「웹 index-…」가 붙는다(옛 웹은 「웹 ?」). 배포 뒤 기기가 새 웹을 실었는지 이것으로 본다. 옛 페이지를 스스로 다시 읽게 하는 것은 하지 않았다(참고 herdr-web-ui는 「업데이트됨, 다시 열기」 안내와 단추만 둔다, `UpdateControls`·`updates.ts`). 필요하면 따로 정한다.
 - 시험: 웹 E2E 18 「멈춘 쓰는 화면」 (5)(구독을 가진 휴대폰이 가려지고 멈춘 동안 push → 10초 넘어 다시 보이면 끊고 새로 붙어 놓친 보고를 다시 읽음 → 「push로 받음 · 안 띄움 · 웹 index-…」, 앱 안 알림 없음). 다시 읽는 길의 시작을 끊긴 때로 되돌린 결함 심기는 (5)에서 「띄움 · focus · 늦어 소리 버림」(실기 #91과 같은 글)으로 실패한다. 늦은지를 가려진 때로 정했을 때는 12 「이 기기 알림」의 가려진 데스크톱 탭 소리가 실패해 지금 꼴로 고쳤다.
 
-### 8.151 「더 보기」는 화면 머리 맨 끝, 주소가 가리킨 pane이 없으면 첫 줄과 머리 알림(10-18, coordinator 「아침 확인 둘은 참고대로」)
+### 8.151 계획 n/m·배경 작업 수(10-18, 차이 목록 2장 S5, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-web-ui는 서버가 2초마다 Claude·Codex 기록을 읽어 pane마다 계획 요약(`PlanSummary` done·total·current)과
+  아직 도는 배경 작업 수를 낸다(`server/session-plan.ts`, `server/claude-subagents.ts`, `pane-status` 틀의 `plan`·`background_tasks`).
+  Agents 보기 줄의 상태 앞에 `BackgroundBadge`(Layers와 수)·`PlanBadge`(ListChecks와 n/m, 다 끝나면 `is-done`)로 그린다
+  (`AgentSidebar.tsx` `agent-row-status`). herdr-projects는 진행률 `~n%`만 있다.
+- **aaa가 달랐던 것.** 진행 보고(`aaa report --percent`)의 n%만 있었다.
+- **구조.** 기록 파일은 agent 머신에 있으므로 읽기는 agent, 저장은 host다(참고의 서버 자리를 agent가 맡는다).
+  - agent `plan.rs`: 세션마다 Session 칸 사건(SessionStart의 `transcript_path`, Codex notify의 thread-id)으로 기록을 찾는다.
+    chat.rs와 같이 기록 폴더 안의 일반 `.jsonl`만 읽는다(hook은 세션 안 누구나 보낸다). 2초마다 늘어난 만큼만 읽고(한 번에 모두 32MiB,
+    파일 하나 8MiB, 그보다 긴 한 줄은 건너뜀), 처음 읽기가 끝에 닿기 전에는 말하지 않는다. 바뀐 세션만 harness 사건
+    `kind = "plan"`(`plan`·`background`)으로 보낸다. 이 사건은 새 칸 `Slot::Plan`에 남아 host가 다시 붙으면 다시 간다.
+  - 계획: 참고 그대로. Claude `TaskCreate`·`TaskUpdate`는 오류 없이 답을 받은 호출만, 모든 단계가 끝난 뒤 처음 만든 단계는 새 계획,
+    `deleted`는 뺀다. Codex는 마지막 `update_plan`이 계획이다.
+  - 배경 작업: 부모 기록만 본다. 하위 agent 호출(`Agent`·`Task`: 동기면 답까지, 배경이면 「Async agent launched」 답의 agentId로
+    알림까지)과 배경 명령(답의 `backgroundTaskId`)을 세고, `<task-notification>`(사람 쪽 글·queue-operation·attachment 세 자리, 도구
+    답이 인용한 것은 아님)의 task-id·tool-use-id나 `TaskStop`·`KillShell` 답으로 끝낸다. 지금 Claude 프로세스보다 먼저 띄운 것은
+    세지 않는다(SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
+  - host `on_harness`: `plan` 사건은 `AgentStatus.plan`·`background`만 바꾸고 상태(activity·since)는 그대로 둔다. harness가 끝나면
+    배경 수를 지운다.
+  - 웹: Agents 보기 줄에 참고 `BackgroundBadge`·`PlanBadge`(말은 「배경 작업 N개 실행 중」·「계획 M단계 중 N단계 끝남 · 지금 단계」,
+    CSS는 이미 옮긴 Sidebar.css 그대로). 머신 목록 줄·머리줄은 참고처럼 그리지 않는다. TUI pane 배지는 `작업 중 40% 1/3 배경2`
+    (폭이 애매한 기호 대신 글). 참고에 없는 자리라, 목록이 좁아 제목이 8칸보다 줄게 되면 계획·배경 수를 먼저 뺀다(들어가는 것만).
+- **계약.** FRONT_API 1.25: `AgentStatus.plan`(`PlanSummary`)·`background`(선택). agent→host `HarnessEvent.plan`·`background`(선택).
+  옛 host는 모르는 `kind = "plan"`을 상태로 읽지 않으므로(`next_activity` None) 무시한다. agent 기능 이름은 더하지 않았다(host가
+  agent에 청하는 것이 없다).
+- **참고와 다르게 둔 것.** 하위 agent 폴더(`<session>/subagents/`)를 읽지 않는다. 그래서 팀 동료(알림이 없음)의 끝남 추정,
+  다시 깨운 하위 agent, 하위 agent가 띄운 배경 명령, 토큰 수는 없다. 팀 동료가 끝나도 알림이 없으면 수가 남을 수 있다(그 Claude
+  프로세스가 끝나면 지워진다). 참고 `BackgroundWait`(배경 작업이 남은 턴 끝을 「끝남」 대신 「배경」 상태로 보기, 차이 목록 S1
+  `waiting`)는 이 수를 근거로 쓸 수 있지만 S5는 배지만 한다.
+- **시험.**
+  - agent 유닛 `plan::tests`: 답 받은 호출만·실패한 갱신·지운 단계·다 끝난 뒤 새 계획, Codex 마지막 update_plan(exec 인용은 무시),
+    배경 명령·배경/동기 하위 agent·세 자리 알림·인용은 무시·TaskStop·프로세스 경계, 첫 읽기가 끝나기 전 침묵·8MiB 넘는 줄,
+    UTC 시각 변환. host `plan_events_set_counts_without_changing_the_activity`, TUI `pane_badge_carries_plan_and_background_counts`
+    (좁을 때 빠지는 차례 포함).
+  - 웹 E2E 11 「계획 n/m·배경 작업 수」: SessionStart hook으로 실험실 기록을 알린 pane에 단계 셋(하나 끝, 하나 진행)·배경 명령·배경
+    하위 agent를 쓰면 Agents 줄이 `1/3`(title에 지금 단계)과 배경 `2`, CLI `pane list`도 같은 값. queue-operation 알림 뒤 `1`, 사람 쪽 글
+    알림 뒤 배지 없음, 남은 단계를 끝내면 `3/3`·`is-done`. 결함 심기: agent가 알림을 무시하게 바꾸면 「20000ms 안에 배경 하나이 되지
+    않았다: "2"」로 실패함을 확인했다.
+
+### 8.152 TUI 탭 막대는 사람이 볼 thread 수를 보인다(10-18, 차이 목록 4장 D 「사람 차례」 수 표시, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-projects는 탭 줄에 `projects: N need you`를 띄운다(`needs-you --line`, sidebar.rs `needs_you_line`). N은 활성
+  프로젝트의 열린 thread 가운데 묶음이 사람 차례(WaitingOnYou)나 검토(ReadyForReview)인 수(`needs_you`)다. 없으면 아무것도 없다.
+  고르는 곳은 `prefix+a` popup이다.
+- **aaa가 달랐던 것.** TUI 탭 막대 오른쪽(herdr `tab_bar_right` 자리)이 질문이 열린 pane 수 ` ● 질문 n `이었다(§8.92).
+- **고침.** 같은 자리·같은 모양(빨강 바탕 굵게)에 ` ● 사람 차례 n `: host가 보낸 ThreadView 묶음이 사람 차례·검토인 thread 수.
+  없으면 그리지 않는다. 참고의 popup 대신 탐색 목록(prefix w)을 쓴다: thread 줄이 이미 사람 차례부터 선다(§8.127·herdr-projects
+  `DISPLAY_ORDER`). thread가 아닌 pane의 질문은 이제 탭 막대에서 세지 않고 사이드바 줄 상태(질문)로만 보인다. 질문 pane으로
+  가는 키(`OpenNotificationTarget`)는 그대로다. 참고의 「ticker가 멈췄으면 그리지 않음」은 aaa host가 묶음을 늘 다시 세므로 없다.
+- **계약 변화 없음.**
+- **시험.** TUI `side_list_like_web`: thread를 시작한 뒤에는 수가 없고, 그 thread의 pane을 보고 없이 닫으면(사람 차례) 탭 막대에
+  ` ● 사람 차례 1 `. 결함 심기: 옛 규칙(질문 pane 수)으로 되돌리면 「20s 안에 사람 차례 수이 되지 않았다」로 실패했다.
+  `attach_draws_layout_and_detach_keeps_sessions`는 thread가 아닌 pane의 질문이 탭 막대에 수를 띄우지 않는지 본다.
+
+### 8.153 「더 보기」는 화면 머리 맨 끝, 주소가 가리킨 pane이 없으면 첫 줄과 머리 알림(10-18, coordinator 「아침 확인 둘은 참고대로」)
 
 §8.146의 아침 확인 둘을 참고 herdr-web-ui `aa624cb`대로 정했다.
 
