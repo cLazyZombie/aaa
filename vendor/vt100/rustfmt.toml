@@ -1,0 +1,3 @@
+# upstream vt100 0.16.2의 서식(폭 78). 상위 aaa rustfmt.toml이 섞이지 않게 둔다
+edition = "2021"
+max_width = 78

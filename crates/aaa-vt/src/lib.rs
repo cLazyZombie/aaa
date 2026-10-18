@@ -1031,16 +1031,21 @@ impl Line {
     fn write(&self, n: usize, out: &mut Vec<u8>) {
         let mut look = Look::default();
         let mut from = 0;
+        // 바로 앞에 쓴 칸의 글과 그 뒤 out 길이(그 뒤에 escape를 썼으면 길이가 다르다)
+        let mut prev: Option<(usize, &str)> = None;
         for &(end, _, has, l) in &self.cells[..n] {
             if l != look {
                 l.sgr(&look, out);
                 look = l;
             }
-            if has {
-                out.extend_from_slice(&self.text.as_bytes()[from..end]);
-            } else {
-                out.push(b' ');
+            let text = if has { &self.text[from..end] } else { " " };
+            // 따로 놓인 칸인데 escape 없이 이어 쓰면 받는 터미널이 앞 칸에 붙이는 글(사이의 escape로 끊겼던 묶음, plan §8.150):
+            // 모양을 다시 써서 끊는다
+            if prev.is_some_and(|(at, p)| at == out.len() && vt100::joins_after(p, text)) {
+                look.sgr(&look, out);
             }
+            out.extend_from_slice(text.as_bytes());
+            prev = Some((out.len(), text));
             from = end;
         }
     }
@@ -1297,6 +1302,9 @@ impl DsrScanner {
         ends
     }
 }
+
+#[cfg(test)]
+mod width_cases;
 
 #[cfg(test)]
 mod tests {
@@ -2047,5 +2055,117 @@ mod tests {
         c.feed(&o.data);
         c.resize(3, 40);
         assert_eq!(all_lines(&c), [lines[0].clone()]);
+    }
+
+    /// 보이는 줄 r의 묶음 칸: (시작 칸, 폭, 글). 빈칸 글자 칸은 빈 칸으로 본다(replay는 줄 가운데 빈 칸을 빈칸으로 쓴다)
+    fn clusters(s: &vt100::Screen, r: u16) -> Vec<(u16, u16, String)> {
+        let (_, cols) = s.size();
+        (0..cols)
+            .filter_map(|c| {
+                let cell = s.cell(r, c).filter(|x| x.has_contents() && x.contents() != " ")?;
+                Some((c, if cell.is_wide() { 2 } else { 1 }, cell.contents().to_string()))
+            })
+            .collect()
+    }
+
+    fn cl(want: &[(u16, u16, &str)]) -> Vec<(u16, u16, String)> {
+        want.iter().map(|&(c, w, s)| (c, w, s.to_string())).collect()
+    }
+
+    /// 기록과 화면의 줄마다(오래된 줄부터) 묶음 칸과 이음 표시
+    fn all_clusters(v: &Vt) -> Vec<(Vec<(u16, u16, String)>, bool)> {
+        let mut s = v.parser.screen().clone();
+        let mut out = Vec::new();
+        each_row(&mut s, |s, r| {
+            out.push((clusters(s, r), s.row_wrapped(r)));
+            true
+        });
+        out
+    }
+
+    /// 글자 폭과 묶음은 웹 터미널(xterm + grapheme addon + herdr 보정)과 같다(plan §8.150). 사례의 칸은 생성기가 웹
+    /// provider로 한 줄에 써서 만든다(web/scripts/vt-widths.ts). 한 byte씩 받아도 같다(xterm도 받은 덩이 경계에서 끊지 않는다)
+    #[test]
+    fn widths_follow_the_web_terminal() {
+        for (text, want) in width_cases::CASES {
+            let want = cl(want);
+            let end = want.last().map_or(0, |&(c, w, _)| c + w);
+            let mut v = Vt::new(3, 40);
+            v.feed(text.as_bytes());
+            assert_eq!(clusters(v.parser.screen(), 0), want, "{text:?}");
+            assert_eq!(v.cursor(), (0, end, true), "{text:?}");
+            let mut bytes = Vt::new(3, 40);
+            for b in text.as_bytes() {
+                bytes.feed(&[*b]);
+            }
+            assert_eq!(clusters(bytes.parser.screen(), 0), want, "한 byte씩 {text:?}");
+        }
+    }
+
+    /// 끝 칸의 한 칸 묶음이 붙은 글자로 두 칸이 되면(⚠ 뒤 VS16) xterm처럼 그 묶음을 이은 줄로 다음 줄 처음에 옮기고 끝 칸은 비운다
+    #[test]
+    fn widened_cluster_at_the_last_column_moves_to_the_next_row() {
+        let mut v = Vt::new(3, 5);
+        v.feed("abcd\u{26a0}\u{fe0f}x".as_bytes());
+        let s = v.parser.screen();
+        assert_eq!(clusters(s, 0), cl(&[(0, 1, "a"), (1, 1, "b"), (2, 1, "c"), (3, 1, "d")]));
+        assert!(s.row_wrapped(0));
+        assert_eq!(clusters(s, 1), cl(&[(0, 2, "\u{26a0}\u{fe0f}"), (2, 1, "x")]));
+        assert_eq!(v.cursor(), (1, 3, true));
+    }
+
+    /// replay를 받은 터미널의 칸은 살아 있는 칸과 같다. escape로 따로 놓인 칸은 모양이 같아도 이어 쓰면 받는 쪽에서 한 묶음이
+    /// 되므로 끊어 쓴다: 기록·화면·alternate screen, 접힌 줄을 넘어서도
+    #[test]
+    fn replay_keeps_clusters_as_they_were_placed() {
+        let lines = [
+            // 모양을 바꾸지 않는 SGR로 끊긴 결합 문자, 같은 색을 다시 건 SGR
+            "e\x1b[m\u{301}x",
+            "\x1b[31me\x1b[31m\u{301}x\x1b[m",
+            // 국기 반쪽 둘, VS16 앞 escape
+            "\u{1f1f0}\x1b[m\u{1f1f7}",
+            "\u{26a0}\x1b[m\u{fe0f}",
+            // 커서를 옮긴 빈 칸 뒤 결합 문자(빈 칸은 빈칸 글자로 쓴다)
+            "a\x1b[2C\u{301}b",
+            // 끊기지 않은 묶음은 그대로 한 칸이다
+            "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{26a0}\u{fe0f}e\u{301}",
+        ];
+        let text: String = lines.iter().map(|l| format!("{l}\r\n")).collect();
+        let check = |rows: u16, cols: u16, alt: bool, input: &str| {
+            let mut a = Vt::new(rows, cols);
+            if alt {
+                a.feed(b"\x1b[?1049h");
+            }
+            a.feed(input.as_bytes());
+            let mut b = Vt::new(rows, cols);
+            b.feed(&a.replay());
+            assert_eq!(all_clusters(&b), all_clusters(&a), "alt {alt} {input:?}");
+            assert_eq!(b.cursor(), a.cursor(), "alt {alt} {input:?}");
+        };
+        // 셋째 줄 뒤로는 기록으로 밀린다
+        check(3, 12, false, &text);
+        check(8, 12, true, &text);
+        // 끝 칸 뒤 escape로 끊겨 다음 줄로 접힌 결합 문자
+        for alt in [false, true] {
+            check(4, 5, alt, "abcde\x1b[m\u{301}");
+        }
+    }
+
+    /// 폭이 바뀌어 다시 접어도 묶음과 따로 놓인 칸이 그대로다(다시 쓰는 줄도 끊어 쓴다)
+    #[test]
+    fn reflow_keeps_clusters_as_they_were_placed() {
+        let mut v = Vt::new(3, 12);
+        v.feed("a\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}e\x1b[m\u{301}\u{1f1f0}\x1b[m\u{1f1f7}x\r\n".as_bytes());
+        let before = all_clusters(&v);
+        v.resize(3, 4);
+        assert_eq!(
+            all_clusters(&v)[..2],
+            [
+                (cl(&[(0, 1, "a"), (1, 2, "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}"), (3, 1, "e")]), true),
+                (cl(&[(0, 1, "\u{301}"), (1, 1, "\u{1f1f0}"), (2, 1, "\u{1f1f7}"), (3, 1, "x")]), false),
+            ]
+        );
+        v.resize(3, 12);
+        assert_eq!(all_clusters(&v), before);
     }
 }
