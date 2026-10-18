@@ -97,11 +97,24 @@ impl Node {
         answers: &[(&str, &str)],
         timeout: Duration,
     ) -> String {
+        self.in_terminal_bin(Path::new(BIN), args, env, answers, timeout)
+    }
+
+    /// `in_terminal_env`와 같되 실행 파일을 고른다(`aaa update`는 지금 도는 실행 파일을 바꾸므로 실험실 사본을 띄운다)
+    pub fn in_terminal_bin(
+        &self,
+        bin: &Path,
+        args: &[&str],
+        env: &[(&str, &str)],
+        answers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> String {
+        let bin = bin.to_str().expect("실행 파일 경로");
         let mut c = Command::new("script");
         if cfg!(target_os = "macos") {
-            c.args(["-q", "/dev/null", BIN]).args(args);
+            c.args(["-q", "/dev/null", bin]).args(args);
         } else {
-            let line = std::iter::once(BIN).chain(args.iter().copied()).map(shell_word).collect::<Vec<_>>().join(" ");
+            let line = std::iter::once(bin).chain(args.iter().copied()).map(shell_word).collect::<Vec<_>>().join(" ");
             c.args(["-qec", &line, "/dev/null"]);
         }
         c.env("AAA_CONFIG_DIR", &self.cfg)

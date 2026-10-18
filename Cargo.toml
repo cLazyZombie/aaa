@@ -69,5 +69,9 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_
 [profile.dev]
 debug = "line-tables-only"
 
+# `aaa update`가 실행 파일(디버그 빌드 100MB 넘음)을 sha256으로 비교한다: 최적화 없는 sha2는 한 번에 3초 걸렸다
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 debug = "line-tables-only"

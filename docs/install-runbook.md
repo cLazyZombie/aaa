@@ -14,7 +14,7 @@ launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aaa를
 |---|---|
 | launcher 등록 | `~/Applications/aaa-launcher.app`이 개발자 도구·전체 디스크 접근에 켜져 있다 |
 | L1 합격 | `p0/launcher/measure.sh after` 판정 통과(median ≤10ms, p95 ≤20ms, FDA ok, 책임 프로세스 `aaa-launcher`) |
-| 각 Mac 같은 aaa | 같은 commit으로 빌드한다(`aaa --version`) |
+| 각 Mac 같은 aaa | 같은 commit으로 빌드한다. version 번호는 빌드마다 같아(0.1.0) `shasum -a 256 ~/.local/bin/aaa`(또는 `aaa update list`)로 본다 |
 
 ## 1. aaa를 고정 경로에 둔다(각 Mac)
 
@@ -24,8 +24,8 @@ install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.ne
 ~/.local/bin/aaa --version
 ```
 
-- 업그레이드도 같은 방법이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
-- 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/.local/bin/aaa.new && chmod 755 ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa' < target/release/aaa`로 옮겨도 된다. 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다.
+- 업그레이드는 9번(`aaa update`)이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
+- 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/aaa.new' < target/release/aaa`로 옮긴 뒤 그 Mac에서 `~/.local/bin/aaa update --from ~/aaa.new`로 바꾼다(처음 설치면 `install -m 755 ~/aaa.new ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa`). 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다(`aaa update`가 앞 12자리를 보인다).
 - hook 명령(`aaa hook --agent …`)은 이 경로로 실행마다 주므로 Claude·Codex 사용자 설정은 고치지 않는다.
 
 ## 2. 설정
@@ -151,9 +151,10 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 ## 9. 업그레이드
 
-1. 1번처럼 새 `aaa`를 빌드해 rename으로 교체한다.
-2. ✋ `aaa service restart --role agent`(host Mac은 `--role host`도, 각각 `yes`)로 다시 띄운다(`launchctl kickstart -k`를 감싼다). 세션은 이어진다.
-3. `aaa status`·`aaa machine list`로 같은 버전·연결을 확인한다.
+1. ✋ 새 `aaa`를 빌드하고 `~/.local/bin/aaa update --from target/release/aaa`로 바꾼다(`yes`). 같은 폴더에 두고 self-check(`--version`·`config check`)와 `[update] version` 고정 검사를 한 뒤 rename한다. 옛것은 `~/.local/bin/.aaa-old/`에 `[update] keep`개(기본 3) 남는다. 먼저 `--dry-run`으로 검사만 해 볼 수 있다.
+2. ✋ `aaa service restart --role agent`(host Mac은 `--role host`도, 각각 `yes`)로 다시 띄운다(`launchctl kickstart -k`를 감싼다). 세션은 이어진다. 바꾸기만 하고 다시 띄우지 않으면 도는 host·agent는 옛 실행 파일로 계속 돈다.
+3. `aaa status`·`aaa machine list`로 같은 버전·연결을 확인한다. version 번호는 아직 빌드마다 같다(0.1.0): 같은 빌드인지는 `aaa update list`의 sha256으로 본다.
+4. 문제가 있으면 ✋ `aaa update rollback`(지금과 다른 가장 새 보관, 이름을 주면 그것, 목록은 `aaa update list`)으로 되돌리고 2번을 다시 한다. DB는 되돌리지 않는다(plan §11 「DB 백업」은 아직 없다).
 
 ## 10. aa에서 옮기기(결정 18)
 

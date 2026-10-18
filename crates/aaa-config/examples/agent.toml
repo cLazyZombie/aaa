@@ -49,3 +49,10 @@ model = ""
 effort = "high"
 args = []
 description = "Codex CLI"
+
+# 실행 파일 바꾸기(`aaa update --from <파일>`·`aaa update rollback`). host.toml에 둬도 된다(둘 다 적으면 둘 다 지킨다).
+[update]
+# 고정한 version: 새 실행 파일이 이 version이어야 바꾼다. 비면 고정하지 않는다(major가 바뀌는 것은 고정해야만 바꾼다)
+version = ""
+# 보관하는 옛 실행 파일 수(실행 파일 옆 .aaa-old/, 1~100)
+keep = 3

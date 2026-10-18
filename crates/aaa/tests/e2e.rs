@@ -432,3 +432,123 @@ fn service_stop_start_restart_wrap_launchctl() {
         ]
     );
 }
+
+/// `aaa update`(plan §8.166, herdr `update`): 실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다(시험 binary는 건드리지 않는다).
+/// 「다른 빌드」는 시험 binary 뒤에 바이트를 덧붙인 사본이다(같은 version, 다른 sha256, 그대로 돈다).
+#[cfg(unix)]
+#[test]
+fn update_replaces_keeps_and_rolls_back() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let lab = Lab::new();
+    let h = lab.node("h", None);
+    let bin = lab.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = bin.join("aaa");
+    std::fs::copy(lab::BIN, &exe).unwrap();
+    let original = std::fs::read(lab::BIN).unwrap();
+    let build = |name: &str| {
+        let p = lab.root.join(name);
+        let mut b = original.clone();
+        b.extend_from_slice(format!("aaa-test-{name}").as_bytes());
+        std::fs::write(&p, b).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    };
+    let script = |name: &str, body: &str| {
+        let p = lab.root.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    };
+    let (new1, new2) = (build("new1"), build("new2"));
+    let s = |p: &std::path::Path| p.to_str().unwrap().to_string();
+    let run = |args: &[&str], answers: &[(&str, &str)]| h.in_terminal_bin(&exe, args, &[], answers, T);
+    let is = |want: &[u8]| std::fs::read(&exe).unwrap() == want;
+    let kept = || {
+        let mut v: Vec<String> = std::fs::read_dir(bin.join(".aaa-old"))
+            .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+    let staging_left = || {
+        std::fs::read_dir(&bin).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with(".aaa-update-"))
+    };
+
+    // 사람 문: 터미널 아님·aaa 세션 안, --from 없음
+    let o = std::process::Command::new(&exe)
+        .args(["update", "--from", &s(&new1)])
+        .env("AAA_CONFIG_DIR", &h.cfg)
+        .env("AAA_STATE_DIR", &h.state)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("터미널에서 실행해야 한다"), "{o:?}");
+    let out = h.in_terminal_bin(&exe, &["update", "--from", &s(&new1)], &[("AAA_SESSION_ID", "01EXAMPLE")], &[], T);
+    assert!(out.contains("aaa 세션 안에서는 하지 않는다"), "{out}");
+    assert!(run(&["update"], &[]).contains("`--from <파일>`"));
+    // self-check: 돌지 않는 파일, version을 말하지 않는 파일, 이 Mac 설정을 받지 않는 파일은 바꾸지 않고 staging도 남기지 않는다
+    for (name, body, want) in [
+        ("broken", "exit 1", "`--version`이 `aaa x.y.z`가 아니다"),
+        ("other", "echo other 1.0.0", "`--version`이 `aaa x.y.z`가 아니다"),
+        (
+            "strict",
+            "case \"$1\" in --version) echo aaa 0.1.0;; *) echo 'schema 9'; exit 2;; esac",
+            "이 Mac 설정을 받지 않는다",
+        ),
+    ] {
+        let out = run(&["update", "--from", &s(&script(name, body))], &[]);
+        assert!(out.contains("self-check 실패") && out.contains(want), "{name}: {out}");
+    }
+    // version 고정: 고정한 것과 다르면, 고정 없이 major가 바뀌면 거부
+    let major = script("major", "case \"$1\" in --version) echo aaa 9.0.0;; *) exit 0;; esac");
+    assert!(run(&["update", "--from", &s(&major)], &[]).contains("major가 바뀐다(0.1.0 → 9.0.0)"));
+    std::fs::write(h.cfg.join("agent.toml"), "schema = 1\n[update]\nversion = \"0.0.9\"\n").unwrap();
+    let out = run(&["update", "--from", &s(&new1)], &[]);
+    assert!(out.contains("agent.toml `[update] version = \"0.0.9\"`로 고정돼 있다"), "{out}");
+    std::fs::remove_file(h.cfg.join("agent.toml")).unwrap();
+    assert!(is(&original) && kept().is_empty() && !staging_left(), "거부는 아무것도 바꾸지 않는다");
+
+    // 검사만(누구나), no면 그만, yes면 바꾸고 옛것을 보관
+    let o = std::process::Command::new(&exe)
+        .args(["update", "--from", &s(&new1), "--dry-run"])
+        .env("AAA_CONFIG_DIR", &h.cfg)
+        .env("AAA_STATE_DIR", &h.state)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&o.stdout).contains("검사만 했다"), "{o:?}");
+    assert!(run(&["update", "--from", &s(&new1)], &[("yes를 입력", "no")]).contains("그만뒀다"));
+    assert!(is(&original) && kept().is_empty() && !staging_left());
+    let out = run(&["update", "--from", &s(&new1)], &[("yes를 입력", "yes")]);
+    assert!(out.contains("바꿨다: aaa 0.1.0 → aaa 0.1.0") && out.contains("aaa service restart --role agent"), "{out}");
+    assert!(is(&std::fs::read(&new1).unwrap()) && !staging_left());
+    let k = kept();
+    assert!(k.len() == 1 && k[0].starts_with("aaa-") && k[0].ends_with("-0.1.0"), "{k:?}");
+    assert_eq!(std::fs::read(bin.join(".aaa-old").join(&k[0])).unwrap(), original, "보관한 것은 바꾸기 전 실행 파일");
+    assert!(run(&["update", "--from", &s(&new1)], &[]).contains("이미 같은 실행 파일이다"));
+
+    // 되돌리기: 이름이 없으면 지금과 다른 가장 새 것(new2 → new1, 그 밑 원본이 아니다), 다시 하면 되돌린 것을 되돌린다
+    let out = run(&["update", "--from", &s(&new2)], &[("yes를 입력", "yes")]);
+    assert!(out.contains("바꿨다") && is(&std::fs::read(&new2).unwrap()), "{out}");
+    let out = run(&["update", "rollback"], &[("yes를 입력", "yes")]);
+    assert!(out.contains("바꿨다") && is(&std::fs::read(&new1).unwrap()), "가장 새 보관(new1)으로: {out}");
+    assert_eq!(kept().len(), 3);
+    let out = run(&["update", "rollback"], &[("yes를 입력", "yes")]);
+    assert!(is(&std::fs::read(&new2).unwrap()), "두 번째 되돌리기는 new2로: {out}");
+    assert!(out.contains("보관 수(3)를 넘어 지웠다"), "{out}");
+    let list = h.in_terminal_bin(&exe, &["--json", "update", "list"], &[], &[], T);
+    let v: serde_json::Value = serde_json::from_str(list.trim()).unwrap_or_else(|e| panic!("{e}: {list}"));
+    assert_eq!(v["kept"].as_array().unwrap().len(), 3, "{v}");
+
+    // 보관 수: keep = 1이면 바꾼 뒤 가장 새 것 하나만 남고, 그 이름으로 되돌린다
+    std::fs::write(h.cfg.join("agent.toml"), "schema = 1\n[update]\nkeep = 1\n").unwrap();
+    let out = run(&["update", "--from", &s(&new1)], &[("yes를 입력", "yes")]);
+    assert!(out.contains("보관 수(1)를 넘어 지웠다") && is(&std::fs::read(&new1).unwrap()), "{out}");
+    let k = kept();
+    assert_eq!(k.len(), 1, "{k:?}");
+    assert_eq!(std::fs::read(bin.join(".aaa-old").join(&k[0])).unwrap(), std::fs::read(&new2).unwrap());
+    let out = run(&["update", "rollback", &k[0]], &[("yes를 입력", "yes")]);
+    assert!(out.contains("바꿨다") && is(&std::fs::read(&new2).unwrap()), "{out}");
+    assert!(run(&["update", "rollback", "aaa-none"], &[]).contains("보관한 것 가운데 `aaa-none`가 없다"));
+}

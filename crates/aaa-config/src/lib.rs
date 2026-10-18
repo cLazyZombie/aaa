@@ -85,6 +85,45 @@ pub struct HostConfig {
     /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
+    pub update: UpdateSection,
+}
+
+/// 실행 파일 바꾸기(`aaa update`, plan §11·§8.166). 그 Mac의 host.toml·agent.toml 어느 쪽에 둬도 되고 둘 다 적으면 둘 다
+/// 지킨다(agent만 도는 Mac에는 host.toml이 없다). `aaa update`가 쓸 때 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSection {
+    /// 고정한 version(`x.y.z`): 새 실행 파일이 이 version이어야 바꾼다. 비면 고정하지 않는다(major는 고정해야만 바뀐다)
+    pub version: String,
+    /// 보관하는 옛 실행 파일 수(`aaa update rollback`이 고른다, 1~100)
+    pub keep: u32,
+}
+
+impl Default for UpdateSection {
+    fn default() -> Self {
+        UpdateSection { version: String::new(), keep: 3 }
+    }
+}
+
+/// `x.y.z`(숫자 셋)
+pub fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut it = v
+        .split('.')
+        .map(|p| if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) { p.parse().ok() } else { None });
+    let parsed = (it.next()??, it.next()??, it.next()??);
+    it.next().is_none().then_some(parsed)
+}
+
+fn validate_update(u: &UpdateSection, out: &mut Vec<Invalid>) {
+    if !u.version.is_empty() && parse_version(&u.version).is_none() {
+        out.push(Invalid {
+            path: key(&["update", "version"]),
+            message: format!("x.y.z(숫자 셋) 형식이어야 한다: {:?}", u.version),
+        });
+    }
+    if !(1..=100).contains(&u.keep) {
+        out.push(Invalid { path: key(&["update", "keep"]), message: "1~100이어야 한다".into() });
+    }
 }
 
 /// 정해지지 않았을 때 쓰는 값(herdr-projects `[defaults]`). host는 쓸 때마다 다시 읽는다.
@@ -201,6 +240,7 @@ impl Default for HostConfig {
             session: SessionSection::default(),
             safety: Default::default(),
             defaults: DefaultsSection::default(),
+            update: UpdateSection::default(),
         }
     }
 }
@@ -455,6 +495,7 @@ pub struct AgentConfig {
     /// thread를 띄우는 profile(§8.2). host.toml `[safety.*] thread_profiles`(옛 `[projects] allow_profiles`)가 허용한 것만
     /// 쓴다. claude·codex는 없어도 기본 profile이다(plan §8.163).
     pub profiles: std::collections::BTreeMap<String, Profile>,
+    pub update: UpdateSection,
 }
 
 impl Default for AgentConfig {
@@ -466,6 +507,7 @@ impl Default for AgentConfig {
             selfcheck: SelfcheckSection::default(),
             health: HealthSection::default(),
             profiles: Default::default(),
+            update: UpdateSection::default(),
         }
     }
 }
@@ -685,6 +727,7 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
             out.push(Invalid { path: key(&["defaults", name]), message: e });
         }
     }
+    validate_update(&c.update, &mut out);
     out
 }
 
@@ -735,6 +778,7 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
             }),
         }
     }
+    validate_update(&c.update, &mut out);
     out
 }
 

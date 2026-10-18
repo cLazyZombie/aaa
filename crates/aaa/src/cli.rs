@@ -90,6 +90,19 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
+    /// 실행 파일을 주어진 빌드로 바꾼다(herdr `update`): 같은 폴더에서 self-check·version 고정 검사 뒤 rename, 옛것은 보관해
+    /// `rollback`으로 되돌린다. 사람만. 내려받기·서명 release는 아직 없다
+    #[command(args_conflicts_with_subcommands = true)]
+    Update {
+        #[command(subcommand)]
+        cmd: Option<UpdateCmd>,
+        /// 새 실행 파일(같은 OS·CPU로 빌드한 aaa)
+        #[arg(long, value_name = "파일")]
+        from: Option<PathBuf>,
+        /// 검사만 하고 바꾸지 않는다(누구나)
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// 프로젝트 폴더(host)
     Project {
         #[command(subcommand)]
@@ -949,6 +962,20 @@ enum ServiceCmd {
 }
 
 #[derive(Subcommand)]
+enum UpdateCmd {
+    /// 보관한 옛 실행 파일로 되돌린다(이름이 없으면 지금과 다른 가장 새 것). 사람만
+    Rollback {
+        /// `aaa update list`의 이름
+        name: Option<String>,
+        /// 검사만 하고 바꾸지 않는다(누구나)
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// 지금 실행 파일과 보관한 옛 실행 파일(version·sha256)
+    List,
+}
+
+#[derive(Subcommand)]
 enum ConfigCmd {
     /// host.toml·agent.toml(+ .local.toml)을 검증한다
     Check,
@@ -1203,6 +1230,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Doctor(a) => doctor_cmd(a, json),
         Cmd::Service { cmd } => service_cmd(cmd),
         Cmd::Config { cmd } => config_cmd(cmd, json),
+        Cmd::Update { cmd: None, from, dry_run } => crate::update::update(json, from, dry_run),
+        Cmd::Update { cmd: Some(UpdateCmd::Rollback { name, dry_run }), .. } => {
+            crate::update::rollback(json, name, dry_run)
+        }
+        Cmd::Update { cmd: Some(UpdateCmd::List), .. } => crate::update::list(json),
     }
 }
 

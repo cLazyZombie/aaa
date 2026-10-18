@@ -15,11 +15,12 @@ CLI를 중심으로 tmux 같은 세션 관리와 웹 접근을 제공합니다.
 
 macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표](docs/install-runbook.md), 설계는 [계획 §10·§15](docs/plan.md)에 있습니다. 아래에서 머신 이름은 `mac-a`(host)·`mac-b`, 주소는 `example.ts.net` 예시입니다.
 
-1. **빌드하고 고정 경로에 둔다(각 Mac).** 업그레이드도 같은 방법(rename으로 교체)입니다.
+1. **빌드하고 고정 경로에 둔다(각 Mac).** 처음에는 rename으로 둡니다. 업그레이드는 `aaa update`가 같은 폴더에서 새것을 검사한 뒤 바꾸고 옛것을 보관합니다(사람이 터미널에서 `yes`, 되돌리기는 `aaa update rollback`).
 
    ```bash
    cargo build --release -p aaa
-   install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa
+   install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa   # 처음
+   ~/.local/bin/aaa update --from target/release/aaa                                                     # 업그레이드
    ```
 
 2. **설정.** `aaa config example host`·`aaa config example agent`로 예시를 보고 `~/.config/aaa/`에 둡니다. `aaa config check`로 확인합니다.
@@ -112,6 +113,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 |---|---|
 | `aaa machine list` | 머신 연결·디스크·이상 |
 | `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`) |
+| `aaa update --from <파일> [--dry-run]` · `aaa update rollback [이름]` · `aaa update list` | 지금 실행 파일을 주어진 빌드로 바꾸기(self-check·`[update] version` 고정 검사 뒤 rename, 옛것은 옆 `.aaa-old/`에 `[update] keep`개) · 보관한 것으로 되돌리기 · 보관 목록. 바꾸기·되돌리기는 사람이 터미널에서(`yes`), 도는 host·agent는 `aaa service restart`로 다시 띄웁니다 |
 | `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 최근 출력 글(`--source visible`이면 지금 화면) |
 | `aaa tab create --machine mac-b -- <명령>` | 새 탭에 새 pane |
 | `aaa pane run <pane> "…"` | 명령 실행(글 + Enter, 사람의 attach에 막히지 않음) |
