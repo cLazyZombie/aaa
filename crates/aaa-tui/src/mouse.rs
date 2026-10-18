@@ -9,7 +9,7 @@
 //! - pane: 누르면 포커스, 안쪽을 끌면 보이는 화면 글을 고르고 떼면 복사(`copy_on_select`), 두 번 누르면 낱말.
 //!   프로그램이 마우스 보고를 켰으면(`GridFrame.modes`) 누름·끌기·뗌·움직임·휠을 그 모드의 인코딩으로 넘긴다.
 //!   보고를 끈 alt 화면이면 휠을 위·아래 화살표로 보낸다(herdr `WheelRouting::AlternateScroll`).
-//! - 링크: ctrl(herdr)·alt+왼쪽 누름이면 host에 그 칸의 링크를 묻고(`PaneLink`), http(s)면 이 기기에서 연다(`open.rs`). 아니면
+//! - 링크: ctrl+왼쪽 누름이면 host에 그 칸의 링크를 묻고(`PaneLink`), http(s)면 이 기기에서 연다(`open.rs`). 아니면
 //!   그 누름을 보통 누름으로 다시 넣는다(herdr `pane.link.activate`·`ReplayMouse`, plan §8.194).
 //! - 창: 이름·닫기 확인은 단추가 아닌 곳을 누르면 닫고(안쪽도), 단축키 창은 밖을 누를 때만 닫는다.
 //! - 오른쪽 누름: 탭 이름표면 탭 메뉴, pane이면 pane 메뉴(herdr `context_menu.rs`). 메뉴에서 「오른쪽 누름을 pane에 보내기」를
@@ -636,14 +636,14 @@ impl App {
         true
     }
 
-    /// ctrl·alt+왼쪽 누름이 pane 안쪽이면 그 칸의 링크를 묻는다(herdr는 ctrl만, alt는 사용자 말 10-18). 물었으면 참.
+    /// ctrl+왼쪽 누름이 pane 안쪽이면 그 칸의 링크를 묻는다(herdr처럼 ctrl만, alt+누름은 늘 보통 누름). 물었으면 참.
     /// herdr처럼 터미널 모드에 창이 없을 때만이고, 묻는 동안 키·다른 사건은 그대로 간다.
     async fn link_press(&mut self, m: MouseEvent, hits: &Hits, tx: &mut FrontSender) -> Result<bool> {
         if self.replaying_link
             || self.link_press.is_some()
             || self.overlay.is_some()
             || self.mode != Mode::Terminal
-            || !m.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            || !m.modifiers.contains(KeyModifiers::CONTROL)
             || self.host_minor < LINK_MINOR
         {
             return Ok(false);

@@ -1850,8 +1850,8 @@ fn host_prefs(node: &Node) -> aaa_proto::SharedPreferences {
 }
 
 /// 링크 열기(herdr 0.9.5 ctrl+누름 `pane.link.activate`, plan §8.194): OSC 8 링크는 그 uri, 글 속 URL은 끝 문장 부호와 짝
-/// 없는 괄호를 뺀 http(s) 주소를 TUI 기기에서 연다(ctrl은 herdr, alt는 사용자 말). 연 누름의 끌기·놓기는 고르지 않는다.
-/// 링크가 아닌 칸은 보통 누름으로 다시 넣는다: 끌면 고르고, 마우스 보고를 켠 프로그램에는 ctrl 표시 그대로 간다.
+/// 없는 괄호를 뺀 http(s) 주소를 TUI 기기에서 연다(ctrl만, herdr와 같다). 연 누름의 끌기·놓기는 고르지 않는다. alt+누름은 링크를
+/// 열지 않는다. 링크가 아닌 칸은 보통 누름으로 다시 넣는다: 끌면 고르고, 마우스 보고를 켠 프로그램에는 ctrl·alt 표시 그대로 간다.
 /// 연 주소는 브라우저 대신 `AAA_TEST_OPEN_URL` 파일로 본다.
 #[test]
 fn link_click_like_herdr() {
@@ -1873,11 +1873,14 @@ fn link_click_like_herdr() {
     tui.mouse(16, (docs.0, docs.1 + 3), true);
     wait_for("OSC 8 링크 열기", T, || (read(&opened) == "https://example.com/osc\n").then_some(()));
 
-    // 2) 글 속 URL을 alt+누르면 끝 점과 짝 없는 괄호를 뺀 주소
+    // 2) 글 속 URL: alt+누름은 열지 않고(사용자 결정 10-18, herdr처럼 ctrl만), ctrl+누름은 끝 점과 짝 없는 괄호를 뺀 주소를 연다.
+    //    alt가 열었으면 ctrl보다 먼저 파일에 들어가 아래 비교가 어긋난다
     tui.type_line("printf 'see %s://example.com/a(b)c. end\\n' https");
     let see = tui.wait_find("see https");
     tui.mouse(8, (see.0, see.1 + 10), false);
     tui.mouse(8, (see.0, see.1 + 10), true);
+    tui.mouse(16, (see.0, see.1 + 10), false);
+    tui.mouse(16, (see.0, see.1 + 10), true);
     let both = "https://example.com/osc\nhttps://example.com/a(b)c\n";
     wait_for("글 속 URL 열기", T, || (read(&opened) == both).then_some(()));
     assert_eq!(read(&copied), "", "링크를 연 누름은 고르지 않는다");
@@ -1890,16 +1893,18 @@ fn link_click_like_herdr() {
     wait_for("보통 누름으로 고르기", T, || (read(&copied) == "end").then_some(()));
     assert_eq!(read(&opened), both, "링크가 아닌 칸은 열지 않는다");
 
-    // 4) 마우스 보고를 켠 프로그램에는 링크가 아닌 ctrl+누름이 ctrl 표시(16) 그대로 간다
+    // 4) 마우스 보고를 켠 프로그램에는 링크가 아닌 ctrl+누름이 ctrl 표시(16), alt+누름이 alt 표시(8) 그대로 간다
     tui.type_line("clear; printf '\\033[?1000h\\033[?1006h'; echo mouse-$((1)); cat -v");
     tui.wait_text("보고 켬", |s| s.contains("mouse-1") && !s.contains("DOCS"));
     let at = (6, SIDE as usize + 4);
     let (x, y) = (at.1 - SIDE as usize + 1, at.0);
     tui.mouse(16, at, false);
     tui.mouse(16, at, true);
+    tui.mouse(8, at, false);
+    tui.mouse(8, at, true);
     tui.send(b"\r");
-    let sent = format!("^[[<16;{x};{y}M^[[<16;{x};{y}m");
-    tui.wait_text("cat이 읽은 ctrl 보고", |s| s.matches(&sent).count() >= 2);
+    let sent = format!("^[[<16;{x};{y}M^[[<16;{x};{y}m^[[<8;{x};{y}M^[[<8;{x};{y}m");
+    tui.wait_text("cat이 읽은 ctrl·alt 보고", |s| s.matches(&sent).count() >= 2);
     tui.send(b"\x03");
 }
 

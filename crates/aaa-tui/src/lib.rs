@@ -392,7 +392,7 @@ struct App {
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
     copy_reply: Option<copy::CopyReply>,
-    /// ctrl·alt+누름으로 링크를 묻는 중(herdr `PendingEndpointKind::PaneLinkActivate`, `mouse.rs` `link_press`)
+    /// ctrl+누름으로 링크를 묻는 중(herdr `PendingEndpointKind::PaneLinkActivate`, `mouse.rs` `link_press`)
     link_press: Option<mouse::LinkPress>,
     /// 링크를 연 누름의 남은 왼쪽 끌기·놓기를 놓을 때까지 버린다(herdr `url_click_consumes_until_up`)
     link_consume: bool,
@@ -726,7 +726,7 @@ impl App {
                 self.pending.insert(id, Pending::SpaceLayout);
             }
             self.reconcile_ascii();
-            // 링크가 아닌 ctrl·alt+누름은 보통 누름으로 다시 넣는다(herdr `ReplayMouse`)
+            // 링크가 아닌 ctrl+누름은 보통 누름으로 다시 넣는다(herdr `ReplayMouse`)
             for m in std::mem::take(&mut self.link_replay) {
                 self.replaying_link = true;
                 let r = self.on_mouse(m, &mut tx).await;
@@ -3255,7 +3255,7 @@ mod tests {
         assert!(lines[6].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
     }
 
-    /// 링크를 묻는 ctrl·alt+누름(herdr `PaneLinkActivate`·`fallback_events`·`url_click_consumes_until_up`): 답이 올 때까지 그
+    /// 링크를 묻는 ctrl+누름(herdr `PaneLinkActivate`·`fallback_events`·`url_click_consumes_until_up`): 답이 올 때까지 그
     /// 누름의 왼쪽 끌기·놓기를 모으고(놓은 뒤와 다른 사건은 그대로 간다), 링크가 아니거나 뜻밖의 답·http(s)가 아닌 주소면 모은
     /// 사건을 다시 넣는다. 그 사이 pane 자리가 바뀌었으면 다시 넣지 않고 놓을 때까지 버린다.
     #[test]
