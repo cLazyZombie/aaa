@@ -2674,7 +2674,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 아무것도 남지 않은 기기에는 보내지 않고 흐름 사건 `push_unwanted`(「기기 N개가 고른 알림 종류가 아니다 · 항목 K개」)를 남긴다.
   - **가르는 기준.** thread 항목 중 「new report」는 작업 완료이고, 나머지 사람 차례(확인창·기다림·pane 닫힘·agent 사라짐·시작 실패)는 입력 필요다. PR·머신·routine·세션처럼 참고에 없는 aaa 항목은 host `notify.kinds`대로 모든 기기에 간다.
   - **참고와 다른 것(아침 확인).** 참고의 「작업 완료」는 끄기·긴 작업(1분 이상)·매번이다. aaa의 작업 완료는 pane 차례가 아니라 thread가 낸 새 보고(일 한 단위)다. 그래서 「빨리 끝난 답」을 거를 차례 길이가 없어 켜기·끄기만 둔다. pane 차례마다 알리는 참고의 길(pane 상태 push)을 따로 넣을지는 사용자 결정이다(넣으면 thread 알림과 겹친다).
-  - 시험: 웹 E2E 12 「기기별 알림 종류」(작업 완료를 끄면 다시 등록 → 보는 동안 앱 안 알림 없음 → 가려진 동안 push 없음과 `push_unwanted` → 다시 켜면 push). host 단위 시험 `device_alert_kinds`, 구독 갱신 시험 `another_device_takes_a_push_endpoint_only_with_its_keys` 끝부분.
+  - 시험: 웹 E2E 17 「기기별 알림 종류」(작업 완료를 끄면 다시 등록 → 보는 동안 앱 안 알림 없음 → 가려진 동안 push 없음과 `push_unwanted` → 다시 켜면 push). host 단위 시험 `device_alert_kinds`, 구독 갱신 시험 `another_device_takes_a_push_endpoint_only_with_its_keys` 끝부분.
   - 결함 심기 둘: host가 기기마다 거르지 않으면 「고르지 않은 종류 기록이 되지 않았다」, 웹이 거르지 않으면 「앱 안 알림이 내려왔다」로 실패한다.
 - **N10 프로젝트 mute.** herdr-projects처럼 `project.toml` `mute = true`면 그 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류만 남기고 끈다.
   - 남는 것: `outage`(`gh` 실패 등)·`config-error`·`health`(머신 이상). herdr-projects가 error로 보내는 「gh keeps failing」·「file is not usable」과 차이 목록의 「오류·머신 이상은 보냄」을 따랐다.
@@ -2887,14 +2887,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - host는 그 연결에서 앱 글이 25초(`presence_lease`, 시험만 `AAA_TEST_PRESENCE_LEASE_MS`) 넘게 없으면 쓰는 화면에서 뺀다. 연결은 두고 다음 presence가 오면 다시 센다. pong은 lease를 늘리지 않는다.
   - Page Lifecycle `freeze`(Chrome·Android)는 쓰지 않는 것으로 알린다. `resume`·`pageshow`는 다시 본다. herdr-web-ui `watchPageInUse`(바꾸지 않고 옮긴 `herdr/presence.ts`)에 없는 사건이라 `api.ts`가 직접 듣는다.
   - **배포 뒤 잠깐 겹칠 수 있다.** service worker가 새 웹을 받기 전의 옛 페이지는 heartbeat를 보내지 않는다. 그 페이지는 25초 뒤 쓰는 화면이 아니게 되어 push가 앱 안 알림과 겹친다(push가 가는 쪽으로 틀린다). 페이지를 다시 열면 끝난다.
-  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」(멈춘 쓰는 기기 → lease 뒤 쓰는 화면 0 → push와 근거 「lease 끝」 → 깨면 다시 쓰는 화면). headless Chromium은 CDP `Page.setWebLifecycleState frozen`으로 보이는 페이지를 멈추지 않아(timer가 계속 돈다, 최소화해도 가려지지 않는다) 페이지 안에서 멈춘다: timer 일을 세우고, 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. WebSocket pong은 브라우저가 계속 한다. lease를 끈 결함 심기(`AAA_TEST_PRESENCE_LEASE_MS=600000`)는 「lease 끝」에서 실패한다. host 단위 시험 `basis_names_the_user_device_connections`.
+  - 시험: 웹 E2E 18 「멈춘 쓰는 화면」(멈춘 쓰는 기기 → lease 뒤 쓰는 화면 0 → push와 근거 「lease 끝」 → 깨면 다시 쓰는 화면). headless Chromium은 CDP `Page.setWebLifecycleState frozen`으로 보이는 페이지를 멈추지 않아(timer가 계속 돈다, 최소화해도 가려지지 않는다) 페이지 안에서 멈춘다: timer 일을 세우고, 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. WebSocket pong은 브라우저가 계속 한다. lease를 끈 결함 심기(`AAA_TEST_PRESENCE_LEASE_MS=600000`)는 「lease 끝」에서 실패한다. host 단위 시험 `basis_names_the_user_device_connections`.
 - **늦은 소리는 버린다(실기 07:45: 무음 모드 iPhone, 알림 때는 소리가 없고 앱으로 돌아올 때 울림).** coordinator 결정 「알림 순간에 못 내면 버린다」.
   - 까닭(유력): iOS는 뒤로 간 홈 화면 앱의 JavaScript와 소리를 멈춘다. 그동안 온 사건은 앱이 다시 앞으로 올 때 한꺼번에 오고, 그때 소리를 냈다. 가려진 채 잠깐 돈 페이지가 예약한 소리도 앱이 돌아올 때 난다.
   - 웹은 멈췄던 페이지가 깨어난 바로 뒤(2초) 받은 사건과 다시 붙어 읽은 놓친 사건을 늦은 알림으로 본다. 앱 안 알림은 띄우고 소리는 내지 않는다. 멈춤은 1초 timer가 3초 넘게 돌지 않은 것으로 안다. 잠깐 가렸다 다시 보인 것은 깨어남이 아니다.
   - host 시각(thread `updated_at_ms`)으로 가르지 않는다: 보고가 검토 대기가 되는 때는 agent가 쉴 때라 저장 시각보다 늦을 수 있다.
   - 가려진 휴대폰(`pointer: coarse`) 페이지는 소리를 내지 않는다. 그 기기에는 host push가 간다(쓰는 화면이 아니다). 데스크톱 탭은 가려져도 소리를 낸다(참고대로).
   - Web Push 알림의 소리는 iOS 무음 스위치를 따른다(알림 소리는 무음 모드에서 나지 않고 진동만 한다). 무음을 넘는 「중요 알림」(Critical Alerts)은 Apple 승인 entitlement가 있는 앱만 쓰며 Web Push에는 없다. 그래서 07:43의 push가 조용했던 것은 iOS 규칙이고 aaa가 바꿀 수 없다.
-  - 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
+  - 시험: 웹 E2E 18 「멈춘 쓰는 화면」 (3)(소리를 켠 휴대폰이 멈춘 동안 난 보고는 깨면 「띄움 · focus · 늦어 소리 버림」). 늦은 소리 검사를 뺀 결함 심기는 「띄움 · focus · 소리」로 실패한다.
 
 ### 8.134 host를 다시 띄워도 알린 끊김(gh·머신)을 이어받는다(10-18, coordinator 실기 확인 중 발견)
 - **결함.** `gh` 실패·머신 끊김은 기준 시간(`outage_secs`)을 넘으면 inbox 항목을 한 번 쓰고, 돌아오면 「다시 된다」를 한 번 쓴다. 이 상태는 host 메모리에만 있어, 알린 뒤 host를 다시 띄우면 새 host는 알린 것을 모른다. 그 뒤 돌아와도 회복 항목이 오지 않아 열린 실패 항목이 그대로 남았다(07:53 재시작, 20:21 shadow 「gh 실패」).
@@ -3059,7 +3059,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **host.** push를 보낸 기기마다 최근 항목(프로젝트·대상·보낸 때, 기기마다 100개·하루)을 메모리에 두고(`push::PushedLog`), `GET /api/v1/push`의 `pushed`로 그 기기 것만 준다. 다시 띄우면 비고, 그러면 웹은 띄운다(놓치지 않는 쪽).
 - **웹.** 늦은 알림(멈췄다 깬 직후 받은 사건은 멈춘 때부터, 다시 붙어 읽은 놓친 사건은 끊긴 때부터)이면 host에 묻고, 그 뒤(기기 시계 차이 5초를 덮는다) 이 기기에 같은 프로젝트·thread로 간 push가 있으면 띄우지 않는다. 결과는 `alert_outcome` 「push로 받음 · 안 띄움」. 묻지 못하면 띄운다. 늦은지는 사건을 받은 때 정한다(묻는 동안 시간이 가도 소리를 내지 않는다). 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다.
 - **thread에 묶이지 않은 pane 확인창**은 push 항목이 없어(thread-state 항목만 push) 늘 띄운다.
-- 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
+- 시험: 웹 E2E 18 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
 
 ### 8.142 ci-local: build 뒤 test·e2e·clippy를 함께, 12를 준비 도우미로 나눔(10-18, 사용자 「ci local시간이 병목일때가 많으니깐 이건 더 줄여봐」, t-0338)
 
