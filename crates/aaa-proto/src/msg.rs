@@ -1538,7 +1538,7 @@ pub enum FrontRequest {
     WebPublish,
     WebPublishOff,
     WebStatus,
-    /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.32)
+    /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.33)
     ProjectCreate {
         name: String,
         #[serde(default)]
@@ -1551,19 +1551,19 @@ pub enum FrontRequest {
         #[serde(default)]
         coordinator_profile: Option<String>,
     },
-    /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.32). key는 `aaa project set --help`
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.33). key는 `aaa project set --help`
     ProjectSet {
         project: String,
         key: String,
         value: String,
     },
-    /// 프로젝트 목록. archived는 `all`일 때만(herdr-projects `list --all`, FRONT_API 1.32)
+    /// 프로젝트 목록. archived는 `all`일 때만(herdr-projects `list --all`, FRONT_API 1.33)
     Projects {
         #[serde(default)]
         #[ts(optional, as = "Option<bool>")]
         all: bool,
     },
-    /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.32)
+    /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.33)
     ProjectLifecycle {
         project: String,
         action: ProjectAction,
@@ -1590,7 +1590,7 @@ pub enum FrontRequest {
         dry_run: bool,
     },
     /// coordinator를 연다(herdr-projects `open`): 도는 coordinator가 있으면 그것을 알려 주고, 없으면(또는 `new`) host 머신에서
-    /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.32)
+    /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.33)
     ProjectOpen {
         project: String,
         /// 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude

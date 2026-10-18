@@ -410,17 +410,17 @@ pub struct ProjectView {
     pub name: String,
     pub path: String,
     pub threads: u32,
-    /// FRONT_API 1.32. 옛 host는 보내지 않는다(active)
+    /// FRONT_API 1.33. 옛 host는 보내지 않는다(active)
     #[serde(default)]
     #[ts(optional, as = "Option<ProjectStatus>")]
     pub status: ProjectStatus,
     /// `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
-    /// FRONT_API 1.32. 옛 host는 보내지 않는다(빈 글)
+    /// FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[ts(optional, as = "Option<String>")]
     pub coordinator_profile: String,
     /// coordinator가 쓸 수 있는 profile(safety `coordinator_profiles`, 사람만 바꾼다). 없으면 모두다. 웹 「coordinator 열기」가
-    /// 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.32
+    /// 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.33
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub coordinator_profiles: Option<Vec<String>>,
@@ -460,7 +460,7 @@ pub struct ProjectChange {
     pub notes: Vec<String>,
 }
 
-/// `project open`의 결과(herdr-projects `open`, FRONT_API 1.32)
+/// `project open`의 결과(herdr-projects `open`, FRONT_API 1.33)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectOpened {
     pub project: ProjectView,
@@ -616,7 +616,7 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<String>>", optional)]
     pub warnings: Vec<String>,
-    /// 그 프로젝트의 상태(FRONT_API 1.32, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+    /// 그 프로젝트의 상태(FRONT_API 1.33, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
     /// 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
     #[serde(default, skip_serializing_if = "ProjectStatus::is_active")]
     #[ts(as = "Option<ProjectStatus>", optional)]
