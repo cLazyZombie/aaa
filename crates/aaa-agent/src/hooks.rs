@@ -237,16 +237,27 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     }
     tokio::time::timeout(Duration::from_secs(3), async {
         let mut s = aaa_common::ipc::connect(Path::new(&sock)).await?;
-        s.write_all(&body).await?;
-        s.shutdown().await?;
-        let mut reply = Vec::new();
-        s.read_to_end(&mut reply).await?;
-        anyhow::ensure!(reply.starts_with(b"ok"), "agent가 거부했다: {}", String::from_utf8_lossy(&reply));
-        let out = String::from_utf8_lossy(&reply[2..]).trim().to_string();
-        Ok((!out.is_empty()).then_some(out))
+        exchange(&mut s, &body).await
     })
     .await
     .context("agent 응답 시간 초과")?
+}
+
+/// hook 요청·응답. 쓰기 반쪽 닫기는 EOF를 기다리는 옛 agent와도 통신하기 위해 남긴다.
+async fn exchange(s: &mut aaa_common::ipc::LocalStream, body: &[u8]) -> Result<Option<String>> {
+    s.write_all(body).await?;
+    // JSON 완성만 보고 응답한 상대가 먼저 닫으면 macOS shutdown은 ENOTCONN이다.
+    // 이미 도착한 응답은 여전히 읽을 수 있으므로 아래의 ok 검증으로 성공 여부를 정한다.
+    if let Err(e) = s.shutdown().await
+        && e.kind() != std::io::ErrorKind::NotConnected
+    {
+        return Err(e.into());
+    }
+    let mut reply = Vec::new();
+    s.read_to_end(&mut reply).await?;
+    anyhow::ensure!(reply.starts_with(b"ok"), "agent가 거부했다: {}", String::from_utf8_lossy(&reply));
+    let out = String::from_utf8_lossy(&reply[2..]).trim().to_string();
+    Ok((!out.is_empty()).then_some(out))
 }
 
 /// agent 쪽: 연결 하나에서 완성된 JSON 사건 하나를 읽는다.
@@ -276,6 +287,81 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// JSON을 읽은 agent가 응답·종료한 뒤 클라이언트가 쓰기 반쪽을 닫는 실제 IPC 차례.
+    /// macOS는 이 shutdown을 ENOTCONN으로 거부하지만 읽지 않은 응답은 그대로 남긴다.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn closed_peer_reply_survives_write_shutdown() {
+        use std::{
+            pin::Pin,
+            task::{Context, Poll},
+        };
+        use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+        struct AfterPeerClosed {
+            stream: tokio::net::UnixStream,
+            closed: tokio::sync::oneshot::Receiver<()>,
+            ready: bool,
+        }
+        impl AsyncRead for AfterPeerClosed {
+            fn poll_read(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                buf: &mut ReadBuf<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Pin::new(&mut self.stream).poll_read(cx, buf)
+            }
+        }
+        impl AsyncWrite for AfterPeerClosed {
+            fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+                Pin::new(&mut self.stream).poll_write(cx, buf)
+            }
+            fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Pin::new(&mut self.stream).poll_flush(cx)
+            }
+            fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                if !self.ready {
+                    match Pin::new(&mut self.closed).poll(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(r) => {
+                            r.expect("agent 응답 task");
+                            self.ready = true;
+                        }
+                    }
+                }
+                Pin::new(&mut self.stream).poll_shutdown(cx)
+            }
+        }
+        let msg = HookMsg {
+            session: "s1".into(),
+            token: "test-hook-secret".into(),
+            harness: "claude".into(),
+            payload: json!({"hook_event_name":"UserPromptSubmit"}),
+        };
+        let guidance = output("UserPromptSubmit", "Waiting for you");
+        for reply in [format!("ok\n{guidance}"), "error: 거부\n".into(), String::new()] {
+            let (client, server) = tokio::net::UnixStream::pair().unwrap();
+            let (closed, wait) = tokio::sync::oneshot::channel();
+            let response = reply.clone();
+            let peer = tokio::spawn(async move {
+                let mut server: aaa_common::ipc::LocalStream = Box::new(server);
+                assert_eq!(read_msg(&mut server).await.unwrap().session, "s1");
+                server.write_all(response.as_bytes()).await.unwrap();
+                drop(server);
+                closed.send(()).unwrap();
+            });
+            let mut client: aaa_common::ipc::LocalStream =
+                Box::new(AfterPeerClosed { stream: client, closed: wait, ready: false });
+            let result = exchange(&mut client, &serde_json::to_vec(&msg).unwrap()).await;
+            peer.await.unwrap();
+            if reply.starts_with("ok") {
+                assert_eq!(result.unwrap(), Some(guidance.clone()));
+            } else {
+                assert!(result.is_err(), "빈 응답·거부는 성공이 아니다");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn hook_json_completion_and_errors_do_not_need_eof() {
