@@ -2522,6 +2522,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - Q22 다시 여는 길: 웹에서 중단된 pane을 열면 터미널 자리에 「이 pane은 다시 뜨지 않았다」·까닭·「다시 열기」(thread·역할 pane이 아니고 제어 권한일 때)를 보인다. 입력줄·키 막대·「세션이 끝났다」 띠는 없다. 데스크톱에서 줄 메뉴 ⋯ 단추를 숨기고 오른쪽 클릭으로 여는 것은 참고(herdr-web-ui `workspace-actions`, `pointer: fine`이면 `display: none`)대로 두었다. TUI는 중단 띠에 `aaa pane resume <id>`를 이미 보인다.
   - Q19 보던 화면이 따라가기: 새 pane의 `PaneView.replaced`(대신한 옛 ID, 오래된 것부터 8개)를 host가 `replace_pane`에서 채운다. 웹은 보던 pane이 목록에서 사라지고 그 ID를 대신한 pane이 있으면 그 pane으로 넘어가고 주소(`#pane=`)를 바꾼다(뒤로 가기에 옛 주소를 남기지 않는다). TUI는 보던 leaf가 layout에서 사라지면 같은 탭·같은 leaf 수일 때 같은 차례의 leaf로 간다(전에는 첫 pane).
   - 목록 차례: host는 pane 목록을 처음 ID(`replaced`의 첫 값) 차례로 준다. 되살리거나 다시 열어도 줄이 옮겨 다니지 않는다.
+  - TUI 중단 표시: 「중단(재부팅) — aaa pane resume <ID>」 명령을 앞에 두고, 까닭은 그 뒤에 pane 폭의 2/3까지만 줄여 붙인다(좁으면 뺀다). 까닭을 명령 앞에 두었더니 긴 까닭이 pane 폭을 다 덮어 명령이 잘리고 첫 줄 글을 가렸다(최신 main 흉내 병합의 병렬 시험 부하에서 TUI E2E `interrupted_badge_and_resume`가 까닭이 먼저 온 화면을 보아 찾음). 유닛 `interrupted_badge_keeps_the_command_and_the_first_line`(되돌리면 실패).
   - 계약: FRONT_API 1.19(`PaneView.replaced`, 선택 필드).
   - 시험(결함 심기로 확인): 웹 E2E spec 13 재부팅 단계(보던 셸 t1이 새 pane으로 넘어가 입력이 되고 주소가 바뀜, 남긴 프로그램 pane의 목록 까닭·자리 표시·「다시 열기」 뒤 그 pane을 따라가 같은 명령 출력, 목록 차례 그대로). 결함 다섯(웹 따라가기 끔·host `replaced` 뺌·프로그램 pane 까닭 뺌·「다시 열기」 뺌·목록을 ID 차례로)이 각각 그 단언에서 실패했다. m12 재부팅 시험 둘(되살린 셸·다시 연 pane의 `replaced`, 남긴 까닭), TUI 유닛 `focus_follows_replaced_pane`.
 
