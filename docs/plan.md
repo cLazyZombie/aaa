@@ -1589,7 +1589,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **안전 영역(M3, 참고 styles.css 579~581·606·645줄).** 전에는 위·아래 inset만 비켰다. 가로로 둔 휴대폰·iPad에서는 노치와 둥근 모서리가 목록 글과 터미널 글을 가렸다.
   - 목록은 왼쪽을 비킨다. 오른쪽 칸(머리·터미널·입력줄·키 막대·thread 화면)은 오른쪽을 비킨다.
-  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비키고, 목록이 오른쪽도 비킨다.
+  - 한 칸씩 보이는 좁은 화면(700px 이하)에서는 오른쪽 칸이 왼쪽도 비킨다. 목록은 768px 이하에서 왼쪽 끝에 붙은 drawer라 왼쪽만 비킨다(§8.146, 전에는 목록이 화면 전체라 오른쪽도 비켰다).
   - 칸마다 자기 바탕색 안에서 비킨다(터미널 옆은 터미널 색). `--inset-l`·`--inset-r` 두 변수로 기존 여백에 더한다.
 - **manifest·meta(M4 일부, 참고 manifest·index.html).**
   - manifest에 `id: "/"`를 둔다. 아이콘은 일반(`any`)·maskable을 192·512 모두 둔다. maskable 192는 `icon.svg`를 바탕까지 채워 렌더했다. 512와 같은 방법이다.
@@ -1598,7 +1598,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **화면 켜짐 유지(M6, 참고 `wakeLock.ts`·`visibility.ts` 그대로, App.tsx 842줄, 설정 「휴대폰」).** 설정을 켜면 pane이나 thread를 보는 동안 screen wake lock을 건다. 가려지면 놓고, 다시 보이면 다시 건다. 기기마다 두며 기본은 꺼짐이다. HTTPS나 localhost에서만 된다. 참고 문구를 그대로 쓴다.
 - **시험.**
   - 웹 E2E 「안전 영역」: Chromium `Emulation.setSafeAreaInsetsOverride`로 좌우 47px를 준다. 가로 두 칸(844×390)과 좁은 가로 한 칸(667×375)에서 각 칸의 여백을 잰다.
-  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 목록으로 가거나 끄면 놓는다.
+  - 웹 E2E 「화면 켜짐 유지」: `navigator.wakeLock`을 기록하는 것으로 바꾼다. 꺼져 있으면 요청 없음, 켜도 목록만 보면 요청 없음, pane을 고르면 요청한다. 가려지면 놓고 다시 보이면 다시 요청한다. 다시 열어도 설정이 남고, 끄면 놓는다. 목록 drawer를 열어도 pane은 골라진 채라 놓지 않는다(참고 `selectedPane !== null`, §8.146. 전에는 휴대폰이 목록 화면으로 가면 놓았다).
   - PWA 단계: manifest `id`, 아이콘 종류 넷, 각 PNG 실제 크기가 적은 크기와 같은지, status-bar meta가 없는지 본다.
 
 ### 8.67 앞 기록: 위로 굴려 받은 기록 끝에 닿으면 그 앞 덩어리를 받아 붙인다(10-17, 사용자 결정·요청)
@@ -2055,7 +2055,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
 - **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
   - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
-  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(`DELIVERED_WORKING_MS`). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
+  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(host.toml `[projects] delivered_working_secs`, 기본 15. 시험에서 줄인다). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
   - 연결되지 않은 머신의 thread는 세지 않는다(참고 `remote_pass`: 닿지 않으면 상태도 묶음도 항목도 바꾸지 않는다).
 - **전이 항목(F2·F3, hp `src/steps.rs` `write_thread_items`·`transition_event`).** 사람 차례나 쉼으로 바뀔 때만 `thread-state` 항목 하나를 낸다.
   - 사건 말은 참고 그대로다: `blocked on a prompt`·`pane closed`·`agent gone`·`waiting on you`·`idle`.
@@ -3035,7 +3035,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **왜.** 로컬 ci-local e2e 단계가 파일을 하나씩 돌아 282~377초였다. 파일마다 준비·정리는 6%뿐이고 나머지는 단계 본문이었다. 가장 긴 `12-threads-push`(129초)가 3분의 1이었다.
 - **함께 돌기.** 입구가 파일을 worker 여러 개로 돈다(core 4개마다 하나, 많아야 4, `--workers`·`AAA_E2E_WORKERS`). 파일마다 이미 자기 실험실(`/tmp/aaw-<pid>`, host·agent·Chromium)이라 나눌 것이 없었다. 웹 port만 harness가 골라 닫은 뒤 host가 다시 여는 틈이 있어, host가 port 0으로 열고 `status.web_listen`으로 알린 port를 host.toml에 다시 써 재시작(07·13)이 같은 port로 뜨게 했다. 긴 파일부터 넣고(기록한 초 `web/e2e/durations.json`, t3code `shardWeights.json`처럼), 적지 않은 새 spec은 맨 앞이다. 재시도는 없다(herdr-web-ui `ci-browser-parallel.ts`의 한 번 다시 돌리기는 받지 않는다). GitHub macos-15(3 core)는 1이 되어 그대로다.
-- **안쪽 기다림.** 기다림마다 시간을 재 보니 thread 하나마다 보고 회수가 늘 4.1초였다: brief를 치기 전 화면이 3초 그대로이기를 기다리는 `SETTLE`(실제 harness가 막 뜬 화면에 치지 않게)이다. 가짜 agent 화면은 뜨자마자 멈추므로 시험에서만 `AAA_TEST_BRIEF_SETTLE_MS`(웹 E2E 300)로 줄인다(`AAA_TEST_EVENTS_PING_MS`와 같은 꼴. Rust 시험(m13 등)은 기본 3초 그대로 돈다). 12가 129초에서 약 81초가 됐다. 남은 큰 기다림은 제품 시간이다: 알림 묶음 `debounce_secs` 1초, 웹 상태 연결 pong 두 번(6초), 앱 안 알림 접힘(약 3초).
+- **안쪽 기다림.** 기다림마다 시간을 재 보니 thread 하나마다 보고 회수가 늘 4.1초였다: brief를 치기 전 화면이 3초 그대로이기를 기다리는 `SETTLE`(실제 harness가 막 뜬 화면에 치지 않게)이다. 가짜 agent 화면은 뜨자마자 멈추므로 시험에서만 `AAA_TEST_BRIEF_SETTLE_MS`(웹 E2E 300)로 줄인다(`AAA_TEST_EVENTS_PING_MS`와 같은 꼴. m13도 같은 값이다, 아래 「m13」). 12가 129초에서 약 81초가 됐다. 남은 큰 기다림은 제품 시간이다: 알림 묶음 `debounce_secs` 1초, 웹 상태 연결 pong 두 번(6초), 앱 안 알림 접힘(약 3초).
+- **m13(t-0327).** m13 host도 300으로 띄운다(`spawn_host`, 다시 띄운 host도 같다). 다만 확인 뒤 바로 쉼을 보는 두 시험(`worktree_thread_round_trip`·`memory_and_restart`)은 기본 3초로 둔다. 가짜 agent는 brief를 읽자마자 보고를 쓴다. 멈춤을 줄이면 agent가 1초마다 보는 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있고, 그러면 `delivered_report`가 그 보고가 되어 확인 뒤에도 창(`delivered_working_secs`) 동안 작업 중이다(제품 모서리, coordinator에 알림). 보고만 기다리고 brief 받음을 단언하던 세 곳은 둘 다 기다리게 고쳤다(기본값에서도 보고 감시 위상에 기대던 경쟁). 가장 긴 시험은 25.5초에서 20.1초, m13은 약 50초에서 42초다. 멈춤을 0으로 심어도 옛 m13·새 m13 모두 통과한다: 멈춤 자체를 보는 시험은 전부터 없다.
 - **지운 것.** 15파일 71단계를 단계마다 무엇을 보나·중복(다른 단계·Rust·웹 유닛)·결함 이력·기능이 남았나로 훑어 단계 여섯을 지우고 스물아홉 곳에서 단언 일부를 뺐다. 기준: 없어진·바뀐 기능, 같은 동작을 다른 시험이 이미 봄, 결과가 아니라 구현 세부(문구·class·저장 꼴), 잡을 길이 없음. 보안·사용자 결정 규칙(쓰는 기기·알림·입력기·iOS)·과거 결함 재발 막기·휴대폰에서 보이는 결과는 남겼다. 표(파일·단계·이유·대신 보는 곳)는 t-0338 report 「지운 단계 표」.
 - **시험.** 지운 판을 worker 4로 세 번(73초씩), 3으로 두 번(88초씩), 전체 묶음 둘을 동시에 worker 4씩 두 번(실험실 여덟, 73~74초) 돌려 모두 통과했고, 파일마다 시간은 차례로 돌 때와 같았다(함께 돌아도 느려지지 않음). 4보다 늘려도 벽시계는 가장 긴 12에 걸린다. 일부러 실패하는 spec을 함께 돌리면 입구가 종료 코드 1·FAIL 줄·실험실을 남긴다. 숫자와 부하는 t-0338 report.
 
@@ -3155,6 +3156,30 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **멈춘 쓰는 화면의 기다림.** lease 25초를 기다리던 단계를 그 파일만 `labEnv`로 `AAA_TEST_PRESENCE_LEASE_MS=4000`(t-0304가 둔 시험 설정)으로 줄이고, 쓰는 동안 남아야 하는 그 화면만 presence를 1초마다 알린다(10초 setInterval 하나를 당기고, 당긴 수를 단언한다).
 - **기기 이름이 같은 두 기기.** 나누자 첫 화면과 B를 몇 초 사이에 짝짓게 되어 18이 실패했다: 흐름 사건과 `/api/v1/push` `user`의 기기 이름(ID 앞 7자)은 ULID 시각이라 약 33초 안에 짝지은 두 기기가 같다. 시험은 가를 수 있는 것으로 본다: 18은 「focus 없음」이 아닌 결과(첫 화면은 focus가 없고 멈추지 않는다), 17 「쓰는 기기」는 근거에 적힌 그 기기의 연결 번호(`연결#N`)가 B 때와 겹치지 않는지. 기기 이름을 바꿀지는 §8.105·§8.133 쪽에서 정한다(t-0338 report).
 - **시험.** 같은 tree·기계에서 차례로 213초, 함께 다섯 번 130·122·121·123·123초(모두 통과, 다시 돌림 없음). 겹쳐도 test 116~117초(혼자 117)·e2e 88~89초(혼자 89)·m13 94.8~95.0초로 같았다. `cargo test`는 시험을 도는 동안 build 잠금을 쥐지 않는다(m13 중 부른 clippy 0.4초, 「Blocking」 없음). 끝을 정하는 길은 test 단계이고 그 안(binary 차례, m13)은 t-0327 몫이다. ci-local 순서는 가짜 단계로 실패(로그 끝·종료 1)·build 실패 뒤 건너뜀·`--tee` 차례를 봤다. 18에서 `labEnv`를 빼면 「lease 끝」 20초로 실패한다. 17 「쓰는 기기」를 혼자(두 기기 이름이 같다) 4번, 18을 4번 통과했다.
+
+### 8.146 휴대폰·좁은 창 목록은 drawer, 첫 화면은 마지막 pane(10-18, 차이 목록 2장 M1·D2)
+
+전에는 700px 이하에서 목록과 pane이 화면을 번갈아 차지했다(pane을 고르면 목록이 사라지고 머리의 「목록으로」로 돌아간다). 처음 열면 빈 화면(「왼쪽에서 하나를 고른다」)이었다. 참고 herdr-web-ui `aa624cb`대로 바꿨다.
+
+- **drawer(참고 App.tsx 290~316·1368~1378·1479~1490줄, styles.css 1560~1614줄).** 768px 이하에서 목록은 pane 위에 겹치는 drawer다. 너비는 `min(88vw, 목록 너비)`이고 머리 아래부터 화면 끝까지다. 닫히면 `translateX(-100%)`·`visibility: hidden`이다. 769px부터는 늘 옆 칸이고, 넓어지면 열려 있던 drawer를 닫는다(다시 좁아져도 scrim과 함께 나오지 않게, 참고 `wideScreen`).
+  - 연다: 화면 머리 맨 앞 단추(「목록 열기」, `aria-expanded`·`aria-controls`), 왼쪽 가장자리 24px 안에서 오른쪽으로 쓸기(`web/src/herdr/edgeSwipe.ts`, 참고 `src/lib/edgeSwipe.ts` 그대로).
+  - 닫는다: 같은 단추(「목록 닫기」), 바깥(scrim) 누름, 왼쪽으로 쓸기, Esc(capture 단계라 focus를 쥔 터미널은 받지 않는다), 줄 고르기(pane·thread·프로젝트).
+  - Esc는 위에 뜬 창(`aria-modal`·`<dialog open>`)과 열린 메뉴(`role=menu`)가 먼저 쓴다. 한 번은 메뉴, 다음은 drawer다.
+- **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다.
+  - 휴대폰(터치)은 키보드를 올리지 않는다. 데스크톱은 터미널이 바로 키보드를 받는다(참고 PaneTerminal 2072줄: 고른 것이 없던 첫 화면은 `autoSelected`가 아니다).
+  - 주소가 가리킨 pane이 없으면 빈 화면이다. 참고는 그때 첫 pane으로 가고 말을 띄우는데, 그것은 이 묶음에 넣지 않았다.
+- **다르게 둔 것.**
+  - 참고는 단추가 창 전체 머리(app-header)에 있다. aaa는 화면마다 머리가 있어(터미널·보고·프로젝트, 빈 화면은 좁은 창에서만 보이는 머리) 그 머리 맨 앞에 같은 단추를 둔다(`web/src/drawer.tsx`). drawer는 그 머리(`--head`) 아래에 선다. 데스크톱 배치는 그대로다.
+  - 참고는 Esc를 `[role="dialog"]`로만 거른다. aaa 확인창은 `alertdialog`라 `aria-modal`로 거른다. 「더 보기」 메뉴는 aaa에서 목록 머리(drawer 안)에 있어 메뉴도 거른다.
+  - Esc로 닫으면 drawer 안에 있던 focus를 단추로 돌린다(숨는 drawer와 함께 focus가 사라지지 않게).
+  - 설정 톱니는 drawer 바닥 줄에 있다. 설정을 열어도 drawer를 닫지 않아, 닫으면 focus가 보이는 톱니로 돌아온다(QA Q10). 참고는 설정을 머리·명령에서 열어 drawer를 닫는다.
+  - 참고는 drawer(`.sidebar`) 안에 목록(`.sidebar-shell`, `height:100%`)이 따로 있다. aaa는 한 요소라 drawer일 때 `height:auto`로 둔다. 그러지 않으면 높이가 화면 전체라 바닥 줄(톱니·사용량)이 머리 높이만큼 화면 밖으로 밀린다(시험이 잡았다).
+- **시험.**
+  - `web/test/edgeSwipe.test.mjs`: 참고 `edgeSwipe.test.ts`를 node:test로 옮겼다(22개).
+  - 웹 E2E `04-app-shell.mjs` 「목록 drawer」: 처음엔 닫힘, 단추로 열고 닫기(이름·`aria-expanded`), 너비 88vw 이하, 바닥 줄까지 화면 안, scrim 누름, Esc 뒤 focus는 단추, CDP 터치로 가장자리 쓸기 열기·왼쪽 쓸기 닫기·가장자리 밖 쓸기는 무시, 줄 고르면 닫힘, 1024로 넓히면 옆 칸이고 닫힘, 다시 390이어도 닫힘, iPad 세로 768 drawer·가로 1024 옆 칸(`phone-drawer-open`·`ipad-drawer-open`·`ipad-landscape-sidebar`).
+  - 「첫 화면」: 휴대폰 첫 줄·키보드 없음·drawer 닫힘, 다른 pane을 열면 같은 기기 새 탭은 그 pane, 그 pane이 끝나면 첫 줄, 데스크톱 첫 줄·터미널 focus(`phone-first-screen`).
+  - 결함 심기: 첫 화면 끄기·기억 끄기·drawer `height:auto` 빼기를 하나씩 넣으면 그 단계가 실패한다.
+  - 다른 시험은 목록 안의 것을 `inList`(harness: 닫힌 drawer면 열고 누름, 닫히는 중이면 움직임이 끝난 뒤 봄)로 누른다. 특정 pane을 첫 화면으로 여는 시험은 주소(`pairPage({hash: paneHash(name)})`)로 연다. 첫 화면이 열자마자 붙는 WebSocket을 듣는 시험은 `onPage`로 먼저 듣는다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

@@ -8,6 +8,7 @@ import { call } from "./api";
 import type { ProjectView, ThreadView } from "./gen/proto";
 import { GROUP_WORD, groupRank, projectLine, stateLine, threadKey } from "./sidebarModel";
 import "./ProjectThreads.css";
+import { DrawerToggle } from "./drawer";
 
 /** popup `Group::DISPLAY_ORDER` */
 const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
@@ -74,7 +75,8 @@ export function ProjectThreads({
     return (
       <section className="project-threads" aria-label="프로젝트" data-testid="projects">
         <header className="project-threads-head">
-          <button type="button" className="icon-button" aria-label="닫기" title="닫기" onClick={onBack}>
+          <DrawerToggle />
+        <button type="button" className="icon-button" aria-label="닫기" title="닫기" onClick={onBack}>
             <ArrowLeft aria-hidden="true" />
           </button>
           <h2 className="project-threads-title">프로젝트</h2>
@@ -153,6 +155,7 @@ function ProjectBody({
   return (
     <section className="project-threads" aria-label={`${project} thread`} data-testid={`project-threads-${project}`}>
       <header className="project-threads-head">
+        <DrawerToggle />
         <button type="button" className="icon-button" aria-label="프로젝트 목록" title="프로젝트 목록" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />
         </button>

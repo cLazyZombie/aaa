@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import {
-  root, aaa, until, pairPage, pushes, pushDevice, nextPush, pushKey, base, step, browser, openSettings, waitOutput, setInUse,
+  root, aaa, until, pairPage, pushes, pushDevice, nextPush, pushKey, base, step, browser, openSettings, waitOutput, setInUse, inList,
   pushInUse, pushWho, pushLab,
 } from "../lib/harness.mjs";
 
@@ -70,7 +70,7 @@ export default async function ({ page }) {
     const pp = phone.page;
     const subscribed = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed);
     const bellPush = async () => {
-      await pp.getByTestId("more").click();
+      await inList(pp, "more");
       const ok = (await pp.getByTestId("alerts-item").innerText()).includes("켜짐, 이 기기로 푸시");
       await pp.keyboard.press("Escape");
       return ok;
@@ -78,7 +78,7 @@ export default async function ({ page }) {
     // (1) 열면 권한·구독이 있는 기기는 조용히 다시 등록한다(참고 App.tsx 「re-registers on every load」). 다시 열어도 같다
     await until("열 때 다시 등록", async () => (await subscribed()) === 1 && (await bellPush()));
     await pp.reload();
-    await pp.getByTestId("machine-labA").waitFor();
+    await pp.getByTestId("machine-labA").waitFor({ state: "attached" });
     await until("다시 열 때 다시 등록", () => bellPush());
     if ((await pp.evaluate(() => window.__pushLog.join(","))) !== "") throw new Error(`다시 등록이 구독을 바꿨다: ${await pp.evaluate(() => window.__pushLog.join(","))}`);
     await until("휴대폰을 봄", async () => (await pushInUse(page)) === 1);
@@ -261,7 +261,7 @@ export default async function ({ page }) {
     if (gone > 6000) throw new Error(`끊기까지 ${gone}ms(ping 1초·3초 기한)`);
     // ⋯ 메뉴(사용자 화면 10-18: 미러링 키보드 Esc로 닫히지 않음): 키보드 사건이 메뉴로 오도록 첫 항목에 focus
     const focused = () => bp.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? document.activeElement?.textContent?.trim());
-    await bp.getByTestId("more").click();
+    await inList(bp, "more");
     await until("열면 첫 항목에 focus", async () => (await focused()) === "링크 복사");
     await bp.keyboard.press("ArrowDown");
     if ((await focused()) !== "alerts-item") throw new Error(`아래 화살표 뒤 focus ${await focused()}`);
@@ -296,7 +296,7 @@ export default async function ({ page }) {
     // B(휴대폰): 열 때는 focus가 없다(앱을 켠 것이 아니다)
     const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: () => (document.hasFocus = () => false) });
     const bp = B.page;
-    await bp.getByTestId("pane-who").click();
+    await inList(bp, "pane-who");
     // 터미널이 입력을 받기 전에 친 글은 붙잡힌다(herdr-web-ui draft): who pane이 붙어 입력을 받을 때까지
     const writable = (p) => until("who 터미널 입력 받음", async () => (await p.locator('[data-testid="terminal"][data-pane-name="who"][data-readonly="false"]').count()) === 1);
     await writable(bp);
