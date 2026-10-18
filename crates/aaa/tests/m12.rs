@@ -310,7 +310,7 @@ fn reboot_restores_shells_and_resumes_agents() {
     // 되살린 pane은 대신한 옛 ID를 알린다: 옛 ID를 보던 화면이 따라간다(QA Q19)
     let replaced =
         hw.wait("대신한 옛 ID", |w| w.pane(&l[0]).filter(|p| !p.replaced.is_empty()).map(|p| p.replaced.clone()));
-    assert_eq!(replaced, [a.clone()]);
+    assert_eq!(replaced, std::slice::from_ref(&a));
     // 프로그램 pane은 일부러 남긴 까닭을 보인다(QA Q22: 전에는 까닭이 없어 「agent backend가 다시 떴을 때 이 세션이 없었다」로 보였다)
     let why = hw.wait("프로그램 pane 까닭", |w| w.pane(&d).and_then(|p| p.restore_error.clone()));
     assert!(why.starts_with("재부팅 뒤 다시 실행하지 않았다"), "{why}");
@@ -321,7 +321,7 @@ fn reboot_restores_shells_and_resumes_agents() {
     h.wait_output(&nd, "job-ran-9", T);
     hw.wait("재개 자리", |w| (w.leaves().get(3) == Some(&nd)).then_some(()));
     let p = hw.wait("대신한 옛 ID", |w| w.pane(&nd).filter(|p| !p.replaced.is_empty()).cloned());
-    assert_eq!(p.replaced, [d.clone()]);
+    assert_eq!(p.replaced, std::slice::from_ref(&d));
 }
 
 /// 보안 감사 t-0340: hook이 알린 harness 세션 ID는 UUID 꼴만 받는다(`aaa_common::util::harness_session_ok`). 셸 pane의
