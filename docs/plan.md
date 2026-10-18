@@ -3439,6 +3439,44 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다시 볼 때.** 문자열을 표로 빼고 시스템·한국어·영어부터(차이 목록 T5 할 일). 참고 문구를 옮긴 자리는 주석에 「문구는 참고
   i18n.ko」를 남겨 두었으므로 그 표의 열쇠를 찾을 수 있다.
 
+### 8.164 질문 카드가 화면 선택 창을 그대로 보인다(10-18, 차이 목록 2장 Q2, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-web-ui는 질문을 hook 내용이 아니라 pane 화면 글에서 읽는다(`server/prompt.ts`): Claude Code 질문(AskUserQuestion:
+  하나·여러 개·직접 쓰기, 선택지 설명, 여러 질문의 탭과 검토), 도구 승인, 계획 승인, Codex 승인 등. 카드(`PromptCard.tsx`)는 번호
+  keycap, 설명, 「(Recommended)」를 뗀 「추천」 표시, 여러 개는 체크와 「제출 (n)」, 직접 쓰기 칸을 그린다. 답 키는 커서가 있는 줄에서
+  상대로 옮기고 Enter, 여러 개는 바뀌는 줄마다 Enter를 친 뒤 →(Submit을 누르지 않음), 직접 쓰기는 그 줄로 옮겨 글과 Enter(계획은
+  shift+tab), Codex 거절 줄은 Esc 하나다. 화면을 다시 읽어 카드가 본 창(내용 hash id, 커서·체크 상태 빼고)이 아니면 거절하고, 처음
+  저지르는 키는 옮긴 커서가 화면에 보인 뒤에 보낸다(`SETTLE_MS` 1.5초).
+- **aaa가 달랐던 것.** 질문은 늘 예·아니오였다(host `ask`, 답은 화면의 Yes 줄로 옮기고 Enter, 아니오는 Esc).
+- **구조.**
+  - host `prompt.rs`: 참고의 읽기(Claude 질문·검토·승인·계획, Codex 승인)와 `answerKeys`를 옮겼다(MIT). 안내 줄이 화면 끝(할 일
+    목록·세션 구분선은 떼고)에 있을 때만 살아 있는 창이다. 화면 읽기는 host만 하므로 aaa-proto가 아니라 host에 둔다.
+  - 질문이 열리면(`on_harness` → `ask`) task 하나가 화면을 읽어 그 질문에 `menu`를 붙인다(hook이 화면보다 먼저 와도 `MENU_WAIT`
+    3초까지 다시 본다). 못 읽으면(번호 없는 폴더 신뢰 창 등) 지금처럼 예·아니오다. 붙이기는 질문 저장과 같은 잠금 안에서 읽고 써서,
+    그 사이 답한 질문을 다시 열지 않는다.
+  - `question_answer`의 `menu`(카드가 본 id)·`pick`(하나·여러 개·직접 쓰기): host가 화면을 다시 읽어 id가 다르면 「화면의 질문이
+    바뀌었다」로 거절하고 질문의 `menu`를 지금 창으로 바꾼다(카드는 새 창으로 다시 그린다). 키는 걸음마다 raw 입력이다(30ms 틈).
+    직접 쓰기 글은 한 줄만 받는다(줄바꿈·Esc 같은 조종 글자는 그 창의 키가 되므로 거절). 기록의 답은 「3. 파일 몇 개」·「직접: …」.
+  - 여러 질문 form은 host가 탭을 돌지 않는다: 답이 간 뒤 남은 창(다음 탭·검토)은 agent 화면 감지가 새 질문으로 알리고(`ask_anew.v1`,
+    plan §8.110) 그 질문에 새 `menu`가 붙는다.
+  - 웹 `PromptCard.tsx`(참고 그리기, 문구는 i18n.ko)·`herdr/PromptCard.css`(그대로). 카드는 지금 자리(pane 아래 dock, Q1)에 둔다.
+    앱 `button` 기본(고정 높이·한 줄)은 선택지 줄에서 되돌린다. `menu`가 없는 질문은 예·아니오 카드 그대로다. CLI·TUI는 예·아니오
+    그대로다(`aaa question answer <id> yes|no`).
+- **계약.** FRONT_API 1.29: `QuestionView.menu`(`QuestionMenu`·`MenuOption`), `question_answer`의 `menu`·`pick`(`MenuPick`). 옛 front의
+  예·아니오 답과 옛 host의 질문(menu 없음)은 그대로 읽는다. 새 오류 코드는 두지 않았다(바뀐 창은 BadRequest와 까닭, 옛 CLI가 모르는
+  코드를 읽지 못하므로).
+- **보안(§6.4).** 새 표면은 없다: 답은 전처럼 조작 기기만(`needs_control`), 직접 쓰기 글은 메시지 보내기와 같은 pane 입력이고 조종
+  글자는 받지 않는다.
+- **참고와 다르게 둔 것(옮기지 않음).** 입력창에 번호·이름을 쳐서 답하기(`answerFromText`)와 그 확인 줄, Codex 질문(질문 대기열
+  alt+↑↓·rollout 읽기), omp·omo·hermes·pi 창, 미리보기 상자가 있는 질문, 초안이 든 직접 쓰기 줄(ctrl+k ctrl+u), 계획 파일을 파일
+  보기로, 붙잡힌 메시지·모델·effort 창, 읽는 창이 없는 막힘의 마지막 카드(`fallback`). 카드 제목의 「Question」·「Multiple choice」·
+  「Review your answers」·「k of n」은 한국어 고정(§8.163)이라 「질문」·「여러 개 고르기」·「답 검토」·「k/n」이다.
+- **시험.** host 유닛 `prompt::tests`(합성 화면: 질문 하나·여러 개와 탭·검토·Claude 승인·Codex 승인·계획·모르는 창, 커서에서 세는
+  옮기기, 조종 글자 거절, id가 커서와 상관없음). 웹 E2E 11 「화면 선택 창 카드」: 가짜 Claude 질문 창(`web/e2e/lib/fake-claude-ask.mjs`,
+  이름이 claude라 화면 감지가 Claude 규칙)으로 카드 모양(설명·추천·번호·직접 쓰기, 줄 겹침 없음), 터미널에서 옮긴 커서, 그 사이 바뀐
+  창의 거절과 새 카드, 직접 쓰기(한글), 여러 질문(하나 → 여러 개 체크와 제출 (2) → 검토 → 보내기). 결함 심기: 커서를 무시한 옮기기
+  (유닛), 여러 개 끝 → 빠짐·직접 쓰기를 그 줄로 안 옮김(E2E가 각각 실패), 선택지 줄 고정 높이(겹침 단언 실패).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
