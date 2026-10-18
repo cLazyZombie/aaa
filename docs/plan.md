@@ -4120,7 +4120,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험.** aaa-vt `queries_are_taken_out_of_the_output_across_chunks`(질의 빼기·자리·chunk 경계 붙들기·질의 아닌 escape 그대로),
   `color_osc_is_found_across_chunks`(OSC 10/11 질의는 빼고 끝을 적음, 지정·되돌리기는 남김, 화면이 받는 꼴), `default_color_replies_prefer_the_program_then_the_screen`
   (프로그램 색·화면 색·없음, 색 지정 꼴), aaa-host `current_colors_follow_the_last_front_used`, aaa-agent
-  `colors_reach_the_session_host_after_and_while_attached`(다시 붙은 session host에 받아 둔 색이 먼저, 붙은 동안 받은 색은 바로). 웹 E2E 21
+  `colors_reach_the_session_host_after_and_while_attached`(다시 붙은 session host에 받아 둔 색이 먼저, 붙은 동안 받은 색은 바로). 웹 E2E 20
   「터미널 질의 답」: 질의 프로그램(시작하자마자 바탕 색을 묻고, `#x`면 질의와 표지 `Q<n>.`, `#z`면 그 뒤 받은 것)을 붙은 화면 0·1·2개에서
   돌린다. 화면마다 표지까지 읽은 뒤 `sentFrames`가 비었는지(화면이 답하지 않았다), 그 뒤 CLI로 보낸 `#z`로 pane이 받은 답이 정확히 하나인지
   본다(session host 답은 질의를 화면에 보내기 전에 pane 입력으로 가 `#z`보다 먼저 닿는다). 색 답은 마지막으로 연 화면의 token을 ST 꼴로
@@ -5026,8 +5026,8 @@ primary 근거:
   같은 이름은 이전 파일도 지워 최신으로 덮어쓰고, 유효한 공유 링크는 그대로 쓴다. 오류 때는 이전 사본을 되돌린다.
 - **실시간 폴더.** 사용자 brief의 「복사 없이 그 자리에서 서빙」에 따라 `publish … --live`를 둔다(폴더만).
   기획의 publish+routine 반복 복사 대신 등록 원본의 canonical root를 host DB에 둔다. 원본 경로는 front에 보내지 않는다.
-  요청마다 목록을 다시 만들므로 수정·추가·삭제가 바로 반영되고 같은 상한을 쓴다. 숨은 이름·`..`·역슬래시·드라이브/ADS·symlink를 거부한다.
-  Unix는 파일을 성분마다 `openat(O_NOFOLLOW)`로 열어 검사 뒤 symlink 교체도 따라가지 않는다. Windows는 reparse point(junction 포함)를 검사한다.
+  요청마다 목록을 다시 만들므로 수정·추가·삭제가 바로 반영되고 같은 상한을 쓴다. 목록의 이름·크기도 안전하게 연 파일에서만 얻는다. 숨은 이름·`..`·역슬래시·드라이브/ADS·symlink를 거부한다.
+  Unix는 파일을 성분마다 `openat(O_NOFOLLOW)`로 열어 검사 뒤 symlink 교체도 따라가지 않는다. Windows는 reparse point(junction 포함)와 열린 handle의 최종 정규 경로를 검사한다.
   원본이 없거나 상한을 넘으면 목록에 문제를 보이고 서빙을 거부한다. 저장소 착지 routine은 필요 없다.
 - **일괄 이전.** `aaa library import <폴더> --project P [--prefix archive-]`. 하위 폴더마다 publish하되 같은 대상 이름은 덮지 않는다.
   충돌·상한 초과·symlink·숨은 이름·낱 파일·유효하지 않은 이름은 건너뛴 항목과 이유로 돌려준다.

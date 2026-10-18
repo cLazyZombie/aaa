@@ -57,6 +57,10 @@ fn scan(root: &Path, limit: u64) -> Result<Vec<LibraryFile>, ErrorBody> {
     let mut dirs = vec![root.to_path_buf()];
     let mut total = 0u64;
     while let Some(dir) = dirs.pop() {
+        // 큐에 넣은 뒤 바뀐 폴더도 확인한다. 파일 항목은 아래에서 안전하게 연 handle로 다시 확인한다.
+        if std::fs::canonicalize(&dir).map_err(io_error)? != dir || !plain(&dir)?.is_dir() {
+            return Err(err(ErrorCode::NotFound, "등록 폴더가 없거나 바뀌었다"));
+        }
         for e in std::fs::read_dir(dir).map_err(io_error)? {
             let e = e.map_err(io_error)?;
             let p = e.path();
@@ -76,22 +80,23 @@ fn scan(root: &Path, limit: u64) -> Result<Vec<LibraryFile>, ErrorBody> {
             if m.is_dir() {
                 dirs.push(p);
             } else if m.is_file() {
-                total = total.saturating_add(m.len());
+                let entry = scanned_file(root, &rel)?;
+                total = total.saturating_add(entry.size);
                 if total > limit {
                     return Err(err(ErrorCode::TooLarge, "보고서가 library_copy_mb 상한을 넘는다"));
                 }
-                files.push(LibraryFile {
-                    path: rel,
-                    size: m.len(),
-                    on_agent: false,
-                    mime: String::new(),
-                    kind: FileKind::Binary,
-                });
+                files.push(entry);
             }
         }
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// 순회 중 발견한 파일은 여기서 보고서 목록 항목으로 만든다.
+fn scanned_file(root: &Path, path: &str) -> Result<LibraryFile, ErrorBody> {
+    let (_, size) = live_file(root, path)?;
+    Ok(LibraryFile { path: path.into(), size, on_agent: false, mime: String::new(), kind: FileKind::Binary })
 }
 
 /// 매 요청마다 모든 성분·실제 경로를 확인한다. 파일 handle을 반환해 검사 뒤 이름 교체가 stream에 영향을 주지 않는다.
@@ -109,6 +114,8 @@ pub(crate) fn live_file(root: &Path, path: &str) -> Result<(std::fs::File, u64),
         return Err(err(ErrorCode::NotFound, "등록 폴더 밖은 열지 않는다"));
     }
     let f = open_regular(&p)?;
+    #[cfg(windows)]
+    constrain_opened_file(&f, root)?;
     let m = f.metadata().map_err(io_error)?;
     if !m.is_file() {
         return Err(err(ErrorCode::NotFound, "일반 파일이 아니다"));
@@ -168,6 +175,26 @@ fn open_regular(path: &Path) -> Result<std::fs::File, ErrorBody> {
         }
     }
     Ok(file)
+}
+
+/// Windows의 최종 reparse 검사만으로는 중간 junction 교체를 막지 못한다.
+/// 문자열 경로를 다시 검사하지 않고 이미 연 handle의 최종 정규 경로를 등록 root와 대조한다.
+#[cfg(windows)]
+fn constrain_opened_file(file: &std::fs::File, root: &Path) -> Result<(), ErrorBody> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+    let mut buf = vec![0u16; 32768];
+    // SAFETY: 살아 있는 File의 handle과 쓰기 가능한 UTF-16 버퍼를 넘긴다. flags=0은 정규화된 DOS 경로다.
+    let n = unsafe { GetFinalPathNameByHandleW(file.as_raw_handle(), buf.as_mut_ptr(), buf.len() as u32, 0) } as usize;
+    if n == 0 || n >= buf.len() {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    let actual = std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf[..n]));
+    if !actual.starts_with(root) {
+        return Err(err(ErrorCode::NotFound, "등록 폴더 밖은 열지 않는다"));
+    }
+    Ok(())
 }
 
 impl Host {
@@ -467,5 +494,48 @@ impl Host {
             removed.push(name);
         }
         Ok(FrontResponse::LibraryPruned { removed })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod scan_tests {
+    use super::*;
+
+    /// 큐에 있던 폴더가 밖을 가리키게 바뀐 뒤, 최종 일반 파일만 검사하는 순회 단계를 재현한다.
+    #[test]
+    fn scanned_file_cannot_expose_a_replaced_directory() {
+        let state = std::env::temp_dir().join(format!("aaa-scan-scope-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(state.join("root/sub")).unwrap();
+        std::fs::create_dir(state.join("outside")).unwrap();
+        std::fs::write(state.join("outside/private.txt"), b"outside metadata").unwrap();
+        let root = std::fs::canonicalize(state.join("root")).unwrap();
+        std::fs::remove_dir(root.join("sub")).unwrap();
+        std::os::unix::fs::symlink(state.join("outside"), root.join("sub")).unwrap();
+        let result = scanned_file(&root, "sub/private.txt");
+        std::fs::remove_dir_all(&state).unwrap();
+        assert!(result.is_err(), "순회에서 얻은 외부 이름과 크기를 목록에 싣지 않는다");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod opened_file_tests {
+    use super::*;
+
+    /// junction 교체로 밖의 일반 파일 handle이 열렸더라도 최종 handle 판정은 그 파일을 거부한다.
+    #[test]
+    fn opened_handle_must_stay_within_the_registered_root() {
+        let state = std::env::temp_dir().join(format!("aaa-open-scope-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(state.join("root")).unwrap();
+        std::fs::write(state.join("root/index.html"), b"inside").unwrap();
+        std::fs::write(state.join("outside.txt"), b"outside").unwrap();
+        let root = std::fs::canonicalize(state.join("root")).unwrap();
+        let inside = std::fs::File::open(root.join("index.html")).unwrap();
+        let outside = std::fs::File::open(state.join("outside.txt")).unwrap();
+        let allowed = constrain_opened_file(&inside, &root);
+        let denied = constrain_opened_file(&outside, &root);
+        drop((inside, outside));
+        std::fs::remove_dir_all(state).unwrap();
+        assert!(allowed.is_ok());
+        assert!(denied.is_err(), "밖에서 열린 일반 파일 handle을 등록 폴더의 파일로 내보내지 않는다");
     }
 }

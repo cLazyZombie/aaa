@@ -41,8 +41,9 @@ export default async function ({ page }) {
     });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+      const copiesBefore=await page.evaluate(() => window.__reportCopies.length);
       await row.getByRole("button", { name: "링크 복사" }).click();
-      await domIs(page, "보고서 링크 복사 기록", () => window.__reportCopies.length > 0);
+      await domIs(page, "이번 보고서 링크 복사 기록", (n) => window.__reportCopies.length === n + 1, copiesBefore);
       if (await page.evaluate(() => window.__reportCopies.at(-1)) !== new URL(link.base, base).href) throw new Error("보고서 링크 복사 값");
       const bounds = await panel.evaluate((p) => {
         const box=p.getBoundingClientRect();
