@@ -291,12 +291,79 @@ export default async function ({ ctl, page }) {
     await until("대화에서 연 파일", async () => (await page.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "대화 메모");
     await page.goBack();
     await domIs(page, "대화 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="chat"]'));
+    // 말 둘레(참고 ChatView, plan §8.180): 대화는 가운데 기둥(폭 --chat-w까지)
+    const column = await chat.evaluate((c) => {
+      const t = c.querySelector(".chat-transcript");
+      const probe = document.createElement("div");
+      probe.style.width = "var(--chat-w)";
+      t.append(probe);
+      const limit = probe.getBoundingClientRect().width;
+      probe.remove();
+      const box = t.getBoundingClientRect();
+      const outer = c.getBoundingClientRect();
+      const inner = outer.width - parseFloat(getComputedStyle(c).paddingLeft) - parseFloat(getComputedStyle(c).paddingRight);
+      return { width: Math.abs(box.width - Math.min(inner, limit)) <= 1, centered: Math.abs(box.left - outer.left - (outer.right - box.right)) <= 1 };
+    });
+    if (!column.width || !column.centered) throw new Error(`대화 기둥 ${JSON.stringify(column)}`);
+    // 복사: 사람 말은 「메시지 복사」, 답은 마크다운·일반 텍스트. 마우스면 말에 올렸을 때만 보인다. clipboard는 page 안에서 받는다(사람의 것을 덮지 않는다)
+    await page.evaluate(() => {
+      window.__copied = [];
+      window.__copyFails = false;
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { if (window.__copyFails) throw new Error("거부"); window.__copied.push(t); } } });
+      const exec = document.execCommand.bind(document);
+      document.execCommand = (cmd, ...rest) => (cmd === "copy" ? false : exec(cmd, ...rest));
+    });
+    const agentTurn = chat.locator(".chat-turn-agent").first();
+    const userTurn = chat.locator(".chat-turn-user").first();
+    const metaShown = (turn) => turn.locator(".chat-turn-meta").evaluate((e) => getComputedStyle(e).opacity === "1");
+    await page.mouse.move(0, 0);
+    await until("마우스가 없으면 복사 단추를 감춘다", async () => !(await metaShown(agentTurn)) && !(await metaShown(userTurn)));
+    await agentTurn.hover();
+    await until("답에 올리면 복사 단추", () => metaShown(agentTurn));
+    const copied = async (turn, label, want) => {
+      // 이름이 「복사됨」으로 바뀌므로 누른 그 단추를 잡아 둔다(앞서 누른 단추도 잠깐 「복사됨」이다)
+      const button = await turn.getByRole("button", { name: label }).elementHandle();
+      await button.click();
+      await until(`${label} 복사됨`, async () => (await button.getAttribute("aria-label")) === "복사됨");
+      const got = await page.evaluate(() => window.__copied.at(-1));
+      if (got !== want) throw new Error(`${label}: ${JSON.stringify(got)}`);
+    };
+    await copied(agentTurn, "마크다운으로 복사", "캐시를 **넣었다**");
+    await copied(agentTurn, "일반 텍스트로 복사", "캐시를 넣었다");
+    await userTurn.hover();
+    await copied(userTurn, "메시지 복사", "결제 지연을 줄여 줘");
+    // 복사가 안 되면 그 말 아래에 한 줄, 다시 되면 지운다
+    await until("복사됨이 돌아온다", async () => (await userTurn.getByRole("button", { name: "메시지 복사" }).count()) === 1);
+    await page.evaluate(() => (window.__copyFails = true));
+    await userTurn.getByRole("button", { name: "메시지 복사" }).click();
+    await until("복사 실패 줄", async () => (await userTurn.getByRole("alert").textContent().catch(() => "")).includes("복사하지 못했습니다"));
+    await page.evaluate(() => (window.__copyFails = false));
+    await userTurn.getByRole("button", { name: "메시지 복사" }).click();
+    await until("복사 실패 줄을 지운다", async () => (await userTurn.getByRole("alert").count()) === 0);
+    // 긴 사람 말은 접혀 몇 줄만, 「전체 메시지 보기」로 펼치고 「접기」로 다시. 짧은 말에는 단추가 없다
+    const long = Array.from({ length: 30 }, (_, i) => `요청 ${i + 1}째 줄`).join("\n");
+    fs.appendFileSync(tr, L({ type: "user", message: { role: "user", content: long } }));
+    await until("긴 사람 말", async () => (await roles()).length === 5);
+    const bubble = chat.locator('[data-role="user"]').nth(1);
+    const fold = async () =>
+      bubble.evaluate((b) => {
+        const body = b.querySelector(".chat-bubble-body");
+        const button = b.querySelector(".chat-bubble-fold");
+        return { cls: [...b.classList].filter((c) => c.startsWith("is-")).join(" "), cut: body.scrollHeight > body.clientHeight + 1, button: button?.textContent ?? null, expanded: button?.getAttribute("aria-expanded") ?? null };
+      });
+    await until("긴 말이 접혔다", async () => JSON.stringify(await fold()) === JSON.stringify({ cls: "is-capped is-folded", cut: true, button: "전체 메시지 보기", expanded: "false" }));
+    if ((await chat.locator('[data-role="user"]').first().locator(".chat-bubble-fold").count()) !== 0) throw new Error("짧은 말에 접기 단추");
+    await shot(page, "desktop-chat-fold");
+    await bubble.getByRole("button", { name: "전체 메시지 보기" }).click();
+    await until("펼쳤다", async () => JSON.stringify(await fold()) === JSON.stringify({ cls: "", cut: false, button: "접기", expanded: "true" }));
+    await bubble.getByRole("button", { name: "접기" }).click();
+    await until("다시 접었다", async () => (await fold()).cls === "is-capped is-folded");
     // 터미널로 돌아간다
     await page.getByTestId("chat-toggle").click();
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");
     // CLI도 같은 기록을 본다
     const c = aaa("pane", "chat", "chat1");
-    if (c.messages.length !== 4 || c.harness !== "claude") throw new Error(JSON.stringify(c));
+    if (c.messages.length !== 5 || c.harness !== "claude") throw new Error(JSON.stringify(c));
     const ct = aaa("pane", "chat", "chat1", "--thinking");
     if (ct.messages[1]?.role !== "thinking" || ct.messages[1].text !== "속생각") throw new Error(JSON.stringify(ct));
     // 기록 폴더 밖을 가리키는 hook(세션 안 누구나 보낼 수 있다)은 읽지 않는다

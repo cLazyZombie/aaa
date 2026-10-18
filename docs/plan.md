@@ -3844,6 +3844,21 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   「채팅 글자 크기」는 답의 Markdown 글자에서 잰다, 답 안 경로는 파일 단추(§8.171 그대로). 결함 심기 둘(답을 글 그대로, Markdown 글자 크기 고정)
   모두 실패.
 
+### 8.180 대화 말 둘레: 기둥 폭·긴 사람 말 접기·말마다 복사(10-18, §8.179 옮기지 않은 것, herdr-web-ui ChatView 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb) `ChatView.tsx`·`ChatView.css`: 대화는 `--chat-w`까지의 가운데 기둥이다. 긴 사람 말(12줄·900자 넘음,
+  `userMessageFold.ts`)은 몇 줄만 보이고 잘린 곳을 흐리게 한 뒤 「전체 메시지 보기」·「접기」로 펼치고 접는다(접은 뒤 카드 머리가 위로 나갔으면 다시 보이게).
+  사람 말에는 「메시지 복사」, 답에는 「마크다운으로 복사」·「일반 텍스트로 복사」(`plainText`가 Markdown 표시를 뗌)가 있고, 마우스면 말에 올렸을 때만
+  보인다(터치는 늘). 복사하면 1.5초 「복사됨」, 안 되면 그 말 아래 「복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.」.
+- **옮김.** `userMessageFold.ts`는 그대로(`web/src/herdr/`), `UserMessage`·`CopyButton`·`plainText`는 `Chat.tsx`에 참고대로, CSS는 참고의
+  `.chat-turn`·`.chat-bubble`(접기·흐림)·`.chat-turn-meta`·`.chat-meta-btn`과 마우스·터치·480px 규칙을 `style.css`에. 복사는 herdr `copyText`.
+  말 본문만 `.chat-msg[data-role]`이라 복사 단추·접기 글은 말 글에 섞이지 않는다.
+- **다른 곳.** aaa 기록에는 시각이 없어 시각은 없다. 펼침은 참고의 `useChatRowToggle`(thread마다 기억) 대신 그 화면 안에서만 기억한다.
+  작업 묶음·미니맵은 옮기지 않았다(aaa 기록에 도구 입력·출력이 없다).
+- **시험.** 웹 E2E 11 「대화 기록」: 기둥 폭이 `min(칸, --chat-w)`이고 가운데, 마우스가 없으면 복사 단추를 감추고 올리면 보임, 세 복사가 맞는 글을
+  (clipboard는 page 안에서 받아 사람의 것을 덮지 않음), 복사가 안 되면 알림 줄·다시 되면 지움, 30줄 사람 말은 접힘·펼침·다시 접힘, 짧은 말에는 단추 없음.
+  결함 심기 다섯(접기 없음, 복사 늘 보임, 일반 텍스트가 Markdown 그대로, 복사 실패 안 알림, 기둥 폭 없음) 모두 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

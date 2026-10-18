@@ -48,6 +48,7 @@
 | `FileViewer.css` | 파일 보기 모양: `src/components/FileViewer.css` 그대로(줄 번호·색은 `HighlightedCode.css`). 마크업은 `web/src/FileViewer.tsx`(참고 `FileViewer.tsx`·`TextFileView.tsx`에서 옮긴 것, 남은 것은 plan §8.125) |
 | `DirectoryBrowser.css`·`FileGlyph.tsx`·`fileIcons.ts`·`workspacePath.ts` | 파일 보기 안 폴더 보기: `src/components/DirectoryBrowser.css`(끝에 aaa 전역 `button` 규칙을 되돌리는 한 덩이)·`FileGlyph.tsx`(import 경로만), `src/lib/fileIcons.ts`·`workspacePath.ts` 그대로. 마크업은 `web/src/DirectoryBrowser.tsx`(읽기를 `pane_dir`로, 폴더 고르기·새 폴더는 뺌, plan §8.148) |
 | `imageBox.ts` | Markdown 그림이 읽히기 전 자리(`imageSlotStyle`·`standaloneImage`): `src/lib/imageBox.ts` 그대로. 파일 보기 안 Markdown이 쓴다(plan §8.125) |
+| `userMessageFold.ts` | 긴 사람 말을 접을지(`shouldFoldUserMessage`, 12줄·900자): `src/lib/userMessageFold.ts` 그대로. 대화 말 접기(plan §8.180) |
 | `markdownImages.ts` | Markdown 그림의 경로를 문서 폴더 기준으로 읽고(`markdownImagePreview`) 20MiB를 넘으면 내려받기로: `src/lib/markdownImages.ts`에서 `FileInfo` import 경로만 `../gen/proto.ts`로 |
 | `fileReader.ts` | 문서 폴더 기준 링크(`resolveFromDocument`)와 따로 여는 읽기 쪽 주소(`readerHref`, 아직 안 씀): `src/lib/fileReader.ts` 그대로 |
 | `highlight.ts`·`highlight.worker.ts`·`offThread.ts`·`highlightOffThread.ts` | 문법 강조: 이름·fence 낱말로 문법 고르기(`languageForPath`·`languageForFence`), `@tanstack/highlight`(1.0.0, MIT, 참고와 같은 판)로 칠하기, 2KB 넘는 글은 worker가 한 번에 하나씩 2초 예산 안에(넘으면 worker를 끝냄), 칠한 결과 기억. `src/lib/` 것 그대로. `highlightOffThread.ts`만 `LinesCache` 생성자 매개변수 속성을 필드와 대입으로 풀었다(Node 형 지우기로 시험하려고). 시험은 `web/test/highlight.test.mjs`·`offThread.test.mjs`(← `src/lib/highlight.test.ts`·`offThread.test.ts`, plan §8.125) |
