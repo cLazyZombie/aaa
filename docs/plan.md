@@ -3011,6 +3011,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **지운 것.** 15파일 71단계를 단계마다 무엇을 보나·중복(다른 단계·Rust·웹 유닛)·결함 이력·기능이 남았나로 훑어 단계 여섯을 지우고 스물아홉 곳에서 단언 일부를 뺐다. 기준: 없어진·바뀐 기능, 같은 동작을 다른 시험이 이미 봄, 결과가 아니라 구현 세부(문구·class·저장 꼴), 잡을 길이 없음. 보안·사용자 결정 규칙(쓰는 기기·알림·입력기·iOS)·과거 결함 재발 막기·휴대폰에서 보이는 결과는 남겼다. 표(파일·단계·이유·대신 보는 곳)는 t-0338 report 「지운 단계 표」.
 - **시험.** 지운 판을 worker 4로 세 번(73초씩), 3으로 두 번(88초씩), 전체 묶음 둘을 동시에 worker 4씩 두 번(실험실 여덟, 73~74초) 돌려 모두 통과했고, 파일마다 시간은 차례로 돌 때와 같았다(함께 돌아도 느려지지 않음). 4보다 늘려도 벽시계는 가장 긴 12에 걸린다. 일부러 실패하는 spec을 함께 돌리면 입구가 종료 코드 1·FAIL 줄·실험실을 남긴다. 숫자와 부하는 t-0338 report.
 
+### 8.139 TUI에서 pane 폭만 바뀌면 그 pane이 빈다(10-18, QA t-0337 Q23)
+
+- **증상.** 사이드바를 접거나 펴거나, 나눔 비율이 바뀌거나, `prefix w`로 높이는 같고 폭만 다른 pane으로 옮기면 그 pane의 앞 출력이 빈칸이 된다. 그 뒤에 바뀐 줄(새 프롬프트 등)만 보인다. `d6bb95c`에서도 재현된다.
+- **원인.** host는 pane마다 front에 보낸 줄 hash를 기억해 바뀐 줄만 보낸다(`watch_grid`). 전체를 다시 보내는 것은 줄 수가 바뀔 때뿐이었다. TUI(`Grid::apply`)는 크기가 바뀐 장면을 받으면 grid를 비우고 온 줄만 채운다. 그래서 폭만 바뀌면 내용이 같아 다시 오지 않은 줄이 비었다.
+- **고침(herdr처럼 크기가 바뀐 pane은 통째로).**
+  - host: 보낸 것에 크기(줄 수·폭)를 함께 기억한다. 크기가 바뀌면 모든 줄을 `full`로 보낸다(`changed_rows`).
+  - TUI: `full`이 아닌 장면은 온 줄만 바꾸고 나머지 줄은 둔다. 보내지 않은 줄은 host가 보기에 그대로이기 때문이다. 그래서 고치기 전 host에 붙어도 비지 않는다. host를 다시 띄우기 전에도 새 `aaa attach`면 고쳐진다.
+- **시험.**
+  - TUI E2E `width_only_change_redraws_the_pane`(약 0.5초): 셸 출력 두 줄 뒤 사이드바를 접고(폭 64→86) 펴서(86→64) 앞 출력이 남는지 본다. 바뀐 뒤 친 표지 줄이 보인 다음에 본다(그 뒤 장면까지 왔다).
+  - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
+  - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
+
 ### 8.140 TUI 휠 기록 넘기기(herdr `apply_scroll`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「휠로 scrollback」, FRONT_API 1.22)
 
 - **참고(herdr 0.9.5).** `src/server/pane_input.rs` `apply_scroll`(보고 pane → 휠 보고, alt 화면 → 화살표, 아니면 `scroll_up`·`scroll_down`을 `mouse_scroll_lines`줄)과 키·글·붙여넣기·마우스 보고 전 `scroll_reset`(누르지 않은 움직임 보고는 그대로), `src/pane/terminal.rs` `ScrollMetrics`, `[ui] mouse_scroll_lines`(기본 3). 기본 TUI 화면은 PageUp·PageDown을 프로그램에 보낸다(`apply_client_terminal_input_events`의 `host_page_keys`가 false, host 기록 넘기기는 `herdr attach`만).

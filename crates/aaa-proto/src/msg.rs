@@ -1003,7 +1003,8 @@ pub struct GridLine {
     pub runs: Vec<GridRun>,
 }
 
-/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다.
+/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다(없는 줄은 그대로).
+/// host는 크기(줄 수나 폭)가 바뀌면 `full`로 보낸다. 고치기 전 host는 폭만 바뀌면 바뀐 줄만 보냈다(QA t-0337 Q23).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct GridFrame {
     pub pane: String,
