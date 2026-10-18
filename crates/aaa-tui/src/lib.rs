@@ -275,6 +275,10 @@ enum Pending {
     SpaceLayout,
     /// host 공유 설정: 기억한 사이드바 배치를 쓴다
     Chrome,
+    /// workspace 이름을 바꿨다(그 workspace를 보고 있었으면 보던 탭): 응답이 오면 새 이름으로 따라간다
+    RenameSpace { from: String, tab: Option<String> },
+    /// workspace를 닫았다: 응답이 오면 목록에서 빼고, 보고 있던 workspace면 남은 것으로 간다
+    CloseSpace(String),
 }
 
 /// herdr `ClientShellMode`(Copy·Resize는 다음 묶음)
@@ -333,6 +337,9 @@ struct App {
     sidebar_width_manual: bool,
     /// 사용자가 펴거나 접었나(herdr `sidebar_collapsed_manual`): host에 남긴다
     sidebar_collapsed_manual: bool,
+    /// 펼친 사이드바에서 위 spaces 구역이 차지하는 비율(herdr `sidebar_section_split`, 0.1~0.9, 기본 0.5)과 사용자가 끌어 바꿨나
+    sidebar_split: f32,
+    sidebar_split_manual: bool,
     /// `[tui] sidebar_width`(경계 두 번 누르기로 돌아갈 값)와 폭 한도(`[tui] sidebar_min_width`·`sidebar_max_width`)
     config_sidebar_width: u16,
     sidebar_bounds: (u16, u16),
@@ -453,6 +460,8 @@ impl App {
             sidebar_width: aaa_config::SIDEBAR_WIDTH,
             sidebar_width_manual: false,
             sidebar_collapsed_manual: false,
+            sidebar_split: 0.5,
+            sidebar_split_manual: false,
             config_sidebar_width: aaa_config::SIDEBAR_WIDTH,
             sidebar_bounds: aaa_config::SIDEBAR_BOUNDS,
             chrome_unsaved: Default::default(),
@@ -863,9 +872,20 @@ impl App {
                         self.note_space(&w);
                         self.enter_space(w);
                     }
+                    // 닫은 workspace 대신 간 workspace면 그 layout으로 그린다
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::SpaceLayout)) => {
-                        self.note_space(&w)
+                        self.note_space(&w);
+                        if w.name == self.ws_name {
+                            self.set_ws(w);
+                        }
                     }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::RenameSpace { from, tab })) => {
+                        self.renamed_space(&from, w, tab)
+                    }
+                    (
+                        Outcome::Ok(aaa_proto::FrontResponse::Workspaces { workspaces }),
+                        Some(Pending::CloseSpace(name)),
+                    ) => self.closed_space(&name, &workspaces),
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), _) => {
                         self.note_space(&w);
                         // 응답 전에 다른 workspace로 바꿨으면 그 응답은 상태 점에만 쓴다
@@ -928,6 +948,12 @@ impl App {
                     }
                     (Outcome::Err(e), Some(Pending::NewSpace)) => {
                         self.set_error(format!("새 workspace를 만들지 못했다: {}", e.message))
+                    }
+                    (Outcome::Err(e), Some(Pending::RenameSpace { .. })) => {
+                        self.set_error(format!("workspace 이름을 바꾸지 못했다: {}", e.message))
+                    }
+                    (Outcome::Err(e), Some(Pending::CloseSpace(_))) => {
+                        self.set_error(format!("workspace를 닫지 못했다: {}", e.message))
                     }
                     (Outcome::Err(e), Some(Pending::Attach(n))) => {
                         if self.attach_failed != Some(n) {
@@ -1006,6 +1032,76 @@ impl App {
         let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
         self.pending.insert(id, Pending::Report("workspace 읽기"));
         Ok(())
+    }
+
+    /// workspace 이름·닫기의 대상(herdr `workspace_action_id`): 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace
+    fn space_target(&self) -> String {
+        match &self.list_sel {
+            Some(list::Row::Space(n)) if self.mode == Mode::Navigate => n.clone(),
+            _ => self.ws_name.clone(),
+        }
+    }
+
+    /// 그 workspace의 pane 수(닫기 확인 창의 「pane n개」)
+    fn space_pane_count(&self, name: &str) -> usize {
+        let ws = if name == self.ws_name { Some(&self.ws) } else { self.spaces.get(name) };
+        ws.map_or(0, |w| w.tabs.iter().map(|t| layout::leaves(&t.root).len()).sum())
+    }
+
+    /// workspace 닫기 확인 창(herdr `open_close_confirmation`: `Close workspace?`, `<이름> — n panes`)
+    fn space_close_confirm(&self, name: String) -> prompt::Confirm {
+        let n = self.space_pane_count(&name);
+        prompt::Confirm {
+            title: "workspace를 닫을까?".into(),
+            detail: format!("{name} — pane {n}개(실행 중인 세션은 끝난다)"),
+            target: prompt::CloseTarget::Workspace(name),
+        }
+    }
+
+    /// workspace를 닫는다(host `workspace_close`)
+    async fn close_space(&mut self, tx: &mut FrontSender, name: String) -> Result<()> {
+        let id = tx.send(FrontRequest::WorkspaceClose { name: name.clone() }).await?;
+        self.pending.insert(id, Pending::CloseSpace(name));
+        Ok(())
+    }
+
+    /// 이름을 바꾼 workspace(host 응답): 목록의 옛 이름을 빼고, 보고 있었으면 새 이름으로 보던 탭에 남는다. host는 옛 이름의 빈
+    /// layout 사건을 먼저 보내므로 보던 탭을 id로 되찾는다
+    fn renamed_space(&mut self, from: &str, w: Workspace, tab: Option<String>) {
+        self.spaces.remove(from);
+        if self.list_sel == Some(list::Row::Space(from.to_string())) {
+            self.list_sel = Some(list::Row::Space(w.name.clone()));
+        }
+        if from != self.ws_name {
+            self.note_space(&w);
+            return;
+        }
+        self.ws_name = w.name.clone();
+        self.note_space(&w);
+        self.set_ws(w);
+        if let Some(i) = tab.and_then(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
+            self.tab = i;
+        }
+    }
+
+    /// 닫은 workspace(host 응답은 남은 workspace 목록): 목록에서 빼고, 보고 있던 것이면 남은 것 중 첫 workspace(host 차례: 기본
+    /// workspace 먼저)로 간다. 남은 것이 없으면 빈 기본 workspace
+    fn closed_space(&mut self, name: &str, left: &[aaa_proto::WorkspaceSummary]) {
+        self.spaces.remove(name);
+        if self.list_sel == Some(list::Row::Space(name.to_string())) {
+            self.list_sel = None;
+        }
+        if name != self.ws_name {
+            return;
+        }
+        let next = left
+            .iter()
+            .map(|w| w.name.clone())
+            .find(|n| n != name)
+            .unwrap_or_else(|| aaa_proto::DEFAULT_WORKSPACE.to_string());
+        let known = self.spaces.get(&next).cloned().unwrap_or_else(|| Workspace { name: next.clone(), tabs: vec![] });
+        self.enter_space(known);
+        self.space_fetch.push(next);
     }
 
     /// 그 workspace를 지금 workspace로 그린다(첫 탭, 포커스는 그 탭의 첫 pane)
@@ -1194,6 +1290,23 @@ impl App {
         }
     }
 
+    /// 구역 경계를 끌었다(herdr `set_sidebar_section_from_row`: 사이드바 위에서 그 줄까지 / 사이드바 높이, 0.1~0.9)
+    fn drag_section_to(&mut self, y: u16, sidebar: Option<Rect>) {
+        let Some(side) = sidebar.filter(|s| s.h > 0) else { return };
+        let ratio = (f32::from(y.saturating_sub(side.y)) / f32::from(side.h)).clamp(0.1, 0.9);
+        if (self.sidebar_split - ratio).abs() > f32::EPSILON {
+            self.sidebar_split = ratio;
+            self.sidebar_split_manual = true;
+        }
+    }
+
+    /// 구역 경계 끌기를 마쳤다: 바뀐 비율을 남긴다(herdr `persist_chrome_preferences`)
+    fn section_drag_done(&mut self) {
+        if self.sidebar_split_manual {
+            self.remember_chrome("tuiSidebarSplit", serde_json::json!(self.sidebar_split));
+        }
+    }
+
     /// 경계를 두 번 눌렀다: 설정 폭으로 되돌리고 남긴 폭을 지운다(herdr 경계 두 번 누르기)
     fn reset_sidebar_width(&mut self) {
         self.sidebar_width = self.config_sidebar_width;
@@ -1235,6 +1348,13 @@ impl App {
         {
             self.sidebar_collapsed = Some(c);
             self.sidebar_collapsed_manual = true;
+        }
+        // herdr: 기억한 비율은 유한한 값만, 0.1~0.9로
+        if !self.sidebar_split_manual
+            && let Some(r) = get("tuiSidebarSplit").and_then(|v| v.as_f64()).map(|r| r as f32).filter(|r| r.is_finite())
+        {
+            self.sidebar_split = r.clamp(0.1, 0.9);
+            self.sidebar_split_manual = true;
         }
     }
 
@@ -1802,6 +1922,7 @@ impl App {
         let change = match c.target {
             prompt::CloseTarget::Tab(tab) => LayoutChange::CloseTab { tab },
             prompt::CloseTarget::Pane(pane) => LayoutChange::Close { pane, kill: true },
+            prompt::CloseTarget::Workspace(name) => return self.close_space(tx, name).await,
         };
         self.layout(tx, change, false).await
     }
@@ -1823,6 +1944,15 @@ impl App {
             }
             // herdr: pane 이름은 저장하면 늘 보낸다(비우면 host가 지운다)
             prompt::RenameTarget::Pane { id } => self.rename_pane(tx, id, Some(text)).await,
+            prompt::RenameTarget::Workspace { name } => {
+                if text.is_empty() || text == name {
+                    return Ok(());
+                }
+                let tab = (name == self.ws_name).then(|| self.ws.tabs.get(self.tab).map(|t| t.id.clone())).flatten();
+                let id = tx.send(FrontRequest::WorkspaceRename { name: name.clone(), to: text }).await?;
+                self.pending.insert(id, Pending::RenameSpace { from: name, tab });
+                Ok(())
+            }
         }
     }
 
@@ -2026,6 +2156,24 @@ impl App {
                     }));
                 }
             }
+            // herdr `open_rename_workspace_overlay`(`rename workspace`, 지금 이름으로 시작)
+            Action::RenameWorkspace => {
+                let name = self.space_target();
+                self.overlay = Some(Overlay::Rename(prompt::Rename {
+                    title: "workspace 이름 바꾸기",
+                    input: editor::Editor::new(&name, false),
+                    target: prompt::RenameTarget::Workspace { name },
+                }));
+            }
+            // herdr `request_workspace_close`: `confirm_close`면 늘 묻는다
+            Action::CloseWorkspace => {
+                let name = self.space_target();
+                if self.confirm_close {
+                    self.overlay = Some(Overlay::Confirm(self.space_close_confirm(name)));
+                } else {
+                    self.close_space(tx, name).await?;
+                }
+            }
             Action::CopyMode => self.enter_copy(tx).await?,
             // herdr `edit_scrollback`: 기록을 그 pane 머신 편집기로 연다(host가 나눠 띄우고 zoom한다). 응답까지 키를 붙잡는다
             Action::EditScrollback => {
@@ -2204,7 +2352,8 @@ impl App {
             // pane 칸 위에만(접힌 칸·탭 막대·머리는 그대로), 모드 막대(pane 맨 아랫줄) 위까지
             let w = if sh.header.h > 0 { body.w } else { self.side_width().min(body.w) };
             self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body });
-            self.hits.borrow_mut().divider = None;
+            let mut hits = self.hits.borrow_mut();
+            (hits.divider, hits.section_divider) = (None, None);
         }
         if let Some(bar) = self.render_mode_bar(buf, body)
             && cursor.is_some_and(|(_, y)| y == bar.y)
@@ -2387,8 +2536,8 @@ impl App {
         let p = &self.palette;
         sidebar_background(buf, r, p);
         let content = Rect { w: r.w.saturating_sub(1), ..r };
-        // herdr `expanded_sidebar_sections`: 위 spaces, 아래 agents(비율 0.5, 끌어 바꾸기는 아직 없다)
-        let (top_h, rest_h) = list::section_heights(content.h, 0.5);
+        // herdr `expanded_sidebar_sections`: 위 spaces, 아래 agents(비율은 구역 경계를 끌어 바꾼다)
+        let (top_h, rest_h) = list::section_heights(content.h, self.sidebar_split);
         let spaces_area = Rect { h: top_h, ..content };
         let agents_area = Rect { y: content.y + top_h, h: rest_h, ..content };
         let sel = match &self.list_sel {
@@ -2409,6 +2558,10 @@ impl App {
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
+        // herdr `sidebar_section_divider_rect`: 6줄 밑이면 없다(띄운 목록은 끌지 않는다)
+        if content.h >= 6 && content.w > 0 && !self.collapsed() {
+            hits.section_divider = Some(Rect { y: content.y + top_h, h: 1, ..content });
+        }
         (hits.new_workspace, hits.global_menu) = footer.flatten().unzip();
         hits.rows =
             placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
@@ -3064,6 +3217,87 @@ mod tests {
             })
             .collect();
         app
+    }
+
+    /// spaces·agents 구역 경계 줄을 끌면 두 구역 비율이 바뀌고(herdr `set_sidebar_section_from_row`: 사이드바 위에서 그 줄까지 /
+    /// 높이, 0.1~0.9), 끌기를 마치면 host에 남는다. 다시 붙으면 기억한 비율로 나눈다.
+    #[test]
+    fn section_split_drags_and_is_remembered() {
+        let mut app = app_with_tabs(&[""]);
+        let (lines, _) = draw(&app);
+        assert!(lines[15].starts_with(&"─".repeat(25)), "반반: {}", lines.join("\n"));
+        assert_eq!(app.hits.borrow().section_divider, Some(r(0, 15, 25, 1)));
+        let side = app.hits.borrow().sidebar;
+        app.drag_section_to(21, side);
+        let (lines, _) = draw(&app);
+        assert!(lines[21].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+        assert!(app.chrome_unsaved.is_empty(), "끄는 동안은 남기지 않는다");
+        app.section_drag_done();
+        assert_eq!(app.chrome_unsaved.get("tuiSidebarSplit"), Some(&serde_json::json!(0.7f32)));
+        // 위·아래 끝은 0.1~0.9, 각 구역은 3줄 넘게(herdr `sidebar_section_heights`)
+        app.drag_section_to(0, side);
+        assert_eq!(app.sidebar_split, 0.1);
+        let (lines, _) = draw(&app);
+        assert!(lines[3].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+
+        let mut again = app_with_tabs(&[""]);
+        let doc = aaa_proto::SharedPreferences {
+            revision: 1,
+            settings: serde_json::from_value(serde_json::json!({ "tuiSidebarSplit": 0.2 })).unwrap(),
+            pins: None,
+        };
+        again.apply_chrome(&doc);
+        let (lines, _) = draw(&again);
+        assert!(lines[6].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+    }
+
+    /// workspace 이름·닫기(herdr `prefix shift+w`·`shift+d`, `workspace_action_id`): 탐색 중 spaces 줄을 골랐으면 그 workspace,
+    /// 아니면 지금 workspace. 이름 창은 지금 이름으로 시작하고, 닫기는 `confirm_close`면 늘 묻는다. 지금 workspace의 이름을 바꾸면
+    /// (host는 옛 이름의 빈 layout을 먼저 보낸다) 새 이름의 보던 탭에 남고, 닫으면 남은 첫 workspace로 간다.
+    #[test]
+    fn workspace_rename_and_close_like_herdr() {
+        let mut app = app_with_tabs(&["a", "b"]);
+        app.confirm_close = true;
+        app.tab = 1;
+        let other = Workspace { name: "side".into(), tabs: app.ws.tabs[..1].to_vec() };
+        app.note_space(&other.clone());
+        assert_eq!(app.space_target(), "main");
+        app.mode = Mode::Navigate;
+        app.list_sel = Some(list::Row::Space("side".into()));
+        assert_eq!(app.space_target(), "side");
+        assert_eq!(app.space_close_confirm("side".into()).detail, "side — pane 1개(실행 중인 세션은 끝난다)");
+        app.mode = Mode::Terminal;
+        app.list_sel = None;
+        assert_eq!(app.space_close_confirm("main".into()).detail, "main — pane 2개(실행 중인 세션은 끝난다)");
+
+        // 이름 바꾸기: 옛 이름의 빈 layout 사건 뒤 응답
+        let tabs = app.ws.tabs.clone();
+        app.pending.insert("r1".into(), Pending::RenameSpace { from: "main".into(), tab: Some(tabs[1].id.clone()) });
+        app.on_msg(FrontMsg::Event(FrontEvent::Workspace(Workspace { name: "main".into(), tabs: vec![] })));
+        let renamed = Workspace { name: "work".into(), tabs };
+        app.on_msg(FrontMsg::Res {
+            id: "r1".into(),
+            result: Outcome::Ok(aaa_proto::FrontResponse::Workspace(renamed)),
+        });
+        assert_eq!((app.ws_name.as_str(), app.tab, app.ws.tabs.len()), ("work", 1, 2));
+        assert!(!app.spaces.contains_key("main") && app.spaces.contains_key("work"));
+
+        // 지금 workspace 닫기: 남은 첫 workspace로 가서 그 layout을 읽는다
+        app.pending.insert("r2".into(), Pending::CloseSpace("work".into()));
+        let left = vec![aaa_proto::WorkspaceSummary { name: "side".into(), tabs: 1, panes: 1 }];
+        app.on_msg(FrontMsg::Res {
+            id: "r2".into(),
+            result: Outcome::Ok(aaa_proto::FrontResponse::Workspaces { workspaces: left }),
+        });
+        assert_eq!((app.ws_name.as_str(), app.space_fetch.as_slice()), ("side", ["side".to_string()].as_slice()));
+        assert!(!app.spaces.contains_key("work"));
+        // 다른 workspace를 닫으면 그대로
+        app.pending.insert("r3".into(), Pending::CloseSpace("gone".into()));
+        app.on_msg(FrontMsg::Res {
+            id: "r3".into(),
+            result: Outcome::Ok(aaa_proto::FrontResponse::Workspaces { workspaces: vec![] }),
+        });
+        assert_eq!(app.ws_name, "side");
     }
 
     /// 보던 탭·pane이 없어지면(닫기, 셸 exit) 앞 탭, 차례상 다음 pane(끝이면 앞 pane)으로 간다(herdr `Workspace::close_tab`·

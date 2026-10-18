@@ -4045,7 +4045,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   (지금 탭 거름·다른 탭 카드·`o`·보는 pane은 host가 안 보냄·입력 필요가 같은 pane 카드를 바꿈·누름·쓰던 pane이라도 다른 탭이면 알림), 웹 E2E 19(짧은 턴 안 띄움·긴 턴
   「작업 완료」·누르면 pane·보고 있는 pane 안 띄움). 결함 심기 열(host 넷·TUI 셋·웹 셋, 옛 「lease면 봤음」 규칙 포함)이 모두 실패했다.
 
-### 8.186 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로(10-18, 사용자 사진 둘, 다시 세기 341 U3)
+### 8.186 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로, 구역 비율, workspace 이름·닫기 키(10-18, 사용자 사진 둘, 다시 세기 341 U3·546)
 
 - **요청(사용자 10-18 15:21).** 「왼쪽 창이 기본값이 작다. herdr만큼 크게, 더 크게도 가능하게. 지금 테마를 바꾸면 키운 왼쪽 창이 리셋된다.
   테마는 테마만.」
@@ -4070,11 +4070,26 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     한 파일을 나눈다). 보기 권한 기기는 남기지 않는다. 웹은 이 이름을 읽지 않는다.
   - Front API는 그대로다(요청·응답이 이미 있다). host가 받는 공유 이름에 `TUI_SETTING_KEYS`를 더했다: 옛 host는 이 이름을 버리므로 기억만 되지
     않는다. 공유 설정 요청은 FRONT_API 1.5 판 중에 생겨 TUI는 host minor 6 이상에만 보낸다.
+- **구역 비율(다시 세기 341 나머지).** spaces·agents 구역 경계 줄(herdr `sidebar_section_divider_rect`, 6줄 밑이면 없다)을 끌면 비율 =
+  (그 줄 − 사이드바 위) / 사이드바 높이, 0.1~0.9(herdr `set_sidebar_section_from_row`), 두 구역은 3줄 넘게(`section_heights`). 끌기를 마치면
+  `tuiSidebarSplit`에 남고 다시 붙으면 그 비율이다(herdr `sidebar_section_split`, 유한한 값만).
+- **머신 묶음 접기 기억(341 나머지)은 하지 않았다.** aaa TUI에는 머신 묶음 접기 자체가 없고(머신 머리 줄은 늘 `▾`), 머신 머리 줄은 agents 목록
+  그리기 안에 있어 그 목록을 맡은 다른 작업(t-0352)과 겹친다(coordinator 범위 조정). herdr는 spaces 쪽 worktree·endpoint 묶음을 접고
+  `collapsed_groups`·`remote_collapsed_groups`로 기억한다.
+- **workspace 이름·닫기(다시 세기 546).** herdr 기본 키 `prefix shift+w`(`rename workspace`)·`prefix shift+d`(`close workspace`, `src/main.rs`
+  158–159, `actions.rs` 103–114). 대상은 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace(`workspace_action_id`). 이름 창은 지금
+  이름으로 시작하고 비었거나 그대로면 보내지 않는다. 닫기는 `confirm_close`면 늘 묻는다(`request_workspace_close`, 「workspace를 닫을까?」·
+  `<이름> — pane n개`). host `workspace_rename`·`workspace_close`(이미 있는 요청, Front API 그대로). 지금 workspace의 이름을 바꾸면 host가 옛
+  이름의 빈 layout을 먼저 보내므로 보던 탭을 id로 되찾고, 닫으면 남은 첫 workspace(기본 workspace 먼저)로 간다. 같은 workspace를 보던 다른
+  TUI는 이름이 바뀌면 빈 옛 이름에 남는다(host가 새 이름의 layout 사건을 보내지 않는다, 이번에 고치지 않음).
 - **시험.** 유닛: 배치(기본 36·한도 72·설정 한도·거꾸로면 알림·화면 폭 − 1), 끈 폭이 테마 바꾸기·설정 폭 바꾸기에 남음·두 번 누르기·접기 남김·
   다시 붙어 기억한 값·null·보기 권한(`dragged_sidebar_width_survives_a_theme_change_and_is_remembered`), host 공유 이름. TUI E2E
   `sidebar_width_like_herdr`(160칸: 기본 36, 끌어 60·72에서 멈춤, 설정 창 테마 바꾼 화면에서 60·host.toml에 폭 없음, 나갔다 붙어도 60,
-  두 번 누르면 36·남긴 값 null), `side_list_like_web` 8b(접기 기억). 다른 TUI 시험은 시험 설정 `sidebar_width = 26`(herdr 기본)으로 그린다.
-  결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다.
+  두 번 누르면 36·남긴 값 null), `side_list_like_web` 8b(접기 기억), `workspace_keys_and_section_split_like_herdr`(spaces 줄로 간 workspace
+  이름 바꾸기·닫기 확인 창 Esc·Enter 뒤 main으로·그 pane 끝남, 구역 경계 끌기·다시 붙어도 그 비율), 유닛 `section_split_drags_and_is_remembered`·
+  `workspace_rename_and_close_like_herdr`. 다른 TUI 시험은 시험 설정 `sidebar_width = 26`(herdr 기본)으로 그린다.
+  결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다. 구역 비율을 0.5로 그리면 유닛·E2E, 이름을 바꾼 뒤 보던 탭을 되찾지 않으면 유닛, 닫은
+  뒤 남은 workspace로 가지 않으면 유닛·E2E가 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

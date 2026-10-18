@@ -14,6 +14,8 @@ pub enum Action {
     OpenNotificationTarget,
     WorkspacePicker,
     NewWorkspace,
+    RenameWorkspace,
+    CloseWorkspace,
     NewTab,
     RenameTab,
     CloseTab,
@@ -60,6 +62,8 @@ const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('o'), Action::OpenNotificationTarget),
     (Combo::plain('w'), Action::WorkspacePicker),
     (Combo::shift('n'), Action::NewWorkspace),
+    (Combo::shift('w'), Action::RenameWorkspace),
+    (Combo::shift('d'), Action::CloseWorkspace),
     (Combo::plain('c'), Action::NewTab),
     (Combo::shift('t'), Action::RenameTab),
     (Combo::shift('x'), Action::CloseTab),
@@ -128,6 +132,8 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
             vec![
                 (p(WorkspacePicker), "목록 탐색"),
                 (p(NewWorkspace), "새 workspace"),
+                (p(RenameWorkspace), "workspace 이름 바꾸기"),
+                (p(CloseWorkspace), "workspace 닫기"),
                 (p(NewTab), "새 탭"),
                 (p(RenameTab), "탭 이름 바꾸기"),
                 (p(PreviousTab), "이전 탭"),
@@ -198,6 +204,8 @@ mod tests {
         assert_eq!(k("b"), Some(ToggleSidebar));
         assert_eq!(k("w"), Some(WorkspacePicker));
         assert_eq!(k("shift+n"), Some(NewWorkspace));
+        assert_eq!(k("shift+w"), Some(RenameWorkspace));
+        assert_eq!(k("shift+d"), Some(CloseWorkspace));
         assert_eq!(k("tab"), Some(CycleNext));
         assert_eq!(k("shift+tab"), Some(CyclePrevious));
         assert_eq!(k("shift+r"), Some(ReloadConfig));

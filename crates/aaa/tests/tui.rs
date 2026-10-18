@@ -1925,6 +1925,82 @@ fn sidebar_width_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// workspace 이름·닫기(herdr `prefix shift+w`·`prefix shift+d`, 다시 세기 546)와 사이드바 구역 비율(herdr `sidebar_section_split`,
+/// 다시 세기 341, plan §8.186): spaces 줄을 눌러 간 workspace의 이름을 바꾸면 그 workspace에 그대로 있고(보던 pane 글이 보인다),
+/// 닫기는 확인 창(`confirm_close`) 뒤 host가 그 pane을 끝내고 TUI는 남은 workspace(main)로 간다. spaces·agents 구역 경계 줄을
+/// 끌면 비율이 바뀌고 host 공유 설정 `tuiSidebarSplit`에 남아 다시 붙어도 그 비율이다.
+#[test]
+fn workspace_keys_and_section_split_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, _hw) = start(&mut lab);
+    h.ok(&["tab", "create", "--machine", "labA", "--label", "home", "--", "/bin/sh"]);
+    let side = h.ok(&["workspace", "create", "--label", "side", "--machine", "labA", "--", "/bin/sh"]);
+    let side_pane = leaves(&side)[0].clone();
+    let names = || -> Vec<String> {
+        h.ok(&["workspace", "list"])["workspaces"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|w| w["name"].as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    let mut tui = Tui::start(&h);
+    tui.wait_text("두 workspace", |s| s.contains(" · side") && tab_chips(s) == ["home"]);
+
+    // 1) spaces 줄을 눌러 side로 가서 글을 둔다
+    let at = tui.wait_find(" · side");
+    tui.click(at);
+    tui.wait_screen("side로", |s| s.current_space().is_some_and(|l| l.contains("side")));
+    tui.type_line("echo side-$((7*6))");
+    tui.wait_text("side 글", |s| s.contains("side-42"));
+
+    // 2) prefix shift+w: 지금 이름으로 시작하는 이름 창, ^u로 지우고 새 이름
+    tui.cmd("W");
+    tui.wait_text("이름 창", |s| s.contains("workspace 이름 바꾸기") && s.contains("side"));
+    tui.send(b"\x15");
+    tui.send(b"work\r");
+    wait_for("host 이름 바뀜", T, || {
+        let n = names();
+        (n.contains(&"work".to_string()) && !n.contains(&"side".to_string())).then_some(())
+    });
+    tui.wait_screen("새 이름에 그대로", |s| {
+        s.current_space().is_some_and(|l| l.contains("work"))
+            && s.text().contains("side-42")
+            && !s.text().contains(" · side")
+    });
+
+    // 3) prefix shift+d: 확인 창(Esc면 그대로), Enter면 닫고 main으로
+    tui.cmd("D");
+    tui.wait_text("확인 창", |s| s.contains("workspace를 닫을까?") && s.contains("work — pane 1개"));
+    tui.send(b"\x1b");
+    tui.wait_text("창 닫힘", |s| !s.contains("workspace를 닫을까?"));
+    assert!(names().contains(&"work".to_string()));
+    tui.cmd("D");
+    tui.wait_text("확인 창", |s| s.contains("workspace를 닫을까?"));
+    tui.send(b"\r");
+    wait_for("host workspace 닫힘", T, || (!names().contains(&"work".to_string())).then_some(()));
+    tui.wait_screen("main으로", |s| {
+        s.current_space().is_some_and(|l| l.contains("main"))
+            && tab_chips(&s.text()) == ["home"]
+            && !s.text().contains(" · work")
+    });
+    wait_for("닫은 workspace의 pane 끝남", T, || h.json(&["pane", "get", &side_pane]).is_err().then_some(()));
+
+    // 4) 구역 경계 줄(30줄이면 위에서 15째 줄)을 끌어 21째 줄로: 비율 0.7, host가 남긴다
+    let divider = |s: &Screen, row: usize| s.side_lines().get(row).is_some_and(|l| l.starts_with(&"─".repeat(20)));
+    tui.wait_screen("반반", |s| divider(s, 15));
+    tui.mouse(0, (15, 3), false);
+    tui.mouse(32, (21, 3), false);
+    tui.mouse(0, (21, 3), true);
+    tui.wait_screen("21째 줄", |s| divider(s, 21));
+    wait_for("host가 남긴 비율", T, || {
+        host_prefs(&h).settings.get("tuiSidebarSplit").and_then(|v| v.as_f64()).filter(|r| (r - 0.7).abs() < 1e-6)
+    });
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    let tui = Tui::start(&h);
+    tui.wait_screen("다시 붙어도 21째 줄", |s| divider(s, 21));
+    drop(tui);
+}
+
 /// 묶음 3d-2(herdr): 마우스 보고를 켠 프로그램에는 누름·뗌·휠을 넘기고, 보고를 끈 alt 화면은 휠을 화살표로(DECCKM이면 `ESC O`),
 /// 나눔 경계를 끌면 그 나눔 비율, 탭 이름표를 끌면 탭 차례(host `SplitRatio`·`MoveTab`, FRONT_API 1.14)
 #[test]

@@ -19,6 +19,8 @@ pub enum RenameTarget {
     Tab { id: String, auto: bool, original: String },
     /// pane에 사람이 붙이는 이름(비우면 지운다, host `pane_rename`)
     Pane { id: String },
+    /// workspace 이름(herdr `rename workspace`, host `workspace_rename`: 비었거나 그대로면 바꾸지 않는다)
+    Workspace { name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,8 @@ pub struct Confirm {
 pub enum CloseTarget {
     Tab(String),
     Pane(String),
+    /// workspace(herdr `Close workspace?`, host `workspace_close`)
+    Workspace(String),
 }
 
 /// 가운데 맞춘 단추 칸들(herdr `row`: 너비들, 사이 칸, 창 안 위에서 몇째 줄)

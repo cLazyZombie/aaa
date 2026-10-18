@@ -92,6 +92,8 @@ pub struct Hits {
     pub toggle: Option<Rect>,
     /// 펼친 사이드바의 오른쪽 경계(끌면 폭)
     pub divider: Option<Rect>,
+    /// 펼친 사이드바의 spaces·agents 구역 경계 줄(끌면 두 구역 비율, herdr `sidebar_section_divider`)
+    pub section_divider: Option<Rect>,
     /// 좁은 화면 머리의 `목록` 단추
     pub header_button: Option<Rect>,
     pub panes: Vec<PaneBox>,
@@ -190,6 +192,8 @@ pub enum Drag {
     Row(Row),
     /// 사이드바 경계를 끈다
     Sidebar,
+    /// 사이드바 구역 경계를 끈다
+    SidebarSection,
     /// pane 글을 고른다. `moved`는 누른 칸을 벗어났나(herdr: 벗어나야 보인다). `offset`은 고르는 동안 보낸 기록 위치
     /// (herdr처럼 화면 frame을 기다리지 않고 그 위치로 고른 끝을 잡는다, 보낸 적이 없으면 화면의 위치)
     Select { pane: String, anchor: Point, moved: bool, offset: Option<u32> },
@@ -704,6 +708,12 @@ impl App {
             self.toggle_list();
             return Ok(());
         }
+        // herdr: 구역 경계를 누르면 그 줄부터 끌어 두 구역 비율을 바꾼다
+        if hits.on(hits.section_divider, x, y) {
+            self.drag = Some(Drag::SidebarSection);
+            self.drag_section_to(y, hits.sidebar);
+            return Ok(());
+        }
         // herdr: 경계를 두 번 누르면 설정 폭으로, 아니면 누른 열부터 끈다
         if hits.on(hits.divider, x, y) {
             let now = Instant::now();
@@ -979,6 +989,7 @@ impl App {
             _ if button != MouseButton::Left => {}
             // herdr: 폭 = 열 + 1, `[tui] sidebar_min_width`~`sidebar_max_width`
             Some(Drag::Sidebar) => self.drag_sidebar_to(x, hits.sidebar.map_or(0, |s| s.x)),
+            Some(Drag::SidebarSection) => self.drag_section_to(y, hits.sidebar),
             // herdr: 33ms마다 바뀐 위치만 보낸다
             Some(Drag::Scrollbar { pane, grab, sent, at }) => {
                 let Some((pane, m, track)) = self.scroll_track(hits, &pane) else { return Ok(()) };
@@ -1085,6 +1096,7 @@ impl App {
             }
             // herdr: 사이드바 폭 끌기를 마치면 남긴다
             Some(Drag::Sidebar) => self.sidebar_drag_done(),
+            Some(Drag::SidebarSection) => self.section_drag_done(),
             // herdr: 누른 이름표에서 떼면 그 탭(`TabFocus`)
             Some(Drag::Tab { index, .. }) if hits.tab_at(x, y) == Some(index) => self.tab = index,
             // 누른 줄에서 떼면 연다(탐색 중이면 탐색도 끝낸다)
