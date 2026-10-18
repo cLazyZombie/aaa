@@ -161,7 +161,7 @@ flowchart LR
     RS[aaa session-host · PTY / ConPTY · VT]
     RA --> RS
   end
-  TUI -- Front API · UDS 또는 TCP+TLS --> H
+  TUI -- Front API · 같은 머신 UDS · 다른 기기는 웹 HTTPS·WS --> H
   BR -- HTTPS --> TS
   RA -- Agent link · TCP+TLS 1.3 · agent가 연결 --> H
 ```
@@ -216,7 +216,7 @@ flowchart LR
 
 | 경계 | 계약 | transport | 인증 | 재연결 | 버전 |
 |---|---|---|---|---|---|
-| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TCP+TLS, 브라우저 HTTPS(serve) → `127.0.0.1` HTTP·WS | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
+| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TUI·브라우저는 HTTPS(serve) → `127.0.0.1` HTTP·WS(§6.2) | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
 | host ↔ agent | Agent link | 로컬은 UDS, 원격은 TCP+TLS 1.3. 연결은 agent가 연다 | 상호 고정 키(자체 서명 인증서 fingerprint pinning) | backoff+jitter, outbox 재전송, command ID로 결과 조회 | major.minor, host가 agent N-1 minor 지원 |
 | agent ↔ session host | Session IPC(내부) | 세션별 UDS/Named Pipe | peer UID/SID + 세션 token | agent 재시작 뒤 registry로 재접속 | 내부 버전. 이전 session host와 호환 |
 | agent pane ↔ agent | Hook IPC | UDS/Named Pipe | 세션·boot ID에 한정한 token | 없음(bounded JSON 한 건) | hook 버전 |
@@ -337,7 +337,13 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 ### 6.2 Front 연결
 
 - **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 host가 연결한 프로세스(peer pid의 조상·세션)로 어느 pane 안인지 판정하고 그 pane의 역할로 범위를 정한다. 일반 thread와 사후 평가자(§8.13)는 보기 권한이다. 처음 적은 「세션·역할 범위 token」은 두지 않았다(§8.25 세션 역할, §8.164 host 판정).
-- **다른 기기의 TUI:** TCP+TLS로 붙는다. 웹과 같은 장치 모델을 쓴다(장치 키 pairing, reader/controller 역할).
+- **다른 기기의 TUI(10-18 coordinator 답, 차이 목록 4장 A 「다른 머신에서 TUI 붙기」 지금 497줄):** 웹 길을 그대로 탄다. 새 listener·인증서·TCP+TLS front는 두지 않는다(처음 적은 「TCP+TLS로 붙는다」를 바꿨다).
+  - 주소: §6.3이 공개한 host 웹 HTTPS 주소(`aaa web publish`, 예: `https://mac-a.example.ts.net:8443`). TLS는 그 주소의 인증서(tailscale serve)가 맡고 TUI는 OS 신뢰 저장소로 확인한다.
+  - 입장: 웹과 같은 장치 pairing. host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 코드를 내고, 그 기기 TUI가 처음 붙을 때 그 코드를 `POST /api/v1/pair`에 내 장치 token을 받는다. token은 그 기기 상태 폴더에 주소마다 0600으로 둔다(브라우저의 `__Host-aaa` cookie와 같은 값, 같은 기기 기록, 목록·취소는 `aaa web devices`·`aaa web revoke`). 역할(reader/controller)은 그 장치 기록이 정하고 host가 요청마다 판정한다(§6.4).
+  - 통신: 웹과 같은 끝점. 요청은 `POST /api/v1/call`(Front API 그대로), 사건은 `GET /api/v1/events`(WebSocket), pane 화면·입력은 `/api/v1/panes/{id}/ws`(WebSocket). TUI는 비브라우저지만 웹 규칙을 그대로 지난다: Host·Origin을 그 공개 주소로 보내고(§8.116 허용 목록), cookie 헤더로 token을 보낸다. 같은 머신 UDS front의 attach 흐름(cell grid diff)을 웹 WebSocket에 실을지, pane WebSocket의 화면 bytes를 TUI가 직접 그릴지는 구현 때 정한다(front는 `aaa-proto`만 쓴다는 원칙 안에서).
+  - 명령: herdr `--remote <ssh-target>`의 aaa 꼴 `aaa attach --remote <웹 주소> [-w <workspace>]`. 키 설정은 그 기기 것이다(herdr `--remote-keybindings` 기본 `local`과 같음).
+  - 참고와 다름: herdr는 SSH 너머 서버에 붙는다. aaa는 SSH를 쓰지 않는다(결정 6). 웹과 TUI가 한 입장·권한 모델을 쓴다.
+  - 지금: 계획만 있다(구현은 다음 묶음, report `## Next`).
 - **브라우저:** §6.3의 HTTPS 주소로 붙는다.
 
 ### 6.3 host 웹 HTTPS 공개 — aaa가 Tailscale을 아는 유일한 곳
@@ -3543,6 +3549,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 참고와 다름: (1) 내려받기·채널(`herdr channel`)·sha256 manifest 검증이 없다(주어진 파일). (2) herdr는 도는 서버를 멈출지·`--handoff`로 넘길지 묻는다: aaa는 session host가 세션을 가져(결정 3) 다시 띄워도 이어져 묻지 않는다. (3) brew·mise·nix 설치 감지 없음(aaa는 고정 경로 하나). (4) herdr는 같거나 옛 version이면 「already up to date」다: aaa version은 아직 빌드마다 같아(0.1.0) sha256이 같을 때만 「이미 같다」고 하고, 바꿀 때 앞뒤 sha256 앞 12자리를 보인다(runbook 「같은 commit」 확인도 version 대신 sha256). (5) herdr에 없는 rollback·보관은 §11을 따랐다.
   - dev profile에서 sha2를 최적화한다(`[profile.dev.package.sha2] opt-level = 3`): 디버그 실행 파일(100MB 넘음) sha256이 한 번에 3초 걸려 시험이 68초였다(→ 6초).
   - 시험: e2e `update_replaces_keeps_and_rolls_back`(실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다, 「다른 빌드」는 시험 binary 뒤에 바이트를 덧붙인 사본): 터미널 아님·세션 안·`--from` 없음, self-check 실패 셋(돌지 않음·version을 말하지 않음·설정 거부)과 major·고정 거부는 실행 파일·보관·staging이 그대로, `--dry-run`·`no`, 바꾸면 보관이 원본, 같은 파일은 「이미 같다」, new2에서 rollback은 가장 새 보관 new1(원본이 아니다)·다시 하면 new2·보관 수(3) 넘으면 지움, `keep = 1`이면 하나만 남고 그 이름으로 되돌림. 심은 결함 둘(version 검사 빼기, rollback이 가장 옛 것을 고름)이 실패했다.
+- **다른 머신에서 TUI 붙기(#495, 지금 차이 목록 497줄).** coordinator 답: 웹 길(웹 HTTPS 주소·WebSocket·장치 pairing reader/controller), 새 listener·인증서 없음. §6.2를 그렇게 고쳐 적었다(옛 「TCP+TLS로 붙는다」). 구현은 다음 묶음이다.
 - **계약.** FRONT_API 1.30: `project_create`의 선택 필드(goal·repos·thread_profile·coordinator_profile)와 `project_set`. 1.31: ProjectView `status`·ThreadView `project_status`, `projects` `all`, `project_lifecycle`·`project_delete`·`project_rename`·`project_sweep`. 1.32: `thread_adopt`와 ThreadKind `adopted`. 1.33: `project_open`·`ProjectOpened`, ProjectView `coordinator_profile`·`coordinator_profiles`(선택 필드). AGENT_LINK는 그대로(sweep은 있는 `ThreadCleanup`, adopt의 `ThreadAdopt`는 agent 기능 `adopt.v1`이, coordinator의 `SpawnSpec.safety`는 `spawn_safety.v1`이 있을 때만 보낸다).
 - **시험(결함 심기로 확인).** m13 `routine_seconds_only_in_tests`(변수가 빈 host에서 `every 30s`는 오류·`every 1m`은 그대로, 변수 검사를 「있기만 하면」으로 되돌리면 실패), host 유닛 `schedules`·`routine_files`. m13 `project_create_options_and_set`(옵션이 project.toml에, 안 준 값은 없음, 프로젝트 기본 profile로 thread가 뜸, 틀린·허용 안 된 profile은 폴더 없음, set은 주석을 두고 값 하나, 상대 경로는 친 cwd 기준, 거부한 set은 파일 그대로), host 유닛 `set_keeps_the_rest_and_checks_values`. 심은 결함 넷(허용 검사 빼기, project.toml 안 쓰기, CLI가 상대 경로를 그대로, 0 허용)이 각각 실패했다.
   - m13 `project_lifecycle`: 멈추면 ticker가 깨진 project.toml을 알리지 않고 되살리면 알림, thread start 거부, thread에 `project_status`; 보관하면 thread pane이 닫히고 목록에서 빠짐(`--all`에는 보관), pause·resume 거부; rename은 열린 thread·coordinator pane으로 거부, dry-run은 그대로, 바꾸면 폴더·AGENTS.md·thread 기록·inbox가 새 이름; delete는 coordinator pane으로 거부, 휴지통에 `aaa-records.json`, 같은 이름으로 다시 만들면 thread·inbox 없음; sweep은 고친 worktree를 남기고, 사람이 지운 뒤에는 병합된 branch까지 치우고 다시 하면 「치울 것이 없다」. 심은 결함 일곱(ticker가 멈춘 것도 봄, 시작 검사 빼기, 보관이 pane을 안 닫음, rename이 DB를 안 옮김, delete가 기록을 안 지움, resolve가 leftover를 안 적음, agent가 없는 worktree를 지운 것으로 안 봄)이 각각 실패했다.
