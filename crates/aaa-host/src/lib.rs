@@ -135,7 +135,7 @@ struct MachineRt {
     health: Option<(aaa_proto::MachineHealth, i64)>,
     /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
     features: Vec<String>,
-    /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.162).
+    /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.163).
     agent_pid: Option<u32>,
 }
 
@@ -335,7 +335,7 @@ pub struct Host {
     front_seq: AtomicU64,
     /// 이 host 실행의 boot ID(흐름 사건에 같이 적는다)
     pub boot_id: String,
-    /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.161)
+    /// host.toml이 있는 설정 폴더(`run`이 정한다). safety·`[defaults]`는 쓸 때마다 여기서 다시 읽는다(plan §8.162)
     pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다)
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
