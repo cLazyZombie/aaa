@@ -54,6 +54,7 @@ pub(crate) fn write_manifest(dir: &Path, id: &str, snap: &ReportSnapshot) -> std
 pub(crate) fn safe_rel(p: &str) -> bool {
     !p.is_empty()
         && !p.contains('\\')
+        && !p.contains(':')
         && p.split('/').all(|c| !c.is_empty() && !c.starts_with('.'))
         && Path::new(p).components().all(|c| matches!(c, Component::Normal(_)))
 }
@@ -119,7 +120,7 @@ pub(crate) fn content_type(path: &str) -> &'static str {
 
 /// 보낼 파일: host 사본이거나 agent에서 읽을 것
 pub(crate) enum ViewSource {
-    Local(PathBuf, u64),
+    Local(std::fs::File, u64),
     Page(Vec<u8>),
     Agent { conn: crate::AgentConn, work_dir: String, path: String, size: u64 },
 }
@@ -145,9 +146,7 @@ impl ViewSource {
             }
             ViewSource::Local(p, _) => {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-                let mut f = tokio::fs::File::open(&p)
-                    .await
-                    .map_err(|e| err(ErrorCode::NotFound, format!("host 사본을 열지 못했다: {e}")))?;
+                let mut f = tokio::fs::File::from_std(p);
                 f.seek(std::io::SeekFrom::Start(start))
                     .await
                     .map_err(|e| err(ErrorCode::NotFound, format!("host 사본을 열지 못했다: {e}")))?;
@@ -203,11 +202,31 @@ impl Host {
         device: Option<&str>,
         reveal_link: bool,
     ) -> Result<LibraryView, ErrorBody> {
+        self.load(project, id)?;
+        self.report_library(project, id, device, reveal_link)
+    }
+
+    pub(crate) fn report_library(
+        &self,
+        project: &str,
+        id: &str,
+        device: Option<&str>,
+        reveal_link: bool,
+    ) -> Result<LibraryView, ErrorBody> {
         let dir = self.project_dir(project)?;
-        let rec = self.load(project, id)?;
+        self.report_manifest(&dir, project, id)?;
+        let rec = match self.load(project, id) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                if self.db.library_report(project, id).map_err(super::orch::internal)?.is_none() {
+                    return Err(e);
+                }
+                None
+            }
+        };
         let report = rec
-            .report_hash
             .as_ref()
+            .and_then(|r| r.report_hash.as_ref())
             .and_then(|_| std::fs::read(dir.join("threads").join(format!("{id}.md"))).ok())
             .map(|b| String::from_utf8_lossy(&b).into_owned());
         let cap = hex::encode(rand::random::<[u8; 24]>());
@@ -225,7 +244,7 @@ impl Host {
                 },
             );
         }
-        let mut files = self.manifest(&dir, id);
+        let mut files = self.report_manifest(&dir, project, id)?;
         files.retain(|f| safe_rel(&f.path));
         for f in &mut files {
             let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(id).join(&f.path));
@@ -266,19 +285,27 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "library 상대 경로가 아니다"));
         }
         let dir = self.project_dir(&project)?;
-        let manifest = self.manifest(&dir, &id);
+        let _ops = self.library_ops.lock().unwrap();
+        let manifest = self.report_manifest(&dir, &project, &id)?;
         if path.is_empty() && !manifest.iter().any(|f| f.path == "index.html" && !f.on_agent) {
             return Ok(ViewSource::Page(library_listing(&manifest)));
         }
         let path = if path.is_empty() { "index.html" } else { path };
-        let entry = self
-            .manifest(&dir, &id)
+        let entry = manifest
             .into_iter()
             .find(|f| f.path == path)
             .ok_or_else(|| err(ErrorCode::NotFound, format!("결과물에 없다: {path}")))?;
         if !entry.on_agent {
-            let (local, size) = local_file(&dir, &id, path)?;
-            return Ok(ViewSource::Local(local, size));
+            if let Some(r) = self.db.library_report(&project, &id).map_err(super::orch::internal)?
+                && let Some(root) = r.live
+            {
+                let (file, size) = crate::library_publish::live_file(Path::new(&root), path)?;
+                return Ok(ViewSource::Local(file, size));
+            }
+            let (local, _) = local_file(&dir, &id, path)?;
+            let file = std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
+            let size = file.metadata().map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?.len();
+            return Ok(ViewSource::Local(file, size));
         }
         if signed {
             return Ok(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec()));

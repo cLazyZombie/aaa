@@ -118,6 +118,13 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
   CLI Ack 뒤 `post-probe-done` 출력과 coordinator nudge 사건을 기다린다. 운영 프로세스·설정은 쓰지 않는다.
 - 결함 심기 결과는 작업 report/library에 남긴다. 신호 동작 시험은 새로 만들지 않는다.
 
-## 특수 임무 시험(2단계)
+## 보고서 publish·등록·이전 검증(§8.200)
+
+- host `library_links` owner 시험이 실제 Front API·HTTP router에서 덮어쓰기, 상한, 실시간 변화·탈출, import 건너뜀/접두사, prune(now), rotate와 pairing을 본다.
+- 웹 E2E 21 `library-reports`는 실제 CLI·host로 목록·크기·만료·doctor·열기·복사·폐기·재발급·Reader를 1280/390px에서 본다.
+- 기존 E2E 12의 top-level sandbox·SW 제외·형제 그림 검증을 유지한다. 시험 실험실을 정리하는 기존 자식 PID 처리만 쓰고 신호 동작 시험은 추가하지 않는다.
+- Windows 공통 시험에는 예약 파일 이름을 만들지 않으며 symlink 생성은 Unix 갈래로 한정한다. 공통 계약 시험 자체는 Windows에서도 실행한다.
+
+## 특수 임무 시험(2단계, §8.201)
 
 `cargo test -p aaa-host -p aaa-agent mission`은 OS 프로세스나 신호를 새로 쓰지 않는다. 실제 host·DB·frame owner에 가짜 agent를 연결해 승인/적용 사본, 범위·debounce·예산, Kill 전 durable 표지·끝남 사건 뒤 새 대화, 막힘/끝남, mission post·쌍 한도, 무한대/철수 제안, 기존 사용량 값에 따른 입력/cursor 보존과 reset 뒤 재개, 옛 상대 무송신을 본다. agent에서는 상태 파일의 처리 셈·조각 이동/hash와 Claude SessionStart 포인터를 본다. 재부팅 중 pause 보존·reset 후보 profile 일치, 같은 repo 경로의 다른 머신 승인, DB 저장 실패 시 routine hash/입력 원자성과 reset·깨움 무전송도 검사한다. 기존 m13의 evaluator_flow·routines·reboot_resumes_threads와 웹 12의 「특수 임무」 단계는 같은 공식 전체 gate에 남긴다. 새로운 실제 Kill 시험은 만들지 않는다.

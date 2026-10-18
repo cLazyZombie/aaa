@@ -142,6 +142,7 @@ dependencies = [
  "tower",
  "tracing",
  "webpki-roots",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

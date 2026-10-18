@@ -5015,7 +5015,44 @@ primary 근거:
   m13은 같은 CLI를 로컬·원격 TLS thread에서 실행하고 inbox 봉투와 nudge 고정 문구를 확인한다.
   source 위조·peer 판정 제거·rate 제거·nudge/push에 summary 삽입·fence 제거·feature 검사 제거를 심어 시험이 실패하는지 본다.
 
-### 8.200 특수 thread 2단계: 임무·사람 승인·사건 깨움(10-18)
+### 8.200 host 보고서 2단계: publish·등록 폴더·import·prune·rotate·전체 목록(10-18, t-0360)
+
+- **범위·참고.** t-0354 기획의 2단계다. herdr-projects 0.2.35 `thread.rs::copy_library_local`의 library 사본·symlink 제외·이름·resolve 뒤 보존을 따르며,
+  herdr-web-ui `file-view.ts`의 숨은 이름·실제 경로 제한과 sandbox 응답 머리를 기존 `/v/`에 그대로 적용한다. herdr 0.9.5에는 보고서 기능이 없다.
+  원격 publish용 전송 경로·새 포트는 만들지 않는다. 업로드는 host 머신의 사람·coordinator CLI만 한다(기존 local_only·needs_control).
+- **복사.** `aaa library publish <폴더 또는 파일> --project P --name N`. 프로젝트의 `library/N/`과 `threads/N.files.json`에 둔다.
+  이름은 소문자·숫자·-·_ 1~100자이며 thread 이름 공간 `t-`와 Windows 예약 이름을 받지 않는다. 숨은 성분·symlink·일반 파일 아닌 것은 빼고,
+  `[projects] library_copy_mb`(기본 200MiB)를 넘으면 전체를 거부한다. 임시 폴더에서 크기를 다시 확인하고 사본·manifest를 교체한다.
+  같은 이름은 이전 파일도 지워 최신으로 덮어쓰고, 유효한 공유 링크는 그대로 쓴다. 오류 때는 이전 사본을 되돌린다.
+- **실시간 폴더.** 사용자 brief의 「복사 없이 그 자리에서 서빙」에 따라 `publish … --live`를 둔다(폴더만).
+  기획의 publish+routine 반복 복사 대신 등록 원본의 canonical root를 host DB에 둔다. 원본 경로는 front에 보내지 않는다.
+  요청마다 목록을 다시 만들므로 수정·추가·삭제가 바로 반영되고 같은 상한을 쓴다. 목록의 이름·크기도 안전하게 연 파일에서만 얻는다. 숨은 이름·`..`·역슬래시·드라이브/ADS·symlink를 거부한다.
+  Unix는 파일을 성분마다 `openat(O_NOFOLLOW)`로 열어 검사 뒤 symlink 교체도 따라가지 않는다. Windows는 reparse point(junction 포함)와 열린 handle의 최종 정규 경로를 검사한다.
+  원본이 없거나 상한을 넘으면 목록에 문제를 보이고 서빙을 거부한다. 저장소 착지 routine은 필요 없다.
+- **일괄 이전.** `aaa library import <폴더> --project P [--prefix archive-]`. 하위 폴더마다 publish하되 같은 대상 이름은 덮지 않는다.
+  충돌·상한 초과·symlink·숨은 이름·낱 파일·유효하지 않은 이름은 건너뛴 항목과 이유로 돌려준다.
+  `--prefix archive-`는 기존 `t-0001` 폴더를 새 thread ID와 겹치지 않는 `archive-t-0001`로 옮기는 길이다. 접두사 뒤 충돌도 건너뛴다.
+  낱 파일은 publish하고, 원본 symlink는 실제 폴더를 명시해 `--live`로 등록한다. 운영 자료 가져오기는 coordinator가 전환 때 한다.
+- **수명.** `aaa library prune --older-than N [--project P]`는 최근 게시/회수 시각이 N일보다 오래된 사본을 지운다(now 인자, 1일 이상).
+  진행 중 thread·실시간 원본은 보호하고 report.md·thread 기록은 남긴다. 지운 보고서의 서명 링크·앱 안 cap은 끝낸다. 자동 삭제는 없다.
+  `aaa library rotate`는 서명 키(0600)를 원자 교체하고 기존 링크 행을 폐기한다. 새 발급은 새 ID를 쓴다.
+  pairing·TLS 키·보고서·앱 안 보기는 그대로다. 두 명령은 host 머신 CLI 전용이고 대상 이름/ID만 감사에 남긴다.
+- **전체 목록·doctor.** 웹 목록 아래 「보고서」(설정에도 같은 쪽)를 둔다. host가 thread·별도 보고서를 프로젝트를 넘어 최신순으로 보낸다.
+  프로젝트 고르기·이름·크기·실시간 표시·갱신·만료·앱에서 열기와 기존 링크 줄(공유 링크·복사·QR·폐기·재발급)을 쓴다.
+  Reader는 서명 링크 없이 앱 안 열기만 된다. 만료·폐기 뒤에도 앱 안 열기는 된다.
+  `aaa library list [--project P]`도 같은 전체 목록이다(옛 `library_links` API는 유지). `aaa doctor`는 host 사본 합계·보고서 수·실시간 수·문제 수를 보인다.
+  실시간 원본 바이트는 host 사본 합계에 넣지 않는다. host가 없으면 확인하지 못했다고 적는다.
+- **저장·호환.** DB `library_reports(project,name,live,updated)`를 더한다(SCHEMA_VERSION=1 유지). 프로젝트 export·rename·delete 표 목록에도 넣는다.
+  FRONT_API **1.38**: LibraryPublish·LibraryImport·LibraryPrune·LibraryRotate·LibraryReports·LibraryOpen·LibraryUsage와 응답, LibraryReport·LibrarySkip.
+  배포된 1.37에는 더하지 않는다. N-1 front(1.37)는 붙는다. 다른 thread가 다음 판을 먼저 배포했다면 나중 착지에서 판을 맞춘다. AGENT_LINK는 그대로다.
+- **시험.** host API와 실제 router owner에서 덮어쓰기·원본 변화·등록 범위·숨은 이름·상한·import 이유/접두사/충돌·prune 시각/보호·rotate/재시작/pairing·권한·크기를 본다.
+  웹 E2E 21은 실제 CLI·host와 1280/390px 화면에서 전체 목록·프로젝트 고르기·크기·만료·열기·복사·폐기·재발급·rotate·Reader·doctor를 본다.
+  기존 12의 top-level sandbox·SW·형제 그림 시험은 유지한다. Windows에서도 되는 파일 이름·cfg로 쓰고 Windows 대상 전체 시험을 교차 컴파일한다.
+  결함 심기 및 최종 검증 결과는 thread report/library에 남긴다.
+- **전환 gate.** 별도 서버는 사용자 결정대로 **전환 직후 즉시 끈다**. 필요한 작은 보고서를 import/publish하고, 큰 묶음의 건너뜀을 검토하며,
+  저장소 실시간 폴더를 등록하고 휴대폰에서 링크를 확인한 뒤 전환한다. 상세 명령은 [보고서 운영](library.md), 전환 점검표는 [이전](migration.md).
+
+### 8.201 특수 thread 2단계: 임무·사람 승인·사건 깨움(10-18)
 
 - **정의와 적용.** `projects/<p>/missions/<name>.md`는 routine과 같은 `+++` TOML+본문이다. `evaluator`는 내장 사후 평가자의 예약 이름이다. `title`, `enabled`, `profile`, `machine`, `repo`, `events`, `repos`, `reports`, `batch_s`(0~86400), `min_gap`, `schedule`, `max_wakes`(기본 12/일), `max_minutes`(기본 60/깨움), `reset`(기본 daily 05:00), `reset_after_wakes`(기본 6)를 쓴다. 모르는 칸과 배경·post·routine·message 사건 구독은 오류다. repo 이름은 해당 머신의 프로젝트 repo 하나로 풀며 승인 hash에 실제 경로·머신을 함께 묶는다. project.toml의 경로 변경이나 같은 경로의 다른 머신으로 이동해도 승인을 우회하지 못한다.
 - **사람 승인.** `aaa mission list|show|approve|reject|start|stop|pause|resume|reload|restart|open`. 첫 시작·repo 추가/변경·예산 올림만 사람 승인이다. CLI는 기존 사람 문, 웹은 Controller를 쓴다. 세션 안 coordinator의 approve는 host가 거부하며 reject는 가능하다. 적용 사본은 DB meta `mission_applied:<p>:<name>`, 승인 칸 hash는 `mission_ok:<p>:<name>`에 있다. 본문·사건·일정·허용 profile·머신은 reload 뒤 안전한 새 대화에서 적용한다. 깨진 후보·승인 대기 중에도 옛 사본을 쓴다. 예산 낮춤·끄기는 다음 tick, repo 제거는 다음 reset에 적용한다. task.md는 투영이며 재시작 지시의 정본이 아니다.
@@ -5024,4 +5061,4 @@ primary 근거:
 - **routine과 post.** 명령 routine의 `mission="<name>"`은 승인 hash에 목적지를 더한다(목적지 없는 기존 hash는 유지). 명령 없는 routine에는 목적지를 받지 않는다. 대상이 열려 있으면 coordinator 없이도 실행한다. 임무 입력과 출력 hash는 한 transaction으로 확정해 저장 실패·host 종료로 출력을 놓치지 않는다. `mission:evaluator`는 내장 사후 평가자의 routine/post 입력이다. 일반/특수 thread는 coordinator에만 post하며 coordinator/사람은 특수 쪽에 data·notice만 보낸다. `pair_hourly`를 임무별로 적용한다. 접수 원장에 pending을 먼저 저장하고 재연결 뒤 동일 이름의 파일로 전달한다. 사후 평가자의 대상 없는 routine 소음은 cursor만 옮기고 묶음을 만들지 않는다. host 알림은 Follow-ups에 쌓지 않는다.
 - **다시 시작.** 임무별 잠금 아래 idle 30초·working 뒤 idle·빈 입력창·보는 사람 없음일 때 resetting을 먼저 저장하고 Kill을 보낸다. DB 확정 실패는 호출자에게 돌려주며 Kill·깨움 입력을 전송하지 않는다. 응답만으로 새 대화를 시작하지 않고 세션 끝남 사건을 기다린다. 새 세션 연결까지 기록한 뒤 host가 종료되어도 실제 띄운 사본으로 적용을 확정한다. Claude compact/clear/resume의 SessionStart에는 brief/state 재독 포인터 한 줄만 준다. Codex는 reset_after_wakes=1만 허용한다. 재부팅 복원도 새 대화이며 사람이 멈춘 상태를 유지한다. reset 도중 재부팅은 일반 thread 복원을 건너뛰고 임무 잠금 아래 고정된 repo·머신·profile로 이어 간다. 임무 재시작은 mission 명령을 사용한다. repo·머신 변경에는 state.md·processed.txt·inbox/·history/를 양쪽 agent 사이에서 조각으로 옮긴 뒤 띄운다(8MiB·1000개, 파일 hash 확인, symlink 거부, 원본 보존). 넘으면 막힘으로 남기며 부분 상태로 실행하지 않는다.
 - **철수와 사용량.** `withdrawal="none"`은 기간 제한 없는 임무다. `criteria`(기본)는 `retire_no_posts_days=7` 동안 처리한 post가 없거나 `retire_cap_days=3`일 연속 상한이면 coordinator에 철수 제안만 한다. `usage_session_below`, `usage_week_below`는 남은 양 % 문턱이다. 값이 있으면 해당 harness/모델의 창이 리셋될 때까지 「사용량 대기」, 입력·cursor 보존, 리셋 뒤 재개다. 값이 없으면 미루지 않는다. 이번 단계는 이미 읽은 host의 사용량만 쓰며 외부 주기 조회·원격 다른 계정의 판단은 하지 않는다. 내장 평가자 흡수·비용/context 실측·nightly 이전은 3단계다.
-- **계약과 시험.** 배포된 계약에 덧붙이지 않고 FRONT_API 1.38, AGENT_LINK 1.5로 올린다. 새 임무 link 요청/응답은 양쪽의 `mission.v1`에서만 쓴다. 1.4 agent와 연결은 유지하되 임무는 시작하지 않는다. DB schema 변경은 없다. 신호 시험 금지에 따라 새 수명주기 시험은 실제 host DB·frame와 가짜 agent로 Kill→끝남 사건→새 Spawn 순서를 검사한다. 실제 CLI/화면은 기존 공식 실험실 gate에서 검사한다.
+- **계약과 시험.** 배포된 계약에 덧붙이지 않고 FRONT_API 1.39, AGENT_LINK 1.5로 올린다. 새 임무 link 요청/응답은 양쪽의 `mission.v1`에서만 쓴다. 1.4 agent와 연결은 유지하되 임무는 시작하지 않는다. DB schema 변경은 없다. 신호 시험 금지에 따라 새 수명주기 시험은 실제 host DB·frame와 가짜 agent로 Kill→끝남 사건→새 Spawn 순서를 검사한다. 실제 CLI/화면은 기존 공식 실험실 gate에서 검사한다.

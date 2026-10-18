@@ -880,6 +880,35 @@ enum MachineCmd {
 
 #[derive(Subcommand)]
 enum LibraryCmd {
+    /// host 머신의 폴더·파일을 복사한다. 같은 이름은 최신으로 바꾼다.
+    Publish {
+        source: std::path::PathBuf,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+        /// 복사 없이 등록한 폴더에서 변경을 즉시 보여 준다(폴더만).
+        #[arg(long)]
+        live: bool,
+    },
+    /// 하위 폴더를 각각 가져온다. 충돌·상한 초과·symlink는 건너뛴 목록에 적는다.
+    Import {
+        source: std::path::PathBuf,
+        #[arg(long)]
+        project: String,
+        /// 저장 이름 앞에 붙인다(예: archive- → archive-t-0001).
+        #[arg(long, default_value = "")]
+        prefix: String,
+    },
+    /// 오래된 사본을 지운다. 진행 중 thread와 실시간 폴더는 남긴다.
+    Prune {
+        #[arg(long)]
+        older_than: u32,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// 보고서 서명 키를 교체한다. 옛 공유 링크가 모두 끝난다(pairing은 그대로).
+    Rotate,
     /// 유효한 링크를 받는다. 없거나 만료·폐기됐으면 새로 만든다.
     Link {
         project: String,
@@ -1344,7 +1373,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 LibraryCmd::Link { project, thread, days } => FrontRequest::LibraryLink { project, thread, days },
-                LibraryCmd::List { project } => FrontRequest::LibraryLinks { project },
+                LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
+                LibraryCmd::Publish { source, project, name, live } => {
+                    FrontRequest::LibraryPublish { source: absolute_source(&source)?, project, name, live }
+                }
+                LibraryCmd::Import { source, project, prefix } => {
+                    FrontRequest::LibraryImport { source: absolute_source(&source)?, project, prefix }
+                }
+                LibraryCmd::Prune { older_than, project } => {
+                    FrontRequest::LibraryPrune { project, older_than_days: older_than }
+                }
+                LibraryCmd::Rotate => FrontRequest::LibraryRotate,
                 LibraryCmd::Revoke { id } => FrontRequest::LibraryLinkRevoke { id },
             },
         ),
@@ -1628,11 +1667,29 @@ fn space_separated_zsh_long_options(script: &str) -> String {
     output
 }
 
+/// host와 CLI의 현재 폴더가 다를 수 있다. symlink는 canonicalize하지 않고 host에서 거부한다.
+fn absolute_source(path: &std::path::Path) -> Result<String> {
+    let path = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+    Ok(path.to_str().context("파일 경로는 UTF-8이어야 한다")?.to_string())
+}
+
 fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
     match a.cmd {
         None => {
             let r = doctor::probe(&doctor::ProbeOptions { samples: 3, throughput: false, ..Default::default() });
-            print_report(&r, json)?;
+            let usage = front_call(FrontRequest::LibraryUsage).ok().and_then(Result::ok);
+            if json {
+                let mut value = serde_json::to_value(&r)?;
+                value["library"] = serde_json::to_value(&usage)?;
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            } else {
+                print_report(&r, false)?;
+                if let Some(usage) = usage {
+                    print!("{}", render_front(&usage));
+                } else {
+                    println!("보고서 용량: host에 연결할 수 없어 확인하지 못했다");
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
         Some(DoctorCmd::Probe { disclaim: true, .. }) => {
@@ -2835,6 +2892,39 @@ fn render_front(r: &FrontResponse) -> String {
                     r.no_coordinator
                 );
             }
+        }
+        FrontResponse::LibraryReports { reports } | FrontResponse::LibraryImported { reports, .. } => {
+            for r in reports {
+                let _ = writeln!(
+                    s,
+                    "{}/{}\t{}B\t갱신 {}{}{}",
+                    r.project,
+                    r.name,
+                    r.size,
+                    r.updated_at_ms,
+                    if r.live { " · 실시간" } else { "" },
+                    r.problem.as_ref().map(|p| format!(" · {p}")).unwrap_or_default()
+                );
+                if let Some(l) = &r.link {
+                    s.push_str(&render_front(&FrontResponse::LibraryLink(l.clone())));
+                }
+            }
+            if let FrontResponse::LibraryImported { skipped, .. } = r {
+                for skip in skipped {
+                    let _ = writeln!(s, "건너뜀 {}: {}", skip.name, skip.reason);
+                }
+            }
+        }
+        FrontResponse::LibraryPruned { removed } => {
+            for name in removed {
+                let _ = writeln!(s, "정리 {name}");
+            }
+        }
+        FrontResponse::LibraryRotated => {
+            s.push_str("보고서 키를 교체했다. 옛 공유 링크는 모두 끝났다. pairing은 그대로다.\n")
+        }
+        FrontResponse::LibraryUsage { size, reports, live, problems } => {
+            let _ = writeln!(s, "보고서 {reports}개 · 사본 {size}B · 실시간 {live}개 · 확인 문제 {problems}개");
         }
         FrontResponse::LibraryLink(l) => {
             let _ = writeln!(

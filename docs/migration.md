@@ -149,9 +149,22 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 기존 shell/custom profile의 command/env는 전환 호환용으로 읽는다. 새 claude/codex 정의는 위 다섯 키를 쓰고
 머신별 실행 경로·환경은 agent의 harness 덮어쓰기로 분리한다. 배포·운영 host 재시작은 binary 배포 담당자가 한다.
 
+## 별도 보고서 서버 전환 gate
+
+사용자 결정(10-18)에 따라 기존 별도 보고서 서버는 aaa 전환 직후 바로 끈다.
+기존 자료를 읽거나 옮기는 작업은 운영 coordinator가 한다. 구현 시험은 임시 host만 쓴다.
+
+1. 기존 작은 보고서 폴더를 `aaa library import "<보고서 루트>" --project P --prefix archive-`로 가져온다.
+2. 건너뜀 목록을 확인한다. 필요한 낱 파일은 publish하고, 상한을 넘는 큰 캡처 묶음은 필요한 파일만 별도 폴더로 준비해 publish한다.
+3. 저장소 폴더를 가리키는 symlink 항목은 실제 폴더를 명시해 `aaa library publish "<실제 폴더>" --project P --name design --live`로 등록한다.
+4. `aaa library list --project P`·`aaa doctor`, 웹 「보고서」 전체 목록과 휴대폰 공유 링크에서 필요한 자료가 열리는지 확인한다.
+5. 전환을 끝낸 직후 별도 서버를 끈다. 실제 서버 종료는 운영 절차에서 직접 확인한 PID로 한다.
+
+상한·충돌·정리·키 교체의 상세 규칙은 [보고서 운영](library.md)에 있다. 이 과정에서 기존 서버·자료를 먼저 지우지 않는다.
+
 ## 임무가 있는 host의 갱신과 되돌리기
 
-- 임무를 쓰려면 host·CLI·해당 agent를 함께 갱신한다(FRONT_API 1.38, AGENT_LINK 1.5, 양쪽 mission.v1). 1.4 agent는 연결할 수 있으나 임무 메시지는 보내지 않는다. 1.3 agent는 먼저 1.4 이상으로 올린다.
+- 임무를 쓰려면 host·CLI·해당 agent를 함께 갱신한다(FRONT_API 1.39, AGENT_LINK 1.5, 양쪽 mission.v1). 1.4 agent는 연결할 수 있으나 임무 메시지는 보내지 않는다. 1.3 agent는 먼저 1.4 이상으로 올린다.
 - 임무를 모르는 host로 되돌리기 전 모든 임무를 `aaa mission stop <p> <name>`으로 끝낸다. 목적지가 있는 routine도 `enabled=false`로 둔다. 옛 host는 ThreadRec을 다시 저장할 때 mission 칸을 잃고 임무를 사후 평가자로 오인할 수 있다.
 - repo·머신 변경 때 원래 작업 폴더는 자동 삭제하지 않는다. 상태 이동이 성공했음을 확인한 뒤 사람이 남긴 worktree·branch를 정리한다. 상태 이동 상한을 넘으면 적용 사본과 원본을 보존하고 막힘으로 알린다.
 - 2단계의 사용량 미룸은 host가 이미 읽은 값만 사용한다. 원격 agent가 다른 로그인으로 도는 계정은 판단하지 않는다. ticker의 주기 조회와 계정 연결은 3단계다.
