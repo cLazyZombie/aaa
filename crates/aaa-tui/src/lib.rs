@@ -202,6 +202,8 @@ enum Pending {
     Focus(HashSet<String>),
     /// 기록 편집기 pane을 열었다(`Focus`처럼 새 pane으로, 그 pane이 닫히면 `from`으로 돌아간다)
     EditScrollback { before: HashSet<String>, from: String },
+    /// 새 workspace를 만들었다: 응답이 오면 그 workspace로 가서 새 pane에 포커스
+    NewSpace,
     /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
     Attach(u64),
     /// 고른 글 읽기: 응답이 오면 복사한다
@@ -320,6 +322,8 @@ struct App {
     held: Vec<Event>,
     /// 연 기록 편집기 pane과 연 pane(herdr `OverlayPaneState.previous_focus`): 편집기 pane이 닫히면 연 pane으로 돌아간다
     overlay_back: Option<(String, String)>,
+    /// 머신 머리 줄로 고른 머신과 그때 포커스 pane(herdr 활성 endpoint): 포커스가 바뀌면 풀린다(`target_machine`)
+    machine_pick: Option<(String, Option<String>)>,
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
     copy_reply: Option<copy::CopyReply>,
@@ -397,6 +401,7 @@ impl App {
             ascii: None,
             focus_wait: None,
             overlay_back: None,
+            machine_pick: None,
             held: vec![],
             copy_wait: None,
             copy_reply: None,
@@ -593,6 +598,10 @@ impl App {
             }
             // copy 모드 pane에 포커스가 오가거나 그 pane이 없어지면 모드를 맞춘다
             self.settle_copy();
+            // 고른 머신은 포커스가 그대로인 동안만이다(다른 pane을 거쳐 돌아와도 다시 살지 않는다)
+            if self.machine_pick.as_ref().is_some_and(|(_, at)| *at != self.focus) {
+                self.machine_pick = None;
+            }
             self.copy_apply(&mut tx).await?;
             for name in std::mem::take(&mut self.space_fetch) {
                 let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
@@ -717,6 +726,10 @@ impl App {
                             self.overlay_back = Some((new, from));
                             self.set_message("기록을 편집기로 열었다");
                         }
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::NewSpace)) => {
+                        self.note_space(&w);
+                        self.enter_space(w);
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::SpaceLayout)) => {
                         self.note_space(&w)
@@ -851,14 +864,44 @@ impl App {
             return Ok(());
         }
         let known = self.spaces.get(&name).cloned().unwrap_or_else(|| Workspace { name: name.clone(), tabs: vec![] });
-        self.ws_name = name.clone();
-        self.ws = Workspace { name: name.clone(), tabs: vec![] };
+        self.enter_space(known);
+        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
+        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        Ok(())
+    }
+
+    /// 그 workspace를 지금 workspace로 그린다(첫 탭, 포커스는 그 탭의 첫 pane)
+    fn enter_space(&mut self, w: Workspace) {
+        self.ws_name = w.name.clone();
+        self.ws = Workspace { name: w.name.clone(), tabs: vec![] };
         self.tab = 0;
         self.focus = None;
         self.list_top = None;
-        self.set_ws(known);
-        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
-        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        self.set_ws(w);
+    }
+
+    /// 새 workspace(herdr `NewWorkspace`, 이름을 묻는 `prompt_new_workspace_name`은 기본 꺼짐): 없는 이름
+    /// `workspace`·`workspace-2`…에 `target_machine`의 셸 탭 하나를 띄우고(CLI `workspace create`와 같은 길) 응답이 오면
+    /// 그 workspace로 간다. 새 셸 폴더는 새 탭처럼 포커스 pane에서 잇는다(herdr `source_workspace_id`).
+    async fn new_space(&mut self, tx: &mut FrontSender) -> Result<()> {
+        let taken = |n: &str| n == self.ws_name || self.spaces.contains_key(n);
+        let name = std::iter::once("workspace".to_string())
+            .chain((2..).map(|i| format!("workspace-{i}")))
+            .find(|n| !taken(n))
+            .unwrap_or_default();
+        let change = LayoutChange::NewTab {
+            machine: self.target_machine(),
+            name: None,
+            argv: vec![],
+            cwd: None,
+            cols: None,
+            rows: None,
+            label: None,
+            from: self.focus.clone(),
+        };
+        let id = tx.send(FrontRequest::LayoutApply { workspace: Some(name), change }).await?;
+        self.pending.insert(id.clone(), Pending::NewSpace);
+        self.focus_wait = Some(id);
         Ok(())
     }
 
@@ -986,7 +1029,7 @@ impl App {
         self.sidebar_collapsed = Some(!self.collapsed());
     }
 
-    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 새 셸이면 새 탭
+    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 머신 머리면 그 머신을 고른다
     async fn open_row(&mut self, tx: &mut FrontSender, row: list::Row) -> Result<()> {
         let pane = match row {
             list::Row::Pane(p) => p,
@@ -998,18 +1041,9 @@ impl App {
                 }
             },
             list::Row::Space(name) => return self.switch_space(tx, name).await,
-            list::Row::NewShell(machine) => {
-                let change = LayoutChange::NewTab {
-                    machine: Some(machine),
-                    name: None,
-                    argv: vec![],
-                    cwd: None,
-                    cols: None,
-                    rows: None,
-                    label: None,
-                    from: None,
-                };
-                return self.layout(tx, change, true).await;
+            list::Row::Machine(id) => {
+                self.pick_machine(id);
+                return Ok(());
             }
             _ => return Ok(()),
         };
@@ -1111,6 +1145,27 @@ impl App {
 
     fn focused_machine(&self) -> Option<String> {
         self.focus.as_ref().and_then(|f| self.panes.get(f)).map(|p| p.machine_id.clone())
+    }
+
+    /// 새 탭·새 workspace를 여는 머신(herdr 활성 endpoint): 머신 머리 줄로 고른 머신(그 뒤 포커스가 그대로일 때), 아니면
+    /// 포커스 pane의 머신. 둘 다 없으면 host가 이 머신(로컬 agent)에 연다.
+    fn target_machine(&self) -> Option<String> {
+        match &self.machine_pick {
+            Some((m, at)) if *at == self.focus => Some(m.clone()),
+            _ => self.focused_machine(),
+        }
+    }
+
+    /// 머신 머리 줄을 눌렀다(herdr `handle_endpoint_machine_click`): 그 머신을 새 탭·workspace를 열 머신으로. 끊긴 머신은
+    /// 알리고 고르지 않는다(herdr 「… is not ready」)
+    fn pick_machine(&mut self, id: String) {
+        let Some(m) = self.machines.iter().find(|m| m.id == id) else { return };
+        if m.connection != aaa_proto::Connection::Connected {
+            self.set_error(format!("{}에 붙어 있지 않다", m.name));
+            return;
+        }
+        self.set_message(format!("새 탭·workspace는 {}에", m.name));
+        self.machine_pick = Some((id, self.focus.clone()));
     }
 
     /// layout 바꾸기. `focus_new`면 응답이 올 때까지 키를 붙잡아 두었다가 새 pane에 포커스를 옮긴 뒤 보낸다:
@@ -1374,9 +1429,9 @@ impl App {
         }));
     }
 
-    /// 새 탭: 포커스 pane의 머신에, 그 pane이 지금 있는 폴더에서(host `[terminal] new_cwd`)
+    /// 새 탭: `target_machine`에, 포커스 pane이 지금 있는 폴더에서(host `[terminal] new_cwd`, 다른 머신이면 home)
     async fn new_tab(&mut self, tx: &mut FrontSender, label: Option<String>) -> Result<()> {
-        let machine = self.focused_machine();
+        let machine = self.target_machine();
         let change = LayoutChange::NewTab {
             machine,
             name: None,
@@ -1542,6 +1597,7 @@ impl App {
                 }));
             }
             Action::NewTab => self.new_tab(tx, None).await?,
+            Action::NewWorkspace => self.new_space(tx).await?,
             Action::RenameTab => {
                 if let Some(t) = self.ws.tabs.get(self.tab) {
                     let original = self.tab_label(self.tab);
@@ -1906,10 +1962,17 @@ impl App {
         let navigating = self.mode == Mode::Navigate;
         let spaces = self.space_list();
         let placed_spaces = list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p);
+        // herdr: 마우스를 받을 때만 ` new`, 머신이 여럿이면 새 workspace를 열 머신 이름을 붙인다(없으면 로컬 agent)
+        let new_workspace = self.mouse_capture.then(|| {
+            let id = self.target_machine().or_else(|| self.machines.iter().find(|m| m.local).map(|m| m.id.clone()));
+            let name = id.and_then(|id| self.machines.iter().find(|m| m.id == id)).map(|m| m.name.as_str());
+            list::render_new_workspace(buf, spaces_area, name.filter(|_| self.machines.len() > 1), p)
+        });
         let body = list::render_agents_header(buf, agents_area, p);
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
+        hits.new_workspace = new_workspace.flatten();
         hits.rows =
             placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
         if body.h > 0 {
@@ -2889,6 +2952,7 @@ mod tests {
         let shown = lines.join("\n");
         assert!(lines[0].starts_with(" spaces "), "{shown}");
         assert!(lines[2].starts_with(" · main "), "{shown}");
+        assert!(lines[14].starts_with(" new "), "{shown}");
         assert!(lines[15].starts_with(&"─".repeat(25)), "{shown}");
         assert!(lines[16].starts_with(" agents") && lines[16].contains("projects│"), "{shown}");
         assert!(lines[18].starts_with(" ▾ mac-a"), "{shown}");
@@ -2912,6 +2976,43 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("   │ ▾ mac-a")), "탐색이면 띄운다: {shown}");
         assert_eq!(at_col(&lines[28], 28), Some('«'), "띄운 목록은 막대 위까지: {shown}");
         assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
+    }
+
+    /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 머신 머리 줄로 고르면 그 머신
+    /// (포커스가 그대로인 동안), 끊긴 머신은 고르지 않는다. 마우스를 받으면 spaces 맨 아랫줄 ` new`, 머신이 여럿이면 그 이름.
+    #[test]
+    fn new_workspace_machine_like_herdr_endpoint() {
+        let mut app = app_with_tabs(&["", ""]);
+        app.focus = Some("p0".into());
+        app.panes.insert("p0".into(), pane_view("p0", "m", "build"));
+        app.panes.insert("p1".into(), pane_view("p1", "m", "log"));
+        let mut far = machine("n", "mac-b");
+        far.local = false;
+        app.machines = vec![machine("m", "mac-a"), far];
+        let footer = |app: &App| draw(app).0[14].clone();
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
+        app.pick_machine("n".into());
+        assert_eq!(app.target_machine().as_deref(), Some("n"));
+        assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 12, h: 1 }));
+        // 포커스가 바뀌면 포커스 pane의 머신
+        app.focus = Some("p1".into());
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        // 끊긴 머신은 고르지 않는다
+        app.machines[1].connection = aaa_proto::Connection::Disconnected;
+        app.pick_machine("n".into());
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        assert!(app.error.as_ref().is_some_and(|e| e.0.contains("mac-b에 붙어 있지 않다")));
+        // 포커스가 없으면 로컬 agent, 머신이 하나면 이름 없이, 마우스를 받지 않으면 없다
+        app.focus = None;
+        assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
+        app.machines.truncate(1);
+        assert!(footer(&app).starts_with(" new    "), "{}", footer(&app));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
+        app.mouse_capture = false;
+        assert!(!footer(&app).contains("new"), "{}", footer(&app));
+        assert_eq!(app.hits.borrow().new_workspace, None);
     }
 
     /// 모드 막대는 평소에 없고(pane 맨 아랫줄은 pane 것), 오류는 ERROR 막대, 알림은 오른쪽 위 카드(herdr)

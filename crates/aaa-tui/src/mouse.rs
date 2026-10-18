@@ -72,6 +72,8 @@ pub struct Hits {
     pub tabs: Vec<(Rect, usize)>,
     pub tab_bar: Option<Rect>,
     pub new_tab: Option<Rect>,
+    /// spaces 구역 맨 아랫줄 ` new`
+    pub new_workspace: Option<Rect>,
     pub scroll_left: Option<Rect>,
     pub scroll_right: Option<Rect>,
     /// 탭 막대가 지금 몇째 탭부터 보이나와 가장 많이 밀 수 있는 값
@@ -639,7 +641,8 @@ impl App {
         }
     }
 
-    /// 왼쪽 누름(herdr 맞히기 순서: 사이드바 접기 → 경계 → 새 탭 → `<` `>` → 탭 → 목록 줄 → 나눔 경계 → pane)
+    /// 왼쪽 누름(herdr 맞히기 순서: 사이드바 접기 → 경계 → 새 workspace → 새 탭 → `<` `>` → 탭 → 목록 줄 → 나눔 경계 →
+    /// pane)
     async fn press(&mut self, x: u16, y: u16, mods: KeyModifiers, hits: &Hits, tx: &mut FrontSender) -> Result<()> {
         self.selection = None;
         if self.mode == Mode::Prefix {
@@ -658,6 +661,9 @@ impl App {
             self.mode = if self.mode == Mode::Navigate { Mode::Terminal } else { Mode::Navigate };
             self.list_sel = None;
             return Ok(());
+        }
+        if hits.on(hits.new_workspace, x, y) {
+            return self.act(Action::NewWorkspace, tx).await;
         }
         if hits.on(hits.new_tab, x, y) {
             return self.act(Action::NewTab, tx).await;

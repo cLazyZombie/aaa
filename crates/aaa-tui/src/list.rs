@@ -1,5 +1,5 @@
-//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·차이 목록 L1·U4~U6). herdr 사이드바처럼 위는 workspace(` spaces`), 아래는
-//! ` agents` 구역이고, agents에는 머신마다 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
+//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·차이 목록 L1·U4~U8). herdr 사이드바처럼 위는 workspace(` spaces`, 맨 아랫줄 ` new`),
+//! 아래는 ` agents` 구역이고, agents에는 머신마다 머리(고르면 새 탭·workspace를 열 머신), 그 머신의 프로젝트 머리와 thread 두 줄
 //! (herdr-projects `thread_display` 「id · 제목」, 둘째 줄 `state_line`), thread에 딸리지 않은 pane, 상태 점과 배지.
 //!
 //! host가 보낸 머신·pane 목록과 thread 사건으로만 만든다(TUI는 저장하지 않는다). 고르면 그 pane을 탭으로 연다.
@@ -23,11 +23,10 @@ pub enum Row {
     Thread(String),
     /// thread 줄의 둘째 줄(상태 말, 고르지 않고 누르면 그 thread)
     ThreadSub(String),
+    /// 머신 머리(머신 ID): 고르면 새 탭·workspace를 그 머신에 연다(herdr endpoint 줄 누르기)
     Machine(String),
     /// 그 머신의 프로젝트 묶음 머리(머신 ID, 프로젝트)
     Project(String, String),
-    /// 그 머신에 새 셸을 연다(머신 ID)
-    NewShell(String),
     Pane(String),
     Empty,
     /// spaces 구역의 workspace(이름)
@@ -36,7 +35,7 @@ pub enum Row {
 
 impl Row {
     pub fn selectable(&self) -> bool {
-        matches!(self, Row::Thread(_) | Row::NewShell(_) | Row::Pane(_) | Row::Space(_))
+        matches!(self, Row::Thread(_) | Row::Machine(_) | Row::Pane(_) | Row::Space(_))
     }
 
     /// 누르면 고르는 줄: thread 둘째 줄은 그 thread
@@ -81,7 +80,7 @@ pub fn project_line(groups: &[ThreadGroup]) -> String {
     if parts.is_empty() { "쉼".to_string() } else { parts.join(" · ") }
 }
 
-/// 웹 목록(`machineRoster`)과 같은 차례: 머신마다 머리·새 셸, 그 머신 thread를 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온
+/// 웹 목록(`machineRoster`)과 같은 차례: 머신마다 머리, 그 머신 thread를 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온
 /// 프로젝트 차례로 묶은 프로젝트 머리와 thread 두 줄, 그다음 thread에 딸리지 않은 pane(평가자 제외). 끝난·평가자 thread는 뺀다.
 /// 맨 아래는 사후 평가자 pane(웹 목록에는 없다).
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
@@ -97,9 +96,6 @@ pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<Stri
     });
     for m in machines {
         out.push(Row::Machine(m.id.clone()));
-        if m.connection == Connection::Connected {
-            out.push(Row::NewShell(m.id.clone()));
-        }
         let pane_of = |t: &ThreadView| t.pane.as_deref().and_then(|id| panes.iter().find(|p| p.id == id));
         let mine: Vec<&&ThreadView> = live.iter().filter(|t| on_machine(t, m, pane_of(t))).collect();
         let mut projects: Vec<&str> = vec![];
@@ -503,7 +499,6 @@ fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> (Vec<Span>, Opti
                 signal.map(|(t, c)| (t, Style::default().fg(c))),
             )
         }
-        Row::NewShell(_) => (vec![(" + 새 셸".into(), faint)], None),
         Row::Empty => (vec![("   pane 없음".into(), faint)], None),
         Row::Space(_) => (vec![], None),
         Row::Pane(id) => match v.panes.get(id) {
@@ -546,7 +541,7 @@ pub fn section_heights(total: u16, split: f32) -> (u16, u16) {
 }
 
 /// spaces 구역(herdr `render_sidebar` 위 구역·`render_workspace_rows`): ` spaces` 머리와 빈 줄, workspace마다
-/// ` <점> 이름`, 맨 아랫줄은 비운다(herdr ` new`·`menu` 자리). 지금 workspace는 `active_row_bg`·이름 `text` 굵게(아니면
+/// ` <점> 이름`, 맨 아랫줄은 비운다(` new` 자리, `render_new_workspace`). 지금 workspace는 `active_row_bg`·이름 `text` 굵게(아니면
 /// `subtext0`), 탐색 중 고른 줄은 `selection_bg`. 넘치면 고른 줄(없으면 지금 줄)이 보이게 내린다. (줄 y, 이름)들을 준다.
 pub fn render_spaces(
     buf: &mut Buffer,
@@ -610,6 +605,26 @@ pub fn render_spaces(
         }
     }
     placed
+}
+
+/// spaces 구역 맨 아랫줄 새 workspace(herdr `render_sidebar`·`render_endpoint_workspaces` footer, 마우스를 받을 때만):
+/// ` new`, 머신이 여럿이면 ` new · 머신`(`overlay0`). 누를 칸을 준다(herdr: ` new`는 5칸, 머신이 붙으면 글 폭).
+/// 오른쪽 `menu`(전체 메뉴)는 설정 화면과 함께 둔다.
+pub fn render_new_workspace(buf: &mut Buffer, r: Rect, machine: Option<&str>, p: &Palette) -> Option<Rect> {
+    if r.h == 0 || r.w == 0 {
+        return None;
+    }
+    let (label, w) = match machine {
+        Some(m) => {
+            let label = format!(" new · {m}");
+            let w = unicode_width(&label) as u16;
+            (label, w)
+        }
+        None => (" new".to_string(), 5),
+    };
+    let y = r.y + r.h - 1;
+    buf.set_stringn(r.x, y, &label, r.w as usize, Style::default().fg(p.overlay0));
+    Some(Rect { x: r.x, y, w: w.min(r.w), h: 1 })
 }
 
 /// agents 구역 머리(herdr `render_agent_panel_header`): 구분선 `─`(`surface_dim`), ` agents`(`overlay0` 굵게)와 오른쪽에
@@ -698,18 +713,18 @@ mod tests {
             Row::Project("m".into(), "p".into()),
             Row::Thread("p/t-0001".into()),
             Row::ThreadSub("p/t-0001".into()),
-            Row::NewShell("m".into()),
             Row::Empty,
             Row::Machine("n".into()),
             Row::Pane("x".into()),
         ]);
-        assert_eq!(first(&r), 2);
-        assert_eq!(step(&r, 2, true), 4);
-        assert_eq!(step(&r, 4, true), 7);
-        assert_eq!(step(&r, 7, true), 7);
-        assert_eq!(step(&r, 7, false), 4);
-        assert_eq!(step(&r, 4, false), 2);
-        assert_eq!(step(&r, 2, false), 2);
+        assert_eq!(first(&r), 0);
+        assert_eq!(step(&r, 0, true), 2);
+        assert_eq!(step(&r, 2, true), 5);
+        assert_eq!(step(&r, 5, true), 6);
+        assert_eq!(step(&r, 6, true), 6);
+        assert_eq!(step(&r, 6, false), 5);
+        assert_eq!(step(&r, 5, false), 2);
+        assert_eq!(step(&r, 0, false), 0);
     }
 
     fn machine(id: &str, name: &str, connection: Connection) -> MachineView {
@@ -806,7 +821,7 @@ mod tests {
         }))
     }
 
-    /// 웹 `machineRoster`와 같은 차례(차이 목록 L1): 머신마다 머리·새 셸, 그 머신 thread를 rank(사람 차례 → 검토 대기 →
+    /// 웹 `machineRoster`와 같은 차례(차이 목록 L1): 머신마다 머리, 그 머신 thread를 rank(사람 차례 → 검토 대기 →
     /// 작업 중 → 쉼)·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다. thread의 머신은 pane이 있으면 pane의 머신,
     /// 없으면 thread 머신 이름·ID. thread pane은 pane 줄로 다시 나오지 않고, 끝난·평가자 thread는 빠진다.
     #[test]
@@ -843,7 +858,6 @@ mod tests {
             rows(&machines, &panes, &threads),
             vec![
                 Row::Machine("m1".into()),
-                Row::NewShell("m1".into()),
                 Row::Project("m1".into(), "demo".into()),
                 t("demo/t-0002"),
                 sub("demo/t-0002"),
@@ -856,7 +870,6 @@ mod tests {
                 sub("other/t-0004"),
                 Row::Pane("p2".into()),
                 Row::Machine("m2".into()),
-                Row::NewShell("m2".into()),
                 Row::Project("m2".into(), "demo".into()),
                 t("demo/t-0003"),
                 sub("demo/t-0003"),
@@ -946,7 +959,6 @@ mod tests {
             shown,
             vec![
                 " ▾ mac-a                          ●",
-                " + 새 셸",
                 " demo       사람 차례 1 · 작업 중 1",
                 // pane이 없는 사람 차례는 웹처럼 「pane 닫힘」
                 "   ● t-0002 · t-0002-job",
@@ -955,11 +967,11 @@ mod tests {
                 "     작업 중 · ~40%",
             ]
         );
-        assert_eq!(buf[(5, 6)].fg, pal.yellow);
-        assert_eq!(buf[(5, 4)].fg, pal.red);
+        assert_eq!(buf[(5, 5)].fg, pal.yellow);
+        assert_eq!(buf[(5, 3)].fg, pal.red);
         // 점은 pane이 돌면 pane 상태(확인창 빨강), pane이 없으면 묶음(사람 차례 빨강)
-        assert_eq!((buf[(3, 5)].symbol(), buf[(3, 5)].fg), ("●", pal.red));
-        assert_eq!((buf[(3, 3)].symbol(), buf[(3, 3)].fg), ("●", pal.red));
+        assert_eq!((buf[(3, 4)].symbol(), buf[(3, 4)].fg), ("●", pal.red));
+        assert_eq!((buf[(3, 2)].symbol(), buf[(3, 2)].fg), ("●", pal.red));
         let mut working = panes.clone();
         working.get_mut("p1").unwrap().agent = agent(AgentActivity::Working, None, None);
         assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
@@ -972,13 +984,13 @@ mod tests {
         waiting.group = ThreadGroup::WaitingOnYou;
         assert_eq!(thread_row_dot(&waiting, &working), Dot::Blocked);
         let selection = if pal.selection_bg == Color::Reset { pal.active_row_bg } else { pal.selection_bg };
-        assert_eq!((buf[(0, 5)].bg, buf[(0, 6)].bg), (selection, selection));
-        assert_ne!(buf[(0, 4)].bg, selection);
+        assert_eq!((buf[(0, 4)].bg, buf[(0, 5)].bg), (selection, selection));
+        assert_ne!(buf[(0, 3)].bg, selection);
 
         // 26칸 사이드바(구분선 빼고 25칸)에서는 셈을 ` · ` 단위로 덜어 이름을 남긴다
         let w = 25;
         let mut narrow = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
-        render(&mut narrow, Rect { x: 0, y: 0, w, h: 1 }, &list[2..3], &View { sel: Some(0), focused: false, ..v });
+        render(&mut narrow, Rect { x: 0, y: 0, w, h: 1 }, &list[1..2], &View { sel: Some(0), focused: false, ..v });
         let (mut out, mut x) = (String::new(), 0);
         while x < w {
             let sym = narrow[(x, 0)].symbol().to_string();

@@ -1187,7 +1187,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
   - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다. → §8.92에서 herdr대로 26칸(구분선 포함)·늘 펼친 채 시작·접으면 4칸 compact로 바꿨다.
   - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
-  - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다.
+  - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다. → §8.169에서 「+ 새 셸」 줄을 빼고 머신 머리를 골라 새 탭·workspace를 그 머신에 열게 했다.
   - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널). → §8.92에서 herdr대로 `selection_bg` 바탕만 쓴다.
 - **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
 
@@ -3361,7 +3361,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **참고.** 웹 목록(§8.71, `web/src/Sidebar.tsx` `MachineGroup`·`ProjectGroup`·`ThreadRow`, `web/src/sidebarModel.ts` `machineRoster`·`threadMachine`·`sortThreads`·`stateLine`·`projectLine`)과 herdr-projects 사이드바(`thread_display` 「id · 제목」, `state_line`, `project_line`, `Group::rank`).
 - **TUI(`aaa-tui::list`).**
-  - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」, 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「사람 차례 n · 작업 중 n」, 없으면 「쉼」, 사람 차례가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
+  - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」(→ §8.169에서 뺐다), 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「사람 차례 n · 작업 중 n」, 없으면 「쉼」, 사람 차례가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
   - thread의 머신은 pane이 있으면 pane의 머신, 없으면 thread 머신 이름·ID(웹 `threadMachine`). thread pane은 pane 줄로 다시 나오지 않는다. 끝난·평가자 thread는 빠진다.
   - 차례는 묶음 rank(사람 차례 → 검토 대기 → 작업 중 → 쉼) 다음 최근 바뀐 순(웹 `sortThreads`).
   - 첫 줄 `   <상태 점> t-0001 · 제목`(점은 thread 묶음 점과 그 pane 상태 점 중 급한 쪽(herdr-web-ui `rollupStatus` 차례: 확인창 > 끝남 > 작업 > 쉼). herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`, 웹 thread 줄은 오른쪽 `PaneState`다. 그래서 확인창은 묶음이 사람 차례로 바뀌는 30초 전에도 빨강이고, 사람 차례 thread는 harness가 쉬어도 초록이 되지 않는다), 둘째 줄 `     <상태 말>`(묶음 색): 묶음 말과 사실 하나. 사람 차례는 pane 닫힘·실패·확인창·~n%, 검토 대기는 보고, 작업 중은 5분 안에 보고한 진행률 ~n%(100은 빼고) 아니면 보고·변경 뒤 5분이 지나면 「n분 조용」. 「n분 조용」이 늘어나게 1분마다 다시 그린다.
@@ -3373,7 +3373,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 아래 agents 구역: 구분선 `─`(`surface_dim`), ` agents`(overlay0 굵게)와 오른쪽 `projects`(herdr-projects 기본 보기 이름, accent 굵게), 빈 줄, 그 아래 위 목록(머신·프로젝트·thread·pane).
   - workspace 목록은 시작할 때 `Workspaces` 한 번과 그 layout(`Workspace`)을 읽고, 그 뒤 workspace 사건(host는 닫거나 이름을 바꾼 workspace를 탭 없는 사건으로 알린다)으로 맞춘다.
   - 탐색(`prefix w`)은 herdr처럼 지금 workspace 줄에서 시작한다. ↑↓는 workspace 줄 다음 agents 목록까지 이어 돌고(herdr는 workspace만, agents는 누르기만: aaa는 목록을 키로도 연다, §8.73), workspace 줄에서 Enter면 그 workspace로 바꾼다(포커스는 front마다라 그 workspace의 첫 pane). 숫자 1~9는 탐색 줄 차례라 workspace 줄이 먼저 온다(herdr `SwitchWorkspace`). workspace 줄을 누르면 바꾼다.
-  - 아직 없음: 구역 경계 끌기(`sidebar_section_split`), ` new`·`menu` 줄(U8 「+ 새 셸」과 같이 정한다), workspace 끌어 옮기기·묶음 접기, spaces 구역 따로 휠. 접힌 compact 열은 그대로 agents 목록이다(herdr는 workspace 번호).
+  - 아직 없음: 구역 경계 끌기(`sidebar_section_split`), ` new` 줄(→ §8.169)·`menu`(설정 화면과 함께), workspace 끌어 옮기기·묶음 접기, spaces 구역 따로 휠. 접힌 compact 열은 그대로 agents 목록이다(herdr는 workspace 번호).
 - **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴는 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
 - **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래. U4: lib.rs `sidebar_like_herdr`(머리 ` spaces`, 셋째 줄 ` · main`, 16째 줄 구분선, ` agents`…`projects`, 19째 줄 머신), harness `side_list_like_web` 7b단계(두 구역, 탐색은 지금 workspace 줄에서, scratch 골라 Enter면 탭 loose 하나·포커스 loose, main으로 돌아옴). 전환해도 workspace 이름을 바꾸지 않는 결함을 심으면 실패한다.
 
@@ -3561,6 +3561,29 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: agent `chunks_names_and_remove`(조각·위치 어긋남·이름 형식·덮어쓰기 거절·0600·지우기 두 번·빈 기록), `unix_editor_runs_in_the_pane_shell`·`windows_editor_from_env_or_notepad`(herdr 시험 셋, Windows 명령 줄 낱말), `scrollback_stays_inside_file_roots`(허용 폴더 밖이면 Forbidden), aaa-vt `unwrapped_all_reads_the_whole_history`(읽기 상한보다 긴 기록을 처음부터), host `zoom_comes_back_only_if_it_was_zoomed_before_and_still_at_exit`, 키 `e`.
   - TUI harness `edit_scrollback_like_herdr`: agent `EDITOR`는 받은 경로를 적고 내용을 보인 뒤 Enter를 기다리는 스크립트, `TMPDIR`는 실험실. `seq 1 200` 뒤 `prefix e`면 편집기 pane·` Z`·알림, 파일은 실험실 임시 폴더의 `aaa-scrollback-*.txt`(0600)에 1~200. Enter면 닫히고 zoom이 풀리고 연 pane으로 돌아오고 파일이 없다. `prefix x`로 닫으면 host가 파일을 지운다. 나누기 전 zoom이면 다시 zoom, 사람이 풀었으면 그대로.
   - 처음에는 `pane read`와 같은 읽기를 써 최근 80줄만 갔다(harness가 잡아 `unwrapped_all`을 더했다). 결함 심기: 닫지 않기·host 지우기 빼기·zoom 되돌리기 빼기·끝날 때 zoom을 보지 않기는 각각 그 단계에서 실패한다. 포커스 되돌리기(`overlay_back`)는 빼도 이 시험이 잡지 못한다: 편집기 pane이 연 pane 바로 뒤에 들어가, 빠질 때의 대체 규칙(앞 pane)도 연 pane으로 간다.
+
+### 8.169 「+ 새 셸」 줄 대신 고른 머신에 새 workspace·탭(herdr endpoint 줄·spaces ` new`)(10-18, 차이 목록 2장 U8 #344, coordinator 「이어서 U8」)
+
+- **참고(herdr 0.9.5).**
+  - `src/client/shell/sidebar.rs` `render_sidebar`: spaces 구역 맨 아랫줄에 마우스를 받을 때(`mouse_capture`)만 ` new`(`overlay0`, 누를 칸 5칸)와 오른쪽 `menu`. endpoint가 여럿이면 `endpoint_sidebar.rs` ` new · <활성 endpoint 이름>`(누를 칸은 글 폭).
+  - 누르면 `NewWorkspace`(`mouse.rs`). 키는 `prefix+shift+n`(`src/config/model.rs`, 단축키 창 workspaces 묶음 「new workspace」). `actions.rs`: `prompt_new_workspace_name`(기본 꺼짐)이면 이름 창, 아니면 `WorkspaceCreate { source_workspace_id, label: None, focus: true }`이고 이름은 서버가 cwd의 git 뿌리·폴더 이름으로 정한다(`derive_label_from_cwd`).
+  - endpoint 줄 누르기(`endpoint_navigation.rs` `handle_endpoint_machine_click`): 활성이 아니면 그 endpoint를 활성으로(끊겼으면 「… is not ready」), 활성이면 접기. 새 workspace·탭은 활성 endpoint에 간다. herdr-web-ui `MachineSidebar.tsx`는 머신 줄의 「+」(New workspace on 이름)다.
+- **aaa(TUI만, proto는 그대로).**
+  - agents 구역의 「+ 새 셸」 줄을 뺐다. 머신 머리 ` ▾ 이름`을 고를 수 있다(탐색 ↑↓·숫자·Enter, 누르기). 고르면 그 머신이 새 탭·workspace를 여는 머신이 되고 알림 「새 탭·workspace는 이름에」가 뜬다. 끊긴 머신은 오류 막대로 알리고 고르지 않는다.
+  - 여는 머신(`target_machine`, herdr 활성 endpoint): 고른 머신은 고를 때의 포커스 pane이 그대로인 동안만이다. 그 밖에는 포커스 pane의 머신, 포커스가 없으면 host가 로컬 agent에 연다. 포커스가 바뀌면 고른 것을 버린다(다른 pane을 거쳐 돌아와도 살지 않는다). aaa workspace는 머신을 섞으니 herdr처럼 workspace마다의 endpoint가 아니라 포커스로 정한다.
+  - `prefix c`·탭 막대 `+`·spaces ` new`·`prefix shift+n` 모두 그 머신에 연다. 새 셸 폴더는 전처럼 포커스 pane에서 잇는다(다른 머신이면 home, host `new_pane_cwd`).
+  - spaces 맨 아랫줄: `[tui] mouse_capture`일 때만 ` new`, 머신이 둘 이상이면 ` new · 이름`(누를 칸은 herdr대로). 누르면 새 workspace다.
+  - 새 workspace(`prefix shift+n`, 단축키 창 「목록 / 탭」의 「새 workspace」): TUI가 아는 workspace에 없는 이름 `workspace`·`workspace-2`…를 정해 `LayoutApply { workspace: Some(이름), NewTab { machine, from: 포커스 } }`(CLI `workspace create`와 같은 길)를 보낸다. 답이 올 때까지 키를 붙잡았다가 그 workspace로 가서 새 pane에 포커스한다.
+- **다른 점.**
+  - 이름: herdr는 서버가 새 셸 cwd의 git 뿌리·폴더 이름으로 정한다. aaa host는 이름을 정하지 않고 TUI는 새 셸 폴더를 모르니 `workspace`·`workspace-N`이다(`aaa workspace rename`으로 바꾼다). 다른 front가 같은 순간 같은 이름을 만들면 같은 workspace에 탭이 더해진다.
+  - 이름 창(`prompt_new_workspace_name`)은 두지 않았다(herdr 기본 꺼짐).
+  - 고른 머신 표시: herdr는 접힌 endpoint 줄만 활성 바탕이고 펼친 줄은 footer 이름으로만 보인다. aaa도 머신 줄에 바탕을 두지 않고 footer와 알림으로 보인다(마우스를 받지 않으면 알림만).
+  - 활성 머신 줄을 다시 누르면 herdr는 접는다. aaa 머신 묶음은 아직 접지 않는다.
+  - 오른쪽 `menu`(전체 메뉴)는 설정 화면(4C)과 함께 둔다.
+- **시험.**
+  - 유닛: `new_workspace_machine_like_herdr_endpoint`(포커스 머신, 고르면 그 머신과 footer 이름·누를 칸 12칸, 포커스가 바뀌면 풀림, 끊긴 머신은 오류, 포커스가 없으면 로컬, 머신 하나면 ` new` 5칸, 마우스를 받지 않으면 없음), `sidebar_like_herdr` 15째 줄 ` new`, `step_skips_headers_and_stops_at_ends`(머신 머리도 고른다), 키 `shift+n`.
+  - TUI harness `new_workspace_on_picked_machine_like_herdr`: 실험실 원격 agent labB를 pane 없이 등록한다. 「새 셸」 글이 없고 ` new · labA`다. labB 머리를 누르면 ` new · labB`, ` new`를 누르면 labB에 `workspace`가 생겨 그리로 가고 그 셸에 입력이 간다. 탐색 Enter로 labA를 고르고 `prefix shift+n`이면 `workspace-2`가 labA에 생긴다. labB를 고르고 `prefix c`면 새 탭이 labB에 생긴다. labA를 고른 뒤 탭 1을 거쳐 탭 2로 오면 다시 labB다. `side_list_like_web` 6단계는 「+ 새 셸」 대신 머신 머리 Enter 뒤 `prefix c`다.
+  - 결함 심기: 고른 머신 무시(「labB를 고름」), 새 workspace만 포커스 머신(「새 workspace」), 포커스가 바뀌어도 고른 것 유지(「탭 2」)는 각각 그 단계에서 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
