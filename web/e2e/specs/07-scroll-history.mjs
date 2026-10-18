@@ -3,7 +3,7 @@
 
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
-  openSettings, start, stop, sentFrames, sentText,
+  openSettings, start, stop, sentFrames, sentText, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -27,7 +27,7 @@ export default async function ({ ctl, page }) {
     };
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { init: copies })).page;
     // 열기 전에 쓴 줄: host가 붙을 때 기록을 채워야 위로 굴러간다(전에는 보이는 줄만 받아 굴릴 것이 없었다)
-    await dp.getByTestId("pane-scroll-plain").click();
+    await inList(dp, "pane-scroll-plain");
     await until("plain 화면", async () => (await screenText(dp)).includes("s-200")).catch(async (e) => {
       // CI(macos-15)에서만 실패한 적이 있다(10-17 69224fd): 그때 화면과 grid·기록 상태를 남긴다
       const seen = {
@@ -101,7 +101,7 @@ export default async function ({ ctl, page }) {
     // alternate screen에 mouse 보고가 없으면 휠은 화살표(herdr AlternateScroll), mouse 보고면 그 보고가 프로그램에 간다
     // 휠 한 번이 여러 줄이면 화살표도 여럿이 한 조각으로 온다
     for (const [mode, want] of [["alt", 'GOT:"\\u001b[A'], ["mouse", 'GOT:"\\u001b[<64;']]) {
-      await dp.getByTestId(`pane-scroll-${mode}`).click();
+      await inList(dp, `pane-scroll-${mode}`);
       await until(`${mode} 화면`, async () => (await screenText(dp)).includes("s-200"));
       await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await dp.mouse.wheel(0, -100);
@@ -147,7 +147,7 @@ export default async function ({ ctl, page }) {
             return document.querySelectorAll(".xterm-rows > div").length === rows && screen.getBoundingClientRect().right <= scroll.getBoundingClientRect().right + 0.5;
           }, pane.rows);
         });
-      await p.getByTestId("pane-scroll-plain").click();
+      await inList(p, "pane-scroll-plain");
       await until(`${label} 화면`, async () => (await screenText(p)).includes('GOT:"x"'));
       await ownGrid("scroll-plain");
       const cell = await p.evaluate(() => {
@@ -169,10 +169,7 @@ export default async function ({ ctl, page }) {
       // 끌기가 휠이 되어 화살표·mouse 보고로 프로그램에 가야 한다
       for (const [mode, want] of [["touch-alt", 'GOT:"\\u001b[A'], ["touch-mouse", 'GOT:"\\u001b[<64;']]) {
         if (label.startsWith("iPad") && mode === "touch-mouse") continue; // 한 기기에서 한 번이면 된다(iPad는 alt만)
-        // 휴대폰은 pane을 열면 목록이 가려진다
-        const back = p.getByRole("button", { name: "목록으로" });
-        if (await back.isVisible()) await back.click();
-        await p.getByTestId(`pane-scroll-${mode}`).click();
+        await inList(p, `pane-scroll-${mode}`);
         // 그 프로그램의 화면이 그려졌는지는 글만으로 모른다: 앞 pane(plain)도 s-200을 보인다(10-18 전체 실행에서 끌기가 바뀌는
         // 사이 화면에 가 사라졌다). alternate screen이면 기록이 없고(viewport가 늘지 않는다), mouse면 xterm이 mouse 보고 중이다
         await until(`${label} ${mode} 화면`, async () =>
@@ -275,7 +272,7 @@ export default async function ({ ctl, page }) {
         const vp = document.querySelector(".xterm-viewport");
         return vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 1;
       });
-    await p.getByTestId("pane-fontjump").click();
+    await inList(p, "pane-fontjump");
     await until("대신 글꼴로 맨 아래 s-200", async () => (await screenText(p)).includes("s-200") && (await atBottom()));
     const before = await rowHeight();
     release();
@@ -305,7 +302,7 @@ export default async function ({ ctl, page }) {
     };
     // 휴대폰이 열어 좁게 쥔다. host 화면은 다시 접어, 접힌 줄을 이으면 원래 줄이다(전에는 좁힌 폭 밖 글을 버렸다)
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
-    await pp.getByTestId("pane-rewrap").click();
+    await inList(pp, "pane-rewrap");
     await until("휴대폰이 쥔 크기", () => cols() < 50);
     has(read("recent-unwrapped"), [long, wrap, wide]);
     await until("휴대폰 화면", async () => (await screenText(pp)).includes("rewrap>"));
@@ -313,7 +310,7 @@ export default async function ({ ctl, page }) {
     await pp.context().close();
     // 넓은 화면이 늦게 붙어 쥔다: 그 replay(host 화면)를 받아 줄 끝까지 보인다. 붙어 있던 xterm은 스스로 다시 접으므로 늦게 붙는다
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-rewrap").click();
+    await inList(dp, "pane-rewrap");
     await until("넓은 화면이 쥔 크기", () => cols() >= 112);
     await until("늦게 붙은 웹에 줄 끝", async () => {
       const rows = (await screenText(dp)).split("\n").map((r) => r.trimEnd());
@@ -324,7 +321,7 @@ export default async function ({ ctl, page }) {
     await shot(dp, "desktop-rewrap");
     await dp.context().close();
     const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
-    await ip.getByTestId("pane-rewrap").click();
+    await inList(ip, "pane-rewrap");
     await until("iPad 화면", async () => (await screenText(ip)).includes("rewrap>"));
     has(read("recent-unwrapped"), [long, wrap, wide]);
     await shot(ip, "ipad-rewrap");
@@ -366,7 +363,7 @@ export default async function ({ ctl, page }) {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const hp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
-    await hp.getByTestId("pane-histapp").click();
+    await inList(hp, "pane-histapp");
     await until("histapp 화면", async () => (await screenText(hp)).includes("hist>"));
     const box = hp.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
@@ -483,7 +480,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "send-text", "resetscroll", "q");
     await waitOutput("resetscroll", "short-done");
     const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1440, height: 900 })).page;
-    await page.getByTestId("pane-resetscroll").click();
+    await inList(page, "pane-resetscroll");
     await until("resetscroll 화면", async () => (await screenText(page)).includes("short-done"));
     const box = page.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
@@ -555,7 +552,7 @@ export default async function ({ ctl, page }) {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const page = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, route] })).page;
-    await page.getByTestId("pane-wake").click();
+    await inList(page, "pane-wake");
     await until("wake 화면", async () => (await screenText(page)).includes("hist>"));
     // 앱이 만드는 pane WebSocket을 센다. 진단 기록(__aaaTermLog)은 Playwright routeWebSocket이 서버에 이을 때 만드는 진짜
     // 연결만 보아, 길에서 거절한 연결은 남지 않는다. 그래서 페이지가 뜬 뒤 앱이 부르는 WebSocket을 감싼다
@@ -641,11 +638,10 @@ export default async function ({ ctl, page }) {
       server.onClose((code, reason) => ws.close({ code, reason }));
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
-    const slow = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, swallow] })).page;
-    await slow.getByTestId("pane-flood").click();
+    // 첫 화면이 flood다(주소): 셀 WebSocket 기록이 그 pane 것뿐이다
+    const slow = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute: [/\/api\/v1\/panes\//, swallow], hash: paneHash("flood") })).page;
     await until("느린 화면 flood>", async () => (await screenText(slow)).includes("flood>"));
-    const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await fast.getByTestId("pane-flood").click();
+    const fast = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { hash: paneHash("flood") })).page;
     await until("따라오는 화면 flood>", async () => (await screenText(fast)).includes("flood>"));
     // 400KB를 한 번에 쓴다(HIGH 256KiB를 넘는다)
     aaa("pane", "send-text", "flood", "f");
@@ -697,7 +693,7 @@ export default async function ({ ctl, page }) {
       }
     }, 30_000);
     const qp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await qp.getByTestId("pane-q8").click();
+    await inList(qp, "pane-q8");
     const box = qp.getByTestId("terminal");
     const attr = (k) => box.evaluate((el, k) => el.dataset[k] ?? null, k);
     await until("q8 화면", async () => (await screenText(qp)).includes("history-done"));

@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 05-devices(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  aaa, until, screenText, shot, pairPage, base, openPages, step, browser, openSettings, env, waitOutput,
+  aaa, until, screenText, shot, pairPage, base, openPages, step, browser, openSettings, env, waitOutput, inList,
 } from "../lib/harness.mjs";
 
 // 이 실험실 host만 입력줄 보내기의 글과 Enter 사이를 4초로 둔다(기본 300ms): 「폐기와 보내던 Enter」 단계가 그 틈에
@@ -57,7 +57,7 @@ export default async function ({ ctl, page }) {
     openPages.add(phone);
     phone.on("close", () => openPages.delete(phone));
     await phone.goto(`${base}?pair=${second}`);
-    await phone.getByTestId("machine-labA").waitFor();
+    await phone.getByTestId("machine-labA").waitFor({ state: "attached" });
     if (phone.url().includes("pair=")) throw new Error(`주소에 코드가 남았다: ${phone.url()}`);
     // 데스크톱 화면은 그 코드로 들어온 기기를 알아채고 코드를 닫는다
     await dlg.getByRole("status").filter({ hasText: "페어링됨: iPhone · Safari." }).waitFor();
@@ -73,7 +73,7 @@ export default async function ({ ctl, page }) {
     const listed = aaa("web", "devices").devices.find((d) => d.id === phoneId);
     if (listed?.label !== "내 폰" || listed.role !== "controller") throw new Error(`CLI 목록 ${JSON.stringify(listed)}`);
     // 폰은 터미널을 연다(그 WebSocket도 바로 닫혀야 한다)
-    await phone.getByTestId("pane-t1").click();
+    await inList(phone, "pane-t1");
     await until("폰 t1 화면", async () => (await screenText(phone)).includes("$"));
     // 폐기: 두 번 눌러야 한다
     const revoke = phoneRow.getByRole("button", { name: "폐기" });
@@ -154,7 +154,7 @@ export default async function ({ ctl, page }) {
         resolve(ws);
       }),
     );
-    await bp.getByTestId("pane-a9").click();
+    await inList(bp, "pane-a9");
     await paneWs;
     const line = bp.getByLabel("보낼 글");
     await until("B 입력줄 켜짐", () => line.isEnabled());

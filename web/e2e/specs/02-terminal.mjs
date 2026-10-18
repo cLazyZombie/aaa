@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount,
+  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -69,7 +69,7 @@ process.stdin.resume();`;
     const bad = [];
     for (const [name, viewport, opt] of devices) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, opt)).page;
-      await p.getByTestId("pane-endcol").click();
+      await inList(p, "pane-endcol");
       // 이 화면이 쥔 크기로 다시 그린 자(붙은 직후에는 앞 화면 크기의 자가 보인다)
       await until(`${name}: 자기 폭의 자`, async () => {
         const c = cols();
@@ -135,7 +135,7 @@ process.stdin.resume();`;
   await step("글자 폭(herdr-web-ui terminalWidths): 이모지·새 이모지·ZWJ 묶음·⚠️는 두 칸", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "widths", "--", process.execPath, `${root}/widths.js`);
     const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 })).page;
-    await wp.getByTestId("pane-widths").click();
+    await inList(wp, "pane-widths");
     await until("폭 화면", async () => (await screenText(wp)).includes("W"));
     // 글자마다 화면 위치로 몇째 칸인지 잰다(DOM renderer의 span 묶음에 기대지 않는다)
     const cols = await wp.evaluate((cols) => {
@@ -161,18 +161,19 @@ process.stdin.resume();`;
   });
 
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 바로 놓는다", async () => {
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
-    const op = other.page;
-    // 이 화면이 WebSocket에 쓴 글 frame
+    // 이 화면이 WebSocket에 쓴 글 frame. 첫 화면이 pane을 열며 붙는 WebSocket부터 듣는다
     const opFrames = [];
-    op.on("websocket", (ws) =>
-      ws.on("framesent", (f) => {
-        if (typeof f.payload !== "string") return;
-        try {
-          opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
-        } catch {}
-      }),
-    );
+    const listen = (op) =>
+      op.on("websocket", (ws) =>
+        ws.on("framesent", (f) => {
+          if (typeof f.payload !== "string") return;
+          try {
+            opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
+          } catch {}
+        }),
+      );
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true, onPage: listen });
+    const op = other.page;
     const t1size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       return `${p.cols}x${p.rows}`;
@@ -186,7 +187,7 @@ process.stdin.resume();`;
     const held = t1size();
     const first = holder();
     const opSent = await sentCount(op);
-    await op.getByTestId("pane-t1").click();
+    await inList(op, "pane-t1");
     await until("둘째 화면 터미널", async () => (await screenText(op)).includes("own-3"));
     // 입력 막대가 켜져 있다(보기 권한이 아니면 언제나 입력된다). 열기만 해서는 크기를 바꾸지 않는다
     if (await op.getByLabel("보낼 글").isDisabled()) throw new Error("다른 화면이 쓰는 중이라고 입력 막대가 꺼졌다");
@@ -270,7 +271,7 @@ process.stdin.resume();`;
     const rp = rd.page;
     if ((await rp.getByRole("button", { name: "새 pane" }).count()) !== 0) throw new Error("reader에게 새 pane 버튼");
     await shot(rp, "mobile-list");
-    await rp.getByTestId("pane-t1").click();
+    await inList(rp, "pane-t1");
     await until("reader 화면", async () => (await screenText(rp)).includes("rd-9"));
     // 휴대폰 폭(13px)에서도 한글이 두 칸에 꼭 맞는다
     const cols = aaa("pane", "list").panes.find((x) => x.name === "t1").cols;
@@ -293,7 +294,7 @@ process.stdin.resume();`;
     // t1 화면은 뒤 단계가 본다: 따로 pane을 띄운다(80×40, 줄 80개 뒤 커서는 맨 아래)
     aaa("tab", "create", "--machine", "labA", "--label", "follow", "--cols", "80", "--rows", "40", "--", "/bin/sh", "-c", "seq 1 80; echo follow-$((6*7)); exec cat");
     const low = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 420 });
-    await low.page.getByTestId("pane-follow").click();
+    await inList(low.page, "pane-follow");
     const followed = () =>
       low.page.evaluate(() => {
         const scroll = document.querySelector(".term-scroll");
@@ -370,6 +371,6 @@ process.stdin.resume();`;
     await dialog.waitFor({ state: "detached" });
     aaa("pane", "kill", agent.id);
     aaa("pane", "kill", shell.id);
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
   });
 }
