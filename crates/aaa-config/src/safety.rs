@@ -1,4 +1,4 @@
-//! safety 설정(herdr-projects 0.2.35 `src/safety.rs`·`src/project.rs` `Safety`·`SafetyLayer`·`load_safety`, plan §8.153).
+//! safety 설정(herdr-projects 0.2.35 `src/safety.rs`·`src/project.rs` `Safety`·`SafetyLayer`·`load_safety`, plan §8.161).
 //!
 //! - host.toml(·host.local.toml)의 `[safety.default]`(모든 프로젝트)와 `[safety."<프로젝트>"]`(그 프로젝트). 프로젝트 폴더
 //!   밖에 두어 coordinator가 고치지 못한다(§8.19). 바꾸기는 사람이 터미널에서만 한다(`aaa safety`, `aaa profile allow`).

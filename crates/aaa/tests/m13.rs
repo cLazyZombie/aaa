@@ -1448,7 +1448,7 @@ fn thread_read_and_keys() {
     assert!(e.contains("trust_screen") && e.contains("trust_screens = user"), "{e}");
     let e = w.h.json(&["thread", "keys", "demo", &id]).expect_err("빈 키");
     assert!(e.contains("키나 --text"), "{e}");
-    // aaa 세션 안 CLI(coordinator의 셸 도구)는 `question answer`로도 신뢰 창에 답하지 못한다(plan §8.153). 사람(세션 밖)은 된다
+    // aaa 세션 안 CLI(coordinator의 셸 도구)는 `question answer`로도 신뢰 창에 답하지 못한다(plan §8.161). 사람(세션 밖)은 된다
     let coord = w.h.new_pane(None, "labA", None, &["/bin/sh"], None);
     let o = w.h.cmd(&["--json", "question", "answer", &q.id, "yes"]).env("AAA_SESSION_ID", &coord).output().unwrap();
     let err = String::from_utf8_lossy(&o.stderr);
@@ -1577,7 +1577,7 @@ fn memory_and_restart() {
 }
 
 /// thread start 기본값(herdr-projects threads.rs `start`·`placement`·`thread_profile`·`new_project_default`, 차이 목록
-/// A1·A15, plan §8.153): profile을 빼면 project.toml `thread_profile` → host.toml `[defaults] thread_profile` → 기본 profile
+/// A1·A15, plan §8.161): profile을 빼면 project.toml `thread_profile` → host.toml `[defaults] thread_profile` → 기본 profile
 /// `claude`(host가 쓸 때마다 host.toml을 다시 읽는다), kind를 빼면 repo가 있으면 worktree·없으면 작업 폴더. 미할당 task도
 /// `thread_profile`로 시작하고, 이미 열린 thread가 맡은 task는 막지 않고 경고한다.
 #[test]
@@ -1619,7 +1619,7 @@ fn start_defaults_profile_kind_and_task() {
     assert!(out.starts_with(&format!("경고: 열린 {aid}가 이미 이 task를 맡고 있다. 그래도 시작했다\n")), "{out}");
 }
 
-/// profile·safety를 사람이 바꾸고 thread가 쓴다(herdr-projects `profile`·`safety`, plan §8.153): 세션 안·터미널 아님은 거부,
+/// profile·safety를 사람이 바꾸고 thread가 쓴다(herdr-projects `profile`·`safety`, plan §8.161): 세션 안·터미널 아님은 거부,
 /// 사람이 y로 켠 yolo가 다음 thread 인자·context에 닿고(host를 다시 띄우지 않음), 이 머신 agent.toml에 더한 profile을
 /// agent를 다시 띄우지 않고 허용·사용한다.
 #[cfg(unix)]
@@ -2279,7 +2279,7 @@ fn worker_session_cli_is_read_only() {
     assert!(next.contains("사람이 더한 줄") && !next.contains("thread가 더한 줄"), "{next}");
 }
 
-/// 시험용(plan §8.154): 여러 길로 떼어 낸 뒤 나머지 인자를 실행하고, 그 프로세스와 자손이 끝날 때까지 기다렸다 끝난다.
+/// 시험용(plan §8.162): 여러 길로 떼어 낸 뒤 나머지 인자를 실행하고, 그 프로세스와 자손이 끝날 때까지 기다렸다 끝난다.
 /// 기다림은 pipe다: 실행한 쪽이 쓰기 끝을 물려받아 모두 끝나면 읽기 쪽이 EOF를 받는다(정한 시간을 자지 않는다).
 const DETACH_PL: &str = r#"use strict;
 use warnings;
@@ -2364,7 +2364,7 @@ sh "$cli" "$out/forged.txt" "$shell_pane" forged
 echo done > "$out/done"
 "#;
 
-/// thread 범위를 host가 판정한다(plan §8.154, t-0340 감사): thread pane 안에서 `AAA_SESSION_ID`를 지우거나 다른 셸·nohup·
+/// thread 범위를 host가 판정한다(plan §8.162, t-0340 감사): thread pane 안에서 `AAA_SESSION_ID`를 지우거나 다른 셸·nohup·
 /// setsid·double fork로 떼어 내거나 사람 셸 pane의 세션을 대도 보기만 된다. 사람 셸 pane에서는 변수를 지워도 조작된다.
 #[test]
 fn thread_scope_survives_env_and_detach_bypass() {
@@ -2551,7 +2551,7 @@ fn routines() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
     let o = w.h.cmd(&["routine", "approve", "demo", "cmd"]).env_remove("AAA_SESSION_ID").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
-    // aaa pane 안에서 변수를 지우고 이름까지 쳐도 host가 그 pane을 판정해 거부한다(plan §8.154)
+    // aaa pane 안에서 변수를 지우고 이름까지 쳐도 host가 그 pane을 판정해 거부한다(plan §8.162)
     let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
     let out = w.lab.root.join("approve-in-pane.txt");
     let line = format!(

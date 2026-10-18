@@ -700,7 +700,7 @@ impl Agent {
         // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
         // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
         if let Some(name) = spec.profile.clone() {
-            // 기본 profile(claude·codex)도 받고 agent.toml을 다시 읽는다(thread와 같다, plan §8.153)
+            // 기본 profile(claude·codex)도 받고 agent.toml을 다시 읽는다(thread와 같다, plan §8.161)
             let cfg = self.threads_cfg.lock().unwrap().clone().fresh()?;
             let (profile, _) = threads::find_profile(&cfg, &name)?;
             let launch = threads::with_hooks(&cfg, threads::resolve(&name, &profile)?, &paths.dir)?;

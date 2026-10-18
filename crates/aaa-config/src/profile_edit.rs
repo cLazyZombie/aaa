@@ -1,5 +1,5 @@
 //! profile 고치기와 검증(herdr-projects 0.2.35 `src/profiles.rs` `validate_name`·`effort_values`·`typed_args`·`Change`·
-//! `apply_in`·`detect`, plan §8.153).
+//! `apply_in`·`detect`, plan §8.161).
 //!
 //! - profile은 머신마다 agent.toml `[profiles.<이름>]`에 둔다(§8.2). `aaa profile add|edit|remove`는 그 머신의 agent.toml을
 //!   사람이 터미널에서 고칠 때만 쓴다. agent는 profile을 쓸 때마다 agent.toml을 다시 읽는다.

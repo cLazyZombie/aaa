@@ -1,4 +1,4 @@
-//! `aaa profile`·`aaa safety`(herdr-projects 0.2.35 `profile`·`safety` 명령, plan §8.153).
+//! `aaa profile`·`aaa safety`(herdr-projects 0.2.35 `profile`·`safety` 명령, plan §8.161).
 //!
 //! - 읽기(`profile list`·`profile resolve`·`safety show`)는 누구나 한다.
 //! - 바꾸기는 사람이 aaa 세션 밖 터미널에서만 한다([`crate::person::require`]). profile은 이 머신 agent.toml, 허용 목록·

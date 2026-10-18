@@ -25,7 +25,7 @@ pub struct ThreadsConfig {
     /// hook 명령에 쓰는 aaa 실행 파일
     pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
-    /// agent.toml이 있는 설정 폴더. 있으면 profile을 쓸 때마다 다시 읽는다(plan §8.153): 사람이 `aaa profile`로 고친 것이
+    /// agent.toml이 있는 설정 폴더. 있으면 profile을 쓸 때마다 다시 읽는다(plan §8.161): 사람이 `aaa profile`로 고친 것이
     /// agent를 다시 띄우지 않아도 닿는다.
     pub config_dir: Option<PathBuf>,
 }
@@ -262,7 +262,7 @@ pub(crate) fn find_profile(cfg: &ThreadsConfig, name: &str) -> Result<(Profile, 
     })
 }
 
-/// safety 인자를 profile 인자에 더한다(plan §8.153, 참고 `profiles::launch_args` 뒤 `Safety::launch_args`): 프로젝트 기본
+/// safety 인자를 profile 인자에 더한다(plan §8.161, 참고 `profiles::launch_args` 뒤 `Safety::launch_args`): 프로젝트 기본
 /// profile과 같은 harness의 기본 profile이면 `thread_agent_args`를 앞에, yolo면 harness의 권한 건너뛰기 인자를 뒤에.
 /// argv와 resume argv가 같은 인자를 쓴다.
 fn with_safety(cfg: &ThreadsConfig, (mut p, builtin): (Profile, bool), safety: Option<&LaunchSafety>) -> Profile {
@@ -593,7 +593,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    /// safety 인자(plan §8.153, 참고 `profiles::launch_args`·`Safety::launch_args`): thread_agent_args는 프로젝트 기본
+    /// safety 인자(plan §8.161, 참고 `profiles::launch_args`·`Safety::launch_args`): thread_agent_args는 프로젝트 기본
     /// profile과 같은 harness의 기본 profile에만, yolo 인자는 harness마다(argv·resume argv 둘 다), 기본 profile은 이름으로 푼다.
     #[test]
     fn safety_args_reach_builtins_and_yolo_every_harness() {
