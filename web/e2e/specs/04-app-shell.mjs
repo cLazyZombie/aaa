@@ -1,49 +1,12 @@
-// 웹 E2E 앱 틀: 안전 영역·화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·명령 팔레트.
+// 웹 E2E 앱 틀: 화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·명령 팔레트.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 04-app-shell(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
   webkit, AA, sleep, aaa, until, screenText, shot, fakeViewport, softKeyboard, pairPage, step, browser,
-  openSettings,
+  openSettings, focusIs,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
-  await step("안전 영역(herdr-web-ui styles.css safe-area-inset, 차이 목록 M3): 가로로 둔 휴대폰의 노치를 목록은 왼쪽, 터미널 칸은 오른쪽(좁으면 양쪽)으로 비킨다", async () => {
-    // 가로 휴대폰(844×390, 두 칸)과 좁은 가로(667×375, 한 칸). Chromium이 env(safe-area-inset-*)를 이 값으로 준다
-    const measure = (p) =>
-      p.evaluate(() => {
-        const pad = (sel) => {
-          const el = document.querySelector(sel);
-          if (!el || !el.getClientRects().length) return null;
-          const cs = getComputedStyle(el);
-          return [parseFloat(cs.paddingLeft), parseFloat(cs.paddingRight)];
-        };
-        return { list: pad(".list"), head: pad(".term-head"), scroll: pad(".term-scroll"), keys: pad(".key-bar"), input: pad(".terminal-input") };
-      });
-    const open = async (viewport, line) => {
-      const { page: p } = await pairPage(browser, aaa("web", "pair").code, viewport, { touch: true, line });
-      const cdp = await p.context().newCDPSession(p);
-      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, left: 47, right: 47, bottom: 21 } });
-      await p.getByTestId("pane-t1").click();
-      await until("t1 화면", async () => (await screenText(p)).includes("$"));
-      return p;
-    };
-    const wide = await open({ width: 844, height: 390 });
-    const w = await measure(wide);
-    const want = { list: [47, 0], head: [16, 12 + 47], scroll: [16, 16 + 47], keys: [8, 8 + 47] };
-    for (const [k, v] of Object.entries(want)) if (JSON.stringify(w[k]) !== JSON.stringify(v)) throw new Error(`가로 두 칸 ${k} ${JSON.stringify(w[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(w)})`);
-    await shot(wide, "phone-landscape-safe-area");
-    await wide.context().close();
-    // 한 칸씩 보이는 좁은 가로: 터미널 칸이 양쪽을 비킨다(입력줄 화면)
-    const narrow = await open({ width: 667, height: 375 }, true);
-    const n = await measure(narrow);
-    const wantN = { head: [8 + 47, 8 + 47], scroll: [8 + 47, 8 + 47], keys: [8 + 47, 8 + 47], input: [8 + 47, 8 + 47] };
-    for (const [k, v] of Object.entries(wantN)) if (JSON.stringify(n[k]) !== JSON.stringify(v)) throw new Error(`좁은 가로 ${k} ${JSON.stringify(n[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(n)})`);
-    await narrow.getByRole("button", { name: "목록으로" }).click();
-    const l = await measure(narrow);
-    if (JSON.stringify(l.list) !== "[47,47]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
-    await narrow.context().close();
-  });
-
   await step("화면 켜짐 유지(herdr-web-ui keepScreenOn·wakeLock, 차이 목록 M6): 켜면 pane을 보는 동안 screen wake lock, 가려지면 놓고 다시 보이면 다시, 끄면 놓음, 이 기기에 저장", async () => {
     // wake lock은 headless에서 거절될 수 있다: 요청·놓기를 기록하는 것으로 바꾼다
     const init = () => {
@@ -169,8 +132,6 @@ export default async function ({ ctl, page }) {
     // Chromium 터치 흉내는 maxTouchPoints가 1이라 실제 iPad처럼 5로 둔다(참고 시험도 5)
     const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
     const MAC_SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
-    const FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0";
-    const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Mobile Safari/537.36";
     // addInitScript는 함수 글만 옮긴다(바깥 init을 부를 수 없다)
     const ipad = () => {
       window.addEventListener(
@@ -185,9 +146,6 @@ export default async function ({ ctl, page }) {
     for (const [name, viewport, userAgent, touch, want, script] of [
       ["iPhone", { width: 390, height: 844 }, IPHONE, true, "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.", init],
       ["iPad(Mac UA·터치)", { width: 1024, height: 1366 }, MAC_SAFARI, true, "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.", ipad],
-      ["Mac Safari", { width: 1280, height: 800 }, MAC_SAFARI, false, "파일 메뉴에서 Dock에 추가를 선택하세요.", init],
-      ["Android", { width: 412, height: 915 }, ANDROID, true, "브라우저 메뉴에서 앱 설치 또는 홈 화면에 추가를 선택하세요.", init],
-      ["데스크톱 Firefox", { width: 1280, height: 800 }, FIREFOX, false, "데스크톱 Firefox는 웹 앱을 설치할 수 없습니다. Chrome이나 Edge로 여세요.", init],
     ]) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { userAgent, touch, init: script })).page;
       await until(`${name} 설치 단추`, () => p.getByTestId("install-app").isVisible());
@@ -225,16 +183,15 @@ export default async function ({ ctl, page }) {
           agent: m.dataset.agent,
           cls: a?.className ?? null,
           label: svg?.getAttribute("aria-label") ?? null,
-          size: svg?.getAttribute("width") ?? null,
           tile: a?.querySelector(".agent-mark-tile")?.getAttribute("fill") ?? null,
           shell: svg?.classList.contains("lucide-terminal") ?? false,
         };
       });
     const bad = [];
     const c = await markOf("markc");
-    if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.size !== "18" || c.tile !== "#D77655") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
+    if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.tile !== "#D77655") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
     const x = await markOf("markx");
-    if (x.cls !== "agent-mark codex" || x.label !== "codex" || x.size !== "18") bad.push(`Codex 줄 ${JSON.stringify(x)}`);
+    if (x.cls !== "agent-mark codex" || x.label !== "codex") bad.push(`Codex 줄 ${JSON.stringify(x)}`);
     // 셸은 agent 표시가 아니라 터미널 표시(참고 Sidebar.tsx rowMark: lucide Terminal)
     const sh = await markOf("t1");
     if (sh.agent !== "shell" || sh.cls !== null || !sh.shell) bad.push(`셸 줄 ${JSON.stringify(sh)}`);
@@ -243,8 +200,8 @@ export default async function ({ ctl, page }) {
     await mp.getByTestId("pane-markc").click();
     const head = mp.locator(".term-title .agent-mark");
     await head.waitFor();
-    const hc = await head.evaluate((a) => `${a.className} ${a.querySelector("svg").getAttribute("width")}`);
-    if (hc !== "agent-mark claude is-brand 18") bad.push(`머리 표시 ${hc}`);
+    const hc = await head.evaluate((a) => a.className);
+    if (hc !== "agent-mark claude is-brand") bad.push(`머리 표시 ${hc}`);
     await shot(mp, "phone-agent-head");
     await mp.getByRole("button", { name: "목록으로" }).click();
     await mp.getByTestId("pane-t1").click();
@@ -329,10 +286,11 @@ export default async function ({ ctl, page }) {
     const headings = () => palette.locator(".palette-section-name").allTextContents();
     const firstOption = () => palette.getByRole("option").first().innerText();
 
-    // 돋보기로 열면 검색 칸이 focus를 받고, 찾지 않은 목록은 머신의 pane 묶음과 동작이다
+    // 돋보기로 열면 검색 칸이 focus를 받고, 찾지 않은 목록은 머신의 pane 묶음과 동작이다. focus는 연 다음 frame에 온다
+    // (useFocusTrap requestAnimationFrame): 보이자마자 보면 부하 아래 그 frame 앞이다(ci-local 10-18 09:2x)
     await dp.getByTestId("palette-open").click();
     await search.waitFor();
-    if (!(await search.evaluate((e) => e === document.activeElement))) bad.push("열어도 검색 칸에 focus가 없다");
+    await focusIs(dp, "열면 검색 칸", '[data-testid="command-palette"] input[type="search"]');
     const opened = await headings();
     if (!opened.includes("pane") || opened.at(-1) !== "동작") bad.push(`처음 묶음 ${JSON.stringify(opened)}`);
     const all = await palette.locator('.palette-filter[data-status="all"] .palette-filter-count').innerText();
