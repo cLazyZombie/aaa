@@ -454,6 +454,7 @@ fn update_replaces_keeps_and_rolls_back() {
     let exe = bin.join("aaa");
     std::fs::copy(lab::BIN, &exe).unwrap();
     let original = std::fs::read(lab::BIN).unwrap();
+    let version = env!("CARGO_PKG_VERSION");
     let build = |name: &str| {
         let p = lab.root.join(name);
         let mut b = original.clone();
@@ -483,7 +484,7 @@ fn update_replaces_keeps_and_rolls_back() {
         std::fs::read_dir(&bin).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with(".aaa-update-"))
     };
 
-    // 사람 문: 터미널 아님·aaa 세션 안, --from 없음
+    // 사람 문: 터미널 아님·aaa 세션 안. 잘못된 release 판은 네트워크에 닿기 전에 거부한다
     let o = std::process::Command::new(&exe)
         .args(["update", "--from", &s(&new1)])
         .env("AAA_CONFIG_DIR", &h.cfg)
@@ -494,7 +495,7 @@ fn update_replaces_keeps_and_rolls_back() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널에서 실행해야 한다"), "{o:?}");
     let out = h.in_terminal_bin(&exe, &["update", "--from", &s(&new1)], &[("AAA_SESSION_ID", "01EXAMPLE")], &[], T);
     assert!(out.contains("aaa 세션 안에서는 하지 않는다"), "{out}");
-    assert!(run(&["update"], &[]).contains("`--from <파일>`"));
+    assert!(run(&["update", "--version", "invalid"], &[]).contains("release 판은 x.y.z"));
     // self-check: 돌지 않는 파일, version을 말하지 않는 파일, 이 Mac 설정을 받지 않는 파일은 바꾸지 않고 staging도 남기지 않는다
     for (name, body, want) in [
         ("broken", "exit 1", "`--version`이 `aaa x.y.z`가 아니다"),
@@ -510,7 +511,7 @@ fn update_replaces_keeps_and_rolls_back() {
     }
     // version 고정: 고정한 것과 다르면, 고정 없이 major가 바뀌면 거부
     let major = script("major", "case \"$1\" in --version) echo aaa 9.0.0;; *) exit 0;; esac");
-    assert!(run(&["update", "--from", &s(&major)], &[]).contains("major가 바뀐다(0.1.0 → 9.0.0)"));
+    assert!(run(&["update", "--from", &s(&major)], &[]).contains(&format!("major가 바뀐다({version} → 9.0.0)")));
     std::fs::write(h.cfg.join("agent.toml"), "schema = 1\n[update]\nversion = \"0.0.9\"\n").unwrap();
     let out = run(&["update", "--from", &s(&new1)], &[]);
     assert!(out.contains("agent.toml `[update] version = \"0.0.9\"`로 고정돼 있다"), "{out}");
@@ -529,10 +530,14 @@ fn update_replaces_keeps_and_rolls_back() {
     assert!(run(&["update", "--from", &s(&new1)], &[("yes를 입력", "no")]).contains("그만뒀다"));
     assert!(is(&original) && kept().is_empty() && !staging_left());
     let out = run(&["update", "--from", &s(&new1)], &[("yes를 입력", "yes")]);
-    assert!(out.contains("바꿨다: aaa 0.1.0 → aaa 0.1.0") && out.contains("aaa service restart --role agent"), "{out}");
+    assert!(
+        out.contains(&format!("바꿨다: aaa {version} → aaa {version}"))
+            && out.contains("aaa service restart --role agent"),
+        "{out}"
+    );
     assert!(is(&std::fs::read(&new1).unwrap()) && !staging_left());
     let k = kept();
-    assert!(k.len() == 1 && k[0].starts_with("aaa-") && k[0].ends_with("-0.1.0"), "{k:?}");
+    assert!(k.len() == 1 && k[0].starts_with("aaa-") && k[0].ends_with(&format!("-{version}")), "{k:?}");
     assert_eq!(std::fs::read(bin.join(".aaa-old").join(&k[0])).unwrap(), original, "보관한 것은 바꾸기 전 실행 파일");
     assert!(run(&["update", "--from", &s(&new1)], &[]).contains("이미 같은 실행 파일이다"));
 

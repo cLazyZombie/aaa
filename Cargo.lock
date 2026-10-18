@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aaa"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-agent",
  "aaa-common",
@@ -26,6 +26,7 @@ dependencies = [
  "objc2-service-management",
  "png",
  "portable-pty",
+ "serde",
  "serde_json",
  "sha2",
  "tokio",
@@ -38,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -64,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-common"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-proto",
  "anyhow",
@@ -88,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_ignored",
@@ -99,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-doctor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -116,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -149,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -161,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-session"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-common",
  "aaa-proto",
@@ -177,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -198,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-vt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aaa-proto",
  "vt100",

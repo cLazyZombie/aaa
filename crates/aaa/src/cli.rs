@@ -106,8 +106,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// 실행 파일을 주어진 빌드로 바꾼다(herdr `update`): 같은 폴더에서 self-check·version 고정 검사 뒤 rename, 옛것은 보관해
-    /// `rollback`으로 되돌린다. 사람만. 내려받기·서명 release는 아직 없다
+    /// 공개 GitHub release(기본 최신판) 또는 --from 파일로 바꾼다. SHA-256·self-check·version 고정 검사 뒤
+    /// rename하고 옛것은 rollback으로 되돌린다. 실제 교체는 사람만
     #[command(args_conflicts_with_subcommands = true)]
     Update {
         #[command(subcommand)]
@@ -115,6 +115,9 @@ enum Cmd {
         /// 새 실행 파일(같은 OS·CPU로 빌드한 aaa)
         #[arg(long, value_name = "파일")]
         from: Option<PathBuf>,
+        /// 받을 release 판(x.y.z 또는 vx.y.z). --from과 함께 쓰지 않는다
+        #[arg(long = "version", value_name = "판", conflicts_with = "from")]
+        release_version: Option<String>,
         /// 검사만 하고 바꾸지 않는다(누구나)
         #[arg(long)]
         dry_run: bool,
@@ -1449,7 +1452,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Service { cmd } => service_cmd(cmd),
         Cmd::Config { cmd } => config_cmd(cmd, json),
-        Cmd::Update { cmd: None, from, dry_run } => crate::update::update(json, from, dry_run),
+        Cmd::Update { cmd: None, from, release_version, dry_run } => {
+            crate::update::update(json, from, release_version, dry_run)
+        }
         Cmd::Update { cmd: Some(UpdateCmd::Rollback { name, dry_run }), .. } => {
             crate::update::rollback(json, name, dry_run)
         }
@@ -3282,6 +3287,24 @@ fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_accepts_release_version_and_keeps_local_and_subcommand_modes() {
+        use super::{Cli, Cmd};
+        use clap::Parser as _;
+        for args in [
+            vec!["aaa", "update"],
+            vec!["aaa", "update", "--version", "v0.2.0", "--dry-run"],
+            vec!["aaa", "update", "--from", "aaa.new", "--dry-run"],
+            vec!["aaa", "update", "rollback", "--dry-run"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok());
+        }
+        let cli = Cli::try_parse_from(["aaa", "update", "--version", "v0.2.0"]).unwrap();
+        assert!(matches!(cli.cmd, Cmd::Update { release_version: Some(v), .. } if v == "v0.2.0"));
+        assert!(Cli::try_parse_from(["aaa", "update", "--from", "aaa.new", "--version", "0.2.0"]).is_err());
+        assert!(Cli::try_parse_from(["aaa", "update", "rollback", "--version", "0.2.0"]).is_err());
+    }
+
     #[test]
     fn follow_fills_a_gap_instead_of_dropping_it() {
         use super::{FollowStep, follow_step};

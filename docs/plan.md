@@ -4682,7 +4682,7 @@ flowchart LR
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
-- **지금(10-18, §8.180):** 주어진 실행 파일을 바꾸는 `aaa update --from`(staging·self-check·rename·보관 `[update] keep`)·`aaa update rollback`·`[update] version` 고정 검사만 있다. 내려받기·서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다(사용자 10-18: brew·배포·서명은 추후 계획).
+- **지금(10-18, §8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
 
 ## 12. 기술 스택 추천
 
@@ -5248,3 +5248,13 @@ primary 근거:
   같은 사건이 한 통, 울타리 알림이 다음 요청), `restarted_host_recovers_only_an_outage_still_open`(회복한 끊김은 다시 쓰지 않음·열린 끊김만
   회복 한 번·회복 뒤 새 끊김·두 프로젝트 ID 겹침), `restarted_host_takes_over_only_a_gh_failure_still_open`. 결함 심기 10건이 각각 실패했다.
   m13 `notify_webhook`·웹 E2E 12의 기대 글을 새 꼴로 바꿨다.
+
+
+### 8.210 GitHub release와 aaa update 내려받기(10-18, t-0368)
+
+- **배포.** herdr `release.yml`의 `v*` tag·Cargo 판 일치·OS/arch 빌드·업로드를 따른다. workspace는 0.1.1로 올려 기존 0.1.0과 구분한다. 웹을 먼저 빌드해 binary에 넣고 macOS arm64·Intel, Windows x86_64, Linux x86_64·arm64(musl)를 만든다. 실행 파일·SHA256SUMS·manifest.json을 같은 공개 release에 올린다. 처음 tag push는 착지 뒤 coordinator만 한다.
+- **manifest 위치.** herdr의 별도 `herdr.dev/latest.json`·소스 branch 배포 갱신 대신 GitHub release asset을 쓴다. 추가 웹 배포·branch 쓰기·다운로드 token 없이 공개 release만으로 갱신하기 위해서다. 최신은 `/releases/latest/download/manifest.json`, 지정판은 `/releases/download/v<판>/manifest.json`이다. `version`·`assets[os-arch]`의 URL·SHA-256 object는 herdr가 받는 형태다. 첫 manifest라 옛 문자열 asset 호환은 없다. 자세한 차이표는 install-runbook 9.1에 있다.
+- **내려받기.** 무인자면 최신 안정판, `--version x.y.z`·`vx.y.z`면 그 판이다. 같은 판은 실행 파일을 받지 않으며 기본 최신판으로 자동 downgrade하지 않는다. 명시한 옛 판은 기존 version 고정 검사 뒤 받는다. manifest 판과 binary self-check 판이 다르면 거부한다. 공개 저장소의 해당 release asset만 허용하며 curl 개인 설정·token·재시도를 쓰지 않는다. 내려받다 끊기거나 SHA-256이 다르면 staging을 지우고 멈춘다.
+- **교체.** 받은 파일은 기존 `--from`의 self-check·version 고정·hard link 보관·rename·keep·rollback 순서로 간다. `--dry-run`도 실제 내려받기와 검사를 하며 교체하지 않는다. 보관 이름에 밀리초·순번을 더해 같은 시각의 서로 다른 판도 생성 순서대로 되돌린다. 옛 보관 이름은 계속 읽는다. Windows는 정적 CRT exe 하나를 기존 고정 경로에 두는 계약을 유지한다. herdr의 zip·junction 설치를 새로 도입하지 않는다. 도는 host·agent·TUI는 이전 이미지로 계속 돌며 사람이 다시 띄운다.
+- **키체인 결정 A.** 기존 Mac 빌드의 ad-hoc 교체 때도 cdhash는 매번 바뀌었다. GitHub release도 같으며 고정 서명은 하지 않는다. 기본 `keychain_service`는 비어 있어 잠금 상태만 본다. doctor의 선택적 직접 항목 조회에서 새 승인이 필요하거나 UI 억제로 읽기 실패가 날 수 있음을 문서화한다. 실제 키체인·ACL·시스템 설정은 건드리지 않는다.
+- **계약·검증.** Front API 1.39·Agent link 1.5를 유지한다. 새 wire는 없다. 가짜 HTTP 서버로 선택·checksum·없는 OS/arch·중단·같은 판 무동작·다운로드 뒤 보관/rollback을 보고, 각 결함 변형이 실패하는지 확인한다. 새 시험은 신호나 고정 sleep을 쓰지 않는다. release 도구 시험은 distribution workflow에서 돌고 release workflow 자체는 이 thread에서 실행하지 않는다.

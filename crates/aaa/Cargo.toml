@@ -20,6 +20,7 @@ aaa-agent.workspace = true
 aaa-host.workspace = true
 aaa-tui.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
 base64.workspace = true

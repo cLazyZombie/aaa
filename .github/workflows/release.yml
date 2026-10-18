@@ -1,0 +1,142 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate-release-source:
+    if: github.repository == 'cLazyZombie/aaa'
+    runs-on: ubuntu-24.04
+    steps:
+      - &require-release-admins
+        name: 게시·재실행 권한 확인(herdr와 같은 관리자 제한)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for actor in "$GITHUB_ACTOR" "$GITHUB_TRIGGERING_ACTOR"; do
+            permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$actor/permission" --jq .permission)
+            if [ "$permission" != admin ]; then
+              echo 'release 게시·재실행에는 저장소 관리자 권한이 필요하다' >&2
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Cargo 버전과 tag 일치 확인
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/release.py check-tag --tag "$RELEASE_TAG"
+
+  build:
+    needs: validate-release-source
+    if: github.repository == 'cLazyZombie/aaa'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+            asset: aaa-macos-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            asset: aaa-macos-x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+            asset: aaa-windows-x86_64.exe
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            asset: aaa-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            asset: aaa-linux-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6, herdr와 같음
+        with:
+          persist-credentials: false
+      - name: Rust 설치
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # herdr와 같은 action
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Linux musl 도구 설치
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo 'CC_${{ matrix.target }}=musl-gcc' >> "$GITHUB_ENV"
+          target_env=$(printf '%s' '${{ matrix.target }}' | tr '[:lower:]-' '[:upper:]_')
+          echo "CARGO_TARGET_${target_env}_LINKER=musl-gcc" >> "$GITHUB_ENV"
+      - name: 웹 먼저 빌드
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          test -s dist/index.html
+      - name: 실행 파일 빌드·판 확인
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_ASSET: ${{ matrix.asset }}
+        run: |
+          cargo build --release --locked -p aaa --bin aaa --target "$RELEASE_TARGET"
+          suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then suffix=".exe"; fi
+          binary="target/$RELEASE_TARGET/release/aaa$suffix"
+          test "$("$binary" --version)" = "aaa ${RELEASE_TAG#v}"
+          mkdir -p release-artifact
+          cp "$binary" "release-artifact/$RELEASE_ASSET"
+      - name: 실행 파일 올리기
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.asset }}
+          path: release-artifact/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.repository == 'cLazyZombie/aaa'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - *require-release-admins
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: manifest·SHA-256 만들기
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/release.py manifest --tag "$RELEASE_TAG" --artifacts release-artifacts --output release-artifacts
+          (cd release-artifacts && sha256sum --check SHA256SUMS)
+      - name: 공개 release 만들기
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: |
+            release-artifacts/aaa-macos-aarch64
+            release-artifacts/aaa-macos-x86_64
+            release-artifacts/aaa-windows-x86_64.exe
+            release-artifacts/aaa-linux-x86_64
+            release-artifacts/aaa-linux-aarch64
+            release-artifacts/SHA256SUMS
+            release-artifacts/manifest.json

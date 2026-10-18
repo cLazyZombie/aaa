@@ -14,18 +14,20 @@ launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aaa를
 |---|---|
 | launcher 등록 | `~/Applications/aaa-launcher.app`이 개발자 도구·전체 디스크 접근에 켜져 있다 |
 | L1 합격 | `p0/launcher/measure.sh after` 판정 통과(median ≤10ms, p95 ≤20ms, FDA ok, 책임 프로세스 `aaa-launcher`) |
-| 각 Mac 같은 aaa | 같은 commit으로 빌드한다. version 번호는 빌드마다 같아(0.1.0) `shasum -a 256 ~/.local/bin/aaa`(또는 `aaa update list`)로 본다 |
+| 각 Mac 같은 aaa | 같은 release 판으로 맞춘다(`aaa --version`). 같은 판의 로컬 빌드까지 구분하려면 `shasum -a 256 ~/.local/bin/aaa` 또는 `aaa update list`로 본다 |
 
 ## 1. aaa를 고정 경로에 둔다(각 Mac)
 
 ```bash
-cd <저장소> && cargo build --release -p aaa
+cd <저장소>/web && npm ci --no-audit --no-fund && npm run build
+cd .. && cargo build --locked --release -p aaa
 install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa   # rename으로 교체
 ~/.local/bin/aaa --version
 ```
 
 - 업그레이드는 9번(`aaa update`)이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
-- 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/aaa.new' < target/release/aaa`로 옮긴 뒤 그 Mac에서 `~/.local/bin/aaa update --from ~/aaa.new`로 바꾼다(처음 설치면 `install -m 755 ~/aaa.new ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa`). 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다(`aaa update`가 앞 12자리를 보인다).
+- 공개 [GitHub release](https://github.com/cLazyZombie/aaa/releases)의 자기 OS·CPU 파일을 써도 된다. 받은 파일의 SHA-256을 같은 release의 `manifest.json`·`SHA256SUMS`와 맞춘 뒤 설치한다. 기존 설치의 갱신·최초 release 전환은 9번을 따른다.
+- 로컬 빌드를 옮길 때는 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/aaa.new' < target/release/aaa`로 옮긴 뒤 그 Mac에서 `~/.local/bin/aaa update --from ~/aaa.new`로 바꾼다(처음 설치면 `install -m 755 ~/aaa.new ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa`). 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다(`aaa update`가 앞 12자리를 보인다).
 - Claude hook은 실행마다 준다. Codex는 전역 hook을 설치한다(§8.201). **배포 뒤 각 Mac에서** 아래를 실행한다.
   ```bash
   ~/.local/bin/aaa integration install codex
@@ -180,10 +182,37 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 ## 9. 업그레이드
 
-1. ✋ 새 `aaa`를 빌드하고 `~/.local/bin/aaa update --from target/release/aaa`로 바꾼다(`yes`). 같은 폴더에 두고 self-check(`--version`·`config check`)와 `[update] version` 고정 검사를 한 뒤 rename한다. 옛것은 `~/.local/bin/.aaa-old/`에 `[update] keep`개(기본 3) 남는다. 먼저 `--dry-run`으로 검사만 해 볼 수 있다.
-2. ✋ `aaa service restart --role agent`(host Mac은 `--role host`도, 각각 `yes`)로 다시 띄운다(`launchctl kickstart -k`를 감싼다). 세션은 이어진다. 바꾸기만 하고 다시 띄우지 않으면 도는 host·agent는 옛 실행 파일로 계속 돈다.
-3. `aaa status`·`aaa machine list`로 같은 버전·연결을 확인한다. version 번호는 아직 빌드마다 같다(0.1.0): 같은 빌드인지는 `aaa update list`의 sha256으로 본다.
-4. 문제가 있으면 ✋ `aaa update rollback`(지금과 다른 가장 새 보관, 이름을 주면 그것, 목록은 `aaa update list`)으로 되돌리고 2번을 다시 한다. DB는 되돌리지 않는다(plan §11 「DB 백업」은 아직 없다).
+1. 각 Mac의 일반 터미널(aaa pane 밖)에서 `aaa update --version 0.1.1 --dry-run`으로 받을 판을 먼저 검사한다. 자기 OS·CPU asset을 공개 GitHub release에서 받고 SHA-256을 확인한 뒤 기존 self-check(`--version`·`config check`)와 `[update] version` 고정 검사를 한다. `--dry-run`은 누구나 가능하며 내려받기·검사까지 하고 staging을 지운다.
+2. ✋ host Mac에서 `aaa update --version 0.1.1`(`yes`)로 바꾸고 `aaa service restart --role host` → `aaa service restart --role agent` 순으로 다시 띄운다(각각 `yes`). 이어 원격 Mac마다 같은 update → `aaa service restart --role agent`를 하나씩 한다. 각 단계에서 `aaa status`·`aaa machine list`로 연결과 판을 확인한 뒤 다음 머신으로 간다. session host의 세션은 이어진다. 바꾸기만 하면 도는 host·agent는 옛 이미지로 계속 돈다.
+3. `aaa --version`으로 설치판을 보고, `aaa update list`의 SHA-256으로 실제 파일을 구분한다. 보관은 `~/.local/bin/.aaa-old/`에 `[update] keep`개(기본 3)다. 판을 주지 않은 `aaa update`는 최신 안정 release를 고르며 같거나 옛 판이면 실행 파일을 받지 않는다. `--version v0.1.1`도 된다. 명시한 옛 판은 고정 검사를 거쳐 받을 수 있다. major 변경은 기존대로 사람이 TOML에 해당 판을 고정해야 한다.
+4. 문제가 있으면 ✋ `aaa update rollback`(지금과 다른 가장 새 보관, 이름을 주면 그것, 목록은 `aaa update list`)으로 되돌리고 2번의 재시작·확인을 한다. DB는 되돌리지 않는다(plan §11 「DB 백업」은 아직 없다).
+
+- **최초 전환(기존 0.1.0).** 옛 `aaa update`에는 내려받기가 없다. 첫 release `v0.1.1`에서 `aaa-macos-aarch64`(Intel은 `aaa-macos-x86_64`)와 `SHA256SUMS`를 받아 `shasum -a 256 <받은 파일>` 결과를 맞춘다. 옛 실행 파일로 `aaa update --from <받은 파일> --dry-run` → ✋ `aaa update --from <받은 파일>`을 한 번 한다. 이후 위 원격 update를 쓴다. Windows도 11.4의 `--from`으로 한 번 전환한다.
+- **로컬 빌드 유지.** `aaa update --from target/release/aaa [--dry-run]`은 그대로다. 같은 version이어도 SHA-256이 다른 빌드는 바꿀 수 있다. `--from`과 `--version`은 함께 쓰지 않는다.
+- **판 고정.** 기존 host.toml·agent.toml에 `[update] version = "0.1.0"`처럼 고정했다면 사람이 목표 판으로 고쳐야 한다. updater는 설정을 저절로 바꾸지 않는다. 보관 이름은 UTC·밀리초·순번·판을 담아 같은 시각의 upgrade·downgrade도 생성 순서대로 되돌린다. 옛 이름의 보관도 계속 읽는다.
+- **네트워크와 실패.** curl이 필요하다(macOS·Windows 기본 제공). 개인 `.curlrc`·GitHub token은 쓰지 않는다. manifest는 `https://github.com/cLazyZombie/aaa/releases/latest/download/manifest.json`, 지정판은 `/releases/download/v<판>/manifest.json`이다. asset은 그 manifest 판의 같은 공개 저장소 release URL만 받는다. 전송 중단·checksum·self-check 실패면 기존 실행 파일과 보관은 건드리지 않고 staging을 지운다. 자동 재시도·우회 설치는 없다.
+- **macOS 키체인.** 기존 Mac 빌드 배포와 같이 ad-hoc 서명을 쓴다. 서로 다른 빌드의 cdhash는 이미 배포마다 바뀌었으며 GitHub release로 받아도 같다. `keychain_service` 기본값은 빈 값이어서 기본 자가 점검은 잠금 상태만 본다. doctor의 선택적 실제 항목 조회는 기존 ACL에 따라 새 접근 승인이 필요하거나 UI 생략으로 조회 실패가 날 수 있다. 고정 서명·ACL 변경·키체인 승인 이전은 하지 않는다. 구독 조회의 `security` 자식과 직접 조회는 다른 경로다. [Apple DR 설명](https://developer.apple.com/library/archive/technotes/tn2206/_index.html), [ACL 설명](https://developer.apple.com/documentation/security/access-control-lists).
+
+### 9.1 release 만들기(coordinator, 착지 뒤)
+
+현재 첫 release는 `v0.1.1`이다. 이후에는 `Cargo.toml`의 `[workspace.package] version`을 올리고 `cargo update --offline --workspace`로 lockfile의 workspace 판을 맞춘 변경을 검증·착지한다. 버전 숫자를 workflow에서 덮어쓰지 않는다(herdr처럼 tag와 Cargo 판이 같아야 빌드한다). main이 push되고 CI가 통과한 commit에서 coordinator만 실행한다:
+
+```bash
+python3 scripts/release.py check-tag --tag v0.1.1
+git tag v0.1.1
+git push origin refs/tags/v0.1.1
+```
+
+`.github/workflows/release.yml`은 웹을 먼저 빌드해 실행 파일 안에 넣고, macOS arm64·Intel, Windows x86_64, Linux x86_64·arm64(musl)를 각각 빌드한다. 자기 runner에서 `aaa --version`까지 확인한 뒤 실행 파일 다섯 개·`SHA256SUMS`·`manifest.json`을 같은 공개 release에 올린다. 최초에는 Actions 다섯 빌드 및 게시 완료, asset 이름·checksum·웹 포함을 확인하고 시험 머신의 dry-run·실제 update·rollback 뒤 운영에 순차 배포한다. release workflow를 만드는 thread는 tag나 branch를 push하지 않는다.
+
+| 항목 | herdr 참고본 | aaa와 다른 이유 |
+| --- | --- | --- |
+| 최신 manifest | `herdr.dev/latest.json`, release 뒤 소스 `distribution/latest.json` 갱신 | 같은 release의 `manifest.json` asset. 별도 웹 배포·branch 쓰기·배포 token 없이 공개 release만으로 설치하기 위해서다. |
+| 지정판 manifest | 안정 최신 manifest와 별도 이력 metadata | `/releases/download/v<판>/manifest.json`. 요청판의 asset·checksum을 그 tag에 고정한다. |
+| manifest 형태 | `version`·`assets[os-arch]`의 URL·SHA-256, 옛 문자열 asset도 지원 | 동일 object 형태만 낸다. aaa의 첫 release라 옛 문자열 manifest 호환은 필요 없다. |
+| Windows | ConPTY DLL이 든 zip·PowerShell installer·판별 release 폴더 | 정적 CRT의 `aaa.exe` 하나·기존 고정 자리 rename. 기존 `--from`·보관·rollback과 설치 경로를 유지한다. |
+| 빌드 도구·runner | ghostty용 Zig·Linux arm64 교차 빌드 | aaa에는 ghostty 빌드가 없다. 같은 target을 native runner에서 빌드해 각 산출물의 판을 실행해 확인한다. |
+| 부가 배포 | Nix 갱신·docs 게시·issue 종료·preview 검증 | aaa에는 대응하는 배포가 없다. release 만들기와 배포 계약 시험만 둔다. |
 
 ## 10. aa에서 옮기기(결정 18)
 
@@ -215,7 +244,7 @@ agent·host·감독자 없이 `aaa attach --remote`로 붙기만 하는 Windows 
 
 ### 11.1 빌드(Mac에서)
 
-Windows용 실행 파일은 Mac에서 교차 빌드한다. 사용자 수준 도구만 쓴다(sudo·시스템 설정 없음).
+배포용은 GitHub release의 `aaa-windows-x86_64.exe`를 받는다. 로컬 빌드가 필요하면 Mac에서 교차 빌드할 수 있다. 사용자 수준 도구만 쓴다(sudo·시스템 설정 없음).
 
 ```bash
 rustup target add x86_64-pc-windows-msvc          # 한 번
@@ -257,13 +286,14 @@ move "%USERPROFILE%\Downloads\aaa.exe" "%USERPROFILE%\.local\bin\aaa.exe"
 
 ### 11.4 바꾸기
 
-새 `aaa.exe`를 11.1·11.2처럼 받아 둔 뒤(받은 것과 지금 것이 다른 이름·자리여야 한다):
+최초 0.1.0 → 0.1.1 전환은 release의 `aaa-windows-x86_64.exe`를 받아 `Get-FileHash <파일> -Algorithm SHA256`(PowerShell)을 `SHA256SUMS`와 맞춘 뒤 기존 `update --from <파일>`로 바꾼다. 이후 그 PC의 일반 터미널에서:
 
 ```bat
-"%USERPROFILE%\.local\bin\aaa.exe" update --from "%USERPROFILE%\Downloads\aaa.exe" --dry-run
-"%USERPROFILE%\.local\bin\aaa.exe" update --from "%USERPROFILE%\Downloads\aaa.exe"
+"%USERPROFILE%\.local\bin\aaa.exe" update --version 0.1.1 --dry-run
+"%USERPROFILE%\.local\bin\aaa.exe" update --version 0.1.1
 "%USERPROFILE%\.local\bin\aaa.exe" update list
 ```
 
 - self-check(`--version`·`config check`)를 한 뒤 `yes`를 받고 바꾼다. Mac과 같은 순서다: 지금 것을 `%USERPROFILE%\.local\bin\.aaa-old\`에 hard link로 보관하고(`[update] keep`개, 기본 3) 새것을 그 자리로 rename한다. 열린 TUI가 있어도 바꿀 수 있고(Windows CI 시험이 도는 exe를 바꿔 본다), 그 TUI는 끝날 때까지 옛것으로 돈다.
 - 되돌리기는 `update rollback`이다. 이 PC에는 host·agent가 없으니 `aaa service restart`는 하지 않는다.
+- Windows에서도 판을 생략하면 최신 안정판이며, 로컬 파일 교체(`update --from <파일>`)도 유지한다. 열린 TUI는 다시 열어 새 client를 쓴다.

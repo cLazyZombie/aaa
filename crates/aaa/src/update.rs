@@ -1,7 +1,8 @@
 //! `aaa update`(herdr 0.9.5 `update.rs` `self_update`·`download_update`·`install_downloaded_update`, 차이 목록 4장 A
 //! 「업데이트 명령」 지금 504줄, plan §11·§8.180).
 //!
-//! - 주어진 실행 파일로 바꾼다(`--from`). 내려받기·채널·서명 release는 아직 없다(사용자 10-18: brew·배포·서명은 추후 계획).
+//! - 공개 GitHub release의 manifest·OS/arch asset을 받아 SHA-256을 확인하거나 주어진 파일(`--from`)로 바꾼다.
+//!   manifest asset 위치는 §8.210. macOS는 기존 배포와 같은 ad-hoc 서명이며 고정 서명·서명 manifest는 없다.
 //! - 바꿀 자리는 지금 도는 실행 파일이다(herdr `current_exe`). 운영은 `~/.local/bin/aaa`로 친다(install-runbook 1번).
 //!   링크면 거부한다: 링크가 가리키는 파일(빌드 폴더일 수 있다)을 바꾸지 않는다.
 //! - 사람만(감독자 명령과 같은 문, `person.rs`): aaa 세션 안·터미널 아님은 거부하고 yes를 받는다. `--dry-run`은 바꾸지 않아 누구나.
@@ -14,8 +15,10 @@
 //! - 도는 host·agent는 옛 이미지로 계속 돈다. 다시 띄우기는 사람이 `aaa service restart`로 한다(자동 재시작 없음, plan §11).
 //! - 참고와 다름: herdr는 도는 서버를 멈출지·넘길지(`--handoff`) 묻는다. aaa는 session host가 세션을 가져 agent·host를 다시
 //!   띄워도 이어진다(결정 3): 바꾼 뒤 다시 띄우기를 알린다. brew·mise·nix 설치 감지는 없다(aaa는 고정 경로 하나).
-//!   herdr는 같거나 옛 version이면 「already up to date」다. aaa version은 아직 빌드마다 같아(0.1.0) version 대신 sha256이 같을
-//!   때만 「이미 같다」고 한다.
+//!   herdr처럼 최신 release가 같거나 옛 version이면 받지 않는다. --version은 명시한 판(같으면 무동작),
+//!   --from은 같은 version의 로컬 빌드도 sha256이 다르면 교체한다.
+
+mod release;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -52,6 +55,20 @@ impl Place {
         self.dir.join(OLD_DIR)
     }
 
+    /// 같은 시각에 여러 판을 보관해도 생성 순서가 이름 차례가 되게 한다.
+    fn backup_path(&self, now: u64, version: &str) -> PathBuf {
+        let stamp = aaa_common::util::utc_compact(now);
+        let prefix = format!("aaa-{stamp}.{:03}.", now % 1000);
+        let serial = self
+            .kept()
+            .iter()
+            .filter_map(|p| p.file_name()?.to_str()?.strip_prefix(&prefix)?.split_once('-')?.0.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        self.old().join(format!("{prefix}{serial:020}-{version}"))
+    }
+
     /// 보관한 옛 실행 파일, 새것부터(이름 `aaa-<UTC>-<version>`이라 이름 차례가 시각 차례다)
     fn kept(&self) -> Vec<PathBuf> {
         let mut v: Vec<PathBuf> = std::fs::read_dir(self.old())
@@ -64,6 +81,21 @@ impl Place {
         v.sort();
         v.reverse();
         v
+    }
+
+    /// 되돌릴 실제 보관 파일을 고른다. 이름이 없으면 지금과 다른 가장 새 파일이다.
+    fn rollback_source(&self, name: Option<&str>) -> Result<PathBuf> {
+        let kept = self.kept();
+        if let Some(n) = name {
+            return kept
+                .into_iter()
+                .find(|p| p.file_name().and_then(|x| x.to_str()) == Some(n))
+                .with_context(|| format!("보관한 것 가운데 `{n}`가 없다(`aaa update list`)"));
+        }
+        let cur = sha256(&self.exe)?;
+        kept.into_iter().find(|p| sha256(p).is_ok_and(|s| s != cur)).with_context(|| {
+            format!("되돌릴 옛 실행 파일이 없다({}가 비었거나 모두 지금과 같다)", self.old().display())
+        })
     }
 }
 
@@ -167,15 +199,29 @@ fn pin_check(new: &str, pins: &[(String, String)]) -> Result<()> {
 struct Staged(Option<PathBuf>);
 
 impl Staged {
-    fn copy_from(src: &Path, place: &Place) -> Result<Staged> {
+    fn new(place: &Place) -> Result<Staged> {
         let path = place.dir.join(format!(".aaa-update-{}.tmp", std::process::id()));
-        let staged = Staged(Some(path.clone()));
-        std::fs::copy(src, &path).with_context(|| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("{}에 staging을 만들지 못했다(기존 파일은 덮지 않는다)", path.display()))?;
+        Ok(Staged(Some(path)))
+    }
+
+    fn copy_from(src: &Path, place: &Place) -> Result<Staged> {
+        let staged = Self::new(place)?;
+        std::fs::copy(src, staged.path()).with_context(|| {
             format!("{}를 {}에 두지 못했다(그 폴더에 쓸 수 있나?)", src.display(), place.dir.display())
         })?;
-        #[cfg(unix)]
-        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+        staged.make_executable()?;
         Ok(staged)
+    }
+
+    fn make_executable(&self) -> Result<()> {
+        #[cfg(unix)]
+        std::fs::set_permissions(self.path(), std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+        Ok(())
     }
 
     fn path(&self) -> &Path {
@@ -186,14 +232,7 @@ impl Staged {
     fn install(mut self, place: &Place, current_version: &str) -> Result<PathBuf> {
         let old = place.old();
         std::fs::create_dir_all(&old).with_context(|| format!("{}를 만들지 못했다", old.display()))?;
-        let stamp = aaa_common::util::utc_compact(aaa_common::util::now_ms());
-        let mut kept = old.join(format!("aaa-{stamp}-{current_version}"));
-        for n in 2.. {
-            if !kept.exists() {
-                break;
-            }
-            kept = old.join(format!("aaa-{stamp}{n}-{current_version}"));
-        }
+        let kept = place.backup_path(aaa_common::util::now_ms(), current_version);
         // 실행 파일 자리가 비지 않게 링크로 보관한다(같은 폴더 아래라 같은 볼륨). 링크를 못 걸면 복사한다
         if std::fs::hard_link(&place.exe, &kept).is_err() {
             std::fs::copy(&place.exe, &kept)
@@ -302,23 +341,55 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32) -> Re
     Ok(ExitCode::SUCCESS)
 }
 
-/// `aaa update --from <파일> [--dry-run]`
-pub fn update(json: bool, from: Option<PathBuf>, dry_run: bool) -> Result<ExitCode> {
-    let Some(from) = from else {
-        bail!(
-            "새 실행 파일을 `--from <파일>`로 준다(같은 OS·CPU로 빌드한 aaa, 예: `aaa update --from target/release/aaa`). 내려받기·서명 release는 아직 없다"
-        );
-    };
+/// `aaa update [--version <판> | --from <파일>] [--dry-run]`
+pub fn update(json: bool, from: Option<PathBuf>, version: Option<String>, dry_run: bool) -> Result<ExitCode> {
+    let requested = release::requested_version(version.as_deref())?;
     if !dry_run {
         crate::person::require("실행 파일 바꾸기")?;
     }
     let place = Place::here()?;
-    if !from.is_file() {
+    if let Some(from) = &from
+        && !from.is_file()
+    {
         bail!("{}가 파일이 아니다", from.display());
     }
     let (pins, keep) = settings()?;
-    let staged = Staged::copy_from(&from, &place)?;
+    let (staged, from, expected) = if let Some(from) = from {
+        (Staged::copy_from(&from, &place)?, from, None)
+    } else {
+        let manifest = release::fetch_manifest(&release::manifest_url(requested.as_deref()))?;
+        let Some(asset) = manifest.select(
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            env!("CARGO_PKG_VERSION"),
+            requested.as_deref(),
+        )?
+        else {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"exe": place.exe, "changed": false,
+                    "version": env!("CARGO_PKG_VERSION"), "release_version": manifest.version})
+                );
+            } else {
+                println!(
+                    "이미 최신판이다(aaa {} · release {}): 바꾸지 않았다",
+                    env!("CARGO_PKG_VERSION"),
+                    manifest.version
+                );
+            }
+            return Ok(ExitCode::SUCCESS);
+        };
+        let staged = asset.download(&place)?;
+        let from = staged.path().to_path_buf();
+        (staged, from, Some(asset.version))
+    };
     let new_version = self_check(staged.path())?;
+    if let Some(expected) = expected
+        && new_version != expected
+    {
+        bail!("self-check 실패: manifest 판은 {expected}인데 실행 파일은 {new_version}이다");
+    }
     pin_check(&new_version, &pins)?;
     let what = format!("{}를 aaa {new_version}로 바꾼다", place.exe.display());
     finish(json, &place, Swap { what, staged, new_version, from: &from }, dry_run, keep)
@@ -330,20 +401,7 @@ pub fn rollback(json: bool, name: Option<String>, dry_run: bool) -> Result<ExitC
         crate::person::require("실행 파일 되돌리기")?;
     }
     let place = Place::here()?;
-    let kept = place.kept();
-    let chosen = match &name {
-        Some(n) => kept
-            .iter()
-            .find(|p| p.file_name().and_then(|x| x.to_str()) == Some(n.as_str()))
-            .cloned()
-            .with_context(|| format!("보관한 것 가운데 `{n}`가 없다(`aaa update list`)"))?,
-        None => {
-            let cur = sha256(&place.exe)?;
-            kept.iter().find(|p| sha256(p).is_ok_and(|s| s != cur)).cloned().with_context(|| {
-                format!("되돌릴 옛 실행 파일이 없다({}가 비었거나 모두 지금과 같다)", place.old().display())
-            })?
-        }
-    };
+    let chosen = place.rollback_source(name.as_deref())?;
     let (pins, keep) = settings()?;
     let staged = Staged::copy_from(&chosen, &place)?;
     let version = self_check(staged.path())?;
@@ -466,7 +524,7 @@ mod tests {
     #[test]
     fn every_os_takes_update_and_rollback() {
         let none = std::env::temp_dir().join(format!("aaa-update-none-{}", std::process::id()));
-        let e = update(false, Some(none.clone()), true).unwrap_err().to_string();
+        let e = update(false, Some(none.clone()), None, true).unwrap_err().to_string();
         assert!(e.contains(&format!("{}가 파일이 아니다", none.display())), "{e}");
         let e = rollback(false, Some("aaa-none".into()), true).unwrap_err().to_string();
         assert!(e.contains("보관한 것 가운데 `aaa-none`가 없다"), "{e}");
