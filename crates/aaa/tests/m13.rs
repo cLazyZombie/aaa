@@ -1040,7 +1040,8 @@ fn reboot_resumes_threads() {
     let f = w.start(&["--title", "plain", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("tf.txt", "y")]);
     let fid = f["id"].as_str().unwrap().to_string();
     let fpane = f["pane"].as_str().unwrap().to_string();
-    ev.kind("report_ready", &fid, T);
+    // 보고와 brief 받음은 따로 온다. 받기 전에 끊으면 복원은 「brief 전이라 새로 띄웠다」라 restore_failed가 없다
+    w.wait_show("보고·brief 받음", &fid, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     // 사람이 붙인 pane 이름은 이어 띄운 thread pane도 잇는다
     w.h.ok(&["pane", "rename", &pane, "리뷰어"]);
 
