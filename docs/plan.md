@@ -768,7 +768,7 @@ host 프로젝트 폴더 구성:
 - **파일:** `projects/<p>/routines/<name>.md`. `+++` TOML front matter(`schedule`·`command`·`machine`·`enabled`)와 본문(coordinator 안내)이다. 모르는 키는 오류로 본다(오타로 명령이 빠지지 않게).
   - 읽지 못한 파일은 내용 hash당 한 번 `config-error` 항목이 된다. `on = "pr"`은 M3까지 오류로 둔다(조용히 무시하지 않는다).
 - **일정(0.2.35 의미 그대로)**
-  - `every <N>s|m|h|d`, `daily HH:MM`. `s`는 aaa가 더한 단위다(E2E가 분 단위로 기다리지 않게). 처음 본 때를 지난 실행으로 친다.
+  - `every <N>m|h|d`, `daily HH:MM`(참고와 같다). `s`(초)는 host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다(E2E가 분 단위로 기다리지 않게, 4장 H #604: 운영 파일의 `every 30s`는 거부). 처음 본 때를 지난 실행으로 친다.
   - daily는 host 머신의 지역 시각이다. 각 HH:MM의 offset을 그 시각 기준으로 구한다(`localtime_r`). 서머타임이 바뀐 다음 날 두 번 돌던 계산을 단위 시험이 잡아 고쳤다. unix가 아닌 host는 UTC로 본다.
   - 여러 번 놓쳐도 한 번만 돈다.
 - **coordinator 없음:** 돌지 않고 `no_coordinator`만 센다. 지난 실행은 앞으로 옮긴다(밀린 실행을 쌓지 않는다).

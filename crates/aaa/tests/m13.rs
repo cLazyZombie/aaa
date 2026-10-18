@@ -2211,6 +2211,25 @@ fn merge_queue_and_capacity() {
     assert_eq!(ev, want);
 }
 
+/// routine 일정의 초 단위(4장 H #604): 운영 host(`AAA_TEST_ROUTINE_SECONDS`가 `1`이 아님)는 참고처럼 분부터 받고, 초 단위
+/// 파일은 그 routine만 오류로 둔다.
+#[test]
+fn routine_seconds_only_in_tests() {
+    let mut lab = Lab::new();
+    let projects = lab.root.join("projects");
+    let h = lab.node("h", Some(&host_toml(&projects, "tick_secs = 1\n", false)));
+    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_ROUTINE_SECONDS", "")]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    h.ok(&["project", "create", "demo"]);
+    let dir = projects.join("demo").join("routines");
+    std::fs::write(dir.join("fast.md"), "+++\nschedule = \"every 30s\"\n+++\n본다\n").unwrap();
+    std::fs::write(dir.join("slow.md"), "+++\nschedule = \"every 1m\"\n+++\n본다\n").unwrap();
+    let list = h.ok(&["routine", "list", "demo"]);
+    let get = |name: &str| list["routines"].as_array().unwrap().iter().find(|r| r["name"] == name).unwrap().clone();
+    assert!(get("fast")["error"].as_str().unwrap_or_default().contains("초 단위"), "{list}");
+    assert_eq!((get("slow")["error"].as_str(), get("slow")["schedule"].as_str()), (None, Some("every 1m")), "{list}");
+}
+
 /// routine(§8.9): coordinator가 없으면 건너뛰고, 안내는 처리 전까지 하나만, 명령은 host.toml 허용과 사람의 승인이 있어야
 /// 대상 머신 agent가 실행한다. 출력이 바뀔 때만 항목이 되고, 명령을 고치면 다시 승인해야 한다.
 #[test]

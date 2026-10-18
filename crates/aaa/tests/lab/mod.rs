@@ -39,6 +39,8 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게(보는 시험만 채운다)
             .env("AAA_TEST_BUILTINS", "")
+            // routine `every <N>s`: host가 시험에서만 받는다
+            .env("AAA_TEST_ROUTINE_SECONDS", "1")
             .env_remove("NO_COLOR")
             .stdin(Stdio::null());
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)

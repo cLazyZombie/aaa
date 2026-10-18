@@ -1,7 +1,7 @@
 //! routine(§8.9, 0.2.35 계승): `projects/<p>/routines/<name>.md`에 적은 일정 작업.
 //!
 //! - 파일은 `+++` TOML front matter(`schedule`·`command`·`machine`·`enabled`)와 본문(coordinator에게 줄 안내)이다.
-//! - 일정은 `every <N>s|m|h|d`, `daily HH:MM`(host 머신의 지역 시각)이다. `s`는 aaa가 더한 단위다(시험용).
+//! - 일정은 참고처럼 `every <N>m|h|d`, `daily HH:MM`(host 머신의 지역 시각)이다. `s`(초)는 host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다(시험용).
 //! - `on = "pr"`(선택 `events = ["opened", "checks-failed", "review", "merged"]`)이면 일정 대신 thread PR 사건에 본문을 그
 //!   thread에 보낸다(herdr-projects routine.rs `Trigger::Pr`, 보내기는 `pr.rs`). 명령은 받지 않는다. 프로젝트를 만들면
 //!   `routines/pr-followup.md`가 생긴다(끄려면 지우지 말고 `enabled = false`).
@@ -34,15 +34,20 @@ pub(crate) enum Schedule {
     Daily(u32, u32),
 }
 
-pub(crate) fn parse_schedule(text: &str) -> Result<Schedule, String> {
+/// 이 환경 변수가 `1`이면 `every <N>s`(초)를 받는다: 시험이 분 단위로 기다리지 않게(plan §8.19). 운영 파일은 참고처럼 분부터.
+pub(crate) const TEST_SECONDS: &str = "AAA_TEST_ROUTINE_SECONDS";
+
+/// `seconds`는 [`TEST_SECONDS`]가 `1`일 때만 참이다
+pub(crate) fn parse_schedule(text: &str, seconds: bool) -> Result<Schedule, String> {
     let text = text.trim();
-    let bad = || format!("일정 형식이 아니다: `{text}`(`every <N>s|m|h|d` 또는 `daily HH:MM`)");
+    let bad = || format!("일정 형식이 아니다: `{text}`(`every <N>m|h|d` 또는 `daily HH:MM`)");
     if let Some(rest) = text.strip_prefix("every ") {
         let rest = rest.trim();
         let (digits, unit) = rest.split_at(rest.len().saturating_sub(1));
         let n: u64 = digits.parse().ok().filter(|n| *n > 0).ok_or_else(bad)?;
         let unit = match unit {
-            "s" => 1,
+            "s" if seconds => 1,
+            "s" => return Err(format!("초 단위는 받지 않는다: `{text}`(가장 짧은 주기는 `every 1m`)")),
             "m" => 60,
             "h" => 3600,
             "d" => 86_400,
@@ -179,6 +184,10 @@ fn sha256(s: &str) -> String {
 }
 
 pub(crate) fn parse(name: &str, text: &str) -> Result<Routine, String> {
+    parse_in(name, text, std::env::var(TEST_SECONDS).as_deref() == Ok("1"))
+}
+
+fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
     if !valid_project(name) {
         return Err("파일 이름은 영문 소문자·숫자·-·_여야 한다".into());
     }
@@ -189,7 +198,7 @@ pub(crate) fn parse(name: &str, text: &str) -> Result<Routine, String> {
         .ok_or("닫는 `+++` 줄이 없다")?;
     let f: Front = toml::from_str(front).map_err(|e| format!("front matter: {}", e.message()))?;
     let (trigger, schedule_text) = match f.on.as_str() {
-        "" => (Trigger::Schedule(parse_schedule(&f.schedule)?), f.schedule.trim().to_string()),
+        "" => (Trigger::Schedule(parse_schedule(&f.schedule, seconds)?), f.schedule.trim().to_string()),
         "pr" => {
             if !f.command.trim().is_empty() {
                 return Err("`pr` routine은 thread에 글을 보낸다. `command`를 받지 않는다".into());
@@ -569,11 +578,14 @@ mod tests {
 
     #[test]
     fn schedules() {
-        assert_eq!(parse_schedule("every 30m"), Ok(Schedule::Every(1800)));
-        assert_eq!(parse_schedule("every 5s"), Ok(Schedule::Every(5)));
-        assert_eq!(parse_schedule(" daily 09:05 "), Ok(Schedule::Daily(9, 5)));
+        assert_eq!(parse_schedule("every 30m", false), Ok(Schedule::Every(1800)));
+        assert_eq!(parse_schedule("every 2d", false), Ok(Schedule::Every(172_800)));
+        assert_eq!(parse_schedule(" daily 09:05 ", false), Ok(Schedule::Daily(9, 5)));
+        // 초는 시험 환경에서만
+        assert!(parse_schedule("every 5s", false).unwrap_err().contains("초 단위"));
+        assert_eq!(parse_schedule("every 5s", true), Ok(Schedule::Every(5)));
         for bad in ["every 0m", "every 5", "every m", "daily 24:00", "daily 9", "weekly 1"] {
-            assert!(parse_schedule(bad).is_err(), "{bad}");
+            assert!(parse_schedule(bad, true).is_err(), "{bad}");
         }
     }
 
@@ -641,6 +653,10 @@ mod tests {
         assert!(parse("x", "+++\nschedule = \"every 1m\"\ncomand = \"oops\"\n+++\n").is_err());
         assert!(parse("Bad Name", "+++\nschedule = \"every 1m\"\n+++\n").is_err());
         let only = parse("ping", "+++\nschedule = \"every 1h\"\n+++").unwrap();
+        // 운영 host(시험 변수 없음)는 초 단위 파일을 오류로 둔다
+        let fast = "+++\nschedule = \"every 30s\"\n+++\n";
+        assert!(parse_in("fast", fast, false).unwrap_err().contains("초 단위"));
+        assert!(parse_in("fast", fast, true).is_ok());
         assert!(only.command.is_empty() && only.enabled);
     }
 
