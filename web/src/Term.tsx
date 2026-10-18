@@ -63,6 +63,7 @@ import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown } from "lucide-react";
+import { DrawerToggle } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -127,7 +128,6 @@ function termTheme(): ITheme {
 export function TermView({
   pane,
   role,
-  onBack,
   title,
   agent,
   crumb,
@@ -138,7 +138,6 @@ export function TermView({
 }: {
   pane: PaneView;
   role: DeviceRole;
-  onBack: () => void;
   /** 목록과 같은 이름(thread pane이면 thread 제목) */
   title?: string;
   /** pane에서 도는 coding agent(머리 제목 앞 표시, herdr-web-ui App.tsx 1402줄) */
@@ -1808,9 +1807,8 @@ export function TermView({
   return (
     <section className="term" ref={sectionRef}>
       <header className="term-head">
-        <button className="back ghost icon" onClick={onBack} aria-label="목록으로">
-          <Icon name="back" />
-        </button>
+        {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
+        <DrawerToggle />
         <div className="term-title">
           <span className="term-title-line">
             {agent && <AgentMark agent={agent} size={18} />}

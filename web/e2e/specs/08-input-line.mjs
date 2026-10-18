@@ -1,14 +1,14 @@
 // 웹 E2E 입력줄: send-text·여러 줄·보내는 동안 친 글.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 08-input-line(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames, sentCount } from "../lib/harness.mjs";
+import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames, sentCount, inList } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "pasteapp", "--", process.execPath, `${root}/paste.js`);
     const got = () => aaa("pane", "read", "pasteapp", "--source", "visible").text;
     const gots = () => got().split("GOT:").length - 1;
-    await page.getByTestId("pane-pasteapp").click();
+    await inList(page, "pane-pasteapp");
     await until("paste 화면", async () => (await screenText(page)).includes("paste>"));
     const box = page.getByLabel("보낼 글");
     // 여러 줄: 프로그램이 bracketed paste를 켰으니 감싸서 한 덩어리로, 줄바꿈은 CR로. Enter는 따로.
@@ -118,7 +118,7 @@ export default async function ({ ctl, page }) {
     }
     // 휴대폰(터치)도 Enter는 보내기다(herdr-web-ui TerminalInput: enterKeyHint="send", Shift+Enter만 줄바꿈)
     const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { line: true });
-    await mob.page.getByTestId("pane-pasteapp").click();
+    await inList(mob.page, "pane-pasteapp");
     const mbox = mob.page.getByLabel("보낼 글");
     // 연결(snapshot)되기 전에는 읽기 전용이다: 화면이 온 뒤에 본다
     await until("휴대폰 paste 화면", async () => (await screenText(mob.page)).includes("paste>"));
@@ -131,7 +131,7 @@ export default async function ({ ctl, page }) {
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();
     aaa("pane", "kill", "pasteapp");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -153,7 +153,7 @@ export default async function ({ ctl, page }) {
       ws.onClose((code, reason) => server.close({ code, reason }));
     };
     const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { line: true, wsRoute: [/\/api\/v1\/panes\//, holdReplies] })).page;
-    await sp.getByTestId("pane-submitapp").click();
+    await inList(sp, "pane-submitapp");
     await until("submitapp 화면", async () => (await screenText(sp)).includes("paste>"));
     const box = sp.getByLabel("보낼 글");
     const sendBtn = sp.getByRole("button", { name: "터미널에 보내기" });

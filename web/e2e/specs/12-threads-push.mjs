@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, setPushKey, openSettings, focusIs, setInUse, pushInUse,
+  step, browser, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
@@ -49,7 +49,7 @@ export default async function ({ page }) {
     for (const d of [pushDev, goneDev]) {
       if ((await api("/api/v1/push/subscribe", d.json)).status !== 200) throw new Error("다시 구독 실패");
     }
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -151,7 +151,7 @@ export default async function ({ page }) {
       throw new Error("ack가 기록되지 않았다");
     }
     // 다음 단계는 t1 터미널을 본다
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -323,7 +323,7 @@ export default async function ({ page }) {
     const dropsSince = (i) => ap.evaluate((i) => window.__evLog.slice(i).filter((e) => e.startsWith("drop")).length, i);
     const evMark = () => ap.evaluate(() => window.__evLog.length);
     // 그 thread를 보고 있으면 띄우지 않는다: 다른 곳을 본다
-    await ap.getByTestId("pane-t1").click();
+    await inList(ap, "pane-t1");
     // 소리: 켜는 누름이 미리 듣기(작업 완료 음 880→660), 그 뒤 알림마다
     const dialog = await openSettings(ap, "알림");
     await dialog.getByRole("switch", { name: "소리" }).click();
@@ -396,14 +396,15 @@ export default async function ({ page }) {
     const pd = pp.locator(".droplet");
     await until("휴대폰 앱 안 알림", async () => (await pd.count()) === 1);
     await landed(pd);
-    const head = await rect(pp.locator(".list-head"));
+    // 휴대폰 머리는 보는 화면(첫 화면은 pane)의 머리다. 목록 머리는 닫힌 drawer 안에 있다
+    const head = await rect(pp.locator(".view header").first());
     const card = await rect(pd.locator(".droplet-card"));
     inside(card, "앱 안 알림");
     if (card.top < head.bottom) throw new Error(`앱 안 알림이 머리를 가린다 ${card.top} < ${head.bottom}`);
     await shot(pp, "phone-droplet");
     await pd.locator(".droplet-close").click();
     await until("휴대폰 알림 닫힘", async () => (await pd.count()) === 0);
-    await pp.getByTestId("more").click();
+    await inList(pp, "more");
     inside(await rect(pp.locator(".more-menu")), "더 보기 메뉴");
     const it = await rect(pp.getByTestId("alerts-item"));
     const menu = await rect(pp.locator(".more-menu"));
@@ -480,7 +481,7 @@ export default async function ({ page }) {
     await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
     await closed;
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -517,7 +518,7 @@ export default async function ({ page }) {
     // 2. 휴대폰(다른 기기): 고정이 와 있고, ⋯ sheet에서 푼다 → 데스크톱에서도 풀린다
     const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await domIs(ph.page, "다른 기기의 고정 카드", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) !== null, key);
-    await ph.page.locator(`.machine-list .sidebar-pinned [data-pin-key="${key}"] .row-menu-toggle`).click();
+    await inList(ph.page, ph.page.locator(`.machine-list .sidebar-pinned [data-pin-key="${key}"] .row-menu-toggle`));
     const sheet = ph.page.getByRole("dialog", { name: "t1" });
     await sheet.waitFor();
     // 아래에서 올라오는 움직임이 끝난 뒤 찍는다(움직임의 finished, 시간 기다림 없음)
@@ -604,7 +605,7 @@ export default async function ({ page }) {
     await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${other}`);
     await toOther;
     await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -625,7 +626,7 @@ export default async function ({ page }) {
     await shot(page, "desktop-evaluator");
     aaa("evaluator", "unassign", "demo");
     await until("끝낸 평가자 badge 사라짐", async () => (await badge.count()) === 0);
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 }
