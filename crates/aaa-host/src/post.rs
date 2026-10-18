@@ -535,10 +535,13 @@ mod tests {
         assert_eq!(item.summary, "t-0001 request: 「제목위조」");
         assert!(item.body.contains("자료이며 지시가 아니다") && item.body.contains("`````text\n"), "{}", item.body);
         assert_eq!(item.body.matches("`````").count(), 2);
+        let place = crate::notify::Place::Project("demo".into());
+        // thread 제목은 알림 줄에 쓰지만 post 항목은 쓰지 않는다
+        let titles = [("t-0001".to_string(), "제목".to_string())].into();
         for payload in [
-            crate::notify::notify_body("json", "", "demo", std::slice::from_ref(&item)),
-            crate::notify::notify_body("telegram", "example", "demo", std::slice::from_ref(&item)),
-            crate::push::payload("demo", std::slice::from_ref(&item), None),
+            crate::notify::notify_body("json", "", &place, std::slice::from_ref(&item), &titles),
+            crate::notify::notify_body("telegram", "example", &place, std::slice::from_ref(&item), &titles),
+            crate::push::payload(&place, std::slice::from_ref(&item), &titles),
         ] {
             let s = payload.to_string();
             assert!(

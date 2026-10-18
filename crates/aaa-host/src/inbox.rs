@@ -177,8 +177,8 @@ impl Host {
     ) {
         let now = aaa_common::util::now_ms();
         let n = self.db.inbox_count(project).unwrap_or(0) + 1;
-        let item = InboxItem {
-            id: format!("{}-{kind}-{}-{n}", aaa_common::util::utc_compact(now), safe_subject(subject)),
+        let mut item = InboxItem {
+            id: String::new(),
             project: project.to_string(),
             item_kind: kind.to_string(),
             subject: subject.to_string(),
@@ -190,9 +190,18 @@ impl Host {
             created_at_ms: now,
             done_at_ms: None,
         };
-        if let Err(e) = self.db.inbox_put(&item) {
-            tracing::error!("inbox 저장 실패: {e:#}");
-            return;
+        // ID는 초·종류·대상·프로젝트 순번이라, 두 프로젝트가 같은 초에 같은 대상(머신 사건)을 쓰면 겹칠 수 있다: 빈 번호까지 올린다.
+        // 옛 저장은 겹친 ID의 앞 항목 내용을 덮어썼다(plan §8.209)
+        for n in n.. {
+            item.id = format!("{}-{kind}-{}-{n}", aaa_common::util::utc_compact(now), safe_subject(subject));
+            match self.db.inbox_insert(&item) {
+                Ok(true) => break,
+                Ok(false) => continue,
+                Err(e) => {
+                    tracing::error!("inbox 저장 실패: {e:#}");
+                    return;
+                }
+            }
         }
         self.inbox_publish(&item);
     }
@@ -406,47 +415,64 @@ impl Host {
             .collect()
     }
 
-    /// 머신이 오래 끊겼다·돌아왔다. 그 머신에 열린 thread가 있는 프로젝트에 알린다.
+    /// 머신이 오래 끊겼다·돌아왔다. 그 머신에 열린 thread가 있는 프로젝트에 알린다(밖 알림은 한 번으로 묶는다, notify.rs).
     /// 끊긴 시간은 이 host 프로세스가 처음 끊김을 본 때부터 잰다(herdr-projects steps.rs `Outage`).
     /// 옛 `last_seen`으로 재면 host를 다시 띄운 직후 아직 붙지 않은 머신이 오래 끊긴 것으로 보인다.
     fn check_outages(&self, projects: &[String]) {
-        let now = aaa_common::util::now_ms();
+        let machines: Vec<(String, String, bool)> = self
+            .machine_views()
+            .into_iter()
+            .map(|m| {
+                let ok = m.connection != aaa_proto::Connection::Disconnected;
+                (m.id, m.name, ok)
+            })
+            .collect();
+        self.outage_pass(projects, &machines, aaa_common::util::now_ms());
+    }
+
+    /// 머신마다(ID, 이름, 붙었나) 끊김을 한 번 센다
+    pub(crate) fn outage_pass(&self, projects: &[String], machines: &[(String, String, bool)], now: u64) {
         let limit = self.cfg.projects.outage_secs * 1000;
-        for m in self.machine_views() {
-            let ok = m.connection != aaa_proto::Connection::Disconnected;
-            let known = self.outages.lock().unwrap().contains_key(&m.id);
-            let reported = !known
-                && projects.iter().any(|p| self.db.inbox_open_exists(p, "outage", &m.name, "down").unwrap_or(false));
+        for (id, name, ok) in machines {
+            let known = self.outages.lock().unwrap().contains_key(id);
+            let reported = !known && projects.iter().any(|p| self.outage_open(p, name, "down"));
             let event = self
                 .outages
                 .lock()
                 .unwrap()
-                .entry(m.id.clone())
+                .entry(id.clone())
                 .or_insert_with(|| Outage::resumed(reported))
-                .record(ok, now, limit);
+                .record(*ok, now, limit);
             let Some(event) = event else { continue };
             for p in projects {
-                if !self.open_threads(p).iter().any(|r| r.machine_id == m.id) {
+                if !self.open_threads(p).iter().any(|r| r.machine_id == *id) {
                     continue;
                 }
                 match event {
-                    OutageEvent::Down => self.inbox_once(
+                    OutageEvent::Down if !self.outage_open(p, name, "down") => self.inbox_add(
                         p,
                         "outage",
-                        &m.name,
+                        name,
                         "down",
                         &format!(
-                            "머신 {}가 {}분째 연결되지 않는다. thread는 마지막 상태를 유지한다",
-                            m.name,
+                            "머신 {name}: {}분째 연결되지 않는다. thread는 마지막 상태를 유지한다",
                             limit / 60_000
                         ),
                     ),
+                    OutageEvent::Down => {}
                     OutageEvent::Recovered => {
-                        self.inbox_add(p, "outage", &m.name, "recovered", &format!("머신 {}가 다시 연결됐다", m.name))
+                        self.inbox_add(p, "outage", name, "recovered", &format!("머신 {name}: 다시 연결됐다"))
                     }
                 }
             }
         }
+    }
+
+    /// 알린 끊김이 아직 이어지나: 그 대상의 마지막 outage 항목이 끝내지 않은 끊김(머신 `down`, `gh` `failing`)이다.
+    /// 뒤에 회복 항목이 있으면 끝난 끊김이다(끊김 항목을 끝내지 않았어도). 열린 끊김 항목만 보면 회복을 쓴 뒤에도 host를
+    /// 다시 띄울 때마다 「다시 연결」을 또 썼다(plan §8.209)
+    pub(crate) fn outage_open(&self, project: &str, subject: &str, down: &str) -> bool {
+        matches!(self.db.inbox_last(project, "outage", subject), Ok(Some((event, false))) if event == down)
     }
 
     /// project.toml을 읽지 못하면 파일 내용 hash당 한 번 알린다
@@ -651,6 +677,66 @@ impl Outage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 머신 끊김을 host 수준에서 센다(머신 연결 없이 `outage_pass`에 붙음 여부를 준다). 새 `Host`는 머신을 처음 보므로
+    /// host를 다시 띄운 직후와 같다(plan §8.134·§8.209)
+    #[test]
+    fn restarted_host_recovers_only_an_outage_still_open() {
+        let state = std::env::temp_dir().join(format!("aaa-outage-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.projects.outage_secs = 60;
+        let h = Host::open(cfg, state.clone()).unwrap();
+        let projects = ["demo".to_string(), "side".to_string()];
+        for (n, p) in projects.iter().enumerate() {
+            h.project_create(p, Default::default(), "test").unwrap();
+            for (m, machine) in ["m-a", "m-b"].iter().enumerate() {
+                let mut r = ThreadRec::starting(
+                    p,
+                    "일",
+                    machine,
+                    "fake",
+                    aaa_proto::Role::Worker,
+                    aaa_proto::ThreadKind::Dir,
+                    1,
+                );
+                r.id = format!("t-{n}{m}");
+                r.status = ThreadStatus::Open;
+                h.db.thread_import(p, &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+            }
+        }
+        let count = |p: &str, subject: &str, event: &str| {
+            h.db.inbox_list(Some(p), true)
+                .unwrap()
+                .iter()
+                .filter(|i| i.item_kind == "outage" && i.subject == subject && i.event == event)
+                .count()
+        };
+        // 앞 host: mac-a 끊김을 알렸고 회복도 썼다(끊김 항목은 아무도 끝내지 않았다). mac-b는 끊김만 알렸다
+        for p in &projects {
+            h.inbox_add(p, "outage", "mac-a", "down", "끊김");
+            h.inbox_add(p, "outage", "mac-a", "recovered", "회복");
+            h.inbox_add(p, "outage", "mac-b", "down", "끊김");
+        }
+        let machines = |a: bool, b: bool| {
+            [("m-a".to_string(), "mac-a".to_string(), a), ("m-b".to_string(), "mac-b".to_string(), b)]
+        };
+        // 새 host가 붙은 두 머신을 본다: 회복한 mac-a는 다시 쓰지 않고, 열린 끊김 mac-b만 회복을 한 번 쓴다
+        h.outage_pass(&projects, &machines(true, true), 1_000);
+        h.outage_pass(&projects, &machines(true, true), 2_000);
+        for p in &projects {
+            assert_eq!((count(p, "mac-a", "recovered"), count(p, "mac-b", "recovered")), (1, 1), "{p}");
+        }
+        // 회복 뒤 새로 오래 끊기면 다시 알린다(열린 옛 끊김 항목이 막지 않는다)
+        h.outage_pass(&projects, &machines(false, true), 10_000);
+        h.outage_pass(&projects, &machines(false, true), 70_000);
+        for p in &projects {
+            assert_eq!(count(p, "mac-a", "down"), 2, "{p}");
+        }
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
+    }
 
     #[test]
     fn short_outages_write_nothing_and_long_ones_write_one_item_each_way() {

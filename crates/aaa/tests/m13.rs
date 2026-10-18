@@ -3529,9 +3529,10 @@ fn notify_webhook() {
     let made: Vec<u64> =
         items.iter().map(|i| i["id"].as_str().unwrap().rsplit('-').next().unwrap().parse().unwrap()).collect();
     assert!(made[0] < made[1], "{body}");
+    // 글은 웹 push와 같은 꼴: 제목은 프로젝트 이름만, 줄마다 「thread 사건 · thread 제목」(영어 사건을 붙이지 않는다, plan §8.209)
     let text = v["text"].as_str().unwrap();
-    assert!(text.starts_with(&format!("[aaa] demo\n- {first} new report")), "{body}");
-    assert!(text.contains("\n- t-0001 new report") && text.contains("\n- t-0002 new report"), "{body}");
+    assert!(text.starts_with(&format!("demo\n- {first} 보고 준비 · n")), "{body}");
+    assert!(text.contains("\n- t-0001 보고 준비 · n1") && text.contains("\n- t-0002 보고 준비 · n2"), "{body}");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
     // 보고 없이 쉬던 thread의 세션이 끝나면 확인 필요(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
     // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
@@ -3544,7 +3545,9 @@ fn notify_webhook() {
     let v: Value = serde_json::from_str(&body).unwrap();
     let got: Vec<_> = v["items"].as_array().unwrap().iter().map(|i| i["event"].as_str().unwrap()).collect();
     assert_eq!(got, ["pane closed"], "{body}");
-    assert!(body.contains(&format!("- {n3} pane closed: {n3} \\\"n3\\\": 확인 필요(pane closed)")), "{body}");
+    assert_eq!(v["items"][0]["subject"], n3.as_str(), "{body}");
+    // 한 thread면 제목이 그 thread이고 줄은 사건만이다
+    assert_eq!(v["text"], "demo · n3\n- pane 닫힘", "{body}");
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
     // 실패한 알림을 다시 보내지 않는다: 다음 알림(n4 pane closed)을 일으키면 받은 다음 요청에 그 항목만 있다. 다시 보냈다면
     // 실패한 항목이 그보다 먼저(따로 또는 같은 묶음으로) 온다(알림은 한 줄로 차례대로 보낸다, notify.rs `start_notifier`)

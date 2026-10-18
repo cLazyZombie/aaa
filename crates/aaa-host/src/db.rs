@@ -716,6 +716,27 @@ impl Db {
         Ok(())
     }
 
+    /// 새 항목만 넣는다. 같은 ID가 이미 있으면 넣지 않고 false다(다른 프로젝트 항목을 덮어쓰지 않는다)
+    pub fn inbox_insert(&self, i: &aaa_proto::InboxItem) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        let n = c.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,done_at,created_at,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+             ON CONFLICT(id) DO NOTHING",
+            params![
+                i.id,
+                i.project,
+                i.item_kind,
+                i.subject,
+                i.event,
+                i.done,
+                i.done_at_ms.map(|v| v as i64),
+                i.created_at_ms as i64,
+                serde_json::to_string(i)?
+            ],
+        )?;
+        Ok(n == 1)
+    }
+
     /// 만든 순서대로. `all`이 아니면 끝내지 않은 것만.
     pub fn inbox_list(&self, project: Option<&str>, all: bool) -> Result<Vec<aaa_proto::InboxItem>> {
         let c = self.conn.lock().unwrap();
@@ -740,6 +761,18 @@ impl Db {
         )
         .optional()?
         .is_some())
+    }
+
+    /// 그 종류·대상의 마지막 항목(사건, 끝냈는가). 끊김이 회복 없이 아직 이어지는지 본다(inbox.rs `outage_open`)
+    pub fn inbox_last(&self, project: &str, kind: &str, subject: &str) -> Result<Option<(String, bool)>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row(
+            "SELECT event, done FROM inbox WHERE project=?1 AND kind=?2 AND subject=?3
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            params![project, kind, subject],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+        )
+        .optional()?)
     }
 
     /// 프로젝트 inbox 순번(항목 ID에 붙인다)

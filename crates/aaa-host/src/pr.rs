@@ -342,9 +342,9 @@ impl Host {
     fn gh_result(&self, project: &str, failed: Option<&str>) {
         let limit = self.cfg.projects.outage_secs * 1000;
         let now = aaa_common::util::now_ms();
-        // 다시 띄운 host는 앞 host가 연 「gh 실패」 항목을 이어받는다(inbox.rs `Outage::resumed`)
+        // 다시 띄운 host는 앞 host가 알리고 아직 회복하지 않은 「gh 실패」를 이어받는다(inbox.rs `Outage::resumed`·`outage_open`)
         let known = self.pr.lock().unwrap().gh.contains_key(project);
-        let reported = !known && self.db.inbox_open_exists(project, "outage", "gh", "failing").unwrap_or(false);
+        let reported = !known && self.outage_open(project, "gh", "failing");
         let event =
             self.pr.lock().unwrap().gh.entry(project.to_string()).or_insert_with(|| Outage::resumed(reported)).record(
                 failed.is_none(),
@@ -354,13 +354,15 @@ impl Host {
         match (event, failed) {
             (Some(OutageEvent::Down), Some(why)) => {
                 let why = sanitize(why);
-                self.inbox_once(
-                    project,
-                    "outage",
-                    "gh",
-                    "failing",
-                    &format!("`gh`가 {}분째 실패해 PR을 따라가지 못한다. 마지막 오류: {why}", limit / 60_000),
-                );
+                if !self.outage_open(project, "gh", "failing") {
+                    self.inbox_add(
+                        project,
+                        "outage",
+                        "gh",
+                        "failing",
+                        &format!("`gh`가 {}분째 실패해 PR을 따라가지 못한다. 마지막 오류: {why}", limit / 60_000),
+                    );
+                }
                 self.flow_project(project, "gh_failing", None, why);
             }
             (Some(OutageEvent::Recovered), _) => {
@@ -630,6 +632,31 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 다시 띄운 host는 알리고 아직 회복하지 않은 「gh 실패」만 이어받는다: 앞 host가 회복을 쓴 실패는 실패 항목을 끝내지
+    /// 않았어도 끝난 실패다(inbox.rs `outage_open`, plan §8.209)
+    #[test]
+    fn restarted_host_takes_over_only_a_gh_failure_still_open() {
+        let state = std::env::temp_dir().join(format!("aaa-gh-outage-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = state.join("projects").display().to_string();
+        let h = Host::open(cfg, state.clone()).unwrap();
+        let count = |p: &str, event: &str| {
+            h.db.inbox_list(Some(p), true).unwrap().iter().filter(|i| i.subject == "gh" && i.event == event).count()
+        };
+        for p in ["done", "open"] {
+            h.project_create(p, Default::default(), "test").unwrap();
+            h.inbox_add(p, "outage", "gh", "failing", "실패");
+        }
+        h.inbox_add("done", "outage", "gh", "working again", "회복");
+        // 새 host의 첫 gh 결과가 성공이다
+        h.gh_result("done", None);
+        h.gh_result("open", None);
+        assert_eq!((count("done", "working again"), count("open", "working again")), (1, 1));
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
+    }
 
     /// PR 추적 한 번이 panic해도 뒷정리(「도는 중」 지우기)가 돈다(보안 감사 t-0340)
     #[tokio::test]

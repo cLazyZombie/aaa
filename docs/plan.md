@@ -5218,3 +5218,33 @@ primary 근거:
   Claude용 `/bin/sh "$@"` 실행기를 복사하면 Codex 옵션이 sh에 가서 종료하므로 별도로 둔다.
   notify 시험의 Python harness도 launch·resume에서 실제로 받은 첫 옵션을 확인한다.
   임무의 frame 가짜 agent와 Codex 화면 fixture는 실행 인자를 해석하지 않으며 기존 기대를 유지한다.
+### 8.209 휴대폰 알림 글을 간단하게: 제목·본문·머신 알림 한 번(10-18, 사용자 「aaa라는 걸 보여줄 필요가 있나?」)
+- **본 것.** 휴대폰 push 제목이 `aaa · <프로젝트>`, 본문이 `machine mac-a recovered: 머신 mac-a가 다시 연결됐다`였다. 앱 이름과 영어
+  kind·event가 겹치고 조사도 틀렸다. 같은 머신 사건은 그 머신에 thread가 열린 프로젝트 수만큼 알림이 됐다. host를 다시 띄울 때마다
+  「끊김」 없이 「다시 연결」만 왔다. 제목 아래 host 주소 줄은 iOS가 웹 알림에 붙인다. 페이지가 바꿀 수 없다.
+- **참고.** herdr-web-ui `statusMessage`·`endedMessage`는 제목에 pane 이름(원격이면 「머신 · pane」)만 쓰고, 본문에 짧은 사건 말을
+  쓴다. herdr-projects notify.rs는 「<Project> · <thread>」와 「review · new report: 제목」을 쓴다. 둘 다 앱 이름을 붙이지 않는다.
+  herdr-projects는 머신 끊김을 inbox에만 쓰고 알림은 보내지 않는다. 기억(`Memory`)을 저장하지 않아, 다시 띄운 뒤 붙는 것을 알리지 않는다.
+- **제목·본문(notify.rs `alert_text`, 웹 push와 webhook이 같이 쓴다).**
+  - 제목: thread 하나면 「프로젝트 · thread 제목」(누르면 그 thread, 그대로), 프로젝트 항목은 프로젝트 이름만, 머신 사건은 머신 이름
+    (여럿이면 「머신」). 앱 이름은 붙이지 않는다.
+  - 본문: 항목마다 한 줄 「대상 사건 · thread 제목」(`t-0012 보고 준비 · 제목`, `mac-a 다시 연결됨`). 제목이 이미 대상을 말하면
+    사건만 쓴다(`보고 준비`). 사건 말은 고정 한국어(`phrase`)다. 대상 이름 뒤에 붙고 조사가 없다(머신·thread 이름은 받침을 알 수
+    없다). 고정 말이 없는 사건은 요약을 쓴다. inbox 요약(「머신 mac-a: 다시 연결됐다」)도 조사 없는 꼴로 바꿨다.
+  - 텔레그램 글은 제목 한 줄과 `- 줄`이다(`[aaa]` 머리와 영어 사건을 뺐다). json webhook은 `project`(머신 사건이면 null)와 항목마다
+    `project`를 더한다. 웹 앱 안·탭 알림은 이미 「프로젝트 · thread 제목」에 `보고 준비`·`작업 완료`라 바꾸지 않았다. FRONT_API는 그대로다.
+- **머신 사건은 한 번(notify.rs `split_machine`).** 연결 `outage`(gh 빼고)·점검 `health`·세션 끝남(`sessions ended`)은 inbox에는
+  프로젝트마다 그대로 남는다. 밖 알림은 모으는 창마다 같은 종류·머신·사건을 하나로 묶어 머신 자리로 한 번만 보낸다. 흐름 사건
+  (`push_sent`·`notify_sent` 등)은 그 사건을 쓴 프로젝트마다 남긴다. `gh` 실패(프로젝트마다 잰다)와 세션 복원 실패(thread 하나, 줄은 thread ID가 든 요약)는 뺐다.
+- **끊김 없는 「다시 연결」은 쓰지 않는다(inbox.rs `outage_open`).** §8.134는 「열린 끊김 항목이 있으면 알린 것으로 시작」했다. 회복을
+  쓴 뒤에도 끊김 항목을 아무도 끝내지 않으면 그 항목이 늘 열려 있어, host를 다시 띄울 때마다 회복을 또 썼다. 이제 그 대상의 **마지막**
+  outage 항목이 끝내지 않은 끊김(`down`, gh `failing`)일 때만 이어받는다. 끊김 쓰기도 같은 판정이다. 회복 뒤 새로 오래 끊기면,
+  끝내지 않은 옛 끊김 항목이 있어도 다시 쓴다(옛 `inbox_once`는 막았다). gh(pr.rs)도 같다.
+- **inbox ID 겹침.** 항목 ID는 「초-종류-대상-프로젝트 순번」이다. 두 프로젝트가 같은 초에 같은 머신 사건을 쓰고 순번이 같으면
+  ID가 겹쳤다. 그러면 저장(upsert)이 앞 프로젝트 항목의 내용을 덮어쓰고, 뒤 프로젝트에는 항목이 남지 않았다. 새 항목은
+  `inbox_insert`(겹치면 넣지 않음)로 넣고, 겹치면 빈 번호까지 올린다.
+- **시험.** 단위: `alert_lines`(사건 말·조사·영어 없음), `payloads`(제목·자리·누르면 그 thread·머신 자리), `bodies`(텔레그램·json),
+  `machine_items_go_out_once`(묶기), `machine_event_goes_out_once_across_projects`(실제 notifier·loopback webhook: 두 프로젝트의
+  같은 사건이 한 통, 울타리 알림이 다음 요청), `restarted_host_recovers_only_an_outage_still_open`(회복한 끊김은 다시 쓰지 않음·열린 끊김만
+  회복 한 번·회복 뒤 새 끊김·두 프로젝트 ID 겹침), `restarted_host_takes_over_only_a_gh_failure_still_open`. 결함 심기 10건이 각각 실패했다.
+  m13 `notify_webhook`·웹 E2E 12의 기대 글을 새 꼴로 바꿨다.

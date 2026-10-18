@@ -8,8 +8,9 @@
 //! - 404·410이면 브라우저가 구독을 버린 것이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
 //! - 웹 화면을 지금 쓰고 있으면(어느 기기든 보이고 focus가 있으면, events WS `presence`) 어느 기기에도 보내지 않는다
 //!   (herdr-web-ui push.ts `inUse`). 보낼 때 묻는다. 시험 알림과 webhook(텔레그램)은 이와 상관없다.
-//! - 알림 한 자리는 thread 하나다(새 것이 옛 것을 바꾼다, herdr-web-ui `paneNotificationTag`). 여러 thread·머신 항목이
-//!   섞이면 프로젝트 한 자리다.
+//! - 알림 한 자리는 thread 하나다(새 것이 옛 것을 바꾼다, herdr-web-ui `paneNotificationTag`). 여러 thread 항목이
+//!   섞이면 프로젝트 한 자리다. 머신 사건은 프로젝트와 따로 한 번 알린다(머신 자리, notify.rs `Place`).
+//! - 제목·본문은 webhook과 같은 함수(notify.rs `alert_text`)가 짓는다. 앱 이름(aaa)은 제목에 붙이지 않는다.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -187,25 +188,15 @@ pub(crate) fn check_keys(p256dh: &str, auth: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 알림 내용. 한 thread 항목만이면 제목은 「프로젝트 · thread 제목」(`title`이 비면 thread ID), 자리(tag)는 그 thread,
-/// 누르면 그 thread 보기로 연다. 아니면 「aaa · 프로젝트」와 프로젝트 자리다.
-pub(crate) fn payload(project: &str, items: &[InboxItem], title: Option<&str>) -> serde_json::Value {
-    let one = items
-        .first()
-        .map(|i| i.subject.as_str())
-        .filter(|s| items.iter().all(|i| i.subject == *s && i.item_kind == "thread-state"));
-    let (url, head, tag) = match one {
-        Some(t) => (
-            format!("/#thread={}", url_escape(&format!("{project}/{t}"))),
-            format!("{project} · {}", title.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(t)),
-            format!("aaa-{project}/{t}"),
-        ),
-        None => ("/".into(), format!("aaa · {project}"), format!("aaa-{project}")),
-    };
+/// 알림 내용(webhook과 같은 `notify::alert_text`). 줄은 암호문 한 통에 들게 자른다
+pub(crate) fn payload(
+    place: &crate::notify::Place,
+    items: &[InboxItem],
+    titles: &HashMap<String, String>,
+) -> serde_json::Value {
+    let t = crate::notify::alert_text(place, items, titles);
     let mut body = String::new();
-    for i in items {
-        let summary: String = crate::notify::safe_summary(i).chars().take(120).collect();
-        let line = format!("{} {}: {summary}", crate::inbox::who(i), i.event);
+    for line in t.lines {
         if body.len() + line.len() + 1 > BODY_CAP {
             body.push('…');
             break;
@@ -215,11 +206,11 @@ pub(crate) fn payload(project: &str, items: &[InboxItem], title: Option<&str>) -
         }
         body.push_str(&line);
     }
-    serde_json::json!({ "title": head, "body": body, "url": url, "tag": tag })
+    serde_json::json!({ "title": t.title, "body": body, "url": t.url, "tag": t.tag })
 }
 
 /// encodeURIComponent와 같은 규칙(웹이 decodeURIComponent로 읽는다)
-fn url_escape(s: &str) -> String {
+pub(crate) fn url_escape(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
@@ -285,8 +276,13 @@ impl Host {
         }
     }
 
-    /// 구독한 모든 기기에 보낸다. 흐름 사건에는 개수와 실패 까닭만 남긴다.
-    pub(crate) async fn push_items(&self, project: &str, items: &[InboxItem]) {
+    /// 구독한 모든 기기에 보낸다. 흐름 사건에는 개수와 실패 까닭만 남긴다(머신 사건 자리는 그 사건을 쓴 프로젝트마다).
+    pub(crate) async fn push_items(
+        &self,
+        place: &crate::notify::Place,
+        items: &[InboxItem],
+        titles: &HashMap<String, String>,
+    ) {
         if self.vapid.is_none() {
             return;
         }
@@ -301,12 +297,15 @@ impl Host {
                 v.basis(aaa_common::util::now_ms()),
             )
         };
+        let flow = |kind: &str, detail: String| {
+            for project in place.projects() {
+                self.flow_project(project, kind, None, detail.clone());
+            }
+        };
         if let Some((user, devices)) = skip {
             let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
-            self.flow_project(
-                project,
+            flow(
                 "push_skipped",
-                None,
                 format!(
                     "쓰는 기기 {user} · 쓰는 화면 {watching}개(기기 {}) · 항목 {}개 · 근거: {basis}",
                     devices.join(", "),
@@ -331,44 +330,28 @@ impl Host {
                 chose_not += 1;
                 continue;
             }
-            // 한 thread 항목이면 알림 제목에 그 thread 제목을 쓴다
-            let title = mine
-                .first()
-                .filter(|f| mine.iter().all(|i| i.subject == f.subject))
-                .and_then(|f| self.load(project, &f.subject).ok())
-                .map(|r| r.title);
-            let body = payload(project, &mine, title.as_deref()).to_string();
+            let body = payload(place, &mine, titles).to_string();
             match self.push_one(s, body.as_bytes()).await {
                 Sent::Ok => {
                     ok += 1;
-                    self.pushed.lock().unwrap().record(&s.device, project, &mine, aaa_common::util::now_ms());
+                    self.pushed.lock().unwrap().record(&s.device, &mine, aaa_common::util::now_ms());
                 }
                 Sent::Gone => gone += 1,
                 Sent::Failed(e) => failed.push(e),
             }
         }
         if ok > 0 {
-            self.flow_project(
-                project,
-                "push_sent",
-                None,
-                format!("기기 {ok}개 · 항목 {}개 · 근거: {basis}", items.len()),
-            );
+            flow("push_sent", format!("기기 {ok}개 · 항목 {}개 · 근거: {basis}", items.len()));
         }
         if chose_not > 0 {
-            self.flow_project(
-                project,
-                "push_unwanted",
-                None,
-                format!("기기 {chose_not}개가 고른 알림 종류가 아니다 · 항목 {}개", items.len()),
-            );
+            flow("push_unwanted", format!("기기 {chose_not}개가 고른 알림 종류가 아니다 · 항목 {}개", items.len()));
         }
         if gone > 0 {
-            self.flow_project(project, "push_gone", None, format!("버려진 구독 {gone}개를 지웠다"));
+            flow("push_gone", format!("버려진 구독 {gone}개를 지웠다"));
         }
         if !failed.is_empty() {
-            tracing::warn!(%project, "Web Push 실패 {}개(다시 보내지 않는다): {}", failed.len(), failed[0]);
-            self.flow_project(project, "push_failed", None, failed.join("; "));
+            tracing::warn!(projects = ?place.projects(), "Web Push 실패 {}개(다시 보내지 않는다): {}", failed.len(), failed[0]);
+            flow("push_failed", failed.join("; "));
         }
     }
 }
@@ -392,10 +375,10 @@ const PUSHED_KEEP: usize = 100;
 const PUSHED_KEEP_MS: u64 = 24 * 60 * 60 * 1000;
 
 impl PushedLog {
-    pub(crate) fn record(&mut self, device: &str, project: &str, items: &[InboxItem], now: u64) {
+    pub(crate) fn record(&mut self, device: &str, items: &[InboxItem], now: u64) {
         let log = self.0.entry(device.to_string()).or_default();
         for i in items {
-            log.push_back(PushedItem { project: project.to_string(), subject: i.subject.clone(), at_ms: now });
+            log.push_back(PushedItem { project: i.project.clone(), subject: i.subject.clone(), at_ms: now });
         }
         while log.len() > PUSHED_KEEP || log.front().is_some_and(|p| now.saturating_sub(p.at_ms) > PUSHED_KEEP_MS) {
             log.pop_front();
@@ -447,17 +430,17 @@ mod tests {
             done_at_ms: None,
         };
         let mut log = PushedLog::default();
-        log.record("phone", "demo", &[it("t-0001"), it("t-0002")], 1_000);
-        log.record("desk", "demo", &[it("t-0003")], 2_000);
+        log.record("phone", &[it("t-0001"), it("t-0002")], 1_000);
+        log.record("desk", &[it("t-0003")], 2_000);
         let subjects = |l: &PushedLog, d: &str| l.of(d).into_iter().map(|p| p.subject).collect::<Vec<_>>();
         assert_eq!(subjects(&log, "phone"), ["t-0001", "t-0002"]);
         assert_eq!(log.of("desk")[0], PushedItem { project: "demo".into(), subject: "t-0003".into(), at_ms: 2_000 });
         assert!(log.of("tablet").is_empty());
         // 하루가 지난 것은 다음 기록 때 버린다, 기기마다 PUSHED_KEEP개까지
-        log.record("phone", "demo", &[it("t-0004")], 1_000 + PUSHED_KEEP_MS + 1);
+        log.record("phone", &[it("t-0004")], 1_000 + PUSHED_KEEP_MS + 1);
         assert_eq!(subjects(&log, "phone"), ["t-0004"]);
         let many: Vec<InboxItem> = (0..PUSHED_KEEP + 5).map(|i| it(&format!("t-{i:04}"))).collect();
-        log.record("desk", "demo", &many, 3_000);
+        log.record("desk", &many, 3_000);
         assert_eq!(log.of("desk").len(), PUSHED_KEEP);
         // 앞 t-0003과 새 105개 중 오래된 여섯(t-0003, t-0000~t-0004)이 빠진다
         assert_eq!(log.of("desk")[0].subject, "t-0005");
@@ -530,7 +513,7 @@ mod tests {
         let ua = EphemeralPrivateKey::generate(&ECDH_P256, &rng).unwrap();
         let ua_pub = ua.compute_public_key().unwrap().as_ref().to_vec();
         let auth = [7u8; 16];
-        let msg = r#"{"title":"aaa · demo","body":"t-0001 질문"}"#.as_bytes();
+        let msg = r#"{"title":"demo","body":"t-0001 확인창 응답 기다림"}"#.as_bytes();
         let body = encrypt(msg, &B64URL.encode(&ua_pub), &B64URL.encode(auth)).unwrap();
         let (salt, rs, idlen) = (&body[..16], u32::from_be_bytes(body[16..20].try_into().unwrap()), body[20]);
         assert_eq!((rs, idlen), (4096, 65));
@@ -576,12 +559,13 @@ mod tests {
 
     #[test]
     fn payloads() {
-        let item = |subject: &str, kind: &str| InboxItem {
+        use crate::notify::Place;
+        let item = |subject: &str, kind: &str, event: &str| InboxItem {
             id: "x".into(),
             project: "demo".into(),
             item_kind: kind.into(),
             subject: subject.into(),
-            event: "blocked on a prompt".into(),
+            event: event.into(),
             summary: "확인창".into(),
             body: String::new(),
             done: false,
@@ -589,24 +573,48 @@ mod tests {
             created_at_ms: 0,
             done_at_ms: None,
         };
-        // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread
-        let p = payload("demo", &[item("t-0001", "thread-state"), item("t-0001", "thread-state")], Some("웹 결과물"));
+        let q = |s: &str| item(s, "thread-state", "blocked on a prompt");
+        let demo = Place::Project("demo".into());
+        let titles: HashMap<String, String> = [("t-0001".to_string(), "웹 결과물".to_string())].into();
+        // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread, 본문은 사건만(제목이 대상을 말한다)
+        let p = payload(&demo, &[q("t-0001"), item("t-0001", "thread-state", "new report")], &titles);
         assert_eq!(p["url"], "/#thread=demo%2Ft-0001");
-        assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("demo · 웹 결과물"), Some("aaa-demo/t-0001")));
-        // 제목이 없거나 비면 thread ID
-        assert_eq!(payload("demo", &[item("t-0001", "thread-state")], Some("  "))["title"], "demo · t-0001");
-        assert_eq!(payload("demo", &[item("t-0001", "thread-state")], None)["title"], "demo · t-0001");
-        // 머신 항목(세션 끝남)은 thread 자리가 아니다
-        assert_eq!(payload("demo", &[item("mac-b", "session")], None)["title"], "aaa · demo");
-        // 섞이면 프로젝트 한 자리
-        let p = payload("demo", &[item("t-0001", "thread-state"), item("mac-b", "outage")], Some("웹 결과물"));
         assert_eq!(
-            (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str()),
-            (Some("/"), Some("aaa · demo"), Some("aaa-demo"))
+            (p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
+            (Some("demo · 웹 결과물"), Some("aaa-demo/t-0001"), Some("확인창 응답 기다림\n보고 준비"))
         );
-        let p = payload("demo", &[item("t-0001", "thread-state"), item("t-0002", "thread-state")], None);
-        assert_eq!((p["title"].as_str(), p["tag"].as_str()), (Some("aaa · demo"), Some("aaa-demo")));
-        let many: Vec<_> = (0..200).map(|n| item(&format!("t-{n:04}"), "thread-state")).collect();
-        assert!(payload("demo", &many, None)["body"].as_str().unwrap().len() <= BODY_CAP + 3);
+        // 제목이 없거나 비면 thread ID
+        let blank: HashMap<String, String> = [("t-0001".to_string(), "  ".to_string())].into();
+        assert_eq!(payload(&demo, &[q("t-0001")], &blank)["title"], "demo · t-0001");
+        assert_eq!(payload(&demo, &[q("t-0001")], &HashMap::new())["title"], "demo · t-0001");
+        // 섞이면 프로젝트 한 자리: 제목은 프로젝트 이름만(앱 이름 aaa를 붙이지 않는다), 줄마다 「대상 사건 · thread 제목」
+        let p = payload(&demo, &[q("t-0001"), item("t-0002", "thread-state", "new report")], &titles);
+        assert_eq!(
+            (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
+            (
+                Some("/"),
+                Some("demo"),
+                Some("aaa-demo"),
+                Some("t-0001 확인창 응답 기다림 · 웹 결과물\nt-0002 보고 준비")
+            )
+        );
+        // 머신 사건: 머신 하나면 그 이름이 제목이고 본문은 사건만, 여럿이면 「머신」과 줄마다 그 머신
+        let machines = Place::Machines(vec!["demo".into(), "side".into()]);
+        let p = payload(&machines, &[item("mac-a", "outage", "recovered")], &HashMap::new());
+        assert_eq!(
+            (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
+            (Some("/"), Some("mac-a"), Some("aaa-machine-mac-a"), Some("다시 연결됨"))
+        );
+        let p = payload(
+            &machines,
+            &[item("mac-a", "outage", "recovered"), item("mac-b", "outage", "down")],
+            &HashMap::new(),
+        );
+        assert_eq!(
+            (p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
+            (Some("머신"), Some("aaa-machines"), Some("mac-a 다시 연결됨\nmac-b 연결 끊김"))
+        );
+        let many: Vec<_> = (0..200).map(|n| q(&format!("t-{n:04}"))).collect();
+        assert!(payload(&demo, &many, &HashMap::new())["body"].as_str().unwrap().len() <= BODY_CAP + 3);
     }
 }
