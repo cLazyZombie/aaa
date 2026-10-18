@@ -5,6 +5,7 @@
 //! - SESSION_IPC 1.1 session host에는 `Detect`(화면 끝 글·OSC·화면 순번)를, 그 전 session host에는 `Screen`(보이는 화면)을
 //!   보낸다. 옛 session host는 모르는 요청을 받으면 연결을 끊는다.
 //! - herdr는 상태와 「보이는 표지」가 바뀔 때 알리지만 aaa host는 상태만 안다: 상태나 질문 본문이 바뀔 때만 사건을 낸다.
+//!   막힘에 입력이 가면(`input_sent`) 그 뒤 화면의 확인창은 같은 글이어도 새로 묻는 것으로 다시 알린다.
 
 use std::time::Instant;
 
@@ -75,6 +76,16 @@ impl Watch {
                 Some((id, body))
             }
         }
+    }
+
+    /// 세션에 입력이 갔다. 막힘이었으면 답일 수 있다: 그 뒤 화면에 있는 확인창은 같은 글이어도 새로 묻는 것이다
+    /// (herdr-web-ui `server/prompt.ts` `askingEnded`: 「the same prompt on its screen after this is asked anew」).
+    /// 방금 답한 창이 아직 그려져 있을 수 있어, 상태가 그대로면 다음 「보이는 막힘」 갱신(입력에서 800ms 뒤)에 알린다
+    /// (herdr-web-ui `closeQueue`: 답한 질문이 600ms 뒤에도 있으면 그 쌍둥이다).
+    /// 다른 상태는 바뀔 때만 알리므로 이 입력에 달라지지 않는다.
+    pub fn input_sent(&mut self, now: Instant) {
+        self.sent = None;
+        self.detector.hold_refresh(now);
     }
 
     /// 감지 요청의 응답을 평가한다. 알릴 것이 있으면 돌려준다.
@@ -251,5 +262,26 @@ mod tests {
         w.due(t2).unwrap();
         let r = w.answer(t2, detect(3, Some(&next))).unwrap();
         assert!(r.message.unwrap().contains("make this edit?"));
+    }
+
+    /// 확인창에 입력이 간 뒤(답) 화면에 남은 확인창은 같은 글이어도 새로 묻는 것이다(herdr-web-ui `askingEnded`). 방금
+    /// 답한 창이 아직 그려져 있을 수 있어 입력에서 800ms 뒤의 refresh에 알린다(참고 `closeQueue`의 쌍둥이 600ms)
+    #[test]
+    fn a_prompt_still_there_after_an_input_is_asked_anew_at_the_next_refresh() {
+        let t0 = Instant::now();
+        let (mut w, _, _) = started(true, t0);
+        assert_eq!(w.answer(t0, detect(1, Some(CLAUDE_PERMISSION))).unwrap().kind, "question");
+        let t1 = t0 + Duration::from_secs(1);
+        w.input_sent(t1);
+        let t2 = t1 + POLL;
+        w.due(t2).unwrap();
+        assert!(w.answer(t2, detect(2, Some(CLAUDE_PERMISSION))).is_none(), "입력 직후 그대로인 창은 답한 그 창이다");
+        let t3 = t1 + Duration::from_millis(800);
+        w.due(t3).unwrap();
+        let r = w.answer(t3, detect(3, Some(CLAUDE_PERMISSION))).expect("남은 확인창을 다시 알린다");
+        assert_eq!((r.kind, r.message.as_deref()), ("question", Some("Do you want to proceed?")));
+        let t4 = t3 + Duration::from_millis(800);
+        w.due(t4).unwrap();
+        assert!(w.answer(t4, detect(4, Some(CLAUDE_PERMISSION))).is_none(), "한 번 알린 뒤로는 바뀔 때만");
     }
 }

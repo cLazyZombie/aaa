@@ -2470,12 +2470,26 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 지금 상태가 된 때보다 오래된 사건은 상태를 바꾸지 않는다(`next_activity`). agent가 다시 붙을 때 보내는 기억(agent `set_host`, 따로 도는 task)이 그 사이 화면 감지가 낸 새 상태보다 늦게 도착할 수 있다. 사건 때는 모두 그 pane agent의 시계라 비교할 수 있다. host가 처음 듣는 pane(host 재시작)은 기억으로 정한다.
   - 질문은 그 pane 세션이 끝나거나 pane이 없어지면 닫는다(Gone, QA t-0337 Q4: 닫은 pane의 질문이 「답을 기다리는 질문」에 남고 답하면 「pane이 없다」). 세션 상태가 끝남으로 바뀔 때(`on_session`)와, agent가 다시 붙어 세션을 모두 알릴 때 이 머신에서 살아 있지 않은 pane의 질문(host·agent가 내려간 사이 끝난 세션)이다. 화면 감지로 working·idle·끝남이 와도 그 pane의 열린 질문을 모두 닫는다. 참고 herdr-web-ui는 질문을 기록하지 않고 살아 있는 blocked pane 화면에서 읽어(`server/prompt.ts`), pane_exited·pane_closed면 pane과 함께 질문도 사라진다(`server/collector.ts` `parseStructureFrame`).
   - 답한 확인창 뒤에 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16: 부하에서 PermissionRequest → 답 → 1.3초 뒤 Claude Notification `permission_prompt`가 와 답한 질문이 다시 열리고 입력 대기로 돌아오지 않았다). 참고 herdr 0.9.5는 상태 hook을 쓰지 않는다: 옛 설치의 hook script도 `session` 말고는 exit 0(`integration/assets/claude/herdr-agent-state.sh`), 설치 때 PermissionRequest·Stop 등 상태 hook을 지운다(`claude_settings.rs` `HOOK_REMOVALS`). 옛 herdr도 Notification을 상태로 쓰지 않았다. 그래서 새 agent는 옛 agent가 띄운 세션의 Notification·PermissionRequest를 버린다. host는 아직 받는 옛 agent의 hook `question`에 화면 감지와 같은 규칙을 둔다: 상태가 질문에서 넘어가지 않은 같은 막힘에서 이미 답했으면 질문을 열지 않는다(화면 감지는 막힘에 들어설 때만 알려 한 막힘에 질문이 하나다). 답한 표지는 상태가 질문에서 넘어가면 지운다.
+  - **답하자마자 같은 물음이 다시 뜨면 둘째도 질문이다(10-18, QA t-0337 Q18).** Claude는 병렬 도구 호출마다 확인창을 잇달아 띄운다. 두 창 사이에 빈 화면이 없으면 화면 감지는 막힘이 이어진 것만 본다. 같은 글이면 「보낸 것과 같다」로 알리지도 않아, 둘째 창은 질문이 되지 못했다.
+    - 참고 herdr-web-ui는 답을 보내면 그 pane의 물음을 끝내고, 그 뒤 화면에 있는 확인창은 같은 글이어도 새 카드다(`server/prompt.ts` `askingEnded`: 「the same prompt on its screen after this is asked anew」). 일을 다시 하면 끝내는 것(`promptWaitEnded`)은 aaa에서 작업 중 → 질문 닫기다.
+    - agent: 세션에 입력이 가면 보낸 상태 기억을 지운다(`detect::Watch::input_sent`). 상태가 막힘 그대로면 다음 「보이는 막힘」 갱신에 질문을 다시 알린다. 그 갱신은 입력에서 800ms 뒤로 미룬다. 방금 답한 창이 아직 그려져 있을 수 있기 때문이다(참고 `closeQueue`: 답한 질문이 600ms 뒤에도 있으면 그 쌍둥이다).
+    - host: 이 agent(hello feature `ask_anew.v1`)의 질문 사건은 답한 질문 뒤라도 새 질문이다. 옛 agent의 hook 질문만 위의 「같은 막힘에서 답했으면 열지 않는다」를 쓴다. 사람이 터미널에서 친 입력 뒤의 다시 알림은 열린 질문에 합쳐진다(`ask`).
+    - 시험: m12 `the_same_prompt_asked_again_right_after_its_answer_is_a_new_question`(가짜 claude `--ask2`: 답하면 지우고 같은 창을 한 번에 다시 그린다 → 둘째 질문 사건 → 답 → 끝 표지, 질문 둘 다 answered). agent 단위 `a_prompt_still_there_after_an_input_is_asked_anew_at_the_next_refresh`(입력 직후 그대로인 창은 알리지 않고 800ms 뒤 한 번 알린다). 결함 심기 셋(agent 입력 표시·host 거르기·refresh 미루기)을 잡았다.
   - t-0331 고침(§8.99)과 합침: 같은 결함을 t-0331이 먼저 hook 이름 짝짓기(`late_pair`)로 고쳤다. 같은 기능을 두 벌 두지 않으려고 참고에 가까운 이쪽 하나만 남기고 `late_pair`·`HarnessEvent.hook`·pane의 hook 기억을 없앴다. 참고는 host에서 hook을 짝짓지 않고 상태 hook을 아예 버린다. 새 agent는 짝 hook 둘 다 보내지 않고 옛 agent는 hook 이름을 싣지 않으므로, `late_pair`가 쓰일 길도 없었다. 옛 agent는 도구마다 PreToolUse·PostToolUse(`working`)를 내므로 같은 턴의 다음 확인창은 새 막힘이다(답한 표지가 다음 확인창을 삼키지 않는다).
   - 답 키: Codex 0.163 승인 창의 맨 아래 줄 「Press enter to confirm or esc to cancel」을 선택 창 표지에 더했다(실측). 참고 herdr-projects는 사람이 고른 키(`thread keys`)를 보내고 선택지를 읽지 않는다. aaa `question answer`는 aaa 기능이라 표지를 실제 화면으로 맞춘다.
   - 질문·메시지 ID는 ULID의 무작위 부분 10자다(`harness.rs` `short_id`). 전에는 앞 10자(ms 시각)라 같은 ms에 만든 둘이 같은 ID가 되어 둘째가 첫째 기록을 덮었다(저장이 `ON CONFLICT(id) DO UPDATE`). 위 늦은 질문 단위 시험이 빠르게 돌 때 다음 확인창의 질문이 답한 질문과 같은 ID로 나와 드러났다(10-18 ci). 시험 `ids_made_in_the_same_millisecond_differ`(옛 ID로 되돌리면 실패한다).
+- **셸 pane 안의 Claude·Codex도 감지한다(10-18, QA t-0337 Q21, 결정 D8 「참고대로」: 사용자는 셸에서 claude를 띄워 쓰고 재부팅 복원도 셸에 `--resume`을 친다).** 전에는 띄울 때 harness를 아는 pane(profile harness·argv 첫 낱말)만 화면을 봤고, 셸에서 띄운 agent는 늘 「입력 대기」였다.
+  - 참고 herdr 0.9.5 `src/pane.rs` `spawn_basic_detection_task`: pane 셸의 제어 터미널 앞 프로세스 그룹(`tpgid`)을 300ms마다 읽고, 그룹이 바뀌거나 정한 간격이 되면 그룹 프로세스를 조사해 이름으로 agent를 정한다(`identify_agent_process_in_job`·`normalized_process_name`: `argv[0]`·`process.title`, 셸·node·python이면 그것이 돌리는 스크립트 이름, symlink 끝 이름).
+  - aaa agent `detect::foreground`가 그것을 Claude·Codex만 옮겼다. 앞 그룹은 cwd follow(§8.76)가 쓰는 `foreground_process_group_id`(macOS `e_tpgid`, Linux `/proc/<pid>/stat`)다. 그룹 프로세스는 macOS `proc_listpids(PROC_PGRP_ONLY)`·`KERN_PROCARGS2`, Linux `/proc` 자손 훑기다. session IPC는 그대로다(agent가 셸 pid로 본다).
+  - 잡기: 앞 agent를 찾으면 그 harness로 화면 감지를 새로 시작한다(시작 유예 3초, herdr `AGENT_STARTUP_GRACE_WINDOW`). 다시 보는 간격은 herdr 값이다: agent가 있으면 그룹이 바뀌거나 5초(`PROCESS_RECHECK_IDENTIFIED`), 없으면 그룹이 바뀔 때. 바뀐 그룹 이름을 모르면 1.5초까지 0.5초, 8초까지 2초마다 다시 본다(`PROCESS_ACQUISITION_*`).
+  - 놓기: 셸이 다시 앞에 오면 앞 agent의 끝을 idle로 알린 다음 차례에 놓는다(herdr `ReportProcessExit` → `ClearAgent`). 셸이 아닌 것이 앞인데 agent로 보이지 않으면 6번 연달아 놓친 뒤 놓는다(`AGENT_MISS_CONFIRMATION_ATTEMPTS`).
+  - 놓기는 harness 사건 `released`(kind 글만 더함, AGENT_LINK·FRONT_API 그대로)다. host는 그 pane의 agent 상태를 지우고 질문을 닫는다. 옛 host는 모르는 kind로 버린다. 놓은 셸은 재부팅 복원에서 대화를 잇지 않는다(herdr도 놓은 agent를 세션에 남기지 않는다). `harness.json`의 마지막 상태가 `released`라 다시 붙어도 그대로다.
+  - 띄울 때 harness를 아는 pane(argv가 claude·codex, profile harness)은 전처럼 그 harness로만 보고 앞 프로세스는 보지 않는다.
+  - **참고와 다른 것(이유).** 백그라운드로 보낸 agent 붙잡기(`AgentJobTracker`, Ctrl-Z 뒤 셸이 앞이어도 agent를 남김)·lifecycle hook 권한(pi 등, aaa harness 아님)·Herdr 환경 표지(`process_agent_hint`)는 옮기지 않았다. 그래서 Ctrl-Z로 멈춘 claude는 놓는다. Windows는 셸 안 agent를 감지하지 않는다(아래 「herdr와 다르게 둔 것」).
+  - 시험: m12 `a_claude_started_in_a_shell_is_detected_and_released_when_it_exits`(셸에서 친 가짜 claude의 확인창 → 질문 → 답 → 셸로 돌아와 agent 없음 → 재부팅 복원은 빈 셸, 뒤에 친 표지만 화면에 있다). agent 단위: 이름 판정 표(herdr 시험의 Claude·Codex 몫), 잡기·끝·놓기·다시 뜸·놓침 6번·바뀐 그룹 다시 보기, 이 Mac의 실제 프로세스(스크립트 `claude`를 제 그룹 leader로 띄워 조사). 가짜 claude는 `exec cat` 대신 줄 되돌려 쓰기로 바꿨다(exec하면 앞 프로세스가 cat이 된다). 결함 심기 다섯(조사 없음·host 무시·놓기 안 알림·셸 앞이어도 남김·스크립트 인자 무시)을 잡았다.
 - **herdr와 다르게 둔 것.**
-  - 프로세스 판별(foreground 프로세스 이름으로 agent 찾기·바뀜·끝남, herdr `src/detect/mod.rs` 186~290줄)은 없다. aaa 세션은 harness 하나를 띄우고 끝나면 세션도 끝난다. 셸에서 사람이 띄운 claude·codex는 감지하지 않는다(차이 목록에 줄이 없고 3 OS 프로세스 코드가 필요하다).
   - 규칙 원격 갱신·local override·explain 명령은 없다(§8.3 「감지 규칙 고정」).
+  - Windows 감지(Toolhelp 트리) 미이식(10-18 coordinator 결정: aaa를 쓰는 기기는 지금 macOS뿐이다). herdr `src/platform/windows.rs`는 셸 앞 agent를 프로세스 그룹 대신 Toolhelp 프로세스 트리로 찾는다. aaa agent는 Windows에서 셸 pane 안의 Claude·Codex를 찾지 않고(`foreground_tick`은 unix만), 띄울 때 harness를 아는 pane만 화면으로 감지한다. 셸 안 감지 시험(m12·실제 프로세스 단위 시험)도 unix에서만 돈다.
   - Codex 세션 ID는 SessionStart hook 대신 notify(`thread-id`)로 받는다. herdr는 `~/.codex/hooks.json`을 고치지만 aaa는 사용자 설정을 고치지 않는다(§8.15).
 - **운영 pane 확인(t-0334 결함 1, shadow/t-0002, 10-18 01:1x, 읽기만).**
   - 증상: 운영 host가 10시간 넘게 「작업 중」(harness working)이라 했는데 화면은 턴이 끝난(「done 10:21 AM」) 뒤 입력 대기였다.
@@ -2524,6 +2538,9 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **설정(herdr `[session]` 이름·기본값 그대로).** host.toml `[session] resume_agents_on_restore = true`, `startup_per_agent_delay_ms = 100`(이어가기 사이 간격, herdr `start_pending_agent_resumes`). 끄면 셸은 되살리고 대화는 잇지 않는다(셸 안의 agent는 빈 셸로, harness pane과 thread는 중단으로).
 - **결정 8-5와 다름.** 결정 8-5(정할 것 5)는 「자동 이어가기 꺼짐 + opt-in」이었다. 결정 20 D12가 「재부팅 뒤 대화 자동 이어가기」를 참고대로 하기로 바꿔 기본 켬이다. §8.3·§8.5의 턴 끝 자동 이어가기(문구 보내기)는 다른 것이라 그대로 없다.
 - **harness 세션 ID를 연결 즉시 안다.** agent가 세션별 마지막 harness 사건(`harness.json`)을 hello(`AgentHello.harness`)에 싣는다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다(옛 host에는 전처럼 보낸다). AGENT_LINK는 그대로(필드는 serde 기본값), session IPC도 그대로다.
+- **끊긴 pane에는 질문을 다시 열지 않는다(10-18, QA t-0337 Q20).** hello의 마지막 사건이 확인창(질문)이면, host는 살아 있지 않은 pane의 질문을 닫은 뒤 그 사건을 적용하며 옛 pane ID로 질문을 다시 열었다. 그 질문은 복원 뒤에도 남았다.
+  - 이제 host는 끝난 세션(`Interrupted`·`Exited`·`Lost`)의 harness 사건으로는 질문을 열지 않는다(상태와 harness 세션 ID는 그대로 적는다). 참고 herdr-web-ui도 살아 있는 blocked pane 화면에서만 질문을 읽는다.
+  - 시험 m12 `reboot_does_not_reopen_the_question_of_an_interrupted_pane`(가짜 claude `--ask`가 확인창을 띄운 채 재부팅 → 복원한 pane이 `--resume`을 받은 뒤 옛 pane 질문이 없다). 검사를 빼면 「끊긴 pane의 질문이 다시 열렸다」로 실패한다.
 - **복원 중 묶음 셈.** 복원하는 동안 ticker는 그 머신 thread의 묶음 전이·「세션이 모두 끝났다」를 세지 않는다(사라졌다가 돌아온 것으로 보지 않게). 끝나면 ticker를 깨운다.
 - **t3code와 비교.** t3code `apps/server/src/orchestration-v2/RestartContinuation.ts`는 재시작 때 턴 중이던 run에 「Continue where you left off.」를 보낸다(사람 답을 기다리던 run은 막고, 이어서 3번까지). herdr는 대화만 다시 연다. aaa는 herdr대로 했다(보고 「아침 확인」).
 - **계약.** FRONT_API 1.16(`PaneView.restore_error`, 선택 필드).
@@ -3085,6 +3102,35 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다시 띄우면.** 열린 thread가 되고 `error`를 지운다(참고 `finish_placement`). 다시 띄우다 실패하면 기록은 그대로다(참고도 restart 실패를 적지 않는다).
 - **시험.** host 유닛 `restart_plan_follows_herdr_projects`(참고 `restart_case_*`: (a)·(e)·(d)·시작 중·끝냄·이을 대화 없음). m13 `failed_threads_restart_from_the_place`: git이 아닌 repo로 시작이 실패하면 오류가 ID와 다시 하는 법을 말하고 failed·사람 차례다. `--resume`은 거부, branch만 있는 것은 거부(b), repo를 고친 뒤 restart는 자리부터 만들고 앞선 시도 안내 brief를 전하며 `error`는 비고, 끝낸 thread는 `--reopen`을 안내한다. 결함 심기(되돌렸다): failed를 거부하면 둘 다, `--resume` 거부를 빼면 둘 다, error를 지우지 않거나 시작 오류에 안내가 없거나 agent의 branch 검사를 빼거나 다시 시작 안내 없는 brief면 m13이 실패한다.
 - **세션을 띄우다 실패한 길은 E2E가 없다.** 그 길을 만들려면 공용 시험 설정(허용 profile 목록)에 없는 실행 파일 profile을 더해야 하고 다른 시험의 단언이 바뀐다. 그 길은 열린 thread의 다시 시작과 같은 코드라(m13 `restart_with_another_profile`) 판단만 유닛으로 본다.
+
+### 8.143 셸에서 `exit`하면 pane·탭·workspace를 닫는다(10-18, 사용자 요청 「다 사용한 탭은 exit로 하면 자동으로 닫히면 좋겠어」)
+- **참고.** herdr 0.9.5는 pane 프로세스가 끝나면(`AppEvent::PaneDied` → `handle_pane_died`) 그 pane을 layout에서 뺀다(`Workspace::remove_pane`).
+  - 탭의 마지막 pane이면 탭을, workspace의 마지막 탭이면 workspace를 지운다. workspace가 하나도 남지 않으면 Navigate 모드로 간다.
+  - 끝난 pane을 남겨 두는 설정(remain-on-exit)은 없다.
+- **aaa.** host가 셸 pane이 실행 중에서 `Exited`로 바뀌는 것을 보면 그 pane을 닫는다. 보는 길은 agent 사건(`on_session`)과 agent가 다시 붙을 때의 `hello.sessions` 둘이다.
+  - 기록을 지우고(`forget`, 감사 actor `exit`) 모든 layout에서 뺀다. 빈 탭은 없어진다.
+  - 그래서 탭이 남지 않은 workspace도 지운다(`workspace_close`와 같은 감사·빈 Workspace 사건). main은 지워도 목록에 늘 보인다(빈 main, TUI 「탭이 없다」).
+- **닫지 않는 것.**
+  - 재부팅으로 끊긴 pane(`Interrupted`)·session host 유실(`Lost`): 복원 대상이다(§8.111). 끝남(`Exited`)이 아니라 닫히지 않는다.
+  - host가 실행 중을 본 적이 없는 세션: host를 다시 띄운 뒤 처음 듣는 끝난 세션이다(host는 pane 기록을 메모리에만 둔다). 다시 붙어 실행 중을 본 뒤 끝나면 닫는다.
+  - host가 끝내기를 보낸 pane(`pane kill`): 다시 열려고 남긴다(aaa 확장, 웹 줄 메뉴 「다시 열기」). 탭·pane 닫기는 스스로 기록을 지운다.
+  - 역할 pane(thread·평가자): 수명은 thread 명령이 정한다(`close_panes`와 같은 규칙).
+  - 프로그램 pane(셸이 아닌 명령, `sh -c …`): 끝난 화면과 종료 코드를 남긴다. herdr pane은 늘 셸이라 이 경우가 없다(aaa 확장).
+- **초점(TUI).** 보던 pane이 빠지면 차례상 다음 pane, 끝이면 앞 pane이다(herdr `TileLayout::close_focused`). 보던 탭이 없어지면 앞 탭이다(herdr `Workspace::close_tab`·`remove_pane`).
+  - 다른 front의 탭 닫기에도 같다. herdr의 「초점이 왔던 pane」 기억(`prev_focus`)은 aaa TUI에 없어 차례만 본다.
+- **웹.** 목록이 host 상태 사건으로 바뀌어 닫힌 pane 줄이 사라진다. 고른 pane이 닫히면 선택을 놓는다.
+  - herdr-web-ui는 그 PC의 herdr 초점 pane을 고른다. aaa 웹은 layout을 받지 않아 고를 초점이 없다.
+- **herdr와 다른 것.** herdr는 신호로 끝난 pane(`ChildExitReason::Interrupted`)도 닫되, 그 전에 세션을 저장해 다음 시작에 되살린다(`checkpoint_session_before_pane_exit`).
+  - aaa session host는 종료 코드만 적는다(portable-pty `exit_code`, 신호는 1). 그래서 사람의 `exit 1`과 신호를 가르지 못하고, 다른 프로세스가 신호로 끝낸 셸도 닫힌다.
+  - 재부팅은 boot ID로 가린다(`Interrupted`).
+- **시험.** `m12 shell_exit_closes_its_pane_tab_and_workspace`:
+  - 나눈 pane의 exit → 그 자리에서 빠진다. 탭의 마지막 pane `exit 3` → 탭이 없어진다. 다른 workspace의 마지막 탭 → workspace가 없어진다.
+  - agent를 내린 사이 fifo로 끝낸 셸 → 다시 붙을 때 닫힌다.
+  - `pane kill`한 셸과 프로그램 pane(`exit 4`)은 남는다. 둘은 뒤에 닫힌 pane보다 먼저 끝났다.
+  - `e2e host_restart_keeps_sessions_and_disconnect_is_readonly`: host를 다시 띄운 뒤의 셸 `exit 3`도 닫힌다.
+  - host 단위 `only_a_shell_that_exited_by_itself_closes`(복원 대상·kill·역할·프로그램·이미 끝난 것), TUI 단위 `a_removed_tab_or_pane_moves_like_herdr`.
+  - 기다림은 host 사건·출력·종료 기록 파일뿐이다.
+  - 결함 심기 아홉(다시 붙는 길·kill 표시·빈 workspace·live 길·셸·역할·실행 중 검사·앞 탭·다음 pane)을 모두 잡았다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

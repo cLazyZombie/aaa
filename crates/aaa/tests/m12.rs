@@ -9,7 +9,9 @@ mod lab;
 use std::time::Duration;
 
 use aaa_common::front::FrontClient;
-use aaa_proto::{B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse, SessionState};
+use aaa_proto::{
+    AgentActivity, B64, ErrorCode, FrontEvent, FrontMsg, FrontRequest, FrontResponse, QuestionState, SessionState,
+};
 use lab::watch::HostWatch;
 use lab::{Lab, Node, wait_for};
 
@@ -194,7 +196,15 @@ echo "fake-claude $*"
 sid=$FAKE_SID
 case "$1" in --resume|--session-id) sid=$2 ;; esac
 [ -n "$sid" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$sid\",\"source\":\"startup\"}"
-exec cat
+# `--ask`: 확인창을 띄우고(화면 감지가 질문으로 본다) 답을 받으면 끝낸다. `--ask2`: 답하면 같은 확인창을 곧바로 다시
+# 그린다(지우고 그리기를 한 번에 써 감지가 빈 화면을 보지 않는다)
+ask=' Bash command\n\n   make test\n\n Do you want to proceed?\n \342\235\257 1. Yes\n   2. No\n\n Esc to cancel\n'
+case " $* " in
+  *" --ask2 "*) printf "$ask"; read -r x; printf "\033[2J\033[H$ask"; read -r x; echo "answered-twice" ;;
+  *" --ask "*) printf "$ask"; read -r x; echo "answered"; exit 0 ;;
+esac
+# 받은 줄을 되돌려 쓴다(cat처럼). exec하지 않아 앞 프로세스가 이 claude로 남는다(셸 pane은 앞 프로세스로 agent를 찾는다)
+while IFS= read -r l; do printf '%s\n' "$l"; done
 "#;
 
 /// 시험 대화 ID(harness 세션 ID는 UUID 꼴만 받는다, `aaa_common::util::harness_session_ok`)
@@ -313,6 +323,88 @@ fn reboot_restores_shells_and_resumes_agents() {
     let nd = p["id"].as_str().unwrap().to_string();
     h.wait_output(&nd, "job-ran-9", T);
     hw.wait("재개 자리", |w| (w.leaves().get(3) == Some(&nd)).then_some(()));
+}
+
+/// QA t-0337 Q20: 확인창을 띄운 채 재부팅으로 끊긴 Claude pane. 다시 붙은 agent가 그 세션의 마지막 상태(질문)를
+/// 알려도(`hello.harness`) 끊긴 pane에 질문을 다시 열지 않는다(전에는 닫은 뒤 옛 pane ID로 다시 열려 복원 뒤에도 남았다).
+/// 질문은 agent가 다시 붙는 처리 안에서 열렸으므로, 복원한 pane이 보이면 이미 열렸을 때다.
+#[test]
+fn reboot_does_not_reopen_the_question_of_an_interrupted_pane() {
+    let mut lab = Lab::new();
+    let (claude, env) = fake_claude_env(&lab);
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", SID_C, "--ask"], None);
+    let asks = |pane: &str| -> Vec<serde_json::Value> {
+        let v = h.ok(&["question", "list"]);
+        v["questions"].as_array().unwrap().iter().filter(|q| q["pane"] == pane).cloned().collect()
+    };
+    hw.wait("harness 세션 ID", |w| has_session(w, &c).then_some(()));
+    wait_for("확인창 질문", T, || (!asks(&c).is_empty()).then_some(()));
+    reboot(&mut lab, &h, &env, 1);
+    let n = hw.wait("복원", |w| {
+        let l = w.leaves();
+        (l.len() == 1 && l[0] != c && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then(|| l[0].clone())
+    });
+    h.wait_output(&n, &format!("fake-claude --resume {SID_C}"), T);
+    assert_eq!(asks(&c), Vec::<serde_json::Value>::new(), "끊긴 pane의 질문이 다시 열렸다");
+}
+
+/// QA t-0337 Q18: 답하자마자 같은 물음의 확인창이 다시 뜨면(Claude는 병렬 도구 호출마다 묻는다) 둘째도 질문이다. 막힘이
+/// 이어져 화면 감지는 바뀐 것을 보지 못한다: 막힘에 입력이 간 뒤 화면에 남은 확인창은 새로 묻는 것이다(herdr-web-ui
+/// `askingEnded`, agent `Watch::input_sent`). 기다림은 host 질문 사건과 출력이다.
+#[test]
+fn the_same_prompt_asked_again_right_after_its_answer_is_a_new_question() {
+    let mut lab = Lab::new();
+    let (claude, env) = fake_claude_env(&lab);
+    let (h, _hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let mut ev = lab::Events::connect(&h);
+    let c = h.new_pane(None, "labA", Some("c"), &[&claude, "--session-id", SID_C, "--ask2"], None);
+    let mut open = |what: &str, not: Option<&str>| -> String {
+        ev.wait(what, T, |e| match e {
+            FrontEvent::Question(q) if q.pane == c && q.state == QuestionState::Open && Some(q.id.as_str()) != not => {
+                Some(q.id.clone())
+            }
+            _ => None,
+        })
+    };
+    let q1 = open("첫 질문", None);
+    h.ok(&["question", "answer", &q1, "yes"]);
+    let q2 = open("같은 물음의 둘째 질문", Some(&q1));
+    h.ok(&["question", "answer", &q2, "yes"]);
+    h.wait_output(&c, "answered-twice", T);
+    let v = h.ok(&["question", "list", "--all"]);
+    let states: Vec<_> =
+        v["questions"].as_array().unwrap().iter().map(|q| q["state"].as_str().unwrap().to_string()).collect();
+    assert_eq!(states, ["answered", "answered"], "{v}");
+}
+
+/// QA t-0337 Q21: 셸 pane에서 띄운 Claude도 상태를 본다(herdr 0.9.5: pane 셸의 앞 프로세스 이름으로 agent를 찾는다,
+/// agent `detect::foreground`). 셸이 다시 앞에 오면 끝을 알린 뒤 pane은 agent 없는 셸이다. 놓은 셸은 재부팅 복원에서
+/// 대화 이어가기를 치지 않는다(SessionStart hook이 harness 세션 ID를 알렸어도). 기다림은 host 사건과 출력이다.
+#[test]
+fn a_claude_started_in_a_shell_is_detected_and_released_when_it_exits() {
+    let mut lab = Lab::new();
+    let (_, env) = fake_claude_env(&lab);
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &env);
+    let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], None);
+    h.ok(&["pane", "run", &a, &format!("FAKE_SID={SID_A} claude --ask")]);
+    hw.wait("셸 안 Claude의 확인창", |w| {
+        let s = w.pane(&a)?.agent.as_ref()?;
+        (s.activity == AgentActivity::Question && s.harness == "claude").then_some(())
+    });
+    let v = h.ok(&["question", "list"]);
+    let q = v["questions"].as_array().unwrap().iter().find(|q| q["pane"] == a.as_str()).expect("질문");
+    h.ok(&["question", "answer", q["id"].as_str().unwrap(), "yes"]);
+    h.wait_output(&a, "answered", T);
+    hw.wait("셸로 돌아와 놓음", |w| w.pane(&a)?.agent.is_none().then_some(()));
+    reboot(&mut lab, &h, &env, 1);
+    let n = hw.wait("셸 복원", |w| {
+        let l = w.leaves();
+        (l.len() == 1 && l[0] != a && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then(|| l[0].clone())
+    });
+    h.ok(&["pane", "run", &n, "echo plain-$((2+2))"]);
+    h.wait_output(&n, "plain-4", T);
+    assert!(!h.screen(&n).contains("fake-claude"), "놓은 셸에 대화 이어가기를 쳤다:\n{}", h.screen(&n));
 }
 
 /// 보안 감사 t-0340: hook이 알린 harness 세션 ID는 UUID 꼴만 받는다(`aaa_common::util::harness_session_ok`). 셸 pane의
@@ -438,6 +530,73 @@ fn pane_rename_survives_agent_restart_exit_and_resume() {
     assert_eq!(h.pane(&id)["name"], "끝난 뒤", "세션이 끝나도 붙인 이름");
     let p = h.ok(&["pane", "resume", &id]);
     assert_eq!((p["name"].as_str(), p["state"].as_str()), (Some("끝난 뒤"), Some("running")));
+}
+
+/// 셸에서 `exit`하면(셸이 스스로 끝남) 그 pane을 닫는다(herdr 0.9.5 `handle_pane_died`·`Workspace::remove_pane`, plan §8.143):
+/// 나눈 자리에서 빠지고, 탭의 마지막 pane이면 탭이, workspace의 마지막 탭이면 workspace가 없어진다. agent가 내려간 사이
+/// 끝난 셸도 다시 붙을 때 닫는다. `pane kill`로 끝낸 셸과 프로그램 pane은 끝난 화면과 종료 코드를 남긴다.
+#[test]
+fn shell_exit_closes_its_pane_tab_and_workspace() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start_watch(&mut lab, LOCAL_ONLY, &[]);
+    let a = h.new_pane(None, "labA", Some("a"), &["/bin/sh"], None);
+    let w = h.ok(&["pane", "split", &a, "--direction", "right"]);
+    let b = w["tabs"][0]["root"]["b"]["pane"].as_str().unwrap().to_string();
+    let c = h.new_pane(None, "labA", Some("c"), &["/bin/sh"], None);
+    let k = h.new_pane(None, "labA", Some("k"), &["/bin/sh"], None);
+    let p = h.new_pane(None, "labA", Some("p"), &["/bin/sh", "-c", "read x; exit 4"], None);
+    let up = [&a, &b, &c, &k, &p];
+    hw.wait("모두 실행 중", |w| {
+        up.iter().all(|id| w.pane(id).is_some_and(|v| v.state.is_running())).then_some(())
+    });
+
+    // 남기는 것 먼저 끝낸다: 사람이 끝낸 셸, 프로그램 pane
+    h.ok(&["pane", "kill", &k]);
+    h.ok(&["pane", "run", &p, "go"]);
+    hw.wait("k·p 끝남", |w| {
+        let k_done = w.pane(&k).is_some_and(|v| matches!(v.state, SessionState::Exited { .. }));
+        (k_done && w.pane(&p)?.state == SessionState::Exited { code: Some(4) }).then_some(())
+    });
+    // 나눈 pane 하나: 그 자리에서 빠지고 옆 pane이 탭을 채운다
+    h.ok(&["pane", "run", &b, "exit"]);
+    let tabs = |w: &HostWatch| -> Vec<Vec<String>> {
+        w.ws.iter().flat_map(|ws| ws.tabs.iter().map(|t| aaa_proto::layout::leaves(&t.root))).collect()
+    };
+    hw.wait("b 닫힘", |w| (w.pane(&b).is_none() && tabs(w)[0] == [a.clone()]).then_some(()));
+    // 앞서 끝난 k·p는 닫는 일이 그 앞에 끝났을 것이다: 그대로 남았다
+    assert_eq!(tabs(&hw), [vec![a.clone()], vec![c.clone()], vec![k.clone()], vec![p.clone()]]);
+    assert!(matches!(hw.pane(&k).unwrap().state, SessionState::Exited { .. }));
+    assert!(h.screen(&p).contains("go"), "프로그램 pane은 끝난 화면을 남긴다");
+    // 탭의 마지막 pane이면 탭이 없어진다
+    h.ok(&["pane", "run", &c, "exit 3"]);
+    hw.wait("c의 탭 닫힘", |w| (w.pane(&c).is_none() && tabs(w).len() == 3).then_some(()));
+
+    // workspace의 마지막 탭이면 workspace가 없어진다(main은 늘 보인다)
+    let s = h.new_pane(Some("side"), "labA", None, &["/bin/sh"], None);
+    hw.wait("s 실행 중", |w| w.pane(&s).is_some_and(|v| v.state.is_running()).then_some(()));
+    h.ok(&["pane", "run", &s, "exit"]);
+    hw.wait("s 닫힘", |w| w.pane(&s).is_none().then_some(()));
+    let names = || -> Vec<String> {
+        let v = h.ok(&["workspace", "list"]);
+        v["workspaces"].as_array().unwrap().iter().map(|w| w["name"].as_str().unwrap().to_string()).collect()
+    };
+    wait_for("side 닫힘", T, || (names() == ["main"]).then_some(()));
+
+    // agent가 내려간 사이 끝난 셸: 다시 붙을 때 닫는다(host는 그 전에 실행 중을 봤다)
+    let d = h.new_pane(None, "labA", Some("d"), &["/bin/sh"], None);
+    let fifo = lab.root.join("go");
+    let cpath = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    h.ok(&["pane", "run", &d, &format!("echo ready-$((1+1)); read x < {}; exit", fifo.display())]);
+    h.wait_output(&d, "ready-2", T);
+    lab.kill("agent");
+    hw.wait("labA 끊김", |w| (!w.connected("labA")).then_some(()));
+    std::fs::write(&fifo, "x\n").unwrap();
+    let exit = h.state.join("agent").join("sessions").join(&d).join("exit.json");
+    wait_for("d 종료 기록", T, || exit.exists().then_some(()));
+    lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
+    hw.wait("d 닫힘", |w| (w.connected("labA") && w.pane(&d).is_none() && !w.leaves().contains(&d)).then_some(()));
+    assert_eq!(tabs(&hw), [vec![a], vec![k], vec![p]]);
 }
 
 /// 한 front 연결에서 응답을 기다리지 않고 보낸 키 입력은 보낸 순서대로 PTY에 들어간다(TUI가 키마다 보낸다).

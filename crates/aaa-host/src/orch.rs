@@ -1243,7 +1243,7 @@ impl Host {
         if let Some(pane) = &rec.pane
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
-            let _ = conn.request(AgentRequest::Kill { session: pane.clone() }).await;
+            let _ = self.kill_session(&conn, pane).await;
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();

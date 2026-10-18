@@ -143,13 +143,10 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     h.ok(&["pane", "run", &id, "echo back-$((2+2))"]);
     h.wait_output(&id, "back-4", T);
 
-    // 세션이 끝나면 종료 상태와 마지막 화면이 남는다
+    // 셸이 스스로 끝나면 그 pane을 닫는다(plan §8.143): host를 다시 띄운 뒤 다시 붙어 실행 중을 본 셸도 그렇다.
+    // 프로그램 pane의 종료 코드·마지막 화면은 remote 시험이 본다
     h.ok(&["pane", "run", &id, "exit 3"]);
-    wait_for("종료 반영", T, || {
-        let p = h.pane(&id);
-        (p["state"] == "exited" && p["code"] == 3).then_some(())
-    });
-    assert!(h.screen(&id).contains("back-4"));
+    wait_for("닫힘", T, || (!h.ok(&["pane", "list"]).to_string().contains(&id)).then_some(()));
 }
 
 /// 운영 pane(shadow/t-0002)을 읽은 화면: 턴이 끝난 뒤 보내지 않은 글이 입력 상자에 남아 있다
