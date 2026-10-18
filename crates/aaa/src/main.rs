@@ -3,7 +3,9 @@
 mod cli;
 mod launchd;
 mod migrate;
+mod person;
 mod service;
+mod settings;
 
 fn main() -> std::process::ExitCode {
     cli::main()

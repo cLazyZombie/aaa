@@ -121,18 +121,8 @@ pub fn show(s: &Spec) -> Result<String> {
 
 /// 사람이 터미널에서 직접 실행했는지 확인한다(agent가 대신 감독자를 바꾸지 못하게)
 fn human_only(what: &str) -> Result<()> {
-    use std::io::{BufRead as _, IsTerminal as _, Write as _};
-    if std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some() {
-        bail!("{what}: aaa 세션 안에서는 하지 않는다. 사람이 자기 터미널에서 실행한다");
-    }
-    if !std::io::stdin().is_terminal() {
-        bail!("{what}: 터미널에서 사람이 직접 실행한다");
-    }
-    print!("{what}. 계속하려면 yes를 입력: ");
-    std::io::stdout().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
-    if line.trim() != "yes" {
+    crate::person::require(what)?;
+    if crate::person::ask(&format!("{what}. 계속하려면 yes를 입력: "))? != "yes" {
         bail!("그만뒀다");
     }
     Ok(())

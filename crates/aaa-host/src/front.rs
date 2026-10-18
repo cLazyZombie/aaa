@@ -15,6 +15,7 @@ use aaa_proto::{
 use anyhow::{Context, Result, bail};
 
 use super::{Host, PaneEvent};
+use crate::caller::Caller;
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 
 /// 화면 frame 사이 최소 간격(초당 약 30장)
@@ -23,9 +24,14 @@ const GRID_INTERVAL: Duration = Duration::from_millis(33);
 /// 응답 frame(JSON). frame 상한(`MAX_FRAME`)을 넘는 응답은 `too_large` 오류로 바꾼다. 그대로 보내면 쓰기 task가
 /// 연결을 닫아 front는 까닭 없이 끊긴다(t-0334 pilot 결함 2: 끝낸 inbox가 많을 때 `inbox list --all`).
 pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) -> Vec<u8> {
+    res_frame_within(id, result, MAX_FRAME)
+}
+
+/// frame 길이는 종류 byte까지 센다(`write_frame`: payload + 1 > max면 거부). payload가 `max`와 같으면 이미 넘는다(t-0340 감사 D2).
+fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: usize) -> Vec<u8> {
     let msg = FrontMsg::Res { id, result: result.into() };
     let bytes = serde_json::to_vec(&msg).expect("JSON 직렬화");
-    if bytes.len() <= MAX_FRAME {
+    if bytes.len() < max {
         return bytes;
     }
     let FrontMsg::Res { id, result } = msg else { unreachable!() };
@@ -40,10 +46,26 @@ pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) ->
         format!(
             "{kind} 응답이 {} KiB라 frame 상한 {} KiB를 넘는다. 범위를 좁혀 다시 묻는다",
             bytes.len() >> 10,
-            MAX_FRAME >> 10
+            max >> 10
         ),
     );
     serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
+}
+
+/// 보기 권한인 까닭(CLI 연결의 actor로 가린다, plan §8.164). 자기 스크립트가 왜 막혔는지 알게 한다.
+pub(crate) fn reader_reason(actor: &str) -> &'static str {
+    if actor.starts_with("detached:") {
+        ": 터미널도 aaa pane도 없는 떼어 낸 프로세스라 보기만 한다(사람 터미널에서 다시 실행한다)"
+    } else if actor.starts_with("worker:") || actor.starts_with("evaluator:") {
+        ": thread 세션 안의 CLI는 보기만 한다"
+    } else {
+        ""
+    }
+}
+
+/// aaa 세션(pane) 안에서 실행한 CLI인가(`local:<client>@<세션>`). coordinator가 여기에 든다.
+pub(crate) fn in_session(actor: &str) -> bool {
+    actor.strip_prefix("local:").is_some_and(|rest| rest.contains('@'))
 }
 
 pub async fn start(host: &Arc<Host>) -> Result<()> {
@@ -51,10 +73,10 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
     let host = host.clone();
     tokio::spawn(async move {
-        while let Ok(s) = listener.accept().await {
+        while let Ok((s, pid)) = listener.accept_peer().await {
             let host = host.clone();
             tokio::spawn(async move {
-                if let Err(e) = serve(host, s).await {
+                if let Err(e) = serve(host, s, pid).await {
                     tracing::debug!("front 연결 끝: {e:#}");
                 }
             });
@@ -63,7 +85,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     Ok(())
 }
 
-async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
+async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32>) -> Result<()> {
     let (r, w) = tokio::io::split(s);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
@@ -78,13 +100,36 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream) -> Result<()> {
     };
     let front = host.new_front(client.clone());
     // thread 세션 안의 CLI는 보기만 한다(§8.25): 일반 thread(worker)와 사후 평가자는 다른 thread·pane에 지시하지 않는다(§8.13).
-    // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 세션 ID는 CLI가 env에서 알린다.
-    let session_role = session.as_deref().and_then(|s| host.pane_view_of(s, DeviceRole::Local)).and_then(|p| p.role);
-    let scoped = matches!(session_role, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
+    // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 어느 pane 안인지는 host가 연결한 프로세스로 정한다(plan §8.164):
+    // CLI가 알린 세션(`AAA_SESSION_ID`)은 권한을 줄이는 쪽으로만 쓴다(변수를 지우면 권한이 늘던 구멍, t-0340 감사).
+    let caller = host.caller_of(pid);
+    let found = match &caller {
+        Caller::Pane(p) => Some(p.clone()),
+        _ => None,
+    };
+    if let (Some(f), Some(c)) = (&found, &session)
+        && f != c
+    {
+        tracing::warn!(found = %f, claimed = %c, "CLI가 알린 세션과 연결한 프로세스의 pane이 다르다: pane을 따른다");
+    }
+    let role_of = |s: &str| host.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role);
+    let scoped_role =
+        |r: Option<aaa_proto::Role>| matches!(r, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
+    let (found_role, claimed_role) = (found.as_deref().and_then(role_of), session.as_deref().and_then(role_of));
+    let scoped = scoped_role(found_role) || scoped_role(claimed_role) || caller == Caller::Detached;
     let role = if scoped { DeviceRole::Reader } else { DeviceRole::Local };
     tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
-    let actor = match (&session, session_role) {
+    // 기록·판단에 쓸 세션: 좁은 쪽(thread)을 먼저, 그다음 판정한 pane, 그다음 알린 세션
+    let (sess, sess_role) = if scoped_role(found_role) || (found.is_some() && !scoped_role(claimed_role)) {
+        (found, found_role)
+    } else {
+        (session, claimed_role)
+    };
+    // aaa 세션 안 CLI(coordinator·사람의 셸 pane)는 `@<세션>`을 붙인다: 사람만 하는 일(신뢰 창 답 등)을 가른다
+    let actor = match (&sess, sess_role) {
         (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
+        _ if caller == Caller::Detached => format!("detached:{client}"),
+        (Some(s), _) => format!("local:{client}@{s}"),
         _ => format!("local:{client}"),
     };
 
@@ -583,5 +628,23 @@ mod tests {
         let e = r.unwrap_err();
         assert_eq!((id.as_str(), e.code), ("8", ErrorCode::TooLarge));
         assert!(e.message.starts_with("inbox 응답이 1024 KiB라 frame 상한 1024 KiB를 넘는다"), "{}", e.message);
+    }
+
+    /// 경계: 종류 byte를 더해 상한과 같으면 보낼 수 있고, payload가 상한과 같으면 `write_frame`이 거부하니 오류로 바꾼다
+    #[test]
+    fn response_frame_limit_counts_the_kind_byte() {
+        let done = res_frame("9".into(), Ok(FrontResponse::Done));
+        let n = done.len();
+        assert_eq!(res_frame_within("9".into(), Ok(FrontResponse::Done), n + 1), done, "payload + 1 == max는 보낸다");
+        let over = res_frame_within("9".into(), Ok(FrontResponse::Done), n);
+        let FrontMsg::Res { result, .. } = serde_json::from_slice::<FrontMsg>(&over).unwrap() else { panic!() };
+        assert_eq!(result.into_result().unwrap_err().code, ErrorCode::TooLarge, "payload == max는 넘는다");
+        let mut buf = Vec::new();
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let mut wrote = |max| {
+            rt.block_on(aaa_proto::frame::write_frame(&mut buf, aaa_proto::frame::FrameKind::Control, &done, max))
+                .is_ok()
+        };
+        assert!(wrote(n + 1) && !wrote(n), "write_frame과 같은 경계");
     }
 }
