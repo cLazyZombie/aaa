@@ -1274,7 +1274,7 @@ impl App {
     /// 이 화면이 그 pane 기록을 보고 있으면 맨 아래로 돌린다(다음 장면이 오기 전에 또 보내지 않게 여기서도 0으로)
     async fn scroll_bottom(&mut self, tx: &mut FrontSender, pane: &str) -> Result<()> {
         let Some(g) = self.grids.get_mut(pane) else { return Ok(()) };
-        if g.scroll.offset == 0 || self.host_minor < 22 {
+        if g.scroll.offset == 0 || self.host_minor < 23 {
             return Ok(());
         }
         g.scroll.offset = 0;

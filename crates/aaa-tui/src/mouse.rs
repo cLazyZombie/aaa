@@ -847,7 +847,7 @@ impl App {
 
     /// 이 화면의 그 pane 기록 위치를 맨 아래에서 `offset`줄로(herdr `set_scroll_offset_from_bottom`)
     pub(crate) async fn scroll_to(&mut self, tx: &mut FrontSender, pane: String, offset: usize) -> Result<()> {
-        if !self.host_at_least(22) {
+        if !self.host_at_least(23) {
             return Ok(());
         }
         // copy 모드가 셈하는 위치도 같이(scrollbar로 옮겨도 다음 키가 그 자리에서 시작한다)
@@ -1093,7 +1093,7 @@ impl App {
             let lines = u32::from(self.scroll_lines);
             let next = if down { offset.saturating_sub(lines) } else { (offset + lines).min(max) };
             self.scroll_to(tx, b.pane, next as usize).await?;
-        } else if self.host_at_least(22) {
+        } else if self.host_at_least(23) {
             // herdr `apply_scroll`: 보통 화면은 이 화면의 기록을 `mouse_scroll_lines`줄씩 넘긴다(프로그램에는 아무것도 안 감)
             let lines = u32::from(self.scroll_lines);
             let by = if down { ScrollBy::Down { lines } } else { ScrollBy::Up { lines } };
@@ -1150,11 +1150,11 @@ impl App {
         Ok(())
     }
 
-    /// 고른 글을 복사한다(herdr `PaneSelectionRead`). 새 host(1.23부터)는 화면 사본에서 기록까지 읽어 응답이 오면 복사하고,
+    /// 고른 글을 복사한다(herdr `PaneSelectionRead`). 새 host(1.24부터)는 화면 사본에서 기록까지 읽어 응답이 오면 복사하고,
     /// 옛 host면 이 화면에 보이는 줄만 바로 복사한다.
     pub(crate) async fn copy_selection(&mut self, tx: &mut FrontSender, sel: &Selection) -> Result<()> {
         let ((r1, c1), (r2, c2)) = sel.range();
-        if self.host_at_least(23) {
+        if self.host_at_least(24) {
             let (from, to) = (TextPoint { row: r1, col: c1 }, TextPoint { row: r2, col: c2 });
             let id = tx.send(FrontRequest::PaneSelectionRead { pane: sel.pane.clone(), from, to }).await?;
             self.pending.insert(id, Pending::Copy);

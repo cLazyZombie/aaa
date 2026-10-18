@@ -360,7 +360,7 @@ impl App {
     async fn copy_motion(&mut self, tx: &mut FrontSender, motion: CopyMotion) -> Result<()> {
         let Some(c) = self.copy.as_ref() else { return Ok(()) };
         let (pane, cursor) = (c.pane.clone(), TextPoint { row: c.cursor.0, col: c.cursor.1 });
-        if !self.host_at_least(23) {
+        if !self.host_at_least(24) {
             return Ok(());
         }
         let id = tx.send(FrontRequest::PaneCopyMotion { pane, cursor, motion }).await?;
@@ -459,7 +459,7 @@ impl App {
             .then(|| c.search.current.and_then(|i| c.search.matches.get(i).copied()).filter(|m| m.start == cursor))
             .flatten();
         let pane = c.pane.clone();
-        if !self.host_at_least(23) {
+        if !self.host_at_least(24) {
             return Ok(());
         }
         let req = FrontRequest::PaneCopySearch { pane, query: query.clone(), direction, cursor, previous };
@@ -508,7 +508,7 @@ impl App {
         });
     }
 
-    /// host가 올라가 있는 화면의 보던 줄을 지키려 기록이 는 만큼 위치를 올린다(§8.142). 보낸 위치(copy 모드·끌어 고르기)도
+    /// host가 올라가 있는 화면의 보던 줄을 지키려 기록이 는 만큼 위치를 올린다(§8.145). 보낸 위치(copy 모드·끌어 고르기)도
     /// 같이 올린다. 그 pane의 alt 화면이 바뀌면 줄 번호가 달라지므로 copy 모드의 고르기를 지운다(herdr).
     pub(crate) fn follow_grid(&mut self, pane: &str, before: aaa_proto::GridScroll, alt_changed: bool) {
         let Some(after) = self.grids.get(pane).map(|g| g.scroll) else { return };
