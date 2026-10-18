@@ -17,7 +17,6 @@ mod http;
 mod inbox;
 mod library;
 pub mod link;
-mod merge;
 pub mod migrate;
 mod notify;
 mod orch;
@@ -1038,8 +1037,21 @@ impl Host {
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
                 self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen: false } => self
-                .thread_resolve(&project, &thread, keep_worktree, orch::ResolveWhy::Manual, actor)
+            FrontRequest::ThreadResolve {
+                project,
+                thread,
+                keep_worktree,
+                reopen: false,
+                skip_copy,
+                discard_uncopied,
+            } => self
+                .thread_resolve(
+                    &project,
+                    &thread,
+                    orch::ResolveOpts { keep_worktree, skip_copy, discard_uncopied },
+                    orch::ResolveWhy::Manual,
+                    actor,
+                )
                 .await
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
@@ -1086,18 +1098,6 @@ impl Host {
                 })
             }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
-            FrontRequest::MergeEnqueue { project, thread } => {
-                self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeDrop { project, thread, landed } => {
-                self.merge_drop(&project, &thread, landed, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeLand { project, thread } => {
-                self.merge_land(&project, thread.as_deref(), actor).await.map(|v| FrontResponse::MergeLand(Box::new(v)))
-            }
-            FrontRequest::MergeList { project } => {
-                self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
-            }
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }

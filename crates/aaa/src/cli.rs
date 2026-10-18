@@ -122,10 +122,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TickerCmd,
     },
-    /// 병합 대기열(순번과 사건만, 병합 단계는 coordinator가 한다)
+    /// 없어졌다: 병합은 thread가 PR로 한다(안내만 하고 끝난다)
+    #[command(hide = true)]
     Merge {
-        #[command(subcommand)]
-        cmd: MergeCmd,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _rest: Vec<String>,
     },
     /// routine(projects/<p>/routines/*.md) 목록과 명령 승인
     Routine {
@@ -240,35 +241,6 @@ enum InboxCmd {
         /// 끝내지 않은 항목 모두
         #[arg(long, conflicts_with = "ids")]
         all: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum MergeCmd {
-    /// 맨 뒤에 넣는다(이미 있으면 그 자리)
-    Enqueue {
-        project: String,
-        thread: String,
-    },
-    List {
-        project: String,
-    },
-    /// 병합을 마쳤다: 대기열에서 빼고 다음 차례로 넘긴다
-    Done {
-        project: String,
-        thread: String,
-    },
-    /// 병합하지 않고 뺀다
-    Drop {
-        project: String,
-        thread: String,
-    },
-    /// 맨 앞 thread를 병합한다: 그 머신 agent가 원격 일치 확인 → 임시 worktree에서 merge --no-ff → tree 같음 확인 → push(force 없음)
-    /// → 사용자 checkout이 깨끗한 main이면 ff-only → 정리. 되면 대기열에서 빼고 같은 기준의 다른 thread에 알린다.
-    Land {
-        project: String,
-        /// 주면 그것이 맨 앞이어야 한다
-        thread: Option<String>,
     },
 }
 
@@ -422,11 +394,18 @@ enum ThreadCmd {
     Resolve {
         project: String,
         thread: String,
+        /// worktree와 branch를 남긴다
         #[arg(long)]
         keep_worktree: bool,
         /// 끝낸 thread를 다시 연다(아무것도 띄우지 않는다. 띄우려면 restart)
-        #[arg(long, conflicts_with = "keep_worktree")]
+        #[arg(long, conflicts_with_all = ["keep_worktree", "skip_copy", "discard_uncopied"])]
         reopen: bool,
+        /// 마지막 사본을 만들 수 없어도 끝낸다(worktree는 남긴다)
+        #[arg(long)]
+        skip_copy: bool,
+        /// 집에 다 오지 않았어도 worktree를 지운다
+        #[arg(long)]
+        discard_uncopied: bool,
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
@@ -968,15 +947,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             },
         ),
         Cmd::Ticker { cmd: TickerCmd::Tick } => front(json, FrontRequest::TickerTick),
-        Cmd::Merge { cmd } => front(
-            json,
-            match cmd {
-                MergeCmd::Enqueue { project, thread } => FrontRequest::MergeEnqueue { project, thread },
-                MergeCmd::List { project } => FrontRequest::MergeList { project },
-                MergeCmd::Done { project, thread } => FrontRequest::MergeDrop { project, thread, landed: true },
-                MergeCmd::Drop { project, thread } => FrontRequest::MergeDrop { project, thread, landed: false },
-                MergeCmd::Land { project, thread } => FrontRequest::MergeLand { project, thread },
-            },
+        Cmd::Merge { .. } => anyhow::bail!(
+            "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
+             `aaa thread next <p> <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
         Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
         Cmd::Routine { cmd: RoutineCmd::Toggle { project, name, on, off } } => {
@@ -1029,8 +1002,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
                 ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
-                ThreadCmd::Resolve { project, thread, keep_worktree, reopen } => {
-                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen }
+                ThreadCmd::Resolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                    FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied }
                 }
                 ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
                 ThreadCmd::Read { project, thread, lines } => FrontRequest::ThreadRead { project, thread, lines },
@@ -1691,10 +1664,6 @@ fn front_print(json: bool, res: Result<FrontResponse, aaa_proto::ErrorBody>) -> 
             } else {
                 print!("{}", render_front(&r));
             }
-            // 병합 단계가 멈췄으면 응답은 왔어도 실패로 끝난다
-            if matches!(&r, FrontResponse::MergeLand(v) if !v.ok) {
-                return Ok(ExitCode::from(1));
-            }
             Ok(ExitCode::SUCCESS)
         }
         Err(e) => {
@@ -2228,40 +2197,6 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Question(q) => render_question(&mut s, q),
         FrontResponse::Message(m) => {
             let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
-        }
-        FrontResponse::Merge { queue } => {
-            if queue.is_empty() {
-                s.push_str("병합 대기열이 비었다\n");
-            }
-            for e in queue {
-                let branch = e.branch.as_deref().unwrap_or("-");
-                let _ =
-                    writeln!(s, "{}\t{}/{}\t{}\t{}@{}", e.position, e.project, e.thread, e.title, branch, e.machine);
-            }
-        }
-        FrontResponse::MergeLand(v) => {
-            let _ = writeln!(
-                s,
-                "{}/{} {}",
-                v.project,
-                v.thread,
-                if v.ok { "병합했다" } else { "병합하지 못했다(대기열에 그대로 있다)" }
-            );
-            for st in &v.steps {
-                let mut lines = st.note.lines();
-                let first = lines.next().unwrap_or("");
-                let _ = writeln!(s, "  {} {}\t{}\t{}ms", if st.ok { "✓" } else { "✗" }, st.name, first, st.ms);
-                for l in lines {
-                    let _ = writeln!(s, "      {l}");
-                }
-            }
-            if let Some(c) = &v.commit {
-                let _ = writeln!(s, "병합 commit: {c}");
-            }
-            if !v.notified.is_empty() {
-                let _ = writeln!(s, "「main 이동」을 알린 thread: {}", v.notified.join(", "));
-            }
-            let _ = writeln!(s, "남은 대기열: {}", v.queue.len());
         }
         FrontResponse::Routines { routines } => {
             if routines.is_empty() {

@@ -17,7 +17,9 @@ impl std::fmt::Display for Version {
 
 /// host ↔ agent. 1.4: `ThreadRebrief.profile`(thread restart --profile).
 /// 버전을 올리지 않은 것(plan §8.113): `ThreadCleanup.merged_head`(옛 agent는 버리고 branch를 남긴다),
-/// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다). host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
+/// `PrQuery::OpenOwn`(agent 기능 `pr.v2`가 있을 때만 보낸다), `MergeLand`·`Landed`를 없앰(새 host는 보내지 않는다, §8.135),
+/// `ThreadCleanup.uncopied`(옛 agent는 버리지만 host가 `keep_worktree`도 켜서 worktree는 남는다, §8.135).
+/// host는 minor N-1까지만 받아 올리면 운영 agent(1.3)가 끊긴다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -32,8 +34,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.17: 묶음 `landing`(PR 승인, plan §8.113),
 /// 1.18: 파일 보기 `pane_file`(plan §8.125),
 /// 1.19: `pane_run`의 `profile`(plan §8.126),
-/// 1.20: `pane_chat`의 `thinking`과 ChatRole `thinking`(plan §8.129)
-pub const FRONT_API: Version = Version { major: 1, minor: 20 };
+/// 1.20: `pane_chat`의 `thinking`과 ChatRole `thinking`(plan §8.129),
+/// 1.21: 병합 대기열 요청(`merge_enqueue`·`merge_drop`·`merge_list`·`merge_land`)을 없앰(옛 front가 보내면 모르는 요청
+/// 오류다), resolve `skip_copy`·`discard_uncopied`(plan §8.135)
+pub const FRONT_API: Version = Version { major: 1, minor: 21 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };
