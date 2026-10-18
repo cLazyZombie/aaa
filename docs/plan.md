@@ -2481,10 +2481,11 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 놓기: 셸이 다시 앞에 오면 앞 agent의 끝을 idle로 알린 다음 차례에 놓는다(herdr `ReportProcessExit` → `ClearAgent`). 셸이 아닌 것이 앞인데 agent로 보이지 않으면 6번 연달아 놓친 뒤 놓는다(`AGENT_MISS_CONFIRMATION_ATTEMPTS`).
   - 놓기는 harness 사건 `released`(kind 글만 더함, AGENT_LINK·FRONT_API 그대로)다. host는 그 pane의 agent 상태를 지우고 질문을 닫는다. 옛 host는 모르는 kind로 버린다. 놓은 셸은 재부팅 복원에서 대화를 잇지 않는다(herdr도 놓은 agent를 세션에 남기지 않는다). `harness.json`의 마지막 상태가 `released`라 다시 붙어도 그대로다.
   - 띄울 때 harness를 아는 pane(argv가 claude·codex, profile harness)은 전처럼 그 harness로만 보고 앞 프로세스는 보지 않는다.
-  - **참고와 다른 것(이유).** 백그라운드로 보낸 agent 붙잡기(`AgentJobTracker`, Ctrl-Z 뒤 셸이 앞이어도 agent를 남김)·lifecycle hook 권한(pi 등, aaa harness 아님)·Herdr 환경 표지(`process_agent_hint`)는 옮기지 않았다. 그래서 Ctrl-Z로 멈춘 claude는 놓는다. **Windows는 아직 아니다**(herdr `src/platform/windows.rs`는 프로세스 그룹 대신 Toolhelp 트리로 본다: 따로 옮긴다).
+  - **참고와 다른 것(이유).** 백그라운드로 보낸 agent 붙잡기(`AgentJobTracker`, Ctrl-Z 뒤 셸이 앞이어도 agent를 남김)·lifecycle hook 권한(pi 등, aaa harness 아님)·Herdr 환경 표지(`process_agent_hint`)는 옮기지 않았다. 그래서 Ctrl-Z로 멈춘 claude는 놓는다. Windows는 셸 안 agent를 감지하지 않는다(아래 「herdr와 다르게 둔 것」).
   - 시험: m12 `a_claude_started_in_a_shell_is_detected_and_released_when_it_exits`(셸에서 친 가짜 claude의 확인창 → 질문 → 답 → 셸로 돌아와 agent 없음 → 재부팅 복원은 빈 셸, 뒤에 친 표지만 화면에 있다). agent 단위: 이름 판정 표(herdr 시험의 Claude·Codex 몫), 잡기·끝·놓기·다시 뜸·놓침 6번·바뀐 그룹 다시 보기, 이 Mac의 실제 프로세스(스크립트 `claude`를 제 그룹 leader로 띄워 조사). 가짜 claude는 `exec cat` 대신 줄 되돌려 쓰기로 바꿨다(exec하면 앞 프로세스가 cat이 된다). 결함 심기 다섯(조사 없음·host 무시·놓기 안 알림·셸 앞이어도 남김·스크립트 인자 무시)을 잡았다.
 - **herdr와 다르게 둔 것.**
   - 규칙 원격 갱신·local override·explain 명령은 없다(§8.3 「감지 규칙 고정」).
+  - Windows 감지(Toolhelp 트리) 미이식(10-18 coordinator 결정: aaa를 쓰는 기기는 지금 macOS뿐이다). herdr `src/platform/windows.rs`는 셸 앞 agent를 프로세스 그룹 대신 Toolhelp 프로세스 트리로 찾는다. aaa agent는 Windows에서 셸 pane 안의 Claude·Codex를 찾지 않고(`foreground_tick`은 unix만), 띄울 때 harness를 아는 pane만 화면으로 감지한다. 셸 안 감지 시험(m12·실제 프로세스 단위 시험)도 unix에서만 돈다.
   - Codex 세션 ID는 SessionStart hook 대신 notify(`thread-id`)로 받는다. herdr는 `~/.codex/hooks.json`을 고치지만 aaa는 사용자 설정을 고치지 않는다(§8.15).
 - **운영 pane 확인(t-0334 결함 1, shadow/t-0002, 10-18 01:1x, 읽기만).**
   - 증상: 운영 host가 10시간 넘게 「작업 중」(harness working)이라 했는데 화면은 턴이 끝난(「done 10:21 AM」) 뒤 입력 대기였다.

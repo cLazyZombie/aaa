@@ -6,6 +6,7 @@
 //!   (aaa 규칙 판은 둘뿐이다).
 //! - 프로세스 조사는 herdr `src/platform/{macos,linux}.rs`의 `foreground_group_leader_job`·`foreground_job`이다. Linux는
 //!   앞 그룹 leader와 셸의 자손을 너비 우선으로 훑는다(herdr `process_tree_pids`, 훑는 수에 상한).
+//!   Windows(herdr `src/platform/windows.rs`의 Toolhelp 트리)는 옮기지 않았다. Windows agent는 셸 안 agent를 찾지 않는다.
 //! - 잡기·놓기는 herdr `src/pane.rs` `spawn_basic_detection_task`의 프로세스 조사 부분(`should_probe_foreground_job`·
 //!   `foreground_shell_agent_action`·`AgentDetectionPresence`)이다. 백그라운드로 보낸 agent 붙잡기(`AgentJobTracker`),
 //!   lifecycle hook 권한, Herdr 환경 표지(`process_agent_hint`)는 옮기지 않았다(plan §8.110).
