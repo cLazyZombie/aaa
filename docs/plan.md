@@ -5090,8 +5090,12 @@ primary 근거:
   사용자 notify를 원래 경로에서 실행한다. config.toml의 notify도 수정하지 않는다.
   이미 실행 중인 옛 대화는 기존 override가 남으므로 배포 뒤 새 시작·재개부터 적용된다. 옛 notify 사건도 계속 받는다.
 - **Windows.** sh 대신 herdr의 PowerShell UTF-16LE EncodedCommand를 쓴다. 경로는 PowerShell 작은따옴표로 인용한다.
+  `-NonInteractive -OutputFormat Text`를 지정하고 첫 문장에서 `$ProgressPreference = 'SilentlyContinue'`로 둔다.
+  EncodedCommand의 기본 stderr CLIXML과 모듈 첫 검색의 진행 출력이 무반응 hook에 섞이지 않게 한다.
   env gate를 stdin보다 먼저 두고 UTF-8 입력·출력·native pipeline 인코딩을 지정해 JSON·한글 안내를 전달한다.
   Windows 전용 명령 생성 계약을 native 테스트에서 복호화해 검사하고 Windows 전체 target check·clippy로 cfg 경로를 검사한다.
+  CLI 통합 시험은 Codex 기본 Windows runner와 같은 COMSPEC/cmd.exe `/C`에서 설치 명령을 실행한다.
+  한글·공백·작은따옴표·$가 든 실행 파일에서 설치해 인증된 시작의 한글 안내와 무반응 사건을 함께 검사한다.
   Windows 실행기에서 같은 CLI 통합 시험도 실행해야 한다. macOS cross check를 Windows 실행 결과라고 부르지 않는다.
 - **시험·결함 심기.** 임시 HOME/CODEX_HOME에서 추가·이동·제거·반복·기존 항목·백업·read-only·손상 설정을 검사한다.
   설치한 명령의 stdin 사건을 실제 agent와 host로 보내 Front 상태의 세션 ID와 기다림 정리를 확인한다.

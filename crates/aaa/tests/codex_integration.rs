@@ -3,7 +3,10 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const BIN: &str = env!("CARGO_BIN_EXE_aaa");
+// Mac에서 교차 빌드한 시험 binary를 Windows 임시 폴더에서 실행할 때만 경로를 지정한다.
+fn bin() -> PathBuf {
+    std::env::var_os("AAA_TEST_BIN").map(PathBuf::from).unwrap_or_else(|| env!("CARGO_BIN_EXE_aaa").into())
+}
 struct Home(PathBuf);
 impl Home {
     fn new() -> Self {
@@ -25,7 +28,24 @@ impl Home {
         c
     }
     fn run(&self, args: &[&str]) -> Output {
-        self.cmd(Path::new(BIN)).args(args).output().unwrap()
+        self.cmd(&bin()).args(args).output().unwrap()
+    }
+    fn hook_command(&self, command: &str) -> Command {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // Codex command_runner::build_command의 기본 Windows 실행 경계와 같다.
+            let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
+            let mut c = self.cmd(Path::new(&shell));
+            c.arg("/C").raw_arg(format!(r#""{command}""#));
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let mut c = self.cmd(Path::new("sh"));
+            c.args(["-c", command]);
+            c
+        }
     }
     fn ok(&self, args: &[&str]) -> Value {
         let o = self.run(args);
@@ -92,7 +112,7 @@ fn install_move_and_remove_keep_foreign_hooks_notify_and_backups() {
 
     // 실행 파일이 옮겨도 이전 명령만 제거한다. 공백·작은따옴표·$·유니코드 경로를 실제 실행한다.
     let moved = h.0.join(if cfg!(windows) { "새 aaa ' $ tool.exe" } else { "새 aaa ' $ tool" });
-    std::fs::copy(BIN, &moved).unwrap();
+    std::fs::copy(bin(), &moved).unwrap();
     let o = h.cmd(&moved).args(["--json", "integration", "install", "codex"]).output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let mut v = h.hooks();
@@ -100,19 +120,7 @@ fn install_move_and_remove_keep_foreign_hooks_notify_and_backups() {
     assert_eq!(start.len(), 2, "이전 aaa 명령이 남았다: {v}");
     assert_eq!(start[0], foreign);
     let hook_command = start[1]["hooks"][0]["command"].as_str().unwrap();
-    let mut shell = if cfg!(windows) { Command::new("powershell") } else { Command::new("sh") };
-    if cfg!(windows) {
-        shell.args(["-NoProfile", "-Command"]);
-    } else {
-        shell.arg("-c");
-    }
-    let o = shell
-        .arg(hook_command)
-        .env_remove("AAA_SESSION_ID")
-        .env_remove("AAA_HOOK_SOCK")
-        .env_remove("AAA_HOOK_TOKEN")
-        .output()
-        .unwrap();
+    let o = h.hook_command(hook_command).output().unwrap();
     assert!(o.status.success() && o.stdout.is_empty() && o.stderr.is_empty(), "{o:?}");
     // 설치 뒤 사용자가 aaa와 같은 그룹에 더한 handler·matcher도 제거에서 보존한다.
     v["hooks"]["SessionStart"][1]["hooks"]
@@ -153,7 +161,7 @@ fn foreign_or_incomplete_session_hooks_are_silent() {
     ] {
         for missing in ["AAA_SESSION_ID", "AAA_HOOK_SOCK", "AAA_HOOK_TOKEN"] {
             let o = h
-                .cmd(Path::new(BIN))
+                .cmd(&bin())
                 .args(&args)
                 .env("AAA_SESSION_ID", "s1")
                 .env("AAA_HOOK_SOCK", "unused")
@@ -224,7 +232,11 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     use aaa_session::files::{SessionPaths, SpecFile};
     use std::time::Duration;
     let h = Home::new();
-    h.ok(&["--json", "integration", "install", "codex"]);
+    // 인증된 경로도 특수 문자·한글이 있는 실행 파일에서 설치한 실제 명령을 쓴다.
+    let moved = h.0.join(if cfg!(windows) { "새 aaa ' $ tool.exe" } else { "새 aaa ' $ tool" });
+    std::fs::copy(bin(), &moved).unwrap();
+    let out = h.cmd(&moved).args(["--json", "integration", "install", "codex"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
     let installed = h.hooks()["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap().to_string();
     let a = aaa_agent::Agent::new(h.0.join("agent"), "lab-agent".into(), "mac-a".into(), true, None).unwrap();
     let mut fakes = Vec::new();
@@ -329,16 +341,11 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     let invoke = |sid: &str, token: &str, inherited: Option<&str>, args: Vec<String>| {
         let payload = if args.first().is_some_and(|a| a == "hook") { Some(args[3].clone()) } else { None };
         let mut c = if payload.is_some() {
-            let mut shell = if cfg!(windows) { h.cmd(Path::new("powershell")) } else { h.cmd(Path::new("sh")) };
-            if cfg!(windows) {
-                shell.args(["-NoProfile", "-Command"]);
-            } else {
-                shell.arg("-c");
-            }
-            shell.arg(&installed).stdin(std::process::Stdio::piped());
+            let mut shell = h.hook_command(&installed);
+            shell.stdin(std::process::Stdio::piped());
             shell
         } else {
-            let mut cli = h.cmd(Path::new(BIN));
+            let mut cli = h.cmd(&bin());
             cli.args(args);
             cli
         };
@@ -410,7 +417,8 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     let start = invoke("s1", &token, Some(id), event("SessionStart", "startup")).await;
     assert!(start.status.success() && start.stderr.is_empty(), "{start:?}");
     let v: Value = serde_json::from_slice(&start.stdout).unwrap();
-    assert!(v["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("report --percent 25"), "{v}");
+    let guidance = v["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(guidance.contains("report --percent 25") && guidance.contains("진행 보고"), "{v}");
     let p = state(&mut front, |p| p.agent.as_ref().is_some_and(|s| s.harness_session.as_deref() == Some(id))).await;
     assert_eq!(p.agent.unwrap().harness, "codex");
     // 인증 거부 사건은 뒤따르는 정상 SessionStart보다 먼저 같은 link에 있어야 한다. s2는 상태가 생기지 않는다.
@@ -481,7 +489,7 @@ fn enabled_toml_is_byte_preserved_and_readonly_fails_before_writing() {
 fn default_home_install_and_removal_do_not_depend_on_workspace_or_valid_toml() {
     let h = Home::new();
     let out = h
-        .cmd(Path::new(BIN))
+        .cmd(&bin())
         .env_remove("CODEX_HOME")
         .current_dir(&h.0)
         .args(["integration", "install", "codex"])
@@ -491,8 +499,7 @@ fn default_home_install_and_removal_do_not_depend_on_workspace_or_valid_toml() {
     assert!(h.0.join(".codex/hooks.json").is_file());
     let config = h.0.join(".codex/config.toml");
     std::fs::write(&config, "invalid [toml").unwrap();
-    let out =
-        h.cmd(Path::new(BIN)).env_remove("CODEX_HOME").args(["integration", "uninstall", "codex"]).output().unwrap();
+    let out = h.cmd(&bin()).env_remove("CODEX_HOME").args(["integration", "uninstall", "codex"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     assert_eq!(std::fs::read_to_string(&config).unwrap(), "invalid [toml");
 }
@@ -500,9 +507,10 @@ fn default_home_install_and_removal_do_not_depend_on_workspace_or_valid_toml() {
 #[test]
 fn foreign_hook_exits_before_stdin_eof() {
     let h = Home::new();
+    h.ok(&["--json", "integration", "install", "codex"]);
+    let installed = h.hooks()["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap().to_string();
     let mut child = h
-        .cmd(Path::new(BIN))
-        .args(["hook", "--agent", "codex"])
+        .hook_command(&installed)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

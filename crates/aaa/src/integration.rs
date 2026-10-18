@@ -35,9 +35,11 @@ fn command(exe: &Path) -> String {
 #[cfg(any(windows, test))]
 fn windows_command(exe: &Path) -> String {
     use base64::Engine;
-    // PowerShell의 기본 code page와 native stdin 전달 차이를 피한다. 비-aaa 세션은 stdin보다 먼저 끝낸다.
+    // EncodedCommand는 stderr를 CLIXML로 내보낸다. 모듈 첫 검색의 진행 출력도 hook 출력이 되므로 억제한다.
+    // 기본 code page와 native stdin 전달 차이를 피한다. 비-aaa 세션은 stdin보다 먼저 끝낸다.
     let script = format!(
-        "if (-not $env:AAA_SESSION_ID -or -not $env:AAA_HOOK_SOCK -or -not $env:AAA_HOOK_TOKEN) {{ exit 0 }}; \
+        "$ProgressPreference = 'SilentlyContinue'; \
+         if (-not $env:AAA_SESSION_ID -or -not $env:AAA_HOOK_SOCK -or -not $env:AAA_HOOK_TOKEN) {{ exit 0 }}; \
          [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); \
          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
          $OutputEncoding = [Console]::OutputEncoding; \
@@ -45,7 +47,10 @@ fn windows_command(exe: &Path) -> String {
         exe.to_string_lossy().replace('\'', "''")
     );
     let bytes: Vec<_> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    format!("powershell -NoProfile -EncodedCommand {}", base64::engine::general_purpose::STANDARD.encode(bytes))
+    format!(
+        "powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
 }
 
 fn read(path: &Path) -> Result<Option<String>> {
@@ -271,13 +276,15 @@ mod tests {
     fn windows_command_preserves_special_path_and_utf8_stdin_stdout() {
         use base64::Engine;
         let cmd = super::windows_command(std::path::Path::new(r"C:\A b\한글 ' $ &\aaa.exe"));
-        let encoded = cmd.strip_prefix("powershell -NoProfile -EncodedCommand ").unwrap();
+        let encoded =
+            cmd.strip_prefix("powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let utf16: Vec<_> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
         let script = String::from_utf16(&utf16).unwrap();
         assert_eq!(
             script,
             concat!(
+                "$ProgressPreference = 'SilentlyContinue'; ",
                 "if (-not $env:AAA_SESSION_ID -or -not $env:AAA_HOOK_SOCK -or -not $env:AAA_HOOK_TOKEN) { exit 0 }; ",
                 "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); ",
                 "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); ",
