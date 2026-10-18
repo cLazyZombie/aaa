@@ -4,7 +4,7 @@
 //! - 값이 잘못된 key는 그 key만 기본값을 쓴다. 파일을 TOML로 읽지 못하면 모두 기본값이고, inbox `config-error`가 알린다.
 //! - `aaa project create`의 옵션과 `aaa project set`(herdr-projects `new`·`set`, 4장 G)이 host를 거쳐 이 파일을 쓴다
 //!   ([`set_in`], toml_edit라 다른 줄·주석은 그대로다). coordinator·사람이 직접 고쳐도 된다.
-//! - `start_threads`·`trust_screens`는 옛 자리다: host.toml `[safety.*]`(사람만 고친다, plan §8.153)에 없을 때만 쓰고,
+//! - `start_threads`·`trust_screens`는 옛 자리다: host.toml `[safety.*]`(사람만 고친다, plan §8.163)에 없을 때만 쓰고,
 //!   `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 보인다.
 
 use std::path::Path;
@@ -231,7 +231,7 @@ impl crate::Host {
         self.project_dir(project).map(|d| ProjectSettings::load(&d)).unwrap_or_default()
     }
 
-    /// safety 층(plan §8.153): host.toml `[safety.*]`와 옛 자리(host.toml `[projects]`, project.toml). host.toml은 쓸 때마다
+    /// safety 층(plan §8.163): host.toml `[safety.*]`와 옛 자리(host.toml `[projects]`, project.toml). host.toml은 쓸 때마다
     /// 다시 읽는다(사람이 `aaa safety`로 고치면 host를 다시 띄우지 않아도 닿는다). 설정 폴더를 모르면(유닛 시험) 시작 때 값.
     pub(crate) fn safety_layers(&self, project: Option<&str>) -> (aaa_config::safety::Layers, Vec<String>) {
         use aaa_config::safety;

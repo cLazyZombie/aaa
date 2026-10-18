@@ -1,5 +1,5 @@
 //! 프로젝트 멈추기·보관·삭제·이름 바꾸기·청소(herdr-projects 0.2.35 `lifecycle.rs`·`rename.rs`·`sweep.rs`, 차이 목록 4장 G #592,
-//! plan §8.155).
+//! plan §8.166).
 //!
 //! - 상태는 host DB(`project_status:<프로젝트>`)에 둔다. 참고는 프로젝트 폴더 `.state/project.json`이지만 aaa coordinator의 cwd가
 //!   그 폴더라 파일을 고쳐 멈춘 프로젝트를 되살릴 수 있다(§8.19와 같은 까닭으로 문을 폴더 밖에).
@@ -418,7 +418,7 @@ impl Host {
         Ok(self.change(project, &dir, notes))
     }
 
-    /// host.toml(·local)의 `[safety.<프로젝트>]` 표가 남는다는 안내(참고 delete의 마지막 줄). 표는 사람만 고친다(§8.153).
+    /// host.toml(·local)의 `[safety.<프로젝트>]` 표가 남는다는 안내(참고 delete의 마지막 줄). 표는 사람만 고친다(§8.163).
     fn safety_table_note(&self, project: &str, which: &str) -> Option<String> {
         let dir = self.config_dir.get()?;
         let files: Vec<&str> = ["host.toml", "host.local.toml"]

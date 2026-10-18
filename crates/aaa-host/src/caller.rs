@@ -1,4 +1,4 @@
-//! front 연결을 연 프로세스가 어느 aaa pane 안에서 돌았나(plan §8.154). env(`AAA_SESSION_ID`) 자기 신고 대신 host가 판정한다.
+//! front 연결을 연 프로세스가 어느 aaa pane 안에서 돌았나(plan §8.164). env(`AAA_SESSION_ID`) 자기 신고 대신 host가 판정한다.
 //!
 //! - 연결한 프로세스 pid(front socket peer credential, [`aaa_common::ipc::LocalListener::accept_peer`])에서, host 머신(로컬
 //!   agent) pane child가 그 프로세스이거나 조상에 있으면 그 pane 안이다. 변수를 지우거나(`env -u`) 다른 셸로 띄우거나
@@ -46,7 +46,7 @@ impl crate::Host {
             if let Some((id, _)) = running.iter().find(|(_, p)| p.info.pid.is_none())
                 && !NO_PID_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
             {
-                tracing::warn!(pane = %id, "pid를 모르는 pane이 있어 그 안의 CLI를 thread 범위로 가리지 못한다(plan §8.154)");
+                tracing::warn!(pane = %id, "pid를 모르는 pane이 있어 그 안의 CLI를 thread 범위로 가리지 못한다(plan §8.164)");
             }
             let panes: Vec<(String, u32)> =
                 running.iter().filter_map(|(id, p)| p.info.pid.map(|c| ((*id).clone(), c))).collect();

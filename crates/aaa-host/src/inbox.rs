@@ -341,7 +341,7 @@ impl Host {
     }
 
     async fn tick(self: &Arc<Self>) {
-        // 멈추거나 보관한 프로젝트는 건너뛴다(herdr-projects ticker, plan §8.155)
+        // 멈추거나 보관한 프로젝트는 건너뛴다(herdr-projects ticker, plan §8.166)
         let projects = self.active_projects();
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
         self.check_outages(&names);
