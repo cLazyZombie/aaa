@@ -3540,7 +3540,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - aaa-vt 열셋: 끊기 셋(aaa-vt 쓰기·vt100 줄 쓰기·줄 넘는 상태), 끝 칸 이음 표시, 넓히지 않음, CSI·OSC 뒤 끊지 않음, 국기 폭 1, 셋째 지역 표시도 묶음, 보이지 않는 글자 보정 없음, spacing mark도 묶음, `joins_after` 늘 거짓, ASCII 빠른 길이 Prepend를 안 봄.
     - web 신선도 하나.
     - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
-||||||| 05b0633
+
 ### 8.168 결과물 파일을 앱 안 파일 보기로(10-18, 차이 목록 2장 R1 나머지, coordinator 지시 「참고대로」)
 
 - **참고.** herdr-projects popup은 보고 글 아래 파일 줄을 ↵로 연다(`src/popup.rs`). herdr-web-ui는 파일을 앱 안 `FileViewer`로
