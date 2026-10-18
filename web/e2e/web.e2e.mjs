@@ -24,8 +24,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const specDir = path.join(here, "specs");
 const STEP = /^ {2}await step\("((?:[^"\\]|\\.)*)"/;
 const durationsFile = path.join(here, "durations.json");
-// 기본 worker 상한: 16 core에서 4·5·6을 ci-local(test·clippy와 함께)과 웹 E2E만으로 재 6까지 실패 0이었고, 파일 합계는
-// 늘지 않았다(10-18 load 23~90, docs/testing.md 「웹 E2E」). 6이면 가장 긴 파일(17)에 가깝다
+// 기본 worker 상한: 16 core에서 4·5·6을 ci-local(test·clippy와 함께)과 웹 E2E만으로 재 6에서도 파일 합계가 늘지 않았다
+// (10-18 load 6~90). 그 사이 한 번 난 07 실패는 agent pump 결함(plan §8.162)이었고, 고친 뒤 네 판 모두 통과(docs/testing.md 「웹 E2E」)
 const MAX_WORKERS = 6;
 
 const args = process.argv.slice(2);
