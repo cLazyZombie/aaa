@@ -1628,7 +1628,7 @@ fn ctrl_v_pastes_clipboard_image() {
 /// plan §8.141): TUI는 바깥 터미널의 bracketed paste(2004)를 켜고 나갈 때 끈다. 붙여 넣은 글은 host가 pane 프로그램이 켠
 /// 2004대로 감싸고 글 안의 ESC는 뺀다(herdr 서버가 client 붙여넣기를 다시 감싸는 것과 같다). 붙여 넣은 글이 그림 파일 하나의
 /// 절대 경로면(터미널에 끌어 놓은 파일) 그 그림을 pane 머신에 올리고 셸 줄에 따옴표 경로를 넣는다(Enter 없음).
-/// 그림이 아닌 파일·상대 경로는 글 그대로다. 각 붙여넣기 뒤에 친 표지 줄을 cat이 되돌린 것을 보고 그 앞 줄을 단언한다.
+/// 그림이 아닌 파일·상대 경로는 글 그대로다. 붙여 넣은 줄마다 cat이 되돌린 것을 본 뒤 단언하고 다음 글을 친다.
 #[test]
 fn paste_and_image_drop_like_herdr() {
     let mut lab = Lab::new();
@@ -1638,18 +1638,16 @@ fn paste_and_image_drop_like_herdr() {
     let mut tui = Tui::start(&h);
     hw.wait("lease", |w| w.held_by(&id, "tui@").then_some(()));
     tui.wait_screen("바깥 터미널 bracketed paste", |s| s.modes.contains(&2004));
-    // 표지 줄을 치고 cat -v가 되돌릴 때까지(tty 메아리와 cat 출력 둘)
-    let mark = |tui: &mut Tui, m: &str| {
-        tui.type_line(m);
-        tui.wait_text(m, |s| s.matches(m).count() >= 2);
-    };
+    // 붙여 넣은 줄을 cat -v가 되돌릴 때까지(tty 메아리와 cat 출력 둘). 그 전에 다음 글을 치면 그 메아리 사이에 cat 출력이
+    // 끼어든다(부하 아래 ci-local). `seen`은 감싸기·ESC 빼기가 맞든 틀리든 둘 다에 나오는 조각이라 틀리면 아래 단언이 실패한다
+    let echoed = |tui: &Tui, seen: &str| tui.wait_text(seen, |s| s.matches(seen).count() >= 2);
 
     // 1) 2004를 켜지 않은 프로그램: 감싸지 않고, 글 안의 ESC는 뺀다(cat -v에 `^[`가 없다)
     tui.type_line("echo plain-$((1)); cat -v");
     tui.wait_text("cat", |s| s.contains("plain-1"));
     tui.send(b"\x1b[200~one\x1b[31mtwo\x1b[201~");
     tui.send(b"\r");
-    mark(&mut tui, "end-a");
+    echoed(&tui, "two");
     let text = tui.text();
     assert!(text.contains("one[31mtwo") && !text.contains("^["), "2004 없는 붙여넣기:\n{text}");
 
@@ -1661,14 +1659,14 @@ fn paste_and_image_drop_like_herdr() {
     for (i, p) in pastes.iter().enumerate() {
         tui.send(format!("\x1b[200~{p}\x1b[201~").as_bytes());
         tui.send(b"\r");
-        mark(&mut tui, "end-b");
+        echoed(&tui, p);
         assert_eq!(tui.text().matches(p.as_str()).count(), 2, "글로 붙인 {p}:\n{}", tui.text());
-        // ^C는 표지가 cat을 지나온 뒤에만 보낸다: 셸이 `clear`와 `cat` 사이일 때 닿으면 cat이 남아 다음 명령 줄을 읽는다
+        // ^C는 cat이 그 줄을 되돌린 뒤에만 보낸다: 셸이 `clear`와 `cat` 사이일 때 닿으면 cat이 남아 다음 명령 줄을 읽는다
         tui.send(b"\x03");
         if i + 1 < pastes.len() {
             // 다음 붙여넣기는 cat이 뜨기 전에 와도 입력으로 기다린다
             tui.type_line("clear; cat -v");
-            tui.wait_text("화면 지움", |s| !s.contains("end-b"));
+            tui.wait_text("화면 지움", |s| !s.contains(p.as_str()));
         }
     }
     assert!(attachments(&h.state).is_empty(), "그림이 아닌 붙여넣기에 첨부가 생겼다");
@@ -1679,7 +1677,7 @@ fn paste_and_image_drop_like_herdr() {
     tui.wait_text("cat", |s| s.contains("wrap-2"));
     tui.send(b"\x1b[200~x\x1b[31my\x1b[201~");
     tui.send(b"\r");
-    mark(&mut tui, "end-c");
+    echoed(&tui, "31my");
     let text = tui.text();
     assert_eq!(text.matches("^[[200~x[31my^[[201~").count(), 2, "감싼 붙여넣기:\n{text}");
     tui.send(b"\x03");
