@@ -153,6 +153,12 @@ fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentA
     }
 }
 
+/// 질문·메시지 ID(`q-…`·`m-…`, 10자). ULID의 무작위 부분에서 뽑는다: 앞 10자는 ms 시각이라 같은 ms에 만든 둘이 같은
+/// ID가 되어 둘째가 첫째 기록을 덮었다(저장은 `ON CONFLICT(id) DO UPDATE`). 차례는 기록의 `created_at`이 정한다.
+fn short_id(prefix: &str) -> String {
+    format!("{prefix}-{}", aaa_common::util::new_id()[16..].to_ascii_lowercase())
+}
+
 impl Host {
     /// 이 pane의 다음 사건 중 `kinds`에 드는 것을 기다린다
     fn wait_kind(&self, pane: &str, kinds: &'static [&'static str]) -> oneshot::Receiver<String> {
@@ -384,7 +390,7 @@ impl Host {
         let _ = mid;
         let rec = self.thread_of_pane(pane);
         let q = QuestionView {
-            id: format!("q-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),
+            id: short_id("q"),
             pane: pane.to_string(),
             machine,
             project: rec.as_ref().map(|r| r.project.clone()),
@@ -666,7 +672,7 @@ impl Host {
             }
         }
         let mut m = MessageView {
-            id: format!("m-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),
+            id: short_id("m"),
             project: project.to_string(),
             thread: id.to_string(),
             mode,
@@ -981,5 +987,12 @@ mod tests {
         h.on_harness("m", ev("question", 4_000));
         let again = h.open_question_of("s").expect("다음 확인창의 질문");
         assert_ne!(again.id, q.id);
+    }
+
+    /// 같은 ms에 잇달아 만든 ID도 다르다(전에는 ULID 시각 부분이라 같아져 둘째 질문·메시지가 첫째 기록을 덮었다)
+    #[test]
+    fn ids_made_in_the_same_millisecond_differ() {
+        let ids: std::collections::HashSet<String> = (0..1000).map(|_| short_id("q")).collect();
+        assert_eq!(ids.len(), 1000);
     }
 }
