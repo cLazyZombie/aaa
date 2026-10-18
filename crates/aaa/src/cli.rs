@@ -1564,6 +1564,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
         agent.recover().await?;
         agent.start_hooks()?;
+        agent.start_plans();
         aaa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
@@ -2080,6 +2081,15 @@ fn render_front(r: &FrontResponse) -> String {
                 }
             }
         },
+        FrontResponse::PaneDir { listing } => {
+            let _ = writeln!(s, "{}", listing.path);
+            for d in &listing.directories {
+                let _ = writeln!(s, "{d}/");
+            }
+            for f in &listing.files {
+                let _ = writeln!(s, "{}\t{}바이트", f.name, f.size);
+            }
+        }
         FrontResponse::Screen(t) => {
             let mut lines = t.lines.clone();
             while lines.last().is_some_and(|l| l.is_empty()) {
@@ -2136,6 +2146,13 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Read(v) => s.push_str(&v.text),
+        FrontResponse::Selection { text, .. } => s.push_str(text),
+        FrontResponse::CopyCursor { cursor, .. } => {
+            let _ = write!(s, "{}:{}", cursor.row, cursor.col);
+        }
+        FrontResponse::CopySearch { total, current_global, .. } => {
+            let _ = write!(s, "{}/{total}", current_global.map_or(0, |n| n + 1));
+        }
         FrontResponse::ThreadPane(v) => render_thread_pane(&mut s, v),
         FrontResponse::OutputMatched { matched_line, .. } => {
             let _ = writeln!(s, "{matched_line}");

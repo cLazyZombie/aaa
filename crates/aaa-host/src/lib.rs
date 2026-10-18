@@ -1213,6 +1213,7 @@ impl Host {
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
             FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
+            FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
             FrontRequest::PaneChat { pane, thinking } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
@@ -1245,6 +1246,11 @@ impl Host {
             }
             FrontRequest::PaneReadText { pane, source, lines, format } => {
                 self.pane_read_text(&pane, source, lines, format).await
+            }
+            FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
+            FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
+            FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
+                self.pane_copy_search(&pane, &query, direction, cursor, previous)
             }
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
@@ -1312,6 +1318,18 @@ impl Host {
                 self.lease_use(&id, f);
                 conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
             }
+            // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
+            FrontRequest::PanePaste { pane, text } => {
+                let f = front.ok_or_else(|| {
+                    err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다(한 번 보내기는 pane_send)")
+                })?;
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                let conn = self.live_conn(&mid)?;
+                self.lease_use(&id, f);
+                let data = aaa_proto::B64(self.key_modes(&id).paste(&text));
+                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+            }
             FrontRequest::PaneTake { pane } => {
                 let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
                 let (id, _) = self.resolve_pane(&pane)?;
@@ -1336,7 +1354,7 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
-            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } => {
+            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
                 Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
             }
             // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다

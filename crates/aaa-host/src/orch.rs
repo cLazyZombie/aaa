@@ -1490,6 +1490,8 @@ mod tests {
             progress_at_ms: None,
             harness_session: None,
             seen: true,
+            plan: None,
+            background: None,
         }
     }
 

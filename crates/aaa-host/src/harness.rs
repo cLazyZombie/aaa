@@ -256,6 +256,8 @@ impl Host {
                 progress_at_ms: None,
                 harness_session: None,
                 seen: true,
+                plan: None,
+                background: None,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -268,6 +270,15 @@ impl Host {
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
                 st.progress_at_ms = Some(ev.at_ms);
+            }
+            // agent가 대화 기록에서 읽은 계획·배경 작업 수(차이 목록 S5): 상태는 바꾸지 않는다(참고 `pane-status` plan·background_tasks)
+            if ev.kind == "plan" {
+                st.plan = ev.plan.clone();
+                st.background = ev.background;
+            }
+            // harness가 끝나면 그 안에서 돌던 배경 작업도 끝났다
+            if next == Some(AgentActivity::Exited) {
+                st.background = None;
             }
             // 새 harness 세션: 옛 진행 보고는 이 세션을 말하지 않는다(herdr-projects progress `respond` SessionStart)
             if ev.kind == "session_start" {
@@ -925,6 +936,8 @@ mod tests {
             percent: None,
             at_ms,
             transcript: None,
+            plan: None,
+            background: None,
         };
         let idle = AgentStatus {
             activity: AgentActivity::Idle,
@@ -936,6 +949,8 @@ mod tests {
             progress_at_ms: None,
             harness_session: None,
             seen: true,
+            plan: None,
+            background: None,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
@@ -977,6 +992,43 @@ mod tests {
         (h, Tmp(dir))
     }
 
+    /// 계획 사건(agent plan.rs, 차이 목록 S5)은 계획·배경 수만 바꾸고 상태는 그대로 둔다. harness가 끝나면 배경 수는 지운다
+    #[tokio::test]
+    async fn plan_events_set_counts_without_changing_the_activity() {
+        let (h, _t) = host_with_pane();
+        let ev = |kind: &str, at_ms, plan: Option<aaa_proto::PlanSummary>, background| HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: kind.into(),
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            at_ms,
+            transcript: None,
+            plan,
+            background,
+        };
+        h.on_harness("m", ev("working", 1_000, None, None));
+        let plan = aaa_proto::PlanSummary { done: 1, total: 3, current: Some("고치는 중".into()) };
+        h.on_harness("m", ev("plan", 2_000, Some(plan.clone()), Some(2)));
+        let a = h.pane_agent("s").unwrap();
+        assert_eq!(
+            (a.activity, a.since_ms, a.plan, a.background),
+            (AgentActivity::Working, 1_000, Some(plan.clone()), Some(2))
+        );
+        // 다른 상태 사건은 계획을 지우지 않는다
+        h.on_harness("m", ev("idle", 3_000, None, None));
+        let a = h.pane_agent("s").unwrap();
+        assert_eq!((a.activity, a.plan.as_ref(), a.background), (AgentActivity::Idle, Some(&plan), Some(2)));
+        h.on_harness("m", ev("exited", 4_000, None, None));
+        let a = h.pane_agent("s").unwrap();
+        assert_eq!((a.plan.as_ref(), a.background), (Some(&plan), None));
+        // 계획이 없어졌다는 사건
+        h.on_harness("m", ev("plan", 5_000, None, None));
+        assert_eq!(h.pane_agent("s").unwrap().plan, None);
+    }
+
     /// 답한 확인창 뒤 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16·plan §8.99: 부하에서
     /// PermissionRequest → 답 → 1.3초 뒤 Notification `permission_prompt`). 막힘이 끝난 뒤(작업 중: 화면 감지나 옛 agent의
     /// PostToolUse·PreToolUse)의 질문 사건은 다음 확인창의 새 질문이다.
@@ -993,6 +1045,8 @@ mod tests {
             percent: None,
             at_ms,
             transcript: None,
+            plan: None,
+            background: None,
         };
         h.on_harness("m", ev("question", 1_000));
         let mut q = h.open_question_of("s").expect("질문");

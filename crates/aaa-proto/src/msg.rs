@@ -369,6 +369,25 @@ pub struct FileInfo {
     pub kind: FileKind,
 }
 
+/// 폴더 보기의 폴더 한 단계(herdr-web-ui `DirectoryListing`). `path`는 agent 머신의 실제 경로다. `parent`는 허용 폴더 안일
+/// 때만 있다. 폴더·파일은 각각 처음 500개까지(`truncated`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DirListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub home: String,
+    pub directories: Vec<String>,
+    pub files: Vec<DirFile>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DirFile {
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+}
+
 // ───────────────────────── Agent link ─────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -485,6 +504,14 @@ pub enum AgentRequest {
     FileLocate {
         session: String,
         path: String,
+    },
+    /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
+    /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
+    DirList {
+        session: String,
+        path: String,
+        #[serde(default)]
+        hidden: bool,
     },
     /// 파일 보기: `FileLocate`가 돌려준 실제 경로의 한 조각(`FileChunk`). 그 사이 바뀌었거나 허용 폴더 밖이면 거부한다.
     /// `page`면 HTML 파일을 페이지로 그린 bytes(제 폴더의 그림·style·script를 넣은 것)의 조각이다.
@@ -663,6 +690,8 @@ pub enum AgentResponse {
     Cwd {
         cwd: Option<String>,
     },
+    /// 읽은 폴더 한 단계
+    DirListed(DirListing),
     /// 찾은 파일. 없으면 끝이 같은 파일 후보(실제 경로, 둘 이상)
     FileLocated {
         info: Option<FileInfo>,
@@ -1020,6 +1049,70 @@ pub struct GridFrame {
     /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
     #[serde(default)]
     pub modes: PaneModes,
+    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
+    #[serde(default)]
+    pub scroll: GridScroll,
+}
+
+/// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GridScroll {
+    pub offset: u32,
+    pub max: u32,
+}
+
+/// 기록 위치 옮기기(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "to", rename_all = "snake_case")]
+pub enum ScrollBy {
+    Up {
+        lines: u32,
+    },
+    Down {
+        lines: u32,
+    },
+    /// 맨 아래(지금 화면)로
+    Bottom,
+    /// 맨 아래에서 `lines`줄 위로
+    Offset {
+        lines: u32,
+    },
+}
+
+/// pane 화면 사본의 글 자리(herdr `PaneTextPoint`). `row`는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는 줄 번호
+/// (alt 화면이면 화면 줄만), `col`은 칸. `GridScroll`로 보면 화면 맨 위 줄은 `max - offset`이다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+pub struct TextPoint {
+    pub row: u32,
+    pub col: u16,
+}
+
+/// 글 범위(시작, 끝 칸 포함. 넓은 글자 끝은 머리 칸 + 1)(herdr `PaneTextRange`)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TextRange {
+    pub start: TextPoint,
+    pub end: TextPoint,
+}
+
+/// copy 모드 낱말·문단 이동(herdr `PaneCopyMotion`에서 줄 끝·첫 글자 빼고: TUI가 화면 frame에서 정한다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyMotion {
+    NextWordStart,
+    PreviousWordStart,
+    NextWordEnd,
+    NextBigWordStart,
+    PreviousBigWordStart,
+    NextBigWordEnd,
+    PreviousParagraph,
+    NextParagraph,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchDirection {
+    Forward,
+    Backward,
 }
 
 /// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
@@ -1149,6 +1242,14 @@ pub enum FrontRequest {
         pane: String,
         path: String,
     },
+    /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
+    /// 조작 기기만(`PaneFile`과 같다)
+    PaneDir {
+        pane: String,
+        path: String,
+        #[serde(default)]
+        hidden: bool,
+    },
     PaneSend {
         pane: String,
         data: B64,
@@ -1226,6 +1327,12 @@ pub enum FrontRequest {
         pane: String,
         data: B64,
     },
+    /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
+    /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
+    PanePaste {
+        pane: String,
+        text: String,
+    },
     /// 조작 lease를 이 연결로 가져온다(이전 보유자에게는 State로 알린다)
     PaneTake {
         pane: String,
@@ -1263,6 +1370,34 @@ pub enum FrontRequest {
     },
     PaneUnwatch {
         pane: String,
+    },
+    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.153). 프로그램에는 아무것도 가지 않는다.
+    PaneScroll {
+        pane: String,
+        by: ScrollBy,
+    },
+    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.27부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
+    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.156).
+    PaneSelectionRead {
+        pane: String,
+        from: TextPoint,
+        to: TextPoint,
+    },
+    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.27부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
+    /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
+    PaneCopyMotion {
+        pane: String,
+        cursor: TextPoint,
+        motion: CopyMotion,
+    },
+    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.27부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
+    /// 있으면 그 다음부터. `CopySearch`로 답한다.
+    PaneCopySearch {
+        pane: String,
+        query: String,
+        direction: SearchDirection,
+        cursor: TextPoint,
+        previous: Option<TextRange>,
     },
     Workspace {
         name: Option<String>,
@@ -1558,6 +1693,10 @@ impl FrontRequest {
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
+                | FrontRequest::PaneScroll { .. }
+                | FrontRequest::PaneSelectionRead { .. }
+                | FrontRequest::PaneCopyMotion { .. }
+                | FrontRequest::PaneCopySearch { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -1625,6 +1764,9 @@ pub enum FrontResponse {
         candidates: Vec<String>,
         url: Option<String>,
     },
+    PaneDir {
+        listing: DirListing,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -1640,6 +1782,25 @@ pub enum FrontResponse {
     },
     Workspace(Workspace),
     Done,
+    /// `PaneSelectionRead`: 고른 글. 한 frame에 들게 앞쪽만 두었으면 `truncated`
+    Selection {
+        pane: String,
+        text: String,
+        truncated: bool,
+    },
+    /// `PaneCopyMotion`: 옮긴 자리
+    CopyCursor {
+        pane: String,
+        cursor: TextPoint,
+    },
+    /// `PaneCopySearch`: 현재 일치 언저리(최대 1024개)와 전체 수, 그 안의 현재·전체에서의 현재(못 찾았으면 없음)
+    CopySearch {
+        pane: String,
+        matches: Vec<TextRange>,
+        total: u64,
+        current: Option<u32>,
+        current_global: Option<u64>,
+    },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {
         path: String,
@@ -1881,6 +2042,10 @@ pub enum EventsClientMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         focus: Option<bool>,
+        /// 이 웹 빌드(주 묶음 파일 이름). 배포 뒤에도 옛 페이지가 도는지 본다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        build: Option<String>,
     },
     /// 사건 하나를 앱 안 알림으로 어떻게 했나(판정 근거 기록, host는 흐름 사건으로 남긴다). `target`은 알림 자리
     /// (`thread=…`·`pane=…`), `kind`는 `blocked`·`done`, `outcome`은 웹이 정한 한 줄(띄움·보는 중·가려짐·꺼짐 등)
@@ -1970,6 +2135,8 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(FrontRequest::PaneDir { pane: "p".into(), path: "src".into(), hidden: false }.needs_control());
+        assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
         assert!(FrontRequest::PaneResize { pane: "p".into(), cols: 1, rows: 1 }.needs_control());
         assert!(
