@@ -25,6 +25,7 @@ pub mod list;
 mod mouse;
 mod prompt;
 mod scrollbar;
+mod settings;
 mod tabs;
 mod theme;
 
@@ -200,6 +201,10 @@ enum Pending {
     Input,
     /// 새로 만든 pane에 포커스를 옮긴다(보낼 때 있던 pane들: 같은 layout 사건이 응답보다 먼저 와도 새 pane을 찾는다)
     Focus(HashSet<String>),
+    /// 기록 편집기 pane을 열었다(`Focus`처럼 새 pane으로, 그 pane이 닫히면 `from`으로 돌아간다)
+    EditScrollback { before: HashSet<String>, from: String },
+    /// 새 workspace를 만들었다: 응답이 오면 그 workspace로 가서 새 pane에 포커스
+    NewSpace,
     /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
     Attach(u64),
     /// 고른 글 읽기: 응답이 오면 복사한다
@@ -236,8 +241,10 @@ enum Overlay {
     Rename(prompt::Rename),
     /// 닫기 확인(마지막 탭·마지막 pane)
     Confirm(prompt::Confirm),
-    /// 오른쪽 누름 메뉴(herdr `ContextMenu`)
+    /// 오른쪽 누름 메뉴(herdr `ContextMenu`)와 전체 메뉴(herdr `GlobalMenu`)
     Menu(mouse::Menu),
+    /// 설정 창(herdr `Settings`)
+    Settings(settings::Settings),
 }
 
 /// 단축키 창(herdr `ClientHelpOverlay`)
@@ -316,6 +323,10 @@ struct App {
     /// 새 pane으로 포커스를 옮길 layout 요청(응답 전까지 키·붙여넣기를 `held`에 붙잡는다)
     focus_wait: Option<String>,
     held: Vec<Event>,
+    /// 연 기록 편집기 pane과 연 pane(herdr `OverlayPaneState.previous_focus`): 편집기 pane이 닫히면 연 pane으로 돌아간다
+    overlay_back: Option<(String, String)>,
+    /// 머신 머리 줄로 고른 머신과 그때 포커스 pane(herdr 활성 endpoint): 포커스가 바뀌면 풀린다(`target_machine`)
+    machine_pick: Option<(String, Option<String>)>,
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
     copy_reply: Option<copy::CopyReply>,
@@ -329,6 +340,10 @@ struct App {
     scroll_lines: u16,
     /// 보통 화면 pane 오른쪽 1칸 scrollbar(`[tui] pane_scrollbars`)
     pane_scrollbars: bool,
+    /// 상태 점 모양(`[tui] status_indicators`)
+    indicators: aaa_config::StatusIndicators,
+    /// 지금 테마 이름(`[tui] theme`, 설정 창이 미리 보는 동안은 그 테마)
+    theme_name: String,
     /// 마지막으로 그린 자리(마우스가 맞힌다)
     hits: std::cell::RefCell<mouse::Hits>,
     drag: Option<mouse::Drag>,
@@ -392,6 +407,8 @@ impl App {
             ascii_on: false,
             ascii: None,
             focus_wait: None,
+            overlay_back: None,
+            machine_pick: None,
             held: vec![],
             copy_wait: None,
             copy_reply: None,
@@ -401,6 +418,8 @@ impl App {
             copy_on_select: true,
             scroll_lines: 3,
             pane_scrollbars: true,
+            indicators: aaa_config::StatusIndicators::Dots,
+            theme_name: "catppuccin".into(),
             hits: Default::default(),
             drag: None,
             selection: None,
@@ -430,6 +449,8 @@ impl App {
         self.copy_on_select = cfg.copy_on_select;
         self.scroll_lines = cfg.mouse_scroll_lines.max(1);
         self.pane_scrollbars = cfg.pane_scrollbars;
+        self.indicators = cfg.status_indicators;
+        self.theme_name = theme::canonical_theme_name(&cfg.theme).unwrap_or("catppuccin").to_string();
         self.sidebar_collapsed.get_or_insert(cfg.sidebar_start_collapsed);
         // herdr처럼 모르는 테마 이름은 알리고 기본(catppuccin)을 쓴다
         self.palette = theme::Palette::from_name(&cfg.theme).unwrap_or_else(theme::Palette::catppuccin);
@@ -588,6 +609,10 @@ impl App {
             }
             // copy 모드 pane에 포커스가 오가거나 그 pane이 없어지면 모드를 맞춘다
             self.settle_copy();
+            // 고른 머신은 포커스가 그대로인 동안만이다(다른 pane을 거쳐 돌아와도 다시 살지 않는다)
+            if self.machine_pick.as_ref().is_some_and(|(_, at)| *at != self.focus) {
+                self.machine_pick = None;
+            }
             self.copy_apply(&mut tx).await?;
             for name in std::mem::take(&mut self.space_fetch) {
                 let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
@@ -680,10 +705,11 @@ impl App {
             FrontMsg::Event(FrontEvent::Grid(f)) => {
                 let pane = f.pane.clone();
                 let g = self.grids.entry(pane.clone()).or_default();
-                let (before, alt) = (g.scroll, g.modes.alt_screen);
+                let (before, alt, size) = (g.scroll, g.modes.alt_screen, (g.cols, g.rows));
                 g.apply(f);
                 let alt_changed = alt != g.modes.alt_screen;
-                self.follow_grid(&pane, before, alt_changed);
+                let resized = size != (g.cols, g.rows);
+                self.follow_grid(&pane, before, alt_changed, resized);
             }
             FrontMsg::Res { id, result } => {
                 if self.focus_wait.as_ref() == Some(&id) {
@@ -700,6 +726,21 @@ impl App {
                         if let Some(new) = self.all_panes().difference(&before).next().cloned() {
                             self.select_pane(&new);
                         }
+                    }
+                    (
+                        Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)),
+                        Some(Pending::EditScrollback { before, from }),
+                    ) => {
+                        self.set_ws(w);
+                        if let Some(new) = self.all_panes().difference(&before).next().cloned() {
+                            self.select_pane(&new);
+                            self.overlay_back = Some((new, from));
+                            self.set_message("기록을 편집기로 열었다");
+                        }
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::NewSpace)) => {
+                        self.note_space(&w);
+                        self.enter_space(w);
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::SpaceLayout)) => {
                         self.note_space(&w)
@@ -758,6 +799,12 @@ impl App {
                         self.set_error(format!("copy 이동 실패: {}", e.message))
                     }
                     (Outcome::Err(e), Some(Pending::Copy)) => self.set_error(format!("복사하지 못했다: {}", e.message)),
+                    (Outcome::Err(e), Some(Pending::EditScrollback { .. })) => {
+                        self.set_error(format!("기록을 편집기로 열지 못했다: {}", e.message))
+                    }
+                    (Outcome::Err(e), Some(Pending::NewSpace)) => {
+                        self.set_error(format!("새 workspace를 만들지 못했다: {}", e.message))
+                    }
                     (Outcome::Err(e), Some(Pending::Attach(n))) => {
                         if self.attach_failed != Some(n) {
                             self.attach_failed = Some(n);
@@ -831,14 +878,44 @@ impl App {
             return Ok(());
         }
         let known = self.spaces.get(&name).cloned().unwrap_or_else(|| Workspace { name: name.clone(), tabs: vec![] });
-        self.ws_name = name.clone();
-        self.ws = Workspace { name: name.clone(), tabs: vec![] };
+        self.enter_space(known);
+        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
+        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        Ok(())
+    }
+
+    /// 그 workspace를 지금 workspace로 그린다(첫 탭, 포커스는 그 탭의 첫 pane)
+    fn enter_space(&mut self, w: Workspace) {
+        self.ws_name = w.name.clone();
+        self.ws = Workspace { name: w.name.clone(), tabs: vec![] };
         self.tab = 0;
         self.focus = None;
         self.list_top = None;
-        self.set_ws(known);
-        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
-        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        self.set_ws(w);
+    }
+
+    /// 새 workspace(herdr `NewWorkspace`, 이름을 묻는 `prompt_new_workspace_name`은 기본 꺼짐): 없는 이름
+    /// `workspace`·`workspace-2`…에 `target_machine`의 셸 탭 하나를 띄우고(CLI `workspace create`와 같은 길) 응답이 오면
+    /// 그 workspace로 간다. 새 셸 폴더는 새 탭처럼 포커스 pane에서 잇는다(herdr `source_workspace_id`).
+    async fn new_space(&mut self, tx: &mut FrontSender) -> Result<()> {
+        let taken = |n: &str| n == self.ws_name || self.spaces.contains_key(n);
+        let name = std::iter::once("workspace".to_string())
+            .chain((2..).map(|i| format!("workspace-{i}")))
+            .find(|n| !taken(n))
+            .unwrap_or_default();
+        let change = LayoutChange::NewTab {
+            machine: self.target_machine(),
+            name: None,
+            argv: vec![],
+            cwd: None,
+            cols: None,
+            rows: None,
+            label: None,
+            from: self.focus.clone(),
+        };
+        let id = tx.send(FrontRequest::LayoutApply { workspace: Some(name), change }).await?;
+        self.pending.insert(id.clone(), Pending::NewSpace);
+        self.focus_wait = Some(id);
         Ok(())
     }
 
@@ -856,6 +933,16 @@ impl App {
         }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
+        }
+        // 기록 편집기 pane이 닫혔다: 그 pane을 보고 있었으면 연 pane으로 돌아간다(herdr `restore_overlay_after_exit`)
+        if let Some((overlay, from)) = self.overlay_back.clone() {
+            let panes = self.all_panes();
+            if !panes.contains(&overlay) {
+                self.overlay_back = None;
+                if self.focus.as_ref() == Some(&overlay) && panes.contains(&from) {
+                    self.select_pane(&from);
+                }
+            }
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
@@ -956,7 +1043,7 @@ impl App {
         self.sidebar_collapsed = Some(!self.collapsed());
     }
 
-    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 새 셸이면 새 탭
+    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 머신 머리면 그 머신을 고른다
     async fn open_row(&mut self, tx: &mut FrontSender, row: list::Row) -> Result<()> {
         let pane = match row {
             list::Row::Pane(p) => p,
@@ -968,18 +1055,9 @@ impl App {
                 }
             },
             list::Row::Space(name) => return self.switch_space(tx, name).await,
-            list::Row::NewShell(machine) => {
-                let change = LayoutChange::NewTab {
-                    machine: Some(machine),
-                    name: None,
-                    argv: vec![],
-                    cwd: None,
-                    cols: None,
-                    rows: None,
-                    label: None,
-                    from: None,
-                };
-                return self.layout(tx, change, true).await;
+            list::Row::Machine(id) => {
+                self.pick_machine(id);
+                return Ok(());
             }
             _ => return Ok(()),
         };
@@ -1081,6 +1159,27 @@ impl App {
 
     fn focused_machine(&self) -> Option<String> {
         self.focus.as_ref().and_then(|f| self.panes.get(f)).map(|p| p.machine_id.clone())
+    }
+
+    /// 새 탭·새 workspace를 여는 머신(herdr 활성 endpoint): 머신 머리 줄로 고른 머신(그 뒤 포커스가 그대로일 때), 아니면
+    /// 포커스 pane의 머신. 둘 다 없으면 host가 이 머신(로컬 agent)에 연다.
+    fn target_machine(&self) -> Option<String> {
+        match &self.machine_pick {
+            Some((m, at)) if *at == self.focus => Some(m.clone()),
+            _ => self.focused_machine(),
+        }
+    }
+
+    /// 머신 머리 줄을 눌렀다(herdr `handle_endpoint_machine_click`): 그 머신을 새 탭·workspace를 열 머신으로. 끊긴 머신은
+    /// 알리고 고르지 않는다(herdr 「… is not ready」)
+    fn pick_machine(&mut self, id: String) {
+        let Some(m) = self.machines.iter().find(|m| m.id == id) else { return };
+        if m.connection != aaa_proto::Connection::Connected {
+            self.set_error(format!("{}에 붙어 있지 않다", m.name));
+            return;
+        }
+        self.set_message(format!("새 탭·workspace는 {}에", m.name));
+        self.machine_pick = Some((id, self.focus.clone()));
     }
 
     /// layout 바꾸기. `focus_new`면 응답이 올 때까지 키를 붙잡아 두었다가 새 pane에 포커스를 옮긴 뒤 보낸다:
@@ -1273,6 +1372,30 @@ impl App {
                 KeyCode::Esc => self.overlay = None,
                 _ => {}
             },
+            // herdr `route_settings_key`: Esc 되돌리고 닫기, Tab·→·l 다음 구역, shift+Tab·←·h 앞 구역, ↑↓·k/j 고르기(테마는
+            // 미리 보기), Enter·space 적용. 다른 키는 버린다
+            Some(Overlay::Settings(s)) => {
+                let plain = k.modifiers.is_empty();
+                match k.code {
+                    KeyCode::Esc => self.settings_cancel(),
+                    KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if plain => {
+                        let next = s.next_section(true);
+                        self.settings_section(next);
+                    }
+                    KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h')
+                        if k.modifiers.difference(KeyModifiers::SHIFT).is_empty() =>
+                    {
+                        let next = s.next_section(false);
+                        self.settings_section(next);
+                    }
+                    KeyCode::Up | KeyCode::Down | KeyCode::Char('k') | KeyCode::Char('j') if plain => {
+                        s.step(matches!(k.code, KeyCode::Down | KeyCode::Char('j')));
+                        self.settings_preview();
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') if plain => self.settings_apply(),
+                    _ => {}
+                }
+            }
             // herdr: Esc 닫기, 위·아래 고르기(끝에서 멈춤), Enter 하기. 다른 키는 버린다
             Some(Overlay::Menu(m)) => match k.code {
                 KeyCode::Esc => self.overlay = None,
@@ -1288,6 +1411,75 @@ impl App {
             None => {}
         }
         Ok(())
+    }
+
+    /// 설정 창 구역을 바꾼다(herdr `select_settings_section`: 그 구역의 지금 값을 고른 채로)
+    fn settings_section(&mut self, section: settings::Section) {
+        let selected = match section {
+            settings::Section::Theme => settings::theme_index(&self.theme_name),
+            settings::Section::Indicators => usize::from(self.indicators == aaa_config::StatusIndicators::Symbols),
+        };
+        if let Some(Overlay::Settings(s)) = self.overlay.as_mut() {
+            s.section = section;
+            s.selected = selected;
+        }
+    }
+
+    /// 테마 구역에서 고른 테마를 바로 입혀 본다(herdr `preview_selected_theme`)
+    fn settings_preview(&mut self) {
+        let Some(Overlay::Settings(s)) = self.overlay.as_ref() else { return };
+        if s.section != settings::Section::Theme {
+            return;
+        }
+        if let Some(name) = theme::THEME_NAMES.get(s.selected) {
+            self.theme_name = name.to_string();
+            self.palette = theme::Palette::from_name(name).unwrap_or_else(theme::Palette::catppuccin);
+        }
+    }
+
+    /// 설정 창을 닫고 미리 본 테마를 되돌린다(herdr `cancel_settings_overlay`)
+    fn settings_cancel(&mut self) {
+        let Some(Overlay::Settings(s)) = self.overlay.take() else { return };
+        self.palette = theme::Palette::from_name(&s.original_theme).unwrap_or_else(theme::Palette::catppuccin);
+        self.theme_name = s.original_theme;
+    }
+
+    /// 고른 값을 host.toml `[tui]`에 쓰고 다시 읽는다(herdr `apply_settings_choice`·`save_settings_edit`). 테마는 창을 닫고
+    /// 상태 표시는 창을 둔다. 쓰지 못하면 창을 둔 채 알리고, host.local.toml이 그 key를 덮어 값이 그대로면 그렇다고 알린다.
+    fn settings_apply(&mut self) {
+        let Some(Overlay::Settings(s)) = self.overlay.as_ref() else { return };
+        let (key, value) = match s.section {
+            settings::Section::Theme => ("theme", theme::THEME_NAMES.get(s.selected).copied().unwrap_or("catppuccin")),
+            settings::Section::Indicators => (
+                "status_indicators",
+                [aaa_config::StatusIndicators::Dots, aaa_config::StatusIndicators::Symbols]
+                    .get(s.selected)
+                    .map_or("dots", |i| i.as_str()),
+            ),
+        };
+        let close = s.section == settings::Section::Theme;
+        let dir = aaa_config::paths::config_dir();
+        if let Err(e) = aaa_config::tui_edit::set(&dir, key, value.into()) {
+            self.set_error(format!("설정을 저장하지 못했다: {e}"));
+            return;
+        }
+        let cfg = match aaa_config::load_host(&dir) {
+            Ok(l) => l.config.tui,
+            Err(_) => {
+                self.set_error("설정을 저장했지만 host.toml을 다시 읽지 못했다");
+                return;
+            }
+        };
+        self.apply_config(&cfg);
+        let now = if close { self.theme_name.as_str() } else { self.indicators.as_str() };
+        if now != value {
+            self.set_error(format!("host.local.toml의 [tui] {key}가 덮고 있어 바뀌지 않았다"));
+        }
+        if close {
+            self.overlay = None;
+        } else if let Some(Overlay::Settings(s)) = self.overlay.as_mut() {
+            s.original_theme = self.theme_name.clone();
+        }
     }
 
     /// 닫기 확인 창에서 닫기
@@ -1344,9 +1536,9 @@ impl App {
         }));
     }
 
-    /// 새 탭: 포커스 pane의 머신에, 그 pane이 지금 있는 폴더에서(host `[terminal] new_cwd`)
+    /// 새 탭: `target_machine`에, 포커스 pane이 지금 있는 폴더에서(host `[terminal] new_cwd`, 다른 머신이면 home)
     async fn new_tab(&mut self, tx: &mut FrontSender, label: Option<String>) -> Result<()> {
-        let machine = self.focused_machine();
+        let machine = self.target_machine();
         let change = LayoutChange::NewTab {
             machine,
             name: None,
@@ -1476,6 +1668,13 @@ impl App {
         let focus = self.focus.clone();
         match a {
             Action::Help => self.overlay = Some(Overlay::Help(Help::default())),
+            Action::Settings => {
+                self.overlay = Some(Overlay::Settings(settings::Settings {
+                    section: settings::Section::Theme,
+                    selected: settings::theme_index(&self.theme_name),
+                    original_theme: self.theme_name.clone(),
+                }))
+            }
             Action::Detach => self.quit = true,
             Action::ReloadConfig => {
                 let cfg = tui_config();
@@ -1512,6 +1711,7 @@ impl App {
                 }));
             }
             Action::NewTab => self.new_tab(tx, None).await?,
+            Action::NewWorkspace => self.new_space(tx).await?,
             Action::RenameTab => {
                 if let Some(t) = self.ws.tabs.get(self.tab) {
                     let original = self.tab_label(self.tab);
@@ -1523,6 +1723,17 @@ impl App {
                 }
             }
             Action::CopyMode => self.enter_copy(tx).await?,
+            // herdr `edit_scrollback`: 기록을 그 pane 머신 편집기로 연다(host가 나눠 띄우고 zoom한다). 응답까지 키를 붙잡는다
+            Action::EditScrollback => {
+                let Some(pane) = focus else { return Ok(()) };
+                if self.host_at_least(32) {
+                    let req =
+                        FrontRequest::PaneEditScrollback { workspace: Some(self.ws_name.clone()), pane: pane.clone() };
+                    let id = tx.send(req).await?;
+                    self.pending.insert(id.clone(), Pending::EditScrollback { before: self.all_panes(), from: pane });
+                    self.focus_wait = Some(id);
+                }
+            }
             Action::RenamePane => {
                 if let Some(pane) = self.focus.clone() {
                     self.open_rename_pane(pane);
@@ -1716,6 +1927,12 @@ impl App {
                 hits.buttons = prompt::rename_buttons(area).into_iter().zip(bs).collect();
                 return prompt::render_rename(buf, area, r, p);
             }
+            Some(Overlay::Settings(s)) => {
+                let h = settings::render(buf, area, s, p);
+                hits.popup = h.as_ref().map(|h| h.popup);
+                hits.settings = h;
+                return None;
+            }
             Some(Overlay::Confirm(c)) => {
                 hits.buttons = prompt::confirm_buttons(area)
                     .into_iter()
@@ -1842,6 +2059,7 @@ impl App {
             focused: self.mode == Mode::Navigate,
             top: self.list_top,
             pal: &self.palette,
+            style: self.indicators,
             now_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64),
@@ -1864,11 +2082,19 @@ impl App {
         };
         let navigating = self.mode == Mode::Navigate;
         let spaces = self.space_list();
-        let placed_spaces = list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p);
+        let placed_spaces =
+            list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p, self.indicators);
+        // herdr: 마우스를 받을 때만 ` new`와 `menu`, 머신이 여럿이면 새 workspace를 열 머신 이름을 붙인다(없으면 로컬 agent)
+        let footer = self.mouse_capture.then(|| {
+            let id = self.target_machine().or_else(|| self.machines.iter().find(|m| m.local).map(|m| m.id.clone()));
+            let name = id.and_then(|id| self.machines.iter().find(|m| m.id == id)).map(|m| m.name.as_str());
+            list::render_spaces_footer(buf, spaces_area, name.filter(|_| self.machines.len() > 1), p)
+        });
         let body = list::render_agents_header(buf, agents_area, p);
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
+        (hits.new_workspace, hits.global_menu) = footer.flatten().unzip();
         hits.rows =
             placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
         if body.h > 0 {
@@ -1932,7 +2158,7 @@ impl App {
             buf.set_string(
                 button.x + button.w - 1,
                 button.y,
-                list::Dot::Blocked.icon(),
+                list::Dot::Blocked.icon(self.indicators),
                 Style::default().fg(p.red).bg(p.surface0),
             );
         }
@@ -1951,7 +2177,7 @@ impl App {
         buf.set_stringn(
             status.x,
             status.y,
-            format!(" {} ", worst.icon()),
+            format!(" {} ", worst.icon(self.indicators)),
             name_w.min(3) as usize,
             Style::default().fg(worst.color(p)).bg(p.panel_bg),
         );
@@ -2655,6 +2881,50 @@ mod tests {
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
     }
 
+    /// copy 모드 찾기 일치는 pane 크기가 바뀌면 지운다(찾은 글·방향은 남아 `n`으로 다시 찾는다). 같은 크기 장면은 그대로
+    #[test]
+    fn search_matches_clear_when_the_pane_resizes() {
+        use aaa_proto::{SearchDirection, TextPoint, TextRange};
+        let mut app = app_with_tabs(&["a"]);
+        let frame = |cols: u16, rows: u16| GridFrame {
+            pane: "p0".into(),
+            cols,
+            rows,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            full: true,
+            lines: vec![],
+            modes: PaneModes::default(),
+            scroll: GridScroll::default(),
+        };
+        app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(40, 10))));
+        let at = |row, col| TextPoint { row, col };
+        let found = copy::Search {
+            query: "ab".into(),
+            direction: Some(SearchDirection::Forward),
+            matches: vec![TextRange { start: at(3, 1), end: at(3, 2) }],
+            total: 1,
+            current: Some(0),
+            current_global: Some(0),
+        };
+        app.copy = Some(copy::CopyMode {
+            pane: "p0".into(),
+            cursor: (3, 1),
+            offset: 0,
+            entry: 0,
+            select: None,
+            prompt: None,
+            search: found.clone(),
+        });
+        app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(40, 10))));
+        assert_eq!(app.copy.as_ref().unwrap().search, found, "같은 크기면 그대로");
+        app.on_msg(FrontMsg::Event(FrontEvent::Grid(frame(60, 10))));
+        let s = &app.copy.as_ref().unwrap().search;
+        assert!(s.matches.is_empty() && s.current_global.is_none() && s.total == 0, "{s:?}");
+        assert_eq!((s.query.as_str(), s.direction), ("ab", Some(SearchDirection::Forward)));
+    }
+
     /// 폭만 바뀐 장면이 바뀐 줄만 가져와도(고치기 전 host) 나머지 줄은 남는다. 전체 장면은 모두 바꾼다(QA t-0337 Q23)
     #[test]
     fn width_only_frames_keep_unsent_rows() {
@@ -2804,6 +3074,7 @@ mod tests {
         let shown = lines.join("\n");
         assert!(lines[0].starts_with(" spaces "), "{shown}");
         assert!(lines[2].starts_with(" · main "), "{shown}");
+        assert!(lines[14].starts_with(" new "), "{shown}");
         assert!(lines[15].starts_with(&"─".repeat(25)), "{shown}");
         assert!(lines[16].starts_with(" agents") && lines[16].contains("projects│"), "{shown}");
         assert!(lines[18].starts_with(" ▾ mac-a"), "{shown}");
@@ -2827,6 +3098,114 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("   │ ▾ mac-a")), "탐색이면 띄운다: {shown}");
         assert_eq!(at_col(&lines[28], 28), Some('«'), "띄운 목록은 막대 위까지: {shown}");
         assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
+    }
+
+    /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 머신 머리 줄로 고르면 그 머신
+    /// (포커스가 그대로인 동안), 끊긴 머신은 고르지 않는다. 마우스를 받으면 spaces 맨 아랫줄 ` new`, 머신이 여럿이면 그 이름.
+    #[test]
+    fn new_workspace_machine_like_herdr_endpoint() {
+        let mut app = app_with_tabs(&["", ""]);
+        app.focus = Some("p0".into());
+        app.panes.insert("p0".into(), pane_view("p0", "m", "build"));
+        app.panes.insert("p1".into(), pane_view("p1", "m", "log"));
+        let mut far = machine("n", "mac-b");
+        far.local = false;
+        app.machines = vec![machine("m", "mac-a"), far];
+        let footer = |app: &App| draw(app).0[14].clone();
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
+        app.pick_machine("n".into());
+        assert_eq!(app.target_machine().as_deref(), Some("n"));
+        assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
+        assert!(footer(&app).contains("         menu│"), "{}", footer(&app));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 12, h: 1 }));
+        assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 14, w: 6, h: 1 }));
+        // 포커스가 바뀌면 포커스 pane의 머신
+        app.focus = Some("p1".into());
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        // 끊긴 머신은 고르지 않는다
+        app.machines[1].connection = aaa_proto::Connection::Disconnected;
+        app.pick_machine("n".into());
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        assert!(app.error.as_ref().is_some_and(|e| e.0.contains("mac-b에 붙어 있지 않다")));
+        // 포커스가 없으면 로컬 agent, 머신이 하나면 이름 없이, 마우스를 받지 않으면 없다
+        app.focus = None;
+        assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
+        app.machines.truncate(1);
+        assert!(footer(&app).starts_with(" new    "), "{}", footer(&app));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
+        app.mouse_capture = false;
+        assert!(!footer(&app).contains("new"), "{}", footer(&app));
+        assert_eq!((app.hits.borrow().new_workspace, app.hits.borrow().global_menu), (None, None));
+    }
+
+    /// 설정 창(herdr `render_settings_overlay`·`route_settings_key`): 머리 ` 설정`, 구역 이름표, 지금 테마 `✓`, 고른 줄 `▸`,
+    /// 안내와 적용·닫기 단추. 테마 구역에서 고르면 바로 입혀 보고, 구역을 바꾸면 그 구역 지금 값, 닫으면 연 때의 테마로.
+    /// (적용은 host.toml에 써서 harness `settings_like_herdr`가 실험실 설정 폴더로 본다)
+    #[test]
+    fn settings_like_herdr() {
+        let mut app = app_with_tabs(&[""]);
+        app.overlay = Some(Overlay::Settings(settings::Settings {
+            section: settings::Section::Theme,
+            selected: 0,
+            original_theme: "catppuccin".into(),
+        }));
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        for want in [
+            " 설정",
+            " 테마   상태 표시 ",
+            " ▸ catppuccin ✓",
+            "   terminal",
+            " ↑↓ 고르기  tab 구역",
+            " ↵ 적용 ",
+            " esc 닫기 ",
+        ] {
+            assert!(shown.contains(want), "{want:?}: {shown}");
+        }
+        assert_eq!(app.hits.borrow().settings.as_ref().map(|h| h.tabs.len()), Some(2));
+        if let Some(Overlay::Settings(s)) = app.overlay.as_mut() {
+            s.step(true);
+            s.step(true);
+        }
+        app.settings_preview();
+        assert_eq!((app.theme_name.as_str(), &app.palette), ("terminal", &theme::Palette::terminal()));
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(shown.contains(" ▸ terminal") && shown.contains("   catppuccin ✓"), "{shown}");
+        app.settings_section(settings::Section::Indicators);
+        let (lines, _) = draw(&app);
+        let shown = lines.join("\n");
+        assert!(shown.contains(" ▸ 색 점  ● ● ● ○ ·") && shown.contains("   기호  × ◐ ✓ ○ ·"), "{shown}");
+        // 미리 본 테마는 구역을 바꿔도 그대로, 닫으면 되돌린다
+        assert_eq!(app.palette, theme::Palette::terminal());
+        app.settings_cancel();
+        assert!(app.overlay.is_none());
+        assert_eq!((app.theme_name.as_str(), &app.palette), ("catppuccin", &theme::Palette::catppuccin()));
+    }
+
+    /// 새 workspace 답: 그 workspace로 가서 새 pane에 포커스(키 붙잡기도 풀림), 실패면 무엇이 실패했는지 알린다
+    #[test]
+    fn new_workspace_answer_enters_it() {
+        let mut app = app_with_tabs(&[""]);
+        app.focus = Some("p0".into());
+        app.pending.insert("r1".into(), Pending::NewSpace);
+        app.focus_wait = Some("r1".into());
+        let tab = aaa_proto::Tab {
+            id: "t9".into(),
+            name: String::new(),
+            root: aaa_proto::LayoutNode::Pane { pane: "p9".into() },
+            zoomed: false,
+        };
+        let w = Workspace { name: "workspace".into(), tabs: vec![tab] };
+        let ok = Outcome::Ok(aaa_proto::FrontResponse::Workspace(w));
+        app.on_msg(FrontMsg::Res { id: "r1".into(), result: ok });
+        assert_eq!((app.ws_name.as_str(), app.focus.as_deref()), ("workspace", Some("p9")));
+        assert!(app.focus_wait.is_none() && app.spaces.contains_key("workspace"));
+        app.pending.insert("r2".into(), Pending::NewSpace);
+        let e = aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::NotFound, "머신이 없다: mac-b");
+        app.on_msg(FrontMsg::Res { id: "r2".into(), result: Outcome::Err(e) });
+        assert_eq!(app.error.as_ref().map(|e| e.0.as_str()), Some("새 workspace를 만들지 못했다: 머신이 없다: mac-b"));
     }
 
     /// 모드 막대는 평소에 없고(pane 맨 아랫줄은 pane 것), 오류는 ERROR 막대, 알림은 오른쪽 위 카드(herdr)

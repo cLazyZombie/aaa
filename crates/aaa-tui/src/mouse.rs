@@ -72,6 +72,11 @@ pub struct Hits {
     pub tabs: Vec<(Rect, usize)>,
     pub tab_bar: Option<Rect>,
     pub new_tab: Option<Rect>,
+    /// spaces 구역 맨 아랫줄 ` new`와 오른쪽 `menu`
+    pub new_workspace: Option<Rect>,
+    pub global_menu: Option<Rect>,
+    /// 설정 창의 구역 이름표·고르는 줄·단추
+    pub settings: Option<crate::settings::Hits>,
     pub scroll_left: Option<Rect>,
     pub scroll_right: Option<Rect>,
     /// 탭 막대가 지금 몇째 탭부터 보이나와 가장 많이 밀 수 있는 값
@@ -202,6 +207,8 @@ pub enum MenuTarget {
         passthrough: bool,
         labeled: bool,
     },
+    /// 전체 메뉴(herdr `GlobalMenu`, spaces 맨 아랫줄 오른쪽 `menu`)
+    Global,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +224,10 @@ pub enum MenuAction {
     Zoom,
     RightClick,
     ClosePane,
+    Settings,
+    Keybinds,
+    ReloadConfig,
+    Detach,
 }
 
 /// 오른쪽 누름 메뉴(herdr `ClientContextMenuOverlay`): 누른 자리에 띄우고 첫 항목을 고른다
@@ -258,7 +269,22 @@ impl Menu {
                 ]);
                 items
             }
+            // herdr `global_menu_items`(새 판 알림 「what's new」은 aaa에 없다)
+            MenuTarget::Global => {
+                vec![("설정", Settings), ("단축키", Keybinds), ("설정 다시 읽기", ReloadConfig), ("나가기", Detach)]
+            }
         }
+    }
+
+    /// 전체 메뉴: `menu` 단추의 오른쪽 끝에 맞춰 그 위에 띄운다(herdr `render_global_menu`)
+    pub fn global(launcher: Rect) -> Menu {
+        let mut m = Menu { target: MenuTarget::Global, x: 0, y: 0, highlighted: 0 };
+        let items = m.items();
+        let w = (items.iter().map(|(l, _)| unicode_width(l) as u16).max().unwrap_or(0) + 4).max(14);
+        let h = items.len() as u16 + 2;
+        m.x = (launcher.x + launcher.w).saturating_sub(w);
+        m.y = launcher.y.saturating_sub(h);
+        m
     }
 
     /// herdr `move_context_menu_selection`: 끝에서 멈춘다
@@ -593,6 +619,25 @@ impl App {
                     }
                     _ => self.overlay = None,
                 },
+                // herdr: 구역 이름표는 그 구역, 줄은 고르기(테마는 미리 보기, 상태 표시는 바로 적용), 적용 단추, 닫기 단추·창 밖은
+                // 되돌리고 닫기
+                Some(Overlay::Settings(s)) => {
+                    let Some(sh) = hits.settings.as_ref() else { return Ok(()) };
+                    if let Some((_, section)) = sh.tabs.iter().find(|(r, _)| contains(*r, x, y)) {
+                        let section = *section;
+                        self.settings_section(section);
+                    } else if let Some((_, i)) = sh.choices.iter().find(|(r, _)| contains(*r, x, y)) {
+                        s.selected = *i;
+                        match s.section {
+                            crate::settings::Section::Theme => self.settings_preview(),
+                            crate::settings::Section::Indicators => self.settings_apply(),
+                        }
+                    } else if contains(sh.apply, x, y) {
+                        self.settings_apply();
+                    } else if contains(sh.close, x, y) || !contains(sh.popup, x, y) {
+                        self.settings_cancel();
+                    }
+                }
                 // 메뉴는 위에서 다뤘다
                 Some(Overlay::Menu(_)) | None => {}
             },
@@ -639,7 +684,8 @@ impl App {
         }
     }
 
-    /// 왼쪽 누름(herdr 맞히기 순서: 사이드바 접기 → 경계 → 새 탭 → `<` `>` → 탭 → 목록 줄 → 나눔 경계 → pane)
+    /// 왼쪽 누름(herdr 맞히기 순서: 사이드바 접기 → 경계 → 전체 메뉴 → 새 workspace → 새 탭 → `<` `>` → 탭 → 목록 줄 →
+    /// 나눔 경계 → pane)
     async fn press(&mut self, x: u16, y: u16, mods: KeyModifiers, hits: &Hits, tx: &mut FrontSender) -> Result<()> {
         self.selection = None;
         if self.mode == Mode::Prefix {
@@ -658,6 +704,13 @@ impl App {
             self.mode = if self.mode == Mode::Navigate { Mode::Terminal } else { Mode::Navigate };
             self.list_sel = None;
             return Ok(());
+        }
+        if let Some(launcher) = hits.global_menu.filter(|r| contains(*r, x, y)) {
+            self.overlay = Some(Overlay::Menu(Menu::global(launcher)));
+            return Ok(());
+        }
+        if hits.on(hits.new_workspace, x, y) {
+            return self.act(Action::NewWorkspace, tx).await;
         }
         if hits.on(hits.new_tab, x, y) {
             return self.act(Action::NewTab, tx).await;
@@ -835,6 +888,15 @@ impl App {
                     self.act(a, tx).await
                 }
             },
+            MenuTarget::Global => {
+                let a = match action {
+                    MenuAction::Settings => Action::Settings,
+                    MenuAction::Keybinds => Action::Help,
+                    MenuAction::ReloadConfig => Action::ReloadConfig,
+                    _ => Action::Detach,
+                };
+                self.act(a, tx).await
+            }
         }
     }
 
@@ -1328,6 +1390,13 @@ mod tests {
     /// 고른 줄은 accent 바탕, 위·아래는 끝에서 멈춤
     #[test]
     fn menu_like_herdr() {
+        // 전체 메뉴(herdr `global_menu_items`·`render_global_menu`): `menu` 단추 오른쪽 끝에 맞춰 그 위에, 폭은 가장 긴 항목 + 4
+        let global = Menu::global(Rect { x: 19, y: 14, w: 6, h: 1 });
+        assert_eq!(
+            global.items().iter().map(|(l, _)| *l).collect::<Vec<_>>(),
+            ["설정", "단축키", "설정 다시 읽기", "나가기"]
+        );
+        assert_eq!((global.x, global.y), (25 - 18, 14 - 6));
         let tab = Menu { target: MenuTarget::Tab { index: 1 }, x: 70, y: 0, highlighted: 0 };
         assert_eq!(tab.items().iter().map(|(l, _)| *l).collect::<Vec<_>>(), ["새 탭", "이름 바꾸기", "닫기"]);
         let mut pane = Menu {

@@ -30,6 +30,7 @@ mod prompt_box;
 mod push;
 mod restore;
 mod routine;
+mod scrollback;
 mod seen;
 pub mod tailscale;
 mod tasks;
@@ -416,6 +417,8 @@ pub struct Host {
     restoring: Mutex<HashSet<String>>,
     /// 이 host 실행에서 복원해 본 pane(한 번만 한다)
     restore_tried: Mutex<HashSet<String>>,
+    /// 기록 편집기 overlay pane(scrollback.rs). 메모리에만 둔다
+    overlays: Mutex<HashMap<String, scrollback::EditOverlay>>,
 }
 
 fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
@@ -556,6 +559,7 @@ impl Host {
             report_refresh: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
             restore_tried: Mutex::new(HashSet::new()),
+            overlays: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -641,6 +645,9 @@ impl Host {
         self.bump();
         for id in exited {
             self.spawn_close_exited(id, hello.machine_id.clone());
+        }
+        for s in hello.sessions.iter().filter(|s| !s.state.is_running()) {
+            self.overlay_ended(&s.id);
         }
         // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
         let open = self.questions(false);
@@ -788,6 +795,7 @@ impl Host {
         self.bump();
         if !info.state.is_running() {
             self.close_questions_of(&info.id);
+            self.overlay_ended(&info.id);
         }
         self.replay_harness(&info.id);
         // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
@@ -1384,6 +1392,12 @@ impl Host {
             FrontRequest::Workspace { name } => {
                 Ok(FrontResponse::Workspace(self.workspace(name.as_deref().unwrap_or(DEFAULT_WORKSPACE))))
             }
+            FrontRequest::PaneEditScrollback { workspace, pane } => {
+                let name = workspace
+                    .or_else(|| self.workspace_of_pane(&pane))
+                    .unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
+                self.pane_edit_scrollback(&name, &pane, actor).await.map(FrontResponse::Workspace)
+            }
             FrontRequest::LayoutApply { workspace, change } => {
                 // workspace를 주지 않으면 그 pane·탭이 든 workspace(없으면 main)
                 let found = match &change {
@@ -1693,31 +1707,34 @@ impl Host {
     /// workspace를 지운다).
     fn spawn_close_exited(self: &Arc<Self>, id: String, mid: String) {
         let me = self.clone();
-        tokio::spawn(async move {
-            let had: Vec<String> = {
-                let ws = me.workspaces.lock().unwrap();
-                ws.values().filter(|w| aaa_proto::layout::ws_contains(w, &id)).map(|w| w.name.clone()).collect()
+        tokio::spawn(async move { me.close_record(&id, &mid, "exit").await });
+    }
+
+    /// 끝난 pane을 닫는다(셸 exit, 기록 편집기 overlay): 기록을 지우고 모든 layout에서 빼고, 탭이 하나도 남지 않은 workspace도 지운다
+    async fn close_record(self: &Arc<Self>, id: &str, mid: &str, actor: &str) {
+        let had: Vec<String> = {
+            let ws = self.workspaces.lock().unwrap();
+            ws.values().filter(|w| aaa_proto::layout::ws_contains(w, id)).map(|w| w.name.clone()).collect()
+        };
+        if let Err(e) = self.forget(id, mid, actor).await {
+            tracing::warn!(pane = %id, actor, "끝난 pane을 닫지 못했다: {}", e.message);
+            return;
+        }
+        for name in had {
+            let emptied = {
+                let mut ws = self.workspaces.lock().unwrap();
+                let empty = ws.get(&name).is_some_and(|w| w.tabs.is_empty());
+                empty && ws.remove(&name).is_some()
             };
-            if let Err(e) = me.forget(&id, &mid, "exit").await {
-                tracing::warn!(pane = %id, "끝난 셸 pane을 닫지 못했다: {}", e.message);
-                return;
+            if !emptied {
+                continue;
             }
-            for name in had {
-                let emptied = {
-                    let mut ws = me.workspaces.lock().unwrap();
-                    let empty = ws.get(&name).is_some_and(|w| w.tabs.is_empty());
-                    empty && ws.remove(&name).is_some()
-                };
-                if !emptied {
-                    continue;
-                }
-                if let Err(e) = me.db.delete_workspace(&name) {
-                    tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
-                }
-                me.db.audit("exit", "workspace_close", &name);
-                let _ = me.layout_events.send(Workspace { name, tabs: vec![] });
+            if let Err(e) = self.db.delete_workspace(&name) {
+                tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
             }
-        });
+            self.db.audit(actor, "workspace_close", &name);
+            let _ = self.layout_events.send(Workspace { name, tabs: vec![] });
+        }
     }
 
     async fn forget(self: &Arc<Self>, id: &str, mid: &str, actor: &str) -> Result<(), ErrorBody> {

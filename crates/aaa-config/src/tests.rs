@@ -167,7 +167,8 @@ fn sidebar_like_herdr() {
     assert!(t.mouse_capture && t.copy_on_select);
     assert_eq!(t.mouse_scroll_lines, 3);
     assert!(t.pane_scrollbars);
-    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\npane_borders = \"off\"\nmouse_capture = false\ncopy_on_select = false\nmouse_scroll_lines = 5\npane_scrollbars = false\n");
+    assert_eq!(t.status_indicators, crate::StatusIndicators::Dots);
+    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\npane_borders = \"off\"\nmouse_capture = false\ncopy_on_select = false\nmouse_scroll_lines = 5\npane_scrollbars = false\nstatus_indicators = \"symbols\"\n");
     let t = load_host(&d.0).unwrap().config.tui;
     assert_eq!((t.sidebar_width, t.sidebar_start_collapsed), (30, true));
     assert_eq!(t.theme, "terminal");
@@ -176,6 +177,7 @@ fn sidebar_like_herdr() {
     assert!(!t.mouse_capture && !t.copy_on_select);
     assert_eq!(t.mouse_scroll_lines, 5);
     assert!(!t.pane_scrollbars);
+    assert_eq!(t.status_indicators, crate::StatusIndicators::Symbols);
     d.write("host.toml", "schema = 1\n[tui]\nsidebar_collapsed_mode = \"tiny\"\n");
     assert!(load_host(&d.0).is_err(), "모르는 접기 방식은 거부한다");
     d.write("host.toml", "schema = 1\n[tui]\npane_borders = \"never\"\n");

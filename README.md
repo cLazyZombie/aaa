@@ -52,20 +52,22 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 
 host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w <이름>`)로 엽니다. 탭·나누기 layout은 host에 저장되므로 나갔다 다시 붙어도 같습니다.
 
-- **왼쪽 목록**: herdr처럼 위는 workspace(` spaces`, 고르면 그 workspace로), 아래 ` agents`에 웹처럼 머신마다 「+ 새 셸」, 프로젝트별 thread(「t-0001 · 제목」과 둘째 줄 상태 말, 사람 차례 → 검토 대기 → 작업 중 → 쉼 차례), thread에 딸리지 않은 pane이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
+- **왼쪽 목록**: herdr처럼 위는 workspace(` spaces`, 고르면 그 workspace로), 아래 ` agents`에 웹처럼 머신마다 머리(누르거나 탐색 `Enter`로 고르면 새 탭·workspace를 그 머신에 엽니다. pane이 없는 머신에 셸을 여는 길입니다), 프로젝트별 thread(「t-0001 · 제목」과 둘째 줄 상태 말, 사람 차례 → 검토 대기 → 작업 중 → 쉼 차례), thread에 딸리지 않은 pane이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
 - 명령으로도 됩니다: 새 pane을 새 탭으로 `aaa tab create --machine mac-b -- <명령>`, 있는 pane을 다른 workspace의 새 탭으로 `aaa pane move <pane> --new-tab -w <이름>`, 나누기 `aaa pane split <pane> --direction right`.
 - 입력은 포커스 pane으로 바로 갑니다. 다른 화면(웹 등)이 쓰던 pane도 입력하면 이 화면 크기가 되고, 터미널 focus를 다시 얻어도 크기를 다시 겁니다.
 - **키는 herdr와 같습니다.** prefix(기본 `ctrl+b`) 다음 키 하나(시간 제한 없음, `Esc`나 모르는 키는 취소). `prefix ?`로 단축키 창(`/`로 검색)이 뜹니다.
 
 | 키 | 하는 일 |
 |---|---|
-| `c` | 새 탭: 이름 창(Enter면 번호 탭), 포커스 pane 머신의 기본 셸을 그 pane의 지금 폴더에서 |
+| `c` | 새 탭: 이름 창(Enter면 번호 탭), 포커스 pane 머신(목록에서 머신 머리를 골랐으면 그 머신)의 기본 셸을 그 pane의 지금 폴더에서 |
+| `Shift+N` | 새 workspace(`workspace`·`workspace-2`…, 첫 탭은 `c`와 같은 머신의 셸). 마우스를 받으면 목록 spaces 맨 아랫줄 ` new`(머신이 여럿이면 ` new · 머신`)도 같다 |
 | `Shift+T` · `Shift+X` | 탭 이름 바꾸기 · 탭 닫기(세션도 끝냄, 마지막 탭은 확인) |
 | `v` · `-` | 오른쪽에 · 아래에 나누기(새 pane은 나눈 pane의 지금 폴더에서) |
 | `h` `j` `k` `l` · `Tab` · `Shift+Tab` | pane 포커스 옮기기 · 차례로 |
 | `n` · `p` · `1`~`9` | 탭 이동 |
 | `x` | pane 닫기(세션도 끝냄) |
 | `Shift+P` | pane 이름 바꾸기(비우고 Enter면 띄울 때 이름으로) |
+| `e` | 기록을 편집기로: 그 pane 머신의 `$EDITOR`(없으면 `vi`, Windows는 `VISUAL`·`EDITOR`·메모장)로 기록 전체를 연 pane을 나눠 크게 띄움, 편집기를 끝내면 닫히고 임시 파일은 지워짐 |
 | `[` | copy 모드: `h/j/k/l`·`w/b/e`·`W/B/E`·`{`/`}`·`PageUp`/`PageDown`·`ctrl+u/d`·`g`/`G`·`0`/`$`/`^`로 커서(기록까지 넘김), `/`·`?` 찾기·`n`/`N` 다시, `v`·`V`로 고르고 `y`·`Enter` 복사, `q`·`Esc` 끝(보던 자리로) |
 | `z` | 포커스 pane 크게 보기(다시 누르면 원래대로) |
 | `r` | 크기 모드: `h/j/k/l`로 가장자리 옮기기, `Esc` 끝 |
@@ -74,6 +76,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | `w` | 목록 탐색(`↑↓` 고르기, `Enter` 열기, `1`~`9` n번째 열기, `h/j/k/l`·`Tab` pane, `Esc` 끝) |
 | `o` | 질문이 열린 pane으로 |
 | `?` | 단축키 창 |
+| `s` | 설정 창: 테마(↑↓로 바로 입혀 보고 `Enter`면 저장, `Esc`면 되돌림)·상태 표시(색 점·기호), `Tab`으로 구역. host.toml `[tui]`에 쓴다. 마우스를 받으면 목록 spaces 맨 아랫줄 오른쪽 `menu`(설정·단축키·설정 다시 읽기·나가기)로도 연다 |
 | `Shift+R` | `[tui]` 설정 다시 읽기 |
 | `q` | 나가기(세션은 그대로) |
 | prefix 한 번 더 | prefix 키를 pane에 보냄 |
@@ -101,6 +104,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   copy_on_select = true                         # 끌어 고른 글을 떼는 때 복사(끄면 ctrl+c·cmd+c)
   mouse_scroll_lines = 3                        # 보통 화면 휠 한 칸에 넘기는 기록 줄 수
   pane_scrollbars = true                        # 보통 화면 pane 오른쪽 1칸에 기록 scrollbar(그만큼 PTY가 좁다)
+  status_indicators = "dots"                    # 상태 표시: dots(색 점 ● ○ ·) · symbols(× ◐ ✓ ○ ·)
 
   [terminal]
   new_cwd = "follow"                            # 새 탭·나누기의 폴더: follow(포커스 pane의 지금 폴더) · home · 절대 경로

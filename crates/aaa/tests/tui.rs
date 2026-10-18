@@ -489,11 +489,16 @@ fn start(lab: &mut Lab) -> (Node, HostWatch) {
 }
 
 fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
+    start_agent_env(lab, host_toml, &[])
+}
+
+/// `start_with`에 agent 환경 변수를 더한다(agent가 띄우는 pane이 물려받는다)
+fn start_agent_env(lab: &mut Lab, host_toml: &str, env: &[(&str, &str)]) -> (Node, HostWatch) {
     let h = lab.node("h", Some(host_toml));
     lab.spawn("host", &h, &["host"]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     let mut hw = HostWatch::new(&h);
-    lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "labA"]);
+    lab.spawn_env("agent", &h, &["agent", "--host", "local", "--name", "labA"], env);
     hw.wait("labA 연결", |w| w.connected("labA").then_some(()));
     (h, hw)
 }
@@ -504,6 +509,8 @@ fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
     let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
+    // 알림 카드(`render_notice`: 오른쪽 위 3줄)가 덮은 오른쪽도 이름표가 아니다
+    let rest = rest.split('┌').next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
     let mut chips: Vec<String> =
         rest.split_whitespace().filter(|c| !matches!(*c, "+" | "<" | ">" | "…")).map(str::to_string).collect();
@@ -1061,7 +1068,7 @@ fn pick(tui: &mut Tui, needle: &str) {
     panic!("목록에 {needle}이 없다:\n{}", tui.text());
 }
 
-/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록(차이 목록 L1)처럼 머신 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
+/// 왼쪽 사이드바(§8.35, herdr 배치): 웹 목록(차이 목록 L1)처럼 머신 머리, 그 머신의 프로젝트 머리와 thread 두 줄
 /// (herdr-projects 「id · 제목」, 둘째 줄 상태 말), thread에 딸리지 않은 pane이 보이고, 새 thread를 따라가며, 고르면 탭으로 연다.
 /// herdr처럼 폭과 관계없이 펼친 채(26칸) 시작한다. herdr 키: prefix b 펴기·접기(접으면 4칸 compact, 포커스는 그대로),
 /// prefix w 탐색 모드(↑↓ 고르기·Enter 열기·Esc 돌아가기, 접혀 있으면 펼친 목록을 pane 위에 띄워 보인다).
@@ -1112,7 +1119,7 @@ fn side_list_like_web() {
     let th_pane =
         wait_for("thread pane", T, || h.ok(&["thread", "show", "demo", &alpha])["pane"].as_str().map(String::from));
 
-    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭. 머신 머리·새 셸 아래 프로젝트 머리, 그 아래
+    // 1) 펼친 사이드바, pane 칸은 사이드바(구분선 포함 26칸)를 뺀 폭. 머신 머리 아래 프로젝트 머리, 그 아래
     //    thread 줄 「id · 제목」과 둘째 줄 상태 말(묶음 말로 시작), 그다음 thread에 딸리지 않은 pane
     let mut tui = Tui::start_cols(&h, &[], WIDE);
     let alpha_row = format!("{alpha} · alpha-job");
@@ -1120,17 +1127,13 @@ fn side_list_like_web() {
     tui.wait_screen("목록", |s| {
         let side = s.side_lines();
         let at = |needle: &str| side.iter().position(|l| l.contains(needle));
-        let (Some(m), Some(shell), Some(demo), Some(row), Some(first), Some(loose)) =
-            (at(" ▾ labA"), at(" + 새 셸"), at(" demo"), at(&alpha_row), at(" first"), at(" loose"))
+        let (Some(m), Some(demo), Some(row), Some(first), Some(loose)) =
+            (at(" ▾ labA"), at(" demo"), at(&alpha_row), at(" first"), at(" loose"))
         else {
             return false;
         };
         let sub = side[row + 1].trim_start();
-        m + 1 == shell
-            && shell + 1 == demo
-            && demo + 1 == row
-            && words.iter().any(|w| sub.starts_with(w))
-            && row + 2 <= first.min(loose)
+        m + 1 == demo && demo + 1 == row && words.iter().any(|w| sub.starts_with(w)) && row + 2 <= first.min(loose)
     });
     // thread pane은 pane 줄로 다시 나오지 않는다
     let side = tui.screen.0.lock().unwrap().side_lines();
@@ -1180,9 +1183,13 @@ fn side_list_like_web() {
     tui.wait_text("첫 탭", |s| s.contains("list-42"));
     assert_eq!(hw.leaves().len(), 3);
 
-    // 6) 새 셸은 그 머신에 새 탭으로
+    // 6) 머신 머리를 Enter로 고르면 새 탭을 그 머신에 연다(U8, `new_workspace_on_picked_machine_like_herdr`)
     tui.cmd("w");
-    pick(&mut tui, "+ 새 셸");
+    pick(&mut tui, "▾ labA");
+    tui.send(b"\r");
+    tui.wait_text("머신을 고름", |s| s.contains("새 탭·workspace는 labA에"));
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("↵ 저장"));
     tui.send(b"\r");
     hw.wait("새 셸 탭", |w| (w.leaves().len() == 4).then_some(()));
 
@@ -1285,6 +1292,100 @@ fn side_list_like_web() {
 
 /// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 셸 pane은 저절로 되살아나고(m12
 /// `reboot_restores_shells_and_resumes_agents`), 다시 실행하지 않는 프로그램 pane은 badge가 알려 주는 CLI로 띄운다.
+/// agents 구역의 지금 pane 줄이 든 머신(그 줄 위 가장 가까운 머신 머리 ` ▾ 이름`)
+fn current_machine(s: &Screen) -> Option<String> {
+    let (row, _) = s.side_row_from(s.agents_top(), ACTIVE_BG)?;
+    let side = s.side_lines();
+    side[..row]
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix(" ▾ "))
+        .map(|l| l.split_whitespace().next().unwrap_or("").into())
+}
+
+/// 차이 목록 U8(herdr endpoint 줄 `handle_endpoint_machine_click`·spaces footer ` new`·`NewWorkspace`): 「+ 새 셸」 줄은
+/// 없다. 머신 머리 줄을 누르거나 탐색 Enter로 고른 머신에 새 workspace(spaces 맨 아랫줄 ` new · 머신`, `prefix shift+n`,
+/// 이름 `workspace`·`workspace-2`)와 새 탭(`prefix c`)을 연다. 고른 머신은 포커스가 바뀌면 풀린다(포커스 pane의 머신).
+/// pane이 하나도 없는 원격 머신에 셸을 여는 길이다.
+#[test]
+fn new_workspace_on_picked_machine_like_herdr() {
+    let mut lab = Lab::new();
+    let host = LOCAL_ONLY.replace("agent_listen = \"\"", "agent_listen = \"127.0.0.1:0\"");
+    let (h, mut hw) = start_with(&mut lab, &host);
+    // 원격 머신 labB를 등록한다(e2e `enroll_remote_agent_and_run_short_command`와 같다)
+    let addr = h.ok(&["status"])["agent_listen"].as_str().expect("agent_listen").to_string();
+    let b = lab.node("b", None);
+    h.ok(&["machine", "enroll", "--open", "5m"]);
+    let (_, mut out) = lab.spawn_piped("enroll", &b, &["agent", "enroll", &addr, "--name", "labB"]);
+    let line = lab::read_line_containing(&mut out, "--code");
+    let code = line.split("--code").nth(1).unwrap().trim().to_string();
+    h.ok(&["machine", "approve", "labB", "--code", &code]);
+    assert!(lab.wait_exit("enroll", T).success(), "enroll 실패: {}", lab.log("enroll"));
+    lab.spawn("agentB", &b, &["agent", "--host", &addr, "--name", "labB"]);
+    hw.wait("labB 연결", |w| w.connected("labB").then_some(()));
+    h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let machine_of = |ws: &str| -> Vec<String> {
+        leaves(&h.ok(&["workspace", "get", ws])).iter().map(|p| h.pane(p)["machine"].as_str().unwrap().into()).collect()
+    };
+    // spaces 맨 아랫줄(오른쪽 `menu`는 뺀다)
+    let footer = |m: &'static str| {
+        move |s: &Screen| s.side_lines().iter().any(|l| l.trim_end_matches("menu").trim_end() == format!(" new · {m}"))
+    };
+
+    // 1) 「+ 새 셸」 줄이 없고 spaces 맨 아랫줄은 ` new · labA`(포커스 pane의 머신)
+    let mut tui = Tui::start_cols(&h, &[], WIDE);
+    tui.wait_screen("머신 둘", |s| footer("labA")(s) && s.side_lines().iter().any(|l| l.starts_with(" ▾ labB")));
+    assert!(!tui.text().contains("새 셸"), "{}", tui.text());
+
+    // 2) pane이 없는 labB 머리를 누르면 ` new · labB`. ` new`를 누르면 labB에 새 workspace `workspace`가 생겨 그리로 가고
+    //    포커스는 그 셸이다
+    let at = tui.wait_find(" ▾ labB");
+    tui.click(at);
+    tui.wait_screen("labB를 고름", footer("labB"));
+    let at = tui.wait_find(" new · labB");
+    tui.click((at.0, at.1 + 1));
+    tui.wait_screen("새 workspace", |s| {
+        s.current_space().is_some_and(|l| l.trim_end_matches(['│', ' ']).ends_with(" workspace"))
+            && current_machine(s).as_deref() == Some("labB")
+    });
+    assert_eq!(machine_of("workspace"), ["labB"]);
+    tui.type_line("echo on-b-$((5*5))");
+    tui.wait_text("labB 셸에 입력", |s| s.contains("on-b-25"));
+
+    // 3) 탐색 Enter로 labA를 고르고 prefix shift+n: 없는 이름 `workspace-2`가 labA에
+    tui.cmd("w");
+    pick(&mut tui, "▾ labA");
+    tui.send(b"\r");
+    tui.wait_screen("labA를 고름", footer("labA"));
+    tui.cmd("N");
+    tui.wait_screen("둘째 새 workspace", |s| {
+        s.current_space().is_some_and(|l| l.contains("workspace-2")) && current_machine(s).as_deref() == Some("labA")
+    });
+    assert_eq!(machine_of("workspace-2"), ["labA"]);
+
+    // 4) labB를 고르고 prefix c: 새 탭이 labB에 생기고 포커스가 그리로
+    tui.cmd("w");
+    pick(&mut tui, "▾ labB");
+    tui.send(b"\r");
+    tui.wait_screen("labB를 고름", footer("labB"));
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("↵ 저장"));
+    tui.send(b"\r");
+    tui.wait_screen("새 탭", |s| tab_chips(&s.text()) == ["1", "2"] && current_machine(s).as_deref() == Some("labB"));
+    assert_eq!(machine_of("workspace-2"), ["labA", "labB"]);
+
+    // 5) 고른 머신은 포커스가 바뀌면 풀린다: labB pane에서 labA를 고른 뒤 탭 1(labA)을 거쳐 탭 2로 돌아오면 labB
+    tui.cmd("w");
+    pick(&mut tui, "▾ labA");
+    tui.send(b"\r");
+    tui.wait_screen("labA를 고름", footer("labA"));
+    tui.cmd("1");
+    tui.wait_screen("탭 1", |s| current_machine(s).as_deref() == Some("labA"));
+    tui.cmd("2");
+    tui.wait_screen("탭 2", |s| current_machine(s).as_deref() == Some("labB") && footer("labB")(s));
+    drop(tui);
+}
+
 #[test]
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
@@ -1927,6 +2028,182 @@ fn copy_mode_like_herdr() {
     tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
     // copy 모드 키는 셸에 가지 않았다
     assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));
+
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 4C 설정 창(herdr `prefix s` `render_settings_overlay`·`apply_settings_choice`, plan §8.178): 테마 구역에서 ↓면 바로 입혀
+/// 보고(탭 막대 `panel_bg`), Esc면 되돌리고 아무것도 쓰지 않는다. Enter면 실험실 host.toml `[tui] theme`에 쓰고(다른 줄은
+/// 그대로) 닫는다. 상태 표시 구역에서 기호를 고르면 창을 둔 채 `status_indicators`를 쓰고 확인 대기 pane 점이 `×`가 된다.
+/// spaces 맨 아랫줄 `menu`(전체 메뉴)를 누르고 Enter면 설정 창이 열린다. host.local.toml이 같은 key를 덮으면 알린다.
+#[test]
+fn settings_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    // 실행 파일 이름이 claude인 셸(`herdr_keys_and_modes`처럼): 화면에 Claude 확인창을 그려 질문(확인 대기 점)을 연다
+    let claude = lab.root.join("bin").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(&claude, "#!/bin/sh\nexec /bin/sh\n").unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let first = leaves(&h.ok(&["tab", "create", "--machine", "labA", "--", lab::path_str(&claude)]))[0].clone();
+    let host_toml = || std::fs::read_to_string(h.cfg.join("host.toml")).unwrap();
+    // 탭 막대 오른쪽 끝 칸 바탕(테마 `panel_bg`): catppuccin은 RGB(24,24,37), terminal은 터미널 기본
+    const CATPPUCCIN: u32 = 0x0200_0000 | (24 << 16) | (24 << 8) | 37;
+    let tab_bg = |s: &Screen| s.bgs[0][COLS as usize - 1];
+    let asking_dot = |s: &Screen, dot: &str| {
+        let side = s.side_lines();
+        let top = s.agents_top();
+        side[top..].iter().any(|l| l.starts_with(&format!(" {dot} ")))
+    };
+    let mut tui = Tui::start(&h);
+    tui.wait_text("셸", |s| s.contains('$'));
+    h.ok(&[
+        "pane",
+        "run",
+        &first,
+        "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
+         ' Esc to cancel · Tab to amend'",
+    ]);
+    hw.wait("질문", |w| {
+        w.pane(&first)?.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question).then_some(())
+    });
+    tui.wait_screen("확인 대기 점", |s| asking_dot(s, "●") && tab_bg(s) == CATPPUCCIN);
+
+    // 1) 열면 지금 테마에 ✓, ↓↓면 terminal을 입혀 보고, Esc면 되돌리고 쓰지 않는다
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains(" 설정") && s.contains("▸ catppuccin ✓") && s.contains(" 상태 표시 "));
+    tui.send(b"jj");
+    tui.wait_screen("미리 보기", |s| s.text().contains("▸ terminal") && tab_bg(s) == 0);
+    tui.send(b"\x1b");
+    tui.wait_screen("되돌림", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == CATPPUCCIN);
+    assert!(!host_toml().contains("theme"), "{}", host_toml());
+
+    // 2) Enter면 host.toml `[tui] theme`에 쓰고 닫는다(실험실 설정의 다른 줄은 그대로)
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ catppuccin ✓"));
+    tui.send(b"jj");
+    tui.wait_text("terminal 고름", |s| s.contains("▸ terminal"));
+    tui.send(b"\r");
+    tui.wait_screen("적용", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == 0);
+    let saved = host_toml();
+    assert!(saved.contains("theme = \"terminal\"") && saved.contains("prefix_jamo_keys = true"), "{saved}");
+
+    // 3) 상태 표시 구역: 기호를 고르면 쓰고 창은 그대로, 확인 대기 pane 점이 `×`
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ terminal ✓"));
+    tui.send(b"\t");
+    tui.wait_text("상태 표시 구역", |s| s.contains("▸ 색 점"));
+    tui.send(b"j\r");
+    tui.wait_screen("기호", |s| s.text().contains("▸ 기호") && asking_dot(s, "×"));
+    assert!(host_toml().contains("status_indicators = \"symbols\""), "{}", host_toml());
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains(" ↑↓ 고르기"));
+
+    // 4) spaces 맨 아랫줄 `menu`: 전체 메뉴(설정·단축키·설정 다시 읽기·나가기), 첫 항목 Enter면 설정 창
+    let at = tui.wait_find("menu");
+    tui.click(at);
+    tui.wait_text("전체 메뉴", |s| s.contains("설정 다시 읽기") && s.contains("나가기"));
+    tui.send(b"\r");
+    tui.wait_text("메뉴에서 설정 창", |s| s.contains(" ↑↓ 고르기") && !s.contains("설정 다시 읽기"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains(" ↑↓ 고르기"));
+
+    // 5) host.local.toml이 theme를 덮으면 써도 바뀌지 않았다고 알린다
+    std::fs::write(h.cfg.join("host.local.toml"), "schema = 1\n[tui]\ntheme = \"nord\"\n").unwrap();
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains("▸ terminal ✓"));
+    tui.send(b"j\r");
+    tui.wait_text("덮음 알림", |s| s.contains("host.local.toml의 [tui] theme가 덮고 있어"));
+    assert!(host_toml().contains("theme = \"tokyo-night\""), "{}", host_toml());
+    drop(tui);
+}
+
+/// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.176): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,
+/// host가 그 pane을 나눠 편집기 pane을 띄워 탭을 zoom한다. 편집기 pane이 끝나면(끝남·닫기) 그 pane을 닫고 파일을 지우고, 끝날
+/// 때도 zoom이면 나누기 전 zoom으로 돌리고, 연 pane으로 포커스를 돌린다. 편집기는 agent `EDITOR`(받은 경로를 적고 내용을 보인
+/// 뒤 Enter를 기다리는 스크립트), 임시 폴더는 agent `TMPDIR`로 실험실 안에 둔다.
+#[test]
+fn edit_scrollback_like_herdr() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut lab = Lab::new();
+    let tmp = lab.root.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let seen = lab.root.join("editor-path.txt");
+    let editor = lab.root.join("editor.sh");
+    let script = format!("#!/bin/sh\necho \"$1\" > '{}'\ncat \"$1\"\necho editor-ready\nread x\n", seen.display());
+    std::fs::write(&editor, script).unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let env = [("EDITOR", editor.to_str().unwrap()), ("TMPDIR", tmp.to_str().unwrap())];
+    let (h, mut hw) = start_agent_env(&mut lab, LOCAL_ONLY, &env);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let first = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["1"]);
+    hw.wait("이 화면 크기", |w| w.held_by(&first, "tui@").then_some(()));
+    tui.type_line("seq 1 200; echo seq-$((1+1))");
+    tui.wait_text("seq 끝", |s| s.contains("seq-2"));
+    let zoomed = |w: &HostWatch| w.ws.as_ref().is_some_and(|ws| ws.tabs[0].zoomed);
+    // 편집기를 열고 그 pane과 편집기가 받은 경로를 돌려준다
+    let open = |tui: &mut Tui, hw: &mut HostWatch, n: usize| {
+        let _ = std::fs::remove_file(&seen);
+        tui.cmd("e");
+        let ed = hw.wait("편집기 pane", |w| (w.leaves().len() == n + 1 && zoomed(w)).then(|| w.leaves()[n].clone()));
+        tui.wait_text("편집기 화면", |s| {
+            tab_chips(s) == ["1", "Z"] && s.contains("기록을 편집기로 열었다") && s.contains("editor-ready")
+        });
+        let path = wait_for("편집기가 받은 경로", T, || {
+            std::fs::read_to_string(&seen).ok().filter(|p| p.ends_with('\n')).map(|p| p.trim().to_string())
+        });
+        (ed, std::path::PathBuf::from(path))
+    };
+
+    // 1) prefix e: 나눠 편집기 pane, 탭 zoom(` Z`), 포커스는 편집기. 파일은 실험실 임시 폴더의 `aaa-scrollback-*.txt`(0600)이고
+    //    기록 처음(1)부터 끝(200)까지 들었다. Enter로 편집기가 끝나면 그 pane을 닫고(나누기 전처럼 zoom 아님) 연 pane으로 돌아간다
+    let (_, path) = open(&mut tui, &mut hw, 1);
+    let name = path.file_name().unwrap().to_string_lossy().to_string();
+    assert!(path.starts_with(&tmp) && name.starts_with("aaa-scrollback-"), "{}", path.display());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.lines().any(|l| l == "1") && text.lines().any(|l| l == "200"), "기록 전체가 아니다:\n{text}");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    tui.send(b"\r");
+    hw.wait("편집기 pane 닫힘", |w| (w.leaves() == [first.clone()] && !zoomed(w)).then_some(()));
+    tui.wait_text("돌아옴", |s| tab_chips(s) == ["1"] && s.contains("seq-2"));
+    wait_for("임시 파일 지움", T, || (!path.exists()).then_some(()));
+    tui.type_line("echo back-$((2+3))");
+    tui.wait_text("연 pane 출력", |s| s.contains("back-5"));
+    assert!(h.screen(&first).contains("back-5"), "포커스가 연 pane으로 돌아오지 않았다");
+
+    // 2) 편집기 pane을 닫으면(prefix x, 세션을 끝낸다) 셸이 지우지 못한 파일을 host가 지운다
+    let (_, path) = open(&mut tui, &mut hw, 1);
+    tui.cmd("x");
+    hw.wait("닫은 편집기 pane", |w| (w.leaves() == [first.clone()] && !zoomed(w)).then_some(()));
+    wait_for("닫은 편집기의 임시 파일 지움", T, || (!path.exists()).then_some(()));
+    // 다음 키는 TUI가 닫힘을 받은 뒤에(host 사건은 이 관측기에 먼저 올 수 있다: 그 전 키는 닫히는 편집기 pane으로 간다)
+    tui.wait_text("닫은 뒤 화면", |s| tab_chips(s) == ["1"] && !s.contains("editor-ready"));
+
+    // 3) 나누기 전 탭이 zoom이었으면 끝날 때 다시 zoom, 포커스는 연 pane(나눈 오른쪽)
+    tui.cmd("v");
+    let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
+    tui.cmd("z");
+    hw.wait("zoom", |w| zoomed(w).then_some(()));
+    let (ed, _) = open(&mut tui, &mut hw, 2);
+    tui.send(b"\r");
+    hw.wait("편집기 pane 닫힘, 다시 zoom", |w| {
+        (!w.leaves().contains(&ed) && w.leaves().len() == 2 && zoomed(w)).then_some(())
+    });
+    tui.wait_text("닫은 뒤 화면", |s| tab_chips(s) == ["1", "Z"] && !s.contains("editor-ready"));
+    tui.type_line("echo right-$((4+5))");
+    tui.wait_text("오른쪽 zoom 출력", |s| tab_chips(s) == ["1", "Z"] && s.contains("right-9"));
+    assert!(h.screen(&right).contains("right-9"), "포커스가 연 pane으로 돌아오지 않았다");
+
+    // 4) 편집기를 보는 사이 사람이 zoom을 풀었으면 그대로 둔다(host는 빼기와 zoom을 한 사건으로 저장한다: 빠진 사건이 끝 상태)
+    let (ed, _) = open(&mut tui, &mut hw, 2);
+    tui.cmd("z");
+    hw.wait("zoom 풀림", |w| (!zoomed(w)).then_some(()));
+    tui.send(b"\r");
+    hw.wait("편집기 pane 닫힘", |w| (!w.leaves().contains(&ed) && w.leaves().len() == 2).then_some(()));
+    assert!(!zoomed(&hw), "사람이 푼 zoom을 다시 켰다");
 
     tui.cmd("q");
     assert!(tui.wait_exit());

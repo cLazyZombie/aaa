@@ -8,10 +8,12 @@ use crate::keys::{self, Combo};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Help,
+    Settings,
     Detach,
     ReloadConfig,
     OpenNotificationTarget,
     WorkspacePicker,
+    NewWorkspace,
     NewTab,
     RenameTab,
     CloseTab,
@@ -22,6 +24,7 @@ pub enum Action {
     SplitHorizontal,
     ClosePane,
     RenamePane,
+    EditScrollback,
     CopyMode,
     Zoom,
     ResizeMode,
@@ -51,10 +54,12 @@ pub fn prefix_action(c: Combo) -> Option<Action> {
 
 const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('?'), Action::Help),
+    (Combo::plain('s'), Action::Settings),
     (Combo::plain('q'), Action::Detach),
     (Combo::shift('r'), Action::ReloadConfig),
     (Combo::plain('o'), Action::OpenNotificationTarget),
     (Combo::plain('w'), Action::WorkspacePicker),
+    (Combo::shift('n'), Action::NewWorkspace),
     (Combo::plain('c'), Action::NewTab),
     (Combo::shift('t'), Action::RenameTab),
     (Combo::shift('x'), Action::CloseTab),
@@ -64,6 +69,7 @@ const PREFIX: &[(Combo, Action)] = &[
     (Combo::plain('-'), Action::SplitHorizontal),
     (Combo::plain('x'), Action::ClosePane),
     (Combo::shift('p'), Action::RenamePane),
+    (Combo::plain('e'), Action::EditScrollback),
     (Combo::plain('['), Action::CopyMode),
     (Combo::plain('z'), Action::Zoom),
     (Combo::plain('r'), Action::ResizeMode),
@@ -100,6 +106,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
             vec![
                 (prefixes.to_string(), "prefix 모드"),
                 (p(Help), "단축키"),
+                (p(Settings), "설정"),
                 (p(Detach), "나가기(세션은 그대로)"),
                 (p(ReloadConfig), "설정 다시 읽기"),
                 (p(OpenNotificationTarget), "질문·알림 pane으로"),
@@ -120,6 +127,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
             "목록 / 탭",
             vec![
                 (p(WorkspacePicker), "목록 탐색"),
+                (p(NewWorkspace), "새 workspace"),
                 (p(NewTab), "새 탭"),
                 (p(RenameTab), "탭 이름 바꾸기"),
                 (p(PreviousTab), "이전 탭"),
@@ -135,6 +143,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 (p(SplitHorizontal), "위아래로 나누기"),
                 (p(ClosePane), "pane 닫기"),
                 (p(RenamePane), "pane 이름 바꾸기"),
+                (p(EditScrollback), "기록을 편집기로"),
                 (p(CopyMode), "copy 모드(h/j/k/l·v·y, q 끝)"),
                 (p(Zoom), "pane 크게 보기"),
                 (p(ResizeMode), "크기 모드(h/j/k/l, esc 끝)"),
@@ -183,16 +192,19 @@ mod tests {
         use Action::*;
         let k = |s: &str| prefix_action(keys::parse_combo(s).unwrap());
         assert_eq!(k("q"), Some(Detach));
+        assert_eq!(k("s"), Some(Settings));
         assert_eq!(k("v"), Some(SplitVertical));
         assert_eq!(k("minus"), Some(SplitHorizontal));
         assert_eq!(k("b"), Some(ToggleSidebar));
         assert_eq!(k("w"), Some(WorkspacePicker));
+        assert_eq!(k("shift+n"), Some(NewWorkspace));
         assert_eq!(k("tab"), Some(CycleNext));
         assert_eq!(k("shift+tab"), Some(CyclePrevious));
         assert_eq!(k("shift+r"), Some(ReloadConfig));
         assert_eq!(k("3"), Some(SwitchTab(2)));
         assert_eq!(k("shift+t"), Some(RenameTab));
         assert_eq!(k("shift+p"), Some(RenamePane));
+        assert_eq!(k("e"), Some(EditScrollback));
         assert_eq!(k("["), Some(CopyMode));
         assert_eq!(k("shift+x"), Some(CloseTab));
         assert_eq!(k("x"), Some(ClosePane));
@@ -201,7 +213,7 @@ mod tests {
         assert_eq!(k("shift+h"), Some(SwapLeft));
         assert_eq!(k("shift+l"), Some(SwapRight));
         // tmux식 예전 키는 없다
-        for old in ["d", "t", "s", "%", "\"", "|"] {
+        for old in ["d", "t", "%", "\"", "|"] {
             assert_eq!(k(old), None, "{old}");
         }
         assert_eq!(rhs(WorkspacePicker), "w");
