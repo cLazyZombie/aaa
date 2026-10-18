@@ -381,12 +381,12 @@ herdr-web-ui 0.4.10의 방식(`server/tailscale.ts`, `scripts/plugin.ts`의 `pho
   - 6자리 코드나 QR로 한다. 코드는 host 머신의 CLI(`aaa web pair`)나, 이미 pairing한 controller 기기의 웹 설정 → 폰 및 기기에서 만든다(10-18 D6 「참고대로」, §8.81). 웹에서 만드는 코드는 controller만이고 보기(reader) 코드는 CLI에서만 만든다.
   - 코드는 한 번에 하나, 10분, 1회용이다. 새 코드가 아직 쓰지 않은 앞 코드를 버린다. 한 코드로 5번 틀리면 그 코드를 버린다.
   - 틀린 시도는 backoff로 막는다: 10분 안에 5번까지는 그대로, 그 뒤로는 1초부터 두 배씩 60초까지 기다린다(web-ui `auth.ts`). 새 코드를 만들면 기다림이 풀린다(§8.116).
-  - token은 URL·로그·HTML에 넣지 않는다.
+  - 장치 token은 URL·로그·HTML에 넣지 않는다. 보고서 하나 읽기만 하는 서명 링크는 별개다(§8.195).
 - **cookie와 요청 검사:** cookie는 `HttpOnly`·`SameSite=Strict`, HTTPS에서는 `Secure`·`__Host-`로 한다. Origin과 CSRF를 검사하고 CSP를 둔다.
 - **권한 취소:** 권한 취소와 lease 변경은 이미 열린 WebSocket과 대기 중인 입력에도 바로 반영한다. reader는 resize·키 입력·routine 실행·질문 응답·업로드를 할 수 없다.
 - **업로드:** 이미지 업로드도 변경 권한이다. 전송이 끝나기 직전에 권한을 다시 확인한다.
 - **감사 로그:** 입력, thread 시작, routine 실행, 질문 응답, 업로드, 공개 변경을 누가 언제 했는지 남긴다.
-- **보고서 표시:** agent가 만든 보고서 HTML은 `allow-same-origin` 없는 sandbox iframe(opaque origin)과 CSP로 보여 준다. 제어 UI와 같은 origin에서 script를 실행하지 않는다.
+- **보고서 표시:** agent가 만든 보고서 HTML은 `allow-same-origin` 없는 CSP sandbox(opaque origin)로 보여 준다. 앱 안 iframe뿐 아니라 공유 링크의 top-level 응답에도 적용하며, `/v/` guard가 빠진 머리를 강제한다(§8.195).
 - **agent pane 안의 CLI:** 세션 역할로 범위를 정한다(§8.25, 10-17). 일반 thread와 사후 평가자 세션 안의 CLI는 보기만 되고, coordinator와 사람의 셸은 그대로 조작한다.
 
 ### 6.5 신뢰 경계
@@ -538,7 +538,7 @@ host 프로젝트 폴더 구성:
   - 상대 경로·digest·길이를 담은 manifest로 다룬다.
   - 기본 복사 상한(예: 200MB, `project.toml`) 안에서만 복사한다. 그 넘는 파일은 agent에 두고, host 웹이 요청할 때 Agent link로 지연 스트리밍한다. host 캐시에는 상한을 둔다. 0.2.35의 50MB 상한 때문에 175MB·5GB 결과물을 잃을 뻔한 일을 막는다.
   - symlink와 junction은 따라가지 않는다.
-- **보기:** host 웹이 보고서와 library를 HTTPS로 바로 보여 준다(§6.4 sandbox).
+- **보기:** host 웹이 보고서와 library를 HTTPS로 바로 보여 준다(§6.4 sandbox). 앱 안은 pairing·2시간 보기 경로, 밖은 회수 때 발급하는 30일 보고서별 링크다. 공유 링크는 host 사본만 준다(§8.195).
 - **알림**
   - Web Push(HTTPS 필요)와 외부 알림 webhook(host.toml, HTTP POST)을 둔다. 명령 실행이 필요한 알림은 로컬 agent backend가 실행한다.
   - 대상 사건: 보고 준비, 질문, 막힘, 머신 이상.
@@ -4299,6 +4299,50 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   `workspace_rename_and_close_like_herdr`. 다른 TUI 시험은 시험 설정 `sidebar_width = 26`(herdr 기본)으로 그린다.
   결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다. 구역 비율을 0.5로 그리면 유닛·E2E, 이름을 바꾼 뒤 보던 탭을 되찾지 않으면 유닛, 닫은
   뒤 남은 workspace로 가지 않으면 유닛·E2E가 실패한다.
+
+
+### 8.195 보고서별 공유 링크: host library 사본·30일·폐기(10-18, t-0355, 기획 t-0354 1단계)
+
+- **사용자 결정.** 회수 때 자동 발급, 기본 30일, 같은 origin의 응답 머리 CSP sandbox, 다시 회수하면 최신으로 덮어쓴다.
+  만료·폐기 뒤에도 pairing한 앱 안 보기는 계속 된다. 0.2 별도 서버는 전환 뒤 2주 읽기 전용으로 두는 일과,
+  저장소 폴더를 가리키는 페이지를 옮기는 일은 이번 범위 밖이다. 운영 host·agent·ticker·설정을 바꾸지 않는다.
+- **참고와 다르게 둘 때의 이유(결정 19).** herdr에는 보고서 웹이 없고, herdr-projects 0.2.35는 `library/<id>/`를
+  resolve 뒤에도 남기는 집 사본이다. herdr-web-ui `server/file-view.ts`의 `PAGE_POLICY`·숨은 이름 거부·no-store·nosniff를 따른다.
+  세 참고에는 보고서별 공유 링크가 없다. 텔레그램 안 브라우저에서 pairing 없이 링크 하나로 열려야 하므로 이 권한만 추가한다.
+  새 crate·포트·Agent link는 두지 않고 기존 `/v/`·회수·알림·QR·clipboard 경로를 넓힌다.
+- **저장·서명.** DB `library_links`를 `CREATE TABLE IF NOT EXISTS`로 더하며 schema 1을 유지한다. 상태 폴더의
+  `library-link.key`(32바이트·0600)를 읽거나 처음 만든다. 깨진 키·넓은 권한은 host 시작 실패다.
+  `/v/<48자 hex>/`의 앞 16자는 무작위 id, 뒤 32자는 `HMAC-SHA256(key, "aaa-library-link:v1:" + id)`의 앞 16바이트다.
+  ring의 상수 시간 검증을 쓰고 DB에는 id·대상·생성·만료·폐기·마지막 열람만 둔다. 키를 잃으면 옛 URL은 끝나고 사본은 남는다.
+  발급·폐기는 id로 감사 로그에 적고, 서명 경로는 로그·흐름 사건·inbox 원본에 적지 않는다. 열람 시각은 최대 1분마다 쓴다.
+- **판정·격리.** 메모리 cap을 먼저 보고, 없으면 매 요청 DB의 서명·만료·폐기를 본다. id가 가리킨 프로젝트/thread의 manifest에
+  정확히 있는 파일만 읽는다. 숨은 성분·절대 경로·`..`·역슬래시·파일과 중간 폴더 symlink를 거부한다.
+  파일 없는 `/v/<cap>/`는 `index.html`, 없으면 그 보고서 안의 파일만 escape·percent encode한 목록이다. `/v/` 자체 목록은 없다.
+  공유 링크는 agent 파일을 스트리밍하지 않고 앱에서 열라는 HTML 안내를 준다. 앱 안의 cap은 기존 지연 스트리밍을 유지한다.
+  guard는 성공·오류·Range 모두에 VIEW_CSP와 no-store를 강제한다. PDF만 기존 viewer 때문에 sandbox를 빼고 `frame-ancestors 'self'`다.
+  VIEW_CSP는 `allow-same-origin` 없이 자체 script·형제 자원만 허용하고 connect·form·base를 막는다. 외부 CDN은 받지 않는다.
+  service worker는 `/v/`를 가로채지 않는다(offline에서 앱 셸로 바꾸지 않음).
+- **자동 발급·알림.** 회수 성공 후 보고 사건 전에 만든다. 같은 보고서의 유효한 링크는 수명을 바꾸지 않고 재사용하고,
+  만료·폐기됐으면 새 id를 만든다. 공개 HTTPS origin이 있을 때만 밖 알림에 `보기: <URL>` 한 줄을 붙인다. loopback은 보내지 않는다.
+  텔레그램 미리보기는 계속 끈다. Web Push는 기존 앱 자리(`#thread=`)를 연다. 조작 권한 inbox·context는 응답 때 링크를 붙이고,
+  앱 안 새 보고 알림도 LibraryView를 읽어 링크 한 줄을 표시한다. 보기 기기에는 공유 링크가 없다.
+- **계약·UI.** FRONT_API **1.35**: `library_link`·`library_links`·`library_link_revoke`, `LibraryView.link`·`LinkView`.
+  agent 1.4는 그대로다. 세 요청(비밀 경로가 있는 목록 포함)은 모두 조작 권한이다. CLI는
+  `aaa library link <project> <thread> [--days N]`(새 링크만 1~3650일), `list [--project P]`, `revoke <id>`.
+  웹 결과물 머리에 링크·복사·QR·만료·폐기·새로 만들기를 둔다. reader는 앱 안에서만 연다. 배포 때 host와 웹을 함께 새로 빌드한다.
+- **시험.** host router 경계에서 root·Range·머리·다른 보고서·경로 탈출·숨은 이름·symlink·서명 끝 글자 위조·목록 escape·agent 안내,
+  시각 인자로 만료 경계, 즉시 폐기·앱 보기 유지·재발급·host 재시작·키 0600·schema 1·조작 권한·공개 알림을 본다.
+  m13 `library_view`는 실제 회수의 자동 발급을, 웹 E2E 12는 cookie 없는 top-level·형제 그림·cookie/storage/SW/API 격리·
+  SW offline 제외·데스크톱/390px 복사·QR·폐기·재발급을 본다. 결함 심기 여섯의 실패/복구 증거는 thread 보고서에 남긴다.
+- **앱 입장과 분리(추가 요구).** 보고서 응답은 Set-Cookie를 주지 않고 장치·pairing 코드·pane을 만들지 않는다.
+  링크를 연 같은 cookie 없는 브라우저에서 `/`는 pairing 화면이며, Front API·events/front/pane WebSocket은 401이다.
+  서명을 query·Authorization에 내도 장치 token으로 받지 않는다. pairing cookie가 이미 있어도 보고서 JS의 API fetch는 막힌다.
+  이 세 계약도 각각 결함 심기로 실패하는 것을 확인한다.
+  보고서 키는 TLS·pairing·장치 token·cookie와 공유하거나 그 값에서 파생하지 않는 전용 무작위 키다.
+  키 파일을 바꿔 host를 다시 열면 옛 링크만 거부되고 기존 pairing 기기 token·TLS 키는 그대로인 시험을 둔다.
+  프로젝트 이름 변경은 링크 대상도 같은 transaction으로 옮기고, 삭제는 링크 행도 지워 이름 재사용 때 새 보고서를 읽지 못하게 한다.
+- **남은 범위.** publish·import·prune·rotate·웹 전체 목록·별도 port·판 보존은 2단계 이후다.
+  실제 iOS 텔레그램 안 브라우저에서 링크 하나로 여는 확인은 기기에서 따로 한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

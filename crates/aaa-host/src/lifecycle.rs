@@ -218,6 +218,8 @@ impl Host {
         crate::orch::write_atomic(&target.join("aaa-records.json"), &json).map_err(internal)?;
         self.hide_threads(&recs);
         self.db.project_forget(project).map_err(internal)?;
+        // 같은 이름을 다시 만들어도 옛 앱 보기 경로가 새 thread 번호를 읽지 못한다.
+        self.view_caps.lock().unwrap().retain(|_, cap| cap.project != project);
         self.db.audit(actor, "project_delete", &format!("{project} → {}", target.display()));
         // 끝나지 않은 thread의 감시를 푼다(pane은 그대로, 참고도 닫지 않는다)
         for r in recs.iter().filter(|r| r.status != ThreadStatus::Resolved) {
@@ -327,6 +329,9 @@ impl Host {
             // 기록을 못 옮겼으면 폴더도 되돌린다(기록과 폴더 이름이 어긋나지 않게)
             let _ = std::fs::rename(&new_dir, &dir);
             return Err(internal(format!("host 기록을 옮기지 못해 되돌렸다: {e:#}")));
+        }
+        for cap in self.view_caps.lock().unwrap().values_mut().filter(|cap| cap.project == project) {
+            cap.project = to.to_string();
         }
         if stock {
             let _ =

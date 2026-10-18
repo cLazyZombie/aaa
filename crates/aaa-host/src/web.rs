@@ -79,6 +79,9 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/usage", get(usage_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/v/{cap}/{*path}", get(view_file))
+        .route("/v/{cap}/", get(view_root))
+        .route("/v", get(|| async { StatusCode::NOT_FOUND }))
+        .route("/v/", get(|| async { StatusCode::NOT_FOUND }))
         .route("/f/{cap}/{*name}", get(pane_file_view))
         .fallback(get(static_file))
         .layer(middleware::from_fn_with_state(host.clone(), guard))
@@ -115,14 +118,21 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
         }
     }
     let api = req.uri().path().starts_with("/api/");
+    let library = req.uri().path().starts_with("/v/");
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
     // 기기·pane 상태를 담은 API 답은 브라우저·proxy가 두지 않는다(herdr-web-ui `index.ts` API no-store)
     if api {
         hs.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-store"));
     }
-    // 결과물 보기(/v/)는 자기 CSP(sandbox)·frame 정책을 둔다
-    hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(CSP));
+    // /v/의 성공·오류·Range 응답 모두에 강제한다. handler 머리가 빠져도 앱 origin으로 실행하지 않는다.
+    if library {
+        let pdf = hs.get(header::CONTENT_TYPE).is_some_and(|v| v == "application/pdf");
+        hs.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(if pdf { PDF_CSP } else { VIEW_CSP }));
+        hs.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    } else {
+        hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(CSP));
+    }
     hs.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     hs.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     hs.entry(header::X_FRAME_OPTIONS).or_insert(HeaderValue::from_static("DENY"));
@@ -247,7 +257,19 @@ async fn pane_file_view(
 
 /// 결과물: opaque origin(sandbox)으로 보여 제어 UI의 cookie·API에 닿지 못하게 한다. 같은 host의 웹 화면 안 iframe에만 넣을 수 있다.
 const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads; \
-                        default-src 'self' 'unsafe-inline' data: blob:; frame-ancestors 'self'";
+                        default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; \
+                        style-src 'self' 'unsafe-inline' data:; img-src 'self' data: blob:; \
+                        media-src 'self' data: blob:; font-src 'self' data:; \
+                        connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
+async fn view_root(
+    State(host): State<Arc<Host>>,
+    Path(cap): Path<String>,
+    Query(q): Query<FileQuery>,
+    headers: HeaderMap,
+) -> Response {
+    serve_view(host, cap, String::new(), q, headers).await
+}
 
 /// `/v/<cap>/<path>`: 보기 경로가 곧 권한이다(그 thread 결과물 읽기만, 2시간). host 사본이 없으면 agent에서 스트리밍한다.
 /// 파일 보기(차이 목록 R1)가 같은 경로로 읽는다: Range(글 앞부분·동영상 넘기기)와 `?download=1`(내려받기)을 받는다.
@@ -257,6 +279,10 @@ async fn view_file(
     Query(q): Query<FileQuery>,
     headers: HeaderMap,
 ) -> Response {
+    serve_view(host, cap, path, q, headers).await
+}
+
+async fn serve_view(host: Arc<Host>, cap: String, path: String, q: FileQuery, headers: HeaderMap) -> Response {
     let fail = |e: ErrorBody| {
         let code = match e.code {
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -271,6 +297,7 @@ async fn view_file(
         Err(e) => return fail(e),
     };
     let size = src.size();
+    let generated = matches!(src, crate::library::ViewSource::Page(_));
     let range = match crate::files::parse_range(headers.get(header::RANGE).and_then(|v| v.to_str().ok()), size) {
         Ok(r) => r,
         Err(()) => {
@@ -286,7 +313,8 @@ async fn view_file(
         Ok(b) => b,
         Err(e) => return fail(e),
     };
-    let kind = crate::library::content_type(&path);
+    let kind =
+        if generated || path.is_empty() { "text/html; charset=utf-8" } else { crate::library::content_type(&path) };
     // PDF는 브라우저의 PDF 보기가 그리는데 그것은 sandbox 문서를 거부한다(`/f/`의 `PDF_CSP`와 같은 까닭)
     let csp = if kind == "application/pdf" { PDF_CSP } else { VIEW_CSP };
     let mut res = Response::builder()
@@ -1480,7 +1508,7 @@ fn touch_icon_alias(path: &str) -> &str {
 
 async fn static_file(req: Request) -> Response {
     let path = req.uri().path().trim_start_matches('/');
-    if path.starts_with("api/") {
+    if path.starts_with("api/") || path.starts_with("v/") {
         return (StatusCode::NOT_FOUND, "없는 API").into_response();
     }
     if assets::WEB_ASSETS.is_empty() {

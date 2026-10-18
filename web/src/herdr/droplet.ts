@@ -15,6 +15,8 @@
 export type DropletKind = "blocked" | "done" | "ended";
 
 export interface DropletNotice {
+  /** aaa: 보고서의 공개 링크 한 줄(조작 기기만). */
+  libraryUrl?: string | null;
   /** where a tap goes: the address hash of a pane or a thread */
   target: string;
   agent: string | null;

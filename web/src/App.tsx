@@ -408,18 +408,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     seenReports.current.set(key, hash);
     if (t.role === "evaluator") return;
     if (!alertKinds.current?.has("thread-state")) return told(alertKinds.current ? "host 알림 종류에 없음" : "host 알림 종류 아직 모름");
-    const { sel, panes } = now.current;
-    const raise: Raise = (late) => raiseAlert({
-      kind: "done",
-      target,
-      late,
-      showing: sel === `thread:${key}`,
-      title: t.title || t.id,
-      machine: null,
-      agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
-      notice: { title: `${t.project} · ${t.title || t.id}`, body: "보고 준비", tag: `aaa-${t.project}/${t.id}` },
-    });
-    alertLate(replayFrom, t.project, t.id, raise, told);
+    const show = (libraryUrl: string | null) => {
+      const { sel, panes } = now.current;
+      const raise: Raise = (late) => raiseAlert({
+        kind: "done", target, late, libraryUrl,
+        showing: sel === `thread:${key}`,
+        title: t.title || t.id,
+        machine: null,
+        agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
+        notice: { title: `${t.project} · ${t.title || t.id}`, body: libraryUrl ? `보고 준비\n보기: ${libraryUrl}` : "보고 준비", tag: `aaa-${t.project}/${t.id}` },
+      });
+      alertLate(replayFrom, t.project, t.id, raise, told);
+    };
+    // 공유 링크는 조작 기기에만 준다. 조회 실패도 새 보고 알림을 없애지 않는다.
+    if (role === "reader") show(null);
+    else void call({ op: "thread_library", project: t.project, thread: t.id })
+      .then((r) => show(r.kind === "library" && r.link && !r.link.revoked && r.link.expires_at_ms > Date.now() ? r.link.url : null))
+      .catch(() => show(null));
   };
 
   // 다른 agent의 턴 끝남(host `notice` 사건, plan §8.185): 「작업 완료」로 그 pane에. host는 보는 화면이 없던 턴만, 같은 턴의

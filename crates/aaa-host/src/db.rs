@@ -13,6 +13,29 @@ pub struct Db {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct LibraryLinkRow {
+    pub id: String,
+    pub project: String,
+    pub thread: String,
+    pub created: u64,
+    pub expires: u64,
+    pub opened: Option<u64>,
+    pub revoked: bool,
+}
+
+fn library_link_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryLinkRow> {
+    Ok(LibraryLinkRow {
+        id: r.get(0)?,
+        project: r.get(1)?,
+        thread: r.get(2)?,
+        created: r.get(3)?,
+        expires: r.get(4)?,
+        opened: r.get(5)?,
+        revoked: r.get(6)?,
+    })
+}
+
+#[derive(Debug, Clone)]
 pub struct MachineRow {
     pub id: String,
     pub name: String,
@@ -65,6 +88,61 @@ pub struct DeviceRow {
 pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
+    /// 유효한 링크 재사용과 삽입을 한 잠금 안에서 한다(회수·웹 발급이 겹쳐도 하나).
+    pub(crate) fn library_link_issue(&self, new: LibraryLinkRow) -> Result<(LibraryLinkRow, bool)> {
+        let c = self.conn.lock().unwrap();
+        let old = c
+            .query_row(
+                "SELECT id,project,thread,created,expires,opened,revoked FROM library_links
+             WHERE project=?1 AND thread=?2 AND revoked=0 AND expires>?3 ORDER BY created DESC LIMIT 1",
+                params![new.project, new.thread, new.created],
+                library_link_row,
+            )
+            .optional()?;
+        if let Some(old) = old {
+            return Ok((old, false));
+        }
+        c.execute(
+            "INSERT INTO library_links(id,project,thread,created,expires) VALUES(?1,?2,?3,?4,?5)",
+            params![new.id, new.project, new.thread, new.created, new.expires],
+        )?;
+        Ok((new, true))
+    }
+
+    pub(crate) fn library_link_get(&self, id: &str) -> Result<Option<LibraryLinkRow>> {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT id,project,thread,created,expires,opened,revoked FROM library_links WHERE id=?1",
+                [id],
+                library_link_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn library_links(&self, project: Option<&str>) -> Result<Vec<LibraryLinkRow>> {
+        let c = self.conn.lock().unwrap();
+        let mut q = c.prepare(
+            "SELECT id,project,thread,created,expires,opened,revoked FROM library_links
+            WHERE (?1 IS NULL OR project=?1) ORDER BY created DESC, rowid DESC",
+        )?;
+        Ok(q.query_map([project], library_link_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub(crate) fn library_link_revoke(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().execute("UPDATE library_links SET revoked=1 WHERE id=?1", [id])? != 0)
+    }
+
+    pub(crate) fn library_link_opened(&self, id: &str, now: u64) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE library_links SET opened=?2 WHERE id=?1 AND (opened IS NULL OR opened<=?3)",
+            params![id, now, now.saturating_sub(60_000)],
+        )?;
+        Ok(())
+    }
+
     pub fn open(path: &Path) -> Result<Db> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -79,6 +157,10 @@ impl Db {
                id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
                created_at INTEGER NOT NULL, last_seen INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE IF NOT EXISTS audit(ts INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);
+             CREATE TABLE IF NOT EXISTS library_links(
+               id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL,
+               created INTEGER NOT NULL, expires INTEGER NOT NULL, opened INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE INDEX IF NOT EXISTS library_links_report ON library_links(project, thread, created);
              CREATE TABLE IF NOT EXISTS workspaces(name TEXT PRIMARY KEY, layout TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS threads(
                project TEXT NOT NULL, id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL,
@@ -700,7 +782,7 @@ impl Db {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 5] = ["threads", "flow_events", "messages", "inbox", "evaluations"];
+const PROJECT_TABLES: [&str; 6] = ["threads", "flow_events", "messages", "inbox", "evaluations", "library_links"];
 
 /// 그 프로젝트의 meta: key가 `<종류>:<프로젝트>` 또는 `<종류>:<프로젝트>:…`(routine·PR·nudge·설정 오류·상태 등)
 fn project_meta(c: &Connection, project: &str) -> Result<Vec<(String, String)>> {

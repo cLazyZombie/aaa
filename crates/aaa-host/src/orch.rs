@@ -1639,6 +1639,8 @@ impl Host {
         match result {
             Ok(None) => Ok(()),
             Ok(Some((hash, skipped, copy, report, changed))) => {
+                // 새 보고 알림보다 먼저 만든다. 같은 보고서의 유효한 링크는 재사용한다.
+                self.library_link(project, id, None, "host")?;
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
                 if rec.report_hash.as_ref() == Some(&hash) && rec.copy.as_deref() != Some("failed") {

@@ -6,6 +6,7 @@ import { Markdown } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
+import { LibraryLink } from "./LibraryLink";
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "사람 차례",
@@ -130,11 +131,12 @@ export function ThreadPanel({
               <p className="muted">아직 회수한 보고가 없다</p>
             )}
           </section>
-          {lib && lib.files.length > 0 && (
+          {lib && (lib.files.length > 0 || lib.link !== null) && (
             <section className="card files" data-testid="files">
               <h2>
                 결과물 <span className="muted">{lib.files.length}</span>
               </h2>
+              {role !== "reader" && <LibraryLink key={`${t.project}/${t.id}`} library={lib} onChange={setLib} />}
               {index && (
                 <iframe
                   className="library-frame"

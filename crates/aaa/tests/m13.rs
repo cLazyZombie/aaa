@@ -3355,6 +3355,15 @@ fn library_view() {
     assert!(!files.iter().any(|f| f.0 == "link"), "{files:?}");
     let base = lib["base"].as_str().unwrap().to_string();
 
+    // 회수 때 자동 발급한다. CLI 발급이 뒤늦게 링크를 만든 것을 자동 발급으로 착각하지 않는다.
+    let shared = &lib["link"];
+    assert!(shared["id"].is_string(), "자동 발급 링크가 없다: {lib}");
+    let link = w.h.ok(&["library", "link", "demo", &id]);
+    assert_eq!(link["id"], shared["id"]);
+    let (st, _, body) = http_get(&web, shared["base"].as_str().unwrap());
+    assert_eq!(st, 200);
+    assert!(String::from_utf8_lossy(&body).contains("<p>보고</p>"));
+
     // host 사본: sandbox CSP, 같은 host 웹 화면 안 frame만
     let (st, head, body) = http_get(&web, &format!("{base}index.html"));
     assert_eq!(st, 200, "{head}");

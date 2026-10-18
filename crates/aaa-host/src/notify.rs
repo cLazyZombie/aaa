@@ -38,6 +38,10 @@ pub(crate) fn notify_text(project: &str, items: &[InboxItem]) -> String {
     for i in items {
         let summary: String = i.summary.chars().take(200).collect();
         s.push_str(&format!("\n- {} {}: {summary}", crate::inbox::who(i), i.event));
+        for line in i.body.lines().filter(|line| line.starts_with("보기: https://")) {
+            s.push('\n');
+            s.push_str(line);
+        }
     }
     if s.chars().count() > TEXT_CAP {
         s = s.chars().take(TEXT_CAP).collect::<String>() + "\n…";
@@ -241,6 +245,8 @@ impl Host {
                     if n.webhook.is_empty() {
                         continue;
                     }
+                    let mut items = items;
+                    me.library_notice_links(&mut items);
                     let body = notify_body(&n.format, &n.telegram_chat_id, &project, &items);
                     let sent = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
                     let res = match sent {

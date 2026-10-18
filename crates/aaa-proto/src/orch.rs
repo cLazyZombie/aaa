@@ -203,6 +203,30 @@ pub struct LibraryView {
     pub base: String,
     #[ts(type = "number")]
     pub expires_at_ms: u64,
+    /// 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
+    #[serde(default)]
+    pub link: Option<LinkView>,
+}
+
+/// 보고서 하나의 host 사본만 읽는 서명 링크(§8.195).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LinkView {
+    pub id: String,
+    pub project: String,
+    pub thread: String,
+    pub base: String,
+    /// 공개했을 때만 있는 절대 HTTPS 주소. loopback은 밖 알림에 싣지 않는다.
+    pub url: Option<String>,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+    #[ts(type = "number")]
+    pub expires_at_ms: u64,
+    #[ts(type = "number | null")]
+    pub last_opened_at_ms: Option<u64>,
+    pub revoked: bool,
+    /// host에 회수한 일반 파일의 합계 바이트
+    #[ts(type = "number")]
+    pub size: u64,
 }
 
 /// report.md 본문과 library 목록(파일 본문은 `FileRead`로 나눠 받는다)
