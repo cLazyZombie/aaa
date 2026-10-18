@@ -153,6 +153,12 @@ fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentA
     }
 }
 
+/// 질문·메시지 ID(`q-…`·`m-…`, 10자). ULID의 무작위 부분에서 뽑는다: 앞 10자는 ms 시각이라 같은 ms에 만든 둘이 같은
+/// ID가 되어 둘째가 첫째 기록을 덮었다(저장은 `ON CONFLICT(id) DO UPDATE`). 차례는 기록의 `created_at`이 정한다.
+fn short_id(prefix: &str) -> String {
+    format!("{prefix}-{}", aaa_common::util::new_id()[16..].to_ascii_lowercase())
+}
+
 impl Host {
     /// 이 pane의 다음 사건 중 `kinds`에 드는 것을 기다린다
     fn wait_kind(&self, pane: &str, kinds: &'static [&'static str]) -> oneshot::Receiver<String> {
@@ -210,8 +216,10 @@ impl Host {
             tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
             ev.harness_session = None;
         }
-        let (activity, answered_block) = {
+        let (activity, answered_block, running) = {
             let mut i = self.inner.lock().unwrap();
+            // 이 agent는 답한 뒤 화면에 남은 확인창을 새로 묻는 것으로만 다시 알린다(`ask_anew.v1`)
+            let anew = i.machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == "ask_anew.v1"));
             let Some(p) = i.panes.get_mut(&ev.session) else {
                 // 세션 안 hook이 세션 시작 사건보다 먼저 올 수 있다: pane이 등록되면 다시 적용한다
                 drop(i);
@@ -219,6 +227,19 @@ impl Host {
                 return;
             };
             if p.machine_id != mid {
+                return;
+            }
+            // 셸 pane 앞의 agent가 끝나 셸로 돌아왔다(agent의 앞 프로세스 찾기, herdr `ClearAgent`): 다시 agent 없는 셸이다.
+            // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
+            if ev.kind == "released" {
+                p.agent = None;
+                p.answered = false;
+                p.transcript = None;
+                let _ = p.events.send(crate::PaneEvent::State);
+                drop(i);
+                self.bump();
+                self.close_questions_of(&ev.session);
+                self.tick_wake.notify_one();
                 return;
             }
             if ev.transcript.is_some() {
@@ -273,7 +294,8 @@ impl Host {
                 st.progress_at_ms = None;
             }
             // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
-            let answered_block = next == Some(AgentActivity::Question)
+            let answered_block = !anew
+                && next == Some(AgentActivity::Question)
                 && prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question)
                 && p.answered;
             if next.is_some_and(|a| a != AgentActivity::Question) {
@@ -290,7 +312,7 @@ impl Host {
             }
             p.agent = Some(st);
             let _ = p.events.send(crate::PaneEvent::State);
-            (next, answered_block)
+            (next, answered_block, p.info.state.is_running())
         };
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
@@ -326,10 +348,14 @@ impl Host {
         // 질문: 열리거나, harness가 넘어가면 닫힌다. 답한 확인창 뒤에 늦게 온 질문 사건(옛 agent의 Claude
         // Notification `permission_prompt`가 답보다 늦게 도착)은 그 질문을 다시 열지 않는다. 참고 herdr 0.9.5는 상태 hook을
         // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
-        // 때만 알리므로, 한 막힘에 질문은 하나다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음
-        // 확인창은 새 막힘이다(t-0333 m13 사건 16, plan §8.99·§8.110)
+        // 때만 알린다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음 확인창은 새 막힘이다(t-0333 m13
+        // 사건 16, plan §8.99·§8.110). `ask_anew.v1` agent는 화면 감지만 질문을 내고, 막힘에 입력이 간 뒤 남은 확인창을
+        // 새 물음으로 다시 알린다(herdr-web-ui `askingEnded`, QA t-0337 Q18): 답한 질문 뒤의 질문 사건은 새 질문이다
+        // 끝난 세션(재부팅으로 끊김·종료)에는 질문을 열지 않는다: 다시 붙은 agent가 알리는 세션별 마지막 상태
+        // (`hello.harness`, 재부팅 복원이 harness 세션 ID를 알려고)가 확인창이면 그 pane 질문을 닫은 뒤 다시 열었다
+        // (QA t-0337 Q20). 참고 herdr-web-ui는 살아 있는 blocked pane 화면에서만 질문을 읽는다(`server/prompt.ts`).
         match activity {
-            Some(AgentActivity::Question) if answered_block => {}
+            Some(AgentActivity::Question) if answered_block || !running => {}
             Some(AgentActivity::Question) => {
                 let kind = ev.question_kind.clone().unwrap_or_else(|| "permission".into());
                 self.ask(&ev.session, &kind, ev.message.clone().unwrap_or_default());
@@ -395,7 +421,7 @@ impl Host {
         let _ = mid;
         let rec = self.thread_of_pane(pane);
         let q = QuestionView {
-            id: format!("q-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),
+            id: short_id("q"),
             pane: pane.to_string(),
             machine,
             project: rec.as_ref().map(|r| r.project.clone()),
@@ -677,7 +703,7 @@ impl Host {
             }
         }
         let mut m = MessageView {
-            id: format!("m-{}", aaa_common::util::new_id()[..10].to_ascii_lowercase()),
+            id: short_id("m"),
             project: project.to_string(),
             thread: id.to_string(),
             mode,
@@ -1035,5 +1061,12 @@ mod tests {
         h.on_harness("m", ev("question", 4_000));
         let again = h.open_question_of("s").expect("다음 확인창의 질문");
         assert_ne!(again.id, q.id);
+    }
+
+    /// 같은 ms에 잇달아 만든 ID도 다르다(전에는 ULID 시각 부분이라 같아져 둘째 질문·메시지가 첫째 기록을 덮었다)
+    #[test]
+    fn ids_made_in_the_same_millisecond_differ() {
+        let ids: std::collections::HashSet<String> = (0..1000).map(|_| short_id("q")).collect();
+        assert_eq!(ids.len(), 1000);
     }
 }
