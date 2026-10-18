@@ -3830,6 +3830,20 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - TUI harness `settings_like_herdr`: 이름이 claude인 셸에 Claude 확인창을 그려 확인 대기 pane을 만든다. `prefix s` → `▸ catppuccin ✓`, `jj`면 탭 막대 바탕이 terminal(터미널 기본)로, Esc면 catppuccin으로 돌아오고 host.toml에 theme가 없다. 다시 `jj` Enter면 닫히고 host.toml에 `theme = "terminal"`(실험실 다른 줄 그대로). 상태 표시 구역에서 기호를 고르면 창은 그대로·`status_indicators = "symbols"`·확인 대기 점 `×`. `menu`를 누르고 Enter면 설정 창. host.local.toml에 theme를 두고 적용하면 덮음 알림. `new_workspace_on_picked_machine_like_herdr`는 footer 비교에서 `menu`를 뺀다.
   - 결함 심기: 되돌리기 빼기(「되돌림」), 쓰기 빼기(「적용」), 덮음 확인 빼기(「덮음 알림」), 상태 점에 설정 모양을 넘기지 않기(「기호」)는 각각 그 단계에서 실패한다.
 
+### 8.179 대화의 사람·답 말을 Markdown으로(10-18, §8.171 남은 것, herdr-web-ui ChatView 「참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb) `ChatView.tsx`는 사람 말을 무채색 카드(`UserMessage` → `.chat-bubble` 안 `Markdown`)로, 답을 카드 없이
+  (`Turn`의 답 `Markdown`, `.chat-turn-agent`) 그린다. 주황은 선택·보내기에 남겨 긴 대화가 색 벽이 되지 않게 한다(ChatView.css 주석).
+- **aaa가 달랐던 것.** 말을 글 그대로(`pre-wrap`) 그리고, 사람 말은 주황 바탕, 답은 테두리 카드였다.
+- **고침.** 사람·답 말은 보고서와 같은 `Markdown`(herdr 파서, HTML 해석 없음)으로 그린다. 사람 말은 무채색 카드(`--bg-elevated`·테두리, 폭 80%),
+  답은 카드 없이. 카드 안 code·code block 바탕은 참고대로 한 단계 다르게. Markdown 글자도 「채팅 글자 크기」를 따른다(`--chat-fs-body` × `--chat-scale`).
+  말 안 경로·파일 링크·경로 code는 그 pane의 파일 보기로 열린다(§8.171의 `OpenFileContext`, 보기 권한 화면은 없음). 도구 줄은 글 그대로다.
+- **옮기지 않은 것.** 긴 사람 말 접기(「전체 보기」, `userMessageFold`), 말마다 시각·복사(MD·TXT) 단추, 작업 묶음(`WorkBlockView`), 대화 기둥 폭·
+  가운데 정렬, 미니맵. aaa 대화 기록에는 도구 입력·출력과 시각이 없다(agent `chat.rs`가 고른 줄만).
+- **시험.** 웹 E2E 11 「대화 기록」: 답의 `**넣었다**`가 strong이고 「**」가 남지 않음, 사람 말은 테두리·바탕 있는 카드, 답은 테두리·바탕 없음,
+  「채팅 글자 크기」는 답의 Markdown 글자에서 잰다, 답 안 경로는 파일 단추(§8.171 그대로). 결함 심기 둘(답을 글 그대로, Markdown 글자 크기 고정)
+  모두 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

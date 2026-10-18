@@ -4,8 +4,8 @@
 // `statusEdgeRead`): aaa는 기록 변경을 push하지 않으니 참고의 push 없는 판처럼 2초마다, 그리고 agent 상태가 작업 중에 들고 날 때
 // (턴 시작·끝)와 이 화면이 보낸 뒤(`readNow`)에는 기다리지 않고 바로 읽는다.
 // 글 속 파일 경로는 그 pane의 파일 보기로 연다(참고 ChatView는 pane마다 `OpenFileContext`, 찾는 곳은 그 pane이 지금 있는 폴더,
-// plan §8.171). 보기 권한 화면은 열 곳이 없어 글 그대로다. 참고는 말을 Markdown으로 그리지만 aaa 대화는 아직 글 그대로라
-// 참고가 Markdown 아닌 글(도구 출력)에 쓰는 `linkFilePaths`로 잇는다.
+// plan §8.171). 보기 권한 화면은 열 곳이 없어 글 그대로다. 사람·답 말은 참고처럼 Markdown으로 그린다(참고 `UserMessage`의
+// `chat-bubble-body`·`Turn`의 답, plan §8.179): 사람 말은 무채색 카드, 답은 카드 없이. 도구 줄은 글 그대로 경로만 잇는다(`linkFilePaths`).
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ApiError, call } from "./api";
@@ -13,6 +13,8 @@ import type { ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
 import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
 import { linkFilePaths } from "./FilePathLink";
+import { Markdown } from "./Markdown";
+import { OpenFileContext } from "./herdr/filePaths.ts";
 
 /** push 없는 대화의 읽기 간격(참고 conversationRefresh.ts `INVALIDATION_MS`) */
 const INVALIDATION_MS = 2000;
@@ -88,30 +90,32 @@ export function ChatPanel({
   }, [chat]);
 
   return (
-    <div
-      className="chat"
-      ref={list}
-      data-testid="chat"
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      }}
-    >
-      <p className="chat-note">
-        {chat?.harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
-        {chat?.truncated && " 앞부분은 생략했다."}
-      </p>
-      {error && <div className="banner warn">{error}</div>}
-      {chat?.messages.map((m, i) =>
-        m.role === "thinking" ? (
-          <ThinkingRow key={i} text={m.text} />
-        ) : (
-          <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
-            {linkFilePaths(m.text, onOpenFile ?? null)}
-          </div>
-        ),
-      )}
-      {chat && chat.messages.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
-    </div>
+    <OpenFileContext.Provider value={onOpenFile ?? null}>
+      <div
+        className="chat"
+        ref={list}
+        data-testid="chat"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}
+      >
+        <p className="chat-note">
+          {chat?.harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
+          {chat?.truncated && " 앞부분은 생략했다."}
+        </p>
+        {error && <div className="banner warn">{error}</div>}
+        {chat?.messages.map((m, i) =>
+          m.role === "thinking" ? (
+            <ThinkingRow key={i} text={m.text} />
+          ) : (
+            <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
+              {m.role === "tool" ? linkFilePaths(m.text, onOpenFile ?? null) : <Markdown>{m.text}</Markdown>}
+            </div>
+          ),
+        )}
+        {chat && chat.messages.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
+      </div>
+    </OpenFileContext.Provider>
   );
 }
