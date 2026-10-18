@@ -547,11 +547,21 @@ impl App {
     /// 터미널에 끌어 놓은 그림 파일(그 경로 하나)은 그림으로 올린다(herdr client `read_image_file_from_terminal_drop`).
     /// 그림만 든 clipboard는 빈 붙여넣기로 오는 터미널이 있다. 그 밖은 글이다.
     async fn on_paste(&mut self, s: String, tx: &mut FrontSender) -> Result<()> {
+        // herdr `handle_raw_events`·`insert_overlay_text`: 이름 창과 검색 중인 단축키 창은 그 입력에 넣는다. 다른 창이 떴거나
+        // Terminal 모드가 아니면(prefix·탐색·크기) 버린다. pane과 그림(`clipboard_image_target`)은 그 밖에서만이다.
         match self.overlay.as_mut() {
             Some(Overlay::Rename(r)) => {
                 r.input.insert(&s);
             }
+            Some(Overlay::Help(h)) if h.search => {
+                let text = editor::single_line(&s);
+                if !text.is_empty() {
+                    h.query.push_str(&text);
+                    h.scroll = 0;
+                }
+            }
             Some(_) => {}
+            None if self.mode != Mode::Terminal => {}
             None if s.is_empty() => {
                 self.paste_image(tx).await?;
             }

@@ -1691,7 +1691,32 @@ fn paste_and_image_drop_like_herdr() {
     assert!(!line.contains(&dropped) && !line.contains("not found"), "{line}");
     tui.send(b"\x15");
 
-    // 5) 나가면(prefix q) bracketed paste를 끈다
+    // 5) 창과 모드(herdr `insert_overlay_text`): prefix 모드의 붙여넣기는 버리고(pane에 가지 않는다), 검색 중인 단축키 창은
+    //    검색어에, 새 탭 이름 창은 이름에 넣는다
+    tui.send(b"\x02");
+    tui.wait_text("PREFIX 막대", |s| s.contains(" PREFIX "));
+    tui.send(b"\x1b[200~zz-prefix\x1b[201~");
+    tui.send(b"\x1b");
+    tui.wait_text("prefix 끝", |s| !s.contains(" PREFIX "));
+    tui.type_line("echo end-$((5))");
+    tui.wait_text("표지", |s| s.contains("end-5"));
+    assert!(!h.screen(&id).contains("zz-prefix"), "prefix 모드의 붙여넣기가 pane에 갔다:\n{}", h.screen(&id));
+    tui.cmd("?");
+    tui.wait_text("단축키 창", |s| s.contains("prefix 모드") && s.contains("esc 닫기"));
+    tui.send(b"/");
+    tui.wait_text("검색", |s| s.contains("esc 돌아가기"));
+    tui.send("\x1b[200~나누기\x1b[201~".as_bytes());
+    tui.wait_text("거름", |s| s.contains("좌우로 나누기") && !s.contains("목록 탐색"));
+    tui.send(b"\x1b");
+    tui.wait_text("검색 끝", |s| s.contains("esc 닫기"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
+    tui.send("\x1b[200~붙인\n탭\x1b[201~\r".as_bytes());
+    hw.wait("붙여 넣은 이름의 탭", |w| w.ws.as_ref()?.tabs.iter().any(|t| t.name == "붙인 탭").then_some(()));
+
+    // 6) 나가면(prefix q) bracketed paste를 끈다
     tui.cmd("q");
     assert!(tui.wait_exit());
     tui.wait_screen("bracketed paste 끔", |s| !s.modes.contains(&2004));
