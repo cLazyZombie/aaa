@@ -49,7 +49,7 @@ new_cwd = "follow"
 [projects]
 # 프로젝트 폴더 root(비우면 ~/.aaa/projects)
 root = ""
-# thread에 쓸 수 있는 profile(agent.toml에 정의). "*"는 모두 허용한다.
+# thread에 쓸 수 있는 profile(옛 자리, "*"는 모두). [safety.*] thread_profiles가 있으면 그것이 먼저다.
 allow_profiles = ["*"]
 # 보고와 함께 host로 복사할 library 상한(MB). 넘는 파일은 agent에 남는다.
 library_copy_mb = 200
@@ -74,7 +74,8 @@ stop_wait_ms = 15000
 delivered_working_secs = 15
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
-# routine 명령을 실행해도 되는 프로젝트("*"는 모두). 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.
+# routine 명령을 실행해도 되는 프로젝트(옛 자리, "*"는 모두). [safety.*] routine_commands가 있으면 그것이 먼저다.
+# 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.
 routine_commands = []
 
 [notify]
@@ -101,3 +102,18 @@ push_subject = ""
 resume_agents_on_restore = true
 # 이어 띄우기 사이 간격(ms)
 startup_per_agent_delay_ms = 100
+
+# 정해지지 않았을 때 쓰는 값. `aaa profile default threads <이름>`이 고친다.
+[defaults]
+# thread start에 --profile이 없고 project.toml thread_profile도 없을 때 쓰는 profile(비우면 기본 profile claude)
+thread_profile = ""
+
+# safety: 사람만 바꾼다(`aaa safety show|yolo|set`, `aaa profile allow`). 프로젝트 폴더 밖이라 coordinator가 고치지 못한다.
+# [safety.default]는 모든 프로젝트, [safety.<프로젝트>]는 그 프로젝트다. 빠진 값은 아래 층(default 표 → 옛 자리 → 기본값)을 따른다.
+# [safety.default]
+# yolo = false                 # 켜면 thread를 묻지 않고 시작하고 claude·codex thread를 권한 건너뛰기 인자로 띄운다
+# start_threads = "propose"    # propose(제안하고 승인을 기다림)·auto. yolo면 auto
+# trust_screens = "user"       # thread pane 신뢰 창에 답하는 쪽: user·coordinator. 없으면 yolo를 따른다
+# thread_agent_args = []       # 프로젝트 기본 profile과 같은 harness의 기본 profile에 붙이는 인자
+# routine_commands = false     # routine 명령 실행(명령마다 사람 승인도 필요하다)
+# thread_profiles = ["claude"] # thread가 쓸 수 있는 profile(없으면 모두)

@@ -62,12 +62,21 @@ impl LocalListener {
 
     /// 같은 사용자 연결만 돌려준다(Unix peer UID). 다른 사용자는 끊고 다음을 기다린다.
     pub async fn accept(&self) -> io::Result<LocalStream> {
+        self.accept_peer().await.map(|(s, _)| s)
+    }
+
+    /// [`accept`](Self::accept)와 같고 연결한 프로세스의 pid도 돌려준다(Unix peer credential — macOS `LOCAL_PEEREPID`,
+    /// Linux `SO_PEERCRED` —, Windows `GetNamedPipeClientProcessId`). 못 읽으면 `None`.
+    pub async fn accept_peer(&self) -> io::Result<(LocalStream, Option<u32>)> {
         #[cfg(unix)]
         loop {
             let (s, _) = self.inner.accept().await?;
             let uid = unsafe { libc::getuid() };
             match s.peer_cred() {
-                Ok(c) if c.uid() == uid => return Ok(Box::new(s)),
+                Ok(c) if c.uid() == uid => {
+                    let pid = c.pid().and_then(|p| u32::try_from(p).ok()).filter(|p| *p > 0);
+                    return Ok((Box::new(s), pid));
+                }
                 _ => {
                     tracing::warn!("다른 사용자의 로컬 연결을 거부했다");
                     continue;
@@ -76,12 +85,18 @@ impl LocalListener {
         }
         #[cfg(windows)]
         {
+            use std::os::windows::io::AsRawHandle;
             use tokio::net::windows::named_pipe::ServerOptions;
             let mut guard = self.inner.lock().await;
             guard.connect().await?;
             let next = ServerOptions::new().create(&self.name)?;
             let connected = std::mem::replace(&mut *guard, next);
-            Ok(Box::new(connected))
+            let mut pid = 0u32;
+            // SAFETY: 연결된 named pipe handle이고 pid는 쓸 수 있는 u32다
+            let ok = unsafe {
+                windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId(connected.as_raw_handle(), &mut pid)
+            };
+            Ok((Box::new(connected), (ok != 0 && pid > 0).then_some(pid)))
         }
     }
 }

@@ -659,8 +659,8 @@ mod e2e {
         assert!(std::fs::read_to_string(dir.join("project.toml")).unwrap().starts_with("schema = 1\n"));
         let set = crate::project::ProjectSettings::load(&dir);
         assert_eq!(
-            (set.goal.as_str(), set.max_parallel_threads, set.start_threads.as_str(), set.auto_resolve_days),
-            ("배포", 2, "auto", 3)
+            (set.goal.as_str(), set.max_parallel_threads, set.start_threads.as_deref(), set.auto_resolve_days),
+            ("배포", 2, Some("auto"), 3)
         );
         assert_eq!(set.thread_profile, "opus");
         assert!(!set.nudge);

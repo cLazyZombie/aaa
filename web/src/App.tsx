@@ -8,6 +8,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
+import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
@@ -39,7 +40,7 @@ import { updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
-import { DrawerContext, DrawerToggle } from "./drawer";
+import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -267,6 +268,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [machines, setMachines] = useState<MachineView[]>([]);
   const [panes, setPanes] = useState<PaneView[]>([]);
   const [up, setUp] = useState(false);
+  // host가 주는 웹 빌드(events 연결마다 온다): 이 페이지와 다르면 다시 열기 줄(plan §8.166)
+  const [hostWeb, setHostWeb] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   const [msg, setMsg] = useState<string | null>(null);
@@ -476,6 +479,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           putThread(t);
         },
         (p) => receivePreferences.current(p),
+        setHostWeb,
       ),
     [],
   );
@@ -501,12 +505,27 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, []);
 
   // 고르면 drawer를 닫는다(참고 selectTarget·selectPane의 setDrawerOpen(false))
-  const choose = (id: string | null) => {
+  // App이 스스로 고른 pane(주소의 pane이 닫혀 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected)
+  const [autoSelected, setAutoSelected] = useState(false);
+  const choose = (id: string | null, auto = false) => {
     location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
     setSel(id ? `pane:${id}` : null);
+    setAutoSelected(auto);
     setDrawerOpen(false);
   };
+  // 보던 pane이 새 pane으로 바뀌었다(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, PaneView.replaced): 그 자리를
+  // 이은 pane을 따라가고 주소도 바꾼다(뒤로 가기에 옛 주소를 남기지 않는다, QA Q19)
+  useEffect(() => {
+    if (!sel?.startsWith("pane:")) return;
+    const id = sel.slice("pane:".length);
+    if (panes.some((p) => p.id === id)) return;
+    const next = panes.find((p) => p.replaced?.includes(id));
+    if (!next) return;
+    history.replaceState(history.state, "", `#pane=${encodeURIComponent(next.id)}`);
+    setSel(`pane:${next.id}`);
+  }, [panes, sel]);
   const chooseThread = (t: ThreadView, from: string | null = null) => {
+    setAutoSelected(false);
     setDrawerOpen(false);
     setBackTo(from);
     openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;
@@ -601,25 +620,43 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, []);
   useShortcuts(actions, true);
 
+  // 머리 알림(참고 headerNote): 8초 뒤 거둔다(참고 App.tsx 281~284줄)
+  const [headNote, setHeadNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (headNote === null) return;
+    const timer = window.setTimeout(() => setHeadNote(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [headNote]);
   // 첫 화면은 마지막으로 연 pane·thread를 바로 연다(herdr-web-ui: 고른 것이 없으면 기억한 것, 없거나 닫혔으면 PC의 첫 pane
   // `fallback`). 주소가 무엇을 가리키면 그것이다. 목록(pane·thread)을 다 받은 뒤 한 번만 고른다
-  const firstPick = useRef(sel !== null || location.hash !== "");
+  const firstPick = useRef(sel?.startsWith("pane:") ? false : sel !== null || location.hash !== "");
   useEffect(() => {
     if (firstPick.current || !loaded || !linkedOnce.current.threads) return;
     firstPick.current = true;
+    // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
+    const pickFirst = (auto: boolean) => {
+      const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+      for (const m of machines.filter((x) => x.connection === "connected")) {
+        const first = machineRows(m, panes, shown)[0];
+        if (!first) continue;
+        if ("pane" in first.open) choose(first.open.pane, auto);
+        else chooseThread(first.open.thread);
+        return;
+      }
+    };
+    // 주소가 가리킨 pane이 없다(닫혔다): 첫 줄을 열고 머리에 말한다. 키보드는 사용자가 고를 때까지 둔다(참고 resolveLink
+    // 「workspace-closed」·fallback·autoSelected. aaa 주소에는 workspace가 없어 그 workspace의 pane을 여는 갈래는 없다)
+    const linked = sel?.startsWith("pane:") ? sel.slice(5) : null;
+    if (linked !== null) {
+      if (panes.some((p) => p.id === linked)) return;
+      setHeadNote("그 링크의 pane은 닫혔습니다");
+      return pickFirst(true);
+    }
     const stored = storedSelection();
     if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5));
     const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
     if (storedThread && storedThread.group !== "resolved") return chooseThread(storedThread);
-    // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
-    const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
-    for (const m of machines.filter((x) => x.connection === "connected")) {
-      const first = machineRows(m, panes, shown)[0];
-      if (!first) continue;
-      if ("pane" in first.open) choose(first.open.pane);
-      else chooseThread(first.open.thread);
-      return;
-    }
+    pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, panes, threads, machines]);
@@ -677,6 +714,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   return (
     <DrawerContext.Provider value={drawer}>
+    <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
     <div className="app">
       <aside id="workspace-drawer" className={`list sidebar-shell${drawerOpen ? " is-open" : ""}`}>
         <header className="list-head">
@@ -700,7 +738,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           >
             <Icon name="search" />
           </button>
-          <MoreMenu onProjects={() => chooseProject(null)} />
         </header>
         {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
         <Sidebar
@@ -727,6 +764,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
+        <UpdateNotice hostBuild={hostWeb} />
         {currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
@@ -752,6 +790,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             controls={paneControls}
             pane={current}
             role={role}
+            autoSelected={autoSelected}
             onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: current.id }) : undefined}
             title={paneTitle(current)}
             agent={agentOf(current, threadOfPane.get(current.id))}
@@ -780,9 +819,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         ) : (
           <>
-          {/* 좁은 창에서 아무것도 고르지 않았을 때도 목록을 열 머리 */}
+          {/* 보일 것이 없을 때의 머리: 좁은 창의 목록 단추·머리 알림·「더 보기」 */}
           <header className="term-head empty-head">
             <DrawerToggle />
+            <HeadNote />
+            <HeadMore />
           </header>
           <div className="empty-view">
             <img className="logo big" src="/icon.svg" alt="" />
@@ -823,6 +864,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         }}
       />
     </div>
+    </HeadContext.Provider>
     </DrawerContext.Provider>
   );
 }
