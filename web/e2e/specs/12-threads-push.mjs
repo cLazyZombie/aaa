@@ -5,8 +5,32 @@
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList,
+  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList, drawerSettled,
 } from "../lib/harness.mjs";
+
+/**
+ * 목록 줄의 오른쪽 끝(보이는 ⋯, 없으면 상태 칸)과 목록 오른쪽 끝의 거리가 목록 여백(--side-gutter)과 경계선 안이다(t-0370:
+ * 휴대폰 ⋯ 뒤 빈 상태 칸). 고정 카드 안 줄은 카드 안쪽 여백만큼 더 들어간다. ⋯은 손가락 크기(--touch-target 40px)를 지킨다
+ */
+async function rowEndsNearEdge(p, what) {
+  const rows = await p.evaluate(() => {
+    const shell = document.querySelector(".sidebar-shell");
+    const px = (el, ...props) => props.reduce((sum, prop) => sum + parseFloat(getComputedStyle(el).getPropertyValue(prop)), 0);
+    const edge = shell.getBoundingClientRect().right - px(shell, "border-right-width");
+    const shown = [...shell.querySelectorAll(".workspace-header, .agent-item")].filter((row) => row.getClientRects().length);
+    return shown.map((row) => {
+      const card = row.closest(".sidebar-pinned");
+      const allowed = px(shell, "--side-gutter") + (card ? px(card, "padding-right", "border-right-width") : 0);
+      const more = row.querySelector(":scope > .workspace-actions .row-menu-toggle, :scope > .agent-actions .row-menu-toggle");
+      const end = more?.getClientRects().length ? more : row.querySelector(".sidebar-pane-meta, .agent-row-state");
+      const r = end.getBoundingClientRect();
+      return { name: row.querySelector(".workspace-name, .agent-title")?.textContent, more: end === more, gap: edge - r.right, allowed, width: r.width };
+    });
+  });
+  const bad = rows.filter((r) => r.gap > r.allowed + 0.5 || (r.more && r.width < 40));
+  if (!rows.length || bad.length) throw new Error(`${what}: 줄 끝이 목록 끝에서 멀다 ${JSON.stringify(bad.length ? bad : rows)}`);
+  return rows;
+}
 
 export default async function ({ page }) {
   const pushDev = pushDevice("push/dev1");
@@ -729,6 +753,12 @@ export default async function ({ page }) {
     // 2. 휴대폰(다른 기기): 고정이 와 있고, ⋯ sheet에서 푼다 → 데스크톱에서도 풀린다
     const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await domIs(ph.page, "다른 기기의 고정 카드", (k) => document.querySelector(`.machine-list .sidebar-pinned [data-pin-key="${k}"]`) !== null, key);
+    // ⋯은 drawer 오른쪽 끝 가까이(목록 여백 안): 마우스 데스크톱은 ⋯ 없이 상태 칸이 그 자리
+    await rowEndsNearEdge(page, "데스크톱");
+    await ph.page.locator(".view [data-testid='drawer-toggle']").click();
+    await ph.page.locator("#workspace-drawer.is-open").waitFor();
+    await drawerSettled(ph.page);
+    if (!(await rowEndsNearEdge(ph.page, "휴대폰 drawer")).some((r) => r.more)) throw new Error("휴대폰 drawer에 ⋯ 줄이 없다");
     await inList(ph.page, ph.page.locator(`.machine-list .sidebar-pinned [data-pin-key="${key}"] .row-menu-toggle`));
     const sheet = ph.page.getByRole("dialog", { name: "t1" });
     await sheet.waitFor();

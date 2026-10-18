@@ -33,3 +33,18 @@
 .machine-strip { margin-top: var(--space-4); }
 .machine-strip-label { padding: 0 var(--side-gutter); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
 .machine-strip .machine-group + .machine-group { margin-top: 0; }
+
+/* ⋯ 단추가 보이는 곳(터치·좁은 창, 참고는 마우스 넓은 창에서만 ⋯을 숨긴다)에서는 ⋯을 줄 오른쪽 끝(목록 여백 안)에 둔다.
+   참고는 ⋯ 뒤 오른쪽 끝에 상태 칸(--side-box)을 늘 잡아 두는데, aaa 줄은 상태를 둘째 줄 글로도 말해 그 칸이 자주 비어
+   ⋯이 끝에서 멀어 보인다(t-0370). 상태 칸은 ⋯ 왼쪽으로 옮기고, 그릴 것(점·?·기호·경고)이 있을 때만 자리를 잡는다:
+   비면 그만큼 이름이 덜 잘린다. 마우스 넓은 창은 참고 그대로 */
+@media (pointer: coarse), (max-width: 768px) {
+  .workspace-header,
+  .agent-item { padding-right: 0; }
+  .workspace-select,
+  .agent-row { position: relative; }
+  .workspace-select:has(> .sidebar-pane-meta :is(.sidebar-status-dot, .sidebar-status-mark, .sidebar-status-glyph:not(:empty), .badge-restore-error)),
+  .agent-row:has(> .agent-row-state :is(.sidebar-status-dot, .sidebar-status-mark, .sidebar-status-glyph:not(:empty), .badge-restore-error)) {
+    padding-right: var(--side-box);
+  }
+}
