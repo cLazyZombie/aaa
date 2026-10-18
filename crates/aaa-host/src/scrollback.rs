@@ -74,6 +74,7 @@ impl Host {
             role: None,
             harness: None,
             profile: None,
+            resolved_profile: None,
         };
         let id = match self.spawn_on(&mid, spec, actor).await {
             Ok(id) => id,

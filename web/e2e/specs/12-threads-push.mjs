@@ -89,8 +89,9 @@ export default async function ({ page }) {
       strongCode: "a1b2c3d",
       link: ["참고 문서", "_blank"],
       head: ["ID", "판정", "근거"],
+      // 경로로 읽히는 code는 그 thread 작업 폴더의 파일 단추다(참고 Markdown `codeIsFilePath`, plan §8.171)
       cells: [
-        ["<code>T2</code>", "같음", "<code>prefs.rs</code>"],
+        ["<code>T2</code>", "같음", '<button type="button" class="markdown-file is-code" title="prefs.rs 열기"><code>prefs.rs</code></button>'],
         ["R1", "<strong>일부</strong>", "표와 <code>code</code>"],
         ["Q9", "휴대폰 표 칸의 한글 낱말은 음절 사이에서 끊기지 않는다", "경우마다 메모를 남긴다"],
       ],
@@ -101,6 +102,45 @@ export default async function ({ page }) {
       fenceBg: "rgba(0, 0, 0, 0)",
     };
     if (JSON.stringify(md) !== JSON.stringify(want)) throw new Error(`보고 Markdown ${JSON.stringify(md)}`);
+    // 보고서 안 파일 링크(1장 J 나머지, plan §8.171): 그 thread의 머신·worktree(agent가 시작한 폴더) 기준으로 찾아 앱 안 파일 보기
+    // (`/f/` 읽기 경로)로 연다. 보고·결과물이 있는 `.aaa/…`(work_dir) 기준이 아니다
+    const cwd = aaa("thread", "show", "demo", t.id).cwd;
+    const fileViewer = page.getByTestId("file-viewer");
+    await report.locator(".markdown-file", { hasText: "작업 메모" }).click();
+    await until("작업 메모(worktree notes/plan.md)", async () => (await fileViewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "작업 메모");
+    const opened = await fileViewer.evaluate((v) => ({ path: v.querySelector(".file-viewer-path")?.textContent, newTab: v.querySelector('a[aria-label="새 탭에서 열기"]')?.getAttribute("href") }));
+    if (!/^\/f\/[0-9a-f]+\/plan\.md$/.test(opened.newTab ?? "") || !opened.path?.includes(`${cwd.split("/").pop()}/notes`)) throw new Error(`작업 메모 ${JSON.stringify({ cwd, ...opened })}`);
+    await page.goBack();
+    await domIs(page, "작업 메모 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="report"]'));
+    // 글 속 경로의 줄 참조는 소스로 그 줄을 보인다
+    await report.locator(".markdown-file", { hasText: "src/app.ts:3" }).click();
+    await until("줄 참조(app.ts 3번째 줄)", async () => (await fileViewer.locator(".hl-line.is-marked").textContent().catch(() => "")).includes("fixed"));
+    await shot(page, "desktop-report-file-link");
+    await page.goBack();
+    await domIs(page, "줄 참조 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
+    // 작업 폴더에 없는 파일은 까닭을 말한다(결과물 목록에서 찾지 않는다)
+    await report.locator(".markdown-file", { hasText: "prefs.rs" }).click();
+    await domIs(page, "없는 파일 알림", () => document.querySelector('[data-testid="file-viewer"] [role="alert"]')?.textContent === "이 경로에 읽을 수 있는 파일이 없습니다.");
+    await page.goBack();
+    await domIs(page, "없는 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
+    // 보기 권한 기기: 보고서의 경로는 단추가 아니고(이름 뒤 경로), host도 거부한다. 같은 요청이 조작 기기에는 열린다
+    const threadFile = (p, path) =>
+      p.evaluate(
+        async ([project, thread, path]) =>
+          (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_file", project, thread, path }) })).json(),
+        ["demo", t.id, path],
+      );
+    const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 })).page;
+    await rp.evaluate((h) => (location.hash = h), `#thread=demo%2F${t.id}`);
+    const readerReport = rp.getByTestId("report");
+    await until("reader 보고", async () => (await readerReport.locator("strong").first().textContent().catch(() => null)) === "확인");
+    const readerFiles = await readerReport.evaluate((r) => ({ buttons: r.querySelectorAll(".markdown-file").length, shown: r.textContent.includes("작업 메모 (notes/plan.md)") }));
+    if (readerFiles.buttons !== 0 || !readerFiles.shown) throw new Error(`보기 권한 화면의 보고서 파일 링크: ${JSON.stringify(readerFiles)}`);
+    const denied = await threadFile(rp, "notes/plan.md");
+    if (denied.err?.code !== "forbidden") throw new Error(`reader thread_file: ${JSON.stringify(denied)}`);
+    await rp.context().close();
+    const allowed = await threadFile(page, "notes/plan.md");
+    if (allowed.ok?.kind !== "pane_file" || allowed.ok.info?.name !== "plan.md") throw new Error(`조작 기기 thread_file: ${JSON.stringify(allowed)}`);
     const frameEl = await page.getByTestId("library-frame").elementHandle();
     const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
     const probe = await until("결과물 HTML 실행", async () => {
@@ -119,6 +159,45 @@ export default async function ({ page }) {
     const big = page.getByTestId("files").locator("li", { hasText: "big.bin" });
     if (!(await big.innerText()).includes("agent에서 읽음")) throw new Error(await big.innerText());
     await shot(page, "desktop-thread-library");
+    // 결과물 파일은 새 탭 대신 앱 안 파일 보기로 연다(차이 목록 R1): 같은 보기 경로(/v/)로 읽고, 문서 안 그림·링크는 결과물 안에서 푼다
+    const viewer = page.getByTestId("file-viewer");
+    await page.getByTestId("files").getByTestId("library-file").filter({ hasText: "docs/notes.md" }).click();
+    await until("결과물 Markdown 보기", async () => (await viewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "결과 메모");
+    const pic = await until("Markdown 안 그림(../pic.png)", async () => {
+      const w = await viewer.locator(".file-viewer-markdown img.markdown-image").evaluate((i) => (i.complete ? i.naturalWidth : 0)).catch(() => 0);
+      return w > 0 ? w : null;
+    });
+    const head = await viewer.evaluate((v) => ({ path: v.querySelector(".file-viewer-path")?.textContent, newTab: v.querySelector('a[aria-label="새 탭에서 열기"]')?.getAttribute("href") }));
+    if (pic !== 1 || head.path !== "·docs" || !/^\/v\/[0-9a-f]+\/docs\/notes\.md$/.test(head.newTab ?? "")) throw new Error(`결과물 Markdown ${JSON.stringify({ pic, ...head })}`);
+    await shot(page, "desktop-library-viewer-markdown");
+    // 문서의 링크(../index.html)는 같은 칸에서 그 결과물 페이지로: 보기 경로의 sandbox 그대로 opaque origin이다
+    await viewer.locator(".markdown-file", { hasText: "결과 페이지" }).click();
+    const pageEl = await until("결과물 페이지 frame", async () => (await viewer.locator("iframe.file-viewer-page").count()) === 1 && viewer.locator("iframe.file-viewer-page"));
+    const inner = await until("결과물 페이지 실행", async () => {
+      const f = await (await pageEl.elementHandle())?.contentFrame();
+      const d = f && (await f.evaluate(() => ({ title: document.getElementById("t")?.textContent, pic: document.getElementById("pic")?.naturalWidth, ...document.body.dataset })).catch(() => null));
+      return d?.api ? d : null;
+    });
+    if (inner.title !== "결과 보고" || inner.pic !== 1 || inner.parent !== "blocked" || inner.cookie === "visible" || inner.api === "200") {
+      throw new Error(`결과물 페이지 ${JSON.stringify(inner)}`);
+    }
+    await viewer.getByRole("button", { name: "소스" }).click();
+    await until("결과물 페이지 소스", async () => (await viewer.getByTestId("file-viewer-code").textContent().catch(() => "")).includes('id=t>결과 보고'));
+    // 내려받기는 attachment로 온다
+    const dl = await viewer.locator('a[aria-label="내려받기"]').getAttribute("href");
+    const got = await page.evaluate(async (u) => {
+      const r = await fetch(u);
+      return [r.status, r.headers.get("content-disposition")];
+    }, dl);
+    if (!dl.endsWith("/index.html?download=1") || got[0] !== 200 || got[1] !== "attachment; filename*=UTF-8''index.html") throw new Error(`내려받기 ${dl} ${JSON.stringify(got)}`);
+    // 다른 파일을 골라도 기록 칸은 하나다: 뒤로 한 번에 닫히고 thread 보기로 돌아온다
+    await page.goBack();
+    await domIs(page, "결과물 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="thread-view"]'));
+    // agent에 남은 큰 binary: 내려받으라고 한다
+    await page.getByTestId("files").getByTestId("library-file").filter({ hasText: "big.bin" }).click();
+    await until("binary 안내", async () => (await viewer.locator(".file-viewer-note").textContent().catch(() => "")).includes("내려받아 여세요"));
+    await viewer.getByRole("button", { name: "파일 닫기" }).click();
+    await domIs(page, "binary 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
     // 휴대폰 폭: 넓은 표는 그 안에서만 옆으로 밀리고 화면은 밀리지 않는다(참고 .markdown-table-wrap)
     await page.setViewportSize({ width: 390, height: 844 });
     await report.locator(".markdown-table-wrap").scrollIntoViewIfNeeded();

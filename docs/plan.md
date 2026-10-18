@@ -305,7 +305,7 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 - **ConPTY I/O는 별도 thread에서 한다.** [ConPTY 문서](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)는 동기 I/O를 별도 thread에서 처리하라고 한다. blocking reader/writer는 Tokio event loop 밖에 둔다.
 - **herdr 0.9.5의 Windows native 지원을 참고한다.** herdr는 Windows native(ConPTY) 서버를 GA로 지원하고, kill-on-close Job은 WMI로 벗어난다. 이 처리를 참고 구현으로 검토한다(Apache-2.0).
 - **Windows는 Session 0 시스템 서비스를 기본으로 쓰지 않는다.** 로그온 전 실행이 필요한지는 [정할 것 8](#16-위험과-정할-것)이다.
-- **경로는 `(machine_id, os, native_path)`로 저장한다.** 중심 Mac의 PathBuf로 Windows 경로를 canonicalize하지 않는다. Unix 비UTF-8 경로는 명시 오류로 처리한다. 실행 env는 machine-local profile에서 해석하고, 중심의 HOME·PATH로 덮어쓰지 않는다. 파일 전송에서는 절대 경로·상위 이동·symlink/junction을 검증한다.
+- **경로는 `(machine_id, os, native_path)`로 저장한다.** 중심 Mac의 PathBuf로 Windows 경로를 canonicalize하지 않는다. Unix 비UTF-8 경로는 명시 오류로 처리한다. 실행 env·harness 경로는 agent.toml의 머신별 harness 덮어쓰기에서 해석하고, 중심의 HOME·PATH로 덮어쓰지 않는다. 파일 전송에서는 절대 경로·상위 이동·symlink/junction을 검증한다.
 
 ## 6. 연결·보안
 
@@ -386,7 +386,7 @@ herdr-web-ui 0.4.10의 방식(`server/tailscale.ts`, `scripts/plugin.ts`의 `pho
 ### 6.5 신뢰 경계
 
 - **강한 sandbox가 아니다.** agent와 coordinator는 같은 사용자 계정의 shell을 갖는다. 보안 격리가 필요하면 별도 OS 계정이나 VM이 필요하다.
-- **원격 실행 권한:** agent backend는 등록된 host 키의 요청만 받는다. 그 요청도 agent.toml의 허용 root·profile 정책 안에서만 실행한다.
+- **원격 실행 권한:** agent backend는 등록된 host 키의 요청만 받는다. 그 요청도 agent.toml의 허용 root·harness 실행 경로 안에서만 실행한다. profile 정의와 허용은 host에서 정한다(10-18 사용자 결정).
 - **승인 묶기:** profile·routine 승인은 설정 revision과 정확한 명령 digest에 묶는다.
 - **agent 산출물은 믿지 않는다.** HTML·Markdown, 터미널 OSC, 파일 링크가 대상이다. 파일 열기는 machine-local allow-root 검증을 거친다.
 
@@ -451,7 +451,7 @@ host 프로젝트 폴더 구성:
   - 이전 프로세스가 아직 같은 파일을 읽는 기간(§11)에는 migrate를 미룬다.
 - **비밀:** TOML에 넣지 않는다. 상태 디렉터리의 0600 키 파일이나 DPAPI에 둔다.
 - **원격 편집:** host는 agent.toml을 몰래 고치지 않는다. `aaa machine config show|diff`로 보기만 한다. 변경은 그 머신에서 하거나 명시 명령으로 하고 감사 로그에 남긴다.
-- **profile 해석:** profile은 agent.toml이 정의하고 host.toml이 허용한다. host는 thread spec에 해석 결과와 revision을 저장한다. restart 때는 저장된 spec을 그대로 쓰거나 명시적으로 갱신한다. 원격에 같은 설정을 미리 깔 필요가 없다.
+- **profile 해석(10-18 사용자 「한곳에 모아」):** host.toml `[profiles.<이름>]` 한 곳에 `agent`·`model`·`effort`·`description`·`args`를 둔다. host가 이름·허용 목록·safety를 풀어 agent에 보내고 agent는 머신별 `[harnesses.<종류>] command/env`와 hook만 적용한다. 해석 결과 `Launch`는 thread에 저장한다. 새 대화 restart는 최신 host 정의, `--resume`은 저장된 spec이다. 옛 agent.toml `[profiles]`는 전환 경고로 읽고 새 host는 사용하지 않는다(§8.170).
 - **front 설정:** front의 키 바인딩 같은 값도 TOML로 두되, 이것은 backend 상태가 아니다.
 
 ### 7.3 DB와 schema
@@ -471,7 +471,7 @@ host 프로젝트 폴더 구성:
 
 ### 8.2 profile과 launch/resume spec
 
-- **profile 필드:** 이름, 설명, agent kind, model, effort, args, env 참조, resume 방식, OS별 shell, daemon 금지 인자·env.
+- **profile 필드:** host의 `[profiles.<이름>] agent`(claude·codex), `model`, `effort`, `args`, `description`(참고 herdr-projects 0.2.x와 같다). 이름 규칙·검증도 참고대로다. env·실행 경로는 각 agent의 `[harnesses.<종류>]`로 분리한다(10-18 사용자 결정). 기존 shell/custom·command/env는 전환 호환으로 읽는다. 실행 중 `/model`은 harness가 맡으며 aaa가 덮어쓰지 않는다.
 - **daemon 금지 인자는 resume에도 적용한다.**
   - 예: codex `--no-daemon`, `CODEX_SSH_SKIP_APP_SERVER_BOOT=true`
   - 운영에서는 복원이 인자 없이 `codex resume <id>`를 띄워, yolo와 daemon 금지가 빠지고 managed app-server daemon이 떴다.
@@ -838,7 +838,7 @@ host 프로젝트 폴더 구성:
 - **TASKS.md:** aaa는 읽기만 하고 coordinator가 쓴다. `- [ ] 제목 (owner) · t-0001`. owner는 비움·`agent`(미할당), `me`, `profile`·`@machine`·`profile@machine`(agent), 그 밖은 사람이다. 옛 표기 `(agent → t-0007)`도 읽는다. 완료는 줄을 지운다.
 - `aaa thread start <p> --from-task "<제목>"`: 제목(대소문자 무시)으로 task를 찾는다. owner가 `--profile`·`--machine` 기본값이 되고 다르면 거부한다. `me`·사람 task, 미할당인데 `--profile`이 없으면 거부한다. 메모는 할 일 끝에 `## Notes from the task list`로 붙는다.
   - 0.2.35와 다른 점: task에 붙은 thread가 아직 열려 있으면 다시 맡기지 않는다(같은 일을 두 thread가 하는 것을 막는다).
-- `aaa assignable <p> [--check <owner>]`: 머신마다 host 허용 목록 ∩ 그 머신 agent.toml profile. 끊긴 머신은 「모름」이다. 맨 profile은 host 로컬 머신을 본다(`thread start`의 기본 머신과 같다). 0.2.35의 ssh 조회·1시간 캐시 대신 연결된 agent에 바로 묻는다.
+- `aaa assignable <p> [--check <owner>]`: 머신마다 host 허용 목록 ∩ host 정본 profile. 끊긴 머신은 「모름」이다. 맨 profile은 host 로컬 머신을 본다(`thread start`의 기본 머신과 같다). 0.2.35의 ssh 조회·1시간 캐시 대신 연결된 agent에 바로 묻는다.
 - `aaa thread next <p> <id> [--line N | --add "…"]`: Next 목록은 보고서 `## Next` 줄 + `threads/<id>.next.md`. `--line N`은 그 줄을 메시지 API(대기열, 턴이 끝나면 전달)로 보낸다. 0.2.35는 바로 입력했다.
 - **`start_threads`(project.toml, propose·auto, 기본 propose):** coordinator가 따르는 안내 값이다. aaa는 강제하지 않는다(0.2.35와 같다). 동시 실행 상한은 aaa가 강제한다(`max_threads_per_machine`).
 - **safety·yolo:** 권한을 건너뛰는 인자는 프로젝트 설정 대신 그 머신 agent.toml의 profile `args`에 둔다. agent.toml은 그 머신 사용자만 고치므로 coordinator가 스스로 켤 수 없다. 0.2.35의 `yolo`처럼 한 번에 켜는 스위치는 두지 않는다. → 결정 20 D12(참고대로)가 바꿨다: host.toml `[safety.*]` yolo 스위치(§8.163).
@@ -858,7 +858,7 @@ host 프로젝트 폴더 구성:
 - **평가자 = 역할이 `evaluator`인 thread.** `aaa evaluator assign <p> --profile P [--machine M] [--repo R] [--note …]`가 일반 thread와 같은 방식으로 시작한다(작업 폴더·resume·보고 회수·세션 끝남 알림·resolve가 같다). 프로젝트당 하나다.
   - thread ID는 일반 순번(`t-NNNN`)이고 작업 폴더는 `.aaa/<p>-<t>/`다. §8.13의 `.aaa/<project>-evaluator/` 대신이다.
   - 지정 기록은 thread 기록(역할)이 정본이다. host는 project.toml을 쓰지 않는다. `[evaluator]`에는 사용자가 쓰는 설정만 둔다: `events`(대상 사건, 기본 `merge_landed`·`thread_resolved`·`thread_failed`·`thread_restarted`), `batch_s`(기본 300초).
-  - 끝내기는 `aaa evaluator unassign <p>`(평가자 thread resolve)다. 동시 thread 한도에 들어간다. 낮은 우선순위는 그 머신 agent.toml profile의 command에 `nice`를 넣어 정한다(aaa가 따로 두지 않는다).
+  - 끝내기는 `aaa evaluator unassign <p>`(평가자 thread resolve)다. 동시 thread 한도에 들어간다. 낮은 우선순위는 그 머신 agent.toml harness 덮어쓰기의 command에 `nice`를 넣어 정한다(aaa가 따로 두지 않는다).
 - **목록에 섞지 않는다.** `aaa thread list`·`aaa context`의 thread·`aaa pane list`·웹 thread·머신 목록은 기본으로 평가자를 뺀다. `--role evaluator`로만 보인다. `aaa context`에는 따로 `evaluator` 요약이 있다.
 - **입력.** 대상 사건이 생기면 착지는 바로, 나머지는 `batch_s` 뒤에 host가 cursor 뒤 사건 묶음을 만든다.
   - 묶음은 Agent link(`WorkFileWrite`)로 평가자 작업 폴더 `inbox/<첫 seq>-<끝 seq>.json`에 쓴다. agent는 이 이름 형식 말고는 쓰지 않는다.
@@ -2719,7 +2719,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - inbox 항목과 앱 안 알림은 그대로다(참고 mute도 Herdr 알림만 끈다).
   - 시간대 조용한 시간은 만들지 않는다(결정 D4, 참고에도 없다).
   - 시험: `mute_keeps_errors_only`, `keys_fall_back_one_by_one`의 `mute`.
-
 ### 8.120 기기 가짜를 iOS 규칙대로 한 곳에(10-18, 사용자 「frontend quality 가 중요해. 실사용해야해서」, t-0338)
 
 - **왜.** iPhone에서만 드러난 결함(가려졌다 돌아온 뒤 소리 없음, 무음 스위치에 묻힌 소리, 앱 안 알림 없음)을 헤드리스가 못 잡았다. 단계마다 init script로 만든 가짜(「이 기기 알림」 FakeAudio)는 아무 때나 resume되고 가려져도 멈추지 않으며, 헤드리스 Chromium에는 어디에나 `Notification`이 있다. 참고 넷도 제품에 능력 주입 층이 없고 시험 쪽에서 바꾼다(herdr-web-ui `alert-sound-regression.ts`·`keyboard-viewport-regression.ts`), plan §13 「production에 시험용 bypass를 만들지 않는다」와도 맞다.
@@ -2824,7 +2823,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 파일 보기 안 Markdown은 그 문서의 폴더를 기준으로 잇는다(참고 `resolveFromDocument`). 문서 링크(`[코드](../src/app.ts)`), code 안 경로, 언어 없는 fence(로그·명령 출력) 안 경로를 누르면 같은 pane 기준으로 연다. 언어가 있는 code 안은 글 그대로다(참고 `PLAIN_FENCE`).
   - 열린 파일 보기 안에서 다른 파일을 열면 기록 칸을 바꾼다(참고와 같다). 뒤로 한 번이면 pane으로 돌아간다.
   - 그림(`![점](../shots/dot.png)`)은 그 pane의 `pane_file`로 찾아 읽기 경로로 그린다(참고 `markdownImages`). 크기를 먼저 읽어 자리를 잡고(참고 `imageBox`), 못 읽으면 「이미지를 표시할 수 없음」, 크면 내려받기를 권한다. 문구는 참고 ko 그대로다.
-  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음).
+  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음). → 보고서 파일 단추는 §8.171(thread worktree 기준), 그림은 아직 없음.
 - **문법 강조(5b-3).**
   - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
   - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
@@ -2832,7 +2831,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
   - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
-  - 대화 보기·보고서 안 파일 링크.
+  - 대화 보기·보고서 안 파일 링크 → §8.171.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
   - 유닛:
@@ -3423,6 +3422,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 ### 8.163 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
 
+> profile 정의·해석 위치는 사용자 「한곳에 모아」 결정으로 §8.170이 대신한다. safety 동작은 유지한다.
+
 - **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
 - **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
   - key: `yolo`·`start_threads`·`trust_screens`·`thread_agent_args`·`routine_commands`·`thread_profiles`. 참고의 `coordinator_agent_args`·`coordinator_profiles`·`profile allow|default coordinator`는 없다: aaa는 coordinator를 띄우지 않는다(§8.104, 사람이 연 세션). 그 이름을 주면 까닭을 말하고 거부한다.
@@ -3541,11 +3542,152 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - web 신선도 하나.
     - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
 
-### 8.173 TUI 기록을 편집기로(herdr `prefix e` `edit_scrollback`)(10-18, coordinator 결정 「(가) herdr대로 — agent가 그 pane 기록을 그 머신 임시 파일로 쓰고 같은 머신에 편집기 overlay pane을 띄운다(임시 파일은 끝나면 지움, 경로는 agent 허용 root 정책 안)」, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 편집기, FRONT_API 1.33)
+### 8.168 결과물 파일을 앱 안 파일 보기로(10-18, 차이 목록 2장 R1 나머지, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-projects popup은 보고 글 아래 파일 줄을 ↵로 연다(`src/popup.rs`). herdr-web-ui는 파일을 앱 안 `FileViewer`로
+  연다(그림·동영상·소리·PDF·HTML 페이지와 소스·Markdown 미리보기, 새 탭·내려받기·복사, 휴대폰 「뒤로」가 닫는 기록 한 칸).
+- **aaa가 달랐던 것.** 결과물 목록의 파일 이름은 보기 경로(`/v/<cap>/<path>`)를 새 탭으로 열었다. 파일 보기(§8.125)는 pane의
+  파일(허용 폴더 안, `pane_file`)만 읽었다.
+- **구조.** 결과물도 같은 `FileViewer`로 연다. 읽기는 새 경로 없이 그 보기 경로(§8.7 opaque origin sandbox, 2시간 권한) 그대로다.
+  - 웹: `FileViewer`의 소스가 pane이거나 thread 결과물이다. 결과물이면 `thread_library`를 한 번 받아 그 목록에서 찾고, 경로는
+    결과물 안 상대 경로다. 문서 기준 풀기(링크·그림)는 결과물 맨 위를 `/`로 두고 해 결과물 밖으로 나가지 않는다(목록에 없으면
+    「결과물에 이 파일이 없습니다」). 폴더 보기·같은 이름 후보는 pane만이다. 결과물 HTML 페이지는 보기 경로가 이미 sandbox 페이지라
+    `?render` 없이 그대로 frame에 넣고(sandbox 값은 결과물 frame과 같다, 형제 파일을 상대 경로로 읽는다), 「소스」는 같은 경로의 앞부분이다.
+    방문 기록 칸(`useFileViewer`)은 pane 대신 그 thread를 적는다. 목록 이름은 그냥 누르면 앱 안, 보조 키·가운데 단추는 브라우저대로 새 탭이다.
+  - host `thread_library`: 파일마다 `mime`·`kind`를 준다. 표는 agent 파일 보기와 같은 것을 aaa-proto(`mime_of`·`FileKind::of_mime`)로
+    옮겨 둘이 쓴다. 이름으로 모르는 파일은 host 사본의 앞 8KiB에 NUL이 없으면 글, agent에만 있는 것은 읽지 않고 binary다
+    (목록을 줄 때마다 agent에 묻지 않는다). 목록 파일(`threads/<id>.files.json`)의 옛 줄은 그대로 읽는다(줄 때 채운다).
+  - host `/v/`: Range(206·`Content-Range`, 못 맞추면 416)와 `?download=1`(attachment)을 받는다. agent에 남긴 파일은 그 위치부터
+    조각(512KiB)으로 읽고 범위 길이에서 끊는다. PDF는 브라우저 PDF 보기가 sandbox 문서를 거부하므로 `/f/`처럼 `frame-ancestors 'self'`만
+    둔다. 질의·Range 없는 요청의 응답은 전과 같다(결과물 HTML이 형제 파일을 읽는 길).
+- **계약.** FRONT_API 1.31: `LibraryFile.mime`·`kind`. agent↔host 계약은 그대로다(agent는 MIME 표를 aaa-proto에서 가져다 쓸 뿐 동작이 같다).
+- **시험.** m13 `library_view`: 목록의 종류·MIME, host 사본의 가운데 범위, agent 파일의 조각을 넘는 범위·끝에서 n바이트, 416,
+  내려받기 머리글, 질의 없는 요청에 disposition이 없음. host 유닛 `file_types_come_from_the_name_or_the_host_copy`. 웹 E2E 12
+  「thread 보고서·결과물」: 하위 폴더 Markdown(`docs/notes.md`)을 열어 `../pic.png` 그림이 그려지고, 문서 링크 `../index.html`이 같은
+  칸에서 결과물 페이지(opaque origin: 부모·cookie·API에 닿지 않음)로, 소스, 내려받기 attachment, 「뒤로」 한 번에 닫힘, agent에 남은
+  binary는 내려받으라는 안내. 결함 심기: 결과물 경로 앞 `/`를 떼지 않으면 그림 단계에서 실패, agent 범위 시작을 0으로 두면 m13
+  범위 단언에서 실패.
+
+### 8.169 화면 언어는 한국어로 고정한다(10-18, 차이 목록 2장 T5·결정 묶음 D5, 사용자 결정 「일단 한국어로 고정해」)
+
+- **참고.** herdr-web-ui는 화면 문구를 `t("…")` 표(`src/lib/i18n.ts`, `i18n.ko.ts` 등)로 빼고 설정 「모양」에서 시스템(브라우저 따름)·영어·
+  중국어·일본어·한국어를 고른다(`SettingsDialog.tsx`, 공유 설정 `language`).
+- **결정.** aaa 웹·TUI 화면은 한국어로 고정한다. 다국어는 하지 않고, 배포 계획 때 다시 본다. 결정 20 D5의 「다국어는 한국어 먼저(구조만
+  참고)」를 이것으로 좁힌다. 참고와 다르게 둔 것이다.
+- **지금 모양.** 옮긴 문구는 참고 `i18n.ko.ts`의 한국어를 코드에 바로 쓴다(`t()` 표를 두지 않는다). 설정 「모양」에 언어 칸이 없다.
+  host가 들고 있는 공유 설정의 `language`(참고 브라우저가 쓴 것)는 읽지 않는다(`preferences.ts`). `index.html`은 `lang="ko"`.
+- **다시 볼 때.** 문자열을 표로 빼고 시스템·한국어·영어부터(차이 목록 T5 할 일). 참고 문구를 옮긴 자리는 주석에 「문구는 참고
+  i18n.ko」를 남겨 두었으므로 그 표의 열쇠를 찾을 수 있다.
+
+### 8.170 profile 정의를 host 한 곳으로(10-18, 사용자 「한곳에 모아」, 차이 목록 4장 G #593)
+
+- **전 구조.** agent.toml `[profiles]`가 정의·argv 해석, host.toml은 허용 목록·기본값·safety만 관리했다.
+  thread start/restart는 이름만 넘기고 agent가 Launch를 돌려주면 host가 DB에 저장했다. `aaa profile add/edit/remove/resolve`도
+  머신 파일을 읽었다(§8.2·§8.14·§8.163의 당시 구현). 사용자 결정으로 정의만 host로 모은다.
+- **자리.** 별도 파일 대신 host.toml `[profiles.<이름>]`: 참고 herdr-projects 0.2.35 `src/profiles.rs`
+  `Entry`·`Config`·`get`·`listed`·`validate_name`·`typed_args`·`apply_in`처럼 하나의 설정에 정의·기본값·허용 목록을 둔다.
+  키는 `agent`·`model`·`effort`·`description`·`args`. 기존 `harness` 별칭과 shell/custom command/env는 전환 호환으로 읽는다.
+  aaa의 기존 shell/custom 시험·사용 설정을 깨지 않게 한 호환 확장이고 새 예시는 참고의 다섯 키만 쓴다.
+- **실행.** host는 쓸 때마다 정본을 읽어 이름·safety를 푼 ResolvedProfile을 보낸다. agent는 머신별
+  `[harnesses.<종류>] command/env`와 hook만 더해 Launch를 돌려준다. host DB·새 대화 restart·resume 저장은 유지한다.
+  실행 파일·권한을 작업 폴더 생성 전에 검사한다. 다른 harness 대체는 없다. command가 래퍼 argv일 때 hook을
+  첫 argv 뒤에 넣던 기존 결함은 명령 argv 전체 뒤에 붙이도록 고쳤다(두 머신 E2E가 먼저 실패한 근거).
+- **협상.** AGENT_LINK는 1.4를 유지해 운영 1.3 연결을 끊지 않는다. `host_profiles.v1`이 있을 때만
+  ResolvedProfile·Harnesses 요청을 보낸다. 없는 agent는 연결·기존 세션을 유지하고 새 시작·새 대화 restart·profile pane 시작을 갱신 안내로 거부한다.
+  옛 host → 새 agent는 기존 Profiles·이름 해석 경로를 유지한다. agent.toml `[profiles]`가 있으면 옮기라는 경고를 낸다.
+  FRONT_API는 통합 main의 1.31을 유지한다. ProfileResolve는 host의 정본·전역 기본값을 읽고, 수정 CLI는 host 머신의
+  사람 터미널에서 host.toml만 쓴다. 초기 후보(당시 main 1.17)에서는 1.18로 묶어 1.17 연결을 검증했다. 이후 main이
+  승인된 다른 기능으로 1.31까지 올라와 현재 N-1인 1.30의 실제 hello/status를 검증한다. 이 변경으로 minor를 더 올리지 않는다.
+  기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면 로컬 host DB로 host 머신인지 확인한다(사람 확인 유지).
+- **front.** 통합 main의 새 pane 창(§8.126 NewSessionDialog·AgentPicker)은 기존 Front Profiles 호출로 host 목록을 본다.
+  PaneRun도 host가 푼 SpawnSpec.resolved_profile을 host_profiles.v1 agent에 보낸다. agent는 머신 덮어쓰기·hook만 적용한다.
+  thread safety 인자는 pane에 더하지 않던 기존 동작을 유지한다. 이미 펼친 argv로 재개하는 pane은 저장된 argv를 쓴다.
+  TUI는 독립된 profile 정의가 없으며 assignable·thread profile 표시는 host 정본이다. 도는 대화의 model은 harness `/model`이다.
+- **새 main의 실패 재생성.** place_and_launch 공용 경로와 RestartPlan::Create에도 host 정본을 전달한다. agent의
+  인자 해석은 작업 폴더를 만들기 전에 끝내던 main 수리를 유지하고, command wrapper 뒤 hook이라는 이 변경의 수리도 유지한다.
+- **추가 참고.** t3code `apps/server/src/provider/Drivers/ClaudeDriver.ts`·`CodexDriver.ts`의 effectiveConfig.binaryPath는
+  실행 머신 경로를 따로 해석한다. herdr-web-ui `src/components`·`src/lib`에서 thread profile 설정을 찾았으나
+  herdr 머신 profile_id·브라우저 profile만 있다. 중앙 profile 형식 기준은 herdr-projects다.
+- **시험 경계.** config 유닛은 host 키·검증·local 병합·옛 agent 경고, m13은 두 agent/TLS의 같은 정본·머신 덮어쓰기·
+  실행 파일 없음/권한 없음 거부, restart --profile의 최신 정본, 1.3 실제 hello/welcome·거부 뒤 ping/pong, pane_run profile·작업 폴더 재생성을 검사한다.
+  관찰 가능한 출력·응답으로 끝내며 고정 sleep은 추가하지 않는다. 결함 심기·전수 gate 결과는 thread 보고에 남긴다.
+- **M4.** docs/migration.md에 운영 0.2 설정을 host로 한 번 옮기고 각 Mac pilot로 확인하는 절차만 추가한다.
+  운영 설정·프로세스는 건드리지 않는다. 사용자 모델 이름 목록은 저장소·fixture에 넣지 않는다.
+
+### 8.171 대화·보고서 안 파일 링크(10-18, 차이 목록 1장 J 「파일 경로 누르면 파일 보기」 나머지, t-0335 넘김, coordinator 「그 thread의 머신·worktree 기준, 참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb)는 pane마다 `OpenFileContext`를 준다(App.tsx 1583줄). 대화(`ChatView.tsx`)의 말·도구 줄과 그 안
+  Markdown의 경로·파일 링크·code 경로가 그 pane의 파일 보기로 열리고, 서버는 pane이 지금 있는 폴더 기준으로 찾는다(§8.125). 보고서는
+  herdr-projects의 것이라 herdr-web-ui에는 없다.
+- **대화.** 그 pane 기준이다(참고 규칙 그대로, pane은 thread worktree에서 시작한다). 이미 있는 `pane_file`을 쓴다. 보기 권한 화면은 터미널과
+  같이 열 곳이 없어 글 그대로다(`onOpenFile`이 없다).
+  - aaa 대화는 아직 말을 Markdown으로 그리지 않고 글 그대로다(§8.27). 그래서 참고가 Markdown 아닌 글(도구 출력)에 쓰는 `linkFilePaths`로
+    경로만 단추로 잇는다. 말을 Markdown으로 그리는 것(참고 `chat-bubble-body`)은 남은 일이다.
+- **보고서.** pane이 없을 수 있다(끝난 thread). 그 thread의 머신에서 **agent가 시작한 폴더(`cwd`: worktree 또는 작업 폴더)** 기준으로
+  찾는다. 보고·결과물이 있는 `work_dir`(`<cwd>/.aaa/<project>-<thread>/`)가 아니다: agent는 보고에 저장소 안 경로(`src/app.ts:3`)를 쓴다.
+  - 웹 → host `thread_file {project, thread, path}`(FRONT_API 1.32, 조작 기기만). host → 그 머신 agent `FileLocateIn {dir, path}`. 찾는
+    규칙·허용 폴더(§6.5 `file_roots`)·후보는 `FileLocate`와 같은 함수(`files::locate`)다. 찾으면 `pane_file`과 같은 30분 읽기 경로
+    `/f/<cap>/<이름>`과 같은 답(`pane_file`)이다. 그 뒤 읽기·조건(기기 cookie·Range·CSP)은 §8.125 그대로다.
+  - agent가 `file_in.v1`을 알릴 때만 보낸다. 옛 agent면 「그 머신 agent가 보고서 안 파일 열기를 아직 모른다(agent binary를 바꿔야 한다)」.
+  - 웹: 보고 Markdown을 `OpenFileContext`로 감싼다(조작 기기만). 파일 보기의 소스는 pane·결과물 말고 셋째 `worktree`이고, 방문 기록 칸
+    (`useFileViewer`)에도 적는다. 보기 안에서 고른 다른 파일도 같은 thread 기준이다. 결과물 목록 파일(R1, §8.168)은 그대로 결과물 보기다.
+  - worktree를 지운 끝난 thread는 열리지 않는다(「이 경로에 읽을 수 있는 파일이 없습니다」 또는 허용 폴더 밖).
+- **옮기지 않은 것.** 보고서 안 그림(`![](…)`)은 대체 글 그대로다(파일 보기 안 Markdown만 그림을 읽는다). 대화의 도구 줄 파일
+  단추(`ToolFile`)·patch 보기·도구 그림은 aaa 대화에 도구 입력·출력이 없어 해당이 없다.
+- **시험.**
+  - 웹 E2E 12 「thread 보고서·결과물」: 보고의 문서 링크 `[작업 메모](notes/plan.md)`가 worktree 파일을 `/f/` 경로로 연다, 글 속
+    `src/app.ts:3`은 소스로 3번째 줄 표시, 표 안 code `prefs.rs`는 파일 단추이고 worktree에 없으면 「없습니다」, 뒤로 한 번에 닫힘,
+    보기 권한 기기는 단추 없이 「이름 (경로)」이고 host `thread_file`도 forbidden(같은 요청이 조작 기기에는 열린다). 가짜 agent가 worktree에
+    `notes/plan.md`·`src/app.ts`를 쓴다. 실험실 `file_roots`에 `work`를 더하고 미리 만든다(시작할 때 없는 폴더는 허용 폴더가 되지 않는다).
+  - 웹 E2E 11 「대화 기록」: 답 줄의 절대 경로만 단추이고 누르면 그 파일 보기, 뒤로 한 번이면 대화.
+  - 결함 심기 다섯이 모두 실패했다: 보고서 경로를 결과물 소스로 보냄, agent가 정한 폴더를 버림, host가 `work_dir` 기준, 보기 권한
+    기기에도 링크, 대화에 링크 문맥 없음. 옛 agent(`file_in.v1` 없음) 거절과 보기 권한 대화 화면은 시험하지 않았다(앞은 `dir.v1`과 같은
+    꼴, 뒤는 터미널과 같은 `onOpenFile` 한 값).
+### 8.172 질문 카드가 화면 선택 창을 그대로 보인다(10-18, 차이 목록 2장 Q2, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-web-ui는 질문을 hook 내용이 아니라 pane 화면 글에서 읽는다(`server/prompt.ts`): Claude Code 질문(AskUserQuestion:
+  하나·여러 개·직접 쓰기, 선택지 설명, 여러 질문의 탭과 검토), 도구 승인, 계획 승인, Codex 승인 등. 카드(`PromptCard.tsx`)는 번호
+  keycap, 설명, 「(Recommended)」를 뗀 「추천」 표시, 여러 개는 체크와 「제출 (n)」, 직접 쓰기 칸을 그린다. 답 키는 커서가 있는 줄에서
+  상대로 옮기고 Enter, 여러 개는 바뀌는 줄마다 Enter를 친 뒤 →(Submit을 누르지 않음), 직접 쓰기는 그 줄로 옮겨 글과 Enter(계획은
+  shift+tab), Codex 거절 줄은 Esc 하나다. 화면을 다시 읽어 카드가 본 창(내용 hash id, 커서·체크 상태 빼고)이 아니면 거절하고, 처음
+  저지르는 키는 옮긴 커서가 화면에 보인 뒤에 보낸다(`SETTLE_MS` 1.5초).
+- **aaa가 달랐던 것.** 질문은 늘 예·아니오였다(host `ask`, 답은 화면의 Yes 줄로 옮기고 Enter, 아니오는 Esc).
+- **구조.**
+  - host `prompt.rs`: 참고의 읽기(Claude 질문·검토·승인·계획, Codex 승인)와 `answerKeys`를 옮겼다(MIT). 안내 줄이 화면 끝(할 일
+    목록·세션 구분선은 떼고)에 있을 때만 살아 있는 창이다. 화면 읽기는 host만 하므로 aaa-proto가 아니라 host에 둔다.
+  - 질문이 열리면(`on_harness` → `ask`) task 하나가 화면을 읽어 그 질문에 `menu`를 붙인다(hook이 화면보다 먼저 와도 `MENU_WAIT`
+    3초까지 다시 본다). 못 읽으면(번호 없는 폴더 신뢰 창 등) 지금처럼 예·아니오다. 붙이기는 질문 저장과 같은 잠금 안에서 읽고 써서,
+    그 사이 답한 질문을 다시 열지 않는다.
+  - `question_answer`의 `menu`(카드가 본 id)·`pick`(하나·여러 개·직접 쓰기): host가 화면을 다시 읽어 id가 다르면 「화면의 질문이
+    바뀌었다」로 거절하고 질문의 `menu`를 지금 창으로 바꾼다(카드는 새 창으로 다시 그린다). 키는 걸음마다 raw 입력이다(30ms 틈).
+    직접 쓰기 글은 한 줄만 받는다(줄바꿈·Esc 같은 조종 글자는 그 창의 키가 되므로 거절). 기록의 답은 「3. 파일 몇 개」·「직접: …」.
+  - 여러 질문 form은 host가 탭을 돌지 않는다: 답이 간 뒤 남은 창(다음 탭·검토)은 agent 화면 감지가 새 질문으로 알리고(`ask_anew.v1`,
+    plan §8.110) 그 질문에 새 `menu`가 붙는다.
+  - 웹 `PromptCard.tsx`(참고 그리기, 문구는 i18n.ko)·`herdr/PromptCard.css`(그대로). 카드는 지금 자리(pane 아래 dock, Q1)에 둔다.
+    앱 `button` 기본(고정 높이·한 줄)은 선택지 줄에서 되돌린다. `menu`가 없는 질문은 예·아니오 카드 그대로다. CLI·TUI는 예·아니오
+    그대로다(`aaa question answer <id> yes|no`).
+- **계약.** FRONT_API 1.32(§8.171과 한 번에 착지해 묶음): `QuestionView.menu`(`QuestionMenu`·`MenuOption`), `question_answer`의 `menu`·`pick`(`MenuPick`). 옛 front의
+  예·아니오 답과 옛 host의 질문(menu 없음)은 그대로 읽는다. 새 오류 코드는 두지 않았다(바뀐 창은 BadRequest와 까닭, 옛 CLI가 모르는
+  코드를 읽지 못하므로).
+- **보안(§6.4).** 새 표면은 없다: 답은 전처럼 조작 기기만(`needs_control`), 직접 쓰기 글은 메시지 보내기와 같은 pane 입력이고 조종
+  글자는 받지 않는다. 「세션 안 CLI는 thread pane의 신뢰 창에 답하지 않는다」(§8.163 `trust_screens = user`)도 같은 함수
+  (`refuse_trust_screen`)로 선택 창 답에 건다(Codex 신뢰 창은 번호가 있어 선택 창으로 읽힌다). CLI는 선택 창 답을 보내지 않아 그 길의
+  시험은 예·아니오 답의 m13 거절 시험이 덮는 같은 함수다.
+- **참고와 다르게 둔 것(옮기지 않음).** 입력창에 번호·이름을 쳐서 답하기(`answerFromText`)와 그 확인 줄, Codex 질문(질문 대기열
+  alt+↑↓·rollout 읽기), omp·omo·hermes·pi 창, 미리보기 상자가 있는 질문, 초안이 든 직접 쓰기 줄(ctrl+k ctrl+u), 계획 파일을 파일
+  보기로, 붙잡힌 메시지·모델·effort 창, 읽는 창이 없는 막힘의 마지막 카드(`fallback`). 카드 제목의 「Question」·「Multiple choice」·
+  「Review your answers」·「k of n」은 한국어 고정(§8.169)이라 「질문」·「여러 개 고르기」·「답 검토」·「k/n」이다.
+- **시험.** host 유닛 `prompt::tests`(합성 화면: 질문 하나·여러 개와 탭·검토·Claude 승인·Codex 승인·계획·모르는 창, 커서에서 세는
+  옮기기, 조종 글자 거절, id가 커서와 상관없음). 웹 E2E 11 「화면 선택 창 카드」: 가짜 Claude 질문 창(`web/e2e/lib/fake-claude-ask.mjs`,
+  이름이 claude라 화면 감지가 Claude 규칙)으로 카드 모양(설명·추천·번호·직접 쓰기, 줄 겹침 없음), 터미널에서 옮긴 커서, 그 사이 바뀐
+  창의 거절과 새 카드, 직접 쓰기(한글), 여러 질문(하나 → 여러 개 체크와 제출 (2) → 검토 → 보내기). 결함 심기: 커서를 무시한 옮기기
+  (유닛), 여러 개 끝 → 빠짐·직접 쓰기를 그 줄로 안 옮김(E2E가 각각 실패), 선택지 줄 고정 높이(겹침 단언 실패).
+
+### 8.173 TUI 기록을 편집기로(herdr `prefix e` `edit_scrollback`)(10-18, coordinator 결정 「(가) herdr대로 — agent가 그 pane 기록을 그 머신 임시 파일로 쓰고 같은 머신에 편집기 overlay pane을 띄운다(임시 파일은 끝나면 지움, 경로는 agent 허용 root 정책 안)」, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 편집기, FRONT_API 1.32)
 
 - **참고(herdr 0.9.5).** `src/config/model.rs` `edit_scrollback`(`prefix+e`, 단축키 창 panes 묶음 rename pane 다음). `src/app/custom_commands.rs` `open_focused_scrollback_in_editor`: 포커스 pane 기록 전체(`recent_unwrapped_text_snapshot(usize::MAX)`)를 서버 머신 임시 폴더에 `herdr-scrollback-*.txt`(새 파일만, 0600)로 쓰고 `src/platform/*.rs` `scrollback_editor_argv`(unix `/bin/sh -c 'scrollback_file=…; eval "${EDITOR:-vi} \"$scrollback_file\""; status=$?; rm -f "$scrollback_file"; exit $status'`, Windows `VISUAL` → `EDITOR` → `notepad.exe` 뒤에 경로)로 `spawn_overlay_argv_command`: 포커스 pane을 좌우로 나눠 새 pane, 그 탭 zoom, 새 pane에 포커스, `OverlayPaneState { previous_focus, previous_zoomed, temp_files }`, 알림 「opened scrollback」. pane이 끝나면 `src/app/api.rs` `restore_overlay_after_exit`: 임시 파일을 지우고, overlay에 포커스가 있었으면 전 포커스와 `previous_zoomed`로, 아니면 끝날 때의 zoom 그대로.
 - **aaa.** pane은 agent 머신에 있으니 파일과 편집기도 그 머신이다.
-  - Front `PaneEditScrollback { workspace, pane }` → `Workspace`(FRONT_API 1.33, 조작 권한). host는 화면 사본의 기록 전체(aaa-vt `Vt::unwrapped_all`: 줄 상한 없이, 접힌 줄은 잇는다)를 그 머신 agent에 512KiB 조각으로 보낸다(`ScrollbackWrite { name, offset, data, eof }`).
+  - Front `PaneEditScrollback { workspace, pane }` → `Workspace`(FRONT_API 1.32, 조작 권한. 같은 1.32 배포에 더하고 minor를 올리지 않는다: §8.171·§8.172가 1.31 front를 그대로 붙이려 묶은 minor라서다. 그 요청을 모르는 1.32 host는 오류로 답해 TUI가 「기록을 편집기로 열지 못했다: …」를 보인다). host는 화면 사본의 기록 전체(aaa-vt `Vt::unwrapped_all`: 줄 상한 없이, 접힌 줄은 잇는다)를 그 머신 agent에 512KiB 조각으로 보낸다(`ScrollbackWrite { name, offset, data, eof }`).
   - agent는 임시 폴더(`std::env::temp_dir()`, 검사는 그 실제 경로로)가 `[agent] file_roots` 안일 때만 그 폴더에 `aaa-scrollback-<name>.txt`로 쓴다(Windows 실제 경로의 `\\?\` 접두가 편집기 명령에 가지 않게 쓰는 경로는 실제 경로로 바꾸지 않는다): 이름은 host가 정한 hex 16자, 새 파일만, 0600, 쓴 길이와 다른 위치는 거절, 64MiB 상한. 마지막 조각에 경로와 편집기 명령(herdr 그대로, agent OS 기준)을 돌려준다. agent 기능 `scrollback.v1`이 없으면 host는 「agent를 새 aaa로」로 거절한다. AGENT_LINK는 올리지 않았다(올리면 운영 agent 1.3이 끊긴다).
   - host는 그 명령으로 그 pane을 좌우로 나눠(cwd는 나누기와 같이 `[terminal] new_cwd`) 새 pane을 띄우고 탭을 zoom해 한 번 저장한다. 편집기 pane 표시(머신·workspace·탭·나누기 전 zoom·파일 이름)는 host 메모리에만 둔다.
   - 그 pane이 실행 중이 아니게 되면(끝남·`pane close`·session host 유실·재부팅, `on_session`과 agent 다시 붙기) layout에서 빼고 zoom을 정해 한 번 저장한 뒤(layout 사건 하나), 기록을 지우고(`forget`) `ScrollbackRemove { name }`(이미 없으면 그대로)로 파일을 지운다. 프로그램 pane(`sh -c`)이라 셸 exit 닫기(§8.143)와 재부팅 복원(4장 A)에는 들지 않는다.
@@ -3603,6 +3745,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - sound·toasts·integrations 구역은 뺐다: aaa TUI에는 배경 상태 소리, 알림 전달 방식(herdr 안·터미널·시스템), harness 연동 설치가 없다. 전체 메뉴의 what's new(새 판 알림)도 없다.
   - 다른 TUI(같은 host에 붙은 다른 `aaa attach`)는 바뀐 설정을 모른다(`prefix shift+r`로 읽는다). herdr는 서버 다시 읽기가 모든 client에 간다. 웹 테마(공유 설정 §8.79 `theme`·`palette`)와는 따로다.
   - host.toml을 사람이 편집기로 연 채 저장하면 그 편집기의 사본이 TUI가 쓴 값을 덮을 수 있다(herdr 설정 파일도 같다).
+  - 같은 순간 `aaa profile`·`aaa safety`가 host.toml을 쓰면 한쪽 변경이 진다(둘 다 임시 파일 → rename이라 파일은 온전하다). host 프로세스는 host.toml을 쓰지 않는다.
   - 좁은 화면 두 줄 머리와 접힌 compact 열에는 `menu`가 없다(herdr도 펼친 spaces 구역에만).
 - **시험.**
   - 유닛: aaa-config `tui_edit` `keeps_the_rest_and_starts_an_empty_file_with_schema`(주석·다른 key 그대로, 빈 파일 `schema = 1`, 쓴 뒤 읽힘, 받지 않는 값 거절), 설정 `status_indicators`, list `indicators_like_herdr`(두 모양 다섯 상태), lib `settings_like_herdr`(창 글·구역 이름표·`▸`·`✓`·미리 보기·구역 바꾸기·되돌리기), `new_workspace_machine_like_herdr_endpoint`에 `menu` 칸, mouse `menu_like_herdr`에 전체 메뉴 항목·자리, 키 `s`.
@@ -4028,7 +4171,7 @@ primary 근거:
 | 0.2.35 기능 | aaa 대응 | 단계 |
 |---|---|---|
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
-| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | agent.toml 정의 + host.toml 허용, 해석 결과 저장(§7.2, §8.2) | M1-3 |
+| profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.170) | M1-3 |
 | thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
 | `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`는 M1 마무리에서 했다(§8.21) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |

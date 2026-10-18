@@ -48,8 +48,13 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.28: ProfileView `args`·`builtin`(기본 profile claude·codex, plan §8.163),
 /// 1.29: PaneView `replaced`(새 pane이 대신한 옛 ID, 보던 화면이 따라간다, plan §8.111 QA 고침),
 /// 1.30: 사건 `web`(host가 주는 웹 빌드, plan §8.166),
-/// 1.33: TUI 기록을 편집기로(`PaneEditScrollback`)(plan §8.173)
-pub const FRONT_API: Version = Version { major: 1, minor: 33 };
+/// 1.31: 결과물 목록의 `LibraryFile.mime`·`kind`(앱 안 파일 보기, plan §8.168)
+/// 같은 1.31 배포에 host 정본 `ProfileResolve`를 더한다(§8.170). host_profiles.v1은 AGENT_LINK 1.4의 선택 기능이다.
+/// 1.32: 보고서 안 파일 링크 `thread_file`(thread worktree 기준, plan §8.171)과 질문의 화면 선택 창 `QuestionView.menu`·그 답
+/// `question_answer`의 `menu`·`pick`(plan §8.172). 한 번에 착지해 minor 하나로 묶는다(1.31 front가 그대로 붙는다)
+/// 같은 1.32 배포에 TUI 기록을 편집기로(`PaneEditScrollback`, plan §8.173)를 더한다(1.31 front가 그대로 붙게 minor를
+/// 올리지 않는다, 그 요청을 모르는 1.32 host는 오류로 답한다).
+pub const FRONT_API: Version = Version { major: 1, minor: 32 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

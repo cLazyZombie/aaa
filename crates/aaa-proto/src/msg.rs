@@ -17,7 +17,7 @@ use crate::orch::{
     OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
     ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick};
 
 use crate::version::Version;
 
@@ -180,11 +180,15 @@ pub struct SpawnSpec {
     /// 화면으로 상태를 볼 harness(`claude`·`codex`, profile harness). 없으면 agent가 argv 첫 인자로 정한다(plan §8.110).
     #[serde(default)]
     pub harness: Option<String>,
-    /// 이 머신 agent.toml profile로 harness를 띄운다(argv는 무시하고 profile이 정한다, 상태 hook도 붙는다).
+    /// host 정본 profile로 harness를 띄운다(argv는 무시하고 profile이 정한다, 상태 hook도 붙는다).
     /// agent가 `profile.v1` 기능을 알릴 때만 보낸다: 옛 agent는 이 칸을 버리고 셸을 띄운다(plan §8.126).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub profile: Option<String>,
+    /// host_profiles.v1: host가 푼 정의. agent는 머신별 경로·env·hook만 적용한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub resolved_profile: Option<crate::ResolvedProfile>,
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -345,7 +349,7 @@ pub struct ChatView {
 }
 
 /// 파일 보기의 종류(herdr-web-ui `FileKind`, plan §8.125)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum FileKind {
     Image,
@@ -353,7 +357,79 @@ pub enum FileKind {
     Audio,
     Pdf,
     Text,
+    #[default]
     Binary,
+}
+
+impl FileKind {
+    /// MIME으로 정하는 종류(agent 파일 보기와 host 결과물 목록이 같은 표를 쓴다)
+    pub fn of_mime(mime: &str) -> FileKind {
+        if mime.starts_with("image/") {
+            FileKind::Image
+        } else if mime.starts_with("video/") {
+            FileKind::Video
+        } else if mime.starts_with("audio/") {
+            FileKind::Audio
+        } else if mime == "application/pdf" {
+            FileKind::Pdf
+        } else if mime.starts_with("text/")
+            || matches!(
+                mime,
+                "application/json"
+                    | "application/xml"
+                    | "application/yaml"
+                    | "application/toml"
+                    | "application/x-sh"
+                    | "application/sql"
+            )
+        {
+            FileKind::Text
+        } else {
+            FileKind::Binary
+        }
+    }
+}
+
+/// 확장자로 정하는 MIME(모르면 None: agent는 내용으로 본다)
+pub fn mime_of(name: &str) -> Option<&'static str> {
+    let (_, ext) = name.rsplit_once('.')?;
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "pdf" => "application/pdf",
+        "html" | "htm" => "text/html",
+        "md" | "markdown" => "text/markdown",
+        "json" => "application/json",
+        "js" | "mjs" | "cjs" => "text/javascript",
+        "css" => "text/css",
+        "csv" => "text/csv",
+        "xml" => "application/xml",
+        "yaml" | "yml" => "application/yaml",
+        "toml" => "application/toml",
+        "sh" => "application/x-sh",
+        "sql" => "application/sql",
+        "txt" | "log" | "rs" | "ts" | "tsx" | "jsx" | "py" | "go" | "rb" | "java" | "kt" | "swift" | "c" | "h"
+        | "cc" | "cpp" | "hpp" | "cs" | "php" | "lua" | "zig" | "diff" | "patch" | "ini" | "conf" | "env" | "lock" => {
+            "text/plain"
+        }
+        "zip" | "gz" | "tgz" | "tar" | "7z" | "bz2" | "xz" => "application/octet-stream",
+        "wasm" | "so" | "dylib" | "dll" | "exe" | "bin" | "o" | "a" => "application/octet-stream",
+        _ => return None,
+    })
 }
 
 /// 파일 보기가 여는 파일(herdr-web-ui `FileInfo`). `path`는 agent 머신의 실제 경로(symlink를 따라간 것)다.
@@ -505,6 +581,12 @@ pub enum AgentRequest {
         session: String,
         path: String,
     },
+    /// 파일 보기: 세션 없이 정한 폴더(thread worktree) 기준으로 찾는다(보고서 안 파일 링크, plan §8.171). 찾는 규칙과 허용
+    /// 폴더는 `FileLocate`와 같다. agent가 `file_in.v1` 기능을 알릴 때만 보낸다.
+    FileLocateIn {
+        dir: String,
+        path: String,
+    },
     /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
     /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
     DirList {
@@ -542,8 +624,10 @@ pub enum AgentRequest {
         #[serde(default)]
         thinking: bool,
     },
-    /// agent.toml에 정의된 profile 목록
+    /// 옛 host 호환: agent.toml에 정의된 profile 목록
     Profiles,
+    /// host_profiles.v1: 정의를 제외한 설치·로그인한 기본 harness만 묻는다.
+    Harnesses,
     /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
     ThreadPrepare(ThreadPrepare),
     /// report.md 변화를 `ReportChanged`로 알린다. 등록 즉시 지금 hash를 한 번 보낸다. `thread`는 `<project>/<thread>`다.
@@ -566,16 +650,16 @@ pub enum AgentRequest {
         offset: u64,
         len: u32,
     },
-    /// thread를 다시 시작할 준비: 있는 작업 폴더에 brief.md를 다시 쓰고, 새 대화로 띄울 launch를 돌려준다
-    /// (claude는 새 `--session-id`). `profile`이 없으면 저장된 launch를 그대로 쓰고, 있으면 이 머신 agent.toml에서
-    /// 그 profile을 다시 해석한다(`thread restart --profile`, AGENT_LINK 1.4). 옛 agent는 `profile`을 모르고 저장된
-    /// launch를 돌려주므로 host는 돌려받은 `Launch.profile`로 확인한다.
+    /// 새 대화 준비. host_profiles.v1이면 host가 푼 resolved_profile을 받고 머신 경로·env·hook을 적용한다.
+    /// 옛 host는 profile 이름과 safety를 보내며, 둘 다 없으면 저장된 launch를 쓴다.
     ThreadRebrief {
         work_dir: String,
         brief: String,
         launch: Launch,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_profile: Option<crate::ResolvedProfile>,
         /// profile을 다시 풀 때 더할 safety(plan §8.163, `launch_safety.v1`을 알린 agent에만)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         safety: Option<crate::LaunchSafety>,
@@ -1247,7 +1331,7 @@ pub enum FrontRequest {
         cwd: Option<String>,
         cols: Option<u16>,
         rows: Option<u16>,
-        /// 이 머신 agent.toml profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
+        /// host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         profile: Option<String>,
@@ -1266,6 +1350,13 @@ pub enum FrontRequest {
     /// 읽기 경로(`url`)를 준다. 조작 기기만(참고도 보기 전용 기기는 403).
     PaneFile {
         pane: String,
+        path: String,
+    },
+    /// 보고서 안 파일 링크(plan §8.171): 그 thread의 머신에서 thread 작업 폴더(worktree) 기준으로 찾는다. 답은 `PaneFile`과
+    /// 같다. 조작 기기만(`PaneFile`과 같다)
+    ThreadFile {
+        project: String,
+        thread: String,
         path: String,
     },
     /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
@@ -1416,7 +1507,7 @@ pub enum FrontRequest {
         cursor: TextPoint,
         motion: CopyMotion,
     },
-    /// pane 기록을 그 머신 편집기로 연다(herdr `prefix e` `edit_scrollback`, 1.33부터, plan §8.173): 그 머신 agent가 화면 사본의
+    /// pane 기록을 그 머신 편집기로 연다(herdr `prefix e` `edit_scrollback`, 1.32부터, plan §8.173): 그 머신 agent가 화면 사본의
     /// 기록을 임시 파일로 쓰고, host가 그 pane을 나눠 편집기 pane을 띄운 뒤 탭을 zoom한다. 편집기 pane이 끝나면 host가 그
     /// pane을 닫고 파일을 지우고 zoom을 되돌린다. `Workspace`로 답한다.
     PaneEditScrollback {
@@ -1472,9 +1563,13 @@ pub enum FrontRequest {
         name: String,
     },
     Projects,
-    /// 머신의 agent.toml profile 목록
+    /// host 정본 profile과 그 머신에 설치·로그인한 기본 harness 목록
     Profiles {
         machine: Option<String>,
+    },
+    /// host 정본의 profile을 확인한다(설치 여부와 무관, 기본값도 host에서 고른다).
+    ProfileResolve {
+        name: Option<String>,
     },
     ThreadStart {
         project: String,
@@ -1589,10 +1684,16 @@ pub enum FrontRequest {
         #[serde(default)]
         all: bool,
     },
-    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다.
+    /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다. `choice`(예·아니오) 대신 `pick`이면 화면 선택 창
+    /// `menu`(그 id)에 답한다(plan §8.172)
     QuestionAnswer {
         id: String,
+        #[serde(default)]
         choice: String,
+        #[serde(default)]
+        menu: Option<String>,
+        #[serde(default)]
+        pick: Option<MenuPick>,
     },
     /// thread agent에 메시지를 보낸다(전달을 모르면 다시 보내지 않는다)
     ThreadMessage {
@@ -1707,6 +1808,7 @@ impl FrontRequest {
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects
                 | FrontRequest::Profiles { .. }
+                | FrontRequest::ProfileResolve { .. }
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::ThreadLibrary { .. }
@@ -1847,6 +1949,9 @@ pub enum FrontResponse {
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,
+    },
+    ProfileResolved {
+        profile: ProfileView,
     },
     Threads {
         threads: Vec<ThreadView>,
@@ -2171,6 +2276,10 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(
+            FrontRequest::ThreadFile { project: "p".into(), thread: "t-0001".into(), path: "a.txt".into() }
+                .needs_control()
+        );
         assert!(FrontRequest::PaneDir { pane: "p".into(), path: "src".into(), hidden: false }.needs_control());
         assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());
@@ -2218,7 +2327,19 @@ mod tests {
         );
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
-        assert!(FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into() }.needs_control());
+        assert!(
+            FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
+                .needs_control()
+        );
+        assert!(
+            FrontRequest::QuestionAnswer {
+                id: "q".into(),
+                choice: String::new(),
+                menu: Some("m".into()),
+                pick: Some(MenuPick::Custom { text: "x".into() })
+            }
+            .needs_control()
+        );
     }
 
     #[test]
@@ -2248,6 +2369,19 @@ mod tests {
         assert!(matches!(
             serde_json::from_value::<FrontRequest>(v).unwrap(),
             FrontRequest::ThreadMessage { mode: MessageMode::Queue, .. }
+        ));
+        // 1.28 front의 예·아니오 답(선택 창 답 없음)과 1.28 host의 질문(선택 창 없음)
+        assert_eq!(
+            serde_json::from_value::<FrontRequest>(json!({"op":"question_answer","id":"q","choice":"yes"})).unwrap(),
+            FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
+        );
+        let v = json!({"id":"q","pane":"p","machine":"mac-a","project":null,"thread":null,"question_kind":"permission",
+            "text":"t","options":["yes","no"],"state":"open","answer":null,"created_at_ms":1});
+        assert_eq!(serde_json::from_value::<QuestionView>(v).unwrap().menu, None);
+        let v = json!({"op":"question_answer","id":"q","menu":"m","pick":{"by":"options","indices":[0,2]}});
+        assert!(matches!(
+            serde_json::from_value::<FrontRequest>(v).unwrap(),
+            FrontRequest::QuestionAnswer { pick: Some(MenuPick::Options { .. }), .. }
         ));
     }
 }

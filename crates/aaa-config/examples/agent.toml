@@ -34,18 +34,8 @@ min_free_gb = 5
 # clt = ["xcrun", "--version"]
 # cargo = ["cargo", "--version"]
 
-# thread를 띄우는 profile. host.toml [projects] allow_profiles가 허용한 것만 쓴다.
-# harness: claude·codex·shell·custom. model·effort는 harness 플래그로 바뀌고, args·env는 resume에도 같다.
-[profiles.claude-opus]
-harness = "claude"
-model = "opus"
-effort = "high"
-args = []
-description = "Claude Code, opus high"
-
-[profiles.codex]
-harness = "codex"
-model = ""
-effort = "high"
-args = []
-description = "Codex CLI"
+# profile 정의는 host.toml [profiles.<이름>] 한 곳에 둔다.
+# 이 머신에서 harness 실행 경로·환경이 다를 때만 덮어쓴다(model·effort·args는 host 값).
+# [harnesses.codex]
+# command = ["/opt/tools/codex"]
+# env = { CODEX_SSH_SKIP_APP_SERVER_BOOT = "true" }

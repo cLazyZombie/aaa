@@ -709,6 +709,10 @@ const claudeAsk = (cmd) =>
   `${clearScreen}; printf '%s\\n' ' Bash command' '' '   ${cmd}' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel · Tab to amend'`;
 const claudeWorking = `${clearScreen}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'`;
 const claudeIdle = `${clearScreen}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'`;
+// 가짜 Claude 질문 창(lib/fake-claude-ask.mjs): 이름이 claude라 화면 감지가 Claude 규칙으로 본다. `askClaude one|tabs`
+const askClaude = `${root}/askbin/claude`;
+fs.mkdirSync(`${root}/askbin`, { recursive: true });
+fs.writeFileSync(askClaude, `#!${process.execPath}\n${fs.readFileSync(new URL("./fake-claude-ask.mjs", import.meta.url), "utf8")}`, { mode: 0o755 });
 // 웹 port는 host가 고른다(listen 0, 「host·agent 시작」이 status로 받는다): 같이 도는 실험실끼리 겹치지 않는다
 let webPort = 0;
 
@@ -777,6 +781,8 @@ try { r.cookie = document.cookie === "" ? "none" : "visible"; } catch (e) { r.co
 fetch("/api/v1/me").then(function (x) { r.api = String(x.status); }).catch(function () { r.api = "blocked"; });
 </script>`,
 );
+// 결과물 안 하위 폴더의 Markdown: 위 폴더의 그림·페이지를 상대 경로로 가리킨다(앱 안 파일 보기, 차이 목록 R1)
+fs.writeFileSync(`${root}/notes.md`, "# 결과 메모\n\n![점 그림](../pic.png)\n\n[결과 페이지](../index.html)\n");
 // fake agent 보고: 실제 보고에 나오는 Markdown(표 안 code, 굵게 안 code, 링크, 번호 목록 안 목록, code block, 차이 목록 R1)
 fs.writeFileSync(
   `${root}/report-fixture.md`,
@@ -784,6 +790,8 @@ fs.writeFileSync(
     "## Report",
     "- 웹 보기 **확인**: `index.html`",
     "- 착지 **`a1b2c3d`**(병합), 근거는 [참고 문서](https://example.com/doc)",
+    // 보고서 안 파일 링크(plan §8.171): thread worktree 기준 문서 링크와 글 속 경로(줄 참조)
+    "- 정리는 [작업 메모](notes/plan.md), 고친 곳은 src/app.ts:3",
     "",
     "| ID | 판정 | 근거 |",
     "| --- | :---: | ---: |",
@@ -813,20 +821,29 @@ while IFS= read -r line; do
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
+      mkdir -p "$dir/library/docs" && cp "${root}/notes.md" "$dir/library/docs/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"
       cp "${root}/report-fixture.md" "$dir/report.md"
+      wt=$(dirname "$(dirname "$dir")")
+      mkdir -p "$wt/notes" "$wt/src"
+      printf '# 작업 메모\n\n고친 까닭\n' > "$wt/notes/plan.md"
+      printf 'const a = 1;\nconst b = 2;\nexport const fixed = a + b;\n' > "$wt/src/app.ts"
       echo done ;;
   esac
   printf 'fake> '
 done
 `,
 );
-// 파일 보기(16-file-viewer)가 여는 폴더: 이 밖은 열지 않는다(agent가 시작할 때 있는 폴더만 허용한다)
+// 파일 보기(16-file-viewer)가 여는 폴더: 이 밖은 열지 않는다(agent가 시작할 때 있는 폴더만 허용한다).
+// thread 작업 폴더(work_root)는 보고서 안 파일 링크(12, plan §8.171)가 연다(기본 허용 폴더에도 work_root가 든다). 시작할 때 없는
+// 폴더는 허용 폴더가 되지 않으므로 미리 만든다
 fs.mkdirSync(`${root}/files`, { recursive: true });
+fs.mkdirSync(`${root}/work`, { recursive: true });
 fs.writeFileSync(
   `${root}/c/agent.toml`,
-  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files"]\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files", "${root}/work"]\n`,
 );
+fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.fake]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`);
 // bracketed paste를 켜는 입력창: 받은 조각을 JSON으로 그대로 보인다(composer 여러 줄·Enter 시험)
 fs.writeFileSync(
   `${root}/paste.js`,
@@ -1055,5 +1072,5 @@ export {
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
   usageHits, usageRoutes, usageServer, browser, setPushKey, setInUse, pushInUse, pushWho, pushLab, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, askClaude,
 };

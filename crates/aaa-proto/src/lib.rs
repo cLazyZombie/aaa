@@ -106,6 +106,9 @@ pub fn typescript_bindings() -> String {
         AgentStatus::decl(&cfg),
         QuestionState::decl(&cfg),
         QuestionView::decl(&cfg),
+        QuestionMenu::decl(&cfg),
+        MenuOption::decl(&cfg),
+        MenuPick::decl(&cfg),
         MessageMode::decl(&cfg),
         DeliveryState::decl(&cfg),
         MessageView::decl(&cfg),
@@ -137,7 +140,7 @@ pub fn typescript_bindings() -> String {
     );
     for d in decls {
         out.push_str("export ");
-        out.push_str(&d);
+        out.push_str(&d.lines().map(str::trim_end).collect::<Vec<_>>().join("\n"));
         out.push_str("\n\n");
     }
     out

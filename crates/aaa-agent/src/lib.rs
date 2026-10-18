@@ -313,6 +313,11 @@ impl Agent {
             Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
             _ => started,
         };
+        self.locate_in(cwd, path).await
+    }
+
+    /// 정한 폴더 기준으로 찾는다(보고서 안 파일 링크: thread worktree, plan §8.171). 규칙·허용 폴더는 `file_locate`와 같다
+    async fn locate_in(&self, cwd: Option<String>, path: String) -> Result<AgentResponse, ErrorBody> {
         let roots = self.file_roots.lock().unwrap().clone();
         let home = aaa_config::paths::home();
         let found =
@@ -708,10 +713,18 @@ impl Agent {
         // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
         // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
         if let Some(name) = spec.profile.clone() {
-            // 기본 profile(claude·codex)도 받고 agent.toml을 다시 읽는다(thread와 같다, plan §8.163)
+            // 새 host 정의 + 머신 덮어쓰기. 옛 host의 이름 기반 요청도 전환 기간에는 받는다.
             let cfg = self.threads_cfg.lock().unwrap().clone().fresh()?;
-            let (profile, _) = threads::find_profile(&cfg, &name)?;
-            let launch = threads::with_hooks(&cfg, threads::resolve(&name, &profile)?, &paths.dir)?;
+            let profile = match &spec.resolved_profile {
+                Some(resolved) => threads::local_profile(&cfg, resolved)?,
+                None => threads::find_profile(&cfg, &name)?.0,
+            };
+            let launch = threads::with_hooks(
+                &cfg,
+                threads::resolve(&name, &profile)?,
+                &paths.dir,
+                profile.command.len().max(1),
+            )?;
             // thread처럼 profile harness의 화면으로 상태를 본다(host orch `harness: Some(launch.harness)`, plan §8.110)
             spec.harness.get_or_insert(launch.harness);
             spec.argv = launch.argv;
@@ -813,6 +826,7 @@ impl Agent {
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
+            AgentRequest::FileLocateIn { dir, path } => self.locate_in(Some(dir), path).await,
             AgentRequest::DirList { session, path, hidden } => self.dir_list(&session, path, hidden).await,
             AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();
@@ -839,6 +853,12 @@ impl Agent {
                     r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
                         .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
                 })
+            }
+            AgentRequest::Harnesses => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                cfg.fresh()
+                    .map(|c| AgentResponse::Profiles { profiles: threads::builtin_views(&c) })
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::Profiles => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
@@ -887,11 +907,19 @@ impl Agent {
                     .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                     .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile, safety } => {
+            AgentRequest::ThreadRebrief { work_dir, brief, launch, profile, safety, resolved_profile } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 cfg.fresh()
                     .and_then(|cfg| {
-                        threads::rebrief(&cfg, &work_dir, &brief, launch, profile.as_deref(), safety.as_ref())
+                        threads::rebrief(
+                            &cfg,
+                            &work_dir,
+                            &brief,
+                            launch,
+                            profile.as_deref(),
+                            safety.as_ref(),
+                            resolved_profile.as_ref(),
+                        )
                     })
                     .map(AgentResponse::Relaunch)
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
@@ -1270,6 +1298,7 @@ mod tests {
             role: None,
             harness: harness.map(str::to_string),
             profile: None,
+            resolved_profile: None,
         };
         let info = SessionInfo {
             id: "s".into(),

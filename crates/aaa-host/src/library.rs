@@ -10,7 +10,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aaa_proto::{AgentRequest, AgentResponse, ErrorBody, ErrorCode, LibraryFile, LibraryView, ReportSnapshot};
+use aaa_proto::{
+    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FileKind, LibraryFile, LibraryView, ReportSnapshot,
+};
 
 use crate::{Host, err};
 
@@ -18,6 +20,8 @@ use crate::{Host, err};
 pub(crate) const VIEW_TTL: Duration = Duration::from_secs(2 * 3600);
 /// agent에서 한 번에 읽는 조각
 const CHUNK: u32 = 512 * 1024;
+/// 이름으로 모르는 파일이 글인지 볼 앞부분(agent 파일 보기와 같다)
+const SNIFF_BYTES: u64 = 8 * 1024;
 
 pub(crate) struct ViewCap {
     pub project: String,
@@ -33,13 +37,15 @@ pub(crate) fn manifest_path(dir: &Path, id: &str) -> PathBuf {
 
 /// 회수한 보고의 결과물 목록을 남긴다(host 사본 + agent에 남긴 일반 파일)
 pub(crate) fn write_manifest(dir: &Path, id: &str, snap: &ReportSnapshot) -> std::io::Result<()> {
-    let mut files: Vec<LibraryFile> =
-        snap.files.iter().map(|f| LibraryFile { path: f.path.clone(), size: f.size, on_agent: false }).collect();
-    files.extend(
-        snap.skipped
-            .iter()
-            .filter_map(|s| s.lazy_size.map(|size| LibraryFile { path: s.path.clone(), size, on_agent: true })),
-    );
+    let file = |path: &str, size, on_agent| LibraryFile {
+        path: path.to_string(),
+        size,
+        on_agent,
+        mime: String::new(),
+        kind: FileKind::Binary,
+    };
+    let mut files: Vec<LibraryFile> = snap.files.iter().map(|f| file(&f.path, f.size, false)).collect();
+    files.extend(snap.skipped.iter().filter_map(|s| s.lazy_size.map(|size| file(&s.path, size, true))));
     files.sort_by(|a, b| a.path.cmp(&b.path));
     crate::orch::write_atomic(&manifest_path(dir, id), &serde_json::to_vec_pretty(&files).unwrap())
 }
@@ -47,6 +53,25 @@ pub(crate) fn write_manifest(dir: &Path, id: &str, snap: &ReportSnapshot) -> std
 /// library 안 상대 경로인가(`..`·절대 경로·빈 경로 거부)
 pub(crate) fn safe_rel(p: &str) -> bool {
     !p.is_empty() && Path::new(p).components().all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// 파일 보기가 고를 MIME·종류(agent 파일 보기 `info`와 같다): 이름으로 정하고, 모르는 이름은 host 사본의 앞부분에
+/// NUL이 없으면 글이다. agent에만 있는 것은 읽지 않고 binary로 둔다(목록을 줄 때마다 agent에 묻지 않는다)
+fn file_type(path: &str, local: Option<&Path>) -> (String, FileKind) {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let text = || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        local
+            .and_then(|p| std::fs::File::open(p).ok())
+            .and_then(|f| f.take(SNIFF_BYTES).read_to_end(&mut buf).ok())
+            .is_some_and(|_| !buf.contains(&0))
+    };
+    match aaa_proto::mime_of(name) {
+        Some(m) => (m.to_string(), FileKind::of_mime(m)),
+        None if text() => ("text/plain".into(), FileKind::Text),
+        None => ("application/octet-stream".into(), FileKind::Binary),
+    }
 }
 
 /// 확장자로 정하는 Content-Type(nosniff를 쓰므로 정확히 준다)
@@ -75,14 +100,67 @@ pub(crate) fn content_type(path: &str) -> &'static str {
 /// 보낼 파일: host 사본이거나 agent에서 읽을 것
 pub(crate) enum ViewSource {
     Local(PathBuf, u64),
-    Agent { conn: crate::AgentConn, work_dir: String, path: String, size: u64, first: Vec<u8>, eof: bool },
+    Agent { conn: crate::AgentConn, work_dir: String, path: String, size: u64 },
 }
+
+pub(crate) type ByteStream = futures_util::stream::BoxStream<'static, Result<Vec<u8>, std::io::Error>>;
 
 impl ViewSource {
     pub fn size(&self) -> u64 {
         match self {
             ViewSource::Local(_, n) => *n,
             ViewSource::Agent { size, .. } => *size,
+        }
+    }
+
+    /// `start`부터 `len`바이트(파일 보기의 Range). agent 파일은 첫 조각을 먼저 받아, 못 읽으면 응답 전에 오류로 끝낸다.
+    pub async fn open(self, start: u64, len: u64) -> Result<ByteStream, ErrorBody> {
+        use futures_util::StreamExt;
+        match self {
+            ViewSource::Local(p, _) => {
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let mut f = tokio::fs::File::open(&p)
+                    .await
+                    .map_err(|e| err(ErrorCode::NotFound, format!("host 사본을 열지 못했다: {e}")))?;
+                f.seek(std::io::SeekFrom::Start(start))
+                    .await
+                    .map_err(|e| err(ErrorCode::NotFound, format!("host 사본을 열지 못했다: {e}")))?;
+                Ok(futures_util::stream::unfold((f.take(len), len), |(mut f, left)| async move {
+                    if left == 0 {
+                        return None;
+                    }
+                    let mut buf = vec![0u8; left.min(256 * 1024) as usize];
+                    match f.read(&mut buf).await {
+                        Ok(0) => None,
+                        Ok(n) => {
+                            buf.truncate(n);
+                            Some((Ok(buf), (f, left - n as u64)))
+                        }
+                        Err(e) => Some((Err(e), (f, 0))),
+                    }
+                })
+                .boxed())
+            }
+            ViewSource::Agent { conn, work_dir, path, .. } => {
+                let first = conn
+                    .request(AgentRequest::FileRead {
+                        work_dir: work_dir.clone(),
+                        path: path.clone(),
+                        offset: start,
+                        len: CHUNK.min(len.try_into().unwrap_or(u32::MAX)),
+                    })
+                    .await
+                    .map_err(|e| {
+                        err(
+                            ErrorCode::Unavailable,
+                            format!("agent에 남긴 결과물을 읽지 못한다(정리됐거나 없다): {}", e.message),
+                        )
+                    })?;
+                let AgentResponse::FileChunk { data, eof } = first else {
+                    return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
+                };
+                Ok(agent_stream(conn, work_dir, path, start, len, data.0, eof).boxed())
+            }
         }
     }
 }
@@ -120,17 +198,22 @@ impl Host {
                 },
             );
         }
+        let mut files = self.manifest(&dir, id);
+        for f in &mut files {
+            let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(id).join(&f.path));
+            (f.mime, f.kind) = file_type(&f.path, local.as_deref());
+        }
         Ok(LibraryView {
             project: project.to_string(),
             thread: id.to_string(),
             report,
-            files: self.manifest(&dir, id),
+            files,
             base: format!("/v/{cap}/"),
             expires_at_ms: aaa_common::util::now_ms() + VIEW_TTL.as_millis() as u64,
         })
     }
 
-    /// 보기 경로의 파일을 찾는다. agent 파일이면 첫 조각을 먼저 받아, 못 읽으면 응답 전에 오류로 끝낸다.
+    /// 보기 경로의 파일을 찾는다. 읽기는 `ViewSource::open`이다.
     pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewSource, ErrorBody> {
         let (project, id) = {
             let caps = self.view_caps.lock().unwrap();
@@ -163,58 +246,49 @@ impl Host {
         let rec = self.load(&project, &id)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::NotFound, "thread 작업 폴더 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
-        let first = conn
-            .request(AgentRequest::FileRead {
-                work_dir: work_dir.clone(),
-                path: path.to_string(),
-                offset: 0,
-                len: CHUNK,
-            })
-            .await
-            .map_err(|e| {
-                err(
-                    ErrorCode::Unavailable,
-                    format!("agent에 남긴 결과물을 읽지 못한다(정리됐거나 없다): {}", e.message),
-                )
-            })?;
-        let AgentResponse::FileChunk { data, eof } = first else {
-            return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
-        };
-        Ok(ViewSource::Agent { conn, work_dir, path: path.to_string(), size: entry.size, first: data.0, eof })
+        Ok(ViewSource::Agent { conn, work_dir, path: path.to_string(), size: entry.size })
     }
 }
 
-/// agent 조각을 이어 읽는 stream. 중간에 끊기면 stream 오류로 끝난다(받은 쪽은 길이가 모자라 실패를 안다).
-pub(crate) fn agent_stream(
+/// agent 조각을 이어 읽는 stream(`start`부터 `len`바이트까지). 중간에 끊기면 stream 오류로 끝난다(받은 쪽은 길이가 모자라
+/// 실패를 안다).
+fn agent_stream(
     conn: crate::AgentConn,
     work_dir: String,
     path: String,
+    start: u64,
+    len: u64,
     first: Vec<u8>,
     eof: bool,
 ) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
-    let start = first.len() as u64;
-    futures_util::stream::unfold((Some(first), start, eof), move |(pending, offset, done)| {
-        let conn = conn.clone();
-        let work_dir = work_dir.clone();
-        let path = path.clone();
-        async move {
-            if let Some(b) = pending {
-                return Some((Ok(b), (None, offset, done)));
-            }
-            if done {
-                return None;
-            }
-            match conn.request(AgentRequest::FileRead { work_dir, path, offset, len: CHUNK }).await {
-                Ok(AgentResponse::FileChunk { data, eof }) => {
-                    let n = data.0.len() as u64;
-                    let end = eof || n == 0;
-                    Some((Ok(data.0), (None, offset + n, end)))
+    let read = first.len() as u64;
+    let left = len.saturating_sub(read);
+    futures_util::stream::unfold(
+        (Some(first), start + read, left, eof || left == 0),
+        move |(pending, offset, left, done)| {
+            let conn = conn.clone();
+            let work_dir = work_dir.clone();
+            let path = path.clone();
+            async move {
+                if let Some(b) = pending {
+                    return Some((Ok(b), (None, offset, left, done)));
                 }
-                Ok(_) => Some((Err(std::io::Error::other("예상하지 못한 응답")), (None, offset, true))),
-                Err(e) => Some((Err(std::io::Error::other(e.message)), (None, offset, true))),
+                if done {
+                    return None;
+                }
+                let ask = CHUNK.min(left.try_into().unwrap_or(u32::MAX));
+                match conn.request(AgentRequest::FileRead { work_dir, path, offset, len: ask }).await {
+                    Ok(AgentResponse::FileChunk { data, eof }) => {
+                        let n = data.0.len() as u64;
+                        let left = left.saturating_sub(n);
+                        Some((Ok(data.0), (None, offset + n, left, eof || n == 0 || left == 0)))
+                    }
+                    Ok(_) => Some((Err(std::io::Error::other("예상하지 못한 응답")), (None, offset, left, true))),
+                    Err(e) => Some((Err(std::io::Error::other(e.message)), (None, offset, left, true))),
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]
@@ -230,5 +304,22 @@ mod tests {
         assert_eq!(content_type("A.HTML"), "text/html; charset=utf-8");
         assert_eq!(content_type("big.bin"), "application/octet-stream");
         assert_eq!(content_type("noext"), "application/octet-stream");
+    }
+
+    #[test]
+    fn file_types_come_from_the_name_or_the_host_copy() {
+        let dir = std::env::temp_dir().join(format!("aaa-library-type-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (text, bin) = (dir.join("NOTES"), dir.join("blob"));
+        std::fs::write(&text, "그냥 글\n").unwrap();
+        std::fs::write(&bin, b"ab\0cd").unwrap();
+        let ty = file_type;
+        assert_eq!(ty("shots/a.PNG", None), ("image/png".into(), FileKind::Image));
+        assert_eq!(ty("notes.md", None), ("text/markdown".into(), FileKind::Text));
+        assert_eq!(ty("NOTES", Some(&text)), ("text/plain".into(), FileKind::Text));
+        assert_eq!(ty("blob", Some(&bin)), ("application/octet-stream".into(), FileKind::Binary));
+        // agent에만 있는 모르는 이름은 읽지 않는다
+        assert_eq!(ty("NOTES", None), ("application/octet-stream".into(), FileKind::Binary));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
