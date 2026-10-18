@@ -44,11 +44,87 @@ enum PumpCmd {
     HostGone,
     /// 끝난 세션을 지운다(forget): session host가 더 응답하는 동안을 기다리지 않고 연결을 닫는다.
     Close,
+    /// 화면 색이 바뀌었다: session host에 알린다(응답은 버린다)
+    Colors(aaa_proto::TermColors),
 }
 
 struct Entry {
     info: SessionInfo,
     pump: Option<mpsc::Sender<PumpCmd>>,
+}
+
+type SessionRx = FrameRx<tokio::io::ReadHalf<aaa_common::ipc::LocalStream>>;
+
+/// 인사를 마친 session host 연결
+struct SessionConn {
+    tx: FrameTx,
+    rx: SessionRx,
+    proto: aaa_proto::Version,
+    info: SessionInfo,
+}
+
+/// session host에 붙지 못한 까닭
+enum ConnectError {
+    /// 받는 쪽이 없다(socket이 없거나 아무도 listen하지 않는다): session host가 사라졌다
+    Gone(anyhow::Error),
+    /// session host가 거부했다(token·판). 다시 해도 같다(herdr `ClientEndpointStatus::Attention`)
+    Rejected(anyhow::Error),
+    /// 그 밖(인사 시한, 인사 중 끊김): 다시 해 볼 만하다
+    Retry(anyhow::Error),
+}
+
+impl ConnectError {
+    fn into_error(self) -> anyhow::Error {
+        match self {
+            ConnectError::Gone(e) | ConnectError::Rejected(e) | ConnectError::Retry(e) => e,
+        }
+    }
+}
+
+/// pump가 session host 연결을 놓은 까닭
+enum Dropped {
+    /// forget이 닫았거나 세션 항목이 사라졌다: 다시 붙지 않는다
+    Closed,
+    /// 연결이 끝났다(까닭). session host가 끝나지 않았으면 다시 붙는다
+    Lost(String),
+}
+
+/// session host에 연결해 인사한다(token·판)
+async fn connect_session(paths: &SessionPaths, spec: &SpecFile) -> Result<SessionConn, ConnectError> {
+    let stream = aaa_common::ipc::connect(&paths.sock).await.map_err(|e| {
+        let gone = matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused);
+        let e = anyhow::Error::new(e).context("session socket 연결");
+        if gone { ConnectError::Gone(e) } else { ConnectError::Retry(e) }
+    })?;
+    let (r, w) = tokio::io::split(stream);
+    let tx = spawn_writer(w, MAX_FRAME);
+    let mut rx = FrameRx::new(r, MAX_FRAME);
+    let hello = SessionMsg::Hello { proto: SESSION_IPC, token: spec.token.clone() };
+    tx.json(&hello).await.map_err(|e| ConnectError::Retry(e.into()))?;
+    let welcome = match tokio::time::timeout(Duration::from_secs(5), rx.control()).await {
+        Ok(Ok(w)) => w,
+        Ok(Err(e)) => return Err(ConnectError::Retry(e.context("welcome 대기"))),
+        Err(e) => return Err(ConnectError::Retry(anyhow::Error::new(e).context("welcome 대기"))),
+    };
+    match welcome {
+        SessionMsg::Welcome { proto, info } => Ok(SessionConn { tx, rx, proto, info }),
+        SessionMsg::Reject(e) => Err(ConnectError::Rejected(anyhow::anyhow!("session host가 거부했다: {e}"))),
+        other => Err(ConnectError::Retry(anyhow::anyhow!("예상하지 못한 응답: {other:?}"))),
+    }
+}
+
+/// session host 프로세스가 있다(`meta.json`의 pid). 좀비이거나 pid가 다시 쓰였으면 있다고 하지만, 그때는 다시 붙을 때
+/// 받는 쪽이 없어(`ConnectError::Gone`) 안다
+fn session_host_alive(paths: &SessionPaths) -> bool {
+    util::read_json::<MetaFile>(&paths.meta()).is_ok_and(|m| util::pid_alive(m.host_pid))
+}
+
+/// 끊긴 뒤 `attempt`번째로 다시 붙기 전 간격: 0.5초부터 두 배씩, 많아야 30초(herdr `client/endpoint/supervisor.rs`
+/// `retry_delay`·Local의 `MAX_LOCAL_RETRY_DELAY`)
+fn reattach_delay(attempt: u32) -> Duration {
+    const INITIAL: Duration = Duration::from_millis(500);
+    const MAX: Duration = Duration::from_secs(30);
+    INITIAL.saturating_mul(1u32.checked_shl(attempt.saturating_sub(1).min(8)).unwrap_or(u32::MAX)).min(MAX)
 }
 
 /// 그린 HTML 페이지: 경로·크기·고친 시각과 bytes
@@ -91,6 +167,8 @@ pub struct Agent {
     /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
     /// 그가 보내는 정보의 이름은 여기서 덮는다.
     labels: Mutex<HashMap<String, String>>,
+    /// host가 알려 준 화면 색(plan §8.187). 새 세션의 spec에 싣고, 다시 붙은 session host에도 보낸다
+    term_colors: Mutex<Option<aaa_proto::TermColors>>,
 }
 
 impl Agent {
@@ -127,6 +205,7 @@ impl Agent {
             progress: Mutex::new(HashMap::new()),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
+            term_colors: Mutex::new(None),
         }))
     }
 
@@ -513,6 +592,16 @@ impl Agent {
         Ok(())
     }
 
+    /// 화면 색을 받았다: 새 세션에 실을 것으로 두고 모든 pump에 넘긴 뒤 답한다. host는 이 답을 받고서야 그 화면에 pane을
+    /// 보이므로 그 화면이 본 뒤의 요청은 pump에서 색 뒤에 선다(plan §8.187)
+    async fn set_term_colors(&self, c: aaa_proto::TermColors) {
+        *self.term_colors.lock().unwrap() = Some(c);
+        let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
+        for p in pumps {
+            let _ = p.send(PumpCmd::Colors(c)).await;
+        }
+    }
+
     /// session host가 없는 세션의 정보(파일에서)
     fn offline_info(&self, paths: &SessionPaths, spec: &SpecFile) -> SessionInfo {
         let meta: Option<MetaFile> = util::read_json(&paths.meta()).ok();
@@ -550,19 +639,11 @@ impl Agent {
 
     /// session host에 연결하고 pump를 띄운다.
     async fn attach(self: &Arc<Self>, paths: &SessionPaths, spec: &SpecFile) -> Result<SessionInfo> {
-        let stream = aaa_common::ipc::connect(&paths.sock).await.context("session socket 연결")?;
-        let (r, w) = tokio::io::split(stream);
-        let tx = spawn_writer(w, MAX_FRAME);
-        let mut rx = FrameRx::new(r, MAX_FRAME);
-        tx.json(&SessionMsg::Hello { proto: SESSION_IPC, token: spec.token.clone() }).await?;
-        let welcome: SessionMsg =
-            tokio::time::timeout(Duration::from_secs(5), rx.control()).await.context("welcome 대기")??;
-        let (proto, info) = match welcome {
-            SessionMsg::Welcome { proto, info } => (proto, self.labeled(info)),
-            SessionMsg::Reject(e) => bail!("session host가 거부했다: {e}"),
-            other => bail!("예상하지 못한 응답: {other:?}"),
-        };
+        let SessionConn { tx, rx, proto, info } =
+            connect_session(paths, spec).await.map_err(ConnectError::into_error)?;
+        let info = self.labeled(info);
         let detect_ipc = detect_ipc(proto);
+        let colors_ipc = colors_ipc(proto);
         let watch = watch_of(spec, &info, detect_ipc);
         // 띄울 때 harness를 모르는 pane(셸)은 herdr처럼 앞 프로세스 이름으로 agent를 찾는다(plan §8.110)
         let front = info
@@ -574,121 +655,169 @@ impl Agent {
         let me = self.clone();
         let paths = paths.clone();
         let spec = spec.clone();
-        tokio::spawn(async move { me.pump(paths, spec, tx, rx, prx, Detecting { watch, front, detect_ipc }).await });
+        tokio::spawn(async move {
+            me.pump(paths, spec, tx, rx, prx, Detecting { watch, front, detect_ipc, colors_ipc }).await
+        });
         Ok(info)
     }
 
+    /// 세션 하나의 중계. session host 연결이 끊겼는데 session host가 끝나지 않았으면(`exit.json` 없음) 다시 붙는다(`reattach`).
     async fn pump(
         self: Arc<Self>,
         paths: SessionPaths,
         spec: SpecFile,
-        tx: FrameTx,
-        mut rx: FrameRx<tokio::io::ReadHalf<aaa_common::ipc::LocalStream>>,
+        mut tx: FrameTx,
+        mut rx: SessionRx,
         mut cmds: mpsc::Receiver<PumpCmd>,
         detecting: Detecting,
     ) {
         let id = spec.id.clone();
-        let Detecting { mut watch, mut front, detect_ipc } = detecting;
-        let mut pending: HashMap<String, (String, bool)> = HashMap::new();
-        let mut forwarding = false;
+        let Detecting { mut watch, mut front, detect_ipc, colors_ipc } = detecting;
         let mut seq = 0u64;
-        loop {
-            let watch_at = watch.as_ref().and_then(detect::Watch::next_at);
-            let detect_at = watch_at.into_iter().chain(front.as_ref().map(|(_, p)| p.next_at())).min();
-            tokio::select! {
-                _ = sleep_until(detect_at) => {
-                    let now = std::time::Instant::now();
-                    if let Some((pid, p)) = front.as_mut()
-                        && p.next_at() <= now
-                    {
-                        match foreground_tick(p, *pid, now) {
-                            Some(detect::foreground::Change::Acquired(h)) => {
-                                watch = Some(detect::Watch::new(h, now, detect_ipc, now));
-                            }
-                            Some(detect::foreground::Change::Exited(h)) => {
-                                watch = None;
-                                let r = detect::Report { kind: "idle", message: None, question_kind: None, rule: None };
-                                self.detected(&id, h, r).await;
-                            }
-                            Some(detect::foreground::Change::Released(h)) => {
-                                watch = None;
-                                let r = detect::Report { kind: "released", message: None, question_kind: None, rule: None };
-                                self.detected(&id, h, r).await;
-                            }
-                            None => {}
-                        }
-                    }
-                    let due = watch.as_ref().and_then(detect::Watch::next_at).is_some_and(|t| t <= now);
-                    if let Some((sid, body)) = watch.as_mut().filter(|_| due).and_then(|w| w.due(now))
-                        && tx.json(&SessionMsg::Req { id: sid, body }).await.is_err()
-                    {
-                        break;
-                    }
-                }
-                cmd = cmds.recv() => match cmd {
-                    Some(PumpCmd::Host { host_id, body }) => {
-                        if matches!(body, SessionRequest::Input { .. }) && let Some(w) = watch.as_mut() {
-                            w.input_sent(std::time::Instant::now());
-                        }
-                        seq += 1;
-                        let sid = format!("h{seq}");
-                        let is_sub = matches!(body, SessionRequest::Subscribe { .. });
-                        if matches!(body, SessionRequest::Unsubscribe) { forwarding = false; }
-                        pending.insert(sid.clone(), (host_id, is_sub));
-                        if tx.json(&SessionMsg::Req { id: sid, body }).await.is_err() { break; }
-                    }
-                    Some(PumpCmd::HostGone) => {
-                        if forwarding {
-                            forwarding = false;
-                            seq += 1;
-                            let _ = tx.json(&SessionMsg::Req { id: format!("u{seq}"), body: SessionRequest::Unsubscribe }).await;
-                        }
-                    }
-                    Some(PumpCmd::Close) | None => break,
-                },
-                incoming = rx.next() => match incoming {
-                    Ok(Some(Incoming::Terminal(chunk))) => {
-                        if forwarding {
-                            match self.host_tx() {
-                                Some(h) => { if h.terminal(&chunk).await.is_err() { forwarding = false; } }
-                                None => forwarding = false,
-                            }
-                        }
-                    }
-                    Ok(Some(Incoming::Control(b))) => match serde_json::from_slice::<SessionMsg>(&b) {
-                        Ok(SessionMsg::Res { id: sid, result }) => {
-                            if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
-                                let harness = w.harness();
-                                if let Some(r) = w.answer(std::time::Instant::now(), result) {
-                                    self.detected(&id, harness, r).await;
-                                }
-                            } else if let Some((host_id, is_sub)) = pending.remove(&sid) {
-                                if is_sub && matches!(result, Outcome::Ok(_)) { forwarding = true; }
-                                self.send_host(&LinkMsg::Res { id: host_id, result }).await;
-                            }
-                        }
-                        Ok(SessionMsg::Updated(info)) => {
-                            let info = self.labeled(info);
-                            if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) { e.info = info.clone(); }
-                            self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
-                        }
-                        Ok(SessionMsg::Resync) => {
-                            forwarding = false;
-                            self.send_host(&LinkMsg::Event(AgentEvent::Resync { session: id.clone() })).await;
-                        }
-                        Ok(other) => tracing::debug!(%id, "무시한 session 메시지: {other:?}"),
-                        Err(e) => { tracing::warn!(%id, "session 메시지 해석 실패: {e}"); break; }
-                    },
-                    Ok(None) => break,
-                    // frame 오류는 session host가 끝난 것이 아니다: 까닭을 남긴다(그 뒤 세션은 Lost로 보인다)
-                    Err(e) => {
-                        tracing::warn!(%id, "session host frame을 읽지 못해 연결을 놓는다: {e}");
-                        break;
-                    }
-                },
+        let pending = loop {
+            let mut pending: HashMap<String, (String, bool)> = HashMap::new();
+            let mut forwarding = false;
+            // 이 연결의 session host에 지금 화면 색을 알린다(다시 붙은 session host, agent보다 오래 산 session host). 쓰지 못했으면
+            // 아래 읽기가 끊김을 본다
+            let colors = *self.term_colors.lock().unwrap();
+            if let Some(c) = colors.filter(|_| colors_ipc) {
+                seq += 1;
+                let _ = tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await;
             }
-        }
-        // session host가 사라졌다(또는 forget이 닫았다): 종료 기록을 기다렸다 읽는다.
+            let dropped = loop {
+                let watch_at = watch.as_ref().and_then(detect::Watch::next_at);
+                let detect_at = watch_at.into_iter().chain(front.as_ref().map(|(_, p)| p.next_at())).min();
+                tokio::select! {
+                    _ = sleep_until(detect_at) => {
+                        let now = std::time::Instant::now();
+                        if let Some((pid, p)) = front.as_mut()
+                            && p.next_at() <= now
+                        {
+                            match foreground_tick(p, *pid, now) {
+                                Some(detect::foreground::Change::Acquired(h)) => {
+                                    watch = Some(detect::Watch::new(h, now, detect_ipc, now));
+                                }
+                                Some(detect::foreground::Change::Exited(h)) => {
+                                    watch = None;
+                                    let r = detect::Report { kind: "idle", message: None, question_kind: None, rule: None };
+                                    self.detected(&id, h, r).await;
+                                }
+                                Some(detect::foreground::Change::Released(h)) => {
+                                    watch = None;
+                                    let r = detect::Report { kind: "released", message: None, question_kind: None, rule: None };
+                                    self.detected(&id, h, r).await;
+                                }
+                                None => {}
+                            }
+                        }
+                        let due = watch.as_ref().and_then(detect::Watch::next_at).is_some_and(|t| t <= now);
+                        if let Some((sid, body)) = watch.as_mut().filter(|_| due).and_then(|w| w.due(now))
+                            && tx.json(&SessionMsg::Req { id: sid, body }).await.is_err()
+                        {
+                            break Dropped::Lost("session host에 쓰지 못했다".into());
+                        }
+                    }
+                    cmd = cmds.recv() => match cmd {
+                        Some(PumpCmd::Host { host_id, body }) => {
+                            if matches!(body, SessionRequest::Input { .. }) && let Some(w) = watch.as_mut() {
+                                w.input_sent(std::time::Instant::now());
+                            }
+                            seq += 1;
+                            let sid = format!("h{seq}");
+                            let is_sub = matches!(body, SessionRequest::Subscribe { .. });
+                            if matches!(body, SessionRequest::Unsubscribe) { forwarding = false; }
+                            pending.insert(sid.clone(), (host_id, is_sub));
+                            if tx.json(&SessionMsg::Req { id: sid, body }).await.is_err() {
+                                break Dropped::Lost("session host에 쓰지 못했다".into());
+                            }
+                        }
+                        Some(PumpCmd::HostGone) => {
+                            if forwarding {
+                                forwarding = false;
+                                seq += 1;
+                                let _ = tx.json(&SessionMsg::Req { id: format!("u{seq}"), body: SessionRequest::Unsubscribe }).await;
+                            }
+                        }
+                        Some(PumpCmd::Close) | None => break Dropped::Closed,
+                        // 답(`c…`)은 pending에 없어 버린다
+                        Some(PumpCmd::Colors(c)) => {
+                            seq += 1;
+                            if colors_ipc
+                                && tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await.is_err()
+                            {
+                                break Dropped::Lost("session host에 쓰지 못했다".into());
+                            }
+                        }
+                    },
+                    incoming = rx.next() => match incoming {
+                        Ok(Some(Incoming::Terminal(chunk))) => {
+                            if forwarding {
+                                match self.host_tx() {
+                                    Some(h) => { if h.terminal(&chunk).await.is_err() { forwarding = false; } }
+                                    None => forwarding = false,
+                                }
+                            }
+                        }
+                        Ok(Some(Incoming::Control(b))) => match serde_json::from_slice::<SessionMsg>(&b) {
+                            Ok(SessionMsg::Res { id: sid, result }) => {
+                                if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
+                                    let harness = w.harness();
+                                    if let Some(r) = w.answer(std::time::Instant::now(), result) {
+                                        self.detected(&id, harness, r).await;
+                                    }
+                                } else if let Some((host_id, is_sub)) = pending.remove(&sid) {
+                                    if is_sub && matches!(result, Outcome::Ok(_)) { forwarding = true; }
+                                    self.send_host(&LinkMsg::Res { id: host_id, result }).await;
+                                }
+                            }
+                            Ok(SessionMsg::Updated(info)) => {
+                                let info = self.labeled(info);
+                                if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) { e.info = info.clone(); }
+                                self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
+                            }
+                            Ok(SessionMsg::Resync) => {
+                                forwarding = false;
+                                self.send_host(&LinkMsg::Event(AgentEvent::Resync { session: id.clone() })).await;
+                            }
+                            Ok(other) => tracing::debug!(%id, "무시한 session 메시지: {other:?}"),
+                            Err(e) => break Dropped::Lost(format!("session 메시지를 해석하지 못했다: {e}")),
+                        },
+                        Ok(None) => break Dropped::Lost("session host가 연결을 닫았다".into()),
+                        // frame 오류는 session host가 끝난 것이 아니다(plan §8.162)
+                        Err(e) => break Dropped::Lost(format!("session host frame을 읽지 못했다: {e}")),
+                    },
+                }
+            };
+            // 이 연결로 보낸 감지 요청에는 답이 오지 않는다
+            if let Some(w) = watch.as_mut() {
+                w.connection_lost(std::time::Instant::now());
+            }
+            // 끝난 session host는 종료 기록(`exit.json`)을 쓴 뒤에 연결을 닫는다
+            let why = match dropped {
+                Dropped::Lost(_) if paths.exit().exists() => break pending,
+                Dropped::Lost(why) if !session_host_alive(&paths) => {
+                    tracing::info!(%id, "session host가 없다({why}): 연결을 놓는다");
+                    break pending;
+                }
+                Dropped::Lost(why) => why,
+                Dropped::Closed => break pending,
+            };
+            tracing::warn!(%id, "session host 연결이 끊겼다({why}): 다시 붙는다");
+            for (_, (host_id, _)) in pending {
+                let err = ErrorBody::new(ErrorCode::Unavailable, format!("session host 연결이 끊겼다: {why}"));
+                self.send_host(&LinkMsg::Res { id: host_id, result: Outcome::Err(err) }).await;
+            }
+            let Some(conn) = self.reattach(&id, &paths, &spec, &mut cmds).await else { break HashMap::new() };
+            let info = self.labeled(conn.info);
+            (tx, rx) = (conn.tx, conn.rx);
+            if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) {
+                e.info = info.clone();
+            }
+            self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
+            // host는 mirror의 마지막 offset부터 다시 구독한다(session host 보존 범위 안이면 빈틈 없이 bytes만)
+            self.send_host(&LinkMsg::Event(AgentEvent::Resync { session: id.clone() })).await;
+        };
+        // session host가 끝났다(또는 사라졌다, forget이 닫았다): 종료 기록을 기다렸다 읽는다.
         for _ in 0..20 {
             if paths.exit().exists() {
                 break;
@@ -712,6 +841,55 @@ impl Agent {
             self.send_host(&LinkMsg::Res { id: host_id, result: Outcome::Err(err) }).await;
         }
         self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
+    }
+
+    /// 끊긴 session host에 다시 붙는다. herdr가 Local endpoint와의 연결이 끊기면 하는 것과 같다(`client/endpoint/supervisor.rs`
+    /// `disconnected` → Reconnecting, `reattach_delay` 간격, 붙으면 다음 끊김은 다시 첫 간격부터). 기다리는 동안 온 host 요청에는
+    /// 「다시 붙는 중」으로 답한다(herdr는 끊긴 endpoint의 요청을 취소한다). herdr의 Local 서버는 사람이 다시 띄울 수 있지만
+    /// session host는 다시 뜨지 않으므로, 끝났거나(`exit.json`) 사라졌거나(받는 쪽 없음) 거부하면 그만둔다. forget이 닫아도 그만둔다.
+    async fn reattach(
+        &self,
+        id: &str,
+        paths: &SessionPaths,
+        spec: &SpecFile,
+        cmds: &mut mpsc::Receiver<PumpCmd>,
+    ) -> Option<SessionConn> {
+        let mut attempt = 0u32;
+        loop {
+            attempt = attempt.saturating_add(1);
+            let until = tokio::time::Instant::now() + reattach_delay(attempt);
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(until) => break,
+                    cmd = cmds.recv() => match cmd {
+                        Some(PumpCmd::Host { host_id, .. }) => {
+                            let err = ErrorBody::new(ErrorCode::Unavailable, "세션에 다시 붙는 중이다");
+                            self.send_host(&LinkMsg::Res { id: host_id, result: Outcome::Err(err) }).await;
+                        }
+                        // 다시 붙으면 그때의 색을 보낸다
+                        Some(PumpCmd::HostGone) | Some(PumpCmd::Colors(_)) => {}
+                        Some(PumpCmd::Close) | None => return None,
+                    },
+                }
+            }
+            if paths.exit().exists() {
+                return None;
+            }
+            match connect_session(paths, spec).await {
+                Ok(conn) => {
+                    tracing::info!(%id, attempt, "세션에 다시 붙었다");
+                    return Some(conn);
+                }
+                Err(ConnectError::Retry(e)) => {
+                    let next = reattach_delay(attempt.saturating_add(1));
+                    tracing::info!(%id, attempt, "다시 붙지 못했다({e:#}): {}ms 뒤 다시 한다", next.as_millis());
+                }
+                Err(e) => {
+                    tracing::warn!(%id, attempt, "session host에 다시 붙지 못해 놓는다: {:#}", e.into_error());
+                    return None;
+                }
+            }
+        }
     }
 
     /// 새 세션: spec을 쓰고 session host를 분리된 프로세스로 띄운 뒤 붙는다.
@@ -775,6 +953,7 @@ impl Agent {
             created_at_ms: util::now_ms(),
             spec,
             label: None,
+            colors: *self.term_colors.lock().unwrap(),
         };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
@@ -968,6 +1147,10 @@ impl Agent {
             }
             AgentRequest::ScrollbackWrite { name, offset, data, eof } => {
                 self.scrollback_write(name, offset, data.0, eof).await
+            }
+            AgentRequest::TermColors(c) => {
+                self.set_term_colors(c).await;
+                Ok(AgentResponse::Done)
             }
             AgentRequest::ScrollbackRemove { name } => {
                 let dir = std::env::temp_dir();
@@ -1222,10 +1405,12 @@ impl Slot {
 
 /// pump의 화면 감지: 띄울 때 정한 harness의 감지 차례(`watch`), 또는 셸 pane 앞 agent 찾기(`front`, 셸 pid와 상태).
 /// 앞에서 agent를 잡으면 그 harness로 `watch`를 만든다. `detect_ipc`: session host가 `Detect`를 받는다.
+/// `colors_ipc`: session host가 `Colors`를 받는다(감지는 아니지만 같은 session host 판으로 정한다).
 struct Detecting {
     watch: Option<detect::Watch>,
     front: Option<(u32, detect::foreground::Presence)>,
     detect_ipc: bool,
+    colors_ipc: bool,
 }
 
 /// 셸 pane 앞의 agent를 한 차례 본다. herdr의 Windows 프로세스 트리 조사는 옮기지 않았다(unix만, plan §8.110).
@@ -1248,6 +1433,10 @@ fn foreground_tick(
 /// session host가 SESSION_IPC 1.1 이상일 때만 `Detect`를 보낸다(그 전 session host는 모르는 요청을 받으면 연결을 끊는다)
 fn detect_ipc(proto: aaa_proto::Version) -> bool {
     proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_DETECT
+}
+
+fn colors_ipc(proto: aaa_proto::Version) -> bool {
+    proto.major == SESSION_IPC.major && proto.minor >= aaa_proto::SESSION_IPC_COLORS
 }
 
 /// 화면으로 상태를 볼 세션이면 감지 차례
@@ -1341,7 +1530,18 @@ mod tests {
             label: None,
             harness: spec.harness.clone(),
         };
-        (SpecFile { id: "s".into(), token: "t".into(), boot_id: "b".into(), created_at_ms: 1, spec, label: None }, info)
+        (
+            SpecFile {
+                id: "s".into(),
+                token: "t".into(),
+                boot_id: "b".into(),
+                created_at_ms: 1,
+                spec,
+                label: None,
+                colors: None,
+            },
+            info,
+        )
     }
 
     /// 감지 요청: 유예가 끝난 차례 다음의 첫 요청
@@ -1392,5 +1592,301 @@ mod tests {
         scrollback::remove(&std::env::temp_dir(), &name).unwrap();
         assert!(!Path::new(&path).exists());
         std::fs::remove_dir_all(&state).unwrap();
+    }
+
+    /// 다시 붙기 간격은 0.5초에서 두 배씩 늘고 30초에서 멈춘다(넘치지 않는다, herdr `retry_backoff_is_bounded`)
+    #[test]
+    fn reattach_delay_is_bounded() {
+        assert_eq!(reattach_delay(1), Duration::from_millis(500));
+        assert_eq!(reattach_delay(2), Duration::from_secs(1));
+        assert_eq!(reattach_delay(100), Duration::from_secs(30));
+    }
+
+    /// 가짜 session host가 본 것(연결 번호)
+    #[derive(Debug)]
+    enum Seen {
+        Hello(u32),
+        Req(u32, SessionRequest),
+    }
+
+    /// 가짜 session host가 첫 연결을 끝내는 길. 모두 frame 오류가 아니다.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum FirstEnd {
+        /// 연결만 닫는다(옛 session host가 모르는 요청을 받았을 때처럼)
+        Eof,
+        /// agent가 모르는 메시지를 보낸다(새 session host)
+        Unknown,
+        /// 연결을 닫고 listen도 그만둔다(session host가 사라졌다)
+        Gone,
+        /// 화면 감지 요청을 받고 답하지 않은 채 닫는다(harness 세션)
+        AfterDetect,
+    }
+
+    /// session host 하나를 흉내 낸다: 연결마다 token을 보고 Welcome(실행 중)을 보낸다. 첫 연결은 `first`로 끝내고, 그 뒤 연결은
+    /// 요청마다 Done으로 답한다(Subscribe는 snapshot 없이 offset 0). `open`이 거짓인 동안은 두째 연결부터 인사만 받고 닫는다.
+    fn fake_session_host(
+        listener: aaa_common::ipc::LocalListener,
+        info: SessionInfo,
+        token: String,
+        first: FirstEnd,
+        open: Arc<std::sync::atomic::AtomicBool>,
+    ) -> mpsc::UnboundedReceiver<Seen> {
+        let (seen, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut listener = Some(listener);
+            for n in 1u32.. {
+                let Some(l) = listener.as_ref() else { break };
+                let Ok(stream) = l.accept().await else { break };
+                let (r, w) = tokio::io::split(stream);
+                let tx = spawn_writer(w, MAX_FRAME);
+                let mut rx = FrameRx::new(r, MAX_FRAME);
+                match rx.control::<SessionMsg>().await {
+                    Ok(SessionMsg::Hello { token: t, .. }) if t == token => {}
+                    other => panic!("인사가 아니다: {other:?}"),
+                }
+                let _ = seen.send(Seen::Hello(n));
+                if n > 1 && !open.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue;
+                }
+                tx.json(&SessionMsg::Welcome { proto: SESSION_IPC, info: info.clone() }).await.unwrap();
+                if n == 1 {
+                    match first {
+                        FirstEnd::Eof => {}
+                        FirstEnd::Unknown => tx.control(br#"{"t":"later_kind"}"#.to_vec()).await.unwrap(),
+                        FirstEnd::Gone => listener = None,
+                        FirstEnd::AfterDetect => {
+                            while let Ok(Some(Incoming::Control(b))) = rx.next().await {
+                                if let Ok(SessionMsg::Req { body, .. }) = serde_json::from_slice::<SessionMsg>(&b) {
+                                    let _ = seen.send(Seen::Req(1, body));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // 쓰기 handle을 놓으면 보낸 것을 다 쓴 뒤 닫힌다(읽는 쪽은 여기서 놓는다)
+                    continue;
+                }
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    while let Ok(Some(Incoming::Control(b))) = rx.next().await {
+                        let Ok(SessionMsg::Req { id, body }) = serde_json::from_slice::<SessionMsg>(&b) else { break };
+                        let result = match &body {
+                            SessionRequest::Subscribe { .. } => {
+                                AgentResponse::Subscribed { session: "s".into(), snapshot: None, offset: 0 }
+                            }
+                            _ => AgentResponse::Done,
+                        };
+                        let _ = seen.send(Seen::Req(n, body));
+                        if tx.json(&SessionMsg::Res { id, result: Outcome::Ok(result) }).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        rx
+    }
+
+    /// host 쪽 줄에서 다음 link 메시지
+    async fn next_link(out: &mut aaa_common::conn::FrameOut) -> LinkMsg {
+        let (_, b) = out.recv().await.expect("host 줄이 닫혔다");
+        serde_json::from_slice(&b).unwrap()
+    }
+
+    /// 실험: 가짜 session host에 붙은 agent와 host 쪽 줄
+    struct Rig {
+        agent: Arc<Agent>,
+        state: PathBuf,
+        seen: mpsc::UnboundedReceiver<Seen>,
+        /// 가짜가 마지막으로 받은 인사의 연결 번호
+        hello: u32,
+        out: aaa_common::conn::FrameOut,
+    }
+
+    impl Rig {
+        /// 가짜가 `first`로 첫 연결을 끝낸 뒤 agent의 다음 연결(Hello 2)과 host로 간 「세션이 끝났다」 중 먼저 온 것
+        async fn after_first_connection_ends(
+            first: FirstEnd,
+            open: bool,
+        ) -> (Rig, Arc<std::sync::atomic::AtomicBool>, Result<(), SessionState>) {
+            // macOS UDS 경로 한도(104바이트) 때문에 짧은 /tmp에 둔다(m13 실험실과 같다)
+            let state = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() }
+                .join(format!("aar-{}-{first:?}-{open}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&state);
+            let agent = Agent::new(state.clone(), "m".into(), "m".into(), false, None).unwrap();
+            let (spec, mut info) = match first {
+                // 화면으로 상태를 보는 세션(오래전에 띄워 시작 유예가 끝났다)
+                FirstEnd::AfterDetect => session(Some("claude"), &["claude"], SessionState::Running),
+                _ => session(None, &["/bin/sh"], SessionState::Running),
+            };
+            // 앞 프로세스 감지(셸 pid)는 보지 않는다
+            info.pid = None;
+            let spec = SpecFile { boot_id: agent.boot_id.clone(), ..spec };
+            let paths = SessionPaths::new(&state, &spec.id);
+            util::ensure_private_dir(&paths.dir).unwrap();
+            util::write_json(&paths.spec(), &spec).unwrap();
+            // session host는 이 시험 프로세스다(살아 있다)
+            let meta = MetaFile { host_pid: std::process::id(), child_pid: None, started_at_ms: 1 };
+            util::write_json(&paths.meta(), &meta).unwrap();
+            let listener = aaa_common::ipc::LocalListener::bind(&paths.sock).unwrap();
+            let gate = Arc::new(std::sync::atomic::AtomicBool::new(open));
+            let mut seen = fake_session_host(listener, info, spec.token.clone(), first, gate.clone());
+            let (host, mut out) = aaa_common::conn::frame_channel();
+            agent.set_host(Some(host), false);
+            agent.recover().await.unwrap();
+            assert!(matches!(seen.recv().await, Some(Seen::Hello(1))));
+            // 안전 상한(오지 않을 때 멈춘다). 다시 붙기 첫 간격은 0.5초다
+            let outcome = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    // 가짜는 Welcome보다 먼저 Hello를 알린다: 먼저 보면 그 뒤에 오는 host 알림(Resync)을 여기서 버리지 않는다
+                    tokio::select! {
+                        biased;
+                        Some(s) = seen.recv() => if matches!(s, Seen::Hello(2)) { return Ok(()) },
+                        m = next_link(&mut out) => if let LinkMsg::Event(AgentEvent::SessionUpdated(i)) = m
+                            && !i.state.is_running()
+                        {
+                            return Err(i.state);
+                        },
+                    }
+                }
+            })
+            .await
+            .expect("다시 붙지도, 놓지도 않았다");
+            (Rig { agent, state, seen, hello: 2, out }, gate, outcome)
+        }
+
+        /// host로 간 다음 응답(id·결과)
+        async fn next_res(&mut self) -> (String, Outcome<AgentResponse>) {
+            loop {
+                if let LinkMsg::Res { id, result } = next_link(&mut self.out).await {
+                    return (id, result);
+                }
+            }
+        }
+
+        async fn input(&self, id: &str) {
+            let body = AgentRequest::Input { session: "s".into(), data: B64(b"x".to_vec()) };
+            self.agent.clone().handle(id.into(), body).await;
+        }
+
+        /// 가짜 session host가 받은 다음 요청(연결 번호·요청). 인사는 건너뛴다
+        async fn next_req(&mut self) -> (u32, SessionRequest) {
+            // 안전 상한(오지 않을 때 멈춘다). 다시 붙기 간격은 길어야 몇 초다
+            let next = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    match self.seen.recv().await {
+                        Some(Seen::Hello(n)) => self.hello = n,
+                        Some(Seen::Req(n, body)) => return (n, body),
+                        None => panic!("가짜 session host가 끝났다"),
+                    }
+                }
+            });
+            next.await.expect("session host가 요청을 받지 않았다")
+        }
+
+        /// 다시 붙었다: 세션은 실행 중이고, host는 다시 구독하라는 알림을 받고(aaa-host `on_resync`가 마지막 offset부터 다시
+        /// 구독한다), 입력은 새 연결로 session host에 간다
+        async fn works_again(mut self) {
+            assert!(self.agent.sessions().iter().all(|s| s.state.is_running()), "{:?}", self.agent.sessions());
+            let resync = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if let LinkMsg::Event(AgentEvent::Resync { session }) = next_link(&mut self.out).await {
+                        return session;
+                    }
+                }
+            });
+            assert_eq!(resync.await.expect("다시 구독 알림이 없다"), "s");
+            self.input("q1").await;
+            let to = loop {
+                match self.seen.recv().await {
+                    Some(Seen::Hello(n)) => self.hello = n,
+                    Some(Seen::Req(n, SessionRequest::Input { .. })) => break n,
+                    other => panic!("입력 대신 {other:?}"),
+                }
+            };
+            assert_eq!(to, self.hello, "입력이 마지막 연결로 가지 않았다");
+            assert_eq!(self.next_res().await, ("q1".into(), Outcome::Ok(AgentResponse::Done)));
+            std::fs::remove_dir_all(&self.state).unwrap();
+        }
+    }
+
+    /// pump가 frame 오류 밖의 까닭으로 끝나도 session host가 살아 있으면 다시 붙는다(herdr Local endpoint 재연결, plan §8.186).
+    /// session host가 연결만 닫았다(옛 session host가 모르는 요청을 받았을 때, `detect_ipc` 주석)
+    #[tokio::test]
+    async fn pump_reattaches_after_the_session_host_closes_the_connection() {
+        let (rig, _, outcome) = Rig::after_first_connection_ends(FirstEnd::Eof, true).await;
+        assert_eq!(outcome, Ok(()), "살아 있는 session host에 다시 붙지 않고 놓았다");
+        rig.works_again().await;
+    }
+
+    /// session host가 agent가 모르는 메시지를 보냈다(pump의 「session 메시지 해석 실패」)
+    #[tokio::test]
+    async fn pump_reattaches_after_an_unknown_session_message() {
+        let (rig, _, outcome) = Rig::after_first_connection_ends(FirstEnd::Unknown, true).await;
+        assert_eq!(outcome, Ok(()), "살아 있는 session host에 다시 붙지 않고 놓았다");
+        rig.works_again().await;
+    }
+
+    /// 다시 붙는 동안 온 요청에는 「세션에 다시 붙는 중이다」로 답한다(세션은 실행 중 그대로). 인사를 받지 못한 연결은 다음
+    /// 간격에 다시 해 보고, 붙은 뒤의 요청은 새 연결로 간다.
+    #[tokio::test]
+    async fn requests_while_reattaching_are_told_so() {
+        let (mut rig, gate, outcome) = Rig::after_first_connection_ends(FirstEnd::Eof, false).await;
+        assert_eq!(outcome, Ok(()), "살아 있는 session host에 다시 붙지 않고 놓았다");
+        // 가짜가 인사를 받지 않는 동안은 붙을 수 없다: 이 요청은 다시 붙는 중에 온다
+        rig.input("w1").await;
+        let (id, result) = rig.next_res().await;
+        assert_eq!(id, "w1");
+        let Outcome::Err(e) = result else { panic!("다시 붙는 중인데 답했다: {result:?}") };
+        assert_eq!((e.code, e.message.as_str()), (ErrorCode::Unavailable, "세션에 다시 붙는 중이다"));
+        assert!(rig.agent.sessions().iter().all(|s| s.state.is_running()), "{:?}", rig.agent.sessions());
+        gate.store(true, std::sync::atomic::Ordering::SeqCst);
+        rig.works_again().await;
+    }
+
+    /// 끊긴 연결로 보낸 감지 요청에는 답이 오지 않는다: 다시 붙은 뒤 새 연결로 다시 묻는다(감지가 멈추지 않는다)
+    #[tokio::test]
+    async fn detection_asks_again_after_reattach() {
+        let (mut rig, _, outcome) = Rig::after_first_connection_ends(FirstEnd::AfterDetect, true).await;
+        assert_eq!(outcome, Ok(()), "살아 있는 session host에 다시 붙지 않고 놓았다");
+        let again = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match rig.seen.recv().await {
+                    Some(Seen::Req(n, SessionRequest::Detect { .. })) if n > 1 => return n,
+                    Some(_) => {}
+                    None => panic!("가짜 session host가 끝났다"),
+                }
+            }
+        });
+        assert!(again.await.is_ok(), "다시 붙은 뒤 화면 감지를 다시 묻지 않는다");
+        std::fs::remove_dir_all(&rig.state).unwrap();
+    }
+
+    /// 화면 색(plan §8.187): 다시 붙는 동안 받은 색은 붙자마자 그 session host에 가고, 붙어 있는 동안 받은 색은 바로 간다.
+    /// 둘 다 agent가 답하기 전에 pump에 넘겼다
+    #[tokio::test]
+    async fn colors_reach_the_session_host_after_and_while_attached() {
+        let dark = aaa_proto::TermColors { fg: [0xd8, 0xd0, 0xc3], bg: [0x18, 0x16, 0x13] };
+        let light = aaa_proto::TermColors { fg: [0x2a, 0x25, 0x1f], bg: [0xfa, 0xf8, 0xf3] };
+        let (mut rig, gate, outcome) = Rig::after_first_connection_ends(FirstEnd::Unknown, false).await;
+        assert_eq!(outcome, Ok(()), "살아 있는 session host에 다시 붙지 않고 놓았다");
+        rig.agent.clone().handle("c1".into(), AgentRequest::TermColors(dark)).await;
+        assert_eq!(rig.next_res().await, ("c1".into(), Outcome::Ok(AgentResponse::Done)));
+        gate.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (n, body) = rig.next_req().await;
+        assert_eq!(body, SessionRequest::Colors(dark), "다시 붙은 session host에 받아 둔 색을 먼저 보내지 않았다");
+        rig.agent.clone().handle("c2".into(), AgentRequest::TermColors(light)).await;
+        assert_eq!(rig.next_req().await, (n, SessionRequest::Colors(light)));
+        std::fs::remove_dir_all(&rig.state).unwrap();
+    }
+
+    /// session host가 사라졌으면(socket이 없다) 다시 붙으려다 놓는다: 세션은 Lost이고 더 묻지 않는다
+    #[tokio::test]
+    async fn pump_lets_go_once_the_session_host_is_gone() {
+        let (mut rig, _, outcome) = Rig::after_first_connection_ends(FirstEnd::Gone, true).await;
+        assert_eq!(outcome, Err(SessionState::Lost));
+        assert!(rig.agent.sessions().iter().all(|s| s.state == SessionState::Lost), "{:?}", rig.agent.sessions());
+        assert!(rig.seen.try_recv().is_err(), "사라진 session host에 또 붙었다");
+        std::fs::remove_dir_all(&rig.state).unwrap();
     }
 }

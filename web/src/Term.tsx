@@ -125,6 +125,11 @@ function termTheme(): ITheme {
   return t;
 }
 
+/** 이 화면의 터미널 기본 색(`rrggbb`). session host가 프로그램의 색 질의(OSC 10/11)에 이 색으로 답한다(plan §8.187) */
+function termColors(): { fg: string; bg: string } {
+  return { fg: token("--term-fg").replace(/^#/, ""), bg: token("--term-bg").replace(/^#/, "") };
+}
+
 export function TermView({
   pane,
   role,
@@ -489,6 +494,7 @@ export function TermView({
     const linkPressed = (event: MouseEvent): boolean => event.button === 0 && !term.hasSelection();
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
+      send({ t: "colors", ...termColors() });
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -1223,7 +1229,9 @@ export function TermView({
     const connect = () => {
       setLink("connecting");
       // flow=ack: 이 화면은 출력 ACK를 보낸다(herdr-web-ui attach flow_control "ack"). 없으면 host는 보내기 줄로만 잰다
-      const ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?flow=ack`));
+      // fg·bg: 이 화면의 색. host는 그 pane의 agent가 받은 뒤에 연다(그 뒤 프로그램이 묻는 색에 이 색으로 답한다)
+      const colors = new URLSearchParams(termColors()).toString();
+      const ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?flow=ack&${colors}`));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
       ws.onopen = () => {

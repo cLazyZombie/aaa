@@ -2181,7 +2181,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 나누기는 herdr `split_rect`: 나눔 칸 없이 첫 쪽이 `round(길이 × 비율)`. 상자끼리 붙는다(`┐┌`). PTY 크기는 테두리 안쪽(90×30에서 반반이면 30×27 둘). 방향 포커스·자리 바꾸기는 바깥 상자로 찾는다.
   - 포커스 pane 자기 테두리 칸은 accent, 나머지 `overlay0`. 위 테두리 x+1에 제목 ` <이름> `(폭−4로 `…` 자름, 포커스면 accent 굵게, 아니면 `overlay0`). 제목은 붙인 pane 이름이다(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다. herdr는 agent 제목·사람이 붙인 이름을 쓰고 agent 이름은 설정(`show_agent_labels_on_pane_borders`, 기본 끔)으로만 보인다.
   - 모드 막대는 pane 칸 맨 아랫줄(나눈 탭이면 아래 테두리)에 겹친다.
-- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다. → §8.186에서 기본 폭 36·한도 18~72·기억(host 공유 설정 `tuiSidebar*`).
+- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다. → §8.188에서 기본 폭 36·한도 18~72·기억(host 공유 설정 `tuiSidebar*`).
 - **시험.**
   - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
   - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
@@ -2196,7 +2196,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **끌어 고르는 중 휠(PaneTerminal 883~893줄 `dragWheel`).** 전에는 휠이 선택을 지웠다. 그래서 끌며 위로 굴려 화면 밖까지 고를 수 없었다. 이제 고르는 끌기 중 휠은 선택을 두고 xterm 기록을 줄 단위로 굴린 뒤 마지막 마우스 자리로 끌기를 한 번 더 알린다(선택 끝이 굴린 줄까지 따라온다). 마우스 보고 중에도 프로그램에 휠을 보내지 않는다.
   - 차이 목록 J 「선택을 놓으면 복사(화면 밖 포함)」는 이것으로 같음이다. 참고가 herdr 원문 API를 쓰는 까닭은 xterm 기록이 0이어서다. aaa xterm은 기록 10,000줄을 가져 고른 글이 곧 원문이다.
 - **「패널에서 클립보드로 복사」(설정, 기본 켬, 참고 `paneClipboard`, PaneTerminal 1050~1063줄).** 끄면 OSC 52를 받기만 하고 버린다. pane 안 아무 프로세스나(agent의 도구 호출도) 사용자가 다음에 붙여 넣을 글을 심을 수 있어서다. 문구는 참고 그대로다. 차이 목록에는 「같음」이었지만 설정이 빠져 있었다.
-- **커서 위치 보고(차이 목록 A 「확인 못 함」 → 같음).** herdr는 서버의 ghostty가 프로그램 질의에 답하고(`terminal_responses`, src/pane/terminal.rs 1402~1547줄) 웹에는 그린 화면을 보내므로 xterm이 답할 일이 없다. aaa는 session host가 DSR 6에 답하고(aaa-vt `DsrScanner`) 웹은 xterm의 같은 답을 버린다. 다만 다른 질의(DA1·DA2·kitty 키보드 질의 `CSI ? u`·색 질의 OSC 10/11)는 session host가 답하지 않아, 붙은 xterm 수만큼(0~N번) 답이 간다. herdr는 늘 한 번이다. 이것은 세션 쪽 일이라 「확인할 것」으로 남긴다(보고서).
+- **커서 위치 보고(차이 목록 A 「확인 못 함」 → 같음).** herdr는 서버의 ghostty가 프로그램 질의에 답하고(`terminal_responses`, src/pane/terminal.rs 1402~1547줄) 웹에는 그린 화면을 보내므로 xterm이 답할 일이 없다. aaa는 session host가 DSR 6에 답하고(aaa-vt `DsrScanner`) 웹은 xterm의 같은 답을 버린다. 다만 다른 질의(DA1·DA2·kitty 키보드 질의 `CSI ? u`·색 질의 OSC 10/11)는 session host가 답하지 않아, 붙은 xterm 수만큼(0~N번) 답이 간다. herdr는 늘 한 번이다. 이것은 세션 쪽 일이라 「확인할 것」으로 남긴다(보고서). → §8.187에서 session host가 답한다.
 - **시험(웹 E2E, 고치기 전 판에서 실패함을 확인).**
   - 「그림 붙여 넣기」: 그림 띠·오류 띠가 떠도 `.term-scroll` 칸 크기가 그대로다.
   - 「터미널 스크롤」: 맨 아래에는 단추가 없고, 위로 굴리면 grid 오른쪽 아래(안쪽)에 뜨며, 누르면 맨 아래·터미널 focus 그대로. 휴대폰·iPad 한 손가락으로 올려도 뜬다. 끌기 중 휠로 12줄 굴리면 첫 줄이 12줄 위이고, 놓으면 화면 밖 줄(`s-NNN`)부터 `more-3`까지 복사한다.
@@ -3423,7 +3423,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **증상.** 07 「host를 다시 띄운 뒤 앞 기록」에서 6000줄을 내보낸 직후 host를 다시 띄우면, 가끔 그 pane이 빈 화면(120x32, 0B)과 「세션이 끝났다」가 되었다(부하가 클 때). session host는 살아 있었다(`exit.json` 없음, socket 그대로).
 - **원인.** agent pump(`aaa-agent` `pump`)는 `select!` 하나로 감지 timer·host 명령·session host frame(`FrameRx::next`)을 기다린다. `next`가 부르던 `read_frame`은 길이·종류·payload를 함수 안 변수에 모으고 `read_exact`로 읽어 취소에 안전하지 않았다. frame이 반쯤 온 동안 다른 갈래가 이기면(host 요청·`HostGone`·감지 timer) 읽은 바이트를 버리고, 다음 읽기는 터미널 글을 길이로 읽어 `TooLarge`로 끝났다. pump는 log 없이 끝나고, `exit.json`이 없어 세션은 `Lost`, 요청은 `offline_request`의 빈 replay·「세션이 끝났다」를 받았다. pump를 다시 붙이는 길은 agent 시작(`recover`)과 새 세션뿐이라 agent를 다시 띄울 때까지 그대로였다. host 재시작이 없어도 출력이 많은 동안 웹 요청 하나로 날 수 있다.
 - **고침.** `FrameRx`가 읽은 바이트를 struct 안 buffer에 두고 `read_buf`(취소되면 읽은 것이 없다)로만 기다린다. frame은 `take_frame`(aaa-proto: 길이를 읽자마자 상한, 종류 byte가 오면 종류를 본다)으로 다 모인 때에만 꺼낸다. `FrameRx`를 쓰는 모든 연결(agent↔host·agent↔session host·front)이 같이 고쳐진다. `read_frame`에는 취소에 안전하지 않다고 적었다. pump가 frame 오류로 끝나면 까닭을 warn으로 남긴다.
-- **남긴 것.** pump가 다른 까닭으로 끝났는데 session host가 살아 있으면 다시 붙지 않는 것은 그대로다(다시 붙기는 따로 정한다).
+- **남긴 것.** pump가 다른 까닭으로 끝났는데 session host가 살아 있으면 다시 붙지 않는 것은 그대로다(다시 붙기는 따로 정한다). → §8.186에서 다시 붙는다.
 - **시험.** aaa-common `next_keeps_a_frame_cut_by_another_select_branch`: 터미널 frame과 제어 frame을 모든 바이트 자리에서 끊고, 그 자리에서 `select!`의 다른 갈래가 이기게 한 뒤 나머지를 보낸다. 옛 읽기는 1바이트에서 끊은 경우부터 「연결이 frame 중간에 끊겼다」로 실패하고, 고친 판은 모든 자리에서 두 frame을 그대로 받는다. aaa-proto `take_frame_*` 둘(한 바이트씩 모을 때·두 frame이 한 번에 올 때·상한·빈 frame·모르는 종류).
 
 ### 8.163 profile 관리·safety를 herdr-projects대로(10-18, 결정 20 D12, 차이 목록 4장 G #593·#594)
@@ -4045,7 +4045,95 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   (지금 탭 거름·다른 탭 카드·`o`·보는 pane은 host가 안 보냄·입력 필요가 같은 pane 카드를 바꿈·누름·쓰던 pane이라도 다른 탭이면 알림), 웹 E2E 19(짧은 턴 안 띄움·긴 턴
   「작업 완료」·누르면 pane·보고 있는 pane 안 띄움). 결함 심기 열(host 넷·TUI 셋·웹 셋, 옛 「lease면 봤음」 규칙 포함)이 모두 실패했다.
 
-### 8.186 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로, 구역 비율, workspace 이름·닫기 키(10-18, 사용자 사진 둘, 다시 세기 341 U3·546)
+### 8.186 pump가 살아 있는 session host에 다시 붙는다(10-18, t-0345 다시 세기 a1, 전환 gate G8)
+
+- **증상.** agent pump(`aaa-agent` `Agent::pump`)가 frame 오류가 아닌 까닭으로 끝나면(session host가 연결을 닫음, 모르는 session 메시지,
+  session host로 쓰기 실패) session host가 살아 있어도 `e.pump = None`이 되고 세션은 `Lost`였다. 다시 붙는 길이 agent 시작(`recover`)과
+  새 세션뿐이라, 그 pane은 agent를 다시 띄울 때까지 「세션이 끝났다」와 마지막 화면만 주었다. 실제로 나는 길: 옛 session host는 모르는
+  요청을 받으면 연결을 끊는다(`detect_ipc` 주석, binary를 바꾼 뒤 살아 있는 옛 session host).
+- **참고(herdr 0.9.5).** client가 살아 있는 서버와의 연결을 잃으면 `client/endpoint/supervisor.rs`의 `EndpointSupervisors`가 다시 붙는다:
+  `disconnected` → `Reconnecting`(`:245-256`), 다음 시도는 `retry_delay` 0.5초부터 두 배·Local은 30초까지(`:11-14`, `:224-241`, `:365-373`),
+  Local은 붙으면 시도 수를 0으로(`:207-213`), 거부(`Attention`)면 Local은 그만둔다(`:214-219`). 끊긴 endpoint의 요청은 취소하고
+  (`client/shell_runtime.rs:515-568` `handle_endpoint_disconnect`) 상태를 「reconnecting」으로 보인다(`client/shell/endpoints.rs:162-163, 726`).
+  herdr-web-ui의 attach 다시 찾기(`server/index.ts:1516-1549`, 5초 창)는 live handoff로 터미널 ID가 바뀐 때의 다른 일이라 따르지 않았다.
+- **고침.** pump가 연결 하나를 놓은 까닭을 `Dropped`로 가른다. forget의 `Close`(또는 세션 항목이 사라짐)는 그대로 끝낸다. 그 밖이면
+  `exit.json`이 있으면(끝난 session host는 그것을 쓴 뒤 닫는다) 그대로 끝내고, `meta.json`의 session host pid가 없으면 놓는다. 아니면 같은
+  pump task 안에서 herdr 간격(`reattach_delay`: 0.5·1·2…30초)으로 다시 붙는다(`connect_session`: 연결·Hello·Welcome을 `attach`와 함께 쓴다).
+  받는 쪽이 없으면(socket 없음·연결 거부: session host가 사라졌다) 또는 session host가 거부하면 놓는다. herdr의 Local 서버는 사람이 다시
+  띄울 수 있지만 session host는 다시 뜨지 않아서다(차이는 이것 하나). 붙으면 세션 정보를 갱신하고 host에 `Resync`를 보내, host가 mirror의
+  마지막 offset부터 다시 구독한다(`aaa-host` `on_resync`, session host 보존 범위 안이면 빈틈 없이 bytes만). 끊긴 연결로 보낸 감지 요청은
+  `Watch::connection_lost`로 비워 다음 간격에 새 연결로 다시 묻는다.
+- **보이는 상태와 log.** 다시 붙는 동안 세션은 실행 중(`Running`) 그대로이고 화면은 host mirror의 마지막 화면이다. 그동안 온 요청(입력·크기·
+  화면 등)에는 `unavailable` 「세션에 다시 붙는 중이다」로 답하고, 끊길 때 답을 기다리던 요청에는 `unavailable` 「session host 연결이
+  끊겼다: <까닭>」으로 답한다(herdr도 끊긴 endpoint의 요청을 취소한다). 다시 붙지 못하면 지금처럼 `Lost`(종료 기록이 있으면 `Exited`)와
+  「세션이 끝났다」다. log: 끊김 warn 「session host 연결이 끊겼다(<까닭>): 다시 붙는다」, 붙음 info 「세션에 다시 붙었다」(attempt), 못 붙고
+  다시 할 때 info(다음 간격), 놓을 때 warn 「session host에 다시 붙지 못해 놓는다」, pid가 없을 때 info 「session host가 없다」.
+  pane에 「다시 붙는 중」 표지를 보이려면 Front API가 바뀌어야 해 하지 않았다(후속 후보).
+- **시험.** `aaa-agent` 유닛(가짜 session host: 실제 socket·frame·인사, session host pid는 시험 프로세스): 연결만 닫힘·모르는 메시지 뒤 다시
+  붙어 세션이 실행 중이고 `Resync`가 가며 입력이 새 연결로 간다(`pump_reattaches_after_*` 둘), 인사를 받지 못하는 동안 온 입력에
+  「세션에 다시 붙는 중이다」(`requests_while_reattaching_are_told_so`), 감지 요청을 받고 끊긴 뒤 새 연결로 다시 묻는다
+  (`detection_asks_again_after_reattach`), socket이 없어지면 `Lost`로 놓고 더 붙지 않는다(`pump_lets_go_once_the_session_host_is_gone`),
+  간격 상한(`reattach_delay_is_bounded`, herdr `retry_backoff_is_bounded`). 고치기 전 `pump_reattaches_after_*` 둘이 `Err(Lost)`로 실패.
+  결함 심기 다섯(다시 붙지 않음 → 넷 실패, 다시 붙는 중 「세션이 끝났다」 → 하나, `Resync` 없음 → 셋, 사라진 session host에도 다시 붙음 →
+  하나, 감지 요청을 비우지 않음 → 하나) 모두 실패.
+- **반영.** agent binary를 바꾸고 agent를 다시 띄워야 한다. session host·host·웹은 바뀌지 않는다.
+
+### 8.187 터미널 질의에 session host가 한 번 답한다(10-18, t-0345 다시 세기 a2, 전환 gate G8, §8.93 「확인할 것」, t-0346)
+
+- **증상.** session host는 DSR 6에만 답했다. DA1·DA2·색 질의(OSC 10/11)는 붙은 웹 화면의 xterm.js 5.5가 화면마다 답해(DA1 `ESC[?1;2c`,
+  DA2 `ESC[>0;276;0c`, OSC는 그 화면 테마 색) 0~N번 pane 입력으로 갔다. 답이 없으면 답을 기다리는 프로그램이 멈추고(감독 멈춤), 두 번이면
+  남는 답이 입력으로 읽힌다. kitty 키보드 질의 `CSI ? u`는 xterm.js 5.5가 답하지 않아(`u`는 앞 글자 없는 restoreCursor만 받는다,
+  `src/common/InputHandler.ts:264`) 화면 수와 상관없이 늘 0번이었다(t-0345의 「0~N」은 이 질의에는 맞지 않는다).
+- **참고(herdr 0.9.5).** 서버의 ghostty가 답하고 쓰기와 순서를 지킨다(`src/pane/terminal.rs:1402-1421, 1491-1569` `terminal_responses`).
+  client에는 그린 화면을 보내 client 터미널은 pane의 질의를 보지 않는다. ghostty 기본 답: DA1 `ESC[?62;22c`·DA2 `ESC[>1;0;0c`
+  (`vendor/libghostty-vt/src/terminal/device_attributes.zig` `Primary`·`Secondary` 기본값과 `primary default` 시험, herdr는 이 callback을
+  걸지 않는다), DSR 6 커서 위치(`stream_terminal.zig:1337-1358`), kitty `ESC[?<flags>u`(`stream_terminal.zig:1538-1545`).
+- **고침(DA1·DA2·DSR 6).** aaa-vt `QueryScanner`가 출력에서 DA1(`CSI c`·`CSI 0 c`)·DA2(`CSI > c`·`CSI > 0 c`)·DSR 6을 빼내고, session host가
+  질의 자리까지 먹인 화면으로 ghostty와 같은 바이트를 답한다. chunk 끝의 질의일 수 있는 앞부분은 다음 출력까지 붙든다(끝나지 않은 escape라
+  어느 터미널도 아직 그리지 않는다, herdr-web-ui `server/attach-output.ts:21-59` `AttachStartupProbes`도 같다). 질의는 ring·VT·front로 가지
+  않으므로 화면(xterm)은 답할 것이 없고, 늦게 붙은 화면이 옛 질의에 다시 답할 일도 없다. 붙들던 끝은 세션이 끝날 때 마저 남긴다. 다른 인자의
+  DA(`CSI 1 c`)·DECXCPR(`CSI ? 6 n`)는 질의가 아니라 그대로 둔다. 웹의 DSR 답 버리기(`Term.tsx`)는 옛 session host를 위해 둔다.
+- **kitty 키보드 질의에는 답하지 않는다(참고와 다름).** 답하면(`ESC[?0u`) 프로그램은 kitty 키보드 방식이 있다고 보고 그 꼴의 키를 기다리지만
+  aaa 화면(xterm.js 5.5·TUI)은 그 꼴로 보내지 않는다. 답이 없으면 프로그램은 뒤따르는 DA1 답으로 「없음」을 안다(이제 DA1은 늘 한 번 답한다).
+  kitty 키보드를 쓰려면 화면의 키 인코딩이 먼저다(후속).
+- **색 질의(OSC 10/11)는 화면이 알려 준 색으로(herdr host terminal theme).** herdr client는 바깥 터미널 색을 서버에 알리고
+  (`src/server/clients.rs:377-424` `update_host_theme`), 서버는 foreground client(가장 최근에 붙거나 입력한 client, `src/server/headless.rs`
+  `promote_client_to_foreground`·`ClientShellHostTheme`)의 색으로 답한다(`src/pane/terminal.rs:3424-3488` `default_color_query_response`·
+  `osc_rgb_response`: `rgb:rrrr/gggg/bbbb`, 끝은 늘 ST). 프로그램이 OSC 10/11로 정한 색이 있으면 그 색을 질의의 끝으로 답하고(ghostty
+  `stream_terminal.zig:1717-1731`), 색을 모르면 답하지 않는다(pane 터미널은 기본 색이 비어 `Terminal.zig:174-193` `colorForXterm`이 없다).
+  foreground client가 없어도 theme은 그대로 둔다(`sync_foreground_client_state`).
+- **고침(OSC 10/11).** 웹은 pane WebSocket 주소에 `fg`·`bg`(token `--term-fg`·`--term-bg`), 테마를 바꾸면 `TermClientMsg::Colors`로 알린다.
+  host(colors.rs)는 화면마다 색과 마지막으로 쓴(알림·입력 `lease_use`) 차례를 두고 가장 최근 화면의 색을 지금 색으로 삼는다. 지금 색이 바뀌면
+  agent 연결마다 차례 있는 줄로 `AgentRequest::TermColors`(agent 기능 `term_colors.v1`)를 보낸다(앞 색이 뒤 색을 덮지 않는다). agent는 색을
+  두고 모든 pump에 넘긴 뒤 답하며, pump는 SESSION_IPC 1.2 session host에 `SessionRequest::Colors`를 보내고 새 연결(다시 붙음)마다 처음에 다시
+  보낸다. 새 세션은 spec에 실어 프로그램이 시작하자마자 묻는 색(vim·Claude Code)에도 답한다. aaa-vt `QueryScanner`가 OSC 10/11 `?`(이어진
+  `10;?;?`도)를 빼고 지정·110/111·`ESC c`는 출력에 남긴 채 적으며(`#`·hex·`rgb:`만 읽는다), `DefaultColors`가 프로그램 색 → 화면 색 → 없음
+  순으로 답한다.
+- **화면을 열기 전에 색이 닿는다.** pane WebSocket은 그 pane의 agent가 이 화면의 색을 받았다고 답한 뒤에(지금 색이 같아도 다시 보낸다)
+  snapshot을 보낸다. agent는 pump에 넘긴 뒤 답하므로 화면이 본 뒤의 입력·질의는 pump에서 색 뒤에 선다. 테마를 바꾼 `colors`도 같게 기다린 뒤
+  그 화면의 다음 메시지를 본다. 값: agent가 늦으면 화면 여는 것도 늦다(요청 시한 15초까지, 끊긴 agent는 기다리지 않는다).
+- **참고와 다른 것.** TUI는 바깥 터미널 색을 알리지 않는다(TUI는 grid로 그려 바깥 터미널이 질의를 본 적이 없어 늘 0번이었다, 후속).
+  색을 알린 화면이 없는 동안(host를 띄우고 웹이 붙기 전)은 답하지 않는다(참고도 host theme을 모르면 답하지 않는다). 옛 웹(주소에 색이 없다)만
+  붙은 동안도 같다.
+- **같은 종류로 남긴 것(확인할 것).** xterm.js가 화면마다 답하는 DSR 5(`ESC[0n`)·DECXCPR(`ESC[?r;cR`)·DECRQM(`$y`)·OSC 4·12, 질의와 지정이 섞인
+  OSC 10/11과 ghostty만 답하는 DA3(`CSI = c`)·XTVERSION. 같은 scanner에 줄을 더하면 된다. X11 색 이름·`rgbi:` 지정은 읽지 않는다.
+- **시험.** aaa-vt `queries_are_taken_out_of_the_output_across_chunks`(질의 빼기·자리·chunk 경계 붙들기·질의 아닌 escape 그대로),
+  `color_osc_is_found_across_chunks`(OSC 10/11 질의는 빼고 끝을 적음, 지정·되돌리기는 남김, 화면이 받는 꼴), `default_color_replies_prefer_the_program_then_the_screen`
+  (프로그램 색·화면 색·없음, 색 지정 꼴), aaa-host `current_colors_follow_the_last_front_used`, aaa-agent
+  `colors_reach_the_session_host_after_and_while_attached`(다시 붙은 session host에 받아 둔 색이 먼저, 붙은 동안 받은 색은 바로). 웹 E2E 20
+  「터미널 질의 답」: 질의 프로그램(시작하자마자 바탕 색을 묻고, `#x`면 질의와 표지 `Q<n>.`, `#z`면 그 뒤 받은 것)을 붙은 화면 0·1·2개에서
+  돌린다. 화면마다 표지까지 읽은 뒤 `sentFrames`가 비었는지(화면이 답하지 않았다), 그 뒤 CLI로 보낸 `#z`로 pane이 받은 답이 정확히 하나인지
+  본다(session host 답은 질의를 화면에 보내기 전에 pane 입력으로 가 `#z`보다 먼저 닿는다). 색 답은 마지막으로 연 화면의 token을 ST 꼴로
+  바꾼 것이다(OSC 10은 ST, 11은 BEL로 묻는다). 고치기 전 실패: 화면 0개 DA1·DA2·OSC 답 없음, 1개 xterm이 답함(`ESC[?1;2c`·`ESC[>0;276;0c`·
+  테마 색), 2개 같은 답 두 번. 고친 뒤 통과. 결함 심기 열셋이 모두 실패한다. DA·DSR(1부): 끝의 앞부분을 붙들지 않음·DA2를 질의로 보지 않음
+  (유닛), 받은 출력을 그대로 화면에 보냄(xterm도 답해 두세 번)·답을 pane에 쓰지 않음·DA2에 xterm.js 답(E2E 20). 색(2부): 색 질의를 화면에도
+  보냄·프로그램 색을 적지 않음·가장 먼저 쓴 화면의 색·새 연결에 색을 보내지 않음·붙은 동안 색을 넘기지 않음(유닛), spec 색을 쓰지 않음(시작할
+  때 질의 답 없음)·화면 색 답을 BEL로 맺음·웹이 색을 알리지 않음(E2E 20).
+- **반영.** 1부는 session host binary다. 이미 떠 있는 session host(이어지는 세션)는 그 세션이 끝날 때까지 옛 동작이다(새로 띄운 세션부터).
+  2부는 host(웹 포함)·agent·session host가 함께 바뀐다(SESSION_IPC 1.2, agent 기능 `term_colors.v1`, FRONT_API 1.34(배포 전, 웹 색 알림)). 옛 session
+  host에는 색을 보내지 않으므로 그 세션의 색 질의는 그대로 화면이 답한다.
+
+### 8.188 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로, 구역 비율, workspace 이름·닫기 키(10-18, 사용자 사진 둘, 다시 세기 341 U3·546)
 
 - **요청(사용자 10-18 15:21).** 「왼쪽 창이 기본값이 작다. herdr만큼 크게, 더 크게도 가능하게. 지금 테마를 바꾸면 키운 왼쪽 창이 리셋된다.
   테마는 테마만.」

@@ -14,7 +14,8 @@ pub use msg::*;
 pub use orch::*;
 pub use usage::*;
 pub use version::{
-    AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, SESSION_IPC_DETECT, Version, negotiate, require_features,
+    AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, SESSION_IPC_COLORS, SESSION_IPC_DETECT, Version, negotiate,
+    require_features,
 };
 
 /// Agent link heartbeat: 양쪽이 이 간격으로 ping하고, 이만큼 아무것도 못 받으면 끊는다.

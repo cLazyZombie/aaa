@@ -27,7 +27,7 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     "usageOrder",
     "usageHidden",
 ];
-/// TUI 사이드바 배치(plan §8.186): 사용자가 끌거나 접은 값만 있다. herdr는 client 기기 파일(`client-shell/*.json`
+/// TUI 사이드바 배치(plan §8.188): 사용자가 끌거나 접은 값만 있다. herdr는 client 기기 파일(`client-shell/*.json`
 /// `sidebar_width`·`sidebar_section_split`·`sidebar_collapsed`)에 두지만 aaa front는 상태를 갖지 않아 host에 둔다(plan §8.92
 /// 설정 절). 값이 null이면 사용자가 되돌린 것이다(설정값을 쓴다). 웹은 이 이름을 읽지 않는다
 pub(crate) const TUI_SETTING_KEYS: &[&str] = &["tuiSidebarWidth", "tuiSidebarSplit", "tuiSidebarCollapsed"];
