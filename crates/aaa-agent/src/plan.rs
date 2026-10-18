@@ -11,6 +11,8 @@
 //! - 배경 작업은 그것을 띄운 Claude 프로세스 안에서 돈다: 지금 프로세스가 시작하기 전에 띄운 것은 세지 않는다(`since_ms`:
 //!   Claude SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
 //! - 기록은 처음부터 읽되 한 번에 `budget`만큼만, 그 뒤로는 늘어난 만큼만 읽는다. 처음 읽기가 끝에 닿기 전에는 계획을 말하지 않는다.
+//! - 다른 파일로 바뀐 것은 unix에서 dev·inode로 안다. 그 밖(Windows)에서는 줄어든 것만 안다: 같은 경로가 같거나 큰 새 파일로
+//!   바뀌면 이어 읽는다(새 harness 세션은 경로가 달라 처음부터 읽으므로 드물다).
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};

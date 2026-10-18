@@ -3083,7 +3083,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     배경 수를 지운다.
   - 웹: Agents 보기 줄에 참고 `BackgroundBadge`·`PlanBadge`(말은 「배경 작업 N개 실행 중」·「계획 M단계 중 N단계 끝남 · 지금 단계」,
     CSS는 이미 옮긴 Sidebar.css 그대로). 머신 목록 줄·머리줄은 참고처럼 그리지 않는다. TUI pane 배지는 `작업 중 40% 1/3 배경2`
-    (폭이 애매한 기호 대신 글).
+    (폭이 애매한 기호 대신 글). 참고에 없는 자리라, 목록이 좁아 제목이 8칸보다 줄게 되면 계획·배경 수를 먼저 뺀다(들어가는 것만).
 - **계약.** FRONT_API 1.22: `AgentStatus.plan`(`PlanSummary`)·`background`(선택). agent→host `HarnessEvent.plan`·`background`(선택).
   옛 host는 모르는 `kind = "plan"`을 상태로 읽지 않으므로(`next_activity` None) 무시한다. agent 기능 이름은 더하지 않았다(host가
   agent에 청하는 것이 없다).
@@ -3094,7 +3094,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험.**
   - agent 유닛 `plan::tests`: 답 받은 호출만·실패한 갱신·지운 단계·다 끝난 뒤 새 계획, Codex 마지막 update_plan(exec 인용은 무시),
     배경 명령·배경/동기 하위 agent·세 자리 알림·인용은 무시·TaskStop·프로세스 경계, 첫 읽기가 끝나기 전 침묵·8MiB 넘는 줄,
-    UTC 시각 변환. host `plan_events_set_counts_without_changing_the_activity`, TUI `pane_badge_carries_plan_and_background_counts`.
+    UTC 시각 변환. host `plan_events_set_counts_without_changing_the_activity`, TUI `pane_badge_carries_plan_and_background_counts`
+    (좁을 때 빠지는 차례 포함).
   - 웹 E2E 11 「계획 n/m·배경 작업 수」: SessionStart hook으로 실험실 기록을 알린 pane에 단계 셋(하나 끝, 하나 진행)·배경 명령·배경
     하위 agent를 쓰면 Agents 줄이 `1/3`(title에 지금 단계)과 배경 `2`, CLI `pane list`도 같은 값. queue-operation 알림 뒤 `1`, 사람 쪽 글
     알림 뒤 배지 없음, 남은 단계를 끝내면 `3/3`·`is-done`. 결함 심기: agent가 알림을 무시하게 바꾸면 「20000ms 안에 배경 하나이 되지
