@@ -2033,7 +2033,7 @@ fn copy_mode_like_herdr() {
     assert!(tui.wait_exit());
 }
 
-/// 4C 설정 창(herdr `prefix s` `render_settings_overlay`·`apply_settings_choice`, plan §8.175): 테마 구역에서 ↓면 바로 입혀
+/// 4C 설정 창(herdr `prefix s` `render_settings_overlay`·`apply_settings_choice`, plan §8.177): 테마 구역에서 ↓면 바로 입혀
 /// 보고(탭 막대 `panel_bg`), Esc면 되돌리고 아무것도 쓰지 않는다. Enter면 실험실 host.toml `[tui] theme`에 쓰고(다른 줄은
 /// 그대로) 닫는다. 상태 표시 구역에서 기호를 고르면 창을 둔 채 `status_indicators`를 쓰고 확인 대기 pane 점이 `×`가 된다.
 /// spaces 맨 아랫줄 `menu`(전체 메뉴)를 누르고 Enter면 설정 창이 열린다. host.local.toml이 같은 key를 덮으면 알린다.
@@ -2119,7 +2119,7 @@ fn settings_like_herdr() {
     drop(tui);
 }
 
-/// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.173): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,
+/// 기록을 편집기로(herdr 0.9.5 `prefix e` `edit_scrollback`, plan §8.175): 그 pane 머신 agent가 기록을 임시 파일(0600)로 쓰고,
 /// host가 그 pane을 나눠 편집기 pane을 띄워 탭을 zoom한다. 편집기 pane이 끝나면(끝남·닫기) 그 pane을 닫고 파일을 지우고, 끝날
 /// 때도 zoom이면 나누기 전 zoom으로 돌리고, 연 pane으로 포커스를 돌린다. 편집기는 agent `EDITOR`(받은 경로를 적고 내용을 보인
 /// 뒤 Enter를 기다리는 스크립트), 임시 폴더는 agent `TMPDIR`로 실험실 안에 둔다.
