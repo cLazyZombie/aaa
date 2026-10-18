@@ -223,6 +223,8 @@ a: number, };
 
 export type GridLine = { row: number, runs: Array<GridRun>, };
 
+export type GridLink = { row: number, col: number, end: number, uri: string, };
+
 export type GridFrame = { pane: string, cols: number, rows: number, cursor_row: number, cursor_col: number, cursor_visible: boolean, full: boolean, lines: Array<GridLine>,
 /**
  * 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)

@@ -68,6 +68,7 @@ pub fn typescript_bindings() -> String {
         LayoutChange::decl(&cfg),
         GridRun::decl(&cfg),
         GridLine::decl(&cfg),
+        GridLink::decl(&cfg),
         GridFrame::decl(&cfg),
         PaneModes::decl(&cfg),
         MouseMode::decl(&cfg),
