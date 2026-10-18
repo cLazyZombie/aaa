@@ -854,6 +854,7 @@ pub enum AgentEvent {
     /// peer+token을 agent가 판정했다. 역할·프로젝트는 host가 정한다.
     Post {
         session: String,
+        #[serde(flatten)]
         input: crate::PostInput,
     },
     /// harness hook·notify·`aaa report`에서 온 상태 사건(adapter가 정규화)

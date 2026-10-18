@@ -299,7 +299,7 @@ export type PostResult = { "state": "accepted", id: string, } | { "state": "refu
 
 export type PostSender = { thread: string | null, role: Role, mission: string | null, machine: string, session: string | null, verified: string, };
 
-export type PostEnvelope = { id: string, project: string, from: PostSender, input: PostInput, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, };
+export type PostEnvelope = { id: string, project: string, from: PostSender, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
 export type FrontRequest = { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**

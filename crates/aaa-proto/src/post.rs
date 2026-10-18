@@ -47,10 +47,52 @@ pub struct PostEnvelope {
     pub id: String,
     pub project: String,
     pub from: PostSender,
+    #[serde(flatten)]
     pub input: PostInput,
     pub caused_by: Vec<String>,
     pub body_sha256: String,
     #[ts(type = "number")]
     pub created_ms: u64,
     pub state: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    /// 기획 §7.3·§7.4의 독립 JSON 계약. 중첩 input이나 instruction 종류를 도입하면 실패한다.
+    #[test]
+    fn post_json_matches_flat_wire_and_envelope_contract() {
+        let wire = json!({"ev":"post","session":"s1","post_id":"00000000000000000000000000000001","to":"coordinator","post_type":"request","topic":"ci-red","title":"보고","body":"본문","needs_user":true});
+        let event: crate::AgentEvent = serde_json::from_value(wire.clone()).expect("기획의 최상위 post 필드를 읽는다");
+        let crate::AgentEvent::Post { input, .. } = event else { panic!("post가 아니다") };
+        let envelope = PostEnvelope {
+            id: "p-00000001".into(),
+            project: "demo".into(),
+            from: PostSender {
+                thread: Some("t-0001".into()),
+                role: crate::Role::Worker,
+                mission: None,
+                machine: "mac-a".into(),
+                session: Some("s1".into()),
+                verified: "peer+token".into(),
+            },
+            input: input.clone(),
+            caused_by: vec![],
+            body_sha256: "fixture-sha".into(),
+            created_ms: 1,
+            state: "delivered".into(),
+        };
+        let value = serde_json::to_value(envelope).unwrap();
+        assert_eq!(value["post_type"], "request");
+        assert_eq!(value["body"], "본문");
+        assert!(value.get("input").is_none());
+        let output = serde_json::to_value(crate::AgentEvent::Post { session: "s1".into(), input }).unwrap();
+        assert_eq!(output["post_id"], wire["post_id"]);
+        assert_eq!(output["post_type"], "request");
+        assert!(output.get("input").is_none());
+        let mut instruction = wire;
+        instruction["post_type"] = json!("instruction");
+        assert!(serde_json::from_value::<crate::AgentEvent>(instruction).is_err(), "post에는 지시 종류가 없다");
+    }
 }
