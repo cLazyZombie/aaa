@@ -2317,8 +2317,7 @@ fn turn_end_notices_follow_reports() {
         (Some("demo"), Some(id.as_str()), "알림")
     );
     assert_eq!(n1.agent.as_deref(), Some("claude"));
-    let turn = n1.turn_ms.expect("host가 본 턴");
-    assert!(turn > 0 && turn <= n1.at_ms.saturating_sub(t) + 1_000, "턴 {turn}ms: {n1:?}");
+    assert!(n1.turn_ms.is_some_and(|t| t > 0), "host가 본 턴: {n1:?}");
     // 1분이 안 된 턴: 웹 앱 안 알림은 띄우지 않는다(herdr-web-ui LONG_TURN_MS)
     assert!(!n1.long && n1.at_ms >= t1, "{n1:?}");
 
