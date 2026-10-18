@@ -3113,6 +3113,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴는 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
 - **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래. U4: lib.rs `sidebar_like_herdr`(머리 ` spaces`, 셋째 줄 ` · main`, 16째 줄 구분선, ` agents`…`projects`, 19째 줄 머신), harness `side_list_like_web` 7b단계(두 구역, 탐색은 지금 workspace 줄에서, scratch 골라 Enter면 탭 loose 하나·포커스 loose, main으로 돌아옴). 전환해도 workspace 이름을 바꾸지 않는 결함을 심으면 실패한다.
 
+### 8.147 시험 셸 prompt를 기계와 상관없이(10-18, coordinator 「`pane_modes_like_herdr` 간헐 실패」, t-0327 판정)
+
+- **증상.** GitHub macOS(cdef86c·ccbabcb·a492d41)에서 TUI `pane_modes_like_herdr`가 「둘 다」(zoom을 푼 뒤)를 20초 기다리다 실패했다. 오른쪽(나눈) pane에 `right-9`가 없고, runner hostname(48자)이 24칸에서 접힌 prompt 줄만 있었다. 다음 run은 통과했다(간헐). ci-local에서는 나지 않았다.
+- **원인(시험 환경).** 명령 없는 pane(나눔)은 `SHELL`(lab이 `/bin/sh`로 정함)을 login으로 띄운다(portable-pty `new_default_prog`). macOS login sh(bash 3.2 sh 모드)는 `/etc/profile` → `/etc/bashrc`를 읽어 prompt를 `\h:\W \u\$ `로 덮는다. 그래서 화면이 기계 hostname 길이에 기댔다. 크기가 바뀔 때마다 셸이 접힌 prompt를 다시 그려 바뀐 줄이 생긴다. 왼쪽 pane(`tab create -- /bin/sh`)은 login이 아니라 `sh-3.2$`였다.
+- **재현.** 실험실 agent의 HOME을 가짜로 두고 그 `.profile`이 48자 hostname 모양 prompt를 정하게 심었다. 접힌 prompt 화면은 그대로 나왔다(크기가 바뀔 때마다 두 번 그림). 그러나 20초 실패는 나지 않았다: cdef86c 20회, Q23 전 branch 시험 병합 20회, 지금 branch 40~52자 13회 모두 0회. 이 Mac에서는 CI의 경합이 나지 않았다.
+  - 가설(확인 안 함): §8.139(Q23)과 모양이 같다. 폭만 바뀐 장면에 host는 바뀐 줄(다시 그린 prompt)만 보내고, TUI는 grid를 비웠다. 짧은 prompt는 같은 줄에 다시 그려 바뀐 줄이 없어 드러나지 않는다. Q23 고침이 든 main(aff9a2c부터)에서는 이 길이 막힌다.
+- **고침.** lab이 노드 설정 폴더에 `shrc`(`PS1='$ '`)를 쓰고 `Node::cmd`가 `ENV`로 준다. sh는 `/etc/profile`·`~/.profile` 다음에 `ENV`를 읽으므로(login·비login 모두, 셸 실험으로 확인) 그 prompt가 이긴다. `TERM_PROGRAM`도 뺀다(`/etc/bashrc_$TERM_PROGRAM`). Ubuntu dash 기본 prompt와 같은 `$ `다. `docs/testing.md` 「실험실」에 적었다.
+- **울타리.** `pane_modes_like_herdr`는 나눈 직후 오른쪽 pane 화면이 `$`인지 본다.
+  - 결함 심기(48자 hostname prompt + `ENV` 없음): 「나눈 pane prompt `$`」에서 실패하고 접힌 hostname prompt를 보인다.
+  - 고친 뒤 같은 결함: 세 번 모두 통과했다.
+- **드러난 것.** `tabs_like_herdr`의 「새 pane이 옮긴 폴더에서 뜸」 확인은 `pwd` 줄이 아니라 기계 prompt의 `\W`(폴더 이름 「작업 폴더」)로 맞고 있었다. macOS `pwd` 줄(`/private/tmp/…`)은 pane 폭에서 접혀 「작|업 폴더」로 갈린다. 접힌 줄을 이어 보는 `wait_output_unwrapped`로 바꿨다(기대는 같고, 이제 `pwd` 출력을 본다).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

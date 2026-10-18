@@ -790,11 +790,9 @@ fn tabs_like_herdr() {
     let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
     // TUI는 host 화면(grid)을 그리므로, 보였으면 host 화면에도 있다
     tui.wait_text("새 pane 출력", |s| s.contains("held-4"));
-    assert!(
-        h.screen(&right).contains("held-4") && h.screen(&right).contains("작업 폴더"),
-        "새 pane이 옮긴 폴더에서 뜨지 않았다:\n{}",
-        h.screen(&right)
-    );
+    assert!(h.screen(&right).contains("held-4"), "나누기 뒤 키가 새 pane으로 가지 않았다:\n{}", h.screen(&right));
+    // pwd 줄은 pane 폭에서 접힌다(macOS `/private/tmp/…`). 예전에는 기계 prompt의 `\W`(폴더 이름)가 대신 맞았다
+    h.wait_output_unwrapped(&right, "/작업 폴더", T);
     assert!(!h.screen(&first).contains("held-4"), "나누기 뒤 키가 옛 pane으로 갔다");
     let cwd_of = |hw: &HostWatch, id: &str| hw.pane(id).and_then(|p| p.cwd.clone()).map(std::path::PathBuf::from);
     hw.wait("나눈 pane의 폴더", |w| cwd_of(w, &right).map(|c| c.canonicalize().ok() == Some(want.clone())));
@@ -878,6 +876,14 @@ fn pane_modes_like_herdr() {
     tui.cmd("v");
     let right = hw.wait("나눔", |w| (w.leaves().len() == 2).then(|| w.leaves()[1].clone()));
     assert_eq!(hw.wait("비율", split_ratio), 500);
+    // 나눈 pane은 명령 없는 기본 셸(login sh)이다. prompt는 실험실이 정한 `$`다: 기계 rc의 hostname prompt면 runner의 긴
+    // hostname이 좁은 pane에서 접혀, 크기를 바꿀 때마다 셸이 다시 그리는 화면이 기계마다 달랐다
+    lab::wait_for_diag(
+        "나눈 pane prompt `$`",
+        T,
+        || (h.screen(&right).trim() == "$").then_some(()),
+        || h.screen(&right),
+    );
 
     // 1) r 크기 모드: RESIZE 막대. 포커스(오른쪽 pane)는 오른쪽 가장자리 나눔이 없어 왼쪽 가장자리를 옮긴다
     //    (herdr `resize_focused`): l이면 나눔이 오른쪽으로 5%씩
