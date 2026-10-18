@@ -910,12 +910,24 @@ impl Host {
         });
     }
 
+    /// 흐름 사건을 저장하고 알린다. 저장(seq를 정함)부터 broadcast까지를 한 잠금 안에서 해 보내는 차례가 seq 차례다: 따로
+    /// 하면 동시에 기록된 두 사건 가운데 나중 seq가 먼저 나갈 수 있고, 따라 읽는 쪽(`aaa events --follow`)은 본 것보다 작은
+    /// seq를 버려 그 사건을 잃었다(10-18 ci-local m13 `merged_pr_resolves_the_thread`: seq 21 `thread_resolved`가 22 뒤에 나감).
+    /// 이 안에서 다시 흐름 사건을 남기면 안 된다(std 잠금이라 멈춘다): inbox·사후 평가자는 사건을 남기지 않는다.
     fn flow_event(&self, mut e: FlowEvent) {
         let kind = e.kind.clone();
         let kind = kind.as_str();
+        let _order = match self.flow_order.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                test_flow_waiting();
+                blocking(|| self.flow_order.lock().unwrap_or_else(|p| p.into_inner()))
+            }
+        };
         match self.db.flow_insert(&e) {
             Ok(seq) => {
                 e.seq = seq;
+                test_flow_hold(&e);
                 self.inbox_from_flow(&e);
                 self.evaluator_on_flow(&e);
                 let _ = self.flow_events.send(e);
@@ -1899,6 +1911,39 @@ impl Host {
     }
 }
 
+/// 시험에서만(`AAA_TEST_FLOW_HOLD=<파일>`): 글이 `hold:`로 시작하는 흐름 사건을 저장한 뒤 그 파일이 생길 때까지(30초까지)
+/// 알리지 않는다. 두 사건이 동시에 기록되는 때를 시간에 기대지 않고 만든다(m13 `flow_events_go_out_in_seq_order`)
+fn test_flow_hold(e: &FlowEvent) {
+    let Some(release) = std::env::var_os("AAA_TEST_FLOW_HOLD") else { return };
+    if !e.detail.starts_with("hold:") {
+        return;
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    blocking(|| {
+        while !std::path::Path::new(&release).exists() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    });
+}
+
+/// 막히는 일을 tokio worker에서 할 때 runtime에 알린다(그 worker에 줄 선 작업을 다른 worker가 맡는다). 여러 스레드 runtime
+/// 밖(시험·blocking 스레드)에서는 그냥 한다
+fn blocking<R>(f: impl FnOnce() -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
+/// 시험에서만: 다른 흐름 사건이 끝나기를 기다리게 된 사건이 있다고 `<파일>.waiting`을 남긴다(시험이 그 사건이 들어온 것을 안다)
+fn test_flow_waiting() {
+    if let Some(release) = std::env::var_os("AAA_TEST_FLOW_HOLD") {
+        let mut p = release;
+        p.push(".waiting");
+        let _ = std::fs::write(p, "");
+    }
+}
+
 /// 두 폴더가 같은 상대 경로에 같은 바이트의 파일을 가졌나(library 사본이 바뀌었는지 볼 때). 없는 폴더는 빈 폴더와 다르다.
 fn same_tree(a: &Path, b: &Path) -> bool {
     fn files(root: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
@@ -1987,6 +2032,7 @@ mod tests {
             seen: true,
             plan: None,
             background: None,
+            background_wait: false,
         }
     }
 

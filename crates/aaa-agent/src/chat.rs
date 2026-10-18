@@ -250,25 +250,45 @@ fn tail(path: &Path, parse: impl Fn(&Value) -> Vec<ChatMessage>) -> std::io::Res
 /// 기록 한 줄 → 보일 줄(둘째 인자: 생각도 싣는다)
 type LineParser = fn(&Value, bool) -> Vec<ChatMessage>;
 
-/// agent 요청 처리. 오류 글에 경로를 넣지 않는다(홈 경로가 웹으로 간다).
+/// 읽을 기록 파일(읽기와 감시가 같은 파일을 본다). 오류 글에 경로를 넣지 않는다(홈 경로가 웹으로 간다).
+pub fn path(harness: &str, transcript: Option<&str>, harness_session: Option<&str>) -> Result<PathBuf, String> {
+    match harness {
+        "claude" => {
+            let t = transcript.ok_or("Claude가 아직 기록 위치를 알리지 않았다(첫 hook 사건 전)")?;
+            inside(&claude_root(), Path::new(t))
+        }
+        "codex" => {
+            let id = harness_session.ok_or("Codex가 아직 thread-id를 알리지 않았다(첫 턴이 끝나기 전)")?;
+            codex_file(&codex_root(), id)
+        }
+        _ => Err("대화 기록은 Claude·Codex pane만 볼 수 있다".into()),
+    }
+}
+
+/// agent 요청 처리
 pub fn read(
     harness: &str,
     transcript: Option<&str>,
     harness_session: Option<&str>,
     thinking: bool,
 ) -> Result<(Vec<ChatMessage>, bool), String> {
-    let (path, parse): (PathBuf, LineParser) = match harness {
-        "claude" => {
-            let t = transcript.ok_or("Claude가 아직 기록 위치를 알리지 않았다(첫 hook 사건 전)")?;
-            (inside(&claude_root(), Path::new(t))?, claude_line)
-        }
-        "codex" => {
-            let id = harness_session.ok_or("Codex가 아직 thread-id를 알리지 않았다(첫 턴이 끝나기 전)")?;
-            (codex_file(&codex_root(), id)?, codex_line)
-        }
-        _ => return Err("대화 기록은 Claude·Codex pane만 볼 수 있다".into()),
-    };
+    let path = path(harness, transcript, harness_session)?;
+    let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
     tail(&path, |v| parse(v, thinking)).map_err(|e| format!("기록을 읽지 못했다: {}", e.kind()))
+}
+
+/// 기록 파일이 바뀌었는지 보는 값(참고 conversation-monitor.ts `fileIdentity`): 장치·inode·크기·고친 시각. 없으면 `missing`
+pub fn identity(path: &Path) -> String {
+    let Ok(m) = std::fs::metadata(path) else { return "missing".into() };
+    let modified =
+        m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        format!("{}:{}:{}:{modified}:{}.{}", m.dev(), m.ino(), m.len(), m.ctime(), m.ctime_nsec())
+    }
+    #[cfg(not(unix))]
+    format!("{}:{modified}", m.len())
 }
 
 #[cfg(test)]

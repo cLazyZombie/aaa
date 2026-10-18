@@ -4626,3 +4626,61 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
     .await
     .unwrap();
 }
+
+/// 흐름 사건은 seq 차례로 나간다(10-18 ci-local `merged_pr_resolves_the_thread`: seq 21 `thread_resolved`가 22 뒤에 나가
+/// `events --follow`가 21을 버렸다). host가 한 사건을 저장한 뒤 알리기 전에 붙잡혀 있는 동안(`AAA_TEST_FLOW_HOLD`) 같은
+/// 프로젝트에 다른 사건이 들어온다. 그 사건은 먼저 저장된 사건보다 먼저 나가지 않는다.
+#[test]
+fn flow_events_go_out_in_seq_order() {
+    let mut lab = Lab::new();
+    let projects = lab.root.join("projects");
+    let h = lab.node("h", Some(&host_toml(&projects, "", false)));
+    let release = lab.root.join("release");
+    let release_s = path_str(&release).to_string();
+    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_FLOW_HOLD", release_s.as_str())]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    h.ok(&["project", "create", "demo"]);
+    let routines = projects.join("demo/routines");
+    std::fs::create_dir_all(&routines).unwrap();
+    for name in ["hold", "free"] {
+        std::fs::write(
+            routines.join(format!("{name}.md")),
+            "+++\n# 차례 시험\non = \"pr\"\nevents = [\"merged\"]\nenabled = false\n+++\n본문\n",
+        )
+        .unwrap();
+    }
+    let mut ev = Events::connect(&h);
+    let waiting = lab.root.join("release.waiting");
+    std::thread::scope(|s| {
+        // `hold: 켬`은 저장된 뒤 붙잡힌다
+        let held = s.spawn(|| h.ok(&["routine", "toggle", "demo", "hold", "--on"]));
+        wait_for("붙잡힌 사건 저장", T, || {
+            h.ok(&["events", "demo"])["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["detail"] == "hold: 켬")
+                .then_some(())
+        });
+        // 그 사이 다른 사건: 끝났거나(먼저 나갔다) 앞 사건을 기다린다(host가 표지를 남긴다)
+        let free = s.spawn(|| h.ok(&["routine", "toggle", "demo", "free", "--on"]));
+        wait_for("다음 사건이 들어옴", T, || (free.is_finished() || waiting.exists()).then_some(()));
+        std::fs::write(&release, "").unwrap();
+        held.join().unwrap();
+        free.join().unwrap();
+    });
+    let mut got = Vec::new();
+    while got.len() < 2 {
+        let f = ev.wait_from(0, "routine_toggled 둘", T, |e| match e {
+            FrontEvent::Flow(f) if f.kind == "routine_toggled" && !got.iter().any(|(s, _)| *s == f.seq) => {
+                Some((f.seq, f.detail.clone()))
+            }
+            _ => None,
+        });
+        got.push(f.1);
+    }
+    let held = got.iter().find(|(_, d)| d == "hold: 켬").unwrap().0;
+    let free = got.iter().find(|(_, d)| d == "free: 켬").unwrap().0;
+    assert_eq!(free, held + 1, "{got:?}");
+    assert_eq!(got.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [held, free], "나간 차례가 seq 차례가 아니다: {got:?}");
+}

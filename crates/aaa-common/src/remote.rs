@@ -537,6 +537,55 @@ impl WsIn {
 mod tests {
     use super::*;
 
+    /// 시험 서버가 요청 하나를 다 읽는다: 머리 끝(빈 줄)까지, 그리고 `Content-Length`만큼. client(`pair_with`)는 머리와 본문을
+    /// 따로 쓰므로 TLS record 둘로 올 수 있다. 한 번만 읽으면 짐 아래서 본문을 놓친다(10-18 ci-local `tls_checks_the_certificate`)
+    async fn read_request(s: &mut (impl AsyncRead + Unpin)) -> String {
+        let mut got = Vec::new();
+        let mut buf = vec![0u8; 4096];
+        loop {
+            if let Some(end) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&got[..end]).to_ascii_lowercase();
+                let len = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if got.len() >= end + 4 + len {
+                    return String::from_utf8_lossy(&got).to_string();
+                }
+            }
+            let n = s.read(&mut buf).await.unwrap();
+            if n == 0 {
+                return String::from_utf8_lossy(&got).to_string();
+            }
+            got.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    /// 읽을 때마다 조각 하나만 주는 stream(머리와 본문이 따로 오는 때)
+    struct Pieces(std::collections::VecDeque<Vec<u8>>);
+
+    impl AsyncRead for Pieces {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if let Some(p) = self.0.pop_front() {
+                buf.put_slice(&p);
+            }
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_test_server_reads_a_body_that_comes_after_the_head() {
+        let head = b"POST /api/v1/pair HTTP/1.1\r\nContent-Length: 5\r\n\r\n".to_vec();
+        let mut s = Pieces([head, b"{\"a\"".to_vec(), b"}".to_vec()].into());
+        let got = read_request(&mut s).await;
+        assert!(got.ends_with("\r\n\r\n{\"a\"}"), "{got:?}");
+    }
+
     #[test]
     fn targets() {
         let t = Target::parse("https://Mac-A.example.ts.net:8443/").unwrap();
@@ -904,9 +953,7 @@ mod tests {
             for _ in 0..2 {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let Ok(mut s) = acceptor.accept(tcp).await else { continue };
-                let mut buf = vec![0u8; 4096];
-                let n = s.read(&mut buf).await.unwrap();
-                heads.push(String::from_utf8_lossy(&buf[..n]).to_string());
+                heads.push(read_request(&mut s).await);
                 let body = br#"{"ok":{"role":"controller"}}"#;
                 let res = format!(
                     "HTTP/1.1 200 OK\r\nset-cookie: __Host-aaa=tok-1; Path=/; HttpOnly; Secure\r\ncontent-length: {}\r\n\r\n",

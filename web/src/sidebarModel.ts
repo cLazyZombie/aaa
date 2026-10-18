@@ -101,10 +101,11 @@ export function paneAgentStatus(p: PaneView): AgentStatus | undefined {
       return "working";
     case "question":
       return "blocked";
+    // 쉬지만 그 턴이 띄운 배경 작업을 기다리면 끝남·쉼 대신 BG(참고 status.ts `paneStatus`, 판정은 host bgwait.rs, plan §8.189)
     case "idle":
-      return a.seen ? "idle" : "done";
+      return a.background_wait ? "waiting" : a.seen ? "idle" : "done";
     case "started":
-      return "idle";
+      return a.background_wait ? "waiting" : "idle";
     default:
       return undefined;
   }

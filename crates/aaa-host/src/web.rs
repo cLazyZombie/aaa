@@ -6,6 +6,7 @@
 //! - `/api/v1/front`는 다른 기기 TUI(`aaa attach --remote`)의 Front API 연결이다: 같은 머신 socket과 같은 메시지를
 //!   WebSocket 글 메시지에 싣는다(plan §6.2).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::{FrontRef, Host, PaneEvent};
+use crate::chatwatch::ChatNote;
 use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict, check_unacked};
 
 mod assets {
@@ -645,6 +647,9 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut notices = host.notice_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut revoked = host.device_revoked.subscribe();
+    let mut chat_notes = host.chat_notes();
+    // 이 연결이 대화를 청한 pane(차이 목록 C3). 연결이 끝나면 그만둔다
+    let mut chats = ChatInterest { host: host.clone(), panes: HashSet::new() };
     let mut presence = Presence { conn: host.conn_open(&dev), host: host.clone(), dev: dev.clone(), active: false };
     let conn = presence.conn;
     let mut send_state = true;
@@ -754,6 +759,39 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 send_state = false;
                 send_preferences = true;
             }
+            n = chat_notes.recv() => {
+                send_state = false;
+                let evs = match n {
+                    Ok(ChatNote::Changed { pane, signature }) if chats.panes.contains(&pane) => {
+                        vec![FrontEvent::ChatChanged { pane, signature }]
+                    }
+                    Ok(ChatNote::Live { pane, live }) if chats.panes.contains(&pane) => {
+                        vec![FrontEvent::ChatWatching { pane, live }]
+                    }
+                    Ok(_) | Err(RecvError::Closed) => vec![],
+                    // 놓친 바뀜이 있을 수 있다: 청한 pane을 모두 다시 읽게 한다
+                    Err(RecvError::Lagged(_)) => chats
+                        .panes
+                        .iter()
+                        .flat_map(|p| {
+                            [
+                                FrontEvent::ChatWatching { pane: p.clone(), live: host.chat_live(p) },
+                                FrontEvent::ChatChanged { pane: p.clone(), signature: "lagged".into() },
+                            ]
+                        })
+                        .collect(),
+                };
+                let mut gone = false;
+                for ev in evs {
+                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
+                        gone = true;
+                        break;
+                    }
+                }
+                if gone {
+                    break;
+                }
+            }
             _ = ping.tick() => {
                 send_state = false;
                 if heard.elapsed() >= dead_after {
@@ -794,12 +832,42 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                                     break;
                                 }
                             }
+                            // 보기 범위(§8.25)는 대화 읽기(`pane_chat`)와 같다
+                            Ok(EventsClientMsg::ChatWatch { pane, enabled }) => {
+                                if !enabled {
+                                    if chats.panes.remove(&pane) {
+                                        host.chat_watch(&pane, false);
+                                    }
+                                } else if host.pane_view_of(&pane, role).is_some() {
+                                    if chats.panes.insert(pane.clone()) {
+                                        host.chat_watch(&pane, true);
+                                    }
+                                    let ev = FrontEvent::ChatWatching { live: host.chat_live(&pane), pane };
+                                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
                             Err(_) => {}
                         }
                     }
                     _ => {}
                 }
             }
+        }
+    }
+}
+
+/// 상태 사건 연결이 대화를 청한 pane들. 연결이 어떻게 끝나든 그만둔다
+struct ChatInterest {
+    host: Arc<Host>,
+    panes: HashSet<String>,
+}
+
+impl Drop for ChatInterest {
+    fn drop(&mut self) {
+        for pane in self.panes.drain() {
+            self.host.chat_watch(&pane, false);
         }
     }
 }

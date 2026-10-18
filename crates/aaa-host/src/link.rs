@@ -254,7 +254,14 @@ async fn serve(
                     LinkMsg::Event(AgentEvent::ReportChanged { thread, hash }) => {
                         host.on_report_changed(&mid, &thread, hash)
                     }
-                    LinkMsg::Event(AgentEvent::Harness(ev)) => host.on_harness(&mid, ev),
+                    LinkMsg::Event(AgentEvent::Harness(ev)) => {
+                        host.on_harness(&mid, ev);
+                        // 대화 감시는 harness·기록 위치를 따라간다
+                        host.sync_chat_watches_if_wanted();
+                    }
+                    LinkMsg::Event(AgentEvent::ChatChanged { key, signature }) => {
+                        host.on_chat_changed(&mid, key, signature)
+                    }
                     LinkMsg::Event(AgentEvent::Health(h)) => host.on_health(&mid, h),
                     LinkMsg::Ping { seq } => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;

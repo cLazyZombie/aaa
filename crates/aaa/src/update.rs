@@ -461,7 +461,7 @@ mod tests {
         let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut Vec::new());
     }
 
-    /// 모든 OS가 바꾸기·되돌리기를 받는다(Windows도 거부하지 않는다: 접속만 하는 PC의 `aaa.exe`, plan §8.188). 없는 파일이나
+    /// 모든 OS가 바꾸기·되돌리기를 받는다(Windows도 거부하지 않는다: 접속만 하는 PC의 `aaa.exe`, plan §8.192). 없는 파일이나
     /// 보관에 없는 이름은 그 까닭으로 멈춘다(검사만이라 실행 파일은 건드리지 않는다)
     #[test]
     fn every_os_takes_update_and_rollback() {
