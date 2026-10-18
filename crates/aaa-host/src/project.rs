@@ -31,6 +31,12 @@ pub(crate) struct ProjectSettings {
     pub start_threads: Option<String>,
     /// 옛 자리 `trust_screens`(user·coordinator, 잘못된 값은 없는 것)
     pub trust_screens: Option<String>,
+    /// 이 프로젝트의 밖으로 가는 알림(webhook·Web Push)을 오류·머신 이상만 남기고 끈다(herdr-projects `mute`, 차이 목록 N10).
+    /// inbox 항목은 그대로 쌓이고 앱 안 알림도 그대로다.
+    pub mute: bool,
+    /// 처음 보는 inbox 항목 묶음을 coordinator에 한 줄로 알린다(herdr-projects `nudge`, 기본 켬). 끄면 묶음을 본 것으로만
+    /// 적고 항목은 coordinator의 다음 턴 `context`가 보인다(사건마다 가는 알림은 그대로다).
+    pub nudge: bool,
 }
 
 impl Default for ProjectSettings {
@@ -43,6 +49,8 @@ impl Default for ProjectSettings {
             auto_resolve_days: 7,
             start_threads: None,
             trust_screens: None,
+            mute: false,
+            nudge: true,
         }
     }
 }
@@ -87,6 +95,8 @@ impl ProjectSettings {
             auto_resolve_days: n("auto_resolve_days", d.auto_resolve_days),
             start_threads,
             trust_screens,
+            mute: t.get("mute").and_then(|v| v.as_bool()).unwrap_or(d.mute),
+            nudge: t.get("nudge").and_then(|v| v.as_bool()).unwrap_or(d.nudge),
         }
     }
 }
@@ -143,6 +153,8 @@ mod tests {
             auto_resolve_days = 0
             start_threads = "auto"
             trust_screens = "nobody"
+            mute = "yes"
+            nudge = 0
             [[repos]]
             path = "/work/app"
             [[repos]]
@@ -162,6 +174,9 @@ mod tests {
         assert_eq!(s.max_parallel_threads, 10);
         assert_eq!(s.trust_screens, None);
         assert_eq!((s.auto_resolve_days, s.start_threads.as_deref()), (0, Some("auto")));
+        assert!(!s.mute);
+        assert!(ProjectSettings::from_table(&"mute = true".parse().unwrap()).mute);
+        assert!(s.nudge && !ProjectSettings::from_table(&"nudge = false".parse().unwrap()).nudge);
         assert_eq!(
             s.repos,
             vec![

@@ -145,6 +145,15 @@ pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
         }
 }
 
+/// 프로젝트 `mute`(herdr-projects notify.rs 「mute = true silences everything but errors」, 차이 목록 N10)에도 나가는 종류:
+/// 오류(`gh` 실패 등 `outage`, 설정 파일 `config-error`)와 머신 이상(`health`)
+pub(crate) const MUTE_PASSES: &[&str] = &["outage", "config-error", "health"];
+
+/// 이 항목을 프로젝트 mute가 막는가
+pub(crate) fn muted(mute: bool, i: &InboxItem) -> bool {
+    mute && !MUTE_PASSES.contains(&i.item_kind.as_str())
+}
+
 /// 아직 알릴 만한 항목만 남긴다: 끝내지 않았고(`open`), 지난 일(`stale`: 확인한 보고, 사람 차례가 끝난 thread)이 아니다.
 /// 돌려주는 수는 뺀 항목 수다.
 pub(crate) fn news(
@@ -185,9 +194,10 @@ impl Host {
         keep
     }
 
-    /// inbox 항목을 알림 대기열에 넣는다(설정에서 켜고 고른 것만, `pushes`)
+    /// inbox 항목을 알림 대기열에 넣는다(설정에서 켜고 고른 것만 `pushes`, 프로젝트 mute면 오류·머신 이상만 `muted`)
     pub(crate) fn notify(&self, item: &InboxItem) {
         if pushes(&self.cfg.notify.item_kinds(), item)
+            && !muted(self.settings(&item.project).mute, item)
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
             let _ = tx.send(item.clone());
@@ -288,6 +298,21 @@ mod tests {
         assert_eq!(dropped, 2);
     }
 
+    /// 프로젝트 mute는 오류·머신 이상만 남긴다(herdr-projects `mute`, N10)
+    #[test]
+    fn mute_keeps_errors_only() {
+        let mut i = item("t-0001", "new report");
+        assert!(!muted(false, &i) && muted(true, &i));
+        for k in ["outage", "config-error", "health"] {
+            i.item_kind = k.into();
+            assert!(!muted(true, &i), "{k}");
+        }
+        for k in ["pr", "routine", "session"] {
+            i.item_kind = k.into();
+            assert!(muted(true, &i), "{k}");
+        }
+    }
+
     /// 옛 종류 이름도 thread 항목을 고르고, thread 항목은 사람이 할 일만 나간다
     #[test]
     fn pushes_needs_you_and_new_reports_only() {
@@ -334,7 +359,7 @@ mod tests {
 
     /// 실제 https(webpki 루트) 확인: `cargo test -p aaa-host notify_https -- --ignored`(네트워크 필요)
     #[tokio::test]
-    #[ignore]
+    #[ignore = "실제 외부 서버(example.com·badssl.com·Apple push)에 요청한다: 손으로만 돌린다(ci-local·CI는 --ignored를 쓰지 않는다)"]
     async fn notify_https() {
         let code = post("https://example.com/", b"{}").await.unwrap();
         assert!((200..600).contains(&code), "{code}");

@@ -53,7 +53,7 @@ pub(crate) struct ThreadRec {
     /// 다시 보내기 전에 화면을 본다(brief.rs).
     #[serde(default)]
     pub brief_attempts: u32,
-    /// brief를 보냈다고 확인한 때와 그때의 보고 hash. 그 뒤 잠시(`DELIVERED_WORKING_MS`) 새 보고가 오기 전까지 작업 중이다
+    /// brief를 보냈다고 확인한 때와 그때의 보고 hash. 그 뒤 잠시(host.toml `[projects] delivered_working_secs`) 새 보고가 오기 전까지 작업 중이다
     #[serde(default)]
     pub delivered_at_ms: Option<u64>,
     #[serde(default)]
@@ -83,6 +83,9 @@ pub(crate) struct ThreadRec {
     /// 보고 hash가 마지막으로 바뀐 시각(herdr-projects `last_report_change`)
     #[serde(default)]
     pub report_changed_ms: Option<u64>,
+    /// ticker가 PR 병합을 처음 본 때(herdr-projects ticker 상태 `merged_seen`). 끝내거나 다시 열면 지운다
+    #[serde(default)]
+    pub merged_seen_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
     /// 사후 평가자: 마지막으로 넘긴 사건 seq, 넘긴 묶음 수, 마지막 묶음 시각(§8.13)
@@ -96,14 +99,25 @@ pub(crate) struct ThreadRec {
     pub updated_at_ms: u64,
 }
 
-/// thread 시작 인자
-/// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났다
+/// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났거나, PR이 병합됐다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolveWhy {
     Manual,
     Auto { days: u32 },
+    Merged,
 }
 
+/// `thread resolve`의 고르기(herdr-projects `ResolveArgs`). 저절로 끝낼 때는 모두 끈 것이다(`resolve_after_copy`)
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ResolveOpts {
+    pub keep_worktree: bool,
+    /// 마지막 사본 없이 끝낸다(worktree는 남긴다)
+    pub skip_copy: bool,
+    /// 집에 다 오지 않았어도 worktree를 지운다
+    pub discard_uncopied: bool,
+}
+
+/// thread 시작 인자
 pub struct StartArgs {
     pub project: String,
     pub title: String,
@@ -140,7 +154,8 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve {p} <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
-- 다음 지시: `aaa thread next {p} <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. 줄을 더할 때는 `--add \"…\"`.
+- 다음 지시: `aaa thread next {p} <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. thread가 자기 도구로 한다. 줄을 더할
+  때는 `--add \"…\"`. Next 줄을 coordinator가 직접 하지 않는다.
 - 그 밖의 메시지: `aaa thread message {p} <id> --text …`. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다).
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
@@ -174,7 +189,11 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 형식: `- [ ] 제목 (owner)`. owner는 비움(미할당)·`me`(사용자 할 일)·`profile`·`@machine`·`profile@machine`.
 - owner를 쓰기 전에 `aaa assignable {p} --check <owner>`로 확인한다.
 - thread에 맡기면 줄 끝에 ` · <thread id>`를 붙인다. 끝나거나 그만두면 줄을 지운다(메모도 함께).
-- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다.
+- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 하나 예외는 아래 「thread가 끝나면」의 병합된 경우다(관찰이다).
+- thread가 끝나면: 맡긴 task의 thread가 끝났거나 열린 thread에서 빠졌을 때, 그 thread의 `pr` 항목이 `상태 MERGED`면 task를
+  지우고 알린다. 아니면 끝났는지·owner에게 돌릴지·다시 맡길지 묻는다(그 task를 이미 물었으면 묻지 않는다).
+- 빈 자리: inbox 항목이 thread가 끝났음을 보인 턴(새 보고, 저절로 끝냄, 병합된 PR)에 미할당이나 agent owner task가 기다리면
+  한 번 말하고 맡길지 묻는다. 다음 턴에 되풀이하지 않는다.
 
 ## memory와 선호
 - 운영 선호는 묻지 않고 적는다. 사용자가 thread를 어떻게 돌리고 싶은지(동시 thread 수, worker의 harness·model, PR 습관,
@@ -185,14 +204,19 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 사용자가 채팅에서 정한 것 중 뒤 thread가 알아야 할 것은 그때 바로 memory에 적는다(따로 두는 결정 기록은 없다).
 
 ## 병합
-- 병합 순서는 `aaa merge enqueue|list|done {p} <id>`로 정한다.
-- worktree thread는 `aaa merge land {p}`로 맨 앞부터 병합한다. aaa가 원격 일치·병합·tree 같음을 확인하고 push한다(force 없음).
-  멈추면 출력의 까닭(커밋하지 않은 변경, main을 합치지 않음 등)을 그 thread에 맡기고 다시 한다. 손으로 병합했으면 `merge done`.
+- aaa는 병합하지 않는다. thread가 PR을 열면 보고 첫 줄에 `PR: <url>`을 쓴다. 사용자가 채팅에서 병합하라고 하면 그 thread의
+  Next 줄(「PR을 병합한다」)을 `aaa thread next {p} <id> --line N`으로 보낸다. thread가 자기 도구(gh·git)로 병합한다.
+- aaa가 thread의 PR을 따라간다. 열리고 승인되면 묶음이 「병합 중」이고, 병합되면 agent가 끝낸 뒤(진행 보고 `Done`, 아니면 병합 뒤
+  새 보고나 10분) 저절로 끝낸다. 보고가 이름 붙인 내 다른 PR이 열려 있으면 기다린다. worktree는 force 없이 지우고, branch는
+  병합된 PR head일 때만 지운다.
 
 ## routine
 - `routines/<이름>.md`는 일정 작업이다(`aaa routine list {p}`). `on = \"pr\"`(선택 `events = [\"opened\", \"checks-failed\", \"review\", \"merged\"]`)이면
   일정 대신 thread의 PR 사건에 본문을 그 thread에 보낸다. 모든 프로젝트에 `routines/pr-followup.md`가 있어 thread가 실패한 check를
   고치고 리뷰 댓글에 답하게 한다. 멈추려면 파일을 지우지 말고 `enabled = false`로 둔다.
+
+## 사용자가 채팅에서 요청하지 않으면 하지 않는 것
+병합, force push, branch 지우기, worktree 지우기, thread 끝내기(`thread resolve`).
 ";
 
 fn bad(msg: impl Into<String>) -> ErrorBody {
@@ -211,19 +235,30 @@ const BLOCKED_DEBOUNCE_MS: u64 = 30_000;
 const NOT_READY_MS: u64 = 60_000;
 /// 진행 보고가 「작업 중」을 정하는 시간(herdr-projects progress `ACTIVITY_TTL_MS`)
 const ACTIVITY_TTL_MS: u64 = 300_000;
-/// brief를 보낸 뒤 작업 중으로 치는 시간. herdr-projects ticker는 「안내를 보낸 tick은 작업 중」(`delivered`)이고 다음
-/// tick(`TICK` 15초)에야 묶음을 센다: 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 그 tick을
-/// 시간으로 옮겼다. 그 사이 새 보고가 오면 더 기다리지 않는다.
-const DELIVERED_WORKING_MS: u64 = 15_000;
+// brief를 보낸 뒤 작업 중으로 치는 시간은 host.toml `[projects] delivered_working_secs`(기본 15초)다. herdr-projects ticker는
+// 「안내를 보낸 tick은 작업 중」(`delivered`)이고 다음 tick(`TICK` 15초)에야 묶음을 센다: 방금 일을 받은 agent는 아직 쉼으로
+// 읽히기 때문이다. aaa는 사건마다 세므로 그 tick을 시간으로 옮겼다. 그 사이 새 보고가 오면 더 기다리지 않는다.
 /// agent가 사람을 기다린다고 알리는 진행 보고 문구(`aaa report --activity 'Waiting for you'`, herdr-projects `WAITING`)
 pub(crate) const WAITING: &str = "Waiting for you";
 
 /// thread 묶음. 위에서부터 처음 맞는 줄이 이긴다. herdr-projects `thread::group()`(src/thread.rs)을 옮겼다.
 /// prompt_pending은 brief `Pending`, brief_stuck은 `Unknown`(aaa는 다시 보내지 않는다), harness 상태는 pane agent 활동,
-/// blocked는 `Question`이다. 다른 점: PR(Landing)은 없고(aaa는 merge 대기열), 보고 사본 실패는 사람 차례로 둔다
-/// (aaa는 보고를 host로 복사한다). 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
+/// blocked는 `Question`이다. 다른 점: 보고 사본 실패는 사람 차례로 둔다(aaa는 보고를 host로 복사한다).
+/// 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
 /// 진행을 보고하는 agent의 새 보고는 `Done`일 때만 검토 대기다(5번 줄, plan §8.85).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
+    let delivered_ms = aaa_config::ProjectsSection::default().delivered_working_secs * 1000;
+    thread_group_with(r, pane_exists, agent, now_ms, delivered_ms)
+}
+
+/// `thread_group`과 같고, brief 뒤 작업 중으로 치는 시간(밀리초)을 설정에서 받는다(`thread_view`)
+pub(crate) fn thread_group_with(
+    r: &ThreadRec,
+    pane_exists: bool,
+    agent: Option<&AgentStatus>,
+    now_ms: u64,
+    delivered_ms: u64,
+) -> ThreadGroup {
     use AgentActivity as A;
     let state = agent.map(|a| a.activity);
     let state_ms = agent.map_or(0, |a| now_ms.saturating_sub(a.since_ms));
@@ -264,23 +299,61 @@ pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&Agen
     if (state == Some(A::Question) && state_ms >= BLOCKED_DEBOUNCE_MS) || self_waiting {
         return ThreadGroup::WaitingOnYou;
     }
-    // 5: 새 보고. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는 결과가 아니다).
-    //    진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이다(herdr-projects steps.rs
+    // 5: PR과 보고. 열리고 승인된 PR은 병합 중이다. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는
+    //    결과가 아니다). 진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이다(herdr-projects steps.rs
     //    `merged_thread_may_resolve`). 배경 명령을 기다리며 턴을 끝낸 중간 보고는 검토 대기가 아니다. pane이 닫혔으면
     //    더 보고할 수 없으니 참고대로 둔다.
+    let pr_open = r.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("open"));
+    if pr_open && r.pr_review.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("approved")) {
+        return ThreadGroup::Landing;
+    }
     let unfinished = pane_exists && reported.is_some_and(|a| a.percent != Some(100));
     let new_report = has_report && r.report_hash != r.acked_hash;
-    if new_report && !prompt_pending && state != Some(A::Working) && !unfinished {
+    if (new_report || (has_report && pr_open)) && !prompt_pending && state != Some(A::Working) && !unfinished {
         return ThreadGroup::ReadyForReview;
     }
-    // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`DELIVERED_WORKING_MS`)
-    let just_delivered = r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < DELIVERED_WORKING_MS)
+    // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`delivered_ms`)
+    let just_delivered = r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < delivered_ms)
         && r.report_hash == r.delivered_report;
     if matches!(state, Some(A::Working | A::Question)) || prompt_pending || self_working || just_delivered {
         return ThreadGroup::Working;
     }
     // 7
     ThreadGroup::Idle
+}
+
+/// `thread restart`가 할 일(herdr-projects threads.rs `RestartPlan`). aaa는 세션이 끝나면 pane도 끝나므로 참고의 (c)
+/// 「셸에 있는 pane 다시 쓰기」는 없다.
+#[derive(Debug, PartialEq)]
+enum RestartPlan {
+    /// (a) 자리를 만들지 못했다(launch 기록이 없다): 자리 만들기부터 다시 한다
+    Create,
+    /// (e) 있는 자리에서 다시 띄운다(새 대화, `--resume`이면 이어서)
+    Reopen,
+}
+
+/// herdr-projects threads.rs `restart_plan`. 시작 중(aaa는 시작에 시한이 없다, §8.40)·끝낸 thread와 (d) 실행 중인 세션은
+/// 거부한다. (b) 기록된 worktree 없이 branch만 있는 것은 그 머신 agent가 자리를 만들 때 거부한다(host는 repo를 보지 않는다).
+fn restart_plan(rec: &ThreadRec, resume: bool, running: bool) -> Result<RestartPlan, ErrorBody> {
+    let id = &rec.id;
+    match rec.status {
+        ThreadStatus::Open | ThreadStatus::Failed => {}
+        ThreadStatus::Starting => return Err(bad(format!("{id}는 아직 시작 중이다"))),
+        ThreadStatus::Resolved => {
+            return Err(bad(format!("{id}는 끝냈다. 먼저 `aaa thread resolve {} {id} --reopen`", rec.project)));
+        }
+    }
+    if running {
+        let pane = rec.pane.as_deref().unwrap_or_default();
+        return Err(bad(format!("세션이 아직 실행 중이다. 끝내려면 `aaa pane kill {pane}`")));
+    }
+    if rec.launch.is_some() {
+        return Ok(RestartPlan::Reopen);
+    }
+    if resume {
+        return Err(bad("시작하지 못한 thread는 이을 대화가 없다. --resume 없이 다시 시작한다"));
+    }
+    Ok(RestartPlan::Create)
 }
 
 /// 프로젝트 폴더 뼈대. 이미 있는 파일은 두고, PROJECT.md를 마지막에 써서 중간에 멈춘 폴더는 프로젝트로 치지 않는다
@@ -435,7 +508,8 @@ impl Host {
 
     pub(crate) fn thread_view(&self, r: &ThreadRec) -> ThreadView {
         let (pane_exists, agent) = self.thread_live(r);
-        let group = thread_group(r, pane_exists, agent.as_ref(), aaa_common::util::now_ms());
+        let delivered_ms = self.cfg.projects.delivered_working_secs * 1000;
+        let group = thread_group_with(r, pane_exists, agent.as_ref(), aaa_common::util::now_ms(), delivered_ms);
         ThreadView {
             project: r.project.clone(),
             id: r.id.clone(),
@@ -709,6 +783,7 @@ impl Host {
             review_item_hash: None,
             group_changed_ms: Some(now),
             report_changed_ms: None,
+            merged_seen_ms: None,
             error: None,
             eval_cursor: 0,
             eval_batches: 0,
@@ -730,43 +805,21 @@ impl Host {
         let brief = self.brief(&dir, &rec, &a.task, false);
         self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
 
-        // 기록은 늘 다시 읽어 고친다(ticker가 그 사이 쓴 `last_group`을 옛 값으로 덮지 않게)
-        let fail = |me: &Arc<Host>, rec: &mut ThreadRec, e: ErrorBody| -> ErrorBody {
-            if let Ok(r) = me.update_rec(&rec.project, &rec.id, |r| {
+        // 정리하지 않는다: `thread restart`가 다시 한다(herdr-projects threads.rs `start`). 기록은 늘 다시 읽어 고친다(ticker가
+        // 그 사이 쓴 `last_group`을 옛 값으로 덮지 않게).
+        if let Err(e) = self.place_and_launch(&conn, &mut rec, brief, safety, actor).await {
+            if let Ok(r) = self.update_rec(&rec.project, &rec.id, |r| {
                 r.status = ThreadStatus::Failed;
                 r.error = Some(e.message.clone());
             }) {
-                *rec = r;
+                rec = r;
             }
-            me.flow(rec, "thread_failed", None, e.message.clone());
-            e
-        };
-        let prep = aaa_proto::ThreadPrepare {
-            project: a.project.clone(),
-            thread: id.clone(),
-            title: rec.title.clone(),
-            kind: a.kind,
-            repo: a.repo.clone(),
-            base: a.base.clone(),
-            profile: a.profile.clone(),
-            brief,
-            safety,
-        };
-        let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await {
-            Ok(AgentResponse::ThreadReady(r)) => r,
-            Ok(other) => return Err(fail(self, &mut rec, internal(format!("예상하지 못한 응답: {other:?}")))),
-            Err(e) => return Err(fail(self, &mut rec, e)),
-        };
-        rec = self.update_rec(&a.project, &id, |r| {
-            r.cwd = Some(ready.cwd.clone());
-            r.work_dir = Some(ready.work_dir.clone());
-            r.branch = ready.branch.clone();
-            r.base = ready.base.clone();
-            r.launch = Some(ready.launch.clone());
-        })?;
-
-        if let Err(e) = self.launch_session(&mut rec, &ready.launch.argv, actor).await {
-            return Err(fail(self, &mut rec, e));
+            self.flow(&rec, "thread_failed", None, e.message.clone());
+            let why = format!(
+                "thread {id}를 시작하지 못했다. `aaa thread restart {} {id}`로 다시 한다: {}",
+                a.project, e.message
+            );
+            return Err(ErrorBody { message: why, ..e });
         }
         self.spawn_brief(&a.project, &id);
         let mut view = self.thread_view(&rec);
@@ -805,7 +858,43 @@ impl Host {
         }
     }
 
-    /// thread 세션을 띄우고 보고 감시를 건다(시작·다시 시작 공통)
+    /// 그 머신 agent가 자리(worktree·작업 폴더)와 brief.md를 만들고 profile을 해석한 뒤 세션을 띄운다. 시작과, 아무것도
+    /// 만들지 못하고 실패한 thread의 다시 시작이 쓴다(herdr-projects threads.rs `place_and_brief`, `RestartPlan::Create`).
+    async fn place_and_launch(
+        self: &Arc<Self>,
+        conn: &crate::AgentConn,
+        rec: &mut ThreadRec,
+        brief: String,
+        safety: Option<aaa_proto::LaunchSafety>,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        let prep = aaa_proto::ThreadPrepare {
+            project: rec.project.clone(),
+            thread: rec.id.clone(),
+            title: rec.title.clone(),
+            kind: rec.kind,
+            repo: rec.repo.clone(),
+            base: rec.base.clone(),
+            profile: rec.profile.clone(),
+            brief,
+            safety,
+        };
+        let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await? {
+            AgentResponse::ThreadReady(r) => r,
+            other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+        };
+        *rec = self.update_rec(&rec.project, &rec.id, |r| {
+            r.cwd = Some(ready.cwd.clone());
+            r.work_dir = Some(ready.work_dir.clone());
+            r.branch = ready.branch.clone();
+            r.base = ready.base.clone();
+            r.launch = Some(ready.launch.clone());
+        })?;
+        self.launch_session(rec, &ready.launch.argv, actor).await
+    }
+
+    /// thread 세션을 띄우고 보고 감시를 건다(시작·다시 시작 공통). 띄우면 열린 thread다(전의 시작 실패는 지운다,
+    /// herdr-projects `finish_placement`).
     async fn launch_session(
         self: &Arc<Self>,
         rec: &mut ThreadRec,
@@ -826,11 +915,13 @@ impl Host {
             role: Some(rec.role),
             // agent가 이 harness(claude·codex)의 화면으로 상태를 본다(plan §8.110)
             harness: Some(launch.harness.clone()),
+            profile: None,
         };
         let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
         *rec = self.update_rec(&rec.project, &rec.id, |r| {
             r.pane = Some(pane);
             r.status = ThreadStatus::Open;
+            r.error = None;
         })?;
         if let (Ok(conn), Some(wd)) = (self.live_conn(&rec.machine_id), rec.work_dir.clone()) {
             let _ = conn
@@ -852,8 +943,10 @@ impl Host {
         Ok(self.thread_view(&rec))
     }
 
-    /// 끝난 thread 세션을 다시 띄운다. 실행 중이면 거부한다(먼저 `aaa pane kill`).
+    /// 끝났거나 시작이 실패한 thread 세션을 다시 띄운다(herdr-projects threads.rs `restart_plan`). 실행 중이면 거부한다(먼저
+    /// `aaa pane kill`). 시작 중이거나 끝낸 thread도 거부한다.
     /// - 기본: task(Follow-ups 포함)·프로젝트 지침·memory를 다시 읽어 brief를 새로 쓰고 새 대화로 띄운 뒤 안내한다.
+    /// - 자리를 만들지 못하고 실패한 thread(launch 기록이 없다)는 자리 만들기부터 다시 한다(`RestartPlan::Create`).
     /// - resume: 저장된 대화를 잇는다(brief 안내 없음). harness 세션 ID를 모르면 거부한다.
     pub(crate) async fn thread_restart(
         self: &Arc<Self>,
@@ -864,23 +957,43 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let mut rec = self.load(project, id)?;
-        if rec.status != ThreadStatus::Open {
-            return Err(bad(format!("열린 thread만 다시 시작한다(지금 {})", rec.status.as_str())));
-        }
+        let running = rec
+            .pane
+            .as_deref()
+            .is_some_and(|p| self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running()));
+        let plan = restart_plan(&rec, resume, running)?;
         if let Some(p) = &profile {
             if resume {
                 return Err(bad("--profile은 새 대화로 다시 시작할 때만 쓴다(--resume과 함께 쓰지 않는다)"));
             }
             self.check_profile_allowed(project, p)?;
         }
-        if let Some(p) = &rec.pane
-            && self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running())
-        {
-            return Err(bad(format!("세션이 아직 실행 중이다. 끝내려면 `aaa pane kill {p}`")));
-        }
-        let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
         self.check_health(&rec.machine_id)?;
+        let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
+        if plan == RestartPlan::Create {
+            let dir = self.project_dir(project)?;
+            let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
+            rec = self.update_rec(project, id, |r| {
+                if let Some(p) = &profile {
+                    r.profile = p.clone();
+                }
+                r.brief = BriefState::Pending;
+                r.brief_attempts = 0;
+            })?;
+            // 자리부터 다시 만들면 agent가 profile을 다시 푼다: 허용 목록·safety를 다시 본다(새 대화 restart와 같다, §8.153)
+            if profile.is_none() && !rec.profile.is_empty() {
+                self.check_profile_allowed(project, &rec.profile)?;
+            }
+            let safety = self.launch_safety(project, &rec.machine_id)?;
+            let brief = self.brief(&dir, &rec, &task, true);
+            self.db.audit(actor, "thread_restart", &format!("{project}/{id} 자리부터{profile_note}"));
+            self.place_and_launch(&conn, &mut rec, brief, safety, actor).await?;
+            self.flow(&rec, "thread_restarted", None, format!("자리부터 다시 만듦{profile_note}"));
+            self.spawn_brief(project, id);
+            return Ok(self.thread_view(&rec));
+        }
+        let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let argv = if resume {
             let key = rec
                 .pane
@@ -942,7 +1055,6 @@ impl Host {
             })?;
             relaunched.argv
         };
-        let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
         self.db.audit(actor, "thread_restart", &format!("{project}/{id} resume={resume}{profile_note}"));
         self.launch_session(&mut rec, &argv, actor).await?;
         let detail = if resume { "resume".to_string() } else { format!("새 대화·brief 다시 씀{profile_note}") };
@@ -1165,7 +1277,7 @@ impl Host {
         self: &Arc<Self>,
         project: &str,
         id: &str,
-        keep_worktree: bool,
+        opts: ResolveOpts,
         why: ResolveWhy,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
@@ -1174,7 +1286,9 @@ impl Host {
             return Ok(self.thread_view(&rec));
         }
         let conn = self.live_conn(&rec.machine_id)?;
-        if let Some(w) = &rec.work_dir {
+        if !opts.skip_copy
+            && let Some(w) = &rec.work_dir
+        {
             let has_report = matches!(
                 conn.request(AgentRequest::ReportCollect { work_dir: w.clone(), max_library_bytes: 0 }).await,
                 Ok(AgentResponse::Report(_))
@@ -1183,34 +1297,61 @@ impl Host {
                 let _guard = self.collect_lock.lock().await;
                 self.collect(project, id, true)
                     .await
-                    .map_err(|e| bad(format!("마지막 사본이 실패해 resolve하지 않는다: {}", e.message)))?;
+                    .map_err(|e| {
+                        bad(format!(
+                            "마지막 사본이 실패해 resolve하지 않는다: {} (`--skip-copy`면 사본 없이 끝내고 worktree는 남긴다)",
+                            e.message
+                        ))
+                    })?;
             }
         }
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Resolved;
             r.last_group = Some(ThreadGroup::Resolved);
+            r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
+        // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
+        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
         if let Some(pane) = &rec.pane
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
-            let _ = conn.request(AgentRequest::Kill { session: pane.clone() }).await;
+            let _ = self.kill_session(&conn, pane).await;
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
+        // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
+        // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
+        let uncopied = rec.kind == ThreadKind::Worktree
+            && !opts.keep_worktree
+            && !opts.discard_uncopied
+            && (opts.skip_copy || rec.copy.as_deref() == Some("partial"));
+        if uncopied {
+            notes.push(if opts.skip_copy {
+                "마지막 사본 없이 끝냈다".to_string()
+            } else {
+                format!("집에 오지 않은 것: {}", rec.copy_notes.join("; "))
+            });
+        }
+        // 그 thread의 자리가 치워졌나: 작업 폴더 thread는 늘, worktree thread는 worktree를 지웠을 때
+        let mut place_gone = rec.kind == ThreadKind::Dir;
         if let Some(cwd) = &rec.cwd {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
+            let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
             match conn
                 .request(AgentRequest::ThreadCleanup {
                     repo,
                     cwd: cwd.clone(),
                     branch: rec.branch.clone(),
-                    base: rec.base.clone(),
-                    keep_worktree,
+                    merged_head,
+                    // 옛 agent는 `uncopied`를 모른다: 남기기를 함께 켜야 지우지 않는다
+                    keep_worktree: opts.keep_worktree || uncopied,
+                    uncopied,
                 })
                 .await
             {
                 Ok(AgentResponse::Cleanup(c)) => {
+                    place_gone |= c.worktree_removed;
                     notes.push(format!(
                         "worktree {}, branch {}",
                         if c.worktree_removed { "삭제" } else { "유지" },
@@ -1222,7 +1363,28 @@ impl Host {
                 Err(e) => notes.push(format!("정리 실패: {}", e.message)),
             }
         }
-        self.merge_forget(&rec);
+        // 참고 `clean`은 worktree를 지우며 그 workspace를, tab 종류는 tab을 닫는다: 끝난 pane 줄을 목록에 남기지 않는다.
+        // worktree를 남기면 pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 세션은 끝낸다, §8.14 resolve)
+        if place_gone && let Some(pane) = &rec.pane {
+            // 끝내기는 위에서 보냈다: 끝남을 기다려 layout과 기록에서 지운다(`pane close`의 뒷부분)
+            let closed = match pane_rx {
+                None => Ok(false),
+                Some(rx) => {
+                    match self
+                        .wait_pane(pane, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다")
+                        .await
+                    {
+                        Ok(()) => self.forget(pane, &rec.machine_id, actor).await.map(|_| true),
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+            notes.push(match closed {
+                Ok(true) => "pane을 닫았다".into(),
+                Ok(false) => "pane은 이미 닫혔다".into(),
+                Err(e) => format!("pane을 닫지 못했다: {}", e.message),
+            });
+        }
         self.flow(
             &rec,
             "thread_resolved",
@@ -1236,6 +1398,10 @@ impl Host {
                 "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
                 crate::transitions::label(&rec)
             ),
+            // herdr-projects `resolve_after_copy` 「resolved (merged)」
+            ResolveWhy::Merged => {
+                format!("{}: PR이 병합돼 저절로 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec))
+            }
         };
         if !notes.is_empty() {
             summary.push_str(&format!(": {}", notes.join("; ")));
@@ -1244,7 +1410,8 @@ impl Host {
         if rec.role != Role::Evaluator {
             self.inbox_add(project, "thread-state", id, "resolved", &summary);
         }
-        Ok(self.thread_view(&rec))
+        // 정리 중 resolve 때 찾은 PR(`last_pr_lookup`)이 기록을 고쳤을 수 있다
+        Ok(self.thread_view(&self.load(project, id).unwrap_or(rec)))
     }
 
     /// 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`): 기록만 열린 것으로 돌리고 아무것도 띄우지 않는다.
@@ -1261,8 +1428,9 @@ impl Host {
         }
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Open;
-            // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다)
+            // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다). 병합을 본 때도 다시 잰다
             r.last_group = None;
+            r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
         self.flow(&rec, "thread_reopened", None, "다시 열었다(아무것도 띄우지 않았다)");
@@ -1362,6 +1530,7 @@ mod tests {
             review_item_hash: None,
             group_changed_ms: None,
             report_changed_ms: None,
+            merged_seen_ms: None,
             error: None,
             eval_cursor: 0,
             eval_batches: 0,
@@ -1382,6 +1551,8 @@ mod tests {
             progress_at_ms: None,
             harness_session: None,
             seen: true,
+            plan: None,
+            background: None,
         }
     }
 
@@ -1407,6 +1578,33 @@ mod tests {
         assert_eq!(g(&young, None), ThreadGroup::Working);
         let old = ThreadRec { status: ThreadStatus::Starting, created_at_ms: NOW - 301_000, ..open_thread() };
         assert_eq!(g(&old, None), ThreadGroup::WaitingOnYou);
+    }
+
+    /// herdr-projects threads.rs `restart_case_*`: 아무것도 못 만든 실패는 자리부터(a), 자리가 있으면 다시 띄우고(e),
+    /// 실행 중(d)·시작 중·끝낸 thread는 거부한다. 이을 대화가 없으면 --resume도 거부한다.
+    #[test]
+    fn restart_plan_follows_herdr_projects() {
+        let launch = aaa_proto::Launch {
+            profile: "claude".into(),
+            harness: "claude".into(),
+            argv: vec!["claude".into()],
+            env: Vec::new(),
+            resume_argv: Vec::new(),
+            session_key: None,
+        };
+        let failed = ThreadRec { status: ThreadStatus::Failed, pane: None, ..open_thread() };
+        assert_eq!(restart_plan(&failed, false, false), Ok(RestartPlan::Create));
+        let e = restart_plan(&failed, true, false).unwrap_err();
+        assert!(e.message.contains("이을 대화가 없다"), "{e:?}");
+        let launched = ThreadRec { launch: Some(launch), ..failed.clone() };
+        assert_eq!(restart_plan(&launched, false, false), Ok(RestartPlan::Reopen));
+        let ended = ThreadRec { status: ThreadStatus::Open, ..launched.clone() };
+        assert_eq!(restart_plan(&ended, true, false), Ok(RestartPlan::Reopen));
+        assert!(restart_plan(&ended, false, true).unwrap_err().message.contains("aaa pane kill"));
+        let starting = ThreadRec { status: ThreadStatus::Starting, ..failed.clone() };
+        assert!(restart_plan(&starting, false, false).unwrap_err().message.contains("시작 중"));
+        let resolved = ThreadRec { status: ThreadStatus::Resolved, ..launched };
+        assert!(restart_plan(&resolved, false, false).unwrap_err().message.contains("--reopen"));
     }
 
     #[test]
@@ -1461,6 +1659,30 @@ mod tests {
         assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
     }
 
+    /// herdr-projects thread.rs `row5_landing_needs_open_and_approved`·`row6_ready_for_review_until_ack_or_while_pr_open`
+    #[test]
+    fn row5_landing_and_an_open_pull_request() {
+        let pr = |t: ThreadRec, state: &str, review: &str| ThreadRec {
+            pr_state: Some(state.into()),
+            pr_review: Some(review.into()),
+            ..t
+        };
+        let t = pr(with_report(open_thread()), "OPEN", "APPROVED");
+        assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::Landing);
+        // 승인된 열린 PR은 일하는 harness보다 먼저다(참고 5번 줄이 6번보다 앞)
+        assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Landing);
+        let changes = pr(t.clone(), "OPEN", "CHANGES_REQUESTED");
+        assert_eq!(g(&changes, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
+        // 확인한 보고라도 PR이 열려 있으면 검토 대기, 병합되면 쉼
+        let acked = ThreadRec { acked_hash: Some("h".into()), ..pr(t.clone(), "OPEN", "") };
+        assert_eq!(g(&acked, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
+        assert_eq!(g(&pr(acked.clone(), "MERGED", "APPROVED"), Some(agent(Idle, 0))), ThreadGroup::Idle);
+        // 보고 없는 열린 PR은 검토할 것이 없다
+        assert_eq!(g(&pr(open_thread(), "OPEN", ""), Some(agent(Idle, 0))), ThreadGroup::Idle);
+        // 사람 차례(4번 줄)는 병합 중보다 먼저다
+        assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
+    }
+
     #[test]
     fn a_just_delivered_brief_is_working_until_a_report_or_a_tick() {
         let t = ThreadRec { delivered_at_ms: Some(NOW - 5_000), ..open_thread() };
@@ -1468,6 +1690,8 @@ mod tests {
         assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::Working);
         let later = ThreadRec { delivered_at_ms: Some(NOW - 16_000), ..open_thread() };
         assert_eq!(g(&later, None), ThreadGroup::Idle);
+        // 창 길이는 설정을 따른다(host.toml `[projects] delivered_working_secs`)
+        assert_eq!(thread_group_with(&t, true, None, NOW, 4_000), ThreadGroup::Idle);
         // 새 보고가 오면 기다리지 않는다: 검토 대기, 확인하면 쉼
         let reported = with_report(t);
         assert_eq!(g(&reported, None), ThreadGroup::ReadyForReview);

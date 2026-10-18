@@ -10,6 +10,7 @@ mod caller;
 mod coord;
 pub mod db;
 mod evaluator;
+mod files;
 pub mod front;
 mod harness;
 mod health;
@@ -17,7 +18,6 @@ mod http;
 mod inbox;
 mod library;
 pub mod link;
-mod merge;
 pub mod migrate;
 mod notify;
 mod orch;
@@ -38,7 +38,7 @@ mod trust_screen;
 pub mod usage;
 pub mod web;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -95,6 +95,20 @@ impl AgentConn {
             Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
+                // 무슨 요청이었는지 남긴다(op과 세션만: 입력 바이트 같은 내용은 남기지 않는다)
+                let what = match &msg {
+                    LinkMsg::Req { body, .. } => serde_json::to_value(body).ok(),
+                    _ => None,
+                };
+                let field =
+                    |k: &str| what.as_ref().and_then(|v| v.get(k)?.as_str().map(str::to_string)).unwrap_or_default();
+                tracing::warn!(
+                    id,
+                    op = field("op"),
+                    session = field("session"),
+                    wait_ms = wait.as_millis() as u64,
+                    "agent 응답 시간 초과"
+                );
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         }
@@ -129,6 +143,16 @@ struct Mirror {
     vt: Vt,
     offset: u64,
     synced: bool,
+    /// 이 mirror를 채운 snapshot 앞에 session host 기록이 더 있다(plan §8.118): mirror 기록이 끝나면 session host에 묻는다
+    source_more: bool,
+}
+
+/// 앞 기록 한 덩어리를 어디서 받는가(plan §8.67·§8.118)
+pub enum OlderHistory {
+    /// host mirror에서 바로(None이면 anchor를 찾지 못했다)
+    Ready(Option<aaa_vt::Older>),
+    /// mirror에 없다: 그 머신 agent를 거쳐 session host에 묻는다
+    Ask(AgentConn),
 }
 
 /// 웹 터미널 등 구독자에게 보내는 pane 사건
@@ -170,6 +194,23 @@ struct PaneRt {
     restore_error: Option<String>,
     /// 이 pane이 대신한 옛 pane(`replace_pane`, 오래된 것부터 [`REPLACED_KEEP`]개)
     replaced: Vec<String>,
+    /// host가 이 세션에 끝내기를 보냈다(`kill_session`). 그렇게 끝난 pane은 스스로 끝난 것이 아니라 닫지 않는다.
+    kill_sent: bool,
+}
+
+/// 사람이 셸에서 `exit`했다(herdr 0.9.5 `handle_pane_died`: pane 프로세스가 끝나면 그 pane을 닫는다): 실행 중이던 셸 pane이
+/// 스스로 끝났다. 다음은 닫지 않는다.
+/// - 역할 pane(thread·평가자): 수명은 thread 명령이 정한다(`close_panes`와 같은 규칙).
+/// - 프로그램 pane(셸이 아닌 명령, aaa 확장): 끝난 화면과 종료 코드를 남긴다. herdr pane은 늘 셸이다.
+/// - host가 끝내기를 보낸 pane: `pane kill`은 다시 띄우려고 남긴다(aaa 확장). 닫기·탭 닫기는 스스로 지운다.
+/// - 재부팅(`Interrupted`)·session host 유실(`Lost`): 복원 대상이다(restore.rs). host가 실행 중을 본 적이 없는 세션(host를
+///   다시 띄운 뒤 처음 듣는 끝난 세션)도 닫지 않는다.
+fn exited_by_itself(old: &SessionInfo, new: &SessionInfo, kill_sent: bool) -> bool {
+    old.state.is_running()
+        && matches!(new.state, SessionState::Exited { .. })
+        && !kill_sent
+        && new.role.is_none()
+        && restore::is_shell(&new.argv)
 }
 
 /// pane이 기억하는 대신한 옛 ID 수
@@ -224,15 +265,43 @@ struct PendingCode {
 #[derive(Default)]
 struct Pairing {
     pending: Option<PendingCode>,
-    /// 연속으로 틀린 수(코드와 상관없이). 5번부터 점점 길게 잠근다(§6.4)
-    failures: u32,
-    locked_until: Option<Instant>,
+    /// 코드와 상관없이 틀린 때, `PAIR_FAIL_WINDOW` 안의 것만(§6.4). 창이 지나면 저절로 줄어든다
+    failures: VecDeque<Instant>,
+}
+
+impl Pairing {
+    fn forget_old(&mut self, now: Instant) {
+        while self.failures.front().is_some_and(|t| now.saturating_duration_since(*t) >= PAIR_FAIL_WINDOW) {
+            self.failures.pop_front();
+        }
+    }
+
+    /// 다음 시도를 받을 때. 창 안에서 `PAIR_FAIL_BUDGET`번까지는 기다리지 않고, 그 뒤로는 마지막 실패부터
+    /// 1초·2초·4초… 60초까지(herdr-web-ui `recordAuthFailure`)
+    fn open_at(&self) -> Option<Instant> {
+        let n = self.failures.len();
+        if n < PAIR_FAIL_BUDGET {
+            return None;
+        }
+        let wait = PAIR_BACKOFF.saturating_mul(1u32 << (n - PAIR_FAIL_BUDGET).min(16)).min(PAIR_BACKOFF_MAX);
+        self.failures.back().map(|t| *t + wait)
+    }
 }
 
 /// pairing 코드 수명(herdr-web-ui `CODE_TTL_MS` 10분)
 pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
 /// 코드 하나로 틀릴 수 있는 수(참고 `CODE_ATTEMPTS`)
 const PAIR_CODE_ATTEMPTS: u32 = 5;
+/// 틀린 시도를 세는 창(참고 `SHARED_WINDOW_MS` 10분): 실패가 이보다 오래되면 잊는다
+const PAIR_FAIL_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// 기다리지 않고 틀릴 수 있는 수(참고 `AUTH_FAILURE_BUDGET`)
+const PAIR_FAIL_BUDGET: usize = 5;
+/// 그 뒤 기다림의 처음과 상한(참고 `AUTH_BACKOFF_MS` 1초·`AUTH_BACKOFF_MAX_MS` 60초)
+const PAIR_BACKOFF: Duration = Duration::from_secs(1);
+const PAIR_BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+/// 머신 이름 규칙(등록·로컬 agent가 새 이름을 쓸 때)
+pub const MACHINE_NAME_RULE: &str = "머신 이름은 영문·숫자·`.`·`_`·`-`로 1~64자다(--name으로 정한다)";
 /// 기기 이름 길이(참고 `LABEL_MAX`)
 const DEVICE_LABEL_MAX: usize = 48;
 /// 마지막으로 본 때를 적는 간격(참고 `LAST_SEEN_WRITE_MS`)
@@ -311,6 +380,8 @@ pub struct Host {
     pr: Mutex<pr::PrMemory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
+    /// 파일 보기 읽기 경로(`/f/<cap>/`, plan §8.125)
+    file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -321,6 +392,8 @@ pub struct Host {
     pub(crate) in_use: std::sync::atomic::AtomicUsize,
     /// 지금 pane을 보는 웹 화면(「끝남(안 봄)」, seen.rs)
     viewing: Mutex<seen::Viewing>,
+    /// 기기마다 최근에 push로 보낸 항목(push.rs `PushedLog`)
+    pub(crate) pushed: Mutex<push::PushedLog>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
     eval_due: Mutex<HashMap<String, Instant>>,
     /// 사후 평가자 묶음은 한 번에 하나씩 만든다
@@ -463,11 +536,13 @@ impl Host {
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),
+            file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
+            pushed: Mutex::new(push::PushedLog::default()),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
@@ -501,6 +576,8 @@ impl Host {
             self.restoring.lock().unwrap().insert(hello.machine_id.clone());
         }
         let subscribe: Vec<(String, Option<u64>)>;
+        // agent가 내려간 사이 스스로 끝난 셸 pane(host는 그 전에 실행 중을 봤다)
+        let mut exited = Vec::new();
         {
             let mut i = self.inner.lock().unwrap();
             if let Some(old) = i.machines.get(&hello.machine_id).and_then(|m| m.conn.clone()) {
@@ -539,8 +616,12 @@ impl Host {
                     transcript: None,
                     answered: false,
                     restore_error: None,
+                    kill_sent: false,
                     replaced: Vec::new(),
                 });
+                if exited_by_itself(&p.info, s, p.kill_sent) {
+                    exited.push(s.id.clone());
+                }
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
                     m.synced = false;
@@ -554,6 +635,9 @@ impl Host {
                 .collect();
         }
         self.bump();
+        for id in exited {
+            self.spawn_close_exited(id, hello.machine_id.clone());
+        }
         // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
         let open = self.questions(false);
         let gone: Vec<String> = {
@@ -628,7 +712,7 @@ impl Host {
             Some(s) => {
                 let mut vt = Vt::new(s.rows, s.cols);
                 vt.feed(&s.replay.0);
-                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true });
+                p.mirror = Some(Mirror { vt, offset: s.offset, synced: true, source_more: s.history_more });
                 let _ = p.events.send(PaneEvent::Reset);
             }
             None => match p.mirror.as_mut() {
@@ -669,7 +753,7 @@ impl Host {
     }
 
     pub fn on_session(self: &Arc<Self>, machine_id: &str, info: SessionInfo, started: bool) {
-        {
+        let closing = {
             let mut i = self.inner.lock().unwrap();
             let p = i.panes.entry(info.id.clone()).or_insert_with(|| PaneRt {
                 machine_id: machine_id.to_string(),
@@ -681,6 +765,7 @@ impl Host {
                 transcript: None,
                 answered: false,
                 restore_error: None,
+                kill_sent: false,
                 replaced: Vec::new(),
             });
             if let Some(m) = p.mirror.as_mut()
@@ -688,8 +773,13 @@ impl Host {
             {
                 m.vt.resize(info.rows, info.cols);
             }
+            let exited = exited_by_itself(&p.info, &info, p.kill_sent);
             p.info = info.clone();
             let _ = p.events.send(PaneEvent::State);
+            exited
+        };
+        if closing {
+            self.spawn_close_exited(info.id.clone(), machine_id.to_string());
         }
         self.bump();
         if !info.state.is_running() {
@@ -791,17 +881,55 @@ impl Host {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
                 let (replay, more) = m.vt.replay_more();
-                (replay, more, m.offset, rows, cols)
+                (replay, more || m.source_more, m.offset, rows, cols)
             }
             None => (Vec::new(), false, 0, p.info.rows, p.info.cols),
         };
         Some(Attach { rx, replay, more, offset, cols, rows })
     }
 
-    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67)
-    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> Option<aaa_vt::Older> {
+    /// 웹이 위로 굴려 받은 기록 끝에 닿았다: host mirror 기록에서 anchor 바로 앞 덩어리(plan §8.67).
+    /// mirror는 처음 구독 snapshot(최근 2000줄)부터 채워진다. 그보다 앞은 session host에만 있으므로, mirror에서 더 줄 것이
+    /// 없으면 session host에 묻는다(plan §8.118, QA t-0337 Q8). 옛 agent·session host면 묻지 않는다.
+    pub fn older_history(&self, id: &str, anchor: &[String], depth: usize) -> OlderHistory {
         let i = self.inner.lock().unwrap();
-        i.panes.get(id)?.mirror.as_ref()?.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY)
+        let Some(p) = i.panes.get(id) else { return OlderHistory::Ready(None) };
+        let Some(m) = p.mirror.as_ref() else { return OlderHistory::Ready(None) };
+        let found = m.vt.older(anchor, depth, aaa_vt::REPLAY_HISTORY);
+        match found {
+            Some(mut o) if o.lines > 0 => {
+                o.more |= m.source_more;
+                OlderHistory::Ready(Some(o))
+            }
+            found if m.source_more => {
+                let conn = i
+                    .machines
+                    .get(&p.machine_id)
+                    .filter(|mc| mc.features.iter().any(|f| f == "history.v1"))
+                    .and_then(|mc| mc.conn.clone());
+                match conn {
+                    Some(c) => OlderHistory::Ask(c),
+                    None => OlderHistory::Ready(found),
+                }
+            }
+            found => OlderHistory::Ready(found),
+        }
+    }
+
+    /// session host에 앞 기록을 묻는다(plan §8.118). 실패하면 None(웹은 더 받지 않는다).
+    pub async fn older_from_agent(
+        conn: &AgentConn,
+        session: String,
+        anchor: Vec<String>,
+        depth: usize,
+    ) -> Option<aaa_vt::Older> {
+        let depth = u32::try_from(depth).unwrap_or(u32::MAX);
+        match conn.request(AgentRequest::History { session, anchor, depth }).await {
+            Ok(AgentResponse::History(c)) if c.found => {
+                Some(aaa_vt::Older { data: c.data.0, lines: c.lines as usize, more: c.more })
+            }
+            _ => None,
+        }
     }
 
     fn resolve_pane(&self, prefix: &str) -> Result<(String, String), ErrorBody> {
@@ -957,7 +1085,7 @@ impl Host {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadLibrary { project, thread } => {
-                self.thread_library(&project, &thread).map(FrontResponse::Library)
+                self.thread_library(&project, &thread, actor.strip_prefix("device:")).map(FrontResponse::Library)
             }
             FrontRequest::ThreadAck { project, thread } => {
                 self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
@@ -965,8 +1093,21 @@ impl Host {
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
                 self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen: false } => self
-                .thread_resolve(&project, &thread, keep_worktree, orch::ResolveWhy::Manual, actor)
+            FrontRequest::ThreadResolve {
+                project,
+                thread,
+                keep_worktree,
+                reopen: false,
+                skip_copy,
+                discard_uncopied,
+            } => self
+                .thread_resolve(
+                    &project,
+                    &thread,
+                    orch::ResolveOpts { keep_worktree, skip_copy, discard_uncopied },
+                    orch::ResolveWhy::Manual,
+                    actor,
+                )
                 .await
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
@@ -1013,18 +1154,6 @@ impl Host {
                 })
             }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
-            FrontRequest::MergeEnqueue { project, thread } => {
-                self.merge_enqueue(&project, &thread, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeDrop { project, thread, landed } => {
-                self.merge_drop(&project, &thread, landed, actor).map(|queue| FrontResponse::Merge { queue })
-            }
-            FrontRequest::MergeLand { project, thread } => {
-                self.merge_land(&project, thread.as_deref(), actor).await.map(|v| FrontResponse::MergeLand(Box::new(v)))
-            }
-            FrontRequest::MergeList { project } => {
-                self.merge_queue(&project).map(|queue| FrontResponse::Merge { queue })
-            }
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }
@@ -1057,8 +1186,23 @@ impl Host {
             FrontRequest::EvaluationDecide { project, id, proposals, adopt, note } => self
                 .evaluation_decide(&project, &id, &proposals, adopt, note, actor)
                 .map(|v| FrontResponse::Evaluation(Box::new(v))),
-            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows } => {
+            FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
+                // 옛 agent는 모르는 `profile` 칸을 버리고 셸을 띄운다: 보내기 전에 거른다
+                if profile.is_some()
+                    && !self
+                        .inner
+                        .lock()
+                        .unwrap()
+                        .machines
+                        .get(&mid)
+                        .is_some_and(|m| m.features.iter().any(|f| f == "profile.v1"))
+                {
+                    return Err(err(
+                        ErrorCode::BadRequest,
+                        "이 머신의 agent가 profile로 띄우기를 모른다(agent binary 반영 필요)",
+                    ));
+                }
                 let spec = SpawnSpec {
                     name: name.unwrap_or_default(),
                     argv,
@@ -1068,6 +1212,7 @@ impl Host {
                     rows: rows.unwrap_or(32),
                     role: None,
                     harness: None,
+                    profile,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 self.pane_view_of(&id, role)
@@ -1088,7 +1233,9 @@ impl Host {
                     .map(FrontResponse::Screen)
                     .ok_or_else(|| err(ErrorCode::AgentDisconnected, "화면 기록이 없다"))
             }
-            FrontRequest::PaneChat { pane } => {
+            FrontRequest::PaneFile { pane, path } => self.pane_file(role, actor, &pane, &path).await,
+            FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
+            FrontRequest::PaneChat { pane, thinking } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1108,7 +1255,9 @@ impl Host {
                     return Err(err(ErrorCode::NotFound, "대화 기록은 Claude·Codex pane만 볼 수 있다"));
                 }
                 let conn = self.live_conn(&mid)?;
-                match conn.request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session }).await?
+                match conn
+                    .request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session, thinking })
+                    .await?
                 {
                     AgentResponse::Chat { messages, truncated } => {
                         Ok(FrontResponse::Chat(aaa_proto::ChatView { pane: id, harness, messages, truncated }))
@@ -1185,6 +1334,18 @@ impl Host {
                 self.lease_use(&id, f);
                 conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
             }
+            // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
+            FrontRequest::PanePaste { pane, text } => {
+                let f = front.ok_or_else(|| {
+                    err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다(한 번 보내기는 pane_send)")
+                })?;
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                let conn = self.live_conn(&mid)?;
+                self.lease_use(&id, f);
+                let data = aaa_proto::B64(self.key_modes(&id).paste(&text));
+                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+            }
             FrontRequest::PaneTake { pane } => {
                 let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
                 let (id, _) = self.resolve_pane(&pane)?;
@@ -1242,7 +1403,7 @@ impl Host {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 let conn = self.live_conn(&mid)?;
                 self.db.audit(actor, "pane_kill", &id);
-                conn.request(AgentRequest::Kill { session: id }).await.map(|_| FrontResponse::Done)
+                self.kill_session(&conn, &id).await.map(|_| FrontResponse::Done)
             }
             FrontRequest::EnrollOpen { minutes } => {
                 let minutes = minutes.clamp(1, 60);
@@ -1453,6 +1614,7 @@ impl Host {
             rows: info.rows,
             role: info.role,
             harness: info.harness.clone(),
+            profile: None,
         };
         let new_id = self.respawn(&id, &mid, spec, actor).await?;
         self.pane_view_of(&new_id, role)
@@ -1514,6 +1676,46 @@ impl Host {
         }
     }
 
+    /// 세션에 끝내기를 보낸다. host가 끝낸 pane은 스스로 끝난 셸이 아니다(`exited_by_itself`).
+    async fn kill_session(&self, conn: &AgentConn, id: &str) -> Result<AgentResponse, ErrorBody> {
+        if let Some(p) = self.inner.lock().unwrap().panes.get_mut(id) {
+            p.kill_sent = true;
+        }
+        conn.request(AgentRequest::Kill { session: id.to_string() }).await
+    }
+
+    /// 스스로 끝난 셸 pane을 닫는다(herdr 0.9.5 `handle_pane_died`·`Workspace::remove_pane`): 기록을 지우고 모든 layout에서
+    /// 뺀다(`forget`, 빈 탭은 없어진다). 그래서 탭이 하나도 남지 않은 workspace도 지운다(herdr는 마지막 pane이 끝난
+    /// workspace를 지운다).
+    fn spawn_close_exited(self: &Arc<Self>, id: String, mid: String) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let had: Vec<String> = {
+                let ws = me.workspaces.lock().unwrap();
+                ws.values().filter(|w| aaa_proto::layout::ws_contains(w, &id)).map(|w| w.name.clone()).collect()
+            };
+            if let Err(e) = me.forget(&id, &mid, "exit").await {
+                tracing::warn!(pane = %id, "끝난 셸 pane을 닫지 못했다: {}", e.message);
+                return;
+            }
+            for name in had {
+                let emptied = {
+                    let mut ws = me.workspaces.lock().unwrap();
+                    let empty = ws.get(&name).is_some_and(|w| w.tabs.is_empty());
+                    empty && ws.remove(&name).is_some()
+                };
+                if !emptied {
+                    continue;
+                }
+                if let Err(e) = me.db.delete_workspace(&name) {
+                    tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
+                }
+                me.db.audit("exit", "workspace_close", &name);
+                let _ = me.layout_events.send(Workspace { name, tabs: vec![] });
+            }
+        });
+    }
+
     async fn forget(self: &Arc<Self>, id: &str, mid: &str, actor: &str) -> Result<(), ErrorBody> {
         if self.inner.lock().unwrap().panes.get(id).is_some_and(|p| p.info.state.is_running()) {
             return Err(err(ErrorCode::BadRequest, "실행 중인 pane은 지울 수 없다"));
@@ -1573,6 +1775,7 @@ impl Host {
                     rows: rows.unwrap_or(32),
                     role: None,
                     harness: None,
+                    profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 // spawn 사이에 다른 변경이 있었을 수 있다: 최신을 다시 읽어 붙인다
@@ -1604,6 +1807,7 @@ impl Host {
                     rows: 24,
                     role: None,
                     harness: None,
+                    profile: None,
                 };
                 let id = self.spawn_on(&mid, spec, actor).await?;
                 w = self.workspace(name);
@@ -1640,7 +1844,7 @@ impl Host {
                 if kill && self.inner.lock().unwrap().panes.get(&id).is_some_and(|p| p.info.state.is_running()) {
                     let conn = self.live_conn(&mid)?;
                     self.db.audit(actor, "pane_kill", &id);
-                    conn.request(AgentRequest::Kill { session: id.clone() }).await?;
+                    self.kill_session(&conn, &id).await?;
                 }
                 if !aaa_proto::layout::ws_remove(&mut w, &id) {
                     return Err(err(ErrorCode::NotFound, format!("workspace {name}에 pane {pane}이 없다")));
@@ -1784,7 +1988,7 @@ impl Host {
             if running {
                 let Ok(rx) = self.pane_events(id) else { continue };
                 self.db.audit(actor, "pane_kill", id);
-                if let Err(e) = conn.request(AgentRequest::Kill { session: id.clone() }).await {
+                if let Err(e) = self.kill_session(&conn, id).await {
                     tracing::warn!(pane = %id, "닫으며 끝내지 못했다: {}", e.message);
                     continue;
                 }
@@ -1938,8 +2142,8 @@ impl Host {
                 "host에서 `aaa machine enroll --open 10m`으로 등록 창을 먼저 연다",
             ));
         }
-        if name.is_empty() || name.len() > 64 {
-            return Err(err(ErrorCode::BadRequest, "머신 이름은 1~64자"));
+        if !util::machine_name_ok(name) {
+            return Err(err(ErrorCode::BadRequest, MACHINE_NAME_RULE));
         }
         if let Ok(Some(m)) = self.db.machine_by_name(name)
             && m.id != machine_id
@@ -2018,22 +2222,26 @@ impl Host {
     // ───────────── pairing ─────────────
 
     /// 새 pairing 코드. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`: 「새 코드」·CLI가 같은 자리를 쓴다).
+    /// 코드를 만드는 것은 주인(이 머신의 CLI나 controller 기기)이라, 앞서 틀린 시도의 잠금도 푼다: 남이 틀려 둔
+    /// 잠금이 주인의 새 코드를 막지 않는다.
     fn mint_pairing(&self, role: DeviceRole, now: Instant) -> (String, u64) {
         let code = format!("{:06}", rand::random_range(0..1_000_000u32));
-        self.pairing.lock().unwrap().pending =
-            Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        let mut p = self.pairing.lock().unwrap();
+        p.pending = Some(PendingCode { code: code.clone(), role, expires: now + PAIR_CODE_TTL, attempts: 0 });
+        p.failures.clear();
         (code, PAIR_CODE_TTL.as_secs())
     }
 
     /// 웹 pairing 코드를 장치 token으로 바꾼다. 코드는 한 번만 쓰고, 한 코드로 5번 틀리면 그 코드를 버린다.
-    /// 코드와 상관없이 5번 넘게 틀리면 점점 길게 잠근다.
+    /// 코드와 상관없이 10분 안에 5번 넘게 틀리면 1초부터 두 배씩 60초까지 기다리게 한다.
     pub fn redeem_pairing(&self, code: &str, label: &str) -> Result<(String, DeviceRole), ErrorBody> {
         self.redeem_pairing_at(code, label, Instant::now())
     }
 
     fn redeem_pairing_at(&self, code: &str, label: &str, now: Instant) -> Result<(String, DeviceRole), ErrorBody> {
         let mut p = self.pairing.lock().unwrap();
-        if let Some(t) = p.locked_until
+        p.forget_old(now);
+        if let Some(t) = p.open_at()
             && t > now
         {
             return Err(err(
@@ -2056,15 +2264,11 @@ impl Host {
                     p.pending = None;
                 }
             }
-            p.failures += 1;
-            if p.failures >= 5 {
-                let secs = 30u64 << (p.failures - 5).min(7);
-                p.locked_until = Some(now + Duration::from_secs(secs));
-            }
+            p.failures.push_back(now);
             return Err(err(ErrorCode::Unauthorized, "코드가 틀렸거나 이미 썼거나 만료됐다"));
         }
         let role = p.pending.take().map(|c| c.role).unwrap_or(DeviceRole::Reader);
-        p.failures = 0;
+        p.failures.clear();
         drop(p);
         let token =
             base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, rand::random::<[u8; 32]>());
@@ -2113,6 +2317,16 @@ impl Host {
         let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
         if let Some(dns) = &plan.dns_name {
             let _ = self.db.set_meta("publish_dns", dns);
+        }
+        // 웹이 받는 Host·Origin은 이 주소(포트까지)뿐이다. tailscale이 돌 때만 고친다: 꺼졌거나 못 읽으면 지난 값을 둔다
+        match &plan.serving {
+            Some((url, _)) => {
+                let _ = self.db.set_meta("publish_origin", &url.to_ascii_lowercase());
+            }
+            None if plan.state == "running" => {
+                let _ = self.db.del_meta("publish_origin");
+            }
+            None => {}
         }
         PublishState {
             tailscale: plan.state.into(),
@@ -2166,13 +2380,38 @@ impl Host {
         self.web_port.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn host_allowed(&self, host_header: &str) -> bool {
-        let loopback = [format!("127.0.0.1:{}", self.web_port()), format!("localhost:{}", self.web_port())];
-        if loopback.iter().any(|l| l == host_header) {
-            return true;
+    /// Host 헤더가 가리키는 이 host의 origin. `http://127.0.0.1:<web_port>`와 tailscale serve 공개 주소
+    /// (`https://<이름>[:포트]`, 443은 포트 없이) 둘뿐이고 포트까지 같아야 한다(§6.3, herdr-web-ui `sameOrigin`이
+    /// 요청 주소의 origin 전체를 비교하는 것과 같다). 아니면 None
+    pub fn web_origin(&self, host_header: &str) -> Option<String> {
+        let loopback = format!("127.0.0.1:{}", self.web_port());
+        if host_header == loopback {
+            return Some(format!("http://{loopback}"));
         }
-        let name = host_header.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_header);
-        self.db.meta("publish_dns").ok().flatten().is_some_and(|d| d.eq_ignore_ascii_case(name))
+        let public = self.public_origin()?;
+        let asked = host_header.to_ascii_lowercase();
+        let asked = asked.strip_suffix(":443").unwrap_or(&asked);
+        (format!("https://{asked}") == public).then_some(public)
+    }
+
+    /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
+    /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
+    fn public_origin(&self) -> Option<String> {
+        if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
+            return Some(o);
+        }
+        let dns = self.db.meta("publish_dns").ok().flatten()?;
+        let port = self.db.meta("publish_port").ok().flatten()?.parse().ok()?;
+        Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+    }
+
+    pub fn host_allowed(&self, host_header: &str) -> bool {
+        self.web_origin(host_header).is_some()
+    }
+
+    /// 공개 주소를 tailscale에서 다시 읽는다(host 시작 때: 지난 실행 뒤 serve 포트가 바뀌었을 수 있다)
+    pub async fn refresh_publish(&self) {
+        let _ = self.publish_status().await;
     }
 
     /// host와 같은 머신의 agent인가(brief의 uploads 주석)
@@ -2190,10 +2429,11 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
     let _ = host.config_dir.set(aaa_config::paths::config_dir());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
+    // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.forget_queued_messages();
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
-    host.forget_queued_messages();
     host.start_ticker();
     host.start_notifier();
     if host.cfg.local_agent.mode == LocalAgentMode::Child {
@@ -2342,7 +2582,7 @@ mod pairing_tests {
     }
 
     #[tokio::test]
-    async fn five_wrong_tries_spend_the_code_and_lock_for_a_while() {
+    async fn five_wrong_tries_spend_the_code_and_then_wait_doubles_up_to_a_minute() {
         let (h, _t) = host();
         let now = Instant::now();
         let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
@@ -2350,14 +2590,79 @@ mod pairing_tests {
         for _ in 0..5 {
             assert_eq!(h.redeem_pairing_at(wrong, "", now).unwrap_err().code, ErrorCode::Unauthorized);
         }
-        // 잠긴 동안은 맞는 코드도 막는다
+        // 기다리는 동안은 맞는 코드도 비교하지 않는다
         assert_eq!(h.redeem_pairing_at(&code, "", now).unwrap_err().code, ErrorCode::Unavailable);
-        // 잠금이 풀려도 그 코드는 이미 버렸다
-        let later = now + Duration::from_secs(31);
-        assert_eq!(h.redeem_pairing_at(&code, "", later).unwrap_err().code, ErrorCode::Unauthorized);
-        let (fresh, _) = h.mint_pairing(DeviceRole::Controller, later);
-        let later = later + Duration::from_secs(61);
-        assert!(h.redeem_pairing_at(&fresh, "", later).is_ok());
+        // 1초 뒤에는 받지만 그 코드는 이미 버렸다(한 코드로 5번)
+        let mut at = now + PAIR_BACKOFF;
+        assert_eq!(h.redeem_pairing_at(&code, "", at).unwrap_err().code, ErrorCode::Unauthorized);
+        // 틀릴 때마다 기다림이 두 배, 60초에서 멈춘다(참고 1초·60초)
+        let mut waits = vec![];
+        for _ in 0..10 {
+            let wait = (0..=120)
+                .map(Duration::from_secs)
+                .find(|d| h.redeem_pairing_at(wrong, "", at + *d).unwrap_err().code == ErrorCode::Unauthorized)
+                .unwrap();
+            waits.push(wait.as_secs());
+            at += wait;
+        }
+        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60, 60, 60, 60]);
+    }
+
+    #[tokio::test]
+    async fn wrong_tries_older_than_ten_minutes_are_forgotten() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        h.mint_pairing(DeviceRole::Controller, now);
+        for i in 0..5 {
+            // 다른 코드로 틀린다(한 코드의 5번 한도와 따로 센다)
+            let _ = h.redeem_pairing_at(&format!("{i:06}x"), "", now);
+        }
+        assert_eq!(h.redeem_pairing_at("1", "", now).unwrap_err().code, ErrorCode::Unavailable);
+        // 창이 지나면 처음처럼 기다림 없이 다섯 번
+        let later = now + PAIR_FAIL_WINDOW;
+        for _ in 0..5 {
+            assert_eq!(h.redeem_pairing_at("1", "", later).unwrap_err().code, ErrorCode::Unauthorized);
+        }
+        assert_eq!(h.redeem_pairing_at("1", "", later).unwrap_err().code, ErrorCode::Unavailable);
+    }
+
+    #[tokio::test]
+    async fn a_new_code_from_the_owner_lifts_the_wait() {
+        let (h, _t) = host();
+        let now = Instant::now();
+        h.mint_pairing(DeviceRole::Controller, now);
+        for _ in 0..12 {
+            let _ = h.redeem_pairing_at("1", "", now);
+        }
+        // CLI(`aaa web pair`)나 controller 기기가 새 코드를 만들면 남이 틀려 둔 잠금 없이 바로 쓴다
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        assert!(h.redeem_pairing_at(&code, "", now).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_view_path_ends_with_the_device_that_got_it() {
+        let (h, _t) = host();
+        let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        let (token, _) = h.redeem_pairing(&code, "").unwrap();
+        let (id, _) = h.device_role(&token).unwrap();
+        let until = Instant::now() + library::VIEW_TTL;
+        let cap = |device: Option<&str>| library::ViewCap {
+            project: "nope".into(),
+            thread: "t-0001".into(),
+            until,
+            device: device.map(str::to_string),
+        };
+        h.view_caps.lock().unwrap().insert("dev".into(), cap(Some(&id)));
+        h.view_caps.lock().unwrap().insert("cli".into(), cap(None));
+        // 경로 검사를 지나면 다음은 프로젝트 찾기(없는 프로젝트)다
+        let reach = |name: &'static str| {
+            let h = h.clone();
+            async move { h.view_source(name, "a.txt").await.err().map(|e| e.code) }
+        };
+        assert_ne!(reach("dev").await, Some(ErrorCode::Unauthorized));
+        h.revoke_device(&id).unwrap();
+        assert_eq!(reach("dev").await, Some(ErrorCode::Unauthorized));
+        assert_ne!(reach("cli").await, Some(ErrorCode::Unauthorized));
     }
 
     #[tokio::test]
@@ -2394,6 +2699,7 @@ mod pairing_tests {
             p256dh: "k".into(),
             auth: "a".into(),
             device: id.clone(),
+            alerts: None,
         };
         h.db.push_put(&sub).unwrap();
         let mut heard = h.device_revoked.subscribe();
@@ -2406,5 +2712,110 @@ mod pairing_tests {
         assert!(devices(&h).await.is_empty());
         let again = FrontRequest::DeviceRevoke { id };
         assert_eq!(h.call(DeviceRole::Local, "test", again).await.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    /// 보안 감사 t-0340 B10: endpoint만 아는 다른 기기는 구독을 가져가지 못하고, 키까지 같은 같은 브라우저(다시 pairing)는 옮긴다
+    #[tokio::test]
+    async fn another_device_takes_a_push_endpoint_only_with_its_keys() {
+        let (h, _t) = host();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+            let (token, _) = h.redeem_pairing(&code, "").unwrap();
+            ids.push(h.device_role(&token).unwrap().0);
+        }
+        let sub = |device: &str, auth: &str| db::PushSub {
+            endpoint: "https://push.example/a".into(),
+            p256dh: "k".into(),
+            auth: auth.into(),
+            device: device.into(),
+            alerts: None,
+        };
+        assert!(h.db.push_put(&sub(&ids[0], "a")).unwrap());
+        // 같은 기기는 키를 바꿀 수 있다
+        assert!(h.db.push_put(&sub(&ids[0], "a2")).unwrap());
+        assert!(!h.db.push_put(&sub(&ids[1], "x")).unwrap());
+        assert_eq!(h.db.push_list(Some(&ids[0])).unwrap().len(), 1);
+        assert!(h.db.push_list(Some(&ids[1])).unwrap().is_empty());
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert!(h.db.push_list(Some(&ids[0])).unwrap().is_empty());
+        assert_eq!(h.db.push_list(Some(&ids[1])).unwrap().len(), 1);
+        // 기기가 고른 알림 종류(N3): 주면 바꾸고, 없이 다시 넣으면(불러올 때마다 다시 구독) 둔다
+        let alerts = |h: &Host| h.db.push_list(Some(&ids[1])).unwrap()[0].alerts.unwrap();
+        assert_eq!(alerts(&h), db::Alerts::default());
+        let quiet = db::Alerts { input: false, done: true };
+        assert!(h.db.push_put(&db::PushSub { alerts: Some(quiet), ..sub(&ids[1], "a2") }).unwrap());
+        assert_eq!(alerts(&h), quiet);
+        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert_eq!(alerts(&h), quiet);
+    }
+
+    /// 보안 감사 t-0340 B5: 제어 문자·공백이 든 이름으로는 등록을 기다리지 못한다(`aaa machine pending` 화면·push 본문 위조)
+    #[tokio::test]
+    async fn enroll_rejects_machine_names_with_control_characters() {
+        let (h, _t) = host();
+        h.enroll.lock().unwrap().open_until = Some(Instant::now() + Duration::from_secs(60));
+        for bad in ["mac\x1b[2Ja", "mac a", "a\u{202e}b", ""] {
+            let e = h.enroll_request(bad, "01M", "fp", "sas").unwrap_err();
+            assert_eq!(e.code, ErrorCode::BadRequest, "{bad:?}");
+        }
+        assert!(h.enroll.lock().unwrap().pending.is_empty());
+        assert!(h.enroll_request("mac-b", "01M", "fp", "sas").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::*;
+
+    fn info(argv: &[&str], state: SessionState, role: Option<aaa_proto::Role>) -> SessionInfo {
+        SessionInfo {
+            id: "s".into(),
+            name: "s".into(),
+            argv: argv.iter().map(|a| a.to_string()).collect(),
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state,
+            role,
+            label: None,
+            harness: None,
+        }
+    }
+
+    /// 스스로 끝난 셸만 닫는다. 복원 대상(재부팅·유실)·host가 끝낸 것·역할·프로그램 pane·실행 중을 못 본 것은 남긴다.
+    #[test]
+    fn only_a_shell_that_exited_by_itself_closes() {
+        use SessionState::*;
+        let exited = || Exited { code: Some(0) };
+        let role = Some(aaa_proto::Role::Worker);
+        let cases = [
+            ("기본 셸 exit", info(&[], Running, None), info(&[], exited(), None), false, true),
+            (
+                "login 셸 exit 3",
+                info(&["/bin/zsh", "-l"], Running, None),
+                info(&["/bin/zsh", "-l"], Exited { code: Some(3) }, None),
+                false,
+                true,
+            ),
+            ("pane kill", info(&["sh"], Running, None), info(&["sh"], exited(), None), true, false),
+            ("역할 pane", info(&["sh"], Running, role), info(&["sh"], exited(), role), false, false),
+            (
+                "프로그램 pane",
+                info(&["sh", "-c", "exit 0"], Running, None),
+                info(&["sh", "-c", "exit 0"], exited(), None),
+                false,
+                false,
+            ),
+            ("재부팅", info(&["sh"], Running, None), info(&["sh"], Interrupted, None), false, false),
+            ("유실", info(&["sh"], Running, None), info(&["sh"], Lost, None), false, false),
+            ("이미 끝나 있던 것", info(&["sh"], Interrupted, None), info(&["sh"], exited(), None), false, false),
+        ];
+        for (what, old, new, kill_sent, want) in cases {
+            assert_eq!(exited_by_itself(&old, &new, kill_sent), want, "{what}");
+        }
     }
 }

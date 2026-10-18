@@ -18,8 +18,8 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
-import type { FrontRequest, MachineView, PaneView, ThreadView } from "./gen/proto";
+import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PaneRename } from "./PaneRename";
@@ -28,7 +28,7 @@ import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, sub
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
-import { GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
+import { activityOrder, GROUP_WORD, machineRoster, paneAgentStatus, paneEnded, paneProblem, projectLine, shortPath, stateLine, threadKey } from "./sidebarModel";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
@@ -57,6 +57,33 @@ function alignBreath(event: AnimationEvent<HTMLSpanElement>) {
  * 초록 점, 작업 중이면 숨쉬는 점, 배경 작업을 기다리면 멈춘 고리. 입력 대기·모름은 칸만 두고 말은 aria-label·title로.
  * 설정 「상태 표시」가 점·기호면 herdr TUI 글자를 herdr 색으로.
  */
+/**
+ * 그 agent가 띄워 아직 도는 배경 작업(하위 agent·배경 명령) 수(herdr-web-ui Sidebar.tsx `BackgroundBadge`): 상태 옆의 조용한 수다.
+ * 상태가 아니다: agent가 답했으면 「끝남」은 그대로다.
+ */
+export function BackgroundBadge({ count }: { count?: number | null }) {
+  if (!count || count <= 0) return null;
+  const label = `배경 작업 ${count}개 실행 중`;
+  return (
+    <span className="background-count" title={label} aria-label={label} data-testid="background-tasks">
+      <Layers aria-hidden="true" />
+      {count}
+    </span>
+  );
+}
+
+/** pane 계획이 어디까지 왔나(herdr-web-ui `PlanBadge`): 상태 옆의 n/m, 모든 단계가 끝나면 조용해진다. */
+export function PlanBadge({ plan }: { plan?: PlanSummary | null }) {
+  if (!plan || plan.total <= 0) return null;
+  const label = `계획 ${plan.total}단계 중 ${plan.done}단계 끝남`;
+  return (
+    <span className={`plan-count${plan.done === plan.total ? " is-done" : ""}`} title={plan.current ? `${label} · ${plan.current}` : label} aria-label={label} data-testid="plan-progress">
+      <ListChecks aria-hidden="true" />
+      {plan.done}/{plan.total}
+    </span>
+  );
+}
+
 export function StatusBadge({ status, compact = false, testid }: { status?: AgentStatus; compact?: boolean; testid?: string }) {
   const { appearance } = useAppearance();
   const value = knownStatus(status);
@@ -333,8 +360,8 @@ function MachineGroup({ machine: m, ...props }: SidebarProps & { machine: Machin
             type="button"
             className="sidebar-row-action machine-new"
             disabled={!online}
-            aria-label={`${m.name}에 새 셸`}
-            title="새 셸"
+            aria-label={`${m.name}에 새 pane`}
+            title="새 pane"
             data-testid={`new-shell-${m.name}`}
             onClick={() => props.onNewShell(m)}
           >
@@ -390,7 +417,7 @@ function PaneRoster({
           </p>
           {props.canControl && online && (
             <button type="button" className="btn" onClick={() => props.onNewShell(m)}>
-              <Plus aria-hidden="true" />새 셸
+              <Plus aria-hidden="true" />새 pane
             </button>
           )}
         </div>
@@ -711,17 +738,21 @@ function AgentSection(props: SidebarProps) {
   const listId = useId();
   const shared = useRows();
   const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
+  const { appearance } = useAppearance();
   const threadOf = new Map<string, ThreadView>();
   for (const t of props.threads) if (t.pane) threadOf.set(t.pane, t);
-  const rows = props.machines.flatMap((m) =>
-    props.panes
+  // 설정 「에이전트 정렬」: 머신 목록 차례, 또는 머신마다 활동순(참고 AgentSidebar `byActivity`, 각 PC 안에서)
+  const byActivity = appearance.agentOrder === "activity";
+  const rows = props.machines.flatMap((m) => {
+    const agents = props.panes
       .filter((p) => p.machine_id === m.id && p.state === "running" && p.role !== "evaluator")
       .flatMap((p) => {
         const t = threadOf.get(p.id);
         const agent = props.agentOf(p, t);
         return agent !== null ? [{ m, p, t, agent }] : [];
-      }),
-  );
+      });
+    return byActivity ? activityOrder(agents, (r) => r.p) : agents;
+  });
   // 고정한 agent는 맨 앞 카드에(참고 AgentSidebar `splitPinnedRows`)
   const split = splitPinnedRows(rows, shared.pins, (r) => sidebarPinKey(r.m.id, r.p.id));
   // 참고 agentContext: 이름이 아닌 말(종류)·머신(둘 이상일 때만)·자리. 같은 말을 두 번 하지 않는다
@@ -777,6 +808,12 @@ function AgentSection(props: SidebarProps) {
             </span>
             {context && <span className="agent-context">{context}</span>}
           </span>
+          {online && (
+            <span className="agent-row-status">
+              <BackgroundBadge count={p.agent?.background} />
+              <PlanBadge plan={p.agent?.plan} />
+            </span>
+          )}
           <span className="agent-row-state">
             {online && paneProblem(p) ? <ProblemBadge reason={paneProblem(p)!} /> : <StatusBadge compact status={online ? paneAgentStatus(p) : undefined} />}
           </span>

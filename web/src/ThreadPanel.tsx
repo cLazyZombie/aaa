@@ -3,10 +3,12 @@ import type { DeviceRole, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
+import { DrawerToggle } from "./drawer";
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "사람 차례",
   ready_for_review: "검토 대기",
+  landing: "병합 중",
   working: "작업 중",
   idle: "쉼",
   resolved: "끝남",
@@ -61,6 +63,7 @@ export function ThreadPanel({
   return (
     <div className="thread-view" data-testid="thread-view">
       <header className="term-head">
+        <DrawerToggle />
         <button className={`back ghost icon${backTo ? " is-shown" : ""}`} onClick={onBack} aria-label={backTo ? `${backTo} 프로젝트로` : "목록으로"} data-testid="thread-back">
           <Icon name="back" />
         </button>

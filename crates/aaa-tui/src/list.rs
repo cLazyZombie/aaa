@@ -34,13 +34,18 @@ pub fn thread_key(t: &ThreadView) -> String {
     format!("{}/{}", t.project, t.id)
 }
 
-/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순) → 머신마다 새 셸·pane(평가자 제외) →
-/// 사후 평가자 pane(예전 상태 줄에 보이던 것, 웹 목록에는 없다)
+/// 웹 목록과 같은 순서: 끝나지 않은 thread(평가자 제외, 묶음 차례 → 같은 묶음은 최근 바뀐 순) → 머신마다 새 셸·pane
+/// (평가자 제외) → 사후 평가자 pane(예전 상태 줄에 보이던 것, 웹 목록에는 없다)
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
     let mut out = vec![];
     let mut shown: Vec<&ThreadView> =
         threads.values().filter(|t| t.group != ThreadGroup::Resolved && t.role != Role::Evaluator).collect();
-    shown.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| thread_key(a).cmp(&thread_key(b))));
+    // herdr-projects 사이드바는 pane을 묶음 rank(`hp_rank` 표지)로 세운다: 사람 차례가 먼저다(`Group::DISPLAY_ORDER`)
+    shown.sort_by(|a, b| {
+        (a.group.rank().cmp(&b.group.rank()))
+            .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
+            .then_with(|| thread_key(a).cmp(&thread_key(b)))
+    });
     if !shown.is_empty() {
         out.push(Row::Header(format!("Thread {}", shown.len())));
         out.extend(shown.into_iter().map(|t| Row::Thread(thread_key(t))));
@@ -115,7 +120,7 @@ pub fn pane_dot(p: &PaneView) -> Dot {
 pub fn thread_dot(t: &ThreadView) -> Dot {
     match t.group {
         ThreadGroup::WaitingOnYou => Dot::Blocked,
-        ThreadGroup::ReadyForReview => Dot::Done,
+        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Dot::Done,
         ThreadGroup::Working => Dot::Working,
         ThreadGroup::Idle => Dot::Idle,
         ThreadGroup::Resolved => Dot::Unknown,
@@ -144,6 +149,7 @@ pub fn group_label(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "사람 차례",
         ThreadGroup::ReadyForReview => "검토 대기",
+        ThreadGroup::Landing => "병합 중",
         ThreadGroup::Working => "작업 중",
         ThreadGroup::Idle => "쉼",
         ThreadGroup::Resolved => "끝남",
@@ -154,19 +160,35 @@ fn group_color(g: ThreadGroup, p: &Palette) -> Color {
     match g {
         ThreadGroup::WaitingOnYou => p.red,
         ThreadGroup::ReadyForReview => p.teal,
+        // herdr-projects popup `group_color`
+        ThreadGroup::Landing => p.green,
         ThreadGroup::Working => p.yellow,
         ThreadGroup::Idle | ThreadGroup::Resolved => p.overlay0,
     }
 }
 
-/// pane 줄 오른쪽 배지(웹 목록과 같은 말). 실행 중이고 harness 상태가 없으면 없다.
-pub fn pane_badge(p: &PaneView, pal: &Palette) -> Option<(String, Color)> {
+/// pane 줄 제목에 남길 칸(이보다 좁아지면 배지의 계획·배경 수를 뺀다)
+const TITLE_MIN: usize = 8;
+
+/// pane 줄 오른쪽 배지(웹 목록과 같은 말). 실행 중이고 harness 상태가 없으면 없다. 계획 n/m·배경 작업 수는 `room`칸 안에
+/// 들 때만 붙인다(좁은 목록에서 제목보다 먼저 빠진다).
+pub fn pane_badge(p: &PaneView, pal: &Palette, room: usize) -> Option<(String, Color)> {
     if p.state.is_running() && p.connection == Connection::Disconnected {
         return Some(("끊김".into(), pal.peach));
     }
     match &p.state {
         SessionState::Running => p.agent.as_ref().map(|a| {
-            let pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
+            let mut pct = a.percent.map(|n| format!(" {n}%")).unwrap_or_default();
+            // 계획 n/m·배경 작업 수(웹 Agents 보기 배지와 같은 값, 차이 목록 S5). 폭이 애매한 기호 대신 글로 쓴다
+            let extra = [
+                a.plan.as_ref().filter(|p| p.total > 0).map(|p| format!(" {}/{}", p.done, p.total)),
+                a.background.filter(|n| *n > 0).map(|n| format!(" 배경{n}")),
+            ];
+            for e in extra.into_iter().flatten() {
+                if unicode_width(&format!("{}{pct}{e}", activity_text(a.activity))) <= room {
+                    pct.push_str(&e);
+                }
+            }
             let color = match a.activity {
                 AgentActivity::Working => pal.yellow,
                 AgentActivity::Question | AgentActivity::Error => pal.red,
@@ -234,7 +256,9 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
         } else {
             None
         };
-        let (left, right) = line(row, v, current || sel);
+        // 배지가 쓸 수 있는 칸: 앞 점(3칸)·사이·끝 칸(2칸)과 제목 TITLE_MIN칸을 뺀 나머지
+        let room = (r.w as usize).saturating_sub(5 + TITLE_MIN);
+        let (left, right) = line(row, v, current || sel, room);
         // 오른쪽 글(상태)은 이름과 한 칸 띄우고 끝 한 칸을 비운다. 넘치는 이름은 herdr `truncate_end`처럼 「…」로 자른다
         // (herdr `resolved_token_spans`: 토큰 사이 구분자, 잘린 토큰 끝 「…」)
         let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16).unwrap_or(0);
@@ -277,7 +301,7 @@ fn is_current(row: &Row, v: &View) -> bool {
 /// 글과 그 모양
 type Span = (String, Style);
 
-fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
+fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> (Vec<Span>, Option<Span>) {
     let pal = v.pal;
     let name = if highlighted {
         Style::default().fg(pal.text).add_modifier(Modifier::BOLD)
@@ -322,7 +346,7 @@ fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
                 let st = if p.state.is_running() { name } else { faint };
                 (
                     vec![dot(pane_dot(p)), (pane_title(p, v.threads), st)],
-                    pane_badge(p, pal).map(|(b, c)| (b, Style::default().fg(c))),
+                    pane_badge(p, pal, room).map(|(b, c)| (b, Style::default().fg(c))),
                 )
             }
             None => (vec![dot(Dot::Unknown), (id.clone(), name)], None),
@@ -399,6 +423,61 @@ mod tests {
         assert_eq!(step(&r, 1, false), 1);
     }
 
+    fn thread(id: &str, group: ThreadGroup, updated_at_ms: u64) -> ThreadView {
+        ThreadView {
+            project: "p".into(),
+            id: id.into(),
+            title: id.into(),
+            machine: "m".into(),
+            profile: "claude".into(),
+            role: Role::Worker,
+            thread_kind: aaa_proto::ThreadKind::Dir,
+            status: aaa_proto::ThreadStatus::Open,
+            group,
+            brief: aaa_proto::BriefState::Delivered,
+            pane: None,
+            cwd: None,
+            work_dir: None,
+            branch: None,
+            pr: None,
+            report_hash: None,
+            acked_hash: None,
+            next: vec![],
+            copy: None,
+            error: None,
+            agent: None,
+            created_at_ms: 0,
+            updated_at_ms,
+            warnings: vec![],
+        }
+    }
+
+    /// thread 줄은 묶음 차례(herdr-projects `DISPLAY_ORDER`: 사람 차례 → 검토 → 병합 중 → 작업 → 쉼)로, 같은 묶음 안은
+    /// 최근 바뀐 것이 먼저다(차이 목록 3장 C1). 끝난 thread는 목록에 없다
+    #[test]
+    fn threads_follow_the_display_order() {
+        let threads: HashMap<String, ThreadView> = [
+            thread("t-idle", ThreadGroup::Idle, 9),
+            thread("t-work-old", ThreadGroup::Working, 1),
+            thread("t-work-new", ThreadGroup::Working, 8),
+            thread("t-landing", ThreadGroup::Landing, 2),
+            thread("t-review", ThreadGroup::ReadyForReview, 3),
+            thread("t-you", ThreadGroup::WaitingOnYou, 4),
+            thread("t-done", ThreadGroup::Resolved, 10),
+        ]
+        .into_iter()
+        .map(|t| (thread_key(&t), t))
+        .collect();
+        let got: Vec<Row> = rows(&[], &[], &threads);
+        let want: Vec<Row> = std::iter::once(Row::Header("Thread 6".into()))
+            .chain(
+                ["t-you", "t-review", "t-landing", "t-work-new", "t-work-old", "t-idle"]
+                    .map(|id| Row::Thread(format!("p/{id}"))),
+            )
+            .collect();
+        assert_eq!(got, want);
+    }
+
     /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
     #[test]
     fn long_name_is_cut_with_ellipsis_before_the_right_text() {
@@ -442,5 +521,50 @@ mod tests {
         assert_eq!(line(20), " ▾ studio-v… ◐ 끊김 ");
         // 넉넉하면 그대로
         assert_eq!(line(40), format!(" ▾ studio-very-long-machine{}◐ 끊김 ", " ".repeat(6)));
+    }
+
+    #[test]
+    fn pane_badge_carries_plan_and_background_counts() {
+        let pal = Palette::catppuccin();
+        let mut p = PaneView {
+            id: "p".into(),
+            machine_id: "m".into(),
+            machine: "m".into(),
+            name: "p".into(),
+            argv: vec![],
+            cwd: None,
+            state: SessionState::Running,
+            connection: Connection::Connected,
+            readonly: false,
+            cols: 80,
+            rows: 24,
+            lease: None,
+            role: None,
+            agent: Some(Box::new(aaa_proto::AgentStatus {
+                activity: AgentActivity::Working,
+                since_ms: 1,
+                harness: "claude".into(),
+                message: None,
+                percent: Some(40),
+                progress: None,
+                progress_at_ms: None,
+                harness_session: None,
+                seen: true,
+                plan: Some(aaa_proto::PlanSummary { done: 1, total: 3, current: None }),
+                background: Some(2),
+            })),
+            label: None,
+            restore_error: None,
+            replaced: Vec::new(),
+        };
+        assert_eq!(pane_badge(&p, &pal, 40).unwrap().0, "작업 중 40% 1/3 배경2");
+        // 좁으면 계획·배경 수가 제목보다 먼저 빠진다(들어가는 것만)
+        assert_eq!(pane_badge(&p, &pal, 15).unwrap().0, "작업 중 40% 1/3");
+        assert_eq!(pane_badge(&p, &pal, 14).unwrap().0, "작업 중 40%");
+        assert_eq!(pane_badge(&p, &pal, 0).unwrap().0, "작업 중 40%");
+        // 계획·배경 작업이 없으면 예전 그대로
+        let a = p.agent.as_mut().unwrap();
+        (a.plan, a.background, a.percent) = (None, None, None);
+        assert_eq!(pane_badge(&p, &pal, 40).unwrap().0, "작업 중");
     }
 }

@@ -2,8 +2,12 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 05-devices(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  aaa, until, screenText, shot, pairPage, base, openPages, step, browser, openSettings,
+  aaa, until, screenText, shot, pairPage, base, openPages, step, browser, openSettings, env, waitOutput, inList,
 } from "../lib/harness.mjs";
+
+// 이 실험실 host만 입력줄 보내기의 글과 Enter 사이를 4초로 둔다(기본 300ms): 「폐기와 보내던 Enter」 단계가 그 틈에
+// 폐기한다. 이 파일의 다른 단계는 입력줄로 보내지 않는다. host는 이 파일을 부른 뒤 runSpec에서 뜬다
+env.AAA_TEST_SUBMIT_GAP_MS = "4000";
 
 export default async function ({ ctl, page }) {
   await step("기기·pairing(herdr-web-ui DevicesPanel·AccessGate·PhonePanel, 차이 목록 P1·P2·P3, D6): 설정 → 기기에서 코드·QR, QR 주소는 바로 내고 주소에서 지움, 새 코드는 앞 코드를 버림, 틀린 코드는 말, 이름 바꾸기, 폐기하면 열린 화면이 바로 pairing 화면, 보기 기기는 목록만, 로그아웃", async () => {
@@ -53,7 +57,7 @@ export default async function ({ ctl, page }) {
     openPages.add(phone);
     phone.on("close", () => openPages.delete(phone));
     await phone.goto(`${base}?pair=${second}`);
-    await phone.getByTestId("machine-labA").waitFor();
+    await phone.getByTestId("machine-labA").waitFor({ state: "attached" });
     if (phone.url().includes("pair=")) throw new Error(`주소에 코드가 남았다: ${phone.url()}`);
     // 데스크톱 화면은 그 코드로 들어온 기기를 알아채고 코드를 닫는다
     await dlg.getByRole("status").filter({ hasText: "페어링됨: iPhone · Safari." }).waitFor();
@@ -69,7 +73,7 @@ export default async function ({ ctl, page }) {
     const listed = aaa("web", "devices").devices.find((d) => d.id === phoneId);
     if (listed?.label !== "내 폰" || listed.role !== "controller") throw new Error(`CLI 목록 ${JSON.stringify(listed)}`);
     // 폰은 터미널을 연다(그 WebSocket도 바로 닫혀야 한다)
-    await phone.getByTestId("pane-t1").click();
+    await inList(phone, "pane-t1");
     await until("폰 t1 화면", async () => (await screenText(phone)).includes("$"));
     // 폐기: 두 번 눌러야 한다
     const revoke = phoneRow.getByRole("button", { name: "폐기" });
@@ -133,5 +137,39 @@ export default async function ({ ctl, page }) {
     aaa("web", "revoke", mine);
     await desk.context().close();
     await phoneCtx.close();
+  });
+
+  await step("폐기와 보내던 Enter(t-0340 감사 A9, t3code awaitInvalidation): 입력줄로 보낸 글과 Enter 사이에 기기를 폐기하면 Enter는 가지 않고 터미널 연결이 닫힌다", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "a9", "--", "/bin/cat");
+    const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { line: true });
+    const bp = B.page;
+    // pane 터미널 연결: 「보냄」 답(submitted)과 닫힘을 본다
+    let submitted = false;
+    let closed = null;
+    const paneWs = new Promise((resolve) =>
+      bp.on("websocket", (ws) => {
+        if (!ws.url().includes("/panes/")) return;
+        ws.on("framereceived", (f) => typeof f.payload === "string" && f.payload.includes('"submitted"') && (submitted = true));
+        closed = new Promise((r) => ws.on("close", r));
+        resolve(ws);
+      }),
+    );
+    await inList(bp, "pane-a9");
+    await paneWs;
+    const line = bp.getByLabel("보낼 글");
+    await until("B 입력줄 켜짐", () => line.isEnabled());
+    const id = (await bp.evaluate(async () => (await (await fetch("/api/v1/me")).json()).ok.device));
+    await line.fill("a9-held");
+    await line.press("Enter");
+    // 글은 들어갔다(tty가 되울림): host는 지금 Enter 앞에서 기다린다
+    await waitOutput("a9", "a9-held");
+    aaa("web", "revoke", id);
+    if (submitted) throw new Error("시험 전제: 폐기 전에 Enter까지 보냈다(틈 4초 안에 폐기하지 못함)");
+    await closed;
+    // 이어 친 글이 같은 줄에 붙으면 Enter는 가지 않았다(갔다면 cat이 a9-held를 따로 한 줄 되돌리고 sync는 새 줄)
+    aaa("pane", "run", "a9", "sync");
+    await waitOutput("a9", "a9-heldsync");
+    if (submitted) throw new Error("폐기한 기기의 보내기가 끝났다고 답했다");
+    await bp.context().close();
   });
 }

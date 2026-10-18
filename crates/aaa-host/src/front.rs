@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use aaa_proto::{
     DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, GridFrame,
-    GridLine, MAX_FRAME, PaneModes, negotiate,
+    GridLine, GridRun, MAX_FRAME, PaneModes, negotiate,
 };
 use anyhow::{Context, Result, bail};
 
@@ -227,7 +227,14 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
             let Incoming::Control(b) = m else { continue };
-            let FrontMsg::Req { id, body } = serde_json::from_slice(&b)? else { continue };
+            let (id, body) = match read_req(&b)? {
+                ReqFrame::Req(id, body) => (id, body),
+                ReqFrame::Unknown(id, e) => {
+                    tx.control(res_frame(id, Err(e))).await?;
+                    continue;
+                }
+                ReqFrame::Other => continue,
+            };
             match body {
                 FrontRequest::PaneWatch { pane } => {
                     let result = match host.pane_view_of(&pane, DeviceRole::Local) {
@@ -258,6 +265,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
+                | FrontRequest::PanePaste { .. }
                 | FrontRequest::PaneSend { .. }
                 | FrontRequest::PaneSendText { .. }
                 | FrontRequest::PaneSendKeys { .. }
@@ -293,6 +301,35 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     }
     host.front_gone(&front.id);
     result
+}
+
+/// front가 보낸 control frame 하나
+enum ReqFrame {
+    Req(String, FrontRequest),
+    /// 이 host가 모르는 요청(옛 front가 보낸 없앤 요청, 새 front의 새 요청): 그 요청에 이 오류로 답한다
+    Unknown(String, ErrorBody),
+    Other,
+}
+
+/// 모르는 요청이어도 `id`가 있으면 연결을 끊지 않는다(t-0340 보안 감사: 1.11 front의 `decision_add`가 답 없이 끊겼다).
+/// `id`도 없는 frame은 front가 아니다: 끊는다.
+fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
+    match serde_json::from_slice::<FrontMsg>(b) {
+        Ok(FrontMsg::Req { id, body }) => Ok(ReqFrame::Req(id, body)),
+        Ok(_) => Ok(ReqFrame::Other),
+        Err(e) => {
+            let id = serde_json::from_slice::<serde_json::Value>(b)
+                .ok()
+                .and_then(|v| v.get("id")?.as_str().map(str::to_string));
+            match id {
+                Some(id) => {
+                    let why = format!("이 host(FRONT_API {FRONT_API})가 모르는 요청이다. CLI·host 판을 맞춘다: {e}");
+                    Ok(ReqFrame::Unknown(id, ErrorBody::new(ErrorCode::BadRequest, why)))
+                }
+                None => Err(e),
+            }
+        }
+    }
 }
 
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
@@ -341,10 +378,9 @@ impl GridDiff {
     }
 }
 
-/// 직전에 보낸 줄 hash와 커서. `sent[rows]`에 커서를 함께 넣는다.
+/// 직전에 보낸 줄 hash와 커서. `sent[rows]`에 커서를, `sent[rows + 1]`에 크기를 함께 넣는다.
 impl Host {
     pub fn grid_frame(&self, pane: &str, sent: &mut Vec<u64>, full: bool) -> Option<GridDiff> {
-        use std::hash::{Hash, Hasher};
         let i = self.inner.lock().unwrap();
         let p = i.panes.get(pane)?;
         let (rows, cols, cursor, modes, src) = match &p.mirror {
@@ -358,24 +394,6 @@ impl Host {
             }
         };
         drop(i);
-        let n = rows as usize;
-        let full = full || sent.len() != n + 1;
-        if full {
-            sent.clear();
-            sent.resize(n + 1, u64::MAX);
-        }
-        let mut lines = Vec::new();
-        for (r, runs) in src.into_iter().enumerate() {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            for run in &runs {
-                (&run.t, run.fg, run.bg, run.a).hash(&mut h);
-            }
-            let hash = h.finish();
-            if sent[r] != hash {
-                sent[r] = hash;
-                lines.push(GridLine { row: r as u16, runs });
-            }
-        }
         let (cursor_row, cursor_col, cursor_visible) = cursor;
         // 모드만 바뀌어도(프로그램이 마우스 보고를 켬) 한 장 보내도록 커서 hash 위 비트에 접는다
         let m = (modes.mouse as u64)
@@ -383,8 +401,7 @@ impl Host {
             | u64::from(modes.alt_screen) << 5
             | u64::from(modes.app_cursor) << 6;
         let c = (m << 48) | (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
-        let cursor_changed = sent[n] != c;
-        sent[n] = c;
+        let (lines, full, cursor_changed) = changed_rows(sent, (rows, cols), src, c, full);
         let frame = GridFrame {
             pane: pane.to_string(),
             cols,
@@ -400,9 +417,91 @@ impl Host {
     }
 }
 
+/// 직전에 보낸 것(`sent`)과 견주어 보낼 줄을 고른다. 돌려주는 것은 (줄, 전체인지, 커서가 바뀌었는지).
+/// 크기가 바뀌면 줄 수만이 아니라 폭만 바뀌어도 전체를 보낸다: front는 크기가 바뀐 grid를 비우므로, 내용이 같아 다시 보내지
+/// 않은 줄이 빈칸으로 남았다(QA t-0337 Q23, herdr는 크기가 바뀐 pane을 통째로 그린다).
+fn changed_rows(
+    sent: &mut Vec<u64>,
+    (rows, cols): (u16, u16),
+    src: Vec<Vec<GridRun>>,
+    cursor: u64,
+    full: bool,
+) -> (Vec<GridLine>, bool, bool) {
+    use std::hash::{Hash, Hasher};
+    let n = rows as usize;
+    let size = (u64::from(rows) << 16) | u64::from(cols);
+    let full = full || sent.len() != n + 2 || sent[n + 1] != size;
+    if full {
+        sent.clear();
+        sent.resize(n + 2, u64::MAX);
+        sent[n + 1] = size;
+    }
+    let mut lines = Vec::new();
+    for (r, runs) in src.into_iter().enumerate() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for run in &runs {
+            (&run.t, run.fg, run.bg, run.a).hash(&mut h);
+        }
+        let hash = h.finish();
+        if sent[r] != hash {
+            sent[r] = hash;
+            lines.push(GridLine { row: r as u16, runs });
+        }
+    }
+    let cursor_changed = sent[n] != cursor;
+    sent[n] = cursor;
+    (lines, full, cursor_changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 바뀐 줄만 보내되, 크기가 바뀌면(폭만 바뀌어도) 모든 줄을 다시 보낸다(QA t-0337 Q23)
+    #[test]
+    fn size_changes_resend_every_row() {
+        let screen = |texts: &[&str]| -> Vec<Vec<GridRun>> {
+            texts.iter().map(|t| vec![GridRun { t: t.to_string(), fg: 0, bg: 0, a: 0 }]).collect()
+        };
+        let rows_of = |lines: &[GridLine]| lines.iter().map(|l| l.row).collect::<Vec<_>>();
+        let mut sent = Vec::new();
+        let (lines, full, _) = changed_rows(&mut sent, (3, 40), screen(&["a", "b", ""]), 7, true);
+        assert!(full);
+        assert_eq!(rows_of(&lines), [0, 1, 2]);
+        // 한 줄만 바뀜
+        let (lines, full, cursor) = changed_rows(&mut sent, (3, 40), screen(&["a", "b", "c"]), 7, false);
+        assert_eq!((rows_of(&lines), full, cursor), (vec![2], false, false));
+        // 폭만 바뀜: 내용이 같아도 모두
+        let (lines, full, _) = changed_rows(&mut sent, (3, 60), screen(&["a", "b", "c"]), 7, false);
+        assert_eq!((rows_of(&lines), full), (vec![0, 1, 2], true));
+        // 줄 수가 바뀜
+        let (lines, full, _) = changed_rows(&mut sent, (2, 60), screen(&["a", "b"]), 7, false);
+        assert_eq!((rows_of(&lines), full), (vec![0, 1], true));
+        // 그대로면 없음, 커서만 바뀌면 커서
+        let (lines, full, cursor) = changed_rows(&mut sent, (2, 60), screen(&["a", "b"]), 8, false);
+        assert_eq!((lines.len(), full, cursor), (0, false, true));
+    }
+
+    /// 없앤 요청(1.12의 `decision_add`)·모르는 요청에는 그 id로 오류를 답하고, id도 없는 것만 끊는다(t-0340 보안 감사)
+    #[test]
+    fn unknown_requests_get_an_error_answer() {
+        let known = br#"{"t":"req","id":"1","body":{"op":"projects"}}"#;
+        assert!(matches!(read_req(known), Ok(ReqFrame::Req(id, FrontRequest::Projects)) if id == "1"));
+        let removed = br#"{"t":"req","id":"2","body":{"op":"decision_add","project":"p","text":"x"}}"#;
+        match read_req(removed) {
+            Ok(ReqFrame::Unknown(id, e)) => {
+                assert_eq!((id.as_str(), e.code), ("2", ErrorCode::BadRequest));
+                assert!(
+                    e.message.starts_with(&format!("이 host(FRONT_API {FRONT_API})가 모르는 요청이다")),
+                    "{}",
+                    e.message
+                );
+            }
+            _ => panic!("모르는 요청에 답하지 않는다"),
+        }
+        assert!(read_req(b"not json").is_err());
+        assert!(read_req(br#"{"t":"req","body":{"op":"nope"}}"#).is_err());
+    }
 
     /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)
     #[test]

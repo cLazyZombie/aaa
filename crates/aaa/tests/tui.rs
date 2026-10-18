@@ -265,6 +265,9 @@ impl Tui {
         cmd.env("AAA_STATE_DIR", &node.state);
         cmd.env("TERM", "xterm-256color");
         cmd.env("RUST_LOG", "off");
+        // 이 관측기가 터미널이고 색(고른 줄·지금 줄 바탕)을 본다. 시험을 돌린 셸의 NO_COLOR를 물려받으면
+        // crossterm이 색을 내지 않아 그 줄을 찾지 못한다(`Node::cmd`처럼 뺀다)
+        cmd.env_remove("NO_COLOR");
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -467,12 +470,12 @@ fn start_with(lab: &mut Lab, host_toml: &str) -> (Node, HostWatch) {
     (h, hw)
 }
 
-/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(질문 수·다른 화면 크기) 앞.
+/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(사람 차례 수·다른 화면 크기) 앞.
 /// 시험의 탭 이름에는 빈칸을 쓰지 않는다.
 fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
-    let rest = rest.split(" ● 질문").next().unwrap_or(rest);
+    let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
     let mut chips: Vec<String> =
         rest.split_whitespace().filter(|c| !matches!(*c, "+" | "<" | ">" | "…")).map(str::to_string).collect();
@@ -517,11 +520,15 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
-    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄(셸은 상태 점 `·`)이 있고
-    // 지금 pane 줄은 active_row_bg 바탕이다(herdr 사이드바).
+    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄이 있고 지금 pane 줄은 active_row_bg
+    // 바탕이다(herdr 사이드바). 이 pane은 실행 파일 이름이 claude라 agent가 띄운 지 3초(`STARTUP_GRACE`) 뒤 화면을 보고
+    // 쉼을 알린다(`○`·「입력 대기」). 상태 없는 `·`은 그 3초 동안만 보여 TUI가 3초 넘게 늦게 뜨면 볼 수 없다.
+    // 시작 시각에 기대지 않게 감지가 알린 쉼을 기다린다.
     tui.wait_screen("탭과 사이드바", |s| {
         let t = s.text();
-        tab_chips(&t) == ["first"] && t.contains(" ▾ labA") && s.current().is_some_and(|l| l.contains(" · first"))
+        tab_chips(&t) == ["first"]
+            && t.contains(" ▾ labA")
+            && s.current().is_some_and(|l| l.contains(" ○ first") && l.contains("입력 대기"))
     });
     // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기(사이드바 26칸과 탭 막대 한 줄을 뺀 칸)로 맞추고
     // 이 화면이 지금 쓰는 화면이 된다. 상태 줄은 없다(herdr).
@@ -533,14 +540,15 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     tui.type_line("echo tui-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("tui-42"));
 
-    // harness 상태는 화면으로 바뀌고 사이드바 줄·탭 막대 질문 수·pane badge에 보인다: Claude 권한 확인창
-    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다
+    // harness 상태는 화면으로 바뀌고 사이드바 줄·pane badge에 보인다: Claude 권한 확인창
+    // (`bash_permission_prompt`)은 질문, spinner 줄(`live_turn_working`)은 작업 중이다. 탭 막대 오른쪽은 thread가 아닌
+    // pane의 질문을 세지 않는다(herdr-projects `projects: N need you`는 thread 수다, side_list_like_web)
     tui.type_line(
         "clear; printf '%s\\n' ' Bash command' '' '   ls' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' \
          ' Esc to cancel · Tab to amend'",
     );
     tui.wait_text("질문 상태", |s| {
-        s.lines().next().is_some_and(|l| l.contains(" ● 질문 1 ")) && s.contains("질문 — aaa question")
+        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 사람 차례"))
     });
     tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| {
@@ -946,6 +954,48 @@ fn lease_conflict_with_another_front() {
     drop(other);
 }
 
+/// 다른 front(휴대폰)가 좁게 쥐었다 놓아도 줄 끝이 돌아온다. host의 pane 화면(aaa-vt)이 폭이 바뀔 때 다시 접는다(herdr도
+/// 다시 접는다: src/pane.rs 「Herdr reflows too」). 전에는 vt100 `set_size`가 좁힌 폭 밖 글을 버려 넓혀도 비었다(coordinator
+/// 10-18, t-0330 발견). 셸은 그래서 fish에게 aaa가 다시 접는다고 알린다(`fish_handle_reflow=0`).
+#[test]
+fn narrow_claim_then_release_keeps_line_ends() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "reflow", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["reflow"]);
+    hw.wait("이 화면의 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    // pane 폭(COLS-SIDE) 안에 드는 49자 줄. 입력한 명령 줄에는 이 글이 그대로 나오지 않는다
+    let long = format!("LONG-{}-END", "0".repeat(40));
+    tui.type_line("echo LONG-$(printf %040d 0)-END; echo \"reflow: ${fish_handle_reflow-none}\"");
+    tui.wait_text("긴 줄과 fish 알림", |s| s.contains(&long) && s.contains("reflow: 0"));
+
+    // 다른 front가 30칸으로 쥔다: 줄이 접혀 한 줄에 다 보이지 않는다
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let mut other = rt.block_on(aaa_common::front::FrontClient::connect_as(&h.state, "phone-front")).unwrap();
+    let mut call = |req| {
+        let r = rt.block_on(other.call(req)).unwrap();
+        assert!(r.is_ok(), "{r:?}");
+    };
+    call(aaa_proto::FrontRequest::PaneResize { pane: id.clone(), cols: 30, rows: 15 });
+    hw.wait("좁은 크기", |w| (w.held_by(&id, "phone-front") && w.pane(&id)?.cols == 30).then_some(()));
+    tui.wait_text("좁게 접힌 줄", |s| {
+        s.contains("phone-front 크기") && !s.contains(&long) && s.contains("LONG-0000")
+    });
+
+    // 놓고 이 화면이 되찾으면(focus) 넓은 폭에서 줄 끝까지 다시 한 줄이다
+    call(aaa_proto::FrontRequest::PaneRelease { pane: id.clone() });
+    hw.wait("놓음", |w| w.pane(&id).is_some_and(|p| p.lease.is_none()).then_some(()));
+    tui.send(b"\x1b[I");
+    hw.wait("되찾은 크기", |w| (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    tui.wait_text("줄 끝이 돌아옴", |s| s.contains(&long) && !s.contains("phone-front 크기"));
+    // 세션 쪽 화면(`pane read`)도 다시 접었다
+    let read = h.ok(&["pane", "read", &id]);
+    assert!(read.to_string().contains(&long), "pane read: {read}");
+    drop(tui);
+}
+
 /// 고른 줄 바로 위가 「Thread n」 머리인가(목록 맨 위)
 fn at_top(s: &Screen) -> bool {
     let text = s.text();
@@ -1040,8 +1090,16 @@ fn side_list_like_web() {
     tui.wait_text("pane 입력", |s| s.contains("list-42"));
 
     // 2) 새 thread는 사건으로 따라온다
-    start("beta-job");
+    let beta = start("beta-job");
     tui.wait_text("새 thread", |s| s.contains("Thread 2") && s.contains("beta-job"));
+    // 탭 막대 오른쪽은 사람이 볼 thread 수다(herdr-projects 탭 줄 `projects: N need you`): 보고 없이 pane이 닫힌 thread는
+    // 사람 차례다. 그 전에는 없다
+    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 사람 차례"), "{}", tui.text());
+    let beta_pane = wait_for("beta pane", T, || {
+        h.ok(&["thread", "show", "demo", beta["id"].as_str().unwrap()])["pane"].as_str().map(String::from)
+    });
+    h.ok(&["pane", "kill", &beta_pane]);
+    tui.wait_text("사람 차례 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 사람 차례 1 ")));
     // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
@@ -1194,6 +1252,17 @@ fn attachments(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 /// 불투명한 기본색 3x2(색 관리가 바꾸지 않는 값)
 const PIXELS: [[u8; 4]; 6] =
     [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 255], [0, 0, 0, 255], [255, 255, 0, 255]];
+
+fn encode_rgba(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, width, height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut wr = enc.write_header().unwrap();
+    wr.write_image_data(rgba).unwrap();
+    wr.finish().unwrap();
+    out
+}
 
 fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
     let mut r = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
@@ -1455,6 +1524,39 @@ fn context_menu_like_herdr() {
     assert!(tui.wait_exit());
 }
 
+/// pane 폭만 바뀌어도 그 pane을 전부 다시 그린다(QA t-0337 Q23, herdr는 크기가 바뀐 pane을 통째로 그린다).
+/// 사이드바를 접고 펴면 줄 수는 그대로이고 폭만 바뀐다. 전에는 host가 바뀐 줄만 보내고 TUI는 폭이 바뀐 grid를 비워서,
+/// 내용이 같은 줄(앞 출력)이 빈칸으로 남았다. 바뀐 뒤 친 표지 줄이 보인 다음(그 뒤 장면까지 왔다) 앞 출력을 본다.
+#[test]
+fn width_only_change_redraws_the_pane() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "wide", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("lease", |w| w.held_by(&id, "tui@").then_some(()));
+    tui.type_line("echo before-$((1)); echo again-$((2))");
+    tui.wait_text("앞 출력", |s| s.contains("again-2"));
+
+    let fold = tui.wait_find("«");
+    tui.click(fold);
+    hw.wait("compact 폭", |w| (w.pane(&id)?.cols == COLS - COMPACT).then_some(()));
+    tui.type_line("echo folded-$((3))");
+    tui.wait_text("접은 뒤 표지", |s| s.contains("folded-3"));
+    let text = tui.text();
+    assert!(text.contains("before-1") && text.contains("again-2"), "폭이 넓어진 pane의 앞 출력이 비었다:\n{text}");
+
+    let unfold = tui.wait_find("»");
+    tui.click(unfold);
+    hw.wait("펼친 폭", |w| (w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    tui.type_line("echo unfolded-$((4))");
+    tui.wait_text("편 뒤 표지", |s| s.contains("unfolded-4"));
+    let text = tui.text();
+    assert!(text.contains("before-1") && text.contains("folded-3"), "폭이 좁아진 pane의 앞 출력이 비었다:\n{text}");
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
 /// Ctrl+V 그림 붙여넣기(§8.28): 그림이 없으면 0x16이 그대로 가고, 있으면 pane 머신 세션 폴더에 PNG로 저장된다.
 /// 셸 pane에도 따옴표 경로와 빈칸을 넣는다(Enter 없음, herdr·herdr-web-ui처럼, plan §8.51). 같은 길을 `aaa pane attach`(raw ssh 셸용)로도 확인한다.
 /// 기본은 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard로 쓴다(개발 Mac의 clipboard를 덮어쓰지 않는다).
@@ -1483,23 +1585,17 @@ fn ctrl_v_pastes_clipboard_image() {
     tui.wait_text("stty 끝", |s| s.contains("lnext-0"));
     tui.send(b"\x16");
     tui.send(b"\r");
-    tui.wait_text("원래 Ctrl+V", |s| s.contains("^V"));
+    // ^V는 tty echo(ECHOCTL)와 cat -v 출력 둘이다. cat이 줄을 읽어 낸 둘째를 본 뒤 ^C를 보낸다: 그때 cat이 앞 그룹이다
+    // (뒤 그룹이 tty를 읽으면 멈춘다). echo만 보고 보내면 셸이 cat을 앞으로 올리기 전의 ^C가 셸로 가고 읽지 않은 줄을
+    // 버려, 살아남은 cat이 다음 줄을 먹었다(ci-local 부하 아래 「화면 지움」 실패)
+    tui.wait_text("원래 Ctrl+V", |s| s.matches("^V").count() >= 2);
     tui.send(b"\x03");
     assert!(attachments(&h.state).is_empty(), "그림이 없는데 첨부가 생겼다");
 
     // 2) 그림이 있으면 대상 머신에 저장하고 셸 줄에 따옴표 경로를 넣고(Enter 없음) 오른쪽 위 알림 카드로 알린다.
     match clip.as_mut() {
         Some(c) => c.set_image(arboard::ImageData { width: 3, height: 2, bytes: rgba.as_slice().into() }).unwrap(),
-        None => {
-            let mut out = Vec::new();
-            let mut enc = png::Encoder::new(&mut out, 3, 2);
-            enc.set_color(png::ColorType::Rgba);
-            enc.set_depth(png::BitDepth::Eight);
-            let mut wr = enc.write_header().unwrap();
-            wr.write_image_data(&rgba).unwrap();
-            wr.finish().unwrap();
-            std::fs::write(&fake, out).unwrap();
-        }
+        None => std::fs::write(&fake, encode_rgba(3, 2, &rgba)).unwrap(),
     }
     tui.type_line("clear; echo cleared-$((2+2))");
     tui.wait_text("화면 지움", |s| s.contains("cleared-4"));
@@ -1538,4 +1634,111 @@ fn ctrl_v_pastes_clipboard_image() {
         serde_json::from_str(&h.json(&["pane", "attach", &id, txt.to_str().unwrap()]).unwrap_err()).unwrap();
     assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("PNG·JPEG·GIF·WebP")), "{r}");
     assert_eq!(attachments(&h.state).len(), 2);
+}
+
+/// 붙여넣기와 그림 파일 끌어놓기(차이 목록 4E, herdr client `EnableBracketedPaste`·`read_image_file_from_terminal_drop`,
+/// plan §8.147): TUI는 바깥 터미널의 bracketed paste(2004)를 켜고 나갈 때 끈다. 붙여 넣은 글은 host가 pane 프로그램이 켠
+/// 2004대로 감싸고 글 안의 ESC는 뺀다(herdr 서버가 client 붙여넣기를 다시 감싸는 것과 같다). 붙여 넣은 글이 그림 파일 하나의
+/// 절대 경로면(터미널에 끌어 놓은 파일) 그 그림을 pane 머신에 올리고 셸 줄에 따옴표 경로를 넣는다(Enter 없음).
+/// 그림이 아닌 파일·상대 경로는 글 그대로다. 붙여 넣은 줄마다 cat이 되돌린 것을 본 뒤 단언하고 다음 글을 친다.
+#[test]
+fn paste_and_image_drop_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "drop", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("lease", |w| w.held_by(&id, "tui@").then_some(()));
+    tui.wait_screen("바깥 터미널 bracketed paste", |s| s.modes.contains(&2004));
+    // 붙여 넣은 줄을 cat -v가 되돌릴 때까지(tty 메아리와 cat 출력 둘). 그 전에 다음 글을 치면 그 메아리 사이에 cat 출력이
+    // 끼어든다(부하 아래 ci-local). `seen`은 감싸기·ESC 빼기가 맞든 틀리든 둘 다에 나오는 조각이라 틀리면 아래 단언이 실패한다
+    let echoed = |tui: &Tui, seen: &str| tui.wait_text(seen, |s| s.matches(seen).count() >= 2);
+
+    // 1) 2004를 켜지 않은 프로그램: 감싸지 않고, 글 안의 ESC는 뺀다(cat -v에 `^[`가 없다)
+    tui.type_line("echo plain-$((1)); cat -v");
+    tui.wait_text("cat", |s| s.contains("plain-1"));
+    tui.send(b"\x1b[200~one\x1b[31mtwo\x1b[201~");
+    tui.send(b"\r");
+    echoed(&tui, "two");
+    let text = tui.text();
+    assert!(text.contains("one[31mtwo") && !text.contains("^["), "2004 없는 붙여넣기:\n{text}");
+
+    // 2) 그림이 아닌 절대 경로·상대 그림 경로·없는 그림 파일은 글 그대로다
+    let note = lab.root.join("note.txt");
+    std::fs::write(&note, "hello").unwrap();
+    let missing = lab.root.join("missing.png");
+    let pastes = [note.display().to_string(), "shot.png".to_string(), missing.display().to_string()];
+    for (i, p) in pastes.iter().enumerate() {
+        tui.send(format!("\x1b[200~{p}\x1b[201~").as_bytes());
+        tui.send(b"\r");
+        echoed(&tui, p);
+        assert_eq!(tui.text().matches(p.as_str()).count(), 2, "글로 붙인 {p}:\n{}", tui.text());
+        // ^C는 cat이 그 줄을 되돌린 뒤에만 보낸다: 셸이 `clear`와 `cat` 사이일 때 닿으면 cat이 남아 다음 명령 줄을 읽는다
+        tui.send(b"\x03");
+        if i + 1 < pastes.len() {
+            // 다음 붙여넣기는 cat이 뜨기 전에 와도 입력으로 기다린다
+            tui.type_line("clear; cat -v");
+            tui.wait_text("화면 지움", |s| !s.contains(p.as_str()));
+        }
+    }
+    assert!(attachments(&h.state).is_empty(), "그림이 아닌 붙여넣기에 첨부가 생겼다");
+
+    // 3) 프로그램이 2004를 켜면 host가 감싸고 글 안의 ESC는 뺀다(글 안의 `ESC[201~`가 붙여넣기를 일찍 끝내지 못한다).
+    //    `ESC[201~` 자체는 바깥 터미널 붙여넣기의 끝이라 TUI까지 오지 않으므로 다른 CSI로 본다
+    tui.type_line("clear; printf '\\033[?2004h'; echo wrap-$((2)); cat -v");
+    tui.wait_text("cat", |s| s.contains("wrap-2"));
+    tui.send(b"\x1b[200~x\x1b[31my\x1b[201~");
+    tui.send(b"\r");
+    echoed(&tui, "31my");
+    let text = tui.text();
+    assert_eq!(text.matches("^[[200~x[31my^[[201~").count(), 2, "감싼 붙여넣기:\n{text}");
+    tui.send(b"\x03");
+    tui.type_line("printf '\\033[?2004l'; clear; echo drop-$((3))");
+    tui.wait_text("화면 지움", |s| s.contains("drop-3") && !s.contains("wrap-2"));
+
+    // 4) 그림 파일 하나를 끌어 놓으면(터미널은 빈칸을 `\ `로 escape한 경로를 붙여 넣는다) 대상 머신에 올리고 셸 줄에
+    //    따옴표 경로를 넣는다(Enter 없음)
+    let rgba: Vec<u8> = PIXELS.concat();
+    let shot = lab.root.join("drop shot.png");
+    std::fs::write(&shot, encode_rgba(3, 2, &rgba)).unwrap();
+    let dropped = shot.display().to_string().replace(' ', "\\ ");
+    tui.send(format!("\x1b[200~{dropped}\x1b[201~").as_bytes());
+    tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
+    let files = attachments(&h.state);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(decode_rgba(&std::fs::read(&files[0]).unwrap()), (3, 2, rgba), "대상 머신 그림의 pixel");
+    let line: String = h.screen(&id).replace('\n', "");
+    assert!(line.contains(&format!("'{}'", files[0].display())), "셸 줄에 따옴표 경로가 없다: {line}");
+    assert!(!line.contains(&dropped) && !line.contains("not found"), "{line}");
+    tui.send(b"\x15");
+
+    // 5) 창과 모드(herdr `insert_overlay_text`): prefix 모드의 붙여넣기는 버리고(pane에 가지 않는다), 검색 중인 단축키 창은
+    //    검색어에, 새 탭 이름 창은 이름에 넣는다
+    tui.send(b"\x02");
+    tui.wait_text("PREFIX 막대", |s| s.contains(" PREFIX "));
+    tui.send(b"\x1b[200~zz-prefix\x1b[201~");
+    tui.send(b"\x1b");
+    tui.wait_text("prefix 끝", |s| !s.contains(" PREFIX "));
+    tui.type_line("echo end-$((5))");
+    tui.wait_text("표지", |s| s.contains("end-5"));
+    assert!(!h.screen(&id).contains("zz-prefix"), "prefix 모드의 붙여넣기가 pane에 갔다:\n{}", h.screen(&id));
+    tui.cmd("?");
+    tui.wait_text("단축키 창", |s| s.contains("prefix 모드") && s.contains("esc 닫기"));
+    tui.send(b"/");
+    tui.wait_text("검색", |s| s.contains("esc 돌아가기"));
+    tui.send("\x1b[200~나누기\x1b[201~".as_bytes());
+    tui.wait_text("거름", |s| s.contains("좌우로 나누기") && !s.contains("목록 탐색"));
+    tui.send(b"\x1b");
+    tui.wait_text("검색 끝", |s| s.contains("esc 닫기"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
+    tui.send("\x1b[200~붙인\n탭\x1b[201~\r".as_bytes());
+    hw.wait("붙여 넣은 이름의 탭", |w| w.ws.as_ref()?.tabs.iter().any(|t| t.name == "붙인 탭").then_some(()));
+
+    // 6) 나가면(prefix q) bracketed paste를 끈다
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    tui.wait_screen("bracketed paste 끔", |s| !s.modes.contains(&2004));
 }

@@ -1,0 +1,8 @@
+# check-public.sh --history가 넘기는, 이미 공개된 옛 이력의 항목. 내용은 적지 않고 열쇠의 `git hash-object` 값만 적는다
+# (열쇠: 「경로<TAB>걸린 줄 전체」, 세션 id는 「session<TAB>id」). 지금 트리와 새 커밋(기준 ref 이후)의 검사는 이 목록을
+# 보지 않는다: 새 누출을 여기에 더해 통과시키지 않는다. 이력을 다시 쓰기로 하면(사람이 정한다) 그 줄을 지운다.
+8861474917f0dc837ecdb3a0215dbe98bb9285f2  p0/e1.sh 13줄: 외장 볼륨 폴더 기본값의 실제 볼륨 이름(c9fd8e9~8cd83f6, 10-18 지움)
+2ea9b1ca4725908efab7f98f538cd7cb02f459f8  p0/e1.sh 19줄: 같은 기본값
+2074ffd331ccb65fdff2db3435178e69da0d89e0  p0/e1.sh 13줄의 옛 이름(aa, 이름 바꾸기 전)
+e1fc311eb14802a5a5a100a31db276f9faff2b82  p0/e1.sh 19줄의 옛 이름(aa)
+7f9d750d592eb2cccc823c9085a7ceff2309c2f5  session: aaa-agent chat.rs 시험 값의 실제 Codex 세션 id(e5cfede~8cd83f6, 10-18 지어낸 id로 바꿈)

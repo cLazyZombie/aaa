@@ -7,6 +7,8 @@
 //! - 터미널 focus를 얻으면(FocusGained) 보이는 pane의 크기를 다시 건다. focus가 없을 때는 크기를 걸지 않는다.
 //! - Ctrl+V(또는 빈 붙여넣기)에서 이 기기 clipboard에 그림이 있으면 pane 머신으로 올린다(`clip`, §8.28).
 //!   그림이 없으면 Ctrl+V는 원래대로 0x16을 보낸다.
+//! - 바깥 터미널의 bracketed paste를 켜서 붙여넣기를 한 덩이로 받는다. 글은 host가 pane 프로그램 모드대로 감싸고
+//!   (`PanePaste`), 그림 파일 하나의 경로면(터미널에 끌어 놓은 파일) 그 그림을 올린다(`clip::dropped_image`, §8.147).
 //! - 키는 herdr 0.9.5 모드를 따른다(`src/client/shell/input.rs` `route_key`): Terminal(pane에 바로) → prefix 키로
 //!   Prefix(명령 키 하나, 시간 제한 없음, Esc·모르는 키는 취소) → `w`로 Navigate(목록 고르기·pane 포커스).
 //! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
@@ -83,6 +85,8 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         let mut terminal = ratatui::init();
         // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
         let _focus = FocusReport::on();
+        // 붙여넣기를 한 덩이로 받는다(herdr client `EnableBracketedPaste`): 끌어 놓은 파일 경로와 여러 줄 글을 낱 키와 가른다
+        let _paste = BracketedPaste::on();
         // 마우스 보고는 App이 설정대로 켠다. 끝날 때(panic도) 끈다.
         let _mouse = MouseOff;
         let mut app =
@@ -112,6 +116,36 @@ impl Drop for FocusReport {
     }
 }
 
+/// 붙여 넣은 글을 보내는 요청. host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC를 뺀다(Front API 1.23 `pane_paste`,
+/// herdr 서버가 client 붙여넣기를 다시 감싸는 것과 같다). 그 전 host에는 전처럼 친 글(`pane_input`)이다: 모르는 요청은 연결을
+/// 끊으므로 지금 도는 host를 끊지 않는다.
+fn paste_request(host_minor: u16, pane: String, text: String) -> FrontRequest {
+    if host_minor < 23 {
+        FrontRequest::PaneInput { pane, data: B64(text.into_bytes()) }
+    } else {
+        FrontRequest::PanePaste { pane, text }
+    }
+}
+
+/// 바깥 터미널의 bracketed paste(`CSI ? 2004 h`)를 켜고, 이 값이 사라질 때(정상·오류·panic 종료) 끈다.
+/// Windows 콘솔은 crossterm이 붙여넣기를 사건으로 주지 않는다(표지가 낱 키로 와 pane에 들어간다): 켜지 않는다.
+struct BracketedPaste;
+
+impl BracketedPaste {
+    fn on() -> BracketedPaste {
+        #[cfg(not(windows))]
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+        BracketedPaste
+    }
+}
+
+impl Drop for BracketedPaste {
+    fn drop(&mut self) {
+        #[cfg(not(windows))]
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+    }
+}
+
 /// 사라질 때 마우스 보고를 끈다
 struct MouseOff;
 
@@ -132,10 +166,14 @@ struct Grid {
 }
 
 impl Grid {
+    /// `full`이면 모든 줄을 바꾼다. 아니면 온 줄만 바꾸고 나머지는 둔다: 크기가 바뀌었어도 보내지 않은 줄은 host가 보기에
+    /// 그대로다. 크기가 바뀐 grid를 비우면 폭만 바뀐 pane이 비었다(QA t-0337 Q23). 지금 host는 크기가 바뀌면 전체를 보내고,
+    /// 고치기 전 host는 폭만 바뀌면 바뀐 줄만 보낸다.
     fn apply(&mut self, f: GridFrame) {
-        if f.full || self.rows != f.rows || self.cols != f.cols {
-            self.lines = vec![Vec::new(); f.rows as usize];
+        if f.full {
+            self.lines.clear();
         }
+        self.lines.resize(f.rows as usize, Vec::new());
         self.cols = f.cols;
         self.rows = f.rows;
         for l in f.lines {
@@ -506,18 +544,50 @@ impl App {
     }
 
     /// 붙여넣기: 이름 창이 열려 있으면 그 칸으로(herdr `insert_overlay_text`), 다른 창이면 버린다.
-    /// 그림만 든 clipboard는 빈 붙여넣기로 오는 터미널이 있다.
+    /// 터미널에 끌어 놓은 그림 파일(그 경로 하나)은 그림으로 올린다(herdr client `read_image_file_from_terminal_drop`).
+    /// 그림만 든 clipboard는 빈 붙여넣기로 오는 터미널이 있다. 그 밖은 글이다.
     async fn on_paste(&mut self, s: String, tx: &mut FrontSender) -> Result<()> {
+        // herdr `handle_raw_events`·`insert_overlay_text`: 이름 창과 검색 중인 단축키 창은 그 입력에 넣는다. 다른 창이 떴거나
+        // Terminal 모드가 아니면(prefix·탐색·크기) 버린다. pane과 그림(`clipboard_image_target`)은 그 밖에서만이다.
         match self.overlay.as_mut() {
             Some(Overlay::Rename(r)) => {
                 r.input.insert(&s);
             }
+            Some(Overlay::Help(h)) if h.search => {
+                let text = editor::single_line(&s);
+                if !text.is_empty() {
+                    h.query.push_str(&text);
+                    h.scroll = 0;
+                }
+            }
             Some(_) => {}
+            None if self.mode != Mode::Terminal => {}
             None if s.is_empty() => {
                 self.paste_image(tx).await?;
             }
-            None => self.input(tx, s.into_bytes()).await?,
+            None => {
+                if let Some(path) = clip::dropped_image(&s)
+                    && let Some(bytes) =
+                        tokio::task::spawn_blocking(move || clip::read_dropped_image(&path)).await.ok().flatten()
+                    && self.send_image(tx, bytes).await?
+                {
+                    return Ok(());
+                }
+                self.paste_text(tx, s).await?;
+            }
         }
+        Ok(())
+    }
+
+    /// 붙여 넣은 글을 포커스 pane에(`paste_request`)
+    async fn paste_text(&mut self, tx: &mut FrontSender, text: String) -> Result<()> {
+        let Some(pane) = self.focus.clone() else { return Ok(()) };
+        if text.is_empty() {
+            return Ok(());
+        }
+        self.message = None;
+        let id = tx.send(paste_request(self.host_minor, pane, text)).await?;
+        self.pending.insert(id, Pending::Input);
         Ok(())
     }
 
@@ -587,20 +657,28 @@ impl App {
         let before = self.current_leaves();
         self.ws = w;
         let same_tab = current.as_ref().and_then(|id| self.ws.tabs.iter().position(|t| &t.id == id));
-        if let Some(i) = same_tab {
-            self.tab = i;
+        match (current.is_some(), same_tab) {
+            (_, Some(i)) => self.tab = i,
+            // 보던 탭이 없어졌다(닫기·마지막 pane이 끝남): 그 앞 탭(herdr `Workspace::close_tab`·`remove_pane`)
+            (true, None) => self.tab = self.tab.saturating_sub(1),
+            (false, None) => {}
         }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
-            // `pane resume`·재부팅 복원은 같은 자리의 leaf만 새 pane으로 바꾼다(모양 그대로): 그 자리의 새 pane을 따라간다(QA Q19)
             let at = self.focus.as_ref().and_then(|f| before.iter().position(|p| p == f));
-            self.focus = match at {
-                Some(i) if same_tab.is_some() && leaves.len() == before.len() => leaves.get(i).cloned(),
-                _ => leaves.first().cloned(),
+            // `pane resume`·재부팅 복원은 같은 자리의 leaf만 새 pane으로 바꾼다(모양 그대로): 그 자리의 새 pane을 따라간다(QA Q19)
+            let same_place =
+                at.filter(|_| same_tab.is_some() && leaves.len() == before.len()).and_then(|i| leaves.get(i).cloned());
+            // 보던 pane이 빠졌다: 차례상 다음 pane, 없으면 앞 pane(herdr `TileLayout::close_focused`)
+            let near = || {
+                at.and_then(|i| {
+                    before[i + 1..].iter().chain(before[..i].iter().rev()).find(|p| leaves.contains(p)).cloned()
+                })
             };
+            self.focus = same_place.or_else(near).or_else(|| leaves.first().cloned());
         }
     }
 
@@ -771,11 +849,19 @@ impl App {
 
     /// clipboard에 그림이 있으면 포커스 pane으로 올리고 true. 없으면 아무것도 보내지 않고 false.
     async fn paste_image(&mut self, tx: &mut FrontSender) -> Result<bool> {
-        let Some(pane) = self.focus.clone() else { return Ok(false) };
+        if self.focus.is_none() {
+            return Ok(false);
+        }
         let Some(png) = tokio::task::spawn_blocking(clip::image_png).await.ok().flatten() else { return Ok(false) };
+        self.send_image(tx, png).await
+    }
+
+    /// 그림 bytes를 포커스 pane으로 올린다(형식은 host가 내용의 signature로 본다). 포커스 pane이 없으면 false.
+    async fn send_image(&mut self, tx: &mut FrontSender, bytes: Vec<u8>) -> Result<bool> {
+        let Some(pane) = self.focus.clone() else { return Ok(false) };
         self.attach_seq += 1;
-        self.set_message(format!("그림 보내는 중({}KB)…", png.len().div_ceil(1024)));
-        for req in aaa_common::front::attach_requests(&pane, &png) {
+        self.set_message(format!("그림 보내는 중({}KB)…", bytes.len().div_ceil(1024)));
+        for req in aaa_common::front::attach_requests(&pane, &bytes) {
             let id = tx.send(req).await?;
             self.pending.insert(id, Pending::Attach(self.attach_seq));
         }
@@ -1369,7 +1455,7 @@ impl App {
 
     /// 탭 막대(herdr `render_tab_bar`): `panel_bg` 줄에 이름표들. 지금 탭은 accent 바탕(이름을 붙였으면 굵게),
     /// 다른 탭은 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`. 넘치면 지금 탭을 가운데로 밀고 `…`.
-    /// 오른쪽 끝은 herdr `tab_bar_right` 자리: 열린 질문 수, 다른 화면이 크기를 쥔 포커스 pane.
+    /// 오른쪽 끝은 herdr `tab_bar_right` 자리: 사람 차례·검토 thread 수(herdr-projects `needs_you_line`), 다른 화면이 크기를 쥔 포커스 pane.
     fn render_tab_bar(&self, buf: &mut Buffer, r: Rect) {
         let p = &self.palette;
         fill(buf, r, Style::default().bg(p.panel_bg));
@@ -1446,10 +1532,18 @@ impl App {
     fn tab_bar_right(&self) -> Vec<(String, Style)> {
         let p = &self.palette;
         let mut out = Vec::new();
-        let asking = self.panes.values().filter(|v| is_asking(v)).count();
-        if asking > 0 {
+        // herdr-projects 탭 줄 `projects: N need you`(sidebar.rs `needs_you_line`): 사람이 볼 thread(사람 차례·검토) 수.
+        // 고르는 곳은 참고의 popup(prefix+a) 대신 탐색 목록이다(thread 줄이 사람 차례부터 선다, 차이 목록 4장 D)
+        let need = self
+            .threads
+            .values()
+            .filter(|t| {
+                matches!(t.group, aaa_proto::ThreadGroup::WaitingOnYou | aaa_proto::ThreadGroup::ReadyForReview)
+            })
+            .count();
+        if need > 0 {
             out.push((
-                format!(" ● 질문 {asking} "),
+                format!(" ● 사람 차례 {need} "),
                 Style::default().fg(theme::contrast(p)).bg(p.red).add_modifier(Modifier::BOLD),
             ));
         }
@@ -1991,7 +2085,8 @@ mod tests {
         let mut w = app.ws.clone();
         aaa_proto::layout::ws_remove(&mut w, "p9");
         app.set_ws(w);
-        assert_eq!(app.focus.as_deref(), Some("p0"));
+        // 빠지면(모양이 바뀜) 차례상 다음 pane(herdr `TileLayout::close_focused`, `a_removed_tab_or_pane_moves_like_herdr`)
+        assert_eq!(app.focus.as_deref(), Some("p2"));
     }
 
     fn app_with_tabs(names: &[&str]) -> App {
@@ -2009,6 +2104,36 @@ mod tests {
             })
             .collect();
         app
+    }
+
+    /// 보던 탭·pane이 없어지면(닫기, 셸 exit) 앞 탭, 차례상 다음 pane(끝이면 앞 pane)으로 간다(herdr `Workspace::close_tab`·
+    /// `remove_pane`·`TileLayout::close_focused`)
+    #[test]
+    fn a_removed_tab_or_pane_moves_like_herdr() {
+        let mut app = app_with_tabs(&["a", "b", "c"]);
+        let ws = |tabs: &[aaa_proto::Tab]| Workspace { name: "main".into(), tabs: tabs.to_vec() };
+        let all = app.ws.tabs.clone();
+        app.tab = 1;
+        app.set_ws(ws(&[all[0].clone(), all[2].clone()]));
+        assert_eq!(app.ws.tabs[app.tab].id, "t0", "가운데 탭이 빠지면 앞 탭");
+        app.tab = 0;
+        app.set_ws(ws(&[all[2].clone()]));
+        assert_eq!(app.ws.tabs[app.tab].id, "t2", "맨 앞 탭이 빠지면 새 맨 앞 탭");
+
+        let leaf = |p: &str| aaa_proto::LayoutNode::Pane { pane: p.into() };
+        let split = |a, b| aaa_proto::LayoutNode::Split {
+            dir: aaa_proto::SplitDir::Horizontal,
+            ratio: 500,
+            a: Box::new(a),
+            b: Box::new(b),
+        };
+        let tab = |root| aaa_proto::Tab { id: "t".into(), name: String::new(), root, zoomed: false };
+        app.set_ws(ws(&[tab(split(leaf("a"), split(leaf("b"), leaf("c"))))]));
+        app.focus = Some("b".into());
+        app.set_ws(ws(&[tab(split(leaf("a"), leaf("c")))]));
+        assert_eq!(app.focus.as_deref(), Some("c"), "다음 pane");
+        app.set_ws(ws(&[tab(leaf("a"))]));
+        assert_eq!(app.focus.as_deref(), Some("a"), "끝 pane이 빠지면 앞 pane");
     }
 
     /// 줄의 `x`칸에 있는 글자(넓은 글자는 두 칸)
@@ -2166,6 +2291,19 @@ mod tests {
         assert_eq!(cursor, None);
     }
 
+    /// 붙여넣기는 1.23 host에 맡겨 감싸게 하고(ESC도 거기서 뺀다), 그 전 host에는 전처럼 친 글이다
+    #[test]
+    fn pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text() {
+        assert_eq!(
+            paste_request(23, "p".into(), "a\nb".into()),
+            FrontRequest::PanePaste { pane: "p".into(), text: "a\nb".into() }
+        );
+        assert_eq!(
+            paste_request(22, "p".into(), "a\nb".into()),
+            FrontRequest::PaneInput { pane: "p".into(), data: B64(b"a\nb".to_vec()) }
+        );
+    }
+
     /// 탭 닫기·이름은 Front API 1.4부터: 옛 host에는 보내지 않고 알린다(모르는 요청은 연결을 끊는다)
     #[test]
     fn old_host_gets_no_tab_requests() {
@@ -2174,6 +2312,33 @@ mod tests {
         app.host_minor = 9;
         assert!(app.host_at_least(4) && !app.host_at_least(10));
         assert!(app.error.as_ref().is_some_and(|(e, _)| e.contains("host를 새 aaa로 다시 띄워야")));
+    }
+
+    /// 폭만 바뀐 장면이 바뀐 줄만 가져와도(고치기 전 host) 나머지 줄은 남는다. 전체 장면은 모두 바꾼다(QA t-0337 Q23)
+    #[test]
+    fn width_only_frames_keep_unsent_rows() {
+        let line =
+            |row: u16, t: &str| aaa_proto::GridLine { row, runs: vec![GridRun { t: t.into(), fg: 0, bg: 0, a: 0 }] };
+        let frame = |cols: u16, rows: u16, full: bool, lines: Vec<aaa_proto::GridLine>| GridFrame {
+            pane: "p".into(),
+            cols,
+            rows,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            full,
+            lines,
+            modes: PaneModes::default(),
+        };
+        let texts =
+            |g: &Grid| g.lines.iter().map(|l| l.iter().map(|r| r.t.as_str()).collect()).collect::<Vec<String>>();
+        let mut g = Grid::default();
+        g.apply(frame(40, 3, true, vec![line(0, "a"), line(1, "b"), line(2, "c")]));
+        g.apply(frame(60, 3, false, vec![line(2, "C")]));
+        assert_eq!(texts(&g), ["a", "b", "C"]);
+        assert_eq!((g.cols, g.rows), (60, 3));
+        g.apply(frame(60, 2, true, vec![line(0, "x")]));
+        assert_eq!(texts(&g), ["x", ""]);
     }
 
     /// zoom(herdr `render_panes`·`tab_label`): 포커스 pane 하나가 칸 전체(상자 하나), 탭 이름표에 ` Z`.

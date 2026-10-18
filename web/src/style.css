@@ -243,13 +243,12 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 /* ── 틀 ────────────────────────────────────────────── */
 /* 높이는 herdr-web-ui styles.css .app처럼: 화면 키보드가 올라오면 보이는 높이(--app-height, herdr/viewport.ts) */
 /* 가로로 둔 휴대폰·iPad의 노치와 둥근 모서리(herdr-web-ui styles.css 579~581·606·645줄): 목록은 왼쪽을, 오른쪽 칸은 오른쪽을
-   비킨다. 한 칸씩 보이는 좁은 화면에서는 오른쪽 칸이 왼쪽도, 목록이 오른쪽도 비킨다. 칸마다 자기 바탕색 안에서 비킨다 */
+   비킨다. 한 칸씩 보이는 좁은 화면에서는 오른쪽 칸이 왼쪽도 비킨다(목록은 왼쪽 끝에 붙은 drawer라 왼쪽만). 칸마다 자기 바탕색 안에서 비킨다 */
 :root { --inset-l: 0px; --inset-r: env(safe-area-inset-right, 0px); }
 .list { padding-left: env(safe-area-inset-left, 0px); }
 .thread-view { padding-left: var(--inset-l); padding-right: var(--inset-r); }
 @media (max-width: 700px) {
   :root { --inset-l: env(safe-area-inset-left, 0px); }
-  .list { padding-right: env(safe-area-inset-right, 0px); }
 }
 .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; height: var(--app-height, 100dvh); }
 /* 머리·목록·바닥 줄을 세로로(herdr-web-ui Sidebar.css .sidebar-shell): 목록(.list-body)만 굴러가고 바닥 줄은 늘 맨 아래 */
@@ -271,6 +270,8 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   border-bottom: 1px solid var(--border);
 }
 .list-head .spacer { flex: 1; }
+/* 명령 팔레트 돋보기(참고 App.tsx `palette-button`): 터치 화면·좁은 창에는 없다(참고 styles.css 1618~1639줄) */
+@media (pointer: coarse), (max-width: 768px) { .palette-button { display: none; } }
 .conn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-dim); }
 /* herdr-web-ui Sidebar.css .sidebar-footer: 늘지도 줄지도 않는다 */
 .list-foot { flex: 0 0 auto; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
@@ -354,6 +355,12 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   min-height: var(--head);
   padding: 0 calc(var(--space-3) + var(--inset-r)) 0 calc(var(--space-4) + var(--inset-l));
   border-bottom: 1px solid var(--border);
+  /* iOS 26부터 홈 화면 앱은 위 가장자리를 배경 있는 fixed·sticky 상자가 덮지 않으면 거기에 Liquid Glass 가장자리 흐림을 얹는다
+     (머리줄 윗줄이 번졌다, 사용자 실기 10-18). 참고 styles.css .app-header처럼 sticky와 불투명 배경을 두어 iOS가 이 색을 쓰게 한다
+     (herdr-web-ui CHANGELOG 「the header is now sticky, so iOS takes its color there」). 굴리지 않는 칸이라 배치는 그대로다 */
+  position: sticky;
+  top: 0;
+  background: var(--bg);
 }
 .term-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
 /* 제목 앞 agent 표시(herdr-web-ui App.tsx context-title: 표시와 제목이 한 줄) */
@@ -375,8 +382,15 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 @media (pointer: coarse) {
   .term-box .xterm-rows { pointer-events: none; }
 }
-.term-box { width: 100%; height: 100%; }
+/* 자간은 기본(normal)이다: body의 -0.005em이 들어오면 xterm이 cell은 canvas로(자간 없이), 글자 폭은 DOM으로(자간째) 재어 그 차이를
+   줄 자간으로 메운다. 글자마다 0.065px(13px) 넓어져 116칸 줄은 한 칸 넘게 밀리고 줄 요소(overflow hidden)가 끝 칸을 잘랐다
+   (「gh pr checks」가 「gh p」로, plan §8.124). 참고는 body에 자간이 없다. 조합 상자·앞 기록 덮개도 이 안이다 */
+.term-box { width: 100%; height: 100%; letter-spacing: normal; }
 .term-box .xterm .xterm-viewport { background: transparent !important; }
+/* 세로 scrollbar는 그리지 않는다(참고 PaneTerminal.css .xterm-viewport): FitAddon이 그 자리를 빼지 않으므로(Term.tsx) 끝 칸 위에 뜬다.
+   기록은 휠·손가락·쪽 넘기기로 굴리고 「맨 아래로 이동」 단추로 돌아온다 */
+.term-box .xterm-viewport { scrollbar-width: none; }
+.term-box .xterm-viewport::-webkit-scrollbar { display: none; }
 /* 앞 기록을 붙여 다시 쓰는 동안 그 전 화면을 덮어 둔다(Term.tsx prependHistory, plan §8.67).
    덮개는 .xterm-screen 사본이라 xterm.css `.xterm .xterm-screen { position: relative }`보다 강해야 한다. 지면 흐름에 들어가
    .xterm이 두 배로 늘고, 그동안 xterm이 잰 viewport 높이로 스크롤 영역이 한 화면 커진다(굴린 자리가 줄과 어긋남) */
@@ -457,12 +471,24 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .terminal-jump-bottom { width: var(--touch-target); height: var(--touch-target); }
 }
 .chat { flex: 1; min-height: 0; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg); }
-.chat-note { margin: 0 0 var(--space-2); font-size: var(--fs-xs); color: var(--text-dim); }
-.chat-msg { max-width: min(760px, 92%); padding: var(--space-2) var(--space-3); border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: var(--fs-md); }
+.chat-note { margin: 0 0 var(--space-2); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); color: var(--text-dim); }
+/* 대화 글자는 설정 「채팅 글자 크기」를 따른다(참고 ChatView.css: 산문은 --fs-chat, 작은 글은 --fs-xs, 모두 × --chat-scale) */
+.chat-msg { max-width: min(760px, 92%); padding: var(--space-2) var(--space-3); border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: calc(var(--fs-chat) * var(--chat-scale, 1)); }
 .chat-msg.user { align-self: flex-end; background: var(--accent-bg); border: 1px solid var(--accent-line); }
 .chat-msg.assistant { align-self: flex-start; background: var(--bg-elevated); border: 1px solid var(--border); }
-.chat-msg.tool { align-self: flex-start; padding: 2px var(--space-3); font: var(--fs-xs)/1.5 var(--font-mono); color: var(--text-dim); background: transparent; }
+.chat-msg.tool { align-self: flex-start; padding: 2px var(--space-3); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); color: var(--text-dim); background: transparent; }
 .chat-btn[aria-pressed="true"] { color: var(--accent); }
+/* 붙잡은 메시지는 입력창 기둥에(herdr/Composer.css `.terminal-stack.is-chat .composer-queue`: aaa의 pane 칸은 .term) */
+.term .composer-queue { width: min(calc(100% - 2 * var(--space-4)), var(--chat-w)); margin: 0 auto; }
+/* 생각 줄(herdr-web-ui ChatView.css `.work-row-head`·`.work-row-thinking .work-row-name`·`.work-thinking-text`): 접힌 「생각」 머리,
+   누르면 글. 말풍선이 아니라 도구 줄처럼 왼쪽에 흐리게 */
+.chat-msg.thinking { align-self: flex-start; max-width: min(760px, 100%); padding: 0; background: transparent; white-space: normal; }
+.chat-msg.thinking .work-row-head { display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--control-h) - var(--space-2)); padding: 0 var(--space-1); border: 0; border-radius: var(--r-sm); background: transparent; color: inherit; font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); cursor: pointer; }
+.chat-msg.thinking .work-row-head:hover { background: var(--bg-hover); }
+.chat-msg.thinking .work-row-caret { display: inline-flex; width: var(--fs-md); height: var(--fs-md); color: var(--text-dim); }
+.chat-msg.thinking .work-row-caret svg { width: 100%; height: 100%; }
+.chat-msg.thinking .work-row-name { font-style: italic; color: var(--text-dim); font-weight: var(--fw-medium); }
+.chat-msg.thinking .work-thinking-text { padding: var(--space-1) var(--space-3) var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); font-size: calc(var(--fs-sm) * var(--chat-scale, 1)); line-height: 1.55; }
 
 /* 입력줄(herdr-web-ui TerminalInput.css). 흐름에는 한 줄 높이의 칸만 두고, 줄은 그 칸 아래끝에 매달려 위로
    (그리드 마지막 줄 위로) 4줄까지 자란다. 그리드 높이가 PTY 크기라 높이가 바뀌면 그 pane을 보는 모든 기기의
@@ -608,26 +634,73 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .files .size { margin-left: auto; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .library-frame { width: 100%; height: 56vh; border: 1px solid var(--border); border-radius: var(--r-md); background: #fff; }
 
+/* 빈 화면 머리: 좁은 창에서만(목록 drawer 단추를 둔다) */
+.empty-head { display: none; border-bottom: 0; }
+.scrim { display: none; }
+
+/* ── 좁은 창: 목록은 pane 위의 drawer(herdr-web-ui styles.css 1560~1614줄) ─────────
+   참고는 drawer가 창 전체 머리(app-header) 아래에 선다. aaa는 화면마다 머리가 있어 그 머리(--head) 아래에 선다 */
+@media (max-width: 768px) {
+  /* primitives.css의 `.drawer-toggle{display:none}`이 이 파일 뒤에 묶여서 화면 머리 안으로 좁혀 이긴다 */
+  .view .drawer-toggle { display: inline-flex; }
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .empty-head { display: flex; }
+  .list {
+    position: fixed;
+    top: calc(var(--head) + env(safe-area-inset-top, 0px));
+    bottom: 0;
+    left: 0;
+    z-index: var(--z-drawer);
+    width: min(88vw, var(--sidebar));
+    transform: translateX(-100%);
+    visibility: hidden;
+    touch-action: pan-y;
+    box-shadow: var(--shadow-drawer);
+    transition:
+      transform var(--dur-base) var(--ease-out),
+      visibility 0s linear var(--dur-base);
+  }
+  /* 참고는 drawer(.sidebar) 안에 .sidebar-shell(height:100%)이 따로 있다. aaa는 한 요소라 그 높이가 top만큼 바닥 줄을
+     화면 밖으로 민다: 높이는 top·bottom으로 */
+  .list.sidebar-shell { height: auto; }
+  .list.is-open {
+    transform: translateX(0);
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  /* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫고, 페이지를 떠난 요소는 남은 손가락 사건을 가져간다(edgeSwipe.ts) */
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: calc(var(--head) + env(safe-area-inset-top, 0px)) 0 0 0;
+    z-index: var(--z-scrim);
+    background: var(--scrim);
+    opacity: 0;
+    pointer-events: none;
+    touch-action: none;
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+  .scrim.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 /* ── 휴대폰 ────────────────────────────────────────── */
 @media (max-width: 700px) {
   :root { --head: 52px; }
-  .app { grid-template-columns: 1fr; }
-  .app.has-sel .list { display: none; }
-  .app:not(.has-sel) .view { display: none; }
-  .list { border-right: 0; background: var(--bg); }
   .list-head {
     background: var(--glass);
     -webkit-backdrop-filter: saturate(1.4) blur(14px);
     backdrop-filter: saturate(1.4) blur(14px);
-    padding-top: env(safe-area-inset-top);
-    height: calc(var(--head) + env(safe-area-inset-top));
   }
   .sec { padding: var(--space-2) var(--space-3) var(--space-1); }
   .pane { min-height: 56px; font-size: var(--fs-chat); padding: var(--space-2) var(--space-3); gap: var(--space-3); }
   .row-sub { font-size: var(--fs-sm); }
-  .back { display: inline-flex; }
   .term-head { padding: 0 calc(var(--space-2) + var(--inset-r)) 0 calc(var(--space-2) + var(--inset-l)); gap: var(--space-2); }
   .term-title { flex-direction: column; align-items: flex-start; gap: 0; line-height: 1.25; }
+  /* 세로 배치에서 flex-start면 줄 폭이 내용 폭이라 말줄임이 걸리지 않고 둘째 줄이 상태 표시 밑까지 칠해졌다: 칸 폭에 묶는다 */
+  .term-title > * { max-width: 100%; }
   .term-title .muted { font-size: calc(var(--fs-2xs) * 11.5 / 11); }
   .term-scroll { padding: var(--space-2) calc(var(--space-2) + var(--inset-r)) var(--space-2) calc(var(--space-2) + var(--inset-l)); }
   .fit-btn, .head-chip { display: none; }

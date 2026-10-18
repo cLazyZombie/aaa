@@ -202,7 +202,7 @@ pub struct HarnessEvent {
     pub session: String,
     /// claude·codex·report(`aaa report`)
     pub harness: String,
-    /// session_start·turn_start·turn_end·question·idle·error·exited·progress
+    /// session_start·turn_start·turn_end·question·idle·error·exited·progress·released(셸 앞 agent를 놓음)
     pub kind: String,
     /// harness 자기 세션 ID(resume에 쓴다)
     pub harness_session: Option<String>,
@@ -215,6 +215,20 @@ pub struct HarnessEvent {
     /// Claude hook이 알린 대화 기록 파일(§8.27). host는 pane에만 기억하고 웹·로그에 내보내지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
+    /// `kind = "plan"`일 때만: agent가 대화 기록에서 읽은 계획(None이면 지금 계획이 없다, 차이 목록 S5)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanSummary>,
+    /// `kind = "plan"`일 때만: 아직 도는 배경 작업(하위 agent·배경 명령) 수. 0이면 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<u32>,
+}
+
+/// pane 계획의 요약(herdr-web-ui `PlanSummary`): 끝난 단계 수·모든 단계 수·지금 하는 단계
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PlanSummary {
+    pub done: u32,
+    pub total: u32,
+    pub current: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -237,6 +251,12 @@ pub struct AgentStatus {
     /// 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
     #[serde(default = "seen_default")]
     pub seen: bool,
+    /// harness가 기록에 남긴 계획(Claude TaskCreate·TaskUpdate, Codex update_plan). 없으면 null(차이 목록 S5)
+    #[serde(default)]
+    pub plan: Option<PlanSummary>,
+    /// 아직 도는 배경 작업 수(Claude 하위 agent·배경 명령). 없으면 null
+    #[serde(default)]
+    pub background: Option<u32>,
 }
 
 fn seen_default() -> bool {
@@ -379,8 +399,10 @@ pub enum ThreadGroup {
     /// 사람이나 coordinator가 할 일이 있다(시작 실패·5분 넘은 시작, 닫힌 pane, brief 전달 불명, 30초 넘은 확인창,
     /// `Waiting for you` 진행 보고). 보고 내용으로는 정하지 않는다(herdr-projects `group`, plan §8.78).
     WaitingOnYou,
-    /// 아직 확인(ack)하지 않은 새 보고
+    /// 아직 확인(ack)하지 않은 새 보고, 또는 보고가 있고 PR이 열려 있다
     ReadyForReview,
+    /// PR이 열려 있고 승인됐다(herdr-projects `Group::Landing`). thread가 자기 도구로 병합한다(D11)
+    Landing,
     Working,
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
@@ -393,9 +415,23 @@ impl ThreadGroup {
         match self {
             ThreadGroup::WaitingOnYou => "사람 차례",
             ThreadGroup::ReadyForReview => "검토 대기",
+            ThreadGroup::Landing => "병합 중",
             ThreadGroup::Working => "작업 중",
             ThreadGroup::Idle => "쉼",
             ThreadGroup::Resolved => "끝남",
+        }
+    }
+
+    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6.
+    /// 목록(TUI·웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
+    pub fn rank(self) -> u8 {
+        match self {
+            ThreadGroup::WaitingOnYou => 1,
+            ThreadGroup::ReadyForReview => 2,
+            ThreadGroup::Landing => 3,
+            ThreadGroup::Working => 4,
+            ThreadGroup::Idle => 5,
+            ThreadGroup::Resolved => 6,
         }
     }
 }
@@ -511,6 +547,20 @@ pub fn fill_brief(brief: &str, work_dir: &str, exe: &str) -> String {
     brief.replace(BRIEF_WORK_DIR, work_dir).replace(BRIEF_EXE, &exe)
 }
 
+/// 진행 보고 안내(herdr-projects `progress::guidance`를 옮김). thread brief(host)와 Claude SessionStart hook의 안내(agent)가
+/// 함께 쓴다(참고도 둘 다 이 글이다). `prefix`는 그 머신 aaa 실행 파일이다.
+pub fn progress_guidance(prefix: &str) -> String {
+    format!(
+        "사용자의 지금 일 전체가 얼마나 됐는지 `{prefix} report`로 알린다. 이것은 타이머나 도구 수가 아니라 너의 어림이다. 보고가 실패해도 실제 일을 멈추지 않는다: 짧은 진단 한 줄만 남기고 다시 하지 않고 이어 간다.\n\n\
+         5 단위로 어림한 백분율과 두~네 단어의 활동을 보고한다. 활동은 `코드 읽기`, `변경 시험`, `Waiting for you`처럼 쓴다:\n\n\
+         `{prefix} report --percent 25 --activity '코드 읽기'`\n\
+         `{prefix} report --unknown --activity '일 가늠'`\n\n\
+         새 일을 시작할 때, 의미 있는 고비를 넘긴 뒤, 활동이 바뀔 때, 막혔을 때, 그리고 내용 있는 답을 하기 전마다 보고한다. 사용자에게 무언가 물으려고 멈출 때는 늘 `--activity 'Waiting for you'`로 보고한다(이 말 그대로). 일하는 동안에는 자연스러운 도구 경계에서 1분에 한 번쯤 보고한다. 알림을 채우려고 진행을 지어내지 않는다. 일이 더 있다는 걸 알게 되면 어림을 낮춘다. 범위가 분명하지 않은 동안은 `--unknown`을 쓴다.\n\n\
+         `--percent 100`은 요청받은 결과 전체와 그 확인이 다 끝났을 때만 쓴다. `Done`으로 보인다. 그 뒤 일을 더 받으면 새로 낮은 백분율을 보고한다.\n\n\
+         이 pane의 맨 위 agent만 보고한다. subagent와 도우미는 보고하지 않는다. report 명령은 끝날 때까지 기다리고 배경으로 돌리지 않는다."
+    )
+}
+
 /// inbox 항목(0.2.35 inbox 계승, §8.9). DB가 원본이고 `projects/<p>/inbox/<id>.md`는 투영이다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct InboxItem {
@@ -563,53 +613,6 @@ pub struct RoutineView {
     pub no_coordinator: u32,
     /// 파일을 읽지 못했다
     pub error: Option<String>,
-}
-
-/// 병합 대기열 한 칸(§8.8). M1-3은 순번과 사건만 두고 단계 실행은 M3에서 한다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct MergeEntry {
-    pub project: String,
-    pub thread: String,
-    /// 1부터. 1이 맨 앞(지금 병합할 차례)이다.
-    pub position: u32,
-    pub title: String,
-    pub machine: String,
-    pub branch: Option<String>,
-    #[ts(type = "number")]
-    pub enqueued_at_ms: u64,
-}
-
-/// 병합 단계 하나의 결과(§8.24). 단계 이름은 `확인`·`fetch`·`원격 일치`·`병합`·`tree 같음`·`push`·`사용자 checkout`·`정리`다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct MergeStep {
-    pub name: String,
-    pub ok: bool,
-    /// 사람이 읽는 설명(실패면 까닭)
-    pub note: String,
-    #[ts(type = "number")]
-    pub ms: u64,
-}
-
-/// agent가 병합 단계를 돌린 결과. `commit`은 push한 병합 commit이다(push까지 갔을 때만).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct LandOutcome {
-    pub ok: bool,
-    pub steps: Vec<MergeStep>,
-    pub commit: Option<String>,
-}
-
-/// `aaa merge land` 결과
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct MergeLandView {
-    pub project: String,
-    pub thread: String,
-    pub ok: bool,
-    pub steps: Vec<MergeStep>,
-    pub commit: Option<String>,
-    /// 「main 이동」을 대기열 메시지로 알린 thread
-    pub notified: Vec<String>,
-    /// 병합 뒤 대기열
-    pub queue: Vec<MergeEntry>,
 }
 
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)
