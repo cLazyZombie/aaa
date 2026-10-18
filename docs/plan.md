@@ -3498,6 +3498,17 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 끝난 pane은 목록에 남아(다시 열기) 「없음」이 아니다. 주소가 가리킨 thread가 없을 때는 참고에 없어 그대로다.
 - **시험.** 웹 E2E 04 「「더 보기」와 닫힌 pane 주소」: 휴대폰 `#pane=gone`으로 열면 첫 줄·머리 알림·키보드 없음, 「더 보기」가 drawer 밖 화면 머리 오른쪽 끝, 메뉴가 화면 안이고 덮이지 않음(메뉴 가운데의 요소가 메뉴), 데스크톱은 첫 줄·알림·키보드를 가져가지 않음, 그 줄을 고르면 터미널 focus(`phone-head-more`·`desktop-head-note`). drawer가 열린 채 연 메뉴가 drawer 위. 결함 심기 다섯(머리 z-index 빼기·drawer 아래 값 12·터미널 머리에서 「더 보기」 빼기·알림 빼기·autoSelected 무시)을 모두 잡는다.
 
+### 8.166 배포 뒤 옛 웹이 남으면 「앱 다시 열기」 줄, 대화 초안 보존, 기기 이름은 ULID 뒤 무작위(10-18, 실기 11:06~11:09 iPhone, FRONT_API 1.30)
+- **실기.** 5cdea67 배포 뒤 홈 화면 앱을 내렸다 올려도 앱 안 알림 #103이 「웹 ?」였다: 페이지를 다시 읽지 않아 옛 웹이 그대로 돌았다. 앱 전환기에서 닫고 다시 연 뒤에야 새 웹(index-Di-S2J_3)이 실렸다. 홈 화면 앱은 내렸다 올려도 페이지를 다시 읽지 않는다.
+- **참고(herdr-web-ui aa624cb).** `lib/updates.ts`가 보이는 동안 서버 상태(`current_revision`)를 묻고, `lib/updateNotes.ts` `reloadReason`이 탭이 빌드된 commit(`__APP_REVISION__`)과 다르면 "updated"다. `components/UpdateControls.tsx` `UpdateNotice`가 pane 칸 위에 한 줄 「App updated. Save unsent drafts before reloading.」과 「Reload app」 단추(`window.location.reload()`)를 둔다. 스스로 다시 읽지 않는다. 입력 초안은 pane마다 localStorage에 있다(`lib/terminalDraft.ts`·`lib/composerDraft.ts`).
+- **aaa.** host가 events 연결이 열릴 때마다 포함한 웹의 빌드(index.html이 여는 주 묶음 이름 `index-XXXX`, 웹 `api.ts` `BUILD`와 같은 꼴)를 새 사건 `web`으로 알린다(state보다 먼저). 웹은 제 `BUILD`와 다르면 참고 줄을 그대로(문구 한국어, class `update-notice is-line is-warning`, `role="status"`, CSS는 `herdr/UpdateNotice.css`) 보기 칸 맨 위에 띄운다. 스스로 다시 열지 않는다(참고와 같다).
+  - **참고와 다른 점: 묻지 않고 연결마다 받는다.** aaa에는 서버 상태 API가 없고, 배포는 host를 다시 띄우므로 연결이 끊겼다 다시 붙는다. 10초 넘게 가려졌다 보이면 웹이 끊고 다시 붙는다(§8.84). 그래서 「다시 보일 때·다시 붙을 때」가 모두 새 연결이라 그때 받는 빌드로 충분하다.
+  - **옛 웹은 이 사건을 모른다**(사건 이름이 다르면 그냥 지나간다). 이번 배포까지는 한 번 앱을 닫고 다시 열어야 하고, 그 뒤 배포부터 줄이 뜬다.
+  - service worker는 화면 이동을 네트워크 먼저로 받으므로(§8.115) 「앱 다시 열기」는 host의 새 셸과 그 묶음을 받는다.
+- **초안.** 입력줄 초안은 이미 localStorage였다(`herdr/terminalDraft.ts`). 대화 입력창(`ChatComposer`)은 메모리(`useState`)라 다시 열면 잃었다: 참고 `lib/composerDraft.ts`를 바꾸지 않고 `web/src/herdr/`로 옮기고 참고 `Composer.tsx`처럼 `herdr-web-ui:composer-draft:<machine:pane>` 열쇠로 읽고 쓴다. 보내기 흐름(보낸 그 글일 때만 비움)은 그대로이고 참고의 다른 탭 보내기 lease(`begin`·`end`·`settle`)는 아직 쓰지 않는다.
+- **기기 이름.** 흐름 사건·판정 근거의 기기 이름이 기기 ID(ULID) 앞 7자(시각)라 약 33초 안에 짝지은 두 기기가 같았다(§8.145 시험이 연결 번호로 돌아갔던 까닭). host `seen.rs` `device_short`: 26자 ULID면 뒤 무작위 7자(35비트), 아니면 앞 7자. 너비를 그대로 두어 기록 모양은 같다.
+- **시험.** 웹 E2E 13 「host가 새 웹을 준다」: 같은 웹이면 줄 없음 → 입력줄에 초안 → `AAA_TEST_WEB_BUILD`로 다른 빌드를 알리는 host로 다시 띄움 → 줄(role=status) → 「앱 다시 열기」를 눌러 다시 열림 → 입력줄 초안 그대로(줄은 가짜 빌드라 다시 뜬다) → 같은 웹을 주는 host로 돌아오면 줄이 사라짐. 11 「대화 입력창」: 쓴 글이 다시 연 뒤에도 남는다. 17 「쓰는 기기」: 두 기기 이름이 `/api/v1/me` ID의 뒤 7자이고 서로 다르다. host 단위 시험 `main_bundle_is_the_index_script_name`·`device_short_is_the_random_tail`. 결함 심기: 웹이 견주지 않음 → 13 줄 기다림 시간 초과, 늘 띄움 → 13 「같은 웹을 주는 host인데 다시 열기 줄이 있다」, host 빌드 이름 꼴이 다름(`.js` 붙임) → 같은 글, 대화 초안을 메모리로 되돌림 → 11 「다시 연 뒤 대화 초안: ""」, 기기 이름 앞 7자로 되돌림 → 17 「기기 이름 A 01M56DD … B 01M56DE」.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
