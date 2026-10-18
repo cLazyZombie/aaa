@@ -3023,6 +3023,36 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
   - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
 
+### 8.140 대화 보기 머리줄: iPhone 홈 화면 앱 위 가장자리 흐림과 둘째 줄 겹침(10-18, 사용자 실기 09:17 「위쪽 흐려지는건 어쩔수없는건가?」)
+
+- **본 것.** iPhone 홈 화면 앱, 대화 보기(main f86ba7b). 머리줄 윗줄(뒤로·agent 표시·제목·「입력 대기」·「보고」)은 번지고, 아랫줄
+  (머신 › 위치 · 칸 수)은 또렷했다. 「입력 대기」가 「68×42」 위에 겹쳤다.
+- **흐림의 원인.** aaa CSS는 `.term-head`를 흐리게 하지 않는다(backdrop-filter는 목록 머리 `.list-head`와 입력 카드 glass뿐이고,
+  pane을 보는 동안 목록은 `display: none`이다. mask·filter·transform·opacity도 없다). 위 가장자리에서 일정 높이까지만 번지는 띠는
+  iOS 26부터 홈 화면 앱 위에 얹는 Liquid Glass 가장자리 흐림이다. 참고 herdr-web-ui(aa624cb) CHANGELOG: 「iOS lays its Liquid Glass
+  edge blur over the top of an installed web app unless a fixed or sticky box with a background covers that edge; the header is
+  now sticky, so iOS takes its color there」. 참고 `.app-header`는 `position: sticky; top: 0; background: var(--bg-panel)`이고,
+  `apple-mobile-web-app-status-bar-style`을 두지 않는 것은 aaa index.html이 이미 같다. 즉 참고와의 차이는 sticky와 배경뿐이었다.
+- **겹침의 원인.** 휴대폰에서 `.term-title`은 세로 배치에 `align-items: flex-start`라 각 줄의 폭이 내용 폭이다. 위치 줄의
+  `nowrap`·`overflow: hidden`·말줄임이 한 번도 걸리지 않고, 줄이 칸을 넘어 상태 표시 밑까지 칠해졌다(`.term-title`의
+  `min-width: 0`은 자식 폭을 묶지 않는다).
+- **고침.**
+  - `.term-head`에 `position: sticky; top: 0; background: var(--bg)`(데스크톱·iPad 홈 화면 앱도 같은 칸이라 기본 규칙에 둔다).
+    굴리지 않는 칸이라 배치는 그대로다. 배경은 참고의 `--bg-panel` 대신 지금 보이는 `--bg`로 두어 데스크톱 색을 바꾸지 않았다.
+    ThreadPanel 머리줄도 같은 class라 함께 받는다.
+  - 휴대폰 `.term-title > * { max-width: 100% }`: 제목·위치 줄이 칸 폭에서 말줄임된다. 상태 표시는 그 자리에 남는다(머리줄 높이는
+    52px 그대로). 좁으면 위치 줄 끝(칸 수)이 말줄임으로 가려진다.
+  - 계약 변화 없음.
+- **확인 못 한 것.** 헤드리스 브라우저는 iOS의 가장자리 띠를 그리지 못한다. 참고 docs/ios-home-screen-testing.md도 iOS 27.0
+  세로에서 fixed-shell 처방이 흐림을 없애지 못한 기록이 있다. 그래서 흐림이 사라졌는지는 실기(홈 화면 앱·세로·대화 보기)에서
+  확인해야 한다. 목록 화면 머리(`.list-head`, glass·sticky 아님)는 이 일 밖이라 그대로 두었다.
+- **시험.** 웹 E2E 15 「iPhone 대화 보기 머리줄」(iPhone 가짜 기기 390×844·dpr 3·홈 화면 앱): 긴 제목·긴 cwd의 가짜 Claude pane을
+  대화 보기로 열고 다음을 본다. 머리줄이 맨 위의 sticky(또는 fixed)이고 배경이 불투명한지(iOS 띠 대신 쓰일 조건). 제목 줄과 위치
+  줄의 오른쪽 끝이 상태 표시 왼쪽을 넘지 않는지. 위치 줄이 실제로 넘쳐 말줄임됐는지(짧아서 그냥 통과하지 않게).
+  - 결함 심기는 단계 안에 있다. 줄 폭을 푸는 style을 넣으면 겹침이 잡혀야 하고(`before` 캡처), 빼면 통과한다(`after` 캡처).
+  - 고치기 전 style.css로 다시 빌드해 돌리면 `position static; 배경 rgba(0, 0, 0, 0); .term-title .muted 오른쪽 508.4 > 상태 왼쪽
+    249.6; 위치 줄이 넘치지 않았다`로 실패함을 확인했다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
