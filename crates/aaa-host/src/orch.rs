@@ -116,6 +116,19 @@ pub struct StartArgs {
     pub role: Role,
 }
 
+/// `project create`의 옵션(herdr-projects `new`)
+#[derive(Debug, Default)]
+pub(crate) struct ProjectOptions {
+    pub goal: String,
+    /// `PATH` 또는 `PATH@MACHINE`
+    pub repos: Vec<String>,
+    pub thread_profile: Option<String>,
+    pub coordinator_profile: Option<String>,
+}
+
+/// project.toml 읽고 고쳐 쓰기를 한 번에 하나씩(두 `project set`이 서로의 값을 지우지 않게)
+static PROJECT_TOML: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 새 프로젝트의 AGENTS.md(coordinator 안내). `{p}`는 프로젝트 이름이다.
 const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 
@@ -145,6 +158,10 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
   확인창 질문은 `aaa question list`·`aaa question answer`.
+
+## 프로젝트 설정
+- 사용자가 바꾸라고 하면 `aaa project set {p} <key> <값>`으로 바꾼다: `goal`, `thread_profile`, `coordinator_profile`,
+  `max_parallel_threads`, `auto_resolve_days`, `repos.add`·`repos.remove`(`PATH` 또는 `PATH@MACHINE`). project.toml을 직접 고쳐도 된다.
 
 ## safety(사용자만 바꾼다)
 `start_threads`·`trust_screens`·yolo·`thread_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의 safety 설정이다.
@@ -336,8 +353,14 @@ impl Host {
         ProjectView { name: name.to_string(), path: dir.to_string_lossy().to_string(), threads }
     }
 
-    /// 프로젝트 폴더를 만든다. PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
-    pub(crate) fn project_create(&self, name: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+    /// 프로젝트 폴더를 만든다(herdr-projects `new`). PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
+    /// goal·저장소·profile은 준 것만 project.toml에 적는다(안 준 profile은 쓸 때 기본 사슬로 푼다, plan §8.117).
+    pub(crate) fn project_create(
+        &self,
+        name: &str,
+        opts: ProjectOptions,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
         if !valid_project(name) {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
         }
@@ -349,15 +372,69 @@ impl Host {
         if dir.join("PROJECT.md").exists() {
             return Err(err(ErrorCode::NameTaken, format!("이미 있다: {}", dir.display())));
         }
+        // 값은 모두 먼저 맞춰 본다: 틀린 옵션으로 반쯤 만든 폴더를 남기지 않는다
+        let mut toml = "schema = 1\n".to_string();
+        let mut set = |key: &str, value: &str| -> Result<(), ErrorBody> {
+            toml = crate::project::set_in(&toml, key, value).map_err(bad)?;
+            Ok(())
+        };
+        if !opts.goal.trim().is_empty() {
+            set("goal", &opts.goal)?;
+        }
+        if let Some(p) = &opts.thread_profile {
+            set("thread_profile", p)?;
+        }
+        if let Some(p) = &opts.coordinator_profile {
+            set("coordinator_profile", p)?;
+        }
+        for r in &opts.repos {
+            set("repos.add", &self.repo_arg(r))?;
+        }
+        if let Some(p) = &opts.thread_profile {
+            // 새 프로젝트의 thread 허용 목록(host.toml `[safety.default]`·옛 자리)에 있어야 한다(참고 `check_allowed`)
+            self.check_profile_allowed(name, p)?;
+        }
         // 기본 `pr` routine(herdr-projects `write_default_routine`). PROJECT.md가 마지막이 되게 뼈대보다 먼저 쓴다.
         // 옮기기(`migrate::convert`)는 0.2의 routine을 꺼서 넣으므로 여기서만 쓴다.
         let followup = dir.join(crate::routine::PR_FOLLOWUP);
         if !followup.exists() {
             write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes()).map_err(internal)?;
         }
+        write_atomic(&dir.join("project.toml"), toml.as_bytes()).map_err(internal)?;
         write_skeleton(&dir, name, &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n")).map_err(internal)?;
         self.db.audit(actor, "project_create", name);
         Ok(FrontResponse::Project(self.project_view(name, &dir)))
+    }
+
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`). thread_profile은 그 프로젝트 thread 허용 목록에 있어야 한다.
+    pub(crate) fn project_set(
+        &self,
+        project: &str,
+        key: &str,
+        value: &str,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let value = if key.starts_with("repos.") { self.repo_arg(value) } else { value.trim().to_string() };
+        if key == "thread_profile" {
+            self.check_profile_allowed(project, &value)?;
+        }
+        let path = dir.join("project.toml");
+        let _guard = PROJECT_TOML.lock().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "schema = 1\n".into());
+        let edited = crate::project::set_in(&text, key, &value).map_err(bad)?;
+        write_atomic(&path, edited.as_bytes()).map_err(internal)?;
+        self.db.audit(actor, "project_set", &format!("{project} {key}={value}"));
+        Ok(FrontResponse::Project(self.project_view(project, &dir)))
+    }
+
+    /// 머신이 없는 저장소 경로는 host 머신 정본 경로로(참고 `create`·`set_in`: 없는 경로는 그대로)
+    fn repo_arg(&self, arg: &str) -> String {
+        let r = crate::project::parse_repo_arg(arg.trim());
+        match r.machine {
+            Some(_) => arg.trim().to_string(),
+            None => std::fs::canonicalize(&r.path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(r.path),
+        }
     }
 
     pub(crate) fn projects(&self) -> Vec<ProjectView> {

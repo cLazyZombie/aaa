@@ -901,7 +901,13 @@ impl Host {
                     .collect();
                 Ok(FrontResponse::Panes { panes })
             }
-            FrontRequest::ProjectCreate { name } => self.project_create(&name, actor),
+            FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile } => self
+                .project_create(
+                    &name,
+                    orch::ProjectOptions { goal, repos, thread_profile, coordinator_profile },
+                    actor,
+                ),
+            FrontRequest::ProjectSet { project, key, value } => self.project_set(&project, &key, &value, actor),
             FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {

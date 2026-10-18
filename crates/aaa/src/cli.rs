@@ -213,9 +213,28 @@ enum QuestionCmd {
 #[derive(Subcommand)]
 enum ProjectCmd {
     List,
-    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md …)
+    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md …, herdr-projects `new`)
     Create {
         name: String,
+        /// 프로젝트가 무엇을 위한 것인가(brief 머리에 들어간다)
+        #[arg(long, default_value = "")]
+        goal: String,
+        /// 저장소. `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신), 여러 번 줄 수 있다
+        #[arg(long = "repo", value_name = "PATH[@MACHINE]")]
+        repos: Vec<String>,
+        /// 이 프로젝트 thread의 기본 profile(안 주면 host.toml `[defaults] thread_profile`, 그다음 claude)
+        #[arg(long, value_name = "NAME")]
+        thread_profile: Option<String>,
+        /// `aaa project open`이 coordinator를 띄우는 profile(안 주면 claude)
+        #[arg(long, value_name = "NAME")]
+        coordinator_profile: Option<String>,
+    },
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove
+    Set {
+        project: String,
+        key: String,
+        value: String,
     },
 }
 
@@ -939,13 +958,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Tab { cmd } => tab_cmd(cmd),
         Cmd::Workspace { cmd } => workspace_cmd(cmd),
         Cmd::Completion { shell } => completion(&shell),
-        Cmd::Project { cmd } => front(
-            json,
-            match cmd {
-                ProjectCmd::List => FrontRequest::Projects,
-                ProjectCmd::Create { name } => FrontRequest::ProjectCreate { name },
-            },
-        ),
+        Cmd::Project { cmd } => project_cmd(json, cmd),
         Cmd::Decision { .. } => anyhow::bail!(
             "`aaa decision`은 없어졌다. 뒤 thread가 알아야 할 결정은 coordinator가 프로젝트 memory(MEMORY.md 색인과 \
              memory/ 파일)에 적는다. memory는 모든 thread brief에 들어간다"
@@ -1635,6 +1648,41 @@ fn evaluator_open(project: &str) -> Result<ExitCode> {
     }
     init_log("warn");
     aaa_tui::run(Some(ws))
+}
+
+fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
+    match cmd {
+        ProjectCmd::List => front(json, FrontRequest::Projects),
+        ProjectCmd::Create { name, goal, repos, thread_profile, coordinator_profile } => {
+            let repos = repos.iter().map(|r| local_repo_path(r)).collect();
+            front(json, FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile })
+        }
+        ProjectCmd::Set { project, key, value } => {
+            let value = if key.starts_with("repos.") { local_repo_path(&value) } else { value };
+            let res = front_call(FrontRequest::ProjectSet {
+                project: project.clone(),
+                key: key.clone(),
+                value: value.clone(),
+            })?;
+            if json || res.is_err() {
+                return front_print(json, res);
+            }
+            println!("{project}: {key} = {}", value.trim());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+/// 머신 없는 상대 경로는 이 셸의 cwd 기준 절대 경로로 보낸다(host는 다른 cwd에서 돈다)
+fn local_repo_path(arg: &str) -> String {
+    let arg = arg.trim();
+    let machine = arg.rsplit_once('@').filter(|(p, m)| {
+        !p.is_empty() && !m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    });
+    if machine.is_some() || std::path::Path::new(arg).is_absolute() {
+        return arg.to_string();
+    }
+    std::path::absolute(arg).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| arg.to_string())
 }
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {

@@ -2607,6 +2607,18 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 기존 `worker_session_cli_is_read_only`(env로 알린 세션은 줄이는 쪽)·`evaluator_flow`는 그대로 통과한다.
   - 유닛: `process`(자기·자식의 부모·세션·터미널), `caller`(터미널 없는 init 자식 leader는 보기만, host·agent 세션이면 밖, 조상에 pane child면 그 pane).
 
+### 8.117 프로젝트·서버 CLI를 참고대로(10-18, 차이 목록 4장 A #495·#497·#502, G #589~#592·#598, H #604)
+
+- **routine 일정 형식(#604).** 참고(hp `routine.rs` `parse_schedule`)처럼 `every <N>m|h|d`·`daily HH:MM`만 받는다. 초 단위 `s`는 host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다(E2E가 분 단위로 기다리지 않게, §8.19). 운영 파일의 `every 30s`는 그 routine만 오류(`routine list`의 「초 단위는 받지 않는다 … 가장 짧은 주기는 `every 1m`」, inbox `config-error`)다. 시험 lab이 변수를 붙인다.
+- **프로젝트 만들기(#589).** `aaa project create <p> [--goal 글] [--repo PATH[@MACHINE]]… [--thread-profile 이름] [--coordinator-profile 이름]`(hp `new`). 준 값만 project.toml에 적는다. 값은 폴더를 만들기 전에 모두 맞춰 본다: 틀린 profile 이름이나 그 프로젝트 thread 허용 목록(§8.115, 새 프로젝트는 `[safety.default]`·옛 자리)에 없는 thread profile이면 폴더를 만들지 않는다. 머신 없는 저장소 경로는 CLI가 친 셸의 cwd 기준 절대 경로로 보내고 host가 정본 경로로 바꾼다(없는 경로는 그대로, 참고와 같다). `@MACHINE`의 경로는 그 머신 것 그대로다.
+  - 참고와 다름: 참고는 안 준 profile도 그때의 기본값(`new_project_default`)을 PROJECT.md에 적는다. aaa는 비워 두고 쓸 때 사슬(project.toml → host.toml `[defaults]` → claude, §8.115)로 푼다. 사람이 `aaa profile default threads`로 기본을 바꾸면 값을 안 적은 프로젝트에도 닿는다. profile이 머신마다 있어(§8.2) 만들 때 그 이름이 어느 머신에 있는지는 보지 않는다(thread start가 그 머신에서 푼다).
+  - 참고의 표시 이름(`name`)은 없다: aaa 프로젝트 이름은 폴더 이름이고 PROJECT.md 첫 제목이 사람이 읽는 이름이다.
+- **프로젝트 설정 바꾸기(#591).** `aaa project set <p> <key> <값>`(hp `set`·`settings::set_in`). key는 aaa가 읽는 것만: `goal`·`thread_profile`·`coordinator_profile`·`max_parallel_threads`(1~1000)·`auto_resolve_days`(0~1000)·`repos.add`·`repos.remove`(`PATH[@MACHINE]`). host가 toml_edit로 그 값만 바꿔 원자적으로 쓴다(다른 줄·주석은 그대로, 인라인 `repos = [...]`는 `[[repos]]`로 바꾼다). `thread_profile`은 그 프로젝트 thread 허용 목록에 있어야 한다(참고 `check_allowed`). 거부한 값은 파일을 바꾸지 않는다. 감사 기록 `project_set`.
+  - 참고와 다름: `name`은 `project rename`으로, `nudge`는 host.toml `[projects] nudge_idle_secs`(프로젝트마다가 아니다)라 까닭을 말하고 거부한다. `coordinator_profile`은 허용 목록이 없어(§8.115는 coordinator 쪽 safety를 두지 않았다) 이름 형식만 본다.
+  - coordinator(조작 권한)도 쓴다(참고도 coordinator가 고친다). thread·평가자 세션 안 CLI는 보기 권한이라 거부된다(§8.116).
+- **계약.** FRONT_API 1.20: `project_create`의 선택 필드(goal·repos·thread_profile·coordinator_profile)와 `project_set`.
+- **시험(결함 심기로 확인).** m13 `routine_seconds_only_in_tests`(변수가 빈 host에서 `every 30s`는 오류·`every 1m`은 그대로, 변수 검사를 「있기만 하면」으로 되돌리면 실패), host 유닛 `schedules`·`routine_files`. m13 `project_create_options_and_set`(옵션이 project.toml에, 안 준 값은 없음, 프로젝트 기본 profile로 thread가 뜸, 틀린·허용 안 된 profile은 폴더 없음, set은 주석을 두고 값 하나, 상대 경로는 친 cwd 기준, 거부한 set은 파일 그대로), host 유닛 `set_keeps_the_rest_and_checks_values`. 심은 결함 넷(허용 검사 빼기, project.toml 안 쓰기, CLI가 상대 경로를 그대로, 0 허용)이 각각 실패했다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

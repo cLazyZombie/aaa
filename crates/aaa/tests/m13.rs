@@ -2211,6 +2211,84 @@ fn merge_queue_and_capacity() {
     assert_eq!(ev, want);
 }
 
+/// 프로젝트 만들기 옵션과 설정 바꾸기(4장 G #589·#591, herdr-projects `new`·`set`): 준 값만 project.toml에 적고, 틀린 값이나
+/// 허용되지 않은 thread profile이면 폴더를 만들지 않는다. `set`은 다른 줄을 두고 값 하나만 바꾼다.
+#[test]
+fn project_create_options_and_set() {
+    let w = world();
+    let toml = |p: &str| std::fs::read_to_string(w.projects.join(p).join("project.toml")).unwrap();
+    // 틀린 값·허용되지 않은 profile: 폴더가 생기지 않는다
+    let e = w.h.json(&["project", "create", "bad1", "--thread-profile=a b"]).unwrap_err();
+    assert!(e.contains("profile"), "{e}");
+    let e = w.h.json(&["project", "create", "bad2", "--thread-profile", "other"]).unwrap_err();
+    assert!(e.contains("허용되지 않았다"), "{e}");
+    assert!(!w.projects.join("bad1").exists() && !w.projects.join("bad2").exists());
+
+    let repo = path_str(&w.repo);
+    w.h.ok(&[
+        "project",
+        "create",
+        "shop",
+        "--goal",
+        "가게를 연다",
+        "--repo",
+        repo,
+        "--repo",
+        "/srv/api@labB",
+        "--thread-profile",
+        "fake",
+        "--coordinator-profile",
+        "claude",
+    ]);
+    let s = toml("shop");
+    for want in [
+        "goal = \"가게를 연다\"",
+        "thread_profile = \"fake\"",
+        "coordinator_profile = \"claude\"",
+        "machine = \"labB\"",
+    ] {
+        assert!(s.contains(want), "{want}\n{s}");
+    }
+    let canon = std::fs::canonicalize(&w.repo).unwrap();
+    assert!(s.contains(&format!("path = \"{}\"", canon.display())), "{s}");
+    // 안 준 값은 적지 않는다(쓸 때 기본 사슬로 푼다)
+    assert_eq!(toml("demo"), "schema = 1\n");
+    // profile 없이 시작한 thread는 프로젝트 기본 profile로 뜬다
+    let t =
+        w.h.ok(&["thread", "start", "shop", "--title", "기본", "--kind", "dir", "--task-file", &w.task("t.txt", "x")]);
+    assert_eq!(t["profile"], "fake", "{t}");
+
+    // set: 값 하나만, 사람이 단 주석은 그대로
+    std::fs::write(w.projects.join("shop/project.toml"), format!("# 사람이 단 주석\n{}", toml("shop"))).unwrap();
+    let o = w.h.run(&["project", "set", "shop", "goal", "가게를 넓힌다"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "shop: goal = 가게를 넓힌다\n");
+    w.h.ok(&["project", "set", "shop", "max_parallel_threads", "3"]);
+    // 상대 경로는 친 셸의 cwd 기준
+    std::fs::create_dir_all(w.lab.root.join("lib")).unwrap();
+    let o = w.h.cmd(&["project", "set", "shop", "repos.add", "lib"]).current_dir(&w.lab.root).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    w.h.ok(&["project", "set", "shop", "repos.remove", "/srv/api@labB"]);
+    let s = toml("shop");
+    assert!(
+        s.starts_with("# 사람이 단 주석\n")
+            && s.contains("goal = \"가게를 넓힌다\"")
+            && s.contains("max_parallel_threads = 3"),
+        "{s}"
+    );
+    let lib = std::fs::canonicalize(w.lab.root.join("lib")).unwrap();
+    assert!(s.contains(&format!("path = \"{}\"", lib.display())) && !s.contains("labB"), "{s}");
+    for (k, v, want) in [
+        ("max_parallel_threads", "0", "1~1000"),
+        ("thread_profile", "other", "허용되지 않았다"),
+        ("name", "새", "project rename"),
+        ("colour", "red", "repos.add"),
+    ] {
+        let e = w.h.json(&["project", "set", "shop", k, v]).unwrap_err();
+        assert!(e.contains(want), "{k}={v}: {e}");
+    }
+    assert_eq!(toml("shop"), s, "거부한 set은 파일을 바꾸지 않는다");
+}
+
 /// routine 일정의 초 단위(4장 H #604): 운영 host(`AAA_TEST_ROUTINE_SECONDS`가 `1`이 아님)는 참고처럼 분부터 받고, 초 단위
 /// 파일은 그 routine만 오류로 둔다.
 #[test]

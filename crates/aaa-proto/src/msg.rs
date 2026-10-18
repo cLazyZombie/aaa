@@ -1207,8 +1207,24 @@ pub enum FrontRequest {
     WebPublish,
     WebPublishOff,
     WebStatus,
+    /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.20)
     ProjectCreate {
         name: String,
+        #[serde(default)]
+        goal: String,
+        /// `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
+        #[serde(default)]
+        repos: Vec<String>,
+        #[serde(default)]
+        thread_profile: Option<String>,
+        #[serde(default)]
+        coordinator_profile: Option<String>,
+    },
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.20). key는 `aaa project set --help`
+    ProjectSet {
+        project: String,
+        key: String,
+        value: String,
     },
     Projects,
     /// 머신의 agent.toml profile 목록
