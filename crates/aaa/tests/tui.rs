@@ -1926,7 +1926,13 @@ fn wheel_scrolls_history_like_herdr() {
     // 2) 올라가 있는 동안 다른 연결(CLI)의 출력(명령 줄·201..205·prompt 6줄)이 와도 보던 줄을 지킨다:
     //    한 칸 더 올리면 167..195. 지키지 않으면 맨 아래에서 6줄 위(173..201)가 된다.
     h.ok(&["pane", "run", &id, "seq 201 205"]);
-    wait_for("host 화면에 205", T, || h.screen(&id).contains("205").then_some(()));
+    // 205만이 아니라 그 다음 prompt까지 기다린다: 아래 「셸에 아무것도 보내지 않았다」는 prompt 줄을 보는데, 205가 보인 뒤 prompt가
+    // 오기 전에 그 단언이 오면(짐 아래 ci-local 10-18 13:57) 화면 끝이 205라 떨어졌다. 아래 「6줄」 셈도 prompt까지 온 뒤의 것이다
+    wait_for("host 화면에 205와 prompt", T, || {
+        let s = h.screen(&id);
+        let tail: Vec<&str> = s.lines().map(str::trim_end).filter(|l| !l.is_empty()).rev().take(2).collect();
+        (tail == ["$", "205"]).then_some(())
+    });
     tui.mouse(64, at, false);
     tui.wait_text("보던 줄에서 3줄 더 위", |s| {
         rows(s).first().is_some_and(|l| l == "167") && rows(s).last().is_some_and(|l| l == "195")
