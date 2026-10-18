@@ -63,6 +63,120 @@ impl SigningKey {
     }
 }
 
+impl Host {
+    pub(crate) fn link_view(&self, r: LibraryLinkRow) -> LinkView {
+        let base = format!("/v/{}/", self.library_signing.cap(&r.id));
+        let size = self
+            .project_dir(&r.project)
+            .ok()
+            .map(|d| {
+                self.manifest(&d, &r.thread)
+                    .iter()
+                    .filter(|f| !f.on_agent && crate::library::safe_rel(&f.path))
+                    .map(|f| f.size)
+                    .sum()
+            })
+            .unwrap_or(0);
+        LinkView {
+            id: r.id,
+            project: r.project,
+            thread: r.thread,
+            url: self.public_origin().map(|o| format!("{o}{base}")),
+            base,
+            created_at_ms: r.created,
+            expires_at_ms: r.expires,
+            last_opened_at_ms: r.opened,
+            revoked: r.revoked,
+            size,
+        }
+    }
+
+    pub(crate) fn library_link(
+        &self,
+        project: &str,
+        thread: &str,
+        days: Option<u32>,
+        actor: &str,
+    ) -> Result<LinkView, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        self.load(project, thread)?;
+        if !crate::library::manifest_path(&dir, thread).is_file() {
+            return Err(err(ErrorCode::NotFound, "아직 회수한 결과물이 없다"));
+        }
+        let days = days.unwrap_or(DEFAULT_DAYS);
+        if !(1..=3650).contains(&days) {
+            return Err(err(ErrorCode::BadRequest, "수명은 1~3650일이다"));
+        }
+        let now = aaa_common::util::now_ms();
+        let (row, created) = self
+            .db
+            .library_link_issue(LibraryLinkRow {
+                id: hex::encode(rand::random::<[u8; 8]>()),
+                project: project.into(),
+                thread: thread.into(),
+                created: now,
+                expires: now + days as u64 * DAY_MS,
+                opened: None,
+                revoked: false,
+            })
+            .map_err(super::orch::internal)?;
+        if created {
+            self.db.audit(actor, "library_link", &format!("{project}/{thread} id={}", row.id));
+        }
+        Ok(self.link_view(row))
+    }
+
+    pub(crate) fn library_links(&self, project: Option<&str>) -> Result<Vec<LinkView>, ErrorBody> {
+        if let Some(p) = project {
+            self.project_dir(p)?;
+        }
+        Ok(self
+            .db
+            .library_links(project)
+            .map_err(super::orch::internal)?
+            .into_iter()
+            .map(|r| self.link_view(r))
+            .collect())
+    }
+
+    pub(crate) fn latest_library_link(&self, project: &str, thread: &str) -> Option<LinkView> {
+        self.db.library_links(Some(project)).ok()?.into_iter().find(|r| r.thread == thread).map(|r| self.link_view(r))
+    }
+
+    pub(crate) fn library_link_revoke(&self, id: &str, actor: &str) -> Result<LinkView, ErrorBody> {
+        if !self.db.library_link_revoke(id).map_err(super::orch::internal)? {
+            return Err(err(ErrorCode::NotFound, "보고서 링크가 없다"));
+        }
+        self.db.audit(actor, "library_link_revoke", &format!("id={id}"));
+        Ok(self.link_view(self.db.library_link_get(id).map_err(super::orch::internal)?.unwrap()))
+    }
+
+    /// 요청마다 DB를 읽으므로 폐기가 바로 반영된다. 수명 판정은 호출자가 준 시각으로 한다.
+    pub(crate) fn signed_library_at(&self, cap: &str, now: u64) -> Result<(String, String), ErrorBody> {
+        let fail = || err(ErrorCode::Unauthorized, "보고서 링크가 없거나 만료·폐기됐다");
+        let id = self.library_signing.verify(cap).ok_or_else(fail)?;
+        let r = self.db.library_link_get(id).map_err(super::orch::internal)?.ok_or_else(fail)?;
+        if r.revoked || now >= r.expires {
+            return Err(fail());
+        }
+        self.db.library_link_opened(id, now).map_err(super::orch::internal)?;
+        Ok((r.project, r.thread))
+    }
+
+    /// 응답할 때만 붙인다. inbox 원본·흐름 사건에는 bearer 경로를 남기지 않는다.
+    pub(crate) fn library_notice_links(&self, items: &mut [InboxItem]) {
+        for i in items.iter_mut().filter(|i| i.item_kind == "thread-state" && i.event == "new report") {
+            if let Some(url) = self
+                .latest_library_link(&i.project, &i.subject)
+                .filter(|l| !l.revoked && l.expires_at_ms > aaa_common::util::now_ms())
+                .and_then(|l| l.url)
+            {
+                i.body.push_str(&format!("\n보기: {url}"));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,120 +449,5 @@ mod tests {
         assert!(telegram["text"].as_str().unwrap().contains("\n보기: https://"));
         assert_eq!(telegram["disable_web_page_preview"], true);
         assert!(!lab.h.db.inbox_list(Some("demo"), false).unwrap()[0].body.contains("/v/"));
-    }
-}
-
-impl Host {
-    pub(crate) fn link_view(&self, r: LibraryLinkRow) -> LinkView {
-        let base = format!("/v/{}/", self.library_signing.cap(&r.id));
-        let size = self
-            .project_dir(&r.project)
-            .ok()
-            .map(|d| {
-                self.manifest(&d, &r.thread)
-                    .iter()
-                    .filter(|f| !f.on_agent && crate::library::safe_rel(&f.path))
-                    .map(|f| f.size)
-                    .sum()
-            })
-            .unwrap_or(0);
-        LinkView {
-            id: r.id,
-            project: r.project,
-            thread: r.thread,
-            url: self.public_origin().map(|o| format!("{o}{base}")),
-            base,
-            created_at_ms: r.created,
-            expires_at_ms: r.expires,
-            last_opened_at_ms: r.opened,
-            revoked: r.revoked,
-            size,
-        }
-    }
-
-    pub(crate) fn library_link(
-        &self,
-        project: &str,
-        thread: &str,
-        days: Option<u32>,
-        actor: &str,
-    ) -> Result<LinkView, ErrorBody> {
-        let dir = self.project_dir(project)?;
-        self.load(project, thread)?;
-        if !crate::library::manifest_path(&dir, thread).is_file() {
-            return Err(err(ErrorCode::NotFound, "아직 회수한 결과물이 없다"));
-        }
-        let days = days.unwrap_or(DEFAULT_DAYS);
-        if !(1..=3650).contains(&days) {
-            return Err(err(ErrorCode::BadRequest, "수명은 1~3650일이다"));
-        }
-        let now = aaa_common::util::now_ms();
-        let (row, created) = self
-            .db
-            .library_link_issue(LibraryLinkRow {
-                id: hex::encode(rand::random::<[u8; 8]>()),
-                project: project.into(),
-                thread: thread.into(),
-                created: now,
-                expires: now + days as u64 * DAY_MS,
-                opened: None,
-                revoked: false,
-            })
-            .map_err(super::orch::internal)?;
-        if created {
-            self.db.audit(actor, "library_link", &format!("{project}/{thread} id={}", row.id));
-        }
-        Ok(self.link_view(row))
-    }
-
-    pub(crate) fn library_links(&self, project: Option<&str>) -> Result<Vec<LinkView>, ErrorBody> {
-        if let Some(p) = project {
-            self.project_dir(p)?;
-        }
-        Ok(self
-            .db
-            .library_links(project)
-            .map_err(super::orch::internal)?
-            .into_iter()
-            .map(|r| self.link_view(r))
-            .collect())
-    }
-
-    pub(crate) fn latest_library_link(&self, project: &str, thread: &str) -> Option<LinkView> {
-        self.db.library_links(Some(project)).ok()?.into_iter().find(|r| r.thread == thread).map(|r| self.link_view(r))
-    }
-
-    pub(crate) fn library_link_revoke(&self, id: &str, actor: &str) -> Result<LinkView, ErrorBody> {
-        if !self.db.library_link_revoke(id).map_err(super::orch::internal)? {
-            return Err(err(ErrorCode::NotFound, "보고서 링크가 없다"));
-        }
-        self.db.audit(actor, "library_link_revoke", &format!("id={id}"));
-        Ok(self.link_view(self.db.library_link_get(id).map_err(super::orch::internal)?.unwrap()))
-    }
-
-    /// 요청마다 DB를 읽으므로 폐기가 바로 반영된다. 수명 판정은 호출자가 준 시각으로 한다.
-    pub(crate) fn signed_library_at(&self, cap: &str, now: u64) -> Result<(String, String), ErrorBody> {
-        let fail = || err(ErrorCode::Unauthorized, "보고서 링크가 없거나 만료·폐기됐다");
-        let id = self.library_signing.verify(cap).ok_or_else(fail)?;
-        let r = self.db.library_link_get(id).map_err(super::orch::internal)?.ok_or_else(fail)?;
-        if r.revoked || now >= r.expires {
-            return Err(fail());
-        }
-        self.db.library_link_opened(id, now).map_err(super::orch::internal)?;
-        Ok((r.project, r.thread))
-    }
-
-    /// 응답할 때만 붙인다. inbox 원본·흐름 사건에는 bearer 경로를 남기지 않는다.
-    pub(crate) fn library_notice_links(&self, items: &mut [InboxItem]) {
-        for i in items.iter_mut().filter(|i| i.item_kind == "thread-state" && i.event == "new report") {
-            if let Some(l) = self
-                .latest_library_link(&i.project, &i.subject)
-                .filter(|l| !l.revoked && l.expires_at_ms > aaa_common::util::now_ms())
-            {
-                if let Some(url) = l.url {
-                    i.body.push_str(&format!("\n보기: {url}"));
-                }
-            }
-        }
     }
 }
