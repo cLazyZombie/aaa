@@ -597,7 +597,7 @@ pub enum AgentRequest {
         data: B64,
         eof: bool,
     },
-    /// pane 기록 한 조각을 이 머신 임시 폴더의 `aaa-scrollback-<name>.txt`에 쓴다(herdr `prefix e`, plan §8.168). `name`은 host가
+    /// pane 기록 한 조각을 이 머신 임시 폴더의 `aaa-scrollback-<name>.txt`에 쓴다(herdr `prefix e`, plan §8.173). `name`은 host가
     /// 정한 hex 16자다. `offset`은 지금까지 쓴 길이와 같아야 하고, `eof`면 경로와 그 파일을 여는 편집기 명령을 돌려준다.
     /// agent 기능 `scrollback.v1`이 있을 때만 보낸다.
     ScrollbackWrite {
@@ -1416,7 +1416,7 @@ pub enum FrontRequest {
         cursor: TextPoint,
         motion: CopyMotion,
     },
-    /// pane 기록을 그 머신 편집기로 연다(herdr `prefix e` `edit_scrollback`, 1.31부터, plan §8.168): 그 머신 agent가 화면 사본의
+    /// pane 기록을 그 머신 편집기로 연다(herdr `prefix e` `edit_scrollback`, 1.33부터, plan §8.173): 그 머신 agent가 화면 사본의
     /// 기록을 임시 파일로 쓰고, host가 그 pane을 나눠 편집기 pane을 띄운 뒤 탭을 zoom한다. 편집기 pane이 끝나면 host가 그
     /// pane을 닫고 파일을 지우고 zoom을 되돌린다. `Workspace`로 답한다.
     PaneEditScrollback {

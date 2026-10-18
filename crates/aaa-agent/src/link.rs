@@ -87,7 +87,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // dir.v1: 폴더 보기 `DirList`(plan §8.148)
         // profiles.v2: 기본 profile(claude·codex)을 이름으로 받고 profile을 쓸 때마다 agent.toml을 다시 읽는다(plan §8.163),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
-        // scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.168)
+        // scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.173)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
