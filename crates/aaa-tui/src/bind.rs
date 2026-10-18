@@ -109,7 +109,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 (p(Settings), "설정"),
                 (p(Detach), "나가기(세션은 그대로)"),
                 (p(ReloadConfig), "설정 다시 읽기"),
-                (p(OpenNotificationTarget), "질문·알림 pane으로"),
+                (p(OpenNotificationTarget), "알림 카드의 pane으로"),
             ],
         ),
         (

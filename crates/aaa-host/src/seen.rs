@@ -6,10 +6,12 @@
 //! - 그 pane을 앞으로 가져오거나(focus) 바깥 터미널이 focus를 얻으면 봤다.
 //!
 //! aaa의 「보는 화면」: 웹은 그 pane 터미널을 연 연결이 있고 그 기기의 events 연결이 「쓰는 화면」(보이고 focus, `presence`)일 때,
-//! TUI는 그 pane의 lease(지금 쓰는 대화형 front)를 쥐고 있을 때다.
+//! TUI는 그 pane의 lease(지금 쓰는 대화형 front)를 쥐고 그 pane을 그리는 동안(화면 구독 `PaneWatch`, 지금 탭의 pane만)이다.
+//! TUI는 다른 탭으로 가도 lease를 놓지 않으므로, 그리지 않는 동안은 보는 것이 아니다(herdr: 보이는 탭이 아니면 안 봄, plan §8.185).
+//! 다시 그리기 시작하면 봤다(herdr `mark_active_tab_seen`).
 //! herdr-web-ui는 웹에서 pane을 열어도 herdr의 「봤음」을 바꾸지 않는다(웹 터미널은 herdr TUI focus가 아니다). 웹으로만 보는
 //! 사람에게는 「끝남」이 영영 남으므로 aaa는 웹 화면도 보는 화면으로 센다(참고와 다르게 둔 것, plan §8.72).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aaa_proto::AgentActivity;
 
@@ -31,6 +33,8 @@ pub(crate) fn device_short(id: &str) -> String {
 pub(crate) struct Viewing {
     active: HashMap<String, usize>,
     terms: HashMap<String, (String, String)>,
+    /// TUI(대화형 front 연결)마다 지금 그리는 pane(화면 구독 `PaneWatch`)
+    draws: HashMap<String, HashSet<String>>,
     /// 사람이 마지막으로 누르거나 치거나 화면을 켠 기기(사용자 결정 10-18 「쓰는 기기」, plan §8.105).
     /// 다른 기기가 그러면 바로 바뀐다. 가려지면 그대로 두되 쓰는 화면이 아니므로 push가 간다
     user: Option<String>,
@@ -135,6 +139,11 @@ impl Viewing {
     fn is_web(&self, front: &str) -> bool {
         self.terms.contains_key(front)
     }
+
+    /// 그 TUI 연결이 그 pane을 그리고 있다
+    fn draws(&self, front: &str, pane: &str) -> bool {
+        self.draws.get(front).is_some_and(|d| d.contains(pane))
+    }
 }
 
 /// 상태가 바뀐 뒤 「봤음」: herdr `apply_pane_state_change`
@@ -151,7 +160,28 @@ impl Host {
     /// 그 pane을 지금 보는 화면(웹·TUI)이 있다. `lease`는 그 pane의 lease다(호출하는 쪽이 잠금 안에서 준다).
     pub(crate) fn someone_sees(&self, pane: &str, lease: Option<&FrontRef>) -> bool {
         let v = self.viewing.lock().unwrap();
-        v.web_sees(pane) || lease.is_some_and(|f| f.interactive() && !v.is_web(&f.id))
+        v.web_sees(pane) || lease.is_some_and(|f| f.interactive() && !v.is_web(&f.id) && v.draws(&f.id, pane))
+    }
+
+    /// TUI 연결이 그 pane을 그리기 시작했다(`on`)·그만뒀다. 그 연결이 쓰는 pane을 다시 그리면 봤다(herdr `mark_active_tab_seen`)
+    pub(crate) fn view_draw(&self, front: &str, pane: &str, on: bool) {
+        {
+            let mut v = self.viewing.lock().unwrap();
+            if on {
+                v.draws.entry(front.to_string()).or_default().insert(pane.to_string());
+            } else if let Some(d) = v.draws.get_mut(front) {
+                d.remove(pane);
+            }
+        }
+        let leased = self.inner.lock().unwrap().panes.get(pane).and_then(|p| p.lease.clone());
+        if on && self.someone_sees(pane, leased.as_ref()) {
+            self.mark_seen(&[pane.to_string()]);
+        }
+    }
+
+    /// TUI 연결이 끝났다: 그리던 pane을 잊는다
+    pub(crate) fn view_draws_end(&self, front: &str) {
+        self.viewing.lock().unwrap().draws.remove(front);
     }
 
     /// 그 pane들을 봤다. 바뀐 것이 있으면 상태 사건을 낸다
@@ -373,6 +403,16 @@ mod tests {
         // 쓰는 기기의 연결이 없다(닫혔다)
         v.conns.remove(&2);
         assert!(v.basis(10_000).contains(" · 그 기기 연결 없음 · "), "{}", v.basis(10_000));
+    }
+
+    #[test]
+    fn a_tui_sees_only_what_it_draws() {
+        let mut v = Viewing::default();
+        v.draws.entry("f1".into()).or_default().insert("p1".into());
+        assert!(v.draws("f1", "p1"));
+        // 다른 탭의 pane(lease는 남아도 그리지 않는다)·다른 연결
+        assert!(!v.draws("f1", "p2"));
+        assert!(!v.draws("f2", "p1"));
     }
 
     #[test]

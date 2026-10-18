@@ -890,6 +890,13 @@ enum DoctorCmd {
     },
     /// 결과 JSON 여러 개를 한 표로
     Summary { files: Vec<PathBuf> },
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md)을 host에서 본다
+    /// (herdr-projects `doctor`). 안내가 낡았으면 `--fix`가 지금 aaa의 것으로 다시 쓴다
+    Files {
+        /// 고친다: aaa 표지가 있는 AGENTS.md는 다시 쓰고, 표지 없는 AGENTS.md·CLAUDE.md는 `<이름>.before-aaa`로 옮겨 둔다
+        #[arg(long)]
+        fix: bool,
+    },
     /// 다른 프로세스의 책임 프로세스(E6: codex app-server·빌드 캐시 daemon 등)
     Lineage {
         /// 명령줄에 이 문자열이 들어 있는 프로세스를 찾는다(여러 번)
@@ -1587,6 +1594,14 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
             }
             print!("{}", doctor::summary_table(&rows));
             Ok(ExitCode::SUCCESS)
+        }
+        Some(DoctorCmd::Files { fix }) => {
+            let res = front_call(FrontRequest::ProjectFiles { fix })?;
+            // 고치지 못한 프로젝트가 있으면 실패로 끝낸다(참고 `doctor`의 FAIL). 고칠 것만 있으면 warn이고 성공이다
+            let failed =
+                matches!(&res, Ok(FrontResponse::ProjectFiles { checks }) if checks.iter().any(|c| c.error.is_some()));
+            let code = front_print(json, res)?;
+            Ok(if failed { ExitCode::FAILURE } else { code })
         }
         Some(DoctorCmd::Lineage { patterns }) => {
             #[cfg(target_os = "macos")]
@@ -2408,6 +2423,29 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::ProjectOpened(o) => {
             for n in &o.notes {
                 let _ = writeln!(s, "{n}");
+            }
+        }
+        FrontResponse::ProjectFiles { checks } => {
+            if checks.is_empty() {
+                let _ = writeln!(s, "프로젝트가 없다");
+            }
+            // herdr-projects `doctor` 줄 모양: `[ok  ]`·`[warn]`·`[FAIL]` files <프로젝트>: …
+            for c in checks {
+                let problems = c.problems.join("; ");
+                let line = match (&c.error, c.fixed, c.problems.is_empty()) {
+                    (Some(e), _, _) => format!("[FAIL] files {}: 고치지 못했다({e}): {problems}", c.project),
+                    (None, true, _) => format!("[ok  ] files {}: 고쳤다: {problems}", c.project),
+                    (None, false, true) => {
+                        format!(
+                            "[ok  ] files {}: AGENTS.md(coordinator 안내)·CLAUDE.md 링크·uploads/·pr-followup routine이 맞다",
+                            c.project
+                        )
+                    }
+                    (None, false, false) => {
+                        format!("[warn] files {}: {problems}; `aaa doctor files --fix`가 고친다", c.project)
+                    }
+                };
+                let _ = writeln!(s, "{line}");
             }
         }
         FrontResponse::ProfileResolved { profile } => {

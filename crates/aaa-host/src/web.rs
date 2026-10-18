@@ -642,6 +642,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
+    let mut notices = host.notice_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut presence = Presence { conn: host.conn_open(&dev), host: host.clone(), dev: dev.clone(), active: false };
@@ -732,6 +733,20 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                         }
                     }
                     Err(_) => break,
+                }
+            }
+            // 앱 안 알림(notice.rs). 기록하지 않으므로 놓친 것은 버린다(끊지 않는다)
+            n = notices.recv() => {
+                send_state = false;
+                match n {
+                    Ok(n) => {
+                        let text = serde_json::to_string(&FrontEvent::Notice(n)).unwrap();
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => break,
                 }
             }
             r = preferences.changed() => {
