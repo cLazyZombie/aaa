@@ -380,8 +380,20 @@ pub(crate) fn with_hooks(
             argv.insert(command_len, "--settings".into());
         }
     }
-    // Codex는 전역 hook을 쓴다. notify를 주입하면 사용자·workspace·profile 설정을 덮으므로 그대로 둔다.
+    if launch.harness == "codex" {
+        // 전역 hook도 pane의 env·peer 계보에서 돌아야 한다. 사용자 notify는 그대로 둔다.
+        for argv in [&mut launch.argv, &mut launch.resume_argv] {
+            ensure_codex_local(argv, command_len);
+        }
+    }
     Ok(launch)
+}
+
+/// 공유 daemon은 pane의 AAA 환경·peer 계보를 잃는다(§8.2). resume 앞의 전역 옵션으로 준다.
+pub(crate) fn ensure_codex_local(argv: &mut Vec<String>, command_len: usize) {
+    if !argv.iter().take_while(|a| a.as_str() != "--").any(|a| a == "--no-daemon") {
+        argv.insert(command_len, "--no-daemon".into());
+    }
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -624,19 +636,36 @@ mod tests {
         }
     }
 
-    /// 전역·명시적 사용자 notify를 aaa 주입으로 덮어쓰지 않는다.
+    /// 기본·wrapper 실행과 resume을 pane 안에 두며 사용자 notify와 명시 인자를 보존한다.
     #[test]
     fn codex_launch_and_resume_preserve_user_notify() {
         let cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
-        for notify in [None, Some(r#"notify=["user-notify","fixed arg"]"#)] {
+        for (command, args, notify) in [
+            (vec![], vec![], None),
+            (vec!["wrapper".into(), "codex".into()], vec![], None),
+            (vec![], vec!["--no-daemon".into()], Some(r#"notify=["user-notify","fixed arg"]"#)),
+        ] {
             let mut p = profile("codex");
+            p.command = command;
+            p.args = args;
+            p.model.clear();
+            p.effort.clear();
             if let Some(n) = notify {
                 p.args.extend(["-c".into(), n.into()]);
             }
-            let launch = with_hooks(&cfg, resolve("p", &p).unwrap(), Path::new("unused"), 1).unwrap();
+            let prefix = p.command.len().max(1);
+            let launch = with_hooks(&cfg, resolve("p", &p).unwrap(), Path::new("unused"), prefix).unwrap();
             for argv in [&launch.argv, &launch.resume_argv] {
                 let values: Vec<_> = argv.iter().filter(|s| s.starts_with("notify=")).map(String::as_str).collect();
                 assert_eq!(values, notify.into_iter().collect::<Vec<_>>(), "{argv:?}");
+                if !p.args.iter().any(|a| a == "--no-daemon") {
+                    assert_eq!(
+                        argv.get(prefix).map(String::as_str),
+                        Some("--no-daemon"),
+                        "pane 밖 공유 daemon으로 실행될 수 있다: {argv:?}"
+                    );
+                }
+                assert_eq!(argv.iter().filter(|a| *a == "--no-daemon").count(), 1, "{argv:?}");
             }
         }
     }
@@ -653,6 +682,7 @@ mod tests {
             &script,
             r#"
 import json, os, pathlib, subprocess, sys, tomllib
+assert sys.argv[1:2] == ['--no-daemon'], sys.argv
 config = tomllib.loads((pathlib.Path(os.environ['CODEX_HOME']) / 'config.toml').read_text())
 for i, arg in enumerate(sys.argv[1:], 1):
     if arg == '-c' and i + 1 < len(sys.argv):

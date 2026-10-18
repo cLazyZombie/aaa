@@ -1091,6 +1091,10 @@ impl Agent {
                 spec.name = name;
             }
         }
+        // profile 없는 tab create와 저장된 Codex resume도 같은 pane 안에서 실행한다.
+        if detect::Harness::of_session(None, &spec.argv) == Some(detect::Harness::Codex) {
+            threads::ensure_codex_local(&mut spec.argv, 1);
+        }
         if spec.name.is_empty() {
             spec.name = spec
                 .argv
@@ -1704,6 +1708,35 @@ pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// tab create와 저장된 resume 모두 session host에 넘기는 spec에서 daemon을 막는다.
+    /// 없는 실행 파일에서 멈추므로 실제 harness·서비스·프로세스 신호는 쓰지 않는다.
+    #[tokio::test]
+    async fn codex_spawn_spec_stays_in_the_pane() {
+        for (argv, expected) in [
+            (vec!["codex"], vec!["codex", "--no-daemon"]),
+            (
+                vec!["C:\\tools\\codex.exe", "resume", "test-id"],
+                vec!["C:\\tools\\codex.exe", "--no-daemon", "resume", "test-id"],
+            ),
+            (vec!["codex", "--no-daemon"], vec!["codex", "--no-daemon"]),
+            (vec!["codex", "--", "--no-daemon"], vec!["codex", "--no-daemon", "--", "--no-daemon"]),
+            (vec!["sh", "-c", "codex"], vec!["sh", "-c", "codex"]),
+        ] {
+            let state = std::env::temp_dir().join(format!("aaa-spawn-{}", util::new_id()));
+            let mut a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+            Arc::get_mut(&mut a).unwrap().exe = state.join("missing-session-host");
+            let (spec, _) = session(None, &argv, SessionState::Running);
+            let error = a.spawn_session(spec.spec).await.unwrap_err();
+            assert_eq!(error.to_string(), "session host 실행");
+            let dirs: Vec<_> = std::fs::read_dir(state.join("sessions")).unwrap().collect();
+            assert_eq!(dirs.len(), 1);
+            let file: SpecFile = util::read_json(&dirs[0].as_ref().unwrap().path().join("spec.json")).unwrap();
+            assert_eq!(file.spec.argv, expected, "session host에 공유 daemon을 허용하는 argv를 넘겼다");
+            assert!(file.spec.env.iter().any(|(k, v)| k == hooks::ENV_TOKEN && !v.is_empty()));
+            std::fs::remove_dir_all(state).unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn codex_start_before_pane_registration_waits_for_registration() {

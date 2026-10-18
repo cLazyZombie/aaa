@@ -5200,3 +5200,21 @@ primary 근거:
   `data-questions-sync`(응답을 화면에 반영한 횟수) 뒤에도 휴대폰 대화의 카드가 남고 실제 답 키를 받는지 본다.
   데스크톱 터미널 답도 유지한다. unit은 답/메뉴 변경·재연결의 역순 응답/실패를 검사한다.
   사건 적용 제거 변형에서 같은 E2E가 실패하고 복구 뒤 통과한다. timeout·재시도·보기 기본값·wire 변경은 없다.
+
+### 8.208 Codex 실행·재개의 공유 daemon 금지(10-18, t-0363 운영 회귀)
+
+- **pane 안 실행.** `-c notify`가 Codex 0.163의 공유 daemon 선택도 막던 부수 효과에 기대지 않는다(§8.2).
+  profile의 Codex launch·resume에는 command 접두사 뒤 `--no-daemon`을 명시한다. 이미 주어졌으면 중복하지 않는다.
+  profile 없는 `tab create -- codex`와 저장된 직접 Codex resume도 세션 spec을 쓰기 전에 같은 옵션을 붙인다.
+  `--` 뒤 prompt 문자열은 옵션으로 세지 않는다. 셸에서 사람이 나중에 Codex를 실행하는 경우 argv는 바꾸지 않는다.
+  공유 daemon은 pane의 AAA 환경·실제 peer 계보를 이어받지 않으므로 hook 무반응을 만들 수 있다.
+  daemon에 token을 복사하거나 peer 판정을 풀지 않는다. 실행 중인 daemon·대화도 바꾸지 않는다.
+  [공식 CLI 문서](https://learn.chatgpt.com/docs/cli/reference)의 `--no-daemon`을 쓴다.
+  `--remote`·Codex agents와의 조합은 Codex CLI가 지원하지 않는다. 기존 pane은 새 실행·재개부터 적용된다.
+- **최신 main과의 통합.** §8.205 임무의 Codex 새 대화는 기존 ThreadPrepare·ThreadRebrief → with_hooks,
+  실제 Spawn → spawn_session 경로를 계속 쓴다. 저장된 resume도 daemon 금지를 유지한다. 임무·hook·notify 시험을 함께 실행한다.
+  FRONT_API 1.39·AGENT_LINK 1.5를 유지하며 임무의 승인·깨움·state 전달·입력 내구성은 바꾸지 않는다.
+- **가짜 실행기의 계약.** 웹 E2E 11의 가짜 Codex는 --no-daemon을 필수로 확인·소비한 뒤 신뢰 화면 script를 실행한다.
+  Claude용 `/bin/sh "$@"` 실행기를 복사하면 Codex 옵션이 sh에 가서 종료하므로 별도로 둔다.
+  notify 시험의 Python harness도 launch·resume에서 실제로 받은 첫 옵션을 확인한다.
+  임무의 frame 가짜 agent와 Codex 화면 fixture는 실행 인자를 해석하지 않으며 기존 기대를 유지한다.

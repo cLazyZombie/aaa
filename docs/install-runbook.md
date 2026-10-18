@@ -82,6 +82,8 @@ cargo = ["cargo", "--version"]
 ```
 
 - profile: claude·codex는 정의하지 않아도 같은 이름의 기본 profile(인자 없음)이다. model·effort·인자는 **host Mac 터미널**에서 한 번 더한다(host.toml `[profiles.<이름>]`, 참고와 같은 `agent`·`model`·`effort`·`description`·`args`). host·agent를 다시 띄우지 않아도 다음 thread부터 쓴다.
+  Codex 실행·resume에는 aaa가 `--no-daemon`을 붙여 hook을 pane의 환경·프로세스 계보 안에서 실행한다.
+  직접 `aaa tab create -- codex`도 같다. 이미 도는 공유 daemon이나 대화는 바꾸지 않는다.
   ```bash
   ~/.local/bin/aaa profile add opus --agent claude --model opus --effort high --description "깊게 볼 일"
   ~/.local/bin/aaa profile list --machine mac-a     # host 정본 + 그 Mac에 설치·로그인한 기본 profile

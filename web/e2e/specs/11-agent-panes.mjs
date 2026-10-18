@@ -836,7 +836,16 @@ export default async function ({ ctl, page }) {
   });
   await step("Codex 폴더 신뢰: 데스크톱·휴대폰 카드가 실제 선택지에 답한다", async () => {
     const codexSh = `${root}/bin/codex`;
-    fs.copyFileSync(claudeSh, codexSh);
+    // 실제 Codex가 받는 필수 실행 옵션을 확인·소비한다. 셸 script에 넘기지 않는다.
+    // 이 단언이 있어야 제품이 daemon 금지를 빠뜨려도 신뢰 화면만 보고 통과하지 않는다.
+    fs.writeFileSync(codexSh, `#!/bin/sh
+if [ "\${1-}" != '--no-daemon' ]; then
+  printf '%s\\n' 'Codex fixture: --no-daemon이 필요하다' >&2
+  exit 64
+fi
+shift
+exec /bin/sh "$@"
+`, { mode: 0o755 });
     const fixture = `${repo}/crates/aaa-agent/src/detect/fixtures`;
     for (const phone of [false, true]) {
       const label = phone ? "codex-trust-phone" : "codex-trust-desktop";
