@@ -81,7 +81,7 @@ pub struct HostConfig {
     pub projects: ProjectsSection,
     pub notify: NotifySection,
     pub session: SessionSection,
-    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.115). host는 쓸
+    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.153). host는 쓸
     /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
@@ -435,7 +435,7 @@ pub struct AgentConfig {
     pub selfcheck: SelfcheckSection,
     pub health: HealthSection,
     /// thread를 띄우는 profile(§8.2). host.toml `[safety.*] thread_profiles`(옛 `[projects] allow_profiles`)가 허용한 것만
-    /// 쓴다. claude·codex는 없어도 기본 profile이다(plan §8.115).
+    /// 쓴다. claude·codex는 없어도 기본 profile이다(plan §8.153).
     pub profiles: std::collections::BTreeMap<String, Profile>,
 }
 

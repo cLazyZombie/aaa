@@ -342,7 +342,7 @@ impl Host {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
         }
         if name == aaa_config::safety::DEFAULT_TABLE {
-            // host.toml `[safety.default]`는 모든 프로젝트 표다(plan §8.115)
+            // host.toml `[safety.default]`는 모든 프로젝트 표다(plan §8.153)
             return Err(bad("`default`는 safety의 모든 프로젝트 표 이름이라 프로젝트 이름으로 쓰지 않는다"));
         }
         let dir = self.projects_root().join(name);
@@ -573,7 +573,7 @@ impl Host {
         ))
     }
 
-    /// thread를 띄울 때 agent에 보낼 safety(plan §8.115). 그 머신 agent가 `launch_safety.v1`을 모르면 보내지 않는데, yolo나
+    /// thread를 띄울 때 agent에 보낼 safety(plan §8.153). 그 머신 agent가 `launch_safety.v1`을 모르면 보내지 않는데, yolo나
     /// `thread_agent_args`가 있으면 조용히 빼지 않고 거부한다(사람이 켠 것이 빠진 채 뜨지 않게).
     pub(crate) fn launch_safety(&self, project: &str, mid: &str) -> Result<Option<aaa_proto::LaunchSafety>, ErrorBody> {
         let s = self.safety(project);
