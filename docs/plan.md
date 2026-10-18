@@ -3053,6 +3053,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 고치기 전 style.css로 다시 빌드해 돌리면 `position static; 배경 rgba(0, 0, 0, 0); .term-title .muted 오른쪽 508.4 > 상태 왼쪽
     249.6; 위치 줄이 넘치지 않았다`로 실패함을 확인했다.
 
+### 8.141 깨어난 페이지는 이 기기에 이미 push로 간 알림을 앱 안에서 다시 띄우지 않는다(10-18, 사용자 결정 「A」)
+- **실기(09:12~09:15 iPhone).** 앱을 내린 동안 push를 받고, 앱을 다시 올리면 멈춘 동안 쌓인 사건이 와 같은 보고가 앱 안 알림으로 다시 떴다(소리는 §8.133대로 버림).
+- **결정 「A」.** 앱을 다시 올릴 때 놓친 사건은 앱 안 알림으로 다시 띄우되, 그 기기에 이미 push를 보낸 항목은 띄우지 않는다. push가 안 간 항목(push 꺼짐·다른 기기가 쓰는 중이라 건너뜀·이 기기가 고르지 않은 종류)만 띄운다. 목록의 안 읽음 표시는 그대로다.
+- **host.** push를 보낸 기기마다 최근 항목(프로젝트·대상·보낸 때, 기기마다 100개·하루)을 메모리에 두고(`push::PushedLog`), `GET /api/v1/push`의 `pushed`로 그 기기 것만 준다. 다시 띄우면 비고, 그러면 웹은 띄운다(놓치지 않는 쪽).
+- **웹.** 늦은 알림(멈췄다 깬 직후 받은 사건은 멈춘 때부터, 다시 붙어 읽은 놓친 사건은 끊긴 때부터)이면 host에 묻고, 그 뒤(기기 시계 차이 5초를 덮는다) 이 기기에 같은 프로젝트·thread로 간 push가 있으면 띄우지 않는다. 결과는 `alert_outcome` 「push로 받음 · 안 띄움」. 묻지 못하면 띄운다. 늦은지는 사건을 받은 때 정한다(묻는 동안 시간이 가도 소리를 내지 않는다). 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다.
+- **thread에 묶이지 않은 pane 확인창**은 push 항목이 없어(thread-state 항목만 push) 늘 띄운다.
+- 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
+
 ### 8.142 TUI 휠 기록 넘기기(herdr `apply_scroll`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「휠로 scrollback」, FRONT_API 1.22)
 
 - **참고(herdr 0.9.5).** `src/server/pane_input.rs` `apply_scroll`(보고 pane → 휠 보고, alt 화면 → 화살표, 아니면 `scroll_up`·`scroll_down`을 `mouse_scroll_lines`줄)과 키·글·붙여넣기·마우스 보고 전 `scroll_reset`(누르지 않은 움직임 보고는 그대로), `src/pane/terminal.rs` `ScrollMetrics`, `[ui] mouse_scroll_lines`(기본 3). 기본 TUI 화면은 PageUp·PageDown을 프로그램에 보낸다(`apply_client_terminal_input_events`의 `host_page_keys`가 false, host 기록 넘기기는 `herdr attach`만).
