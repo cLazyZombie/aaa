@@ -2142,7 +2142,7 @@ impl App {
 
     /// 탭 막대(herdr `render_tab_bar`): `panel_bg` 줄에 이름표들. 지금 탭은 accent 바탕(이름을 붙였으면 굵게),
     /// 다른 탭은 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`. 넘치면 지금 탭을 가운데로 밀고 `…`.
-    /// 오른쪽 끝은 herdr `tab_bar_right` 자리: 사람 차례·검토 thread 수(herdr-projects `needs_you_line`), 다른 화면이 크기를 쥔 포커스 pane.
+    /// 오른쪽 끝은 herdr `tab_bar_right` 자리: 확인 필요·검토 thread 수(herdr-projects `needs_you_line`), 다른 화면이 크기를 쥔 포커스 pane.
     fn render_tab_bar(&self, buf: &mut Buffer, r: Rect) {
         let p = &self.palette;
         fill(buf, r, Style::default().bg(p.panel_bg));
@@ -2219,8 +2219,8 @@ impl App {
     fn tab_bar_right(&self) -> Vec<(String, Style)> {
         let p = &self.palette;
         let mut out = Vec::new();
-        // herdr-projects 탭 줄 `projects: N need you`(sidebar.rs `needs_you_line`): 사람이 볼 thread(사람 차례·검토) 수.
-        // 고르는 곳은 참고의 popup(prefix+a) 대신 탐색 목록이다(thread 줄이 사람 차례부터 선다, 차이 목록 4장 D)
+        // herdr-projects 탭 줄 `projects: N need you`(sidebar.rs `needs_you_line`): 사람이 볼 thread(확인 필요·검토) 수.
+        // 고르는 곳은 참고의 popup(prefix+a) 대신 탐색 목록이다(thread 줄이 확인 필요부터 선다, 차이 목록 4장 D)
         let need = self
             .threads
             .values()
@@ -2230,7 +2230,7 @@ impl App {
             .count();
         if need > 0 {
             out.push((
-                format!(" ● 사람 차례 {need} "),
+                format!(" ● 확인 필요 {need} "),
                 Style::default().fg(theme::contrast(p)).bg(p.red).add_modifier(Modifier::BOLD),
             ));
         }

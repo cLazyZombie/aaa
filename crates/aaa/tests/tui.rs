@@ -537,12 +537,12 @@ fn start_agent_env(lab: &mut Lab, host_toml: &str, env: &[(&str, &str)]) -> (Nod
     (h, hw)
 }
 
-/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(사람 차례 수·다른 화면 크기) 앞.
+/// 탭 막대의 이름표들(herdr: 붙인 이름 또는 자리 번호). 맨 윗줄에서 사이드바 구분선 뒤, 오른쪽 조각(확인 필요 수·다른 화면 크기) 앞.
 /// 시험의 탭 이름에는 빈칸을 쓰지 않는다.
 fn tab_chips(text: &str) -> Vec<String> {
     let first = text.lines().next().unwrap_or("");
     let rest = first.split_once('│').map_or("", |(_, r)| r);
-    let rest = rest.split(" ● 사람 차례").next().unwrap_or(rest);
+    let rest = rest.split(" ● 확인 필요").next().unwrap_or(rest);
     // 알림 카드(`render_notice`: 오른쪽 위 3줄)가 덮은 오른쪽도 이름표가 아니다
     let rest = rest.split('┌').next().unwrap_or(rest);
     // 마우스 단추(` + `, 넘칠 때 ` < ` ` > `)와 잘린 표시 `…`는 이름표가 아니다
@@ -617,7 +617,7 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
          ' Esc to cancel · Tab to amend'",
     );
     tui.wait_text("질문 상태", |s| {
-        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 사람 차례"))
+        s.contains("질문 — aaa question") && s.lines().next().is_some_and(|l| !l.contains(" ● 확인 필요"))
     });
     tui.type_line("clear; printf '✻ Working… (1s · esc to interrupt)\\n'");
     tui.wait_text("작업 상태", |s| {
@@ -1360,7 +1360,7 @@ fn side_list_like_web() {
     //    thread 줄 「id · 제목」과 둘째 줄 상태 말(묶음 말로 시작), 그다음 thread에 딸리지 않은 pane
     let mut tui = Tui::start_cols(&h, &[], WIDE);
     let alpha_row = format!("{alpha} · alpha-job");
-    let words = ["사람 차례", "검토 대기", "작업 중", "쉼"];
+    let words = ["확인 필요", "검토 대기", "작업 중", "쉼"];
     tui.wait_screen("목록", |s| {
         let side = s.side_lines();
         let at = |needle: &str| side.iter().position(|l| l.contains(needle));
@@ -1387,12 +1387,12 @@ fn side_list_like_web() {
             && side.iter().any(|l| l.contains(&format!("{beta} · beta-job")))
     });
     // 탭 막대 오른쪽은 사람이 볼 thread 수다(herdr-projects 탭 줄 `projects: N need you`): 보고 없이 pane이 닫힌 thread는
-    // 사람 차례다. 그 전에는 없다
-    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 사람 차례"), "{}", tui.text());
+    // 확인 필요다. 그 전에는 없다
+    assert!(!tui.text().lines().next().unwrap_or("").contains(" ● 확인 필요"), "{}", tui.text());
     let beta_pane =
         wait_for("beta pane", T, || h.ok(&["thread", "show", "demo", &beta])["pane"].as_str().map(String::from));
     h.ok(&["pane", "kill", &beta_pane]);
-    tui.wait_text("사람 차례 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 사람 차례 1 ")));
+    tui.wait_text("확인 필요 수", |s| s.lines().next().is_some_and(|l| l.contains(" ● 확인 필요 1 ")));
     // 보고서용 화면 텍스트(`AAA_TUI_LIST_DUMP=파일`)
     if let Ok(path) = std::env::var("AAA_TUI_LIST_DUMP") {
         std::fs::write(path, tui.text()).unwrap();

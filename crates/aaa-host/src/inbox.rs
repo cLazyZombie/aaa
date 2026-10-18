@@ -2,7 +2,7 @@
 //!
 //! - **inbox:** 잃지 않는 항목과 끝내기(done)로 관리한다. DB가 원본이고 `projects/<p>/inbox/<id>.md`(TOML front
 //!   matter, 0.2.35 형식)는 투영이다. 끝낸 항목은 `inbox/done/`으로 옮기고 `inbox_done_days`가 지나면 지운다.
-//! - **항목 출처:** ticker의 묶음 전이(`thread-state`: 사람 차례·쉼·새 보고, transitions.rs), thread 사건
+//! - **항목 출처:** ticker의 묶음 전이(`thread-state`: 확인 필요·쉼·새 보고, transitions.rs), thread 사건
 //!   (`thread-state`: resolved·brief not delivered·message not delivered·not launched)과 ticker가 찾는 특수 항목
 //!   (`session` 한 머신의 세션이 모두 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
 //! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs` 이상

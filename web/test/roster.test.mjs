@@ -17,7 +17,7 @@ describe("단축키 줄 차례", () => {
       thread("beta", "t-3", "waiting_on_you", null),
     ];
     const keys = machineRows(m, panes, threads).map((r) => r.keys[0]);
-    // 사람 차례(waiting_on_you)가 먼저라 alpha가 먼저 나오고, beta 안에서도 t-3이 t-2보다 앞
+    // 확인 필요(waiting_on_you)가 먼저라 alpha가 먼저 나오고, beta 안에서도 t-3이 t-2보다 앞
     assert.deepEqual(keys, ["thread:alpha/t-1", "thread:beta/t-3", "thread:beta/t-2", "pane:p1", "pane:p2"]);
   });
 

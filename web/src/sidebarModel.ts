@@ -4,13 +4,13 @@
 import type { MachineView, PaneView, ThreadGroup, ThreadView } from "./gen/proto";
 import type { AgentStatus } from "./herdr/status.ts";
 
-/** herdr-projects `Group::rank`: 사람 차례 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
+/** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
 const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, landing: 3, working: 4, idle: 5, resolved: 6 };
 export const groupRank = (g: ThreadGroup | string): number => RANK[g] ?? 4.5;
 
 /** herdr-projects `sidebar::word`(목록·탭 줄의 짧은 말) */
 export const GROUP_WORD: Record<string, string> = {
-  waiting_on_you: "사람 차례",
+  waiting_on_you: "확인 필요",
   ready_for_review: "검토 대기",
   landing: "병합 중",
   working: "작업 중",
@@ -66,13 +66,13 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
   return fact ? `${word} · ${fact}` : word;
 }
 
-/** herdr-projects `project_line`(「2 need you · 3 working」): 「사람 차례 2 · 작업 중 3」, 없으면 「쉼」 */
+/** herdr-projects `project_line`(「2 need you · 3 working」): 「확인 필요 2 · 작업 중 3」, 없으면 「쉼」 */
 export function projectLine(groups: readonly string[], paused = false): string {
   // 멈춘 프로젝트는 묶음 대신 「멈춤」(herdr-projects sidebar.rs `project_line` 「paused」)
   if (paused) return "멈춤";
   const need = groups.filter(needsYou).length;
   const parts: string[] = [];
-  if (need > 0) parts.push(`사람 차례 ${need}`);
+  if (need > 0) parts.push(`확인 필요 ${need}`);
   for (const [g, label] of [
     ["working", "작업 중"],
     ["landing", "병합 중"],

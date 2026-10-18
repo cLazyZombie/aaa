@@ -1,7 +1,7 @@
 //! 묶음 전이와 thread 항목(herdr-projects ticker.rs `thread_pass`·steps.rs `write_thread_items`, plan §8.85).
 //!
 //! - ticker가 열린 thread마다 묶음을 다시 셈해 기록(`last_group`)과 견준다. 바뀌었으면 전이다.
-//! - 사람 차례·병합 중·쉼으로 바뀔 때만 `thread-state` 항목 한 건을 낸다. 사람 차례는 알림(push)도 간다.
+//! - 확인 필요·병합 중·쉼으로 바뀔 때만 `thread-state` 항목 한 건을 낸다. 확인 필요는 알림(push)도 간다.
 //! - 「새 보고」 항목은 묶음이 검토 대기나 병합 중일 때 보고 hash당 한 번이다. 작업 중에 고쳐 쓴 보고는 항목을 만들지 않는다.
 //! - PR이 병합된 thread는 agent가 끝난 뒤 저절로 끝낸다(`resolve_merged_pass`, herdr-projects steps.rs `resolve_merged`).
 //! - 한 머신에 기록된 pane이 둘 이상이고 모두 사라졌으면(agent 재시작·재부팅) thread마다가 아니라 그 머신의 `session`
@@ -19,7 +19,7 @@ use crate::orch::{ResolveWhy, ThreadRec, WAITING, thread_group_with};
 /// 이 수 이상 기록된 pane이 한 머신에서 모두 사라지면 세션 한 건으로 알린다(herdr-projects `session_lost`)
 const SESSION_LOST_PANES: usize = 2;
 
-/// 알림(push·webhook)으로 내보내는 `thread-state` 사건. 참고는 사람 차례 전이와 새 보고에만 notifier를 부른다.
+/// 알림(push·webhook)으로 내보내는 `thread-state` 사건. 참고는 확인 필요 전이와 새 보고에만 notifier를 부른다.
 /// 시작 실패(`not launched`)는 참고가 실패한 thread를 묶음 셈에서 빼서 알리지 않지만, 사람이 할 일이라 aaa는 알린다.
 pub(crate) const PUSH_EVENTS: [&str; 6] =
     ["blocked on a prompt", "pane closed", "agent gone", "waiting on you", "new report", "not launched"];
@@ -37,7 +37,7 @@ pub(crate) fn label(r: &ThreadRec) -> String {
 }
 
 /// 전이 note: pane이 없으면 pane closed, agent 상태가 없으면 no agent, 그 밖은 harness 상태(herdr-projects ticker).
-/// 보고 사본 실패는 aaa에만 있는 사람 차례 까닭이다.
+/// 보고 사본 실패는 aaa에만 있는 확인 필요 까닭이다.
 pub(crate) fn note(pane_exists: bool, agent: Option<&AgentStatus>, copy_failed: bool) -> String {
     if !pane_exists {
         return "pane closed".into();
@@ -70,12 +70,12 @@ pub(crate) fn transition_event(t: &Transition) -> &'static str {
     }
 }
 
-/// 전이를 항목으로 내는가: 사람 차례·병합 중·쉼만(herdr-projects `write_thread_items`)
+/// 전이를 항목으로 내는가: 확인 필요·병합 중·쉼만(herdr-projects `write_thread_items`)
 pub(crate) fn writes_item(to: ThreadGroup) -> bool {
     matches!(to, ThreadGroup::WaitingOnYou | ThreadGroup::Landing | ThreadGroup::Idle)
 }
 
-/// 전이 항목 요약. 확인창이면 답하는 길을, 그 밖의 사람 차례면 pane과 머신을 적는다.
+/// 전이 항목 요약. 확인창이면 답하는 길을, 그 밖의 확인 필요면 pane과 머신을 적는다.
 pub(crate) fn transition_summary(
     project: &str,
     r: &ThreadRec,

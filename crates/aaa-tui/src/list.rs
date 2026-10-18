@@ -65,12 +65,12 @@ fn listed(t: &ThreadView) -> bool {
     t.group != ThreadGroup::Resolved && t.role != Role::Evaluator
 }
 
-/// herdr-projects `project_line`(웹 `projectLine`): 「사람 차례 2 · 작업 중 3 · 병합 중 1」, 없으면 「쉼」
+/// herdr-projects `project_line`(웹 `projectLine`): 「확인 필요 2 · 작업 중 3 · 병합 중 1」, 없으면 「쉼」
 pub fn project_line(groups: &[ThreadGroup]) -> String {
     let need = groups.iter().filter(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview)).count();
     let mut parts = vec![];
     if need > 0 {
-        parts.push(format!("사람 차례 {need}"));
+        parts.push(format!("확인 필요 {need}"));
     }
     for (g, label) in [(ThreadGroup::Working, "작업 중"), (ThreadGroup::Landing, "병합 중")] {
         let n = groups.iter().filter(|x| **x == g).count();
@@ -87,7 +87,7 @@ pub fn project_line(groups: &[ThreadGroup]) -> String {
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
     let mut out = vec![];
     let mut live: Vec<&ThreadView> = threads.values().filter(|t| listed(t)).collect();
-    // herdr-projects `Group::rank`(`DISPLAY_ORDER`): 사람 차례 → 검토 대기 → 병합 중 → 작업 중 → 쉼
+    // herdr-projects `Group::rank`(`DISPLAY_ORDER`): 확인 필요 → 검토 대기 → 병합 중 → 작업 중 → 쉼
     live.sort_by(|a, b| {
         a.group
             .rank()
@@ -223,7 +223,7 @@ pub fn pane_dot(p: &PaneView) -> Dot {
     }
 }
 
-/// thread 상태 점: 사람 차례 blocked, 검토 대기 done(herdr 「끝났고 아직 안 봄」 자리), 작업 중 working
+/// thread 상태 점: 확인 필요 blocked, 검토 대기 done(herdr 「끝났고 아직 안 봄」 자리), 작업 중 working
 pub fn thread_dot(t: &ThreadView) -> Dot {
     match t.group {
         ThreadGroup::WaitingOnYou => Dot::Blocked,
@@ -246,8 +246,8 @@ fn urgency(d: Dot) -> u8 {
 }
 
 /// thread 줄 점: thread 묶음 점과 그 pane 상태 점(herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`,
-/// 웹 thread 줄은 오른쪽 `PaneState`) 중 급한 쪽. 확인창이 뜨면 묶음이 사람 차례로 바뀌기(30초) 전에도 빨강이고,
-/// 사람 차례 thread의 harness가 쉬고 있어도 초록이 되지 않는다.
+/// 웹 thread 줄은 오른쪽 `PaneState`) 중 급한 쪽. 확인창이 뜨면 묶음이 확인 필요로 바뀌기(30초) 전에도 빨강이고,
+/// 확인 필요 thread의 harness가 쉬고 있어도 초록이 되지 않는다.
 pub fn thread_row_dot(t: &ThreadView, panes: &HashMap<String, PaneView>) -> Dot {
     let group = thread_dot(t);
     match t.pane.as_deref().and_then(|id| panes.get(id)).map(pane_dot) {
@@ -276,7 +276,7 @@ pub fn first(rows: &[Row]) -> usize {
 
 pub fn group_label(g: ThreadGroup) -> &'static str {
     match g {
-        ThreadGroup::WaitingOnYou => "사람 차례",
+        ThreadGroup::WaitingOnYou => "확인 필요",
         ThreadGroup::ReadyForReview => "검토 대기",
         ThreadGroup::Landing => "병합 중",
         ThreadGroup::Working => "작업 중",
@@ -399,7 +399,7 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
         // 배지가 쓸 수 있는 칸: 앞 점(3칸)·사이·끝 칸(2칸)과 제목 TITLE_MIN칸을 뺀 나머지
         let room = (r.w as usize).saturating_sub(5 + TITLE_MIN);
         let (left, mut right) = line(row, v, current || sel, room);
-        // 오른쪽 글(프로젝트 셈 「사람 차례 2 · 작업 중 1」)이 이름 자리를 먹으면 ` · ` 단위로 뒤를 덜어 낸다
+        // 오른쪽 글(프로젝트 셈 「확인 필요 2 · 작업 중 1」)이 이름 자리를 먹으면 ` · ` 단위로 뒤를 덜어 낸다
         let lw: usize = left.iter().map(|(t, _)| unicode_width(t)).sum();
         if let Some((t, _)) = right.as_mut() {
             while lw + unicode_width(t) + 2 > r.w as usize {
@@ -855,7 +855,7 @@ mod tests {
         }))
     }
 
-    /// 웹 `machineRoster`와 같은 차례(차이 목록 L1): 머신마다 머리, 그 머신 thread를 rank(사람 차례 → 검토 대기 →
+    /// 웹 `machineRoster`와 같은 차례(차이 목록 L1): 머신마다 머리, 그 머신 thread를 rank(확인 필요 → 검토 대기 →
     /// 작업 중 → 쉼)·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다. thread의 머신은 pane이 있으면 pane의 머신,
     /// 없으면 thread 머신 이름·ID. thread pane은 pane 줄로 다시 나오지 않고, 끝난·평가자 thread는 빠진다.
     #[test]
@@ -920,14 +920,14 @@ mod tests {
     fn state_line_like_herdr_projects() {
         let now = 10 * 60_000;
         let mut t = thread("demo", "t-0001", ThreadGroup::WaitingOnYou, now - 60_000, "mac-a", Some("p1"));
-        assert_eq!(state_line(&t, false, now), "사람 차례 · pane 닫힘");
+        assert_eq!(state_line(&t, false, now), "확인 필요 · pane 닫힘");
         t.agent = agent(AgentActivity::Question, Some(40), Some(now));
-        assert_eq!(state_line(&t, true, now), "사람 차례 · 확인창");
+        assert_eq!(state_line(&t, true, now), "확인 필요 · 확인창");
         t.status = ThreadStatus::Failed;
-        assert_eq!(state_line(&t, true, now), "사람 차례 · 실패");
+        assert_eq!(state_line(&t, true, now), "확인 필요 · 실패");
         t.status = ThreadStatus::Open;
         t.agent = agent(AgentActivity::Idle, Some(40), Some(now));
-        assert_eq!(state_line(&t, true, now), "사람 차례 · ~40%");
+        assert_eq!(state_line(&t, true, now), "확인 필요 · ~40%");
         t.group = ThreadGroup::ReadyForReview;
         assert_eq!(state_line(&t, true, now), "검토 대기 · 보고");
         // 따라가는 PR이 있으면 그 번호(웹 `stateLine`과 같다). 번호로 끝나지 않는 주소는 「보고」
@@ -1007,17 +1007,17 @@ mod tests {
             shown,
             vec![
                 " ▾ mac-a                          ●",
-                " demo       사람 차례 1 · 작업 중 1",
-                // pane이 없는 사람 차례는 웹처럼 「pane 닫힘」
+                " demo       확인 필요 1 · 작업 중 1",
+                // pane이 없는 확인 필요는 웹처럼 「pane 닫힘」
                 "   ● t-0002 · t-0002-job",
-                "     사람 차례 · pane 닫힘",
+                "     확인 필요 · pane 닫힘",
                 "   ● t-0001 · t-0001-job",
                 "     작업 중 · ~40%",
             ]
         );
         assert_eq!(buf[(5, 5)].fg, pal.yellow);
         assert_eq!(buf[(5, 3)].fg, pal.red);
-        // 점은 pane이 돌면 pane 상태(확인창 빨강), pane이 없으면 묶음(사람 차례 빨강)
+        // 점은 pane이 돌면 pane 상태(확인창 빨강), pane이 없으면 묶음(확인 필요 빨강)
         assert_eq!((buf[(3, 4)].symbol(), buf[(3, 4)].fg), ("●", pal.red));
         assert_eq!((buf[(3, 2)].symbol(), buf[(3, 2)].fg), ("●", pal.red));
         let mut working = panes.clone();
@@ -1045,10 +1045,10 @@ mod tests {
             x += (unicode_width(&sym) as u16).max(1);
             out.push_str(&sym);
         }
-        assert_eq!(out.trim_end(), " demo        사람 차례 1");
+        assert_eq!(out.trim_end(), " demo        확인 필요 1");
     }
 
-    /// thread 줄은 묶음 차례(herdr-projects `DISPLAY_ORDER`: 사람 차례 → 검토 → 병합 중 → 작업 → 쉼)로, 같은 묶음 안은
+    /// thread 줄은 묶음 차례(herdr-projects `DISPLAY_ORDER`: 확인 필요 → 검토 → 병합 중 → 작업 → 쉼)로, 같은 묶음 안은
     /// 최근 바뀐 것이 먼저다(차이 목록 3장 C1). 끝난 thread는 목록에 없다
     #[test]
     fn threads_follow_the_display_order() {
@@ -1077,7 +1077,7 @@ mod tests {
         assert_eq!(got, want);
         assert_eq!(
             project_line(&threads.values().filter(|t| listed(t)).map(|t| t.group).collect::<Vec<_>>()),
-            "사람 차례 2 · 작업 중 2 · 병합 중 1"
+            "확인 필요 2 · 작업 중 2 · 병합 중 1"
         );
         assert_eq!(state_line(&threads["p/t-landing"], true, 0), "병합 중 · 보고");
     }
