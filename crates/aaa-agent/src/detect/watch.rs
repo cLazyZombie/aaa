@@ -78,6 +78,13 @@ impl Watch {
         }
     }
 
+    /// session host 연결이 끊겼다: 기다리던 응답은 오지 않는다. 다음 차례는 지금부터 한 간격 뒤에 새 연결로 묻는다.
+    pub fn connection_lost(&mut self, now: Instant) {
+        if self.in_flight.take().is_some() {
+            self.next = now + self.detector.interval();
+        }
+    }
+
     /// 세션에 입력이 갔다. 막힘이었으면 답일 수 있다: 그 뒤 화면에 있는 확인창은 같은 글이어도 새로 묻는 것이다
     /// (herdr-web-ui `server/prompt.ts` `askingEnded`: 「the same prompt on its screen after this is asked anew」).
     /// 방금 답한 창이 아직 그려져 있을 수 있어, 상태가 그대로면 다음 「보이는 막힘」 갱신(입력에서 800ms 뒤)에 알린다
