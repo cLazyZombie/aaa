@@ -1879,8 +1879,10 @@ fn big_inbox_lists_within_frame() {
 #[test]
 fn thread_state_items_follow_groups() {
     let (port, rx) = webhook_server(false);
+    // brief 뒤 작업 중으로 치는 창(기본 15초)을 줄인다: 보고 없는 B·D의 쉼이 그만큼 늦다. A(진행 보고)는 첫 보고가 brief를
+    // 받았다는 표시라 이 창을 쓰지 않는다. 창 자체는 aaa-host `a_just_delivered_brief_is_working_until_a_report_or_a_tick`
     let mut w = world_with(&format!(
-        "tick_secs = 1\n[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 1\n"
+        "tick_secs = 1\ndelivered_working_secs = 5\n[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 1\n"
     ));
     w.add_remote();
     let items = |w: &World| -> Vec<Value> {
@@ -1950,7 +1952,7 @@ fn thread_state_items_follow_groups() {
     let v = w.h.ok(&["thread", "resolve", "demo", &a]);
     assert_eq!(v["status"], "resolved");
     assert!(has(&w, &a, "resolved"), "{:?}", items(&w));
-    // B: 다시 시작하면 다시 쉰다. D는 B와 따로 돌아 함께 띄운다(보고 없는 thread의 쉼은 brief 뒤 15초를 기다린다)
+    // B: 다시 시작하면 다시 쉰다. D는 B와 따로 돌아 함께 띄운다(보고 없는 thread의 쉼은 brief 뒤 작업 중 창을 기다린다)
     w.h.ok(&["thread", "restart", "demo", &b]);
     // D: 보고 없이 쉬는 worktree thread를 끝낸다(세션 종료 뒤 worktree 정리가 이어진다, t-0334가 본 0.4초 창).
     // 상태를 먼저 써서 닫힌 pane을 사람 차례로 보지 않는다: resolved뿐이다
