@@ -6,7 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   AA, root, repo, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList, askClaude,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList, askClaude, inTime,
 } from "../lib/harness.mjs";
 
 // 화면 감지 시작 유예 0(기본 3초, aaa-agent detect/state.rs startup_grace): 가짜 harness 화면은 뜨자마자 그대로다.
@@ -841,8 +841,22 @@ export default async function ({ ctl, page }) {
     for (const phone of [false, true]) {
       const label = phone ? "codex-trust-phone" : "codex-trust-desktop";
       const script = `stty -echo; ${clearScreen}; cat '${fixture}/codex-trust.txt'; read a; ${clearScreen}; printf '%s\\n' 'codex-trust-accepted'; cat '${fixture}/codex-idle.txt'; exec cat > /dev/null`;
+      // 처음 질문 목록의 실제 HTTP 응답을 붙잡는다. 그 뒤 열린 질문은 WebSocket 사건으로 먼저 온다.
+      const captured = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      let held = false;
+      const device = phone ? await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, {
+        route: ["**/api/v1/call", async (route) => {
+          if (route.request().postDataJSON()?.op !== "questions" || held) return route.continue();
+          held = true;
+          const response = await route.fetch();
+          captured.resolve(await response.json());
+          await release.promise;
+          await route.fulfill({ response });
+        }],
+      }) : null;
+      if (phone) await inTime(captured.promise, 20_000, "처음 질문 목록을 받음");
       const pane = aaa("tab", "create", "--machine", "labA", "--label", label, "--", codexSh, "-c", script).tabs.at(-1).root.pane;
-      const device = phone ? await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }) : null;
       const pg = device?.page ?? page;
       await pg.getByTestId(`agent-${label}`).and(pg.locator('[data-status="blocked"]')).waitFor({ state: "attached" });
       await inList(pg, `pane-${label}`);
@@ -850,9 +864,25 @@ export default async function ({ ctl, page }) {
       if (q?.question_kind !== "trust") throw new Error(`신뢰 질문이 아니다: ${JSON.stringify(q)}`);
       const card = pg.getByTestId(`dock-question-${q.id}`);
       await card.waitFor();
+      if (phone) {
+        // 대화 자동 선택까지 마쳤다. 질문 dock은 터미널/대화의 숨김 칸 바깥에 있어야 한다.
+        await pg.getByTestId("chat-toggle").and(pg.locator('[aria-pressed="true"]')).waitFor();
+        await pg.getByTestId("chat").waitFor();
+        const before = Number(await pg.locator(".app").getAttribute("data-questions-sync"));
+        release.resolve();
+        await domIs(pg, "처음 질문 목록 응답을 화면이 처리했다", (n) => Number(document.querySelector(".app")?.dataset.questionsSync) > n, before);
+        try {
+          await card.waitFor();
+        } catch (error) {
+          throw new Error(`대화에서 보였던 질문 카드가 처음 목록 응답 처리 뒤 사라졌다: ${error.message}`);
+        }
+      }
       await shot(pg, label);
       // 읽은 화면 메뉴가 있으면 그 선택지, 예·아니오 카드면 같은 의미 답을 보낸다.
+      const reply = pg.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "question_answer");
       await card.getByRole("button", { name: /^(예|.*Trust and continue.*)$/ }).click();
+      const response = await (await reply).json();
+      if (response.ok?.kind !== "question") throw new Error(`신뢰 답 응답: ${JSON.stringify(response)}`);
       await waitOutput(pane, "codex-trust-accepted", "recent");
       await card.waitFor({ state: "detached" });
       const answered = aaa("question", "list", "--all").questions.find((item) => item.id === q.id);

@@ -20,6 +20,7 @@ import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
+import { QuestionReload } from "./questionReload";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
@@ -311,6 +312,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const drawer = useMemo(() => ({ open: drawerOpen, toggle: () => setDrawerOpen((open) => !open) }), [drawerOpen]);
   // 열린 질문(id → 질문). 연결할 때마다 목록을 새로 읽고, 이후는 질문 사건으로 따라간다.
   const [questions, setQuestions] = useState<Map<string, QuestionView>>(new Map());
+  // HTTP 질문 목록을 화면에 반영한 횟수. 사건과 목록 응답의 완료 경계를 관찰한다.
+  const [questionsSync, setQuestionsSync] = useState(0);
+  const questionReload = useRef(new QuestionReload());
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   // 사후 평가자: 목록에 섞지 않고 header badge로만 보인다(§8.13)
@@ -341,13 +345,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
   };
 
-  const putQuestion = (q: QuestionView) =>
+  const putQuestion = (q: QuestionView) => {
+    questionReload.current.note(q);
     setQuestions((old) => {
       const next = new Map(old);
       if (q.state === "open") next.set(q.id, q);
       else next.delete(q.id);
       return next;
     });
+  };
 
   // 이 기기의 알림(plan §8.70): host가 알리는 종류(`notify.kinds`의 `thread-state`)에만 띄운다. 질문이 열리면 바로
   // 「입력 필요」(host push는 30초 넘게 뜬 확인창만 보낸다), thread가 검토 대기가 된 새 보고는 「작업 완료」(host 「new report」
@@ -501,18 +507,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             pushInfo()
               .then((i) => (alertKinds.current = new Set(i.kinds)))
               .catch(() => {});
-          if (on)
+          if (on) {
+            const read = questionReload.current.begin();
             call({ op: "questions", all: false })
               .then((r) => {
-                if (r.kind !== "questions") return;
+                if (r.kind !== "questions") return questionReload.current.failed(read);
+                const next = questionReload.current.finish(read, r.questions);
+                if (next === null) return; // 다시 붙은 뒤 더 늦게 돌아온 옛 연결의 응답
                 // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
                 // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
-                if (linkedOnce.current.questions) for (const q of r.questions) questionNews(q, down);
-                else for (const q of r.questions) seenQuestions.current.add(q.id);
+                if (linkedOnce.current.questions) for (const q of next.values()) questionNews(q, down);
+                else for (const q of next.values()) seenQuestions.current.add(q.id);
                 linkedOnce.current.questions = true;
-                setQuestions(new Map(r.questions.map((q) => [q.id, q])));
+                setQuestions(next);
+                setQuestionsSync((n) => n + 1);
               })
-              .catch(() => {});
+              .catch(() => questionReload.current.failed(read));
+          }
           if (on) { loadEvaluators(); loadMissions(); }
           if (on)
             call({ op: "threads", project: null, role: null })
@@ -780,7 +791,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   return (
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
-    <div className="app">
+    <div className="app" data-questions-sync={questionsSync}>
       <aside id="workspace-drawer" className={`list sidebar-shell${drawerOpen ? " is-open" : ""}`}>
         <header className="list-head">
           <span className="brand">
