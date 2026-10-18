@@ -394,6 +394,8 @@ struct PushInfo {
     kinds: Vec<String>,
     /// 이 장치 구독이 고른 알림 종류(차이 목록 N3, 구독이 없으면 없음)
     alerts: Option<crate::db::Alerts>,
+    /// 이 장치에 최근 push로 보낸 항목(오래된 것부터). 깨어난 페이지는 이것으로 이미 받은 알림을 다시 띄우지 않는다(plan §8.141)
+    pushed: Vec<crate::push::PushedItem>,
 }
 
 /// Web Push(§8.26): 키와 이 장치의 구독 상태. 보기 권한 장치도 알림은 받는다.
@@ -409,7 +411,8 @@ async fn push_info(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
         (v.user(), v.is_user(&id))
     };
     let kinds = host.cfg.notify.item_kinds();
-    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts }))
+    let pushed = host.pushed.lock().unwrap().of(&id);
+    Json(Outcome::Ok(PushInfo { enabled: key.is_some(), key, subscribed, in_use, user, you, kinds, alerts, pushed }))
         .into_response()
 }
 
