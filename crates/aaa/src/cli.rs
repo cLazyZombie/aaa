@@ -8,7 +8,9 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::service;
 use aaa_doctor as doctor;
-use aaa_proto::{DeviceRole, FrontRequest, FrontResponse, LayoutChange, Role, SplitDir, ThreadKind};
+use aaa_proto::{
+    DeviceRole, FrontRequest, FrontResponse, LayoutChange, ProjectAction, ProjectStatus, Role, SplitDir, ThreadKind,
+};
 
 #[derive(Parser)]
 #[command(name = "aaa", version, about = "여러 머신의 agent 오케스트레이션")]
@@ -60,11 +62,15 @@ enum Cmd {
         #[arg(value_parser = ["bash", "elvish", "fish", "powershell", "zsh"])]
         shell: String,
     },
-    /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신)
+    /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신, 또는 --remote로 다른 기기에서)
     Attach {
         /// workspace 이름(기본 main)
         #[arg(long, short)]
         workspace: Option<String>,
+        /// 다른 기기에서 host 웹 주소로 붙는다(`aaa web publish`의 https 주소). 처음에는 host에서 사람이 `aaa web pair`로
+        /// 낸 코드를 묻고, 받은 기기 token을 이 기기에 둔다
+        #[arg(long, value_name = "웹 주소")]
+        remote: Option<String>,
     },
     /// 머신 등록·목록·폐기(host에서)
     Machine {
@@ -78,7 +84,7 @@ enum Cmd {
     },
     /// 자가 점검(계보·키체인·첫 실행 지연)
     Doctor(DoctorArgs),
-    /// macOS 감독자: 운영은 show·install·uninstall(LaunchAgent → aaa-launcher → aaa, 결정 14). plan·register 등은 보류한 SMAppService 경로
+    /// macOS 감독자: 운영은 show·install·uninstall·restart·stop·start(LaunchAgent → aaa-launcher → aaa, 결정 14). plan·register 등은 보류한 SMAppService 경로
     Service {
         #[command(subcommand)]
         cmd: ServiceCmd,
@@ -87,6 +93,19 @@ enum Cmd {
     Config {
         #[command(subcommand)]
         cmd: ConfigCmd,
+    },
+    /// 실행 파일을 주어진 빌드로 바꾼다(herdr `update`): 같은 폴더에서 self-check·version 고정 검사 뒤 rename, 옛것은 보관해
+    /// `rollback`으로 되돌린다. 사람만. 내려받기·서명 release는 아직 없다
+    #[command(args_conflicts_with_subcommands = true)]
+    Update {
+        #[command(subcommand)]
+        cmd: Option<UpdateCmd>,
+        /// 새 실행 파일(같은 OS·CPU로 빌드한 aaa)
+        #[arg(long, value_name = "파일")]
+        from: Option<PathBuf>,
+        /// 검사만 하고 바꾸지 않는다(누구나)
+        #[arg(long)]
+        dry_run: bool,
     },
     /// 프로젝트 폴더(host)
     Project {
@@ -213,10 +232,73 @@ enum QuestionCmd {
 
 #[derive(Subcommand)]
 enum ProjectCmd {
-    List,
-    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md …)
+    /// 프로젝트 목록(보관한 것은 `--all`일 때만)
+    List {
+        #[arg(long)]
+        all: bool,
+    },
+    /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md …, herdr-projects `new`)
     Create {
         name: String,
+        /// 프로젝트가 무엇을 위한 것인가(brief 머리에 들어간다)
+        #[arg(long, default_value = "")]
+        goal: String,
+        /// 저장소. `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신), 여러 번 줄 수 있다
+        #[arg(long = "repo", value_name = "PATH[@MACHINE]")]
+        repos: Vec<String>,
+        /// 이 프로젝트 thread의 기본 profile(안 주면 host.toml `[defaults] thread_profile`, 그다음 claude)
+        #[arg(long, value_name = "NAME")]
+        thread_profile: Option<String>,
+        /// `aaa project open`이 coordinator를 띄우는 profile(안 주면 host.toml `[defaults] coordinator_profile`, 그다음 claude)
+        #[arg(long, value_name = "NAME")]
+        coordinator_profile: Option<String>,
+    },
+    /// coordinator를 연다(herdr-projects `open`): 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더를 작업
+    /// 폴더로 띄워 프로젝트 이름 workspace의 새 탭 「coordinator」에 둔다
+    Open {
+        project: String,
+        /// coordinator profile(안 주면 project.toml coordinator_profile → host.toml [defaults] → claude). `aaa profile list`
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+        /// coordinator가 돌아도 하나 더 띄운다
+        #[arg(long)]
+        new: bool,
+    },
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
+    Set { project: String, key: String, value: String },
+    /// 멈춘다: ticker가 건너뛰고 `thread start`를 거부한다. 도는 agent는 멈추지 않는다
+    Pause { project: String },
+    /// 멈춘 프로젝트를 다시 돌린다
+    Resume { project: String },
+    /// 보관한다: 멈추고, 목록에서 숨기고, 살아 있는 pane(coordinator·thread)을 닫는다. `project open`을 거부한다
+    Archive { project: String },
+    /// 보관을 푼다
+    Unarchive { project: String },
+    /// 폴더를 휴지통(projects root의 .trash)으로 옮기고 host 기록을 그 안에 남긴다. worktree·branch·PR은 건드리지 않는다
+    Delete {
+        project: String,
+        /// coordinator나 thread pane이 살아 있어도
+        #[arg(long)]
+        force: bool,
+    },
+    /// 이름(폴더 이름)을 바꾼다. 끝나지 않은 thread나 도는 coordinator가 있으면 거부한다
+    Rename {
+        project: String,
+        new_name: String,
+        /// 할 일만 보이고 바꾸지 않는다
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// 끝난 thread가 남긴 worktree·병합된 branch를 그 머신에서 치운다(force 없음)
+    Sweep {
+        project: String,
+        /// 목록만
+        #[arg(long)]
+        dry_run: bool,
+        /// 묻지 않고 치운다
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -354,6 +436,19 @@ enum ThreadCmd {
         /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다.
         #[arg(long)]
         from_task: Option<String>,
+    },
+    /// 이미 띄운 Claude·Codex pane을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects `thread adopt`).
+    /// pane은 그대로 두고 그 폴더에 작업 폴더를 만든다. 다시 시작(restart)은 하지 않고, resolve도 pane을 끝내지 않는다.
+    Adopt {
+        project: String,
+        /// 데려올 pane(ID·앞 4자 이상·이름)
+        #[arg(long)]
+        pane: String,
+        #[arg(long)]
+        title: String,
+        /// 할 일 파일(`-`면 표준 입력). 없으면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
+        #[arg(long)]
+        task_file: Option<String>,
     },
     /// thread의 Next 목록(보고서 `## Next` + 더한 줄). --line N은 그 줄을 thread에 메시지로 보낸다.
     Next {
@@ -853,6 +948,35 @@ enum ServiceCmd {
         #[arg(long, value_parser = ["host", "agent"])]
         role: String,
     },
+    /// 감독자가 aaa를 끝내고 다시 띄운다(launchctl kickstart -k, 업그레이드 뒤). 세션은 이어진다. 사람이 터미널에서 직접 한다.
+    Restart {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
+    /// 감독자에서 내린다(launchctl bootout, herdr `server stop`). plist는 남아 다음 로그인에 뜬다. 사람이 터미널에서 직접 한다.
+    Stop {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
+    /// 멈춘 감독자를 다시 올린다(launchctl bootstrap). 사람이 터미널에서 직접 한다.
+    Start {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// 보관한 옛 실행 파일로 되돌린다(이름이 없으면 지금과 다른 가장 새 것). 사람만
+    Rollback {
+        /// `aaa update list`의 이름
+        name: Option<String>,
+        /// 검사만 하고 바꾸지 않는다(누구나)
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// 지금 실행 파일과 보관한 옛 실행 파일(version·sha256)
+    List,
 }
 
 #[derive(Subcommand)]
@@ -927,13 +1051,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Tab { cmd } => tab_cmd(cmd),
         Cmd::Workspace { cmd } => workspace_cmd(cmd),
         Cmd::Completion { shell } => completion(&shell),
-        Cmd::Project { cmd } => front(
-            json,
-            match cmd {
-                ProjectCmd::List => FrontRequest::Projects,
-                ProjectCmd::Create { name } => FrontRequest::ProjectCreate { name },
-            },
-        ),
+        Cmd::Project { cmd } => project_cmd(json, cmd),
         Cmd::Decision { .. } => anyhow::bail!(
             "`aaa decision`은 없어졌다. 뒤 thread가 알아야 할 결정은 coordinator가 프로젝트 memory(MEMORY.md 색인과 \
              memory/ 파일)에 적는다. memory는 모든 thread brief에 들어간다"
@@ -973,15 +1091,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     if from_task.is_none() && (title.is_none() || task_file.is_none()) {
                         anyhow::bail!("--title·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
                     }
-                    let task = match task_file.as_deref() {
-                        None => String::new(),
-                        Some("-") => {
-                            let mut t = String::new();
-                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
-                            t
-                        }
-                        Some(f) => std::fs::read_to_string(f).with_context(|| format!("할 일 파일: {f}"))?,
-                    };
+                    let task = task_text(task_file.as_deref())?;
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     FrontRequest::ThreadStart {
                         project,
@@ -994,6 +1104,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         task,
                         from_task,
                     }
+                }
+                ThreadCmd::Adopt { project, pane, title, task_file } => {
+                    FrontRequest::ThreadAdopt { project, pane, title, task: task_text(task_file.as_deref())? }
                 }
                 ThreadCmd::Next { project, thread, line, add } => {
                     FrontRequest::ThreadNext { project, thread, line, add }
@@ -1067,9 +1180,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
-        Cmd::Attach { workspace } => {
+        Cmd::Attach { workspace, remote: None } => {
             init_log("warn");
             aaa_tui::run(workspace)
+        }
+        Cmd::Attach { workspace, remote: Some(url) } => {
+            let target = aaa_common::remote::Target::parse(&url)?;
+            init_log("warn");
+            aaa_tui::run_remote(workspace, &target, |why| {
+                // 기기 pairing은 사람이 한다: 코드는 host 사람이 낸다
+                crate::person::require("원격 TUI pairing")?;
+                println!("{why}.");
+                println!(
+                    "host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 넣는다({}).",
+                    target.origin()
+                );
+                let code = crate::person::ask("pairing 코드: ")?;
+                if code.is_empty() {
+                    anyhow::bail!("pairing 코드가 비었다");
+                }
+                Ok(code)
+            })
         }
         Cmd::Evaluator { cmd: EvaluatorCmd::Open { project } } => evaluator_open(&project),
         Cmd::Evaluator { cmd } => front(
@@ -1123,6 +1254,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Doctor(a) => doctor_cmd(a, json),
         Cmd::Service { cmd } => service_cmd(cmd),
         Cmd::Config { cmd } => config_cmd(cmd, json),
+        Cmd::Update { cmd: None, from, dry_run } => crate::update::update(json, from, dry_run),
+        Cmd::Update { cmd: Some(UpdateCmd::Rollback { name, dry_run }), .. } => {
+            crate::update::rollback(json, name, dry_run)
+        }
+        Cmd::Update { cmd: Some(UpdateCmd::List), .. } => crate::update::list(json),
     }
 }
 
@@ -1646,6 +1782,74 @@ fn evaluator_open(project: &str) -> Result<ExitCode> {
     aaa_tui::run(Some(ws))
 }
 
+fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
+    match cmd {
+        ProjectCmd::List { all } => front(json, FrontRequest::Projects { all }),
+        ProjectCmd::Pause { project } => lifecycle(json, project, ProjectAction::Pause),
+        ProjectCmd::Resume { project } => lifecycle(json, project, ProjectAction::Resume),
+        ProjectCmd::Archive { project } => lifecycle(json, project, ProjectAction::Archive),
+        ProjectCmd::Unarchive { project } => lifecycle(json, project, ProjectAction::Unarchive),
+        ProjectCmd::Delete { project, force } => front(json, FrontRequest::ProjectDelete { project, force }),
+        ProjectCmd::Rename { project, new_name, dry_run } => {
+            front(json, FrontRequest::ProjectRename { project, to: new_name, dry_run })
+        }
+        ProjectCmd::Open { project, profile, new } => front(json, FrontRequest::ProjectOpen { project, profile, new }),
+        ProjectCmd::Sweep { project, dry_run, yes } => {
+            if dry_run || yes {
+                return front(json, FrontRequest::ProjectSweep { project, dry_run });
+            }
+            // 참고 `sweep::run`: 목록을 보이고 터미널에서 묻는다(터미널이 아니면 --yes)
+            let list = front_call(FrontRequest::ProjectSweep { project: project.clone(), dry_run: true })?;
+            let Ok(FrontResponse::ProjectChange(c)) = &list else { return front_print(json, list) };
+            if c.notes.iter().any(|n| n.ends_with("치울 것이 없다")) {
+                return front_print(json, list);
+            }
+            print!("{}", render_front(list.as_ref().unwrap()));
+            if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                anyhow::bail!("치우려면 --yes를 준다(목록만은 --dry-run)");
+            }
+            if !crate::person::confirm("모두 치울까?")? {
+                println!("아무것도 치우지 않았다");
+                return Ok(ExitCode::SUCCESS);
+            }
+            front(json, FrontRequest::ProjectSweep { project, dry_run: false })
+        }
+        ProjectCmd::Create { name, goal, repos, thread_profile, coordinator_profile } => {
+            let repos = repos.iter().map(|r| local_repo_path(r)).collect();
+            front(json, FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile })
+        }
+        ProjectCmd::Set { project, key, value } => {
+            let value = if key.starts_with("repos.") { local_repo_path(&value) } else { value };
+            let res = front_call(FrontRequest::ProjectSet {
+                project: project.clone(),
+                key: key.clone(),
+                value: value.clone(),
+            })?;
+            if json || res.is_err() {
+                return front_print(json, res);
+            }
+            println!("{project}: {key} = {}", value.trim());
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn lifecycle(json: bool, project: String, action: ProjectAction) -> Result<ExitCode> {
+    front(json, FrontRequest::ProjectLifecycle { project, action })
+}
+
+/// 머신 없는 상대 경로는 이 셸의 cwd 기준 절대 경로로 보낸다(host는 다른 cwd에서 돈다)
+fn local_repo_path(arg: &str) -> String {
+    let arg = arg.trim();
+    let machine = arg.rsplit_once('@').filter(|(p, m)| {
+        !p.is_empty() && !m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    });
+    if machine.is_some() || std::path::Path::new(arg).is_absolute() {
+        return arg.to_string();
+    }
+    std::path::absolute(arg).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| arg.to_string())
+}
+
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
 }
@@ -1807,15 +2011,29 @@ fn render_thread_pane(s: &mut String, v: &aaa_proto::ThreadPaneView) {
     );
 }
 
+/// 할 일 파일(`-`면 표준 입력, 없으면 빈 글)
+fn task_text(file: Option<&str>) -> Result<String> {
+    Ok(match file {
+        None => String::new(),
+        Some("-") => {
+            let mut t = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+            t
+        }
+        Some(f) => std::fs::read_to_string(f).with_context(|| format!("할 일 파일: {f}"))?,
+    })
+}
+
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     use std::fmt::Write as _;
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");
     }
     let group = t.group.label();
+    let adopted = if t.thread_kind == ThreadKind::Adopted { "(데려옴)" } else { "" };
     let _ = writeln!(
         s,
-        "{}/{}\t{}\t{}\t{}@{}\tbrief {}",
+        "{}/{}\t{}\t{}\t{}{adopted}@{}\tbrief {}",
         t.project,
         t.id,
         group,
@@ -1987,6 +2205,14 @@ fn render_evaluation(s: &mut String, v: &aaa_proto::EvaluationView) {
         }
     }
     let _ = writeln!(s, "본문: projects/{}/{}", v.project, v.file);
+}
+
+fn status_word(s: ProjectStatus) -> &'static str {
+    match s {
+        ProjectStatus::Active => "진행",
+        ProjectStatus::Paused => "멈춤",
+        ProjectStatus::Archived => "보관",
+    }
 }
 
 fn render_front(r: &FrontResponse) -> String {
@@ -2168,11 +2394,21 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "프로젝트가 없다(`aaa project create <이름>`)");
             }
             for p in projects {
-                let _ = writeln!(s, "{}\tthread {}\t{}", p.name, p.threads, p.path);
+                let _ = writeln!(s, "{}\t{}\tthread {}\t{}", p.name, status_word(p.status), p.threads, p.path);
             }
         }
         FrontResponse::Project(p) => {
             let _ = writeln!(s, "{}\t{}", p.name, p.path);
+        }
+        FrontResponse::ProjectChange(c) => {
+            for n in &c.notes {
+                let _ = writeln!(s, "{n}");
+            }
+        }
+        FrontResponse::ProjectOpened(o) => {
+            for n in &o.notes {
+                let _ = writeln!(s, "{n}");
+            }
         }
         FrontResponse::ProfileResolved { profile } => {
             let _ = writeln!(s, "{}", serde_json::to_string(profile).unwrap());
@@ -2414,6 +2650,9 @@ fn service_cmd(cmd: ServiceCmd) -> Result<ExitCode> {
             print!("{}", crate::launchd::install(&launchd_spec(role, aaa, launcher)?, replace)?)
         }
         ServiceCmd::Uninstall { role } => print!("{}", crate::launchd::uninstall(&role)?),
+        ServiceCmd::Restart { role } => print!("{}", crate::launchd::restart(&role)?),
+        ServiceCmd::Stop { role } => print!("{}", crate::launchd::stop(&role)?),
+        ServiceCmd::Start { role } => print!("{}", crate::launchd::start(&role)?),
     }
     Ok(ExitCode::SUCCESS)
 }

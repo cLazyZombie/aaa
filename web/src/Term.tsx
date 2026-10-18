@@ -1880,7 +1880,7 @@ export function TermView({
               <TriangleAlert aria-hidden="true" />
               <span>이 pane은 다시 뜨지 않았다</span>
               <span className="terminal-placeholder-detail">{pane.restore_error ?? "agent backend가 다시 떴을 때 이 세션이 없었다"}</span>
-              {canControl && !pane.role && (
+              {canControl && (!pane.role || pane.role === "coordinator") && (
                 <button type="button" className="btn btn-primary" data-testid="pane-resume" disabled={resuming} onClick={() => void resume()}>
                   <RotateCcw aria-hidden="true" />
                   다시 열기

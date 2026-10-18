@@ -160,3 +160,66 @@
     min-height: var(--touch-target);
   }
 }
+
+/* 머리 「coordinator」(CoordinatorOpen.tsx): 제목이 남는 자리를 가져 단추와 「더 보기」가 끝에 선다. 좁은 창은 표지만 */
+.project-threads-head .project-threads-heading {
+  flex: 1 1 auto;
+}
+
+.project-coordinator[aria-disabled="true"] {
+  cursor: progress;
+}
+
+.project-coordinator svg {
+  flex: 0 0 auto;
+}
+
+.project-coordinator .is-spinning {
+  animation: project-coordinator-spin var(--dur-spin) steps(8) infinite;
+}
+
+@keyframes project-coordinator-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-coordinator .is-spinning {
+    animation: none;
+  }
+}
+
+/* herdr/primitives.css의 `.btn`(padding)이 이 파일 뒤에 묶인다: 두 class로 좁혀 이긴다 */
+@media (max-width: 480px) {
+  .btn.project-coordinator {
+    width: var(--control-h);
+    padding: 0;
+  }
+
+  .project-coordinator-label {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) and (pointer: coarse) {
+  .btn.project-coordinator {
+    width: var(--touch-target);
+  }
+}
+
+.coordinator-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.project-threads-error {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--status-blocked);
+  border-radius: var(--radius-md);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}

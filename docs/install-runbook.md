@@ -3,7 +3,7 @@
 launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aaa를 운영 자리에 올리는 순서다. 설계는 기획서 [§10](plan.md)·[§15](plan.md#15-현재-운영에서-이전)에 있다. 이 문서는 명령과 확인만 적는다.
 
 - 머신 이름은 일반 이름이다. mac-a·mac-b·mac-c 중 host를 둘 Mac을 **host Mac**이라 부른다. 주소 예시는 `example.ts.net`이다.
-- **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aaa service install·uninstall`은 aaa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다.
+- **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aaa service install·uninstall·restart·stop·start`는 aaa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다.
 - **명령은 전체 경로 `~/.local/bin/aaa`로 친다.** 본문의 `aaa …`는 모두 `~/.local/bin/aaa …`를 뜻한다. launchd가 주는 PATH나 셸 PATH 순서에 기대지 않는다.
 - **이름 변경(결정 18) 전 `aa` 설치에서 옮기기:** 아래 「10. aa에서 옮기기」를 먼저 한다.
 - 지금 운영(herdr·herdr-projects·herdr-web-ui·WezTerm)과 그 설정·socket·port는 건드리지 않는다. aaa는 다른 port·state·작업 폴더를 쓴다.
@@ -14,7 +14,7 @@ launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aaa를
 |---|---|
 | launcher 등록 | `~/Applications/aaa-launcher.app`이 개발자 도구·전체 디스크 접근에 켜져 있다 |
 | L1 합격 | `p0/launcher/measure.sh after` 판정 통과(median ≤10ms, p95 ≤20ms, FDA ok, 책임 프로세스 `aaa-launcher`) |
-| 각 Mac 같은 aaa | 같은 commit으로 빌드한다(`aaa --version`) |
+| 각 Mac 같은 aaa | 같은 commit으로 빌드한다. version 번호는 빌드마다 같아(0.1.0) `shasum -a 256 ~/.local/bin/aaa`(또는 `aaa update list`)로 본다 |
 
 ## 1. aaa를 고정 경로에 둔다(각 Mac)
 
@@ -24,8 +24,8 @@ install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.ne
 ~/.local/bin/aaa --version
 ```
 
-- 업그레이드도 같은 방법이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
-- 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/.local/bin/aaa.new && chmod 755 ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa' < target/release/aaa`로 옮겨도 된다. 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다.
+- 업그레이드는 9번(`aaa update`)이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
+- 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/aaa.new' < target/release/aaa`로 옮긴 뒤 그 Mac에서 `~/.local/bin/aaa update --from ~/aaa.new`로 바꾼다(처음 설치면 `install -m 755 ~/aaa.new ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa`). 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다(`aaa update`가 앞 12자리를 보인다).
 - hook 명령(`aaa hook --agent …`)은 이 경로로 실행마다 주므로 Claude·Codex 사용자 설정은 고치지 않는다.
 
 ## 2. 설정
@@ -128,12 +128,13 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 - 홈 화면 앱(PWA): Android Chrome은 목록 아래 「홈 화면에 설치」, iPhone은 Safari 공유 → 「홈 화면에 추가」. iPhone 홈 화면 앱은 Safari와 cookie가 따로라 처음 열 때 다시 pairing한다.
 - 알림(Web Push): 목록 아래 「알림 켜기」를 누르면 시험 알림이 온다. iPhone은 홈 화면 앱에서만 켤 수 있다(iOS 16.4 이상).
+- 다른 기기 TUI: 그 기기(aaa를 둔 노트북 등)에서 `aaa attach --remote <위 publish 주소>` → host에서 `aaa web pair`로 낸 코드 입력. 확인: 같은 탭·pane이 보이고 입력되며, host `aaa web devices`에 「aaa TUI · …」가 있다. 그 기기를 `aaa web revoke`하면 열린 TUI가 「취소됐다」로 끝난다.
 
 ## 6. shadow(§15 2)
 
 - aaa 프로젝트는 aaa projects root에 새로 만든다(`aaa project create <p>`). herdr-projects 폴더를 가리키지 않는다.
 - 기존 herdr thread는 aaa로 제어하지 않는다. 같은 성격의 새 low-impact 일을 aaa thread로 하나 맡기고 상태·보고를 비교한다.
-- coordinator: aaa 프로젝트 폴더를 cwd로 Claude를 띄운다(`aaa tab create --cwd <프로젝트 폴더> -- claude`). AGENTS.md 안내대로 매 턴 `aaa context <p>`를 본다.
+- coordinator: `aaa project open <p>`가 host 머신에서 프로젝트 폴더를 cwd로 띄운다(profile은 `--profile`, 없으면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude). 이미 돌면 그 pane을 알린다. AGENTS.md 안내대로 매 턴 `aaa context <p>`를 본다.
 
 | 비교 | 기준 |
 |---|---|
@@ -155,15 +156,18 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 ~/.local/bin/aaa service uninstall --role agent     # ✋ 각 Mac(host Mac은 --role host도)
 ```
 
+잠깐 멈추기만 하려면 ✋ `aaa service stop --role agent`(plist는 남아 다음 로그인 때 다시 뜬다), 다시 올리려면 ✋ `aaa service start --role agent`다. launchd가 KeepAlive로 감독하므로 프로세스를 직접 끝내면 곧 다시 뜬다.
+
 - 세션은 session host가 소유하므로 agent를 내려도 도는 harness는 바로 죽지 않는다. 필요하면 `aaa pane kill`로 먼저 끝낸다.
 - herdr 쪽 설치·설정은 처음부터 건드리지 않았으므로 되돌릴 것이 없다.
 - 보고·결과물은 aaa projects root에 남는다. 기존 coordinator가 읽을 수 있는 Markdown이다.
 
 ## 9. 업그레이드
 
-1. 1번처럼 새 `aaa`를 빌드해 rename으로 교체한다.
-2. ✋ `launchctl kickstart -k gui/$(id -u)/dev.aaa.agent`(host Mac은 `dev.aaa.host`도)로 다시 띄운다. 세션은 이어진다.
-3. `aaa status`·`aaa machine list`로 같은 버전·연결을 확인한다.
+1. ✋ 새 `aaa`를 빌드하고 `~/.local/bin/aaa update --from target/release/aaa`로 바꾼다(`yes`). 같은 폴더에 두고 self-check(`--version`·`config check`)와 `[update] version` 고정 검사를 한 뒤 rename한다. 옛것은 `~/.local/bin/.aaa-old/`에 `[update] keep`개(기본 3) 남는다. 먼저 `--dry-run`으로 검사만 해 볼 수 있다.
+2. ✋ `aaa service restart --role agent`(host Mac은 `--role host`도, 각각 `yes`)로 다시 띄운다(`launchctl kickstart -k`를 감싼다). 세션은 이어진다. 바꾸기만 하고 다시 띄우지 않으면 도는 host·agent는 옛 실행 파일로 계속 돈다.
+3. `aaa status`·`aaa machine list`로 같은 버전·연결을 확인한다. version 번호는 아직 빌드마다 같다(0.1.0): 같은 빌드인지는 `aaa update list`의 sha256으로 본다.
+4. 문제가 있으면 ✋ `aaa update rollback`(지금과 다른 가장 새 보관, 이름을 주면 그것, 목록은 `aaa update list`)으로 되돌리고 2번을 다시 한다. DB는 되돌리지 않는다(plan §11 「DB 백업」은 아직 없다).
 
 ## 10. aa에서 옮기기(결정 18)
 

@@ -5,8 +5,8 @@
 //! - 값마다 「프로젝트 표 → default 표 → 옛 자리 → 기본값」 차례로 정한다. 옛 자리는 host.toml `[projects] allow_profiles`·
 //!   `routine_commands`와 project.toml `start_threads`·`trust_screens`(프로젝트 폴더 안이라 출처에 드러낸다).
 //! - host는 쓸 때마다 이 표만 느슨하게 다시 읽는다: 다른 절이 깨져도, 값 하나가 잘못돼도 그 값만 기본값으로 간다.
-//! - herdr-projects의 coordinator 쪽 값(`coordinator_profiles`·`coordinator_agent_args`)은 없다: aaa는 coordinator를 띄우지
-//!   않는다(plan §8.104).
+//! - coordinator 쪽 값(`coordinator_profiles`·`coordinator_agent_args`, yolo의 coordinator 몫)은 `aaa project open`이 쓴다
+//!   (plan §8.180). aaa에 옛 자리가 없어 프로젝트 표 → default 표 → 기본값이다.
 
 use std::path::Path;
 
@@ -16,18 +16,19 @@ use toml_edit::{Array, DocumentMut, Item, Table};
 /// 모든 프로젝트가 따르는 `[safety.<표>]`. 프로젝트 이름은 이 이름을 쓸 수 없다.
 pub const DEFAULT_TABLE: &str = "default";
 
-/// `aaa safety set`이 받는 key와 값(참고 `KEYS`에서 coordinator 쪽을 뺐다)
-pub const KEYS: [(&str, &str); 5] = [
+/// `aaa safety set`이 받는 key와 값(참고 `KEYS`)
+pub const KEYS: [(&str, &str); 6] = [
     ("yolo", "on/off"),
     ("start_threads", "propose/auto"),
     ("trust_screens", "coordinator/user"),
+    ("coordinator_agent_args", "인자"),
     ("thread_agent_args", "인자"),
     ("routine_commands", "on/off"),
 ];
 
 /// 바꾼 뒤 알리는 말(참고 `RESTART_NOTE`)
-pub const RESTART_NOTE: &str =
-    "이제부터 띄우는 thread가 쓴다. 이미 도는 thread는 다시 띄울 때까지 옛 인자다(`aaa thread restart`)";
+pub const RESTART_NOTE: &str = "이제부터 띄우는 thread·coordinator가 쓴다. 이미 도는 것은 다시 띄울 때까지 옛 인자다(thread는 \
+                                `aaa thread restart`, coordinator는 닫고 `aaa project open`)";
 
 /// harness가 권한을 묻지 않게 하는 인자(참고 `yolo_flags`). 모르는 harness는 `None`: yolo여도 묻는다.
 pub fn yolo_flags(harness: &str) -> Option<&'static [&'static str]> {
@@ -42,7 +43,7 @@ pub fn yolo_flags(harness: &str) -> Option<&'static [&'static str]> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SafetyLayer {
-    /// yolo: thread를 묻지 않고 시작하고(start_threads auto), thread를 harness의 권한 건너뛰기 인자로 띄운다
+    /// yolo: thread를 묻지 않고 시작하고(start_threads auto), thread·coordinator를 harness의 권한 건너뛰기 인자로 띄운다
     #[serde(skip_serializing_if = "Option::is_none")]
     pub yolo: Option<bool>,
     /// coordinator가 따르는 안내 값: propose(제안하고 승인을 기다림)·auto
@@ -51,6 +52,9 @@ pub struct SafetyLayer {
     /// thread pane 신뢰 창에 누가 답하나: user·coordinator. 없으면 yolo를 따른다(켬: coordinator)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_screens: Option<String>,
+    /// coordinator(`project open`)를 띄울 때 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile 인자 앞에 붙이는 인자
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinator_agent_args: Option<Vec<String>>,
     /// thread를 띄울 때 profile 인자 뒤에 붙이는 인자
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_agent_args: Option<Vec<String>>,
@@ -60,6 +64,9 @@ pub struct SafetyLayer {
     /// thread가 쓸 수 있는 profile. 없으면 모두
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_profiles: Option<Vec<String>>,
+    /// coordinator가 쓸 수 있는 profile. 없으면 모두
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinator_profiles: Option<Vec<String>>,
 }
 
 /// 실제로 쓰는 값(참고 `Safety`)
@@ -68,16 +75,24 @@ pub struct Safety {
     pub yolo: bool,
     pub start_threads: String,
     pub trust_screens: String,
+    pub coordinator_agent_args: Vec<String>,
     pub thread_agent_args: Vec<String>,
     pub routine_commands: bool,
     /// `None`이면 모든 profile
     pub thread_profiles: Option<Vec<String>>,
+    /// `None`이면 모든 profile
+    pub coordinator_profiles: Option<Vec<String>>,
 }
 
 impl Safety {
     /// thread가 이 profile을 쓸 수 있는가. 목록의 `"*"`는 모두다(옛 `allow_profiles`와 같다).
     pub fn profile_allowed(&self, name: &str) -> bool {
         self.thread_profiles.as_ref().is_none_or(|l| l.iter().any(|a| a == name || a == "*"))
+    }
+
+    /// coordinator가 이 profile을 쓸 수 있는가(참고 `check_allowed`의 Role::Coordinator)
+    pub fn coordinator_profile_allowed(&self, name: &str) -> bool {
+        self.coordinator_profiles.as_ref().is_none_or(|l| l.iter().any(|a| a == name || a == "*"))
     }
 
     /// 실제로 띄울 인자: `args` 뒤에 yolo면 그 harness의 인자(참고 `Safety::launch_args`)
@@ -129,6 +144,11 @@ impl Layers {
         Safety {
             start_threads: if yolo { "auto".into() } else { pick(|x| x.start_threads.clone(), "propose".into()) },
             trust_screens: pick(|x| x.trust_screens.clone(), default_trust_screens(yolo).into()),
+            coordinator_agent_args: o
+                .coordinator_agent_args
+                .clone()
+                .or_else(|| d.coordinator_agent_args.clone())
+                .unwrap_or_default(),
             thread_agent_args: o
                 .thread_agent_args
                 .clone()
@@ -141,6 +161,7 @@ impl Layers {
                 .clone()
                 .or_else(|| d.thread_profiles.clone())
                 .or_else(|| l.thread_profiles.clone()),
+            coordinator_profiles: o.coordinator_profiles.clone().or_else(|| d.coordinator_profiles.clone()),
             yolo,
         }
     }
@@ -190,6 +211,12 @@ impl Layers {
                 note: if trust_source == "기본값" { "yolo를 따른다".into() } else { String::new() },
             },
             Row {
+                key: "coordinator_agent_args",
+                value: args(&s.coordinator_agent_args),
+                source: src(o.coordinator_agent_args.is_some(), d.coordinator_agent_args.is_some(), false, ""),
+                note: String::new(),
+            },
+            Row {
                 key: "thread_agent_args",
                 value: args(&s.thread_agent_args),
                 source: src(o.thread_agent_args.is_some(), d.thread_agent_args.is_some(), false, ""),
@@ -219,6 +246,16 @@ impl Layers {
                     l.thread_profiles.is_some(),
                     LEGACY_HOST,
                 ),
+                note: String::new(),
+            },
+            Row {
+                key: "coordinator_profiles",
+                value: match &s.coordinator_profiles {
+                    None => "모든 profile".into(),
+                    Some(l) if l.is_empty() => "없음".into(),
+                    Some(l) => l.join(", "),
+                },
+                source: src(o.coordinator_profiles.is_some(), d.coordinator_profiles.is_some(), false, ""),
                 note: String::new(),
             },
         ]
@@ -268,8 +305,13 @@ pub fn legacy_project_layer(project_toml: &str) -> SafetyLayer {
 
 /// project.toml의 `thread_profile`(없으면 빈 값)
 pub fn project_thread_profile(project_toml: &str) -> String {
+    project_profile(project_toml, "thread_profile")
+}
+
+/// project.toml의 `thread_profile`·`coordinator_profile`(없으면 빈 값)
+pub fn project_profile(project_toml: &str, key: &str) -> String {
     let doc = project_toml.parse::<DocumentMut>().unwrap_or_default();
-    doc.get("thread_profile").and_then(Item::as_str).unwrap_or_default().to_string()
+    doc.get(key).and_then(Item::as_str).unwrap_or_default().to_string()
 }
 
 /// 글(host.local.toml)에 `[safety.<table>] key`가 있는가: 있으면 host.toml을 고쳐도 닿지 않는다
@@ -352,9 +394,12 @@ fn overlay(layer: &mut SafetyLayer, t: &dyn toml_edit::TableLike, table: &str, w
             _ => bad("trust_screens", "\"coordinator\"·\"user\"여야 한다"),
         }
     }
-    for (key, slot) in
-        [("thread_agent_args", &mut layer.thread_agent_args), ("thread_profiles", &mut layer.thread_profiles)]
-    {
+    for (key, slot) in [
+        ("coordinator_agent_args", &mut layer.coordinator_agent_args),
+        ("thread_agent_args", &mut layer.thread_agent_args),
+        ("thread_profiles", &mut layer.thread_profiles),
+        ("coordinator_profiles", &mut layer.coordinator_profiles),
+    ] {
         if let Some(v) = t.get(key) {
             match v.as_array().filter(|a| a.iter().all(|x| x.is_str())) {
                 Some(_) => *slot = strings(v),
@@ -394,17 +439,12 @@ pub fn value_item(key: &str, words: &[String]) -> Result<Option<Item>, String> {
             v @ ("coordinator" | "user") => toml_edit::value(v),
             other => return Err(format!("trust_screens는 coordinator·user다, `{other}`가 아니다")),
         },
-        "thread_agent_args" => {
+        "thread_agent_args" | "coordinator_agent_args" => {
             let mut a = Array::new();
             for arg in words.iter().flat_map(|w| w.split_whitespace()) {
                 a.push(arg);
             }
             toml_edit::value(a)
-        }
-        "coordinator_agent_args" | "coordinator_profiles" => {
-            return Err(format!(
-                "aaa는 coordinator를 띄우지 않아 `{key}`가 없다(plan §8.104): coordinator는 사람이 연 세션이다"
-            ));
         }
         other => {
             return Err(format!(
@@ -443,8 +483,9 @@ pub fn set_in(text: &str, table: &str, key: &str, item: Option<Item>) -> Result<
     Ok(doc.to_string())
 }
 
-/// `[safety.<table>] thread_profiles`: `Some`이면 그 목록, `None`이면 지워 모든 profile(참고 `Change::Allow`)
-pub fn set_profiles_in(text: &str, table: &str, names: Option<&[String]>) -> Result<String, String> {
+/// `[safety.<table>] thread_profiles`·`coordinator_profiles`(`key`): `Some`이면 그 목록, `None`이면 지워 모든 profile
+/// (참고 `Change::Allow`)
+pub fn set_profiles_in(text: &str, table: &str, key: &str, names: Option<&[String]>) -> Result<String, String> {
     let item = names.map(|n| {
         let mut a = Array::new();
         for name in n {
@@ -452,29 +493,33 @@ pub fn set_profiles_in(text: &str, table: &str, names: Option<&[String]>) -> Res
         }
         toml_edit::value(a)
     });
-    set_in(text, table, "thread_profiles", item)
+    set_in(text, table, key, item)
 }
 
 /// `[defaults] thread_profile`(참고 `Change::Default`): `thread start`에 profile이 정해지지 않으면 쓰고, `project create`가
 /// project.toml에 적는다
-pub fn set_default_profile_in(text: &str, name: &str) -> Result<String, String> {
+pub fn set_default_profile_in(text: &str, key: &str, name: &str) -> Result<String, String> {
     let mut doc = text.parse::<DocumentMut>().map_err(|e| format!("host.toml을 읽지 못했다: {e}"))?;
     if !doc.contains_key("defaults") {
         doc["defaults"] = Item::Table(Table::new());
     }
-    doc["defaults"].as_table_mut().ok_or("host.toml의 `defaults`가 표가 아니다")?["thread_profile"] =
-        toml_edit::value(name);
+    doc["defaults"].as_table_mut().ok_or("host.toml의 `defaults`가 표가 아니다")?[key] = toml_edit::value(name);
     Ok(doc.to_string())
 }
 
-/// host.toml(local 말고)의 `[defaults] thread_profile`(없으면 빈 값). host는 쓸 때마다 읽는다.
+/// host.toml(local이 덮는다)의 `[defaults] thread_profile`(없으면 빈 값). host는 쓸 때마다 읽는다.
 pub fn default_thread_profile(config_dir: &Path) -> String {
+    default_profile(config_dir, "thread_profile")
+}
+
+/// host.toml(local이 덮는다)의 `[defaults]` `thread_profile`·`coordinator_profile`(없으면 빈 값)
+pub fn default_profile(config_dir: &Path, key: &str) -> String {
     let mut out = String::new();
     for f in ["host.toml", "host.local.toml"] {
-        if let Some(v) =
-            std::fs::read_to_string(config_dir.join(f)).ok().and_then(|t| t.parse::<DocumentMut>().ok()).and_then(|d| {
-                d.get("defaults").and_then(|x| x.get("thread_profile")).and_then(|v| v.as_str().map(str::to_string))
-            })
+        if let Some(v) = std::fs::read_to_string(config_dir.join(f))
+            .ok()
+            .and_then(|t| t.parse::<DocumentMut>().ok())
+            .and_then(|d| d.get("defaults").and_then(|x| x.get(key)).and_then(|v| v.as_str().map(str::to_string)))
         {
             out = v;
         }
@@ -520,6 +565,14 @@ mod tests {
         // 옛 allow_profiles가 "*"면 모두
         let (d, o, l, _) = read_texts(&["[projects]\nallow_profiles = [\"*\"]\n".into()], Some("x"));
         assert!(Layers { own: o, default: d, legacy: l }.resolve().profile_allowed("anything"));
+        // coordinator 쪽: 옛 자리가 없고, 목록이 없으면 모두, thread 목록과 따로다
+        assert!(demo.coordinator_profile_allowed("codex") && demo.coordinator_agent_args.is_empty());
+        let local = "[safety.demo]\ncoordinator_profiles = [\"luna\"]\n\n[safety.default]\ncoordinator_agent_args = [\"--c\"]\n";
+        let (d, o, l, w) = read_texts(&[HOST.into(), local.into()], Some("demo"));
+        assert!(w.is_empty(), "{w:?}");
+        let demo = Layers { own: o, default: d, legacy: l }.resolve();
+        assert!(demo.coordinator_profile_allowed("luna") && !demo.coordinator_profile_allowed("opus"));
+        assert_eq!((demo.coordinator_agent_args, demo.thread_profiles), (s(&["--c"]), Some(s(&["opus"]))));
     }
 
     #[test]
@@ -551,6 +604,14 @@ mod tests {
             (by("thread_profiles").text(), by("thread_profiles").source),
             ("모든 profile".to_string(), "기본값")
         );
+        assert_eq!(
+            (by("coordinator_agent_args").text(), by("coordinator_agent_args").source),
+            ("(없음)".to_string(), "기본값")
+        );
+        assert_eq!(
+            (by("coordinator_profiles").text(), by("coordinator_profiles").source),
+            ("모든 profile".to_string(), "기본값")
+        );
     }
 
     #[test]
@@ -560,19 +621,26 @@ mod tests {
         assert!(t.contains("[safety.demo]\nyolo = false\n"), "{t}");
         // default면 지우고, 빈 표는 없앤다
         let t = set_in(&t, "demo", "yolo", None).unwrap();
-        let t = set_profiles_in(&t, "demo", None).unwrap();
+        let t = set_profiles_in(&t, "demo", "thread_profiles", None).unwrap();
         assert!(!t.contains("[safety.demo]"), "{t}");
+        let c = set_profiles_in(&t, "demo", "coordinator_profiles", Some(&s(&["luna"]))).unwrap();
+        assert!(c.contains("[safety.demo]\ncoordinator_profiles = [\"luna\"]\n"), "{c}");
         let t = set_in(&t, "new", "thread_agent_args", value_item("thread_agent_args", &s(&["--a b", "--c"])).unwrap())
             .unwrap();
         let (_, o, _, w) = read_texts(std::slice::from_ref(&t), Some("new"));
         assert!(w.is_empty());
         assert_eq!(o.thread_agent_args, Some(s(&["--a", "b", "--c"])));
-        let t = set_default_profile_in(&t, "opus").unwrap();
+        let c =
+            set_in(&t, "new", "coordinator_agent_args", value_item("coordinator_agent_args", &s(&["--x y"])).unwrap())
+                .unwrap();
+        assert_eq!(read_texts(&[c], Some("new")).1.coordinator_agent_args, Some(s(&["--x", "y"])));
+        let t = set_default_profile_in(&t, "thread_profile", "opus").unwrap();
         assert!(t.contains("[defaults]\nthread_profile = \"opus\"\n"), "{t}");
+        let t = set_default_profile_in(&t, "coordinator_profile", "luna").unwrap();
+        assert!(t.contains("[defaults]\nthread_profile = \"opus\"\ncoordinator_profile = \"luna\"\n"), "{t}");
         for (key, words, why) in [
             ("yolo", s(&["maybe"]), "on·off"),
             ("start_threads", s(&["now"]), "propose·auto"),
-            ("coordinator_agent_args", s(&["x"]), "coordinator를 띄우지 않아"),
             ("colour", s(&["x"]), "모르는 safety 설정"),
         ] {
             assert!(value_item(key, &words).unwrap_err().contains(why), "{key}");

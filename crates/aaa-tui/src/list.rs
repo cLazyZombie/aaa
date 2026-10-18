@@ -819,6 +819,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms,
             warnings: vec![],
+            project_status: Default::default(),
         }
     }
 

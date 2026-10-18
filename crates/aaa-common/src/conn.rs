@@ -74,6 +74,25 @@ pub fn spawn_writer<W: AsyncWrite + Unpin + Send + 'static>(mut w: W, max: usize
     FrameTx { tx }
 }
 
+/// 쓰기 task 없이 handle과 그 줄을 만든다. 줄을 비우는 쪽이 frame을 옮긴다(WebSocket 위 Front API는 제어 frame 하나를
+/// 글 메시지 하나로 보낸다, plan §6.2). handle이 모두 사라지면 줄이 끝난다.
+pub fn frame_channel() -> (FrameTx, FrameOut) {
+    let (tx, rx) = mpsc::channel::<Out>(512);
+    (FrameTx { tx }, FrameOut { rx })
+}
+
+/// `frame_channel`의 받는 쪽
+pub struct FrameOut {
+    rx: mpsc::Receiver<Out>,
+}
+
+impl FrameOut {
+    /// 다음 frame. handle이 모두 사라지면 None
+    pub async fn recv(&mut self) -> Option<(FrameKind, Vec<u8>)> {
+        self.rx.recv().await.map(|Out::Frame(kind, payload)| (kind, payload))
+    }
+}
+
 /// 한 번에 읽어 오는 크기(session host의 터미널 frame은 32KiB까지)
 const READ_CHUNK: usize = 64 << 10;
 

@@ -341,7 +341,8 @@ impl Host {
     }
 
     async fn tick(self: &Arc<Self>) {
-        let projects = self.projects();
+        // 멈추거나 보관한 프로젝트는 건너뛴다(herdr-projects ticker, plan §8.180)
+        let projects = self.active_projects();
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
         self.check_outages(&names);
         self.check_health_items(&names);
@@ -482,13 +483,22 @@ impl Host {
 
     /// 프로젝트 폴더를 cwd로 쓰는 host 머신의 실행 중 pane(coordinator)
     fn coordinator_pane(&self, dir: &Path) -> Option<aaa_proto::PaneView> {
+        self.coordinator_panes(dir).into_iter().next()
+    }
+
+    /// 프로젝트 폴더를 cwd로 쓰는 host 머신의 실행 중 pane 모두(herdr-projects 「Any agent whose working directory is `cwd`
+    /// is a coordinator」)
+    pub(crate) fn coordinator_panes(&self, dir: &Path) -> Vec<aaa_proto::PaneView> {
         let local: Vec<String> = self.machine_views().into_iter().filter(|m| m.local).map(|m| m.id).collect();
-        self.pane_views(DeviceRole::Local).into_iter().find(|p| {
-            local.contains(&p.machine_id)
-                && p.state.is_running()
-                && p.connection == aaa_proto::Connection::Connected
-                && p.cwd.as_deref().is_some_and(|c| same_dir(c, dir))
-        })
+        self.pane_views(DeviceRole::Local)
+            .into_iter()
+            .filter(|p| {
+                local.contains(&p.machine_id)
+                    && p.state.is_running()
+                    && p.connection == aaa_proto::Connection::Connected
+                    && p.cwd.as_deref().is_some_and(|c| same_dir(c, dir))
+            })
+            .collect()
     }
 
     async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {

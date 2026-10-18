@@ -67,7 +67,9 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
 }
 
 /** herdr-projects `project_line`(「2 need you · 3 working」): 「사람 차례 2 · 작업 중 3」, 없으면 「쉼」 */
-export function projectLine(groups: readonly string[]): string {
+export function projectLine(groups: readonly string[], paused = false): string {
+  // 멈춘 프로젝트는 묶음 대신 「멈춤」(herdr-projects sidebar.rs `project_line` 「paused」)
+  if (paused) return "멈춤";
   const need = groups.filter(needsYou).length;
   const parts: string[] = [];
   if (need > 0) parts.push(`사람 차례 ${need}`);

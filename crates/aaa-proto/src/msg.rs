@@ -14,8 +14,8 @@ use ts_rs::TS;
 
 use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, MessageMode, MessageView,
-    OwnerChoice, ProfileView, ProjectContext, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadKind,
-    ThreadPrepare, ThreadReady, ThreadView,
+    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectOpened, ProjectView, QuestionView,
+    ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick};
 
@@ -630,6 +630,9 @@ pub enum AgentRequest {
     Harnesses,
     /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
     ThreadPrepare(ThreadPrepare),
+    /// 사람이 띄운 agent 세션을 thread로 데려온다: 그 세션의 지금 폴더에 작업 폴더·brief.md를 만든다(`thread adopt`).
+    /// agent 기능 `adopt.v1`이 있을 때만 보낸다(옛 agent는 모르는 요청에 연결을 끊는다)
+    ThreadAdopt(ThreadAdopt),
     /// report.md 변화를 `ReportChanged`로 알린다. 등록 즉시 지금 hash를 한 번 보낸다. `thread`는 `<project>/<thread>`다.
     ThreadWatch {
         thread: String,
@@ -773,6 +776,7 @@ pub enum AgentResponse {
         profiles: Vec<ProfileView>,
     },
     ThreadReady(ThreadReady),
+    ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
     FileChunk {
         data: B64,
@@ -1559,10 +1563,70 @@ pub enum FrontRequest {
     WebPublish,
     WebPublishOff,
     WebStatus,
+    /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.33)
     ProjectCreate {
         name: String,
+        #[serde(default)]
+        goal: String,
+        /// `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
+        #[serde(default)]
+        repos: Vec<String>,
+        #[serde(default)]
+        thread_profile: Option<String>,
+        #[serde(default)]
+        coordinator_profile: Option<String>,
     },
-    Projects,
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.33). key는 `aaa project set --help`
+    ProjectSet {
+        project: String,
+        key: String,
+        value: String,
+    },
+    /// 프로젝트 목록. archived는 `all`일 때만(herdr-projects `list --all`, FRONT_API 1.33)
+    Projects {
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        all: bool,
+    },
+    /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.33)
+    ProjectLifecycle {
+        project: String,
+        action: ProjectAction,
+    },
+    /// 프로젝트 폴더를 휴지통(`<projects root>/.trash`)으로 옮기고 host 기록을 그 안 `aaa-records.json`으로 뺀다.
+    /// worktree·branch·PR은 건드리지 않는다(herdr-projects `delete`)
+    ProjectDelete {
+        project: String,
+        /// 살아 있는 pane이 있어도
+        #[serde(default)]
+        force: bool,
+    },
+    /// 프로젝트 이름(폴더 이름)을 바꾼다(herdr-projects `rename`). 끝나지 않은 thread나 도는 coordinator가 있으면 거부한다
+    ProjectRename {
+        project: String,
+        to: String,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    /// 끝난 thread가 남긴 worktree·branch를 그 머신 agent가 다시 정리한다(herdr-projects `sweep`)
+    ProjectSweep {
+        project: String,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    /// coordinator를 연다(herdr-projects `open`): 도는 coordinator가 있으면 그것을 알려 주고, 없으면(또는 `new`) host 머신에서
+    /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.33)
+    ProjectOpen {
+        project: String,
+        /// 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        profile: Option<String>,
+        /// coordinator가 돌아도 하나 더 띄운다
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        new: bool,
+    },
     /// host 정본 profile과 그 머신에 설치·로그인한 기본 harness 목록
     Profiles {
         machine: Option<String>,
@@ -1587,6 +1651,16 @@ pub enum FrontRequest {
         /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
+    },
+    /// 사람이 이미 띄운 agent pane(Claude·Codex)을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects
+    /// `thread adopt`). pane은 그대로 두고 그 폴더에 작업 폴더를 만든다
+    ThreadAdopt {
+        project: String,
+        pane: String,
+        title: String,
+        /// 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
+        #[serde(default)]
+        task: String,
     },
     /// thread의 Next 목록을 보이거나(`line`·`add` 없음), N번째 줄을 thread에 메시지로 보내거나, 줄을 더한다
     ThreadNext {
@@ -1806,7 +1880,9 @@ impl FrontRequest {
             FrontRequest::Status
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
-                | FrontRequest::Projects
+                | FrontRequest::Projects { .. }
+                | FrontRequest::ProjectRename { dry_run: true, .. }
+                | FrontRequest::ProjectSweep { dry_run: true, .. }
                 | FrontRequest::Profiles { .. }
                 | FrontRequest::ProfileResolve { .. }
                 | FrontRequest::Threads { .. }
@@ -1946,6 +2022,8 @@ pub enum FrontResponse {
         projects: Vec<ProjectView>,
     },
     Project(ProjectView),
+    ProjectChange(ProjectChange),
+    ProjectOpened(Box<ProjectOpened>),
     Profiles {
         machine: String,
         profiles: Vec<ProfileView>,

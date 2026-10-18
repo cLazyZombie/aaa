@@ -95,8 +95,67 @@ pub(crate) struct ThreadRec {
     pub eval_batches: u32,
     #[serde(default)]
     pub eval_last_batch_ms: Option<u64>,
+    /// resolve 때 남긴 worktree·branch(`project sweep`이 다시 정리한다). None은 모른다(이 필드 전에 끝난 thread)
+    #[serde(default)]
+    pub leftover: Option<crate::lifecycle::Leftover>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+
+impl ThreadRec {
+    /// 막 기록하는 thread(시작 중). 번호는 DB가 붙인다
+    pub(crate) fn starting(
+        project: &str,
+        title: &str,
+        machine_id: &str,
+        profile: &str,
+        role: Role,
+        kind: ThreadKind,
+        now: u64,
+    ) -> ThreadRec {
+        ThreadRec {
+            project: project.to_string(),
+            id: String::new(),
+            title: title.to_string(),
+            machine_id: machine_id.to_string(),
+            profile: profile.to_string(),
+            role,
+            kind,
+            repo: None,
+            base: None,
+            branch: None,
+            pr: None,
+            pr_state: None,
+            pr_review: None,
+            cwd: None,
+            work_dir: None,
+            pane: None,
+            status: ThreadStatus::Starting,
+            brief: BriefState::Pending,
+            brief_attempts: 0,
+            delivered_at_ms: None,
+            delivered_report: None,
+            launch: None,
+            report_hash: None,
+            acked_hash: None,
+            next: vec![],
+            copy: None,
+            copy_notes: vec![],
+            // 시작 중은 작업 중이다(`thread_group` 2번 줄). 처음 셈을 기다리지 않고 적어, 첫 셈 전에 온 보고도 새 보고다.
+            last_group: Some(ThreadGroup::Working),
+            review_item_hash: None,
+            group_changed_ms: Some(now),
+            report_changed_ms: None,
+            merged_seen_ms: None,
+            error: None,
+            eval_cursor: 0,
+            eval_batches: 0,
+            eval_last_batch_ms: None,
+            leftover: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        }
+    }
 }
 
 /// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났거나, PR이 병합됐다
@@ -130,6 +189,24 @@ pub struct StartArgs {
     pub role: Role,
 }
 
+/// `project create`의 옵션(herdr-projects `new`)
+#[derive(Debug, Default)]
+pub(crate) struct ProjectOptions {
+    pub goal: String,
+    /// `PATH` 또는 `PATH@MACHINE`
+    pub repos: Vec<String>,
+    pub thread_profile: Option<String>,
+    pub coordinator_profile: Option<String>,
+}
+
+/// project.toml 읽고 고쳐 쓰기를 한 번에 하나씩(두 `project set`이 서로의 값을 지우지 않게)
+static PROJECT_TOML: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 새 프로젝트의 AGENTS.md(coordinator 안내)
+pub(crate) fn coordinator_guide(project: &str) -> String {
+    COORDINATOR_GUIDE.replace("{p}", project)
+}
+
 /// 새 프로젝트의 AGENTS.md(coordinator 안내). `{p}`는 프로젝트 이름이다.
 const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
 
@@ -161,8 +238,15 @@ const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
   확인창 질문은 `aaa question list`·`aaa question answer`.
 
+## 프로젝트 설정
+- 사용자가 바꾸라고 하면 `aaa project set {p} <key> <값>`으로 바꾼다: `goal`, `thread_profile`, `coordinator_profile`,
+  `max_parallel_threads`, `auto_resolve_days`, `repos.add`·`repos.remove`(`PATH` 또는 `PATH@MACHINE`). project.toml을 직접 고쳐도 된다.
+- 사용자가 요청할 때만: `aaa project pause|resume {p}`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep {p}`
+  (끝난 thread가 남긴 worktree·병합된 branch를 치운다, `--dry-run`으로 먼저 보인다). 보관·삭제·이름 바꾸기는 사용자가 한다.
+
 ## safety(사용자만 바꾼다)
-`start_threads`·`trust_screens`·yolo·`thread_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의 safety 설정이다.
+`start_threads`·`trust_screens`·yolo·`thread_agent_args`·`coordinator_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의
+safety 설정이다.
 `aaa safety show {p}`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
 터미널에서만 한다: 필요하면 사용자에게 그 명령을 알린다. project.toml의 `start_threads`·`trust_screens`는 옛 자리라
 safety 표에 값이 있으면 먹지 않는다.
@@ -223,7 +307,7 @@ fn bad(msg: impl Into<String>) -> ErrorBody {
     err(ErrorCode::BadRequest, msg)
 }
 
-fn internal(e: impl std::fmt::Display) -> ErrorBody {
+pub(crate) fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 
@@ -371,7 +455,7 @@ pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::i
     put("MEMORY.md", "# Memory\n")?;
     put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
     put("project.toml", "schema = 1\n")?;
-    put("AGENTS.md", &COORDINATOR_GUIDE.replace("{p}", name))?;
+    put("AGENTS.md", &coordinator_guide(name))?;
     put("PROJECT.md", project_md)
 }
 
@@ -404,13 +488,26 @@ impl Host {
         Ok(dir)
     }
 
-    fn project_view(&self, name: &str, dir: &Path) -> ProjectView {
+    pub(crate) fn project_view(&self, name: &str, dir: &Path) -> ProjectView {
         let threads = self.db.threads(Some(name)).map(|v| v.len() as u32).unwrap_or(0);
-        ProjectView { name: name.to_string(), path: dir.to_string_lossy().to_string(), threads }
+        ProjectView {
+            name: name.to_string(),
+            path: dir.to_string_lossy().to_string(),
+            threads,
+            status: self.project_status(name),
+            coordinator_profile: self.default_coordinator_profile(name),
+            coordinator_profiles: self.safety(name).coordinator_profiles,
+        }
     }
 
-    /// 프로젝트 폴더를 만든다. PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
-    pub(crate) fn project_create(&self, name: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+    /// 프로젝트 폴더를 만든다(herdr-projects `new`). PROJECT.md를 마지막에 써서, 중간에 멈춘 폴더는 프로젝트로 치지 않는다.
+    /// goal·저장소·profile은 준 것만 project.toml에 적는다(안 준 profile은 쓸 때 기본 사슬로 푼다, plan §8.180).
+    pub(crate) fn project_create(
+        &self,
+        name: &str,
+        opts: ProjectOptions,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
         if !valid_project(name) {
             return Err(bad(format!("프로젝트 이름 형식이 아니다(영문 소문자·숫자·-·_): {name}")));
         }
@@ -422,18 +519,82 @@ impl Host {
         if dir.join("PROJECT.md").exists() {
             return Err(err(ErrorCode::NameTaken, format!("이미 있다: {}", dir.display())));
         }
+        // 값은 모두 먼저 맞춰 본다: 틀린 옵션으로 반쯤 만든 폴더를 남기지 않는다
+        let mut toml = "schema = 1\n".to_string();
+        let mut set = |key: &str, value: &str| -> Result<(), ErrorBody> {
+            toml = crate::project::set_in(&toml, key, value).map_err(bad)?;
+            Ok(())
+        };
+        if !opts.goal.trim().is_empty() {
+            set("goal", &opts.goal)?;
+        }
+        if let Some(p) = &opts.thread_profile {
+            set("thread_profile", p)?;
+        }
+        if let Some(p) = &opts.coordinator_profile {
+            set("coordinator_profile", p)?;
+        }
+        for r in &opts.repos {
+            set("repos.add", &self.repo_arg(r))?;
+        }
+        if let Some(p) = &opts.thread_profile {
+            // 새 프로젝트의 thread 허용 목록(host.toml `[safety.default]`·옛 자리)에 있어야 한다(참고 `check_allowed`)
+            self.check_profile_allowed(name, p)?;
+        }
         // 기본 `pr` routine(herdr-projects `write_default_routine`). PROJECT.md가 마지막이 되게 뼈대보다 먼저 쓴다.
         // 옮기기(`migrate::convert`)는 0.2의 routine을 꺼서 넣으므로 여기서만 쓴다.
         let followup = dir.join(crate::routine::PR_FOLLOWUP);
         if !followup.exists() {
             write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes()).map_err(internal)?;
         }
+        write_atomic(&dir.join("project.toml"), toml.as_bytes()).map_err(internal)?;
         write_skeleton(&dir, name, &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n")).map_err(internal)?;
         self.db.audit(actor, "project_create", name);
         Ok(FrontResponse::Project(self.project_view(name, &dir)))
     }
 
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`). thread_profile은 그 프로젝트 thread 허용 목록에 있어야 한다.
+    pub(crate) fn project_set(
+        &self,
+        project: &str,
+        key: &str,
+        value: &str,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let value = if key.starts_with("repos.") { self.repo_arg(value) } else { value.trim().to_string() };
+        if key == "thread_profile" {
+            self.check_profile_allowed(project, &value)?;
+        }
+        let path = dir.join("project.toml");
+        let _guard = PROJECT_TOML.lock().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "schema = 1\n".into());
+        let edited = crate::project::set_in(&text, key, &value).map_err(bad)?;
+        write_atomic(&path, edited.as_bytes()).map_err(internal)?;
+        self.db.audit(actor, "project_set", &format!("{project} {key}={value}"));
+        Ok(FrontResponse::Project(self.project_view(project, &dir)))
+    }
+
+    /// 머신이 없는 저장소 경로는 host 머신 정본 경로로(참고 `create`·`set_in`: 없는 경로는 그대로)
+    fn repo_arg(&self, arg: &str) -> String {
+        let r = crate::project::parse_repo_arg(arg.trim());
+        match r.machine {
+            Some(_) => arg.trim().to_string(),
+            None => std::fs::canonicalize(&r.path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(r.path),
+        }
+    }
+
+    /// 보관하지 않은 프로젝트(herdr-projects `list`)
     pub(crate) fn projects(&self) -> Vec<ProjectView> {
+        self.projects_all().into_iter().filter(|p| p.status != aaa_proto::ProjectStatus::Archived).collect()
+    }
+
+    /// 지금 도는 프로젝트(ticker가 보는 것): 멈추거나 보관한 것은 뺀다
+    pub(crate) fn active_projects(&self) -> Vec<ProjectView> {
+        self.projects_all().into_iter().filter(|p| p.status == aaa_proto::ProjectStatus::Active).collect()
+    }
+
+    pub(crate) fn projects_all(&self) -> Vec<ProjectView> {
         let root = self.projects_root();
         let mut out: Vec<ProjectView> = std::fs::read_dir(&root)
             .into_iter()
@@ -537,6 +698,7 @@ impl Host {
             created_at_ms: r.created_at_ms,
             updated_at_ms: r.updated_at_ms,
             warnings: Vec::new(),
+            project_status: self.project_status(&r.project),
         }
     }
 
@@ -620,7 +782,7 @@ impl Host {
         self.db.flow_after(project, after, limit.unwrap_or(500).min(5000)).map_err(internal)
     }
 
-    fn profile_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {
+    pub(crate) fn profile_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {
         match self.config_dir.get() {
             Some(dir) => aaa_config::load_host(dir).map(|l| l.config).map_err(|e| bad(e.render())),
             None => Ok(self.cfg.clone()),
@@ -698,6 +860,37 @@ impl Host {
         mid: &str,
         name: &str,
     ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
+        // 새 pane은 thread safety를 덧붙이지 않던 기존 계약을 유지한다.
+        let safety = project.map(|project| {
+            let s = self.safety(project);
+            (self.default_thread_profile(project), s.thread_agent_args, s.yolo)
+        });
+        self.resolve_launch(mid, name, safety)
+    }
+
+    /// coordinator(`project open`, plan §8.180): safety의 coordinator 몫(참고 `Safety::launch_args`의 Role::Coordinator) —
+    /// 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile에 `coordinator_agent_args`, yolo면 권한 건너뛰기
+    pub(crate) fn resolved_coordinator_profile(
+        &self,
+        project: &str,
+        mid: &str,
+        name: &str,
+    ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
+        let s = self.safety(project);
+        self.resolve_launch(
+            mid,
+            name,
+            Some((self.default_coordinator_profile(project), s.coordinator_agent_args, s.yolo)),
+        )
+    }
+
+    /// `safety`: (그 역할의 프로젝트 기본 profile, 기본 profile에 붙일 인자, yolo)
+    fn resolve_launch(
+        &self,
+        mid: &str,
+        name: &str,
+        safety: Option<(String, Vec<String>, bool)>,
+    ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
         if !self.machine_feature(mid, "host_profiles.v1") {
             return Err(bad(
                 "그 머신 agent는 host profile을 받지 못한다(host_profiles.v1 없음). 연결은 유지된다. 그 머신 aaa agent를 갱신한 뒤 시작한다",
@@ -711,9 +904,7 @@ impl Host {
                     "host.toml에 profile `{name}`가 없다: `aaa profile list`로 보고 사람이 `aaa profile add`로 더한다"
                 ))
             })?;
-        // 새 pane은 thread safety를 덧붙이지 않던 기존 계약을 유지한다.
-        if let Some(project) = project {
-            let default = self.default_thread_profile(project);
+        if let Some((default, agent_args, yolo)) = safety {
             let legacy = cfg
                 .profiles
                 .get(&default)
@@ -721,10 +912,9 @@ impl Host {
                 .or_else(|| aaa_config::profile_edit::builtin(&default))
                 .map(|p| p.harness)
                 .unwrap_or_else(|| "claude".into());
-            let safety = self.safety(project);
-            let mut args = aaa_config::safety::legacy_args(builtin, &p.harness, &safety.thread_agent_args, &legacy);
+            let mut args = aaa_config::safety::legacy_args(builtin, &p.harness, &agent_args, &legacy);
             args.extend(p.args);
-            p.args = aaa_config::safety::apply_yolo(safety.yolo, &p.harness, &args);
+            p.args = aaa_config::safety::apply_yolo(yolo, &p.harness, &args);
         }
         Ok(aaa_proto::ResolvedProfile {
             harness: p.harness,
@@ -766,9 +956,23 @@ impl Host {
         if global.is_empty() { "claude".into() } else { global }
     }
 
+    /// `project open`에 profile이 없을 때(참고 `resolve`의 Role::Coordinator): project.toml `coordinator_profile` → host.toml
+    /// `[defaults] coordinator_profile` → 기본 profile `claude`
+    pub(crate) fn default_coordinator_profile(&self, project: &str) -> String {
+        let own = self.settings(project).coordinator_profile;
+        if !own.is_empty() {
+            return own;
+        }
+        let global = match self.config_dir.get() {
+            Some(dir) => aaa_config::safety::default_profile(dir, "coordinator_profile"),
+            None => self.cfg.defaults.coordinator_profile.clone(),
+        };
+        if global.is_empty() { "claude".into() } else { global }
+    }
+
     /// brief.md(herdr-projects `brief_for`): 프로젝트 설정·지침·memory를 읽어 `compose_brief`로 짓는다.
     /// memory 파일은 `memory/*.md`(이름순, symlink·숨은 파일 제외)다.
-    fn brief(&self, dir: &Path, r: &ThreadRec, task: &str, restart: bool) -> String {
+    pub(crate) fn brief(&self, dir: &Path, r: &ThreadRec, task: &str, restart: bool) -> String {
         use crate::brief_text::{BriefInput, THREAD_GUIDE, compose_brief};
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
         let settings = crate::project::ProjectSettings::load(dir);
@@ -816,6 +1020,7 @@ impl Host {
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
     pub(crate) async fn thread_start(self: &Arc<Self>, mut a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
+        self.check_active(&a.project)?;
         if a.title.trim().is_empty() {
             return Err(bad("제목이 비었다"));
         }
@@ -826,6 +1031,9 @@ impl Host {
             a.profile = self.default_thread_profile(&a.project);
         }
         self.check_profile_allowed(&a.project, &a.profile)?;
+        if a.kind == ThreadKind::Adopted {
+            return Err(bad("데려온 thread는 `aaa thread adopt`로 만든다"));
+        }
         if a.kind == ThreadKind::Worktree && a.repo.is_none() {
             return Err(bad("worktree thread에는 --repo(그 머신의 repo 경로)가 필요하다. repo 없이 하려면 --kind dir"));
         }
@@ -836,45 +1044,9 @@ impl Host {
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
-            project: a.project.clone(),
-            id: String::new(),
-            title: a.title.trim().to_string(),
-            machine_id: mid.clone(),
-            profile: a.profile.clone(),
-            role: a.role,
-            kind: a.kind,
             repo: a.repo.clone(),
             base: a.base.clone(),
-            branch: None,
-            pr: None,
-            pr_state: None,
-            pr_review: None,
-            cwd: None,
-            work_dir: None,
-            pane: None,
-            status: ThreadStatus::Starting,
-            brief: BriefState::Pending,
-            brief_attempts: 0,
-            delivered_at_ms: None,
-            delivered_report: None,
-            launch: None,
-            report_hash: None,
-            acked_hash: None,
-            next: vec![],
-            copy: None,
-            copy_notes: vec![],
-            // 시작 중은 작업 중이다(`thread_group` 2번 줄). 처음 셈을 기다리지 않고 적어, 첫 셈 전에 온 보고도 새 보고다.
-            last_group: Some(ThreadGroup::Working),
-            review_item_hash: None,
-            group_changed_ms: Some(now),
-            report_changed_ms: None,
-            merged_seen_ms: None,
-            error: None,
-            eval_cursor: 0,
-            eval_batches: 0,
-            eval_last_batch_ms: None,
-            created_at_ms: now,
-            updated_at_ms: now,
+            ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         let id = self
             .db
@@ -1044,6 +1216,10 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let mut rec = self.load(project, id)?;
+        // 참고 threads.rs `restart`: 데려온 pane은 사람이 띄운 것이라 같은 것을 다시 띄울 방법을 모른다
+        if rec.kind == ThreadKind::Adopted {
+            return Err(bad("데려온 thread는 다시 띄우지 않는다. 새 pane을 띄워 `aaa thread adopt`로 데려온다"));
+        }
         let running = rec
             .pane
             .as_deref()
@@ -1399,15 +1575,20 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
+        // 데려온 pane은 사람 것이다(참고 threads.rs `cleanup`의 `Kind::Adopted`): 끝내지 않고, 그 폴더도 정리하지 않는다
+        let adopted = rec.kind == ThreadKind::Adopted;
         // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
-        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
-        if let Some(pane) = &rec.pane
+        let pane_rx = rec.pane.as_deref().filter(|_| !adopted).and_then(|p| self.pane_events(p).ok());
+        if let Some(pane) = rec.pane.as_ref().filter(|_| !adopted)
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
             let _ = self.kill_session(&conn, pane).await;
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
+        if adopted {
+            notes.push("pane은 그대로 둔다(데려온 pane은 사람 것)".to_string());
+        }
         // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
         // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
         let uncopied = rec.kind == ThreadKind::Worktree
@@ -1423,7 +1604,7 @@ impl Host {
         }
         // 그 thread의 자리가 치워졌나: 작업 폴더 thread는 늘, worktree thread는 worktree를 지웠을 때
         let mut place_gone = rec.kind == ThreadKind::Dir;
-        if let Some(cwd) = &rec.cwd {
+        if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
             let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
             match conn
@@ -1440,6 +1621,14 @@ impl Host {
             {
                 Ok(AgentResponse::Cleanup(c)) => {
                     place_gone |= c.worktree_removed;
+                    // 사람이 남기라고 한 worktree(--keep-worktree)·집에 다 오지 않아 남긴 worktree와 그 branch는 청소하지
+                    // 않는다(참고 sweep `kept_worktree`, `clean` `copy_complete`)
+                    let kept = opts.keep_worktree || uncopied;
+                    let left = crate::lifecycle::Leftover {
+                        worktree: rec.kind == ThreadKind::Worktree && !kept && !c.worktree_removed,
+                        branch: rec.branch.is_some() && !kept && !c.branch_deleted,
+                    };
+                    let _ = self.update_rec(project, id, |r| r.leftover = Some(left));
                     notes.push(format!(
                         "worktree {}, branch {}",
                         if c.worktree_removed { "삭제" } else { "유지" },
@@ -1623,6 +1812,7 @@ mod tests {
             eval_cursor: 0,
             eval_batches: 0,
             eval_last_batch_ms: None,
+            leftover: None,
             created_at_ms: NOW - 3_600_000,
             updated_at_ms: NOW,
         }

@@ -18,6 +18,7 @@ dependencies = [
  "arboard",
  "clap",
  "clap_complete",
+ "hex",
  "libc",
  "objc2",
  "objc2-foundation",
@@ -25,6 +26,7 @@ dependencies = [
  "png",
  "portable-pty",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -64,6 +66,7 @@ version = "0.1.0"
 dependencies = [
  "aaa-proto",
  "anyhow",
+ "futures-util",
  "hex",
  "libc",
  "rcgen",
@@ -74,8 +77,10 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite",
  "tracing",
  "ulid",
+ "webpki-roots",
  "windows-sys 0.60.2",
 ]
 

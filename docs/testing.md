@@ -46,7 +46,7 @@
 | 머신 끊김 알림 | `[projects] outage_secs` |
 | coordinator nudge | `[projects] nudge_idle_secs`·`nudge_quiet_secs` |
 | 머신 건강 | `[health] every_s` |
-| routine | routine 머리 `schedule = "every 2s"` |
+| routine | routine 머리 `schedule = "every 2s"`(host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다, lab이 붙인다) |
 | 알림 묶음 | `[notify] debounce_secs`(초). 1초 밑은 `AAA_TEST_NOTIFY_DEBOUNCE_MS`(시험에서만, 웹 E2E 17·18 100. 설정 1초 길은 12) |
 | 웹 상태 사건 ping | `AAA_TEST_EVENTS_PING_MS`(시험에서만) |
 | thread brief를 치기 전 화면 멈춤(3초) | `AAA_TEST_BRIEF_SETTLE_MS`(시험에서만, 웹 E2E·m13 300. m13은 `spawn_host`로 띄운다) |

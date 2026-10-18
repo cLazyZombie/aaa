@@ -583,7 +583,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       selectAdjacentPane: (direction) => {
         // 고른 줄의 머신 안에서, 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
-        const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+        const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
         const groups = machines.filter((m) => m.connection === "connected").map((m) => machineRows(m, panes, shown));
         const rows = sel === null ? groups.find((g) => g.length > 0) : groups.find((g) => g.some((r) => r.keys.includes(sel)));
         if (!rows || rows.length === 0) return;
@@ -690,8 +690,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [keepScreenOn, holdScreen, viewing]);
   // 파일 보기(결정 20 D7, herdr-web-ui useFileViewer): 휴대폰 뒤로가 닫도록 기록 한 칸이다
   const { viewing: fileViewing, openFile, closeFile } = useFileViewer();
-  // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads)
-  const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator");
+  // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads).
+  // 보관한(지웠거나 이름을 바꾼) 프로젝트의 thread는 어디에도 보이지 않는다(참고 archive는 sidebar token을 지운다)
+  const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator" && t.project_status !== "archived");
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
   const viewProject = sel === "projects:" ? null : sel?.startsWith("project:") ? sel.slice(8) : undefined;
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
@@ -797,6 +798,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onProject={chooseProject}
             onThread={(t) => chooseThread(t, `project:${t.project}`)}
             onBack={() => choose(null)}
+            onPane={canControl ? (id) => choose(id) : undefined}
           />
         ) : current ? (
           <TermView

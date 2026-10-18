@@ -88,6 +88,45 @@ pub struct HostConfig {
     /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
+    pub update: UpdateSection,
+}
+
+/// 실행 파일 바꾸기(`aaa update`, plan §11·§8.180). 그 Mac의 host.toml·agent.toml 어느 쪽에 둬도 되고 둘 다 적으면 둘 다
+/// 지킨다(agent만 도는 Mac에는 host.toml이 없다). `aaa update`가 쓸 때 읽는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSection {
+    /// 고정한 version(`x.y.z`): 새 실행 파일이 이 version이어야 바꾼다. 비면 고정하지 않는다(major는 고정해야만 바뀐다)
+    pub version: String,
+    /// 보관하는 옛 실행 파일 수(`aaa update rollback`이 고른다, 1~100)
+    pub keep: u32,
+}
+
+impl Default for UpdateSection {
+    fn default() -> Self {
+        UpdateSection { version: String::new(), keep: 3 }
+    }
+}
+
+/// `x.y.z`(숫자 셋)
+pub fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut it = v
+        .split('.')
+        .map(|p| if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) { p.parse().ok() } else { None });
+    let parsed = (it.next()??, it.next()??, it.next()??);
+    it.next().is_none().then_some(parsed)
+}
+
+fn validate_update(u: &UpdateSection, out: &mut Vec<Invalid>) {
+    if !u.version.is_empty() && parse_version(&u.version).is_none() {
+        out.push(Invalid {
+            path: key(&["update", "version"]),
+            message: format!("x.y.z(숫자 셋) 형식이어야 한다: {:?}", u.version),
+        });
+    }
+    if !(1..=100).contains(&u.keep) {
+        out.push(Invalid { path: key(&["update", "keep"]), message: "1~100이어야 한다".into() });
+    }
 }
 
 /// 정해지지 않았을 때 쓰는 값(herdr-projects `[defaults]`). host는 쓸 때마다 다시 읽는다.
@@ -96,6 +135,9 @@ pub struct HostConfig {
 pub struct DefaultsSection {
     /// thread start에 profile이 없고 project.toml `thread_profile`도 없을 때 쓰는 profile(`aaa profile default threads`)
     pub thread_profile: String,
+    /// `aaa project open`에 profile이 없고 project.toml `coordinator_profile`도 없을 때 쓰는 profile
+    /// (`aaa profile default coordinator`)
+    pub coordinator_profile: String,
 }
 
 /// 새 pane(새 탭·나누기). 이름과 값은 herdr 0.9.5 `[terminal] new_cwd`를 따른다(plan §8.76).
@@ -202,6 +244,7 @@ impl Default for HostConfig {
             profiles: Default::default(),
             safety: Default::default(),
             defaults: DefaultsSection::default(),
+            update: UpdateSection::default(),
         }
     }
 }
@@ -476,6 +519,7 @@ pub struct AgentConfig {
     pub health: HealthSection,
     /// 옛 agent 설정 호환용. 새 host는 쓰지 않으며 시작 때 host로 옮기라는 경고를 낸다.
     pub profiles: std::collections::BTreeMap<String, Profile>,
+    pub update: UpdateSection,
     /// 머신별 실행 파일·환경만 덮어쓴다. model·effort·args는 host 정본을 따른다.
     pub harnesses: std::collections::BTreeMap<String, HarnessOverride>,
 }
@@ -496,6 +540,7 @@ impl Default for AgentConfig {
             selfcheck: SelfcheckSection::default(),
             health: HealthSection::default(),
             profiles: Default::default(),
+            update: UpdateSection::default(),
             harnesses: Default::default(),
         }
     }
@@ -709,23 +754,30 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
         if let Some(v) = l.trust_screens.as_deref().filter(|v| !matches!(*v, "coordinator" | "user")) {
             bad("trust_screens", format!("\"coordinator\" 또는 \"user\"여야 한다: {v:?}"));
         }
-        for name in l.thread_profiles.iter().flatten() {
-            if let Err(e) = profile_edit::validate_name(name) {
-                bad("thread_profiles", e);
+        for (key, list) in [("thread_profiles", &l.thread_profiles), ("coordinator_profiles", &l.coordinator_profiles)]
+        {
+            for name in list.iter().flatten() {
+                if let Err(e) = profile_edit::validate_name(name) {
+                    bad(key, e);
+                }
             }
         }
     }
-    let d = &c.defaults.thread_profile;
-    if !d.is_empty()
-        && let Err(e) = profile_edit::validate_name(d)
+    for (name, d) in
+        [("thread_profile", &c.defaults.thread_profile), ("coordinator_profile", &c.defaults.coordinator_profile)]
     {
-        out.push(Invalid { path: key(&["defaults", "thread_profile"]), message: e });
+        if !d.is_empty()
+            && let Err(e) = profile_edit::validate_name(d)
+        {
+            out.push(Invalid { path: key(&["defaults", name]), message: e });
+        }
     }
     for (name, profile) in &c.profiles {
         if let Err(message) = profile_edit::validate_profile(name, profile) {
             out.push(Invalid { path: key(&["profiles", name]), message });
         }
     }
+    validate_update(&c.update, &mut out);
     out
 }
 
@@ -786,6 +838,7 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
             }),
         }
     }
+    validate_update(&c.update, &mut out);
     out
 }
 

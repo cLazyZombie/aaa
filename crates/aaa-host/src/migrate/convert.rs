@@ -64,9 +64,7 @@ pub struct Outcome {
 fn setting_note(key: &str) -> Option<&'static str> {
     Some(match key {
         "name" => "aaa 프로젝트는 폴더 이름(slug) 하나다. 표시 이름 없음",
-        "mute" => "aaa 알림은 기기별 설정이다(D4). 프로젝트 mute 없음",
-        "coordinator_profile" => "aaa는 coordinator를 띄우지 않는다(사람이 프로젝트 폴더에서 agent를 띄운다)",
-        "paused" | "archived" => "aaa에 멈춤·보관이 없다(4장 G「멈추기·보관」 옮길 예정)",
+        "paused" | "archived" => "aaa 프로젝트 상태는 host 기록이다: 옮긴 뒤 `aaa project pause|archive`로 정한다",
         _ => return None,
     })
 }
@@ -161,6 +159,7 @@ pub(crate) fn thread_rec(
         eval_cursor: 0,
         eval_batches: 0,
         eval_last_batch_ms: None,
+        leftover: None,
         created_at_ms: created,
         updated_at_ms: aaa_common::util::parse_iso(&t.updated).unwrap_or(created),
     }
@@ -320,8 +319,10 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
             | "auto_resolve_days"
             | "goal"
             | "thread_profile"
+            | "coordinator_profile"
             | "repos"
-            | "nudge" => project_toml.push_str(&format!("{k} = {v}\n")),
+            | "nudge"
+            | "mute" => project_toml.push_str(&format!("{k} = {v}\n")),
             _ => {
                 let note = setting_note(k).unwrap_or("aaa에 같은 설정이 없다");
                 out.settings_not_mapped.push((k.clone(), front_value(v), note.to_string()));
@@ -570,7 +571,7 @@ mod e2e {
             &src,
             "PROJECT.md",
             "+++\nname = \"Demo\"\ngoal = \"배포\"\nmax_parallel_threads = 2\nstart_threads = \"auto\"\nauto_resolve_days = 3\n\
-             thread_profile = \"opus\"\ncoordinator_profile = \"opus\"\nnudge = false\n\n[[repos]]\npath = \"/srv/app\"\nmachine = \"mac-a\"\n\n\
+             thread_profile = \"opus\"\ncoordinator_profile = \"opus\"\nnudge = false\nmute = true\n\n[[repos]]\npath = \"/srv/app\"\nmachine = \"mac-a\"\n\n\
              [[repos]]\npath = \"/work/lib\"\n+++\n\n# 지침\n규칙\n",
         );
         put(&src, "AGENTS.md", "0.2 안내\n");
@@ -662,8 +663,8 @@ mod e2e {
             (set.goal.as_str(), set.max_parallel_threads, set.start_threads.as_deref(), set.auto_resolve_days),
             ("배포", 2, Some("auto"), 3)
         );
-        assert_eq!(set.thread_profile, "opus");
-        assert!(!set.nudge);
+        assert_eq!((set.thread_profile.as_str(), set.coordinator_profile.as_str()), ("opus", "opus"));
+        assert!(!set.nudge && set.mute);
         assert_eq!(
             set.repos,
             [
@@ -672,7 +673,7 @@ mod e2e {
             ]
         );
         let not: Vec<&str> = o.settings_not_mapped.iter().map(|(k, _, _)| k.as_str()).collect();
-        assert_eq!(not, ["coordinator_profile", "name"], "{not:?}");
+        assert_eq!(not, ["name"], "{not:?}");
         assert!(std::fs::read_to_string(dir.join("PROJECT.md")).unwrap().starts_with("# demo\n\n# 지침\n규칙"));
         assert!(dir.join("AGENTS.md").is_file() && dir.join("imported/AGENTS.herdr.md").is_file());
         assert!(dir.join("MEMORY.md").is_file() && !dir.join("decisions.md").exists());

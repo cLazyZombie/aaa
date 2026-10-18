@@ -1,5 +1,7 @@
 //! Front API의 같은 머신 경로 서버(UDS, peer UID 확인 → Local 역할). 클라이언트는 `aaa_common::front`다.
 //! front는 backend를 띄우지 않는다: host가 없으면 「host 없음」만 알린다(§4.2 2).
+//! 다른 기기 TUI는 웹 WebSocket(`/api/v1/front`, plan §6.2)으로 같은 처리(`serve_conn`)를 탄다: 권한은 그 기기 역할이고
+//! 기기를 취소하면 끝난다(`serve_device`).
 //!
 //! 연결 하나가 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고, 다른 front가 입력하면 옮겨 가며, 연결이 끝나면 풀린다.
 //! `PaneWatch`로 pane 화면(cell grid)을, 연결하면 workspace layout 변경을 사건으로 받는다.
@@ -50,6 +52,44 @@ fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: u
         ),
     );
     serde_json::to_vec(&FrontMsg::Res { id, result: Err::<FrontResponse, _>(e).into() }).expect("JSON 직렬화")
+}
+
+/// front 연결에서 오는 제어 frame(JSON). 같은 머신 socket과 웹 WebSocket이 같은 처리를 탄다(plan §6.2)
+pub(crate) trait FrontIn {
+    /// 다음 제어 frame. 연결이 끝나면 None. 취소에 안전해야 한다(기기 취소와 함께 기다린다)
+    async fn next_control(&mut self) -> Result<Option<Vec<u8>>>;
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> FrontIn for FrameRx<R> {
+    async fn next_control(&mut self) -> Result<Option<Vec<u8>>> {
+        loop {
+            match self.next().await? {
+                None => return Ok(None),
+                Some(Incoming::Control(b)) => return Ok(Some(b)),
+                Some(Incoming::Terminal(_)) => continue,
+            }
+        }
+    }
+}
+
+/// 한 front 연결의 신원(handshake 뒤)
+struct Conn {
+    /// 요청 권한
+    role: DeviceRole,
+    /// 목록·화면 구독에 쓰는 역할(보기 전용 표시). 같은 머신 연결은 thread 범위여도 Local로 본다(전과 같다)
+    view: DeviceRole,
+    actor: String,
+    front: crate::FrontRef,
+    /// 웹 기기 ID(그 기기를 취소하면 연결을 끝낸다)
+    device: Option<String>,
+}
+
+/// 연결이 끝난 까닭
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Ended {
+    Closed,
+    /// 이 기기를 취소했다(웹 연결은 4401로 닫는다)
+    Revoked,
 }
 
 /// 보기 권한인 까닭(CLI 연결의 actor로 가린다, plan §8.164). 자기 스크립트가 왜 막혔는지 알게 한다.
@@ -112,7 +152,10 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     {
         tracing::warn!(found = %f, claimed = %c, "CLI가 알린 세션과 연결한 프로세스의 pane이 다르다: pane을 따른다");
     }
-    let role_of = |s: &str| host.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role);
+    // 데려온 pane(`thread adopt`)은 띄울 때 역할이 없다: 끝나지 않은 thread면 그 역할이다
+    let role_of = |s: &str| {
+        host.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role).or_else(|| host.thread_of_pane(s).map(|r| r.role))
+    };
     let scoped_role =
         |r: Option<aaa_proto::Role>| matches!(r, Some(aaa_proto::Role::Evaluator | aaa_proto::Role::Worker));
     let (found_role, claimed_role) = (found.as_deref().and_then(role_of), session.as_deref().and_then(role_of));
@@ -132,6 +175,41 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         (Some(s), _) => format!("local:{client}@{s}"),
         _ => format!("local:{client}"),
     };
+    serve_conn(host, tx, rx, Conn { role, view: DeviceRole::Local, actor, front, device: None }).await.map(|_| ())
+}
+
+/// 웹 기기의 front 연결(다른 기기 TUI, plan §6.2). 권한은 그 기기 역할이고 actor는 웹 `call`과 같은 `device:<id>`다.
+/// 다른 기기에서 알린 aaa 세션(`AAA_SESSION_ID`)은 이 host의 세션이 아니라 쓰지 않는다.
+pub(crate) async fn serve_device(
+    host: Arc<Host>,
+    tx: FrameTx,
+    mut rx: impl FrontIn,
+    device: String,
+    role: DeviceRole,
+) -> Result<Ended> {
+    let first = tokio::time::timeout(Duration::from_secs(10), rx.next_control())
+        .await
+        .context("hello를 기다리다 시간이 지났다")??
+        .context("hello 전에 닫혔다")?;
+    let FrontMsg::Hello { proto, client, .. } = serde_json::from_slice(&first)? else {
+        bail!("hello가 와야 한다")
+    };
+    let agreed = match negotiate(FRONT_API, proto) {
+        Ok(v) => v,
+        Err(e) => {
+            tx.json(&FrontMsg::Reject(ErrorBody::new(ErrorCode::UnsupportedVersion, e.to_string()))).await?;
+            bail!("{e}");
+        }
+    };
+    let front = host.new_front(client);
+    tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
+    let actor = format!("device:{device}");
+    serve_conn(host, tx, rx, Conn { role, view: role, actor, front, device: Some(device) }).await
+}
+
+/// handshake 뒤 한 front 연결: 사건을 보내고 요청을 처리한다
+async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Conn) -> Result<Ended> {
+    let Conn { role, view, actor, front, device } = conn;
 
     // workspace layout 변경을 이 연결에 보낸다
     let layout_task = {
@@ -182,8 +260,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         let (tx, host, mut changed) = (tx.clone(), host.clone(), host.changed.subscribe());
         tokio::spawn(async move {
             loop {
-                let ev =
-                    FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(DeviceRole::Local) };
+                let ev = FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(view) };
                 if tx.json(&FrontMsg::Event(ev)).await.is_err() || changed.changed().await.is_err() {
                     break;
                 }
@@ -224,9 +301,29 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     };
     let mut watches: HashMap<String, (tokio::task::JoinHandle<()>, Arc<ScrollCtl>)> = HashMap::new();
     let mut waits: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-    let result: Result<()> = async {
-        while let Some(m) = rx.next().await? {
-            let Incoming::Control(b) = m else { continue };
+    // 기기를 취소하면 끝낸다(웹 상태 사건·터미널 연결과 같다). 듣기 시작한 뒤에 다시 본다
+    let mut revoked = host.device_revoked.subscribe();
+    let result: Result<Ended> = async {
+        if device.as_deref().is_some_and(|d| host.is_revoked(d)) {
+            return Ok(Ended::Revoked);
+        }
+        loop {
+            let m = tokio::select! {
+                m = rx.next_control() => m?,
+                r = revoked.recv(), if device.is_some() => {
+                    let dev = device.as_deref().unwrap_or_default();
+                    let mine = match r {
+                        Ok(gone) => gone == dev,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => host.is_revoked(dev),
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => false,
+                    };
+                    if mine {
+                        return Ok(Ended::Revoked);
+                    }
+                    continue;
+                }
+            };
+            let Some(b) = m else { return Ok(Ended::Closed) };
             let (id, body) = match read_req(&b)? {
                 ReqFrame::Req(id, body) => (id, body),
                 ReqFrame::Unknown(id, e) => {
@@ -237,7 +334,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
             };
             match body {
                 FrontRequest::PaneWatch { pane } => {
-                    let result = match host.pane_view_of(&pane, DeviceRole::Local) {
+                    let result = match host.pane_view_of(&pane, view) {
                         Some(_) => {
                             if let Some((old, _)) = watches.remove(&pane) {
                                 old.abort();
@@ -302,7 +399,6 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
                 }
             }
         }
-        Ok(())
     }
     .await;
     layout_task.abort();
@@ -555,7 +651,7 @@ mod tests {
     #[test]
     fn unknown_requests_get_an_error_answer() {
         let known = br#"{"t":"req","id":"1","body":{"op":"projects"}}"#;
-        assert!(matches!(read_req(known), Ok(ReqFrame::Req(id, FrontRequest::Projects)) if id == "1"));
+        assert!(matches!(read_req(known), Ok(ReqFrame::Req(id, FrontRequest::Projects { all: false })) if id == "1"));
         let removed = br#"{"t":"req","id":"2","body":{"op":"decision_add","project":"p","text":"x"}}"#;
         match read_req(removed) {
             Ok(ReqFrame::Unknown(id, e)) => {

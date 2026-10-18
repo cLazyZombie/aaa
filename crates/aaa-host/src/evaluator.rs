@@ -330,7 +330,12 @@ impl Host {
         let now = Instant::now();
         let ready: Vec<String> = {
             let mut m = self.eval_due.lock().unwrap();
-            let ready: Vec<String> = m.iter().filter(|(_, d)| **d <= now).map(|(p, _)| p.clone()).collect();
+            // 멈추거나 보관한 프로젝트는 그대로 두었다가 되살리면 넘긴다(ticker가 건너뛰는 것과 같게)
+            let ready: Vec<String> = m
+                .iter()
+                .filter(|(p, d)| **d <= now && self.project_status(p) == aaa_proto::ProjectStatus::Active)
+                .map(|(p, _)| p.clone())
+                .collect();
             for p in &ready {
                 m.remove(p);
             }

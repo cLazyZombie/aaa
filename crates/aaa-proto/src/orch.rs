@@ -46,6 +46,9 @@ pub enum ThreadKind {
     Worktree,
     /// repo 없는 작업 폴더(agent 작업 root 아래)
     Dir,
+    /// 사람이 이미 띄운 agent pane을 thread로 기록했다(`thread adopt`, herdr-projects `Kind::Adopted`). 자리를 만들지 않고
+    /// 그 pane이 있는 폴더에서 일한다. pane은 사람 것이라 다시 띄우지도 끝내지도 않는다
+    Adopted,
 }
 
 /// host profile에 그 머신 실행 경로·환경·hook을 적용한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
@@ -131,6 +134,28 @@ pub struct ThreadReady {
     /// 기준 commit
     pub base: Option<String>,
     pub launch: Launch,
+}
+
+/// 사람이 띄운 agent pane을 thread로 데려온다(`thread adopt`): 그 세션이 지금 있는 폴더에 작업 폴더를 만들고 brief.md를 쓴다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadAdopt {
+    pub project: String,
+    pub thread: String,
+    /// 데려올 세션(pane) ID
+    pub session: String,
+    pub brief: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadAdopted {
+    /// 세션이 지금 있는 폴더
+    pub cwd: String,
+    /// `<cwd>/.aaa/<project>-<thread>/`(brief.md·report.md·library/)
+    pub work_dir: String,
+    /// cwd가 git repo 안이면 그 top
+    pub repo: Option<String>,
+    /// 지금 branch(떼어 낸 HEAD면 None)
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -385,6 +410,71 @@ pub struct ProjectView {
     pub name: String,
     pub path: String,
     pub threads: u32,
+    /// FRONT_API 1.33. 옛 host는 보내지 않는다(active)
+    #[serde(default)]
+    #[ts(optional, as = "Option<ProjectStatus>")]
+    pub status: ProjectStatus,
+    /// `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
+    /// FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[ts(optional, as = "Option<String>")]
+    pub coordinator_profile: String,
+    /// coordinator가 쓸 수 있는 profile(safety `coordinator_profiles`, 사람만 바꾼다). 없으면 모두다. 웹 「coordinator 열기」가
+    /// 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.33
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub coordinator_profiles: Option<Vec<String>>,
+}
+
+/// 프로젝트 상태(herdr-projects `project::Status`). paused·archived는 ticker가 건너뛰고 `thread start`를 거부한다.
+/// archived는 목록에서 숨고 `project open`을 거부한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectStatus {
+    #[default]
+    Active,
+    Paused,
+    Archived,
+}
+
+impl ProjectStatus {
+    pub fn is_active(&self) -> bool {
+        *self == ProjectStatus::Active
+    }
+}
+
+/// `project pause|resume|archive|unarchive`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectAction {
+    Pause,
+    Resume,
+    Archive,
+    Unarchive,
+}
+
+/// 프로젝트 관리 명령(상태·삭제·이름·청소)의 결과: 바뀐 뒤 프로젝트와 사람이 읽을 줄
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectChange {
+    pub project: ProjectView,
+    pub notes: Vec<String>,
+}
+
+/// `project open`의 결과(herdr-projects `open`, FRONT_API 1.33)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectOpened {
+    pub project: ProjectView,
+    /// 띄운 coordinator, 또는 이미 돌던 것 중 가장 최근에 상태가 바뀐 것
+    pub pane: crate::PaneView,
+    /// 새로 띄웠다(false면 돌던 coordinator)
+    pub started: bool,
+    /// `pane` 말고도 도는 coordinator 수
+    pub others: u32,
+    /// coordinator를 띄운 profile(돌던 것이면 그 pane의 harness)
+    pub profile: String,
+    /// 그 pane이 든 workspace(layout에 없으면 빈 글)
+    pub workspace: String,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -526,6 +616,11 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<String>>", optional)]
     pub warnings: Vec<String>,
+    /// 그 프로젝트의 상태(FRONT_API 1.33, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+    /// 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
+    #[serde(default, skip_serializing_if = "ProjectStatus::is_active")]
+    #[ts(as = "Option<ProjectStatus>", optional)]
+    pub project_status: ProjectStatus,
 }
 
 /// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)

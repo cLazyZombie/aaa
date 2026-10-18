@@ -739,4 +739,126 @@ export default async function ({ page }) {
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
+
+  await step("프로젝트 멈춤·보관(herdr-projects sidebar.rs project_line 「paused」·archive, 차이 목록 4장 G #592): 멈추면 sidebar 프로젝트 줄과 프로젝트 고르기가 다시 불러오지 않고 「멈춤」, 되살리면 묶음 줄로, 보관하면 그 프로젝트의 thread 줄과 프로젝트가 사라진다", async () => {
+    const $ = (id) => `[data-testid="${id}"]`;
+    aaa("project", "create", "side");
+    fs.writeFileSync(`${root}/side-task.txt`, "noreport\n");
+    const t = aaa("thread", "start", "side", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/side-task.txt`);
+    const head = `${$("project-labA-side")} .project-select`;
+    await domIs(page, "side 프로젝트 줄", (q) => document.querySelector(q) !== null, head);
+    aaa("project", "pause", "side");
+    await domIs(page, "멈춤 줄", (q) => document.querySelector(q)?.getAttribute("title") === "side · 멈춤", head);
+    await shot(page, "desktop-project-paused");
+    await page.getByTestId("more").click();
+    const toProjects = hashIs(page, "#projects");
+    await page.getByTestId("projects-item").click();
+    await toProjects;
+    await domIs(page, "프로젝트 고르기의 멈춤", (q) => document.querySelector(q)?.textContent.includes("멈춤"), $("project-open-side"));
+    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    aaa("project", "resume", "side");
+    await domIs(page, "되살린 줄", (q) => document.querySelector(q) && !document.querySelector(q).getAttribute("title").includes("멈춤"), head);
+    aaa("project", "archive", "side");
+    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-labA-side"), $(`thread-side-${t.id}`)]);
+    await page.getByTestId("more").click();
+    const toProjects2 = hashIs(page, "#projects");
+    await page.getByTestId("projects-item").click();
+    await toProjects2;
+    // 목록을 받은 뒤(줄이 있거나 「프로젝트 없음」) side가 없다
+    await domIs(page, "프로젝트 고르기에 side가 없다", ([list, side]) => document.querySelector(`${list} [data-testid^="project-open-"], ${list} [role=status]`) !== null && !document.querySelector(side), [$("projects"), $("project-open-side")]);
+    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    aaa("project", "delete", "side", "--force");
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
+  });
+
+  await step("coordinator 열기(herdr-projects popup.rs Threads `c` → profile_picker, 차이 목록 4장 G #592): 프로젝트 머리 「coordinator」가 host 머신 profile 가운데 허용한 것을 기본부터 보이고, 고르면 띄워 그 pane을 열며 도는 것이 있으면 그것을 연다. 허용 목록 밖은 고를 것이 없다고 말하고, 고르는 사이 막히면 host 거부 글을 보인다", async () => {
+    const $ = (id) => `[data-testid="${id}"]`;
+    const toml = `${root}/c/host.toml`;
+    const plain = fs.readFileSync(toml, "utf8");
+    // safety는 host가 쓸 때마다 host.toml에서 다시 읽는다(사람만 바꾸는 값이라 시험은 파일을 바로 쓴다)
+    const allowOnly = (names) => fs.writeFileSync(toml, `${plain}[safety.demo]\ncoordinator_profiles = ${JSON.stringify(names)}\n`);
+    // 응답 몸은 {ok: …} 또는 {err: {code, message}}
+    const openCall = () =>
+      page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "project_open").then((r) => r.json());
+    const toDemoScreen = async () => {
+      await page.getByTestId("more").click();
+      const toProjects = hashIs(page, "#projects");
+      await page.getByTestId("projects-item").click();
+      await toProjects;
+      const toDemo = hashIs(page, "#project=demo");
+      await page.getByTestId("project-open-demo").click();
+      await toDemo;
+    };
+    const button = page.getByTestId("project-coordinator");
+    const fake = page.getByRole("menuitem", { name: /^fake/ });
+    aaa("project", "set", "demo", "coordinator_profile", "fake");
+    await toDemoScreen();
+    // 1. 허용한 profile이 host 머신에 없으면 메뉴 대신 그 말(참고 「No profile is allowed here」)
+    allowOnly(["nope"]);
+    await button.click();
+    await domIs(page, "허용된 profile 없음", (q) => document.querySelector(q)?.textContent.includes("(허용: nope)"), $("project-coordinator-error"));
+    if ((await page.getByRole("menu").count()) !== 0) throw new Error("고를 것이 없는데 메뉴가 열렸다");
+    // 2. 프로젝트 기본 coordinator profile이 맨 위(「기본」). 고르는 사이 허용 목록이 바뀌면 host가 거부하고 화면은 그대로
+    fs.writeFileSync(toml, plain);
+    await button.click();
+    await focusIs(page, "메뉴 첫 항목", '[role="menu"] [role="menuitem"]');
+    await domIs(page, "오류 줄 지움", (q) => !document.querySelector(q), $("project-coordinator-error"));
+    const first = await page.getByRole("menu").locator('[role="menuitem"]').first().innerText();
+    if (first.replace(/\s+/g, " ") !== "fake 기본") throw new Error(`첫 항목 ${JSON.stringify(first)}`);
+    await shot(page, "desktop-coordinator-menu");
+    allowOnly(["nope"]);
+    const refused = openCall();
+    await fake.click();
+    if ((await refused).err?.code !== "forbidden") throw new Error(`거부가 아니다: ${JSON.stringify(await refused)}`);
+    await domIs(page, "host 거부 글", (q) => document.querySelector(q)?.textContent.includes("coordinator에 허용되지 않았다"), $("project-coordinator-error"));
+    if ((await page.evaluate(() => location.hash)) !== "#project=demo") throw new Error("거부됐는데 화면이 바뀌었다");
+    fs.writeFileSync(toml, plain);
+    // 3. 띄우기: 그 pane을 열고, host 기록은 역할 coordinator·이름 「demo coordinator」, workspace demo의 탭 coordinator
+    await button.click();
+    const started = openCall();
+    await fake.click();
+    const one = (await started).ok;
+    if (!one.started || one.profile !== "fake" || one.workspace !== "demo") throw new Error(`띄우기 ${JSON.stringify(one)}`);
+    await hashIs(page, `#pane=${encodeURIComponent(one.pane.id)}`);
+    await until("coordinator 터미널", async () => (await screenText(page)).includes("fake>"));
+    const mine = () => aaa("pane", "list").panes.filter((x) => x.name.startsWith("demo coordinator"));
+    if (JSON.stringify(mine().map((x) => [x.id, x.role])) !== JSON.stringify([[one.pane.id, "coordinator"]])) throw new Error(`pane ${JSON.stringify(mine())}`);
+    await inList(page, "pane-demo coordinator");
+    await shot(page, "desktop-coordinator-pane");
+    // 4. 도는 것이 있으면 띄우지 않고 그 pane(뒤로 가기는 프로젝트 화면)
+    const back = hashIs(page, "#project=demo");
+    await page.goBack();
+    await back;
+    await button.click();
+    const again = openCall();
+    await fake.click();
+    const two = (await again).ok;
+    if (two.started || two.pane.id !== one.pane.id) throw new Error(`다시 열기 ${JSON.stringify(two)}`);
+    await hashIs(page, `#pane=${encodeURIComponent(one.pane.id)}`);
+    if (mine().length !== 1) throw new Error(`coordinator가 늘었다: ${JSON.stringify(mine())}`);
+    // 5. 휴대폰 폭: 단추는 표지만, 머리가 옆으로 밀리지 않고 고르기는 아래 sheet
+    await page.setViewportSize({ width: 390, height: 844 });
+    const back2 = hashIs(page, "#project=demo");
+    await page.goBack();
+    await back2;
+    // 표지는 16px 그대로(단추 padding에 눌리지 않는다)
+    await domIs(page, "휴대폰 폭 단추는 표지만", (q) => { const b = document.querySelector(q)?.getBoundingClientRect(); const i = document.querySelector(`${q} svg`)?.getBoundingClientRect(); return b && b.width > 0 && b.width < 60 && i.width === 16; }, $("project-coordinator"));
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
+    await button.click();
+    const sheet = page.getByRole("dialog", { name: "coordinator 열기" });
+    await sheet.waitFor();
+    await shot(page, "phone-coordinator-menu");
+    await sheet.getByRole("button", { name: "취소" }).click();
+    await domIs(page, "sheet 닫힘", () => !document.querySelector('[role="dialog"]'));
+    await page.setViewportSize({ width: 1280, height: 800 });
+    aaa("pane", "close", one.pane.id);
+    const toPicker = hashIs(page, "#projects");
+    await page.getByRole("button", { name: "프로젝트 목록" }).click();
+    await toPicker;
+    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    await page.getByTestId("pane-t1").click();
+    await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
+  });
 }

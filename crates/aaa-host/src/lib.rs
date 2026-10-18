@@ -3,6 +3,7 @@
 //! - host는 자식 프로세스를 만들지 않는다. 예외: tailscale CLI, 개발 모드의 로컬 agent 기동(§4.2).
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
+mod adopt;
 mod attach;
 mod brief;
 mod brief_text;
@@ -17,9 +18,11 @@ mod health;
 mod http;
 mod inbox;
 mod library;
+mod lifecycle;
 pub mod link;
 pub mod migrate;
 mod notify;
+mod open;
 mod orch;
 mod output;
 mod pr;
@@ -1041,8 +1044,25 @@ impl Host {
                     .collect();
                 Ok(FrontResponse::Panes { panes })
             }
-            FrontRequest::ProjectCreate { name } => self.project_create(&name, actor),
-            FrontRequest::Projects => Ok(FrontResponse::Projects { projects: self.projects() }),
+            FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile } => self
+                .project_create(
+                    &name,
+                    orch::ProjectOptions { goal, repos, thread_profile, coordinator_profile },
+                    actor,
+                ),
+            FrontRequest::ProjectSet { project, key, value } => self.project_set(&project, &key, &value, actor),
+            FrontRequest::Projects { all } => {
+                Ok(FrontResponse::Projects { projects: if all { self.projects_all() } else { self.projects() } })
+            }
+            FrontRequest::ProjectLifecycle { project, action } => self.project_lifecycle(&project, action, actor).await,
+            FrontRequest::ProjectDelete { project, force } => self.project_delete(&project, force, actor).await,
+            FrontRequest::ProjectRename { project, to, dry_run } => {
+                self.project_rename(&project, &to, dry_run, actor).await
+            }
+            FrontRequest::ProjectSweep { project, dry_run } => self.project_sweep(&project, dry_run, actor).await,
+            FrontRequest::ProjectOpen { project, profile, new } => {
+                self.project_open(&project, profile, new, actor).await
+            }
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
@@ -1077,6 +1097,9 @@ impl Host {
                     v.warnings.extend(warning);
                     FrontResponse::Thread(v)
                 })
+            }
+            FrontRequest::ThreadAdopt { project, pane, title, task } => {
+                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -1679,6 +1702,10 @@ impl Host {
             if let Some(p) = i.panes.get_mut(new) {
                 p.replaced = chain.split_off(skip);
             }
+        }
+        // 데려온 thread는 그 pane이 정본이다(다시 띄울 launch가 없다): 새 pane이 대신하면 thread도 따라간다
+        if let Some(r) = self.thread_of_pane(old).filter(|r| r.kind == aaa_proto::ThreadKind::Adopted) {
+            let _ = self.update_rec(&r.project, &r.id, |x| x.pane = Some(new.to_string()));
         }
         {
             let mut ws = self.workspaces.lock().unwrap();

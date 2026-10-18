@@ -1651,8 +1651,9 @@ fn safety_and_profiles_by_a_person() {
     // 틀린 값은 사람인지 묻기 전에 알린다
     let o = w.h.run(&["safety", "set", "demo", "start_threads", "now"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("propose·auto"), "{o:?}");
-    let o = w.h.run(&["profile", "allow", "coordinator", "fake"]);
-    assert!(String::from_utf8_lossy(&o.stderr).contains("coordinator를 띄우지 않는다"), "{o:?}");
+    let o = w.h.run(&["profile", "allow", "coordinator", "nope"]);
+    // 없는 이름은 사람인지 묻기 전에(정의는 host.toml 한 곳, §8.170)
+    assert!(String::from_utf8_lossy(&o.stderr).contains("host.toml에 profile `nope`가 없다"), "{o:?}");
     // 사람이 y가 아니면 바꾸지 않는다
     let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "n")], T);
     assert!(out.contains("권한 건너뛰기") && out.contains("바꾸지 않았다"), "{out}");
@@ -2532,6 +2533,551 @@ fn parallel_threads_only_warn() {
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
     assert!(out.starts_with("경고: 열린 thread가 이미 2개다(project.toml max_parallel_threads 2)"), "{out}");
+}
+
+/// 프로젝트 만들기 옵션과 설정 바꾸기(4장 G #589·#591, herdr-projects `new`·`set`): 준 값만 project.toml에 적고, 틀린 값이나
+/// 허용되지 않은 thread profile이면 폴더를 만들지 않는다. `set`은 다른 줄을 두고 값 하나만 바꾼다.
+#[test]
+fn project_create_options_and_set() {
+    let w = world();
+    let toml = |p: &str| std::fs::read_to_string(w.projects.join(p).join("project.toml")).unwrap();
+    // 틀린 값·허용되지 않은 profile: 폴더가 생기지 않는다
+    let e = w.h.json(&["project", "create", "bad1", "--thread-profile=a b"]).unwrap_err();
+    assert!(e.contains("profile"), "{e}");
+    let e = w.h.json(&["project", "create", "bad2", "--thread-profile", "other"]).unwrap_err();
+    assert!(e.contains("허용되지 않았다"), "{e}");
+    assert!(!w.projects.join("bad1").exists() && !w.projects.join("bad2").exists());
+
+    let repo = path_str(&w.repo);
+    w.h.ok(&[
+        "project",
+        "create",
+        "shop",
+        "--goal",
+        "가게를 연다",
+        "--repo",
+        repo,
+        "--repo",
+        "/srv/api@labB",
+        "--thread-profile",
+        "fake",
+        "--coordinator-profile",
+        "claude",
+    ]);
+    let s = toml("shop");
+    for want in [
+        "goal = \"가게를 연다\"",
+        "thread_profile = \"fake\"",
+        "coordinator_profile = \"claude\"",
+        "machine = \"labB\"",
+    ] {
+        assert!(s.contains(want), "{want}\n{s}");
+    }
+    let canon = std::fs::canonicalize(&w.repo).unwrap();
+    assert!(s.contains(&format!("path = \"{}\"", canon.display())), "{s}");
+    // 안 준 값은 적지 않는다(쓸 때 기본 사슬로 푼다)
+    assert_eq!(toml("demo"), "schema = 1\n");
+    // profile 없이 시작한 thread는 프로젝트 기본 profile로 뜬다
+    let t =
+        w.h.ok(&["thread", "start", "shop", "--title", "기본", "--kind", "dir", "--task-file", &w.task("t.txt", "x")]);
+    assert_eq!(t["profile"], "fake", "{t}");
+
+    // set: 값 하나만, 사람이 단 주석은 그대로
+    std::fs::write(w.projects.join("shop/project.toml"), format!("# 사람이 단 주석\n{}", toml("shop"))).unwrap();
+    let o = w.h.run(&["project", "set", "shop", "goal", "가게를 넓힌다"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "shop: goal = 가게를 넓힌다\n");
+    w.h.ok(&["project", "set", "shop", "max_parallel_threads", "3"]);
+    // 상대 경로는 친 셸의 cwd 기준
+    std::fs::create_dir_all(w.lab.root.join("lib")).unwrap();
+    let o = w.h.cmd(&["project", "set", "shop", "repos.add", "lib"]).current_dir(&w.lab.root).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    w.h.ok(&["project", "set", "shop", "repos.remove", "/srv/api@labB"]);
+    let s = toml("shop");
+    assert!(
+        s.starts_with("# 사람이 단 주석\n")
+            && s.contains("goal = \"가게를 넓힌다\"")
+            && s.contains("max_parallel_threads = 3"),
+        "{s}"
+    );
+    let lib = std::fs::canonicalize(w.lab.root.join("lib")).unwrap();
+    assert!(s.contains(&format!("path = \"{}\"", lib.display())) && !s.contains("labB"), "{s}");
+    for (k, v, want) in [
+        ("max_parallel_threads", "0", "1~1000"),
+        ("thread_profile", "other", "허용되지 않았다"),
+        ("name", "새", "project rename"),
+        ("colour", "red", "repos.add"),
+    ] {
+        let e = w.h.json(&["project", "set", "shop", k, v]).unwrap_err();
+        assert!(e.contains(want), "{k}={v}: {e}");
+    }
+    assert_eq!(toml("shop"), s, "거부한 set은 파일을 바꾸지 않는다");
+}
+
+/// 프로젝트 멈추기·보관·이름 바꾸기·삭제·청소(4장 G #592, herdr-projects `pause`·`archive`·`rename`·`delete`·`sweep`).
+#[test]
+fn project_lifecycle() {
+    // 가짜 gh: 청소가 branch를 지우는 것은 PR이 병합됐고 로컬 끝이 병합된 head일 때뿐이다(아래 청소 단계)
+    let w = world_setup("tick_secs = 3600\npr_poll_secs = 3600\n", false, fake_gh);
+    let names = |all: bool| -> Vec<(String, String)> {
+        let mut a = vec!["project", "list"];
+        if all {
+            a.push("--all");
+        }
+        w.h.ok(&a)["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["name"].as_str().unwrap().to_string(), p["status"].as_str().unwrap().to_string()))
+            .collect()
+    };
+    let notes = |v: &Value| {
+        v["notes"].as_array().unwrap().iter().map(|n| n.as_str().unwrap().to_string()).collect::<Vec<_>>().join("\n")
+    };
+    let config_errors = |p: &str| {
+        w.h.ok(&["inbox", "list", p, "--all", "--peek"])["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["item_kind"] == "config-error")
+            .count()
+    };
+    w.h.ok(&["project", "create", "life"]);
+    let dir = w.projects.join("life");
+    let t = w.h.ok(&[
+        "thread",
+        "start",
+        "life",
+        "--title",
+        "일",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("l.txt", "x"),
+    ]);
+    let id = t["id"].as_str().unwrap().to_string();
+    let pane = t["pane"].as_str().unwrap().to_string();
+
+    // 멈춤: ticker가 건너뛰고(깨진 project.toml을 알리지 않는다) thread start를 거부한다
+    let v = w.h.ok(&["project", "pause", "life"]);
+    assert!(notes(&v).contains("이제 멈춤"), "{v}");
+    assert!(names(false).contains(&("life".into(), "paused".into())));
+    // front가 다시 묻지 않고 알게 thread에도 실린다(웹 sidebar 「멈춤」)
+    assert_eq!(w.h.ok(&["thread", "show", "life", &id])["project_status"], "paused");
+    std::fs::write(dir.join("project.toml"), "schema = \n").unwrap();
+    w.h.ok(&["ticker", "tick"]);
+    assert_eq!(config_errors("life"), 0, "멈춘 프로젝트는 ticker가 보지 않는다");
+    let e =
+        w.h.json(&[
+            "thread",
+            "start",
+            "life",
+            "--title",
+            "또",
+            "--profile",
+            "fake",
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task("l2.txt", "x"),
+        ])
+        .unwrap_err();
+    assert!(e.contains("멈춰"), "{e}");
+    w.h.ok(&["project", "resume", "life"]);
+    assert!(w.h.ok(&["thread", "show", "life", &id]).get("project_status").is_none(), "진행 중이면 없다");
+    w.h.ok(&["ticker", "tick"]);
+    assert_eq!(config_errors("life"), 1, "되살리면 ticker가 본다");
+    std::fs::write(dir.join("project.toml"), "schema = 1\n").unwrap();
+
+    // 보관: 살아 있는 pane을 닫고 목록에서 숨긴다. 멈추기·되살리기는 거부, unarchive로 푼다
+    let v = w.h.ok(&["project", "archive", "life"]);
+    assert!(notes(&v).contains(&format!("{id}의 pane {pane}을 닫았다")), "{v}");
+    wait_for("thread pane 닫힘", T, || {
+        (!w.h.pane(&pane)["state"].as_str().is_some_and(|s| s == "running")).then_some(())
+    });
+    assert!(!names(false).iter().any(|(n, _)| n == "life"));
+    assert!(names(true).contains(&("life".into(), "archived".into())));
+    for verb in ["pause", "resume"] {
+        let e = w.h.json(&["project", verb, "life"]).unwrap_err();
+        assert!(e.contains("unarchive"), "{verb}: {e}");
+    }
+    w.h.ok(&["project", "unarchive", "life"]);
+    assert!(names(false).contains(&("life".into(), "active".into())));
+
+    // 이름 바꾸기: 끝나지 않은 thread·도는 coordinator가 있으면 거부, dry-run은 바꾸지 않는다
+    let e = w.h.json(&["project", "rename", "life", "shop2"]).unwrap_err();
+    assert!(e.contains(&id), "{e}");
+    w.h.ok(&["thread", "resolve", "life", &id]);
+    let coord = w.h.new_pane(None, "labA", None, &["/bin/sh"], Some(path_str(&dir)));
+    wait_for("coordinator pane", T, || w.h.pane(&coord)["cwd"].is_string().then_some(()));
+    let e = w.h.json(&["project", "rename", "life", "shop2"]).unwrap_err();
+    assert!(e.contains("coordinator") && e.contains(&coord), "{e}");
+    let e = w.h.json(&["project", "delete", "life"]).unwrap_err();
+    assert!(e.contains("coordinator") && e.contains("--force"), "{e}");
+    w.h.ok(&["pane", "kill", &coord]);
+    wait_for("coordinator 끝", T, || (w.h.pane(&coord)["state"] != "running").then_some(()));
+    let v = w.h.ok(&["project", "rename", "life", "shop2", "--dry-run"]);
+    assert!(notes(&v).contains("--dry-run") && dir.exists(), "{v}");
+    let v = w.h.ok(&["project", "rename", "life", "shop2"]);
+    assert_eq!(v["project"]["name"], "shop2", "{v}");
+    let moved = w.projects.join("shop2");
+    assert!(!dir.exists() && moved.join("PROJECT.md").is_file());
+    let agents = std::fs::read_to_string(moved.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("aaa context shop2") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
+    let th = w.h.ok(&["thread", "show", "shop2", &id]);
+    assert_eq!((th["project"].as_str(), th["status"].as_str()), (Some("shop2"), Some("resolved")), "{th}");
+    assert_eq!(config_errors("shop2"), 1, "inbox 기록도 옮긴다");
+    assert_eq!(w.h.ok(&["thread", "list", "life"])["threads"].as_array().unwrap().len(), 0);
+
+    // 삭제: 휴지통으로, host 기록은 그 안에. 같은 이름으로 다시 만들면 옛 thread가 없다
+    let v = w.h.ok(&["project", "delete", "shop2"]);
+    let trash = PathBuf::from(v["project"]["path"].as_str().unwrap());
+    assert!(trash.starts_with(w.projects.join(".trash")) && trash.join("PROJECT.md").is_file(), "{v}");
+    let rec: Value = serde_json::from_str(&std::fs::read_to_string(trash.join("aaa-records.json")).unwrap()).unwrap();
+    assert_eq!(rec["threads"].as_array().unwrap().len(), 1, "{rec}");
+    assert!(!names(true).iter().any(|(n, _)| n == "shop2" || n.starts_with('.')));
+    w.h.ok(&["project", "create", "shop2"]);
+    assert_eq!(w.h.ok(&["thread", "list", "shop2"])["threads"].as_array().unwrap().len(), 0);
+    assert_eq!(config_errors("shop2"), 0);
+
+    // 청소: resolve가 남긴 worktree(고친 파일)·branch를 다시 정리한다(force 없음). branch는 참고 sweep `Orphan::Branch`와
+    // resolve처럼 PR이 병합됐고 로컬 끝이 병합된 head일 때만 지운다: 그 PR을 가짜 gh에 둔다(조회는 보고 때와 resolve 때)
+    let stub = w.lab.root.join("gh");
+    git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
+    let task = w.task("dirty.txt", "dirty 파일을 남긴다");
+    let base = git(&w.repo, &["rev-parse", "origin/main"]);
+    let branch = "aaa/demo/t-0001-keep";
+    std::fs::write(stub.join("view-31.json"), pr_view_json(branch, "OPEN", "", &base)).unwrap();
+    std::fs::write(
+        stub.join(format!("list-{}.json", branch.replace('/', "_"))),
+        r#"[{"url":"https://github.com/o/app/pull/31","state":"OPEN","createdAt":"2026-10-18T00:00:00Z"}]"#,
+    )
+    .unwrap();
+    let v = w.start(&["--title", "keep", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task]);
+    assert_eq!(v["branch"], branch, "{v}");
+    let wid = v["id"].as_str().unwrap().to_string();
+    let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
+    w.wait_show("보고와 PR", &wid, |v| v["report_hash"].is_string() && v["pr"]["state"] == "OPEN");
+    // 병합됐다(head는 로컬 branch 끝): resolve가 한 번 더 보고 기록한다. 고친 파일이 있어 worktree도 branch도 남는다
+    std::fs::write(stub.join("view-31.json"), pr_view_json(branch, "MERGED", "", &base)).unwrap();
+    let v = w.h.ok(&["thread", "resolve", "demo", &wid]);
+    assert_eq!(v["pr"]["state"], "MERGED", "{v}");
+    assert!(cwd.join("dirty.txt").exists());
+    let v = w.h.ok(&["project", "sweep", "demo", "--dry-run"]);
+    let listed = notes(&v);
+    assert!(listed.contains(&wid) && listed.contains("worktree") && listed.contains("branch aaa/demo/"), "{v}");
+    // 아직 고친 파일이 있으면 남긴다
+    let v = w.h.ok(&["project", "sweep", "demo", "--yes"]);
+    assert!(notes(&v).contains("남겼다") && cwd.exists(), "{v}");
+    // 사람이 worktree를 직접 지웠다: 이미 없는 worktree는 지운 것으로 보고 병합된 branch를 지운다
+    git(&w.repo, &["worktree", "remove", "--force", path_str(&cwd)]);
+    let v = w.h.ok(&["project", "sweep", "demo", "--yes"]);
+    assert!(notes(&v).contains("치웠다"), "{v}");
+    assert!(!cwd.exists());
+    assert_eq!(git(&w.repo, &["branch", "--list", "aaa/demo/*"]), "", "병합된 head와 같은 branch는 지운다");
+    assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
+}
+
+/// coordinator safety(herdr-projects `check_allowed`·`Safety::launch_args`의 coordinator 몫): 사람이 터미널에서
+/// `profile allow coordinator`로 정한 목록에 없는 profile은 기본값이어도 거부하고, yolo면 coordinator를 harness의 권한 건너뛰기
+/// 인자로 띄운다(host가 profile을 풀며 붙인다, `resolved_coordinator_profile`). safety가 없는 프로젝트는 그대로다.
+#[test]
+fn project_open_follows_coordinator_safety() {
+    let w = world();
+    let host_toml = w.h.cfg.join("host.toml");
+    let mut text = std::fs::read_to_string(&host_toml).unwrap();
+    text.push_str("\n[safety.demo]\nyolo = true\n");
+    std::fs::write(&host_toml, text).unwrap();
+    let o = w.h.cmd(&["profile", "allow", "coordinator", "resumable", "--project", "demo"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
+    let out = w.h.in_terminal(&["profile", "allow", "coordinator", "resumable", "--project", "demo"], &[], T);
+    assert!(out.contains("coordinator는 `demo`에서 resumable를 쓸 수 있다"), "{out}");
+    let show = w.h.ok(&["safety", "show", "demo"]);
+    let row = show["rows"].as_array().unwrap().iter().find(|r| r["key"] == "coordinator_profiles").unwrap().clone();
+    assert_eq!((row["value"].as_str(), row["source"].as_str()), (Some("resumable"), Some("프로젝트")), "{show}");
+    // 목록에 없으면 기본값(claude)이어도 아무것도 띄우지 않는다
+    let e = w.h.json(&["project", "open", "demo"]).expect_err("허용되지 않은 profile");
+    assert!(e.contains("coordinator에 허용되지 않았다") && e.contains("허용: resumable"), "{e}");
+    let v = w.h.ok(&["project", "open", "demo", "--profile", "resumable"]);
+    let argv = v["pane"]["argv"].to_string();
+    assert!(argv.contains("--dangerously-skip-permissions"), "yolo는 coordinator에도 닿는다: {argv}");
+    // safety가 없는 프로젝트는 인자가 없다
+    w.h.ok(&["project", "create", "p2"]);
+    let v = w.h.ok(&["project", "open", "p2", "--profile", "resumable"]);
+    assert!(!v["pane"]["argv"].to_string().contains("dangerously"), "{v}");
+}
+
+/// 사람이 띄운 가짜 Claude(실행 파일 이름이 `claude`라 aaa가 화면으로 상태를 본다, hook settings 없음). 띄운 인자를 보이고
+/// SessionStart hook으로 대화 ID를 알린 뒤, Claude처럼 입력 상자를 그려 Enter마다 받은 줄을 남긴다. brief 안내를 받으면
+/// 그 pane 안에서 자기 thread에 Next 줄을 더해 보고(thread 범위 시험) 결과를 `probe.txt`에, 보고를 report.md에 쓴다.
+/// 그 턴은 실제 Claude처럼 입력 상자 위에 「Working… esc to interrupt」를 다음 입력까지 그린다: hook이 없는 pane은 화면
+/// 감지의 작업 중이 받았다는 사건이다(없으면 host가 `accept_wait_ms`를 다 기다린다). `@BIN@`은 aaa 실행 파일이다.
+const ADOPT_AGENT: &str = r#"#!/bin/sh
+stty -icanon -echo min 1 time 0
+R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
+log="args: $*
+"
+"@BIN@" hook --agent claude '{"hook_event_name":"SessionStart","session_id":"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d","source":"startup"}'
+buf=''; st=''
+draw() { printf '\033[2J\033[H%s%s%s\n\342\235\257 %s\n%s\n' "$log" "$st" "$R" "$buf" "$R"; }
+draw
+while :; do
+  c=$(dd bs=4096 count=1 2>/dev/null)
+  if [ -z "$c" ]; then
+    case "$buf" in
+      *brief.md*)
+        st=$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n_'); st=${st%_}
+        draw
+        dir=$(dirname "$(printf '%s' "$buf" | sed 's/를 읽고.*//')")
+        id=$(basename "$dir"); id=${id#demo-}
+        "@BIN@" thread next demo "$id" --add probe > "$dir/probe.tmp" 2>&1; echo "rc=$?" >> "$dir/probe.tmp"
+        mv "$dir/probe.tmp" "$dir/probe.txt"
+        printf '## Report\n데려온 pane이 보고했다\n\n## Next\n- 확인\n' > "$dir/report.md.tmp"
+        mv "$dir/report.md.tmp" "$dir/report.md" ;;
+    esac
+    log="$log$(printf 'got: %s' "$buf")
+"
+    buf=''
+  else
+    buf="$buf$c"; st=''
+  fi
+  draw
+done
+"#;
+
+/// 이미 띄운 agent pane을 thread로 데려온다(herdr-projects `thread adopt`, 4장 G #598): Claude·Codex가 아닌 pane·coordinator
+/// pane·빈 제목은 거부, 데려오면 pane의 폴더·repo·branch를 적고 brief를 안내해 보고를 받는다. 그 pane 안 CLI는 thread
+/// 범위(보기만)다. 같은 pane은 두 번 데려오지 않고, 다시 시작하지 않는다. 재부팅 뒤에는 사람이 띄운 pane처럼 대화를 이어
+/// 띄우고 thread가 새 pane을 따라간다. resolve는 pane을 끝내지 않는다. 기다림은 기록·출력·파일이다.
+#[test]
+fn thread_adopt_existing_pane() {
+    let mut w = world();
+    let bin_dir = w.lab.root.join("human");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let claude = bin_dir.join("claude");
+    std::fs::write(&claude, ADOPT_AGENT.replace("@BIN@", lab::BIN)).unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    git(&w.repo, &["checkout", "-q", "-b", "feature-x"]);
+    let pane = w.h.new_pane(None, "labA", Some("내 claude"), &[path_str(&claude)], Some(path_str(&w.repo)));
+    let sid = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    wait_for_diag(
+        "대화 ID(SessionStart hook)",
+        T,
+        || (w.h.pane(&pane)["agent"]["harness_session"] == sid).then_some(()),
+        || format!("{}", w.h.pane(&pane)),
+    );
+    let refused = |args: &[&str]| {
+        let mut a = vec!["thread", "adopt", "demo"];
+        a.extend_from_slice(args);
+        w.h.json(&a).expect_err("거부돼야 한다")
+    };
+    let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
+    let e = refused(&["--pane", &shell, "--title", "셸"]);
+    assert!(e.contains("Claude·Codex pane이 아니다"), "{e}");
+    let coord = w.h.new_pane(None, "labA", None, &[path_str(&claude)], Some(path_str(&w.projects.join("demo"))));
+    let e = refused(&["--pane", &coord, "--title", "coordinator"]);
+    assert!(e.contains("`demo`의 coordinator다"), "{e}");
+    let e = refused(&["--pane", &pane, "--title", " "]);
+    assert!(e.contains("--title이 비었다"), "{e}");
+    w.h.ok(&["pane", "kill", &shell]);
+    w.h.ok(&["pane", "kill", &coord]);
+
+    let v = w.h.ok(&["thread", "adopt", "demo", "--pane", &pane, "--title", "데려온 일"]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let real = |p: &Value| std::fs::canonicalize(p.as_str().unwrap_or_else(|| panic!("경로가 없다: {v}"))).unwrap();
+    let repo = std::fs::canonicalize(&w.repo).unwrap();
+    assert_eq!((v["thread_kind"].as_str(), v["status"].as_str()), (Some("adopted"), Some("open")), "{v}");
+    assert_eq!((v["pane"].as_str(), v["profile"].as_str()), (Some(pane.as_str()), Some("claude")), "{v}");
+    // repo는 보기에 없다: branch가 그 repo에서 읽은 것이다
+    assert_eq!((real(&v["cwd"]), v["branch"].as_str()), (repo.clone(), Some("feature-x")), "{v}");
+    w.wait_show("brief", &id, |v| v["brief"] == "delivered");
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    // pane 안 CLI는 thread 범위다(띄울 때 역할이 없는 pane이라도 thread면 보기만)
+    let probe = repo.join(".aaa").join(format!("demo-{id}")).join("probe.txt");
+    let got = wait_for("pane 안 CLI 결과", T, || std::fs::read_to_string(&probe).ok());
+    assert!(
+        got.contains("보기 권한으로는 조작할 수 없다: thread 세션 안의 CLI는 보기만 한다") && got.ends_with("rc=1\n"),
+        "{got}"
+    );
+    assert!(!w.h.ok(&["thread", "next", "demo", &id])["lines"].to_string().contains("probe"));
+    // 작업 폴더는 git 상태에 보이지 않는다
+    assert_eq!(git(&w.repo, &["status", "--porcelain"]), "");
+    let e = refused(&["--pane", &pane, "--title", "또"]);
+    assert!(e.contains(&format!("이미 `demo`의 thread {id}다")), "{e}");
+    let e = w.h.json(&["thread", "restart", "demo", &id]).expect_err("다시 띄우지 않는다");
+    assert!(e.contains("데려온 thread는 다시 띄우지 않는다"), "{e}");
+
+    // 재부팅: 사람이 띄운 Claude pane처럼 대화를 이어 띄우고(`--resume <ID>`) thread가 새 pane을 따라간다
+    w.lab.kill("agentA");
+    assert!(w.lab.kill_session_hosts() >= 1);
+    w.lab.spawn_env(
+        "agentA2",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1"), ("AAA_TEST_BOOT_ID", "boot-after")],
+    );
+    let v = w.wait_show("새 pane", &id, |v| v["pane"].as_str().is_some_and(|p| p != pane));
+    let new = v["pane"].as_str().unwrap().to_string();
+    w.h.wait_output(&new, &format!("args: --resume {sid}"), T);
+    assert!(!w.kinds(0).contains(&"restore_failed".to_string()), "{:?}", w.kinds(0));
+    // resolve는 pane을 끝내지 않는다
+    let v = w.h.ok(&["thread", "resolve", "demo", &id]);
+    assert_eq!(v["status"], "resolved", "{v}");
+    let events = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().clone();
+    let last = events.iter().rev().find(|e| e["kind"] == "thread_resolved").unwrap();
+    assert!(last["detail"].as_str().unwrap().contains("pane은 그대로 둔다"), "{last}");
+    // resolve 뒤에도 pane은 입력을 받는다(끝냈으면 상태가 늦게 와도 입력이 거부되거나 답이 없다)
+    w.h.ok(&["pane", "send-text", &new, "still-here"]);
+    w.h.ok(&["pane", "send-keys", &new, "enter"]);
+    w.h.wait_output(&new, "got: still-here", T);
+}
+
+/// 셸 pane에서 친 Claude도 데려온다(참고는 herdr가 감지한 agent가 있는 pane이면 데려온다). 가짜 Claude는 hook을 부르지
+/// 않아 harness는 agent의 앞 프로세스 감지(§8.110 Q21)로만 온다. 셸만 앞이면 거부, Claude가 앞이면 데려와 brief가 Claude에
+/// 가고 보고가 온다. 기다림은 pane 기록·파일이다.
+#[test]
+fn thread_adopt_claude_started_in_a_shell() {
+    let w = world();
+    let bin_dir = w.lab.root.join("human");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let claude = bin_dir.join("claude");
+    let hook = ADOPT_AGENT.lines().find(|l| l.contains("hook --agent claude")).unwrap();
+    std::fs::write(&claude, ADOPT_AGENT.replace(hook, "").replace("@BIN@", lab::BIN)).unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let sh = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], Some(path_str(&w.repo)));
+    let e = w.h.json(&["thread", "adopt", "demo", "--pane", &sh, "--title", "셸"]).expect_err("셸만 앞이면 거부");
+    assert!(e.contains("Claude·Codex pane이 아니다"), "{e}");
+    w.h.ok(&["pane", "run", &sh, path_str(&claude)]);
+    wait_for_diag(
+        "셸 안 Claude 감지",
+        T,
+        || (w.h.pane(&sh)["agent"]["harness"] == "claude").then_some(()),
+        || format!("{}", w.h.pane(&sh)),
+    );
+    let v = w.h.ok(&["thread", "adopt", "demo", "--pane", &sh, "--title", "셸에서 친 일"]);
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!((v["thread_kind"].as_str(), v["profile"].as_str()), (Some("adopted"), Some("claude")), "{v}");
+    let repo = std::fs::canonicalize(&w.repo).unwrap();
+    assert_eq!(std::fs::canonicalize(v["cwd"].as_str().unwrap()).unwrap(), repo, "{v}");
+    w.wait_show("brief", &id, |v| v["brief"] == "delivered");
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    let probe = repo.join(".aaa").join(format!("demo-{id}")).join("probe.txt");
+    let got = wait_for("pane 안 CLI 결과", T, || std::fs::read_to_string(&probe).ok());
+    assert!(got.contains("thread 세션 안의 CLI는 보기만 한다") && got.ends_with("rc=1\n"), "{got}");
+}
+
+/// coordinator 열기(herdr-projects `open`, 4장 G): 도는 coordinator가 없으면 host 머신에서 프로젝트 폴더를 작업 폴더로
+/// profile을 띄워 프로젝트 이름 workspace의 탭 「coordinator」에 두고, 돌면 그 pane을 알린다(`--new`면 하나 더). 사람 셸이 그
+/// 폴더에 있어도 coordinator가 도는 것은 아니다. profile은 `--profile` → project.toml → host.toml `[defaults]` → claude.
+/// 없는 profile·보관한 프로젝트는 아무것도 만들지 않는다. 기다림은 pane 기록이다.
+#[test]
+fn project_open_starts_or_shows_the_coordinator() {
+    let w = world();
+    let dir = std::fs::canonicalize(w.projects.join("demo")).unwrap();
+    let tabs =
+        |ws: &str| -> Vec<Value> { w.h.ok(&["workspace", "get", ws])["tabs"].as_array().cloned().unwrap_or_default() };
+    w.h.new_pane(None, "labA", Some("사람 셸"), &["/bin/sh"], Some(path_str(&dir)));
+    let e = w.h.json(&["project", "open", "demo", "--profile", "nope"]).expect_err("없는 profile");
+    assert!(e.contains("profile `nope`"), "{e}");
+    assert!(tabs("demo").is_empty(), "없는 profile이면 workspace를 만들지 않는다");
+
+    // 아무것도 정하지 않았으면 claude(이 머신 agent.toml의 claude profile, hook으로 상태를 알린다)
+    let v = w.h.ok(&["project", "open", "demo"]);
+    assert_eq!(
+        (v["started"].as_bool(), v["profile"].as_str(), v["workspace"].as_str()),
+        (Some(true), Some("claude"), Some("demo")),
+        "{v}"
+    );
+    let pane = v["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(std::fs::canonicalize(v["pane"]["cwd"].as_str().unwrap()).unwrap(), dir, "{v}");
+    assert_eq!(
+        (v["pane"]["role"].as_str(), v["pane"]["name"].as_str()),
+        (Some("coordinator"), Some("demo coordinator")),
+        "{v}"
+    );
+    let argv: Vec<String> = serde_json::from_value(v["pane"]["argv"].clone()).unwrap();
+    assert!(argv[0].ends_with("claude.sh") && argv.contains(&"--settings".to_string()), "{argv:?}");
+    let t = tabs("demo");
+    assert!(t.len() == 1 && t[0]["name"] == "coordinator" && t[0]["root"].to_string().contains(&pane), "{t:?}");
+    wait_for("coordinator 상태(hook)", T, || (w.h.pane(&pane)["agent"]["harness"] == "claude").then_some(()));
+
+    // 돌고 있으면 그것을 알리고 아무것도 만들지 않는다. 없는 profile은 돌아도 거부한다(참고는 profile부터 푼다)
+    let e = w.h.json(&["project", "open", "demo", "--profile", "nope"]).expect_err("돌아도 없는 profile은 거부");
+    assert!(e.contains("profile `nope`"), "{e}");
+    let same = |v: &Value, id: &str, others: u64| {
+        assert_eq!(
+            (v["started"].as_bool(), v["pane"]["id"].as_str(), v["others"].as_u64()),
+            (Some(false), Some(id), Some(others)),
+            "{v}"
+        );
+    };
+    let v = w.h.ok(&["project", "open", "demo"]);
+    same(&v, &pane, 0);
+    assert!(v["notes"].to_string().contains("--new"), "{v}");
+    // --profile은 그 profile로 띄운 coordinator만 다시 쓴다: 다른 profile이면 옆에 하나 더(참고 popup에서 다른 profile)
+    same(&w.h.ok(&["project", "open", "demo", "--profile", "claude"]), &pane, 0);
+    let v = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    assert_eq!(
+        (v["started"].as_bool(), v["others"].as_u64(), v["profile"].as_str()),
+        (Some(true), Some(1), Some("fake")),
+        "{v}"
+    );
+    assert_eq!(v["pane"]["name"], "demo coordinator 2", "{v}");
+    let second = v["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(tabs("demo").len(), 2);
+    // custom profile(상태를 모르는 harness)도 open이 띄운 것은 coordinator로 센다
+    same(&w.h.ok(&["project", "open", "demo", "--profile", "fake"]), &second, 1);
+    let v = w.h.ok(&["project", "open", "demo"]);
+    assert!([pane.as_str(), second.as_str()].contains(&v["pane"]["id"].as_str().unwrap()), "{v}");
+    assert_eq!((v["started"].as_bool(), v["others"].as_u64()), (Some(false), Some(1)), "{v}");
+    // --new는 돌아도 하나 더
+    let v = w.h.ok(&["project", "open", "demo", "--new"]);
+    assert_eq!(
+        (v["started"].as_bool(), v["others"].as_u64(), v["profile"].as_str()),
+        (Some(true), Some(2), Some("claude")),
+        "{v}"
+    );
+    assert_eq!(tabs("demo").len(), 3);
+
+    // project.toml coordinator_profile, 그다음 host.toml [defaults](사람이 터미널에서 `aaa profile default coordinator`)
+    w.h.ok(&["project", "create", "p2", "--coordinator-profile", "fake"]);
+    assert_eq!(w.h.ok(&["project", "open", "p2"])["profile"], "fake");
+    let list = w.h.ok(&["project", "list"]);
+    let of = |n: &str| {
+        list["projects"].as_array().unwrap().iter().find(|p| p["name"] == n).unwrap()["coordinator_profile"].clone()
+    };
+    assert_eq!((of("demo"), of("p2")), (Value::from("claude"), Value::from("fake")), "{list}");
+    let o = w.h.cmd(&["profile", "default", "coordinator", "resumable"]).env("AAA_SESSION_ID", "x").output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
+    let out = w.h.in_terminal(&["profile", "default", "coordinator", "resumable"], &[], T);
+    assert!(out.contains("`resumable`을 쓴다"), "{out}");
+    w.h.ok(&["project", "create", "p3"]);
+    assert_eq!(w.h.ok(&["project", "open", "p3"])["profile"], "resumable");
+
+    // 보관한 프로젝트는 열지 않는다
+    w.h.ok(&["project", "archive", "p3"]);
+    let e = w.h.json(&["project", "open", "p3"]).expect_err("보관");
+    assert!(e.contains("unarchive"), "{e}");
+}
+
+/// routine 일정의 초 단위(4장 H #604): 운영 host(`AAA_TEST_ROUTINE_SECONDS`가 `1`이 아님)는 참고처럼 분부터 받고, 초 단위
+/// 파일은 그 routine만 오류로 둔다.
+#[test]
+fn routine_seconds_only_in_tests() {
+    let mut lab = Lab::new();
+    let projects = lab.root.join("projects");
+    let h = lab.node("h", Some(&host_toml(&projects, "tick_secs = 1\n", false)));
+    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_ROUTINE_SECONDS", "")]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    h.ok(&["project", "create", "demo"]);
+    let dir = projects.join("demo").join("routines");
+    std::fs::write(dir.join("fast.md"), "+++\nschedule = \"every 30s\"\n+++\n본다\n").unwrap();
+    std::fs::write(dir.join("slow.md"), "+++\nschedule = \"every 1m\"\n+++\n본다\n").unwrap();
+    let list = h.ok(&["routine", "list", "demo"]);
+    let get = |name: &str| list["routines"].as_array().unwrap().iter().find(|r| r["name"] == name).unwrap().clone();
+    assert!(get("fast")["error"].as_str().unwrap_or_default().contains("초 단위"), "{list}");
+    assert_eq!((get("slow")["error"].as_str(), get("slow")["schedule"].as_str()), (None, Some("every 1m")), "{list}");
 }
 
 /// routine(§8.9): coordinator가 없으면 건너뛰고, 안내는 처리 전까지 하나만, 명령은 host.toml 허용과 사람의 승인이 있어야

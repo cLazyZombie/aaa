@@ -88,6 +88,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // profiles.v2: 옛 host의 이름 기반 요청. host_profiles.v1이면 host 정본과 머신별 덮어쓰기만 쓴다(plan §8.170),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
         // scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.176)
+        // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.180)
         features: vec![
             "terminal.v1".into(),
             "cwd.v1".into(),
@@ -105,6 +106,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "dir.v1".into(),
             "file_in.v1".into(),
             "scrollback.v1".into(),
+            "adopt.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

@@ -15,11 +15,12 @@ CLI를 중심으로 tmux 같은 세션 관리와 웹 접근을 제공합니다.
 
 macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표](docs/install-runbook.md), 설계는 [계획 §10·§15](docs/plan.md)에 있습니다. 아래에서 머신 이름은 `mac-a`(host)·`mac-b`, 주소는 `example.ts.net` 예시입니다.
 
-1. **빌드하고 고정 경로에 둔다(각 Mac).** 업그레이드도 같은 방법(rename으로 교체)입니다.
+1. **빌드하고 고정 경로에 둔다(각 Mac).** 처음에는 rename으로 둡니다. 업그레이드는 `aaa update`가 같은 폴더에서 새것을 검사한 뒤 바꾸고 옛것을 보관합니다(사람이 터미널에서 `yes`, 되돌리기는 `aaa update rollback`).
 
    ```bash
    cargo build --release -p aaa
-   install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa
+   install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa   # 처음
+   ~/.local/bin/aaa update --from target/release/aaa                                                     # 업그레이드
    ```
 
 2. **설정.** `aaa config example host`·`aaa config example agent`로 예시를 보고 `~/.config/aaa/`에 둡니다. `aaa config check`로 확인합니다.
@@ -51,6 +52,8 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
 ### TUI(`aaa attach`)
 
 host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w <이름>`)로 엽니다. 탭·나누기 layout은 host에 저장되므로 나갔다 다시 붙어도 같습니다.
+
+다른 기기(노트북 등)에서는 `aaa attach --remote https://mac-a.example.ts.net:8443`처럼 웹 주소(`aaa web publish`)로 붙습니다. 처음에는 host에서 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 묻고, 받은 기기 token을 그 기기에 둡니다(다음부터는 묻지 않음). 권한·취소는 웹 기기와 같습니다(`aaa web devices`·`aaa web revoke`). 보기 기기는 탭 막대에 「보기 전용」이 보이고 입력하지 않습니다.
 
 - **왼쪽 목록**: herdr처럼 위는 workspace(` spaces`, 고르면 그 workspace로), 아래 ` agents`에 웹처럼 머신마다 머리(누르거나 탐색 `Enter`로 고르면 새 탭·workspace를 그 머신에 엽니다. pane이 없는 머신에 셸을 여는 길입니다), 프로젝트별 thread(「t-0001 · 제목」과 둘째 줄 상태 말, 사람 차례 → 검토 대기 → 작업 중 → 쉼 차례), thread에 딸리지 않은 pane이 보입니다. `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
 - 명령으로도 됩니다: 새 pane을 새 탭으로 `aaa tab create --machine mac-b -- <명령>`, 있는 pane을 다른 workspace의 새 탭으로 `aaa pane move <pane> --new-tab -w <이름>`, 나누기 `aaa pane split <pane> --direction right`.
@@ -115,14 +118,21 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | 명령 | 하는 일 |
 |---|---|
 | `aaa machine list` | 머신 연결·디스크·이상 |
+| `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`) |
+| `aaa update --from <파일> [--dry-run]` · `aaa update rollback [이름]` · `aaa update list` | 지금 실행 파일을 주어진 빌드로 바꾸기(self-check·`[update] version` 고정 검사 뒤 rename, 옛것은 옆 `.aaa-old/`에 `[update] keep`개) · 보관한 것으로 되돌리기 · 보관 목록. 바꾸기·되돌리기는 사람이 터미널에서(`yes`), 도는 host·agent는 `aaa service restart`로 다시 띄웁니다 |
 | `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 최근 출력 글(`--source visible`이면 지금 화면) |
 | `aaa tab create --machine mac-b -- <명령>` | 새 탭에 새 pane |
 | `aaa pane run <pane> "…"` | 명령 실행(글 + Enter, 사람의 attach에 막히지 않음) |
 | `aaa pane send-text <pane> "…"` · `aaa pane send-keys <pane> enter` | 글만 · 키만 보내기 |
 | `aaa pane wait-output <pane> --match "…" --timeout 30000` | 출력에 글이 나올 때까지 기다리기 |
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
-| `aaa project create <p>` · `aaa context <p>` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox) |
+| `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context <p>` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox) |
+| `aaa project set <p> <key> <값>` | project.toml 값 하나 바꾸기(goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove) |
+| `aaa project open <p> [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
+| `aaa project pause\|resume\|archive\|unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음) |
+| `aaa project rename <p> <새 이름>` · `aaa project delete <p>` · `aaa project sweep <p>` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
 | `aaa thread start <p> --title "…" --machine mac-b --profile codex --kind dir --task-file task.md` | thread 시작 |
+| `aaa thread adopt <p> --pane <ID> --title "…"` | 이미 띄운 Claude·Codex pane(셸에서 친 것은 감지된 뒤)을 thread로 데려오기(pane은 그대로, 다시 시작·resolve가 pane을 끝내지 않음) |
 | `aaa thread list <p>` · `aaa thread show <p> <id>` | thread 목록 · 보고·Next 보기 |
 | `aaa thread ack <p> <id>` · `aaa thread resolve <p> <id>` | 보고 확인 · 끝내기(worktree 정리) |
 | `aaa inbox list <p>` · `aaa inbox done <p> <id>` | 보고·질문·끊김 같은 놓치면 안 되는 항목 |

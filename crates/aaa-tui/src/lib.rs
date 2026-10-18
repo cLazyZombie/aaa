@@ -1,5 +1,8 @@
 //! TUI front(`aaa attach`). 상태를 갖지 않는 얇은 client다(§4.5).
 //!
+//! - 같은 머신이면 host Front socket으로, 다른 기기면 host 웹 주소의 WebSocket으로 같은 Front API를 쓴다
+//!   (`aaa attach --remote`, plan §6.2). 키 설정은 이 기기 것이다(herdr `--remote-keybindings` 기본 `local`).
+//!
 //! - host가 준 workspace layout을 칸으로 나누고, 각 pane은 host가 보내는 cell grid를 그린다.
 //! - 가진 것은 지금 탭·포커스·prefix 입력 상태뿐이다. lease·pane 상태는 host가 보낸 목록을 그대로 쓴다.
 //! - 키 입력은 포커스 pane에 대화형 입력(`PaneInput`)으로 보낸다. 다른 front가 쓰던 pane이어도 들어가고, 이 화면이
@@ -79,14 +82,62 @@ fn tui_config() -> aaa_config::TuiSection {
     aaa_config::load_host(&aaa_config::paths::config_dir()).map(|l| l.config.tui).unwrap_or_default()
 }
 
+fn runtime() -> Result<tokio::runtime::Runtime> {
+    Ok(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?)
+}
+
+/// 이 화면의 front 이름(lease·기기 목록에 보인다)
+fn label() -> String {
+    format!("tui@{}", aaa_common::util::hostname())
+}
+
 pub fn run(workspace: Option<String>) -> Result<ExitCode> {
-    let cfg = tui_config();
+    let rt = runtime()?;
     let state = aaa_config::paths::state_dir();
-    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
+    let client = rt.block_on(FrontClient::connect_as(&state, &label()))?;
+    attach(&rt, workspace, client)
+}
+
+/// 다른 기기의 host 웹 주소로 붙는다(plan §6.2). 저장한 장치 token이 없거나 host가 받지 않으면 `ask_code`(까닭을 받는다)로
+/// host 사람이 낸 pairing 코드를 받아 pairing하고 token을 이 기기 상태 폴더에 둔다. 새로 받은 token도 거부되면 멈춘다.
+pub fn run_remote(
+    workspace: Option<String>,
+    target: &aaa_common::remote::Target,
+    ask_code: impl Fn(&str) -> Result<String>,
+) -> Result<ExitCode> {
+    use aaa_common::remote;
+    let rt = runtime()?;
+    let file = target.token_file(&aaa_config::paths::state_dir());
+    let mut fresh = false;
+    let client = loop {
+        let why = match remote::load_token(&file) {
+            Some(token) => match rt.block_on(FrontClient::connect_remote(target, &token, &label())) {
+                Ok(c) => break c,
+                Err(e) if e.downcast_ref::<remote::Unauthorized>().is_some() => {
+                    remote::forget_token(&file)?;
+                    if fresh {
+                        anyhow::bail!("{}: pairing으로 받은 token도 host가 받지 않았다", target.origin());
+                    }
+                    "저장한 기기 token을 host가 받지 않는다(기기를 취소했거나 다른 host다)"
+                }
+                Err(e) => return Err(e),
+            },
+            None => "이 기기는 아직 그 host와 pairing하지 않았다",
+        };
+        let code = ask_code(why)?;
+        let name = format!("aaa TUI · {}", aaa_common::util::hostname());
+        let token = rt.block_on(remote::pair(target, &code, &name))?;
+        remote::save_token(&file, &token)?;
+        fresh = true;
+    };
+    attach(&rt, workspace, client)
+}
+
+fn attach(rt: &tokio::runtime::Runtime, workspace: Option<String>, client: FrontClient) -> Result<ExitCode> {
+    let cfg = tui_config();
     rt.block_on(async move {
-        let label = format!("tui@{}", aaa_common::util::hostname());
-        let client = FrontClient::connect_as(&state, &label).await?;
         let host_minor = client.proto.minor;
+        let reader = client.role == aaa_proto::DeviceRole::Reader;
         let mut terminal = ratatui::init();
         // 터미널 focus 사건(FocusGained·FocusLost): 돌아온 화면이 크기를 다시 건다. 비정상 종료(panic)에도 끈다.
         let _focus = FocusReport::on();
@@ -97,6 +148,7 @@ pub fn run(workspace: Option<String>) -> Result<ExitCode> {
         let mut app =
             App::new(workspace.unwrap_or_else(|| aaa_proto::DEFAULT_WORKSPACE.to_string()), client.front.clone());
         app.host_minor = host_minor;
+        app.reader = reader;
         app.apply_config(&cfg);
         let r = app.run(&mut terminal, client).await;
         ratatui::restore();
@@ -316,6 +368,8 @@ struct App {
     confirm_close: bool,
     /// host와 합의한 Front API minor(옛 host는 탭 닫기·이름을 모른다)
     host_minor: u16,
+    /// 보기 권한 연결(보기 기기·thread 세션 안): pane 크기를 걸지 않고 입력은 보내지 않은 채 알린다
+    reader: bool,
     /// 영문 입력기를 원하는 상태인가(herdr `ascii_input_source_active`)
     ascii_on: bool,
     /// 영문으로 바꿔 둔 입력기(없애면 되돌린다: 모드 끝·종료·panic)
@@ -404,6 +458,7 @@ impl App {
             prompt_new_tab: true,
             confirm_close: true,
             host_minor: aaa_proto::FRONT_API.minor,
+            reader: false,
             ascii_on: false,
             ascii: None,
             focus_wait: None,
@@ -562,7 +617,7 @@ impl App {
             tokio::select! {
                 m = rx.recv() => match m {
                     Some(m) => { self.on_msg(m); dirty = true; }
-                    None => anyhow::bail!("host 연결이 끊겼다"),
+                    None => anyhow::bail!("{}", tx.ended().unwrap_or_else(|| "host 연결이 끊겼다".into())),
                 },
                 e = keys_in.next() => match e {
                     Some(Ok(e @ (Event::Key(_) | Event::Paste(_) | Event::Mouse(_)))) if self.waiting() => self.held.push(e),
@@ -676,6 +731,9 @@ impl App {
     async fn paste_text(&mut self, tx: &mut FrontSender, text: String) -> Result<()> {
         let Some(pane) = self.focus.clone() else { return Ok(()) };
         if text.is_empty() {
+            return Ok(());
+        }
+        if self.refuse_reader() {
             return Ok(());
         }
         // 기록을 보고 있었으면 먼저 맨 아래로(친 글과 같다, herdr `scroll_reset`)
@@ -1091,7 +1149,8 @@ impl App {
         let Some(tab) = self.ws.tabs.get(self.tab) else { return Ok(()) };
         let boxes = self.shown(tab, self.body(area));
         let reclaim = std::mem::take(&mut self.reclaim);
-        if !self.focused {
+        // 보기 권한은 크기를 걸 수 없다(host가 거부한다): 쓰는 화면의 크기 그대로 본다
+        if !self.focused || self.reader {
             return Ok(());
         }
         // PTY는 테두리 안쪽 칸 크기다(herdr `pane_inner_rect`)
@@ -1129,6 +1188,9 @@ impl App {
 
     /// 기록 위치는 그대로 두고 보낸다(누르지 않은 움직임 보고, herdr)
     async fn send_input(&mut self, tx: &mut FrontSender, pane: String, data: Vec<u8>) -> Result<()> {
+        if self.refuse_reader() {
+            return Ok(());
+        }
         self.message = None;
         let id = tx.send(FrontRequest::PaneInput { pane, data: B64(data) }).await?;
         self.pending.insert(id, Pending::Input);
@@ -1147,6 +1209,9 @@ impl App {
     /// 그림 bytes를 포커스 pane으로 올린다(형식은 host가 내용의 signature로 본다). 포커스 pane이 없으면 false.
     async fn send_image(&mut self, tx: &mut FrontSender, bytes: Vec<u8>) -> Result<bool> {
         let Some(pane) = self.focus.clone() else { return Ok(false) };
+        if self.refuse_reader() {
+            return Ok(true);
+        }
         self.scroll_bottom(tx, &pane).await?;
         self.attach_seq += 1;
         self.set_message(format!("그림 보내는 중({}KB)…", bytes.len().div_ceil(1024)));
@@ -1155,6 +1220,14 @@ impl App {
             self.pending.insert(id, Pending::Attach(self.attach_seq));
         }
         Ok(true)
+    }
+
+    /// 보기 권한이면 pane에 보내지 않고 오류 막대로 알린다(host에 가서 거부되기를 기다리지 않는다)
+    fn refuse_reader(&mut self) -> bool {
+        if self.reader {
+            self.set_error("보기 권한 화면이라 pane에 입력하지 않는다(조작 기기는 host에서 `aaa web pair`로 더한다)");
+        }
+        self.reader
     }
 
     fn focused_machine(&self) -> Option<String> {
@@ -2038,6 +2111,13 @@ impl App {
             out.push((
                 format!(" ● 사람 차례 {need} "),
                 Style::default().fg(theme::contrast(p)).bg(p.red).add_modifier(Modifier::BOLD),
+            ));
+        }
+        // 보기 권한 연결(웹의 「보기 전용」 표시와 같다): 입력·크기·layout 바꾸기를 하지 않는다
+        if self.reader {
+            out.push((
+                " 보기 전용 ".into(),
+                Style::default().fg(theme::contrast(p)).bg(p.peach).add_modifier(Modifier::BOLD),
             ));
         }
         // 다른 화면이 이 pane의 PTY 크기를 쥐고 있다(입력하거나 이 터미널로 돌아오면 이 화면 크기로 바뀐다)

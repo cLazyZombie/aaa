@@ -307,7 +307,23 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "pane_watch", pane: string, } | { "op": "pane_unwatch", pane: string, } | { "op": "pane_scroll", pane: string, by: ScrollBy, } | { "op": "pane_selection_read", pane: string, from: TextPoint, to: TextPoint, } | { "op": "pane_copy_motion", pane: string, cursor: TextPoint, motion: CopyMotion, } | { "op": "pane_edit_scrollback", workspace: string | null, pane: string, } | { "op": "pane_copy_search", pane: string, query: string, direction: SearchDirection, cursor: TextPoint, previous: TextRange | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, } | { "op": "projects" } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "pane_watch", pane: string, } | { "op": "pane_unwatch", pane: string, } | { "op": "pane_scroll", pane: string, by: ScrollBy, } | { "op": "pane_selection_read", pane: string, from: TextPoint, to: TextPoint, } | { "op": "pane_copy_motion", pane: string, cursor: TextPoint, motion: CopyMotion, } | { "op": "pane_edit_scrollback", workspace: string | null, pane: string, } | { "op": "pane_copy_search", pane: string, query: string, direction: SearchDirection, cursor: TextPoint, previous: TextRange | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+/**
+ * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
+ */
+repos: Array<string>, thread_profile: string | null, coordinator_profile: string | null, } | { "op": "project_set", project: string, key: string, value: string, } | { "op": "projects", all?: boolean, } | { "op": "project_lifecycle", project: string, action: ProjectAction, } | { "op": "project_delete", project: string,
+/**
+ * 살아 있는 pane이 있어도
+ */
+force: boolean, } | { "op": "project_rename", project: string, to: string, dry_run: boolean, } | { "op": "project_sweep", project: string, dry_run: boolean, } | { "op": "project_open", project: string,
+/**
+ * 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude
+ */
+profile?: string,
+/**
+ * coordinator가 돌아도 하나 더 띄운다
+ */
+new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null,
 /**
  * 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
  */
@@ -323,7 +339,11 @@ task: string,
 /**
  * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
-from_task: string | null, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean,
+from_task: string | null, } | { "op": "thread_adopt", project: string, pane: string, title: string,
+/**
+ * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
+ */
+task: string, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean,
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
@@ -371,7 +391,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -415,7 +435,7 @@ build?: string, } | { "t": "alert", project: string | null, target: string, kind
 
 export type Role = "coordinator" | "worker" | "evaluator";
 
-export type ThreadKind = "worktree" | "dir";
+export type ThreadKind = "worktree" | "dir" | "adopted";
 
 export type Launch = { profile: string,
 /**
@@ -449,7 +469,49 @@ export type Skipped = { path: string, reason: string,
  */
 lazy_size: number | null, };
 
-export type ProjectView = { name: string, path: string, threads: number, };
+export type ProjectView = { name: string, path: string, threads: number,
+/**
+ * FRONT_API 1.33. 옛 host는 보내지 않는다(active)
+ */
+status?: ProjectStatus,
+/**
+ * `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
+ * FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
+ */
+coordinator_profile?: string,
+/**
+ * coordinator가 쓸 수 있는 profile(safety `coordinator_profiles`, 사람만 바꾼다). 없으면 모두다. 웹 「coordinator 열기」가
+ * 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.33
+ */
+coordinator_profiles?: Array<string>, };
+
+export type ProjectStatus = "active" | "paused" | "archived";
+
+export type ProjectAction = "pause" | "resume" | "archive" | "unarchive";
+
+export type ProjectChange = { project: ProjectView, notes: Array<string>, };
+
+export type ProjectOpened = { project: ProjectView,
+/**
+ * 띄운 coordinator, 또는 이미 돌던 것 중 가장 최근에 상태가 바뀐 것
+ */
+pane: PaneView,
+/**
+ * 새로 띄웠다(false면 돌던 coordinator)
+ */
+started: boolean,
+/**
+ * `pane` 말고도 도는 coordinator 수
+ */
+others: number,
+/**
+ * coordinator를 띄운 profile(돌던 것이면 그 pane의 harness)
+ */
+profile: string,
+/**
+ * 그 pane이 든 workspace(layout에 없으면 빈 글)
+ */
+workspace: string, notes: Array<string>, };
 
 export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
@@ -481,7 +543,12 @@ agent: AgentStatus | null, created_at_ms: number, updated_at_ms: number,
 /**
  * `thread start`가 알리는 경고(시작은 했다, 예: 동시 thread 한도). 다른 응답에는 없다.
  */
-warnings?: Array<string>, };
+warnings?: Array<string>,
+/**
+ * 그 프로젝트의 상태(FRONT_API 1.33, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+ * 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
+ */
+project_status?: ProjectStatus, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 

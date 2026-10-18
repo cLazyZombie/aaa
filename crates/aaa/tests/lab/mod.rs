@@ -39,6 +39,8 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게(보는 시험만 채운다)
             .env("AAA_TEST_BUILTINS", "")
+            // routine `every <N>s`: host가 시험에서만 받는다
+            .env("AAA_TEST_ROUTINE_SECONDS", "1")
             .env_remove("NO_COLOR")
             // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
             .env_remove("fish_handle_reflow")
@@ -84,11 +86,35 @@ impl Node {
     /// PTY를 만들고, `answers`의 물음(`(보일 글, 칠 줄)`)이 보이면 차례로 친다. 표준 출력과 오류를 이어 돌려준다.
     #[cfg(unix)]
     pub fn in_terminal(&self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
+        self.in_terminal_env(args, &[], answers, timeout)
+    }
+
+    /// `in_terminal`과 같되 환경 변수를 더 준다(예: 가짜 `launchctl`을 PATH 앞에, HOME을 실험실에)
+    pub fn in_terminal_env(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+        answers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> String {
+        self.in_terminal_bin(Path::new(BIN), args, env, answers, timeout)
+    }
+
+    /// `in_terminal_env`와 같되 실행 파일을 고른다(`aaa update`는 지금 도는 실행 파일을 바꾸므로 실험실 사본을 띄운다)
+    pub fn in_terminal_bin(
+        &self,
+        bin: &Path,
+        args: &[&str],
+        env: &[(&str, &str)],
+        answers: &[(&str, &str)],
+        timeout: Duration,
+    ) -> String {
+        let bin = bin.to_str().expect("실행 파일 경로");
         let mut c = Command::new("script");
         if cfg!(target_os = "macos") {
-            c.args(["-q", "/dev/null", BIN]).args(args);
+            c.args(["-q", "/dev/null", bin]).args(args);
         } else {
-            let line = std::iter::once(BIN).chain(args.iter().copied()).map(shell_word).collect::<Vec<_>>().join(" ");
+            let line = std::iter::once(bin).chain(args.iter().copied()).map(shell_word).collect::<Vec<_>>().join(" ");
             c.args(["-qec", &line, "/dev/null"]);
         }
         c.env("AAA_CONFIG_DIR", &self.cfg)
@@ -96,6 +122,7 @@ impl Node {
             .env("AAA_TEST_BUILTINS", "")
             .env_remove("AAA_SESSION_ID")
             .env_remove("AAA_HOOK_SOCK")
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -103,6 +130,7 @@ impl Node {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
         let mut out = child.stdout.take().unwrap();
         let s2 = seen.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
             let mut b = [0u8; 256];
             while let Ok(n) = std::io::Read::read(&mut out, &mut b) {
@@ -111,6 +139,7 @@ impl Node {
                 }
                 s2.lock().unwrap().extend_from_slice(&b[..n]);
             }
+            let _ = done_tx.send(());
         });
         let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
         let mut stdin = child.stdin.take().unwrap();
@@ -118,6 +147,13 @@ impl Node {
         for (prompt, typed) in answers {
             wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
             std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
+        }
+        // 출력이 끝날(명령이 끝날) 때까지. 답하지 않은 물음에서 기다리면 멈추지 않고 실패로 끝낸다(입력을 닫으면 macOS
+        // script가 친 답보다 EOF를 먼저 넣기도 해 닫지 않는다)
+        if done_rx.recv_timeout(timeout).is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{args:?}가 {timeout:?} 안에 끝나지 않았다(답하지 않은 물음?):\n{}", text());
         }
         let o = child.wait_with_output().unwrap();
         drop(stdin);

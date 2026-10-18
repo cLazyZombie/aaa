@@ -3,6 +3,8 @@
 //! - 입장: aaa pairing 코드 → 장치 token cookie(HttpOnly·SameSite=Strict, HTTPS면 Secure·`__Host-`). loopback은 인증 신호가 아니다.
 //! - Host 헤더 허용 목록(DNS rebinding), 변경 요청·WebSocket의 Origin 검사, CSP.
 //! - `/api/v1/call`은 Front API 요청을 그대로 받는다(같은 타입, 같은 권한 판정).
+//! - `/api/v1/front`는 다른 기기 TUI(`aaa attach --remote`)의 Front API 연결이다: 같은 머신 socket과 같은 메시지를
+//!   WebSocket 글 메시지에 싣는다(plan §6.2).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,6 +68,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/me", get(me).delete(sign_out))
         .route("/api/v1/call", post(call))
         .route("/api/v1/events", get(events_ws))
+        .route("/api/v1/front", get(front_ws))
         .route("/api/v1/push", get(push_info))
         .route("/api/v1/push/subscribe", post(push_subscribe))
         .route("/api/v1/push/unsubscribe", post(push_unsubscribe))
@@ -786,6 +789,86 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     }
 }
 
+/// 다른 기기 TUI의 Front API(plan §6.2). 글 메시지 하나가 같은 머신 socket의 제어 frame 하나다(Front API 그대로,
+/// 화면은 cell grid 사건). 권한은 그 기기 역할이고 기기를 취소하면 4401로 닫는다. 상태 사건 연결처럼 ping하고, 아무것도
+/// 받지 못한 채 끊는 시간이 지나면 버린다(잠든 노트북·바뀐 망의 반쯤 열린 연결이 「지금 쓰는 화면」을 쥐고 있지 않게).
+/// 웹 페이지의 「보는 화면」(push 거르기)에는 들지 않는다: 같은 머신 TUI와 같다.
+async fn front_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {
+    let Some((dev, role)) = device(&host, &headers) else { return unauthorized() };
+    ws.max_message_size(aaa_proto::MAX_FRAME).on_upgrade(move |socket| front_loop(host, dev, role, socket))
+}
+
+async fn front_loop(host: Arc<Host>, dev: String, role: DeviceRole, socket: WebSocket) {
+    let (mut sink, stream) = socket.split();
+    let (tx, mut out) = aaa_common::conn::frame_channel();
+    let (every, dead_after) = events_liveness();
+    let (stop, mut stopped) = tokio::sync::oneshot::channel::<(u16, &'static str)>();
+    let writer = tokio::spawn(async move {
+        let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+        loop {
+            let m = tokio::select! {
+                biased;
+                r = &mut stopped => {
+                    if let Ok((code, reason)) = r {
+                        let close = Message::Close(Some(CloseFrame { code, reason: reason.into() }));
+                        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sink.send(close)).await;
+                    }
+                    return;
+                }
+                f = out.recv() => match f {
+                    // front 연결은 제어 frame(JSON)만 보낸다
+                    Some((_, payload)) => match String::from_utf8(payload) {
+                        Ok(text) => Message::Text(text.into()),
+                        Err(_) => continue,
+                    },
+                    None => return,
+                },
+                _ = ping.tick() => Message::Ping(Default::default()),
+            };
+            if sink.send(m).await.is_err() {
+                return;
+            }
+        }
+    });
+    // 처리가 끝난 뒤 닫기 frame을 보낼 때까지 쓰기 줄을 살려 둔다
+    let keep = tx.clone();
+    let r = crate::front::serve_device(host, tx, FrontWsIn { stream, dead_after }, dev, role).await;
+    match r {
+        Ok(crate::front::Ended::Revoked) => {
+            let _ = stop.send((DEVICE_REVOKED_CLOSE_CODE, DEVICE_REVOKED_REASON));
+        }
+        Ok(crate::front::Ended::Closed) => drop(stop),
+        Err(e) => {
+            tracing::debug!("원격 front 연결 끝: {e:#}");
+            drop(stop);
+        }
+    }
+    drop(keep);
+    let _ = writer.await;
+}
+
+/// 원격 front의 받는 쪽: 글 메시지만 제어 frame이다. ping·pong은 살아 있다는 표시로만 센다
+struct FrontWsIn {
+    stream: futures_util::stream::SplitStream<WebSocket>,
+    dead_after: std::time::Duration,
+}
+
+impl crate::front::FrontIn for FrontWsIn {
+    async fn next_control(&mut self) -> Result<Option<Vec<u8>>> {
+        loop {
+            let m = tokio::time::timeout(self.dead_after, self.stream.next())
+                .await
+                .map_err(|_| anyhow::anyhow!("{:?} 동안 아무것도 받지 못했다", self.dead_after))?;
+            match m {
+                None | Some(Ok(Message::Close(_))) => return Ok(None),
+                Some(Ok(Message::Text(t))) => return Ok(Some(t.as_bytes().to_vec())),
+                Some(Ok(_)) => continue,
+                Some(Err(e)) => return Err(e.into()),
+            }
+        }
+    }
+}
+
 /// 상태 사건 연결의 WebSocket ping 간격과, 아무것도 받지 못하면 끊는 시간(15초·45초: ping 두 번을 놓치고도 남는다).
 /// `AAA_TEST_EVENTS_PING_MS`는 시험에서만 줄인다(끊는 시간은 그 세 배).
 fn events_liveness() -> (std::time::Duration, std::time::Duration) {
@@ -1482,13 +1565,17 @@ mod guard_tests {
                 ("cookie", t.as_str()),
             ]
         };
-        for bad in ["https://mac-a.example.ts.net:9999", "https://mac-a.example.ts.net"] {
-            assert_eq!(code(&l.0, "GET", "/api/v1/events", PUBLIC, &ws(bad)).await, StatusCode::FORBIDDEN, "{bad}");
+        // 다른 기기 TUI의 Front API(`/api/v1/front`, plan §6.2)도 같은 규칙이다
+        for path in ["/api/v1/events", "/api/v1/front"] {
+            for bad in ["https://mac-a.example.ts.net:9999", "https://mac-a.example.ts.net"] {
+                assert_eq!(code(&l.0, "GET", path, PUBLIC, &ws(bad)).await, StatusCode::FORBIDDEN, "{path} {bad}");
+            }
+            assert_ne!(
+                code(&l.0, "GET", path, PUBLIC, &ws("https://mac-a.example.ts.net:8443")).await,
+                StatusCode::FORBIDDEN,
+                "{path}"
+            );
         }
-        assert_ne!(
-            code(&l.0, "GET", "/api/v1/events", PUBLIC, &ws("https://mac-a.example.ts.net:8443")).await,
-            StatusCode::FORBIDDEN
-        );
     }
 
     #[tokio::test]

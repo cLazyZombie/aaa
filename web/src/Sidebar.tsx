@@ -581,7 +581,10 @@ function ProjectGroup({
   const foldedCount = threads.length - shown.length;
   // 접힌 머리는 자식 상태까지 대표한다(참고 rollupStatus: blocked > done > working > waiting > idle)
   const status = rollupStatus(threads.map((t) => (online && t.pane ? (paneOf(t.pane) ? paneAgentStatus(paneOf(t.pane)!) : undefined) : undefined)));
-  const line = projectLine(threads.map((t) => t.group));
+  const line = projectLine(
+    threads.map((t) => t.group),
+    threads.some((t) => t.project_status === "paused"),
+  );
   const label = collapsed ? `${project} thread 펼치기` : `${project} thread 접기`;
   const rows = useRows();
   const menuKey = `project:${m.id}:${project}`;

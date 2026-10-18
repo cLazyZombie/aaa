@@ -161,7 +161,7 @@ flowchart LR
     RS[aaa session-host · PTY / ConPTY · VT]
     RA --> RS
   end
-  TUI -- Front API · UDS 또는 TCP+TLS --> H
+  TUI -- Front API · 같은 머신 UDS · 다른 기기는 웹 HTTPS·WS --> H
   BR -- HTTPS --> TS
   RA -- Agent link · TCP+TLS 1.3 · agent가 연결 --> H
 ```
@@ -216,7 +216,7 @@ flowchart LR
 
 | 경계 | 계약 | transport | 인증 | 재연결 | 버전 |
 |---|---|---|---|---|---|
-| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TCP+TLS, 브라우저 HTTPS(serve) → `127.0.0.1` HTTP·WS | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
+| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TUI·브라우저는 HTTPS(serve) → `127.0.0.1` HTTP·WS(§6.2) | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
 | host ↔ agent | Agent link | 로컬은 UDS, 원격은 TCP+TLS 1.3. 연결은 agent가 연다 | 상호 고정 키(자체 서명 인증서 fingerprint pinning) | backoff+jitter, outbox 재전송, command ID로 결과 조회 | major.minor, host가 agent N-1 minor 지원 |
 | agent ↔ session host | Session IPC(내부) | 세션별 UDS/Named Pipe | peer UID/SID + 세션 token | agent 재시작 뒤 registry로 재접속 | 내부 버전. 이전 session host와 호환 |
 | agent pane ↔ agent | Hook IPC | UDS/Named Pipe | 세션·boot ID에 한정한 token | 없음(bounded JSON 한 건) | hook 버전 |
@@ -337,7 +337,13 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 ### 6.2 Front 연결
 
 - **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 host가 연결한 프로세스(peer pid의 조상·세션)로 어느 pane 안인지 판정하고 그 pane의 역할로 범위를 정한다. 일반 thread와 사후 평가자(§8.13)는 보기 권한이다. 처음 적은 「세션·역할 범위 token」은 두지 않았다(§8.25 세션 역할, §8.164 host 판정).
-- **다른 기기의 TUI:** TCP+TLS로 붙는다. 웹과 같은 장치 모델을 쓴다(장치 키 pairing, reader/controller 역할).
+- **다른 기기의 TUI(10-18 coordinator 답, 차이 목록 4장 A 「다른 머신에서 TUI 붙기」 지금 497줄):** 웹 길을 그대로 탄다. 새 listener·인증서·TCP+TLS front는 두지 않는다(처음 적은 「TCP+TLS로 붙는다」를 바꿨다).
+  - 주소: §6.3이 공개한 host 웹 HTTPS 주소(`aaa web publish`, 예: `https://mac-a.example.ts.net:8443`). TLS는 그 주소의 인증서(tailscale serve)가 맡고 TUI는 webpki 루트로 확인한다(처음 적은 OS 신뢰 저장소를 바꿨다, §8.181).
+  - 입장: 웹과 같은 장치 pairing. host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 코드를 내고, 그 기기 TUI가 처음 붙을 때 그 코드를 `POST /api/v1/pair`에 내 장치 token을 받는다. token은 그 기기 상태 폴더에 주소마다 0600으로 둔다(브라우저의 `__Host-aaa` cookie와 같은 값, 같은 기기 기록, 목록·취소는 `aaa web devices`·`aaa web revoke`). 역할(reader/controller)은 그 장치 기록이 정하고 host가 요청마다 판정한다(§6.4).
+  - 통신: 웹 listener의 WebSocket 하나 `GET /api/v1/front`에 같은 머신 socket의 Front API를 그대로 싣는다(글 메시지 하나가 제어 frame 하나, 화면은 cell grid 사건 `Grid`, §8.181). 웹 화면의 끝점 셋(`/api/v1/call`·`events`·`panes/{id}/ws`)을 쓰지 않는 까닭: pane WebSocket은 화면 bytes라 TUI가 VT를 돌려야 하는데 front는 `aaa-vt`에 의존하지 않는다(`cargo test -p aaa --test deps`). TUI는 비브라우저지만 웹 규칙을 그대로 지난다: Host·Origin을 그 공개 주소로 보내고(§8.116 허용 목록), cookie 헤더로 token을 보낸다(HTTPS면 `__Host-aaa`).
+  - 명령: herdr `--remote <ssh-target>`의 aaa 꼴 `aaa attach --remote <웹 주소> [-w <workspace>]`. 키 설정은 그 기기 것이다(herdr `--remote-keybindings` 기본 `local`과 같음).
+  - 참고와 다름: herdr는 SSH 너머 서버에 붙는다. aaa는 SSH를 쓰지 않는다(결정 6). 웹과 TUI가 한 입장·권한 모델을 쓴다.
+  - 지금: 있다(§8.181). TLS는 OS 신뢰 저장소 대신 webpki 루트로 확인한다(host의 다른 client와 같은 rustls·ring, tailscale serve 인증서는 Let's Encrypt라 든다). `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다.
 - **브라우저:** §6.3의 HTTPS 주소로 붙는다.
 
 ### 6.3 host 웹 HTTPS 공개 — aaa가 Tailscale을 아는 유일한 곳
@@ -769,7 +775,7 @@ host 프로젝트 폴더 구성:
 - **파일:** `projects/<p>/routines/<name>.md`. `+++` TOML front matter(`schedule`·`command`·`machine`·`enabled`)와 본문(coordinator 안내)이다. 모르는 키는 오류로 본다(오타로 명령이 빠지지 않게).
   - 읽지 못한 파일은 내용 hash당 한 번 `config-error` 항목이 된다. `on = "pr"`은 M3까지 오류로 둔다(조용히 무시하지 않는다).
 - **일정(0.2.35 의미 그대로)**
-  - `every <N>s|m|h|d`, `daily HH:MM`. `s`는 aaa가 더한 단위다(E2E가 분 단위로 기다리지 않게). 처음 본 때를 지난 실행으로 친다.
+  - `every <N>m|h|d`, `daily HH:MM`(참고와 같다). `s`(초)는 host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다(E2E가 분 단위로 기다리지 않게, 4장 H #604: 운영 파일의 `every 30s`는 거부). 처음 본 때를 지난 실행으로 친다.
   - daily는 host 머신의 지역 시각이다. 각 HH:MM의 offset을 그 시각 기준으로 구한다(`localtime_r`). 서머타임이 바뀐 다음 날 두 번 돌던 계산을 단위 시험이 잡아 고쳤다. unix가 아닌 host는 UTC로 본다.
   - 여러 번 놓쳐도 한 번만 돈다.
 - **coordinator 없음:** 돌지 않고 `no_coordinator`만 센다. 지난 실행은 앞으로 옮긴다(밀린 실행을 쌓지 않는다).
@@ -3426,7 +3432,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **무엇.** herdr-projects 0.2.35의 `profile list|resolve|add|edit|remove|allow|default`와 `safety show|yolo|set`(`src/profiles.rs`·`src/safety.rs`·`src/project.rs` `Safety`)을 aaa에 옮겼다. 결정 20 D12가 「참고대로」라 §8.21의 「yolo 스위치는 두지 않는다」를 바꿨다.
 - **safety 자리.** host.toml(·host.local.toml) `[safety.default]`(모든 프로젝트)와 `[safety.<프로젝트>]`. 프로젝트 폴더 밖이라 coordinator가 파일을 고쳐 켤 수 없다(§8.19와 같은 까닭). 참고는 표 이름이 프로젝트 절대 경로라 `default`와 겹치지 않지만, aaa 프로젝트는 이름으로 부르므로 `default`를 프로젝트 이름으로 쓰지 않는다(`project create default` 거부).
-  - key: `yolo`·`start_threads`·`trust_screens`·`thread_agent_args`·`routine_commands`·`thread_profiles`. 참고의 `coordinator_agent_args`·`coordinator_profiles`·`profile allow|default coordinator`는 없다: aaa는 coordinator를 띄우지 않는다(§8.104, 사람이 연 세션). 그 이름을 주면 까닭을 말하고 거부한다.
+  - key: `yolo`·`start_threads`·`trust_screens`·`thread_agent_args`·`routine_commands`·`thread_profiles`. 참고의 `coordinator_agent_args`·`coordinator_profiles`·`profile allow|default coordinator`는 없다: aaa는 coordinator를 띄우지 않는다(§8.104, 사람이 연 세션). 그 이름을 주면 까닭을 말하고 거부한다. (→ §8.180 `aaa project open`이 coordinator를 띄우게 되어 `profile default coordinator`를 열었다.)
   - 값마다 「프로젝트 표 → default 표 → 옛 자리 → 기본값」. 옛 자리는 host.toml `[projects] allow_profiles`(`"*"`는 모두)·`routine_commands`(프로젝트 목록)와 project.toml `start_threads`·`trust_screens`다. 이미 쓴 설정이 그대로 먹게 두었고, project.toml 값은 프로젝트 폴더 안이라 `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 드러낸다.
   - yolo면 `start_threads`는 auto, `trust_screens`가 없으면 coordinator(참고 `default_trust_screens`). `routine_commands`는 yolo와 따로다(켜도 명령마다 사람 승인, §8.19).
   - host는 쓸 때마다 host.toml을 다시 읽는다(`Host::safety`, `aaa_config::safety::read`): 사람이 바꾸면 host를 다시 띄우지 않아도 다음 thread start·신뢰 창 판단·routine·context가 쓴다. 이 읽기는 느슨하다: 다른 절이 깨졌거나 값 하나가 잘못돼도 그 값만 아래 층으로 가고 경고를 남긴다. 시작 때 읽기(`load_host`)는 전처럼 엄격하다(값 검사 포함).
@@ -3844,6 +3850,78 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   「채팅 글자 크기」는 답의 Markdown 글자에서 잰다, 답 안 경로는 파일 단추(§8.171 그대로). 결함 심기 둘(답을 글 그대로, Markdown 글자 크기 고정)
   모두 실패.
 
+### 8.180 프로젝트·서버 CLI를 참고대로(10-18, 차이 목록 4장 A #495·#497·#502, G #589~#592·#598, H #604)
+
+- **routine 일정 형식(#604).** 참고(hp `routine.rs` `parse_schedule`)처럼 `every <N>m|h|d`·`daily HH:MM`만 받는다. 초 단위 `s`는 host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다(E2E가 분 단위로 기다리지 않게, §8.19). 운영 파일의 `every 30s`는 그 routine만 오류(`routine list`의 「초 단위는 받지 않는다 … 가장 짧은 주기는 `every 1m`」, inbox `config-error`)다. 시험 lab이 변수를 붙인다.
+- **프로젝트 만들기(#589).** `aaa project create <p> [--goal 글] [--repo PATH[@MACHINE]]… [--thread-profile 이름] [--coordinator-profile 이름]`(hp `new`). 준 값만 project.toml에 적는다. 값은 폴더를 만들기 전에 모두 맞춰 본다: 틀린 profile 이름이나 그 프로젝트 thread 허용 목록(§8.163, 새 프로젝트는 `[safety.default]`·옛 자리)에 없는 thread profile이면 폴더를 만들지 않는다. 머신 없는 저장소 경로는 CLI가 친 셸의 cwd 기준 절대 경로로 보내고 host가 정본 경로로 바꾼다(없는 경로는 그대로, 참고와 같다). `@MACHINE`의 경로는 그 머신 것 그대로다.
+  - 참고와 다름: 참고는 안 준 profile도 그때의 기본값(`new_project_default`)을 PROJECT.md에 적는다. aaa는 비워 두고 쓸 때 사슬(project.toml → host.toml `[defaults]` → claude, §8.163)로 푼다. 사람이 `aaa profile default threads`로 기본을 바꾸면 값을 안 적은 프로젝트에도 닿는다. profile이 머신마다 있어(§8.2) 만들 때 그 이름이 어느 머신에 있는지는 보지 않는다(thread start가 그 머신에서 푼다).
+  - 참고의 표시 이름(`name`)은 없다: aaa 프로젝트 이름은 폴더 이름이고 PROJECT.md 첫 제목이 사람이 읽는 이름이다.
+- **프로젝트 설정 바꾸기(#591).** `aaa project set <p> <key> <값>`(hp `set`·`settings::set_in`). key는 aaa가 읽는 것만: `goal`·`thread_profile`·`coordinator_profile`·`max_parallel_threads`(1~1000)·`auto_resolve_days`(0~1000)·`repos.add`·`repos.remove`(`PATH[@MACHINE]`). host가 toml_edit로 그 값만 바꿔 원자적으로 쓴다(다른 줄·주석은 그대로, 인라인 `repos = [...]`는 `[[repos]]`로 바꾼다). `thread_profile`은 그 프로젝트 thread 허용 목록에 있어야 한다(참고 `check_allowed`). 거부한 값은 파일을 바꾸지 않는다. 감사 기록 `project_set`.
+  - 참고와 다름: `name`은 `project rename`으로 가라고 말하고 거부한다. `nudge`·`mute`는 참고처럼 true·false(on·off·yes·no)다(main이 project.toml에서 읽는 값, §8.136). `coordinator_profile`은 허용 목록이 없어(§8.163은 coordinator 쪽 safety를 두지 않았다) 이름 형식만 본다.
+  - coordinator(조작 권한)도 쓴다(참고도 coordinator가 고친다). thread·평가자 세션 안 CLI는 보기 권한이라 거부된다(§8.164).
+- **멈추기·보관·삭제·이름·청소(#592).** `aaa project pause|resume|archive|unarchive|delete|rename|sweep`(hp `lifecycle.rs`·`rename.rs`·`sweep.rs`, `crates/aaa-host/src/lifecycle.rs`).
+  - 상태는 host DB(`project_status:<프로젝트>`)다. 참고는 프로젝트 폴더 `.state/project.json`이지만 aaa coordinator의 cwd가 그 폴더라 파일로 되살릴 수 있다(§8.19처럼 문을 폴더 밖에).
+  - paused: ticker가 그 프로젝트를 건너뛰고(설정 오류·thread 확인·auto-resolve·routine·PR·nudge, 평가자 묶음은 되살릴 때까지 미룸) `thread start`를 거부한다. 도는 agent는 멈추지 않고 일하는 중인 pane을 알린다.
+  - archived: paused에 더해 `project list`(`--all` 없이)·웹 프로젝트 고르기·sidebar에서 빠지고, 살아 있는 pane(coordinator = 폴더를 cwd로 쓰는 host 머신 pane, 끝나지 않은 thread pane)을 닫는다(참고 `close_workspaces`). `pause`·`resume`은 「먼저 unarchive」로 거부. unarchive는 coordinator를 다시 열지 않고 `aaa project open`을 알린다(참고는 다시 연다 — `project open`이 생기면 따른다).
+  - delete: 살아 있는 pane이 있으면 `--force` 없이 거부. 폴더를 `<projects root>/.trash/<이름>-<UTC>`로 옮기고, host 기록(thread·flow 사건·메시지·inbox·평가와 `<종류>:<프로젝트>` meta)을 그 안 `aaa-records.json`으로 뺀 뒤 지운다: 같은 이름으로 다시 만든 프로젝트가 옛 thread를 물려받지 않는다(참고는 기록이 폴더 안이라 함께 옮겨진다). 끝나지 않은 thread는 감시를 풀고 pane은 둔다. 남긴 worktree·branch와 `[safety.<이름>]` 표를 알린다.
+  - rename: 끝나지 않은 thread가 있으면 거부(참고와 같다). coordinator가 돌면 거부한다 — 참고는 ticker가 쉬는 때를 기다려 닫고 바꾼 뒤 새 폴더에서 다시 연다(aaa는 사람이 닫고 바꾼 뒤 `aaa project open <새 이름>`으로 다시 연다). DB의 project 열·thread 기록 JSON·meta key를 한 transaction으로, 폴더 이름, 뼈대 그대로인 AGENTS.md를 바꾼다(고친 AGENTS.md는 두고 알린다). `--dry-run`. 참고의 `--name`(표시 이름)은 없다. 끝난 thread branch(`aaa/<옛 이름>/…`)는 그대로다.
+  - sweep: resolve가 남긴 worktree(고친 파일이 있어 force 없이 못 지움)·branch(병합 안 됨)를 thread 기록(`ThreadRec.leftover`, resolve가 적는다)에 두고, 그 머신 agent에 `ThreadCleanup`을 다시 보낸다(force 없음, 기준에 병합된 branch만). 이미 없는 worktree는 지운 것으로 보아 병합된 branch를 지운다(agent 고침, 새 요청 없음). `--dry-run`, 터미널이면 `[y/N]`, 아니면 `--yes`. `--keep-worktree`로 남긴 것은 치우지 않는다(참고 `kept_worktree`).
+  - 참고와 다름(sweep): 참고는 저장소의 `hp/<slug>/` worktree·branch를 직접 훑어 기록 없는 것까지 찾고, 오래 끝난 탭 thread 폴더·30일 지난 처리한 inbox·빈 Space도 치운다. aaa worktree는 thread 머신에 있어 기록으로 찾는다(이 필드 전에 끝난 thread는 모른다). dir thread 작업 폴더는 남는다. 처리한 inbox는 host가 `inbox_done_days`로 이미 지운다.
+  - front: ProjectView `status`, ThreadView `project_status`(진행 중이면 없음). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 웹이 다시 묻지 않고 안다: sidebar 프로젝트 줄·프로젝트 고르기가 「멈춤」(참고 `project_line` 「paused」), 보관한 프로젝트의 thread·줄은 숨는다. 삭제·이름 바꾸기는 옛 이름 thread를 「보관」으로 한 번 알려 웹 목록에서 뺀다(thread를 지우는 사건이 따로 없다).
+- **coordinator 열기(#590, 지금 차이 목록 592줄).** `aaa project open <p> [--profile 이름] [--new]`(hp `coordinator.rs` `open`, `crates/aaa-host/src/open.rs`).
+  - profile을 먼저 푼다(참고 `profiles::resolve`): `--profile` → project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile`(사람이 `aaa profile default coordinator`) → claude. host.toml 정본(§8.170, 기본 profile claude·codex)에 없으면 coordinator가 돌아도 거부한다. 보관한 프로젝트는 「먼저 unarchive」로 거부(참고와 같다, 멈춘 프로젝트는 연다).
+  - 도는 coordinator: aaa 판정(host 머신에서 프로젝트 폴더를 작업 폴더로 도는 pane) 중 agent가 있는 pane — open이 띄운 것(역할 coordinator, custom profile이어도), 띄운 harness·실행 파일이 Claude·Codex인 것, 감지한 agent가 있는 것. 참고도 그 폴더의 agent만 센다: 사람 셸이 그 폴더에 있어도 coordinator가 도는 것은 아니다. `--new`가 없으면 가장 최근에 상태가 바뀐 것을 알리고 아무것도 만들지 않는다. `--profile`을 주면 기록한 coordinator가 그 profile일 때만 다시 쓰고, 아니면 옆에 하나 더 띄운다(참고 popup에서 다른 profile을 고르는 길). 기록은 host DB meta `coordinator:<p>`({pane, profile}, 재부팅 복원이 대신한 pane은 `replaced`로 따라감, 삭제·이름 바꾸기가 다른 meta처럼 옮긴다).
+  - 띄우기: host 머신 agent에 `SpawnSpec { profile, role: coordinator, cwd: 프로젝트 폴더 }`(§8.126 길: hook 설정·`--session-id`, 재부팅 복원이 대화를 잇는다). 역할 coordinator는 agent가 hook 진행 안내를 넣는 세션이다(참고 `managed`). 프로젝트 이름 workspace(없으면 만든다)의 새 탭 「coordinator」에 둔다(참고 `tab_create`·`workspace_create`·탭 이름 coordinator). pane 이름은 「<p> coordinator」, 둘째부터 「<p> coordinator N」(참고 `hpc-<slug>-N`).
+  - 참고와 다름: (1) 셸 pane에서 치면 그 pane에서 띄우는 길(`run_here`)·`--tab`이 없다. aaa pane은 처음부터 그 명령으로 띄우고 셸 뒤에 agent를 붙이지 않는다(§8.126이 참고의 「agent가 못 떴을 때 열기」를 뺀 것과 같은 까닭). (2) 도는 coordinator에 focus를 옮기지 않는다: focus는 화면마다라 pane ID와 `aaa attach -w <p>`를 알린다. (3) `--rebind` 없음(host 하나). (4) 기록한 대화를 open이 잇지 않는다: pane 복원(§8.111)이 잇는다.
+  - coordinator safety(참고 `check_allowed`·`profiles::launch_args`·`Safety::launch_args`의 coordinator 몫): §8.163이 「aaa는 coordinator를 띄우지 않는다」로 뺀 것을 open과 함께 넣었다. host.toml `[safety.*]` `coordinator_profiles`(사람이 `aaa profile allow coordinator …`, 목록에 없으면 기본 profile이어도·돌아도 거부)·`coordinator_agent_args`(`aaa safety set … coordinator_agent_args`, 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile에만, issue #45)·yolo(coordinator도 harness의 권한 건너뛰기 인자로). aaa에 옛 자리가 없어 프로젝트 표 → default 표 → 기본값이다. host가 profile을 풀 때 붙인다(`resolved_coordinator_profile`, main §8.170의 `resolved_profile`과 같은 풀기에 coordinator 몫을 준다): `SpawnSpec.resolved_profile`로 가고, `host_profiles.v1`을 모르는 agent면 정의를 잃은 채 띄우지 않고 거부한다. (이 가지에서는 처음에 agent가 profile을 풀어 `SpawnSpec.safety`·`spawn_safety.v1`로 보냈다가 main §8.170을 들이며 host 풀기로 옮기고 그 칸·기능을 지웠다.) `aaa safety show`에 두 줄이 더해졌고 RESTART_NOTE는 「닫고 `aaa project open`」을 함께 말한다.
+  - 0.2 옮기기(`migrate`)는 이제 `coordinator_profile`과 `mute`(main §8.136)를 project.toml로 옮긴다(전에는 「aaa에 없다」로 남겼다).
+  - 웹 「coordinator 열기」(참고 popup Threads의 `c` → `profile_picker("Start or focus a coordinator with")` → `open <p> --profile <고른 것>`, `web/src/CoordinatorOpen.tsx`): 프로젝트 화면 머리(제목과 「더 보기」 사이)의 「coordinator」 단추. 누르면 host 머신 profile 목록(`profiles`, machine 없음 = host 머신)과 프로젝트(`projects`)를 그때 받아, `ProjectView.coordinator_profiles`(safety 허용 목록, 없으면 모두)로 거르고 `coordinator_profile`(풀린 기본값)을 맨 위에 「기본」으로 둔 메뉴를 연다(참고 `usable`: 허용한 것만, 기본이 먼저). 고르면 `project_open`에 그 profile을 주고 돌아온 pane으로 간다(띄웠든 도는 것이든). 고를 것이 없으면 메뉴 대신 머리 아래 줄에 허용 목록과 고치는 명령(참고 「No profile is allowed here」), host 거부(고르는 사이 바뀐 허용 목록·보관·없는 profile)도 그 줄에 host 글 그대로. 보기 권한 화면에는 단추가 없다(`project_open`은 조작 권한). 휴대폰 폭(480px 이하)은 표지만이고 메뉴는 아래 sheet(RowMenu).
+  - 참고와 다름(웹): 참고 popup은 profile을 고르기 전 기록한 coordinator를 모른다(고르면 hp가 정한다). 웹도 같다: 도는 것이 있는지는 고른 뒤 host가 정하고, 메뉴 머리가 「도는 것이 있으면 그 pane을, 없으면 띄운다」고 말한다. 사이드바 프로젝트 줄 ⋯에는 넣지 않았다(참고 `sidebar.rs`는 줄을 보이기만 하고 여는 동작은 popup에만 있다).
+- **thread adopt(#598).** `aaa thread adopt <p> --pane <ID> --title <글> [--task-file 파일|-]`(hp `adopt.rs` `adopt`, `crates/aaa-host/src/adopt.rs`). 이미 띄운 agent pane을 이 프로젝트의 thread(종류 `adopted`)로 적고 brief를 안내한다. pane은 그대로 두고 그 폴더에서 일한다.
+  - 거부는 아무것도 만들기 전에(참고 `adoptable_agent`): 멈춘·보관한 프로젝트, 빈 제목, 없는·끝난 pane, Claude·Codex가 아닌 pane, 어느 프로젝트의 coordinator pane(폴더가 그 프로젝트 폴더), 이미 끝나지 않은 thread인 pane, adopt를 모르는 옛 agent.
+  - 자리: 그 머신 agent가 세션이 **지금** 있는 폴더(앞 프로그램의 cwd, `follow_cwd` — 참고가 쓰는 herdr `agent.cwd`와 같은 뜻, 못 읽으면 띄운 폴더)에 `.aaa/<p>-<t>/`를 만들고 brief.md를 쓴다. git repo 안이면 `.aaa/`를 exclude에 넣고 repo top·지금 branch(떼어 낸 HEAD면 없음)를 적는다. host는 git을 실행하지 않는다. 할 일을 안 주면 참고 `DEFAULT_TASK`처럼 「하던 일을 이어 하되 이제 이 프로젝트 thread다」. 그다음은 다른 thread와 같다: 보고 감시, brief는 입력을 받을 수 있을 때(`spawn_brief`), 흐름 사건 `thread_started`(평가자 시작 시각).
+  - 다시 띄우지 않는다(참고 `restart`의 「adopt a new pane instead」): launch는 pane argv 그대로이고 이을 방법이 없다. resolve는 pane을 끝내지 않고 그 폴더도 정리하지 않는다(「pane은 그대로 둔다」, 참고 `Kind::Adopted => its pane was left alone`). 마지막 사본·감시 풀기는 같다. sweep은 worktree thread만 본다.
+  - thread 범위: 사람이 띄운 pane은 띄울 때 역할이 없다. 그 pane이 끝나지 않은 thread면 그 역할(worker)로 본다(§8.164 판정의 역할 대체): 그 안 CLI는 보기만이다.
+  - Claude·Codex인지: pane을 띄울 때 알린 harness, 없으면 실행 파일 이름(`aaa pane run -- claude`), 그것으로 모르면 agent가 감지해 알린 상태의 harness(셸 안에서 띄운 agent — 참고는 herdr가 감지한 agent가 있는 pane만 데려온다). 띄운 프로그램으로 정하는 것은 갓 띄운 pane이 아직 상태를 알리기 전에도 데려오게 한다.
+  - 참고와 다름: (1) 셸 pane 안의 agent는 agent가 앞 프로세스로 감지한 뒤에만 데려온다(§8.110 Q21: 감지는 시작 유예 3초 뒤, 셸만 앞이면 거부). 참고는 herdr가 감지한 agent면 바로다. (2) 재부팅 복원·`aaa pane resume`이 새 pane으로 대신하면 thread가 새 pane을 따라간다(`replace_pane`): 데려온 pane은 사람이 띄운 pane과 같은 길(대화 ID를 알면 `--resume`, 모르면 중단으로 둠)로 잇고, thread restart 길(§8.111)로 가지 않는다. 참고는 herdr pane ID가 복원 뒤에도 같아 따로 할 일이 없다. (3) PR은 보고 `PR:` 줄로만 찾는다(branch로 찾기는 worktree thread만, 사람 checkout의 branch는 main일 수 있다). 참고는 종류와 상관없이 branch로도 찾는다.
+- **서버 멈추기·다시 띄우기(#497).** `aaa service restart|stop|start --role host|agent`(herdr `server stop`, `crates/aaa/src/launchd.rs`). launchd가 KeepAlive로 감독해(결정 14) 프로세스를 끝내면 다시 뜨므로 launchctl을 감싼다: 다시 띄우기 `kickstart -k`(업그레이드 뒤, 세션은 session host가 가져 이어진다), 멈추기 `bootout`(plist는 남아 다음 로그인에 뜬다, 아주 내리려면 `uninstall`), 띄우기 `bootstrap`. 설치·해제와 같은 사람 문(aaa 세션 안·터미널 아님은 거부, `yes`)을 지난다. 설치 전·멈춘 때·올라간 때 맞지 않는 명령은 launchctl을 부르지 않고 다음 명령을 알린다. runbook 업그레이드 절의 손 `launchctl kickstart`를 바꿨다.
+  - 참고와 다름: herdr `server stop`은 서버에 끝내라고 보낸다(감독자가 없다). aaa는 감독자를 거친다. herdr는 원격 서버에도 보내지만 aaa 감독자는 그 Mac 사람만 바꾼다(다른 Mac은 그 Mac 터미널에서).
+  - 시험: e2e `service_stop_start_restart_wrap_launchctl`(가짜 launchctl, HOME은 실험실): 설치 전·멈춘 때·올라간 때의 안내, 터미널 아님·세션 안·`no`면 launchctl을 바꾸지 않음, `yes`면 bootstrap → kickstart -k → bootout 차례, 멈춘 뒤 plist가 남음. 심은 결함 셋(start 사람 문 빼기, stop이 kickstart, restart 멈춤 검사 빼기)이 각각 실패했다. lab `in_terminal`은 답하지 않은 물음에서 기다리며 멈추지 않고 시간 안에 실패로 끝낸다(셋째 결함이 처음엔 멈춤으로 드러났다).
+- **업데이트 명령(#502, 지금 차이 목록 504줄).** `aaa update --from <파일> [--dry-run]`·`aaa update rollback [이름]`·`aaa update list`(herdr `update.rs` `self_update`·`download_update`·`install_downloaded_update`, `crates/aaa/src/update.rs`). coordinator 답 (가): 주어진 실행 파일 교체·self-check·보관·rollback·version 고정 검사까지, 내려받기·서명 release는 만들지 않는다(사용자 10-18: brew·배포·서명은 추후).
+  - 바꿀 자리는 지금 도는 실행 파일(herdr `current_exe`, 운영은 `~/.local/bin/aaa`). 링크면 거부한다(가리키는 파일을 바꾸지 않는다). 사람 문은 감독자 명령과 같다(aaa 세션 안·터미널 아님 거부, `yes`). `--dry-run`·`list`는 바꾸지 않아 누구나.
+  - 순서(§11 「교체」): 같은 폴더 `.aaa-update-<pid>.tmp`(herdr와 같은 자리, 같은 볼륨이라 rename이 원자적) → self-check(주어진 파일을 실행해 `--version`이 `aaa x.y.z`이고 `config check`가 이 Mac 설정을 받는지, 30초 한도) → version 고정 → 지금 것을 옆 `.aaa-old/aaa-<UTC>-<version>`에 hard link로 보관(실행 파일 자리가 비지 않는다) → rename → 새것부터 `[update] keep`개만 남긴다. 실패하면 staging을 지우고 실행 파일은 그대로다.
+  - version 고정: `[update] version = "x.y.z"`(host.toml·agent.toml 어느 쪽이든, 둘 다 적으면 둘 다 지킨다 — agent만 도는 Mac에는 host.toml이 없다)와 다르면 거부, 고정하지 않았으면 major가 바뀌는 것을 거부한다(§11 「major를 자동으로 올리지 않는다」). 되돌리기는 빠져나가는 길이라 고정과 달라도 알리기만 한다.
+  - rollback: 이름이 없으면 지금과 sha256이 다른 가장 새 보관, 지금 것도 보관하므로 다시 하면 되돌린 것을 되돌린다. DB는 되돌리지 않는다(§11 「DB 백업」은 아직 없다).
+  - 도는 host·agent는 옛 이미지로 계속 돈다: 바꾼 뒤 `aaa service restart`를 알리고 저절로 다시 띄우지 않는다(§11).
+  - 참고와 다름: (1) 내려받기·채널(`herdr channel`)·sha256 manifest 검증이 없다(주어진 파일). (2) herdr는 도는 서버를 멈출지·`--handoff`로 넘길지 묻는다: aaa는 session host가 세션을 가져(결정 3) 다시 띄워도 이어져 묻지 않는다. (3) brew·mise·nix 설치 감지 없음(aaa는 고정 경로 하나). (4) herdr는 같거나 옛 version이면 「already up to date」다: aaa version은 아직 빌드마다 같아(0.1.0) sha256이 같을 때만 「이미 같다」고 하고, 바꿀 때 앞뒤 sha256 앞 12자리를 보인다(runbook 「같은 commit」 확인도 version 대신 sha256). (5) herdr에 없는 rollback·보관은 §11을 따랐다.
+  - dev profile에서 sha2를 최적화한다(`[profile.dev.package.sha2] opt-level = 3`): 디버그 실행 파일(100MB 넘음) sha256이 한 번에 3초 걸려 시험이 68초였다(→ 6초).
+  - 시험: e2e `update_replaces_keeps_and_rolls_back`(실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다, 「다른 빌드」는 시험 binary 뒤에 바이트를 덧붙인 사본): 터미널 아님·세션 안·`--from` 없음, self-check 실패 셋(돌지 않음·version을 말하지 않음·설정 거부)과 major·고정 거부는 실행 파일·보관·staging이 그대로, `--dry-run`·`no`, 바꾸면 보관이 원본, 같은 파일은 「이미 같다」, new2에서 rollback은 가장 새 보관 new1(원본이 아니다)·다시 하면 new2·보관 수(3) 넘으면 지움, `keep = 1`이면 하나만 남고 그 이름으로 되돌림. 심은 결함 둘(version 검사 빼기, rollback이 가장 옛 것을 고름)이 실패했다.
+- **다른 머신에서 TUI 붙기(#495, 지금 차이 목록 497줄).** coordinator 답: 웹 길(웹 HTTPS 주소·WebSocket·장치 pairing reader/controller), 새 listener·인증서 없음. §6.2를 그렇게 고쳐 적었다(옛 「TCP+TLS로 붙는다」). 구현은 §8.181.
+- **계약.** FRONT_API 1.33 하나로 묶는다(main 383072b가 10-18 13:55에 배포돼 배포된 웹이 1.32다 — coordinator 착지 지시. 한 번에 착지해 minor 하나, 배포된 1.32 front가 그대로 붙는다): `project_create`의 선택 필드(goal·repos·thread_profile·coordinator_profile)와 `project_set`, ProjectView `status`·ThreadView `project_status`, `projects` `all`, `project_lifecycle`·`project_delete`·`project_rename`·`project_sweep`, `thread_adopt`와 ThreadKind `adopted`, `project_open`·`ProjectOpened`, ProjectView `coordinator_profile`·`coordinator_profiles`(선택 필드). 이 가지에서는 1.30~1.33 넷으로 나눴다가 main 뒤로 옮기며 1.33 하나로 묶었고, 1.32가 배포되기 전에는 잠깐 1.32에 더했었다. AGENT_LINK는 그대로(sweep은 있는 `ThreadCleanup`, adopt의 `ThreadAdopt`는 agent 기능 `adopt.v1`이 있을 때만 보낸다, coordinator는 main §8.170의 `SpawnSpec.resolved_profile`).
+- **시험(결함 심기로 확인).** m13 `routine_seconds_only_in_tests`(변수가 빈 host에서 `every 30s`는 오류·`every 1m`은 그대로, 변수 검사를 「있기만 하면」으로 되돌리면 실패), host 유닛 `schedules`·`routine_files`. m13 `project_create_options_and_set`(옵션이 project.toml에, 안 준 값은 없음, 프로젝트 기본 profile로 thread가 뜸, 틀린·허용 안 된 profile은 폴더 없음, set은 주석을 두고 값 하나, 상대 경로는 친 cwd 기준, 거부한 set은 파일 그대로), host 유닛 `set_keeps_the_rest_and_checks_values`. 심은 결함 넷(허용 검사 빼기, project.toml 안 쓰기, CLI가 상대 경로를 그대로, 0 허용)이 각각 실패했다.
+  - m13 `project_lifecycle`: 멈추면 ticker가 깨진 project.toml을 알리지 않고 되살리면 알림, thread start 거부, thread에 `project_status`; 보관하면 thread pane이 닫히고 목록에서 빠짐(`--all`에는 보관), pause·resume 거부; rename은 열린 thread·coordinator pane으로 거부, dry-run은 그대로, 바꾸면 폴더·AGENTS.md·thread 기록·inbox가 새 이름; delete는 coordinator pane으로 거부, 휴지통에 `aaa-records.json`, 같은 이름으로 다시 만들면 thread·inbox 없음; sweep은 고친 worktree를 남기고, 사람이 지운 뒤에는 병합된 branch까지 치우고 다시 하면 「치울 것이 없다」. 심은 결함 일곱(ticker가 멈춘 것도 봄, 시작 검사 빼기, 보관이 pane을 안 닫음, rename이 DB를 안 옮김, delete가 기록을 안 지움, resolve가 leftover를 안 적음, agent가 없는 worktree를 지운 것으로 안 봄)이 각각 실패했다.
+  - m13 `thread_adopt_existing_pane`: 이름이 `claude`인 가짜 agent를 사람이 띄운 pane처럼 열고, 셸 pane·coordinator pane·빈 제목은 거부, 데려오면 종류·pane·폴더·branch가 기록되고 brief가 가서 보고가 오며 작업 폴더는 git 상태에 안 보임, 그 pane 안 CLI는 보기만, 같은 pane 다시·restart 거부, 재부팅 뒤 `--resume <ID>`로 이어 띄운 새 pane을 thread가 따라가고 `restore_failed` 없음, resolve 뒤에도 pane이 입력을 받음. 심은 결함 여섯(역할 대체 빼기, 복원 걸름 빼기, pane 따라가기 빼기, resolve가 pane을 끝냄, restart 거부 빼기, coordinator 거부 빼기)이 각각 실패했다. host 유닛 `harness_from_declared_then_program_name`.
+  - m13 `project_open_starts_or_shows_the_coordinator`: 사람 셸이 프로젝트 폴더에 있어도 띄운다, 없는 profile은 아무것도 만들지 않음(돌아도 거부), 기본 claude로 띄우면 이름·역할·cwd·argv(`--settings`)·workspace 탭, hook 상태, 다시 열면 같은 pane, `--profile claude`는 다시 쓰고 `--profile fake`는 옆에 하나 더(custom profile도 coordinator로 셈), `--new`, project.toml·`aaa profile default coordinator`(세션 안 거부, 터미널에서 씀) 사슬, `project list`의 `coordinator_profile`, 보관 거부. 결함 셋(사람 셸도 셈·open이 띄운 custom pane을 안 셈·`--profile`을 안 봄)이 각각 실패했다.
+  - m13 `project_open_follows_coordinator_safety`: `profile allow coordinator`는 터미널이 아니면 거부, 터미널에서 쓰면 `safety show`의 `coordinator_profiles`가 그 값(출처 프로젝트), 목록에 없는 기본 profile은 거부, 허용한 profile은 yolo 인자(`--dangerously-skip-permissions`)를 달고 뜨고 safety 없는 프로젝트는 인자 없음. 결함 둘(host가 목록을 안 봄·host가 coordinator 몫 safety를 안 붙임)이 각각 실패했다. aaa-config 유닛: coordinator 두 값의 층·`safety show` 줄·쓰기.
+  - m13 `thread_adopt_claude_started_in_a_shell`: hook을 부르지 않는 가짜 Claude를 셸 pane에서 친다. 셸만 앞이면 거부, 앞 프로세스 감지로 harness claude가 된 뒤 데려오면 종류·profile·폴더가 맞고 brief가 Claude에 가 보고가 오며 그 안 CLI는 보기만이다. 감지한 harness 갈래를 끄는 결함을 심으면 「Claude·Codex pane이 아니다」로 실패했다.
+  - 두 adopt 시험의 가짜 Claude는 brief 턴에 실제 Claude처럼 입력 상자 위에 「Working… esc to interrupt」를 그린다. hook 없는 pane은 화면 감지의 작업 중이 받았다는 사건이라, 전에는 host가 `accept_wait_ms`(10초)를 다 기다린 뒤 화면으로 받음을 정했다(셸 시험 15초 → 두 시험 합 5.4초).
+  - 웹 E2E spec 12 「프로젝트 멈춤·보관」: 멈추면 sidebar 줄 title·프로젝트 고르기가 「멈춤」, 되살리면 묶음 줄, 보관하면 줄과 thread가 사라지고 고르기에 없다. 심은 결함 둘(sidebar에 멈춤을 안 넘김, 보관 thread를 안 거름)이 실패했다.
+  - 웹 E2E spec 12 「coordinator 열기」: 허용 목록에 host 머신 profile이 없으면 메뉴 없이 그 말, 기본 profile이 첫 항목 「fake 기본」, 메뉴를 연 뒤 허용 목록을 바꾸면 host `forbidden` 글이 머리 아래에 서고 화면은 그대로, 고르면 그 pane 주소로 가 화면에 fake가 뜨고 host 기록은 역할 coordinator 하나, 뒤로 가서 다시 고르면 띄우지 않고 같은 pane, 휴대폰 폭은 표지 16px 단추·옆 밀림 없음·아래 sheet. 심은 결함 둘(허용 목록 거르기 빼기, 도는 coordinator면 pane으로 안 감)이 실패했다. 휴대폰 단추 표지가 8px로 눌린 것(뒤에 묶인 `.btn` padding)도 이 시험이 찾았다.
+  - 웹 E2E 그림(`shot`)은 Playwright `animations: "disabled"`로 찍는다: 창 폭을 바꾼 바로 뒤 drawer가 미끄러지는 중을 찍던 휴대폰 그림(`phone-project-threads` 등)이 끝난 모습이 된다.
+
+### 8.181 다른 기기 TUI: 웹 WebSocket 위 Front API(10-18, 차이 목록 4장 A #495, 지금 497줄)
+
+- **명령.** `aaa attach --remote <웹 주소> [-w <workspace>]`(herdr `--remote <ssh-target>`의 aaa 꼴). 주소는 `aaa web publish`의 https 주소이고 scheme이 없으면 https다. `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다: 장치 token을 다른 기기로 평문으로 보내지 않는다(연결 전에 거부).
+- **입장.** 이 기기 상태 폴더 `remote/<scheme>-<이름>-<포트>.token`(0600, 폴더 0700)에 장치 token이 없거나 host가 받지 않으면(401) 사람에게 pairing 코드를 묻는다(`person::require`: aaa 세션 안·터미널 아님 거부). host 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 `POST /api/v1/pair`에 내고 `Set-Cookie`의 token을 둔다. 기기 이름은 「aaa TUI · <이 기기>」(host `aaa web devices`). 받지 않는 token은 지우고 다시 묻는다. 새로 받은 token도 거부되면 멈춘다.
+- **통신.** host 웹 listener에 `GET /api/v1/front`(WebSocket)를 더했다(새 listener·인증서 없음). 글 메시지 하나가 같은 머신 socket의 제어 frame 하나다: Hello·Welcome·요청·응답·사건(`Grid` cell grid diff 포함)이 그대로다. host는 같은 머신 연결과 같은 처리(`front::serve_conn`)를 탄다. 다른 것은 신원뿐이다: 권한과 목록·화면의 보기 전용 표시는 그 기기 역할(reader/controller), actor는 웹 `call`과 같은 `device:<id>`, 다른 기기가 알린 aaa 세션은 쓰지 않는다. 기기를 취소하면 4401로 닫고(웹 화면과 같은 code) TUI는 「이 기기가 host에서 취소됐다」로 끝난다.
+- **살아 있는지.** host는 상태 사건 연결처럼 15초마다 ping하고 45초 동안 아무것도 받지 못하면 연결을 버린다(잠든 노트북의 반쯤 열린 연결이 「지금 쓰는 화면」을 쥐고 있지 않게). TUI는 60초 동안 아무것도 오지 않으면 「host 웹이 답하지 않는다」로 끝난다. 키 하나하나가 바로 가게 TCP Nagle을 끈다. 느린 망에서는 cell grid가 바뀐 줄만 묶어 보내므로(초당 30장 상한) 밀린 화면이 쌓이지 않는다.
+- **보기 기기.** Welcome의 역할이 Reader면 TUI는 탭 막대 오른쪽에 「보기 전용」(웹의 보기 전용 표시와 같은 자리 뜻)을 보이고, pane 크기를 걸지 않으며(host가 거부한다), 친 글·붙여넣기·그림은 보내지 않고 오류 막대로 알린다. thread 세션 안에서 연 같은 머신 TUI(Reader)도 같다. layout 바꾸기는 host가 거부한 말이 오류 막대에 선다.
+- **키·설정.** 이 기기의 `[tui]`(host.toml이 없으면 기본값). herdr `--remote-keybindings` 기본 `local`과 같다.
+- **웹 「보는 화면」.** push 거르기의 presence는 보내지 않는다: 같은 머신 TUI와 같다.
+- **참고와 다름.** (1) herdr는 SSH 너머 서버에 붙고 서버가 없으면 띄운다: aaa는 SSH를 쓰지 않고(결정 6) host를 띄우지 않는다. (2) 계획에 적은 OS 신뢰 저장소 대신 webpki 루트(새 crate 없이 host의 다른 client와 같은 길). (3) 계획에 적은 웹 끝점 셋 대신 `/api/v1/front` 하나(front의 `aaa-vt` 의존 금지). (4) herdr는 원격 client 쪽 키 설정을 고를 수 있다(`--remote-keybindings remote`): aaa는 이 기기 설정만 쓴다.
+- **계약.** Front API 메시지는 그대로라 FRONT_API를 올리지 않는다. 옛 host(`/api/v1/front` 없음)에는 「host가 원격 front를 받지 않았다(HTTP …). 옛 host면 host binary를 새로 바꾼다」로 멈춘다. `FrontClient.role`(Welcome의 역할)은 Rust client 쪽 값이다.
+- **시험(결함 심기로 확인).** TUI harness `remote_attach_rides_the_web`: 실험실 웹 loopback에 다른 기기 상태 폴더로 붙는다. 다른 이름의 http는 연결 전 거부, 처음에는 코드를 묻고 붙으면 탭·사이드바·이 화면 칸 크기의 lease·입력이 pane에, token 0600, host 기기 목록에 조작 기기 하나, 나갔다 lease가 풀린 뒤 다시 붙으면 묻지 않음. 보기 기기는 「보기 전용」이고, 조작 기기 입력이 따라 보일 때 오류 막대가 비어 있으며(붙으며 크기를 걸었다면 host 거부가 서 있다, 한 연결 안 차례) 친 글은 pane에 가지 않는다. 조작 기기를 취소하면 그 화면이 까닭과 함께 실패로 끝나고, 다시 붙으면 token을 지우고 다시 묻는다. 심은 결함 여섯(host가 기기 역할을 무시·취소를 무시, TUI가 거부된 token을 남김·보기 기기가 크기를 걺·친 글을 보냄, http를 아무 이름에나)이 모두 실패했다. 화면 관측기는 이제 alt 화면(`CSI ? 1049 h/l`)을 실제 터미널처럼 따로 둔다: TUI 앞에 찍힌 pairing 물음이 TUI 화면에 섞이지 않고, 끝난 뒤 글은 보통 화면에 선다. 유닛: `remote::targets`(주소·Host·Origin·cookie 이름·token 파일 이름), `token_file_is_private`, `tls_checks_the_certificate`(그 인증서를 믿는 루트로는 pairing·SNI·Host·Origin, webpki 루트로는 자체 서명 거부). host `origin_must_match_the_whole_origin`에 `/api/v1/front`.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
@@ -4050,6 +4128,7 @@ flowchart LR
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
+- **지금(10-18, §8.180):** 주어진 실행 파일을 바꾸는 `aaa update --from`(staging·self-check·rename·보관 `[update] keep`)·`aaa update rollback`·`[update] version` 고정 검사만 있다. 내려받기·서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다(사용자 10-18: brew·배포·서명은 추후 계획).
 
 ## 12. 기술 스택 추천
 
@@ -4264,7 +4343,7 @@ primary 근거:
 |---|---|---|
 | 프로젝트 폴더(PROJECT/AGENTS/MEMORY/memory/TASKS/routines), coordinator = 프로젝트 cwd agent | 그대로(§8.1). 결정 기록·`project.toml` 추가 | M1-3 |
 | profile(agent·model·effort·args·description), 허용 목록(thread/coordinator) | host.toml 정의·허용, agent는 머신 경로·env만 적용, 해석 결과 저장(§7.2, §8.2, §8.170) | M1-3 |
-| thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12) | M1-3 |
+| thread 종류 worktree·tab·checkout·adopt, 원격은 worktree만 | 로컬·원격 기능 같음 + repo 없는 task dir(§8.12). adopt는 `aaa thread adopt`(§8.180, Claude·Codex pane만) | M1-3 |
 | `thread start/restart/prompt/next/stop/brief/read/keys/list/show/ack/resolve` | Front API 명령으로 대응. read·keys는 pane read/send와 question 응답. `next`는 M1 마무리에서 했다(§8.21) | M1-3 |
 | `trust_screens`, 확인창 키 응답 | question 사건 + 원격 응답(§8.4) | M1-3 |
 | brief 전달(claim 60초·settle 3초·3회·`--wait --until working`) | 그대로 계승(§8.5) | M1-3 |

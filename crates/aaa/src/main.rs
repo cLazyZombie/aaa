@@ -6,6 +6,7 @@ mod migrate;
 mod person;
 mod service;
 mod settings;
+mod update;
 
 fn main() -> std::process::ExitCode {
     cli::main()
