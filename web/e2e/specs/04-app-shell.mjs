@@ -23,7 +23,7 @@ export default async function ({ ctl, page }) {
       const { page: p } = await pairPage(browser, aaa("web", "pair").code, viewport, { touch: true, line });
       const cdp = await p.context().newCDPSession(p);
       await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, left: 47, right: 47, bottom: 21 } });
-      await p.getByTestId("pane-t1").click();
+      await inList(p, "pane-t1");
       await until("t1 화면", async () => (await screenText(p)).includes("$"));
       return p;
     };
@@ -38,9 +38,11 @@ export default async function ({ ctl, page }) {
     const n = await measure(narrow);
     const wantN = { head: [8 + 47, 8 + 47], scroll: [8 + 47, 8 + 47], keys: [8 + 47, 8 + 47], input: [8 + 47, 8 + 47] };
     for (const [k, v] of Object.entries(wantN)) if (JSON.stringify(n[k]) !== JSON.stringify(v)) throw new Error(`좁은 가로 ${k} ${JSON.stringify(n[k])} ≠ ${JSON.stringify(v)} (${JSON.stringify(n)})`);
-    await narrow.getByRole("button", { name: "목록으로" }).click();
+    // 목록은 pane 위의 drawer다(참고 styles.css .sidebar): 왼쪽 끝에 붙어 왼쪽 노치만 비킨다(오른쪽 끝에 닿지 않는다)
+    await narrow.locator(".view [data-testid='drawer-toggle']").click();
+    await narrow.locator("#workspace-drawer.is-open").waitFor();
     const l = await measure(narrow);
-    if (JSON.stringify(l.list) !== "[47,47]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
+    if (JSON.stringify(l.list) !== "[47,0]") throw new Error(`좁은 가로 목록 ${JSON.stringify(l.list)}`);
     await narrow.context().close();
   });
 
