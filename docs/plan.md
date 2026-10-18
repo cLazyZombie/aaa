@@ -3394,6 +3394,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 옛 동작을 심으면(닫기를 보내지 않음) 「pane을 닫지 못했다: session host가 아직 닫히지 않았다」로 실패하고, 고친 판은 통과한다.
   - 시간 경계는 두지 않았다.
 
+### 8.161 웹 E2E의 제품 시간 기다림 둘을 시험 값으로: 화면 감지 시작 유예·알림 묶음(10-18, coordinator 결정 「시험 환경 변수, 없으면 운영 그대로, 기다림마다 기본값 단계 하나」, t-0338)
+
+- **왜.** t-0327이 test 단계를 59초로 줄인 뒤 ci-local의 끝은 웹 E2E(91~96초)다. 그 벽시계는 파일 합계(379초) ÷ worker 4다. 기다림마다 시간을 재 보니 제품 시간이 컸다: 11의 agent 상태 표시 12번이 번마다 3.3~4.6초(35초/54초), 17·18의 push 판정이 번마다 알림 묶음 1초.
+- **화면 감지 시작 유예.** agent는 harness가 막 시작하면 3초 동안 화면을 읽지 않는다(herdr `AGENT_STARTUP_GRACE_WINDOW`: 시작 화면을 상태로 읽지 않으려고). 가짜 harness 화면은 뜨자마자 그대로라 시험에서는 `AAA_TEST_DETECT_GRACE_MS`(agent `detect/state.rs startup_grace`)로 줄인다. 11만 0이고, 기본값 3초 길은 15-ios-rules(확인창 알림·소리)가 돈다.
+- **알림 묶음.** `[notify] debounce_secs`는 초 단위다(실험실 1초, 제품 기본 15초). 1초 밑은 `AAA_TEST_NOTIFY_DEBOUNCE_MS`(host `notify.rs debounce`)로 둔다. 17·18만 100ms이고, 설정 1초 길은 12(보고 알림·이 기기 알림)가 돈다.
+- **줄이지 않은 것.** 웹 pong 기한(3초 × 2)과 앱 안 알림이 저절로 접히는 시간은 시험 전체에 한 번씩(17 「다시 붙음」, 12 「앞 알림 접힘」)이라, 기본값 단계를 남기면 줄일 몫이 없다.
+- **시험.** 11 54 → 27초, 17 68.7 → 59.8초, 18 22.6 → 19.9초(12·15는 그대로). 두 값 모두 없으면 동작이 그대로다(운영 host·agent에 영향 없음).
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
