@@ -60,6 +60,17 @@ struct Screen {
     row: usize,
     col: usize,
     cols: usize,
+    /// alt 화면(`CSI ? 1049 h`)에 든 동안 둔 보통 화면(글·바탕·커서). 실제 터미널처럼 alt 화면은 비어서 시작하고, 나오면
+    /// 보통 화면이 돌아온다: TUI 앞에 찍힌 글(원격 pairing 물음)이 TUI 화면에 섞이지 않는다
+    main: Option<Saved>,
+}
+
+/// alt 화면에 든 동안 둔 보통 화면
+struct Saved {
+    cells: Vec<Vec<char>>,
+    bgs: Vec<Vec<u32>>,
+    row: usize,
+    col: usize,
 }
 
 impl Screen {
@@ -72,6 +83,7 @@ impl Screen {
             row: 0,
             col: 0,
             cols: cols as usize,
+            main: None,
         }
     }
 
@@ -214,6 +226,17 @@ impl vte::Perform for Screen {
                     self.modes.insert(m);
                 } else {
                     self.modes.remove(&m);
+                }
+                if m == 1049 && action == 'h' && self.main.is_none() {
+                    let blank = (vec![vec![' '; self.cols]; ROWS as usize], vec![vec![0; self.cols]; ROWS as usize]);
+                    let cells = std::mem::replace(&mut self.cells, blank.0);
+                    let bgs = std::mem::replace(&mut self.bgs, blank.1);
+                    self.main = Some(Saved { cells, bgs, row: self.row, col: self.col });
+                } else if m == 1049
+                    && action == 'l'
+                    && let Some(Saved { cells, bgs, row, col }) = self.main.take()
+                {
+                    (self.cells, self.bgs, self.row, self.col) = (cells, bgs, row, col);
                 }
             }
             return;
@@ -660,6 +683,12 @@ fn remote_attach_rides_the_web() {
     let first = leaves(&w)[0].clone();
     // 다른 기기: 제 설정·상태 폴더(기기 token은 여기 둔다)
     let dev = lab.node("dev", None);
+    // 보고서용 화면 텍스트(`AAA_TUI_DUMP_REMOTE=폴더`)
+    let dump = |name: &str, tui: &Tui| {
+        if let Ok(dir) = std::env::var("AAA_TUI_DUMP_REMOTE") {
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();
+        }
+    };
 
     // http는 host 머신 loopback만: 다른 이름이면 연결하기 전에 거부한다(token을 평문으로 보내지 않는다)
     let out = dev.run(&["attach", "--remote", "http://mac-a.example.ts.net:8443"]);
@@ -670,6 +699,7 @@ fn remote_attach_rides_the_web() {
     let code = h.ok(&["web", "pair"])["code"].as_str().unwrap().to_string();
     let mut tui = Tui::start_args(&dev, &["attach", "--remote", &url], &[], COLS);
     tui.wait_text("pairing 물음", |s| s.contains("아직 그 host와 pairing하지 않았다") && s.contains("pairing 코드:"));
+    dump("pair", &tui);
     tui.type_line(&code);
     tui.wait_text("탭과 사이드바", |s| tab_chips(s) == ["far"] && s.contains(" ▾ labA"));
     hw.wait("원격 화면의 lease와 칸 크기", |w| {
@@ -678,6 +708,7 @@ fn remote_attach_rides_the_web() {
     });
     tui.type_line("echo far-$((6*7))");
     tui.wait_text("입력 결과", |s| s.contains("far-42"));
+    dump("controller", &tui);
     assert!(h.screen(&first).contains("far-42"));
     let token = dev.state.join("remote").join(format!("http-{}.token", web.replace(':', "-")));
     #[cfg(unix)]
@@ -697,14 +728,14 @@ fn remote_attach_rides_the_web() {
     assert_eq!(mine[0]["role"], "controller");
     let id = mine[0]["id"].as_str().unwrap().to_string();
 
-    // 나갔다 다시 붙으면 묻지 않는다
+    // 나갔다 다시 붙으면 묻지 않는다. 나간 화면의 lease는 풀린다(같은 머신 TUI와 같다)
     tui.cmd("q");
     assert!(tui.wait_exit(), "detach는 성공으로 끝나야 한다");
     drop(tui);
+    hw.wait("lease 해제", |w| w.pane(&first).is_some_and(|p| p.lease.is_none()).then_some(()));
     let mut tui = Tui::start_args(&dev, &["attach", "--remote", &url], &[], COLS);
     tui.wait_text("다시 붙기", |s| s.contains("far-42") && tab_chips(s) == ["far"]);
     assert!(!tui.text().contains("pairing 코드"), "{}", tui.text());
-    hw.wait("다시 쥔 lease", |w| w.held_by(&first, "tui@").then_some(()));
 
     // 보기 기기: 「보기 전용」, 크기를 걸지 않고 입력은 pane에 가지 않는다
     let viewer = lab.node("viewer", None);
@@ -713,19 +744,29 @@ fn remote_attach_rides_the_web() {
     ro.wait_text("pairing 물음(보기)", |s| s.contains("pairing 코드:"));
     ro.type_line(&code);
     ro.wait_text("보기 화면", |s| s.contains("far-42") && s.contains(" 보기 전용 "));
+    // 조작 기기 입력이 따라 보일 때는 보기 기기가 붙으며 보냈을 요청의 답도 이미 왔다(한 연결 안 차례): 크기를 걸었다면
+    // host 거부(「보기 권한으로는 조작할 수 없다」)가 오류 막대에 서 있다
+    tui.type_line("echo mid-$((1+1))");
+    tui.wait_text("조작 기기 입력", |s| s.contains("mid-2"));
+    ro.wait_text("보기 화면도 따라옴", |s| s.contains("mid-2"));
+    assert!(!ro.text().contains("ERROR"), "보기 기기가 host가 거부할 요청을 보냈다:\n{}", ro.text());
+    hw.wait("조작 기기의 lease와 크기", |w| {
+        let p = w.pane(&first)?;
+        (w.held_by(&first, "tui@") && (p.cols, p.rows) == (COLS - SIDE - GUTTER, ROWS - 1)).then_some(())
+    });
     ro.type_line("echo ro-$((2*3))");
     ro.wait_text("입력 거부", |s| s.contains("보기 권한 화면이라 pane에 입력하지 않는다"));
+    dump("reader", &ro);
     tui.type_line("echo after-$((3*3))");
     tui.wait_text("조작 기기 입력", |s| s.contains("after-9"));
     ro.wait_text("보기 화면도 따라옴", |s| s.contains("after-9"));
     assert!(!h.screen(&first).contains("ro-6"), "보기 기기 입력이 pane에 갔다:\n{}", h.screen(&first));
-    let p = hw.pane(&first).unwrap();
-    assert_eq!((p.cols, p.rows), (COLS - SIDE - GUTTER, ROWS - 1), "보기 기기가 크기를 바꿨다");
 
     // 조작 기기를 취소하면 그 화면은 까닭과 함께 끝난다
     h.ok(&["web", "revoke", &id]);
     assert!(!tui.wait_exit(), "취소된 화면은 실패로 끝나야 한다");
     tui.wait_text("취소 까닭", |s| s.contains("이 기기가 host에서 취소됐다"));
+    dump("revoked", &tui);
     drop(tui);
     // 다시 붙으면 받지 않는 token을 지우고 새 코드를 묻는다
     let tui = Tui::start_args(&dev, &["attach", "--remote", &url], &[], COLS);
