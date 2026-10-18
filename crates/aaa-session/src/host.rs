@@ -284,8 +284,10 @@ pub fn main(dir: PathBuf) -> Result<()> {
     rt.block_on(run(dir))
 }
 
-/// 세션에 넘기지 않는, 부모 harness 세션의 표지 env
+/// 세션에 넘기지 않는, 부모 harness 세션의 표지 env. Codex·omp 표지는 herdr `apply_pane_launch_env`(src/pane.rs)와 같다
 const INHERITED_SESSION_MARKERS: &[&str] = &[
+    "CODEX_THREAD_ID",
+    "OMPCODE",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SESSION_ID",
@@ -318,7 +320,9 @@ async fn run(dir: PathBuf) -> Result<()> {
         cmd.cwd(cwd);
     }
     // agent를 Claude Code 세션 안에서 띄웠으면 그 세션 표지가 이어진다. 남기면 세션 안 Claude가 자기를 자식 세션으로 보고
-    // 기록 저장(resume)을 끄고, 메시징 token도 새어 나간다. 사용자가 준 설정 env(CLAUDE_CODE_USE_BEDROCK 등)는 남긴다.
+    // 기록 저장(resume)을 끄고, 메시징 token도 새어 나간다. Codex 안에서 띄웠으면 `CODEX_THREAD_ID`가 이어져 세션 안 Codex의
+    // hook 사건이 모두 중첩 thread로 보여 버려진다(`aaa_agent::hooks::nested_codex`). 사용자가 준 설정 env
+    // (CLAUDE_CODE_USE_BEDROCK 등)는 남긴다.
     for k in INHERITED_SESSION_MARKERS {
         cmd.env_remove(k);
     }

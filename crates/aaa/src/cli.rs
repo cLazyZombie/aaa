@@ -507,10 +507,11 @@ enum PaneCmd {
         #[arg(long)]
         current: bool,
     },
-    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). 출력은 글 그대로(--json이면 JSON)
+    /// 글로 읽는다. 기본은 기록과 화면의 마지막 80줄(--source recent). detection은 상태 감지가 읽는 글이다.
+    /// 출력은 글 그대로(--json이면 JSON)
     Read {
         pane: String,
-        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped"], default_value = "recent")]
+        #[arg(long, value_parser = ["visible", "recent", "recent-unwrapped", "detection"], default_value = "recent")]
         source: String,
         /// 줄 수(최대 1000)
         #[arg(long)]
@@ -520,6 +521,9 @@ enum PaneCmd {
         /// --format ansi와 같다
         #[arg(long)]
         ansi: bool,
+        /// --format ansi와 같다(herdr `--raw`)
+        #[arg(long)]
+        raw: bool,
     },
     /// pane 자리를 나눠 새 pane을 띄운다(명령이 없으면 그 머신 사용자의 기본 셸)
     Split {
@@ -1026,19 +1030,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),
         Cmd::Hook { agent, payload } => {
             // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 출력 없음
+            // 표준 출력은 agent가 돌려준 진행 안내 JSON 한 줄만이다(Claude Code는 JSON이 아니면 버린다)
             let body = match payload {
                 Some(p) => p,
                 None => {
                     let mut t = String::new();
-                    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut t);
+                    let _ = std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 1 << 20), &mut t);
                     t
                 }
             };
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body)
                 && let Ok(rt) = runtime()
-                && let Err(e) = rt.block_on(aaa_agent::hooks::send(&agent, v))
             {
-                eprintln!("aaa hook: {e:#}");
+                match rt.block_on(aaa_agent::hooks::send(&agent, v)) {
+                    Ok(Some(out)) => println!("{out}"),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("aaa hook: {e:#}"),
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -1123,6 +1131,7 @@ fn read_source(s: &str) -> aaa_proto::ReadSource {
     match s {
         "visible" => aaa_proto::ReadSource::Visible,
         "recent-unwrapped" => aaa_proto::ReadSource::RecentUnwrapped,
+        "detection" => aaa_proto::ReadSource::Detection,
         _ => aaa_proto::ReadSource::Recent,
     }
 }
@@ -1159,9 +1168,9 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
         }
         PaneCmd::Get { pane } => FrontRequest::PaneGet { pane },
         PaneCmd::Current { pane, current: _ } => FrontRequest::PaneGet { pane: current_pane(pane)? },
-        PaneCmd::Read { pane, source, lines, format, ansi } => {
+        PaneCmd::Read { pane, source, lines, format, ansi, raw } => {
             let format =
-                if ansi || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
+                if ansi || raw || format == "ansi" { aaa_proto::ReadFormat::Ansi } else { aaa_proto::ReadFormat::Text };
             return front_print(
                 json,
                 front_call(FrontRequest::PaneReadText { pane, source: read_source(&source), lines, format })?,

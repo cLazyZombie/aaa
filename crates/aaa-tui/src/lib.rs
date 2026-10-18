@@ -588,16 +588,25 @@ impl App {
     fn set_ws(&mut self, w: Workspace) {
         // 탭 차례가 바뀌어도(탭 옮기기) 보던 탭에 남는다(herdr `move_tab`은 지금 탭을 그 탭으로 둔다)
         let current = self.ws.tabs.get(self.tab).map(|t| t.id.clone());
+        let before = self.current_leaves();
         self.ws = w;
-        if let Some(i) = current.and_then(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
-            self.tab = i;
+        match current.map(|id| self.ws.tabs.iter().position(|t| t.id == id)) {
+            Some(Some(i)) => self.tab = i,
+            // 보던 탭이 없어졌다(닫기·마지막 pane이 끝남): 그 앞 탭(herdr `Workspace::close_tab`·`remove_pane`)
+            Some(None) => self.tab = self.tab.saturating_sub(1),
+            None => {}
         }
         if self.tab >= self.ws.tabs.len() {
             self.tab = self.ws.tabs.len().saturating_sub(1);
         }
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
-            self.focus = leaves.first().cloned();
+            // 보던 pane이 빠졌다: 차례상 다음 pane, 없으면 앞 pane(herdr `TileLayout::close_focused`)
+            let at = self.focus.as_ref().and_then(|f| before.iter().position(|p| p == f));
+            let near = at.and_then(|i| {
+                before[i + 1..].iter().chain(before[..i].iter().rev()).find(|p| leaves.contains(p)).cloned()
+            });
+            self.focus = near.or_else(|| leaves.first().cloned());
         }
     }
 
@@ -1941,6 +1950,36 @@ mod tests {
             })
             .collect();
         app
+    }
+
+    /// 보던 탭·pane이 없어지면(닫기, 셸 exit) 앞 탭, 차례상 다음 pane(끝이면 앞 pane)으로 간다(herdr `Workspace::close_tab`·
+    /// `remove_pane`·`TileLayout::close_focused`)
+    #[test]
+    fn a_removed_tab_or_pane_moves_like_herdr() {
+        let mut app = app_with_tabs(&["a", "b", "c"]);
+        let ws = |tabs: &[aaa_proto::Tab]| Workspace { name: "main".into(), tabs: tabs.to_vec() };
+        let all = app.ws.tabs.clone();
+        app.tab = 1;
+        app.set_ws(ws(&[all[0].clone(), all[2].clone()]));
+        assert_eq!(app.ws.tabs[app.tab].id, "t0", "가운데 탭이 빠지면 앞 탭");
+        app.tab = 0;
+        app.set_ws(ws(&[all[2].clone()]));
+        assert_eq!(app.ws.tabs[app.tab].id, "t2", "맨 앞 탭이 빠지면 새 맨 앞 탭");
+
+        let leaf = |p: &str| aaa_proto::LayoutNode::Pane { pane: p.into() };
+        let split = |a, b| aaa_proto::LayoutNode::Split {
+            dir: aaa_proto::SplitDir::Horizontal,
+            ratio: 500,
+            a: Box::new(a),
+            b: Box::new(b),
+        };
+        let tab = |root| aaa_proto::Tab { id: "t".into(), name: String::new(), root, zoomed: false };
+        app.set_ws(ws(&[tab(split(leaf("a"), split(leaf("b"), leaf("c"))))]));
+        app.focus = Some("b".into());
+        app.set_ws(ws(&[tab(split(leaf("a"), leaf("c")))]));
+        assert_eq!(app.focus.as_deref(), Some("c"), "다음 pane");
+        app.set_ws(ws(&[tab(leaf("a"))]));
+        assert_eq!(app.focus.as_deref(), Some("a"), "끝 pane이 빠지면 앞 pane");
     }
 
     /// 줄의 `x`칸에 있는 글자(넓은 글자는 두 칸)
