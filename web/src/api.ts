@@ -6,6 +6,7 @@ import type {
   FrontEvent,
   FrontRequest,
   FrontResponse,
+  NoticeView,
   Outcome,
   QuestionView,
   SharedPreferences,
@@ -198,6 +199,7 @@ export function watchEvents(
   onThread: (t: ThreadView) => void,
   onPreferences: (p: SharedPreferences) => void,
   onWeb: (build: string) => void,
+  onNotice: (n: NoticeView) => void = () => {},
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -349,6 +351,10 @@ export function watchEvents(
         const { ev: _tag, ...p } = ev;
         onPreferences(p);
       } else if (ev.ev === "web") onWeb(ev.build);
+      else if (ev.ev === "notice") {
+        const { ev: _tag, ...n } = ev;
+        onNotice(n);
+      }
       else if (ev.ev === "pong" && probeIds.has(ev.id)) {
         probeDrops = 0;
         endProbe();

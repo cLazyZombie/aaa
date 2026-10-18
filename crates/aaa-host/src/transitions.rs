@@ -227,7 +227,11 @@ impl Host {
                 let summary = transition_summary(project, r, t, machine.as_deref(), agent.as_ref());
                 self.inbox_add(project, "thread-state", &r.id, transition_event(t), &summary);
             }
-            self.new_report_item(project, r);
+            let reported = self.new_report_item(project, r);
+            // 같은 턴의 끝남은 새 보고 알림 하나로(notice.rs)
+            if let Some(pane) = r.pane.as_deref() {
+                self.settle_turn_end(pane, reported);
+            }
         }
     }
 
@@ -301,13 +305,13 @@ impl Host {
     }
 
     /// 검토 대기·병합 중인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
-    /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다.
-    fn new_report_item(&self, project: &str, r: &ThreadRec) {
+    /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다. 낸 항목은 앱 안 알림으로도 보낸다(notice.rs). 냈으면 true
+    fn new_report_item(&self, project: &str, r: &ThreadRec) -> bool {
         if r.status != ThreadStatus::Open || r.report_hash.is_none() || r.report_hash == r.review_item_hash {
-            return;
+            return false;
         }
         if !matches!(r.last_group, Some(ThreadGroup::ReadyForReview | ThreadGroup::Landing)) {
-            return;
+            return false;
         }
         let short: String = r.report_hash.as_deref().unwrap_or_default().chars().take(12).collect();
         let mut summary = format!("{}: 새 보고 threads/{}.md(보고 {short})", label(r), r.id);
@@ -315,9 +319,12 @@ impl Host {
             summary.push_str(&format!("; 다 옮기지 못했다: {}", r.copy_notes.join("; ")));
         }
         let hash = r.report_hash.clone();
-        if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_ok() {
-            self.inbox_add(project, "thread-state", &r.id, "new report", &summary);
+        if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_err() {
+            return false;
         }
+        self.inbox_add(project, "thread-state", &r.id, "new report", &summary);
+        self.report_notice(project, r);
+        true
     }
 
     /// 한 머신의 기록된 pane이 모두 사라졌다: 세션 항목 한 건. 다시 하나라도 살면(또는 다시 시작하면) 잊는다.

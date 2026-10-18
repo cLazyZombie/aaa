@@ -370,6 +370,39 @@ pub struct QuestionView {
     pub menu: Option<QuestionMenu>,
 }
 
+/// 앱 안 알림의 종류(plan §8.185). 휴대폰 push는 아니다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeKind {
+    /// 보는 화면 없이 agent의 턴이 끝났다(herdr `ToastKind::Finished`: 작업·질문에서 쉼으로, 안 봄)
+    Finished,
+    /// thread의 새 보고(herdr-projects 「review · new report」 알림, host 「new report」 항목과 같은 때)
+    Report,
+}
+
+/// 앱 안 알림 하나(host가 front마다 보낸다, `FrontEvent::Notice`). 입력 필요는 따로 없고 `Question` 사건이 맡는다.
+/// 같은 턴의 끝남과 새 보고는 새 보고 하나다(plan §8.185).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NoticeView {
+    pub kind: NoticeKind,
+    /// 갈 pane(새 보고는 그 thread의 pane, 없으면 null)
+    pub pane: Option<String>,
+    pub machine: String,
+    pub project: Option<String>,
+    pub thread: Option<String>,
+    /// thread 제목 또는 pane 이름
+    pub title: String,
+    /// harness 이름(claude·codex, 끝남만)
+    pub agent: Option<String>,
+    /// 끝난 턴의 길이(작업·질문으로 들어선 때부터). host가 그 턴의 시작을 못 봤으면 null
+    #[ts(type = "number | null")]
+    pub turn_ms: Option<u64>,
+    /// 긴 턴(herdr-web-ui `LONG_TURN_MS` 60초 이상이거나 길이를 모름): 웹 앱 안 알림은 이것만 띄운다
+    pub long: bool,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageMode {
@@ -458,6 +491,18 @@ pub enum ProjectAction {
 pub struct ProjectChange {
     pub project: ProjectView,
     pub notes: Vec<String>,
+}
+
+/// `doctor files`의 프로젝트 한 줄(herdr-projects `doctor`의 `files <slug>`, FRONT_API 1.34)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectFilesCheck {
+    pub project: String,
+    /// 본 때 고칠 것(AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md). 비면 맞다
+    pub problems: Vec<String>,
+    /// `fix`로 고쳤다
+    pub fixed: bool,
+    /// 고치지 못한 까닭
+    pub error: Option<String>,
 }
 
 /// `project open`의 결과(herdr-projects `open`, FRONT_API 1.33)
