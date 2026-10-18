@@ -4300,6 +4300,39 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다. 구역 비율을 0.5로 그리면 유닛·E2E, 이름을 바꾼 뒤 보던 탭을 되찾지 않으면 유닛, 닫은
   뒤 남은 workspace로 가지 않으면 유닛·E2E가 실패한다.
 
+### 8.194 TUI 링크 열기: ctrl+누름(10-18, 사용자 「herdr에서 alt를 누른 채 링크를 누르면 웹페이지가 열린다」, coordinator 다음 일)
+
+- **herdr 경로(0.9.5).** client가 **ctrl**+왼쪽 누름이 pane 안쪽이면(터미널 모드, 창 없음, 마우스 받기) 서버에 `pane.link.activate`를 묻는다
+  (`src/client/shell/mouse.rs` 947–997). 서버는 그 칸의 OSC 8 링크 uri, 없으면 그 칸을 포함한 공백 사이 낱말(접힌 줄 포함, 8192칸)의 http(s)
+  URL을 찾는다(`crates/ghostty-vt` `viewport_link_selection`, `src/app/actions.rs` 1044–1235 `url_from_link_target`·`url_span_at_column`·
+  `trim_url_edges`: 끝의 `" ' ` . , ; : ! ?`와 짝 없는 `) ] }`를 뺀다). **여는 것은 client 기기다**(`shell_runtime.rs` 49–56
+  `OpenSafeWebUrl`, http·https만 `safe_web_url`): macOS `open`, Linux `xdg-open`, Windows `ShellExecuteW` "open"(`src/platform/*` `open_url`).
+  답을 기다리는 동안 그 누름의 왼쪽 끌기·놓기를 모으고(`fallback_events`), 링크가 아니거나 오류면 모은 사건을 보통 누름으로 다시 넣는다
+  (`ReplayMouse`, 그동안은 링크를 묻지 않는다 `replaying_url_click`). 열었으면 남은 끌기·놓기를 놓을 때까지 버린다(`url_click_consumes_until_up`).
+  수정키는 ctrl뿐이다(SGR 16, `raw_input.rs` 1620–1628). 사용자가 말한 alt는 herdr 소스로는 설명되지 않는다(WezTerm 기본 설정도 alt+누름을
+  마우스 보고 앱에 넘긴다).
+- **aaa.** herdr 소스와 같이 ctrl+누름만 링크를 묻는다(사용자 결정 10-18 16:5x). alt+누름은 전처럼 pane 프로그램에 그대로 간다. 링크가
+  아니면 보통 누름으로 다시 넣으므로 링크가 아닌 칸의 ctrl+누름도 지금처럼 pane 프로그램에 간다. TUI는 그 칸의 절대 자리(`view_top` + 줄)로 `PaneLink { pane, at }`을 묻고 host가 화면 사본(`aaa-vt`)에서 찾아 `Link { url }`로
+  답한다. 여는 것은 TUI가 도는 기기다(원격 Windows TUI면 그 Windows의 `ShellExecuteW`). FRONT_API 1.35로 올렸고(1.34는 배포됨, N-1 규칙),
+  TUI는 1.35 이상 host에만 묻는다(옛 host에는 ctrl+누름이 지금처럼 보통 누름이다). 보기 권한 기기도 물을 수 있다(읽기만 한다).
+- **OSC 8을 담는 법.** vt100은 칸에 링크를 담지 않는다(ghostty는 칸마다 담는다). 그래서 OSC 8을 열고 닫을 때 커서의 절대 자리와 그 사이 글을
+  남기고(최근 512개, 64줄 넘게 걸치면 버림, uri 4096자), 찾을 때 그 자리의 지금 글이 남긴 글과 같을 때만 링크로 친다(덮어쓴 칸은 링크가
+  아니다). 기록이 가득하면(10,000줄) 맨 앞 줄을 버리며 절대 줄이 그대로인 채 글이 위로 밀리므로 남긴 줄보다 위에서 같은 칸·같은 글을 찾되,
+  밀린 폭이 구간마다 달라 맞는 구간의 uri가 하나일 때만 연다(같은 칸·같은 글에 uri가 다른 링크가 둘이면 틀린 주소 대신 못 찾음).
+  크기가 바뀌면(다시 접기) 남긴 자리를 버린다. http(s)가 아닌 OSC 8 uri는 열지 않고 글 속 URL로 돌아가지도 않는다(herdr).
+- **한계.** OSC 8 구간은 512개까지라 Ink처럼 frame마다 OSC 8을 다시 내는 프로그램이면 기록 속 OSC 8 링크가 빨리 밀려난다(글 속 URL은
+  그대로 찾는다). 한 번에 한 링크만 묻는다: 답 전의 두 번째 ctrl+누름은 보통 누름이다(herdr는 여럿을 묻는다).
+- **하지 않은 것(herdr에는 있다).** 바깥 터미널로 OSC 8 다시 내보내기(`render_ansi.rs` 616–699, 서버가 `visible_hyperlinks`를 frame
+  칸에 싣는다)는 사용자가 먼저 써 보게 다음 commit으로 미뤘다(coordinator 10-18). ctrl+움직임 밑줄(`link_hover.rs`), 누른 뒤
+  화면이 바뀌었으면 거절하는 `content_revision`. host가 다시 떠 화면 사본을 replay로 다시 만들면 그 전 OSC 8 링크는 없다(글 속 URL은 찾는다).
+  웹은 이미 xterm `WebLinksAddon`으로 연다.
+- **시험.** 유닛: herdr URL 경우(괄호 짝·끝 점·`[docs](…)`·`file://`·끝에서 뺀 칸), 접힌 줄 어느 줄을 눌러도 같은 URL, OSC 8(그 칸만·기록으로
+  올라가도·접혀 두 줄·덮어쓰면 아님·`file://` uri·alt 화면·크기 바꿈), 가득 찬 기록에서 밀린 링크·같은 글 다른 uri 둘은 못 찾음, 구간 512개 상한, TUI 누름 모으기·다시
+  넣기·pane이 바뀌면 버리기(`link_press_replays_a_plain_press_like_herdr`). TUI E2E `link_click_like_herdr`(브라우저 대신 `AAA_TEST_OPEN_URL`
+  파일): OSC 8 글 ctrl+누르고 끌기 → uri, 글 속 URL alt+누름은 열지 않고 ctrl+누름 → 끝 점·짝 없는 괄호 뺀 주소, 연 누름은 고르지 않음, 링크 아닌 칸 ctrl+끌기는
+  골라 복사, 마우스 보고 프로그램에는 ctrl(16)·alt(8) 표시 그대로. 결함 심기: OSC 8 무시·끝 점 안 뺌(유닛·E2E), 덮어쓴 글 확인 안 함·가득 찬 기록
+  밀림 무시·가득 찬 기록에서 첫 일치로 정함(유닛), alt도 받음(E2E), 다시 넣지 않음(유닛·E2E), 연 뒤 놓기까지 안 삼킴·끌기 안 모음(유닛)이 모두 실패한다.
+
 ### 8.195 목록을 프로젝트 먼저로, 「사람 차례」 → 「확인 필요」(10-18, t-0352, 사용자 결정 2안)
 
 - **요청.** TUI 왼쪽 agents 구역과 웹 목록이 머신 → 프로젝트 → thread로 묶여 같은 프로젝트가 머신마다 흩어졌다. 프로젝트(사용자 말로

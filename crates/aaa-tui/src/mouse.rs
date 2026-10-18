@@ -9,6 +9,8 @@
 //! - pane: 누르면 포커스, 안쪽을 끌면 보이는 화면 글을 고르고 떼면 복사(`copy_on_select`), 두 번 누르면 낱말.
 //!   프로그램이 마우스 보고를 켰으면(`GridFrame.modes`) 누름·끌기·뗌·움직임·휠을 그 모드의 인코딩으로 넘긴다.
 //!   보고를 끈 alt 화면이면 휠을 위·아래 화살표로 보낸다(herdr `WheelRouting::AlternateScroll`).
+//! - 링크: ctrl+왼쪽 누름이면 host에 그 칸의 링크를 묻고(`PaneLink`), http(s)면 이 기기에서 연다(`open.rs`). 아니면
+//!   그 누름을 보통 누름으로 다시 넣는다(herdr `pane.link.activate`·`ReplayMouse`, plan §8.194).
 //! - 창: 이름·닫기 확인은 단추가 아닌 곳을 누르면 닫고(안쪽도), 단축키 창은 밖을 누를 때만 닫는다.
 //! - 오른쪽 누름: 탭 이름표면 탭 메뉴, pane이면 pane 메뉴(herdr `context_menu.rs`). 메뉴에서 「오른쪽 누름을 pane에 보내기」를
 //!   켠 보고 pane에는 수정키 없는 오른쪽 누름을 넘긴다. 메뉴는 누르거나 위·아래·Enter로 고르고, 밖을 누르거나 Esc면 닫는다.
@@ -34,8 +36,28 @@ use crate::chrome::{PaneBox, SplitHit};
 use crate::list::Row;
 use crate::theme::Palette;
 use crate::{
-    App, DIVIDER_DOUBLE_CLICK, FrontSender, Mode, Overlay, Pending, clip, help, keys, scrollbar, unicode_width,
+    App, DIVIDER_DOUBLE_CLICK, FrontSender, Mode, Overlay, Pending, clip, help, keys, open, scrollbar, unicode_width,
 };
+
+/// 링크를 묻는 누름(herdr `PendingEndpointKind::PaneLinkActivate`): 요청 id, 누른 pane과 그 안쪽 칸, 링크가 아니면 다시 넣을
+/// 누름과 그 뒤 왼쪽 끌기·놓기
+#[derive(Debug, Clone)]
+pub struct LinkPress {
+    pub id: String,
+    pane: String,
+    inner: Rect,
+    events: Vec<MouseEvent>,
+}
+
+#[cfg(test)]
+impl LinkPress {
+    pub fn new(id: &str, b: &PaneBox, press: MouseEvent) -> Self {
+        LinkPress { id: id.into(), pane: b.pane.clone(), inner: b.inner, events: vec![press] }
+    }
+}
+
+/// `PaneLink`를 아는 host Front API minor
+const LINK_MINOR: u16 = 35;
 
 /// 두 번 누름으로 보는 사이(herdr `DOUBLE_CLICK_WINDOW`)
 pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
@@ -558,8 +580,14 @@ impl App {
         if !self.mouse_capture {
             return Ok(());
         }
+        if !self.replaying_link && self.link_gesture(m) {
+            return Ok(());
+        }
         let (x, y, mods) = (m.column, m.row, m.modifiers);
         let hits = self.hits.borrow().clone();
+        if m.kind == MouseEventKind::Down(MouseButton::Left) && self.link_press(m, &hits, tx).await? {
+            return Ok(());
+        }
         if self.overlay.is_some() {
             self.overlay_mouse(m, &hits, tx).await?;
         } else {
@@ -583,6 +611,76 @@ impl App {
         }
         self.reconcile_ascii();
         Ok(())
+    }
+
+    /// 링크를 묻거나 연 누름의 왼쪽 끌기·놓기(herdr `url_click_consumes_until_up`·`fallback_events`): 연 뒤면 놓을 때까지 버리고,
+    /// 묻는 중이면 답이 올 때까지 모은다. 다룬 사건이면 참.
+    pub(crate) fn link_gesture(&mut self, m: MouseEvent) -> bool {
+        if self.link_consume {
+            match m.kind {
+                MouseEventKind::Drag(MouseButton::Left) => return true,
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.link_consume = false;
+                    return true;
+                }
+                MouseEventKind::Down(MouseButton::Left) => self.link_consume = false,
+                _ => {}
+            }
+        }
+        if !matches!(m.kind, MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)) {
+            return false;
+        }
+        let Some(l) = self.link_press.as_mut() else { return false };
+        if l.events.iter().any(|e| e.kind == MouseEventKind::Up(MouseButton::Left)) {
+            return false;
+        }
+        l.events.push(m);
+        true
+    }
+
+    /// ctrl+왼쪽 누름이 pane 안쪽이면 그 칸의 링크를 묻는다(herdr처럼 ctrl만, alt+누름은 늘 보통 누름). 물었으면 참.
+    /// herdr처럼 터미널 모드에 창이 없을 때만이고, 묻는 동안 키·다른 사건은 그대로 간다.
+    async fn link_press(&mut self, m: MouseEvent, hits: &Hits, tx: &mut FrontSender) -> Result<bool> {
+        if self.replaying_link
+            || self.link_press.is_some()
+            || self.overlay.is_some()
+            || self.mode != Mode::Terminal
+            || !m.modifiers.contains(KeyModifiers::CONTROL)
+            || self.host_minor < LINK_MINOR
+        {
+            return Ok(false);
+        }
+        let (x, y) = (m.column, m.row);
+        let Some(b) = hits.panes.iter().find(|b| contains(b.inner, x, y)) else { return Ok(false) };
+        let top = self.grids.get(&b.pane).map_or(0, |g| view_top(g.scroll));
+        let at = TextPoint { row: top + u32::from(y - b.inner.y), col: x - b.inner.x };
+        self.last_click = None;
+        let id = tx.send(FrontRequest::PaneLink { pane: b.pane.clone(), at }).await?;
+        self.link_press = Some(LinkPress { id, pane: b.pane.clone(), inner: b.inner, events: vec![m] });
+        Ok(true)
+    }
+
+    /// 링크 답(herdr `PendingEndpointKind::PaneLinkActivate` 답): http(s)면 이 기기에서 열고 남은 끌기·놓기를 버린다. 링크가
+    /// 아니거나 오류면 모은 누름을 보통 누름으로 다시 넣는다. 그 사이 모드·창·pane 자리가 바뀌었으면 다시 넣지 않고 버린다.
+    pub(crate) fn link_done(&mut self, result: aaa_proto::Outcome<aaa_proto::FrontResponse>) {
+        let Some(l) = self.link_press.take() else { return };
+        let released = l.events.iter().any(|e| e.kind == MouseEventKind::Up(MouseButton::Left));
+        let still = self.mouse_capture
+            && self.mode == Mode::Terminal
+            && self.overlay.is_none()
+            && self.hits.borrow().panes.iter().any(|b| b.pane == l.pane && b.inner == l.inner);
+        match result {
+            aaa_proto::Outcome::Ok(aaa_proto::FrontResponse::Link { url: Some(url), .. })
+                if still && open::safe_web_url(&url) =>
+            {
+                self.link_consume = !released;
+                if let Err(e) = open::open_url(&url) {
+                    self.set_error(format!("링크를 열지 못했다: {e}"));
+                }
+            }
+            _ if still => self.link_replay = l.events,
+            _ => self.link_consume = !released,
+        }
     }
 
     /// herdr: 이름·닫기 확인 창은 단추가 아닌 곳을 누르면(안쪽도) 닫는다. 단축키 창은 밖을 누를 때만 닫고 휠로 3줄씩 민다.

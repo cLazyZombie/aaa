@@ -27,6 +27,7 @@ pub mod input_source;
 pub mod keys;
 pub mod list;
 mod mouse;
+mod open;
 mod prompt;
 mod scrollbar;
 mod settings;
@@ -45,7 +46,7 @@ use aaa_proto::{
     PaneDirection, PaneModes, PaneView, ScrollBy, SessionState, SplitDir, ThreadView, Workspace,
 };
 use anyhow::Result;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use futures_util::StreamExt;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
@@ -393,6 +394,13 @@ struct App {
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
     copy_reply: Option<copy::CopyReply>,
+    /// ctrl+누름으로 링크를 묻는 중(herdr `PendingEndpointKind::PaneLinkActivate`, `mouse.rs` `link_press`)
+    link_press: Option<mouse::LinkPress>,
+    /// 링크를 연 누름의 남은 왼쪽 끌기·놓기를 놓을 때까지 버린다(herdr `url_click_consumes_until_up`)
+    link_consume: bool,
+    /// 링크가 아니어서 다시 넣을 누름과 그 뒤 사건, 다시 넣는 동안(그때는 링크를 묻지 않는다, herdr `replaying_url_click`)
+    link_replay: Vec<MouseEvent>,
+    replaying_link: bool,
     quit: bool,
     /// 마우스(`[tui] mouse_capture`)와 터미널에 걸어 둔 값(다시 걸어야 하면 None)
     mouse_capture: bool,
@@ -486,6 +494,10 @@ impl App {
             folded: HashSet::new(),
             held: vec![],
             copy_wait: None,
+            link_press: None,
+            link_consume: false,
+            link_replay: vec![],
+            replaying_link: false,
             copy_reply: None,
             quit: false,
             mouse_capture: true,
@@ -717,6 +729,14 @@ impl App {
                 self.pending.insert(id, Pending::SpaceLayout);
             }
             self.reconcile_ascii();
+            // 링크가 아닌 ctrl+누름은 보통 누름으로 다시 넣는다(herdr `ReplayMouse`)
+            for m in std::mem::take(&mut self.link_replay) {
+                self.replaying_link = true;
+                let r = self.on_mouse(m, &mut tx).await;
+                self.replaying_link = false;
+                r?;
+                dirty = true;
+            }
             // 포커스를 옮기거나 copy 커서가 온 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
             while !self.waiting() && !self.held.is_empty() {
                 match self.held.remove(0) {
@@ -822,6 +842,10 @@ impl App {
                 let alt_changed = alt != g.modes.alt_screen;
                 let resized = size != (g.cols, g.rows);
                 self.follow_grid(&pane, before, alt_changed, resized);
+            }
+            FrontMsg::Res { id, result } if self.link_press.as_ref().is_some_and(|l| l.id == id) => {
+                self.pending.remove(&id);
+                self.link_done(result);
             }
             FrontMsg::Res { id, result } => {
                 if self.focus_wait.as_ref() == Some(&id) {
@@ -3267,6 +3291,43 @@ mod tests {
         again.apply_chrome(&doc);
         let (lines, _) = draw(&again);
         assert!(lines[6].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+    }
+
+    /// 링크를 묻는 ctrl+누름(herdr `PaneLinkActivate`·`fallback_events`·`url_click_consumes_until_up`): 답이 올 때까지 그
+    /// 누름의 왼쪽 끌기·놓기를 모으고(놓은 뒤와 다른 사건은 그대로 간다), 링크가 아니거나 뜻밖의 답·http(s)가 아닌 주소면 모은
+    /// 사건을 다시 넣는다. 그 사이 pane 자리가 바뀌었으면 다시 넣지 않고 놓을 때까지 버린다.
+    #[test]
+    fn link_press_replays_a_plain_press_like_herdr() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_tabs(&[""]);
+        draw(&app);
+        let pane = app.hits.borrow().panes[0].clone();
+        let ev =
+            |kind| MouseEvent { kind, column: pane.inner.x + 1, row: pane.inner.y, modifiers: KeyModifiers::CONTROL };
+        let (down, drag, up) = (
+            ev(MouseEventKind::Down(MouseButton::Left)),
+            ev(MouseEventKind::Drag(MouseButton::Left)),
+            ev(MouseEventKind::Up(MouseButton::Left)),
+        );
+        let link = |url: Option<&str>| {
+            Outcome::Ok(aaa_proto::FrontResponse::Link { pane: pane.pane.clone(), url: url.map(Into::into) })
+        };
+        for answer in [link(None), link(Some("file:///etc/passwd")), Outcome::Ok(aaa_proto::FrontResponse::Done)] {
+            app.link_press = Some(mouse::LinkPress::new("9", &pane, down));
+            assert!(app.link_gesture(drag) && app.link_gesture(up));
+            assert!(!app.link_gesture(up), "놓은 뒤는 보통 사건");
+            assert!(!app.link_gesture(ev(MouseEventKind::Moved)));
+            app.link_done(answer);
+            assert_eq!(std::mem::take(&mut app.link_replay), vec![down, drag, up]);
+            assert!(app.link_press.is_none() && !app.link_consume);
+        }
+        // 놓기 전에 답이 왔는데 그 pane이 없어졌다: 버리고, 남은 끌기·놓기도 버린다
+        app.link_press = Some(mouse::LinkPress::new("9", &pane, down));
+        app.hits.borrow_mut().panes.clear();
+        app.link_done(link(None));
+        assert!(app.link_replay.is_empty() && app.link_consume);
+        assert!(app.link_gesture(drag) && app.link_gesture(up));
+        assert!(!app.link_consume && !app.link_gesture(up));
     }
 
     /// workspace 이름·닫기(herdr `prefix shift+w`·`shift+d`, `workspace_action_id`): 탐색 중 spaces 줄을 골랐으면 그 workspace,
