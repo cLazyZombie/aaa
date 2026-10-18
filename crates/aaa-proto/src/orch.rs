@@ -277,7 +277,7 @@ pub enum QuestionState {
     Gone,
 }
 
-/// 화면에서 읽은 선택 창(herdr-web-ui `InteractivePrompt`, plan §8.169). `id`는 내용(커서·체크 상태 빼고)의 hash라,
+/// 화면에서 읽은 선택 창(herdr-web-ui `InteractivePrompt`, plan §8.171). `id`는 내용(커서·체크 상태 빼고)의 hash라,
 /// 답할 때 화면을 다시 읽어 다르면 거절한다(그 사이 바뀐 질문에 잘못 답하지 않는다).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuestionMenu {

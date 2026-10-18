@@ -89,8 +89,9 @@ export default async function ({ page }) {
       strongCode: "a1b2c3d",
       link: ["참고 문서", "_blank"],
       head: ["ID", "판정", "근거"],
+      // 경로로 읽히는 code는 그 thread 작업 폴더의 파일 단추다(참고 Markdown `codeIsFilePath`, plan §8.170)
       cells: [
-        ["<code>T2</code>", "같음", "<code>prefs.rs</code>"],
+        ["<code>T2</code>", "같음", '<button type="button" class="markdown-file is-code" title="prefs.rs 열기"><code>prefs.rs</code></button>'],
         ["R1", "<strong>일부</strong>", "표와 <code>code</code>"],
         ["Q9", "휴대폰 표 칸의 한글 낱말은 음절 사이에서 끊기지 않는다", "경우마다 메모를 남긴다"],
       ],
@@ -101,6 +102,45 @@ export default async function ({ page }) {
       fenceBg: "rgba(0, 0, 0, 0)",
     };
     if (JSON.stringify(md) !== JSON.stringify(want)) throw new Error(`보고 Markdown ${JSON.stringify(md)}`);
+    // 보고서 안 파일 링크(1장 J 나머지, plan §8.170): 그 thread의 머신·worktree(agent가 시작한 폴더) 기준으로 찾아 앱 안 파일 보기
+    // (`/f/` 읽기 경로)로 연다. 보고·결과물이 있는 `.aaa/…`(work_dir) 기준이 아니다
+    const cwd = aaa("thread", "show", "demo", t.id).cwd;
+    const fileViewer = page.getByTestId("file-viewer");
+    await report.locator(".markdown-file", { hasText: "작업 메모" }).click();
+    await until("작업 메모(worktree notes/plan.md)", async () => (await fileViewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "작업 메모");
+    const opened = await fileViewer.evaluate((v) => ({ path: v.querySelector(".file-viewer-path")?.textContent, newTab: v.querySelector('a[aria-label="새 탭에서 열기"]')?.getAttribute("href") }));
+    if (!/^\/f\/[0-9a-f]+\/plan\.md$/.test(opened.newTab ?? "") || !opened.path?.includes(`${cwd.split("/").pop()}/notes`)) throw new Error(`작업 메모 ${JSON.stringify({ cwd, ...opened })}`);
+    await page.goBack();
+    await domIs(page, "작업 메모 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="report"]'));
+    // 글 속 경로의 줄 참조는 소스로 그 줄을 보인다
+    await report.locator(".markdown-file", { hasText: "src/app.ts:3" }).click();
+    await until("줄 참조(app.ts 3번째 줄)", async () => (await fileViewer.locator(".hl-line.is-marked").textContent().catch(() => "")).includes("fixed"));
+    await shot(page, "desktop-report-file-link");
+    await page.goBack();
+    await domIs(page, "줄 참조 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
+    // 작업 폴더에 없는 파일은 까닭을 말한다(결과물 목록에서 찾지 않는다)
+    await report.locator(".markdown-file", { hasText: "prefs.rs" }).click();
+    await domIs(page, "없는 파일 알림", () => document.querySelector('[data-testid="file-viewer"] [role="alert"]')?.textContent === "이 경로에 읽을 수 있는 파일이 없습니다.");
+    await page.goBack();
+    await domIs(page, "없는 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
+    // 보기 권한 기기: 보고서의 경로는 단추가 아니고(이름 뒤 경로), host도 거부한다. 같은 요청이 조작 기기에는 열린다
+    const threadFile = (p, path) =>
+      p.evaluate(
+        async ([project, thread, path]) =>
+          (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_file", project, thread, path }) })).json(),
+        ["demo", t.id, path],
+      );
+    const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 })).page;
+    await rp.evaluate((h) => (location.hash = h), `#thread=demo%2F${t.id}`);
+    const readerReport = rp.getByTestId("report");
+    await until("reader 보고", async () => (await readerReport.locator("strong").first().textContent().catch(() => null)) === "확인");
+    const readerFiles = await readerReport.evaluate((r) => ({ buttons: r.querySelectorAll(".markdown-file").length, shown: r.textContent.includes("작업 메모 (notes/plan.md)") }));
+    if (readerFiles.buttons !== 0 || !readerFiles.shown) throw new Error(`보기 권한 화면의 보고서 파일 링크: ${JSON.stringify(readerFiles)}`);
+    const denied = await threadFile(rp, "notes/plan.md");
+    if (denied.err?.code !== "forbidden") throw new Error(`reader thread_file: ${JSON.stringify(denied)}`);
+    await rp.context().close();
+    const allowed = await threadFile(page, "notes/plan.md");
+    if (allowed.ok?.kind !== "pane_file" || allowed.ok.info?.name !== "plan.md") throw new Error(`조작 기기 thread_file: ${JSON.stringify(allowed)}`);
     const frameEl = await page.getByTestId("library-frame").elementHandle();
     const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
     const probe = await until("결과물 HTML 실행", async () => {

@@ -3,6 +3,7 @@ import type { DeviceRole, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
+import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 
@@ -30,6 +31,7 @@ export function ThreadPanel({
   backTo,
   onOpenPane,
   onOpenFile,
+  onOpenReportFile,
 }: {
   t: ThreadView;
   role: DeviceRole;
@@ -40,6 +42,8 @@ export function ThreadPanel({
   onOpenPane?: () => void;
   /** 결과물 파일을 앱 안 파일 보기로(차이 목록 R1, 결과물 안 상대 경로) */
   onOpenFile: (path: string) => void;
+  /** 보고서 안 파일 경로·링크를 그 thread의 머신·작업 폴더 기준으로 연다(plan §8.170). 보기 권한 기기는 없다(열 수 없다) */
+  onOpenReportFile?: (path: string) => void;
 }) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -118,7 +122,13 @@ export function ThreadPanel({
           </div>
           <section className="card report" data-testid="report">
             <h2>보고</h2>
-            {lib?.report ? <Markdown className="report-markdown">{lib.report}</Markdown> : <p className="muted">아직 회수한 보고가 없다</p>}
+            {lib?.report ? (
+              <OpenFileContext.Provider value={onOpenReportFile ?? null}>
+                <Markdown className="report-markdown">{lib.report}</Markdown>
+              </OpenFileContext.Provider>
+            ) : (
+              <p className="muted">아직 회수한 보고가 없다</p>
+            )}
           </section>
           {lib && lib.files.length > 0 && (
             <section className="card files" data-testid="files">

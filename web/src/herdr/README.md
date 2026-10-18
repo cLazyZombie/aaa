@@ -23,7 +23,7 @@
 | `keyRepeat.ts` | 꾹 누르면 반복(`createKeyRepeat`: 400ms 뒤 50ms마다, 10px 넘게 밀면 취소) |
 | `draft.ts` | 끊긴 동안 친 글(붙잡은 입력): 글·붙여넣기를 모으고 Enter·줄바꿈은 빼서 알리며, 1024자 상한, 저장 기록은 24시간(`restoreDraft`) |
 | `terminalDraft.ts` | 입력줄 초안: 머신·pane마다 localStorage(32,768자 상한, 막히면 메모리). 보내는 동안 친 글은 두고 보낸 앞부분만 지운다 |
-| `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53) |
+| `terminalWidths.ts` | 이모지·ZWJ 묶음·VS16·새 이모지를 herdr처럼 두 칸으로 센다(`matchHerdrWidths`, `@xterm/addon-unicode-graphemes` 위에 보정 셋, plan §8.53). session host vt100의 폭 표도 이것에서 만든다: 바꾸면 `node web/scripts/vt-widths.ts`로 다시 만든다(plan §8.167) |
 | `wheelSteps.ts` | 한 손가락 끌기를 휠 걸음으로(`wheelSteps`·`finalStep`, plan §8.55) |
 | `status.ts` | agent 상태 말·herdr TUI 글자(`indicatorGlyph`)·여러 pane 대표 상태(`rollupStatus`). `src/lib/status.ts`에서 `AgentStatus` import 한 줄만 그 타입 선언으로 바꿨다(plan §8.71) |
 | `preferences.ts` | 화면들이 함께 쓰는 설정 이름(`SHARED_SETTING_KEYS`)·문서 형·한도. `src/lib/`가 아니라 `shared/preferences.ts`를 바꾸지 않고 옮겼다. host 쪽은 `crates/aaa-host/src/prefs.rs`가 Rust로 옮겼다(plan §8.79) |
@@ -60,7 +60,7 @@
 | `PaneRename.css` | pane 이름 창: `src/components/PaneCanvas.css`의 `.pane-rename-form` 그대로, 이름 글자를 칸 위에 두는 aaa 규칙 한 줄을 더함. 마크업은 `web/src/PaneRename.tsx`(plan §8.109) |
 | `NewSessionDialog.css`·`recent-directories.ts` | 새 pane 창 모양과 머신마다 최근 폴더(`src/components/NewSessionDialog.css`·`src/lib/recent-directories.ts` 그대로). 마크업은 `web/src/NewSessionDialog.tsx`·`AgentPicker.tsx`·`RecentFolderChips.tsx`(plan §8.126) |
 | `Composer.css`·`messageQueue.ts` | 대화 입력창 모양과 이 기기에 붙잡은 메시지 저장(`src/components/Composer.css`·`src/lib/messageQueue.ts` 그대로, 저장 열쇠 머리 `herdr-web-ui:queue:`도 그대로). 마크업은 `web/src/ChatComposer.tsx`(plan §8.130) |
-| `PromptCard.css` | 화면 선택 창 카드 모양(`src/components/PromptCard.css` 그대로). 마크업은 `web/src/PromptCard.tsx`(← `src/components/PromptCard.tsx`의 그리기, 문구는 i18n.ko.ts, 입력창으로 답하기·계획 파일·omo 단계는 뺌), 읽기와 답 키는 host `crates/aaa-host/src/prompt.rs`(← `server/prompt.ts`의 Claude·Codex 읽기와 `answerKeys`, plan §8.169) |
+| `PromptCard.css` | 화면 선택 창 카드 모양(`src/components/PromptCard.css` 그대로). 마크업은 `web/src/PromptCard.tsx`(← `src/components/PromptCard.tsx`의 그리기, 문구는 i18n.ko.ts, 입력창으로 답하기·계획 파일·omo 단계는 뺌), 읽기와 답 키는 host `crates/aaa-host/src/prompt.rs`(← `server/prompt.ts`의 Claude·Codex 읽기와 `answerKeys`, plan §8.171) |
 | `CommandPalette.css` | 명령 팔레트 모양(`src/components/CommandPalette.css` 그대로). 마크업은 `web/src/CommandPalette.tsx`, 검색·묶음은 `web/src/palette.ts`(plan §8.132) |
 
 agent 표시 `AgentMark`(plan §8.49·§8.56): `AgentMark.tsx`·`AgentMark.css`·`agentMark.ts`는 `src/components/AgentMark.tsx`·`src/components/AgentMark.css`·`src/lib/agentMark.ts`를 그대로 옮겼다(`AgentMark.tsx`는 import 경로만). `agentSvgMarks.ts`는 `src/components/agentSvgMarks.ts`에서 droid(Factory favicon)·maki(maki.sh favicon) 두 줄만 뺐다. 참고가 그 출처의 사용 허락을 적지 않아서다. 그 agent는 머리글자 표시(FallbackMark)로 보인다. 참고는 Claude·Codex·Cursor·OpenCode·omp·gjc·omo 표시를 같은 저자의 chatmux llm-logo-provider 묶음에서 옮겼다고 적는다. `agentSvgMarks.ts`의 나머지는 LobeHub Icons(`@lobehub/icons-static-svg`, 아래 MIT)다. **Claude 로고는 Anthropic, Codex(OpenAI) 로고는 OpenAI의 상표이며, 그 밖의 표시도 각 소유자의 것이다.** aaa는 pane에서 도는 agent를 가리키는 데만 쓰며 그들과의 관계를 뜻하지 않는다.

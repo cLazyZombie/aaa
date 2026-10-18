@@ -577,6 +577,12 @@ pub enum AgentRequest {
         session: String,
         path: String,
     },
+    /// 파일 보기: 세션 없이 정한 폴더(thread worktree) 기준으로 찾는다(보고서 안 파일 링크, plan §8.170). 찾는 규칙과 허용
+    /// 폴더는 `FileLocate`와 같다. agent가 `file_in.v1` 기능을 알릴 때만 보낸다.
+    FileLocateIn {
+        dir: String,
+        path: String,
+    },
     /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
     /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
     DirList {
@@ -1322,6 +1328,13 @@ pub enum FrontRequest {
         pane: String,
         path: String,
     },
+    /// 보고서 안 파일 링크(plan §8.170): 그 thread의 머신에서 thread 작업 폴더(worktree) 기준으로 찾는다. 답은 `PaneFile`과
+    /// 같다. 조작 기기만(`PaneFile`과 같다)
+    ThreadFile {
+        project: String,
+        thread: String,
+        path: String,
+    },
     /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
     /// 조작 기기만(`PaneFile`과 같다)
     PaneDir {
@@ -1637,7 +1650,7 @@ pub enum FrontRequest {
         all: bool,
     },
     /// 질문에 답한다. host가 질문이 아직 열려 있는지 다시 확인한다. `choice`(예·아니오) 대신 `pick`이면 화면 선택 창
-    /// `menu`(그 id)에 답한다(plan §8.169)
+    /// `menu`(그 id)에 답한다(plan §8.171)
     QuestionAnswer {
         id: String,
         #[serde(default)]
@@ -2224,6 +2237,10 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        assert!(
+            FrontRequest::ThreadFile { project: "p".into(), thread: "t-0001".into(), path: "a.txt".into() }
+                .needs_control()
+        );
         assert!(FrontRequest::PaneDir { pane: "p".into(), path: "src".into(), hidden: false }.needs_control());
         assert!(FrontRequest::PanePaste { pane: "p".into(), text: "a".into() }.needs_control());
         assert!(FrontRequest::PaneSend { pane: "p".into(), data: B64(vec![]) }.needs_control());

@@ -6,7 +6,7 @@
 // 아직 옮기지 않은 것(plan §8.125 남은 것): 긴 소스 가상화(VirtualSource). 「파일 뷰어」 설정은 plan §8.149.
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 // thread 결과물도 이것으로 연다(차이 목록 R1): 결과물 목록의 보기 경로(`/v/`, opaque origin sandbox)로 읽고, 경로는 결과물
-// 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.167).
+// 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.168).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
@@ -42,8 +42,8 @@ const MARKDOWN_CLASS: Record<MarkdownWidth, string> = {
 
 type Loaded = { text: string; truncated: boolean; lines: number };
 
-/** 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안) 또는 thread 결과물 */
-export type FileSource = { pane: string } | { project: string; thread: string };
+/** 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, 또는 thread 작업 폴더의 파일(보고서 안 링크, plan §8.170) */
+export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } };
 /** 찾은 파일과 그 읽기 경로, 또는 같은 이름의 후보들 */
 type Found = { info: FileInfo; url: string | null } | { candidates: string[] };
 /** 결과물 목록: 보기 경로 맨 위와 상대 경로별 파일 */
@@ -100,6 +100,9 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   const pane = "pane" in from ? from.pane : null;
   const project = "project" in from ? from.project : null;
   const thread = "thread" in from ? from.thread : null;
+  // 보고서 안 링크는 pane 대신 그 thread의 머신·작업 폴더에서 찾는다. 찾은 뒤는 pane 파일과 같은 읽기 경로(`/f/`)다
+  const worktree = "worktree" in from ? from.worktree : null;
+  const isLibrary = project !== null;
   // 결과물 목록은 한 번 받는다(보기 경로는 2시간 산다)
   const library = useRef<Promise<Library> | null>(null);
   const locate = useCallback(
@@ -107,6 +110,11 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
       if (pane !== null) {
         const r = await call({ op: "pane_file", pane, path });
         if (r.kind !== "pane_file") throw new Error("pane_file");
+        return r.info === null ? { candidates: r.candidates } : { info: r.info, url: r.url };
+      }
+      if (worktree !== null) {
+        const r = await call({ op: "thread_file", project: worktree.project, thread: worktree.thread, path });
+        if (r.kind !== "pane_file") throw new Error("thread_file");
         return r.info === null ? { candidates: r.candidates } : { info: r.info, url: r.url };
       }
       library.current ??= call({ op: "thread_library", project: project ?? "", thread: thread ?? "" }).then((r) => {
@@ -119,7 +127,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
       if (f === undefined) throw notFound(rel);
       return { info: libraryInfo(f), url: lib.base + encodePath(rel) };
     },
-    [pane, project, thread],
+    [pane, project, thread, worktree?.project, worktree?.thread],
   );
   const [path, setPath] = useState(asked);
   const target = useMemo(() => fileLineTarget(path), [path]);
@@ -240,7 +248,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
     );
   }, [documentPath, locate]);
   const fullPath = info?.path ?? target.path;
-  const shownPath = pane === null ? fullPath.replace(/^\/+/, "") : fullPath;
+  const shownPath = isLibrary ? fullPath.replace(/^\/+/, "") : fullPath;
   const { stem, extension } = pathParts(info?.name ?? shownPath);
   const { folder } = pathParts(shownPath);
   const textFile = info?.kind === "text";
@@ -248,7 +256,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   // 제 script로 그리는 페이지: origin도 network도 없는 sandbox(host PAGE_CSP). 결과물은 보기 경로가 이미 sandbox 페이지다
   // (host VIEW_CSP: 제 폴더의 형제 파일을 읽는다)
   const htmlPage = textFile && info.mime === "text/html";
-  const pageUrl = url === null ? null : pane === null ? url : `${url}?render=1`;
+  const pageUrl = url === null ? null : isLibrary ? url : `${url}?render=1`;
   const modes = (
     <div className="segmented file-viewer-modes" role="group" aria-label="HTML 파일 보기 방식">
       <button type="button" aria-pressed={!source} onClick={() => setSource(false)}>
@@ -294,7 +302,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
       return (
         <p className="file-viewer-note" role="alert">
           {problem.kind === "missing"
-            ? pane === null
+            ? isLibrary
                 ? "결과물에 이 파일이 없습니다."
                 : "이 경로에 읽을 수 있는 파일이 없습니다."
             : problem.kind === "outside"
@@ -340,7 +348,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
               <iframe
                 className="file-viewer-page"
                 src={pageUrl ?? undefined}
-                sandbox={pane === null ? LIBRARY_SANDBOX : "allow-scripts"}
+                sandbox={isLibrary ? LIBRARY_SANDBOX : "allow-scripts"}
                 title={info.name}
               />
             </>

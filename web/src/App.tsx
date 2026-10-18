@@ -493,7 +493,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const r = await call({ op: "question_answer", id: q.id, choice, menu: null, pick: null });
     if (r.kind === "question") putQuestion(r);
   };
-  // 화면 선택 창 답(plan §8.169): 카드가 본 창(id)에. host가 화면을 다시 읽어 다르면 거절하고 질문의 창을 새로 붙인다
+  // 화면 선택 창 답(plan §8.171): 카드가 본 창(id)에. host가 화면을 다시 읽어 다르면 거절하고 질문의 창을 새로 붙인다
   const answerMenu = async (q: QuestionView, menu: QuestionMenu, pick: MenuPick) => {
     const r = await call({ op: "question_answer", id: q.id, choice: "", menu: menu.id, pick });
     if (r.kind === "question") putQuestion(r);
@@ -784,6 +784,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
+            onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
           />
         ) : viewProject !== undefined ? (
           <ProjectThreads
@@ -867,6 +868,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           source={fileViewing.library}
           onClose={closeFile}
           onOpen={(path) => openFile({ path, pane: null, library: fileViewing.library })}
+        />
+      )}
+      {/* 보고서 안 파일 링크(plan §8.170): thread의 머신·작업 폴더 기준. 고른 다른 파일도 같은 곳이다 */}
+      {fileViewing && fileViewing.pane === null && fileViewing.worktree && (
+        <FileViewer
+          key={`${fileViewing.worktree.project}/${fileViewing.worktree.thread} worktree ${fileViewing.path}`}
+          path={fileViewing.path}
+          source={{ worktree: fileViewing.worktree }}
+          onClose={closeFile}
+          onOpen={(path) => openFile({ path, pane: null, worktree: fileViewing.worktree })}
         />
       )}
       {newPaneOn && (

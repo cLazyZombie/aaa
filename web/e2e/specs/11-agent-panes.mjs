@@ -238,7 +238,9 @@ export default async function ({ ctl, page }) {
     if (JSON.stringify(await roles()) !== JSON.stringify(want)) throw new Error(JSON.stringify(await roles()));
     // 생각·도구 결과·끼운 글을 빼는 규칙은 agent chat.rs `claude_tail_filters`가 본다(위 세 줄이 그대로면 빠졌다)
     // 새 줄이 생기면 따라간다
-    fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: "시험도 통과했다" }] } }));
+    // 글 속 파일 경로는 그 pane의 파일 보기로 연다(plan §8.170, 참고 ChatView `OpenFileContext`)
+    fs.writeFileSync(`${root}/files/chat-note.md`, "# 대화 메모\n");
+    fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: `시험도 통과했다. 기록은 ${root}/files/chat-note.md 에 남겼다` }] } }));
     await until("새 줄", async () => (await roles()).length === 4);
     await shot(page, "desktop-chat");
     // 설정 「생각 표시」(herdr-web-ui showThinking, 차이 목록 C4): 켜면 생각이 제자리에 접힌 「생각」 줄로, 누르면 글
@@ -270,6 +272,13 @@ export default async function ({ ctl, page }) {
     if (!(bigger > before)) throw new Error(`채팅 글자 크게: ${before} → ${bigger}`);
     await chatFont("채팅 글자 작게");
     if ((await answerPx()) !== before) throw new Error(`채팅 글자 작게로 돌아오지 않음: ${await answerPx()} ≠ ${before}`);
+    // 글 속 파일 경로: 그 줄만 단추이고 누르면 앱 안 파일 보기, 뒤로 한 번이면 대화로 돌아온다
+    const chatLinks = await chat.locator(".markdown-file").evaluateAll((els) => els.map((e) => [e.closest(".chat-msg")?.dataset.role, e.textContent]));
+    if (JSON.stringify(chatLinks) !== JSON.stringify([["assistant", `${root}/files/chat-note.md`]])) throw new Error(`대화 파일 링크 ${JSON.stringify(chatLinks)}`);
+    await chat.locator(".markdown-file").click();
+    await until("대화에서 연 파일", async () => (await page.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "대화 메모");
+    await page.goBack();
+    await domIs(page, "대화 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]') && !!document.querySelector('[data-testid="chat"]'));
     // 터미널로 돌아간다
     await page.getByTestId("chat-toggle").click();
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");

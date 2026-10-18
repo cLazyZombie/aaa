@@ -532,7 +532,7 @@ impl Host {
         Ok(())
     }
 
-    /// 열린 질문에 화면 선택 창을 붙인다(plan §8.169). hook 사건이 화면보다 먼저 올 수 있어 `MENU_WAIT`까지 다시 본다.
+    /// 열린 질문에 화면 선택 창을 붙인다(plan §8.171). hook 사건이 화면보다 먼저 올 수 있어 `MENU_WAIT`까지 다시 본다.
     /// 못 읽으면(모르는 창) 그대로 두고 예·아니오로 답한다
     fn read_menu(self: &Arc<Self>, id: String, pane: String) {
         let h = self.clone();

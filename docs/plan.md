@@ -1452,7 +1452,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 ### 8.53 이모지·결합 문자 폭을 herdr와 같게(10-17, 차이 목록 2 「이모지·결합 문자 폭」)
 
 - **옮긴 것(herdr-web-ui `src/lib/terminalWidths.ts`, PaneTerminal 583줄).** `web/src/herdr/terminalWidths.ts`를 바꾸지 않고 옮기고 `@xterm/addon-unicode-graphemes` 0.4.0(MIT, xterm 묶음)을 넣었다. 터미널을 열 때 fit addon 다음에 `matchHerdrWidths(term)`로 폭 규칙을 갈아 끼운다(addon이 proposed API라 `allowProposedApi: true`). 이모지·새 이모지·ZWJ 묶음·⚠️(VS16)가 두 칸이다. xterm 기본(Unicode 6)에서는 이모지가 한 칸이고 ZWJ 묶음은 이모지마다 칸을 차지해서 뒤 글자가 밀렸다.
-- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. vt100 폭을 맞추는 일은 뒤로 미룬다.
+- **남은 차이.** session host의 `vt100` 0.16은 code point마다 폭을 세어 ZWJ 묶음·VS16을 herdr와 다르게 센다. 그래서 다시 붙을 때 받는 화면(replay)에서는 그 줄이 어긋날 수 있다. 살아 있는 출력은 프로그램이 낸 그대로 지나가므로 이 문제가 없다. → §8.167에서 vt100 폭을 웹 규칙대로 맞췄다.
 - **시험.** 웹 E2E 「글자 폭」: 이모지·새 이모지(🫠)·ZWJ 가족·⚠️ 뒤에 쓴 글자의 칸 자리로 폭을 잰다. 기대값은 `[2,2,2,2]`다. `matchHerdrWidths`를 빼고 웹 번들을 다시 지은 판은 `[1,1,4,1]`로 실패한다.
 
 ### 8.54 목록 바닥 줄(설정·사용량)은 늘 맨 아래(10-17, 사용자 요청 「aaa 왼쪽밑은 항상 왼쪽밑이어야해. 스크롤 안되어도」)
@@ -2824,7 +2824,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 파일 보기 안 Markdown은 그 문서의 폴더를 기준으로 잇는다(참고 `resolveFromDocument`). 문서 링크(`[코드](../src/app.ts)`), code 안 경로, 언어 없는 fence(로그·명령 출력) 안 경로를 누르면 같은 pane 기준으로 연다. 언어가 있는 code 안은 글 그대로다(참고 `PLAIN_FENCE`).
   - 열린 파일 보기 안에서 다른 파일을 열면 기록 칸을 바꾼다(참고와 같다). 뒤로 한 번이면 pane으로 돌아간다.
   - 그림(`![점](../shots/dot.png)`)은 그 pane의 `pane_file`로 찾아 읽기 경로로 그린다(참고 `markdownImages`). 크기를 먼저 읽어 자리를 잡고(참고 `imageBox`), 못 읽으면 「이미지를 표시할 수 없음」, 크면 내려받기를 권한다. 문구는 참고 ko 그대로다.
-  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음).
+  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음). → 보고서 파일 단추는 §8.170(thread worktree 기준), 그림은 아직 없음.
 - **문법 강조(5b-3).**
   - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
   - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
@@ -2832,7 +2832,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
   - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
-  - 대화 보기·보고서 안 파일 링크.
+  - 대화 보기·보고서 안 파일 링크 → §8.170.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
   - 유닛:
@@ -3511,7 +3511,37 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **기기 이름.** 흐름 사건·판정 근거의 기기 이름이 기기 ID(ULID) 앞 7자(시각)라 약 33초 안에 짝지은 두 기기가 같았다(§8.145 시험이 연결 번호로 돌아갔던 까닭). host `seen.rs` `device_short`: 26자 ULID면 뒤 무작위 7자(35비트), 아니면 앞 7자. 너비를 그대로 두어 기록 모양은 같다.
 - **시험.** 웹 E2E 13 「host가 새 웹을 준다」: 같은 웹이면 줄 없음 → 입력줄에 초안 → `AAA_TEST_WEB_BUILD`로 다른 빌드를 알리는 host로 다시 띄움 → 줄(role=status) → 「앱 다시 열기」를 눌러 다시 열림 → 입력줄 초안 그대로(줄은 가짜 빌드라 다시 뜬다) → 같은 웹을 주는 host로 돌아오면 줄이 사라짐. 11 「대화 입력창」: 쓴 글이 다시 연 뒤에도 남는다. 17 「쓰는 기기」: 두 기기 이름이 `/api/v1/me` ID의 뒤 7자이고 서로 다르다. host 단위 시험 `main_bundle_is_the_index_script_name`·`device_short_is_the_random_tail`. 결함 심기: 웹이 견주지 않음 → 13 줄 기다림 시간 초과, 늘 띄움 → 13 「같은 웹을 주는 host인데 다시 열기 줄이 있다」, host 빌드 이름 꼴이 다름(`.js` 붙임) → 같은 글, 대화 초안을 메모리로 되돌림 → 11 「다시 연 뒤 대화 초안: ""」, 기기 이름 앞 7자로 되돌림 → 17 「기기 이름 A 01M56DD … B 01M56DE」.
 
-### 8.167 결과물 파일을 앱 안 파일 보기로(10-18, 차이 목록 2장 R1 나머지, coordinator 지시 「참고대로」)
+### 8.167 이모지·결합 문자 폭: session host 화면을 웹 폭 규칙대로(10-18, 차이 목록 1장 G 「이모지·결합 문자 폭」)
+
+- **문제.** 웹 터미널은 xterm 5.5 + `@xterm/addon-unicode-graphemes` 0.4.0 + herdr-web-ui 보정(`terminalWidths.ts` `herdrWidthProvider`)으로 묶음(⚠️·ZWJ 가족·국기·피부색·keycap, 한글 자모, 태국 모음)을 한 칸이나 두 칸에 놓는다. session host 화면(aaa-vt의 vt100 0.16.2)은 code point마다 `unicode-width`로 세고 폭 0 글자는 늘 앞 칸에 붙였다.
+  - replay는 글로 다시 쓰니 받는 xterm이 묶음 폭을 다시 센다. 그래서 대개 맞지만, session host가 센 칸으로 정하는 곳이 어긋났다: 절대 칸(CHA·CUP) 뒤 글, replay 뒤 커서 자리(이어 쓰는 출력), 줄 접힘(가족 ZWJ가 vt100에서 여섯 칸), alternate screen의 칸 위치.
+  - escape로 따로 놓인 칸(`e` `ESC[m` `◌́`, ⚠ `ESC[m` VS16)은 vt100이 앞 칸에 붙여, 다시 붙은 화면에서 한 묶음이 됐다.
+- **고침.** vt100을 `vendor/vt100`에 들여와(MIT, workspace `[patch.crates-io]`, 바꾼 것은 그 README) `Screen::text`를 웹 규칙대로 고쳤다.
+  - 폭 표: `web/scripts/vt-widths.ts`가 웹 provider에서 만든다. code point마다 grapheme 부류·폭·묶기 방식을 담는다. 묶기 방식은 보통, 묶지 않음(herdr: spacing mark는 제 칸), 보이지 않음(herdr: 앞 칸에 붙는 0칸, 줄 처음은 addon대로) 셋이다.
+  - 앞 글자와 묶을지는 addon `shouldJoin`과 같은 규칙이다(GB6~GB13 줄인 판). 묶이면 넓은 쪽 폭이고, 지역 표시 둘은 두 칸이며 셋째는 새로 시작한다.
+  - 표를 만들 때 모든 code point × 앞 상태 스물에서 「표 + 규칙」이 provider와 같은지 대조하고, 다르면 멈춘다.
+  - 묶음이 한 칸에서 두 칸이 되면(⚠ 뒤 VS16) 그 자리에서 넓힌다. 끝 칸이면 xterm처럼 이은 줄로 다음 줄 처음에 옮긴다.
+  - 제어 문자·CSI·ESC·OSC·DCS 뒤에는 묶지 않는다(xterm parser `precedingJoinState = 0`). 받은 덩이 경계에서는 끊지 않는다.
+  - 다시 쓰는 곳(replay 화면·기록·앞 기록, reflow, alternate screen의 vt100 `contents_formatted`)은 escape로 따로 놓였던 칸을 escape 없이 이어 쓰면 받는 쪽이 합친다. 그래서 그 자리에 모양(SGR)을 다시 써서 끊는다. 이은 줄을 넘어서도 본다(vt100 `joins_after`).
+- **한계.**
+  - 칸 하나의 글은 22바이트다(vt100 그대로). 피부색 넷인 가족 같은 긴 묶음은 뒤 글자가 잘린다. 칸 폭은 맞다.
+  - TUI(`aaa attach`)는 이 칸을 바깥 터미널에 그린다. 바깥 터미널이 묶음을 다르게 세면(grapheme 묶음을 모르는 터미널) 그 줄이 어긋난다.
+  - ⚠ 뒤 escape 뒤 홀로 선 VS16은 두 칸 칸이지만 그 뒤 글자가 ⚠ 바로 뒤에 보인다. 재어 보니 xterm DOM renderer가 그 span에 두 칸만큼 letter-spacing(15.66px)을 주어도 span 폭이 0이었다(브라우저가 VS16을 앞 ⚠에 붙여 그린다). 살아 있는 화면도 같다.
+- **비용(release, 12,000줄).** 받기 ASCII 1.2MB 8.3 → 10.6ms(ASCII는 표를 찾지 않는다), 한글·이모지 섞인 2MB 15.5 → 27.4ms. replay 6.6 → 7.1ms, 폭 120 → 60 reflow 30.9 → 34.2ms(ASCII), 24.3 → 38.3ms(섞인 줄).
+- **시험.**
+  - aaa-vt 유닛 넷이다.
+    - `widths_follow_the_web_terminal`: 생성기가 웹 provider로 만든 사례 스물(`width_cases.rs`: 묶음, escape·OSC로 끊긴 묶음, Prepend 뒤 ASCII)의 칸과 커서를 본다. 한 byte씩 받아도 같다.
+    - `widened_cluster_at_the_last_column_moves_to_the_next_row`.
+    - `replay_keeps_clusters_as_they_were_placed`: 기록·화면·alternate screen, 끝 칸 뒤 escape로 끊겨 접힌 결합 문자.
+    - `reflow_keeps_clusters_as_they_were_placed`.
+  - web 유닛 `vtWidths.test.mjs`: 표와 사례가 생성기 출력 그대로인지 본다. 웹 규칙이 바뀌었는데 다시 만들지 않으면 실패한다.
+  - 웹 E2E `02-terminal` 「다시 붙은 화면도 같은 칸」(약 2초): 살아 있는 화면과 새로 붙은 데스크톱·휴대폰·iPad에서 표지 글자의 줄·칸이 같다. 표지는 묶음 뒤, escape로 끊긴 묶음 뒤, 절대 칸, replay 뒤 커서 자리에 둔다. 칸 폭은 화면의 눈금 줄로 잰다.
+  - 변형 확인: 모두 실패한다.
+    - aaa-vt 열셋: 끊기 셋(aaa-vt 쓰기·vt100 줄 쓰기·줄 넘는 상태), 끝 칸 이음 표시, 넓히지 않음, CSI·OSC 뒤 끊지 않음, 국기 폭 1, 셋째 지역 표시도 묶음, 보이지 않는 글자 보정 없음, spacing mark도 묶음, `joins_after` 늘 거짓, ASCII 빠른 길이 Prepend를 안 봄.
+    - web 신선도 하나.
+    - 웹 E2E 둘: vt100 옛 code point 폭, replay 끊기 없음.
+
+### 8.168 결과물 파일을 앱 안 파일 보기로(10-18, 차이 목록 2장 R1 나머지, coordinator 지시 「참고대로」)
 
 - **참고.** herdr-projects popup은 보고 글 아래 파일 줄을 ↵로 연다(`src/popup.rs`). herdr-web-ui는 파일을 앱 안 `FileViewer`로
   연다(그림·동영상·소리·PDF·HTML 페이지와 소스·Markdown 미리보기, 새 탭·내려받기·복사, 휴대폰 「뒤로」가 닫는 기록 한 칸).
@@ -3537,7 +3567,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   binary는 내려받으라는 안내. 결함 심기: 결과물 경로 앞 `/`를 떼지 않으면 그림 단계에서 실패, agent 범위 시작을 0으로 두면 m13
   범위 단언에서 실패.
 
-### 8.168 화면 언어는 한국어로 고정한다(10-18, 차이 목록 2장 T5·결정 묶음 D5, 사용자 결정 「일단 한국어로 고정해」)
+### 8.169 화면 언어는 한국어로 고정한다(10-18, 차이 목록 2장 T5·결정 묶음 D5, 사용자 결정 「일단 한국어로 고정해」)
 
 - **참고.** herdr-web-ui는 화면 문구를 `t("…")` 표(`src/lib/i18n.ts`, `i18n.ko.ts` 등)로 빼고 설정 「모양」에서 시스템(브라우저 따름)·영어·
   중국어·일본어·한국어를 고른다(`SettingsDialog.tsx`, 공유 설정 `language`).
@@ -3548,7 +3578,36 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다시 볼 때.** 문자열을 표로 빼고 시스템·한국어·영어부터(차이 목록 T5 할 일). 참고 문구를 옮긴 자리는 주석에 「문구는 참고
   i18n.ko」를 남겨 두었으므로 그 표의 열쇠를 찾을 수 있다.
 
-### 8.169 질문 카드가 화면 선택 창을 그대로 보인다(10-18, 차이 목록 2장 Q2, coordinator 지시 「참고대로」)
+### 8.170 대화·보고서 안 파일 링크(10-18, 차이 목록 1장 J 「파일 경로 누르면 파일 보기」 나머지, t-0335 넘김, coordinator 「그 thread의 머신·worktree 기준, 참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb)는 pane마다 `OpenFileContext`를 준다(App.tsx 1583줄). 대화(`ChatView.tsx`)의 말·도구 줄과 그 안
+  Markdown의 경로·파일 링크·code 경로가 그 pane의 파일 보기로 열리고, 서버는 pane이 지금 있는 폴더 기준으로 찾는다(§8.125). 보고서는
+  herdr-projects의 것이라 herdr-web-ui에는 없다.
+- **대화.** 그 pane 기준이다(참고 규칙 그대로, pane은 thread worktree에서 시작한다). 이미 있는 `pane_file`을 쓴다. 보기 권한 화면은 터미널과
+  같이 열 곳이 없어 글 그대로다(`onOpenFile`이 없다).
+  - aaa 대화는 아직 말을 Markdown으로 그리지 않고 글 그대로다(§8.27). 그래서 참고가 Markdown 아닌 글(도구 출력)에 쓰는 `linkFilePaths`로
+    경로만 단추로 잇는다. 말을 Markdown으로 그리는 것(참고 `chat-bubble-body`)은 남은 일이다.
+- **보고서.** pane이 없을 수 있다(끝난 thread). 그 thread의 머신에서 **agent가 시작한 폴더(`cwd`: worktree 또는 작업 폴더)** 기준으로
+  찾는다. 보고·결과물이 있는 `work_dir`(`<cwd>/.aaa/<project>-<thread>/`)가 아니다: agent는 보고에 저장소 안 경로(`src/app.ts:3`)를 쓴다.
+  - 웹 → host `thread_file {project, thread, path}`(FRONT_API 1.32, 조작 기기만). host → 그 머신 agent `FileLocateIn {dir, path}`. 찾는
+    규칙·허용 폴더(§6.5 `file_roots`)·후보는 `FileLocate`와 같은 함수(`files::locate`)다. 찾으면 `pane_file`과 같은 30분 읽기 경로
+    `/f/<cap>/<이름>`과 같은 답(`pane_file`)이다. 그 뒤 읽기·조건(기기 cookie·Range·CSP)은 §8.125 그대로다.
+  - agent가 `file_in.v1`을 알릴 때만 보낸다. 옛 agent면 「그 머신 agent가 보고서 안 파일 열기를 아직 모른다(agent binary를 바꿔야 한다)」.
+  - 웹: 보고 Markdown을 `OpenFileContext`로 감싼다(조작 기기만). 파일 보기의 소스는 pane·결과물 말고 셋째 `worktree`이고, 방문 기록 칸
+    (`useFileViewer`)에도 적는다. 보기 안에서 고른 다른 파일도 같은 thread 기준이다. 결과물 목록 파일(R1, §8.168)은 그대로 결과물 보기다.
+  - worktree를 지운 끝난 thread는 열리지 않는다(「이 경로에 읽을 수 있는 파일이 없습니다」 또는 허용 폴더 밖).
+- **옮기지 않은 것.** 보고서 안 그림(`![](…)`)은 대체 글 그대로다(파일 보기 안 Markdown만 그림을 읽는다). 대화의 도구 줄 파일
+  단추(`ToolFile`)·patch 보기·도구 그림은 aaa 대화에 도구 입력·출력이 없어 해당이 없다.
+- **시험.**
+  - 웹 E2E 12 「thread 보고서·결과물」: 보고의 문서 링크 `[작업 메모](notes/plan.md)`가 worktree 파일을 `/f/` 경로로 연다, 글 속
+    `src/app.ts:3`은 소스로 3번째 줄 표시, 표 안 code `prefs.rs`는 파일 단추이고 worktree에 없으면 「없습니다」, 뒤로 한 번에 닫힘,
+    보기 권한 기기는 단추 없이 「이름 (경로)」이고 host `thread_file`도 forbidden(같은 요청이 조작 기기에는 열린다). 가짜 agent가 worktree에
+    `notes/plan.md`·`src/app.ts`를 쓴다. 실험실 `file_roots`에 `work`를 더하고 미리 만든다(시작할 때 없는 폴더는 허용 폴더가 되지 않는다).
+  - 웹 E2E 11 「대화 기록」: 답 줄의 절대 경로만 단추이고 누르면 그 파일 보기, 뒤로 한 번이면 대화.
+  - 결함 심기 다섯이 모두 실패했다: 보고서 경로를 결과물 소스로 보냄, agent가 정한 폴더를 버림, host가 `work_dir` 기준, 보기 권한
+    기기에도 링크, 대화에 링크 문맥 없음. 옛 agent(`file_in.v1` 없음) 거절과 보기 권한 대화 화면은 시험하지 않았다(앞은 `dir.v1`과 같은
+    꼴, 뒤는 터미널과 같은 `onOpenFile` 한 값).
+### 8.171 질문 카드가 화면 선택 창을 그대로 보인다(10-18, 차이 목록 2장 Q2, coordinator 지시 「참고대로」)
 
 - **참고.** herdr-web-ui는 질문을 hook 내용이 아니라 pane 화면 글에서 읽는다(`server/prompt.ts`): Claude Code 질문(AskUserQuestion:
   하나·여러 개·직접 쓰기, 선택지 설명, 여러 질문의 탭과 검토), 도구 승인, 계획 승인, Codex 승인 등. 카드(`PromptCard.tsx`)는 번호
@@ -3571,7 +3630,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 웹 `PromptCard.tsx`(참고 그리기, 문구는 i18n.ko)·`herdr/PromptCard.css`(그대로). 카드는 지금 자리(pane 아래 dock, Q1)에 둔다.
     앱 `button` 기본(고정 높이·한 줄)은 선택지 줄에서 되돌린다. `menu`가 없는 질문은 예·아니오 카드 그대로다. CLI·TUI는 예·아니오
     그대로다(`aaa question answer <id> yes|no`).
-- **계약.** FRONT_API 1.32: `QuestionView.menu`(`QuestionMenu`·`MenuOption`), `question_answer`의 `menu`·`pick`(`MenuPick`). 옛 front의
+- **계약.** FRONT_API 1.33: `QuestionView.menu`(`QuestionMenu`·`MenuOption`), `question_answer`의 `menu`·`pick`(`MenuPick`). 옛 front의
   예·아니오 답과 옛 host의 질문(menu 없음)은 그대로 읽는다. 새 오류 코드는 두지 않았다(바뀐 창은 BadRequest와 까닭, 옛 CLI가 모르는
   코드를 읽지 못하므로).
 - **보안(§6.4).** 새 표면은 없다: 답은 전처럼 조작 기기만(`needs_control`), 직접 쓰기 글은 메시지 보내기와 같은 pane 입력이고 조종
@@ -3581,7 +3640,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고와 다르게 둔 것(옮기지 않음).** 입력창에 번호·이름을 쳐서 답하기(`answerFromText`)와 그 확인 줄, Codex 질문(질문 대기열
   alt+↑↓·rollout 읽기), omp·omo·hermes·pi 창, 미리보기 상자가 있는 질문, 초안이 든 직접 쓰기 줄(ctrl+k ctrl+u), 계획 파일을 파일
   보기로, 붙잡힌 메시지·모델·effort 창, 읽는 창이 없는 막힘의 마지막 카드(`fallback`). 카드 제목의 「Question」·「Multiple choice」·
-  「Review your answers」·「k of n」은 한국어 고정(§8.168)이라 「질문」·「여러 개 고르기」·「답 검토」·「k/n」이다.
+  「Review your answers」·「k of n」은 한국어 고정(§8.169)이라 「질문」·「여러 개 고르기」·「답 검토」·「k/n」이다.
 - **시험.** host 유닛 `prompt::tests`(합성 화면: 질문 하나·여러 개와 탭·검토·Claude 승인·Codex 승인·계획·모르는 창, 커서에서 세는
   옮기기, 조종 글자 거절, id가 커서와 상관없음). 웹 E2E 11 「화면 선택 창 카드」: 가짜 Claude 질문 창(`web/e2e/lib/fake-claude-ask.mjs`,
   이름이 claude라 화면 감지가 Claude 규칙)으로 카드 모양(설명·추천·번호·직접 쓰기, 줄 겹침 없음), 터미널에서 옮긴 커서, 그 사이 바뀐
