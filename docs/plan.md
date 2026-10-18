@@ -5052,7 +5052,112 @@ primary 근거:
 - **전환 gate.** 별도 서버는 사용자 결정대로 **전환 직후 즉시 끈다**. 필요한 작은 보고서를 import/publish하고, 큰 묶음의 건너뜀을 검토하며,
   저장소 실시간 폴더를 등록하고 휴대폰에서 링크를 확인한 뒤 전환한다. 상세 명령은 [보고서 운영](library.md), 전환 점검표는 [이전](migration.md).
 
-### 8.201 특수 thread 2단계: 임무·사람 승인·사건 깨움(10-18)
+### 8.201 Codex 전역 hook·사용자 notify 보존(10-18, 전환 G5)
+
+- **참고.** herdr v0.9.5 `src/integration/targets.rs` install_codex·uninstall_codex,
+  `assets/codex/herdr-agent-state.sh`, herdr-projects v0.2.35 `setup.rs`·`progress.rs`를 따랐다.
+  SessionStart·UserPromptSubmit·PostToolUse만 설치한다. 상태는 계속 화면 감지가 정한다.
+  [OpenAI 공식 hook 문서](https://learn.chatgpt.com/docs/hooks)는 `SessionStart`의 startup·resume·clear·compact·fork와
+  `hookSpecificOutput.additionalContext`를 명시한다. 압축 뒤에도 같은 SessionStart 안내를 받는다.
+- **명령·설치 시점.** `aaa integration install codex`·`aaa integration uninstall codex`.
+  `CODEX_HOME`(없으면 Unix HOME 또는 Windows USERPROFILE 아래 `.codex`)의 hooks.json에 추가한다.
+  새 머신 설치 절차에 넣으며 새 workspace마다 설치하지 않는다. agent 기동은 사용자 설정을 자동 수정하지 않는다.
+  `aaa doctor`는 누락·낡은 실행 경로·꺼진 features.hooks를 경고하고 `aaa doctor --fix`가 설치한다.
+  doctor는 파일 상태만 확인한다. Codex의 비관리 hook 신뢰 여부를 추정하거나 자동 승인하지 않는다.
+- **소유·보존.** hooks.json 기존 사건·그룹·사용자 handler는 보존한다. aaa 명령만 완전 일치로 더하거나 제거한다.
+  실행 경로가 옮겨도 지울 수 있게 `aaa-codex-integration.json`에 설치한 명령 목록을 보관한다.
+  같은 그룹에 나중에 더한 사용자 handler도 제거에서 남긴다. 반복 설치·제거는 추가 쓰기·백업을 만들지 않는다.
+  config.toml은 toml_edit로 features.hooks만 true로 바꾼다. 이미 true면 바이트 그대로 둔다.
+  제거는 공용 hooks 기능과 소유 기록을 남긴다. 제거에는 config.toml의 정상 문법이 필요하지 않다.
+- **쓰기.** 모든 문법·변경 대상의 snapshot·쓰기 권한을 먼저 확인한다. symlink·Unix hard link는 거부한다.
+  기존 파일은 같은 폴더 `<파일>.before-aaa-<시각ms>-<PID>-<순번>`에 0600으로 백업한 뒤,
+  create_new 임시 파일·sync·snapshot 재확인·rename으로 교체한다(Windows는 사용자 ACL 상속).
+  원자성은 파일마다 보장한다. 여러 파일 전체가 한 transaction은 아니므로 중간 I/O 실패는 백업으로 되돌린다.
+  소유 기록을 먼저 써서 중간 실패 뒤에도 이전·새 명령을 정확히 제거할 수 있다.
+- **aaa 판정.** CLI는 AAA_SESSION_ID·AAA_HOOK_SOCK·AAA_HOOK_TOKEN 셋이 모두 비어 있지 않은지
+  stdin을 읽기 전에 본다. 없으면 출력·오류 없이 0이다. agent는 세션 spec에서 파생 token을 검증하고,
+  실제 IPC peer PID의 조상·세션 leader가 그 실행 중 pane에 속하는지 판정한다(post와 같은 caller::judge).
+  새 전역 hook은 spec의 harness 또는 argv가 Codex인 세션만 받는다.
+  옛 agent-turn-complete notify는 harness 선언 없는 aaa 셸에서도 왔으므로 token·peer 판정 뒤 호환 수신한다. env만 복사한 세션 밖 호출은 인정하지 않는다.
+  CODEX_THREAD_ID가 사건 ID와 다르거나 하위 agent 사건이면 버린다. 역할 있는 thread만 진행 안내를 받는다.
+  시작 hook이 pane 등록보다 먼저 오면 attach의 등록 사건으로 깨운다(2초는 실패 안전 상한, sleep·재시도 없음).
+  이 대기와 실제 attach의 알림을 제거하는 결함을 각각 재현한다.
+- **사건.** SessionStart는 harness 세션 ID·기록 경로를 기존 session_start로 host에 보내고 시작 안내를 돌려준다.
+  UserPromptSubmit은 기존 prompt_submit로 host의 Waiting for you를 지우고 응답 안내를 돌려준다.
+  PostToolUse는 host 상태 사건을 만들지 않으며 기존 60초 간격 안내만 넣는다. 보고 명령 자신과 하위 agent는 제외한다.
+- **notify.** 실행·resume의 aaa `-c notify` 주입을 제거한다. herdr 전역 SessionStart처럼 ID를 받으므로
+  notify를 가로채거나 중계할 필요가 없다. Codex가 전역·workspace·profile·명시적 CLI 우선순위대로
+  사용자 notify를 원래 경로에서 실행한다. config.toml의 notify도 수정하지 않는다.
+  이미 실행 중인 옛 대화는 기존 override가 남으므로 배포 뒤 새 시작·재개부터 적용된다. 옛 notify 사건도 계속 받는다.
+- **Windows.** sh 대신 herdr의 PowerShell UTF-16LE EncodedCommand를 쓴다. 경로는 PowerShell 작은따옴표로 인용한다.
+  `-NonInteractive -OutputFormat Text`를 지정하고 첫 문장에서 `$ProgressPreference = 'SilentlyContinue'`로 둔다.
+  EncodedCommand의 기본 stderr CLIXML과 모듈 첫 검색의 진행 출력이 무반응 hook에 섞이지 않게 한다.
+  env gate를 stdin보다 먼저 두고 UTF-8 입력·출력·native pipeline 인코딩을 지정해 JSON·한글 안내를 전달한다.
+  Windows 전용 명령 생성 계약을 native 테스트에서 복호화해 검사하고 Windows 전체 target check·clippy로 cfg 경로를 검사한다.
+  CLI 통합 시험은 Codex 기본 Windows runner와 같은 COMSPEC/cmd.exe `/C`에서 설치 명령을 실행한다.
+  한글·공백·작은따옴표·$가 든 실행 파일에서 설치해 인증된 시작의 한글 안내와 무반응 사건을 함께 검사한다.
+  Windows 실행기에서 같은 CLI 통합 시험도 실행해야 한다. macOS cross check를 Windows 실행 결과라고 부르지 않는다.
+- **시험·결함 심기.** 임시 HOME/CODEX_HOME에서 추가·이동·제거·반복·기존 항목·백업·read-only·손상 설정을 검사한다.
+  설치한 명령의 stdin 사건을 실제 agent와 host로 보내 Front 상태의 세션 ID와 기다림 정리를 확인한다.
+  session host만 가짜이며 OS 프로세스 신호를 쓰지 않는다. 사용자 notify는 launch·resume의 실제 argv와
+  설정 배열+마지막 JSON 인자를 실행하는 최소 harness로 확인한다(Python 3.11+ 표준 tomllib, Unix).
+  기존 항목 삭제·중복 설치·그룹 전체 제거·feature 미활성·백업 생략·외부 출력·token/peer/중첩 검사 제거·
+  Codex 안내 제거·notify 덮어쓰기·Windows 인코딩 제거를 심어 owner 시험이 실패하고 복구 뒤 통과하는지 기록한다.
+- **호환·G5.** 기존 HarnessEvent의 session_start·prompt_submit만 쓰므로 AGENT_LINK 1.4·FRONT_API 1.38을 유지한다.
+  배포 뒤 세 Mac에서 설치·Codex 신뢰를 마치고 새 Codex pilot의 시작 ID·진행 안내·기다림 정리·사용자 notify를
+  확인해야 G5를 통과한다. 이 구현 thread는 운영 HOME이나 운영 서비스를 변경하지 않는다.
+
+### 8.202 대화 보기 한 바탕·iPad 입력창 끌기(10-18, 사용자 「색이 달라」·「입력창 왼쪽을 잡고 올리면 창이 통째로 올라간다」)
+
+- **색.** 기록(`.chat`)은 `--bg`, 입력창 둘레 띠(`.composer`)는 참고 사본 `herdr/Composer.css`의 `--bg-panel`이었다. 참고는 대화 보기를 한 바탕으로 두고
+  (ChatView.css `.terminal-stack.is-chat .composer { background: transparent }`) 카드는 입력 상자뿐이다. aaa의 칸은 `.terminal-stack.is-chat`이 아니라
+  `.term`이라 그 규칙이 맞지 않았다. `style.css` `.term .composer { background: transparent }`로 띠가 칸 바탕(`.view`의 `--bg`)을 보인다.
+  경계선·그림자는 참고처럼 두지 않는다. 입력 상자(`.composer-surface`)는 그대로다. 테마·색상마다 토큰이라 모두 같다.
+- **끌기.** 문서는 굴러갈 것이 없지만(scrollHeight = clientHeight) iOS는 문서 자체를 고무줄로 끌고, 화면 키보드가 올라온 동안은 문서를 굴린다.
+  html·body·`.chat`의 overscroll-behavior가 모두 auto였다. 셋을 고친다.
+  1. `html, body { overscroll-behavior-y: none }`. 참고는 `contain`(당겨 새로 읽기 막기)인데 contain은 문서 자신의 고무줄을 남긴다.
+  2. `.chat { overscroll-behavior: contain }`(참고 `.chat-view`): 기록 끝에 닿은 끌기를 문서로 넘기지 않는다.
+  3. `web/src/pageHold.ts`: 입력창·붙잡은 메시지 칸에서 시작한 한 손가락 끌기가 그 방향으로 굴러갈 것(넘치는 글 칸, 가로로 넘치는 빠른 답장)을
+     지나지 않으면 `touchmove`를 막는다(passive: false). 두 손가락·글 고르는 중·굴러갈 것 위의 끌기는 막지 않는다. 참고에는 없는 막음이다:
+     iOS가 1을 늘 따르는지 headless로 볼 수 없어 손으로도 막는다.
+- **시험.** 웹 E2E 22 `chat-surface`. 휴대폰·iPad(WebKit)·데스크톱(Chromium), 어둡게·밝게 × 색상 셋에서 기록과 띠의 칠해진 색(위로 올라가며 처음 만나는
+  불투명 배경)이 같고 입력 상자는 다르다. iPad WebKit(Safari 탭·홈 화면 앱, 화면 키보드 흉내)에서 계산된 overscroll과, 띠·짧은 글 칸 끌기의
+  touchmove가 막히고 넘치는 글 칸 올리기·대화 끌기는 막히지 않는다. Chromium iPad 크기의 CDP 진짜 터치로 대화와 넘치는 글 칸이 굴러가고,
+  띠 끌기는 막히며 문서 자리는 0이다. 고치기 전 빌드에서 두 단계 모두 실패했다(색 18조합, 끌기 15곳).
+- **실기 확인 필요.** iPad Safari 탭·홈 화면 앱 × 화면 키보드 내림·올림에서 입력창 왼쪽 띠·입력 상자·넘치는 글을 위아래로 끌어 화면이 따라가지 않고
+  대화·입력칸 글은 굴러가는지. 글 칸을 길게 눌러 커서 옮기기·고르기가 그대로인지. FRONT_API는 그대로다.
+
+### 8.203 프로젝트 머리 셈을 확인 필요·검토 대기로 나눔(10-18, QA t-0362 O1, 사용자 「추천대로」)
+
+- **문제.** 목록 프로젝트 머리의 셈 「확인 필요 N」은 herdr-projects `needs_you`(확인 필요·검토)를 한 수로 셌다. 그런데 그 아래 thread 줄 글은
+  「검토 대기」라 머리와 줄이 맞지 않았다(검토 대기 thread 하나만 있어도 머리는 「확인 필요 1」).
+- **고침.** 셈 글만 나눈다: 웹 `sidebarModel.ts projectLine`과 TUI `list.rs project_line`이 「확인 필요 1 · 검토 대기 1 · 작업 중 2 · 병합 중 1」 차례로,
+  0인 쪽은 뺀다. 말은 줄 글과 같은 `GROUP_WORD`·`group_label`이다. 세는 규칙은 그대로다: `needsYou`(머리 빨강, 웹 Sidebar `is-need`·TUI 머리 색)와
+  TUI 탭 막대 「● 확인 필요 N」(herdr-projects 탭 줄 `N need you`)은 두 묶음을 함께 센다. 프로젝트 고르기 줄(ProjectThreads)도 같은 함수다.
+- **폭.** 웹은 휴대폰 390px drawer에서도 「확인 필요 1 · 검토 대기 1」이 잘리지 않는다(넘치면 말줄임). TUI는 기본 폭(36칸)에서 다 보이고,
+  좁으면 지금처럼 ` · ` 단위로 뒤에서 덜어 이름을 남긴다(25칸이면 「확인 필요 1」만).
+- **시험.** 웹 유닛 `stateLine.test.mjs` 「프로젝트 머리 셈」, TUI `project_line_splits_need_and_review`(셈과 그린 머리 35·25칸).
+  웹 E2E 12 「프로젝트 머리 셈」: 가짜 agent가 할 일 「사람을 기다림」이면 `aaa report --activity 'Waiting for you'`만 알려(harness fake.sh) 확인 필요
+  thread를 만들고, 보고를 쓴 검토 대기 thread와 함께 데스크톱·iPad·휴대폰 폭에서 머리 글·빨강·넘침 없음을 본다.
+  기존 기대를 바꾼 곳: TUI `threads_follow_the_display_order`의 「확인 필요 2 · 작업 중 2 · 병합 중 1」(검토 하나를 확인 필요로 셌다) →
+  「확인 필요 1 · 검토 대기 1 · …」, 웹 E2E 12 「목록은 프로젝트 먼저」의 머리 셈 정규식에 「검토 대기」를 더함.
+
+### 8.204 대화 칸 가로 넘침: 글 속 경로 단추의 nowrap(10-18, 사용자 iPhone 19:48 「대화 보기가 좌우로 스크롤된다」)
+
+- **원인.** 글 속 파일 경로는 누르면 여는 `<button class="markdown-file">`(FilePathLink, plan §8.170)이다. 참고 전역 `button`은 font·color만 정해
+  단추가 둘레 글의 white-space를 따르는데, aaa 전역 `button`(style.css, M1-1부터)은 `white-space: nowrap`이다. `herdr/Markdown.css`의
+  `.markdown-file`(참고 ChatView.css 그대로)은 white-space를 정하지 않아 그것을 받았다. 그래서 도구 줄의 긴 경로(`Write: /…`)와 답의
+  경로 inline code가 한 줄로 남아 `.chat` 폭을 넘기고(휴대폰 390px에서 scrollWidth 1213), 그 뒤 글은 넓어진 줄에 밀려 함께 잘렸다.
+  긴 URL·경로 아닌 inline code·code block은 원래 맞았다. 대화에 이 단추가 들어온 것은 339566f2(10-18 12:37, 대화·보고서 안 파일 링크)부터다.
+  파일 보기의 Markdown 미리보기에도 59aa2c68(10-18 07:22)부터 같은 단추가 있었다.
+- **고침.** `style.css` `.markdown-file { white-space: inherit; }`. 둘레 글(일반·pre-wrap)이면 `overflow-wrap: anywhere`로 줄을 바꾸고,
+  code block(pre) 안이면 pre를 따라 그 상자(`.hl-code` overflow-x auto) 안에서 가로로 굴러간다.
+  참고와 같게 `<button>`은 inline-block처럼 그려지므로, 여러 줄로 바뀐 경로 칩 옆의 목록 점은 칩 마지막 줄에 선다(참고도 같다).
+- **시험.** 웹 E2E 22 「대화 칸 가로 넘침 0」. 데스크톱(Chromium)·iPad·휴대폰(WebKit)에서 긴 경로(사람 말·도구 줄·답 inline code·언어 없는
+  fence), 긴 inline code, 긴 URL, 긴 rust code block이 든 대화를 열고 문서·대화 칸 scrollWidth = clientWidth, 기둥이 칸 안, 기둥 밖 글 조각
+  없음(코드 상자 안 제외), code block은 제 상자에서 가로로 굴러감을 본다. 고치기 전 빌드에서 세 기기 모두 실패했다.
+
+### 8.205 특수 thread 2단계: 임무·사람 승인·사건 깨움(10-18)
 
 - **정의와 적용.** `projects/<p>/missions/<name>.md`는 routine과 같은 `+++` TOML+본문이다. `evaluator`는 내장 사후 평가자의 예약 이름이다. `title`, `enabled`, `profile`, `machine`, `repo`, `events`, `repos`, `reports`, `batch_s`(0~86400), `min_gap`, `schedule`, `max_wakes`(기본 12/일), `max_minutes`(기본 60/깨움), `reset`(기본 daily 05:00), `reset_after_wakes`(기본 6)를 쓴다. 모르는 칸과 배경·post·routine·message 사건 구독은 오류다. repo 이름은 해당 머신의 프로젝트 repo 하나로 풀며 승인 hash에 실제 경로·머신을 함께 묶는다. project.toml의 경로 변경이나 같은 경로의 다른 머신으로 이동해도 승인을 우회하지 못한다.
 - **사람 승인.** `aaa mission list|show|approve|reject|start|stop|pause|resume|reload|restart|open`. 첫 시작·repo 추가/변경·예산 올림만 사람 승인이다. CLI는 기존 사람 문, 웹은 Controller를 쓴다. 세션 안 coordinator의 approve는 host가 거부하며 reject는 가능하다. 적용 사본은 DB meta `mission_applied:<p>:<name>`, 승인 칸 hash는 `mission_ok:<p>:<name>`에 있다. 본문·사건·일정·허용 profile·머신은 reload 뒤 안전한 새 대화에서 적용한다. 깨진 후보·승인 대기 중에도 옛 사본을 쓴다. 예산 낮춤·끄기는 다음 tick, repo 제거는 다음 reset에 적용한다. task.md는 투영이며 재시작 지시의 정본이 아니다.

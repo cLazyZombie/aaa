@@ -821,9 +821,9 @@ export default async function ({ page }) {
   });
 
   await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.195): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
-    // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
+    // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 검토 대기 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
     const counts = await page.getByTestId("project-demo").locator(".project-place").innerText();
-    if (!/^(쉼|(확인 필요|작업 중|병합 중) \d+( · (작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);
+    if (!/^(쉼|(확인 필요|검토 대기|작업 중|병합 중) \d+( · (검토 대기|작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);
     // thread 둘째 줄: 왼쪽 상태 말, 오른쪽 머신 이름. 머신 칸에는 줄이 없다
     const machines = await page.locator('[data-testid^="thread-machine-demo-"]').allInnerTexts();
     if (machines.length === 0 || machines.some((m) => m !== "labA")) throw new Error(`thread 줄 머신: ${machines}`);
@@ -1074,6 +1074,56 @@ export default async function ({ page }) {
     await row.getByRole("img", { name: "보고서 공유 링크 QR 코드" }).waitFor();
     await row.getByRole("button", { name: "링크 폐기" }).click();
     await domIs(page, "빈 결과물 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
+  });
+
+  await step("프로젝트 머리 셈(QA t-0362 O1, plan §8.203): 확인 필요와 검토 대기를 줄 글과 같은 말로 나눠 「확인 필요 1 · 검토 대기 1」, 머리는 빨강(사람이 볼 thread), 휴대폰·iPad·데스크톱 폭에서 같은 글이 잘리지 않고 줄 안에 선다", async () => {
+    aaa("project", "create", "heads");
+    const start = (title, task) => {
+      fs.writeFileSync(`${root}/heads-${title}.md`, task);
+      return aaa("thread", "start", "heads", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/heads-${title}.md`);
+    };
+    const review = start("검토", "보고를 쓴다");
+    const asking = start("물음", "사람을 기다림");
+    await until("두 묶음", () => {
+      const g = Object.fromEntries(aaa("thread", "list", "heads").threads.map((t) => [t.id, t.group]));
+      return g[review.id] === "ready_for_review" && g[asking.id] === "waiting_on_you";
+    });
+    const want = "확인 필요 1 · 검토 대기 1";
+    const bad = [];
+    for (const [name, width, height] of [["desktop", 1280, 800], ["ipad", 820, 1180], ["phone", 390, 844]]) {
+      await page.setViewportSize({ width, height });
+      // 좁은 창은 목록이 drawer다: 연다
+      const toggle = page.locator(".view [data-testid='drawer-toggle']");
+      if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
+        await toggle.click();
+        await page.locator("#workspace-drawer.is-open").waitFor();
+      }
+      const head = page.getByTestId("project-heads");
+      await head.waitFor();
+      await domIs(page, `${name} 머리 셈`, (q) => document.querySelector(q) !== null, '[data-testid="project-heads"] .project-place');
+      const got = await head.locator(".project-place").evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const row = el.closest(".workspace-header").getBoundingClientRect();
+        const red = document.createElement("span");
+        red.style.color = "var(--status-blocked)";
+        document.body.append(red);
+        const want = getComputedStyle(red).color;
+        red.remove();
+        return { text: el.textContent, clipped: el.scrollWidth > el.clientWidth, inside: r.left >= row.left - 0.5 && r.right <= row.right + 0.5, red: getComputedStyle(el).color === want, wide: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      });
+      await head.scrollIntoViewIfNeeded();
+      await shot(page, `${name}-project-head-split`);
+      if (got.text !== want) bad.push(`${name}: ${got.text}`);
+      if (got.clipped || !got.inside || got.wide > 0) bad.push(`${name} 넘침 ${JSON.stringify(got)}`);
+      if (!got.red) bad.push(`${name} 머리가 빨갛지 않다`);
+      if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) === "true") {
+        await toggle.click();
+        await domIs(page, "목록 drawer 닫힘", () => !document.querySelector("#workspace-drawer.is-open"));
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    for (const id of [review.id, asking.id]) aaa("thread", "resolve", "heads", id);
+    if (bad.length) throw new Error(bad.join("; "));
   });
 
   await step("특수 임무: 파일 발견·임무 보기·Controller의 첫 승인", async () => {

@@ -26,7 +26,21 @@ install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.ne
 
 - 업그레이드는 9번(`aaa update`)이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
 - 운영 Mac에 빌드 부하를 주지 않으려면 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/aaa.new' < target/release/aaa`로 옮긴 뒤 그 Mac에서 `~/.local/bin/aaa update --from ~/aaa.new`로 바꾼다(처음 설치면 `install -m 755 ~/aaa.new ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa`). 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다(`aaa update`가 앞 12자리를 보인다).
-- hook 명령(`aaa hook --agent …`)은 이 경로로 실행마다 주므로 Claude·Codex 사용자 설정은 고치지 않는다.
+- Claude hook은 실행마다 준다. Codex는 전역 hook을 설치한다(§8.201). **배포 뒤 각 Mac에서** 아래를 실행한다.
+  ```bash
+  ~/.local/bin/aaa integration install codex
+  ~/.local/bin/aaa doctor
+  ```
+  빠졌거나 실행 경로가 바뀌었으면 `~/.local/bin/aaa doctor --fix`도 같은 설치를 한다.
+  `CODEX_HOME`을 쓰는 머신은 Codex·설치 명령에 같은 값을 준다. 새 workspace에는 추가 설정이 없다.
+  새 Codex 세션의 Hooks 화면에서 aaa hook을 검토하고 신뢰한 뒤 진행한다. 설치·doctor는 신뢰를 대신하지 않는다.
+  시작 세션 ID·진행 안내·사람 답 뒤 기다림 정리·기존 사용자 notify를 새 pilot에서 확인한다(G5).
+- 백업은 Codex 설정 폴더의 `<파일>.before-aaa-<시각ms>-<PID>-<순번>`이다. 설치 명령이 경로를 보인다.
+  원래 없던 파일에는 백업이 없다. `aaa-codex-integration.json`은 설치한 명령 소유 기록이므로 보관한다.
+  제거는 `~/.local/bin/aaa integration uninstall codex`다. 기존 hook·사용자 notify·공용 hooks 기능은 남긴다.
+  완전 복원은 Codex와 설정 편집을 멈춘 뒤 해당 작업 직전 백업을 원래 파일에 임시 복사→rename으로 돌린다.
+  백업 뒤의 사용자 변경도 되돌리므로 새 변경이 있으면 uninstall을 먼저 쓰고 필요한 항목만 수동 복원한다.
+  실제 운영 설정 설치·복원은 구현 thread가 수행하지 않는다.
 
 ## 2. 설정
 

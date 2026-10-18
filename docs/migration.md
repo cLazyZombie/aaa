@@ -77,7 +77,7 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 | G2 | **열린 0.2 thread가 없다.** 남은 것은 사용자가 정한 idle 시점에 재개 정보(세션 ID·profile 인자, 인자 출처 `record`·`home-profile`)로 명시적으로 이어 간다 | `inventory.md` 「열린 thread와 재개 정보」 |
 | G3 | **0.2 inbox 끝내지 않은 항목 0** | `inventory.md` 「inbox」 |
 | G4 | **shadow: N시간 동안 의도하지 않은 차이 0**, 판정한 줄 비율 90% 이상(「입력 재현 안 됨」이 많으면 수집을 고친다) | `shadow.md` 「의도하지 않은 차이(분류 안 됨)」 줄. 까닭이 붙은 다름(plan에 정한 차이)은 세지 않는다 |
-| G5 | **pilot: 잃은 보고 0, 잘못된 입력 0, 멈춘 감독자 0.** 시작·brief·진행 보고·inbox·확인 필요·착지·resolve를 aaa에서 끝까지 했다 | pilot 기록 |
+| G5 | **pilot: 잃은 보고 0, 잘못된 입력 0, 멈춘 감독자 0.** 시작·brief·진행 보고·inbox·확인 필요·착지·resolve를 aaa에서 끝까지 했다. 세 Mac Codex 전역 hook 설치·신뢰 후 새 Codex의 시작 ID·진행 안내·기다림 정리·사용자 notify도 확인한다(§8.201) | pilot 기록·각 Mac doctor |
 | G6 | **aaa 상태 = 화면.** shadow의 aaa thread 줄에서 harness 활동과 화면 단서가 어긋난 줄 0(D8 화면 감지가 들어간 binary 기준) | `shadow.md` 「aaa thread」 |
 | G7 | **설치가 맞다.** 세 Mac `aaa doctor lineage`가 `aaa-launcher` 책임, `aaa machine list` 모두 연결·이상 없음, 같은 `aaa --version` | install-runbook §3·§4 |
 | G8 | **열린 결함.** pilot·shadow에서 기록한 결함이 고쳐졌거나 사용자가 받아들였다 | 차이 목록 |
@@ -161,6 +161,16 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 5. 전환을 끝낸 직후 별도 서버를 끈다. 실제 서버 종료는 운영 절차에서 직접 확인한 PID로 한다.
 
 상한·충돌·정리·키 교체의 상세 규칙은 [보고서 운영](library.md)에 있다. 이 과정에서 기존 서버·자료를 먼저 지우지 않는다.
+
+## 0.2 hook 정리(전환 완료 뒤)
+
+- G5 통과 전에는 herdr·herdr-projects의 hook을 남긴다. aaa installer는 다른 도구의 항목을 수정하지 않는다.
+- 0.2의 열린 coordinator·thread를 모두 끝내고 ticker를 멈춘 뒤, 각 머신에서 **설치했던 0.2.35 실행 파일과 같은 root**로
+  `herdr-projects --root <0.2-root> unconfigure`를 실행한다. 0.2 setup의 owned.json을 이용하므로 사용자 hook을 보존한다.
+  이 명령은 0.2 hook뿐 아니라 그 설치가 소유한 안내·sidebar도 정리한다. herdr 자체를 계속 쓰면 herdr integration은 남긴다.
+- 일부 hook만 정리할 때는 두 설정 파일을 별도 백업하고, 각 event의 handlers 중 설치된 **herdr-projects 실행 파일의
+  `hook --agent codex` 명령과 완전 일치하는 것만** 제거한다. 그룹의 사용자 handler·aaa handler는 남긴다.
+  hooks.json 전체 삭제나 features.hooks 끄기로 정리하지 않는다. 완료 뒤 `aaa doctor`와 새 Codex pilot을 다시 확인한다.
 
 ## 임무가 있는 host의 갱신과 되돌리기
 

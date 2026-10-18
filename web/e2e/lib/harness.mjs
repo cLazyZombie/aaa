@@ -845,6 +845,12 @@ while IFS= read -r line; do
   case "$line" in
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
+      # 할 일에 「사람을 기다림」이 있으면 보고 없이 사람을 기다린다고만 알린다(host 묶음 확인 필요, 12 「프로젝트 머리 셈」)
+      if grep -q '사람을 기다림' "$dir/brief.md"; then
+        "${AA}" report --percent 50 --activity 'Waiting for you'
+        printf 'fake> '
+        continue
+      fi
       cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
       mkdir -p "$dir/library/docs" && cp "${root}/notes.md" "$dir/library/docs/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"

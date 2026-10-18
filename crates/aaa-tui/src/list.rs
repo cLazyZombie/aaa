@@ -80,14 +80,12 @@ fn listed(t: &ThreadView) -> bool {
     t.group != ThreadGroup::Resolved && t.role != Role::Evaluator
 }
 
-/// herdr-projects `project_line`(웹 `projectLine`): 「확인 필요 2 · 작업 중 3 · 병합 중 1」, 없으면 「쉼」
+/// herdr-projects `project_line`(웹 `projectLine`): 「확인 필요 1 · 검토 대기 1 · 작업 중 3 · 병합 중 1」, 없으면 「쉼」.
+/// 참고의 「need you」 한 수(확인 필요·검토)는 thread 줄 글과 같은 말로 나눠 보인다(QA t-0362 O1, plan §8.203). 0인 쪽은 뺀다
 pub fn project_line(groups: &[ThreadGroup]) -> String {
-    let need = groups.iter().filter(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview)).count();
     let mut parts = vec![];
-    if need > 0 {
-        parts.push(format!("확인 필요 {need}"));
-    }
-    for (g, label) in [(ThreadGroup::Working, "작업 중"), (ThreadGroup::Landing, "병합 중")] {
+    for g in [ThreadGroup::WaitingOnYou, ThreadGroup::ReadyForReview, ThreadGroup::Working, ThreadGroup::Landing] {
+        let label = group_label(g);
         let n = groups.iter().filter(|x| **x == g).count();
         if n > 0 {
             parts.push(format!("{label} {n}"));
@@ -1197,9 +1195,54 @@ mod tests {
         assert_eq!(got, want);
         assert_eq!(
             project_line(&threads.values().filter(|t| listed(t)).map(|t| t.group).collect::<Vec<_>>()),
-            "확인 필요 2 · 작업 중 2 · 병합 중 1"
+            "확인 필요 1 · 검토 대기 1 · 작업 중 2 · 병합 중 1"
         );
         assert_eq!(state_line(&threads["p/t-landing"], true, 0), "병합 중 · 보고");
+    }
+
+    /// 프로젝트 머리 셈(웹 `projectLine`, plan §8.203): 확인 필요와 검토 대기는 줄 글과 같은 말로 나눠 세고 0인 쪽은 뺀다
+    /// (QA t-0362 O1). 머리를 빨갛게 하는 「사람이 볼 thread」는 그대로 둘 다다(herdr-projects needs you)
+    #[test]
+    fn project_line_splits_need_and_review() {
+        use ThreadGroup::*;
+        assert_eq!(project_line(&[WaitingOnYou, ReadyForReview]), "확인 필요 1 · 검토 대기 1");
+        assert_eq!(project_line(&[ReadyForReview, ReadyForReview]), "검토 대기 2");
+        assert_eq!(project_line(&[WaitingOnYou, Working]), "확인 필요 1 · 작업 중 1");
+        assert_eq!(project_line(&[Idle]), "쉼");
+        // 그린 머리: 기본 폭(36칸)은 다 보이고, 좁으면 ` · ` 단위로 뒤에서 덜어 이름을 남긴다(급한 「확인 필요」가 남는다)
+        let machines = [machine("m1", "mac-a", Connection::Connected)];
+        let threads: HashMap<String, ThreadView> = [
+            thread("heads", "t-0001", ReadyForReview, 0, "mac-a", None),
+            thread("heads", "t-0002", WaitingOnYou, 0, "mac-a", None),
+        ]
+        .into_iter()
+        .map(|t| (thread_key(&t), t))
+        .collect();
+        let (panes, open, pal) = (HashMap::new(), HashSet::new(), Palette::catppuccin());
+        let head = |w: u16| {
+            let v = View {
+                machines: &machines,
+                panes: &panes,
+                threads: &threads,
+                current: None,
+                sel: None,
+                focused: true,
+                top: None,
+                pal: &pal,
+                style: StatusIndicators::Dots,
+                now_ms: 0,
+                folded: &open,
+            };
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
+            render(&mut buf, Rect { x: 0, y: 0, w, h: 1 }, &[Row::Project("heads".into())], &v);
+            (shown(&buf, w, 1).remove(0), buf[(w - 2, 0)].fg)
+        };
+        assert_eq!(head(35), (" ▾ heads 확인 필요 1 · 검토 대기 1".to_string(), pal.red));
+        let narrow = head(25).0;
+        assert!(
+            narrow.starts_with(" ▾ heads ") && narrow.ends_with(" 확인 필요 1") && !narrow.contains("검토"),
+            "{narrow}"
+        );
     }
 
     /// 「기타」 pane 줄은 제목 뒤에 머신 이름. 넘치면 제목이 먼저 「…」로 줄고 머신·배지는 남는다, 오른쪽 글과 한 칸 띄우고
