@@ -186,7 +186,7 @@ pub struct SpawnSpec {
     #[ts(optional)]
     pub profile: Option<String>,
     /// `profile`을 풀 때 더할 safety. coordinator(`project open`)는 `thread_agent_args` 칸에 `coordinator_agent_args`를,
-    /// `default_profile`에 프로젝트 기본 coordinator profile을 싣는다. agent가 `spawn_safety.v1`을 알릴 때만 보낸다(plan §8.166)
+    /// `default_profile`에 프로젝트 기본 coordinator profile을 싣는다. agent가 `spawn_safety.v1`을 알릴 때만 보낸다(plan §8.173)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(skip)]
     pub safety: Option<crate::LaunchSafety>,
@@ -1452,7 +1452,7 @@ pub enum FrontRequest {
     WebPublish,
     WebPublishOff,
     WebStatus,
-    /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.30)
+    /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.33)
     ProjectCreate {
         name: String,
         #[serde(default)]
@@ -1465,19 +1465,19 @@ pub enum FrontRequest {
         #[serde(default)]
         coordinator_profile: Option<String>,
     },
-    /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.30). key는 `aaa project set --help`
+    /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.33). key는 `aaa project set --help`
     ProjectSet {
         project: String,
         key: String,
         value: String,
     },
-    /// 프로젝트 목록. archived는 `all`일 때만(herdr-projects `list --all`, FRONT_API 1.31)
+    /// 프로젝트 목록. archived는 `all`일 때만(herdr-projects `list --all`, FRONT_API 1.33)
     Projects {
         #[serde(default)]
         #[ts(optional, as = "Option<bool>")]
         all: bool,
     },
-    /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.31)
+    /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.33)
     ProjectLifecycle {
         project: String,
         action: ProjectAction,

@@ -471,7 +471,7 @@ lazy_size: number | null, };
 
 export type ProjectView = { name: string, path: string, threads: number, 
 /**
- * FRONT_API 1.31. 옛 host는 보내지 않는다(active)
+ * FRONT_API 1.33. 옛 host는 보내지 않는다(active)
  */
 status?: ProjectStatus, 
 /**
@@ -545,7 +545,7 @@ agent: AgentStatus | null, created_at_ms: number, updated_at_ms: number,
  */
 warnings?: Array<string>, 
 /**
- * 그 프로젝트의 상태(FRONT_API 1.31, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+ * 그 프로젝트의 상태(FRONT_API 1.33, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
  * 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
  */
 project_status?: ProjectStatus, };

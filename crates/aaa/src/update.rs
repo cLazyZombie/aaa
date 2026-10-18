@@ -1,5 +1,5 @@
 //! `aaa update`(herdr 0.9.5 `update.rs` `self_update`·`download_update`·`install_downloaded_update`, 차이 목록 4장 A
-//! 「업데이트 명령」 지금 504줄, plan §11·§8.166).
+//! 「업데이트 명령」 지금 504줄, plan §11·§8.173).
 //!
 //! - 주어진 실행 파일로 바꾼다(`--from`). 내려받기·채널·서명 release는 아직 없다(사용자 10-18: brew·배포·서명은 추후 계획).
 //! - 바꿀 자리는 지금 도는 실행 파일이다(herdr `current_exe`). 운영은 `~/.local/bin/aaa`로 친다(install-runbook 1번).

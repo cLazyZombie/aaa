@@ -1,5 +1,5 @@
 // 프로젝트 화면 머리의 「coordinator」(herdr-projects popup Threads `c` → `profile_picker("Start or focus a coordinator with")` →
-// `open <p> --profile <고른 것>`, plan §8.166). 고르기 목록은 host 머신 profile 가운데 safety `coordinator_profiles`가 허용한
+// `open <p> --profile <고른 것>`, plan §8.173). 고르기 목록은 host 머신 profile 가운데 safety `coordinator_profiles`가 허용한
 // 것이고(참고 `usable`) 프로젝트 기본 coordinator profile이 맨 위다. 고르면 host가 도는 coordinator를 알리거나 띄우고 그 pane을 연다.
 // 목록과 허용·기본값은 단추를 누를 때 받는다: agent.toml·로그인한 harness·safety는 화면을 연 뒤에도 바뀐다.
 // 거부(허용 목록·보관·없는 profile)는 host가 하고 그 글을 머리 아래 줄(onError)에 보인다.

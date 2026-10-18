@@ -3,7 +3,7 @@
 //! - 읽기(`profile list`·`profile resolve`·`safety show`)는 누구나 한다.
 //! - 바꾸기는 사람이 aaa 세션 밖 터미널에서만 한다([`crate::person::require`]). profile은 이 머신 agent.toml, 허용 목록·
 //!   기본값·safety는 host.toml을 toml_edit로 그 key만 고친다(주석·차례는 그대로). host·agent는 쓸 때마다 다시 읽는다.
-//! - coordinator 쪽(`profile default|allow coordinator`, `coordinator_agent_args`)은 `aaa project open`이 쓴다(§8.166).
+//! - coordinator 쪽(`profile default|allow coordinator`, `coordinator_agent_args`)은 `aaa project open`이 쓴다(§8.173).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

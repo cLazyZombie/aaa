@@ -433,7 +433,7 @@ fn service_stop_start_restart_wrap_launchctl() {
     );
 }
 
-/// `aaa update`(plan §8.166, herdr `update`): 실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다(시험 binary는 건드리지 않는다).
+/// `aaa update`(plan §8.173, herdr `update`): 실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다(시험 binary는 건드리지 않는다).
 /// 「다른 빌드」는 시험 binary 뒤에 바이트를 덧붙인 사본이다(같은 version, 다른 sha256, 그대로 돈다).
 #[cfg(unix)]
 #[test]

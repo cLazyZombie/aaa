@@ -6,7 +6,7 @@
 //!   `routine_commands`와 project.toml `start_threads`·`trust_screens`(프로젝트 폴더 안이라 출처에 드러낸다).
 //! - host는 쓸 때마다 이 표만 느슨하게 다시 읽는다: 다른 절이 깨져도, 값 하나가 잘못돼도 그 값만 기본값으로 간다.
 //! - coordinator 쪽 값(`coordinator_profiles`·`coordinator_agent_args`, yolo의 coordinator 몫)은 `aaa project open`이 쓴다
-//!   (plan §8.166). aaa에 옛 자리가 없어 프로젝트 표 → default 표 → 기본값이다.
+//!   (plan §8.173). aaa에 옛 자리가 없어 프로젝트 표 → default 표 → 기본값이다.
 
 use std::path::Path;
 

@@ -356,7 +356,7 @@ pub struct ProjectView {
     pub name: String,
     pub path: String,
     pub threads: u32,
-    /// FRONT_API 1.31. 옛 host는 보내지 않는다(active)
+    /// FRONT_API 1.33. 옛 host는 보내지 않는다(active)
     #[serde(default)]
     #[ts(optional, as = "Option<ProjectStatus>")]
     pub status: ProjectStatus,
@@ -562,7 +562,7 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<Vec<String>>", optional)]
     pub warnings: Vec<String>,
-    /// 그 프로젝트의 상태(FRONT_API 1.31, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
+    /// 그 프로젝트의 상태(FRONT_API 1.33, 진행 중이면 없다). 상태를 바꾸면 그 프로젝트 thread 사건을 다시 내서 front가
     /// 다시 묻지 않고 멈춤·보관을 안다(웹 sidebar의 「멈춤」, 보관한 프로젝트 숨김)
     #[serde(default, skip_serializing_if = "ProjectStatus::is_active")]
     #[ts(as = "Option<ProjectStatus>", optional)]
