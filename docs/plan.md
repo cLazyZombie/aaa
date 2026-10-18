@@ -4163,13 +4163,20 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   웹 `paneAgentStatus`는 쉼(봄·안 봄)·시작 위에 `waiting`을 겹친다(참고 `paneStatus`). 배지·팔레트 필터·접힌 머리 합치기(`rollupStatus`)는
   이미 `waiting`을 안다.
 - **참고와 다른 곳.** 배경 수는 agent `plan.rs`가 센 「지금 Claude 프로세스가 띄워 아직 도는 것」이다(참고는 그 턴이 띄운 것만, 앞 턴의 일도
-  센다). aaa에는 pane 턴 끝 알림이 없어(N3, 사용자 결정 대기) 알림 미루기는 없다. TUI 상태 표시는 그대로다(herdr TUI에 BG가 없다).
+  센다). TUI 상태 표시는 그대로다(herdr TUI에 BG가 없다).
+- **턴 끝남 알림(§8.185)과 함께(coordinator 지시, 착지 때).** 참고 `alertStatus`대로 알림은 BG로 기다리는 쉼을 작업 중으로 본다(notice.rs
+  `alert_activity`). 그래서 끝남은 그 기다림이 끝날 때 한 번 간다: 다음 턴이 끝날 때, 또는 유예·한도가 다 돼 ticker가 풀 때(참고 `waitsRanOut`).
+  턴 길이는 첫 턴 시작부터 잰다. 알림이 본 상태는 pane마다 기억한다(`PaneRt.alert`): 턴 안에서 온 사람 입력(`prompt_submit`)은 턴을 끝내지
+  않는다. aaa는 그 hook에 상태를 바꾸지 않고 다음 화면이 작업 중을 알리는데, 그 입력이 배경 기다림을 지우면 그 틈에 쉼으로 보여 끝남이
+  두 번(BG 앞 턴과 짧은 다음 턴) 나갔다(첫 판 E2E에서 찾음).
 - **계약.** FRONT_API 1.34: `AgentStatus.background_wait`(없으면 false, 옛 host는 보내지 않는다). 같은 1.34(배포 전, §8.184·§8.185·§8.187과 함께)에 C3를 더해 한 번에 착지한다. L9(줄 옮기기)는 웹 목록 구조를 맡은 thread가 하므로 이 착지에서 뺐다.
 - **시험.** host 유닛 `bgwait::tests`(참고 background-wait.test.ts의 Claude 경우들 — 턴 끝에 일이 돌면 기다리고 끝나도 유예까지, 다음 턴이 풂,
   턴 안에서 끝난 일·처음 쉼은 붙잡지 않음, 한도는 사람 입력 뒤 첫 쉼부터·새 입력이 새 한도, forget). 웹 E2E 11 「배경 작업을 기다리는 쉼」:
   가짜 Claude pane(SessionStart hook으로 기록 위치, 화면으로 턴, UserPromptSubmit hook으로 사람 입력)에서 턴이 배경 명령을 띄우고 끝나면
   Agents 줄이 「배경 작업 대기」(CLI `background_wait` true), 그 일의 알림 뒤 배경 수가 없어져도 BG(유예), 다음 턴이 끝나면 BG가 아님.
-  결함 심기 셋(웹이 무시, host가 내지 않음, 유예 없음) 모두 실패.
+  그 pane을 보지 않는 둘째 화면이 받은 끝남 알림은 둘째 턴이 끝날 때 하나이고, 그 턴 길이는 첫 턴부터다. host 유닛
+  `a_rest_that_waits_on_background_work_is_still_the_turn`. 결함 심기 셋(웹이 무시, host가 내지 않음, 유예 없음)과 알림 둘(BG를 쉼으로 봄,
+  턴 안 사람 입력이 턴을 끊음) 모두 실패.
 
 ### 8.190 TUI thread 상태 말의 PR 번호(10-18, 차이 목록 2장 L3 241줄 TUI 몫, t-0345 recount (b))
 

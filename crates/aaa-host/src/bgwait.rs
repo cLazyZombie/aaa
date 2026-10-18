@@ -7,7 +7,7 @@
 //! 저절로 이어진 턴마다 새로 세지 않는다. 처음부터 쉬던 pane은 붙잡지 않는다.
 //!
 //! 참고와 다른 곳: 배경 수는 agent `plan.rs`가 센 「지금 Claude 프로세스가 띄워 아직 도는 것」이다(참고는 그 턴이 띄운 것만).
-//! 참고는 이 판정으로 「작업 끝남」 알림도 미루지만(`alertStatus`), aaa에는 pane 턴 끝 알림이 없어 목록 상태만 바꾼다.
+//! 참고처럼 이 판정으로 「작업 끝남」 알림도 미룬다(notice.rs `alert_activity`, 참고 `alertStatus`): 기다림이 끝날 때 한 번이다.
 
 use std::collections::HashMap;
 
@@ -136,25 +136,42 @@ impl crate::Host {
         Some(std::time::Instant::now() + std::time::Duration::from_millis(left))
     }
 
-    /// 유예·한도가 다 된 기다림을 풀고 그 pane 상태를 다시 낸다
+    /// 유예·한도가 다 된 기다림을 풀고 그 pane 상태를 다시 낸다. 알림은 그 기다림을 작업 중으로 보았으므로(notice.rs
+    /// `alert_activity`, 참고 server/index.ts `waitsRanOut`) 쉬는 pane이면 이제 그 턴의 끝남이다
     pub(crate) fn settle_background_waits(&self) {
-        let ended = self.bgwait.lock().unwrap().tick(aaa_common::util::now_ms());
+        let now = aaa_common::util::now_ms();
+        let ended = self.bgwait.lock().unwrap().tick(now);
         if ended.is_empty() {
             return;
         }
+        let mut finished = Vec::new();
         {
             let mut i = self.inner.lock().unwrap();
             let w = self.bgwait.lock().unwrap();
             for id in &ended {
                 if let Some(p) = i.panes.get_mut(id) {
                     if let Some(a) = p.agent.as_mut() {
+                        let was = p.alert.unwrap_or(crate::notice::alert_activity(a.activity, a.background_wait));
                         a.background_wait = w.waiting(id);
+                        let next = crate::notice::alert_activity(a.activity, a.background_wait);
+                        p.alert = Some(next);
+                        if was != next {
+                            let a = a.clone();
+                            if crate::notice::finished(Some(was), next, a.seen) {
+                                let turn_ms = p.turn_from.map(|from| now.saturating_sub(from));
+                                finished.push(crate::notice::finish_notice(id, p, &a, turn_ms));
+                            }
+                            p.turn_from = crate::notice::turn_from(Some(was), next, p.turn_from, now);
+                        }
                     }
                     let _ = p.events.send(crate::PaneEvent::State);
                 }
             }
         }
         self.bump();
+        for n in finished {
+            self.announce_finish(n);
+        }
     }
 }
 

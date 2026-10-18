@@ -688,6 +688,18 @@ export default async function ({ ctl, page }) {
     const agent = () => aaa("pane", "list").panes.find((p) => p.name === "bgw1")?.agent;
     await until("bgw1 harness", () => agent()?.harness === "claude");
     await is("idle", "처음은 쉼");
+    // 그 pane을 보지 않는 화면이 받는 앱 안 알림(host `notice`): 참고 alertStatus대로 BG 동안은 끝남이 아니고, 기다림이 끝난 턴에
+    // 한 번이다. 알림은 한 줄로 차례대로 오므로 마지막 끝남을 받았을 때 앞 턴의 끝남이 있었다면 이미 와 있다
+    const bgId = aaa("pane", "list").panes.find((p) => p.name === "bgw1").id;
+    const notices = [];
+    const nw = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      onPage: (p) => p.on("websocket", (ws) => ws.on("framereceived", (f) => {
+        if (typeof f.payload !== "string" || !f.payload.includes('"ev":"notice"')) return;
+        const n = JSON.parse(f.payload);
+        if (n.pane === bgId) notices.push(n);
+      })),
+    });
+    const t1 = Date.now();
     const at = () => new Date().toISOString();
     const L = (o) => JSON.stringify(o) + "\n";
     // 1) 사람 입력 → 턴이 배경 명령을 띄우고 끝난다: 끝남 대신 BG(CLI도 같은 값)
@@ -708,11 +720,18 @@ export default async function ({ ctl, page }) {
     await page.getByTestId("agent-row-bgw1").getByTestId("background-tasks").waitFor({ state: "detached" });
     await is("waiting", "일이 끝나도 유예 동안 BG");
     // 3) 다음 턴(작업 중)이 끝나면 BG가 아니다(이 화면이 그 pane을 보는지에 따라 끝남·쉼)
+    const t2 = Date.now();
     aaa("pane", "run", "bgw1", "go");
     await is("working", "다음 턴");
     aaa("pane", "run", "bgw1", "end");
     await until("다음 턴이 끝나면 BG가 아니다", async () => ["done", "idle"].includes(await state.getAttribute("data-status")));
     if (agent()?.background_wait) throw new Error(`끝난 뒤 background_wait: ${JSON.stringify(agent())}`);
+    // 끝남 알림은 둘째 턴이 끝날 때 하나, 그 턴은 첫 턴부터 BG를 지나 이어졌다
+    await until("끝남 알림", () => notices.length > 0);
+    const told = notices.map((n) => [n.kind, n.turn_ms === null ? null : n.turn_ms >= t2 - t1]);
+    if (JSON.stringify(told) !== JSON.stringify([["finished", true]])) throw new Error(`BG 동안의 끝남 알림: ${JSON.stringify(notices)}`);
+    if (nw.errors.length) throw new Error(nw.errors.join("; "));
+    await nw.page.context().close();
     aaa("pane", "kill", "bgw1");
   });
 
