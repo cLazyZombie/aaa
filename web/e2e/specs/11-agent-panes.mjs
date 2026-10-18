@@ -105,6 +105,15 @@ export default async function ({ ctl, page }) {
       custom: "답을 입력",
     };
     if (JSON.stringify(shown) !== JSON.stringify(want)) throw new Error(`선택 창 카드 ${JSON.stringify(shown)}`);
+    // 설명이 붙은 줄은 그만큼 자라고 다음 줄과 겹치지 않는다(앱 button 기본의 고정 높이·한 줄을 쓰지 않는다)
+    const overlap = await card.evaluate((c) => {
+      const rows = [...c.querySelectorAll(".prompt-card-option")].map((o) => [o.getBoundingClientRect(), o.querySelector(".prompt-card-option-description")?.getBoundingClientRect()]);
+      return rows.flatMap(([r, d], i) => [
+        ...(d && d.bottom > r.bottom + 0.5 ? [`${i + 1} 설명이 줄 밖`] : []),
+        ...(i + 1 < rows.length && r.bottom > rows[i + 1][0].top + 0.5 ? [`${i + 1}·${i + 2} 겹침`] : []),
+      ]);
+    });
+    if (overlap.length) throw new Error(`선택지 줄: ${overlap.join(", ")}`);
     await shot(page, "desktop-prompt-card");
     // 터미널에서 커서를 둘째로 옮겨도 같은 창이다: 카드의 셋째는 거기서 한 칸 아래다
     aaa("pane", "send-keys", "ask1", "down");
@@ -141,6 +150,8 @@ export default async function ({ ctl, page }) {
     }
     await card.getByText("TUI").click();
     await card.getByText("CLI").click();
+    // 「제출」은 고르면 주 단추로 바뀐다(색·투명도 전환): 그 전환이 끝난 모습을 찍는다
+    await card.locator(".prompt-card-submit").evaluate((b) => Promise.all(b.getAnimations().map((a) => a.finished)));
     await shot(page, "desktop-prompt-card-multi");
     await card.getByRole("button", { name: "제출 (2)" }).click();
     ({ q, card } = await opened(p2, [q.menu.id]));
