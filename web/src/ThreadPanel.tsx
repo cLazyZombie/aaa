@@ -4,6 +4,7 @@ import { ApiError, call } from "./api";
 import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
+import { LIBRARY_SANDBOX } from "./FileViewer";
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "사람 차례",
@@ -20,13 +21,15 @@ const fmtSize = (n: number) =>
 
 const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
-/** thread 보고서와 결과물. 결과물 HTML은 sandbox iframe(opaque origin)으로 보여 이 화면의 권한에 닿지 못한다. */
+/** thread 보고서와 결과물. 결과물 HTML은 sandbox iframe(opaque origin)으로 보여 이 화면의 권한에 닿지 못한다.
+ *  결과물 파일은 앱 안 파일 보기로 연다(차이 목록 R1, herdr-projects popup의 파일 줄 ↵): 같은 보기 경로로 읽는다. */
 export function ThreadPanel({
   t,
   role,
   onBack,
   backTo,
   onOpenPane,
+  onOpenFile,
 }: {
   t: ThreadView;
   role: DeviceRole;
@@ -35,6 +38,8 @@ export function ThreadPanel({
   backTo?: string;
   /** 그 thread의 agent pane이 돌고 있으면 터미널로(목록의 thread 줄과 같은 곳) */
   onOpenPane?: () => void;
+  /** 결과물 파일을 앱 안 파일 보기로(차이 목록 R1, 결과물 안 상대 경로) */
+  onOpenFile: (path: string) => void;
 }) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -125,7 +130,7 @@ export function ThreadPanel({
                   className="library-frame"
                   data-testid="library-frame"
                   title="결과물 index.html"
-                  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
+                  sandbox={LIBRARY_SANDBOX}
                   src={lib.base + "index.html"}
                 />
               )}
@@ -133,7 +138,18 @@ export function ThreadPanel({
                 {lib.files.map((f) => (
                   <li key={f.path}>
                     <Icon name="file" />
-                    <a href={lib.base + encodePath(f.path)} target="_blank" rel="noopener noreferrer">
+                    {/* 그냥 누르면 앱 안 파일 보기, 보조 키·가운데 단추는 브라우저대로 새 탭 */}
+                    <a
+                      href={lib.base + encodePath(f.path)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="library-file"
+                      onClick={(e) => {
+                        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                        e.preventDefault();
+                        onOpenFile(f.path);
+                      }}
+                    >
                       {f.path}
                     </a>
                     {f.on_agent && <span className="tag">agent에서 읽음</span>}

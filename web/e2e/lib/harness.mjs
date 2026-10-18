@@ -777,6 +777,8 @@ try { r.cookie = document.cookie === "" ? "none" : "visible"; } catch (e) { r.co
 fetch("/api/v1/me").then(function (x) { r.api = String(x.status); }).catch(function () { r.api = "blocked"; });
 </script>`,
 );
+// 결과물 안 하위 폴더의 Markdown: 위 폴더의 그림·페이지를 상대 경로로 가리킨다(앱 안 파일 보기, 차이 목록 R1)
+fs.writeFileSync(`${root}/notes.md`, "# 결과 메모\n\n![점 그림](../pic.png)\n\n[결과 페이지](../index.html)\n");
 // fake agent 보고: 실제 보고에 나오는 Markdown(표 안 code, 굵게 안 code, 링크, 번호 목록 안 목록, code block, 차이 목록 R1)
 fs.writeFileSync(
   `${root}/report-fixture.md`,
@@ -813,6 +815,7 @@ while IFS= read -r line; do
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
+      mkdir -p "$dir/library/docs" && cp "${root}/notes.md" "$dir/library/docs/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"
       cp "${root}/report-fixture.md" "$dir/report.md"
       echo done ;;

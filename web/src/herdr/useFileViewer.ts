@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { outsideSettings } from "./settingsHistory.ts";
 
 // herdr-web-ui src/lib/useFileViewer.ts(aa624cb). aaa: pane ID가 host 전체에서 하나라 머신 ID 대신 pane만 둔다.
+// thread 결과물(차이 목록 R1)은 pane 대신 그 thread(`library`)를 둔다: 경로는 결과물 안 상대 경로다.
 
 interface FilePreview {
   path: string;
   pane: string | null;
+  library?: { project: string; thread: string };
 }
 const HISTORY_KEY = "aaa:file-preview";
 
@@ -14,8 +16,11 @@ function previewFromState(state: unknown): FilePreview | null {
   const preview = (state as Record<string, unknown>)[HISTORY_KEY];
   if (preview === null || typeof preview !== "object") return null;
   const value = preview as Record<string, unknown>;
-  return typeof value.path === "string" && (value.pane === null || typeof value.pane === "string")
-    ? { path: value.path, pane: value.pane }
+  if (typeof value.path !== "string" || (value.pane !== null && typeof value.pane !== "string")) return null;
+  const library = value.library as Record<string, unknown> | null | undefined;
+  if (library === undefined) return { path: value.path, pane: value.pane };
+  return library !== null && typeof library === "object" && typeof library.project === "string" && typeof library.thread === "string"
+    ? { path: value.path, pane: value.pane, library: { project: library.project, thread: library.thread } }
     : null;
 }
 

@@ -213,7 +213,7 @@ fn info(real: &Path, meta: &std::fs::Metadata) -> FileInfo {
     let name = real.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mime = mime_of(&name);
     let kind = match mime {
-        Some(m) => kind_of(m),
+        Some(m) => FileKind::of_mime(m),
         None if sniff_binary(real) => FileKind::Binary,
         None => FileKind::Text,
     };
@@ -233,73 +233,7 @@ fn info(real: &Path, meta: &std::fs::Metadata) -> FileInfo {
     }
 }
 
-/// 확장자로 정하는 MIME(모르면 None: 내용으로 본다)
-pub(crate) fn mime_of(name: &str) -> Option<&'static str> {
-    let (_, ext) = name.rsplit_once('.')?;
-    Some(match ext.to_ascii_lowercase().as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "bmp" => "image/bmp",
-        "ico" => "image/x-icon",
-        "svg" => "image/svg+xml",
-        "mp4" | "m4v" => "video/mp4",
-        "webm" => "video/webm",
-        "mov" => "video/quicktime",
-        "mp3" => "audio/mpeg",
-        "m4a" => "audio/mp4",
-        "wav" => "audio/wav",
-        "ogg" => "audio/ogg",
-        "flac" => "audio/flac",
-        "pdf" => "application/pdf",
-        "html" | "htm" => "text/html",
-        "md" | "markdown" => "text/markdown",
-        "json" => "application/json",
-        "js" | "mjs" | "cjs" => "text/javascript",
-        "css" => "text/css",
-        "csv" => "text/csv",
-        "xml" => "application/xml",
-        "yaml" | "yml" => "application/yaml",
-        "toml" => "application/toml",
-        "sh" => "application/x-sh",
-        "sql" => "application/sql",
-        "txt" | "log" | "rs" | "ts" | "tsx" | "jsx" | "py" | "go" | "rb" | "java" | "kt" | "swift" | "c" | "h"
-        | "cc" | "cpp" | "hpp" | "cs" | "php" | "lua" | "zig" | "diff" | "patch" | "ini" | "conf" | "env" | "lock" => {
-            "text/plain"
-        }
-        "zip" | "gz" | "tgz" | "tar" | "7z" | "bz2" | "xz" => "application/octet-stream",
-        "wasm" | "so" | "dylib" | "dll" | "exe" | "bin" | "o" | "a" => "application/octet-stream",
-        _ => return None,
-    })
-}
-
-fn kind_of(mime: &str) -> FileKind {
-    if mime.starts_with("image/") {
-        FileKind::Image
-    } else if mime.starts_with("video/") {
-        FileKind::Video
-    } else if mime.starts_with("audio/") {
-        FileKind::Audio
-    } else if mime == "application/pdf" {
-        FileKind::Pdf
-    } else if mime.starts_with("text/")
-        || matches!(
-            mime,
-            "application/json"
-                | "application/xml"
-                | "application/yaml"
-                | "application/toml"
-                | "application/x-sh"
-                | "application/sql"
-        )
-    {
-        FileKind::Text
-    } else {
-        FileKind::Binary
-    }
-}
+pub(crate) use aaa_proto::mime_of;
 
 fn sniff_binary(path: &Path) -> bool {
     let Ok(mut f) = File::open(path) else { return true };

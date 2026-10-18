@@ -620,7 +620,11 @@ path: string, size: number,
 /**
  * host에 사본이 없다: 볼 때 agent에서 스트리밍한다(작업 폴더가 남아 있을 때만)
  */
-on_agent: boolean, };
+on_agent: boolean, 
+/**
+ * 파일 보기가 고를 MIME·종류(파일 보기 `FileInfo`와 같은 표). 옛 목록 파일에는 없어 host가 줄 때 채운다
+ */
+mime: string, kind: FileKind, };
 
 export type LibraryView = { project: string, thread: string, 
 /**
