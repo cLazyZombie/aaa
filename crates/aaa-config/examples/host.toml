@@ -70,6 +70,8 @@ pr_poll_secs = 120
 accept_wait_ms = 10000
 # interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기를 기다리는 상한(밀리초). 넘으면 그대로 보낸다
 stop_wait_ms = 15000
+# brief를 보낸 뒤 새 보고가 오기 전까지 thread를 작업 중으로 치는 시간(초). 방금 일을 받은 agent는 아직 쉼으로 읽혀서다
+delivered_working_secs = 15
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
 # routine 명령을 실행해도 되는 프로젝트("*"는 모두). 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.

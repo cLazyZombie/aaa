@@ -215,6 +215,9 @@ pub struct ProjectsSection {
     /// interrupt 메시지: Esc 뒤 harness가 멈췄다고 알리기(턴 끝 hook이나 화면의 「Interrupted」)를 기다리는 상한(밀리초).
     /// 넘으면 그대로 보낸다.
     pub stop_wait_ms: u64,
+    /// brief를 보낸 뒤 새 보고가 오기 전까지 thread를 작업 중으로 치는 시간(초). 방금 일을 받은 agent는 아직 쉼으로 읽혀서다
+    /// (herdr-projects ticker는 안내를 보낸 tick을 작업 중으로 두고 다음 tick(`TICK` 15초)에 센다, plan §8.85). 시험에서 줄인다.
+    pub delivered_working_secs: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
     /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
@@ -239,6 +242,7 @@ impl Default for ProjectsSection {
             pr_poll_secs: 120,
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
+            delivered_working_secs: 15,
             auto_resolve_day_secs: 86_400,
             merge_grace_secs: 600,
             inbox_done_days: 30,
@@ -583,6 +587,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     if c.projects.auto_resolve_day_secs == 0 {
         out.push(Invalid {
             path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
+        });
+    }
+    if c.projects.delivered_working_secs == 0 {
+        out.push(Invalid {
+            path: key(&["projects", "delivered_working_secs"]), message: "1초 이상이어야 한다".into()
         });
     }
     for (name, v) in [("accept_wait_ms", c.projects.accept_wait_ms), ("stop_wait_ms", c.projects.stop_wait_ms)] {
