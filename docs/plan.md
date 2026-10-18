@@ -3402,6 +3402,32 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **줄이지 않은 것.** 웹 pong 기한(3초 × 2)과 앱 안 알림이 저절로 접히는 시간은 시험 전체에 한 번씩(17 「다시 붙음」, 12 「앞 알림 접힘」)이라, 기본값 단계를 남기면 줄일 몫이 없다.
 - **시험.** 11 54 → 27초, 17 68.7 → 59.8초, 18 22.6 → 19.9초(12·15는 그대로). 두 값 모두 없으면 동작이 그대로다(운영 host·agent에 영향 없음).
 
+### 8.162 결과물 파일을 앱 안 파일 보기로(10-18, 차이 목록 2장 R1 나머지, coordinator 지시 「참고대로」)
+
+- **참고.** herdr-projects popup은 보고 글 아래 파일 줄을 ↵로 연다(`src/popup.rs`). herdr-web-ui는 파일을 앱 안 `FileViewer`로
+  연다(그림·동영상·소리·PDF·HTML 페이지와 소스·Markdown 미리보기, 새 탭·내려받기·복사, 휴대폰 「뒤로」가 닫는 기록 한 칸).
+- **aaa가 달랐던 것.** 결과물 목록의 파일 이름은 보기 경로(`/v/<cap>/<path>`)를 새 탭으로 열었다. 파일 보기(§8.125)는 pane의
+  파일(허용 폴더 안, `pane_file`)만 읽었다.
+- **구조.** 결과물도 같은 `FileViewer`로 연다. 읽기는 새 경로 없이 그 보기 경로(§8.7 opaque origin sandbox, 2시간 권한) 그대로다.
+  - 웹: `FileViewer`의 소스가 pane이거나 thread 결과물이다. 결과물이면 `thread_library`를 한 번 받아 그 목록에서 찾고, 경로는
+    결과물 안 상대 경로다. 문서 기준 풀기(링크·그림)는 결과물 맨 위를 `/`로 두고 해 결과물 밖으로 나가지 않는다(목록에 없으면
+    「결과물에 이 파일이 없습니다」). 폴더 보기·같은 이름 후보는 pane만이다. 결과물 HTML 페이지는 보기 경로가 이미 sandbox 페이지라
+    `?render` 없이 그대로 frame에 넣고(sandbox 값은 결과물 frame과 같다, 형제 파일을 상대 경로로 읽는다), 「소스」는 같은 경로의 앞부분이다.
+    방문 기록 칸(`useFileViewer`)은 pane 대신 그 thread를 적는다. 목록 이름은 그냥 누르면 앱 안, 보조 키·가운데 단추는 브라우저대로 새 탭이다.
+  - host `thread_library`: 파일마다 `mime`·`kind`를 준다. 표는 agent 파일 보기와 같은 것을 aaa-proto(`mime_of`·`FileKind::of_mime`)로
+    옮겨 둘이 쓴다. 이름으로 모르는 파일은 host 사본의 앞 8KiB에 NUL이 없으면 글, agent에만 있는 것은 읽지 않고 binary다
+    (목록을 줄 때마다 agent에 묻지 않는다). 목록 파일(`threads/<id>.files.json`)의 옛 줄은 그대로 읽는다(줄 때 채운다).
+  - host `/v/`: Range(206·`Content-Range`, 못 맞추면 416)와 `?download=1`(attachment)을 받는다. agent에 남긴 파일은 그 위치부터
+    조각(512KiB)으로 읽고 범위 길이에서 끊는다. PDF는 브라우저 PDF 보기가 sandbox 문서를 거부하므로 `/f/`처럼 `frame-ancestors 'self'`만
+    둔다. 질의·Range 없는 요청의 응답은 전과 같다(결과물 HTML이 형제 파일을 읽는 길).
+- **계약.** FRONT_API 1.28: `LibraryFile.mime`·`kind`. agent 쪽은 바뀌지 않았다.
+- **시험.** m13 `library_view`: 목록의 종류·MIME, host 사본의 가운데 범위, agent 파일의 조각을 넘는 범위·끝에서 n바이트, 416,
+  내려받기 머리글, 질의 없는 요청에 disposition이 없음. host 유닛 `file_types_come_from_the_name_or_the_host_copy`. 웹 E2E 12
+  「thread 보고서·결과물」: 하위 폴더 Markdown(`docs/notes.md`)을 열어 `../pic.png` 그림이 그려지고, 문서 링크 `../index.html`이 같은
+  칸에서 결과물 페이지(opaque origin: 부모·cookie·API에 닿지 않음)로, 소스, 내려받기 attachment, 「뒤로」 한 번에 닫힘, agent에 남은
+  binary는 내려받으라는 안내. 결함 심기: 결과물 경로 앞 `/`를 떼지 않으면 그림 단계에서 실패, agent 범위 시작을 0으로 두면 m13
+  범위 단언에서 실패.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
