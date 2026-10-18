@@ -2181,7 +2181,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 나누기는 herdr `split_rect`: 나눔 칸 없이 첫 쪽이 `round(길이 × 비율)`. 상자끼리 붙는다(`┐┌`). PTY 크기는 테두리 안쪽(90×30에서 반반이면 30×27 둘). 방향 포커스·자리 바꾸기는 바깥 상자로 찾는다.
   - 포커스 pane 자기 테두리 칸은 accent, 나머지 `overlay0`. 위 테두리 x+1에 제목 ` <이름> `(폭−4로 `…` 자름, 포커스면 accent 굵게, 아니면 `overlay0`). 제목은 붙인 pane 이름이다(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다. herdr는 agent 제목·사람이 붙인 이름을 쓰고 agent 이름은 설정(`show_agent_labels_on_pane_borders`, 기본 끔)으로만 보인다.
   - 모드 막대는 pane 칸 맨 아랫줄(나눈 탭이면 아래 테두리)에 겹친다.
-- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다.
+- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다. → §8.193에서 기본 폭 36·한도 18~72·기억(host 공유 설정 `tuiSidebar*`).
 - **시험.**
   - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
   - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
@@ -4213,6 +4213,93 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   단계에는 시한 `STEP_LIMIT_MS` 120초(가장 긴 spec 전체가 41초)를 두었다. 옛 순서로 다시 돌리면 20초 만에 「목록 서랍 움직임 끝(다음 frame)이
   되지 않았다(페이지가 답하지 않음)」로 실패한다. 단계는 시계를 대화를 연 뒤에 멈춘다.
 
+### 8.192 Windows에서 접속만 하는 TUI(10-18, 사용자 「1번 진행해」, §8.181의 Windows 쪽)
+
+- **범위.** agent가 없는 Windows PC(x86_64, Tailscale)에서 `aaa.exe attach --remote <host 웹 주소>`로 붙기만 한다. 실행 파일은
+  `%USERPROFILE%\.local\bin\aaa.exe`(Mac `~/.local/bin/aaa`와 같은 자리), 바꾸기는 `aaa update --from <파일>`(§8.180). Windows agent·host·
+  감지(Q21)는 범위 밖이다. 절차는 install-runbook 11번.
+- **빌드.** Mac에서 `cargo xwin build --release -p aaa --target x86_64-pc-windows-msvc`(rustup target·cargo-xwin, 사용자 수준 도구).
+  CI windows runner와 같은 msvc target이다. C 런타임은 정적으로 넣는다(`.cargo/config.toml` `crt-static`, herdr 0.9.5
+  `.cargo/config.toml`과 같다): 처음 빌드는 `VCRUNTIME140.dll`·`api-ms-win-crt-*`를 들여 VC++ 재배포 패키지가 없는 PC에서 돌지 않을 수 있었다.
+- **token 파일 권한(Windows ACL).** 전에는 Unix에만 0700·0600을 걸고 Windows는 `%LOCALAPPDATA%`가 물려주는 DACL(상속, Administrators
+  포함) 그대로였다. herdr 0.9.5 `src/platform/windows.rs`의 SDDL을 따른다: `remote/` 폴더는 `create_remote_private_dir`(:745-766)의
+  `D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)`에서 OW만 계정 SID로 바꾼 것(herdr는 새 폴더만 만들지만 aaa는 있던 폴더를 다시 쓴다: 관리자 권한
+  터미널에서 처음 만든 폴더는 소유자가 Administrators라 OW면 나중의 일반 권한 실행이 DACL을 다시 걸지 못한다, finish 리뷰), token 파일은 `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349)처럼
+  `D:P(A;;GA;;;SY)(A;;GA;;;<계정 SID>)`로 `CreateFileW`(CREATE_NEW)에서 처음부터 만든다(만든 뒤 바꾸지 않는다, Unix와 같은 원칙). 폴더는
+  이미 있으면 `SetFileSecurityW`로 그렇게 바꾼다(Unix가 늘 0700을 거는 것과 같다).
+- **`aaa update` Windows.** 전에는 「아직 macOS·Linux만」으로 거부했다. 거부를 빼고 Mac과 같은 순서(같은 폴더 staging → self-check →
+  hard link 보관 → rename)를 쓴다. 처음에는 「도는 exe는 덮지 못한다」고 보고 지금 것을 옮긴 뒤 바꾸는 Windows 길을 따로 넣었으나, Windows
+  CI에서 도는 exe 자리에 바로 rename하는 길(결함으로 심은 것)도 시험이 통과해 그 가정이 틀렸음을 보았다(std rename이 POSIX 방식으로 바꾼다).
+  따로 길을 두지 않고 시험만 남겼다. herdr Windows 갱신은 release 폴더마다 풀고 junction·사용자 PATH를 바꾸는 `distribution/install.ps1`이다:
+  aaa는 고정 경로 하나라 따르지 않았다(참고와 다름).
+- **키(Windows 콘솔).** crossterm 0.29 Windows 입력(`event/sys/windows/parse.rs`)은 콘솔 레코드를 읽는다: 왼쪽·오른쪽 수정키를 합치고, Ctrl
+  글자는 `ToUnicodeEx`로 기본 배치 글자를 찾아 CONTROL과 주며(prefix `ctrl+b`가 맞는다), AltGr는 Ctrl+Alt로 온다. 그대로면 독일 배치 AltGr+Q
+  `@`가 NUL에 ESC를 붙여 갔다. herdr `windows_vti.rs` `windows_record_modifiers`(:1576-1590, 「글자 키의 AltGr는 글자 shift」)처럼
+  Ctrl+Alt의 기호·숫자·비영문 글자는 글자로 둔다(`keys::altgr_text`). crossterm이 왼쪽·오른쪽을 가르지 않아 진짜 Ctrl+Alt는 영문 글자와 Space만
+  남는다. 놓기(Release)는 이미 거른다. 한글은 터미널 IME가 조합하고 확정된 음절이 글자 하나로 온다. prefix 뒤 한/영 바꾸기는 §8.73대로다.
+- **참고와 다름(남김).** herdr는 Windows 클라이언트 입력을 `ENABLE_VIRTUAL_TERMINAL_INPUT`으로 켜고 VT 바이트를 직접 푼다
+  (`src/client/terminal_setup.rs`·`src/client/input/windows_vti.rs`, 4천 줄 넘음): bracketed paste·마우스 VT 보고가 그 길에서 온다. aaa는
+  crossterm 콘솔 입력 그대로라 Windows에서 붙여넣기는 낱 키로 가고(여러 줄은 줄마다 Enter, README 붙여넣기 줄), 마우스는 콘솔 레코드다.
+  VT 입력 길은 따로 일로 남긴다.
+- **그대로인 것(코드로 확인).** 상태·설정 폴더는 `%LOCALAPPDATA%\aaa\state`·`\config`(roaming `%APPDATA%` 아님, `aaa-config/src/paths.rs`),
+  HOME은 `USERPROFILE`. TLS는 webpki 루트·SNI(그 PC의 신뢰 저장소를 보지 않는다, §8.181). 크기 바뀜은 ratatui가 창 크기를 다시 읽는다
+  (crossterm `Resize`는 다시 그리기만). focus 사건은 콘솔이 늘 준다. 터미널 색 물음(OSC 10/11)은 보내지 않는다.
+- **시험.** 유닛 `remote::admit_pairs_keeps_and_forgets_tokens`(모든 OS, 가짜 host 웹 http 127.0.0.1: 처음엔 묻고 pairing·token 두기·Host·
+  Origin·cookie, 다음엔 묻지 않음, 401이면 지우고 다시 묻기, 새 token도 거부되면 지운 채 멈춤, 틀린 코드 401, 4401 취소), `keys::
+  windows_console_keys_table`(crossterm Windows 꼴 → bytes 표, prefix), Windows만 `remote::token_file_is_private`(파일·폴더 DACL을 SDDL로
+  읽어 `D:P`·SYSTEM과 계정만, 계정은 SDDL 별칭 꼴로 견준다 — CI runner는 내장 Administrator라 `LA`로 나온다),
+  `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다), 모든 OS `update::every_os_takes_update_and_rollback`(Windows 거부가 돌아오면 실패). 결함 심기: 로컬 넷(AltGr 정규화 빼기, 거부 token 안 지움, token 안 둠
+  — 시험의 묻기 한도로 끝없는 고리 대신 실패, Origin 안 보냄) 모두 실패. Windows CI(심은 branch): token을 상속 DACL로 만들면 `D:P`가 없어 실패.
+- **실기(10-18).** 그 PC(Windows 11 x64, 기본 셸 cmd)에 ssh로 `aaa.exe`를 두고 `--version`·`attach --help`·`update --dry-run`·`update list`,
+  ssh pty로 보기 전용 pairing → TUI 「보기 전용」 → 창 크기 바꿈(ConPTY `CSI 8;50;140t` 뒤 다시 그림) → prefix q → 다시 붙을 때 묻지 않음을
+  보았다. `icacls`로 폴더 SYSTEM·OWNER RIGHTS(그때 판, 지금은 계정 SID), 파일 SYSTEM·그 계정만(상속 없음). 사람 자판·IME·마우스 점검은 사용자 몫으로 남겼다.
+
+### 8.193 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로, 구역 비율, workspace 이름·닫기 키(10-18, 사용자 사진 둘, 다시 세기 341 U3·546)
+
+- **요청(사용자 10-18 15:21).** 「왼쪽 창이 기본값이 작다. herdr만큼 크게, 더 크게도 가능하게. 지금 테마를 바꾸면 키운 왼쪽 창이 리셋된다.
+  테마는 테마만.」
+- **herdr 근거.** herdr 0.9.5 기본은 aaa와 같다: `sidebar_width = 26`, `sidebar_min_width = 18`, `sidebar_max_width = 36`(`src/config/model.rs`
+  1201–1203, 한도는 설정으로 바꾸고 거꾸로면 거부 `validated_sidebar_bounds` 303). 사용자의 herdr가 넓은 것은 경계를 끌어 둔 폭(36, 한도
+  끝)을 client가 기억해서다(`src/client/shell/preferences.rs` `ClientChromePreferences.sidebar_width`, 상태 폴더 `client-shell/local-<socket
+  해시>.json`). 끌기는 열 + 1을 한도로 묶고 사용자 값으로 표시한다(`mouse.rs` 8–22 `set_sidebar_width_from_column`), 끌기를 마치면 남기고
+  (`mouse.rs` 2036–2037), 경계를 350ms 안에 두 번 누르면 설정 폭으로 돌아가 남긴 값을 지운다(1952–1965). 설정을 다시 읽어도 사용자가 끈
+  폭이면 두고(`config.rs` 86–88 `reload_client_config`), 시작할 때 기억한 폭이 설정보다 앞선다(`state.rs` 1010–1049). 접기도 같다
+  (`actions.rs` 13–20 `ToggleSidebar` → `sidebar_collapsed_manual`).
+- **원인(aaa).** TUI `apply_config`가 다시 읽을 때마다 폭을 `[tui] sidebar_width`로 덮었다. 설정 창은 고른 테마를 host.toml `[tui] theme`
+  하나만 고쳐 쓰고(`tui_edit::set_in`, toml_edit라 다른 key·주석은 남는다) 이 함수로 다시 읽으므로 끌어 키운 폭이 기본으로 돌아갔다. 쓰기가 다른
+  key를 지운 것은 아니다. 끈 폭은 어디에도 남지 않아 다시 붙으면 늘 26이었다.
+- **고침.**
+  - 기본 폭 36, 한도 18~72(`[tui] sidebar_min_width`·`sidebar_max_width`, herdr 이름). **herdr 기본(26·36)과 다르다**: 사용자가 herdr에서
+    쓰는 폭을 기본으로, 그보다 넓게도 끌 수 있게 했다. 한도가 거꾸로면 오류 막대로 알리고 기본 한도를 쓴다. 화면 폭 − 1을 넘지 않는다(herdr).
+  - 사용자가 끈 폭·접기는 「사용자 값」이다(herdr `*_manual`). 다시 읽기(테마 바꾸기·`prefix shift+r`)는 사용자 값을 두고 설정 폭은 경계 두 번
+    누르기로 돌아갈 값으로만 쓴다. 폭을 바꾼 누름은 두 번 누르기의 첫 번이 아니다(herdr는 끈 뒤 350ms 안에 다시 잡으면 되돌린다).
+  - 기억은 host 공유 설정 문서(§8.79)에 둔다: `tuiSidebarWidth`·`tuiSidebarCollapsed`(값이 null이면 되돌림). front는 상태를 갖지 않는다는
+    원칙이라 herdr의 client 기기 파일 대신이다. TUI는 붙을 때 `preferences`를 읽어 그동안 사용자가 바꾸지 않은 값을 쓰고, 바뀐 이름만
+    `preferences_set`으로 보낸다(다른 TUI가 남긴 다른 값을 덮지 않는다). 같은 host의 TUI들이 한 값을 나눈다(herdr는 같은 endpoint의 client가
+    한 파일을 나눈다). 보기 권한 기기는 남기지 않는다. 웹은 이 이름을 읽지 않는다.
+  - Front API는 그대로다(요청·응답이 이미 있다). host가 받는 공유 이름에 `TUI_SETTING_KEYS`를 더했다: 옛 host는 이 이름을 버리므로 기억만 되지
+    않는다. 공유 설정 요청은 FRONT_API 1.5 판 중에 생겨 TUI는 host minor 6 이상에만 보낸다.
+- **구역 비율(다시 세기 341 나머지).** spaces·agents 구역 경계 줄(herdr `sidebar_section_divider_rect`, 6줄 밑이면 없다)을 끌면 비율 =
+  (그 줄 − 사이드바 위) / 사이드바 높이, 0.1~0.9(herdr `set_sidebar_section_from_row`), 두 구역은 3줄 넘게(`section_heights`). 끌기를 마치면
+  `tuiSidebarSplit`에 남고 다시 붙으면 그 비율이다(herdr `sidebar_section_split`, 유한한 값만).
+- **머신 묶음 접기 기억(341 나머지)은 하지 않았다.** aaa TUI에는 머신 묶음 접기 자체가 없고(머신 머리 줄은 늘 `▾`), 머신 머리 줄은 agents 목록
+  그리기 안에 있어 그 목록을 맡은 다른 작업(t-0352)과 겹친다(coordinator 범위 조정). herdr는 spaces 쪽 worktree·endpoint 묶음을 접고
+  `collapsed_groups`·`remote_collapsed_groups`로 기억한다.
+- **workspace 이름·닫기(다시 세기 546).** herdr 기본 키 `prefix shift+w`(`rename workspace`)·`prefix shift+d`(`close workspace`, `src/main.rs`
+  158–159, `actions.rs` 103–114). 대상은 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace(`workspace_action_id`). 이름 창은 지금
+  이름으로 시작하고 비었거나 그대로면 보내지 않는다. 닫기는 `confirm_close`면 늘 묻는다(`request_workspace_close`, 「workspace를 닫을까?」·
+  `<이름> — pane n개`). host `workspace_rename`·`workspace_close`(이미 있는 요청, Front API 그대로). 지금 workspace의 이름을 바꾸면 host가 옛
+  이름의 빈 layout을 먼저 보내므로 보던 탭을 id로 되찾고, 닫으면 남은 첫 workspace(기본 workspace 먼저)로 간다. 같은 workspace를 보던 다른
+  TUI는 이름이 바뀌면 빈 옛 이름에 남는다(host가 새 이름의 layout 사건을 보내지 않는다, 이번에 고치지 않음).
+- **시험.** 유닛: 배치(기본 36·한도 72·설정 한도·거꾸로면 알림·화면 폭 − 1), 끈 폭이 테마 바꾸기·설정 폭 바꾸기에 남음·두 번 누르기·접기 남김·
+  다시 붙어 기억한 값·null·보기 권한(`dragged_sidebar_width_survives_a_theme_change_and_is_remembered`), host 공유 이름. TUI E2E
+  `sidebar_width_like_herdr`(160칸: 기본 36, 끌어 60·72에서 멈춤, 설정 창 테마 바꾼 화면에서 60·host.toml에 폭 없음, 나갔다 붙어도 60,
+  두 번 누르면 36·남긴 값 null), `side_list_like_web` 8b(접기 기억), `workspace_keys_and_section_split_like_herdr`(spaces 줄로 간 workspace
+  이름 바꾸기·닫기 확인 창 Esc·Enter 뒤 main으로·그 pane 끝남, 구역 경계 끌기·다시 붙어도 그 비율), 유닛 `section_split_drags_and_is_remembered`·
+  `workspace_rename_and_close_like_herdr`. 다른 TUI 시험은 시험 설정 `sidebar_width = 26`(herdr 기본)으로 그린다.
+  결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다. 구역 비율을 0.5로 그리면 유닛·E2E, 이름을 바꾼 뒤 보던 탭을 되찾지 않으면 유닛, 닫은
+  뒤 남은 workspace로 가지 않으면 유닛·E2E가 실패한다.
+
 ### 8.194 목록을 프로젝트 먼저로, 「사람 차례」 → 「확인 필요」(10-18, t-0352, 사용자 결정 2안)
 
 - **요청.** TUI 왼쪽 agents 구역과 웹 목록이 머신 → 프로젝트 → thread로 묶여 같은 프로젝트가 머신마다 흩어졌다. 프로젝트(사용자 말로
@@ -4230,7 +4317,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     「…」), 둘째 줄 `   상태 말 · 사실` + 오른쪽 머신(상태 말이 먼저: 머신은 남는 칸에 「…」로 줄고 네 칸도 안 남으면 빠진다, 끊긴 머신은
     `이름 끊김` 노랑), 「기타」 pane 줄 `· 제목 머신 배지`(제목이 먼저 줄어든다).
   - 접기: 프로젝트 머리와 「기타」를 고를 수 있고 Enter·누르기로 접고 편다(접힌 묶음도 지금 pane의 thread·pane은 남는다, 웹과 같다).
-    접힘은 TUI 프로세스 안에만 둔다. t-0351 「접기 기억」 저장소와 잇는 것은 뒤 작업이다.
+    접힘은 TUI 프로세스 안에만 둔다. 공유 설정 문서에 남기는 것(§8.193이 사이드바 폭·접기는 `tuiSidebarWidth`·`tuiSidebarCollapsed`로
+    남기고 묶음 접기 기억은 이 목록 작업으로 미뤘다)은 뒤 작업이다.
   - 머신 머리 줄이 없어져 새 탭·workspace를 열 머신 고르기(§8.177)를 옮겼다: 탐색 `m`과 맨 아랫줄 ` new · 머신`의 머신 이름 누르기가 다음
     붙은 머신으로 돈다(끊긴 머신은 건너뛰고, 붙은 것이 없으면 「붙은 머신이 없다」). 탐색 숫자 1~9는 묶음 머리를 빼고 센다.
   - TUI는 웹 「기타」의 사람이 옮긴 차례(`paneOrder`, §8.195)를 받지 않는다(host 차례 그대로).

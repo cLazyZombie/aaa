@@ -155,12 +155,14 @@ fn tui_keys_like_herdr() {
     assert!(!t.prefix_jamo_keys && t.switch_ascii());
 }
 
-/// herdr `[ui]` 사이드바: 폭 26, 펼친 채 시작, 접으면 compact, 64칸 이하는 머리줄
+/// herdr `[ui]` 사이드바: 폭(aaa 기본 36, herdr 26)·한도 18~72(herdr 18~36, 설정으로 바꾼다), 펼친 채 시작, 접으면 compact,
+/// 64칸 이하는 머리줄
 #[test]
 fn sidebar_like_herdr() {
     let d = Dir::new("sidebar");
     let t = load_host(&d.0).unwrap().config.tui;
-    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (26, false, 64));
+    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (36, false, 64));
+    assert_eq!(t.sidebar_bounds(), Some((18, 72)));
     assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Compact);
     assert_eq!(t.theme, "catppuccin");
     assert_eq!(t.pane_borders, crate::PaneBorders::Auto);
@@ -168,9 +170,12 @@ fn sidebar_like_herdr() {
     assert_eq!(t.mouse_scroll_lines, 3);
     assert!(t.pane_scrollbars);
     assert_eq!(t.status_indicators, crate::StatusIndicators::Dots);
-    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\npane_borders = \"off\"\nmouse_capture = false\ncopy_on_select = false\nmouse_scroll_lines = 5\npane_scrollbars = false\nstatus_indicators = \"symbols\"\n");
+    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_min_width = 12\nsidebar_max_width = 80\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\npane_borders = \"off\"\nmouse_capture = false\ncopy_on_select = false\nmouse_scroll_lines = 5\npane_scrollbars = false\nstatus_indicators = \"symbols\"\n");
     let t = load_host(&d.0).unwrap().config.tui;
     assert_eq!((t.sidebar_width, t.sidebar_start_collapsed), (30, true));
+    assert_eq!(t.sidebar_bounds(), Some((12, 80)));
+    let inverted = crate::TuiSection { sidebar_min_width: 50, sidebar_max_width: 30, ..Default::default() };
+    assert_eq!(inverted.sidebar_bounds(), None, "거꾸로 된 한도(herdr validated_sidebar_bounds)");
     assert_eq!(t.theme, "terminal");
     assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Hidden);
     assert_eq!(t.pane_borders, crate::PaneBorders::Off);

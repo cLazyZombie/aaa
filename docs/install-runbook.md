@@ -192,3 +192,62 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
    - B. 등록을 미룬다. 옛 launcher를 그대로 쓴다: 3번 명령에 `--launcher ~/Applications/aa-launcher.app/Contents/MacOS/aa-launcher`를 붙인다.
 6. ✋ 3번(감독자 설치)과 확인을 다시 한다. `aaa service install`은 옛 `dev.aa.*` plist가 남아 있으면 거부한다.
 7. 웹 pairing cookie 이름이 바뀌어(`__Host-aaa`) 휴대폰은 다시 pairing한다. 옛 `~/.local/bin/aa`는 확인 뒤 지워도 된다.
+
+## 11. Windows에서 접속만(agent 없는 PC)
+
+agent·host·감독자 없이 `aaa attach --remote`로 붙기만 하는 Windows PC(x86_64, Tailscale 설치됨)다. 그 PC에는 aaa 서비스·예약 작업을 두지 않는다. 실행 파일 자리는 Mac의 `~/.local/bin/aaa`와 같은 `%USERPROFILE%\.local\bin\aaa.exe`이고, 명령은 그 전체 경로로 친다(PATH에 넣는 것은 사람이 사용자 환경 변수에서 직접, 선택). 설계는 기획서 §8.181·§8.192.
+
+### 11.1 빌드(Mac에서)
+
+Windows용 실행 파일은 Mac에서 교차 빌드한다. 사용자 수준 도구만 쓴다(sudo·시스템 설정 없음).
+
+```bash
+rustup target add x86_64-pc-windows-msvc          # 한 번
+cargo binstall cargo-xwin                         # 한 번(또는 cargo install cargo-xwin)
+cd <저장소>
+bash scripts/ci-local.sh --only web               # host 실행 파일에 들어가는 웹 front(같은 파일 하나라 함께 빌드한다)
+cargo xwin build --release --locked -p aaa --target x86_64-pc-windows-msvc
+file target/x86_64-pc-windows-msvc/release/aaa.exe   # PE32+ executable (console) x86-64
+shasum -a 256 target/x86_64-pc-windows-msvc/release/aaa.exe
+```
+
+- cargo-xwin은 처음 빌드할 때 Microsoft CRT·Windows SDK 파일을 사용자 캐시(`~/Library/Caches/cargo-xwin`)에 받는다. 그 파일에는 Microsoft 라이선스가 붙는다(cargo-xwin이 받으며 동의한 것으로 친다).
+- cargo-xwin이 링커를 Rust에 든 `rust-lld`(`lld-link`)로, C 코드(ring·SQLite)를 `clang-cl`로 잡는다(`cargo xwin env --target x86_64-pc-windows-msvc`로 본다). 확인한 Mac은 Homebrew `llvm`의 clang을 썼다.
+- C 런타임은 정적으로 넣는다(저장소 `.cargo/config.toml`의 `crt-static`, herdr와 같다): VC++ 재배포 패키지가 없는 PC에서도 `aaa.exe` 하나로 돈다. `llvm-readobj --coff-imports aaa.exe`에 `VCRUNTIME140.dll`·`api-ms-win-crt-*`가 없어야 한다.
+
+### 11.2 그 PC로 보내기
+
+- ssh가 열린 PC: `scp target/x86_64-pc-windows-msvc/release/aaa.exe <pc>:Downloads/aaa.exe`
+- Taildrop(같은 tailnet, 같은 사용자의 기기): Mac에서 `tailscale file cp target/x86_64-pc-windows-msvc/release/aaa.exe <pc 이름>:` → Windows에서 `"C:\Program Files\Tailscale\tailscale.exe" file get "%USERPROFILE%\Downloads"`(받은 파일함에서 꺼낸다. 같은 이름이 있으면 `--conflict=overwrite`). Tailscale 앱이 이미 받은 파일을 「다운로드」에 두었으면 꺼낼 것이 없다(`--wait`를 붙이면 다음 파일까지 기다리니 붙이지 않는다). 명령 꼴은 두 쪽 `--help`로 맞췄고, 실제로 보내 보지는 않았다.
+- 받은 뒤 같은 파일인지 본다: `certutil -hashfile "%USERPROFILE%\Downloads\aaa.exe" SHA256`이 Mac의 `shasum -a 256`과 같다.
+
+### 11.3 처음 두기와 붙기
+
+```bat
+mkdir "%USERPROFILE%\.local\bin"
+move "%USERPROFILE%\Downloads\aaa.exe" "%USERPROFILE%\.local\bin\aaa.exe"
+"%USERPROFILE%\.local\bin\aaa.exe" --version
+"%USERPROFILE%\.local\bin\aaa.exe" attach --remote https://mac-a.example.ts.net:8443
+```
+
+- 처음 붙으면 pairing 코드를 묻는다. host Mac에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 넣는다. host `aaa web devices`에 「aaa TUI · <그 PC 이름>」이 생긴다.
+- 장치 token은 `%LOCALAPPDATA%\aaa\state\remote\https-<이름>-<포트>.token`이다. 폴더와 파일은 상속을 끊은 DACL에 그 계정과 SYSTEM만 있다(Unix의 0700·0600): `icacls "%LOCALAPPDATA%\aaa\state\remote"`로 본다.
+- 키 설정(`[tui]`)은 그 PC의 `%LOCALAPPDATA%\aaa\config\host.toml`이다. 없으면 기본값이다(prefix `ctrl+b`).
+- 터미널은 Windows Terminal을 권한다(conhost도 된다). 그 PC 터미널에서 다른 점:
+  - 붙여넣기(Windows Terminal의 Ctrl+V·오른쪽 클릭)는 낱 키로 간다(Windows 콘솔 입력에는 bracketed paste가 없다): 여러 줄은 줄마다 Enter가 된다. 그림 붙여넣기(Ctrl+V)는 Windows Terminal이 Ctrl+V를 먼저 가져가 되지 않는다.
+  - 한글은 터미널(IME)이 조합을 보여 주고 확정된 음절만 TUI로 온다. prefix 뒤 명령 키는 한국어 IME가 한글 상태면 영문으로 바꿨다가 되돌린다(`[tui] switch_ascii_input_source_in_prefix`).
+  - AltGr 글자(유럽 배치 `@`·`{` 등)는 글자로 간다. 진짜 Ctrl+Alt 조합은 영문 글자와 Space만 남는다(Windows가 AltGr를 Ctrl+Alt로 알린다).
+- 기기를 지우려면 host에서 `aaa web revoke <기기>`. 그 PC의 열린 TUI는 「취소됐다」로 끝나고, 다음에 붙으면 token을 지우고 코드를 다시 묻는다.
+
+### 11.4 바꾸기
+
+새 `aaa.exe`를 11.1·11.2처럼 받아 둔 뒤(받은 것과 지금 것이 다른 이름·자리여야 한다):
+
+```bat
+"%USERPROFILE%\.local\bin\aaa.exe" update --from "%USERPROFILE%\Downloads\aaa.exe" --dry-run
+"%USERPROFILE%\.local\bin\aaa.exe" update --from "%USERPROFILE%\Downloads\aaa.exe"
+"%USERPROFILE%\.local\bin\aaa.exe" update list
+```
+
+- self-check(`--version`·`config check`)를 한 뒤 `yes`를 받고 바꾼다. Mac과 같은 순서다: 지금 것을 `%USERPROFILE%\.local\bin\.aaa-old\`에 hard link로 보관하고(`[update] keep`개, 기본 3) 새것을 그 자리로 rename한다. 열린 TUI가 있어도 바꿀 수 있고(Windows CI 시험이 도는 exe를 바꿔 본다), 그 TUI는 끝날 때까지 옛것으로 돈다.
+- 되돌리기는 `update rollback`이다. 이 PC에는 host·agent가 없으니 `aaa service restart`는 하지 않는다.

@@ -68,11 +68,7 @@ pub fn thread_key(t: &ThreadView) -> String {
 }
 
 /// thread가 도는 머신(웹 `threadMachine`): pane이 있으면 pane의 머신, 없으면 thread의 머신 이름·ID로 찾는다
-fn thread_machine<'a>(
-    t: &ThreadView,
-    machines: &'a [MachineView],
-    pane: Option<&PaneView>,
-) -> Option<&'a MachineView> {
+fn thread_machine<'a>(t: &ThreadView, machines: &'a [MachineView], pane: Option<&PaneView>) -> Option<&'a MachineView> {
     match pane {
         Some(p) => machines.iter().find(|m| m.id == p.machine_id),
         None => machines.iter().find(|m| t.machine == m.name || t.machine == m.id),
@@ -554,7 +550,10 @@ fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> Parts {
                 v.threads.values().filter(|t| t.project == *project && listed(t)).map(|t| t.group).collect();
             let need = groups.iter().any(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview));
             let color = if need { group_color(ThreadGroup::WaitingOnYou, pal) } else { pal.overlay0 };
-            Parts { flex: Some(1), ..Parts::new(head(project), Some((project_line(&groups), Style::default().fg(color)))) }
+            Parts {
+                flex: Some(1),
+                ..Parts::new(head(project), Some((project_line(&groups), Style::default().fg(color))))
+            }
         }
         // 「기타」 머리: 오른쪽은 그 묶음의 pane 수
         Row::Other => {

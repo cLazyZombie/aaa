@@ -29,6 +29,10 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     // aaa: 웹 목록 pane 줄 순서(참고는 herdr workspace 순서라 herdr 서버에 있다, plan §8.195)
     "paneOrder",
 ];
+/// TUI 사이드바 배치(plan §8.193): 사용자가 끌거나 접은 값만 있다. herdr는 client 기기 파일(`client-shell/*.json`
+/// `sidebar_width`·`sidebar_section_split`·`sidebar_collapsed`)에 두지만 aaa front는 상태를 갖지 않아 host에 둔다(plan §8.92
+/// 설정 절). 값이 null이면 사용자가 되돌린 것이다(설정값을 쓴다). 웹은 이 이름을 읽지 않는다
+pub(crate) const TUI_SETTING_KEYS: &[&str] = &["tuiSidebarWidth", "tuiSidebarSplit", "tuiSidebarCollapsed"];
 pub(crate) const MAX_PINS: usize = 500;
 const MAX_PIN_LENGTH: usize = 300;
 /// 공유 값은 몇 낱말이나 짧은 목록이다: 변경 하나와 그것이 만드는 문서 전체가 작게 남는다
@@ -56,7 +60,8 @@ pub(crate) fn change_body(
             ));
         }
     }
-    let settings = settings.into_iter().filter(|(k, _)| SHARED_SETTING_KEYS.contains(&k.as_str())).collect();
+    let known = |k: &str| SHARED_SETTING_KEYS.contains(&k) || TUI_SETTING_KEYS.contains(&k);
+    let settings = settings.into_iter().filter(|(k, _)| known(k)).collect();
     let pins = pins.map(|p| {
         let mut seen = std::collections::HashSet::new();
         p.into_iter().filter(|x| seen.insert(x.clone())).collect()
@@ -192,6 +197,24 @@ mod tests {
         assert_eq!(serde_json::from_str::<serde_json::Value>(&saved).unwrap(), want);
         // 다시 띄우면 저장된 문서에서 시작한다
         assert_eq!(doc(&parse(Some(&saved))), want);
+    }
+
+    #[test]
+    fn keeps_the_tui_sidebar_names_too() {
+        let store = Store::new(parse(None));
+        let doc = store
+            .set(
+                change(json!({ "settings": { "tuiSidebarWidth": 48, "tuiSidebarCollapsed": null, "tuiOther": 1 } })),
+                ok,
+            )
+            .unwrap();
+        assert_eq!(
+            doc.settings,
+            change(json!({ "settings": { "tuiSidebarWidth": 48, "tuiSidebarCollapsed": null } })).settings
+        );
+        // 웹이 제 설정을 바꿔도 TUI 값은 남는다
+        store.set(change(json!({ "settings": { "theme": "dark" } })), ok).unwrap();
+        assert_eq!(store.get().settings.get("tuiSidebarWidth"), Some(&json!(48)));
     }
 
     #[test]
