@@ -81,7 +81,7 @@ fn listed(t: &ThreadView) -> bool {
 }
 
 /// herdr-projects `project_line`(웹 `projectLine`): 「확인 필요 1 · 검토 대기 1 · 작업 중 3 · 병합 중 1」, 없으면 「쉼」.
-/// 참고의 「need you」 한 수(확인 필요·검토)는 thread 줄 글과 같은 말로 나눠 보인다(QA t-0362 O1, plan §8.202). 0인 쪽은 뺀다
+/// 참고의 「need you」 한 수(확인 필요·검토)는 thread 줄 글과 같은 말로 나눠 보인다(QA t-0362 O1, plan §8.203). 0인 쪽은 뺀다
 pub fn project_line(groups: &[ThreadGroup]) -> String {
     let mut parts = vec![];
     for g in [ThreadGroup::WaitingOnYou, ThreadGroup::ReadyForReview, ThreadGroup::Working, ThreadGroup::Landing] {
@@ -1199,7 +1199,7 @@ mod tests {
         assert_eq!(state_line(&threads["p/t-landing"], true, 0), "병합 중 · 보고");
     }
 
-    /// 프로젝트 머리 셈(웹 `projectLine`, plan §8.202): 확인 필요와 검토 대기는 줄 글과 같은 말로 나눠 세고 0인 쪽은 뺀다
+    /// 프로젝트 머리 셈(웹 `projectLine`, plan §8.203): 확인 필요와 검토 대기는 줄 글과 같은 말로 나눠 세고 0인 쪽은 뺀다
     /// (QA t-0362 O1). 머리를 빨갛게 하는 「사람이 볼 thread」는 그대로 둘 다다(herdr-projects needs you)
     #[test]
     fn project_line_splits_need_and_review() {

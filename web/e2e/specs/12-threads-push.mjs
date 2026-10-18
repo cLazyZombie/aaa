@@ -1076,7 +1076,7 @@ export default async function ({ page }) {
     await domIs(page, "빈 결과물 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
   });
 
-  await step("프로젝트 머리 셈(QA t-0362 O1, plan §8.202): 확인 필요와 검토 대기를 줄 글과 같은 말로 나눠 「확인 필요 1 · 검토 대기 1」, 머리는 빨강(사람이 볼 thread), 휴대폰·iPad·데스크톱 폭에서 같은 글이 잘리지 않고 줄 안에 선다", async () => {
+  await step("프로젝트 머리 셈(QA t-0362 O1, plan §8.203): 확인 필요와 검토 대기를 줄 글과 같은 말로 나눠 「확인 필요 1 · 검토 대기 1」, 머리는 빨강(사람이 볼 thread), 휴대폰·iPad·데스크톱 폭에서 같은 글이 잘리지 않고 줄 안에 선다", async () => {
     aaa("project", "create", "heads");
     const start = (title, task) => {
       fs.writeFileSync(`${root}/heads-${title}.md`, task);

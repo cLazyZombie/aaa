@@ -22,7 +22,7 @@ describe("검토·병합 중 줄의 사실", () => {
   });
 });
 
-// 프로젝트 머리 셈(src/sidebarModel.ts projectLine, plan §8.202): 사람이 볼 thread(herdr-projects needs you: 확인 필요·검토)를
+// 프로젝트 머리 셈(src/sidebarModel.ts projectLine, plan §8.203): 사람이 볼 thread(herdr-projects needs you: 확인 필요·검토)를
 // 한 수로 세지 않고 줄 글(「확인 필요」·「검토 대기」)과 같은 말로 나눠 보인다(QA t-0362 O1). 0인 쪽은 뺀다. 세는 규칙(needsYou)은 그대로다
 describe("프로젝트 머리 셈", () => {
   it("확인 필요와 검토 대기를 나눠 세고, 0인 쪽은 뺀다", () => {
