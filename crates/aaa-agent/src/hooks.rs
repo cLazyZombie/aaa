@@ -249,7 +249,8 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     .context("agent 응답 시간 초과")?
 }
 
-/// agent 쪽: 연결 하나에서 사건 하나를 읽는다
+/// agent 쪽: 연결 하나에서 완성된 JSON 사건 하나를 읽는다.
+/// Named Pipe의 shutdown은 EOF를 보내지 않으므로 쓰기 반쪽 닫기를 기다리지 않는다.
 pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
@@ -262,6 +263,11 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
         if buf.len() > MAX_MSG {
             bail!("사건이 너무 크다");
         }
+        match serde_json::from_slice(&buf) {
+            Ok(msg) => return Ok(msg),
+            Err(e) if e.is_eof() => {} // JSON·UTF-8이 read 경계에서 잘렸으면 나머지를 받는다.
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(serde_json::from_slice(&buf)?)
 }
@@ -270,6 +276,51 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn hook_json_completion_and_errors_do_not_need_eof() {
+        let payload = json!({"body": "한글\"\\\n".repeat(20)});
+        let valid = serde_json::to_vec(&HookMsg {
+            session: "s1".into(),
+            token: "test-hook-secret".into(),
+            harness: "post".into(),
+            payload: payload.clone(),
+        })
+        .unwrap();
+        // 작은 버퍼가 JSON·UTF-8을 여러 read로 나눈다. writer는 응답을 기다리듯 열린 채로 남긴다.
+        for (bytes, close, expected) in [
+            (valid.clone(), false, "완성"),
+            (valid, true, "완성"),
+            (b"{!".to_vec(), false, "문법"),
+            ([b"{\"payload\":\"".as_slice(), &vec![b'x'; MAX_MSG]].concat(), false, "한도"),
+            (b"{\"session\":".to_vec(), true, "미완성"),
+        ] {
+            let capacity = if expected == "완성" { 7 } else { MAX_MSG + 64 };
+            let (mut writer, reader) = tokio::io::duplex(capacity);
+            let writing = tokio::spawn(async move {
+                writer.write_all(&bytes).await.unwrap();
+                if close {
+                    writer.shutdown().await.unwrap();
+                }
+                writer
+            });
+            let mut reader: aaa_common::ipc::LocalStream = Box::new(reader);
+            let result = read_msg(&mut reader).await;
+            // join 결과의 writer를 여기까지 보존하므로 EOF로 거짓 통과할 수 없다.
+            let _writer = writing.await.unwrap();
+            match expected {
+                "완성" => {
+                    let msg = result.unwrap();
+                    assert_eq!(
+                        (msg.session.as_str(), msg.harness.as_str(), msg.payload),
+                        ("s1", "post", payload.clone())
+                    );
+                }
+                "한도" => assert!(result.unwrap_err().to_string().contains("사건이 너무 크다")),
+                _ => assert!(result.unwrap_err().downcast_ref::<serde_json::Error>().is_some(), "{expected}"),
+            }
+        }
+    }
 
     #[test]
     fn subagent_and_foreign_session_events_are_dropped() {

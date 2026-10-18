@@ -268,7 +268,7 @@ mod tests {
         )
         .await
         .unwrap();
-        c.shutdown().await.unwrap();
+        // Named Pipe는 쓰기 반쪽을 닫지 못한다. Unix에서도 연결을 열어 둔 채 같은 계약을 검사한다.
         let mut s = String::new();
         c.read_to_string(&mut s).await.unwrap();
         s
