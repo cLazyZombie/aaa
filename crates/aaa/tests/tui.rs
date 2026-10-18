@@ -1253,6 +1253,17 @@ fn attachments(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 const PIXELS: [[u8; 4]; 6] =
     [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 255], [0, 0, 0, 255], [255, 255, 0, 255]];
 
+fn encode_rgba(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, width, height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut wr = enc.write_header().unwrap();
+    wr.write_image_data(rgba).unwrap();
+    wr.finish().unwrap();
+    out
+}
+
 fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
     let mut r = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
     let mut buf = vec![0; r.output_buffer_size().unwrap()];
@@ -1584,16 +1595,7 @@ fn ctrl_v_pastes_clipboard_image() {
     // 2) 그림이 있으면 대상 머신에 저장하고 셸 줄에 따옴표 경로를 넣고(Enter 없음) 오른쪽 위 알림 카드로 알린다.
     match clip.as_mut() {
         Some(c) => c.set_image(arboard::ImageData { width: 3, height: 2, bytes: rgba.as_slice().into() }).unwrap(),
-        None => {
-            let mut out = Vec::new();
-            let mut enc = png::Encoder::new(&mut out, 3, 2);
-            enc.set_color(png::ColorType::Rgba);
-            enc.set_depth(png::BitDepth::Eight);
-            let mut wr = enc.write_header().unwrap();
-            wr.write_image_data(&rgba).unwrap();
-            wr.finish().unwrap();
-            std::fs::write(&fake, out).unwrap();
-        }
+        None => std::fs::write(&fake, encode_rgba(3, 2, &rgba)).unwrap(),
     }
     tui.type_line("clear; echo cleared-$((2+2))");
     tui.wait_text("화면 지움", |s| s.contains("cleared-4"));
@@ -1632,4 +1634,111 @@ fn ctrl_v_pastes_clipboard_image() {
         serde_json::from_str(&h.json(&["pane", "attach", &id, txt.to_str().unwrap()]).unwrap_err()).unwrap();
     assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("PNG·JPEG·GIF·WebP")), "{r}");
     assert_eq!(attachments(&h.state).len(), 2);
+}
+
+/// 붙여넣기와 그림 파일 끌어놓기(차이 목록 4E, herdr client `EnableBracketedPaste`·`read_image_file_from_terminal_drop`,
+/// plan §8.147): TUI는 바깥 터미널의 bracketed paste(2004)를 켜고 나갈 때 끈다. 붙여 넣은 글은 host가 pane 프로그램이 켠
+/// 2004대로 감싸고 글 안의 ESC는 뺀다(herdr 서버가 client 붙여넣기를 다시 감싸는 것과 같다). 붙여 넣은 글이 그림 파일 하나의
+/// 절대 경로면(터미널에 끌어 놓은 파일) 그 그림을 pane 머신에 올리고 셸 줄에 따옴표 경로를 넣는다(Enter 없음).
+/// 그림이 아닌 파일·상대 경로는 글 그대로다. 붙여 넣은 줄마다 cat이 되돌린 것을 본 뒤 단언하고 다음 글을 친다.
+#[test]
+fn paste_and_image_drop_like_herdr() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "drop", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("lease", |w| w.held_by(&id, "tui@").then_some(()));
+    tui.wait_screen("바깥 터미널 bracketed paste", |s| s.modes.contains(&2004));
+    // 붙여 넣은 줄을 cat -v가 되돌릴 때까지(tty 메아리와 cat 출력 둘). 그 전에 다음 글을 치면 그 메아리 사이에 cat 출력이
+    // 끼어든다(부하 아래 ci-local). `seen`은 감싸기·ESC 빼기가 맞든 틀리든 둘 다에 나오는 조각이라 틀리면 아래 단언이 실패한다
+    let echoed = |tui: &Tui, seen: &str| tui.wait_text(seen, |s| s.matches(seen).count() >= 2);
+
+    // 1) 2004를 켜지 않은 프로그램: 감싸지 않고, 글 안의 ESC는 뺀다(cat -v에 `^[`가 없다)
+    tui.type_line("echo plain-$((1)); cat -v");
+    tui.wait_text("cat", |s| s.contains("plain-1"));
+    tui.send(b"\x1b[200~one\x1b[31mtwo\x1b[201~");
+    tui.send(b"\r");
+    echoed(&tui, "two");
+    let text = tui.text();
+    assert!(text.contains("one[31mtwo") && !text.contains("^["), "2004 없는 붙여넣기:\n{text}");
+
+    // 2) 그림이 아닌 절대 경로·상대 그림 경로·없는 그림 파일은 글 그대로다
+    let note = lab.root.join("note.txt");
+    std::fs::write(&note, "hello").unwrap();
+    let missing = lab.root.join("missing.png");
+    let pastes = [note.display().to_string(), "shot.png".to_string(), missing.display().to_string()];
+    for (i, p) in pastes.iter().enumerate() {
+        tui.send(format!("\x1b[200~{p}\x1b[201~").as_bytes());
+        tui.send(b"\r");
+        echoed(&tui, p);
+        assert_eq!(tui.text().matches(p.as_str()).count(), 2, "글로 붙인 {p}:\n{}", tui.text());
+        // ^C는 cat이 그 줄을 되돌린 뒤에만 보낸다: 셸이 `clear`와 `cat` 사이일 때 닿으면 cat이 남아 다음 명령 줄을 읽는다
+        tui.send(b"\x03");
+        if i + 1 < pastes.len() {
+            // 다음 붙여넣기는 cat이 뜨기 전에 와도 입력으로 기다린다
+            tui.type_line("clear; cat -v");
+            tui.wait_text("화면 지움", |s| !s.contains(p.as_str()));
+        }
+    }
+    assert!(attachments(&h.state).is_empty(), "그림이 아닌 붙여넣기에 첨부가 생겼다");
+
+    // 3) 프로그램이 2004를 켜면 host가 감싸고 글 안의 ESC는 뺀다(글 안의 `ESC[201~`가 붙여넣기를 일찍 끝내지 못한다).
+    //    `ESC[201~` 자체는 바깥 터미널 붙여넣기의 끝이라 TUI까지 오지 않으므로 다른 CSI로 본다
+    tui.type_line("clear; printf '\\033[?2004h'; echo wrap-$((2)); cat -v");
+    tui.wait_text("cat", |s| s.contains("wrap-2"));
+    tui.send(b"\x1b[200~x\x1b[31my\x1b[201~");
+    tui.send(b"\r");
+    echoed(&tui, "31my");
+    let text = tui.text();
+    assert_eq!(text.matches("^[[200~x[31my^[[201~").count(), 2, "감싼 붙여넣기:\n{text}");
+    tui.send(b"\x03");
+    tui.type_line("printf '\\033[?2004l'; clear; echo drop-$((3))");
+    tui.wait_text("화면 지움", |s| s.contains("drop-3") && !s.contains("wrap-2"));
+
+    // 4) 그림 파일 하나를 끌어 놓으면(터미널은 빈칸을 `\ `로 escape한 경로를 붙여 넣는다) 대상 머신에 올리고 셸 줄에
+    //    따옴표 경로를 넣는다(Enter 없음)
+    let rgba: Vec<u8> = PIXELS.concat();
+    let shot = lab.root.join("drop shot.png");
+    std::fs::write(&shot, encode_rgba(3, 2, &rgba)).unwrap();
+    let dropped = shot.display().to_string().replace(' ', "\\ ");
+    tui.send(format!("\x1b[200~{dropped}\x1b[201~").as_bytes());
+    tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
+    let files = attachments(&h.state);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(decode_rgba(&std::fs::read(&files[0]).unwrap()), (3, 2, rgba), "대상 머신 그림의 pixel");
+    let line: String = h.screen(&id).replace('\n', "");
+    assert!(line.contains(&format!("'{}'", files[0].display())), "셸 줄에 따옴표 경로가 없다: {line}");
+    assert!(!line.contains(&dropped) && !line.contains("not found"), "{line}");
+    tui.send(b"\x15");
+
+    // 5) 창과 모드(herdr `insert_overlay_text`): prefix 모드의 붙여넣기는 버리고(pane에 가지 않는다), 검색 중인 단축키 창은
+    //    검색어에, 새 탭 이름 창은 이름에 넣는다
+    tui.send(b"\x02");
+    tui.wait_text("PREFIX 막대", |s| s.contains(" PREFIX "));
+    tui.send(b"\x1b[200~zz-prefix\x1b[201~");
+    tui.send(b"\x1b");
+    tui.wait_text("prefix 끝", |s| !s.contains(" PREFIX "));
+    tui.type_line("echo end-$((5))");
+    tui.wait_text("표지", |s| s.contains("end-5"));
+    assert!(!h.screen(&id).contains("zz-prefix"), "prefix 모드의 붙여넣기가 pane에 갔다:\n{}", h.screen(&id));
+    tui.cmd("?");
+    tui.wait_text("단축키 창", |s| s.contains("prefix 모드") && s.contains("esc 닫기"));
+    tui.send(b"/");
+    tui.wait_text("검색", |s| s.contains("esc 돌아가기"));
+    tui.send("\x1b[200~나누기\x1b[201~".as_bytes());
+    tui.wait_text("거름", |s| s.contains("좌우로 나누기") && !s.contains("목록 탐색"));
+    tui.send(b"\x1b");
+    tui.wait_text("검색 끝", |s| s.contains("esc 닫기"));
+    tui.send(b"\x1b");
+    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+    tui.cmd("c");
+    tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
+    tui.send("\x1b[200~붙인\n탭\x1b[201~\r".as_bytes());
+    hw.wait("붙여 넣은 이름의 탭", |w| w.ws.as_ref()?.tabs.iter().any(|t| t.name == "붙인 탭").then_some(()));
+
+    // 6) 나가면(prefix q) bracketed paste를 끈다
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    tui.wait_screen("bracketed paste 끔", |s| !s.modes.contains(&2004));
 }

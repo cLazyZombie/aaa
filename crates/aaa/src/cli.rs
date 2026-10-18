@@ -2081,6 +2081,15 @@ fn render_front(r: &FrontResponse) -> String {
                 }
             }
         },
+        FrontResponse::PaneDir { listing } => {
+            let _ = writeln!(s, "{}", listing.path);
+            for d in &listing.directories {
+                let _ = writeln!(s, "{d}/");
+            }
+            for f in &listing.files {
+                let _ = writeln!(s, "{}\t{}바이트", f.name, f.size);
+            }
+        }
         FrontResponse::Screen(t) => {
             let mut lines = t.lines.clone();
             while lines.last().is_some_and(|l| l.is_empty()) {
