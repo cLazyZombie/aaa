@@ -67,14 +67,17 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
   return fact ? `${word} · ${fact}` : word;
 }
 
-/** herdr-projects `project_line`(「2 need you · 3 working」): 「확인 필요 2 · 작업 중 3」, 없으면 「쉼」 */
+/**
+ * herdr-projects `project_line`(「2 need you · 3 working」): 「확인 필요 1 · 검토 대기 1 · 작업 중 3」, 없으면 「쉼」.
+ * 참고의 「need you」 한 수(needsYou: 확인 필요·검토)는 thread 줄 글과 같은 말로 나눠 보인다(QA t-0362 O1, plan §8.202). 0인 쪽은 뺀다
+ */
 export function projectLine(groups: readonly string[], paused = false): string {
   // 멈춘 프로젝트는 묶음 대신 「멈춤」(herdr-projects sidebar.rs `project_line` 「paused」)
   if (paused) return "멈춤";
-  const need = groups.filter(needsYou).length;
   const parts: string[] = [];
-  if (need > 0) parts.push(`확인 필요 ${need}`);
   for (const [g, label] of [
+    ["waiting_on_you", GROUP_WORD.waiting_on_you],
+    ["ready_for_review", GROUP_WORD.ready_for_review],
     ["working", "작업 중"],
     ["landing", "병합 중"],
   ] as const) {
