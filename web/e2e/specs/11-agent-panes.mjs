@@ -391,18 +391,15 @@ export default async function ({ ctl, page }) {
       await pg.getByTestId("chat-toggle").and(pg.locator(`[aria-pressed="${chat}"]`)).waitFor();
       if ((await pg.getByTestId("chat").count()) !== (chat ? 1 : 0)) throw new Error(`${what}: 대화 칸`);
     };
-    // 다시 열기: 휴대폰은 pane을 보는 동안 목록이 숨으니 「목록으로」(pane을 닫는다), 데스크톱은 셸 t1을 거쳐 온다
+    // 다시 열기: 셸 t1을 거쳐 온다(휴대폰도 목록 drawer에서 고른다. drawer를 열어도 pane은 골라진 채다)
     const reopen = async (pg, name) => {
-      const back = pg.getByRole("button", { name: "목록으로" });
-      if (await back.isVisible()) await back.click();
-      else await inList(pg, "pane-t1");
+      await inList(pg, "pane-t1");
       await until(`${name} 떠나기`, async () => (await pg.getByTestId("chat-toggle").count()) === 0);
       await inList(pg, `pane-${name}`);
     };
     // 휴대폰(터치): agent pane은 대화, 셸은 터미널(대화 단추가 없다)
     await inList(pp, "pane-lens1");
     await lensIs(pp, "휴대폰 agent pane", true);
-    await pp.getByRole("button", { name: "목록으로" }).click();
     await inList(pp, "pane-t1");
     await until("휴대폰 셸 터미널", async () => (await screenText(pp)).includes("$"));
     if ((await pp.getByTestId("chat").count()) !== 0) throw new Error("셸이 대화로 열렸다");
@@ -417,7 +414,6 @@ export default async function ({ ctl, page }) {
     await reopen(pp, "lens1");
     await lensIs(pp, "고른 보기를 기억", false);
     // 설정 「패널 기본 화면」 채팅: pane마다 고른 보기를 잊고 모두 대화(이 기기만, 데스크톱은 그대로). 설정은 목록 바닥에 있다
-    await pp.getByRole("button", { name: "목록으로" }).click();
     const d = await openSettings(pp, "채팅");
     await d.getByRole("group", { name: "패널 기본 화면" }).getByRole("button", { name: "채팅" }).click();
     await pp.keyboard.press("Escape");

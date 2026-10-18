@@ -411,7 +411,7 @@ async function inList(p, target) {
   const item = typeof target === "string" ? p.getByTestId(target) : target;
   await item.waitFor({ state: "attached" });
   // 닫히는 중인 drawer의 항목은 움직임이 끝날 때까지 보인다: 끝난 뒤에 본다(transition의 finished)
-  await p.evaluate(() => Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null))));
+  await drawerSettled(p);
   const toggle = p.locator(".view [data-testid='drawer-toggle']");
   if (!(await item.isVisible()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
@@ -429,6 +429,16 @@ async function inList(p, target) {
     throw new Error(`목록 항목이 보이지 않는다(${p.viewportSize()?.width}px): ${JSON.stringify(at)}`);
   }
   await item.click();
+  // 줄을 고르면 drawer가 닫히며 미끄러진다. 그동안은 아직 pane 위에 있어 다음 누름을 가져가므로 끝날 때까지 기다린다
+  await drawerSettled(p, true);
+}
+
+/** 목록 drawer의 움직임(transform·visibility transition)이 끝났다. nextFrame이면 방금 누른 것이 시작한 움직임까지 본다 */
+function drawerSettled(p, nextFrame = false) {
+  return p.evaluate(async (nextFrame) => {
+    if (nextFrame) await new Promise((r) => requestAnimationFrame(() => r()));
+    await Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null)));
+  }, nextFrame);
 }
 
 /** 그 이름의 pane을 가리키는 주소(pairPage `hash`) */
