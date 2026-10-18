@@ -3,12 +3,16 @@
 // (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.129). 다시 읽기(차이 목록 C3, 참고 conversationRefresh.ts·status.ts
 // `statusEdgeRead`): aaa는 기록 변경을 push하지 않으니 참고의 push 없는 판처럼 2초마다, 그리고 agent 상태가 작업 중에 들고 날 때
 // (턴 시작·끝)와 이 화면이 보낸 뒤(`readNow`)에는 기다리지 않고 바로 읽는다.
+// 글 속 파일 경로는 그 pane의 파일 보기로 연다(참고 ChatView는 pane마다 `OpenFileContext`, 찾는 곳은 그 pane이 지금 있는 폴더,
+// plan §8.170). 보기 권한 화면은 열 곳이 없어 글 그대로다. 참고는 말을 Markdown으로 그리지만 aaa 대화는 아직 글 그대로라
+// 참고가 Markdown 아닌 글(도구 출력)에 쓰는 `linkFilePaths`로 잇는다.
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ApiError, call } from "./api";
 import type { ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
 import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
+import { linkFilePaths } from "./FilePathLink";
 
 /** push 없는 대화의 읽기 간격(참고 conversationRefresh.ts `INVALIDATION_MS`) */
 const INVALIDATION_MS = 2000;
@@ -29,7 +33,18 @@ function ThinkingRow({ text }: { text: string }) {
   );
 }
 
-export function ChatPanel({ pane, status, readNow = 0 }: { pane: string; status?: AgentStatus; readNow?: number }) {
+export function ChatPanel({
+  pane,
+  status,
+  readNow = 0,
+  onOpenFile,
+}: {
+  pane: string;
+  status?: AgentStatus;
+  readNow?: number;
+  /** 글 속 파일 경로를 연다(조작 기기만) */
+  onOpenFile?: (path: string) => void;
+}) {
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -92,7 +107,7 @@ export function ChatPanel({ pane, status, readNow = 0 }: { pane: string; status?
           <ThinkingRow key={i} text={m.text} />
         ) : (
           <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
-            {m.text}
+            {linkFilePaths(m.text, onOpenFile ?? null)}
           </div>
         ),
       )}

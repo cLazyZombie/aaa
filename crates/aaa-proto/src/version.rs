@@ -47,8 +47,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 1.28: ProfileView `args`·`builtin`(기본 profile claude·codex, plan §8.163),
 /// 1.29: PaneView `replaced`(새 pane이 대신한 옛 ID, 보던 화면이 따라간다, plan §8.111 QA 고침),
 /// 1.30: 사건 `web`(host가 주는 웹 빌드, plan §8.166),
-/// 1.31: 결과물 목록의 `LibraryFile.mime`·`kind`(앱 안 파일 보기, plan §8.168)
-pub const FRONT_API: Version = Version { major: 1, minor: 31 };
+/// 1.31: 결과물 목록의 `LibraryFile.mime`·`kind`(앱 안 파일 보기, plan §8.168),
+/// 1.32: 보고서 안 파일 링크 `thread_file`(thread worktree 기준, plan §8.170)
+pub const FRONT_API: Version = Version { major: 1, minor: 32 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 pub const SESSION_IPC: Version = Version { major: 1, minor: 1 };

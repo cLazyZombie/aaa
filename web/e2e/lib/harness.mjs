@@ -786,6 +786,8 @@ fs.writeFileSync(
     "## Report",
     "- 웹 보기 **확인**: `index.html`",
     "- 착지 **`a1b2c3d`**(병합), 근거는 [참고 문서](https://example.com/doc)",
+    // 보고서 안 파일 링크(plan §8.170): thread worktree 기준 문서 링크와 글 속 경로(줄 참조)
+    "- 정리는 [작업 메모](notes/plan.md), 고친 곳은 src/app.ts:3",
     "",
     "| ID | 판정 | 근거 |",
     "| --- | :---: | ---: |",
@@ -818,17 +820,24 @@ while IFS= read -r line; do
       mkdir -p "$dir/library/docs" && cp "${root}/notes.md" "$dir/library/docs/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"
       cp "${root}/report-fixture.md" "$dir/report.md"
+      wt=$(dirname "$(dirname "$dir")")
+      mkdir -p "$wt/notes" "$wt/src"
+      printf '# 작업 메모\n\n고친 까닭\n' > "$wt/notes/plan.md"
+      printf 'const a = 1;\nconst b = 2;\nexport const fixed = a + b;\n' > "$wt/src/app.ts"
       echo done ;;
   esac
   printf 'fake> '
 done
 `,
 );
-// 파일 보기(16-file-viewer)가 여는 폴더: 이 밖은 열지 않는다(agent가 시작할 때 있는 폴더만 허용한다)
+// 파일 보기(16-file-viewer)가 여는 폴더: 이 밖은 열지 않는다(agent가 시작할 때 있는 폴더만 허용한다).
+// thread 작업 폴더(work_root)는 보고서 안 파일 링크(12, plan §8.170)가 연다(기본 허용 폴더에도 work_root가 든다). 시작할 때 없는
+// 폴더는 허용 폴더가 되지 않으므로 미리 만든다
 fs.mkdirSync(`${root}/files`, { recursive: true });
+fs.mkdirSync(`${root}/work`, { recursive: true });
 fs.writeFileSync(
   `${root}/c/agent.toml`,
-  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files"]\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files", "${root}/work"]\n[profiles.fake]\nharness = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`,
 );
 // bracketed paste를 켜는 입력창: 받은 조각을 JSON으로 그대로 보인다(composer 여러 줄·Enter 시험)
 fs.writeFileSync(

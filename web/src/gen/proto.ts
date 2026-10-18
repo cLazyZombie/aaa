@@ -299,7 +299,7 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
 /**
  * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
  */
-thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
+thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */

@@ -1863,7 +1863,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} />}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>

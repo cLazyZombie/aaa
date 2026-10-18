@@ -776,6 +776,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
+            onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
           />
         ) : viewProject !== undefined ? (
           <ProjectThreads
@@ -847,6 +848,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           source={fileViewing.library}
           onClose={closeFile}
           onOpen={(path) => openFile({ path, pane: null, library: fileViewing.library })}
+        />
+      )}
+      {/* 보고서 안 파일 링크(plan §8.170): thread의 머신·작업 폴더 기준. 고른 다른 파일도 같은 곳이다 */}
+      {fileViewing && fileViewing.pane === null && fileViewing.worktree && (
+        <FileViewer
+          key={`${fileViewing.worktree.project}/${fileViewing.worktree.thread} worktree ${fileViewing.path}`}
+          path={fileViewing.path}
+          source={{ worktree: fileViewing.worktree }}
+          onClose={closeFile}
+          onOpen={(path) => openFile({ path, pane: null, worktree: fileViewing.worktree })}
         />
       )}
       {newPaneOn && (
