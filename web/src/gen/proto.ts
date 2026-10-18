@@ -24,7 +24,7 @@ lines: Array<string>, cursor_row: number, cursor_col: number,
  */
 ansi: string, };
 
-export type ReadSource = "visible" | "recent" | "recent-unwrapped";
+export type ReadSource = "visible" | "recent" | "recent-unwrapped" | "detection";
 
 export type ReadFormat = "text" | "ansi";
 
