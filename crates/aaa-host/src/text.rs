@@ -74,6 +74,19 @@ impl Host {
         Ok(FrontResponse::Selection { pane: id, text, truncated })
     }
 
+    /// TUI가 누른 칸의 링크(herdr `pane.link.activate`): 화면 사본의 OSC 8 링크나 글 속 http(s) URL
+    pub(crate) fn pane_link(&self, pane: &str, at: TextPoint) -> Result<FrontResponse, ErrorBody> {
+        let (id, _) = self.resolve_pane(pane)?;
+        let mut i = self.inner.lock().unwrap();
+        let m = i
+            .panes
+            .get_mut(&id)
+            .and_then(|p| p.mirror.as_mut())
+            .ok_or_else(|| err(ErrorCode::NotFound, "화면 사본이 없다"))?;
+        let url = m.vt.link_at(point(at));
+        Ok(FrontResponse::Link { pane: id, url })
+    }
+
     /// TUI copy 모드 낱말·문단 이동(herdr `pane.copy_motion`): 화면 사본의 기록까지 본다
     pub(crate) fn pane_copy_motion(
         &self,

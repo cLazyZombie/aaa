@@ -2462,6 +2462,7 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Read(v) => s.push_str(&v.text),
         FrontResponse::Selection { text, .. } => s.push_str(text),
+        FrontResponse::Link { url, .. } => s.push_str(url.as_deref().unwrap_or("")),
         FrontResponse::CopyCursor { cursor, .. } => {
             let _ = write!(s, "{}:{}", cursor.row, cursor.col);
         }

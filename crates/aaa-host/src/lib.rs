@@ -1369,6 +1369,7 @@ impl Host {
                 self.pane_read_text(&pane, source, lines, format).await
             }
             FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
+            FrontRequest::PaneLink { pane, at } => self.pane_link(&pane, at),
             FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
             FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
                 self.pane_copy_search(&pane, &query, direction, cursor, previous)
