@@ -93,12 +93,21 @@ impl Screen {
         }
     }
 
-    /// 사이드바 칸(왼쪽 SIDE칸) 중 바탕이 `bg`인 첫 줄: (줄 번호, 그 줄의 사이드바 글)
-    fn side_row(&self, bg: u32) -> Option<(usize, String)> {
+    /// 사이드바 칸(왼쪽 SIDE칸) 중 `from` 줄부터 바탕이 `bg`인 첫 줄: (줄 번호, 그 줄의 사이드바 글)
+    fn side_row_from(&self, from: usize, bg: u32) -> Option<(usize, String)> {
         let w = (SIDE as usize).min(self.cols);
-        (0..self.cells.len())
+        (from..self.cells.len())
             .find(|r| self.bgs[*r][..w - 1].contains(&bg))
             .map(|r| (r, self.cells[r][..w].iter().filter(|c| **c != '\0').collect()))
+    }
+
+    fn side_row(&self, bg: u32) -> Option<(usize, String)> {
+        self.side_row_from(0, bg)
+    }
+
+    /// 사이드바 ` agents` 머리 줄(herdr 아래 구역, 없으면 맨 위부터 본다)
+    fn agents_top(&self) -> usize {
+        self.side_lines().iter().position(|l| l.starts_with(" agents")).map_or(0, |i| i + 1)
     }
 
     /// 탐색 모드에서 고른 줄(herdr `selection_bg`)
@@ -115,9 +124,14 @@ impl Screen {
             .collect()
     }
 
-    /// 지금 pane 줄(herdr `active_row_bg`)
+    /// agents 구역의 지금 pane 줄(herdr `active_row_bg`)
     fn current(&self) -> Option<String> {
-        self.side_row(ACTIVE_BG).map(|(_, l)| l)
+        self.side_row_from(self.agents_top(), ACTIVE_BG).map(|(_, l)| l)
+    }
+
+    /// spaces 구역의 지금 workspace 줄(같은 `active_row_bg`, agents 머리 위)
+    fn current_space(&self) -> Option<String> {
+        self.side_row(ACTIVE_BG).filter(|(r, _)| *r < self.agents_top()).map(|(_, l)| l)
     }
 
     /// 글이 처음 보이는 칸(줄, 열). 넓은 글자는 두 칸으로 센다(마우스로 누를 자리).
@@ -960,16 +974,14 @@ fn lease_conflict_with_another_front() {
     drop(other);
 }
 
-/// 고른 줄 바로 위가 첫 머신 머리(` ▾ 이름`)인가(목록 맨 위, 첫 머신의 「+ 새 셸」)
+/// 고른 줄이 spaces 구역 첫 workspace 줄(` spaces` 머리와 빈 줄 바로 아래)인가(탐색 줄 맨 위)
 fn at_top(s: &Screen) -> bool {
-    let text = s.text();
-    let lines: Vec<&str> = text.lines().collect();
-    s.selected().is_some_and(|(i, _)| {
-        i > 0 && lines[i - 1].contains(" ▾ ") && !lines[..i - 1].iter().any(|l| l.contains(" ▾ "))
-    })
+    let side = s.side_lines();
+    s.selected().is_some_and(|(i, _)| i >= 2 && side[i - 2].starts_with(" spaces"))
 }
 
-/// 탐색 모드에서 목록 맨 위(첫 머신의 새 셸)로 올라간 뒤 `needle` 줄까지 내려간다(herdr 탐색은 ↑↓, 고른 줄은 selection_bg 바탕).
+/// 탐색 모드에서 맨 위(spaces 구역 첫 workspace)로 올라간 뒤 `needle` 줄까지 내려간다(spaces 다음 agents 목록,
+/// 고른 줄은 selection_bg 바탕).
 /// 한 칸씩 고른 줄이 바뀐 것을 보고 다음 키를 누른다.
 fn pick(tui: &mut Tui, needle: &str) {
     tui.wait_screen("탐색 모드", |s| s.text().contains(" NAVIGATE ") && s.selected().is_some());
@@ -1114,6 +1126,39 @@ fn side_list_like_web() {
     tui.wait_text("탐색 모드", |s| s.contains(" NAVIGATE "));
     tui.send(b"\x1b");
     tui.wait_text("Esc", |s| !s.contains(" NAVIGATE "));
+
+    // 7b) 위 spaces 구역(herdr `render_sidebar`): 기본 workspace 먼저 workspace 줄, 지금 workspace는 active_row_bg, 아래 구분선과
+    //     ` agents` 머리. 탐색은 지금 workspace 줄에서 시작하고, scratch를 골라 Enter면 그 workspace로 바뀌어 탭이 loose
+    //     하나·포커스는 loose다(herdr `switch_workspace`, 포커스는 front마다). main을 다시 고르면 돌아온다
+    tui.wait_screen("두 구역", |s| {
+        let side = s.side_lines();
+        let at = |needle: &str| side.iter().position(|l| l.contains(needle));
+        let (Some(head), Some(main), Some(scratch), Some(agents)) =
+            (at(" spaces"), at(" main"), at(" scratch"), at(" agents"))
+        else {
+            return false;
+        };
+        head + 2 == main
+            && main + 1 == scratch
+            && side[agents - 1].starts_with('─')
+            && side[agents].ends_with("projects")
+            && s.current_space().is_some_and(|l| l.contains("main"))
+    });
+    tui.cmd("w");
+    tui.wait_screen("지금 workspace에서 시작", |s| s.selected().is_some_and(|(_, l)| l.contains("main")));
+    pick(&mut tui, "scratch");
+    tui.send(b"\r");
+    tui.wait_screen("scratch로", |s| {
+        tab_chips(&s.text()) == ["loose"]
+            && s.current_space().is_some_and(|l| l.contains("scratch"))
+            && s.current().is_some_and(|l| l.contains("loose"))
+    });
+    tui.cmd("w");
+    pick(&mut tui, "main");
+    tui.send(b"\r");
+    tui.wait_screen("main으로", |s| {
+        s.current_space().is_some_and(|l| l.contains("main")) && tab_chips(&s.text()).len() == 4
+    });
 
     // 8) prefix b로 접으면 4칸 compact 열(번호·상태 점, herdr `render_collapsed_sidebar`)만 남는다
     tui.cmd("1");

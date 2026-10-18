@@ -1,4 +1,5 @@
-//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·차이 목록 L1·U4~U6): 머신마다 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
+//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·차이 목록 L1·U4~U6). herdr 사이드바처럼 위는 workspace(` spaces`), 아래는
+//! ` agents` 구역이고, agents에는 머신마다 머리·새 셸, 그 머신의 프로젝트 머리와 thread 두 줄
 //! (herdr-projects `thread_display` 「id · 제목」, 둘째 줄 `state_line`), thread에 딸리지 않은 pane, 상태 점과 배지.
 //!
 //! host가 보낸 머신·pane 목록과 thread 사건으로만 만든다(TUI는 저장하지 않는다). 고르면 그 pane을 탭으로 연다.
@@ -29,11 +30,13 @@ pub enum Row {
     NewShell(String),
     Pane(String),
     Empty,
+    /// spaces 구역의 workspace(이름)
+    Space(String),
 }
 
 impl Row {
     pub fn selectable(&self) -> bool {
-        matches!(self, Row::Thread(_) | Row::NewShell(_) | Row::Pane(_))
+        matches!(self, Row::Thread(_) | Row::NewShell(_) | Row::Pane(_) | Row::Space(_))
     }
 
     /// 누르면 고르는 줄: thread 둘째 줄은 그 thread
@@ -329,7 +332,8 @@ pub struct View<'a> {
     pub threads: &'a HashMap<String, ThreadView>,
     /// 지금 열린(포커스) pane
     pub current: Option<&'a str>,
-    pub sel: usize,
+    /// 탐색 중 고른 줄(spaces 구역의 줄을 고르면 없다)
+    pub sel: Option<usize>,
     pub focused: bool,
     /// 휠로 민 첫 줄(없으면 고른 줄이 보이게 내린다)
     pub top: Option<usize>,
@@ -347,7 +351,11 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
     let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
     let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
     // 고른 thread 줄은 둘째 줄까지 보이게
-    let sel_end = if matches!(rows.get(v.sel + 1), Some(Row::ThreadSub(_))) { v.sel + 2 } else { v.sel + 1 };
+    let sel_end = match v.sel {
+        Some(n) if matches!(rows.get(n + 1), Some(Row::ThreadSub(_))) => n + 2,
+        Some(n) => n + 1,
+        None => 0,
+    };
     let skip = match v.top {
         Some(t) => t.min(rows.len().saturating_sub(r.h as usize)),
         None => sel_end.saturating_sub(r.h as usize),
@@ -356,7 +364,7 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
     for (n, row) in rows.iter().enumerate().skip(skip).take(r.h as usize) {
         let y = r.y + (n - skip) as u16;
         placed.push((y, n));
-        let sel = v.focused && rows.get(v.sel).is_some_and(|s| *s == row.target());
+        let sel = v.focused && v.sel.and_then(|n| rows.get(n)).is_some_and(|s| *s == row.target());
         let current = is_current(row, v);
         let bg = if sel {
             Some(selection)
@@ -485,6 +493,7 @@ fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
         }
         Row::NewShell(_) => (vec![(" + 새 셸".into(), faint)], None),
         Row::Empty => (vec![("   pane 없음".into(), faint)], None),
+        Row::Space(_) => (vec![], None),
         Row::Pane(id) => match v.panes.get(id) {
             Some(p) => {
                 let st = if p.state.is_running() { name } else { faint };
@@ -498,6 +507,128 @@ fn line(row: &Row, v: &View, highlighted: bool) -> (Vec<Span>, Option<Span>) {
     }
 }
 
+/// spaces 구역의 workspace 한 줄(herdr `ClientShellWorkspace`의 이름과 `agent_status`)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Space {
+    pub name: String,
+    pub dot: Dot,
+}
+
+/// workspace 상태 점: 그 pane들 중 가장 급한 pane 상태(herdr `agent_status`, `status_priority` 차례)
+pub fn space_dot<'a>(panes: impl IntoIterator<Item = &'a PaneView>) -> Dot {
+    panes.into_iter().map(pane_dot).max_by_key(|d| urgency(*d)).unwrap_or(Dot::Unknown)
+}
+
+/// 펼친 사이드바의 두 구역 높이(herdr `sidebar_section_heights`): 6줄 밑이면 반씩(위가 하나 더), 아니면 `split` 비율로
+/// 나누되 위·아래 다 3줄 넘게
+pub fn section_heights(total: u16, split: f32) -> (u16, u16) {
+    if total == 0 {
+        return (0, 0);
+    }
+    if total < 6 {
+        let top = total.div_ceil(2);
+        return (top, total - top);
+    }
+    let top = ((f32::from(total) * split.clamp(0.1, 0.9)).round() as u16).clamp(3, total - 3);
+    (top, total - top)
+}
+
+/// spaces 구역(herdr `render_sidebar` 위 구역·`render_workspace_rows`): ` spaces` 머리와 빈 줄, workspace마다
+/// ` <점> 이름`, 맨 아랫줄은 비운다(herdr ` new`·`menu` 자리). 지금 workspace는 `active_row_bg`·이름 `text` 굵게(아니면
+/// `subtext0`), 탐색 중 고른 줄은 `selection_bg`. 넘치면 고른 줄(없으면 지금 줄)이 보이게 내린다. (줄 y, 이름)들을 준다.
+pub fn render_spaces(
+    buf: &mut Buffer,
+    r: Rect,
+    spaces: &[Space],
+    current: &str,
+    sel: Option<&str>,
+    navigating: bool,
+    p: &Palette,
+) -> Vec<(u16, String)> {
+    if r.h == 0 || r.w == 0 {
+        return vec![];
+    }
+    buf.set_stringn(r.x, r.y, " spaces", r.w as usize, Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD));
+    let body = Rect { y: r.y + 2, h: r.h.saturating_sub(3), ..r };
+    let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
+    let active = if navigating && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
+    let keep = spaces
+        .iter()
+        .position(|s| Some(s.name.as_str()) == sel)
+        .or_else(|| spaces.iter().position(|s| s.name == current));
+    let skip = keep.map_or(0, |k| (k + 1).saturating_sub(body.h as usize));
+    let mut placed = vec![];
+    for (i, sp) in spaces.iter().enumerate().skip(skip).take(body.h as usize) {
+        let y = body.y + (i - skip) as u16;
+        placed.push((y, sp.name.clone()));
+        let focused = sp.name == current;
+        let selected = navigating && Some(sp.name.as_str()) == sel;
+        let name = if focused {
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.subtext0)
+        };
+        // herdr: 첫 줄은 한 칸 들여 상태 점, 이름. 끝 두 칸은 비운다
+        let end = r.x + r.w.saturating_sub(2);
+        let x = buf
+            .set_stringn(
+                r.x + 1,
+                y,
+                sp.dot.icon(),
+                end.saturating_sub(r.x + 1) as usize,
+                Style::default().fg(sp.dot.color(p)),
+            )
+            .0;
+        let x = buf.set_stringn(x, y, " ", end.saturating_sub(x) as usize, name).0;
+        let room = end.saturating_sub(x) as usize;
+        buf.set_stringn(x, y, crate::chrome::truncate_end(&sp.name, room), room, name);
+        let bg = if selected {
+            Some(selection)
+        } else if focused {
+            Some(active)
+        } else {
+            None
+        };
+        if let Some(c) = bg {
+            for dx in 0..r.w {
+                if let Some(cell) = buf.cell_mut((r.x + dx, y)) {
+                    cell.set_bg(c);
+                }
+            }
+        }
+    }
+    placed
+}
+
+/// agents 구역 머리(herdr `render_agent_panel_header`): 구분선 `─`(`surface_dim`), ` agents`(`overlay0` 굵게)와 오른쪽에
+/// 보기 이름. aaa 목록은 herdr-projects 기본 보기(`default_view` label 「projects」)에 해당해 accent 굵게 쓴다.
+/// 목록 칸(머리 세 줄 아래)을 준다.
+pub fn render_agents_header(buf: &mut Buffer, r: Rect, p: &Palette) -> Rect {
+    if r.h == 0 {
+        return Rect { h: 0, ..r };
+    }
+    buf.set_stringn(r.x, r.y, "─".repeat(r.w as usize), r.w as usize, Style::default().fg(p.surface_dim));
+    if r.h >= 2 {
+        buf.set_stringn(
+            r.x,
+            r.y + 1,
+            " agents",
+            r.w as usize,
+            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+        );
+        let label = "projects";
+        let w = (unicode_width(label) as u16).min(r.w);
+        buf.set_stringn(
+            r.x + r.w - w,
+            r.y + 1,
+            label,
+            w as usize,
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+        );
+    }
+    Rect { y: r.y + 3.min(r.h), h: r.h.saturating_sub(3), ..r }
+}
+
 /// 접힌 사이드바(herdr `render_collapsed_sidebar`): 고를 수 있는 thread·pane 줄마다 번호와 상태 점
 pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> Vec<(u16, usize)> {
     let p = v.pal;
@@ -505,13 +636,13 @@ pub fn render_compact(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> Vec<
     let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
     let items: Vec<(usize, &Row)> =
         rows.iter().enumerate().filter(|(_, r)| matches!(r, Row::Thread(_) | Row::Pane(_))).collect();
-    let sel_at = items.iter().position(|(n, _)| *n == v.sel).unwrap_or(0);
+    let sel_at = items.iter().position(|(n, _)| Some(*n) == v.sel).unwrap_or(0);
     let skip = (sel_at + 1).saturating_sub(r.h as usize);
     let mut placed = Vec::new();
     for (i, (n, row)) in items.iter().enumerate().skip(skip).take(r.h as usize) {
         let y = r.y + (i - skip) as u16;
         placed.push((y, *n));
-        let sel = *n == v.sel && v.focused;
+        let sel = Some(*n) == v.sel && v.focused;
         let current = is_current(row, v);
         let (bg, num) = if sel {
             (Some(selection), Style::default().fg(p.overlay1))
@@ -776,7 +907,7 @@ mod tests {
             panes: &panes,
             threads: &threads,
             current: None,
-            sel,
+            sel: Some(sel),
             focused: true,
             top: None,
             pal: &pal,
@@ -831,7 +962,7 @@ mod tests {
         // 26칸 사이드바(구분선 빼고 25칸)에서는 셈을 ` · ` 단위로 덜어 이름을 남긴다
         let w = 25;
         let mut narrow = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
-        render(&mut narrow, Rect { x: 0, y: 0, w, h: 1 }, &list[2..3], &View { sel: 0, focused: false, ..v });
+        render(&mut narrow, Rect { x: 0, y: 0, w, h: 1 }, &list[2..3], &View { sel: Some(0), focused: false, ..v });
         let (mut out, mut x) = (String::new(), 0);
         while x < w {
             let sym = narrow[(x, 0)].symbol().to_string();
@@ -864,7 +995,7 @@ mod tests {
             panes: &panes,
             threads: &threads,
             current: None,
-            sel: 0,
+            sel: Some(0),
             focused: false,
             top: None,
             pal: &pal,

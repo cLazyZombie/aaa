@@ -2552,8 +2552,14 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 오른쪽 글이 이름 자리를 먹으면(26칸에서 「사람 차례 2 · 작업 중 1」) ` · ` 단위로 뒤를 덜어 낸다.
   - 둘째 줄은 고르지 않는다. 탐색 ↑↓는 건너뛰고, 누르면 그 thread, 고른·지금 thread는 두 줄을 같이 칠하고, 고른 thread가 아래 끝이면 둘째 줄까지 보이게 내린다. 지금 pane이 thread pane이면 그 thread 줄을 고른 줄로 삼는다.
   - 접힌 compact 열은 그대로(thread·pane마다 번호와 점, 차례는 위 목록 차례).
-- **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴·agents 묶음은 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
-- **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래.
+- **구역 나누기(U4, 10-18).** herdr `src/client/shell/sidebar.rs` `render_sidebar`·`src/ui/sidebar.rs` `expanded_sidebar_sections`·`agent_sidebar.rs` `render_agent_panel_header`대로 펼친 사이드바를 두 구역으로 나눈다.
+  - 위 spaces 구역(높이는 herdr `sidebar_section_heights`: 6줄 밑이면 반씩, 아니면 비율 0.5에 위·아래 3줄 이상): ` spaces`(overlay0 굵게)와 빈 줄, workspace마다 ` <점> 이름`(점은 그 workspace pane들 중 가장 급한 상태, 지금 workspace는 `active_row_bg`·이름 `text` 굵게, 다른 것은 `subtext0`), 맨 아랫줄은 비운다. 차례는 host `workspace_summaries`처럼 기본 workspace 먼저, 그다음 이름 차례.
+  - 아래 agents 구역: 구분선 `─`(`surface_dim`), ` agents`(overlay0 굵게)와 오른쪽 `projects`(herdr-projects 기본 보기 이름, accent 굵게), 빈 줄, 그 아래 위 목록(머신·프로젝트·thread·pane).
+  - workspace 목록은 시작할 때 `Workspaces` 한 번과 그 layout(`Workspace`)을 읽고, 그 뒤 workspace 사건(host는 닫거나 이름을 바꾼 workspace를 탭 없는 사건으로 알린다)으로 맞춘다.
+  - 탐색(`prefix w`)은 herdr처럼 지금 workspace 줄에서 시작한다. ↑↓는 workspace 줄 다음 agents 목록까지 이어 돌고(herdr는 workspace만, agents는 누르기만: aaa는 목록을 키로도 연다, §8.73), workspace 줄에서 Enter면 그 workspace로 바꾼다(포커스는 front마다라 그 workspace의 첫 pane). 숫자 1~9는 탐색 줄 차례라 workspace 줄이 먼저 온다(herdr `SwitchWorkspace`). workspace 줄을 누르면 바꾼다.
+  - 아직 없음: 구역 경계 끌기(`sidebar_section_split`), ` new`·`menu` 줄(U8 「+ 새 셸」과 같이 정한다), workspace 끌어 옮기기·묶음 접기, spaces 구역 따로 휠. 접힌 compact 열은 그대로 agents 목록이다(herdr는 workspace 번호).
+- **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴는 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
+- **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래. U4: lib.rs `sidebar_like_herdr`(머리 ` spaces`, 셋째 줄 ` · main`, 16째 줄 구분선, ` agents`…`projects`, 19째 줄 머신), harness `side_list_like_web` 7b단계(두 구역, 탐색은 지금 workspace 줄에서, scratch 골라 Enter면 탭 loose 하나·포커스 loose, main으로 돌아옴). 전환해도 workspace 이름을 바꾸지 않는 결함을 심으면 실패한다.
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 

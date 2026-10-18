@@ -170,6 +170,10 @@ enum Pending {
     CopyMotion,
     /// copy 모드 찾기(찾은 글·방향·`n`·`N` 다시인지): 응답이 오면 현재 일치로
     CopySearch { query: String, direction: aaa_proto::SearchDirection, repeat: bool },
+    /// spaces 구역 workspace 목록: 응답이 오면 이름을 넣고 지금 것이 아닌 workspace의 layout을 읽는다
+    Spaces,
+    /// 다른 workspace의 layout(상태 점에 쓴다): 응답이 와도 지금 workspace로 바꾸지 않는다
+    SpaceLayout,
 }
 
 /// herdr `ClientShellMode`(Copy·Resize는 다음 묶음)
@@ -231,6 +235,9 @@ struct App {
     pane_borders: aaa_config::PaneBorders,
     /// 탐색 모드에서 고른 줄(줄이 늘거나 줄어도 같은 것을 가리킨다)
     list_sel: Option<list::Row>,
+    /// spaces 구역 workspace들(herdr `ClientShellWorkspace`, layout을 아직 읽지 않았으면 탭 없음)과 읽을 이름
+    spaces: HashMap<String, Workspace>,
+    space_fetch: Vec<String>,
     /// 마지막으로 그린 터미널 크기
     width: u16,
     height: u16,
@@ -321,6 +328,8 @@ impl App {
             palette: theme::Palette::catppuccin(),
             pane_borders: aaa_config::PaneBorders::Auto,
             list_sel: None,
+            spaces: HashMap::new(),
+            space_fetch: vec![],
             width: 0,
             height: 0,
             grids: HashMap::new(),
@@ -462,6 +471,8 @@ impl App {
         let (mut tx, mut rx) = client.split();
         let id = tx.send(FrontRequest::Workspace { name: Some(self.ws_name.clone()) }).await?;
         self.pending.insert(id, Pending::Report("workspace 읽기"));
+        let id = tx.send(FrontRequest::Workspaces).await?;
+        self.pending.insert(id, Pending::Spaces);
         let id = tx.send(FrontRequest::Threads { project: None, role: None }).await?;
         self.pending.insert(id, Pending::Report("thread 목록"));
         let mut keys_in = EventStream::new();
@@ -540,6 +551,10 @@ impl App {
             // copy 모드 pane에 포커스가 오가거나 그 pane이 없어지면 모드를 맞춘다
             self.settle_copy();
             self.copy_apply(&mut tx).await?;
+            for name in std::mem::take(&mut self.space_fetch) {
+                let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
+                self.pending.insert(id, Pending::SpaceLayout);
+            }
             self.reconcile_ascii();
             // 포커스를 옮기거나 copy 커서가 온 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
             while !self.waiting() && !self.held.is_empty() {
@@ -576,8 +591,12 @@ impl App {
 
     fn on_msg(&mut self, m: FrontMsg) {
         match m {
-            FrontMsg::Event(FrontEvent::Workspace(w)) if w.name == self.ws_name => self.set_ws(w),
-            FrontMsg::Event(FrontEvent::Workspace(_)) => {}
+            FrontMsg::Event(FrontEvent::Workspace(w)) => {
+                self.note_space(&w);
+                if w.name == self.ws_name {
+                    self.set_ws(w);
+                }
+            }
             FrontMsg::Event(FrontEvent::State { machines, panes }) => {
                 self.machines = machines;
                 self.pane_order = panes.iter().map(|p| p.id.clone()).collect();
@@ -610,7 +629,26 @@ impl App {
                             self.select_pane(&new);
                         }
                     }
-                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), _) => self.set_ws(w),
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), Some(Pending::SpaceLayout)) => {
+                        self.note_space(&w)
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspace(w)), _) => {
+                        self.note_space(&w);
+                        // 응답 전에 다른 workspace로 바꿨으면 그 응답은 상태 점에만 쓴다
+                        if w.name == self.ws_name {
+                            self.set_ws(w);
+                        }
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Workspaces { workspaces }), Some(Pending::Spaces)) => {
+                        for w in workspaces {
+                            if !self.spaces.contains_key(&w.name) {
+                                self.spaces.insert(w.name.clone(), Workspace { name: w.name.clone(), tabs: vec![] });
+                                if w.name != self.ws_name && w.panes > 0 {
+                                    self.space_fetch.push(w.name);
+                                }
+                            }
+                        }
+                    }
                     (Outcome::Ok(aaa_proto::FrontResponse::Threads { threads }), _) => {
                         self.threads = threads.into_iter().map(|t| (list::thread_key(&t), t)).collect();
                     }
@@ -673,6 +711,63 @@ impl App {
 
     fn all_panes(&self) -> HashSet<String> {
         self.ws.tabs.iter().flat_map(|t| layout::leaves(&t.root)).collect()
+    }
+
+    /// workspace 사건·응답으로 spaces 구역을 맞춘다. host는 닫거나 이름을 바꾼 workspace를 탭 없는 사건으로 알린다
+    /// (기본 workspace와 지금 workspace는 남긴다).
+    fn note_space(&mut self, w: &Workspace) {
+        if w.tabs.is_empty() && w.name != aaa_proto::DEFAULT_WORKSPACE && w.name != self.ws_name {
+            self.spaces.remove(&w.name);
+            return;
+        }
+        self.spaces.insert(w.name.clone(), w.clone());
+    }
+
+    /// spaces 구역 차례(host `workspace_summaries`처럼 기본 workspace 먼저, 그다음 이름 차례)와 상태 점
+    fn space_list(&self) -> Vec<list::Space> {
+        let mut names: Vec<&String> = self.spaces.keys().collect();
+        if !self.spaces.contains_key(&self.ws_name) {
+            names.push(&self.ws_name);
+        }
+        names.sort_by(|a, b| {
+            (a.as_str() != aaa_proto::DEFAULT_WORKSPACE)
+                .cmp(&(b.as_str() != aaa_proto::DEFAULT_WORKSPACE))
+                .then(a.cmp(b))
+        });
+        names
+            .into_iter()
+            .map(|n| {
+                let w = if *n == self.ws_name { Some(&self.ws) } else { self.spaces.get(n) };
+                let panes: Vec<String> =
+                    w.into_iter().flat_map(|w| w.tabs.iter().flat_map(|t| layout::leaves(&t.root))).collect();
+                list::Space { name: n.clone(), dot: list::space_dot(panes.iter().filter_map(|id| self.panes.get(id))) }
+            })
+            .collect()
+    }
+
+    /// 탐색 모드가 도는 줄: spaces 구역 workspace들 다음 agents 목록(herdr는 ↑↓가 workspace만 돈다, §8.73)
+    fn nav_rows(&self) -> Vec<list::Row> {
+        let mut rows: Vec<list::Row> = self.space_list().into_iter().map(|s| list::Row::Space(s.name)).collect();
+        rows.extend(self.list_rows());
+        rows
+    }
+
+    /// 다른 workspace로(herdr `switch_workspace`): 아는 layout으로 바로 그리고 host에 다시 읽는다. 포커스는 front마다라
+    /// 그 workspace의 첫 pane으로 간다.
+    async fn switch_space(&mut self, tx: &mut FrontSender, name: String) -> Result<()> {
+        if name == self.ws_name {
+            return Ok(());
+        }
+        let known = self.spaces.get(&name).cloned().unwrap_or_else(|| Workspace { name: name.clone(), tabs: vec![] });
+        self.ws_name = name.clone();
+        self.ws = Workspace { name: name.clone(), tabs: vec![] };
+        self.tab = 0;
+        self.focus = None;
+        self.list_top = None;
+        self.set_ws(known);
+        let id = tx.send(FrontRequest::Workspace { name: Some(name) }).await?;
+        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        Ok(())
     }
 
     fn set_ws(&mut self, w: Workspace) {
@@ -761,6 +856,14 @@ impl App {
         self.list_sel.as_ref().and_then(at).or_else(current).unwrap_or_else(|| list::first(rows))
     }
 
+    /// agents 목록에서 고른 줄(spaces 구역의 workspace를 골랐으면 없다)
+    fn agent_sel(&self, rows: &[list::Row]) -> Option<usize> {
+        if matches!(self.list_sel, Some(list::Row::Space(_))) {
+            return None;
+        }
+        Some(self.list_index(rows))
+    }
+
     /// 목록 펴기·접기(herdr `ToggleSidebar`: 포커스는 그대로)
     fn toggle_list(&mut self) {
         self.sidebar_collapsed = Some(!self.collapsed());
@@ -777,6 +880,7 @@ impl App {
                     return Ok(());
                 }
             },
+            list::Row::Space(name) => return self.switch_space(tx, name).await,
             list::Row::NewShell(machine) => {
                 let change = LayoutChange::NewTab {
                     machine: Some(machine),
@@ -990,7 +1094,7 @@ impl App {
             self.list_sel = None;
             return Ok(());
         }
-        let rows = self.list_rows();
+        let rows = self.nav_rows();
         let i = self.list_index(&rows);
         if c.mods.is_empty() {
             match c.code {
@@ -1298,9 +1402,10 @@ impl App {
                     self.open_pane(tx, p).await?;
                 }
             }
+            // herdr `open_navigate`: 지금 workspace 줄에서 시작한다
             Action::WorkspacePicker => {
                 self.mode = Mode::Navigate;
-                self.list_sel = None;
+                self.list_sel = Some(list::Row::Space(self.ws_name.clone()));
             }
             // herdr `open_new_tab_overlay`: 기본 이름(탭 수+1)을 골라 둔 채로 묻는다
             Action::NewTab if self.prompt_new_tab => {
@@ -1630,7 +1735,7 @@ impl App {
             panes: &self.panes,
             threads: &self.threads,
             current: self.focus.as_deref(),
-            sel: self.list_index(rows),
+            sel: self.agent_sel(rows),
             focused: self.mode == Mode::Navigate,
             top: self.list_top,
             pal: &self.palette,
@@ -1640,27 +1745,33 @@ impl App {
         }
     }
 
-    /// 펼친 사이드바(herdr `render_sidebar`): 바탕과 오른쪽 구분선, 머리 ` {workspace}`(herdr ` spaces` 자리)와 빈 줄,
-    /// 목록, 맨 아래 오른쪽 접기 표시 `«`
+    /// 펼친 사이드바(herdr `render_sidebar`): 바탕과 오른쪽 구분선, 위 ` spaces` 구역(workspace 줄), 아래 ` agents` 구역
+    /// (구분선·머리·목록), 맨 아래 오른쪽 접기 표시 `«`
     fn render_sidebar(&self, buf: &mut Buffer, r: Rect) {
         let p = &self.palette;
         sidebar_background(buf, r, p);
         let content = Rect { w: r.w.saturating_sub(1), ..r };
-        buf.set_stringn(
-            content.x,
-            content.y,
-            format!(" {}", self.ws_name),
-            content.w as usize,
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        );
-        let body = Rect { y: r.y + 2, h: r.h.saturating_sub(3), ..content };
+        // herdr `expanded_sidebar_sections`: 위 spaces, 아래 agents(비율 0.5, 끌어 바꾸기는 아직 없다)
+        let (top_h, rest_h) = list::section_heights(content.h, 0.5);
+        let spaces_area = Rect { h: top_h, ..content };
+        let agents_area = Rect { y: content.y + top_h, h: rest_h, ..content };
+        let sel = match &self.list_sel {
+            Some(list::Row::Space(n)) => Some(n.as_str()),
+            _ => None,
+        };
+        let navigating = self.mode == Mode::Navigate;
+        let spaces = self.space_list();
+        let placed_spaces = list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p);
+        let body = list::render_agents_header(buf, agents_area, p);
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
+        hits.rows =
+            placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
         if body.h > 0 {
             let (placed, skip) = list::render(buf, body, &rows, &self.list_view(&rows));
             // thread 둘째 줄을 누르면 그 thread
-            hits.rows = placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..body }, rows[n].target())).collect();
+            hits.rows.extend(placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..body }, rows[n].target())));
             hits.list_skip = skip;
             hits.list_h = body.h;
         }
@@ -2254,8 +2365,8 @@ mod tests {
         app.tab = 1;
         let (lines, _) = draw(&app);
         let top = &lines[0];
-        // 사이드바 머리 ` main`·구분선 뒤 탭 막대에 "   1    " "  빌드  " "   3    "(사이 한 칸)
-        assert!(top.starts_with(" main"), "{top:?}");
+        // 사이드바 머리 ` spaces`·구분선 뒤 탭 막대에 "   1    " "  빌드  " "   3    "(사이 한 칸)
+        assert!(top.starts_with(" spaces"), "{top:?}");
         assert!(right_of_sidebar(top).starts_with("   1       빌드      3    "), "{top:?}");
         let area = Rect { x: 0, y: 0, w: 90, h: 30 };
         let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, 90, 30));
@@ -2435,7 +2546,8 @@ mod tests {
         assert_eq!(fresh.shell(area).sidebar.w, 4);
     }
 
-    /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 머리 ` {workspace}`, 오른쪽 `│`, 맨 아래 `«`.
+    /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 위 ` spaces` 구역(빈 줄 뒤 workspace 줄), 30줄이면
+    /// 15줄째에 구분선 `─`과 ` agents`·오른쪽 `projects`, 그 아래 빈 줄 뒤 목록, 오른쪽 `│`, 맨 아래 `«`.
     /// 접으면 번호와 상태 점, `»`. 탐색 모드면 접힌 채여도 펼친 목록을 pane 위에 띄운다.
     #[test]
     fn sidebar_like_herdr() {
@@ -2446,7 +2558,11 @@ mod tests {
         app.machines = vec![machine("m", "mac-a")];
         let (lines, _) = draw(&app);
         let shown = lines.join("\n");
-        assert!(lines[0].starts_with(" main "), "{shown}");
+        assert!(lines[0].starts_with(" spaces "), "{shown}");
+        assert!(lines[2].starts_with(" · main "), "{shown}");
+        assert!(lines[15].starts_with(&"─".repeat(25)), "{shown}");
+        assert!(lines[16].starts_with(" agents") && lines[16].contains("projects│"), "{shown}");
+        assert!(lines[18].starts_with(" ▾ mac-a"), "{shown}");
         assert!(lines.iter().all(|l| at_col(l, 25) == Some('│')), "{shown}");
         assert!(lines.iter().any(|l| l.starts_with(" ▾ mac-a")), "{shown}");
         assert!(lines.iter().any(|l| l.starts_with(" · build")), "셸 pane은 unknown 점: {shown}");
@@ -2462,7 +2578,8 @@ mod tests {
         let shown = lines.join("\n");
         // 접힌 칸(4칸)과 탭 막대는 그대로, 그 오른쪽 아래 pane 칸에 펼친 목록(머리·`▾ 머신`·`«`), 모드 막대 위까지
         assert!(lines[0].starts_with("1 ·│   1   "), "{shown}");
-        assert!(lines[1].starts_with("   │ main "), "{shown}");
+        assert!(lines[1].starts_with("   │ spaces "), "{shown}");
+        assert!(lines[3].starts_with("   │ · main "), "{shown}");
         assert!(lines.iter().any(|l| l.starts_with("   │ ▾ mac-a")), "탐색이면 띄운다: {shown}");
         assert_eq!(at_col(&lines[28], 28), Some('«'), "띄운 목록은 막대 위까지: {shown}");
         assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
