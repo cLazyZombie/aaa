@@ -57,7 +57,7 @@ impl LinkPress {
 }
 
 /// `PaneLink`를 아는 host Front API minor
-const LINK_MINOR: u16 = 34;
+const LINK_MINOR: u16 = 35;
 
 /// 두 번 누름으로 보는 사이(herdr `DOUBLE_CLICK_WINDOW`)
 pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);

@@ -1573,7 +1573,7 @@ pub enum FrontRequest {
         cursor: TextPoint,
         previous: Option<TextRange>,
     },
-    /// 누른 칸의 링크(herdr `pane.link.activate`, 1.34부터, plan §8.194): 화면 사본에서 그 칸을 덮는 OSC 8 링크, 없으면 그
+    /// 누른 칸의 링크(herdr `pane.link.activate`, 1.35부터, plan §8.194): 화면 사본에서 그 칸을 덮는 OSC 8 링크, 없으면 그
     /// 칸을 포함한 낱말의 http(s) URL을 `Link`로 답한다. 여는 것은 TUI가 도는 기기다. 모르는 옛 host는 오류로 답한다.
     PaneLink {
         pane: String,

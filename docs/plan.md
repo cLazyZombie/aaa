@@ -4311,10 +4311,10 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   (`ReplayMouse`, 그동안은 링크를 묻지 않는다 `replaying_url_click`). 열었으면 남은 끌기·놓기를 놓을 때까지 버린다(`url_click_consumes_until_up`).
   수정키는 ctrl뿐이다(SGR 16, `raw_input.rs` 1620–1628). 사용자가 말한 alt는 herdr 소스로는 설명되지 않는다(WezTerm 기본 설정도 alt+누름을
   마우스 보고 앱에 넘긴다).
-- **aaa.** ctrl(herdr)과 alt(사용자 말)를 다 받는다. 링크가 아니면 보통 누름으로 다시 넣으므로 alt+누름의 다른 쓰임(마우스 보고 앱에 alt 표시)은
-  그대로다. TUI는 그 칸의 절대 자리(`view_top` + 줄)로 `PaneLink { pane, at }`을 묻고 host가 화면 사본(`aaa-vt`)에서 찾아 `Link { url }`로
-  답한다. 여는 것은 TUI가 도는 기기다(원격 Windows TUI면 그 Windows의 `ShellExecuteW`). FRONT_API 1.34(배포 전)에 더했고, TUI는 1.34 이상
-  host에만 묻는다(옛 host에는 ctrl·alt+누름이 지금처럼 보통 누름이다). 보기 권한 기기도 물을 수 있다(읽기만 한다).
+- **aaa.** ctrl(herdr)과 alt를 다 받는다. **alt는 herdr와 다르다: 사용자 요청이다**(10-18 16:4x 「진행해」, coordinator 전달: ctrl+클릭과
+  alt+클릭 둘 다 링크를 연다). 링크가 아니면 보통 누름으로 다시 넣으므로 링크가 아닌 칸의 alt·ctrl+누름은 지금처럼 pane 프로그램에 간다. TUI는 그 칸의 절대 자리(`view_top` + 줄)로 `PaneLink { pane, at }`을 묻고 host가 화면 사본(`aaa-vt`)에서 찾아 `Link { url }`로
+  답한다. 여는 것은 TUI가 도는 기기다(원격 Windows TUI면 그 Windows의 `ShellExecuteW`). FRONT_API 1.35로 올렸고(1.34는 배포됨, N-1 규칙),
+  TUI는 1.35 이상 host에만 묻는다(옛 host에는 ctrl·alt+누름이 지금처럼 보통 누름이다). 보기 권한 기기도 물을 수 있다(읽기만 한다).
 - **OSC 8을 담는 법.** vt100은 칸에 링크를 담지 않는다(ghostty는 칸마다 담는다). 그래서 OSC 8을 열고 닫을 때 커서의 절대 자리와 그 사이 글을
   남기고(최근 512개, 64줄 넘게 걸치면 버림, uri 4096자), 찾을 때 그 자리의 지금 글이 남긴 글과 같을 때만 링크로 친다(덮어쓴 칸은 링크가
   아니다). 기록이 가득하면(10,000줄) 맨 앞 줄을 버리며 절대 줄이 그대로인 채 글이 위로 밀리므로 남긴 줄보다 위에서 같은 칸·같은 글을 찾되,
@@ -4322,7 +4322,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   크기가 바뀌면(다시 접기) 남긴 자리를 버린다. http(s)가 아닌 OSC 8 uri는 열지 않고 글 속 URL로 돌아가지도 않는다(herdr).
 - **한계.** OSC 8 구간은 512개까지라 Ink처럼 frame마다 OSC 8을 다시 내는 프로그램이면 기록 속 OSC 8 링크가 빨리 밀려난다(글 속 URL은
   그대로 찾는다). 한 번에 한 링크만 묻는다: 답 전의 두 번째 ctrl·alt+누름은 보통 누름이다(herdr는 여럿을 묻는다).
-- **하지 않은 것(herdr에는 있다).** ctrl+움직임 밑줄(`link_hover.rs`), 바깥 터미널로 OSC 8 다시 내보내기(`render_ansi.rs` 616–699), 누른 뒤
+- **하지 않은 것(herdr에는 있다).** 바깥 터미널로 OSC 8 다시 내보내기(`render_ansi.rs` 616–699, 서버가 `visible_hyperlinks`를 frame
+  칸에 싣는다)는 사용자가 먼저 써 보게 다음 commit으로 미뤘다(coordinator 10-18). ctrl+움직임 밑줄(`link_hover.rs`), 누른 뒤
   화면이 바뀌었으면 거절하는 `content_revision`. host가 다시 떠 화면 사본을 replay로 다시 만들면 그 전 OSC 8 링크는 없다(글 속 URL은 찾는다).
   웹은 이미 xterm `WebLinksAddon`으로 연다.
 - **시험.** 유닛: herdr URL 경우(괄호 짝·끝 점·`[docs](…)`·`file://`·끝에서 뺀 칸), 접힌 줄 어느 줄을 눌러도 같은 URL, OSC 8(그 칸만·기록으로
