@@ -22,6 +22,7 @@ mod http;
 mod inbox;
 mod library;
 mod library_links;
+mod library_publish;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
@@ -415,7 +416,8 @@ pub struct Host {
     pr: Mutex<pr::PrMemory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
-    library_signing: library_links::SigningKey,
+    library_signing: std::sync::RwLock<library_links::SigningKey>,
+    library_ops: std::sync::Mutex<()>,
     /// 파일 보기 읽기 경로(`/f/<cap>/`, plan §8.125)
     file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
@@ -585,7 +587,8 @@ impl Host {
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),
-            library_signing,
+            library_signing: std::sync::RwLock::new(library_signing),
+            library_ops: std::sync::Mutex::new(()),
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
@@ -1197,6 +1200,23 @@ impl Host {
             FrontRequest::ThreadLibrary { project, thread } => self
                 .thread_library(&project, &thread, actor.strip_prefix("device:"), role.can_control())
                 .map(FrontResponse::Library),
+            FrontRequest::LibraryPublish { project, name, source, live } => {
+                self.library_publish(&project, &name, &source, live, actor)
+            }
+            FrontRequest::LibraryImport { project, source, prefix } => {
+                self.library_import(&project, &source, &prefix, actor)
+            }
+            FrontRequest::LibraryPrune { project, older_than_days } => {
+                self.library_prune_at(project.as_deref(), older_than_days, util::now_ms(), actor)
+            }
+            FrontRequest::LibraryRotate => self.library_rotate(actor),
+            FrontRequest::LibraryReports { project } => self
+                .library_reports(project.as_deref(), role.can_control())
+                .map(|reports| FrontResponse::LibraryReports { reports }),
+            FrontRequest::LibraryOpen { project, name } => self
+                .report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())
+                .map(FrontResponse::Library),
+            FrontRequest::LibraryUsage => self.library_usage(),
             FrontRequest::LibraryLink { project, thread, days } => {
                 self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)
             }

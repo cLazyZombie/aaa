@@ -13,10 +13,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryView, LinkView, MessageMode, MessageView,
-    OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened,
-    ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind,
-    ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryReport, LibrarySkip, LibraryView,
+    LinkView, MessageMode, MessageView, OwnerChoice, ProfileView, ProjectAction, ProjectChange, ProjectContext,
+    ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView, ThreadAdopt,
+    ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView};
 
@@ -1816,6 +1816,35 @@ pub enum FrontRequest {
     LibraryLinkRevoke {
         id: String,
     },
+    /// FRONT_API 1.38. host 머신의 CLI만 로컬 파일을 읽는다. live는 복사 없이 등록한다.
+    LibraryPublish {
+        project: String,
+        name: String,
+        source: String,
+        #[serde(default)]
+        live: bool,
+    },
+    LibraryImport {
+        project: String,
+        source: String,
+        /// 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
+        #[serde(default)]
+        prefix: String,
+    },
+    LibraryPrune {
+        project: Option<String>,
+        older_than_days: u32,
+    },
+    LibraryRotate,
+    /// 링크는 조작 권한에만 싣는다. 앱 안 열기는 읽기 권한도 된다.
+    LibraryReports {
+        project: Option<String>,
+    },
+    LibraryOpen {
+        project: String,
+        name: String,
+    },
+    LibraryUsage,
     /// 지금 보고를 확인했다
     ThreadAck {
         project: String,
@@ -2011,6 +2040,9 @@ impl FrontRequest {
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::ThreadLibrary { .. }
+                | FrontRequest::LibraryReports { .. }
+                | FrontRequest::LibraryOpen { .. }
+                | FrontRequest::LibraryUsage
                 | FrontRequest::ThreadNext { line: None, add: None, .. }
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
@@ -2054,6 +2086,10 @@ impl FrontRequest {
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
                 | FrontRequest::TickerTick
+                | FrontRequest::LibraryPublish { .. }
+                | FrontRequest::LibraryImport { .. }
+                | FrontRequest::LibraryPrune { .. }
+                | FrontRequest::LibraryRotate
         )
     }
 }
@@ -2203,6 +2239,24 @@ pub enum FrontResponse {
     },
     Library(LibraryView),
     LibraryLink(LinkView),
+    LibraryReports {
+        reports: Vec<LibraryReport>,
+    },
+    LibraryImported {
+        reports: Vec<LibraryReport>,
+        skipped: Vec<LibrarySkip>,
+    },
+    LibraryPruned {
+        removed: Vec<String>,
+    },
+    LibraryRotated,
+    LibraryUsage {
+        #[ts(type = "number")]
+        size: u64,
+        reports: u32,
+        live: u32,
+        problems: u32,
+    },
     LibraryLinks {
         links: Vec<LinkView>,
     },

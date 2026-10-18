@@ -133,6 +133,8 @@ pub fn typescript_bindings() -> String {
         LibraryFile::decl(&cfg),
         LibraryView::decl(&cfg),
         LinkView::decl(&cfg),
+        LibraryReport::decl(&cfg),
+        LibrarySkip::decl(&cfg),
         FileKind::decl(&cfg),
         FileInfo::decl(&cfg),
         DirListing::decl(&cfg),

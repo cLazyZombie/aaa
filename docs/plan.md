@@ -4120,7 +4120,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **시험.** aaa-vt `queries_are_taken_out_of_the_output_across_chunks`(질의 빼기·자리·chunk 경계 붙들기·질의 아닌 escape 그대로),
   `color_osc_is_found_across_chunks`(OSC 10/11 질의는 빼고 끝을 적음, 지정·되돌리기는 남김, 화면이 받는 꼴), `default_color_replies_prefer_the_program_then_the_screen`
   (프로그램 색·화면 색·없음, 색 지정 꼴), aaa-host `current_colors_follow_the_last_front_used`, aaa-agent
-  `colors_reach_the_session_host_after_and_while_attached`(다시 붙은 session host에 받아 둔 색이 먼저, 붙은 동안 받은 색은 바로). 웹 E2E 20
+  `colors_reach_the_session_host_after_and_while_attached`(다시 붙은 session host에 받아 둔 색이 먼저, 붙은 동안 받은 색은 바로). 웹 E2E 21
   「터미널 질의 답」: 질의 프로그램(시작하자마자 바탕 색을 묻고, `#x`면 질의와 표지 `Q<n>.`, `#z`면 그 뒤 받은 것)을 붙은 화면 0·1·2개에서
   돌린다. 화면마다 표지까지 읽은 뒤 `sentFrames`가 비었는지(화면이 답하지 않았다), 그 뒤 CLI로 보낸 `#z`로 pane이 받은 답이 정확히 하나인지
   본다(session host 답은 질의를 화면에 보내기 전에 pane 입력으로 가 `#z`보다 먼저 닿는다). 색 답은 마지막으로 연 화면의 token을 ST 꼴로
@@ -5014,3 +5014,40 @@ primary 근거:
   agent의 실제 hook socket·frame에서 token·다른 PID·outbox 한도·디스크 재전송·Ack·feature 없는 상대의 무송신을 검사한다.
   m13은 같은 CLI를 로컬·원격 TLS thread에서 실행하고 inbox 봉투와 nudge 고정 문구를 확인한다.
   source 위조·peer 판정 제거·rate 제거·nudge/push에 summary 삽입·fence 제거·feature 검사 제거를 심어 시험이 실패하는지 본다.
+
+### 8.200 host 보고서 2단계: publish·등록 폴더·import·prune·rotate·전체 목록(10-18, t-0360)
+
+- **범위·참고.** t-0354 기획의 2단계다. herdr-projects 0.2.35 `thread.rs::copy_library_local`의 library 사본·symlink 제외·이름·resolve 뒤 보존을 따르며,
+  herdr-web-ui `file-view.ts`의 숨은 이름·실제 경로 제한과 sandbox 응답 머리를 기존 `/v/`에 그대로 적용한다. herdr 0.9.5에는 보고서 기능이 없다.
+  원격 publish용 전송 경로·새 포트는 만들지 않는다. 업로드는 host 머신의 사람·coordinator CLI만 한다(기존 local_only·needs_control).
+- **복사.** `aaa library publish <폴더 또는 파일> --project P --name N`. 프로젝트의 `library/N/`과 `threads/N.files.json`에 둔다.
+  이름은 소문자·숫자·-·_ 1~100자이며 thread 이름 공간 `t-`와 Windows 예약 이름을 받지 않는다. 숨은 성분·symlink·일반 파일 아닌 것은 빼고,
+  `[projects] library_copy_mb`(기본 200MiB)를 넘으면 전체를 거부한다. 임시 폴더에서 크기를 다시 확인하고 사본·manifest를 교체한다.
+  같은 이름은 이전 파일도 지워 최신으로 덮어쓰고, 유효한 공유 링크는 그대로 쓴다. 오류 때는 이전 사본을 되돌린다.
+- **실시간 폴더.** 사용자 brief의 「복사 없이 그 자리에서 서빙」에 따라 `publish … --live`를 둔다(폴더만).
+  기획의 publish+routine 반복 복사 대신 등록 원본의 canonical root를 host DB에 둔다. 원본 경로는 front에 보내지 않는다.
+  요청마다 목록을 다시 만들므로 수정·추가·삭제가 바로 반영되고 같은 상한을 쓴다. 숨은 이름·`..`·역슬래시·드라이브/ADS·symlink를 거부한다.
+  Unix는 파일을 성분마다 `openat(O_NOFOLLOW)`로 열어 검사 뒤 symlink 교체도 따라가지 않는다. Windows는 reparse point(junction 포함)를 검사한다.
+  원본이 없거나 상한을 넘으면 목록에 문제를 보이고 서빙을 거부한다. 저장소 착지 routine은 필요 없다.
+- **일괄 이전.** `aaa library import <폴더> --project P [--prefix archive-]`. 하위 폴더마다 publish하되 같은 대상 이름은 덮지 않는다.
+  충돌·상한 초과·symlink·숨은 이름·낱 파일·유효하지 않은 이름은 건너뛴 항목과 이유로 돌려준다.
+  `--prefix archive-`는 기존 `t-0001` 폴더를 새 thread ID와 겹치지 않는 `archive-t-0001`로 옮기는 길이다. 접두사 뒤 충돌도 건너뛴다.
+  낱 파일은 publish하고, 원본 symlink는 실제 폴더를 명시해 `--live`로 등록한다. 운영 자료 가져오기는 coordinator가 전환 때 한다.
+- **수명.** `aaa library prune --older-than N [--project P]`는 최근 게시/회수 시각이 N일보다 오래된 사본을 지운다(now 인자, 1일 이상).
+  진행 중 thread·실시간 원본은 보호하고 report.md·thread 기록은 남긴다. 지운 보고서의 서명 링크·앱 안 cap은 끝낸다. 자동 삭제는 없다.
+  `aaa library rotate`는 서명 키(0600)를 원자 교체하고 기존 링크 행을 폐기한다. 새 발급은 새 ID를 쓴다.
+  pairing·TLS 키·보고서·앱 안 보기는 그대로다. 두 명령은 host 머신 CLI 전용이고 대상 이름/ID만 감사에 남긴다.
+- **전체 목록·doctor.** 웹 목록 아래 「보고서」(설정에도 같은 쪽)를 둔다. host가 thread·별도 보고서를 프로젝트를 넘어 최신순으로 보낸다.
+  프로젝트 고르기·이름·크기·실시간 표시·갱신·만료·앱에서 열기와 기존 링크 줄(공유 링크·복사·QR·폐기·재발급)을 쓴다.
+  Reader는 서명 링크 없이 앱 안 열기만 된다. 만료·폐기 뒤에도 앱 안 열기는 된다.
+  `aaa library list [--project P]`도 같은 전체 목록이다(옛 `library_links` API는 유지). `aaa doctor`는 host 사본 합계·보고서 수·실시간 수·문제 수를 보인다.
+  실시간 원본 바이트는 host 사본 합계에 넣지 않는다. host가 없으면 확인하지 못했다고 적는다.
+- **저장·호환.** DB `library_reports(project,name,live,updated)`를 더한다(SCHEMA_VERSION=1 유지). 프로젝트 export·rename·delete 표 목록에도 넣는다.
+  FRONT_API **1.38**: LibraryPublish·LibraryImport·LibraryPrune·LibraryRotate·LibraryReports·LibraryOpen·LibraryUsage와 응답, LibraryReport·LibrarySkip.
+  배포된 1.37에는 더하지 않는다. N-1 front(1.37)는 붙는다. 다른 thread가 다음 판을 먼저 배포했다면 나중 착지에서 판을 맞춘다. AGENT_LINK는 그대로다.
+- **시험.** host API와 실제 router owner에서 덮어쓰기·원본 변화·등록 범위·숨은 이름·상한·import 이유/접두사/충돌·prune 시각/보호·rotate/재시작/pairing·권한·크기를 본다.
+  웹 E2E 21은 실제 CLI·host와 1280/390px 화면에서 전체 목록·프로젝트 고르기·크기·만료·열기·복사·폐기·재발급·rotate·Reader·doctor를 본다.
+  기존 12의 top-level sandbox·SW·형제 그림 시험은 유지한다. Windows에서도 되는 파일 이름·cfg로 쓰고 Windows 대상 전체 시험을 교차 컴파일한다.
+  결함 심기 및 최종 검증 결과는 thread report/library에 남긴다.
+- **전환 gate.** 별도 서버는 사용자 결정대로 **전환 직후 즉시 끈다**. 필요한 작은 보고서를 import/publish하고, 큰 묶음의 건너뜀을 검토하며,
+  저장소 실시간 폴더를 등록하고 휴대폰에서 링크를 확인한 뒤 전환한다. 상세 명령은 [보고서 운영](library.md), 전환 점검표는 [이전](migration.md).

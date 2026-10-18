@@ -12,6 +12,7 @@ import "./herdr/SettingsDialog.css";
 import type { DeviceRole, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ReportsPanel } from "./ReportsPanel";
 import { DevicesPanel } from "./DevicesPanel";
 import { PhonePanel, phonePlan } from "./PhonePanel";
 import { isLoopbackHost } from "./herdr/phone";
@@ -880,7 +881,7 @@ function ShortcutsPage() {
   );
 }
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
+type SettingsPage = "reports" | "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
 
 /** 목록에 보이는 차례(참고 PAGES 198~210줄 가운데 aaa에 있는 쪽) */
 export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string }[] = [
@@ -890,6 +891,7 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string
   { id: "alerts", icon: Bell, label: "알림" },
   { id: "usage", icon: Gauge, label: "구독 사용량" },
   { id: "shortcuts", icon: Keyboard, label: "단축키" },
+  { id: "reports", icon: MessageSquare, label: "보고서" },
   { id: "devices", icon: Smartphone, label: "폰 및 기기" },
 ];
 const label = (id: SettingsPage): string => PAGES.find((p) => p.id === id)!.label;
@@ -1021,6 +1023,8 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
         return <UsageGroups />;
       case "shortcuts":
         return <ShortcutsPage />;
+      case "reports":
+        return <ReportsPanel role={role} />;
       case "devices":
         return <DevicesPage role={role} device={device} onSignOut={onSignOut} />;
       default:

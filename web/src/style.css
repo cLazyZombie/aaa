@@ -898,3 +898,12 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .droplet-mark .agent-mark { --bg-elevated: var(--droplet-mark-bg); --border: var(--droplet-ring); }
 /* 기기 → 코드의 「또는 이 링크를…」(herdr/DevicesPanel.css .devices-link는 줄 전체가 고정폭): 고정폭 한글은 글자 사이가 벌어져 보여 말은 UI 글꼴로 둔다 */
 .devices-link .settings-description { font-family: var(--font-ui); }
+
+/* 보고서 전체 목록: 휴대폰에서도 기존 링크 줄이 카드 안에서 줄바꿈된다. */
+.reports-panel { min-width: 0; }
+.reports-toolbar, .report-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.reports-toolbar { margin-bottom: 12px; }
+.report-card { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.report-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.report-card p { margin: 6px 0; }
+.report-card .library-link { margin-top: 10px; }

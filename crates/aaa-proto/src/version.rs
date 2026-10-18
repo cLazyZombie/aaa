@@ -72,7 +72,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 4 };
 /// 같은 1.36(배포 전)에 grid frame의 보이는 OSC 8 링크 칸(`GridFrame.links`, plan §8.198)을 더한다(옛 front는 모르는 칸을 버리고,
 ///   옛 host는 보내지 않아 TUI가 링크 없이 그린다).
 /// 1.37: Post·PostStatus·PostList·PostUnmute(§8.199). 1.36이 배포되어 다음 판으로 분리한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 37 };
+/// 1.38: library publish·import·prune·rotate·전체 목록·앱 안 열기·용량(§8.200).
+pub const FRONT_API: Version = Version { major: 1, minor: 38 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

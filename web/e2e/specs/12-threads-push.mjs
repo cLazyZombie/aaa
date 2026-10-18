@@ -208,7 +208,7 @@ export default async function ({ page }) {
     await until("보고 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
     // 보고서 공유 링크: CLI·웹은 같은 자동 발급 링크를 보고, 실제 clipboard 대신 기록하는 가짜를 쓴다.
     const shared = aaa("library", "link", "demo", t.id);
-    if (aaa("library", "list", "--project", "demo").links[0].id !== shared.id) throw new Error("링크 목록과 발급이 다르다");
+    if (aaa("library", "list", "--project", "demo").reports[0].link.id !== shared.id) throw new Error("링크 목록과 발급이 다르다");
     const linkRow = page.getByTestId("library-link");
     const sharedUrl = new URL(shared.base, base).href;
     if (await linkRow.getByRole("link", { name: "보고서 공유 링크" }).getAttribute("href") !== sharedUrl) throw new Error("웹 링크가 자동 발급 링크와 다르다");

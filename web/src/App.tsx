@@ -29,6 +29,7 @@ import { rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
+import { requestSettingsPage } from "./palette";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
@@ -1155,6 +1156,7 @@ function ListFoot({
           {help}
         </p>
       )}
+      <button className="ghost" data-testid="reports-open" onClick={() => { requestSettingsPage("reports"); setSettingsOpen(true); }}>보고서</button>
       {/* 설정과 그 옆 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row) */}
       <div className="foot-row">
         <button className="ghost foot-settings" data-testid="settings-open" onClick={() => setSettingsOpen(true)}>

@@ -36,6 +36,14 @@ fn library_link_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryLinkRow> {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct LibraryReportRow {
+    pub project: String,
+    pub name: String,
+    pub live: Option<String>,
+    pub updated: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct MachineRow {
     pub id: String,
     pub name: String,
@@ -88,6 +96,49 @@ pub struct DeviceRow {
 pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
+    pub(crate) fn library_report(&self, project: &str, name: &str) -> Result<Option<LibraryReportRow>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT live,updated FROM library_reports WHERE project=?1 AND name=?2",
+                params![project, name],
+                |r| {
+                    Ok(LibraryReportRow {
+                        project: project.into(),
+                        name: name.into(),
+                        live: r.get(0)?,
+                        updated: r.get(1)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub(crate) fn library_report_put(&self, r: &LibraryReportRow) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO library_reports(project,name,live,updated) VALUES(?1,?2,?3,?4)
+             ON CONFLICT(project,name) DO UPDATE SET live=excluded.live,updated=excluded.updated",
+            params![r.project, r.name, r.live, r.updated],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn library_report_remove(&self, project: &str, name: &str) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM library_reports WHERE project=?1 AND name=?2", params![project, name])?;
+        tx.execute("UPDATE library_links SET revoked=1 WHERE project=?1 AND thread=?2", params![project, name])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn library_links_revoke_all(&self) -> Result<()> {
+        self.conn.lock().unwrap().execute("UPDATE library_links SET revoked=1", [])?;
+        Ok(())
+    }
+
     /// 유효한 링크 재사용과 삽입을 한 잠금 안에서 한다(회수·웹 발급이 겹쳐도 하나).
     pub(crate) fn library_link_issue(&self, new: LibraryLinkRow) -> Result<(LibraryLinkRow, bool)> {
         let c = self.conn.lock().unwrap();
@@ -160,6 +211,9 @@ impl Db {
              CREATE TABLE IF NOT EXISTS library_links(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL,
                created INTEGER NOT NULL, expires INTEGER NOT NULL, opened INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS library_reports(
+               project TEXT NOT NULL, name TEXT NOT NULL, live TEXT, updated INTEGER NOT NULL,
+               PRIMARY KEY(project,name));
              CREATE INDEX IF NOT EXISTS library_links_report ON library_links(project, thread, created);
              CREATE TABLE IF NOT EXISTS workspaces(name TEXT PRIMARY KEY, layout TEXT NOT NULL, updated_at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS threads(
@@ -796,8 +850,8 @@ impl Db {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 7] =
-    ["threads", "flow_events", "messages", "inbox", "evaluations", "library_links", "posts"];
+const PROJECT_TABLES: [&str; 8] =
+    ["threads", "flow_events", "messages", "inbox", "evaluations", "library_links", "library_reports", "posts"];
 
 /// 그 프로젝트의 meta: key가 `<종류>:<프로젝트>` 또는 `<종류>:<프로젝트>:…`(routine·PR·nudge·설정 오류·상태 등)
 fn project_meta(c: &Connection, project: &str) -> Result<Vec<(String, String)>> {

@@ -202,7 +202,7 @@ export function loadRecent(read: (key: string) => string | null): string[] {
   }
 }
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
+export type SettingsPageId = "reports" | "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
 
 /** What the palette shows for one Settings page: its name and the words a user may look for it by. */
 export interface SettingsPageEntry {
@@ -219,6 +219,7 @@ export const SETTINGS_PAGE_ENTRIES: readonly SettingsPageEntry[] = [
   { id: "alerts", label: "알림", aliases: "알림 소리 푸시 벨 입력 필요 완료" },
   { id: "usage", label: "구독 사용량", aliases: "요금제 한도 할당량 미터" },
   { id: "shortcuts", label: "단축키", aliases: "키보드 키 단축키 바인딩" },
+  { id: "reports", label: "보고서", aliases: "보고서 결과물 library 공유 링크" },
   { id: "devices", label: "폰 및 기기", aliases: "휴대폰 설치 화면 켜짐 유지 앱" },
 ];
 

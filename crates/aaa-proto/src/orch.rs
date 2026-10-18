@@ -229,6 +229,27 @@ pub struct LinkView {
     pub size: u64,
 }
 
+/// FRONT_API 1.38. thread 결과물과 별도로 올린 보고서의 전체 목록 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryReport {
+    pub project: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    #[ts(type = "number")]
+    pub updated_at_ms: u64,
+    pub live: bool,
+    /// 읽기 실패·상한 초과도 목록에서 감추지 않는다.
+    pub problem: Option<String>,
+    pub link: Option<LinkView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibrarySkip {
+    pub name: String,
+    pub reason: String,
+}
+
 /// report.md 본문과 library 목록(파일 본문은 `FileRead`로 나눠 받는다)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReportSnapshot {

@@ -148,3 +148,16 @@ aaa thread(pilot 등)는 host가 낸 묶음·harness 활동과 그 pane 화면 �
 
 기존 shell/custom profile의 command/env는 전환 호환용으로 읽는다. 새 claude/codex 정의는 위 다섯 키를 쓰고
 머신별 실행 경로·환경은 agent의 harness 덮어쓰기로 분리한다. 배포·운영 host 재시작은 binary 배포 담당자가 한다.
+
+## 별도 보고서 서버 전환 gate
+
+사용자 결정(10-18)에 따라 기존 별도 보고서 서버는 aaa 전환 직후 바로 끈다.
+기존 자료를 읽거나 옮기는 작업은 운영 coordinator가 한다. 구현 시험은 임시 host만 쓴다.
+
+1. 기존 작은 보고서 폴더를 `aaa library import "<보고서 루트>" --project P --prefix archive-`로 가져온다.
+2. 건너뜀 목록을 확인한다. 필요한 낱 파일은 publish하고, 상한을 넘는 큰 캡처 묶음은 필요한 파일만 별도 폴더로 준비해 publish한다.
+3. 저장소 폴더를 가리키는 symlink 항목은 실제 폴더를 명시해 `aaa library publish "<실제 폴더>" --project P --name design --live`로 등록한다.
+4. `aaa library list --project P`·`aaa doctor`, 웹 「보고서」 전체 목록과 휴대폰 공유 링크에서 필요한 자료가 열리는지 확인한다.
+5. 전환을 끝낸 직후 별도 서버를 끈다. 실제 서버 종료는 운영 절차에서 직접 확인한 PID로 한다.
+
+상한·충돌·정리·키 교체의 상세 규칙은 [보고서 운영](library.md)에 있다. 이 과정에서 기존 서버·자료를 먼저 지우지 않는다.
