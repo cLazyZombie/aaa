@@ -2,6 +2,9 @@
 //!
 //! - 개발자 도구·전체 디스크 접근에는 launcher를 한 번 등록한다. `aaa`는 다시 빌드·교체해도 등록을 다시 하지 않는다.
 //! - 설치·해제는 launchd 설정을 바꾸므로 사람이 터미널에서 직접 한다(aaa 세션 안이거나 터미널이 아니면 거부).
+//! - 멈추기·띄우기·다시 띄우기(herdr `server stop`, 차이 목록 4장 A #497)도 같은 문을 지난다. launchd가 KeepAlive로
+//!   감독하므로 프로세스를 끝내면 다시 뜬다: 멈추기는 `bootout`(plist는 남아 다음 로그인에 뜬다), 띄우기는 `bootstrap`,
+//!   다시 띄우기는 `kickstart -k`다. 세션은 session host가 가져 이어진다.
 //! - launchd가 주는 PATH는 짧다(`/usr/bin:/bin:…`). 설치하는 셸의 PATH를 plist에 적어 `claude`·`codex`를 찾게 한다.
 
 use std::path::{Path, PathBuf};
@@ -93,6 +96,23 @@ fn launchctl(args: &[&str]) -> Result<(bool, String)> {
     Ok((o.status.success(), text))
 }
 
+fn service_target(role: &str) -> String {
+    format!("gui/{}/{}", uid(), label(role))
+}
+
+/// launchd에 올라가 있으면 그 상태 줄(state·pid·last exit code), 아니면 None
+fn launchd_state(role: &str) -> Result<Option<String>> {
+    let (ok, text) = launchctl(&["print", &service_target(role)])?;
+    Ok(ok.then(|| {
+        let keep: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("state =") || l.starts_with("pid =") || l.starts_with("last exit code ="))
+            .collect();
+        keep.join(" · ")
+    }))
+}
+
 /// 읽기만 한다: plist 내용·경로 확인·launchd 상태
 pub fn show(s: &Spec) -> Result<String> {
     let mut out = String::new();
@@ -102,16 +122,9 @@ pub fn show(s: &Spec) -> Result<String> {
     out.push_str(&format!("launcher: {} ({})\n", s.launcher.display(), check(&s.launcher)));
     out.push_str(&format!("aaa: {} ({})\nlog: {}\n", s.aaa.display(), check(&s.aaa), log_path(&s.role).display()));
     if cfg!(target_os = "macos") {
-        let (ok, text) = launchctl(&["print", &format!("gui/{}/{}", uid(), label(&s.role))])?;
-        if ok {
-            let keep: Vec<&str> = text
-                .lines()
-                .map(str::trim)
-                .filter(|l| l.starts_with("state =") || l.starts_with("pid =") || l.starts_with("last exit code ="))
-                .collect();
-            out.push_str(&format!("launchd: 올라가 있다 · {}\n", keep.join(" · ")));
-        } else {
-            out.push_str("launchd: 올라가 있지 않다\n");
+        match launchd_state(&s.role)? {
+            Some(state) => out.push_str(&format!("launchd: 올라가 있다 · {state}\n")),
+            None => out.push_str("launchd: 올라가 있지 않다\n"),
         }
     }
     out.push_str("--- 설치할 plist ---\n");
@@ -168,6 +181,69 @@ pub fn install(s: &Spec, replace: bool) -> Result<String> {
         bail!("launchctl bootstrap 실패(plist를 지웠다): {}", text.trim());
     }
     show(s)
+}
+
+/// 설치된 감독자(plist)가 있어야 멈추고 띄운다
+fn installed(role: &str, what: &str) -> Result<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        bail!("launchd {what}는 macOS 전용이다");
+    }
+    let p = plist_path(role);
+    if !p.is_file() {
+        bail!(
+            "{} 감독자가 설치되지 않았다: {} 없음. 먼저 `aaa service install --role {role}`",
+            label(role),
+            p.display()
+        );
+    }
+    Ok(p)
+}
+
+/// 감독자가 aaa를 끝내고 다시 띄운다(`launchctl kickstart -k`). 업그레이드(새 binary로 교체) 뒤에 쓴다
+pub fn restart(role: &str) -> Result<String> {
+    installed(role, "다시 띄우기")?;
+    if launchd_state(role)?.is_none() {
+        bail!("{} 감독자가 멈춰 있다. 띄우려면 `aaa service start --role {role}`", label(role));
+    }
+    human_only(&format!("{} 다시 띄우기(세션은 이어진다)", label(role)))?;
+    let (ok, text) = launchctl(&["kickstart", "-k", &service_target(role)])?;
+    if !ok {
+        bail!("launchctl kickstart 실패: {}", text.trim());
+    }
+    let state = launchd_state(role)?.unwrap_or_else(|| "올라가 있지 않다".into());
+    Ok(format!("다시 띄웠다: {} · {state}\n", label(role)))
+}
+
+/// 감독자에서 내린다(`launchctl bootout`): 다시 뜨지 않는다. plist는 남아 다음 로그인 때 다시 뜬다
+pub fn stop(role: &str) -> Result<String> {
+    installed(role, "멈추기")?;
+    if launchd_state(role)?.is_none() {
+        bail!("{} 감독자는 이미 멈춰 있다", label(role));
+    }
+    human_only(&format!("{} 멈추기(세션은 남는다)", label(role)))?;
+    let (ok, text) = launchctl(&["bootout", &service_target(role)])?;
+    if !ok {
+        bail!("launchctl bootout 실패: {}", text.trim());
+    }
+    Ok(format!(
+        "멈췄다: {}. 다시 띄우려면 `aaa service start --role {role}`(plist가 남아 다음 로그인 때도 뜬다. 아주 내리려면 `aaa service uninstall --role {role}`)\n",
+        label(role)
+    ))
+}
+
+/// 멈춘 감독자를 다시 올린다(`launchctl bootstrap`)
+pub fn start(role: &str) -> Result<String> {
+    let p = installed(role, "띄우기")?;
+    if launchd_state(role)?.is_some() {
+        bail!("{} 감독자는 이미 올라가 있다. 다시 띄우려면 `aaa service restart --role {role}`", label(role));
+    }
+    human_only(&format!("{} 띄우기", label(role)))?;
+    let (ok, text) = launchctl(&["bootstrap", &format!("gui/{}", uid()), &p.to_string_lossy()])?;
+    if !ok {
+        bail!("launchctl bootstrap 실패: {}", text.trim());
+    }
+    let state = launchd_state(role)?.unwrap_or_else(|| "올라가 있지 않다".into());
+    Ok(format!("띄웠다: {} · {state}\n", label(role)))
 }
 
 pub fn uninstall(role: &str) -> Result<String> {

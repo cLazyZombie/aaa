@@ -80,7 +80,7 @@ enum Cmd {
     },
     /// 자가 점검(계보·키체인·첫 실행 지연)
     Doctor(DoctorArgs),
-    /// macOS 감독자: 운영은 show·install·uninstall(LaunchAgent → aaa-launcher → aaa, 결정 14). plan·register 등은 보류한 SMAppService 경로
+    /// macOS 감독자: 운영은 show·install·uninstall·restart·stop·start(LaunchAgent → aaa-launcher → aaa, 결정 14). plan·register 등은 보류한 SMAppService 경로
     Service {
         #[command(subcommand)]
         cmd: ServiceCmd,
@@ -929,6 +929,21 @@ enum ServiceCmd {
     },
     /// 운영 감독자를 내리고 plist를 지운다. 사람이 터미널에서 직접 한다.
     Uninstall {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
+    /// 감독자가 aaa를 끝내고 다시 띄운다(launchctl kickstart -k, 업그레이드 뒤). 세션은 이어진다. 사람이 터미널에서 직접 한다.
+    Restart {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
+    /// 감독자에서 내린다(launchctl bootout, herdr `server stop`). plist는 남아 다음 로그인에 뜬다. 사람이 터미널에서 직접 한다.
+    Stop {
+        #[arg(long, value_parser = ["host", "agent"])]
+        role: String,
+    },
+    /// 멈춘 감독자를 다시 올린다(launchctl bootstrap). 사람이 터미널에서 직접 한다.
+    Start {
         #[arg(long, value_parser = ["host", "agent"])]
         role: String,
     },
@@ -2563,6 +2578,9 @@ fn service_cmd(cmd: ServiceCmd) -> Result<ExitCode> {
             print!("{}", crate::launchd::install(&launchd_spec(role, aaa, launcher)?, replace)?)
         }
         ServiceCmd::Uninstall { role } => print!("{}", crate::launchd::uninstall(&role)?),
+        ServiceCmd::Restart { role } => print!("{}", crate::launchd::restart(&role)?),
+        ServiceCmd::Stop { role } => print!("{}", crate::launchd::stop(&role)?),
+        ServiceCmd::Start { role } => print!("{}", crate::launchd::start(&role)?),
     }
     Ok(ExitCode::SUCCESS)
 }

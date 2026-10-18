@@ -105,6 +105,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 | 명령 | 하는 일 |
 |---|---|
 | `aaa machine list` | 머신 연결·디스크·이상 |
+| `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`) |
 | `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 최근 출력 글(`--source visible`이면 지금 화면) |
 | `aaa tab create --machine mac-b -- <명령>` | 새 탭에 새 pane |
 | `aaa pane run <pane> "…"` | 명령 실행(글 + Enter, 사람의 attach에 막히지 않음) |

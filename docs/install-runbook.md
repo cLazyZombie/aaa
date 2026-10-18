@@ -3,7 +3,7 @@
 launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aaa를 운영 자리에 올리는 순서다. 설계는 기획서 [§10](plan.md)·[§15](plan.md#15-현재-운영에서-이전)에 있다. 이 문서는 명령과 확인만 적는다.
 
 - 머신 이름은 일반 이름이다. mac-a·mac-b·mac-c 중 host를 둘 Mac을 **host Mac**이라 부른다. 주소 예시는 `example.ts.net`이다.
-- **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aaa service install·uninstall`은 aaa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다.
+- **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aaa service install·uninstall·restart·stop·start`는 aaa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다.
 - **명령은 전체 경로 `~/.local/bin/aaa`로 친다.** 본문의 `aaa …`는 모두 `~/.local/bin/aaa …`를 뜻한다. launchd가 주는 PATH나 셸 PATH 순서에 기대지 않는다.
 - **이름 변경(결정 18) 전 `aa` 설치에서 옮기기:** 아래 「10. aa에서 옮기기」를 먼저 한다.
 - 지금 운영(herdr·herdr-projects·herdr-web-ui·WezTerm)과 그 설정·socket·port는 건드리지 않는다. aaa는 다른 port·state·작업 폴더를 쓴다.
@@ -143,6 +143,8 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 ~/.local/bin/aaa service uninstall --role agent     # ✋ 각 Mac(host Mac은 --role host도)
 ```
 
+잠깐 멈추기만 하려면 ✋ `aaa service stop --role agent`(plist는 남아 다음 로그인 때 다시 뜬다), 다시 올리려면 ✋ `aaa service start --role agent`다. launchd가 KeepAlive로 감독하므로 프로세스를 직접 끝내면 곧 다시 뜬다.
+
 - 세션은 session host가 소유하므로 agent를 내려도 도는 harness는 바로 죽지 않는다. 필요하면 `aaa pane kill`로 먼저 끝낸다.
 - herdr 쪽 설치·설정은 처음부터 건드리지 않았으므로 되돌릴 것이 없다.
 - 보고·결과물은 aaa projects root에 남는다. 기존 coordinator가 읽을 수 있는 Markdown이다.
@@ -150,7 +152,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 ## 9. 업그레이드
 
 1. 1번처럼 새 `aaa`를 빌드해 rename으로 교체한다.
-2. ✋ `launchctl kickstart -k gui/$(id -u)/dev.aaa.agent`(host Mac은 `dev.aaa.host`도)로 다시 띄운다. 세션은 이어진다.
+2. ✋ `aaa service restart --role agent`(host Mac은 `--role host`도, 각각 `yes`)로 다시 띄운다(`launchctl kickstart -k`를 감싼다). 세션은 이어진다.
 3. `aaa status`·`aaa machine list`로 같은 버전·연결을 확인한다.
 
 ## 10. aa에서 옮기기(결정 18)
