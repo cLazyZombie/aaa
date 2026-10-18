@@ -165,11 +165,11 @@ mod win {
     }
 }
 
-#[cfg(test)]
+// 시험은 unix 것뿐이다(Windows에서 `use super::*`가 쓰이지 않아 clippy -D warnings가 막았다)
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn own_ancestry_and_terminal() {
         let me = std::process::id();
