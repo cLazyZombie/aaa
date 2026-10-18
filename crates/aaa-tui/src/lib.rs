@@ -384,8 +384,10 @@ struct App {
     held: Vec<Event>,
     /// 연 기록 편집기 pane과 연 pane(herdr `OverlayPaneState.previous_focus`): 편집기 pane이 닫히면 연 pane으로 돌아간다
     overlay_back: Option<(String, String)>,
-    /// 머신 머리 줄로 고른 머신과 그때 포커스 pane(herdr 활성 endpoint): 포커스가 바뀌면 풀린다(`target_machine`)
+    /// 고른 머신(탐색 `m`·바닥 줄 머신 이름)과 그때 포커스 pane(herdr 활성 endpoint): 포커스가 바뀌면 풀린다(`target_machine`)
     machine_pick: Option<(String, Option<String>)>,
+    /// agents 목록에서 접은 묶음(`list::Row::fold_key`). 이 화면에만 둔다(접기 기억 저장소는 아직 없다)
+    folded: HashSet<String>,
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
     copy_reply: Option<copy::CopyReply>,
@@ -471,6 +473,7 @@ impl App {
             focus_wait: None,
             overlay_back: None,
             machine_pick: None,
+            folded: HashSet::new(),
             held: vec![],
             copy_wait: None,
             copy_reply: None,
@@ -1094,7 +1097,7 @@ impl App {
 
     fn list_rows(&self) -> Vec<list::Row> {
         let panes: Vec<PaneView> = self.pane_order.iter().filter_map(|id| self.panes.get(id).cloned()).collect();
-        list::rows(&self.machines, &panes, &self.threads)
+        list::rows(&self.machines, &panes, &self.threads, &self.folded, self.focus.as_deref())
     }
 
     /// 고른 줄의 자리(없어졌으면 지금 pane 줄이나 그 pane의 thread 줄, 그것도 없으면 첫 줄)
@@ -1124,7 +1127,17 @@ impl App {
         self.sidebar_collapsed = Some(!self.collapsed());
     }
 
-    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 머신 머리면 그 머신을 고른다
+    /// agents 묶음 머리를 접고 편다(웹 `useFold`). 고른 줄은 그 머리에 남는다
+    fn toggle_fold(&mut self, row: &list::Row) {
+        if let Some(k) = row.fold_key()
+            && !self.folded.remove(&k)
+        {
+            self.folded.insert(k);
+        }
+        self.list_top = None;
+    }
+
+    /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 묶음 머리면 접고 편다
     async fn open_row(&mut self, tx: &mut FrontSender, row: list::Row) -> Result<()> {
         let pane = match row {
             list::Row::Pane(p) => p,
@@ -1136,8 +1149,8 @@ impl App {
                 }
             },
             list::Row::Space(name) => return self.switch_space(tx, name).await,
-            list::Row::Machine(id) => {
-                self.pick_machine(id);
+            r @ (list::Row::Project(_) | list::Row::Other) => {
+                self.toggle_fold(&r);
                 return Ok(());
             }
             _ => return Ok(()),
@@ -1371,7 +1384,23 @@ impl App {
         }
     }
 
-    /// 머신 머리 줄을 눌렀다(herdr `handle_endpoint_machine_click`): 그 머신을 새 탭·workspace를 열 머신으로. 끊긴 머신은
+    /// 새 탭·workspace를 열 머신을 다음 붙은 머신으로(탐색 `m`, 바닥 줄 ` new · 머신`의 머신 이름 누르기). 지금 머신 다음부터
+    /// 머신 목록 차례로 돌고, 붙은 머신이 그것 하나면 그대로 알린다
+    fn next_machine(&mut self) {
+        let now = self.target_machine().or_else(|| self.machines.iter().find(|m| m.local).map(|m| m.id.clone()));
+        let at = self.machines.iter().position(|m| Some(&m.id) == now.as_ref()).unwrap_or(0);
+        let n = self.machines.len();
+        let next = (1..=n)
+            .map(|i| &self.machines[(at + i) % n])
+            .find(|m| m.connection == aaa_proto::Connection::Connected)
+            .map(|m| m.id.clone());
+        match next {
+            Some(id) => self.pick_machine(id),
+            None => self.set_error("붙은 머신이 없다"),
+        }
+    }
+
+    /// 그 머신을 새 탭·workspace를 열 머신으로(herdr `handle_endpoint_machine_click`). 끊긴 머신은
     /// 알리고 고르지 않는다(herdr 「… is not ready」)
     fn pick_machine(&mut self, id: String) {
         let Some(m) = self.machines.iter().find(|m| m.id == id) else { return };
@@ -1512,11 +1541,16 @@ impl App {
                     return Ok(());
                 }
                 KeyCode::Char(d @ '1'..='9') => {
-                    if let Some(r) = rows.iter().filter(|r| r.selectable()).nth(d as usize - '1' as usize).cloned() {
+                    if let Some(r) = rows.iter().filter(|r| r.opens()).nth(d as usize - '1' as usize).cloned() {
                         self.mode = Mode::Terminal;
                         self.list_sel = None;
                         self.open_row(tx, r).await?;
                     }
+                    return Ok(());
+                }
+                // 머신 머리 줄이 없어(프로젝트 먼저, §8.192) 새 탭·workspace를 열 머신은 `m`으로 돌려 고른다
+                KeyCode::Char('m') => {
+                    self.next_machine();
                     return Ok(());
                 }
                 KeyCode::Tab => return self.act(Action::CycleNext, tx).await,
@@ -2264,6 +2298,7 @@ impl App {
             now_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64),
+            folded: &self.folded,
         }
     }
 
@@ -2295,7 +2330,10 @@ impl App {
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
-        (hits.new_workspace, hits.global_menu) = footer.flatten().unzip();
+        let footer = footer.flatten();
+        hits.new_workspace = footer.map(|f| f.new);
+        hits.pick_machine = footer.and_then(|f| f.machine);
+        hits.global_menu = footer.map(|f| f.menu);
         hits.rows =
             placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
         if body.h > 0 {
@@ -3354,10 +3392,10 @@ mod tests {
         assert!(lines[14].starts_with(" new "), "{shown}");
         assert!(lines[15].starts_with(&"─".repeat(25)), "{shown}");
         assert!(lines[16].starts_with(" agents") && lines[16].contains("projects│"), "{shown}");
-        assert!(lines[18].starts_with(" ▾ mac-a"), "{shown}");
+        // thread가 없으면 셸 pane은 「기타」 묶음에, 머신은 글자로(트리 단계가 아니다)
+        assert!(lines[18].starts_with(" ▾ 기타") && lines[18].contains("pane 1"), "{shown}");
         assert!(lines.iter().all(|l| at_col(l, 25) == Some('│')), "{shown}");
-        assert!(lines.iter().any(|l| l.starts_with(" ▾ mac-a")), "{shown}");
-        assert!(lines.iter().any(|l| l.starts_with(" · build")), "셸 pane은 unknown 점: {shown}");
+        assert!(lines[19].starts_with(" · build mac-a"), "셸 pane은 unknown 점과 머신 이름: {shown}");
         assert_eq!(lines[29].chars().nth(24), Some('«'), "{shown}");
         app.toggle_list();
         let (lines, _) = draw(&app);
@@ -3368,17 +3406,18 @@ mod tests {
         app.mode = Mode::Navigate;
         let (lines, _) = draw(&app);
         let shown = lines.join("\n");
-        // 접힌 칸(4칸)과 탭 막대는 그대로, 그 오른쪽 아래 pane 칸에 펼친 목록(머리·`▾ 머신`·`«`), 모드 막대 위까지
+        // 접힌 칸(4칸)과 탭 막대는 그대로, 그 오른쪽 아래 pane 칸에 펼친 목록(머리·`▾ 기타`·`«`), 모드 막대 위까지
         assert!(lines[0].starts_with("1 ·│   1   "), "{shown}");
         assert!(lines[1].starts_with("   │ spaces "), "{shown}");
         assert!(lines[3].starts_with("   │ · main "), "{shown}");
-        assert!(lines.iter().any(|l| l.starts_with("   │ ▾ mac-a")), "탐색이면 띄운다: {shown}");
+        assert!(lines.iter().any(|l| l.starts_with("   │ ▾ 기타")), "탐색이면 띄운다: {shown}");
         assert_eq!(at_col(&lines[28], 28), Some('«'), "띄운 목록은 막대 위까지: {shown}");
         assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
     }
 
-    /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 머신 머리 줄로 고르면 그 머신
-    /// (포커스가 그대로인 동안), 끊긴 머신은 고르지 않는다. 마우스를 받으면 spaces 맨 아랫줄 ` new`, 머신이 여럿이면 그 이름.
+    /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 고르면 그 머신(포커스가 그대로인
+    /// 동안), 끊긴 머신은 고르지 않는다. 마우스를 받으면 spaces 맨 아랫줄 ` new`, 머신이 여럿이면 ` · 이름`(누를 칸 따로).
+    /// 머신 머리 줄이 없어(§8.192) 고르기는 다음 붙은 머신으로 돈다(탐색 `m`·` · 이름` 누르기, 끊긴 머신은 건너뛴다).
     #[test]
     fn new_workspace_machine_like_herdr_endpoint() {
         let mut app = app_with_tabs(&["", ""]);
@@ -3395,8 +3434,14 @@ mod tests {
         assert_eq!(app.target_machine().as_deref(), Some("n"));
         assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
         assert!(footer(&app).contains("         menu│"), "{}", footer(&app));
-        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 12, h: 1 }));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
+        assert_eq!(app.hits.borrow().pick_machine, Some(Rect { x: 5, y: 14, w: 7, h: 1 }));
         assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 14, w: 6, h: 1 }));
+        // 다음 붙은 머신으로 돈다: mac-b → mac-a → mac-b
+        app.next_machine();
+        assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
+        app.next_machine();
+        assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
         // 포커스가 바뀌면 포커스 pane의 머신
         app.focus = Some("p1".into());
         assert_eq!(app.target_machine().as_deref(), Some("m"));
@@ -3405,12 +3450,22 @@ mod tests {
         app.pick_machine("n".into());
         assert_eq!(app.target_machine().as_deref(), Some("m"));
         assert!(app.error.as_ref().is_some_and(|e| e.0.contains("mac-b에 붙어 있지 않다")));
+        // 도는 고르기는 끊긴 머신을 건너뛴다(붙은 것이 mac-a뿐이면 mac-a, mac-c가 붙으면 mac-b를 건너 mac-c)
+        app.next_machine();
+        assert_eq!(app.target_machine().as_deref(), Some("m"));
+        let mut third = machine("o", "mac-c");
+        third.local = false;
+        app.machines.push(third);
+        app.next_machine();
+        assert_eq!(app.target_machine().as_deref(), Some("o"));
+        app.machines.pop();
         // 포커스가 없으면 로컬 agent, 머신이 하나면 이름 없이, 마우스를 받지 않으면 없다
         app.focus = None;
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
         app.machines.truncate(1);
         assert!(footer(&app).starts_with(" new    "), "{}", footer(&app));
         assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
+        assert_eq!(app.hits.borrow().pick_machine, None);
         app.mouse_capture = false;
         assert!(!footer(&app).contains("new"), "{}", footer(&app));
         assert_eq!((app.hits.borrow().new_workspace, app.hits.borrow().global_menu), (None, None));

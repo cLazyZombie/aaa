@@ -1,10 +1,11 @@
-//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·차이 목록 L1·U4~U8). herdr 사이드바처럼 위는 workspace(` spaces`, 맨 아랫줄 ` new`),
-//! 아래는 ` agents` 구역이고, agents에는 머신마다 머리(고르면 새 탭·workspace를 열 머신), 그 머신의 프로젝트 머리와 thread 두 줄
-//! (herdr-projects `thread_display` 「id · 제목」, 둘째 줄 `state_line`), thread에 딸리지 않은 pane, 상태 점과 배지.
+//! 왼쪽 목록(웹 목록과 같은 모양, §8.35·§8.192·차이 목록 L1·U4~U8). herdr 사이드바처럼 위는 workspace(` spaces`, 맨 아랫줄
+//! ` new`), 아래는 ` agents` 구역이다. agents는 프로젝트(사용자 말의 workspace)를 먼저 묶는다(t-0352 시안 2안): 프로젝트 머리
+//! (접기, 셈), 그 아래 thread 두 줄(첫 줄 상태 점·번호·제목, 둘째 줄 왼쪽 `state_line`·오른쪽 머신 이름), thread에 딸리지 않은
+//! pane은 맨 아래 「기타」 묶음(pane 줄에 머신 이름), 맨 아래 사후 평가자. 머신은 트리 단계가 아니라 글자로만 적는다.
 //!
 //! host가 보낸 머신·pane 목록과 thread 사건으로만 만든다(TUI는 저장하지 않는다). 고르면 그 pane을 탭으로 연다.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aaa_config::StatusIndicators;
 use aaa_proto::layout::Rect;
@@ -22,12 +23,12 @@ pub enum Row {
     Header(String),
     /// thread 키(`project/id`)
     Thread(String),
-    /// thread 줄의 둘째 줄(상태 말, 고르지 않고 누르면 그 thread)
+    /// thread 줄의 둘째 줄(상태 말과 머신, 고르지 않고 누르면 그 thread)
     ThreadSub(String),
-    /// 머신 머리(머신 ID): 고르면 새 탭·workspace를 그 머신에 연다(herdr endpoint 줄 누르기)
-    Machine(String),
-    /// 그 머신의 프로젝트 묶음 머리(머신 ID, 프로젝트)
-    Project(String, String),
+    /// 프로젝트 묶음 머리(프로젝트 이름): 고르면 접고 편다
+    Project(String),
+    /// thread에 딸리지 않은 pane 묶음 머리(「기타」): 고르면 접고 편다
+    Other,
     Pane(String),
     Empty,
     /// spaces 구역의 workspace(이름)
@@ -36,7 +37,12 @@ pub enum Row {
 
 impl Row {
     pub fn selectable(&self) -> bool {
-        matches!(self, Row::Thread(_) | Row::Machine(_) | Row::Pane(_) | Row::Space(_))
+        matches!(self, Row::Thread(_) | Row::Project(_) | Row::Other | Row::Pane(_) | Row::Space(_))
+    }
+
+    /// 여는 줄(탐색 숫자 키가 세는 줄): 묶음 머리는 접기라 빼고 센다
+    pub fn opens(&self) -> bool {
+        matches!(self, Row::Thread(_) | Row::Pane(_) | Row::Space(_))
     }
 
     /// 누르면 고르는 줄: thread 둘째 줄은 그 thread
@@ -46,17 +52,30 @@ impl Row {
             r => r.clone(),
         }
     }
+
+    /// 접기 열쇠: 프로젝트 머리는 `project:<이름>`, 「기타」는 `other`
+    pub fn fold_key(&self) -> Option<String> {
+        match self {
+            Row::Project(p) => Some(format!("project:{p}")),
+            Row::Other => Some("other".into()),
+            _ => None,
+        }
+    }
 }
 
 pub fn thread_key(t: &ThreadView) -> String {
     format!("{}/{}", t.project, t.id)
 }
 
-/// 그 머신의 thread인가(웹 `threadMachine`): pane이 있으면 pane의 머신, 없으면 thread의 머신 이름·ID
-fn on_machine(t: &ThreadView, m: &MachineView, pane: Option<&PaneView>) -> bool {
+/// thread가 도는 머신(웹 `threadMachine`): pane이 있으면 pane의 머신, 없으면 thread의 머신 이름·ID로 찾는다
+fn thread_machine<'a>(
+    t: &ThreadView,
+    machines: &'a [MachineView],
+    pane: Option<&PaneView>,
+) -> Option<&'a MachineView> {
     match pane {
-        Some(p) => p.machine_id == m.id,
-        None => t.machine == m.name || t.machine == m.id,
+        Some(p) => machines.iter().find(|m| m.id == p.machine_id),
+        None => machines.iter().find(|m| t.machine == m.name || t.machine == m.id),
     }
 }
 
@@ -81,10 +100,17 @@ pub fn project_line(groups: &[ThreadGroup]) -> String {
     if parts.is_empty() { "쉼".to_string() } else { parts.join(" · ") }
 }
 
-/// 웹 목록(`machineRoster`)과 같은 차례: 머신마다 머리, 그 머신 thread를 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온
-/// 프로젝트 차례로 묶은 프로젝트 머리와 thread 두 줄, 그다음 thread에 딸리지 않은 pane(평가자 제외). 끝난·평가자 thread는 뺀다.
-/// 맨 아래는 사후 평가자 pane(웹 목록에는 없다).
-pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
+/// 웹 목록(`roster`)과 같은 차례. 모든 머신의 thread를 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶어
+/// 프로젝트 머리와 thread 두 줄, 그다음 thread에 딸리지 않은 pane의 「기타」 묶음(머신 차례, 머신 안은 받은 차례. 웹은 사람이
+/// 옮긴 차례 `paneOrder`가 먼저인데 TUI는 그것을 받지 않는다), 맨 아래 사후 평가자 pane(웹 목록에는 없다). 끝난·평가자 thread는 뺀다. `folded`의 묶음(`Row::fold_key`)은 머리만
+/// 남기되, 지금 pane(`current`)의 thread는 접혀도 남긴다(웹 접힌 묶음의 고른 줄). 줄이 하나도 없으면 「pane 없음」.
+pub fn rows(
+    machines: &[MachineView],
+    panes: &[PaneView],
+    threads: &HashMap<String, ThreadView>,
+    folded: &HashSet<String>,
+    current: Option<&str>,
+) -> Vec<Row> {
     let mut out = vec![];
     let mut live: Vec<&ThreadView> = threads.values().filter(|t| listed(t)).collect();
     // herdr-projects `Group::rank`(`DISPLAY_ORDER`): 확인 필요 → 검토 대기 → 병합 중 → 작업 중 → 쉼
@@ -95,34 +121,40 @@ pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<Stri
             .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
             .then_with(|| thread_key(a).cmp(&thread_key(b)))
     });
+    let mut projects: Vec<&str> = vec![];
+    for t in &live {
+        if !projects.contains(&t.project.as_str()) {
+            projects.push(&t.project);
+        }
+    }
+    for project in projects {
+        let head = Row::Project(project.to_string());
+        let shut = head.fold_key().is_some_and(|k| folded.contains(&k));
+        out.push(head);
+        for t in live.iter().filter(|t| t.project == project) {
+            if shut && (current.is_none() || t.pane.as_deref() != current) {
+                continue;
+            }
+            out.push(Row::Thread(thread_key(t)));
+            out.push(Row::ThreadSub(thread_key(t)));
+        }
+    }
+    let thread_panes: Vec<&str> = live.iter().filter_map(|t| t.pane.as_deref()).collect();
+    let mut loose: Vec<&PaneView> = vec![];
     for m in machines {
-        out.push(Row::Machine(m.id.clone()));
-        let pane_of = |t: &ThreadView| t.pane.as_deref().and_then(|id| panes.iter().find(|p| p.id == id));
-        let mine: Vec<&&ThreadView> = live.iter().filter(|t| on_machine(t, m, pane_of(t))).collect();
-        let mut projects: Vec<&str> = vec![];
-        for t in &mine {
-            if !projects.contains(&t.project.as_str()) {
-                projects.push(&t.project);
-            }
-        }
-        for project in &projects {
-            out.push(Row::Project(m.id.clone(), project.to_string()));
-            for t in mine.iter().filter(|t| t.project == *project) {
-                out.push(Row::Thread(thread_key(t)));
-                out.push(Row::ThreadSub(thread_key(t)));
-            }
-        }
-        let thread_panes: Vec<&str> = mine.iter().filter_map(|t| t.pane.as_deref()).collect();
-        let loose: Vec<&PaneView> = panes
-            .iter()
-            .filter(|p| {
-                p.machine_id == m.id && p.role != Some(Role::Evaluator) && !thread_panes.contains(&p.id.as_str())
-            })
-            .collect();
-        if mine.is_empty() && loose.is_empty() {
-            out.push(Row::Empty);
-        }
-        out.extend(loose.into_iter().map(|p| Row::Pane(p.id.clone())));
+        loose.extend(panes.iter().filter(|p| {
+            p.machine_id == m.id && p.role != Some(Role::Evaluator) && !thread_panes.contains(&p.id.as_str())
+        }));
+    }
+    if !loose.is_empty() {
+        let shut = folded.contains("other");
+        out.push(Row::Other);
+        out.extend(
+            loose.into_iter().filter(|p| !shut || current == Some(p.id.as_str())).map(|p| Row::Pane(p.id.clone())),
+        );
+    }
+    if out.is_empty() {
+        out.push(Row::Empty);
     }
     let mut evals: Vec<&PaneView> = panes.iter().filter(|p| p.role == Some(Role::Evaluator)).collect();
     evals.sort_by(|a, b| a.name.cmp(&b.name));
@@ -363,6 +395,8 @@ pub struct View<'a> {
     pub style: StatusIndicators,
     /// 지금 시각(「n분 조용」)
     pub now_ms: u64,
+    /// 접은 묶음(`Row::fold_key`): 머리가 `▸`
+    pub folded: &'a HashSet<String>,
 }
 
 /// 줄들을 그리고 (줄 y, 줄 차례)들과 첫 보이는 줄을 준다(사이드바 바탕·구분선은 부르는 쪽).
@@ -398,24 +432,44 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
         };
         // 배지가 쓸 수 있는 칸: 앞 점(3칸)·사이·끝 칸(2칸)과 제목 TITLE_MIN칸을 뺀 나머지
         let room = (r.w as usize).saturating_sub(5 + TITLE_MIN);
-        let (left, mut right) = line(row, v, current || sel, room);
-        // 오른쪽 글(프로젝트 셈 「확인 필요 2 · 작업 중 1」)이 이름 자리를 먹으면 ` · ` 단위로 뒤를 덜어 낸다
-        let lw: usize = left.iter().map(|(t, _)| unicode_width(t)).sum();
-        if let Some((t, _)) = right.as_mut() {
-            while lw + unicode_width(t) + 2 > r.w as usize {
+        let mut l = line(row, v, current || sel, room);
+        let w = r.w as usize;
+        let lw = |l: &Parts| l.left.iter().map(|(t, _)| unicode_width(t)).sum::<usize>();
+        let left = lw(&l);
+        if l.keep_left {
+            // 왼쪽(상태 말)이 먼저다: 오른쪽(머신)은 남는 칸에 「…」로 줄이고, 네 칸도 안 남으면 뺀다
+            if let Some((t, _)) = l.right.as_mut() {
+                let room = w.saturating_sub(left + 2);
+                if room < 4 {
+                    l.right = None;
+                } else {
+                    *t = crate::chrome::truncate_end(t, room);
+                }
+            }
+        } else if let Some((t, _)) = l.right.as_mut() {
+            // 오른쪽 글(프로젝트 셈 「확인 필요 2 · 작업 중 1」)이 이름 자리를 먹으면 ` · ` 단위로 뒤를 덜어 낸다
+            while left + unicode_width(t) + 2 > w {
                 match t.rsplit_once(" · ") {
                     Some((head, _)) => *t = head.to_string(),
                     None => break,
                 }
             }
         }
-        // 오른쪽 글(상태)은 이름과 한 칸 띄우고 끝 한 칸을 비운다. 넘치는 이름은 herdr `truncate_end`처럼 「…」로 자른다
-        // (herdr `resolved_token_spans`: 토큰 사이 구분자, 잘린 토큰 끝 「…」)
-        let rw = right.as_ref().map(|(s, _)| unicode_width(s) as u16).unwrap_or(0);
+        // 오른쪽 글은 이름과 한 칸 띄우고 끝 한 칸을 비운다
+        let rw = l.right.as_ref().map(|(s, _)| unicode_width(s) as u16).unwrap_or(0);
         let end = r.x + r.w.saturating_sub(if rw > 0 { rw + 2 } else { 0 });
-        let overflow = left.iter().map(|(t, _)| unicode_width(t)).sum::<usize>() > (end - r.x) as usize;
+        let room = (end - r.x) as usize;
+        // 넘치면 먼저 줄이는 조각(제목)을 「…」로 줄인다. 두 칸도 안 남으면 그 조각을 뺀다
+        let over = lw(&l).saturating_sub(room);
+        if let Some(i) = l.flex.filter(|_| over > 0) {
+            let t = &l.left[i].0;
+            let keep = unicode_width(t).saturating_sub(over);
+            l.left[i].0 = if keep < 2 { String::new() } else { crate::chrome::truncate_end(t, keep) };
+        }
+        // 그래도 넘치는 이름은 herdr `truncate_end`처럼 「…」로 자른다(herdr `resolved_token_spans`: 잘린 토큰 끝 「…」)
+        let overflow = lw(&l) > room;
         let mut x = r.x;
-        for (t, st) in &left {
+        for (t, st) in &l.left {
             if x >= end {
                 break;
             }
@@ -423,7 +477,7 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
             let t = if overflow { crate::chrome::truncate_end(t, room) } else { t.clone() };
             x = buf.set_stringn(x, y, &t, room, *st).0;
         }
-        if let Some((t, st)) = right {
+        if let Some((t, st)) = l.right {
             buf.set_stringn(end + 1, y, &t, rw as usize, st);
         }
         if let Some(c) = bg {
@@ -447,11 +501,36 @@ fn is_current(row: &Row, v: &View) -> bool {
     }
 }
 
-/// 줄의 왼쪽 조각들과 오른쪽 표시. herdr 기본 줄(`state_icon` + 이름, 머신은 ` ▾ 이름`과 연결 점)을 한 줄로 쓴다.
 /// 글과 그 모양
 type Span = (String, Style);
 
-fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> (Vec<Span>, Option<Span>) {
+/// 한 줄의 조각: 왼쪽 조각들, 넘치면 먼저 줄일 왼쪽 조각(제목), 오른쪽 표시, 왼쪽을 지키고 오른쪽을 줄이는가(thread 둘째 줄)
+struct Parts {
+    left: Vec<Span>,
+    flex: Option<usize>,
+    right: Option<Span>,
+    keep_left: bool,
+}
+
+impl Parts {
+    fn new(left: Vec<Span>, right: Option<Span>) -> Parts {
+        Parts { left, flex: None, right, keep_left: false }
+    }
+}
+
+/// 머신 글자(머신 이름, 끊겼으면 「이름 끊김」 노랑)
+fn machine_label(m: Option<&MachineView>, fallback: &str, pal: &Palette) -> Span {
+    match m {
+        Some(m) if m.connection != Connection::Connected => {
+            (format!("{} 끊김", m.name), Style::default().fg(pal.yellow))
+        }
+        Some(m) => (m.name.clone(), Style::default().fg(pal.overlay0)),
+        None => (fallback.to_string(), Style::default().fg(pal.overlay0)),
+    }
+}
+
+/// 줄의 조각. herdr 기본 줄(`state_icon` + 이름)을 한 줄로 쓴다. 묶음 머리는 ` ▾ 이름`(접혔으면 `▸`)과 오른쪽 셈.
+fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> Parts {
     let pal = v.pal;
     let name = if highlighted {
         Style::default().fg(pal.text).add_modifier(Modifier::BOLD)
@@ -460,73 +539,82 @@ fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> (Vec<Span>, Opti
     };
     let faint = Style::default().fg(pal.overlay0);
     let dot = |d: Dot| (format!(" {} ", d.icon(v.style)), Style::default().fg(d.color(pal)));
+    let head = |label: &str| {
+        let arrow = if row.fold_key().is_some_and(|k| v.folded.contains(&k)) { "▸" } else { "▾" };
+        vec![
+            (format!(" {arrow} "), Style::default().fg(pal.overlay1)),
+            (label.to_string(), Style::default().fg(pal.text).add_modifier(Modifier::BOLD)),
+        ]
+    };
     match row {
-        Row::Header(t) => (vec![(format!(" {t}"), faint.add_modifier(Modifier::BOLD))], None),
-        // 프로젝트 머리(웹 project-group): 굵은 이름, 오른쪽은 그 머신 이 프로젝트 thread 셈(웹 둘째 줄 `projectLine`)
-        Row::Project(machine, project) => {
-            let groups: Vec<ThreadGroup> = match v.machines.iter().find(|m| m.id == *machine) {
-                Some(m) => v
-                    .threads
-                    .values()
-                    .filter(|t| t.project == *project && listed(t))
-                    .filter(|t| on_machine(t, m, t.pane.as_deref().and_then(|id| v.panes.get(id))))
-                    .map(|t| t.group)
-                    .collect(),
-                None => vec![],
-            };
+        Row::Header(t) => Parts::new(vec![(format!(" {t}"), faint.add_modifier(Modifier::BOLD))], None),
+        // 프로젝트 머리(웹 project-group): 굵은 이름, 오른쪽은 모든 머신의 이 프로젝트 thread 셈(웹 `projectLine`)
+        Row::Project(project) => {
+            let groups: Vec<ThreadGroup> =
+                v.threads.values().filter(|t| t.project == *project && listed(t)).map(|t| t.group).collect();
             let need = groups.iter().any(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview));
             let color = if need { group_color(ThreadGroup::WaitingOnYou, pal) } else { pal.overlay0 };
-            (
-                vec![(format!(" {project}"), Style::default().fg(pal.text).add_modifier(Modifier::BOLD))],
-                Some((project_line(&groups), Style::default().fg(color))),
-            )
+            Parts { flex: Some(1), ..Parts::new(head(project), Some((project_line(&groups), Style::default().fg(color)))) }
         }
-        // thread 줄(herdr-projects `thread_display`): 상태 점과 「id · 제목」, 둘째 줄에 상태 말(묶음 색)
+        // 「기타」 머리: 오른쪽은 그 묶음의 pane 수
+        Row::Other => {
+            let n = v
+                .panes
+                .values()
+                .filter(|p| p.role != Some(Role::Evaluator) && v.machines.iter().any(|m| m.id == p.machine_id))
+                .filter(|p| !v.threads.values().any(|t| listed(t) && t.pane.as_deref() == Some(p.id.as_str())))
+                .count();
+            Parts::new(head("기타"), Some((format!("pane {n}"), faint)))
+        }
+        // thread 첫 줄: 상태 점, 번호(흐리게), 제목(오른쪽 글이 없어 넘치면 끝에서 「…」로 자른다)
         Row::Thread(k) => match v.threads.get(k) {
-            Some(t) => (
-                vec![("  ".into(), name), dot(thread_row_dot(t, v.panes)), (format!("{} · {}", t.id, t.title), name)],
+            Some(t) => Parts::new(
+                vec![
+                    dot(thread_row_dot(t, v.panes)),
+                    (t.id.clone(), Style::default().fg(pal.overlay1)),
+                    (" ".into(), name),
+                    (t.title.clone(), name),
+                ],
                 None,
             ),
-            None => (vec![("  ".into(), name), dot(Dot::Unknown), (k.clone(), name)], None),
+            None => Parts::new(vec![dot(Dot::Unknown), (k.clone(), name)], None),
         },
+        // thread 둘째 줄: 왼쪽 상태 말(묶음 색, 늘 보인다), 오른쪽 머신 이름(넘치면 먼저 줄인다)
         Row::ThreadSub(k) => match v.threads.get(k) {
             Some(t) => {
-                let open = t.pane.as_deref().and_then(|id| v.panes.get(id)).is_some_and(|p| p.state.is_running());
-                (
-                    vec![(
-                        format!("     {}", state_line(t, open, v.now_ms)),
-                        Style::default().fg(group_color(t.group, pal)),
-                    )],
-                    None,
-                )
+                let pane = t.pane.as_deref().and_then(|id| v.panes.get(id));
+                let open = pane.is_some_and(|p| p.state.is_running());
+                let m = thread_machine(t, v.machines, pane);
+                Parts {
+                    keep_left: true,
+                    ..Parts::new(
+                        vec![(
+                            format!("   {}", state_line(t, open, v.now_ms)),
+                            Style::default().fg(group_color(t.group, pal)),
+                        )],
+                        Some(machine_label(m, &t.machine, pal)),
+                    )
+                }
             }
-            None => (vec![], None),
+            None => Parts::new(vec![], None),
         },
-        Row::Machine(id) => {
-            let m = v.machines.iter().find(|m| &m.id == id);
-            let label = m.map_or(id.as_str(), |m| m.name.as_str());
-            // herdr `render_endpoint_row`: 이 머신(host)은 표시 없음, 붙은 머신은 초록 점, 끊긴 머신은 노랑 반달
-            let signal = match m {
-                Some(m) if m.connection != Connection::Connected => Some(("◐ 끊김".to_string(), pal.yellow)),
-                Some(m) if !m.local => Some(("●".to_string(), pal.green)),
-                _ => None,
-            };
-            (
-                vec![(format!(" ▾ {label}"), Style::default().fg(pal.text).add_modifier(Modifier::BOLD))],
-                signal.map(|(t, c)| (t, Style::default().fg(c))),
-            )
-        }
-        Row::Empty => (vec![("   pane 없음".into(), faint)], None),
-        Row::Space(_) => (vec![], None),
+        Row::Empty => Parts::new(vec![("   pane 없음".into(), faint)], None),
+        Row::Space(_) => Parts::new(vec![], None),
+        // pane 줄: 상태 점, 제목(넘치면 먼저 줄인다), 「기타」 묶음이면 머신 이름, 오른쪽 배지
         Row::Pane(id) => match v.panes.get(id) {
             Some(p) => {
                 let st = if p.state.is_running() { name } else { faint };
-                (
-                    vec![dot(pane_dot(p)), (pane_title(p, v.threads), st)],
-                    pane_badge(p, pal, room).map(|(b, c)| (b, Style::default().fg(c))),
-                )
+                let mut left = vec![dot(pane_dot(p)), (pane_title(p, v.threads), st)];
+                if p.role != Some(Role::Evaluator) {
+                    let (m, style) = machine_label(v.machines.iter().find(|m| m.id == p.machine_id), &p.machine, pal);
+                    left.push((format!(" {m}"), style));
+                }
+                Parts {
+                    flex: Some(1),
+                    ..Parts::new(left, pane_badge(p, pal, room).map(|(b, c)| (b, Style::default().fg(c))))
+                }
             }
-            None => (vec![dot(Dot::Unknown), (id.clone(), name)], None),
+            None => Parts::new(vec![dot(Dot::Unknown), (id.clone(), name)], None),
         },
     }
 }
@@ -626,28 +714,38 @@ pub fn render_spaces(
     placed
 }
 
+/// spaces 구역 맨 아랫줄의 누를 칸: 새 workspace ` new`, 머신이 여럿이면 그 뒤 ` · 머신`(누르면 다음 붙은 머신, §8.192),
+/// 전체 메뉴 `menu`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Footer {
+    pub new: Rect,
+    pub machine: Option<Rect>,
+    pub menu: Rect,
+}
+
 /// spaces 구역 맨 아랫줄(herdr `render_sidebar`·`render_endpoint_workspaces` footer, 마우스를 받을 때만): 왼쪽 새 workspace
-/// ` new`(머신이 여럿이면 ` new · 머신`), 오른쪽 전체 메뉴 `menu`(`overlay0`). 누를 칸 둘을 준다(herdr: ` new`는 5칸, 머신이
-/// 붙으면 글 폭, `menu`는 오른쪽 6칸).
-pub fn render_spaces_footer(buf: &mut Buffer, r: Rect, machine: Option<&str>, p: &Palette) -> Option<(Rect, Rect)> {
+/// ` new`(머신이 여럿이면 ` new · 머신`), 오른쪽 전체 메뉴 `menu`(`overlay0`). herdr: ` new`는 5칸, `menu`는 오른쪽 6칸.
+/// 머신 머리 줄이 없어진 aaa는 ` · 머신` 칸을 따로 준다(그 머신을 바꾸는 자리).
+pub fn render_spaces_footer(buf: &mut Buffer, r: Rect, machine: Option<&str>, p: &Palette) -> Option<Footer> {
     if r.h == 0 || r.w == 0 {
         return None;
     }
-    let (label, w) = match machine {
-        Some(m) => {
-            let label = format!(" new · {m}");
-            let w = unicode_width(&label) as u16;
-            (label, w)
-        }
-        None => (" new".to_string(), 5),
-    };
+    let tail = machine.map(|m| format!(" · {m}")).unwrap_or_default();
     let y = r.y + r.h - 1;
     let faint = Style::default().fg(p.overlay0);
-    buf.set_stringn(r.x, y, &label, r.w as usize, faint);
+    buf.set_stringn(r.x, y, format!(" new{tail}"), r.w as usize, faint);
     let text = 4.min(r.w);
     buf.set_stringn(r.x + r.w - text, y, "menu", text as usize, faint);
     let menu = 6.min(r.w);
-    Some((Rect { x: r.x, y, w: w.min(r.w), h: 1 }, Rect { x: r.x + r.w - menu, y, w: menu, h: 1 }))
+    let new = Rect { x: r.x, y, w: 5.min(r.w), h: 1 };
+    // ` new` 칸(5칸)이 ` · 머신`의 앞 빈칸을 덮는다: 머신 칸은 그 뒤 `· 이름`
+    let machine = machine.map(|_| Rect {
+        x: r.x + new.w,
+        y,
+        w: (unicode_width(&tail) as u16).saturating_sub(1).min(r.w - new.w),
+        h: 1,
+    });
+    Some(Footer { new, machine, menu: Rect { x: r.x + r.w - menu, y, w: menu, h: 1 } })
 }
 
 /// agents 구역 머리(herdr `render_agent_panel_header`): 구분선 `─`(`surface_dim`), ` agents`(`overlay0` 굵게)와 오른쪽에
@@ -738,25 +836,40 @@ mod tests {
         assert_eq!(icons(StatusIndicators::Symbols), "× ◐ ✓ ○ ·");
     }
 
+    /// 고를 수 있는 줄은 thread 첫 줄·묶음 머리·pane이다(둘째 줄·「pane 없음」은 건너뛴다)
     #[test]
     fn step_skips_headers_and_stops_at_ends() {
         let r = rows_of(&[
-            Row::Machine("m".into()),
-            Row::Project("m".into(), "p".into()),
+            Row::Project("p".into()),
             Row::Thread("p/t-0001".into()),
             Row::ThreadSub("p/t-0001".into()),
             Row::Empty,
-            Row::Machine("n".into()),
+            Row::Other,
             Row::Pane("x".into()),
         ]);
         assert_eq!(first(&r), 0);
-        assert_eq!(step(&r, 0, true), 2);
-        assert_eq!(step(&r, 2, true), 5);
-        assert_eq!(step(&r, 5, true), 6);
-        assert_eq!(step(&r, 6, true), 6);
-        assert_eq!(step(&r, 6, false), 5);
-        assert_eq!(step(&r, 5, false), 2);
+        assert_eq!(step(&r, 0, true), 1);
+        assert_eq!(step(&r, 1, true), 4);
+        assert_eq!(step(&r, 4, true), 5);
+        assert_eq!(step(&r, 5, true), 5);
+        assert_eq!(step(&r, 5, false), 4);
+        assert_eq!(step(&r, 4, false), 1);
         assert_eq!(step(&r, 0, false), 0);
+    }
+
+    /// 화면에 보이는 대로의 줄들(넓은 글자 뒤 칸은 건너뛰고 끝 빈칸은 뺀다)
+    fn shown(buf: &Buffer, w: u16, h: u16) -> Vec<String> {
+        (0..h)
+            .map(|y| {
+                let (mut out, mut x) = (String::new(), 0);
+                while x < w {
+                    let sym = buf[(x, y)].symbol().to_string();
+                    x += (unicode_width(&sym) as u16).max(1);
+                    out.push_str(&sym);
+                }
+                out.trim_end().to_string()
+            })
+            .collect()
     }
 
     fn machine(id: &str, name: &str, connection: Connection) -> MachineView {
@@ -855,20 +968,25 @@ mod tests {
         }))
     }
 
-    /// 웹 `machineRoster`와 같은 차례(차이 목록 L1): 머신마다 머리, 그 머신 thread를 rank(확인 필요 → 검토 대기 →
-    /// 작업 중 → 쉼)·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다. thread의 머신은 pane이 있으면 pane의 머신,
-    /// 없으면 thread 머신 이름·ID. thread pane은 pane 줄로 다시 나오지 않고, 끝난·평가자 thread는 빠진다.
+    /// 프로젝트를 먼저 묶는다(t-0352 2안, 웹 `roster`와 같은 차례): 모든 머신의 thread를 rank(확인 필요 → 검토 대기 →
+    /// 작업 중 → 쉼)·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다. 같은 프로젝트가 머신마다 나뉘지 않는다.
+    /// 프로젝트 차례는 이름순이 아니다. thread pane은 pane 줄로 다시 나오지 않고, 끝난·평가자 thread는 빠진다. thread에
+    /// 딸리지 않은 pane은 맨 아래 「기타」에 머신 차례로(머신 안은 받은 차례). 접은 묶음은 머리만 남기되 지금 pane의 thread는 남긴다. 줄이 없으면 「pane 없음」.
     #[test]
-    fn rows_group_threads_by_machine_and_project_like_web() {
+    fn rows_group_threads_by_project_across_machines() {
         let machines = [
             machine("m1", "mac-a", Connection::Connected),
             machine("m2", "mac-b", Connection::Connected),
             machine("m3", "mac-c", Connection::Disconnected),
         ];
+        let mut ended = pane("p4", "m2", None);
+        ended.state = SessionState::Exited { code: Some(0) };
         let panes = [
             pane("p1", "m1", Some(Role::Worker)),
+            ended,
             pane("p2", "m1", None),
             pane("p3", "m2", Some(Role::Worker)),
+            pane("p5", "m2", None),
             pane("pe", "m1", Some(Role::Evaluator)),
         ];
         let mut evaluator = thread("demo", "t-0006", ThreadGroup::WaitingOnYou, 900, "mac-a", Some("pe"));
@@ -876,43 +994,45 @@ mod tests {
         let threads: HashMap<String, ThreadView> = [
             thread("demo", "t-0001", ThreadGroup::Working, 100, "mac-a", Some("p1")),
             thread("demo", "t-0002", ThreadGroup::WaitingOnYou, 50, "mac-a", None),
-            // pane이 mac-b에 있으면 thread 머신 이름이 달라도 mac-b
+            // 다른 머신(mac-b pane)의 같은 프로젝트 thread도 같은 묶음
             thread("demo", "t-0003", ThreadGroup::ReadyForReview, 10, "mac-a", Some("p3")),
-            thread("other", "t-0004", ThreadGroup::Idle, 300, "m1", None),
-            thread("demo", "t-0007", ThreadGroup::Working, 200, "mac-a", None),
+            thread("alpha", "t-0004", ThreadGroup::Idle, 300, "m1", None),
+            thread("demo", "t-0007", ThreadGroup::Working, 200, "mac-c", None),
             thread("demo", "t-0005", ThreadGroup::Resolved, 999, "mac-a", None),
             evaluator,
         ]
         .into_iter()
         .map(|t| (thread_key(&t), t))
         .collect();
-        let t = |k: &str| Row::Thread(k.into());
-        let sub = |k: &str| Row::ThreadSub(k.into());
-        assert_eq!(
-            rows(&machines, &panes, &threads),
-            vec![
-                Row::Machine("m1".into()),
-                Row::Project("m1".into(), "demo".into()),
-                t("demo/t-0002"),
-                sub("demo/t-0002"),
-                t("demo/t-0007"),
-                sub("demo/t-0007"),
-                t("demo/t-0001"),
-                sub("demo/t-0001"),
-                Row::Project("m1".into(), "other".into()),
-                t("other/t-0004"),
-                sub("other/t-0004"),
-                Row::Pane("p2".into()),
-                Row::Machine("m2".into()),
-                Row::Project("m2".into(), "demo".into()),
-                t("demo/t-0003"),
-                sub("demo/t-0003"),
-                Row::Machine("m3".into()),
-                Row::Empty,
-                Row::Header("평가".into()),
-                Row::Pane("pe".into()),
-            ]
-        );
+        let t = |k: &str| [Row::Thread(k.into()), Row::ThreadSub(k.into())];
+        let open = HashSet::new();
+        let want: Vec<Row> = [
+            vec![Row::Project("demo".into())],
+            t("demo/t-0002").to_vec(),
+            t("demo/t-0003").to_vec(),
+            t("demo/t-0007").to_vec(),
+            t("demo/t-0001").to_vec(),
+            vec![Row::Project("alpha".into())],
+            t("alpha/t-0004").to_vec(),
+            vec![Row::Other, Row::Pane("p2".into()), Row::Pane("p4".into()), Row::Pane("p5".into())],
+            vec![Row::Header("평가".into()), Row::Pane("pe".into())],
+        ]
+        .concat();
+        assert_eq!(rows(&machines, &panes, &threads, &open, None), want);
+        // 접은 묶음: 머리만, 지금 pane(p1)의 thread와 지금 pane(p5)은 남는다
+        let folded: HashSet<String> = ["project:demo".to_string(), "other".to_string()].into();
+        let want: Vec<Row> = [
+            vec![Row::Project("demo".into())],
+            t("demo/t-0001").to_vec(),
+            vec![Row::Project("alpha".into())],
+            t("alpha/t-0004").to_vec(),
+            vec![Row::Other],
+            vec![Row::Header("평가".into()), Row::Pane("pe".into())],
+        ]
+        .concat();
+        assert_eq!(rows(&machines, &panes, &threads, &folded, Some("p1")), want);
+        assert!(rows(&machines, &panes, &threads, &folded, Some("p5")).contains(&Row::Pane("p5".into())));
+        assert_eq!(rows(&machines, &[], &HashMap::new(), &open, None), vec![Row::Empty]);
     }
 
     /// herdr-projects `state_line`(웹 `stateLine`): 묶음 말과 사실 하나
@@ -959,11 +1079,12 @@ mod tests {
         assert_eq!(state_line(&t, true, now), "쉼");
     }
 
-    /// 프로젝트 머리 오른쪽은 그 머신 thread 셈(herdr-projects `project_line`), thread는 「id · 제목」과 둘째 줄 상태 말,
-    /// 고른 thread는 둘째 줄까지 칠한다
+    /// 2안 줄 모양: 프로젝트 머리 오른쪽은 모든 머신의 그 프로젝트 thread 셈(herdr-projects `project_line`), thread 첫 줄은
+    /// 점·번호·제목, 둘째 줄은 왼쪽 상태 말(묶음 색)·오른쪽 머신 이름. 고른 thread는 둘째 줄까지 칠한다. 좁으면 머신이 먼저
+    /// 「…」로 줄고 빠진다(상태 말은 남는다). 끊긴 머신은 「이름 끊김」 노랑.
     #[test]
-    fn thread_rows_render_two_lines_like_herdr_projects() {
-        let machines = [machine("m1", "mac-a", Connection::Connected)];
+    fn thread_rows_render_two_lines_project_first() {
+        let mut machines = [machine("m1", "mac-a", Connection::Connected)];
         // thread는 아직 작업 중이지만 그 pane에 확인창이 떴다
         let mut asking = pane("p1", "m1", Some(Role::Worker));
         asking.agent = agent(AgentActivity::Question, None, None);
@@ -975,51 +1096,47 @@ mod tests {
                 .into_iter()
                 .map(|t| (thread_key(&t), t))
                 .collect();
-        let list = rows(&machines, &panes.values().cloned().collect::<Vec<_>>(), &threads);
+        let open = HashSet::new();
+        let list = rows(&machines, &panes.values().cloned().collect::<Vec<_>>(), &threads, &open, None);
         let pal = Palette::catppuccin();
         let sel = list.iter().position(|r| *r == Row::Thread("demo/t-0001".into())).unwrap();
-        let v = View {
-            machines: &machines,
-            panes: &panes,
-            threads: &threads,
-            current: None,
-            sel: Some(sel),
-            focused: true,
-            top: None,
-            pal: &pal,
-            style: StatusIndicators::Dots,
-            now_ms: 2_000,
+        let draw = |machines: &[MachineView], rows: &[Row], w: u16, sel: Option<usize>| {
+            let v = View {
+                machines,
+                panes: &panes,
+                threads: &threads,
+                current: None,
+                sel,
+                focused: true,
+                top: None,
+                pal: &pal,
+                style: StatusIndicators::Dots,
+                now_ms: 2_000,
+                folded: &open,
+            };
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, rows.len() as u16));
+            render(&mut buf, Rect { x: 0, y: 0, w, h: rows.len() as u16 }, rows, &v);
+            buf
         };
-        let w = 36;
-        let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, list.len() as u16));
-        render(&mut buf, Rect { x: 0, y: 0, w, h: list.len() as u16 }, &list, &v);
-        let text = |y: u16| {
-            let (mut out, mut x) = (String::new(), 0);
-            while x < w {
-                let sym = buf[(x, y)].symbol().to_string();
-                x += (unicode_width(&sym) as u16).max(1);
-                out.push_str(&sym);
-            }
-            out.trim_end().to_string()
-        };
-        let shown: Vec<String> = (0..list.len() as u16).map(text).collect();
+        let buf = draw(&machines, &list, 36, Some(sel));
         assert_eq!(
-            shown,
+            shown(&buf, 36, list.len() as u16),
             vec![
-                " ▾ mac-a                          ●",
-                " demo       확인 필요 1 · 작업 중 1",
+                " ▾ demo     확인 필요 1 · 작업 중 1",
+                " ● t-0002 t-0002-job",
                 // pane이 없는 확인 필요는 웹처럼 「pane 닫힘」
-                "   ● t-0002 · t-0002-job",
-                "     확인 필요 · pane 닫힘",
-                "   ● t-0001 · t-0001-job",
-                "     작업 중 · ~40%",
+                "   확인 필요 · pane 닫힘      mac-a",
+                " ● t-0001 t-0001-job",
+                "   작업 중 · ~40%             mac-a",
             ]
         );
-        assert_eq!(buf[(5, 5)].fg, pal.yellow);
-        assert_eq!(buf[(5, 3)].fg, pal.red);
+        assert_eq!(buf[(3, 4)].fg, pal.yellow);
+        assert_eq!(buf[(3, 2)].fg, pal.red);
+        assert_eq!(buf[(30, 2)].fg, pal.overlay0);
+        assert_eq!(buf[(3, 1)].fg, pal.overlay1);
         // 점은 pane이 돌면 pane 상태(확인창 빨강), pane이 없으면 묶음(확인 필요 빨강)
-        assert_eq!((buf[(3, 4)].symbol(), buf[(3, 4)].fg), ("●", pal.red));
-        assert_eq!((buf[(3, 2)].symbol(), buf[(3, 2)].fg), ("●", pal.red));
+        assert_eq!((buf[(1, 3)].symbol(), buf[(1, 3)].fg), ("●", pal.red));
+        assert_eq!((buf[(1, 1)].symbol(), buf[(1, 1)].fg), ("●", pal.red));
         let mut working = panes.clone();
         working.get_mut("p1").unwrap().agent = agent(AgentActivity::Working, None, None);
         assert_eq!(thread_row_dot(&threads["demo/t-0001"], &working), Dot::Working);
@@ -1032,20 +1149,23 @@ mod tests {
         waiting.group = ThreadGroup::WaitingOnYou;
         assert_eq!(thread_row_dot(&waiting, &working), Dot::Blocked);
         let selection = if pal.selection_bg == Color::Reset { pal.active_row_bg } else { pal.selection_bg };
-        assert_eq!((buf[(0, 4)].bg, buf[(0, 5)].bg), (selection, selection));
-        assert_ne!(buf[(0, 3)].bg, selection);
+        assert_eq!((buf[(0, 3)].bg, buf[(0, 4)].bg), (selection, selection));
+        assert_ne!(buf[(0, 2)].bg, selection);
 
-        // 26칸 사이드바(구분선 빼고 25칸)에서는 셈을 ` · ` 단위로 덜어 이름을 남긴다
-        let w = 25;
-        let mut narrow = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
-        render(&mut narrow, Rect { x: 0, y: 0, w, h: 1 }, &list[1..2], &View { sel: Some(0), focused: false, ..v });
-        let (mut out, mut x) = (String::new(), 0);
-        while x < w {
-            let sym = narrow[(x, 0)].symbol().to_string();
-            x += (unicode_width(&sym) as u16).max(1);
-            out.push_str(&sym);
-        }
-        assert_eq!(out.trim_end(), " demo        확인 필요 1");
+        // 좁으면 머신이 먼저 「…」로 줄고(네 칸까지) 빠진다. 상태 말은 남는다
+        let sub = &list[2..3];
+        let one = |w: u16| shown(&draw(&machines, sub, w, None), w, 1).remove(0);
+        assert_eq!(one(31), "   확인 필요 · pane 닫힘 mac-a");
+        assert_eq!(one(30), "   확인 필요 · pane 닫힘 mac…");
+        assert_eq!(one(29), "   확인 필요 · pane 닫힘");
+        assert!(one(18).starts_with("   확인 필요"), "{}", one(18));
+        // 26칸 사이드바(구분선 빼고 25칸)에서 머리 셈은 ` · ` 단위로 덜어 이름을 남긴다
+        assert_eq!(shown(&draw(&machines, &list[0..1], 25, None), 25, 1)[0], " ▾ demo      확인 필요 1");
+        // 끊긴 머신은 「이름 끊김」 노랑
+        machines[0].connection = Connection::Disconnected;
+        let buf = draw(&machines, sub, 36, None);
+        assert_eq!(shown(&buf, 36, 1)[0], "   확인 필요 · pane 닫힘 mac-a 끊김");
+        assert_eq!(buf[(25, 0)].fg, pal.yellow);
     }
 
     /// thread 줄은 묶음 차례(herdr-projects `DISPLAY_ORDER`: 확인 필요 → 검토 → 병합 중 → 작업 → 쉼)로, 같은 묶음 안은
@@ -1065,8 +1185,8 @@ mod tests {
         .into_iter()
         .map(|t| (thread_key(&t), t))
         .collect();
-        // 머신 머리 아래 프로젝트 머리 하나, 그 아래 thread 줄들(둘째 줄은 뺀다)
-        let got: Vec<Row> = rows(&[machine("m", "mac-a", Connection::Connected)], &[], &threads)
+        // 프로젝트 머리 하나, 그 아래 thread 줄들(둘째 줄은 뺀다)
+        let got: Vec<Row> = rows(&[machine("m", "mac-a", Connection::Connected)], &[], &threads, &HashSet::new(), None)
             .into_iter()
             .filter(|r| matches!(r, Row::Thread(_)))
             .collect();
@@ -1082,51 +1202,38 @@ mod tests {
         assert_eq!(state_line(&threads["p/t-landing"], true, 0), "병합 중 · 보고");
     }
 
-    /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
+    /// 「기타」 pane 줄은 제목 뒤에 머신 이름. 넘치면 제목이 먼저 「…」로 줄고 머신·배지는 남는다, 오른쪽 글과 한 칸 띄우고
+    /// 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)
     #[test]
-    fn long_name_is_cut_with_ellipsis_before_the_right_text() {
-        let machines = [MachineView {
-            id: "m".into(),
-            name: "studio-very-long-machine".into(),
-            local: false,
-            connection: Connection::Disconnected,
-            os: None,
-            boot_id: None,
-            dev_mode: false,
-            last_seen_ms: None,
-            health: None,
-            clock_skew_ms: None,
-            problems: vec![],
-        }];
-        let (panes, threads) = (HashMap::new(), HashMap::new());
+    fn pane_row_cuts_the_title_before_the_machine() {
+        let machines = [machine("m", "mac-b", Connection::Connected)];
+        let mut p = pane("p", "m", None);
+        p.name = "very-long-pane-title".into();
+        p.state = SessionState::Exited { code: Some(0) };
+        let panes: HashMap<String, PaneView> = [(p.id.clone(), p)].into();
+        let (threads, open) = (HashMap::new(), HashSet::new());
         let pal = Palette::catppuccin();
         let v = View {
             machines: &machines,
             panes: &panes,
             threads: &threads,
             current: None,
-            sel: Some(0),
+            sel: None,
             focused: false,
             top: None,
             pal: &pal,
             style: StatusIndicators::Dots,
             now_ms: 0,
+            folded: &open,
         };
         let line = |w: u16| {
             let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, 1));
-            render(&mut buf, Rect { x: 0, y: 0, w, h: 1 }, &[Row::Machine("m".into())], &v);
-            // 넓은 글자 뒤 칸은 건너뛴다(터미널에 보이는 대로)
-            let (mut out, mut x) = (String::new(), 0);
-            while x < w {
-                let sym = buf[(x, 0)].symbol().to_string();
-                x += (unicode_width(&sym) as u16).max(1);
-                out.push_str(&sym);
-            }
-            out
+            render(&mut buf, Rect { x: 0, y: 0, w, h: 1 }, &[Row::Pane("p".into())], &v);
+            shown(&buf, w, 1).remove(0)
         };
-        assert_eq!(line(20), " ▾ studio-v… ◐ 끊김 ");
+        assert_eq!(line(30), " · very-long-p… mac-b 종료(0)");
         // 넉넉하면 그대로
-        assert_eq!(line(40), format!(" ▾ studio-very-long-machine{}◐ 끊김 ", " ".repeat(6)));
+        assert_eq!(line(40), " · very-long-pane-title mac-b   종료(0)");
     }
 
     #[test]
