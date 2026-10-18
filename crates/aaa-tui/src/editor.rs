@@ -28,7 +28,6 @@ impl Editor {
         e
     }
 
-    #[cfg(test)]
     pub fn as_str(&self) -> &str {
         &self.text
     }

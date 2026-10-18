@@ -2,16 +2,22 @@
 //! 옮기며 이 화면의 기록을 넘기고(`PaneScroll`), 고른 글은 끌어 고르기처럼 host가 기록까지 읽어 복사한다(`PaneSelectionRead`).
 //! 커서·고르기는 기록 줄 번호(`mouse::Point`)로 둔다. 화면 위치는 frame을 기다리지 않고 보낸 값으로 셈한다(herdr와 같다).
 //! 낱말·문단 이동(`w b e W B E { }`)은 herdr처럼 host가 화면 사본의 기록까지 보고 정하고(`PaneCopyMotion`), 답이 올 때까지
-//! 다음 키를 붙잡아 그 자리에서 잇는다. 찾기(`/`·`?`·`n`·`N`)는 아직 없다.
+//! 다음 키를 붙잡아 그 자리에서 잇는다. 찾기(`/`·`?` 입력 줄, `n`·`N` 다시)도 host가 하고(`PaneCopySearch`) 답이 오면
+//! 현재 일치로 커서를 옮기고 일치를 칠한다.
 //!
 //! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 
-use aaa_proto::{CopyMotion, FrontRequest, GridRun, TextPoint};
+use aaa_proto::layout::Rect;
+use aaa_proto::{CopyMotion, FrontRequest, GridRun, SearchDirection, TextPoint, TextRange};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::buffer::Buffer;
+use ratatui::style::Style;
 
+use crate::editor::{self, Editor};
 use crate::keys::Combo;
 use crate::mouse::{self, Point, Selection};
+use crate::theme::Palette;
 use crate::{App, FrontSender, Mode, Pending};
 
 /// copy 모드 상태(herdr `ClientCopyModeState`). pane에 붙어 있어 포커스가 다른 pane으로 가면 Terminal 모드가 되고,
@@ -25,6 +31,61 @@ pub struct CopyMode {
     /// 들어올 때의 기록 위치(나갈 때 되돌린다)
     pub entry: u32,
     pub select: Option<Select>,
+    /// 찾기 입력 줄(herdr `ClientCopySearchPrompt`): `/` 앞으로·`?` 뒤로
+    pub prompt: Option<(SearchDirection, Editor)>,
+    pub search: Search,
+}
+
+/// 마지막 찾기(herdr `search_query`·`search_direction`·`search_matches`·…). 화면 내용이 바뀌면 일치만 지우고 `n`·`N`은 남는다.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Search {
+    pub query: String,
+    /// `/`·`?`로 연 방향(`n`은 이 방향, `N`은 반대)
+    pub direction: Option<SearchDirection>,
+    /// 현재 일치 언저리(host가 최대 1024개)
+    pub matches: Vec<TextRange>,
+    pub total: u64,
+    pub current: Option<usize>,
+    pub current_global: Option<u64>,
+}
+
+impl Search {
+    fn clear_matches(&mut self) {
+        self.matches.clear();
+        self.total = 0;
+        self.current = None;
+        self.current_global = None;
+    }
+
+    /// Esc가 지울 것이 있는가(herdr: 찾은 글·일치·방향 중 하나라도)
+    fn is_active(&self) -> bool {
+        !self.query.is_empty() || !self.matches.is_empty() || self.direction.is_some()
+    }
+
+    /// 막대의 ` n/m`(herdr `match_status`: 찾았으나 없으면 ` 0/0`, 찾지 않았으면 빈 글)
+    pub fn status(&self) -> String {
+        match self.current_global {
+            Some(n) => format!(" {}/{}", n + 1, self.total),
+            None if !self.query.is_empty() => " 0/0".into(),
+            None => String::new(),
+        }
+    }
+}
+
+/// copy 모드 요청의 답(`copy_apply`가 커서·찾기에 넣는다)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CopyReply {
+    Cursor { pane: String, cursor: Point },
+    Search { pane: String, query: String, direction: SearchDirection, repeat: bool, found: Found },
+}
+
+/// `CopySearch` 답(herdr `ClientCopySearchResult`)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Found {
+    pub matches: Vec<TextRange>,
+    pub total: u64,
+    pub current: Option<u32>,
+    pub current_global: Option<u64>,
 }
 
 /// 고르기 시작점(herdr `ClientCopySelection`): 글자 단위는 그 칸, 줄 단위는 그 줄
@@ -97,7 +158,15 @@ impl App {
         let offset = g.scroll.offset;
         self.selection = None;
         self.autoscroll = None;
-        self.copy = Some(CopyMode { pane, cursor, offset, entry: offset, select: None });
+        self.copy = Some(CopyMode {
+            pane,
+            cursor,
+            offset,
+            entry: offset,
+            select: None,
+            prompt: None,
+            search: Search::default(),
+        });
         self.mode = Mode::Copy;
         Ok(())
     }
@@ -148,16 +217,21 @@ impl App {
 
     /// copy 모드 키(herdr `route_copy_mode_key`). prefix는 prefix 모드로 가고 명령 뒤 copy 모드로 돌아온다.
     pub(crate) async fn on_copy_key(&mut self, c: Combo, tx: &mut FrontSender) -> Result<()> {
+        // 찾기 입력 줄이 열려 있으면 키는 모두 그 줄로(prefix도, herdr)
+        if self.copy.as_ref().is_some_and(|c| c.prompt.is_some()) {
+            return self.on_prompt_key(c, tx).await;
+        }
         if self.is_prefix(c) {
             self.mode = Mode::Prefix;
             return Ok(());
         }
         let ctrl = c.mods == KeyModifiers::CONTROL;
         match c.code {
-            // 고르기가 있으면 지우기만, 없으면 나간다
+            // 고르기나 찾기가 있으면 지우기만, 없으면 나간다
             KeyCode::Esc => {
-                if let Some(copy) = self.copy.as_mut().filter(|c| c.select.is_some()) {
+                if let Some(copy) = self.copy.as_mut().filter(|c| c.select.is_some() || c.search.is_active()) {
                     copy.select = None;
+                    copy.search = Search::default();
                     self.selection = None;
                     return Ok(());
                 }
@@ -206,6 +280,10 @@ impl App {
             Some('E') => self.copy_motion(tx, CopyMotion::NextBigWordEnd).await?,
             Some('{') => self.copy_motion(tx, CopyMotion::PreviousParagraph).await?,
             Some('}') => self.copy_motion(tx, CopyMotion::NextParagraph).await?,
+            Some('/') => self.open_prompt(SearchDirection::Forward),
+            Some('?') => self.open_prompt(SearchDirection::Backward),
+            Some('n') => self.repeat_search(tx, false).await?,
+            Some('N') => self.repeat_search(tx, true).await?,
             _ => {}
         }
         Ok(())
@@ -219,7 +297,7 @@ impl App {
         let last = max + u32::from(h.max(1)) - 1;
         c.cursor.0 = (i64::from(c.cursor.0) + rows).clamp(0, i64::from(last)) as u32;
         c.cursor.1 = (i64::from(c.cursor.1) + cols).clamp(0, i64::from(w.saturating_sub(1))) as u16;
-        self.copy_reveal(tx).await?;
+        self.copy_reveal(tx, false).await?;
         self.copy_sync();
         Ok(())
     }
@@ -255,13 +333,14 @@ impl App {
         Ok(())
     }
 
-    /// 커서가 화면 밖이면 그 줄이 맨 위·맨 아래에 오게 넘긴다(herdr `reveal_copy_cursor`)
-    async fn copy_reveal(&mut self, tx: &mut FrontSender) -> Result<()> {
+    /// 커서가 화면 밖이면 그 줄이 맨 위·맨 아래에 오게 넘긴다(herdr `reveal_copy_cursor`). `bar`면 맨 아랫줄(모드 막대)
+    /// 위까지만 쓴다(찾은 자리).
+    async fn copy_reveal(&mut self, tx: &mut FrontSender, bar: bool) -> Result<()> {
         let Some(pane) = self.copy.as_ref().map(|c| c.pane.clone()) else { return Ok(()) };
         let Some((_, h, max)) = self.copy_geometry(&pane) else { return Ok(()) };
         let Some(c) = self.copy.as_mut() else { return Ok(()) };
         let top = max.saturating_sub(c.offset);
-        let rows = u32::from(h.saturating_sub(1));
+        let rows = u32::from(h.saturating_sub(if bar { 2 } else { 1 }));
         let want = if c.cursor.0 < top {
             c.cursor.0
         } else if c.cursor.0 > top + rows {
@@ -290,13 +369,103 @@ impl App {
         Ok(())
     }
 
-    /// host가 정한 자리로 커서를 옮기고 보이게 넘긴다. 그사이 copy 모드를 나갔거나 다른 pane이면 버린다.
+    /// host 답을 넣는다(herdr `apply_copy_motion_target`·`apply_copy_search_result`): 옮긴 자리, 찾았으면 현재 일치의 시작으로
+    /// 커서를 옮기고 보이게 넘긴다. 그사이 copy 모드를 나갔거나 다른 pane이면 버린다.
     pub(crate) async fn copy_apply(&mut self, tx: &mut FrontSender) -> Result<()> {
-        let Some((pane, cursor)) = self.copy_reply.take() else { return Ok(()) };
-        let Some(c) = self.copy.as_mut().filter(|c| c.pane == pane) else { return Ok(()) };
-        c.cursor = cursor;
-        self.copy_reveal(tx).await?;
+        let bar = match self.copy_reply.take() {
+            None => return Ok(()),
+            Some(CopyReply::Cursor { pane, cursor }) => {
+                let Some(c) = self.copy.as_mut().filter(|c| c.pane == pane) else { return Ok(()) };
+                c.cursor = cursor;
+                false
+            }
+            Some(CopyReply::Search { pane, query, direction, repeat, found }) => {
+                let Some(c) = self.copy.as_mut().filter(|c| c.pane == pane) else { return Ok(()) };
+                let Found { matches, total, current, current_global } = found;
+                let current = current.map(|i| i as usize).filter(|i| *i < matches.len());
+                c.search.query = query;
+                if !repeat {
+                    c.search.direction = Some(direction);
+                }
+                c.search = Search { matches, total, current, current_global, ..std::mem::take(&mut c.search) };
+                let Some(at) = current.and_then(|i| c.search.matches.get(i)) else { return Ok(()) };
+                c.cursor = (at.start.row, at.start.col);
+                true
+            }
+        };
+        self.copy_reveal(tx, bar).await?;
         self.copy_sync();
+        Ok(())
+    }
+
+    /// `/`·`?`(herdr `open_copy_search`): 빈 입력 줄을 연다
+    fn open_prompt(&mut self, direction: SearchDirection) {
+        if let Some(c) = self.copy.as_mut() {
+            c.prompt = Some((direction, Editor::default()));
+        }
+    }
+
+    /// 입력 줄 키(herdr `route_copy_search_prompt_key`): Esc 닫기, Enter 찾기, 나머지는 편집
+    async fn on_prompt_key(&mut self, k: Combo, tx: &mut FrontSender) -> Result<()> {
+        let Some(c) = self.copy.as_mut() else { return Ok(()) };
+        match k.code {
+            KeyCode::Esc => c.prompt = None,
+            KeyCode::Enter => {
+                if let Some((direction, input)) = c.prompt.take() {
+                    self.copy_search(tx, input.as_str().to_string(), direction, false).await?;
+                }
+            }
+            _ => {
+                if let Some((_, input)) = c.prompt.as_mut() {
+                    input.key(k.code, k.mods);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 입력 줄에 붙여넣기(herdr `insert_copy_search_text`). 입력 줄이 없으면 false.
+    pub(crate) fn prompt_paste(&mut self, text: &str) -> bool {
+        let Some((_, input)) = self.copy.as_mut().and_then(|c| c.prompt.as_mut()) else { return false };
+        input.insert(text);
+        true
+    }
+
+    /// `n` 같은 방향·`N` 반대로 다시 찾기(herdr `repeat_copy_search`)
+    async fn repeat_search(&mut self, tx: &mut FrontSender, reverse: bool) -> Result<()> {
+        let Some(c) = self.copy.as_ref() else { return Ok(()) };
+        let Some(direction) = c.search.direction.filter(|_| !c.search.query.is_empty()) else { return Ok(()) };
+        let direction = match (direction, reverse) {
+            (SearchDirection::Forward, true) => SearchDirection::Backward,
+            (SearchDirection::Backward, true) => SearchDirection::Forward,
+            (d, false) => d,
+        };
+        let query = c.search.query.clone();
+        self.copy_search(tx, query, direction, true).await
+    }
+
+    /// 찾기 요청(herdr `dispatch_next_copy_operation`의 Search): 다시 찾기이고 커서가 현재 일치의 시작이면 그 일치 다음부터.
+    /// 답이 올 때까지 키를 붙잡는다.
+    async fn copy_search(
+        &mut self,
+        tx: &mut FrontSender,
+        query: String,
+        direction: SearchDirection,
+        repeat: bool,
+    ) -> Result<()> {
+        let Some(c) = self.copy.as_ref().filter(|_| !query.is_empty()) else { return Ok(()) };
+        let cursor = TextPoint { row: c.cursor.0, col: c.cursor.1 };
+        let previous = repeat
+            .then(|| c.search.current.and_then(|i| c.search.matches.get(i).copied()).filter(|m| m.start == cursor))
+            .flatten();
+        let pane = c.pane.clone();
+        if !self.host_at_least(17) {
+            return Ok(());
+        }
+        let req = FrontRequest::PaneCopySearch { pane, query: query.clone(), direction, cursor, previous };
+        let id = tx.send(req).await?;
+        self.pending.insert(id.clone(), Pending::CopySearch { query, direction, repeat });
+        self.copy_wait = Some(id);
         Ok(())
     }
 
@@ -353,6 +522,11 @@ impl App {
                 c.select = None;
                 self.selection = None;
             }
+            // herdr는 화면 내용이 바뀌면(content revision) 일치를 지운다. aaa frame에는 그 번호가 없어 기록이 늘거나
+            // alt 화면이 바뀐 때 지운다
+            if grew > 0 || alt_changed {
+                c.search.clear_matches();
+            }
         }
         if let Some(mouse::Drag::Select { pane: p, offset: Some(o), .. }) = self.drag.as_mut()
             && p == pane
@@ -361,6 +535,57 @@ impl App {
                 *o += grew;
             }
             *o = (*o).min(after.max);
+        }
+    }
+}
+
+/// 찾기 입력 줄 막대(herdr `render_mode_bar` Copy의 search prompt): ` COPY ` 다음 `/`·`?`, 입력 칸, 넓으면 오른쪽에 안내.
+/// 입력 칸은 `text` 글에 `panel_bg` 바탕, 커서 칸은 뒤집는다.
+pub fn render_prompt(buf: &mut Buffer, bar: Rect, prompt: &(SearchDirection, Editor), p: &Palette, styles: [Style; 3]) {
+    let [chip, key, base] = styles;
+    let (direction, input) = prompt;
+    buf.set_stringn(bar.x, bar.y, " COPY ", usize::from(bar.w), chip);
+    let prefix = 8.min(bar.w);
+    if bar.w >= 8 {
+        buf.set_string(bar.x + 7, bar.y, if *direction == SearchDirection::Forward { "/" } else { "?" }, key);
+    }
+    let footer = "  enter 찾기  esc 취소";
+    let footer_w = if bar.w >= 50 { crate::unicode_width(footer) as u16 } else { 0 };
+    let field = Rect { x: bar.x + prefix, w: bar.w.saturating_sub(prefix + footer_w), ..bar };
+    if let Some((x, y)) = editor::render(buf, field, input, Style::default().fg(p.text).bg(p.panel_bg))
+        && let Some(cell) = buf.cell_mut((x, y))
+    {
+        cell.set_style(Style::default().fg(p.panel_bg).bg(p.text));
+    }
+    if footer_w > 0 {
+        buf.set_string(bar.x + bar.w - footer_w, bar.y, footer, base);
+    }
+}
+
+/// 찾은 일치 칠하기(herdr `render_client_copy_search_highlights`): `current`면 현재 일치만 accent 바탕 굵게, 아니면 나머지를
+/// `surface1` 바탕에 `text` 글로. `r`은 pane 안쪽 칸, `top`은 화면 맨 위 줄의 기록 줄 번호.
+pub fn paint_matches(buf: &mut Buffer, r: Rect, top: u32, search: &Search, p: &Palette, current: bool) {
+    if r.w == 0 || r.h == 0 {
+        return;
+    }
+    let bottom = top + u32::from(r.h) - 1;
+    let style = if current {
+        Style::default().fg(crate::theme::contrast(p)).bg(p.accent).add_modifier(ratatui::style::Modifier::BOLD)
+    } else {
+        Style::default().fg(p.text).bg(p.surface1)
+    };
+    for (i, m) in search.matches.iter().enumerate() {
+        if (search.current == Some(i)) != current || m.end.row < top || m.start.row > bottom {
+            continue;
+        }
+        for row in m.start.row.max(top)..=m.end.row.min(bottom) {
+            let from = if row == m.start.row { m.start.col } else { 0 };
+            let to = if row == m.end.row { m.end.col } else { r.w - 1 }.min(r.w - 1);
+            for col in from..=to {
+                if let Some(cell) = buf.cell_mut((r.x + col, r.y + (row - top) as u16)) {
+                    cell.set_style(style);
+                }
+            }
         }
     }
 }

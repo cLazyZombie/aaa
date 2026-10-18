@@ -31,6 +31,9 @@ const COMPACT: u16 = 4;
 /// herdr catppuccin 팔레트의 탐색 커서 줄 바탕(`selection_bg`)과 지금 pane 줄 바탕(`active_row_bg`)
 const SELECTION_BG: u32 = 0x0200_0000 | (49 << 16) | (50 << 8) | 68;
 const ACTIVE_BG: u32 = 0x0200_0000 | (30 << 16) | (30 << 8) | 46;
+/// copy 모드 찾기: 현재 일치(accent)와 나머지 일치(`surface1`) 바탕
+const ACCENT_BG: u32 = 0x0200_0000 | (137 << 16) | (180 << 8) | 250;
+const SURFACE1_BG: u32 = 0x0200_0000 | (69 << 16) | (71 << 8) | 90;
 
 /// 시험 설정: 사용자 입력기는 건드리지 않고(입력기 전환은 기본 켬이라 끈다), prefix 뒤 자모 해석은 켠다(기본값)
 const LOCAL_ONLY: &str = r#"schema = 1
@@ -1705,7 +1708,8 @@ fn copy_mode_like_herdr() {
     let copied = lab.root.join("copied.txt");
     let copied_s = lab::path_str(&copied);
     let read_copied = || std::fs::read_to_string(&copied).unwrap_or_default();
-    let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)]);
+    // 넓게: copy 모드 막대(herdr처럼 넘치면 자른다)가 끝까지 보인다
+    let mut tui = Tui::start_cols(&h, &[("AAA_TEST_CLIPBOARD_TEXT", copied_s)], WIDE);
     hw.wait("이 화면 크기", |w| w.held_by(&id, "tui@").then_some(()));
     let text = |l: &str| panes_part(l).trim_end_matches(['▕', '▐', ' ']).to_string();
     let rows = |s: &str| s.lines().skip(1).map(text).collect::<Vec<_>>();
@@ -1761,6 +1765,32 @@ fn copy_mode_like_herdr() {
     tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("w/b/e"));
     tui.send(b"k0vwwey");
     wait_for("낱말 이동 복사", T, || (read_copied() == "one two-three").then_some(()));
+    tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
+
+    // 6) 찾기(herdr `PaneCopySearch`): `?19` Enter는 뒤로 찾아 199(19·119·190~199 열두 개 중 마지막)로, 막대에 12/12.
+    //    `n`은 같은 방향 다음(198, 11/12), `N`은 반대(199), Esc는 찾기만 지우고 커서(199 첫 칸)는 둔다(herdr). 거기서 다시
+    //    `?19` Enter는 커서 앞에서 끝나는 마지막 일치(198), `n`은 197, `ve`·`y`면 「197」(답을 기다리는 동안 붙잡은 키로 잇는다).
+    tui.cmd("[");
+    tui.wait_text("copy 모드 막대", |s| s.contains(" COPY ") && s.contains("/ ? 찾기"));
+    tui.send(b"?19");
+    tui.wait_text("찾기 입력 줄", |s| s.contains(" COPY  ?19") && s.contains("enter 찾기"));
+    tui.send(b"\r");
+    // 현재 일치(199의 「19」)는 accent, 나머지(198)는 surface1 바탕. 커서 칸(accent)은 일치 첫 칸이라 둘째 칸으로 본다
+    let bg_at = |s: &Screen, needle: &str, dx: usize| s.find(needle).map(|(r, c)| s.bgs[r][c + dx]);
+    tui.wait_screen("뒤로 찾음", |s| {
+        s.text().contains("n/N 다시 12/12")
+            && bg_at(s, "199", 1) == Some(ACCENT_BG)
+            && bg_at(s, "198", 1) == Some(SURFACE1_BG)
+            && bg_at(s, "198", 2) != Some(SURFACE1_BG)
+    });
+    tui.send(b"n");
+    tui.wait_text("같은 방향 다음", |s| s.contains("n/N 다시 11/12"));
+    tui.send(b"N");
+    tui.wait_text("반대 방향", |s| s.contains("n/N 다시 12/12"));
+    tui.send(b"\x1b");
+    tui.wait_text("찾기 지움", |s| s.contains(" COPY ") && !s.contains("12/12") && s.contains("q/esc 끝"));
+    tui.send(b"?19\rnvey");
+    wait_for("찾은 자리에서 복사", T, || (read_copied() == "197").then_some(()));
     tui.wait_text("copy 모드 끝", |s| !s.contains(" COPY "));
     // copy 모드 키는 셸에 가지 않았다
     assert!(h.screen(&id).trim_end().ends_with('$'), "{}", h.screen(&id));

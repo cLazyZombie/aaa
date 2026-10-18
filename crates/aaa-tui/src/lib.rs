@@ -168,6 +168,8 @@ enum Pending {
     Copy,
     /// copy 모드 낱말·문단 이동: 응답이 오면 커서를 그 자리로
     CopyMotion,
+    /// copy 모드 찾기(찾은 글·방향·`n`·`N` 다시인지): 응답이 오면 현재 일치로
+    CopySearch { query: String, direction: aaa_proto::SearchDirection, repeat: bool },
 }
 
 /// herdr `ClientShellMode`(Copy·Resize는 다음 묶음)
@@ -271,7 +273,7 @@ struct App {
     held: Vec<Event>,
     /// copy 모드 이동 요청(응답 전까지 키를 `held`에 붙잡아 다음 키가 옮긴 자리에서 시작한다)과 받은 자리(pane, 커서)
     copy_wait: Option<String>,
-    copy_reply: Option<(String, mouse::Point)>,
+    copy_reply: Option<copy::CopyReply>,
     quit: bool,
     /// 마우스(`[tui] mouse_capture`)와 터미널에 걸어 둔 값(다시 걸어야 하면 None)
     mouse_capture: bool,
@@ -438,6 +440,8 @@ impl App {
         match &self.overlay {
             Some(Overlay::Rename(_)) => false,
             Some(_) => true,
+            // copy 모드 찾기 입력 줄도 글을 쓰는 칸이다(herdr)
+            None if self.mode == Mode::Copy && self.copy.as_ref().is_some_and(|c| c.prompt.is_some()) => false,
             None => self.mode != Mode::Terminal,
         }
     }
@@ -558,8 +562,10 @@ impl App {
                 r.input.insert(&s);
             }
             Some(_) => {}
-            // copy 모드에서는 pane에 보내지 않는다
-            None if self.mode == Mode::Copy => {}
+            // copy 모드에서는 pane에 보내지 않는다(찾기 입력 줄이 열려 있으면 그 줄로, herdr)
+            None if self.mode == Mode::Copy => {
+                self.prompt_paste(&s);
+            }
             None if s.is_empty() => {
                 self.paste_image(tx).await?;
             }
@@ -619,9 +625,25 @@ impl App {
                         self.copied(&text, truncated)
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::CopyCursor { pane, cursor }), Some(Pending::CopyMotion)) => {
-                        self.copy_reply = Some((pane, (cursor.row, cursor.col)))
+                        self.copy_reply = Some(copy::CopyReply::Cursor { pane, cursor: (cursor.row, cursor.col) })
+                    }
+                    (
+                        Outcome::Ok(aaa_proto::FrontResponse::CopySearch {
+                            pane,
+                            matches,
+                            total,
+                            current,
+                            current_global,
+                        }),
+                        Some(Pending::CopySearch { query, direction, repeat }),
+                    ) => {
+                        let found = copy::Found { matches, total, current, current_global };
+                        self.copy_reply = Some(copy::CopyReply::Search { pane, query, direction, repeat, found })
                     }
                     (Outcome::Ok(_), _) => {}
+                    (Outcome::Err(e), Some(Pending::CopySearch { .. })) => {
+                        self.set_error(format!("찾기 실패: {}", e.message))
+                    }
                     (Outcome::Err(e), Some(Pending::CopyMotion)) => {
                         self.set_error(format!("copy 이동 실패: {}", e.message))
                     }
@@ -1780,6 +1802,15 @@ impl App {
         }
         let bar = Rect { y: pane_area.y + pane_area.h - 1, h: 1, ..pane_area };
         fill(buf, bar, Style::default().fg(self.palette.overlay0).bg(self.palette.panel_bg));
+        if let Some(prompt) = self.copy.as_ref().and_then(|c| c.prompt.as_ref()).filter(|_| self.mode == Mode::Copy)
+            && self.error.is_none()
+        {
+            let p = &self.palette;
+            let chip = Style::default().fg(theme::contrast(p)).bg(p.accent).add_modifier(Modifier::BOLD);
+            let key = Style::default().fg(p.accent).bg(p.panel_bg).add_modifier(Modifier::BOLD);
+            copy::render_prompt(buf, bar, prompt, p, [chip, key, Style::default().fg(p.overlay0).bg(p.panel_bg)]);
+            return Some(bar);
+        }
         let mut x = bar.x;
         let end = bar.x + bar.w;
         for (text, st) in segments {
@@ -1830,20 +1861,26 @@ impl App {
                 s("esc", key),
                 s(" 끝", base),
             ]),
-            // herdr copy 모드 막대(찾기는 아직 없다)
+            // herdr copy 모드 막대(찾기 입력 줄은 `render_mode_bar`가 따로 그린다)
             Mode::Copy => {
                 let selecting = self.copy.as_ref().is_some_and(|c| c.select.is_some());
+                let status = self.copy.as_ref().map(|c| c.search.status()).unwrap_or_default();
+                let searched = self.copy.as_ref().is_some_and(|c| !c.search.query.is_empty());
                 let mut v = vec![
                     s(" COPY ", chip),
                     s(" ", base),
-                    s("h/j/k/l w/b/e", key),
+                    s("h/j/k/l w/b/e { }", key),
                     s(" 이동  ", base),
+                    s("/ ?", key),
+                    s(" 찾기  ", base),
+                    s("n/N", key),
+                    (format!(" 다시{status}  "), base),
                     s("v/space", key),
                     s(if selecting { " 고르는 중  " } else { " 고르기  " }, base),
                     s("y/enter", key),
                     s(" 복사  ", base),
                 ];
-                if selecting {
+                if selecting || searched {
                     v.extend([s("esc", key), s(" 지우기  q 끝", base)]);
                 } else {
                     v.extend([s("q/esc", key), s(" 끝", base)]);
@@ -1880,6 +1917,12 @@ impl App {
                     x = buf.set_stringn(x, y, &run.t, room, run_style(run)).0;
                 }
             }
+            // 찾은 일치(herdr: 나머지 일치, 고른 글, 현재 일치 차례로 칠한다)
+            let copying = self.copy.as_ref().filter(|c| c.pane == pane);
+            let top = mouse::view_top(g.scroll);
+            if let Some(c) = copying {
+                copy::paint_matches(buf, r, top, &c.search, &self.palette, false);
+            }
             // 고른 글(herdr 선택 색)
             if let Some(sel) = self.selection.as_ref().filter(|s| s.pane == pane) {
                 let (bg, fg) = mouse::selection_colors(&self.palette);
@@ -1894,8 +1937,10 @@ impl App {
                     }
                 }
             }
+            if let Some(c) = copying {
+                copy::paint_matches(buf, r, top, &c.search, &self.palette, true);
+            }
             // copy 모드 커서(herdr: accent 바탕 굵게, 터미널 커서는 숨김)
-            let copying = self.copy.as_ref().filter(|c| c.pane == pane);
             if let Some(c) = copying
                 && let Some(row) = c.cursor.0.checked_sub(mouse::view_top(g.scroll)).filter(|row| *row < u32::from(r.h))
                 && c.cursor.1 < r.w
