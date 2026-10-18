@@ -2824,7 +2824,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 파일 보기 안 Markdown은 그 문서의 폴더를 기준으로 잇는다(참고 `resolveFromDocument`). 문서 링크(`[코드](../src/app.ts)`), code 안 경로, 언어 없는 fence(로그·명령 출력) 안 경로를 누르면 같은 pane 기준으로 연다. 언어가 있는 code 안은 글 그대로다(참고 `PLAIN_FENCE`).
   - 열린 파일 보기 안에서 다른 파일을 열면 기록 칸을 바꾼다(참고와 같다). 뒤로 한 번이면 pane으로 돌아간다.
   - 그림(`![점](../shots/dot.png)`)은 그 pane의 `pane_file`로 찾아 읽기 경로로 그린다(참고 `markdownImages`). 크기를 먼저 읽어 자리를 잡고(참고 `imageBox`), 못 읽으면 「이미지를 표시할 수 없음」, 크면 내려받기를 권한다. 문구는 참고 ko 그대로다.
-  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음).
+  - 보고서 같은 다른 Markdown에는 이 문맥이 없어 전과 같다(파일 단추·그림 읽기 없음). → 보고서 파일 단추는 §8.170(thread worktree 기준), 그림은 아직 없음.
 - **문법 강조(5b-3).**
   - 소스는 파일 이름으로, Markdown code block은 fence 낱말로 문법을 골라 칠한다(참고 `highlight.ts`·`HighlightedCode`, `@tanstack/highlight` 1.0.0 그대로, 참고와 같은 판). 2KB까지는 그리면서 칠한다. 더 긴 것은 worker가 칠하고, 그동안은 글 그대로다.
   - worker는 한 글에 2초를 쓴다. 넘으면 worker를 끝내고 글 그대로 두며 머리에 「너무 길어 강조 표시를 생략했습니다」를 단다(tokenizer가 제곱으로 느려지는 꼴이 있어서다).
@@ -2832,7 +2832,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 참고와 다른 것(시험): 벽시계를 재는 「2KB를 50ms 안에」는 옮기지 않았다(docs/testing.md). bun의 진짜 Web Worker를 쓰는 넷은 Node에 worker 대역(같은 `highlightRuns`로 답함·미룸·실패)을 두고 옮겼다. 예산을 넘기는 꼴은 실패로 대신했다(같은 길). 진짜 worker와 2초 예산은 웹 E2E가 본다.
 - **남은 것(5b).**
   - 긴 소스 가상화(참고 `VirtualSource`, `@pierre/diffs`). 폴더 보기는 §8.148, 「파일 뷰어」 설정은 §8.149.
-  - 대화 보기·보고서 안 파일 링크.
+  - 대화 보기·보고서 안 파일 링크 → §8.170.
   - **OSC 8 replay.** aaa-vt(vt100)는 OSC 8을 화면 상태에 두지 않는다. 그래서 늦게 붙은 화면의 replay에는 OSC 8 링크가 없다(붙어 있을 때 온 출력만 링크다). herdr는 ghostty 화면이 링크를 지녀 늦게 붙어도 있다. 글 속 경로 링크는 replay에도 있다.
 - **시험.**
   - 유닛:
@@ -3577,6 +3577,36 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   host가 들고 있는 공유 설정의 `language`(참고 브라우저가 쓴 것)는 읽지 않는다(`preferences.ts`). `index.html`은 `lang="ko"`.
 - **다시 볼 때.** 문자열을 표로 빼고 시스템·한국어·영어부터(차이 목록 T5 할 일). 참고 문구를 옮긴 자리는 주석에 「문구는 참고
   i18n.ko」를 남겨 두었으므로 그 표의 열쇠를 찾을 수 있다.
+
+### 8.170 대화·보고서 안 파일 링크(10-18, 차이 목록 1장 J 「파일 경로 누르면 파일 보기」 나머지, t-0335 넘김, coordinator 「그 thread의 머신·worktree 기준, 참고대로」)
+
+- **참고.** herdr-web-ui(aa624cb)는 pane마다 `OpenFileContext`를 준다(App.tsx 1583줄). 대화(`ChatView.tsx`)의 말·도구 줄과 그 안
+  Markdown의 경로·파일 링크·code 경로가 그 pane의 파일 보기로 열리고, 서버는 pane이 지금 있는 폴더 기준으로 찾는다(§8.125). 보고서는
+  herdr-projects의 것이라 herdr-web-ui에는 없다.
+- **대화.** 그 pane 기준이다(참고 규칙 그대로, pane은 thread worktree에서 시작한다). 이미 있는 `pane_file`을 쓴다. 보기 권한 화면은 터미널과
+  같이 열 곳이 없어 글 그대로다(`onOpenFile`이 없다).
+  - aaa 대화는 아직 말을 Markdown으로 그리지 않고 글 그대로다(§8.27). 그래서 참고가 Markdown 아닌 글(도구 출력)에 쓰는 `linkFilePaths`로
+    경로만 단추로 잇는다. 말을 Markdown으로 그리는 것(참고 `chat-bubble-body`)은 남은 일이다.
+- **보고서.** pane이 없을 수 있다(끝난 thread). 그 thread의 머신에서 **agent가 시작한 폴더(`cwd`: worktree 또는 작업 폴더)** 기준으로
+  찾는다. 보고·결과물이 있는 `work_dir`(`<cwd>/.aaa/<project>-<thread>/`)가 아니다: agent는 보고에 저장소 안 경로(`src/app.ts:3`)를 쓴다.
+  - 웹 → host `thread_file {project, thread, path}`(FRONT_API 1.32, 조작 기기만). host → 그 머신 agent `FileLocateIn {dir, path}`. 찾는
+    규칙·허용 폴더(§6.5 `file_roots`)·후보는 `FileLocate`와 같은 함수(`files::locate`)다. 찾으면 `pane_file`과 같은 30분 읽기 경로
+    `/f/<cap>/<이름>`과 같은 답(`pane_file`)이다. 그 뒤 읽기·조건(기기 cookie·Range·CSP)은 §8.125 그대로다.
+  - agent가 `file_in.v1`을 알릴 때만 보낸다. 옛 agent면 「그 머신 agent가 보고서 안 파일 열기를 아직 모른다(agent binary를 바꿔야 한다)」.
+  - 웹: 보고 Markdown을 `OpenFileContext`로 감싼다(조작 기기만). 파일 보기의 소스는 pane·결과물 말고 셋째 `worktree`이고, 방문 기록 칸
+    (`useFileViewer`)에도 적는다. 보기 안에서 고른 다른 파일도 같은 thread 기준이다. 결과물 목록 파일(R1, §8.168)은 그대로 결과물 보기다.
+  - worktree를 지운 끝난 thread는 열리지 않는다(「이 경로에 읽을 수 있는 파일이 없습니다」 또는 허용 폴더 밖).
+- **옮기지 않은 것.** 보고서 안 그림(`![](…)`)은 대체 글 그대로다(파일 보기 안 Markdown만 그림을 읽는다). 대화의 도구 줄 파일
+  단추(`ToolFile`)·patch 보기·도구 그림은 aaa 대화에 도구 입력·출력이 없어 해당이 없다.
+- **시험.**
+  - 웹 E2E 12 「thread 보고서·결과물」: 보고의 문서 링크 `[작업 메모](notes/plan.md)`가 worktree 파일을 `/f/` 경로로 연다, 글 속
+    `src/app.ts:3`은 소스로 3번째 줄 표시, 표 안 code `prefs.rs`는 파일 단추이고 worktree에 없으면 「없습니다」, 뒤로 한 번에 닫힘,
+    보기 권한 기기는 단추 없이 「이름 (경로)」이고 host `thread_file`도 forbidden(같은 요청이 조작 기기에는 열린다). 가짜 agent가 worktree에
+    `notes/plan.md`·`src/app.ts`를 쓴다. 실험실 `file_roots`에 `work`를 더하고 미리 만든다(시작할 때 없는 폴더는 허용 폴더가 되지 않는다).
+  - 웹 E2E 11 「대화 기록」: 답 줄의 절대 경로만 단추이고 누르면 그 파일 보기, 뒤로 한 번이면 대화.
+  - 결함 심기 다섯이 모두 실패했다: 보고서 경로를 결과물 소스로 보냄, agent가 정한 폴더를 버림, host가 `work_dir` 기준, 보기 권한
+    기기에도 링크, 대화에 링크 문맥 없음. 옛 agent(`file_in.v1` 없음) 거절과 보기 권한 대화 화면은 시험하지 않았다(앞은 `dir.v1`과 같은
+    꼴, 뒤는 터미널과 같은 `onOpenFile` 한 값).
 
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
