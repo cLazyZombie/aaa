@@ -265,6 +265,9 @@ impl Tui {
         cmd.env("AAA_STATE_DIR", &node.state);
         cmd.env("TERM", "xterm-256color");
         cmd.env("RUST_LOG", "off");
+        // 이 관측기가 터미널이고 색(고른 줄·지금 줄 바탕)을 본다. 시험을 돌린 셸의 NO_COLOR를 물려받으면
+        // crossterm이 색을 내지 않아 그 줄을 찾지 못한다(`Node::cmd`처럼 뺀다)
+        cmd.env_remove("NO_COLOR");
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -517,11 +520,15 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
-    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄(셸은 상태 점 `·`)이 있고
-    // 지금 pane 줄은 active_row_bg 바탕이다(herdr 사이드바).
+    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄이 있고 지금 pane 줄은 active_row_bg
+    // 바탕이다(herdr 사이드바). 이 pane은 실행 파일 이름이 claude라 agent가 띄운 지 3초(`STARTUP_GRACE`) 뒤 화면을 보고
+    // 쉼을 알린다(`○`·「입력 대기」). 상태 없는 `·`은 그 3초 동안만 보여 TUI가 3초 넘게 늦게 뜨면 볼 수 없다.
+    // 시작 시각에 기대지 않게 감지가 알린 쉼을 기다린다.
     tui.wait_screen("탭과 사이드바", |s| {
         let t = s.text();
-        tab_chips(&t) == ["first"] && t.contains(" ▾ labA") && s.current().is_some_and(|l| l.contains(" · first"))
+        tab_chips(&t) == ["first"]
+            && t.contains(" ▾ labA")
+            && s.current().is_some_and(|l| l.contains(" ○ first") && l.contains("입력 대기"))
     });
     // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기(사이드바 26칸과 탭 막대 한 줄을 뺀 칸)로 맞추고
     // 이 화면이 지금 쓰는 화면이 된다. 상태 줄은 없다(herdr).
@@ -1493,6 +1500,39 @@ fn context_menu_like_herdr() {
     assert!(!tui.text().contains("pane 닫기"), "넘긴 오른쪽 누름에 메뉴가 열렸다");
     tui.send(b"\x03");
 
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// pane 폭만 바뀌어도 그 pane을 전부 다시 그린다(QA t-0337 Q23, herdr는 크기가 바뀐 pane을 통째로 그린다).
+/// 사이드바를 접고 펴면 줄 수는 그대로이고 폭만 바뀐다. 전에는 host가 바뀐 줄만 보내고 TUI는 폭이 바뀐 grid를 비워서,
+/// 내용이 같은 줄(앞 출력)이 빈칸으로 남았다. 바뀐 뒤 친 표지 줄이 보인 다음(그 뒤 장면까지 왔다) 앞 출력을 본다.
+#[test]
+fn width_only_change_redraws_the_pane() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "wide", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("lease", |w| w.held_by(&id, "tui@").then_some(()));
+    tui.type_line("echo before-$((1)); echo again-$((2))");
+    tui.wait_text("앞 출력", |s| s.contains("again-2"));
+
+    let fold = tui.wait_find("«");
+    tui.click(fold);
+    hw.wait("compact 폭", |w| (w.pane(&id)?.cols == COLS - COMPACT).then_some(()));
+    tui.type_line("echo folded-$((3))");
+    tui.wait_text("접은 뒤 표지", |s| s.contains("folded-3"));
+    let text = tui.text();
+    assert!(text.contains("before-1") && text.contains("again-2"), "폭이 넓어진 pane의 앞 출력이 비었다:\n{text}");
+
+    let unfold = tui.wait_find("»");
+    tui.click(unfold);
+    hw.wait("펼친 폭", |w| (w.pane(&id)?.cols == COLS - SIDE).then_some(()));
+    tui.type_line("echo unfolded-$((4))");
+    tui.wait_text("편 뒤 표지", |s| s.contains("unfolded-4"));
+    let text = tui.text();
+    assert!(text.contains("before-1") && text.contains("folded-3"), "폭이 좁아진 pane의 앞 출력이 비었다:\n{text}");
     tui.cmd("q");
     assert!(tui.wait_exit());
 }

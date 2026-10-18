@@ -3003,6 +3003,64 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이어 띄운 가짜: 한 번에 읽은 글 안의 줄 끝도 Enter다. routine 시험: 보고 뒤 brief 전달(`brief = delivered`)을 보고 메시지를 보낸다.
 - **시험.** 결함 심기: 반응 기다림을 빼면 늦게 그린 창으로 race 글이 「accepted」가 되어 실패하고, 넣으면 통과한다. m13 31개 통과.
 
+### 8.138 웹 E2E를 함께 돌리고, 기다림을 줄이고, 값 없는 단계를 지운다(10-18, 사용자 「local에서 4-6분이면 이것만 좀더 줄여」·「필요없어진 e2e나 가치가 없는건 가차없이 지워」, t-0338)
+
+- **왜.** 로컬 ci-local e2e 단계가 파일을 하나씩 돌아 282~377초였다. 파일마다 준비·정리는 6%뿐이고 나머지는 단계 본문이었다. 가장 긴 `12-threads-push`(129초)가 3분의 1이었다.
+- **함께 돌기.** 입구가 파일을 worker 여러 개로 돈다(core 4개마다 하나, 많아야 4, `--workers`·`AAA_E2E_WORKERS`). 파일마다 이미 자기 실험실(`/tmp/aaw-<pid>`, host·agent·Chromium)이라 나눌 것이 없었다. 웹 port만 harness가 골라 닫은 뒤 host가 다시 여는 틈이 있어, host가 port 0으로 열고 `status.web_listen`으로 알린 port를 host.toml에 다시 써 재시작(07·13)이 같은 port로 뜨게 했다. 긴 파일부터 넣고(기록한 초 `web/e2e/durations.json`, t3code `shardWeights.json`처럼), 적지 않은 새 spec은 맨 앞이다. 재시도는 없다(herdr-web-ui `ci-browser-parallel.ts`의 한 번 다시 돌리기는 받지 않는다). GitHub macos-15(3 core)는 1이 되어 그대로다.
+- **안쪽 기다림.** 기다림마다 시간을 재 보니 thread 하나마다 보고 회수가 늘 4.1초였다: brief를 치기 전 화면이 3초 그대로이기를 기다리는 `SETTLE`(실제 harness가 막 뜬 화면에 치지 않게)이다. 가짜 agent 화면은 뜨자마자 멈추므로 시험에서만 `AAA_TEST_BRIEF_SETTLE_MS`(웹 E2E 300)로 줄인다(`AAA_TEST_EVENTS_PING_MS`와 같은 꼴. Rust 시험(m13 등)은 기본 3초 그대로 돈다). 12가 129초에서 약 81초가 됐다. 남은 큰 기다림은 제품 시간이다: 알림 묶음 `debounce_secs` 1초, 웹 상태 연결 pong 두 번(6초), 앱 안 알림 접힘(약 3초).
+- **지운 것.** 15파일 71단계를 단계마다 무엇을 보나·중복(다른 단계·Rust·웹 유닛)·결함 이력·기능이 남았나로 훑어 단계 여섯을 지우고 스물아홉 곳에서 단언 일부를 뺐다. 기준: 없어진·바뀐 기능, 같은 동작을 다른 시험이 이미 봄, 결과가 아니라 구현 세부(문구·class·저장 꼴), 잡을 길이 없음. 보안·사용자 결정 규칙(쓰는 기기·알림·입력기·iOS)·과거 결함 재발 막기·휴대폰에서 보이는 결과는 남겼다. 표(파일·단계·이유·대신 보는 곳)는 t-0338 report 「지운 단계 표」.
+- **시험.** 지운 판을 worker 4로 세 번(73초씩), 3으로 두 번(88초씩), 전체 묶음 둘을 동시에 worker 4씩 두 번(실험실 여덟, 73~74초) 돌려 모두 통과했고, 파일마다 시간은 차례로 돌 때와 같았다(함께 돌아도 느려지지 않음). 4보다 늘려도 벽시계는 가장 긴 12에 걸린다. 일부러 실패하는 spec을 함께 돌리면 입구가 종료 코드 1·FAIL 줄·실험실을 남긴다. 숫자와 부하는 t-0338 report.
+
+### 8.139 TUI에서 pane 폭만 바뀌면 그 pane이 빈다(10-18, QA t-0337 Q23)
+
+- **증상.** 사이드바를 접거나 펴거나, 나눔 비율이 바뀌거나, `prefix w`로 높이는 같고 폭만 다른 pane으로 옮기면 그 pane의 앞 출력이 빈칸이 된다. 그 뒤에 바뀐 줄(새 프롬프트 등)만 보인다. `d6bb95c`에서도 재현된다.
+- **원인.** host는 pane마다 front에 보낸 줄 hash를 기억해 바뀐 줄만 보낸다(`watch_grid`). 전체를 다시 보내는 것은 줄 수가 바뀔 때뿐이었다. TUI(`Grid::apply`)는 크기가 바뀐 장면을 받으면 grid를 비우고 온 줄만 채운다. 그래서 폭만 바뀌면 내용이 같아 다시 오지 않은 줄이 비었다.
+- **고침(herdr처럼 크기가 바뀐 pane은 통째로).**
+  - host: 보낸 것에 크기(줄 수·폭)를 함께 기억한다. 크기가 바뀌면 모든 줄을 `full`로 보낸다(`changed_rows`).
+  - TUI: `full`이 아닌 장면은 온 줄만 바꾸고 나머지 줄은 둔다. 보내지 않은 줄은 host가 보기에 그대로이기 때문이다. 그래서 고치기 전 host에 붙어도 비지 않는다. host를 다시 띄우기 전에도 새 `aaa attach`면 고쳐진다.
+- **시험.**
+  - TUI E2E `width_only_change_redraws_the_pane`(약 0.5초): 셸 출력 두 줄 뒤 사이드바를 접고(폭 64→86) 펴서(86→64) 앞 출력이 남는지 본다. 바뀐 뒤 친 표지 줄이 보인 다음에 본다(그 뒤 장면까지 왔다).
+  - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
+  - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
+
+### 8.140 대화 보기 머리줄: iPhone 홈 화면 앱 위 가장자리 흐림과 둘째 줄 겹침(10-18, 사용자 실기 09:17 「위쪽 흐려지는건 어쩔수없는건가?」)
+
+- **본 것.** iPhone 홈 화면 앱, 대화 보기(main f86ba7b). 머리줄 윗줄(뒤로·agent 표시·제목·「입력 대기」·「보고」)은 번지고, 아랫줄
+  (머신 › 위치 · 칸 수)은 또렷했다. 「입력 대기」가 「68×42」 위에 겹쳤다.
+- **흐림의 원인.** aaa CSS는 `.term-head`를 흐리게 하지 않는다(backdrop-filter는 목록 머리 `.list-head`와 입력 카드 glass뿐이고,
+  pane을 보는 동안 목록은 `display: none`이다. mask·filter·transform·opacity도 없다). 위 가장자리에서 일정 높이까지만 번지는 띠는
+  iOS 26부터 홈 화면 앱 위에 얹는 Liquid Glass 가장자리 흐림이다. 참고 herdr-web-ui(aa624cb) CHANGELOG: 「iOS lays its Liquid Glass
+  edge blur over the top of an installed web app unless a fixed or sticky box with a background covers that edge; the header is
+  now sticky, so iOS takes its color there」. 참고 `.app-header`는 `position: sticky; top: 0; background: var(--bg-panel)`이고,
+  `apple-mobile-web-app-status-bar-style`을 두지 않는 것은 aaa index.html이 이미 같다. 즉 참고와의 차이는 sticky와 배경뿐이었다.
+- **겹침의 원인.** 휴대폰에서 `.term-title`은 세로 배치에 `align-items: flex-start`라 각 줄의 폭이 내용 폭이다. 위치 줄의
+  `nowrap`·`overflow: hidden`·말줄임이 한 번도 걸리지 않고, 줄이 칸을 넘어 상태 표시 밑까지 칠해졌다(`.term-title`의
+  `min-width: 0`은 자식 폭을 묶지 않는다).
+- **고침.**
+  - `.term-head`에 `position: sticky; top: 0; background: var(--bg)`(데스크톱·iPad 홈 화면 앱도 같은 칸이라 기본 규칙에 둔다).
+    굴리지 않는 칸이라 배치는 그대로다. 배경은 참고의 `--bg-panel` 대신 지금 보이는 `--bg`로 두어 데스크톱 색을 바꾸지 않았다.
+    ThreadPanel 머리줄도 같은 class라 함께 받는다.
+  - 휴대폰 `.term-title > * { max-width: 100% }`: 제목·위치 줄이 칸 폭에서 말줄임된다. 상태 표시는 그 자리에 남는다(머리줄 높이는
+    52px 그대로). 좁으면 위치 줄 끝(칸 수)이 말줄임으로 가려진다.
+  - 계약 변화 없음.
+- **확인 못 한 것.** 헤드리스 브라우저는 iOS의 가장자리 띠를 그리지 못한다. 참고 docs/ios-home-screen-testing.md도 iOS 27.0
+  세로에서 fixed-shell 처방이 흐림을 없애지 못한 기록이 있다. 그래서 흐림이 사라졌는지는 실기(홈 화면 앱·세로·대화 보기)에서
+  확인해야 한다. 목록 화면 머리(`.list-head`, glass·sticky 아님)는 이 일 밖이라 그대로 두었다.
+- **시험.** 웹 E2E 15 「iPhone 대화 보기 머리줄」(iPhone 가짜 기기 390×844·dpr 3·홈 화면 앱): 긴 제목·긴 cwd의 가짜 Claude pane을
+  대화 보기로 열고 다음을 본다. 머리줄이 맨 위의 sticky(또는 fixed)이고 배경이 불투명한지(iOS 띠 대신 쓰일 조건). 제목 줄과 위치
+  줄의 오른쪽 끝이 상태 표시 왼쪽을 넘지 않는지. 위치 줄이 실제로 넘쳐 말줄임됐는지(짧아서 그냥 통과하지 않게).
+  - 결함 심기는 단계 안에 있다. 줄 폭을 푸는 style을 넣으면 겹침이 잡혀야 하고(`before` 캡처), 빼면 통과한다(`after` 캡처).
+  - 고치기 전 style.css로 다시 빌드해 돌리면 `position static; 배경 rgba(0, 0, 0, 0); .term-title .muted 오른쪽 508.4 > 상태 왼쪽
+    249.6; 위치 줄이 넘치지 않았다`로 실패함을 확인했다.
+
+### 8.141 깨어난 페이지는 이 기기에 이미 push로 간 알림을 앱 안에서 다시 띄우지 않는다(10-18, 사용자 결정 「A」)
+- **실기(09:12~09:15 iPhone).** 앱을 내린 동안 push를 받고, 앱을 다시 올리면 멈춘 동안 쌓인 사건이 와 같은 보고가 앱 안 알림으로 다시 떴다(소리는 §8.133대로 버림).
+- **결정 「A」.** 앱을 다시 올릴 때 놓친 사건은 앱 안 알림으로 다시 띄우되, 그 기기에 이미 push를 보낸 항목은 띄우지 않는다. push가 안 간 항목(push 꺼짐·다른 기기가 쓰는 중이라 건너뜀·이 기기가 고르지 않은 종류)만 띄운다. 목록의 안 읽음 표시는 그대로다.
+- **host.** push를 보낸 기기마다 최근 항목(프로젝트·대상·보낸 때, 기기마다 100개·하루)을 메모리에 두고(`push::PushedLog`), `GET /api/v1/push`의 `pushed`로 그 기기 것만 준다. 다시 띄우면 비고, 그러면 웹은 띄운다(놓치지 않는 쪽).
+- **웹.** 늦은 알림(멈췄다 깬 직후 받은 사건은 멈춘 때부터, 다시 붙어 읽은 놓친 사건은 끊긴 때부터)이면 host에 묻고, 그 뒤(기기 시계 차이 5초를 덮는다) 이 기기에 같은 프로젝트·thread로 간 push가 있으면 띄우지 않는다. 결과는 `alert_outcome` 「push로 받음 · 안 띄움」. 묻지 못하면 띄운다. 늦은지는 사건을 받은 때 정한다(묻는 동안 시간이 가도 소리를 내지 않는다). 깨어나 한꺼번에 온 사건들은 1초 안이면 한 번만 묻는다.
+- **thread에 묶이지 않은 pane 확인창**은 push 항목이 없어(thread-state 항목만 push) 늘 띄운다.
+- 시험: 웹 E2E 12 「멈춘 쓰는 화면」 (3) 구독 없는 휴대폰은 깨면 띄움(늦어 소리 버림), (4) 구독을 가진 채 멈춘 휴대폰은 lease 뒤 push를 받고 깨면 「push로 받음 · 안 띄움」, 앱 안 알림 없음. host 단위 시험 `pushed_log_keeps_recent_items_per_device`. host 답을 무시하는 결함 심기는 (4)에서 「띄움 · focus · 늦어 소리 버림」으로 실패한다.
+
 ## 9. 이미지 붙여넣기 (front → host → agent)
 
 herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.

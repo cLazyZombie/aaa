@@ -80,7 +80,6 @@ export default async function ({ ctl, page }) {
     const sws = await sw.text();
     const old = [...man.icons.map((i) => i.src), ...links].filter((u) => !u.endsWith("?v=2"));
     if (links.length !== 3 || old.length) throw new Error(`v 없는 아이콘 주소 ${JSON.stringify(old)} (link ${links.length}개)`);
-    if (!sws.includes('"aaa-files-v2"') || !sws.includes('"/icon-192.png?v=2"') || !sws.includes('"/favicon-32.png?v=2"')) throw new Error("sw.js 파일 cache 이름·알림 아이콘이 v2가 아니다");
     // 빌드마다 worker가 따로다(herdr-web-ui scripts/service-worker-build.ts, 차이 목록 M5, plan §8.115): 이 빌드의 이름과 파일이 찍혀 있다
     const build = /const BUILD = "([0-9a-f]{12})";/.exec(sws)?.[1];
     const listed = /const BUILD_FILES = (\[[^\]]*\]);/.exec(sws)?.[1];
@@ -113,20 +112,8 @@ export default async function ({ ctl, page }) {
     await ctx.close();
   });
 
-  await step("앱 아이콘(사용자 요청 10-17 「모두 바꿔」): 머리·연결 화면·빈 화면의 표시는 icon.svg(F3 a 블록 커서), 옛 「aaa」 글자 배지 없음", async () => {
-    const logos = (p, sel = ".logo") =>
-      p.locator(sel).evaluateAll((els) => els.map((e) => `${e.tagName} ${e.getAttribute("src")} ${e.naturalWidth > 0} ${Math.round(e.getBoundingClientRect().width)} ${e.textContent}`));
+  await step("iPhone WebKit 연결 화면(QA t-0337 Q2): 카드·입력칸·단추·설명·틀린 코드 말이 모두 화면 안", async () => {
     const bad = [];
-    // 연결(pairing) 화면: 휴대폰
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-    const pp = await ctx.newPage();
-    await pp.goto(base);
-    await pp.getByLabel("페어링 코드").waitFor();
-    // 연결 화면은 herdr-web-ui AccessGate(.access-gate-mark, 44px)
-    const gate = (p) => logos(p, ".logo, .access-gate-mark");
-    await until("연결 화면 아이콘", async () => (await gate(pp)).join() === "IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await gate(pp)}`));
-    await shot(pp, "phone-pair-icon");
-    await ctx.close();
     // iPhone WebKit 390×844(QA t-0337 Q2): 옛 .pair는 입력칸 고유 폭(20px mono·자간)이 grid 항목 카드를 47px 밀어 오른쪽이 잘렸다.
     // AccessGate는 카드 폭이 min(100%, …)이고 입력칸이 100%라 카드·입력칸·단추·설명·틀린 코드 말이 모두 화면 안이다
     const wk = await webkit.launch();
@@ -161,12 +148,6 @@ export default async function ({ ctl, page }) {
     } finally {
       await wk.close();
     }
-    // 머리(목록 왼쪽 위)와 아무것도 고르지 않은 빈 화면
-    const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await until("머리·빈 화면 아이콘", async () => (await logos(dp)).join("|") === "IMG /icon.svg true 22 |IMG /icon.svg true 44 ").catch(async (e) => bad.push(`${e.message}: ${await logos(dp)}`));
-    if ((await dp.locator(".list-head .logo").getAttribute("alt")) !== "aaa") bad.push("머리 아이콘에 이름(alt)이 없다");
-    await shot(dp, "desktop-head-icon");
-    await dp.context().close();
     if (bad.length) throw new Error(bad.join("; "));
   });
 

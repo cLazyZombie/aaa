@@ -365,6 +365,8 @@ pub struct Host {
     pub(crate) in_use: std::sync::atomic::AtomicUsize,
     /// 지금 pane을 보는 웹 화면(「끝남(안 봄)」, seen.rs)
     viewing: Mutex<seen::Viewing>,
+    /// 기기마다 최근에 push로 보낸 항목(push.rs `PushedLog`)
+    pub(crate) pushed: Mutex<push::PushedLog>,
     /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
     eval_due: Mutex<HashMap<String, Instant>>,
     /// 사후 평가자 묶음은 한 번에 하나씩 만든다
@@ -511,6 +513,7 @@ impl Host {
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
+            pushed: Mutex::new(push::PushedLog::default()),
             eval_due: Mutex::new(HashMap::new()),
             eval_lock: tokio::sync::Mutex::new(()),
             eval_decide_lock: Mutex::new(()),
