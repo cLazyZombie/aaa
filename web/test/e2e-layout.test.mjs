@@ -19,7 +19,7 @@ test("spec 파일은 NN-이름.mjs이고 단계를 기본 함수로 내보낸다
   assert.deepEqual(bad, [], `${SPECS}에는 01-http-pwa.mjs 꼴의 spec만 둔다(도우미는 web/e2e/lib)`);
   for (const f of specs) {
     const src = read(`${SPECS}/${f}`);
-    assert.match(src, /^export default async function \(\{ ctl, page \}\) \{$/m, `${f}: export default async function ({ ctl, page }) {`);
+    assert.match(src, /^export default async function \((\{ [\w, ]+ \})?\) \{$/m, `${f}: export default async function ({ ctl, page }) {(쓰는 것만, 없으면 ())`);
     assert.ok(src.split("\n").some((l) => STEP.test(l)), `${f}: 단계(\`  await step("…", async () => {\`)가 없다`);
   }
 });

@@ -7,6 +7,7 @@ mod lab;
 
 use std::time::Duration;
 
+use lab::watch::HostWatch;
 use lab::{Lab, read_line_containing, wait_for};
 
 const T: Duration = Duration::from_secs(20);
@@ -73,7 +74,7 @@ fn host_restart_keeps_sessions_and_disconnect_is_readonly() {
     )
     .unwrap();
     let hook =
-        serde_json::json!({ "hook_event_name": "SessionStart", "session_id": "s1", "transcript_path": tr }).to_string();
+        serde_json::json!({ "hook_event_name": "SessionStart", "session_id": "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a", "transcript_path": tr }).to_string();
     // 실행 파일 이름이 claude라 agent가 Claude 화면 규칙으로 본다
     let fake = lab.root.join("bin").join("claude");
     std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
@@ -198,7 +199,7 @@ fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
     lab.kill("host");
     let file = h.state.join("agent").join("sessions").join(&id).join("harness.json");
     let old = serde_json::json!([{
-        "session": id, "harness": "claude", "kind": "turn_start", "harness_session": "s1",
+        "session": id, "harness": "claude", "kind": "turn_start", "harness_session": "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a",
         "message": null, "question_kind": null, "percent": null, "at_ms": lab::now_ms() - 10 * 3600 * 1000,
     }]);
     std::fs::write(&file, old.to_string()).unwrap();
@@ -256,16 +257,42 @@ fn enroll_remote_agent_and_run_short_command() {
     // 종료가 보이자마자 지울 수 있다(session host가 종료 뒤 2초 더 응답하는 동안에도)
     let qid = h.new_pane(None, "labB", None, &["/bin/sh", "-c", "exit 0"], None);
     wait_for("곧바로 끝남", T, || (h.pane(&qid)["state"] == "exited").then_some(()));
+    let qhost = b.session_host_pid(&qid).expect("session host PID");
     h.ok(&["pane", "forget", &qid]);
-    std::thread::sleep(Duration::from_millis(2500));
-    assert!(!h.ok(&["pane", "list"]).to_string().contains(&qid), "지운 pane이 되살아났다");
+    // 지운 pane은 되살아나지 않는다(agent `forget`: 먼저 잊으면 session host가 닫힐 때 보내는 종료 알림이 되살린다).
+    // 그 session host가 끝나기를 기다리고, 그 뒤 같은 agent 연결로 온 새 셸의 출력까지 host가 처리한 다음에 본다
+    wait_for("지운 pane의 session host 끝남", T, || b.session_host_gone(qhost, &qid).then_some(()));
 
     // 원격 셸에 입력
     let rid = h.new_pane(None, "labB", Some("rsh"), &["/bin/sh"], None);
     h.ok(&["pane", "run", "rsh", "echo 원격-$((3*3))"]);
     h.wait_output(&rid, "원격-9", T);
+    assert!(!h.ok(&["pane", "list"]).to_string().contains(&qid), "지운 pane이 되살아났다");
+
+    // 이미 등록된 머신이 다시 등록하면 그렇다고 하고 다시 등록하는 길을 알린다(QA t-0337 Q17, 전에는 「hello가 와야
+    // 한다」만 나왔다)
+    let again = b.run(&["agent", "enroll", &addr, "--name", "labB"]);
+    let err = String::from_utf8_lossy(&again.stderr).to_string();
+    assert!(!again.status.success(), "이미 등록된 머신이 다시 등록됐다");
+    assert!(
+        err.contains("이 머신(labB)은 이미 이 host에 등록돼 있다") && err.contains("aaa machine revoke labB"),
+        "{err}"
+    );
+    assert!(!err.contains("hello가 와야 한다"), "{err}");
 
     // 등록을 취소하면 그 장치는 다시 붙지 못한다
     h.ok(&["machine", "revoke", "labB"]);
     wait_for("취소 뒤 끊김", T, || (!h.connected("labB")).then_some(()));
+    lab.kill("agentB");
+    let mut hw = HostWatch::new(&h, T);
+
+    // 알린 길대로 다시 등록한다: 등록 창을 열고 같은 머신이 다시 등록해 승인받으면 다시 붙는다
+    h.ok(&["machine", "enroll", "--open", "5m"]);
+    let (_, mut out) = lab.spawn_piped("enroll2", &b, &["agent", "enroll", &addr, "--name", "labB"]);
+    let line = read_line_containing(&mut out, "--code");
+    let code = line.split("--code").nth(1).unwrap().trim().to_string();
+    h.ok(&["machine", "approve", "labB", "--code", &code]);
+    assert!(lab.wait_exit("enroll2", T).success(), "다시 등록 실패: {}", lab.log("enroll2"));
+    lab.spawn("agentB2", &b, &["agent", "--host", &addr, "--name", "labB"]);
+    hw.wait("다시 등록한 labB 연결", |w| w.connected("labB").then_some(()));
 }

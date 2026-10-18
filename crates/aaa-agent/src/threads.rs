@@ -221,7 +221,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
     })
 }
 
-fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
+pub(crate) fn find_profile<'a>(cfg: &'a ThreadsConfig, name: &str) -> Result<&'a Profile> {
     cfg.profiles.get(name).with_context(|| {
         format!("이 머신 agent.toml에 profile `{name}`가 없다(있는 것: {:?})", cfg.profiles.keys().collect::<Vec<_>>())
     })
@@ -233,7 +233,7 @@ fn launch_in(cfg: &ThreadsConfig, name: &str, work_dir: &Path) -> Result<Launch>
 }
 
 /// harness별 상태 hook을 launch에 붙인다
-fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path) -> Result<Launch> {
+pub(crate) fn with_hooks(cfg: &ThreadsConfig, mut launch: Launch, work_dir: &Path) -> Result<Launch> {
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
@@ -406,12 +406,17 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// thread 정리(herdr-projects threads.rs `clean`). worktree는 force 없이 지운다. branch는 PR이 병합됐고(`merged_head`가
+/// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
+/// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
+/// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
 pub async fn cleanup(
     repo: Option<&str>,
     cwd: &str,
     branch: Option<&str>,
-    base: Option<&str>,
+    merged_head: Option<&str>,
     keep_worktree: bool,
+    uncopied: bool,
 ) -> Result<Cleanup> {
     let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
     let Some(repo) = repo else {
@@ -419,8 +424,15 @@ pub async fn cleanup(
         return Ok(c);
     };
     let repo = PathBuf::from(repo);
-    if keep_worktree {
+    if keep_worktree && !uncopied {
         c.notes.push("worktree를 남겼다(요청)".into());
+    } else if !Path::new(cwd).exists() {
+        // 이미 없는 폴더는 잃을 것이 없다(herdr-projects `worktree_gone`): 지운 것으로 치고 git 기록만 치운다
+        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
+        c.worktree_removed = true;
+        c.notes.push("worktree는 이미 없다".into());
+    } else if uncopied {
+        c.notes.push("worktree를 남겼다: 마지막 사본에 집에 오지 않은 것이 있다(`--discard-uncopied`면 지운다)".into());
     } else {
         match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
             Ok(_) => c.worktree_removed = true,
@@ -429,17 +441,41 @@ pub async fn cleanup(
         }
         let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
     }
-    if let (Some(branch), Some(base), true) = (branch, base, c.worktree_removed) {
-        let _ = git(&repo, &["fetch", "--quiet", "origin"], Duration::from_secs(15)).await;
-        match git(&repo, &["merge-base", "--is-ancestor", branch, base], GIT_T).await {
-            Ok(_) => match git(&repo, &["branch", "-D", branch], GIT_T).await {
-                Ok(_) => c.branch_deleted = true,
-                Err(e) => c.notes.push(format!("branch 삭제 실패: {e:#}")),
+    if let Some(branch) = branch.filter(|b| !b.is_empty()) {
+        match (merged_head, c.worktree_removed) {
+            (Some(head), true) => match delete_branch(&repo, branch, head).await {
+                Ok(true) => {
+                    c.branch_deleted = true;
+                    c.notes.push(format!("branch {branch}를 지웠다(PR이 병합됐다)"));
+                }
+                Ok(false) => c.notes.push(format!("branch {branch}는 이미 지워졌다")),
+                Err(e) => c.notes.push(format!("branch {branch}를 남겼다: {e:#}")),
             },
-            Err(_) => c.notes.push(format!("branch {branch}는 {base}에 병합되지 않아 남겼다")),
+            (None, _) => c.notes.push(format!("branch {branch}를 남겼다: PR이 병합되지 않았다")),
+            (Some(_), false) => c.notes.push(format!("branch {branch}를 남겼다: worktree가 남아 있다")),
         }
     }
     Ok(c)
+}
+
+/// branch 끝이 병합된 PR의 head commit일 때만 지운다(herdr-projects `delete_branch`): 병합 뒤 push하지 않은 commit이
+/// 있으면 남는다. `-D`인 까닭: GitHub가 병합됐다고 하고, squash 병합은 git이 보기에 병합되지 않은 branch를 남긴다.
+/// `false`: 지울 branch가 없었다.
+async fn delete_branch(repo: &Path, branch: &str, head: &str) -> Result<bool> {
+    if head.is_empty() {
+        bail!("병합된 PR의 head commit을 모른다");
+    }
+    let tip = git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
+        .await
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if tip.is_empty() {
+        return Ok(false);
+    }
+    if tip != head {
+        bail!("병합된 PR에 없는 commit이 있다");
+    }
+    git(repo, &["branch", "-D", branch], GIT_T).await.map(|_| true)
 }
 
 #[cfg(test)]

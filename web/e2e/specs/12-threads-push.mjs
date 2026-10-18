@@ -692,7 +692,7 @@ export default async function ({ ctl, page }) {
     let k = skips().length;
     ts.push(work("두 기기 A 쓰는 중"));
     const s1 = await until("A 때문에 보내지 않음", () => skips().slice(k)[0]);
-    if (!/^쓰는 기기 [0-9A-Za-z]{1,7} · 쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개$/.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
+    if (!/^쓰는 기기 [0-9A-Za-z]{1,7} · 쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개 · 근거: 쓰는 기기 /.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
     await until("보이기만 하는 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("두 기기 A 쓰는 중"));
     if (devicePushes(from).length !== 0) throw new Error(`A가 쓰는 동안 push ${devicePushes(from).length}건`);
     await bp.locator(".droplet-close").click();
@@ -1073,6 +1073,210 @@ export default async function ({ ctl, page }) {
     if (B.errors.length) throw new Error(`페이지 오류: ${B.errors.join("; ")}`);
     await bp.context().close();
     aaa("pane", "kill", "who");
+  });
+
+  await step("멈춘 쓰는 화면(coordinator 실기 10-18 07:39 iPhone: 「쓰는 화면」으로 push 생략, 앱 안 알림도 없음, plan §8.133): 쓰는 기기의 페이지가 멈추면(timer·소켓 사건이 서고 보내지 못한다, 브라우저 네트워크 층은 WebSocket pong을 계속 한다) host는 앱 글이 lease(25초) 넘게 없을 때 쓰는 화면에서 빼고 push를 보낸다. 다시 깨면 presence가 다시 세어진다. push 판정 근거와 앱 안 알림 결과가 흐름 사건에 남는다", async () => {
+    const events = (kind) => aaa("events", "demo").events.filter((e) => e.kind === kind);
+    const ts = [];
+    let n = 0;
+    const work = (title) => {
+      fs.writeFileSync(`${root}/task-frozen-${++n}.md`, title);
+      ts.push(aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-frozen-${n}.md`));
+    };
+    const done = () => {
+      while (ts.length) aaa("thread", "resolve", "demo", ts.shift().id);
+    };
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    // B(휴대폰): 보이고 focus, 누른 기기라 쓰는 기기다. 소리를 켜 둔다(아래 (3) 늦은 소리).
+    // 페이지 멈춤(iOS가 뒤로 간 앱을 멈춘 것): headless Chromium은 CDP Page.setWebLifecycleState frozen으로 보이는 페이지를
+    // 멈추지 않는다(timer가 계속 돈다, 최소화해도 가려지지 않는다). 그래서 페이지 안에서 멈춘다: 멈춘 동안 timer 일은 돌지
+    // 않고(setTimeout은 깰 때 돈다), 상태 사건 소켓은 보내지 못하며 받은 것은 깰 때 차례대로 온다. pong은 브라우저가 한다
+    const stallInit = () => {
+      localStorage.setItem("aaa:alert-sound", "1");
+      let frozen = false;
+      const held = [];
+      const realInterval = window.setInterval.bind(window);
+      const realTimeout = window.setTimeout.bind(window);
+      window.setInterval = (fn, ms, ...args) => realInterval(() => frozen || fn(...args), ms);
+      window.setTimeout = (fn, ms, ...args) =>
+        realTimeout(function run() {
+          if (frozen) held.push(run);
+          else fn(...args);
+        }, ms);
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          this.addEventListener("message", (e) => {
+            if (!frozen || e.replayed) return;
+            e.stopImmediatePropagation();
+            held.push(() => {
+              const again = new MessageEvent("message", { data: e.data });
+              again.replayed = true;
+              this.dispatchEvent(again);
+            });
+          });
+        }
+        send(d) {
+          if (!frozen) super.send(d);
+        }
+      };
+      window.__stall = () => void (frozen = true);
+      window.__wake = () => {
+        frozen = false;
+        for (const run of held.splice(0)) run();
+      };
+    };
+    const B = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init: stallInit });
+    const bp = B.page;
+    await bp.evaluate(() => window.dispatchEvent(new PointerEvent("pointerdown")));
+    await until("B가 쓰는 기기·쓰는 화면", async () => (await pushInUse()) === 1 && (await pushWho(bp)).you);
+    const bId = (await pushWho(bp)).user;
+    // (1) 살아 있는 B: 건너뛰고, 그 근거(쓰는 기기를 알린 길, 연결의 presence 까닭·화면 값, 앱 글)와 B가 띄운 앱 안 알림이 남는다
+    let k = events("push_skipped").length;
+    let a = events("alert_outcome").length;
+    work("멈추기 전");
+    const s1 = await until("살아 있는 B 때문에 건너뜀", () => events("push_skipped").slice(k)[0]);
+    const basis1 = new RegExp(`근거: 쓰는 기기 ${bId}\\(touch \\d+초 전\\) · 연결#\\d+ 쓰는 중\\(presence \\d+초 전 true (open|focus|heartbeat) 보임·focus, 앱 글 \\d+초 전`);
+    if (!basis1.test(s1.detail)) throw new Error(`push_skipped 근거 ${s1.detail}`);
+    const o1 = await until("B의 앱 안 알림 결과", () => events("alert_outcome").slice(a).find((e) => e.detail.startsWith(`기기 ${bId} · done · thread=`)));
+    if (!/ · 띄움 · focus · /.test(o1.detail)) throw new Error(`alert_outcome ${o1.detail}`);
+    await until("B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("멈추기 전"));
+    await bp.locator(".droplet-close").click();
+    done();
+    // (2) B가 멈춘다: 앱 글(10초마다 presence)이 끊긴다. lease가 끝나면 쓰는 화면이 아니다(연결은 그대로)
+    await bp.evaluate(() => window.__stall());
+    await until("lease 끝", async () => (await pushInUse()) === 0, 45_000);
+    const m = events("push_sent").length;
+    k = events("push_skipped").length;
+    work("멈춘 동안");
+    const sent = await until("멈춘 B 대신 push 보냄", () => events("push_sent").slice(m)[0]);
+    if (events("push_skipped").length !== k) throw new Error(`멈춘 B 때문에 건너뜀: ${JSON.stringify(events("push_skipped").slice(k))}`);
+    // host가 연결을 끊은 것이 아니라 lease로 뺐다(pong은 왔다)
+    const frozenId = ts[0].id;
+    if (!new RegExp(`근거: 쓰는 기기 ${bId}\\(touch \\d+초 전\\) · 연결#\\d+ 안 씀\\(presence \\d+초 전 lease 끝\\(앱 글 \\d+초 없음\\), 앱 글 \\d+초 전, pong \\d+초 전`).test(sent.detail))
+      throw new Error(`push_sent 근거 ${sent.detail}`);
+    done();
+    // (3) 다시 깬다: 다음 presence로 다시 쓰는 화면. 멈춘 동안 쌓인 보고는 앱 안 알림으로 내려오되 소리는 버린다(늦은 소리,
+    // coordinator 실기 10-18 07:45 「알림 순간에 못 내면 버린다」)
+    a = events("alert_outcome").length;
+    await bp.evaluate(() => window.__wake());
+    await until("깨면 다시 쓰는 화면", async () => (await pushInUse()) === 1, 30_000);
+    const late = await until("멈춘 동안 보고의 앱 안 알림 결과", () =>
+      events("alert_outcome").slice(a).find((e) => e.detail.startsWith(`기기 ${bId} · done · thread=demo%2F${frozenId} · `)),
+    );
+    if (!/ · 띄움 · focus · 늦어 소리 버림$/.test(late.detail)) throw new Error(`alert_outcome ${late.detail}`);
+    if (B.errors.length) throw new Error(`페이지 오류: ${B.errors.join("; ")}`);
+    await bp.context().close();
+  });
+
+  await step("기기별 알림 종류(herdr-web-ui AlertsPage 「입력 필요」·「작업 완료」, notify-policy alertsAllow, 차이 목록 N3, plan §8.119): 설정에서 「작업 완료」를 끄면 다시 등록해 host가 이 기기로 새 보고 push를 보내지 않고 앱 안 알림도 없으며, 다시 켜면 보낸다", async () => {
+    const dev = pushDevice("push/dev-kinds");
+    const devPath = new URL(dev.json.endpoint).pathname;
+    const toDev = (from) => pushes.slice(from).filter((x) => x.path === devPath);
+    // 알림을 켜 둔 기기(권한·구독 있음). 브라우저 push 서비스 대신 가짜 push 서비스 주소를 준다(위 「보는 동안」과 같다)
+    const init = `(${(a) => {
+      const log = [];
+      Object.defineProperty(window, "__pushLog", { value: log });
+      class FakeNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        addEventListener() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, value: FakeNotification });
+      ServiceWorkerRegistration.prototype.showNotification = async () => {};
+      const key = Uint8Array.from(atob(a.key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)).buffer;
+      const sub = { endpoint: a.sub.endpoint, options: { applicationServerKey: key }, toJSON: () => a.sub, unsubscribe: async () => true };
+      PushManager.prototype.getSubscription = async () => sub;
+      PushManager.prototype.subscribe = async () => sub;
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          this.addEventListener("message", (m) => {
+            try {
+              const d = JSON.parse(m.data);
+              if (d.ev === "thread") log.push(`thr ${String(d.report_hash).slice(0, 6)}`);
+            } catch {}
+          });
+        }
+      };
+    }})(${JSON.stringify({ key: pushKey, sub: dev.json })})`;
+    // 본 화면은 쓰지 않는 것으로 둔다: 이 휴대폰만 본다
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse()) === 0);
+    const start = pushes.length;
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init });
+    const pp = phone.page;
+    const mine = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok);
+    await until("열 때 다시 등록(기본 둘 다 켬)", async () => {
+      const i = await mine();
+      return i.subscribed === 1 && i.alerts?.input === true && i.alerts?.done === true;
+    });
+    const doneSwitch = async (on) => {
+      const dialog = await openSettings(pp, "알림");
+      const sw = dialog.getByRole("switch", { name: "작업 완료" });
+      if ((await sw.getAttribute("aria-checked")) !== String(!on)) throw new Error(`작업 완료 스위치 ${await sw.getAttribute("aria-checked")}`);
+      await sw.click();
+      await pp.keyboard.press("Escape");
+      // 바꾸면 다시 등록해 host가 이 기기의 고른 것을 안다
+      await until(`host가 작업 완료 ${on}을 앎`, async () => (await mine()).alerts?.done === on);
+    };
+    const hide = (hidden) =>
+      pp.evaluate((hidden) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+        if (hidden) document.hasFocus = () => false;
+        else delete document.hasFocus;
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event(hidden ? "blur" : "focus"));
+      }, hidden);
+    const ts = [];
+    const work = async (title) => {
+      fs.writeFileSync(`${root}/task-kinds-${ts.length}.md`, title);
+      const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-kinds-${ts.length}.md`);
+      ts.push(t);
+      const hash = await until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
+      await until(`${title} 보고 사건 받음`, () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
+      return t;
+    };
+    await doneSwitch(false);
+    // (1) 보는 동안: 이 기기가 고르지 않은 종류라 앱 안 알림이 없다(이 화면이 그 사건을 받아 처리한 뒤)
+    const kinds = (kind) => aaa("events", "demo").events.filter((e) => e.kind === kind);
+    const skipped = kinds("push_skipped").length;
+    await work("완료 알림 끈 동안 봄");
+    await pp.evaluate(() => new Promise((r) => setTimeout(r)));
+    if ((await pp.locator(".droplet").count()) !== 0) throw new Error("작업 완료를 껐는데 앱 안 알림이 내려왔다");
+    // host가 이 보고를 정할 때까지(모으는 기다림 뒤 쓰는 화면이라 건너뜀). 기다리지 않고 가리면 이 보고가 (2)의 결정이 되고
+    // (2)의 보고가 (3)으로 밀린다(ci-local 07:2x에서 (3)의 push가 (2)의 thread였다)
+    await until("보는 동안 보고는 건너뜀", () => kinds("push_skipped").length > skipped);
+    // (2) 가려진 동안: host는 이 기기에 보내지 않고 그 까닭을 남긴다
+    await hide(true);
+    await until("가려진 휴대폰", async () => (await pushInUse()) === 0);
+    const k = kinds("push_unwanted").length;
+    await work("완료 알림 끈 동안 닫음");
+    const unwanted = await until("고르지 않은 종류 기록", () => kinds("push_unwanted")[k]);
+    if (!/^기기 1개가 고른 알림 종류가 아니다 · 항목 1개$/.test(unwanted.detail)) throw new Error(`push_unwanted ${unwanted.detail}`);
+    if (toDev(start).length !== 0) throw new Error(`작업 완료를 껐는데 push ${toDev(start).length}건`);
+    // (3) 다시 켜면 보낸다
+    await hide(false);
+    await doneSwitch(true);
+    await hide(true);
+    await until("다시 가려진 휴대폰", async () => (await pushInUse()) === 0);
+    const t = await work("완료 알림 다시 켬");
+    const { msg } = await nextPush(dev, start, "다시 켠 뒤 push");
+    if (msg.tag !== `aaa-demo/${t.id}`) throw new Error(JSON.stringify(msg));
+    if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
+    if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
+    await pp.context().close();
+    for (const x of ts) aaa("thread", "resolve", "demo", x.id);
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse()) === 1);
   });
 
   await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {

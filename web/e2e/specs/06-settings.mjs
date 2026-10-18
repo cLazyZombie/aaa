@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit,
+  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, usageHits, browser, openSettings, webkit, sentFrames, sentCount,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -18,7 +18,9 @@ export default async function ({ ctl, page }) {
         window.queryLocalFonts = async () => [{ family: "Menlo" }, { family: "Helvetica" }, { family: "E2E Wide" }];
       } catch {}
     };
-    const fp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init })).page;
+    // service worker는 /fonts/를 캐시 먼저로 맡아(plan §8.115) 다시 연 화면의 face가 아래 route를 거치지 않는다.
+    // 다시 연 뒤에도 늦게 온 face를 받은 다음 재는지 보려고 이 기기는 worker 없이 연다(worker 캐시는 01-http-pwa가 본다)
+    const fp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init, serviceWorkers: "block" })).page;
     // 그 face는 늦게 준다: 받기 전에 cell을 재면 대신 글꼴 너비가 남아 아래 1.5배 확인이 실패한다
     let wideFetches = 0;
     await fp.context().route((url) => url.search === "?e2e-wide", async (r) => {
@@ -152,14 +154,20 @@ export default async function ({ ctl, page }) {
   await step("글자 크기(herdr-web-ui terminalFontSize·핀치): 설정에서 한 칸씩, 휴대폰은 두 손가락으로 글자가 따라오고 손을 떼면 저장하고 PTY를 한 번 다시 건다", async () => {
     const t1 = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
     const rowsFont = (pg) => pg.evaluate(() => getComputedStyle(document.querySelector('[data-testid="terminal"] .xterm-rows')).fontSize);
-    /** 이 화면이 PTY 크기를 건 뒤 멈춘 열 수 */
-    const settled = async (pg, what, ok) =>
-      until(what, async () => {
-        const a = t1().cols;
-        await sleep(300);
-        const b = t1().cols;
-        return a === b && (await ok(b)) ? b : null;
+    /**
+     * 이 화면이 PTY 크기를 건 뒤 멈춘 열 수: 맞추기 판단(Term data-fit)이 same(이 화면이 받은 host 크기가 맞출 크기와 같다)이고
+     * 크기 바뀜 뒤 기다리는 맞추기(data-fit-pending)가 없을 때의 host 열 수. 300ms 사이 두 번 읽어 멈춤을 어림하지 않는다
+     */
+    const settled = async (pg, what, ok) => {
+      const term = pg.getByTestId("terminal");
+      const now = async () => ({ fit: await term.getAttribute("data-fit"), pending: await term.getAttribute("data-fit-pending"), cols: t1().cols });
+      return until(what, async () => {
+        const n = await now();
+        return n.fit === "same" && n.pending === null && (await ok(n.cols)) ? n.cols : null;
+      }).catch(async (e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(await now())}`);
       });
+    };
     /**
      * 이 화면의 터미널 칸을 PTY `cols`열이 채운다: 이 화면이 자기 칸으로 크기를 건 뒤다(xterm은 host가 알린 PTY 크기를 따른다).
      * 앞 단계 화면이 건 크기(넓은 창이면 116열)가 남아 있는 동안은 넘친다(02-terminal 「넓은 창」과 같은 판정)
@@ -214,6 +222,7 @@ export default async function ({ ctl, page }) {
         type,
         touchPoints: d === null ? [] : [{ x: cx - d / 2, y: cy, id: 1 }, { x: cx + d / 2, y: cy, id: 2 }],
       });
+    const beforePinch = await sentCount(mp);
     await touch("touchStart", 100);
     await touch("touchMove", 130);
     await touch("touchMove", 150);
@@ -221,19 +230,25 @@ export default async function ({ ctl, page }) {
     await until("핀치 중 20px", async () => (await rowsFont(mp)) === "20px");
     const badge = await mp.getByTestId("pinch-badge").innerText();
     if (badge !== "20px") throw new Error(`핀치 표시 ${JSON.stringify(badge)}`);
-    if (t1().cols !== phone) throw new Error("손을 떼기 전에 PTY가 바뀌었다");
+    // 핀치 사건 처리 안에서 크기를 걸었다면 이미 보냈다(host에 닿기 전이어도)
+    const pinchResize = (await sentFrames(mp, beforePinch)).filter((f) => f.t === "resize");
+    if (pinchResize.length || t1().cols !== phone) throw new Error(`손을 떼기 전에 PTY가 바뀌었다: ${phone}열 → ${t1().cols}열, 보낸 크기 ${JSON.stringify(pinchResize)}`);
+    const beforeEnd = await sentCount(mp);
     if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== null) throw new Error("손을 떼기 전에 저장했다");
     await touch("touchEnd", null);
     await until("핀치 표시 사라짐", async () => await mp.getByTestId("pinch-badge").isHidden());
     if ((await mp.evaluate(() => localStorage.getItem("aaa:terminal-font-size"))) !== "20") throw new Error("핀치 크기를 저장하지 않았다");
     const pinched = await settled(mp, "핀치 뒤 PTY", (c) => c < phone * 0.8);
+    const endResize = (await sentFrames(mp, beforeEnd)).filter((f) => f.t === "resize");
+    if (endResize.length !== 1) throw new Error(`손을 뗀 뒤 PTY를 한 번 걸지 않았다: ${JSON.stringify(endResize)}`);
     console.log(`     핀치 ${phone}열(13px) → ${pinched}열(20px)`);
     await mp.context().close();
   });
 
   await step("설정 쪽(herdr-web-ui SettingsDialog PAGES·settings-nav·settingsHistory, 차이 목록 T1): 넓은 창은 목록 옆에 쪽·화살표로 넘김, 휴대폰은 목록 → 쪽 → 뒤로, 시스템 뒤로는 한 걸음씩, Esc는 닫고 focus는 톱니로", async () => {
     const bad = [];
-    const NAMES = ["모양", "터미널", "알림", "구독 사용량", "단축키", "폰 및 기기"];
+    // 참고 PAGES 차례 가운데 aaa에 있는 쪽(「채팅」은 C1·C4에서 더했다)
+    const NAMES = ["모양", "채팅", "터미널", "알림", "구독 사용량", "단축키", "폰 및 기기"];
     const tabs = (dialog) => dialog.getByRole("tab").allInnerTexts();
     const focused = (p) => p.evaluate(() => `${document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName}:${document.activeElement?.textContent?.trim() || document.activeElement?.getAttribute("aria-label")}`);
     const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("dialog", { name: "설정" }).count()) === 0);
@@ -253,8 +268,8 @@ export default async function ({ ctl, page }) {
     if (side.navRight > side.bodyLeft || !side.top) bad.push(`넓은 창 목록·쪽이 나란하지 않다 ${JSON.stringify(side)}`);
     await until("고른 줄에 focus", async () => (await focused(dp)) === "tab:모양").catch(async (e) => bad.push(`${e.message}: ${await focused(dp)}`));
     await dp.keyboard.press("ArrowDown");
-    await dlg.getByRole("tabpanel", { name: "터미널" }).waitFor();
-    if ((await dlg.getByRole("tab", { name: "터미널" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
+    await dlg.getByRole("tabpanel", { name: "채팅" }).waitFor();
+    if ((await dlg.getByRole("tab", { name: "채팅" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
     await dp.keyboard.press("End");
     await dlg.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
     await dp.keyboard.press("Home");
@@ -267,7 +282,7 @@ export default async function ({ ctl, page }) {
       await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null)));
       return [...document.querySelectorAll(".settings-tab")].map((t) => `${t.textContent.trim()}:${getComputedStyle(t).backgroundColor !== "rgba(0, 0, 0, 0)"}`);
     });
-    if (marks.join() !== "모양:false,터미널:false,알림:true,구독 사용량:false,단축키:false,폰 및 기기:false") bad.push(`고른 줄 바탕 ${marks}`);
+    if (marks.join() !== "모양:false,채팅:false,터미널:false,알림:true,구독 사용량:false,단축키:false,폰 및 기기:false") bad.push(`고른 줄 바탕 ${marks}`);
     await shot(dp, "settings-pages-desktop");
     await dp.keyboard.press("Escape");
     await closed(dp);

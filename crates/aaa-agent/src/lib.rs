@@ -10,11 +10,12 @@ mod chat;
 mod command;
 mod cwd;
 pub mod detect;
+mod files;
 mod health;
 pub mod hooks;
 pub mod identity;
 pub mod link;
-mod merge;
+mod page;
 mod pr;
 pub mod threads;
 
@@ -46,6 +47,9 @@ struct Entry {
     pump: Option<mpsc::Sender<PumpCmd>>,
 }
 
+/// 그린 HTML 페이지: 경로·크기·고친 시각과 bytes
+type DrawnPage = (String, u64, std::time::SystemTime, Arc<Vec<u8>>);
+
 pub struct Agent {
     pub state: PathBuf,
     pub machine_id: String,
@@ -58,6 +62,10 @@ pub struct Agent {
     host: Mutex<Option<FrameTx>>,
     pub selfcheck: Mutex<Option<serde_json::Value>>,
     threads_cfg: Mutex<threads::ThreadsConfig>,
+    /// 파일 보기가 여는 폴더(plan §8.125)
+    file_roots: Mutex<files::Roots>,
+    /// 마지막으로 그린 HTML 페이지(경로·크기·고친 시각): host가 조각으로 읽는 동안 다시 그리지 않는다
+    page_cache: Mutex<Option<DrawnPage>>,
     /// report.md 감시 task(thread ID별)
     watches: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). 칸마다(`Slot`) 마지막 하나다.
@@ -97,6 +105,8 @@ impl Agent {
             host: Mutex::new(None),
             selfcheck: Mutex::new(None),
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
+            file_roots: Mutex::new(files::Roots::default()),
+            page_cache: Mutex::new(None),
             watches: Mutex::new(HashMap::new()),
             harness_last: Mutex::new(HashMap::new()),
             labels: Mutex::new(HashMap::new()),
@@ -217,6 +227,62 @@ impl Agent {
         *self.threads_cfg.lock().unwrap() = cfg;
     }
 
+    /// 파일 보기가 열 수 있는 폴더(§6.5 허용 폴더, plan §8.125). 없는 폴더는 빠진다.
+    pub fn configure_file_roots(&self, roots: Vec<PathBuf>) {
+        *self.file_roots.lock().unwrap() = files::Roots::new(roots);
+    }
+
+    /// 페이지로 그린 HTML 파일의 한 조각. 파일이 그대로면 마지막으로 그린 것을 다시 쓴다(조각마다 다시 그리지 않는다)
+    fn page_chunk(&self, path: &str, offset: u64, len: u32, roots: &files::Roots) -> anyhow::Result<(Vec<u8>, bool)> {
+        let (size, modified) = files::page_key(path, roots)?;
+        let cached = self
+            .page_cache
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|c| c.0 == path && c.1 == size && c.2 == modified)
+            .map(|c| c.3.clone());
+        let bytes = match cached {
+            Some(b) => b,
+            None => {
+                let b = Arc::new(page::render(Path::new(path), roots)?);
+                *self.page_cache.lock().unwrap() = Some((path.to_string(), size, modified, b.clone()));
+                b
+            }
+        };
+        let start = (offset as usize).min(bytes.len());
+        let end = start.saturating_add(len.min(files::MAX_CHUNK) as usize).min(bytes.len());
+        Ok((bytes[start..end].to_vec(), end >= bytes.len()))
+    }
+
+    /// 파일 보기: 세션이 지금 있는 폴더(없으면 시작 폴더) 기준으로 경로를 찾는다
+    async fn file_locate(&self, session: &str, path: String) -> Result<AgentResponse, ErrorBody> {
+        let started = {
+            let s = self.sessions.lock().unwrap();
+            s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?.info.cwd.clone()
+        };
+        // 지금 폴더를 못 읽어도 찾는다(참고 `paneContext` 실패: 절대·~ 경로는 그대로 열린다)
+        let cwd = match self.session_cwd(session).await {
+            Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
+            _ => started,
+        };
+        let roots = self.file_roots.lock().unwrap().clone();
+        let home = aaa_config::paths::home();
+        let found =
+            tokio::task::spawn_blocking(move || files::locate(&path, cwd.as_deref().map(Path::new), &home, &roots))
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        match found {
+            files::Located::Found(info) => Ok(AgentResponse::FileLocated { info: Some(info), candidates: Vec::new() }),
+            files::Located::Candidates(candidates) => Ok(AgentResponse::FileLocated { info: None, candidates }),
+            files::Located::Missing => Err(ErrorBody::new(ErrorCode::NotFound, "이 경로에 읽을 수 있는 파일이 없다")),
+            files::Located::Outside => Err(ErrorBody::new(
+                ErrorCode::Forbidden,
+                "허용한 폴더 밖의 파일이라 열지 않는다(그 머신 agent.toml [agent] file_roots)",
+            )),
+        }
+    }
+
     /// report.md hash를 1초마다 보고 바뀌면 host에 알린다. 등록하면 지금 값을 한 번 보낸다.
     fn watch_report(self: &Arc<Self>, thread: String, work_dir: PathBuf) {
         let me = self.clone();
@@ -265,12 +331,19 @@ impl Agent {
         self.host.lock().unwrap().clone()
     }
 
-    pub fn set_host(&self, tx: Option<FrameTx>) {
+    /// 세션별 마지막 harness 사건(시각 차례). hello에 싣거나 옛 host에 다시 보낸다.
+    pub fn harness_events(&self) -> Vec<aaa_proto::HarnessEvent> {
+        let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
+        last.sort_by_key(|e| e.at_ms);
+        last
+    }
+
+    /// `replay`: hello에 실은 harness 사건을 연결 뒤 다시 보낸다(hello의 것을 읽지 않는 옛 host)
+    pub fn set_host(&self, tx: Option<FrameTx>, replay: bool) {
         let gone = tx.is_none();
-        if let Some(tx) = &tx {
+        if let Some(tx) = tx.as_ref().filter(|_| replay) {
             // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
-            let mut last: Vec<_> = self.harness_last.lock().unwrap().values().flatten().cloned().collect();
-            last.sort_by_key(|e| e.at_ms);
+            let last = self.harness_events();
             let tx = tx.clone();
             tokio::spawn(async move {
                 for ev in last {
@@ -508,10 +581,31 @@ impl Agent {
         if spec.cwd.is_none() {
             spec.cwd = self.default_cwd.clone();
         }
+        // 웹 새 세션 창은 `~/…`도 받는다(herdr-web-ui 「absolute path or ~/…」): 이 머신 사용자의 집으로 푼다
+        if let Some(rest) = spec.cwd.as_deref().and_then(|c| c.strip_prefix('~'))
+            && (rest.is_empty() || rest.starts_with('/'))
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            spec.cwd = Some(format!("{}{rest}", home.to_string_lossy()));
+        }
         if let Some(cwd) = &spec.cwd
             && !Path::new(cwd).is_dir()
         {
             bail!("작업 폴더가 없다: {cwd}");
+        }
+        // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
+        // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
+        if let Some(name) = spec.profile.clone() {
+            let cfg = self.threads_cfg.lock().unwrap().clone();
+            let launch =
+                threads::with_hooks(&cfg, threads::resolve(&name, threads::find_profile(&cfg, &name)?)?, &paths.dir)?;
+            // thread처럼 profile harness의 화면으로 상태를 본다(host orch `harness: Some(launch.harness)`, plan §8.110)
+            spec.harness.get_or_insert(launch.harness);
+            spec.argv = launch.argv;
+            spec.env.extend(launch.env);
+            if spec.name.is_empty() {
+                spec.name = name;
+            }
         }
         if spec.name.is_empty() {
             spec.name = spec
@@ -599,18 +693,39 @@ impl Agent {
             }
             AgentRequest::Kill { session } => return self.to_session(id, &session, SessionRequest::Kill).await,
             AgentRequest::Screen { session } => return self.to_session(id, &session, SessionRequest::Screen).await,
+            AgentRequest::History { session, anchor, depth } => {
+                return self.to_session(id, &session, SessionRequest::History { anchor, depth }).await;
+            }
             AgentRequest::Forget { session } => self.forget(&session).await,
             AgentRequest::Rename { session, label } => self.rename(&session, label).await,
             AgentRequest::Cwd { session } => self.session_cwd(&session).await,
-            AgentRequest::Chat { harness, transcript, harness_session } => tokio::task::spawn_blocking(move || {
-                chat::read(&harness, transcript.as_deref(), harness_session.as_deref())
-            })
-            .await
-            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-            .and_then(|r| {
-                r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
-                    .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
-            }),
+            AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
+            AgentRequest::FileView { path, offset, len, page } => {
+                let roots = self.file_roots.lock().unwrap().clone();
+                let me = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    if page {
+                        me.page_chunk(&path, offset, len, &roots)
+                    } else {
+                        files::read(&path, offset, len, &roots)
+                    }
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
+            }
+            AgentRequest::Chat { harness, transcript, harness_session, thinking } => {
+                tokio::task::spawn_blocking(move || {
+                    chat::read(&harness, transcript.as_deref(), harness_session.as_deref(), thinking)
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| {
+                    r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
+                        .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
+                })
+            }
             AgentRequest::Profiles => {
                 Ok(AgentResponse::Profiles { profiles: threads::profile_views(&self.threads_cfg.lock().unwrap()) })
             }
@@ -676,17 +791,18 @@ impl Agent {
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
             }
-            AgentRequest::MergeLand { repo, cwd, branch, remote, target, message } => {
-                merge::land(&repo, &cwd, &branch, &remote, &target, &message)
-                    .await
-                    .map(AgentResponse::Landed)
-                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
-            }
-            AgentRequest::ThreadCleanup { repo, cwd, branch, base, keep_worktree } => {
-                threads::cleanup(repo.as_deref(), &cwd, branch.as_deref(), base.as_deref(), keep_worktree)
-                    .await
-                    .map(AgentResponse::Cleanup)
-                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
+            AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree, uncopied } => {
+                threads::cleanup(
+                    repo.as_deref(),
+                    &cwd,
+                    branch.as_deref(),
+                    merged_head.as_deref(),
+                    keep_worktree,
+                    uncopied,
+                )
+                .await
+                .map(AgentResponse::Cleanup)
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
             }
             AgentRequest::PrQuery { cwd, query } => pr::query(&cwd, &query)
                 .await
@@ -840,6 +956,7 @@ impl Agent {
                         cols: info.cols,
                         rows: info.rows,
                         replay: B64(replay),
+                        history_more: false,
                     }),
                     offset: end,
                 })
@@ -950,6 +1067,7 @@ mod tests {
             rows: 24,
             role: None,
             harness: harness.map(str::to_string),
+            profile: None,
         };
         let info = SessionInfo {
             id: "s".into(),

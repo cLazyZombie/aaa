@@ -293,6 +293,9 @@ impl Tui {
         cmd.env("AAA_STATE_DIR", &node.state);
         cmd.env("TERM", "xterm-256color");
         cmd.env("RUST_LOG", "off");
+        // 이 관측기가 터미널이고 색(고른 줄·지금 줄 바탕)을 본다. 시험을 돌린 셸의 NO_COLOR를 물려받으면
+        // crossterm이 색을 내지 않아 그 줄을 찾지 못한다(`Node::cmd`처럼 뺀다)
+        cmd.env_remove("NO_COLOR");
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -545,11 +548,15 @@ fn attach_draws_layout_and_detach_keeps_sessions() {
     let first = leaves(&w)[0].clone();
 
     let mut tui = Tui::start(&h);
-    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄(셸은 상태 점 `·`)이 있고
-    // 지금 pane 줄은 active_row_bg 바탕이다(herdr 사이드바).
+    // 탭 이름표는 herdr처럼 붙인 이름 또는 자리 번호다. 사이드바에 머신 줄과 pane 줄이 있고 지금 pane 줄은 active_row_bg
+    // 바탕이다(herdr 사이드바). 이 pane은 실행 파일 이름이 claude라 agent가 띄운 지 3초(`STARTUP_GRACE`) 뒤 화면을 보고
+    // 쉼을 알린다(`○`·「입력 대기」). 상태 없는 `·`은 그 3초 동안만 보여 TUI가 3초 넘게 늦게 뜨면 볼 수 없다.
+    // 시작 시각에 기대지 않게 감지가 알린 쉼을 기다린다.
     tui.wait_screen("탭과 사이드바", |s| {
         let t = s.text();
-        tab_chips(&t) == ["first"] && t.contains(" ▾ labA") && s.current().is_some_and(|l| l.contains(" · first"))
+        tab_chips(&t) == ["first"]
+            && t.contains(" ▾ labA")
+            && s.current().is_some_and(|l| l.contains(" ○ first") && l.contains("입력 대기"))
     });
     // 처음 포커스한 pane은 아무도 쓰지 않으니 칸 크기(사이드바 26칸과 탭 막대 한 줄을 뺀 칸)로 맞추고
     // 이 화면이 지금 쓰는 화면이 된다. 상태 줄은 없다(herdr).
@@ -974,6 +981,52 @@ fn lease_conflict_with_another_front() {
     drop(other);
 }
 
+/// 다른 front(휴대폰)가 좁게 쥐었다 놓아도 줄 끝이 돌아온다. host의 pane 화면(aaa-vt)이 폭이 바뀔 때 다시 접는다(herdr도
+/// 다시 접는다: src/pane.rs 「Herdr reflows too」). 전에는 vt100 `set_size`가 좁힌 폭 밖 글을 버려 넓혀도 비었다(coordinator
+/// 10-18, t-0330 발견). 셸은 그래서 fish에게 aaa가 다시 접는다고 알린다(`fish_handle_reflow=0`).
+#[test]
+fn narrow_claim_then_release_keeps_line_ends() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "reflow", "--", "/bin/sh"]);
+    let id = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["reflow"]);
+    hw.wait("이 화면의 크기", |w| {
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
+    });
+    // pane 폭(COLS-SIDE) 안에 드는 49자 줄. 입력한 명령 줄에는 이 글이 그대로 나오지 않는다
+    let long = format!("LONG-{}-END", "0".repeat(40));
+    tui.type_line("echo LONG-$(printf %040d 0)-END; echo \"reflow: ${fish_handle_reflow-none}\"");
+    tui.wait_text("긴 줄과 fish 알림", |s| s.contains(&long) && s.contains("reflow: 0"));
+
+    // 다른 front가 30칸으로 쥔다: 줄이 접혀 한 줄에 다 보이지 않는다
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let mut other = rt.block_on(aaa_common::front::FrontClient::connect_as(&h.state, "phone-front")).unwrap();
+    let mut call = |req| {
+        let r = rt.block_on(other.call(req)).unwrap();
+        assert!(r.is_ok(), "{r:?}");
+    };
+    call(aaa_proto::FrontRequest::PaneResize { pane: id.clone(), cols: 30, rows: 15 });
+    hw.wait("좁은 크기", |w| (w.held_by(&id, "phone-front") && w.pane(&id)?.cols == 30).then_some(()));
+    tui.wait_text("좁게 접힌 줄", |s| {
+        s.contains("phone-front 크기") && !s.contains(&long) && s.contains("LONG-0000")
+    });
+
+    // 놓고 이 화면이 되찾으면(focus) 넓은 폭에서 줄 끝까지 다시 한 줄이다
+    call(aaa_proto::FrontRequest::PaneRelease { pane: id.clone() });
+    hw.wait("놓음", |w| w.pane(&id).is_some_and(|p| p.lease.is_none()).then_some(()));
+    tui.send(b"\x1b[I");
+    hw.wait("되찾은 크기", |w| {
+        (w.held_by(&id, "tui@") && w.pane(&id)?.cols == COLS - SIDE - GUTTER).then_some(())
+    });
+    tui.wait_text("줄 끝이 돌아옴", |s| s.contains(&long) && !s.contains("phone-front 크기"));
+    // 세션 쪽 화면(`pane read`)도 다시 접었다
+    let read = h.ok(&["pane", "read", &id]);
+    assert!(read.to_string().contains(&long), "pane read: {read}");
+    drop(tui);
+}
+
 /// 고른 줄이 spaces 구역 첫 workspace 줄(` spaces` 머리와 빈 줄 바로 아래)인가(탐색 줄 맨 위)
 fn at_top(s: &Screen) -> bool {
     let side = s.side_lines();
@@ -1218,17 +1271,20 @@ fn side_list_like_web() {
     assert!(h.screen(&right).contains("still-9"), "포커스는 나눈 오른쪽 pane 그대로");
 }
 
-/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 사람이 다시 띄우는 길은 badge가 알려 주는 CLI다.
+/// 재부팅 흉내 뒤 중단 표시. herdr에는 재개 키가 없다: 셸 pane은 저절로 되살아나고(m12
+/// `reboot_restores_shells_and_resumes_agents`), 다시 실행하지 않는 프로그램 pane은 badge가 알려 주는 CLI로 띄운다.
 #[test]
 fn interrupted_badge_and_resume() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh"]);
+    // 띄울 때마다 차례를 센다(첫 실행 `run-1`, 재개 `run-2`)
+    let runs = lab.root.join("runs").display().to_string();
+    let script = r#"echo x >> "$0"; echo "run-$(( $(wc -l < "$0") ))"; exec cat"#;
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "job", "--", "/bin/sh", "-c", script, &runs]);
     let old = leaves(&w)[0].clone();
-    h.ok(&["pane", "run", &old, "echo before-$((1+1))"]);
 
     let mut tui = Tui::start(&h);
-    tui.wait_text("첫 화면", |s| s.contains("before-2"));
+    tui.wait_text("첫 화면", |s| s.contains("run-1"));
 
     lab.kill("agent");
     tui.wait_text("끊김 표시", |s| s.contains("끊김·읽기 전용"));
@@ -1236,7 +1292,7 @@ fn interrupted_badge_and_resume() {
     lab.spawn_env("agent2", &h, &["agent", "--host", "local", "--name", "labA"], &[("AAA_TEST_BOOT_ID", "boot-after")]);
     let short: String = old.chars().take(8).collect();
     let badge = format!("중단(재부팅) — aaa pane resume {short}");
-    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("before-2"));
+    tui.wait_text("중단 표시", |s| s.contains(&badge) && s.contains("run-1"));
 
     h.ok(&["pane", "resume", &short]);
     hw.wait("재개", |w| {
@@ -1244,12 +1300,11 @@ fn interrupted_badge_and_resume() {
         (l.len() == 1 && l[0] != old && w.pane(&l[0]).is_some_and(|p| p.state.is_running())).then_some(())
     });
     // badge는 옛 pane 기록이 빠질 때 먼저 사라진다. 포커스는 TUI가 새 layout을 받을 때 새 pane으로 옮기므로,
-    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 새 pane 화면(옛 출력 없이 prompt)이 그려진 뒤 친다.
-    tui.wait_text("재개 뒤 새 pane", |s| {
-        !s.contains("중단(재부팅)") && !s.contains("before-2") && s.lines().any(|l| l.trim_end().ends_with('$'))
-    });
-    tui.type_line("echo resumed-$((5*5))");
-    tui.wait_text("재개 뒤 입력", |s| s.contains("resumed-25"));
+    // 그 전에 친 키는 옛 pane으로 가 사라진다(첫 글자를 잃음). 같은 spec으로 다시 돈 새 pane 화면(`run-2`)이 그려진 뒤 친다.
+    tui.wait_text("재개 뒤 새 pane", |s| !s.contains("중단(재부팅)") && s.contains("run-2"));
+    // 입력은 새 세션(cat)이 받는다: 터미널 echo와 cat 출력으로 두 번
+    tui.type_line("typed-after-resume");
+    tui.wait_text("재개 뒤 입력", |s| s.matches("typed-after-resume").count() >= 2);
 }
 
 /// 세션 폴더에 저장된 첨부 파일들
@@ -1890,8 +1945,8 @@ fn ctrl_v_pastes_clipboard_image() {
             std::fs::write(&fake, out).unwrap();
         }
     }
-    tui.type_line("clear");
-    std::thread::sleep(Duration::from_millis(300));
+    tui.type_line("clear; echo cleared-$((2+2))");
+    tui.wait_text("화면 지움", |s| s.contains("cleared-4"));
     tui.send(b"\x16");
     tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
     let files = attachments(&h.state);

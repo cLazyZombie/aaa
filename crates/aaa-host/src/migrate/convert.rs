@@ -64,7 +64,6 @@ pub struct Outcome {
 fn setting_note(key: &str) -> Option<&'static str> {
     Some(match key {
         "name" => "aaa 프로젝트는 폴더 이름(slug) 하나다. 표시 이름 없음",
-        "nudge" => "aaa nudge는 host.toml nudge_idle_secs로 늘 켜져 있다(3장 G6 `nudge` 설정 옮길 예정)",
         "mute" => "aaa 알림은 기기별 설정이다(D4). 프로젝트 mute 없음",
         "coordinator_profile" => "aaa는 coordinator를 띄우지 않는다(사람이 프로젝트 폴더에서 agent를 띄운다)",
         "paused" | "archived" => "aaa에 멈춤·보관이 없다(4장 G「멈추기·보관」 옮길 예정)",
@@ -157,6 +156,7 @@ pub(crate) fn thread_rec(
         review_item_hash: None,
         group_changed_ms: None,
         report_changed_ms: None,
+        merged_seen_ms: None,
         error: opt(&t.error),
         eval_cursor: 0,
         eval_batches: 0,
@@ -315,9 +315,13 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
     for (k, v) in &p.settings {
         match k.as_str() {
             // project.toml에서 같은 이름·같은 뜻이다
-            "start_threads" | "max_parallel_threads" | "auto_resolve_days" | "goal" | "thread_profile" | "repos" => {
-                project_toml.push_str(&format!("{k} = {v}\n"))
-            }
+            "start_threads"
+            | "max_parallel_threads"
+            | "auto_resolve_days"
+            | "goal"
+            | "thread_profile"
+            | "repos"
+            | "nudge" => project_toml.push_str(&format!("{k} = {v}\n")),
             _ => {
                 let note = setting_note(k).unwrap_or("aaa에 같은 설정이 없다");
                 out.settings_not_mapped.push((k.clone(), front_value(v), note.to_string()));
@@ -566,7 +570,7 @@ mod e2e {
             &src,
             "PROJECT.md",
             "+++\nname = \"Demo\"\ngoal = \"배포\"\nmax_parallel_threads = 2\nstart_threads = \"auto\"\nauto_resolve_days = 3\n\
-             thread_profile = \"opus\"\ncoordinator_profile = \"opus\"\n\n[[repos]]\npath = \"/srv/app\"\nmachine = \"mac-a\"\n\n\
+             thread_profile = \"opus\"\ncoordinator_profile = \"opus\"\nnudge = false\n\n[[repos]]\npath = \"/srv/app\"\nmachine = \"mac-a\"\n\n\
              [[repos]]\npath = \"/work/lib\"\n+++\n\n# 지침\n규칙\n",
         );
         put(&src, "AGENTS.md", "0.2 안내\n");
@@ -659,6 +663,7 @@ mod e2e {
             ("배포", 2, "auto", 3)
         );
         assert_eq!(set.thread_profile, "opus");
+        assert!(!set.nudge);
         assert_eq!(
             set.repos,
             [

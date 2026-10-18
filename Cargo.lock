@@ -42,6 +42,7 @@ dependencies = [
  "aaa-proto",
  "aaa-session",
  "anyhow",
+ "base64 0.22.1",
  "hex",
  "libc",
  "portable-pty",
@@ -133,6 +134,7 @@ dependencies = [
  "tokio-rustls",
  "toml",
  "toml_edit",
+ "tower",
  "tracing",
  "webpki-roots",
 ]

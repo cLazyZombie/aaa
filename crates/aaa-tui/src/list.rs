@@ -52,17 +52,6 @@ pub fn thread_key(t: &ThreadView) -> String {
     format!("{}/{}", t.project, t.id)
 }
 
-/// herdr-projects `Group::rank`(웹 `groupRank`): 사람 차례 → 검토 대기 → (병합 중) → 작업 중 → 쉼 → 끝남
-pub fn group_rank(g: ThreadGroup) -> u8 {
-    match g {
-        ThreadGroup::WaitingOnYou => 1,
-        ThreadGroup::ReadyForReview => 2,
-        ThreadGroup::Working => 4,
-        ThreadGroup::Idle => 5,
-        ThreadGroup::Resolved => 6,
-    }
-}
-
 /// 그 머신의 thread인가(웹 `threadMachine`): pane이 있으면 pane의 머신, 없으면 thread의 머신 이름·ID
 fn on_machine(t: &ThreadView, m: &MachineView, pane: Option<&PaneView>) -> bool {
     match pane {
@@ -76,16 +65,18 @@ fn listed(t: &ThreadView) -> bool {
     t.group != ThreadGroup::Resolved && t.role != Role::Evaluator
 }
 
-/// herdr-projects `project_line`(웹 `projectLine`): 「사람 차례 2 · 작업 중 3」, 없으면 「쉼」
+/// herdr-projects `project_line`(웹 `projectLine`): 「사람 차례 2 · 작업 중 3 · 병합 중 1」, 없으면 「쉼」
 pub fn project_line(groups: &[ThreadGroup]) -> String {
     let need = groups.iter().filter(|g| matches!(g, ThreadGroup::WaitingOnYou | ThreadGroup::ReadyForReview)).count();
-    let working = groups.iter().filter(|g| **g == ThreadGroup::Working).count();
     let mut parts = vec![];
     if need > 0 {
         parts.push(format!("사람 차례 {need}"));
     }
-    if working > 0 {
-        parts.push(format!("작업 중 {working}"));
+    for (g, label) in [(ThreadGroup::Working, "작업 중"), (ThreadGroup::Landing, "병합 중")] {
+        let n = groups.iter().filter(|x| **x == g).count();
+        if n > 0 {
+            parts.push(format!("{label} {n}"));
+        }
     }
     if parts.is_empty() { "쉼".to_string() } else { parts.join(" · ") }
 }
@@ -96,9 +87,11 @@ pub fn project_line(groups: &[ThreadGroup]) -> String {
 pub fn rows(machines: &[MachineView], panes: &[PaneView], threads: &HashMap<String, ThreadView>) -> Vec<Row> {
     let mut out = vec![];
     let mut live: Vec<&ThreadView> = threads.values().filter(|t| listed(t)).collect();
+    // herdr-projects `Group::rank`(`DISPLAY_ORDER`): 사람 차례 → 검토 대기 → 병합 중 → 작업 중 → 쉼
     live.sort_by(|a, b| {
-        group_rank(a.group)
-            .cmp(&group_rank(b.group))
+        a.group
+            .rank()
+            .cmp(&b.group.rank())
             .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
             .then_with(|| thread_key(a).cmp(&thread_key(b)))
     });
@@ -157,7 +150,7 @@ pub fn state_line(t: &ThreadView, pane_open: bool, now_ms: u64) -> String {
             Some("확인창".to_string())
         }
         ThreadGroup::WaitingOnYou => pct,
-        ThreadGroup::ReadyForReview => Some("보고".to_string()),
+        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Some("보고".to_string()),
         ThreadGroup::Working => {
             let reported = a.and_then(|a| a.progress_at_ms);
             let fresh = reported.is_some_and(|at| now_ms.saturating_sub(at) < QUIET_MS);
@@ -223,7 +216,7 @@ pub fn pane_dot(p: &PaneView) -> Dot {
 pub fn thread_dot(t: &ThreadView) -> Dot {
     match t.group {
         ThreadGroup::WaitingOnYou => Dot::Blocked,
-        ThreadGroup::ReadyForReview => Dot::Done,
+        ThreadGroup::ReadyForReview | ThreadGroup::Landing => Dot::Done,
         ThreadGroup::Working => Dot::Working,
         ThreadGroup::Idle => Dot::Idle,
         ThreadGroup::Resolved => Dot::Unknown,
@@ -274,6 +267,7 @@ pub fn group_label(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "사람 차례",
         ThreadGroup::ReadyForReview => "검토 대기",
+        ThreadGroup::Landing => "병합 중",
         ThreadGroup::Working => "작업 중",
         ThreadGroup::Idle => "쉼",
         ThreadGroup::Resolved => "끝남",
@@ -284,6 +278,8 @@ fn group_color(g: ThreadGroup, p: &Palette) -> Color {
     match g {
         ThreadGroup::WaitingOnYou => p.red,
         ThreadGroup::ReadyForReview => p.teal,
+        // herdr-projects popup `group_color`
+        ThreadGroup::Landing => p.green,
         ThreadGroup::Working => p.yellow,
         ThreadGroup::Idle | ThreadGroup::Resolved => p.overlay0,
     }
@@ -733,6 +729,7 @@ mod tests {
             role,
             agent: None,
             label: None,
+            restore_error: None,
         }
     }
 
@@ -970,6 +967,40 @@ mod tests {
             out.push_str(&sym);
         }
         assert_eq!(out.trim_end(), " demo        사람 차례 1");
+    }
+
+    /// thread 줄은 묶음 차례(herdr-projects `DISPLAY_ORDER`: 사람 차례 → 검토 → 병합 중 → 작업 → 쉼)로, 같은 묶음 안은
+    /// 최근 바뀐 것이 먼저다(차이 목록 3장 C1). 끝난 thread는 목록에 없다
+    #[test]
+    fn threads_follow_the_display_order() {
+        let t = |id: &str, g, at| thread("p", id, g, at, "mac-a", None);
+        let threads: HashMap<String, ThreadView> = [
+            t("t-idle", ThreadGroup::Idle, 9),
+            t("t-work-old", ThreadGroup::Working, 1),
+            t("t-work-new", ThreadGroup::Working, 8),
+            t("t-landing", ThreadGroup::Landing, 2),
+            t("t-review", ThreadGroup::ReadyForReview, 3),
+            t("t-you", ThreadGroup::WaitingOnYou, 4),
+            t("t-done", ThreadGroup::Resolved, 10),
+        ]
+        .into_iter()
+        .map(|t| (thread_key(&t), t))
+        .collect();
+        // 머신 머리 아래 프로젝트 머리 하나, 그 아래 thread 줄들(둘째 줄은 뺀다)
+        let got: Vec<Row> = rows(&[machine("m", "mac-a", Connection::Connected)], &[], &threads)
+            .into_iter()
+            .filter(|r| matches!(r, Row::Thread(_)))
+            .collect();
+        let want: Vec<Row> = ["t-you", "t-review", "t-landing", "t-work-new", "t-work-old", "t-idle"]
+            .map(|id| Row::Thread(format!("p/{id}")))
+            .into_iter()
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(
+            project_line(&threads.values().filter(|t| listed(t)).map(|t| t.group).collect::<Vec<_>>()),
+            "사람 차례 2 · 작업 중 2 · 병합 중 1"
+        );
+        assert_eq!(state_line(&threads["p/t-landing"], true, 0), "병합 중 · 보고");
     }
 
     /// 잘린 이름은 「…」로 끝나고 오른쪽 글과 한 칸 띄운다, 끝 한 칸은 빈다(t-0337 QA Q13, herdr `truncate_end`·구분자)

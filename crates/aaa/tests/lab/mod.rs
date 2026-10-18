@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+pub mod watch;
+
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -36,6 +38,8 @@ impl Node {
             .env("AAA_STATE_DIR", &self.state)
             .env("RUST_LOG", "aaa=info")
             .env_remove("NO_COLOR")
+            // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
+            .env_remove("fish_handle_reflow")
             .stdin(Stdio::null());
         // 명령 없는 pane의 기본 셸을 사람의 셸 설정(zsh 테마·plugin) 대신 /bin/sh로: 로컬과 CI가 같은 화면을 본다(herdr tests/cli/harness.rs)
         #[cfg(unix)]
@@ -155,6 +159,17 @@ impl Node {
     pub fn ticks(&self, n: usize) -> u64 {
         (0..n).fold(0, |_, _| self.ok(&["ticker", "tick"])["runs"].as_u64().expect("ticker tick 응답"))
     }
+
+    /// 이 agent 노드에서 세션의 session host PID(세션 폴더 meta.json)
+    pub fn session_host_pid(&self, session: &str) -> Option<u32> {
+        let text = std::fs::read_to_string(self.state.join("agent/sessions").join(session).join("meta.json")).ok()?;
+        serde_json::from_str::<Value>(&text).ok()?["host_pid"].as_u64().map(|p| p as u32)
+    }
+
+    /// 그 session host가 끝났다(PID가 없거나 다른 프로세스가 됐다). 세션 폴더를 지운 뒤에도 명령줄로 가린다
+    pub fn session_host_gone(&self, pid: u32, session: &str) -> bool {
+        command_of(pid).is_none_or(|c| !(cfg!(windows) || c.contains(session)))
+    }
 }
 
 impl Lab {
@@ -211,6 +226,13 @@ impl Lab {
     }
 
     /// 띄운 프로세스 하나를 SIGKILL로 끝낸다(갑작스러운 죽음을 흉내 낸다).
+    /// 이 실험실이 띄운 프로세스에 신호를 보낸다(SIGSTOP·SIGCONT로 응답을 붙잡는 시험)
+    #[cfg(unix)]
+    pub fn signal(&self, tag: &str, sig: i32) {
+        let (_, c) = self.procs.iter().find(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
+        assert_eq!(unsafe { libc::kill(c.id() as i32, sig) }, 0, "{tag}에 신호 {sig}");
+    }
+
     pub fn kill(&mut self, tag: &str) {
         let i = self.procs.iter().position(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
         let (_, mut c) = self.procs.remove(i);

@@ -130,6 +130,7 @@ pub fn token(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "waiting-on-you",
         ThreadGroup::ReadyForReview => "ready-for-review",
+        ThreadGroup::Landing => "landing",
         ThreadGroup::Working => "working",
         ThreadGroup::Idle => "idle",
         ThreadGroup::Resolved => "resolved",
@@ -151,8 +152,8 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         base: None,
         branch: None,
         pr: None,
-        pr_state: None,
-        pr_review: None,
+        pr_state: (!f.pr_state.is_empty()).then(|| f.pr_state.clone()),
+        pr_review: (!f.pr_review.is_empty()).then(|| f.pr_review.clone()),
         cwd: None,
         work_dir: None,
         pane: None,
@@ -176,6 +177,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         review_item_hash: None,
         group_changed_ms: None,
         report_changed_ms: None,
+        merged_seen_ms: None,
         error: None,
         eval_cursor: 0,
         eval_batches: 0,
@@ -200,12 +202,6 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
 
 /// 차이의 까닭(규칙을 읽고 정한 분류)
 pub fn reason(f: &Facts, hp: &str, _aaa: &str) -> String {
-    if hp == "landing" {
-        return "aaa에는 Landing(PR 승인) 묶음이 없다(4장 I「누가 병합하나」, D11 옮기는 중)".into();
-    }
-    if hp == "ready-for-review" && f.pr_state.eq_ignore_ascii_case("open") && f.report_hash == f.acked_hash {
-        return "PR이 열린 확인된 보고: 0.2는 검토 대기, aaa는 PR을 모른다(4장 I)".into();
-    }
     if f.agent_state.as_deref() == Some("unknown") {
         return "herdr `unknown`(셸·모르는 프로그램)을 aaa는 agent 없음으로 본다".into();
     }
@@ -638,13 +634,16 @@ mod tests {
         d.agent_state = Some("idle".into());
         d.report_hash = "h".into();
         assert_eq!(both(&d), ("ready-for-review", "ready-for-review"));
-        // PR 승인: 0.2만 Landing
+        // PR 승인: 둘 다 병합 중(D11). 확인한 보고라도 PR이 열려 있으면 둘 다 검토 대기
         let mut l = open();
         l.agent_state = Some("idle".into());
         l.pr_state = "OPEN".into();
         l.pr_review = "APPROVED".into();
-        assert_eq!(hp_group(&l, NOW), "landing");
-        assert!(reason(&l, "landing", token(aaa_group(&l, NOW))).contains("Landing"));
+        assert_eq!(both(&l), ("landing", "landing"));
+        l.pr_review.clear();
+        l.report_hash = "h".into();
+        l.acked_hash = "h".into();
+        assert_eq!(both(&l), ("ready-for-review", "ready-for-review"));
     }
 
     #[test]

@@ -8,16 +8,17 @@
 //!   (`AgentRequest::PrQuery`, agent 기능 `pr.v1`). 옛 agent나 `gh` 실패는 `outage_secs` 동안 이어지면 한 번 알린다.
 //! - **무엇을 남기나:** GitHub 글(본문·제목)은 받지 않는다. 정해진 필드만 줄여(`reduce`) 바뀌면 `pr` inbox 항목과 흐름 사건을
 //!   남기고, `on = "pr"` routine 중 그 사건을 원하는 것이 thread에 메시지를 보낸다(`routine` 항목).
-//! - **여기서 하지 않는 것:** 병합 뒤 resolve(hp `resolve_merged`)는 병합 흐름(D11)이 `pr_state` 위에 얹는다.
+//! - **병합 뒤(D11):** 열리고 승인된 PR은 묶음 「병합 중」이다(orch.rs `thread_group`). 병합되면 ticker가 agent가 끝난 뒤
+//!   thread를 끝내고(transitions.rs `resolve_merged_pass`), 정리는 병합된 PR head와 같은 branch만 지운다(`merged_head`).
 //!
 //! 옮긴 hp 코드의 MIT 고지는 `aaa_common::pr`에 있다.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aaa_common::pr::{normalize_origin, sanitize, valid_pr_url};
+use aaa_common::pr::{normalize_origin, report_refs, sanitize, valid_pr_url};
 use aaa_proto::{AgentRequest, AgentResponse, ErrorBody, ErrorCode, MessageMode, PrAnswer, PrQuery, Role, ThreadKind};
 use serde::{Deserialize, Serialize};
 
@@ -267,6 +268,14 @@ fn label(r: &ThreadRec) -> String {
     format!("{} \"{}\"", r.id, r.title)
 }
 
+/// 따로 도는 task로 돌려 끝까지 갔는지(panic이면 false). 부른 쪽은 결과와 상관없이 뒷정리를 한다.
+async fn survives<F>(fut: F) -> bool
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(fut).await.is_ok()
+}
+
 impl Host {
     fn pr_every(&self) -> Duration {
         Duration::from_secs(self.cfg.projects.pr_poll_secs.max(1))
@@ -285,11 +294,22 @@ impl Host {
         let me = self.clone();
         let project = project.to_string();
         tokio::spawn(async move {
-            me.pr_pass(&project).await;
+            // 한 번이 panic해도 「도는 중」 표시를 지워 다음 간격에 다시 본다(전에는 그 프로젝트 PR 추적이 멈췄다,
+            // 보안 감사 t-0340)
+            let inner = me.clone();
+            let p = project.clone();
+            if !survives(async move { inner.pr_pass(&p).await }).await {
+                tracing::error!(project = %project, "PR 추적 한 번이 panic했다. 다음 간격에 다시 본다");
+            }
             let mut m = me.pr.lock().unwrap();
             m.running.remove(&project);
             m.last.insert(project, Instant::now());
         });
+    }
+
+    /// 이 프로젝트의 PR 조회가 도는 중이다(병합을 막 기록하고 routine 글을 보내는 중일 수 있다)
+    pub(crate) fn pr_running(&self, project: &str) -> bool {
+        self.pr.lock().unwrap().running.contains(project)
     }
 
     /// 다음 조회 때(ticker가 그때까지만 잔다). 도는 중인 프로젝트는 끝난 뒤 다시 센다.
@@ -305,7 +325,7 @@ impl Host {
         self.tick_wake.notify_one();
     }
 
-    fn machine_feature(&self, mid: &str, feature: &str) -> bool {
+    pub(crate) fn machine_feature(&self, mid: &str, feature: &str) -> bool {
         self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == feature))
     }
 
@@ -322,8 +342,15 @@ impl Host {
     fn gh_result(&self, project: &str, failed: Option<&str>) {
         let limit = self.cfg.projects.outage_secs * 1000;
         let now = aaa_common::util::now_ms();
+        // 다시 띄운 host는 앞 host가 연 「gh 실패」 항목을 이어받는다(inbox.rs `Outage::resumed`)
+        let known = self.pr.lock().unwrap().gh.contains_key(project);
+        let reported = !known && self.db.inbox_open_exists(project, "outage", "gh", "failing").unwrap_or(false);
         let event =
-            self.pr.lock().unwrap().gh.entry(project.to_string()).or_default().record(failed.is_none(), now, limit);
+            self.pr.lock().unwrap().gh.entry(project.to_string()).or_insert_with(|| Outage::resumed(reported)).record(
+                failed.is_none(),
+                now,
+                limit,
+            );
         match (event, failed) {
             (Some(OutageEvent::Down), Some(why)) => {
                 let why = sanitize(why);
@@ -408,6 +435,11 @@ impl Host {
             }
             Err(e) => return self.gh_result(project, Some(&e.message)),
         };
+        // 보고의 `#n`이 가리키는 저장소(herdr-projects thread `origin`, `other_pr_open`이 쓴다)
+        let key = format!("pr_origin:{project}:{}", rec.id);
+        if !answer.origin.is_empty() && self.db.meta(&key).ok().flatten().as_deref() != Some(answer.origin.as_str()) {
+            let _ = self.db.set_meta(&key, &answer.origin);
+        }
         let branch = rec.branch.clone().unwrap_or_default();
         match reduce(&answer.out, &branch, &answer.origin) {
             Err(e) => tracing::warn!(thread = %rec.id, "gh pr view 출력을 읽지 못했다: {e}"),
@@ -455,14 +487,107 @@ impl Host {
                 let event = pr_event(&events, &summary);
                 self.inbox_add(project, "pr", &rec.id, event, &format!("{}: PR {change}", label(&rec)));
                 self.flow(&rec, "pr_changed", None, format!("{url} {event} [{}]: {change}", events.join(", ")));
+                // 평가자의 「착지」 사건(전에는 병합 대기열의 `merge_landed`)
+                if events.contains(&"merged") {
+                    self.flow(&rec, "pr_merged", None, url.clone());
+                }
                 self.fire_pr_routines(project, dir, &rec, &url, &events, &summary).await;
                 let _ = self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap());
             }
         }
     }
 
+    /// 정리에 넘길 병합된 PR head(herdr-projects threads.rs `clean` 앞부분). 기록이 병합이면 마지막으로 본 head이고,
+    /// 병합이 아니거나 head를 모르면 한 번 더 찾아본다(`last_pr_lookup`). 병합되지 않았으면 None, head를 모르면 빈 값.
+    pub(crate) async fn merged_head(&self, project: &str, rec: &ThreadRec, conn: &AgentConn) -> Option<String> {
+        let mut merged = rec.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("merged"));
+        let mut head = self.pr_summary(project, &rec.id).map(|s| s.head_oid).unwrap_or_default();
+        if rec.kind == ThreadKind::Worktree
+            && rec.branch.as_deref().is_some_and(|b| !b.is_empty())
+            && (!merged || head.is_empty())
+            && let Some(s) = self.last_pr_lookup(project, rec, conn).await
+        {
+            merged = s.state == "MERGED";
+            head = s.head_oid;
+        }
+        merged.then_some(head)
+    }
+
+    fn pr_summary(&self, project: &str, id: &str) -> Option<Summary> {
+        let json = self.db.meta(&format!("pr_summary:{project}:{id}")).ok().flatten()?;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// resolve 때 PR을 한 번 더 본다(herdr-projects threads.rs `last_pr_lookup`): 보고 `PR:` 줄, 전에 찾은 것, branch 차례.
+    /// 바뀌었으면 기록을 고치고 `PR found at resolve` 항목을 남긴다. 병합 직후 사람이 끝내도 branch를 지울 수 있다.
+    async fn last_pr_lookup(&self, project: &str, rec: &ThreadRec, conn: &AgentConn) -> Option<Summary> {
+        if !self.machine_feature(&rec.machine_id, "pr.v1") {
+            return None;
+        }
+        let cwd = rec.cwd.clone()?;
+        let branch = rec.branch.clone().unwrap_or_default();
+        let dir = self.project_dir(project).ok()?;
+        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id))).unwrap_or_default();
+        let url = match pr_line(&report) {
+            Ok(Some(url)) => url,
+            _ if rec.pr.as_deref().is_some_and(|u| !u.is_empty()) => rec.pr.clone()?,
+            _ => Some(self.pr_ask(conn, &cwd, PrQuery::Find { branch: branch.clone() }).await.ok()?.out)
+                .filter(|u| !u.is_empty())?,
+        };
+        let answer = self.pr_ask(conn, &cwd, PrQuery::View { url: url.clone() }).await.ok()?;
+        let Checked::Summary(summary) = reduce(&answer.out, &branch, &answer.origin).ok()? else {
+            return None;
+        };
+        if rec.pr.as_deref() != Some(url.as_str()) || rec.pr_state.as_deref().unwrap_or("") != summary.state {
+            let (found, state, review) = (url.clone(), summary.state.clone(), summary.review_decision.clone());
+            let _ = self.update_rec(project, &rec.id, |r| {
+                r.pr = Some(found);
+                r.pr_state = Some(state).filter(|s| !s.is_empty());
+                r.pr_review = Some(review).filter(|s| !s.is_empty());
+            });
+            let change = describe_change(None, &summary);
+            self.inbox_add(
+                project,
+                "pr",
+                &rec.id,
+                "PR found at resolve",
+                &format!("{}: PR {change}(resolve 때 찾았다)", label(rec)),
+            );
+        }
+        Some(summary)
+    }
+
+    /// 보고가 이름 붙인 PR 중 추적하는 것 밖에서 `gh` 계정이 연 것이 열려 있나(herdr-projects steps.rs `other_pr_open`).
+    /// `gh` 실패와 그 질문을 모르는 옛 agent(기능 `pr.v2` 없음)는 열린 것으로 친다: 다음 셈에 다시 묻는다.
+    pub(crate) async fn other_pr_open(&self, project: &str, rec: &ThreadRec) -> bool {
+        let Ok(dir) = self.project_dir(project) else { return true };
+        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id))).unwrap_or_default();
+        let origin = self.db.meta(&format!("pr_origin:{project}:{}", rec.id)).ok().flatten().unwrap_or_default();
+        let refs = report_refs(&report, &origin, rec.pr.as_deref().unwrap_or(""));
+        if refs.is_empty() {
+            return false;
+        }
+        let (Some(conn), Some(cwd)) = (self.conn_of(&rec.machine_id), rec.cwd.clone().or_else(|| rec.work_dir.clone()))
+        else {
+            return true;
+        };
+        if !self.machine_feature(&rec.machine_id, "pr.v2") {
+            return true;
+        }
+        for (repo, named) in refs {
+            let open: BTreeSet<u32> = match self.pr_ask(&conn, &cwd, PrQuery::OpenOwn { repo }).await {
+                Ok(a) => a.out.split(',').filter_map(|n| n.trim().parse().ok()).collect(),
+                Err(_) => return true,
+            };
+            if !open.is_disjoint(&named) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// 켜진 `pr` routine 중 일어난 사건을 원하는 것이 thread에 글을 보내고 `routine` 항목을 남긴다
-    /// (herdr-projects steps.rs `fire_pr_routines`). 글은 턴이 끝난 뒤 들어가는 메시지(queue)다.
+    /// (herdr-projects steps.rs `fire_pr_routines`). 글은 일하는 중이어도 바로 입력한다(E1, `thread_message`).
     async fn fire_pr_routines(
         self: &Arc<Self>,
         project: &str,
@@ -505,6 +630,13 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PR 추적 한 번이 panic해도 뒷정리(「도는 중」 지우기)가 돈다(보안 감사 t-0340)
+    #[tokio::test]
+    async fn a_panicking_pass_still_lets_the_caller_clean_up() {
+        assert!(survives(async {}).await);
+        assert!(!survives(async { panic!("gh 응답이 이상했다") }).await);
+    }
 
     #[test]
     fn pr_line_validation() {

@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 use super::{AgentConn, Host};
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use aaa_common::tls;
+use aaa_common::util;
 use aaa_proto::{LINK_DEAD_AFTER as DEAD_AFTER, LINK_PING_EVERY as PING_EVERY};
 
 /// 인증 전 동시 연결 상한
@@ -151,6 +152,15 @@ async fn enroll<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     }
 }
 
+/// 이미 등록된 머신이 다시 등록하려 할 때의 안내: 등록 없이 붙는 길과 다시 등록하는 길
+fn already_enrolled(name: &str) -> String {
+    format!(
+        "이 머신({name})은 이미 이 host에 등록돼 있다. 다시 등록하지 않고 `aaa agent`로 붙는다(agent.toml [agent] host). \
+         다시 등록하려면 host 머신에서 `aaa machine revoke {name}`·`aaa machine enroll --open 10m`을 한 뒤 이 머신에서 \
+         `aaa agent enroll <host:port>`를 다시 한다"
+    )
+}
+
 /// 인증된 agent: hello → welcome → 요청·사건·출력 처리. `known`은 TLS로 확인한 머신 ID(로컬은 None).
 async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Option<String>) -> Result<()> {
     let local = known.is_none();
@@ -158,8 +168,17 @@ async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Opt
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
     let first: LinkMsg = tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("hello 대기")??;
-    let LinkMsg::Hello(hello) = first else {
-        return reject(&tx, ErrorCode::BadRequest, "hello가 와야 한다").await;
+    let hello = match first {
+        LinkMsg::Hello(hello) => hello,
+        // 이미 등록된 장치 키로 `aaa agent enroll`을 다시 했다(QA t-0337 Q17): 무엇이 문제이고 어떻게 하는지 알린다
+        LinkMsg::Enroll(req) if known.is_some() => {
+            let name = known
+                .as_deref()
+                .and_then(|id| host.db.machines().ok()?.into_iter().find(|m| m.id == id))
+                .map_or(req.machine_name, |m| m.name);
+            return reject(&tx, ErrorCode::BadRequest, &already_enrolled(&name)).await;
+        }
+        _ => return reject(&tx, ErrorCode::BadRequest, "hello가 와야 한다").await,
     };
     let agreed = match negotiate(AGENT_LINK, hello.proto)
         .and_then(|v| require_features(&["terminal.v1"], &hello.features).map(|_| v))
@@ -178,7 +197,8 @@ async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Opt
     tx.json(&LinkMsg::Welcome(HostWelcome {
         proto: agreed,
         host_id: host.host_id.clone(),
-        features: vec!["terminal.v1".into(), "health.v1".into()],
+        // harness_hello.v1: hello의 harness 사건을 읽는다(agent는 연결 뒤 다시 보내지 않는다, 재부팅 복원)
+        features: vec!["terminal.v1".into(), "health.v1".into(), "harness_hello.v1".into()],
     }))
     .await?;
     let generation = host.next_gen();
@@ -245,10 +265,15 @@ async fn serve(host: Arc<Host>, stream: aaa_common::ipc::LocalStream, known: Opt
 
 /// 같은 머신의 agent(UDS, 같은 사용자): 등록 없이 로컬 머신으로 받아들인다.
 async fn register_local(host: &Host, hello: &AgentHello, tx: &FrameTx) -> Result<()> {
-    if let Ok(Some(m)) = host.db.machine_by_name(&hello.machine_name)
+    let known = host.db.machine_by_name(&hello.machine_name).ok().flatten();
+    if let Some(m) = &known
         && m.id != hello.machine_id
     {
         return reject(tx, ErrorCode::NameTaken, &format!("이름 {}은 다른 머신이 쓴다", hello.machine_name)).await;
+    }
+    // 새 이름만 검사한다. 이미 이 머신의 이름으로 등록된 것은 그대로 받는다(올리기 전 이름).
+    if known.is_none() && !util::machine_name_ok(&hello.machine_name) {
+        return reject(tx, ErrorCode::BadRequest, crate::MACHINE_NAME_RULE).await;
     }
     host.db.upsert_machine(&hello.machine_id, &hello.machine_name, None, true)?;
     Ok(())

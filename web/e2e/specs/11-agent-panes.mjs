@@ -5,8 +5,8 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import {
-  AA, root, sleep, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle,
+  AA, root, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -115,7 +115,7 @@ export default async function ({ ctl, page }) {
     aaa("pane", "kill", "seen1");
   });
 
-  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 생각·도구 결과는 빼고, 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
+  await step("대화 기록(읽기 전용): Claude 기록에서 사람·답·도구 줄만, 도구 결과는 빼고 생각은 설정 「생각 표시」일 때만(C4), 「채팅 글자 크기」(T4), 새 줄을 따라가고, 기록 폴더 밖은 거부", async () => {
     const dir = `${root}/claude/projects/-lab-chat`;
     fs.mkdirSync(dir, { recursive: true });
     const tr = `${dir}/s1.jsonl`;
@@ -138,7 +138,7 @@ export default async function ({ ctl, page }) {
     );
     const hookPane = (name, path) =>
       aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
-        JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1", source: "startup", transcript_path: path }));
+        JSON.stringify({ hook_event_name: "SessionStart", session_id: "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a", source: "startup", transcript_path: path }));
     hookPane("chat1", tr);
     await page.getByTestId("pane-chat1").click();
     await until("대화 단추", async () => (await page.getByTestId("chat-toggle").count()) === 1);
@@ -154,12 +154,43 @@ export default async function ({ ctl, page }) {
     fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: "시험도 통과했다" }] } }));
     await until("새 줄", async () => (await roles()).length === 4);
     await shot(page, "desktop-chat");
+    // 설정 「생각 표시」(herdr-web-ui showThinking, 차이 목록 C4): 켜면 생각이 제자리에 접힌 「생각」 줄로, 누르면 글
+    const thinkingSetting = async (on) => {
+      const d = await openSettings(page, "채팅");
+      const sw = d.getByRole("switch", { name: "생각 표시" });
+      if ((await sw.getAttribute("aria-checked")) !== String(on)) await sw.click();
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    await thinkingSetting(true);
+    await until("생각 줄", async () => JSON.stringify((await roles())[1]) === JSON.stringify(["thinking", "생각"]));
+    await chat.getByRole("button", { name: "생각" }).click();
+    await until("생각 글", async () => (await chat.locator('[data-role="thinking"]').innerText()).includes("속생각"));
+    await shot(page, "desktop-chat-thinking");
+    await thinkingSetting(false);
+    await until("생각을 끄면 뺀다", async () => (await roles()).length === 4);
+    // 설정 「채팅 글자 크기」(herdr-web-ui chatFontSize·--chat-scale, 차이 목록 T4): 한 칸 크게 하면 답 줄 글자가 커지고, 작게 하면 돌아온다
+    const answerPx = () => chat.locator('[data-role="assistant"]').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+    const before = await answerPx();
+    const chatFont = async (button) => {
+      const d = await openSettings(page, "채팅");
+      await d.getByRole("button", { name: button }).click();
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    await chatFont("채팅 글자 크게");
+    const bigger = await answerPx();
+    if (!(bigger > before)) throw new Error(`채팅 글자 크게: ${before} → ${bigger}`);
+    await chatFont("채팅 글자 작게");
+    if ((await answerPx()) !== before) throw new Error(`채팅 글자 작게로 돌아오지 않음: ${await answerPx()} ≠ ${before}`);
     // 터미널로 돌아간다
     await page.getByTestId("chat-toggle").click();
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");
     // CLI도 같은 기록을 본다
     const c = aaa("pane", "chat", "chat1");
     if (c.messages.length !== 4 || c.harness !== "claude") throw new Error(JSON.stringify(c));
+    const ct = aaa("pane", "chat", "chat1", "--thinking");
+    if (ct.messages[1]?.role !== "thinking" || ct.messages[1].text !== "속생각") throw new Error(JSON.stringify(ct));
     // 기록 폴더 밖을 가리키는 hook(세션 안 누구나 보낼 수 있다)은 읽지 않는다
     fs.writeFileSync(`${root}/secret.jsonl`, L({ type: "user", message: { role: "user", content: "비밀" } }));
     hookPane("chat2", `${root}/secret.jsonl`);
@@ -195,10 +226,14 @@ export default async function ({ ctl, page }) {
     if ((fs.statSync(p1).mode & 0o777) !== 0o600) throw new Error(`권한 ${(fs.statSync(p1).mode & 0o777).toString(8)}`);
     // 긴 경로는 화면에서 줄이 접힌다: 접힌 줄을 이어 본다(herdr recent-unwrapped)
     await waitOutput("t1", `'${p1}'`, "recent-unwrapped");
-    // Enter가 없었다: 셸은 실행하지 않았다(그 줄을 지운다)
-    await sleep(300);
-    if (aaa("pane", "read", "t1", "--source", "visible").text.replaceAll("\n", "").includes("No such file")) throw new Error("셸이 경로를 실행했다");
+    // Enter가 없었다: 셸은 실행하지 않았다. 그 줄을 지우고 표지를 실행한다: 셸은 입력을 차례로 처리하므로 경로를 실행했다면
+    // 그 오류가 표지보다 먼저 나온다
     aaa("pane", "send-text", "t1", "\u0015");
+    aaa("pane", "run", "t1", "echo paste-fence-$((2+2))");
+    await waitOutput("t1", "paste-fence-4");
+    // 붙인 파일은 있으니 실행했다면 「Permission denied」다(0600). 옛 단언은 「No such file」만 봐 이 결함을 잡지 못했다
+    const ran = /No such file|Permission denied|command not found|cannot execute/.exec(aaa("pane", "read", "t1", "--source", "visible").text.replaceAll("\n", ""));
+    if (ran) throw new Error(`셸이 경로를 실행했다: ${ran[0]}`);
     // 2) 형식이 다른 파일(SVG)은 host가 signature로 거부한다
     await pasteFile(page, Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"), "image/svg+xml", "x.svg");
     await until("형식 거부", async () => (await page.locator(".banner.err").innerText()).includes("PNG·JPEG·GIF·WebP"));
@@ -233,9 +268,9 @@ export default async function ({ ctl, page }) {
       { b64: png.toString("base64") },
     );
     await until("글만 붙여 넣음", () => recvNext() === "\x1b[200~mixed-text\x1b[201~");
-    await sleep(300);
-    if (recvNext() !== "\x1b[200~mixed-text\x1b[201~") throw new Error(`글과 그림: ${JSON.stringify(recvNext())}`);
-    seen = fs.readFileSync(recv, "latin1").length;
+    // 그림까지 올렸다면 그 경로는 다음 3b의 올리기보다 먼저 온다(올리기는 한 줄로 선다, Term.tsx fileQueueRef). 그래서 받은 글
+    // 길이만큼만 넘긴다: 늦게 온 경로는 3b의 「두 경로」 앞에 남아 그 단언이 실패한다
+    seen += "\x1b[200~mixed-text\x1b[201~".length;
     // 3b) 파일 여러 개를 끌어 놓으면 놓은 순서대로 올리고 경로를 차례로 넣는다
     const pa = Buffer.concat([png.subarray(0, 8), Buffer.alloc(300_000, 1)]);
     const pb = Buffer.concat([png.subarray(0, 8), Buffer.alloc(2_000, 2)]);
@@ -259,6 +294,8 @@ export default async function ({ ctl, page }) {
     const two = await until("두 경로", () => {
       const m = /^\x1b\[200~'([^']+)' \x1b\[201~\x1b\[200~'([^']+)' \x1b\[201~$/.exec(recvNext());
       return m ? [m[1], m[2]] : null;
+    }).catch((e) => {
+      throw new Error(`${e.message}: 받은 것 ${JSON.stringify(recvNext())}`);
     });
     if (!fs.readFileSync(two[0]).equals(pa) || !fs.readFileSync(two[1]).equals(pb)) throw new Error(`놓은 순서가 아니다: ${two}`);
     seen = fs.readFileSync(recv, "latin1").length;
@@ -274,8 +311,10 @@ export default async function ({ ctl, page }) {
     await until("h2 터미널", async () => (await screenText(page)).includes("Esc to cancel"));
     await pasteFile(page, png, "image/png");
     await until("확인창 배너", async () => (await banner.innerText()).includes("확인창이 떠 있어"));
-    await sleep(300);
-    if (fs.readFileSync(recv2, "latin1") !== "") throw new Error(`확인창에 입력이 갔다: ${fs.readFileSync(recv2, "latin1")}`);
+    // host는 넣지 않기로 정한 뒤 답했다. 같은 host → agent 길로 표지 글을 보내 그것만 왔는지 본다(넣었다면 경로가 먼저 온다)
+    aaa("pane", "send-text", "h2", "fence-h2");
+    await until("h2 표지", () => fs.readFileSync(recv2, "latin1").includes("fence-h2"));
+    if (fs.readFileSync(recv2, "latin1") !== "fence-h2") throw new Error(`확인창에 입력이 갔다: ${JSON.stringify(fs.readFileSync(recv2, "latin1"))}`);
 
     // 5) reader 연결은 화면 밖에서 직접 보내도 host가 거부한다
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
@@ -298,5 +337,146 @@ export default async function ({ ctl, page }) {
     if (got.t !== "error" || got.code !== "forbidden") throw new Error(`reader 첨부: ${JSON.stringify(got)}`);
     await rd.page.context().close();
     for (const n of ["h1", "h2"]) aaa("pane", "kill", n);
+  });
+
+  await step("Agents 정렬(herdr-web-ui AgentSidebar `byActivity`·sidebarOrder.ts `activityOrder`, 차이 목록 L8): 기본은 머신 목록 차례, 설정 「에이전트 정렬」 활동순이면 질문이 먼저·그다음 최근 바뀐 agent, 일을 시키면 위로, 공유 설정이라 다른 기기도 같은 차례", async () => {
+    // 차례대로 띄우고 상태마다 기다린다(상태가 바뀐 시각이 차례다): o1 쉼(입력을 받으면 작업 중) → o2 작업 중 → o3 질문
+    const run = (label, script) => aaa("tab", "create", "--machine", "labA", "--label", label, "--", claudeSh, "-c", script);
+    const status = (pg, name, value) => pg.getByTestId(`agent-${name}`).and(pg.locator(`[data-status="${value}"]`)).waitFor();
+    run("o1", `stty -echo; ${claudeIdle}; read a; ${claudeWorking}; exec cat > /dev/null`);
+    await status(page, "o1", "idle");
+    run("o2", `stty -echo; ${claudeWorking}; exec cat > /dev/null`);
+    await status(page, "o2", "working");
+    run("o3", `stty -echo; ${claudeAsk("make o3")}; exec cat > /dev/null`);
+    await status(page, "o3", "blocked");
+    const order = (pg) =>
+      pg.evaluate(() =>
+        [...document.querySelectorAll('[data-testid="agents"] [data-testid^="agent-row-"]')].map((b) => b.dataset.testid.slice(10)).filter((n) => /^o\d$/.test(n)),
+      );
+    const orderIs = async (pg, what, want) => {
+      let last = null;
+      await until(what, async () => JSON.stringify((last = await order(pg))) === JSON.stringify(want)).catch((e) => {
+        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+      });
+    };
+    await orderIs(page, "기본은 머신 목록 차례", ["o1", "o2", "o3"]);
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    await orderIs(other.page, "다른 기기도 머신 목록 차례", ["o1", "o2", "o3"]);
+    const d = await openSettings(page, "모양");
+    await d.getByRole("group", { name: "에이전트 정렬" }).getByRole("button", { name: "활동순" }).click();
+    await page.keyboard.press("Escape");
+    await d.waitFor({ state: "detached" });
+    await orderIs(page, "활동순: 질문, 그다음 최근", ["o3", "o2", "o1"]);
+    // 쉬던 o1에 일을 시키면 질문 다음으로 오른다
+    await page.getByTestId("pane-o1").click();
+    await until("o1 화면", async () => (await screenText(page)).includes("? for shortcuts"));
+    await page.getByTestId("terminal").click();
+    await page.keyboard.press("Enter");
+    await status(page, "o1", "working");
+    await orderIs(page, "일을 시킨 o1이 위로", ["o3", "o1", "o2"]);
+    // 공유 설정: 다른 기기도 활동순으로 같은 차례
+    await orderIs(other.page, "다른 기기도 활동순", ["o3", "o1", "o2"]);
+    await shot(page, "desktop-agents-activity");
+    if (other.errors.length) throw new Error(other.errors.join("; "));
+    await other.page.context().close();
+    for (const n of ["o1", "o2", "o3"]) aaa("pane", "kill", n);
+  });
+
+  await step("처음 보기(herdr-web-ui settings `defaultView`·paneLens.ts, 차이 목록 C1): 자동이면 터치 화면의 agent pane은 대화, 데스크톱·셸은 터미널, pane에서 바꾼 보기는 그 pane에 남고, 설정 「패널 기본 화면」을 바꾸면 그것이 모두에게", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "lens1", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
+    await page.getByTestId("agent-lens1").and(page.locator('[data-status="idle"]')).waitFor();
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const pp = ph.page;
+    const lensIs = async (pg, what, chat) => {
+      await pg.getByTestId("chat-toggle").and(pg.locator(`[aria-pressed="${chat}"]`)).waitFor();
+      if ((await pg.getByTestId("chat").count()) !== (chat ? 1 : 0)) throw new Error(`${what}: 대화 칸`);
+    };
+    // 다시 열기: 휴대폰은 pane을 보는 동안 목록이 숨으니 「목록으로」(pane을 닫는다), 데스크톱은 셸 t1을 거쳐 온다
+    const reopen = async (pg, name) => {
+      const back = pg.getByRole("button", { name: "목록으로" });
+      if (await back.isVisible()) await back.click();
+      else await pg.getByTestId("pane-t1").click();
+      await until(`${name} 떠나기`, async () => (await pg.getByTestId("chat-toggle").count()) === 0);
+      await pg.getByTestId(`pane-${name}`).click();
+    };
+    // 휴대폰(터치): agent pane은 대화, 셸은 터미널(대화 단추가 없다)
+    await pp.getByTestId("pane-lens1").click();
+    await lensIs(pp, "휴대폰 agent pane", true);
+    await pp.getByRole("button", { name: "목록으로" }).click();
+    await pp.getByTestId("pane-t1").click();
+    await until("휴대폰 셸 터미널", async () => (await screenText(pp)).includes("$"));
+    if ((await pp.getByTestId("chat").count()) !== 0) throw new Error("셸이 대화로 열렸다");
+    // 데스크톱: 같은 agent pane이 터미널
+    await page.getByTestId("pane-lens1").click();
+    await lensIs(page, "데스크톱 agent pane", false);
+    // 휴대폰에서 터미널로 바꾸면 그 pane은 다시 열어도 터미널
+    await reopen(pp, "lens1");
+    await lensIs(pp, "휴대폰 다시", true);
+    await pp.getByTestId("chat-toggle").click();
+    await lensIs(pp, "휴대폰 터미널로 바꿈", false);
+    await reopen(pp, "lens1");
+    await lensIs(pp, "고른 보기를 기억", false);
+    // 설정 「패널 기본 화면」 채팅: pane마다 고른 보기를 잊고 모두 대화(이 기기만, 데스크톱은 그대로). 설정은 목록 바닥에 있다
+    await pp.getByRole("button", { name: "목록으로" }).click();
+    const d = await openSettings(pp, "채팅");
+    await d.getByRole("group", { name: "패널 기본 화면" }).getByRole("button", { name: "채팅" }).click();
+    await pp.keyboard.press("Escape");
+    await d.waitFor({ state: "detached" });
+    await pp.getByTestId("pane-lens1").click();
+    await lensIs(pp, "기본 채팅", true);
+    await shot(pp, "phone-chat-default");
+    await reopen(page, "lens1");
+    await lensIs(page, "데스크톱은 그대로", false);
+    if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    await pp.context().close();
+    aaa("pane", "kill", "lens1");
+  });
+
+  await step("대화 입력창(herdr-web-ui Composer·composer-queue, 차이 목록 C2): Enter로 보내면 터미널 입력줄과 같은 길로 프로그램에 가고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 이 기기에 붙잡혀 「지금 보내기」로 가며, 빠른 답장은 누르면 간다", async () => {
+    // 받은 줄을 파일에 적는 Claude 화면: 처음은 쉼, 한 줄을 받으면 작업 중으로 바뀌고 그 뒤 줄도 적는다
+    const got = `${root}/composer.txt`;
+    fs.writeFileSync(got, "");
+    const lines = () => fs.readFileSync(got, "utf8").split("\n").filter(Boolean);
+    aaa("tab", "create", "--machine", "labA", "--label", "cmp1", "--", claudeSh, "-c",
+      `stty -echo; ${claudeIdle}; read a; printf '%s\\n' "$a" >> ${got}; ${claudeWorking}; while read a; do printf '%s\\n' "$a" >> ${got}; done`);
+    await page.getByTestId("agent-cmp1").and(page.locator('[data-status="idle"]')).waitFor();
+    await page.getByTestId("pane-cmp1").click();
+    await page.getByTestId("chat-toggle").click();
+    const composer = page.getByTestId("chat-composer");
+    const box = composer.getByRole("textbox", { name: "메시지" });
+    await box.fill("첫 메시지 c2");
+    await box.press("Enter");
+    await until("보낸 글이 프로그램에", async () => lines().includes("첫 메시지 c2"));
+    if ((await box.inputValue()) !== "") throw new Error("보낸 뒤 입력창이 비지 않았다");
+    await page.getByTestId("agent-cmp1").and(page.locator('[data-status="working"]')).waitFor();
+    // 자동 전송을 끄면 작업 중에 쓴 글은 붙잡힌다
+    const chatSettings = async (fn) => {
+      const d = await openSettings(page, "채팅");
+      await fn(d);
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    await chatSettings((d) => d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click());
+    await box.fill("붙잡을 글");
+    await box.press("Enter");
+    const queue = page.getByTestId("chat-queue");
+    await queue.waitFor();
+    if ((await queue.getByRole("textbox", { name: "대기 메시지 1" }).inputValue()) !== "붙잡을 글") throw new Error("붙잡은 글이 다르다");
+    if (!(await queue.innerText()).includes("에이전트가 준비될 때까지 보관")) throw new Error(`붙잡은 칸 글: ${await queue.innerText()}`);
+    if (lines().includes("붙잡을 글")) throw new Error("붙잡을 글이 프로그램에 갔다");
+    await shot(page, "desktop-chat-composer-held");
+    await queue.getByRole("button", { name: "지금 보내기" }).click();
+    await until("지금 보내기로 간다", async () => lines().includes("붙잡을 글"));
+    await queue.waitFor({ state: "detached" });
+    // 빠른 답장: 켜면 입력창 위에 칩, 누르면 간다(작업 중이고 자동 전송이 꺼져 있어도 같은 규칙: 다시 켠다)
+    await chatSettings(async (d) => {
+      await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
+      await d.getByRole("switch", { name: "입력창 위에 표시" }).click();
+    });
+    await composer.getByRole("group", { name: "빠른 답장" }).getByRole("button", { name: "yes", exact: true }).click();
+    await until("빠른 답장이 간다", async () => lines().includes("yes"));
+    await chatSettings((d) => d.getByRole("switch", { name: "입력창 위에 표시" }).click());
+    await page.getByTestId("chat-toggle").click();
+    aaa("pane", "kill", "cmp1");
   });
 }

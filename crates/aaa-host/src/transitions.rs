@@ -1,13 +1,15 @@
 //! 묶음 전이와 thread 항목(herdr-projects ticker.rs `thread_pass`·steps.rs `write_thread_items`, plan §8.85).
 //!
 //! - ticker가 열린 thread마다 묶음을 다시 셈해 기록(`last_group`)과 견준다. 바뀌었으면 전이다.
-//! - 사람 차례·쉼으로 바뀔 때만 `thread-state` 항목 한 건을 낸다(병합 중은 D11). 사람 차례는 알림(push)도 간다.
-//! - 「새 보고」 항목은 묶음이 검토 대기일 때 보고 hash당 한 번이다. 작업 중에 고쳐 쓴 보고는 항목을 만들지 않는다.
+//! - 사람 차례·병합 중·쉼으로 바뀔 때만 `thread-state` 항목 한 건을 낸다. 사람 차례는 알림(push)도 간다.
+//! - 「새 보고」 항목은 묶음이 검토 대기나 병합 중일 때 보고 hash당 한 번이다. 작업 중에 고쳐 쓴 보고는 항목을 만들지 않는다.
+//! - PR이 병합된 thread는 agent가 끝난 뒤 저절로 끝낸다(`resolve_merged_pass`, herdr-projects steps.rs `resolve_merged`).
 //! - 한 머신에 기록된 pane이 둘 이상이고 모두 사라졌으면(agent 재시작·재부팅) thread마다가 아니라 그 머신의 `session`
 //!   항목 한 건이다(참고는 herdr 세션 하나를 본다. aaa는 세션이 머신마다 있어 머신마다 센다).
 //! - 연결되지 않은 머신의 thread는 읽지 않는다: 상태도 묶음도 항목도 바꾸지 않는다(herdr-projects `remote_pass`).
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use aaa_proto::{AgentActivity, AgentStatus, Connection, Role, ThreadGroup, ThreadStatus};
 
@@ -62,14 +64,15 @@ pub(crate) fn transition_event(t: &Transition) -> &'static str {
         (ThreadGroup::WaitingOnYou, "pane closed") => "pane closed",
         (ThreadGroup::WaitingOnYou, "no agent") => "agent gone",
         (ThreadGroup::WaitingOnYou, _) => "waiting on you",
+        (ThreadGroup::Landing, _) => "landing",
         (ThreadGroup::Idle, _) => "idle",
         _ => "changed state",
     }
 }
 
-/// 전이를 항목으로 내는가: 사람 차례·쉼만(herdr-projects `write_thread_items`)
+/// 전이를 항목으로 내는가: 사람 차례·병합 중·쉼만(herdr-projects `write_thread_items`)
 pub(crate) fn writes_item(to: ThreadGroup) -> bool {
-    matches!(to, ThreadGroup::WaitingOnYou | ThreadGroup::Idle)
+    matches!(to, ThreadGroup::WaitingOnYou | ThreadGroup::Landing | ThreadGroup::Idle)
 }
 
 /// 전이 항목 요약. 확인창이면 답하는 길을, 그 밖의 사람 차례면 pane과 머신을 적는다.
@@ -131,6 +134,27 @@ pub(crate) fn auto_resolve_due(r: &ThreadRec, now: u64, started: u64, limit_ms: 
     since.min(now.saturating_sub(started)) >= limit_ms
 }
 
+/// 병합된 thread를 끝내도 되나(herdr-projects steps.rs `merged_thread_may_resolve`). `seen`은 ticker가 병합을 처음 본
+/// 때다. `last_group`은 같은 tick의 `thread_pass`가 막 셈했다. 병합은 agent를 멈추지 않는다: tag·배포·다른 PR·마지막
+/// 보고가 남았을 수 있다.
+pub(crate) fn merged_may_resolve(
+    r: &ThreadRec,
+    agent: Option<&AgentStatus>,
+    seen: u64,
+    now: u64,
+    grace_ms: u64,
+) -> bool {
+    if matches!(r.last_group, Some(ThreadGroup::Working | ThreadGroup::WaitingOnYou)) {
+        return false;
+    }
+    // 진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이고, 시간이 낮은 진행을 넘지 않는다.
+    // 배경 셸로 CI·배포를 기다리면 쉼으로 읽힌다.
+    if let Some(a) = agent.filter(|a| a.progress_at_ms.is_some()) {
+        return a.percent == Some(100);
+    }
+    r.report_changed_ms.is_some_and(|t| t > seen) || now.saturating_sub(seen) >= grace_ms
+}
+
 impl Host {
     /// 한 프로젝트의 묶음 전이와 thread 항목(ticker 한 번). 기록은 잠금 안에서 다시 읽고 고친다
     /// (같은 때 resolve·ack가 쓴 필드를 옛 값으로 덮지 않고, 끝낸 thread를 닫힌 pane으로 보지 않게).
@@ -148,6 +172,8 @@ impl Host {
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
             .filter(|r| matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) && r.role != Role::Evaluator)
             .filter(|r| connected.contains(r.machine_id.as_str()))
+            // 재부팅 뒤 복원 중인 머신의 thread는 끝난 뒤에 센다(사라졌다가 돌아온 것으로 보지 않게, restore.rs)
+            .filter(|r| !self.restoring.lock().unwrap().contains(&r.machine_id))
             .collect();
         // 머신마다 기록된 pane과 사라진 pane(보고를 다시 확인하는 thread도 센다: 세션은 한꺼번에 끝난다)
         let mut per_machine: BTreeMap<String, MachinePanes> = BTreeMap::new();
@@ -204,9 +230,49 @@ impl Host {
         }
     }
 
+    /// PR이 병합된 thread를 마지막 사본 뒤 끝낸다(herdr-projects steps.rs `resolve_merged`): agent가 일하거나 사람을
+    /// 기다리지 않고, 끝났고(`merged_may_resolve`), 보고가 이름 붙인 다른 PR이 열려 있지 않을 때. 사본이 실패하면 다음 셈에
+    /// 다시 한다. 연결되지 않은 머신의 thread는 건너뛴다.
+    pub(crate) async fn resolve_merged_pass(self: &Arc<Self>, project: &str) {
+        // 참고는 한 tick 안에서 PR 조회(병합 기록·routine 발화) 뒤에 끝낸다. aaa의 PR 조회는 따로 돌아(`pr_tick`) 그 조회가
+        // 보내는 routine 글(처음 본 PR이 이미 승인·병합이면 `review`)을 끝내기가 자를 수 있다: 조회가 도는 동안은 끝내지 않는다
+        if self.pr_running(project) {
+            return;
+        }
+        let now = aaa_common::util::now_ms();
+        let grace = self.cfg.projects.merge_grace_secs * 1000;
+        let merged: Vec<ThreadRec> = self
+            .db
+            .threads(Some(project))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter(|r| r.status == ThreadStatus::Open && r.role != Role::Evaluator)
+            .filter(|r| r.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("merged")))
+            .filter(|r| self.live_conn(&r.machine_id).is_ok())
+            .collect();
+        for r in merged {
+            let seen = match r.merged_seen_ms {
+                Some(t) => t,
+                None => {
+                    let _ = self.update_rec(project, &r.id, |x| x.merged_seen_ms = Some(now));
+                    now
+                }
+            };
+            let (_, agent) = self.thread_live(&r);
+            if !merged_may_resolve(&r, agent.as_ref(), seen, now, grace) || self.other_pr_open(project, &r).await {
+                continue;
+            }
+            if let Err(e) = self.thread_resolve(project, &r.id, Default::default(), ResolveWhy::Merged, "ticker").await
+            {
+                tracing::warn!(project, thread = %r.id, "병합 뒤 resolve를 다음 셈으로 미룬다: {}", e.message);
+            }
+        }
+    }
+
     /// 쉼으로 `auto_resolve_days`가 지난 thread를 마지막 사본 뒤 끝낸다(herdr-projects steps.rs `auto_resolve`).
     /// 사본이 실패하면 끝내지 않고 다음 셈에 다시 한다. 연결되지 않은 머신의 thread는 건너뛴다.
-    pub(crate) async fn auto_resolve_pass(self: &std::sync::Arc<Self>, project: &str) {
+    pub(crate) async fn auto_resolve_pass(self: &Arc<Self>, project: &str) {
         let days = self.settings(project).auto_resolve_days;
         if days == 0 {
             return;
@@ -225,19 +291,21 @@ impl Host {
             .map(|r| r.id)
             .collect();
         for id in due {
-            if let Err(e) = self.thread_resolve(project, &id, false, ResolveWhy::Auto { days }, "ticker").await {
+            if let Err(e) =
+                self.thread_resolve(project, &id, Default::default(), ResolveWhy::Auto { days }, "ticker").await
+            {
                 tracing::warn!(project, thread = %id, "자동 resolve를 다음 셈으로 미룬다: {}", e.message);
             }
         }
     }
 
-    /// 검토 대기인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
+    /// 검토 대기·병합 중인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
     /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다.
     fn new_report_item(&self, project: &str, r: &ThreadRec) {
         if r.status != ThreadStatus::Open || r.report_hash.is_none() || r.report_hash == r.review_item_hash {
             return;
         }
-        if r.last_group != Some(ThreadGroup::ReadyForReview) {
+        if !matches!(r.last_group, Some(ThreadGroup::ReadyForReview | ThreadGroup::Landing)) {
             return;
         }
         let short: String = r.report_hash.as_deref().unwrap_or_default().chars().take(12).collect();
@@ -277,15 +345,21 @@ impl Host {
 
 #[cfg(test)]
 mod tests {
-    /// herdr-projects steps.rs `auto_resolve`: 묶음·보고가 바뀐 때와 ticker(host)가 뜬 때 중 가장 늦은 때부터 잰다
-    #[test]
-    fn auto_resolve_counts_from_the_latest_change_or_host_start() {
-        let mut r: super::ThreadRec = serde_json::from_value(serde_json::json!({
+    use super::*;
+
+    fn rec() -> ThreadRec {
+        serde_json::from_value(serde_json::json!({
             "project": "p", "id": "t-0001", "title": "t", "machine_id": "m", "profile": "x", "role": "worker",
             "kind": "dir", "status": "open", "brief": "delivered", "created_at_ms": 0, "updated_at_ms": 0
         }))
-        .unwrap();
-        let due = |r: &super::ThreadRec, now, started| super::auto_resolve_due(r, now, started, 100);
+        .unwrap()
+    }
+
+    /// herdr-projects steps.rs `auto_resolve`: 묶음·보고가 바뀐 때와 ticker(host)가 뜬 때 중 가장 늦은 때부터 잰다
+    #[test]
+    fn auto_resolve_counts_from_the_latest_change_or_host_start() {
+        let mut r = rec();
+        let due = |r: &ThreadRec, now, started| auto_resolve_due(r, now, started, 100);
         assert!(!due(&r, 1_000, 0), "잴 시각이 없는 옛 기록은 끝내지 않는다");
         r.group_changed_ms = Some(500);
         assert!(due(&r, 600, 0) && !due(&r, 599, 0));
@@ -295,7 +369,32 @@ mod tests {
         assert!(due(&r, 1_050, 950));
     }
 
-    use super::*;
+    /// herdr-projects scenarios.rs 병합 시험(`a_thread_merged_while_its_agent_works_is_not_resolved` 등)의 판정 부분
+    #[test]
+    fn a_merged_thread_resolves_once_its_agent_is_done() {
+        let may = |r: &ThreadRec, a: Option<&AgentStatus>, now| merged_may_resolve(r, a, 1_000, now, 600);
+        let mut r = rec();
+        // 일하거나 사람을 기다리면 오래 지나도 끝내지 않는다
+        for busy in [ThreadGroup::Working, ThreadGroup::WaitingOnYou] {
+            r.last_group = Some(busy);
+            assert!(!may(&r, None, 100_000), "{busy:?}");
+        }
+        // 쉬는 agent: 병합 뒤 새 보고가 오거나, 기다림이 지나면 끝낸다
+        r.last_group = Some(ThreadGroup::ReadyForReview);
+        assert!(!may(&r, None, 1_599));
+        assert!(may(&r, None, 1_600));
+        r.report_changed_ms = Some(900);
+        assert!(!may(&r, None, 1_100), "병합 전 보고는 끝 신호가 아니다");
+        r.report_changed_ms = Some(1_050);
+        assert!(may(&r, None, 1_100));
+        // 진행을 보고하는 agent는 `Done`(100)만: 기다림도 새 보고도 낮은 진행을 넘지 않는다
+        let progress = |percent| AgentStatus { percent, progress_at_ms: Some(0), ..agent(AgentActivity::Idle) };
+        assert!(!may(&r, Some(&progress(Some(70))), 100_000));
+        assert!(!may(&r, Some(&progress(None)), 100_000));
+        assert!(may(&r, Some(&progress(Some(100))), 1_001));
+        // 진행 보고가 없는 agent 상태는 그 규칙을 쓰지 않는다
+        assert!(may(&r, Some(&agent(AgentActivity::Idle)), 1_100));
+    }
 
     fn agent(activity: AgentActivity) -> AgentStatus {
         AgentStatus {
@@ -334,7 +433,9 @@ mod tests {
         assert_eq!(transition_event(&t(ThreadGroup::WaitingOnYou, "no agent")), "agent gone");
         assert_eq!(transition_event(&t(ThreadGroup::WaitingOnYou, "idle")), "waiting on you");
         assert_eq!(transition_event(&t(ThreadGroup::Idle, "idle")), "idle");
+        assert_eq!(transition_event(&t(ThreadGroup::Landing, "idle")), "landing");
         assert!(writes_item(ThreadGroup::WaitingOnYou) && writes_item(ThreadGroup::Idle));
+        assert!(writes_item(ThreadGroup::Landing));
         assert!(!writes_item(ThreadGroup::Working) && !writes_item(ThreadGroup::ReadyForReview));
         assert!(!writes_item(ThreadGroup::Resolved));
     }

@@ -204,7 +204,12 @@ impl Host {
     }
 
     /// agent가 harness 사건을 보냈다
-    pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, ev: HarnessEvent) {
+    pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, mut ev: HarnessEvent) {
+        // 옛 agent는 hook의 harness 세션 ID를 거르지 않고 보낸다: host도 UUID 꼴만 받는다(`--resume` 인자가 된다)
+        if ev.harness_session.as_deref().is_some_and(|s| !aaa_common::util::harness_session_ok(s)) {
+            tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
+            ev.harness_session = None;
+        }
         let (activity, answered_block) = {
             let mut i = self.inner.lock().unwrap();
             let Some(p) = i.panes.get_mut(&ev.session) else {
@@ -490,51 +495,75 @@ impl Host {
         let before = |msg: String| SubmitErr { typed: false, msg };
         let after = |msg: String| SubmitErr { typed: true, msg };
         let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
-        // Enter 뒤 harness가 입력을 받았다고 알리기를 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
+        // 친 글에 프로그램이 반응하고 Enter 뒤 harness가 받았다고 알리기까지 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
         let accept_wait = Duration::from_millis(self.cfg.projects.accept_wait_ms);
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
-        if let Some((_, q)) = self.screen_lines(mid, pane).await.as_deref().and_then(modal_of) {
+        let shown = self.screen_lines(mid, pane).await;
+        if let Some((_, q)) = shown.as_deref().and_then(modal_of) {
             return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
         }
         let agent = self.pane_agent(pane);
+        // 확인창(권한·질문)이 떠 있으면 친 글과 Enter를 그 창이 받는다
+        if agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
+            return Err(before("확인창이 떠 있어 입력하지 않았다".into()));
+        }
         let hooked = agent.as_ref().is_some_and(|a| a.harness != "report");
         // 일하는 중인 harness는 받은 글을 다음 턴으로 줄 세운다(Claude Code 대기 메시지). herdr `agent prompt --wait`도
         // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
         let (hook_accept, mut screen_accept) = if hooked && !busy { (on_accept, None) } else { (None, on_accept) };
-        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         // 프로그램이 bracketed paste를 켰을 때만 감싸고 Enter도 그 터미널 모드대로 쓴다(herdr `encode_api_submission_parts`,
         // src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
         let modes = self.key_modes(pane);
+        let deadline = Instant::now() + accept_wait;
         if let Some(text) = text {
             conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) })
                 .await
                 .map_err(|e| after(e.message))?;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
-        let typed = self.screen_lines(mid, pane).await;
+        // 치는 동안 뜬 확인창(t-0340 보안 감사): Enter가 사람이 보지 않은 선택지(권한 창의 기본은 「Yes」)를 고른다.
+        // Enter 바로 전에 화면과 harness 상태를 다시 본다. 친 글은 남으니 받았는지 모르는 것으로 둔다(다시 보내지 않는다).
+        // 입력 상자에 친 글을 보이는 harness(hook·화면 감지가 있는 Claude 등)는 그 검사를 프로그램이 친 글을 읽은 뒤(화면이
+        // 바뀐 뒤)에 한다: 부하 아래 300ms(참고 herdr) 안에 글을 읽지 못한 프로그램은 아직 친 글 앞 상태라, 검사 뒤에 그린
+        // 확인창이 Enter를 받았다(ci-local m13 race). 바뀌지 않으면 받음 시한까지 기다려 보낸다(시한은 친 때부터 센다).
+        // 그 밖의 프로그램(custom·보고만)은 Enter 전에 글을 보이지 않을 수 있어 참고처럼 300ms 뒤에 본다
+        let typed = loop {
+            let now = self.screen_lines(mid, pane).await;
+            if let Some((_, q)) = now.as_deref().and_then(modal_of) {
+                return Err(after(format!("치는 동안 선택 창이 떠 Enter를 보내지 않았다: {q}")));
+            }
+            if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
+                return Err(after("치는 동안 확인창이 떠 Enter를 보내지 않았다".into()));
+            }
+            if text.is_none() || !hooked || now != shown || Instant::now() >= deadline {
+                break now;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let left = || deadline.saturating_duration_since(Instant::now());
+        // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
+        // 그 전부터 기다리면 Enter를 보내지 않은 글을 받았다고 적는다
+        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
         let enter = modes.key("enter").unwrap_or_else(|| b"\r".to_vec());
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(enter) })
             .await
             .map_err(|e| after(e.message))?;
         if busy {
-            let still = matches!(
-                self.pane_agent(pane).map(|a| a.activity),
-                Some(AgentActivity::Working | AgentActivity::Question)
-            );
+            // Enter 뒤 확인창이면 그 Enter가 창에 갔을 수 있다: 받은 것으로 치지 않는다(t-0340 보안 감사)
+            let still = self.pane_agent(pane).map(|a| a.activity) == Some(AgentActivity::Working);
             // 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다
-            let ok = still || tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok());
+            let ok = still || tokio::time::timeout(left(), accepted).await.is_ok_and(|r| r.is_ok());
             if ok && let Some(f) = screen_accept.take() {
                 f();
             }
             return Ok(ok);
         }
         if hooked {
-            return Ok(tokio::time::timeout(accept_wait, accepted).await.is_ok_and(|r| r.is_ok()));
+            return Ok(tokio::time::timeout(left(), accepted).await.is_ok_and(|r| r.is_ok()));
         }
         // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
-        let until = Instant::now() + accept_wait;
-        while Instant::now() < until {
+        while Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(250)).await;
             if self.screen_lines(mid, pane).await != typed {
                 if let Some(f) = screen_accept.take() {

@@ -50,7 +50,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking";
 
 export type ChatMessage = { role: ChatRole, text: string, };
 
@@ -181,7 +181,11 @@ agent: AgentStatus | null,
 /**
  * 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.
  */
-label?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
+label?: string, 
+/**
+ * 재부팅 뒤 다시 띄우지 못한 까닭(herdr `restore_error`). 그 pane은 중단으로 남는다.
+ */
+restore_error?: string, } & ({ "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" });
 
 export type SplitDir = "horizontal" | "vertical";
 
@@ -282,7 +286,15 @@ last_seen_ms: number | null, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
-export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
+export type FrontRequest = { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, 
+/**
+ * 이 머신 agent.toml profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
+ */
+profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat", pane: string, 
+/**
+ * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
+ */
+thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource, 
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -310,11 +322,19 @@ from_task: string | null, } | { "op": "thread_next", project: string, thread: st
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
-reopen: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, 
+reopen: boolean, 
+/**
+ * 마지막 사본 없이 끝낸다(사본을 만들 수 없을 때, worktree는 남긴다. herdr-projects `--skip-copy`)
+ */
+skip_copy: boolean, 
+/**
+ * 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
+ */
+discard_uncopied: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean, 
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "merge_enqueue", project: string, thread: string, } | { "op": "merge_drop", project: string, thread: string, landed: boolean, } | { "op": "merge_list", project: string, } | { "op": "merge_land", project: string, thread: string | null, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
+profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null, 
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -346,7 +366,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>, 
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -358,7 +378,7 @@ omitted_open: number,
 /**
  * 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
  */
-omitted_done: number, } | { "kind": "merge", queue: Array<MergeEntry>, } | { "kind": "ticker", runs: bigint, } | { "kind": "merge_land" } & MergeLandView | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, };
 
@@ -370,7 +390,19 @@ history_more: boolean, } | { "t": "history", id: number, data: B64, lines: numbe
 
 export type TermClientMsg = { "t": "input", data: string, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, };
 
-export type EventsClientMsg = { "t": "presence", active: boolean, } | { "t": "touch" } | { "t": "ping", id: number, };
+export type EventsClientMsg = { "t": "presence", active: boolean, 
+/**
+ * 무엇이 알리게 했나(focus·blur·visibilitychange·pagehide·pageshow·freeze·resume·open·heartbeat)
+ */
+why?: string, 
+/**
+ * 그때 `document.visibilityState === "visible"`
+ */
+visible?: boolean, 
+/**
+ * 그때 `document.hasFocus()`
+ */
+focus?: boolean, } | { "t": "alert", project: string | null, target: string, kind: string, outcome: string, } | { "t": "touch" } | { "t": "ping", id: number, };
 
 export type Role = "coordinator" | "worker" | "evaluator";
 
@@ -406,7 +438,7 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "working" | "idle" | "resolved";
+export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "resolved";
 
 export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, role: Role, 
 /**
@@ -519,30 +551,6 @@ body: string, done: boolean,
  */
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
-export type MergeEntry = { project: string, thread: string, 
-/**
- * 1부터. 1이 맨 앞(지금 병합할 차례)이다.
- */
-position: number, title: string, machine: string, branch: string | null, enqueued_at_ms: number, };
-
-export type MergeStep = { name: string, ok: boolean, 
-/**
- * 사람이 읽는 설명(실패면 까닭)
- */
-note: string, ms: number, };
-
-export type LandOutcome = { ok: boolean, steps: Array<MergeStep>, commit: string | null, };
-
-export type MergeLandView = { project: string, thread: string, ok: boolean, steps: Array<MergeStep>, commit: string | null, 
-/**
- * 「main 이동」을 대기열 메시지로 알린 thread
- */
-notified: Array<string>, 
-/**
- * 병합 뒤 대기열
- */
-queue: Array<MergeEntry>, };
-
 export type RoutineView = { name: string, 
 /**
  * `every 30m`·`daily 09:00`(파일에 적힌 글)
@@ -592,6 +600,10 @@ export type LibraryView = { project: string, thread: string,
  * 회수한 report.md(없으면 None)
  */
 report: string | null, files: Array<LibraryFile>, base: string, expires_at_ms: number, };
+
+export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
+
+export type FileInfo = { path: string, name: string, size: number, modified_ms: number, mime: string, kind: FileKind, };
 
 export type EvaluatorView = { project: string, thread: ThreadView, 
 /**
