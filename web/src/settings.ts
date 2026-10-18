@@ -214,15 +214,17 @@ export function useKeepScreenOn(): boolean {
  * - paneClipboard(기본 켬): pane 프로그램의 클립보드 쓰기(OSC 52)를 이 기기 클립보드에 넣는다.
  * - releasePaneAway(기본 꺼짐): 다른 창으로 옮기고 1초 뒤 이 탭은 pane을 보기만 하고 크기를 놓는다(터미널의 aaa TUI와 같이 쓸 때).
  * - enterSends(기본 켬): 대화 입력창에서 Enter가 보내고 Shift+Enter가 줄바꿈. 끄면 Mod+Enter가 보낸다(참고 `enterSends`).
+ * - wrapCode(기본 꺼짐): 파일 보기가 긴 줄을 옆으로 굴리지 않고 접는다(참고 `wrapCode`, 「파일 뷰어」 설정).
  * 기본값이면 지운다. 값은 "1"·"0".
  */
-export type TerminalToggle = "paneClipboard" | "releasePaneAway" | "enterSends";
+export type TerminalToggle = "paneClipboard" | "releasePaneAway" | "enterSends" | "wrapCode";
 const TOGGLE_KEYS: Record<TerminalToggle, string> = {
   paneClipboard: "aaa:pane-clipboard",
   releasePaneAway: "aaa:release-pane-away",
   enterSends: "aaa:enter-sends",
+  wrapCode: "aaa:wrap-code",
 };
-const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false, enterSends: true };
+const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false, enterSends: true, wrapCode: false };
 
 function readToggle(name: TerminalToggle): boolean {
   try {
@@ -237,6 +239,7 @@ const toggles: Record<TerminalToggle, boolean> = {
   paneClipboard: readToggle("paneClipboard"),
   releasePaneAway: readToggle("releasePaneAway"),
   enterSends: readToggle("enterSends"),
+  wrapCode: readToggle("wrapCode"),
 };
 
 window.addEventListener("storage", (e) => {
@@ -264,6 +267,45 @@ export function terminalToggle(name: TerminalToggle): boolean {
 
 export function useTerminalToggle(name: TerminalToggle): boolean {
   return useSyncExternalStore(subscribe, () => toggles[name]);
+}
+
+/**
+ * 파일 보기 Markdown 너비(herdr-web-ui settings.ts `markdownWidth`: 기기마다, 기본 readable). readable은 대화 열(--chat-w)
+ * 너비, full은 파일 보기 너비다. 기본값이면 지운다.
+ */
+export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
+export type MarkdownWidth = (typeof MARKDOWN_WIDTHS)[number];
+const MARKDOWN_WIDTH_KEY = "aaa:markdown-width";
+
+function readMarkdownWidth(): MarkdownWidth {
+  try {
+    return MARKDOWN_WIDTHS.find((width) => width === localStorage.getItem(MARKDOWN_WIDTH_KEY)) ?? "readable";
+  } catch {
+    return "readable";
+  }
+}
+
+let markdownWidth = readMarkdownWidth();
+
+window.addEventListener("storage", (e) => {
+  if (e.key !== MARKDOWN_WIDTH_KEY) return;
+  markdownWidth = readMarkdownWidth();
+  listeners.forEach((f) => f());
+});
+
+export function setMarkdownWidth(width: MarkdownWidth) {
+  markdownWidth = width;
+  try {
+    if (width === "readable") localStorage.removeItem(MARKDOWN_WIDTH_KEY);
+    else localStorage.setItem(MARKDOWN_WIDTH_KEY, width);
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  listeners.forEach((f) => f());
+}
+
+export function useMarkdownWidth(): MarkdownWidth {
+  return useSyncExternalStore(subscribe, () => markdownWidth);
 }
 
 /**

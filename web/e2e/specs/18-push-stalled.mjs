@@ -85,6 +85,8 @@ export default async function ({ page }) {
     const s1 = await until("살아 있는 B 때문에 건너뜀", () => events("push_skipped").slice(k)[0]);
     const basis1 = new RegExp(`근거: 쓰는 기기 ${bId}\\(touch \\d+초 전\\) · 연결#\\d+ 쓰는 중\\(presence \\d+초 전 true (open|focus|heartbeat) 보임·focus, 앱 글 \\d+초 전`);
     if (!basis1.test(s1.detail)) throw new Error(`push_skipped 근거 ${s1.detail}`);
+    // 그 연결의 웹 빌드(주 묶음 파일 이름): 배포 뒤 옛 페이지가 도는지 가린다(plan §8.150)
+    if (!/, 웹 index-[\w-]+\)/.test(s1.detail)) throw new Error(`push_skipped 근거에 웹 빌드가 없다 ${s1.detail}`);
     // B의 앱 안 알림 결과. 흐름 사건의 기기 이름은 앞 7자(ULID 시각, 약 33초 폭)라 몇 초 안에 짝지은 첫 화면도 같은 이름이다
     // (t-0338 report 「찾은 결함」). 첫 화면은 focus가 없고 멈추지 않아(위 setInUse) 그 결과에는 늘 「focus 없음」이 있다: 그것을 뺀 것이 B의 것이다.
     // 첫 화면의 상태 사건 연결이 이 단계 안에서 다시 붙지 않는다는 전제다(다시 붙으면 놓친 사건을 늦은 알림으로 읽어, 구독 dev1을 가진
@@ -119,7 +121,7 @@ export default async function ({ page }) {
     await bp.evaluate(() => window.__wake());
     await until("깨면 다시 쓰는 화면", async () => (await pushInUse(page)) === 1);
     const late = await outcomeOfB(a, `demo%2F${frozenId} · `);
-    if (!/ · 띄움 · focus · 늦어 소리 버림$/.test(late.detail)) throw new Error(`alert_outcome ${late.detail}`);
+    if (!/ · 띄움 · focus · 늦어 소리 버림 · 웹 index-[\w-]+$/.test(late.detail)) throw new Error(`alert_outcome ${late.detail}`);
     // (4) 이 기기에 이미 push로 간 알림은 깨어나도 앱 안에서 다시 띄우지 않는다(사용자 결정 10-18 「A」, plan §8.141).
     // B가 push 구독을 가진 채 멈춘다: lease 뒤 B에 push가 가고, 깨면 그 보고는 「push로 받음 · 안 띄움」
     const bDev = pushDevice("push/dev-frozen");
@@ -137,9 +139,38 @@ export default async function ({ page }) {
     a = events("alert_outcome").length;
     await bp.evaluate(() => window.__wake());
     const got = await outcomeOfB(a, `demo%2F${pushedId} · `);
-    if (!/ · push로 받음 · 안 띄움$/.test(got.detail)) throw new Error(`alert_outcome ${got.detail}`);
+    if (!/ · push로 받음 · 안 띄움 · 웹 index-[\w-]+$/.test(got.detail)) throw new Error(`alert_outcome ${got.detail}`);
     // 결과를 알린 뒤에 본다(판단이 끝났다)
     if ((await bp.locator(".droplet-title").allInnerTexts()).includes("멈춘 동안 push로 받음")) throw new Error("push로 받은 알림이 앱 안에 다시 떴다");
+    // (5) 실기 10-18 10:22 iPhone(#90 push_sent·#91 「띄움」, plan §8.150): 앱을 내리면 가려지고(presence false) 멈춘다. 10초
+    // 넘어 다시 올리면 웹은 묻지 않고 새로 붙는다(쌓인 사건은 버린다) → 놓친 보고를 다시 읽는다. 그 사이 이 기기에 간 push는
+    // 가려진 때부터 봐야 한다(끊긴 때 = 다시 올린 때부터 보면 그 push를 놓친다). 다시 올릴 때 visibilitychange가 깨어남보다 먼저다
+    await bp.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until("B 가려짐", async () => (await pushInUse(page)) === 0);
+    await bp.evaluate(() => window.__stall());
+    const fromPush2 = pushes.length;
+    work("가려진 동안 push로 받음");
+    const hiddenId = ts[0].id;
+    await until("가려진 B에 push", () => pushes.slice(fromPush2).some((x) => x.path === bPath));
+    // 열린 채 둔다: 다시 붙어 읽는 목록은 열린 thread만이다(실기에서도 열려 있었다)
+    a = events("alert_outcome").length;
+    // 다시 올림: 10초 넘게 가려졌다(시계만 앞으로) → 보임 → 깨어남
+    await bp.evaluate(() => {
+      const real = Date.now;
+      Date.now = () => real() + 11_000;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.__wake();
+    });
+    const back = await outcomeOfB(a, `demo%2F${hiddenId} · `);
+    if (!/ · push로 받음 · 안 띄움 · 웹 index-[\w-]+$/.test(back.detail)) throw new Error(`alert_outcome ${back.detail}`);
+    if ((await bp.locator(".droplet-title").allInnerTexts()).includes("가려진 동안 push로 받음")) throw new Error("가려진 동안 push로 받은 알림이 앱 안에 다시 떴다");
+    done();
     if (B.errors.length) throw new Error(`페이지 오류: ${B.errors.join("; ")}`);
     await bp.context().close();
   });
