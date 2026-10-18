@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, inList } from "../lib/harness.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -85,7 +85,7 @@ export default async function ({ ctl, page }) {
 
     // 데스크톱: 상대 경로 → Markdown 미리보기
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-files").click();
+    await inList(dp, "pane-files");
     await screenHas(dp, "파일 줄들", "files>");
     await clickLink(dp, "notes/readme.md");
     await domIs(dp, "Markdown 미리보기", () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "읽어보기");
@@ -196,7 +196,7 @@ export default async function ({ ctl, page }) {
 
     // 휴대폰: 손가락으로 누른다. 화면을 다 덮는다
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
-    await pp.getByTestId("pane-files").click();
+    await inList(pp, "pane-files");
     await screenHas(pp, "휴대폰 파일 줄들", "files>");
     const at = await textPoint(pp, "notes/readme.md");
     await pp.touchscreen.tap(at.x, at.y);
@@ -214,7 +214,7 @@ export default async function ({ ctl, page }) {
 
     // iPad: 손가락 기기라 역시 화면 가득, 줄 참조
     const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 })).page;
-    await ip.getByTestId("pane-files").click();
+    await inList(ip, "pane-files");
     await screenHas(ip, "iPad 파일 줄들", "files>");
     const ipAt = await textPoint(ip, "src/app.ts:20:5");
     await ip.touchscreen.tap(ipAt.x, ipAt.y);
@@ -227,7 +227,7 @@ export default async function ({ ctl, page }) {
 
     // 보기 권한 기기: 파일 경로를 눌러도 열리지 않는다(뒤에 누른 웹 주소가 새 탭으로 열린 뒤에 본다). host도 거부한다
     const rp = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 })).page;
-    await rp.getByTestId("pane-files").click();
+    await inList(rp, "pane-files");
     await screenHas(rp, "reader 파일 줄들", "files>");
     const fileAt = await textPoint(rp, "notes/readme.md");
     await rp.mouse.move(fileAt.x, fileAt.y);
@@ -304,7 +304,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "media", "--cwd", proj, "--", process.execPath, "-e", prog);
     await waitOutput("media", "media>");
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-media").click();
+    await inList(dp, "pane-media");
     await screenHas(dp, "media 줄들", "media>");
 
     // HTML 페이지
@@ -387,7 +387,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "code", "--cwd", proj, "--", process.execPath, "-e", prog);
     await waitOutput("code", "code>");
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
-    await dp.getByTestId("pane-code").click();
+    await inList(dp, "pane-code");
     await screenHas(dp, "code 줄들", "code>");
 
     await clickLink(dp, "src/long.ts");

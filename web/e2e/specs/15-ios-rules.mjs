@@ -4,7 +4,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 15-ios-rules(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk, claudeIdle, root } from "../lib/harness.mjs";
+import { aaa, until, step, browser, openSettings, shot, claudeSh, claudeAsk, claudeIdle, root, inList } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 export default async function () {
@@ -51,7 +51,7 @@ export default async function () {
     await still(dialog);
     await shot(ph, "iphone-home-sound-settings");
     await ph.keyboard.press("Escape");
-    await ph.getByTestId("pane-t1").click();
+    await inList(ph, "pane-t1");
     // 1) 다른 pane의 확인창: 앱 안 알림과 「입력 필요」 소리(660 → 880)
     await device.skipAudio();
     m = device.mark();
@@ -120,7 +120,7 @@ export default async function () {
     aaa("tab", "create", "--machine", "labA", "--label", "shadow-이름-뜻-메모-머리줄", "--cwd", cwd, "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
     const app = await pairDevice(browser, aaa("web", "pair").code, "iphone", { standalone: true });
     const ph = app.page;
-    await ph.getByTestId("pane-shadow-이름-뜻-메모-머리줄").click();
+    await inList(ph, "pane-shadow-이름-뜻-메모-머리줄");
     await ph.getByTestId("chat").waitFor();
     await ph.locator(".term-head .chip.agent.idle").waitFor();
     // 머리줄의 문제를 모은다(빈 목록이면 통과). 겹침은 줄 오른쪽 끝이 상태 표시 왼쪽을 넘는 것이다

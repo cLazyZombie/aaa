@@ -6,7 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   AA, root, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings,
+  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -19,15 +19,15 @@ export default async function ({ ctl, page }) {
     await state(page).and(page.locator('[data-status="blocked"]')).waitFor();
     if ((await state(page).locator(".sidebar-status-mark").innerText()) !== "?") throw new Error("질문 줄에 ? 표시가 없다");
     if ((await state(page).getAttribute("aria-label")) !== "agent 답을 기다림") throw new Error(`상태 말: ${await state(page).getAttribute("aria-label")}`);
-    await page.getByTestId("pane-q1").click();
+    await inList(page, "pane-q1");
     // 질문 본문은 화면에서 물음표가 있는 마지막 줄이다(host `modal_of`·agent `question_of`)
     const q = aaa("question", "list").questions.find((x) => x.pane === q1);
     const card = page.getByTestId(`dock-question-${q.id}`);
     await card.waitFor();
     if (!(await card.innerText()).includes("Do you want to proceed?")) throw new Error(`카드 본문: ${await card.innerText()}`);
     const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
-    await state(rd.page).and(rd.page.locator('[data-status="blocked"]')).waitFor();
-    await rd.page.getByTestId("pane-q1").click();
+    await state(rd.page).and(rd.page.locator('[data-status="blocked"]')).waitFor({ state: "attached" });
+    await inList(rd.page, "pane-q1");
     const rcard = rd.page.getByTestId(`dock-question-${q.id}`);
     await rcard.waitFor();
     if ((await rcard.getByRole("button", { name: "예" }).count()) !== 0) throw new Error("reader에게 답 버튼");
@@ -49,8 +49,8 @@ export default async function ({ ctl, page }) {
     const script = `${clearScreen}; printf '%s\\n' ' Bash command' '' '   make lint' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No'; stty -echo; exec cat > /dev/null`;
     const q2 = aaa("tab", "create", "--machine", "labA", "--label", "q2", "--", claudeSh, "-c", script).tabs.at(-1).root.pane;
     const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
-    await ph.page.getByTestId("agent-q2").and(ph.page.locator('[data-status="blocked"]')).waitFor();
-    await ph.page.getByTestId("pane-q2").click();
+    await ph.page.getByTestId("agent-q2").and(ph.page.locator('[data-status="blocked"]')).waitFor({ state: "attached" });
+    await inList(ph.page, "pane-q2");
     const q = aaa("question", "list").questions.find((x) => x.pane === q2);
     const id = `dock-question-${q.id}`;
     const card = ph.page.getByTestId(id);
@@ -102,7 +102,7 @@ export default async function ({ ctl, page }) {
     if ((await state.getAttribute("aria-label")) !== "agent 끝남(안 봄)") throw new Error(`상태 말: ${await state.getAttribute("aria-label")}`);
     await shot(page, "desktop-unseen-done");
     // 2) 그 pane을 열면 봤다
-    await page.getByTestId("pane-seen1").click();
+    await inList(page, "pane-seen1");
     await is("idle");
     // 3) 보는 동안 끝난 턴은 끝남으로 남지 않는다
     await turn("idle", true);
@@ -139,7 +139,7 @@ export default async function ({ ctl, page }) {
       aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
         JSON.stringify({ hook_event_name: "SessionStart", session_id: "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9a", source: "startup", transcript_path: path }));
     hookPane("chat1", tr);
-    await page.getByTestId("pane-chat1").click();
+    await inList(page, "pane-chat1");
     await until("대화 단추", async () => (await page.getByTestId("chat-toggle").count()) === 1);
     await page.getByTestId("chat-toggle").click();
     const chat = page.getByTestId("chat");
@@ -202,7 +202,7 @@ export default async function ({ ctl, page }) {
     }
     if (!refused.includes("기록 폴더 밖") || refused.includes("비밀")) throw new Error(`밖의 파일: ${refused}`);
     for (const n of ["chat1", "chat2"]) aaa("pane", "kill", n);
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
@@ -210,7 +210,7 @@ export default async function ({ ctl, page }) {
     const png = fs.readFileSync(`${root}/pic.png`);
     const banner = page.getByTestId("attach-banner");
     // 1) 일반 셸(t1): 대상 머신 세션 폴더에 저장하고 셸에도 따옴표 경로와 빈칸을 넣는다(결정 20 D7, Enter 없음)
-    await page.getByTestId("pane-t1").click();
+    await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("$"));
     // 띠는 터미널 위에 뜬다(herdr-web-ui .terminal-banners): 흐름에 있으면 띠가 날 때 칸이 줄어 PTY 크기가 바뀐다
     const termBox = () => page.locator(".term-scroll").evaluate((el) => `${el.clientWidth}x${el.clientHeight}`);
@@ -243,7 +243,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "h1", "--", "/bin/sh", "-c",
       '"$0" hook --agent claude \'{"hook_event_name":"SessionStart","session_id":"h1","source":"startup"}\'; stty raw -echo; printf "\\033[?2004h\\342\\235\\257 \\n"; exec cat > "$1"', AA, recv);
     await until("h1 harness 상태", async () => (await page.getByTestId("agent-h1").count()) === 1);
-    await page.getByTestId("pane-h1").click();
+    await inList(page, "pane-h1");
     await until("h1 터미널", async () => (await screenText(page)).includes("❯"));
     await pasteFile(page, big, "image/png");
     await until("입력창 배너", async () => (await banner.innerText()).includes("경로를 넣었다"));
@@ -304,7 +304,7 @@ export default async function ({ ctl, page }) {
     const recv2 = `${root}/h2.in`;
     aaa("tab", "create", "--machine", "labA", "--label", "h2", "--", claudeSh, "-c", `${claudeAsk("rm x")}; stty raw -echo; exec cat > "$1"`, AA, recv2);
     await page.getByTestId("agent-h2").and(page.locator('[data-status="blocked"]')).waitFor();
-    await page.getByTestId("pane-h2").click();
+    await inList(page, "pane-h2");
     await until("h2 터미널", async () => (await screenText(page)).includes("Esc to cancel"));
     await pasteFile(page, png, "image/png");
     await until("확인창 배너", async () => (await banner.innerText()).includes("확인창이 떠 있어"));
@@ -365,7 +365,7 @@ export default async function ({ ctl, page }) {
     await d.waitFor({ state: "detached" });
     await orderIs(page, "활동순: 질문, 그다음 최근", ["o3", "o2", "o1"]);
     // 쉬던 o1에 일을 시키면 질문 다음으로 오른다
-    await page.getByTestId("pane-o1").click();
+    await inList(page, "pane-o1");
     await until("o1 화면", async () => (await screenText(page)).includes("? for shortcuts"));
     await page.getByTestId("terminal").click();
     await page.keyboard.press("Enter");
@@ -438,23 +438,20 @@ export default async function ({ ctl, page }) {
       await pg.getByTestId("chat-toggle").and(pg.locator(`[aria-pressed="${chat}"]`)).waitFor();
       if ((await pg.getByTestId("chat").count()) !== (chat ? 1 : 0)) throw new Error(`${what}: 대화 칸`);
     };
-    // 다시 열기: 휴대폰은 pane을 보는 동안 목록이 숨으니 「목록으로」(pane을 닫는다), 데스크톱은 셸 t1을 거쳐 온다
+    // 다시 열기: 셸 t1을 거쳐 온다(휴대폰도 목록 drawer에서 고른다. drawer를 열어도 pane은 골라진 채다)
     const reopen = async (pg, name) => {
-      const back = pg.getByRole("button", { name: "목록으로" });
-      if (await back.isVisible()) await back.click();
-      else await pg.getByTestId("pane-t1").click();
+      await inList(pg, "pane-t1");
       await until(`${name} 떠나기`, async () => (await pg.getByTestId("chat-toggle").count()) === 0);
-      await pg.getByTestId(`pane-${name}`).click();
+      await inList(pg, `pane-${name}`);
     };
     // 휴대폰(터치): agent pane은 대화, 셸은 터미널(대화 단추가 없다)
-    await pp.getByTestId("pane-lens1").click();
+    await inList(pp, "pane-lens1");
     await lensIs(pp, "휴대폰 agent pane", true);
-    await pp.getByRole("button", { name: "목록으로" }).click();
-    await pp.getByTestId("pane-t1").click();
+    await inList(pp, "pane-t1");
     await until("휴대폰 셸 터미널", async () => (await screenText(pp)).includes("$"));
     if ((await pp.getByTestId("chat").count()) !== 0) throw new Error("셸이 대화로 열렸다");
     // 데스크톱: 같은 agent pane이 터미널
-    await page.getByTestId("pane-lens1").click();
+    await inList(page, "pane-lens1");
     await lensIs(page, "데스크톱 agent pane", false);
     // 휴대폰에서 터미널로 바꾸면 그 pane은 다시 열어도 터미널
     await reopen(pp, "lens1");
@@ -464,12 +461,11 @@ export default async function ({ ctl, page }) {
     await reopen(pp, "lens1");
     await lensIs(pp, "고른 보기를 기억", false);
     // 설정 「패널 기본 화면」 채팅: pane마다 고른 보기를 잊고 모두 대화(이 기기만, 데스크톱은 그대로). 설정은 목록 바닥에 있다
-    await pp.getByRole("button", { name: "목록으로" }).click();
     const d = await openSettings(pp, "채팅");
     await d.getByRole("group", { name: "패널 기본 화면" }).getByRole("button", { name: "채팅" }).click();
     await pp.keyboard.press("Escape");
     await d.waitFor({ state: "detached" });
-    await pp.getByTestId("pane-lens1").click();
+    await inList(pp, "pane-lens1");
     await lensIs(pp, "기본 채팅", true);
     await shot(pp, "phone-chat-default");
     await reopen(page, "lens1");
@@ -487,7 +483,7 @@ export default async function ({ ctl, page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "cmp1", "--", claudeSh, "-c",
       `stty -echo; ${claudeIdle}; read a; printf '%s\\n' "$a" >> ${got}; ${claudeWorking}; while read a; do printf '%s\\n' "$a" >> ${got}; done`);
     await page.getByTestId("agent-cmp1").and(page.locator('[data-status="idle"]')).waitFor();
-    await page.getByTestId("pane-cmp1").click();
+    await inList(page, "pane-cmp1");
     await page.getByTestId("chat-toggle").click();
     const composer = page.getByTestId("chat-composer");
     const box = composer.getByRole("textbox", { name: "메시지" });
