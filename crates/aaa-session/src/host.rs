@@ -455,8 +455,10 @@ async fn run(dir: PathBuf) -> Result<()> {
     )?;
     let info = st.info();
     st.broadcast(SessionMsg::Updated(info)).await;
-    // 바로 끝난 명령도 agent가 붙어 종료 상태·마지막 화면을 받을 수 있게 잠깐 더 응답한다.
-    let until = tokio::time::Instant::now() + Duration::from_secs(2);
+    // 바로 끝난 명령도 agent가 붙어 종료 상태·마지막 화면을 받을 수 있게 잠깐 더 응답한다(2초).
+    // `AAA_TEST_SESSION_LINGER_MS`는 시험에서만 쓴다(m13: 끝난 세션을 지우는 agent가 이 창을 기다리지 않는지)
+    let ms = std::env::var("AAA_TEST_SESSION_LINGER_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(2000);
+    let until = tokio::time::Instant::now() + Duration::from_millis(ms);
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(until) => break,

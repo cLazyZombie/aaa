@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use aaa_proto::{
     DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, GridFrame,
-    GridLine, GridRun, MAX_FRAME, PaneModes, negotiate,
+    GridLine, GridRun, GridScroll, MAX_FRAME, PaneModes, ScrollBy, negotiate,
 };
 use anyhow::{Context, Result, bail};
 
@@ -222,7 +222,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
             }
         })
     };
-    let mut watches: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut watches: HashMap<String, (tokio::task::JoinHandle<()>, Arc<ScrollCtl>)> = HashMap::new();
     let mut waits: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let result: Result<()> = async {
         while let Some(m) = rx.next().await? {
@@ -239,10 +239,12 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
                 FrontRequest::PaneWatch { pane } => {
                     let result = match host.pane_view_of(&pane, DeviceRole::Local) {
                         Some(_) => {
-                            if let Some(old) = watches.remove(&pane) {
+                            if let Some((old, _)) = watches.remove(&pane) {
                                 old.abort();
                             }
-                            watches.insert(pane.clone(), tokio::spawn(watch_grid(host.clone(), pane, tx.clone())));
+                            let ctl = Arc::new(ScrollCtl::default());
+                            let task = tokio::spawn(watch_grid(host.clone(), pane.clone(), tx.clone(), ctl.clone()));
+                            watches.insert(pane, (task, ctl));
                             Ok(FrontResponse::Done)
                         }
                         None => Err(ErrorBody::new(ErrorCode::NotFound, format!("pane이 없다: {pane}"))),
@@ -250,10 +252,24 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
                     tx.control(res_frame(id, result)).await?;
                 }
                 FrontRequest::PaneUnwatch { pane } => {
-                    if let Some(t) = watches.remove(&pane) {
+                    if let Some((t, _)) = watches.remove(&pane) {
                         t.abort();
                     }
                     tx.json(&FrontMsg::Res { id, result: Ok::<_, ErrorBody>(FrontResponse::Done).into() }).await?;
+                }
+                // 기록 위치는 이 연결의 구독마다 둔다(herdr는 pane마다 하나): 두 화면이 서로의 위치를 옮기지 않는다
+                FrontRequest::PaneScroll { pane, by } => {
+                    let result = match watches.get(&pane) {
+                        Some((_, ctl)) => {
+                            ctl.pending.lock().unwrap().push(by);
+                            ctl.wake.notify_one();
+                            Ok(FrontResponse::Done)
+                        }
+                        None => {
+                            Err(ErrorBody::new(ErrorCode::NotFound, format!("이 연결이 보는 pane이 아니다: {pane}")))
+                        }
+                    };
+                    tx.json(&FrontMsg::Res { id, result: result.into() }).await?;
                 }
                 // 출력 기다리기는 연결이 끝나면 멈춘다(herdr `should_stop_connection`)
                 body @ FrontRequest::PaneWaitOutput { .. } => {
@@ -293,7 +309,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     state_task.abort();
     ordered_task.abort();
     flow_task.abort();
-    for (_, t) in watches {
+    for (_, (t, _)) in watches {
         t.abort();
     }
     for t in waits {
@@ -332,14 +348,50 @@ fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
     }
 }
 
+/// 한 구독(연결 × pane)의 기록 위치 옮기기: `PaneScroll`이 쌓고 구독을 깨운다
+#[derive(Default)]
+struct ScrollCtl {
+    pending: std::sync::Mutex<Vec<ScrollBy>>,
+    wake: tokio::sync::Notify,
+}
+
+/// 구독이 보는 기록 위치: 맨 아래에서 올라간 줄 수와 직전에 본 기록 줄 수
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GridView {
+    pub offset: usize,
+    pub max: usize,
+}
+
+impl GridView {
+    /// 새 기록 줄 수 `max`에 맞춘다: 올라가 있으면 늘어난 만큼 더 올려 보던 줄을 지키고(herdr·ghostty viewport 고정),
+    /// 옮기기를 차례로 한 뒤 기록 안으로 묶는다. 기록이 상한에서 앞을 버리면 지키지 못한다.
+    pub fn update(&mut self, max: usize, ops: &[ScrollBy]) {
+        if self.offset > 0 && max > self.max {
+            self.offset += max - self.max;
+        }
+        for op in ops {
+            self.offset = match *op {
+                ScrollBy::Up { lines } => self.offset.saturating_add(lines as usize).min(max),
+                ScrollBy::Down { lines } => self.offset.saturating_sub(lines as usize),
+                ScrollBy::Bottom => 0,
+                ScrollBy::Offset { lines } => lines as usize,
+            };
+        }
+        self.offset = self.offset.min(max);
+        self.max = max;
+    }
+}
+
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
-async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx) {
+async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollCtl>) {
     use tokio::sync::broadcast::error::{RecvError, TryRecvError};
     let Some(crate::Attach { mut rx, .. }) = host.attach_pane(&pane) else { return };
     let mut sent: Vec<u64> = Vec::new();
     let mut full = true;
+    let mut view = GridView::default();
     loop {
-        if let Some(frame) = host.grid_frame(&pane, &mut sent, full) {
+        let ops = std::mem::take(&mut *ctl.pending.lock().unwrap());
+        if let Some(frame) = host.grid_frame(&pane, &mut sent, full, &mut view, &ops) {
             full = false;
             if (!frame.lines.is_empty() || frame.full || frame.cursor_changed)
                 && tx.json(&FrontMsg::Event(FrontEvent::Grid(frame.into_frame()))).await.is_err()
@@ -347,11 +399,14 @@ async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx) {
                 return;
             }
         }
-        // 다음 변경을 기다리고, 짧은 시간 동안 들어온 변경은 한 장으로 묶는다
-        match rx.recv().await {
-            Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => full = true,
-            Ok(_) => {}
-            Err(RecvError::Closed) => return,
+        // 다음 변경이나 기록 옮기기를 기다리고, 짧은 시간 동안 들어온 변경은 한 장으로 묶는다
+        tokio::select! {
+            r = rx.recv() => match r {
+                Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => full = true,
+                Ok(_) => {}
+                Err(RecvError::Closed) => return,
+            },
+            _ = ctl.wake.notified() => {}
         }
         tokio::time::sleep(GRID_INTERVAL).await;
         loop {
@@ -378,29 +433,42 @@ impl GridDiff {
     }
 }
 
-/// 직전에 보낸 줄 hash와 커서. `sent[rows]`에 커서를, `sent[rows + 1]`에 크기를 함께 넣는다.
+/// 직전에 보낸 줄 hash와 커서. `sent[rows]`에 커서·모드·기록 위치를, `sent[rows + 1]`에 크기를 함께 넣는다.
 impl Host {
-    pub fn grid_frame(&self, pane: &str, sent: &mut Vec<u64>, full: bool) -> Option<GridDiff> {
-        let i = self.inner.lock().unwrap();
-        let p = i.panes.get(pane)?;
-        let (rows, cols, cursor, modes, src) = match &p.mirror {
+    pub fn grid_frame(
+        &self,
+        pane: &str,
+        sent: &mut Vec<u64>,
+        full: bool,
+        view: &mut GridView,
+        ops: &[ScrollBy],
+    ) -> Option<GridDiff> {
+        use std::hash::{Hash, Hasher};
+        let mut i = self.inner.lock().unwrap();
+        let p = i.panes.get_mut(pane)?;
+        let (rows, cols, cursor, modes, src) = match &mut p.mirror {
             Some(m) => {
                 let (rows, cols) = m.vt.size();
-                let lines: Vec<_> = (0..rows).map(|r| m.vt.grid_row(r)).collect();
+                view.update(m.vt.history_rows(), ops);
+                let (lines, _) = m.vt.grid_rows_at(view.offset);
                 (rows, cols, m.vt.cursor(), m.vt.pane_modes(), lines)
             }
             None => {
+                view.update(0, ops);
                 (p.info.rows, p.info.cols, (0, 0, false), PaneModes::default(), vec![Vec::new(); p.info.rows as usize])
             }
         };
         drop(i);
         let (cursor_row, cursor_col, cursor_visible) = cursor;
-        // 모드만 바뀌어도(프로그램이 마우스 보고를 켬) 한 장 보내도록 커서 hash 위 비트에 접는다
-        let m = (modes.mouse as u64)
-            | (modes.mouse_encoding as u64) << 3
-            | u64::from(modes.alt_screen) << 5
-            | u64::from(modes.app_cursor) << 6;
-        let c = (m << 48) | (u64::from(cursor_row) << 32) | (u64::from(cursor_col) << 1) | u64::from(cursor_visible);
+        // 기록을 보는 동안은 커서를 숨긴다(그 자리는 지금 화면의 칸이다)
+        let cursor_visible = cursor_visible && view.offset == 0;
+        let scroll = GridScroll { offset: view.offset as u32, max: view.max as u32 };
+        // 모드나 기록 위치만 바뀌어도(프로그램이 마우스 보고를 켬, 보던 줄을 지키며 기록이 늚) 한 장 보낸다
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (cursor_row, cursor_col, cursor_visible).hash(&mut h);
+        (modes.mouse as u8, modes.mouse_encoding as u8, modes.alt_screen, modes.app_cursor).hash(&mut h);
+        (scroll.offset, scroll.max).hash(&mut h);
+        let c = h.finish();
         let (lines, full, cursor_changed) = changed_rows(sent, (rows, cols), src, c, full);
         let frame = GridFrame {
             pane: pane.to_string(),
@@ -412,6 +480,7 @@ impl Host {
             full,
             lines: vec![],
             modes,
+            scroll,
         };
         Some(GridDiff { frame, lines, full, cursor_changed })
     }
@@ -501,6 +570,33 @@ mod tests {
         }
         assert!(read_req(b"not json").is_err());
         assert!(read_req(br#"{"t":"req","body":{"op":"nope"}}"#).is_err());
+    }
+
+    /// 기록 위치(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`): 끝에서 멈추고,
+    /// 올라가 있으면 새 기록만큼 더 올라 보던 줄을 지키며, 맨 아래면 새 출력을 따라간다
+    #[test]
+    fn grid_view_keeps_the_lines_it_shows() {
+        let mut v = GridView::default();
+        v.update(10, &[ScrollBy::Up { lines: 3 }]);
+        assert_eq!(v, GridView { offset: 3, max: 10 });
+        v.update(14, &[]);
+        assert_eq!(v.offset, 7);
+        v.update(14, &[ScrollBy::Up { lines: 30 }]);
+        assert_eq!(v.offset, 14);
+        v.update(14, &[ScrollBy::Down { lines: 3 }, ScrollBy::Down { lines: 3 }]);
+        assert_eq!(v.offset, 8);
+        // clear 등으로 기록이 줄면 그 안으로
+        v.update(5, &[]);
+        assert_eq!(v.offset, 5);
+        v.update(5, &[ScrollBy::Offset { lines: 2 }]);
+        assert_eq!(v.offset, 2);
+        v.update(9, &[ScrollBy::Bottom]);
+        assert_eq!(v, GridView { offset: 0, max: 9 });
+        v.update(12, &[]);
+        assert_eq!(v.offset, 0);
+        // alt 화면은 기록이 없다
+        v.update(0, &[ScrollBy::Up { lines: 3 }]);
+        assert_eq!(v, GridView { offset: 0, max: 0 });
     }
 
     /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)

@@ -41,6 +41,8 @@ enum PumpCmd {
     Host { host_id: String, body: SessionRequest },
     /// host 연결이 끊겼다: 구독을 멈춘다.
     HostGone,
+    /// 끝난 세션을 지운다(forget): session host가 더 응답하는 동안을 기다리지 않고 연결을 닫는다.
+    Close,
 }
 
 struct Entry {
@@ -612,7 +614,7 @@ impl Agent {
                             let _ = tx.json(&SessionMsg::Req { id: format!("u{seq}"), body: SessionRequest::Unsubscribe }).await;
                         }
                     }
-                    None => break,
+                    Some(PumpCmd::Close) | None => break,
                 },
                 incoming = rx.next() => match incoming {
                     Ok(Some(Incoming::Terminal(chunk))) => {
@@ -651,7 +653,7 @@ impl Agent {
                 },
             }
         }
-        // session host가 사라졌다: 종료 기록을 기다렸다 읽는다.
+        // session host가 사라졌다(또는 forget이 닫았다): 종료 기록을 기다렸다 읽는다.
         for _ in 0..20 {
             if paths.exit().exists() {
                 break;
@@ -953,12 +955,9 @@ impl Agent {
             .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
     }
 
-    /// 끝난 세션을 지울 때 session host가 닫히기를 기다리는 한도(session host는 종료 뒤 2초 더 응답한다)
+    /// 끝난 세션을 지울 때 pump가 떨어지기를 기다리는 한도
     const FORGET_WAIT: Duration = Duration::from_secs(5);
 
-    /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
-    /// session host는 종료를 알린 뒤에도 2초 더 응답한다(바로 끝난 명령도 마지막 화면을 받게). 그동안은 pump가
-    /// 붙어 있으니 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
     /// 사람이 붙인 이름을 `spec.json`에 적고(지우면 뺀다) 바뀐 정보를 host에 알린다. 끝난 세션에도 붙인다(다시 열면 그 이름).
     async fn rename(&self, session: &str, label: Option<String>) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -1000,11 +999,16 @@ impl Agent {
         Ok(AgentResponse::Session(info))
     }
 
+    /// 끝난 세션 기록(폴더)을 지운다. 실행 중이면 거부한다.
+    /// pump가 붙어 있으면 떨어질 때까지 기다렸다 지운다. 먼저 지우면 pump가 끝나며 보내는 종료 알림이 기록을 되살린다.
+    /// session host는 종료를 알린 뒤에도 2초 더 응답하므로(늦게 붙는 agent도 마지막 화면을 받게) 그 연결은 여기서 닫는다:
+    /// 종료는 이미 받았고 마지막 화면은 파일에 있다. 닫기를 기다리면 끝난 thread resolve·pane 닫기마다 2초가 걸렸다(t-0338, plan §8.160).
     async fn forget(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
         }
         let deadline = tokio::time::Instant::now() + Self::FORGET_WAIT;
+        let mut closing = false;
         loop {
             {
                 let mut map = self.sessions.lock().unwrap();
@@ -1016,6 +1020,9 @@ impl Agent {
                     Some(e) if e.pump.is_none() => {
                         map.remove(session);
                         break;
+                    }
+                    Some(e) if !closing => {
+                        closing = e.pump.as_ref().is_some_and(|p| p.try_send(PumpCmd::Close).is_ok());
                     }
                     Some(_) => {}
                 }
