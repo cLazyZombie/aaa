@@ -29,7 +29,7 @@ import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
 import { useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
-import { raiseAlert, wokeSince, useAlerts, useAlertSoundUnlock } from "./alerts";
+import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
 import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
@@ -288,8 +288,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 늦은지는 사건을 받은 때 정한다(host에 묻는 동안 시간이 간다)
   type Raise = (late: boolean) => string;
   const alertLate = (replayFrom: number | null, project: string | null, subject: string | null, raise: Raise, told: (o: string) => void) => {
-    const since = replayFrom ?? wokeSince();
-    if (since === null || project === null || subject === null) return told(raise(since !== null));
+    // 늦은 알림: 다시 붙어 읽은 놓친 사건이거나 멈췄다 깬 직후 받은 사건. 가려진 채 살아 있는 페이지(데스크톱 탭)가 제때 받은
+    // 사건은 늦지 않다(소리를 낸다). 늦은 알림은 알림을 띄우지 못한 동안의 시작부터 이 기기에 간 push를 본다
+    const late = replayFrom !== null || justWoke();
+    const since = replayFrom ?? (late ? unableSince() : null);
+    if (!late || since === null || project === null || subject === null) return told(raise(late));
     void pushedSince(since)
       .then((pushed) => pushed.some((p) => p.project === project && p.subject === subject))
       .catch(() => false)
@@ -372,7 +375,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         },
         (on) => {
           setUp(on);
-          if (!on) linkDownAt.current ??= Date.now();
+          if (!on) linkDownAt.current ??= unableSince() ?? Date.now();
           // 끊긴 때(놓친 사건을 다시 읽을 때 그 뒤 이 기기에 간 push를 본다)
           const down = on ? (linkDownAt.current ?? Date.now()) : 0;
           if (on) linkDownAt.current = null;

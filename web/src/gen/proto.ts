@@ -386,7 +386,11 @@ visible?: boolean,
 /**
  * 그때 `document.hasFocus()`
  */
-focus?: boolean, } | { "t": "alert", project: string | null, target: string, kind: string, outcome: string, } | { "t": "touch" } | { "t": "ping", id: number, };
+focus?: boolean, 
+/**
+ * 이 웹 빌드(주 묶음 파일 이름). 배포 뒤에도 옛 페이지가 도는지 본다
+ */
+build?: string, } | { "t": "alert", project: string | null, target: string, kind: string, outcome: string, } | { "t": "touch" } | { "t": "ping", id: number, };
 
 export type Role = "coordinator" | "worker" | "evaluator";
 
