@@ -246,6 +246,7 @@ impl Host {
                 threads: recs.len() as u32,
                 status: ProjectStatus::Archived,
                 coordinator_profile: String::new(),
+                coordinator_profiles: None,
             },
             notes,
         }))

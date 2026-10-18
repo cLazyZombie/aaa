@@ -2,6 +2,7 @@
 // 사이드바는 열린 thread만 보이고(sidebar.rs `recorded_groups`), 프로젝트 하나를 고르면 묶음마다 머리 「묶음 (n)」 아래 줄을 보이며
 // 끝난 thread는 맨 아래 「끝남」 묶음에 흐리게 둔다. 「/」 거르기는 popup처럼 이름(id·제목)에 든 글로 고른다. 줄을 고르면 보고(popup detail).
 // 프로젝트 고르기(popup 첫 화면, projects_in_scope)도 같은 화면이다: 프로젝트마다 열린 묶음 줄(project_line)과 끝난 수.
+// 프로젝트 머리의 「coordinator」는 popup Threads의 `c`(CoordinatorOpen.tsx).
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronRight, Folder, Search } from "lucide-react";
 import { call } from "./api";
@@ -9,6 +10,7 @@ import type { ProjectView, ThreadView } from "./gen/proto";
 import { GROUP_WORD, groupRank, projectLine, stateLine, threadKey } from "./sidebarModel";
 import "./ProjectThreads.css";
 import { DrawerToggle, HeadMore } from "./drawer";
+import { CoordinatorOpen } from "./CoordinatorOpen";
 
 /** popup `Group::DISPLAY_ORDER` */
 const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
@@ -39,6 +41,7 @@ export function ProjectThreads({
   onProject,
   onThread,
   onBack,
+  onPane,
 }: {
   /** null이면 프로젝트 고르기 */
   project: string | null;
@@ -47,10 +50,16 @@ export function ProjectThreads({
   onProject: (name: string | null) => void;
   onThread: (t: ThreadView) => void;
   onBack: () => void;
+  /** 「coordinator」가 연 pane으로 간다. 없으면(보기 권한) 단추가 없다 */
+  onPane?: (id: string) => void;
 }) {
   const [projects, setProjects] = useState<ProjectView[] | null>(null);
   const [filter, setFilter] = useState("");
-  useEffect(() => setFilter(""), [project]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setFilter("");
+    setError(null);
+  }, [project]);
   useEffect(() => {
     let live = true;
     // 보관한 프로젝트도 받아 thread 기록에서 나온 이름까지 숨긴다(참고 popup은 보관한 것을 빼고 보인다)
@@ -136,6 +145,8 @@ export function ProjectThreads({
       now={now}
       onThread={onThread}
       onBack={() => onProject(null)}
+      coordinator={onPane && <CoordinatorOpen project={project} onPane={onPane} onError={setError} />}
+      error={error}
     />
   );
 }
@@ -149,6 +160,8 @@ function ProjectBody({
   now,
   onThread,
   onBack,
+  coordinator,
+  error,
 }: {
   project: string;
   line: string;
@@ -158,6 +171,8 @@ function ProjectBody({
   now: number;
   onThread: (t: ThreadView) => void;
   onBack: () => void;
+  coordinator: ReactNode;
+  error: string | null;
 }) {
   return (
     <section className="project-threads" aria-label={`${project} thread`} data-testid={`project-threads-${project}`}>
@@ -170,8 +185,14 @@ function ProjectBody({
           <h2 className="project-threads-title">{project}</h2>
           <span className="project-threads-facts">{line}</span>
         </span>
+        {coordinator}
         <HeadMore />
       </header>
+      {error && (
+        <p className="project-threads-error" role="alert" data-testid="project-coordinator-error">
+          {error}
+        </p>
+      )}
       {filter}
       {empty && (
         <p className="project-threads-empty" role="status">

@@ -496,6 +496,7 @@ impl Host {
             threads,
             status: self.project_status(name),
             coordinator_profile: self.default_coordinator_profile(name),
+            coordinator_profiles: self.safety(name).coordinator_profiles,
         }
     }
 

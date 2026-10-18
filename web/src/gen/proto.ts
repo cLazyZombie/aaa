@@ -478,7 +478,12 @@ status?: ProjectStatus,
  * `project open`이 profile 없이 쓸 coordinator profile(project.toml → host.toml `[defaults]` → claude로 푼 것).
  * FRONT_API 1.33. 옛 host는 보내지 않는다(빈 글)
  */
-coordinator_profile?: string, };
+coordinator_profile?: string, 
+/**
+ * coordinator가 쓸 수 있는 profile(safety `coordinator_profiles`, 사람만 바꾼다). 없으면 모두다. 웹 「coordinator 열기」가
+ * 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.33
+ */
+coordinator_profiles?: Array<string>, };
 
 export type ProjectStatus = "active" | "paused" | "archived";
 

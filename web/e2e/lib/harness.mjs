@@ -220,7 +220,8 @@ async function pasteFile(page, bytes, type, name = "shot.png") {
 
 /** 배너의 「…: <절대 경로>」에서 경로 */
 const bannerPath = (text) => /(\/\S+\.(png|jpg|gif|webp))/.exec(text)?.[1];
-const shot = async (page, name) => shots && (await page.screenshot({ path: path.join(shots, `${name}.png`) }));
+// 움직이는 중(창 크기를 바꾼 뒤 drawer·sheet가 미끄러지는 중)을 찍지 않는다: 끝나는 움직임은 끝까지 감고 끝없는 것은 처음 모습으로
+const shot = async (page, name) => shots && (await page.screenshot({ path: path.join(shots, `${name}.png`), animations: "disabled" }));
 
 /** 터미널 글꼴 측정: xterm cell 너비, 실제 글꼴 목록으로 잰 영문·한글 너비, 넣은 WOFF2만으로 잰 너비 */
 async function termFont(page, cols) {

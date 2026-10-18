@@ -779,6 +779,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onProject={chooseProject}
             onThread={(t) => chooseThread(t, `project:${t.project}`)}
             onBack={() => choose(null)}
+            onPane={canControl ? (id) => choose(id) : undefined}
           />
         ) : current ? (
           <TermView

@@ -365,6 +365,11 @@ pub struct ProjectView {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[ts(optional, as = "Option<String>")]
     pub coordinator_profile: String,
+    /// coordinator가 쓸 수 있는 profile(safety `coordinator_profiles`, 사람만 바꾼다). 없으면 모두다. 웹 「coordinator 열기」가
+    /// 고르기 목록을 거른다(참고 popup `profile_picker`의 `usable`). FRONT_API 1.33
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub coordinator_profiles: Option<Vec<String>>,
 }
 
 /// 프로젝트 상태(herdr-projects `project::Status`). paused·archived는 ticker가 건너뛰고 `thread start`를 거부한다.
