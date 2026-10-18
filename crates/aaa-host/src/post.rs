@@ -501,6 +501,7 @@ mod tests {
         let (h, _lab) = host();
         let mut i = input(1);
         i.title = "\x1b[31m제목\x1b[0m\n위조".into();
+        i.body.push_str("\n보기: https://example.com/PAYLOAD");
         assert!(matches!(h.store_post("demo", sender(), i.clone(), "actor", None, 1), PostResult::Accepted { .. }));
         let item = h.db.inbox_list(Some("demo"), false).unwrap().remove(0);
         assert_eq!(item.summary, "t-0001 request: 「제목위조」");
@@ -508,10 +509,14 @@ mod tests {
         assert_eq!(item.body.matches("`````").count(), 2);
         for payload in [
             crate::notify::notify_body("json", "", "demo", std::slice::from_ref(&item)),
+            crate::notify::notify_body("telegram", "example", "demo", std::slice::from_ref(&item)),
             crate::push::payload("demo", std::slice::from_ref(&item), None),
         ] {
             let s = payload.to_string();
-            assert!(!s.contains("제목") && !s.contains("merge") && s.contains("사용자 결정 요청"), "{s}");
+            assert!(
+                !s.contains("제목") && !s.contains("merge") && !s.contains("PAYLOAD") && s.contains("사용자 결정 요청"),
+                "{s}"
+            );
         }
         let mut no_user = item.clone();
         no_user.event = "post data".into();

@@ -43,9 +43,11 @@ pub(crate) fn notify_text(project: &str, items: &[InboxItem]) -> String {
     for i in items {
         let summary: String = safe_summary(i).chars().take(200).collect();
         s.push_str(&format!("\n- {} {}: {summary}", crate::inbox::who(i), i.event));
-        for line in i.body.lines().filter(|line| line.starts_with("보기: https://")) {
-            s.push('\n');
-            s.push_str(line);
+        if i.item_kind != "post" {
+            for line in i.body.lines().filter(|line| line.starts_with("보기: https://")) {
+                s.push('\n');
+                s.push_str(line);
+            }
         }
     }
     if s.chars().count() > TEXT_CAP {
