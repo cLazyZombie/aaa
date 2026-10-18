@@ -2717,8 +2717,15 @@ fn project_lifecycle() {
     assert!(e.contains("coordinator") && e.contains("--force"), "{e}");
     w.h.ok(&["pane", "kill", &coord]);
     wait_for("coordinator 끝", T, || (w.h.pane(&coord)["state"] != "running").then_some(()));
+    // 옛 판 aaa가 쓴 안내(표지 있음, 지금 안내와 다름)도 새 이름의 지금 안내로 다시 쓴다(plan §8.184)
+    std::fs::write(
+        dir.join("AGENTS.md"),
+        "# 프로젝트 coordinator\n\naaa가 쓴 파일이다. 옛 판.\n\n`aaa context life`\n",
+    )
+    .unwrap();
     let v = w.h.ok(&["project", "rename", "life", "shop2", "--dry-run"]);
     assert!(notes(&v).contains("--dry-run") && dir.exists(), "{v}");
+    assert!(notes(&v).contains("AGENTS.md(coordinator 안내)를 새 이름으로 다시 쓴다"), "{v}");
     let v = w.h.ok(&["project", "rename", "life", "shop2"]);
     assert_eq!(v["project"]["name"], "shop2", "{v}");
     let moved = w.projects.join("shop2");
@@ -3641,6 +3648,119 @@ fn coordinator_flow() {
     w.h.ok(&["project", "create", "p2"]);
     let guide = std::fs::read_to_string(w.projects.join("p2").join("AGENTS.md")).unwrap();
     assert!(guide.contains("aaa context p2") && guide.contains("--from-task"), "{guide}");
+}
+
+/// coordinator 안내에 옮긴 herdr-projects COORDINATOR.md 절(차이 목록 3장 G2, plan §8.184). 절마다 그 절에만 있는 글 하나
+const GUIDE_SECTIONS: &[&str] = &[
+    "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",
+    "## 새 프로젝트의 첫 턴",
+    "지시는 사용자만, 채팅으로 한다",
+    "## 메시지마다 세 가지 중 하나",
+    "## 이어지는 말",
+    "**thread 결과 요약은 언제나 이 모양이다**",
+    "- 더하기: 사용자가 지금 시작하지 않는 일을 말하면 더한다",
+    "- 목록(`##` 머리): 사용자가 요청하면",
+    "- 끝남·그만둠:",
+    "- 보이기: 사용자가 task를 보자고 하면",
+    "## 무엇이 누구 것인가",
+    "사용자가 일정 작업이나 지켜보는 일을 요청하면 `routines/<이름>.md`를 만들거나 고친다",
+];
+
+/// `aaa doctor files`의 프로젝트 한 줄
+fn files_check(v: &Value, project: &str) -> Value {
+    v["checks"].as_array().unwrap().iter().find(|c| c["project"] == project).cloned().unwrap_or_else(|| panic!("{v}"))
+}
+
+/// coordinator 안내(AGENTS.md)가 새 프로젝트와 있는 프로젝트에 닿는다(herdr-projects `doctor --fix`·`write_priming`, plan §8.184):
+/// 새 프로젝트는 옮긴 절을 모두 갖고 CLAUDE.md가 AGENTS.md 링크다. 있는 프로젝트는 `aaa doctor files`가 고칠 것을 보이기만 하고,
+/// `--fix`가 aaa 표지 있는 낡은 안내를 다시 쓴다. 표지 없는 글(옛 aaa·사람이 쓴 것)과 사람이 쓴 CLAUDE.md는 덮지 않고
+/// `.before-aaa`로 옮겨 두며, 이미 옮겨 둔 것이 있으면 고치지 않고 실패한다. 두 번째 `--fix`는 아무것도 바꾸지 않는다.
+#[test]
+fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
+    let w = world();
+    // 새 프로젝트
+    w.h.ok(&["project", "create", "fresh"]);
+    let fresh = w.projects.join("fresh");
+    let guide = std::fs::read_to_string(fresh.join("AGENTS.md")).unwrap();
+    for s in GUIDE_SECTIONS {
+        assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
+    }
+    assert!(guide.contains("aaa context fresh") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
+    assert_eq!(std::fs::read_link(fresh.join("CLAUDE.md")).unwrap(), Path::new("AGENTS.md"));
+    let v = w.h.ok(&["doctor", "files"]);
+    for p in ["demo", "fresh"] {
+        assert_eq!(files_check(&v, p)["problems"], serde_json::json!([]), "{v}");
+    }
+
+    // 있는 프로젝트 셋: 표지 있는 낡은 안내(old), 표지 없는 옛 aaa 안내와 사람이 쓴 CLAUDE.md(hand), 옮겨 둔 것이 이미 있음(stuck)
+    let make = |name: &str, agents: &str| -> PathBuf {
+        let d = w.projects.join(name);
+        std::fs::create_dir_all(d.join("routines")).unwrap();
+        std::fs::write(d.join("AGENTS.md"), agents).unwrap();
+        std::fs::write(d.join("PROJECT.md"), format!("# {name}\n")).unwrap();
+        d
+    };
+    let stale = "# 프로젝트 coordinator\n\naaa가 쓴 파일이다. 옛 판 안내.\n\n## 매 턴\n- `aaa context old`\n";
+    let old = make("old", stale);
+    let hand_text =
+        "# 프로젝트 coordinator\n\n이 폴더를 cwd로 쓰는 agent가 이 프로젝트의 coordinator다.\n\n사람이 더한 줄\n";
+    let hand = make("hand", hand_text);
+    std::fs::write(hand.join("CLAUDE.md"), "사람이 쓴 CLAUDE.md\n").unwrap();
+    let stuck = make("stuck", "두 번째 사람 글\n");
+    std::fs::write(stuck.join("AGENTS.md.before-aaa"), "처음 옮겨 둔 사람 글\n").unwrap();
+
+    // 보기만: 고칠 것을 말하고 아무것도 바꾸지 않는다
+    let v = w.h.ok(&["doctor", "files"]);
+    let problems = |v: &Value, p: &str| files_check(v, p)["problems"].to_string();
+    let o = problems(&v, "old");
+    assert!(
+        o.contains("지금 aaa의 coordinator 안내가 아니다") && o.contains("CLAUDE.md") && o.contains("uploads/"),
+        "{o}"
+    );
+    assert!(o.contains("pr-followup"), "{o}");
+    assert!(problems(&v, "hand").contains("aaa 표지가 없다"), "{v}");
+    assert_eq!(std::fs::read_to_string(old.join("AGENTS.md")).unwrap(), stale);
+    assert!(!hand.join("AGENTS.md.before-aaa").exists() && !old.join("uploads").exists());
+    let text = String::from_utf8_lossy(&w.h.run(&["doctor", "files"]).stdout).to_string();
+    assert!(text.contains("[warn] files old:") && text.contains("`aaa doctor files --fix`가 고친다"), "{text}");
+    assert!(text.contains("[ok  ] files fresh:"), "{text}");
+
+    // 고치기: stuck이 실패하므로 종료 코드는 실패, 결과는 표준 출력의 JSON
+    let o = w.h.run(&["--json", "doctor", "files", "--fix"]);
+    assert!(!o.status.success(), "옮겨 둘 자리가 찬 프로젝트가 있으면 실패");
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(files_check(&v, "old")["fixed"], true, "{v}");
+    assert_eq!(files_check(&v, "fresh")["fixed"], false, "고칠 것이 없으면 건드리지 않는다: {v}");
+    let s = files_check(&v, "stuck");
+    assert!(s["fixed"] == false && s["error"].as_str().unwrap().contains("AGENTS.md.before-aaa가 이미 있어"), "{s}");
+    // 표지 있는 낡은 안내는 지금 안내로, 빠진 파일도 생긴다
+    let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
+    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa context old"), "{now}");
+    assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
+    assert_eq!(std::fs::read_link(old.join("CLAUDE.md")).unwrap(), Path::new("AGENTS.md"));
+    assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
+    // 사람 글은 옆에 그대로
+    assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
+    assert_eq!(std::fs::read_to_string(hand.join("CLAUDE.md.before-aaa")).unwrap(), "사람이 쓴 CLAUDE.md\n");
+    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa context hand"));
+    assert_eq!(std::fs::read_link(hand.join("CLAUDE.md")).unwrap(), Path::new("AGENTS.md"));
+    // 자리가 찬 프로젝트는 두 사람 글 모두 그대로
+    assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md")).unwrap(), "두 번째 사람 글\n");
+    assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "처음 옮겨 둔 사람 글\n");
+    let text = String::from_utf8_lossy(&w.h.run(&["doctor", "files"]).stdout).to_string();
+    assert!(text.contains("[ok  ] files old:") && text.contains("[ok  ] files hand:"), "{text}");
+
+    // 두 번째 --fix: 사람이 하나를 치우면 stuck도 고쳐지고, 나머지는 바뀌지 않는다(옮겨 둔 사람 글도 그대로)
+    std::fs::remove_file(stuck.join("AGENTS.md.before-aaa")).unwrap();
+    let before = std::fs::read(hand.join("AGENTS.md")).unwrap();
+    let v = w.h.ok(&["doctor", "files", "--fix"]);
+    assert_eq!(files_check(&v, "hand")["fixed"], false, "{v}");
+    assert_eq!(files_check(&v, "stuck")["fixed"], true, "{v}");
+    assert_eq!(std::fs::read(hand.join("AGENTS.md")).unwrap(), before);
+    assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
+    assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "두 번째 사람 글\n");
+    let v = w.h.ok(&["doctor", "files"]);
+    assert!(v["checks"].as_array().unwrap().iter().all(|c| c["problems"] == serde_json::json!([])), "{v}");
 }
 
 /// 사후 평가자(§8.13): 목록에 섞이지 않고, 착지·완료 사건 묶음을 받아 평가 기록을 내며, 평가자 세션은 보기만 한다.

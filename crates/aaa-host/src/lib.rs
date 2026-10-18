@@ -1060,6 +1060,7 @@ impl Host {
                 self.project_rename(&project, &to, dry_run, actor).await
             }
             FrontRequest::ProjectSweep { project, dry_run } => self.project_sweep(&project, dry_run, actor).await,
+            FrontRequest::ProjectFiles { fix } => Ok(self.project_files(fix, actor)),
             FrontRequest::ProjectOpen { project, profile, new } => {
                 self.project_open(&project, profile, new, actor).await
             }
