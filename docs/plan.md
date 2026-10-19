@@ -5475,3 +5475,5 @@ primary 근거:
 - 첫 등록/없던 branch는 기준만 잡고, 변화는 pushed·forced·deleted로 구별한다. 공용 watch 상태·outage·내구 outbox·전달을 쓴다. 저장 revision으로 같은 head의 재시작 중복은 막고 이후 같은 SHA 쌍 변화는 새 사건으로 남긴다.
 - FlowEvent.repo를 선택 칸/DB 추가 열로 저장한다(FRONT_API 1.46). 임무 repos는 thread 사건이면 thread repo, thread 없는 사건이면 사건 repo를 쓴다. 이전 DB/기록의 repo는 없음이다. Git의 주인 보고는 기존 watch 발행 경계에서 연결한다.
 - 조회 머신은 routine machine으로 선택한다. 생략하면 host 등록 repo 우선, 없으면 유일한 repo 머신이다. GitHub CI 감시는 host 머신 agent 기본을 유지한다. [Git runbook](git-watch.md)과 [시험](testing.md)의 Git 감시를 따른다. 운영 파일 전환은 배포 뒤 coordinator가 맡는다.
+
+- L2 검토 수리: 꺼진 CI/Git 정의와 삭제한 프로젝트의 오래된 watch deadline을 source 활성 callback으로 제거한다. 지난 예약 때문에 ticker가 즉시 반복될 수 있는 경계를 실제 설정 전환 keeper의 RED로 확인했다. 활성 source의 주기/판정은 유지한다.

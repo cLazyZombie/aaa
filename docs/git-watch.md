@@ -31,3 +31,5 @@
 agent는 필요한 commit 객체만 fetch한다. `--no-write-fetch-head`·명시 SHA·submodule fetch 끔·자동 maintenance 끔으로 작업 파일·checkout HEAD·remote tracking ref·FETCH_HEAD를 움직이지 않는다. 처음 본 원격 head도 객체로 보유해 뒤의 force push를 비교한다. commit 객체를 갖고 있으면 ls-remote 뒤 추가 fetch를 하지 않는다.
 
 관련 구현·시험은 [plan](plan.md)의 L2와 [testing](testing.md)의 Git 감시를 따른다. 순수 TOML 자동화 정의 전환은 후속 L4다.
+
+감시 정의를 끄거나 프로젝트를 지우면 해당 source의 다음 예약도 지운다. 이미 진행 중인 조회는 마치고 이후 조회 예약을 정리한다. 다른 source의 예약은 유지한다.

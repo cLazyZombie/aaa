@@ -75,9 +75,22 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 impl Host {
-    pub(crate) fn watch_next_due(&self, source: &str, every: Duration) -> Option<Instant> {
-        let m = self.watch.lock().unwrap();
+    pub(crate) fn watch_next_due(
+        &self,
+        source: &str,
+        every: Duration,
+        active: impl Fn(&str) -> bool,
+    ) -> Option<Instant> {
         let prefix = format!("{source}:");
+        let candidates: Vec<_> = {
+            let m = self.watch.lock().unwrap();
+            m.last.keys().filter_map(|key| key.strip_prefix(&prefix).map(|p| (key.clone(), p.to_string()))).collect()
+        };
+        // 정의 파일을 읽는 callback은 runtime 잠금 밖에서 실행한다.
+        let inactive: HashSet<_> = candidates.into_iter().filter_map(|(key, p)| (!active(&p)).then_some(key)).collect();
+        let mut m = self.watch.lock().unwrap();
+        // 꺼진 정의·삭제한 프로젝트의 지난 deadline이 ticker를 계속 깨우지 않게 한다.
+        m.last.retain(|key, _| !inactive.contains(key));
         m.last
             .iter()
             .filter(|(p, _)| p.starts_with(&prefix) && !m.running.contains(*p))

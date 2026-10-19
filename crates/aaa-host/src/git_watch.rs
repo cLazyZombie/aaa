@@ -42,12 +42,16 @@ impl Host {
         let min = if std::env::var(crate::routine::TEST_SECONDS).as_deref() == Ok("1") { 1 } else { 30 };
         Duration::from_secs(self.cfg.projects.git_poll_secs.max(min))
     }
+    fn git_enabled(&self, project: &str) -> bool {
+        self.project_dir(project).ok().is_some_and(|dir| {
+            crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Git(_)))
+        })
+    }
     pub(crate) fn git_next_due(&self) -> Option<Instant> {
-        self.watch_next_due("git", self.git_every())
+        self.watch_next_due("git", self.git_every(), |p| self.git_enabled(p))
     }
     pub(crate) fn git_tick(self: &Arc<Self>, p: &str) {
-        let Ok(dir) = self.project_dir(p) else { return };
-        if !crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Git(_))) {
+        if !self.git_enabled(p) {
             return;
         }
         if !self.watch_claim("git", p, self.git_every()) {
