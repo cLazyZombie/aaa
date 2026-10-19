@@ -239,11 +239,24 @@ impl Host {
                 "message not delivered",
                 "특수 thread의 입력을 전달했는지 모른다. 파일을 보존하고 다시 보내지 않는다",
             );
+            let mut changed = false;
+            let mut mission_name = None;
             let _ = self.update_rec(p, thread, |r| {
                 if let Some(m) = r.mission.as_mut() {
-                    m.state = "막힘".into();
+                    changed = m.block(aaa_proto::MissionBlockReason::MessageUnknown);
+                    mission_name = Some(m.name.clone());
                 }
             });
+            if changed && let Some(name) = mission_name {
+                self.record_routine(
+                    p,
+                    &format!("mission:{name}"),
+                    &format!("message-unknown:{}", e.seq),
+                    "waiting",
+                    "막힘 · 입력 전달 모름",
+                    Some(thread),
+                );
+            }
             return;
         }
         let (event, summary) = match e.kind.as_str() {

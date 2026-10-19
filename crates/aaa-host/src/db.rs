@@ -359,6 +359,20 @@ impl Db {
         Ok(())
     }
 
+    /// 읽기→갱신을 한 transaction에서 한다. 동시에 도는 source의 기록을 잃지 않는다.
+    pub(crate) fn update_meta(&self, key: &str, update: impl FnOnce(Option<String>) -> Result<String>) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let old = tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
+        let value = update(old)?;
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [key, &value],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn del_meta(&self, key: &str) -> Result<()> {
         self.conn.lock().unwrap().execute("DELETE FROM meta WHERE key=?1", [key])?;
         Ok(())

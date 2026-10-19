@@ -356,6 +356,21 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 
+/// enabled 칸만 편집한다. 후보 파싱과 파일 쓰기는 정의 소유자가 맡는다.
+pub(crate) fn edit_enabled(text: &str, on: Option<bool>) -> Result<(String, bool), ErrorBody> {
+    let bad = |m: String| err(ErrorCode::BadRequest, m);
+    let rest = text.strip_prefix("+++\n").ok_or_else(|| bad("`+++` 줄로 시작해야 한다".into()))?;
+    let (front, body) = rest
+        .split_once("\n+++\n")
+        .or_else(|| rest.strip_suffix("\n+++").map(|f| (f, "")))
+        .ok_or_else(|| bad("닫는 `+++` 줄이 없다".into()))?;
+    let mut doc: toml_edit::DocumentMut =
+        front.parse().map_err(|e: toml_edit::TomlError| bad(format!("front matter: {}", e.message())))?;
+    let enabled = on.unwrap_or(!doc.get("enabled").and_then(|i| i.as_bool()).unwrap_or(true));
+    doc["enabled"] = toml_edit::value(enabled);
+    Ok((format!("+++\n{}\n+++\n{body}", doc.to_string().trim_end_matches('\n')), enabled))
+}
+
 impl Host {
     fn routine_state(&self, project: &str, name: &str) -> State {
         self.db
@@ -388,7 +403,19 @@ impl Host {
             .iter()
             .map(|r| {
                 let st = self.routine_state(project, &r.name);
-                RoutineView {
+                let mut view = RoutineView {
+                    trigger: r.schedule_text.clone(),
+                    action: if let Some(m) = &r.mission {
+                        format!("임무 {m} 입력")
+                    } else if matches!(r.trigger, Trigger::Pr(_)) {
+                        "주인 thread에 글".into()
+                    } else if r.command.is_empty() {
+                        "coordinator 안내".into()
+                    } else {
+                        format!("명령 → coordinator 안내 ({})", r.machine.as_deref().unwrap_or("host"))
+                    },
+                    origin: "routine".into(),
+                    file: format!("routines/{}.md", r.name),
                     name: r.name.clone(),
                     schedule: r.schedule_text.clone(),
                     command: r.command.clone(),
@@ -405,7 +432,13 @@ impl Host {
                     skipped: st.skipped,
                     no_coordinator: st.no_coordinator,
                     error: None,
+                    ..Default::default()
+                };
+                match self.routine_history(project, &r.name) {
+                    Ok(h) => h.fill(&mut view),
+                    Err(e) => view.error = Some(e.message),
                 }
+                view
             })
             .collect();
         out.extend(broken.into_iter().map(|(file, _, e)| RoutineView {
@@ -422,7 +455,11 @@ impl Host {
             skipped: 0,
             no_coordinator: 0,
             error: Some(e),
+            origin: "routine".into(),
+            file,
+            ..Default::default()
         }));
+        out.extend(self.mission_automation_views(project)?);
         Ok(out)
     }
 
@@ -469,6 +506,10 @@ impl Host {
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
         let dir = self.project_dir(project)?;
+        if let Some(n) = name.strip_prefix("mission:") {
+            self.mission_automation_toggle(project, n, on, actor)?;
+            return self.routines(project);
+        }
         let bad = |m: String| err(ErrorCode::BadRequest, m);
         if !valid_project(name) {
             return Err(bad(format!("routine 이름 형식이 아니다: {name}")));
@@ -476,16 +517,7 @@ impl Host {
         let path = dir.join("routines").join(format!("{name}.md"));
         let text = std::fs::read_to_string(&path)
             .map_err(|_| err(ErrorCode::NotFound, format!("routine이 없다: {project}/{name}")))?;
-        let rest = text.strip_prefix("+++\n").ok_or_else(|| bad("`+++` 줄로 시작해야 한다".into()))?;
-        let (front, body) = rest
-            .split_once("\n+++\n")
-            .or_else(|| rest.strip_suffix("\n+++").map(|f| (f, "")))
-            .ok_or_else(|| bad("닫는 `+++` 줄이 없다".into()))?;
-        let mut doc: toml_edit::DocumentMut =
-            front.parse().map_err(|e: toml_edit::TomlError| bad(format!("front matter: {}", e.message())))?;
-        let enabled = on.unwrap_or(!doc.get("enabled").and_then(|i| i.as_bool()).unwrap_or(true));
-        doc["enabled"] = toml_edit::value(enabled);
-        let edited = format!("+++\n{}\n+++\n{body}", doc.to_string().trim_end_matches('\n'));
+        let (edited, enabled) = edit_enabled(&text, on)?;
         parse(name, &edited).map_err(bad)?;
         crate::orch::write_atomic(&path, edited.as_bytes()).map_err(internal)?;
         let word = if enabled { "켬" } else { "끔" };
@@ -522,6 +554,7 @@ impl Host {
                 continue;
             }
             st.last_run_ms = Some(now);
+            let run_id = format!("schedule:{now}");
             if let Some(n) = &r.mission
                 && !self.mission_target_exists(project, n)
             {
@@ -532,11 +565,13 @@ impl Host {
                     "mission missing",
                     "routine의 대상 임무가 없어 실행하지 않았다",
                 );
+                self.record_routine(project, &r.name, &run_id, "waiting", "대상 임무 없음", None);
                 self.save_routine_state(project, &r.name, &st);
                 continue;
             }
             if !coordinator && !r.mission.as_ref().is_some_and(|n| self.mission_target_exists(project, n)) {
                 st.no_coordinator += 1;
+                self.record_routine(project, &r.name, &run_id, "skipped", "coordinator 없음", None);
                 self.save_routine_state(project, &r.name, &st);
                 continue;
             }
@@ -550,8 +585,10 @@ impl Host {
                     .any(|i| i.item_kind == "routine" && i.subject == r.name);
                 if waiting {
                     st.skipped += 1;
+                    self.record_routine(project, &r.name, &run_id, "skipped", "처리하지 않은 안내가 있음", None);
                 } else {
                     st.skipped = 0;
+                    self.record_routine(project, &r.name, &run_id, "done", "inbox 안내", None);
                     self.inbox_add_body(
                         project,
                         "routine",
@@ -566,6 +603,18 @@ impl Host {
             }
             let sha = r.command_sha256();
             if !self.routine_commands_allowed(project) || !self.routine_approved(project, &r) {
+                self.record_routine(
+                    project,
+                    &r.name,
+                    &run_id,
+                    "skipped",
+                    if self.routine_commands_allowed(project) {
+                        "명령 승인 필요"
+                    } else {
+                        "routine_commands 꺼짐"
+                    },
+                    None,
+                );
                 if st.approval_item_for != sha {
                     st.approval_item_for = sha;
                     let why = if self.routine_commands_allowed(project) {
@@ -592,6 +641,7 @@ impl Host {
             self.save_routine_state(project, &r.name, &st);
             let key = format!("{project}/{}", r.name);
             if !self.routine_running.lock().unwrap().insert(key.clone()) {
+                self.record_routine(project, &r.name, &run_id, "skipped", "지난 명령 실행 중", None);
                 tracing::info!(%key, "routine이 아직 돈다: 이번 차례는 건너뛴다");
                 continue;
             }
@@ -605,6 +655,7 @@ impl Host {
     }
 
     async fn routine_run(self: &Arc<Self>, project: &str, r: &Routine) {
+        let run_id = aaa_common::util::new_id();
         let res = async {
             let mid = self.resolve_machine(r.machine.as_deref())?;
             let conn = self.live_conn(&mid)?;
@@ -633,6 +684,14 @@ impl Host {
                     match self.mission_routine_input(project, n, &key, &hash, packet) {
                         Ok(changed) => changed,
                         Err(e) => {
+                            self.record_routine(
+                                project,
+                                &r.name,
+                                &run_id,
+                                "failed",
+                                &format!("임무 전달: {}", e.message),
+                                None,
+                            );
                             self.inbox_once(project, "mission", n, "routine delivery failed", &e.message);
                             self.flow_project(project, "routine_failed", None, format!("{}: {}", r.name, e.message));
                             return;
@@ -654,9 +713,18 @@ impl Host {
                     changed
                 };
                 let same = if changed { "출력 바뀜" } else { "출력 같음" };
+                self.record_routine(
+                    project,
+                    &r.name,
+                    &run_id,
+                    if ran.exit_code == Some(0) && !ran.timed_out { "done" } else { "failed" },
+                    &format!("{exit}, {same}"),
+                    None,
+                );
                 self.flow_project(project, "routine_ran", None, format!("{}: {exit}, {same}", r.name));
             }
             Err(e) => {
+                self.record_routine(project, &r.name, &run_id, "failed", &e.message, None);
                 self.flow_project(project, "routine_failed", None, format!("{}: {}", r.name, e.message));
                 self.inbox_once(
                     project,

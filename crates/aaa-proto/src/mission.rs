@@ -2,6 +2,18 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// 확인창만 화면의 Working/Idle로 자동 회복한다. 나머지는 명시 restart를 기다린다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MissionBlockReason {
+    Question,
+    MessageUnknown,
+    WakeUnknown,
+    BriefUnknown,
+    RestartFailed,
+    LegacyUnknown,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MissionView {
     pub project: String,
@@ -9,6 +21,8 @@ pub struct MissionView {
     pub title: String,
     pub thread: Option<Box<crate::ThreadView>>,
     pub state: String,
+    #[serde(default)]
+    pub blocked_reason: Option<MissionBlockReason>,
     pub applied_sha: Option<String>,
     pub file_sha: Option<String>,
     pub approval_sha256: String,

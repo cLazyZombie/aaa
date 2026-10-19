@@ -352,6 +352,14 @@ impl Host {
                     && c.events.iter().any(|e| e == kind);
                 s.outbox.push(Notice {
                     id: id.clone(),
+                    routine: r.name.clone(),
+                    skip_reason: if historical || latest_terminal.as_ref() != Some(&sha) {
+                        Some("따라잡기: 앞선 결과는 깨우지 않음".into())
+                    } else if red && same {
+                        Some("같은 실패 집합".into())
+                    } else {
+                        None
+                    },
                     kind: if recovered { "fixed" } else { kind }.into(),
                     sha: sha.clone(),
                     owners,

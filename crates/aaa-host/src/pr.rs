@@ -629,6 +629,14 @@ impl Host {
                     format!("{}에 보내지 못했다({}): {}", rec.id, hit.join(", "), e.message),
                 ),
             };
+            self.record_routine(
+                project,
+                &r.name,
+                &aaa_common::util::new_id(),
+                if ok { "done" } else { "failed" },
+                &outcome,
+                Some(&rec.id),
+            );
             self.inbox_add(project, "routine", &r.name, event, &format!("routine `{}` {outcome}", r.name));
             let kind = if ok { "routine_prompted" } else { "routine_prompt_failed" };
             self.flow(rec, kind, Some(format!("routines/{}.md", r.name)), outcome);

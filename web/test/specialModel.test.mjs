@@ -18,6 +18,8 @@ describe("특수 패널", () => {
     assert.equal(missionWord(mission({ error: "x", approved: false })), "오류");
     assert.equal(missionWord(mission({ approved: false, state: "승인 대기" })), "승인 필요");
     assert.equal(missionWord(mission({ state: "멈춤" })), "멈춤");
+    for (const [blocked_reason, word] of Object.entries({ question: "확인창", message_unknown: "입력 전달 모름", wake_unknown: "재시작 중 깨움 모름", brief_unknown: "brief 전달 모름", restart_failed: "다시 시작 실패", legacy_unknown: "이유 모름" })) assert.equal(missionWord(mission({ state: "막힘", blocked_reason })), `막힘 · ${word}`);
+    assert.equal(missionWord(mission({ state: "막힘", blocked_reason: null })), "막힘");
   });
 
   it("평가자 줄: 확인창이면 막힘, 일하면 평가 중, pane이 없거나 끝나면 세션 끝남", () => {

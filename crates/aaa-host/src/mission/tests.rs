@@ -75,12 +75,32 @@ impl Lab {
         let seen_names = inbox_names.clone();
         let shown = screen.clone();
         let prepared_root = self.root.join("prepared");
+        let fault = Arc::new(Mutex::new(None::<bool>));
+        let fault_in_task = fault.clone();
         let handle = tokio::spawn(async move {
             let mut rx = FrameRx::new(b, MAX_FRAME);
             let mut spawns = 0;
             while let Ok(msg) = rx.control::<LinkMsg>().await {
                 let LinkMsg::Req { id, body, .. } = msg else { continue };
                 log.lock().unwrap().push(body.clone());
+                let point = match &body {
+                    AgentRequest::MissionInboxStatus { .. } => Some(false),
+                    AgentRequest::WorkFileWrite { .. } => Some(true),
+                    _ => None,
+                };
+                let inject = {
+                    let mut f = fault_in_task.lock().unwrap();
+                    if point.is_some() && *f == point {
+                        f.take();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if inject {
+                    let r = h.mission_rec("demo", "watch").unwrap();
+                    h.flow(&r, "message_unknown", None, "await 중 전달 모름");
+                }
                 let answer = match body {
                     AgentRequest::MissionInboxStatus { .. } => {
                         let names = seen_names.lock().unwrap().clone();
@@ -198,7 +218,7 @@ impl Lab {
             true,
             conn,
         );
-        Fake { requests, inbox_names, _screen: screen, handle }
+        Fake { requests, inbox_names, _screen: screen, fault, handle }
     }
     // 시험의 시작 상태만 만든다. 실제 routine 전달은 routine_pass 경계 시험이 소유한다.
     fn queue(&self, p: &str, n: &str, id: String, source: &str, text: String) -> Result<(), ErrorBody> {
@@ -224,6 +244,7 @@ impl Lab {
     }
 }
 struct Fake {
+    fault: Arc<Mutex<Option<bool>>>,
     inbox_names: Arc<Mutex<Vec<String>>>,
     requests: Arc<Mutex<Vec<AgentRequest>>>,
     _screen: Arc<Mutex<String>>,
@@ -538,6 +559,117 @@ async fn explicit_restart_recovers_a_blocked_prompt_without_approving_it() {
         assert!(!spawn.argv.iter().any(|a| a.contains("resume")));
     }
 }
+/// 확인창은 현재 화면의 상태다. 답한 뒤 일함/대기로 돌아가고 입력은 한 번 전달한다.
+#[tokio::test]
+async fn answered_question_recovers_and_pending_input_wakes_once() {
+    let l = Lab::new();
+    l.applied(&text("withdrawal=\"none\""));
+    let f = l.fake(vec!["mission.v1".into()]).await;
+    let now = util::now_ms();
+    l.pane(AgentActivity::Question);
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().state, "막힘");
+    assert_eq!(l.h.mission_show("demo", "watch").unwrap().blocked_reason, Some(MissionBlockReason::Question));
+    l.pane(AgentActivity::Working);
+    l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
+    assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().state, "일함");
+    assert_eq!(l.h.mission_show("demo", "watch").unwrap().blocked_reason, None);
+    l.pane(AgentActivity::Idle);
+    l.h.mission_tick("demo", "watch", now + 2).await.unwrap();
+    assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().state, "대기");
+    assert!(!f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::WorkFileWrite { .. })));
+    l.pane(AgentActivity::Question);
+    l.h.mission_tick("demo", "watch", now + 3).await.unwrap();
+    l.h.mission_data_input("demo", "watch", "test:data", "one", "자료".into(), "git").unwrap();
+    l.pane(AgentActivity::Idle);
+    l.h.mission_tick("demo", "watch", now + 4).await.unwrap();
+    assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().wakes_today, 1);
+    l.h.mission_tick("demo", "watch", now + 5).await.unwrap();
+    assert_eq!(
+        f.requests.lock().unwrap().iter().filter(|r| matches!(r, AgentRequest::WorkFileWrite { .. })).count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn durable_and_legacy_blocks_survive_activity_and_pause_until_explicit_restart() {
+    for reason in [
+        Some(MissionBlockReason::MessageUnknown),
+        Some(MissionBlockReason::WakeUnknown),
+        Some(MissionBlockReason::BriefUnknown),
+        Some(MissionBlockReason::RestartFailed),
+        None,
+    ] {
+        let l = Lab::new();
+        let r = l.applied(&text("withdrawal=\"none\""));
+        let f = l.fake(vec!["mission.v1".into()]).await;
+        l.h.update_rec("demo", &r.id, |r| {
+            let m = r.mission.as_mut().unwrap();
+            m.state = "막힘".into();
+            m.blocked_reason = reason;
+        })
+        .unwrap();
+        l.h.mission_data_input("demo", "watch", "test:block", "one", "보존할 자료".into(), "git").unwrap();
+        for activity in [AgentActivity::Question, AgentActivity::Working, AgentActivity::Idle] {
+            l.pane(activity);
+            l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap();
+        }
+        for action in ["pause", "resume"] {
+            l.h.mission_control("demo", "watch", action, "local:cli").await.unwrap();
+        }
+        l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap();
+        let m = l.h.mission_rec("demo", "watch").unwrap().mission.unwrap();
+        assert_eq!(m.state, "막힘", "{reason:?}");
+        assert_eq!(m.blocked_reason, Some(reason.unwrap_or(MissionBlockReason::LegacyUnknown)));
+        assert_eq!(m.pending.len(), 1);
+        assert!(
+            !f.requests.lock().unwrap().iter().any(|r| matches!(
+                r,
+                AgentRequest::Input { .. } | AgentRequest::WorkFileWrite { .. } | AgentRequest::Kill { .. }
+            )),
+            "{reason:?}"
+        );
+        l.h.mission_control("demo", "watch", "restart", "local:cli").await.unwrap();
+        assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().blocked_reason, None);
+    }
+}
+
+#[tokio::test]
+async fn newer_message_unknown_during_await_survives_merge_and_prevents_wake() {
+    for during_file_write in [false, true] {
+        let l = Lab::new();
+        l.applied(&text("withdrawal=\"none\""));
+        let f = l.fake(vec!["mission.v1".into()]).await;
+        *f.fault.lock().unwrap() = Some(during_file_write);
+        l.pane(AgentActivity::Idle);
+        l.h.mission_data_input("demo", "watch", "test:race", "one", "자료".into(), "git").unwrap();
+        l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap();
+        let m = l.h.mission_rec("demo", "watch").unwrap().mission.unwrap();
+        assert_eq!(m.state, "막힘");
+        assert_eq!(m.blocked_reason, Some(MissionBlockReason::MessageUnknown));
+        assert_eq!(m.wakes_today, 0);
+        assert_eq!(m.pending.len(), 1);
+        assert!(
+            !f.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|r| matches!(r, AgentRequest::Input { .. } | AgentRequest::Kill { .. }))
+        );
+    }
+}
+
+#[tokio::test]
+async fn brief_unknown_is_not_reclassified_as_a_question() {
+    let l = Lab::new();
+    let r = l.applied(&text(""));
+    let _f = l.fake(vec!["mission.v1".into()]).await;
+    l.h.update_rec("demo", &r.id, |r| r.brief = BriefState::Unknown).unwrap();
+    l.pane(AgentActivity::Question);
+    l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap();
+    assert_eq!(l.h.mission_show("demo", "watch").unwrap().blocked_reason, Some(MissionBlockReason::BriefUnknown));
+}
+
 #[tokio::test]
 async fn mission_blocked_ended_and_old_peer_are_visible() {
     let l = Lab::new();
@@ -566,7 +698,7 @@ async fn mission_blocked_ended_and_old_peer_are_visible() {
             .contains("mission.v1")
     );
     l.pane(AgentActivity::Idle);
-    l.h.update_rec("demo", &r.id, |r| r.mission.as_mut().unwrap().state = "대기".into()).unwrap();
+    l.h.mission_control("demo", "watch", "restart", "local:cli").await.unwrap();
     let before = f.requests.lock().unwrap().len();
     assert!(l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap_err().message.contains("mission.v1"));
     assert_eq!(f.requests.lock().unwrap().len(), before, "옛 상대에는 새 link 요청을 보내지 않는다");
@@ -888,6 +1020,12 @@ async fn uncertain_wake_after_host_restart_is_blocked_without_resend() {
     assert_eq!(m.state, "막힘");
     assert_eq!(m.pending.len(), 1);
     assert!(!m.wake_inflight);
+    assert_eq!(m.blocked_reason, Some(MissionBlockReason::WakeUnknown));
+    for activity in [AgentActivity::Question, AgentActivity::Working, AgentActivity::Idle] {
+        l.pane(activity);
+        l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap();
+    }
+    assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().state, "막힘");
     assert!(
         !f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Input { .. } | AgentRequest::Kill { .. }))
     );

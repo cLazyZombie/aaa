@@ -992,10 +992,32 @@ pub struct InboxItem {
     pub done_at_ms: Option<u64>,
 }
 
-/// routine 하나(`projects/<p>/routines/<name>.md`, 0.2.35 계승)
+/// 자동화 한 차례의 결과. 사건 자료·명령 출력 본문은 넣지 않는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RoutineRun {
+    pub id: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// done / skipped / waiting / failed
+    pub status: String,
+    pub detail: String,
+    pub thread: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct RoutineView {
     pub name: String,
+    pub trigger: String,
+    pub action: String,
+    /// routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+    pub origin: String,
+    pub file: String,
+    pub last_result: Option<RoutineRun>,
+    pub last_skip: Option<RoutineRun>,
+    pub today: u32,
+    pub max_per_day: Option<u32>,
+    /// 최근 순서, 최대 20건. 전체 50건은 routine_runs로 읽는다.
+    pub recent: Vec<RoutineRun>,
     /// `every 30m`·`daily 09:00`(파일에 적힌 글)
     pub schedule: String,
     /// 비면 안내만 하는 routine

@@ -1,0 +1,16 @@
+.automations-panel { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; }
+.automations { overflow-y: auto; min-height: 0; padding: 12px; flex: 1; overflow-wrap: anywhere; }
+.automation-tools, .automation-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.automation-tools > button, .automation-heading > button { margin-left: auto; }
+.automations h3 { font-size: 13px; margin: 18px 0 8px; }
+.automation-row { border-top: 1px solid var(--border); padding: 12px 0; font-size: 12px; }
+.automation-row p { margin: 6px 0; }
+.automation-heading > span, .automation-file { color: var(--text-dim); }
+.automation-summary { line-height: 1.6; }
+.automation-row[data-status="off"] .automation-heading { opacity: .65; }
+.automation-row[data-status="failed"] .automation-heading { color: var(--danger-text); }
+.automation-row details { margin-top: 10px; }
+.automation-row summary { cursor: pointer; }
+.automation-row ol { padding-left: 20px; }
+.automation-row li { margin: 8px 0; }
+.automation-heading button { min-height: 32px; }

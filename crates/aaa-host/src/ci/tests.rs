@@ -73,6 +73,8 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
     let h = &lab.h;
     let n = Notice {
         id: "ci-proof".into(),
+        routine: "ci-main".into(),
+        skip_reason: None,
         kind: "failed".into(),
         sha: "a".repeat(40),
         owners: vec!["t-0042".into()],
@@ -102,6 +104,10 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
         2,
         "프로젝트와 owner 이력 각각 한 번"
     );
+    let history = h.routine_history("demo", "ci-main").unwrap();
+    assert_eq!(history.runs.len(), 1);
+    assert_eq!(history.today, 1);
+    assert_eq!(history.runs[0].status, "done");
     let pending = h.mission_rec("demo", "watch").unwrap().mission.unwrap().pending;
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].source, "ci");

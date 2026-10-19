@@ -5477,3 +5477,12 @@ primary 근거:
 - 조회 머신은 routine machine으로 선택한다. 생략하면 host 등록 repo 우선, 없으면 유일한 repo 머신이다. GitHub CI 감시는 host 머신 agent 기본을 유지한다. [Git runbook](git-watch.md)과 [시험](testing.md)의 Git 감시를 따른다. 운영 파일 전환은 배포 뒤 coordinator가 맡는다.
 
 - L2 검토 수리: 꺼진 CI/Git 정의와 삭제한 프로젝트의 오래된 watch deadline을 source 활성 callback으로 제거한다. 지난 예약 때문에 ticker가 즉시 반복될 수 있는 경계를 실제 설정 전환 keeper의 RED로 확인했다. 활성 source의 주기/판정은 유지한다.
+
+### 8.277 자동화 실행 기록과 웹 목록(10-19, t-0420 L3)
+
+- 실행 판정/전달 경계에서 규칙별 결과·건너뜀을 기록한다. DB meta `routine_runs:<p>:<name>`의 최근 50건·마지막 결과/건너뜀·지역 날짜별 오늘 횟수는 transaction으로 갱신한다. 같은 내구 전달 id는 갱신하며 중복 집계하지 않는다. 변화 없는 poll은 무음이다.
+- RoutineView에 조건·동작·출처 파일·지난 결과·건너뜀·오늘/상한·최근20건을 더한다. CLI `routine runs`는 50건까지 읽으며 Reader 요청이다. FRONT_API 1.47, TS 재생성. agent 계약 변화는 없어 AGENT_LINK는 유지한다.
+- 활동 막대 「자동화」에서 routine과 임무의 사건/일정 조건을 함께 보고 enabled만 토글한다. Controller만 쓰며 Reader는 보기만 한다. 임무 조건은 기존 실행기를 목록에 투영하는 것으로, 공용 규칙 추출은 L4다. 임무 토글도 파일/적용 사본 계약을 지킨다.
+- 목록은 열기·포커스·보이는 동안30초·수동 갱신으로 host 정본을 읽는다. 최근 기록20건을 펼치며 휴대폰 drawer에서도 쓴다. 폼 편집/지금 실행/TOML/공통 안전장치는 후속 단계다. [운영 확인](automations.md)과 [시험](testing.md)을 따른다.
+
+- **L3 추가 수리(사용자 21:3x 결정, t-0436 인계).** MissionRun의 내구 blocked_reason으로 question·message_unknown·wake_unknown·brief_unknown·restart_failed·legacy_unknown을 구분한다. question만 Working/Idle 관찰로 해제하며 쌓인 입력은 기존 안전장치를 거친다. 전달 모름은 Question·pause/resume로 우회하지 않고 merge_run의 오래된 사본으로 덮지 않는다. 깨움 표지 commit 전에도 최신 이유를 확인한다. 명시 restart·새 대화 확정 때만 내구 이유를 지운다. 웹 특수 줄은 짧은 이유를 붙이고 자동화 기록에도 남긴다. [운영 확인](mission-blocks.md).

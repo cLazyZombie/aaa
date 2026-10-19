@@ -44,6 +44,7 @@ import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
+import { AutomationPanel } from "./AutomationPanel";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
 import { evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
@@ -317,6 +318,9 @@ export function Sidebar(props: SidebarProps) {
       </div>
       <div {...panelProps("special", props.panel)} className="sidebar-panel special-panel">
         <SpecialSection {...props} />
+      </div>
+      <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
+        {props.panel === "automations" && <AutomationPanel canControl={props.canControl} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (

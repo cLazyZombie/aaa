@@ -63,7 +63,7 @@ export default async function () {
       await p.keyboard.press("Enter");
       await sidebarIs(p, { panel: "machines", collapsed: false }, "Enter로 머신");
       await p.keyboard.press("End");
-      await focusIs(p, "End 특수 단추", '[data-testid="activity-special"]');
+      await focusIs(p, "End 자동화 단추", '[data-testid="activity-automations"]');
       await p.keyboard.press("Home");
       await focusIs(p, "Home 프로젝트 단추", '[data-testid="activity-projects"]');
       const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.tabIndex).join(","));
@@ -338,8 +338,8 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 「특수」(plan §8.258)가 에이전트 밑에 더해져 그 아래다
-        const agents = box('[data-testid="activity-special"]');
+        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.277)까지 더해진 묶음 아래다
+        const agents = box('[data-testid="activity-automations"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
         const footBox = foot.getBoundingClientRect();
