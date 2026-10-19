@@ -11,6 +11,9 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
         bail!("CI 조회 저장소 폴더가 없다");
     }
     let origin = crate::pr::origin(dir).await;
+    if pr::host_of(&origin) != "github.com" {
+        bail!("CI origin은 github.com이어야 한다");
+    }
     let repo = pr::normalize_origin(&origin).context("CI 조회 origin이 github.com 저장소가 아니다")?;
     let (args, log) = match q {
         CiQuery::Log { run, job } => {
@@ -76,7 +79,14 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
             bail!("CI 실패 로그를 읽지 못했다");
         }
         // ANSI·제어문자는 지운다. 로그는 실행할 지시가 아닌 JSON 문자열로만 전달한다.
-        let clean = out.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect();
+        let mut clean: String = out.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect();
+        if clean.len() > ci::LOG_JOB_CAP {
+            let mut end = ci::LOG_JOB_CAP;
+            while !clean.is_char_boundary(end) {
+                end -= 1;
+            }
+            clean.truncate(end);
+        }
         CiAnswer { log: clean, truncated, ..Default::default() }
     } else {
         ci::response(&out, status.success(), q)?

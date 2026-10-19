@@ -38,7 +38,11 @@ pub fn valid_sha(s: &str) -> bool {
 /// 구조화한 GET만 만든다. arbitrary URL·shell·머리 주입은 받지 않는다.
 pub fn api_args(repo: &str, q: &CiQuery) -> Result<Vec<String>> {
     if repo.split('/').count() != 2
-        || repo.split('/').any(|s| s.is_empty() || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)))
+        || repo.split('/').any(|s| {
+            s.is_empty()
+                || matches!(s, "." | "..")
+                || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        })
     {
         bail!("GitHub owner/repo 형식이 아니다");
     }
@@ -139,6 +143,9 @@ pub fn response(out: &str, success: bool, q: &CiQuery) -> Result<CiAnswer> {
                     continue;
                 }
                 let sha = text(r, "head_sha");
+                if num(r, "id") == 0 || num(r, "workflow_id") == 0 {
+                    bail!("run/workflow ID가 없다");
+                }
                 if !valid_sha(&sha) {
                     bail!("run의 SHA 형식이 아니다");
                 }

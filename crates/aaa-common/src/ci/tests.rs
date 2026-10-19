@@ -26,7 +26,7 @@ fn calls_are_get_only_and_reject_header_or_path_injection() {
     let a = api_args("o/app", &q()).unwrap();
     assert!(a.contains(&"If-None-Match: \"v1\"".into()));
     assert!(a.last().unwrap().contains("event=push&per_page=30&exclude_pull_requests=true"));
-    for repo in ["o/app/other", "o/app?x", "-x/", ""] {
+    for repo in ["o/app/other", "o/app?x", "-x/", "o/..", "../app", ""] {
         assert!(api_args(repo, &q()).is_err());
     }
     assert!(api_args("o/app", &CiQuery::Runs { etag: Some("a\nB: c".into()), since: None, page: 1 }).is_err());
@@ -65,7 +65,7 @@ fn same_failure_ignores_ids_and_merge_owners_require_suffix() {
     let a = CiJob { id: 1, name: "linux".into(), steps: vec!["test".into()] };
     let mut b = a.clone();
     b.id = 99;
-    assert_eq!(failure_set(&[a.clone()]), failure_set(&[b.clone()]));
+    assert_eq!(failure_set(std::slice::from_ref(&a)), failure_set(std::slice::from_ref(&b)));
     b.steps = vec!["build".into()];
     assert_ne!(failure_set(&[a]), failure_set(&[b]));
     for bad in ["이슈 (t-0042)", "병합: x (t-0042) extra", "병합: x (t-004)", "병합: x\n(t-0042)"] {
