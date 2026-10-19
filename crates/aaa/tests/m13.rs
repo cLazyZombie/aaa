@@ -1911,7 +1911,8 @@ fn auto_resolve_and_reopen() {
     w.h.ok(&["thread", "ack", "demo", &id]);
     w.h.ok(&["pane", "kill", &pane]);
     w.wait_show("쉼", &id, |v| v["group"] == "idle");
-    let v = w.wait_show("자동 resolve", &id, |v| v["status"] == "resolved");
+    // resolved 상태는 pane 정리 전에 저장한다. 완료 표시는 정리 응답까지 기록한 뒤 확인한다.
+    let v = w.wait_show("자동 resolve 완료", &id, |v| v["status"] == "resolved" && v["cleanup_pending"] != true);
     assert_eq!(v["group"], "resolved");
     // 상태는 pane 정리보다 먼저 저장한다. resolved를 봐도 inbox 추가는 아직일 수 있으므로,
     // auto_resolve_pass를 포함한 ticker의 완료 응답까지 기다린다(고정 지연으로 맞추지 않는다).
