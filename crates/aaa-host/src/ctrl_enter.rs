@@ -66,6 +66,26 @@ pub(crate) fn ctrl_enter_keys(
     }
 }
 
+/// 웹 입력창(대화 입력창·터미널 입력줄)이 Ctrl+Enter로 보낸 글의 마지막 키(사용자 10-19 15:3x, plan §8.239 후속). host는 글을 친 뒤
+/// Enter 대신 이것을 보낸다. 위 판정과 같은 조건으로 Claude가 작업 중이면 sendNow(Ctrl+X Ctrl+S)다. 상태와 `esc to interrupt` 상태 줄이
+/// 함께 있고 입력 상자가 살아 있어야 하며, 그러면 진행 중 턴에 그 글을 지금 넣는다. 그 밖은 Enter, 곧 보통 보내기다.
+/// Codex는 작업 중 Enter가 정식 steering이다(`pending_steers`). 위 판정의 Esc는 빈 입력에서만 뜻이 있고 글이 있으면 쓰지 않는다.
+/// 쉬는 agent는 사용자 결정대로 보통 보내기다. 작업 중인지 모르면(web은 작업 중으로 보았지만 화면이 확인하지 않음)
+/// 다음 턴으로 줄 서는 보통 보내기다. 글은 버리지 않는다.
+pub(crate) fn steer_submit_keys(
+    harness: Option<&str>,
+    live: &str,
+    colors: Option<&str>,
+    working: bool,
+) -> &'static [&'static str] {
+    match harness {
+        Some("claude") if working && claude_working_line(live) && claude_input_live(live, colors) => {
+            &["ctrl+x", "ctrl+s"]
+        }
+        _ => &["enter"],
+    }
+}
+
 // manifest의 prompt_box_body와 같은 마지막 두 가로줄 사이. 닫히지 않은 상자는 모름이다.
 fn claude_body(screen: &str) -> Option<String> {
     let lines: Vec<&str> = screen.lines().map(str::trim_end).collect();
@@ -172,6 +192,36 @@ mod tests {
         }
         // 일반 프로그램은 상태와 상관없이 그 프로그램의 Ctrl+Enter다
         assert_eq!(ctrl_enter_keys(None, "", None, false, false), ["ctrl+enter"]);
+    }
+
+    #[test]
+    fn steered_text_ends_with_send_now_only_for_a_working_claude() {
+        let idle_text = TEXT.replace("✻ Working… (1s · esc to interrupt)\n", "");
+        // 작업 중인 Claude의 상자(글이 화면에 아직 없어도 살아 있는 상자): 지금 턴에 넣는다
+        for screen in [TEXT, EMPTY] {
+            assert_eq!(
+                steer_submit_keys(Some("claude"), screen, Some(screen), true),
+                ["ctrl+x", "ctrl+s"],
+                "{screen:?}"
+            );
+        }
+        // 쉬는 Claude·상태 모름·화면에 작업 줄 없음·상자 모름은 보통 보내기(Enter): 글은 다음 턴으로 간다
+        for (screen, working, what) in [
+            (idle_text.as_str(), false, "쉬는 중"),
+            (TEXT, false, "상태가 작업 중이 아니다"),
+            (idle_text.as_str(), true, "화면에 작업 줄이 없다"),
+            ("tool output\n", true, "상자 모름"),
+        ] {
+            assert_eq!(steer_submit_keys(Some("claude"), screen, Some(screen), working), ["enter"], "{what}");
+        }
+        // Codex는 작업 중이든 아니든 Enter: 작업 중 Enter가 steering이고 대기 패널의 Esc는 쓰지 않는다
+        let pending = codex("›", true, true);
+        for working in [true, false] {
+            assert_eq!(steer_submit_keys(Some("codex"), &pending, Some(&pending), working), ["enter"]);
+        }
+        for harness in [None, Some("unknown")] {
+            assert_eq!(steer_submit_keys(harness, TEXT, Some(TEXT), true), ["enter"]);
+        }
     }
 
     #[test]

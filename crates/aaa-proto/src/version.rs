@@ -90,6 +90,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 같은 1.43에 사용자 보고서(`LibraryPublish.to_user`·`title`, `LibraryReport.to_user`·`title`·`unseen`·`busy`), `LibraryDelete`,
 // 웹 events의 `Reports`(안 본 수, plan §8.256)를 더한다. 옛 front는 새 칸을 버리고, 옛 host는 `to_user`를 버려 보통 publish가 되며
 // `LibraryDelete`는 모르는 요청으로 거절한다. `Reports`는 웹 events 연결에만 보내 TUI(Rust 사건 해석)는 받지 않는다.
+// 같은 1.43에 웹 터미널 `submit.steer`(웹 입력창 Ctrl+Enter, plan §8.239 후속)를 더한다. 옛 host는 그 칸을 버려 보통 보내기(Enter)다.
 pub const FRONT_API: Version = Version { major: 1, minor: 43 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

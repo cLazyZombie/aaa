@@ -1,10 +1,12 @@
 // Ctrl+Enter: host의 같은 감지 판정을 웹 하드웨어·터치 키가 사용한다. TUI는 PaneCtrlEnter 요청을 공유한다.
 // steering만 하고 줄바꿈은 넣지 않는다(사용자 10-19 「스티어링만 남기고 싶어」, plan §8.239 후속). 줄바꿈은 Shift+Enter다.
 // agent가 작업 중일 때만 동작한다(사용자 10-19 15:1x 정정): 쉬는 Claude·Codex는 글이 있어도 보내지 않는다.
+// 웹 입력창(대화 입력창·터미널 입력줄)에 글이 있으면 Ctrl+Enter는 안내 줄 없이 그 글을 steering으로 보낸다(사용자 10-19 15:3x):
+// 보내기와 같은 submit이고 host가 끝 키를 고른다(작업 중인 Claude는 sendNow, 그 밖은 Enter).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
-  root, aaa, waitOutput, domIs, shot, pairPage, step, browser, inList, sentCount, sentFrames,
+  root, aaa, waitOutput, domIs, shot, pairPage, step, browser, inList, sentCount, sentFrames, openSettings,
 } from "../lib/harness.mjs";
 
 export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0" };
@@ -120,7 +122,79 @@ draw();
       else await expectNothing(page, name, () => page.keyboard.press("Control+Enter"));
     }
   });
-  await step("터치 Ctrl+Enter도 같은 판정: Ctrl 래치+Enter, 입력줄 초안은 보내지도 줄을 바꾸지도 않고 알리며, IME 확정은 steering하지 않음", async () => {
+  await step("대화 입력창 Ctrl+Enter(사용자 10-19 15:3x): 안내 줄 없이 글을 steering으로 보낸다. 작업 중인 Claude는 글 뒤 sendNow(Ctrl+X Ctrl+S)이고 「대기 메시지 자동 전송」을 꺼도 붙잡지 않으며, 쉬는 Claude는 보통 보내기(글 + Enter), 작업 중 Codex는 글 + Enter(steer). 보내기와 같은 submit이라 전달 뒤 입력창이 풀린다. 빈 입력창은 작업 중이면 대기 메시지를 지금 보내고(이 기기에 붙잡은 것이 먼저, 없으면 harness 대기열), 쉬면 아무것도 보내지 않는다", async () => {
+    const chat = async (name) => {
+      await inList(page, `pane-${name}`);
+      const toggle = page.getByTestId("chat-toggle");
+      if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+      const box = page.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
+      await box.waitFor();
+      return box;
+    };
+    // 가짜 harness는 기록을 알리지 않는다: host 전달이 보내짐이고(plan §8.247) 그때 입력창이 비고 풀린다
+    const unlocked = (what) => domIs(page, what, () => {
+      const box = document.querySelector('[data-testid="chat-composer"] textarea');
+      return box?.value === "" && !box.hasAttribute("readonly") && !document.querySelector('[data-testid="chat-send-state"]');
+    });
+    const frames = async (from) => (await sentFrames(page, from))
+      .filter((f) => ["input", "submit", "ctrl_enter"].includes(f.t))
+      .map((f) => (f.t === "submit" ? `submit:${f.data}:${f.steer}` : f.t));
+    const autoSend = async () => {
+      const d = await openSettings(page, "채팅");
+      await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    let box = await chat("ce-text");
+    await autoSend();
+    try {
+      // 자동 전송을 끄면 작업 중 Enter는 이 기기에 붙잡고, Ctrl+Enter는 붙잡지 않고 지금 턴에 넣는다
+      await box.fill("held-1");
+      await box.press("Enter");
+      const queue = page.getByTestId("chat-queue");
+      await queue.waitFor();
+      let from = await sentCount(page);
+      await box.fill("steer-1");
+      await expectKey(page, "ce-text", () => box.press("Control+Enter"), "steer-1\x18\x13");
+      await unlocked("Ctrl+Enter 글을 전달한 뒤 입력창이 풀린다");
+      assert.deepEqual(await frames(from), ["submit:steer-1:true"]);
+      assert.equal(await queue.getByRole("textbox", { name: "대기 메시지 1" }).inputValue(), "held-1");
+      await shot(page, "ctrl-enter-chat-held");
+      // 빈 입력창: 이 기기에 붙잡은 맨 앞을 steering으로 지금 보낸다
+      from = await sentCount(page);
+      await expectKey(page, "ce-text", () => box.press("Control+Enter"), "held-1\x18\x13");
+      await queue.waitFor({ state: "detached" });
+      assert.deepEqual(await frames(from), ["submit:held-1:true"]);
+    } finally {
+      await autoSend();
+    }
+    // 붙잡은 것이 없으면 harness 대기열을 host 판정으로 지금 보낸다(Claude sendNow)
+    let from = await sentCount(page);
+    await expectKey(page, "ce-text", () => box.press("Control+Enter"), "\x18\x13");
+    assert.deepEqual(await frames(from), ["ctrl_enter"]);
+    // 쉬는 Claude: 글은 보통 보내기, 빈 입력창은 아무것도 보내지 않는다
+    box = await chat("ce-idle");
+    from = await sentCount(page);
+    await box.fill("idle-1");
+    await expectKey(page, "ce-idle", () => box.press("Control+Enter"), "idle-1\r");
+    await unlocked("쉬는 Claude에 보낸 뒤");
+    assert.deepEqual(await frames(from), ["submit:idle-1:false"]);
+    from = await sentCount(page);
+    await box.press("Control+Enter");
+    assert.deepEqual(await frames(from), []);
+    // 작업 중 Codex: 글 + Enter(정식 steer)
+    box = await chat("ce-codex-typed");
+    from = await sentCount(page);
+    await box.fill("codex-1");
+    await expectKey(page, "ce-codex-typed", () => box.press("Control+Enter"), "codex-1\r");
+    await unlocked("Codex에 보낸 뒤");
+    assert.deepEqual(await frames(from), ["submit:codex-1:true"]);
+    // 「Ctrl+Enter는 …」 안내 줄은 없다
+    assert.equal(await page.locator(".composer-note, .terminal-input-note", { hasText: "Ctrl+Enter" }).count(), 0);
+    await shot(page, "ctrl-enter-chat-desktop");
+    await page.getByTestId("chat-toggle").click();
+  });
+  await step("터치 Ctrl+Enter도 같은 판정: Ctrl 래치+Enter, 입력줄 초안은 안내 줄 없이 그 글을 steering으로 보내고(작업 중 Claude는 글 뒤 sendNow), IME 확정은 steering하지 않음", async () => {
     const mobile = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, line: true })).page;
     await open(mobile, "ce-empty");
     const bar = mobile.locator('.key-bar');
@@ -130,11 +204,10 @@ draw();
     const line = mobile.getByLabel("보낼 글");
     await line.fill("휴대폰 초안");
     const sent = await sentCount(mobile);
-    await line.press("Control+Enter");
-    await mobile.locator(".terminal-input-note", { hasText: "줄바꿈은 Shift+Enter" }).waitFor();
-    assert.equal(await line.inputValue(), "휴대폰 초안");
-    assert.equal((await sentFrames(mobile, sent)).filter(f => ['input', 'submit', 'ctrl_enter'].includes(f.t)).length, 0);
-    await line.fill("");
+    await expectKey(mobile, "ce-empty", () => line.press("Control+Enter"), "휴대폰 초안");
+    await domIs(mobile, "보낸 입력줄이 빈다", () => document.querySelector('textarea[aria-label="보낼 글"]')?.value === "");
+    assert.deepEqual((await sentFrames(mobile, sent)).filter(f => ['input', 'submit', 'ctrl_enter'].includes(f.t)).map(f => `${f.t}:${f.steer}`), ["submit:true"]);
+    assert.equal(await mobile.locator(".terminal-input-note").count(), 0);
     await expectKey(mobile, "ce-empty", () => line.press("Control+Enter"), "\x18\x13");
     const start = await sentCount(mobile);
     await line.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));

@@ -5654,7 +5654,27 @@ primary 근거:
     - 쉬는 중, slash·`!` 목록이 footer를 덮은 화면, 패널이 아닌 글이 끼인 화면, 커서가 입력 줄을 벗어난 화면에서는 보내지 않는다.
     - 결과로 작업 중 글을 쓰고 Ctrl+Enter를 두 번 누르면, 첫 번은 steer 대기열에 넣고 둘째(빈 입력 + 대기 패널)는 Esc로 지금 보낸다.
     - 쉬는 Codex의 글은 보내지 않는다. 처음에는 쉬는 Claude의 글을 sendNow로 바로 제출했으나(Claude 자체 Ctrl+Enter와 같음) 사용자 정정으로 쉬는 Claude도 보내지 않는다. 두 harness가 같이 「작업 중에만」이다.
-  - **front.** 웹 입력줄(보내기 전 글)에 글이 있으면 요청하지 않고 입력줄 아래에 「보내기는 Enter, 줄바꿈은 Shift+Enter」를 띄운다(글은 그대로). 비었으면 같은 요청이다. TUI 인코더는 Ctrl+Enter를 LF로 바꾸지 않는다. Front API 1.43 미만 host에는 보내지 않고 안내를 띄운다. harness가 없는 pane은 기존 Ctrl+Enter 인코딩 그대로다.
+  - **front.** 빈 웹 입력줄은 같은 요청이다. 글이 있는 웹 입력창은 아래 「웹 입력창 Ctrl+Enter」를 따른다. 처음에는 요청하지 않고 「보내기는 Enter, 줄바꿈은 Shift+Enter」 안내를 띄웠으나 15:3x 정정으로 없앴다. TUI 인코더는 Ctrl+Enter를 LF로 바꾸지 않는다. Front API 1.43 미만 host에는 보내지 않고 안내를 띄운다. harness가 없는 pane은 기존 Ctrl+Enter 인코딩 그대로다.
+  - **정정: 웹 입력창 Ctrl+Enter(사용자 10-19 15:3x).** 사용자 「cotrol+enter누르면 웹 대화에서는 현재 입력이 있으면 바로 그걸 steering으로 보내는거지? 현재 입력이 있고, 이전 입력이 처리되지 않았으면 그걸 steering하고. … control-enter 눌면 어떻게 해라고 보여주는건 좀 과한것 같아.」 대화 입력창과 터미널 보기의 웹 입력줄(보내기 전 글을 이 기기에 두는 칸)이 같다. 글은 보내기와 같은 `submit`으로 가고 `steer: true`를 붙인다. host가 글을 친 뒤 Enter 대신 끝 키를 고른다(`ctrl_enter::steer_submit_keys`). 그래서 t-0392의 보내기 잠금·전달 확인·멈춤(§8.247)을 그대로 타고, 반영될 때까지 입력창이 잠긴다. 결정표는 다음과 같다.
+
+    | 입력창 | agent | 보내는 것 |
+    |---|---|---|
+    | 글 있음 | 작업 중 Claude(상태 + 상자 위 작업 줄 + 살아 있는 상자) | 글 → Ctrl+X Ctrl+S(sendNow: 지금 턴에 넣는다) |
+    | 글 있음 | 작업 중 Codex | 글 → Enter(작업 중 Enter가 `pending_steers` steer이고 바로 간다) |
+    | 글 있음 | 쉼 | 보통 보내기(글 → Enter). 웹이 쉼으로 보면 `steer`를 붙이지 않는다 |
+    | 글 있음 | 웹은 작업 중, host 화면은 확인 못 함 | 글 → Enter(다음 턴으로 줄 서는 보통 보내기. 글은 버리지 않는다) |
+    | 빈 대화 입력창 | 작업 중 | 대기 메시지를 지금 보낸다. 이 기기에 붙잡은 것(「대기 메시지 자동 전송」 끔)이 있으면 그 맨 앞을 `steer`로 보내고, 없으면 harness 대기열을 위 공통 판정으로 보낸다(Claude sendNow, Codex 대기 패널이면 Esc) |
+    | 빈 대화 입력창 | 쉼 | 아무것도 보내지 않는다 |
+    | 빈 웹 입력줄·터미널 직접 입력·키 막대 | | 위 공통 판정(작업 중에만) 그대로 |
+
+    - 작업 중 Ctrl+Enter 글은 「대기 메시지 자동 전송」을 꺼도 붙잡지 않는다. 지금 넣으라는 뜻이기 때문이다. Enter는 그대로 붙잡는다.
+    - 대화 입력창의 Ctrl+Enter는 보내기 설정(Enter·Cmd+Enter)과 터치 여부에 상관없다. Windows·Linux에서 「Cmd/Ctrl+Enter로 보내기」를 고른 사람의 Ctrl+Enter는 보내기였고, 이제는 steering 보내기다(쉬는 중이면 보내기와 같다). macOS Cmd+Enter는 그대로 보내기다.
+    - 키 막대의 Ctrl+Enter는 웹 입력줄에 남은 글을 건드리지 않고 아무것도 보내지 않는다(안내 없음).
+    - 「대기 메시지」를 두 곳으로 본 까닭: 화면의 「대기 메시지」 칸과 「지금 보내기」 단추는 이 기기에 붙잡은 글이다. 자동 전송이 켜진 기본값에서는 작업 중 보낸 글이 harness 대기열에 있다. 붙잡은 글은 아직 agent에 가지 않았으므로 먼저 보낸다.
+    - 사용자 말 「웹 대화」는 대화 입력창으로 받았다. 「Ctrl+Enter는 …」 안내는 웹 입력줄에만 떴으므로 그 칸도 같은 규칙으로 바꿨다. 「웹 터미널 안 입력줄」은 터미널 화면 속 agent 입력줄(직접 입력)로 받아 앞의 공통 판정 그대로 둔다.
+    - 옛 host는 `steer` 칸을 버려 보통 보내기가 된다(wire는 serde 기본값, 1.43 그대로).
+    - 검증: 유닛 `steered_text_ends_with_send_now_only_for_a_working_claude`(작업 중 Claude 글·빈 상자 → sendNow, 쉼·상태만 쉼·화면 작업 줄 없음·상자 모름 → Enter, Codex 대기 패널에서도 Enter, 모르는 harness → Enter). E2E 25 「대화 입력창 Ctrl+Enter」는 자동 전송을 끈 작업 중 Claude에서 Enter는 붙잡고 Ctrl+Enter 글은 `steer-1` + `\x18\x13`, 빈 입력창은 붙잡은 `held-1` + `\x18\x13` 뒤 대기 칸이 사라지고, 붙잡은 것이 없으면 `ctrl_enter` → `\x18\x13`을 본다. 쉬는 Claude 글은 `idle-1\r`(submit `steer` false), 쉬는 빈 입력창은 보내는 frame 없음, 작업 중 Codex 글은 `codex-1\r`, 전달 뒤 입력창이 비고 풀림, 「Ctrl+Enter」 안내 없음을 실제 PTY bytes와 보낸 frame으로 본다. 터치 단계는 웹 입력줄 글 → 글 + `\x18\x13`, 줄이 비고 안내 없음을 본다.
+    - 결함을 심어 실패를 확인했다. (l) host가 `steer`를 무시(늘 Enter), (m) Ctrl+Enter 글도 붙잡음, (q) 빈 입력창이 붙잡은 글을 건너뜀 → E2E 대화 입력창 단계(바이트 수 사건이 오지 않음). (n) 쉬는 중에도 `steer` → 같은 단계의 frame 비교. (o) 웹 입력줄 글을 보내지 않음(옛 안내 자리) → E2E 터치 단계. (p1) 화면 작업 줄 확인을 뺌, (p2) Codex에 공통 판정의 Esc를 씀 → 유닛.
   - **검증.** `ctrl_enter.rs` 유닛 3개는 어느 판정에서도 줄바꿈 키가 없음, Claude 두 사본 일치, Codex 작업 중·쉼·패널·글·slash 목록을 본다. E2E 25는 Claude 글·빈·회색 → `\x18\x13`, 모름 → 무송신, Codex 대기 → `\x1b`, 작업 중 글 → `\r`, 쉼·이탈 → 무송신, 웹 입력줄 → 안내와 무전송을 실제 PTY bytes로 본다. 무송신은 같은 연결의 뒤따르는 입력 조각만 닿는지로 판정한다. TUI `ctrl_enter_uses_shared_host_request`와 `tests/tui.rs::modified_enter_uses_agent_newline`(모르는 화면 Ctrl+Enter 무송신, 뒤 글자가 울타리)도 맞췄다.
     결함 넷을 심어 실패를 확인했다. (a) 모름에 Alt+Enter → 유닛 2개·E2E Claude 단계, (b) 웹 입력줄 줄바꿈 → E2E 터치 단계, (c) TUI 옛 host LF → TUI 시험, (d) 쉬는 Codex 글에 Enter → 유닛·E2E Codex 단계.
     작업 중 정정: 유닛 `ctrl_enter_acts_only_while_the_agent_works`(쉬는 중 글·빈 입력, 상태만 쉼, 화면 작업 줄 없음, 먼 작업 줄, Codex 상태 쉼)와 E2E 25의 쉬는 Claude 탭(`ce-idle`, 빈 입력과 글 모두 무송신). E2E는 감지가 알린 목록 상태(`data-status`)를 사건으로 기다린 뒤 누른다. 결함 (f) 작업 중 조건을 통째로 뺌 → 유닛과 E2E Claude 단계, (g) 화면 작업 줄 확인만 뺌 → 유닛이 잡았다.

@@ -86,6 +86,23 @@ impl Host {
         keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect()
     }
 
+    /// 웹 입력창이 Ctrl+Enter로 보낸 글(submit `steer`)의 마지막 키 bytes(`ctrl_enter::steer_submit_keys`). 작업 중인 Claude면
+    /// sendNow이고 그 밖은 Enter다. pane·화면 사본을 모르면 Enter, 곧 보통 보내기다.
+    pub(crate) fn steer_submit_data(&self, pane: &str) -> Vec<u8> {
+        let Ok((id, _)) = self.resolve_pane(pane) else { return b"\r".to_vec() };
+        let mut inner = self.inner.lock().unwrap();
+        let Some(pane) = inner.panes.get_mut(&id) else { return b"\r".to_vec() };
+        let harness = pane.agent.as_ref().map(|a| a.harness.clone());
+        let working = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Working);
+        let Some(mirror) = pane.mirror.as_mut() else { return b"\r".to_vec() };
+        let colors = mirror.vt.read(ReadSource::Visible, None, ReadFormat::Ansi).text;
+        let live = if mirror.synced { mirror.vt.detection_text() } else { String::new() };
+        let keys = crate::ctrl_enter::steer_submit_keys(harness.as_deref(), &live, Some(&colors), working);
+        let modes = mirror.vt.modes();
+        let data: Vec<u8> = keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect();
+        if data.is_empty() { b"\r".to_vec() } else { data }
+    }
+
     /// 화면 사본에서 읽는다. 사본이 없으면 None.
     pub(crate) fn read_view(
         &self,

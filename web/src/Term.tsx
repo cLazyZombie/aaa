@@ -86,8 +86,6 @@ const SUBMIT_TIMEOUT_MS = 90_000;
 const CANCEL_REPLY_MS = 2000;
 /** 붙잡은 입력이 있는 동안 다른 입력을 거절하는 말(herdr-web-ui PaneTerminal 1375줄) */
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
-/** 입력줄에 글이 있을 때 Ctrl+Enter(plan §8.239 후속): steering은 agent 입력줄이 대상이다 */
-const CTRL_ENTER_LINE = "Ctrl+Enter는 agent 입력줄 steering이다. 보내기는 Enter, 줄바꿈은 Shift+Enter.";
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
 const inUse = () => document.visibilityState === "visible" && document.hasFocus();
 /** 「터미널의 aaa와 같이 쓰기」: 다른 창으로 옮기고 이만큼 뒤 보기만 한다(herdr-web-ui PaneTerminal `RELEASE_AFTER_MS`) */
@@ -464,15 +462,17 @@ export function TermView({
     deliver(data, { modifiedEnter });
   };
 
-  // steering 판정은 host의 detection 입력줄이 한다(plan §8.239 후속: 줄바꿈 없음, 줄바꿈은 Shift+Enter). 웹 입력줄에 아직 보내지 않은
-  // 글이 있으면 그 글은 pane 입력이 아니라 steering할 것이 없다: 보내지도 줄을 바꾸지도 않고 알린다.
-  const pressCtrlEnter = (): boolean | string => {
+  // steering 판정은 host의 detection 입력줄이 한다(plan §8.239 후속: 줄바꿈 없음, 줄바꿈은 Shift+Enter). 웹 입력창(입력줄·대화
+  // 입력창)에 글이 있으면 그 입력창이 Ctrl+Enter로 그 글을 steering으로 보낸다(`sendTerminalLine` steer, 사용자 10-19 15:3x).
+  // 여기는 빈 입력창·터미널·키 막대의 Ctrl+Enter다. 키 막대가 누른 Ctrl+Enter는 입력줄에 남은 글을 건드리지 않고 아무것도 보내지
+  // 않는다. 안내 줄은 없앴다(사용자 「어떻게 해라고 보여주는건 좀 과한것 같아」). `chat`: 대화 입력창이 불렀다(입력줄은 숨었다)
+  const pressCtrlEnter = (chat = false): boolean | string => {
     if (!canControlRef.current || readonlyRef.current || composingTermRef.current || commitPendingRef.current || lineComposingRef.current) return false;
     if (!draftIsEmpty(draftRef.current)) {
       setInputError(HELD_FIRST);
       return HELD_FIRST;
     }
-    if (inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) return CTRL_ENTER_LINE;
+    if (!chat && inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) return false;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     autoFit.current(true);
@@ -1728,7 +1728,9 @@ export function TermView({
   // 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). 여러 줄은 터미널 붙여넣기 모양이다:
   // 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다(xterm.js paste, 참고 `composerPayload`).
   // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다. 입력줄 글은 유지 키를 붙이지 않는다.
-  const sendTerminalLine = (value: string): false | Promise<true | string> => {
+  // `steer`: 입력창의 Ctrl+Enter다. host가 글 뒤 Enter 대신 steering 키를 고른다(작업 중인 Claude는 sendNow, 그 밖은 Enter).
+  // 잠금·전달 확인·멈춤은 보통 보내기와 같다(plan §8.247)
+  const sendTerminalLine = (value: string, steer = false): false | Promise<true | string> => {
     const term = termRef.current;
     const ws = wsRef.current;
     if (!term || readonlyRef.current || !ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -1745,8 +1747,8 @@ export function TermView({
       if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
     }
     const id = ++submitIdRef.current;
-    trace("submit", { id, data });
-    ws.send(JSON.stringify({ t: "submit", id, data } satisfies TermClientMsg));
+    trace("submit", { id, data, steer });
+    ws.send(JSON.stringify({ t: "submit", id, data, steer } satisfies TermClientMsg));
     term.scrollToBottom();
     // 확인되면 입력줄이 보낸 앞부분만 지운다(그 사이 친 글은 남는다). 거절이면 이유, 끊기거나 답이 없으면 확인 못 함
     return new Promise((resolve, reject) => {
@@ -2046,7 +2048,7 @@ export function TermView({
             onComposing={setLineComposing}
             onSend={sendTerminalLine}
             onEnter={pressEnter}
-            onCtrlEnter={pressCtrlEnter}
+            onCtrlEnter={() => pressCtrlEnter()}
             onFocus={() => autoFit.current(true)}
             onImage={() => fileRef.current?.click()}
             onPaste={(e) => {
@@ -2090,6 +2092,7 @@ export function TermView({
           messages={chatMessages}
           onInspect={() => setChatView(false)}
           onSend={sendTerminalLine}
+          onCtrlEnter={() => pressCtrlEnter(true)}
           onCancelSend={cancelSubmit}
           onSent={() => setChatSent((n) => n + 1)}
         />
