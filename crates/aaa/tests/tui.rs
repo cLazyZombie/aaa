@@ -1690,6 +1690,14 @@ fn side_list_like_web() {
     tui.wait_screen("탐색 중에도 두 pane 글", |s| {
         s.text().contains(" NAVIGATE ") && s.selected().is_some() && both(&s.text())
     });
+    tui.send(b"\x1b[Z");
+    tui.wait_screen("Shift+Tab은 이전 pane", |s| {
+        s.text().contains(" NAVIGATE ")
+            && !s.text().contains(" ACTIVITY ")
+            && s.current().is_some_and(|l| l.contains("first"))
+    });
+    tui.send(b"\t");
+    tui.wait_screen("Tab은 다음 pane", |s| s.current().is_some_and(|l| l.contains("shell")));
     tui.send(b"\x1b");
     tui.wait_text("탐색 끝", |s| !s.contains(" NAVIGATE ") && both(s));
     tui.cmd("b");
@@ -1795,7 +1803,7 @@ fn side_list_like_web() {
     tui.wait_screen("프로젝트 굴린 자리 복귀", |s| s.side_lines()[23].contains(order[1].1));
     shot(&tui, "panel-projects");
     tui.cmd("w");
-    tui.send(b"\x1b[Z");
+    tui.send(b"\x1b[17~");
     tui.wait_text("활동 막대 키보드 포커스", |s| s.contains(" ACTIVITY ") && s.contains("프로젝트"));
     tui.send(b"\x1b[B");
     tui.wait_screen("화살표는 포커스만 이동", |s| {

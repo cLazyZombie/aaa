@@ -2049,7 +2049,7 @@ impl App {
             self.activity_focus = None;
             return Ok(());
         }
-        if c.code == KeyCode::BackTab {
+        if c.code == KeyCode::F(6) && c.mods.is_empty() {
             self.activity_focus = Some(self.panel.index());
             return Ok(());
         }
@@ -3228,6 +3228,8 @@ impl App {
             Mode::Navigate => Some(vec![
                 s(" NAVIGATE ", chip),
                 s(" esc 돌아가기  ", base),
+                s("F6", key),
+                s(" 활동  ", base),
                 s("↑/↓", key),
                 s(" 목록  ", base),
                 s("enter", key),

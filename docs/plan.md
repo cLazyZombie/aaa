@@ -5726,8 +5726,8 @@ primary 근거:
   배지다. 특수 임무·평가자는 모든 패널의 공통 머리 배지와 별도 목록에 있다. pane이 없는 임무도 보이고 열기로 시작/승인하지
   않는다. 프로젝트 머리 Enter/제목 클릭은 실행 중 coordinator를 열며 Space/왼쪽 화살표 클릭은 접는다.
 - **TUI 보존·대응.** herdr `render_sidebar`·`render_collapsed_sidebar`의 workspace·compact 번호·탭·마우스를 남긴다.
-  4칸 막대에서 P/M/A가 세 패널, R이 보고서, 톱니가 설정, S가 공통 특수 목록이다. 탐색 모드 Shift+Tab으로 막대에 가며
-  화살표·Home/End는 포커스만, Enter/Space는 선택, Tab은 목록, s는 특수 목록이다. 일반 Tab의 pane 이동은 유지한다.
+  4칸 막대에서 P/M/A가 세 패널, R이 보고서, 톱니가 설정, S가 공통 특수 목록이다. 탐색 모드 F6으로 막대에 가며
+  화살표·Home/End는 포커스만, Enter/Space는 선택, Tab은 목록, s는 특수 목록이다. 기존 Tab/Shift+Tab의 pane 정·역방향 이동은 유지한다.
   마지막 패널·접힘은 기기의 state `tui-sidebar.json` 표시 설정이다. 기존 host 공유 접힘은 이전값으로 읽되 기기값이 우선한다.
   spaces는 공통 머리 아래 자동 높이, 직접 끈 구역 경계는 기존 비율로 유지한다.
 - **터미널 차이.** 보고서는 Front `LibraryReports`/`LibraryOpen`으로 읽는 thread 보고 글·결과물 목록이다. 웹 HTML iframe을
@@ -5747,3 +5747,7 @@ primary 근거:
   웹 `App.tsx::agentOf`·`herdr/AgentMark.tsx`의 알려진 명령도 hook/thread 없이 인식하며 대소문자는 구분하지 않는다.
   기존 사이드바 keeper에서 옛 정렬과 알려진 명령 누락 RED를 확인한 뒤 고쳤다. 기준 3503e963의 Ctrl+Enter·Windows paste·
   pane 복사는 보존하며 최종 소스로 전체 gate를 다시 검증한다.
+
+- **키 보존 확인.** 새 활동 막대의 진입은 F6이다. 기존 탐색 Shift+Tab을 가로채던 초기 구현을 실제 PTY의 이전 pane
+  이동 RED로 잡아 고쳤다. 기존 Tab/Shift+Tab은 pane 정·역방향 이동, F6 뒤 화살표는 활동 단추 포커스만 이동한다.
+  도움말에도 F6·s를 표시한다. 최종 소스로 전체 gate를 다시 검증한다.
