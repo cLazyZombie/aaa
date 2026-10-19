@@ -774,13 +774,25 @@ impl Host {
         hash: &str,
         text: String,
     ) -> Result<bool, ErrorBody> {
+        self.mission_data_input(p, n, key, hash, text, "routine")
+    }
+    /// 원자적으로 pending과 중복 방지 key를 함께 저장한다. CI 입력도 같은 내구 경계를 쓴다.
+    pub(crate) fn mission_data_input(
+        &self,
+        p: &str,
+        n: &str,
+        key: &str,
+        hash: &str,
+        text: String,
+        source: &str,
+    ) -> Result<bool, ErrorBody> {
         let _guard = self.rec_lock.lock().unwrap();
         if self.db.meta(key).map_err(internal)?.as_deref() == Some(hash) {
             return Ok(false);
         }
         let mut r = if n == "evaluator" { self.evaluator_rec(p) } else { self.mission_rec(p, n) }
             .ok_or_else(|| err(ErrorCode::NotFound, "routine 대상 임무가 없다"))?;
-        let input = Input { id: self.db.mission_next_input("r").map_err(internal)?, source: "routine".into(), text };
+        let input = Input { id: self.db.mission_next_input("r").map_err(internal)?, source: source.into(), text };
         let now = util::now_ms();
         if n == "evaluator" {
             r.eval_inputs.push(input);
@@ -806,6 +818,26 @@ impl Host {
         }
         self.tick_wake.notify_one();
         Ok(true)
+    }
+    /// 회복은 새 깨움을 만들지 않고, 아직 전달하지 않은 CI 입력에만 회복을 표시한다.
+    pub(crate) fn mission_ci_recovered(&self, p: &str, text: &str) -> Result<(), ErrorBody> {
+        let recovered: serde_json::Value = serde_json::from_str(text).map_err(internal)?;
+        for rec in self.open_threads(p).into_iter().filter(|r| r.mission.is_some()) {
+            self.update_rec(p, &rec.id, |r| {
+                for input in &mut r.mission.as_mut().unwrap().pending {
+                    if input.source == "ci"
+                        && let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&input.text)
+                        && v["repo"] == recovered["repo"]
+                        && v["branch"] == recovered["branch"]
+                    {
+                        v["already_recovered"] = true.into();
+                        v["fixed_by_sha"] = recovered["sha"].clone();
+                        input.text = v.to_string();
+                    }
+                }
+            })?;
+        }
+        Ok(())
     }
     fn mission_files_changed(&self, p: &str) {
         let Ok(dir) = self.project_dir(p) else {

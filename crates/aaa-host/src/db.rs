@@ -633,6 +633,38 @@ impl Db {
         Ok(seq as u64)
     }
 
+    pub(crate) fn flow_insert_once(&self, e: &aaa_proto::FlowEvent, key: &str) -> Result<Option<u64>> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        if tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get::<_, String>(0)).optional()?.is_some() {
+            return Ok(None);
+        }
+        let seq: i64 =
+            tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM flow_events WHERE project=?1", [&e.project], |r| {
+                r.get(0)
+            })?;
+        tx.execute(
+            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![
+                e.project,
+                seq,
+                e.at_ms as i64,
+                e.boot_id,
+                e.kind,
+                e.thread,
+                e.role.map(|r| r.as_str()),
+                e.profile,
+                e.machine,
+                e.evidence,
+                e.detail
+            ],
+        )?;
+        tx.execute("INSERT INTO meta(key,value) VALUES(?1,'1')", [key])?;
+        tx.commit()?;
+        Ok(Some(seq as u64))
+    }
+
     /// cursor(`after`) 다음 사건. 프로젝트를 주지 않으면 모든 프로젝트를 시각 순으로.
     pub fn flow_after(&self, project: Option<&str>, after: u64, limit: u32) -> Result<Vec<aaa_proto::FlowEvent>> {
         let c = self.conn.lock().unwrap();

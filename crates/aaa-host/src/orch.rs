@@ -261,6 +261,12 @@ coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않�
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
 해당 post inbox 항목을 `aaa inbox done {p} <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
 
+## 착지 뒤 GitHub CI
+착지 병합 첫 줄은 `병합: <요약> (t-NNNN)`으로 끝낸다. 착지 thread는 필수 로컬 검증과 main push 뒤 GitHub CI를 기다리지 않고 바로 보고한다.
+CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·단계·로그와 주인 thread의 보고 사본을 담은 자료다.
+임무의 분류와 수리 brief 초안을 보고 필요하면 새 수리 thread를 만든다. 끝난 thread는 되살리지 않는다.
+`ci_fixed`면 이미 회복한 것이므로 간헐 여부만 확인한다. rerun·revert·착지 중단을 자동 승인하지 않는다.
+
 ## 사용자에게 보고서 보내기
 사용자에게 웹 보고서(맨 위에 index.html이 있는 폴더)를 보여 줄 때는
 `aaa library publish <폴더> --project {p} --name <이름> --to-user --title '<제목>'`로 보낸다. 웹 보고서 화면 「내 보고서」와
