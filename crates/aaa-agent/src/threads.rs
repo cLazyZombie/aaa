@@ -371,12 +371,18 @@ pub(crate) fn with_hooks(
     command_len: usize,
 ) -> Result<Launch> {
     let project = launch.env.iter().find(|(k, _)| k == "AAA_MISSION_PROJECT_DIR").map(|(_, v)| PathBuf::from(v));
+    let queries = if let Some(project) = &project {
+        mission_permissions::prepare_inbox(work_dir)?;
+        mission_permissions::queries(&launch, project)?
+    } else {
+        vec![]
+    };
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
         let mut value = crate::hooks::claude_settings(&cfg.exe);
         if let Some(project) = &project {
-            mission_permissions::claude(&mut value, &cfg.exe, work_dir, project);
+            mission_permissions::claude(&mut value, &cfg.exe, work_dir, project, &queries);
         }
         std::fs::write(&settings, serde_json::to_vec_pretty(&value)?)?;
         let s = settings.to_string_lossy().to_string();
@@ -387,7 +393,7 @@ pub(crate) fn with_hooks(
     }
     if launch.harness == "codex" {
         if project.is_some() {
-            mission_permissions::codex(&mut launch, &cfg.exe, work_dir)?;
+            mission_permissions::codex(&mut launch, &cfg.exe, work_dir, &queries)?;
         }
         // 전역 hook도 pane의 env·peer 계보에서 돌아야 한다. 사용자 notify는 그대로 둔다.
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
@@ -1021,7 +1027,11 @@ mod mission_tests {
                 effort: String::new(),
                 args: vec![],
                 command: vec![std::env::current_exe().unwrap().to_string_lossy().into_owned()],
-                env: [("AAA_MISSION_PROJECT_DIR".into(), project.to_string_lossy().into())].into(),
+                env: [
+                    ("AAA_MISSION_PROJECT_DIR".into(), project.to_string_lossy().into()),
+                    ("AAA_MISSION_NAME".into(), "watch".into()),
+                ]
+                .into(),
             };
             let previous = Launch {
                 profile: "watch".into(),
@@ -1033,11 +1043,23 @@ mod mission_tests {
             };
             let launch =
                 rebrief(&cfg, work.to_str().unwrap(), "임무", previous, Some("watch"), None, Some(&profile)).unwrap();
+            assert!(work.join("inbox").is_dir(), "입력이 없어도 자기 inbox 위치는 존재한다");
+            assert!(mission_inbox_pending(work.to_str().unwrap()).unwrap().is_empty());
             if harness == "claude" {
                 let settings: serde_json::Value =
                     serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
                 let allow = settings["permissions"]["allow"].as_array().expect("임무 허용 목록");
                 assert!(allow.contains(&serde_json::json!("Bash(aaa report *)")));
+                assert!(allow.contains(&serde_json::json!("Bash(aaa mission show demo watch --json)")));
+                assert!(allow.contains(&serde_json::json!("Bash(aaa mission --help)")));
+                assert!(allow.contains(&serde_json::json!("Bash(aaa --help)")));
+                assert!(allow.contains(&serde_json::json!(format!(
+                    "Bash(ls -1 -- '{}/inbox')",
+                    work.to_string_lossy().replace('\\', "/")
+                ))));
+                assert!(!allow.iter().any(|v| {
+                    v.as_str().is_some_and(|s| s.starts_with("Bash(find ") || s == "Bash(aaa *)" || s == "Bash(ls *)")
+                }));
                 assert!(allow.contains(&serde_json::json!("Bash(aaa post coordinator *)")));
                 let path = work.to_string_lossy().replace('\\', "/");
                 assert!(allow.contains(&serde_json::json!(format!("Edit(//{}/**)", path.trim_start_matches('/')))));
@@ -1063,6 +1085,8 @@ mod mission_tests {
                 }
                 let rules = std::fs::read_to_string(work.join(".codex/rules/aaa-mission.rules")).unwrap();
                 assert!(rules.contains(r#"["aaa","report"]"#));
+                assert!(rules.contains(r#"["aaa","mission","show","demo","watch","--json"]"#));
+                assert!(rules.contains(r#"["aaa","mission","--help"]"#));
                 assert!(rules.contains(r#"["aaa","post","coordinator"]"#));
                 assert!(!rules.contains("push"));
             }
@@ -1076,6 +1100,7 @@ mod mission_tests {
                     serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
                 assert!(settings.get("permissions").is_none(), "일반 thread에 임무 허용 목록을 주지 않는다");
             }
+            std::fs::remove_dir(work.join("inbox")).unwrap();
         }
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1097,6 +1122,10 @@ mod mission_tests {
             resume_argv: vec!["codex".into(), "resume".into()],
             session_key: None,
         };
+        std::os::unix::fs::symlink(&outside, work.join("inbox")).unwrap();
+        assert!(with_hooks(&cfg, launch.clone(), &work, 1).is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        std::fs::remove_file(work.join("inbox")).unwrap();
         std::os::unix::fs::symlink(&outside, work.join(".codex")).unwrap();
         assert!(with_hooks(&cfg, launch.clone(), &work, 1).is_err());
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
