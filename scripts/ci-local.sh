@@ -84,7 +84,11 @@ step_build() { cargo build --workspace --all-targets --locked; }
 # unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
 step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary(예: tests/tui.rs) 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
-step_test() { cargo test --workspace --locked --no-fail-fast; }
+step_test() {
+  cargo test --workspace --locked --no-fail-fast || return 1
+  # vendored crossterm의 Windows paste 입력기 회귀(운영 콘솔·clipboard·OS 신호 없음).
+  cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_ -- --nocapture
+}
 step_clipboard() {
   local run=()
   [ "$OS" = linux ] && run=(xvfb-run -a)

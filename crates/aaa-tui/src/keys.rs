@@ -286,6 +286,9 @@ pub fn encode_in(k: &KeyEvent, app_cursor: bool) -> Vec<u8> {
             None => c.to_string().into_bytes(),
         },
         KeyCode::Char(c) => c.to_string().into_bytes(),
+        // agent 입력기의 공통 줄바꿈 키 Ctrl+J. Ctrl+Enter의 조건부 steering은
+        // route_key에서 host의 공통 판정 요청으로 보낸다(이 인코더는 안전한 기본값).
+        KeyCode::Enter if m.intersects(KeyModifiers::CONTROL | KeyModifiers::SHIFT) => vec![b'\n'],
         KeyCode::Enter => vec![b'\r'],
         KeyCode::Tab => vec![b'\t'],
         KeyCode::BackTab => b"\x1b[Z".to_vec(),
@@ -410,6 +413,8 @@ mod tests {
             (KeyCode::PageUp, none, b"\x1b[5~"),
             (KeyCode::Delete, none, b"\x1b[3~"),
             (KeyCode::Enter, none, b"\r"),
+            (KeyCode::Enter, ctrl, b"\n"),
+            (KeyCode::Enter, shift, b"\n"),
             (KeyCode::Tab, none, b"\t"),
             // Windows는 Shift+Tab을 BackTab + SHIFT로 준다
             (KeyCode::BackTab, shift, b"\x1b[Z"),

@@ -128,6 +128,7 @@ fn attach(rt: &tokio::runtime::Runtime, workspace: Option<String>, client: Front
         let _focus = FocusReport::on();
         // 붙여넣기를 한 덩이로 받는다(herdr client `EnableBracketedPaste`): 끌어 놓은 파일 경로와 여러 줄 글을 낱 키와 가른다
         let _paste = BracketedPaste::on();
+        let _keyboard = KeyboardReport::on();
         // 마우스 보고는 App이 설정대로 켠다. 끝날 때(panic도) 끈다.
         let _mouse = MouseOff;
         let mut app =
@@ -170,21 +171,59 @@ fn paste_request(host_minor: u16, pane: String, text: String) -> FrontRequest {
 }
 
 /// 바깥 터미널의 bracketed paste(`CSI ? 2004 h`)를 켜고, 이 값이 사라질 때(정상·오류·panic 종료) 끈다.
-/// Windows 콘솔은 crossterm이 붙여넣기를 사건으로 주지 않는다(표지가 낱 키로 와 pane에 들어간다): 켜지 않는다.
+/// Windows 콘솔의 표지도 vendored crossterm이 Paste로 복원한다.
 struct BracketedPaste;
 
 impl BracketedPaste {
     fn on() -> BracketedPaste {
-        #[cfg(not(windows))]
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+        if outer_vt() {
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+        }
         BracketedPaste
     }
 }
 
 impl Drop for BracketedPaste {
     fn drop(&mut self) {
+        if outer_vt() {
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+        }
+    }
+}
+
+/// herdr terminal_setup·ime_compatible_keyboard_enhancement_flags: Unix의 수정 Enter를
+/// 구분하고 IME는 일반 글자로 둔다. Windows는 원래 콘솔 KEY_EVENT_RECORD의 수정키를 쓴다.
+struct KeyboardReport;
+
+impl KeyboardReport {
+    fn on() -> Self {
         #[cfg(not(windows))]
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+        {
+            use crossterm::event::{KeyboardEnhancementFlags as F, PushKeyboardEnhancementFlags};
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(b"\x1b[>4;2m");
+            let _ = crossterm::execute!(
+                out,
+                PushKeyboardEnhancementFlags(
+                    F::DISAMBIGUATE_ESCAPE_CODES | F::REPORT_EVENT_TYPES | F::REPORT_ALTERNATE_KEYS
+                )
+            );
+        }
+        Self
+    }
+}
+
+impl Drop for KeyboardReport {
+    fn drop(&mut self) {
+        #[cfg(not(windows))]
+        {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = crossterm::execute!(out, crossterm::event::PopKeyboardEnhancementFlags);
+            let _ = out.write_all(b"\x1b[>4;0m");
+            let _ = out.flush();
+        }
     }
 }
 

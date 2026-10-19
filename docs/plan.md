@@ -5418,3 +5418,29 @@ primary 근거:
 - **참고 그대로 재사용.** herdr-web-ui aa624cb `components/RowMenu.tsx` 78~108은 body portal의 fixed 좌표를 EDGE=8 안에 보정하고 아래 공간이 부족하면 위에 둔다. 휴대폰은 같은 파일의 modal sheet를 쓴다. aaa에 이미 옮긴 공통 RowMenu를 임무에도 사용한다. t3code `components/ui/popover.tsx`의 Portal/Positioner·collisionAvoidance·available-width/height 제한과 목적이 같으며 새 위치 계산기나 의존성을 만들지 않는다.
 - **동작.** 긴 임무 배지는 목록 머리 안에서 말줄임하고 메뉴에는 전체 이름과 작업 셈을 보인다. 임무 보기·시작/멈춤/이어 가기·다시 읽기·승인 검토는 같은 API와 역할 검사를 유지한다. 공통 메뉴의 Esc·바깥 누름·focus 복귀·좁은 화면 취소 단추를 따른다. 운영 임무는 건드리지 않는다.
 - **검증.** 기존 웹 E2E 12 임무 발견/승인 경계를 확장했다. 세 화면에서 메뉴와 설명의 실제 글 조각, 모든 단추의 화면 경계와 hit target을 검사하고 실제 Controller 승인 저장·승인만으로 시작하지 않음도 본다. 수정 전 세 크기 모두 같은 이유로 RED이며 headless 전후 캡처를 보존한다. 서로 다른 크기는 새 탭에서 열어 이전 sheet의 퇴장 픽셀이 다음 캡처에 섞이지 않게 한다. 고정 sleep·timeout 연장·기대값 완화는 없다.
+
+### 8.227 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+
+- **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
+  crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
+  Windows에서는 bracketed paste를 일부러 끄고 있었다. Windows Terminal은 Ctrl+V를 자신의 paste로 처리하고,
+  그림-only clipboard의 빈 입력은 bracketed paste를 요청한 앱에만 알린다. 과거 입력 로그는 bytes 개수만 있어
+  특정 운영 키를 소급 확정할 수 없으며, 수정 전 PTY 재현에서는 modifyOtherKeys 두 키가 도착하지 않았다.
+- **참고.** herdr 0.9.5 `client/terminal_setup.rs`의 확장 키 요청·종료 복원과
+  `input/model.rs::ime_compatible_keyboard_enhancement_flags`를 따른다. 모든 글자를 escape로 바꾸는 flag는 켜지 않는다.
+  Windows 입력은 `client/input/windows_vti.rs`의 콘솔 key record→붙여넣기 복원을 따른다.
+  t3code는 웹 composer이므로 OS 터미널 입력 파서에 해당하는 경로는 없다.
+  그림-only paste 근거는 Microsoft Terminal `TerminalPage::_PasteFromClipboardHandler`다.
+- **수리.** crossterm 0.29를 MIT 고지와 함께 vendor에 두고 위 두 입력 파서를 보완했다(변경 목록은
+  `vendor/crossterm/AAA.md`). Windows 콘솔은 key-down/up·UTF-16·분할 표지·빈 paste를 복원하며,
+  표지가 아닌 Escape는 원래 키로 돌려준다. Escape 구분 시한은 입력 프로토콜용이며 시험은 주어진 시계로 검사한다.
+  Windows도 bracketed paste를 켜므로 Ctrl+V 그림은 기존 PNG 첨부 경로로 간다. 사용자 Terminal 설정은 바꾸지 않는다.
+  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter 및 판정을 모를 때의 안전한 줄바꿈 bytes는
+  Claude의 공식 `chat:newline`과 Codex 0.163 `keymap.rs::editor.insert_newline`이 공통 지원하는 Ctrl+J(LF)다.
+- **사용자 추가 결정.** Ctrl+Enter의 최종 동작은 「agent 입력줄에 글이 있거나 알 수 없으면 줄바꿈, 비었으면 steering」이다.
+  화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
+  같은 backend 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
+- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm 네 Enter의 LF 및 보통 Enter의 CR,
+  확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
+  Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
+  새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.

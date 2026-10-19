@@ -214,3 +214,14 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
   운영 CLI의 사람 판정·host의 프로세스 기반 호출자 판정은 바꾸지 않는다.
 
 웹 E2E 12의 「특수 임무: 좁은 창·휴대폰·데스크톱」은 390/500/1280px에서 승인 메뉴·설명 글 조각·각 단추의 화면 경계와 실제 hit target을 확인하고 Controller 승인을 저장한다. 기존 승인 시험에 화면 경계를 더했으며 별도 가짜 위치 계산 시험은 없다. 화면마다 새 탭을 사용해 퇴장 sheet와 다음 크기를 섞지 않는다. `--spec 12 --grep '특수 임무: 좁은'`으로 이 경계만 확인할 수 있다.
+
+## TUI 확장 Enter와 Windows 붙여넣기(§8.227)
+
+- `cargo test --locked -p aaa --test tui modified_enter_inserts_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
+  kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
+  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 입력줄 비움 판정·steering owner와 별개로 키 전송 경계를 지킨다.
+- 기존 `ctrl_v_pastes_clipboard_image`는 직접 Ctrl+V와 Windows Terminal의 빈 bracketed paste를 같은 경계에서 본다.
+  실제 대상 파일의 pixels·따옴표 경로·Enter 없음·조각 업로드를 유지한다. 개발 머신 clipboard는 파일 fixture로 대체한다.
+- `cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_`는 Windows 콘솔 표지의 UTF-16·빈 paste·
+  key-up·단독 Escape·잘못된 표지를 세 OS에서 본다. Windows에서는 native KEY_EVENT_RECORD의 수정 Enter·합성 제어키도 본다.
+  공식 ci-local test 단계에 포함되어 있으며 OS 프로세스·clipboard·신호를 쓰지 않는다.
