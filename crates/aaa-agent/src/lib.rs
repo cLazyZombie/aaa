@@ -17,6 +17,7 @@ mod git_watch;
 mod health;
 pub mod hooks;
 pub mod identity;
+mod journal;
 pub mod link;
 mod page;
 mod plan;
@@ -453,7 +454,8 @@ impl Agent {
     }
 
     /// agent.toml의 thread 설정(작업 root·profile)
-    pub fn configure_threads(&self, cfg: threads::ThreadsConfig) {
+    pub fn configure_threads(&self, mut cfg: threads::ThreadsConfig) {
+        cfg.state_dir = Some(self.state.clone());
         *self.threads_cfg.lock().unwrap() = cfg;
     }
 

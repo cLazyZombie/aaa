@@ -26,6 +26,8 @@ mod preparation;
 pub struct ThreadsConfig {
     pub work_root: PathBuf,
     pub work_mount: Option<PathBuf>,
+    /// 실제 agent가 configure_threads에서 붙이는 내구 기록 위치.
+    pub state_dir: Option<PathBuf>,
     /// hook 명령에 쓰는 aaa 실행 파일
     pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
@@ -35,8 +37,59 @@ pub struct ThreadsConfig {
 }
 
 impl ThreadsConfig {
+    pub(crate) fn known_roots(&self) -> Result<Vec<crate::work_root::RootInfo>> {
+        let mut roots = self
+            .state_dir
+            .as_deref()
+            .map(crate::work_root::inspect)
+            .transpose()?
+            .flatten()
+            .map(|s| s.roots)
+            .unwrap_or_default();
+        if self.work_root.is_absolute() && !roots.iter().any(|r| r.path == self.work_root) {
+            roots.push(crate::work_root::RootInfo {
+                path: self.work_root.clone(),
+                real_path: crate::work_root::real_location(&self.work_root)?,
+                mount: self.work_mount.clone(),
+                imported: false,
+            });
+        }
+        Ok(roots)
+    }
+    pub(crate) fn root_for_path(&self, path: &Path) -> Result<Option<crate::work_root::RootInfo>> {
+        let roots = self.known_roots()?;
+        if let Some(root) =
+            roots.iter().filter(|r| path.starts_with(&r.path)).max_by_key(|r| r.path.components().count())
+        {
+            return Ok(Some(root.clone()));
+        }
+        let real = crate::work_root::real_location(path)?;
+        Ok(roots
+            .into_iter()
+            .filter(|r| real.starts_with(&r.real_path))
+            .max_by_key(|r| r.real_path.components().count()))
+    }
     pub(crate) fn check_path(&self, path: &Path) -> Result<()> {
-        crate::work_root::check_managed_path(&self.work_root, self.work_mount.as_deref(), path)
+        match self.root_for_path(path)? {
+            Some(root) => root.check(path),
+            None => crate::work_root::check(path, None).map(|_| ()),
+        }
+    }
+    pub(crate) fn lease(&self) -> Result<Option<crate::work_root::Lease>> {
+        self.state_dir.as_deref().map(crate::work_root::shared).transpose()
+    }
+    pub(crate) fn lock_reason(&self, cwd: &Path) -> Result<Option<String>> {
+        if !self.root_for_path(cwd)?.is_some_and(|r| r.portable()) {
+            return Ok(None);
+        }
+        let real = crate::work_root::real_location(cwd)?;
+        Ok(self
+            .state_dir
+            .as_deref()
+            .map(crate::work_root::inspect)
+            .transpose()?
+            .flatten()
+            .map(|s| format!("aaa:{}:{}", s.owner, hex::encode(Sha256::digest(real.as_os_str().as_encoded_bytes())))))
     }
     /// 지금 agent.toml의 머신별 덮어쓰기·호환 profile로 바꾼 설정. 읽지 못하면 그 까닭이 오류다(옛 값으로 띄우지 않는다).
     pub fn fresh(&self) -> Result<ThreadsConfig> {
@@ -45,6 +98,10 @@ impl ThreadsConfig {
             .map_err(|e| anyhow::anyhow!("이 머신 agent.toml을 읽지 못했다:\n{}", e.render()))?;
         Ok(ThreadsConfig { profiles: loaded.config.profiles, harnesses: loaded.config.harnesses, ..self.clone() })
     }
+}
+
+pub(crate) fn import_legacy(state: &Path, root: &crate::work_root::RootInfo) -> Result<usize> {
+    preparation::import_legacy(state, root)
 }
 
 fn view(name: &str, p: &Profile, builtin: bool) -> ProfileView {
@@ -550,8 +607,9 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
 /// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
 /// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
 /// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
-pub use preparation::{cleanup_recorded, placement};
+pub use preparation::{cleanup_recorded, placement, protect_recorded_worktrees, recover_cleanup_locks};
 
+#[allow(clippy::too_many_arguments)]
 async fn cleanup(
     repo: Option<&str>,
     cwd: &str,
@@ -559,6 +617,7 @@ async fn cleanup(
     merged_head: Option<&str>,
     keep_worktree: bool,
     uncopied: bool,
+    owned_lock: Option<&str>,
     wait: Duration,
 ) -> Result<Cleanup> {
     let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
@@ -569,21 +628,33 @@ async fn cleanup(
     let repo = PathBuf::from(repo);
     if keep_worktree && !uncopied {
         c.notes.push("worktree를 남겼다(요청)".into());
-    } else if !Path::new(cwd).exists() {
-        // 이미 없는 폴더는 잃을 것이 없다(herdr-projects `worktree_gone`): 지운 것으로 치고 git 기록만 치운다.
-        // 사람이 지운 뒤 `project sweep`이 다시 부르면 병합된 branch는 이제 지울 수 있다
-        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
-        c.worktree_removed = true;
-        c.notes.push("worktree는 이미 없다".into());
-    } else if uncopied {
+    } else if uncopied && Path::new(cwd).exists() {
         c.notes.push("worktree를 남겼다: 마지막 사본에 집에 오지 않은 것이 있다(`--discard-uncopied`면 지운다)".into());
     } else {
-        match git(&repo, &["worktree", "remove", cwd], wait).await {
-            Ok(_) => c.worktree_removed = true,
-            // force는 쓰지 않는다: 고친 파일이 있으면 남는다
-            Err(e) => c.notes.push(format!("worktree를 남겼다: {e:#}")),
+        let registered = preparation::worktree_lock(&repo, Path::new(cwd)).await?;
+        match &registered {
+            Some(Some(reason)) if Some(reason.as_str()) != owned_lock => {
+                c.notes.push("worktree를 남겼다: 사람이 걸었거나 다른 인스턴스의 Git 잠금이 있다".into());
+                return Ok(c);
+            }
+            Some(Some(_)) => {
+                git(&repo, &["worktree", "unlock", cwd], GIT_T).await?;
+            }
+            _ => {}
         }
-        let _ = git(&repo, &["worktree", "prune"], GIT_T).await;
+        let gone = !Path::new(cwd).exists();
+        if registered.is_none() && gone {
+            c.worktree_removed = true;
+        } else {
+            // 대상 하나만 지운다. 넓은 prune은 빠진 다른 볼륨의 기록까지 지울 수 있다.
+            match git(&repo, &["worktree", "remove", cwd], wait).await {
+                Ok(_) => c.worktree_removed = true,
+                Err(e) => c.notes.push(format!("worktree를 남겼다: {e:#}")),
+            }
+        }
+        if c.worktree_removed && gone {
+            c.notes.push("worktree는 이미 없다".into());
+        }
     }
     if let Some(branch) = branch.filter(|b| !b.is_empty()) {
         match (merged_head, c.worktree_removed) {

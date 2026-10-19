@@ -2055,14 +2055,16 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .filter(|c| !c.is_empty())
         .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
     rt.block_on(async move {
-        let agent = aaa_agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
+        let agent = aaa_agent::Agent::new(state.clone(), ident.machine_id, name, a.dev_mode, default_cwd)?;
         agent.configure_deployment(crate::deployment::execute)?;
         let home = aaa_config::paths::home();
         let work_root = aaa_config::work_root::resolve(&cfg.agent.work_root, &home).map_err(anyhow::Error::msg)?;
         let work_mount = aaa_config::work_root::mount(&cfg.agent.work_mount, &home).map_err(anyhow::Error::msg)?;
-        aaa_agent::work_root::initialize(&work_root, work_mount.as_deref())?;
+        let roots = aaa_agent::work_root::activate(&state, &work_root, work_mount.as_deref())?;
+        let work_mount = roots.roots.iter().find(|r| r.path == work_root).and_then(|r| r.mount.clone());
         let file_roots: Vec<PathBuf> = if cfg.agent.file_roots.is_empty() {
             let mut v = vec![aaa_config::paths::home(), work_root.clone(), std::env::temp_dir()];
+            v.extend(roots.roots.iter().map(|r| r.path.clone()));
             v.extend(agent.default_cwd.as_ref().map(PathBuf::from));
             if cfg!(unix) {
                 v.push(PathBuf::from("/tmp"));
@@ -2079,15 +2081,19 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
             cfg.agent.file_roots.iter().map(|r| at_home(r)).collect()
         };
         agent.configure_file_roots(file_roots);
-        agent.configure_threads(aaa_agent::threads::ThreadsConfig {
+        let threads = aaa_agent::threads::ThreadsConfig {
             work_root,
             work_mount,
+            state_dir: Some(state.clone()),
             exe: std::env::current_exe()?,
             profiles: cfg.profiles.clone(),
             harnesses: cfg.harnesses.clone(),
             config_dir: Some(aaa_config::paths::config_dir()),
-        });
+        };
+        aaa_agent::threads::protect_recorded_worktrees(&threads).await?;
+        agent.configure_threads(threads);
         tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
+        aaa_agent::threads::recover_cleanup_locks(&state).await?;
         agent.recover().await?;
         agent.start_hooks()?;
         agent.start_plans();
