@@ -5434,3 +5434,12 @@ primary 근거:
 - **입력 진단.** 같은 trace에 `steer_queued`(고른 키 또는 거절 까닭, working·synced·커서·화면 근거·queue_hint), `steer_sent`, `steer_failed`를 남긴다. 글 본문은 남기지 않는다([입력 진단](input-debug.md)).
 - **실측.** Claude 2.1.303 sendNow는 하던 shell을 배경으로 돌리고(끊지 않음) 대기 글을 `remove reason=absorbed_mid_turn` + `attachment queued_command`로 흡수했다. Codex 0.163은 exec가 배경 터미널이면 작업 중 글을 거의 바로 넘겨(rollout에 바로 적힘) 패널이 잘 보이지 않는다: 그때 단추는 `no_queue`로 거절해 「이미 읽었을 수 있습니다」를 보인다.
 - **검증.** host 유닛 `ctrl_enter::tests`(실제 Claude 화면 두 fixture, Codex 패널·커서). 웹 유닛 `steerQueued.test.mjs`(보임·꺼짐, 개수 문구, 까닭 문구, 10초 알림). 웹 E2E 23(가짜 Claude 대기열 enqueue·sendNow 흡수, 단추 하나, 쓰던 글 거절과 bytes 없음, 옛 host 숨김, 휴대폰 크기, 가짜 Codex 패널 Esc 흡수와 패널 없는 거절, 입력 진단)과 25(감지 pane마다 frame을 넣어 bytes·까닭, 보기 기기 거절). 결함 셋을 심어 실패를 확인했다: host가 쓰던 글을 무시함(23·25 실패), 웹이 거절 답을 버림(23 실패), 모든 대기 말에 단추(23 실패).
+
+### 8.272 보고서 링크도 열면 봄으로 기록한다(10-19, t-0418)
+
+- 사용자 결정: 목록 제목·공유 링크, 채팅·앱 안 알림·post에 있는 공유 주소를 열어도 보고서를 본 것이다. 외부 브라우저의 첫 문서 GET에서 기록하므로 pairing·앱 JS에 의존하지 않는다.
+- 참고 확인: herdr-projects v0.2.35 `src/inbox.rs`의 `mark_seen`은 context에 보여 준 inbox 항목 기록이며 보고서 URL의 열람 기록이 아니다. 고정 herdr-web-ui `aa624cb`의 FileViewer·server에도 보고서 공유 URL과 안 봄 배지를 연결하는 같은 기능은 없다. aaa의 기존 host 기록을 확장한다.
+- 서명·파일 권한 확인은 기록하지 않는다. `/v/`가 성공 문서 응답을 준비한 뒤 브라우저 탐색(GET, Fetch Metadata의 navigate·document/iframe/frame)이면 같은 DB transaction으로 안 봄과 마지막 열람을 기록한다. 기존 API 열기도 이 기록을 쓴다. 안 봄이 바뀌면 기존 reports 사건으로 앱 배지를 갱신한다.
+- HEAD·fetch·그림·링크 미리보기·preview/prefetch/prerender 목적 요청·다운로드·실패 응답은 열람에서 제외한다. sandbox·서명 수명·폐기·Range 규칙은 유지한다. Fetch Metadata 없는 요청은 열람으로 판정하지 않는다.
+- 「내 보고서」 제목과 「작업 보고」 이름을 실제 링크로 만든다. 보통 클릭은 앱 본문에서 열고, 보조 키·가운데 단추는 브라우저의 새 탭 동작을 쓴다.
+- 검증: host HTTP 유닛 하나가 기록·제외 조건을 표로 확인한다. 웹 E2E 21은 제목·공유 링크 클릭, 인증 없는 Chromium·WebKit 탭의 주소 탐색과 실시간 배지를 확인한다. 운영 host·agent는 교체하지 않는다.
