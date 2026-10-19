@@ -1136,7 +1136,6 @@ fn agent_cards_like_herdr() {
     // 카드가 없으면 o는 아무것도 하지 않는다(herdr): 포커스는 side 그대로
     tui.cmd("o");
     tui.wait_text("PREFIX 끝", |s| !s.contains(" PREFIX "));
-    tui.type_line("x");
     assert!(hw.held_by(&side, "tui@"));
 
     // 5) 쓰던 pane이라도 다른 탭으로 가면 보는 것이 아니다: TUI는 lease를 놓지 않지만 그 pane을 그리지 않는다(herdr: 보이는

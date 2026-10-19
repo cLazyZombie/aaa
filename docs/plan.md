@@ -5598,3 +5598,5 @@ primary 근거:
 - 검증 owner: `ctrl_enter.rs` 유닛은 스타일·잘린 상자·여러 줄·현재 Codex 패널 판정을, 웹 `25-ctrl-enter.mjs`는 실제 host·agent·PTY의 bytes와 물리 키·모바일·입력줄·IME·반복 키를 본다. 기존 `03-keys.mjs`가 일반 프로그램의 modifyOtherKeys·Shift+Enter를 계속 확인한다. 기다림은 출력 표지·DOM·sentFrames 사건으로 끝낸다.
 
 - **최신 main 통합 fixture 경계(t-0385).** Codex 제목 설정의 `-c`가 argv 끝에 추가되어 웹 E2E 25 가짜 harness의 마지막 두 인자 추정이 깨졌다. 실제 실패는 ce-codex.bytes ENOENT이며 받은 화면도 Claude 모양이었다. fixture 고유 인자를 `--` 뒤로 명시하고 그 경계를 읽는다. 실제 harness 옵션·제품 키·기대 bytes·시한은 바꾸지 않는다.
+
+- **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
