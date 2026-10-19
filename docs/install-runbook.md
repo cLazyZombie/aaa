@@ -3,7 +3,7 @@
 launcher 등록([P0 절차서](p0-runbook.md))과 L1 측정이 끝난 뒤 aaa를 운영 자리에 올리는 순서다. 설계는 기획서 [§10](plan.md)·[§15](plan.md#15-현재-운영에서-이전)에 있다. 이 문서는 명령과 확인만 적는다.
 
 - 머신 이름은 일반 이름이다. mac-a·mac-b·mac-c 중 host를 둘 Mac을 **host Mac**이라 부른다. 주소 예시는 `example.ts.net`이다.
-- **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aaa service install·uninstall·restart·stop·start`는 aaa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다.
+- **launchd·시스템 설정을 바꾸는 단계(✋)는 사람이 자기 터미널에서 직접 한다.** `aaa service install·uninstall·stop·start`와 일반 restart는 aaa 세션 안이거나 터미널이 아니면 거부하고 `yes` 입력을 받는다. 아래 coordinator 배포 safety를 켠 경우에만 coordinator의 restart를 허용한다.
 - **명령은 전체 경로 `~/.local/bin/aaa`로 친다.** 본문의 `aaa …`는 모두 `~/.local/bin/aaa …`를 뜻한다. launchd가 주는 PATH나 셸 PATH 순서에 기대지 않는다.
 - **이름 변경(결정 18) 전 `aa` 설치에서 옮기기:** 아래 「10. aa에서 옮기기」를 먼저 한다.
 - 지금 운영(herdr·herdr-projects·herdr-web-ui·WezTerm)과 그 설정·socket·port는 건드리지 않는다. aaa는 다른 port·state·작업 폴더를 쓴다.
@@ -297,3 +297,32 @@ move "%USERPROFILE%\Downloads\aaa.exe" "%USERPROFILE%\.local\bin\aaa.exe"
 - self-check(`--version`·`config check`)를 한 뒤 `yes`를 받고 바꾼다. Mac과 같은 순서다: 지금 것을 `%USERPROFILE%\.local\bin\.aaa-old\`에 hard link로 보관하고(`[update] keep`개, 기본 3) 새것을 그 자리로 rename한다. 열린 TUI가 있어도 바꿀 수 있고(Windows CI 시험이 도는 exe를 바꿔 본다), 그 TUI는 끝날 때까지 옛것으로 돈다.
 - 되돌리기는 `update rollback`이다. 이 PC에는 host·agent가 없으니 `aaa service restart`는 하지 않는다.
 - Windows에서도 판을 생략하면 최신 안정판이며, 로컬 파일 교체(`update --from <파일>`)도 유지한다. 열린 TUI는 다시 열어 새 client를 쓴다.
+
+
+### coordinator가 요청받은 배포를 실행하기(10-19)
+
+기본은 차단한다. 먼저 사람이 이 API를 아는 host·agent를 설치한 뒤, aaa 밖 host 터미널에서 한 번 켠다.
+
+```sh
+aaa safety set demo coordinator_deploy on
+```
+
+`demo`는 프로젝트 이름이다. `[safety.demo] coordinator_deploy = true`를 host 설정에 기록한다. yolo나 project.toml은 이 허용을 켜지 않는다. 끄려면 `aaa safety set demo coordinator_deploy off`다. 변경은 다음 요청부터 적용하며, 이전 배포 기록 조회는 계속된다. 같은 OS 계정의 파일 접근 자체를 격리하는 sandbox는 아니다.
+
+사용자가 **채팅에서 배포를 지시했을 때만** 그 프로젝트의 host 머신 coordinator가 실행한다. thread·평가자·임의 셸 pane·웹 Controller에는 배포 권한을 주지 않는다. host는 socket peer PID로 coordinator 소속을 정하므로 세션 환경변수를 지우거나 coordinator ID를 신고해도 허용되지 않는다.
+
+```sh
+aaa update --machine mac-a --version 0.1.2
+# 또는: aaa update --machine mac-a --from /opt/aaa/candidate/aaa
+aaa update status <출력된-ID> --wait
+aaa service restart --role host --machine mac-a
+aaa update status <재시작-ID> --wait
+```
+
+`--from`은 대상 머신에 이미 있는 파일이다. 배포 순서는 host 파일 교체·판/SHA 확인 → host restart·연결 확인 → host 머신 agent → 나머지 agent들이다. agent마다 update → ID의 완료/판/SHA 확인 → `service restart --role agent --machine <머신>` → `machine list`의 재연결과 `update status <id>`의 running_software·running_sha256 확인을 끝낸 뒤 다음으로 간다. 세션은 별도 session host가 소유해 backend 재시작 동안 이어진다. macOS의 기존 launchd 감독자만 재시작하며 설치·해제·start·stop은 계속 사람만 한다.
+
+시작 명령은 실행 전 ID와 조회 명령을 stderr에 출력한다. host 응답이나 agent 연결이 끊겨도 시작 명령을 재전송하지 않고 같은 ID를 조회한다. `status`의 machine 생략은 host에 기록된 대상을 따른다. 작업 기록은 agent 상태 폴더의 `deployments/<id>.json`에 원자 저장한다. 같은 ID·같은 작업은 다시 실행하지 않고, 다른 작업은 거부한다. 머신마다 동시에 하나만 실행한다.
+
+failed·interrupted·판/SHA 불일치면 진행을 멈추고 원인을 본다. `aaa update rollback --machine <문제 머신>`의 완료 → 해당 서비스 restart → 판/SHA·재연결을 확인한다. 중단된 update는 자동 재실행하지 않는다. agent restart 중 종료는 OS 잠금으로 확인한 이전 실행기 종료와 기대 SHA가 맞을 때만 복구 완료로 기록한다. 구판 host/agent는 새 API를 사용하지 않고 사람의 최초 반영 또는 터미널 복구를 안내한다.
+
+생성된 coordinator 안내는 binary 반영 뒤 `aaa doctor files --fix`로 갱신한다. 운영 설정·서비스의 변경은 이 코드의 시험·착지와 별도다.

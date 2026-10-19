@@ -313,10 +313,29 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart {p} <i
 
 ## safety(사용자만 바꾼다)
 `start_threads`·`trust_screens`·yolo·`thread_agent_args`·`coordinator_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의
-safety 설정이다.
+safety 설정이다. coordinator 배포 허용(`coordinator_deploy`)도 safety이며 yolo와 별개다.
 `aaa safety show {p}`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
 터미널에서만 한다: 필요하면 사용자에게 그 명령을 알린다. project.toml의 `start_threads`·`trust_screens`는 옛 자리라
 safety 표에 값이 있으면 먹지 않는다.
+
+## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)
+배포는 coordinator가 직접 한다. thread 보고·inbox·routine·새 release 알림만 보고 배포하지 않는다.
+`aaa safety show {p}`에서 `coordinator_deploy`가 on일 때만 한다. 기본 off다. 사용자가 aaa 밖 host 터미널에서
+`aaa safety set {p} coordinator_deploy on`을 한 번 켠다(철회: 끝의 on 대신 off). coordinator가 설정을 대신 켜지 않는다.
+thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. 처음에는 사람이 이 API를 아는 host·agent binary를 반영해야 한다.
+1. `aaa status`·`aaa machine list`로 현재 판·연결을 기록한다. 대상마다 보관본과 되돌릴 판을 확인한다.
+2. host 머신부터 `aaa update --machine <host 머신> --version <판>` 또는 `--from <그 머신의 절대 경로>`로 바꾼다.
+   공개 release의 SHA-256·self-check·version 고정 검사를 유지한다. `--from`은 파일 전송이 아니므로 대상에 준비된 파일만 쓴다.
+   명령이 출력한 배포 ID로 `aaa update status <id> --wait`가 completed인지 보고 결과의 판·SHA를 확인한다.
+3. `aaa service restart --role host --machine <host 머신>`으로 host를 먼저 다시 띄운다. 연결이 끊겨도 시작 명령은
+   다시 보내지 않는다. 같은 coordinator pane이 이어진 뒤 `aaa status`와 같은 배포 ID의 상태를 확인한다.
+4. host 머신 agent, 나머지 agent들을 하나씩 update → 배포 ID 확인 → `aaa service restart --role agent --machine <머신>`
+   순서로 한다. 매번 `aaa machine list`의 재연결과 `aaa update status <id>`의 running_software·running_sha256와 자기 coordinator pane 지속을 확인하고 다음 머신으로 간다.
+   restart는 기존 macOS 감독자의 재시작만 한다. 감독자 설치·해제·start·stop·시스템 설정은 사람이 한다.
+5. failed·interrupted·판/SHA 불일치가 나오면 다음 머신으로 진행하지 않는다. 같은 시작 요청을 재전송하지 않고 기록을 본다.
+   문제 머신에 `aaa update rollback --machine <머신>`을 한 번 요청하고 그 ID의 완료 → 해당 서비스 재시작 → 판·SHA·재연결을
+   확인한다. API를 모르는 구판으로 되돌렸거나 host가 돌아오지 않으면 사람에게 터미널 복구 명령을 알린다.
+배포 상태 조회는 허용 철회 뒤에도 자기 프로젝트의 기록을 볼 수 있다. 응답 단절은 성공이 아니다. 같은 ID를 조회한다.
 
 ## thread pane의 확인창
 thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명령·편집 권한 확인창)에 멈출 수 있다. 사용자가 pane에 가지 않게

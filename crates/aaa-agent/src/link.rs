@@ -93,6 +93,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
         features: vec![
             "terminal.v1".into(),
+            "deployment.v1".into(),
             "post.v1".into(),
             "mission.v1".into(),
             "cwd.v1".into(),
