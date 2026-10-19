@@ -772,6 +772,16 @@ impl Host {
         if dir.join("PROJECT.md").exists() {
             return Err(err(ErrorCode::NameTaken, format!("이미 있다: {}", dir.display())));
         }
+        // 한 host는 프로젝트 하나(plan §8.283·§8.285): 보관하지 않은 프로젝트가 있으면 둘째를 만들지 않는다
+        match self.sole_project() {
+            Ok(None) => {}
+            Ok(Some(have)) => {
+                return Err(bad(format!(
+                    "host는 프로젝트 하나만 맡는다: 이미 `{have}`가 있다. 명령은 프로젝트 인자 없이 쓴다"
+                )));
+            }
+            Err(names) => return Err(bad(crate::lifecycle::sole_project_refusal(&names))),
+        }
         // 값은 모두 먼저 맞춰 본다: 틀린 옵션으로 반쯤 만든 폴더를 남기지 않는다
         let mut toml = "schema = 1\n".to_string();
         let mut set = |key: &str, value: &str| -> Result<(), ErrorBody> {

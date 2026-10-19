@@ -716,7 +716,7 @@ mod tests {
         cfg.projects.root = state.join("projects").display().to_string();
         cfg.projects.outage_secs = 60;
         let h = Host::open(cfg, state.clone()).unwrap();
-        let projects = ["demo".to_string(), "side".to_string()];
+        let projects = ["demo".to_string()];
         for (n, p) in projects.iter().enumerate() {
             h.project_create(p, Default::default(), "test").unwrap();
             for (m, machine) in ["m-a", "m-b"].iter().enumerate() {

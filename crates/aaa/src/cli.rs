@@ -2454,7 +2454,7 @@ fn project_or_here(given: Option<String>) -> Result<String> {
         Some(p) => {
             if open.as_slice() == [p.as_str()] {
                 static ONCE: std::sync::Once = std::sync::Once::new();
-                ONCE.call_once(|| eprintln!("aaa: 프로젝트 인자는 이제 생략한다(`{p}`를 빼고 쓴다, plan §8.285)"));
+                ONCE.call_once(|| eprintln!("경고: 프로젝트 인자는 이제 생략한다(`{p}`를 빼고 쓴다, plan §8.285)"));
             } else if let [one] = open.as_slice()
                 && !known.iter().any(|(n, _)| *n == p)
             {

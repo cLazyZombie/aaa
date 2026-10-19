@@ -615,7 +615,6 @@ mod tests {
     fn coordinator_host() -> (Arc<Host>, Lab) {
         let (h, _lab) = host();
         h.project_create("demo", Default::default(), "test").unwrap();
-        h.project_create("side", Default::default(), "test").unwrap();
         h.agent_connected(
             &aaa_proto::AgentHello {
                 proto: aaa_proto::AGENT_LINK,
@@ -674,7 +673,6 @@ mod tests {
             (80, "demo", "local:cli"),
             (81, "demo", "local:cli@unverified"),
             (82, "demo", "device:phone"),
-            (83, "side", "local:cli@coord"),
             (84, "demo", "worker:coord"),
         ] {
             let mut i = input(n);
