@@ -5445,6 +5445,12 @@ primary 근거:
   Ctrl+Shift+C·쓰기 실패가 pane에 들어가지 않음. raw 관측기는 ISIG를 끄고 뒤따른 표지의 수신 bytes로 끝낸다.
   기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
   개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
+- **Windows CI 후속.** 첫 console 소유자 구현은 Windows CI 실제 텍스트 쓰기에서 실패했다(run 39189740640,
+  native_clipboard_roundtrip). 공개 annotation은 panic 위치만 남기고 API 오류 본문을 빼, 그 원인을 단정하지 않는다.
+  쓰는 스레드 소유의 message-only STATIC 창을 만들고 clipboard를 닫은 뒤 지우도록 고쳤다.
+  console 창이 없는 실행 환경에서도 NULL·남의 창에 기대지 않는 Microsoft clipboard owner 계약이다.
+  표시·전역 설정·별도 메시지 루프 없이 즉시 렌더링하고, 같은 native 왕복 시험의 기대를 유지한다.
+  다음 실패부터 API 오류도 기존 CI annotation에 담기도록 native 시험 진단을 보강했다.
 - 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
 
 ### 8.226 휴대폰 푸시 본문에 보고 첫 줄 요약(10-19, t-0379)
@@ -5493,8 +5499,47 @@ primary 근거:
 - **통합 검사에서 발견한 TUI 시작 입력 유실.** `osc52_copy_reports_a_request`는 TUI가 첫 layout을 받기 전에 입력해 `echo`의 첫 글자를 잃었다. 기존 TUI 시험처럼 이름 있는 탭과 pane을 그린 출력 사건(Condvar), host 입력권 사건을 기다린 뒤 입력한다. 제품도 최초 Workspace 요청을 단순 pending에만 넣어 포커스가 없는 동안 키를 버릴 수 있었다. 기존 `await_layout`에 등록해 workspace 전환과 같은 `focus_wait`·`held` 보류/재생 경로를 쓴다. herdr client의 `initial_host_input` 보존과 같은 목적이며 새 buffer·시험 전용 seam·고정 sleep은 없다. 초기 TTY 설정 이전 입력까지 보장한다는 뜻은 아니다. 사용자가 이 별도 실패도 직접 수리하도록 범위를 명시했다.
 - **운영 반영.** 새 agent binary로 새로 띄우거나 재개한 Codex부터 제목 설정이 적용된다. 이미 실행 중인 Codex는 host·agent만 다시 시작해도 argv가 바뀌지 않는다. 기존 세션의 재개 시점은 coordinator가 정한다. 운영 프로세스·설정·상태 폴더는 이 작업에서 수정하지 않았다.
 
+### 8.231 GitHub Light·Dark·Dark Dimmed 테마(10-19, t-0388)
 
-### 8.231 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+- 웹 색상과 TUI 설정에 같은 세 이름을 추가했다. 기본값·설정/공유 protocol은 그대로다.
+- 색 값은 GitHub 공식 Primer 7.10.0이다. 역할·참고 소스·가독성 보정은 [GitHub 테마](github-themes.md)에 적었다.
+- TUI는 pane 기본색·ANSI 16색·빈 바탕까지 테마를 적용하고, 명시 RGB·확장 256색은 유지한다.
+- 웹의 빌드된 단축 hex(`#fff`)도 터미널 기본색 전달 protocol에서 6자리로 보낸다.
+- 기존 웹 공유 설정·TUI 설정 E2E를 넓혔다. 화면은 별도 실험실에서 headless로 캡처하며 운영 설정·프로세스는 바꾸지 않는다.
+### 8.232 사진만 보낸 입력의 자동완성·수신 확인과 대화 썸네일(10-19, t-0387)
+
+- **실제 기록·재현.** 운영 로그의 submit 5는 글 62바이트와 Enter 1바이트 모두 PTY 접수까지 성공했지만 턴이 시작되지 않았다.
+  별도 설정 폴더와 로컬의 응답하지 않는 API 주소를 쓴 실제 Claude Code 2.1.303에서도 마지막 `@경로`의 첫 Enter가 파일 선택으로
+  소비되어 입력창에 글이 남았다. 공백 뒤 Enter는 턴을 시작했다. Codex 0.163.0에서는 같은 입력의 Enter가 턴을 시작했다.
+  운영 설정·프로세스·실제 모델 API는 쓰지 않았다.
+- **참고.** herdr-web-ui `aa624cb` `server/index.ts closeMention`은 마지막 `@파일` 뒤에 공백을 넣어 자동완성을 닫는다.
+  Composer의 trim 뒤 Term의 제출 글에 이 규칙을 적용한다. 줄바꿈·IME·일반 Enter의 키 전송과 기존 글/Enter 간격은 그대로다.
+  Enter를 하나 더 보내거나 Escape로 작업을 끊지 않는다. herdr `api_helpers.rs encode_api_submission_parts`·`api/agents.rs`와
+  herdr-projects `threads.rs keys`의 글/Enter 분리도 대조했다. t3code는 SDK에 첨부를 구조화해 보내므로 PTY 자동완성이 없다.
+- **수신 확인.** PTY ACK는 「입력 전달됨 · 기록 확인 중」이다. 보낸 글과 같은 새 사용자 기록을 받으면 수신 확인으로 바꾼다.
+  보내기 전의 같은 글·무관한 새 기록·agent의 작업 중 상태만으로 확인하지 않는다. 기록을 아직 읽지 못한 채 보냈으면 보수적으로
+  확인 불가로 둔다. 10초 뒤에도 확인되지 않으면 「아직 처리되지 않음」과 입력창 확인·보낸 글 복원을 보인다. 늦은 기록도 반영하며
+  자동 재전송은 없다. 새 초안이 있으면 복원 단추를 막아 보존한다. 수신 확인은 모델 처리 완료를 뜻하지 않는다.
+  참고 Composer의 `Not confirmed. Check the terminal before sending again` 안내와 t3code의 서버 사용자 기록을 기준으로 삼는
+  `ChatView.tsx serverVisibleTurnItems`를 따르되, aaa의 기존 읽기 API에는 제출 ID가 없어 같은 글의 출현 횟수 증가로 확인한다.
+- **그림 보기.** 경로 matcher가 `@/…`를 그대로 넘겨 상대 경로로 찾던 것이 파일 보기 실패의 원인이다. 파일 링크에서 절대·홈·점
+  상대 경로의 `@` 표시를 떼고 기존 `pane_file`로 연다. 같은 pane의 머신 agent가 canonical path와 `file_roots`를 검사하고,
+  30분 수명의 파일 하나 capability(`/f/…`)를 준다. 허용 범위·머신 선택·cookie 인증은 바꾸지 않는다.
+  herdr-web-ui `ChatView.tsx UserImages/ImageThumb`·`ChatView.css .chat-user-images`처럼 사용자 메시지의 `@그림`은 썸네일로
+  보이고 누르면 확대한다. t3code `MessagesTimeline.tsx`의 사용자 그림·`onImageExpand`도 대조했다. 확대는 aaa의 이미 있는
+  FileViewer를 재사용해 다운로드·새 탭·Back·닫기 뒤 focus 복귀도 같은 경계를 쓴다. reader는 기존대로 파일을 열지 않는다.
+- **검증 소유 경계.** 기존 웹 E2E 23을 넓혀 그림만 보내기, 실제 transcript push를 통한 수신·미확인·늦은 확인·같은 글 재전송,
+  새 초안 보존, 썸네일 잘림·확대·focus, 허용 밖·symlink·reader·미인증 읽기를 확인한다. 기존 네 브라우저/기기 첨부·Enter·IME
+  사례도 유지한다. 시간 창은 Playwright 시계로 넘기고 수신·화면·출력 사건으로 끝낸다. 새로운 시험 전용 production seam은 없다.
+  실험실에서 프로젝트 uploads만 추가로 허용하며 허용 밖 파일은 그대로 거부한다. 프로토콜 판 변경은 없다.
+
+- **통합 시험의 입력 프레이밍.** 전수 검증에서 기존 `thread_adopt_existing_pane`의 가짜 셸이 글과 Enter를 같은 `dd` 조각으로
+  받아 마지막 줄바꿈을 command substitution이 지웠다. PTY는 쓰기별 read 경계를 보장하지 않는다. adopt가 보는 것은 pane의
+  생존과 제출 뒤 응답이므로 가짜를 canonical 줄 읽기로 바꾸고, 기존 생존 검사는 글+Enter를 한 번 쓰는 `pane run`으로 강화했다.
+  실제 입력·기대 응답·시한을 바꾸지 않는다. 첫 실패의 실험실·로그를 보존한다.
+
+
+### 8.233 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
 
 - **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
   crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.

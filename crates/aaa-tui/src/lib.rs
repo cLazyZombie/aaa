@@ -2968,6 +2968,10 @@ impl App {
 
     fn render_pane(&self, buf: &mut Buffer, pane: &str, r: Rect, focused: bool) -> Option<(u16, u16)> {
         let view = self.panes.get(pane);
+        // VT는 기본색의 빈 꼬리 칸을 보내지 않는다. GitHub는 빈 곳까지 같은 바탕으로 채운다.
+        if let Some(bg) = theme::terminal_color(&self.theme_name, 0, false) {
+            fill(buf, r, Style::default().fg(self.palette.text).bg(bg));
+        }
         if let Some(g) = self.grids.get(pane) {
             // PTY 크기가 칸과 다를 수 있다(다른 front가 쓰는 중): 왼쪽 위에 맞추고 칸 밖은 자른다
             for (row, runs) in g.lines.iter().enumerate().take(r.h as usize) {
@@ -2978,7 +2982,7 @@ impl App {
                     if room == 0 {
                         break;
                     }
-                    x = buf.set_stringn(x, y, &run.t, room, run_style(run)).0;
+                    x = buf.set_stringn(x, y, &run.t, room, run_style(run, &self.theme_name)).0;
                 }
             }
             hyperlink::note(buf, r, &g.links, &mut self.painted.borrow_mut());
@@ -3245,8 +3249,10 @@ fn color(c: u32) -> Color {
     }
 }
 
-fn run_style(r: &GridRun) -> Style {
-    let mut s = Style::default().fg(color(r.fg)).bg(color(r.bg));
+fn run_style(r: &GridRun, theme_name: &str) -> Style {
+    let mut s = Style::default()
+        .fg(theme::terminal_color(theme_name, r.fg, true).unwrap_or_else(|| color(r.fg)))
+        .bg(theme::terminal_color(theme_name, r.bg, false).unwrap_or_else(|| color(r.bg)));
     for (bit, m) in [(1, Modifier::BOLD), (2, Modifier::ITALIC), (4, Modifier::UNDERLINED), (8, Modifier::REVERSED)] {
         if r.a & bit != 0 {
             s = s.add_modifier(m);
@@ -3324,6 +3330,35 @@ mod tests {
 
     fn r(x: u16, y: u16, w: u16, h: u16) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    /// GitHub pane은 바깥 터미널 색에 기대지 않고, 프로그램의 명시 RGB·확장 색은 유지한다.
+    #[test]
+    fn github_pane_colors_keep_explicit_colors() {
+        for (name, bg, red) in [
+            ("github-light", Color::Rgb(255, 255, 255), Color::Rgb(207, 34, 46)),
+            ("github-dark", Color::Rgb(13, 17, 23), Color::Rgb(255, 123, 114)),
+            ("github-dark-dimmed", Color::Rgb(34, 39, 46), Color::Rgb(244, 112, 103)),
+        ] {
+            let mut app = App::new("main".into(), "me".into());
+            app.apply_config(&aaa_config::TuiSection { theme: name.into(), ..Default::default() });
+            app.grids.insert(
+                "p".into(),
+                Grid {
+                    lines: vec![vec![
+                        GridRun { t: "A".into(), fg: 0x0100_0001, bg: 0, a: 1 },
+                        GridRun { t: "B".into(), fg: 0x0201_0203, bg: 0x0100_0010, a: 0 },
+                    ]],
+                    ..Default::default()
+                },
+            );
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, 8, 2));
+            app.render_pane(&mut buf, "p", r(0, 0, 8, 2), false);
+            assert_eq!((buf[(0, 0)].fg, buf[(0, 0)].bg), (red, bg), "{name}");
+            assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD));
+            assert_eq!((buf[(1, 0)].fg, buf[(1, 0)].bg), (Color::Rgb(1, 2, 3), Color::Indexed(16)));
+            assert_eq!(buf[(7, 1)].bg, bg, "내용 없는 칸도 테마 바탕");
+        }
     }
 
     /// prefix 뒤 두벌식 자모는 설정이 켜졌을 때만 같은 자리 영문 키다(`[tui] prefix_jamo_keys`, 설정 기본은 켬.

@@ -1,7 +1,7 @@
 // 웹 E2E 공유 설정: 기기 사이 테마·색상·사이드바 행, 보기 권한 거부(빈 공유 설정 문서에서 시작).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 14-shared-preferences(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { aaa, shot, pairPage, step, browser, openSettings, domIs, until } from "../lib/harness.mjs";
+import { aaa, shot, pairPage, step, browser, openSettings, domIs, until, sentFrames, inList, screenText } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("공유 설정(herdr-web-ui preferencesSync·shared/preferences.ts, 차이 목록 T2): 한 기기에서 바꾼 테마·색상·사이드바 행은 다른 기기에 곧 오고, 기기 설정(상태 표시)은 남으며, 여는 것만으로는 쓰지 않고, 보기 권한 기기의 쓰기는 거부되며 다음 공유 변경을 모두 받는다, 바꾸고 곧 닫아도 간다(QA Q11)", async () => {
@@ -115,4 +115,49 @@ export default async function ({ ctl, page }) {
     await w.page.context().close();
     for (const p of [a, b, r]) await p.context().close();
   });
+  await step("GitHub 세 팔레트: 데스크톱·휴대폰에서 선택하고 다시 열어도 UI·ANSI 색과 설정이 남는다", async () => {
+    const pane = aaa("pane", "list").panes.find((p) => p.name === "t1").id;
+    aaa("pane", "run", pane, "printf '\\033[2J\\033[HGitHub theme / ANSI 16 colors\\n'; for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do printf '\\033[38;5;%sm Color %s \\033[0m\\n' $i $i; done");
+    for (const [device, viewport] of [["desktop", { width: 1280, height: 800 }], ["phone", { width: 390, height: 844 }]]) {
+      const p = (await pairPage(browser, aaa("web", "pair").code, viewport)).page;
+      for (const [name, mode, bg] of [["github-light", "light", "#ffffff"], ["github-dark", "dark", "#0d1117"], ["github-dark-dimmed", "dark", "#22272e"]]) {
+        const d = await openSettings(p, "모양");
+        const sent = p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set");
+        await d.locator("#settings-palette").selectOption(name, { timeout: 3000 });
+        const response = await sent;
+        if (!response.ok()) throw new Error(`${name} 설정 저장 ${response.status()}`);
+        await domIs(p, "html", (want) => document.documentElement.dataset.palette === want, name);
+        const look = await p.evaluate(() => {
+          const css = getComputedStyle(document.documentElement);
+          const token = (name) => css.getPropertyValue(name).trim().replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
+          return { mode: document.documentElement.dataset.theme, bg: token("--term-bg"), ansi: Array.from({ length: 16 }, (_, i) => token(`--ansi-${i}`)), palette: JSON.parse(localStorage.getItem("aaa:appearance")).palette };
+        });
+        if (look.mode !== mode || look.bg !== bg || look.palette !== name || look.ansi.some((c) => !/^#[0-9a-f]{6}$/i.test(c))) throw new Error(`${name}: ${JSON.stringify(look)}`);
+        const colors = (await sentFrames(p, 0)).filter((f) => f.t === "colors");
+        if (!colors.length || colors.some((f) => !/^[0-9a-f]{6}$/i.test(f.fg) || !/^[0-9a-f]{6}$/i.test(f.bg))) throw new Error(`${name} 터미널 기본색 protocol: ${JSON.stringify(colors)}`);
+        const contrasts = await p.evaluate(() => {
+          const css = getComputedStyle(document.documentElement);
+          const color = (name) => css.getPropertyValue(`--${name}`).trim().replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
+          const lum = (hex) => hex.slice(1).match(/../g).map((x) => parseInt(x, 16) / 255).map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+          const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+          const pairs = ["text", "text-dim", "accent", "status-idle", "status-working", "status-blocked", "status-done", "notice"].flatMap((fg) => ["bg", "bg-panel", "bg-hover"].map((bg) => [fg, bg]));
+          pairs.push(["primary-text", "primary"], ["primary-text", "primary-hover"], ...Array.from({ length: 16 }, (_, i) => [`ansi-${i}`, "term-bg"]));
+          return pairs.map(([fg, bg]) => ({ fg, bg, ratio: ratio(color(fg), color(bg)) }));
+        });
+        if (contrasts.some((c) => c.ratio < 4.5)) throw new Error(`${name} 대비: ${JSON.stringify(contrasts.filter((c) => c.ratio < 4.5))}`);
+        console.log(`     ${device} ${name}: 최소 대비 ${Math.min(...contrasts.map((c) => c.ratio)).toFixed(2)}:1`);
+        await shot(p, `${device}-${name}-settings`);
+        await d.getByRole("button", { name: "설정 닫기" }).click();
+        await d.waitFor({ state: "detached" });
+        await inList(p, "pane-t1");
+        await until("ANSI 화면", async () => (await screenText(p)).includes("Color 15"));
+        await shot(p, `${device}-${name}`);
+        // 새로 읽기는 localStorage뿐 아니라 host 공유 설정을 다시 받는 실제 경로다.
+        await p.reload();
+        await domIs(p, "html", (want) => document.documentElement.dataset.palette === want, name);
+      }
+      await p.context().close();
+    }
+  });
+
 }

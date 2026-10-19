@@ -8,7 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import type { DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
+import type { ChatMessage, DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
@@ -127,7 +127,9 @@ function termTheme(): ITheme {
 
 /** 이 화면의 터미널 기본 색(`rrggbb`). session host가 프로그램의 색 질의(OSC 10/11)에 이 색으로 답한다(plan §8.187) */
 function termColors(): { fg: string; bg: string } {
-  return { fg: token("--term-fg").replace(/^#/, ""), bg: token("--term-bg").replace(/^#/, "") };
+  // CSS 빌드가 #ffffff를 #fff로 줄여도 protocol의 rrggbb 계약을 지킨다.
+  const hex = (name: string) => token(name).replace(/^#/, "").replace(/^([0-9a-f])([0-9a-f])([0-9a-f])$/i, "$1$1$2$2$3$3");
+  return { fg: hex("--term-fg"), bg: hex("--term-bg") };
 }
 
 export function TermView({
@@ -192,6 +194,7 @@ export function TermView({
   const chatView = (picked ?? lensesFor(defaultView).of(lensKey, chatable ? true : agent ? null : false, coarse)) === "chat";
   // 대화 입력창이 보낸 수: 대화를 바로 다시 읽는다(Chat `readNow`)
   const [chatSent, setChatSent] = useState(0);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[] | null>(null);
   const setChatView = (chat: boolean) => {
     const lens = chat ? "chat" : "terminal";
     rememberLens(lensKey, lens);
@@ -1684,7 +1687,10 @@ export function TermView({
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     autoFit.current(true);
     // 붙여 넣은 글처럼 ESC를 뺀다(pasteText.ts)
+    // 참고 server/index.ts closeMention: 끝의 @파일 자동완성을 공백으로 닫는다.
+    // Enter/Escape를 더 보내면 다른 입력까지 실행하거나 작업을 끊으므로 글 안에서만 닫는다.
     let data = pasteText(value);
+    if (/(?:^|\s)@\S+$/.test(data)) data += " ";
     if (data.includes("\n")) {
       data = data.replace(/\r?\n/g, "\r");
       if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
@@ -1871,7 +1877,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} />}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onMessages={setChatMessages} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
@@ -2000,6 +2006,8 @@ export function TermView({
           pane={pane.id}
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}
+          messages={chatMessages}
+          onInspect={() => setChatView(false)}
           onSend={sendTerminalLine}
           onSent={() => setChatSent((n) => n + 1)}
         />

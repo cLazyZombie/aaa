@@ -13,7 +13,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
-import type { ChatView } from "./gen/proto";
+import type { ChatMessage, ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
 import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
 import { linkFilePaths } from "./FilePathLink";
@@ -139,10 +139,11 @@ function UserMessage({ text }: { text: string }) {
 }
 
 /** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
-function UserTurn({ text }: { text: string }) {
+function UserTurn({ text, pane, onOpenFile }: { text: string; pane: string; onOpenFile?: (path: string) => void }) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-user">
+      {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
         <UserMessage text={text} />
         <div className="chat-turn-meta">
@@ -152,6 +153,36 @@ function UserTurn({ text }: { text: string }) {
       {note}
     </article>
   );
+}
+
+// 참고 ChatView UserImages·ImageThumb. @는 첨부 표시이고 실제 파일 경로에 속하지 않는다.
+// URL은 같은 pane의 기존 파일 API가 준 capability만 쓴다(머신·file_roots·인증은 그대로).
+const IMAGE_MENTION = /(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi;
+function UserImages({ pane, text, onOpenFile }: { pane: string; text: string; onOpenFile: (path: string) => void }) {
+  const paths = useMemo(() => [...new Set([...text.matchAll(IMAGE_MENTION)].map((m) => m[1]!))], [text]);
+  return paths.length === 0 ? null : <div className="chat-user-images">
+    {paths.map((path) => <ImageThumb key={path} pane={pane} path={path} onOpenFile={onOpenFile} />)}
+  </div>;
+}
+function ImageThumb({ pane, path, onOpenFile }: { pane: string; path: string; onOpenFile: (path: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void call({ op: "pane_file", pane, path }).then((r) => {
+      if (!alive) return;
+      if (r.kind !== "pane_file" || r.info?.kind !== "image" || r.url === null || r.info.size > 20 * 1024 * 1024) {
+        setError("이미지를 표시할 수 없음");
+      } else setUrl(r.url);
+    }).catch((e) => { if (alive) setError(e instanceof Error ? e.message : "이미지를 표시할 수 없음"); });
+    return () => { alive = false; };
+  }, [pane, path]);
+  return <button type="button" className="chat-user-image" aria-label="첨부 그림 확대" title={error ?? path}
+    disabled={url === null || error !== null} data-state={error ? "error" : url ? "ready" : "loading"}
+    onClick={(e) => { e.currentTarget.focus({ preventScroll: true }); onOpenFile(path); }}>
+    {url && !error ? <img src={url} alt={path.split(/[\\/]/).at(-1)} loading="lazy" onError={() => setError("이미지를 표시할 수 없음")} />
+      : <span role="status">{error ?? "그림 여는 중…"}</span>}
+  </button>;
 }
 
 /** 답: 카드 없이 Markdown, 그 아래 마크다운·일반 텍스트 복사(참고 `chat-agent-meta`) */
@@ -181,12 +212,14 @@ export function ChatPanel({
   status,
   readNow = 0,
   onOpenFile,
+  onMessages,
 }: {
   pane: string;
   status?: AgentStatus;
   readNow?: number;
   /** 글 속 파일 경로를 연다(조작 기기만) */
   onOpenFile?: (path: string) => void;
+  onMessages?: (messages: ChatMessage[]) => void;
 }) {
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +244,7 @@ export function ChatPanel({
         if (!alive) return;
         if (r.kind === "chat") {
           setChat(r);
+          onMessages?.(r.messages);
           setError(null);
         }
       } catch (e) {
@@ -230,7 +264,7 @@ export function ChatPanel({
       refresh.setPushes(false);
       setPushes(false);
     };
-  }, [pane, showThinking, refresh]);
+  }, [pane, showThinking, refresh, onMessages]);
   // 처음·보낸 뒤·턴 시작과 끝은 읽기를 끊지 않고 바로 읽는다(읽는 곳은 위 effect가 먼저 둔다)
   useEffect(() => {
     refresh.refresh();
@@ -264,7 +298,7 @@ export function ChatPanel({
             m.role === "thinking" ? (
               <ThinkingRow key={i} text={m.text} />
             ) : m.role === "user" ? (
-              <UserTurn key={i} text={m.text} />
+              <UserTurn key={i} text={m.text} pane={pane} onOpenFile={onOpenFile} />
             ) : m.role === "assistant" ? (
               <AgentTurn key={i} text={m.text} />
             ) : (
