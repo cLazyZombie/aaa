@@ -1916,9 +1916,11 @@ fn mouse_like_herdr() {
 fn osc52_copy_reports_a_request() {
     let mut lab = Lab::new();
     let (h, _) = start(&mut lab);
-    h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    h.ok(&["tab", "create", "--machine", "labA", "--label", "copy", "--", "/bin/sh"]);
     // SSH 경로는 시스템 clipboard에 닿지 않는다.
     let mut tui = Tui::start_env(&h, &[("SSH_TTY", "/dev/test-terminal")]);
+    // 다른 TUI 입력 시험과 같이 host layout을 그린 첫 화면을 기다린다(출력 Condvar 사건).
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["copy"] && s.contains(" · copy labA"));
     tui.type_line("echo copy-$((42))");
     let at = tui.wait_find("copy-42");
     tui.mouse(0, at, false);
