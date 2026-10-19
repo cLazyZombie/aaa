@@ -34,7 +34,7 @@
 | `workspaceOrder.ts` | `placeBlock`(줄을 이웃 앞·뒤에 놓은 차례)만: `src/lib/workspaceOrder.ts`에서. herdr로 보내는 `workspaceMoves`는 없다(순서는 host 공유 설정 `paneOrder`, plan §8.196) |
 | `tokens.css` | 디자인 token: 색(기본 amber, 밝음, charcoal·catppuccin 팔레트)·글자·크기·움직임·밀도. `src/styles.css` 18~494줄 그대로(plan §8.71) |
 | `primitives.css` | 공용 조각 `visually-hidden`·`icon-button`·`btn`·`badge`. `src/styles.css` 549~561·981~1116·1149~1205줄 그대로 |
-| `Sidebar.css`·`AgentSidebar.css`·`Machines.css` | 왼쪽 목록(머신 묶음·줄·상태 칸·Agents 구역·바닥 줄). `src/components/` 것 그대로. aaa 마크업은 `web/src/Sidebar.tsx` |
+| `Sidebar.css`·`Machines.css` | 왼쪽 목록(머신 묶음·줄·상태 칸·바닥 줄). `src/components/` 것 그대로. aaa 마크업은 `web/src/Sidebar.tsx`. Agents 구역의 `AgentSidebar.css`는 에이전트 패널을 「작업」 트리로 합치며 뺐다(plan §8.280) |
 | `phone.ts` | `src/lib/phone.ts`의 세 함수 그대로: `isLoopbackHost`, `deviceLabel`(pairing 기기 이름 「iPhone · Safari」), `takePairCode`(QR 주소의 `?pair=`를 읽고 바로 지움). plan §8.81 |
 | `clipboard.ts` | `src/lib/clipboard.ts` 그대로: `copyText`(clipboard API가 없으면 copy 명령, 그래도 안 되면 고르기) |
 | `QrCode.tsx`·`QrCode.css` | `src/components/QrCode.*` 그대로: QR을 inline SVG로(`qrcode-generator` 2.0.4, MIT). 설정 → 폰·기기 |

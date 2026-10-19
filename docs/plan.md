@@ -5518,3 +5518,11 @@ primary 근거:
 - 조회 머신은 routine machine으로 선택한다. 생략하면 host 등록 repo 우선, 없으면 유일한 repo 머신이다. GitHub CI 감시는 host 머신 agent 기본을 유지한다. [Git runbook](git-watch.md)과 [시험](testing.md)의 Git 감시를 따른다. 운영 파일 전환은 배포 뒤 coordinator가 맡는다.
 
 - L2 검토 수리: 꺼진 CI/Git 정의와 삭제한 프로젝트의 오래된 watch deadline을 source 활성 callback으로 제거한다. 지난 예약 때문에 ticker가 즉시 반복될 수 있는 경계를 실제 설정 전환 keeper의 RED로 확인했다. 활성 source의 주기/판정은 유지한다.
+
+### 8.280 「프로젝트」·「에이전트」 패널을 「작업」 트리로 합친다(10-19, t-0429 S3a)
+
+- **결정.** 사용자 결정 10-19 「429는 추천대로」의 1·2·3번: 활동 막대의 「프로젝트」·「에이전트」 두 패널은 같은 agent pane을 두 번 보였다. 이를 안 A(작업 공간 트리) 「작업」 하나로 합친다. 막대는 작업·머신·특수 셋이며, 임무 thread와 그 pane은 특수 패널에만 둔다. 프로젝트 층 제거(S0~S4)의 첫 단계이며 host·wire·저장 이름은 바꾸지 않는다.
+- **트리.** 참고 herdr-web-ui `AgentSidebar`의 저장소 폴더와 herdr-projects `sidebar.rs`의 thread 줄을 따른다. 프로젝트 안은 coordinator 줄 → 작업 공간 폴더(§8.260 `ThreadView.repo` 마지막 폴더 이름, 이름순, 「작업 폴더」 끝) → 폴더 안 thread 줄이다. 그 뒤로 thread에 딸리지 않은 pane의 「기타」(사람이 옮긴 paneOrder)가 온다. 저장소를 아는 thread가 없으면(옛 host) 폴더 없이 「thread n」 머리줄이다. 프로젝트가 하나면 프로젝트 머리 없이 그린다. 여럿 남아 있는 동안은 지금 프로젝트 머리 안에 폴더를 넣고, 폴더 자식 줄을 8px 더 들인다.
+- **에이전트 패널에서 옮긴 것.** thread 줄 ⋯ 메뉴의 고정·고정 해제(열쇠는 그 agent pane의 `machine:pane`이라 예전 고정을 이어받는다)와 줄 끝 배경 작업 수·계획 n/m을 옮겼다. 설정 「Agents 정렬」은 「폴더 안 정렬」(상태순·활동순)이 되어 목록·이전/다음 단축키·팔레트가 같은 차례(`rosterRows`)를 탄다. 폴더 접힘은 `aaa:workspace-collapsed:<이름>`이며 예전 `aaa:agent-folder-collapsed:<이름>`을 읽는다. 저장된 패널 `projects`·`agents`는 `work`로 읽는다.
+- **배지.** 「작업」 배지는 예전 두 배지의 합집합이다. 확인 필요·검토 대기 thread에 더해, 그 밖에 답을 기다리는 agent pane(연결됨·평가자·임무 pane 아님)을 센다. 단축키·팔레트·알림이 연 줄이 트리에 있으면 「작업」 패널을 드러낸다.
+- **검증.** [testing](testing.md)의 「작업」 패널 통합을 따른다. 데스크톱·휴대폰 화면은 thread library에 남긴다. CSS `AgentSidebar.css`·`.agents-panel` 규칙은 지웠다.

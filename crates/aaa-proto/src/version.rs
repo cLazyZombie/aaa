@@ -96,7 +96,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 6 };
 // 같은 1.43에 웹 터미널 `submit.steer`(웹 입력창 Ctrl+Enter, plan §8.239 후속)를 더한다. 옛 host는 그 칸을 버려 보통 보내기(Enter)다.
 // 1.44: thread 작업 요약(`thread_summary`·`thread_summary_set`, ThreadView.summary, plan §8.259). 1.43이 배포돼 올린다(1.43 front는
 // 새 칸을 버리고, 옛 host는 새 요청을 모르는 요청으로 거절한다: 웹은 그때 요약 단추에 오류를 보인다).
-// 같은 1.44에 ThreadView.repo(thread 저장소 경로, 선택, plan §8.260)를 더한다. 옛 host는 생략해 웹 에이전트 패널이 폴더 없이
+// 같은 1.44에 ThreadView.repo(thread 저장소 경로, 선택, plan §8.260)를 더한다. 옛 host는 생략해 웹 목록(지금 「작업」 트리)이 폴더 없이
 // 그리고, 옛 front는 버린다.
 // 같은 1.44에 로컬 DebugInput과 입력 진단 사건·submit trace/meta를 더한다. 웹은 host와 함께 갱신된다.
 // 같은 1.44에 ThreadView.limited_until_ms(사용량 한도가 풀리는 때, 선택, plan §8.267)를 더한다. 옛 host는 생략해 웹이 한도를

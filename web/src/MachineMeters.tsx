@@ -17,7 +17,7 @@ function Meter({ stat, icon: Icon, value, bar, title }: { stat: string; icon: Lu
   );
 }
 
-/** 에이전트 패널과 같은 기준으로 센 그 머신의 agent(일하는 중·답 기다림 포함) */
+/** 그 머신에서 도는 agent(일하는 중·답 기다림 포함, Sidebar `machineAgents`) */
 export type MachineAgents = { count: number; working: number; waiting: number };
 
 /** 머리줄 오른쪽(+ 앞) agent·CPU·MEM */

@@ -630,50 +630,7 @@ export default async function ({ ctl, page }) {
     for (const n of ["h1", "h2"]) aaa("pane", "kill", n);
   });
 
-  await step("Agents 정렬(herdr-web-ui AgentSidebar `byActivity`·sidebarOrder.ts `activityOrder`, 차이 목록 L8): 기본은 머신 목록 차례, 설정 「에이전트 정렬」 활동순이면 질문이 먼저·그다음 최근 바뀐 agent, 일을 시키면 위로, 공유 설정이라 다른 기기도 같은 차례", async () => {
-    // 차례대로 띄우고 상태마다 기다린다(상태가 바뀐 시각이 차례다): o1 쉼(입력을 받으면 작업 중) → o2 작업 중 → o3 질문
-    const run = (label, script) => aaa("tab", "create", "--machine", "labA", "--label", label, "--", claudeSh, "-c", script);
-    const status = (pg, name, value) => pg.getByTestId(`agent-${name}`).and(pg.locator(`[data-status="${value}"]`)).waitFor();
-    run("o1", `stty -echo; ${claudeIdle}; read a; ${claudeWorking}; exec cat > /dev/null`);
-    await status(page, "o1", "idle");
-    run("o2", `stty -echo; ${claudeWorking}; exec cat > /dev/null`);
-    await status(page, "o2", "working");
-    run("o3", `stty -echo; ${claudeAsk("make o3")}; exec cat > /dev/null`);
-    await status(page, "o3", "blocked");
-    const order = (pg) =>
-      pg.evaluate(() =>
-        [...document.querySelectorAll('[data-testid="agents"] [data-testid^="agent-row-"]')].map((b) => b.dataset.testid.slice(10)).filter((n) => /^o\d$/.test(n)),
-      );
-    const orderIs = async (pg, what, want) => {
-      let last = null;
-      await until(what, async () => JSON.stringify((last = await order(pg))) === JSON.stringify(want)).catch((e) => {
-        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
-      });
-    };
-    await orderIs(page, "기본은 머신 목록 차례", ["o1", "o2", "o3"]);
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
-    await orderIs(other.page, "다른 기기도 머신 목록 차례", ["o1", "o2", "o3"]);
-    const d = await openSettings(page, "모양");
-    await d.getByRole("group", { name: "에이전트 정렬" }).getByRole("button", { name: "활동순" }).click();
-    await page.keyboard.press("Escape");
-    await d.waitFor({ state: "detached" });
-    await orderIs(page, "활동순: 질문, 그다음 최근", ["o3", "o2", "o1"]);
-    // 쉬던 o1에 일을 시키면 질문 다음으로 오른다
-    await inList(page, "pane-o1");
-    await until("o1 화면", async () => (await screenText(page)).includes("? for shortcuts"));
-    await page.getByTestId("terminal").click();
-    await page.keyboard.press("Enter");
-    await status(page, "o1", "working");
-    await orderIs(page, "일을 시킨 o1이 위로", ["o3", "o1", "o2"]);
-    // 공유 설정: 다른 기기도 활동순으로 같은 차례
-    await orderIs(other.page, "다른 기기도 활동순", ["o3", "o1", "o2"]);
-    await shot(page, "desktop-agents-activity");
-    if (other.errors.length) throw new Error(other.errors.join("; "));
-    await other.page.context().close();
-    for (const n of ["o1", "o2", "o3"]) aaa("pane", "kill", n);
-  });
-
-  await step("계획 n/m·배경 작업 수(herdr-web-ui AgentSidebar `PlanBadge`·`BackgroundBadge`, 차이 목록 S5): agent가 Claude 기록의 TaskCreate·TaskUpdate와 배경 명령·배경 하위 agent를 읽어 Agents 줄에 보이고, 끝남 알림이 오면 배경 수가 준다", async () => {
+  await step("계획 n/m·배경 작업 수(herdr-web-ui AgentSidebar `PlanBadge`·`BackgroundBadge`, 차이 목록 S5): agent가 Claude 기록의 TaskCreate·TaskUpdate와 배경 명령·배경 하위 agent를 읽어 「작업」 트리 줄 첫 줄 끝에 보이고(plan §8.280), 끝남 알림이 오면 배경 수가 준다", async () => {
     const dir = `${root}/claude/projects/-lab-plan`;
     fs.mkdirSync(dir, { recursive: true });
     const tr = `${dir}/p1.jsonl`;
@@ -696,13 +653,13 @@ export default async function ({ ctl, page }) {
         call("b1", "Bash", { command: "cargo test", run_in_background: true }) + answer("b1", "Command running in background with ID: bg1", { backgroundTaskId: "bg1" }) +
         call("a1", "Agent", { description: "찾기", run_in_background: true }) + answer("a1", "Async agent launched successfully.", { status: "async_launched", agentId: "ag1" }),
     );
-    const row = page.getByTestId("agent-row-plan1");
+    const row = page.getByTestId("pane-plan1");
     const plan = row.getByTestId("plan-progress");
     // count() 다음 innerText() 사이에 배지가 사라지면 Playwright가 그 배지를 30초 다시 기다린다.
     // 한 DOM 읽기에서 값·부재를 함께 보고 MutationObserver 사건으로 끝낸다.
     const textIs = async (id, what, want) => {
       await domIs(page, what, ([id, want]) => {
-        const el = document.querySelector(`[data-testid="agent-row-plan1"] [data-testid="${id}"]`);
+        const el = document.querySelector(`[data-testid="pane-plan1"] [data-testid="${id}"]`);
         return (el?.textContent ?? null) === want;
       }, [id, want]).catch((e) => {
         const agent = aaa("pane", "list").panes.find((p) => p.name === "plan1")?.agent;
@@ -777,7 +734,7 @@ export default async function ({ ctl, page }) {
     // 2) 그 일이 끝났다(알림): Claude가 이어 갈 동안(유예)은 그대로 BG
     fs.appendFileSync(tr, L({ type: "queue-operation", operation: "enqueue", timestamp: at(), content: "<task-notification>\n<task-id>bg1</task-id>\n<tool-use-id>b1</tool-use-id>\n<status>completed</status>\n<summary>끝</summary>\n</task-notification>" }));
     await until("배경 없음", () => agent()?.background == null);
-    await page.getByTestId("agent-row-bgw1").getByTestId("background-tasks").waitFor({ state: "detached" });
+    await page.getByTestId("pane-bgw1").getByTestId("background-tasks").waitFor({ state: "detached" });
     await is("waiting", "일이 끝나도 유예 동안 BG");
     // 3) 다음 턴(작업 중)이 끝나면 BG가 아니다(이 화면이 그 pane을 보는지에 따라 끝남·쉼)
     const t2 = Date.now();
