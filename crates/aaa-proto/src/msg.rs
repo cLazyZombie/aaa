@@ -1067,6 +1067,17 @@ pub struct MachineHealth {
     /// 1분 평균 부하 ×100과 CPU 수
     pub load_x100: Option<u32>,
     pub cpus: u32,
+    /// 직전 표본부터의 CPU 사용률(0~100, 모든 코어 평균). 옛 agent는 보내지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cpu_pct: Option<u8>,
+    /// 사용 메모리와 전체 바이트. 사용 = macOS 앱(internal−purgeable)+wired+압축, Linux 전체−MemAvailable, Windows 전체−ullAvailPhys
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub mem_used_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub mem_total_bytes: Option<u64>,
     /// 전원에 연결됐는가(배터리가 없는 머신은 true, 알 수 없으면 None)
     pub on_ac: Option<bool>,
     pub toolchain: Vec<ToolCheck>,
