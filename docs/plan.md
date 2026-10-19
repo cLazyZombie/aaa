@@ -5701,3 +5701,29 @@ primary 근거:
 - **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
 
 - **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
+
+### 8.243 외부 푸시는 해당 프로젝트 coordinator 사용자 post만(10-19, t-0395)
+
+- **사용자 결정.** 앱 안 알림은 thread 보고·상태·확인창·세션·머신 사건을 계속 보인다. 외부 Web Push와 webhook은
+  host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다. thread의 `[완료]`·`[확인 필요]` 표지는
+  앱 안 알림과 coordinator 판단의 근거다. 시스템 사건도 coordinator가 inbox로 받고 사람이 필요할 때 post로 알린다.
+  §8.223의 오류·머신 외부 알림 유지와 §8.226의 thread 보고 요약 푸시를 이 결정으로 대체한다.
+- **출처 경계.** Front의 peer PID로 판정한 actor pane과 host 정본 `coordinator_project`를 배포와 공통으로 확인한다.
+  thread/adopt·임무·임의 pane·다른 프로젝트 coordinator·웹·밖 CLI는 외부 푸시 출처가 아니다. post에는 host 판정인
+  `verified = coordinator-pane`과 세션을 저장한다. 기존 `front-control`은 조작 권한만 뜻하며 푸시 권한이 아니다.
+  일반 inbox 발행은 외부 알림 대기열을 건드리지 않고, post 저장 뒤 검증한 봉투로만 대기열에 넣는다.
+- **두 의도.** `user --request --needs-user --topic user-action`은 「확인 필요」,
+  `user --notice --topic task-complete`은 「전체 완료」다. 그 외 post는 앱 안에 남는다.
+  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다. debounce·done 제거·프로젝트 mute·기기별
+  input/done·쓰는 화면 억제·실패 시 재전송 없음도 유지한다.
+- **설정.** `[notify].kinds`의 기존 기본값·옛 이름 변환은 호환성을 위해 유지한다. `post`를 빼면 외부 알림을 끄며,
+  다른 종류를 추가해도 위 출처 범위를 넓힐 수 없다. 앱 안 알림의 기존 `thread-state` 선택은 유지한다. `post`의 유무는 thread 앱 안 알림을 바꾸지 않는다.
+- **참고 대조.** herdr-projects 0.2.35 `src/notify.rs::Notifier::send`는 coordinator의 herdr socket을 전달 경로로 쓰지만
+  thread·오류 사건을 외부 알림으로 보낸다. herdr-web-ui `aa624cb`의 `server/push.ts::onStatus/onEnded`도 pane 상태가
+  푸시 원인이며 inUse·기기 설정으로 거른다. t3code `4b1024da`의 `packages/provider-core/src/server/notification.ts`는
+  subagent·command·monitor·delegated_task 출처를 구조화하고, `docs/user/mobile-notifications.md`는 agent 완료·실패·승인·입력
+  사건의 모바일 전달을 설명한다. 출처를 host에서 정하고 앱 알림과 전달 정책을 나누는 점은 따르되, coordinator post만
+  푸시하는 범위는 이번 사용자 결정이라 세 참고와 다르게 둔다.
+- **확인.** 기존 report 전이 시험이 완료·사람 필요 표지의 inbox 유지와 외부 대기열 비움을 함께 본다. post 시험은
+  올바른 coordinator 두 의도와 위장·다른 프로젝트·웹·밖 CLI·다른 topic을 비교한다. 실제 CLI webhook과 웹 푸시
+  E2E는 coordinator pane의 자식 CLI로 발송하고 thread 앱 안 알림이 별개로 유지되는지 확인한다.

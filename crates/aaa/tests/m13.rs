@@ -2155,12 +2155,8 @@ fn big_inbox_lists_within_frame() {
 ///   세션 항목 없이 「resolved」 한 건이다(알림 없음, t-0334 결함 7).
 #[test]
 fn thread_state_items_follow_groups() {
-    let (port, rx) = webhook_server(false);
-    // brief 뒤 작업 중으로 치는 창(기본 15초)을 줄인다: 보고 없는 B·D의 쉼이 그만큼 늦다. A(진행 보고)는 첫 보고가 brief를
-    // 받았다는 표시라 이 창을 쓰지 않는다. 창 자체는 aaa-host `a_just_delivered_brief_is_working_until_a_report_or_a_tick`
-    let mut w = world_with(&format!(
-        "tick_secs = 1\ndelivered_working_secs = 5\n[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 1\n"
-    ));
+    // brief 뒤 작업 중으로 치는 창만 줄인다. 외부 푸시 분리는 notify_webhook과 host 대기열 시험이 본다.
+    let mut w = world_with("tick_secs = 1\ndelivered_working_secs = 5\n");
     w.add_remote();
     let items = |w: &World| -> Vec<Value> {
         w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone()
@@ -2174,19 +2170,6 @@ fn thread_state_items_follow_groups() {
             || format!("inbox: {:?}\nthread: {}", items(w), w.show(id)),
         )
     };
-    // 받은 알림 항목(대상, 사건)
-    let mut pushed: Vec<(String, String)> = Vec::new();
-    let wait_push = |id: &str, event: &str, pushed: &mut Vec<(String, String)>| {
-        let want = (id.to_string(), event.to_string());
-        while !pushed.contains(&want) {
-            let (_, body) = rx.recv_timeout(T).unwrap_or_else(|_| panic!("{id} {event} 알림: 받은 것 {pushed:?}"));
-            let v: Value = serde_json::from_str(&body).unwrap();
-            for i in v["items"].as_array().unwrap() {
-                pushed.push((i["subject"].as_str().unwrap().into(), i["event"].as_str().unwrap().into()));
-            }
-        }
-    };
-
     let start = |machine: &str, profile: &str, task: &str| -> (String, String) {
         let v = w.start(&[
             "--title",
@@ -2218,11 +2201,9 @@ fn thread_state_items_follow_groups() {
     });
     let done = v["report_hash"].as_str().unwrap().to_string();
     wait_item(&w, &a, "new report");
-    wait_push(&a, "new report", &mut pushed);
     // B: pane이 닫히면 확인 필요
     w.h.ok(&["pane", "kill", &b_pane]);
     wait_item(&w, &b, "pane closed");
-    wait_push(&b, "pane closed", &mut pushed);
     // A: 확인하면 쉼, 끝내면 resolved
     w.h.ok(&["thread", "ack", "demo", &a]);
     wait_item(&w, &a, "idle");
@@ -2283,9 +2264,6 @@ fn thread_state_items_follow_groups() {
             && closed.2.contains(&format!("aaa thread restart demo {b}")),
         "{closed:?}"
     );
-    // 알림: 사람이 할 일만 나간다(쉼·resolved는 inbox에만). 알림은 차례대로 오므로, 중간 보고에 항목이 생겼다면 끝낸 보고
-    // 알림보다 먼저(또는 함께) 받았다. 마지막 알림 뒤에 생긴 항목(쉼·resolved)은 알릴 것이 아니다.
-    assert_eq!(pushed, [(a.clone(), "new report".to_string()), (b.clone(), "pane closed".to_string())]);
 }
 
 /// 앱 안 알림(plan §8.185): 보는 화면 없이 끝난 턴은 host가 front에 「끝남」을 알린다(herdr `Finished`). thread pane의 끝남은
@@ -3505,95 +3483,85 @@ fn webhook_server(ok_first_only: bool) -> (u16, std::sync::mpsc::Receiver<(Strin
     (port, rx)
 }
 
-/// 알림 webhook(§8.7): 사람이 볼 항목을 debounce 동안 모아 프로젝트마다 한 통 보내고, 실패하면 다시 보내지 않는다.
+/// 실제 coordinator pane의 자식 CLI를 쓴다. 자기 신고 env나 바깥 Front 호출로 coordinator를 흉내 내지 않는다.
+fn coordinator_user_posts(w: &World, numbers: &[u32]) {
+    let pane = w.h.ok(&["project", "open", "demo", "--profile", "fake"])["pane"]["id"].as_str().unwrap().to_string();
+    w.wait_screen(&pane, "fake>");
+    let n = numbers[0];
+    let out = w.lab.root.join(format!("notify-{n}.jsonl"));
+    let mut script = String::new();
+    for n in numbers {
+        let body = w.task(&format!("notify-{n}.txt"), &format!("본문 {n}"));
+        script.push_str(&format!("'{}' --json post demo user --notice --topic task-complete --title '전체 완료' --post-id '{n:032x}' --body-file '{}' >> '{}' 2>&1\n", lab::BIN, body, out.display()));
+    }
+    script.push_str(&format!("echo notify-{n}-done\n"));
+    let path = w.task(&format!("notify-{n}.sh"), &script);
+    w.h.ok(&["pane", "run", &pane, &format!("post-probe {path}")]);
+    w.h.wait_output(&pane, &format!("notify-{n}-done"), T);
+    let results = std::fs::read_to_string(out).unwrap();
+    for line in results.lines() {
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(v["state"], "accepted", "{results}");
+    }
+    assert_eq!(results.lines().count(), numbers.len());
+}
+
+/// 외부 webhook은 coordinator 사용자 post만 모으고 실패를 재전송하지 않는다. thread 보고는 inbox에 유지한다.
 #[test]
 fn notify_webhook() {
-    // 두 번째 요청부터는 실패를 돌려준다
     let (port, rx) = webhook_server(true);
-    // 옛 종류 이름(report)도 thread 항목(thread-state)으로 읽는다(plan §8.85)
     let w = world_with(&format!(
-        "[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 2\nkinds = [\"report\", \"session\"]\n"
+        "[notify]\nwebhook = \"http://127.0.0.1:{port}/hook\"\ndebounce_secs = 2\nkinds = [\"report\", \"session\", \"post\"]\n[post]\nburst = 100\nhourly = 100\ndaily = 100\n"
     ));
-    let ids: Vec<String> = ["n1", "n2"]
-        .iter()
-        .map(|n| {
-            w.start(&[
-                "--title",
-                n,
-                "--profile",
-                "fake",
-                "--kind",
-                "dir",
-                "--task-file",
-                &w.task(&format!("{n}.txt"), "x"),
-            ])["id"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        })
-        .collect();
-    // 두 보고가 debounce 안에 오면 한 통이다. 항목은 만든 차례(id 끝 번호)다. 두 thread가 보고하는 차례는 시작 차례와
-    // 다를 수 있다(부하가 크면 뒤에 띄운 thread가 brief를 먼저 받는다)
-    let (line, body) = rx.recv_timeout(T).expect("알림");
+    let t = w.start(&[
+        "--title",
+        "thread 보고",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("report.txt", "x"),
+    ]);
+    let id = t["id"].as_str().unwrap();
+    w.wait_show("보고 회수", id, |v| v["report_hash"].is_string());
+    w.h.ticks(1);
+    assert!(
+        w.h.ok(&["inbox", "list", "demo", "--peek"])["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["subject"] == id && i["event"] == "new report")
+    );
+    coordinator_user_posts(&w, &[1, 2]);
+    let (line, body) = rx.recv_timeout(T).expect("coordinator 알림");
     assert_eq!(line, "POST /hook HTTP/1.1");
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["project"], "demo");
-    // 항목은 들어온 순서(notify batch), 곧 inbox 항목을 만든 차례(id 끝 번호)다
     let items = v["items"].as_array().unwrap();
-    let mut got: Vec<_> =
-        items.iter().map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap())).collect();
-    let first = got[0].0;
-    got.sort();
-    assert_eq!(got, [(ids[0].as_str(), "new report"), (ids[1].as_str(), "new report")], "{body}");
-    let made: Vec<u64> =
-        items.iter().map(|i| i["id"].as_str().unwrap().rsplit('-').next().unwrap().parse().unwrap()).collect();
-    assert!(made[0] < made[1], "{body}");
-    // 글은 웹 push와 같은 꼴: 제목은 프로젝트 이름만, 줄마다 「thread 사건 · thread 제목」(영어 사건을 붙이지 않는다, plan §8.209)
-    let text = v["text"].as_str().unwrap();
-    assert!(text.starts_with(&format!("demo\n- {first} 맡긴 일 끝 · n")), "{body}");
-    assert!(text.contains("\n- t-0001 맡긴 일 끝 · n1") && text.contains("\n- t-0002 맡긴 일 끝 · n2"), "{body}");
+    assert_eq!(items.len(), 2, "thread 보고를 외부로 보냈다: {body}");
+    assert!(
+        items.iter().all(|i| i["kind"] == "post" && i["subject"] == "coordinator" && i["event"] == "post completed"),
+        "{body}"
+    );
+    assert_eq!(v["text"], "demo\n- coordinator 맡긴 일 완료\n- coordinator 맡긴 일 완료");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
-    // 보고 없이 쉬던 thread의 세션이 끝나면 확인 필요(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
-    // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
-    let n3 =
-        w.start(&["--title", "n3", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("n3.txt", "noreport")]);
-    let (n3, pane3) = (n3["id"].as_str().unwrap().to_string(), n3["pane"].as_str().unwrap().to_string());
-    w.wait_screen(&pane3, "done");
-    w.h.ok(&["pane", "kill", &pane3]);
-    let (_, body) = rx.recv_timeout(T).expect("pane closed 알림");
-    let v: Value = serde_json::from_str(&body).unwrap();
-    let got: Vec<_> = v["items"].as_array().unwrap().iter().map(|i| i["event"].as_str().unwrap()).collect();
-    assert_eq!(got, ["pane closed"], "{body}");
-    assert_eq!(v["items"][0]["subject"], n3.as_str(), "{body}");
-    // 한 thread면 제목이 그 thread이고 줄은 사건만이다
-    assert_eq!(v["text"], "demo · n3\n- pane 닫힘", "{body}");
+    coordinator_user_posts(&w, &[3]);
+    let (_, failed) = rx.recv_timeout(T).expect("실패할 알림");
+    let failed: Value = serde_json::from_str(&failed).unwrap();
+    assert_eq!(failed["items"].as_array().unwrap().len(), 1);
     wait_for("notify_failed", T, || w.kinds(0).contains(&"notify_failed".to_string()).then_some(()));
-    // 실패한 알림을 다시 보내지 않는다: 다음 알림(n4 pane closed)을 일으키면 받은 다음 요청에 그 항목만 있다. 다시 보냈다면
-    // 실패한 항목이 그보다 먼저(따로 또는 같은 묶음으로) 온다(알림은 한 줄로 차례대로 보낸다, notify.rs `start_notifier`)
-    let n4 =
-        w.start(&["--title", "n4", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("n4.txt", "noreport")]);
-    let (n4, pane4) = (n4["id"].as_str().unwrap().to_string(), n4["pane"].as_str().unwrap().to_string());
-    w.wait_screen(&pane4, "done");
-    w.h.ok(&["pane", "kill", &pane4]);
-    let (_, body) = rx.recv_timeout(T).expect("n4 pane closed 알림");
-    let v: Value = serde_json::from_str(&body).unwrap();
-    let got: Vec<_> = v["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|i| (i["subject"].as_str().unwrap(), i["event"].as_str().unwrap()))
-        .collect();
-    assert_eq!(got, [(n4.as_str(), "pane closed")], "실패한 알림을 다시 보냈다: {body}");
-    let failed = w.h.ok(&["events", "demo"])["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["kind"] == "notify_failed")
-        .unwrap()
-        .clone();
-    assert_eq!(failed["detail"], "HTTP 500");
-    // 주소(비밀값이 들어갈 수 있다)는 기록에 남지 않는다
-    assert!(!w.h.ok(&["events", "demo"]).to_string().contains("/hook"));
+    // 뒤따르는 알림이 울타리다. 실패를 다시 보냈다면 그 항목이 먼저 온다.
+    coordinator_user_posts(&w, &[4]);
+    let (_, next) = rx.recv_timeout(T).expect("다음 알림");
+    let next: Value = serde_json::from_str(&next).unwrap();
+    assert_eq!(next["items"].as_array().unwrap().len(), 1);
+    assert_ne!(next["items"][0]["id"], failed["items"][0]["id"], "실패한 알림을 다시 보냈다");
+    let events = w.h.ok(&["events", "demo"]);
+    assert!(
+        events["events"].as_array().unwrap().iter().any(|e| e["kind"] == "notify_failed" && e["detail"] == "HTTP 500")
+    );
+    assert!(!events.to_string().contains("/hook"));
 }
 
 /// 머신 건강(§8.10): 디스크 부족·toolchain 실패면 새 세션을 거부하고 inbox에 남긴다. 고치고 다시 띄우면 풀린다.
@@ -4923,14 +4891,19 @@ esac
         cmd.envs(service_env);
         cmd
     });
-    wait_for("원격 사본 agent 연결", T, || {
-        if !w.lab.log("agentB-copy").contains("host에 연결했다") {
+    // 새 프로세스의 연결 로그와 host 상태를 함께 본다. 원격만 기다리면 로컬 agent가 아직 시작도 하지 않아
+    // 곧바로 여는 coordinator가 AgentDisconnected로 실패할 수 있다.
+    wait_for("로컬·원격 사본 agent 연결", T, || {
+        if !w.lab.log("agentA").contains("host에 연결했다") || !w.lab.log("agentB-copy").contains("host에 연결했다")
+        {
             return None;
         }
-        w.h.json(&["machine", "list"])
-            .ok()
-            .and_then(|v| v["machines"].as_array().cloned())
-            .and_then(|v| v.into_iter().find(|m| m["name"] == "labB" && m["connection"] == "connected"))
+        let v = w.h.json(&["machine", "list"]).ok()?;
+        let machines = v["machines"].as_array()?;
+        ["labA", "labB"]
+            .iter()
+            .all(|name| machines.iter().any(|m| m["name"] == *name && m["connection"] == "connected"))
+            .then_some(())
     });
     let coordinator = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
     let pane = coordinator["pane"]["id"].as_str().unwrap().to_string();
@@ -5080,7 +5053,9 @@ esac
     });
     w.lab.kill("agentA");
     w.lab.spawn("agentA-restored", &w.h, &["agent", "--host", "local", "--name", "labA"]);
-    wait_for("coordinator agent 재연결", T, || w.h.connected("labA").then_some(()));
+    wait_for("coordinator agent 재연결", T, || {
+        (w.lab.log("agentA-restored").contains("host에 연결했다") && w.h.connected("labA")).then_some(())
+    });
     assert_eq!(w.h.pane(&pane)["pid"], pid, "coordinator 프로세스가 바뀌었다");
     let (rc, out, err) =
         probe(&w, &pane, &mut probe_number, &format!("update status {rollback_id} --machine labB --wait"));
