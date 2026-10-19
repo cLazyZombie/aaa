@@ -206,16 +206,37 @@ impl MissionRun {
         }
     }
 }
-pub(crate) fn safe_profile(mut p: aaa_proto::ResolvedProfile) -> aaa_proto::ResolvedProfile {
+pub(crate) fn safe_profile(
+    mut p: aaa_proto::ResolvedProfile,
+    project_dir: &std::path::Path,
+) -> aaa_proto::ResolvedProfile {
+    // agent가 자기 작업 폴더·실행 파일 경로와 합쳐 실행별 허용 목록을 만든다. 일반 thread에는 보내지 않는다.
+    p.env.insert("AAA_MISSION_PROJECT_DIR".into(), project_dir.to_string_lossy().into());
     let pairs: &[(&str, &str)] = match p.harness.as_str() {
         "claude" => &[("--permission-mode", "default")],
         "codex" => &[("--ask-for-approval", "on-request"), ("--sandbox", "workspace-write")],
         _ => &[],
     };
     for (flag, value) in pairs {
-        if !p.args.iter().any(|s| s == flag || s.starts_with(&format!("{flag}="))) {
-            p.args.extend([flag.to_string(), value.to_string()]);
+        // 기존 profile에 acceptEdits 등이 있어도 임무의 기본 승인 모드를 우선한다.
+        let alias = if *flag == "--ask-for-approval" {
+            "-a"
+        } else if *flag == "--sandbox" {
+            "-s"
+        } else {
+            flag
+        };
+        let mut i = 0;
+        while i < p.args.len() {
+            if p.args[i] == *flag || p.args[i] == *alias {
+                p.args.drain(i..(i + 2).min(p.args.len()));
+            } else if p.args[i].starts_with(&format!("{flag}=")) || p.args[i].starts_with(&format!("{alias}=")) {
+                p.args.remove(i);
+            } else {
+                i += 1;
+            }
         }
+        p.args.extend([flag.to_string(), value.to_string()]);
     }
     p
 }
@@ -616,7 +637,7 @@ impl Host {
     fn validate_mission_profile(&self, p: &str, m: &Mission) -> Result<String, ErrorBody> {
         self.check_profile_allowed(p, &m.def.profile)?;
         let mid = self.resolve_machine(m.def.machine.as_deref())?;
-        let profile = self.resolved_profile(Some(p), &mid, &m.def.profile)?;
+        let profile = self.resolved_mission_profile(p, &mid, &m.def.profile)?;
         let unsafe_args = profile.args.iter().chain(profile.command.iter()).any(|s| {
             s.contains("dangerously")
                 || s == "--yolo"
@@ -624,7 +645,7 @@ impl Host {
                 || s == "never"
                 || s.ends_with("=never")
         });
-        if self.safety(p).yolo || unsafe_args {
+        if unsafe_args {
             return Err(err(ErrorCode::Forbidden, "임무는 권한 확인을 켠 profile을 쓴다"));
         }
         if profile.harness == "codex" && m.def.reset_after_wakes != 1 {

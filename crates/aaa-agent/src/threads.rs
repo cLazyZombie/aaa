@@ -370,10 +370,15 @@ pub(crate) fn with_hooks(
     work_dir: &Path,
     command_len: usize,
 ) -> Result<Launch> {
+    let project = launch.env.iter().find(|(k, _)| k == "AAA_MISSION_PROJECT_DIR").map(|(_, v)| PathBuf::from(v));
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
-        std::fs::write(&settings, serde_json::to_vec_pretty(&crate::hooks::claude_settings(&cfg.exe))?)?;
+        let mut value = crate::hooks::claude_settings(&cfg.exe);
+        if let Some(project) = &project {
+            mission_permissions::claude(&mut value, &cfg.exe, work_dir, project);
+        }
+        std::fs::write(&settings, serde_json::to_vec_pretty(&value)?)?;
         let s = settings.to_string_lossy().to_string();
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
             argv.insert(command_len, s.clone());
@@ -381,6 +386,9 @@ pub(crate) fn with_hooks(
         }
     }
     if launch.harness == "codex" {
+        if project.is_some() {
+            mission_permissions::codex(&mut launch, &cfg.exe, work_dir)?;
+        }
         // 전역 hook도 pane의 env·peer 계보에서 돌아야 한다. 사용자 notify는 그대로 둔다.
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
             ensure_codex_local(argv, command_len);
@@ -388,6 +396,9 @@ pub(crate) fn with_hooks(
     }
     Ok(launch)
 }
+
+#[path = "mission_permissions.rs"]
+mod mission_permissions;
 
 /// 공유 daemon은 pane의 AAA 환경·peer 계보를 잃는다(§8.2). resume 앞의 전역 옵션으로 준다.
 pub(crate) fn ensure_codex_local(argv: &mut Vec<String>, command_len: usize) {
@@ -979,6 +990,112 @@ pub fn mission_state_write(work_dir: &str, rel: &str, offset: u64, data: &[u8], 
 #[cfg(test)]
 mod mission_tests {
     use super::*;
+
+    /// 실행별 권한 계약: 임무만 보고·post·자료 읽기·자기 폴더 쓰기를 허용한다.
+    #[test]
+    fn mission_launch_scopes_permissions_for_both_harnesses() {
+        let root = std::env::temp_dir().join(format!("aaa-mission-policy-{}", aaa_common::util::new_id()));
+        let work = root.join("repo/.aaa/demo-t-0001");
+        let project = root.join("projects/demo");
+        std::fs::create_dir_all(&work).unwrap();
+        let cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
+        for harness in ["claude", "codex"] {
+            let mut profile = aaa_proto::ResolvedProfile {
+                harness: harness.into(),
+                model: String::new(),
+                effort: String::new(),
+                args: vec![],
+                command: vec![std::env::current_exe().unwrap().to_string_lossy().into_owned()],
+                env: [("AAA_MISSION_PROJECT_DIR".into(), project.to_string_lossy().into())].into(),
+            };
+            let previous = Launch {
+                profile: "watch".into(),
+                harness: harness.into(),
+                argv: vec![],
+                env: vec![],
+                resume_argv: vec![],
+                session_key: None,
+            };
+            let launch =
+                rebrief(&cfg, work.to_str().unwrap(), "임무", previous, Some("watch"), None, Some(&profile)).unwrap();
+            if harness == "claude" {
+                let settings: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
+                let allow = settings["permissions"]["allow"].as_array().expect("임무 허용 목록");
+                assert!(allow.contains(&serde_json::json!("Bash(aaa report *)")));
+                assert!(allow.contains(&serde_json::json!("Bash(aaa post coordinator *)")));
+                let path = work.to_string_lossy().replace('\\', "/");
+                assert!(allow.contains(&serde_json::json!(format!("Edit(//{}/**)", path.trim_start_matches('/')))));
+                assert!(!allow.contains(&serde_json::json!("Bash")));
+                assert!(!allow.contains(&serde_json::json!("Edit")));
+                assert!(
+                    settings["permissions"]["additionalDirectories"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&serde_json::json!(project.join("threads")))
+                );
+                assert!(settings["hooks"]["SessionStart"].is_array());
+            } else {
+                for argv in [&launch.argv, &launch.resume_argv] {
+                    assert!(argv.contains(&"default_permissions=\"aaa_mission\"".into()), "{argv:?}");
+                    assert!(!argv.contains(&"--sandbox".into()));
+                    let policy =
+                        argv.iter().find_map(|a| a.strip_prefix("permissions.aaa_mission=")).expect("임무 sandbox");
+                    let policy: toml::Value = toml::from_str(&format!("policy={policy}")).unwrap();
+                    assert_eq!(policy["policy"]["filesystem"][work.to_str().unwrap()].as_str(), Some("write"));
+                    assert_eq!(policy["policy"]["filesystem"]["/"].as_str(), Some("read"));
+                    assert_eq!(policy["policy"]["network"]["enabled"].as_bool(), Some(false));
+                }
+                let rules = std::fs::read_to_string(work.join(".codex/rules/aaa-mission.rules")).unwrap();
+                assert!(rules.contains(r#"["aaa","report"]"#));
+                assert!(rules.contains(r#"["aaa","post","coordinator"]"#));
+                assert!(!rules.contains("push"));
+            }
+            profile.env.clear();
+            let normal =
+                rebrief(&cfg, work.to_str().unwrap(), "일반 작업", launch, Some("normal"), None, Some(&profile))
+                    .unwrap();
+            assert!(!normal.argv.iter().any(|a| a.starts_with("default_permissions=")));
+            if harness == "claude" {
+                let settings: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
+                assert!(settings.get("permissions").is_none(), "일반 thread에 임무 허용 목록을 주지 않는다");
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mission_settings_do_not_write_through_links() {
+        let root = std::env::temp_dir().join(format!("aaa-mission-links-{}", aaa_common::util::new_id()));
+        let work = root.join("work");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
+        let launch = Launch {
+            profile: "watch".into(),
+            harness: "codex".into(),
+            argv: vec!["codex".into()],
+            env: vec![("AAA_MISSION_PROJECT_DIR".into(), outside.to_string_lossy().into())],
+            resume_argv: vec!["codex".into(), "resume".into()],
+            session_key: None,
+        };
+        std::os::unix::fs::symlink(&outside, work.join(".codex")).unwrap();
+        assert!(with_hooks(&cfg, launch.clone(), &work, 1).is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        std::fs::remove_file(work.join(".codex")).unwrap();
+        with_hooks(&cfg, launch.clone(), &work, 1).unwrap();
+        let original = outside.join("config.toml");
+        std::fs::write(&original, "원래 파일").unwrap();
+        let target = work.join(".codex/config.toml");
+        std::fs::remove_file(&target).unwrap();
+        std::fs::hard_link(&original, &target).unwrap();
+        with_hooks(&cfg, launch, &work, 1).unwrap();
+        assert_eq!(std::fs::read_to_string(original).unwrap(), "원래 파일");
+        std::fs::remove_dir_all(root).unwrap();
+    }
     use sha2::Digest;
     #[test]
     fn mission_inbox_counts_processed_and_state_transfer_is_exact() {

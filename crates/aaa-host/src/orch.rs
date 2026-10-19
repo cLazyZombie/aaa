@@ -1074,6 +1074,17 @@ impl Host {
         self.resolve_launch(mid, name, safety)
     }
 
+    /// 특수 임무는 프로젝트의 yolo를 상속하지 않는다. profile 자체의 위험 인자는 임무 검증에서 거부한다.
+    pub(crate) fn resolved_mission_profile(
+        &self,
+        project: &str,
+        mid: &str,
+        name: &str,
+    ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
+        let s = self.safety(project);
+        self.resolve_launch(mid, name, Some((self.default_thread_profile(project), s.thread_agent_args, false)))
+    }
+
     /// coordinator(`project open`, plan §8.180): safety의 coordinator 몫(참고 `Safety::launch_args`의 Role::Coordinator) —
     /// 프로젝트 기본 coordinator profile과 같은 harness의 기본 profile에 `coordinator_agent_args`, yolo면 권한 건너뛰기
     pub(crate) fn resolved_coordinator_profile(
@@ -1258,8 +1269,13 @@ impl Host {
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
-        let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
-        let resolved_profile = Some(if mission.is_some() { crate::mission::safe_profile(profile) } else { profile });
+        let profile = if mission.is_some() {
+            self.resolved_mission_profile(&a.project, &mid, &a.profile)?
+        } else {
+            self.resolved_profile(Some(&a.project), &mid, &a.profile)?
+        };
+        let resolved_profile =
+            Some(if mission.is_some() { crate::mission::safe_profile(profile, &dir) } else { profile });
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
@@ -1498,8 +1514,12 @@ impl Host {
             if profile.is_none() && !rec.profile.is_empty() {
                 self.check_profile_allowed(project, &rec.profile)?;
             }
-            let p = self.resolved_profile(Some(project), &rec.machine_id, &rec.profile)?;
-            let resolved_profile = Some(if rec.mission.is_some() { crate::mission::safe_profile(p) } else { p });
+            let p = if rec.mission.is_some() {
+                self.resolved_mission_profile(project, &rec.machine_id, &rec.profile)?
+            } else {
+                self.resolved_profile(Some(project), &rec.machine_id, &rec.profile)?
+            };
+            let resolved_profile = Some(if rec.mission.is_some() { crate::mission::safe_profile(p, &dir) } else { p });
             let brief = self.brief(&dir, &rec, &task, true);
             self.db.audit(actor, "thread_restart", &format!("{project}/{id} 자리부터{profile_note}"));
             self.place_and_launch(&conn, &mut rec, brief, resolved_profile, actor).await?;
@@ -1538,8 +1558,12 @@ impl Host {
             // 새 대화는 host 정본과 지금 safety를 다시 읽는다. --resume은 위의 저장된 launch를 쓴다.
             let again = profile.clone().unwrap_or_else(|| rec.profile.clone());
             self.check_profile_allowed(project, &again)?;
-            let p = self.resolved_profile(Some(project), &rec.machine_id, &again)?;
-            let resolved_profile = Some(if rec.mission.is_some() { crate::mission::safe_profile(p) } else { p });
+            let p = if rec.mission.is_some() {
+                self.resolved_mission_profile(project, &rec.machine_id, &again)?
+            } else {
+                self.resolved_profile(Some(project), &rec.machine_id, &again)?
+            };
+            let resolved_profile = Some(if rec.mission.is_some() { crate::mission::safe_profile(p, &dir) } else { p });
             let safety = None;
             let relaunched = match conn
                 .request(AgentRequest::ThreadRebrief {
