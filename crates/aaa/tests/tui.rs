@@ -1937,21 +1937,27 @@ fn side_list_like_web() {
     tui.wait_screen("제목 전체 렌더", title_ready);
     shot(&tui, "panel-title-full");
     tui.send(b"TITLE-LEAK\x1b[200~PASTE-LEAK\x1b[201~");
+    let title_closed = |s: &Screen| {
+        !s.text().contains("제목 전체 · esc 닫기")
+            && s.text().contains(" NAVIGATE ")
+            && s.selected().is_some_and(|(_, row)| row.contains(&long_id))
+            && s.cells[25][7] != '└'
+            && s.cells[25][82] != '┘'
+    };
     tui.send(b"\x1b");
-    tui.wait_text("제목만 닫힘", |s| !s.contains("제목 전체 · esc 닫기") && s.contains(" NAVIGATE "));
-    assert!(tui.selected().unwrap().1.contains(&long_id));
+    tui.wait_screen("제목만 닫히고 선택 복원", title_closed);
     // 미리 보기 누름과 목록 오른쪽 누름은 같은 읽기 창이다.
     let preview_y = tui.text().lines().position(|l| l.contains("선택 제목")).unwrap();
     tui.click((preview_y, SIDE as usize + 1));
     tui.wait_screen("미리 보기 누름", title_ready);
     tui.send(b"\x1b");
-    tui.wait_text("다시 목록", |s| !s.contains("제목 전체 · esc 닫기"));
+    tui.wait_screen("다시 목록", title_closed);
     let row = tui.selected().unwrap().0;
     tui.mouse(2, (row, 10), false);
     tui.mouse(2, (row, 10), true);
     tui.wait_screen("목록 오른쪽 누름", title_ready);
     tui.send(b"\x1b");
-    tui.wait_text("제목 창 닫음", |s| !s.contains("제목 전체 · esc 닫기"));
+    tui.wait_screen("제목 창 닫음", title_closed);
     tui.send(b"\x1b");
     tui.wait_text("제목 탐색 끝", |s| !s.contains(" NAVIGATE "));
     tui.type_line("TITLE-BARRIER");
