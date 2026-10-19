@@ -5648,16 +5648,17 @@ primary 근거:
 - **최신 main 통합의 fixture 경계.** t-0383의 Codex 제목 `-c` 옵션이 뒤에 추가되어 마지막 두 argv를 읽던 E2E 가짜가 옵션을 모드·기록 파일로 오인했다. fixture 인자를 명시적 `--` 뒤에 두고 그 경계에서 읽어 harness 옵션 추가와 분리한다. 실제 Ctrl+Enter bytes·시한·기대값은 유지하며 실패 로그를 보존했다.
 
 - **후속: 줄바꿈 없이 steering만(10-19, t-0393).** 사용자 「control+enter 줄바꿈은 필수인거야? 스티어링만 남기고 싶어」. 위의 「글이 있거나 모르면 줄바꿈」을 바꾼다. Ctrl+Enter는 어떤 경우에도 줄바꿈을 넣지 않고, 줄바꿈은 Shift+Enter만이다. 입력 상자를 판정하지 못하면 아무것도 보내지 않는다. 글이 있을 때는 그 글을 steering으로 보내는 각 harness의 정식 키를 쓰고, 그런 키가 없으면 보내지 않는다. 판정은 `ctrl_enter.rs::ctrl_enter_keys` 한 곳이고 웹·TUI가 함께 쓴다. wire는 그대로이고 1.43 아래 뜻만 바뀐다.
-  - **Claude Code(설치본 2.1.303 바인딩).** `ctrl+x ctrl+s`와 Claude 자신의 `ctrl+enter`는 모두 `chat:sendNow`다. 글이 있으면 진행 중 턴을 끊고 지금 제출하고, 비었으면 대기 메시지를 지금 보낸다(`ctrl+x enter`는 queueSubmit, `ctrl+s`는 stash). 그래서 detection과 색 사본이 같은 입력 상자를 보일 때만, 빈 입력·회색 추천문·글 모두 Ctrl+X → Ctrl+S다. 상자를 모르면 보내지 않는다.
+  - **정정: 작업 중에만(사용자 결정 10-19 15:1x).** harness pane의 Ctrl+Enter는 host가 아는 그 pane의 agent 상태가 작업 중일 때만 동작한다(목록의 「작업 중」과 같은 값). 쉬거나 상태를 모르면 글이 있어도 보내지 않는다. Claude는 화면에서도 입력 상자 바로 위(6줄 안)의 작업 상태 줄(`esc to interrupt)`로 끝남, herdr claude.toml의 working 표지)이 함께 보여야 한다. Codex는 원래 Working 줄을 화면에서 확인한다. `ctrl+x ctrl+s`와 Claude 자신의 `ctrl+enter`는 모두 `chat:sendNow`다. 글이 있으면 진행 중 턴을 끊고 지금 제출하고, 비었으면 대기 메시지를 지금 보낸다(`ctrl+x enter`는 queueSubmit, `ctrl+s`는 stash). 그래서 작업 중이고 detection과 색 사본이 같은 입력 상자를 보일 때만, 빈 입력·회색 추천문·글 모두 Ctrl+X → Ctrl+S다. 쉬는 중의 sendNow는 그냥 바로 제출이라 steering이 아니므로 보내지 않는다. 상자를 모르면 보내지 않는다.
   - **Codex(rust-v0.163.0).** 작업 중 Enter는 글을 `pending_steers`에 넣는 steer다(`input_submission.rs` 228줄 `render_in_history = !agent_turn_running`, 543줄 push). 쉬는 중 Enter는 새 턴이라 steering이 아니다. Esc는 대기 steer를 즉시 보내고, Tab은 queue다. 그래서 다음처럼 둔다.
     - Working 줄·footer·빈 아래 줄이 확인되고 대기 패널이 있으며, 입력이 비고(색 판정 Empty·커서 시작 칸)이면 Esc.
     - Working 중 글이 있으면(색 판정 Typed) Enter.
     - 쉬는 중, slash·`!` 목록이 footer를 덮은 화면, 패널이 아닌 글이 끼인 화면, 커서가 입력 줄을 벗어난 화면에서는 보내지 않는다.
     - 결과로 작업 중 글을 쓰고 Ctrl+Enter를 두 번 누르면, 첫 번은 steer 대기열에 넣고 둘째(빈 입력 + 대기 패널)는 Esc로 지금 보낸다.
-    - 쉬는 Codex의 글은 보내지 않는다. 쉬는 Claude의 글은 sendNow가 바로 제출한다. 이 비대칭은 각 harness의 정식 키를 따른 결과다.
+    - 쉬는 Codex의 글은 보내지 않는다. 처음에는 쉬는 Claude의 글을 sendNow로 바로 제출했으나(Claude 자체 Ctrl+Enter와 같음) 사용자 정정으로 쉬는 Claude도 보내지 않는다. 두 harness가 같이 「작업 중에만」이다.
   - **front.** 웹 입력줄(보내기 전 글)에 글이 있으면 요청하지 않고 입력줄 아래에 「보내기는 Enter, 줄바꿈은 Shift+Enter」를 띄운다(글은 그대로). 비었으면 같은 요청이다. TUI 인코더는 Ctrl+Enter를 LF로 바꾸지 않는다. Front API 1.43 미만 host에는 보내지 않고 안내를 띄운다. harness가 없는 pane은 기존 Ctrl+Enter 인코딩 그대로다.
   - **검증.** `ctrl_enter.rs` 유닛 3개는 어느 판정에서도 줄바꿈 키가 없음, Claude 두 사본 일치, Codex 작업 중·쉼·패널·글·slash 목록을 본다. E2E 25는 Claude 글·빈·회색 → `\x18\x13`, 모름 → 무송신, Codex 대기 → `\x1b`, 작업 중 글 → `\r`, 쉼·이탈 → 무송신, 웹 입력줄 → 안내와 무전송을 실제 PTY bytes로 본다. 무송신은 같은 연결의 뒤따르는 입력 조각만 닿는지로 판정한다. TUI `ctrl_enter_uses_shared_host_request`와 `tests/tui.rs::modified_enter_uses_agent_newline`(모르는 화면 Ctrl+Enter 무송신, 뒤 글자가 울타리)도 맞췄다.
     결함 넷을 심어 실패를 확인했다. (a) 모름에 Alt+Enter → 유닛 2개·E2E Claude 단계, (b) 웹 입력줄 줄바꿈 → E2E 터치 단계, (c) TUI 옛 host LF → TUI 시험, (d) 쉬는 Codex 글에 Enter → 유닛·E2E Codex 단계.
+    작업 중 정정: 유닛 `ctrl_enter_acts_only_while_the_agent_works`(쉬는 중 글·빈 입력, 상태만 쉼, 화면 작업 줄 없음, 먼 작업 줄, Codex 상태 쉼)와 E2E 25의 쉬는 Claude 탭(`ce-idle`, 빈 입력과 글 모두 무송신). E2E는 감지가 알린 목록 상태(`data-status`)를 사건으로 기다린 뒤 누른다. 결함 (f) 작업 중 조건을 통째로 뺌 → 유닛과 E2E Claude 단계, (g) 화면 작업 줄 확인만 뺌 → 유닛이 잡았다.
 
 ### 8.240 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
 

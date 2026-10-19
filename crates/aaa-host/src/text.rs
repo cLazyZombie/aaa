@@ -63,6 +63,8 @@ impl Host {
         // 아직 상태 사건이 오지 않은 직접 실행 agent도 판정 모름으로 둔다(보내지 않는다).
         let harness = pane.agent.as_ref().map(|a| a.harness.as_str()).or(declared.then_some("unknown"));
         let blocked = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question);
+        // 작업 중에만 steering한다(사용자 10-19 15:1x 정정). 상태 사건이 아직 없으면 모름이라 보내지 않는다
+        let working = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Working);
         let Some(mirror) = pane.mirror.as_mut() else {
             return if harness.is_some() { Vec::new() } else { b"\r".to_vec() };
         };
@@ -79,7 +81,7 @@ impl Host {
         };
         let live =
             if blocked || !mirror.synced || codex_row_elsewhere { String::new() } else { mirror.vt.detection_text() };
-        let keys = crate::ctrl_enter::ctrl_enter_keys(harness, &live, Some(&colors), cursor_home);
+        let keys = crate::ctrl_enter::ctrl_enter_keys(harness, &live, Some(&colors), cursor_home, working);
         let modes = mirror.vt.modes();
         keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect()
     }

@@ -1,5 +1,6 @@
 // Ctrl+Enter: host의 같은 감지 판정을 웹 하드웨어·터치 키가 사용한다. TUI는 PaneCtrlEnter 요청을 공유한다.
 // steering만 하고 줄바꿈은 넣지 않는다(사용자 10-19 「스티어링만 남기고 싶어」, plan §8.239 후속). 줄바꿈은 Shift+Enter다.
+// agent가 작업 중일 때만 동작한다(사용자 10-19 15:1x 정정): 쉬는 Claude·Codex는 글이 있어도 보내지 않는다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
@@ -28,7 +29,8 @@ function draw() {
   else if (mode === 'unknown') screen += '✻ Working… (1s · esc to interrupt)\r\ninput not visible\r\n';
   // Codex 입력 줄(›, 화면 셋째 줄 또는 Working 줄 아래 둘째 줄)에 친 글을 그리고 커서를 글 끝에 둔다
   else if (mode === 'working' || mode === 'idle') screen += (mode === 'working' ? '• Working (2s • esc to interrupt)\r\n' : '') + '› ' + draft + '\r\n\r\n  GPT-6.1 low · /workspace\r\n  ? for shortcuts\r\n';
-  else screen += '────────────────────────\r\n❯ ' + (mode === 'grey' ? '\x1b[2mTry something\x1b[0m' : draft) + '\r\n────────────────────────\r\n  ? for shortcuts\r\n';
+  // Claude 입력 상자. work-로 시작하면 그 위에 작업 상태 줄(감지가 작업 중으로 본다)
+  else screen += (mode.startsWith('work') ? '✻ Working… (1s · esc to interrupt)\r\n\r\n' : '') + '────────────────────────\r\n❯ ' + (mode.endsWith('grey') ? '\x1b[2mTry something\x1b[0m' : draft) + '\r\n────────────────────────\r\n  ? for shortcuts\r\n';
   const at = mode === 'pending' ? '\x1b[5;3H' : mode === 'working' ? '\x1b[3;' + (3 + draft.length) + 'H' : mode === 'idle' ? '\x1b[2;' + (3 + draft.length) + 'H' : '';
   process.stdout.write('\x1b[2J\x1b[H' + screen + at);
 }
@@ -43,15 +45,22 @@ draw();
   await step("Ctrl+Enter 준비: Claude·Codex 감지 화면과 입력 bytes 기록", async () => {
     fs.mkdirSync(directory);
     for (const harness of ["claude", "codex"]) fs.writeFileSync(`${directory}/${harness}`, `#!${process.execPath}\n${program}`, { mode: 0o755 });
-    for (const [name, harness, mode] of [
-      ["ce-empty", "claude", "empty"], ["ce-text", "claude", "empty"],
-      ["ce-grey", "claude", "grey"], ["ce-unknown", "claude", "unknown"], ["ce-codex", "codex", "pending"], ["ce-codex-away", "codex", "pending-away"],
-      ["ce-codex-typed", "codex", "working"], ["ce-codex-idle", "codex", "idle"],
+    // [이름, harness, 화면, 감지가 볼 상태(작업 중 / 쉼)]
+    for (const [name, harness, mode, working] of [
+      ["ce-empty", "claude", "work-empty", true], ["ce-text", "claude", "work-empty", true],
+      ["ce-grey", "claude", "work-grey", true], ["ce-idle", "claude", "empty", false], ["ce-unknown", "claude", "unknown", true],
+      ["ce-codex", "codex", "pending", true], ["ce-codex-away", "codex", "pending-away", true],
+      ["ce-codex-typed", "codex", "working", true], ["ce-codex-idle", "codex", "idle", false],
     ]) {
       aaa("tab", "create", "--machine", "labA", "--label", name, "--cwd", directory, "--", `${directory}/${harness}`, "--", mode, `${directory}/${name}.bytes`);
       await waitOutput(name, "received 0");
       await page.getByTestId(`agent-${name}`).waitFor({ state: "attached" });
       assert.equal(aaa("pane", "list").panes.find(p => p.name === name)?.agent?.harness, harness);
+      // 판정은 host가 아는 agent 상태를 본다: 감지가 그 상태를 알린 뒤에 시험한다(쉼은 「쉼」이거나 「끝남」)
+      await domIs(page, `${name} 상태`, ([name, working]) => {
+        const status = document.querySelector(`[data-testid="agent-${name}"]`)?.dataset.status;
+        return working ? status === "working" : status === "idle" || status === "done";
+      }, [name, working]);
     }
   }, { always: true });
 
@@ -76,7 +85,7 @@ draw();
     await waitOutput(name, `received ${before.length + 1}`);
     assert.equal(received(name).subarray(before.length).toString(), "z");
   };
-  await step("Claude Ctrl+Enter: 글이 있든 비었든 sendNow(Ctrl+X Ctrl+S), 회색 추천문도 같고, 입력 상자를 모르면 보내지 않는다(줄바꿈 없음)", async () => {
+  await step("Claude Ctrl+Enter: 작업 중이면 글이 있든 비었든 sendNow(Ctrl+X Ctrl+S), 회색 추천문도 같고, 쉬는 중(글이 있어도)·입력 상자를 모르면 보내지 않는다(줄바꿈 없음)", async () => {
     await open(page, "ce-text");
     await page.keyboard.type("draft");
     await waitOutput("ce-text", "❯ draft");
@@ -86,6 +95,11 @@ draw();
       await open(page, name);
       await expectKey(page, name, () => page.keyboard.press("Control+Enter"), "\x18\x13");
     }
+    await open(page, "ce-idle");
+    await expectNothing(page, "ce-idle", () => page.keyboard.press("Control+Enter"));
+    await page.keyboard.type("draft");
+    await waitOutput("ce-idle", "❯ zdraft");
+    await expectNothing(page, "ce-idle", () => page.keyboard.press("Control+Enter"));
     await open(page, "ce-unknown");
     await expectNothing(page, "ce-unknown", () => page.keyboard.press("Control+Enter"));
     await shot(page, "ctrl-enter-unknown-desktop");

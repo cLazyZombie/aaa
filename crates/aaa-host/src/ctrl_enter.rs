@@ -3,6 +3,7 @@
 //! 스타일 판독은 기존 herdr-projects 입력 상자 판정기(prompt_box.rs)를 재사용한다.
 //! 바꾼 점(사용자 10-19 「control+enter 줄바꿈은 필수인거야? 스티어링만 남기고 싶어」, plan §8.239 후속): Ctrl+Enter는
 //! steering만 하고 줄바꿈은 넣지 않는다(줄바꿈은 Shift+Enter). 입력 상태를 모르면 아무것도 보내지 않는다.
+//! 정정(사용자 10-19 15:1x): agent가 작업 중일 때만 동작한다. 쉬는 Claude에 글이 있어도 보내지 않는다(쉬는 Codex와 같다).
 //!
 //! MIT License
 //!
@@ -32,10 +33,12 @@ use std::sync::OnceLock;
 
 /// 판정과 키 선택은 host에서 한 번만 한다. 일반 프로그램은 기존 Ctrl+Enter다. 빈 목록이면 보내지 않는다.
 /// `cursor_home`: Codex 커서가 입력 줄 시작 칸에 있다(빈 입력 판정에만 쓴다).
+/// `working`: host가 아는 그 pane의 agent 상태가 작업 중이다(사람이 목록에서 보는 「작업 중」과 같다). 아니거나 모르면 보내지 않는다.
 ///
-/// - Claude Code: 살아 있는 입력 상자가 확인되면 비었든 글이 있든 `chat:sendNow`(Ctrl+X Ctrl+S). 2.1.303 기본 바인딩은
-///   `ctrl+x ctrl+s`·`ctrl+enter`가 모두 sendNow이고, 처리기는 글(붙여넣기 포함)이 있으면 그 글을 지금 보내고(진행 중 턴을 끊는다)
-///   비었으면 대기 메시지를 지금 보낸다. 상자가 없으면(확인창·`/model` 등 다른 화면의 Ctrl+S는 다른 뜻) 보내지 않는다.
+/// - Claude Code: 작업 중이고(상태와 입력 상자 위 `esc to interrupt` 상태 줄이 함께) 살아 있는 입력 상자가 확인되면 비었든 글이
+///   있든 `chat:sendNow`(Ctrl+X Ctrl+S). 2.1.303 기본 바인딩은 `ctrl+x ctrl+s`·`ctrl+enter`가 모두 sendNow이고, 처리기는 글(붙여넣기
+///   포함)이 있으면 그 글을 지금 보내고(진행 중 턴을 끊는다) 비었으면 대기 메시지를 지금 보낸다. 쉬는 중의 sendNow는 그냥 제출이라
+///   steering이 아니므로 보내지 않는다. 상자가 없으면(확인창·`/model` 등 다른 화면의 Ctrl+S는 다른 뜻) 보내지 않는다.
 /// - Codex 0.163: 빈 입력 + 현재 대기 steering 패널이면 Esc(「interrupt and send immediately」). 한 줄 글 + 작업 중이면 Enter:
 ///   작업 중 제출은 `pending_steers`로 가는 정식 steering이다(`chatwidget/input_submission.rs` `render_in_history =
 ///   !agent_turn_running`). 쉬는 중 Enter는 새 턴 제출이라 steering이 아니므로 보내지 않는다. 목록(slash·`!` 등)이 떠
@@ -45,10 +48,12 @@ pub(crate) fn ctrl_enter_keys(
     live: &str,
     colors: Option<&str>,
     cursor_home: bool,
+    working: bool,
 ) -> &'static [&'static str] {
     match harness {
         None => &["ctrl+enter"],
-        Some("claude") if claude_input_live(live, colors) => &["ctrl+x", "ctrl+s"],
+        Some(_) if !working => &[],
+        Some("claude") if claude_working_line(live) && claude_input_live(live, colors) => &["ctrl+x", "ctrl+s"],
         Some("codex") => {
             let draft = colors.map(|ansi| prompt_box::check("codex", ansi));
             match codex_state(live) {
@@ -80,6 +85,19 @@ fn claude_input_live(live: &str, colors: Option<&str>) -> bool {
         return false;
     };
     claude_body(&prompt_box::plain(colors)).as_ref() == Some(&body)
+}
+
+/// 입력 상자 바로 위(대기 메시지 몇 줄을 넘어) Claude 작업 상태 줄 `✻ Working… (1s · esc to interrupt)`이 있다.
+/// herdr claude.toml의 working 표지(`esc to interrupt`)와 같다. 상자를 모르면 false
+fn claude_working_line(live: &str) -> bool {
+    let lines: Vec<&str> = live.lines().map(str::trim_end).collect();
+    let rule = |line: &&str| {
+        let t = line.trim();
+        t.starts_with("───") || (!t.is_empty() && t.chars().all(|c| c == '─'))
+    };
+    let Some(bottom) = lines.iter().rposition(rule) else { return false };
+    let Some(top) = lines[..bottom].iter().rposition(rule) else { return false };
+    lines[top.saturating_sub(6)..top].iter().any(|line| line.trim_end().ends_with("esc to interrupt)"))
 }
 
 const STEERING_HINT: &str =
@@ -131,8 +149,10 @@ fn codex_state(live: &str) -> Option<Codex> {
 mod tests {
     use super::*;
 
-    const EMPTY: &str = "done\n────────────────────\n❯\n────────────────────\nmode\n";
-    const TEXT: &str = "done\n────────────────────\n❯ 한글\n  다음 줄\n────────────────────\nmode\n";
+    // 작업 중인 Claude: 상태 줄 + 입력 상자
+    const EMPTY: &str =
+        "done\n✻ Working… (1s · esc to interrupt)\n\n────────────────────\n❯\n────────────────────\nmode\n";
+    const TEXT: &str = "done\n✻ Working… (1s · esc to interrupt)\n\n────────────────────\n❯ 한글\n  다음 줄\n────────────────────\nmode\n";
     const NONE: &[&str] = &[];
 
     #[test]
@@ -148,18 +168,51 @@ mod tests {
             (Some("unknown"), EMPTY, NONE),
             (Some("codex"), "›\n", NONE),
         ] {
-            assert_eq!(ctrl_enter_keys(harness, screen, Some(screen), true), expected, "{harness:?} {screen:?}");
+            assert_eq!(ctrl_enter_keys(harness, screen, Some(screen), true, true), expected, "{harness:?} {screen:?}");
         }
+        // 일반 프로그램은 상태와 상관없이 그 프로그램의 Ctrl+Enter다
+        assert_eq!(ctrl_enter_keys(None, "", None, false, false), ["ctrl+enter"]);
+    }
+
+    #[test]
+    fn ctrl_enter_acts_only_while_the_agent_works() {
+        let idle_text = TEXT.replace("✻ Working… (1s · esc to interrupt)\n", "");
+        let idle_empty = EMPTY.replace("✻ Working… (1s · esc to interrupt)\n", "");
+        for (screen, working, what) in [
+            // 쉬는 Claude의 글은 sendNow가 그냥 제출한다: 보내지 않는다(쉬는 Codex와 같다)
+            (idle_text.as_str(), false, "쉬는 중 글"),
+            (idle_empty.as_str(), false, "쉬는 중 빈 입력"),
+            // host 상태와 화면이 함께 작업 중이어야 한다(어느 하나라도 모르면 보내지 않는다)
+            (TEXT, false, "상태가 작업 중이 아니다"),
+            (idle_text.as_str(), true, "화면에 작업 줄이 없다"),
+            // 상자 위 몇 줄보다 먼 지난 작업 줄은 지금 것이 아니다
+            (
+                &TEXT.replace(
+                    "✻ Working… (1s · esc to interrupt)\n\n",
+                    "✻ Working… (1s · esc to interrupt)\n1\n2\n3\n4\n5\n6\n",
+                ),
+                true,
+                "먼 작업 줄",
+            ),
+        ] {
+            assert_eq!(ctrl_enter_keys(Some("claude"), screen, Some(screen), true, working), NONE, "{what}");
+        }
+        let pending = codex("›", true, true);
+        assert_eq!(
+            ctrl_enter_keys(Some("codex"), &pending, Some(&pending), true, false),
+            NONE,
+            "Codex도 상태가 작업 중이어야 한다"
+        );
     }
 
     #[test]
     fn claude_needs_the_live_box_in_both_reads() {
         let hint = EMPTY.replace("❯", "❯ Try something");
         let grey = hint.replace("❯ Try something", "❯ \x1b[7mT\x1b[27;2mry something\x1b[0m");
-        assert_eq!(ctrl_enter_keys(Some("claude"), &hint, Some(&grey), true), ["ctrl+x", "ctrl+s"]);
+        assert_eq!(ctrl_enter_keys(Some("claude"), &hint, Some(&grey), true, true), ["ctrl+x", "ctrl+s"]);
         // 색 사본이 없거나 다른 본문이면(지난 상자) 보내지 않는다
         for colors in [None, Some(grey.replace("something", "different"))] {
-            assert_eq!(ctrl_enter_keys(Some("claude"), &hint, colors.as_deref(), true), NONE);
+            assert_eq!(ctrl_enter_keys(Some("claude"), &hint, colors.as_deref(), true, true), NONE);
         }
         // 친 글·붙여넣기·그림 자리표시도 sendNow가 지금 보낸다
         for content in [
@@ -170,7 +223,7 @@ mod tests {
         ] {
             let ansi = EMPTY.replace("❯", &format!("❯ {content}"));
             let live = prompt_box::plain(&ansi);
-            assert_eq!(ctrl_enter_keys(Some("claude"), &live, Some(&ansi), true), ["ctrl+x", "ctrl+s"]);
+            assert_eq!(ctrl_enter_keys(Some("claude"), &live, Some(&ansi), true, true), ["ctrl+x", "ctrl+s"]);
         }
     }
 
@@ -183,15 +236,19 @@ mod tests {
     #[test]
     fn codex_esc_sends_a_pending_steer_now_and_enter_steers_a_typed_draft_while_working() {
         let pending = codex("›", true, true);
-        assert_eq!(ctrl_enter_keys(Some("codex"), &pending, Some(&pending), true), ["esc"]);
-        assert_eq!(ctrl_enter_keys(Some("codex"), &pending, Some(&pending), false), NONE, "커서가 입력 시작이 아니다");
+        assert_eq!(ctrl_enter_keys(Some("codex"), &pending, Some(&pending), true, true), ["esc"]);
+        assert_eq!(
+            ctrl_enter_keys(Some("codex"), &pending, Some(&pending), false, true),
+            NONE,
+            "커서가 입력 시작이 아니다"
+        );
         let live = pending.replace("›\n\n", "› Ask Codex to do anything\n\n");
         let grey = pending.replace("›\n\n", "› \x1b[2mAsk Codex to do anything\x1b[0m\n\n");
-        assert_eq!(ctrl_enter_keys(Some("codex"), &live, Some(&grey), true), ["esc"]);
-        assert_eq!(ctrl_enter_keys(Some("codex"), &live, Some(&live), true), NONE, "자리표시인지 모른다");
+        assert_eq!(ctrl_enter_keys(Some("codex"), &live, Some(&grey), true, true), ["esc"]);
+        assert_eq!(ctrl_enter_keys(Some("codex"), &live, Some(&live), true, true), NONE, "자리표시인지 모른다");
         // 작업 중 한 줄 글: Enter가 pending_steers로 보낸다(대기 패널이 있어도 같다)
         for screen in [codex("› 방향 바꿔", false, true), codex("› 방향 바꿔", true, true)] {
-            assert_eq!(ctrl_enter_keys(Some("codex"), &screen, Some(&screen), false), ["enter"], "{screen}");
+            assert_eq!(ctrl_enter_keys(Some("codex"), &screen, Some(&screen), false, true), ["enter"], "{screen}");
         }
         for screen in [
             // 쉬는 중 Enter는 새 턴 제출이지 steering이 아니다
@@ -208,7 +265,7 @@ mod tests {
             // slash 목록이 footer를 덮으면 Enter는 고르기다
             codex("› /mo", false, true).replace("  ? for shortcuts\n", "  /model  choose what model to use\n"),
         ] {
-            assert_eq!(ctrl_enter_keys(Some("codex"), &screen, Some(&screen), true), NONE, "{screen}");
+            assert_eq!(ctrl_enter_keys(Some("codex"), &screen, Some(&screen), true, true), NONE, "{screen}");
         }
     }
 }

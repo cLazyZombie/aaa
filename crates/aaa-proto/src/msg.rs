@@ -1616,7 +1616,7 @@ pub enum FrontRequest {
         pane: String,
         data: B64,
     },
-    /// 웹·TUI의 Ctrl+Enter. host가 감지 입력줄로 steering 키를 정한다(줄바꿈 없음, 모르면 보내지 않음). 권한·입력 순서는 PaneInput과 같다.
+    /// 웹·TUI의 Ctrl+Enter. host가 감지 입력줄로 steering 키를 정한다(줄바꿈 없음, 작업 중일 때만, 모르면 보내지 않음). 권한·입력 순서는 PaneInput과 같다.
     PaneCtrlEnter {
         pane: String,
     },
