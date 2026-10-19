@@ -1371,6 +1371,7 @@ async fn pane_session(
                         }
                     }
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
+                    Ok(PaneEvent::Clipboard { .. }) => false, // 웹은 원래 PTY 출력의 OSC를 받는다
                     Ok(PaneEvent::State) => {
                         let Some(view) = host.pane_view_of(&id, role) else { break };
                         if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) { break; }

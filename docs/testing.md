@@ -227,3 +227,9 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 실행 파일 사본과 TLS agent에서 기본 차단·사람의 safety 허용/철회·coordinator ID 위장·env를 지운 worker 차단·실제 교체/rollback·host/자기 agent 재시작 뒤 동일 pane PID와 결과 조회를 확인한다. probe는 파일 기록 뒤 고유 출력 표지로 끝낸다. macOS에서는 격리 HOME/PATH의 launchctl 모형으로 typed host/원격 agent restart와 실패의 영구 기록을 확인한다. 운영 launchd에는 닿지 않는다. agent `deploy::tests`는 같은 ID 중복·동시 작업·다른 요청 충돌·중단 복구/실행기 중복 잠금/SHA 불일치를 담당한다. 기존 update E2E가 public release hash·self-check·pin·rename을 계속 소유한다.
 
 배포 실행기 수명 회귀(§8.233): 기존 `jobs_are_durable_once_and_reconcile_only_after_the_executor_releases_its_lock`에서 실제 잠금 File을 `try_clone`해 fork와 같은 잠금 참조를 남긴다. Unix에서는 원본 FD의 close-on-exec도 확인한다. 실행기가 살아 있으면 중복 configure는 실패하고, drop 뒤에는 복제 FD가 살아 있어도 새 실행기가 즉시 잠금과 journal 복구를 맡아야 한다. dup/fork는 같은 flock을 공유하므로 자식·신호·sleep 없이 병렬 spawn의 fork~exec 창을 결정적으로 재현한다. close-on-exec만으로는 exec 전 잠금 참조가 사라지지 않는다.
+
+## TUI pane 앱의 선택 복사
+
+`cargo test -p aaa --test tui`의 `pane_osc52_reaches_front_clipboard`는 pane이 낸 OSC 52를 입력권 TUI의 파일 sink에서 확인하고, 재접속에는 복사하지 않는지 본다. 다른 화면·reader/옛 판의 무복사는 host `clipboard_effect_targets_one_front_before_the_fence`가 실제 전송 큐의 Pong 울타리로 확인한다. `reported_selection_copy_never_interrupts_pane`는 마우스 보고 앱의 일반 끌기 뒤 Ctrl+C가 pane에 `03`으로 새지 않는지 raw 관측기로 확인한다. 시스템 clipboard는 사용하지 않는다. VT의 chunk 분할·잘못된 payload·크기 한도는 `aaa-vt::clipboard_effects_are_live_bounded_and_drained_once`, Windows native UTF-16 왕복은 기존 `AAA_CLIP_NATIVE=1` CI가 맡는다. Windows Terminal 자체가 가로채는 Shift 선택은 headless SGR 입력으로 증명할 수 없으며, [공식 동작](https://learn.microsoft.com/en-us/windows/terminal/selection)과 실제 터미널 확인을 구분한다.
+
+사용자 승인(10-19)에 따라 Windows 본문 복사의 기준은 일반 끌기(OSC 52 → 로컬 native)와 앱 선택 뒤 Ctrl+C(pane 본문 복사, 앱 중단 없음)다. Windows Terminal 자체 Shift+끌기는 플랫폼 제약으로 남긴다.

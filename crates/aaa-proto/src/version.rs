@@ -79,7 +79,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 1.41: ThreadView.report_attention（완료·확인 필요 표지）
 // 1.42: coordinator 배포 safety·작업/확인 API
 // 같은 1.42에 PaneView.coordinator_project(선택 소속)를 더한다. 옛 host는 생략하고 옛 front는 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 42 };
+// 1.43: live pane OSC 52를 입력권 TUI front로 전달(Clipboard 사건).
+pub const FRONT_API: Version = Version { major: 1, minor: 43 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -98,6 +98,7 @@ pub fn typescript_bindings() -> String {
         FrontRequest::decl(&cfg),
         SharedPreferences::decl(&cfg),
         FrontResponse::decl(&cfg),
+        ClipboardOutcome::decl(&cfg),
         FrontEvent::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
