@@ -3,9 +3,6 @@ profile = "cheap"
 machine = "mac-b"
 events = []
 batch_s = 0
-min_gap = "1m"
-max_wakes = 20
-max_minutes = 15
 reset_after_wakes = 3
 withdrawal = "none"
 +++

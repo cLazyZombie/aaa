@@ -56,13 +56,11 @@ pub(super) fn claude(settings: &mut Value, exe: &Path, work: &Path, project: &Pa
     // 기존 임무처럼 프로젝트 루트로 cd한 뒤 threads/...를 읽는 명령도 읽기 범위로 판정한다.
     allow.push(format!("Bash(cd {})", project.display()));
     allow.push(format!("Bash(cd {})", shell_quote(project)));
-    // additionalDirectories는 읽기 범위다. default 모드에서 쓰기는 아래의 자기 폴더 규칙만 허용한다.
+    // 자기 폴더의 추가 허용만 보강한다. 승인·권한 모드는 host의 일반 thread safety를 따른다.
     for tool in ["Read", "Edit", "Write"] {
         allow.push(format!("{tool}(//{}/**)", work.to_string_lossy().replace('\\', "/").trim_start_matches('/')));
     }
     settings["permissions"] = json!({
-        "defaultMode": "default",
-        "disableBypassPermissionsMode": "disable",
         "allow": allow,
         "additionalDirectories": [project.join("threads"), project.join("library"), project.join("missions")],
     });
@@ -73,7 +71,7 @@ fn shell_quote(path: &Path) -> String {
 }
 
 pub(super) fn codex(launch: &mut Launch, exe: &Path, work: &Path, queries: &[Vec<String>]) -> Result<()> {
-    // 이 폴더의 config layer에서만 rules를 읽는다. 자기 폴더 밖 쓰기와 외부 통신은 sandbox가 막는다.
+    // 자기 폴더의 추가 rules만 둔다. sandbox·외부 통신은 일반 thread의 설정을 그대로 따른다.
     let config = work.join(".codex");
     let rules = config.join("rules");
     for dir in [&config, &rules] {
@@ -83,8 +81,7 @@ pub(super) fn codex(launch: &mut Launch, exe: &Path, work: &Path, queries: &[Vec
             std::fs::create_dir(dir)?;
         }
     }
-    let mut policy =
-        String::from("# aaa 특수 임무: 보고·coordinator post·자기 임무 조회·help만 sandbox 밖에서 허용한다.\n");
+    let mut policy = String::from("# aaa 특수 임무의 추가 허용: 보고·coordinator post·자기 임무 조회·help.\n");
     for command in ["aaa".to_string(), exe.to_string_lossy().into_owned()] {
         for args in [vec![&command, "report"], vec![&command, "post", "coordinator"]] {
             policy.push_str(&format!("prefix_rule(pattern={}, decision=\"allow\")\n", serde_json::to_string(&args)?));
@@ -107,20 +104,9 @@ pub(super) fn codex(launch: &mut Launch, exe: &Path, work: &Path, queries: &[Vec
         std::fs::rename(temp, path)?;
     }
     let work = work.to_string_lossy();
-    let config = [
-        "default_permissions=\"aaa_mission\"".to_string(),
-        format!(
-            "permissions.aaa_mission={{filesystem={{\"/\"=\"read\",{}=\"write\"}},network={{enabled=false}}}}",
-            json!(work)
-        ),
-        format!("projects.{}.trust_level=\"trusted\"", json!(work)),
-        "approvals_reviewer=\"user\"".to_string(),
-    ];
+    // 권한·승인 모드는 일반 thread와 같은 host safety 인자를 보존한다.
+    let config = [format!("projects.{}.trust_level=\"trusted\"", json!(work))];
     for argv in [&mut launch.argv, &mut launch.resume_argv] {
-        // host가 넣은 호환 sandbox flag와 named permission profile을 함께 주지 않는다.
-        if let Some(i) = argv.iter().position(|a| a == "--sandbox") {
-            argv.drain(i..(i + 2).min(argv.len()));
-        }
         argv.extend(["--cd".into(), work.to_string()]);
         for item in &config {
             argv.extend(["--config".into(), item.clone()]);

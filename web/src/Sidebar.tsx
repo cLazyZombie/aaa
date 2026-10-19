@@ -1170,7 +1170,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                                 run: () =>
                                   rows.ask({
                                     title: `${m.title} · 임무 승인`,
-                                    body: `첫 시작·repo·예산 올림을 승인한다.\n승인 hash ${m.approval_sha256}\n\n${m.file_text}`,
+                                    body: `첫 시작·repo 추가/변경을 승인한다.\n승인 hash ${m.approval_sha256}\n\n${m.file_text}${m.brief_text ? `\n\nbrief_file\n${m.brief_text}` : ""}`,
                                     action: "승인",
                                     run: async () => {
                                       await call({ op: "mission_approve", project: m.project, name: m.name, approval_sha256: m.approval_sha256 });
@@ -1192,11 +1192,11 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                     lead={t ? <RowMark agent={agent} /> : <span className="sidebar-mark" aria-hidden="true"><CircleDashed /></span>}
                     title={m.title}
                     tone={missionTone(m)}
-                    facts={[missionWord(m), `깨움 ${m.wakes_today}/${m.max_wakes}`, ...(pane ? [] : ["pane 없음"])]}
+                    facts={[missionWord(m), `깨움 ${m.wakes_today}/${m.max_wakes || "무제한"}`, ...(m.apply_wait ? [m.apply_wait] : []), ...(pane ? [] : ["pane 없음"])]}
                     where={t?.machine ?? ""}
                     paneOpen={pane !== undefined}
                     selected={pane !== undefined && selected === `pane:${pane.id}`}
-                    summary={`${m.project} · 일한 분 ${m.work_minutes} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
+                    summary={`${m.project}${m.pending_sha ? ` · 예약 판 ${m.pending_sha}` : ""} · 일한 분 ${m.work_minutes} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
                     open={() => (pane ? onPane(pane.id) : setShow(m))}
                     items={items}
                   />
@@ -1237,7 +1237,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
       {show && (
         <ConfirmDialog
           title={`${show.title} · ${missionWord(show)}`}
-          body={`적용 판 ${show.applied_sha ?? "없음"} · 파일 판 ${show.file_sha ?? "없음"}\n승인 ${show.approved ? "됨" : "필요"}\n다음 reset ${show.next_reset_ms ? new Date(show.next_reset_ms).toLocaleString() : "없음"}\n사용량 대기 ${show.usage_wait_until_ms ? new Date(show.usage_wait_until_ms).toLocaleString() : "없음"}\n\n차이\n${show.diff || "없음"}\n\n적용 사본\n${show.applied_text}\n\n후보 파일\n${show.file_text}${show.error ? `\n오류: ${show.error}` : ""}`}
+          body={`적용 판 ${show.applied_sha ?? "없음"} · 파일 판 ${show.file_sha ?? "없음"}\n승인 ${show.approved ? "됨" : "필요"}\n예약 판 ${show.pending_sha ?? "없음"}\n적용 ${show.apply_wait ?? "후보 판과 적용 판이 같다"}\n다음 reset ${show.next_reset_ms ? new Date(show.next_reset_ms).toLocaleString() : "없음"}\n사용량 대기 ${show.usage_wait_until_ms ? new Date(show.usage_wait_until_ms).toLocaleString() : "없음"}\n\n차이\n${show.diff || "없음"}\n\n적용 사본\n${show.applied_text}${show.applied_brief_text ? `\n\nbrief_file\n${show.applied_brief_text}` : ""}\n\n후보 파일\n${show.file_text}${show.brief_text ? `\n\nbrief_file\n${show.brief_text}` : ""}${show.error ? `\n오류: ${show.error}` : ""}`}
           confirmLabel="확인"
           onConfirm={async () => setShow(null)}
           onClose={() => setShow(null)}

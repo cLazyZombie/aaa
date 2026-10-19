@@ -255,6 +255,9 @@ impl Host {
             .filter(|r| self.live_conn(&r.machine_id).is_ok())
             .collect();
         for r in merged {
+            if self.automation_message_pending(project, &r.id) {
+                continue;
+            }
             let seen = match r.merged_seen_ms {
                 Some(t) => t,
                 None => {

@@ -94,7 +94,7 @@ pub struct HostConfig {
     pub update: UpdateSection,
 }
 
-/// 임무의 host 상한. 프로젝트 파일로 늘릴 수 없다.
+/// 명시한 임무 host 상한. 생략·0은 무제한이고 프로젝트 파일로 늘릴 수 없다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MissionsSection {
@@ -104,7 +104,7 @@ pub struct MissionsSection {
 }
 impl Default for MissionsSection {
     fn default() -> Self {
-        Self { max_running: 2, max_pending: 50, reset_idle_secs: 30 }
+        Self { max_running: 0, max_pending: 0, reset_idle_secs: 30 }
     }
 }
 

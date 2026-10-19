@@ -206,6 +206,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RoutineCmd,
     },
+    /// 자동화 파일의 정본 스키마
+    Automation {
+        #[command(subcommand)]
+        cmd: AutomationCmd,
+    },
     /// 특수 임무 정의·승인·깨움 상태
     Mission {
         #[command(subcommand)]
@@ -480,6 +485,17 @@ enum MissionCmd {
         /// (옛 꼴 `<프로젝트> <대상>`의 대상)
         #[arg(hide = true)]
         legacy: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AutomationCmd {
+    /// 옛 파일을 검증 뒤 TOML로 옮기고 원본은 .converted/에 보존한다
+    Convert { project: Option<String> },
+    /// Rust 정본 타입에서 JSON Schema를 출력한다
+    Schema {
+        #[arg(long)]
+        mission: bool,
     },
 }
 
@@ -1367,6 +1383,10 @@ fn with_cli_stack<T: Send + 'static>(build: impl FnOnce() -> T + Send + 'static)
         .map(|thread| thread.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
 }
 
+fn mission_cap(value: u32) -> String {
+    if value == 0 { "무제한".into() } else { value.to_string() }
+}
+
 pub fn main() -> ExitCode {
     let cli = match with_cli_stack(|| {
         let version: &'static str =
@@ -1485,6 +1505,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
              `aaa thread next <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
+        Cmd::Automation { cmd: AutomationCmd::Convert { project } } => {
+            front(json, FrontRequest::AutomationConvert { project: project_or_here(project)? })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Schema { mission } } => {
+            println!("{}", if mission { aaa_host::mission_schema() } else { aaa_host::automation_schema() });
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Routine { cmd: RoutineCmd::Runs { name, legacy } } => {
             let (project, name) = on_target(name, legacy)?;
             front(json, FrontRequest::RoutineRuns { project, name })
@@ -3090,7 +3117,13 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         let _ = writeln!(
             s,
             "특수 {}: {} · 깨움 {}/{} · 입력 {} · post 처리 {}/{}",
-            m.name, m.state, m.wakes_today, m.max_wakes, m.pending, m.handled_posts, m.posts
+            m.name,
+            m.state,
+            m.wakes_today,
+            mission_cap(m.max_wakes),
+            m.pending,
+            m.handled_posts,
+            m.posts
         );
     }
     if let Some(v) = &c.evaluator {
@@ -3486,7 +3519,7 @@ fn render_front(r: &FrontResponse) -> String {
                     m.title,
                     m.state,
                     m.wakes_today,
-                    m.max_wakes,
+                    mission_cap(m.max_wakes),
                     m.work_minutes,
                     m.handled_posts,
                     m.posts,
@@ -3495,8 +3528,23 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Mission { mission: m } => {
+            if let Some(reason) = &m.apply_wait {
+                let _ = writeln!(
+                    s,
+                    "적용 대기{}: {reason}",
+                    m.pending_sha.as_ref().map(|sha| format!(" · 예약 판 {sha}")).unwrap_or_default()
+                );
+            } else {
+                let _ = writeln!(s, "후보 판과 적용 판이 같다");
+            }
             s.push_str(&format!("차이:\n{}\n", m.diff));
-            s.push_str(&format!("{}/{} · {}\n적용 판: {} · 파일 판: {} · 승인: {}\n오늘 깨움 {}/{} · 일한 분 {} · 묶음 {}바이트 · post 처리 {}/{} · 입력 {}\n다음 reset {:?} · 사용량 대기 {:?}\n\n적용 사본:\n{}\n후보 파일:\n{}",m.project,m.name,m.state,m.applied_sha.as_deref().unwrap_or("없음"),m.file_sha.as_deref().unwrap_or("없음"),m.approved,m.wakes_today,m.max_wakes,m.work_minutes,m.input_bytes,m.handled_posts,m.posts,m.pending,m.next_reset_ms,m.usage_wait_until_ms,m.applied_text,m.file_text));
+            s.push_str(&format!("{}/{} · {}\n적용 판: {} · 파일 판: {} · 승인: {}\n오늘 깨움 {}/{} · 일한 분 {} · 묶음 {}바이트 · post 처리 {}/{} · 입력 {}\n다음 reset {:?} · 사용량 대기 {:?}\n\n적용 사본:\n{}\n후보 파일:\n{}",m.project,m.name,m.state,m.applied_sha.as_deref().unwrap_or("없음"),m.file_sha.as_deref().unwrap_or("없음"),m.approved,m.wakes_today,mission_cap(m.max_wakes),m.work_minutes,m.input_bytes,m.handled_posts,m.posts,m.pending,m.next_reset_ms,m.usage_wait_until_ms,m.applied_text,m.file_text));
+            if !m.applied_brief_text.is_empty() {
+                s.push_str(&format!("\n적용 brief_file:\n{}\n", m.applied_brief_text));
+            }
+            if !m.brief_text.is_empty() {
+                s.push_str(&format!("\n후보 brief_file:\n{}\n", m.brief_text));
+            }
         }
         FrontResponse::Routines { routines } => {
             if routines.is_empty() {
@@ -3536,6 +3584,16 @@ fn render_front(r: &FrontResponse) -> String {
                     r.today,
                     r.origin
                 );
+            }
+        }
+        FrontResponse::AutomationConverted { files } => {
+            if files.is_empty() {
+                s.push_str("변환할 옛 파일이 없다\n");
+            } else {
+                for file in files {
+                    s.push_str(&format!("{file}\n"));
+                }
+                s.push_str("변환 파일과 보존 사본을 coordinator 폴더 git에 한 커밋으로 남긴다.\n");
             }
         }
         FrontResponse::RoutineRuns { runs } => {
@@ -3924,10 +3982,13 @@ fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
                 Ok(FrontResponse::Mission { mission }) => mission,
                 other => return front_print(json, other),
             };
+            let brief =
+                if m.brief_text.is_empty() { String::new() } else { format!("\n\nbrief_file:\n{}", m.brief_text) };
             println!(
-                "임무 {project}/{name}\n{}\n첫 시작·repo·예산 올림 승인 대상 hash {}",
-                m.file_text, m.approval_sha256
+                "임무 {project}/{name}\n{}{}\n첫 시작·repo 추가/변경 승인 대상 hash {}",
+                m.file_text, brief, m.approval_sha256
             );
+
             if crate::person::ask(&format!("승인하려면 임무 이름 {name:?}를 그대로 입력한다: "))? != name
             {
                 anyhow::bail!(

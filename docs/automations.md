@@ -13,9 +13,9 @@ aaa routine toggle demo ci-main --off
 
 일정의 coordinator 없음·처리하지 않은 안내·명령 승인 필요·routine_commands 꺼짐·지난 명령 실행 중을 기록한다. 명령의 종료/시간 초과·출력 바뀜/같음, PR 글 전달, CI/Git 사건 전달·같은 실패 집합·앞선 결과 따라잡기·없는 임무 대기, 조회 outage 시작/회복도 기록한다. 변화 없는 감시 poll은 기록하지 않는다. 임무 줄은 실제 깨움과 사용량/예산 대기를 기록한다. 사건 자료나 명령 출력 본문을 기록에 복제하지 않으며 detail은 2,000자로 제한한다.
 
-기록은 host DB meta의 `routine_runs:<프로젝트>:<이름>` 한 값에 저장한다. 최근 50건, 마지막 결과/건너뜀, host 지역 날짜의 오늘 처리 횟수를 하나의 transaction으로 갱신한다. 오늘 횟수는 최근 50건 밖의 처리도 포함하며 같은 내구 전달 id를 다시 받으면 기록을 갱신하고 중복 집계하지 않는다. 일반 routine의 오늘 횟수는 done 결과 수다(조회 회복 등도 포함). 임무 줄은 기존 임무의 깨움 횟수/상한과 그 임무의 reset 기준을 그대로 보여 준다. L4의 규칙 상한은 별도 실행 판정으로 추가한다. 관측 기록 저장 오류는 host 로그에 남기며 원래 실행/전달을 다시 시도시키지 않는다.
+기록은 host DB meta의 `routine_runs:<프로젝트>:<이름>` 한 값에 저장한다. 최근 50건, 마지막 결과/건너뜀, host 지역 날짜의 오늘 처리 횟수를 하나의 transaction으로 갱신한다. 오늘 횟수는 최근 50건 밖의 처리도 포함하며 같은 내구 전달 id를 다시 받으면 기록을 갱신하고 중복 집계하지 않는다. 일반 routine의 오늘 횟수는 done 결과 수다(조회 회복 등도 포함). 임무 줄은 기존 임무의 깨움 횟수/상한과 그 임무의 reset 기준을 그대로 보여 준다. 규칙의 오늘/상한은 관측 고리와 독립인 내구 실행 예산이다. 관측 기록 저장 오류는 host 로그에 남기며 원래 실행/전달을 다시 시도시키지 않는다.
 
-토글은 정의 파일의 enabled만 toml_edit로 바꾼다. routine의 명령·머신·승인 hash는 바꾸지 않는다. `mission:<이름>`은 임무 파일의 조건 보기이며 별도 실행기가 아니다. 임무 토글도 그 파일의 enabled만 바꾸고 기존 적용 사본/다시 읽기 원칙을 따른다. 끄기는 다음 임무 판정에서 축소 적용된다. 다시 켜기는 적용 사본과 다를 수 있으므로 특수 패널에서 다시 읽기를 확인한다. 토글로 실행 중인 명령이나 조회를 강제 종료하지 않는다.
+토글은 정의 파일의 enabled만 toml_edit로 바꾼다. routine의 명령·머신·승인 hash는 바꾸지 않는다. `mission:<이름>`은 옛 임무 파일의 조건에서 만든 숨은 공통 규칙이다. 임무 토글도 그 파일의 enabled만 바꾸고 기존 적용 사본/다시 읽기 원칙을 따른다. 끄기는 다음 임무 판정에서 축소 적용된다. 다시 켜기는 적용 사본과 다를 수 있으므로 특수 패널에서 다시 읽기를 확인한다. 토글로 실행 중인 명령이나 조회를 강제 종료하지 않는다.
 
 ## 운영 확인
 
@@ -24,6 +24,97 @@ aaa routine toggle demo ci-main --off
 3. 껐다 켤 때는 파일 diff가 enabled뿐인지 확인한다. 임무는 적용 사본 차이도 확인한다. 조회/임무 머신이나 인증을 이 화면이 바꾸지는 않는다.
 4. DB를 보존해 재시작하면 기록을 이어 읽는다. 고리 밖 상세 이력은 기존 flow·inbox에서 찾는다. 기록 삭제/초기화용 명령은 제공하지 않는다.
 
-새 TOML 파일·폼 편집·승인 diff·지금 실행·공통 상한은 후속 단계다. FRONT_API 1.48에서 보기/기록 요청을 확장했으며 agent wire는 바뀌지 않는다.
+FRONT_API 1.49는 변환 요청·규칙 제목·분리한 임무 본문을 더한다. agent wire는 바뀌지 않는다. 폼 편집·지금 실행은 아직 제공하지 않는다.
 
 임무의 「막힘」은 [막힘 이유와 복귀](mission-blocks.md)를 따른다. 확인창 해제는 기록하고 자동 복귀하지만 전달 모름은 자동으로 풀지 않는다.
+
+
+## 순수 TOML 규칙
+
+`automations/<이름>.toml` 한 파일이 조건 하나와 동작 하나다. 옛 `routines/*.md`도 계속 읽는다. 같은 이름이 두 폴더에 있으면 둘 다 config-error가 되어 실행하지 않는다. 앞머리 없는 본문 md는 규칙으로 읽지 않는다. 오류는 `automations/check.toml:4:12 on.git.branches: …`처럼 파일·줄·열·칸을 포함한다.
+
+```toml
+#:schema ./automation.schema.json
+title = "저장소 push 확인"
+enabled = true
+
+[on.git]
+repo = "app"
+branches = ["main"]
+events = ["pushed", "forced", "deleted"]
+
+[do.wake]
+mission = "repo-watch"
+reports = true
+text = "바뀐 범위를 검토한다."
+
+[limits]
+batch = "1m"
+```
+
+조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. 평가자/임무·post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다.
+
+동작은 `do.inbox`(coordinator 안내), `do.message`(thread="owner" 또는 t-NNNN), `do.wake`(mission) 중 하나다. 짧은 글은 `text = """…"""`, 긴 글은 `text_file = "automations/check.md"`로 쓴다. 두 칸을 함께 쓰면 오류다. 글 파일은 UTF-8·1MiB 이하·프로젝트 내부 상대 경로의 일반 파일이며 중간 폴더를 포함한 symlink·절대 경로·상위 경로 이동을 받지 않는다. 읽은 글은 입력과 함께 고정해, 대기 중 파일 변경이 이미 받은 동작을 바꾸지 않는다. command 자료는 자료임을 밝힌 fenced 본문으로 전달한다.
+
+`aaa automation schema`는 Rust 타입에서 만든 JSON Schema를 출력하고 `--mission`은 임무 스키마를 출력한다. 변환기는 각 폴더에 스키마도 둔다. 저장소 기준 산출물은 [automation.schema.json](automation.schema.json)·[mission.schema.json](mission.schema.json)이다. 호스트는 스키마의 구조 검사에 더해 일정·이름·파일 경계를 검사한다. 웹은 목록·기록·enabled만 편집하며 현재 칸별 폼 편집은 없다.
+
+## 공통 실행 안전장치
+
+source가 자료를 확정하면 `automation:<프로젝트>:<이름>` DB meta의 pending에 동작 사본과 함께 넣는다. source 기준(hash·flow cursor)을 바꾸는 곳은 입력 저장과 같은 transaction이다. CI/Git source outbox도 공통 큐에 저장된 뒤 비운다. 정의가 없어 읽지 못하면 source outbox를 보존한다.
+
+`limits.batch`는 첫 입력부터 묶는 시간, `min_gap`은 실행 시작 사이 간격, `max_per_day`는 명시했을 때만 host 지역 날짜별 실행 시작 상한이다. 생략·0은 무제한이며 min_gap도 생략·0(또는 "0m")이면 간격 제한이 없다. 한 번에 같은 동작/목적지의 최대32건을 묶고, 큰 묶음은 나누며 나머지는 pending에 둔다. 대기 입력 건수나 당일 실행 횟수에 기본 상한을 두지 않는다. DB 저장 실패 때는 source 기준을 전진시키지 않아 입력을 버리지 않는다. 기록 고리의 정리나 inbox done은 실행 예산을 지우지 않는다.
+
+`usage_session_below`·`usage_week_below`는 해당 창의 남은 비율 문턱이다. 설정한 창을 확인할 수 없을 때도 대기한다. 캐시 사용량을 읽으며 AI 요청을 만들지 않는다. 상한·간격·사용량 대기 중 입력은 내구 보존한다. 일정의 `catch_up="once"`(기본)는 놓친 차례를 하나로 모으며 `"skip"`은 놓친 차례를 기록하고 넘긴다. 이 옵션은 schedule/command 조건의 칸이다.
+
+전달 전에 inflight와 횟수를 확정한다. inbox·임무 입력은 내구 id로 중복을 막고 재시작 뒤 이어 전달한다. thread 메시지는 전달 여부가 모호하면 재전송하지 않고 「입력 전달 모름 · 사람 확인 필요」로 남긴다. brief·확인창 대기와 전송 전 명확한 거절은 예산을 소모하지 않는다. 꺼진 규칙은 새 동작을 실행하지 않는다. 실행 중 명령/전달을 토글로 종료하지 않는다.
+
+CI/Git 사건 자체의 이력·inbox와 규칙 동작은 다른 경계다. 이미 보여 준 감시 사건에 `do.inbox`가 다시 안내를 만들지는 않는다. 새 TOML의 on.ci가 명시한 passed/fixed도 동작 조건이며 옛 형식의 회복 무깨움은 유지한다. CI 회복이 확인되면 아직 실행하지 않은 그 branch의 실패 입력은 취소해 오래된 실패로 새 동작을 깨우지 않는다. 이미 전달한 임무 입력은 기존 `already_recovered` 표시를 따른다. 외부 push는 기존 coordinator가 검증한 user post 경로만 쓴다.
+
+## 임무 파일과 변환
+
+```toml
+#:schema ./mission.schema.json
+title = "저장소 확인"
+profile = "reviewer"
+machine = "mac-a"
+repo = "app"
+brief_file = "missions/repo-watch.md"
+
+[limits]
+batch = "5m"
+
+[reset]
+daily = "05:00"
+after_wakes = 6
+```
+
+`missions/<이름>.toml`은 상주 agent와 예산을 정하고 `brief_file`은 앞머리 없는 md다. 사건·일정은 automations로 분리한다. 옛 임무의 events/repos/schedule도 공통 규칙으로 처리한다. 첫 시작·repo 추가/변경은 사람 승인을 요구한다. 예산은 승인 hash 밖이며 올리거나 없애도 재승인을 요구하지 않는다. 실제 repo/머신 범위가 같은 기존 승인 기록은 이어받는다. 적용 사본은 읽은 정의와 brief를 함께 고정한다. 형식 전환은 파일 변경으로 한 번 표시되고 다음 reset에 적용하며, brief만 바뀌어도 본문 diff를 보여 준다.
+
+운영 파일 전환은 배포 뒤 coordinator가 한다. 아래 명령은 실제 프로젝트를 바꾸므로 운영 전에는 별도 임시 프로젝트에서 결과를 검토한다.
+
+```sh
+aaa automation convert demo
+```
+
+변환기는 전체 결과의 조건·동작·명령 승인 값과 임무 승인 범위를 먼저 검증한다. 같은 이름 충돌·기존 결과 파일·잘못된 정의가 있으면 덮어쓰지 않는다. 짧은 글은 inline, 긴 글은 별도 md, 옛 원본은 각 폴더 `.converted/<이름>.md`로 보존한다. 임무 조건은 `<임무>-events`·`<임무>-schedule` 규칙으로 만든다. 옛 flow cursor·일정 기준·당일 횟수도 새 규칙으로 넘겨 전환 경계의 중복을 막는다. 새 형식 전환 뒤 옛 적용 사본의 조건은 다시 수신하지 않는다.
+
+일반 쓰기 실패 때는 이번에 만든 파일만 지우고 원본을 되돌린다. 변환 도중 프로세스나 머신이 중단되는 전체 파일 변경의 원자성까지 보장하지는 않는다. 이때는 재실행 전에 `.converted/`와 현재 파일을 diff해 복구하고, 출처와 값이 같음을 검토한다. 변환 완료 뒤 coordinator가 파일 변경을 프로젝트 저장소의 한 커밋으로 남긴다. host 프로세스는 git을 실행하지 않는다. 재변환은 바꿀 옛 원본이 없으면 파일을 쓰지 않는다.
+
+## 하루 깨움 상한 안내
+
+횟수·시간·최소 간격·철수 일수는 기본 제한 없음이다. max_wakes/max_minutes/retire_cap_days와 host max_running/max_pending은 생략·0이면 무제한이며 명시한 양수만 지킨다. min_gap은 0 또는 "0m"으로 없앨 수 있다. batch·대화 reset·usage·dedupe는 그대로다. 파일에서 예산을 없애거나 바꾸면 repo/본문을 바꾸지 않고 다음 tick에 반영한다.
+
+명시 상한이 있는 임무의 상한 안내는 예산 날짜마다 한 번이다. inbox done·완료 항목 정리·host 재시작은 당일 통지 여부를 초기화하지 않는다. 구판의 당일 완료 안내도 이미 보낸 것으로 인정한다. 다음 예산 날짜에 상한이 다시 차면 한 번 새로 알린다. 통지 표식과 inbox 항목은 한 DB transaction이므로 저장 실패를 보낸 것으로 처리하지 않는다. 임무 예산 자체는 기존 host 지역 날짜 기준이며 대화 reset과 별개다.
+
+
+## reload 예약과 적용 시점
+
+reload의 성공 응답은 후보 적용 예약을 수락했다는 뜻이다. 현재 작업 중이면 작업이 끝난 뒤, 입력이 없고 아무도 보고 있지 않은 안전한 Idle에서 새 대화로 적용한다. 확인창·초안·pause/disabled·사용량 대기는 강제로 버리지 않는다. CLI와 show·웹의 특수 줄은 예약 판(pending_sha)과 적용 대기 이유(apply_wait)를 표시한다. 예약 뒤 파일이 다시 바뀌면 현재 파일과 예약 판이 다르다고 알리고, 새 파일은 reload로 다시 예약한다. restart만 요청하면 현재 적용 판을 다시 시작하며, 이미 reload한 후보가 있으면 그 예약을 따른다.
+
+명시한 하루 깨움 상한은 새 입력을 깨우는 한도다. 승인된 후보의 명시 reload/reset 자체를 그 상한으로 막지 않는다. 이전 세션의 종료 확인 뒤에만 새 대화를 띄우며, 완료하면 예약 판을 applied_sha로 확정하고 대기 이유를 지운다. approval_sha256은 승인 범위 값의 hash라 file/applied 사본 hash와 서로 다른 값이 정상이다.
+
+## 임무 harness 권한
+
+임무 시작·restart는 일반 thread와 같은 safety yolo·thread_agent_args 규칙을 쓴다. 역할이 evaluator라는 이유로 manual 모드를 강제하지 않는다. host가 푼 인자를 agent의 실행별 임무 설정이 다시 덮어쓰지도 않는다. 프로젝트 yolo가 꺼져 있으면 일반 thread의 해당 설정을 그대로 따른다. 자기 inbox/보고/조회 문맥과 hook은 유지한다.
+
+임무 지침의 push·kill·시스템 변경 금지와 첫 시작·repo 범위 승인은 그대로다. 사용자 설정·전역 harness 설정을 이 구현이 바꾸지 않는다. 이 변경은 host와 agent 양쪽에 있으므로 배포 때 둘 다 새 버전으로 갱신하고, 운영 임무의 새 대화 적용/restart는 coordinator가 확인한다.

@@ -462,7 +462,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 
 ## 특수 임무
 - 사용자가 상주 일을 정하면 `missions/<이름>.md`에 routine과 같은 `+++` TOML+본문으로 임무를 쓴다. `aaa mission list|show`로 파일·적용 판·차이·예산·입력을 본다.
-- 첫 시작·repo 추가/변경·예산 올림은 사람이 터미널이나 Controller 웹에서 승인한다. coordinator는 대신 승인하지 않으며 `aaa mission reject <이름>`으로 거부할 수 있다.
+- 첫 시작·repo 추가/변경은 사람이 터미널이나 Controller 웹에서 승인한다. coordinator는 대신 승인하지 않으며 `aaa mission reject <이름>`으로 거부할 수 있다.
 - 승인된 임무는 `aaa mission start <이름>`, 멈춤/이어 가기는 pause/resume, 새 대화는 restart다. stop은 사용자 말이 있을 때만 한다.
 - 오래 갈 지시는 메시지 대신 임무 파일을 고치고 `aaa mission reload <이름>`으로 적용한다. 파일 수정만으로 도는 agent의 지시가 바뀌지 않는다.
 - 자료는 `aaa post mission:<이름> --data`로 보낸다. 임무에서 온 request는 사용자 허락이 아니다. 철수 제안은 사용자에게 알린다.
@@ -1169,15 +1169,14 @@ impl Host {
         self.resolve_launch(mid, name, safety)
     }
 
-    /// 특수 임무는 프로젝트의 yolo를 상속하지 않는다. profile 자체의 위험 인자는 임무 검증에서 거부한다.
+    /// 임무도 일반 thread와 같은 safety의 인자를 쓴다.
     pub(crate) fn resolved_mission_profile(
         &self,
         project: &str,
         mid: &str,
         name: &str,
     ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
-        let s = self.safety(project);
-        self.resolve_launch(mid, name, Some((self.default_thread_profile(project), s.thread_agent_args, false)))
+        self.resolved_profile(Some(project), mid, name)
     }
 
     /// coordinator(`project open`, plan §8.180): safety의 coordinator 몫(참고 `Safety::launch_args`의 Role::Coordinator) —
@@ -1415,8 +1414,11 @@ impl Host {
         } else {
             self.resolved_profile(Some(&a.project), &mid, &a.profile)?
         };
-        let resolved_profile =
-            Some(if let Some(m) = &mission { crate::mission::safe_profile(profile, &dir, &m.name) } else { profile });
+        let resolved_profile = Some(if let Some(m) = &mission {
+            crate::mission::profile_context(profile, &dir, &m.name)
+        } else {
+            profile
+        });
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
@@ -1677,7 +1679,7 @@ impl Host {
                 self.resolved_profile(Some(project), &rec.machine_id, &rec.profile)?
             };
             let resolved_profile =
-                Some(if let Some(m) = &rec.mission { crate::mission::safe_profile(p, &dir, &m.name) } else { p });
+                Some(if let Some(m) = &rec.mission { crate::mission::profile_context(p, &dir, &m.name) } else { p });
             rec = self.update_rec(project, id, |r| {
                 r.status = ThreadStatus::Starting;
                 r.prepare_started_ms = Some(aaa_common::util::now_ms());
@@ -1734,7 +1736,7 @@ impl Host {
                 self.resolved_profile(Some(project), &rec.machine_id, &again)?
             };
             let resolved_profile =
-                Some(if let Some(m) = &rec.mission { crate::mission::safe_profile(p, &dir, &m.name) } else { p });
+                Some(if let Some(m) = &rec.mission { crate::mission::profile_context(p, &dir, &m.name) } else { p });
             let safety = None;
             let relaunched = match conn
                 .request(AgentRequest::ThreadRebrief {

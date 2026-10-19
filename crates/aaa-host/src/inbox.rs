@@ -420,6 +420,7 @@ impl Host {
             self.auto_resolve_pass(&p.name).await;
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
+            self.automation_tick(&p.name);
             self.pr_tick(&p.name);
             self.ci_tick(&p.name);
             self.git_tick(&p.name);

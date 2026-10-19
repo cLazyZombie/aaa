@@ -456,6 +456,8 @@ pub enum NoticeKind {
     Finished,
     /// post 남용 한도에 걸린 출처가 음소거됐다. 앱 안에서만 알린다.
     PostMuted,
+    /// 규칙이 명시한 앱 안 안내. 외부 push가 아니다.
+    Automation,
     /// thread의 새 보고(herdr-projects 「review · new report」 알림, host 「new report」 항목과 같은 때)
     Report,
 }
@@ -1009,6 +1011,7 @@ pub struct RoutineRun {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct RoutineView {
+    pub title: String,
     pub name: String,
     pub trigger: String,
     pub action: String,
