@@ -711,7 +711,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
-    // 보고서 안 본 수(활동 막대 배지, plan §8.252): 열 때와 목록이 바뀔 때
+    // 보고서 안 본 수(활동 막대 배지, plan §8.254): 열 때와 목록이 바뀔 때
     let mut send_reports = true;
     let close_revoked = |mut socket: WebSocket| async move {
         let frame = CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE, reason: DEVICE_REVOKED_REASON.into() };

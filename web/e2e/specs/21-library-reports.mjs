@@ -1,6 +1,6 @@
 // 보고서 전체 목록은 CLI로 올린 host 사본·등록 폴더와 같은 정본을 본다. 기존 실험실의 자식 정리만 쓴다.
 import fs from "node:fs";
-import { root, aaa, base, browser, step, pairPage, inList, domIs, shot } from "../lib/harness.mjs";
+import { root, aaa, base, browser, step, pairPage, inList, domIs, until, shot } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
   await step("보고서 전체 목록: publish·실시간·import, 활동 막대 「보고서」가 연 본문 화면(plan §8.240), 데스크톱·휴대폰의 열기·새 창·복사·폐기·새 링크", async () => {
@@ -9,8 +9,9 @@ export default async function ({ page }) {
     const input = `${root}/reports`;
     fs.mkdirSync(input);
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>첫 보고서</h1></html>");
-    const link = aaa("library", "publish", input, "--project", "demo", "--name", "page");
-    const live = aaa("library", "publish", input, "--project", "other", "--name", "design", "--live");
+    // 사용자 보고서(--to-user, plan §8.254)는 「내 보고서」 탭의 카드다. import한 것은 「작업 보고」 탭이다
+    const link = aaa("library", "publish", input, "--project", "demo", "--name", "page", "--to-user");
+    const live = aaa("library", "publish", input, "--project", "other", "--name", "design", "--live", "--to-user");
     const batch = `${root}/batch`;
     fs.mkdirSync(`${batch}/extra`, { recursive: true });
     fs.mkdirSync(`${batch}/page`);
@@ -29,7 +30,7 @@ export default async function ({ page }) {
     const preview = aaa("library", "prune", "--dry-run");
     if (preview.kind !== "library_prune_preview" || preview.candidates.length !== 0 || preview.max_days !== 30 || preview.max_size !== 20 * 1024 ** 3) throw new Error("자동 규칙의 CLI 미리 보기");
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>최신 보고서</h1></html>");
-    aaa("library", "publish", input, "--project", "demo", "--name", "page");
+    aaa("library", "publish", input, "--project", "demo", "--name", "page", "--to-user");
     if (!(await (await fetch(new URL(live.base, base))).text()).includes("최신 보고서")) throw new Error("등록 폴더 변경을 반영하지 않았다");
     await inList(page, "activity-reports");
     const panel = page.getByTestId("reports-panel");
@@ -90,8 +91,103 @@ export default async function ({ page }) {
       await reader.page.getByTestId("report-other-design").waitFor();
       if (await reader.page.getByTestId("library-link").count() !== 0) throw new Error("보기 기기에 공유 링크 조작을 보였다");
       await reader.page.getByTestId("report-other-design").getByRole("button", { name: "새 창", exact: true }).waitFor();
+      if (await reader.page.getByTestId("report-delete").count() !== 0) throw new Error("보기 기기에 지우기를 보였다");
+      await reader.page.getByTestId("reports-tab-work").click();
+      await reader.page.getByTestId("report-demo-extra").waitFor();
+      if (await reader.page.getByTestId("reports-delete").count() !== 0 || await reader.page.locator(".report-pick").count() !== 0) throw new Error("보기 기기에 작업 보고 고르기·지우기를 보였다");
     } finally { await reader.page.context().close(); }
     const prefixed=aaa("library","import",batch,"--project","demo","--prefix","archive-");
     if (!prefixed.reports.some((r) => r.name === "archive-t-0001") || prefixed.skipped.length !== 0) throw new Error("접두사를 붙인 이전 보고서 import");
+  });
+  await step("사용자 보고서(plan §8.254): index.html이 없으면 거부, 막대·탭 안 봄 배지와 알림 post, 열면 봄, 다시 보내면 다시 안 봄, 카드 지우기는 확인 한 번", async () => {
+    const unseen = () => aaa("library", "list").reports.filter((r) => r.unseen).length;
+    const badges = () => page.evaluate(() => [document.querySelector('[data-testid="activity-badge-reports"]')?.textContent ?? null, document.querySelector('[data-testid="reports-unseen"]')?.textContent ?? null]);
+    const badgesAre = (n) => until(`안 봄 배지 ${n}`, async () => { const b = await badges(); return b[0] === (n ? String(n) : null) && b[1] === b[0]; });
+    const plain = `${root}/plain`;
+    fs.mkdirSync(plain);
+    fs.writeFileSync(`${plain}/notes.md`, "웹 보고서가 아니다");
+    let refused = "";
+    try { aaa("library", "publish", plain, "--project", "demo", "--name", "plain", "--to-user"); } catch (e) { refused = e.message; }
+    if (!refused.includes("index.html") || aaa("library", "list").reports.some((r) => r.name === "plain")) throw new Error(`index.html 없는 사용자 보고서: ${refused}`);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByTestId("reports-panel").getByRole("combobox", { name: "보고서 프로젝트" }).selectOption("");
+    await page.getByTestId("reports-tab-mine").click();
+    const before = unseen();
+    await badgesAre(before);
+    const weekly = `${root}/weekly`;
+    fs.mkdirSync(weekly);
+    fs.writeFileSync(`${weekly}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>주간 보고</h1></html>");
+    aaa("library", "publish", weekly, "--project", "demo", "--name", "weekly", "--to-user", "--title", "주간 보고");
+    // 다시 읽기 단추를 누르지 않는다: host `reports` 사건이 막대·탭 배지와 목록을 고친다
+    await badgesAre(before + 1);
+    const card = page.getByTestId("report-demo-weekly");
+    await domIs(page, "새 카드 안 봄", () => document.querySelector('[data-testid="report-demo-weekly"]')?.dataset.unseen === "true");
+    if (!(await card.locator(".report-heading strong").innerText()).includes("주간 보고")) throw new Error(`제목: ${await card.innerText()}`);
+    const label = await page.getByTestId("activity-reports").getAttribute("aria-label");
+    if (label !== `보고서, 안 본 보고서 ${before + 1}`) throw new Error(`막대 단추 이름: ${label}`);
+    const posts = aaa("post", "list", "demo").posts.filter((p) => p.topic === "report");
+    if (!posts.some((p) => p.title === "새 보고서: 주간 보고" && p.to === "user" && p.refs.includes("library/demo/weekly"))) throw new Error(`알림 post: ${JSON.stringify(posts)}`);
+    await shot(page, "reports-mine-unseen");
+    await card.getByRole("button", { name: "열기", exact: true }).click();
+    await page.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "주간 보고" }).waitFor();
+    await page.getByTestId("report-back").click();
+    await badgesAre(before);
+    await domIs(page, "연 카드는 봄", () => document.querySelector('[data-testid="report-demo-weekly"]')?.dataset.unseen === "false");
+    aaa("library", "publish", weekly, "--project", "demo", "--name", "weekly", "--to-user", "--title", "주간 보고");
+    await badgesAre(before + 1);
+    await domIs(page, "다시 보내면 안 봄", () => document.querySelector('[data-testid="report-demo-weekly"]')?.dataset.unseen === "true");
+    // 카드 지우기: 취소하면 남고, 확인 한 번이면 host 사본·링크·목록에서 지운다
+    const shared = aaa("library", "link", "demo", "weekly");
+    if (!fs.existsSync(`${root}/projects/demo/library/weekly/index.html`)) throw new Error("host 사본 자리가 다르다");
+    await card.getByTestId("report-delete").click();
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByRole("button", { name: "취소" }).click();
+    await dialog.waitFor({ state: "detached" });
+    if (!aaa("library", "list").reports.some((r) => r.name === "weekly")) throw new Error("취소했는데 지웠다");
+    await card.getByTestId("report-delete").click();
+    if (!(await dialog.innerText()).includes("demo/weekly")) throw new Error(`확인 창: ${await dialog.innerText()}`);
+    await shot(page, "reports-delete-confirm");
+    await dialog.getByRole("button", { name: "영구히 지우기" }).click();
+    await card.waitFor({ state: "detached" });
+    await badgesAre(before);
+    if (aaa("library", "list").reports.some((r) => r.name === "weekly")) throw new Error("지운 보고서가 목록에 있다");
+    if ((await fetch(new URL(shared.base, base))).status === 200) throw new Error("지운 보고서의 공유 링크가 열린다");
+    if (fs.existsSync(`${root}/projects/demo/library/weekly`)) throw new Error("host 사본이 남았다");
+  });
+
+  await step("작업 보고(plan §8.254): 진행 중 thread의 사본은 고를 수 없고 host도 거부, resolve하면 풀린다, 끝난 것 모두 고르기·확인 한 번으로 모두 지운다", async () => {
+    fs.writeFileSync(`${root}/task-reports.md`, "웹 보기");
+    const t = aaa("thread", "start", "demo", "--title", "보고 정리", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-reports.md`);
+    await until("thread 사본", () => aaa("library", "list", "--project", "demo").reports.some((r) => r.name === t.id));
+    await page.getByTestId("reports-tab-work").click();
+    const row = page.getByTestId(`report-demo-${t.id}`);
+    await domIs(page, "진행 중 사본", (id) => document.querySelector(`[data-testid="report-demo-${id}"]`)?.dataset.busy === "true", t.id);
+    if (!(await row.locator(".report-pick").isDisabled()) || !(await row.innerText()).includes("진행 중")) throw new Error("진행 중 사본을 고를 수 있다");
+    let refused = "";
+    try { aaa("library", "delete", "--project", "demo", t.id, "extra"); } catch (e) { refused = e.message; }
+    if (!refused.includes("끝나지 않은") || !aaa("library", "list").reports.some((r) => r.name === "extra")) throw new Error(`진행 중 사본 지우기: ${refused}`);
+    await page.getByTestId("reports-pick-done").click();
+    await domIs(page, "끝난 것만 고름", (id) => {
+      const rows = [...document.querySelectorAll('[data-testid^="report-"][data-busy]')];
+      return rows.length > 1 && rows.every((r) => r.querySelector(".report-pick").checked === (r.dataset.busy === "false")) && !document.querySelector(`[data-testid="report-demo-${id}"] .report-pick`).checked;
+    }, t.id);
+    await shot(page, "reports-work-picked");
+    aaa("thread", "resolve", "demo", t.id, "--skip-copy");
+    await domIs(page, "resolve하면 풀림", (id) => document.querySelector(`[data-testid="report-demo-${id}"]`)?.dataset.busy === "false", t.id);
+    await row.locator(".report-pick").check();
+    const picked = await page.locator(".report-pick:checked").count();
+    const names = aaa("library", "list").reports.filter((r) => !r.to_user).map((r) => `${r.project}/${r.name}`);
+    if (picked !== names.length) throw new Error(`고른 수 ${picked}, 작업 보고 ${names.length}`);
+    if (!fs.existsSync(`${root}/projects/demo/library/${t.id}`) || !fs.existsSync(`${root}/projects/demo/threads/${t.id}.files.json`)) throw new Error("thread 사본 자리가 다르다");
+    await page.getByTestId("reports-delete").click();
+    const dialog = page.getByRole("alertdialog");
+    if (!(await dialog.getByRole("heading").innerText()).includes(`${picked}개`)) throw new Error(`확인 창: ${await dialog.innerText()}`);
+    await dialog.getByRole("button", { name: "영구히 지우기" }).click();
+    await dialog.waitFor({ state: "detached" });
+    await domIs(page, "작업 보고 비움", () => document.querySelectorAll('[data-testid^="report-"][data-busy]').length === 0);
+    const left = aaa("library", "list").reports;
+    if (left.some((r) => !r.to_user)) throw new Error(`작업 보고가 남았다: ${JSON.stringify(left.map((r) => r.name))}`);
+    if (fs.existsSync(`${root}/projects/demo/library/${t.id}`) || fs.existsSync(`${root}/projects/demo/threads/${t.id}.files.json`)) throw new Error("thread 사본이 남았다");
+    if (!left.some((r) => r.name === "page")) throw new Error("내 보고서까지 지웠다");
   });
 }

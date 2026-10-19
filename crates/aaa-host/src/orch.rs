@@ -1793,7 +1793,7 @@ impl Host {
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
             if changed || old_manifest.is_none() {
-                // 보고서 화면 「작업 보고」(plan §8.252)
+                // 보고서 화면 「작업 보고」(plan §8.254)
                 self.reports_bump();
             }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
@@ -1910,6 +1910,8 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
+        // 그 사본이 「진행 중」(지울 수 없음)에서 풀린다: 보고서 화면이 다시 읽는다(plan §8.254)
+        self.reports_bump();
         // 데려온 pane은 사람 것이다(참고 threads.rs `cleanup`의 `Kind::Adopted`): 끝내지 않고, 그 폴더도 정리하지 않는다
         let adopted = rec.kind == ThreadKind::Adopted;
         // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
@@ -2045,6 +2047,7 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
+        self.reports_bump();
         self.flow(&rec, "thread_reopened", None, "다시 열었다(아무것도 띄우지 않았다)");
         let mut view = self.thread_view(&rec);
         view.warnings

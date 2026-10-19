@@ -1,24 +1,26 @@
-// 머신 CPU %·MEM %(사용자 10-19 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」, plan §8.245): 머신 패널 머리줄 오른쪽 C·M 막대,
+// 머신 CPU %·MEM %(사용자 10-19 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」, plan §8.245): 머신 패널 머리줄 오른쪽
+// agent·CPU·MEM 아이콘 + 숫자(CPU·MEM은 2px 막대, 사용자 결정 10-19 「1안」, plan §8.254),
 // 90%부터 빨강과 접힌 활동 막대의 머신 배지, 옛 agent의 「—」, 끊긴 머신은 그리지 않음.
 // 첫 단계는 실제 agent가 기본 주기(점검 60초 사이 15초 표본)로 보낸 값을 기다린다(이 파일이 그 기본값 길이다). 높은 값·옛 agent는
 // 실제 agent가 낼 수 없어 상태 사건 WebSocket의 state에 값을 끼운 화면으로 본다.
 import { aaa, step, browser, pairPage, showPanel, stop, until, shot } from "../lib/harness.mjs";
 
-/** labA의 C·M 칸: 값·높음·빈 값 */
+/** labA의 agent·CPU·MEM 칸: 값·높음·빈 값·막대·아이콘·title */
 const meters = (p) =>
   p.evaluate(() => {
     const box = document.querySelector('[data-testid="machine-stats-labA"]');
     if (!box) return null;
     const one = (k) => {
       const m = box.querySelector(`[data-stat="${k}"]`);
-      return { value: m.querySelector(".machine-meter-value").textContent, high: m.classList.contains("is-high"), empty: m.classList.contains("is-empty"), fill: m.querySelector(".machine-meter-bar").style.getPropertyValue("--fill") };
+      const bar = m.querySelector(".machine-meter-bar");
+      return { value: m.querySelector(".machine-meter-value").textContent, high: m.classList.contains("is-high"), empty: m.classList.contains("is-empty"), fill: bar ? bar.style.getPropertyValue("--fill") : null, icon: m.querySelector(":scope > svg") !== null, title: m.getAttribute("title") };
     };
-    return { c: one("C"), m: one("M"), title: box.getAttribute("title") };
+    return { a: one("agents"), c: one("cpu"), m: one("mem"), title: box.getAttribute("title") };
   });
 const badge = (p) => p.evaluate(() => document.querySelector('[data-testid="activity-badge-machines"]')?.textContent ?? null);
 
 export default async function ({ page }) {
-  await step("머신 CPU·MEM: 실제 agent가 15초마다 잰 값이 머신 머리줄 오른쪽 C·M 막대로 보이고 title이 풀이한다", async () => {
+  await step("머신 CPU·MEM: 실제 agent가 15초마다 잰 값이 머신 머리줄 오른쪽 아이콘·숫자·막대로 보이고, agent 수는 에이전트 패널 기준으로 세며 title이 풀이한다", async () => {
     await showPanel(page, "machines");
     // CPU는 두 표본 사이 평균이라 첫 점검에는 없고 15초 표본부터 온다. 값만 바뀐 보고도 처음 생긴 값은 host가 화면에 보낸다
     const got = await until("CPU·MEM 값", async () => {
@@ -27,9 +29,18 @@ export default async function ({ page }) {
     }, 40_000);
     for (const k of ["c", "m"]) {
       const n = Number(got[k].value);
-      if (n > 100 || got[k].fill !== `${n}%` || got[k].empty) throw new Error(`${k} 칸: ${JSON.stringify(got)}`);
+      if (n > 100 || got[k].fill !== `${n}%` || got[k].empty || !got[k].icon) throw new Error(`${k} 칸: ${JSON.stringify(got)}`);
     }
-    if (!/^CPU \d+% · 메모리 \d+\.\dGB \/ \d+\.\dGB 사용\(\d+%\) · 부하 \d+\.\d\d\/\d+ · \d+초 전$/.test(got.title)) throw new Error(`title: ${got.title}`);
+    if (got.c.title !== `CPU ${got.c.value}%` || got.m.title !== `메모리 ${got.m.value}%`) throw new Error(`칸 title: ${JSON.stringify(got)}`);
+    // agent 칸은 막대가 없고, 에이전트 패널에 보이는 labA agent 수와 같다(이 실험실의 셸 tab은 agent가 아니다)
+    await showPanel(page, "agents");
+    const listed = await page.evaluate(() => document.querySelectorAll('.agent-list [data-testid^="agent-row-"]').length);
+    await showPanel(page, "machines");
+    const agents = (await meters(page)).a;
+    if (agents.value !== String(listed) || agents.fill !== null || !agents.icon || agents.empty !== (listed === 0)) throw new Error(`agent 칸(패널 ${listed}): ${JSON.stringify(agents)}`);
+    if (!/^agent \d+ · 일하는 중 \d+ · 답 기다림 \d+$/.test(agents.title)) throw new Error(`agent title: ${agents.title}`);
+    const [agentLine, detail] = got.title.split("\n");
+    if (agentLine !== agents.title || !/^CPU \d+% · 메모리 \d+\.\dGB \/ \d+\.\dGB 사용\(\d+%\) · 부하 \d+\.\d\d\/\d+ · \d+초 전$/.test(detail)) throw new Error(`title: ${got.title}`);
     const h = aaa("machine", "list").machines.find((m) => m.name === "labA").health;
     if (typeof h.cpu_pct !== "number" || !(h.mem_used_bytes <= h.mem_total_bytes)) throw new Error(`host 값: ${JSON.stringify(h)}`);
     await shot(page, "desktop-machine-stats");
@@ -81,7 +92,7 @@ export default async function ({ page }) {
     bump();
     await until("옛 agent", async () => (await meters(p))?.c.value === "—");
     const old = await meters(p);
-    if (!(old.c.empty && old.m.empty && old.m.value === "—" && old.title.startsWith("CPU 모름 · 메모리 모름"))) throw new Error(`옛 agent: ${JSON.stringify(old)}`);
+    if (!(old.c.empty && old.m.empty && old.m.value === "—" && old.title.split("\n")[1].startsWith("CPU 모름 · 메모리 모름") && old.c.title === "CPU 모름(옛 agent)")) throw new Error(`옛 agent: ${JSON.stringify(old)}`);
     if ((await badge(p)) !== null) throw new Error(`값 없는 머신에 배지: ${await badge(p)}`);
   });
 

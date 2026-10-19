@@ -41,7 +41,7 @@ pub(crate) struct LibraryReportRow {
     pub name: String,
     pub live: Option<String>,
     pub updated: u64,
-    /// 사용자에게 보낸 웹 보고서(`--to-user`, plan §8.252)
+    /// 사용자에게 보낸 웹 보고서(`--to-user`, plan §8.254)
     pub to_user: bool,
     pub title: Option<String>,
     /// 사용자 보고서로 보낸(다시 보낸) 때. 이보다 늦게 열었으면 봤다
@@ -294,7 +294,7 @@ impl Db {
                  ALTER TABLE push_subs ADD COLUMN alert_done INTEGER NOT NULL DEFAULT 1;",
             )?;
         }
-        // 사용자 보고서(plan §8.252). 위와 같이 열만 더한다
+        // 사용자 보고서(plan §8.254). 위와 같이 열만 더한다
         let has_to_user =
             conn.prepare("SELECT 1 FROM pragma_table_info('library_reports') WHERE name='to_user'")?.exists([])?;
         if !has_to_user {

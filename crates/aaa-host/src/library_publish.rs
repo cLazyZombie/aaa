@@ -216,7 +216,7 @@ impl Host {
         Ok(self.manifest(dir, name))
     }
 
-    /// `to_user`는 사용자에게 보내는 웹 보고서다(Some(제목), plan §8.252): index.html이 있어야 하고, 안 봄으로 두며, 사용자 알림
+    /// `to_user`는 사용자에게 보내는 웹 보고서다(Some(제목), plan §8.254): index.html이 있어야 하고, 안 봄으로 두며, 사용자 알림
     /// post(topic `report`)를 같은 출처로 남긴다. 외부 푸시는 §8.249의 두 의도만이라 이 post는 앱 안 inbox·배지로만 알린다.
     pub(crate) fn library_publish(
         &self,
@@ -257,7 +257,7 @@ impl Host {
         Ok(FrontResponse::LibraryLink(link))
     }
 
-    /// 보고서를 모든 곳에서 지운다(plan §8.252): 목록 행·공유 링크(DB에서 폐기)·앱 안 보기 경로·host 사본·파일 목록, thread 사본이면
+    /// 보고서를 모든 곳에서 지운다(plan §8.254): 목록 행·공유 링크(DB에서 폐기)·앱 안 보기 경로·host 사본·파일 목록, thread 사본이면
     /// 보고 사본(`threads/<id>.md`)까지. 실시간 등록은 등록만 지우고 원본 폴더는 건드리지 않는다. 끝나지 않은 thread의 사본이
     /// 하나라도 있으면 아무것도 지우지 않는다(thread가 다음 보고 때 다시 만든다).
     pub(crate) fn library_delete(&self, reports: &[LibraryRef], actor: &str) -> Result<FrontResponse, ErrorBody> {

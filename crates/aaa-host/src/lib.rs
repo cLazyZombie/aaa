@@ -373,7 +373,7 @@ pub struct Host {
     pub web_port: std::sync::atomic::AtomicU16,
     inner: Mutex<Inner>,
     pub changed: watch::Sender<u64>,
-    /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.252). 웹 events가 안 본 수를 다시 보낸다
+    /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.254). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: watch::Sender<u64>,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
@@ -651,7 +651,7 @@ impl Host {
         self.changed.send_modify(|v| *v += 1);
     }
 
-    /// 보고서 목록이 바뀌었다(plan §8.252)
+    /// 보고서 목록이 바뀌었다(plan §8.254)
     pub(crate) fn reports_bump(&self) {
         self.reports_changed.send_modify(|v| *v += 1);
     }
@@ -1311,7 +1311,7 @@ impl Host {
                 .map(|reports| FrontResponse::LibraryReports { reports }),
             FrontRequest::LibraryOpen { project, name } => {
                 let view = self.report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())?;
-                // 열면 봤다(사용자 결정 10-19, plan §8.252). 기록하지 못해도 열기는 막지 않는다
+                // 열면 봤다(사용자 결정 10-19, plan §8.254). 기록하지 못해도 열기는 막지 않는다
                 if self.db.library_report_seen(&project, &name, util::now_ms()).unwrap_or(false) {
                     self.reports_bump();
                 }
