@@ -567,9 +567,8 @@
   overflow-x: hidden;
   overflow-y: auto;
   overflow-wrap: anywhere;
+  /* 막대 모양은 앱 공통 규칙(style.css)을 따른다: 참고의 thin·색 지정은 Chromium에서 기본 막대(Windows는 화살표째)를 그린다 */
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
   background: transparent;
   border: 0;
   outline: 0;
@@ -588,19 +587,6 @@
     font-size: calc(var(--fs-chat) * var(--chat-scale, 1));
     line-height: var(--lh-code);
   }
-}
-
-.composer-text::-webkit-scrollbar {
-  width: var(--space-2);
-}
-
-.composer-text::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.composer-text::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: var(--radius-pill);
 }
 
 .composer-text:focus-visible {
