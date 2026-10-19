@@ -5588,3 +5588,26 @@ primary 근거:
 
 - 사용자 「작업 아이콘 수정해. 6개 후보 줘」. 후보(lucide FolderKanban·FolderGit2·BriefcaseBusiness·Layers·Boxes, 직접 그린 폴더+coordinator·thread)를 실제 막대에 넣어 데스크톱·휴대폰 × 어두움·밝음 × 고름·배지로 찍었고, 사용자가 추천 FolderKanban을 골랐다. 폴더 외곽은 작업 공간·저장소, 안의 막대는 그 안에서 도는 thread다.
 - 머신(Monitor)·특수(Radar)·자동화(Workflow)·보고서(FileText)와 외곽선이 겹치지 않는다. 노드를 선으로 잇는 꼴(Network·GitFork)은 자동화와 닮아 후보에서 뺐다. 배지가 오른쪽 아래를 가려도 폴더 탭과 왼쪽 두 막대가 남는다.
+
+### 8.288 요청의 프로젝트 생략·[safety] 표 하나·aaa.toml(10-19, t-0429 S2)
+
+- **범위.** 프로젝트 단계 없애기의 S2다. S1(§8.285)이 CLI에서 생략한 프로젝트를 wire·설정에서도 생략한다. DB·폴더·branch의 내부 이름(`projects`)은 그대로다.
+- **wire(FRONT_API 1.50).** 프로젝트를 받는 요청 49개의 `project`를 생략할 수 있다(serde default, TS는 선택 칸).
+  - host는 `call_from`에서 빈 `project`를 맡은 프로젝트 하나로 채운다. 아직 없으면 NotFound로 답한다.
+  - 프로젝트 자체를 바꾸는 lifecycle·delete·rename·sweep은 이름을 늘 받는다(S5).
+  - `None`이 「모든 프로젝트」인 선택 칸(`Threads`·`Events` 등 8개)은 그대로 둔다.
+  - `Instance` 보기를 더한다. 맡은 프로젝트의 `ProjectView`를 주고, 없으면 비어 있다. 웹(S3)이 프로젝트 고르기 대신 쓴다. `Projects`는 그대로다.
+  - 옛 host는 빈 이름을 형식 오류로 거절하므로 CLI는 S1처럼 이름을 채워 보낸다.
+- **post.** 세션 안의 `post`는 늘 먼저 Front에 붙어 본다. 조작 권한(coordinator·사람의 셸 pane)이면 Front로 보내고 프로젝트는 생략한다. thread·평가자 pane은 front 연결이 보기 권한이라 예전처럼 hook으로 간다(m13 thread post 시험이 `peer+token`으로 본다). `post list|unmute|status`도 생략하고, 음소거 안내는 `aaa post unmute <출처>`다.
+- **safety.**
+  - 읽기 차례는 `[safety]` 표 하나의 값 → `[safety."<p>"]` → `[safety.default]` → 옛 자리다.
+  - host.toml의 `[safety]`에는 값과 아래 표가 섞인다. `HostConfig.safety`는 값을 `ONE_TABLE`(빈 열쇠)로 읽고 쓴다.
+  - 되돌리기 때문에 `aaa safety`는 호환 기간 동안 프로젝트 표에 쓴다. 옛 binary는 `[safety]`의 값을 읽지 못해 host.toml 전체를 거부한다. 프로젝트 표를 고칠 때 `[safety]` 같은 key가 덮으면 알린다.
+  - `aaa safety show|yolo|set`은 대상을 생략하면 host가 맡은 프로젝트를 쓴다. 이를 위해 host에 묻는다. `--global`과 옛 꼴 이름도 받는다.
+  - `set`은 첫 낱말이 key면 대상을 생략한 것으로 본다. `profile list --project`는 이름을 생략할 수 있다. `profile allow`의 `--project`가 없으면 지금처럼 모든 프로젝트 기본값이다.
+- **aaa.toml.**
+  - 홈에 `aaa.toml`이 있으면 project.toml 대신 그것을 읽고 쓴다(`aaa_config::project_settings_file`). 프로젝트 설정·평가자·설정 오류 inbox·`safety show`가 이 파일을 쓴다.
+  - aaa.toml의 저장소 목록은 `[[workspaces]]`다. 두 파일 모두 두 이름을 읽고, 쓸 때는 글에 이미 있는 목록 이름을 따른다. `workspaces.add|remove`는 `repos.*`와 같다.
+  - 옛 binary로 되돌릴 수 있게 aaa는 aaa.toml을 만들지 않는다. project.toml도 지우지 않고, `project create`도 project.toml을 쓴다. 사람이 옮기면 그 뒤로는 aaa.toml만 읽는다.
+- **안내.** `COORDINATOR_GUIDE`의 post·safety·profile·mission post에서도 프로젝트를 뺐다. 남은 `{p}`는 `project pause|resume|sweep`뿐이다. 배포 뒤 coordinator가 `aaa doctor files --fix`로 받는다.
+- **검증.** [testing](testing.md)의 「요청의 프로젝트 생략·safety 표 하나·aaa.toml」을 따른다.

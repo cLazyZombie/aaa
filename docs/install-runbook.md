@@ -69,11 +69,12 @@ root = ""                          # 기본 ~/.aaa/projects. herdr-projects 폴�
 - 정리 중에는 `thread show`에 「정리 중」이 보인다. 정리 응답 전에 끊겼다면 같은 `thread resolve`로 이어서 한다(처음의 보존·사본 선택을 유지). 완료 후에만 완료 사건·inbox를 남긴다. agent의 상태 폴더 `thread-cleanup/`에도 결과가 남는다. 미완료 정리를 마치기 전에는 `--reopen`을 거부한다.
 
 - thread가 쓸 profile·yolo·신뢰 창·routine 명령은 사람만 바꾸는 safety 설정이다. 파일을 고치지 말고 aaa 밖 터미널에서 명령으로 바꾼다(herdr-projects와 같다, plan §8.170):
-  - `aaa safety show --global`·`aaa safety show <프로젝트>`: 지금 값과 출처
-  - `aaa profile allow threads claude codex [--project <프로젝트>]`: thread가 쓸 수 있는 profile(없으면 모두)
+  - `aaa safety show`·`aaa safety show --global`: 이 host의 프로젝트 값·모든 프로젝트 기본값과 출처(대상을 생략하면 이 host의 프로젝트, §8.288)
+  - `aaa profile allow threads claude codex [--project <프로젝트>]`: thread가 쓸 수 있는 profile(없으면 모두, --project가 없으면 모든 프로젝트 기본값)
   - `aaa profile default threads claude`: `thread start`에 profile이 없을 때(프로젝트 `thread_profile`이 먼저)
-  - `aaa safety yolo <프로젝트|--global> on|off|default`: 묻지 않고 thread를 시작하고 claude·codex를 권한 건너뛰기 인자로 띄운다(y로 확인)
-  - `aaa safety set <프로젝트|--global> routine_commands on`: routine 명령 실행(명령마다 `aaa routine approve`도 필요)
+  - `aaa safety yolo [--global] on|off|default`: 묻지 않고 thread를 시작하고 claude·codex를 권한 건너뛰기 인자로 띄운다(y로 확인)
+  - `aaa safety set [--global] routine_commands on`: routine 명령 실행(명령마다 `aaa routine approve`도 필요)
+  - host.toml에는 `[safety]` 표 하나(`yolo = true`처럼 바로 적은 값)도 쓸 수 있다. `[safety."<프로젝트>"]`보다 앞선다. `aaa safety`는 되돌리기(옛 binary는 `[safety]` 값을 읽지 못하고 host.toml 전체를 거부한다)를 위해 한동안 `[safety."<프로젝트>"]`에 쓴다.
   - 옛 `[projects] allow_profiles`·`routine_commands`는 그대로 읽는다(safety 표에 값이 없을 때).
 
 - 알림(선택): 봇 token이 든 주소는 `host.local.toml`의 `[notify]`에 둔다(커밋·공유하지 않는다).

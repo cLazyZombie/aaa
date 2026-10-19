@@ -5092,7 +5092,7 @@ printf 'complete-rc=%s\n' "$?" >> '{out}'
         &format!(
             r#"
 for n in 1 2 3 4 5 6; do
-  '{bin}' post demo user --request --needs-user --topic other-action --title "자료 $n" > /dev/null 2>&1
+  '{bin}' post user --request --needs-user --topic other-action --title "자료 $n" > /dev/null 2>&1
 done
 '{bin}' machine list > '{warning}' 2>&1
 '{bin}' context demo --peek > '{context}' 2>/dev/null
@@ -5106,7 +5106,7 @@ printf 'post-mute-warning-done\n'
     w.h.ok(&["pane", "run", &coord, &format!("post-probe {script}")]);
     w.h.wait_output(&coord, "post-mute-warning-done", T);
     let warning = std::fs::read_to_string(warning).unwrap();
-    assert!(warning.contains("post 음소거:") && warning.contains("aaa post unmute demo"), "{warning}");
+    assert!(warning.contains("post 음소거:") && warning.contains("aaa post unmute local:"), "{warning}");
     let context = std::fs::read_to_string(context).unwrap();
     assert!(context.starts_with("⚠ post 음소거:"), "{context}");
 }
