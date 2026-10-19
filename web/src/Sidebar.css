@@ -12,7 +12,7 @@
 
 /* Agents 목록의 굴림 영역도 위 목록(.machine-list)처럼 사이드바 양 끝까지 펴고 여백은 그 안에 둔다(사용자 10-19 「스크롤바 위치가 달라」).
    참고 AgentSidebar.css는 묶음(.agents-sidebar)에 좌우 여백을 줘 굴림 영역이 여백만큼 안쪽이라 두 막대의 x가 어긋난다(참고에도 있는 어긋남).
-   줄·머리 자리는 그대로다: 묶음에서 뺀 여백을 머리 단추(바깥 여백)와 굴림 영역(안쪽 여백)에 다시 준다 */
+   줄·머리 자리는 그대로다: 묶음에서 뺀 여백을 머리 단추(바깥 여백)와 굴림 영역(안쪽 여백)에 다시 준다(plan §8.232) */
 .sidebar-shell .agents-sidebar { padding-inline: 0; }
 .sidebar-shell .agents-sidebar > .agent-section-toggle { width: auto; margin-inline: var(--side-gutter); }
 .sidebar-shell .agent-list-contents { padding-inline: var(--side-gutter); }
