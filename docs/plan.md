@@ -5570,8 +5570,49 @@ primary 근거:
 - **프로젝트 화면.** `.project-threads`는 880px 기둥 자체가 굴림 영역이라 넓은 창에서 막대가 화면 가운데 쪽에 섰다. t3code `settingsLayout.tsx`(화면 폭 굴림 영역 안에 폭 제한 기둥)처럼 굴림 영역을 화면 폭으로 펴고 좌우 여백이 남는 폭을 나눠 갖게 했다(글 기둥 자리는 1400px 창에서 전후 436~1284px로 같다).
 - **회귀.** 웹 E2E 04 「목록 두 굴림 영역」: 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역의 left·right가 같다. 고치기 전 binary에서는 `left 0/12, right 319/307`로 실패했다. 막대의 색·폭은 headless 기본(`--hide-scrollbars`)에서 그려지지 않아 시험하지 않고 전후 캡처로 본다(`ignoreDefaultArgs`로 막대를 켠 실험실 캡처). Firefox는 이 머신에 Playwright Firefox가 없어 보지 못했고, macOS headless는 Windows 기본 막대를 흉내 내지 못해 고치기 전 Windows 모양은 사용자 캡처로 대신한다(꾸민 `::-webkit-scrollbar` 막대는 OS와 관계없이 같은 모양으로 그려진다).
 
+### 8.236 확인창에 막힌 임무의 명시적 재시작(10-19, t-0380 후속)
 
-### 8.236 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+- **운영 근거.** 배포 후 `mission restart` audit 두 건이 있으나 같은 임무 pane·harness 세션이 유지됐다. 읽기 전용 DB에서 `reset_requested=true`, `resetting=false`, `state=막힘`, `idle_since_ms=null`이며 기존 Claude settings에는 permissions가 없었다. 설정 생성 수정(§8.227)에 도달하기 전에 막힌 것이다. `--permission-mode default` 자체는 새 설정에서도 의도한 값이다.
+- **원인.** restart는 reset 요청을 저장하고 막힘을 대기로 돌리지만 다음 tick의 Question 판정이 다시 막힘으로 바꿔 조기 반환했다. 이를 넘겨도 idle 30초·보는 화면·빈 입력창 조건이 확인창 복구를 막았다. Kill 뒤 Exited 감지가 오면 보는 화면 조건에 다시 걸릴 수도 있었다.
+- **수정.** 내부 저장 필드 `restart_requested`로 명시한 restart와 reload·자동 reset을 구별한다(옛 기록은 false). 명시 restart의 Question 복구만 이 보호 조건을 넘겨 기존 `resetting 저장 → Kill 요청 → 끝남 사건 → 새 profile rebrief → fresh Spawn` 경로로 보낸다. 끝남을 기다리는 동안 복구 의도를 유지한다. 확인창에 yes/no·명령 입력을 보내지 않으며 임무를 stop/resolve하지 않는다. 일하는 대화·idle 초안·자동 reset·reload·pause·예산·사용량의 기존 보호는 유지한다. 완료 시 두 요청 표지를 지운다.
+- **참고.** herdr-projects 0.2.35 `threads.rs::restart`의 명시 재시작과 `prompt`의 blocked/초안 보호를 구별하는 방식을 따른다. herdr 0.9.5 `app/api/agents.rs`도 blocked agent의 prompt를 거부한다. 이 참고 버전과 t3code `orchestration-v2/Adapters/ClaudeAdapterV2.ts`에는 aaa 임무 reset과 같은 기능이 없어 자동 reset의 준비 조건을 그대로 명시 복구에 적용하지 않았다.
+- **회귀.** 실제 host·DB·frame와 가짜 agent로 확인창+보는 화면에서 수정 전 Kill 0건을 재현했다. 자동 reset·reload는 그대로 보존, 명시 restart는 Kill 1건 후 실제 harness Exited·SessionState 끝남 사건을 거쳐 새 pane을 만들고 최신 권한 profile을 전달한다. state.md·processed.txt·inbox·미처리 입력은 남는다. idle 초안/보는 화면까지 예외를 넓히는 변형도 실패한다. 새 신호 시험·고정 sleep·외부 프로세스는 없다.
+- **운영 전환.** 이 수정의 host binary를 반영한 뒤 coordinator가 `aaa mission restart projects rc-verify-watch`를 다시 한 번 실행한다. 옛 binary가 남긴 reset_requested만으로 새 복구 의도를 추정하지 않는다. stop이나 옛 명령 승인은 필요 없다. 같은 thread에서 새 pane·새 harness 세션·permissions.allow·추가 읽기 경로가 적용됐는지를 확인한다. 이 thread는 운영 restart·binary 교체를 실행하지 않았다.
+
+- 최신 main 통합 전체 검사에서 기존 `tui::tabs_like_herdr`가 실제 올바른 `작업 폴더` 경로를 찾지 못했다. 임시 경로 길이에 따라 공백이 pane 끝 칸에 오면 `Vt::rows_between`이 접힌 줄 끝의 실제 공백을 지운 것이 원인이다. 기대값·시한·시험을 바꾸지 않고 RecentUnwrapped의 soft-wrap 끝 공백만 보존했다. 기존 `recent_unwrapped_joins_soft_wrapped_rows`에 화면/기록 경계 사례를 더해 원인 실패(`abcd efgh` → `abcdefgh`)를 먼저 재현했다. 일반 Recent의 끝 공백 제거와 넓은 글자 spacer 규칙은 유지한다. 참고 herdr 0.9.5 `pane/terminal.rs`의 화면 텍스트 이음은 `soft_wrapped`일 때 `row_text` 전체를 보존한다(`history_read.rs`의 Windows fallback은 같은 trim을 하므로 따르지 않음). 이는 임무 수정과 별도 커밋으로 나눈 전체 gate 차단 결함의 최소 수리다.
+
+### 8.237 local agent 재연결 중 coordinator 배포 조회(10-19, t-0381 후속)
+
+- **실제 기록.** 배포 직후 local agent가 12:13:38.407~12:13:44.283 KST 동안 끊겼다. session host의 coordinator pane은 계속 살아 있었지만 사용자에게 배포 조회 Forbidden이 나왔고 재연결 뒤 같은 ID는 Completed였다. caller_of는 cached running pane PID로 소속을 찾았으나, deployment_project가 입력·열기용 running_coordinators → coordinator_panes의 Connected 조건을 재사용해 소속을 없앴다. CLI --wait도 첫 AgentDisconnected를 곧바로 오류 종료했다.
+- **참고.** herdr-projects 0.2.35 `coordinator.rs::is_coordinator/discover/live`는 프로젝트 cwd 소속과 관측한 live 기록을 둔다. herdr는 서버가 pane을 소유하지만 aaa는 session host가 backend 재시작을 견디므로 전송 연결과 pane 소속을 분리해야 한다. herdr-web-ui `server/herdr-update.ts::HerdrUpdater.status/run`의 실행 판·handoff 상태, t3code `cloud/updateHandoff.ts::pendingUpdateHandoffExists`의 명시적 handoff 기록도 대조했다. 네 참고에 같은 다중 backend 배포 CLI 대기는 없으며 aaa의 기존 Front State/Flow 사건을 쓴다.
+- **제품.** 배포 소속은 host가 canonical cwd·local 머신·harness/role로 이미 판정한 PaneView.coordinator_project와 running 상태를 쓴다. peer PID actor 검증과 thread/adopt 제외, 사람의 safety 확인은 유지한다. 입력 가능한 coordinator 목록은 그대로다. --wait는 AgentDisconnected만 재연결/배포 완료 사건 뒤 같은 DeployStatus ID로 재조회하며 DeployStart는 재전송하지 않는다. 머신 이름·ID·생략을 지원하고 nonwait·Forbidden 등 다른 오류는 즉시 반환한다.
+- **최소 회귀.** host owner는 실제 agent_disconnected와 caller_of·Front 요청에서 권한 유지/AgentDisconnected·위장/worker/device/일반 셸/끝난 pane 거부를 확인한다. CLI owner는 실제 Front IPC frame에서 단절 → Connected → 같은 ID 상태 조회 → Completed와 nonwait·Forbidden 즉시 종료를 본다. 기존 m13은 실제 backend 재시작과 pane 생존을 계속 맡는다. 둘은 권한과 전송 대기의 다른 계약이며 새 외부 프로세스·신호·시험용 production export·고정 sleep·시한 증가가 없다. 두 owner를 원래 제품으로 되돌린 변형 RED와 저장 바이트 복원 GREEN을 확인했다.
+
+### 8.238 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
+
+### 8.239 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
+
+사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
+
+- 공통 처리: `aaa-host/src/text.rs::Host::ctrl_enter_data` → `ctrl_enter.rs::ctrl_enter_keys`. mirror의 `Vt::detection_text`와 같은 mirror의 Visible ANSI를 함께 읽고 기존 `prompt_box.rs`(herdr-projects `src/prompt_box.rs`)의 Empty·Typed·Unknown 판정을 재사용한다. 확인창·사본 미동기화·상자 잘림·서로 다른 본문은 steering하지 않는다. 아직 감지 사건이 오지 않은 직접 실행 harness도 모름으로 처리한다.
+- Claude Code의 올바른 순서는 **Ctrl+X → Ctrl+S**다. Ctrl+S 단독은 초안 보관이다. 공식 interactive-mode·keybindings 문서와 설치본 2.1.303의 `chat:sendNow` 바인딩으로 확인했다. 회색 추천문은 dim·inverse 스타일로 구분하고 이미지·붙여넣기 placeholder는 내용으로 센다. NO_COLOR에서 추천문인지 알 수 없으면 줄바꿈이다.
+- Codex 0.163의 Ctrl+X·Ctrl+S는 같은 동작이 아니다. 참고 `herdr-web-ui/server/codex-steering.ts::codexSteeringPending`처럼 현재 Working·native 대기 안내·↳ 항목·빈 입력·footer가 확인될 때만 Esc로 대기 steering을 즉시 보낸다. 지난 패널·입력 아래 글·확인창·대기 메시지가 없는 화면에서는 줄바꿈이다. 일반 빈 입력에 Esc를 보내 작업을 취소하지 않는다. 여러 줄 초안의 경계를 알 수 없거나 커서가 입력 시작 칸을 벗어나도 줄바꿈이다.
+- 웹은 기존 `PaneTerminal.tsx::onModifiedEnter`의 IME 확정 뒤 onKey/onData 순서를 유지하되 `TermClientMsg::CtrlEnter`를 보낸다. 키 막대의 Ctrl 래치+Enter·저장한 Ctrl+Enter 조합·빈 입력줄도 같은 요청이다. 아직 보내지 않은 웹 입력줄의 글은 제출하지 않고 그 줄에 줄바꿈을 넣는다. 반복 keydown은 다시 steering하지 않는다.
+- 셸·vim 등 harness가 없는 pane은 기존 프로그램의 Ctrl+Enter 인코딩을 유지한다. 요청은 reader 제한과 대화형 입력 순서·lease 경로를 공유한다. 새 session IPC나 운영 agent 설정은 필요 없다.
+- 근거: herdr-web-ui `aa624cb` `server/prompt.ts::claudeInputEmpty/claudeInputDraft`, `src/components/PaneTerminal.tsx` onModifiedEnter·키 막대 경로; herdr 0.9.5 `src/detect/manifest.rs`의 입력 상자 영역과 `src/app/api_helpers.rs::encode_api_keys`; t3code `4b1024da` `ChatView.tsx`의 `thread.steerQueuedMessage`(provider 큐라 PTY 키로 대체하지 않음). 사용자 결정에 따라 기본 Ctrl+Enter를 입력줄 상태로 분기하는 부분만 참고의 고정 인코딩과 다르다.
+- 검증 owner: `ctrl_enter.rs` 유닛은 스타일·잘린 상자·여러 줄·현재 Codex 패널 판정을, 웹 `25-ctrl-enter.mjs`는 실제 host·agent·PTY의 bytes와 물리 키·모바일·입력줄·IME·반복 키를 본다. 기존 `03-keys.mjs`가 일반 프로그램의 modifyOtherKeys·Shift+Enter를 계속 확인한다. 기다림은 출력 표지·DOM·sentFrames 사건으로 끝낸다.
+
+- **최신 main 통합의 fixture 경계.** t-0383의 Codex 제목 `-c` 옵션이 뒤에 추가되어 마지막 두 argv를 읽던 E2E 가짜가 옵션을 모드·기록 파일로 오인했다. fixture 인자를 명시적 `--` 뒤에 두고 그 경계에서 읽어 harness 옵션 추가와 분리한다. 실제 Ctrl+Enter bytes·시한·기대값은 유지하며 실패 로그를 보존했다.
+
+### 8.240 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
 
 - **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
   crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
@@ -5593,27 +5634,12 @@ primary 근거:
   화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
   `PaneCtrlEnter` 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
   Front API 1.43부터 요청하며 1.42 host에는 LF를 보낸다. 반복 키는 steering을 재실행하지 않고 reader는 전송하지 않는다.
-  공통 owner t-0384의 판정·키 선택 위치는 §8.237다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
+  공통 owner t-0384의 판정·키 선택 위치는 §8.239다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
 - **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm Ctrl+Enter의 공통 요청·안전한 Alt+Enter와 Shift+Enter의 LF 및 보통 Enter의 CR,
   확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
   Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
   새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.
 
 - **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
-
-
-### 8.237 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
-
-사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
-
-- 공통 처리: `aaa-host/src/text.rs::Host::ctrl_enter_data` → `ctrl_enter.rs::ctrl_enter_keys`. mirror의 `Vt::detection_text`와 같은 mirror의 Visible ANSI를 함께 읽고 기존 `prompt_box.rs`(herdr-projects `src/prompt_box.rs`)의 Empty·Typed·Unknown 판정을 재사용한다. 확인창·사본 미동기화·상자 잘림·서로 다른 본문은 steering하지 않는다. 아직 감지 사건이 오지 않은 직접 실행 harness도 모름으로 처리한다.
-- Claude Code의 올바른 순서는 **Ctrl+X → Ctrl+S**다. Ctrl+S 단독은 초안 보관이다. 공식 interactive-mode·keybindings 문서와 설치본 2.1.303의 `chat:sendNow` 바인딩으로 확인했다. 회색 추천문은 dim·inverse 스타일로 구분하고 이미지·붙여넣기 placeholder는 내용으로 센다. NO_COLOR에서 추천문인지 알 수 없으면 줄바꿈이다.
-- Codex 0.163의 Ctrl+X·Ctrl+S는 같은 동작이 아니다. 참고 `herdr-web-ui/server/codex-steering.ts::codexSteeringPending`처럼 현재 Working·native 대기 안내·↳ 항목·빈 입력·footer가 확인될 때만 Esc로 대기 steering을 즉시 보낸다. 지난 패널·입력 아래 글·확인창·대기 메시지가 없는 화면에서는 줄바꿈이다. 일반 빈 입력에 Esc를 보내 작업을 취소하지 않는다. 여러 줄 초안의 경계를 알 수 없거나 커서가 입력 시작 칸을 벗어나도 줄바꿈이다.
-- 웹은 기존 `PaneTerminal.tsx::onModifiedEnter`의 IME 확정 뒤 onKey/onData 순서를 유지하되 `TermClientMsg::CtrlEnter`를 보낸다. 키 막대의 Ctrl 래치+Enter·저장한 Ctrl+Enter 조합·빈 입력줄도 같은 요청이다. 아직 보내지 않은 웹 입력줄의 글은 제출하지 않고 그 줄에 줄바꿈을 넣는다. 반복 keydown은 다시 steering하지 않는다.
-- 셸·vim 등 harness가 없는 pane은 기존 프로그램의 Ctrl+Enter 인코딩을 유지한다. 요청은 reader 제한과 대화형 입력 순서·lease 경로를 공유한다. 새 session IPC나 운영 agent 설정은 필요 없다.
-- 근거: herdr-web-ui `aa624cb` `server/prompt.ts::claudeInputEmpty/claudeInputDraft`, `src/components/PaneTerminal.tsx` onModifiedEnter·키 막대 경로; herdr 0.9.5 `src/detect/manifest.rs`의 입력 상자 영역과 `src/app/api_helpers.rs::encode_api_keys`; t3code `4b1024da` `ChatView.tsx`의 `thread.steerQueuedMessage`(provider 큐라 PTY 키로 대체하지 않음). 사용자 결정에 따라 기본 Ctrl+Enter를 입력줄 상태로 분기하는 부분만 참고의 고정 인코딩과 다르다.
-- 검증 owner: `ctrl_enter.rs` 유닛은 스타일·잘린 상자·여러 줄·현재 Codex 패널 판정을, 웹 `25-ctrl-enter.mjs`는 실제 host·agent·PTY의 bytes와 물리 키·모바일·입력줄·IME·반복 키를 본다. 기존 `03-keys.mjs`가 일반 프로그램의 modifyOtherKeys·Shift+Enter를 계속 확인한다. 기다림은 출력 표지·DOM·sentFrames 사건으로 끝낸다.
-
-- **최신 main 통합 fixture 경계(t-0385).** Codex 제목 설정의 `-c`가 argv 끝에 추가되어 웹 E2E 25 가짜 harness의 마지막 두 인자 추정이 깨졌다. 실제 실패는 ce-codex.bytes ENOENT이며 받은 화면도 Claude 모양이었다. fixture 고유 인자를 `--` 뒤로 명시하고 그 경계를 읽는다. 실제 harness 옵션·제품 키·기대 bytes·시한은 바꾸지 않는다.
 
 - **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.

@@ -14,9 +14,9 @@ export default async function ({ page }) {
   // 출력 표지를 wait-output으로 기다려 transport와 host의 화면 사본이 모두 처리된 뒤 검증한다.
   const program = String.raw`
 import fs from 'node:fs';
-// 실제 Codex가 앞에 --no-daemon, 뒤에 -c를 더하므로 fixture 인자는 --로 구분한다.
-const separator = process.argv.indexOf('--');
-if (separator < 0) throw new Error('fixture 인자 구분 누락');
+// agent가 앞에 붙이는 Codex 옵션과 fixture 인자를 --로 구분한다.
+const separator = process.argv.indexOf('--', 2);
+if (separator < 0) throw new Error('fixture arguments need --');
 const [mode, file] = process.argv.slice(separator + 1);
 let draft = '', count = 0;
 fs.writeFileSync(file, '');

@@ -2727,8 +2727,14 @@ impl App {
         let p = &self.palette;
         sidebar_background(buf, r, p);
         let content = Rect { w: r.w.saturating_sub(1), ..r };
-        // herdr `expanded_sidebar_sections`: 위 spaces, 아래 agents(비율은 구역 경계를 끌어 바꾼다)
-        let (top_h, rest_h) = list::section_heights(content.h, self.sidebar_split);
+        // 자동 높이는 항목과 머리·빈 줄·footer만 쓰되 agents에 절반 이상을 남긴다.
+        // 경계를 직접 끌었거나 host에 비율을 남겼으면 그 비율이 우선이다.
+        let spaces = self.space_list();
+        let (mut top_h, _) = list::section_heights(content.h, self.sidebar_split);
+        if !self.sidebar_split_manual {
+            top_h = (spaces.len().saturating_add(3).min(u16::MAX as usize) as u16).min(content.h.div_ceil(2));
+        }
+        let rest_h = content.h - top_h;
         let spaces_area = Rect { h: top_h, ..content };
         let agents_area = Rect { y: content.y + top_h, h: rest_h, ..content };
         let sel = match &self.list_sel {
@@ -2736,7 +2742,6 @@ impl App {
             _ => None,
         };
         let navigating = self.mode == Mode::Navigate;
-        let spaces = self.space_list();
         let placed_spaces =
             list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p, self.indicators);
         // herdr: 마우스를 받을 때만 ` new`와 `menu`, 머신이 여럿이면 새 workspace를 열 머신 이름을 붙인다(없으면 로컬 agent)
@@ -3564,8 +3569,23 @@ mod tests {
     fn section_split_drags_and_is_remembered() {
         let mut app = app_with_tabs(&[""]);
         let (lines, _) = draw(&app);
-        assert!(lines[15].starts_with(&"─".repeat(25)), "반반: {}", lines.join("\n"));
-        assert_eq!(app.hits.borrow().section_divider, Some(r(0, 15, 25, 1)));
+        assert!(lines[4].starts_with(&"─".repeat(25)), "항목만큼: {}", lines.join("\n"));
+        assert_eq!(app.hits.borrow().section_divider, Some(r(0, 4, 25, 1)));
+        // 큰 화면에서도 세 workspace는 머리·빈 줄·footer를 더한 여섯 줄이면 된다.
+        app.spaces.insert("projects".into(), app.ws.clone());
+        app.spaces.insert("shadow".into(), app.ws.clone());
+        app.height = 80;
+        let (lines, _) = draw(&app);
+        assert!(lines[6].starts_with(&"─".repeat(25)), "세 workspace: {}", lines.join("\n"));
+        // workspace가 많으면 agents에도 절반 이상을 남긴다.
+        for i in 0..50 {
+            app.spaces.insert(format!("space-{i}"), app.ws.clone());
+        }
+        let (lines, _) = draw(&app);
+        assert!(lines[40].starts_with(&"─".repeat(25)), "상한: {}", lines.join("\n"));
+        app.spaces.clear();
+        app.height = 30;
+        draw(&app);
         let side = app.hits.borrow().sidebar;
         app.drag_section_to(21, side);
         let (lines, _) = draw(&app);
@@ -4130,7 +4150,7 @@ mod tests {
     }
 
     /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 위 ` spaces` 구역(빈 줄 뒤 workspace 줄), 30줄이면
-    /// 15줄째에 구분선 `─`과 ` agents`·오른쪽 `projects`, 그 아래 빈 줄 뒤 목록, 오른쪽 `│`, 맨 아래 `«`.
+    /// 4줄째에 구분선 `─`과 ` agents`·오른쪽 `projects`, 그 아래 빈 줄 뒤 목록, 오른쪽 `│`, 맨 아래 `«`.
     /// 접으면 번호와 상태 점, `»`. 탐색 모드면 접힌 채여도 펼친 목록을 pane 위에 띄운다.
     #[test]
     fn sidebar_like_herdr() {
@@ -4143,13 +4163,13 @@ mod tests {
         let shown = lines.join("\n");
         assert!(lines[0].starts_with(" spaces "), "{shown}");
         assert!(lines[2].starts_with(" · main "), "{shown}");
-        assert!(lines[14].starts_with(" new "), "{shown}");
-        assert!(lines[15].starts_with(&"─".repeat(25)), "{shown}");
-        assert!(lines[16].starts_with(" agents") && lines[16].contains("projects│"), "{shown}");
+        assert!(lines[3].starts_with(" new "), "{shown}");
+        assert!(lines[4].starts_with(&"─".repeat(25)), "{shown}");
+        assert!(lines[5].starts_with(" agents") && lines[5].contains("projects│"), "{shown}");
         // thread가 없으면 셸 pane은 「기타」 묶음에, 머신은 글자로(트리 단계가 아니다)
-        assert!(lines[18].starts_with(" ▾ 기타") && lines[18].contains("pane 1"), "{shown}");
+        assert!(lines[7].starts_with(" ▾ 기타") && lines[7].contains("pane 1"), "{shown}");
         assert!(lines.iter().all(|l| at_col(l, 25) == Some('│')), "{shown}");
-        assert!(lines[19].starts_with(" · build mac-a"), "셸 pane은 unknown 점과 머신 이름: {shown}");
+        assert!(lines[8].starts_with(" · build mac-a"), "셸 pane은 unknown 점과 머신 이름: {shown}");
         assert_eq!(lines[29].chars().nth(24), Some('«'), "{shown}");
         app.toggle_list();
         let (lines, _) = draw(&app);
@@ -4181,16 +4201,16 @@ mod tests {
         let mut far = machine("n", "mac-b");
         far.local = false;
         app.machines = vec![machine("m", "mac-a"), far];
-        let footer = |app: &App| draw(app).0[14].clone();
+        let footer = |app: &App| draw(app).0[3].clone();
         assert_eq!(app.target_machine().as_deref(), Some("m"));
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
         app.pick_machine("n".into());
         assert_eq!(app.target_machine().as_deref(), Some("n"));
         assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
         assert!(footer(&app).contains("         menu│"), "{}", footer(&app));
-        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
-        assert_eq!(app.hits.borrow().pick_machine, Some(Rect { x: 5, y: 14, w: 7, h: 1 }));
-        assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 14, w: 6, h: 1 }));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 3, w: 5, h: 1 }));
+        assert_eq!(app.hits.borrow().pick_machine, Some(Rect { x: 5, y: 3, w: 7, h: 1 }));
+        assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 3, w: 6, h: 1 }));
         // 다음 붙은 머신으로 돈다: mac-b → mac-a → mac-b
         app.next_machine();
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
@@ -4218,7 +4238,7 @@ mod tests {
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
         app.machines.truncate(1);
         assert!(footer(&app).starts_with(" new    "), "{}", footer(&app));
-        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 14, w: 5, h: 1 }));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 3, w: 5, h: 1 }));
         assert_eq!(app.hits.borrow().pick_machine, None);
         app.mouse_capture = false;
         assert!(!footer(&app).contains("new"), "{}", footer(&app));

@@ -228,7 +228,13 @@ m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 �
 
 배포 실행기 수명 회귀(§8.233): 기존 `jobs_are_durable_once_and_reconcile_only_after_the_executor_releases_its_lock`에서 실제 잠금 File을 `try_clone`해 fork와 같은 잠금 참조를 남긴다. Unix에서는 원본 FD의 close-on-exec도 확인한다. 실행기가 살아 있으면 중복 configure는 실패하고, drop 뒤에는 복제 FD가 살아 있어도 새 실행기가 즉시 잠금과 journal 복구를 맡아야 한다. dup/fork는 같은 flock을 공유하므로 자식·신호·sleep 없이 병렬 spawn의 fork~exec 창을 결정적으로 재현한다. close-on-exec만으로는 exec 전 잠금 참조가 사라지지 않는다.
 
-## TUI 확장 Enter와 Windows 붙여넣기(§8.236)
+local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinator_identity_survives_local_agent_disconnect`가 연결 상태와 독립적인 peer PID/pane 소속·권한 경계를 검사한다. CLI `deployment::tests::status_waits_for_reconnection_but_preserves_nonwait_and_forbidden_errors`는 Front IPC에서 AgentDisconnected 뒤 State 사건을 기다려 같은 ID만 조회하고, nonwait·Forbidden을 즉시 반환하는 경계를 검사한다. 머신 ID·생략을 포함한다. 고정 대기·새 자식·신호는 없으며, 기존 m13의 실제 재시작 검증을 대체하지 않는다.
+
+### Ctrl+Enter 공통 판정
+
+`aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
+
+## TUI 확장 Enter와 Windows 붙여넣기(§8.240)
 
 - `cargo test --locked -p aaa --test tui modified_enter_uses_agent_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
   kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
@@ -242,9 +248,5 @@ m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 �
   공식 ci-local test 단계에 포함되어 있으며 OS 프로세스·clipboard·신호를 쓰지 않는다.
 
 - `cargo test --locked -p aaa-tui keyboard_cleanup_precedes_panic_restore`는 자식 시험 프로세스에 panic hook을 격리해 keyboard pop이 화면 복원보다 먼저 한 번만 실행되는지 본다. 위 PTY 시험은 main/alternate 키 스택을 따로 유지하고 원래 main 모드가 보존되는지도 본다.
-
-### Ctrl+Enter 공통 판정
-
-`aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
 
 신호 금지 작업에서 E2E 25는 Ctrl+Enter 준비·Claude·Codex·터치 Ctrl+Enter 단계를 함께 고른다. 이 단계는 신호 동작을 시험하지 않고 공식 실험실의 자기 자식 정리만 쓴다.
