@@ -21,6 +21,7 @@ import { takePairCode } from "./herdr/phone";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { QuestionReload } from "./questionReload";
+import { ThreadReload } from "./threadReload";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
@@ -317,6 +318,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const questionReload = useRef(new QuestionReload());
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
+  const [threadsSync, setThreadsSync] = useState(0);
+  const threadReload = useRef(new ThreadReload());
   // 사후 평가자: 목록에 섞지 않고 header badge로만 보인다(§8.13)
   const [missions, setMissions] = useState<MissionView[]>([]);
   const missionLoading = useRef(false);
@@ -337,6 +340,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       })
       .catch(() => {});
   const putThread = (t: ThreadView) => {
+    threadReload.current.note(t);
     if (t.role === "evaluator") { loadEvaluators(); loadMissions(); }
     setThreads((old) => {
       const next = new Map(old);
@@ -525,22 +529,27 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               .catch(() => questionReload.current.failed(read));
           }
           if (on) { loadEvaluators(); loadMissions(); }
-          if (on)
+          if (on) {
+            const read = threadReload.current.begin();
             call({ op: "threads", project: null, role: null })
               .then((r) => {
-                if (r.kind !== "threads") return;
+                if (r.kind !== "threads") return threadReload.current.failed(read);
+                const next = threadReload.current.finish(read, r.threads);
+                if (next === null) return;
                 // 위 질문과 같다: 다시 붙을 때는 끊긴 동안 검토 대기가 된 새 보고를 알린다(처음 보는 thread는 새 소식이 아니다)
                 // 끊긴 동안 새로 생긴 thread도 처음 붙을 때 목록에 없었으니 새 소식이다
                 if (linkedOnce.current.threads)
-                  for (const t of r.threads) {
+                  for (const t of next.values()) {
                     if (!seenReports.current.has(threadKey(t))) seenReports.current.set(threadKey(t), null);
                     reportNews(t, down);
                   }
-                else for (const t of r.threads) seenReports.current.set(threadKey(t), reviewHash(t));
+                else for (const t of next.values()) seenReports.current.set(threadKey(t), reviewHash(t));
                 linkedOnce.current.threads = true;
-                setThreads(new Map(r.threads.map((t) => [threadKey(t), t])));
+                setThreads(next);
+                setThreadsSync((n) => n + 1);
               })
-              .catch(() => {});
+              .catch(() => threadReload.current.failed(read));
+          }
         },
         (t) => {
           reportNews(t);
@@ -791,7 +800,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   return (
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
-    <div className="app" data-questions-sync={questionsSync}>
+    <div className="app" data-questions-sync={questionsSync} data-threads-sync={threadsSync}>
       <aside id="workspace-drawer" className={`list sidebar-shell${drawerOpen ? " is-open" : ""}`}>
         <header className="list-head">
           <span className="brand">
