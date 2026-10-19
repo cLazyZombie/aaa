@@ -205,8 +205,9 @@ fn project_dir(name: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// 프로젝트 설정 글(`aaa.toml`, 없으면 project.toml)
 fn project_toml(dir: &Path) -> String {
-    std::fs::read_to_string(dir.join("project.toml")).unwrap_or_default()
+    std::fs::read_to_string(aaa_config::project_settings_file(dir)).unwrap_or_default()
 }
 
 /// 값을 정할 층(host와 같은 차례: 프로젝트 표 → default 표 → 옛 자리 → 기본값)과 버린 값 경고

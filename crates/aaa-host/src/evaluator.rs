@@ -91,7 +91,7 @@ struct EvalCfg {
 }
 
 fn eval_cfg(dir: &Path) -> EvalCfg {
-    let t = std::fs::read_to_string(dir.join("project.toml"))
+    let t = std::fs::read_to_string(aaa_config::project_settings_file(dir))
         .ok()
         .and_then(|t| t.parse::<toml::Table>().ok())
         .and_then(|t| t.get("evaluator").and_then(|v| v.as_table()).cloned())

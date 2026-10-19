@@ -148,7 +148,8 @@ enum Cmd {
         cmd: ProjectCmd,
     },
     /// 설정 값 하나를 바꾼다(`aaa project set`의 새 꼴, plan §8.285): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute.
+    /// 프로젝트 홈의 aaa.toml이 있으면 거기, 없으면 project.toml에 쓴다(plan §8.288)
     Set { key: String, value: String },
     /// coordinator(`aaa project open`의 새 꼴, plan §8.285)
     Coordinator {

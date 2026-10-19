@@ -587,6 +587,13 @@ impl Default for HealthSection {
 
 // ───────────────────────── 읽기 ─────────────────────────
 
+/// 프로젝트 홈의 설정 파일(plan §8.288): `aaa.toml`이 있으면 그것, 없으면 옛 `project.toml`(없어도 그 자리). 되돌리기(옛 binary는
+/// project.toml만 읽는다)를 위해 aaa는 둘 중 어느 것도 스스로 만들거나 지우지 않는다(`project create`는 project.toml을 쓴다).
+pub fn project_settings_file(dir: &Path) -> PathBuf {
+    let new = dir.join("aaa.toml");
+    if new.is_file() { new } else { dir.join("project.toml") }
+}
+
 pub fn load_host(dir: &Path) -> Result<Loaded<HostConfig>, ConfigErrors> {
     load(dir, "host", validate_host)
 }

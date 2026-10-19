@@ -829,10 +829,12 @@ impl Host {
         if key == "thread_profile" {
             self.check_profile_allowed(project, &value)?;
         }
-        let path = dir.join("project.toml");
+        // 있는 쪽 파일에 쓴다(aaa.toml, 없으면 project.toml. plan §8.288)
+        let path = aaa_config::project_settings_file(&dir);
         let _guard = PROJECT_TOML.lock().unwrap();
         let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "schema = 1\n".into());
-        let edited = crate::project::set_in(&text, key, &value).map_err(bad)?;
+        let edited =
+            crate::project::set_in_table(&text, key, &value, crate::project::repos_table(&path)).map_err(bad)?;
         write_atomic(&path, edited.as_bytes()).map_err(internal)?;
         self.db.audit(actor, "project_set", &format!("{project} {key}={value}"));
         Ok(FrontResponse::Project(self.project_view(project, &dir)))

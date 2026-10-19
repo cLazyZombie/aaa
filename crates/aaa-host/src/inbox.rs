@@ -503,9 +503,11 @@ impl Host {
         matches!(self.db.inbox_last(project, "outage", subject), Ok(Some((event, false))) if event == down)
     }
 
-    /// project.toml을 읽지 못하면 파일 내용 hash당 한 번 알린다
+    /// 설정 파일(`aaa.toml`, 없으면 project.toml)을 읽지 못하면 파일 내용 hash당 한 번 알린다
     fn check_project_config(&self, project: &str, dir: &Path) {
-        let Ok(text) = std::fs::read_to_string(dir.join("project.toml")) else { return };
+        let path = aaa_config::project_settings_file(dir);
+        let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let Ok(text) = std::fs::read_to_string(&path) else { return };
         let Err(e) = text.parse::<toml_edit::DocumentMut>() else { return };
         let hash = hex::encode(sha2::Sha256::digest(text.as_bytes()));
         let key = format!("config_error:{project}");
@@ -514,13 +516,7 @@ impl Host {
         }
         let _ = self.db.set_meta(&key, &hash);
         let first = e.to_string().lines().next().unwrap_or_default().to_string();
-        self.inbox_add(
-            project,
-            "config-error",
-            "project.toml",
-            "not usable",
-            &format!("project.toml을 읽지 못한다: {first}"),
-        );
+        self.inbox_add(project, "config-error", &file, "not usable", &format!("{file}을 읽지 못한다: {first}"));
     }
 
     /// 옛 aaa의 결정 기록(decisions.md)은 brief에 더 넣지 않는다(결정은 memory에 적는다, D10 G9). 결정이 적혀 있으면
