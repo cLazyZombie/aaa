@@ -297,11 +297,33 @@ export function ChatPanel({
     refresh.refresh();
   }, [pane, showThinking, pollKey, readNow, refresh]);
 
-  // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다
-  useEffect(() => {
+  // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect)
+  useLayoutEffect(() => {
     const el = list.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [chat, pending]);
+  // 입력창이 커지거나(여러 줄·보내기 상태·알림) 키보드가 오르거나 창이 좁아지면 보기가 굴림 사건 없이 줄어든다. 폭·글자가 바뀌어
+  // 대화가 다시 접혀도 그렇다. 맨 아래를 보던 사람은 바로 맨 아래에 남는다. 높이만 는 것(접힌 말 펼침)은 손이 한 일이라 따라가지 않는다
+  // (참고 herdr-web-ui `aa624cb` ChatView.tsx ResizeObserver, plan §8.248)
+  useEffect(() => {
+    const el = list.current;
+    if (el === null) return;
+    let lane = "";
+    const observer = new ResizeObserver((entries) => {
+      let follow = false;
+      for (const entry of entries) {
+        if (entry.target === el) { follow = true; continue; }
+        const style = getComputedStyle(entry.target);
+        const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
+        if (next !== lane) { lane = next; follow = true; }
+      }
+      if (follow && atBottom.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    if (el.firstElementChild !== null) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
+  const lastScrollTop = useRef(0);
 
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>
@@ -311,8 +333,11 @@ export function ChatPanel({
         data-testid="chat"
         data-pushes={pushes}
         onScroll={(e) => {
+          // 위로 굴린 손만 따라가기를 끈다: 아래로 가는 자동 굴림은 다음 잰 높이보다 먼저 올 수 있다(참고 ChatView.tsx onScroll)
           const el = e.currentTarget;
-          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          const scrollingUp = el.scrollTop < lastScrollTop.current;
+          lastScrollTop.current = el.scrollTop;
+          if (!atBottom.current || scrollingUp) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
         }}
       >
         <div className="chat-transcript">
