@@ -632,13 +632,6 @@ async fn usage_report(
     res
 }
 
-/// 입력줄 `Submit`의 글과 Enter 사이(harness 메시지 전달과 같다, 300ms). `AAA_TEST_SUBMIT_GAP_MS`는 시험에서만
-/// 늘린다(그 틈에 기기를 폐기하는 시험)
-fn submit_enter_gap() -> std::time::Duration {
-    let ms = std::env::var("AAA_TEST_SUBMIT_GAP_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(300);
-    std::time::Duration::from_millis(ms)
-}
-
 /// 입력 사건 기록 하나의 상한과 남기는 개수
 const DIAG_MAX: usize = 1 << 20;
 const DIAG_KEEP: usize = 20;
@@ -1424,7 +1417,7 @@ async fn pane_session(
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
                             tracing::info!(pane = %id, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "text", "웹 입력: agent 응답");
                             if sent.is_ok() {
-                                tokio::time::sleep(submit_enter_gap()).await;
+                                crate::text::submission_gap().await;
                                 // 기다리는 동안 폐기된 기기의 Enter는 보내지 않는다(t-0340 감사 A9, t3code `awaitInvalidation`)
                                 if host.is_revoked(dev) {
                                     tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 기기 폐기로 Enter 취소");
