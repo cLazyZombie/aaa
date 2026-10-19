@@ -1,7 +1,9 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
 pub mod deploy;
+pub mod input;
 pub use deploy::*;
+pub use input::*;
 pub mod frame;
 pub mod layout;
 pub mod mission;
@@ -56,6 +58,11 @@ pub fn typescript_bindings() -> String {
         ChatRole::decl(&cfg),
         ChatMessage::decl(&cfg),
         ChatView::decl(&cfg),
+        InputTraceEvent::decl(&cfg),
+        InputReceiptMethod::decl(&cfg),
+        InputEvent::decl(&cfg),
+        InputSubmitMeta::decl(&cfg),
+        ChatReceipt::decl(&cfg),
         DeviceRole::decl(&cfg),
         Connection::decl(&cfg),
         MachineView::decl(&cfg),

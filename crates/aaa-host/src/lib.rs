@@ -22,6 +22,7 @@ mod harness;
 mod health;
 mod http;
 mod inbox;
+mod input_log;
 mod library;
 mod library_links;
 mod library_publish;
@@ -1157,6 +1158,7 @@ impl Host {
             ));
         }
         match req {
+            FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
             FrontRequest::DeployContext => Ok(self.deployment_context(actor)),
             FrontRequest::DeployStart { machine, id, action } => {
                 self.deployment_start(actor, machine, id, action).await
@@ -1607,13 +1609,13 @@ impl Host {
                 .await
                 .map(|_| FrontResponse::Done)
             }
-            FrontRequest::PaneCtrlEnter { pane } => {
+            FrontRequest::PaneCtrlEnter { pane, trace } => {
                 let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
                 let (id, mid) = self.resolve_pane(&pane)?;
                 self.check_running(&id)?;
                 let conn = self.live_conn(&mid)?;
                 self.lease_use(&id, f);
-                let data = self.ctrl_enter_data(&id);
+                let data = self.ctrl_enter_data(&id, trace.as_deref());
                 // steering할 수 없는 상태(입력 모름·쉬는 Codex 등)는 아무것도 보내지 않는다(plan §8.239 후속)
                 if data.is_empty() {
                     return Ok(FrontResponse::Done);

@@ -12,6 +12,7 @@ describe("붙여넣기 꼬리표", () => {
   it("감싸지 않았거나 id가 다르거나 한쪽만 있으면 그대로다(사람이 쓴 같은 모양 글)", () => {
     const keep = [
       "그냥 글",
+      '<pasted_content id="a">one</pasted_content id="a">\n<pasted_content id="a">two</pasted_content id="a">',
       '앞말 <pasted_content id="7f06">\n안\n</pasted_content id="7f06">',
       '<pasted_content id="7f06">\n안\n</pasted_content id="7f06">\n뒷말',
       '<pasted_content id="7f06">\n안\n</pasted_content id="9999">',

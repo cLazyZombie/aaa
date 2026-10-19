@@ -32,6 +32,7 @@ function draw() {
   // Codex 입력 줄(›, 화면 셋째 줄 또는 Working 줄 아래 둘째 줄)에 친 글을 그리고 커서를 글 끝에 둔다
   else if (mode === 'working' || mode === 'idle') screen += (mode === 'working' ? '• Working (2s • esc to interrupt)\r\n' : '') + '› ' + draft + '\r\n\r\n  GPT-6.1 low · /workspace\r\n  ? for shortcuts\r\n';
   // Claude 입력 상자. work-로 시작하면 그 위에 작업 상태 줄(감지가 작업 중으로 본다)
+  else if (mode === 'modern') screen += '❯ queued message\r\n  ctrl+x ctrl+s to send now\r\n✻ Shimmying…\r\n\r\n────────────────────────\r\n❯ \x1b[2mPress up to edit queued messages\x1b[0m\r\n────────────────────────\r\n  paste again to expand\r\n';
   else screen += (mode.startsWith('work') ? '✻ Working… (1s · esc to interrupt)\r\n\r\n' : '') + '────────────────────────\r\n❯ ' + (mode.endsWith('grey') ? '\x1b[2mTry something\x1b[0m' : draft) + '\r\n────────────────────────\r\n  ? for shortcuts\r\n';
   const at = mode === 'pending' ? '\x1b[5;3H' : mode === 'working' ? '\x1b[3;' + (3 + draft.length) + 'H' : mode === 'idle' ? '\x1b[2;' + (3 + draft.length) + 'H' : '';
   process.stdout.write('\x1b[2J\x1b[H' + screen + at);
@@ -49,7 +50,7 @@ draw();
     for (const harness of ["claude", "codex"]) fs.writeFileSync(`${directory}/${harness}`, `#!${process.execPath}\n${program}`, { mode: 0o755 });
     // [이름, harness, 화면, 감지가 볼 상태(작업 중 / 쉼)]
     for (const [name, harness, mode, working] of [
-      ["ce-empty", "claude", "work-empty", true], ["ce-text", "claude", "work-empty", true],
+      ["ce-modern", "claude", "modern", true], ["ce-empty", "claude", "work-empty", true], ["ce-text", "claude", "work-empty", true],
       ["ce-grey", "claude", "work-grey", true], ["ce-idle", "claude", "empty", false], ["ce-unknown", "claude", "unknown", true],
       ["ce-codex", "codex", "pending", true], ["ce-codex-away", "codex", "pending-away", true],
       ["ce-codex-typed", "codex", "working", true], ["ce-codex-idle", "codex", "idle", false],
@@ -93,7 +94,7 @@ draw();
     await waitOutput("ce-text", "❯ draft");
     await expectKey(page, "ce-text", () => page.keyboard.press("Control+Enter"), "\x18\x13");
     await shot(page, "ctrl-enter-draft-desktop");
-    for (const name of ["ce-empty", "ce-grey"]) {
+    for (const name of ["ce-modern", "ce-empty", "ce-grey"]) {
       await open(page, name);
       await expectKey(page, name, () => page.keyboard.press("Control+Enter"), "\x18\x13");
     }
@@ -105,6 +106,9 @@ draw();
     await open(page, "ce-unknown");
     await expectNothing(page, "ce-unknown", () => page.keyboard.press("Control+Enter"));
     await shot(page, "ctrl-enter-unknown-desktop");
+    const events = aaa("debug", "input", "--since", "1h").events.filter((e) => e.event === "ctrl_enter");
+    if (!events.some((e) => e.detail.includes('keys=["ctrl+x", "ctrl+s"]') && e.detail.includes("working_line=true"))) throw new Error("Ctrl+Enter 성공 판정 로그 없음");
+    if (!events.some((e) => e.detail.includes('keys=[]') && e.detail.includes("input_live=false"))) throw new Error("Ctrl+Enter 무반응 근거 로그 없음");
   });
   await step("Codex Ctrl+Enter: 대기 steering 패널의 빈 입력은 Esc, 작업 중 친 글은 Enter(steer), 쉬는 중·커서가 입력 밖이면 보내지 않는다", async () => {
     await open(page, "ce-codex");
@@ -145,7 +149,11 @@ draw();
       await page.keyboard.press("Escape");
       await d.waitFor({ state: "detached" });
     };
-    let box = await chat("ce-text");
+    let box = await chat("ce-modern");
+    let modernFrom = await sentCount(page);
+    await expectKey(page, "ce-modern", () => box.press("Control+Enter"), "\x18\x13");
+    assert.deepEqual(await frames(modernFrom), ["ctrl_enter"]);
+    box = await chat("ce-text");
     await autoSend();
     try {
       // 자동 전송을 끄면 작업 중 Enter는 이 기기에 붙잡고, Ctrl+Enter는 붙잡지 않고 지금 턴에 넣는다
@@ -158,6 +166,9 @@ draw();
       await expectKey(page, "ce-text", () => box.press("Control+Enter"), "steer-1\x18\x13");
       await unlocked("Ctrl+Enter 글을 전달한 뒤 입력창이 풀린다");
       assert.deepEqual(await frames(from), ["submit:steer-1:true"]);
+      const events = aaa("debug", "input", "--pane", "ce-text").events;
+      const sent = events.filter((e) => e.event === "received" && e.detail.includes("steer=true")).at(-1);
+      assert.ok(sent && events.some((e) => e.id === sent.id && e.event === "ctrl_enter" && e.detail.includes('keys=["ctrl+x", "ctrl+s"]') && e.detail.includes("input_live=true")), "글 있는 Ctrl+Enter의 같은 ID에 선택 키와 화면 근거를 기록한다");
       assert.equal(await queue.getByRole("textbox", { name: "대기 메시지 1" }).inputValue(), "held-1");
       await shot(page, "ctrl-enter-chat-held");
       // 빈 입력창: 이 기기에 붙잡은 맨 앞을 steering으로 지금 보낸다
@@ -179,9 +190,12 @@ draw();
     await expectKey(page, "ce-idle", () => box.press("Control+Enter"), "idle-1\r");
     await unlocked("쉬는 Claude에 보낸 뒤");
     assert.deepEqual(await frames(from), ["submit:idle-1:false"]);
+    const idleEvents = aaa("debug", "input", "--pane", "ce-idle").events;
+    const idleSend = idleEvents.filter((e) => e.event === "received").at(-1);
+    assert.ok(idleSend && idleEvents.some((e) => e.id === idleSend.id && e.event === "ctrl_enter" && e.detail.includes('keys=["enter"]') && e.detail.includes("working=false")), "쉬는 pane의 글 Ctrl+Enter도 보통 Enter 선택 근거를 기록한다");
     from = await sentCount(page);
     await box.press("Control+Enter");
-    assert.deepEqual(await frames(from), []);
+    assert.deepEqual(await frames(from), ["ctrl_enter"]);
     // 작업 중 Codex: 글 + Enter(정식 steer)
     box = await chat("ce-codex-typed");
     from = await sentCount(page);
@@ -212,6 +226,8 @@ draw();
     const start = await sentCount(mobile);
     await line.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));
     assert.equal((await sentFrames(mobile, start)).filter(f => ['input', 'submit', 'ctrl_enter'].includes(f.t)).length, 0);
+    await expectKey(mobile, "ce-empty", () => line.press("Control+Enter"), "\x18\x13");
+    assert.ok(aaa("debug", "input", "--pane", "ce-empty").events.some((e) => e.event === "ui" && e.detail.includes("CtrlEnterBlocked") && e.detail.includes("Composing")), "IME Ctrl+Enter 차단 이유를 host에 기록한다");
     await shot(mobile, "ctrl-enter-phone");
     await mobile.context().close();
   });

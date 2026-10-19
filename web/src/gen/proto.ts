@@ -57,13 +57,27 @@ export type ChatMessage = { role: ChatRole, text: string,
  * 사람 글이 harness 대기열에 있다(작업 중에 보내 아직 흡수되지 않음, Claude `queue-operation`). 기록 끝에 붙는다.
  * 옛 agent는 보내지 않고 옛 front는 버린다(plan §8.247).
  */
-pending: boolean, };
+pending: boolean,
+/**
+ * 표시 상한으로 자르기 전의 사람 글. 옛 agent에는 없으므로 짧은 글 비교로 돌아간다.
+ */
+receipt?: ChatReceipt | null, };
 
 export type ChatView = { pane: string, harness: string, messages: Array<ChatMessage>,
 /**
  * 기록이 더 길어 끝부분만 실었다
  */
 truncated: boolean, };
+
+export type InputTraceEvent = "receipt" | "preparing" | "ctrl_enter_blocked" | "unlocked" | "slow" | "unlock" | "cancel" | "failed" | "pending" | "stuck";
+
+export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room";
+
+export type InputEvent = { at_ms: bigint, id: string, pane: string, thread: string | null, harness: string | null, working: boolean, event: string, detail: string, };
+
+export type InputSubmitMeta = { pasted: boolean, attachments: number, ctrl_enter: boolean, };
+
+export type ChatReceipt = { sha256: string, method: InputReceiptMethod, };
 
 export type DeviceRole = "reader" | "controller" | "local";
 
@@ -273,7 +287,7 @@ export type PostSender = { thread: string | null, role: Role, mission: string | 
 
 export type PostEnvelope = { id: string, project: string, from: PostSender, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
-export type FrontRequest = { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -289,7 +303,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -377,7 +391,7 @@ settings: Record<string, unknown>,
  */
 pins?: Array<string>, };
 
-export type FrontResponse = { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type FrontResponse = { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -409,12 +423,12 @@ export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: 
  */
 history_more: boolean, } | { "t": "history", id: number, data: B64, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string, } | { "t": "attached", path: string, inserted: boolean, note: string | null, } | { "t": "submitted", id: number, ok: boolean, message: string | null, } | { "t": "submit_cancelled", id: number, stage: SubmitStage, } | { "t": "error" } & ErrorBody;
 
-export type TermClientMsg = { "t": "input", data: string, } | { "t": "ctrl_enter" } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string,
+export type TermClientMsg = { "t": "input", data: string, } | { "t": "ctrl_enter", trace: string | null, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, trace: string | null, meta: InputSubmitMeta,
 /**
  * 입력창의 Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 글 뒤 Enter 대신 host가 steering 키를 고른다(작업 중인 Claude는
  * sendNow, 그 밖은 Enter). 옛 host는 이 칸을 버려 보통 보내기가 된다
  */
-steer: boolean, } | { "t": "submit_cancel", id: number, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, } | { "t": "colors", fg: string, bg: string, };
+steer: boolean, } | { "t": "input_trace", id: string, event: InputTraceEvent, method: InputReceiptMethod | null, } | { "t": "submit_cancel", id: number, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, } | { "t": "colors", fg: string, bg: string, };
 
 export type EventsClientMsg = { "t": "presence", active: boolean,
 /**

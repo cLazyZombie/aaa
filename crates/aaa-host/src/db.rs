@@ -244,6 +244,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS devices(
                id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
                created_at INTEGER NOT NULL, last_seen INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS input_events(seq INTEGER PRIMARY KEY, ts INTEGER NOT NULL, pane TEXT NOT NULL, thread TEXT, data TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS audit(ts INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);
              CREATE TABLE IF NOT EXISTS library_links(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL,
@@ -848,6 +849,37 @@ impl Db {
         Ok(gone)
     }
 
+    pub(crate) fn input_event(&self, row: &aaa_proto::InputEvent) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        tx.execute(
+            "INSERT INTO input_events(ts,pane,thread,data) VALUES(?1,?2,?3,?4)",
+            params![row.at_ms, row.pane, row.thread, serde_json::to_string(row)?],
+        )?;
+        tx.execute("DELETE FROM input_events WHERE ts < ?1", [row.at_ms.saturating_sub(30 * 86400 * 1000)])?;
+        tx.execute("DELETE FROM input_events WHERE seq <= (SELECT seq FROM input_events ORDER BY seq DESC LIMIT 1 OFFSET 10000)", [])?;
+        // 기존 입력 진단 파일(20 × 1MiB)과 같은 최대 본문 예산. 최신 사건부터 남긴다.
+        let bytes: u64 =
+            tx.query_row("SELECT coalesce(sum(length(CAST(data AS BLOB))),0) FROM input_events", [], |r| r.get(0))?;
+        if bytes > 20 * 1024 * 1024 {
+            tx.execute("WITH sizes AS (SELECT seq,sum(length(CAST(data AS BLOB))) OVER (ORDER BY seq DESC) AS bytes FROM input_events) DELETE FROM input_events WHERE seq IN (SELECT seq FROM sizes WHERE bytes > 20971520)", [])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn input_events(
+        &self,
+        pane: Option<&str>,
+        thread: Option<&str>,
+        since: u64,
+    ) -> Result<Vec<aaa_proto::InputEvent>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT data FROM (SELECT seq,data FROM input_events WHERE ts>=?1 AND (?2 IS NULL OR pane=?2) AND (?3 IS NULL OR thread=?3 OR substr(thread,instr(thread,'/')+1)=?3) ORDER BY seq DESC LIMIT 1000) ORDER BY seq")?;
+        let rows = st.query_map(params![since, pane, thread], |r| r.get::<_, String>(0))?;
+        rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+    }
+
     pub fn audit(&self, actor: &str, action: &str, detail: &str) {
         let c = self.conn.lock().unwrap();
         let _ = c.execute(
@@ -1100,5 +1132,70 @@ impl Db {
         tx.execute("INSERT INTO meta(key,value) VALUES('mission_input_seq',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[seq.to_string()])?;
         tx.commit()?;
         Ok(format!("{prefix}-{seq:012}"))
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn input_log_bounds_retention_and_queries_without_message_bodies() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let now = 40 * 86400 * 1000;
+        let mut row = aaa_proto::InputEvent {
+            at_ms: now,
+            id: "new".into(),
+            pane: "p1".into(),
+            thread: Some("project/t-1".into()),
+            harness: Some("claude".into()),
+            working: true,
+            event: "received".into(),
+            detail: "bytes=7 sha256=abc".into(),
+        };
+        {
+            let c = db.conn.lock().unwrap();
+            c.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<10001) INSERT INTO input_events(ts,pane,thread,data) SELECT ?1,'p2','project/t-2',?2 FROM n", params![now, serde_json::to_string(&row).unwrap()]).unwrap();
+            c.execute(
+                "INSERT INTO input_events(ts,pane,data) VALUES(1,'old',?1)",
+                [serde_json::to_string(&row).unwrap()],
+            )
+            .unwrap();
+        }
+        db.input_event(&row).unwrap();
+        let c = db.conn.lock().unwrap();
+        assert_eq!(c.query_row("SELECT count(*) FROM input_events", [], |r| r.get::<_, u64>(0)).unwrap(), 10000);
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM input_events WHERE pane='old'", [], |r| r.get::<_, u64>(0)).unwrap(),
+            0
+        );
+        drop(c);
+        assert_eq!(db.input_events(Some("p1"), Some("t-1"), now).unwrap(), [row.clone()]);
+        assert!(db.input_events(Some("p1"), Some("t-2"), 0).unwrap().is_empty());
+        assert!(db.input_events(None, None, now + 1).unwrap().is_empty());
+        row.at_ms += 1;
+        row.id = "later".into();
+        db.input_event(&row).unwrap();
+        let rows = db.input_events(None, None, 0).unwrap();
+        assert_eq!(rows.len(), 1000);
+        assert_eq!(rows.last().unwrap(), &row);
+        // 1,000자 한국어 상세도 한 줄 3KiB다: 행 수만으로 20MiB를 넘기지 않게 한다.
+        let mut large = row.clone();
+        large.detail = "가".repeat(1000);
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE input_events SET data=?1", [serde_json::to_string(&large).unwrap()])
+            .unwrap();
+        db.input_event(&row).unwrap();
+        let c = db.conn.lock().unwrap();
+        let (count, bytes): (u64, u64) = c
+            .query_row("SELECT count(*),sum(length(CAST(data AS BLOB))) FROM input_events", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert!(count < 10000 && bytes <= 20 * 1024 * 1024);
+        drop(c);
+        assert_eq!(db.input_events(Some("p1"), Some("t-1"), now + 1).unwrap().last().unwrap(), &row);
     }
 }
