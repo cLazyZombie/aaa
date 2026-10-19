@@ -5293,3 +5293,28 @@ primary 근거:
   배포 때 host·CLI·웹을 함께 새 판으로 바꾸고 첫 자동 정리 전 dry-run 예상치를 확인한다.
 - **시험:** 주입한 now와 임시 사본으로 기한·오래된 순·보호·보호 초과 알림·꺼짐·6시간 경계·쓰기 없는 미리 보기를 본다.
   기존 보고서 E2E에 doctor·CLI dry-run·웹 합계/한도 표시를 더한다. 고정 sleep·새 신호 시험은 없다.
+
+### 8.213 대화 입력창은 한 줄로 시작하고 필요할 때만 늘어난다(10-19, t-0376, 사용자 「두 줄이 필요할 때만 두줄로 쓰고 작을 때는 한 줄로」)
+
+- **원인.** 글 칸은 이미 한 줄이었다(`rows=1`, `min-height: calc(1lh + var(--space-5))`). 두 줄로 보인 것은 `.composer-surface` grid가
+  글 칸(`"text text text"`) 밑에 단추 줄(`"left status right"`)을 따로 두기 때문이다. 참고 herdr-web-ui는 그 줄에 더하기·마이크·작업 칩·상태·보내기를
+  두지만 aaa는 보내기만 옮겨(§8.130) 빈 줄처럼 보였다. 또 글 칸이 글만큼 늘지 않아 여러 줄이 한 줄 칸 안에서 굴렀다(참고 `sizeTextarea`를 옮기지 않았다).
+- **고침.** `web/src/ChatComposer.tsx`
+  - 높이: 참고 herdr-web-ui `src/components/Composer.tsx` `sizeTextarea`(415~433줄) 그대로 `height=auto` → `scrollHeight`를 `useLayoutEffect`에서 준다.
+    다시 재는 때도 참고대로 글·상자 폭(ResizeObserver, 참고 `boxWidth`)·대화 글자 크기와 밀도(참고 `settings.chatFontSize` 효과)다. 참고의 `facesLoaded`는
+    입력창 글꼴이 시스템 글꼴이라 없다.
+  - 한 줄 배치: t3code `ChatComposer.tsx` `isComposerResting`(6645·7054~7060·7126~7137·7219~7221줄)과 `useComposerMultilinePrompt.ts`다. 글이 없거나 한 줄이면
+    `.composer-surface[data-lines="one"]`가 grid를 `"left text right"` 한 줄로 바꿔 단추가 글 칸 옆 가운데에 선다(`herdr/Composer.css`). 줄바꿈이 있거나
+    단추 옆 폭에서 줄이 넘치면 `data-lines="more"`로 참고 herdr-web-ui 배치(글 칸 전체 폭, 단추는 밑 줄)로 간다. 같은 textarea라 focus·caret이 그대로다.
+- **참고와 다른 점.**
+  - t3code resting은 데스크톱·기존 thread·긴 대화·굴려 접힘에만 쓰고 휴대폰은 따로 접는다(`shouldUseRestingComposerLayout`). 여기는 사용자 요청대로 세 기기 모두 글만 본다.
+  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 두 배치 모두 **단추 옆 폭**에서 잰다
+    (펼친 배치에서는 같은 그리기 안에서 글 칸 폭을 잠시 그 폭으로 줄여 잰다). 판정이 배치와 무관해 오가며 튀지 않고 잘리지도 않는다.
+  - 높이 한도: 참고 `max-height: 10lh`에 참고 손잡이 한도(`.composer-text.is-sized`의 보이는 높이 절반)를 더했다. 휴대폰 가로(402px)에서 10줄이면
+    입력창이 화면 3/4을 덮고 화면 키보드가 오르면 대화가 남지 않는다.
+  - 한 줄 배치에서 긴 placeholder(「재연결 중…」)는 말줄임으로 끝난다(t3code resting placeholder `whitespace-nowrap overflow-hidden`). 그렇지 않으면
+    Chromium·WebKit 모두 placeholder 줄넘김만큼 빈 칸이 커진다.
+- **시험.** 웹 E2E 22 「대화 입력창 높이」: 휴대폰 874×402·402×874(WebKit iPhone)·데스크톱 1920×1080에서 빈 칸·짧은 글·두 줄·14줄·줄넘김 문단·지운 뒤를
+  `data-lines` 표지로 기다려 본다. 한 줄이면 단추와 글 칸 가운데가 1px 안이고 겹치지 않으며 글 칸이 굴러가지 않는다. 여러 줄이면 단추가 글 칸 밑이고
+  높이가 그 줄 수(한도에서 멈춰 굴러감)다. 내내 focus가 글 칸에 있고 상자 아래끝이 같으며 표지는 입력마다 한 번만 바뀐다(`more,one,more,one`).
+  고치기 전 빌드에서 세 기기 모두 한 줄 표지·단추 가운데·겹침·높이로 실패했다.
