@@ -28,5 +28,6 @@
   "30-thread-preparation": 2,
   "30-chat-reading": 7,
   "31-render-guards": 11,
-  "32-usage-limit": 14
+  "32-usage-limit": 14,
+  "35-composer-send-height": 53
 }
