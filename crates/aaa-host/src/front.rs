@@ -390,6 +390,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
+                | FrontRequest::PaneCtrlEnter { .. }
                 | FrontRequest::PanePaste { .. }
                 | FrontRequest::PaneSend { .. }
                 | FrontRequest::PaneSendText { .. }

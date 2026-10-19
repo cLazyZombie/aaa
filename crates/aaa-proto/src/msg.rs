@@ -1601,6 +1601,10 @@ pub enum FrontRequest {
         pane: String,
         data: B64,
     },
+    /// 웹·TUI의 Ctrl+Enter. host가 감지 입력줄로 줄바꿈/steering을 정한다. 권한·입력 순서는 PaneInput과 같다.
+    PaneCtrlEnter {
+        pane: String,
+    },
     /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
     /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
     PanePaste {
@@ -2550,6 +2554,8 @@ pub enum TermClientMsg {
     Input {
         data: String,
     },
+    /// front에서 입력줄을 추측하지 않고 host의 공통 Ctrl+Enter 판정을 쓴다.
+    CtrlEnter,
     Resize {
         cols: u16,
         rows: u16,
