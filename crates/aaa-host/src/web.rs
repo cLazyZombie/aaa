@@ -1404,6 +1404,7 @@ async fn pane_session(
                             None
                         }
                         Ok(TermClientMsg::Input { data }) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(data.into_bytes()) }),
+                        Ok(TermClientMsg::CtrlEnter) => Some(FrontRequest::PaneCtrlEnter { pane: id.clone() }),
                         Ok(TermClientMsg::Resize { cols, rows }) if role.can_control() => {
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }

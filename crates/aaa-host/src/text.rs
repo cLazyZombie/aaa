@@ -49,6 +49,40 @@ fn match_output(text: &str, matcher: &OutputMatch, regex: Option<&regex::Regex>)
 }
 
 impl Host {
+    /// 웹·TUI가 함께 쓰는 Ctrl+Enter. detection과 색을 같은 mirror에서 읽어 회색 suggestion과 초안을 구별한다.
+    pub(crate) fn ctrl_enter_data(&self, id: &str) -> Vec<u8> {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(pane) = inner.panes.get_mut(id) else {
+            return b"\x1b\r".to_vec();
+        };
+        let declared = pane.info.harness.is_some()
+            || pane.info.argv.first().is_some_and(|arg| {
+                matches!(arg.rsplit(['/', '\\']).next().unwrap_or(arg).trim_end_matches(".exe"), "claude" | "codex")
+            });
+        // 아직 상태 사건이 오지 않은 직접 실행 agent도 판정 모름을 Enter 제출로 처리하지 않는다.
+        let harness = pane.agent.as_ref().map(|a| a.harness.as_str()).or(declared.then_some("unknown"));
+        let blocked = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question);
+        let Some(mirror) = pane.mirror.as_mut() else {
+            return if harness.is_some() { b"\x1b\r".to_vec() } else { b"\r".to_vec() };
+        };
+        let colors = mirror.vt.read(ReadSource::Visible, None, ReadFormat::Ansi).text;
+        let codex_cursor_elsewhere = harness == Some("codex") && {
+            let plain = crate::prompt_box::plain(&colors);
+            let lines: Vec<&str> = plain.lines().collect();
+            let prompt_row = lines.iter().rposition(|line| line.trim_start().starts_with('›'));
+            let (row, col, _) = mirror.vt.cursor();
+            prompt_row != Some(usize::from(row)) || col > 2
+        };
+        let live = if blocked || !mirror.synced || codex_cursor_elsewhere {
+            String::new()
+        } else {
+            mirror.vt.detection_text()
+        };
+        let keys = crate::ctrl_enter::ctrl_enter_keys(harness, &live, Some(&colors));
+        let modes = mirror.vt.modes();
+        keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect()
+    }
+
     /// 화면 사본에서 읽는다. 사본이 없으면 None.
     pub(crate) fn read_view(
         &self,
