@@ -5580,3 +5580,13 @@ primary 근거:
 - **운영 전환.** 이 수정의 host binary를 반영한 뒤 coordinator가 `aaa mission restart projects rc-verify-watch`를 다시 한 번 실행한다. 옛 binary가 남긴 reset_requested만으로 새 복구 의도를 추정하지 않는다. stop이나 옛 명령 승인은 필요 없다. 같은 thread에서 새 pane·새 harness 세션·permissions.allow·추가 읽기 경로가 적용됐는지를 확인한다. 이 thread는 운영 restart·binary 교체를 실행하지 않았다.
 
 - 최신 main 통합 전체 검사에서 기존 `tui::tabs_like_herdr`가 실제 올바른 `작업 폴더` 경로를 찾지 못했다. 임시 경로 길이에 따라 공백이 pane 끝 칸에 오면 `Vt::rows_between`이 접힌 줄 끝의 실제 공백을 지운 것이 원인이다. 기대값·시한·시험을 바꾸지 않고 RecentUnwrapped의 soft-wrap 끝 공백만 보존했다. 기존 `recent_unwrapped_joins_soft_wrapped_rows`에 화면/기록 경계 사례를 더해 원인 실패(`abcd efgh` → `abcdefgh`)를 먼저 재현했다. 일반 Recent의 끝 공백 제거와 넓은 글자 spacer 규칙은 유지한다. 참고 herdr 0.9.5 `pane/terminal.rs`의 화면 텍스트 이음은 `soft_wrapped`일 때 `row_text` 전체를 보존한다(`history_read.rs`의 Windows fallback은 같은 trim을 하므로 따르지 않음). 이는 임무 수정과 별도 커밋으로 나눈 전체 gate 차단 결함의 최소 수리다.
+
+### 8.237 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
