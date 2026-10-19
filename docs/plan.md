@@ -5321,3 +5321,10 @@ primary 근거:
   - 웹 단위 `agentFolders.test.mjs`: 경로가 다른 같은 이름(Windows 경로 포함)은 한 폴더, coordinator 맨 위·이름순·「기타」 끝·폴더 안 받은 차례, 폴더 하나도 폴더, 저장소를 모르면 폴더 없음.
   - E2E 12 「에이전트 패널 저장소 폴더」: 실제 git 저장소의 worktree thread와 작업 폴더 thread가 rcgame·「기타」 폴더에, 자식 줄 8px, 둘째 줄 상태 말·「프로젝트 · 머신」, 접으면 +1, 휴대폰 drawer에서 폴더 머리·줄의 ⋯이 목록 끝 여백 안.
   - 결함 셋을 심어 실패를 확인했다. (a) host가 칸을 채우지 않음 → m13, (b) 폴더 이름순 정렬 없음 → 단위, (c) 자식 줄 8px 규칙 없음 → E2E 12.
+
+### 8.261 coordinator가 오래 기다리는 명령을 돌리지 않게 안내(10-19, t-0409)
+
+- **요청.** brief 전달을 기다리는 sleep 반복 명령 동안 사용자 메시지가 쌓였다. coordinator는 언제나 사용자에게 답할 수 있어야 한다.
+- **안내.** `COORDINATOR_GUIDE`에 앞(foreground)에서 오래 기다리는 명령을 돌리지 말라는 규칙을 더했다. brief 전달·CI·재연결·thread 상태를 sleep·until 반복으로 기다리지 않고, aaa inbox 알림에 맡기거나 수 초 안에 한 번만 확인하고 끝낸다. 새 프로젝트의 AGENTS.md에 들어가고, 기존 프로젝트는 새 binary를 반영한 뒤 `aaa doctor files --fix`로 갱신한다. 운영 반영은 코드 검증·착지와 별도다.
+- **메시지 대기열 검토.** 참고 herdr-projects 0.2.35(`1f05c00`) `threads.rs::prompt`도 `prompt_pending`이면 거부하며, 입력 뒤에만 `thread.rs::append_follow_up`으로 기록한다. aaa도 같은 규칙이다(§8.40). brief 뒤 자동 전송을 넣으려면 brief 실패·재시작·resolve 때의 취소, 보내기 직전 확인창·신뢰 창·입력 초안 검사, 중복 전송 방지와 Follow-ups 기록 시점을 함께 정해야 한다. 현재 host는 재시작 시 남은 queued 메시지를 unknown으로 바꾸고 재전송하지 않는다. 이번에는 전달 계약을 유지하고 대기열은 후속 제안으로 남긴다.
+- **검증.** 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`에서 새 프로젝트와 `doctor files --fix`가 만든 안내에 금지·대안 문구가 있는지 확인한다. 규칙이 없는 원래 코드에서 실패하고, 추가한 뒤 통과한다. 새 시험·production seam은 없다.

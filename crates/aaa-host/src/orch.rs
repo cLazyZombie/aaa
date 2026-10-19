@@ -230,6 +230,8 @@ aaa가 쓴 파일이다. `aaa doctor files --fix`가 지금 aaa의 안내로 다
 
 coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다. 코드를 고치거나 빌드·시험을 돌리거나 저장소를
 깊이 조사하지 않는다. 잠깐 보는 것보다 더 드는 일은 thread에 맡긴다.
+앞(foreground)에서 오래 기다리는 명령을 돌리지 않는다. brief 전달·CI·재연결·thread 상태를 기다리며 sleep·until 반복을
+돌리면 사용자에게 답할 수 없다. 기다릴 일은 aaa inbox 알림에 맡기거나, 수 초 안에 한 번만 확인하고 끝낸다.
 
 ## 매 턴
 1. 먼저 `aaa context {p}`를 본다: TASKS.md, 열린 thread와 Next 줄, `start_threads`, 맡길 수 있는 owner, inbox 항목.
