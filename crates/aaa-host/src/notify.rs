@@ -680,7 +680,7 @@ mod tests {
             let place = Place::Project("demo".into());
             let titles = HashMap::new();
             let items = [i];
-            let push = crate::push::payload(&place, &items, &titles);
+            let push = crate::push::payload(&place, &items, &titles, None);
             let hook = notify_body("json", "", &place, &items, &titles);
             assert_eq!(push["body"], want);
             assert_eq!(hook["items"][0]["summary"], want);

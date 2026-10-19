@@ -207,6 +207,7 @@ impl Host {
     }
 
     pub(crate) fn inbox_publish(&self, item: &InboxItem) {
+        self.bump(); // 사용자 요청의 설치 앱 배지도 다시 읽는다
         let dir = self.inbox_dir(&item.project);
         if let Err(e) = std::fs::create_dir_all(&dir)
             .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(item)))
@@ -323,6 +324,7 @@ impl Host {
             i.done = true;
             i.done_at_ms = Some(now);
             self.db.inbox_put(&i)?;
+            self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
             if i.item_kind == "post"
                 && let Ok(r) = self.load(project, &i.subject)
                 && r.mission.is_some()
