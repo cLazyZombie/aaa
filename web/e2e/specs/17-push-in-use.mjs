@@ -12,6 +12,20 @@ import {
 // 알림 묶음 100ms(실험실 설정 1초, notify.rs debounce): push 판정마다 1초를 기다렸다. 설정 1초 길은 12가 돈다
 export const labEnv = { AAA_TEST_NOTIFY_DEBOUNCE_MS: "100" };
 
+// 여기서는 push 판정·앱 안 알림을 검증한 뒤 화면을 정리한다. 닫기 단추의 실제 조작은 12가 소유한다.
+// 조회 도중 저절로 접혔으면 이미 정리된 것이다. 존재 확인과 click을 같은 JS 작업에서 해 수명과 경쟁하지 않는다.
+async function dismissObservedDroplet(page) {
+  const action = await page.evaluate(() => {
+    const droplet = document.querySelector(".droplet");
+    if (!droplet) return "already-gone";
+    if (droplet.dataset.phase === "out") return "already-leaving";
+    droplet.querySelector(".droplet-close").click();
+    return "closed";
+  });
+  await page.locator(".droplet").waitFor({ state: "detached" });
+  return action;
+}
+
 export default async function ({ page }) {
   await pushLab(page);
 
@@ -71,6 +85,7 @@ export default async function ({ page }) {
     const start = pushes.length;
     const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init });
     const pp = phone.page;
+    await pp.clock.install();
     const subscribed = () => pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.subscribed);
     const bellPush = async () => {
       await inList(pp, "more");
@@ -102,7 +117,12 @@ export default async function ({ page }) {
     await until("보는 동안 앱 안 알림", async () => (await pp.locator(".droplet-title").allInnerTexts()).includes("휴대폰으로 보는 중"));
     if ((await pp.locator(".droplet").count()) !== 1) throw new Error(`앱 안 알림 ${await pp.locator(".droplet").count()}개`);
     if (toDev(start).length !== 0) throw new Error(`보는 동안·여는 동안 push ${toDev(start).length}건`);
-    await pp.locator(".droplet-close").click();
+    // CLI 조회 중 hold가 끝난 순서를 가상 시계로 고정한다. 닫힘 사건 뒤의 정리는 없어질 단추를 기다리면 안 된다.
+    await pp.clock.runFor(6000); // reveal + 3.6초 hold + fold를 넘긴다(실제 sleep 없음)
+    await pp.locator(".droplet").waitFor({ state: "detached" });
+    console.log('droplet-close-race {"observed":true,"expiredBeforeCleanup":true}');
+    const cleanup = await dismissObservedDroplet(pp);
+    if (cleanup !== "already-gone") throw new Error(`자동 닫힘 뒤 정리: ${cleanup}`);
     await until("앱 안 알림 닫힘", async () => (await pp.locator(".droplet").count()) === 0);
     // (3) 가려지면(홈 화면으로 나감): 쓰는 화면이 없어 이 기기에 push가 하나 간다. 앱 안 알림·탭 알림은 없다
     await pp.evaluate(() => {
@@ -187,7 +207,7 @@ export default async function ({ page }) {
     if (!/^쓰는 기기 [0-9A-Za-z]{1,7} · 쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개 · 근거: 쓰는 기기 /.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
     await until("보이기만 하는 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("두 기기 A 쓰는 중"));
     if (devicePushes(from).length !== 0) throw new Error(`A가 쓰는 동안 push ${devicePushes(from).length}건`);
-    await bp.locator(".droplet-close").click();
+    await dismissObservedDroplet(bp);
     // 머신마다 도는 thread 수에 한도가 있다(max_threads_per_machine): 다 본 thread는 정리한다
     const done = () => {
       while (ts.length) aaa("thread", "resolve", "demo", ts.shift().id);
@@ -213,7 +233,7 @@ export default async function ({ page }) {
     await until("새 연결이 쓰는 화면", async () => (await pushInUse(page)) === 1);
     // 다시 붙으면 끊긴 동안 놓친 보고를 알린다(t3code afterSequence처럼 놓친 사건을 잇는다)
     await until("놓친 보고의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("죽은 연결 동안"));
-    await bp.locator(".droplet-close").click();
+    await dismissObservedDroplet(bp);
     await until("놓친 보고 알림 닫힘", async () => (await bp.locator(".droplet").count()) === 0);
     done();
     k = skips().length;
@@ -340,7 +360,7 @@ export default async function ({ page }) {
     if (!s2.detail.startsWith(`쓰는 기기 ${bId} · 쓰는 화면 2개`)) throw new Error(`push_skipped ${s2.detail}(B ${bId})`);
     await until("B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("쓰는 기기 B가 볼 때"));
     if (devicePushes(from).length !== 0) throw new Error(`B가 쓰는 동안 push ${devicePushes(from).length}건`);
-    await bp.locator(".droplet-close").click();
+    await dismissObservedDroplet(bp);
     done();
     // B가 가려진다: 쓰는 기기는 B 그대로, 쓰는 화면이 아니므로 push가 간다(A는 보이고 focus)
     await bp.evaluate(() => {
