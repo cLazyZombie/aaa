@@ -1,0 +1,502 @@
+{
+  "$defs": {
+    "Action": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "inbox": {
+              "$ref": "#/$defs/Inbox"
+            }
+          },
+          "required": [
+            "inbox"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/Message"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "wake": {
+              "$ref": "#/$defs/Wake"
+            }
+          },
+          "required": [
+            "wake"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CatchUp": {
+      "enum": [
+        "once",
+        "skip"
+      ],
+      "type": "string"
+    },
+    "Ci": {
+      "additionalProperties": false,
+      "properties": {
+        "branches": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "events": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": "string"
+        },
+        "workflows": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "repo",
+        "branches"
+      ],
+      "type": "object"
+    },
+    "Command": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "daily"
+            ]
+          },
+          "required": [
+            "every"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "every"
+            ]
+          },
+          "required": [
+            "daily"
+          ]
+        }
+      ],
+      "properties": {
+        "catch_up": {
+          "$ref": "#/$defs/CatchUp",
+          "default": "once"
+        },
+        "command": {
+          "type": "string"
+        },
+        "daily": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "every": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "Condition": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "schedule": {
+              "$ref": "#/$defs/Scheduled"
+            }
+          },
+          "required": [
+            "schedule"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Command"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "thread": {
+              "$ref": "#/$defs/Threads"
+            }
+          },
+          "required": [
+            "thread"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "pr": {
+              "$ref": "#/$defs/Pr"
+            }
+          },
+          "required": [
+            "pr"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ci": {
+              "$ref": "#/$defs/Ci"
+            }
+          },
+          "required": [
+            "ci"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "git": {
+              "$ref": "#/$defs/Git"
+            }
+          },
+          "required": [
+            "git"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Git": {
+      "additionalProperties": false,
+      "properties": {
+        "branches": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "events": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "branches"
+      ],
+      "type": "object"
+    },
+    "Inbox": {
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "text",
+          "text_file"
+        ]
+      },
+      "properties": {
+        "notify": {
+          "default": false,
+          "type": "boolean"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "batch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_per_day": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_gap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": 0
+            }
+          ],
+          "description": "생략 또는0이면 제한 없음"
+        },
+        "usage_session_below": {
+          "format": "double",
+          "maximum": 100,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usage_week_below": {
+          "format": "double",
+          "maximum": 100,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Message": {
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "text",
+          "text_file"
+        ]
+      },
+      "properties": {
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "Pr": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Scheduled": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "daily"
+            ]
+          },
+          "required": [
+            "every"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "every"
+            ]
+          },
+          "required": [
+            "daily"
+          ]
+        }
+      ],
+      "properties": {
+        "catch_up": {
+          "$ref": "#/$defs/CatchUp",
+          "default": "once"
+        },
+        "daily": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "every": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Threads": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repos": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "type": "object"
+    },
+    "Wake": {
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "text",
+          "text_file"
+        ]
+      },
+      "properties": {
+        "mission": {
+          "type": "string"
+        },
+        "reports": {
+          "default": false,
+          "type": "boolean"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mission"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "do": {
+      "$ref": "#/$defs/Action"
+    },
+    "enabled": {
+      "default": true,
+      "type": "boolean"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits",
+      "default": {}
+    },
+    "on": {
+      "$ref": "#/$defs/Condition"
+    },
+    "title": {
+      "default": "",
+      "type": "string"
+    }
+  },
+  "required": [
+    "on",
+    "do"
+  ],
+  "title": "AAA 자동화",
+  "type": "object"
+}

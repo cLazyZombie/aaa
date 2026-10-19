@@ -381,16 +381,33 @@ impl Db {
 
     /// 읽기→갱신을 한 transaction에서 한다. 동시에 도는 source의 기록을 잃지 않는다.
     pub(crate) fn update_meta(&self, key: &str, update: impl FnOnce(Option<String>) -> Result<String>) -> Result<()> {
+        self.update_meta_checked(key, &[], |old| Ok((update(old)?, vec![]))).map(|_| ())
+    }
+
+    /// receipt 검사·상태·여러 receipt를 같은 transaction에서 처리한다.
+    pub(crate) fn update_meta_checked(
+        &self,
+        key: &str,
+        absent: &[&str],
+        update: impl FnOnce(Option<String>) -> Result<(String, Vec<(String, String)>)>,
+    ) -> Result<bool> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
+        for guard in absent {
+            if tx.query_row("SELECT 1 FROM meta WHERE key=?1", [guard], |_| Ok(())).optional()?.is_some() {
+                return Ok(false);
+            }
+        }
         let old = tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
-        let value = update(old)?;
-        tx.execute(
-            "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [key, &value],
-        )?;
+        let (value, extra) = update(old)?;
+        for (key, value) in std::iter::once((key.to_string(), value)).chain(extra) {
+            tx.execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [key, value],
+            )?;
+        }
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     pub fn del_meta(&self, key: &str) -> Result<()> {
@@ -857,6 +874,34 @@ impl Db {
             ],
         )?;
         Ok(n == 1)
+    }
+
+    /// 알림의 예산 epoch와 항목을 함께 저장한다. done·prune은 이 표지를 지우지 않는다.
+    pub(crate) fn inbox_insert_marked(
+        &self,
+        i: &aaa_proto::InboxItem,
+        key: &str,
+        epoch: &str,
+        already_seen: bool,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let previous: Option<String> =
+            tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
+        if previous.as_deref() == Some(epoch) {
+            return Ok(false);
+        }
+        let inserted = if already_seen {
+            false
+        } else {
+            tx.execute("INSERT INTO inbox(id,project,kind,subject,event,done,done_at,created_at,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO NOTHING",params![i.id,i.project,i.item_kind,i.subject,i.event,i.done,i.done_at_ms.map(|v|v as i64),i.created_at_ms as i64,serde_json::to_string(i)?])?==1
+        };
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [key, epoch],
+        )?;
+        tx.commit()?;
+        Ok(inserted)
     }
 
     /// 만든 순서대로. `all`이 아니면 끝내지 않은 것만.

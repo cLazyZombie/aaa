@@ -1146,12 +1146,27 @@ mod mission_tests {
         let project = root.join("projects/demo");
         std::fs::create_dir_all(&work).unwrap();
         let cfg = ThreadsConfig { exe: "/opt/aaa tools/aaa".into(), ..Default::default() };
-        for harness in ["claude", "codex"] {
+        for (harness, yolo) in [("claude", false), ("claude", true), ("codex", false), ("codex", true)] {
             let mut profile = aaa_proto::ResolvedProfile {
                 harness: harness.into(),
                 model: String::new(),
                 effort: String::new(),
-                args: vec![],
+                args: aaa_config::safety::apply_yolo(
+                    yolo,
+                    harness,
+                    &if yolo {
+                        vec![]
+                    } else if harness == "codex" {
+                        vec![
+                            "--sandbox".into(),
+                            "workspace-write".into(),
+                            "--ask-for-approval".into(),
+                            "on-request".into(),
+                        ]
+                    } else {
+                        vec!["--permission-mode".into(), "acceptEdits".into()]
+                    },
+                ),
                 command: vec![std::env::current_exe().unwrap().to_string_lossy().into_owned()],
                 env: [
                     ("AAA_MISSION_PROJECT_DIR".into(), project.to_string_lossy().into()),
@@ -1169,11 +1184,18 @@ mod mission_tests {
             };
             let launch =
                 rebrief(&cfg, work.to_str().unwrap(), "임무", previous, Some("watch"), None, Some(&profile)).unwrap();
+            for argv in [&launch.argv, &launch.resume_argv] {
+                for arg in &profile.args {
+                    assert!(argv.contains(arg), "임무도 일반 thread의 시작 인자를 보존한다: {arg} {argv:?}");
+                }
+            }
             assert!(work.join("inbox").is_dir(), "입력이 없어도 자기 inbox 위치는 존재한다");
             assert!(mission_inbox_pending(work.to_str().unwrap()).unwrap().is_empty());
             if harness == "claude" {
                 let settings: serde_json::Value =
                     serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
+                assert!(settings["permissions"].get("defaultMode").is_none());
+                assert!(settings["permissions"].get("disableBypassPermissionsMode").is_none());
                 let allow = settings["permissions"]["allow"].as_array().expect("임무 허용 목록");
                 assert!(allow.contains(&serde_json::json!("Bash(aaa report *)")));
                 assert!(allow.contains(&serde_json::json!("Bash(aaa mission show demo watch --json)")));
@@ -1216,14 +1238,12 @@ mod mission_tests {
                 assert!(settings["hooks"]["SessionStart"].is_array());
             } else {
                 for argv in [&launch.argv, &launch.resume_argv] {
-                    assert!(argv.contains(&"default_permissions=\"aaa_mission\"".into()), "{argv:?}");
-                    assert!(!argv.contains(&"--sandbox".into()));
-                    let policy =
-                        argv.iter().find_map(|a| a.strip_prefix("permissions.aaa_mission=")).expect("임무 sandbox");
-                    let policy: toml::Value = toml::from_str(&format!("policy={policy}")).unwrap();
-                    assert_eq!(policy["policy"]["filesystem"][work.to_str().unwrap()].as_str(), Some("write"));
-                    assert_eq!(policy["policy"]["filesystem"]["/"].as_str(), Some("read"));
-                    assert_eq!(policy["policy"]["network"]["enabled"].as_bool(), Some(false));
+                    assert!(
+                        !argv.iter().any(|a| a.starts_with("default_permissions=")
+                            || a.starts_with("permissions.aaa_mission=")
+                            || a == "approvals_reviewer=\"user\""),
+                        "임무만 manual 권한을 강제하지 않는다: {argv:?}"
+                    );
                 }
                 let rules = std::fs::read_to_string(work.join(".codex/rules/aaa-mission.rules")).unwrap();
                 assert!(rules.contains(r#"["aaa","report"]"#));

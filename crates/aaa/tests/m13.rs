@@ -1297,6 +1297,33 @@ fn mission_question_answer_recovers_and_delivers_accumulated_input_once() {
     assert!(
         history["runs"].as_array().unwrap().iter().any(|r| r["detail"].as_str().unwrap().starts_with("확인창 해제"))
     );
+    // 실제 plain CLI도 요청 수락과 작업 중 적용 대기를 구분한다.
+    wait_for("깨움 뒤 일함", T, || {
+        (w.h.ok(&["mission", "show", "question-watch"])["mission"]["state"] == "일함").then_some(())
+    });
+    let file = project.join("missions/question-watch.md");
+    let original = std::fs::read_to_string(&file).unwrap();
+    let old_sha = w.h.ok(&["mission", "show", "question-watch"])["mission"]["applied_sha"].clone();
+    std::fs::write(&file, format!("{original}본문만 더한 후보.\n")).unwrap();
+    let output = w.h.run(&["mission", "reload", "question-watch"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("적용 대기") && text.contains("예약 판") && text.contains("현재 작업이 끝난 뒤"), "{text}");
+    let view = w.h.ok(&["mission", "show", "question-watch"]);
+    assert_eq!(view["mission"]["applied_sha"], old_sha);
+    assert_eq!(view["mission"]["pending_sha"], view["mission"]["file_sha"]);
+    assert_eq!(view["mission"]["stale"], true);
+    let human_show = w.h.run(&["mission", "show", "question-watch"]);
+    let text = String::from_utf8_lossy(&human_show.stdout);
+    assert!(text.contains("현재 작업이 끝난 뒤"), "{text}");
+    let counts = text.lines().find(|s| s.starts_with("오늘 깨움 ")).unwrap();
+    assert!(
+        counts.contains("오늘 깨움 1 · 일한 분 ") && !counts.contains("무제한") && !counts.contains("깨움 1/"),
+        "{counts}"
+    );
+    let list = w.h.run(&["mission", "list"]);
+    let list = String::from_utf8_lossy(&list.stdout);
+    assert!(list.lines().any(|s| s.contains("question-watch") && s.contains("깨움 1 · 일한 분 ")), "{list}");
 }
 
 /// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.110), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
@@ -3581,6 +3608,27 @@ fn routines() {
     let ran = w.kinds(0).iter().filter(|k| *k == "routine_ran").count();
     assert!(ran >= 3, "{:?}", w.kinds(0));
     assert!(w.kinds(0).contains(&"routine_approved".to_string()));
+
+    // 실제 새 파일 읽기 경계: 변환해도 승인 값과 원격 agent의 다음 실행을 이어받는다.
+    std::fs::remove_file(dir.join("routines/slack.md")).unwrap(); // 위에서 검증한 깨진 예시만 제거한다.
+    let approval = routine("far")["command_sha256"].as_str().expect("명령 승인 hash").to_string();
+    let far_runs = || {
+        w.h.ok(&["events", "demo"])["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "routine_ran" && e["detail"].as_str().is_some_and(|d| d.starts_with("far: ")))
+            .count()
+    };
+    let before = far_runs();
+    let converted = w.h.ok(&["automation", "convert", "demo"]);
+    assert!(converted["files"].as_array().unwrap().iter().any(|f| f == "automations/far.toml"));
+    assert!(!dir.join("routines/far.md").exists());
+    assert_eq!(routine("far")["file"], "automations/far.toml");
+    assert_eq!(routine("far")["command_sha256"], approval);
+    assert_eq!(routine("far")["approved"], true);
+    wait_for("새 TOML 원격 명령 두 차례", T, || (far_runs() >= before + 2).then_some(()));
+    assert_eq!(items("routine", "far").len(), 1, "변환과 같은 출력은 안내를 다시 만들지 않는다");
 }
 
 /// HTTP/1.1 GET 한 번(Connection: close). (상태, 머리글 소문자, 본문)

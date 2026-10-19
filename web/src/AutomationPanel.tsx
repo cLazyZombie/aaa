@@ -56,7 +56,7 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
     {rows.filter((p) => p.rules.length > 0).map(({ project, rules }) => <section key={project} aria-label={`${project} 자동화`}>
       <h3>{project} · {rules.length}개</h3>
       {rules.map((r) => <article className="automation-row" key={r.name} data-testid={`automation-${project}-${r.name}`} data-status={!r.enabled ? "off" : r.error ? "failed" : r.last_result?.status ?? "ready"}>
-        <div className="automation-heading"><span className="automation-indicator" role="img" aria-label={!r.enabled ? "꺼짐" : r.error ? "실패" : r.last_result ? statusWord[r.last_result.status] ?? r.last_result.status : "기록 없음"} /><strong>{r.name.replace(/^mission:/, "")}</strong>{r.origin === "mission" && <span>임무 파일에서</span>}
+        <div className="automation-heading"><span className="automation-indicator" role="img" aria-label={!r.enabled ? "꺼짐" : r.error ? "실패" : r.last_result ? statusWord[r.last_result.status] ?? r.last_result.status : "기록 없음"} /><strong>{r.title || r.name.replace(/^mission:/, "")}</strong>{r.origin === "mission" && <span>임무 파일에서</span>}
           <button type="button" role="switch" aria-checked={r.enabled} aria-label={`${project}/${r.name} 켜기`} disabled={!canControl || busy !== null || r.error != null} onClick={() => void toggle(project, r)}>{r.enabled ? "켬" : "끔"}</button>
         </div>
         <p className="automation-summary">{r.trigger || r.schedule} → {r.action || "동작 정보 없음"}</p>
@@ -66,7 +66,7 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
           {r.origin === "mission" && !r.approved && <p className="automation-approval">임무 승인 필요</p>}
           {r.command && (!r.approved || !r.commands_allowed) && <p>{!r.approved ? "승인 필요" : "routine_commands 꺼짐"}</p>}
           <p>지난 {r.last_result ? <Result run={r.last_result} /> : "기록 없음"}</p>
-          <p>다음: {r.enabled ? r.next_run_ms === null ? "사건 오면" : time(r.next_run_ms) : "꺼짐"} · 오늘 {r.today ?? "—"}{r.max_per_day != null && `/${r.max_per_day}`}</p>
+          <p>다음: {r.enabled ? r.next_run_ms === null ? "사건 오면" : time(r.next_run_ms) : "꺼짐"} · 오늘 {r.today ?? "—"}{`/${r.max_per_day || "무제한"}`}</p>
           {r.last_skip && <p className="automation-skip">마지막 건너뜀: {r.last_skip.detail}</p>}
         </>}
         <details><summary>최근 기록 ({Math.min((r.recent ?? []).length, 20)})</summary>

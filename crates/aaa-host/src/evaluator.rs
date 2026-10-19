@@ -749,7 +749,7 @@ impl Host {
         if inputs.is_empty() {
             return Ok(());
         }
-        if inputs.len() > self.cfg.missions.max_pending as usize {
+        if self.cfg.missions.max_pending > 0 && inputs.len() > self.cfg.missions.max_pending as usize {
             self.inbox_once(&rec.project, "mission", "evaluator", "backlog", "사후 평가자 입력이 상한을 넘었다");
             return Ok(());
         }

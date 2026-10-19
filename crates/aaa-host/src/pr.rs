@@ -13,13 +13,14 @@
 //!
 //! 옮긴 hp 코드의 MIT 고지는 `aaa_common::pr`에 있다.
 
+use sha2::Digest;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aaa_common::pr::{normalize_origin, report_refs, sanitize, valid_pr_url};
-use aaa_proto::{AgentRequest, AgentResponse, ErrorBody, ErrorCode, MessageMode, PrAnswer, PrQuery, Role, ThreadKind};
+use aaa_proto::{AgentRequest, AgentResponse, ErrorBody, ErrorCode, PrAnswer, PrQuery, Role, ThreadKind};
 use serde::{Deserialize, Serialize};
 
 use crate::inbox::{Outage, OutageEvent};
@@ -617,29 +618,17 @@ impl Host {
                 continue;
             }
             let prompt = pr_routine_prompt(&r.name, &r.prompt, url, &hit, summary);
-            let actor = format!("routine:{}", r.name);
-            let (ok, event, outcome) = match self
-                .thread_message(project, &rec.id, prompt, MessageMode::Queue, &actor)
-                .await
-            {
-                Ok(m) => (true, "prompted its thread", format!("{}에 보냈다({}): {}", rec.id, m.id, hit.join(", "))),
-                Err(e) => (
-                    false,
-                    "could not prompt its thread",
-                    format!("{}에 보내지 못했다({}): {}", rec.id, hit.join(", "), e.message),
-                ),
-            };
-            self.record_routine(
-                project,
-                &r.name,
-                &aaa_common::util::new_id(),
-                if ok { "done" } else { "failed" },
-                &outcome,
-                Some(&rec.id),
+            let prompt = serde_json::json!({"source":"pr","prompt":prompt,"events":hit}).to_string();
+            let id = format!(
+                "pr:{}:{}",
+                rec.id,
+                hex::encode(sha2::Sha256::digest(serde_json::to_vec(&(summary, &hit)).unwrap()))
             );
-            self.inbox_add(project, "routine", &r.name, event, &format!("routine `{}` {outcome}", r.name));
-            let kind = if ok { "routine_prompted" } else { "routine_prompt_failed" };
-            self.flow(rec, kind, Some(format!("routines/{}.md", r.name)), outcome);
+            if let Err(e) =
+                self.automation_changed_owner(project, r, &format!("pr:{}", rec.id), &id, prompt, Some(rec.id.clone()))
+            {
+                self.record_routine(project, &r.name, &id, "failed", &e.message, Some(&rec.id));
+            }
         }
     }
 }
