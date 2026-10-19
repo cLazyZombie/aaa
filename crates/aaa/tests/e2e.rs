@@ -487,6 +487,8 @@ fn update_replaces_keeps_and_rolls_back() {
     // 사람 문: 터미널 아님·aaa 세션 안. 잘못된 release 판은 네트워크에 닿기 전에 거부한다
     let o = std::process::Command::new(&exe)
         .args(["update", "--from", &s(&new1)])
+        .env_remove("AAA_SESSION_ID")
+        .env_remove("AAA_HOOK_SOCK")
         .env("AAA_CONFIG_DIR", &h.cfg)
         .env("AAA_STATE_DIR", &h.state)
         .stdin(std::process::Stdio::null())

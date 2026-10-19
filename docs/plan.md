@@ -5293,3 +5293,11 @@ primary 근거:
   배포 때 host·CLI·웹을 함께 새 판으로 바꾸고 첫 자동 정리 전 dry-run 예상치를 확인한다.
 - **시험:** 주입한 now와 임시 사본으로 기한·오래된 순·보호·보호 초과 알림·꺼짐·6시간 경계·쓰기 없는 미리 보기를 본다.
   기존 보고서 E2E에 doctor·CLI dry-run·웹 합계/한도 표시를 더한다. 고정 sleep·새 신호 시험은 없다.
+
+### 8.213 Windows release의 xterm 패치 줄 끝과 실험실 환경 격리(10-19, t-0375)
+
+- **실제 실패.** v0.1.1 release의 Windows job은 `npm run build` 중 `src/browser/Terminal.ts` 첫 hunk의 문맥이 없다고 끝났다. Windows checkout의 CRLF 패치를 LF로 읽은 npm 소스와 그대로 비교했다. 적용기는 대상 소스만 LF로 정규화하고 있었다.
+- **수정.** `xterm-source.mjs applyPatch`가 패치 입력도 LF로 정규화한다. 문맥이 정확히 한 곳이어야 하는 조건은 유지한다. workspace 판은 0.1.2이며 v0.1.1 tag를 옮기지 않는다. tag 게시·운영 binary 교체는 coordinator 몫이다.
+- **참고와 차이.** herdr-web-ui `package.json patchedDependencies`·`scripts/build-xterm.ts`는 Bun이 패치한 소스를 TypeScript로 빌드한다. aaa는 npm을 써 자체 패치 적용기가 필요하다. t3code `package.json`·`patches/`도 확인했으나 같은 자체 적용기는 없다. Vite 구성이나 IME 동작은 바꾸지 않는다.
+- **최소 보호선.** `web/test/xterm-source.test.mjs`가 실제 파일 적용기를 LF/CRLF 네 조합으로 실행하고, 이미 바뀌어 문맥이 안 맞는 파일은 거부되는지 본다. 수정 전 CRLF patch에서 실패했고 수정 뒤 통과했다. 기존 CI 세 OS의 `web` 단계가 이 시험을 실행하므로 별도 Windows job을 늘리지 않는다.
+- **실험실.** aaa pane 안에서 전체 검사를 처음 실행하자 기존 시험 다섯 건이 운영 pane의 호출자·hook 환경을 물려받아 실패했다. `tests/lab Node::cmd`·사람 터미널 fixture는 실험실을 띄울 때 그 변수만 제거한다. 권한 시험은 자기 값을 명시해 주입한다. update 사본의 비터미널 검사도 세션 변수를 제거한다. 제품의 사람 전용·worker 권한 검사는 그대로다.
